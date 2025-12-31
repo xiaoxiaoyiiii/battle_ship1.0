@@ -595,12 +595,6 @@ def end_turn(data):
 def index():
     return render_template('index.html')
 
-@app.route('/test-static')
-def test_static():
-    static_path = app.static_folder
-    files = os.listdir(static_path) if os.path.exists(static_path) else []
-    return f"Static folder: {static_path}<br>Files: {files}"
-
 if __name__ == '__main__':
     # 添加详细日志输出
     import logging

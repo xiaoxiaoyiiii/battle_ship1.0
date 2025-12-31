@@ -359,6 +359,7 @@ def handle_attack(data):
     if attacker_id != room.current_attacker:
         return {'status': 'error', 'message': '还没到你的攻击回合'}
     
+    print(room.current_phase)
     # 新增：检查当前是否为战斗阶段
     if room.current_phase != 'battle':
         return {'status': 'error', 'message': '当前不是战斗阶段'}
@@ -645,13 +646,13 @@ def handle_use_magic_card(data):
     return {'status': 'success', 'message': f'魔法卡{card["name"]}使用成功'}
 
 def can_play_magic_card(room, player_id, card):
+    if card['speed'] == 3:
+        # 速阶3的卡牌可以在任何时候使用
+        return True
     # 检查是否是当前回合
     if room.current_phase in ['preparation', 'battle', 'end'] and room.current_attacker == player_id:
         # 当前玩家回合
         return card['speed'] in [1, 2]
-    elif card['speed'] == 3:
-        # 速阶3的卡牌可以在任何时候使用
-        return True
     return False
 
 # 添加处理对方是否使用"失灵！"的响应

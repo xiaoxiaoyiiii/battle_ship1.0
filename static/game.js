@@ -183,24 +183,8 @@ function setupSocketListeners() {
                 updateTurnIndicator(data.current_attacker, data.attacks_remaining);
                 updatePhaseUI(); // 确保调用阶段UI更新
                 
-                // 修复：保留现有手牌并追加新抽卡牌
-                if (gameState.playerId === data.current_attacker) {
-                    // 当前玩家是先手，添加1张牌
-                    if (data.winner_card) {
-                        // 将新卡牌追加到手牌，而不是替换
-                        gameState.hand = gameState.hand || [];
-                        gameState.hand.push(data.winner_card);
-                        updateHandUI();
-                    }
-                } else {
-                    // 当前玩家是后手，添加2张牌
-                    if (data.loser_cards && data.loser_cards.length) {
-                        // 将新卡牌追加到手牌，而不是替换
-                        gameState.hand = gameState.hand || [];
-                        gameState.hand.push(...data.loser_cards);
-                        updateHandUI();
-                    }
-                }
+                // 不再手动添加卡牌，改为依赖hand_updated事件
+                // 卡牌会通过hand_updated事件正确更新，避免重复添加
                 break;
             case 'game_over':
                 gameOverScreen.classList.add('active');

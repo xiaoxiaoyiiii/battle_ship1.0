@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>战舰游戏</title>
+    <!-- 修改CSS引用路径 -->
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+</head>
+<body>
+    <div class="game-container">
+        <!-- 开始界面 -->
+        <div id="start-screen" class="screen active">
+            <h1>战舰游戏</h1>
+            <div class="input-group">
+                <input type="text" id="player-name" placeholder="输入你的名字">
+            </div>
+            <div class="button-group">
+                <button id="create-room">创建房间</button>
+                <button id="join-room">加入房间</button>
+            </div>
+            <div id="room-id-input" class="input-group hidden">
+                <input type="text" id="room-code" placeholder="输入房间ID">
+                <button id="confirm-join">确认加入</button>
+            </div>
+            <div id="room-info" class="hidden">
+                <p>房间ID: <span id="current-room-id"></span></p>
+                <p>等待其他玩家加入...</p>
+            </div>
+        </div>
+
+        <!-- 战舰放置界面 -->
+        <div id="ship-placement-screen" class="screen">
+            <h2>放置你的战舰</h2>
+            <p>点击格子放置战舰 (共6艘)</p>
+            <div class="board-container">
+                <div id="player-board" class="board"></div>
+            </div>
+            <p id="ships-placed">已放置: <span id="placed-count">0</span>/6</p>
+            <button id="confirm-ships" class="hidden">确认放置</button>
+        </div>
+
+        <!-- 猜拳界面 -->
+        <div id="rps-screen" class="screen">
+            <h2>第<span id="rps-round">1</span>回合 - 猜拳决定攻击顺序</h2>
+            <p>选择一种手势:</p>
+            <div class="rps-choices">
+                <button class="rps-choice" data-choice="rock">石头</button>
+                <button class="rps-choice" data-choice="paper">剪刀</button>
+                <button class="rps-choice" data-choice="scissors">布</button>
+            </div>
+            <div id="rps-result" class="hidden"></div>
+        </div>
+
+        <!-- 游戏主界面 -->
+        <!-- 在游戏主界面添加场地魔法区域 -->
+        <div id="game-screen" class="screen">
+            <div class="game-info">
+                <h2>第<span id="game-round">1</span>回合</h2>
+                <!-- 添加场地魔法显示区域 -->
+                <div class="field-magic-area">
+                    <div id="player-field-magic" class="field-magic">你的场地魔法: <span class="no-magic">无</span></div>
+                    <div id="opponent-field-magic" class="field-magic">对方场地魔法: <span class="no-magic">无</span></div>
+                </div>
+                <div class="players-info">
+                    <div class="player-info">
+                        <p>你: <span id="your-ships">6</span>艘战舰剩余</p>
+                    </div>
+                    <div class="player-info">
+                        <p>对手: <span id="opponent-ships">6</span>艘战舰剩余</p>
+                    </div>
+                </div>
+                <div id="turn-indicator">
+                    <div class="game-info">
+                        <div>当前阶段: <span id="current-phase">准备阶段</span></div>
+                        <div>当前回合: <span id="current-player">你</span></div>
+                        <div>剩余攻击次数: <span id="attacks-remaining">0</span></div>
+                        <button id="enter-battle-phase" class="phase-btn">进入战斗阶段</button>
+                        <button id="enter-end-phase" class="phase-btn" style="display:none;">结束战斗阶段</button>
+                        <button id="end-turn-btn" class="phase-btn" style="display:none;">结束结束阶段</button>
+                    </div>
+                </div>
+            </div>
+            <div class="boards-container">
+                <div class="board-wrapper">
+                    <h3>你的棋盘</h3>
+                    <div id="game-player-board" class="board"></div>
+                </div>
+                <div class="board-wrapper">
+                    <h3>对手的棋盘</h3>
+                    <div id="opponent-board" class="board"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 游戏结束界面 -->
+        <div id="game-over-screen" class="screen">
+            <h2 id="game-result"></h2>
+            <button id="play-again">再来一局</button>
+        </div>
+    </div>
+
+    <!-- 修改JS引用路径 -->
+    <!-- 确保正确的加载顺序 -->
+    <script src="/static/magic_cards.js"></script>
+    <!-- 先加载游戏核心逻辑 -->
+    <script src="/static/game.js"></script>
+    <!-- 后加载测试脚本 -->
+    <script src="/static/test_magic.js"></script>
+</body>
+</html>

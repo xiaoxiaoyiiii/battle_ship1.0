@@ -595,12 +595,6 @@ def end_turn(data):
 def index():
     return render_template('index.html')
 
-if __name__ == '__main__':
-    # 添加详细日志输出
-    import logging
-    logging.basicConfig(level=logging.DEBUG)
-    # 添加allow_unsafe_werkzeug参数
-    socketio.run(app, debug=True, host='0.0.0.0', port=5000)
 @socketio.on('use_magic_card')
 def handle_use_magic_card(data):
     room_id = data['room_id']
@@ -1379,3 +1373,10 @@ def apply_magic_effect(room, caster_id, card, target_data):
         result['message'] = f'魔法效果应用失败: {str(e)}'
 
     return result
+
+if __name__ == '__main__':
+    # 添加详细日志输出
+    import logging
+    logging.basicConfig(level=logging.DEBUG)
+    # 添加allow_unsafe_werkzeug参数
+    socketio.run(app, debug=True, host='0.0.0.0', port=5000)

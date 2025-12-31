@@ -209,7 +209,6 @@ function setupSocketListeners() {
     socket.on('attack_result', (result) => {
         console.log('Attack result:', result);
         updateAttackDisplay(result);
-        opponentShips.textContent = result.defender_remaining_ships;
         attacksRemaining.textContent = result.remaining_attacks;
     });
 

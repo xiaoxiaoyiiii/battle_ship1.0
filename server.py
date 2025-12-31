@@ -232,9 +232,12 @@ def handle_rps_choice(data):
         loser_card2 = room.draw_card(loser)
         
         room.state = 'attacking'
+        # 设置当前阶段为准备阶段
+        room.current_phase = 'preparation'
         emit('game_state', {
             'state': 'attacking',
             'current_attacker': winner,
+            'current_phase': 'preparation',
             'attacks_remaining': room.attacks_remaining,
             'winner_card': winner_card,
             'loser_cards': [loser_card1, loser_card2],
@@ -439,6 +442,7 @@ def handle_attack(data):
         'hit': hit,
         'ship_sunk': ship_sunk,
         'remaining_attacks': room.attacks_remaining,
+        'attacker_remaining_ships': room.players[attacker_id]['remaining_ships'],
         'defender_remaining_ships': room.players[defender_id]['remaining_ships']
     }
     
@@ -701,8 +705,13 @@ def counter_magic_response(data):
             'timestamp': time.time()
         }
         # 广播魔法效果
-        emit('magic_applied', result, room=room_id)
-        return {'status': 'success', 'result': result}
+    emit('magic_applied', result, room=room_id)
+    # 发送剩余战舰数更新
+    emit('ships_updated', {
+        'player_remaining_ships': room.players[caster_id]['remaining_ships'],
+        'opponent_remaining_ships': room.players[opponent_id]['remaining_ships']
+    }, room=room_id)
+    return {'status': 'success', 'result': result}
 
 @socketio.on('remove_field_magic')
 def handle_remove_field_magic(data):

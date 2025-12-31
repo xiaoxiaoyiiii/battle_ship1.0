@@ -182,9 +182,6 @@ function setupSocketListeners() {
                 initGameBoards();
                 updateTurnIndicator(data.current_attacker, data.attacks_remaining);
                 updatePhaseUI(); // 确保调用阶段UI更新
-                
-                // 不再手动添加卡牌，改为依赖hand_updated事件
-                // 卡牌会通过hand_updated事件正确更新，避免重复添加
                 break;
             case 'game_over':
                 gameOverScreen.classList.add('active');
@@ -360,6 +357,13 @@ function setupSocketListeners() {
         updateHandUI();
     });
 
+    // 新增：监听战舰数更新事件
+    socket.on('ships_updated', (data) => {
+        // 更新双方剩余战舰数
+        yourShips.textContent = data.player_remaining_ships;
+        opponentShips.textContent = data.opponent_remaining_ships;
+    });
+
 }
 
 // 切换屏幕
@@ -532,6 +536,9 @@ function updateAttackDisplay(result) {
             y: result.y,
             hit: result.hit
         });
+        // 更新自己和对手的剩余战舰数
+        yourShips.textContent = result.attacker_remaining_ships;
+        opponentShips.textContent = result.defender_remaining_ships;
     } else {
         // 如果是对手的攻击
         gameState.opponentAttacks.push({
@@ -539,7 +546,9 @@ function updateAttackDisplay(result) {
             y: result.y,
             hit: result.hit
         });
+        // 更新自己和对手的剩余战舰数
         yourShips.textContent = result.defender_remaining_ships;
+        opponentShips.textContent = result.attacker_remaining_ships;
     }
 
     // 更新棋盘显示

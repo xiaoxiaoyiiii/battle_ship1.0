@@ -419,6 +419,12 @@ def handle_attack(data):
                         room.winner = attacker_id
                         emit('game_over', {'winner': attacker_id}, room=room_id)
                         return {'status': 'success', 'game_over': True}
+                    
+                    # 发送战舰数更新事件
+                    emit('ships_updated', {
+                        'player_remaining_ships': room.players[attacker_id]['remaining_ships'],
+                        'opponent_remaining_ships': room.players[defender_id]['remaining_ships']
+                    }, room=room_id)
             break
     
     # 记录最后一次攻击（用于溅射等效果）
@@ -645,6 +651,9 @@ def handle_use_magic_card(data):
     room.last_magic = card
 
     res = apply_magic_effect(room, player_id, card, targets)
+
+    # 广播魔法卡生效结果，用于显示魔法效果信息
+    emit('magic_applied', res, room=room_id)
 
     # 返回成功响应
     return {'status': 'success', 'message': f'魔法卡{card["name"]}使用成功'}

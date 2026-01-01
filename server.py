@@ -362,7 +362,6 @@ def handle_attack(data):
     if attacker_id != room.current_attacker:
         return {'status': 'error', 'message': '还没到你的攻击回合'}
     
-    print(room.current_phase)
     # 新增：检查当前是否为战斗阶段
     if room.current_phase != 'battle':
         return {'status': 'error', 'message': '当前不是战斗阶段'}

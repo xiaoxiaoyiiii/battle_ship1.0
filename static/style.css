@@ -241,32 +241,33 @@ button:hover {
 
 /* 场地魔法样式 */
 .field-magic-area {
-    display: flex;
-    justify-content: space-around;
+    display: block;
     margin: 10px 0;
     padding: 10px;
     background-color: #f5f5f5;
     border-radius: 5px;
+    text-align: center;
 }
 
 .field-magic {
     padding: 8px 15px;
     border-radius: 20px;
     font-weight: bold;
+    display: inline-block;
 }
 
-.your-field {
-    background-color: rgba(76, 175, 80, 0.1);
-    border: 1px solid #4CAF50;
-}
-
-.opponent-field {
-    background-color: rgba(244, 67, 54, 0.1);
-    border: 1px solid #F44336;
+.field-magic.active {
+    background-color: rgba(255, 235, 59, 0.2);
+    border: 1px solid #FFEB3B;
+    box-shadow: 0 0 10px rgba(255, 235, 59, 0.5);
 }
 
 .field-magic-card {
     display: inline-block;
+    color: #FF9800;
+    font-weight: bold;
+    margin-left: 5px;
+    text-shadow: 0 0 3px rgba(255, 152, 0, 0.5);
     padding: 3px 8px;
     background-color: #fff;
     border-radius: 12px;

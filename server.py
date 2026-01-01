@@ -82,6 +82,10 @@ class GameRoom:
         self.last_magic = None  # 上一张使用的魔法卡
         self.pending_magic = None  # 待处理的魔法卡（等待对方是否使用失灵）
         self.magic_temp_data = {}  # 魔法卡临时数据
+        # 连锁相关状态
+        self.chain = []  # 连锁栈
+        self.chain_waiting = False  # 是否正在等待玩家回应连锁
+        self.chain_timer = None  # 连锁回应计时器
 
     def init_player_magic(self, player_id, magic_cards):
         """初始化玩家魔法卡牌堆"""
@@ -629,20 +633,6 @@ def handle_use_magic_card(data):
     if not can_play_magic_card(room, player_id, card):
         return {'status': 'error', 'message': f'当前阶段{room.current_phase}无法使用速阶{card["speed"]}的魔法卡'}
 
-    # 处理场地魔法
-    if card['type'] == '场地':
-        # 移除已有的场地魔法
-        if player_id in room.field_magics:
-            old_card = room.field_magics[player_id]
-            room.players[player_id]['magic_discard'].append(old_card)
-        # 设置新的场地魔法
-        room.field_magics[player_id] = card
-        # 广播场地魔法更新
-        emit('field_magic_updated', {
-            'player_id': player_id,
-            'card': card
-        }, room=room_id)
-
     # 从手牌中移除并添加到弃牌堆
     player['magic_hand'] = [c for c in player['magic_hand'] if not (c['name'] == card['name'] and c['speed'] == card['speed'])]
     player['magic_discard'].append(card)
@@ -650,23 +640,176 @@ def handle_use_magic_card(data):
     # 记录最后使用的魔法卡
     room.last_magic = card
 
-    res = apply_magic_effect(room, player_id, card, targets)
+    # 处理场地魔法 - 全场只能有一张场地魔法卡生效
+    if card['type'] == '场地':
+        # 移除所有玩家的场地魔法卡（全场只能有一张）
+        for existing_player_id in list(room.field_magics.keys()):
+            old_card = room.field_magics[existing_player_id]
+            # 将旧的场地魔法卡加入弃牌堆
+            room.players[existing_player_id]['magic_discard'].append(old_card)
+            # 广播场地魔法移除
+            emit('field_magic_updated', {
+                'player_id': existing_player_id,
+                'card': None
+            }, room=room_id)
+            # 从场地魔法字典中移除
+            del room.field_magics[existing_player_id]
+        
+        # 设置新的场地魔法卡
+        room.field_magics[player_id] = card
+        # 广播新的场地魔法卡
+        emit('field_magic_updated', {
+            'player_id': player_id,
+            'card': card
+        }, room=room_id)
 
-    # 广播魔法卡生效结果，用于显示魔法效果信息
-    emit('magic_applied', res, room=room_id)
-
-    # 返回成功响应
-    return {'status': 'success', 'message': f'魔法卡{card["name"]}使用成功'}
+    # 添加到连锁栈
+    chain_item = {
+        'player_id': player_id,
+        'card': card,
+        'targets': targets,
+        'timestamp': time.time()
+    }
+    room.chain.append(chain_item)
+    
+    # 广播连锁更新
+    emit('magic_chain_updated', {
+        'chain': room.chain
+    }, room=room_id)
+    
+    # 检查对方是否可以连锁（速阶高于当前连锁卡）
+    can_chain = False
+    if len(room.chain) > 1:
+        # 只有在有其他卡的情况下才能连锁
+        last_chain_card_speed = room.chain[-2]['card']['speed']
+        if card['speed'] > last_chain_card_speed:
+            can_chain = True
+    
+    if can_chain:
+        # 通知对方可以连锁
+        room.chain_waiting = True
+        emit('chain_request', {
+            'card': card
+        }, to=opponent_id)
+    else:
+        # 直接结算连锁
+        resolve_chain(room)
+    
+    return {'status': 'success', 'message': f'魔法卡{card["name"]}已加入连锁'}
 
 def can_play_magic_card(room, player_id, card):
     if card['speed'] == 3:
         # 速阶3的卡牌可以在任何时候使用
         return True
-    # 检查是否是当前回合
-    if room.current_phase in ['preparation', 'battle', 'end'] and room.current_attacker == player_id:
-        # 当前玩家回合
+    
+    # 速阶1和速阶2只能在自己的回合使用
+    if room.current_attacker != player_id:
+        return False
+    
+    # 根据当前阶段和速阶检查
+    if room.current_phase == 'preparation':
+        # 准备阶段只可以使用速阶1卡牌
+        return card['speed'] == 1
+    elif room.current_phase == 'battle':
+        # 战斗阶段可以使用速阶1和速阶2的卡牌
         return card['speed'] in [1, 2]
+    elif room.current_phase == 'end':
+        # 结束阶段不能使用魔法卡
+        return False
+    
     return False
+
+def resolve_chain(room):
+    """结算连锁"""
+    results = []
+    
+    # 按照连锁顺序结算（从后往前）
+    while room.chain:
+        chain_item = room.chain.pop()
+        player_id = chain_item['player_id']
+        card = chain_item['card']
+        targets = chain_item['targets']
+        
+        # 应用卡牌效果
+        result = apply_magic_effect(room, player_id, card, targets)
+        results.append(result)
+    
+    # 广播连锁结算结果
+    emit('chain_resolved', {
+        'results': results
+    }, room=room.id)
+    
+    # 重置连锁状态
+    room.chain = []
+    room.chain_waiting = False
+    
+    return results
+
+# 添加处理连锁响应
+@socketio.on('chain_response')
+def chain_response(data):
+    room_id = data['room_id']
+    player_id = data['player_id']
+    chain = data.get('chain', False)
+    card = data.get('card')
+    targets = data.get('targets', [])
+
+    if room_id not in rooms or player_id not in rooms[room_id].players:
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+
+    room = rooms[room_id]
+    if not room.chain_waiting:
+        return {'status': 'error', 'message': '没有待处理的连锁请求'}
+
+    # 重置连锁等待状态
+    room.chain_waiting = False
+    
+    if chain and card:
+        # 玩家选择连锁，处理新的魔法卡
+        player = room.players[player_id]
+        opponent_id = next(p for p in room.players if p != player_id)
+        
+        # 检查卡牌是否在玩家手牌中
+        if not any(c['name'] == card['name'] and c['speed'] == card['speed'] for c in player['magic_hand']):
+            return {'status': 'error', 'message': '你没有这张魔法卡'}
+        
+        # 检查速阶是否高于上一张连锁卡
+        last_chain_card = room.chain[-1]['card']
+        if card['speed'] <= last_chain_card['speed']:
+            return {'status': 'error', 'message': f'连锁卡速阶必须高于上一张卡的速阶（{last_chain_card["speed"]}）'}
+        
+        # 从手牌中移除并添加到弃牌堆
+        player['magic_hand'] = [c for c in player['magic_hand'] if not (c['name'] == card['name'] and c['speed'] == card['speed'])]
+        player['magic_discard'].append(card)
+        
+        # 记录最后使用的魔法卡
+        room.last_magic = card
+        
+        # 添加到连锁栈
+        chain_item = {
+            'player_id': player_id,
+            'card': card,
+            'targets': targets,
+            'timestamp': time.time()
+        }
+        room.chain.append(chain_item)
+        
+        # 广播连锁更新
+        emit('magic_chain_updated', {
+            'chain': room.chain
+        }, room=room_id)
+        
+        # 检查对方是否可以继续连锁
+        can_chain = True
+        emit('chain_request', {
+            'card': card
+        }, to=opponent_id)
+        
+        return {'status': 'success', 'message': f'魔法卡{card["name"]}已加入连锁'}
+    else:
+        # 玩家选择不连锁，结算当前连锁
+        results = resolve_chain(room)
+        return {'status': 'success', 'message': '连锁已结算', 'results': results}
 
 # 添加处理对方是否使用"失灵！"的响应
 @socketio.on('counter_magic_response')
@@ -1694,7 +1837,21 @@ def apply_magic_effect(room, caster_id, card, target_data):
 
         # ==== 场地魔法卡 ====
         elif card['type'] == '场地':
-            # 场地魔法处理
+            # 场地魔法处理 - 全场只能有一张场地魔法卡生效
+            # 移除所有玩家的场地魔法卡
+            for existing_player_id in list(room.field_magics.keys()):
+                old_card = room.field_magics[existing_player_id]
+                # 将旧的场地魔法卡加入弃牌堆
+                room.players[existing_player_id]['magic_discard'].append(old_card)
+                # 广播场地魔法移除
+                emit('field_magic_updated', {
+                    'player_id': existing_player_id,
+                    'card': None
+                }, room=room.id)
+                # 从场地魔法字典中移除
+                del room.field_magics[existing_player_id]
+            
+            # 设置新的场地魔法卡
             room.field_magics[caster_id] = card
             
             if card['name'] == '恶魔契约':

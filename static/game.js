@@ -744,9 +744,10 @@ function canPlayCard(card) {
     if (card.speed === 1) {
         return gameState.currentPhase === 'preparation' && gameState.currentAttacker === gameState.playerId;
     }
-    // 速阶2: 只能在自己的战斗阶段使用
+    // 速阶2: 可以在自己的准备阶段和战斗阶段使用
     else if (card.speed === 2) {
-        return gameState.currentPhase === 'battle' && gameState.currentAttacker === gameState.playerId;
+        return (gameState.currentPhase === 'preparation' || gameState.currentPhase === 'battle') && 
+               gameState.currentAttacker === gameState.playerId;
     }
     // 速阶3: 任何时候都可以使用
     else if (card.speed === 3) {

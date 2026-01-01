@@ -744,9 +744,9 @@ function canPlayCard(card) {
     if (card.speed === 1) {
         return gameState.currentPhase === 'preparation' && gameState.currentAttacker === gameState.playerId;
     }
-    // 速阶2: 只能在自己的回合使用
+    // 速阶2: 只能在自己的战斗阶段使用
     else if (card.speed === 2) {
-        return gameState.currentAttacker === gameState.playerId;
+        return gameState.currentPhase === 'battle' && gameState.currentAttacker === gameState.playerId;
     }
     // 速阶3: 任何时候都可以使用
     else if (card.speed === 3) {
@@ -1774,16 +1774,15 @@ function showMagicAnimation(card) {
 
 // 更新场地魔法UI显示
 function updateFieldMagicUI(playerId, card) {
-    const isMyField = playerId === gameState.playerId;
-    const fieldElement = isMyField ? 
-        document.getElementById('player-field-magic') : 
-        document.getElementById('opponent-field-magic');
+    const fieldElement = document.getElementById('current-field-magic');
 
     if (card) {
-        fieldElement.innerHTML = `${isMyField ? '你的' : '对方'}场地魔法: <span class="field-magic-card">${card.name}</span>`;
-        fieldElement.className = `field-magic ${isMyField ? 'your-field' : 'opponent-field'}`;
+        // 获取当前场地魔法的拥有者
+        const owner = playerId === gameState.playerId ? '你的' : '对方的';
+        fieldElement.innerHTML = `当前生效的场地魔法: <span class="field-magic-card">${owner}${card.name}</span>`;
+        fieldElement.className = `field-magic active`;
     } else {
-        fieldElement.innerHTML = `${isMyField ? '你的' : '对方'}场地魔法: <span class="no-magic">无</span>`;
+        fieldElement.innerHTML = `当前生效的场地魔法: <span class="no-magic">无</span>`;
         fieldElement.className = 'field-magic';
     }
 }

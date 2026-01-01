@@ -940,6 +940,7 @@ def apply_magic_effect(room, caster_id, card, target_data):
             hit_count = 0
             ships_changed = False
             
+            affected_positions = []
             for pos in valid_positions:
                 # 检查是否击中
                 hit = False
@@ -986,6 +987,13 @@ def apply_magic_effect(room, caster_id, card, target_data):
                     'defender_remaining_ships': opponent['remaining_ships']
                 }
                 emit('attack_result', attack_result, room=room.id)
+
+                affected_positions.append({
+                    'x': pos['x'],
+                    'y': pos['y'],
+                    'hit': hit,
+                    'ship_sunk': ship_sunk
+                })
             
             # 若有船只数量变化，广播更新
             if ships_changed:
@@ -995,6 +1003,8 @@ def apply_magic_effect(room, caster_id, card, target_data):
                 }, room=room.id)
 
             result['message'] = f'溅射攻击命中{hit_count}个目标'
+            result['affected_positions'] = affected_positions
+            result['caster_id'] = caster_id
 
         elif card['name'] == '雷达子弹':
             # 显示击中位置周围八格的战舰
@@ -1112,6 +1122,7 @@ def apply_magic_effect(room, caster_id, card, target_data):
             ships_changed = False
             removed_positions = set()
 
+            affected_positions = []
             # 移除这些船并为其每个格子生成命中事件（完整击沉）
             for ship in to_remove:
                 if ship in opponent['ships']:
@@ -1139,6 +1150,12 @@ def apply_magic_effect(room, caster_id, card, target_data):
                             'defender_remaining_ships': opponent['remaining_ships']
                         }
                         emit('attack_result', attack_result, room=room.id)
+                        affected_positions.append({
+                            'x': ship_pos['x'],
+                            'y': ship_pos['y'],
+                            'hit': True,
+                            'ship_sunk': True
+                        })
 
             # 对于该行/列中未命中的格子也发出未命中事件，以保持 UI 一致性
             for pos in positions:
@@ -1161,6 +1178,12 @@ def apply_magic_effect(room, caster_id, card, target_data):
                         'defender_remaining_ships': opponent['remaining_ships']
                     }
                     emit('attack_result', attack_result, room=room.id)
+                    affected_positions.append({
+                        'x': pos['x'],
+                        'y': pos['y'],
+                        'hit': False,
+                        'ship_sunk': False
+                    })
 
             # 若有船只数量变化，广播更新
             if ships_changed:
@@ -1168,6 +1191,10 @@ def apply_magic_effect(room, caster_id, card, target_data):
                     'player_remaining_ships': room.players[caster_id]['remaining_ships'],
                     'opponent_remaining_ships': opponent['remaining_ships']
                 }, room=room.id)
+
+            result['message'] = f'轰炸成功击沉{sunk_count}艘战舰'
+            result['affected_positions'] = affected_positions
+            result['caster_id'] = caster_id
 
             result['message'] = f'轰炸成功击沉{sunk_count}艘战舰'
 
@@ -1294,6 +1321,7 @@ def apply_magic_effect(room, caster_id, card, target_data):
 
             for ship in to_remove:
                 if ship in opponent['ships']:
+                    affected_positions = []
                     opponent['ships'].remove(ship)
                     opponent['remaining_ships'] -= 1
                     ships_changed = True
@@ -1318,6 +1346,12 @@ def apply_magic_effect(room, caster_id, card, target_data):
                             'defender_remaining_ships': opponent['remaining_ships']
                         }
                         emit('attack_result', attack_result, room=room.id)
+                        affected_positions.append({
+                            'x': ship_pos['x'],
+                            'y': ship_pos['y'],
+                            'hit': True,
+                            'ship_sunk': True
+                        })
 
             # 对于选定格子中未命中的格子，发送未命中事件
             for pos in positions:
@@ -1340,6 +1374,12 @@ def apply_magic_effect(room, caster_id, card, target_data):
                         'defender_remaining_ships': opponent['remaining_ships']
                     }
                     emit('attack_result', attack_result, room=room.id)
+                    affected_positions.append({
+                        'x': pos['x'],
+                        'y': pos['y'],
+                        'hit': False,
+                        'ship_sunk': False
+                    })
 
             # 广播被摧毁舰只更新
             if ships_changed:
@@ -1349,6 +1389,8 @@ def apply_magic_effect(room, caster_id, card, target_data):
                 }, room=room.id)
 
             result['message'] = f'硫磺火焰成功击杀{sunk_count}艘战舰'
+            result['affected_positions'] = affected_positions
+            result['caster_id'] = caster_id
 
         elif card['name'] == '探测雷达':
             # 显示2*2区域内的战舰

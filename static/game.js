@@ -395,6 +395,23 @@ function setupSocketListeners() {
     socket.on('magic_applied', function(result) {
         showMessage(`魔法卡【${result.card.name}】效果生效: ${result.message}`);
         applyCardEffect(result.card);
+        // 如果服务器返回了受影响的格子，确保客户端同步显示这些格子的攻击结果
+        if (result.affected_positions && Array.isArray(result.affected_positions)) {
+            result.affected_positions.forEach(pos => {
+                updateAttackDisplay({
+                    attacker: result.caster_id || result.caster || result.card && result.card.caster,
+                    x: pos.x,
+                    y: pos.y,
+                    hit: !!pos.hit,
+                    ship_sunk: !!pos.ship_sunk,
+                    remaining_attacks: result.remaining_attacks,
+                    attacker_remaining_ships: result.attacker_remaining_ships,
+                    defender_remaining_ships: result.defender_remaining_ships
+                });
+            });
+            // 强制重绘棋盘以反映变化
+            initGameBoards();
+        }
         updateHandUI();
     });
 

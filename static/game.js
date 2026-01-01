@@ -669,45 +669,609 @@ function canPlayCard(card) {
 }
 
 // 添加魔法卡目标选择UI
-function showMagicTargetSelection(card) {
+function showMagicTargetSelection(card, index) {
+    // 记录当前待选卡和索引，供确认时使用
+    gameState.currentMagicCard = card;
+    gameState.currentCardIndex = index;
+
     const targetPrompt = document.createElement('div');
     targetPrompt.className = 'magic-target-prompt';
-    
-    const size = needsTargetSelection(card.name);
-    if (size > 0) {
-        targetPrompt.innerHTML = `
-            <h3>选择${size}x${size}区域</h3>
-            <div class="target-board" id="target-board"></div>
-            <button id="confirm-target">确认选择</button>
-        `;
-        createSelectionBoard(size);
-    }
-    
-    document.body.appendChild(targetPrompt);
-}
 
-// 添加魔法卡目标选择判断函数
+    const descriptor = needsTargetSelection(card.name);
+
+    if (!descriptor) {
+        alert('此卡不需要选择目标');
+        return;
+    }
+
+    // Helper to cleanup prompt and selection mode
+    function cleanupPrompt() {
+        if (document.body.contains(targetPrompt)) document.body.removeChild(targetPrompt);
+        if (typeof gameState.selectionCleanup === 'function') {
+            gameState.selectionCleanup();
+            gameState.selectionCleanup = null;
+        }
+        gameState.currentMagicCard = null;
+        gameState.currentCardIndex = null;
+    }
+
+    // AREA selection (square)
+    if (descriptor.type === 'area') {
+        const size = descriptor.size;
+        targetPrompt.innerHTML = `
+            <h3>在对手棋盘上选择 ${size}x${size} 区域（悬停预览，点击确认）</h3>
+            <div style="text-align:center;margin-top:8px;">
+                <button id="cancel-target">取消</button>
+            </div>
+        `;
+        document.body.appendChild(targetPrompt);
+
+        gameState.selectionCleanup = createSelectionBoard(size, 'opponent-board', (areaObj) => {
+            if (areaObj && areaObj.target_area) {
+                confirmMagicTarget(areaObj);
+                cleanupPrompt();
+            } else {
+                alert('请选择目标区域');
+            }
+        }, true);
+
+        document.getElementById('cancel-target').addEventListener('click', cleanupPrompt);
+
+        return;
+    }
+
+    // LINE selection (row or column) e.g., 轰炸 — 支持拖拽与方向切换
+    if (descriptor.type === 'line') {
+        // ensure styles
+        if (!document.getElementById('magic-selection-styles')) {
+            const s = document.createElement('style');
+            s.id = 'magic-selection-styles';
+            s.textContent = `
+                .magic-selection-overlay { background-color: rgba(255,69,0,0.28); transition: background-color .12s ease, box-shadow .12s ease; }
+                .magic-selection-overlay.col { background-color: rgba(30,144,255,0.28); }
+                .magic-selection-controls { display:flex; gap:8px; justify-content:center; margin-top:8px; }
+                .inline-confirm { background:#222; color:#fff; padding:8px; border-radius:4px; box-shadow:0 4px 14px rgba(0,0,0,.5); }
+            `;
+            document.head.appendChild(s);
+        }
+
+        targetPrompt.innerHTML = `
+            <h3>拖拽或点击选择一整行/列（拖拽时松开确认）</h3>
+            <div class="magic-selection-controls">
+                <button id="toggle-line-dir">方向: 行</button>
+                <button id="cancel-target">取消</button>
+            </div>
+        `;
+        document.body.appendChild(targetPrompt);
+
+        const boardEl = opponentBoard;
+        if (!boardEl) return;
+        gameState.selectingOnBoard = true;
+
+        let mode = 'row'; // 'row' or 'col'
+        const toggleBtn = document.getElementById('toggle-line-dir');
+        toggleBtn.addEventListener('click', () => {
+            mode = mode === 'row' ? 'col' : 'row';
+            toggleBtn.textContent = `方向: ${mode === 'row' ? '行' : '列'}`;
+        });
+
+        const cells = Array.from(boardEl.querySelectorAll('.cell'));
+        let isMouseDown = false;
+        let lastIndex = null;
+
+        function clearHighlights() {
+            cells.forEach(c => c.classList.remove('magic-selection-overlay'));
+        }
+
+        function highlightIndex(idx) {
+            clearHighlights();
+            if (mode === 'row') {
+                boardEl.querySelectorAll(`.cell[data-y="${idx}"]`).forEach(c => c.classList.add('magic-selection-overlay'));
+            } else {
+                boardEl.querySelectorAll(`.cell[data-x="${idx}"]`).forEach(c => c.classList.add('magic-selection-overlay', 'col'));
+            }
+        }
+
+        function confirmIndex(idx) {
+            if (mode === 'row') confirmMagicTarget({ target_line: { type: 'row', index: idx } });
+            else confirmMagicTarget({ target_line: { type: 'col', index: idx } });
+            cleanupAll();
+        }
+
+        cells.forEach(cell => {
+            const mx = parseInt(cell.dataset.x, 10);
+            const my = parseInt(cell.dataset.y, 10);
+
+            const onMouseDown = (e) => {
+                e.preventDefault(); e.stopPropagation();
+                isMouseDown = true;
+                lastIndex = mode === 'row' ? my : mx;
+                highlightIndex(lastIndex);
+                // attach a global mouseup to capture end of drag
+                const onUp = (ev) => {
+                    if (isMouseDown) {
+                        confirmIndex(lastIndex);
+                    }
+                    isMouseDown = false;
+                    window.removeEventListener('mouseup', onUp);
+                };
+                window.addEventListener('mouseup', onUp);
+            };
+
+            const onEnter = () => {
+                if (isMouseDown) {
+                    lastIndex = mode === 'row' ? my : mx;
+                    highlightIndex(lastIndex);
+                } else {
+                    // hover preview
+                    const idx = mode === 'row' ? my : mx;
+                    highlightIndex(idx);
+                }
+            };
+
+            const onLeave = () => { if (!isMouseDown) clearHighlights(); };
+
+            // click fallback: open small confirm box
+            const onClick = (e) => {
+                e.stopPropagation(); e.preventDefault();
+                const idx = mode === 'row' ? my : mx;
+                const confirmBox = document.createElement('div');
+                confirmBox.className = 'inline-confirm';
+                confirmBox.style.position = 'absolute';
+                confirmBox.style.left = (e.pageX + 8) + 'px';
+                confirmBox.style.top = (e.pageY + 8) + 'px';
+                confirmBox.innerHTML = `
+                    <div>确认轰炸</div>
+                    <button id="confirm-line">确认 (${mode === 'row' ? '轰炸整行' : '轰炸整列'})</button>
+                    <button id="cancel-line">取消</button>
+                `;
+                document.body.appendChild(confirmBox);
+                document.getElementById('confirm-line').addEventListener('click', () => { confirmIndex(idx); cleanupConfirm(); });
+                document.getElementById('cancel-line').addEventListener('click', () => { cleanupConfirm(); });
+                function cleanupConfirm() { if (document.body.contains(confirmBox)) document.body.removeChild(confirmBox); }
+            };
+
+            cell.addEventListener('mousedown', onMouseDown, true);
+            cell.addEventListener('mouseenter', onEnter);
+            cell.addEventListener('mouseleave', onLeave);
+            cell.addEventListener('click', onClick, true);
+            // store for cleanup
+            (cell._magicHandlers = cell._magicHandlers || []).push({type:'line', handlers:{onMouseDown,onEnter,onLeave,onClick}});
+        });
+
+        function cleanupAll() {
+            cells.forEach(cell => {
+                if (cell._magicHandlers) {
+                    cell._magicHandlers.filter(h => h.type === 'line').forEach(h => {
+                        const {onMouseDown,onEnter,onLeave,onClick} = h.handlers;
+                        cell.removeEventListener('mousedown', onMouseDown, true);
+                        cell.removeEventListener('mouseenter', onEnter);
+                        cell.removeEventListener('mouseleave', onLeave);
+                        cell.removeEventListener('click', onClick, true);
+                    });
+                }
+                cell.classList.remove('magic-selection-overlay','col');
+            });
+            if (document.body.contains(targetPrompt)) document.body.removeChild(targetPrompt);
+            gameState.selectingOnBoard = false;
+            gameState.selectionCleanup = null;
+        }
+
+        document.getElementById('cancel-target').addEventListener('click', cleanupAll);
+        gameState.selectionCleanup = cleanupAll;
+        return;
+    }
+
+    // CONTINUOUS selection (n contiguous cells) e.g., 硫磺火焰 — 拖拽选择并可旋转
+    if (descriptor.type === 'continuous') {
+        const L = descriptor.length;
+        // ensure styles
+        if (!document.getElementById('magic-selection-styles')) {
+            const s = document.createElement('style');
+            s.id = 'magic-selection-styles';
+            s.textContent = `
+                .magic-selection-overlay { background-color: rgba(255,140,0,0.24); transition: background-color .12s ease, transform .12s ease; }
+                .magic-selection-overlay.vert { background-color: rgba(34,139,34,0.24); }
+                .inline-confirm { background:#222; color:#fff; padding:8px; border-radius:4px; box-shadow:0 4px 14px rgba(0,0,0,.5); }
+            `;
+            document.head.appendChild(s);
+        }
+
+        targetPrompt.innerHTML = `
+            <h3>拖拽选择连续 ${L} 个格子（按住并拖动选择方向，松开确认；按 R 键切换方向）</h3>
+            <div style="text-align:center;margin-top:8px;">
+                <button id="cancel-target">取消</button>
+                <button id="rotate-mode">方向: 自动 (按 R 切换)</button>
+            </div>
+        `;
+        document.body.appendChild(targetPrompt);
+
+        const boardEl = opponentBoard;
+        if (!boardEl) return;
+        gameState.selectingOnBoard = true;
+
+        const cells = Array.from(boardEl.querySelectorAll('.cell'));
+        let anchor = null; // {x,y}
+        let dragging = false;
+        let forcedDir = null; // 'h' or 'v' or null (auto)
+
+        function clearHighlights() { cells.forEach(c => c.classList.remove('magic-selection-overlay','vert')); }
+
+        function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
+        function getCellAt(x,y) { return boardEl.querySelector(`.cell[data-x="${x}"][data-y="${y}"]`); }
+        function highlightSegmentFromAnchor(anchor, cursorX, cursorY, dirHint) {
+            clearHighlights();
+            let dx = cursorX - anchor.x;
+            let dy = cursorY - anchor.y;
+            let dir = dirHint || (Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v');
+            if (forcedDir) dir = forcedDir;
+
+            if (dir === 'h') {
+                // pick a startX so that segment of length L includes anchor and best fits cursor
+                let mid = Math.min(anchor.x, cursorX);
+                let startX = clamp(Math.min(anchor.x, cursorX), 0, 6 - L);
+                // try to bias to include anchor
+                if (startX + L - 1 < anchor.x) startX = clamp(anchor.x - (L - 1), 0, 6 - L);
+                for (let x = startX; x < startX + L; x++) {
+                    const c = getCellAt(x, anchor.y);
+                    if (c) c.classList.add('magic-selection-overlay');
+                }
+            } else {
+                let startY = clamp(Math.min(anchor.y, cursorY), 0, 6 - L);
+                if (startY + L - 1 < anchor.y) startY = clamp(anchor.y - (L - 1), 0, 6 - L);
+                for (let y = startY; y < startY + L; y++) {
+                    const c = getCellAt(anchor.x, y);
+                    if (c) c.classList.add('magic-selection-overlay','vert');
+                }
+            }
+        }
+
+        // rotate UI
+        const rotateBtn = document.getElementById('rotate-mode');
+        function updateRotateText() { rotateBtn.textContent = `方向: ${forcedDir === 'h' ? '横向' : forcedDir === 'v' ? '纵向' : '自动 (按 R 切换)'} `; }
+        updateRotateText();
+        rotateBtn.addEventListener('click', () => {
+            if (!forcedDir) forcedDir = 'h';
+            else if (forcedDir === 'h') forcedDir = 'v';
+            else forcedDir = null;
+            updateRotateText();
+        });
+
+        // keyboard rotate: R toggles
+        const onKey = (e) => { if (e.key === 'r' || e.key === 'R') { rotateBtn.click(); } };
+        window.addEventListener('keydown', onKey);
+
+        // handlers
+        cells.forEach(cell => {
+            const mx = parseInt(cell.dataset.x, 10);
+            const my = parseInt(cell.dataset.y, 10);
+            const onMouseDown = (e) => {
+                e.preventDefault(); e.stopPropagation();
+                anchor = {x: mx, y: my};
+                dragging = true;
+            };
+            const onEnter = (e) => {
+                if (dragging && anchor) {
+                    highlightSegmentFromAnchor(anchor, mx, my);
+                } else if (anchor) {
+                    // hover preview using anchor as most recent selected
+                    highlightSegmentFromAnchor(anchor, mx, my);
+                }
+            };
+            const onLeave = () => { if (!dragging) clearHighlights(); };
+            const onMouseUp = (e) => {
+                if (!anchor) return;
+                // confirm segment using current hovered cell if available
+                const cursorX = mx; const cursorY = my;
+                // compute final segment cells as in highlight
+                let dx = cursorX - anchor.x; let dy = cursorY - anchor.y;
+                let dir = forcedDir || (Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v');
+                const selected = [];
+                if (dir === 'h') {
+                    let startX = clamp(Math.min(anchor.x, cursorX), 0, 6 - L);
+                    if (startX + L - 1 < anchor.x) startX = clamp(anchor.x - (L - 1), 0, 6 - L);
+                    for (let x = startX; x < startX + L; x++) selected.push({x, y: anchor.y});
+                } else {
+                    let startY = clamp(Math.min(anchor.y, cursorY), 0, 6 - L);
+                    if (startY + L - 1 < anchor.y) startY = clamp(anchor.y - (L - 1), 0, 6 - L);
+                    for (let y = startY; y < startY + L; y++) selected.push({x: anchor.x, y});
+                }
+
+                if (selected.length === L) {
+                    // show quick confirm
+                    const confirmBox = document.createElement('div');
+                    confirmBox.className = 'inline-confirm';
+                    confirmBox.style.position = 'absolute';
+                    confirmBox.style.left = (e.pageX + 8) + 'px';
+                    confirmBox.style.top = (e.pageY + 8) + 'px';
+                    confirmBox.innerHTML = `
+                        <div>确认选择这 ${L} 个格子?</div>
+                        <button id="confirm-seg">确认</button>
+                        <button id="cancel-seg">取消</button>
+                    `;
+                    document.body.appendChild(confirmBox);
+                    document.getElementById('confirm-seg').addEventListener('click', () => {
+                        confirmMagicTarget({ target_cells: selected });
+                        cleanupAll(); if (document.body.contains(confirmBox)) document.body.removeChild(confirmBox);
+                    });
+                    document.getElementById('cancel-seg').addEventListener('click', () => { if (document.body.contains(confirmBox)) document.body.removeChild(confirmBox); cleanupAll(); });
+                } else {
+                    alert('无法放下该连续区域，请重试');
+                }
+
+                dragging = false; anchor = null;
+            };
+
+            cell.addEventListener('mousedown', onMouseDown, true);
+            cell.addEventListener('mouseenter', onEnter);
+            cell.addEventListener('mouseleave', onLeave);
+            cell.addEventListener('mouseup', onMouseUp, true);
+            (cell._magicHandlers = cell._magicHandlers || []).push({type:'continuous', handlers:{onMouseDown,onEnter,onLeave,onMouseUp}});
+        });
+
+        function cleanupAll() {
+            cells.forEach(cell => {
+                if (cell._magicHandlers) {
+                    cell._magicHandlers.filter(h => h.type === 'continuous').forEach(h => {
+                        const {onMouseDown,onEnter,onLeave,onMouseUp} = h.handlers;
+                        cell.removeEventListener('mousedown', onMouseDown, true);
+                        cell.removeEventListener('mouseenter', onEnter);
+                        cell.removeEventListener('mouseleave', onLeave);
+                        cell.removeEventListener('mouseup', onMouseUp, true);
+                    });
+                }
+                cell.classList.remove('magic-selection-overlay','vert');
+            });
+            window.removeEventListener('keydown', onKey);
+            if (document.body.contains(targetPrompt)) document.body.removeChild(targetPrompt);
+            gameState.selectingOnBoard = false;
+            gameState.selectionCleanup = null;
+        }
+
+        document.getElementById('cancel-target').addEventListener('click', cleanupAll);
+        gameState.selectionCleanup = cleanupAll;
+        return;
+    }
+
+    // SINGLE selection (单格) - 默认选择对手棋盘，如需选择我方则 descriptor.board === 'self'
+    if (descriptor.type === 'single') {
+        const which = descriptor.board || 'opponent';
+        targetPrompt.innerHTML = `
+            <h3>选择一个目标格子</h3>
+            <div style="text-align:center;margin-top:8px;">
+                <button id="cancel-target">取消</button>
+            </div>
+        `;
+        document.body.appendChild(targetPrompt);
+
+        const boardEl = which === 'self' ? gamePlayerBoard : opponentBoard;
+        if (!boardEl) return;
+        gameState.selectingOnBoard = true;
+        const listeners = [];
+        const onClick = (e) => {
+            e.stopPropagation(); e.preventDefault();
+            const el = e.currentTarget;
+            const x = parseInt(el.dataset.x, 10);
+            const y = parseInt(el.dataset.y, 10);
+            confirmMagicTarget({ x, y });
+            cleanupAll();
+        };
+        boardEl.querySelectorAll('.cell').forEach(cell => { cell.addEventListener('click', onClick, true); listeners.push({el: cell, handler: onClick}); });
+        function cleanupAll() { listeners.forEach(({el, handler}) => el.removeEventListener('click', handler, true)); gameState.selectingOnBoard = false; if (document.body.contains(targetPrompt)) document.body.removeChild(targetPrompt); }
+        document.getElementById('cancel-target').addEventListener('click', cleanupAll);
+        gameState.selectionCleanup = cleanupAll;
+        return;
+    }
+
+    // OWN_SHIPS selection (选择若干我方舰船) e.g., 神之宣告 选择两艘自己船
+    if (descriptor.type === 'own_ships') {
+        const count = descriptor.count || 1;
+        targetPrompt.innerHTML = `
+            <h3>请选择 ${count} 艘你自己的战舰（点击格子切换选择）</h3>
+            <div style="text-align:center;margin-top:8px;">
+                <button id="confirm-ships">确认</button>
+                <button id="cancel-target">取消</button>
+            </div>
+        `;
+        document.body.appendChild(targetPrompt);
+
+        const boardEl = gamePlayerBoard;
+        if (!boardEl) return;
+        const selected = new Set();
+        boardEl.querySelectorAll('.cell').forEach(cell => {
+            const x = parseInt(cell.dataset.x, 10);
+            const y = parseInt(cell.dataset.y, 10);
+            // 仅允许选有船的格子
+            const hasShip = gameState.ships.some(s => s.positions.some(p => p.x === x && p.y === y));
+            if (!hasShip) return;
+            cell.style.cursor = 'pointer';
+            const onClick = (e) => {
+                e.stopPropagation(); e.preventDefault();
+                const key = `${x},${y}`;
+                if (selected.has(key)) {
+                    selected.delete(key);
+                    cell.classList.remove('selected');
+                    cell.style.outline = '';
+                } else {
+                    if (selected.size >= count) {
+                        alert(`只能选择 ${count} 艘战舰`);
+                        return;
+                    }
+                    selected.add(key);
+                    cell.classList.add('selected');
+                    cell.style.outline = '3px solid rgba(0,191,255,0.9)';
+                }
+            };
+            cell.addEventListener('click', onClick, true);
+            // store to cleanup later
+            (cell._magicHandlers = cell._magicHandlers || []).push(onClick);
+        });
+
+        document.getElementById('confirm-ships').addEventListener('click', () => {
+            if (selected.size !== count) { alert(`请选中 ${count} 艘战舰`); return; }
+            const arr = Array.from(selected).map(k => { const [x,y] = k.split(','); return {x: parseInt(x,10), y: parseInt(y,10)}; });
+            confirmMagicTarget({ selected_cells: arr });
+            // cleanup
+            document.querySelectorAll('#player-board .cell').forEach(cell => {
+                if (cell._magicHandlers && cell._magicHandlers.length) {
+                    cell._magicHandlers.forEach(h => cell.removeEventListener('click', h, true));
+                    cell._magicHandlers = [];
+                }
+                cell.style.outline = '';
+                cell.classList.remove('selected');
+            });
+            if (document.body.contains(targetPrompt)) document.body.removeChild(targetPrompt);
+            gameState.currentMagicCard = null;
+            gameState.currentCardIndex = null;
+        });
+
+        document.getElementById('cancel-target').addEventListener('click', () => {
+            // cleanup
+            document.querySelectorAll('#player-board .cell').forEach(cell => {
+                if (cell._magicHandlers && cell._magicHandlers.length) {
+                    cell._magicHandlers.forEach(h => cell.removeEventListener('click', h, true));
+                    cell._magicHandlers = [];
+                }
+                cell.style.outline = '';
+                cell.classList.remove('selected');
+            });
+            if (document.body.contains(targetPrompt)) document.body.removeChild(targetPrompt);
+            gameState.currentMagicCard = null;
+            gameState.currentCardIndex = null;
+        });
+
+        return;
+    }
+
+    alert('尚未实现该卡的目标选择方式');
+}
+// 添加魔法卡目标选择判断函数（返回目标选择描述）
 function needsTargetSelection(cardName) {
-    const areaCards = {
-        '冻结': 3,          // 3x3区域
-        '探测雷达': 2,      // 2x2区域
-        '轰炸': 10,         // 10x1行或列
-        '硫磺火焰': 6,      // 6个连续格子
-        '克苏鲁之眼': 1,    // 单个格子
-        '神之宣告': 1       // 单个格子
+    const map = {
+        '冻结': { type: 'area', size: 3, board: 'opponent' },          // 3x3区域
+        '探测雷达': { type: 'area', size: 2, board: 'opponent' },      // 2x2区域
+        '轰炸': { type: 'line', board: 'opponent' },                  // 行或列
+        '硫磺火焰': { type: 'continuous', length: 6, board: 'opponent' }, // 6个连续格子
+        '克苏鲁之眼': { type: 'single', board: 'self' },             // 选择自己的船暴露
+        '神之宣告': { type: 'own_ships', count: 2 }                   // 选择两艘自己的船牺牲
     };
-    return areaCards[cardName] || 0;
+    return map[cardName] || null;
 }
 
 // 创建区域选择面板 - 用于区域选择类魔法卡
-function createSelectionBoard(size, isOpponentBoard = true) {
+// 支持两种模式：
+// - 小面板模式（默认）：创建 size x size 的选择面板
+// - 对手棋盘模式（isOpponentBoard === true）：在对手真实棋盘上悬停预览、点击确认区域
+function createSelectionBoard(size, boardId = 'selection-board', onConfirm = null, isOpponentBoard = false) {
+    // 若选择在真实对手棋盘上
+    if (isOpponentBoard) {
+        const boardEl = document.getElementById(boardId) || opponentBoard;
+        if (!boardEl) return null;
+
+        // 防重入
+        if (gameState.selectingOnBoard) return null;
+        gameState.selectingOnBoard = true;
+
+        const attachedListeners = [];
+        let lastHighlighted = [];
+
+        function clearHighlights() {
+            lastHighlighted.forEach(c => {
+                c.style.outline = '';
+                c.classList.remove('selection-highlight');
+            });
+            lastHighlighted = [];
+        }
+
+        function highlightArea(startX, startY) {
+            clearHighlights();
+            for (let y = startY; y < startY + size; y++) {
+                for (let x = startX; x < startX + size; x++) {
+                    if (x >= 0 && x < 6 && y >= 0 && y < 6) {
+                        const cell = boardEl.querySelector(`.cell[data-x="${x}"][data-y="${y}"]`);
+                        if (cell) {
+                            cell.style.outline = '3px solid rgba(255,215,0,0.9)';
+                            cell.classList.add('selection-highlight');
+                            lastHighlighted.push(cell);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 鼠标移入时预览（使用 capture to ensure we run first）
+        boardEl.querySelectorAll('.cell').forEach(cell => {
+            const mx = parseInt(cell.dataset.x, 10);
+            const my = parseInt(cell.dataset.y, 10);
+
+            const onEnter = (e) => {
+                // 计算合法的起点（保证不会越界）
+                const startX = Math.max(0, Math.min(mx, 6 - size));
+                const startY = Math.max(0, Math.min(my, 6 - size));
+                highlightArea(startX, startY);
+            };
+
+            const onLeave = (e) => {
+                clearHighlights();
+            };
+
+            // 点击确认（使用 capture 阶段阻止普通点击触发攻击）
+            const onClick = (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                // 以当前 hover 为起点并保证不越界
+                const startX = Math.max(0, Math.min(mx, 6 - size));
+                const startY = Math.max(0, Math.min(my, 6 - size));
+                const area = {
+                    x1: startX,
+                    y1: startY,
+                    x2: startX + size - 1,
+                    y2: startY + size - 1
+                };
+                if (typeof onConfirm === 'function') {
+                    onConfirm({ target_area: area });
+                }
+                // 清理
+                clearHighlights();
+                cleanup();
+            };
+
+            cell.addEventListener('mouseenter', onEnter);
+            cell.addEventListener('mouseleave', onLeave);
+            // capture true so we intercept before other click handlers
+            cell.addEventListener('click', onClick, true);
+
+            attachedListeners.push({el: cell, handlers: {onEnter, onLeave, onClick}});
+        });
+
+        function cleanup() {
+            attachedListeners.forEach(({el, handlers}) => {
+                el.removeEventListener('mouseenter', handlers.onEnter);
+                el.removeEventListener('mouseleave', handlers.onLeave);
+                el.removeEventListener('click', handlers.onClick, true);
+                el.style.outline = '';
+                el.classList.remove('selection-highlight');
+            });
+            clearHighlights();
+            gameState.selectingOnBoard = false;
+            // 移除可能残留的提示div
+            const exist = document.getElementById('selection-overlay');
+            if (exist) exist.remove();
+        }
+
+        // 返回 cleanup 以便外部可取消
+        return cleanup;
+    }
+
+    // 小面板模式（原有逻辑）
     // 清除现有选择面板
-    const existingBoard = document.getElementById('selection-board');
+    const existingBoard = document.getElementById(boardId);
     if (existingBoard) existingBoard.remove();
 
     // 创建选择面板容器
     const board = document.createElement('div');
-    board.id = 'selection-board';
+    board.id = boardId;
     board.className = 'selection-board';
     board.style.display = 'grid';
     board.style.gridTemplateColumns = `repeat(${size}, 40px)`;
@@ -744,34 +1308,33 @@ function createSelectionBoard(size, isOpponentBoard = true) {
     confirmBtn.className = 'magic-confirm-btn';
     confirmBtn.style.marginTop = '10px';
     confirmBtn.style.padding = '5px 15px';
-    
-    // 移除旧的确认按钮事件监听器（如果存在）
-    const oldConfirmBtn = document.querySelector('.magic-confirm-btn');
-    if (oldConfirmBtn) {
-        oldConfirmBtn.removeEventListener('click', confirmHandler);
-    }
-    
-    // 创建新的确认按钮事件处理函数
-    const confirmHandler = () => {
-        const selectedCells = getSelectedCells();
+
+    // 创建确认按钮事件处理函数
+    confirmBtn.addEventListener('click', () => {
+        const selectedCells = getSelectedCells(boardId);
         if (selectedCells.length > 0) {
-            confirmMagicTarget(selectedCells);
+            if (typeof onConfirm === 'function') {
+                onConfirm({ selected_cells: selectedCells });
+            } else {
+                confirmMagicTarget(selectedCells);
+            }
             board.remove();
         } else {
             alert('请至少选择一个单元格');
         }
-    };
-    
-    confirmBtn.addEventListener('click', confirmHandler);
+    });
 
     board.appendChild(confirmBtn);
     document.body.appendChild(board);
+
+    // 返回 null（没有需要外部 cleanup 的事件）
+    return null;
 }
 
 // 获取选中的单元格坐标
-function getSelectedCells() {
+function getSelectedCells(boardId = 'selection-board') {
     const selectedCells = [];
-    document.querySelectorAll('.selection-cell.selected').forEach(cell => {
+    document.querySelectorAll(`#${boardId} .selection-cell.selected`).forEach(cell => {
         selectedCells.push({
             x: parseInt(cell.dataset.x),
             y: parseInt(cell.dataset.y)
@@ -832,13 +1395,59 @@ function sendMagicCard(index, targets) {
 
 // 修改目标选择后的确认函数
 function confirmMagicTarget(targetData) {
-    if (gameState.currentMagicCard && gameState.currentCardIndex !== null) {
-        sendMagicCard(gameState.currentCardIndex, targetData);
-        // 清除当前选择的魔法卡
-        gameState.currentMagicCard = null;
-        gameState.currentCardIndex = null;
+    if (!gameState.currentMagicCard || gameState.currentCardIndex === null) return;
+
+    // 兼容多种 targetData 格式：
+    // - { target_area: {x1,y1,x2,y2} } （来自对手真实棋盘）
+    // - { selected_cells: [ {x,y}, ... ] } （来自小面板或选舰）
+    // - { target_line: {...} } （行/列选择）
+    // - { target_cells: [ {x,y}, ... ] } （显式格子集合）
+    // - legacy array [ {x,y}, ... ]
+
+    let payload = {};
+
+    if (Array.isArray(targetData)) {
+        // 旧格式数组 -> 计算包围盒
+        const xs = targetData.map(c => c.x);
+        const ys = targetData.map(c => c.y);
+        payload.target_area = {
+            x1: Math.min(...xs),
+            y1: Math.min(...ys),
+            x2: Math.max(...xs),
+            y2: Math.max(...ys)
+        };
+        payload.selected_cells = targetData;
+    } else if (targetData && targetData.selected_cells) {
+        const arr = targetData.selected_cells;
+        const xs = arr.map(c => c.x);
+        const ys = arr.map(c => c.y);
+        payload.target_area = {
+            x1: Math.min(...xs),
+            y1: Math.min(...ys),
+            x2: Math.max(...xs),
+            y2: Math.max(...ys)
+        };
+        payload.selected_cells = arr;
+    } else if (targetData && targetData.target_area) {
+        payload.target_area = targetData.target_area; // 直接传递 { target_area: {...} }
+    } else if (targetData && targetData.target_line) {
+        payload.target_line = targetData.target_line; // 行/列选择
+    } else if (targetData && targetData.target_cells) {
+        payload.target_cells = targetData.target_cells; // 显式格子集合（如连续选择）
+    } else if (targetData && targetData.x !== undefined && targetData.y !== undefined) {
+        // 单格位置
+        payload.target_area = { x1: targetData.x, y1: targetData.y, x2: targetData.x, y2: targetData.y };
+    } else {
+        // 未识别格式，直接发送原始数据
+        payload = targetData;
     }
+
+    // 发送并清理当前魔法卡选择状态
+    sendMagicCard(gameState.currentCardIndex, payload);
+    gameState.currentMagicCard = null;
+    gameState.currentCardIndex = null;
 }
+
 
 // 扩展applyCardEffect函数
 function applyCardEffect(card) {
@@ -1095,23 +1704,24 @@ function showReinforcementPrompt() {
     prompt.innerHTML = `
         <h3>选择增援战舰位置</h3>
         <div class="target-board" id="reinforcement-board"></div>
-        <button id="confirm-reinforcement">确认放置</button>
     `;
     document.body.appendChild(prompt);
-    createSelectionBoard('reinforcement-board', 6, 6, false, true);
-    
-    document.getElementById('confirm-reinforcement').addEventListener('click', () => {
-        const selected = getSelectedCells()[0];
-        if (selected) {
+
+    // 创建6x6选择面板（小面板模式），并通过回调确认放置
+    createSelectionBoard(6, 'reinforcement-board', (res) => {
+        // res 可能为 { selected_cells: [...] } 或 legacy array
+        const cells = Array.isArray(res) ? res : (res.selected_cells || []);
+        const selectedPos = cells[0];
+        if (selectedPos) {
             gameState.socket.emit('confirm_reinforcement_position', {
                 room_id: gameState.roomId,
-                position: selected
+                position: selectedPos
             });
-            document.body.removeChild(prompt);
+            if (document.body.contains(prompt)) document.body.removeChild(prompt);
         } else {
             alert('请选择放置位置');
         }
-    });
+    }, false);
 }
 
 // 更新手牌UI

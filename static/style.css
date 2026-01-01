@@ -277,3 +277,36 @@ button:hover {
     color: #999;
     font-style: italic;
 }
+
+/* 消息提示样式 */
+#game-message-container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: center;
+    pointer-events: none;
+}
+
+.game-message {
+    background-color: rgba(0,0,0,0.8);
+    color: white;
+    padding: 10px 14px;
+    border-radius: 8px;
+    min-width: 200px;
+    text-align: center;
+    opacity: 0;
+    transform: translateY(-10px);
+    transition: opacity 0.25s, transform 0.25s;
+    pointer-events: auto;
+}
+
+.game-message.success { background-color: rgba(46, 204, 113, 0.95); color: #063; }
+.game-message.warning { background-color: rgba(241, 196, 15, 0.95); color: #333; }
+.game-message.error { background-color: rgba(231, 76, 60, 0.95); color: #fff; }
+
+/* 揭示格子样式（用于雷达/探测类效果） */
+.cell.revealed {
+    box-shadow: 0 0 10px 3px rgba(255, 235, 59, 0.45) inset;
+    border-color: #FFD54F;
+    transition: box-shadow 0.3s;
+}

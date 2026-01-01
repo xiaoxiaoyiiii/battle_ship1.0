@@ -59,6 +59,54 @@ window.gameState = {
     fieldMagic: null        // 场地魔法
 }
 
+// 全局消息提示辅助函数
+function showMessage(text, options = {}) {
+    const duration = options.duration || 3500;
+    const type = options.type || 'info'; // info, success, warning, error
+
+    // 创建容器（如果还没创建）
+    let container = document.getElementById('game-message-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'game-message-container';
+        container.style.position = 'fixed';
+        container.style.top = '20px';
+        container.style.left = '50%';
+        container.style.transform = 'translateX(-50%)';
+        container.style.zIndex = 99999;
+        container.style.pointerEvents = 'none';
+        document.body.appendChild(container);
+    }
+
+    const msg = document.createElement('div');
+    msg.className = `game-message ${type}`;
+    msg.textContent = text;
+    msg.style.pointerEvents = 'auto';
+    container.appendChild(msg);
+
+    // 动画入场
+    requestAnimationFrame(() => {
+        msg.style.opacity = '1';
+        msg.style.transform = 'translateY(0)';
+    });
+
+    // 点击可立刻关闭
+    msg.addEventListener('click', () => {
+        msg.style.opacity = '0';
+        msg.style.transform = 'translateY(-10px)';
+        setTimeout(() => container.removeChild(msg), 300);
+    });
+
+    // 自动隐藏
+    setTimeout(() => {
+        msg.style.opacity = '0';
+        msg.style.transform = 'translateY(-10px)';
+        setTimeout(() => {
+            if (msg.parentNode === container) container.removeChild(msg);
+        }, 300);
+    }, duration);
+}
+
 // 添加加载完成验证
 console.log("game.js 加载完成，playMagicCard 状态:", typeof window.playMagicCard);
 
@@ -361,6 +409,28 @@ function setupSocketListeners() {
         // 更新双方剩余战舰数
         yourShips.textContent = data.player_remaining_ships;
         opponentShips.textContent = data.opponent_remaining_ships;
+    });
+
+    // 服务器推送的通用消息
+    socket.on('message', (data) => {
+        if (data && data.text) showMessage(data.text);
+    });
+
+    // 服务器返回的被揭示的位置（仅对触发方发送）
+    socket.on('revealed_positions', (data) => {
+        if (!data || !Array.isArray(data.positions)) return;
+        // 高亮显示这些格子几秒钟
+        const positions = data.positions;
+        positions.forEach(pos => {
+            const cell = opponentBoard.querySelector(`.cell[data-x='${pos.x}'][data-y='${pos.y}']`);
+            if (cell) cell.classList.add('revealed');
+        });
+        setTimeout(() => {
+            positions.forEach(pos => {
+                const cell = opponentBoard.querySelector(`.cell[data-x='${pos.x}'][data-y='${pos.y}']`);
+                if (cell) cell.classList.remove('revealed');
+            });
+        }, 4000);
     });
 
 }
@@ -1495,7 +1565,8 @@ function applyCardEffect(card) {
             showMessage('雷达子弹效果生效，已扫描周围战舰位置');
             // 请求显示扫描结果
             gameState.socket.emit('request_revealed_positions', {
-                room_id: gameState.roomId
+                room_id: gameState.roomId,
+                player_id: gameState.playerId
             });
             break;
 
@@ -1538,7 +1609,8 @@ function applyCardEffect(card) {
         case '探测雷达':
             showMessage('探测雷达效果生效，已显示目标区域战舰');
             gameState.socket.emit('request_revealed_positions', {
-                room_id: gameState.roomId
+                room_id: gameState.roomId,
+                player_id: gameState.playerId
             });
             break;
 
@@ -1549,7 +1621,8 @@ function applyCardEffect(card) {
         case '克苏鲁之眼':
             showMessage('克苏鲁之眼效果生效，双方各暴露一艘战舰位置');
             gameState.socket.emit('request_revealed_positions', {
-                room_id: gameState.roomId
+                room_id: gameState.roomId,
+                player_id: gameState.playerId
             });
             break;
 

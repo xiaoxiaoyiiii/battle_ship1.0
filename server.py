@@ -433,6 +433,8 @@ def handle_attack(data):
     
     # 减少攻击次数
     room.attacks_remaining -= 1
+    # 确保攻击次数不会为负数
+    room.attacks_remaining = max(0, room.attacks_remaining)
     
     # 准备攻击结果
     attack_result = {
@@ -642,17 +644,7 @@ def handle_use_magic_card(data):
     # 记录最后使用的魔法卡
     room.last_magic = card
 
-    # 应用卡牌效果
     res = apply_magic_effect(room, player_id, card, targets)
-
-    # 广播魔法卡生效结果，确保客户端可见相关效果（包括单点攻击事件）
-    emit('magic_applied', res, room=room_id)
-
-    # 同步战舰信息供 UI 更新（某些卡牌在内部会额外广播）
-    emit('ships_updated', {
-        'player_remaining_ships': room.players[player_id]['remaining_ships'],
-        'opponent_remaining_ships': room.players[opponent_id]['remaining_ships']
-    }, room=room_id)
 
     # 返回成功响应
     return {'status': 'success', 'message': f'魔法卡{card["name"]}使用成功'}
@@ -714,13 +706,8 @@ def counter_magic_response(data):
             'timestamp': time.time()
         }
         # 广播魔法效果
-    emit('magic_applied', result, room=room_id)
-    # 发送剩余战舰数更新
-    emit('ships_updated', {
-        'player_remaining_ships': room.players[caster_id]['remaining_ships'],
-        'opponent_remaining_ships': room.players[opponent_id]['remaining_ships']
-    }, room=room_id)
-    return {'status': 'success', 'result': result}
+        emit('magic_applied', result, room=room_id)
+        return {'status': 'success', 'result': result}
 
 @socketio.on('remove_field_magic')
 def handle_remove_field_magic(data):
@@ -1702,16 +1689,7 @@ def apply_magic_effect(room, caster_id, card, target_data):
             result['success'] = False
             result['message'] = f'未实现的魔法卡: {card["name"]}'
 
-        # 检查是否是消耗攻击次数的卡牌
-        if card['name'] not in ['失灵！', '看破！']:
-            # 减少当前攻击者的攻击次数
-            if room.current_attacker == caster_id:
-                room.attacks_remaining = max(0, room.attacks_remaining - 1)
-                # 广播攻击次数更新
-                emit('attacks_updated', {
-                    'current_attacker': room.current_attacker,
-                    'attacks_remaining': room.attacks_remaining
-                }, room=room.id)
+
 
     except Exception as e:
         result['success'] = False

@@ -698,7 +698,10 @@ def handle_use_magic_card(data):
     return {'status': 'success', 'message': f'魔法卡{card["name"]}已加入连锁'}
 
 def can_play_magic_card(room, player_id, card):
-    if card['speed'] == 3:
+    # 确保speed是数字类型
+    speed = int(card['speed'])
+    
+    if speed == 3:
         # 速阶3的卡牌可以在任何时候使用
         return True
     
@@ -708,11 +711,11 @@ def can_play_magic_card(room, player_id, card):
     
     # 根据当前阶段和速阶检查
     if room.current_phase == 'preparation':
-        # 准备阶段只可以使用速阶1卡牌
-        return card['speed'] == 1
+        # 准备阶段可以使用速阶1和速阶2的卡牌
+        return speed in [1, 2]
     elif room.current_phase == 'battle':
         # 战斗阶段可以使用速阶1和速阶2的卡牌
-        return card['speed'] in [1, 2]
+        return speed == 2
     elif room.current_phase == 'end':
         # 结束阶段不能使用魔法卡
         return False

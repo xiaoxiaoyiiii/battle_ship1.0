@@ -333,6 +333,12 @@ function setupSocketListeners() {
             case 'placing_ships':
                 console.log('Switching to ship placement screen');
                 
+                // 设置playerId（使用socket.id）
+                if (gameState.socket && !gameState.playerId) {
+                    gameState.playerId = gameState.socket.id;
+                    console.log('设置playerId为:', gameState.playerId);
+                }
+                
                 // 如果有opponent_name，显示匹配成功提示框
                 if (data.opponent_name) {
                     showMatchSuccess(data.opponent_name);
@@ -351,7 +357,6 @@ function setupSocketListeners() {
                         // 添加以下代码确保界面正确切换
                         startScreen.classList.add('hidden');
                         customRoomScreen.classList.add('hidden');
-                        roomInfo.classList.add('hidden');
                         matchStatus.classList.add('hidden');
                         // 保存房间ID（如果来自匹配）
                         if (data.room_id) {
@@ -365,7 +370,6 @@ function setupSocketListeners() {
                     // 添加以下代码确保界面正确切换
                     startScreen.classList.add('hidden');
                     customRoomScreen.classList.add('hidden');
-                    roomInfo.classList.add('hidden');
                     matchStatus.classList.add('hidden');
                     // 保存房间ID（如果来自匹配）
                     if (data.room_id) {
@@ -724,13 +728,41 @@ function handleCellClick(x, y) {
 
 // 确认战舰放置
 function confirmShipPlacement() {
+    console.log('确认放置按钮被点击');
+    console.log('gameState.socket:', gameState.socket);
+    console.log('gameState.roomId:', gameState.roomId);
+    console.log('gameState.playerId:', gameState.playerId);
+    console.log('gameState.ships:', gameState.ships);
+    
+    if (!gameState.socket) {
+        console.error('socket连接为null');
+        alert('socket连接为null，请重新创建或加入房间');
+        return;
+    }
+    
+    if (!gameState.roomId) {
+        console.error('roomId为null');
+        alert('roomId为null，请重新创建或加入房间');
+        return;
+    }
+    
+    if (!gameState.playerId) {
+        console.error('playerId为null');
+        alert('playerId为null，请重新创建或加入房间');
+        return;
+    }
+    
     gameState.socket.emit('place_ships', {
         room_id: gameState.roomId,
         player_id: gameState.playerId,
         ships: gameState.ships
     }, (response) => {
+        console.log('place_ships响应:', response);
         if (response.status === 'success') {
             console.log('Ships placed successfully');
+        } else {
+            console.error('Ships placement failed:', response.message);
+            alert('放置战舰失败: ' + response.message);
         }
     });
 }
@@ -1315,7 +1347,7 @@ function showMagicTargetSelection(card, index) {
         targetPrompt.innerHTML = `
             <h3>请选择 ${count} 艘你自己的战舰（点击格子切换选择）</h3>
             <div style="text-align:center;margin-top:8px;">
-                <button id="confirm-ships">确认</button>
+                <button id="confirm-magic-ships">确认</button>
                 <button id="cancel-target">取消</button>
             </div>
         `;
@@ -1353,7 +1385,7 @@ function showMagicTargetSelection(card, index) {
             (cell._magicHandlers = cell._magicHandlers || []).push(onClick);
         });
 
-        document.getElementById('confirm-ships').addEventListener('click', () => {
+        document.getElementById('confirm-magic-ships').addEventListener('click', () => {
             if (selected.size !== count) { alert(`请选中 ${count} 艘战舰`); return; }
             const arr = Array.from(selected).map(k => { const [x,y] = k.split(','); return {x: parseInt(x,10), y: parseInt(y,10)}; });
             confirmMagicTarget({ selected_cells: arr });

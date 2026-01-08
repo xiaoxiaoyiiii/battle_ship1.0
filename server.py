@@ -67,6 +67,11 @@ rooms = {}
 # 匹配队列
 match_queue = []
 
+# 大厅匹配队列（简单 FIFO 队列）
+lobby_queue = []
+
+# 简单的 lobby 成员列表（用于显示）
+lobby_members = set()
 class GameRoom:
     def __init__(self, room_id):
         self.id = room_id
@@ -139,10 +144,12 @@ def handle_create_room(data):
     rooms[room_id] = GameRoom(room_id)
     return {'status': 'success', 'room_id': room_id}
 
+
 @app.route('/')
 def index():
     # 渲染主页面并传递登录信息
     return render_template('index.html', username=session.get('username'))
+
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
@@ -168,6 +175,7 @@ def register():
     # SPA: 返回主页面，前端负责显示注册表单/提示
     return render_template('index.html', username=session.get('username'))
 
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -184,12 +192,14 @@ def login():
     # SPA: 返回主页面，前端负责显示登录表单/提示
     return render_template('index.html', username=session.get('username'))
 
+
 @app.route('/logout')
 def logout():
     session.pop('user_id', None)
     session.pop('username', None)
     flash('已退出登录')
     return redirect(url_for('index'))
+
 
 @app.route('/leaderboard')
 def leaderboard():
@@ -200,6 +210,11 @@ def leaderboard():
 def api_leaderboard():
     rows = db.get_leaderboard(100)
     return jsonify(rows)
+
+@app.route('/lobby')
+def lobby():
+    # SPA entry point for lobby view
+    return render_template('index.html', username=session.get('username'))
 
 @socketio.on('join_room')
 def handle_join_room(data):
@@ -228,38 +243,108 @@ def handle_join_room(data):
     # 添加玩家到Socket.IO房间
     join_room(room_id)
     
-    # 检查房间是否已满
+    # 检查是否所有玩家都已加入
     if len(room.players) == 2:
-        # 房间已满，初始化魔法卡牌系统
-        for p in room.players:
-            room.init_player_magic(p, magic_cards)
-        
-        # 设置房间状态为放置战舰
+        # 所有玩家都已加入，开始游戏
         room.state = 'placing_ships'
         
-        # 为每个玩家添加对方的名字
+        # 初始化魔法卡牌系统
+        room.init_player_magic(list(room.players.keys())[0], magic_cards)
+        room.init_player_magic(list(room.players.keys())[1], magic_cards)
+        
+        # 准备发送给玩家的游戏状态
         game_state_data = {
             'state': 'placing_ships',
             'room_id': room_id
         }
         
-        player_ids = list(room.players.keys())
-        for p_id in player_ids:
-            opponent_id = player_ids[1] if p_id == player_ids[0] else player_ids[0]
-            emit('game_state', {
-                **game_state_data,
-                'player_name': room.players[p_id]['name'],
-                'opponent_name': room.players[opponent_id]['name']
-            }, to=p_id)
-    
-    # 返回玩家 id 供前端记录
-    return {'status': 'success', 'player_id': player_id}
+        # 为每个玩家添加对方的名字
+        for pid in room.players:
+            opponent_id = next(p for p in room.players if p != pid)
+            game_state_data['opponent_name'] = room.players[opponent_id]['name']
+            emit('game_state', game_state_data, room=pid)
 
+
+# 大厅：加入匹配队列
+@socketio.on('join_lobby')
+def handle_join_lobby(data):
+    player_id = session.get('user_id', request.sid)
+    # 防止重复加入
+    if player_id not in lobby_queue:
+        lobby_queue.append(player_id)
+        lobby_members.add(player_id)
+        # 将当前 socket 加入一个以 player_id 命名的个人房间，方便推送
+        try:
+            join_room(player_id)
+        except Exception:
+            pass
+        emit('lobby_joined', room=request.sid)
+        # 发送带可显示名字的成员列表
+        players_display = []
+        for pid in list(lobby_members):
+            u = db.get_user_by_id(pid)
+            players_display.append(u['username'] if u else str(pid)[:6])
+        emit('lobby_update', {'players': players_display}, broadcast=True)
+        # 尝试匹配
+        try_match()
+    else:
+        # 已在队列中：仅推送更新以同步 UI
+        players_display = []
+        for pid in list(lobby_members):
+            u = db.get_user_by_id(pid)
+            players_display.append(u['username'] if u else str(pid)[:6])
+        emit('lobby_update', {'players': players_display}, room=request.sid)
+
+
+@socketio.on('leave_lobby')
+def handle_leave_lobby():
+    player_id = session.get('user_id', request.sid)
+    # 安全地移除
+    try:
+        while player_id in lobby_queue:
+            lobby_queue.remove(player_id)
+    except ValueError:
+        pass
+    lobby_members.discard(player_id)
+    try:
+        leave_room(player_id)
+    except Exception:
+        pass
+    emit('lobby_left', room=request.sid)
+    players_display = []
+    for pid in list(lobby_members):
+        u = db.get_user_by_id(pid)
+        players_display.append(u['username'] if u else str(pid)[:6])
+    emit('lobby_update', {'players': players_display}, broadcast=True)
+
+
+def try_match():
+    # 简单 FIFO：两两配对
+    while len(lobby_queue) >= 2:
+        p1 = lobby_queue.pop(0)
+        p2 = lobby_queue.pop(0)
+        lobby_members.discard(p1)
+        lobby_members.discard(p2)
+        # 创建房间并通知
+        new_room_id = str(uuid.uuid4())[:6]
+        rooms[new_room_id] = GameRoom(new_room_id)
+        # 向双方发送匹配成功（使用个人房间）
+        emit('match_found', {'room_id': new_room_id}, room=p1)
+        emit('match_found', {'room_id': new_room_id}, room=p2)
+
+    # Broadcast lobby update
+    players_display = []
+    for pid in list(lobby_members):
+        u = db.get_user_by_id(pid)
+        players_display.append(u['username'] if u else str(pid)[:6])
+    emit('lobby_update', {'players': players_display}, broadcast=True)
+
+    return {'status': 'ok'}
 @socketio.on('find_match')
 def handle_find_match(data):
     """处理玩家匹配请求"""
     player_id = request.sid
-    player_name = data.get('player_name', f'玩家_{player_id[:4]}')
+    player_name = data.get('player_name', '匿名玩家')
     
     # 检查玩家是否已经在匹配队列中
     if player_id in match_queue:
@@ -268,7 +353,7 @@ def handle_find_match(data):
     # 将玩家添加到匹配队列
     match_queue.append(player_id)
     
-    # 保存玩家名称到字典中
+    # 保存玩家名称到session或字典中
     if not hasattr(app, 'player_names'):
         app.player_names = {}
     app.player_names[player_id] = player_name
@@ -308,8 +393,10 @@ def check_match_queue():
         room_id = str(uuid.uuid4())[:6]
         room = GameRoom(room_id)
         rooms[room_id] = room
-        player1_name = app.player_names.get(player1, f'玩家_{player1[:4]}') if hasattr(app, 'player_names') else f'玩家_{player1[:4]}'
-        player2_name = app.player_names.get(player2, f'玩家_{player2[:4]}') if hasattr(app, 'player_names') else f'玩家_{player2[:4]}'
+        
+        # 获取玩家名称
+        player1_name = app.player_names.get(player1, '匿名玩家1')
+        player2_name = app.player_names.get(player2, '匿名玩家2')
         
         # 添加玩家到房间
         room.players[player1] = {
@@ -344,19 +431,13 @@ def check_match_queue():
         }
         
         # 为每个玩家添加对方的名字
-        # 发送给player1，确保opponent_name是player2的名字
-        emit('game_state', {
-            **game_state_data,
-            'player_name': room.players[player1]['name'],
-            'opponent_name': room.players[player2]['name']
-        }, to=player1)
-        
-        # 发送给player2，确保opponent_name是player1的名字
-        emit('game_state', {
-            **game_state_data,
-            'player_name': room.players[player2]['name'],
-            'opponent_name': room.players[player1]['name']
-        }, to=player2)
+        for player_id in [player1, player2]:
+            opponent_id = player2 if player_id == player1 else player1
+            emit('game_state', {
+                **game_state_data,
+                'player_name': room.players[player_id]['name'],
+                'opponent_name': room.players[opponent_id]['name']
+            }, to=player_id)
         
         # 从玩家名称字典中移除
         if hasattr(app, 'player_names'):

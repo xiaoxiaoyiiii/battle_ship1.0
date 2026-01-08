@@ -1,25 +1,17 @@
 // DOM元素
 const startScreen = document.getElementById('start-screen');
 const customRoomScreen = document.getElementById('custom-room-screen');
-const matchSuccessScreen = document.getElementById('match-success-screen');
 const shipPlacementScreen = document.getElementById('ship-placement-screen');
 const rpsScreen = document.getElementById('rps-screen');
 const gameScreen = document.getElementById('game-screen');
 const gameOverScreen = document.getElementById('game-over-screen');
-
-// 导航栏元素
-const gameNav = document.getElementById('game-nav');
-
-// 匹配成功界面元素
-const opponentInfo = document.getElementById('opponent-info');
-const countdownTimer = document.getElementById('countdown-timer');
-const countdownBar = document.getElementById('countdown-bar');
 
 // 开始界面元素
 const findMatchBtn = document.getElementById('find-match');
 const customRoomBtn = document.getElementById('custom-room');
 const matchStatus = document.getElementById('match-status');
 const cancelMatchBtn = document.getElementById('cancel-match');
+const playerNameInput = document.getElementById('player-name');
 
 // 自定义房间游戏界面元素
 const customCreateRoomBtn = document.getElementById('custom-create-room');
@@ -28,10 +20,9 @@ const customRoomIdInput = document.getElementById('custom-room-id-input');
 const customConfirmJoinBtn = document.getElementById('custom-confirm-join');
 const customRoomInfo = document.getElementById('custom-room-info');
 const customCurrentRoomId = document.getElementById('custom-current-room-id');
+const customPlayerNameInput = document.getElementById('custom-player-name');
 const customRoomCodeInput = document.getElementById('custom-room-code');
 const backToMainBtn = document.getElementById('back-to-main');
-
-// 使用固定玩家名称或从服务器获取
 
 // 战舰放置界面元素
 const playerBoard = document.getElementById('player-board');
@@ -66,6 +57,15 @@ const leaderboardScreen = document.getElementById('leaderboard-screen');
 const backFromLeaderboardBtn = document.getElementById('back-to-main-from-leaderboard');
 const leaderboardTableBody = document.querySelector('#leaderboard-table tbody');
 const leaderboardError = document.getElementById('leaderboard-error');
+
+// 大厅界面元素
+const lobbyScreen = document.getElementById('lobby-screen');
+const joinLobbyBtn = document.getElementById('join-lobby-match');
+const leaveLobbyBtn = document.getElementById('leave-lobby-match');
+const backFromLobbyBtn = document.getElementById('back-to-main-from-lobby');
+const lobbyPlayerCount = document.getElementById('lobby-player-count');
+const lobbyPlayersList = document.getElementById('lobby-players-list');
+
 
 // 登录/注册模态弹窗及控件
 const loginModal = document.getElementById('login-modal');
@@ -201,6 +201,14 @@ function bindEventListeners() {
         switchScreen(startScreen);
     });
 
+    // 大厅按钮事件绑定
+    if (joinLobbyBtn) joinLobbyBtn.addEventListener('click', joinLobbyMatch);
+    if (leaveLobbyBtn) leaveLobbyBtn.addEventListener('click', leaveLobbyMatch);
+    if (backFromLobbyBtn) backFromLobbyBtn.addEventListener('click', () => {
+        history.pushState({}, '', '/');
+        switchScreen(startScreen);
+    });
+
     // 登录/注册弹窗按钮事件绑定
     if (loginSubmitBtn) loginSubmitBtn.addEventListener('click', handleLoginSubmit);
     if (registerSubmitBtn) registerSubmitBtn.addEventListener('click', handleRegisterSubmit);
@@ -240,6 +248,10 @@ function bindEventListeners() {
             e.preventDefault();
             history.pushState({}, '', '/register');
             showRegister();
+        } else if (href === '/lobby') {
+            e.preventDefault();
+            history.pushState({}, '', '/lobby');
+            showLobby();
         }
     });
 
@@ -251,6 +263,8 @@ function bindEventListeners() {
             showLogin();
         } else if (window.location.pathname.startsWith('/register')) {
             showRegister();
+        } else if (window.location.pathname.startsWith('/lobby')) {
+            showLobby();
         } else {
             // 默认回到首页
             switchScreen(startScreen);
@@ -260,7 +274,7 @@ function bindEventListeners() {
 
 // 创建房间
 function createRoom() {
-    gameState.playerName = '玩家'; // 使用默认名称
+    gameState.playerName = playerNameInput.value || '玩家';
     gameState.socket = io.connect('http://' + window.location.host);
     setupSocketListeners();
 
@@ -295,13 +309,7 @@ function toggleCustomRoomOptions() {
 
 // 寻找匹配
 function findMatch() {
-    // 如果是已登录用户，使用真实用户名；否则使用随机名称
-    if (window.__USERNAME) {
-        gameState.playerName = window.__USERNAME;
-    } else {
-        // 使用随机生成的唯一名称，避免相同账户登录时名称冲突
-        gameState.playerName = `玩家_${Math.floor(Math.random() * 10000)}`;
-    }
+    gameState.playerName = playerNameInput.value || '玩家';
     
     // 创建socket连接
     gameState.socket = io.connect('http://' + window.location.host);
@@ -330,7 +338,7 @@ function cancelMatch() {
 
 // 自定义房间游戏 - 创建房间
 function customCreateRoom() {
-    gameState.playerName = '玩家'; // 使用默认名称
+    gameState.playerName = customPlayerNameInput.value || '玩家';
     gameState.socket = io.connect('http://' + window.location.host);
     setupSocketListeners();
 
@@ -360,7 +368,7 @@ function customCreateRoom() {
 
 // 自定义房间游戏 - 加入房间
 function customJoinRoom() {
-    gameState.playerName = '玩家'; // 使用默认名称
+    gameState.playerName = customPlayerNameInput.value || '玩家';
     const roomId = customRoomCodeInput.value.trim();
     if (!roomId) return;
 
@@ -384,7 +392,7 @@ function customJoinRoom() {
 
 // 加入房间
 function joinRoom() {
-    gameState.playerName = '玩家'; // 使用默认名称
+    gameState.playerName = playerNameInput.value || '玩家';
     const roomId = roomCodeInput.value.trim();
     if (!roomId) return;
 
@@ -432,7 +440,6 @@ function setupSocketListeners() {
         customRoomIdInput.classList.add('hidden');
         startScreen.classList.remove('active');
         customRoomScreen.classList.remove('active');
-        matchSuccessScreen.classList.remove('active');
         shipPlacementScreen.classList.remove('active');
         rpsScreen.classList.remove('active');
         gameScreen.classList.remove('active');
@@ -450,8 +457,6 @@ function setupSocketListeners() {
             case 'waiting':
                 // 只有当游戏是从自定义房间创建或加入时，才显示自定义房间游戏界面
                 // 匹配游戏不应该显示这个界面
-                // 显示导航栏
-                if (gameNav) gameNav.style.display = 'block';
                 break;
             case 'placing_ships':
                 console.log('Switching to ship placement screen');
@@ -462,65 +467,26 @@ function setupSocketListeners() {
                     console.log('设置playerId为:', gameState.playerId);
                 }
                 
-                // 隐藏导航栏
-                if (gameNav) gameNav.style.display = 'none';
-                
-                // 显示匹配成功界面
-                matchSuccessScreen.classList.add('active');
-                
-                // 显示对手信息
-                opponentInfo.textContent = gameState.opponentName;
-                
-                // 开始5秒倒计时
-                let countdown = 5;
-                countdownTimer.textContent = countdown;
-                
-                // 获取倒计时条元素
-                const barFill = countdownBar.querySelector('.countdown-fill');
-                
-                // 初始进度为100%
-                barFill.style.width = '100%';
-                
-                // 每秒更新一次，确保数字和进度条完全同步
-                const countdownInterval = setInterval(() => {
-                    countdown--;
-                    countdownTimer.textContent = countdown;
-                    
-                    // 直接设置进度条宽度，与当前倒计时数字完全对应
-                    // 例如：5秒时100%，4秒时80%，3秒时60%，依此类推
-                    const progress = (countdown / 5) * 100;
-                    barFill.style.width = `${progress}%`;
-                    
-                    // 倒计时结束
-                    if (countdown <= 0) {
-                        clearInterval(countdownInterval);
-                        
-                        // 直接进入放置战舰界面
-                        matchSuccessScreen.classList.remove('active');
-                        shipPlacementScreen.classList.add('active');
-                        initBoard(playerBoard, true);
-                        // 确保界面正确切换
-                        startScreen.classList.add('hidden');
-                        customRoomScreen.classList.add('hidden');
-                        matchStatus.classList.add('hidden');
-                        // 保存房间ID
-                        if (data.room_id) {
-                            gameState.roomId = data.room_id;
-                        }
-                    }
-                }, 1000);
+                // 直接进入放置战舰界面（大厅匹配或自定义房间）
+                shipPlacementScreen.classList.add('active');
+                initBoard(playerBoard, true);
+                // 确保界面正确切换
+                startScreen.classList.add('hidden');
+                customRoomScreen.classList.add('hidden');
+                matchStatus.classList.add('hidden');
+                lobbyScreen.classList.add('hidden');
+                // 保存房间ID
+                if (data.room_id) {
+                    gameState.roomId = data.room_id;
+                }
                 break;
             case 'rock_paper_scissors':
-                // 隐藏导航栏
-                if (gameNav) gameNav.style.display = 'none';
                 rpsScreen.classList.add('active');
                 rpsRound.textContent = data.round || 1;
                 rpsResult.classList.add('hidden');
                 break;
             // 在setupSocketListeners的game_state事件处理中添加
             case 'attacking':
-                // 隐藏导航栏
-                if (gameNav) gameNav.style.display = 'none';
                 gameScreen.classList.add('active');
                 gameRound.textContent = data.round || 1;
                 gameState.currentPhase = data.current_phase || 'preparation';
@@ -530,8 +496,6 @@ function setupSocketListeners() {
                 updatePhaseUI(); // 确保调用阶段UI更新
                 break;
             case 'game_over':
-                // 显示导航栏
-                if (gameNav) gameNav.style.display = 'block';
                 gameOverScreen.classList.add('active');
                 gameResult.textContent = data.winner === gameState.playerId ? '恭喜你获胜了！' : '很遗憾，你输了。';
                 break;
@@ -540,8 +504,6 @@ function setupSocketListeners() {
                 roomInfo.classList.remove('hidden');
                 currentRoomId.textContent = gameState.roomId;
                 roomInfo.querySelector('.waiting-message').textContent = '未知游戏状态，请刷新页面';
-                // 显示导航栏
-                if (gameNav) gameNav.style.display = 'block';
         }
     });
 
@@ -737,6 +699,43 @@ function setupSocketListeners() {
         updateHandUI();
     });
 
+    // 大厅相关事件
+    socket.on('lobby_update', (data) => {
+        // 更新大厅玩家列表
+        if (lobbyPlayerCount && lobbyPlayersList) {
+            lobbyPlayerCount.textContent = data.players.length;
+            lobbyPlayersList.innerHTML = '';
+            data.players.forEach(player => {
+                const li = document.createElement('li');
+                li.textContent = player;
+                lobbyPlayersList.appendChild(li);
+            });
+        }
+    });
+
+    socket.on('lobby_joined', (data) => {
+        joinLobbyBtn.classList.add('hidden');
+        leaveLobbyBtn.classList.remove('hidden');
+        showMessage('已加入匹配队列', {type: 'success'});
+    });
+
+    socket.on('lobby_left', (data) => {
+        joinLobbyBtn.classList.remove('hidden');
+        leaveLobbyBtn.classList.add('hidden');
+        showMessage('已离开匹配队列', {type: 'info'});
+    });
+
+    socket.on('match_found', (data) => {
+        console.log('Match found:', data);
+        showMessage(`找到对手，房间ID: ${data.room_id}`);
+        // 如果在游戏主界面，自动尝试 join_room
+        if (gameState.roomId !== data.room_id) {
+            gameState.roomId = data.room_id;
+            // 告诉服务器加入该房间
+            socket.emit('join_room', { room_id: data.room_id, player_name: gameState.playerName });
+        }
+    });
+
     // 新增：监听手牌更新事件
     socket.on('hand_updated', (data) => {
         gameState.hand = data.hand;
@@ -776,7 +775,7 @@ function setupSocketListeners() {
 
 // 切换屏幕
 function switchScreen(screen) {
-    const screens = [startScreen, customRoomScreen, shipPlacementScreen, rpsScreen, gameScreen, leaderboardScreen, gameOverScreen];
+    const screens = [startScreen, customRoomScreen, shipPlacementScreen, rpsScreen, gameScreen, leaderboardScreen, lobbyScreen, gameOverScreen];
     screens.forEach(s => { if (s) s.classList.remove('active'); });
     if (screen) screen.classList.add('active');
 
@@ -792,6 +791,22 @@ function showLeaderboard() {
     switchScreen(leaderboardScreen);
     fetchLeaderboard();
 }
+
+// 显示大厅
+function showLobby() {
+    switchScreen(lobbyScreen);
+    // 如果还没有socket连接，创建连接
+    if (!gameState.socket) {
+        gameState.socket = io.connect('http://' + window.location.host);
+        setupSocketListeners();
+    }
+    // 重置按钮状态（显示加入匹配，隐藏离开匹配）
+    joinLobbyBtn.classList.remove('hidden');
+    leaveLobbyBtn.classList.add('hidden');
+    // 请求大厅更新
+    updateLobbyDisplay();
+}
+
 function fetchLeaderboard() {
     if (!leaderboardTableBody || !leaderboardError) return;
     leaderboardTableBody.innerHTML = '';
@@ -820,6 +835,31 @@ function fetchLeaderboard() {
         leaderboardError.textContent = '无法加载排行榜：' + err.message;
     });
 }
+
+// 更新大厅显示
+function updateLobbyDisplay() {
+    // 请求服务器发送大厅更新
+    if (gameState.socket) {
+        // 可以通过发送一个特殊事件来请求更新，或者依赖服务器的广播
+        // 这里暂时不做额外请求，依赖 lobby_update 事件
+    }
+}
+
+// 加入大厅匹配
+function joinLobbyMatch() {
+    if (!gameState.socket) {
+        gameState.socket = io.connect('http://' + window.location.host);
+        setupSocketListeners();
+    }
+    gameState.socket.emit('join_lobby', {});
+}
+
+// 离开大厅匹配
+function leaveLobbyMatch() {
+    if (!gameState.socket) return;
+    gameState.socket.emit('leave_lobby', {});
+}
+
 // 初始化棋盘
 function initBoard(boardElement, isEditable = false) {
     boardElement.innerHTML = '';
@@ -2418,6 +2458,8 @@ function init() {
         showLogin();
     } else if (window.location.pathname.startsWith('/register')) {
         showRegister();
+    } else if (window.location.pathname.startsWith('/lobby')) {
+        showLobby();
     }
 
     // 检查 URL 是否包含 room 参数，如果有则在连接后自动加入

@@ -10,7 +10,7 @@
 </head>
 <body>
     <div class="game-container">
-        <div class="nav" id="game-nav">
+        <div class="nav">
             {% if username %}
                 <span>已登录: {{ username }}</span> | <a href="/logout">退出</a> | <a href="/lobby">大厅</a> | <a href="/leaderboard" class="hide-in-game">排行榜</a>
             {% else %}
@@ -41,6 +41,9 @@
         <!-- 开始界面 -->
         <div id="start-screen" class="screen active">
             <h1>战舰游戏</h1>
+            <div class="input-group">
+                <input type="text" id="player-name" placeholder="输入你的名字">
+            </div>
             <div class="button-group">
                 <button id="find-match">匹配游戏</button>
                 <button id="custom-room">自定义房间游戏</button>
@@ -54,6 +57,9 @@
         <!-- 自定义房间游戏界面 -->
         <div id="custom-room-screen" class="screen">
             <h1>自定义房间游戏</h1>
+            <div class="input-group">
+                <input type="text" id="custom-player-name" placeholder="输入你的名字">
+            </div>
             <div class="button-group">
                 <button id="custom-create-room">创建房间</button>
                 <button id="custom-join-room">加入房间</button>
@@ -106,18 +112,6 @@
             </div>
         </div>
 
-        <!-- 匹配成功等待界面 -->
-        <div id="match-success-screen" class="screen">
-            <h2>匹配成功！</h2>
-            <div class="match-info">
-                <p>你的对手是: <span id="opponent-info"></span></p>
-                <p>游戏将在 <span id="countdown-timer">5</span> 秒后开始</p>
-                <div id="countdown-bar" class="countdown-bar">
-                    <div class="countdown-fill"></div>
-                </div>
-            </div>
-        </div>
-        
         <!-- 战舰放置界面 -->
         <div id="ship-placement-screen" class="screen">
             <h2>放置你的战舰</h2>

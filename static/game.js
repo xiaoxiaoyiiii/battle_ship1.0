@@ -1,3 +1,8 @@
+// 个人战绩相关元素
+const showUserStatsBtn = document.getElementById('show-user-stats');
+const userStatsModal = document.getElementById('user-stats-modal');
+const userStatsModalClose = document.getElementById('user-stats-modal-close');
+const userStatsContent = document.getElementById('user-stats-content');
 // DOM元素
 const startScreen = document.getElementById('start-screen');
 const customRoomScreen = document.getElementById('custom-room-screen');
@@ -177,6 +182,45 @@ function addGameLog(logText) {
 
 // 绑定事件监听器
 function bindEventListeners() {
+        // 个人战绩按钮事件
+        if (showUserStatsBtn) showUserStatsBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            showUserStats();
+        });
+        if (userStatsModalClose) userStatsModalClose.addEventListener('click', () => {
+            userStatsModal.classList.add('hidden');
+        });
+        // 点击遮罩关闭
+        if (userStatsModal) userStatsModal.addEventListener('click', (e) => {
+            if (e.target === userStatsModal) userStatsModal.classList.add('hidden');
+        });
+    // 显示个人战绩弹窗并请求数据
+    function showUserStats() {
+        if (!userStatsModal || !userStatsContent) return;
+        userStatsModal.classList.remove('hidden');
+        userStatsContent.innerHTML = '<p>加载中...</p>';
+        fetch('/user_stats').then(resp => {
+            if (!resp.ok) throw new Error('未登录或获取失败');
+            return resp.json();
+        }).then(data => {
+            if (data.stats) {
+                const s = data.stats;
+                userStatsContent.innerHTML = `
+                    <table class="user-stats-table">
+                        <tr><td>用户名</td><td>${s.username}</td></tr>
+                        <tr><td>胜场</td><td>${s.wins}</td></tr>
+                        <tr><td>负场</td><td>${s.losses}</td></tr>
+                        <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>
+                        <tr><td>最长连胜</td><td>${s.longest_streak}</td></tr>
+                    </table>
+                `;
+            } else {
+                userStatsContent.innerHTML = '<p>未找到战绩数据</p>';
+            }
+        }).catch(err => {
+            userStatsContent.innerHTML = `<p style="color:red;">${err.message}</p>`;
+        });
+    }
     // 开始界面
     findMatchBtn.addEventListener('click', findMatch);
     customRoomBtn.addEventListener('click', () => {

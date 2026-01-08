@@ -1,3 +1,76 @@
+:root {
+    --surface: #f8fafc;
+    --text: #111827;
+    --muted: #6b7280;
+    --primary: #1976d2;
+    --primary-600: #1565c0;
+    --danger: #e53935;
+    --success: #10b981;
+    --board-bg: #e6f4ff;
+    --cell-bg: #ffffff;
+    --glass: rgba(255,255,255,0.85);
+}
+
+html.theme-dark {
+    --surface: #181a20;
+    --text: #e3e6ef;
+    --muted: #8a8fa3;
+    --primary: #1976d2;
+    --primary-600: #1565c0;
+    --danger: #e57373;
+    --success: #43e68b;
+    --board-bg: #23263a;
+    --cell-bg: #23263a;
+    --glass: rgba(30,32,40,0.85);
+}
+
+body, .game-container, .modal-content, .log-container, .log-entry, .board, .cell, .input-group input, .magic-hand-container, .magic-card, .selection-board, .reinforcement-prompt, .user-stats-table {
+    background-color: var(--surface) !important;
+    color: var(--text) !important;
+}
+
+.modal-content, .log-container, .log-entry, .board, .cell, .magic-card, .selection-board, .user-stats-table {
+    border-color: var(--muted) !important;
+}
+
+button, .btn {
+    background-color: var(--primary) !important;
+    color: #fff !important;
+}
+
+button:hover, .btn:hover {
+    background-color: var(--primary-600) !important;
+}
+
+html.theme-dark .modal-content, html.theme-dark .log-container, html.theme-dark .log-entry, html.theme-dark .board, html.theme-dark .cell, html.theme-dark .magic-card, html.theme-dark .selection-board, html.theme-dark .user-stats-table {
+    background-color: #23263a !important;
+    color: #e3e6ef !important;
+    border-color: #44485a !important;
+}
+
+html.theme-dark .game-container {
+    background-color: #23263a !important;
+    color: #e3e6ef !important;
+}
+
+html.theme-dark .log-header {
+    background-color: #1976d2 !important;
+    color: #fff !important;
+}
+
+html.theme-dark .log-content {
+    background: #23263a !important;
+    color: #e3e6ef !important;
+}
+
+html.theme-dark .cell {
+    background-color: #23263a !important;
+    border-color: #44485a !important;
+}
+
+html.theme-dark .modal-overlay {
+    background: rgba(0,0,0,0.7) !important;
+}
 /* 模态弹窗样式 */
 .modal-overlay {
     position: fixed;

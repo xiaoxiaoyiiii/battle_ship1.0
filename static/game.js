@@ -1,3 +1,42 @@
+// 游戏内头像元素
+const myAvatarInGame = document.getElementById('my-avatar-in-game');
+const opponentAvatarInGame = document.getElementById('opponent-avatar-in-game');
+// 获取当前用户头像并显示到游戏内
+function updateMyAvatarInGame() {
+    fetch('/api/profile').then(r => r.json()).then(res => {
+        console.log("updateMyAvatarInGame",res);
+        if (res.profile && myAvatarInGame) {
+            myAvatarInGame.src = res.profile.avatar || '/static/avatars/default.png';
+        }
+    });
+}
+
+// 获取对手头像（通过Socket或后端接口，假设有对手id）
+function updateOpponentAvatarInGame(opponentId) {
+    if (!opponentId) return;
+    fetch(`/user_stats?username=${encodeURIComponent(opponentId)}`)
+        .then(r => r.json()).then(res => {
+            console.log("updateOpponentAvatarInGame",res);
+            if (res.stats && opponentAvatarInGame) {
+                // 兼容后端返回格式
+                if (res.stats.avatar && res.stats.avatar !== '') {
+                    opponentAvatarInGame.src = res.stats.avatar;
+                } else {
+                    opponentAvatarInGame.src = '/static/avatars/default.png';
+                }
+            } else if (opponentAvatarInGame) {
+                opponentAvatarInGame.src = '/static/avatars/default.png';
+            }
+        }).catch(() => {
+            if (opponentAvatarInGame) opponentAvatarInGame.src = '/static/avatars/default.png';
+        });
+}
+// 在切换到游戏主界面时自动刷新头像
+function onEnterGameScreen(opponentName) {
+    updateMyAvatarInGame();
+    if (opponentName) updateOpponentAvatarInGame(opponentName);
+}
+
 // 个人信息相关元素
 const showProfileBtn = document.getElementById('show-profile');
 const profileModal = document.getElementById('profile-modal');
@@ -667,6 +706,7 @@ function setupSocketListeners() {
                 opponentUsernameInfo.textContent = data.opponent_name;
                 showOpponentStatsBtn && (showOpponentStatsBtn.style.display = 'inline-block');
             }
+            onEnterGameScreen(data.opponent_name);
         } else {
             if (opponentUsernameInfo) opponentUsernameInfo.textContent = '';
             showOpponentStatsBtn && (showOpponentStatsBtn.style.display = 'none');

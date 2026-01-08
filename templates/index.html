@@ -10,6 +10,7 @@
 </head>
 <body>
     <div class="game-container">
+        {% include '_header.html' %}
         <!-- 开始界面 -->
         <div id="start-screen" class="screen active">
             <h1>战舰游戏</h1>
@@ -104,6 +105,7 @@
     <!-- 确保正确的加载顺序 -->
     <script src="/static/magic_cards.js"></script>
     <!-- 先加载游戏核心逻辑 -->
+    <script>window.__USERNAME = {{ username|tojson }};</script>
     <script src="/static/game.js"></script>
     <!-- 后加载测试脚本 -->
     <script src="/static/test_magic.js"></script>

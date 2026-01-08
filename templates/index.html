@@ -190,6 +190,27 @@
                 
                 <!-- 游戏内容区域 -->
                 <div class="game-content">
+                    <!-- 魔法卡预览框 -->
+                    <div id="magic-card-preview" class="magic-preview-container">
+                        <div class="preview-header">
+                            <h3>待使用魔法卡</h3>
+                            <button id="cancel-magic" class="cancel-btn">取消</button>
+                        </div>
+                        <div class="preview-content">
+                            <div class="card-name">未选择魔法卡</div>
+                            <div class="card-stats">
+                                <div class="stat-item">速阶: <span id="preview-speed">-</span></div>
+                                <div class="stat-item">类型: <span id="preview-type">-</span></div>
+                            </div>
+                            <div class="card-description">
+                                <h4>效果描述:</h4>
+                                <p id="preview-description">请选择一张魔法卡查看详细信息</p>
+                            </div>
+                            <div class="preview-instructions">
+                                <p>点击一次卡牌进入待使用状态，再次点击尝试使用</p>
+                            </div>
+                        </div>
+                    </div>
                     <div class="game-info">
                         <h2>第<span id="game-round">1</span>回合</h2>
                         <!-- 添加场地魔法显示区域 -->

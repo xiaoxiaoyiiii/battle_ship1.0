@@ -125,7 +125,8 @@ window.gameState = {
     discardPile: [],        // 弃牌堆
     chain: [],              // 连锁栈
     currentPhase: null,     // 当前游戏阶段
-    fieldMagic: null        // 场地魔法
+    fieldMagic: null,       // 场地魔法
+    selectedCardIndex: -1   // 当前选中的卡牌索引，-1表示未选中
 }
 
 // 全局消息提示辅助函数
@@ -1396,7 +1397,14 @@ window.endBattlePhase = function() {
 window.addEventListener('load', () => {
     init();
     setupPhaseButtons(); // 添加这行
+    initCardPreview(); // 初始化卡牌预览功能
 });
+
+// 添加卡牌悬停提示功能 - 已废弃，使用新的预览框替代
+function initCardTooltip() {
+    // 不再需要创建悬停提示，保留空函数避免报错
+    console.log('旧的卡牌悬停提示功能已废弃，使用新的预览框替代');
+}
 
 // 初始化魔法卡牌堆
 function initMagicDeck() {
@@ -2556,6 +2564,99 @@ function showMatchSuccess(opponentName) {
 }
 
 // 更新手牌UI
+// 更新卡牌预览信息
+function updateCardPreview(card, index) {
+    const cardName = document.querySelector('.card-name');
+    const previewSpeed = document.getElementById('preview-speed');
+    const previewType = document.getElementById('preview-type');
+    const previewDescription = document.getElementById('preview-description');
+    const cancelBtn = document.getElementById('cancel-magic');
+    
+    if (card) {
+        cardName.textContent = card.name;
+        previewSpeed.textContent = card.speed;
+        previewType.textContent = card.type;
+        previewDescription.textContent = card.description;
+        cancelBtn.style.display = 'block';
+    } else {
+        cardName.textContent = '未选择魔法卡';
+        previewSpeed.textContent = '-';
+        previewType.textContent = '-';
+        previewDescription.textContent = '请选择一张魔法卡查看详细信息';
+        cancelBtn.style.display = 'none';
+    }
+}
+
+// 初始化卡牌预览功能
+function initCardPreview() {
+    const cancelBtn = document.getElementById('cancel-magic');
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', () => {
+            gameState.selectedCardIndex = -1;
+            updateHandUI();
+            updateCardPreview(null);
+        });
+    }
+    
+    // 初始更新预览
+    updateCardPreview(null);
+    
+    // 添加拖拽功能
+    initPreviewDrag();
+}
+
+// 初始化预览框拖拽功能
+function initPreviewDrag() {
+    const previewContainer = document.getElementById('magic-card-preview');
+    if (!previewContainer) return;
+    
+    let isDragging = false;
+    let startX, startY, initialX, initialY;
+    
+    // 鼠标按下事件
+    previewContainer.addEventListener('mousedown', (e) => {
+        // 只有点击头部区域才允许拖拽
+        if (e.target.closest('.preview-header') || e.target === previewContainer) {
+            isDragging = true;
+            
+            // 记录初始位置
+            initialX = parseInt(window.getComputedStyle(previewContainer).left, 10);
+            initialY = parseInt(window.getComputedStyle(previewContainer).top, 10);
+            
+            // 记录鼠标按下位置
+            startX = e.clientX;
+            startY = e.clientY;
+            
+            // 添加拖拽样式
+            previewContainer.style.cursor = 'grabbing';
+        }
+    });
+    
+    // 鼠标移动事件
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        
+        // 计算偏移量
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        
+        // 更新位置
+        previewContainer.style.left = `${initialX + dx}px`;
+        previewContainer.style.top = `${initialY + dy}px`;
+    });
+    
+    // 鼠标释放事件
+    document.addEventListener('mouseup', () => {
+        if (isDragging) {
+            isDragging = false;
+            previewContainer.style.cursor = 'grab';
+        }
+    });
+    
+    // 初始化拖拽样式
+    previewContainer.style.cursor = 'grab';
+}
+
 function updateHandUI() {
     const handElement = document.getElementById('magic-hand');
     if (!handElement) return;
@@ -2565,39 +2666,45 @@ function updateHandUI() {
         const cardElement = document.createElement('div');
         cardElement.classList.add('magic-card');
         cardElement.dataset.index = index;
+        
+        // 如果是选中状态，添加selected类
+        if (gameState.selectedCardIndex === index) {
+            cardElement.classList.add('selected');
+        }
+        
         cardElement.innerHTML = `
             <div class="card-name">${card.name}</div>
             <div class="card-speed">速阶: ${card.speed}</div>
             <div class="card-type">${card.type}魔法</div>
         `;
-        cardElement.addEventListener('click', () => playMagicCard(index));
         
-        // 添加悬停事件
-        cardElement.addEventListener('mouseover', (e) => {
-            const tooltip = document.getElementById('card-tooltip');
-            tooltip.innerHTML = `
-                <h3>${card.name}</h3>
-                <p>速阶: ${card.speed}</p>
-                <p>类型: ${card.type}</p>
-                <p>效果: ${card.description}</p>
-            `;
-            tooltip.style.left = `${e.pageX + 10}px`;
-            tooltip.style.top = `${e.pageY + 10}px`;
-            tooltip.style.display = 'block';
-        });
-        
-        cardElement.addEventListener('mouseout', () => {
-            document.getElementById('card-tooltip').style.display = 'none';
-        });
-        
-        cardElement.addEventListener('mousemove', (e) => {
-            const tooltip = document.getElementById('card-tooltip');
-            tooltip.style.left = `${e.pageX + 10}px`;
-            tooltip.style.top = `${e.pageY + 10}px`;
+        // 添加点击事件，实现点击选择/使用功能
+        cardElement.addEventListener('click', () => {
+            // 如果是已选中状态，尝试使用卡牌
+            if (gameState.selectedCardIndex === index) {
+                // 尝试使用卡牌
+                playMagicCard(index);
+            } else {
+                // 选中卡牌，更新预览
+                gameState.selectedCardIndex = index;
+                updateHandUI(); // 重新渲染手牌，更新选中状态
+                updateCardPreview(card, index);
+            }
         });
         
         handElement.appendChild(cardElement);
     });
+}
+
+// 初始化魔法卡牌堆
+function initMagicDeck() {
+    // 复制魔法卡数组并洗牌
+    gameState.deck = [...window.magicCards];
+    shuffleDeck(gameState.deck);
+    // 初始抽5张牌
+    for (let i = 0; i < 5; i++) {
+        drawCard();
+    }
 }
 
 // 添加卡牌悬停提示功能

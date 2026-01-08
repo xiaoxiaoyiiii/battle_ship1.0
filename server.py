@@ -238,84 +238,6 @@ def handle_join_room(data):
     # 返回玩家 id 供前端记录
     return {'status': 'success', 'player_id': player_id}
 
-<<<<<<< HEAD
-
-# 大厅：加入匹配队列
-@socketio.on('join_lobby')
-def handle_join_lobby():
-    player_id = session.get('user_id', request.sid)
-    # 防止重复加入
-    if player_id not in lobby_queue:
-        lobby_queue.append(player_id)
-        lobby_members.add(player_id)
-        # 将当前 socket 加入一个以 player_id 命名的个人房间，方便推送
-        try:
-            join_room(player_id)
-        except Exception:
-            pass
-        emit('lobby_joined', room=request.sid)
-        # 发送带可显示名字的成员列表
-        players_display = []
-        for pid in list(lobby_members):
-            u = db.get_user_by_id(pid)
-            players_display.append(u['username'] if u else str(pid)[:6])
-        emit('lobby_update', {'players': players_display}, broadcast=True)
-        # 尝试匹配
-        try_match()
-    else:
-        # 已在队列中：仅推送更新以同步 UI
-        players_display = []
-        for pid in list(lobby_members):
-            u = db.get_user_by_id(pid)
-            players_display.append(u['username'] if u else str(pid)[:6])
-        emit('lobby_update', {'players': players_display}, room=request.sid)
-
-
-@socketio.on('leave_lobby')
-def handle_leave_lobby():
-    player_id = session.get('user_id', request.sid)
-    # 安全地移除
-    try:
-        while player_id in lobby_queue:
-            lobby_queue.remove(player_id)
-    except ValueError:
-        pass
-    lobby_members.discard(player_id)
-    try:
-        leave_room(player_id)
-    except Exception:
-        pass
-    emit('lobby_left', room=request.sid)
-    players_display = []
-    for pid in list(lobby_members):
-        u = db.get_user_by_id(pid)
-        players_display.append(u['username'] if u else str(pid)[:6])
-    emit('lobby_update', {'players': players_display}, broadcast=True)
-
-
-def try_match():
-    # 简单 FIFO：两两配对
-    while len(lobby_queue) >= 2:
-        p1 = lobby_queue.pop(0)
-        p2 = lobby_queue.pop(0)
-        lobby_members.discard(p1)
-        lobby_members.discard(p2)
-        # 创建房间并通知
-        new_room_id = str(uuid.uuid4())[:6]
-        rooms[new_room_id] = GameRoom(new_room_id)
-        # 向双方发送匹配成功（使用个人房间）
-        emit('match_found', {'room_id': new_room_id}, room=p1)
-        emit('match_found', {'room_id': new_room_id}, room=p2)
-
-    # Broadcast lobby update
-    players_display = []
-    for pid in list(lobby_members):
-        u = db.get_user_by_id(pid)
-        players_display.append(u['username'] if u else str(pid)[:6])
-    emit('lobby_update', {'players': players_display}, broadcast=True)
-
-    return {'status': 'ok'}
-=======
 @socketio.on('find_match')
 def handle_find_match(data):
     """处理玩家匹配请求"""
@@ -421,7 +343,6 @@ def check_match_queue():
                 del app.player_names[player1]
             if player2 in app.player_names:
                 del app.player_names[player2]
->>>>>>> 01c133b8bc5ceba0982433d25ba7b52afa7c6430
 
 @socketio.on('place_ships')
 def handle_place_ships(data):

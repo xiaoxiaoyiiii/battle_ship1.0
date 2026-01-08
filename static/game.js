@@ -1,10 +1,16 @@
 // DOM元素
 const startScreen = document.getElementById('start-screen');
 const customRoomScreen = document.getElementById('custom-room-screen');
+const matchSuccessScreen = document.getElementById('match-success-screen');
 const shipPlacementScreen = document.getElementById('ship-placement-screen');
 const rpsScreen = document.getElementById('rps-screen');
 const gameScreen = document.getElementById('game-screen');
 const gameOverScreen = document.getElementById('game-over-screen');
+
+// 匹配成功界面元素
+const opponentInfo = document.getElementById('opponent-info');
+const countdownTimer = document.getElementById('countdown-timer');
+const countdownBar = document.getElementById('countdown-bar');
 
 // 开始界面元素
 const findMatchBtn = document.getElementById('find-match');
@@ -423,6 +429,7 @@ function setupSocketListeners() {
         customRoomIdInput.classList.add('hidden');
         startScreen.classList.remove('active');
         customRoomScreen.classList.remove('active');
+        matchSuccessScreen.classList.remove('active');
         shipPlacementScreen.classList.remove('active');
         rpsScreen.classList.remove('active');
         gameScreen.classList.remove('active');
@@ -450,17 +457,50 @@ function setupSocketListeners() {
                     console.log('设置playerId为:', gameState.playerId);
                 }
                 
-                // 直接进入放置战舰界面（大厅匹配或自定义房间）
-                shipPlacementScreen.classList.add('active');
-                initBoard(playerBoard, true);
-                // 确保界面正确切换
-                startScreen.classList.add('hidden');
-                customRoomScreen.classList.add('hidden');
-                matchStatus.classList.add('hidden');
-                // 保存房间ID
-                if (data.room_id) {
-                    gameState.roomId = data.room_id;
-                }
+                // 显示匹配成功界面
+                matchSuccessScreen.classList.add('active');
+                
+                // 显示对手信息
+                opponentInfo.textContent = gameState.opponentName;
+                
+                // 开始5秒倒计时
+                let countdown = 5;
+                countdownTimer.textContent = countdown;
+                
+                // 获取倒计时条元素
+                const barFill = countdownBar.querySelector('.countdown-fill');
+                
+                // 初始进度为100%
+                barFill.style.width = '100%';
+                
+                // 每秒更新一次，确保数字和进度条完全同步
+                const countdownInterval = setInterval(() => {
+                    countdown--;
+                    countdownTimer.textContent = countdown;
+                    
+                    // 直接设置进度条宽度，与当前倒计时数字完全对应
+                    // 例如：5秒时100%，4秒时80%，3秒时60%，依此类推
+                    const progress = (countdown / 5) * 100;
+                    barFill.style.width = `${progress}%`;
+                    
+                    // 倒计时结束
+                    if (countdown <= 0) {
+                        clearInterval(countdownInterval);
+                        
+                        // 直接进入放置战舰界面
+                        matchSuccessScreen.classList.remove('active');
+                        shipPlacementScreen.classList.add('active');
+                        initBoard(playerBoard, true);
+                        // 确保界面正确切换
+                        startScreen.classList.add('hidden');
+                        customRoomScreen.classList.add('hidden');
+                        matchStatus.classList.add('hidden');
+                        // 保存房间ID
+                        if (data.room_id) {
+                            gameState.roomId = data.room_id;
+                        }
+                    }
+                }, 1000);
                 break;
             case 'rock_paper_scissors':
                 rpsScreen.classList.add('active');

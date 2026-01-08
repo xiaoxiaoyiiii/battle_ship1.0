@@ -1058,22 +1058,23 @@ def handle_use_magic_card(data):
         'chain': room.chain
     }, room=room_id)
     
-    # 检查对方是否可以连锁（速阶高于当前连锁卡）
-    can_chain = False
-    if len(room.chain) > 1:
-        # 只有在有其他卡的情况下才能连锁
-        last_chain_card_speed = room.chain[-2]['card']['speed']
-        if card['speed'] > last_chain_card_speed:
-            can_chain = True
+    # 新的连锁逻辑：检查对方是否有速阶3的卡牌
+    opponent = room.players[opponent_id]
+    opponent_has_speed3 = any(int(c['speed']) == 3 for c in opponent['magic_hand'])
     
-    if can_chain:
-        # 通知对方可以连锁
+    if opponent_has_speed3:
+        # 对方有速阶3的卡牌，开启连锁请求
         room.chain_waiting = True
+        # 获取对方的速阶3卡牌列表
+        opponent_speed3_cards = [c for c in opponent['magic_hand'] if int(c['speed']) == 3]
+        # 发送连锁请求，包含倒计时
         emit('chain_request', {
-            'card': card
+            'card': card,
+            'speed3_cards': opponent_speed3_cards,
+            'countdown': 10
         }, to=opponent_id)
     else:
-        # 直接结算连锁
+        # 对方没有速阶3的卡牌，直接结算连锁
         resolve_chain(room)
     
     return {'status': 'success', 'message': f'魔法卡{card["name"]}已加入连锁'}
@@ -1154,15 +1155,15 @@ def chain_response(data):
         # 玩家选择连锁，处理新的魔法卡
         player = room.players[player_id]
         opponent_id = next(p for p in room.players if p != player_id)
+        opponent = room.players[opponent_id]
         
         # 检查卡牌是否在玩家手牌中
         if not any(c['name'] == card['name'] and c['speed'] == card['speed'] for c in player['magic_hand']):
             return {'status': 'error', 'message': '你没有这张魔法卡'}
         
-        # 检查速阶是否高于上一张连锁卡
-        last_chain_card = room.chain[-1]['card']
-        if card['speed'] <= last_chain_card['speed']:
-            return {'status': 'error', 'message': f'连锁卡速阶必须高于上一张卡的速阶（{last_chain_card["speed"]}）'}
+        # 检查是否为速阶3卡牌
+        if int(card['speed']) != 3:
+            return {'status': 'error', 'message': '只能使用速阶3的卡牌进行连锁'}
         
         # 从手牌中移除并添加到弃牌堆
         player['magic_hand'] = [c for c in player['magic_hand'] if not (c['name'] == card['name'] and c['speed'] == card['speed'])]
@@ -1185,17 +1186,28 @@ def chain_response(data):
             'chain': room.chain
         }, room=room_id)
         
-        # 检查对方是否可以继续连锁
-        can_chain = True
-        emit('chain_request', {
-            'card': card
-        }, to=opponent_id)
+        # 检查对方是否有速阶3的卡牌可以继续连锁
+        opponent_has_speed3 = any(int(c['speed']) == 3 for c in opponent['magic_hand'])
+        
+        if opponent_has_speed3:
+            # 对方有速阶3的卡牌，发送连锁请求
+            opponent_speed3_cards = [c for c in opponent['magic_hand'] if int(c['speed']) == 3]
+            emit('chain_request', {
+                'card': card,
+                'speed3_cards': opponent_speed3_cards,
+                'countdown': 10
+            }, to=opponent_id)
+            # 继续等待连锁
+            room.chain_waiting = True
+        else:
+            # 对方没有速阶3的卡牌，直接结算连锁
+            resolve_chain(room)
         
         return {'status': 'success', 'message': f'魔法卡{card["name"]}已加入连锁'}
     else:
         # 玩家选择不连锁，结算当前连锁
-        results = resolve_chain(room)
-        return {'status': 'success', 'message': '连锁已结算', 'results': results}
+        resolve_chain(room)
+        return {'status': 'success', 'message': '连锁已结算'}
 
 # 添加处理对方是否使用"失灵！"的响应
 @socketio.on('counter_magic_response')

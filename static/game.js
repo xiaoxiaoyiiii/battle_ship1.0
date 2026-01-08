@@ -1210,31 +1210,84 @@ function setupSocketListeners() {
         // 显示连锁选择对话框
         const chainPrompt = document.createElement('div');
         chainPrompt.className = 'magic-prompt';
+        
+        // 生成速阶3卡牌列表HTML
+        let speed3CardsHTML = '';
+        data.speed3_cards.forEach((card, index) => {
+            speed3CardsHTML += `<div class="chain-card-item" data-card-index="${index}" data-card-name="${card.name}" data-card-speed="${card.speed}">
+                <div class="chain-card-name">${card.name}</div>
+                <div class="chain-card-speed">速阶: ${card.speed}</div>
+            </div>`;
+        });
+        
         chainPrompt.innerHTML = `
-            <h3>对方发动了魔法卡【${data.card.name}】</h3>
-            <p>是否发动连锁魔法卡？</p>
+            <h3>连锁请求</h3>
+            <p>对方发动了魔法卡【${data.card.name}】</p>
+            <div class="chain-countdown">剩余时间: <span id="chain-countdown-time">10</span>秒</div>
+            <div class="chain-speed3-cards">
+                <h4>你拥有的速阶3魔法卡：</h4>
+                ${speed3CardsHTML}
+            </div>
+            <p class="chain-prompt-text">是否打出接续连锁？</p>
             <div class="chain-options">
-                <button id="chain-yes">发动连锁</button>
-                <button id="chain-no">不连锁</button>
+                <button id="chain-cancel" class="chain-cancel-btn">取消</button>
             </div>
         `;
         document.body.appendChild(chainPrompt);
 
-        // 不连锁按钮
-        document.getElementById('chain-no').addEventListener('click', () => {
-            gameState.socket.emit('chain_response', {
-                room_id: gameState.roomId,
-                player_id: gameState.playerId,
-                chain: false
-            });
-            document.body.removeChild(chainPrompt);
-        });
+        // 倒计时功能
+        let countdown = data.countdown || 10;
+        const countdownTimer = setInterval(() => {
+            countdown--;
+            // 使用chainPrompt.querySelector获取当前对话框内的倒计时元素
+            const countdownTimeElement = chainPrompt.querySelector('#chain-countdown-time');
+            if (countdownTimeElement) {
+                countdownTimeElement.textContent = countdown;
+            }
+            if (countdown <= 0) {
+                clearInterval(countdownTimer);
+                // 倒计时结束，自动默认"否"
+                gameState.socket.emit('chain_response', {
+                    room_id: gameState.roomId,
+                    player_id: gameState.playerId,
+                    chain: false
+                });
+                document.body.removeChild(chainPrompt);
+            }
+        }, 1000);
 
-        // 发动连锁按钮
-        document.getElementById('chain-yes').addEventListener('click', () => {
-            document.body.removeChild(chainPrompt);
-            // 显示可连锁的手牌
-            showChainableCards();
+        // 取消按钮 - 使用chainPrompt.querySelector获取当前对话框内的按钮
+        const cancelButton = chainPrompt.querySelector('#chain-cancel');
+        if (cancelButton) {
+            cancelButton.addEventListener('click', () => {
+                clearInterval(countdownTimer);
+                gameState.socket.emit('chain_response', {
+                    room_id: gameState.roomId,
+                    player_id: gameState.playerId,
+                    chain: false
+                });
+                document.body.removeChild(chainPrompt);
+            });
+        }
+
+        // 点击速阶3卡牌选择连锁 - 使用chainPrompt.querySelectorAll获取当前对话框内的卡牌元素
+        const cardItems = chainPrompt.querySelectorAll('.chain-card-item');
+        cardItems.forEach(cardElement => {
+            cardElement.addEventListener('click', () => {
+                clearInterval(countdownTimer);
+                const cardIndex = parseInt(cardElement.dataset.cardIndex);
+                const selectedCard = data.speed3_cards[cardIndex];
+                
+                // 发送连锁响应，包含选择的卡牌
+                gameState.socket.emit('chain_response', {
+                    room_id: gameState.roomId,
+                    player_id: gameState.playerId,
+                    chain: true,
+                    card: selectedCard,
+                    targets: []
+                });
+                document.body.removeChild(chainPrompt);
+            });
         });
     });
 

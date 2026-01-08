@@ -1,10 +1,20 @@
 // DOM元素
 const startScreen = document.getElementById('start-screen');
 const customRoomScreen = document.getElementById('custom-room-screen');
+const matchSuccessScreen = document.getElementById('match-success-screen');
 const shipPlacementScreen = document.getElementById('ship-placement-screen');
 const rpsScreen = document.getElementById('rps-screen');
 const gameScreen = document.getElementById('game-screen');
 const gameOverScreen = document.getElementById('game-over-screen');
+
+// 匹配成功界面元素
+const opponentInfo = document.getElementById('opponent-info');
+const countdownTimer = document.getElementById('countdown-timer');
+const countdownBar = document.getElementById('countdown-bar');
+const countdownFill = countdownBar.querySelector('.countdown-fill');
+
+// 导航栏元素
+const gameNav = document.getElementById('game-nav');
 
 // 开始界面元素
 const findMatchBtn = document.getElementById('find-match');
@@ -440,6 +450,7 @@ function setupSocketListeners() {
         customRoomIdInput.classList.add('hidden');
         startScreen.classList.remove('active');
         customRoomScreen.classList.remove('active');
+        matchSuccessScreen.classList.remove('active');
         shipPlacementScreen.classList.remove('active');
         rpsScreen.classList.remove('active');
         gameScreen.classList.remove('active');
@@ -457,6 +468,8 @@ function setupSocketListeners() {
             case 'waiting':
                 // 只有当游戏是从自定义房间创建或加入时，才显示自定义房间游戏界面
                 // 匹配游戏不应该显示这个界面
+                // 显示导航栏
+                if (gameNav) gameNav.style.display = 'block';
                 break;
             case 'placing_ships':
                 console.log('Switching to ship placement screen');
@@ -467,26 +480,63 @@ function setupSocketListeners() {
                     console.log('设置playerId为:', gameState.playerId);
                 }
                 
-                // 直接进入放置战舰界面（大厅匹配或自定义房间）
-                shipPlacementScreen.classList.add('active');
-                initBoard(playerBoard, true);
-                // 确保界面正确切换
-                startScreen.classList.add('hidden');
-                customRoomScreen.classList.add('hidden');
-                matchStatus.classList.add('hidden');
-                lobbyScreen.classList.add('hidden');
-                // 保存房间ID
-                if (data.room_id) {
-                    gameState.roomId = data.room_id;
-                }
+                // 隐藏导航栏
+                if (gameNav) gameNav.style.display = 'none';
+                
+                // 显示匹配成功界面
+                matchSuccessScreen.classList.add('active');
+                
+                // 显示对手信息
+                opponentInfo.textContent = gameState.opponentName;
+                
+                // 开始5秒倒计时
+                let countdown = 5;
+                countdownTimer.textContent = countdown;
+                
+                // 初始进度为100%
+                const countdownFill = countdownBar.querySelector('.countdown-fill');
+                countdownFill.style.width = '100%';
+                
+                // 每秒更新一次，确保数字和进度条完全同步
+                const countdownInterval = setInterval(() => {
+                    countdown--;
+                    countdownTimer.textContent = countdown;
+                    
+                    // 直接设置进度条宽度，与当前倒计时数字完全对应
+                    const progress = (countdown / 5) * 100;
+                    countdownFill.style.width = `${progress}%`;
+                    
+                    // 倒计时结束，进入战舰放置界面
+                    if (countdown <= 0) {
+                        clearInterval(countdownInterval);
+                        
+                        // 直接进入放置战舰界面
+                        matchSuccessScreen.classList.remove('active');
+                        shipPlacementScreen.classList.add('active');
+                        initBoard(playerBoard, true);
+                        // 确保界面正确切换
+                        startScreen.classList.add('hidden');
+                        customRoomScreen.classList.add('hidden');
+                        matchStatus.classList.add('hidden');
+                        lobbyScreen.classList.add('hidden');
+                        // 保存房间ID
+                        if (data.room_id) {
+                            gameState.roomId = data.room_id;
+                        }
+                    }
+                }, 1000);
                 break;
             case 'rock_paper_scissors':
+                // 隐藏导航栏
+                if (gameNav) gameNav.style.display = 'none';
                 rpsScreen.classList.add('active');
                 rpsRound.textContent = data.round || 1;
                 rpsResult.classList.add('hidden');
                 break;
             // 在setupSocketListeners的game_state事件处理中添加
             case 'attacking':
+                // 隐藏导航栏
+                if (gameNav) gameNav.style.display = 'none';
                 gameScreen.classList.add('active');
                 gameRound.textContent = data.round || 1;
                 gameState.currentPhase = data.current_phase || 'preparation';
@@ -496,11 +546,15 @@ function setupSocketListeners() {
                 updatePhaseUI(); // 确保调用阶段UI更新
                 break;
             case 'game_over':
+                // 显示导航栏
+                if (gameNav) gameNav.style.display = 'block';
                 gameOverScreen.classList.add('active');
                 gameResult.textContent = data.winner === gameState.playerId ? '恭喜你获胜了！' : '很遗憾，你输了。';
                 break;
             default:
                 console.error('Unknown game state:', data.state);
+                // 显示导航栏
+                if (gameNav) gameNav.style.display = 'block';
                 roomInfo.classList.remove('hidden');
                 currentRoomId.textContent = gameState.roomId;
                 roomInfo.querySelector('.waiting-message').textContent = '未知游戏状态，请刷新页面';
@@ -1021,9 +1075,12 @@ function handleRPSChoice(choice) {
 
 // 处理攻击
 function handleAttack(x, y) {
+    // 检查是否正在进行魔法卡目标选择，如果是则不执行攻击
+    if (gameState.currentMagicCard) return;
+    
     if (!gameState.isMyTurn) return;
     
-    // 新增：检查当前是否为战斗阶段
+    // 检查当前是否为战斗阶段
     if (gameState.currentPhase !== 'battle') {
         alert('当前不是战斗阶段');
         return;

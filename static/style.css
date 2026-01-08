@@ -696,6 +696,43 @@ html.theme-dark .cell.ship {
     box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
     z-index: 9999; /* 确保弹窗在最上层 */
 }
+/* 炫酷动效：头像/用户名浮动动画 */
+body.cool-effects-enabled .cool-float {
+    animation: floatY 2.2s ease-in-out infinite alternate;
+}
+@keyframes floatY {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(-10px); }
+}
+
+/* 炫酷动效：按钮点击波纹 */
+body.cool-effects-enabled .ripple {
+    position: absolute;
+    width: 48px;
+    height: 48px;
+    background: rgba(25,118,210,0.25);
+    border-radius: 50%;
+    pointer-events: none;
+    transform: translate(-50%, -50%) scale(0.7);
+    animation: ripple-anim 0.6s linear;
+    z-index: 2;
+}
+@keyframes ripple-anim {
+    0% { opacity: 0.7; transform: translate(-50%, -50%) scale(0.7); }
+    80% { opacity: 0.3; transform: translate(-50%, -50%) scale(1.2); }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(1.5); }
+}
+
+/* 炫酷动效：棋盘格子闪烁 */
+body.cool-effects-enabled .cell.cool-flash {
+    box-shadow: 0 0 16px 4px #1976d2, 0 0 8px 2px #fff inset;
+    animation: cell-flash-anim 0.7s linear;
+}
+@keyframes cell-flash-anim {
+    0% { box-shadow: 0 0 0 0 #1976d2, 0 0 0 0 #fff inset; }
+    50% { box-shadow: 0 0 16px 4px #1976d2, 0 0 8px 2px #fff inset; }
+    100% { box-shadow: 0 0 0 0 #1976d2, 0 0 0 0 #fff inset; }
+}
 
 /* 为弹窗添加半透明背景遮罩 */
 .magic-prompt::before {

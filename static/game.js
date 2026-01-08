@@ -135,8 +135,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     updateCornerNames();
     window.addEventListener('gameStateUpdate', updateCornerNames);
-    setInterval(updateCornerNames, 2000);
-
+    setInterval(updateCornerNames, 20000);
     // 自动更新对手头像
     function updateOpponentAvatarCorner() {
         const opponentName = (window.gameState && window.gameState.opponentName) || '';
@@ -144,7 +143,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     updateOpponentAvatarCorner();
     window.addEventListener('gameStateUpdate', updateOpponentAvatarCorner);
-    setInterval(updateOpponentAvatarCorner, 2000);
+    setInterval(updateOpponentAvatarCorner, 20000);
 });
 
 // 获取当前用户头像并显示到游戏内
@@ -187,20 +186,7 @@ function onEnterGameScreen(opponentName) {
 if (myAvatarInGame) {
     myAvatarInGame.style.cursor = 'pointer';
     myAvatarInGame.addEventListener('click', () => {
-        // 兼容变量未定义的情况
-        let userStatsModal = document.getElementById('user-stats-modal');
-        let userStatsContent = document.getElementById('user-stats-content');
         // 如果没有弹窗则自动创建
-        
-        userStatsModal = document.createElement('div');
-        userStatsModal.id = 'user-stats-modal';
-        userStatsModal.className = 'modal-overlay';
-        userStatsModal.innerHTML = '<div class="modal-content"><span class="modal-close" id="user-stats-modal-close">×</span><h2>个人战绩</h2><div id="user-stats-content1"><p>加载中...</p></div></div>';
-        document.body.appendChild(userStatsModal);
-        // 绑定关闭事件
-        userStatsModal.querySelector('.modal-close').onclick = () => userStatsModal.classList.add('hidden');
-        userStatsModal.onclick = (e) => { if (e.target === userStatsModal) userStatsModal.classList.add('hidden'); };
-        userStatsContent = document.getElementById('user-stats-content1');
         
         // 优先使用 gameState.playerName，再退回到服务器渲染的全局用户名或页面元素
         const username = (window.gameState && window.gameState.playerName) || window.__USERNAME || (document.getElementById('profile-username') && document.getElementById('profile-username').textContent) || '';
@@ -212,7 +198,7 @@ if (myAvatarInGame) {
             .then(r => r.json()).then(data => {
                 if (data.stats) {
                     const s = data.stats;
-                    userStatsContent.innerHTML = `\
+                    let userStatsContents = `\
                         <table class="user-stats-table">\
                             <tr><td>用户名</td><td>${s.username}</td></tr>\
                             <tr><td>胜场</td><td>${s.wins}</td></tr>\
@@ -220,7 +206,14 @@ if (myAvatarInGame) {
                             <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>\
                             <tr><td>最长连胜</td><td>${s.longest_streak}</td></tr>\
                         </table>`;
-                    userStatsModal.classList.remove('hidden');
+                    let userStatsModal = document.createElement('div');
+                    userStatsModal.id = 'user-stats-modal';
+                    userStatsModal.className = 'modal-overlay';
+                    userStatsModal.innerHTML = '<div class="modal-content"><span class="modal-close" id="user-stats-modal-close">×</span><h2>个人战绩</h2><div id="user-stats-content1"><p>'+userStatsContents+'</p></div></div>';
+                    document.body.appendChild(userStatsModal);
+                    // 绑定关闭事件
+                    userStatsModal.querySelector('.modal-close').onclick = () => userStatsModal.classList.add('hidden');
+                    userStatsModal.onclick = (e) => { if (e.target === userStatsModal) userStatsModal.classList.add('hidden'); };
                 } else {
                     showMessage('未找到战绩数据', { type: 'warning' });
                 }
@@ -233,29 +226,13 @@ if (myAvatarInGame) {
 if (opponentAvatarInGame) {
     opponentAvatarInGame.style.cursor = 'pointer';
     opponentAvatarInGame.addEventListener('click', () => {
-        // 优先使用 gameState.opponentName，再尝试页面元素
-        // 兼容变量未定义的情况
-        let userStatsModal = document.getElementById('user-stats-modal');
-        let userStatsContent = document.getElementById('user-stats-content');
-        // 如果没有弹窗则自动创建
-        
-        userStatsModal = document.createElement('div');
-        userStatsModal.id = 'user-stats-modal';
-        userStatsModal.className = 'modal-overlay';
-        userStatsModal.innerHTML = '<div class="modal-content"><span class="modal-close" id="user-stats-modal-close">×</span><h2>个人战绩</h2><div id="user-stats-content2"><p>加载中...</p></div></div>';
-        document.body.appendChild(userStatsModal);
-        // 绑定关闭事件
-        userStatsModal.querySelector('.modal-close').onclick = () => userStatsModal.classList.add('hidden');
-        userStatsModal.onclick = (e) => { if (e.target === userStatsModal) userStatsModal.classList.add('hidden'); };
-        userStatsContent = document.getElementById('user-stats-content2');
-        
         const username = (window.gameState && window.gameState.opponentName) || (document.getElementById('opponent-username-info') && document.getElementById('opponent-username-info').textContent) || '';
         if (!username) return showMessage('对手信息不可用', { type: 'warning' });
         fetch(`/user_stats?username=${encodeURIComponent(username)}`)
             .then(r => r.json()).then(data => {
                 if (data.stats) {
                     const s = data.stats;
-                    userStatsContent.innerHTML = `\
+                    let userStatsContents = `\
                         <table class="user-stats-table">\
                             <tr><td>用户名</td><td>${s.username}</td></tr>\
                             <tr><td>胜场</td><td>${s.wins}</td></tr>\
@@ -263,7 +240,14 @@ if (opponentAvatarInGame) {
                             <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>\
                             <tr><td>最长连胜</td><td>${s.longest_streak}</td></tr>\
                         </table>`;
-                    userStatsModal.classList.remove('hidden');
+                    let userStatsModal = document.createElement('div');
+                    userStatsModal.id = 'user-stats-modal';
+                    userStatsModal.className = 'modal-overlay';
+                    userStatsModal.innerHTML = '<div class="modal-content"><span class="modal-close" id="user-stats-modal-close">×</span><h2>个人战绩</h2><div id="user-stats-content2"><p>'+userStatsContents+'</p></div></div>';
+                    document.body.appendChild(userStatsModal);
+                    // 绑定关闭事件
+                    userStatsModal.querySelector('.modal-close').onclick = () => userStatsModal.classList.add('hidden');
+                    userStatsModal.onclick = (e) => { if (e.target === userStatsModal) userStatsModal.classList.add('hidden'); };
                 } else {
                     showMessage('未找到对手战绩', { type: 'warning' });
                 }

@@ -238,7 +238,6 @@ def handle_join_room(data):
     # 返回玩家 id 供前端记录
     return {'status': 'success', 'player_id': player_id}
 
-<<<<<<< HEAD
 
 # 大厅：加入匹配队列
 @socketio.on('join_lobby')
@@ -315,7 +314,6 @@ def try_match():
     emit('lobby_update', {'players': players_display}, broadcast=True)
 
     return {'status': 'ok'}
-=======
 @socketio.on('find_match')
 def handle_find_match(data):
     """处理玩家匹配请求"""
@@ -421,7 +419,6 @@ def check_match_queue():
                 del app.player_names[player1]
             if player2 in app.player_names:
                 del app.player_names[player2]
->>>>>>> 01c133b8bc5ceba0982433d25ba7b52afa7c6430
 
 @socketio.on('place_ships')
 def handle_place_ships(data):

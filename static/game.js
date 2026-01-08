@@ -1358,8 +1358,129 @@ function setupSocketListeners() {
             // 强制重绘棋盘以反映变化
             initGameBoards();
         }
+        
+        // 处理需要选择的魔法卡效果
+        if (result.temp_data_id) {
+            if (result.temp_data_id === 'taoyuan_choice') {
+                // 桃园结义选择UI
+                showTaoyuanChoice(result);
+            }
+        }
+        
         updateHandUI();
     });
+    
+    // 显示桃园结义选择界面
+    function showTaoyuanChoice(result) {
+        // 创建选择界面
+        const taoyuanChoiceDiv = document.createElement('div');
+        taoyuanChoiceDiv.className = 'taoyuan-choice-overlay';
+        taoyuanChoiceDiv.innerHTML = `
+            <div class="taoyuan-choice-container">
+                <div class="taoyuan-choice-header">
+                    <h3>桃园结义 - 卡牌选择</h3>
+                    <p id="taoyuan-choice-message">${result.message}</p>
+                </div>
+                <div class="taoyuan-choice-step">
+                    <h4 id="taoyuan-step-title">第一步：选择一张卡牌给自己</h4>
+                </div>
+                <div class="taoyuan-cards-container"></div>
+                <div class="taoyuan-choice-footer">
+                    <button id="taoyuan-cancel-btn" class="btn btn-danger">取消</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(taoyuanChoiceDiv);
+        
+        // 获取卡片容器
+        const cardsContainer = taoyuanChoiceDiv.querySelector('.taoyuan-cards-container');
+        
+        // 存储选择状态
+        let selectedCards = { caster: null, opponent: null };
+        let step = 1; // 1: 选择自己的卡, 2: 选择对方的卡
+        
+        // 请求服务器获取卡牌数据
+        gameState.socket.emit('get_magic_temp_data', {
+            room_id: gameState.roomId,
+            player_id: gameState.playerId
+        }, (response) => {
+            if (response.status === 'success' && response.data && response.data.cards) {
+                const cards = response.data.cards;
+                
+                // 显示卡牌
+                cards.forEach((card, index) => {
+                    const cardElement = document.createElement('div');
+                    cardElement.className = 'taoyuan-card-item';
+                    cardElement.dataset.index = index;
+                    cardElement.innerHTML = `
+                        <div class="taoyuan-card-name">${card.name}</div>
+                        <div class="taoyuan-card-type">${card.type}·速阶${card.speed}</div>
+                        <div class="taoyuan-card-desc">${card.description}</div>
+                    `;
+                    cardsContainer.appendChild(cardElement);
+                    
+                    // 添加点击事件
+                    cardElement.addEventListener('click', () => {
+                        if (step === 1) {
+                            // 第一步：选择自己的卡
+                            selectedCards.caster = index;
+                            
+                            // 更新界面
+                            cardElement.classList.add('selected');
+                            
+                            // 检查是否需要第二步
+                            if (cards.length > 1) {
+                                // 进入第二步
+                                step = 2;
+                                document.getElementById('taoyuan-step-title').textContent = '第二步：选择一张卡牌给对方';
+                                
+                                // 禁用已选择的卡
+                                cardElement.classList.add('disabled');
+                            } else {
+                                // 只有一张卡，直接确认
+                                confirmTaoyuanChoice(selectedCards, cards);
+                                document.body.removeChild(taoyuanChoiceDiv);
+                            }
+                        } else if (step === 2) {
+                            // 第二步：选择对方的卡
+                            if (index !== selectedCards.caster) {
+                                selectedCards.opponent = index;
+                                
+                                // 确认选择
+                                confirmTaoyuanChoice(selectedCards, cards);
+                                document.body.removeChild(taoyuanChoiceDiv);
+                            }
+                        }
+                    });
+                });
+            }
+        });
+        
+        // 取消按钮事件
+        document.getElementById('taoyuan-cancel-btn').addEventListener('click', () => {
+            document.body.removeChild(taoyuanChoiceDiv);
+        });
+    }
+    
+    // 确认桃园结义选择
+    function confirmTaoyuanChoice(selectedCards, cards) {
+        gameState.socket.emit('confirm_magic_target', {
+            room_id: gameState.roomId,
+            player_id: gameState.playerId,
+            temp_data_id: 'taoyuan_choice',
+            target_data: {
+                caster_choice: selectedCards.caster,
+                opponent_choice: selectedCards.opponent || -1
+            }
+        }, (response) => {
+            if (response.status === 'success') {
+                showMessage('桃园结义选择完成');
+                updateHandUI();
+            } else {
+                showMessage(`选择失败: ${response.message}`, { type: 'error' });
+            }
+        });
+    }
 
     // 大厅相关事件
     socket.on('lobby_update', (data) => {
@@ -3090,7 +3211,7 @@ function showMatchSuccess(opponentName) {
 // 更新手牌UI
 // 更新卡牌预览信息
 function updateCardPreview(card, index) {
-    const cardName = document.querySelector('.card-name');
+    const cardName = document.querySelector('#magic-card-preview .card-name');
     const previewSpeed = document.getElementById('preview-speed');
     const previewType = document.getElementById('preview-type');
     const previewDescription = document.getElementById('preview-description');
@@ -3302,13 +3423,102 @@ function updateHandUI() {
                 // 选中卡牌，更新预览
                 gameState.selectedCardIndex = index;
                 updateHandUI(); // 重新渲染手牌，更新选中状态
-                updateCardPreview(card, index);
+                updateCardPreview(card, index); // 更新卡牌预览信息
             }
         });
         
         handElement.appendChild(cardElement);
     });
+    
+    // 更新卡牌预览
+    if (gameState.selectedCardIndex >= 0 && gameState.selectedCardIndex < gameState.hand.length) {
+        updateCardPreview(gameState.hand[gameState.selectedCardIndex], gameState.selectedCardIndex);
+    } else {
+        updateCardPreview(null);
+    }
 }
+
+// 弃牌堆查看功能
+function setupDiscardPileUI() {
+    // 获取弃牌堆查看按钮
+    const viewDiscardBtn = document.getElementById('view-discard-pile');
+    const discardModal = document.getElementById('discard-pile-modal');
+    const discardModalClose = document.getElementById('discard-pile-modal-close');
+    
+    if (viewDiscardBtn && discardModal && discardModalClose) {
+        // 显示弃牌堆弹窗
+        viewDiscardBtn.addEventListener('click', () => {
+            discardModal.classList.remove('hidden');
+            loadDiscardPile();
+        });
+        
+        // 关闭弃牌堆弹窗
+        function closeDiscardModal() {
+            discardModal.classList.add('hidden');
+        }
+        
+        // 点击X关闭
+        discardModalClose.addEventListener('click', closeDiscardModal);
+        
+        // 点击弹窗外部关闭
+        discardModal.addEventListener('click', (e) => {
+            if (e.target === discardModal) {
+                closeDiscardModal();
+            }
+        });
+        
+        // ESC键关闭
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !discardModal.classList.contains('hidden')) {
+                closeDiscardModal();
+            }
+        });
+    }
+}
+
+// 加载弃牌堆数据
+function loadDiscardPile() {
+    gameState.socket.emit('get_discard_pile', {
+        room_id: gameState.roomId,
+        player_id: gameState.playerId
+    }, (response) => {
+        if (response.status === 'success') {
+            displayDiscardPile(response.discard_pile);
+        } else {
+            showMessage(`加载弃牌堆失败: ${response.message}`, { type: 'error' });
+        }
+    });
+}
+
+// 显示弃牌堆卡牌
+function displayDiscardPile(discardPile) {
+    const cardsContainer = document.getElementById('discard-pile-cards');
+    if (!cardsContainer) return;
+    
+    // 清空容器
+    cardsContainer.innerHTML = '';
+    
+    // 如果弃牌堆为空
+    if (!discardPile || discardPile.length === 0) {
+        cardsContainer.innerHTML = '<p style="text-align: center; color: var(--muted);">弃牌堆为空</p>';
+        return;
+    }
+    
+    // 显示弃牌堆卡牌
+    discardPile.forEach((card, index) => {
+        const cardElement = document.createElement('div');
+        cardElement.className = 'discard-pile-card';
+        cardElement.innerHTML = `
+            <div class="discard-pile-card-name">${card.name}</div>
+            <div class="discard-pile-card-type">${card.type}·速阶${card.speed}</div>
+            <div class="discard-pile-card-desc">${card.description}</div>
+        `;
+        cardsContainer.appendChild(cardElement);
+    });
+}
+
+// 在游戏初始化时设置弃牌堆UI
+setupDiscardPileUI();
 
 // 初始化魔法卡牌堆
 function initMagicDeck() {

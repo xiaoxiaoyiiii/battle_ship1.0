@@ -187,34 +187,28 @@ class GameRoom:
 
     def draw_card(self, player_id):
         """抽卡逻辑，返回抽到的卡牌"""
+        # 牌堆为空，无法抽卡
         if not self.players[player_id]['magic_deck']:
-            # 牌堆为空，从弃牌堆重新洗牌
-            # 过滤掉重复的非"失灵！"卡牌
-            unique_discard = []
-            seen = set()
-            for card in self.players[player_id]['magic_discard']:
-                if card['name'] == '失灵！' or card['name'] not in seen:
-                    unique_discard.append(card)
-                    if card['name'] != '失灵！':
-                        seen.add(card['name'])
-            self.players[player_id]['magic_deck'] = unique_discard
-            random.shuffle(self.players[player_id]['magic_deck'])
-            self.players[player_id]['magic_discard'] = []
+            return None
         
-        if self.players[player_id]['magic_deck']:
-            card = self.players[player_id]['magic_deck'].pop(0)
-            # 检查手牌中是否已有相同卡牌（除了"失灵！"）
-            if card['name'] != '失灵！' and any(c['name'] == card['name'] and c['speed'] == card['speed'] for c in self.players[player_id]['magic_hand']):
-                # 避免重复卡牌，放入弃牌堆并重新抽一张
-                self.players[player_id]['magic_discard'].append(card)
-                return self.draw_card(player_id)
-            self.players[player_id]['magic_hand'].append(card)
-            # 通知客户端手牌更新
-            emit('hand_updated', {
-                'hand': self.players[player_id]['magic_hand']
-            }, room=player_id)
-            return card  # 返回抽到的卡牌
-        return None
+        # 从牌堆顶部抽一张卡
+        card = self.players[player_id]['magic_deck'].pop(0)
+        
+        # 检查手牌中是否已有相同卡牌（除了"失灵！"）
+        if card['name'] != '失灵！' and any(c['name'] == card['name'] and c['speed'] == card['speed'] for c in self.players[player_id]['magic_hand']):
+            # 避免重复卡牌，放入弃牌堆
+            self.players[player_id]['magic_discard'].append(card)
+            return None
+        
+        # 将卡牌加入手牌
+        self.players[player_id]['magic_hand'].append(card)
+        
+        # 通知客户端手牌更新
+        emit('hand_updated', {
+            'hand': self.players[player_id]['magic_hand']
+        }, room=player_id)
+        
+        return card  # 返回抽到的卡牌
 
 @socketio.on('create_room')
 def handle_create_room(data):
@@ -967,10 +961,7 @@ def switch_turn_after_end_phase(room, opponent_id):
     room.attacks_remaining = len(room.players[opponent_id]['ships'])  # 根据战舰数量设置攻击次数
     room.current_phase = 'preparation'
     
-    # 抽卡阶段
-    room.draw_card(opponent_id)
-    
-    # 广播回合变化
+    # 广播回合变化 - 移除了回合切换时的额外抽卡
     socketio.emit('turn_change', {
         'current_attacker': opponent_id,
         'attacks_remaining': room.attacks_remaining,
@@ -1024,9 +1015,6 @@ def end_turn(data):
                     # 保留场地魔法等永久效果，清除临时效果
                     permanent_flags = ['holy_heart', 'reinforcement_check']  # 永久效果白名单
                     room.players[p_id]['effect_flags'] = {k: v for k, v in room.players[p_id]['effect_flags'].items() if k in permanent_flags}
-            
-            # 抽卡阶段
-            room.draw_card(room.current_attacker)
             
             # 广播回合和阶段更新
             emit('phase_updated', {
@@ -1390,6 +1378,98 @@ def handle_request_revealed_positions(data):
     # 只发送给请求者
     emit('revealed_positions', {'positions': positions}, to=player_id)
     return {'status': 'success'}
+
+@socketio.on('get_magic_temp_data')
+def get_magic_temp_data(data):
+    room_id = data.get('room_id')
+    player_id = data.get('player_id')
+    if not room_id or room_id not in rooms or not player_id or player_id not in rooms[room_id].players:
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+    room = rooms[room_id]
+    return {'status': 'success', 'data': room.magic_temp_data}
+
+@socketio.on('confirm_magic_target')
+def confirm_magic_target(data):
+    room_id = data.get('room_id')
+    player_id = data.get('player_id')
+    temp_data_id = data.get('temp_data_id')
+    target_data = data.get('target_data', {})
+    
+    if not room_id or room_id not in rooms or not player_id or player_id not in rooms[room_id].players:
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+    
+    room = rooms[room_id]
+    
+    if temp_data_id == 'taoyuan_choice':
+        # 处理桃园结义的选择
+        caster_choice = target_data['caster_choice']
+        opponent_choice = target_data['opponent_choice']
+        
+        # 分配卡牌
+        caster = room.players[player_id]
+        opponent_id = next(p for p in room.players if p != player_id)
+        opponent = room.players[opponent_id]
+        
+        if 'cards' not in room.magic_temp_data:
+            return {'status': 'error', 'message': '没有可分配的卡牌'}
+        
+        # 确保选择有效
+        if 0 <= caster_choice < len(room.magic_temp_data['cards']):
+            # 给自己分配卡牌
+            caster['magic_hand'].append(room.magic_temp_data['cards'][caster_choice])
+            
+            # 给对方分配卡牌（如果选择有效且不是同一张卡）
+            if opponent_choice >= 0 and opponent_choice < len(room.magic_temp_data['cards']) and opponent_choice != caster_choice:
+                opponent['magic_hand'].append(room.magic_temp_data['cards'][opponent_choice])
+            
+            # 剩余卡牌加入弃牌堆
+            for i, card in enumerate(room.magic_temp_data['cards']):
+                if i != caster_choice and (opponent_choice < 0 or i != opponent_choice):
+                    caster['magic_discard'].append(card)
+            
+            # 清除临时数据
+            room.magic_temp_data = {}
+            
+            # 通知双方手牌更新
+            emit('hand_updated', {
+                'hand': caster['magic_hand']
+            }, to=player_id)
+            
+            emit('hand_updated', {
+                'hand': opponent['magic_hand']
+            }, to=opponent_id)
+            
+            return {'status': 'success', 'message': '桃园结义选择完成'}
+        else:
+            return {'status': 'error', 'message': '无效的卡牌选择'}
+    
+    return {'status': 'error', 'message': '无效的临时数据ID'}
+
+@socketio.on('get_discard_pile')
+def get_discard_pile(data):
+    """获取玩家的弃牌堆数据"""
+    room_id = data.get('room_id')
+    player_id = data.get('player_id')
+    
+    if not room_id or room_id not in rooms or not player_id or player_id not in rooms[room_id].players:
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+    
+    room = rooms[room_id]
+    player = room.players[player_id]
+    
+    # 获取弃牌堆数据
+    discard_pile = player['magic_discard']
+    
+    # 过滤掉重复的非"失灵！"卡牌（场上仅存在一张）
+    unique_discard = []
+    seen = set()
+    for card in discard_pile:
+        if card['name'] == '失灵！' or card['name'] not in seen:
+            unique_discard.append(card)
+            if card['name'] != '失灵！':
+                seen.add(card['name'])
+    
+    return {'status': 'success', 'discard_pile': unique_discard}
 
 # 添加辅助函数
 

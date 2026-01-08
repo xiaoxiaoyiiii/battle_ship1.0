@@ -1007,3 +1007,384 @@ html.theme-dark .cell.ship {
         bottom: 120px;
     }
 }
+
+/* 桃园结义选择界面样式 - 提高优先级和美观度 */
+.taoyuan-choice-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.9); /* 更暗的背景，提高对比度 */
+    z-index: 9999; /* 最高优先级，确保在所有元素之上 */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    backdrop-filter: blur(5px); /* 添加背景模糊效果 */
+    animation: fadeIn 0.3s ease-in-out; /* 淡入动画 */
+}
+
+/* 淡入动画 */
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* 容器弹出动画 */
+@keyframes slideUp {
+    from { transform: translateY(50px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+.taoyuan-choice-container {
+    background: linear-gradient(135deg, var(--surface) 0%, rgba(255, 255, 255, 0.95) 100%);
+    border: 3px solid var(--primary);
+    border-radius: 15px; /* 更大的圆角 */
+    padding: 25px;
+    max-width: 900px; /* 更大的宽度 */
+    max-height: 90vh; /* 更高的高度 */
+    overflow-y: auto;
+    width: 95%;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3); /* 更明显的阴影 */
+    animation: slideUp 0.4s ease-out;
+    position: relative;
+}
+
+/* 滚动条样式 */
+.taoyuan-choice-container::-webkit-scrollbar {
+    width: 8px;
+}
+
+.taoyuan-choice-container::-webkit-scrollbar-track {
+    background: var(--glass);
+    border-radius: 4px;
+}
+
+.taoyuan-choice-container::-webkit-scrollbar-thumb {
+    background: var(--primary);
+    border-radius: 4px;
+}
+
+.taoyuan-choice-container::-webkit-scrollbar-thumb:hover {
+    background: var(--secondary);
+}
+
+.taoyuan-choice-header {
+    text-align: center;
+    margin-bottom: 25px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid var(--primary); /* 底部边框 */
+}
+
+.taoyuan-choice-header h3 {
+    color: var(--primary);
+    margin-bottom: 10px;
+    font-size: 1.8rem; /* 更大的标题 */
+    font-weight: bold;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.taoyuan-choice-message {
+    color: var(--muted);
+    font-size: 1rem;
+    margin: 0;
+}
+
+.taoyuan-choice-step {
+    margin-bottom: 25px;
+    text-align: center;
+    background-color: rgba(var(--primary-rgb), 0.1);
+    padding: 15px;
+    border-radius: 8px;
+    border-left: 4px solid var(--primary);
+}
+
+.taoyuan-step-title {
+    color: var(--primary);
+    font-size: 1.3rem;
+    margin: 0;
+    font-weight: 600;
+}
+
+.taoyuan-cards-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); /* 更大的卡牌宽度 */
+    gap: 20px; /* 更大的间距 */
+    margin-bottom: 25px;
+}
+
+.taoyuan-card-item {
+    background: linear-gradient(135deg, var(--glass) 0%, rgba(255, 255, 255, 0.8) 100%);
+    border: 2px solid var(--muted);
+    border-radius: 12px; /* 更大的圆角 */
+    padding: 15px;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); /* 更流畅的过渡 */
+    min-height: 140px; /* 更高的卡牌 */
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.taoyuan-card-item:hover {
+    border-color: var(--primary);
+    transform: translateY(-4px); /* 更大的上浮效果 */
+    box-shadow: 0 8px 20px rgba(var(--primary-rgb), 0.2); /* 发光效果 */
+    background: linear-gradient(135deg, rgba(var(--primary-rgb), 0.05) 0%, rgba(255, 255, 255, 0.9) 100%);
+}
+
+.taoyuan-card-item.selected {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+    color: white;
+    border-color: var(--primary);
+    transform: translateY(-4px);
+    box-shadow: 0 8px 25px rgba(var(--primary-rgb), 0.4); /* 更强的发光效果 */
+}
+
+.taoyuan-card-item.selected::before {
+    content: '✓';
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    font-size: 1.5rem;
+    font-weight: bold;
+    opacity: 0.8;
+}
+
+.taoyuan-card-item.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
+    filter: grayscale(50%); /* 灰度效果 */
+}
+
+/* 为卡牌添加定位上下文 */
+.taoyuan-card-item {
+    position: relative;
+}
+
+.taoyuan-card-name {
+    font-weight: bold;
+    font-size: 1.1rem; /* 更大的卡牌名称 */
+    margin-bottom: 8px;
+    color: var(--text);
+    z-index: 1;
+}
+
+.taoyuan-card-item.selected .taoyuan-card-name {
+    color: white;
+}
+
+.taoyuan-card-type {
+    font-size: 0.9rem;
+    opacity: 0.9;
+    margin-bottom: 10px;
+    color: var(--secondary);
+    font-weight: 500;
+}
+
+.taoyuan-card-item.selected .taoyuan-card-type {
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.taoyuan-card-desc {
+    font-size: 0.85rem;
+    opacity: 0.8;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 4; /* 显示更多行 */
+    -webkit-box-orient: vertical;
+    flex-grow: 1;
+    line-height: 1.4;
+}
+
+.taoyuan-card-item.selected .taoyuan-card-desc {
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.taoyuan-choice-footer {
+    text-align: center;
+    margin-top: 25px;
+    padding-top: 20px;
+    border-top: 2px solid var(--primary);
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+}
+
+.taoyuan-choice-footer .btn {
+    margin: 0;
+    padding: 12px 30px; /* 更大的按钮 */
+    font-size: 1.1rem;
+    font-weight: 600;
+    border-radius: 8px;
+    transition: all 0.3s ease;
+    min-width: 120px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.taoyuan-choice-footer .btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+}
+
+.taoyuan-choice-footer .btn-danger {
+    background-color: var(--danger);
+    border-color: var(--danger);
+}
+
+.taoyuan-choice-footer .btn-danger:hover {
+    background-color: #dc3545;
+    border-color: #dc3545;
+}
+
+/* 添加一个装饰性的边框 */
+.taoyuan-choice-container::before {
+    content: '';
+    position: absolute;
+    top: -3px;
+    left: -3px;
+    right: -3px;
+    bottom: -3px;
+    border: 3px solid transparent;
+    border-radius: 15px;
+    background: linear-gradient(45deg, var(--primary), var(--secondary), var(--accent), var(--primary)) border-box;
+    -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    z-index: -1;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .taoyuan-cards-container {
+        grid-template-columns: 1fr;
+        gap: 15px;
+    }
+    
+    .taoyuan-card-item {
+        min-height: 120px;
+    }
+    
+    .taoyuan-choice-header h3 {
+        font-size: 1.5rem;
+    }
+    
+    .taoyuan-step-title {
+        font-size: 1.1rem;
+    }
+    
+    .taoyuan-choice-container {
+        padding: 15px;
+        margin: 10px;
+    }
+}
+
+
+
+/* 弃牌堆弹窗样式 */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.8);
+    z-index: 10000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+.modal-content {
+    background-color: var(--surface);
+    border: 2px solid var(--primary);
+    border-radius: 10px;
+    padding: 20px;
+    max-width: 800px;
+    max-height: 80vh;
+    overflow-y: auto;
+    width: 90%;
+    position: relative;
+    animation: slideUp 0.4s ease-out;
+}
+
+.discard-pile-content {
+    width: 95%;
+    max-width: 900px;
+}
+
+.modal-close {
+    position: absolute;
+    top: 15px;
+    right: 20px;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: var(--muted);
+    transition: color 0.2s ease;
+}
+
+.modal-close:hover {
+    color: var(--danger);
+}
+
+.discard-pile-container {
+    margin-top: 20px;
+}
+
+#discard-pile-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 15px;
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 15px;
+    background-color: var(--glass);
+    border-radius: 8px;
+}
+
+.discard-pile-card {
+    background-color: rgba(255, 255, 255, 0.8);
+    border: 1px solid var(--muted);
+    border-radius: 8px;
+    padding: 12px;
+    transition: all 0.2s ease;
+    min-height: 100px;
+    display: flex;
+    flex-direction: column;
+}
+
+.discard-pile-card:hover {
+    border-color: var(--primary);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.discard-pile-card-name {
+    font-weight: bold;
+    font-size: 1rem;
+    margin-bottom: 5px;
+    color: var(--text);
+}
+
+.discard-pile-card-type {
+    font-size: 0.85rem;
+    opacity: 0.8;
+    margin-bottom: 5px;
+    color: var(--secondary);
+}
+
+.discard-pile-card-desc {
+    font-size: 0.8rem;
+    opacity: 0.7;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    margin: 0;
+}
+
+.hidden {
+    display: none !important;
+}

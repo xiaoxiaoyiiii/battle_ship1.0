@@ -343,6 +343,22 @@
                             <button id="chain-cancel" class="chain-cancel-btn">取消</button>
                         </div>
                     </div>
+                    
+                    <!-- 弃牌堆查看按钮 -->
+                    <div style="text-align: center; margin-top: 10px;">
+                        <button id="view-discard-pile" class="btn btn-secondary">查看弃牌堆</button>
+                    </div>
+                    
+                    <!-- 弃牌堆查看弹窗 -->
+                    <div id="discard-pile-modal" class="modal-overlay hidden">
+                        <div class="modal-content discard-pile-content">
+                            <span class="modal-close" id="discard-pile-modal-close">×</span>
+                            <h2>弃牌堆</h2>
+                            <div class="discard-pile-container">
+                                <div id="discard-pile-cards"></div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

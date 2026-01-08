@@ -413,7 +413,10 @@ button:hover {
 }
 
 .cell.ship {
-    background-color: #795548;
+    background-color: #795548 !important;
+}
+html.theme-dark .cell.ship {
+    background-color: #bfa074 !important;
 }
 
 .cell.hit {

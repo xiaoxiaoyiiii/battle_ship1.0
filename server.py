@@ -5,10 +5,12 @@ from flask_socketio import SocketIO, join_room, leave_room, emit
 import random
 import uuid
 import os
-import time
 from werkzeug.security import generate_password_hash, check_password_hash
 import db  # local database helpers for users and matches
 from flask import copy_current_request_context
+
+# 在线人数统计
+online_users = set()
 
 # 添加魔法卡牌数据定义（与客户端 magic_cards.js 保持一致）
 magic_cards = [
@@ -312,6 +314,11 @@ def api_leaderboard():
     rows = db.get_leaderboard(100)
     return jsonify(rows)
 
+@app.route('/api/online_count')
+def api_online_count():
+    """获取当前在线人数"""
+    return jsonify({'online_count': len(online_users)})
+
 @app.route('/lobby')
 def lobby():
     # SPA entry point for lobby view
@@ -450,6 +457,28 @@ def try_match():
     return {'status': 'ok'}
 
 # 局内聊天事件
+@socketio.on('connect')
+def handle_connect():
+    """处理客户端连接事件"""
+    sid = request.sid
+    online_users.add(sid)
+    print(f"Client connected: {sid}, online users: {len(online_users)}")
+    
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """处理客户端断开连接事件"""
+    sid = request.sid
+    if sid in online_users:
+        online_users.remove(sid)
+    print(f"Client disconnected: {sid}, online users: {len(online_users)}")
+    
+    # 清理相关数据
+    if hasattr(app, 'player_names') and sid in app.player_names:
+        del app.player_names[sid]
+    if hasattr(app, 'player_room') and sid in app.player_room:
+        del app.player_room[sid]
+
 @socketio.on('chat_message')
 def handle_chat_message(data):
     player_id = session.get('user_id', request.sid)
@@ -518,10 +547,30 @@ def handle_cancel_match(data):
 
 def check_match_queue():
     """检查匹配队列，尝试为等待的玩家创建房间"""
+    # 声明全局变量
+    global match_queue
+    
+    # 去重匹配队列，避免同一个玩家多次出现
+    unique_match_queue = []
+    seen_players = set()
+    for player in match_queue:
+        if player not in seen_players:
+            seen_players.add(player)
+            unique_match_queue.append(player)
+    
+    # 更新匹配队列，只保留唯一玩家
+    match_queue = unique_match_queue
+    
     while len(match_queue) >= 2:
         # 从队列中取出前两个玩家
         player1 = match_queue.pop(0)
         player2 = match_queue.pop(0)
+        
+        # 再次检查是否是同一个玩家，确保不会匹配到自己
+        if player1 == player2:
+            # 将玩家放回队列末尾
+            match_queue.append(player1)
+            continue
         
         # 创建新房间
         room_id = str(uuid.uuid4())[:6]

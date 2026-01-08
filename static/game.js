@@ -547,7 +547,6 @@ const registerSubmitBtn = document.getElementById('register-submit');
 const registerModalClose = document.getElementById('register-modal-close');
 
 // 游戏状态
-// 游戏状态
 window.gameState = {
     socket: null,
     playerId: null,
@@ -567,6 +566,14 @@ window.gameState = {
     fieldMagic: null,       // 场地魔法
     selectedCardIndex: -1   // 当前选中的卡牌索引，-1表示未选中
 }
+
+// 页面加载时初始化WebSocket连接，用于在线人数统计
+document.addEventListener('DOMContentLoaded', function() {
+    if (!window.gameState.socket) {
+        window.gameState.socket = io.connect('http://' + window.location.host);
+        setupSocketListeners();
+    }
+});
 
 // 全局消息提示辅助函数
 function showMessage(text, options = {}) {
@@ -859,9 +866,11 @@ function toggleCustomRoomOptions() {
 function findMatch() {
     gameState.playerName = playerNameInput.value || '玩家';
     
-    // 创建socket连接
-    gameState.socket = io.connect('http://' + window.location.host);
-    setupSocketListeners();
+    // 如果已经有socket连接，直接使用，不创建新连接
+    if (!gameState.socket) {
+        gameState.socket = io.connect('http://' + window.location.host);
+        setupSocketListeners();
+    }
     
     // 发送匹配请求
     gameState.socket.emit('find_match', {

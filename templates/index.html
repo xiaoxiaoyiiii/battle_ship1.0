@@ -12,7 +12,7 @@
     <div class="game-container">
         <div class="nav" id="game-nav">
             {% if username %}
-                <span>已登录: {{ username }}</span> | <a href="/logout">退出</a> | <a href="/lobby">大厅</a> | <a href="/leaderboard" class="hide-in-game">排行榜</a> | <a href="#" id="show-user-stats" class="hide-in-game">个人战绩</a> | <a href="#" id="show-profile" class="hide-in-game">个人信息</a>
+                <span>已登录: {{ username }}</span> | <a href="/logout">退出</a> | <a href="/leaderboard" class="hide-in-game">排行榜</a> | <a href="#" id="show-user-stats" class="hide-in-game">个人战绩</a> | <a href="#" id="show-profile" class="hide-in-game">个人信息</a>
             {% else %}
                 <a href="/login" class="hide-in-game">登录</a> | <a href="/register" class="hide-in-game">注册</a> | <a href="/leaderboard" class="hide-in-game">排行榜</a>
             {% endif %}
@@ -132,6 +132,11 @@
             <div id="match-status" class="hidden">
                 <p>正在寻找匹配...</p>
                 <button id="cancel-match">取消匹配</button>
+            </div>
+            
+            <!-- 在线人数显示 -->
+            <div id="online-count-container" style="margin-top: 20px; text-align: center; color: var(--muted); font-size: 0.9rem;">
+                当前在线人数: <span id="online-count">0</span>
             </div>
         </div>
         
@@ -419,5 +424,54 @@
     <script src="/static/game.js"></script>
     <!-- 后加载测试脚本 -->
     <script src="/static/test_magic.js"></script>
+    
+    <!-- 在线人数更新脚本 -->
+    <script>
+        // 更新在线人数的函数
+        function updateOnlineCount() {
+            fetch('/api/online_count')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    const onlineCountElement = document.getElementById('online-count');
+                    if (onlineCountElement) {
+                        // 添加数字滚动效果
+                        const currentCount = parseInt(onlineCountElement.textContent) || 0;
+                        const targetCount = data.online_count;
+                        const duration = 1000; // 1秒完成动画
+                        const startTime = performance.now();
+                        
+                        function animateCount(timestamp) {
+                            const elapsed = timestamp - startTime;
+                            const progress = Math.min(elapsed / duration, 1);
+                            const current = Math.floor(currentCount + (targetCount - currentCount) * progress);
+                            onlineCountElement.textContent = current;
+                            
+                            if (progress < 1) {
+                                requestAnimationFrame(animateCount);
+                            }
+                        }
+                        
+                        requestAnimationFrame(animateCount);
+                    }
+                })
+                .catch(error => {
+                    console.error('获取在线人数失败:', error);
+                });
+        }
+        
+        // 页面加载时更新一次
+        window.addEventListener('DOMContentLoaded', updateOnlineCount);
+        
+        // 每10秒自动更新一次
+        setInterval(updateOnlineCount, 10000);
+        
+        // 添加调试信息
+        console.log('在线人数更新脚本已加载');
+    </script>
 </body>
 </html>

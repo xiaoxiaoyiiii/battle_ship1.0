@@ -1,3 +1,41 @@
+/* 排行榜滚动显示 */
+#leaderboard-container {
+    max-height: 340px;
+    overflow-y: auto;
+    border: 1px solid var(--muted);
+    border-radius: 8px;
+    background: var(--glass);
+    margin-bottom: 12px;
+}
+
+#leaderboard-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+#leaderboard-table th, #leaderboard-table td {
+    padding: 8px 6px;
+    text-align: center;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+#leaderboard-table thead th {
+    position: sticky;
+    top: 0;
+    background: var(--surface);
+    z-index: 1;
+}
+
+#leaderboard-container::-webkit-scrollbar {
+    width: 8px;
+}
+#leaderboard-container::-webkit-scrollbar-thumb {
+    background: #b0b0b0;
+    border-radius: 4px;
+}
+#leaderboard-container::-webkit-scrollbar-track {
+    background: transparent;
+}
 :root {
     --surface: #f8fafc;
     --text: #111827;

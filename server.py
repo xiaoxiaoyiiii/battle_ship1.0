@@ -72,6 +72,21 @@ lobby_queue = []
 
 # 简单的 lobby 成员列表（用于显示）
 lobby_members = set()
+
+@app.route('/user_stats', methods=['GET'])
+def user_stats_view():
+    """查询个人战绩，支持通过 username 查询或当前登录用户。"""
+    username = request.args.get('username')
+    if username:
+        stats = db.get_user_stats_by_username(username)
+    else:
+        uid = session.get('user_id')
+        if not uid:
+            return jsonify({'error': '未登录'}), 401
+        stats = db.get_user_stats_by_id(uid)
+    if not stats:
+        return jsonify({'error': '用户不存在'}), 404
+    return jsonify({'stats': stats})
 class GameRoom:
     def __init__(self, room_id):
         self.id = room_id

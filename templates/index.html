@@ -12,11 +12,21 @@
     <div class="game-container">
         <div class="nav">
             {% if username %}
-                <span>已登录: {{ username }}</span> | <a href="/logout">退出</a> | <a href="/lobby">大厅</a> | <a href="/leaderboard" class="hide-in-game">排行榜</a>
+                <span>已登录: {{ username }}</span> | <a href="/logout">退出</a> | <a href="/lobby">大厅</a> | <a href="/leaderboard" class="hide-in-game">排行榜</a> | <a href="#" id="show-user-stats" class="hide-in-game">个人战绩</a>
             {% else %}
                 <a href="/login" class="hide-in-game">登录</a> | <a href="/register" class="hide-in-game">注册</a> | <a href="/leaderboard" class="hide-in-game">排行榜</a>
             {% endif %}
             <button id="theme-toggle" class="btn secondary" style="margin-left:12px;">切换主题</button>
+                <!-- 个人战绩模态弹窗 -->
+                <div id="user-stats-modal" class="modal-overlay hidden">
+                    <div class="modal-content">
+                        <span class="modal-close" id="user-stats-modal-close">×</span>
+                        <h2>个人战绩</h2>
+                        <div id="user-stats-content">
+                            <p>加载中...</p>
+                        </div>
+                    </div>
+                </div>
         </div>
 
         <script>

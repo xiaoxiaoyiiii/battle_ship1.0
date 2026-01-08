@@ -1382,12 +1382,6 @@ window.endBattlePhase = function() {
         return;
     }
     
-    // 检查攻击次数是否用完
-    if (parseInt(attacksRemaining.textContent) > 0) {
-        alert('还有尚未用完的攻击次数');
-        return;
-    }
-    
     gameState.socket.emit('enter_end_phase', {
         room_id: gameState.roomId,
         player_id: gameState.playerId

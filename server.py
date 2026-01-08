@@ -159,6 +159,31 @@ def handle_create_room(data):
     rooms[room_id] = GameRoom(room_id)
     return {'status': 'success', 'room_id': room_id}
 
+# 测试功能：添加所有魔法卡到手牌
+@socketio.on('test_add_all_magic_cards')
+def test_add_all_magic_cards(data):
+    room_id = data['room_id']
+    player_id = data['player_id']
+    
+    if room_id not in rooms or player_id not in rooms[room_id].players:
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+    
+    room = rooms[room_id]
+    
+    # 将所有魔法卡添加到玩家手牌
+    room.players[player_id]['magic_hand'] = magic_cards.copy()
+    
+    # 清空牌堆和弃牌堆
+    room.players[player_id]['magic_deck'] = []
+    room.players[player_id]['magic_discard'] = []
+    
+    # 通知客户端手牌更新
+    emit('hand_updated', {
+        'hand': room.players[player_id]['magic_hand']
+    }, room=player_id)
+    
+    return {'status': 'success', 'message': f'已添加 {len(magic_cards)} 张魔法卡到手牌'}
+
 
 @app.route('/')
 def index():
@@ -240,12 +265,12 @@ def handle_join_room(data):
     
     if room_id not in rooms:
         emit('error', {'message': '房间不存在'}, room=request.sid)
-        return
+        return {'status': 'error', 'message': '房间不存在'}
     
     room = rooms[room_id]
     if len(room.players) >= 2:
         emit('error', {'message': '房间已满'}, room=request.sid)
-        return
+        return {'status': 'error', 'message': '房间已满'}
     
     # 添加玩家到房间（key 为 user_id 或 sid）
     room.players[player_id] = {
@@ -278,6 +303,9 @@ def handle_join_room(data):
             opponent_id = next(p for p in room.players if p != pid)
             game_state_data['opponent_name'] = room.players[opponent_id]['name']
             emit('game_state', game_state_data, room=pid)
+    
+    # 返回响应给客户端，包含player_id
+    return {'status': 'success', 'player_id': player_id}
 
 
 # 大厅：加入匹配队列

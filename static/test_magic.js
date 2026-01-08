@@ -1,4 +1,4 @@
-// 魔法卡测试工具 - 直接获取所有魔法卡
+// 魔法卡测试工具 - 通过服务器获取所有魔法卡
 function testMagicSystem() {
     console.log("====== 魔法卡测试工具 ======");
     
@@ -9,23 +9,29 @@ function testMagicSystem() {
         return;
     }
     
-    console.log("正在获取所有魔法卡...");
+    // 添加房间和玩家ID检查
+    if (!gameState.roomId || !gameState.playerId) {
+        console.error("错误: 未加入房间，请先创建或加入房间");
+        alert("请先创建或加入房间后再运行测试");
+        return;
+    }
     
-    // 直接将所有魔法卡添加到手牌
-    gameState.hand = [...window.magicCards];
+    console.log("正在通过服务器获取所有魔法卡...");
     
-    // 清空牌堆和弃牌堆
-    gameState.deck = [];
-    gameState.discardPile = [];
-    
-    console.log(`已获取 ${gameState.hand.length} 张魔法卡`);
-    console.log("魔法卡已添加到手牌，可开始测试魔法卡效果");
-    
-    // 更新手牌UI
-    updateHandUI();
-    
-    // 显示提示信息
-    alert("已获取所有魔法卡，可开始测试魔法卡效果");
+    // 发送请求到服务器，让服务器添加所有魔法卡到手牌
+    gameState.socket.emit('test_add_all_magic_cards', {
+        room_id: gameState.roomId,
+        player_id: gameState.playerId
+    }, (response) => {
+        if (response.status === 'success') {
+            console.log(response.message);
+            console.log("魔法卡已添加到手牌，可开始测试魔法卡效果");
+            alert("已获取所有魔法卡，可开始测试魔法卡效果");
+        } else {
+            console.error(`错误: ${response.message}`);
+            alert(`获取魔法卡失败: ${response.message}`);
+        }
+    });
 }
 
 // 添加测试启动函数

@@ -6,13 +6,26 @@
     font-family: "Microsoft YaHei", "SimHei", "WenQuanYi Micro Hei", sans-serif;
 }
 
+:root {
+    --surface: #f8fafc;
+    --text: #111827;
+    --muted: #6b7280;
+    --primary: #1976d2;
+    --primary-600: #1565c0;
+    --danger: #e53935;
+    --success: #10b981;
+    --board-bg: #e6f4ff;
+    --cell-bg: #ffffff;
+    --glass: rgba(255,255,255,0.85);
+}
+
 body {
-    background-color: #f0f0f0;
+    background-color: var(--surface);
     display: flex;
     justify-content: center;
     align-items: center;
     min-height: 100vh;
-    color: #333;
+    color: var(--text);
 }
 
 .game-container {
@@ -66,17 +79,19 @@ input {
 button {
     padding: 0.5rem 1rem;
     font-size: 1rem;
-    background-color: #4CAF50;
+    background-color: var(--primary);
     color: white;
     border: none;
     border-radius: 5px;
     cursor: pointer;
-    transition: background-color 0.3s;
+    transition: background-color 0.18s ease, transform 0.12s ease;
 }
 
 button:hover {
-    background-color: #45a049;
+    background-color: var(--primary-600);
+    transform: translateY(-2px);
 }
+
 
 /* 棋盘样式 */
 .board-container {
@@ -377,6 +392,15 @@ button:hover {
     border-radius: 5px;
     text-align: center;
 }
+
+/* 排行榜样式 */
+#leaderboard-container { max-width: 720px; margin: 0 auto; }
+#leaderboard-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+#leaderboard-table thead th { text-align: left; padding: 10px; background: rgba(25,118,210,0.06); }
+#leaderboard-table tbody td { padding: 10px; border-bottom: 1px solid rgba(0,0,0,0.04); }
+#leaderboard-table tbody tr:nth-child(odd) { background: rgba(0,0,0,0.02); }
+#leaderboard-error { color: var(--danger); text-align: center; margin-top: 8px; }
+#leaderboard-screen .btn { margin-top: 6px; }
 
 .field-magic {
     padding: 8px 15px;

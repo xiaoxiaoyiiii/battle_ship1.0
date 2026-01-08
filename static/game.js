@@ -52,6 +52,12 @@ const gameLogs = document.getElementById('game-logs');
 const gameResult = document.getElementById('game-result');
 const playAgainBtn = document.getElementById('play-again');
 
+// 排行榜界面元素
+const leaderboardScreen = document.getElementById('leaderboard-screen');
+const backFromLeaderboardBtn = document.getElementById('back-to-main-from-leaderboard');
+const leaderboardTableBody = document.querySelector('#leaderboard-table tbody');
+const leaderboardError = document.getElementById('leaderboard-error');
+
 // 游戏状态
 // 游戏状态
 window.gameState = {
@@ -153,6 +159,7 @@ function bindEventListeners() {
     customJoinRoomBtn.addEventListener('click', () => customRoomIdInput.classList.remove('hidden'));
     customConfirmJoinBtn.addEventListener('click', customJoinRoom);
     backToMainBtn.addEventListener('click', () => {
+        history.pushState({}, '', '/');
         switchScreen(startScreen);
         // 隐藏所有可能显示的元素
         customRoomIdInput.classList.add('hidden');
@@ -167,12 +174,38 @@ function bindEventListeners() {
         choice.addEventListener('click', () => handleRPSChoice(choice.dataset.choice));
     });
     
+    // 排行榜返回按钮
+    if (backFromLeaderboardBtn) backFromLeaderboardBtn.addEventListener('click', () => {
+        history.pushState({}, '', '/');
+        switchScreen(startScreen);
+    });
+
     // 修复：结束战斗阶段按钮事件（修正ID匹配问题）
     document.getElementById('enter-end-phase').addEventListener('click', endBattlePhase);
     
     // 日志切换按钮
     toggleLogBtn.addEventListener('click', () => {
         logContainer.classList.toggle('collapsed');
+    });
+
+    // 全局监听 header 中的排行榜链接以便做 SPA 跳转（防止完整页面刷新）
+    document.addEventListener('click', (e) => {
+        const a = e.target.closest && e.target.closest('a');
+        if (a && a.getAttribute('href') === '/leaderboard') {
+            e.preventDefault();
+            history.pushState({}, '', '/leaderboard');
+            showLeaderboard();
+        }
+    });
+
+    // 监听浏览器后退/前进
+    window.addEventListener('popstate', () => {
+        if (window.location.pathname.startsWith('/leaderboard')) {
+            showLeaderboard();
+        } else {
+            // 默认回到首页
+            switchScreen(startScreen);
+        }
     });
 }
 
@@ -689,10 +722,50 @@ function setupSocketListeners() {
 
 // 切换屏幕
 function switchScreen(screen) {
-    [startScreen, customRoomScreen, shipPlacementScreen, rpsScreen, gameScreen, gameOverScreen].forEach(s => {
-        s.classList.remove('active');
+    const screens = [startScreen, customRoomScreen, shipPlacementScreen, rpsScreen, gameScreen, leaderboardScreen, gameOverScreen];
+    screens.forEach(s => { if (s) s.classList.remove('active'); });
+    if (screen) screen.classList.add('active');
+
+    // 隐藏或显示在局内不应显示的导航项（登录/注册/排行榜）
+    const hideEls = document.querySelectorAll('.hide-in-game');
+    const inRoomScreens = ['ship-placement-screen','rps-screen','game-screen','custom-room-screen','game-over-screen'];
+    const shouldHide = screen && inRoomScreens.includes(screen.id);
+    hideEls.forEach(el => { el.style.display = shouldHide ? 'none' : ''; });
+}
+
+// 展示并加载排行榜
+function showLeaderboard() {
+    switchScreen(leaderboardScreen);
+    fetchLeaderboard();
+}
+
+function fetchLeaderboard() {
+    if (!leaderboardTableBody || !leaderboardError) return;
+    leaderboardTableBody.innerHTML = '';
+    leaderboardError.classList.add('hidden');
+    const loadingRow = document.createElement('tr');
+    loadingRow.innerHTML = '<td colspan="6" style="text-align:center; padding:12px">加载中...</td>';
+    leaderboardTableBody.appendChild(loadingRow);
+
+    fetch('/api/leaderboard').then(resp => {
+        if (!resp.ok) throw new Error('网络错误');
+        return resp.json();
+    }).then(data => {
+        leaderboardTableBody.innerHTML = '';
+        data.forEach((row, idx) => {
+            const tr = document.createElement('tr');
+            const wins = row.wins || 0;
+            const losses = row.losses || 0;
+            const total = wins + losses;
+            const winrate = total ? Math.round((wins/total) * 100) + '%' : '-';
+            tr.innerHTML = `<td>${idx+1}</td><td>${row.username}</td><td>${wins}</td><td>${losses}</td><td>${winrate}</td><td>${row.longest_streak || 0}</td>`;
+            leaderboardTableBody.appendChild(tr);
+        });
+    }).catch(err => {
+        leaderboardTableBody.innerHTML = '';
+        leaderboardError.classList.remove('hidden');
+        leaderboardError.textContent = '无法加载排行榜：' + err.message;
     });
-    screen.classList.add('active');
 }
 
 // 初始化棋盘
@@ -2209,6 +2282,11 @@ function init() {
     if (window.__USERNAME) {
         gameState.playerName = window.__USERNAME || gameState.playerName;
         if (playerNameInput) playerNameInput.value = gameState.playerName;
+    }
+
+    // SPA: 基于路径显示对应视图
+    if (window.location.pathname.startsWith('/leaderboard')) {
+        showLeaderboard();
     }
 
     // 检查 URL 是否包含 room 参数，如果有则在连接后自动加入

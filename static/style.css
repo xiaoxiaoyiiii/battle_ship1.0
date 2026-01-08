@@ -1499,6 +1499,75 @@ body.cool-effects-enabled .cell.cool-flash {
     margin: 0;
 }
 
+/* 极限增援倒计时样式 */
+.reinforcement-countdown {
+    background-color: rgba(220, 53, 69, 0.95);
+    color: white;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 15px;
+    text-align: center;
+    box-shadow: 0 4px 15px rgba(220, 53, 69, 0.3);
+    animation: pulse 2s infinite;
+}
+
+.reinforcement-countdown h3 {
+    margin: 0 0 10px 0;
+    font-size: 1.2em;
+    font-weight: bold;
+}
+
+.countdown-text {
+    font-size: 1.5em;
+    font-weight: bold;
+}
+
+.reinforcement-countdown.hidden {
+    display: none;
+}
+
+@keyframes pulse {
+    0% {
+        box-shadow: 0 4px 15px rgba(220, 53, 69, 0.3);
+    }
+    50% {
+        box-shadow: 0 4px 25px rgba(220, 53, 69, 0.6);
+    }
+    100% {
+        box-shadow: 0 4px 15px rgba(220, 53, 69, 0.3);
+    }
+}
+
 .hidden {
     display: none !important;
+}
+
+/* 游戏结束按钮样式 */
+.game-over-buttons {
+    display: flex;
+    gap: 20px;
+    justify-content: center;
+    margin-top: 30px;
+}
+
+#return-to-menu {
+    background-color: var(--secondary);
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    font-size: 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+#return-to-menu:hover {
+    background-color: var(--secondary-dark);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+#return-to-menu:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }

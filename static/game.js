@@ -493,11 +493,28 @@ function setChatVisible(visible) {
 setChatVisible(false);
 
 // 切换到游戏主界面时初始化聊天
-const origSwitchScreen = window.switchScreen;
+const origSwitchScreen = window.switchScreen || function(screen) {
+    // 默认实现，如果window.switchScreen未定义
+    const screens = [startScreen, customRoomScreen, shipPlacementScreen, rpsScreen, gameScreen, leaderboardScreen, lobbyScreen, gameOverScreen];
+    screens.forEach(s => { if (s) s.classList.remove('active'); });
+    if (screen) screen.classList.add('active');
+};
 window.switchScreen = function(screen) {
-    origSwitchScreen(screen);
-    setChatVisible(screen === 'game-screen');
-    if (screen === 'game-screen') {
+    // 处理DOM元素或字符串参数
+    let screenElement = screen;
+    if (typeof screen === 'string') {
+        // 如果是字符串，根据ID获取DOM元素
+        screenElement = document.getElementById(screen);
+    }
+    
+    // 调用原始switchScreen函数
+    origSwitchScreen(screenElement);
+    
+    // 设置聊天可见性
+    const screenId = screenElement ? screenElement.id : '';
+    setChatVisible(screenId === 'game-screen');
+    
+    if (screenId === 'game-screen') {
         initInGameChatSocket();
     }
 }
@@ -518,6 +535,7 @@ const gameLogs = document.getElementById('game-logs');
 // 游戏结束界面元素
 const gameResult = document.getElementById('game-result');
 const playAgainBtn = document.getElementById('play-again');
+const returnToMenuBtn = document.getElementById('return-to-menu'); // 返回主菜单按钮
 
 // 排行榜界面元素
 const leaderboardScreen = document.getElementById('leaderboard-screen');
@@ -726,6 +744,9 @@ function bindEventListeners() {
     });
     cancelMatchBtn.addEventListener('click', cancelMatch);
     playAgainBtn.addEventListener('click', resetGame);
+    
+    // 返回主菜单按钮事件处理
+    returnToMenuBtn.addEventListener('click', resetGame);
 
     // 自定义房间游戏界面
     customCreateRoomBtn.addEventListener('click', customCreateRoom);
@@ -1231,6 +1252,26 @@ function setupSocketListeners() {
         gameState.currentPhase = data.current_phase;
         gameState.currentAttacker = data.current_attacker;
         updatePhaseUI();
+    });
+    
+    // 极限增援相关事件处理
+    socket.on('reinforcement_activated', (data) => {
+        // 显示极限增援倒计时
+        const countdownElement = document.getElementById('reinforcement-countdown');
+        const remainingElement = document.getElementById('reinforcement-remaining');
+        
+        if (countdownElement && remainingElement) {
+            remainingElement.textContent = data.remaining_turns;
+            countdownElement.classList.remove('hidden');
+        }
+    });
+    
+    socket.on('reinforcement_turn_updated', (data) => {
+        // 更新极限增援剩余回合
+        const remainingElement = document.getElementById('reinforcement-remaining');
+        if (remainingElement) {
+            remainingElement.textContent = data.remaining_turns;
+        }
     });
 
     // 添加场地魔法更新监听
@@ -2145,6 +2186,13 @@ async function handleRegisterSubmit() {
 
 // 重置游戏
 function resetGame() {
+    // 断开socket连接（如果存在）
+    if (gameState.socket) {
+        gameState.socket.disconnect();
+        gameState.socket = null;
+    }
+    
+    // 重置游戏状态
     gameState = {
         socket: null,
         playerId: null,
@@ -2154,9 +2202,17 @@ function resetGame() {
         placedShips: 0,
         isMyTurn: false,
         myAttacks: [],
-        opponentAttacks: []
+        opponentAttacks: [],
+        currentPhase: 'preparation',
+        currentAttacker: null,
+        hand: [],
+        opponentHand: [],
+        chain: [],
+        fieldMagic: null
     };
-    switchScreen(startScreen);
+    
+    // 直接重新加载页面，确保完全重置
+    window.location.href = '/';
 }
 
 // 新增：结束战斗阶段函数

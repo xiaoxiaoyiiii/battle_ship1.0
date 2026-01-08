@@ -282,6 +282,12 @@
                         </div>
                     </div>
                     <div class="game-info">
+                        <!-- 极限增援倒计回合显示 -->
+                        <div id="reinforcement-countdown" class="reinforcement-countdown hidden">
+                            <h3>极限增援结算倒计时</h3>
+                            <div class="countdown-text">剩余 <span id="reinforcement-remaining">0</span> 回合后将结算！</div>
+                        </div>
+                        
                         <div style="display: flex; justify-content: space-between; align-items: center;">
                             <h2>第<span id="game-round">1</span>回合</h2>
                             <button id="surrender-btn" class="surrender-btn">投降</button>
@@ -412,7 +418,10 @@
         <!-- 游戏结束界面 -->
         <div id="game-over-screen" class="screen">
             <h2 id="game-result"></h2>
-            <button id="play-again">再来一局</button>
+            <div class="game-over-buttons">
+                <button id="play-again">再来一局</button>
+                <button id="return-to-menu">返回主菜单</button>
+            </div>
         </div>
     </div>
 

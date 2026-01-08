@@ -176,40 +176,60 @@ class GameRoom:
         self.pending_magic = None  # 待处理的魔法卡（等待对方是否使用失灵）
         self.magic_temp_data = {}  # 魔法卡临时数据
         self.magic_discard = []  # 全局弃牌堆（所有玩家使用过的魔法卡）
+        self.magic_deck = []  # 全局共享魔法卡堆
+        self.used_cards = []  # 已使用的卡牌列表，用于避免重复
         # 连锁相关状态
         self.chain = []  # 连锁栈
         self.chain_waiting = False  # 是否正在等待玩家回应连锁
         self.chain_timer = None  # 连锁回应计时器
 
     def init_player_magic(self, player_id, magic_cards):
-        """初始化玩家魔法卡牌堆"""
-        # 复制并洗牌
-        deck = magic_cards.copy()
-        random.shuffle(deck)
-        self.players[player_id]['magic_deck'] = deck
+        """初始化玩家魔法卡相关状态"""
+        # 初始化玩家的魔法卡状态
         self.players[player_id]['magic_hand'] = []  # 初始手牌为空
-        self.players[player_id]['magic_discard'] = []
-        # 移除初始抽卡逻辑
+        self.players[player_id]['magic_discard'] = []  # 玩家的魔法卡弃牌堆
+        
+        # 仅在第一次调用时初始化全局共享魔法卡堆
+        if not self.magic_deck:
+            # 复制并洗牌创建全局共享卡堆
+            self.magic_deck = magic_cards.copy()
+            random.shuffle(self.magic_deck)
         # ... existing code ...
 
     def draw_card(self, player_id):
-        """抽卡逻辑，返回抽到的卡牌"""
+        """抽卡逻辑，返回抽到的卡牌，使用全局共享卡堆"""
         # 检查是否有禁止抽卡效果
         effect_flags = self.players[player_id].get('effect_flags', {})
         if effect_flags.get('no_draw'):
             return None
             
         # 牌堆为空，无法抽卡
-        if not self.players[player_id]['magic_deck']:
+        if not self.magic_deck:
             return None
         
-        # 从牌堆顶部抽一张卡
-        card = self.players[player_id]['magic_deck'].pop(0)
+        # 从全局共享牌堆顶部抽一张卡
+        card = self.magic_deck.pop(0)
+        
+        # 检查该卡牌是否已经被使用过（除了"失灵！"）
+        if card['name'] != '失灵！':
+            # 检查是否已在使用卡列表中
+            card_key = (card['name'], card['speed'])
+            if card_key in self.used_cards:
+                # 卡牌已被使用，放入弃牌堆
+                self.magic_discard.append(card)
+                return None
+            # 将卡牌标记为已使用
+            self.used_cards.append(card_key)
         
         # 检查手牌中是否已有相同卡牌（除了"失灵！"）
         if card['name'] != '失灵！' and any(c['name'] == card['name'] and c['speed'] == card['speed'] for c in self.players[player_id]['magic_hand']):
             # 避免重复卡牌，放入弃牌堆
             self.magic_discard.append(card)
+            # 如果是"失灵！"以外的卡牌，从已使用列表中移除
+            if card['name'] != '失灵！':
+                card_key = (card['name'], card['speed'])
+                if card_key in self.used_cards:
+                    self.used_cards.remove(card_key)
             return None
         
         # 将卡牌加入手牌
@@ -1076,6 +1096,52 @@ def end_turn(data):
         if next_index == 0:
             # 进入新回合，重置状态
             room.round += 1
+            
+            # 更新并检查极限增援效果
+            if 'reinforcement_check' in room.game_effects:
+                check = room.game_effects['reinforcement_check']
+                # 更新剩余回合计数
+                check['remaining_turns'] -= 1
+                remaining_turns = check['remaining_turns']
+                
+                # 通知客户端剩余回合更新
+                emit('reinforcement_turn_updated', {
+                    'remaining_turns': remaining_turns
+                }, room=room_id)
+                
+                # 当剩余回合归0时，执行极限增援结算
+                if remaining_turns <= 0:
+                    # 执行极限增援效果：船数少的一方获胜
+                    player1_id = list(room.players.keys())[0]
+                    player2_id = list(room.players.keys())[1]
+                    player1_ships = len(room.players[player1_id]['ships'])
+                    player2_ships = len(room.players[player2_id]['ships'])
+                    
+                    if player1_ships < player2_ships:
+                        winner = player1_id
+                    elif player2_ships < player1_ships:
+                        winner = player2_id
+                    else:
+                        # 船数相同，随机选择获胜者或继续游戏
+                        # 按照需求，当倒计回合归0时直接判定，所以即使船数相同也要选择
+                        import random
+                        winner = random.choice([player1_id, player2_id])
+                    
+                    # 直接结束游戏
+                    room.state = 'game_over'
+                    room.winner = winner
+                    
+                    # 广播游戏结束
+                    emit('game_state', {
+                        'state': 'game_over',
+                        'winner': winner,
+                        'reason': '极限增援生效，船数少的一方等到了增援并获胜了！'
+                    }, room=room_id)
+                    return {'status': 'success', 'game_over': True, 'winner': winner}
+                
+                # 更新game_effects中的剩余回合
+                room.game_effects['reinforcement_check'] = check
+            
             room.state = 'rock_paper_scissors'
             room.rps_choices = {}
             
@@ -1083,7 +1149,7 @@ def end_turn(data):
             for p_id in room.players:
                 if 'effect_flags' in room.players[p_id]:
                     # 保留场地魔法等永久效果，清除所有临时效果（包括no_draw）
-                    permanent_flags = ['holy_heart', 'reinforcement_check']  # 永久效果白名单
+                    permanent_flags = ['holy_heart']  # 永久效果白名单（reinforcement_check不是玩家效果）
                     room.players[p_id]['effect_flags'] = {k: v for k, v in room.players[p_id]['effect_flags'].items() if k in permanent_flags}
             
             # 广播进入猜拳阶段
@@ -1647,7 +1713,7 @@ def apply_magic_effect(room, caster_id, card, target_data):
                 result['message'] = '无法抽取卡牌'
 
         elif card['name'] == '无中生有':
-            # 抽两张牌，本回合双方无法获得魔法卡
+            # 抽两张牌，本回合双方无法获得魔法卡，已修复
             card1 = room.draw_card(caster_id)
             card2 = room.draw_card(caster_id)
             # 设置禁止抽卡标记
@@ -1659,16 +1725,20 @@ def apply_magic_effect(room, caster_id, card, target_data):
 
         elif card['name'] == '极限增援':
             # 两个大回合后，船少的一方获胜
-            room.game_effects = room.get('game_effects', {})
+            total_turns = 2
             room.game_effects['reinforcement_check'] = {
-                'turn': room.round + 2,
-                'caster': caster_id
+                'turn': room.round + total_turns,
+                'caster': caster_id,
+                'remaining_turns': total_turns  # 添加剩余回合计数
             }
-            result['message'] = '两个大回合后船少的一方获胜'
+            # 通知双方客户端，极限增援已激活并显示剩余回合
+            emit('reinforcement_activated', {
+                'remaining_turns': total_turns
+            }, room=room_id)
+            result['message'] = '极限增援已激活，剩余2回合后结算'
 
         elif card['name'] == '无暇圣心':
             # 两个大回合后如果双方都没造成伤害，施法者获胜
-            room.game_effects = room.get('game_effects', {})
             room.game_effects['holy_heart'] = {
                 'turn': room.round + 2,
                 'caster': caster_id,
@@ -1893,7 +1963,6 @@ def apply_magic_effect(room, caster_id, card, target_data):
                 result['message'] = '目标区域内1艘战舰被击沉'
             else:
                 # 记录暂时除外的战舰，下一回合回归
-                room.game_effects = room.get('game_effects', {})
                 room.game_effects['excluded_ships'] = {
                     'ships': excluded_ships,
                     'player': opponent_id,

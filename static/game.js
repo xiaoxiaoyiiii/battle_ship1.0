@@ -719,7 +719,16 @@ function setupSocketListeners() {
                 // 显示导航栏
                 if (gameNav) gameNav.style.display = 'block';
                 gameOverScreen.classList.add('active');
-                gameResult.textContent = data.winner === gameState.playerId ? '恭喜你获胜了！' : '很遗憾，你输了。';
+                // 根据胜利原因显示不同的提示
+                if (data.winner === gameState.playerId) {
+                    if (data.reason === 'surrender') {
+                        gameResult.textContent = '对方已投降，你获胜了！';
+                    } else {
+                        gameResult.textContent = '恭喜你获胜了！';
+                    }
+                } else {
+                    gameResult.textContent = '很遗憾，你输了。';
+                }
                 break;
             default:
                 console.error('Unknown game state:', data.state);
@@ -773,7 +782,16 @@ function setupSocketListeners() {
     socket.on('game_over', (data) => {
         console.log('Game over:', data);
         switchScreen(gameOverScreen);
-        gameResult.textContent = data.winner === gameState.playerId ? '恭喜你获胜了！' : '很遗憾，你输了。';
+        // 根据胜利原因显示不同的提示
+        if (data.winner === gameState.playerId) {
+            if (data.reason === 'surrender') {
+                gameResult.textContent = '对方已投降，你获胜了！';
+            } else {
+                gameResult.textContent = '恭喜你获胜了！';
+            }
+        } else {
+            gameResult.textContent = '很遗憾，你输了。';
+        }
     });
 
     // 添加阶段更新监听
@@ -1005,7 +1023,7 @@ function switchScreen(screen) {
 
     // 隐藏或显示在局内不应显示的导航项（登录/注册/排行榜）
     const hideEls = document.querySelectorAll('.hide-in-game');
-    const inRoomScreens = ['ship-placement-screen','rps-screen','game-screen','custom-room-screen','game-over-screen'];
+    const inRoomScreens = ['ship-placement-screen','rps-screen','game-screen','custom-room-screen'];
     const shouldHide = screen && inRoomScreens.includes(screen.id);
     hideEls.forEach(el => { el.style.display = shouldHide ? 'none' : ''; });
 }

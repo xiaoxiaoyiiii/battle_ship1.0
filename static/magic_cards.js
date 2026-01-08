@@ -47,4 +47,3 @@ window.magicCards = [
     { name: "神机妙算", speed: 3, type: "普通", description: "只可在对方的准备阶段以及自己的所有阶段使用。宣言一个数目x，如果对方的结束阶段结束之后自己的船数减少了x，那么那些原本会减少的船不会减少并在原位置或者对方没有打过的位置重新部署。" },
     { name: "灵气复苏", speed: 1, type: "普通", description: "调整双方的船数都变为x，x为不大于双方最大船数的任意非零整数。调整时只可以在自己原本有战舰的地方进行调整。"}
 ];
-// 删除此行：export default magicCards;

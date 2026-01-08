@@ -213,7 +213,10 @@
                 <div id="player-board" class="board"></div>
             </div>
             <p id="ships-placed">已放置: <span id="placed-count">0</span>/6</p>
-            <button id="confirm-ships" class="hidden">确认放置</button>
+            <div style="display: flex; gap: 10px; margin-top: 15px;">
+                <button id="random-ships" class="btn">随机摆放</button>
+                <button id="confirm-ships" class="hidden btn">确认放置</button>
+            </div>
         </div>
 
         <!-- 猜拳界面 -->
@@ -331,6 +334,22 @@
                         <div class="board-wrapper">
                             <h3>对手的棋盘</h3>
                             <div id="opponent-board" class="board"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- 连锁提示区域 -->
+                    <div id="chain-prompt-container" class="chain-prompt-container hidden">
+                        <div class="chain-prompt">
+                            <h3>连锁提示</h3>
+                            <div class="chain-countdown">
+                                <span class="countdown-text">剩余时间: </span>
+                                <span id="chain-timer" class="countdown-number">10</span>
+                                <span class="countdown-text">秒</span>
+                            </div>
+                            <div id="chain-cards-list" class="chain-cards-list">
+                                <!-- 速阶3卡牌列表将动态添加这里 -->
+                            </div>
+                            <button id="chain-cancel" class="chain-cancel-btn">取消</button>
                         </div>
                     </div>
                 </div>

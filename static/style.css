@@ -978,9 +978,146 @@ body.cool-effects-enabled .cell.cool-flash {
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
 }
 
-/* 揭示格子样式（用于雷达/探测类效果） */
+/* 鎻ず鏍煎瓙鏍峰紡锛堢敤浜庨浄杈?鎺㈡祴绫绘晥鏋滐級 */
 .cell.revealed {
     box-shadow: 0 0 10px 3px rgba(255, 235, 59, 0.45) inset;
     border-color: #FFD54F;
     transition: box-shadow 0.3s;
+}
+
+/* 连锁提示样式 */
+.chain-prompt-container {
+    position: fixed;
+    bottom: 150px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    pointer-events: none;
+}
+
+.chain-prompt {
+    background-color: var(--surface);
+    border: 2px solid var(--primary);
+    border-radius: 10px;
+    padding: 15px 20px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+    min-width: 400px;
+    text-align: center;
+    pointer-events: auto;
+    max-height: 300px;
+    overflow: hidden;
+}
+
+.chain-prompt h3 {
+    margin: 0 0 15px 0;
+    color: var(--primary);
+    font-size: 1.2rem;
+}
+
+.chain-countdown {
+    margin-bottom: 15px;
+    font-size: 1.1rem;
+    font-weight: bold;
+}
+
+.countdown-number {
+    color: var(--danger);
+    font-size: 1.3rem;
+    margin: 0 5px;
+}
+
+.chain-cards-list,
+.chain-speed3-cards {
+    margin-bottom: 15px;
+    max-height: 120px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 10px;
+    background-color: var(--glass);
+    border-radius: 8px;
+    text-align: left;
+}
+
+.chain-speed3-cards h4 {
+    margin: 0 0 10px 0;
+    font-size: 1rem;
+    color: var(--primary);
+}
+
+.chain-card-item {
+    background-color: rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--muted);
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 60px;
+}
+
+.chain-card-item:hover {
+    background-color: var(--primary);
+    color: white;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.chain-card-name {
+    font-weight: bold;
+    margin-bottom: 3px;
+    font-size: 0.95rem;
+}
+
+.chain-card-desc {
+    font-size: 0.85rem;
+    opacity: 0.8;
+    margin-bottom: 5px;
+}
+
+.chain-card-speed {
+    font-size: 0.8rem;
+    opacity: 0.7;
+    align-self: flex-end;
+}
+
+.chain-options {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 15px;
+    pointer-events: auto;
+}
+
+.chain-cancel-btn {
+    background-color: var(--muted);
+    color: white;
+    border: none;
+    padding: 8px 20px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: background-color 0.2s ease;
+}
+
+.chain-cancel-btn:hover {
+    background-color: #888;
+}
+
+.chain-prompt-container.hidden {
+    display: none;
+}
+
+/* 连锁UI响应式设计 */
+@media (max-width: 768px) {
+    .chain-prompt {
+        min-width: 90%;
+        padding: 10px 15px;
+    }
+    
+    .chain-prompt-container {
+        bottom: 120px;
+    }
 }

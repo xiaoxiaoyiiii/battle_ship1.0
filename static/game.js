@@ -7,6 +7,9 @@ const rpsScreen = document.getElementById('rps-screen');
 const gameScreen = document.getElementById('game-screen');
 const gameOverScreen = document.getElementById('game-over-screen');
 
+// 导航栏元素
+const gameNav = document.getElementById('game-nav');
+
 // 匹配成功界面元素
 const opponentInfo = document.getElementById('opponent-info');
 const countdownTimer = document.getElementById('countdown-timer');
@@ -447,6 +450,8 @@ function setupSocketListeners() {
             case 'waiting':
                 // 只有当游戏是从自定义房间创建或加入时，才显示自定义房间游戏界面
                 // 匹配游戏不应该显示这个界面
+                // 显示导航栏
+                if (gameNav) gameNav.style.display = 'block';
                 break;
             case 'placing_ships':
                 console.log('Switching to ship placement screen');
@@ -456,6 +461,9 @@ function setupSocketListeners() {
                     gameState.playerId = gameState.socket.id;
                     console.log('设置playerId为:', gameState.playerId);
                 }
+                
+                // 隐藏导航栏
+                if (gameNav) gameNav.style.display = 'none';
                 
                 // 显示匹配成功界面
                 matchSuccessScreen.classList.add('active');
@@ -503,12 +511,16 @@ function setupSocketListeners() {
                 }, 1000);
                 break;
             case 'rock_paper_scissors':
+                // 隐藏导航栏
+                if (gameNav) gameNav.style.display = 'none';
                 rpsScreen.classList.add('active');
                 rpsRound.textContent = data.round || 1;
                 rpsResult.classList.add('hidden');
                 break;
             // 在setupSocketListeners的game_state事件处理中添加
             case 'attacking':
+                // 隐藏导航栏
+                if (gameNav) gameNav.style.display = 'none';
                 gameScreen.classList.add('active');
                 gameRound.textContent = data.round || 1;
                 gameState.currentPhase = data.current_phase || 'preparation';
@@ -518,6 +530,8 @@ function setupSocketListeners() {
                 updatePhaseUI(); // 确保调用阶段UI更新
                 break;
             case 'game_over':
+                // 显示导航栏
+                if (gameNav) gameNav.style.display = 'block';
                 gameOverScreen.classList.add('active');
                 gameResult.textContent = data.winner === gameState.playerId ? '恭喜你获胜了！' : '很遗憾，你输了。';
                 break;
@@ -526,6 +540,8 @@ function setupSocketListeners() {
                 roomInfo.classList.remove('hidden');
                 currentRoomId.textContent = gameState.roomId;
                 roomInfo.querySelector('.waiting-message').textContent = '未知游戏状态，请刷新页面';
+                // 显示导航栏
+                if (gameNav) gameNav.style.display = 'block';
         }
     });
 

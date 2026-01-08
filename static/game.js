@@ -1,3 +1,10 @@
+// 对手信息相关元素
+const opponentUsernameInfo = document.getElementById('opponent-username-info');
+const myUsernameInfo = document.getElementById('my-username-info');
+const showOpponentStatsBtn = document.getElementById('show-opponent-stats');
+const opponentStatsModal = document.getElementById('opponent-stats-modal');
+const opponentStatsModalClose = document.getElementById('opponent-stats-modal-close');
+const opponentStatsContent = document.getElementById('opponent-stats-content');
 // 个人战绩相关元素
 const showUserStatsBtn = document.getElementById('show-user-stats');
 const userStatsModal = document.getElementById('user-stats-modal');
@@ -182,6 +189,17 @@ function addGameLog(logText) {
 
 // 绑定事件监听器
 function bindEventListeners() {
+            // 对手战绩按钮事件
+            if (showOpponentStatsBtn) showOpponentStatsBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                showOpponentStats();
+            });
+            if (opponentStatsModalClose) opponentStatsModalClose.addEventListener('click', () => {
+                opponentStatsModal.classList.add('hidden');
+            });
+            if (opponentStatsModal) opponentStatsModal.addEventListener('click', (e) => {
+                if (e.target === opponentStatsModal) opponentStatsModal.classList.add('hidden');
+            });
         // 个人战绩按钮事件
         if (showUserStatsBtn) showUserStatsBtn.addEventListener('click', (e) => {
             e.preventDefault();
@@ -503,9 +521,44 @@ function setupSocketListeners() {
         // 保存玩家名称和对手名称
         if (data.player_name) {
             gameState.playerName = data.player_name;
+            if (myUsernameInfo) myUsernameInfo.textContent = data.player_name;
         }
         if (data.opponent_name) {
             gameState.opponentName = data.opponent_name;
+            if (opponentUsernameInfo) {
+                opponentUsernameInfo.textContent = data.opponent_name;
+                showOpponentStatsBtn && (showOpponentStatsBtn.style.display = 'inline-block');
+            }
+        } else {
+            if (opponentUsernameInfo) opponentUsernameInfo.textContent = '';
+            showOpponentStatsBtn && (showOpponentStatsBtn.style.display = 'none');
+        }
+        // 显示对手战绩弹窗并请求数据
+        function showOpponentStats() {
+            if (!opponentStatsModal || !opponentStatsContent || !gameState.opponentName) return;
+            opponentStatsModal.classList.remove('hidden');
+            opponentStatsContent.innerHTML = '<p>加载中...</p>';
+            fetch('/user_stats?username=' + encodeURIComponent(gameState.opponentName)).then(resp => {
+                if (!resp.ok) throw new Error('未找到对手或未登录');
+                return resp.json();
+            }).then(data => {
+                if (data.stats) {
+                    const s = data.stats;
+                    opponentStatsContent.innerHTML = `
+                        <table class="user-stats-table">
+                            <tr><td>用户名</td><td>${s.username}</td></tr>
+                            <tr><td>胜场</td><td>${s.wins}</td></tr>
+                            <tr><td>负场</td><td>${s.losses}</td></tr>
+                            <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>
+                            <tr><td>最长连胜</td><td>${s.longest_streak}</td></tr>
+                        </table>
+                    `;
+                } else {
+                    opponentStatsContent.innerHTML = '<p>未找到对手战绩数据</p>';
+                }
+            }).catch(err => {
+                opponentStatsContent.innerHTML = `<p style="color:red;">${err.message}</p>`;
+            });
         }
         
         switch (data.state) {

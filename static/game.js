@@ -1,3 +1,47 @@
+// 设置相关元素
+const settingsBtn = document.getElementById('settings-btn');
+const settingsModal = document.getElementById('settings-modal');
+const settingsModalClose = document.getElementById('settings-modal-close');
+const primaryColorPicker = document.getElementById('primary-color-picker');
+const settingsSaveBtn = document.getElementById('settings-save-btn');
+
+// 设置弹窗逻辑
+if (settingsBtn && settingsModal && settingsModalClose) {
+    settingsBtn.onclick = () => {
+        // 读取当前主色
+        const cur = localStorage.getItem('battleship_primary_color') || getComputedStyle(document.documentElement).getPropertyValue('--primary') || '#1976d2';
+        if (primaryColorPicker) primaryColorPicker.value = cur.trim().replace(/^#|^rgb\((.+)\)$/g, m => m.startsWith('#') ? m : '#1976d2');
+        settingsModal.classList.remove('hidden');
+    };
+    settingsModalClose.onclick = () => settingsModal.classList.add('hidden');
+    settingsModal.onclick = (e) => { if (e.target === settingsModal) settingsModal.classList.add('hidden'); };
+}
+
+if (settingsSaveBtn && primaryColorPicker) {
+    settingsSaveBtn.onclick = () => {
+        const color = primaryColorPicker.value;
+        localStorage.setItem('battleship_primary_color', color);
+        applyPrimaryColor(color);
+        if (settingsModal) settingsModal.classList.add('hidden');
+    };
+}
+
+function applyPrimaryColor(color) {
+    document.documentElement.style.setProperty('--primary', color);
+    document.documentElement.style.setProperty('--primary-600', color);
+}
+
+// 页面加载时自动应用自定义主色
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() {
+        const color = localStorage.getItem('battleship_primary_color');
+        if (color) applyPrimaryColor(color);
+    });
+} else {
+    const color = localStorage.getItem('battleship_primary_color');
+    if (color) applyPrimaryColor(color);
+}
+
 // 帮助相关元素
 const helpBtn = document.getElementById('help-btn');
 const helpModal = document.getElementById('help-modal');
@@ -2473,7 +2517,6 @@ function showMagicAnimation(card) {
         }, 1000);
     }, 100);
 }
-
 
 // 更新场地魔法UI显示
 function updateFieldMagicUI(playerId, card) {

@@ -11,7 +11,6 @@ const findMatchBtn = document.getElementById('find-match');
 const customRoomBtn = document.getElementById('custom-room');
 const matchStatus = document.getElementById('match-status');
 const cancelMatchBtn = document.getElementById('cancel-match');
-const playerNameInput = document.getElementById('player-name');
 
 // 自定义房间游戏界面元素
 const customCreateRoomBtn = document.getElementById('custom-create-room');
@@ -20,9 +19,10 @@ const customRoomIdInput = document.getElementById('custom-room-id-input');
 const customConfirmJoinBtn = document.getElementById('custom-confirm-join');
 const customRoomInfo = document.getElementById('custom-room-info');
 const customCurrentRoomId = document.getElementById('custom-current-room-id');
-const customPlayerNameInput = document.getElementById('custom-player-name');
 const customRoomCodeInput = document.getElementById('custom-room-code');
 const backToMainBtn = document.getElementById('back-to-main');
+
+// 使用固定玩家名称或从服务器获取
 
 // 战舰放置界面元素
 const playerBoard = document.getElementById('player-board');
@@ -274,7 +274,7 @@ function bindEventListeners() {
 
 // 创建房间
 function createRoom() {
-    gameState.playerName = playerNameInput.value || '玩家';
+    gameState.playerName = '玩家'; // 使用默认名称
     gameState.socket = io.connect('http://' + window.location.host);
     setupSocketListeners();
 
@@ -309,7 +309,13 @@ function toggleCustomRoomOptions() {
 
 // 寻找匹配
 function findMatch() {
-    gameState.playerName = playerNameInput.value || '玩家';
+    // 如果是已登录用户，使用真实用户名；否则使用随机名称
+    if (window.__USERNAME) {
+        gameState.playerName = window.__USERNAME;
+    } else {
+        // 使用随机生成的唯一名称，避免相同账户登录时名称冲突
+        gameState.playerName = `玩家_${Math.floor(Math.random() * 10000)}`;
+    }
     
     // 创建socket连接
     gameState.socket = io.connect('http://' + window.location.host);
@@ -338,7 +344,7 @@ function cancelMatch() {
 
 // 自定义房间游戏 - 创建房间
 function customCreateRoom() {
-    gameState.playerName = customPlayerNameInput.value || '玩家';
+    gameState.playerName = '玩家'; // 使用默认名称
     gameState.socket = io.connect('http://' + window.location.host);
     setupSocketListeners();
 
@@ -368,7 +374,7 @@ function customCreateRoom() {
 
 // 自定义房间游戏 - 加入房间
 function customJoinRoom() {
-    gameState.playerName = customPlayerNameInput.value || '玩家';
+    gameState.playerName = '玩家'; // 使用默认名称
     const roomId = customRoomCodeInput.value.trim();
     if (!roomId) return;
 
@@ -392,7 +398,7 @@ function customJoinRoom() {
 
 // 加入房间
 function joinRoom() {
-    gameState.playerName = playerNameInput.value || '玩家';
+    gameState.playerName = '玩家'; // 使用默认名称
     const roomId = roomCodeInput.value.trim();
     if (!roomId) return;
 

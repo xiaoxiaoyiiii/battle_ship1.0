@@ -1,10 +1,10 @@
 import os
+import time
 from werkzeug.utils import secure_filename
 from flask import Flask, render_template, request, session, redirect, url_for, flash, jsonify
 from flask_socketio import SocketIO, join_room, leave_room, emit
 import random
 import uuid
-import os
 from werkzeug.security import generate_password_hash, check_password_hash
 import db  # local database helpers for users and matches
 from flask import copy_current_request_context
@@ -175,6 +175,7 @@ class GameRoom:
         self.last_magic = None  # 上一张使用的魔法卡
         self.pending_magic = None  # 待处理的魔法卡（等待对方是否使用失灵）
         self.magic_temp_data = {}  # 魔法卡临时数据
+        self.magic_discard = []  # 全局弃牌堆（所有玩家使用过的魔法卡）
         # 连锁相关状态
         self.chain = []  # 连锁栈
         self.chain_waiting = False  # 是否正在等待玩家回应连锁
@@ -203,7 +204,7 @@ class GameRoom:
         # 检查手牌中是否已有相同卡牌（除了"失灵！"）
         if card['name'] != '失灵！' and any(c['name'] == card['name'] and c['speed'] == card['speed'] for c in self.players[player_id]['magic_hand']):
             # 避免重复卡牌，放入弃牌堆
-            self.players[player_id]['magic_discard'].append(card)
+            self.magic_discard.append(card)
             return None
         
         # 将卡牌加入手牌
@@ -765,7 +766,7 @@ def handle_magic_target(data):
         # 剩余卡牌加入弃牌堆
         for i, card in enumerate(room.magic_temp_data['cards']):
             if i != caster_choice and i != opponent_choice:
-                caster['magic_discard'].append(card)
+                room.magic_discard.append(card)
         
         room.magic_temp_data = {}
         return {'status': 'success', 'message': '卡牌选择完成'}
@@ -1138,7 +1139,7 @@ def handle_use_magic_card(data):
 
     # 从手牌中移除并添加到弃牌堆
     player['magic_hand'] = [c for c in player['magic_hand'] if not (c['name'] == card['name'] and c['speed'] == card['speed'])]
-    player['magic_discard'].append(card)
+    room.magic_discard.append(card)
 
     # 记录最后使用的魔法卡
     room.last_magic = card
@@ -1149,7 +1150,7 @@ def handle_use_magic_card(data):
         for existing_player_id in list(room.field_magics.keys()):
             old_card = room.field_magics[existing_player_id]
             # 将旧的场地魔法卡加入弃牌堆
-            room.players[existing_player_id]['magic_discard'].append(old_card)
+            room.magic_discard.append(old_card)
             # 广播场地魔法移除
             emit('field_magic_updated', {
                 'player_id': existing_player_id,
@@ -1289,7 +1290,7 @@ def chain_response(data):
         
         # 从手牌中移除并添加到弃牌堆
         player['magic_hand'] = [c for c in player['magic_hand'] if not (c['name'] == card['name'] and c['speed'] == card['speed'])]
-        player['magic_discard'].append(card)
+        room.magic_discard.append(card)
         
         # 记录最后使用的魔法卡
         room.last_magic = card
@@ -1505,10 +1506,15 @@ def confirm_magic_target(data):
             if opponent_choice >= 0 and opponent_choice < len(room.magic_temp_data['cards']) and opponent_choice != caster_choice:
                 opponent['magic_hand'].append(room.magic_temp_data['cards'][opponent_choice])
             
-            # 剩余卡牌加入弃牌堆
+            # 剩余卡牌放回牌堆
+            remaining_cards = []
             for i, card in enumerate(room.magic_temp_data['cards']):
                 if i != caster_choice and (opponent_choice < 0 or i != opponent_choice):
-                    caster['magic_discard'].append(card)
+                    remaining_cards.append(card)
+            
+            # 将剩余卡牌放回牌堆
+            if remaining_cards:
+                room.magic_deck = remaining_cards + room.magic_deck
             
             # 清除临时数据
             room.magic_temp_data = {}
@@ -1522,6 +1528,11 @@ def confirm_magic_target(data):
                 'hand': opponent['magic_hand']
             }, to=opponent_id)
             
+            # 通知对手等待结束
+            emit('taoyuan_complete', {
+                'message': '对方桃园结义结算完成'
+            }, to=opponent_id)
+            
             return {'status': 'success', 'message': '桃园结义选择完成'}
         else:
             return {'status': 'error', 'message': '无效的卡牌选择'}
@@ -1530,7 +1541,7 @@ def confirm_magic_target(data):
 
 @socketio.on('get_discard_pile')
 def get_discard_pile(data):
-    """获取玩家的弃牌堆数据"""
+    """获取玩家的弃牌堆数据（返回全局弃牌堆）"""
     room_id = data.get('room_id')
     player_id = data.get('player_id')
     
@@ -1538,10 +1549,9 @@ def get_discard_pile(data):
         return {'status': 'error', 'message': '无效的房间或玩家'}
     
     room = rooms[room_id]
-    player = room.players[player_id]
     
-    # 获取弃牌堆数据
-    discard_pile = player['magic_discard']
+    # 获取全局弃牌堆数据
+    discard_pile = room.magic_discard
     
     # 过滤掉重复的非"失灵！"卡牌（场上仅存在一张）
     unique_discard = []
@@ -1588,7 +1598,8 @@ def apply_magic_effect(room, caster_id, card, target_data):
             # 从牌堆抽取n张牌(n为自己的战舰数)，自己选1张，再给对方选1张
             n = len(caster['ships'])
             drawn_cards = []
-            for _ in range(n):
+            # 只抽取牌堆中实际存在的牌
+            while len(drawn_cards) < n and room.magic_deck:
                 card = room.draw_card(caster_id)
                 if card: drawn_cards.append(card)
             
@@ -1598,10 +1609,15 @@ def apply_magic_effect(room, caster_id, card, target_data):
                     'type': 'taoyuan_choice',
                     'caster': caster_id,
                     'opponent': opponent_id,
-                    'cards': drawn_cards
+                    'cards': drawn_cards,
+                    'original_deck': room.magic_deck.copy()  # 保存原始牌堆，用于放回未选中的牌
                 }
                 result['message'] = f'抽了{len(drawn_cards)}张牌，请选择'
                 result['temp_data_id'] = 'taoyuan_choice'
+                # 通知对手等待
+                emit('taoyuan_waiting', {
+                    'message': '对方正在结算桃园结义效果 请等待'
+                }, to=opponent_id)
             else:
                 result['success'] = False
                 result['message'] = '无法抽取卡牌'
@@ -2532,6 +2548,28 @@ def apply_magic_effect(room, caster_id, card, target_data):
                 }
                 result['temp_data_id'] = 'reinforcement_choice'
                 result['message'] = '请选择增援放置位置'
+
+        elif card['name'] == '桃园结义':
+            # 从牌堆抽取n张牌(n为自己的战舰数)，自己选1张，再给对方选1张
+            n = len(caster['ships'])
+            drawn_cards = []
+            for _ in range(n):
+                card = room.draw_card(caster_id)
+                if card: drawn_cards.append(card)
+            
+            if drawn_cards:
+                # 记录待选择的牌
+                room.magic_temp_data = {
+                    'type': 'taoyuan_choice',
+                    'caster': caster_id,
+                    'opponent': opponent_id,
+                    'cards': drawn_cards
+                }
+                result['message'] = f'抽了{len(drawn_cards)}张牌，请选择'
+                result['temp_data_id'] = 'taoyuan_choice'
+            else:
+                result['success'] = False
+                result['message'] = '无法抽取卡牌'
 
         else:
             result['success'] = False

@@ -1257,6 +1257,14 @@ function setupSocketListeners() {
             const round = parseInt(gameRound.textContent) || 1;
             const playerName = result.caster === gameState.playerId ? gameState.playerName : gameState.opponentName;
             addGameLog(`【第${round}回合】<span class="log-player">${playerName}</span>使用了魔法卡<span class="log-card">[${result.card.name}]</span>，发动效果：${result.card.description}！`);
+            
+            // 处理需要选择的魔法卡效果（如桃园结义）
+            if (result.temp_data_id) {
+                if (result.temp_data_id === 'taoyuan_choice') {
+                    // 桃园结义选择UI
+                    showTaoyuanChoice(result);
+                }
+            }
         });
         // 更新游戏状态
         updateHandUI();
@@ -1440,29 +1448,30 @@ function setupSocketListeners() {
         // 创建选择界面
         const taoyuanChoiceDiv = document.createElement('div');
         taoyuanChoiceDiv.className = 'taoyuan-choice-overlay';
+        taoyuanChoiceDiv.style.zIndex = '10000'; // 设置最高优先级
         taoyuanChoiceDiv.innerHTML = `
             <div class="taoyuan-choice-container">
                 <div class="taoyuan-choice-header">
                     <h3>桃园结义 - 卡牌选择</h3>
                     <p id="taoyuan-choice-message">${result.message}</p>
+                    <div id="taoyuan-selection-result" style="margin-top: 8px; padding: 8px; background-color: rgba(25, 118, 210, 0.1); border-radius: 4px;"></div>
                 </div>
                 <div class="taoyuan-choice-step">
                     <h4 id="taoyuan-step-title">第一步：选择一张卡牌给自己</h4>
                 </div>
                 <div class="taoyuan-cards-container"></div>
-                <div class="taoyuan-choice-footer">
-                    <button id="taoyuan-cancel-btn" class="btn btn-danger">取消</button>
-                </div>
             </div>
         `;
         document.body.appendChild(taoyuanChoiceDiv);
         
-        // 获取卡片容器
+        // 获取卡片容器和选择结果区域
         const cardsContainer = taoyuanChoiceDiv.querySelector('.taoyuan-cards-container');
+        const selectionResultDiv = document.getElementById('taoyuan-selection-result');
         
         // 存储选择状态
         let selectedCards = { caster: null, opponent: null };
         let step = 1; // 1: 选择自己的卡, 2: 选择对方的卡
+        let cards = [];
         
         // 请求服务器获取卡牌数据
         gameState.socket.emit('get_magic_temp_data', {
@@ -1470,7 +1479,7 @@ function setupSocketListeners() {
             player_id: gameState.playerId
         }, (response) => {
             if (response.status === 'success' && response.data && response.data.cards) {
-                const cards = response.data.cards;
+                cards = response.data.cards;
                 
                 // 显示卡牌
                 cards.forEach((card, index) => {
@@ -1493,6 +1502,13 @@ function setupSocketListeners() {
                             // 更新界面
                             cardElement.classList.add('selected');
                             
+                            // 更新选择结果提示
+                            selectionResultDiv.innerHTML = `
+                                <strong>选择结果：</strong><br>
+                                已为自己选择卡牌：<span style="color: #1976d2; font-weight: bold;">${card.name}</span><br>
+                                该卡牌已加入你的手牌库
+                            `;
+                            
                             // 检查是否需要第二步
                             if (cards.length > 1) {
                                 // 进入第二步
@@ -1503,17 +1519,32 @@ function setupSocketListeners() {
                                 cardElement.classList.add('disabled');
                             } else {
                                 // 只有一张卡，直接确认
-                                confirmTaoyuanChoice(selectedCards, cards);
-                                document.body.removeChild(taoyuanChoiceDiv);
+                                selectionResultDiv.innerHTML += '<br><strong style="color: #10b981;">选择完成！</strong>';
+                                setTimeout(() => {
+                                    confirmTaoyuanChoice(selectedCards, cards);
+                                    document.body.removeChild(taoyuanChoiceDiv);
+                                }, 1000);
                             }
                         } else if (step === 2) {
                             // 第二步：选择对方的卡
                             if (index !== selectedCards.caster) {
                                 selectedCards.opponent = index;
                                 
+                                // 更新选择结果提示
+                                const opponentCard = cards[index];
+                                selectionResultDiv.innerHTML = `
+                                    <strong>选择结果：</strong><br>
+                                    已为自己选择卡牌：<span style="color: #1976d2; font-weight: bold;">${cards[selectedCards.caster].name}</span><br>
+                                    已为对方选择卡牌：<span style="color: #f57c00; font-weight: bold;">${opponentCard.name}</span><br>
+                                    卡牌已分别加入双方手牌库
+                                    <br><strong style="color: #10b981;">选择完成！</strong>
+                                `;
+                                
                                 // 确认选择
-                                confirmTaoyuanChoice(selectedCards, cards);
-                                document.body.removeChild(taoyuanChoiceDiv);
+                                setTimeout(() => {
+                                    confirmTaoyuanChoice(selectedCards, cards);
+                                    document.body.removeChild(taoyuanChoiceDiv);
+                                }, 1000);
                             }
                         }
                     });
@@ -1600,6 +1631,40 @@ function setupSocketListeners() {
     // 服务器推送的通用消息
     socket.on('message', (data) => {
         if (data && data.text) showMessage(data.text);
+    });
+
+    // 对手桃园结义结算等待提示
+    socket.on('taoyuan_waiting', (data) => {
+        // 创建等待提示界面
+        const waitingDiv = document.createElement('div');
+        waitingDiv.className = 'taoyuan-waiting-overlay';
+        waitingDiv.style.zIndex = '10000';
+        waitingDiv.style.position = 'fixed';
+        waitingDiv.style.top = '0';
+        waitingDiv.style.left = '0';
+        waitingDiv.style.width = '100%';
+        waitingDiv.style.height = '100%';
+        waitingDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+        waitingDiv.style.display = 'flex';
+        waitingDiv.style.alignItems = 'center';
+        waitingDiv.style.justifyContent = 'center';
+        waitingDiv.style.color = 'white';
+        waitingDiv.innerHTML = `
+            <div style="background: rgba(25, 118, 210, 0.9); padding: 20px; border-radius: 10px; text-align: center;">
+                <h3>${data.message}</h3>
+            </div>
+        `;
+        document.body.appendChild(waitingDiv);
+    });
+
+    // 桃园结义结算完成提示
+    socket.on('taoyuan_complete', (data) => {
+        // 移除等待提示
+        const waitingOverlay = document.querySelector('.taoyuan-waiting-overlay');
+        if (waitingOverlay) {
+            waitingOverlay.remove();
+        }
+        showMessage(data.message);
     });
 
     // 服务器返回的被揭示的位置（仅对触发方发送）

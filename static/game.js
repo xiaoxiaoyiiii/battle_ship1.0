@@ -1085,34 +1085,49 @@ function initGameBoards() {
     }
 }
 
-// 处理棋盘单元格点击（放置战舰）
+// 处理棋盘单元格点击（放置/移除战舰）
 function handleCellClick(x, y) {
-    // 检查是否已经放置了6艘战舰
-    if (gameState.placedShips >= 6) return;
-
     // 检查该位置是否已经放置了战舰
-    const alreadyPlaced = gameState.ships.some(ship => 
+    const shipIndex = gameState.ships.findIndex(ship => 
         ship.positions.some(pos => pos.x === x && pos.y === y)
     );
-    if (alreadyPlaced) return;
+    
+    if (shipIndex !== -1) {
+        // 移除已放置的战舰
+        gameState.ships.splice(shipIndex, 1);
+        gameState.placedShips--;
+        shipsPlaced.textContent = gameState.placedShips;
+        
+        // 更新界面，移除战舰显示
+        const cell = playerBoard.querySelector(`[data-x="${x}"][data-y="${y}"]`);
+        cell.classList.remove('ship');
+        
+        // 如果之前显示了确认按钮，检查是否需要隐藏
+        if (gameState.placedShips < 6) {
+            confirmShipsBtn.classList.add('hidden');
+        }
+    } else {
+        // 检查是否已经放置了6艘战舰
+        if (gameState.placedShips >= 6) return;
+        
+        // 添加新战舰（1x1大小）
+        gameState.ships.push({
+            id: Date.now(),
+            positions: [{x, y}],
+            hits: []
+        });
 
-    // 添加新战舰（1x1大小）
-    gameState.ships.push({
-        id: Date.now(),
-        positions: [{x, y}],
-        hits: []
-    });
+        gameState.placedShips++;
+        shipsPlaced.textContent = gameState.placedShips;
 
-    gameState.placedShips++;
-    shipsPlaced.textContent = gameState.placedShips;
+        // 更新界面
+        const cell = playerBoard.querySelector(`[data-x="${x}"][data-y="${y}"]`);
+        cell.classList.add('ship');
 
-    // 更新界面
-    const cell = playerBoard.querySelector(`[data-x="${x}"][data-y="${y}"]`);
-    cell.classList.add('ship');
-
-    // 如果放置了6艘战舰，显示确认按钮
-    if (gameState.placedShips === 6) {
-        confirmShipsBtn.classList.remove('hidden');
+        // 如果放置了6艘战舰，显示确认按钮
+        if (gameState.placedShips === 6) {
+            confirmShipsBtn.classList.remove('hidden');
+        }
     }
 }
 

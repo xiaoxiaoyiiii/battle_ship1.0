@@ -194,6 +194,11 @@ class GameRoom:
 
     def draw_card(self, player_id):
         """抽卡逻辑，返回抽到的卡牌"""
+        # 检查是否有禁止抽卡效果
+        effect_flags = self.players[player_id].get('effect_flags', {})
+        if effect_flags.get('no_draw'):
+            return None
+            
         # 牌堆为空，无法抽卡
         if not self.players[player_id]['magic_deck']:
             return None
@@ -1074,10 +1079,10 @@ def end_turn(data):
             room.state = 'rock_paper_scissors'
             room.rps_choices = {}
             
-            # 重置所有临时效果标志
+            # 重置所有临时效果标志，包括no_draw标志
             for p_id in room.players:
                 if 'effect_flags' in room.players[p_id]:
-                    # 保留场地魔法等永久效果，清除临时效果
+                    # 保留场地魔法等永久效果，清除所有临时效果（包括no_draw）
                     permanent_flags = ['holy_heart', 'reinforcement_check']  # 永久效果白名单
                     room.players[p_id]['effect_flags'] = {k: v for k, v in room.players[p_id]['effect_flags'].items() if k in permanent_flags}
             
@@ -1093,11 +1098,11 @@ def end_turn(data):
             room.current_phase = 'preparation'
             room.attacks_remaining = room.players[room.current_attacker]['remaining_ships']
             
-            # 重置所有临时效果标志
+            # 重置所有临时效果标志 - 但保留no_draw标志直到大回合结束
             for p_id in room.players:
                 if 'effect_flags' in room.players[p_id]:
-                    # 保留场地魔法等永久效果，清除临时效果
-                    permanent_flags = ['holy_heart', 'reinforcement_check']  # 永久效果白名单
+                    # 保留场地魔法等永久效果和no_draw标志，清除其他临时效果
+                    permanent_flags = ['holy_heart', 'reinforcement_check', 'no_draw']  # 永久效果白名单
                     room.players[p_id]['effect_flags'] = {k: v for k, v in room.players[p_id]['effect_flags'].items() if k in permanent_flags}
             
             # 广播回合和阶段更新
@@ -1605,13 +1610,13 @@ def apply_magic_effect(room, caster_id, card, target_data):
     try:
         # ==== 速阶1 魔法卡 ====
         if card['name'] == '余音绕梁':
-            # 标记接下来两个攻击阶段造成的伤害将强制击杀
+            # 标记接下来两个攻击阶段造成的伤害将强制击杀，已修复
             room.players[caster_id]['effect_flags'] = room.players[caster_id].get('effect_flags', {})
             room.players[caster_id]['effect_flags']['forced_kill'] = 2  # 持续2个攻击阶段
             result['message'] = '接下来两个攻击阶段将造成强制击杀'
 
         elif card['name'] == '桃园结义':
-            # 从牌堆抽取n张牌(n为自己的战舰数)，自己选1张，再给对方选1张
+            # 从牌堆抽取n张牌(n为自己的战舰数)，自己选1张，再给对方选1张，已修复
             n = len(caster['ships'])
             drawn_cards = []
             

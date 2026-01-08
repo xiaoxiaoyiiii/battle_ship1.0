@@ -43,6 +43,110 @@ document.addEventListener('DOMContentLoaded', function() {
 // 游戏内头像元素
 const myAvatarInGame = document.getElementById('my-avatar-in-game');
 const opponentAvatarInGame = document.getElementById('opponent-avatar-in-game');
+
+// 移动自己的头像到左上角，对手头像到右上角
+document.addEventListener('DOMContentLoaded', function() {
+    // 左上角自己的头像和用户名
+    let avatarCorner = document.getElementById('avatar-corner');
+    if (!avatarCorner) {
+        avatarCorner = document.createElement('div');
+        avatarCorner.id = 'avatar-corner';
+        avatarCorner.style.position = 'fixed';
+        avatarCorner.style.top = '16px';
+        avatarCorner.style.left = '16px';
+        avatarCorner.style.zIndex = '1000';
+        avatarCorner.style.background = 'rgba(255,255,255,0.85)';
+        avatarCorner.style.borderRadius = '24px';
+        avatarCorner.style.boxShadow = '0 2px 8px rgba(0,0,0,0.08)';
+        avatarCorner.style.padding = '4px 12px 4px 4px';
+        avatarCorner.style.display = 'flex';
+        avatarCorner.style.alignItems = 'center';
+        // 头像
+        avatarCorner.appendChild(myAvatarInGame);
+        // 用户名
+        let myNameSpan = document.createElement('span');
+        myNameSpan.id = 'my-username-corner';
+        myNameSpan.style.marginLeft = '8px';
+        myNameSpan.style.fontWeight = 'bold';
+        myNameSpan.style.fontSize = '1.05em';
+        myNameSpan.style.color = '#333';
+        avatarCorner.appendChild(myNameSpan);
+        document.body.appendChild(avatarCorner);
+    } else {
+        avatarCorner.appendChild(myAvatarInGame);
+        if (!document.getElementById('my-username-corner')) {
+            let myNameSpan = document.createElement('span');
+            myNameSpan.id = 'my-username-corner';
+            myNameSpan.style.marginLeft = '8px';
+            myNameSpan.style.fontWeight = 'bold';
+            myNameSpan.style.fontSize = '1.05em';
+            myNameSpan.style.color = '#333';
+            avatarCorner.appendChild(myNameSpan);
+        }
+    }
+
+    // 右上角对手头像和用户名
+    let opponentAvatarCorner = document.getElementById('opponent-avatar-corner');
+    if (!opponentAvatarCorner) {
+        opponentAvatarCorner = document.createElement('div');
+        opponentAvatarCorner.id = 'opponent-avatar-corner';
+        opponentAvatarCorner.style.position = 'fixed';
+        opponentAvatarCorner.style.top = '16px';
+        opponentAvatarCorner.style.right = '16px';
+        opponentAvatarCorner.style.zIndex = '1000';
+        opponentAvatarCorner.style.background = 'rgba(255,255,255,0.85)';
+        opponentAvatarCorner.style.borderRadius = '24px';
+        opponentAvatarCorner.style.boxShadow = '0 2px 8px rgba(0,0,0,0.08)';
+        opponentAvatarCorner.style.padding = '4px 4px 4px 12px';
+        opponentAvatarCorner.style.display = 'flex';
+        opponentAvatarCorner.style.alignItems = 'center';
+        // 用户名
+        let oppNameSpan = document.createElement('span');
+        oppNameSpan.id = 'opponent-username-corner';
+        oppNameSpan.style.marginRight = '8px';
+        oppNameSpan.style.fontWeight = 'bold';
+        oppNameSpan.style.fontSize = '1.05em';
+        oppNameSpan.style.color = '#333';
+        opponentAvatarCorner.appendChild(oppNameSpan);
+        // 头像
+        opponentAvatarCorner.appendChild(opponentAvatarInGame);
+        document.body.appendChild(opponentAvatarCorner);
+    } else {
+        if (!document.getElementById('opponent-username-corner')) {
+            let oppNameSpan = document.createElement('span');
+            oppNameSpan.id = 'opponent-username-corner';
+            oppNameSpan.style.marginRight = '8px';
+            oppNameSpan.style.fontWeight = 'bold';
+            oppNameSpan.style.fontSize = '1.05em';
+            oppNameSpan.style.color = '#333';
+            opponentAvatarCorner.insertBefore(oppNameSpan, opponentAvatarInGame);
+        }
+        opponentAvatarCorner.appendChild(opponentAvatarInGame);
+    }
+
+    // 自动更新用户名
+    function updateCornerNames() {
+        const myName = (window.gameState && window.gameState.playerName) || window.__USERNAME || '';
+        const oppName = (window.gameState && window.gameState.opponentName) || '';
+        const myNameSpan = document.getElementById('my-username-corner');
+        const oppNameSpan = document.getElementById('opponent-username-corner');
+        if (myNameSpan) myNameSpan.textContent = myName ? myName : '';
+        if (oppNameSpan) oppNameSpan.textContent = oppName ? oppName : '';
+    }
+    updateCornerNames();
+    window.addEventListener('gameStateUpdate', updateCornerNames);
+    setInterval(updateCornerNames, 2000);
+
+    // 自动更新对手头像
+    function updateOpponentAvatarCorner() {
+        const opponentName = (window.gameState && window.gameState.opponentName) || '';
+        if (opponentName) updateOpponentAvatarInGame(opponentName);
+    }
+    updateOpponentAvatarCorner();
+    window.addEventListener('gameStateUpdate', updateOpponentAvatarCorner);
+    setInterval(updateOpponentAvatarCorner, 2000);
+});
+
 // 获取当前用户头像并显示到游戏内
 function updateMyAvatarInGame() {
     fetch('/api/profile').then(r => r.json()).then(res => {
@@ -83,9 +187,27 @@ function onEnterGameScreen(opponentName) {
 if (myAvatarInGame) {
     myAvatarInGame.style.cursor = 'pointer';
     myAvatarInGame.addEventListener('click', () => {
+        // 兼容变量未定义的情况
+        let userStatsModal = document.getElementById('user-stats-modal');
+        let userStatsContent = document.getElementById('user-stats-content');
+        // 如果没有弹窗则自动创建
+        
+        userStatsModal = document.createElement('div');
+        userStatsModal.id = 'user-stats-modal';
+        userStatsModal.className = 'modal-overlay';
+        userStatsModal.innerHTML = '<div class="modal-content"><span class="modal-close" id="user-stats-modal-close">×</span><h2>个人战绩</h2><div id="user-stats-content1"><p>加载中...</p></div></div>';
+        document.body.appendChild(userStatsModal);
+        // 绑定关闭事件
+        userStatsModal.querySelector('.modal-close').onclick = () => userStatsModal.classList.add('hidden');
+        userStatsModal.onclick = (e) => { if (e.target === userStatsModal) userStatsModal.classList.add('hidden'); };
+        userStatsContent = document.getElementById('user-stats-content1');
+        
         // 优先使用 gameState.playerName，再退回到服务器渲染的全局用户名或页面元素
         const username = (window.gameState && window.gameState.playerName) || window.__USERNAME || (document.getElementById('profile-username') && document.getElementById('profile-username').textContent) || '';
-        if (!username) return showMessage('未登录，无法查看战绩', { type: 'warning' });
+        if (!username) {
+            showMessage('未登录，无法查看战绩', { type: 'warning' });
+            return;
+        }
         fetch(`/user_stats?username=${encodeURIComponent(username)}`)
             .then(r => r.json()).then(data => {
                 if (data.stats) {
@@ -102,7 +224,9 @@ if (myAvatarInGame) {
                 } else {
                     showMessage('未找到战绩数据', { type: 'warning' });
                 }
-            }).catch(err => showMessage('获取战绩失败', { type: 'error' }));
+            }).catch(err => {
+                showMessage('获取战绩失败', { type: 'error' });
+            });
     });
 }
 
@@ -110,6 +234,21 @@ if (opponentAvatarInGame) {
     opponentAvatarInGame.style.cursor = 'pointer';
     opponentAvatarInGame.addEventListener('click', () => {
         // 优先使用 gameState.opponentName，再尝试页面元素
+        // 兼容变量未定义的情况
+        let userStatsModal = document.getElementById('user-stats-modal');
+        let userStatsContent = document.getElementById('user-stats-content');
+        // 如果没有弹窗则自动创建
+        
+        userStatsModal = document.createElement('div');
+        userStatsModal.id = 'user-stats-modal';
+        userStatsModal.className = 'modal-overlay';
+        userStatsModal.innerHTML = '<div class="modal-content"><span class="modal-close" id="user-stats-modal-close">×</span><h2>个人战绩</h2><div id="user-stats-content2"><p>加载中...</p></div></div>';
+        document.body.appendChild(userStatsModal);
+        // 绑定关闭事件
+        userStatsModal.querySelector('.modal-close').onclick = () => userStatsModal.classList.add('hidden');
+        userStatsModal.onclick = (e) => { if (e.target === userStatsModal) userStatsModal.classList.add('hidden'); };
+        userStatsContent = document.getElementById('user-stats-content2');
+        
         const username = (window.gameState && window.gameState.opponentName) || (document.getElementById('opponent-username-info') && document.getElementById('opponent-username-info').textContent) || '';
         if (!username) return showMessage('对手信息不可用', { type: 'warning' });
         fetch(`/user_stats?username=${encodeURIComponent(username)}`)

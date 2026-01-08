@@ -10,7 +10,7 @@
 </head>
 <body>
     <div class="game-container">
-        <div class="nav">
+        <div class="nav" id="game-nav">
             {% if username %}
                 <span>已登录: {{ username }}</span> | <a href="/logout">退出</a> | <a href="/lobby">大厅</a> | <a href="/leaderboard" class="hide-in-game">排行榜</a> | <a href="#" id="show-user-stats" class="hide-in-game">个人战绩</a>
             {% else %}

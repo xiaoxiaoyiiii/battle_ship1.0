@@ -2648,6 +2648,42 @@ function initCardPreview() {
     initPreviewDrag();
     // 初始化日志容器拖拽
     initLogDrag();
+    
+    // 初始化投降按钮
+    initSurrenderBtn();
+}
+
+// 初始化投降按钮功能
+function initSurrenderBtn() {
+    const surrenderBtn = document.getElementById('surrender-btn');
+    if (surrenderBtn) {
+        surrenderBtn.addEventListener('click', handleSurrender);
+    }
+}
+
+// 处理投降逻辑
+function handleSurrender() {
+    // 显示确认对话框，防止误操作
+    if (!confirm('确定要投降吗？投降后游戏将结束。')) {
+        return;
+    }
+    
+    // 向服务器发送投降请求
+    if (gameState.socket) {
+        gameState.socket.emit('surrender', {
+            room_id: gameState.roomId,
+            player_id: gameState.playerId
+        }, (response) => {
+            if (response.status === 'success') {
+                // 投降成功，游戏结束
+                showMessage('你已投降，游戏结束', { type: 'warning' });
+                // 等待服务器发送game_over事件
+            } else {
+                // 投降失败
+                showMessage(`投降失败: ${response.message}`, { type: 'error' });
+            }
+        });
+    }
 }
 
 // 初始化预览框拖拽功能

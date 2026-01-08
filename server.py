@@ -2258,6 +2258,35 @@ def apply_magic_effect(room, caster_id, card, target_data):
 
     return result
 
+@socketio.on('surrender')
+def handle_surrender(data):
+    # 处理投降请求
+    player_id = request.sid
+    room_id = data.get('room_id')
+    room = rooms.get(room_id)
+    if not room:
+        return {'status': 'error', 'message': '房间不存在'}
+    
+    if player_id not in room.players:
+        return {'status': 'error', 'message': '你不在这个房间'}
+    
+    # 设置游戏结束状态
+    room.state = 'game_over'
+    
+    # 投降玩家失败，对手获胜
+    opponent_id = next(p for p in room.players if p != player_id)
+    room.winner = opponent_id
+    
+    # 记录战绩（若为已登录用户）
+    try:
+        db.record_match(opponent_id, player_id)
+    except Exception:
+        pass
+    
+    # 向房间发送游戏结束事件
+    emit('game_over', {'winner': opponent_id}, room=room_id)
+    return {'status': 'success'}
+
 if __name__ == '__main__':
     # 初始化数据库
     db.init_db()

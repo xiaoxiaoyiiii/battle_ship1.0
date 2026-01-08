@@ -43,6 +43,11 @@ const currentPlayer = document.getElementById('current-player');
 const attacksRemaining = document.getElementById('attacks-remaining');
 const gameRound = document.getElementById('game-round');
 
+// 日志功能元素
+const logContainer = document.querySelector('.log-container');
+const toggleLogBtn = document.getElementById('toggle-log');
+const gameLogs = document.getElementById('game-logs');
+
 // 游戏结束界面元素
 const gameResult = document.getElementById('game-result');
 const playAgainBtn = document.getElementById('play-again');
@@ -54,12 +59,12 @@ window.gameState = {
     playerId: null,
     roomId: null,
     playerName: '玩家',
+    opponentName: '对手',  
     ships: [],
     placedShips: 0,
     isMyTurn: false,
     myAttacks: [],
     opponentAttacks: [],
-    // 新增魔法卡相关状态
     deck: [],               // 牌堆
     hand: [],               // 手牌
     discardPile: [],        // 弃牌堆
@@ -119,6 +124,20 @@ function showMessage(text, options = {}) {
 // 添加加载完成验证
 console.log("game.js 加载完成，playMagicCard 状态:", typeof window.playMagicCard);
 
+// 添加日志条目
+function addGameLog(logText) {
+    const logEntry = document.createElement('div');
+    logEntry.className = 'log-entry';
+    logEntry.innerHTML = logText;
+    
+    // 添加到日志容器的顶部
+    if (gameLogs.firstChild) {
+        gameLogs.insertBefore(logEntry, gameLogs.firstChild);
+    } else {
+        gameLogs.appendChild(logEntry);
+    }
+}
+
 // 绑定事件监听器
 function bindEventListeners() {
     // 开始界面
@@ -150,6 +169,11 @@ function bindEventListeners() {
     
     // 修复：结束战斗阶段按钮事件（修正ID匹配问题）
     document.getElementById('enter-end-phase').addEventListener('click', endBattlePhase);
+    
+    // 日志切换按钮
+    toggleLogBtn.addEventListener('click', () => {
+        logContainer.classList.toggle('collapsed');
+    });
 }
 
 // 创建房间
@@ -325,6 +349,14 @@ function setupSocketListeners() {
         gameScreen.classList.remove('active');
         gameOverScreen.classList.remove('active');
         
+        // 保存玩家名称和对手名称
+        if (data.player_name) {
+            gameState.playerName = data.player_name;
+        }
+        if (data.opponent_name) {
+            gameState.opponentName = data.opponent_name;
+        }
+        
         switch (data.state) {
             case 'waiting':
                 // 只有当游戏是从自定义房间创建或加入时，才显示自定义房间游戏界面
@@ -419,6 +451,21 @@ function setupSocketListeners() {
         console.log('Attack result:', result);
         updateAttackDisplay(result);
         attacksRemaining.textContent = result.remaining_attacks;
+        
+        // 添加攻击日志
+        const round = parseInt(gameRound.textContent) || 1;
+        const playerName = result.attacker === gameState.playerId ? gameState.playerName : gameState.opponentName;
+        const coordinate = `(${result.x},${result.y})`;
+        
+        if (result.hit) {
+            if (result.ship_sunk) {
+                addGameLog(`【第${round}回合】<span class="log-player">${playerName}</span>攻击了坐标<span class="log-coordinate">${coordinate}</span>，此处的船被击沉！`);
+            } else {
+                addGameLog(`【第${round}回合】<span class="log-player">${playerName}</span>攻击了坐标<span class="log-coordinate">${coordinate}</span>，此处有船！`);
+            }
+        } else {
+            addGameLog(`【第${round}回合】<span class="log-player">${playerName}</span>攻击了坐标<span class="log-coordinate">${coordinate}</span>，此处没有船！`);
+        }
     });
 
     socket.on('turn_change', (data) => {
@@ -452,7 +499,7 @@ function setupSocketListeners() {
         gameState.chain = data.chain;
         updateChainUI();
     });
-
+    
     socket.on('chain_resolved', function(data) {
         console.log('连锁结算完成', data.results);
         // 应用连锁结算结果
@@ -460,6 +507,11 @@ function setupSocketListeners() {
             applyCardEffect(result.card);
             // 将使用过的卡牌加入弃牌堆
             gameState.discardPile.push(result.card);
+            
+            // 添加魔法卡使用日志
+            const round = parseInt(gameRound.textContent) || 1;
+            const playerName = result.caster === gameState.playerId ? gameState.playerName : gameState.opponentName;
+            addGameLog(`【第${round}回合】<span class="log-player">${playerName}</span>使用了魔法卡<span class="log-card">[${result.card.name}]</span>，发动效果：${result.card.description}！`);
         });
         // 更新游戏状态
         updateHandUI();

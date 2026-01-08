@@ -76,39 +76,53 @@
         <!-- 游戏主界面 -->
         <!-- 在游戏主界面添加场地魔法区域 -->
         <div id="game-screen" class="screen">
-            <div class="game-info">
-                <h2>第<span id="game-round">1</span>回合</h2>
-                <!-- 添加场地魔法显示区域 -->
-                <div class="field-magic-area">
-                    <div id="current-field-magic" class="field-magic">当前生效的场地魔法: <span class="no-magic">无</span></div>
-                </div>
-                <div class="players-info">
-                    <div class="player-info">
-                        <p>你: <span id="your-ships">6</span>艘战舰剩余</p>
+            <div class="game-main-container">
+                <!-- 日志区域 -->
+                <div class="log-container">
+                    <div class="log-header">
+                        <h3>游戏日志</h3>
+                        <button id="toggle-log" class="toggle-log-btn">▼</button>
                     </div>
-                    <div class="player-info">
-                        <p>对手: <span id="opponent-ships">6</span>艘战舰剩余</p>
-                    </div>
+                    <div id="game-logs" class="log-content"></div>
                 </div>
-                <div id="turn-indicator">
+                
+                <!-- 游戏内容区域 -->
+                <div class="game-content">
                     <div class="game-info">
-                        <div>当前阶段: <span id="current-phase">准备阶段</span></div>
-                        <div>当前回合: <span id="current-player">你</span></div>
-                        <div>剩余攻击次数: <span id="attacks-remaining">0</span></div>
-                        <button id="enter-battle-phase" class="phase-btn">进入战斗阶段</button>
-                        <button id="enter-end-phase" class="phase-btn" style="display:none;">结束战斗阶段</button>
-                        <button id="end-turn-btn" class="phase-btn" style="display:none;">结束结束阶段</button>
+                        <h2>第<span id="game-round">1</span>回合</h2>
+                        <!-- 添加场地魔法显示区域 -->
+                        <div class="field-magic-area">
+                            <div id="current-field-magic" class="field-magic">当前生效的场地魔法: <span class="no-magic">无</span></div>
+                        </div>
+                        <div class="players-info">
+                            <div class="player-info">
+                                <p>你: <span id="your-ships">6</span>艘战舰剩余</p>
+                            </div>
+                            <div class="player-info">
+                                <p>对手: <span id="opponent-ships">6</span>艘战舰剩余</p>
+                            </div>
+                        </div>
+                        <div id="turn-indicator">
+                            <div class="game-info">
+                                <div>当前阶段: <span id="current-phase">准备阶段</span></div>
+                                <div>当前回合: <span id="current-player">你</span></div>
+                                <div>剩余攻击次数: <span id="attacks-remaining">0</span></div>
+                                <button id="enter-battle-phase" class="phase-btn">进入战斗阶段</button>
+                                <button id="enter-end-phase" class="phase-btn" style="display:none;">结束战斗阶段</button>
+                                <button id="end-turn-btn" class="phase-btn" style="display:none;">结束结束阶段</button>
+                            </div>
+                        </div>
                     </div>
-                </div>
-            </div>
-            <div class="boards-container">
-                <div class="board-wrapper">
-                    <h3>你的棋盘</h3>
-                    <div id="game-player-board" class="board"></div>
-                </div>
-                <div class="board-wrapper">
-                    <h3>对手的棋盘</h3>
-                    <div id="opponent-board" class="board"></div>
+                    <div class="boards-container">
+                        <div class="board-wrapper">
+                            <h3>你的棋盘</h3>
+                            <div id="game-player-board" class="board"></div>
+                        </div>
+                        <div class="board-wrapper">
+                            <h3>对手的棋盘</h3>
+                            <div id="opponent-board" class="board"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

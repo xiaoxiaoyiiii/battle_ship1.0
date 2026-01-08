@@ -263,13 +263,23 @@
                         </div>
                         <div class="players-info">
                             <div class="player-info">
-                                <p>你: <span id="your-ships">6</span>艘战舰剩余</p>
-                                <div id="my-username-info" style="font-size:0.95em;color:var(--muted);"></div>
+                                <div style="display:flex;align-items:center;gap:10px;">
+                                    <img id="my-avatar-in-game" src="/static/avatars/default.png" alt="我的头像" style="width:40px;height:40px;border-radius:50%;object-fit:cover;border:1px solid #ccc;">
+                                    <div>
+                                        <p>你: <span id="your-ships">6</span>艘战舰剩余</p>
+                                        <div id="my-username-info" style="font-size:0.95em;color:var(--muted);"></div>
+                                    </div>
+                                </div>
                             </div>
                             <div class="player-info">
-                                <p>对手: <span id="opponent-ships">6</span>艘战舰剩余</p>
-                                <div id="opponent-username-info" style="font-size:0.95em;color:var(--muted);display:inline-block;"></div>
-                                <button id="show-opponent-stats" style="margin-left:8px;display:none;" class="btn secondary">查询对手战绩</button>
+                                <div style="display:flex;align-items:center;gap:10px;">
+                                    <img id="opponent-avatar-in-game" src="/static/avatars/default.png" alt="对手头像" style="width:40px;height:40px;border-radius:50%;object-fit:cover;border:1px solid #ccc;">
+                                    <div>
+                                        <p>对手: <span id="opponent-ships">6</span>艘战舰剩余</p>
+                                        <div id="opponent-username-info" style="font-size:0.95em;color:var(--muted);display:inline-block;"></div>
+                                        <button id="show-opponent-stats" style="margin-left:8px;display:none;" class="btn secondary">查询对手战绩</button>
+                                    </div>
+                                </div>
                             </div>
                                 <!-- 对手战绩模态弹窗 -->
                                 <div id="opponent-stats-modal" class="modal-overlay hidden">

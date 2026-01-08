@@ -133,19 +133,19 @@ def record_match(winner_id, loser_id):
 def get_leaderboard(limit=10):
     conn = get_conn()
     c = conn.cursor()
-    rows = c.execute('SELECT id, username, wins, losses, current_streak, longest_streak FROM users ORDER BY wins DESC, longest_streak DESC LIMIT ?', (limit,)).fetchall()
+    rows = c.execute('SELECT id, username, wins, losses, current_streak, longest_streak, avatar FROM users ORDER BY wins DESC, longest_streak DESC LIMIT ?', (limit,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 def get_user_stats_by_username(username):
     conn = get_conn()
     c = conn.cursor()
-    row = c.execute('SELECT id, username, wins, losses, current_streak, longest_streak FROM users WHERE username = ?', (username,)).fetchone()
+    row = c.execute('SELECT id, username, wins, losses, current_streak, longest_streak, avatar FROM users WHERE username = ?', (username,)).fetchone()
     conn.close()
     return dict(row) if row else None
 
 def get_user_stats_by_id(uid):
     conn = get_conn()
     c = conn.cursor()
-    row = c.execute('SELECT id, username, wins, losses, current_streak, longest_streak FROM users WHERE id = ?', (uid,)).fetchone()
+    row = c.execute('SELECT id, username, wins, losses, current_streak, longest_streak, avatar FROM users WHERE id = ?', (uid,)).fetchone()
     conn.close()
     return dict(row) if row else None

@@ -263,10 +263,27 @@ button:hover {
     gap: 1rem;
     margin-top: 1rem;
     align-items: flex-start;
+    margin-left: 280px; /* 为左侧日志容器留出空间 */
+}
+
+/* 响应式设计 */
+@media (max-width: 1200px) {
+    .game-main-container {
+        margin-left: 270px; /* 调整为较小的日志容器宽度 */
+    }
+}
+
+@media (max-width: 992px) {
+    .game-main-container {
+        margin-left: 0; /* 移动端不需要为固定定位的日志容器留空间 */
+    }
 }
 
 /* 日志容器 */
 .log-container {
+    position: fixed;
+    top: 80px;
+    left: 20px;
     width: 250px;
     background-color: #f5f5f5;
     border: 1px solid #ddd;
@@ -275,8 +292,16 @@ button:hover {
     flex-direction: column;
     height: calc(100vh - 200px); /* 自适应浏览器高度，减去其他元素的高度 */
     max-height: 600px; /* 最大高度限制 */
-    transition: width 0.3s ease;
+    transition: width 0.3s ease, box-shadow 0.2s ease;
     flex-shrink: 0; /* 防止被压缩 */
+    z-index: 999;
+    cursor: grab;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.log-container:active {
+    cursor: grabbing;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
 }
 
 .log-container.collapsed {
@@ -813,6 +838,31 @@ html.theme-dark .cell.ship {
 .game-message.success { background-color: rgba(46, 204, 113, 0.95); color: #063; }
 .game-message.warning { background-color: rgba(241, 196, 15, 0.95); color: #333; }
 .game-message.error { background-color: rgba(231, 76, 60, 0.95); color: #fff; }
+
+/* 投降按钮样式 */
+.surrender-btn {
+    padding: 8px 16px;
+    background-color: var(--danger);
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 1rem;
+    font-weight: bold;
+    transition: background-color 0.2s ease, transform 0.1s ease;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+.surrender-btn:hover {
+    background-color: #c0392b;
+    transform: translateY(-1px);
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.2);
+}
+
+.surrender-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
 
 /* 揭示格子样式（用于雷达/探测类效果） */
 .cell.revealed {

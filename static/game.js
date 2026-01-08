@@ -438,6 +438,7 @@ const backToMainBtn = document.getElementById('back-to-main');
 const playerBoard = document.getElementById('player-board');
 const shipsPlaced = document.getElementById('placed-count');
 const confirmShipsBtn = document.getElementById('confirm-ships');
+const randomShipsBtn = document.getElementById('random-ships');
 
 // 猜拳界面元素
 const rpsChoices = document.querySelectorAll('.rps-choice');
@@ -677,6 +678,9 @@ function bindEventListeners() {
 
     // 战舰放置
     confirmShipsBtn.addEventListener('click', confirmShipPlacement);
+    if (randomShipsBtn) {
+        randomShipsBtn.addEventListener('click', randomizeShips);
+    }
 
     // 猜拳选择
     rpsChoices.forEach(choice => {
@@ -1590,6 +1594,49 @@ function initGameBoards() {
             opponentBoard.appendChild(cell);
         }
     }
+}
+
+// 随机摆放战舰
+function randomizeShips() {
+    // 清空当前所有战舰
+    gameState.ships = [];
+    gameState.placedShips = 0;
+    
+    // 清空棋盘显示
+    playerBoard.querySelectorAll('.cell').forEach(cell => {
+        cell.classList.remove('ship');
+    });
+    
+    // 生成6个不重复的随机位置
+    const positions = new Set();
+    while (positions.size < 6) {
+        const x = Math.floor(Math.random() * 6);
+        const y = Math.floor(Math.random() * 6);
+        positions.add(`${x},${y}`);
+    }
+    
+    // 放置战舰
+    positions.forEach(pos => {
+        const [x, y] = pos.split(',').map(Number);
+        
+        // 添加新战舰（1x1大小）
+        gameState.ships.push({
+            positions: [{x, y}],
+            hits: []
+        });
+        
+        gameState.placedShips++;
+        
+        // 更新界面，显示战舰
+        const cell = playerBoard.querySelector(`[data-x="${x}"][data-y="${y}"]`);
+        cell.classList.add('ship');
+    });
+    
+    // 更新放置计数
+    shipsPlaced.textContent = gameState.placedShips;
+    
+    // 显示确认按钮
+    confirmShipsBtn.classList.remove('hidden');
 }
 
 // 处理棋盘单元格点击（放置/移除战舰）

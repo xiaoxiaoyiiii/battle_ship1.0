@@ -757,59 +757,110 @@ def handle_attack(data):
     ship_sunk = False
     for i, ship in enumerate(defender_ships):
         if {'x': target_x, 'y': target_y} in ship['positions']:
-            # 检查目标船是否有特殊状态
-            if ship.get('invincible'):
-                # 无敌状态，只显形不造成伤害
-                hit = True
-                ship_sunk = False
-            elif ship.get('shield'):
-                # 盾牌状态，抵挡一次伤害
-                hit = True
-                ship_sunk = False
-                del ship['shield']
-            else:
-                hit = True
+            hit = True
+            
+            # 检查攻击者是否有强制击杀效果
+            has_forced_kill = room.players[attacker_id].get('effect_flags', {}).get('forced_kill', 0) > 0
+            
+            if has_forced_kill:
+                # 强制击杀效果，忽略无敌和盾牌状态，直接击杀
                 # 记录击中位置
                 defender_ships[i]['hits'] = defender_ships[i].get('hits', []) + [{'x': target_x, 'y': target_y}]
                 
-                # 检查船是否被击沉
-                if len(defender_ships[i]['hits']) == len(defender_ships[i]['positions']):
-                    ship_sunk = True
-                    defender_remaining_before = room.players[defender_id]['remaining_ships']
-                    room.players[defender_id]['remaining_ships'] -= 1
-                    defender_remaining_after = room.players[defender_id]['remaining_ships']
+                # 直接击沉，不管当前击中次数
+                ship_sunk = True
+                defender_remaining_before = room.players[defender_id]['remaining_ships']
+                room.players[defender_id]['remaining_ships'] -= 1
+                defender_remaining_after = room.players[defender_id]['remaining_ships']
+                
+                # 记录船数变化（用于平等条约）
+                room.game_effects['last_ship_change'] = {
+                    'player': defender_id,
+                    'count': defender_remaining_before - defender_remaining_after
+                }
+                
+                # 检查饮血效果
+                if room.players[attacker_id].get('effect_flags', {}).get('vampire'):
+                    room.draw_card(attacker_id)
+                    emit('message', {'text': '饮血效果发动，抽一张卡'}, to=attacker_id)
+                
+                # 检查绝处逢生效果
+                if room.players[attacker_id].get('effect_flags', {}).get('last_stand'):
+                    # 直接获胜
+                    room.state = 'game_over'
+                    room.winner = attacker_id
+                    # 记录战绩（若为已登录用户）
+                    try:
+                        # 如果是游客（sid），db.record_match 会忽略不存在的用户
+                        opponent_id = next(p for p in room.players if p != attacker_id)
+                        db.record_match(attacker_id, opponent_id)
+                    except Exception:
+                        pass
+                    emit('game_over', {'winner': attacker_id}, room=room_id)
+                    return {'status': 'success', 'game_over': True}
+                
+                # 发送战舰数更新事件
+                emit('ships_updated', {
+                    'player_remaining_ships': room.players[attacker_id]['remaining_ships'],
+                    'opponent_remaining_ships': room.players[defender_id]['remaining_ships']
+                }, room=room_id)
+                
+                # 减少强制击杀效果的剩余次数
+                room.players[attacker_id]['effect_flags']['forced_kill'] -= 1
+                # 如果剩余次数为0，移除该效果
+                if room.players[attacker_id]['effect_flags']['forced_kill'] <= 0:
+                    del room.players[attacker_id]['effect_flags']['forced_kill']
+            else:
+                # 没有强制击杀效果，检查目标船是否有特殊状态
+                if ship.get('invincible'):
+                    # 无敌状态，只显形不造成伤害
+                    ship_sunk = False
+                elif ship.get('shield'):
+                    # 盾牌状态，抵挡一次伤害
+                    ship_sunk = False
+                    del ship['shield']
+                else:
+                    # 记录击中位置
+                    defender_ships[i]['hits'] = defender_ships[i].get('hits', []) + [{'x': target_x, 'y': target_y}]
                     
-                    # 记录船数变化（用于平等条约）
-                    room.game_effects['last_ship_change'] = {
-                        'player': defender_id,
-                        'count': defender_remaining_before - defender_remaining_after
-                    }
-                    
-                    # 检查饮血效果
-                    if room.players[attacker_id].get('effect_flags', {}).get('vampire'):
-                        room.draw_card(attacker_id)
-                        emit('message', {'text': '饮血效果发动，抽一张卡'}, to=attacker_id)
-                    
-                    # 检查绝处逢生效果
-                    if room.players[attacker_id].get('effect_flags', {}).get('last_stand'):
-                        # 直接获胜
-                        room.state = 'game_over'
-                        room.winner = attacker_id
-                        # 记录战绩（若为已登录用户）
-                        try:
-                            # 如果是游客（sid），db.record_match 会忽略不存在的用户
-                            opponent_id = next(p for p in room.players if p != attacker_id)
-                            db.record_match(attacker_id, opponent_id)
-                        except Exception:
-                            pass
-                        emit('game_over', {'winner': attacker_id}, room=room_id)
-                        return {'status': 'success', 'game_over': True}
-                    
-                    # 发送战舰数更新事件
-                    emit('ships_updated', {
-                        'player_remaining_ships': room.players[attacker_id]['remaining_ships'],
-                        'opponent_remaining_ships': room.players[defender_id]['remaining_ships']
-                    }, room=room_id)
+                    # 检查船是否被击沉
+                    if len(defender_ships[i]['hits']) == len(defender_ships[i]['positions']):
+                        ship_sunk = True
+                        defender_remaining_before = room.players[defender_id]['remaining_ships']
+                        room.players[defender_id]['remaining_ships'] -= 1
+                        defender_remaining_after = room.players[defender_id]['remaining_ships']
+                        
+                        # 记录船数变化（用于平等条约）
+                        room.game_effects['last_ship_change'] = {
+                            'player': defender_id,
+                            'count': defender_remaining_before - defender_remaining_after
+                        }
+                        
+                        # 检查饮血效果
+                        if room.players[attacker_id].get('effect_flags', {}).get('vampire'):
+                            room.draw_card(attacker_id)
+                            emit('message', {'text': '饮血效果发动，抽一张卡'}, to=attacker_id)
+                        
+                        # 检查绝处逢生效果
+                        if room.players[attacker_id].get('effect_flags', {}).get('last_stand'):
+                            # 直接获胜
+                            room.state = 'game_over'
+                            room.winner = attacker_id
+                            # 记录战绩（若为已登录用户）
+                            try:
+                                # 如果是游客（sid），db.record_match 会忽略不存在的用户
+                                opponent_id = next(p for p in room.players if p != attacker_id)
+                                db.record_match(attacker_id, opponent_id)
+                            except Exception:
+                                pass
+                            emit('game_over', {'winner': attacker_id}, room=room_id)
+                            return {'status': 'success', 'game_over': True}
+                        
+                        # 发送战舰数更新事件
+                        emit('ships_updated', {
+                            'player_remaining_ships': room.players[attacker_id]['remaining_ships'],
+                            'opponent_remaining_ships': room.players[defender_id]['remaining_ships']
+                        }, room=room_id)
             break
     
     # 记录最后一次攻击（用于溅射等效果）

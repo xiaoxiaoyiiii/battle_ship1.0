@@ -843,6 +843,8 @@ def resolve_chain(room):
         
         # 应用卡牌效果
         result = apply_magic_effect(room, player_id, card, targets)
+        # 添加施法者信息到结果中
+        result['caster'] = player_id
         results.append(result)
     
     # 广播连锁结算结果

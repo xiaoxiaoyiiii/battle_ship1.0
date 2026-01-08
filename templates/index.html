@@ -18,6 +18,21 @@
             {% endif %}
             <button id="theme-toggle" class="btn secondary" style="margin-left:12px;">切换主题</button>
             <button id="help-btn" class="btn secondary" style="margin-left:12px;">帮助</button>
+                        <button id="settings-btn" class="btn secondary" style="margin-left:12px;">设置</button>
+                        <!-- 设置模态弹窗 -->
+                        <div id="settings-modal" class="modal-overlay hidden">
+                            <div class="modal-content" style="max-width:400px;">
+                                <span class="modal-close" id="settings-modal-close">×</span>
+                                <h2>界面设置</h2>
+                                <div id="settings-content" style="text-align:left;max-height:60vh;overflow-y:auto;">
+                                    <label style="display:block;margin-bottom:1em;">
+                                        <span>主色（Primary Color）：</span>
+                                        <input type="color" id="primary-color-picker" value="#1976d2" style="vertical-align:middle;margin-left:8px;">
+                                    </label>
+                                    <button id="settings-save-btn" class="btn">保存</button>
+                                </div>
+                            </div>
+                        </div>
             <!-- 帮助模态弹窗 -->
             <div id="help-modal" class="modal-overlay hidden">
                 <div class="modal-content" style="max-width:600px;">

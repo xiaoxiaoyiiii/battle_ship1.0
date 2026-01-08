@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, session, redirect, url_for, flash
+from flask import Flask, render_template, request, session, redirect, url_for, flash, jsonify
 from flask_socketio import SocketIO, join_room, leave_room, emit
 import random
 import uuid
@@ -170,7 +170,8 @@ def register():
         else:
             flash('注册失败')
             return redirect(url_for('register'))
-    return render_template('register.html')
+    # SPA: 返回主页面，前端负责显示注册表单/提示
+    return render_template('index.html', username=session.get('username'))
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -185,7 +186,8 @@ def login():
         session['username'] = user['username']
         flash('登录成功')
         return redirect(url_for('index'))
-    return render_template('login.html')
+    # SPA: 返回主页面，前端负责显示登录表单/提示
+    return render_template('index.html', username=session.get('username'))
 
 @app.route('/logout')
 def logout():
@@ -196,8 +198,13 @@ def logout():
 
 @app.route('/leaderboard')
 def leaderboard():
-    rows = db.get_leaderboard(20)
-    return render_template('leaderboard.html', rows=rows)
+    # SPA entry point for leaderboard view
+    return render_template('index.html', username=session.get('username'))
+
+@app.route('/api/leaderboard')
+def api_leaderboard():
+    rows = db.get_leaderboard(100)
+    return jsonify(rows)
 
 @socketio.on('join_room')
 def handle_join_room(data):

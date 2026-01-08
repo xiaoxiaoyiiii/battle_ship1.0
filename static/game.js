@@ -792,7 +792,34 @@ function showLeaderboard() {
     switchScreen(leaderboardScreen);
     fetchLeaderboard();
 }
+function fetchLeaderboard() {
+    if (!leaderboardTableBody || !leaderboardError) return;
+    leaderboardTableBody.innerHTML = '';
+    leaderboardError.classList.add('hidden');
+    const loadingRow = document.createElement('tr');
+    loadingRow.innerHTML = '<td colspan="6" style="text-align:center; padding:12px">加载中...</td>';
+    leaderboardTableBody.appendChild(loadingRow);
 
+    fetch('/api/leaderboard').then(resp => {
+        if (!resp.ok) throw new Error('网络错误');
+        return resp.json();
+    }).then(data => {
+        leaderboardTableBody.innerHTML = '';
+        data.forEach((row, idx) => {
+            const tr = document.createElement('tr');
+            const wins = row.wins || 0;
+            const losses = row.losses || 0;
+            const total = wins + losses;
+            const winrate = total ? Math.round((wins/total) * 100) + '%' : '-';
+            tr.innerHTML = `<td>${idx+1}</td><td>${row.username}</td><td>${wins}</td><td>${losses}</td><td>${winrate}</td><td>${row.longest_streak || 0}</td>`;
+            leaderboardTableBody.appendChild(tr);
+        });
+    }).catch(err => {
+        leaderboardTableBody.innerHTML = '';
+        leaderboardError.classList.remove('hidden');
+        leaderboardError.textContent = '无法加载排行榜：' + err.message;
+    });
+}
 // 初始化棋盘
 function initBoard(boardElement, isEditable = false) {
     boardElement.innerHTML = '';

@@ -1261,8 +1261,11 @@ function setupSocketListeners() {
             // 处理需要选择的魔法卡效果（如桃园结义）
             if (result.temp_data_id) {
                 if (result.temp_data_id === 'taoyuan_choice') {
-                    // 桃园结义选择UI
-                    showTaoyuanChoice(result);
+                    // 只有当施法者是当前玩家时，才显示桃园结义选择UI
+                    if (result.caster === gameState.playerId) {
+                        // 桃园结义选择UI
+                        showTaoyuanChoice(result);
+                    }
                 }
             }
         });
@@ -1435,8 +1438,12 @@ function setupSocketListeners() {
         // 处理需要选择的魔法卡效果
         if (result.temp_data_id) {
             if (result.temp_data_id === 'taoyuan_choice') {
-                // 桃园结义选择UI
-                showTaoyuanChoice(result);
+                // 只有当施法者是当前玩家时，才显示桃园结义选择UI
+                const caster = result.caster_id || result.caster;
+                if (caster === gameState.playerId) {
+                    // 桃园结义选择UI
+                    showTaoyuanChoice(result);
+                }
             }
         }
         

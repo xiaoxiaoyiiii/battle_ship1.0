@@ -1378,8 +1378,13 @@ def counter_magic_response(data):
             'caster': caster_id,
             'timestamp': time.time()
         }
-        # 广播魔法效果
-        emit('magic_applied', result, room=room_id)
+        # 只将带有temp_data_id的结果发送给施法者，其他结果广播给所有人
+        if 'temp_data_id' in result:
+            # 只发送给施法者
+            emit('magic_applied', result, to=caster_id)
+        else:
+            # 广播给所有人
+            emit('magic_applied', result, room=room_id)
         return {'status': 'success', 'result': result}
 
 @socketio.on('remove_field_magic')
@@ -1487,7 +1492,6 @@ def confirm_magic_target(data):
     if temp_data_id == 'taoyuan_choice':
         # 处理桃园结义的选择
         caster_choice = target_data['caster_choice']
-        opponent_choice = target_data['opponent_choice']
         
         # 分配卡牌
         caster = room.players[player_id]
@@ -1497,24 +1501,36 @@ def confirm_magic_target(data):
         if 'cards' not in room.magic_temp_data:
             return {'status': 'error', 'message': '没有可分配的卡牌'}
         
+        cards = room.magic_temp_data['cards']
+        
         # 确保选择有效
-        if 0 <= caster_choice < len(room.magic_temp_data['cards']):
+        if 0 <= caster_choice < len(cards):
             # 给自己分配卡牌
-            caster['magic_hand'].append(room.magic_temp_data['cards'][caster_choice])
+            caster['magic_hand'].append(cards[caster_choice])
             
-            # 给对方分配卡牌（如果选择有效且不是同一张卡）
-            if opponent_choice >= 0 and opponent_choice < len(room.magic_temp_data['cards']) and opponent_choice != caster_choice:
-                opponent['magic_hand'].append(room.magic_temp_data['cards'][opponent_choice])
+            # 给对方分配卡牌（如果有剩余卡牌）
+            opponent_choice = -1
+            if len(cards) > 1:
+                # 如果有多张牌，给对方选一张（排除自己选的那张）
+                for i in range(len(cards)):
+                    if i != caster_choice:
+                        opponent_choice = i
+                        break
+                
+                if opponent_choice >= 0 and opponent_choice < len(cards):
+                    opponent['magic_hand'].append(cards[opponent_choice])
             
             # 剩余卡牌放回牌堆
             remaining_cards = []
-            for i, card in enumerate(room.magic_temp_data['cards']):
-                if i != caster_choice and (opponent_choice < 0 or i != opponent_choice):
+            for i, card in enumerate(cards):
+                if i != caster_choice and i != opponent_choice:
                     remaining_cards.append(card)
             
-            # 将剩余卡牌放回牌堆
+            # 将剩余卡牌放回施法者的牌堆顶部
+            player_deck = room.players[player_id]['magic_deck']
             if remaining_cards:
-                room.magic_deck = remaining_cards + room.magic_deck
+                player_deck = remaining_cards + player_deck
+                room.players[player_id]['magic_deck'] = player_deck
             
             # 清除临时数据
             room.magic_temp_data = {}
@@ -1598,10 +1614,13 @@ def apply_magic_effect(room, caster_id, card, target_data):
             # 从牌堆抽取n张牌(n为自己的战舰数)，自己选1张，再给对方选1张
             n = len(caster['ships'])
             drawn_cards = []
+            
+            # 获取玩家的魔法牌堆
+            player_deck = room.players[caster_id]['magic_deck']
+            
             # 只抽取牌堆中实际存在的牌
-            while len(drawn_cards) < n and room.magic_deck:
-                card = room.draw_card(caster_id)
-                if card: drawn_cards.append(card)
+            for i in range(min(n, len(player_deck))):
+                drawn_cards.append(player_deck.pop(0))
             
             if drawn_cards:
                 # 记录待选择的牌
@@ -1610,7 +1629,7 @@ def apply_magic_effect(room, caster_id, card, target_data):
                     'caster': caster_id,
                     'opponent': opponent_id,
                     'cards': drawn_cards,
-                    'original_deck': room.magic_deck.copy()  # 保存原始牌堆，用于放回未选中的牌
+                    'player_deck_backup': []  # 备份，用于记录放回的牌
                 }
                 result['message'] = f'抽了{len(drawn_cards)}张牌，请选择'
                 result['temp_data_id'] = 'taoyuan_choice'

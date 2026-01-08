@@ -77,6 +77,41 @@
             </div>
         </div>
 
+
+        <!-- 登录模态弹窗 -->
+        <div id="login-modal" class="modal-overlay hidden">
+            <div class="modal-content">
+                <span class="modal-close" id="login-modal-close">×</span>
+                <h2>登录</h2>
+                <div class="input-group">
+                    <input type="text" id="login-username" placeholder="用户名">
+                </div>
+                <div class="input-group">
+                    <input type="password" id="login-password" placeholder="密码">
+                </div>
+                <div class="button-group">
+                    <button id="login-submit">登录</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 注册模态弹窗 -->
+        <div id="register-modal" class="modal-overlay hidden">
+            <div class="modal-content">
+                <span class="modal-close" id="register-modal-close">×</span>
+                <h2>注册</h2>
+                <div class="input-group">
+                    <input type="text" id="register-username" placeholder="用户名">
+                </div>
+                <div class="input-group">
+                    <input type="password" id="register-password" placeholder="密码">
+                </div>
+                <div class="button-group">
+                    <button id="register-submit">注册</button>
+                </div>
+            </div>
+        </div>
+
         <!-- 战舰放置界面 -->
         <div id="ship-placement-screen" class="screen">
             <h2>放置你的战舰</h2>
@@ -151,6 +186,21 @@
                         </div>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- 大厅界面 -->
+        <div id="lobby-screen" class="screen">
+            <h2>游戏大厅</h2>
+            <p>加入匹配队列，等待其他玩家...</p>
+            <div class="lobby-info">
+                <p>当前大厅玩家: <span id="lobby-player-count">0</span></p>
+                <ul id="lobby-players-list"></ul>
+            </div>
+            <div class="button-group">
+                <button id="join-lobby-match">加入匹配</button>
+                <button id="leave-lobby-match" class="hidden">离开匹配</button>
+                <button id="back-to-main-from-lobby">返回首页</button>
             </div>
         </div>
 

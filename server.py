@@ -224,13 +224,13 @@ def handle_join_room(data):
     player_name = session.get('username', data.get('player_name', '匿名玩家'))
     
     if room_id not in rooms:
-        emit('error', {'message': '房间不存在'})
-        return {'status': 'error', 'message': '房间不存在'}
+        emit('error', {'message': '房间不存在'}, room=request.sid)
+        return
     
     room = rooms[room_id]
     if len(room.players) >= 2:
-        emit('error', {'message': '房间已满'})
-        return {'status': 'error', 'message': '房间已满'}
+        emit('error', {'message': '房间已满'}, room=request.sid)
+        return
     
     # 添加玩家到房间（key 为 user_id 或 sid）
     room.players[player_id] = {
@@ -242,13 +242,32 @@ def handle_join_room(data):
     
     # 添加玩家到Socket.IO房间
     join_room(room_id)
-    # 返回玩家 id 供前端记录
-    return {'status': 'success', 'player_id': player_id}
+    
+    # 检查是否所有玩家都已加入
+    if len(room.players) == 2:
+        # 所有玩家都已加入，开始游戏
+        room.state = 'placing_ships'
+        
+        # 初始化魔法卡牌系统
+        room.init_player_magic(list(room.players.keys())[0], magic_cards)
+        room.init_player_magic(list(room.players.keys())[1], magic_cards)
+        
+        # 准备发送给玩家的游戏状态
+        game_state_data = {
+            'state': 'placing_ships',
+            'room_id': room_id
+        }
+        
+        # 为每个玩家添加对方的名字
+        for pid in room.players:
+            opponent_id = next(p for p in room.players if p != pid)
+            game_state_data['opponent_name'] = room.players[opponent_id]['name']
+            emit('game_state', game_state_data, room=pid)
 
 
 # 大厅：加入匹配队列
 @socketio.on('join_lobby')
-def handle_join_lobby():
+def handle_join_lobby(data):
     player_id = session.get('user_id', request.sid)
     # 防止重复加入
     if player_id not in lobby_queue:

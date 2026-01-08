@@ -2603,6 +2603,8 @@ function initCardPreview() {
     
     // 添加拖拽功能
     initPreviewDrag();
+    // 初始化日志容器拖拽
+    initLogDrag();
 }
 
 // 初始化预览框拖拽功能
@@ -2655,6 +2657,58 @@ function initPreviewDrag() {
     
     // 初始化拖拽样式
     previewContainer.style.cursor = 'grab';
+}
+
+// 初始化日志容器拖拽功能
+function initLogDrag() {
+    const logContainer = document.querySelector('.log-container');
+    if (!logContainer) return;
+    
+    let isDragging = false;
+    let startX, startY, initialX, initialY;
+    
+    // 鼠标按下事件
+    logContainer.addEventListener('mousedown', (e) => {
+        // 只有点击头部区域才允许拖拽
+        if (e.target.closest('.log-header') || e.target === logContainer) {
+            isDragging = true;
+            
+            // 记录初始位置
+            initialX = parseInt(window.getComputedStyle(logContainer).left, 10);
+            initialY = parseInt(window.getComputedStyle(logContainer).top, 10);
+            
+            // 记录鼠标按下位置
+            startX = e.clientX;
+            startY = e.clientY;
+            
+            // 添加拖拽样式
+            logContainer.style.cursor = 'grabbing';
+        }
+    });
+    
+    // 鼠标移动事件
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        
+        // 计算偏移量
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        
+        // 更新位置
+        logContainer.style.left = `${initialX + dx}px`;
+        logContainer.style.top = `${initialY + dy}px`;
+    });
+    
+    // 鼠标释放事件
+    document.addEventListener('mouseup', () => {
+        if (isDragging) {
+            isDragging = false;
+            logContainer.style.cursor = 'grab';
+        }
+    });
+    
+    // 初始化拖拽样式
+    logContainer.style.cursor = 'grab';
 }
 
 function updateHandUI() {

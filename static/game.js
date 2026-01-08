@@ -1,3 +1,9 @@
+// 帮助相关元素
+const helpBtn = document.getElementById('help-btn');
+const helpModal = document.getElementById('help-modal');
+const helpModalClose = document.getElementById('help-modal-close');
+const helpContent = document.getElementById('help-content');
+const helpMagicCards = document.getElementById('help-magic-cards');
 // 对手信息相关元素
 const opponentUsernameInfo = document.getElementById('opponent-username-info');
 const myUsernameInfo = document.getElementById('my-username-info');
@@ -189,6 +195,28 @@ function addGameLog(logText) {
 
 // 绑定事件监听器
 function bindEventListeners() {
+                // 帮助按钮事件
+                if (helpBtn) helpBtn.addEventListener('click', () => {
+                    if (helpModal) helpModal.classList.remove('hidden');
+                    if (helpMagicCards && window.magicCards) {
+                        // 去重：同名同描述同速阶同类型只显示一次
+                        const seen = new Set();
+                        const uniqueCards = window.magicCards.filter(card => {
+                            const key = card.name + '|' + card.type + '|' + card.speed + '|' + card.description;
+                            if (seen.has(key)) return false;
+                            seen.add(key);
+                            return true;
+                        });
+                        helpMagicCards.innerHTML = uniqueCards.map(card => `
+                            <div class="magic-card-help" style="border:1px solid #ccc;border-radius:6px;padding:8px;margin-bottom:8px;background:var(--glass);">
+                                <b>${card.name}</b> <span style="color:#888;">(${card.type}·速阶${card.speed})</span><br>
+                                <span style="font-size:0.98em;">${card.description}</span>
+                            </div>
+                        `).join('');
+                    }
+                });
+                if (helpModalClose) helpModalClose.addEventListener('click', () => helpModal.classList.add('hidden'));
+                if (helpModal) helpModal.addEventListener('click', (e) => { if (e.target === helpModal) helpModal.classList.add('hidden'); });
             // 对手战绩按钮事件
             if (showOpponentStatsBtn) showOpponentStatsBtn.addEventListener('click', (e) => {
                 e.preventDefault();

@@ -63,6 +63,17 @@ def update_user_avatar(uid, avatar_path):
     finally:
         conn.close()
 
+def update_user_password(uid, password_hash):
+    conn = get_conn()
+    try:
+        conn.execute('UPDATE users SET password_hash = ? WHERE id = ?', (password_hash, uid))
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
 def get_user_profile(uid):
     conn = get_conn()
     c = conn.cursor()

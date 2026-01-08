@@ -1,3 +1,45 @@
+// 更改密码表单逻辑
+document.addEventListener('DOMContentLoaded', function() {
+    const changePasswordForm = document.getElementById('change-password-form');
+    const changePasswordMsg = document.getElementById('change-password-msg');
+    if (changePasswordForm) {
+        changePasswordForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const oldPwd = document.getElementById('old-password').value;
+            const newPwd = document.getElementById('new-password').value;
+            changePasswordMsg.textContent = '';
+            if (!oldPwd || !newPwd) {
+                changePasswordMsg.style.color = 'red';
+                changePasswordMsg.textContent = '请填写原密码和新密码';
+                return;
+            }
+            if (newPwd.length < 6) {
+                changePasswordMsg.style.color = 'red';
+                changePasswordMsg.textContent = '新密码长度至少6位';
+                return;
+            }
+            const formData = new FormData();
+            formData.append('old_password', oldPwd);
+            formData.append('new_password', newPwd);
+            fetch('/api/change_password', {
+                method: 'POST',
+                body: formData
+            }).then(r => r.json()).then(res => {
+                if (res.success) {
+                    changePasswordMsg.style.color = 'green';
+                    changePasswordMsg.textContent = '密码修改成功';
+                    changePasswordForm.reset();
+                } else {
+                    changePasswordMsg.style.color = 'red';
+                    changePasswordMsg.textContent = res.msg || '修改失败';
+                }
+            }).catch(() => {
+                changePasswordMsg.style.color = 'red';
+                changePasswordMsg.textContent = '请求失败，请稍后重试';
+            });
+        });
+    }
+});
 // 游戏内头像元素
 const myAvatarInGame = document.getElementById('my-avatar-in-game');
 const opponentAvatarInGame = document.getElementById('opponent-avatar-in-game');
@@ -35,6 +77,59 @@ function updateOpponentAvatarInGame(opponentId) {
 function onEnterGameScreen(opponentName) {
     updateMyAvatarInGame();
     if (opponentName) updateOpponentAvatarInGame(opponentName);
+}
+
+// 点击头像查看战绩
+if (myAvatarInGame) {
+    myAvatarInGame.style.cursor = 'pointer';
+    myAvatarInGame.addEventListener('click', () => {
+        // 优先使用 gameState.playerName，再退回到服务器渲染的全局用户名或页面元素
+        const username = (window.gameState && window.gameState.playerName) || window.__USERNAME || (document.getElementById('profile-username') && document.getElementById('profile-username').textContent) || '';
+        if (!username) return showMessage('未登录，无法查看战绩', { type: 'warning' });
+        fetch(`/user_stats?username=${encodeURIComponent(username)}`)
+            .then(r => r.json()).then(data => {
+                if (data.stats) {
+                    const s = data.stats;
+                    userStatsContent.innerHTML = `\
+                        <table class="user-stats-table">\
+                            <tr><td>用户名</td><td>${s.username}</td></tr>\
+                            <tr><td>胜场</td><td>${s.wins}</td></tr>\
+                            <tr><td>负场</td><td>${s.losses}</td></tr>\
+                            <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>\
+                            <tr><td>最长连胜</td><td>${s.longest_streak}</td></tr>\
+                        </table>`;
+                    userStatsModal.classList.remove('hidden');
+                } else {
+                    showMessage('未找到战绩数据', { type: 'warning' });
+                }
+            }).catch(err => showMessage('获取战绩失败', { type: 'error' }));
+    });
+}
+
+if (opponentAvatarInGame) {
+    opponentAvatarInGame.style.cursor = 'pointer';
+    opponentAvatarInGame.addEventListener('click', () => {
+        // 优先使用 gameState.opponentName，再尝试页面元素
+        const username = (window.gameState && window.gameState.opponentName) || (document.getElementById('opponent-username-info') && document.getElementById('opponent-username-info').textContent) || '';
+        if (!username) return showMessage('对手信息不可用', { type: 'warning' });
+        fetch(`/user_stats?username=${encodeURIComponent(username)}`)
+            .then(r => r.json()).then(data => {
+                if (data.stats) {
+                    const s = data.stats;
+                    userStatsContent.innerHTML = `\
+                        <table class="user-stats-table">\
+                            <tr><td>用户名</td><td>${s.username}</td></tr>\
+                            <tr><td>胜场</td><td>${s.wins}</td></tr>\
+                            <tr><td>负场</td><td>${s.losses}</td></tr>\
+                            <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>\
+                            <tr><td>最长连胜</td><td>${s.longest_streak}</td></tr>\
+                        </table>`;
+                    userStatsModal.classList.remove('hidden');
+                } else {
+                    showMessage('未找到对手战绩', { type: 'warning' });
+                }
+            }).catch(err => showMessage('获取战绩失败', { type: 'error' }));
+    });
 }
 
 // 个人信息相关元素
@@ -344,6 +439,11 @@ function addGameLog(logText) {
 
 // 绑定事件监听器
 function bindEventListeners() {
+    // 辅助：从服务器返回的对象中提取用户名，支持多种命名风格
+    function extractName(obj) {
+        if (!obj) return null;
+        return obj.opponent_name || obj.opponentName || obj.opponent || obj.player_name || obj.playerName || obj.player || null;
+    }
                 // 帮助按钮事件
                 if (helpBtn) helpBtn.addEventListener('click', () => {
                     if (helpModal) helpModal.classList.remove('hidden');
@@ -695,21 +795,30 @@ function setupSocketListeners() {
         gameScreen.classList.remove('active');
         gameOverScreen.classList.remove('active');
         
-        // 保存玩家名称和对手名称
-        if (data.player_name) {
-            gameState.playerName = data.player_name;
-            if (myUsernameInfo) myUsernameInfo.textContent = data.player_name;
+        // 保存玩家名称和对手名称（支持多种字段名）
+        const playerNameFromData = data.player_name || data.playerName || data.player || null;
+        if (playerNameFromData) {
+            gameState.playerName = playerNameFromData;
+            if (myUsernameInfo) myUsernameInfo.textContent = playerNameFromData;
         }
-        if (data.opponent_name) {
-            gameState.opponentName = data.opponent_name;
+
+        const oppNameFromData = data.opponent_name || data.opponentName || data.opponent || null;
+        if (oppNameFromData) {
+            gameState.opponentName = oppNameFromData;
             if (opponentUsernameInfo) {
-                opponentUsernameInfo.textContent = data.opponent_name;
+                opponentUsernameInfo.textContent = oppNameFromData;
                 showOpponentStatsBtn && (showOpponentStatsBtn.style.display = 'inline-block');
             }
-            onEnterGameScreen(data.opponent_name);
+            onEnterGameScreen(oppNameFromData);
         } else {
-            if (opponentUsernameInfo) opponentUsernameInfo.textContent = '';
-            showOpponentStatsBtn && (showOpponentStatsBtn.style.display = 'none');
+            // 如果没有从当前数据里获得对手名，尝试从 gameState 中恢复（有可能之前已设置）
+            if (gameState.opponentName) {
+                if (opponentUsernameInfo) opponentUsernameInfo.textContent = gameState.opponentName;
+                showOpponentStatsBtn && (showOpponentStatsBtn.style.display = 'inline-block');
+            } else {
+                if (opponentUsernameInfo) opponentUsernameInfo.textContent = '';
+                showOpponentStatsBtn && (showOpponentStatsBtn.style.display = 'none');
+            }
         }
         // 显示对手战绩弹窗并请求数据
         function showOpponentStats() {

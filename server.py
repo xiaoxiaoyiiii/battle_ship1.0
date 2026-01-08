@@ -117,6 +117,25 @@ def upload_avatar():
     avatar_url = f"/static/avatars/{filename}"
     ok = db.update_user_avatar(uid, avatar_url)
     return jsonify({'success': ok, 'avatar': avatar_url})
+# 更改密码
+@app.route('/api/change_password', methods=['POST'])
+def change_password():
+    """更改当前用户密码"""
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'success': False, 'msg': '未登录'}), 401
+    old_password = request.form.get('old_password', '')
+    new_password = request.form.get('new_password', '')
+    if not old_password or not new_password:
+        return jsonify({'success': False, 'msg': '请填写原密码和新密码'}), 400
+    user = db.get_user_by_id(uid)
+    if not user or not db or not check_password_hash(user['password_hash'], old_password):
+        return jsonify({'success': False, 'msg': '原密码错误'}), 403
+    if len(new_password) < 6:
+        return jsonify({'success': False, 'msg': '新密码长度至少6位'}), 400
+    new_hash = generate_password_hash(new_password)
+    ok = db.update_user_password(uid, new_hash)
+    return jsonify({'success': ok, 'msg': '密码修改成功' if ok else '修改失败'})
 @app.route('/user_stats', methods=['GET'])
 def user_stats_view():
     """查询个人战绩，支持通过 username 查询或当前登录用户。"""

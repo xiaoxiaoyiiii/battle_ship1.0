@@ -38,7 +38,19 @@
                                         </label>
                                         <button type="submit" class="btn">保存修改</button>
                                     </form>
-                                    <div id="profile-save-msg" style="color:green;margin-top:8px;"></div>
+                                    <hr>
+                                    <form id="change-password-form" style="margin-top:1em;">
+                                        <label style="display:block;margin-bottom:0.5em;">
+                                            <span>原密码：</span>
+                                            <input type="password" id="old-password" maxlength="32" style="width:90%;">
+                                        </label>
+                                        <label style="display:block;margin-bottom:0.5em;">
+                                            <span>新密码：</span>
+                                            <input type="password" id="new-password" maxlength="32" style="width:90%;">
+                                        </label>
+                                        <button type="submit" class="btn">更改密码</button>
+                                    </form>
+                                    <div id="change-password-msg" style="color:green;margin-top:8px;"></div>
                                 </div>
                             </div>
                         </div>

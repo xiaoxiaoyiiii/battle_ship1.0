@@ -1071,7 +1071,6 @@ def find_safe_position(room, player_id):
 
 
 def apply_magic_effect(room, caster_id, card, target_data):
-    """应用魔法卡效果 - 完整实现"""
     result = {'card': card, 'caster': caster_id, 'success': True, 'message': ''}
     opponent_id = next(p for p in room.players if p != caster_id)
     caster = room.players[caster_id]
@@ -1174,6 +1173,35 @@ def apply_magic_effect(room, caster_id, card, target_data):
                     break
             
             result['message'] = f'双方船数调整为{target_ships}'
+
+        elif card['name'] == '军备竞赛':
+            # 将对方的战舰数变得和自己一样
+            caster_ship_count = len(caster['ships'])
+            opponent_ship_count = len(opponent['ships'])
+            
+            if opponent_ship_count > caster_ship_count:
+                # 对方多于自己，对方选择牺牲多出去的船
+                extra_ships = opponent_ship_count - caster_ship_count
+                # 直接移除多余的船（简化实现，实际应让对方选择）
+                while len(opponent['ships']) > caster_ship_count:
+                    opponent['ships'].pop()
+                    opponent['remaining_ships'] -= 1
+                result['message'] = f'对方船数过多，已移除{extra_ships}艘船'
+            elif opponent_ship_count < caster_ship_count:
+                # 对方少于自己，对方在未被打过的格子中放置少了的船
+                missing_ships = caster_ship_count - opponent_ship_count
+                added_ships = 0
+                while len(opponent['ships']) < caster_ship_count:
+                    pos = find_safe_position(room, opponent_id)
+                    if pos:
+                        opponent['ships'].append({'id': f'magic_{uuid.uuid4()[:4]}', 'positions': [pos], 'hits': []})
+                        opponent['remaining_ships'] += 1
+                        added_ships += 1
+                    else:
+                        break
+                result['message'] = f'对方船数不足，已添加{added_ships}艘船'
+            else:
+                result['message'] = '双方船数相同，无需调整'
 
         # ==== 速阶2 魔法卡 ====
         elif card['name'] == '溅射':

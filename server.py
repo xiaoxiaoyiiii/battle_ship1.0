@@ -2328,7 +2328,10 @@ def handle_surrender(data):
         pass
     
     # 向房间发送游戏结束事件
-    emit('game_over', {'winner': opponent_id}, room=room_id)
+    emit('game_over', {
+        'winner': opponent_id,
+        'reason': 'surrender'  # 添加投降原因标记
+    }, room=room_id)
     return {'status': 'success'}
 
 if __name__ == '__main__':

@@ -1,3 +1,68 @@
+// 个人信息相关元素
+const showProfileBtn = document.getElementById('show-profile');
+const profileModal = document.getElementById('profile-modal');
+const profileModalClose = document.getElementById('profile-modal-close');
+const profileForm = document.getElementById('profile-form');
+const profileAvatar = document.getElementById('profile-avatar');
+const avatarInput = document.getElementById('avatar-input');
+const profileUsername = document.getElementById('profile-username');
+const profileSignature = document.getElementById('profile-signature');
+const profileSaveMsg = document.getElementById('profile-save-msg');
+
+// 个人信息弹窗逻辑
+if (showProfileBtn && profileModal && profileModalClose) {
+    showProfileBtn.onclick = () => {
+        fetch('/api/profile').then(r => r.json()).then(res => {
+            if (res.profile) {
+                profileUsername.textContent = res.profile.username;
+                profileSignature.value = res.profile.signature || '';
+                profileAvatar.src = res.profile.avatar || '/static/avatars/default.png';
+            }
+        });
+        profileModal.classList.remove('hidden');
+        profileSaveMsg.textContent = '';
+    };
+    profileModalClose.onclick = () => profileModal.classList.add('hidden');
+    profileModal.onclick = (e) => { if (e.target === profileModal) profileModal.classList.add('hidden'); };
+}
+
+// 签名保存
+if (profileForm) {
+    profileForm.onsubmit = function(e) {
+        e.preventDefault();
+        const formData = new FormData();
+        formData.append('signature', profileSignature.value);
+        fetch('/api/profile/signature', { method: 'POST', body: formData })
+            .then(r => r.json()).then(res => {
+                if (res.success) {
+                    profileSaveMsg.textContent = '签名已保存';
+                } else {
+                    profileSaveMsg.textContent = '保存失败';
+                    profileSaveMsg.style.color = 'red';
+                }
+            });
+    };
+}
+
+// 头像上传
+if (avatarInput) {
+    avatarInput.onchange = function() {
+        const file = avatarInput.files[0];
+        if (!file) return;
+        const formData = new FormData();
+        formData.append('avatar', file);
+        fetch('/api/profile/avatar', { method: 'POST', body: formData })
+            .then(r => r.json()).then(res => {
+                if (res.success && res.avatar) {
+                    profileAvatar.src = res.avatar + '?t=' + Date.now();
+                    profileSaveMsg.textContent = '头像已更新';
+                } else {
+                    profileSaveMsg.textContent = res.error || '头像上传失败';
+                    profileSaveMsg.style.color = 'red';
+                }
+            });
+    };
+}
 // 设置相关元素
 const settingsBtn = document.getElementById('settings-btn');
 const settingsModal = document.getElementById('settings-modal');

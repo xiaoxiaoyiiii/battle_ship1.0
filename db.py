@@ -25,7 +25,9 @@ def init_db():
             losses INTEGER DEFAULT 0,
             current_streak INTEGER DEFAULT 0,
             longest_streak INTEGER DEFAULT 0,
-            created_at INTEGER
+            created_at INTEGER,
+            signature TEXT DEFAULT '',
+            avatar TEXT DEFAULT ''
         )
     ''')
     c.execute('''
@@ -38,6 +40,35 @@ def init_db():
     ''')
     conn.commit()
     conn.close()
+
+def update_user_signature(uid, signature):
+    conn = get_conn()
+    try:
+        conn.execute('UPDATE users SET signature = ? WHERE id = ?', (signature, uid))
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+def update_user_avatar(uid, avatar_path):
+    conn = get_conn()
+    try:
+        conn.execute('UPDATE users SET avatar = ? WHERE id = ?', (avatar_path, uid))
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+def get_user_profile(uid):
+    conn = get_conn()
+    c = conn.cursor()
+    row = c.execute('SELECT id, username, signature, avatar FROM users WHERE id = ?', (uid,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
 
 
 def create_user(username, password_hash):

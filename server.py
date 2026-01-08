@@ -1,3 +1,5 @@
+import os
+from werkzeug.utils import secure_filename
 from flask import Flask, render_template, request, session, redirect, url_for, flash, jsonify
 from flask_socketio import SocketIO, join_room, leave_room, emit
 import random
@@ -72,7 +74,49 @@ lobby_queue = []
 
 # 简单的 lobby 成员列表（用于显示）
 lobby_members = set()
+# 允许上传的头像文件类型
+ALLOWED_AVATAR_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+AVATAR_UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'static', 'avatars')
+os.makedirs(AVATAR_UPLOAD_FOLDER, exist_ok=True)
 
+def allowed_avatar_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_AVATAR_EXTENSIONS
+# 获取用户个性化信息
+@app.route('/api/profile', methods=['GET'])
+def get_profile():
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'error': '未登录'}), 401
+    profile = db.get_user_profile(uid)
+    return jsonify({'profile': profile})
+
+# 修改签名
+@app.route('/api/profile/signature', methods=['POST'])
+def update_signature():
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'error': '未登录'}), 401
+    signature = request.form.get('signature', '')
+    ok = db.update_user_signature(uid, signature)
+    return jsonify({'success': ok})
+
+# 上传头像
+@app.route('/api/profile/avatar', methods=['POST'])
+def upload_avatar():
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'error': '未登录'}), 401
+    if 'avatar' not in request.files:
+        return jsonify({'error': '未选择文件'}), 400
+    file = request.files['avatar']
+    if file.filename == '' or not allowed_avatar_file(file.filename):
+        return jsonify({'error': '文件类型不支持'}), 400
+    filename = secure_filename(f"{uid}_avatar.{file.filename.rsplit('.', 1)[1].lower()}")
+    save_path = os.path.join(AVATAR_UPLOAD_FOLDER, filename)
+    file.save(save_path)
+    avatar_url = f"/static/avatars/{filename}"
+    ok = db.update_user_avatar(uid, avatar_url)
+    return jsonify({'success': ok, 'avatar': avatar_url})
 @app.route('/user_stats', methods=['GET'])
 def user_stats_view():
     """查询个人战绩，支持通过 username 查询或当前登录用户。"""

@@ -437,6 +437,78 @@ const currentPlayer = document.getElementById('current-player');
 const attacksRemaining = document.getElementById('attacks-remaining');
 const gameRound = document.getElementById('game-round');
 
+// 局内聊天相关元素
+const chatContainer = document.getElementById('in-game-chat-container');
+const chatMessages = document.getElementById('in-game-chat-messages');
+const chatInput = document.getElementById('in-game-chat-input');
+const chatSendBtn = document.getElementById('in-game-chat-send');
+
+// 聊天Socket初始化
+let chatSocketInitialized = false;
+function initInGameChatSocket() {
+    if (chatSocketInitialized) return;
+    if (!window.gameState || !window.gameState.socket) return;
+    const socket = window.gameState.socket;
+    socket.on('chat_message', function(data) {
+        console.log("Received chat message:", data);
+        appendChatMessage(data.username, data.message, data.isMe);
+    });
+    chatSocketInitialized = true;
+}
+
+// 发送消息
+function sendChatMessage() {
+    if (!chatInput || !chatInput.value.trim() || !window.gameState || !window.gameState.socket) return;
+    const msg = chatInput.value.trim().slice(0, 100);
+    window.gameState.socket.emit('chat_message', {room_id:gameState.roomId, message: msg });
+    chatInput.value = '';
+}
+if (chatSendBtn && chatInput) {
+    chatSendBtn.addEventListener('click', sendChatMessage);
+    chatInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') sendChatMessage();
+    });
+}
+
+// 显示消息
+function appendChatMessage(username, message, isMe) {
+    if (!chatMessages) return;
+    const div = document.createElement('div');
+    div.className = 'in-game-chat-message ' + (isMe ? 'me' : 'opponent');
+    div.innerHTML = `<span>${escapeHtml(username)}：</span>${escapeHtml(message)}`;
+    chatMessages.appendChild(div);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, function(c) {
+        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c];
+    });
+}
+
+// 只在游戏主界面显示聊天框
+function setChatVisible(visible) {
+    if (chatContainer) chatContainer.style.display = visible ? '' : 'none';
+}
+setChatVisible(false);
+
+// 切换到游戏主界面时初始化聊天
+const origSwitchScreen = window.switchScreen;
+window.switchScreen = function(screen) {
+    origSwitchScreen(screen);
+    setChatVisible(screen === 'game-screen');
+    if (screen === 'game-screen') {
+        initInGameChatSocket();
+    }
+}
+
+// 进入游戏主界面时也初始化聊天
+const origOnEnterGameScreen = window.onEnterGameScreen;
+window.onEnterGameScreen = function(opponentName) {
+    if (typeof origOnEnterGameScreen === 'function') origOnEnterGameScreen(opponentName);
+    setChatVisible(true);
+    initInGameChatSocket();
+}
+
 // 日志功能元素
 const logContainer = document.querySelector('.log-container');
 const toggleLogBtn = document.getElementById('toggle-log');

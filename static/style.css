@@ -496,6 +496,83 @@ button:hover {
     margin-right: 330px; /* 为右侧预览框留出空间 */
 }
 
+/* 局内聊天框样式 */
+.in-game-chat-container {
+    position: fixed;
+    right: 32px;
+    bottom: 32px;
+    width: 320px;
+    max-width: 90vw;
+    background: var(--glass);
+    border: 1px solid var(--muted);
+    border-radius: 10px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+    z-index: 1200;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.in-game-chat-messages {
+    flex: 1;
+    min-height: 120px;
+    max-height: 220px;
+    overflow-y: auto;
+    padding: 12px 10px 6px 10px;
+    font-size: 0.98em;
+    color: var(--text);
+    background: transparent;
+}
+.in-game-chat-message {
+    margin-bottom: 6px;
+    word-break: break-all;
+    line-height: 1.5;
+}
+.in-game-chat-message.me {
+    color: var(--primary);
+    font-weight: bold;
+}
+.in-game-chat-message.opponent {
+    color: #e67e22;
+}
+.in-game-chat-input-row {
+    display: flex;
+    border-top: 1px solid var(--muted);
+    background: var(--surface);
+    padding: 6px 8px;
+    gap: 6px;
+}
+#in-game-chat-input {
+    flex: 1;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    padding: 6px 8px;
+    font-size: 1em;
+    outline: none;
+    background: #fff;
+    color: var(--text);
+}
+#in-game-chat-send {
+    min-width: 56px;
+    font-size: 1em;
+    border-radius: 5px;
+    background: var(--primary);
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    transition: background 0.18s;
+}
+#in-game-chat-send:hover {
+    background: var(--primary-600);
+}
+@media (max-width: 600px) {
+    .in-game-chat-container {
+        right: 2vw;
+        bottom: 2vw;
+        width: 98vw;
+        max-width: 98vw;
+    }
+}
+
 /* 响应式设计 */
 @media (max-width: 1200px) {
     .magic-preview-container {

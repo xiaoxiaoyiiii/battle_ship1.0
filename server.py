@@ -1,9 +1,11 @@
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, session, redirect, url_for, flash
 from flask_socketio import SocketIO, join_room, leave_room, emit
 import random
 import uuid
 import os
 import time
+from werkzeug.security import generate_password_hash, check_password_hash
+import db  # local database helpers for users and matches
 
 # 添加魔法卡牌数据定义（与客户端 magic_cards.js 保持一致）
 magic_cards = [
@@ -65,6 +67,11 @@ rooms = {}
 # 匹配队列
 match_queue = []
 
+# 大厅匹配队列（简单 FIFO 队列）
+lobby_queue = []
+
+# 简单的 lobby 成员列表（用于显示）
+lobby_members = set()
 class GameRoom:
     def __init__(self, room_id):
         self.id = room_id
@@ -137,11 +144,77 @@ def handle_create_room(data):
     rooms[room_id] = GameRoom(room_id)
     return {'status': 'success', 'room_id': room_id}
 
+
+@app.route('/')
+def index():
+    # 渲染主页面并传递登录信息
+    return render_template('index.html', username=session.get('username'))
+
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        if not username or not password:
+            flash('用户名和密码不能为空')
+            return redirect(url_for('register'))
+        if db.get_user_by_username(username):
+            flash('用户名已存在')
+            return redirect(url_for('register'))
+        pw_hash = generate_password_hash(password)
+        uid = db.create_user(username, pw_hash)
+        if uid:
+            session['user_id'] = uid
+            session['username'] = username
+            flash('注册成功')
+            return redirect(url_for('index'))
+        else:
+            flash('注册失败')
+            return redirect(url_for('register'))
+    return render_template('register.html')
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        user = db.get_user_by_username(username)
+        if not user or not check_password_hash(user['password_hash'], password):
+            flash('用户名或密码错误')
+            return redirect(url_for('login'))
+        session['user_id'] = user['id']
+        session['username'] = user['username']
+        flash('登录成功')
+        return redirect(url_for('index'))
+    return render_template('login.html')
+
+
+@app.route('/logout')
+def logout():
+    session.pop('user_id', None)
+    session.pop('username', None)
+    flash('已退出登录')
+    return redirect(url_for('index'))
+
+
+@app.route('/leaderboard')
+def leaderboard():
+    rows = db.get_leaderboard(20)
+    return render_template('leaderboard.html', rows=rows)
+
+@app.route('/lobby')
+def lobby():
+    # 渲染大厅页面，传递用户名以显示已登录用户（可为 None 表示游客）
+    return render_template('lobby.html', username=session.get('username'))
+
 @socketio.on('join_room')
 def handle_join_room(data):
     room_id = data['room_id']
-    player_id = request.sid
-    player_name = data.get('player_name', '匿名玩家')
+    # 优先使用登录后的 user_id，否则使用 sid（游客模式）
+    player_id = session.get('user_id', request.sid)
+    player_name = session.get('username', data.get('player_name', '匿名玩家'))
     
     if room_id not in rooms:
         emit('error', {'message': '房间不存在'})
@@ -152,7 +225,7 @@ def handle_join_room(data):
         emit('error', {'message': '房间已满'})
         return {'status': 'error', 'message': '房间已满'}
     
-    # 添加玩家到房间
+    # 添加玩家到房间（key 为 user_id 或 sid）
     room.players[player_id] = {
         'name': player_name,
         'ships': [],
@@ -162,24 +235,87 @@ def handle_join_room(data):
     
     # 添加玩家到Socket.IO房间
     join_room(room_id)
-    
-    # 初始化魔法卡牌系统
-    room.init_player_magic(player_id, magic_cards)
-    
-    # 发送房间状态更新
-    emit('room_updated', {
-        'players': list(room.players.keys()),
-        'state': room.state
-    }, room=room_id)
-    
-    # 检查是否两个玩家都已加入，如果是则开始放置战舰阶段
-    if len(room.players) == 2:
-        room.state = 'placing_ships'
-        emit('game_state', {'state': 'placing_ships'}, room=room_id)
-    
-    # 返回成功状态
+    # 返回玩家 id 供前端记录
     return {'status': 'success', 'player_id': player_id}
 
+<<<<<<< HEAD
+
+# 大厅：加入匹配队列
+@socketio.on('join_lobby')
+def handle_join_lobby():
+    player_id = session.get('user_id', request.sid)
+    # 防止重复加入
+    if player_id not in lobby_queue:
+        lobby_queue.append(player_id)
+        lobby_members.add(player_id)
+        # 将当前 socket 加入一个以 player_id 命名的个人房间，方便推送
+        try:
+            join_room(player_id)
+        except Exception:
+            pass
+        emit('lobby_joined', room=request.sid)
+        # 发送带可显示名字的成员列表
+        players_display = []
+        for pid in list(lobby_members):
+            u = db.get_user_by_id(pid)
+            players_display.append(u['username'] if u else str(pid)[:6])
+        emit('lobby_update', {'players': players_display}, broadcast=True)
+        # 尝试匹配
+        try_match()
+    else:
+        # 已在队列中：仅推送更新以同步 UI
+        players_display = []
+        for pid in list(lobby_members):
+            u = db.get_user_by_id(pid)
+            players_display.append(u['username'] if u else str(pid)[:6])
+        emit('lobby_update', {'players': players_display}, room=request.sid)
+
+
+@socketio.on('leave_lobby')
+def handle_leave_lobby():
+    player_id = session.get('user_id', request.sid)
+    # 安全地移除
+    try:
+        while player_id in lobby_queue:
+            lobby_queue.remove(player_id)
+    except ValueError:
+        pass
+    lobby_members.discard(player_id)
+    try:
+        leave_room(player_id)
+    except Exception:
+        pass
+    emit('lobby_left', room=request.sid)
+    players_display = []
+    for pid in list(lobby_members):
+        u = db.get_user_by_id(pid)
+        players_display.append(u['username'] if u else str(pid)[:6])
+    emit('lobby_update', {'players': players_display}, broadcast=True)
+
+
+def try_match():
+    # 简单 FIFO：两两配对
+    while len(lobby_queue) >= 2:
+        p1 = lobby_queue.pop(0)
+        p2 = lobby_queue.pop(0)
+        lobby_members.discard(p1)
+        lobby_members.discard(p2)
+        # 创建房间并通知
+        new_room_id = str(uuid.uuid4())[:6]
+        rooms[new_room_id] = GameRoom(new_room_id)
+        # 向双方发送匹配成功（使用个人房间）
+        emit('match_found', {'room_id': new_room_id}, room=p1)
+        emit('match_found', {'room_id': new_room_id}, room=p2)
+
+    # Broadcast lobby update
+    players_display = []
+    for pid in list(lobby_members):
+        u = db.get_user_by_id(pid)
+        players_display.append(u['username'] if u else str(pid)[:6])
+    emit('lobby_update', {'players': players_display}, broadcast=True)
+
+    return {'status': 'ok'}
+=======
 @socketio.on('find_match')
 def handle_find_match(data):
     """处理玩家匹配请求"""
@@ -285,6 +421,7 @@ def check_match_queue():
                 del app.player_names[player1]
             if player2 in app.player_names:
                 del app.player_names[player2]
+>>>>>>> 01c133b8bc5ceba0982433d25ba7b52afa7c6430
 
 @socketio.on('place_ships')
 def handle_place_ships(data):
@@ -529,6 +666,13 @@ def handle_attack(data):
                         # 直接获胜
                         room.state = 'game_over'
                         room.winner = attacker_id
+                        # 记录战绩（若为已登录用户）
+                        try:
+                            # 如果是游客（sid），db.record_match 会忽略不存在的用户
+                            opponent_id = next(p for p in room.players if p != attacker_id)
+                            db.record_match(attacker_id, opponent_id)
+                        except Exception:
+                            pass
                         emit('game_over', {'winner': attacker_id}, room=room_id)
                         return {'status': 'success', 'game_over': True}
                     
@@ -572,6 +716,11 @@ def handle_attack(data):
     if room.players[defender_id]['remaining_ships'] == 0:
         room.state = 'game_over'
         room.winner = attacker_id
+        # 记录战绩（若为已登录用户）
+        try:
+            db.record_match(attacker_id, defender_id)
+        except Exception:
+            pass
         emit('game_over', {'winner': attacker_id}, room=room_id)
         return {'status': 'success', 'game_over': True}
     
@@ -715,9 +864,6 @@ def end_turn(data):
     
     return {'status': 'error', 'message': '无法结束当前回合'}
 
-@app.route('/')
-def index():
-    return render_template('index.html')
 
 @socketio.on('use_magic_card')
 def handle_use_magic_card(data):
@@ -2047,9 +2193,11 @@ def apply_magic_effect(room, caster_id, card, target_data):
     return result
 
 if __name__ == '__main__':
+    # 初始化数据库
+    db.init_db()
     # 添加详细日志输出
     import logging
     logging.basicConfig(level=logging.DEBUG)
-    # 添加allow_unsafe_werkzeug参数
+    # 启动服务器
     socketio.run(app, debug=True, host='0.0.0.0', port=5000)
     

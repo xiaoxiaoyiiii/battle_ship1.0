@@ -628,6 +628,28 @@ function setupSocketListeners() {
         updateHandUI();
     });
 
+    // 大厅相关事件
+    socket.on('lobby_update', (data) => {
+        // 如果在大厅页面，页面会处理此事件；否则可用于显示在线匹配人数
+        console.log('Lobby update:', data);
+    });
+
+    socket.on('match_found', (data) => {
+        console.log('Match found:', data);
+        showMessage(`找到对手，房间ID: ${data.room_id}`);
+        // 如果在游戏主界面，自动尝试 join_room
+        if (gameState.roomId !== data.room_id) {
+            // 告诉服务器加入该房间
+            socket.emit('join_room', { room_id: data.room_id, player_name: gameState.playerName }, (resp) => {
+                if (resp && resp.status === 'success') {
+                    gameState.roomId = resp.player_id === undefined ? data.room_id : data.room_id;
+                    // 切换到游戏界面以便玩家开始放置战舰
+                    switchScreen(shipPlacementScreen);
+                }
+            });
+        }
+    });
+
     // 新增：监听手牌更新事件
     socket.on('hand_updated', (data) => {
         gameState.hand = data.hand;
@@ -2183,6 +2205,44 @@ function createMagicCardUI() {
 function init() {
     // 绑定事件监听器
     bindEventListeners();
+    // 如果服务端传来了用户名，预填并设置为当前玩家名
+    if (window.__USERNAME) {
+        gameState.playerName = window.__USERNAME || gameState.playerName;
+        if (playerNameInput) playerNameInput.value = gameState.playerName;
+    }
+
+    // 检查 URL 是否包含 room 参数，如果有则在连接后自动加入
+    const urlParams = new URLSearchParams(window.location.search);
+    const autoRoom = urlParams.get('room');
+    if (autoRoom) {
+        // Ensure socket exists and listeners are set up
+        if (!gameState.socket) {
+            gameState.socket = io.connect('http://' + window.location.host);
+            setupSocketListeners();
+        }
+        // 在 socket 连接后尝试加入房间
+        if (gameState.socket.connected) {
+            gameState.socket.emit('join_room', { room_id: autoRoom, player_name: gameState.playerName }, (resp) => {
+                if (resp && resp.status === 'success') {
+                    gameState.roomId = autoRoom;
+                    switchScreen(shipPlacementScreen);
+                }
+            });
+        } else {
+            // 等待连接建立后加入
+            const onceConnect = () => {
+                gameState.socket.emit('join_room', { room_id: autoRoom, player_name: gameState.playerName }, (resp) => {
+                    if (resp && resp.status === 'success') {
+                        gameState.roomId = autoRoom;
+                        switchScreen(shipPlacementScreen);
+                    }
+                    gameState.socket.off('connect', onceConnect);
+                });
+            };
+            gameState.socket.on('connect', onceConnect);
+        }
+    }
+
     // 创建魔法手牌区域
     createMagicCardUI();
     // 初始化卡牌提示框

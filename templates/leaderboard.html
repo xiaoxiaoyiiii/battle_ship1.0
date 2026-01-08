@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="/static/style.css">
+    <title>排行榜</title>
+  </head>
+  <body>
+    <div class="game-container">
+      {% include '_header.html' %}
+      <h2>排行榜（按胜场）</h2>
+      <div class="leaderboard-wrap">
+        <table border="1">
+          <tr><th>用户名</th><th>胜</th><th>负</th><th>当前连胜</th><th>历史最长连胜</th></tr>
+          {% for r in rows %}
+          <tr>
+            <td>{{ r.username }}</td>
+            <td>{{ r.wins }}</td>
+            <td>{{ r.losses }}</td>
+            <td>{{ r.current_streak }}</td>
+            <td>{{ r.longest_streak }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+        <p><a href="/">返回游戏</a></p>
+      </div>
+    </div>
+  </body>
+</html>

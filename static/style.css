@@ -49,11 +49,12 @@ h1, h2, h3, p {
 }
 
 input {
-    padding: 0.5rem;
+    padding: 0.6rem 0.75rem;
     font-size: 1rem;
-    border: 1px solid #ddd;
-    border-radius: 5px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
     margin-right: 0.5rem;
+    background: #fff;
 }
 
 .button-group {
@@ -91,17 +92,26 @@ input {
 button {
     padding: 0.5rem 1rem;
     font-size: 1rem;
-    background-color: #4CAF50;
+    background-color: var(--primary);
     color: white;
     border: none;
-    border-radius: 5px;
+    border-radius: 8px;
     cursor: pointer;
-    transition: background-color 0.3s;
+    transition: background-color 0.18s ease, transform 0.12s ease;
+    box-shadow: 0 6px 12px rgba(25,118,210,0.08);
 }
 
-button:hover {
-    background-color: #45a049;
+button:hover, .btn:hover {
+    background-color: var(--primary-600);
+    transform: translateY(-2px);
 }
+
+button.secondary, .btn.secondary {
+    background-color: transparent;
+    color: var(--primary);
+    border: 1px solid rgba(25,118,210,0.12);
+}
+
 
 /* 棋盘样式 */
 .board-container {
@@ -112,8 +122,10 @@ button:hover {
 
 .boards-container {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-around;
-    margin-top: 2rem;
+    gap: 20px;
+    margin-top: 1.5rem;
 }
 
 /* 游戏主容器 */
@@ -251,38 +263,47 @@ button:hover {
 
 .board {
     display: grid;
-    grid-template-columns: repeat(6, 40px);
-    gap: 5px;
-    background-color: #87CEEB;
-    padding: 10px;
-    border-radius: 5px;
+    grid-template-columns: repeat(6, 48px);
+    gap: 6px;
+    background: linear-gradient(180deg, var(--board-bg), #d7eefc);
+    padding: 12px;
+    border-radius: 10px;
+    box-shadow: inset 0 -6px 24px rgba(1, 75, 150, 0.03);
 }
 
 .cell {
-    width: 40px;
-    height: 40px;
-    background-color: #E0F7FA;
-    border: 1px solid #87CEEB;
-    border-radius: 3px;
+    width: 48px;
+    height: 48px;
+    background-color: var(--cell-bg);
+    border: 1px solid rgba(2,119,189,0.12);
+    border-radius: 8px;
     cursor: pointer;
     display: flex;
     justify-content: center;
     align-items: center;
     font-size: 20px;
+    color: var(--text);
+    transition: transform 0.08s ease, box-shadow 0.12s ease;
 }
 
+.cell:hover { transform: translateY(-2px); box-shadow: 0 6px 14px rgba(2,119,189,0.06);} 
+
 .cell.ship {
-    background-color: #795548;
+    background-color: #6d4c41;
+    color: #fff;
 }
 
 .cell.hit {
-    background-color: #F44336;
+    background-color: var(--danger);
     color: white;
+    box-shadow: 0 6px 12px rgba(229,57,53,0.14);
 }
 
 .cell.miss {
-    background-color: #BDBDBD;
+    background-color: #e0e6eb;
+    color: var(--muted);
 }
+
 
 /* 猜拳样式 */
 .rps-choices {
@@ -393,6 +414,17 @@ button:hover {
     z-index: -1;
 }
 
+/* 主题：深色模式 */
+html.theme-dark {
+    --surface: #071028;
+    --text: #e6eef8;
+    --muted: #9aa6b2;
+    --primary: #4fc3f7;
+    --board-bg: #022b3a;
+    --cell-bg: #032b2f;
+    --glass: rgba(7,12,28,0.85);
+}
+
 /* 场地魔法样式 */
 .field-magic-area {
     display: block;
@@ -402,6 +434,22 @@ button:hover {
     border-radius: 5px;
     text-align: center;
 }
+
+/* 顶部导航样式 */
+.nav {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgba(15,23,36,0.04);
+    margin-bottom: 12px;
+    font-size: 0.95rem;
+}
+
+.nav a { color: var(--primary); text-decoration: none; }
+.nav span { color: var(--muted); }
+
 
 .field-magic {
     padding: 8px 15px;
@@ -435,29 +483,36 @@ button:hover {
 
 /* 消息提示样式 */
 #game-message-container {
+    position: fixed;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
     display: flex;
     flex-direction: column;
     gap: 8px;
     align-items: center;
     pointer-events: none;
+    z-index: 99999;
 }
 
 .game-message {
-    background-color: rgba(0,0,0,0.8);
+    background-color: rgba(10,14,24,0.9);
     color: white;
-    padding: 10px 14px;
-    border-radius: 8px;
-    min-width: 200px;
+    padding: 12px 18px;
+    border-radius: 12px;
+    min-width: 220px;
     text-align: center;
-    opacity: 0;
-    transform: translateY(-10px);
+    opacity: 1;
+    transform: translateY(0);
     transition: opacity 0.25s, transform 0.25s;
     pointer-events: auto;
+    box-shadow: 0 10px 30px rgba(2,6,23,0.14);
 }
 
-.game-message.success { background-color: rgba(46, 204, 113, 0.95); color: #063; }
-.game-message.warning { background-color: rgba(241, 196, 15, 0.95); color: #333; }
-.game-message.error { background-color: rgba(231, 76, 60, 0.95); color: #fff; }
+.game-message.success { background-color: var(--success); color: #083; }
+.game-message.warning { background-color: #f59e0b; color: #111; }
+.game-message.error { background-color: var(--danger); color: #fff; }
+
 
 /* 揭示格子样式（用于雷达/探测类效果） */
 .cell.revealed {

@@ -17,6 +17,24 @@
                 <a href="/login" class="hide-in-game">登录</a> | <a href="/register" class="hide-in-game">注册</a> | <a href="/leaderboard" class="hide-in-game">排行榜</a>
             {% endif %}
             <button id="theme-toggle" class="btn secondary" style="margin-left:12px;">切换主题</button>
+            <button id="help-btn" class="btn secondary" style="margin-left:12px;">帮助</button>
+            <!-- 帮助模态弹窗 -->
+            <div id="help-modal" class="modal-overlay hidden">
+                <div class="modal-content" style="max-width:600px;">
+                    <span class="modal-close" id="help-modal-close">×</span>
+                    <h2>游戏帮助</h2>
+                    <div id="help-content" style="text-align:left;max-height:60vh;overflow-y:auto;">
+                        <h3>玩法简介</h3>
+                        <ul>
+                            <li>每位玩家布置6艘战舰，轮流攻击，率先击沉对方全部战舰获胜。</li>
+                            <li>可使用魔法卡牌，触发特殊效果。</li>
+                        </ul>
+                        <h3>魔法卡牌说明</h3>
+                        <div id="help-magic-cards"></div>
+                        <p style="color:var(--muted);font-size:0.95em;margin-top:1em;">如需详细规则请咨询管理员。</p>
+                    </div>
+                </div>
+            </div>
                 <!-- 个人战绩模态弹窗 -->
                 <div id="user-stats-modal" class="modal-overlay hidden">
                     <div class="modal-content">

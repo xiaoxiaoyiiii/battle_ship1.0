@@ -67,11 +67,6 @@ rooms = {}
 # 匹配队列
 match_queue = []
 
-# 大厅匹配队列（简单 FIFO 队列）
-lobby_queue = []
-
-# 简单的 lobby 成员列表（用于显示）
-lobby_members = set()
 class GameRoom:
     def __init__(self, room_id):
         self.id = room_id

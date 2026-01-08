@@ -58,15 +58,6 @@ const backFromLeaderboardBtn = document.getElementById('back-to-main-from-leader
 const leaderboardTableBody = document.querySelector('#leaderboard-table tbody');
 const leaderboardError = document.getElementById('leaderboard-error');
 
-// 大厅界面元素
-const lobbyScreen = document.getElementById('lobby-screen');
-const joinLobbyBtn = document.getElementById('join-lobby-match');
-const leaveLobbyBtn = document.getElementById('leave-lobby-match');
-const backFromLobbyBtn = document.getElementById('back-to-main-from-lobby');
-const lobbyPlayerCount = document.getElementById('lobby-player-count');
-const lobbyPlayersList = document.getElementById('lobby-players-list');
-
-
 // 登录/注册模态弹窗及控件
 const loginModal = document.getElementById('login-modal');
 const registerModal = document.getElementById('register-modal');
@@ -201,14 +192,6 @@ function bindEventListeners() {
         switchScreen(startScreen);
     });
 
-    // 大厅按钮事件绑定
-    if (joinLobbyBtn) joinLobbyBtn.addEventListener('click', joinLobbyMatch);
-    if (leaveLobbyBtn) leaveLobbyBtn.addEventListener('click', leaveLobbyMatch);
-    if (backFromLobbyBtn) backFromLobbyBtn.addEventListener('click', () => {
-        history.pushState({}, '', '/');
-        switchScreen(startScreen);
-    });
-
     // 登录/注册弹窗按钮事件绑定
     if (loginSubmitBtn) loginSubmitBtn.addEventListener('click', handleLoginSubmit);
     if (registerSubmitBtn) registerSubmitBtn.addEventListener('click', handleRegisterSubmit);
@@ -248,10 +231,6 @@ function bindEventListeners() {
             e.preventDefault();
             history.pushState({}, '', '/register');
             showRegister();
-        } else if (href === '/lobby') {
-            e.preventDefault();
-            history.pushState({}, '', '/lobby');
-            showLobby();
         }
     });
 
@@ -263,8 +242,6 @@ function bindEventListeners() {
             showLogin();
         } else if (window.location.pathname.startsWith('/register')) {
             showRegister();
-        } else if (window.location.pathname.startsWith('/lobby')) {
-            showLobby();
         } else {
             // 默认回到首页
             switchScreen(startScreen);
@@ -480,7 +457,6 @@ function setupSocketListeners() {
                 startScreen.classList.add('hidden');
                 customRoomScreen.classList.add('hidden');
                 matchStatus.classList.add('hidden');
-                lobbyScreen.classList.add('hidden');
                 // 保存房间ID
                 if (data.room_id) {
                     gameState.roomId = data.room_id;
@@ -705,43 +681,6 @@ function setupSocketListeners() {
         updateHandUI();
     });
 
-    // 大厅相关事件
-    socket.on('lobby_update', (data) => {
-        // 更新大厅玩家列表
-        if (lobbyPlayerCount && lobbyPlayersList) {
-            lobbyPlayerCount.textContent = data.players.length;
-            lobbyPlayersList.innerHTML = '';
-            data.players.forEach(player => {
-                const li = document.createElement('li');
-                li.textContent = player;
-                lobbyPlayersList.appendChild(li);
-            });
-        }
-    });
-
-    socket.on('lobby_joined', (data) => {
-        joinLobbyBtn.classList.add('hidden');
-        leaveLobbyBtn.classList.remove('hidden');
-        showMessage('已加入匹配队列', {type: 'success'});
-    });
-
-    socket.on('lobby_left', (data) => {
-        joinLobbyBtn.classList.remove('hidden');
-        leaveLobbyBtn.classList.add('hidden');
-        showMessage('已离开匹配队列', {type: 'info'});
-    });
-
-    socket.on('match_found', (data) => {
-        console.log('Match found:', data);
-        showMessage(`找到对手，房间ID: ${data.room_id}`);
-        // 如果在游戏主界面，自动尝试 join_room
-        if (gameState.roomId !== data.room_id) {
-            gameState.roomId = data.room_id;
-            // 告诉服务器加入该房间
-            socket.emit('join_room', { room_id: data.room_id, player_name: gameState.playerName });
-        }
-    });
-
     // 新增：监听手牌更新事件
     socket.on('hand_updated', (data) => {
         gameState.hand = data.hand;
@@ -781,7 +720,7 @@ function setupSocketListeners() {
 
 // 切换屏幕
 function switchScreen(screen) {
-    const screens = [startScreen, customRoomScreen, shipPlacementScreen, rpsScreen, gameScreen, leaderboardScreen, lobbyScreen, gameOverScreen];
+    const screens = [startScreen, customRoomScreen, shipPlacementScreen, rpsScreen, gameScreen, leaderboardScreen, gameOverScreen];
     screens.forEach(s => { if (s) s.classList.remove('active'); });
     if (screen) screen.classList.add('active');
 
@@ -796,74 +735,6 @@ function switchScreen(screen) {
 function showLeaderboard() {
     switchScreen(leaderboardScreen);
     fetchLeaderboard();
-}
-
-// 显示大厅
-function showLobby() {
-    switchScreen(lobbyScreen);
-    // 如果还没有socket连接，创建连接
-    if (!gameState.socket) {
-        gameState.socket = io.connect('http://' + window.location.host);
-        setupSocketListeners();
-    }
-    // 重置按钮状态（显示加入匹配，隐藏离开匹配）
-    joinLobbyBtn.classList.remove('hidden');
-    leaveLobbyBtn.classList.add('hidden');
-    // 请求大厅更新
-    updateLobbyDisplay();
-}
-
-function fetchLeaderboard() {
-    if (!leaderboardTableBody || !leaderboardError) return;
-    leaderboardTableBody.innerHTML = '';
-    leaderboardError.classList.add('hidden');
-    const loadingRow = document.createElement('tr');
-    loadingRow.innerHTML = '<td colspan="6" style="text-align:center; padding:12px">加载中...</td>';
-    leaderboardTableBody.appendChild(loadingRow);
-
-    fetch('/api/leaderboard').then(resp => {
-        if (!resp.ok) throw new Error('网络错误');
-        return resp.json();
-    }).then(data => {
-        leaderboardTableBody.innerHTML = '';
-        data.forEach((row, idx) => {
-            const tr = document.createElement('tr');
-            const wins = row.wins || 0;
-            const losses = row.losses || 0;
-            const total = wins + losses;
-            const winrate = total ? Math.round((wins/total) * 100) + '%' : '-';
-            tr.innerHTML = `<td>${idx+1}</td><td>${row.username}</td><td>${wins}</td><td>${losses}</td><td>${winrate}</td><td>${row.longest_streak || 0}</td>`;
-            leaderboardTableBody.appendChild(tr);
-        });
-    }).catch(err => {
-        leaderboardTableBody.innerHTML = '';
-        leaderboardError.classList.remove('hidden');
-        leaderboardError.textContent = '无法加载排行榜：' + err.message;
-    });
-}
-
-// 更新大厅显示
-function updateLobbyDisplay() {
-    // 请求服务器发送大厅更新
-    if (gameState.socket) {
-        // 可以通过发送一个特殊事件来请求更新，或者依赖服务器的广播
-        // 这里暂时不做额外请求，依赖 lobby_update 事件
-    }
-}
-
-// 加入大厅匹配
-function joinLobbyMatch() {
-    if (!gameState.socket) {
-        gameState.socket = io.connect('http://' + window.location.host);
-        setupSocketListeners();
-    }
-    gameState.socket.emit('join_lobby', {});
-}
-
-// 离开大厅匹配
-function leaveLobbyMatch() {
-    if (!gameState.socket) return;
-    gameState.socket.emit('leave_lobby', {});
 }
 
 // 初始化棋盘
@@ -2464,8 +2335,6 @@ function init() {
         showLogin();
     } else if (window.location.pathname.startsWith('/register')) {
         showRegister();
-    } else if (window.location.pathname.startsWith('/lobby')) {
-        showLobby();
     }
 
     // 检查 URL 是否包含 room 参数，如果有则在连接后自动加入

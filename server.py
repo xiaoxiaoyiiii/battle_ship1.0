@@ -834,32 +834,13 @@ def handle_attack(data):
         emit('game_over', {'winner': attacker_id}, room=room_id)
         return {'status': 'success', 'game_over': True}
     
-    # 检查是否需要切换攻击者
+    # 攻击次数为0时，不自动切换攻击者，让玩家手动进入结束阶段
+    # 玩家需要点击"进入结束阶段"按钮来结束当前回合
     if room.attacks_remaining == 0:
-        current_index = room.attack_order.index(attacker_id)
-        next_index = (current_index + 1) % len(room.attack_order)
-        
-        # 如果所有玩家都已攻击过，开始新的大回合
-        if next_index == 0:
-            room.round += 1
-            room.state = 'rock_paper_scissors'
-            room.rps_choices = {}
-            emit('game_state', {'state': 'rock_paper_scissors', 'round': room.round}, room=room_id)
-            return {'status': 'success', 'new_round': True}
-        
-        # 切换到下一个攻击者
-        room.current_attacker = room.attack_order[next_index]
-        room.current_phase = 'preparation'  # 设置为准备阶段
-        room.attacks_remaining = room.players[room.current_attacker]['remaining_ships']
-        # 发送阶段更新事件
-        emit('phase_updated', {
-            'current_phase': room.current_phase,
-            'current_attacker': room.current_attacker
-        }, room=room_id)
-        emit('turn_change', {
+        # 只发送攻击次数更新，不切换攻击者
+        emit('attacks_updated', {
             'current_attacker': room.current_attacker,
-            'attacks_remaining': room.attacks_remaining,
-            'phase': room.current_phase
+            'attacks_remaining': room.attacks_remaining
         }, room=room_id)
     
     return {'status': 'success'}
@@ -896,23 +877,16 @@ def handle_enter_end_phase(data):
         return {'status': 'error', 'message': '无效的房间或玩家'}
     
     room = rooms[room_id]
-    
-    # 检查是否是当前攻击者
-    if room.current_attacker != player_id:
-        return {'status': 'error', 'message': '不是你的回合'}
-    
-    # 检查是否还有攻击次数
-    if room.attacks_remaining > 0:
-        return {'status': 'error', 'message': '还有剩余攻击次数'}
-    
-    # 进入结束阶段
-    room.current_phase = 'end'
-    emit('phase_updated', {'phase': 'end'}, room=room_id)
-    
-    # 延迟切换到对方回合，给结束阶段一些时间
-    socketio.start_background_task(target=switch_turn_after_end_phase, room=room, opponent_id=next(p for p in room.players if p != player_id))
-    
-    return {'status': 'success', 'message': '已进入结束阶段'}
+    # 检查是否是当前攻击者的战斗阶段
+    if room.current_attacker == player_id and room.current_phase == 'battle':
+        # 直接进入结束阶段，允许玩家在还有攻击次数的情况下结束战斗
+        room.current_phase = 'end'
+        emit('phase_updated', {
+            'current_phase': room.current_phase,
+            'current_attacker': room.current_attacker
+        }, room=room_id)
+        
+        return {'status': 'success', 'message': '已进入结束阶段'}
 
 def switch_turn_after_end_phase(room, opponent_id):
     # 模拟结束阶段处理时间
@@ -948,29 +922,53 @@ def end_turn(data):
         current_index = room.attack_order.index(room.current_attacker)
         next_index = (current_index + 1) % len(room.attack_order)
         
-        # 切换到下一个攻击者的准备阶段
-        room.current_attacker = room.attack_order[next_index]
-        room.current_phase = 'preparation'
-        room.attacks_remaining = room.players[room.current_attacker]['remaining_ships']
-        
-        # 重置所有临时效果标志
-        for p_id in room.players:
-            if 'effect_flags' in room.players[p_id]:
-                # 保留场地魔法等永久效果，清除临时效果
-                permanent_flags = ['holy_heart', 'reinforcement_check']  # 永久效果白名单
-                room.players[p_id]['effect_flags'] = {k: v for k, v in room.players[p_id]['effect_flags'].items() if k in permanent_flags}
-        
-        # 广播回合和阶段更新
-        emit('phase_updated', {
-            'current_phase': room.current_phase,
-            'current_attacker': room.current_attacker
-        }, room=room_id)
-        emit('turn_change', {
-            'current_attacker': room.current_attacker,
-            'attacks_remaining': room.attacks_remaining,
-            'phase': room.current_phase
-        }, room=room_id)
-        return {'status': 'success'}
+        # 如果是最后一个玩家结束回合，开始新的大回合
+        if next_index == 0:
+            # 进入新回合，重置状态
+            room.round += 1
+            room.state = 'rock_paper_scissors'
+            room.rps_choices = {}
+            
+            # 重置所有临时效果标志
+            for p_id in room.players:
+                if 'effect_flags' in room.players[p_id]:
+                    # 保留场地魔法等永久效果，清除临时效果
+                    permanent_flags = ['holy_heart', 'reinforcement_check']  # 永久效果白名单
+                    room.players[p_id]['effect_flags'] = {k: v for k, v in room.players[p_id]['effect_flags'].items() if k in permanent_flags}
+            
+            # 广播进入猜拳阶段
+            emit('game_state', {
+                'state': 'rock_paper_scissors',
+                'round': room.round
+            }, room=room_id)
+            return {'status': 'success', 'new_round': True}
+        else:
+            # 切换到下一个攻击者的准备阶段
+            room.current_attacker = room.attack_order[next_index]
+            room.current_phase = 'preparation'
+            room.attacks_remaining = room.players[room.current_attacker]['remaining_ships']
+            
+            # 重置所有临时效果标志
+            for p_id in room.players:
+                if 'effect_flags' in room.players[p_id]:
+                    # 保留场地魔法等永久效果，清除临时效果
+                    permanent_flags = ['holy_heart', 'reinforcement_check']  # 永久效果白名单
+                    room.players[p_id]['effect_flags'] = {k: v for k, v in room.players[p_id]['effect_flags'].items() if k in permanent_flags}
+            
+            # 抽卡阶段
+            room.draw_card(room.current_attacker)
+            
+            # 广播回合和阶段更新
+            emit('phase_updated', {
+                'current_phase': room.current_phase,
+                'current_attacker': room.current_attacker
+            }, room=room_id)
+            emit('turn_change', {
+                'current_attacker': room.current_attacker,
+                'attacks_remaining': room.attacks_remaining,
+                'phase': room.current_phase
+            }, room=room_id)
+            return {'status': 'success'}
     
     return {'status': 'error', 'message': '无法结束当前回合'}
 

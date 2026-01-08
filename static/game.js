@@ -821,6 +821,9 @@ function setupSocketListeners() {
         updateAttackDisplay(result);
         attacksRemaining.textContent = result.remaining_attacks;
         
+        // 更新攻击次数后，重新检查阶段UI，确保按钮显示正确
+        updatePhaseUI();
+        
         // 添加攻击日志
         const round = parseInt(gameRound.textContent) || 1;
         const playerName = result.attacker === gameState.playerId ? gameState.playerName : gameState.opponentName;
@@ -835,6 +838,13 @@ function setupSocketListeners() {
         } else {
             addGameLog(`【第${round}回合】<span class="log-player">${playerName}</span>攻击了坐标<span class="log-coordinate">${coordinate}</span>，此处没有船！`);
         }
+    });
+    
+    // 添加处理攻击次数更新事件
+    socket.on('attacks_updated', (data) => {
+        console.log('Attacks updated:', data);
+        attacksRemaining.textContent = data.attacks_remaining;
+        updatePhaseUI();
     });
 
     socket.on('turn_change', (data) => {
@@ -3112,6 +3122,11 @@ function updatePhaseUI() {
         'battle': '战斗阶段',
         'end': '结束阶段'
     }[gameState.currentPhase] || gameState.currentPhase;
+    
+    // 更新按钮文本
+    enterBattleBtn.textContent = '进入战斗阶段';
+    enterEndBtn.textContent = '进入结束阶段';
+    endTurnBtn.textContent = '结束结束阶段';
     
     // 按钮显示逻辑
     const isMyTurn = gameState.currentAttacker === gameState.playerId;

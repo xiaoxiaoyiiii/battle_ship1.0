@@ -496,6 +496,83 @@ button:hover {
     margin-right: 330px; /* 为右侧预览框留出空间 */
 }
 
+/* 局内聊天框样式 */
+.in-game-chat-container {
+    position: fixed;
+    right: 32px;
+    bottom: 32px;
+    width: 320px;
+    max-width: 90vw;
+    background: var(--glass);
+    border: 1px solid var(--muted);
+    border-radius: 10px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+    z-index: 1200;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.in-game-chat-messages {
+    flex: 1;
+    min-height: 120px;
+    max-height: 220px;
+    overflow-y: auto;
+    padding: 12px 10px 6px 10px;
+    font-size: 0.98em;
+    color: var(--text);
+    background: transparent;
+}
+.in-game-chat-message {
+    margin-bottom: 6px;
+    word-break: break-all;
+    line-height: 1.5;
+}
+.in-game-chat-message.me {
+    color: var(--primary);
+    font-weight: bold;
+}
+.in-game-chat-message.opponent {
+    color: #e67e22;
+}
+.in-game-chat-input-row {
+    display: flex;
+    border-top: 1px solid var(--muted);
+    background: var(--surface);
+    padding: 6px 8px;
+    gap: 6px;
+}
+#in-game-chat-input {
+    flex: 1;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    padding: 6px 8px;
+    font-size: 1em;
+    outline: none;
+    background: #fff;
+    color: var(--text);
+}
+#in-game-chat-send {
+    min-width: 56px;
+    font-size: 1em;
+    border-radius: 5px;
+    background: var(--primary);
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    transition: background 0.18s;
+}
+#in-game-chat-send:hover {
+    background: var(--primary-600);
+}
+@media (max-width: 600px) {
+    .in-game-chat-container {
+        right: 2vw;
+        bottom: 2vw;
+        width: 98vw;
+        max-width: 98vw;
+    }
+}
+
 /* 响应式设计 */
 @media (max-width: 1200px) {
     .magic-preview-container {
@@ -695,6 +772,43 @@ html.theme-dark .cell.ship {
     border-radius: 10px;
     box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
     z-index: 9999; /* 确保弹窗在最上层 */
+}
+/* 炫酷动效：头像/用户名浮动动画 */
+body.cool-effects-enabled .cool-float {
+    animation: floatY 2.2s ease-in-out infinite alternate;
+}
+@keyframes floatY {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(-10px); }
+}
+
+/* 炫酷动效：按钮点击波纹 */
+body.cool-effects-enabled .ripple {
+    position: absolute;
+    width: 48px;
+    height: 48px;
+    background: rgba(25,118,210,0.25);
+    border-radius: 50%;
+    pointer-events: none;
+    transform: translate(-50%, -50%) scale(0.7);
+    animation: ripple-anim 0.6s linear;
+    z-index: 2;
+}
+@keyframes ripple-anim {
+    0% { opacity: 0.7; transform: translate(-50%, -50%) scale(0.7); }
+    80% { opacity: 0.3; transform: translate(-50%, -50%) scale(1.2); }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(1.5); }
+}
+
+/* 炫酷动效：棋盘格子闪烁 */
+body.cool-effects-enabled .cell.cool-flash {
+    box-shadow: 0 0 16px 4px #1976d2, 0 0 8px 2px #fff inset;
+    animation: cell-flash-anim 0.7s linear;
+}
+@keyframes cell-flash-anim {
+    0% { box-shadow: 0 0 0 0 #1976d2, 0 0 0 0 #fff inset; }
+    50% { box-shadow: 0 0 16px 4px #1976d2, 0 0 8px 2px #fff inset; }
+    100% { box-shadow: 0 0 0 0 #1976d2, 0 0 0 0 #fff inset; }
 }
 
 /* 为弹窗添加半透明背景遮罩 */

@@ -8,6 +8,7 @@ import os
 import time
 from werkzeug.security import generate_password_hash, check_password_hash
 import db  # local database helpers for users and matches
+from flask import copy_current_request_context
 
 # 添加魔法卡牌数据定义（与客户端 magic_cards.js 保持一致）
 magic_cards = [
@@ -68,6 +69,9 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 rooms = {}
 # 匹配队列
 match_queue = []
+
+# 聊天消息最大长度
+MAX_CHAT_MSG_LEN = 100
 
 # 大厅匹配队列（简单 FIFO 队列）
 lobby_queue = []
@@ -339,6 +343,10 @@ def handle_join_room(data):
     
     # 添加玩家到Socket.IO房间
     join_room(room_id)
+
+    # 记录玩家当前所在房间，便于聊天
+    if not hasattr(app, 'player_room'): app.player_room = {}
+    app.player_room[player_id] = room_id
     
     # 检查是否所有玩家都已加入
     if len(room.players) == 2:
@@ -440,6 +448,32 @@ def try_match():
     emit('lobby_update', {'players': players_display}, broadcast=True)
 
     return {'status': 'ok'}
+
+# 局内聊天事件
+@socketio.on('chat_message')
+def handle_chat_message(data):
+    player_id = session.get('user_id', request.sid)
+    username = session.get('username', f'玩家{str(player_id)[:6]}')
+    msg = (data.get('message') or '').strip()
+    if not msg:
+        return
+    msg = msg[:MAX_CHAT_MSG_LEN]
+    # 查找玩家所在房间
+    room_id = data.get('room_id') or app.player_room.get(player_id)
+    # 仅房间内广播
+    print(f"Chat from {username} in room {room_id}: {msg}")
+    if room_id and room_id in rooms:
+        print(rooms,rooms[room_id].players)
+        # 标记自己和对手
+        for pid in rooms[room_id].players:
+            emit('chat_message', {
+                'username': username,
+                'message': msg,
+                'isMe': pid == app.player_names[player_id]
+            }, room=pid)
+    else:
+        # fallback: 仅回发给自己
+        emit('chat_message', {'username': username, 'message': msg, 'isMe': True}, room=player_id)
 @socketio.on('find_match')
 def handle_find_match(data):
     """处理玩家匹配请求"""

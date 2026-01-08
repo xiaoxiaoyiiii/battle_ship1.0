@@ -135,8 +135,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     updateCornerNames();
     window.addEventListener('gameStateUpdate', updateCornerNames);
-    setInterval(updateCornerNames, 2000);
-
+    setInterval(updateCornerNames, 20000);
     // 自动更新对手头像
     function updateOpponentAvatarCorner() {
         const opponentName = (window.gameState && window.gameState.opponentName) || '';
@@ -144,7 +143,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     updateOpponentAvatarCorner();
     window.addEventListener('gameStateUpdate', updateOpponentAvatarCorner);
-    setInterval(updateOpponentAvatarCorner, 2000);
+    setInterval(updateOpponentAvatarCorner, 20000);
 });
 
 // 获取当前用户头像并显示到游戏内
@@ -187,20 +186,7 @@ function onEnterGameScreen(opponentName) {
 if (myAvatarInGame) {
     myAvatarInGame.style.cursor = 'pointer';
     myAvatarInGame.addEventListener('click', () => {
-        // 兼容变量未定义的情况
-        let userStatsModal = document.getElementById('user-stats-modal');
-        let userStatsContent = document.getElementById('user-stats-content');
         // 如果没有弹窗则自动创建
-        
-        userStatsModal = document.createElement('div');
-        userStatsModal.id = 'user-stats-modal';
-        userStatsModal.className = 'modal-overlay';
-        userStatsModal.innerHTML = '<div class="modal-content"><span class="modal-close" id="user-stats-modal-close">×</span><h2>个人战绩</h2><div id="user-stats-content1"><p>加载中...</p></div></div>';
-        document.body.appendChild(userStatsModal);
-        // 绑定关闭事件
-        userStatsModal.querySelector('.modal-close').onclick = () => userStatsModal.classList.add('hidden');
-        userStatsModal.onclick = (e) => { if (e.target === userStatsModal) userStatsModal.classList.add('hidden'); };
-        userStatsContent = document.getElementById('user-stats-content1');
         
         // 优先使用 gameState.playerName，再退回到服务器渲染的全局用户名或页面元素
         const username = (window.gameState && window.gameState.playerName) || window.__USERNAME || (document.getElementById('profile-username') && document.getElementById('profile-username').textContent) || '';
@@ -212,7 +198,7 @@ if (myAvatarInGame) {
             .then(r => r.json()).then(data => {
                 if (data.stats) {
                     const s = data.stats;
-                    userStatsContent.innerHTML = `\
+                    let userStatsContents = `\
                         <table class="user-stats-table">\
                             <tr><td>用户名</td><td>${s.username}</td></tr>\
                             <tr><td>胜场</td><td>${s.wins}</td></tr>\
@@ -220,7 +206,14 @@ if (myAvatarInGame) {
                             <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>\
                             <tr><td>最长连胜</td><td>${s.longest_streak}</td></tr>\
                         </table>`;
-                    userStatsModal.classList.remove('hidden');
+                    let userStatsModal = document.createElement('div');
+                    userStatsModal.id = 'user-stats-modal';
+                    userStatsModal.className = 'modal-overlay';
+                    userStatsModal.innerHTML = '<div class="modal-content"><span class="modal-close" id="user-stats-modal-close">×</span><h2>个人战绩</h2><div id="user-stats-content1"><p>'+userStatsContents+'</p></div></div>';
+                    document.body.appendChild(userStatsModal);
+                    // 绑定关闭事件
+                    userStatsModal.querySelector('.modal-close').onclick = () => userStatsModal.classList.add('hidden');
+                    userStatsModal.onclick = (e) => { if (e.target === userStatsModal) userStatsModal.classList.add('hidden'); };
                 } else {
                     showMessage('未找到战绩数据', { type: 'warning' });
                 }
@@ -233,29 +226,13 @@ if (myAvatarInGame) {
 if (opponentAvatarInGame) {
     opponentAvatarInGame.style.cursor = 'pointer';
     opponentAvatarInGame.addEventListener('click', () => {
-        // 优先使用 gameState.opponentName，再尝试页面元素
-        // 兼容变量未定义的情况
-        let userStatsModal = document.getElementById('user-stats-modal');
-        let userStatsContent = document.getElementById('user-stats-content');
-        // 如果没有弹窗则自动创建
-        
-        userStatsModal = document.createElement('div');
-        userStatsModal.id = 'user-stats-modal';
-        userStatsModal.className = 'modal-overlay';
-        userStatsModal.innerHTML = '<div class="modal-content"><span class="modal-close" id="user-stats-modal-close">×</span><h2>个人战绩</h2><div id="user-stats-content2"><p>加载中...</p></div></div>';
-        document.body.appendChild(userStatsModal);
-        // 绑定关闭事件
-        userStatsModal.querySelector('.modal-close').onclick = () => userStatsModal.classList.add('hidden');
-        userStatsModal.onclick = (e) => { if (e.target === userStatsModal) userStatsModal.classList.add('hidden'); };
-        userStatsContent = document.getElementById('user-stats-content2');
-        
         const username = (window.gameState && window.gameState.opponentName) || (document.getElementById('opponent-username-info') && document.getElementById('opponent-username-info').textContent) || '';
         if (!username) return showMessage('对手信息不可用', { type: 'warning' });
         fetch(`/user_stats?username=${encodeURIComponent(username)}`)
             .then(r => r.json()).then(data => {
                 if (data.stats) {
                     const s = data.stats;
-                    userStatsContent.innerHTML = `\
+                    let userStatsContents = `\
                         <table class="user-stats-table">\
                             <tr><td>用户名</td><td>${s.username}</td></tr>\
                             <tr><td>胜场</td><td>${s.wins}</td></tr>\
@@ -263,7 +240,14 @@ if (opponentAvatarInGame) {
                             <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>\
                             <tr><td>最长连胜</td><td>${s.longest_streak}</td></tr>\
                         </table>`;
-                    userStatsModal.classList.remove('hidden');
+                    let userStatsModal = document.createElement('div');
+                    userStatsModal.id = 'user-stats-modal';
+                    userStatsModal.className = 'modal-overlay';
+                    userStatsModal.innerHTML = '<div class="modal-content"><span class="modal-close" id="user-stats-modal-close">×</span><h2>个人战绩</h2><div id="user-stats-content2"><p>'+userStatsContents+'</p></div></div>';
+                    document.body.appendChild(userStatsModal);
+                    // 绑定关闭事件
+                    userStatsModal.querySelector('.modal-close').onclick = () => userStatsModal.classList.add('hidden');
+                    userStatsModal.onclick = (e) => { if (e.target === userStatsModal) userStatsModal.classList.add('hidden'); };
                 } else {
                     showMessage('未找到对手战绩', { type: 'warning' });
                 }
@@ -453,6 +437,78 @@ const opponentShips = document.getElementById('opponent-ships');
 const currentPlayer = document.getElementById('current-player');
 const attacksRemaining = document.getElementById('attacks-remaining');
 const gameRound = document.getElementById('game-round');
+
+// 局内聊天相关元素
+const chatContainer = document.getElementById('in-game-chat-container');
+const chatMessages = document.getElementById('in-game-chat-messages');
+const chatInput = document.getElementById('in-game-chat-input');
+const chatSendBtn = document.getElementById('in-game-chat-send');
+
+// 聊天Socket初始化
+let chatSocketInitialized = false;
+function initInGameChatSocket() {
+    if (chatSocketInitialized) return;
+    if (!window.gameState || !window.gameState.socket) return;
+    const socket = window.gameState.socket;
+    socket.on('chat_message', function(data) {
+        console.log("Received chat message:", data);
+        appendChatMessage(data.username, data.message, data.isMe);
+    });
+    chatSocketInitialized = true;
+}
+
+// 发送消息
+function sendChatMessage() {
+    if (!chatInput || !chatInput.value.trim() || !window.gameState || !window.gameState.socket) return;
+    const msg = chatInput.value.trim().slice(0, 100);
+    window.gameState.socket.emit('chat_message', {room_id:gameState.roomId, message: msg });
+    chatInput.value = '';
+}
+if (chatSendBtn && chatInput) {
+    chatSendBtn.addEventListener('click', sendChatMessage);
+    chatInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') sendChatMessage();
+    });
+}
+
+// 显示消息
+function appendChatMessage(username, message, isMe) {
+    if (!chatMessages) return;
+    const div = document.createElement('div');
+    div.className = 'in-game-chat-message ' + (isMe ? 'me' : 'opponent');
+    div.innerHTML = `<span>${escapeHtml(username)}：</span>${escapeHtml(message)}`;
+    chatMessages.appendChild(div);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, function(c) {
+        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c];
+    });
+}
+
+// 只在游戏主界面显示聊天框
+function setChatVisible(visible) {
+    if (chatContainer) chatContainer.style.display = visible ? '' : 'none';
+}
+setChatVisible(false);
+
+// 切换到游戏主界面时初始化聊天
+const origSwitchScreen = window.switchScreen;
+window.switchScreen = function(screen) {
+    origSwitchScreen(screen);
+    setChatVisible(screen === 'game-screen');
+    if (screen === 'game-screen') {
+        initInGameChatSocket();
+    }
+}
+
+// 进入游戏主界面时也初始化聊天
+const origOnEnterGameScreen = window.onEnterGameScreen;
+window.onEnterGameScreen = function(opponentName) {
+    if (typeof origOnEnterGameScreen === 'function') origOnEnterGameScreen(opponentName);
+    setChatVisible(true);
+    initInGameChatSocket();
+}
 
 // 日志功能元素
 const logContainer = document.querySelector('.log-container');

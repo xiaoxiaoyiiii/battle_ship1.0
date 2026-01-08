@@ -1,19 +1,28 @@
 // DOM元素
 const startScreen = document.getElementById('start-screen');
+const customRoomScreen = document.getElementById('custom-room-screen');
 const shipPlacementScreen = document.getElementById('ship-placement-screen');
 const rpsScreen = document.getElementById('rps-screen');
 const gameScreen = document.getElementById('game-screen');
 const gameOverScreen = document.getElementById('game-over-screen');
 
 // 开始界面元素
-const createRoomBtn = document.getElementById('create-room');
-const joinRoomBtn = document.getElementById('join-room');
-const roomIdInput = document.getElementById('room-id-input');
-const confirmJoinBtn = document.getElementById('confirm-join');
-const roomInfo = document.getElementById('room-info');
-const currentRoomId = document.getElementById('current-room-id');
+const findMatchBtn = document.getElementById('find-match');
+const customRoomBtn = document.getElementById('custom-room');
+const matchStatus = document.getElementById('match-status');
+const cancelMatchBtn = document.getElementById('cancel-match');
 const playerNameInput = document.getElementById('player-name');
-const roomCodeInput = document.getElementById('room-code');
+
+// 自定义房间游戏界面元素
+const customCreateRoomBtn = document.getElementById('custom-create-room');
+const customJoinRoomBtn = document.getElementById('custom-join-room');
+const customRoomIdInput = document.getElementById('custom-room-id-input');
+const customConfirmJoinBtn = document.getElementById('custom-confirm-join');
+const customRoomInfo = document.getElementById('custom-room-info');
+const customCurrentRoomId = document.getElementById('custom-current-room-id');
+const customPlayerNameInput = document.getElementById('custom-player-name');
+const customRoomCodeInput = document.getElementById('custom-room-code');
+const backToMainBtn = document.getElementById('back-to-main');
 
 // 战舰放置界面元素
 const playerBoard = document.getElementById('player-board');
@@ -113,10 +122,23 @@ console.log("game.js 加载完成，playMagicCard 状态:", typeof window.playMa
 // 绑定事件监听器
 function bindEventListeners() {
     // 开始界面
-    createRoomBtn.addEventListener('click', createRoom);
-    joinRoomBtn.addEventListener('click', () => roomIdInput.classList.remove('hidden'));
-    confirmJoinBtn.addEventListener('click', joinRoom);
+    findMatchBtn.addEventListener('click', findMatch);
+    customRoomBtn.addEventListener('click', () => {
+        switchScreen(customRoomScreen);
+    });
+    cancelMatchBtn.addEventListener('click', cancelMatch);
     playAgainBtn.addEventListener('click', resetGame);
+
+    // 自定义房间游戏界面
+    customCreateRoomBtn.addEventListener('click', customCreateRoom);
+    customJoinRoomBtn.addEventListener('click', () => customRoomIdInput.classList.remove('hidden'));
+    customConfirmJoinBtn.addEventListener('click', customJoinRoom);
+    backToMainBtn.addEventListener('click', () => {
+        switchScreen(startScreen);
+        // 隐藏所有可能显示的元素
+        customRoomIdInput.classList.add('hidden');
+        customRoomInfo.classList.add('hidden');
+    });
 
     // 战舰放置
     confirmShipsBtn.addEventListener('click', confirmShipPlacement);
@@ -160,6 +182,94 @@ function createRoom() {
     });
 }
 
+// 切换自定义房间选项显示
+function toggleCustomRoomOptions() {
+    customRoomOptions.classList.toggle('hidden');
+}
+
+// 寻找匹配
+function findMatch() {
+    gameState.playerName = playerNameInput.value || '玩家';
+    
+    // 创建socket连接
+    gameState.socket = io.connect('http://' + window.location.host);
+    setupSocketListeners();
+    
+    // 发送匹配请求
+    gameState.socket.emit('find_match', {
+        player_name: gameState.playerName
+    }, (response) => {
+        if (response.status === 'error') {
+            alert(response.message);
+        }
+    });
+}
+
+// 取消匹配
+function cancelMatch() {
+    if (gameState.socket) {
+        gameState.socket.emit('cancel_match', {}, (response) => {
+            if (response.status === 'success') {
+                matchStatus.classList.add('hidden');
+            }
+        });
+    }
+}
+
+// 自定义房间游戏 - 创建房间
+function customCreateRoom() {
+    gameState.playerName = customPlayerNameInput.value || '玩家';
+    gameState.socket = io.connect('http://' + window.location.host);
+    setupSocketListeners();
+
+    // 等待Socket连接成功后再发送创建房间请求
+    gameState.socket.on('connect', () => {
+        gameState.socket.emit('create_room', {}, (response) => {
+            if (response.status === 'success') {
+                gameState.roomId = response.room_id;
+                customCurrentRoomId.textContent = gameState.roomId;
+                customRoomInfo.classList.remove('hidden');
+                
+                // 自动加入创建的房间
+                gameState.socket.emit('join_room', {
+                    room_id: gameState.roomId,
+                    player_name: gameState.playerName
+                }, (joinResponse) => {
+                    if (joinResponse.status === 'success') {
+                        gameState.playerId = joinResponse.player_id;
+                    } else {
+                        alert(joinResponse.message);
+                    }
+                });
+            }
+        });
+    });
+}
+
+// 自定义房间游戏 - 加入房间
+function customJoinRoom() {
+    gameState.playerName = customPlayerNameInput.value || '玩家';
+    const roomId = customRoomCodeInput.value.trim();
+    if (!roomId) return;
+
+    gameState.socket = io.connect('http://' + window.location.host);
+    setupSocketListeners();
+
+    gameState.socket.emit('join_room', {
+        room_id: roomId,
+        player_name: gameState.playerName
+    }, (response) => {
+        if (response.status === 'success') {
+            gameState.roomId = roomId;
+            gameState.playerId = response.player_id;
+            customCurrentRoomId.textContent = roomId;
+            customRoomInfo.classList.remove('hidden');
+        } else {
+            alert(response.message);
+        }
+    });
+}
+
 // 加入房间
 function joinRoom() {
     gameState.playerName = playerNameInput.value || '玩家';
@@ -192,11 +302,24 @@ function setupSocketListeners() {
         console.log('Connected to server');
     });
 
+    // 匹配相关事件处理
+    socket.on('match_queued', (response) => {
+        console.log('已加入匹配队列:', response);
+        matchStatus.classList.remove('hidden');
+    });
+
+    socket.on('match_canceled', (response) => {
+        console.log('匹配已取消:', response);
+        matchStatus.classList.add('hidden');
+    });
+
     socket.on('game_state', (data) => {
         console.log('Game state received:', data);
         // 隐藏所有屏幕和信息面板
-        roomInfo.classList.add('hidden');
+        customRoomInfo.classList.add('hidden');
+        customRoomIdInput.classList.add('hidden');
         startScreen.classList.remove('active');
+        customRoomScreen.classList.remove('active');
         shipPlacementScreen.classList.remove('active');
         rpsScreen.classList.remove('active');
         gameScreen.classList.remove('active');
@@ -204,17 +327,51 @@ function setupSocketListeners() {
         
         switch (data.state) {
             case 'waiting':
-                // 显示等待其他玩家加入
-                roomInfo.classList.remove('hidden');
-                currentRoomId.textContent = gameState.roomId;
+                // 只有当游戏是从自定义房间创建或加入时，才显示自定义房间游戏界面
+                // 匹配游戏不应该显示这个界面
                 break;
             case 'placing_ships':
                 console.log('Switching to ship placement screen');
-                shipPlacementScreen.classList.add('active');
-                initBoard(playerBoard, true);
-                // 添加以下代码确保界面正确切换
-                startScreen.classList.add('hidden');
-                roomInfo.classList.add('hidden');
+                
+                // 如果有opponent_name，显示匹配成功提示框
+                if (data.opponent_name) {
+                    showMatchSuccess(data.opponent_name);
+                    
+                    // 5秒后进入游戏
+                    setTimeout(() => {
+                        // 移除匹配成功提示框
+                        const matchSuccessPrompt = document.getElementById('match-success-prompt');
+                        if (matchSuccessPrompt) {
+                            document.body.removeChild(matchSuccessPrompt);
+                        }
+                        
+                        // 进入游戏界面
+                        shipPlacementScreen.classList.add('active');
+                        initBoard(playerBoard, true);
+                        // 添加以下代码确保界面正确切换
+                        startScreen.classList.add('hidden');
+                        customRoomScreen.classList.add('hidden');
+                        roomInfo.classList.add('hidden');
+                        matchStatus.classList.add('hidden');
+                        // 保存房间ID（如果来自匹配）
+                        if (data.room_id) {
+                            gameState.roomId = data.room_id;
+                        }
+                    }, 5000);
+                } else {
+                    // 直接进入游戏界面（自定义房间情况）
+                    shipPlacementScreen.classList.add('active');
+                    initBoard(playerBoard, true);
+                    // 添加以下代码确保界面正确切换
+                    startScreen.classList.add('hidden');
+                    customRoomScreen.classList.add('hidden');
+                    roomInfo.classList.add('hidden');
+                    matchStatus.classList.add('hidden');
+                    // 保存房间ID（如果来自匹配）
+                    if (data.room_id) {
+                        gameState.roomId = data.room_id;
+                    }
+                }
                 break;
             case 'rock_paper_scissors':
                 rpsScreen.classList.add('active');
@@ -454,7 +611,7 @@ function setupSocketListeners() {
 
 // 切换屏幕
 function switchScreen(screen) {
-    [startScreen, shipPlacementScreen, rpsScreen, gameScreen, gameOverScreen].forEach(s => {
+    [startScreen, customRoomScreen, shipPlacementScreen, rpsScreen, gameScreen, gameOverScreen].forEach(s => {
         s.classList.remove('active');
     });
     screen.classList.add('active');
@@ -1812,6 +1969,53 @@ function showReinforcementPrompt() {
             alert('请选择放置位置');
         }
     }, false);
+}
+
+// 显示匹配成功提示框
+function showMatchSuccess(opponentName) {
+    // 创建匹配成功提示框
+    const prompt = document.createElement('div');
+    prompt.id = 'match-success-prompt';
+    prompt.className = 'magic-prompt';
+    
+    // 设置初始倒计时
+    let countdown = 5;
+    
+    prompt.innerHTML = `
+        <h2>匹配成功！</h2>
+        <div class="match-success-content">
+            <p>你已匹配到对手：<strong>${opponentName}</strong></p>
+            <p>游戏将在 <strong id="countdown-timer">${countdown}</strong> 秒后开始</p>
+        </div>
+    `;
+    
+    // 添加样式
+    prompt.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background-color: white;
+        padding: 30px;
+        border-radius: 10px;
+        box-shadow: 0 0 30px rgba(0, 0, 0, 0.3);
+        z-index: 99999;
+        text-align: center;
+        min-width: 300px;
+    `;
+    
+    document.body.appendChild(prompt);
+    
+    // 启动倒计时
+    const timerElement = document.getElementById('countdown-timer');
+    const countdownInterval = setInterval(() => {
+        countdown--;
+        timerElement.textContent = countdown;
+        
+        if (countdown <= 0) {
+            clearInterval(countdownInterval);
+        }
+    }, 1000);
 }
 
 // 更新手牌UI

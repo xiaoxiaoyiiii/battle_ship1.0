@@ -63,6 +63,31 @@ input {
     margin-bottom: 1rem;
 }
 
+#custom-room-options {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+#match-status {
+    text-align: center;
+    margin: 1rem 0;
+    padding: 1rem;
+    background-color: #f0f8ff;
+    border-radius: 5px;
+    border: 1px solid #87cefa;
+}
+
+#cancel-match {
+    background-color: #f44336;
+    margin-top: 0.5rem;
+}
+
+#cancel-match:hover {
+    background-color: #d32f2f;
+}
+
 button {
     padding: 0.5rem 1rem;
     font-size: 1rem;

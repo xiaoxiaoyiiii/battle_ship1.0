@@ -62,6 +62,8 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 
 # 游戏房间数据结构
 rooms = {}
+# 匹配队列
+match_queue = []
 
 class GameRoom:
     def __init__(self, room_id):
@@ -177,6 +179,112 @@ def handle_join_room(data):
     
     # 返回成功状态
     return {'status': 'success', 'player_id': player_id}
+
+@socketio.on('find_match')
+def handle_find_match(data):
+    """处理玩家匹配请求"""
+    player_id = request.sid
+    player_name = data.get('player_name', '匿名玩家')
+    
+    # 检查玩家是否已经在匹配队列中
+    if player_id in match_queue:
+        return {'status': 'error', 'message': '你已经在匹配队列中'}
+    
+    # 将玩家添加到匹配队列
+    match_queue.append(player_id)
+    
+    # 保存玩家名称到session或字典中
+    if not hasattr(app, 'player_names'):
+        app.player_names = {}
+    app.player_names[player_id] = player_name
+    
+    emit('match_queued', {'status': 'success', 'message': '已加入匹配队列'})
+    
+    # 尝试匹配
+    check_match_queue()
+    
+    return {'status': 'success', 'message': '开始寻找匹配'}
+
+@socketio.on('cancel_match')
+def handle_cancel_match(data):
+    """处理玩家取消匹配请求"""
+    player_id = request.sid
+    
+    # 从匹配队列中移除玩家
+    if player_id in match_queue:
+        match_queue.remove(player_id)
+    
+    # 从玩家名称字典中移除
+    if hasattr(app, 'player_names') and player_id in app.player_names:
+        del app.player_names[player_id]
+    
+    emit('match_canceled', {'status': 'success', 'message': '已取消匹配'})
+    
+    return {'status': 'success', 'message': '已取消匹配'}
+
+def check_match_queue():
+    """检查匹配队列，尝试为等待的玩家创建房间"""
+    while len(match_queue) >= 2:
+        # 从队列中取出前两个玩家
+        player1 = match_queue.pop(0)
+        player2 = match_queue.pop(0)
+        
+        # 创建新房间
+        room_id = str(uuid.uuid4())[:6]
+        room = GameRoom(room_id)
+        rooms[room_id] = room
+        
+        # 获取玩家名称
+        player1_name = app.player_names.get(player1, '匿名玩家1')
+        player2_name = app.player_names.get(player2, '匿名玩家2')
+        
+        # 添加玩家到房间
+        room.players[player1] = {
+            'name': player1_name,
+            'ships': [],
+            'attacks': [],
+            'remaining_ships': 0
+        }
+        
+        room.players[player2] = {
+            'name': player2_name,
+            'ships': [],
+            'attacks': [],
+            'remaining_ships': 0
+        }
+        
+        # 初始化魔法卡牌系统
+        room.init_player_magic(player1, magic_cards)
+        room.init_player_magic(player2, magic_cards)
+        
+        # 将玩家添加到Socket.IO房间
+        join_room(room_id, player1)
+        join_room(room_id, player2)
+        
+        # 设置房间状态为放置战舰
+        room.state = 'placing_ships'
+        
+        # 准备发送给两个玩家的游戏状态
+        game_state_data = {
+            'state': 'placing_ships',
+            'room_id': room_id
+        }
+        
+        # 为每个玩家添加对方的名字
+        for player_id in [player1, player2]:
+            opponent_id = player2 if player_id == player1 else player1
+            emit('game_state', {
+                **game_state_data,
+                'player_name': room.players[player_id]['name'],
+                'opponent_name': room.players[opponent_id]['name']
+            }, to=player_id)
+        
+        # 从玩家名称字典中移除
+        if hasattr(app, 'player_names'):
+            if player1 in app.player_names:
+                del app.player_names[player1]
+            if player2 in app.player_names:
+                del app.player_names[player2]
 
 @socketio.on('place_ships')
 def handle_place_ships(data):

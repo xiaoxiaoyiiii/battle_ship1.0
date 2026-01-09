@@ -3,8 +3,6 @@ import time
 import uuid
 from pathlib import Path
 
-from werkzeug.security import generate_password_hash
-
 DB_PATH = Path(__file__).parent / 'data' / 'battleship.db'
 
 
@@ -21,43 +19,43 @@ def init_db():
     c.execute('''
               CREATE TABLE IF NOT EXISTS users
               (
-                  id TEXT PRIMARY KEY,
-                  username TEXT UNIQUE,
-                  password_hash TEXT,
-                  wins INTEGER DEFAULT 0,
-                  losses INTEGER DEFAULT 0,
+                  id             TEXT PRIMARY KEY,
+                  username       TEXT UNIQUE,
+                  password_hash  TEXT,
+                  wins           INTEGER DEFAULT 0,
+                  losses         INTEGER DEFAULT 0,
                   current_streak INTEGER DEFAULT 0,
                   longest_streak INTEGER DEFAULT 0,
-                  created_at INTEGER,
-                  signature TEXT DEFAULT '',
-                  avatar TEXT DEFAULT '',
-                  token TEXT DEFAULT ''
+                  created_at     INTEGER,
+                  signature      TEXT    DEFAULT '',
+                  avatar         TEXT    DEFAULT '',
+                  token          TEXT    DEFAULT ''
               )
               ''')
     c.execute('''
               CREATE TABLE IF NOT EXISTS matches
               (
-                  id TEXT PRIMARY KEY,
+                  id        TEXT PRIMARY KEY,
                   winner_id TEXT,
-                  loser_id TEXT,
+                  loser_id  TEXT,
                   timestamp INTEGER
               )
               ''')
     c.execute('''
               CREATE TABLE IF NOT EXISTS chat_messages
               (
-                  id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  user_id TEXT,
-                  username TEXT,
-                  content TEXT,
+                  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                  user_id   TEXT,
+                  username  TEXT,
+                  content   TEXT,
                   timestamp INTEGER
               )
               ''')
     c.execute('''
               CREATE TABLE IF NOT EXISTS active_games
               (
-                  user_id TEXT PRIMARY KEY,
-                  room_id TEXT,
+                  user_id    TEXT PRIMARY KEY,
+                  room_id    TEXT,
                   updated_at INTEGER
               )
               ''')
@@ -76,7 +74,7 @@ def clear_temp_data():
         conn.close()
 
 
-def update_user(uid, **kwargs):
+def update_user(uid: str, **kwargs):
     """通用更新用户信息"""
     if not kwargs:
         return True
@@ -93,7 +91,7 @@ def update_user(uid, **kwargs):
         conn.close()
 
 
-def get_user(uid=None, username=None):
+def get_user(uid="", username=""):
     """通用获取用户信息"""
     conn = get_conn()
     c = conn.cursor()
@@ -108,7 +106,7 @@ def get_user(uid=None, username=None):
     return dict(row) if row else None
 
 
-def get_user_by_token(token):
+def get_user_by_token(token: str):
     """通过token获取用户信息"""
     conn = get_conn()
     c = conn.cursor()
@@ -117,7 +115,7 @@ def get_user_by_token(token):
     return dict(row) if row else None
 
 
-def save_active_game(uid, room_id):
+def save_active_game(uid: str, room_id: str):
     conn = get_conn()
     try:
         conn.execute('INSERT OR REPLACE INTO active_games (user_id, room_id, updated_at) VALUES (?, ?, ?)',
@@ -127,7 +125,7 @@ def save_active_game(uid, room_id):
         conn.close()
 
 
-def get_active_game(uid):
+def get_active_game(uid: str):
     conn = get_conn()
     try:
         row = conn.execute('SELECT room_id FROM active_games WHERE user_id = ?', (uid,)).fetchone()
@@ -135,7 +133,8 @@ def get_active_game(uid):
     finally:
         conn.close()
 
-def update_user_signature(uid, signature):
+
+def update_user_signature(uid: str, signature: str):
     conn = get_conn()
     try:
         conn.execute('UPDATE users SET signature = ? WHERE id = ?', (signature, uid))
@@ -147,7 +146,7 @@ def update_user_signature(uid, signature):
         conn.close()
 
 
-def update_user_avatar(uid, avatar_path):
+def update_user_avatar(uid: str, avatar_path: str):
     conn = get_conn()
     try:
         conn.execute('UPDATE users SET avatar = ? WHERE id = ?', (avatar_path, uid))
@@ -159,7 +158,7 @@ def update_user_avatar(uid, avatar_path):
         conn.close()
 
 
-def update_user_password(uid, password_hash):
+def update_user_password(uid: str, password_hash: str):
     conn = get_conn()
     try:
         conn.execute('UPDATE users SET password_hash = ? WHERE id = ?', (password_hash, uid))
@@ -171,14 +170,15 @@ def update_user_password(uid, password_hash):
         conn.close()
 
 
-def get_user_profile(uid):
+def get_user_profile(uid: str):
     conn = get_conn()
     c = conn.cursor()
     row = c.execute('SELECT id, username, signature, avatar FROM users WHERE id = ?', (uid,)).fetchone()
     conn.close()
     return dict(row) if row else None
 
-def add_chat_message(user_id, username, content):
+
+def add_chat_message(user_id: str, username: str, content: str):
     conn = get_conn()
     try:
         conn.execute('INSERT INTO chat_messages (user_id, username, content, timestamp) VALUES (?, ?, ?, ?)',
@@ -197,7 +197,7 @@ def get_chat_messages(limit=50):
         conn.close()
 
 
-def create_user(username, password_hash):
+def create_user(username: str, password_hash: str):
     conn = get_conn()
     try:
         uid = str(uuid.uuid4())
@@ -211,7 +211,7 @@ def create_user(username, password_hash):
         conn.close()
 
 
-def record_match(winner_id, loser_id):
+def record_match(winner_id: str, loser_id: str):
     conn = get_conn()
     c = conn.cursor()
     mid = str(uuid.uuid4())
@@ -250,11 +250,12 @@ def get_leaderboard(limit=10):
     return [dict(r) for r in rows]
 
 
-def get_token_by_password(username, password_hash):
+def get_token_by_password(username: str, password_hash: str):
     """通过用户名和密码哈希获取并生成token"""
     conn = get_conn()
     c = conn.cursor()
-    user = c.execute('SELECT id FROM users WHERE username = ? AND password_hash = ?', (username, password_hash)).fetchone()
+    user = c.execute('SELECT id FROM users WHERE username = ? AND password_hash = ?',
+                     (username, password_hash)).fetchone()
     if user:
         token = str(uuid.uuid4())
         c.execute('UPDATE users SET token = ? WHERE id = ?', (token, user['id']))
@@ -263,4 +264,3 @@ def get_token_by_password(username, password_hash):
         return token
     conn.close()
     return None
-

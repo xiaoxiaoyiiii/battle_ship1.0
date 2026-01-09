@@ -180,12 +180,6 @@ function updateOpponentAvatarInGame(opponentId) {
     });
 }
 
-// 在切换到游戏主界面时自动刷新头像
-function onEnterGameScreen(opponentName) {
-    updateMyAvatarInGame();
-    if (opponentName) updateOpponentAvatarInGame(opponentName);
-}
-
 // 点击头像查看战绩
 if (myAvatarInGame) {
     myAvatarInGame.style.cursor = 'pointer';
@@ -465,7 +459,7 @@ function initInGameChatSocket() {
     const socket = window.gameState.socket;
     socket.on('chat_message', function (data) {
         console.log("Received chat message:", data);
-        appendChatMessage(data.username, data.message, data.isMe);
+        appendChatMessage(data.username, data.message,data.isMe);
     });
     chatSocketInitialized = true;
 }
@@ -508,42 +502,6 @@ function setChatVisible(visible) {
 
 setChatVisible(false);
 
-// 切换到游戏主界面时初始化聊天
-const origSwitchScreen = window.switchScreen || function (screen) {
-    // 默认实现，如果window.switchScreen未定义
-    const screens = [startScreen, customRoomScreen, shipPlacementScreen, rpsScreen, gameScreen, leaderboardScreen, lobbyScreen, gameOverScreen];
-    screens.forEach(s => {
-        if (s) s.classList.remove('active');
-    });
-    if (screen) screen.classList.add('active');
-};
-window.switchScreen = function (screen) {
-    // 处理DOM元素或字符串参数
-    let screenElement = screen;
-    if (typeof screen === 'string') {
-        // 如果是字符串，根据ID获取DOM元素
-        screenElement = document.getElementById(screen);
-    }
-
-    // 调用原始switchScreen函数
-    origSwitchScreen(screenElement);
-
-    // 设置聊天可见性
-    const screenId = screenElement ? screenElement.id : '';
-    setChatVisible(screenId === 'game-screen');
-
-    if (screenId === 'game-screen') {
-        initInGameChatSocket();
-    }
-}
-
-// 进入游戏主界面时也初始化聊天
-const origOnEnterGameScreen = window.onEnterGameScreen;
-window.onEnterGameScreen = function (opponentName) {
-    if (typeof origOnEnterGameScreen === 'function') origOnEnterGameScreen(opponentName);
-    setChatVisible(true);
-    initInGameChatSocket();
-}
 
 // 日志功能元素
 const logContainer = document.querySelector('.log-container');
@@ -678,11 +636,7 @@ function addGameLog(logText) {
 
 // 绑定事件监听器
 function bindEventListeners() {
-    // 辅助：从服务器返回的对象中提取用户名，支持多种命名风格
-    function extractName(obj) {
-        if (!obj) return null;
-        return obj.opponent_name || obj.opponentName || obj.opponent || obj.player_name || obj.playerName || obj.player || null;
-    }
+
 
     // 帮助按钮事件
     if (helpBtn) helpBtn.addEventListener('click', () => {
@@ -1073,7 +1027,8 @@ function setupSocketListeners() {
                 opponentUsernameInfo.textContent = oppNameFromData;
                 showOpponentStatsBtn && (showOpponentStatsBtn.style.display = 'inline-block');
             }
-            onEnterGameScreen(oppNameFromData);
+            updateMyAvatarInGame();
+            updateOpponentAvatarInGame(oppNameFromData);
         } else {
             // 如果没有从当前数据里获得对手名，尝试从 gameState 中恢复（有可能之前已设置）
             if (gameState.opponentName) {
@@ -2288,28 +2243,6 @@ window.addEventListener('load', () => {
     initCardPreview(); // 初始化卡牌预览功能
 });
 
-// 洗牌算法 (Fisher-Yates)
-function shuffleDeck(deck) {
-    for (let i = deck.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [deck[i], deck[j]] = [deck[j], deck[i]];
-    }
-}
-
-// 抽卡函数
-window.drawCard = function () {
-    if (gameState.deck.length === 0) {
-        // 牌堆为空，从弃牌堆重新洗牌
-        gameState.deck = [...gameState.discardPile];
-        shuffleDeck(gameState.deck);
-        gameState.discardPile = [];
-        console.log('牌堆已用尽，从弃牌堆重新洗牌');
-    }
-    const card = gameState.deck.shift();
-    gameState.hand.push(card);
-    updateHandUI();
-    return card;
-};
 
 // 修改canPlayCard函数
 function canPlayCard(card) {
@@ -3447,53 +3380,6 @@ function showReinforcementPrompt() {
     }, false);
 }
 
-// 显示匹配成功提示框
-function showMatchSuccess(opponentName) {
-    // 创建匹配成功提示框
-    const prompt = document.createElement('div');
-    prompt.id = 'match-success-prompt';
-    prompt.className = 'magic-prompt';
-
-    // 设置初始倒计时
-    let countdown = 5;
-
-    prompt.innerHTML = `
-        <h2>匹配成功！</h2>
-        <div class="match-success-content">
-            <p>你已匹配到对手：<strong>${opponentName}</strong></p>
-            <p>游戏将在 <strong id="countdown-timer">${countdown}</strong> 秒后开始</p>
-        </div>
-    `;
-
-    // 添加样式
-    prompt.style.cssText = `
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        background-color: white;
-        padding: 30px;
-        border-radius: 10px;
-        box-shadow: 0 0 30px rgba(0, 0, 0, 0.3);
-        z-index: 99999;
-        text-align: center;
-        min-width: 300px;
-    `;
-
-    document.body.appendChild(prompt);
-
-    // 启动倒计时
-    const timerElement = document.getElementById('countdown-timer');
-    const countdownInterval = setInterval(() => {
-        countdown--;
-        timerElement.textContent = countdown;
-
-        if (countdown <= 0) {
-            clearInterval(countdownInterval);
-        }
-    }, 1000);
-}
-
 // 更新手牌UI
 // 更新卡牌预览信息
 function updateCardPreview(card, index) {
@@ -3536,7 +3422,8 @@ function initCardPreview() {
     initPreviewDrag();
     // 初始化日志容器拖拽
     initLogDrag();
-
+    setChatVisible(true);
+    initInGameChatSocket();
     // 初始化投降按钮
     initSurrenderBtn();
 }

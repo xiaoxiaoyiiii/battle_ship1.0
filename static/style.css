@@ -36,18 +36,6 @@
 #leaderboard-container::-webkit-scrollbar-track {
     background: transparent;
 }
-:root {
-    --surface: #f8fafc;
-    --text: #111827;
-    --muted: #6b7280;
-    --primary: #1976d2;
-    --primary-600: #1565c0;
-    --danger: #e53935;
-    --success: #10b981;
-    --board-bg: #e6f4ff;
-    --cell-bg: #ffffff;
-    --glass: rgba(255,255,255,0.85);
-}
 
 html.theme-dark {
     --surface: #181a20;

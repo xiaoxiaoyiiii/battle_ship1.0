@@ -2,6 +2,7 @@ import os
 import random
 import time
 import uuid
+from typing import Any
 
 from flask import Flask, render_template, request, session, redirect, url_for, flash, jsonify
 from flask_socketio import SocketIO, join_room, leave_room, emit
@@ -465,83 +466,6 @@ def handle_join_room(data):
     return {'status': 'success', 'player_id': player_id}
 
 
-# 大厅：加入匹配队列
-@socketio.on('join_lobby')
-def handle_join_lobby(data):
-    player_id = session.get('user_id', request.sid)
-    # 防止重复加入
-    if player_id not in lobby_queue:
-        lobby_queue.append(player_id)
-        lobby_members.add(player_id)
-        # 将当前 socket 加入一个以 player_id 命名的个人房间，方便推送
-        try:
-            join_room(player_id)
-        except Exception:
-            pass
-        emit('lobby_joined', room=request.sid)
-        # 发送带可显示名字的成员列表
-        players_display = []
-        for pid in list(lobby_members):
-            u = db.get_user_by_id(pid)
-            players_display.append(u['username'] if u else str(pid)[:6])
-        emit('lobby_update', {'players': players_display}, broadcast=True)
-        # 尝试匹配
-        try_match()
-    else:
-        # 已在队列中：仅推送更新以同步 UI
-        players_display = []
-        for pid in list(lobby_members):
-            u = db.get_user_by_id(pid)
-            players_display.append(u['username'] if u else str(pid)[:6])
-        emit('lobby_update', {'players': players_display}, room=request.sid)
-
-
-@socketio.on('leave_lobby')
-def handle_leave_lobby():
-    player_id = session.get('user_id', request.sid)
-    # 安全地移除
-    try:
-        while player_id in lobby_queue:
-            lobby_queue.remove(player_id)
-    except ValueError:
-        pass
-    lobby_members.discard(player_id)
-    try:
-        leave_room(player_id)
-    except Exception:
-        pass
-    emit('lobby_left', room=request.sid)
-    players_display = []
-    for pid in list(lobby_members):
-        u = db.get_user_by_id(pid)
-        players_display.append(u['username'] if u else str(pid)[:6])
-    emit('lobby_update', {'players': players_display}, broadcast=True)
-
-
-def try_match():
-    # 简单 FIFO：两两配对
-    while len(lobby_queue) >= 2:
-        p1 = lobby_queue.pop(0)
-        p2 = lobby_queue.pop(0)
-        lobby_members.discard(p1)
-        lobby_members.discard(p2)
-        # 创建房间并通知
-        new_room_id = str(uuid.uuid4())[:6]
-        rooms[new_room_id] = GameRoom(new_room_id)
-        # 向双方发送匹配成功（使用个人房间）
-        emit('match_found', {'room_id': new_room_id}, room=p1)
-        emit('match_found', {'room_id': new_room_id}, room=p2)
-
-    # Broadcast lobby update
-    players_display = []
-    for pid in list(lobby_members):
-        u = db.get_user_by_id(pid)
-        players_display.append(u['username'] if u else str(pid)[:6])
-    emit('lobby_update', {'players': players_display}, broadcast=True)
-
-    return {'status': 'ok'}
-
-
 # 局内聊天事件
 @socketio.on('connect')
 def handle_connect():
@@ -581,15 +505,14 @@ def handle_chat_message(data):
     if room_id and room_id in rooms:
         print(rooms, rooms[room_id].players)
         # 标记自己和对手
-        for pid in rooms[room_id].players:
-            emit('chat_message', {
-                'username': username,
-                'message': msg,
-                'isMe': pid == app.player_names[player_id]
-            }, room=pid)
+        emit('chat_message', {
+            'username': username,
+            'message': msg,
+            'isMe': False
+        }, room=room_id)
     else:
         # fallback: 仅回发给自己
-        emit('chat_message', {'username': username, 'message': msg, 'isMe': True}, room=player_id)
+        emit('chat_message', {'username': username, 'message': msg, 'isMe': True}, to=player_id)
 
 
 @socketio.on('find_match')
@@ -641,16 +564,8 @@ def check_match_queue():
     # 声明全局变量
     global match_queue
 
-    # 去重匹配队列，避免同一个玩家多次出现
-    unique_match_queue = []
-    seen_players = set()
-    for player in match_queue:
-        if player not in seen_players:
-            seen_players.add(player)
-            unique_match_queue.append(player)
-
     # 更新匹配队列，只保留唯一玩家
-    match_queue = unique_match_queue
+    match_queue = list(set(match_queue))
 
     while len(match_queue) >= 2:
         # 从队列中取出前两个玩家
@@ -1675,7 +1590,7 @@ def confirm_magic_target(data):
                         opponent_choice = i
                         break
 
-                if opponent_choice >= 0 and opponent_choice < len(cards):
+                if 0 <= opponent_choice < len(cards):
                     opponent['magic_hand'].append(cards[opponent_choice])
 
             # 剩余卡牌放回牌堆
@@ -1853,7 +1768,7 @@ def apply_magic_effect(room, caster_id, card, target_data):
             while len(caster['ships']) < target_ships:
                 pos = find_safe_position(room, caster_id)
                 if pos:
-                    caster['ships'].append({'id': f'magic_{uuid.uuid4()[:4]}', 'positions': [pos], 'hits': []})
+                    caster['ships'].append({'id': f'magic_{get_uuid()}', 'positions': [pos], 'hits': []})
                     caster['remaining_ships'] += 1
                 else:
                     break
@@ -1865,7 +1780,7 @@ def apply_magic_effect(room, caster_id, card, target_data):
             while len(opponent['ships']) < target_ships:
                 pos = find_safe_position(room, opponent_id)
                 if pos:
-                    opponent['ships'].append({'id': f'magic_{uuid.uuid4()[:4]}', 'positions': [pos], 'hits': []})
+                    opponent['ships'].append({'id': f'magic_{get_uuid()}', 'positions': [pos], 'hits': []})
                     opponent['remaining_ships'] += 1
                 else:
                     break
@@ -1892,7 +1807,7 @@ def apply_magic_effect(room, caster_id, card, target_data):
                 while len(opponent['ships']) < caster_ship_count:
                     pos = find_safe_position(room, opponent_id)
                     if pos:
-                        opponent['ships'].append({'id': f'magic_{uuid.uuid4()[:4]}', 'positions': [pos], 'hits': []})
+                        opponent['ships'].append({'id': f'magic_{get_uuid()}', 'positions': [pos], 'hits': []})
                         opponent['remaining_ships'] += 1
                         added_ships += 1
                     else:
@@ -2764,6 +2679,10 @@ def apply_magic_effect(room, caster_id, card, target_data):
         result['message'] = f'魔法效果应用失败: {str(e)}'
 
     return result
+
+
+def get_uuid() -> Any:
+    return uuid.uuid4()[:4]
 
 
 @socketio.on('surrender')

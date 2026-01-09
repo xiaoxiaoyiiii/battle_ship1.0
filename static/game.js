@@ -1226,6 +1226,11 @@ function setupSocketListeners() {
 
     socket.on('game_over', (data) => {
         console.log('Game over:', data);
+        
+        // 隐藏状态显示栏中的所有效果
+        document.getElementById('reinforcement-status')?.classList.add('hidden');
+        document.getElementById('holy-heart-status')?.classList.add('hidden');
+        
         switchScreen(gameOverScreen);
         // 根据胜利原因显示不同的提示
         if (data.winner === gameState.playerId) {
@@ -1248,54 +1253,115 @@ function setupSocketListeners() {
 
     // 极限增援相关事件处理
     socket.on('reinforcement_activated', (data) => {
+        console.log('极限增援激活:', data);
         // 显示极限增援倒计时
         const countdownElement = document.getElementById('reinforcement-countdown');
         const remainingElement = document.getElementById('reinforcement-remaining');
+        
+        // 更新状态显示栏
+        const statusElement = document.getElementById('reinforcement-status');
+        const statusRemainingElement = document.getElementById('reinforcement-status-remaining');
 
+        // 更新传统倒计时
         if (countdownElement && remainingElement) {
             remainingElement.textContent = data.remaining_turns;
             countdownElement.classList.remove('hidden');
         }
+        
+        // 更新状态显示栏
+        if (statusElement && statusRemainingElement) {
+            statusRemainingElement.textContent = data.remaining_turns;
+            statusElement.classList.remove('hidden');
+        }
     });
 
     socket.on('reinforcement_turn_updated', (data) => {
+        console.log('极限增援回合更新:', data);
         // 更新极限增援剩余回合
         const remainingElement = document.getElementById('reinforcement-remaining');
+        // 更新状态显示栏
+        const statusRemainingElement = document.getElementById('reinforcement-status-remaining');
+        
         if (remainingElement) {
             remainingElement.textContent = data.remaining_turns;
+        }
+        if (statusRemainingElement) {
+            statusRemainingElement.textContent = data.remaining_turns;
         }
     });
 
     // 无暇圣心激活监听
     socket.on('holy_heart_activated', (data) => {
+        console.log('无暇圣心激活:', data);
         // 显示无暇圣心倒计时
         const countdownElement = document.getElementById('holy-heart-countdown');
         const remainingElement = document.getElementById('holy-heart-remaining');
+        
+        // 更新状态显示栏
+        const statusElement = document.getElementById('holy-heart-status');
+        const statusRemainingElement = document.getElementById('holy-heart-status-remaining');
 
+        // 更新传统倒计时
         if (countdownElement && remainingElement) {
             remainingElement.textContent = data.remaining_turns;
             countdownElement.classList.remove('hidden');
+        }
+        
+        // 更新状态显示栏
+        if (statusElement && statusRemainingElement) {
+            statusRemainingElement.textContent = data.remaining_turns;
+            statusElement.classList.remove('hidden');
         }
     });
 
     // 无暇圣心回合更新监听
     socket.on('holy_heart_turn_updated', (data) => {
+        console.log('无暇圣心回合更新:', data);
         // 更新无暇圣心剩余回合
         const remainingElement = document.getElementById('holy-heart-remaining');
+        // 更新状态显示栏
+        const statusRemainingElement = document.getElementById('holy-heart-status-remaining');
+        
         if (remainingElement) {
             remainingElement.textContent = data.remaining_turns;
+        }
+        if (statusRemainingElement) {
+            statusRemainingElement.textContent = data.remaining_turns;
         }
     });
 
     // 无暇圣心中断监听
     socket.on('holy_heart_interrupted', (data) => {
+        console.log('无暇圣心中断:', data);
         // 隐藏无暇圣心倒计时
         const countdownElement = document.getElementById('holy-heart-countdown');
+        // 隐藏状态显示栏中的无暇圣心
+        const statusElement = document.getElementById('holy-heart-status');
+        
         if (countdownElement) {
             countdownElement.classList.add('hidden');
         }
+        if (statusElement) {
+            statusElement.classList.add('hidden');
+        }
         // 显示中断原因
         showMessage(data.reason);
+    });
+
+    // 极限增援结束监听
+    socket.on('reinforcement_finished', (data) => {
+        console.log('极限增援结束:', data);
+        // 隐藏极限增援倒计时
+        const countdownElement = document.getElementById('reinforcement-countdown');
+        // 隐藏状态显示栏中的极限增援
+        const statusElement = document.getElementById('reinforcement-status');
+        
+        if (countdownElement) {
+            countdownElement.classList.add('hidden');
+        }
+        if (statusElement) {
+            statusElement.classList.add('hidden');
+        }
     });
 
     // 添加场地魔法更新监听

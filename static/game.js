@@ -550,6 +550,7 @@ window.gameState = {
     opponentName: '对手',
     ships: [],
     placedShips: 0,
+    maxShips: 6,            // 默认可摆放的船数为6
     isMyTurn: false,
     myAttacks: [],
     opponentAttacks: [],
@@ -1389,13 +1390,19 @@ function setupSocketListeners() {
             const playerName = result.caster === gameState.playerId ? gameState.playerName : gameState.opponentName;
             addGameLog(`【第${round}回合】<span class="log-player">${playerName}</span>使用了魔法卡<span class="log-card">[${result.card.name}]</span>，发动效果：${result.card.description}！`);
 
-            // 处理需要选择的魔法卡效果（如桃园结义）
+            // 处理需要选择的魔法卡效果（如桃园结义、灵气复苏）
             if (result.temp_data_id) {
                 if (result.temp_data_id === 'taoyuan_choice') {
                     // 只有当施法者是当前玩家时，才显示桃园结义选择UI
                     if (result.caster === gameState.playerId) {
                         // 桃园结义选择UI
                         showTaoyuanChoice(result);
+                    }
+                } else if (result.temp_data_id === 'lingqi_choice') {
+                    // 只有当施法者是当前玩家时，才显示灵气复苏选择UI
+                    if (result.caster === gameState.playerId) {
+                        // 灵气复苏选择UI
+                        showLingqiChoice(result);
                     }
                 }
             }
@@ -1545,6 +1552,60 @@ function setupSocketListeners() {
         updateHandUI();
     });
 
+    // 灵气复苏相关事件
+    socket.on('lingqi_waiting', function (data) {
+        // 显示等待提示
+        showMessage(data.message, { type: 'info' });
+    });
+
+    socket.on('lingqi_complete', function (data) {
+        // 显示完成提示
+        showMessage(data.message, { type: 'info' });
+    });
+
+    socket.on('reset_gameboard', function (data) {
+        // 重置游戏棋盘，进入重新摆放阶段
+        showMessage(data.message, { type: 'warning' });
+        
+        // 重置游戏状态
+        gameState.ships = [];
+        gameState.attacks = [];
+        gameState.remainingShips = 0;
+        gameState.opponentRemainingShips = 0;
+        gameState.maxShips = data.new_max_ships;
+        
+        // 隐藏所有其他屏幕
+        startScreen.classList.remove('active');
+        customRoomScreen.classList.remove('active');
+        matchSuccessScreen.classList.remove('active');
+        rpsScreen.classList.remove('active');
+        gameScreen.classList.remove('active');
+        gameOverScreen.classList.remove('active');
+        
+        // 直接进入放置战舰界面
+        shipPlacementScreen.classList.add('active');
+        initBoard(playerBoard, true);
+        
+        // 确保界面正确切换
+        startScreen.classList.add('hidden');
+        customRoomScreen.classList.add('hidden');
+        matchStatus.classList.add('hidden');
+        lobbyScreen.classList.add('hidden');
+        
+        // 更新可摆放船数显示
+        const shipsPlaced = document.getElementById('ships-placed');
+        const totalShips = document.getElementById('total-ships');
+        if (totalShips) {
+            totalShips.textContent = data.new_max_ships;
+        }
+        if (shipsPlaced) {
+            shipsPlaced.textContent = 0;
+        }
+        
+        // 重置已放置船数
+        gameState.placedShips = 0;
+    });
+
     socket.on('magic_applied', function (result) {
         showMessage(`魔法卡【${result.card.name}】效果生效: ${result.message}`);
         applyCardEffect(result.card);
@@ -1574,6 +1635,13 @@ function setupSocketListeners() {
                 if (caster === gameState.playerId) {
                     // 桃园结义选择UI
                     showTaoyuanChoice(result);
+                }
+            } else if (result.temp_data_id === 'lingqi_choice') {
+                // 只有当施法者是当前玩家时，才显示灵气复苏选择UI
+                const caster = result.caster_id || result.caster;
+                if (caster === gameState.playerId) {
+                    // 灵气复苏选择UI
+                    showLingqiChoice(result);
                 }
             }
         }
@@ -1711,7 +1779,90 @@ function setupSocketListeners() {
                 showMessage('桃园结义选择完成');
                 updateHandUI();
             } else {
-                showMessage(`选择失败: ${response.message}`, {type: 'error'});
+                showMessage(`选择失败: ${response.message}`, { type: 'error' });
+            }
+        });
+    }
+    
+    // 显示灵气复苏船数选择界面
+    function showLingqiChoice(result) {
+        // 创建选择界面，使用与桃园结义相同的UI样式
+        const lingqiChoiceDiv = document.createElement('div');
+        lingqiChoiceDiv.className = 'taoyuan-choice-overlay';
+        lingqiChoiceDiv.style.zIndex = '10000'; // 设置最高优先级
+        lingqiChoiceDiv.innerHTML = `
+            <div class="taoyuan-choice-container">
+                <div class="taoyuan-choice-header">
+                    <h3>灵气复苏 - 船数选择</h3>
+                    <p id="taoyuan-choice-message">灵气复苏船数选择 选择后双方的船数都会变为你选择的数目</p>
+                </div>
+                <div class="taoyuan-cards-container" style="display: flex; flex-wrap: wrap; gap: 12px; justify-content: center;"></div>
+            </div>
+        `;
+        document.body.appendChild(lingqiChoiceDiv);
+
+        // 获取卡片容器
+        const cardsContainer = lingqiChoiceDiv.querySelector('.taoyuan-cards-container');
+        
+        // 获取最大船数
+        let maxShips = result.max_ships;
+        
+        // 如果maxShips未在result中返回，请求服务器获取
+        if (!maxShips) {
+            gameState.socket.emit('get_magic_temp_data', {
+                room_id: gameState.roomId,
+                player_id: gameState.playerId
+            }, (response) => {
+                if (response.status === 'success' && response.data && response.data.max_ships) {
+                    maxShips = response.data.max_ships;
+                    renderShipButtons(maxShips);
+                }
+            });
+        } else {
+            renderShipButtons(maxShips);
+        }
+        
+        // 渲染船数按钮
+        function renderShipButtons(maxShips) {
+            cardsContainer.innerHTML = '';
+            
+            // 创建1到maxShips的按钮，使用与桃园结义卡牌相同的样式
+            for (let i = 1; i <= maxShips; i++) {
+                const buttonElement = document.createElement('div');
+                buttonElement.className = 'taoyuan-card-item';
+                buttonElement.dataset.shipCount = i;
+                buttonElement.innerHTML = `
+                    <div class="taoyuan-card-name" style="text-align: center;">${i}艘</div>
+                    <div class="taoyuan-card-type" style="text-align: center;">选择此船数</div>
+                    <div class="taoyuan-card-desc" style="text-align: center;">双方船数将调整为${i}艘</div>
+                `;
+                
+                // 添加点击事件
+                buttonElement.addEventListener('click', () => {
+                    const selectedShipCount = parseInt(buttonElement.dataset.shipCount);
+                    confirmLingqiChoice(selectedShipCount);
+                    document.body.removeChild(lingqiChoiceDiv);
+                });
+                
+                cardsContainer.appendChild(buttonElement);
+            }
+        }
+    }
+    
+    // 确认灵气复苏选择
+    function confirmLingqiChoice(targetShips) {
+        gameState.socket.emit('confirm_magic_target', {
+            room_id: gameState.roomId,
+            player_id: gameState.playerId,
+            temp_data_id: 'lingqi_choice',
+            target_data: {
+                target_ships: targetShips
+            }
+        }, (response) => {
+            if (response.status === 'success') {
+                showMessage(response.message);
+            } else {
+                showMessage(`选择失败: ${response.message}`, { type: 'error' });
             }
         });
     }
@@ -2000,9 +2151,9 @@ function randomizeShips() {
         cell.classList.remove('ship');
     });
 
-    // 生成6个不重复的随机位置
+    // 生成maxShips个不重复的随机位置
     const positions = new Set();
-    while (positions.size < 6) {
+    while (positions.size < gameState.maxShips) {
         const x = Math.floor(Math.random() * 6);
         const y = Math.floor(Math.random() * 6);
         positions.add(`${x},${y}`);
@@ -2050,12 +2201,12 @@ function handleCellClick(x, y) {
         cell.classList.remove('ship');
 
         // 如果之前显示了确认按钮，检查是否需要隐藏
-        if (gameState.placedShips < 6) {
+        if (gameState.placedShips < gameState.maxShips) {
             confirmShipsBtn.classList.add('hidden');
         }
     } else {
-        // 检查是否已经放置了6艘战舰
-        if (gameState.placedShips >= 6) return;
+        // 检查是否已经放置了最大数量的战舰
+        if (gameState.placedShips >= gameState.maxShips) return;
 
         // 添加新战舰（1x1大小）
         gameState.ships.push({
@@ -2071,8 +2222,8 @@ function handleCellClick(x, y) {
         const cell = playerBoard.querySelector(`[data-x="${x}"][data-y="${y}"]`);
         cell.classList.add('ship');
 
-        // 如果放置了6艘战舰，显示确认按钮
-        if (gameState.placedShips === 6) {
+        // 如果放置了最大数量的战舰，显示确认按钮
+        if (gameState.placedShips === gameState.maxShips) {
             confirmShipsBtn.classList.remove('hidden');
         }
     }

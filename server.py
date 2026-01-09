@@ -662,6 +662,19 @@ def handle_place_ships(data):
     all_placed = all(len(p['ships']) > 0 for p in room.players.values())
     if all_placed:
         room.state = 'rock_paper_scissors'
+        # 重置猜拳选择，确保新的猜拳阶段从空开始
+        room.rps_choices = {}
+        
+        # 检查是否是灵气复苏后的重新摆放
+        if hasattr(room, 'lingqi_resurgence_applied') and room.lingqi_resurgence_applied:
+            # 发送双方船数已调整的广播
+            emit('game_message', {
+                'message': '双方船数已调整，进入猜拳阶段',
+                'type': 'info'
+            }, room=room_id)
+            # 清除标记
+            room.lingqi_resurgence_applied = False
+        
         emit('game_state', {'state': 'rock_paper_scissors'}, room=room_id)
 
     return {'status': 'success'}
@@ -734,9 +747,8 @@ def determine_rps_winner(room):
         'scissors': 'paper'
     }
 
-    # 修复前逻辑：if win_conditions[c1] == c2:
-    # 修复后逻辑：判断c2是否克制c1
-    if win_conditions[c2] == c1:
+    # 正确逻辑：判断c1是否克制c2
+    if win_conditions[c1] == c2:
         winner, loser = p2, p1
     else:
         winner, loser = p1, p2
@@ -1685,6 +1697,59 @@ def confirm_magic_target(data):
             return {'status': 'success', 'message': '桃园结义选择完成'}
         else:
             return {'status': 'error', 'message': '无效的卡牌选择'}
+    elif temp_data_id == 'lingqi_choice':
+        # 处理灵气复苏的船数选择
+        target_ships = target_data['target_ships']
+        
+        # 获取施法者和对手
+        caster = room.players[player_id]
+        opponent_id = next(p for p in room.players if p != player_id)
+        opponent = room.players[opponent_id]
+        
+        # 验证选择是否有效
+        if 'max_ships' not in room.magic_temp_data:
+            return {'status': 'error', 'message': '没有可选择的船数范围'}
+        
+        max_ships = room.magic_temp_data['max_ships']
+        if target_ships < 1 or target_ships > max_ships:
+            return {'status': 'error', 'message': f'无效的船数选择，应在1-{max_ships}之间'}
+        
+        # 重置双方的战舰数据
+        for p_id in room.players:
+            player = room.players[p_id]
+            player['ships'] = []
+            player['attacks'] = []
+            player['remaining_ships'] = 0
+            player['needs_reset'] = True
+            player['revealed_positions'] = []
+            # 设置新的船数限制
+            player['max_ships'] = target_ships
+        
+        # 清除临时数据
+        room.magic_temp_data = {}
+        
+        # 重置房间状态，进入重新摆放阶段
+        room.state = 'placing_ships'
+        room.attack_order = []
+        room.current_attacker = None
+        room.attacks_remaining = 0
+        
+        # 添加灵气复苏应用标记，用于后续广播
+        room.lingqi_resurgence_applied = True
+        
+        # 通知双方进入重新摆放阶段，并发送新的船数限制
+        for p_id in room.players:
+            emit('reset_gameboard', {
+                'new_max_ships': target_ships,
+                'message': f'灵气复苏生效，双方需要重新摆放{target_ships}艘战舰'
+            }, to=p_id)
+        
+        # 通知对手等待结束
+        emit('lingqi_complete', {
+            'message': '对方灵气复苏结算完成'
+        }, to=opponent_id)
+        
+        return {'status': 'success', 'message': f'灵气复苏船数选择完成'}
 
     return {'status': 'error', 'message': '无效的临时数据ID'}
 
@@ -1823,35 +1888,28 @@ def apply_magic_effect(room, caster_id, card, target_data):
             result['message'] = '本回合攻击次数翻倍'
 
         elif card['name'] == '灵气复苏':
-            # 调整双方船数为x(x为不大于双方最大船数的任意非零整数)
+            # 计算双方最大船数
             max_ships = max(len(caster['ships']), len(opponent['ships']))
-            target_ships = random.randint(1, max_ships) if max_ships > 0 else 1
-
-            # 调整施法者船数
-            while len(caster['ships']) > target_ships:
-                caster['ships'].pop()
-                caster['remaining_ships'] -= 1
-            while len(caster['ships']) < target_ships:
-                pos = find_safe_position(room, caster_id)
-                if pos:
-                    caster['ships'].append({'id': f'magic_{get_uuid()}', 'positions': [pos], 'hits': []})
-                    caster['remaining_ships'] += 1
-                else:
-                    break
-
-            # 调整对手船数
-            while len(opponent['ships']) > target_ships:
-                opponent['ships'].pop()
-                opponent['remaining_ships'] -= 1
-            while len(opponent['ships']) < target_ships:
-                pos = find_safe_position(room, opponent_id)
-                if pos:
-                    opponent['ships'].append({'id': f'magic_{get_uuid()}', 'positions': [pos], 'hits': []})
-                    opponent['remaining_ships'] += 1
-                else:
-                    break
-
-            result['message'] = f'双方船数调整为{target_ships}'
+            if max_ships < 1:
+                max_ships = 1
+            
+            # 存储临时数据，等待玩家选择船数
+            room.magic_temp_data = {
+                'type': 'lingqi_choice',
+                'caster': caster_id,
+                'opponent': opponent_id,
+                'max_ships': max_ships
+            }
+            
+            # 设置结果，只发送给施法者
+            result['message'] = '请选择灵气复苏的船数'
+            result['temp_data_id'] = 'lingqi_choice'
+            result['max_ships'] = max_ships
+            
+            # 通知对手等待
+            emit('lingqi_waiting', {
+                'message': '对方正在结算灵气复苏效果 请等待'
+            }, to=opponent_id)
 
         elif card['name'] == '军备竞赛':
             # 将对方的战舰数变得和自己一样

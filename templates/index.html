@@ -9,478 +9,498 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 </head>
 <body>
-    <div class="game-container">
-        <div class="nav" id="game-nav">
-            {% if username %}
-                <span>已登录: {{ username }}</span> | <a href="/logout">退出</a> | <a href="/leaderboard" class="hide-in-game">排行榜</a> | <a href="#" id="show-user-stats" class="hide-in-game">个人战绩</a> | <a href="#" id="show-profile" class="hide-in-game">个人信息</a>
-            {% else %}
-                <a href="/login" class="hide-in-game">登录</a> | <a href="/register" class="hide-in-game">注册</a> | <a href="/leaderboard" class="hide-in-game">排行榜</a>
-            {% endif %}
-                        <!-- 个人信息模态弹窗 -->
-                        <div id="profile-modal" class="modal-overlay hidden">
-                            <div class="modal-content" style="max-width:400px;">
-                                <span class="modal-close" id="profile-modal-close">×</span>
-                                <h2>个人信息</h2>
-                                <div id="profile-content" style="text-align:left;max-height:60vh;overflow-y:auto;">
-                                    <form id="profile-form">
-                                        <div style="text-align:center;margin-bottom:1em;">
-                                            <img id="profile-avatar" src="/static/avatars/default.png" alt="头像" style="width:80px;height:80px;border-radius:50%;object-fit:cover;border:1px solid #ccc;">
-                                            <br>
-                                            <input type="file" id="avatar-input" accept="image/*" style="margin-top:8px;">
-                                        </div>
-                                        <label style="display:block;margin-bottom:1em;">
-                                            <span>用户名：</span>
-                                            <span id="profile-username"></span>
-                                        </label>
-                                        <label style="display:block;margin-bottom:1em;">
-                                            <span>个性签名：</span>
-                                            <input type="text" id="profile-signature" maxlength="60" style="width:90%;">
-                                        </label>
-                                        <button type="submit" class="btn">保存修改</button>
-                                    </form>
-                                    <hr>
-                                    <form id="change-password-form" style="margin-top:1em;">
-                                        <label style="display:block;margin-bottom:0.5em;">
-                                            <span>原密码：</span>
-                                            <input type="password" id="old-password" maxlength="32" style="width:90%;">
-                                        </label>
-                                        <label style="display:block;margin-bottom:0.5em;">
-                                            <span>新密码：</span>
-                                            <input type="password" id="new-password" maxlength="32" style="width:90%;">
-                                        </label>
-                                        <button type="submit" class="btn">更改密码</button>
-                                    </form>
-                                    <div id="change-password-msg" style="color:green;margin-top:8px;"></div>
-                                </div>
-                            </div>
+<div class="game-container">
+    <div class="nav" id="game-nav">
+        {% if username %}
+            <span>已登录: {{ username }}</span> | <a href="/logout">退出</a> |
+            <a href="/leaderboard" class="hide-in-game">排行榜</a> |
+            <a href="#" id="show-user-stats" class="hide-in-game">个人战绩</a> |
+            <a href="#" id="show-profile" class="hide-in-game">个人信息</a>
+        {% else %}
+            <a href="/login" class="hide-in-game">登录</a> | <a href="/register" class="hide-in-game">注册</a> |
+            <a href="/leaderboard" class="hide-in-game">排行榜</a>
+        {% endif %}
+        <!-- 个人信息模态弹窗 -->
+        <div id="profile-modal" class="modal-overlay hidden">
+            <div class="modal-content" style="max-width:400px;">
+                <span class="modal-close" id="profile-modal-close">×</span>
+                <h2>个人信息</h2>
+                <div id="profile-content" style="text-align:left;max-height:60vh;overflow-y:auto;">
+                    <form id="profile-form">
+                        <div style="text-align:center;margin-bottom:1em;">
+                            <img id="profile-avatar" src="/static/avatars/default.png" alt="头像"
+                                 style="width:80px;height:80px;border-radius:50%;object-fit:cover;border:1px solid #ccc;">
+                            <br>
+                            <input type="file" id="avatar-input" accept="image/*" style="margin-top:8px;">
                         </div>
-            <button id="theme-toggle" class="btn secondary" style="margin-left:12px;">切换主题</button>
-            <button id="help-btn" class="btn secondary" style="margin-left:12px;">帮助</button>
-                        <button id="settings-btn" class="btn secondary" style="margin-left:12px;">设置</button>
-                        <!-- 设置模态弹窗 -->
-                        <div id="settings-modal" class="modal-overlay hidden">
-                            <div class="modal-content" style="max-width:400px;">
-                                <span class="modal-close" id="settings-modal-close">×</span>
-                                <h2>界面设置</h2>
-                                <div id="settings-content" style="text-align:left;max-height:60vh;overflow-y:auto;">
-                                    <label style="display:block;margin-bottom:1em;">
-                                        <span>主色（Primary Color）：</span>
-                                        <input type="color" id="primary-color-picker" value="#1976d2" style="vertical-align:middle;margin-left:8px;">
-                                    </label>
-                                    <button id="settings-save-btn" class="btn">保存</button>
-                                </div>
-                            </div>
-                        </div>
-            <!-- 帮助模态弹窗 -->
-            <div id="help-modal" class="modal-overlay hidden">
-                <div class="modal-content" style="max-width:600px;">
-                    <span class="modal-close" id="help-modal-close">×</span>
-                    <h2>游戏帮助</h2>
-                    <div id="help-content" style="text-align:left;max-height:60vh;overflow-y:auto;">
-                        <h3>玩法简介</h3>
-                        <ul>
-                            <li>每位玩家布置6艘战舰，轮流攻击，率先击沉对方全部战舰获胜。</li>
-                            <li>可使用魔法卡牌，触发特殊效果。</li>
-                        </ul>
-                        <h3>魔法卡牌说明</h3>
-                        <div id="help-magic-cards"></div>
-                        <p style="color:var(--muted);font-size:0.95em;margin-top:1em;">如需详细规则请咨询管理员。</p>
-                    </div>
+                        <label style="display:block;margin-bottom:1em;">
+                            <span>用户名：</span>
+                            <span id="profile-username"></span>
+                        </label>
+                        <label style="display:block;margin-bottom:1em;">
+                            <span>个性签名：</span>
+                            <input type="text" id="profile-signature" maxlength="60" style="width:90%;">
+                        </label>
+                        <button type="submit" class="btn">保存修改</button>
+                    </form>
+                    <hr>
+                    <form id="change-password-form" style="margin-top:1em;">
+                        <label style="display:block;margin-bottom:0.5em;">
+                            <span>原密码：</span>
+                            <input type="password" id="old-password" maxlength="32" style="width:90%;">
+                        </label>
+                        <label style="display:block;margin-bottom:0.5em;">
+                            <span>新密码：</span>
+                            <input type="password" id="new-password" maxlength="32" style="width:90%;">
+                        </label>
+                        <button type="submit" class="btn">更改密码</button>
+                    </form>
+                    <div id="change-password-msg" style="color:green;margin-top:8px;"></div>
                 </div>
             </div>
-                <!-- 个人战绩模态弹窗 -->
-                <div id="user-stats-modal" class="modal-overlay hidden">
-                    <div class="modal-content">
-                        <span class="modal-close" id="user-stats-modal-close">×</span>
-                        <h2>个人战绩</h2>
-                        <div id="user-stats-content">
-                            <p>加载中...</p>
-                        </div>
-                    </div>
-                </div>
         </div>
+        <button id="theme-toggle" class="btn secondary" style="margin-left:12px;">切换主题</button>
+        <button id="help-btn" class="btn secondary" style="margin-left:12px;">帮助</button>
+        <button id="settings-btn" class="btn secondary" style="margin-left:12px;">设置</button>
+        <!-- 设置模态弹窗 -->
+        <div id="settings-modal" class="modal-overlay hidden">
+            <div class="modal-content" style="max-width:400px;">
+                <span class="modal-close" id="settings-modal-close">×</span>
+                <h2>界面设置</h2>
+                <div id="settings-content" style="text-align:left;max-height:60vh;overflow-y:auto;">
+                    <label style="display:block;margin-bottom:1em;">
+                        <span>主色（Primary Color）：</span>
+                        <input type="color" id="primary-color-picker" value="#1976d2"
+                               style="vertical-align:middle;margin-left:8px;">
+                    </label>
+                    <button id="settings-save-btn" class="btn">保存</button>
+                </div>
+            </div>
+        </div>
+        <!-- 帮助模态弹窗 -->
+        <div id="help-modal" class="modal-overlay hidden">
+            <div class="modal-content" style="max-width:600px;">
+                <span class="modal-close" id="help-modal-close">×</span>
+                <h2>游戏帮助</h2>
+                <div id="help-content" style="text-align:left;max-height:60vh;overflow-y:auto;">
+                    <h3>玩法简介</h3>
+                    <ul>
+                        <li>每位玩家布置6艘战舰，轮流攻击，率先击沉对方全部战舰获胜。</li>
+                        <li>可使用魔法卡牌，触发特殊效果。</li>
+                    </ul>
+                    <h3>魔法卡牌说明</h3>
+                    <div id="help-magic-cards"></div>
+                    <p style="color:var(--muted);font-size:0.95em;margin-top:1em;">如需详细规则请咨询管理员。</p>
+                </div>
+            </div>
+        </div>
+        <!-- 个人战绩模态弹窗 -->
+        <div id="user-stats-modal" class="modal-overlay hidden">
+            <div class="modal-content">
+                <span class="modal-close" id="user-stats-modal-close">×</span>
+                <h2>个人战绩</h2>
+                <div id="user-stats-content">
+                    <p>加载中...</p>
+                </div>
+            </div>
+        </div>
+    </div>
 
-        <script>
-        (function(){
-            function applyTheme(){
+    <script>
+        (function () {
+            function applyTheme() {
                 const t = localStorage.getItem('battleship_theme');
-                if(t === 'dark') document.documentElement.classList.add('theme-dark'); else document.documentElement.classList.remove('theme-dark');
+                if (t === 'dark') document.documentElement.classList.add('theme-dark'); else document.documentElement.classList.remove('theme-dark');
                 const btn = document.getElementById('theme-toggle');
-                if(btn) btn.textContent = (t === 'dark') ? '浅色主题' : '深色主题';
+                if (btn) btn.textContent = (t === 'dark') ? '浅色主题' : '深色主题';
             }
+
             document.addEventListener('DOMContentLoaded', applyTheme);
-            document.addEventListener('click', function(e){
-                if(e.target && e.target.id === 'theme-toggle'){
+            document.addEventListener('click', function (e) {
+                if (e.target && e.target.id === 'theme-toggle') {
                     const cur = localStorage.getItem('battleship_theme');
                     localStorage.setItem('battleship_theme', cur === 'dark' ? 'light' : 'dark');
                     applyTheme();
                 }
             });
         })();
-        </script>
+    </script>
 
-        <!-- 开始界面 -->
-        <div id="start-screen" class="screen active">
-            <h1>战舰游戏</h1>
+    <!-- 开始界面 -->
+    <div id="start-screen" class="screen active">
+        <h1>战舰游戏</h1>
+        <div class="input-group">
+            <input type="text" id="player-name" placeholder="输入你的名字">
+        </div>
+        <div class="button-group">
+            <button id="find-match">匹配游戏</button>
+            <button id="custom-room">自定义房间游戏</button>
+        </div>
+        <div id="match-status" class="hidden">
+            <p>正在寻找匹配...</p>
+            <button id="cancel-match">取消匹配</button>
+        </div>
+
+        <!-- 在线人数显示 -->
+        <div id="online-count-container"
+             style="margin-top: 20px; text-align: center; color: var(--muted); font-size: 0.9rem;">
+            当前在线人数: <span id="online-count">0</span>
+        </div>
+    </div>
+
+    <!-- 自定义房间游戏界面 -->
+    <div id="custom-room-screen" class="screen">
+        <h1>自定义房间游戏</h1>
+        <div class="input-group">
+            <input type="text" id="custom-player-name" placeholder="输入你的名字">
+        </div>
+        <div class="button-group">
+            <button id="custom-create-room">创建房间</button>
+            <button id="custom-join-room">加入房间</button>
+        </div>
+        <div id="custom-room-id-input" class="input-group hidden">
+            <input type="text" id="custom-room-code" placeholder="输入房间ID">
+            <button id="custom-confirm-join">确认加入</button>
+        </div>
+        <div id="custom-room-info" class="hidden">
+            <p>房间ID: <span id="custom-current-room-id"></span></p>
+            <p>等待其他玩家加入...</p>
+        </div>
+        <div class="button-group">
+            <button id="back-to-main">返回主菜单</button>
+        </div>
+    </div>
+
+
+    <!-- 登录模态弹窗 -->
+    <div id="login-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <span class="modal-close" id="login-modal-close">×</span>
+            <h2>登录</h2>
             <div class="input-group">
-                <input type="text" id="player-name" placeholder="输入你的名字">
+                <input type="text" id="login-username" placeholder="用户名">
             </div>
-            <div class="button-group">
-                <button id="find-match">匹配游戏</button>
-                <button id="custom-room">自定义房间游戏</button>
-            </div>
-            <div id="match-status" class="hidden">
-                <p>正在寻找匹配...</p>
-                <button id="cancel-match">取消匹配</button>
-            </div>
-            
-            <!-- 在线人数显示 -->
-            <div id="online-count-container" style="margin-top: 20px; text-align: center; color: var(--muted); font-size: 0.9rem;">
-                当前在线人数: <span id="online-count">0</span>
-            </div>
-        </div>
-        
-        <!-- 自定义房间游戏界面 -->
-        <div id="custom-room-screen" class="screen">
-            <h1>自定义房间游戏</h1>
             <div class="input-group">
-                <input type="text" id="custom-player-name" placeholder="输入你的名字">
+                <input type="password" id="login-password" placeholder="密码">
             </div>
             <div class="button-group">
-                <button id="custom-create-room">创建房间</button>
-                <button id="custom-join-room">加入房间</button>
-            </div>
-            <div id="custom-room-id-input" class="input-group hidden">
-                <input type="text" id="custom-room-code" placeholder="输入房间ID">
-                <button id="custom-confirm-join">确认加入</button>
-            </div>
-            <div id="custom-room-info" class="hidden">
-                <p>房间ID: <span id="custom-current-room-id"></span></p>
-                <p>等待其他玩家加入...</p>
-            </div>
-            <div class="button-group">
-                <button id="back-to-main">返回主菜单</button>
-            </div>
-        </div>
-
-
-        <!-- 登录模态弹窗 -->
-        <div id="login-modal" class="modal-overlay hidden">
-            <div class="modal-content">
-                <span class="modal-close" id="login-modal-close">×</span>
-                <h2>登录</h2>
-                <div class="input-group">
-                    <input type="text" id="login-username" placeholder="用户名">
-                </div>
-                <div class="input-group">
-                    <input type="password" id="login-password" placeholder="密码">
-                </div>
-                <div class="button-group">
-                    <button id="login-submit">登录</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- 注册模态弹窗 -->
-        <div id="register-modal" class="modal-overlay hidden">
-            <div class="modal-content">
-                <span class="modal-close" id="register-modal-close">×</span>
-                <h2>注册</h2>
-                <div class="input-group">
-                    <input type="text" id="register-username" placeholder="用户名">
-                </div>
-                <div class="input-group">
-                    <input type="password" id="register-password" placeholder="密码">
-                </div>
-                <div class="button-group">
-                    <button id="register-submit">注册</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- 匹配成功等待界面 -->
-        <div id="match-success-screen" class="screen">
-            <h2>匹配成功！</h2>
-            <div class="match-info">
-                <p>你的对手是: <span id="opponent-info"></span></p>
-                <p>游戏将在 <span id="countdown-timer">5</span> 秒后开始</p>
-                <div id="countdown-bar" class="countdown-bar">
-                    <div class="countdown-fill"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- 战舰放置界面 -->
-        <div id="ship-placement-screen" class="screen">
-            <h2>放置你的战舰</h2>
-            <p>点击格子放置战舰 (共6艘)</p>
-            <div class="board-container">
-                <div id="player-board" class="board"></div>
-            </div>
-            <p id="ships-placed">已放置: <span id="placed-count">0</span>/6</p>
-            <div style="display: flex; gap: 10px; margin-top: 15px;">
-                <button id="random-ships" class="btn">随机摆放</button>
-                <button id="confirm-ships" class="hidden btn">确认放置</button>
-            </div>
-        </div>
-
-        <!-- 猜拳界面 -->
-        <div id="rps-screen" class="screen">
-            <h2>第<span id="rps-round">1</span>回合 - 猜拳决定攻击顺序</h2>
-            <p>选择一种手势:</p>
-            <div class="rps-choices">
-                <button class="rps-choice" data-choice="rock">石头</button>
-                <button class="rps-choice" data-choice="paper">剪刀</button>
-                <button class="rps-choice" data-choice="scissors">布</button>
-            </div>
-            <div id="rps-result" class="hidden"></div>
-        </div>
-
-        <!-- 游戏主界面 -->
-        <!-- 在游戏主界面添加场地魔法区域 -->
-        <div id="game-screen" class="screen">
-            <div class="game-main-container">
-                <!-- 日志区域 -->
-                <div class="log-container">
-                    <div class="log-header">
-                        <h3>游戏日志</h3>
-                        <button id="toggle-log" class="toggle-log-btn">▼</button>
-                    </div>
-                    <div id="game-logs" class="log-content"></div>
-                </div>
-                
-                <!-- 游戏内容区域 -->
-                <div class="game-content">
-                    <!-- 魔法卡预览框 -->
-                    <div id="magic-card-preview" class="magic-preview-container">
-                        <div class="preview-header">
-                            <h3>待使用魔法卡</h3>
-                            <button id="cancel-magic" class="cancel-btn">取消</button>
-                        </div>
-                        <div class="preview-content">
-                            <div class="card-name">未选择魔法卡</div>
-                            <div class="card-stats">
-                                <div class="stat-item">速阶: <span id="preview-speed">-</span></div>
-                                <div class="stat-item">类型: <span id="preview-type">-</span></div>
-                            </div>
-                            <div class="card-description">
-                                <h4>效果描述:</h4>
-                                <p id="preview-description">请选择一张魔法卡查看详细信息</p>
-                            </div>
-                            <div class="preview-instructions">
-                                <p>点击一次卡牌进入待使用状态，再次点击尝试使用</p>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- 局内聊天框 -->
-                    <div id="in-game-chat-container" class="in-game-chat-container">
-                        <div id="in-game-chat-messages" class="in-game-chat-messages"></div>
-                        <div class="in-game-chat-input-row">
-                            <input type="text" id="in-game-chat-input" maxlength="100" placeholder="输入聊天内容..." autocomplete="off" />
-                            <button id="in-game-chat-send" class="btn">发送</button>
-                        </div>
-                    </div>
-                    <div class="game-info">
-                        <!-- 极限增援倒计回合显示 -->
-                        <div id="reinforcement-countdown" class="reinforcement-countdown hidden">
-                            <h3>极限增援结算倒计时</h3>
-                            <div class="countdown-text">剩余 <span id="reinforcement-remaining">0</span> 回合后将结算！</div>
-                        </div>
-                        
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <h2>第<span id="game-round">1</span>回合</h2>
-                            <button id="surrender-btn" class="surrender-btn">投降</button>
-                        </div>
-                        <!-- 添加场地魔法显示区域 -->
-                        <div class="field-magic-area">
-                            <div id="current-field-magic" class="field-magic">当前生效的场地魔法: <span class="no-magic">无</span></div>
-                        </div>
-                        <div class="players-info">
-                            <div class="player-info">
-                                <div style="display:flex;align-items:center;gap:10px;">
-                                    <img id="my-avatar-in-game" src="/static/avatars/default.png" alt="我的头像" style="width:40px;height:40px;border-radius:50%;object-fit:cover;border:1px solid #ccc;">
-                                    <div>
-                                        <p>你: <span id="your-ships">6</span>艘战舰剩余</p>
-                                        <div id="my-username-info" style="font-size:0.95em;color:var(--muted);"></div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="player-info">
-                                <div style="display:flex;align-items:center;gap:10px;">
-                                    <img id="opponent-avatar-in-game" src="/static/avatars/default.png" alt="对手头像" style="width:40px;height:40px;border-radius:50%;object-fit:cover;border:1px solid #ccc;">
-                                    <div>
-                                        <p>对手: <span id="opponent-ships">6</span>艘战舰剩余</p>
-                                        <div id="opponent-username-info" style="font-size:0.95em;color:var(--muted);display:inline-block;"></div>
-                                    </div>
-                                </div>
-                            </div>
-                                <!-- 对手战绩模态弹窗 -->
-                                <div id="opponent-stats-modal" class="modal-overlay hidden">
-                                    <div class="modal-content">
-                                        <span class="modal-close" id="opponent-stats-modal-close">×</span>
-                                        <h2>对手战绩</h2>
-                                        <div id="opponent-stats-content">
-                                            <p>加载中...</p>
-                                        </div>
-                                    </div>
-                                </div>
-                        </div>
-                        <div id="turn-indicator">
-                            <div class="game-info">
-                                <div>当前阶段: <span id="current-phase">准备阶段</span></div>
-                                <div>当前回合: <span id="current-player">你</span></div>
-                                <div>剩余攻击次数: <span id="attacks-remaining">0</span></div>
-                                <button id="enter-battle-phase" class="phase-btn">进入战斗阶段</button>
-                                <button id="enter-end-phase" class="phase-btn" style="display:none;">结束战斗阶段</button>
-                                <button id="end-turn-btn" class="phase-btn" style="display:none;">结束结束阶段</button>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="boards-container">
-                        <div class="board-wrapper">
-                            <h3>你的棋盘</h3>
-                            <div id="game-player-board" class="board"></div>
-                        </div>
-                        <div class="board-wrapper">
-                            <h3>对手的棋盘</h3>
-                            <div id="opponent-board" class="board"></div>
-                        </div>
-                    </div>
-                    
-                    <!-- 连锁提示区域 -->
-                    <div id="chain-prompt-container" class="chain-prompt-container hidden">
-                        <div class="chain-prompt">
-                            <h3>连锁提示</h3>
-                            <div class="chain-countdown">
-                                <span class="countdown-text">剩余时间: </span>
-                                <span id="chain-timer" class="countdown-number">10</span>
-                                <span class="countdown-text">秒</span>
-                            </div>
-                            <div id="chain-cards-list" class="chain-cards-list">
-                                <!-- 速阶3卡牌列表将动态添加这里 -->
-                            </div>
-                            <button id="chain-cancel" class="chain-cancel-btn">取消</button>
-                        </div>
-                    </div>
-                    
-                    <!-- 弃牌堆查看按钮 -->
-                    <div style="text-align: center; margin-top: 10px;">
-                        <button id="view-discard-pile" class="btn btn-secondary">查看弃牌堆</button>
-                    </div>
-                    
-                    <!-- 弃牌堆查看弹窗 -->
-                    <div id="discard-pile-modal" class="modal-overlay hidden">
-                        <div class="modal-content discard-pile-content">
-                            <span class="modal-close" id="discard-pile-modal-close">×</span>
-                            <h2>弃牌堆</h2>
-                            <div class="discard-pile-container">
-                                <div id="discard-pile-cards"></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- 大厅界面 -->
-        <div id="lobby-screen" class="screen">
-            <h2>游戏大厅</h2>
-            <p>加入匹配队列，等待其他玩家...</p>
-            <div class="lobby-info">
-                <p>当前大厅玩家: <span id="lobby-player-count">0</span></p>
-                <ul id="lobby-players-list"></ul>
-            </div>
-            <div class="button-group">
-                <button id="join-lobby-match">加入匹配</button>
-                <button id="leave-lobby-match" class="hidden">离开匹配</button>
-                <button id="back-to-main-from-lobby">返回首页</button>
-            </div>
-        </div>
-
-        <!-- 排行榜界面 -->
-        <div id="leaderboard-screen" class="screen">
-            <h2>排行榜</h2>
-            <div id="leaderboard-container">
-                <table id="leaderboard-table">
-                    <thead>
-                        <tr><th>排名</th><th>用户名</th><th>胜</th><th>负</th><th>胜率</th><th>最长连胜</th></tr>
-                    </thead>
-                    <tbody></tbody>
-                </table>
-                <div id="leaderboard-error" class="hidden"></div>
-            </div>
-            <div style="text-align:center; margin-top:12px;">
-                <button id="back-to-main-from-leaderboard" class="btn">返回首页</button>
-            </div>
-        </div>
-
-        <!-- 游戏结束界面 -->
-        <div id="game-over-screen" class="screen">
-            <h2 id="game-result"></h2>
-            <div class="game-over-buttons">
-                <button id="play-again">再来一局</button>
-                <button id="return-to-menu">返回主菜单</button>
+                <button id="login-submit">登录</button>
             </div>
         </div>
     </div>
 
-    <!-- 修改JS引用路径 -->
-    <!-- 确保正确的加载顺序 -->
-    <script src="/static/magic_cards.js"></script>
-    <!-- 先加载游戏核心逻辑 -->
-    <script>window.__USERNAME = {{ username|tojson }};</script>
-    <script src="/static/game.js"></script>
-    <!-- 后加载测试脚本 -->
-    <script src="/static/test_magic.js"></script>
-    
-    <!-- 在线人数更新脚本 -->
-    <script>
-        // 更新在线人数的函数
-        function updateOnlineCount() {
-            fetch('/api/online_count')
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error('Network response was not ok');
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    const onlineCountElement = document.getElementById('online-count');
-                    if (onlineCountElement) {
-                        // 添加数字滚动效果
-                        const currentCount = parseInt(onlineCountElement.textContent) || 0;
-                        const targetCount = data.online_count;
-                        const duration = 1000; // 1秒完成动画
-                        const startTime = performance.now();
-                        
-                        function animateCount(timestamp) {
-                            const elapsed = timestamp - startTime;
-                            const progress = Math.min(elapsed / duration, 1);
-                            const current = Math.floor(currentCount + (targetCount - currentCount) * progress);
-                            onlineCountElement.textContent = current;
-                            
-                            if (progress < 1) {
-                                requestAnimationFrame(animateCount);
-                            }
+    <!-- 注册模态弹窗 -->
+    <div id="register-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <span class="modal-close" id="register-modal-close">×</span>
+            <h2>注册</h2>
+            <div class="input-group">
+                <input type="text" id="register-username" placeholder="用户名">
+            </div>
+            <div class="input-group">
+                <input type="password" id="register-password" placeholder="密码">
+            </div>
+            <div class="button-group">
+                <button id="register-submit">注册</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 匹配成功等待界面 -->
+    <div id="match-success-screen" class="screen">
+        <h2>匹配成功！</h2>
+        <div class="match-info">
+            <p>你的对手是: <span id="opponent-info"></span></p>
+            <p>游戏将在 <span id="countdown-timer">5</span> 秒后开始</p>
+            <div id="countdown-bar" class="countdown-bar">
+                <div class="countdown-fill"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 战舰放置界面 -->
+    <div id="ship-placement-screen" class="screen">
+        <h2>放置你的战舰</h2>
+        <p>点击格子放置战舰 (共6艘)</p>
+        <div class="board-container">
+            <div id="player-board" class="board"></div>
+        </div>
+        <p id="ships-placed">已放置: <span id="placed-count">0</span>/6</p>
+        <div style="display: flex; gap: 10px; margin-top: 15px;">
+            <button id="random-ships" class="btn">随机摆放</button>
+            <button id="confirm-ships" class="hidden btn">确认放置</button>
+        </div>
+    </div>
+
+    <!-- 猜拳界面 -->
+    <div id="rps-screen" class="screen">
+        <h2>第<span id="rps-round">1</span>回合 - 猜拳决定攻击顺序</h2>
+        <p>选择一种手势:</p>
+        <div class="rps-choices">
+            <button class="rps-choice" data-choice="rock">石头</button>
+            <button class="rps-choice" data-choice="paper">剪刀</button>
+            <button class="rps-choice" data-choice="scissors">布</button>
+        </div>
+        <div id="rps-result" class="hidden"></div>
+    </div>
+
+    <!-- 游戏主界面 -->
+    <!-- 在游戏主界面添加场地魔法区域 -->
+    <div id="game-screen" class="screen">
+        <div class="game-main-container">
+            <!-- 日志区域 -->
+            <div class="log-container">
+                <div class="log-header">
+                    <h3>游戏日志</h3>
+                    <button id="toggle-log" class="toggle-log-btn">▼</button>
+                </div>
+                <div id="game-logs" class="log-content"></div>
+            </div>
+
+            <!-- 游戏内容区域 -->
+            <div class="game-content">
+                <!-- 魔法卡预览框 -->
+                <div id="magic-card-preview" class="magic-preview-container">
+                    <div class="preview-header">
+                        <h3>待使用魔法卡</h3>
+                        <button id="cancel-magic" class="cancel-btn">取消</button>
+                    </div>
+                    <div class="preview-content">
+                        <div class="card-name">未选择魔法卡</div>
+                        <div class="card-stats">
+                            <div class="stat-item">速阶: <span id="preview-speed">-</span></div>
+                            <div class="stat-item">类型: <span id="preview-type">-</span></div>
+                        </div>
+                        <div class="card-description">
+                            <h4>效果描述:</h4>
+                            <p id="preview-description">请选择一张魔法卡查看详细信息</p>
+                        </div>
+                        <div class="preview-instructions">
+                            <p>点击一次卡牌进入待使用状态，再次点击尝试使用</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 局内聊天框 -->
+                <div id="in-game-chat-container" class="in-game-chat-container">
+                    <div id="in-game-chat-messages" class="in-game-chat-messages"></div>
+                    <div class="in-game-chat-input-row">
+                        <input type="text" id="in-game-chat-input" maxlength="100" placeholder="输入聊天内容..."
+                               autocomplete="off"/>
+                        <button id="in-game-chat-send" class="btn">发送</button>
+                    </div>
+                </div>
+                <div class="game-info">
+                    <!-- 极限增援倒计回合显示 -->
+                    <div id="reinforcement-countdown" class="reinforcement-countdown hidden">
+                        <h3>极限增援结算倒计时</h3>
+                        <div class="countdown-text">剩余 <span id="reinforcement-remaining">0</span> 回合后将结算！</div>
+                    </div>
+
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <h2>第<span id="game-round">1</span>回合</h2>
+                        <button id="surrender-btn" class="surrender-btn">投降</button>
+                    </div>
+                    <!-- 添加场地魔法显示区域 -->
+                    <div class="field-magic-area">
+                        <div id="current-field-magic" class="field-magic">当前生效的场地魔法: <span
+                                class="no-magic">无</span></div>
+                    </div>
+                    <div class="players-info">
+                        <div class="player-info">
+                            <div style="display:flex;align-items:center;gap:10px;">
+                                <img id="my-avatar-in-game" src="/static/avatars/default.png" alt="我的头像"
+                                     style="width:40px;height:40px;border-radius:50%;object-fit:cover;border:1px solid #ccc;">
+                                <div>
+                                    <p>你: <span id="your-ships">6</span>艘战舰剩余</p>
+                                    <div id="my-username-info" style="font-size:0.95em;color:var(--muted);"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="player-info">
+                            <div style="display:flex;align-items:center;gap:10px;">
+                                <img id="opponent-avatar-in-game" src="/static/avatars/default.png" alt="对手头像"
+                                     style="width:40px;height:40px;border-radius:50%;object-fit:cover;border:1px solid #ccc;">
+                                <div>
+                                    <p>对手: <span id="opponent-ships">6</span>艘战舰剩余</p>
+                                    <div id="opponent-username-info"
+                                         style="font-size:0.95em;color:var(--muted);display:inline-block;"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- 对手战绩模态弹窗 -->
+                        <div id="opponent-stats-modal" class="modal-overlay hidden">
+                            <div class="modal-content">
+                                <span class="modal-close" id="opponent-stats-modal-close">×</span>
+                                <h2>对手战绩</h2>
+                                <div id="opponent-stats-content">
+                                    <p>加载中...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="turn-indicator">
+                        <div class="game-info">
+                            <div>当前阶段: <span id="current-phase">准备阶段</span></div>
+                            <div>当前回合: <span id="current-player">你</span></div>
+                            <div>剩余攻击次数: <span id="attacks-remaining">0</span></div>
+                            <button id="enter-battle-phase" class="phase-btn">进入战斗阶段</button>
+                            <button id="enter-end-phase" class="phase-btn" style="display:none;">结束战斗阶段</button>
+                            <button id="end-turn-btn" class="phase-btn" style="display:none;">结束结束阶段</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="boards-container">
+                    <div class="board-wrapper">
+                        <h3>你的棋盘</h3>
+                        <div id="game-player-board" class="board"></div>
+                    </div>
+                    <div class="board-wrapper">
+                        <h3>对手的棋盘</h3>
+                        <div id="opponent-board" class="board"></div>
+                    </div>
+                </div>
+
+                <!-- 连锁提示区域 -->
+                <div id="chain-prompt-container" class="chain-prompt-container hidden">
+                    <div class="chain-prompt">
+                        <h3>连锁提示</h3>
+                        <div class="chain-countdown">
+                            <span class="countdown-text">剩余时间: </span>
+                            <span id="chain-timer" class="countdown-number">10</span>
+                            <span class="countdown-text">秒</span>
+                        </div>
+                        <div id="chain-cards-list" class="chain-cards-list">
+                            <!-- 速阶3卡牌列表将动态添加这里 -->
+                        </div>
+                        <button id="chain-cancel" class="chain-cancel-btn">取消</button>
+                    </div>
+                </div>
+
+                <!-- 弃牌堆查看按钮 -->
+                <div style="text-align: center; margin-top: 10px;">
+                    <button id="view-discard-pile" class="btn btn-secondary">查看弃牌堆</button>
+                </div>
+
+                <!-- 弃牌堆查看弹窗 -->
+                <div id="discard-pile-modal" class="modal-overlay hidden">
+                    <div class="modal-content discard-pile-content">
+                        <span class="modal-close" id="discard-pile-modal-close">×</span>
+                        <h2>弃牌堆</h2>
+                        <div class="discard-pile-container">
+                            <div id="discard-pile-cards"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 大厅界面 -->
+    <div id="lobby-screen" class="screen">
+        <h2>游戏大厅</h2>
+        <p>加入匹配队列，等待其他玩家...</p>
+        <div class="lobby-info">
+            <p>当前大厅玩家: <span id="lobby-player-count">0</span></p>
+            <ul id="lobby-players-list"></ul>
+        </div>
+        <div class="button-group">
+            <button id="join-lobby-match">加入匹配</button>
+            <button id="leave-lobby-match" class="hidden">离开匹配</button>
+            <button id="back-to-main-from-lobby">返回首页</button>
+        </div>
+    </div>
+
+    <!-- 排行榜界面 -->
+    <div id="leaderboard-screen" class="screen">
+        <h2>排行榜</h2>
+        <div id="leaderboard-container">
+            <table id="leaderboard-table">
+                <thead>
+                <tr>
+                    <th>排名</th>
+                    <th>用户名</th>
+                    <th>胜</th>
+                    <th>负</th>
+                    <th>胜率</th>
+                    <th>最长连胜</th>
+                </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+            <div id="leaderboard-error" class="hidden"></div>
+        </div>
+        <div style="text-align:center; margin-top:12px;">
+            <button id="back-to-main-from-leaderboard" class="btn">返回首页</button>
+        </div>
+    </div>
+
+    <!-- 游戏结束界面 -->
+    <div id="game-over-screen" class="screen">
+        <h2 id="game-result"></h2>
+        <div class="game-over-buttons">
+            <button id="play-again">再来一局</button>
+            <button id="return-to-menu">返回主菜单</button>
+        </div>
+    </div>
+</div>
+
+<!-- 修改JS引用路径 -->
+<!-- 确保正确的加载顺序 -->
+<script src="/static/magic_cards.js"></script>
+<!-- 先加载游戏核心逻辑 -->
+<script>window.__USERNAME = {{ username|tojson }};</script>
+<script src="/static/game.js"></script>
+<!-- 后加载测试脚本 -->
+<script src="/static/test_magic.js"></script>
+
+<!-- 在线人数更新脚本 -->
+<script>
+    // 更新在线人数的函数
+    function updateOnlineCount() {
+        fetch('/api/online_count')
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                const onlineCountElement = document.getElementById('online-count');
+                if (onlineCountElement) {
+                    // 添加数字滚动效果
+                    const currentCount = parseInt(onlineCountElement.textContent) || 0;
+                    const targetCount = data.online_count;
+                    const duration = 1000; // 1秒完成动画
+                    const startTime = performance.now();
+
+                    function animateCount(timestamp) {
+                        const elapsed = timestamp - startTime;
+                        const progress = Math.min(elapsed / duration, 1);
+                        const current = Math.floor(currentCount + (targetCount - currentCount) * progress);
+                        onlineCountElement.textContent = current;
+
+                        if (progress < 1) {
+                            requestAnimationFrame(animateCount);
                         }
-                        
-                        requestAnimationFrame(animateCount);
                     }
-                })
-                .catch(error => {
-                    console.error('获取在线人数失败:', error);
-                });
-        }
-        
-        // 页面加载时更新一次
-        window.addEventListener('DOMContentLoaded', updateOnlineCount);
-        
-        // 每10秒自动更新一次
-        setInterval(updateOnlineCount, 10000);
-        
-        // 添加调试信息
-        console.log('在线人数更新脚本已加载');
-    </script>
+
+                    requestAnimationFrame(animateCount);
+                }
+            })
+            .catch(error => {
+                console.error('获取在线人数失败:', error);
+            });
+    }
+
+    // 页面加载时更新一次
+    window.addEventListener('DOMContentLoaded', updateOnlineCount);
+
+    // 每10秒自动更新一次
+    setInterval(updateOnlineCount, 10000);
+
+    // 添加调试信息
+    console.log('在线人数更新脚本已加载');
+</script>
 </body>
 </html>

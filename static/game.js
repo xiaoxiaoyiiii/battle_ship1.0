@@ -1,9 +1,9 @@
 // 更改密码表单逻辑
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     const changePasswordForm = document.getElementById('change-password-form');
     const changePasswordMsg = document.getElementById('change-password-msg');
     if (changePasswordForm) {
-        changePasswordForm.addEventListener('submit', function(e) {
+        changePasswordForm.addEventListener('submit', function (e) {
             e.preventDefault();
             const oldPwd = document.getElementById('old-password').value;
             const newPwd = document.getElementById('new-password').value;
@@ -45,7 +45,7 @@ const myAvatarInGame = document.getElementById('my-avatar-in-game');
 const opponentAvatarInGame = document.getElementById('opponent-avatar-in-game');
 
 // 移动自己的头像到左上角，对手头像到右上角
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     // 左上角自己的头像和用户名
     let avatarCorner = document.getElementById('avatar-corner');
     if (!avatarCorner) {
@@ -133,14 +133,17 @@ document.addEventListener('DOMContentLoaded', function() {
         if (myNameSpan) myNameSpan.textContent = myName ? myName : '';
         if (oppNameSpan) oppNameSpan.textContent = oppName ? oppName : '';
     }
+
     updateCornerNames();
     window.addEventListener('gameStateUpdate', updateCornerNames);
     setInterval(updateCornerNames, 20000);
+
     // 自动更新对手头像
     function updateOpponentAvatarCorner() {
         const opponentName = (window.gameState && window.gameState.opponentName) || '';
         if (opponentName) updateOpponentAvatarInGame(opponentName);
     }
+
     updateOpponentAvatarCorner();
     window.addEventListener('gameStateUpdate', updateOpponentAvatarCorner);
     setInterval(updateOpponentAvatarCorner, 20000);
@@ -149,7 +152,7 @@ document.addEventListener('DOMContentLoaded', function() {
 // 获取当前用户头像并显示到游戏内
 function updateMyAvatarInGame() {
     fetch('/api/profile').then(r => r.json()).then(res => {
-        console.log("updateMyAvatarInGame",res);
+        console.log("updateMyAvatarInGame", res);
         if (res.profile && myAvatarInGame) {
             myAvatarInGame.src = res.profile.avatar || '/static/avatars/default.png';
         }
@@ -161,21 +164,22 @@ function updateOpponentAvatarInGame(opponentId) {
     if (!opponentId) return;
     fetch(`/user_stats?username=${encodeURIComponent(opponentId)}`)
         .then(r => r.json()).then(res => {
-            console.log("updateOpponentAvatarInGame",res);
-            if (res.stats && opponentAvatarInGame) {
-                // 兼容后端返回格式
-                if (res.stats.avatar && res.stats.avatar !== '') {
-                    opponentAvatarInGame.src = res.stats.avatar;
-                } else {
-                    opponentAvatarInGame.src = '/static/avatars/default.png';
-                }
-            } else if (opponentAvatarInGame) {
+        console.log("updateOpponentAvatarInGame", res);
+        if (res.stats && opponentAvatarInGame) {
+            // 兼容后端返回格式
+            if (res.stats.avatar && res.stats.avatar !== '') {
+                opponentAvatarInGame.src = res.stats.avatar;
+            } else {
                 opponentAvatarInGame.src = '/static/avatars/default.png';
             }
-        }).catch(() => {
-            if (opponentAvatarInGame) opponentAvatarInGame.src = '/static/avatars/default.png';
-        });
+        } else if (opponentAvatarInGame) {
+            opponentAvatarInGame.src = '/static/avatars/default.png';
+        }
+    }).catch(() => {
+        if (opponentAvatarInGame) opponentAvatarInGame.src = '/static/avatars/default.png';
+    });
 }
+
 // 在切换到游戏主界面时自动刷新头像
 function onEnterGameScreen(opponentName) {
     updateMyAvatarInGame();
@@ -187,18 +191,18 @@ if (myAvatarInGame) {
     myAvatarInGame.style.cursor = 'pointer';
     myAvatarInGame.addEventListener('click', () => {
         // 如果没有弹窗则自动创建
-        
+
         // 优先使用 gameState.playerName，再退回到服务器渲染的全局用户名或页面元素
         const username = (window.gameState && window.gameState.playerName) || window.__USERNAME || (document.getElementById('profile-username') && document.getElementById('profile-username').textContent) || '';
         if (!username) {
-            showMessage('未登录，无法查看战绩', { type: 'warning' });
+            showMessage('未登录，无法查看战绩', {type: 'warning'});
             return;
         }
         fetch(`/user_stats?username=${encodeURIComponent(username)}`)
             .then(r => r.json()).then(data => {
-                if (data.stats) {
-                    const s = data.stats;
-                    let userStatsContents = `\
+            if (data.stats) {
+                const s = data.stats;
+                let userStatsContents = `\
                         <table class="user-stats-table">\
                             <tr><td>用户名</td><td>${s.username}</td></tr>\
                             <tr><td>胜场</td><td>${s.wins}</td></tr>\
@@ -206,20 +210,22 @@ if (myAvatarInGame) {
                             <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>\
                             <tr><td>最长连胜</td><td>${s.longest_streak}</td></tr>\
                         </table>`;
-                    let userStatsModal = document.createElement('div');
-                    userStatsModal.id = 'user-stats-modal';
-                    userStatsModal.className = 'modal-overlay';
-                    userStatsModal.innerHTML = '<div class="modal-content"><span class="modal-close" id="user-stats-modal-close">×</span><h2>个人战绩</h2><div id="user-stats-content1"><p>'+userStatsContents+'</p></div></div>';
-                    document.body.appendChild(userStatsModal);
-                    // 绑定关闭事件
-                    userStatsModal.querySelector('.modal-close').onclick = () => userStatsModal.classList.add('hidden');
-                    userStatsModal.onclick = (e) => { if (e.target === userStatsModal) userStatsModal.classList.add('hidden'); };
-                } else {
-                    showMessage('未找到战绩数据', { type: 'warning' });
-                }
-            }).catch(err => {
-                showMessage('获取战绩失败', { type: 'error' });
-            });
+                let userStatsModal = document.createElement('div');
+                userStatsModal.id = 'user-stats-modal';
+                userStatsModal.className = 'modal-overlay';
+                userStatsModal.innerHTML = '<div class="modal-content"><span class="modal-close" id="user-stats-modal-close">×</span><h2>个人战绩</h2><div id="user-stats-content1"><p>' + userStatsContents + '</p></div></div>';
+                document.body.appendChild(userStatsModal);
+                // 绑定关闭事件
+                userStatsModal.querySelector('.modal-close').onclick = () => userStatsModal.classList.add('hidden');
+                userStatsModal.onclick = (e) => {
+                    if (e.target === userStatsModal) userStatsModal.classList.add('hidden');
+                };
+            } else {
+                showMessage('未找到战绩数据', {type: 'warning'});
+            }
+        }).catch(err => {
+            showMessage('获取战绩失败' + err, {type: 'error'});
+        });
     });
 }
 
@@ -227,12 +233,12 @@ if (opponentAvatarInGame) {
     opponentAvatarInGame.style.cursor = 'pointer';
     opponentAvatarInGame.addEventListener('click', () => {
         const username = (window.gameState && window.gameState.opponentName) || (document.getElementById('opponent-username-info') && document.getElementById('opponent-username-info').textContent) || '';
-        if (!username) return showMessage('对手信息不可用', { type: 'warning' });
+        if (!username) return showMessage('对手信息不可用', {type: 'warning'});
         fetch(`/user_stats?username=${encodeURIComponent(username)}`)
             .then(r => r.json()).then(data => {
-                if (data.stats) {
-                    const s = data.stats;
-                    let userStatsContents = `\
+            if (data.stats) {
+                const s = data.stats;
+                let userStatsContents = `\
                         <table class="user-stats-table">\
                             <tr><td>用户名</td><td>${s.username}</td></tr>\
                             <tr><td>胜场</td><td>${s.wins}</td></tr>\
@@ -240,18 +246,20 @@ if (opponentAvatarInGame) {
                             <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>\
                             <tr><td>最长连胜</td><td>${s.longest_streak}</td></tr>\
                         </table>`;
-                    let userStatsModal = document.createElement('div');
-                    userStatsModal.id = 'user-stats-modal';
-                    userStatsModal.className = 'modal-overlay';
-                    userStatsModal.innerHTML = '<div class="modal-content"><span class="modal-close" id="user-stats-modal-close">×</span><h2>个人战绩</h2><div id="user-stats-content2"><p>'+userStatsContents+'</p></div></div>';
-                    document.body.appendChild(userStatsModal);
-                    // 绑定关闭事件
-                    userStatsModal.querySelector('.modal-close').onclick = () => userStatsModal.classList.add('hidden');
-                    userStatsModal.onclick = (e) => { if (e.target === userStatsModal) userStatsModal.classList.add('hidden'); };
-                } else {
-                    showMessage('未找到对手战绩', { type: 'warning' });
-                }
-            }).catch(err => showMessage('获取战绩失败', { type: 'error' }));
+                let userStatsModal = document.createElement('div');
+                userStatsModal.id = 'user-stats-modal';
+                userStatsModal.className = 'modal-overlay';
+                userStatsModal.innerHTML = '<div class="modal-content"><span class="modal-close" id="user-stats-modal-close">×</span><h2>个人战绩</h2><div id="user-stats-content2"><p>' + userStatsContents + '</p></div></div>';
+                document.body.appendChild(userStatsModal);
+                // 绑定关闭事件
+                userStatsModal.querySelector('.modal-close').onclick = () => userStatsModal.classList.add('hidden');
+                userStatsModal.onclick = (e) => {
+                    if (e.target === userStatsModal) userStatsModal.classList.add('hidden');
+                };
+            } else {
+                showMessage('未找到对手战绩', {type: 'warning'});
+            }
+        }).catch(err => showMessage('获取战绩失败' + err, {type: 'error'}));
     });
 }
 
@@ -280,44 +288,46 @@ if (showProfileBtn && profileModal && profileModalClose) {
         profileSaveMsg.textContent = '';
     };
     profileModalClose.onclick = () => profileModal.classList.add('hidden');
-    profileModal.onclick = (e) => { if (e.target === profileModal) profileModal.classList.add('hidden'); };
+    profileModal.onclick = (e) => {
+        if (e.target === profileModal) profileModal.classList.add('hidden');
+    };
 }
 
 // 签名保存
 if (profileForm) {
-    profileForm.onsubmit = function(e) {
+    profileForm.onsubmit = function (e) {
         e.preventDefault();
         const formData = new FormData();
         formData.append('signature', profileSignature.value);
-        fetch('/api/profile/signature', { method: 'POST', body: formData })
+        fetch('/api/profile/signature', {method: 'POST', body: formData})
             .then(r => r.json()).then(res => {
-                if (res.success) {
-                    profileSaveMsg.textContent = '签名已保存';
-                } else {
-                    profileSaveMsg.textContent = '保存失败';
-                    profileSaveMsg.style.color = 'red';
-                }
-            });
+            if (res.success) {
+                profileSaveMsg.textContent = '签名已保存';
+            } else {
+                profileSaveMsg.textContent = '保存失败';
+                profileSaveMsg.style.color = 'red';
+            }
+        });
     };
 }
 
 // 头像上传
 if (avatarInput) {
-    avatarInput.onchange = function() {
+    avatarInput.onchange = function () {
         const file = avatarInput.files[0];
         if (!file) return;
         const formData = new FormData();
         formData.append('avatar', file);
-        fetch('/api/profile/avatar', { method: 'POST', body: formData })
+        fetch('/api/profile/avatar', {method: 'POST', body: formData})
             .then(r => r.json()).then(res => {
-                if (res.success && res.avatar) {
-                    profileAvatar.src = res.avatar + '?t=' + Date.now();
-                    profileSaveMsg.textContent = '头像已更新';
-                } else {
-                    profileSaveMsg.textContent = res.error || '头像上传失败';
-                    profileSaveMsg.style.color = 'red';
-                }
-            });
+            if (res.success && res.avatar) {
+                profileAvatar.src = res.avatar + '?t=' + Date.now();
+                profileSaveMsg.textContent = '头像已更新';
+            } else {
+                profileSaveMsg.textContent = res.error || '头像上传失败';
+                profileSaveMsg.style.color = 'red';
+            }
+        });
     };
 }
 // 设置相关元素
@@ -336,7 +346,9 @@ if (settingsBtn && settingsModal && settingsModalClose) {
         settingsModal.classList.remove('hidden');
     };
     settingsModalClose.onclick = () => settingsModal.classList.add('hidden');
-    settingsModal.onclick = (e) => { if (e.target === settingsModal) settingsModal.classList.add('hidden'); };
+    settingsModal.onclick = (e) => {
+        if (e.target === settingsModal) settingsModal.classList.add('hidden');
+    };
 }
 
 if (settingsSaveBtn && primaryColorPicker) {
@@ -355,7 +367,7 @@ function applyPrimaryColor(color) {
 
 // 页面加载时自动应用自定义主色
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener('DOMContentLoaded', function () {
         const color = localStorage.getItem('battleship_primary_color');
         if (color) applyPrimaryColor(color);
     });
@@ -446,11 +458,12 @@ const chatSendBtn = document.getElementById('in-game-chat-send');
 
 // 聊天Socket初始化
 let chatSocketInitialized = false;
+
 function initInGameChatSocket() {
     if (chatSocketInitialized) return;
     if (!window.gameState || !window.gameState.socket) return;
     const socket = window.gameState.socket;
-    socket.on('chat_message', function(data) {
+    socket.on('chat_message', function (data) {
         console.log("Received chat message:", data);
         appendChatMessage(data.username, data.message, data.isMe);
     });
@@ -461,12 +474,13 @@ function initInGameChatSocket() {
 function sendChatMessage() {
     if (!chatInput || !chatInput.value.trim() || !window.gameState || !window.gameState.socket) return;
     const msg = chatInput.value.trim().slice(0, 100);
-    window.gameState.socket.emit('chat_message', {room_id:gameState.roomId, message: msg });
+    window.gameState.socket.emit('chat_message', {room_id: gameState.roomId, message: msg});
     chatInput.value = '';
 }
+
 if (chatSendBtn && chatInput) {
     chatSendBtn.addEventListener('click', sendChatMessage);
-    chatInput.addEventListener('keydown', function(e) {
+    chatInput.addEventListener('keydown', function (e) {
         if (e.key === 'Enter') sendChatMessage();
     });
 }
@@ -480,9 +494,10 @@ function appendChatMessage(username, message, isMe) {
     chatMessages.appendChild(div);
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
+
 function escapeHtml(str) {
-    return String(str).replace(/[&<>"']/g, function(c) {
-        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c];
+    return String(str).replace(/[&<>"']/g, function (c) {
+        return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;'}[c];
     });
 }
 
@@ -490,30 +505,33 @@ function escapeHtml(str) {
 function setChatVisible(visible) {
     if (chatContainer) chatContainer.style.display = visible ? '' : 'none';
 }
+
 setChatVisible(false);
 
 // 切换到游戏主界面时初始化聊天
-const origSwitchScreen = window.switchScreen || function(screen) {
+const origSwitchScreen = window.switchScreen || function (screen) {
     // 默认实现，如果window.switchScreen未定义
     const screens = [startScreen, customRoomScreen, shipPlacementScreen, rpsScreen, gameScreen, leaderboardScreen, lobbyScreen, gameOverScreen];
-    screens.forEach(s => { if (s) s.classList.remove('active'); });
+    screens.forEach(s => {
+        if (s) s.classList.remove('active');
+    });
     if (screen) screen.classList.add('active');
 };
-window.switchScreen = function(screen) {
+window.switchScreen = function (screen) {
     // 处理DOM元素或字符串参数
     let screenElement = screen;
     if (typeof screen === 'string') {
         // 如果是字符串，根据ID获取DOM元素
         screenElement = document.getElementById(screen);
     }
-    
+
     // 调用原始switchScreen函数
     origSwitchScreen(screenElement);
-    
+
     // 设置聊天可见性
     const screenId = screenElement ? screenElement.id : '';
     setChatVisible(screenId === 'game-screen');
-    
+
     if (screenId === 'game-screen') {
         initInGameChatSocket();
     }
@@ -521,7 +539,7 @@ window.switchScreen = function(screen) {
 
 // 进入游戏主界面时也初始化聊天
 const origOnEnterGameScreen = window.onEnterGameScreen;
-window.onEnterGameScreen = function(opponentName) {
+window.onEnterGameScreen = function (opponentName) {
     if (typeof origOnEnterGameScreen === 'function') origOnEnterGameScreen(opponentName);
     setChatVisible(true);
     initInGameChatSocket();
@@ -570,7 +588,7 @@ window.gameState = {
     playerId: null,
     roomId: null,
     playerName: '玩家',
-    opponentName: '对手',  
+    opponentName: '对手',
     ships: [],
     placedShips: 0,
     isMyTurn: false,
@@ -586,7 +604,7 @@ window.gameState = {
 }
 
 // 页面加载时初始化WebSocket连接，用于在线人数统计
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     if (!window.gameState.socket) {
         window.gameState.socket = io.connect('http://' + window.location.host);
         setupSocketListeners();
@@ -649,7 +667,7 @@ function addGameLog(logText) {
     const logEntry = document.createElement('div');
     logEntry.className = 'log-entry';
     logEntry.innerHTML = logText;
-    
+
     // 添加到日志容器的顶部
     if (gameLogs.firstChild) {
         gameLogs.insertBefore(logEntry, gameLogs.firstChild);
@@ -665,51 +683,55 @@ function bindEventListeners() {
         if (!obj) return null;
         return obj.opponent_name || obj.opponentName || obj.opponent || obj.player_name || obj.playerName || obj.player || null;
     }
-                // 帮助按钮事件
-                if (helpBtn) helpBtn.addEventListener('click', () => {
-                    if (helpModal) helpModal.classList.remove('hidden');
-                    if (helpMagicCards && window.magicCards) {
-                        // 去重：同名同描述同速阶同类型只显示一次
-                        const seen = new Set();
-                        const uniqueCards = window.magicCards.filter(card => {
-                            const key = card.name + '|' + card.type + '|' + card.speed + '|' + card.description;
-                            if (seen.has(key)) return false;
-                            seen.add(key);
-                            return true;
-                        });
-                        helpMagicCards.innerHTML = uniqueCards.map(card => `
+
+    // 帮助按钮事件
+    if (helpBtn) helpBtn.addEventListener('click', () => {
+        if (helpModal) helpModal.classList.remove('hidden');
+        if (helpMagicCards && window.magicCards) {
+            // 去重：同名同描述同速阶同类型只显示一次
+            const seen = new Set();
+            const uniqueCards = window.magicCards.filter(card => {
+                const key = card.name + '|' + card.type + '|' + card.speed + '|' + card.description;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+            helpMagicCards.innerHTML = uniqueCards.map(card => `
                             <div class="magic-card-help" style="border:1px solid #ccc;border-radius:6px;padding:8px;margin-bottom:8px;background:var(--glass);">
                                 <b>${card.name}</b> <span style="color:#888;">(${card.type}·速阶${card.speed})</span><br>
                                 <span style="font-size:0.98em;">${card.description}</span>
                             </div>
                         `).join('');
-                    }
-                });
-                if (helpModalClose) helpModalClose.addEventListener('click', () => helpModal.classList.add('hidden'));
-                if (helpModal) helpModal.addEventListener('click', (e) => { if (e.target === helpModal) helpModal.classList.add('hidden'); });
-            // 对手战绩按钮事件
-            if (showOpponentStatsBtn) showOpponentStatsBtn.addEventListener('click', (e) => {
-                e.preventDefault();
-                showOpponentStats();
-            });
-            if (opponentStatsModalClose) opponentStatsModalClose.addEventListener('click', () => {
-                opponentStatsModal.classList.add('hidden');
-            });
-            if (opponentStatsModal) opponentStatsModal.addEventListener('click', (e) => {
-                if (e.target === opponentStatsModal) opponentStatsModal.classList.add('hidden');
-            });
-        // 个人战绩按钮事件
-        if (showUserStatsBtn) showUserStatsBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            showUserStats();
-        });
-        if (userStatsModalClose) userStatsModalClose.addEventListener('click', () => {
-            userStatsModal.classList.add('hidden');
-        });
-        // 点击遮罩关闭
-        if (userStatsModal) userStatsModal.addEventListener('click', (e) => {
-            if (e.target === userStatsModal) userStatsModal.classList.add('hidden');
-        });
+        }
+    });
+    if (helpModalClose) helpModalClose.addEventListener('click', () => helpModal.classList.add('hidden'));
+    if (helpModal) helpModal.addEventListener('click', (e) => {
+        if (e.target === helpModal) helpModal.classList.add('hidden');
+    });
+    // 对手战绩按钮事件
+    if (showOpponentStatsBtn) showOpponentStatsBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        showOpponentStats();
+    });
+    if (opponentStatsModalClose) opponentStatsModalClose.addEventListener('click', () => {
+        opponentStatsModal.classList.add('hidden');
+    });
+    if (opponentStatsModal) opponentStatsModal.addEventListener('click', (e) => {
+        if (e.target === opponentStatsModal) opponentStatsModal.classList.add('hidden');
+    });
+    // 个人战绩按钮事件
+    if (showUserStatsBtn) showUserStatsBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        showUserStats();
+    });
+    if (userStatsModalClose) userStatsModalClose.addEventListener('click', () => {
+        userStatsModal.classList.add('hidden');
+    });
+    // 点击遮罩关闭
+    if (userStatsModal) userStatsModal.addEventListener('click', (e) => {
+        if (e.target === userStatsModal) userStatsModal.classList.add('hidden');
+    });
+
     // 显示个人战绩弹窗并请求数据
     function showUserStats() {
         if (!userStatsModal || !userStatsContent) return;
@@ -737,6 +759,7 @@ function bindEventListeners() {
             userStatsContent.innerHTML = `<p style="color:red;">${err.message}</p>`;
         });
     }
+
     // 开始界面
     findMatchBtn.addEventListener('click', findMatch);
     customRoomBtn.addEventListener('click', () => {
@@ -744,7 +767,7 @@ function bindEventListeners() {
     });
     cancelMatchBtn.addEventListener('click', cancelMatch);
     playAgainBtn.addEventListener('click', resetGame);
-    
+
     // 返回主菜单按钮事件处理
     returnToMenuBtn.addEventListener('click', resetGame);
 
@@ -770,7 +793,7 @@ function bindEventListeners() {
     rpsChoices.forEach(choice => {
         choice.addEventListener('click', () => handleRPSChoice(choice.dataset.choice));
     });
-    
+
     // 排行榜返回按钮
     if (backFromLeaderboardBtn) backFromLeaderboardBtn.addEventListener('click', () => {
         history.pushState({}, '', '/');
@@ -788,20 +811,32 @@ function bindEventListeners() {
     // 登录/注册弹窗按钮事件绑定
     if (loginSubmitBtn) loginSubmitBtn.addEventListener('click', handleLoginSubmit);
     if (registerSubmitBtn) registerSubmitBtn.addEventListener('click', handleRegisterSubmit);
-    if (loginModalClose) loginModalClose.addEventListener('click', () => { hideLogin(); history.pushState({}, '', '/'); });
-    if (registerModalClose) registerModalClose.addEventListener('click', () => { hideRegister(); history.pushState({}, '', '/'); });
+    if (loginModalClose) loginModalClose.addEventListener('click', () => {
+        hideLogin();
+        history.pushState({}, '', '/');
+    });
+    if (registerModalClose) registerModalClose.addEventListener('click', () => {
+        hideRegister();
+        history.pushState({}, '', '/');
+    });
 
     // ESC键关闭弹窗
     window.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
-            if (loginModal && !loginModal.classList.contains('hidden')) { hideLogin(); history.pushState({}, '', '/'); }
-            if (registerModal && !registerModal.classList.contains('hidden')) { hideRegister(); history.pushState({}, '', '/'); }
+            if (loginModal && !loginModal.classList.contains('hidden')) {
+                hideLogin();
+                history.pushState({}, '', '/');
+            }
+            if (registerModal && !registerModal.classList.contains('hidden')) {
+                hideRegister();
+                history.pushState({}, '', '/');
+            }
         }
     });
 
     // 修复：结束战斗阶段按钮事件（修正ID匹配问题）
     document.getElementById('enter-end-phase').addEventListener('click', endBattlePhase);
-    
+
     // 日志切换按钮
     toggleLogBtn.addEventListener('click', () => {
         logContainer.classList.toggle('collapsed');
@@ -861,7 +896,7 @@ function createRoom() {
                 gameState.roomId = response.room_id;
                 currentRoomId.textContent = gameState.roomId;
                 roomInfo.classList.remove('hidden');
-                
+
                 // 自动加入创建的房间
                 gameState.socket.emit('join_room', {
                     room_id: gameState.roomId,
@@ -886,13 +921,13 @@ function toggleCustomRoomOptions() {
 // 寻找匹配
 function findMatch() {
     gameState.playerName = playerNameInput.value || '玩家';
-    
+
     // 如果已经有socket连接，直接使用，不创建新连接
     if (!gameState.socket) {
         gameState.socket = io.connect('http://' + window.location.host);
         setupSocketListeners();
     }
-    
+
     // 发送匹配请求
     gameState.socket.emit('find_match', {
         player_name: gameState.playerName
@@ -927,7 +962,7 @@ function customCreateRoom() {
                 gameState.roomId = response.room_id;
                 customCurrentRoomId.textContent = gameState.roomId;
                 customRoomInfo.classList.remove('hidden');
-                
+
                 // 自动加入创建的房间
                 gameState.socket.emit('join_room', {
                     room_id: gameState.roomId,
@@ -1023,7 +1058,7 @@ function setupSocketListeners() {
         rpsScreen.classList.remove('active');
         gameScreen.classList.remove('active');
         gameOverScreen.classList.remove('active');
-        
+
         // 保存玩家名称和对手名称（支持多种字段名）
         const playerNameFromData = data.player_name || data.playerName || data.player || null;
         if (playerNameFromData) {
@@ -1049,6 +1084,7 @@ function setupSocketListeners() {
                 showOpponentStatsBtn && (showOpponentStatsBtn.style.display = 'none');
             }
         }
+
         // 显示对手战绩弹窗并请求数据
         function showOpponentStats() {
             if (!opponentStatsModal || !opponentStatsContent || !gameState.opponentName) return;
@@ -1076,7 +1112,7 @@ function setupSocketListeners() {
                 opponentStatsContent.innerHTML = `<p style="color:red;">${err.message}</p>`;
             });
         }
-        
+
         switch (data.state) {
             case 'waiting':
                 // 只有当游戏是从自定义房间创建或加入时，才显示自定义房间游戏界面
@@ -1086,43 +1122,43 @@ function setupSocketListeners() {
                 break;
             case 'placing_ships':
                 console.log('Switching to ship placement screen');
-                
+
                 // 设置playerId（使用socket.id）
                 if (gameState.socket && !gameState.playerId) {
                     gameState.playerId = gameState.socket.id;
                     console.log('设置playerId为:', gameState.playerId);
                 }
-                
+
                 // 隐藏导航栏
                 if (gameNav) gameNav.style.display = 'none';
-                
+
                 // 显示匹配成功界面
                 matchSuccessScreen.classList.add('active');
-                
+
                 // 显示对手信息
                 opponentInfo.textContent = gameState.opponentName;
-                
+
                 // 开始5秒倒计时
                 let countdown = 5;
                 countdownTimer.textContent = countdown;
-                
+
                 // 初始进度为100%
                 const countdownFill = countdownBar.querySelector('.countdown-fill');
                 countdownFill.style.width = '100%';
-                
+
                 // 每秒更新一次，确保数字和进度条完全同步
                 const countdownInterval = setInterval(() => {
                     countdown--;
                     countdownTimer.textContent = countdown;
-                    
+
                     // 直接设置进度条宽度，与当前倒计时数字完全对应
                     const progress = (countdown / 5) * 100;
                     countdownFill.style.width = `${progress}%`;
-                    
+
                     // 倒计时结束，进入战舰放置界面
                     if (countdown <= 0) {
                         clearInterval(countdownInterval);
-                        
+
                         // 直接进入放置战舰界面
                         matchSuccessScreen.classList.remove('active');
                         shipPlacementScreen.classList.add('active');
@@ -1198,15 +1234,15 @@ function setupSocketListeners() {
         console.log('Attack result:', result);
         updateAttackDisplay(result);
         attacksRemaining.textContent = result.remaining_attacks;
-        
+
         // 更新攻击次数后，重新检查阶段UI，确保按钮显示正确
         updatePhaseUI();
-        
+
         // 添加攻击日志
         const round = parseInt(gameRound.textContent) || 1;
         const playerName = result.attacker === gameState.playerId ? gameState.playerName : gameState.opponentName;
         const coordinate = `(${result.x},${result.y})`;
-        
+
         if (result.hit) {
             if (result.ship_sunk) {
                 addGameLog(`【第${round}回合】<span class="log-player">${playerName}</span>攻击了坐标<span class="log-coordinate">${coordinate}</span>，此处的船被击沉！`);
@@ -1217,7 +1253,7 @@ function setupSocketListeners() {
             addGameLog(`【第${round}回合】<span class="log-player">${playerName}</span>攻击了坐标<span class="log-coordinate">${coordinate}</span>，此处没有船！`);
         }
     });
-    
+
     // 添加处理攻击次数更新事件
     socket.on('attacks_updated', (data) => {
         console.log('Attacks updated:', data);
@@ -1253,19 +1289,19 @@ function setupSocketListeners() {
         gameState.currentAttacker = data.current_attacker;
         updatePhaseUI();
     });
-    
+
     // 极限增援相关事件处理
     socket.on('reinforcement_activated', (data) => {
         // 显示极限增援倒计时
         const countdownElement = document.getElementById('reinforcement-countdown');
         const remainingElement = document.getElementById('reinforcement-remaining');
-        
+
         if (countdownElement && remainingElement) {
             remainingElement.textContent = data.remaining_turns;
             countdownElement.classList.remove('hidden');
         }
     });
-    
+
     socket.on('reinforcement_turn_updated', (data) => {
         // 更新极限增援剩余回合
         const remainingElement = document.getElementById('reinforcement-remaining');
@@ -1275,7 +1311,7 @@ function setupSocketListeners() {
     });
 
     // 添加场地魔法更新监听
-    socket.on('field_magic_updated', function(data) {
+    socket.on('field_magic_updated', function (data) {
         console.log('场地魔法更新:', data);
         updateFieldMagicUI(data.player_id, data.card);
     });
@@ -1285,20 +1321,20 @@ function setupSocketListeners() {
         gameState.chain = data.chain;
         updateChainUI();
     });
-    
-    socket.on('chain_resolved', function(data) {
+
+    socket.on('chain_resolved', function (data) {
         console.log('连锁结算完成', data.results);
         // 应用连锁结算结果
         data.results.forEach(result => {
             applyCardEffect(result.card);
             // 将使用过的卡牌加入弃牌堆
             gameState.discardPile.push(result.card);
-            
+
             // 添加魔法卡使用日志
             const round = parseInt(gameRound.textContent) || 1;
             const playerName = result.caster === gameState.playerId ? gameState.playerName : gameState.opponentName;
             addGameLog(`【第${round}回合】<span class="log-player">${playerName}</span>使用了魔法卡<span class="log-card">[${result.card.name}]</span>，发动效果：${result.card.description}！`);
-            
+
             // 处理需要选择的魔法卡效果（如桃园结义）
             if (result.temp_data_id) {
                 if (result.temp_data_id === 'taoyuan_choice') {
@@ -1317,8 +1353,8 @@ function setupSocketListeners() {
             enableAttack();
         }
     });
-    
-    socket.on('magic_chain_error', function(data) {
+
+    socket.on('magic_chain_error', function (data) {
         alert('魔法卡使用错误: ' + data.message);
         // 错误恢复 - 将卡牌放回手牌
         if (data.card) {
@@ -1327,11 +1363,11 @@ function setupSocketListeners() {
         }
     });
 
-    socket.on('chain_request', function(data) {
+    socket.on('chain_request', function (data) {
         // 显示连锁选择对话框
         const chainPrompt = document.createElement('div');
         chainPrompt.className = 'magic-prompt';
-        
+
         // 生成速阶3卡牌列表HTML
         let speed3CardsHTML = '';
         data.speed3_cards.forEach((card, index) => {
@@ -1340,7 +1376,7 @@ function setupSocketListeners() {
                 <div class="chain-card-speed">速阶: ${card.speed}</div>
             </div>`;
         });
-        
+
         chainPrompt.innerHTML = `
             <h3>连锁请求</h3>
             <p>对方发动了魔法卡【${data.card.name}】</p>
@@ -1398,7 +1434,7 @@ function setupSocketListeners() {
                 clearInterval(countdownTimer);
                 const cardIndex = parseInt(cardElement.dataset.cardIndex);
                 const selectedCard = data.speed3_cards[cardIndex];
-                
+
                 // 发送连锁响应，包含选择的卡牌
                 gameState.socket.emit('chain_response', {
                     room_id: gameState.roomId,
@@ -1413,7 +1449,7 @@ function setupSocketListeners() {
     });
 
     // 添加新的魔法卡相关事件监听
-    socket.on('ask_counter_magic', function(data) {
+    socket.on('ask_counter_magic', function (data) {
         // 显示是否使用"失灵！"的对话框
         const counterPrompt = document.createElement('div');
         counterPrompt.className = 'magic-prompt';
@@ -1450,12 +1486,12 @@ function setupSocketListeners() {
         });
     });
 
-    socket.on('magic_negated', function(data) {
+    socket.on('magic_negated', function (data) {
         showMessage(`魔法卡【${data.card.name}】被对方无效化！`);
         updateHandUI();
     });
 
-    socket.on('magic_applied', function(result) {
+    socket.on('magic_applied', function (result) {
         showMessage(`魔法卡【${result.card.name}】效果生效: ${result.message}`);
         applyCardEffect(result.card);
         // 如果服务器返回了受影响的格子，确保客户端同步显示这些格子的攻击结果
@@ -1475,7 +1511,7 @@ function setupSocketListeners() {
             // 强制重绘棋盘以反映变化
             initGameBoards();
         }
-        
+
         // 处理需要选择的魔法卡效果
         if (result.temp_data_id) {
             if (result.temp_data_id === 'taoyuan_choice') {
@@ -1487,10 +1523,10 @@ function setupSocketListeners() {
                 }
             }
         }
-        
+
         updateHandUI();
     });
-    
+
     // 显示桃园结义选择界面
     function showTaoyuanChoice(result) {
         // 创建选择界面
@@ -1511,16 +1547,16 @@ function setupSocketListeners() {
             </div>
         `;
         document.body.appendChild(taoyuanChoiceDiv);
-        
+
         // 获取卡片容器和选择结果区域
         const cardsContainer = taoyuanChoiceDiv.querySelector('.taoyuan-cards-container');
         const selectionResultDiv = document.getElementById('taoyuan-selection-result');
-        
+
         // 存储选择状态
-        let selectedCards = { caster: null, opponent: null };
+        let selectedCards = {caster: null, opponent: null};
         let step = 1; // 1: 选择自己的卡, 2: 选择对方的卡
         let cards = [];
-        
+
         // 请求服务器获取卡牌数据
         gameState.socket.emit('get_magic_temp_data', {
             room_id: gameState.roomId,
@@ -1528,7 +1564,7 @@ function setupSocketListeners() {
         }, (response) => {
             if (response.status === 'success' && response.data && response.data.cards) {
                 cards = response.data.cards;
-                
+
                 // 显示卡牌
                 cards.forEach((card, index) => {
                     const cardElement = document.createElement('div');
@@ -1540,29 +1576,29 @@ function setupSocketListeners() {
                         <div class="taoyuan-card-desc">${card.description}</div>
                     `;
                     cardsContainer.appendChild(cardElement);
-                    
+
                     // 添加点击事件
                     cardElement.addEventListener('click', () => {
                         if (step === 1) {
                             // 第一步：选择自己的卡
                             selectedCards.caster = index;
-                            
+
                             // 更新界面
                             cardElement.classList.add('selected');
-                            
+
                             // 更新选择结果提示
                             selectionResultDiv.innerHTML = `
                                 <strong>选择结果：</strong><br>
                                 已为自己选择卡牌：<span style="color: #1976d2; font-weight: bold;">${card.name}</span><br>
                                 该卡牌已加入你的手牌库
                             `;
-                            
+
                             // 检查是否需要第二步
                             if (cards.length > 1) {
                                 // 进入第二步
                                 step = 2;
                                 document.getElementById('taoyuan-step-title').textContent = '第二步：选择一张卡牌给对方';
-                                
+
                                 // 禁用已选择的卡
                                 cardElement.classList.add('disabled');
                             } else {
@@ -1577,7 +1613,7 @@ function setupSocketListeners() {
                             // 第二步：选择对方的卡
                             if (index !== selectedCards.caster) {
                                 selectedCards.opponent = index;
-                                
+
                                 // 更新选择结果提示
                                 const opponentCard = cards[index];
                                 selectionResultDiv.innerHTML = `
@@ -1587,7 +1623,7 @@ function setupSocketListeners() {
                                     卡牌已分别加入双方手牌库
                                     <br><strong style="color: #10b981;">选择完成！</strong>
                                 `;
-                                
+
                                 // 确认选择
                                 setTimeout(() => {
                                     confirmTaoyuanChoice(selectedCards, cards);
@@ -1599,13 +1635,13 @@ function setupSocketListeners() {
                 });
             }
         });
-        
+
         // 取消按钮事件
         document.getElementById('taoyuan-cancel-btn').addEventListener('click', () => {
             document.body.removeChild(taoyuanChoiceDiv);
         });
     }
-    
+
     // 确认桃园结义选择
     function confirmTaoyuanChoice(selectedCards, cards) {
         gameState.socket.emit('confirm_magic_target', {
@@ -1621,7 +1657,7 @@ function setupSocketListeners() {
                 showMessage('桃园结义选择完成');
                 updateHandUI();
             } else {
-                showMessage(`选择失败: ${response.message}`, { type: 'error' });
+                showMessage(`选择失败: ${response.message}`, {type: 'error'});
             }
         });
     }
@@ -1659,7 +1695,7 @@ function setupSocketListeners() {
         if (gameState.roomId !== data.room_id) {
             gameState.roomId = data.room_id;
             // 告诉服务器加入该房间
-            socket.emit('join_room', { room_id: data.room_id, player_name: gameState.playerName });
+            socket.emit('join_room', {room_id: data.room_id, player_name: gameState.playerName});
         }
     });
 
@@ -1737,14 +1773,18 @@ function setupSocketListeners() {
 // 切换屏幕
 function switchScreen(screen) {
     const screens = [startScreen, customRoomScreen, shipPlacementScreen, rpsScreen, gameScreen, leaderboardScreen, lobbyScreen, gameOverScreen];
-    screens.forEach(s => { if (s) s.classList.remove('active'); });
+    screens.forEach(s => {
+        if (s) s.classList.remove('active');
+    });
     if (screen) screen.classList.add('active');
 
     // 隐藏或显示在局内不应显示的导航项（登录/注册/排行榜）
     const hideEls = document.querySelectorAll('.hide-in-game');
-    const inRoomScreens = ['ship-placement-screen','rps-screen','game-screen','custom-room-screen'];
+    const inRoomScreens = ['ship-placement-screen', 'rps-screen', 'game-screen', 'custom-room-screen'];
     const shouldHide = screen && inRoomScreens.includes(screen.id);
-    hideEls.forEach(el => { el.style.display = shouldHide ? 'none' : ''; });
+    hideEls.forEach(el => {
+        el.style.display = shouldHide ? 'none' : '';
+    });
 }
 
 // 展示并加载排行榜
@@ -1786,8 +1826,8 @@ function fetchLeaderboard() {
             const wins = row.wins || 0;
             const losses = row.losses || 0;
             const total = wins + losses;
-            const winrate = total ? Math.round((wins/total) * 100) + '%' : '-';
-            tr.innerHTML = `<td>${idx+1}</td><td>${row.username}</td><td>${wins}</td><td>${losses}</td><td>${winrate}</td><td>${row.longest_streak || 0}</td>`;
+            const winrate = total ? Math.round((wins / total) * 100) + '%' : '-';
+            tr.innerHTML = `<td>${idx + 1}</td><td>${row.username}</td><td>${wins}</td><td>${losses}</td><td>${winrate}</td><td>${row.longest_streak || 0}</td>`;
             leaderboardTableBody.appendChild(tr);
         });
     }).catch(err => {
@@ -1900,12 +1940,12 @@ function randomizeShips() {
     // 清空当前所有战舰
     gameState.ships = [];
     gameState.placedShips = 0;
-    
+
     // 清空棋盘显示
     playerBoard.querySelectorAll('.cell').forEach(cell => {
         cell.classList.remove('ship');
     });
-    
+
     // 生成6个不重复的随机位置
     const positions = new Set();
     while (positions.size < 6) {
@@ -1913,27 +1953,27 @@ function randomizeShips() {
         const y = Math.floor(Math.random() * 6);
         positions.add(`${x},${y}`);
     }
-    
+
     // 放置战舰
     positions.forEach(pos => {
         const [x, y] = pos.split(',').map(Number);
-        
+
         // 添加新战舰（1x1大小）
         gameState.ships.push({
             positions: [{x, y}],
             hits: []
         });
-        
+
         gameState.placedShips++;
-        
+
         // 更新界面，显示战舰
         const cell = playerBoard.querySelector(`[data-x="${x}"][data-y="${y}"]`);
         cell.classList.add('ship');
     });
-    
+
     // 更新放置计数
     shipsPlaced.textContent = gameState.placedShips;
-    
+
     // 显示确认按钮
     confirmShipsBtn.classList.remove('hidden');
 }
@@ -1941,20 +1981,20 @@ function randomizeShips() {
 // 处理棋盘单元格点击（放置/移除战舰）
 function handleCellClick(x, y) {
     // 检查该位置是否已经放置了战舰
-    const shipIndex = gameState.ships.findIndex(ship => 
+    const shipIndex = gameState.ships.findIndex(ship =>
         ship.positions.some(pos => pos.x === x && pos.y === y)
     );
-    
+
     if (shipIndex !== -1) {
         // 移除已放置的战舰
         gameState.ships.splice(shipIndex, 1);
         gameState.placedShips--;
         shipsPlaced.textContent = gameState.placedShips;
-        
+
         // 更新界面，移除战舰显示
         const cell = playerBoard.querySelector(`[data-x="${x}"][data-y="${y}"]`);
         cell.classList.remove('ship');
-        
+
         // 如果之前显示了确认按钮，检查是否需要隐藏
         if (gameState.placedShips < 6) {
             confirmShipsBtn.classList.add('hidden');
@@ -1962,7 +2002,7 @@ function handleCellClick(x, y) {
     } else {
         // 检查是否已经放置了6艘战舰
         if (gameState.placedShips >= 6) return;
-        
+
         // 添加新战舰（1x1大小）
         gameState.ships.push({
             id: Date.now(),
@@ -1991,25 +2031,25 @@ function confirmShipPlacement() {
     console.log('gameState.roomId:', gameState.roomId);
     console.log('gameState.playerId:', gameState.playerId);
     console.log('gameState.ships:', gameState.ships);
-    
+
     if (!gameState.socket) {
         console.error('socket连接为null');
         alert('socket连接为null，请重新创建或加入房间');
         return;
     }
-    
+
     if (!gameState.roomId) {
         console.error('roomId为null');
         alert('roomId为null，请重新创建或加入房间');
         return;
     }
-    
+
     if (!gameState.playerId) {
         console.error('playerId为null');
         alert('playerId为null，请重新创建或加入房间');
         return;
     }
-    
+
     gameState.socket.emit('place_ships', {
         room_id: gameState.roomId,
         player_id: gameState.playerId,
@@ -2042,9 +2082,9 @@ function handleRPSChoice(choice) {
 function handleAttack(x, y) {
     // 检查是否正在进行魔法卡目标选择，如果是则不执行攻击
     if (gameState.currentMagicCard) return;
-    
+
     if (!gameState.isMyTurn) return;
-    
+
     // 检查当前是否为战斗阶段
     if (gameState.currentPhase !== 'battle') {
         alert('当前不是战斗阶段');
@@ -2115,14 +2155,17 @@ function showLogin() {
     if (!loginModal) return;
     loginModal.classList.remove('hidden');
 }
+
 function hideLogin() {
     if (!loginModal) return;
     loginModal.classList.add('hidden');
 }
+
 function showRegister() {
     if (!registerModal) return;
     registerModal.classList.remove('hidden');
 }
+
 function hideRegister() {
     if (!registerModal) return;
     registerModal.classList.add('hidden');
@@ -2132,12 +2175,15 @@ function hideRegister() {
 async function handleLoginSubmit() {
     const username = loginUsernameInput.value.trim();
     const password = loginPasswordInput.value;
-    if (!username || !password) { showMessage('用户名和密码不能为空', {type: 'warning'}); return; }
+    if (!username || !password) {
+        showMessage('用户名和密码不能为空', {type: 'warning'});
+        return;
+    }
     try {
         const resp = await fetch('/login', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({ username, password }),
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: new URLSearchParams({username, password}),
             credentials: 'same-origin'
         });
         // 如果服务器进行了重定向（登录成功会重定向到首页），则直接跳转
@@ -2161,12 +2207,15 @@ async function handleLoginSubmit() {
 async function handleRegisterSubmit() {
     const username = registerUsernameInput.value.trim();
     const password = registerPasswordInput.value;
-    if (!username || !password) { showMessage('用户名和密码不能为空', {type: 'warning'}); return; }
+    if (!username || !password) {
+        showMessage('用户名和密码不能为空', {type: 'warning'});
+        return;
+    }
     try {
         const resp = await fetch('/register', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({ username, password }),
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: new URLSearchParams({username, password}),
             credentials: 'same-origin'
         });
         if (resp.redirected) {
@@ -2191,7 +2240,7 @@ function resetGame() {
         gameState.socket.disconnect();
         gameState.socket = null;
     }
-    
+
     // 重置游戏状态
     gameState = {
         socket: null,
@@ -2210,18 +2259,18 @@ function resetGame() {
         chain: [],
         fieldMagic: null
     };
-    
+
     // 直接重新加载页面，确保完全重置
     window.location.href = '/';
 }
 
 // 新增：结束战斗阶段函数
-window.endBattlePhase = function() {
+window.endBattlePhase = function () {
     if (!gameState.isMyTurn || gameState.currentPhase !== 'battle') {
         alert('当前不是你的战斗阶段');
         return;
     }
-    
+
     gameState.socket.emit('enter_end_phase', {
         room_id: gameState.roomId,
         player_id: gameState.playerId
@@ -2239,23 +2288,6 @@ window.addEventListener('load', () => {
     initCardPreview(); // 初始化卡牌预览功能
 });
 
-// 添加卡牌悬停提示功能 - 已废弃，使用新的预览框替代
-function initCardTooltip() {
-    // 不再需要创建悬停提示，保留空函数避免报错
-    console.log('旧的卡牌悬停提示功能已废弃，使用新的预览框替代');
-}
-
-// 初始化魔法卡牌堆
-function initMagicDeck() {
-    // 复制魔法卡数组并洗牌
-    gameState.deck = [...window.magicCards];
-    shuffleDeck(gameState.deck);
-    // 初始抽5张牌
-    for (let i = 0; i < 5; i++) {
-        drawCard();
-    }
-}
-
 // 洗牌算法 (Fisher-Yates)
 function shuffleDeck(deck) {
     for (let i = deck.length - 1; i > 0; i--) {
@@ -2265,7 +2297,7 @@ function shuffleDeck(deck) {
 }
 
 // 抽卡函数
-window.drawCard = function() {
+window.drawCard = function () {
     if (gameState.deck.length === 0) {
         // 牌堆为空，从弃牌堆重新洗牌
         gameState.deck = [...gameState.discardPile];
@@ -2287,8 +2319,8 @@ function canPlayCard(card) {
     }
     // 速阶2: 可以在自己的准备阶段和战斗阶段使用
     else if (card.speed === 2) {
-        return (gameState.currentPhase === 'preparation' || gameState.currentPhase === 'battle') && 
-               gameState.currentAttacker === gameState.playerId;
+        return (gameState.currentPhase === 'preparation' || gameState.currentPhase === 'battle') &&
+            gameState.currentAttacker === gameState.playerId;
     }
     // 速阶3: 任何时候都可以使用
     else if (card.speed === 3) {
@@ -2402,8 +2434,8 @@ function showMagicTargetSelection(card, index) {
         }
 
         function confirmIndex(idx) {
-            if (mode === 'row') confirmMagicTarget({ target_line: { type: 'row', index: idx } });
-            else confirmMagicTarget({ target_line: { type: 'col', index: idx } });
+            if (mode === 'row') confirmMagicTarget({target_line: {type: 'row', index: idx}});
+            else confirmMagicTarget({target_line: {type: 'col', index: idx}});
             cleanupAll();
         }
 
@@ -2412,7 +2444,8 @@ function showMagicTargetSelection(card, index) {
             const my = parseInt(cell.dataset.y, 10);
 
             const onMouseDown = (e) => {
-                e.preventDefault(); e.stopPropagation();
+                e.preventDefault();
+                e.stopPropagation();
                 isMouseDown = true;
                 lastIndex = mode === 'row' ? my : mx;
                 highlightIndex(lastIndex);
@@ -2438,11 +2471,14 @@ function showMagicTargetSelection(card, index) {
                 }
             };
 
-            const onLeave = () => { if (!isMouseDown) clearHighlights(); };
+            const onLeave = () => {
+                if (!isMouseDown) clearHighlights();
+            };
 
             // click fallback: open small confirm box
             const onClick = (e) => {
-                e.stopPropagation(); e.preventDefault();
+                e.stopPropagation();
+                e.preventDefault();
                 const idx = mode === 'row' ? my : mx;
                 const confirmBox = document.createElement('div');
                 confirmBox.className = 'inline-confirm';
@@ -2455,9 +2491,17 @@ function showMagicTargetSelection(card, index) {
                     <button id="cancel-line">取消</button>
                 `;
                 document.body.appendChild(confirmBox);
-                document.getElementById('confirm-line').addEventListener('click', () => { confirmIndex(idx); cleanupConfirm(); });
-                document.getElementById('cancel-line').addEventListener('click', () => { cleanupConfirm(); });
-                function cleanupConfirm() { if (document.body.contains(confirmBox)) document.body.removeChild(confirmBox); }
+                document.getElementById('confirm-line').addEventListener('click', () => {
+                    confirmIndex(idx);
+                    cleanupConfirm();
+                });
+                document.getElementById('cancel-line').addEventListener('click', () => {
+                    cleanupConfirm();
+                });
+
+                function cleanupConfirm() {
+                    if (document.body.contains(confirmBox)) document.body.removeChild(confirmBox);
+                }
             };
 
             cell.addEventListener('mousedown', onMouseDown, true);
@@ -2465,21 +2509,24 @@ function showMagicTargetSelection(card, index) {
             cell.addEventListener('mouseleave', onLeave);
             cell.addEventListener('click', onClick, true);
             // store for cleanup
-            (cell._magicHandlers = cell._magicHandlers || []).push({type:'line', handlers:{onMouseDown,onEnter,onLeave,onClick}});
+            (cell._magicHandlers = cell._magicHandlers || []).push({
+                type: 'line',
+                handlers: {onMouseDown, onEnter, onLeave, onClick}
+            });
         });
 
         function cleanupAll() {
             cells.forEach(cell => {
                 if (cell._magicHandlers) {
                     cell._magicHandlers.filter(h => h.type === 'line').forEach(h => {
-                        const {onMouseDown,onEnter,onLeave,onClick} = h.handlers;
+                        const {onMouseDown, onEnter, onLeave, onClick} = h.handlers;
                         cell.removeEventListener('mousedown', onMouseDown, true);
                         cell.removeEventListener('mouseenter', onEnter);
                         cell.removeEventListener('mouseleave', onLeave);
                         cell.removeEventListener('click', onClick, true);
                     });
                 }
-                cell.classList.remove('magic-selection-overlay','col');
+                cell.classList.remove('magic-selection-overlay', 'col');
             });
             if (document.body.contains(targetPrompt)) document.body.removeChild(targetPrompt);
             gameState.selectingOnBoard = false;
@@ -2524,11 +2571,18 @@ function showMagicTargetSelection(card, index) {
         let dragging = false;
         let forcedDir = null; // 'h' or 'v' or null (auto)
 
-        function clearHighlights() { cells.forEach(c => c.classList.remove('magic-selection-overlay','vert')); }
+        function clearHighlights() {
+            cells.forEach(c => c.classList.remove('magic-selection-overlay', 'vert'));
+        }
 
-        function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+        function clamp(v, a, b) {
+            return Math.max(a, Math.min(b, v));
+        }
 
-        function getCellAt(x,y) { return boardEl.querySelector(`.cell[data-x="${x}"][data-y="${y}"]`); }
+        function getCellAt(x, y) {
+            return boardEl.querySelector(`.cell[data-x="${x}"][data-y="${y}"]`);
+        }
+
         function highlightSegmentFromAnchor(anchor, cursorX, cursorY, dirHint) {
             clearHighlights();
             let dx = cursorX - anchor.x;
@@ -2551,14 +2605,18 @@ function showMagicTargetSelection(card, index) {
                 if (startY + L - 1 < anchor.y) startY = clamp(anchor.y - (L - 1), 0, 6 - L);
                 for (let y = startY; y < startY + L; y++) {
                     const c = getCellAt(anchor.x, y);
-                    if (c) c.classList.add('magic-selection-overlay','vert');
+                    if (c) c.classList.add('magic-selection-overlay', 'vert');
                 }
             }
         }
 
         // rotate UI
         const rotateBtn = document.getElementById('rotate-mode');
-        function updateRotateText() { rotateBtn.textContent = `方向: ${forcedDir === 'h' ? '横向' : forcedDir === 'v' ? '纵向' : '自动 (按 R 切换)'} `; }
+
+        function updateRotateText() {
+            rotateBtn.textContent = `方向: ${forcedDir === 'h' ? '横向' : forcedDir === 'v' ? '纵向' : '自动 (按 R 切换)'} `;
+        }
+
         updateRotateText();
         rotateBtn.addEventListener('click', () => {
             if (!forcedDir) forcedDir = 'h';
@@ -2568,7 +2626,11 @@ function showMagicTargetSelection(card, index) {
         });
 
         // keyboard rotate: R toggles
-        const onKey = (e) => { if (e.key === 'r' || e.key === 'R') { rotateBtn.click(); } };
+        const onKey = (e) => {
+            if (e.key === 'r' || e.key === 'R') {
+                rotateBtn.click();
+            }
+        };
         window.addEventListener('keydown', onKey);
 
         // handlers
@@ -2576,7 +2638,8 @@ function showMagicTargetSelection(card, index) {
             const mx = parseInt(cell.dataset.x, 10);
             const my = parseInt(cell.dataset.y, 10);
             const onMouseDown = (e) => {
-                e.preventDefault(); e.stopPropagation();
+                e.preventDefault();
+                e.stopPropagation();
                 anchor = {x: mx, y: my};
                 dragging = true;
             };
@@ -2588,13 +2651,17 @@ function showMagicTargetSelection(card, index) {
                     highlightSegmentFromAnchor(anchor, mx, my);
                 }
             };
-            const onLeave = () => { if (!dragging) clearHighlights(); };
+            const onLeave = () => {
+                if (!dragging) clearHighlights();
+            };
             const onMouseUp = (e) => {
                 if (!anchor) return;
                 // confirm segment using current hovered cell if available
-                const cursorX = mx; const cursorY = my;
+                const cursorX = mx;
+                const cursorY = my;
                 // compute final segment cells as in highlight
-                let dx = cursorX - anchor.x; let dy = cursorY - anchor.y;
+                let dx = cursorX - anchor.x;
+                let dy = cursorY - anchor.y;
                 let dir = forcedDir || (Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v');
                 const selected = [];
                 if (dir === 'h') {
@@ -2621,36 +2688,44 @@ function showMagicTargetSelection(card, index) {
                     `;
                     document.body.appendChild(confirmBox);
                     document.getElementById('confirm-seg').addEventListener('click', () => {
-                        confirmMagicTarget({ target_cells: selected });
-                        cleanupAll(); if (document.body.contains(confirmBox)) document.body.removeChild(confirmBox);
+                        confirmMagicTarget({target_cells: selected});
+                        cleanupAll();
+                        if (document.body.contains(confirmBox)) document.body.removeChild(confirmBox);
                     });
-                    document.getElementById('cancel-seg').addEventListener('click', () => { if (document.body.contains(confirmBox)) document.body.removeChild(confirmBox); cleanupAll(); });
+                    document.getElementById('cancel-seg').addEventListener('click', () => {
+                        if (document.body.contains(confirmBox)) document.body.removeChild(confirmBox);
+                        cleanupAll();
+                    });
                 } else {
                     alert('无法放下该连续区域，请重试');
                 }
 
-                dragging = false; anchor = null;
+                dragging = false;
+                anchor = null;
             };
 
             cell.addEventListener('mousedown', onMouseDown, true);
             cell.addEventListener('mouseenter', onEnter);
             cell.addEventListener('mouseleave', onLeave);
             cell.addEventListener('mouseup', onMouseUp, true);
-            (cell._magicHandlers = cell._magicHandlers || []).push({type:'continuous', handlers:{onMouseDown,onEnter,onLeave,onMouseUp}});
+            (cell._magicHandlers = cell._magicHandlers || []).push({
+                type: 'continuous',
+                handlers: {onMouseDown, onEnter, onLeave, onMouseUp}
+            });
         });
 
         function cleanupAll() {
             cells.forEach(cell => {
                 if (cell._magicHandlers) {
                     cell._magicHandlers.filter(h => h.type === 'continuous').forEach(h => {
-                        const {onMouseDown,onEnter,onLeave,onMouseUp} = h.handlers;
+                        const {onMouseDown, onEnter, onLeave, onMouseUp} = h.handlers;
                         cell.removeEventListener('mousedown', onMouseDown, true);
                         cell.removeEventListener('mouseenter', onEnter);
                         cell.removeEventListener('mouseleave', onLeave);
                         cell.removeEventListener('mouseup', onMouseUp, true);
                     });
                 }
-                cell.classList.remove('magic-selection-overlay','vert');
+                cell.classList.remove('magic-selection-overlay', 'vert');
             });
             window.removeEventListener('keydown', onKey);
             if (document.body.contains(targetPrompt)) document.body.removeChild(targetPrompt);
@@ -2679,15 +2754,25 @@ function showMagicTargetSelection(card, index) {
         gameState.selectingOnBoard = true;
         const listeners = [];
         const onClick = (e) => {
-            e.stopPropagation(); e.preventDefault();
+            e.stopPropagation();
+            e.preventDefault();
             const el = e.currentTarget;
             const x = parseInt(el.dataset.x, 10);
             const y = parseInt(el.dataset.y, 10);
-            confirmMagicTarget({ x, y });
+            confirmMagicTarget({x, y});
             cleanupAll();
         };
-        boardEl.querySelectorAll('.cell').forEach(cell => { cell.addEventListener('click', onClick, true); listeners.push({el: cell, handler: onClick}); });
-        function cleanupAll() { listeners.forEach(({el, handler}) => el.removeEventListener('click', handler, true)); gameState.selectingOnBoard = false; if (document.body.contains(targetPrompt)) document.body.removeChild(targetPrompt); }
+        boardEl.querySelectorAll('.cell').forEach(cell => {
+            cell.addEventListener('click', onClick, true);
+            listeners.push({el: cell, handler: onClick});
+        });
+
+        function cleanupAll() {
+            listeners.forEach(({el, handler}) => el.removeEventListener('click', handler, true));
+            gameState.selectingOnBoard = false;
+            if (document.body.contains(targetPrompt)) document.body.removeChild(targetPrompt);
+        }
+
         document.getElementById('cancel-target').addEventListener('click', cleanupAll);
         gameState.selectionCleanup = cleanupAll;
         return;
@@ -2716,7 +2801,8 @@ function showMagicTargetSelection(card, index) {
             if (!hasShip) return;
             cell.style.cursor = 'pointer';
             const onClick = (e) => {
-                e.stopPropagation(); e.preventDefault();
+                e.stopPropagation();
+                e.preventDefault();
                 const key = `${x},${y}`;
                 if (selected.has(key)) {
                     selected.delete(key);
@@ -2738,9 +2824,15 @@ function showMagicTargetSelection(card, index) {
         });
 
         document.getElementById('confirm-magic-ships').addEventListener('click', () => {
-            if (selected.size !== count) { alert(`请选中 ${count} 艘战舰`); return; }
-            const arr = Array.from(selected).map(k => { const [x,y] = k.split(','); return {x: parseInt(x,10), y: parseInt(y,10)}; });
-            confirmMagicTarget({ selected_cells: arr });
+            if (selected.size !== count) {
+                alert(`请选中 ${count} 艘战舰`);
+                return;
+            }
+            const arr = Array.from(selected).map(k => {
+                const [x, y] = k.split(',');
+                return {x: parseInt(x, 10), y: parseInt(y, 10)};
+            });
+            confirmMagicTarget({selected_cells: arr});
             // cleanup
             document.querySelectorAll('#player-board .cell').forEach(cell => {
                 if (cell._magicHandlers && cell._magicHandlers.length) {
@@ -2775,15 +2867,16 @@ function showMagicTargetSelection(card, index) {
 
     alert('尚未实现该卡的目标选择方式');
 }
+
 // 添加魔法卡目标选择判断函数（返回目标选择描述）
 function needsTargetSelection(cardName) {
     const map = {
-        '冻结': { type: 'area', size: 3, board: 'opponent' },          // 3x3区域
-        '探测雷达': { type: 'area', size: 2, board: 'opponent' },      // 2x2区域
-        '轰炸': { type: 'line', board: 'opponent' },                  // 行或列
-        '硫磺火焰': { type: 'continuous', length: 6, board: 'opponent' }, // 6个连续格子
-        '克苏鲁之眼': { type: 'single', board: 'self' },             // 选择自己的船暴露
-        '神之宣告': { type: 'own_ships', count: 2 }                   // 选择两艘自己的船牺牲
+        '冻结': {type: 'area', size: 3, board: 'opponent'},          // 3x3区域
+        '探测雷达': {type: 'area', size: 2, board: 'opponent'},      // 2x2区域
+        '轰炸': {type: 'line', board: 'opponent'},                  // 行或列
+        '硫磺火焰': {type: 'continuous', length: 6, board: 'opponent'}, // 6个连续格子
+        '克苏鲁之眼': {type: 'single', board: 'self'},             // 选择自己的船暴露
+        '神之宣告': {type: 'own_ships', count: 2}                   // 选择两艘自己的船牺牲
     };
     return map[cardName] || null;
 }
@@ -2859,7 +2952,7 @@ function createSelectionBoard(size, boardId = 'selection-board', onConfirm = nul
                     y2: startY + size - 1
                 };
                 if (typeof onConfirm === 'function') {
-                    onConfirm({ target_area: area });
+                    onConfirm({target_area: area});
                 }
                 // 清理
                 clearHighlights();
@@ -2943,7 +3036,7 @@ function createSelectionBoard(size, boardId = 'selection-board', onConfirm = nul
         const selectedCells = getSelectedCells(boardId);
         if (selectedCells.length > 0) {
             if (typeof onConfirm === 'function') {
-                onConfirm({ selected_cells: selectedCells });
+                onConfirm({selected_cells: selectedCells});
             } else {
                 confirmMagicTarget(selectedCells);
             }
@@ -3065,7 +3158,7 @@ function confirmMagicTarget(targetData) {
         payload.target_cells = targetData.target_cells; // 显式格子集合（如连续选择）
     } else if (targetData && targetData.x !== undefined && targetData.y !== undefined) {
         // 单格位置
-        payload.target_area = { x1: targetData.x, y1: targetData.y, x2: targetData.x, y2: targetData.y };
+        payload.target_area = {x1: targetData.x, y1: targetData.y, x2: targetData.x, y2: targetData.y};
     } else {
         // 未识别格式，直接发送原始数据
         payload = targetData;
@@ -3084,7 +3177,7 @@ function applyCardEffect(card) {
     // 显示魔法效果动画
     showMagicAnimation(card);
 
-    switch(card.name) {
+    switch (card.name) {
         case '余音绕梁':
             showMessage('余音绕梁效果生效，接下来两个攻击阶段将造成强制击杀');
             break;
@@ -3303,7 +3396,7 @@ function showMagicAnimation(card) {
     animation.className = 'magic-animation';
     animation.innerHTML = `<div class="magic-card-name">${card.name}</div>`;
     document.body.appendChild(animation);
-    
+
     setTimeout(() => {
         animation.classList.add('active');
         setTimeout(() => {
@@ -3360,10 +3453,10 @@ function showMatchSuccess(opponentName) {
     const prompt = document.createElement('div');
     prompt.id = 'match-success-prompt';
     prompt.className = 'magic-prompt';
-    
+
     // 设置初始倒计时
     let countdown = 5;
-    
+
     prompt.innerHTML = `
         <h2>匹配成功！</h2>
         <div class="match-success-content">
@@ -3371,7 +3464,7 @@ function showMatchSuccess(opponentName) {
             <p>游戏将在 <strong id="countdown-timer">${countdown}</strong> 秒后开始</p>
         </div>
     `;
-    
+
     // 添加样式
     prompt.style.cssText = `
         position: fixed;
@@ -3386,15 +3479,15 @@ function showMatchSuccess(opponentName) {
         text-align: center;
         min-width: 300px;
     `;
-    
+
     document.body.appendChild(prompt);
-    
+
     // 启动倒计时
     const timerElement = document.getElementById('countdown-timer');
     const countdownInterval = setInterval(() => {
         countdown--;
         timerElement.textContent = countdown;
-        
+
         if (countdown <= 0) {
             clearInterval(countdownInterval);
         }
@@ -3409,7 +3502,7 @@ function updateCardPreview(card, index) {
     const previewType = document.getElementById('preview-type');
     const previewDescription = document.getElementById('preview-description');
     const cancelBtn = document.getElementById('cancel-magic');
-    
+
     if (card) {
         cardName.textContent = card.name;
         previewSpeed.textContent = card.speed;
@@ -3435,15 +3528,15 @@ function initCardPreview() {
             updateCardPreview(null);
         });
     }
-    
+
     // 初始更新预览
     updateCardPreview(null);
-    
+
     // 添加拖拽功能
     initPreviewDrag();
     // 初始化日志容器拖拽
     initLogDrag();
-    
+
     // 初始化投降按钮
     initSurrenderBtn();
 }
@@ -3462,7 +3555,7 @@ function handleSurrender() {
     if (!confirm('确定要投降吗？投降后游戏将结束。')) {
         return;
     }
-    
+
     // 向服务器发送投降请求
     if (gameState.socket) {
         gameState.socket.emit('surrender', {
@@ -3471,11 +3564,11 @@ function handleSurrender() {
         }, (response) => {
             if (response.status === 'success') {
                 // 投降成功，游戏结束
-                showMessage('你已投降，游戏结束', { type: 'warning' });
+                showMessage('你已投降，游戏结束', {type: 'warning'});
                 // 等待服务器发送game_over事件
             } else {
                 // 投降失败
-                showMessage(`投降失败: ${response.message}`, { type: 'error' });
+                showMessage(`投降失败: ${response.message}`, {type: 'error'});
             }
         });
     }
@@ -3485,42 +3578,42 @@ function handleSurrender() {
 function initPreviewDrag() {
     const previewContainer = document.getElementById('magic-card-preview');
     if (!previewContainer) return;
-    
+
     let isDragging = false;
     let startX, startY, initialX, initialY;
-    
+
     // 鼠标按下事件
     previewContainer.addEventListener('mousedown', (e) => {
         // 只有点击头部区域才允许拖拽
         if (e.target.closest('.preview-header') || e.target === previewContainer) {
             isDragging = true;
-            
+
             // 记录初始位置
             initialX = parseInt(window.getComputedStyle(previewContainer).left, 10);
             initialY = parseInt(window.getComputedStyle(previewContainer).top, 10);
-            
+
             // 记录鼠标按下位置
             startX = e.clientX;
             startY = e.clientY;
-            
+
             // 添加拖拽样式
             previewContainer.style.cursor = 'grabbing';
         }
     });
-    
+
     // 鼠标移动事件
     document.addEventListener('mousemove', (e) => {
         if (!isDragging) return;
-        
+
         // 计算偏移量
         const dx = e.clientX - startX;
         const dy = e.clientY - startY;
-        
+
         // 更新位置
         previewContainer.style.left = `${initialX + dx}px`;
         previewContainer.style.top = `${initialY + dy}px`;
     });
-    
+
     // 鼠标释放事件
     document.addEventListener('mouseup', () => {
         if (isDragging) {
@@ -3528,7 +3621,7 @@ function initPreviewDrag() {
             previewContainer.style.cursor = 'grab';
         }
     });
-    
+
     // 初始化拖拽样式
     previewContainer.style.cursor = 'grab';
 }
@@ -3537,42 +3630,42 @@ function initPreviewDrag() {
 function initLogDrag() {
     const logContainer = document.querySelector('.log-container');
     if (!logContainer) return;
-    
+
     let isDragging = false;
     let startX, startY, initialX, initialY;
-    
+
     // 鼠标按下事件
     logContainer.addEventListener('mousedown', (e) => {
         // 只有点击头部区域才允许拖拽
         if (e.target.closest('.log-header') || e.target === logContainer) {
             isDragging = true;
-            
+
             // 记录初始位置
             initialX = parseInt(window.getComputedStyle(logContainer).left, 10);
             initialY = parseInt(window.getComputedStyle(logContainer).top, 10);
-            
+
             // 记录鼠标按下位置
             startX = e.clientX;
             startY = e.clientY;
-            
+
             // 添加拖拽样式
             logContainer.style.cursor = 'grabbing';
         }
     });
-    
+
     // 鼠标移动事件
     document.addEventListener('mousemove', (e) => {
         if (!isDragging) return;
-        
+
         // 计算偏移量
         const dx = e.clientX - startX;
         const dy = e.clientY - startY;
-        
+
         // 更新位置
         logContainer.style.left = `${initialX + dx}px`;
         logContainer.style.top = `${initialY + dy}px`;
     });
-    
+
     // 鼠标释放事件
     document.addEventListener('mouseup', () => {
         if (isDragging) {
@@ -3580,7 +3673,7 @@ function initLogDrag() {
             logContainer.style.cursor = 'grab';
         }
     });
-    
+
     // 初始化拖拽样式
     logContainer.style.cursor = 'grab';
 }
@@ -3594,18 +3687,18 @@ function updateHandUI() {
         const cardElement = document.createElement('div');
         cardElement.classList.add('magic-card');
         cardElement.dataset.index = index;
-        
+
         // 如果是选中状态，添加selected类
         if (gameState.selectedCardIndex === index) {
             cardElement.classList.add('selected');
         }
-        
+
         cardElement.innerHTML = `
             <div class="card-name">${card.name}</div>
             <div class="card-speed">速阶: ${card.speed}</div>
             <div class="card-type">${card.type}魔法</div>
         `;
-        
+
         // 添加点击事件，实现点击选择/使用功能
         cardElement.addEventListener('click', () => {
             // 如果是已选中状态，尝试使用卡牌
@@ -3619,10 +3712,10 @@ function updateHandUI() {
                 updateCardPreview(card, index); // 更新卡牌预览信息
             }
         });
-        
+
         handElement.appendChild(cardElement);
     });
-    
+
     // 更新卡牌预览
     if (gameState.selectedCardIndex >= 0 && gameState.selectedCardIndex < gameState.hand.length) {
         updateCardPreview(gameState.hand[gameState.selectedCardIndex], gameState.selectedCardIndex);
@@ -3637,29 +3730,29 @@ function setupDiscardPileUI() {
     const viewDiscardBtn = document.getElementById('view-discard-pile');
     const discardModal = document.getElementById('discard-pile-modal');
     const discardModalClose = document.getElementById('discard-pile-modal-close');
-    
+
     if (viewDiscardBtn && discardModal && discardModalClose) {
         // 显示弃牌堆弹窗
         viewDiscardBtn.addEventListener('click', () => {
             discardModal.classList.remove('hidden');
             loadDiscardPile();
         });
-        
+
         // 关闭弃牌堆弹窗
         function closeDiscardModal() {
             discardModal.classList.add('hidden');
         }
-        
+
         // 点击X关闭
         discardModalClose.addEventListener('click', closeDiscardModal);
-        
+
         // 点击弹窗外部关闭
         discardModal.addEventListener('click', (e) => {
             if (e.target === discardModal) {
                 closeDiscardModal();
             }
         });
-        
+
         // ESC键关闭
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && !discardModal.classList.contains('hidden')) {
@@ -3678,7 +3771,7 @@ function loadDiscardPile() {
         if (response.status === 'success') {
             displayDiscardPile(response.discard_pile);
         } else {
-            showMessage(`加载弃牌堆失败: ${response.message}`, { type: 'error' });
+            showMessage(`加载弃牌堆失败: ${response.message}`, {type: 'error'});
         }
     });
 }
@@ -3687,16 +3780,16 @@ function loadDiscardPile() {
 function displayDiscardPile(discardPile) {
     const cardsContainer = document.getElementById('discard-pile-cards');
     if (!cardsContainer) return;
-    
+
     // 清空容器
     cardsContainer.innerHTML = '';
-    
+
     // 如果弃牌堆为空
     if (!discardPile || discardPile.length === 0) {
         cardsContainer.innerHTML = '<p style="text-align: center; color: var(--muted);">弃牌堆为空</p>';
         return;
     }
-    
+
     // 显示弃牌堆卡牌
     discardPile.forEach((card, index) => {
         const cardElement = document.createElement('div');
@@ -3713,17 +3806,6 @@ function displayDiscardPile(discardPile) {
 // 在游戏初始化时设置弃牌堆UI
 setupDiscardPileUI();
 
-// 初始化魔法卡牌堆
-function initMagicDeck() {
-    // 复制魔法卡数组并洗牌
-    gameState.deck = [...window.magicCards];
-    shuffleDeck(gameState.deck);
-    // 初始抽5张牌
-    for (let i = 0; i < 5; i++) {
-        drawCard();
-    }
-}
-
 // 添加卡牌悬停提示功能
 function initCardTooltip() {
     const tooltip = document.createElement('div');
@@ -3738,7 +3820,6 @@ function initCardTooltip() {
     tooltip.style.display = 'none';
     document.body.appendChild(tooltip);
 }
-
 
 
 // 创建魔法卡UI元素
@@ -3788,7 +3869,7 @@ function init() {
         }
         // 在 socket 连接后尝试加入房间
         if (gameState.socket.connected) {
-            gameState.socket.emit('join_room', { room_id: autoRoom, player_name: gameState.playerName }, (resp) => {
+            gameState.socket.emit('join_room', {room_id: autoRoom, player_name: gameState.playerName}, (resp) => {
                 if (resp && resp.status === 'success') {
                     gameState.roomId = autoRoom;
                     switchScreen(shipPlacementScreen);
@@ -3797,7 +3878,7 @@ function init() {
         } else {
             // 等待连接建立后加入
             const onceConnect = () => {
-                gameState.socket.emit('join_room', { room_id: autoRoom, player_name: gameState.playerName }, (resp) => {
+                gameState.socket.emit('join_room', {room_id: autoRoom, player_name: gameState.playerName}, (resp) => {
                     if (resp && resp.status === 'success') {
                         gameState.roomId = autoRoom;
                         switchScreen(shipPlacementScreen);
@@ -3825,7 +3906,7 @@ function updateChainUI() {
         const chainItem = document.createElement('div');
         chainItem.className = 'chain-item';
         chainItem.innerHTML = `
-            <div>连锁 ${index+1}: ${item.card.name}</div>
+            <div>连锁 ${index + 1}: ${item.card.name}</div>
             <div>玩家: ${item.playerId === gameState.playerId ? '你' : '对手'}</div>
         `;
         chainElement.appendChild(chainItem);
@@ -3906,30 +3987,30 @@ function updatePhaseUI() {
     const enterBattleBtn = document.getElementById('enter-battle-phase');
     const enterEndBtn = document.getElementById('enter-end-phase');
     const endTurnBtn = document.getElementById('end-turn-btn');
-    
+
     // 显示当前阶段
     phaseElement.textContent = {
         'preparation': '准备阶段',
         'battle': '战斗阶段',
         'end': '结束阶段'
     }[gameState.currentPhase] || gameState.currentPhase;
-    
+
     // 更新按钮文本
     enterBattleBtn.textContent = '进入战斗阶段';
     enterEndBtn.textContent = '进入结束阶段';
     endTurnBtn.textContent = '结束结束阶段';
-    
+
     // 按钮显示逻辑
     const isMyTurn = gameState.currentAttacker === gameState.playerId;
-    
+
     // 隐藏所有按钮
     enterBattleBtn.style.display = 'none';
     enterEndBtn.style.display = 'none';
     endTurnBtn.style.display = 'none';
-    
+
     // 根据当前阶段和回合显示相应按钮
     if (isMyTurn) {
-        switch(gameState.currentPhase) {
+        switch (gameState.currentPhase) {
             case 'preparation':
                 enterBattleBtn.style.display = 'block';
                 break;
@@ -3956,7 +4037,7 @@ function setupPhaseButtons() {
             }
         });
     });
-    
+
     // 进入结束阶段按钮
     document.getElementById('enter-end-phase').addEventListener('click', () => {
         gameState.socket.emit('enter_end_phase', {
@@ -3968,7 +4049,7 @@ function setupPhaseButtons() {
             }
         });
     });
-    
+
     // 结束回合按钮
     document.getElementById('end-turn-btn').addEventListener('click', () => {
         gameState.socket.emit('end_turn', {

@@ -1,7 +1,7 @@
 import sqlite3
-from pathlib import Path
-import uuid
 import time
+import uuid
+from pathlib import Path
 
 DB_PATH = Path(__file__).parent / 'data' / 'battleship.db'
 
@@ -17,29 +17,63 @@ def init_db():
     conn = get_conn()
     c = conn.cursor()
     c.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id TEXT PRIMARY KEY,
-            username TEXT UNIQUE,
-            password_hash TEXT,
-            wins INTEGER DEFAULT 0,
-            losses INTEGER DEFAULT 0,
-            current_streak INTEGER DEFAULT 0,
-            longest_streak INTEGER DEFAULT 0,
-            created_at INTEGER,
-            signature TEXT DEFAULT '',
-            avatar TEXT DEFAULT ''
-        )
-    ''')
+              CREATE TABLE IF NOT EXISTS users
+              (
+                  id
+                  TEXT
+                  PRIMARY
+                  KEY,
+                  username
+                  TEXT
+                  UNIQUE,
+                  password_hash
+                  TEXT,
+                  wins
+                  INTEGER
+                  DEFAULT
+                  0,
+                  losses
+                  INTEGER
+                  DEFAULT
+                  0,
+                  current_streak
+                  INTEGER
+                  DEFAULT
+                  0,
+                  longest_streak
+                  INTEGER
+                  DEFAULT
+                  0,
+                  created_at
+                  INTEGER,
+                  signature
+                  TEXT
+                  DEFAULT
+                  '',
+                  avatar
+                  TEXT
+                  DEFAULT
+                  ''
+              )
+              ''')
     c.execute('''
-        CREATE TABLE IF NOT EXISTS matches (
-            id TEXT PRIMARY KEY,
-            winner_id TEXT,
-            loser_id TEXT,
-            timestamp INTEGER
-        )
-    ''')
+              CREATE TABLE IF NOT EXISTS matches
+              (
+                  id
+                  TEXT
+                  PRIMARY
+                  KEY,
+                  winner_id
+                  TEXT,
+                  loser_id
+                  TEXT,
+                  timestamp
+                  INTEGER
+              )
+              ''')
     conn.commit()
     conn.close()
+
 
 def update_user_signature(uid, signature):
     conn = get_conn()
@@ -52,6 +86,7 @@ def update_user_signature(uid, signature):
     finally:
         conn.close()
 
+
 def update_user_avatar(uid, avatar_path):
     conn = get_conn()
     try:
@@ -63,6 +98,7 @@ def update_user_avatar(uid, avatar_path):
     finally:
         conn.close()
 
+
 def update_user_password(uid, password_hash):
     conn = get_conn()
     try:
@@ -73,6 +109,7 @@ def update_user_password(uid, password_hash):
         return False
     finally:
         conn.close()
+
 
 def get_user_profile(uid):
     conn = get_conn()
@@ -144,19 +181,27 @@ def record_match(winner_id, loser_id):
 def get_leaderboard(limit=10):
     conn = get_conn()
     c = conn.cursor()
-    rows = c.execute('SELECT id, username, wins, losses, current_streak, longest_streak, avatar FROM users ORDER BY wins DESC, longest_streak DESC LIMIT ?', (limit,)).fetchall()
+    rows = c.execute(
+        'SELECT id, username, wins, losses, current_streak, longest_streak, avatar FROM users ORDER BY wins DESC, longest_streak DESC LIMIT ?',
+        (limit,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
 def get_user_stats_by_username(username):
     conn = get_conn()
     c = conn.cursor()
-    row = c.execute('SELECT id, username, wins, losses, current_streak, longest_streak, avatar FROM users WHERE username = ?', (username,)).fetchone()
+    row = c.execute(
+        'SELECT id, username, wins, losses, current_streak, longest_streak, avatar FROM users WHERE username = ?',
+        (username,)).fetchone()
     conn.close()
     return dict(row) if row else None
+
 
 def get_user_stats_by_id(uid):
     conn = get_conn()
     c = conn.cursor()
-    row = c.execute('SELECT id, username, wins, losses, current_streak, longest_streak, avatar FROM users WHERE id = ?', (uid,)).fetchone()
+    row = c.execute('SELECT id, username, wins, losses, current_streak, longest_streak, avatar FROM users WHERE id = ?',
+                    (uid,)).fetchone()
     conn.close()
     return dict(row) if row else None

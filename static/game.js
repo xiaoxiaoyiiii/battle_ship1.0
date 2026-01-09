@@ -1584,12 +1584,15 @@ function setupSocketListeners() {
         // 重置游戏棋盘，进入重新摆放阶段
         showMessage(data.message, { type: 'warning' });
         
-        // 重置游戏状态
+        // 完全重置游戏状态，确保棋盘干净
         gameState.ships = [];
         gameState.attacks = [];
+        gameState.myAttacks = [];
+        gameState.opponentAttacks = [];
         gameState.remainingShips = 0;
         gameState.opponentRemainingShips = 0;
         gameState.maxShips = data.new_max_ships;
+        gameState.placedShips = 0;
         
         // 隐藏所有其他屏幕
         startScreen.classList.remove('active');

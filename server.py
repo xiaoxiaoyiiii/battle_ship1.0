@@ -67,8 +67,6 @@ magic_cards = [
     {"name": "死者苏生", "speed": 3, "type": "普通",
      "description": "复活自己的一艘船并将他摆放在对方没有打过的格子上。"},
     {"name": "疗愈", "speed": 3, "type": "普通", "description": "选定自己至多两艘被击杀的船并将他们在原地复活。"},
-    {"name": "军备竞赛", "speed": 1, "type": "普通",
-     "description": "将对方的战舰数变得和自己一样。如果对方多于自己，则要对方主动挑选牺牲多出去的船。如果对方少于自己，则对方只可在没有被打过的格子中放置少了的船。"},
     {"name": "桃园结义", "speed": 1, "type": "普通",
      "description": "从牌堆中抽取n张牌，n为自己的战舰数。在这一堆牌中优先为自己挑选一张，然后再在剩余的里面挑选一张给对方。对方不可见被抽出来的所有n张牌。如果n为1，则优先给自己被摸出来的那张牌。"},
     {"name": "无中生有", "speed": 1, "type": "普通",
@@ -101,7 +99,8 @@ magic_cards = [
     {"name": "神机妙算", "speed": 3, "type": "普通",
      "description": "只可在对方的准备阶段以及自己的所有阶段使用。宣言一个数目x，如果对方的结束阶段结束之后自己的船数减少了x，那么那些原本会减少的船不会减少并在原位置或者对方没有打过的位置重新部署。"},
     {"name": "灵气复苏", "speed": 1, "type": "普通",
-     "description": "调整双方的船数都变为x，x为不大于双方最大船数的任意非零整数。调整时只可以在自己原本有战舰的地方进行调整。"}
+     "description": "调整双方的船数都变为x，x为不大于双方最大船数的任意非零整数。调整时只可以在自己原本有战舰的地方进行调整。"},
+    {"name": "败者食尘", "speed": 1, "type": "普通", "description": "立即重启正常对局但保留双方的手牌。败者食尘生效的大回合内双方的攻击次数都为0。"}
 ]
 
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'),
@@ -665,7 +664,7 @@ def handle_place_ships(data):
         # 重置猜拳选择，确保新的猜拳阶段从空开始
         room.rps_choices = {}
         
-        # 检查是否是灵气复苏后的重新摆放
+        # 检查是否是灵气复苏或两极反转后的重新摆放
         if hasattr(room, 'lingqi_resurgence_applied') and room.lingqi_resurgence_applied:
             # 发送双方船数已调整的广播
             emit('game_message', {
@@ -704,8 +703,13 @@ def handle_rps_choice(data):
         loser = room.attack_order[1]  # 后手
         room.current_attacker = winner
 
-        # 初始化攻击次数
-        room.attacks_remaining = room.players[winner]['remaining_ships']
+        # 初始化攻击次数 - 如果是败者食尘生效的回合，攻击次数为0
+        if hasattr(room, 'polar_reversal_applied') and room.polar_reversal_applied:
+            room.attacks_remaining = 0
+            # 清除败者食尘标记
+            room.polar_reversal_applied = False
+        else:
+            room.attacks_remaining = room.players[winner]['remaining_ships']
 
         # 猜拳后抽卡逻辑：先手1张，后手2张
         # 先手抽1张
@@ -1888,7 +1892,7 @@ def apply_magic_effect(room, caster_id, card, target_data):
             result['message'] = '本回合攻击次数翻倍'
 
         elif card['name'] == '灵气复苏':
-            # 计算双方最大船数
+            # 计算双方最大船数，已修复
             max_ships = max(len(caster['ships']), len(opponent['ships']))
             if max_ships < 1:
                 max_ships = 1
@@ -1910,37 +1914,61 @@ def apply_magic_effect(room, caster_id, card, target_data):
             emit('lingqi_waiting', {
                 'message': '对方正在结算灵气复苏效果 请等待'
             }, to=opponent_id)
+        
+        elif card['name'] == '败者食尘':
+            # 记录败者食尘打出前双方的船数
+            original_caster_ships = len(caster['ships'])
+            original_opponent_ships = len(opponent['ships'])
+            
+            # 交换双方的船数限制：将双方的max_ships设置为对方的原始船数
+            caster['max_ships'] = original_opponent_ships
+            opponent['max_ships'] = original_caster_ships
+            
+            # 重置房间状态，进入重新摆放阶段
+            room.state = 'placing_ships'
+            room.attack_order = []
+            room.current_attacker = None
+            room.attacks_remaining = 0
+            
+            # 完全初始化棋盘，使其像刚开局那样干净
+            for p_id in room.players:
+                player = room.players[p_id]
+                # 重置战舰数据
+                player['ships'] = []
+                player['remaining_ships'] = 0
+                # 清除攻击记录
+                player['attacks'] = []
+                # 清除被攻击记录
+                if 'opponent_attacks' in player:
+                    player['opponent_attacks'] = []
+                # 清除其他相关状态
+                player['needs_reset'] = True
+                player['revealed_positions'] = []
+                # 清除所有与棋盘相关的状态
+                if 'hits' in player:
+                    player['hits'] = []
+                if 'misses' in player:
+                    player['misses'] = []
+                if 'ship_positions' in player:
+                    player['ship_positions'] = []
+            
+            # 标记这是败者食尘效果，用于后续处理
+            room.lingqi_resurgence_applied = True
+            # 添加败者食尘标记，用于设置攻击次数为0
+            room.polar_reversal_applied = True
+            
+            # 通知双方进入重新摆放阶段，并发送新的船数限制
+            for p_id in room.players:
+                player = room.players[p_id]
+                emit('reset_gameboard', {
+                    'new_max_ships': player['max_ships'],
+                    'message': '败者食尘生效，立即重启正常对局但保留双方的手牌'
+                }, to=p_id)
+            
+            # 设置结果
+            result['message'] = '败者食尘生效，立即重启正常对局但保留双方的手牌'
 
-        elif card['name'] == '军备竞赛':
-            # 将对方的战舰数变得和自己一样
-            caster_ship_count = len(caster['ships'])
-            opponent_ship_count = len(opponent['ships'])
-
-            if opponent_ship_count > caster_ship_count:
-                # 对方多于自己，对方选择牺牲多出去的船
-                extra_ships = opponent_ship_count - caster_ship_count
-                # 直接移除多余的船（简化实现，实际应让对方选择）
-                while len(opponent['ships']) > caster_ship_count:
-                    opponent['ships'].pop()
-                    opponent['remaining_ships'] -= 1
-                result['message'] = f'对方船数过多，已移除{extra_ships}艘船'
-            elif opponent_ship_count < caster_ship_count:
-                # 对方少于自己，对方在未被打过的格子中放置少了的船
-                missing_ships = caster_ship_count - opponent_ship_count
-                added_ships = 0
-                while len(opponent['ships']) < caster_ship_count:
-                    pos = find_safe_position(room, opponent_id)
-                    if pos:
-                        opponent['ships'].append({'id': f'magic_{get_uuid()}', 'positions': [pos], 'hits': []})
-                        opponent['remaining_ships'] += 1
-                        added_ships += 1
-                    else:
-                        break
-                result['message'] = f'对方船数不足，已添加{added_ships}艘船'
-            else:
-                result['message'] = '双方船数相同，无需调整'
-
-        # ==== 速阶2 魔法卡 ====
+        # ==== 速阶2 魔法卡 ===
         elif card['name'] == '溅射':
             # 对击中格子的上下左右四格造成伤害
             if not room.last_attack or room.last_attack['attacker'] != caster_id:

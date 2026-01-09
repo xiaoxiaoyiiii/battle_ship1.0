@@ -747,9 +747,8 @@ def determine_rps_winner(room):
         'scissors': 'paper'
     }
 
-    # 修复前逻辑：if win_conditions[c1] == c2:
-    # 修复后逻辑：判断c2是否克制c1
-    if win_conditions[c2] == c1:
+    # 正确逻辑：判断c1是否克制c2
+    if win_conditions[c1] == c2:
         winner, loser = p2, p1
     else:
         winner, loser = p1, p2

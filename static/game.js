@@ -1266,6 +1266,38 @@ function setupSocketListeners() {
         }
     });
 
+    // 无暇圣心激活监听
+    socket.on('holy_heart_activated', (data) => {
+        // 显示无暇圣心倒计时
+        const countdownElement = document.getElementById('holy-heart-countdown');
+        const remainingElement = document.getElementById('holy-heart-remaining');
+
+        if (countdownElement && remainingElement) {
+            remainingElement.textContent = data.remaining_turns;
+            countdownElement.classList.remove('hidden');
+        }
+    });
+
+    // 无暇圣心回合更新监听
+    socket.on('holy_heart_turn_updated', (data) => {
+        // 更新无暇圣心剩余回合
+        const remainingElement = document.getElementById('holy-heart-remaining');
+        if (remainingElement) {
+            remainingElement.textContent = data.remaining_turns;
+        }
+    });
+
+    // 无暇圣心中断监听
+    socket.on('holy_heart_interrupted', (data) => {
+        // 隐藏无暇圣心倒计时
+        const countdownElement = document.getElementById('holy-heart-countdown');
+        if (countdownElement) {
+            countdownElement.classList.add('hidden');
+        }
+        // 显示中断原因
+        showMessage(data.reason);
+    });
+
     // 添加场地魔法更新监听
     socket.on('field_magic_updated', function (data) {
         console.log('场地魔法更新:', data);

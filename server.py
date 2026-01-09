@@ -874,6 +874,15 @@ def handle_attack(data):
                     'count': defender_remaining_before - defender_remaining_after
                 }
 
+                # 检查无暇圣心效果：如果有战舰被击沉，中断效果
+                if 'holy_heart' in room.game_effects:
+                    # 移除无暇圣心效果
+                    del room.game_effects['holy_heart']
+                    # 通知客户端无暇圣心效果被中断
+                    emit('holy_heart_interrupted', {
+                        'reason': '有战舰被击沉，无暇圣心效果中断'
+                    }, room=room_id)
+
                 # 检查饮血效果
                 if room.players[attacker_id].get('effect_flags', {}).get('vampire'):
                     room.draw_card(attacker_id)
@@ -930,6 +939,15 @@ def handle_attack(data):
                             'player': defender_id,
                             'count': defender_remaining_before - defender_remaining_after
                         }
+
+                        # 检查无暇圣心效果：如果有战舰被击沉，中断效果
+                        if 'holy_heart' in room.game_effects:
+                            # 移除无暇圣心效果
+                            del room.game_effects['holy_heart']
+                            # 通知客户端无暇圣心效果被中断
+                            emit('holy_heart_interrupted', {
+                                'reason': '有战舰被击沉，无暇圣心效果中断'
+                            }, room=room_id)
 
                         # 检查饮血效果
                         if room.players[attacker_id].get('effect_flags', {}).get('vampire'):
@@ -1137,6 +1155,40 @@ def end_turn(data):
 
                 # 更新game_effects中的剩余回合
                 room.game_effects['reinforcement_check'] = check
+            
+            # 更新并检查无暇圣心效果
+            if 'holy_heart' in room.game_effects:
+                check = room.game_effects['holy_heart']
+                # 只有当双方都未造成伤害时才更新
+                if check['no_damage']:
+                    # 更新剩余回合计数
+                    check['remaining_turns'] -= 1
+                    remaining_turns = check['remaining_turns']
+                    
+                    # 通知客户端剩余回合更新
+                    emit('holy_heart_turn_updated', {
+                        'remaining_turns': remaining_turns
+                    }, room=room_id)
+                    
+                    # 当剩余回合归0时，执行无暇圣心结算
+                    if remaining_turns <= 0:
+                        # 执行无暇圣心效果：施法者获胜
+                        winner = check['caster']
+                        
+                        # 直接结束游戏
+                        room.state = 'game_over'
+                        room.winner = winner
+                        
+                        # 广播游戏结束
+                        emit('game_state', {
+                            'state': 'game_over',
+                            'winner': winner,
+                            'reason': '无暇圣心笼罩大地 愿这方世界不再有战争'
+                        }, room=room_id)
+                        return {'status': 'success', 'game_over': True, 'winner': winner}
+                    
+                    # 更新game_effects中的剩余回合
+                    room.game_effects['holy_heart'] = check
 
             room.state = 'rock_paper_scissors'
             room.rps_choices = {}
@@ -1735,7 +1787,7 @@ def apply_magic_effect(room, caster_id, card, target_data):
             result['message'] = '抽了2张牌，本回合双方无法获得魔法卡'
 
         elif card['name'] == '极限增援':
-            # 两个大回合后，船少的一方获胜
+            # 两个大回合后，船少的一方获胜，已修复
             total_turns = 2
             room.game_effects['reinforcement_check'] = {
                 'turn': room.round + total_turns,
@@ -1750,12 +1802,18 @@ def apply_magic_effect(room, caster_id, card, target_data):
 
         elif card['name'] == '无暇圣心':
             # 两个大回合后如果双方都没造成伤害，施法者获胜
+            total_turns = 2
             room.game_effects['holy_heart'] = {
-                'turn': room.round + 2,
+                'turn': room.round + total_turns,
                 'caster': caster_id,
-                'damage_check': True
+                'remaining_turns': total_turns,  # 剩余回合计数
+                'no_damage': True  # 初始状态：双方都未造成伤害
             }
-            result['message'] = '两个大回合后若双方都未造成伤害则你获胜'
+            # 通知双方客户端，无暇圣心已激活并显示剩余回合
+            emit('holy_heart_activated', {
+                'remaining_turns': total_turns
+            }, room=room_id)
+            result['message'] = '无暇圣心已激活，剩余2回合后结算'
 
         elif card['name'] == '火力全开':
             # 本回合攻击次数翻倍

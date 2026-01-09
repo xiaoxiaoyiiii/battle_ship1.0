@@ -1044,6 +1044,7 @@ def enter_battle_phase(data):
         room.current_phase = 'battle'
         if room.field_magic=="伊甸园":
             room.attacks_remaining = 6 - room.players[player_id]['remaining_ships']
+
         # 检查是否有攻击次数翻倍效果
         if room.players[player_id].get('effect_flags', {}).get('double_attacks'):
             # 翻倍当前攻击次数
@@ -1055,7 +1056,8 @@ def enter_battle_phase(data):
             }, room=room_id)
             # 移除翻倍效果，因为它只持续一个大回合
             del room.players[player_id]['effect_flags']['double_attacks']
-        
+        if room.field_magic=="教皇旨意":
+            room.attacks_remaining = 0
         # 广播阶段更新
         emit('phase_updated', {
             'current_phase': room.current_phase,

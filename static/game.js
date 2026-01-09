@@ -3109,6 +3109,12 @@ function playMagicCard(index) {
         alert(`无法使用${card.name}：当前阶段${phaseName}不允许使用速阶${card.speed}的魔法卡`);
         return;
     }
+    if (gameState.fieldMagic==="禁忌果实"){
+        if(!(card.name==="失灵！"||card.type==="场地")){
+            alert(`无法使用${card.name}：场地魔法“禁忌果实”生效，非场地及失灵类魔法卡无法使用`);
+            return;
+        }
+    }
 
     // 检查是否需要目标选择
     if (needsTargetSelection(card.name)) {

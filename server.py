@@ -221,7 +221,7 @@ class GameRoom:
         self.round = 1
         self.winner = None
         # 魔法卡相关状态
-        self.field_magics = {}  # 场地魔法 {player_id: card}
+        self.field_magic = ""  # 场地魔法 card
         self.magic_history = []  # 魔法卡使用历史
         self.game_effects = {}  # 游戏效果跟踪
         self.current_phase = 'preparation'  # 当前阶段
@@ -1042,11 +1042,12 @@ def enter_battle_phase(data):
     if room.current_attacker == player_id and room.current_phase == 'preparation':
         # 切换到战斗阶段
         room.current_phase = 'battle'
-        
+        if room.field_magic=="伊甸园":
+            room.attacks_remaining = 6 - room.players[player_id]['remaining_ships']
         # 检查是否有攻击次数翻倍效果
         if room.players[player_id].get('effect_flags', {}).get('double_attacks'):
             # 翻倍当前攻击次数
-            room.attacks_remaining *= 2
+            room.attacks_remaining = room.players[player_id]['remaining_ships'] * 2
             # 广播攻击次数更新
             emit('attacks_updated', {
                 'current_attacker': room.current_attacker,
@@ -1281,21 +1282,8 @@ def handle_use_magic_card(data):
 
     # 处理场地魔法 - 全场只能有一张场地魔法卡生效
     if card['type'] == '场地':
-        # 移除所有玩家的场地魔法卡（全场只能有一张）
-        for existing_player_id in list(room.field_magics.keys()):
-            old_card = room.field_magics[existing_player_id]
-            # 将旧的场地魔法卡加入弃牌堆
-            room.magic_discard.append(old_card)
-            # 广播场地魔法移除
-            emit('field_magic_updated', {
-                'player_id': existing_player_id,
-                'card': None
-            }, room=room_id)
-            # 从场地魔法字典中移除
-            del room.field_magics[existing_player_id]
-
         # 设置新的场地魔法卡
-        room.field_magics[player_id] = card
+        room.field_magic = card
         # 广播新的场地魔法卡
         emit('field_magic_updated', {
             'player_id': player_id,
@@ -1535,16 +1523,14 @@ def handle_remove_field_magic(data):
 
     if room_id in rooms and player_id in rooms[room_id].players:
         room = rooms[room_id]
-        if player_id in room.field_magics:
-            # 将场地魔法加入弃牌堆
-            room.players[player_id]['magic_discard'].append(room.field_magics[player_id])
-            # 移除场地魔法
-            del room.field_magics[player_id]
-            # 广播场地魔法更新
-            emit('field_magic_updated', {
-                'player_id': player_id,
-                'card': None
-            }, room=room_id)
+        # 将场地魔法加入弃牌堆
+        for player_id in room.players:
+            room.players[player_id]['magic_discard'].append(room.field_magic)
+        # 广播场地魔法更新
+        emit('field_magic_updated', {
+            'player_id': player_id,
+            'card': None
+        }, room=room_id)
 
     return {'status': 'success'}
 
@@ -2631,9 +2617,9 @@ def apply_magic_effect(room, caster_id, card, target_data):
                 negated_count += 1
 
             # 无效化场地魔法
-            if opponent_id in room.field_magics:
-                del room.field_magics[opponent_id]
+            if room.field_magic:
                 negated_count += 1
+            room.field_magic=""
 
             result['message'] = f'成功无效化{negated_count}个效果'
 
@@ -2671,7 +2657,7 @@ def apply_magic_effect(room, caster_id, card, target_data):
             # 场地魔法处理 - 全场只能有一张场地魔法卡生效
             # 移除所有玩家的场地魔法卡
             for existing_player_id in list(room.field_magics.keys()):
-                old_card = room.field_magics[existing_player_id]
+                old_card = room.field_magic
                 # 将旧的场地魔法卡加入弃牌堆
                 room.players[existing_player_id]['magic_discard'].append(old_card)
                 # 广播场地魔法移除
@@ -2680,10 +2666,10 @@ def apply_magic_effect(room, caster_id, card, target_data):
                     'card': None
                 }, room=room.id)
                 # 从场地魔法字典中移除
-                del room.field_magics[existing_player_id]
+                room.field_magic=""
 
             # 设置新的场地魔法卡
-            room.field_magics[caster_id] = card
+            room.field_magic = card
 
             if card['name'] == '恶魔契约':
                 result['message'] = '恶魔契约生效，双方船数增减绑定'

@@ -1797,7 +1797,7 @@ def apply_magic_effect(room, caster_id, card, target_data):
             # 通知双方客户端，极限增援已激活并显示剩余回合
             emit('reinforcement_activated', {
                 'remaining_turns': total_turns
-            }, room=room_id)
+            }, room=room.id)
             result['message'] = '极限增援已激活，剩余2回合后结算'
 
         elif card['name'] == '无暇圣心':
@@ -1812,7 +1812,7 @@ def apply_magic_effect(room, caster_id, card, target_data):
             # 通知双方客户端，无暇圣心已激活并显示剩余回合
             emit('holy_heart_activated', {
                 'remaining_turns': total_turns
-            }, room=room_id)
+            }, room=room.id)
             result['message'] = '无暇圣心已激活，剩余2回合后结算'
 
         elif card['name'] == '火力全开':

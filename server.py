@@ -183,7 +183,7 @@ def change_password():
     new_password = request.form.get('new_password', '')
     if not old_password or not new_password:
         return jsonify({'success': False, 'msg': '请填写原密码和新密码'}), 400
-    user = db.get_user_by_id(uid)
+    user = db.get_user(uid=uid)
     if not user or not db or not check_password_hash(user['password_hash'], old_password):
         return jsonify({'success': False, 'msg': '原密码错误'}), 403
     if len(new_password) < 6:
@@ -198,12 +198,12 @@ def user_stats_view():
     """查询个人战绩，支持通过 username 查询或当前登录用户。"""
     username = request.args.get('username')
     if username:
-        stats = db.get_user_stats_by_username(username)
+        stats = db.get_user(username=username)
     else:
         uid = session.get('user_id')
         if not uid:
             return jsonify({'error': '未登录'}), 401
-        stats = db.get_user_stats_by_id(uid)
+        stats = db.get_user(uid=uid)
     if not stats:
         return jsonify({'error': '用户不存在'}), 404
     return jsonify({'stats': stats})
@@ -235,6 +235,7 @@ class GameRoom:
         self.chain = []  # 连锁栈
         self.chain_waiting = False  # 是否正在等待玩家回应连锁
         self.chain_timer = None  # 连锁回应计时器
+        self.cursor=""
 
     def init_player_magic(self, player_id, magic_cards):
         """初始化玩家魔法卡相关状态"""
@@ -344,7 +345,7 @@ def register():
         if not username or not password:
             flash('用户名和密码不能为空')
             return redirect(url_for('register'))
-        if db.get_user_by_username(username):
+        if db.get_user(username=username):
             flash('用户名已存在')
             return redirect(url_for('register'))
         pw_hash = generate_password_hash(password)
@@ -366,7 +367,7 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
-        user = db.get_user_by_username(username)
+        user = db.get_user(username=username)
         if not user or not check_password_hash(user['password_hash'], password):
             flash('用户名或密码错误')
             return redirect(url_for('login'))
@@ -397,6 +398,11 @@ def api_leaderboard():
     rows = db.get_leaderboard(100)
     return jsonify(rows)
 
+@app.route('/api/login',methods=['POST'])
+def api_login():
+    data=request.get_json()
+    token = db.get_token_by_password(data['username'], generate_password_hash(data['password']))
+    return token
 
 @app.route('/api/online_count')
 def api_online_count():
@@ -503,16 +509,17 @@ def handle_chat_message(data):
     # 仅房间内广播
     print(f"Chat from {username} in room {room_id}: {msg}")
     if room_id and room_id in rooms:
-        print(rooms, rooms[room_id].players)
+        for pid in rooms[room_id].players:
+            is_me = (rooms[room_id].players[pid]["name"] == username)
+            emit('chat_message', {
+                'username': username,
+                'message': msg,
+                'isMe': is_me
+            }, room=pid)
         # 标记自己和对手
-        emit('chat_message', {
-            'username': username,
-            'message': msg,
-            'isMe': False
-        }, room=room_id)
     else:
         # fallback: 仅回发给自己
-        emit('chat_message', {'username': username, 'message': msg, 'isMe': True}, to=player_id)
+        emit('chat_message', {'username': username, 'message': msg, 'isMe': True}, room=request.sid)
 
 
 @socketio.on('find_match')
@@ -1572,7 +1579,7 @@ def handle_confirm_reinforcement(data):
 
     # 放置战舰
     new_ship = {
-        'id': f'magic_{uuid.uuid4()[:4]}',
+        'id': f'magic_{get_uuid()}',
         'positions': [{'x': x, 'y': y}],
         'hits': []
     }
@@ -2753,7 +2760,7 @@ def apply_magic_effect(room, caster_id, card, target_data):
 
 
 def get_uuid() -> Any:
-    return uuid.uuid4()[:4]
+    return str(uuid.uuid4())[:4]
 
 
 @socketio.on('surrender')

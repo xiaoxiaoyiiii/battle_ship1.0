@@ -1557,5 +1557,61 @@ body.cool-effects-enabled .cell.cool-flash {
 
 #return-to-menu:active {
     transform: translateY(0);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* 状态显示栏样式 */
+.effect-status-bar {
+    background-color: rgba(255, 255, 255, 0.9);
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 10px;
+    margin-bottom: 10px;
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    align-items: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* 主题模式支持 */
+html.theme-dark .effect-status-bar {
+    background-color: rgba(30, 30, 30, 0.9);
+    border-color: #444;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+}
+
+.status-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.9em;
+    padding: 5px 10px;
+    background-color: #f0f0f0;
+    border-radius: 4px;
+    border-left: 3px solid #3366cc;
+}
+
+/* 主题模式支持 */
+html.theme-dark .status-item {
+    background-color: #444;
+    border-left-color: #667eea;
+}
+
+.status-label {
+    font-weight: bold;
+    color: #3366cc;
+}
+
+/* 主题模式支持 */
+html.theme-dark .status-label {
+    color: #667eea;
+}
+
+.status-value {
+    color: #333;
+}
+
+/* 主题模式支持 */
+html.theme-dark .status-value {
+    color: #ddd;
 }

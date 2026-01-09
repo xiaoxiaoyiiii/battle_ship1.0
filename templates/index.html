@@ -307,6 +307,18 @@
                         <h2>第<span id="game-round">1</span>回合</h2>
                         <button id="surrender-btn" class="surrender-btn">投降</button>
                     </div>
+                    <!-- 状态显示栏 - 显示延迟结算效果 -->
+                    <div id="effect-status-bar" class="effect-status-bar">
+                        <div class="status-item hidden" id="reinforcement-status">
+                            <span class="status-label">极限增援:</span>
+                            <span class="status-value">剩余 <span id="reinforcement-status-remaining">0</span> 回合</span>
+                        </div>
+                        <div class="status-item hidden" id="holy-heart-status">
+                            <span class="status-label">无暇圣心:</span>
+                            <span class="status-value">剩余 <span id="holy-heart-status-remaining">0</span> 回合</span>
+                        </div>
+                    </div>
+
                     <!-- 添加场地魔法显示区域 -->
                     <div class="field-magic-area">
                         <div id="current-field-magic" class="field-magic">当前生效的场地魔法: <span

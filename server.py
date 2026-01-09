@@ -1035,6 +1035,19 @@ def enter_battle_phase(data):
     if room.current_attacker == player_id and room.current_phase == 'preparation':
         # 切换到战斗阶段
         room.current_phase = 'battle'
+        
+        # 检查是否有攻击次数翻倍效果
+        if room.players[player_id].get('effect_flags', {}).get('double_attacks'):
+            # 翻倍当前攻击次数
+            room.attacks_remaining *= 2
+            # 广播攻击次数更新
+            emit('attacks_updated', {
+                'current_attacker': room.current_attacker,
+                'attacks_remaining': room.attacks_remaining
+            }, room=room_id)
+            # 移除翻倍效果，因为它只持续一个大回合
+            del room.players[player_id]['effect_flags']['double_attacks']
+        
         # 广播阶段更新
         emit('phase_updated', {
             'current_phase': room.current_phase,
@@ -1794,7 +1807,7 @@ def apply_magic_effect(room, caster_id, card, target_data):
             result['message'] = '极限增援已激活，剩余2回合后结算'
 
         elif card['name'] == '无暇圣心':
-            # 两个大回合后如果双方都没造成伤害，施法者获胜
+            # 两个大回合后如果双方都没造成伤害，施法者获胜，已修复
             total_turns = 2
             room.game_effects['holy_heart'] = {
                 'turn': room.round + total_turns,
@@ -1809,7 +1822,7 @@ def apply_magic_effect(room, caster_id, card, target_data):
             result['message'] = '无暇圣心已激活，剩余2回合后结算'
 
         elif card['name'] == '火力全开':
-            # 本回合攻击次数翻倍
+            # 本回合攻击次数翻倍，已修复
             room.players[caster_id]['effect_flags'] = room.players[caster_id].get('effect_flags', {})
             room.players[caster_id]['effect_flags']['double_attacks'] = True
             result['message'] = '本回合攻击次数翻倍'

@@ -1390,13 +1390,18 @@ function setupSocketListeners() {
             const playerName = result.caster === gameState.playerId ? gameState.playerName : gameState.opponentName;
             addGameLog(`【第${round}回合】<span class="log-player">${playerName}</span>使用了魔法卡<span class="log-card">[${result.card.name}]</span>，发动效果：${result.card.description}！`);
 
-            // 处理需要选择的魔法卡效果（如桃园结义、灵气复苏）
+            // 处理需要选择的魔法卡效果
             if (result.temp_data_id) {
                 if (result.temp_data_id === 'taoyuan_choice') {
                     // 只有当施法者是当前玩家时，才显示桃园结义选择UI
                     if (result.caster === gameState.playerId) {
                         // 桃园结义选择UI
                         showTaoyuanChoice(result);
+                    }
+                } else if (result.temp_data_id === 'divine_decree') {
+                    // 神之宣告选择：仅施法者需要选择
+                    if (result.caster === gameState.playerId) {
+                        showDivineDecreeChoice(result);
                     }
                 } else if (result.temp_data_id === 'lingqi_choice') {
                     // 只有当施法者是当前玩家时，才显示灵气复苏选择UI
@@ -1413,6 +1418,18 @@ function setupSocketListeners() {
         if (gameState.currentPhase === 'battle') {
             enableAttack();
         }
+    });
+
+    // 等待神之宣告选择的通知
+    socket.on('divine_decree_waiting', (data) => {
+        showMessage(data.message || '对方正在选择神之宣告的效果，请稍候');
+    });
+
+    // 神之宣告结算完成通知
+    socket.on('divine_decree_resolved', (data) => {
+        const { caster, choice, message } = data;
+        addGameLog(`<span class="log-player">${caster === gameState.playerId ? gameState.playerName : gameState.opponentName}</span>完成神之宣告选择：效果${choice}。${message}`);
+        showMessage(message || '神之宣告已结算');
     });
 
     socket.on('magic_chain_error', function (data) {
@@ -3604,6 +3621,7 @@ function updateFieldMagicUI(playerId, card) {
         const owner = playerId === gameState.playerId ? '你的' : '对方的';
         fieldElement.innerHTML = `当前生效的场地魔法: <span class="field-magic-card">${owner}${card.name}</span>`;
         fieldElement.className = `field-magic active`;
+        gameState.fieldMagic=card.name;
     } else {
         fieldElement.innerHTML = `当前生效的场地魔法: <span class="no-magic">无</span>`;
         fieldElement.className = 'field-magic';

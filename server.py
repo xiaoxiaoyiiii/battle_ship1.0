@@ -864,7 +864,7 @@ def handle_attack(data):
                     room.winner = attacker_id
                     add_game_log(room, f"{room.players[attacker_id].name or attacker_id} 触发绝处逢生并获胜", 'result', {
                         'winner': attacker_id,
-                        'loser': opponent_id
+                        'loser': defender_id
                     })
                     # 记录战绩（若为已登录用户）
                     try:
@@ -934,7 +934,7 @@ def handle_attack(data):
                             room.winner = attacker_id
                             add_game_log(room, f"{room.players[attacker_id].name or attacker_id} 触发绝处逢生并获胜", 'result', {
                                 'winner': attacker_id,
-                                'loser': opponent_id
+                                'loser': defender_id
                             })
                             # 记录战绩（若为已登录用户）
                             try:
@@ -1831,7 +1831,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
     elif card.name == '极限增援':
         # 两个大回合后，船少的一方获胜，已修复
         total_turns = 2
-        room.game_effects.reinforcement_check = {
+        room.game_effects["reinforcement_check"] = {
             'turn': room.round + total_turns,
             'caster': caster_id,
             'remaining_turns': total_turns  # 添加剩余回合计数
@@ -1893,8 +1893,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
     
     elif card.name == '败者食尘':
         # 记录败者食尘打出前双方的船数，已修复
-        original_caster_ships = len(caster['ships'])
-        original_opponent_ships = len(opponent['ships'])
+        original_caster_ships = len(caster.ships)
+        original_opponent_ships = len(opponent.ships)
         
         # 交换双方的船数限制：将双方的max_ships设置为对方的原始船数
         caster.max_ships = original_opponent_ships
@@ -1915,7 +1915,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             # 清除攻击记录
             player.attacks = []
             # 清除被攻击记录
-            if 'opponent_attacks' in player:
+            if hasattr(player, 'opponent_attacks'):
                 player.opponent_attacks = []
             # 清除其他相关状态
             player.needs_reset = True

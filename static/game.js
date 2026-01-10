@@ -2926,7 +2926,7 @@ function showMagicTargetSelection(card, index) {
         return;
     }
 
-    // CONTINUOUS selection (n contiguous cells) e.g., 硫磺火焰 — 拖拽选择并可旋转
+    // CONTINUOUS selection (自由连续 n 格) e.g., 硫磺火焰 — 自由连选 6 格
     if (descriptor.type === 'continuous') {
         const L = descriptor.length;
         // ensure styles
@@ -2936,16 +2936,15 @@ function showMagicTargetSelection(card, index) {
             s.textContent = `
                 .magic-selection-overlay { background-color: rgba(255,140,0,0.24); transition: background-color .12s ease, transform .12s ease; }
                 .magic-selection-overlay.vert { background-color: rgba(34,139,34,0.24); }
-                .inline-confirm { background:#222; color:#fff; padding:8px; border-radius:4px; box-shadow:0 4px 14px rgba(0,0,0,.5); }
             `;
             document.head.appendChild(s);
         }
 
         targetPrompt.innerHTML = `
-            <h3>拖拽选择连续 ${L} 个格子（按住并拖动选择方向，松开确认；按 R 键切换方向）</h3>
+            <h3>自由选择连续 ${L} 个格子（点击选中/取消，每个新增格需与已选格相邻）</h3>
             <div style="text-align:center;margin-top:8px;">
+                <button id="confirm-continuous">确认</button>
                 <button id="cancel-target">取消</button>
-                <button id="rotate-mode">方向: 自动 (按 R 切换)</button>
             </div>
         `;
         document.body.appendChild(targetPrompt);
@@ -2955,150 +2954,92 @@ function showMagicTargetSelection(card, index) {
         gameState.selectingOnBoard = true;
 
         const cells = Array.from(boardEl.querySelectorAll('.cell'));
-        let anchor = null; // {x,y}
-        let dragging = false;
-        let forcedDir = null; // 'h' or 'v' or null (auto)
+        const selected = new Set();
 
-        function clearHighlights() {
+        const key = (x, y) => `${x},${y}`;
+        const parseKey = (k) => k.split(',').map(Number);
+
+        function isAdjacentToSelected(x, y) {
+            if (selected.size === 0) return true;
+            for (const k of selected) {
+                const [sx, sy] = parseKey(k);
+                if (Math.abs(sx - x) + Math.abs(sy - y) === 1) return true;
+            }
+            return false;
+        }
+
+        function isConnected(setLike) {
+            if (setLike.size <= 1) return true;
+            const arr = Array.from(setLike);
+            const [startX, startY] = parseKey(arr[0]);
+            const visited = new Set();
+            const stack = [[startX, startY]];
+            const lookup = new Set(arr);
+            while (stack.length) {
+                const [cx, cy] = stack.pop();
+                const ck = key(cx, cy);
+                if (visited.has(ck)) continue;
+                visited.add(ck);
+                const neighbors = [
+                    [cx + 1, cy],
+                    [cx - 1, cy],
+                    [cx, cy + 1],
+                    [cx, cy - 1]
+                ];
+                neighbors.forEach(([nx, ny]) => {
+                    const nk = key(nx, ny);
+                    if (lookup.has(nk) && !visited.has(nk)) stack.push([nx, ny]);
+                });
+            }
+            return visited.size === setLike.size;
+        }
+
+        function refreshHighlights() {
             cells.forEach(c => c.classList.remove('magic-selection-overlay', 'vert'));
+            cells.forEach(c => {
+                const cx = parseInt(c.dataset.x, 10);
+                const cy = parseInt(c.dataset.y, 10);
+                if (selected.has(key(cx, cy))) c.classList.add('magic-selection-overlay');
+            });
         }
 
-        function clamp(v, a, b) {
-            return Math.max(a, Math.min(b, v));
-        }
-
-        function getCellAt(x, y) {
-            return boardEl.querySelector(`.cell[data-x="${x}"][data-y="${y}"]`);
-        }
-
-        function highlightSegmentFromAnchor(anchor, cursorX, cursorY, dirHint) {
-            clearHighlights();
-            let dx = cursorX - anchor.x;
-            let dy = cursorY - anchor.y;
-            let dir = dirHint || (Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v');
-            if (forcedDir) dir = forcedDir;
-
-            if (dir === 'h') {
-                // pick a startX so that segment of length L includes anchor and best fits cursor
-                let mid = Math.min(anchor.x, cursorX);
-                let startX = clamp(Math.min(anchor.x, cursorX), 0, 6 - L);
-                // try to bias to include anchor
-                if (startX + L - 1 < anchor.x) startX = clamp(anchor.x - (L - 1), 0, 6 - L);
-                for (let x = startX; x < startX + L; x++) {
-                    const c = getCellAt(x, anchor.y);
-                    if (c) c.classList.add('magic-selection-overlay');
-                }
-            } else {
-                let startY = clamp(Math.min(anchor.y, cursorY), 0, 6 - L);
-                if (startY + L - 1 < anchor.y) startY = clamp(anchor.y - (L - 1), 0, 6 - L);
-                for (let y = startY; y < startY + L; y++) {
-                    const c = getCellAt(anchor.x, y);
-                    if (c) c.classList.add('magic-selection-overlay', 'vert');
-                }
-            }
-        }
-
-        // rotate UI
-        const rotateBtn = document.getElementById('rotate-mode');
-
-        function updateRotateText() {
-            rotateBtn.textContent = `方向: ${forcedDir === 'h' ? '横向' : forcedDir === 'v' ? '纵向' : '自动 (按 R 切换)'} `;
-        }
-
-        updateRotateText();
-        rotateBtn.addEventListener('click', () => {
-            if (!forcedDir) forcedDir = 'h';
-            else if (forcedDir === 'h') forcedDir = 'v';
-            else forcedDir = null;
-            updateRotateText();
-        });
-
-        // keyboard rotate: R toggles
-        const onKey = (e) => {
-            if (e.key === 'r' || e.key === 'R') {
-                rotateBtn.click();
-            }
-        };
-        window.addEventListener('keydown', onKey);
-
-        // handlers
         cells.forEach(cell => {
             const mx = parseInt(cell.dataset.x, 10);
             const my = parseInt(cell.dataset.y, 10);
-            const onMouseDown = (e) => {
-                e.preventDefault();
+            cell.style.cursor = 'pointer';
+
+            const onClick = (e) => {
                 e.stopPropagation();
-                anchor = { x: mx, y: my };
-                dragging = true;
-            };
-            const onEnter = (e) => {
-                if (dragging && anchor) {
-                    highlightSegmentFromAnchor(anchor, mx, my);
-                } else if (anchor) {
-                    // hover preview using anchor as most recent selected
-                    highlightSegmentFromAnchor(anchor, mx, my);
-                }
-            };
-            const onLeave = () => {
-                if (!dragging) clearHighlights();
-            };
-            const onMouseUp = (e) => {
-                if (!anchor) return;
-                // confirm segment using current hovered cell if available
-                const cursorX = mx;
-                const cursorY = my;
-                // compute final segment cells as in highlight
-                let dx = cursorX - anchor.x;
-                let dy = cursorY - anchor.y;
-                let dir = forcedDir || (Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v');
-                const selected = [];
-                if (dir === 'h') {
-                    let startX = clamp(Math.min(anchor.x, cursorX), 0, 6 - L);
-                    if (startX + L - 1 < anchor.x) startX = clamp(anchor.x - (L - 1), 0, 6 - L);
-                    for (let x = startX; x < startX + L; x++) selected.push({ x, y: anchor.y });
-                } else {
-                    let startY = clamp(Math.min(anchor.y, cursorY), 0, 6 - L);
-                    if (startY + L - 1 < anchor.y) startY = clamp(anchor.y - (L - 1), 0, 6 - L);
-                    for (let y = startY; y < startY + L; y++) selected.push({ x: anchor.x, y });
+                e.preventDefault();
+                const k = key(mx, my);
+                if (selected.has(k)) {
+                    const temp = new Set(selected);
+                    temp.delete(k);
+                    if (temp.size > 0 && !isConnected(temp)) {
+                        alert('移除该格会导致不连续，请选择其他格子');
+                        return;
+                    }
+                    selected.delete(k);
+                    refreshHighlights();
+                    return;
                 }
 
-                if (selected.length === L) {
-                    // show quick confirm
-                    const confirmBox = document.createElement('div');
-                    confirmBox.className = 'inline-confirm';
-                    confirmBox.style.position = 'absolute';
-                    confirmBox.style.left = (e.pageX + 8) + 'px';
-                    confirmBox.style.top = (e.pageY + 8) + 'px';
-                    confirmBox.innerHTML = `
-                        <div>确认选择这 ${L} 个格子?</div>
-                        <button id="confirm-seg">确认</button>
-                        <button id="cancel-seg">取消</button>
-                    `;
-                    document.body.appendChild(confirmBox);
-                    document.getElementById('confirm-seg').addEventListener('click', () => {
-                        confirmMagicTarget({ target_cells: selected });
-                        cleanupAll();
-                        if (document.body.contains(confirmBox)) document.body.removeChild(confirmBox);
-                    });
-                    document.getElementById('cancel-seg').addEventListener('click', () => {
-                        if (document.body.contains(confirmBox)) document.body.removeChild(confirmBox);
-                        cleanupAll();
-                    });
-                } else {
-                    alert('无法放下该连续区域，请重试');
+                if (selected.size >= L) {
+                    alert(`最多只能选择 ${L} 个格子`);
+                    return;
                 }
-
-                dragging = false;
-                anchor = null;
+                if (!isAdjacentToSelected(mx, my)) {
+                    alert('新增格子需与已选格子相邻');
+                    return;
+                }
+                selected.add(k);
+                refreshHighlights();
             };
 
-            cell.addEventListener('mousedown', onMouseDown, true);
-            cell.addEventListener('mouseenter', onEnter);
-            cell.addEventListener('mouseleave', onLeave);
-            cell.addEventListener('mouseup', onMouseUp, true);
+            cell.addEventListener('click', onClick, true);
             (cell._magicHandlers = cell._magicHandlers || []).push({
                 type: 'continuous',
-                handlers: { onMouseDown, onEnter, onLeave, onMouseUp }
+                handlers: { onClick }
             });
         });
 
@@ -3106,22 +3047,35 @@ function showMagicTargetSelection(card, index) {
             cells.forEach(cell => {
                 if (cell._magicHandlers) {
                     cell._magicHandlers.filter(h => h.type === 'continuous').forEach(h => {
-                        const { onMouseDown, onEnter, onLeave, onMouseUp } = h.handlers;
-                        cell.removeEventListener('mousedown', onMouseDown, true);
-                        cell.removeEventListener('mouseenter', onEnter);
-                        cell.removeEventListener('mouseleave', onLeave);
-                        cell.removeEventListener('mouseup', onMouseUp, true);
+                        const { onClick } = h.handlers;
+                        cell.removeEventListener('click', onClick, true);
                     });
                 }
                 cell.classList.remove('magic-selection-overlay', 'vert');
+                cell.style.cursor = '';
             });
-            window.removeEventListener('keydown', onKey);
             if (document.body.contains(targetPrompt)) document.body.removeChild(targetPrompt);
             gameState.selectingOnBoard = false;
             gameState.selectionCleanup = null;
         }
 
         document.getElementById('cancel-target').addEventListener('click', cleanupAll);
+        document.getElementById('confirm-continuous').addEventListener('click', () => {
+            if (selected.size !== L) {
+                alert(`需要选择 ${L} 个格子`);
+                return;
+            }
+            if (!isConnected(selected)) {
+                alert('所选格子必须保持连续相邻');
+                return;
+            }
+            const payload = Array.from(selected).map(k => {
+                const [x, y] = parseKey(k);
+                return { x, y };
+            });
+            confirmMagicTarget({ target_cells: payload });
+            cleanupAll();
+        });
         gameState.selectionCleanup = cleanupAll;
         return;
     }

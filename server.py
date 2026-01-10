@@ -1077,10 +1077,10 @@ def end_turn(data):
 
             # 更新并检查极限增援效果
             if 'reinforcement_check' in room.game_effects:
-                check = room.game_effects.reinforcement_check
+                check = room.game_effects['reinforcement_check']
                 # 更新剩余回合计数
-                check.remaining_turns -= 1
-                remaining_turns = check.remaining_turns
+                check['remaining_turns'] -= 1
+                remaining_turns = check['remaining_turns']
 
                 # 通知客户端剩余回合更新
                 emit('reinforcement_turn_updated', {
@@ -1118,7 +1118,7 @@ def end_turn(data):
                     return {'status': 'success', 'game_over': True, 'winner': winner}
 
                 # 更新game_effects中的剩余回合
-                room.game_effects.reinforcement_check = check
+                room.game_effects['reinforcement_check'] = check
 
             # 更新并检查无暇圣心效果
             if 'holy_heart' in room.game_effects:
@@ -1152,7 +1152,7 @@ def end_turn(data):
                         return {'status': 'success', 'game_over': True, 'winner': winner}
 
                     # 更新game_effects中的剩余回合
-                    room.game_effects.holy_heart = check
+                    room.game_effects['holy_heart'] = check
 
             room.state = 'rock_paper_scissors'
             room.rps_choices = {}
@@ -1204,7 +1204,7 @@ def end_turn(data):
 def handle_use_magic_card(data):
     room_id = data['room_id']
     player_id = data['player_id']
-    card = data['card']
+    card_dict = data['card']
     targets = data.get('targets', [])
 
     if room_id not in rooms or player_id not in rooms[room_id].players:
@@ -1213,6 +1213,17 @@ def handle_use_magic_card(data):
     room = rooms[room_id]
     player = room.players[player_id]
     opponent_id = next(p for p in room.players if p != player_id)
+
+    # 将客户端传来的字典转换为MagicCard对象
+    try:
+        card = MagicCard(
+            name=card_dict.get('name', ''),
+            speed=card_dict.get('speed', ''),
+            type=card_dict.get('type', ''),
+            description=card_dict.get('description', '')
+        )
+    except Exception as e:
+        return {'status': 'error', 'message': f'无效的魔法卡数据: {str(e)}'}
 
     # 检查卡牌是否在玩家手牌中
     if not any(c.name == card.name and c.speed == card.speed for c in player.magic_hand):
@@ -1786,7 +1797,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         elif card.name == '极限增援':
             # 两个大回合后，船少的一方获胜，已修复
             total_turns = 2
-            room.game_effects.reinforcement_check = {
+            room.game_effects['reinforcement_check'] = {
                 'turn': room.round + total_turns,
                 'caster': caster_id,
                 'remaining_turns': total_turns  # 添加剩余回合计数
@@ -1846,10 +1857,10 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                 'message': '对方正在结算灵气复苏效果 请等待'
             }, to=opponent_id)
         
-        elif card['name'] == '败者食尘':
+        elif card.name == '败者食尘':
             # 记录败者食尘打出前双方的船数，已修复
-            original_caster_ships = len(caster['ships'])
-            original_opponent_ships = len(opponent['ships'])
+            original_caster_ships = len(caster.ships)
+            original_opponent_ships = len(opponent.ships)
             
             # 交换双方的船数限制：将双方的max_ships设置为对方的原始船数
             caster.max_ships = original_opponent_ships
@@ -1901,7 +1912,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                 result['message'] = '必须在击中对方后使用'
                 return result
 
-            x, y = room.last_attack.x, room.last_attack.y
+            x, y = room.last_attack['x'], room.last_attack['y']
             splash_positions = [
                 {'x': x, 'y': y - 1},  # 上
                 {'x': x, 'y': y + 1},  # 下

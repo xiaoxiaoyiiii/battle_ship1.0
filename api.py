@@ -80,6 +80,7 @@ def change_password():
 def user_stats_view():
     """查询个人战绩，支持通过 username 查询或当前登录用户。"""
     username = request.args.get('username')
+    limit = int(request.args.get('limit', 20))
     if username:
         stats = db.get_user(username=username)
     else:
@@ -89,7 +90,8 @@ def user_stats_view():
         stats = db.get_user(uid=uid)
     if not stats:
         return jsonify({'error': '用户不存在'}), 404
-    return jsonify({'stats': stats})
+    history = db.get_match_history(stats['id'], limit)
+    return jsonify({'stats': stats, 'history': history})
 @app.route('/')
 def index():
     # 渲染主页面并传递登录信息

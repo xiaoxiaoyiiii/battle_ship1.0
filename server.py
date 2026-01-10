@@ -17,6 +17,20 @@ def emit(event, data, to=None, room: str | None = None):
     return semit(event, json.loads(json_data), to=to, room=room)
 
 
+def add_game_log(room, text: str, event_type: str = 'info', payload: dict | None = None):
+    """Append a lightweight battle log entry for later history queries."""
+    if not hasattr(room, 'game_logs'):
+        room.game_logs = []
+    entry = {
+        'ts': int(time.time()),
+        'type': event_type,
+        'text': text
+    }
+    if payload:
+        entry['detail'] = payload
+    room.game_logs.append(entry)
+
+
 # 在线人数统计
 online_users = set()
 magic_cards: list[MagicCard]
@@ -194,6 +208,7 @@ class GameRoom:
         self.chain_timer = -1  # 连锁回应计时器
         self.effects=[]
         self.last_attack = None  # 记录最后一次攻击的信息
+        self.game_logs: list[dict[str, Any]] = []
 
     def init_player_magic(self, player_id: str, magic_cards):
         """初始化玩家魔法卡相关状态"""
@@ -294,15 +309,24 @@ class GameRoom:
             'defender_remaining_ships': self.players[defender_id].remaining_ships
         }
 
+        add_game_log(self, f"{attacker_id} 攻击 ({target.x},{target.y}) - {'命中' if hit else '未命中'}{'，击沉战舰' if ship_sunk else ''}",
+                     'attack', {
+                         'attacker': attacker_id,
+                         'target': {'x': target.x, 'y': target.y},
+                         'hit': hit,
+                         'ship_sunk': ship_sunk
+                     })
+
         emit('attack_result', attack_result, room=self.id)
 
         # 检查游戏是否结束
         if self.players[defender_id].remaining_ships == 0:
             self.state = 'game_over'
             self.winner = attacker_id
+            add_game_log(self, f"{attacker_id} 获胜，游戏结束", 'result', {'winner': attacker_id, 'loser': defender_id})
             # 记录战绩（若为已登录用户）
             try:
-                db.record_match(attacker_id, defender_id)
+                db.record_match(attacker_id, defender_id, getattr(self, 'game_logs', None))
             except Exception:
                 pass
             emit('game_over', {'winner': attacker_id}, room=self.id)
@@ -838,11 +862,15 @@ def handle_attack(data):
                     # 直接获胜
                     room.state = 'game_over'
                     room.winner = attacker_id
+                    add_game_log(room, f"{room.players[attacker_id].name or attacker_id} 触发绝处逢生并获胜", 'result', {
+                        'winner': attacker_id,
+                        'loser': opponent_id
+                    })
                     # 记录战绩（若为已登录用户）
                     try:
                         # 如果是游客（sid），db.record_match 会忽略不存在的用户
                         opponent_id = next(p for p in room.players if p != attacker_id)
-                        db.record_match(attacker_id, opponent_id)
+                        db.record_match(attacker_id, opponent_id, getattr(room, 'game_logs', None))
                     except Exception:
                         pass
                     emit('game_over', {'winner': attacker_id}, room=room_id)
@@ -904,11 +932,15 @@ def handle_attack(data):
                             # 直接获胜
                             room.state = 'game_over'
                             room.winner = attacker_id
+                            add_game_log(room, f"{room.players[attacker_id].name or attacker_id} 触发绝处逢生并获胜", 'result', {
+                                'winner': attacker_id,
+                                'loser': opponent_id
+                            })
                             # 记录战绩（若为已登录用户）
                             try:
                                 # 如果是游客（sid），db.record_match 会忽略不存在的用户
                                 opponent_id = next(p for p in room.players if p != attacker_id)
-                                db.record_match(attacker_id, opponent_id)
+                                db.record_match(attacker_id, opponent_id, getattr(room, 'game_logs', None))
                             except Exception:
                                 pass
                             emit('game_over', {'winner': attacker_id}, room=room_id)
@@ -948,15 +980,27 @@ def handle_attack(data):
         'defender_remaining_ships': room.players[defender_id].remaining_ships
     }
 
+    add_game_log(room, f"{room.players[attacker_id].name or attacker_id} 攻击 ({target_x},{target_y}) - {'命中' if hit else '未命中'}{'，击沉战舰' if ship_sunk else ''}",
+                 'attack', {
+                     'attacker': attacker_id,
+                     'target': {'x': target_x, 'y': target_y},
+                     'hit': hit,
+                     'ship_sunk': ship_sunk
+                 })
+
     emit('attack_result', attack_result, room=room_id)
 
     # 检查游戏是否结束
     if room.players[defender_id].remaining_ships == 0:
         room.state = 'game_over'
         room.winner = attacker_id
+        add_game_log(room, f"{room.players[attacker_id].name or attacker_id} 获胜，游戏结束", 'result', {
+            'winner': attacker_id,
+            'loser': defender_id
+        })
         # 记录战绩（若为已登录用户）
         try:
-            db.record_match(attacker_id, defender_id)
+            db.record_match(attacker_id, defender_id, getattr(room, 'game_logs', None))
         except Exception:
             pass
         emit('game_over', {'winner': attacker_id}, room=room_id)
@@ -2725,7 +2769,7 @@ def handle_surrender(data):
     room.winner = opponent_id
 
     # 记录战绩（若为已登录用户）
-    db.record_match(opponent_id, player_id)
+    db.record_match(opponent_id, player_id, getattr(room, 'game_logs', None))
     # 向房间发送游戏结束事件
     emit('game_over', {
         'winner': opponent_id,

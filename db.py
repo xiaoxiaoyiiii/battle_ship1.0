@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import time
 import uuid
@@ -60,6 +61,34 @@ def init_db():
               )
               ''')
     conn.commit()
+    c.execute('''
+              CREATE TABLE IF NOT EXISTS match_logs
+              (
+                  match_id TEXT PRIMARY KEY,
+                  logs     TEXT
+              )
+              ''')
+    conn.commit()
+    # 便于直接查询的视图：match_history
+    try:
+        c.execute('''
+            CREATE VIEW IF NOT EXISTS match_history AS
+            SELECT m.id AS match_id,
+                   m.winner_id,
+                   m.loser_id,
+                   m.timestamp,
+                   w.username AS winner_name,
+                   l.username AS loser_name,
+                   ml.logs
+            FROM matches m
+            LEFT JOIN users w ON m.winner_id = w.id
+            LEFT JOIN users l ON m.loser_id = l.id
+            LEFT JOIN match_logs ml ON ml.match_id = m.id
+        ''')
+        conn.commit()
+    except Exception:
+        # 视图创建失败不影响核心功能
+        pass
     conn.close()
 
 
@@ -211,13 +240,22 @@ def create_user(username: str, password_hash: str):
         conn.close()
 
 
-def record_match(winner_id: str, loser_id: str):
+def record_match(winner_id: str, loser_id: str, logs=None):
     conn = get_conn()
     c = conn.cursor()
     mid = str(uuid.uuid4())
     t = int(time.time())
     c.execute('INSERT INTO matches (id, winner_id, loser_id, timestamp) VALUES (?,?,?,?)',
               (mid, winner_id, loser_id, t))
+
+    # 记录局内日志（可选）
+    if logs is not None:
+        try:
+            logs_json = json.dumps(logs, ensure_ascii=False)
+            c.execute('INSERT OR REPLACE INTO match_logs (match_id, logs) VALUES (?, ?)', (mid, logs_json))
+        except Exception:
+            # 忽略日志序列化错误，仍然保留胜负记录
+            pass
 
     # 增加胜负统计与连胜逻辑
     # 先取目前的 streak 值以便更新 longest_streak
@@ -238,6 +276,47 @@ def record_match(winner_id: str, loser_id: str):
     conn.commit()
     conn.close()
     return True
+
+
+def get_match_history(uid: str, limit=20):
+    conn = get_conn()
+    c = conn.cursor()
+    rows = c.execute('''
+        SELECT m.id,
+               m.winner_id,
+               m.loser_id,
+               m.timestamp,
+               w.username AS winner_name,
+               l.username AS loser_name,
+               ml.logs
+        FROM matches m
+        LEFT JOIN users w ON m.winner_id = w.id
+        LEFT JOIN users l ON m.loser_id = l.id
+        LEFT JOIN match_logs ml ON ml.match_id = m.id
+        WHERE m.winner_id = ? OR m.loser_id = ?
+        ORDER BY m.timestamp DESC
+        LIMIT ?
+    ''', (uid, uid, limit)).fetchall()
+    print(rows)
+    conn.close()
+    history = []
+    for r in rows:
+        logs = []
+        if r['logs']:
+            try:
+                logs = json.loads(r['logs'])
+            except Exception:
+                logs = []
+        history.append({
+            'match_id': r['id'],
+            'winner_id': r['winner_id'],
+            'loser_id': r['loser_id'],
+            'timestamp': r['timestamp'],
+            'winner_name': r['winner_name'],
+            'loser_name': r['loser_name'],
+            'logs': logs
+        })
+    return history
 
 
 def get_leaderboard(limit=10):

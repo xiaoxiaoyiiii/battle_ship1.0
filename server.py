@@ -1,16 +1,14 @@
 import json
-import os
 import random
 import time
 import uuid
 from typing import Any, Callable
 
-from flask import Flask, render_template, request, session, redirect, url_for, flash, jsonify
+from flask import render_template, request, session, jsonify
 from flask_socketio import SocketIO, join_room, emit as semit
-from werkzeug.security import generate_password_hash, check_password_hash
-from werkzeug.utils import secure_filename
 
 import db  # local database helpers for users and matches
+from api import app
 from file import read_json
 
 
@@ -22,7 +20,10 @@ def emit(event, data, to=None, room: str | None = None):
 # 在线人数统计
 online_users = set()
 magic_cards: list[MagicCard]
-
+@app.route('/api/online_count')
+def api_online_count():
+    """获取当前在线人数"""
+    return jsonify({'online_count': len(online_users)})
 
 class Position:
     x: int
@@ -103,16 +104,17 @@ class EffectFlags:
     double_attacks: bool = False
 
 class Effect:
+    name:str
     phase:str
     end_phase:str
     priority:int
-    func:Callable[[GameRoom,str],None]
-    to:str
-    def __init__(self,phase,priority,func,to):
+    func:Callable[...,None]
+    def __init__(self,name,phase,end_phase,priority,func):
+        self.name=name
         self.phase = phase
         self.priority = priority
         self.func = func
-        self.to=to
+        self.end_phase=end_phase
 
 
 class Player:
@@ -202,7 +204,15 @@ class GameRoom:
             # 复制并洗牌创建全局共享卡堆
             self.magic_deck = magic_cards.copy()
             random.shuffle(self.magic_deck)
-
+    def pop_effect(self,name:str):
+        for i in self.effects:
+            if i.name == name:
+                self.effects.remove(i)
+    def apply_effect(self,end_phase:str):
+        #效果结束判定
+        for i in self.effects:
+            if i.end_phase == end_phase:
+                self.pop_effect(i.name)
     def draw_card(self, player_id: str):
         """抽卡逻辑，返回抽到的卡牌，使用全局共享卡堆"""
         # 检查是否有禁止抽卡效果
@@ -239,7 +249,7 @@ class GameRoom:
         self.magic_discard.append(card)
         card_index = self.players[player_id].magic_hand.index(card)
         self.players[player_id].magic_hand.pop(card_index)
-    def attack(self,target:Position,attacker_id=""):
+    def attack(self,target:Position,attacker_id="",enable_effects=True):
         # 找到对手
         if not attacker_id:
             attacker_id = self.current_attacker
@@ -256,11 +266,16 @@ class GameRoom:
                 hit = True
                 ship_sunk = True
                 defender_ships[i].hits.append(target)
-
+        self.players[attacker_id].attacks.append(Position(**{
+            "hit":hit,
+            "ship_sunk":ship_sunk,
+            **target
+        }))
         for effect in self.effects:
             if effect.phase== "after_attack":
-                effect.func(self,attacker_id)
-
+                effect.func(self,attacker_id,defender_id)
+        attack=self.players[attacker_id].attacks[-1]
+        self.players[attacker_id].remaining_ships-=attack.hit
         emit('ships_updated', {
             'player_remaining_ships': self.players[attacker_id].remaining_ships,
             'opponent_remaining_ships': self.players[defender_id].remaining_ships
@@ -294,9 +309,7 @@ class GameRoom:
 
 # 添加魔法卡牌数据定义（与客户端 magic_cards.js 保持一致）
 magic_cards = list(map(lambda x: MagicCard(**x), read_json('./static/magic_card.json')))
-app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'),
-            template_folder=os.path.join(os.path.dirname(__file__), 'templates'))
-app.config['SECRET_KEY'] = 'battleship_secret_key'
+
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # 游戏房间数据结构
@@ -312,88 +325,6 @@ lobby_queue = []
 
 # 简单的 lobby 成员列表（用于显示）
 lobby_members = set()
-# 允许上传的头像文件类型
-ALLOWED_AVATAR_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
-AVATAR_UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'static', 'avatars')
-os.makedirs(AVATAR_UPLOAD_FOLDER, exist_ok=True)
-
-
-# 获取用户个性化信息
-@app.route('/api/profile', methods=['GET'])
-def get_profile():
-    uid = session.get('user_id')
-    if not uid:
-        return jsonify({'error': '未登录'}), 401
-    profile = db.get_user_profile(uid)
-    return jsonify({'profile': profile})
-
-
-# 修改签名
-@app.route('/api/profile/signature', methods=['POST'])
-def update_signature():
-    uid = session.get('user_id')
-    if not uid:
-        return jsonify({'error': '未登录'}), 401
-    signature = request.form.get('signature', '')
-    ok = db.update_user_signature(uid, signature)
-    return jsonify({'success': ok})
-
-
-# 上传头像
-@app.route('/api/profile/avatar', methods=['POST'])
-def upload_avatar():
-    uid = session.get('user_id')
-    if not uid:
-        return jsonify({'error': '未登录'}), 401
-    if 'avatar' not in request.files:
-        return jsonify({'error': '未选择文件'}), 400
-    file = request.files['avatar']
-    if file.filename == '' or (
-            not '.' in file.filename and file.filename.rsplit('.', 1)[1].lower() in ALLOWED_AVATAR_EXTENSIONS):
-        return jsonify({'error': '文件类型不支持'}), 400
-    filename = secure_filename(f"{uid}_avatar.{file.filename.rsplit('.', 1)[1].lower()}")
-    save_path = os.path.join(AVATAR_UPLOAD_FOLDER, filename)
-    file.save(save_path)
-    avatar_url = f"/static/avatars/{filename}"
-    ok = db.update_user_avatar(uid, avatar_url)
-    return jsonify({'success': ok, 'avatar': avatar_url})
-
-
-# 更改密码
-@app.route('/api/change_password', methods=['POST'])
-def change_password():
-    """更改当前用户密码"""
-    uid = session.get('user_id')
-    if not uid:
-        return jsonify({'success': False, 'msg': '未登录'}), 401
-    old_password = request.form.get('old_password', '')
-    new_password = request.form.get('new_password', '')
-    if not old_password or not new_password:
-        return jsonify({'success': False, 'msg': '请填写原密码和新密码'}), 400
-    user = db.get_user(uid=uid)
-    if not user or not db or not check_password_hash(user['password_hash'], old_password):
-        return jsonify({'success': False, 'msg': '原密码错误'}), 403
-    if len(new_password) < 6:
-        return jsonify({'success': False, 'msg': '新密码长度至少6位'}), 400
-    new_hash = generate_password_hash(new_password)
-    ok = db.update_user_password(uid, new_hash)
-    return jsonify({'success': ok, 'msg': '密码修改成功' if ok else '修改失败'})
-
-
-@app.route('/user_stats', methods=['GET'])
-def user_stats_view():
-    """查询个人战绩，支持通过 username 查询或当前登录用户。"""
-    username = request.args.get('username')
-    if username:
-        stats = db.get_user(username=username)
-    else:
-        uid = session.get('user_id')
-        if not uid:
-            return jsonify({'error': '未登录'}), 401
-        stats = db.get_user(uid=uid)
-    if not stats:
-        return jsonify({'error': '用户不存在'}), 404
-    return jsonify({'stats': stats})
 
 
 @socketio.on('create_room')
@@ -424,86 +355,6 @@ def test_add_all_magic_cards(data):
 
     return {'status': 'success', 'message': f'已添加 {len(magic_cards)} 张魔法卡到手牌'}
 
-
-@app.route('/')
-def index():
-    # 渲染主页面并传递登录信息
-    return render_template('index.html', username=session.get('username'))
-
-
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
-        if not username or not password:
-            flash('用户名和密码不能为空')
-            return redirect(url_for('register'))
-        if db.get_user(username=username):
-            flash('用户名已存在')
-            return redirect(url_for('register'))
-        pw_hash = generate_password_hash(password)
-        uid = db.create_user(username, pw_hash)
-        if uid:
-            session['user_id'] = uid
-            session['username'] = username
-            flash('注册成功')
-            return redirect(url_for('index'))
-        else:
-            flash('注册失败')
-            return redirect(url_for('register'))
-    # SPA: 返回主页面，前端负责显示注册表单/提示
-    return render_template('index.html', username=session.get('username'))
-
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
-        user = db.get_user(username=username)
-        if not user or not check_password_hash(user['password_hash'], password):
-            flash('用户名或密码错误')
-            return redirect(url_for('login'))
-        session['user_id'] = user['id']
-        session['username'] = user['username']
-        flash('登录成功')
-        return redirect(url_for('index'))
-    # SPA: 返回主页面，前端负责显示登录表单/提示
-    return render_template('index.html', username=session.get('username'))
-
-
-@app.route('/logout')
-def logout():
-    session.pop('user_id', None)
-    session.pop('username', None)
-    flash('已退出登录')
-    return redirect(url_for('index'))
-
-
-@app.route('/leaderboard')
-def leaderboard():
-    # SPA entry point for leaderboard view
-    return render_template('index.html', username=session.get('username'))
-
-
-@app.route('/api/leaderboard')
-def api_leaderboard():
-    rows = db.get_leaderboard(100)
-    return jsonify(rows)
-
-
-@app.route('/api/login', methods=['POST'])
-def api_login():
-    data = request.get_json()
-    token = db.get_token_by_password(data['username'], generate_password_hash(data['password']))
-    return token
-
-
-@app.route('/api/online_count')
-def api_online_count():
-    """获取当前在线人数"""
-    return jsonify({'online_count': len(online_users)})
 
 
 @app.route('/lobby')
@@ -626,34 +477,6 @@ def handle_find_match(data):
     emit('match_queued', {'status': 'success', 'message': '已加入匹配队列'})
 
     # 尝试匹配
-    check_match_queue()
-    return {'status': 'success', 'message': '开始寻找匹配'}
-
-
-@socketio.on('cancel_match')
-def handle_cancel_match(data):
-    """处理玩家取消匹配请求"""
-    player_id = request.sid
-
-    # 从匹配队列中移除玩家
-    if player_id in match_queue[0]:
-        index = match_queue[0].index(player_id)
-        match_queue[0].pop(index)
-        match_queue[1].pop(index)
-
-    emit('match_canceled', {'status': 'success', 'message': '已取消匹配'})
-
-    return {'status': 'success', 'message': '已取消匹配'}
-
-
-def check_match_queue():
-    """检查匹配队列，尝试为等待的玩家创建房间"""
-    # 声明全局变量
-    global match_queue
-
-    # 更新匹配队列，只保留唯一玩家
-    # match_queue = list(set(match_queue))
-
     while len(match_queue[0]) >= 2:
         # 从队列中取出前两个玩家
         player1 = match_queue[0].pop(0)
@@ -714,6 +537,24 @@ def check_match_queue():
                 'player_name': room.players[player_id].name,
                 'opponent_name': room.players[opponent_id].name
             }, to=player_id)
+    return {'status': 'success', 'message': '开始寻找匹配'}
+
+
+@socketio.on('cancel_match')
+def handle_cancel_match(data):
+    """处理玩家取消匹配请求"""
+    player_id = request.sid
+
+    # 从匹配队列中移除玩家
+    if player_id in match_queue[0]:
+        index = match_queue[0].index(player_id)
+        match_queue[0].pop(index)
+        match_queue[1].pop(index)
+
+    emit('match_canceled', {'status': 'success', 'message': '已取消匹配'})
+
+    return {'status': 'success', 'message': '已取消匹配'}
+
 
 
 @socketio.on('place_ships')
@@ -1874,9 +1715,15 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             room.players[caster_id].effect_flags = room.players[caster_id].effect_flags
             room.players[caster_id].effect_flags.forced_kill = 2  # 持续2个攻击阶段
             result['message'] = '接下来两个攻击阶段将造成强制击杀'
-            def func(room:GameRoom,player_id:str):
-                pass
-            room.effects.append(Effect("after_attack",999,func))
+            def func(room:GameRoom,attacker_id:str,defender_id:str):
+                attack=room.players[attacker_id].attacks.pop()
+                attack.hit=True
+                attack.ship_sunk=True
+                room.players[attacker_id].attacks.append(attack)
+                room.players[attacker_id].effect_flags.forced_kill-=1
+                if room.players[attacker_id].effect_flags.forced_kill==0:
+                    room.pop_effect(card.name)
+            room.effects.append(Effect(card.name,"after_attack","after_attack",999,func))
         elif card.name == '桃园结义':
             # 从牌堆抽取n张牌(n为自己的战舰数)，自己选1张，再给对方选1张，已修复
             n = len(caster.ships)
@@ -1950,6 +1797,10 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             room.players[caster_id].effect_flags = room.players[caster_id].effect_flags
             room.players[caster_id].effect_flags.double_attacks = True
             result['message'] = '本回合攻击次数翻倍'
+            def func(room:GameRoom):
+                room.attacks_remaining*=2
+                room.pop_effect(card.name)
+            room.effects.append(Effect(card.name,"before_attack",999,func))
 
         elif card.name == '灵气复苏':
             # 计算双方最大船数，已修复
@@ -2561,7 +2412,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             caster.remaining_ships = 1
 
             # 设置效果标记
-            room.players[caster_id].effect_flags = room.players[caster_id].effect_flags
             room.players[caster_id].effect_flags.last_stand = True
             # 无效化其他魔法卡
             caster.magic_hand = []

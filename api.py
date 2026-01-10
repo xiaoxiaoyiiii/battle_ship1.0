@@ -1,0 +1,169 @@
+# 允许上传的头像文件类型
+import os
+
+from flask import Flask, session, jsonify, request, render_template, redirect, url_for, flash
+from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.utils import secure_filename
+
+import db
+
+ALLOWED_AVATAR_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+AVATAR_UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'static', 'avatars')
+os.makedirs(AVATAR_UPLOAD_FOLDER, exist_ok=True)
+app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'),
+            template_folder=os.path.join(os.path.dirname(__file__), 'templates'))
+app.config['SECRET_KEY'] = 'battleship_secret_key'
+
+# 获取用户个性化信息
+@app.route('/api/profile', methods=['GET'])
+def get_profile():
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'error': '未登录'}), 401
+    profile = db.get_user_profile(uid)
+    return jsonify({'profile': profile})
+
+
+# 修改签名
+@app.route('/api/profile/signature', methods=['POST'])
+def update_signature():
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'error': '未登录'}), 401
+    signature = request.form.get('signature', '')
+    ok = db.update_user_signature(uid, signature)
+    return jsonify({'success': ok})
+
+
+# 上传头像
+@app.route('/api/profile/avatar', methods=['POST'])
+def upload_avatar():
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'error': '未登录'}), 401
+    if 'avatar' not in request.files:
+        return jsonify({'error': '未选择文件'}), 400
+    file = request.files['avatar']
+    if file.filename == '' or (
+            not '.' in file.filename and file.filename.rsplit('.', 1)[1].lower() in ALLOWED_AVATAR_EXTENSIONS):
+        return jsonify({'error': '文件类型不支持'}), 400
+    filename = secure_filename(f"{uid}_avatar.{file.filename.rsplit('.', 1)[1].lower()}")
+    save_path = os.path.join(AVATAR_UPLOAD_FOLDER, filename)
+    file.save(save_path)
+    avatar_url = f"/static/avatars/{filename}"
+    ok = db.update_user_avatar(uid, avatar_url)
+    return jsonify({'success': ok, 'avatar': avatar_url})
+
+
+# 更改密码
+@app.route('/api/change_password', methods=['POST'])
+def change_password():
+    """更改当前用户密码"""
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'success': False, 'msg': '未登录'}), 401
+    old_password = request.form.get('old_password', '')
+    new_password = request.form.get('new_password', '')
+    if not old_password or not new_password:
+        return jsonify({'success': False, 'msg': '请填写原密码和新密码'}), 400
+    user = db.get_user(uid=uid)
+    if not user or not db or not check_password_hash(user['password_hash'], old_password):
+        return jsonify({'success': False, 'msg': '原密码错误'}), 403
+    if len(new_password) < 6:
+        return jsonify({'success': False, 'msg': '新密码长度至少6位'}), 400
+    new_hash = generate_password_hash(new_password)
+    ok = db.update_user_password(uid, new_hash)
+    return jsonify({'success': ok, 'msg': '密码修改成功' if ok else '修改失败'})
+
+
+@app.route('/user_stats', methods=['GET'])
+def user_stats_view():
+    """查询个人战绩，支持通过 username 查询或当前登录用户。"""
+    username = request.args.get('username')
+    if username:
+        stats = db.get_user(username=username)
+    else:
+        uid = session.get('user_id')
+        if not uid:
+            return jsonify({'error': '未登录'}), 401
+        stats = db.get_user(uid=uid)
+    if not stats:
+        return jsonify({'error': '用户不存在'}), 404
+    return jsonify({'stats': stats})
+@app.route('/')
+def index():
+    # 渲染主页面并传递登录信息
+    return render_template('index.html', username=session.get('username'))
+
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        if not username or not password:
+            flash('用户名和密码不能为空')
+            return redirect(url_for('register'))
+        if db.get_user(username=username):
+            flash('用户名已存在')
+            return redirect(url_for('register'))
+        pw_hash = generate_password_hash(password)
+        uid = db.create_user(username, pw_hash)
+        if uid:
+            session['user_id'] = uid
+            session['username'] = username
+            flash('注册成功')
+            return redirect(url_for('index'))
+        else:
+            flash('注册失败')
+            return redirect(url_for('register'))
+    # SPA: 返回主页面，前端负责显示注册表单/提示
+    return render_template('index.html', username=session.get('username'))
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        user = db.get_user(username=username)
+        if not user or not check_password_hash(user['password_hash'], password):
+            flash('用户名或密码错误')
+            return redirect(url_for('login'))
+        session['user_id'] = user['id']
+        session['username'] = user['username']
+        flash('登录成功')
+        return redirect(url_for('index'))
+    # SPA: 返回主页面，前端负责显示登录表单/提示
+    return render_template('index.html', username=session.get('username'))
+
+
+@app.route('/logout')
+def logout():
+    session.pop('user_id', None)
+    session.pop('username', None)
+    flash('已退出登录')
+    return redirect(url_for('index'))
+
+
+@app.route('/leaderboard')
+def leaderboard():
+    # SPA entry point for leaderboard view
+    return render_template('index.html', username=session.get('username'))
+
+
+@app.route('/api/leaderboard')
+def api_leaderboard():
+    rows = db.get_leaderboard(100)
+    return jsonify(rows)
+
+
+@app.route('/api/login', methods=['POST'])
+def api_login():
+    data = request.get_json()
+    token = db.get_token_by_password(data['username'], generate_password_hash(data['password']))
+    return token
+
+
+
+

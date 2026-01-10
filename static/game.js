@@ -717,6 +717,7 @@ window.gameState = {
     isMyTurn: false,
     myAttacks: [],
     opponentAttacks: [],
+    lastAttack: null,
     deck: [],               // 牌堆
     hand: [],               // 手牌
     discardPile: [],        // 弃牌堆
@@ -2519,6 +2520,14 @@ function updateAttackDisplay(result) {
         opponentShips.textContent = result.attacker_remaining_ships;
     }
 
+    // 记录最近一次攻击坐标与来源，供溅射动画使用
+    gameState.lastAttack = {
+        x: result.x,
+        y: result.y,
+        attacker: result.attacker,
+        hit: result.hit
+    };
+
     // 更新棋盘显示
     initGameBoards();
 }
@@ -2644,6 +2653,7 @@ function resetGame() {
         isMyTurn: false,
         myAttacks: [],
         opponentAttacks: [],
+        lastAttack: null,
         currentPhase: 'preparation',
         currentAttacker: null,
         hand: [],
@@ -2697,6 +2707,14 @@ function canPlayCard(card) {
         return true;
     }
     return false;
+}
+
+// 限制需命中后才能发动的卡
+function canPlayAfterHit(card) {
+    const needHit = card.name === '溅射' || card.name === '雷达子弹';
+    if (!needHit) return true;
+    const last = gameState.lastAttack;
+    return !!(last && last.attacker === gameState.playerId && last.hit);
 }
 
 // 添加魔法卡目标选择UI
@@ -3447,6 +3465,12 @@ function playMagicCard(index) {
         alert(`无法使用${card.name}：当前阶段${phaseName}不允许使用速阶${card.speed}的魔法卡`);
         return;
     }
+
+    // 特殊限制：溅射、雷达子弹需在自己上一击命中后才可使用
+    if (!canPlayAfterHit(card)) {
+        alert(`${card.name} 需要你上一次攻击命中后才能发动`);
+        return;
+    }
     if (gameState.fieldMagic === "禁忌果实") {
         if (!(card.name === "失灵！" || card.type === "场地")) {
             alert(`无法使用${card.name}：场地魔法“禁忌果实”生效，非场地及失灵类魔法卡无法使用`);
@@ -3780,6 +3804,75 @@ function showMagicAnimation(card) {
             setTimeout(() => document.body.removeChild(animation), 1000);
         }, 1000);
     }, 100);
+}
+
+// 溅射动画：以最近攻击点为中心，对周围格子展示涟漪（支持形状与半径）
+// options: { radius: number=1, shape: 'square'|'cross'|'diamond', target: 'opponent'|'self' }
+function showSplashAnimation(x, y, options = {}) {
+    const coordValid = Number.isInteger(x) && Number.isInteger(y);
+    if (!coordValid && gameState.lastAttack) {
+        x = gameState.lastAttack.x;
+        y = gameState.lastAttack.y;
+    }
+    if (!Number.isInteger(x) || !Number.isInteger(y)) {
+        console.warn('溅射动画缺少有效坐标');
+        return;
+    }
+
+    const { radius = 1, shape = 'square', target } = options;
+    const attackerId = gameState.lastAttack?.attacker || gameState.playerId;
+    let targetBoard = attackerId === gameState.playerId ? opponentBoard : gamePlayerBoard;
+    if (target === 'opponent') targetBoard = opponentBoard;
+    if (target === 'self') targetBoard = gamePlayerBoard;
+    if (!targetBoard) return;
+
+    const maxSize = 6;
+    const positions = [];
+
+    for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || nx >= maxSize || ny < 0 || ny >= maxSize) continue;
+
+            const manhattan = Math.abs(dx) + Math.abs(dy);
+            const chebyshev = Math.max(Math.abs(dx), Math.abs(dy));
+            let inShape = false;
+
+            switch (shape) {
+                case 'cross':
+                    // 十字：在 x 或 y 方向的直线，距离不超过 radius
+                    inShape = (dx === 0 || dy === 0) && manhattan <= radius;
+                    break;
+                case 'diamond':
+                    // 菱形：曼哈顿距离不超过 radius
+                    inShape = manhattan <= radius;
+                    break;
+                case 'square':
+                default:
+                    // 方形：切比雪夫距离不超过 radius
+                    inShape = chebyshev <= radius;
+                    break;
+            }
+
+            if (inShape) {
+                const delayBase = shape === 'cross' ? manhattan : (manhattan + chebyshev) / 2;
+                positions.push({ x: nx, y: ny, delay: Math.floor(delayBase * 70) });
+            }
+        }
+    }
+
+    positions.forEach(pos => {
+        const cell = targetBoard.querySelector(`.cell[data-x="${pos.x}"][data-y="${pos.y}"]`);
+        if (!cell) return;
+
+        const ripple = document.createElement('div');
+        ripple.className = 'splash-effect';
+        ripple.style.animationDelay = `${pos.delay}ms`;
+        cell.querySelectorAll('.splash-effect').forEach(n => n.remove());
+        cell.appendChild(ripple);
+        setTimeout(() => { if (ripple.parentNode === cell) ripple.remove(); }, 800 + pos.delay);
+    });
 }
 
 // 更新场地魔法UI显示

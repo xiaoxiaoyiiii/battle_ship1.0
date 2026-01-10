@@ -235,6 +235,24 @@ button:hover, .btn:hover { background-color: var(--primary-600); transform: tran
     width: 40px; height: 40px; background-color: var(--cell-bg);
     border: 1px solid var(--board-border); border-radius: 3px;
     cursor: pointer; display: flex; justify-content: center; align-items: center; font-size: 20px;
+    position: relative;
+}
+.cell .splash-effect {
+    position: absolute;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    pointer-events: none;
+    box-shadow: 0 0 0 0 rgba(25,118,210,0.35);
+    animation: splash-ripple 0.8s ease-out forwards;
+    top: 2px;
+    left: 2px;
+}
+
+@keyframes splash-ripple {
+    0% { box-shadow: 0 0 0 0 rgba(25,118,210,0.35); opacity: 1; }
+    70% { box-shadow: 0 0 0 8px rgba(25,118,210,0.12); opacity: 0.6; }
+    100% { box-shadow: 0 0 0 12px rgba(25,118,210,0); opacity: 0; }
 }
 .cell.ship { background-color: #795548 !important; }
 html.theme-dark .cell.ship { background-color: #bfa074 !important; }

@@ -57,7 +57,7 @@ class PlayerShip:
     hits: list[Position]
     shield: bool = False  # 是否有护盾
 
-    def __init__(self, positions: list[Position], hits: list[Position]):
+    def __init__(self, positions: list[Position], hits: list[Position],**kwargs):
         self.invincible = False
         self.positions = positions
         self.hits = hits

@@ -327,11 +327,6 @@ lobby_queue = []
 lobby_members = set()
 
 
-@socketio.on('create_room')
-def handle_create_room(data):
-    room_id = str(uuid.uuid4())[:6]
-    rooms[room_id] = GameRoom(room_id)
-    return {'status': 'success', 'room_id': room_id}
 
 
 # 测试功能：添加所有魔法卡到手牌
@@ -362,12 +357,27 @@ def lobby():
     # SPA entry point for lobby view
     return render_template('index.html', username=session.get('username'))
 
+@socketio.on('create_room')
+def handle_create_room(data):
+    room_id = str(uuid.uuid4())[:6]
+    rooms[room_id] = GameRoom(room_id)
+    # 优先使用登录后的 user_id，否则使用 sid（游客模式）
+    join_room(room_id)
+    player_id = request.sid
+    player_name = session.get('username', data.get('player_name', '匿名玩家'))
+    rooms[room_id].players[player_id] = Player(**{
+        'name': player_name,
+        'ships': [],
+        'attacks': [],
+        'remaining_ships': 0  # 初始化剩余战舰数量
+    })
+    return {'status': 'success', 'room_id': room_id}
 
 @socketio.on('join_room')
 def handle_join_room(data):
     room_id = data['room_id']
     # 优先使用登录后的 user_id，否则使用 sid（游客模式）
-    player_id = session.get('user_id', request.sid)
+    player_id = request.sid
     player_name = session.get('username', data.get('player_name', '匿名玩家'))
 
     if room_id not in rooms:
@@ -389,7 +399,6 @@ def handle_join_room(data):
 
     # 添加玩家到Socket.IO房间
     join_room(room_id)
-
     # 检查是否所有玩家都已加入
     if len(room.players) == 2:
         # 所有玩家都已加入，开始游戏
@@ -400,13 +409,20 @@ def handle_join_room(data):
         room.init_player_magic(list(room.players.keys())[1], magic_cards)
 
         # 为每个玩家添加对方的名字
-        for pid in room.players:
-            opponent_id = next(p for p in room.players if p != pid)
+        # 准备发送给两个玩家的游戏状态
+        game_state_data = {
+            'state': 'placing_ships',
+            'room_id': room_id
+        }
+
+        # 为每个玩家添加对方的名字
+        for player_id in room.players:
+            opponent_id = next(p for p in room.players if p != player_id)
             emit('game_state', {
-                'state': 'placing_ships',
-                'room_id': room_id,
+                **game_state_data,
+                'player_name': room.players[player_id].name,
                 'opponent_name': room.players[opponent_id].name
-            }, room=pid)
+            }, to=player_id)
 
     # 返回响应给客户端，包含player_id
     return {'status': 'success', 'player_id': player_id}

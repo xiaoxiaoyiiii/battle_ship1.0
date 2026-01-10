@@ -2315,6 +2315,10 @@ function handleAttack(x, y) {
         alert('当前不是战斗阶段');
         return;
     }
+    if (attacksRemaining.textContent === "0") {
+        alert('无剩余攻击次数');
+        return;
+    }
 
     gameState.socket.emit('attack', {
         room_id: gameState.roomId,

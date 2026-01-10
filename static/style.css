@@ -1295,6 +1295,7 @@ body.cool-effects-enabled .cell.cool-flash {
     overflow: hidden;
     display: -webkit-box;
     -webkit-line-clamp: 4; /* 显示更多行 */
+    line-clamp: 4; /* 标准属性，兼容性 */
     -webkit-box-orient: vertical;
     flex-grow: 1;
     line-height: 1.4;
@@ -1352,6 +1353,7 @@ body.cool-effects-enabled .cell.cool-flash {
     border-radius: 15px;
     background: linear-gradient(45deg, var(--primary), var(--secondary), var(--accent), var(--primary)) border-box;
     -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+    mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
     -webkit-mask-composite: xor;
     mask-composite: exclude;
     z-index: -1;
@@ -1483,6 +1485,7 @@ body.cool-effects-enabled .cell.cool-flash {
     overflow: hidden;
     display: -webkit-box;
     -webkit-line-clamp: 3;
+    line-clamp: 3;
     -webkit-box-orient: vertical;
     margin: 0;
 }

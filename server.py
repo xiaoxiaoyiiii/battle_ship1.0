@@ -100,7 +100,8 @@ magic_cards = [
      "description": "只可在对方的准备阶段以及自己的所有阶段使用。宣言一个数目x，如果对方的结束阶段结束之后自己的船数减少了x，那么那些原本会减少的船不会减少并在原位置或者对方没有打过的位置重新部署。"},
     {"name": "灵气复苏", "speed": 1, "type": "普通",
      "description": "调整双方的船数都变为x，x为不大于双方最大船数的任意非零整数。调整时只可以在自己原本有战舰的地方进行调整。"},
-    {"name": "败者食尘", "speed": 1, "type": "普通", "description": "立即重启正常对局但保留双方的手牌。败者食尘生效的大回合内双方的攻击次数都为0。"}
+    {"name": "败者食尘", "speed": 1, "type": "普通",
+     "description": "立即重启整场对局但仍然保留双方的手牌。败者食尘生效的大回合内双方的攻击次数都为0。"}
 ]
 
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'),
@@ -1096,7 +1097,11 @@ def handle_enter_end_phase(data):
     room = rooms[room_id]
     # 检查是否是当前攻击者的战斗阶段
     if room.current_attacker == player_id and room.current_phase == 'battle':
-        # 直接进入结束阶段，允许玩家在还有攻击次数的情况下结束战斗
+        # 检查是否还有剩余攻击次数
+        if room.attacks_remaining > 0:
+            return {'status': 'error', 'message': '你还有剩余攻击次数，无法进入结束阶段'}
+        
+        # 进入结束阶段
         room.current_phase = 'end'
         emit('phase_updated', {
             'current_phase': room.current_phase,
@@ -1916,7 +1921,7 @@ def apply_magic_effect(room, caster_id, card, target_data):
             }, to=opponent_id)
         
         elif card['name'] == '败者食尘':
-            # 记录败者食尘打出前双方的船数
+            # 记录败者食尘打出前双方的船数，已修复
             original_caster_ships = len(caster['ships'])
             original_opponent_ships = len(opponent['ships'])
             
@@ -1970,7 +1975,7 @@ def apply_magic_effect(room, caster_id, card, target_data):
 
         # ==== 速阶2 魔法卡 ===
         elif card['name'] == '溅射':
-            # 对击中格子的上下左右四格造成伤害
+            # 对击中格子的上下左右四格造成伤害，已修复
             if not room.last_attack or room.last_attack['attacker'] != caster_id:
                 result['success'] = False
                 result['message'] = '必须在击中对方后使用'

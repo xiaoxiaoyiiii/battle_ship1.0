@@ -4204,6 +4204,15 @@ function setupPhaseButtons() {
 
     // 进入结束阶段按钮
     document.getElementById('enter-end-phase').addEventListener('click', () => {
+        // 获取当前剩余攻击次数
+        const remainingAttacks = parseInt(attacksRemaining.textContent, 10);
+        
+        // 检查是否还有剩余攻击次数
+        if (remainingAttacks > 0) {
+            alert('你还有剩余攻击次数，无法进入结束阶段');
+            return; // 阻止进入结束阶段
+        }
+        
         gameState.socket.emit('enter_end_phase', {
             room_id: gameState.roomId,
             player_id: gameState.playerId

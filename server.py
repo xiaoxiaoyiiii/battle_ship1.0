@@ -2121,7 +2121,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
 
         line = target_data['target_line']
         # 检查是行还是列
-        if line.type == 'row':
+        if line["type"] == 'row':
             positions = [{'x': x, 'y': line['index']} for x in range(6)]
         else:
             positions = [{'x': line['index'], 'y': y} for y in range(6)]
@@ -2217,18 +2217,18 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                 ships_changed = True
                 sunk_count += 1
                 for ship_pos in ship.positions:
-                    removed_positions.add((ship_pos.x, ship_pos.y))
+                    removed_positions.add((ship_pos["x"], ship_pos["y"]))
                     caster.attacks.append(Position(**{
-                        'x': ship_pos.x,
-                        'y': ship_pos.y,
+                        'x': ship_pos["x"],
+                        'y': ship_pos["y"],
                         'hit': True,
                         'ship_sunk': True,
                         'is_sulfur': True
                     }))
                     attack_result = {
                         'attacker': caster_id,
-                        'x': ship_pos.x,
-                        'y': ship_pos.y,
+                        'x': ship_pos["x"],
+                        'y': ship_pos["y"],
                         'hit': True,
                         'ship_sunk': True,
                         'remaining_attacks': room.attacks_remaining,
@@ -2237,26 +2237,26 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                     }
                     emit('attack_result', attack_result, room=room.id)
                     affected_positions.append(Position(**{
-                        'x': ship_pos.x,
-                        'y': ship_pos.y,
+                        'x': ship_pos["x"],
+                        'y': ship_pos["y"],
                         'hit': True,
                         'ship_sunk': True
                     }))
 
         # 对于选定格子中未命中的格子，发送未命中事件
         for pos in positions:
-            if (pos.x, pos.y) not in removed_positions:
+            if (pos["x"], pos["y"]) not in removed_positions:
                 caster.attacks.append(Position(**{
-                    'x': pos.x,
-                    'y': pos.y,
+                    'x': pos["x"],
+                    'y': pos["y"],
                     'hit': False,
                     'ship_sunk': False,
                     'is_sulfur': True
                 }))
                 attack_result = {
                     'attacker': caster_id,
-                    'x': pos.x,
-                    'y': pos.y,
+                    'x': pos["x"],
+                    'y': pos["y"],
                     'hit': False,
                     'ship_sunk': False,
                     'remaining_attacks': room.attacks_remaining,
@@ -2265,8 +2265,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                 }
                 emit('attack_result', attack_result, room=room.id)
                 affected_positions.append(Position(**{
-                    'x': pos.x,
-                    'y': pos.y,
+                    'x': pos["x"],
+                    'y': pos["y"],
                     'hit': False,
                     'ship_sunk': False
                 }))
@@ -2292,17 +2292,53 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         area = target_data['target_area']
         positions = []
         room.players[caster_id].revealed_positions = room.players[caster_id].revealed_positions
-
+        affected_positions = []
         # 添加需要显示的位置
         for y in range(area['y1'], area['y2'] + 1):
             for x in range(area['x1'], area['x2'] + 1):
                 pos = {'x': x, 'y': y}
                 room.players[caster_id].revealed_positions.append(Position(**pos))
                 positions.append(pos)
+        for pos in positions:
+            # 检查是否击中
+            hit = False
+            ship_sunk = False
+            for i, ship in enumerate(opponent.ships):
+                if Position(**pos) in ship.positions and Position(**pos) not in ship.hits:
+                    hit=True
+            if hit:continue 
+            # 记录攻击（包括未命中）
+            caster.attacks.append(Position(**{
+                'x': pos['x'],
+                'y': pos['y'],
+                'hit': hit,
+                'ship_sunk': ship_sunk,
+                'is_splash': True
+            }))
 
+            # 发送单点攻击结果，保持与普通攻击一致的 UI 更新
+            attack_result = {
+                'attacker': caster_id,
+                'x': pos['x'],
+                'y': pos['y'],
+                'hit': hit,
+                'ship_sunk': ship_sunk,
+                'remaining_attacks': room.attacks_remaining,
+                'attacker_remaining_ships': room.players[caster_id].remaining_ships,
+                'defender_remaining_ships': opponent.remaining_ships
+            }
+            emit('attack_result', attack_result, room=room.id)
+
+            affected_positions.append(Position(**{
+                'x': pos['x'],
+                'y': pos['y'],
+                'hit': hit,
+                'ship_sunk': ship_sunk
+            }))
         # 立即发送给触发者
         emit('revealed_positions', {'positions': positions}, to=caster_id)
         result['message'] = '已探测目标区域战舰位置'
+        result['affected_positions'] = affected_positions
 
     elif card.name == '饮血':
         # 每击杀一艘船，抽一张牌

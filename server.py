@@ -1961,7 +1961,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                 'attacker_remaining_ships': room.players[caster_id].remaining_ships,
                 'defender_remaining_ships': opponent.remaining_ships
             }
-            print(attack_result)
             emit('attack_result', attack_result, room=room.id)
 
             affected_positions.append(Position(**{
@@ -1988,10 +1987,9 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             result['success'] = False
             result['message'] = '必须在击中对方战舰后使用'
             return result
-
+        affected_positions = []
         x, y = room.last_attack["x"], room.last_attack["y"]
         # 记录需要显示的位置
-        room.players[caster_id].revealed_positions = room.players[caster_id].revealed_positions
         new_positions = []
         for dy in [-1, 0, 1]:
             for dx in [-1, 0, 1]:
@@ -2001,10 +1999,46 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                     pos = {'x': nx, 'y': ny}
                     room.players[caster_id].revealed_positions.append(Position(**pos))
                     new_positions.append(pos)
+        for pos in new_positions:
+            # 检查是否击中
+            hit = False
+            ship_sunk = False
+            for i, ship in enumerate(opponent.ships):
+                if Position(**pos) in ship.positions and Position(**pos) not in ship.hits:
+                    hit=True
+            if hit:continue 
+            # 记录攻击（包括未命中）
+            caster.attacks.append(Position(**{
+                'x': pos['x'],
+                'y': pos['y'],
+                'hit': hit,
+                'ship_sunk': ship_sunk,
+                'is_splash': True
+            }))
 
+            # 发送单点攻击结果，保持与普通攻击一致的 UI 更新
+            attack_result = {
+                'attacker': caster_id,
+                'x': pos['x'],
+                'y': pos['y'],
+                'hit': hit,
+                'ship_sunk': ship_sunk,
+                'remaining_attacks': room.attacks_remaining,
+                'attacker_remaining_ships': room.players[caster_id].remaining_ships,
+                'defender_remaining_ships': opponent.remaining_ships
+            }
+            emit('attack_result', attack_result, room=room.id)
+
+            affected_positions.append(Position(**{
+                'x': pos['x'],
+                'y': pos['y'],
+                'hit': hit,
+                'ship_sunk': ship_sunk
+            }))
         # 立即将被揭示的位置发送给触发方
         emit('revealed_positions', {'positions': new_positions}, to=caster_id)
         result['message'] = '已扫描周围八格战舰位置'
+        result['affected_positions'] = affected_positions
 
     elif card.name == '越战越勇':
         # 每造成一次伤害，攻击次数加2

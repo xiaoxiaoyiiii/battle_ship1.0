@@ -1,4 +1,49 @@
+// 基于原 game.js 的优化：添加粒子动画
+function initParticles() {
+    const canvas = document.getElementById('particle-canvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
 
+    const particles = [];
+    for (let i = 0; i < 100; i++) {
+        particles.push({
+            x: Math.random() * canvas.width,
+            y: Math.random() * canvas.height,
+            radius: Math.random() * 2 + 1,
+            speed: Math.random() * 0.5 + 0.1,
+            color: 'rgba(25,118,210,0.3)' // 基于 --primary
+        });
+    }
+
+    function animate() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        particles.forEach(p => {
+            p.y += p.speed;
+            if (p.y > canvas.height) p.y = 0;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+            ctx.fillStyle = p.color;
+            ctx.fill();
+        });
+        requestAnimationFrame(animate);
+    }
+    animate();
+}
+
+// 窗口调整大小
+window.addEventListener('resize', () => {
+    const canvas = document.getElementById('particle-canvas');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+});
+
+// 初始化
+document.addEventListener('DOMContentLoaded', () => {
+    initParticles();
+    // 原 init() 函数调用
+    init();
+});
 // 更改密码表单逻辑
 document.addEventListener('DOMContentLoaded', function () {
     const changePasswordForm = document.getElementById('change-password-form');
@@ -165,20 +210,20 @@ function updateOpponentAvatarInGame(opponentId) {
     if (!opponentId) return;
     fetch(`/user_stats?username=${encodeURIComponent(opponentId)}`)
         .then(r => r.json()).then(res => {
-        console.log("updateOpponentAvatarInGame", res);
-        if (res.stats && opponentAvatarInGame) {
-            // 兼容后端返回格式
-            if (res.stats.avatar && res.stats.avatar !== '') {
-                opponentAvatarInGame.src = res.stats.avatar;
-            } else {
+            console.log("updateOpponentAvatarInGame", res);
+            if (res.stats && opponentAvatarInGame) {
+                // 兼容后端返回格式
+                if (res.stats.avatar && res.stats.avatar !== '') {
+                    opponentAvatarInGame.src = res.stats.avatar;
+                } else {
+                    opponentAvatarInGame.src = '/static/avatars/default.png';
+                }
+            } else if (opponentAvatarInGame) {
                 opponentAvatarInGame.src = '/static/avatars/default.png';
             }
-        } else if (opponentAvatarInGame) {
-            opponentAvatarInGame.src = '/static/avatars/default.png';
-        }
-    }).catch(() => {
-        if (opponentAvatarInGame) opponentAvatarInGame.src = '/static/avatars/default.png';
-    });
+        }).catch(() => {
+            if (opponentAvatarInGame) opponentAvatarInGame.src = '/static/avatars/default.png';
+        });
 }
 
 // 点击头像查看战绩
@@ -190,14 +235,14 @@ if (myAvatarInGame) {
         // 优先使用 gameState.playerName，再退回到服务器渲染的全局用户名或页面元素
         const username = (window.gameState && window.gameState.playerName) || window.__USERNAME || (document.getElementById('profile-username') && document.getElementById('profile-username').textContent) || '';
         if (!username) {
-            showMessage('未登录，无法查看战绩', {type: 'warning'});
+            showMessage('未登录，无法查看战绩', { type: 'warning' });
             return;
         }
         fetch(`/user_stats?username=${encodeURIComponent(username)}`)
             .then(r => r.json()).then(data => {
-            if (data.stats) {
-                const s = data.stats;
-                let userStatsContents = `\
+                if (data.stats) {
+                    const s = data.stats;
+                    let userStatsContents = `\
                         <table class="user-stats-table">\
                             <tr><td>用户名</td><td>${s.username}</td></tr>\
                             <tr><td>胜场</td><td>${s.wins}</td></tr>\
@@ -205,22 +250,22 @@ if (myAvatarInGame) {
                             <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>\
                             <tr><td>最长连胜</td><td>${s.longest_streak}</td></tr>\
                         </table>`;
-                let userStatsModal = document.createElement('div');
-                userStatsModal.id = 'user-stats-modal';
-                userStatsModal.className = 'modal-overlay';
-                userStatsModal.innerHTML = '<div class="modal-content"><span class="modal-close" id="user-stats-modal-close">×</span><h2>个人战绩</h2><div id="user-stats-content1"><p>' + userStatsContents + '</p></div></div>';
-                document.body.appendChild(userStatsModal);
-                // 绑定关闭事件
-                userStatsModal.querySelector('.modal-close').onclick = () => userStatsModal.classList.add('hidden');
-                userStatsModal.onclick = (e) => {
-                    if (e.target === userStatsModal) userStatsModal.classList.add('hidden');
-                };
-            } else {
-                showMessage('未找到战绩数据', {type: 'warning'});
-            }
-        }).catch(err => {
-            showMessage('获取战绩失败' + err, {type: 'error'});
-        });
+                    let userStatsModal = document.createElement('div');
+                    userStatsModal.id = 'user-stats-modal';
+                    userStatsModal.className = 'modal-overlay';
+                    userStatsModal.innerHTML = '<div class="modal-content"><span class="modal-close" id="user-stats-modal-close">×</span><h2>个人战绩</h2><div id="user-stats-content1"><p>' + userStatsContents + '</p></div></div>';
+                    document.body.appendChild(userStatsModal);
+                    // 绑定关闭事件
+                    userStatsModal.querySelector('.modal-close').onclick = () => userStatsModal.classList.add('hidden');
+                    userStatsModal.onclick = (e) => {
+                        if (e.target === userStatsModal) userStatsModal.classList.add('hidden');
+                    };
+                } else {
+                    showMessage('未找到战绩数据', { type: 'warning' });
+                }
+            }).catch(err => {
+                showMessage('获取战绩失败' + err, { type: 'error' });
+            });
     });
 }
 
@@ -228,12 +273,12 @@ if (opponentAvatarInGame) {
     opponentAvatarInGame.style.cursor = 'pointer';
     opponentAvatarInGame.addEventListener('click', () => {
         const username = (window.gameState && window.gameState.opponentName) || (document.getElementById('opponent-username-info') && document.getElementById('opponent-username-info').textContent) || '';
-        if (!username) return showMessage('对手信息不可用', {type: 'warning'});
+        if (!username) return showMessage('对手信息不可用', { type: 'warning' });
         fetch(`/user_stats?username=${encodeURIComponent(username)}`)
             .then(r => r.json()).then(data => {
-            if (data.stats) {
-                const s = data.stats;
-                let userStatsContents = `\
+                if (data.stats) {
+                    const s = data.stats;
+                    let userStatsContents = `\
                         <table class="user-stats-table">\
                             <tr><td>用户名</td><td>${s.username}</td></tr>\
                             <tr><td>胜场</td><td>${s.wins}</td></tr>\
@@ -241,20 +286,20 @@ if (opponentAvatarInGame) {
                             <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>\
                             <tr><td>最长连胜</td><td>${s.longest_streak}</td></tr>\
                         </table>`;
-                let userStatsModal = document.createElement('div');
-                userStatsModal.id = 'user-stats-modal';
-                userStatsModal.className = 'modal-overlay';
-                userStatsModal.innerHTML = '<div class="modal-content"><span class="modal-close" id="user-stats-modal-close">×</span><h2>个人战绩</h2><div id="user-stats-content2"><p>' + userStatsContents + '</p></div></div>';
-                document.body.appendChild(userStatsModal);
-                // 绑定关闭事件
-                userStatsModal.querySelector('.modal-close').onclick = () => userStatsModal.classList.add('hidden');
-                userStatsModal.onclick = (e) => {
-                    if (e.target === userStatsModal) userStatsModal.classList.add('hidden');
-                };
-            } else {
-                showMessage('未找到对手战绩', {type: 'warning'});
-            }
-        }).catch(err => showMessage('获取战绩失败' + err, {type: 'error'}));
+                    let userStatsModal = document.createElement('div');
+                    userStatsModal.id = 'user-stats-modal';
+                    userStatsModal.className = 'modal-overlay';
+                    userStatsModal.innerHTML = '<div class="modal-content"><span class="modal-close" id="user-stats-modal-close">×</span><h2>个人战绩</h2><div id="user-stats-content2"><p>' + userStatsContents + '</p></div></div>';
+                    document.body.appendChild(userStatsModal);
+                    // 绑定关闭事件
+                    userStatsModal.querySelector('.modal-close').onclick = () => userStatsModal.classList.add('hidden');
+                    userStatsModal.onclick = (e) => {
+                        if (e.target === userStatsModal) userStatsModal.classList.add('hidden');
+                    };
+                } else {
+                    showMessage('未找到对手战绩', { type: 'warning' });
+                }
+            }).catch(err => showMessage('获取战绩失败' + err, { type: 'error' }));
     });
 }
 
@@ -294,15 +339,15 @@ if (profileForm) {
         e.preventDefault();
         const formData = new FormData();
         formData.append('signature', profileSignature.value);
-        fetch('/api/profile/signature', {method: 'POST', body: formData})
+        fetch('/api/profile/signature', { method: 'POST', body: formData })
             .then(r => r.json()).then(res => {
-            if (res.success) {
-                profileSaveMsg.textContent = '签名已保存';
-            } else {
-                profileSaveMsg.textContent = '保存失败';
-                profileSaveMsg.style.color = 'red';
-            }
-        });
+                if (res.success) {
+                    profileSaveMsg.textContent = '签名已保存';
+                } else {
+                    profileSaveMsg.textContent = '保存失败';
+                    profileSaveMsg.style.color = 'red';
+                }
+            });
     };
 }
 
@@ -313,16 +358,16 @@ if (avatarInput) {
         if (!file) return;
         const formData = new FormData();
         formData.append('avatar', file);
-        fetch('/api/profile/avatar', {method: 'POST', body: formData})
+        fetch('/api/profile/avatar', { method: 'POST', body: formData })
             .then(r => r.json()).then(res => {
-            if (res.success && res.avatar) {
-                profileAvatar.src = res.avatar + '?t=' + Date.now();
-                profileSaveMsg.textContent = '头像已更新';
-            } else {
-                profileSaveMsg.textContent = res.error || '头像上传失败';
-                profileSaveMsg.style.color = 'red';
-            }
-        });
+                if (res.success && res.avatar) {
+                    profileAvatar.src = res.avatar + '?t=' + Date.now();
+                    profileSaveMsg.textContent = '头像已更新';
+                } else {
+                    profileSaveMsg.textContent = res.error || '头像上传失败';
+                    profileSaveMsg.style.color = 'red';
+                }
+            });
     };
 }
 // 设置相关元素
@@ -461,7 +506,7 @@ function initInGameChatSocket() {
     const socket = window.gameState.socket;
     socket.on('chat_message', function (data) {
         console.log("Received chat message:", data);
-        appendChatMessage(data.username, data.message,data.isMe);
+        appendChatMessage(data.username, data.message, data.isMe);
     });
     chatSocketInitialized = true;
 }
@@ -470,7 +515,7 @@ function initInGameChatSocket() {
 function sendChatMessage() {
     if (!chatInput || !chatInput.value.trim() || !window.gameState || !window.gameState.socket) return;
     const msg = chatInput.value.trim().slice(0, 100);
-    window.gameState.socket.emit('chat_message', {room_id: gameState.roomId, message: msg});
+    window.gameState.socket.emit('chat_message', { room_id: gameState.roomId, message: msg });
     chatInput.value = '';
 }
 
@@ -493,7 +538,7 @@ function appendChatMessage(username, message, isMe) {
 
 function escapeHtml(str) {
     return String(str).replace(/[&<>"']/g, function (c) {
-        return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
 }
 
@@ -505,7 +550,7 @@ function setChatVisible(visible) {
 setChatVisible(false);
 
 // 使聊天框可拖动
-(function enableDraggableChat(){
+(function enableDraggableChat() {
     if (!chatContainer || !chatHeader) return;
 
     // 尝试恢复位置
@@ -519,14 +564,14 @@ setChatVisible(false);
                 chatContainer.style.right = 'auto';
                 chatContainer.style.bottom = 'auto';
             }
-        } catch(_){}
+        } catch (_) { }
     }
 
     let dragging = false;
     let startX = 0, startY = 0, startLeft = 0, startTop = 0;
 
-    function clamp(val, min, max){ return Math.max(min, Math.min(max, val)); }
-    function getBounds(){
+    function clamp(val, min, max) { return Math.max(min, Math.min(max, val)); }
+    function getBounds() {
         const rect = chatContainer.getBoundingClientRect();
         const vw = window.innerWidth, vh = window.innerHeight;
         const maxLeft = vw - rect.width;
@@ -534,12 +579,12 @@ setChatVisible(false);
         return { maxLeft: Math.max(0, maxLeft), maxTop: Math.max(0, maxTop) };
     }
 
-    function save(){
+    function save() {
         const rect = chatContainer.getBoundingClientRect();
         localStorage.setItem('in_game_chat_pos', JSON.stringify({ left: rect.left, top: rect.top }));
     }
 
-    function onMouseDown(e){
+    function onMouseDown(e) {
         if (e.button !== 0) return; // 仅限左键
         dragging = true;
         const rect = chatContainer.getBoundingClientRect();
@@ -550,7 +595,7 @@ setChatVisible(false);
         e.preventDefault();
     }
 
-    function onMouseMove(e){
+    function onMouseMove(e) {
         if (!dragging) return;
         const dx = e.clientX - startX;
         const dy = e.clientY - startY;
@@ -563,7 +608,7 @@ setChatVisible(false);
         chatContainer.style.bottom = 'auto';
     }
 
-    function onMouseUp(){
+    function onMouseUp() {
         if (!dragging) return;
         dragging = false;
         document.removeEventListener('mousemove', onMouseMove);
@@ -574,18 +619,18 @@ setChatVisible(false);
     chatHeader.addEventListener('mousedown', onMouseDown);
 
     // 触摸支持
-    chatHeader.addEventListener('touchstart', function(e){
+    chatHeader.addEventListener('touchstart', function (e) {
         if (!e.touches || e.touches.length === 0) return;
         const t = e.touches[0];
         dragging = true;
         const rect = chatContainer.getBoundingClientRect();
         startX = t.clientX; startY = t.clientY;
         startLeft = rect.left; startTop = rect.top;
-        document.addEventListener('touchmove', onTouchMove, {passive:false});
+        document.addEventListener('touchmove', onTouchMove, { passive: false });
         document.addEventListener('touchend', onTouchEnd);
         e.preventDefault();
     });
-    function onTouchMove(e){
+    function onTouchMove(e) {
         if (!dragging || !e.touches || e.touches.length === 0) return;
         const t = e.touches[0];
         const dx = t.clientX - startX;
@@ -599,7 +644,7 @@ setChatVisible(false);
         chatContainer.style.bottom = 'auto';
         e.preventDefault();
     }
-    function onTouchEnd(){
+    function onTouchEnd() {
         if (!dragging) return;
         dragging = false;
         document.removeEventListener('touchmove', onTouchMove);
@@ -608,7 +653,7 @@ setChatVisible(false);
     }
 
     // 窗口缩放时，确保位置仍在视口内
-    window.addEventListener('resize', function(){
+    window.addEventListener('resize', function () {
         const rect = chatContainer.getBoundingClientRect();
         const bounds = getBounds();
         const left = clamp(rect.left, 0, bounds.maxLeft);
@@ -672,6 +717,7 @@ window.gameState = {
     isMyTurn: false,
     myAttacks: [],
     opponentAttacks: [],
+    lastAttack: null,
     deck: [],               // 牌堆
     hand: [],               // 手牌
     discardPile: [],        // 弃牌堆
@@ -1345,11 +1391,11 @@ function setupSocketListeners() {
 
     socket.on('game_over', (data) => {
         console.log('Game over:', data);
-        
+
         // 隐藏状态显示栏中的所有效果
         document.getElementById('reinforcement-status')?.classList.add('hidden');
         document.getElementById('holy-heart-status')?.classList.add('hidden');
-        
+
         switchScreen(gameOverScreen);
         // 根据胜利原因显示不同的提示
         if (data.winner === gameState.playerId) {
@@ -1376,7 +1422,7 @@ function setupSocketListeners() {
         // 显示极限增援倒计时
         const countdownElement = document.getElementById('reinforcement-countdown');
         const remainingElement = document.getElementById('reinforcement-remaining');
-        
+
         // 更新状态显示栏
         const statusElement = document.getElementById('reinforcement-status');
         const statusRemainingElement = document.getElementById('reinforcement-status-remaining');
@@ -1386,7 +1432,7 @@ function setupSocketListeners() {
             remainingElement.textContent = data.remaining_turns;
             countdownElement.classList.remove('hidden');
         }
-        
+
         // 更新状态显示栏
         if (statusElement && statusRemainingElement) {
             statusRemainingElement.textContent = data.remaining_turns;
@@ -1400,7 +1446,7 @@ function setupSocketListeners() {
         const remainingElement = document.getElementById('reinforcement-remaining');
         // 更新状态显示栏
         const statusRemainingElement = document.getElementById('reinforcement-status-remaining');
-        
+
         if (remainingElement) {
             remainingElement.textContent = data.remaining_turns;
         }
@@ -1415,7 +1461,7 @@ function setupSocketListeners() {
         // 显示无暇圣心倒计时
         const countdownElement = document.getElementById('holy-heart-countdown');
         const remainingElement = document.getElementById('holy-heart-remaining');
-        
+
         // 更新状态显示栏
         const statusElement = document.getElementById('holy-heart-status');
         const statusRemainingElement = document.getElementById('holy-heart-status-remaining');
@@ -1425,7 +1471,7 @@ function setupSocketListeners() {
             remainingElement.textContent = data.remaining_turns;
             countdownElement.classList.remove('hidden');
         }
-        
+
         // 更新状态显示栏
         if (statusElement && statusRemainingElement) {
             statusRemainingElement.textContent = data.remaining_turns;
@@ -1440,7 +1486,7 @@ function setupSocketListeners() {
         const remainingElement = document.getElementById('holy-heart-remaining');
         // 更新状态显示栏
         const statusRemainingElement = document.getElementById('holy-heart-status-remaining');
-        
+
         if (remainingElement) {
             remainingElement.textContent = data.remaining_turns;
         }
@@ -1456,7 +1502,7 @@ function setupSocketListeners() {
         const countdownElement = document.getElementById('holy-heart-countdown');
         // 隐藏状态显示栏中的无暇圣心
         const statusElement = document.getElementById('holy-heart-status');
-        
+
         if (countdownElement) {
             countdownElement.classList.add('hidden');
         }
@@ -1474,7 +1520,7 @@ function setupSocketListeners() {
         const countdownElement = document.getElementById('reinforcement-countdown');
         // 隐藏状态显示栏中的极限增援
         const statusElement = document.getElementById('reinforcement-status');
-        
+
         if (countdownElement) {
             countdownElement.classList.add('hidden');
         }
@@ -1701,7 +1747,7 @@ function setupSocketListeners() {
     socket.on('reset_gameboard', function (data) {
         // 重置游戏棋盘，进入重新摆放阶段
         showMessage(data.message, { type: 'warning' });
-        
+
         // 完全重置游戏状态，确保棋盘干净
         gameState.ships = [];
         gameState.attacks = [];
@@ -1711,7 +1757,7 @@ function setupSocketListeners() {
         gameState.opponentRemainingShips = 0;
         gameState.maxShips = data.new_max_ships;
         gameState.placedShips = 0;
-        
+
         // 隐藏所有其他屏幕
         startScreen.classList.remove('active');
         customRoomScreen.classList.remove('active');
@@ -1719,17 +1765,17 @@ function setupSocketListeners() {
         rpsScreen.classList.remove('active');
         gameScreen.classList.remove('active');
         gameOverScreen.classList.remove('active');
-        
+
         // 直接进入放置战舰界面
         shipPlacementScreen.classList.add('active');
         initBoard(playerBoard, true);
-        
+
         // 确保界面正确切换
         startScreen.classList.add('hidden');
         customRoomScreen.classList.add('hidden');
         matchStatus.classList.add('hidden');
         lobbyScreen.classList.add('hidden');
-        
+
         // 更新可摆放船数显示
         const shipsPlaced = document.getElementById('ships-placed');
         const totalShips = document.getElementById('total-ships');
@@ -1739,7 +1785,7 @@ function setupSocketListeners() {
         if (shipsPlaced) {
             shipsPlaced.textContent = 0;
         }
-        
+
         // 重置已放置船数
         gameState.placedShips = 0;
     });
@@ -1813,7 +1859,7 @@ function setupSocketListeners() {
         const selectionResultDiv = document.getElementById('taoyuan-selection-result');
 
         // 存储选择状态
-        let selectedCards = {caster: null, opponent: null};
+        let selectedCards = { caster: null, opponent: null };
         let step = 1; // 1: 选择自己的卡, 2: 选择对方的卡
         let cards = [];
 
@@ -1921,7 +1967,7 @@ function setupSocketListeners() {
             }
         });
     }
-    
+
     // 显示灵气复苏船数选择界面
     function showLingqiChoice(result) {
         // 创建选择界面，使用与桃园结义相同的UI样式
@@ -1941,10 +1987,10 @@ function setupSocketListeners() {
 
         // 获取卡片容器
         const cardsContainer = lingqiChoiceDiv.querySelector('.taoyuan-cards-container');
-        
+
         // 获取最大船数
         let maxShips = result.max_ships;
-        
+
         // 如果maxShips未在result中返回，请求服务器获取
         if (!maxShips) {
             gameState.socket.emit('get_magic_temp_data', {
@@ -1959,11 +2005,11 @@ function setupSocketListeners() {
         } else {
             renderShipButtons(maxShips);
         }
-        
+
         // 渲染船数按钮
         function renderShipButtons(maxShips) {
             cardsContainer.innerHTML = '';
-            
+
             // 创建1到maxShips的按钮，使用与桃园结义卡牌相同的样式
             for (let i = 1; i <= maxShips; i++) {
                 const buttonElement = document.createElement('div');
@@ -1974,19 +2020,19 @@ function setupSocketListeners() {
                     <div class="taoyuan-card-type" style="text-align: center;">选择此船数</div>
                     <div class="taoyuan-card-desc" style="text-align: center;">双方船数将调整为${i}艘</div>
                 `;
-                
+
                 // 添加点击事件
                 buttonElement.addEventListener('click', () => {
                     const selectedShipCount = parseInt(buttonElement.dataset.shipCount);
                     confirmLingqiChoice(selectedShipCount);
                     document.body.removeChild(lingqiChoiceDiv);
                 });
-                
+
                 cardsContainer.appendChild(buttonElement);
             }
         }
     }
-    
+
     // 确认灵气复苏选择
     function confirmLingqiChoice(targetShips) {
         gameState.socket.emit('confirm_magic_target', {
@@ -2022,13 +2068,13 @@ function setupSocketListeners() {
     socket.on('lobby_joined', (data) => {
         joinLobbyBtn.classList.add('hidden');
         leaveLobbyBtn.classList.remove('hidden');
-        showMessage('已加入匹配队列', {type: 'success'});
+        showMessage('已加入匹配队列', { type: 'success' });
     });
 
     socket.on('lobby_left', (data) => {
         joinLobbyBtn.classList.remove('hidden');
         leaveLobbyBtn.classList.add('hidden');
-        showMessage('已离开匹配队列', {type: 'info'});
+        showMessage('已离开匹配队列', { type: 'info' });
     });
 
     socket.on('match_found', (data) => {
@@ -2038,7 +2084,7 @@ function setupSocketListeners() {
         if (gameState.roomId !== data.room_id) {
             gameState.roomId = data.room_id;
             // 告诉服务器加入该房间
-            socket.emit('join_room', {room_id: data.room_id, player_name: gameState.playerName});
+            socket.emit('join_room', { room_id: data.room_id, player_name: gameState.playerName });
         }
     });
 
@@ -2303,7 +2349,7 @@ function randomizeShips() {
 
         // 添加新战舰（1x1大小）
         gameState.ships.push({
-            positions: [{x, y}],
+            positions: [{ x, y }],
             hits: []
         });
 
@@ -2349,7 +2395,7 @@ function handleCellClick(x, y) {
         // 添加新战舰（1x1大小）
         gameState.ships.push({
             id: Date.now(),
-            positions: [{x, y}],
+            positions: [{ x, y }],
             hits: []
         });
 
@@ -2474,6 +2520,14 @@ function updateAttackDisplay(result) {
         opponentShips.textContent = result.attacker_remaining_ships;
     }
 
+    // 记录最近一次攻击坐标与来源，供溅射动画使用
+    gameState.lastAttack = {
+        x: result.x,
+        y: result.y,
+        attacker: result.attacker,
+        hit: result.hit
+    };
+
     // 更新棋盘显示
     initGameBoards();
 }
@@ -2523,14 +2577,14 @@ async function handleLoginSubmit() {
     const username = loginUsernameInput.value.trim();
     const password = loginPasswordInput.value;
     if (!username || !password) {
-        showMessage('用户名和密码不能为空', {type: 'warning'});
+        showMessage('用户名和密码不能为空', { type: 'warning' });
         return;
     }
     try {
         const resp = await fetch('/login', {
             method: 'POST',
-            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-            body: new URLSearchParams({username, password}),
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ username, password }),
             credentials: 'same-origin'
         });
         // 如果服务器进行了重定向（登录成功会重定向到首页），则直接跳转
@@ -2540,13 +2594,13 @@ async function handleLoginSubmit() {
         }
         const text = await resp.text();
         if (text && text.includes('用户名或密码错误')) {
-            showMessage('用户名或密码错误', {type: 'error'});
+            showMessage('用户名或密码错误', { type: 'error' });
         } else {
             // 无明显错误，刷新页面以同步登录状态
             window.location.reload();
         }
     } catch (err) {
-        showMessage('登录失败，请稍后重试', {type: 'error'});
+        showMessage('登录失败，请稍后重试', { type: 'error' });
     }
 }
 
@@ -2555,14 +2609,14 @@ async function handleRegisterSubmit() {
     const username = registerUsernameInput.value.trim();
     const password = registerPasswordInput.value;
     if (!username || !password) {
-        showMessage('用户名和密码不能为空', {type: 'warning'});
+        showMessage('用户名和密码不能为空', { type: 'warning' });
         return;
     }
     try {
         const resp = await fetch('/register', {
             method: 'POST',
-            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-            body: new URLSearchParams({username, password}),
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ username, password }),
             credentials: 'same-origin'
         });
         if (resp.redirected) {
@@ -2571,12 +2625,12 @@ async function handleRegisterSubmit() {
         }
         const text = await resp.text();
         if (text && (text.includes('用户名已存在') || text.includes('注册失败'))) {
-            showMessage('注册失败: 用户名可能已存在', {type: 'error'});
+            showMessage('注册失败: 用户名可能已存在', { type: 'error' });
         } else {
             window.location.reload();
         }
     } catch (err) {
-        showMessage('注册失败，请稍后重试', {type: 'error'});
+        showMessage('注册失败，请稍后重试', { type: 'error' });
     }
 }
 
@@ -2599,6 +2653,7 @@ function resetGame() {
         isMyTurn: false,
         myAttacks: [],
         opponentAttacks: [],
+        lastAttack: null,
         currentPhase: 'preparation',
         currentAttacker: null,
         hand: [],
@@ -2652,6 +2707,14 @@ function canPlayCard(card) {
         return true;
     }
     return false;
+}
+
+// 限制需命中后才能发动的卡
+function canPlayAfterHit(card) {
+    const needHit = card.name === '溅射' || card.name === '雷达子弹';
+    if (!needHit) return true;
+    const last = gameState.lastAttack;
+    return !!(last && last.attacker === gameState.playerId && last.hit);
 }
 
 // 添加魔法卡目标选择UI
@@ -2759,8 +2822,8 @@ function showMagicTargetSelection(card, index) {
         }
 
         function confirmIndex(idx) {
-            if (mode === 'row') confirmMagicTarget({target_line: {type: 'row', index: idx}});
-            else confirmMagicTarget({target_line: {type: 'col', index: idx}});
+            if (mode === 'row') confirmMagicTarget({ target_line: { type: 'row', index: idx } });
+            else confirmMagicTarget({ target_line: { type: 'col', index: idx } });
             cleanupAll();
         }
 
@@ -2836,7 +2899,7 @@ function showMagicTargetSelection(card, index) {
             // store for cleanup
             (cell._magicHandlers = cell._magicHandlers || []).push({
                 type: 'line',
-                handlers: {onMouseDown, onEnter, onLeave, onClick}
+                handlers: { onMouseDown, onEnter, onLeave, onClick }
             });
         });
 
@@ -2844,7 +2907,7 @@ function showMagicTargetSelection(card, index) {
             cells.forEach(cell => {
                 if (cell._magicHandlers) {
                     cell._magicHandlers.filter(h => h.type === 'line').forEach(h => {
-                        const {onMouseDown, onEnter, onLeave, onClick} = h.handlers;
+                        const { onMouseDown, onEnter, onLeave, onClick } = h.handlers;
                         cell.removeEventListener('mousedown', onMouseDown, true);
                         cell.removeEventListener('mouseenter', onEnter);
                         cell.removeEventListener('mouseleave', onLeave);
@@ -2863,7 +2926,7 @@ function showMagicTargetSelection(card, index) {
         return;
     }
 
-    // CONTINUOUS selection (n contiguous cells) e.g., 硫磺火焰 — 拖拽选择并可旋转
+    // CONTINUOUS selection (自由连续 n 格) e.g., 硫磺火焰 — 自由连选 6 格
     if (descriptor.type === 'continuous') {
         const L = descriptor.length;
         // ensure styles
@@ -2873,16 +2936,15 @@ function showMagicTargetSelection(card, index) {
             s.textContent = `
                 .magic-selection-overlay { background-color: rgba(255,140,0,0.24); transition: background-color .12s ease, transform .12s ease; }
                 .magic-selection-overlay.vert { background-color: rgba(34,139,34,0.24); }
-                .inline-confirm { background:#222; color:#fff; padding:8px; border-radius:4px; box-shadow:0 4px 14px rgba(0,0,0,.5); }
             `;
             document.head.appendChild(s);
         }
 
         targetPrompt.innerHTML = `
-            <h3>拖拽选择连续 ${L} 个格子（按住并拖动选择方向，松开确认；按 R 键切换方向）</h3>
+            <h3>自由选择连续 ${L} 个格子（点击选中/取消，每个新增格需与已选格相邻）</h3>
             <div style="text-align:center;margin-top:8px;">
+                <button id="confirm-continuous">确认</button>
                 <button id="cancel-target">取消</button>
-                <button id="rotate-mode">方向: 自动 (按 R 切换)</button>
             </div>
         `;
         document.body.appendChild(targetPrompt);
@@ -2892,150 +2954,92 @@ function showMagicTargetSelection(card, index) {
         gameState.selectingOnBoard = true;
 
         const cells = Array.from(boardEl.querySelectorAll('.cell'));
-        let anchor = null; // {x,y}
-        let dragging = false;
-        let forcedDir = null; // 'h' or 'v' or null (auto)
+        const selected = new Set();
 
-        function clearHighlights() {
+        const key = (x, y) => `${x},${y}`;
+        const parseKey = (k) => k.split(',').map(Number);
+
+        function isAdjacentToSelected(x, y) {
+            if (selected.size === 0) return true;
+            for (const k of selected) {
+                const [sx, sy] = parseKey(k);
+                if (Math.abs(sx - x) + Math.abs(sy - y) === 1) return true;
+            }
+            return false;
+        }
+
+        function isConnected(setLike) {
+            if (setLike.size <= 1) return true;
+            const arr = Array.from(setLike);
+            const [startX, startY] = parseKey(arr[0]);
+            const visited = new Set();
+            const stack = [[startX, startY]];
+            const lookup = new Set(arr);
+            while (stack.length) {
+                const [cx, cy] = stack.pop();
+                const ck = key(cx, cy);
+                if (visited.has(ck)) continue;
+                visited.add(ck);
+                const neighbors = [
+                    [cx + 1, cy],
+                    [cx - 1, cy],
+                    [cx, cy + 1],
+                    [cx, cy - 1]
+                ];
+                neighbors.forEach(([nx, ny]) => {
+                    const nk = key(nx, ny);
+                    if (lookup.has(nk) && !visited.has(nk)) stack.push([nx, ny]);
+                });
+            }
+            return visited.size === setLike.size;
+        }
+
+        function refreshHighlights() {
             cells.forEach(c => c.classList.remove('magic-selection-overlay', 'vert'));
+            cells.forEach(c => {
+                const cx = parseInt(c.dataset.x, 10);
+                const cy = parseInt(c.dataset.y, 10);
+                if (selected.has(key(cx, cy))) c.classList.add('magic-selection-overlay');
+            });
         }
 
-        function clamp(v, a, b) {
-            return Math.max(a, Math.min(b, v));
-        }
-
-        function getCellAt(x, y) {
-            return boardEl.querySelector(`.cell[data-x="${x}"][data-y="${y}"]`);
-        }
-
-        function highlightSegmentFromAnchor(anchor, cursorX, cursorY, dirHint) {
-            clearHighlights();
-            let dx = cursorX - anchor.x;
-            let dy = cursorY - anchor.y;
-            let dir = dirHint || (Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v');
-            if (forcedDir) dir = forcedDir;
-
-            if (dir === 'h') {
-                // pick a startX so that segment of length L includes anchor and best fits cursor
-                let mid = Math.min(anchor.x, cursorX);
-                let startX = clamp(Math.min(anchor.x, cursorX), 0, 6 - L);
-                // try to bias to include anchor
-                if (startX + L - 1 < anchor.x) startX = clamp(anchor.x - (L - 1), 0, 6 - L);
-                for (let x = startX; x < startX + L; x++) {
-                    const c = getCellAt(x, anchor.y);
-                    if (c) c.classList.add('magic-selection-overlay');
-                }
-            } else {
-                let startY = clamp(Math.min(anchor.y, cursorY), 0, 6 - L);
-                if (startY + L - 1 < anchor.y) startY = clamp(anchor.y - (L - 1), 0, 6 - L);
-                for (let y = startY; y < startY + L; y++) {
-                    const c = getCellAt(anchor.x, y);
-                    if (c) c.classList.add('magic-selection-overlay', 'vert');
-                }
-            }
-        }
-
-        // rotate UI
-        const rotateBtn = document.getElementById('rotate-mode');
-
-        function updateRotateText() {
-            rotateBtn.textContent = `方向: ${forcedDir === 'h' ? '横向' : forcedDir === 'v' ? '纵向' : '自动 (按 R 切换)'} `;
-        }
-
-        updateRotateText();
-        rotateBtn.addEventListener('click', () => {
-            if (!forcedDir) forcedDir = 'h';
-            else if (forcedDir === 'h') forcedDir = 'v';
-            else forcedDir = null;
-            updateRotateText();
-        });
-
-        // keyboard rotate: R toggles
-        const onKey = (e) => {
-            if (e.key === 'r' || e.key === 'R') {
-                rotateBtn.click();
-            }
-        };
-        window.addEventListener('keydown', onKey);
-
-        // handlers
         cells.forEach(cell => {
             const mx = parseInt(cell.dataset.x, 10);
             const my = parseInt(cell.dataset.y, 10);
-            const onMouseDown = (e) => {
-                e.preventDefault();
+            cell.style.cursor = 'pointer';
+
+            const onClick = (e) => {
                 e.stopPropagation();
-                anchor = {x: mx, y: my};
-                dragging = true;
-            };
-            const onEnter = (e) => {
-                if (dragging && anchor) {
-                    highlightSegmentFromAnchor(anchor, mx, my);
-                } else if (anchor) {
-                    // hover preview using anchor as most recent selected
-                    highlightSegmentFromAnchor(anchor, mx, my);
-                }
-            };
-            const onLeave = () => {
-                if (!dragging) clearHighlights();
-            };
-            const onMouseUp = (e) => {
-                if (!anchor) return;
-                // confirm segment using current hovered cell if available
-                const cursorX = mx;
-                const cursorY = my;
-                // compute final segment cells as in highlight
-                let dx = cursorX - anchor.x;
-                let dy = cursorY - anchor.y;
-                let dir = forcedDir || (Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v');
-                const selected = [];
-                if (dir === 'h') {
-                    let startX = clamp(Math.min(anchor.x, cursorX), 0, 6 - L);
-                    if (startX + L - 1 < anchor.x) startX = clamp(anchor.x - (L - 1), 0, 6 - L);
-                    for (let x = startX; x < startX + L; x++) selected.push({x, y: anchor.y});
-                } else {
-                    let startY = clamp(Math.min(anchor.y, cursorY), 0, 6 - L);
-                    if (startY + L - 1 < anchor.y) startY = clamp(anchor.y - (L - 1), 0, 6 - L);
-                    for (let y = startY; y < startY + L; y++) selected.push({x: anchor.x, y});
+                e.preventDefault();
+                const k = key(mx, my);
+                if (selected.has(k)) {
+                    const temp = new Set(selected);
+                    temp.delete(k);
+                    if (temp.size > 0 && !isConnected(temp)) {
+                        alert('移除该格会导致不连续，请选择其他格子');
+                        return;
+                    }
+                    selected.delete(k);
+                    refreshHighlights();
+                    return;
                 }
 
-                if (selected.length === L) {
-                    // show quick confirm
-                    const confirmBox = document.createElement('div');
-                    confirmBox.className = 'inline-confirm';
-                    confirmBox.style.position = 'absolute';
-                    confirmBox.style.left = (e.pageX + 8) + 'px';
-                    confirmBox.style.top = (e.pageY + 8) + 'px';
-                    confirmBox.innerHTML = `
-                        <div>确认选择这 ${L} 个格子?</div>
-                        <button id="confirm-seg">确认</button>
-                        <button id="cancel-seg">取消</button>
-                    `;
-                    document.body.appendChild(confirmBox);
-                    document.getElementById('confirm-seg').addEventListener('click', () => {
-                        confirmMagicTarget({target_cells: selected});
-                        cleanupAll();
-                        if (document.body.contains(confirmBox)) document.body.removeChild(confirmBox);
-                    });
-                    document.getElementById('cancel-seg').addEventListener('click', () => {
-                        if (document.body.contains(confirmBox)) document.body.removeChild(confirmBox);
-                        cleanupAll();
-                    });
-                } else {
-                    alert('无法放下该连续区域，请重试');
+                if (selected.size >= L) {
+                    alert(`最多只能选择 ${L} 个格子`);
+                    return;
                 }
-
-                dragging = false;
-                anchor = null;
+                if (!isAdjacentToSelected(mx, my)) {
+                    alert('新增格子需与已选格子相邻');
+                    return;
+                }
+                selected.add(k);
+                refreshHighlights();
             };
 
-            cell.addEventListener('mousedown', onMouseDown, true);
-            cell.addEventListener('mouseenter', onEnter);
-            cell.addEventListener('mouseleave', onLeave);
-            cell.addEventListener('mouseup', onMouseUp, true);
+            cell.addEventListener('click', onClick, true);
             (cell._magicHandlers = cell._magicHandlers || []).push({
                 type: 'continuous',
-                handlers: {onMouseDown, onEnter, onLeave, onMouseUp}
+                handlers: { onClick }
             });
         });
 
@@ -3043,22 +3047,35 @@ function showMagicTargetSelection(card, index) {
             cells.forEach(cell => {
                 if (cell._magicHandlers) {
                     cell._magicHandlers.filter(h => h.type === 'continuous').forEach(h => {
-                        const {onMouseDown, onEnter, onLeave, onMouseUp} = h.handlers;
-                        cell.removeEventListener('mousedown', onMouseDown, true);
-                        cell.removeEventListener('mouseenter', onEnter);
-                        cell.removeEventListener('mouseleave', onLeave);
-                        cell.removeEventListener('mouseup', onMouseUp, true);
+                        const { onClick } = h.handlers;
+                        cell.removeEventListener('click', onClick, true);
                     });
                 }
                 cell.classList.remove('magic-selection-overlay', 'vert');
+                cell.style.cursor = '';
             });
-            window.removeEventListener('keydown', onKey);
             if (document.body.contains(targetPrompt)) document.body.removeChild(targetPrompt);
             gameState.selectingOnBoard = false;
             gameState.selectionCleanup = null;
         }
 
         document.getElementById('cancel-target').addEventListener('click', cleanupAll);
+        document.getElementById('confirm-continuous').addEventListener('click', () => {
+            if (selected.size !== L) {
+                alert(`需要选择 ${L} 个格子`);
+                return;
+            }
+            if (!isConnected(selected)) {
+                alert('所选格子必须保持连续相邻');
+                return;
+            }
+            const payload = Array.from(selected).map(k => {
+                const [x, y] = parseKey(k);
+                return { x, y };
+            });
+            confirmMagicTarget({ target_cells: payload });
+            cleanupAll();
+        });
         gameState.selectionCleanup = cleanupAll;
         return;
     }
@@ -3084,16 +3101,16 @@ function showMagicTargetSelection(card, index) {
             const el = e.currentTarget;
             const x = parseInt(el.dataset.x, 10);
             const y = parseInt(el.dataset.y, 10);
-            confirmMagicTarget({x, y});
+            confirmMagicTarget({ x, y });
             cleanupAll();
         };
         boardEl.querySelectorAll('.cell').forEach(cell => {
             cell.addEventListener('click', onClick, true);
-            listeners.push({el: cell, handler: onClick});
+            listeners.push({ el: cell, handler: onClick });
         });
 
         function cleanupAll() {
-            listeners.forEach(({el, handler}) => el.removeEventListener('click', handler, true));
+            listeners.forEach(({ el, handler }) => el.removeEventListener('click', handler, true));
             gameState.selectingOnBoard = false;
             if (document.body.contains(targetPrompt)) document.body.removeChild(targetPrompt);
         }
@@ -3155,9 +3172,9 @@ function showMagicTargetSelection(card, index) {
             }
             const arr = Array.from(selected).map(k => {
                 const [x, y] = k.split(',');
-                return {x: parseInt(x, 10), y: parseInt(y, 10)};
+                return { x: parseInt(x, 10), y: parseInt(y, 10) };
             });
-            confirmMagicTarget({selected_cells: arr});
+            confirmMagicTarget({ selected_cells: arr });
             // cleanup
             document.querySelectorAll('#player-board .cell').forEach(cell => {
                 if (cell._magicHandlers && cell._magicHandlers.length) {
@@ -3196,12 +3213,12 @@ function showMagicTargetSelection(card, index) {
 // 添加魔法卡目标选择判断函数（返回目标选择描述）
 function needsTargetSelection(cardName) {
     const map = {
-        '冻结': {type: 'area', size: 3, board: 'opponent'},          // 3x3区域
-        '探测雷达': {type: 'area', size: 2, board: 'opponent'},      // 2x2区域
-        '轰炸': {type: 'line', board: 'opponent'},                  // 行或列
-        '硫磺火焰': {type: 'continuous', length: 6, board: 'opponent'}, // 6个连续格子
-        '克苏鲁之眼': {type: 'single', board: 'self'},             // 选择自己的船暴露
-        '神之宣告': {type: 'own_ships', count: 2}                   // 选择两艘自己的船牺牲
+        '冻结': { type: 'area', size: 3, board: 'opponent' },          // 3x3区域
+        '探测雷达': { type: 'area', size: 2, board: 'opponent' },      // 2x2区域
+        '轰炸': { type: 'line', board: 'opponent' },                  // 行或列
+        '硫磺火焰': { type: 'continuous', length: 6, board: 'opponent' }, // 6个连续格子
+        '克苏鲁之眼': { type: 'single', board: 'self' },             // 选择自己的船暴露
+        '神之宣告': { type: 'own_ships', count: 2 }                   // 选择两艘自己的船牺牲
     };
     return map[cardName] || null;
 }
@@ -3277,7 +3294,7 @@ function createSelectionBoard(size, boardId = 'selection-board', onConfirm = nul
                     y2: startY + size - 1
                 };
                 if (typeof onConfirm === 'function') {
-                    onConfirm({target_area: area});
+                    onConfirm({ target_area: area });
                 }
                 // 清理
                 clearHighlights();
@@ -3289,11 +3306,11 @@ function createSelectionBoard(size, boardId = 'selection-board', onConfirm = nul
             // capture true so we intercept before other click handlers
             cell.addEventListener('click', onClick, true);
 
-            attachedListeners.push({el: cell, handlers: {onEnter, onLeave, onClick}});
+            attachedListeners.push({ el: cell, handlers: { onEnter, onLeave, onClick } });
         });
 
         function cleanup() {
-            attachedListeners.forEach(({el, handlers}) => {
+            attachedListeners.forEach(({ el, handlers }) => {
                 el.removeEventListener('mouseenter', handlers.onEnter);
                 el.removeEventListener('mouseleave', handlers.onLeave);
                 el.removeEventListener('click', handlers.onClick, true);
@@ -3361,7 +3378,7 @@ function createSelectionBoard(size, boardId = 'selection-board', onConfirm = nul
         const selectedCells = getSelectedCells(boardId);
         if (selectedCells.length > 0) {
             if (typeof onConfirm === 'function') {
-                onConfirm({selected_cells: selectedCells});
+                onConfirm({ selected_cells: selectedCells });
             } else {
                 confirmMagicTarget(selectedCells);
             }
@@ -3402,8 +3419,14 @@ function playMagicCard(index) {
         alert(`无法使用${card.name}：当前阶段${phaseName}不允许使用速阶${card.speed}的魔法卡`);
         return;
     }
-    if (gameState.fieldMagic==="禁忌果实"){
-        if(!(card.name==="失灵！"||card.type==="场地")){
+
+    // 特殊限制：溅射、雷达子弹需在自己上一击命中后才可使用
+    if (!canPlayAfterHit(card)) {
+        alert(`${card.name} 需要你上一次攻击命中后才能发动`);
+        return;
+    }
+    if (gameState.fieldMagic === "禁忌果实") {
+        if (!(card.name === "失灵！" || card.type === "场地")) {
             alert(`无法使用${card.name}：场地魔法“禁忌果实”生效，非场地及失灵类魔法卡无法使用`);
             return;
         }
@@ -3489,7 +3512,7 @@ function confirmMagicTarget(targetData) {
         payload.target_cells = targetData.target_cells; // 显式格子集合（如连续选择）
     } else if (targetData && targetData.x !== undefined && targetData.y !== undefined) {
         // 单格位置
-        payload.target_area = {x1: targetData.x, y1: targetData.y, x2: targetData.x, y2: targetData.y};
+        payload.target_area = { x1: targetData.x, y1: targetData.y, x2: targetData.x, y2: targetData.y };
     } else {
         // 未识别格式，直接发送原始数据
         payload = targetData;
@@ -3737,6 +3760,75 @@ function showMagicAnimation(card) {
     }, 100);
 }
 
+// 溅射动画：以最近攻击点为中心，对周围格子展示涟漪（支持形状与半径）
+// options: { radius: number=1, shape: 'square'|'cross'|'diamond', target: 'opponent'|'self' }
+function showSplashAnimation(x, y, options = {}) {
+    const coordValid = Number.isInteger(x) && Number.isInteger(y);
+    if (!coordValid && gameState.lastAttack) {
+        x = gameState.lastAttack.x;
+        y = gameState.lastAttack.y;
+    }
+    if (!Number.isInteger(x) || !Number.isInteger(y)) {
+        console.warn('溅射动画缺少有效坐标');
+        return;
+    }
+
+    const { radius = 1, shape = 'square', target } = options;
+    const attackerId = gameState.lastAttack?.attacker || gameState.playerId;
+    let targetBoard = attackerId === gameState.playerId ? opponentBoard : gamePlayerBoard;
+    if (target === 'opponent') targetBoard = opponentBoard;
+    if (target === 'self') targetBoard = gamePlayerBoard;
+    if (!targetBoard) return;
+
+    const maxSize = 6;
+    const positions = [];
+
+    for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || nx >= maxSize || ny < 0 || ny >= maxSize) continue;
+
+            const manhattan = Math.abs(dx) + Math.abs(dy);
+            const chebyshev = Math.max(Math.abs(dx), Math.abs(dy));
+            let inShape = false;
+
+            switch (shape) {
+                case 'cross':
+                    // 十字：在 x 或 y 方向的直线，距离不超过 radius
+                    inShape = (dx === 0 || dy === 0) && manhattan <= radius;
+                    break;
+                case 'diamond':
+                    // 菱形：曼哈顿距离不超过 radius
+                    inShape = manhattan <= radius;
+                    break;
+                case 'square':
+                default:
+                    // 方形：切比雪夫距离不超过 radius
+                    inShape = chebyshev <= radius;
+                    break;
+            }
+
+            if (inShape) {
+                const delayBase = shape === 'cross' ? manhattan : (manhattan + chebyshev) / 2;
+                positions.push({ x: nx, y: ny, delay: Math.floor(delayBase * 70) });
+            }
+        }
+    }
+
+    positions.forEach(pos => {
+        const cell = targetBoard.querySelector(`.cell[data-x="${pos.x}"][data-y="${pos.y}"]`);
+        if (!cell) return;
+
+        const ripple = document.createElement('div');
+        ripple.className = 'splash-effect';
+        ripple.style.animationDelay = `${pos.delay}ms`;
+        cell.querySelectorAll('.splash-effect').forEach(n => n.remove());
+        cell.appendChild(ripple);
+        setTimeout(() => { if (ripple.parentNode === cell) ripple.remove(); }, 800 + pos.delay);
+    });
+}
+
 // 更新场地魔法UI显示
 function updateFieldMagicUI(playerId, card) {
     const fieldElement = document.getElementById('current-field-magic');
@@ -3746,7 +3838,7 @@ function updateFieldMagicUI(playerId, card) {
         const owner = playerId === gameState.playerId ? '你的' : '对方的';
         fieldElement.innerHTML = `当前生效的场地魔法: <span class="field-magic-card">${owner}${card.name}</span>`;
         fieldElement.className = `field-magic active`;
-        gameState.fieldMagic=card.name;
+        gameState.fieldMagic = card.name;
     } else {
         fieldElement.innerHTML = `当前生效的场地魔法: <span class="no-magic">无</span>`;
         fieldElement.className = 'field-magic';
@@ -3850,11 +3942,11 @@ function handleSurrender() {
         }, (response) => {
             if (response.status === 'success') {
                 // 投降成功，游戏结束
-                showMessage('你已投降，游戏结束', {type: 'warning'});
+                showMessage('你已投降，游戏结束', { type: 'warning' });
                 // 等待服务器发送game_over事件
             } else {
                 // 投降失败
-                showMessage(`投降失败: ${response.message}`, {type: 'error'});
+                showMessage(`投降失败: ${response.message}`, { type: 'error' });
             }
         });
     }
@@ -4057,7 +4149,7 @@ function loadDiscardPile() {
         if (response.status === 'success') {
             displayDiscardPile(response.discard_pile);
         } else {
-            showMessage(`加载弃牌堆失败: ${response.message}`, {type: 'error'});
+            showMessage(`加载弃牌堆失败: ${response.message}`, { type: 'error' });
         }
     });
 }
@@ -4155,7 +4247,7 @@ function init() {
         }
         // 在 socket 连接后尝试加入房间
         if (gameState.socket.connected) {
-            gameState.socket.emit('join_room', {room_id: autoRoom, player_name: gameState.playerName}, (resp) => {
+            gameState.socket.emit('join_room', { room_id: autoRoom, player_name: gameState.playerName }, (resp) => {
                 if (resp && resp.status === 'success') {
                     gameState.roomId = autoRoom;
                     switchScreen(shipPlacementScreen);
@@ -4164,7 +4256,7 @@ function init() {
         } else {
             // 等待连接建立后加入
             const onceConnect = () => {
-                gameState.socket.emit('join_room', {room_id: autoRoom, player_name: gameState.playerName}, (resp) => {
+                gameState.socket.emit('join_room', { room_id: autoRoom, player_name: gameState.playerName }, (resp) => {
                     if (resp && resp.status === 'success') {
                         gameState.roomId = autoRoom;
                         switchScreen(shipPlacementScreen);
@@ -4328,13 +4420,13 @@ function setupPhaseButtons() {
     document.getElementById('enter-end-phase').addEventListener('click', () => {
         // 获取当前剩余攻击次数
         const remainingAttacks = parseInt(attacksRemaining.textContent, 10);
-        
+
         // 检查是否还有剩余攻击次数
         if (remainingAttacks > 0) {
             alert('你还有剩余攻击次数，无法进入结束阶段');
             return; // 阻止进入结束阶段
         }
-        
+
         gameState.socket.emit('enter_end_phase', {
             room_id: gameState.roomId,
             player_id: gameState.playerId

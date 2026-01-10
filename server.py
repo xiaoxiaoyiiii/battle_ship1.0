@@ -1214,17 +1214,6 @@ def handle_use_magic_card(data):
     player = room.players[player_id]
     opponent_id = next(p for p in room.players if p != player_id)
 
-    # 将客户端传来的字典转换为MagicCard对象
-    try:
-        card = MagicCard(
-            name=card_dict.get('name', ''),
-            speed=card_dict.get('speed', ''),
-            type=card_dict.get('type', ''),
-            description=card_dict.get('description', '')
-        )
-    except Exception as e:
-        return {'status': 'error', 'message': f'无效的魔法卡数据: {str(e)}'}
-
     # 检查卡牌是否在玩家手牌中
     if not any(c.name == card.name and c.speed == card.speed for c in player.magic_hand):
         return {'status': 'error', 'message': '你没有这张魔法卡'}

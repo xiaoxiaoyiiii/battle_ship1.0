@@ -1008,7 +1008,11 @@ def handle_enter_end_phase(data):
     room = rooms[room_id]
     # 检查是否是当前攻击者的战斗阶段
     if room.current_attacker == player_id and room.current_phase == 'battle':
-        # 直接进入结束阶段，允许玩家在还有攻击次数的情况下结束战斗
+        # 检查是否还有剩余攻击次数
+        if room.attacks_remaining > 0:
+            return {'status': 'error', 'message': '你还有剩余攻击次数，无法进入结束阶段'}
+        
+        # 进入结束阶段
         room.current_phase = 'end'
         emit('phase_updated', {
             'current_phase': room.current_phase,
@@ -1825,12 +1829,12 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             emit('lingqi_waiting', {
                 'message': '对方正在结算灵气复苏效果 请等待'
             }, to=opponent_id)
-
-        elif card.name == '败者食尘':
-            # 记录败者食尘打出前双方的船数
-            original_caster_ships = len(caster.ships)
-            original_opponent_ships = len(opponent.ships)
-
+        
+        elif card['name'] == '败者食尘':
+            # 记录败者食尘打出前双方的船数，已修复
+            original_caster_ships = len(caster['ships'])
+            original_opponent_ships = len(opponent['ships'])
+            
             # 交换双方的船数限制：将双方的max_ships设置为对方的原始船数
             caster.max_ships = original_opponent_ships
             opponent.max_ships = original_caster_ships

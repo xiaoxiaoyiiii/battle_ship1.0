@@ -500,6 +500,15 @@ button:hover {
     flex-direction: column;
     overflow: hidden;
 }
+.in-game-chat-header {
+    user-select: none;
+    cursor: move;
+    padding: 8px 10px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--muted);
+    font-weight: 600;
+    color: var(--text);
+}
 .in-game-chat-messages {
     flex: 1;
     min-height: 120px;

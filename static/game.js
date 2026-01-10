@@ -450,6 +450,7 @@ const chatContainer = document.getElementById('in-game-chat-container');
 const chatMessages = document.getElementById('in-game-chat-messages');
 const chatInput = document.getElementById('in-game-chat-input');
 const chatSendBtn = document.getElementById('in-game-chat-send');
+const chatHeader = document.getElementById('in-game-chat-header');
 
 // 聊天Socket初始化
 let chatSocketInitialized = false;
@@ -492,7 +493,7 @@ function appendChatMessage(username, message, isMe) {
 
 function escapeHtml(str) {
     return String(str).replace(/[&<>"']/g, function (c) {
-        return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;'}[c];
+        return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
     });
 }
 
@@ -502,6 +503,123 @@ function setChatVisible(visible) {
 }
 
 setChatVisible(false);
+
+// 使聊天框可拖动
+(function enableDraggableChat(){
+    if (!chatContainer || !chatHeader) return;
+
+    // 尝试恢复位置
+    const saved = localStorage.getItem('in_game_chat_pos');
+    if (saved) {
+        try {
+            const pos = JSON.parse(saved);
+            if (typeof pos.left === 'number' && typeof pos.top === 'number') {
+                chatContainer.style.left = pos.left + 'px';
+                chatContainer.style.top = pos.top + 'px';
+                chatContainer.style.right = 'auto';
+                chatContainer.style.bottom = 'auto';
+            }
+        } catch(_){}
+    }
+
+    let dragging = false;
+    let startX = 0, startY = 0, startLeft = 0, startTop = 0;
+
+    function clamp(val, min, max){ return Math.max(min, Math.min(max, val)); }
+    function getBounds(){
+        const rect = chatContainer.getBoundingClientRect();
+        const vw = window.innerWidth, vh = window.innerHeight;
+        const maxLeft = vw - rect.width;
+        const maxTop = vh - rect.height;
+        return { maxLeft: Math.max(0, maxLeft), maxTop: Math.max(0, maxTop) };
+    }
+
+    function save(){
+        const rect = chatContainer.getBoundingClientRect();
+        localStorage.setItem('in_game_chat_pos', JSON.stringify({ left: rect.left, top: rect.top }));
+    }
+
+    function onMouseDown(e){
+        if (e.button !== 0) return; // 仅限左键
+        dragging = true;
+        const rect = chatContainer.getBoundingClientRect();
+        startX = e.clientX; startY = e.clientY;
+        startLeft = rect.left; startTop = rect.top;
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+        e.preventDefault();
+    }
+
+    function onMouseMove(e){
+        if (!dragging) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        const bounds = getBounds();
+        const nextLeft = clamp(startLeft + dx, 0, bounds.maxLeft);
+        const nextTop = clamp(startTop + dy, 0, bounds.maxTop);
+        chatContainer.style.left = nextLeft + 'px';
+        chatContainer.style.top = nextTop + 'px';
+        chatContainer.style.right = 'auto';
+        chatContainer.style.bottom = 'auto';
+    }
+
+    function onMouseUp(){
+        if (!dragging) return;
+        dragging = false;
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        save();
+    }
+
+    chatHeader.addEventListener('mousedown', onMouseDown);
+
+    // 触摸支持
+    chatHeader.addEventListener('touchstart', function(e){
+        if (!e.touches || e.touches.length === 0) return;
+        const t = e.touches[0];
+        dragging = true;
+        const rect = chatContainer.getBoundingClientRect();
+        startX = t.clientX; startY = t.clientY;
+        startLeft = rect.left; startTop = rect.top;
+        document.addEventListener('touchmove', onTouchMove, {passive:false});
+        document.addEventListener('touchend', onTouchEnd);
+        e.preventDefault();
+    });
+    function onTouchMove(e){
+        if (!dragging || !e.touches || e.touches.length === 0) return;
+        const t = e.touches[0];
+        const dx = t.clientX - startX;
+        const dy = t.clientY - startY;
+        const bounds = getBounds();
+        const nextLeft = clamp(startLeft + dx, 0, bounds.maxLeft);
+        const nextTop = clamp(startTop + dy, 0, bounds.maxTop);
+        chatContainer.style.left = nextLeft + 'px';
+        chatContainer.style.top = nextTop + 'px';
+        chatContainer.style.right = 'auto';
+        chatContainer.style.bottom = 'auto';
+        e.preventDefault();
+    }
+    function onTouchEnd(){
+        if (!dragging) return;
+        dragging = false;
+        document.removeEventListener('touchmove', onTouchMove);
+        document.removeEventListener('touchend', onTouchEnd);
+        save();
+    }
+
+    // 窗口缩放时，确保位置仍在视口内
+    window.addEventListener('resize', function(){
+        const rect = chatContainer.getBoundingClientRect();
+        const bounds = getBounds();
+        const left = clamp(rect.left, 0, bounds.maxLeft);
+        const top = clamp(rect.top, 0, bounds.maxTop);
+        chatContainer.style.left = left + 'px';
+        chatContainer.style.top = top + 'px';
+        chatContainer.style.right = 'auto';
+        chatContainer.style.bottom = 'auto';
+        save();
+    });
+})();
 
 
 // 日志功能元素

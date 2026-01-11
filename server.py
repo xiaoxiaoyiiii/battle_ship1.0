@@ -1266,7 +1266,11 @@ def handle_use_magic_card(data):
     if not can_play_magic_card(room, player_id, card):
         return {'status': 'error', 'message': f'当前阶段{room.current_phase}无法使用速阶{card.speed}的魔法卡'}
 
-    # 从手牌中移除并添加到弃牌堆
+    # 找到并移除玩家手牌中的卡牌
+    for i, c in enumerate(player.magic_hand):
+        if c.name == card.name and c.speed == card.speed:
+            player.magic_hand.pop(i)
+            break
     room.magic_discard.append(card)
 
     # 记录最后使用的魔法卡

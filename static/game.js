@@ -4231,6 +4231,11 @@ function initCardTooltip() {
 
 // 创建魔法卡UI元素
 function createMagicCardUI() {
+    // 检查是否已经存在魔法卡系统，避免重复创建
+    if (document.getElementById('magic-system')) {
+        return;
+    }
+    
     const gameScreen = document.getElementById('game-screen');
     const magicUI = document.createElement('div');
     magicUI.id = 'magic-system';

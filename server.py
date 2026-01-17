@@ -1608,11 +1608,10 @@ def can_play_magic_card(room, player_id, card):
         return speed in [1, 2]
     elif room.current_phase == 'battle':
         # 战斗阶段可以使用速阶1和速阶2的卡牌
-        return speed == 2
+        return speed in [1, 2]
     elif room.current_phase == 'end':
         # 结束阶段不能使用魔法卡
         return False
-
     return False
 
 

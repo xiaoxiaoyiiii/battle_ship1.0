@@ -17,17 +17,27 @@ def emit(event, data, to=None, room: str | None = None):
     return semit(event, json.loads(json_data), to=to, room=room)
 
 
+class GameLog:
+    def __init__(self, text: str, event_type: str = 'info', payload: dict | None = None):
+        self.ts = int(time.time())
+        self.type = event_type
+        self.text = text
+        self.detail = payload
+    
+    def to_dict(self):
+        return {
+            'ts': self.ts,
+            'type': self.type,
+            'text': self.text,
+            'detail': self.detail
+        }
+
+
 def add_game_log(room, text: str, event_type: str = 'info', payload: dict | None = None):
     """Append a lightweight battle log entry for later history queries."""
     if not hasattr(room, 'game_logs'):
         room.game_logs = []
-    entry = {
-        'ts': int(time.time()),
-        'type': event_type,
-        'text': text
-    }
-    if payload:
-        entry['detail'] = payload
+    entry = GameLog(text, event_type, payload)
     room.game_logs.append(entry)
 
 
@@ -143,8 +153,9 @@ class Player:
     # 设置新的船数限制
     max_ships: Any
     sunken_ships: Any
+    user_id: str
 
-    def __init__(self, name: str, ships: list[PlayerShip], attacks: list[Position], remaining_ships: int):
+    def __init__(self, name: str, ships: list[PlayerShip], attacks: list[Position], remaining_ships: int, user_id: str = None):
         self.magic_blocked = None
         self.damage_dealt_this_turn = 0
         self.magic_hand = []
@@ -156,6 +167,7 @@ class Player:
         self.needs_reset = False
         self.revealed_positions = []
         self.max_ships = None
+        self.user_id = user_id
 
 
 class GameRoom:
@@ -298,16 +310,16 @@ class GameRoom:
         }, room=self.id)
 
         # 准备攻击结果
-        attack_result = {
-            'attacker': attacker_id,
-            'x': target.x,
-            'y': target.y,
-            'hit': hit,
-            'ship_sunk': ship_sunk,
-            'remaining_attacks': self.attacks_remaining,
-            'attacker_remaining_ships': self.players[attacker_id].remaining_ships,
-            'defender_remaining_ships': self.players[defender_id].remaining_ships
-        }
+        attack_result = AttackResult(
+            attacker=attacker_id,
+            x=target.x,
+            y=target.y,
+            hit=hit,
+            ship_sunk=ship_sunk,
+            remaining_attacks=self.attacks_remaining,
+            attacker_remaining_ships=self.players[attacker_id].remaining_ships,
+            defender_remaining_ships=self.players[defender_id].remaining_ships
+        )
 
         add_game_log(self, f"{attacker_id} 攻击 ({target.x},{target.y}) - {'命中' if hit else '未命中'}{'，击沉战舰' if ship_sunk else ''}",
                      'attack', {
@@ -326,7 +338,11 @@ class GameRoom:
             add_game_log(self, f"{attacker_id} 获胜，游戏结束", 'result', {'winner': attacker_id, 'loser': defender_id})
             # 记录战绩（若为已登录用户）
             try:
-                db.record_match(attacker_id, defender_id, getattr(self, 'game_logs', None))
+                winner_user_id = self.players[attacker_id].user_id
+                loser_user_id = self.players[defender_id].user_id
+                # 只有当至少有一个是已登录用户时才记录
+                if winner_user_id or loser_user_id:
+                    db.record_match(winner_user_id or attacker_id, loser_user_id or defender_id, getattr(self, 'game_logs', None))
             except Exception:
                 pass
             emit('game_over', {'winner': attacker_id}, room=self.id)
@@ -337,17 +353,170 @@ magic_cards = list(map(lambda x: MagicCard(**x), read_json('./static/magic_card.
 
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# 游戏房间数据结构
-rooms: dict[str, GameRoom] = {}
-# 匹配队列：存储 (socket_sid, db_user_id, player_name) 元组
-match_queue: list[list[str], list[str], list[str]] = [[], [], []]
 # 聊天消息最大长度
 MAX_CHAT_MSG_LEN = 100
-# 大厅匹配队列（简单 FIFO 队列）
-lobby_queue = []
 
-# 简单的 lobby 成员列表（用于显示）
-lobby_members = set()
+class RoomManager:
+    def __init__(self):
+        # 游戏房间数据结构
+        self.rooms: dict[str, GameRoom] = {}
+        # 匹配队列 [socket_ids, player_names, user_ids]
+        self.match_queue: list[list[str], list[str], list[str]] = [[], [], []]
+        # 大厅匹配队列（简单 FIFO 队列）
+        self.lobby_queue = []
+        # 简单的 lobby 成员列表（用于显示）
+        self.lobby_members = set()
+    
+    # 房间管理方法
+    def create_room(self, room_id: str = None) -> str:
+        """创建新房间，返回房间ID"""
+        if not room_id:
+            room_id = str(uuid.uuid4())[:6]
+        self.rooms[room_id] = GameRoom(room_id)
+        return room_id
+    
+    def join_room(self, room_id: str, player_id: str, player_name: str) -> bool:
+        """玩家加入房间，返回是否成功"""
+        if room_id not in self.rooms:
+            return False
+        
+        room = self.rooms[room_id]
+        if len(room.players) >= 2:
+            return False
+        
+        room.players[player_id] = Player(**{
+            'name': player_name,
+            'ships': [],
+            'attacks': [],
+            'remaining_ships': 0
+        })
+        return True
+    
+    def get_room(self, room_id: str) -> GameRoom | None:
+        """获取房间对象"""
+        return self.rooms.get(room_id)
+    
+    def delete_room(self, room_id: str) -> bool:
+        """删除房间，返回是否成功"""
+        if room_id in self.rooms:
+            del self.rooms[room_id]
+            return True
+        return False
+    
+    def get_all_rooms(self) -> dict[str, GameRoom]:
+        """获取所有房间"""
+        return self.rooms
+    
+    # 匹配功能方法
+    def add_to_match_queue(self, player_id: str, player_name: str) -> bool:
+        """添加玩家到匹配队列，返回是否成功"""
+        if player_id in self.match_queue[0]:
+            return False
+        
+        self.match_queue[0].append(player_id)
+        self.match_queue[1].append(player_name)
+        return True
+    
+    def remove_from_match_queue(self, player_id: str) -> bool:
+        """从匹配队列移除玩家，返回是否成功"""
+        if player_id in self.match_queue[0]:
+            index = self.match_queue[0].index(player_id)
+            self.match_queue[0].pop(index)
+            self.match_queue[1].pop(index)
+            if len(self.match_queue[2]) > index:
+                self.match_queue[2].pop(index)
+            return True
+        return False
+    
+    def has_player_in_match_queue(self, player_id: str) -> bool:
+        """检查玩家是否在匹配队列中"""
+        return player_id in self.match_queue[0]
+    
+    def get_match_queue_size(self) -> int:
+        """获取匹配队列大小"""
+        return len(self.match_queue[0])
+    
+    def process_match_queue(self, magic_cards: list[MagicCard]) -> list[dict]:
+        """处理匹配队列，返回匹配结果列表"""
+        matches = []
+        
+        while len(self.match_queue[0]) >= 2:
+            # 从队列中取出前两个玩家
+            player1 = self.match_queue[0].pop(0)
+            player2 = self.match_queue[0].pop(0)
+            
+            # 再次检查是否是同一个玩家，确保不会匹配到自己
+            if player1 == player2:
+                # 将玩家放回队列末尾
+                self.match_queue[0].append(player1)
+                # 也要放回其他队列的数据
+                if len(self.match_queue[1]) > 0:
+                    self.match_queue[1].append(self.match_queue[1].pop(0))
+                if len(self.match_queue[2]) > 0:
+                    self.match_queue[2].append(self.match_queue[2].pop(0))
+                continue
+            
+            # 创建新房间
+            room_id = str(uuid.uuid4())[:6]
+            room = GameRoom(room_id)
+            self.rooms[room_id] = room
+            
+            # 获取玩家名称和user_id
+            player1_name = self.match_queue[1].pop(0)
+            player2_name = self.match_queue[1].pop(0)
+            player1_user_id = self.match_queue[2].pop(0)
+            player2_user_id = self.match_queue[2].pop(0)
+            
+            # 添加玩家到房间
+            room.players[player1] = Player(**{
+                'name': player1_name,
+                'ships': [],
+                'attacks': [],
+                'remaining_ships': 0,
+                'user_id': player1_user_id
+            })
+            
+            room.players[player2] = Player(**{
+                'name': player2_name,
+                'ships': [],
+                'attacks': [],
+                'remaining_ships': 0,
+                'user_id': player2_user_id
+            })
+            
+            # 初始化魔法卡牌系统
+            room.init_player_magic(player1, magic_cards)
+            room.init_player_magic(player2, magic_cards)
+            
+            matches.append({
+                'room_id': room_id,
+                'players': [player1, player2],
+                'room': room
+            })
+        
+        return matches
+    
+    # 大厅功能方法
+    def add_lobby_member(self, member_id: str) -> bool:
+        """添加成员到大厅，返回是否成功"""
+        if member_id in self.lobby_members:
+            return False
+        self.lobby_members.add(member_id)
+        return True
+    
+    def remove_lobby_member(self, member_id: str) -> bool:
+        """从大厅移除成员，返回是否成功"""
+        if member_id in self.lobby_members:
+            self.lobby_members.remove(member_id)
+            return True
+        return False
+    
+    def get_lobby_members(self) -> set[str]:
+        """获取大厅成员列表"""
+        return self.lobby_members
+
+# 创建RoomManager实例
+room_manager = RoomManager()
 
 
 
@@ -382,18 +551,19 @@ def lobby():
 
 @socketio.on('create_room')
 def handle_create_room(data):
-    room_id = str(uuid.uuid4())[:6]
-    rooms[room_id] = GameRoom(room_id)
+    room_id = room_manager.create_room()
     # 优先使用登录后的 user_id，否则使用 sid（游客模式）
     join_room(room_id)
     player_id = session.get('user_id', request.sid)
     player_name = session.get('username', data.get('player_name', '匿名玩家'))
-    rooms[room_id].players[player_id] = Player(**{
-        'name': player_name,
-        'ships': [],
-        'attacks': [],
-        'remaining_ships': 0  # 初始化剩余战舰数量
-    })
+    room = room_manager.get_room(room_id)
+    if room:
+        room.players[player_id] = Player(**{
+            'name': player_name,
+            'ships': [],
+            'attacks': [],
+            'remaining_ships': 0  # 初始化剩余战舰数量
+        })
     return {'status': 'success', 'room_id': room_id}
 
 @socketio.on('join_room')
@@ -403,11 +573,11 @@ def handle_join_room(data):
     player_id = session.get('user_id', request.sid)
     player_name = session.get('username', data.get('player_name', '匿名玩家'))
 
-    if room_id not in rooms:
+    room = room_manager.get_room(room_id)
+    if not room:
         emit('error', {'message': '房间不存在'}, room=request.sid)
         return {'status': 'error', 'message': '房间不存在'}
 
-    room = rooms[room_id]
     if len(room.players) >= 2:
         emit('error', {'message': '房间已满'}, room=request.sid)
         return {'status': 'error', 'message': '房间已满'}
@@ -470,11 +640,10 @@ def handle_disconnect():
     print(f"Client disconnected: {sid}, online users: {len(online_users)}")
     
     # 清理相关数据
-    if sid in match_queue[0]:
-        i = match_queue[0].index(sid)
-        match_queue[0].pop(i)
-        match_queue[1].pop(i)
-        match_queue[2].pop(i)
+    if sid in room_manager.match_queue[0]:
+        i = room_manager.match_queue[0].index(sid)
+        room_manager.match_queue[0].pop(i)
+        room_manager.match_queue[1].pop(i)
 
 
 @socketio.on('chat_message')
@@ -508,53 +677,55 @@ def handle_find_match(data):
     socket_sid = request.sid
     db_user_id = session.get('user_id', socket_sid)
     player_name = data.get('player_name', '匿名玩家')
+    user_id = session.get('user_id')
 
     # 检查玩家是否已经在匹配队列中
-    if socket_sid in match_queue[0]:
+    if player_id in room_manager.match_queue[0]:
         return {'status': 'error', 'message': '你已经在匹配队列中'}
 
-    # 将玩家添加到匹配队列 (socket_sid, db_user_id, player_name)
-    match_queue[0].append(socket_sid)
-    match_queue[1].append(db_user_id)
-    match_queue[2].append(player_name)
+    # 将玩家添加到匹配队列 (保存socket_id, player_name, user_id)
+    room_manager.match_queue[0].append(player_id)
+    room_manager.match_queue[1].append(player_name)
+    room_manager.match_queue[2].append(user_id)
     emit('match_queued', {'status': 'success', 'message': '已加入匹配队列'})
 
     # 尝试匹配
-    while len(match_queue[0]) >= 2:
+    while len(room_manager.match_queue[0]) >= 2:
         # 从队列中取出前两个玩家
-        socket_sid1 = match_queue[0].pop(0)
-        socket_sid2 = match_queue[0].pop(0)
-        db_user_id1 = match_queue[1].pop(0)
-        db_user_id2 = match_queue[1].pop(0)
-        player1_name = match_queue[2].pop(0)
-        player2_name = match_queue[2].pop(0)
+        player1 = room_manager.match_queue[0].pop(0)
+        player2 = room_manager.match_queue[0].pop(0)
 
         # 再次检查是否是同一个玩家，确保不会匹配到自己
         if db_user_id1 == db_user_id2:
             # 将玩家放回队列末尾
-            match_queue[0].append(socket_sid1)
-            match_queue[1].append(db_user_id1)
-            match_queue[2].append(player1_name)
+            room_manager.match_queue[0].append(player1)
             continue
 
         # 创建新房间
-        room_id = str(uuid.uuid4())[:6]
-        room = GameRoom(room_id)
-        rooms[room_id] = room
+        room_id = room_manager.create_room()
+        room = room_manager.get_room(room_id)
 
-        # 添加玩家到房间（使用数据库用户ID作为key）
-        room.players[db_user_id1] = Player(**{
+        # 获取玩家名称和user_id
+        player1_name = room_manager.match_queue[1].pop(0)
+        player2_name = room_manager.match_queue[1].pop(0)
+        player1_user_id = room_manager.match_queue[2].pop(0)
+        player2_user_id = room_manager.match_queue[2].pop(0)
+
+        # 添加玩家到房间
+        room.players[player1] = Player(**{
             'name': player1_name,
             'ships': [],
             'attacks': [],
-            'remaining_ships': 0
+            'remaining_ships': 0,
+            'user_id': player1_user_id
         })
 
         room.players[db_user_id2] = Player(**{
             'name': player2_name,
             'ships': [],
             'attacks': [],
-            'remaining_ships': 0
+            'remaining_ships': 0,
+            'user_id': player2_user_id
         })
 
         # 初始化魔法卡牌系统
@@ -592,11 +763,10 @@ def handle_cancel_match(data):
     socket_sid = session.get('user_id', request.sid)
 
     # 从匹配队列中移除玩家
-    if socket_sid in match_queue[0]:
-        index = match_queue[0].index(socket_sid)
-        match_queue[0].pop(index)
-        match_queue[1].pop(index)
-        match_queue[2].pop(index)
+    if player_id in room_manager.match_queue[0]:
+        index = room_manager.match_queue[0].index(player_id)
+        room_manager.match_queue[0].pop(index)
+        room_manager.match_queue[1].pop(index)
 
     emit('match_canceled', {'status': 'success', 'message': '已取消匹配'})
 
@@ -609,10 +779,10 @@ def handle_place_ships(data):
     room_id = data['room_id']
     player_id = data['player_id']
     ships = data['ships']
-    if room_id not in rooms or player_id not in rooms[room_id].players:
+    room = room_manager.get_room(room_id)
+    if not room or player_id not in room.players:
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
-    room = rooms[room_id]
     room.players[player_id].ships = list(map(lambda x: PlayerShip(**x), ships))
 
     # 新增：计算并设置剩余战舰数量（攻击次数）
@@ -646,10 +816,10 @@ def handle_rps_choice(data):
     player_id = data['player_id']
     choice = data['choice']  # 'rock', 'paper', 'scissors'
 
-    if room_id not in rooms or player_id not in rooms[room_id].players:
+    room = room_manager.get_room(room_id)
+    if not room or player_id not in room.players:
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
-    room = rooms[room_id]
     room.rps_choices[player_id] = choice
 
     # 检查是否所有玩家都已做出选择
@@ -658,7 +828,7 @@ def handle_rps_choice(data):
         result = determine_rps_winner(room)
         emit('rps_result', result, room=room_id)
         # 设置攻击顺序
-        room.attack_order = result['order']
+        room.attack_order = result.order
         winner = room.attack_order[0]  # 先手
         loser = room.attack_order[1]  # 后手
         room.current_attacker = winner
@@ -694,6 +864,82 @@ def handle_rps_choice(data):
     return {'status': 'success'}
 
 
+class RPSResult:
+    def __init__(self, status: str, message: str, winner: str = None, loser: str = None, choices: dict = None, order: list = None):
+        self.status = status
+        self.message = message
+        self.winner = winner
+        self.loser = loser
+        self.choices = choices or {}
+        self.order = order or []
+    
+    def to_dict(self):
+        return {
+            'status': self.status,
+            'message': self.message,
+            'winner': self.winner,
+            'loser': self.loser,
+            'choices': self.choices,
+            'order': self.order
+        }
+
+
+class ChainItem:
+    def __init__(self, player_id: str, card: MagicCard, targets: list, timestamp: float):
+        self.player_id = player_id
+        self.card = card
+        self.targets = targets
+        self.timestamp = timestamp
+    
+    def to_dict(self):
+        return {
+            'player_id': self.player_id,
+            'card': self.card,
+            'targets': self.targets,
+            'timestamp': self.timestamp
+        }
+
+
+class AttackResult:
+    def __init__(self, attacker: str, x: int, y: int, hit: bool, ship_sunk: bool, remaining_attacks: int, attacker_remaining_ships: int, defender_remaining_ships: int):
+        self.attacker = attacker
+        self.x = x
+        self.y = y
+        self.hit = hit
+        self.ship_sunk = ship_sunk
+        self.remaining_attacks = remaining_attacks
+        self.attacker_remaining_ships = attacker_remaining_ships
+        self.defender_remaining_ships = defender_remaining_ships
+    
+    def to_dict(self):
+        return {
+            'attacker': self.attacker,
+            'x': self.x,
+            'y': self.y,
+            'hit': self.hit,
+            'ship_sunk': self.ship_sunk,
+            'remaining_attacks': self.remaining_attacks,
+            'attacker_remaining_ships': self.attacker_remaining_ships,
+            'defender_remaining_ships': self.defender_remaining_ships
+        }
+
+
+class ChainResult:
+    def __init__(self, card: MagicCard, caster: str, success: bool = True, message: str = ''):
+        self.card = card
+        self.caster = caster
+        self.success = success
+        self.message = message
+    
+    def to_dict(self):
+        return {
+            'card': self.card,
+            'caster': self.caster,
+            'success': self.success,
+            'message': self.message
+        }
+
+
 def determine_rps_winner(room: GameRoom):
     players = list(room.players.keys())
     p1, p2 = players[0], players[1]
@@ -702,7 +948,7 @@ def determine_rps_winner(room: GameRoom):
     # 处理平局情况
     if c1 == c2:
         room.rps_choices = {}
-        return {'status': 'tie', 'message': '平局，重新猜拳'}
+        return RPSResult('tie', '平局，重新猜拳')
 
     # 判断胜负
     win_conditions = {
@@ -717,13 +963,14 @@ def determine_rps_winner(room: GameRoom):
     else:
         winner, loser = p1, p2
 
-    return {
-        'status': 'win',
-        'winner': winner,
-        'loser': loser,
-        'choices': {p1: c1, p2: c2},
-        'order': [winner, loser]  # 攻击顺序
-    }
+    return RPSResult(
+        status='win',
+        message=f'{winner} 获胜',
+        winner=winner,
+        loser=loser,
+        choices={p1: c1, p2: c2},
+        order=[winner, loser]  # 攻击顺序
+    )
 
 
 # 添加新的Socket事件处理
@@ -734,10 +981,10 @@ def handle_magic_target(data):
     target_data = data['target_data']
     temp_data_id = data['temp_data_id']
 
-    if room_id not in rooms or player_id not in rooms[room_id].players:
+    room = room_manager.get_room(room_id)
+    if not room or player_id not in room.players:
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
-    room = rooms[room_id]
     # 存储临时目标数据
     room.magic_temp_data = {**room.magic_temp_data, **target_data}
 
@@ -801,10 +1048,9 @@ def handle_attack(data):
     target_x = data['x']
     target_y = data['y']
 
-    if room_id not in rooms or attacker_id not in rooms[room_id].players:
+    room = room_manager.get_room(room_id)
+    if not room or attacker_id not in room.players:
         return {'status': 'error', 'message': '无效的房间或玩家'}
-
-    room = rooms[room_id]
 
     # 检查是否是当前攻击者
     if attacker_id != room.current_attacker:
@@ -828,6 +1074,10 @@ def handle_attack(data):
     for i, ship in enumerate(defender_ships):
         if {'x': target_x, 'y': target_y} in ship.positions:
             hit = True
+            
+            # 更新无暇圣心效果：如果有伤害，标记no_damage为False
+            if 'holy_heart' in room.game_effects and not ship.invincible:  # 无敌状态不算造成伤害
+                room.game_effects['holy_heart']['no_damage'] = False
 
             # 检查攻击者是否有强制击杀效果
             has_forced_kill = room.players[attacker_id].effect_flags.forced_kill > 0
@@ -876,7 +1126,11 @@ def handle_attack(data):
                     try:
                         # 如果是游客（sid），db.record_match 会忽略不存在的用户
                         opponent_id = next(p for p in room.players if p != attacker_id)
-                        db.record_match(attacker_id, opponent_id, getattr(room, 'game_logs', None))
+                        winner_user_id = room.players[attacker_id].user_id
+                        loser_user_id = room.players[opponent_id].user_id
+                        # 只有当至少有一个是已登录用户时才记录
+                        if winner_user_id or loser_user_id:
+                            db.record_match(winner_user_id or attacker_id, loser_user_id or opponent_id, getattr(room, 'game_logs', None))
                     except Exception:
                         pass
                     emit('game_over', {'winner': attacker_id}, room=room_id)
@@ -946,7 +1200,11 @@ def handle_attack(data):
                             try:
                                 # 如果是游客（sid），db.record_match 会忽略不存在的用户
                                 opponent_id = next(p for p in room.players if p != attacker_id)
-                                db.record_match(attacker_id, opponent_id, getattr(room, 'game_logs', None))
+                                winner_user_id = room.players[attacker_id].user_id
+                                loser_user_id = room.players[opponent_id].user_id
+                                # 只有当至少有一个是已登录用户时才记录
+                                if winner_user_id or loser_user_id:
+                                    db.record_match(winner_user_id or attacker_id, loser_user_id or opponent_id, getattr(room, 'game_logs', None))
                             except Exception:
                                 pass
                             emit('game_over', {'winner': attacker_id}, room=room_id)
@@ -975,16 +1233,16 @@ def handle_attack(data):
     room.attacks_remaining = max(0, room.attacks_remaining)
 
     # 准备攻击结果
-    attack_result = {
-        'attacker': attacker_id,
-        'x': target_x,
-        'y': target_y,
-        'hit': hit,
-        'ship_sunk': ship_sunk,
-        'remaining_attacks': room.attacks_remaining,
-        'attacker_remaining_ships': room.players[attacker_id].remaining_ships,
-        'defender_remaining_ships': room.players[defender_id].remaining_ships
-    }
+    attack_result = AttackResult(
+        attacker=attacker_id,
+        x=target_x,
+        y=target_y,
+        hit=hit,
+        ship_sunk=ship_sunk,
+        remaining_attacks=room.attacks_remaining,
+        attacker_remaining_ships=room.players[attacker_id].remaining_ships,
+        defender_remaining_ships=room.players[defender_id].remaining_ships
+    )
 
     add_game_log(room, f"{room.players[attacker_id].name or attacker_id} 攻击 ({target_x},{target_y}) - {'命中' if hit else '未命中'}{'，击沉战舰' if ship_sunk else ''}",
                  'attack', {
@@ -1006,7 +1264,11 @@ def handle_attack(data):
         })
         # 记录战绩（若为已登录用户）
         try:
-            db.record_match(attacker_id, defender_id, getattr(room, 'game_logs', None))
+            winner_user_id = room.players[attacker_id].user_id
+            loser_user_id = room.players[defender_id].user_id
+            # 只有当至少有一个是已登录用户时才记录
+            if winner_user_id or loser_user_id:
+                db.record_match(winner_user_id or attacker_id, loser_user_id or defender_id, getattr(room, 'game_logs', None))
         except Exception:
             pass
         emit('game_over', {'winner': attacker_id}, room=room_id)
@@ -1029,10 +1291,10 @@ def enter_battle_phase(data):
     room_id = data['room_id']
     player_id = data['player_id']
 
-    if room_id not in rooms or player_id not in rooms[room_id].players:
+    room = room_manager.get_room(room_id)
+    if not room or player_id not in room.players:
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
-    room = rooms[room_id]
     # 检查是否是当前攻击者的准备阶段
     if room.current_attacker == player_id and room.current_phase == 'preparation':
         # 切换到战斗阶段
@@ -1069,10 +1331,10 @@ def handle_enter_end_phase(data):
     room_id = data['room_id']
     player_id = data['player_id']
 
-    if room_id not in rooms or player_id not in rooms[room_id].players:
+    room = room_manager.get_room(room_id)
+    if not room or player_id not in room.players:
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
-    room = rooms[room_id]
     # 检查是否是当前攻击者的战斗阶段
     if room.current_attacker == player_id and room.current_phase == 'battle':
         # 检查是否还有剩余攻击次数
@@ -1112,10 +1374,10 @@ def end_turn(data):
     room_id = data['room_id']
     player_id = data['player_id']
 
-    if room_id not in rooms or player_id not in rooms[room_id].players:
+    room = room_manager.get_room(room_id)
+    if not room or player_id not in room.players:
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
-    room = rooms[room_id]
     # 检查是否是当前攻击者的结束阶段
     if room.current_attacker == player_id and room.current_phase == 'end':
         current_index = room.attack_order.index(room.current_attacker)
@@ -1257,10 +1519,10 @@ def handle_use_magic_card(data):
     card = MagicCard(**data['card'])
     targets = data.get('targets', [])
 
-    if room_id not in rooms or player_id not in rooms[room_id].players:
+    room = room_manager.get_room(room_id)
+    if not room or player_id not in room.players:
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
-    room = rooms[room_id]
     player = room.players[player_id]
     opponent_id = next(p for p in room.players if p != player_id)
 
@@ -1293,12 +1555,7 @@ def handle_use_magic_card(data):
         }, room=room_id)
 
     # 添加到连锁栈
-    chain_item = {
-        'player_id': player_id,
-        'card': card,
-        'targets': targets,
-        'timestamp': time.time()
-    }
+    chain_item = ChainItem(player_id, card, targets, time.time())
     room.chain.append(chain_item)
 
     # 广播连锁更新
@@ -1361,9 +1618,9 @@ def resolve_chain(room):
     # 按照连锁顺序结算（从后往前）
     while room.chain:
         chain_item = room.chain.pop()
-        player_id = chain_item['player_id']
-        card = chain_item['card']
-        targets = chain_item['targets']
+        player_id = chain_item.player_id
+        card = chain_item.card
+        targets = chain_item.targets
 
         # 应用卡牌效果
         result = apply_magic_effect(room, player_id, card, targets)
@@ -1392,10 +1649,10 @@ def chain_response(data):
     card = data.get('card')
     targets = data.get('targets', [])
 
-    if room_id not in rooms or player_id not in rooms[room_id].players:
+    room = room_manager.get_room(room_id)
+    if not room or player_id not in room.players:
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
-    room = rooms[room_id]
     if not room.chain_waiting:
         return {'status': 'error', 'message': '没有待处理的连锁请求'}
 
@@ -1423,12 +1680,7 @@ def chain_response(data):
         room.last_magic = card
 
         # 添加到连锁栈
-        chain_item = {
-            'player_id': player_id,
-            'card': card,
-            'targets': targets,
-            'timestamp': time.time()
-        }
+        chain_item = ChainItem(player_id, card, targets, time.time())
         room.chain.append(chain_item)
 
         # 广播连锁更新
@@ -1467,10 +1719,10 @@ def counter_magic_response(data):
     player_id = data['player_id']
     use_counter = data['use_counter']
 
-    if room_id not in rooms or player_id not in rooms[room_id].players:
+    room = room_manager.get_room(room_id)
+    if not room or player_id not in room.players:
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
-    room = rooms[room_id]
     if not room.pending_magic:
         return {'status': 'error', 'message': '没有待处理的魔法卡'}
 
@@ -1521,8 +1773,8 @@ def handle_remove_field_magic(data):
     room_id = data['room_id']
     player_id = data['player_id']
 
-    if room_id in rooms and player_id in rooms[room_id].players:
-        room = rooms[room_id]
+    room = room_manager.get_room(room_id)
+    if room and player_id in room.players:
         # 将场地魔法加入弃牌堆
         for player_id in room.players:
             room.discard_card(player_id, MagicCard(room.field_magic))
@@ -1540,9 +1792,9 @@ def handle_confirm_reinforcement(data):
     room_id = data.get('room_id')
     player_id = data.get('player_id')
     position = data.get('position')
-    if not room_id or room_id not in rooms or not player_id or player_id not in rooms[room_id].players:
+    room = room_manager.get_room(room_id)
+    if not room or not player_id or player_id not in room.players:
         return {'status': 'error', 'message': '无效的房间或玩家'}
-    room = rooms[room_id]
     caster = room.players[player_id]
 
     # 验证是否存在等待的增援
@@ -1588,9 +1840,9 @@ def handle_confirm_reinforcement(data):
 def handle_request_revealed_positions(data):
     room_id = data.get('room_id')
     player_id = data.get('player_id')
-    if not room_id or room_id not in rooms or not player_id or player_id not in rooms[room_id].players:
+    room = room_manager.get_room(room_id)
+    if not room or not player_id or player_id not in room.players:
         return {'status': 'error', 'message': '无效的房间或玩家'}
-    room = rooms[room_id]
     positions = room.players[player_id].revealed_positions
     # 只发送给请求者
     emit('revealed_positions', {'positions': positions}, to=player_id)
@@ -1601,9 +1853,9 @@ def handle_request_revealed_positions(data):
 def get_magic_temp_data(data):
     room_id = data.get('room_id')
     player_id = data.get('player_id')
-    if not room_id or room_id not in rooms or not player_id or player_id not in rooms[room_id].players:
+    room = room_manager.get_room(room_id)
+    if not room or not player_id or player_id not in room.players:
         return {'status': 'error', 'message': '无效的房间或玩家'}
-    room = rooms[room_id]
     return {'status': 'success', 'data': room.magic_temp_data}
 
 
@@ -1614,10 +1866,9 @@ def confirm_magic_target(data):
     temp_data_id = data.get('temp_data_id')
     target_data = data.get('target_data', {})
 
-    if not room_id or room_id not in rooms or not player_id or player_id not in rooms[room_id].players:
+    room = room_manager.get_room(room_id)
+    if not room or not player_id or player_id not in room.players:
         return {'status': 'error', 'message': '无效的房间或玩家'}
-
-    room = rooms[room_id]
 
     if temp_data_id == 'taoyuan_choice':
         # 处理桃园结义的选择
@@ -1741,10 +1992,9 @@ def get_discard_pile(data):
     room_id = data.get('room_id')
     player_id = data.get('player_id')
 
-    if not room_id or room_id not in rooms or not player_id or player_id not in rooms[room_id].players:
+    room = room_manager.get_room(room_id)
+    if not room or not player_id or player_id not in room.players:
         return {'status': 'error', 'message': '无效的房间或玩家'}
-
-    room = rooms[room_id]
 
     # 获取全局弃牌堆数据
     discard_pile = room.magic_discard
@@ -1777,7 +2027,7 @@ def find_safe_position(room: GameRoom, player_id: str):
 
 
 def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_data):
-    result = {'card': card, 'caster': caster_id, 'success': True, 'message': ''}
+    result = ChainResult(card=card, caster=caster_id, success=True, message='')
     opponent_id = next(p for p in room.players if p != caster_id)
     caster = room.players[caster_id]
     opponent = room.players[opponent_id]
@@ -1786,8 +2036,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
 
     # ==== 速阶1 魔法卡 ====
     if card.name == '余音绕梁':
-        # 标记接下来两个攻击阶段造成的伤害将强制击杀，已修复
-        room.players[caster_id].effect_flags = room.players[caster_id].effect_flags
+        # 标记接下来两个攻击阶段造成的伤害将强制击杀
         room.players[caster_id].effect_flags.forced_kill = 2  # 持续2个攻击阶段
         result['message'] = '接下来两个攻击阶段将造成强制击杀'
         def func(room:GameRoom,attacker_id:str,defender_id:str):
@@ -1828,12 +2077,10 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             result['message'] = '无法抽取卡牌'
 
     elif card.name == '无中生有':
-        # 抽两张牌，本回合双方无法获得魔法卡，已修复
+        # 抽两张牌，本回合双方无法获得魔法卡
         card1 = room.draw_card(caster_id)
         card2 = room.draw_card(caster_id)
         # 设置禁止抽卡标记
-        room.players[caster_id].effect_flags = room.players[caster_id].effect_flags
-        room.players[opponent_id].effect_flags = room.players[opponent_id].effect_flags
         room.players[caster_id].effect_flags.no_draw = True
         room.players[opponent_id].effect_flags.no_draw = True
         result['message'] = '抽了2张牌，本回合双方无法获得魔法卡'
@@ -1868,8 +2115,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['message'] = '无暇圣心已激活，剩余2回合后结算'
 
     elif card.name == '火力全开':
-        # 本回合攻击次数翻倍，已修复
-        room.players[caster_id].effect_flags = room.players[caster_id].effect_flags
+        # 本回合攻击次数翻倍
         room.players[caster_id].effect_flags.double_attacks = True
         result['message'] = '本回合攻击次数翻倍'
         def func(room:GameRoom):
@@ -1932,8 +2178,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             player.revealed_positions = []
             # 清除所有与棋盘相关的状态
 
-        # 标记这是败者食尘效果，用于后续处理
-        room.lingqi_resurgence_applied = True
         # 添加败者食尘标记，用于设置攻击次数为0
         room.polar_reversal_applied = True
 
@@ -2779,7 +3023,14 @@ def handle_surrender(data):
     room.winner = opponent_id
 
     # 记录战绩（若为已登录用户）
-    db.record_match(opponent_id, player_id, getattr(room, 'game_logs', None))
+    try:
+        winner_user_id = room.players[opponent_id].user_id
+        loser_user_id = room.players[player_id].user_id
+        # 只有当至少有一个是已登录用户时才记录
+        if winner_user_id or loser_user_id:
+            db.record_match(winner_user_id or opponent_id, loser_user_id or player_id, getattr(room, 'game_logs', None))
+    except Exception:
+        pass
     # 向房间发送游戏结束事件
     emit('game_over', {
         'winner': opponent_id,

@@ -6,7 +6,7 @@
     <title>战舰游戏</title>
     <!-- 修改CSS引用路径 -->
     <link rel="stylesheet" href="/static/style.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="/static/socket.io.js"></script>
 </head>
 <body>
     <canvas id="particle-canvas"></canvas>
@@ -16,10 +16,12 @@
             <span>已登录: {{ username }}</span> | <a href="/logout">退出</a> |
             <a href="/leaderboard" class="hide-in-game">排行榜</a> |
             <a href="#" id="show-user-stats" class="hide-in-game">个人战绩</a> |
-            <a href="#" id="show-profile" class="hide-in-game">个人信息</a>
+            <a href="#" id="show-profile" class="hide-in-game">个人信息</a> |
+            <a href="#" id="toggle-theme" class="hide-in-game">深色模式</a>
         {% else %}
             <a href="/login" class="hide-in-game">登录</a> | <a href="/register" class="hide-in-game">注册</a> |
-            <a href="/leaderboard" class="hide-in-game">排行榜</a>
+            <a href="/leaderboard" class="hide-in-game">排行榜</a> |
+            <a href="#" id="toggle-theme" class="hide-in-game">深色模式</a>
         {% endif %}
         <!-- 个人信息模态弹窗 -->
         <div id="profile-modal" class="modal-overlay hidden">
@@ -60,7 +62,6 @@
                 </div>
             </div>
         </div>
-        <button id="theme-toggle" class="btn secondary" style="margin-left:12px;">切换主题</button>
         <button id="help-btn" class="btn secondary" style="margin-left:12px;">帮助</button>
         <button id="settings-btn" class="btn secondary" style="margin-left:12px;">设置</button>
         <button id="music-btn" class="btn secondary" style="margin-left:12px;">🎵</button>
@@ -149,26 +150,6 @@
         </div>
     </div>
 
-    <script>
-        (function () {
-            function applyTheme() {
-                const t = localStorage.getItem('battleship_theme');
-                if (t === 'dark') document.documentElement.classList.add('theme-dark'); else document.documentElement.classList.remove('theme-dark');
-                const btn = document.getElementById('theme-toggle');
-                if (btn) btn.textContent = (t === 'dark') ? '浅色主题' : '深色主题';
-            }
-
-            document.addEventListener('DOMContentLoaded', applyTheme);
-            document.addEventListener('click', function (e) {
-                if (e.target && e.target.id === 'theme-toggle') {
-                    const cur = localStorage.getItem('battleship_theme');
-                    localStorage.setItem('battleship_theme', cur === 'dark' ? 'light' : 'dark');
-                    applyTheme();
-                }
-            });
-        })();
-    </script>
-
     <!-- 开始界面 -->
     <div id="start-screen" class="screen active">
         <h1>战舰游戏</h1>
@@ -216,38 +197,38 @@
 
 
     <!-- 登录模态弹窗 -->
-    <div id="login-modal" class="modal-overlay hidden">
-        <div class="modal-content">
-            <span class="modal-close" id="login-modal-close">×</span>
-            <h2>登录</h2>
-            <div class="input-group">
-                <input type="text" id="login-username" placeholder="用户名">
-            </div>
-            <div class="input-group">
-                <input type="password" id="login-password" placeholder="密码">
-            </div>
-            <div class="button-group">
-                <button id="login-submit">登录</button>
-            </div>
+<div id="login-modal" class="modal-overlay hidden">
+    <div class="modal-content">
+        <span class="modal-close" id="login-modal-close">×</span>
+        <h2>登录</h2>
+        <div class="input-group">
+            <input type="text" id="login-username" placeholder="用户名" class="modal-input">
+        </div>
+        <div class="input-group">
+            <input type="password" id="login-password" placeholder="密码" class="modal-input">
+        </div>
+        <div class="button-group">
+            <button id="login-submit" class="modal-btn">登录</button>
         </div>
     </div>
+</div>
 
-    <!-- 注册模态弹窗 -->
-    <div id="register-modal" class="modal-overlay hidden">
-        <div class="modal-content">
-            <span class="modal-close" id="register-modal-close">×</span>
-            <h2>注册</h2>
-            <div class="input-group">
-                <input type="text" id="register-username" placeholder="用户名">
-            </div>
-            <div class="input-group">
-                <input type="password" id="register-password" placeholder="密码">
-            </div>
-            <div class="button-group">
-                <button id="register-submit">注册</button>
-            </div>
+<!-- 注册模态弹窗 -->
+<div id="register-modal" class="modal-overlay hidden">
+    <div class="modal-content">
+        <span class="modal-close" id="register-modal-close">×</span>
+        <h2>注册</h2>
+        <div class="input-group">
+            <input type="text" id="register-username" placeholder="用户名" class="modal-input">
+        </div>
+        <div class="input-group">
+            <input type="password" id="register-password" placeholder="密码" class="modal-input">
+        </div>
+        <div class="button-group">
+            <button id="register-submit" class="modal-btn">注册</button>
         </div>
     </div>
+</div>
 
     <!-- 匹配成功等待界面 -->
     <div id="match-success-screen" class="screen">
@@ -565,6 +546,38 @@
 
     // 添加调试信息
     console.log('在线人数更新脚本已加载');
+
+    // 主题切换功能
+    document.addEventListener('DOMContentLoaded', function() {
+        const themeToggle = document.getElementById('toggle-theme');
+        const html = document.documentElement;
+        
+        // 检查本地存储中的主题偏好
+        const savedTheme = localStorage.getItem('theme');
+        
+        // 应用保存的主题或默认主题
+        if (savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            html.classList.add('theme-dark');
+            themeToggle.textContent = '浅色模式';
+        } else {
+            html.classList.remove('theme-dark');
+            themeToggle.textContent = '深色模式';
+        }
+        
+        // 主题切换事件监听
+        themeToggle.addEventListener('click', function(e) {
+            e.preventDefault();
+            if (html.classList.contains('theme-dark')) {
+                html.classList.remove('theme-dark');
+                themeToggle.textContent = '深色模式';
+                localStorage.setItem('theme', 'light');
+            } else {
+                html.classList.add('theme-dark');
+                themeToggle.textContent = '浅色模式';
+                localStorage.setItem('theme', 'dark');
+            }
+        });
+    });
 </script>
 </body>
 </html>

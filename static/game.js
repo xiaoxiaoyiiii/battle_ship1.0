@@ -193,6 +193,42 @@ document.addEventListener('DOMContentLoaded', function () {
     updateOpponentAvatarCorner();
     window.addEventListener('gameStateUpdate', updateOpponentAvatarCorner);
     setInterval(updateOpponentAvatarCorner, 20000);
+
+    // 控制游戏未开始时隐藏相关元素
+    function controlGameElementsVisibility() {
+        // 获取元素
+        const avatarCorner = document.getElementById('avatar-corner');
+        const opponentAvatarCorner = document.getElementById('opponent-avatar-corner');
+        const testMagicButton = document.getElementById('test-magic-system');
+        
+        // 检查游戏是否开始
+        // 游戏开始的条件：有房间ID或者当前屏幕是游戏相关界面（不是开始、大厅、登录等界面）
+        const gameStarted = window.gameState && window.gameState.roomId;
+        
+        // 隐藏或显示元素
+        const visibility = gameStarted ? 'block' : 'none';
+        
+        if (avatarCorner) {
+            avatarCorner.style.display = visibility;
+        }
+        
+        if (opponentAvatarCorner) {
+            opponentAvatarCorner.style.display = visibility;
+        }
+        
+        if (testMagicButton) {
+            testMagicButton.style.display = visibility;
+        }
+    }
+    
+    // 初始调用
+    controlGameElementsVisibility();
+    
+    // 监听游戏状态更新
+    window.addEventListener('gameStateUpdate', controlGameElementsVisibility);
+    
+    // 每隔2秒检查一次，确保元素状态正确
+    setInterval(controlGameElementsVisibility, 2000);
 });
 
 // 获取当前用户头像并显示到游戏内

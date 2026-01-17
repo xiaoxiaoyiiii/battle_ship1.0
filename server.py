@@ -1542,13 +1542,33 @@ def enter_battle_phase(data):
     if room.current_attacker == player_id and room.current_phase == 'preparation':
         # 切换到战斗阶段
         room.current_phase = 'battle'
+        
+        # 检查船只冻结状态
+        player_ships = room.players[player_id].ships
+        frozen_ships = 0
+        
+        for ship in player_ships:
+            if hasattr(ship, 'frozen') and ship.frozen > room.round:
+                frozen_ships += 1
+            elif hasattr(ship, 'frozen') and ship.frozen <= room.round:
+                # 冻结效果已过期，移除冻结状态
+                delattr(ship, 'frozen')
+        
+        # 计算可用的攻击次数（未冻结的船只数）
+        available_ships = len(player_ships) - frozen_ships
+        
         if room.field_magic == "伊甸园":
             room.attacks_remaining = 6 - room.players[player_id].remaining_ships
+        elif room.field_magic == "教皇旨意":
+            room.attacks_remaining = 0
+        else:
+            # 默认攻击次数为可用船只数
+            room.attacks_remaining = available_ships
 
         # 检查是否有攻击次数翻倍效果
         if room.players[player_id].effect_flags.double_attacks:
             # 翻倍当前攻击次数
-            room.attacks_remaining = room.players[player_id].remaining_ships * 2
+            room.attacks_remaining = available_ships * 2
             # 广播攻击次数更新
             emit('attacks_updated', {
                 'current_attacker': room.current_attacker,
@@ -1556,8 +1576,6 @@ def enter_battle_phase(data):
             }, room=room_id)
             # 移除翻倍效果，因为它只持续一个大回合
             room.players[player_id].effect_flags.double_attacks = False
-        if room.field_magic == "教皇旨意":
-            room.attacks_remaining = 0
         # 广播阶段更新
         emit('phase_updated', {
             'current_phase': room.current_phase,
@@ -1738,6 +1756,15 @@ def end_turn(data):
             # 切换到下一个攻击者的准备阶段
             room.current_attacker = room.attack_order[next_index]
             room.current_phase = 'preparation'
+            
+            # 检查新攻击者的船只冻结状态，清除过期效果
+            new_attacker_ships = room.players[room.current_attacker].ships
+            for ship in new_attacker_ships:
+                if hasattr(ship, 'frozen') and ship.frozen <= room.round:
+                    # 冻结效果已过期，移除冻结状态
+                    delattr(ship, 'frozen')
+            
+            # 初始攻击次数设置为剩余船只数，在进入战斗阶段时会重新计算（考虑冻结效果）
             room.attacks_remaining = room.players[room.current_attacker].remaining_ships
 
             # 重置所有临时效果标志 - 但保留no_draw标志直到大回合结束
@@ -2676,13 +2703,13 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
 
         # 标记区域内的战舰
         for ship in opponent.ships:
-            in_area = any(
-                area['x1'] <= pos.x <= area['x2'] and
-                area['y1'] <= pos.y <= area['y2']
-                for pos in ship.positions
-            )
+            in_area = False
+            for pos in ship.positions:
+                if area['x1'] <= pos.x <= area['x2'] and area['y1'] <= pos.y <= area['y2']:
+                    in_area = True
+                    break
 
-            if in_area and 'frozen' not in ship:
+            if in_area and not hasattr(ship, 'frozen'):
                 ship.frozen = room.round + 1  # 冻结到下一回合
                 frozen_count += 1
 

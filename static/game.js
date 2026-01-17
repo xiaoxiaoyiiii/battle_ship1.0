@@ -2030,6 +2030,12 @@ function setupSocketListeners() {
                         // 灵气复苏选择UI
                         showLingqiChoice(result);
                     }
+                } else if (result.temp_data_id === 'bury_choice') {
+                    // 只有当施法者是当前玩家时，才显示明智埋葬选择UI
+                    if (result.caster === gameState.playerId) {
+                        // 明智埋葬选择UI
+                        showBuryChoice(result);
+                    }
                 }
             }
         });
@@ -2051,6 +2057,13 @@ function setupSocketListeners() {
         const { caster, choice, message } = data;
         addGameLog(`<span class="log-player">${caster === gameState.playerId ? gameState.playerName : gameState.opponentName}</span>完成神之宣告选择：效果${choice}。${message}`);
         showMessage(message || '神之宣告已结算');
+    });
+
+    // 弃牌堆更新通知
+    socket.on('discard_pile_updated', (data) => {
+        console.log('收到弃牌堆更新:', data);
+        gameState.discardPile = data.discard;
+        displayDiscardPile(data.discard);
     });
 
     socket.on('magic_chain_error', function (data) {
@@ -2190,6 +2203,12 @@ function setupSocketListeners() {
         updateHandUI();
     });
 
+    // 灵气复苏相关事件
+    socket.on('lingqi_waiting', function (data) {
+        // 显示等待提示
+        showMessage(data.message, { type: 'info' });
+    });
+    
     // 灵气复苏相关事件
     socket.on('lingqi_waiting', function (data) {
         // 显示等待提示
@@ -2498,6 +2517,88 @@ function setupSocketListeners() {
             temp_data_id: 'lingqi_choice',
             target_data: {
                 target_ships: targetShips
+            }
+        }, (response) => {
+            if (response.status === 'success') {
+                showMessage(response.message);
+            } else {
+                showMessage(`选择失败: ${response.message}`, { type: 'error' });
+            }
+        });
+    }
+
+    function showBuryChoice(result) {
+        // 创建选择界面，使用与桃园结义相同的UI样式
+        const buryChoiceDiv = document.createElement('div');
+        buryChoiceDiv.className = 'taoyuan-choice-overlay';
+        buryChoiceDiv.style.zIndex = '10000'; // 设置最高优先级
+        buryChoiceDiv.innerHTML = `
+            <div class="taoyuan-choice-container">
+                <div class="taoyuan-choice-header">
+                    <h3>明智埋葬 - 卡牌选择</h3>
+                    <p id="taoyuan-choice-message">${result.message}</p>
+                </div>
+                <div class="taoyuan-cards-container"></div>
+            </div>
+        `;
+        document.body.appendChild(buryChoiceDiv);
+
+        // 获取卡片容器
+        const cardsContainer = buryChoiceDiv.querySelector('.taoyuan-cards-container');
+
+        // 存储选择状态
+        let selectedCard = null;
+        let cards = [];
+
+        // 请求服务器获取卡牌数据
+        gameState.socket.emit('get_magic_temp_data', {
+            room_id: gameState.roomId,
+            player_id: gameState.playerId
+        }, (response) => {
+            if (response.status === 'success' && response.data && response.data.cards) {
+                cards = response.data.cards;
+
+                // 显示卡牌
+                cards.forEach((card, index) => {
+                    const cardElement = document.createElement('div');
+                    cardElement.className = 'taoyuan-card-item';
+                    cardElement.dataset.index = index;
+                    cardElement.dataset.cardKey = card.card_key;
+                    cardElement.innerHTML = `
+                        <div class="taoyuan-card-name">${card.name}</div>
+                        <div class="taoyuan-card-type">${card.type}·速阶${card.speed}</div>
+                        <div class="taoyuan-card-desc">${card.description}</div>
+                    `;
+                    cardsContainer.appendChild(cardElement);
+
+                    // 添加点击事件
+                    cardElement.addEventListener('click', () => {
+                        // 移除其他卡牌的选中状态
+                        cardsContainer.querySelectorAll('.taoyuan-card-item').forEach(item => {
+                            item.classList.remove('selected');
+                        });
+
+                        // 选中当前卡牌
+                        cardElement.classList.add('selected');
+                        selectedCard = card.card_key;
+
+                        // 确认选择
+                        confirmBuryChoice(selectedCard);
+                        document.body.removeChild(buryChoiceDiv);
+                    });
+                });
+            }
+        });
+    }
+
+    // 确认明智埋葬选择
+    function confirmBuryChoice(cardKey) {
+        gameState.socket.emit('confirm_magic_target', {
+            room_id: gameState.roomId,
+            player_id: gameState.playerId,
+            temp_data_id: 'bury_choice',
+            target_data: {
+                card_key: cardKey
             }
         }, (response) => {
             if (response.status === 'success') {

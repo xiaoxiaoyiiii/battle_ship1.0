@@ -197,15 +197,23 @@ class Database:
     def get_user(self, uid="", username=""):
         """通用获取用户信息"""
         try:
+            # 使用独立的游标避免递归使用游标错误
+            cursor = self.conn.cursor()
+            
             if uid:
-                row = self.cursor.execute('SELECT * FROM users WHERE id = ?', (uid,)).fetchone()
+                cursor.execute('SELECT * FROM users WHERE id = ?', (uid,))
+                row = cursor.fetchone()
                 logger.debug(f"根据ID查询用户: {uid}, 结果: {'找到' if row else '未找到'}")
             elif username:
-                row = self.cursor.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
+                cursor.execute('SELECT * FROM users WHERE username = ?', (username,))
+                row = cursor.fetchone()
                 logger.debug(f"根据用户名查询用户: {username}, 结果: {'找到' if row else '未找到'}")
             else:
                 logger.warning("尝试获取用户信息但未提供ID或用户名")
+                cursor.close()
                 return None
+            
+            cursor.close()
             return dict(row) if row else None
         except sqlite3.Error as e:
             logger.error(f"查询用户信息时发生数据库错误: ID={uid}, 用户名={username}, 错误: {e}")
@@ -221,7 +229,12 @@ class Database:
             return None
         
         try:
-            row = self.cursor.execute('SELECT * FROM users WHERE token = ?', (token,)).fetchone()
+            # 使用独立的游标避免递归使用游标错误
+            cursor = self.conn.cursor()
+            cursor.execute('SELECT * FROM users WHERE token = ?', (token,))
+            row = cursor.fetchone()
+            cursor.close()
+            
             logger.debug(f"根据token查询用户: {token}, 结果: {'找到' if row else '未找到'}")
             return dict(row) if row else None
         except sqlite3.Error as e:
@@ -259,7 +272,12 @@ class Database:
             return None
             
         try:
-            row = self.cursor.execute('SELECT room_id FROM active_games WHERE user_id = ?', (uid,)).fetchone()
+            # 使用独立的游标避免递归使用游标错误
+            cursor = self.conn.cursor()
+            cursor.execute('SELECT room_id FROM active_games WHERE user_id = ?', (uid,))
+            row = cursor.fetchone()
+            cursor.close()
+            
             logger.debug(f"获取活跃游戏: uid={uid}, 结果: {'找到' if row else '未找到'}")
             return row
         except sqlite3.Error as e:
@@ -355,7 +373,12 @@ class Database:
             return None
             
         try:
-            row = self.cursor.execute('SELECT id, username, signature, avatar FROM users WHERE id = ?', (uid,)).fetchone()
+            # 使用独立的游标避免递归使用游标错误
+            cursor = self.conn.cursor()
+            cursor.execute('SELECT id, username, signature, avatar FROM users WHERE id = ?', (uid,))
+            row = cursor.fetchone()
+            cursor.close()
+            
             logger.debug(f"获取用户资料: uid={uid}, 结果: {'找到' if row else '未找到'}")
             return dict(row) if row else None
         except sqlite3.Error as e:
@@ -517,7 +540,9 @@ class Database:
             # 确保limit在合理范围内
             safe_limit = min(max(1, limit), 100)  # 限制在1-100之间
             
-            rows = self.cursor.execute('''
+            # 使用独立的游标避免递归使用游标错误
+            cursor = self.conn.cursor()
+            cursor.execute('''
                 SELECT m.id,
                        m.winner_id,
                        m.loser_id,
@@ -532,7 +557,9 @@ class Database:
                 WHERE m.winner_id = ? OR m.loser_id = ?
                 ORDER BY m.timestamp DESC
                 LIMIT ?
-            ''', (uid, uid, safe_limit)).fetchall()
+            ''', (uid, uid, safe_limit))
+            rows = cursor.fetchall()
+            cursor.close()
             
             history = []
             for r in rows:
@@ -571,9 +598,14 @@ class Database:
             # 确保limit在合理范围内
             safe_limit = min(max(1, limit), 100)  # 限制在1-100之间
             
-            rows = self.cursor.execute(
+            # 使用独立的游标避免递归使用游标错误
+            cursor = self.conn.cursor()
+            cursor.execute(
                 'SELECT id, username, wins, losses, current_streak, longest_streak, avatar FROM users ORDER BY wins DESC, longest_streak DESC LIMIT ?',
-                (safe_limit,)).fetchall()
+                (safe_limit,))
+            rows = cursor.fetchall()
+            cursor.close()
+            
             result = [dict(r) for r in rows]
             logger.debug(f"获取排行榜基础数据: limit={safe_limit}, 结果数量={len(result)}")
             return result

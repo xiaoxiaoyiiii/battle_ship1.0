@@ -527,10 +527,9 @@ def test_add_all_magic_cards(data):
     room_id = data['room_id']
     player_id = data['player_id']
 
-    if room_id not in rooms or player_id not in rooms[room_id].players:
+    room = room_manager.get_room(room_id)
+    if not room or player_id not in room.players:
         return {'status': 'error', 'message': '无效的房间或玩家'}
-
-    room = rooms[room_id]
 
     # 将所有魔法卡添加到玩家手牌
     room.players[player_id].magic_hand = magic_cards.copy()
@@ -657,9 +656,10 @@ def handle_chat_message(data):
     # 查找玩家所在房间
     room_id = data.get('room_id')
     # 仅房间内广播
-    if room_id and room_id in rooms:
-        for pid in rooms[room_id].players:
-            is_me = (rooms[room_id].players[pid].name == username)
+    room = room_manager.get_room(room_id)
+    if room:
+        for pid in room.players:
+            is_me = (room.players[pid].name == username)
             emit('chat_message', {
                 'username': username,
                 'message': msg,
@@ -3012,7 +3012,7 @@ def handle_surrender(data):
     # 处理投降请求
     player_id = session.get('user_id', request.sid)
     room_id = data.get('room_id')
-    room = rooms.get(room_id)
+    room = room_manager.get_room(room_id)
     if not room:
         return {'status': 'error', 'message': '房间不存在'}
 

@@ -680,11 +680,11 @@ def handle_find_match(data):
     user_id = session.get('user_id')
 
     # 检查玩家是否已经在匹配队列中
-    if player_id in room_manager.match_queue[0]:
+    if socket_sid in room_manager.match_queue[0]:
         return {'status': 'error', 'message': '你已经在匹配队列中'}
 
     # 将玩家添加到匹配队列 (保存socket_id, player_name, user_id)
-    room_manager.match_queue[0].append(player_id)
+    room_manager.match_queue[0].append(socket_sid)
     room_manager.match_queue[1].append(player_name)
     room_manager.match_queue[2].append(user_id)
     emit('match_queued', {'status': 'success', 'message': '已加入匹配队列'})
@@ -694,22 +694,25 @@ def handle_find_match(data):
         # 从队列中取出前两个玩家
         player1 = room_manager.match_queue[0].pop(0)
         player2 = room_manager.match_queue[0].pop(0)
+        player1_name = room_manager.match_queue[1].pop(0)
+        player2_name = room_manager.match_queue[1].pop(0)
+        player1_user_id = room_manager.match_queue[2].pop(0)
+        player2_user_id = room_manager.match_queue[2].pop(0)
 
         # 再次检查是否是同一个玩家，确保不会匹配到自己
-        if db_user_id1 == db_user_id2:
+        if player1_user_id == player2_user_id:
             # 将玩家放回队列末尾
             room_manager.match_queue[0].append(player1)
+            room_manager.match_queue[0].append(player2)
+            room_manager.match_queue[1].append(player1_name)
+            room_manager.match_queue[1].append(player2_name)
+            room_manager.match_queue[2].append(player1_user_id)
+            room_manager.match_queue[2].append(player2_user_id)
             continue
 
         # 创建新房间
         room_id = room_manager.create_room()
         room = room_manager.get_room(room_id)
-
-        # 获取玩家名称和user_id
-        player1_name = room_manager.match_queue[1].pop(0)
-        player2_name = room_manager.match_queue[1].pop(0)
-        player1_user_id = room_manager.match_queue[2].pop(0)
-        player2_user_id = room_manager.match_queue[2].pop(0)
 
         # 添加玩家到房间
         room.players[player1] = Player(**{
@@ -720,7 +723,7 @@ def handle_find_match(data):
             'user_id': player1_user_id
         })
 
-        room.players[db_user_id2] = Player(**{
+        room.players[player2] = Player(**{
             'name': player2_name,
             'ships': [],
             'attacks': [],
@@ -729,12 +732,12 @@ def handle_find_match(data):
         })
 
         # 初始化魔法卡牌系统
-        room.init_player_magic(db_user_id1, magic_cards)
-        room.init_player_magic(db_user_id2, magic_cards)
+        room.init_player_magic(player1, magic_cards)
+        room.init_player_magic(player2, magic_cards)
 
         # 将玩家添加到Socket.IO房间（使用Socket会话ID）
-        join_room(room_id, socket_sid1)
-        join_room(room_id, socket_sid2)
+        join_room(room_id, player1)
+        join_room(room_id, player2)
 
         # 设置房间状态为放置战舰
         room.state = 'placing_ships'
@@ -746,14 +749,14 @@ def handle_find_match(data):
         }
 
         # 为每个玩家添加对方的名字
-        for db_user_id, socket_sid in [(db_user_id1, socket_sid1), (db_user_id2, socket_sid2)]:
-            opponent_db_user_id = db_user_id2 if db_user_id == db_user_id1 else db_user_id1
+        for player_sid in [player1, player2]:
+            opponent_sid = player2 if player_sid == player1 else player1
             emit('game_state', {
                 **game_state_data,
-                'player_id': db_user_id,
-                'player_name': room.players[db_user_id].name,
-                'opponent_name': room.players[opponent_db_user_id].name
-            }, to=socket_sid)
+                'player_id': player_sid,
+                'player_name': room.players[player_sid].name,
+                'opponent_name': room.players[opponent_sid].name
+            }, to=player_sid)
     return {'status': 'success', 'message': '开始寻找匹配'}
 
 
@@ -763,10 +766,12 @@ def handle_cancel_match(data):
     socket_sid = session.get('user_id', request.sid)
 
     # 从匹配队列中移除玩家
-    if player_id in room_manager.match_queue[0]:
-        index = room_manager.match_queue[0].index(player_id)
+    if socket_sid in room_manager.match_queue[0]:
+        index = room_manager.match_queue[0].index(socket_sid)
         room_manager.match_queue[0].pop(index)
         room_manager.match_queue[1].pop(index)
+        if index < len(room_manager.match_queue[2]):
+            room_manager.match_queue[2].pop(index)
 
     emit('match_canceled', {'status': 'success', 'message': '已取消匹配'})
 

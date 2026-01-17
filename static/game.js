@@ -592,11 +592,16 @@ const showOpponentStatsBtn = document.getElementById('show-opponent-stats');
 const opponentStatsModal = document.getElementById('opponent-stats-modal');
 const opponentStatsModalClose = document.getElementById('opponent-stats-modal-close');
 const opponentStatsContent = document.getElementById('opponent-stats-content');
-// 个人战绩相关元素
+// 对手战绩按钮事件
 const showUserStatsBtn = document.getElementById('show-user-stats');
 const userStatsModal = document.getElementById('user-stats-modal');
 const userStatsModalClose = document.getElementById('user-stats-modal-close');
 const userStatsContent = document.getElementById('user-stats-content');
+
+// 对局详情模态窗口元素
+const matchDetailModal = document.getElementById('match-detail-modal');
+const matchDetailModalClose = document.getElementById('match-detail-modal-close');
+const matchDetailContent = document.getElementById('match-detail-content');
 // DOM元素
 const startScreen = document.getElementById('start-screen');
 const customRoomScreen = document.getElementById('custom-room-screen');
@@ -1002,28 +1007,24 @@ function bindEventListeners() {
     if (opponentStatsModal) opponentStatsModal.addEventListener('click', (e) => {
         if (e.target === opponentStatsModal) opponentStatsModal.classList.add('hidden');
     });
-    // 个人战绩按钮事件
-    if (showUserStatsBtn) showUserStatsBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        showUserStats();
-    });
-    if (userStatsModalClose) userStatsModalClose.addEventListener('click', () => {
-        userStatsModal.classList.add('hidden');
-    });
-    // 点击遮罩关闭
-    if (userStatsModal) userStatsModal.addEventListener('click', (e) => {
-        if (e.target === userStatsModal) userStatsModal.classList.add('hidden');
-    });
-
     // 显示个人战绩弹窗并请求数据
     function showUserStats() {
-        if (!userStatsModal || !userStatsContent) return;
+        console.log('showUserStats 函数被调用');
+        
+        if (!userStatsModal || !userStatsContent) {
+            console.error('DOM元素不存在：userStatsModal 或 userStatsContent');
+            return;
+        }
+        
         userStatsModal.classList.remove('hidden');
         userStatsContent.innerHTML = '<p>加载中...</p>';
+        
         fetch('/user_stats').then(resp => {
             if (!resp.ok) throw new Error('未登录或获取失败');
             return resp.json();
         }).then(data => {
+            console.log('获取到战绩数据:', data);
+            
             if (data.stats) {
                 const s = data.stats;
                 const history = data.history || [];
@@ -1035,16 +1036,34 @@ function bindEventListeners() {
                         return ts ? `[${ts}] ${text}` : text;
                     }).join('<br>');
                 };
-                const historyRows = history.length ? history.map(h => {
+                const historyRows = history.length ? history.map((h, index) => {
                     const opponentName = h.winner_id === s.id ? (h.loser_name || h.loser_id || '未知') : (h.winner_name || h.winner_id || '未知');
                     const resultText = h.winner_id === s.id ? '胜' : '负';
                     const timeText = h.timestamp ? new Date(h.timestamp * 1000).toLocaleString() : '';
-                    return `<tr>
-                                <td>${timeText}</td>
-                                <td>${escapeHtml(opponentName)}</td>
-                                <td>${resultText}</td>
-                                <td>${formatLogs(h.logs)}</td>
-                            </tr>`;
+                    const isWin = h.winner_id === s.id;
+                    const bgColor = isWin ? '#4caf50' : '#f44336';
+                    const hoverColor = isWin ? '#66bb6a' : '#d32f2f';
+                    return `<button class="match-history-btn" data-match-index="${index}" style="
+                        background-color: ${bgColor};
+                        color: white;
+                        padding: 10px 15px;
+                        border: none;
+                        border-radius: 8px;
+                        cursor: pointer;
+                        font-size: 0.95em;
+                        transition: all 0.3s;
+                        width: 100%;
+                        text-align: left;
+                        margin-bottom: 8px;
+                    " onmouseover="this.style.backgroundColor='${hoverColor}'" onmouseout="this.style.backgroundColor='${bgColor}'">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div style="flex:1;">
+                                <span style="font-weight:bold;">${timeText}</span>
+                                <span style="margin-left:10px;">vs ${escapeHtml(opponentName)}</span>
+                            </div>
+                            <span style="font-weight:bold;font-size:1.1em;">${resultText}</span>
+                        </div>
+                    </button>`;
                 }).join('') : '<tr><td colspan="4" style="text-align:center;">暂无历史战绩</td></tr>';
                 userStatsContent.innerHTML = `
                     <table class="user-stats-table">
@@ -1064,12 +1083,252 @@ function bindEventListeners() {
                         </table>
                     </div>
                 `;
+                
+                // 添加对局按钮点击事件监听（修复作用域问题）
+                setTimeout(() => {
+                    const matchButtons = document.querySelectorAll('.match-history-btn');
+                    console.log(`找到 ${matchButtons.length} 个对局按钮`);
+                    matchButtons.forEach(btn => {
+                        btn.addEventListener('click', (e) => {
+                            const matchIndex = parseInt(btn.dataset.matchIndex);
+                            console.log(`点击了对局按钮，索引: ${matchIndex}`);
+                            if (history && history[matchIndex]) {
+                                showMatchDetail(history[matchIndex], s.id);
+                            }
+                        });
+                    });
+                }, 100);
             } else {
                 userStatsContent.innerHTML = '<p>未找到战绩数据</p>';
             }
         }).catch(err => {
-            userStatsContent.innerHTML = `<p style="color:red;">${err.message}</p>`;
+            console.error('获取个人战绩失败:', err);
+            userStatsContent.innerHTML = `<p style="color:red;">获取个人战绩失败: ${err.message}</p>`;
         });
+    }
+
+    // 显示对局详情
+    function showMatchDetail(matchData, playerId) {
+        console.log('showMatchDetail 函数被调用，matchData:', matchData, 'playerId:', playerId);
+        
+        if (!matchDetailModal || !matchDetailContent) {
+            console.error('DOM元素不存在：matchDetailModal 或 matchDetailContent');
+            return;
+        }
+        
+        matchDetailModal.classList.remove('hidden');
+        
+        const isWin = matchData.winner_id === playerId;
+        const resultText = isWin ? '胜' : '负';
+        const resultColor = isWin ? '#4caf50' : '#f44336';
+        const timeText = matchData.timestamp ? new Date(matchData.timestamp * 1000).toLocaleString() : '';
+        
+        const formatDetailLogs = (logs = []) => {
+            if (!logs.length) return '无局内日志';
+            return logs.map(l => {
+                const ts = l.ts ? new Date(l.ts * 1000).toLocaleTimeString() : '';
+                const text = escapeHtml(l.text || '');
+                return ts ? `[${ts}] ${text}` : text;
+            }).join('<br>');
+        };
+        
+        matchDetailContent.innerHTML = `
+            <div style="margin-bottom:16px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                    <h3 style="margin:0;font-size:1.2em;">对局信息</h3>
+                    <span style="font-size:0.9em;color:var(--muted);">${timeText}</span>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+                    <div style="padding:12px;background:var(--surface);border-radius:8px;">
+                        <div style="font-weight:bold;margin-bottom:8px;">对手</div>
+                        <div style="font-size:1.1em;">${matchData.winner_name || matchData.loser_name || '未知'}</div>
+                    </div>
+                    <div style="padding:12px;background:var(--surface);border-radius:8px;">
+                        <div style="font-weight:bold;margin-bottom:8px;">结果</div>
+                        <div style="font-size:1.5em;font-weight:bold;color:${resultColor};padding:4px 8px;border-radius:4px;display:inline-block;">${resultText}</div>
+                    </div>
+                </div>
+                <div style="padding:12px;background:var(--surface);border-radius:8px;">
+                    <div style="font-weight:bold;margin-bottom:8px;">局内日志</div>
+                    <div style="max-height:300px;overflow-y:auto;font-size:0.9em;line-height:1.6;padding:8px;background:var(--glass);border-radius:4px;">
+                        ${formatDetailLogs(matchData.logs)}
+                    </div>
+                </div>
+        `;
+    }
+
+    // 个人战绩按钮事件
+    if (showUserStatsBtn) showUserStatsBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        console.log('点击了个人战绩按钮');
+        showUserStats();
+    });
+    if (userStatsModalClose) userStatsModalClose.addEventListener('click', () => {
+        userStatsModal.classList.add('hidden');
+    });
+    // 点击遮罩关闭
+    if (userStatsModal) userStatsModal.addEventListener('click', (e) => {
+        if (e.target === userStatsModal) userStatsModal.classList.add('hidden');
+    });
+    
+    // 对局详情模态窗口关闭事件
+    if (matchDetailModalClose) matchDetailModalClose.addEventListener('click', () => {
+        matchDetailModal.classList.add('hidden');
+    });
+    
+    // 点击遮罩关闭对局详情
+    if (matchDetailModal) matchDetailModal.addEventListener('click', (e) => {
+        if (e.target === matchDetailModal) matchDetailModal.classList.add('hidden');
+    });
+
+    // 显示个人战绩弹窗并请求数据
+    function showUserStats() {
+        console.log('showUserStats 函数被调用');
+        
+        if (!userStatsModal || !userStatsContent) {
+            console.error('DOM元素不存在：userStatsModal 或 userStatsContent');
+            return;
+        }
+        
+        userStatsModal.classList.remove('hidden');
+        userStatsContent.innerHTML = '<p>加载中...</p>';
+        
+        fetch('/user_stats').then(resp => {
+            if (!resp.ok) throw new Error('未登录或获取失败');
+            return resp.json();
+        }).then(data => {
+            console.log('获取到战绩数据:', data);
+            
+            if (data.stats) {
+                const s = data.stats;
+                const history = data.history || [];
+                const formatLogs = (logs = []) => {
+                    if (!logs.length) return '—';
+                    return logs.map(l => {
+                        const ts = l.ts ? new Date(l.ts * 1000).toLocaleTimeString() : '';
+                        const text = escapeHtml(l.text || '');
+                        return ts ? `[${ts}] ${text}` : text;
+                    }).join('<br>');
+                };
+                const historyRows = history.length ? history.map((h, index) => {
+                    const opponentName = h.winner_id === s.id ? (h.loser_name || h.loser_id || '未知') : (h.winner_name || h.winner_id || '未知');
+                    const resultText = h.winner_id === s.id ? '胜' : '负';
+                    const timeText = h.timestamp ? new Date(h.timestamp * 1000).toLocaleString() : '';
+                    const isWin = h.winner_id === s.id;
+                    const bgColor = isWin ? '#4caf50' : '#f44336';
+                    const hoverColor = isWin ? '#66bb6a' : '#d32f2f';
+                    return `<button class="match-history-btn" data-match-index="${index}" style="
+                        background-color: ${bgColor};
+                        color: white;
+                        padding: 10px 15px;
+                        border: none;
+                        border-radius: 8px;
+                        cursor: pointer;
+                        font-size: 0.95em;
+                        transition: all 0.3s;
+                        width: 100%;
+                        text-align: left;
+                        margin-bottom: 8px;
+                    " onmouseover="this.style.backgroundColor='${hoverColor}'" onmouseout="this.style.backgroundColor='${bgColor}'">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div style="flex:1;">
+                                <span style="font-weight:bold;">${timeText}</span>
+                                <span style="margin-left:10px;">vs ${escapeHtml(opponentName)}</span>
+                            </div>
+                            <span style="font-weight:bold;font-size:1.1em;">${resultText}</span>
+                        </div>
+                    </button>`;
+                }).join('') : '<tr><td colspan="4" style="text-align:center;">暂无历史战绩</td></tr>';
+                userStatsContent.innerHTML = `
+                    <table class="user-stats-table">
+                        <tr><td>用户名</td><td>${s.username}</td></tr>
+                        <tr><td>胜场</td><td>${s.wins}</td></tr>
+                        <tr><td>负场</td><td>${s.losses}</td></tr>
+                        <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>
+                        <tr><td>最长连胜</td><td>${s.longest_streak}</td></tr>
+                    </table>
+                    <div class="user-history" style="margin-top:12px;">
+                        <h3 style="margin-bottom:8px;">历史战绩</h3>
+                        <table class="user-stats-table" style="font-size:0.95em;">
+                            <thead>
+                                <tr><th>时间</th><th>对手</th><th>结果</th><th>局内日志</th></tr>
+                            </thead>
+                            <tbody>${historyRows}</tbody>
+                        </table>
+                    </div>
+                `;
+                
+                // 添加对局按钮点击事件监听（修复作用域问题）
+                setTimeout(() => {
+                    const matchButtons = document.querySelectorAll('.match-history-btn');
+                    console.log(`找到 ${matchButtons.length} 个对局按钮`);
+                    matchButtons.forEach(btn => {
+                        btn.addEventListener('click', (e) => {
+                            const matchIndex = parseInt(btn.dataset.matchIndex);
+                            console.log(`点击了对局按钮，索引: ${matchIndex}`);
+                            if (history && history[matchIndex]) {
+                                showMatchDetail(history[matchIndex], s.id);
+                            }
+                        });
+                    });
+                }, 100);
+            } else {
+                userStatsContent.innerHTML = '<p>未找到战绩数据</p>';
+            }
+        }).catch(err => {
+            console.error('获取个人战绩失败:', err);
+            userStatsContent.innerHTML = `<p style="color:red;">获取个人战绩失败: ${err.message}</p>`;
+        });
+    }
+
+    // 显示对局详情
+    function showMatchDetail(matchData, playerId) {
+        console.log('showMatchDetail 函数被调用，matchData:', matchData, 'playerId:', playerId);
+        
+        if (!matchDetailModal || !matchDetailContent) {
+            console.error('DOM元素不存在：matchDetailModal 或 matchDetailContent');
+            return;
+        }
+        
+        matchDetailModal.classList.remove('hidden');
+        
+        const isWin = matchData.winner_id === playerId;
+        const resultText = isWin ? '胜' : '负';
+        const resultColor = isWin ? '#4caf50' : '#f44336';
+        const timeText = matchData.timestamp ? new Date(matchData.timestamp * 1000).toLocaleString() : '';
+        
+        const formatDetailLogs = (logs = []) => {
+            if (!logs.length) return '无局内日志';
+            return logs.map(l => {
+                const ts = l.ts ? new Date(l.ts * 1000).toLocaleTimeString() : '';
+                const text = escapeHtml(l.text || '');
+                return ts ? `[${ts}] ${text}` : text;
+            }).join('<br>');
+        };
+        
+        matchDetailContent.innerHTML = `
+            <div style="margin-bottom:16px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                    <h3 style="margin:0;font-size:1.2em;">对局信息</h3>
+                    <span style="font-size:0.9em;color:var(--muted);">${timeText}</span>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+                    <div style="padding:12px;background:var(--surface);border-radius:8px;">
+                        <div style="font-weight:bold;margin-bottom:8px;">对手</div>
+                        <div style="font-size:1.1em;">${matchData.winner_name || matchData.loser_name || '未知'}</div>
+                    </div>
+                    <div style="padding:12px;background:var(--surface);border-radius:8px;">
+                        <div style="font-weight:bold;margin-bottom:8px;">结果</div>
+                        <div style="font-size:1.5em;font-weight:bold;color:${resultColor};padding:4px 8px;border-radius:4px;display:inline-block;">${resultText}</div>
+                    </div>
+                </div>
+                <div style="padding:12px;background:var(--surface);border-radius:8px;">
+                    <div style="font-weight:bold;margin-bottom:8px;">局内日志</div>
+                    <div style="max-height:300px;overflow-y:auto;font-size:0.9em;line-height:1.6;padding:8px;background:var(--glass);border-radius:4px;">
+                        ${formatDetailLogs(matchData.logs)}
+                    </div>
+                </div>
+        `;
     }
 
     // 开始界面
@@ -1146,7 +1405,7 @@ function bindEventListeners() {
         }
     });
 
-    // 修复：结束战斗阶段按钮事件（修正ID匹配问题）
+    // 结束战斗阶段按钮事件
     document.getElementById('enter-end-phase').addEventListener('click', endBattlePhase);
 
     // 日志切换按钮
@@ -1398,7 +1657,7 @@ function setupSocketListeners() {
             }
         }
 
-        // 设置玩家ID（关键修复）
+        // 设置玩家ID
         if (data.player_id) {
             gameState.playerId = data.player_id;
             console.log('设置playerId为:', gameState.playerId);

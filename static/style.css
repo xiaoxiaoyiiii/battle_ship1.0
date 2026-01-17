@@ -640,4 +640,142 @@ html.theme-dark .status-item { background-color: #444; border-left-color: #667ee
 .status-label { font-weight: bold; color: #3366cc; }
 html.theme-dark .status-label { color: #667eea; }
 .status-value { color: #333; }
+html.theme-dark .status-value { color: #ddd; }
+
+/* 对局历史按钮样式 */
+.match-history-btn {
+    background-color: #4caf50;
+    color: white;
+    padding: 10px 15px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.95em;
+    transition: all 0.3s;
+    width: 100%;
+    text-align: left;
+    margin-bottom: 8px;
+}
+
+.match-history-btn:hover {
+    background-color: #66bb6a;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* 对局详情模态窗口样式 */
+#match-detail-modal .modal-content {
+    max-width: 600px;
+    max-height: 80vh;
+}
+
+.match-detail-content {
+    padding: 20px;
+}
+
+.match-detail-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.match-detail-time {
+    font-size: 0.9em;
+    color: var(--muted);
+}
+
+.match-detail-info-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.match-detail-info-box {
+    padding: 12px;
+    background: var(--surface);
+    border-radius: 8px;
+}
+
+.match-detail-label {
+    font-weight: bold;
+    margin-bottom: 8px;
+}
+
+.match-detail-value {
+    font-size: 1.1em;
+}
+
+.match-detail-result {
+    font-size: 1.5em;
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+    display: inline-block;
+}
+
+.match-detail-result.win {
+    color: #4caf50;
+    background-color: rgba(76, 175, 80, 0.1);
+}
+
+.match-detail-result.lose {
+    color: #f44336;
+    background-color: rgba(244, 67, 54, 0.1);
+}
+
+html.theme-dark .match-detail-result.win {
+    color: #4caf50;
+    background-color: rgba(76, 175, 80, 0.1);
+}
+
+html.theme-dark .match-detail-result.lose {
+    color: #f44336;
+    background-color: rgba(244, 67, 54, 0.1);
+}
+
+html.theme-dark .match-history-btn {
+    background-color: #4caf50;
+    color: white;
+    padding: 10px 15px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.95em;
+    transition: all 0.3s;
+    width: 100%;
+    text-align: left;
+    margin-bottom: 8px;
+}
+
+html.theme-dark .match-history-btn:hover {
+    background-color: #66bb6a;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.match-detail-logs {
+    max-height: 300px;
+    overflow-y: auto;
+    font-size: 0.9em;
+    line-height: 1.6;
+    padding: 8px;
+    background: var(--glass);
+    border-radius: 4px;
+}
+
+.match-detail-logs::-webkit-scrollbar {
+    width: 8px;
+}
+
+.match-detail-logs::-webkit-scrollbar-track {
+    background: var(--glass);
+    border-radius: 4px;
+}
+
+.match-detail-logs::-webkit-scrollbar-thumb {
+    background: var(--primary);
+    border-radius: 4px;
+}
 html.theme-dark .status-value { color: var(--text); }

@@ -221,6 +221,7 @@ class GameRoom:
         self.effects=[]
         self.last_attack = None  # 记录最后一次攻击的信息
         self.game_logs: list[dict[str, Any]] = []
+        self.rps_processed = False  # 记录猜拳结果是否已经处理过
 
     def init_player_magic(self, player_id: str, magic_cards):
         """初始化玩家魔法卡相关状态"""
@@ -277,6 +278,7 @@ class GameRoom:
         self.magic_discard.append(card)
         card_index = self.players[player_id].magic_hand.index(card)
         self.players[player_id].magic_hand.pop(card_index)
+    
     def attack(self,target:Position,attacker_id="",enable_effects=True):
         # 找到对手
         if not attacker_id:
@@ -797,8 +799,9 @@ def handle_place_ships(data):
     all_placed = all(len(p.ships) > 0 for p in room.players.values())
     if all_placed:
         room.state = 'rock_paper_scissors'
-        # 重置猜拳选择，确保新的猜拳阶段从空开始
+        # 重置猜拳选择和处理标记，确保新的猜拳阶段从空开始
         room.rps_choices = {}
+        room.rps_processed = False
 
         # 检查是否是灵气复苏或两极反转后的重新摆放
         if hasattr(room, 'lingqi_resurgence_applied') and room.lingqi_resurgence_applied:
@@ -826,10 +829,14 @@ def handle_rps_choice(data):
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
     room.rps_choices[player_id] = choice
-
+    
     # 检查是否所有玩家都已做出选择
-    if len(room.rps_choices) == len(room.players):
+    if len(room.rps_choices) == len(room.players) and not room.rps_processed:
+        # 标记为已处理，防止重复执行
+        room.rps_processed = True
+        
         # 决定猜拳结果
+        print(room.rps_choices)
         result = determine_rps_winner(room)
         emit('rps_result', result, room=room_id)
         # 设置攻击顺序
@@ -959,6 +966,7 @@ def determine_rps_winner(room: GameRoom):
     # 处理平局情况
     if c1 == c2:
         room.rps_choices = {}
+        room.rps_processed = False  # 重置处理标记，确保可以重新处理
         return RPSResult('tie', '平局，重新猜拳')
 
     # 判断胜负
@@ -1479,6 +1487,7 @@ def end_turn(data):
 
             room.state = 'rock_paper_scissors'
             room.rps_choices = {}
+            room.rps_processed = False
 
             # 重置所有临时效果标志，包括no_draw标志
             for p_id in room.players:

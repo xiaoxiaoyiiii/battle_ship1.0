@@ -91,6 +91,10 @@ body {
     width: 100%;
 }
 
+html.theme-dark .game-container {
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+}
+
 h1, h2, h3, p {
     text-align: center;
     margin-bottom: 1rem;
@@ -119,11 +123,13 @@ input {
     border: 1px solid var(--border);
     border-radius: 5px;
     margin-right: 0.5rem;
-    background: #fff;
+    background: var(--surface-strong);
     color: var(--text);
 }
 .button-group { display: flex; justify-content: center; gap: 1rem; margin-bottom: 1rem; }
-button, .btn {
+
+/* 通用按钮基础样式 */
+button, .btn, .nav-btn, .modal-btn {
     padding: 0.5rem 1rem;
     font-size: 1rem;
     background-color: var(--primary);
@@ -132,43 +138,55 @@ button, .btn {
     border-radius: 6px;
     cursor: pointer;
     transition: background-color 0.18s ease, transform 0.12s ease, box-shadow 0.18s ease;
+    font-weight: 500;
 }
-button:hover, .btn:hover { background-color: var(--primary-600); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(25, 118, 210, 0.2); }
-button:active, .btn:active { transform: translateY(0); box-shadow: 0 2px 8px rgba(25, 118, 210, 0.15); }
 
-/* 导航按钮样式 */
+button:hover, .btn:hover, .nav-btn:hover, .modal-btn:hover {
+    background-color: var(--primary-600);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(25, 118, 210, 0.2);
+}
+
+button:active, .btn:active, .nav-btn:active, .modal-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(25, 118, 210, 0.15);
+}
+
+/* 导航链接样式 */
 .nav a {
     display: inline-block;
-    padding: 0.4rem 0.8rem;
+    padding: 0.5rem 1rem;
     color: var(--text);
     text-decoration: none;
-    border-radius: 5px;
-    transition: all 0.18s ease;
+    border-radius: 8px;
+    transition: all 0.2s ease;
     background-color: transparent;
     border: 1px solid transparent;
+    font-weight: 500;
+    letter-spacing: 0.2px;
 }
 
 .nav a:hover {
     background-color: var(--primary-50);
     color: var(--primary);
-    text-decoration: none;
     border-color: var(--primary);
     transform: translateY(-1px);
-    box-shadow: 0 2px 8px rgba(25, 118, 210, 0.15);
+    box-shadow: 0 3px 10px rgba(25, 118, 210, 0.2);
 }
 
 .nav a:active {
     transform: translateY(0);
-    box-shadow: 0 1px 4px rgba(25, 118, 210, 0.1);
+    box-shadow: 0 2px 6px rgba(25, 118, 210, 0.15);
 }
 
-/* 登录、注册、退出等特定按钮样式 */
+/* 导航栏按钮样式 */
 .nav a[href="/login"],
 .nav a[href="/register"],
 .nav a[href="/logout"] {
     background-color: var(--primary);
     color: white;
     border-color: var(--primary);
+    box-shadow: 0 2px 8px rgba(25, 118, 210, 0.2);
 }
 
 .nav a[href="/login"]:hover,
@@ -176,29 +194,20 @@ button:active, .btn:active { transform: translateY(0); box-shadow: 0 2px 8px rgb
 .nav a[href="/logout"]:hover {
     background-color: var(--primary-600);
     border-color: var(--primary-600);
-    color: white;
-    box-shadow: 0 4px 12px rgba(25, 118, 210, 0.2);
+    box-shadow: 0 4px 12px rgba(25, 118, 210, 0.3);
+    transform: translateY(-2px);
 }
 
-/* 浅色主题下的导航链接 */
-:root .nav a {
-    color: var(--text);
-}
-
-/* 暗色主题下的导航链接 */
-html.theme-dark .nav a {
-    color: var(--text);
-}
-
+/* 暗色主题适配 */
 html.theme-dark .nav a:hover {
     background-color: rgba(25, 118, 210, 0.2);
-    border-color: var(--primary);
 }
 
 /* 分离线样式 */
 .nav span {
     margin: 0 0.5rem;
     color: var(--muted);
+    opacity: 0.6;
 }
 
 /* 粒子背景（Canvas） */
@@ -245,8 +254,8 @@ html.theme-dark .nav a:hover {
 .log-container.collapsed .log-content { display: none; }
 .log-container.collapsed h3 { display: none; }
 .log-entry { margin-bottom: 0.5rem; padding: 0.3rem; border-radius: 3px; background-color: var(--surface-strong); box-shadow: 0 1px 3px rgba(0,0,0,0.1); word-wrap: break-word; }
-.log-player { color: #e53935; font-weight: bold; }
-.log-card { color: #f9a825; font-weight: bold; }
+.log-player { color: var(--danger); font-weight: bold; }
+.log-card { color: var(--accent); font-weight: bold; }
 .log-coordinate { font-weight: bold; }
 
 /* 预览框 */
@@ -268,10 +277,10 @@ html.theme-dark .nav a:hover {
 .stat-item { text-align: center; }
 .stat-item span { font-weight: bold; color: var(--primary); }
 .card-description { margin-bottom: 15px; }
-.card-description h4 { margin: 0 0 8px 0; font-size: 1rem; color: #343a40; }
+.card-description h4 { margin: 0 0 8px 0; font-size: 1rem; color: var(--text); }
 .card-description p { line-height: 1.5; margin: 0; }
 .preview-instructions { margin-top: 15px; padding: 10px; background-color: var(--primary-50); border-radius: 4px; font-size: 0.85rem; color: #1976d2; text-align: center; }
-.magic-card.selected { border: 2px solid #ffc107; box-shadow: 0 0 10px rgba(255,193,7,0.5); transform: scale(1.05); }
+.magic-card.selected { border: 2px solid var(--warning); box-shadow: 0 0 10px rgba(255,193,7,0.5); transform: scale(1.05); }
 
 /* 局内聊天 */
 .game-content { position: relative; margin-right: 330px; }
@@ -287,7 +296,7 @@ html.theme-dark .nav a:hover {
 .in-game-chat-message.me { color: var(--primary); font-weight: bold; }
 .in-game-chat-message.opponent { color: #e67e22; }
 .in-game-chat-input-row { display: flex; border-top: 1px solid var(--muted); background: var(--surface); padding: 6px 8px; gap: 6px; }
-#in-game-chat-input { flex: 1; border: 1px solid var(--border); border-radius: 5px; padding: 6px 8px; font-size: 1em; outline: none; background: #fff; color: var(--text); }
+#in-game-chat-input { flex: 1; border: 1px solid var(--border); border-radius: 5px; padding: 6px 8px; font-size: 1em; outline: none; background: var(--surface-strong); color: var(--text); }
 #in-game-chat-send { min-width: 56px; font-size: 1em; border-radius: 5px; background: var(--primary); color: #fff; border: none; cursor: pointer; transition: background 0.18s; }
 #in-game-chat-send:hover { background: var(--primary-600); }
 @media (max-width: 600px) { .in-game-chat-container { right: 2vw; bottom: 2vw; width: 98vw; max-width: 98vw; } }
@@ -322,9 +331,9 @@ html.theme-dark .nav a:hover {
 }
 .cell.ship { background-color: #795548 !important; }
 html.theme-dark .cell.ship { background-color: #bfa074 !important; }
-.cell.hit { background-color: #F44336; color: #fff; }
-.cell.miss { background-color: #BDBDBD; }
-.cell.revealed { box-shadow: 0 0 10px 3px rgba(255,235,59,0.45) inset; border-color: #FFD54F; transition: box-shadow 0.3s; }
+.cell.hit { background-color: var(--danger); color: #fff; }
+.cell.miss { background-color: var(--muted); }
+.cell.revealed { box-shadow: 0 0 10px 3px rgba(255,235,59,0.45) inset; border-color: var(--warning); transition: box-shadow 0.3s; }
 
 /* 猜拳 */
 .rps-choices { display: flex; justify-content: center; gap: 1rem; margin-bottom: 1rem; }
@@ -338,10 +347,10 @@ html.theme-dark .cell.ship { background-color: #bfa074 !important; }
 .magic-hand { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
 .magic-card { width: 100px; height: 150px; border: 2px solid var(--border-strong); background-color: var(--surface-strong); cursor: pointer; transition: transform 0.2s; }
 .magic-card:hover { transform: scale(1.05); border-color: var(--warning); }
-.card-name { font-weight: bold; margin-bottom: 5px; border-bottom: 1px solid #ccc; }
+.card-name { font-weight: bold; margin-bottom: 5px; border-bottom: 1px solid var(--border); }
 .card-speed { font-size: 0.8em; }
 .magic-card .card-description { font-size: 0.7em; height: 60px; overflow-y: auto; }
-.card-type { font-size: 0.8em; margin-top: 5px; color: #3366cc; }
+.card-type { font-size: 0.8em; margin-top: 5px; color: var(--primary); }
 
 /* 魔法卡弹窗 */
 .magic-prompt {
@@ -411,38 +420,32 @@ body.cool-effects-enabled .cell.cool-flash { box-shadow: 0 0 16px 4px #1976d2, 0
 .surrender-btn:hover { background-color: #c0392b; transform: translateY(-1px); box-shadow: 0 3px 6px rgba(0,0,0,0.2); }
 .surrender-btn:active { transform: translateY(0); box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
 
-/* 登录、注册弹窗按钮优化 */
+/* 模态弹窗按钮样式 */
+.modal-btn {
+    padding: 0.6rem 1.5rem;
+    border-radius: 8px;
+    margin-top: 0.5rem;
+    box-shadow: 0 4px 12px rgba(25, 118, 210, 0.25);
+}
+
+.modal-btn:hover {
+    box-shadow: 0 6px 16px rgba(25, 118, 210, 0.35);
+}
+
+/* 登录、注册弹窗特定样式 */
 #login-modal .button-group button, 
 #register-modal .button-group button {
-    padding: 0.6rem 1.5rem;
-    font-size: 1rem;
-    font-weight: 500;
+    /* 复用模态弹窗按钮样式 */
     background: linear-gradient(135deg, var(--primary), var(--primary-600));
-    color: white;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 4px 12px rgba(25, 118, 210, 0.25);
-    margin-top: 0.5rem;
 }
 
 #login-modal .button-group button:hover, 
 #register-modal .button-group button:hover {
     background: linear-gradient(135deg, var(--primary-600), var(--primary-600));
-    transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(25, 118, 210, 0.35);
-}
-
-#login-modal .button-group button:active, 
-#register-modal .button-group button:active {
-    transform: translateY(0);
-    box-shadow: 0 4px 12px rgba(25, 118, 210, 0.25);
 }
 
 /* 弹窗输入框样式优化 */
-#login-modal input, 
-#register-modal input {
+.modal-input {
     width: 90%;
     max-width: 300px;
     padding: 0.7rem;
@@ -456,23 +459,20 @@ body.cool-effects-enabled .cell.cool-flash { box-shadow: 0 0 16px 4px #1976d2, 0
     transition: border-color 0.18s ease, box-shadow 0.18s ease;
 }
 
-#login-modal input:focus, 
-#register-modal input:focus {
+.modal-input:focus {
     outline: none;
     border-color: var(--primary);
     box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.1);
 }
 
 /* 暗色主题下的弹窗样式增强 */
-html.theme-dark #login-modal input, 
-html.theme-dark #register-modal input {
+html.theme-dark .modal-input {
     background-color: var(--surface-strong);
     border-color: var(--border-strong);
     color: var(--text);
 }
 
-html.theme-dark #login-modal input:focus, 
-html.theme-dark #register-modal input:focus {
+html.theme-dark .modal-input:focus {
     box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.3);
 }
 
@@ -486,10 +486,7 @@ html.theme-dark #register-modal .button-group button:hover {
     box-shadow: 0 6px 16px rgba(25, 118, 210, 0.5);
 }
 
-/* 确保导航栏按钮在游戏中的隐藏效果与主题兼容 */
-html.theme-dark .hide-in-game {
-    display: none;
-}
+
 
 /* 响应式调整 */
 @media (max-width: 768px) {
@@ -498,8 +495,7 @@ html.theme-dark .hide-in-game {
         font-size: 0.9rem;
     }
     
-    #login-modal input, 
-    #register-modal input {
+    .modal-input {
         width: 95%;
         padding: 0.6rem;
     }
@@ -592,20 +588,31 @@ html.theme-dark .hide-in-game {
 /* 弃牌堆弹窗（统一） */
 .modal-overlay {
     position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-    background-color: rgba(0,0,0,0.8); z-index: 10000;
+    background-color: rgba(0,0,0,0.85); z-index: 10000;
     display: flex; justify-content: center; align-items: center;
     animation: fadeIn 0.3s ease-in-out;
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); 
 }
 .modal-overlay.hidden { display: none; }
 .modal-content {
-    background: var(--surface-strong); border-radius: 10px;
-    box-shadow: 0 0 24px rgba(0,0,0,0.18); padding: 20px;
+    background: var(--surface-strong); border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3); padding: 24px;
     max-width: 800px; max-height: 80vh; overflow-y: auto; width: 90%; position: relative;
-    animation: slideUp 0.4s ease-out;
+    animation: slideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    border: 1px solid rgba(255, 255, 255, 0.1);
 }
 .discard-pile-content { width: 95%; max-width: 900px; }
-.modal-close { position: absolute; top: 15px; right: 20px; font-size: 1.5rem; cursor: pointer; color: var(--muted); transition: color 0.2s ease; }
-.modal-close:hover { color: var(--danger); }
+.modal-close {
+    position: absolute; top: 15px; right: 20px; font-size: 1.8rem;
+    cursor: pointer; color: var(--muted); transition: all 0.2s ease;
+    width: 35px; height: 35px; display: flex; justify-content: center; align-items: center;
+    border-radius: 50%; background-color: transparent;
+}
+.modal-close:hover {
+    color: var(--danger);
+    background-color: rgba(220, 53, 69, 0.1);
+    transform: scale(1.1);
+}
 .discard-pile-container { margin-top: 20px; }
 #discard-pile-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 15px; max-height: 60vh; overflow-y: auto; padding: 15px; background-color: var(--glass); border-radius: 8px; }
 .discard-pile-card { background-color: rgba(255,255,255,0.8); border: 1px solid var(--muted); border-radius: 8px; padding: 12px; transition: all 0.2s ease; min-height: 100px; display: flex; flex-direction: column; }
@@ -633,4 +640,4 @@ html.theme-dark .status-item { background-color: #444; border-left-color: #667ee
 .status-label { font-weight: bold; color: #3366cc; }
 html.theme-dark .status-label { color: #667eea; }
 .status-value { color: #333; }
-html.theme-dark .status-value { color: #ddd; }
+html.theme-dark .status-value { color: var(--text); }

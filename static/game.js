@@ -452,6 +452,133 @@ if (document.readyState === 'loading') {
     if (color) applyPrimaryColor(color);
 }
 
+// 音乐控制相关元素
+const musicBtn = document.getElementById('music-btn');
+const musicVolume = document.getElementById('music-volume');
+const volumeDisplay = document.getElementById('volume-display');
+const musicLoopMode = document.getElementById('music-loop-mode');
+const musicTogglePlay = document.getElementById('music-toggle-play');
+const musicNext = document.getElementById('music-next');
+const musicPrevious = document.getElementById('music-previous');
+const musicMuted = document.getElementById('music-muted');
+const currentTrack = document.getElementById('current-track');
+
+// 音乐按钮逻辑
+if (musicBtn) {
+    musicBtn.onclick = () => {
+        if (settingsModal) {
+            settingsModal.classList.remove('hidden');
+        }
+    };
+}
+
+// 音量控制
+if (musicVolume && volumeDisplay) {
+    musicVolume.addEventListener('input', (e) => {
+        const volume = e.target.value / 100;
+        if (window.bgMusicPlayer) {
+            window.bgMusicPlayer.setVolume(volume);
+            volumeDisplay.textContent = e.target.value + '%';
+            localStorage.setItem('bgm_volume', volume);
+        }
+    });
+}
+
+// 循环模式控制
+if (musicLoopMode) {
+    musicLoopMode.addEventListener('change', (e) => {
+        if (window.bgMusicPlayer) {
+            window.bgMusicPlayer.setLoopMode(e.target.value);
+            localStorage.setItem('bgm_loop_mode', e.target.value);
+        }
+    });
+}
+
+// 播放/暂停控制
+if (musicTogglePlay) {
+    musicTogglePlay.onclick = () => {
+        if (window.bgMusicPlayer) {
+            window.bgMusicPlayer.togglePlay();
+            updateMusicStatus();
+        }
+    };
+}
+
+// 下一首控制
+if (musicNext) {
+    musicNext.onclick = () => {
+        if (window.bgMusicPlayer) {
+            window.bgMusicPlayer.playNext();
+            updateMusicStatus();
+        }
+    };
+}
+
+// 上一首控制
+if (musicPrevious) {
+    musicPrevious.onclick = () => {
+        if (window.bgMusicPlayer) {
+            window.bgMusicPlayer.playPrevious();
+            updateMusicStatus();
+        }
+    };
+}
+
+// 静音控制
+if (musicMuted) {
+    musicMuted.addEventListener('change', (e) => {
+        if (window.bgMusicPlayer) {
+            window.bgMusicPlayer.isMuted = e.target.checked;
+            if (window.bgMusicPlayer.audio) {
+                window.bgMusicPlayer.audio.muted = e.target.checked;
+            }
+            localStorage.setItem('bgm_muted', e.target.checked);
+        }
+    });
+}
+
+// 更新音乐状态显示
+function updateMusicStatus() {
+    if (!window.bgMusicPlayer) return;
+    
+    const status = window.bgMusicPlayer.getStatus();
+    
+    // 更新当前播放曲目
+    if (currentTrack) {
+        if (status.currentTrack) {
+            const trackName = status.currentTrack.split('/').pop();
+            currentTrack.textContent = trackName;
+        } else {
+            currentTrack.textContent = '未播放';
+        }
+    }
+    
+    // 更新音量显示
+    if (musicVolume && volumeDisplay) {
+        musicVolume.value = status.volume * 100;
+        volumeDisplay.textContent = Math.round(status.volume * 100) + '%';
+    }
+    
+    // 更新循环模式
+    if (musicLoopMode) {
+        musicLoopMode.value = status.loopMode;
+    }
+    
+    // 更新静音状态
+    if (musicMuted) {
+        musicMuted.checked = status.isMuted;
+    }
+}
+
+// 设置弹窗打开时更新音乐状态
+if (settingsBtn && settingsModal) {
+    const originalOnClick = settingsBtn.onclick;
+    settingsBtn.onclick = () => {
+        if (originalOnClick) originalOnClick();
+        updateMusicStatus();
+    };
+}
+
 // 帮助相关元素
 const helpBtn = document.getElementById('help-btn');
 const helpModal = document.getElementById('help-modal');
@@ -1269,6 +1396,12 @@ function setupSocketListeners() {
                 if (opponentUsernameInfo) opponentUsernameInfo.textContent = '';
                 showOpponentStatsBtn && (showOpponentStatsBtn.style.display = 'none');
             }
+        }
+
+        // 设置玩家ID（关键修复）
+        if (data.player_id) {
+            gameState.playerId = data.player_id;
+            console.log('设置playerId为:', gameState.playerId);
         }
 
         // 显示对手战绩弹窗并请求数据
@@ -4267,6 +4400,11 @@ function initCardTooltip() {
 
 // 创建魔法卡UI元素
 function createMagicCardUI() {
+    // 检查是否已经存在魔法卡系统，避免重复创建
+    if (document.getElementById('magic-system')) {
+        return;
+    }
+    
     const gameScreen = document.getElementById('game-screen');
     const magicUI = document.createElement('div');
     magicUI.id = 'magic-system';

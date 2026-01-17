@@ -64,6 +64,7 @@
         </div>
         <button id="help-btn" class="btn secondary" style="margin-left:12px;">帮助</button>
         <button id="settings-btn" class="btn secondary" style="margin-left:12px;">设置</button>
+        <button id="music-btn" class="btn secondary" style="margin-left:12px;">🎵</button>
         <!-- 设置模态弹窗 -->
         <div id="settings-modal" class="modal-overlay hidden">
             <div class="modal-content" style="max-width:400px;">
@@ -75,6 +76,39 @@
                         <input type="color" id="primary-color-picker" value="#1976d2"
                                style="vertical-align:middle;margin-left:8px;">
                     </label>
+                    <hr style="margin: 1em 0;">
+                    <h3>背景音乐设置</h3>
+                    <div style="margin-bottom:1em;">
+                        <label style="display:block;margin-bottom:0.5em;">
+                            <span>音量：</span>
+                            <input type="range" id="music-volume" min="0" max="100" value="50"
+                                   style="width:200px;vertical-align:middle;">
+                            <span id="volume-display">50%</span>
+                        </label>
+                    </div>
+                    <div style="margin-bottom:1em;">
+                        <label style="display:block;margin-bottom:0.5em;">
+                            <span>循环模式：</span>
+                            <select id="music-loop-mode" style="vertical-align:middle;">
+                                <option value="all">全部循环</option>
+                                <option value="single">单曲循环</option>
+                                <option value="none">不循环</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div style="margin-bottom:1em;">
+                        <button id="music-toggle-play" class="btn">播放/暂停</button>
+                        <button id="music-next" class="btn">下一首</button>
+                        <button id="music-previous" class="btn">上一首</button>
+                    </div>
+                    <div style="margin-bottom:1em;">
+                        <label style="display:inline-block;margin-right:1em;">
+                            <input type="checkbox" id="music-muted"> 静音
+                        </label>
+                    </div>
+                    <div style="margin-bottom:1em;font-size:0.9em;color:var(--muted);">
+                        <p>当前播放: <span id="current-track">未播放</span></p>
+                    </div>
                     <button id="settings-save-btn" class="btn">保存</button>
                 </div>
             </div>
@@ -454,6 +488,8 @@
 <script src="/static/game.js"></script>
 <!-- 后加载测试脚本 -->
 <script src="/static/test_magic.js"></script>
+<!-- 背景音乐播放器 -->
+<script src="/static/music_player.js"></script>
 
 <!-- 在线人数更新脚本 -->
 <script>

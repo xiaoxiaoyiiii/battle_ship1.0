@@ -554,7 +554,7 @@ def handle_create_room(data):
     room_id = room_manager.create_room()
     # 优先使用登录后的 user_id，否则使用 sid（游客模式）
     join_room(room_id)
-    player_id = request.sid
+    player_id = session.get('user_id', request.sid)
     player_name = session.get('username', data.get('player_name', '匿名玩家'))
     room = room_manager.get_room(room_id)
     if room:
@@ -570,7 +570,7 @@ def handle_create_room(data):
 def handle_join_room(data):
     room_id = data['room_id']
     # 优先使用登录后的 user_id，否则使用 sid（游客模式）
-    player_id = request.sid
+    player_id = session.get('user_id', request.sid)
     player_name = session.get('username', data.get('player_name', '匿名玩家'))
 
     room = room_manager.get_room(room_id)
@@ -591,7 +591,7 @@ def handle_join_room(data):
     })
 
     # 添加玩家到Socket.IO房间
-    join_room(room_id)
+    join_room(room_id, request.sid)
     # 检查是否所有玩家都已加入
     if len(room.players) == 2:
         # 所有玩家都已加入，开始游戏
@@ -613,9 +613,10 @@ def handle_join_room(data):
             opponent_id = next(p for p in room.players if p != player_id)
             emit('game_state', {
                 **game_state_data,
+                'player_id': player_id,
                 'player_name': room.players[player_id].name,
                 'opponent_name': room.players[opponent_id].name
-            }, to=player_id)
+            }, to=request.sid)
 
     # 返回响应给客户端，包含player_id
     return {'status': 'success', 'player_id': player_id}
@@ -637,7 +638,7 @@ def handle_disconnect():
     if sid in online_users:
         online_users.remove(sid)
     print(f"Client disconnected: {sid}, online users: {len(online_users)}")
-
+    
     # 清理相关数据
     if sid in room_manager.match_queue[0]:
         i = room_manager.match_queue[0].index(sid)
@@ -673,7 +674,8 @@ def handle_chat_message(data):
 @socketio.on('find_match')
 def handle_find_match(data):
     """处理玩家匹配请求"""
-    player_id = request.sid
+    socket_sid = request.sid
+    db_user_id = session.get('user_id', socket_sid)
     player_name = data.get('player_name', '匿名玩家')
     user_id = session.get('user_id')
 
@@ -694,7 +696,7 @@ def handle_find_match(data):
         player2 = room_manager.match_queue[0].pop(0)
 
         # 再次检查是否是同一个玩家，确保不会匹配到自己
-        if player1 == player2:
+        if db_user_id1 == db_user_id2:
             # 将玩家放回队列末尾
             room_manager.match_queue[0].append(player1)
             continue
@@ -718,7 +720,7 @@ def handle_find_match(data):
             'user_id': player1_user_id
         })
 
-        room.players[player2] = Player(**{
+        room.players[db_user_id2] = Player(**{
             'name': player2_name,
             'ships': [],
             'attacks': [],
@@ -727,12 +729,12 @@ def handle_find_match(data):
         })
 
         # 初始化魔法卡牌系统
-        room.init_player_magic(player1, magic_cards)
-        room.init_player_magic(player2, magic_cards)
+        room.init_player_magic(db_user_id1, magic_cards)
+        room.init_player_magic(db_user_id2, magic_cards)
 
-        # 将玩家添加到Socket.IO房间
-        join_room(room_id, player1)
-        join_room(room_id, player2)
+        # 将玩家添加到Socket.IO房间（使用Socket会话ID）
+        join_room(room_id, socket_sid1)
+        join_room(room_id, socket_sid2)
 
         # 设置房间状态为放置战舰
         room.state = 'placing_ships'
@@ -744,20 +746,21 @@ def handle_find_match(data):
         }
 
         # 为每个玩家添加对方的名字
-        for player_id in [player1, player2]:
-            opponent_id = player2 if player_id == player1 else player1
+        for db_user_id, socket_sid in [(db_user_id1, socket_sid1), (db_user_id2, socket_sid2)]:
+            opponent_db_user_id = db_user_id2 if db_user_id == db_user_id1 else db_user_id1
             emit('game_state', {
                 **game_state_data,
-                'player_name': room.players[player_id].name,
-                'opponent_name': room.players[opponent_id].name
-            }, to=player_id)
+                'player_id': db_user_id,
+                'player_name': room.players[db_user_id].name,
+                'opponent_name': room.players[opponent_db_user_id].name
+            }, to=socket_sid)
     return {'status': 'success', 'message': '开始寻找匹配'}
 
 
 @socketio.on('cancel_match')
 def handle_cancel_match(data):
     """处理玩家取消匹配请求"""
-    player_id = request.sid
+    socket_sid = session.get('user_id', request.sid)
 
     # 从匹配队列中移除玩家
     if player_id in room_manager.match_queue[0]:
@@ -1531,7 +1534,11 @@ def handle_use_magic_card(data):
     if not can_play_magic_card(room, player_id, card):
         return {'status': 'error', 'message': f'当前阶段{room.current_phase}无法使用速阶{card.speed}的魔法卡'}
 
-    # 从手牌中移除并添加到弃牌堆
+    # 找到并移除玩家手牌中的卡牌
+    for i, c in enumerate(player.magic_hand):
+        if c.name == card.name and c.speed == card.speed:
+            player.magic_hand.pop(i)
+            break
     room.magic_discard.append(card)
 
     # 记录最后使用的魔法卡
@@ -2999,7 +3006,7 @@ def get_uuid() -> str:
 @socketio.on('surrender')
 def handle_surrender(data):
     # 处理投降请求
-    player_id = request.sid
+    player_id = session.get('user_id', request.sid)
     room_id = data.get('room_id')
     room = rooms.get(room_id)
     if not room:

@@ -1362,6 +1362,12 @@ function setupSocketListeners() {
             }
         }
 
+        // 设置玩家ID（关键修复）
+        if (data.player_id) {
+            gameState.playerId = data.player_id;
+            console.log('设置playerId为:', gameState.playerId);
+        }
+
         // 显示对手战绩弹窗并请求数据
         function showOpponentStats() {
             if (!opponentStatsModal || !opponentStatsContent || !gameState.opponentName) return;

@@ -936,6 +936,12 @@ class ChainResult:
         self.success = success
         self.message = message
     
+    def __getitem__(self, key):
+        return getattr(self, key)
+    
+    def __setitem__(self, key, value):
+        setattr(self, key, value)
+    
     def to_dict(self):
         return {
             'card': self.card,
@@ -1630,7 +1636,7 @@ def resolve_chain(room):
         # 应用卡牌效果
         result = apply_magic_effect(room, player_id, card, targets)
         # 添加施法者信息到结果中
-        result['caster'] = player_id
+        result.caster = player_id
         results.append(result)
 
     # 广播连锁结算结果
@@ -1986,7 +1992,7 @@ def confirm_magic_target(data):
             'message': '对方灵气复苏结算完成'
         }, to=opponent_id)
 
-        return {'status': 'success', 'message': f'灵气复苏船数选择完成'}
+        return {'status': 'success', 'message': '灵气复苏船数选择完成'}
 
     return {'status': 'error', 'message': '无效的临时数据ID'}
 
@@ -2043,7 +2049,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
     if card.name == '余音绕梁':
         # 标记接下来两个攻击阶段造成的伤害将强制击杀
         room.players[caster_id].effect_flags.forced_kill = 2  # 持续2个攻击阶段
-        result['message'] = '接下来两个攻击阶段将造成强制击杀'
+        result.message = '接下来两个攻击阶段将造成强制击杀'
         def func(room:GameRoom,attacker_id:str,defender_id:str):
             attack=room.players[attacker_id].attacks.pop()
             attack.hit=True
@@ -2071,15 +2077,15 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                 'cards': drawn_cards,
                 'player_deck_backup': []  # 备份，用于记录放回的牌
             }
-            result['message'] = f'抽了{len(drawn_cards)}张牌，请选择'
-            result['temp_data_id'] = 'taoyuan_choice'
+            result.message = f'抽了{len(drawn_cards)}张牌，请选择'
+            result.temp_data_id = 'taoyuan_choice'
             # 通知对手等待
             emit('taoyuan_waiting', {
                 'message': '对方正在结算桃园结义效果 请等待'
             }, to=opponent_id)
         else:
-            result['success'] = False
-            result['message'] = '无法抽取卡牌'
+            result.success = False
+            result.message = '无法抽取卡牌'
 
     elif card.name == '无中生有':
         # 抽两张牌，本回合双方无法获得魔法卡
@@ -2088,7 +2094,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         # 设置禁止抽卡标记
         room.players[caster_id].effect_flags.no_draw = True
         room.players[opponent_id].effect_flags.no_draw = True
-        result['message'] = '抽了2张牌，本回合双方无法获得魔法卡'
+        result.message = '抽了2张牌，本回合双方无法获得魔法卡'
 
     elif card.name == '极限增援':
         # 两个大回合后，船少的一方获胜，已修复
@@ -2102,7 +2108,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         emit('reinforcement_activated', {
             'remaining_turns': total_turns
         }, room=room.id)
-        result['message'] = '极限增援已激活，剩余2回合后结算'
+        result.message = '极限增援已激活，剩余2回合后结算'
 
     elif card.name == '无暇圣心':
         # 两个大回合后如果双方都没造成伤害，施法者获胜，已修复
@@ -2117,12 +2123,12 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         emit('holy_heart_activated', {
             'remaining_turns': total_turns
         }, room=room.id)
-        result['message'] = '无暇圣心已激活，剩余2回合后结算'
+        result.message = '无暇圣心已激活，剩余2回合后结算'
 
     elif card.name == '火力全开':
         # 本回合攻击次数翻倍
         room.players[caster_id].effect_flags.double_attacks = True
-        result['message'] = '本回合攻击次数翻倍'
+        result.message = '本回合攻击次数翻倍'
         def func(room:GameRoom):
             room.attacks_remaining*=2
             room.pop_effect(card.name)
@@ -2143,9 +2149,9 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         }
 
         # 设置结果，只发送给施法者
-        result['message'] = '请选择灵气复苏的船数'
-        result['temp_data_id'] = 'lingqi_choice'
-        result['max_ships'] = max_ships
+        result.message = '请选择灵气复苏的船数'
+        result.temp_data_id = 'lingqi_choice'
+        result.max_ships = max_ships
 
         # 通知对手等待
         emit('lingqi_waiting', {
@@ -2905,19 +2911,19 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         for ship in caster.ships:
             ship.invincible = True
 
-        result['message'] = '牺牲一艘战舰，其他战舰进入无敌状态'
+        result.message = '牺牲一艘战舰，其他战舰进入无敌状态'
 
     elif card.name == '神机妙算':
         # 宣言x，如果结束阶段船数减少x，那些船不会减少
         if 'prediction' not in room.magic_temp_data:
-            result['success'] = False
-            result['message'] = '需要宣言减少的船数'
+            result.success = False
+            result.message = '需要宣言减少的船数'
             return result
 
         x = room.magic_temp_data['prediction']
         room.players[caster_id].effect_flags = room.players[caster_id].effect_flags
         room.players[caster_id].effect_flags.prediction = x
-        result['message'] = f'宣言船数减少{x}，若预测成功则不会减少'
+        result.message = f'宣言船数减少{x}，若预测成功则不会减少'
 
     # ==== 场地魔法卡 ====
     elif card.type == '场地':
@@ -2932,43 +2938,43 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         room.field_magic = card.name
 
         if card.name == '恶魔契约':
-            result['message'] = '恶魔契约生效，双方船数增减绑定'
+            result.message = '恶魔契约生效，双方船数增减绑定'
         elif card.name == '禁忌果实':
-            result['message'] = '禁忌果实生效，双方只能使用失灵！和场地魔法'
+            result.message = '禁忌果实生效，双方只能使用失灵！和场地魔法'
         elif card.name == '伊甸园':
-            result['message'] = '伊甸园生效，攻击次数变为6-n'
+            result.message = '伊甸园生效，攻击次数变为6-n'
         elif card.name == '教皇旨意':
-            result['message'] = '教皇旨意生效，攻击需要弃置魔法卡'
+            result.message = '教皇旨意生效，攻击需要弃置魔法卡'
 
     # ==== 已实现的魔法卡 ====
     elif card.name == '失灵！':
         # 无效化对方上一张魔法卡
         if room.magic_history and room.magic_history[-1]['caster'] != caster_id:
             last_magic = room.magic_history.pop()
-            result['message'] = f'无效化了{last_magic["card"]["name"]}'
-            result['negated'] = last_magic
+            result.message = f'无效化了{last_magic["card"]["name"]}'
+            result.negated = last_magic
         else:
-            result['success'] = False
-            result['message'] = '没有可无效化的魔法卡'
+            result.success = False
+            result.message = '没有可无效化的魔法卡'
 
     elif card.name == '看破！':
         # 无效化对方本回合所有魔法卡
         room.players[opponent_id].magic_blocked = True
-        result['message'] = '本回合对方魔法卡被无效化'
+        result.message = '本回合对方魔法卡被无效化'
 
     elif card.name == '增援':
         # 召唤一艘战舰：等待玩家选择放置位置
         if len(caster.ships) >= 6:
-            result['success'] = False
-            result['message'] = '战舰数量已达上限'
+            result.success = False
+            result.message = '战舰数量已达上限'
         else:
             # 存储临时数据以等待客户端确认位置
             room.magic_temp_data = room.magic_temp_data
             room.magic_temp_data['pending_reinforcement'] = {
                 'caster': caster_id
             }
-            result['temp_data_id'] = 'reinforcement_choice'
-            result['message'] = '请选择增援放置位置'
+            result.temp_data_id = 'reinforcement_choice'
+            result.message = '请选择增援放置位置'
 
     elif card.name == '桃园结义':
         # 从牌堆抽取n张牌(n为自己的战舰数)，自己选1张，再给对方选1张
@@ -2986,15 +2992,15 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                 'opponent': opponent_id,
                 'cards': drawn_cards
             }
-            result['message'] = f'抽了{len(drawn_cards)}张牌，请选择'
-            result['temp_data_id'] = 'taoyuan_choice'
+            result.message = f'抽了{len(drawn_cards)}张牌，请选择'
+            result.temp_data_id = 'taoyuan_choice'
         else:
-            result['success'] = False
-            result['message'] = '无法抽取卡牌'
+            result.success = False
+            result.message = '无法抽取卡牌'
 
     else:
-        result['success'] = False
-        result['message'] = f'未实现的魔法卡: {card.name}'
+        result.success = False
+        result.message = f'未实现的魔法卡: {card.name}'
 
 
 

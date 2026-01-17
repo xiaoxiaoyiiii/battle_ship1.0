@@ -154,14 +154,16 @@ class Player:
     max_ships: Any
     sunken_ships: Any
     user_id: str
+    sid: str  # 添加sid属性来存储socket会话ID
 
-    def __init__(self, name: str, ships: list[PlayerShip], attacks: list[Position], remaining_ships: int, user_id: str = None):
+    def __init__(self, name: str, ships: list[PlayerShip], attacks: list[Position], remaining_ships: int, user_id: str = None, sid: str = None):
         self.magic_blocked = None
         self.damage_dealt_this_turn = 0
         self.magic_hand = []
         self.effect_flags = EffectFlags()
         self.name = name
         self.ships = ships
+        self.sid = sid  # 初始化sid属性
         self.attacks = attacks
         self.remaining_ships = remaining_ships
         self.needs_reset = False
@@ -267,9 +269,10 @@ class GameRoom:
         self.players[player_id].magic_hand.append(card)
 
         # 通知客户端手牌更新
+        player = self.players[player_id]
         emit('hand_updated', {
-            'hand': self.players[player_id].magic_hand
-        }, room=player_id)
+            'hand': player.magic_hand
+        }, room=player.sid)
 
         return card  # 返回抽到的卡牌
 
@@ -475,15 +478,17 @@ class RoomManager:
                 'ships': [],
                 'attacks': [],
                 'remaining_ships': 0,
-                'user_id': player1_user_id
+                'user_id': player1_user_id,
+                'sid': player1  # 传递sid给Player构造函数
             })
-            
+
             room.players[player2] = Player(**{
                 'name': player2_name,
                 'ships': [],
                 'attacks': [],
                 'remaining_ships': 0,
-                'user_id': player2_user_id
+                'user_id': player2_user_id,
+                'sid': player2  # 传递sid给Player构造函数
             })
             
             # 初始化魔法卡牌系统
@@ -537,9 +542,10 @@ def test_add_all_magic_cards(data):
     room.players[player_id].magic_hand = magic_cards.copy()
 
     # 通知客户端手牌更新
+    player = room.players[player_id]
     emit('hand_updated', {
-        'hand': room.players[player_id].magic_hand
-    }, room=player_id)
+        'hand': player.magic_hand
+    }, room=player.sid)
 
     return {'status': 'success', 'message': f'已添加 {len(magic_cards)} 张魔法卡到手牌'}
 
@@ -554,16 +560,19 @@ def lobby():
 def handle_create_room(data):
     room_id = room_manager.create_room()
     # 优先使用登录后的 user_id，否则使用 sid（游客模式）
-    join_room(room_id)
     player_id = session.get('user_id', request.sid)
     player_name = session.get('username', data.get('player_name', '匿名玩家'))
+    # 明确指定socket_id加入Socket.IO房间
+    join_room(room_id, request.sid)
     room = room_manager.get_room(room_id)
     if room:
         room.players[player_id] = Player(**{
             'name': player_name,
             'ships': [],
             'attacks': [],
-            'remaining_ships': 0  # 初始化剩余战舰数量
+            'remaining_ships': 0,  # 初始化剩余战舰数量
+            'user_id': player_id,
+            'sid': request.sid  # 传递sid给Player构造函数
         })
     return {'status': 'success', 'room_id': room_id}
 
@@ -588,7 +597,9 @@ def handle_join_room(data):
         'name': player_name,
         'ships': [],
         'attacks': [],
-        'remaining_ships': 0  # 初始化剩余战舰数量
+        'remaining_ships': 0,  # 初始化剩余战舰数量
+        'user_id': player_id,
+        'sid': request.sid  # 传递sid给Player构造函数
     })
 
     # 添加玩家到Socket.IO房间
@@ -612,12 +623,13 @@ def handle_join_room(data):
         # 为每个玩家添加对方的名字
         for player_id in room.players:
             opponent_id = next(p for p in room.players if p != player_id)
+            player = room.players[player_id]
             emit('game_state', {
                 **game_state_data,
                 'player_id': player_id,
-                'player_name': room.players[player_id].name,
+                'player_name': player.name,
                 'opponent_name': room.players[opponent_id].name
-            }, to=request.sid)
+            }, to=player.sid)
 
     # 返回响应给客户端，包含player_id
     return {'status': 'success', 'player_id': player_id}

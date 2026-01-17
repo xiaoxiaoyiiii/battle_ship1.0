@@ -83,8 +83,20 @@ class PlayerShip:
 
     def __init__(self, positions: list[Position], hits: list[Position],**kwargs):
         self.invincible = False
-        self.positions = positions
-        self.hits = hits
+        # 确保positions是Position对象列表
+        self.positions = []
+        for pos in positions:
+            if isinstance(pos, dict):
+                self.positions.append(Position(**pos))
+            else:
+                self.positions.append(pos)
+        # 确保hits是Position对象列表
+        self.hits = []
+        for hit in hits:
+            if isinstance(hit, dict):
+                self.hits.append(Position(**hit))
+            else:
+                self.hits.append(hit)
 
 
 class MagicCard:
@@ -2610,6 +2622,14 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['message'] = f'硫磺火焰成功击杀{sunk_count}艘战舰'
         result['affected_positions'] = affected_positions
         result['caster_id'] = caster_id
+        
+        # 添加游戏日志
+        add_game_log(room, f"{room.players[caster_id].name or caster_id} 使用了硫磺火焰，击杀了{sunk_count}艘战舰", 'magic', {
+            'caster_id': caster_id,
+            'card_name': card.name,
+            'sunk_count': sunk_count,
+            'affected_positions': affected_positions
+        })
 
     elif card.name == '探测雷达':
         # 显示2*2区域内的战舰

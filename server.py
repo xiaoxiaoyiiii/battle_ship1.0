@@ -1721,18 +1721,69 @@ def handle_magic_target(data):
 
     elif temp_data_id == 'bury_choice':
         # 处理明智埋葬的选择
-        card_index = target_data['card_index']
+        card_key = target_data.get('card_key')
         caster = room.players[player_id]
-
-        if 0 <= card_index < len(caster.magic_hand):
-            # 将选中的卡放入弃牌堆
-            room.discard_card(player_id, caster.magic_hand[card_index])
-            # 抽一张新卡
-            room.draw_card(player_id)
-            room.magic_temp_data = {}
-            return {'status': 'success', 'message': '埋葬完成'}
-
-        return {'status': 'error', 'message': '无效的选择'}
+        opponent_id = next(p for p in room.players if p != player_id)
+        opponent = room.players[opponent_id]
+        
+        # 验证选择
+        if card_key is None:
+            return {'status': 'error', 'message': '未选择卡牌'}
+        
+        # 从不同来源查找并移除选中的卡牌
+        card_to_remove = None
+        card_source = None
+        
+        # 1. 检查施法者的手牌
+        for i, card in enumerate(caster.magic_hand):
+            if f"{card.name}_{card.speed}" == card_key:
+                card_to_remove = card
+                card_source = 'caster_hand'
+                caster.magic_hand.pop(i)
+                break
+        
+        # 2. 如果不在施法者的手牌中，检查对方的手牌
+        if card_to_remove is None:
+            for i, card in enumerate(opponent.magic_hand):
+                if f"{card.name}_{card.speed}" == card_key:
+                    card_to_remove = card
+                    card_source = 'opponent_hand'
+                    opponent.magic_hand.pop(i)
+                    break
+        
+        # 3. 如果不在对方的手牌中，检查牌堆
+        if card_to_remove is None:
+            for i, card in enumerate(room.magic_deck):
+                if f"{card.name}_{card.speed}" == card_key:
+                    card_to_remove = card
+                    card_source = 'deck'
+                    room.magic_deck.pop(i)
+                    break
+        
+        if card_to_remove is None:
+            return {'status': 'error', 'message': '卡牌不存在'}
+        
+        # 将选中的卡放入弃牌堆
+        room.magic_discard.append(card_to_remove)
+        # 抽一张新卡
+        room.draw_card(player_id)
+        room.magic_temp_data = {}
+        
+        # 通知双方手牌更新
+        emit('hand_updated', {
+            'hand': caster.magic_hand
+        }, to=player_id)
+        
+        emit('hand_updated', {
+            'hand': opponent.magic_hand
+        }, to=opponent_id)
+        
+        # 通知弃牌堆更新
+        emit('discard_pile_updated', {
+            'discard': room.magic_discard
+        }, room=room.id)
+        
+        return {'status': 'success', 'message': '埋葬完成'}
 
     elif temp_data_id == 'shield_choice':
         # 处理仁王之盾的选择
@@ -2878,7 +2929,72 @@ def confirm_magic_target(data):
         }, to=opponent_id)
 
         return {'status': 'success', 'message': '灵气复苏船数选择完成'}
-
+    elif temp_data_id == 'bury_choice':
+        # 处理明智埋葬的选择
+        card_key = target_data.get('card_key')
+        caster = room.players[player_id]
+        opponent_id = next(p for p in room.players if p != player_id)
+        opponent = room.players[opponent_id]
+        
+        # 验证选择
+        if card_key is None:
+            return {'status': 'error', 'message': '未选择卡牌'}
+        
+        # 从不同来源查找并移除选中的卡牌
+        card_to_remove = None
+        card_source = None
+        
+        # 1. 检查施法者的手牌
+        for i, card in enumerate(caster.magic_hand):
+            if f"{card.name}_{card.speed}" == card_key:
+                card_to_remove = card
+                card_source = 'caster_hand'
+                caster.magic_hand.pop(i)
+                break
+        
+        # 2. 如果不在施法者的手牌中，检查对方的手牌
+        if card_to_remove is None:
+            for i, card in enumerate(opponent.magic_hand):
+                if f"{card.name}_{card.speed}" == card_key:
+                    card_to_remove = card
+                    card_source = 'opponent_hand'
+                    opponent.magic_hand.pop(i)
+                    break
+        
+        # 3. 如果不在对方的手牌中，检查牌堆
+        if card_to_remove is None:
+            for i, card in enumerate(room.magic_deck):
+                if f"{card.name}_{card.speed}" == card_key:
+                    card_to_remove = card
+                    card_source = 'deck'
+                    room.magic_deck.pop(i)
+                    break
+        
+        if card_to_remove is None:
+            return {'status': 'error', 'message': '卡牌不存在'}
+        
+        # 将选中的卡放入弃牌堆
+        room.magic_discard.append(card_to_remove)
+        # 抽一张新卡
+        room.draw_card(player_id)
+        room.magic_temp_data = {}
+        
+        # 通知双方手牌更新
+        emit('hand_updated', {
+            'hand': caster.magic_hand
+        }, to=player_id)
+        
+        emit('hand_updated', {
+            'hand': opponent.magic_hand
+        }, to=opponent_id)
+        
+        # 通知弃牌堆更新
+        emit('discard_pile_updated', {
+            'discard': room.magic_discard
+        }, room=room.id)
+        
+        return {'status': 'success', 'message': '埋葬完成'}
+    
     return {'status': 'error', 'message': '无效的临时数据ID'}
 
 
@@ -3534,18 +3650,67 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             result['success'] = False
             result['message'] = '手牌为空，无法发动'
             return result
-
+        
+        # 收集所有不在弃牌堆中的卡牌
+        opponent_id = next(p for p in room.players if p != caster_id)
+        opponent = room.players[opponent_id]
+        
+        # 收集所有可选卡牌：施法者的手牌 + 对方的手牌 + 牌堆中的牌
+        available_cards = []
+        
+        # 添加施法者的手牌
+        for card in caster.magic_hand:
+            card_key = f"{card.name}_{card.speed}"
+            if card_key not in [f"{c.name}_{c.speed}" for c in room.magic_discard]:
+                available_cards.append({
+                    'name': card.name,
+                    'speed': card.speed,
+                    'type': card.type,
+                    'description': card.description,
+                    'source': 'caster_hand',
+                    'card_key': card_key
+                })
+        
+        # 添加对方的手牌
+        for card in opponent.magic_hand:
+            card_key = f"{card.name}_{card.speed}"
+            if card_key not in [f"{c.name}_{c.speed}" for c in room.magic_discard]:
+                available_cards.append({
+                    'name': card.name,
+                    'speed': card.speed,
+                    'type': card.type,
+                    'description': card.description,
+                    'source': 'opponent_hand',
+                    'card_key': card_key
+                })
+        
+        # 添加牌堆中的牌
+        for card in room.magic_deck:
+            card_key = f"{card.name}_{card.speed}"
+            if card_key not in [f"{c.name}_{c.speed}" for c in room.magic_discard]:
+                available_cards.append({
+                    'name': card.name,
+                    'speed': card.speed,
+                    'type': card.type,
+                    'description': card.description,
+                    'source': 'deck',
+                    'card_key': card_key
+                })
+        
         # 记录需要选择的牌
         room.magic_temp_data = {
             'type': 'bury_choice',
             'caster': caster_id,
-            'cards': caster.magic_hand
+            'cards': available_cards
         }
         result['message'] = '请选择要埋葬的卡牌'
         result['temp_data_id'] = 'bury_choice'
-        add_game_log(room, f"{caster_name} 使用明智埋葬，准备选择一张卡牌埋葬", 'magic', {
-            'effect': 'bury_card'
-        })
+        
+        # 发送选择界面事件给客户端
+        emit('bury_choice_selection', {
+            'caster': caster_id,
+            'cards': available_cards
+        }, room=room.id)
 
     elif card.name == '仁王之盾':
         # 选择至多3艘船进入盾牌状态

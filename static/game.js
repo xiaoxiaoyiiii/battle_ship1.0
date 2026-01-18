@@ -622,6 +622,7 @@ const gameNav = document.getElementById('game-nav');
 
 // 开始界面元素
 const findMatchBtn = document.getElementById('find-match');
+const aiMatchBtn = document.getElementById('ai-match');
 const customRoomBtn = document.getElementById('custom-room');
 const matchStatus = document.getElementById('match-status');
 const cancelMatchBtn = document.getElementById('cancel-match');
@@ -1333,6 +1334,7 @@ function bindEventListeners() {
 
     // 开始界面
     findMatchBtn.addEventListener('click', findMatch);
+    aiMatchBtn.addEventListener('click', aiMatch);
     customRoomBtn.addEventListener('click', () => {
         switchScreen(customRoomScreen);
     });
@@ -1504,6 +1506,41 @@ function findMatch() {
         player_name: gameState.playerName
     }, (response) => {
         if (response.status === 'error') {
+            alert(response.message);
+        }
+    });
+}
+
+// 人机对战
+function aiMatch() {
+    gameState.playerName = playerNameInput.value || '玩家';
+
+    // 如果已经有socket连接，直接使用，不创建新连接
+    if (!gameState.socket) {
+        gameState.socket = io.connect('http://' + window.location.host);
+        setupSocketListeners();
+    }
+
+    // 发送人机对战请求
+    gameState.socket.emit('create_ai_room', {
+        player_name: gameState.playerName
+    }, (response) => {
+        if (response.status === 'success') {
+            gameState.roomId = response.room_id;
+            // 自动加入创建的人机对战房间
+            gameState.socket.emit('join_room', {
+                room_id: gameState.roomId,
+                player_name: gameState.playerName
+            }, (joinResponse) => {
+                if (joinResponse.status === 'success') {
+                    gameState.playerId = joinResponse.player_id;
+                    // 切换到游戏界面
+                    switchScreen(gameScreen);
+                } else {
+                    alert(joinResponse.message);
+                }
+            });
+        } else {
             alert(response.message);
         }
     });

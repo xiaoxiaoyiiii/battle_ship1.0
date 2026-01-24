@@ -6,7 +6,7 @@ from typing import Any, Callable
 import logging
 from flask import render_template, request, session, jsonify
 from flask_socketio import SocketIO, join_room, emit as semit
-import threading
+
 import db  # local database helpers for users and matches
 from api import app
 from file import read_json
@@ -38,7 +38,7 @@ def add_game_log(room, text: str, event_type: str = 'info', payload: dict | None
     if not hasattr(room, 'game_logs'):
         room.game_logs = []
     entry = GameLog(text, event_type, payload)
-    room.game_logs.append(entry)
+    room.game_logs.append(entry.to_dict())
 
 
 # 在线人数统计
@@ -398,28 +398,9 @@ class RoomManager:
             return False
         
         room = self.rooms[room_id]
-        
-        # 检查是否是人机对战房间（包含AI玩家）
-        ai_players = [p_id for p_id in room.players if p_id.startswith('AI_')]
-        has_ai_player = len(ai_players) > 0
-        
-        # 如果是人机对战房间
-        if has_ai_player:
-            # 检查玩家是否已经在房间中
-            if player_id in room.players:
-                # 如果玩家已经在房间中，更新sid
-                room.players[player_id].sid = sid
-                return True
-            # 如果是人机对战房间，允许真实玩家加入，即使房间中已经有两个玩家（一个真实玩家和一个AI玩家）
-            # 但只允许一个真实玩家
-            real_players = [p_id for p_id in room.players if not p_id.startswith('AI_')]
-            if len(real_players) >= 1:
-                return False
-        # 如果是普通房间，检查玩家数量
-        elif len(room.players) >= 2:
+        if len(room.players) >= 2:
             return False
         
-        # 添加玩家到房间
         room.players[player_id] = Player(**{
             'name': player_name,
             'ships': [],
@@ -554,173 +535,9 @@ class RoomManager:
     def get_lobby_members(self) -> set[str]:
         """获取大厅成员列表"""
         return self.lobby_members
-        
-    def create_ai_room(self, player_id: str, player_name: str, player_user_id: str = None) -> str:
-        """创建人机对战房间，返回房间ID"""
-        # 创建新房间
-        room_id = str(uuid.uuid4())[:6]
-        room = GameRoom(room_id)
-        self.rooms[room_id] = room
-        
-        # 添加真实玩家到房间
-        room.players[player_id] = Player(**{
-            'name': player_name,
-            'ships': [],
-            'attacks': [],
-            'remaining_ships': 0,
-            'user_id': player_user_id,
-            'sid': player_id
-        })
-        
-        # 创建AI玩家ID
-        ai_player_id = f"AI_{room_id}"
-        ai_name = "AI对手"
-        
-        # 添加AI玩家到房间
-        room.players[ai_player_id] = Player(**{
-            'name': ai_name,
-            'ships': [],
-            'attacks': [],
-            'remaining_ships': 0,
-            'user_id': ai_player_id,
-            'sid': ai_player_id  # AI玩家不需要真实的sid
-        })
-        
-        # 初始化魔法卡牌系统
-        room.init_player_magic(player_id, magic_cards)
-        room.init_player_magic(ai_player_id, magic_cards)
-        
-        # 设置房间状态为放置船只
-        room.state = 'placing_ships'
-        
-        return room_id
 
 # 创建RoomManager实例
 room_manager = RoomManager()
-
-
-class AIPlayer:
-    """AI玩家类，用于实现人机对战的AI逻辑"""
-    
-    @staticmethod
-    def place_ships(ship_count=6):
-        """自动放置船只，返回船只列表"""
-        from random import sample
-        all_positions = [(x, y) for x in range(6) for y in range(6)]
-        used_positions = set()
-        ships = []
-        
-        # 船只大小顺序：3, 2, 2, 1, 1, 1
-        for ship_size in [3, 2, 2, 1, 1, 1][:ship_count]:
-            placed = False
-            while not placed:
-                direction = sample(['horizontal', 'vertical'], 1)[0]
-                if direction == 'horizontal':
-                    x = sample(range(6 - ship_size + 1), 1)[0]
-                    y = sample(range(6), 1)[0]
-                    positions = [(x + i, y) for i in range(ship_size)]
-                else:
-                    x = sample(range(6), 1)[0]
-                    y = sample(range(6 - ship_size + 1), 1)[0]
-                    positions = [(x, y + i) for i in range(ship_size)]
-
-                # 检查是否与现有船只重叠
-                if not any(pos in used_positions for pos in positions):
-                    # 创建船只
-                    ship_positions = [Position(x=x, y=y) for x, y in positions]
-                    ships.append(PlayerShip(positions=ship_positions, hits=[]))
-                    
-                    # 更新已用位置
-                    used_positions.update(positions)
-                    placed = True
-        
-        return ships
-    
-    @staticmethod
-    def choose_attack_position(room, ai_player_id):
-        """AI选择攻击位置，返回(x, y)坐标"""
-        # 获取玩家已攻击过的位置
-        player = room.players[ai_player_id]
-        attacked_positions = set((a.x, a.y) for a in player.attacks)
-        
-        # 获取所有可能的位置
-        all_positions = set((x, y) for x in range(6) for y in range(6))
-        
-        # 找出未攻击过的位置
-        available_positions = all_positions - attacked_positions
-        
-        # 如果没有可用位置（理论上不会发生），返回随机位置
-        if not available_positions:
-            return (random.randint(0, 5), random.randint(0, 5))
-        
-        # 检查是否有击中但未击沉的位置，优先攻击这些位置周围
-        hit_but_not_sunk = []
-        for attack in player.attacks:
-            if attack.hit and not attack.ship_sunk:
-                hit_but_not_sunk.append((attack.x, attack.y))
-        
-        # 如果有击中但未击沉的位置，尝试攻击其周围
-        if hit_but_not_sunk:
-            # 收集所有击中位置周围的未攻击位置
-            surrounding_positions = []
-            for (x, y) in hit_but_not_sunk:
-                # 检查上下左右四个方向
-                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                    new_x, new_y = x + dx, y + dy
-                    # 确保位置在棋盘内且未被攻击
-                    if 0 <= new_x < 6 and 0 <= new_y < 6:
-                        if (new_x, new_y) in available_positions:
-                            surrounding_positions.append((new_x, new_y))
-            
-            # 如果有周围位置可选，随机选择一个
-            if surrounding_positions:
-                return random.choice(surrounding_positions)
-        
-        # 否则随机选择一个未攻击过的位置
-        return random.choice(list(available_positions))
-
-    @staticmethod
-    def execute_turn(room, ai_player_id):
-        """执行AI玩家的回合，包括攻击和结束阶段"""
-        import time
-        
-        # 延迟执行，让玩家有时间看到AI的行动
-        time.sleep(1)
-        
-        # 进入战斗阶段
-        if room.current_phase == 'preparation':
-            room.current_phase = 'battle'
-            
-            # 设置攻击次数
-            player = room.players[ai_player_id]
-            available_ships = len(player.ships)
-            room.attacks_remaining = available_ships
-            
-            # 检查是否有攻击次数翻倍效果
-            if player.effect_flags.double_attacks:
-                room.attacks_remaining = available_ships * 2
-                player.effect_flags.double_attacks = False
-        
-        # 进行攻击直到攻击次数用完
-        while room.attacks_remaining > 0 and room.state == 'attacking' and room.current_attacker == ai_player_id:
-            # 选择攻击位置
-            x, y = AIPlayer.choose_attack_position(room, ai_player_id)
-            
-            # 执行攻击
-            handle_attack({
-                'room_id': room.id,
-                'player_id': ai_player_id,
-                'x': x,
-                'y': y
-            })
-            
-            # 攻击后延迟
-            time.sleep(1)
-        
-        # 如果攻击次数用完，进入结束阶段
-        if room.attacks_remaining == 0 and room.state == 'attacking':
-            # 这里可以添加结束阶段的逻辑
-            pass
 
 
 
@@ -900,276 +717,6 @@ def test_get_game_state(data):
     return {'status': 'success', 'game_state': game_state}
 
 
-@socketio.on('test_reset_game')
-def test_reset_game(data):
-    room_id = data['room_id']
-
-    room = room_manager.get_room(room_id)
-    if not room:
-        return {'status': 'error', 'message': '无效的房间'}
-
-    # 重置游戏状态
-    room.state = 'placing_ships'
-    room.attack_order = []
-    room.current_attacker = ""
-    room.attacks_remaining = 0
-    room.field_magic = ""
-    room.game_effects = {}
-    room.polar_reversal_applied = False
-    room.last_attack = None
-    room.magic_temp_data = {}
-    room.chain = []
-    room.chain_waiting = False
-
-    # 重置玩家状态
-    for player_id in room.players:
-        player = room.players[player_id]
-        player.ships = []
-        player.remaining_ships = 0
-        player.attacks = []
-        player.magic_hand = []
-        player.damage_dealt_this_turn = 0
-        
-        if hasattr(player, 'effect_flags'):
-            player.effect_flags = EffectFlags()
-        
-        if hasattr(player, 'opponent_attacks'):
-            player.opponent_attacks = []
-        
-        player.revealed_positions = []
-        player.needs_reset = True
-
-    return {'status': 'success', 'message': '游戏状态已重置'}
-
-
-@socketio.on('create_ai_room')
-def handle_create_ai_room(data):
-    """处理创建人机对战房间的请求"""
-    player_id = request.sid
-    player_name = data.get('player_name', '玩家')
-    player_user_id = data.get('user_id', None)
-    
-    # 创建人机对战房间
-    room_id = room_manager.create_ai_room(player_id, player_name, player_user_id)
-    
-    # 让玩家加入房间
-    join_room(room_id)
-    
-    # 返回房间信息
-    return {
-        'status': 'success',
-        'room_id': room_id,
-        'message': '人机对战房间创建成功'
-    }
-
-
-@socketio.on('test_set_opponent_ships')
-def test_set_opponent_ships(data):
-    room_id = data['room_id']
-    player_id = data['player_id']
-    ship_count = data['ship_count']
-
-    room = room_manager.get_room(room_id)
-    if not room or player_id not in room.players:
-        return {'status': 'error', 'message': '无效的房间或玩家'}
-
-    opponent_id = next(p for p in room.players if p != player_id)
-    opponent = room.players[opponent_id]
-    player = room.players[player_id]
-
-    # 清除现有船只
-    opponent.ships = []
-    opponent.remaining_ships = 0
-
-    # 添加新船只
-    from random import sample
-    all_positions = [(x, y) for x in range(6) for y in range(6)]
-    used_positions = set()
-
-    for ship_size in [3, 2, 2, 1, 1, 1][:ship_count]:
-        # 随机生成船只位置（水平或垂直）
-        placed = False
-        while not placed:
-            direction = sample(['horizontal', 'vertical'], 1)[0]
-            if direction == 'horizontal':
-                x = sample(range(6 - ship_size + 1), 1)[0]
-                y = sample(range(6), 1)[0]
-                positions = [(x + i, y) for i in range(ship_size)]
-            else:
-                x = sample(range(6), 1)[0]
-                y = sample(range(6 - ship_size + 1), 1)[0]
-                positions = [(x, y + i) for i in range(ship_size)]
-
-            # 检查是否与现有船只重叠
-            if not any(pos in used_positions for pos in positions):
-                # 创建船只
-                ship_positions = [Position(x=x, y=y) for x, y in positions]
-                opponent.ships.append(PlayerShip(positions=ship_positions, hits=[]))
-                opponent.remaining_ships += 1
-                
-                # 更新已用位置
-                used_positions.update(positions)
-                placed = True
-
-    # 更新客户端
-    emit('ships_updated', {
-        'player_remaining_ships': player.remaining_ships,
-        'opponent_remaining_ships': opponent.remaining_ships
-    }, room=room_id)
-
-    return {'status': 'success', 'message': f'已设置对方船只数量为 {ship_count}'}
-
-
-@socketio.on('test_end_turn')
-def test_end_turn(data):
-    room_id = data['room_id']
-
-    room = room_manager.get_room(room_id)
-    if not room:
-        return {'status': 'error', 'message': '无效的房间'}
-
-    # 结束当前回合
-    if room.current_phase == 'battle':
-        # 进入结束阶段
-        room.current_phase = 'end'
-    elif room.current_phase == 'end':
-        # 切换到下一回合
-        current_index = room.attack_order.index(room.current_attacker)
-        next_index = (current_index + 1) % len(room.attack_order)
-        room.current_attacker = room.attack_order[next_index]
-        room.current_phase = 'preparation'
-        room.attacks_remaining = room.players[room.current_attacker].remaining_ships
-
-    return {'status': 'success', 'message': '回合已结束'}
-
-
-@socketio.on('test_win_game')
-def test_win_game(data):
-    room_id = data['room_id']
-    player_id = data['player_id']
-
-    room = room_manager.get_room(room_id)
-    if not room or player_id not in room.players:
-        return {'status': 'error', 'message': '无效的房间或玩家'}
-
-    # 直接设置玩家为胜利
-    room.state = 'game_over'
-    room.winner = player_id
-    
-    emit('game_over', {'winner': player_id}, room=room_id)
-    return {'status': 'success', 'message': '游戏胜利已设置'}
-
-
-@socketio.on('test_lose_game')
-def test_lose_game(data):
-    room_id = data['room_id']
-    player_id = data['player_id']
-
-    room = room_manager.get_room(room_id)
-    if not room or player_id not in room.players:
-        return {'status': 'error', 'message': '无效的房间或玩家'}
-
-    # 直接设置玩家为失败
-    opponent_id = next(p for p in room.players if p != player_id)
-    room.state = 'game_over'
-    room.winner = opponent_id
-    
-    emit('game_over', {'winner': opponent_id}, room=room_id)
-    return {'status': 'success', 'message': '游戏失败已设置'}
-
-
-@socketio.on('test_get_magic_cards_list')
-def test_get_magic_cards_list(data):
-    # 返回所有可用的魔法卡列表
-    cards_list = []
-    for card in magic_cards:
-        cards_list.append({
-            'name': card.name,
-            'speed': card.speed,
-            'type': card.type,
-            'description': card.description
-        })
-    
-    return {'status': 'success', 'magic_cards': cards_list}
-
-
-@socketio.on('test_auto_attack')
-def test_auto_attack(data):
-    room_id = data['room_id']
-    player_id = data['player_id']
-    attack_count = data.get('count', 1)
-
-    room = room_manager.get_room(room_id)
-    if not room or player_id not in room.players:
-        return {'status': 'error', 'message': '无效的房间或玩家'}
-
-    opponent_id = next(p for p in room.players if p != player_id)
-    opponent = room.players[opponent_id]
-
-    # 记录攻击结果
-    attack_results = []
-
-    for _ in range(attack_count):
-        if room.attacks_remaining <= 0:
-            break
-
-        # 选择一个未攻击过的随机位置        
-        all_positions = [(x, y) for x in range(6) for y in range(6)]
-        attacked_positions = [(a.x, a.y) for a in room.players[player_id].attacks]
-        available_positions = [pos for pos in all_positions if pos not in attacked_positions]
-
-        if not available_positions:
-            break
-
-        target_x, target_y = random.choice(available_positions)
-
-        # 执行攻击
-        hit = False
-        ship_sunk = False
-        
-        for i, ship in enumerate(opponent.ships):
-            if Position(x=target_x, y=target_y) in ship.positions:
-                hit = True
-                
-                if ship.shield:
-                    ship.shield = False
-                elif not ship.invincible:
-                    ship.hits.append(Position(x=target_x, y=target_y))
-                    
-                    if len(ship.hits) == len(ship.positions):
-                        ship_sunk = True
-                        opponent.remaining_ships -= 1
-                
-                break
-
-        # 记录攻击
-        attack = type('Attack', (), {})
-        attack.x = target_x
-        attack.y = target_y
-        attack.hit = hit
-        attack.ship_sunk = ship_sunk
-        
-        room.players[player_id].attacks.append(attack)
-        room.attacks_remaining -= 1
-
-        # 收集攻击结果
-        attack_results.append({
-            'x': target_x,
-            'y': target_y,
-            'hit': hit,
-            'ship_sunk': ship_sunk
-        })
-
-        # 检查游戏是否结束
-        if opponent.remaining_ships <= 0:
-            room.state = 'game_over'
-            room.winner = player_id
-            emit('game_over', {'winner': player_id}, room=room_id)
-            break
-
-    return {'status': 'success', 'message': f'已执行 {len(attack_results)} 次自动攻击', 'attack_results': attack_results}
-
-
 
 @app.route('/lobby')
 def lobby():
@@ -1277,35 +824,6 @@ def handle_disconnect():
         i = room_manager.match_queue[0].index(sid)
         room_manager.match_queue[0].pop(i)
         room_manager.match_queue[1].pop(i)
-    
-    # 从房间中移除断开连接的玩家
-    for room_id, room in room_manager.rooms.items():
-        # 查找使用该sid的玩家
-        to_remove = None
-        for player_id, player in room.players.items():
-            if player.sid == sid:
-                to_remove = player_id
-                break
-        
-        if to_remove:
-            # 移除玩家
-            del room.players[to_remove]
-            print(f"Removed player {to_remove} from room {room_id}")
-            
-            # 如果房间为空，删除房间
-            if not room.players:
-                room_manager.delete_room(room_id)
-                print(f"Deleted empty room {room_id}")
-            else:
-                # 如果还有其他玩家，通知该玩家
-                for remaining_player_id, remaining_player in room.players.items():
-                    emit('player_disconnected', {
-                        'message': '对手已断开连接，游戏结束' 
-                    }, to=remaining_player.sid)
-                # 也删除房间，因为游戏无法继续
-                room_manager.delete_room(room_id)
-                print(f"Deleted room {room_id} because a player disconnected")
-            break
 
 
 @socketio.on('chat_message')
@@ -1458,21 +976,6 @@ def handle_place_ships(data):
     # 新增：计算并设置剩余战舰数量（攻击次数）
     room.players[player_id].remaining_ships = len(ships)
 
-    # 检查是否有AI玩家需要自动放置船只
-    ai_players = [p_id for p_id in room.players if p_id.startswith('AI_')]
-    for ai_player_id in ai_players:
-        if len(room.players[ai_player_id].ships) == 0:
-            # 为AI玩家自动放置船只
-            ai_ships = AIPlayer.place_ships()
-            room.players[ai_player_id].ships = ai_ships
-            room.players[ai_player_id].remaining_ships = len(ai_ships)
-            
-            # 记录AI放置的船只信息到日志
-            add_game_log(room, f"AI对手已自动放置 {len(ai_ships)} 艘战舰", 'info', {
-                'player_id': ai_player_id,
-                'ship_count': len(ai_ships)
-            })
-
     # 检查是否所有玩家都已放置战舰
     all_placed = all(len(p.ships) > 0 for p in room.players.values())
     if all_placed:
@@ -1507,19 +1010,6 @@ def handle_rps_choice(data):
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
     room.rps_choices[player_id] = choice
-    
-    # 为所有AI玩家自动做出猜拳选择
-    ai_players = [p_id for p_id in room.players if p_id.startswith('AI_') and p_id not in room.rps_choices]
-    for ai_player_id in ai_players:
-        # AI随机选择猜拳
-        ai_choice = random.choice(['rock', 'paper', 'scissors'])
-        room.rps_choices[ai_player_id] = ai_choice
-        
-        # 记录AI的猜拳选择到日志
-        add_game_log(room, f"AI对手选择了 {ai_choice}", 'info', {
-            'player_id': ai_player_id,
-            'choice': ai_choice
-        })
     
     # 检查是否所有玩家都已做出选择
     if len(room.rps_choices) == len(room.players) and not room.rps_processed:
@@ -1721,69 +1211,18 @@ def handle_magic_target(data):
 
     elif temp_data_id == 'bury_choice':
         # 处理明智埋葬的选择
-        card_key = target_data.get('card_key')
+        card_index = target_data['card_index']
         caster = room.players[player_id]
-        opponent_id = next(p for p in room.players if p != player_id)
-        opponent = room.players[opponent_id]
-        
-        # 验证选择
-        if card_key is None:
-            return {'status': 'error', 'message': '未选择卡牌'}
-        
-        # 从不同来源查找并移除选中的卡牌
-        card_to_remove = None
-        card_source = None
-        
-        # 1. 检查施法者的手牌
-        for i, card in enumerate(caster.magic_hand):
-            if f"{card.name}_{card.speed}" == card_key:
-                card_to_remove = card
-                card_source = 'caster_hand'
-                caster.magic_hand.pop(i)
-                break
-        
-        # 2. 如果不在施法者的手牌中，检查对方的手牌
-        if card_to_remove is None:
-            for i, card in enumerate(opponent.magic_hand):
-                if f"{card.name}_{card.speed}" == card_key:
-                    card_to_remove = card
-                    card_source = 'opponent_hand'
-                    opponent.magic_hand.pop(i)
-                    break
-        
-        # 3. 如果不在对方的手牌中，检查牌堆
-        if card_to_remove is None:
-            for i, card in enumerate(room.magic_deck):
-                if f"{card.name}_{card.speed}" == card_key:
-                    card_to_remove = card
-                    card_source = 'deck'
-                    room.magic_deck.pop(i)
-                    break
-        
-        if card_to_remove is None:
-            return {'status': 'error', 'message': '卡牌不存在'}
-        
-        # 将选中的卡放入弃牌堆
-        room.magic_discard.append(card_to_remove)
-        # 抽一张新卡
-        room.draw_card(player_id)
-        room.magic_temp_data = {}
-        
-        # 通知双方手牌更新
-        emit('hand_updated', {
-            'hand': caster.magic_hand
-        }, to=player_id)
-        
-        emit('hand_updated', {
-            'hand': opponent.magic_hand
-        }, to=opponent_id)
-        
-        # 通知弃牌堆更新
-        emit('discard_pile_updated', {
-            'discard': room.magic_discard
-        }, room=room.id)
-        
-        return {'status': 'success', 'message': '埋葬完成'}
+
+        if 0 <= card_index < len(caster.magic_hand):
+            # 将选中的卡放入弃牌堆
+            room.discard_card(player_id, caster.magic_hand[card_index])
+            # 抽一张新卡
+            room.draw_card(player_id)
+            room.magic_temp_data = {}
+            return {'status': 'success', 'message': '埋葬完成'}
+
+        return {'status': 'error', 'message': '无效的选择'}
 
     elif temp_data_id == 'shield_choice':
         # 处理仁王之盾的选择
@@ -1800,6 +1239,295 @@ def handle_magic_target(data):
     return {'status': 'success'}
 
 
+# 修改攻击处理函数，添加魔法效果检查
+@socketio.on('attack')
+def handle_attack(data):
+    room_id = data['room_id']
+    attacker_id = data['player_id']
+    target_x = data['x']
+    target_y = data['y']
+
+    room = room_manager.get_room(room_id)
+    if not room or attacker_id not in room.players:
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+
+    # 检查是否是当前攻击者
+    if attacker_id != room.current_attacker:
+        return {'status': 'error', 'message': '还没到你的攻击回合'}
+
+    # 新增：检查当前是否为战斗阶段
+    if room.current_phase != 'battle':
+        return {'status': 'error', 'message': '当前不是战斗阶段'}
+
+    # 检查是否已经攻击过这个位置
+    if any(a.x == target_x and a.y == target_y for a in room.players[attacker_id].attacks):
+        return {'status': 'error', 'message': '你已经攻击过这个位置了'}
+
+    # 找到对手
+    defender_id = next(p for p in room.players if p != attacker_id)
+    defender_ships = room.players[defender_id].ships
+
+    # 检查是否击中
+    hit = False
+    ship_sunk = False
+    for i, ship in enumerate(defender_ships):
+        if {'x': target_x, 'y': target_y} in ship.positions:
+            hit = True
+            
+            # 更新无暇圣心效果：如果有伤害，标记no_damage为False
+            if 'holy_heart' in room.game_effects and not ship.invincible:  # 无敌状态不算造成伤害
+                room.game_effects['holy_heart']['no_damage'] = False
+
+            # 检查攻击者是否有强制击杀效果
+            has_forced_kill = room.players[attacker_id].effect_flags.forced_kill > 0
+
+            if has_forced_kill:
+                # 强制击杀效果，忽略无敌和盾牌状态，直接击杀
+                # 记录击中位置
+                defender_ships[i].hits = defender_ships[i].hits + [Position(x=target_x, y=target_y)]
+
+                # 直接击沉，不管当前击中次数
+                ship_sunk = True
+                defender_remaining_before = room.players[defender_id].remaining_ships
+                room.players[defender_id].remaining_ships -= 1
+                defender_remaining_after = room.players[defender_id].remaining_ships
+
+                # 记录船数变化（用于平等条约）
+                room.game_effects['last_ship_change'] = {
+                    'player': defender_id,
+                    'count': defender_remaining_before - defender_remaining_after
+                }
+
+                # 检查无暇圣心效果：如果有战舰被击沉，中断效果
+                if 'holy_heart' in room.game_effects:
+                    # 移除无暇圣心效果
+                    del room.game_effects['holy_heart']
+                    # 通知客户端无暇圣心效果被中断
+                    emit('holy_heart_interrupted', {
+                        'reason': '有战舰被击沉，无暇圣心效果中断'
+                    }, room=room_id)
+
+                # 检查饮血效果
+                if room.players[attacker_id].effect_flags.vampire:
+                    room.draw_card(attacker_id)
+                    emit('message', {'text': '饮血效果发动，抽一张卡'}, to=attacker_id)
+                
+                # 检查越战越勇效果
+                if room.players[attacker_id].effect_flags.battle_spirit:
+                    room.attacks_remaining += 2
+                    emit('message', {'text': '越战越勇效果发动，攻击次数增加2次'}, room=room_id)
+                
+                # 更新本回合伤害统计
+                room.players[attacker_id].damage_dealt_this_turn += 1
+
+                # 检查绝处逢生效果
+                if room.players[attacker_id].effect_flags.last_stand:
+                    # 直接获胜
+                    room.state = 'game_over'
+                    room.winner = attacker_id
+                    add_game_log(room, f"{room.players[attacker_id].name or attacker_id} 触发绝处逢生并获胜", 'result', {
+                        'winner': attacker_id,
+                        'loser': defender_id
+                    })
+                    # 记录战绩（若为已登录用户）
+                    try:
+                        # 如果是游客（sid），db.record_match 会忽略不存在的用户
+                        opponent_id = next(p for p in room.players if p != attacker_id)
+                        winner_user_id = room.players[attacker_id].user_id
+                        loser_user_id = room.players[opponent_id].user_id
+                        # 只有当至少有一个是已登录用户时才记录
+                        if winner_user_id or loser_user_id:
+                            db.record_match(winner_user_id or attacker_id, loser_user_id or opponent_id, getattr(room, 'game_logs', None))
+                    except Exception:
+                        pass
+                    emit('game_over', {'winner': attacker_id}, room=room_id)
+                    return {'status': 'success', 'game_over': True}
+                
+                # 检查回光返照效果
+                if room.game_effects.get('last_chance') and room.game_effects['last_chance']['caster'] == defender_id:
+                    # 对使用回光返照的玩家造成了伤害，回光返照使用者直接判负
+                    room.state = 'game_over'
+                    room.winner = attacker_id
+                    add_game_log(room, f"{room.players[defender_id].name or defender_id} 触发回光返照失败并判负", 'result', {
+                        'winner': attacker_id,
+                        'loser': defender_id
+                    })
+                    # 记录战绩（若为已登录用户）
+                    try:
+                        # 如果是游客（sid），db.record_match 会忽略不存在的用户
+                        winner_user_id = room.players[attacker_id].user_id
+                        loser_user_id = room.players[defender_id].user_id
+                        # 只有当至少有一个是已登录用户时才记录
+                        if winner_user_id or loser_user_id:
+                            db.record_match(winner_user_id or attacker_id, loser_user_id or defender_id, getattr(room, 'game_logs', None))
+                    except Exception:
+                        pass
+                    emit('game_over', {'winner': attacker_id}, room=room_id)
+                    return {'status': 'success', 'game_over': True}
+
+                # 发送战舰数更新事件
+                if ship_sunk:
+                    emit('ships_updated', {
+                        'player_remaining_ships': room.players[attacker_id].remaining_ships,
+                        'opponent_remaining_ships': room.players[defender_id].remaining_ships
+                    }, room=room_id)
+
+                # 减少强制击杀效果的剩余次数
+                room.players[attacker_id].effect_flags.forced_kill -= 1
+                # 如果剩余次数为0，移除该效果
+                if room.players[attacker_id].effect_flags.forced_kill <= 0:
+                    del room.players[attacker_id].effect_flags.forced_kill
+            else:
+                # 没有强制击杀效果，检查目标船是否有特殊状态
+                if ship.invincible:
+                    # 无敌状态，只显形不造成伤害
+                    ship_sunk = False
+                elif ship.shield:
+                    # 盾牌状态，抵挡一次伤害
+                    ship_sunk = False
+                    ship.shield = False
+                else:
+                    # 记录击中位置
+                    defender_ships[i].hits = defender_ships[i].hits + [Position(x=target_x, y=target_y)]
+
+                    # 检查船是否被击沉
+                    if len(defender_ships[i].hits) == len(defender_ships[i].positions):
+                        ship_sunk = True
+                        defender_remaining_before = room.players[defender_id].remaining_ships
+                        room.players[defender_id].remaining_ships -= 1
+                        defender_remaining_after = room.players[defender_id].remaining_ships
+
+                        # 记录船数变化（用于平等条约）
+                        room.game_effects['last_ship_change'] = {
+                            'player': defender_id,
+                            'count': defender_remaining_before - defender_remaining_after
+                        }
+
+                        # 检查无暇圣心效果：如果有战舰被击沉，中断效果
+                        if 'holy_heart' in room.game_effects:
+                            # 移除无暇圣心效果
+                            del room.game_effects['holy_heart']
+                            # 通知客户端无暇圣心效果被中断
+                            emit('holy_heart_interrupted', {
+                                'reason': '有战舰被击沉，无暇圣心效果中断'
+                            }, room=room_id)
+
+                        # 检查饮血效果
+                        if room.players[attacker_id].effect_flags.vampire:
+                            room.draw_card(attacker_id)
+                            emit('message', {'text': '饮血效果发动，抽一张卡'}, to=attacker_id)
+                        
+                        # 检查越战越勇效果
+                        if room.players[attacker_id].effect_flags.battle_spirit:
+                            room.attacks_remaining += 2
+                            emit('message', {'text': '越战越勇效果发动，攻击次数增加2次'}, room=room_id)
+                    else:
+                        # 未击沉但造成了伤害，也触发越战越勇效果
+                        if room.players[attacker_id].effect_flags.battle_spirit:
+                            room.attacks_remaining += 2
+                            emit('message', {'text': '越战越勇效果发动，攻击次数增加2次'}, room=room_id)
+                        
+                        # 更新本回合伤害统计
+                        room.players[attacker_id].damage_dealt_this_turn += 1
+
+                    # 检查绝处逢生效果
+                    if room.players[attacker_id].effect_flags.last_stand:
+                        # 直接获胜
+                        room.state = 'game_over'
+                        room.winner = attacker_id
+                        add_game_log(room, f"{room.players[attacker_id].name or attacker_id} 触发绝处逢生并获胜", 'result', {
+                            'winner': attacker_id,
+                            'loser': defender_id
+                        })
+                        # 记录战绩（若为已登录用户）
+                        try:
+                            # 如果是游客（sid），db.record_match 会忽略不存在的用户
+                            opponent_id = next(p for p in room.players if p != attacker_id)
+                            winner_user_id = room.players[attacker_id].user_id
+                            loser_user_id = room.players[opponent_id].user_id
+                            # 只有当至少有一个是已登录用户时才记录
+                            if winner_user_id or loser_user_id:
+                                db.record_match(winner_user_id or attacker_id, loser_user_id or opponent_id, getattr(room, 'game_logs', None))
+                        except Exception:
+                            pass
+                        emit('game_over', {'winner': attacker_id}, room=room_id)
+                        return {'status': 'success', 'game_over': True}
+
+                    # 发送战舰数更新事件
+                    emit('ships_updated', {
+                        'player_remaining_ships': room.players[attacker_id].remaining_ships,
+                        'opponent_remaining_ships': room.players[defender_id].remaining_ships
+                    }, room=room_id)
+            break
+
+    # 记录最后一次攻击（用于溅射等效果）
+    room.last_attack = {
+        'attacker': attacker_id,
+        'x': target_x,
+        'y': target_y,
+        'hit': hit,
+        'ship_sunk': ship_sunk,
+        'round': room.round
+    }
+
+    # 减少攻击次数
+    room.attacks_remaining -= 1
+    # 确保攻击次数不会为负数
+    room.attacks_remaining = max(0, room.attacks_remaining)
+
+    # 准备攻击结果
+    attack_result = AttackResult(
+        attacker=attacker_id,
+        x=target_x,
+        y=target_y,
+        hit=hit,
+        ship_sunk=ship_sunk,
+        remaining_attacks=room.attacks_remaining,
+        attacker_remaining_ships=room.players[attacker_id].remaining_ships,
+        defender_remaining_ships=room.players[defender_id].remaining_ships
+    )
+
+    add_game_log(room, f"{room.players[attacker_id].name or attacker_id} 攻击 ({target_x},{target_y}) - {'命中' if hit else '未命中'}{'，击沉战舰' if ship_sunk else ''}",
+                 'attack', {
+                     'attacker': attacker_id,
+                     'target': {'x': target_x, 'y': target_y},
+                     'hit': hit,
+                     'ship_sunk': ship_sunk
+                 })
+
+    emit('attack_result', attack_result, room=room_id)
+
+    # 检查游戏是否结束
+    if room.players[defender_id].remaining_ships == 0:
+        room.state = 'game_over'
+        room.winner = attacker_id
+        add_game_log(room, f"{room.players[attacker_id].name or attacker_id} 获胜，游戏结束", 'result', {
+            'winner': attacker_id,
+            'loser': defender_id
+        })
+        # 记录战绩（若为已登录用户）
+        try:
+            winner_user_id = room.players[attacker_id].user_id
+            loser_user_id = room.players[defender_id].user_id
+            # 只有当至少有一个是已登录用户时才记录
+            if winner_user_id or loser_user_id:
+                db.record_match(winner_user_id or attacker_id, loser_user_id or defender_id, getattr(room, 'game_logs', None))
+        except Exception:
+            pass
+        emit('game_over', {'winner': attacker_id}, room=room_id)
+        return {'status': 'success', 'game_over': True}
+
+    # 攻击次数为0时，不自动切换攻击者，让玩家手动进入结束阶段
+    # 玩家需要点击"进入结束阶段"按钮来结束当前回合
+    if room.attacks_remaining == 0:
+        # 只发送攻击次数更新，不切换攻击者
+        emit('attacks_updated', {
+            'current_attacker': room.current_attacker,
+            'attacks_remaining': room.attacks_remaining
+        }, room=room_id)
+
+    return {'status': 'success'}
+
 
 @socketio.on('enter_battle_phase')
 def enter_battle_phase(data):
@@ -1814,33 +1542,13 @@ def enter_battle_phase(data):
     if room.current_attacker == player_id and room.current_phase == 'preparation':
         # 切换到战斗阶段
         room.current_phase = 'battle'
-        
-        # 检查船只冻结状态
-        player_ships = room.players[player_id].ships
-        frozen_ships = 0
-        
-        for ship in player_ships:
-            if hasattr(ship, 'frozen') and ship.frozen > room.round:
-                frozen_ships += 1
-            elif hasattr(ship, 'frozen') and ship.frozen <= room.round:
-                # 冻结效果已过期，移除冻结状态
-                delattr(ship, 'frozen')
-        
-        # 计算可用的攻击次数（未冻结的船只数）
-        available_ships = len(player_ships) - frozen_ships
-        
         if room.field_magic == "伊甸园":
             room.attacks_remaining = 6 - room.players[player_id].remaining_ships
-        elif room.field_magic == "教皇旨意":
-            room.attacks_remaining = 0
-        else:
-            # 默认攻击次数为可用船只数
-            room.attacks_remaining = available_ships
 
         # 检查是否有攻击次数翻倍效果
         if room.players[player_id].effect_flags.double_attacks:
             # 翻倍当前攻击次数
-            room.attacks_remaining = available_ships * 2
+            room.attacks_remaining = room.players[player_id].remaining_ships * 2
             # 广播攻击次数更新
             emit('attacks_updated', {
                 'current_attacker': room.current_attacker,
@@ -1848,6 +1556,8 @@ def enter_battle_phase(data):
             }, room=room_id)
             # 移除翻倍效果，因为它只持续一个大回合
             room.players[player_id].effect_flags.double_attacks = False
+        if room.field_magic == "教皇旨意":
+            room.attacks_remaining = 0
         # 广播阶段更新
         emit('phase_updated', {
             'current_phase': room.current_phase,
@@ -1859,355 +1569,6 @@ def enter_battle_phase(data):
 
 
 # 添加结束战斗阶段，进入结束阶段
-def handle_attack(data):
-    """处理玩家攻击请求，重构后的版本更具可扩展性"""
-    room_id = data['room_id']
-    attacker_id = data['player_id']
-    target_x = data['x']
-    target_y = data['y']
-
-    room = room_manager.get_room(room_id)
-    if not room or attacker_id not in room.players:
-        return {'status': 'error', 'message': '无效的房间或玩家'}
-
-    # 检查攻击条件
-    attack_check_result = _check_attack_conditions(room, attacker_id, target_x, target_y)
-    if attack_check_result['status'] == 'error':
-        return attack_check_result
-
-    # 找到对手
-    defender_id = next(p for p in room.players if p != attacker_id)
-    
-    # 执行攻击
-    attack_result = _execute_attack(room, room_id, attacker_id, defender_id, target_x, target_y)
-    
-    # 处理攻击结果
-    _process_attack_result(room, room_id, attacker_id, defender_id, attack_result)
-    
-    # 检查游戏是否结束
-    if room.players[defender_id].remaining_ships == 0:
-        return _handle_game_over(room, room_id, attacker_id, defender_id)
-
-    # 处理攻击次数更新
-    _update_attack_count(room, room_id, attacker_id)
-
-    return {'status': 'success'}
-
-
-def _check_attack_conditions(room, attacker_id, target_x, target_y):
-    """检查攻击条件是否满足"""
-    # 检查是否是当前攻击者
-    if attacker_id != room.current_attacker:
-        return {'status': 'error', 'message': '还没到你的攻击回合'}
-
-    # 检查当前是否为战斗阶段
-    if room.current_phase != 'battle':
-        return {'status': 'error', 'message': '当前不是战斗阶段'}
-
-    # 检查是否已经攻击过这个位置
-    if any(a.x == target_x and a.y == target_y for a in room.players[attacker_id].attacks):
-        return {'status': 'error', 'message': '你已经攻击过这个位置了'}
-
-    return {'status': 'success'}
-
-
-def _execute_attack(room, room_id, attacker_id, defender_id, target_x, target_y):
-    """执行攻击逻辑"""
-    hit = False
-    ship_sunk = False
-    ship_index = -1
-    
-    defender_ships = room.players[defender_id].ships
-    target_pos = Position(x=target_x, y=target_y)
-    
-    # 检查是否击中船只
-    for i, ship in enumerate(defender_ships):
-        if target_pos in ship.positions:
-            hit = True
-            ship_index = i
-            break
-    
-    if hit:
-        ship = defender_ships[ship_index]
-        
-        # 更新无暇圣心效果：如果有伤害，标记no_damage为False
-        if 'holy_heart' in room.game_effects and not ship.invincible:  # 无敌状态不算造成伤害
-            room.game_effects['holy_heart']['no_damage'] = False
-        
-        # 检查攻击者是否有强制击杀效果
-        has_forced_kill = hasattr(room.players[attacker_id].effect_flags, 'forced_kill') and \
-                         room.players[attacker_id].effect_flags.forced_kill > 0
-        
-        if has_forced_kill:
-            ship_sunk = _handle_forced_kill(room, room_id, attacker_id, defender_id, ship_index)
-        else:
-            ship_sunk = _handle_normal_attack(room, room_id, attacker_id, defender_id, ship_index, target_pos)
-    
-    # 记录攻击信息
-    room.players[attacker_id].attacks.append(Position(**{
-        'x': target_x,
-        'y': target_y,
-        'hit': hit,
-        'ship_sunk': ship_sunk
-    }))
-    
-    return {
-        'hit': hit,
-        'ship_sunk': ship_sunk,
-        'target_x': target_x,
-        'target_y': target_y
-    }
-
-
-def _handle_forced_kill(room, room_id, attacker_id, defender_id, ship_index):
-    """处理强制击杀效果"""
-    defender_ships = room.players[defender_id].ships
-    ship = defender_ships[ship_index]
-    
-    # 直接击沉船只
-    defender_remaining_before = room.players[defender_id].remaining_ships
-    room.players[defender_id].remaining_ships -= 1
-    defender_remaining_after = room.players[defender_id].remaining_ships
-    
-    # 记录船数变化
-    room.game_effects['last_ship_change'] = {
-        'player': defender_id,
-        'count': defender_remaining_before - defender_remaining_after
-    }
-    
-    # 处理船只被击沉时的效果
-    _handle_ship_sunk_effects(room, room_id, attacker_id, defender_id)
-    
-    # 减少强制击杀效果次数
-    room.players[attacker_id].effect_flags.forced_kill -= 1
-    if room.players[attacker_id].effect_flags.forced_kill <= 0:
-        delattr(room.players[attacker_id].effect_flags, 'forced_kill')
-    
-    return True
-
-
-def _handle_normal_attack(room, room_id, attacker_id, defender_id, ship_index, target_pos):
-    """处理普通攻击"""
-    defender_ships = room.players[defender_id].ships
-    ship = defender_ships[ship_index]
-    
-    # 检查船只特殊状态
-    if ship.invincible:
-        # 无敌状态，只显形不造成伤害
-        return False
-    elif ship.shield:
-        # 盾牌状态，抵挡一次伤害
-        ship.shield = False
-        return False
-    else:
-        # 记录击中位置
-        defender_ships[ship_index].hits.append(target_pos)
-        
-        # 检查船是否被击沉
-        if len(defender_ships[ship_index].hits) == len(defender_ships[ship_index].positions):
-            # 记录船数变化
-            defender_remaining_before = room.players[defender_id].remaining_ships
-            room.players[defender_id].remaining_ships -= 1
-            defender_remaining_after = room.players[defender_id].remaining_ships
-            
-            room.game_effects['last_ship_change'] = {
-                'player': defender_id,
-                'count': defender_remaining_before - defender_remaining_after
-            }
-            
-            # 处理击沉效果
-            _handle_ship_sunk_effects(room, room_id, attacker_id, defender_id)
-            
-            return True
-        else:
-            # 未击沉但造成了伤害
-            _handle_damage_effects(room, room_id, attacker_id)
-            return False
-
-def _handle_ship_sunk_effects(room, room_id, attacker_id, defender_id):
-    """处理船只被击沉时的效果"""
-    # 检查无暇圣心效果
-    if 'holy_heart' in room.game_effects:
-        del room.game_effects['holy_heart']
-        emit('holy_heart_interrupted', {
-            'reason': '有战舰被击沉，无暇圣心效果中断'
-        }, room=room_id)
-    
-    # 检查饮血效果
-    if hasattr(room.players[attacker_id].effect_flags, 'vampire') and room.players[attacker_id].effect_flags.vampire:
-        room.draw_card(attacker_id)
-        emit('message', {'text': '饮血效果发动，抽一张卡'}, to=attacker_id)
-        
-    # 检查越战越勇效果
-    if hasattr(room.players[attacker_id].effect_flags, 'battle_spirit') and room.players[attacker_id].effect_flags.battle_spirit:
-        room.attacks_remaining += 2
-        emit('message', {'text': '越战越勇效果发动，攻击次数增加2次'}, room=room_id)
-
-
-def _handle_damage_effects(room, room_id, attacker_id):
-    """处理造成伤害时的效果"""
-    defender_id = next(p for p in room.players if p != attacker_id)
-    
-    # 检查越战越勇效果
-    if hasattr(room.players[attacker_id].effect_flags, 'battle_spirit') and room.players[attacker_id].effect_flags.battle_spirit:
-        room.attacks_remaining += 2
-        emit('message', {'text': '越战越勇效果发动，攻击次数增加2次'}, room=room_id)
-    
-    # 更新本回合伤害统计
-    room.players[attacker_id].damage_dealt_this_turn += 1
-    
-    # 检查绝处逢生效果
-    if hasattr(room.players[attacker_id].effect_flags, 'last_stand') and room.players[attacker_id].effect_flags.last_stand:
-        # 触发绝处逢生效果，直接获胜
-        _handle_game_over(room, room_id, attacker_id, defender_id)
-        return True
-    
-    return False
-
-
-def _process_attack_result(room, room_id, attacker_id, defender_id, attack_result):
-    """处理攻击结果"""
-    hit = attack_result['hit']
-    ship_sunk = attack_result['ship_sunk']
-    target_x = attack_result['target_x']
-    target_y = attack_result['target_y']
-    
-    # 检查回光返照效果
-    if hit and room.game_effects.get('last_chance') and room.game_effects['last_chance']['caster'] == defender_id:
-        # 对使用回光返照的玩家造成了伤害，回光返照使用者直接判负
-        _handle_game_over(room, room_id, attacker_id, defender_id)
-    
-    # 记录最后一次攻击
-    room.last_attack = {
-        'attacker': attacker_id,
-        'x': target_x,
-        'y': target_y,
-        'hit': hit,
-        'ship_sunk': ship_sunk,
-        'round': room.round
-    }
-    
-    # 发送攻击结果
-    attack_result_obj = AttackResult(
-        attacker=attacker_id,
-        x=target_x,
-        y=target_y,
-        hit=hit,
-        ship_sunk=ship_sunk,
-        remaining_attacks=room.attacks_remaining,
-        attacker_remaining_ships=room.players[attacker_id].remaining_ships,
-        defender_remaining_ships=room.players[defender_id].remaining_ships
-    )
-    
-    emit('attack_result', attack_result_obj, room=room_id)
-    
-    # 记录攻击日志
-    add_game_log(room, f"{room.players[attacker_id].name or attacker_id} 攻击 ({target_x},{target_y}) - {'命中' if hit else '未命中'}{'，击沉战舰' if ship_sunk else ''}",
-                 'attack', {
-                     'attacker': attacker_id,
-                     'target': {'x': target_x, 'y': target_y},
-                     'hit': hit,
-                     'ship_sunk': ship_sunk
-                 })
-    
-    # 如果船只被击沉，发送战舰数更新
-    if ship_sunk:
-        emit('ships_updated', {
-            'player_remaining_ships': room.players[attacker_id].remaining_ships,
-            'opponent_remaining_ships': room.players[defender_id].remaining_ships
-        }, room=room_id)
-
-
-def _handle_game_over(room, room_id, winner_id, loser_id):
-    """处理游戏结束"""
-    room.state = 'game_over'
-    room.winner = winner_id
-    
-    add_game_log(room, f"{room.players[winner_id].name or winner_id} 获胜，游戏结束", 'result', {
-        'winner': winner_id,
-        'loser': loser_id
-    })
-    
-    # 记录战绩
-    try:
-        winner_user_id = room.players[winner_id].user_id
-        loser_user_id = room.players[loser_id].user_id
-        if winner_user_id or loser_user_id:
-            db.record_match(winner_user_id or winner_id, loser_user_id or loser_id, getattr(room, 'game_logs', None))
-    except Exception:
-        pass
-    
-    emit('game_over', {'winner': winner_id}, room=room_id)
-    return {'status': 'success', 'game_over': True}
-
-
-def _update_attack_count(room, room_id, attacker_id):
-    """更新攻击次数"""
-    room.attacks_remaining = max(0, room.attacks_remaining - 1)
-    
-    # 如果是AI玩家，自动结束回合
-    if attacker_id.startswith('AI_') and room.attacks_remaining == 0:
-        _auto_end_ai_turn(room, room_id, attacker_id)
-
-
-def _auto_end_ai_turn(room, room_id, ai_player_id):
-    """AI玩家自动结束回合"""
-    # 模拟结束阶段处理时间
-    threading.Thread(target=_end_ai_turn, args=(room, room_id, ai_player_id)).start()
-
-
-def _end_ai_turn(room, room_id, ai_player_id):
-    """结束AI玩家的回合"""
-    time.sleep(1)  # 延迟，让玩家有时间看到AI的行动
-    
-    # 调用结束阶段处理
-    handle_enter_end_phase({
-        'room_id': room_id,
-        'player_id': ai_player_id
-    })
-
-
-@socketio.on('attack')
-def handle_attack_wrapper(data):
-    """攻击处理的包装函数，保持与原代码兼容"""
-    return handle_attack(data)
-
-
-def handle_area_attack(room_id, caster_id, positions, attack_type, attack_name, target_data=None):
-    """处理区域攻击的主函数，遵循与普通攻击相同的处理流程
-    
-    Args:
-        room_id: 房间ID
-        caster_id: 施法者ID
-        positions: 攻击位置列表
-        attack_type: 攻击类型 ('bomb' 或 'sulfur')
-        attack_name: 攻击名称（用于日志）
-        target_data: 额外的目标数据（如轰炸的目标行/列）
-    
-    Returns:
-        dict: 攻击结果
-    """
-    room = room_manager.get_room(room_id)
-    if not room or caster_id not in room.players:
-        return {'status': 'error', 'message': '无效的房间或玩家'}
-    
-    # 找到对手
-    defender_id = next(p for p in room.players if p != caster_id)
-    opponent = room.players[defender_id]
-    
-    # 执行区域攻击
-    sunk_count, affected_positions = _handle_area_attack(room, caster_id, opponent, positions, attack_type, attack_name)
-    
-    # 检查游戏是否结束
-    if opponent.remaining_ships == 0:
-        return _handle_game_over(room, room_id, caster_id, defender_id)
-    
-    # 处理攻击次数更新
-    _update_attack_count(room, room_id, caster_id)
-    
-    return {'status': 'success', 'sunk_count': sunk_count, 'affected_positions': affected_positions}
-
-
 @socketio.on('enter_end_phase')
 def handle_enter_end_phase(data):
     room_id = data['room_id']
@@ -2234,55 +1595,7 @@ def handle_enter_end_phase(data):
             'current_attacker': room.current_attacker
         }, room=room_id)
 
-        # 找到对手ID
-        opponent_id = next(p for p in room.players if p != player_id)
-        
-        # 如果对手是AI玩家，自动切换回合并执行AI的行动
-        if opponent_id.startswith('AI_'):
-            import threading
-            # 在后台线程中执行AI的回合，避免阻塞
-            threading.Thread(target=switch_turn_and_ai_action, args=(room, opponent_id)).start()
-        else:
-            # 真实玩家，正常切换回合
-            import threading
-            threading.Thread(target=switch_turn_after_end_phase, args=(room, opponent_id)).start()
-
         return {'status': 'success', 'message': '已进入结束阶段'}
-
-
-def switch_turn_and_ai_action(room, ai_player_id):
-    """切换到AI回合并执行AI的行动"""
-    # 模拟结束阶段处理时间
-    time.sleep(2)
-
-    # 切换到AI回合
-    room.current_attacker = ai_player_id
-    room.attacks_remaining = len(room.players[ai_player_id].ships)  # 根据战舰数量设置攻击次数
-    room.current_phase = 'preparation'
-    
-    # 重置本回合伤害统计
-    room.players[ai_player_id].damage_dealt_this_turn = 0
-
-    # 广播回合变化
-    emit('turn_change', {
-        'current_attacker': ai_player_id,
-        'attacks_remaining': room.attacks_remaining,
-        'phase': 'preparation'
-    }, room=room.id)
-    
-    # 执行AI的行动
-    AIPlayer.execute_turn(room, ai_player_id)
-    
-    # AI行动完成后，自动结束回合
-    if room.state == 'attacking' and room.current_attacker == ai_player_id:
-        # 模拟AI结束回合的延迟
-        time.sleep(1)
-        
-        # 调用handle_enter_end_phase函数结束AI的回合
-        handle_enter_end_phase({
-            'room_id': room.id,
-            'player_id': ai_player_id
-        })
 
 
 def switch_turn_after_end_phase(room, opponent_id):
@@ -2425,15 +1738,6 @@ def end_turn(data):
             # 切换到下一个攻击者的准备阶段
             room.current_attacker = room.attack_order[next_index]
             room.current_phase = 'preparation'
-            
-            # 检查新攻击者的船只冻结状态，清除过期效果
-            new_attacker_ships = room.players[room.current_attacker].ships
-            for ship in new_attacker_ships:
-                if hasattr(ship, 'frozen') and ship.frozen <= room.round:
-                    # 冻结效果已过期，移除冻结状态
-                    delattr(ship, 'frozen')
-            
-            # 初始攻击次数设置为剩余船只数，在进入战斗阶段时会重新计算（考虑冻结效果）
             room.attacks_remaining = room.players[room.current_attacker].remaining_ships
 
             # 重置所有临时效果标志 - 但保留no_draw标志直到大回合结束
@@ -2929,72 +2233,7 @@ def confirm_magic_target(data):
         }, to=opponent_id)
 
         return {'status': 'success', 'message': '灵气复苏船数选择完成'}
-    elif temp_data_id == 'bury_choice':
-        # 处理明智埋葬的选择
-        card_key = target_data.get('card_key')
-        caster = room.players[player_id]
-        opponent_id = next(p for p in room.players if p != player_id)
-        opponent = room.players[opponent_id]
-        
-        # 验证选择
-        if card_key is None:
-            return {'status': 'error', 'message': '未选择卡牌'}
-        
-        # 从不同来源查找并移除选中的卡牌
-        card_to_remove = None
-        card_source = None
-        
-        # 1. 检查施法者的手牌
-        for i, card in enumerate(caster.magic_hand):
-            if f"{card.name}_{card.speed}" == card_key:
-                card_to_remove = card
-                card_source = 'caster_hand'
-                caster.magic_hand.pop(i)
-                break
-        
-        # 2. 如果不在施法者的手牌中，检查对方的手牌
-        if card_to_remove is None:
-            for i, card in enumerate(opponent.magic_hand):
-                if f"{card.name}_{card.speed}" == card_key:
-                    card_to_remove = card
-                    card_source = 'opponent_hand'
-                    opponent.magic_hand.pop(i)
-                    break
-        
-        # 3. 如果不在对方的手牌中，检查牌堆
-        if card_to_remove is None:
-            for i, card in enumerate(room.magic_deck):
-                if f"{card.name}_{card.speed}" == card_key:
-                    card_to_remove = card
-                    card_source = 'deck'
-                    room.magic_deck.pop(i)
-                    break
-        
-        if card_to_remove is None:
-            return {'status': 'error', 'message': '卡牌不存在'}
-        
-        # 将选中的卡放入弃牌堆
-        room.magic_discard.append(card_to_remove)
-        # 抽一张新卡
-        room.draw_card(player_id)
-        room.magic_temp_data = {}
-        
-        # 通知双方手牌更新
-        emit('hand_updated', {
-            'hand': caster.magic_hand
-        }, to=player_id)
-        
-        emit('hand_updated', {
-            'hand': opponent.magic_hand
-        }, to=opponent_id)
-        
-        # 通知弃牌堆更新
-        emit('discard_pile_updated', {
-            'discard': room.magic_discard
-        }, room=room.id)
-        
-        return {'status': 'success', 'message': '埋葬完成'}
-    
+
     return {'status': 'error', 'message': '无效的临时数据ID'}
 
 
@@ -3044,15 +2283,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
     caster = room.players[caster_id]
     opponent = room.players[opponent_id]
     print(f"Applying magic effect: {card.name} target {target_data}")
-    
-    # 通用魔法卡使用日志
-    caster_name = caster.name or caster_id
-    add_game_log(room, f"{caster_name} 使用了魔法卡 {card.name}", 'magic', {
-        'caster_id': caster_id,
-        'card_name': card.name,
-        'card_type': card.type,
-        'target_data': target_data
-    })
 
 
     # ==== 速阶1 魔法卡 ====
@@ -3069,10 +2299,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             if room.players[attacker_id].effect_flags.forced_kill==0:
                 room.pop_effect(card.name)
         room.effects.append(Effect(card.name,"after_attack","after_attack",999,func))
-        add_game_log(room, f"{caster_name} 使用余音绕梁，接下来两个攻击阶段将造成强制击杀", 'magic', {
-            'effect': 'forced_kill',
-            'duration': 2
-        })
     elif card.name == '桃园结义':
         # 从牌堆抽取n张牌(n为自己的战舰数)，自己选1张，再给对方选1张，已修复
         n = len(caster.ships)
@@ -3109,10 +2335,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         room.players[caster_id].effect_flags.no_draw = True
         room.players[opponent_id].effect_flags.no_draw = True
         result.message = '抽了2张牌，本回合双方无法获得魔法卡'
-        add_game_log(room, f"{caster_name} 使用无中生有，抽了2张牌，本回合双方无法获得魔法卡", 'magic', {
-            'drawn_cards': 2,
-            'no_draw_effect': True
-        })
 
     elif card.name == '极限增援':
         # 两个大回合后，船少的一方获胜，已修复
@@ -3127,9 +2349,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             'remaining_turns': total_turns
         }, room=room.id)
         result.message = '极限增援已激活，剩余2回合后结算'
-        add_game_log(room, f"{caster_name} 使用极限增援，两个大回合后船少的一方获胜", 'magic', {
-            'remaining_turns': total_turns
-        })
 
     elif card.name == '无暇圣心':
         # 两个大回合后如果双方都没造成伤害，施法者获胜，已修复
@@ -3145,9 +2364,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             'remaining_turns': total_turns
         }, room=room.id)
         result.message = '无暇圣心已激活，剩余2回合后结算'
-        add_game_log(room, f"{caster_name} 使用无暇圣心，两个大回合后双方都未造成伤害则获胜", 'magic', {
-            'remaining_turns': total_turns
-        })
 
     elif card.name == '火力全开':
         # 本回合攻击次数翻倍
@@ -3157,9 +2373,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             room.attacks_remaining*=2
             room.pop_effect(card.name)
         room.effects.append(Effect(card.name,"before_attack","",999,func))
-        add_game_log(room, f"{caster_name} 使用火力全开，本回合攻击次数翻倍", 'magic', {
-            'effect': 'double_attacks'
-        })
 
     elif card.name == '灵气复苏':
         # 计算双方最大船数，已修复
@@ -3326,9 +2539,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                 'defender_remaining_ships': opponent.remaining_ships
             }
             emit('attack_result', attack_result, room=room.id)
-            
-            # 记录受影响的位置（仅记录攻击覆盖的位置）
-            affected_positions.append(Position(x=x, y=y, hit=False, ship_sunk=False))
 
             affected_positions.append(Position(**{
                 'x': pos['x'],
@@ -3347,10 +2557,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['message'] = f'溅射攻击命中{hit_count}个目标'
         result['affected_positions'] = affected_positions
         result['caster_id'] = caster_id
-        add_game_log(room, f"{caster_name} 使用溅射，命中{hit_count}个目标", 'magic', {
-            'affected_positions': affected_positions,
-            'hit_count': hit_count
-        })
 
     elif card.name == '雷达子弹':
         # 显示击中位置周围八格的战舰
@@ -3410,9 +2616,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         emit('revealed_positions', {'positions': new_positions}, to=caster_id)
         result['message'] = '已扫描周围八格战舰位置'
         result['affected_positions'] = affected_positions
-        add_game_log(room, f"{caster_name} 使用雷达子弹，扫描了击中位置周围八格的战舰", 'magic', {
-            'scanned_positions': new_positions
-        })
 
     elif card.name == '越战越勇':
         # 每造成一次伤害，攻击次数加2
@@ -3424,9 +2627,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         # 添加越战越勇效果标记
         room.players[caster_id].effect_flags.battle_spirit = True
         result['message'] = '越战越勇效果生效，本回合每造成一次伤害攻击次数加2'
-        add_game_log(room, f"{caster_name} 使用越战越勇，本回合每造成一次伤害攻击次数加2", 'magic', {
-            'effect': 'battle_spirit'
-        })
 
     elif card.name == '神威！':
         # 选定3*3区域，暂时除外区域内战舰
@@ -3441,48 +2641,28 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         # 收集区域内的战舰
         for i in range(len(opponent.ships) - 1, -1, -1):
             ship = opponent.ships[i]
-            in_area = False
-            
-            # 安全检查：确保ship.positions是可迭代的
-            if hasattr(ship, 'positions') and isinstance(ship.positions, (list, tuple, set)):
-                in_area = any(
-                    area['x1'] <= pos.x <= area['x2'] and
-                    area['y1'] <= pos.y <= area['y2']
-                    for pos in ship.positions
-                )
+            in_area = any(
+                area['x1'] <= pos.x <= area['x2'] and
+                area['y1'] <= pos.y <= area['y2']
+                for pos in ship.positions
+            )
 
             if in_area:
                 excluded_ships.append(ship)
                 del opponent.ships[i]
                 opponent.remaining_ships -= 1
 
-        # 确保excluded_ships始终是列表
-        if not isinstance(excluded_ships, list):
-            excluded_ships = [excluded_ships]
-
         # 如果只有一艘船被除外，直接击沉
         if len(excluded_ships) == 1:
             result['message'] = '目标区域内1艘战舰被击沉'
-            add_game_log(room, f"{caster_name} 使用神威！，目标区域内1艘战舰被直接击沉", 'magic', {
-                'target_area': area,
-                'ships_affected': 1,
-                'effect': 'sink'
-            })
         else:
             # 记录暂时除外的战舰，下一回合回归
-            # 只存储必要的信息，避免存储PlayerShip对象
             room.game_effects['excluded_ships'] = {
-                'ships_count': len(excluded_ships),
+                'ships': excluded_ships,
                 'player': opponent_id,
                 'return_turn': room.round + 1
             }
             result['message'] = f'目标区域内{len(excluded_ships)}艘战舰被暂时除外'
-            add_game_log(room, f"{caster_name} 使用神威！，目标区域内{len(excluded_ships)}艘战舰被暂时除外", 'magic', {
-                'target_area': area,
-                'ships_affected': len(excluded_ships),
-                'effect': 'exclude',
-                'return_turn': room.round + 1
-            })
 
     elif card.name == '冻结':
         # 冻结3*3区域内的船，使其无法攻击
@@ -3496,23 +2676,17 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
 
         # 标记区域内的战舰
         for ship in opponent.ships:
-            in_area = False
-            for pos in ship.positions:
-                if area['x1'] <= pos.x <= area['x2'] and area['y1'] <= pos.y <= area['y2']:
-                    in_area = True
-                    break
+            in_area = any(
+                area['x1'] <= pos.x <= area['x2'] and
+                area['y1'] <= pos.y <= area['y2']
+                for pos in ship.positions
+            )
 
-            if in_area and not hasattr(ship, 'frozen'):
+            if in_area and 'frozen' not in ship:
                 ship.frozen = room.round + 1  # 冻结到下一回合
                 frozen_count += 1
 
         result['message'] = f'冻结了{frozen_count}艘战舰'
-        add_game_log(room, f"{caster_name} 使用冻结，冻结了{frozen_count}艘战舰", 'magic', {
-            'target_area': area,
-            'frozen_count': frozen_count,
-            'effect': 'freeze'
-        })
-
 
 
     elif card.name == '轰炸':
@@ -3529,15 +2703,70 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         else:
             positions = [{'x': line['index'], 'y': y} for y in range(6)]
 
-        # 调用通用函数处理区域攻击
-        sunk_count, _ = _handle_area_attack(room, caster_id, opponent, positions, 'bomb', '轰炸')
+        # 找出所有与该行/列相交的船只，整艘摧毁
+        to_remove = [ship for ship in opponent.ships if any(pos in ship.positions for pos in positions)]
+        sunk_count = 0
+        ships_changed = False
+        removed_positions = set()
+
+        # 移除受影响的船只，并为其所有格子生成命中事件
+        for ship in to_remove:
+            if ship in opponent.ships:
+                opponent.ships.remove(ship)
+                opponent.remaining_ships -= 1
+                ships_changed = True
+                sunk_count += 1
+                for ship_pos in ship.positions:
+                    removed_positions.add((ship_pos.x, ship_pos.y))
+                    caster.attacks.append(Position(**{
+                        'x': ship_pos.x,
+                        'y': ship_pos.y,
+                        'hit': True,
+                        'ship_sunk': True,
+                        'is_bomb': True
+                    }))
+                    attack_result = {
+                        'attacker': caster_id,
+                        'x': ship_pos.x,
+                        'y': ship_pos.y,
+                        'hit': True,
+                        'ship_sunk': True,
+                        'remaining_attacks': room.attacks_remaining,
+                        'attacker_remaining_ships': room.players[caster_id].remaining_ships,
+                        'defender_remaining_ships': opponent.remaining_ships
+                    }
+                    emit('attack_result', attack_result, room=room.id)
+
+        # 对于该行/列中未命中的格子也发出未命中事件，以保持 UI 一致性
+        for pos in positions:
+            if (pos['x'], pos['y']) not in removed_positions:
+                caster.attacks.append(Position(**{
+                    'x': pos['x'],
+                    'y': pos['y'],
+                    'hit': False,
+                    'ship_sunk': False,
+                    'is_bomb': True
+                }))
+                attack_result = {
+                    'attacker': caster_id,
+                    'x': pos['x'],
+                    'y': pos['y'],
+                    'hit': False,
+                    'ship_sunk': False,
+                    'remaining_attacks': room.attacks_remaining,
+                    'attacker_remaining_ships': room.players[caster_id].remaining_ships,
+                    'defender_remaining_ships': opponent.remaining_ships
+                }
+                emit('attack_result', attack_result, room=room.id)
+
+        # 若有船只数量变化，广播更新
+        if ships_changed:
+            emit('ships_updated', {
+                'player_remaining_ships': room.players[caster_id].remaining_ships,
+                'opponent_remaining_ships': opponent.remaining_ships
+            }, room=room.id)
 
         result['message'] = f'轰炸成功击沉{sunk_count}艘战舰'
-        add_game_log(room, f"{caster_name} 使用轰炸，成功击沉{sunk_count}艘战舰", 'magic', {
-            'target_line': line,
-            'sunk_count': sunk_count,
-            'effect': 'bombard'
-        })
 
     elif card.name == '硫磺火焰':
         # 对选定的连续6格释放硫磺火焰，强制击杀这些格子上所属的所有战舰（无视护盾/无敌）
@@ -3551,8 +2780,80 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             result['message'] = '需要选择恰好6个连续的格子'
             return result
 
-        # 调用通用函数处理区域攻击
-        sunk_count, affected_positions = _handle_area_attack(room, caster_id, opponent, positions, 'sulfur', '硫磺火焰')
+        # 找出所有与这些格子相交的船只，并整艘摧毁
+        to_remove = [ship for ship in opponent.ships if any(pos in ship.positions for pos in positions)]
+        sunk_count = 0
+        ships_changed = False
+        removed_positions = set()
+        affected_positions: list[Position] = []
+        for ship in to_remove:
+            if ship in opponent.ships:
+                affected_positions = []
+                opponent.ships.remove(ship)
+                opponent.remaining_ships -= 1
+                ships_changed = True
+                sunk_count += 1
+                for ship_pos in ship.positions:
+                    removed_positions.add((ship_pos["x"], ship_pos["y"]))
+                    caster.attacks.append(Position(**{
+                        'x': ship_pos["x"],
+                        'y': ship_pos["y"],
+                        'hit': True,
+                        'ship_sunk': True,
+                        'is_sulfur': True
+                    }))
+                    attack_result = {
+                        'attacker': caster_id,
+                        'x': ship_pos["x"],
+                        'y': ship_pos["y"],
+                        'hit': True,
+                        'ship_sunk': True,
+                        'remaining_attacks': room.attacks_remaining,
+                        'attacker_remaining_ships': room.players[caster_id].remaining_ships,
+                        'defender_remaining_ships': opponent.remaining_ships
+                    }
+                    emit('attack_result', attack_result, room=room.id)
+                    affected_positions.append(Position(**{
+                        'x': ship_pos["x"],
+                        'y': ship_pos["y"],
+                        'hit': True,
+                        'ship_sunk': True
+                    }))
+
+        # 对于选定格子中未命中的格子，发送未命中事件
+        for pos in positions:
+            if (pos["x"], pos["y"]) not in removed_positions:
+                caster.attacks.append(Position(**{
+                    'x': pos["x"],
+                    'y': pos["y"],
+                    'hit': False,
+                    'ship_sunk': False,
+                    'is_sulfur': True
+                }))
+                attack_result = {
+                    'attacker': caster_id,
+                    'x': pos["x"],
+                    'y': pos["y"],
+                    'hit': False,
+                    'ship_sunk': False,
+                    'remaining_attacks': room.attacks_remaining,
+                    'attacker_remaining_ships': room.players[caster_id].remaining_ships,
+                    'defender_remaining_ships': opponent.remaining_ships
+                }
+                emit('attack_result', attack_result, room=room.id)
+                affected_positions.append(Position(**{
+                    'x': pos["x"],
+                    'y': pos["y"],
+                    'hit': False,
+                    'ship_sunk': False
+                }))
+
+        # 广播被摧毁舰只更新
+        if ships_changed:
+            emit('ships_updated', {
+                'player_remaining_ships': room.players[caster_id].remaining_ships,
+                'opponent_remaining_ships': opponent.remaining_ships
+            }, room=room.id)
 
         result['message'] = f'硫磺火焰成功击杀{sunk_count}艘战舰'
         result['affected_positions'] = affected_positions
@@ -3565,13 +2866,69 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             'sunk_count': sunk_count,
             'affected_positions': affected_positions
         })
+
+    elif card.name == '探测雷达':
+        # 显示2*2区域内的战舰
+        if 'target_area' not in target_data:
+            result['success'] = False
+            result['message'] = '需要选择目标区域'
+            return result
+
+        area = target_data['target_area']
+        positions = []
+        room.players[caster_id].revealed_positions = room.players[caster_id].revealed_positions
+        affected_positions = []
+        # 添加需要显示的位置
+        for y in range(area['y1'], area['y2'] + 1):
+            for x in range(area['x1'], area['x2'] + 1):
+                pos = {'x': x, 'y': y}
+                room.players[caster_id].revealed_positions.append(Position(**pos))
+                positions.append(pos)
+        for pos in positions:
+            # 检查是否击中
+            hit = False
+            ship_sunk = False
+            for i, ship in enumerate(opponent.ships):
+                if Position(**pos) in ship.positions and Position(**pos) not in ship.hits:
+                    hit=True
+            if hit:continue 
+            # 记录攻击（包括未命中）
+            caster.attacks.append(Position(**{
+                'x': pos['x'],
+                'y': pos['y'],
+                'hit': hit,
+                'ship_sunk': ship_sunk,
+                'is_splash': True
+            }))
+
+            # 发送单点攻击结果，保持与普通攻击一致的 UI 更新
+            attack_result = {
+                'attacker': caster_id,
+                'x': pos['x'],
+                'y': pos['y'],
+                'hit': hit,
+                'ship_sunk': ship_sunk,
+                'remaining_attacks': room.attacks_remaining,
+                'attacker_remaining_ships': room.players[caster_id].remaining_ships,
+                'defender_remaining_ships': opponent.remaining_ships
+            }
+            emit('attack_result', attack_result, room=room.id)
+
+            affected_positions.append(Position(**{
+                'x': pos['x'],
+                'y': pos['y'],
+                'hit': hit,
+                'ship_sunk': ship_sunk
+            }))
+        # 立即发送给触发者
+        emit('revealed_positions', {'positions': positions}, to=caster_id)
+        result['message'] = '已探测目标区域战舰位置'
+        result['affected_positions'] = affected_positions
+
     elif card.name == '饮血':
         # 每击杀一艘船，抽一张牌
         room.players[caster_id].effect_flags = room.players[caster_id].effect_flags
         room.players[caster_id].effect_flags.vampire = True
-        add_game_log(room, f"{caster_name} 使用饮血，每击杀一艘船将抽一张牌", 'magic', {
-            'effect': 'vampire'
-        })
         result['message'] = '接下来自己的攻击，每击杀一艘船，自己摸一张牌。'
 
     elif card.name == '克苏鲁之眼':
@@ -3600,9 +2957,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         emit('revealed_positions', {'positions': caster_positions}, to=opponent_id)
 
         result['message'] = '双方各暴露一艘战舰位置'
-        add_game_log(room, f"{caster_name} 使用克苏鲁之眼，双方各暴露一艘战舰位置", 'magic', {
-            'effect': 'mutual_reveal'
-        })
 
     elif card.name == 'Freezing！':
         # 本回合未造成伤害时可发动，跳过对方回合
@@ -3621,10 +2975,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         # 跳过对方回合
         room.skip_next_turn = opponent_id
         result['message'] = '成功跳过对方回合'
-        add_game_log(room, f"{caster_name} 使用Freezing！，成功跳过对方回合", 'magic', {
-            'effect': 'skip_turn',
-            'skipped_player': opponent_id
-        })
 
     elif card.name == '五险一金':
         # 本回合未造成伤害则增加攻击次数
@@ -3636,10 +2986,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                 'current_attacker': room.current_attacker,
                 'attacks_remaining': room.attacks_remaining
             }, room=room.id)
-            add_game_log(room, f"{caster_name} 使用五险一金，未造成伤害，攻击次数+3", 'magic', {
-                'effect': 'add_attacks',
-                'attacks_added': 3
-            })
         else:
             result['success'] = False
             result['message'] = '本回合已造成伤害，无法发动'
@@ -3650,67 +2996,15 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             result['success'] = False
             result['message'] = '手牌为空，无法发动'
             return result
-        
-        # 收集所有不在弃牌堆中的卡牌
-        opponent_id = next(p for p in room.players if p != caster_id)
-        opponent = room.players[opponent_id]
-        
-        # 收集所有可选卡牌：施法者的手牌 + 对方的手牌 + 牌堆中的牌
-        available_cards = []
-        
-        # 添加施法者的手牌
-        for card in caster.magic_hand:
-            card_key = f"{card.name}_{card.speed}"
-            if card_key not in [f"{c.name}_{c.speed}" for c in room.magic_discard]:
-                available_cards.append({
-                    'name': card.name,
-                    'speed': card.speed,
-                    'type': card.type,
-                    'description': card.description,
-                    'source': 'caster_hand',
-                    'card_key': card_key
-                })
-        
-        # 添加对方的手牌
-        for card in opponent.magic_hand:
-            card_key = f"{card.name}_{card.speed}"
-            if card_key not in [f"{c.name}_{c.speed}" for c in room.magic_discard]:
-                available_cards.append({
-                    'name': card.name,
-                    'speed': card.speed,
-                    'type': card.type,
-                    'description': card.description,
-                    'source': 'opponent_hand',
-                    'card_key': card_key
-                })
-        
-        # 添加牌堆中的牌
-        for card in room.magic_deck:
-            card_key = f"{card.name}_{card.speed}"
-            if card_key not in [f"{c.name}_{c.speed}" for c in room.magic_discard]:
-                available_cards.append({
-                    'name': card.name,
-                    'speed': card.speed,
-                    'type': card.type,
-                    'description': card.description,
-                    'source': 'deck',
-                    'card_key': card_key
-                })
-        
+
         # 记录需要选择的牌
         room.magic_temp_data = {
             'type': 'bury_choice',
             'caster': caster_id,
-            'cards': available_cards
+            'cards': caster.magic_hand
         }
         result['message'] = '请选择要埋葬的卡牌'
         result['temp_data_id'] = 'bury_choice'
-        
-        # 发送选择界面事件给客户端
-        emit('bury_choice_selection', {
-            'caster': caster_id,
-            'cards': available_cards
-        }, room=room.id)
 
     elif card.name == '仁王之盾':
         # 选择至多3艘船进入盾牌状态
@@ -3727,9 +3021,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         }
         result['message'] = '请选择要保护的战舰'
         result['temp_data_id'] = 'shield_choice'
-        add_game_log(room, f"{caster_name} 使用仁王之盾，准备选择要保护的战舰", 'magic', {
-            'effect': 'shield_protection'
-        })
 
     # ==== 速阶3 魔法卡 ====
     elif card.name == '八方来财':
@@ -3737,9 +3028,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         room.players[caster_id].effect_flags = room.players[caster_id].effect_flags
         room.players[caster_id].effect_flags.treasure_hunter = True
         result['message'] = '战舰数目变化时抽一张牌'
-        add_game_log(room, f"{caster_name} 使用八方来财，战舰数目变化时将抽一张牌", 'magic', {
-            'effect': 'treasure_hunter'
-        })
 
     elif card.name == '平等条约':
         # 船数改变时无效化导致改变的攻击/魔法
@@ -3757,19 +3045,12 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             opponent.remaining_ships += last_change['count']
 
         result['message'] = '成功无效化船数改变效果'
-        add_game_log(room, f"{caster_name} 使用平等条约，成功无效化船数改变效果", 'magic', {
-            'effect': 'nullify_ship_change',
-            'last_change': last_change
-        })
 
     elif card.name == '百亿补贴':
         # 船被击败时攻击次数加3
         room.players[caster_id].effect_flags = room.players[caster_id].effect_flags
         room.players[caster_id].effect_flags.subsidy = True
         result['message'] = '船被击败时攻击次数加3'
-        add_game_log(room, f"{caster_name} 使用百亿补贴，船被击败时攻击次数加3", 'magic', {
-            'effect': 'subsidy'
-        })
 
     elif card.name == '神之宣告':
         # 牺牲两艘船，选择一个效果
@@ -3790,19 +3071,10 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             opponent.ships.pop()
             opponent.remaining_ships -= 1
             result['message'] = '牺牲两艘战舰，对方被迫选择一艘战舰摧毁'
-            add_game_log(room, f"{caster_name} 使用神之宣告，牺牲两艘战舰，对方被迫选择一艘战舰摧毁", 'magic', {
-                'effect': 'sacrifice_destroy',
-                'sacrificed_ships': 2,
-                'destroyed_ships': 1
-            })
         else:
             # 跳过对方所有阶段
             room.skip_opponent_turn = True
             result['message'] = '牺牲两艘战舰，跳过对方本回合所有阶段'
-            add_game_log(room, f"{caster_name} 使用神之宣告，牺牲两艘战舰，跳过对方本回合所有阶段", 'magic', {
-                'effect': 'sacrifice_skip',
-                'sacrificed_ships': 2
-            })
 
     elif card.name == '绝处逢生':
         # 牺牲所有船，只留一艘，之后击杀任何船直接获胜
@@ -3822,10 +3094,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         caster.magic_hand = []
 
         result['message'] = '进入绝处逢生状态，击杀任何船直接获胜'
-        add_game_log(room, f"{caster_name} 使用绝处逢生，进入绝处逢生状态，击杀任何船直接获胜", 'magic', {
-            'effect': 'last_stand',
-            'remaining_ships': 1
-        })
 
     elif card.name == '死者苏生':
         # 复活一艘船
@@ -3840,10 +3108,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             caster.ships.append(revived_ship)
             caster.remaining_ships += 1
             result['message'] = '成功复活一艘战舰'
-            add_game_log(room, f"{caster_name} 使用死者苏生，成功复活一艘战舰", 'magic', {
-                'effect': 'revive',
-                'revived_count': 1
-            })
         else:
             result['success'] = False
             result['message'] = '没有可复活的战舰'
@@ -3865,10 +3129,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                 revived += 1
 
         result['message'] = f'成功复活{revived}艘战舰'
-        add_game_log(room, f"{caster_name} 使用疗愈，成功复活{revived}艘战舰", 'magic', {
-            'effect': 'heal',
-            'revived_count': revived
-        })
 
     elif card.name == '盗亦有道':
         # 获取对方打出的上一张魔法卡
@@ -3884,13 +3144,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         room.discard_card(caster_id, stolen_card)
 
         result['message'] = f'成功盗取对方的{stolen_card.name}'
-        add_game_log(room, f"{caster_name} 使用盗亦有道，成功盗取对方的{stolen_card.name}", 'magic', {
-            'effect': 'steal_card',
-            'stolen_card': stolen_card.name
-        })
 
     elif card.name == '回光返照':
-        # 回光返照的日志将在效果触发时添加（如在溅射攻击中）
         # 只能在自己先手时发动
         if room.attack_order and room.attack_order[0] != caster_id:
             result['success'] = False
@@ -3916,10 +3171,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         }
 
         result['message'] = '已清空棋盘，请重新摆放战舰，本回合战斗阶段跳过。若对方在本大回合内对您的船造成伤害，您将直接判负'
-        add_game_log(room, f"{caster_name} 使用回光返照，清空棋盘重新摆放战舰", 'magic', {
-            'effect': 'last_chance',
-            'risky_move': True
-        })
 
     elif card.name == '加百列之光':
         # 无效化对方上一张魔法卡和当前场地魔法
@@ -3935,10 +3186,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         room.field_magic = ""
 
         result['message'] = f'成功无效化{negated_count}个效果'
-        add_game_log(room, f"{caster_name} 使用加百列之光，成功无效化{negated_count}个效果", 'magic', {
-            'effect': 'negate_magic',
-            'negated_count': negated_count
-        })
 
     elif card.name == '钢筋铁骨':
         # 牺牲一艘船，其他船进入无敌状态
@@ -3956,11 +3203,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             ship.invincible = True
 
         result['message'] = '牺牲一艘战舰，其他战舰进入无敌状态'
-        add_game_log(room, f"{caster_name} 使用钢筋铁骨，牺牲一艘战舰，其他战舰进入无敌状态", 'magic', {
-            'effect': 'invincibility',
-            'sacrificed_ships': 1,
-            'invincible_ships': len(caster.ships)
-        })
 
     elif card.name == '神机妙算':
         # 宣言x，如果结束阶段船数减少x，那些船不会减少
@@ -3973,18 +3215,12 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         room.players[caster_id].effect_flags = room.players[caster_id].effect_flags
         room.players[caster_id].effect_flags.prediction = x
         result.message = f'宣言船数减少{x}，若预测成功则不会减少'
-        add_game_log(room, f"{caster_name} 使用神机妙算，宣言船数减少{x}", 'magic', {
-            'effect': 'prediction',
-            'predicted_value': x
-        })
 
     # ==== 场地魔法卡 ====
     elif card.type == '场地':
         # 场地魔法处理 - 全场只能有一张场地魔法卡生效
         # 移除所有玩家的场地魔法卡
-        discarded = None
         if room.field_magic:
-            discarded = room.field_magic
             room.discard_card(caster_id, MagicCard(room.field_magic))
             emit('field_magic_updated', {
                 'player_id': caster_id,
@@ -3992,13 +3228,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             }, room=room.id)
         # 设置新的场地魔法卡
         room.field_magic = card.name
-        add_game_log(room, f"{caster_name} 使用场地魔法 {card.name}{f'，替换了{discarded}' if discarded else ''}", 'magic', {
-            'effect': 'field_magic',
-            'card_name': card.name,
-            'replaced': discarded
-        })
 
-        # 根据具体场地魔法卡设置不同的消息
         if card.name == '恶魔契约':
             result.message = '恶魔契约生效，双方船数增减绑定'
         elif card.name == '禁忌果实':
@@ -4015,10 +3245,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             last_magic = room.magic_history.pop()
             result.message = f'无效化了{last_magic["card"]["name"]}'
             result.negated = last_magic
-            add_game_log(room, f"{caster_name} 使用失灵！，无效化了对方的{last_magic["card"]["name"]}", 'magic', {
-                'effect': 'negate_last_magic',
-                'negated_card': last_magic["card"]["name"]
-            })
         else:
             result.success = False
             result.message = '没有可无效化的魔法卡'
@@ -4027,10 +3253,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         # 无效化对方本回合所有魔法卡
         room.players[opponent_id].magic_blocked = True
         result.message = '本回合对方魔法卡被无效化'
-        add_game_log(room, f"{caster_name} 使用看破！，本回合对方魔法卡被无效化", 'magic', {
-            'effect': 'block_magic',
-            'target_player': opponent_id
-        })
 
     elif card.name == '增援':
         # 召唤一艘战舰：等待玩家选择放置位置
@@ -4045,11 +3267,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             }
             result.temp_data_id = 'reinforcement_choice'
             result.message = '请选择增援放置位置'
-            add_game_log(room, f"{caster_name} 使用增援，准备召唤一艘战舰", 'magic', {
-                'effect': 'reinforce',
-                'max_ships': 6,
-                'current_ships': len(caster.ships)
-            })
 
     elif card.name == '桃园结义':
         # 从牌堆抽取n张牌(n为自己的战舰数)，自己选1张，再给对方选1张
@@ -4124,120 +3341,6 @@ def handle_surrender(data):
     }, room=room_id)
     return {'status': 'success'}
 
-def _handle_area_attack(room, caster_id, opponent, positions, attack_type, attack_name):
-    """处理区域攻击的通用函数
-    
-    Args:
-        room: GameRoom对象
-        caster_id: 施法者ID
-        opponent: 对手Player对象
-        positions: 攻击位置列表
-        attack_type: 攻击类型 ('bomb' 或 'sulfur')
-        attack_name: 攻击名称（用于日志）
-    
-    Returns:
-        tuple: (击沉的船只数量, 受影响的位置列表)
-    """
-    caster = room.players[caster_id]
-    sunk_count = 0
-    ships_changed = False
-    removed_positions = set()
-    affected_positions = []
-    
-    # 找出所有与这些格子相交的船只
-    to_remove = [ship for ship in opponent.ships if any(pos in ship.positions for pos in positions)]
-    
-    # 移除受影响的船只，并为其所有格子生成命中事件
-    for ship in to_remove:
-        if ship in opponent.ships:
-            opponent.ships.remove(ship)
-            opponent.remaining_ships -= 1
-            ships_changed = True
-            sunk_count += 1
-            
-            for ship_pos in ship.positions:
-                # 处理不同类型的位置对象（可能是字典或Position对象）
-                x = ship_pos.x if hasattr(ship_pos, 'x') else ship_pos['x']
-                y = ship_pos.y if hasattr(ship_pos, 'y') else ship_pos['y']
-                
-                removed_positions.add((x, y))
-                
-                # 创建攻击记录
-                position_kwargs = {
-                    'x': x,
-                    'y': y,
-                    'hit': True,
-                    'ship_sunk': True
-                }
-                if attack_type == 'bomb':
-                    position_kwargs['is_bomb'] = True
-                elif attack_type == 'sulfur':
-                    position_kwargs['is_sulfur'] = True
-                
-                caster.attacks.append(Position(**position_kwargs))
-                
-                # 创建攻击结果对象（与普通攻击保持一致的格式）
-                attack_result_obj = AttackResult(
-                    attacker=caster_id,
-                    x=x,
-                    y=y,
-                    hit=True,
-                    ship_sunk=True,
-                    remaining_attacks=room.attacks_remaining,
-                    attacker_remaining_ships=room.players[caster_id].remaining_ships,
-                    defender_remaining_ships=opponent.remaining_ships
-                )
-                
-                emit('attack_result', attack_result_obj, room=room.id)
-                
-                # 记录受影响的位置
-                affected_positions.append(Position(x=x, y=y, hit=True, ship_sunk=True))
-    
-    # 对于该区域中未命中的格子也发出未命中事件，以保持 UI 一致性
-    for pos in positions:
-        x = pos['x'] if isinstance(pos, dict) else pos.x
-        y = pos['y'] if isinstance(pos, dict) else pos.y
-        
-        if (x, y) not in removed_positions:
-            # 创建攻击记录
-            position_kwargs = {
-                'x': x,
-                'y': y,
-                'hit': False,
-                'ship_sunk': False
-            }
-            if attack_type == 'bomb':
-                position_kwargs['is_bomb'] = True
-            elif attack_type == 'sulfur':
-                position_kwargs['is_sulfur'] = True
-            
-            caster.attacks.append(Position(**position_kwargs))
-            
-            # 创建攻击结果对象（与普通攻击保持一致的格式）
-            attack_result_obj = AttackResult(
-                attacker=caster_id,
-                x=x,
-                y=y,
-                hit=False,
-                ship_sunk=False,
-                remaining_attacks=room.attacks_remaining,
-                attacker_remaining_ships=room.players[caster_id].remaining_ships,
-                defender_remaining_ships=opponent.remaining_ships
-            )
-            
-            emit('attack_result', attack_result_obj, room=room.id)
-            
-            # 记录受影响的位置
-            affected_positions.append(Position(x=x, y=y, hit=False, ship_sunk=False))
-    
-    # 广播被摧毁舰只更新
-    if ships_changed:
-        emit('ships_updated', {
-            'player_remaining_ships': room.players[caster_id].remaining_ships,
-            'opponent_remaining_ships': opponent.remaining_ships
-        }, room=room.id)
-    
-    return sunk_count, affected_positions
 
 if __name__ == '__main__':
     # 初始化数据库

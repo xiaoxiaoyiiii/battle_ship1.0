@@ -2794,18 +2794,18 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                 ships_changed = True
                 sunk_count += 1
                 for ship_pos in ship.positions:
-                    removed_positions.add((ship_pos["x"], ship_pos["y"]))
+                    removed_positions.add((ship_pos.x, ship_pos.y))
                     caster.attacks.append(Position(**{
-                        'x': ship_pos["x"],
-                        'y': ship_pos["y"],
+                        'x': ship_pos.x,
+                        'y': ship_pos.y,
                         'hit': True,
                         'ship_sunk': True,
                         'is_sulfur': True
                     }))
                     attack_result = {
                         'attacker': caster_id,
-                        'x': ship_pos["x"],
-                        'y': ship_pos["y"],
+                        'x': ship_pos.x,
+                        'y': ship_pos.y,
                         'hit': True,
                         'ship_sunk': True,
                         'remaining_attacks': room.attacks_remaining,
@@ -2814,8 +2814,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                     }
                     emit('attack_result', attack_result, room=room.id)
                     affected_positions.append(Position(**{
-                        'x': ship_pos["x"],
-                        'y': ship_pos["y"],
+                        'x': ship_pos.x,
+                        'y': ship_pos.y,
                         'hit': True,
                         'ship_sunk': True
                     }))

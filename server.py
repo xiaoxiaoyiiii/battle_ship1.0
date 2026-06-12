@@ -38,7 +38,7 @@ def add_game_log(room, text: str, event_type: str = 'info', payload: dict | None
     if not hasattr(room, 'game_logs'):
         room.game_logs = []
     entry = GameLog(text, event_type, payload)
-    room.game_logs.append(entry)
+    room.game_logs.append(entry.to_dict())
 
 
 # 在线人数统计
@@ -723,6 +723,276 @@ def test_get_game_state(data):
     return {'status': 'success', 'game_state': game_state}
 
 
+@socketio.on('test_reset_game')
+def test_reset_game(data):
+    room_id = data['room_id']
+
+    room = room_manager.get_room(room_id)
+    if not room:
+        return {'status': 'error', 'message': '无效的房间'}
+
+    # 重置游戏状态
+    room.state = 'placing_ships'
+    room.attack_order = []
+    room.current_attacker = ""
+    room.attacks_remaining = 0
+    room.field_magic = ""
+    room.game_effects = {}
+    room.polar_reversal_applied = False
+    room.last_attack = None
+    room.magic_temp_data = {}
+    room.chain = []
+    room.chain_waiting = False
+
+    # 重置玩家状态
+    for player_id in room.players:
+        player = room.players[player_id]
+        player.ships = []
+        player.remaining_ships = 0
+        player.attacks = []
+        player.magic_hand = []
+        player.damage_dealt_this_turn = 0
+        
+        if hasattr(player, 'effect_flags'):
+            player.effect_flags = EffectFlags()
+        
+        if hasattr(player, 'opponent_attacks'):
+            player.opponent_attacks = []
+        
+        player.revealed_positions = []
+        player.needs_reset = True
+
+    return {'status': 'success', 'message': '游戏状态已重置'}
+
+
+@socketio.on('create_ai_room')
+def handle_create_ai_room(data):
+    """处理创建人机对战房间的请求"""
+    player_id = request.sid
+    player_name = data.get('player_name', '玩家')
+    player_user_id = data.get('user_id', None)
+    
+    # 创建人机对战房间
+    room_id = room_manager.create_ai_room(player_id, player_name, player_user_id)
+    
+    # 让玩家加入房间
+    join_room(room_id)
+    
+    # 返回房间信息
+    return {
+        'status': 'success',
+        'room_id': room_id,
+        'message': '人机对战房间创建成功'
+    }
+
+
+@socketio.on('test_set_opponent_ships')
+def test_set_opponent_ships(data):
+    room_id = data['room_id']
+    player_id = data['player_id']
+    ship_count = data['ship_count']
+
+    room = room_manager.get_room(room_id)
+    if not room or player_id not in room.players:
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+
+    opponent_id = next(p for p in room.players if p != player_id)
+    opponent = room.players[opponent_id]
+    player = room.players[player_id]
+
+    # 清除现有船只
+    opponent.ships = []
+    opponent.remaining_ships = 0
+
+    # 添加新船只
+    from random import sample
+    all_positions = [(x, y) for x in range(6) for y in range(6)]
+    used_positions = set()
+
+    for ship_size in [3, 2, 2, 1, 1, 1][:ship_count]:
+        # 随机生成船只位置（水平或垂直）
+        placed = False
+        while not placed:
+            direction = sample(['horizontal', 'vertical'], 1)[0]
+            if direction == 'horizontal':
+                x = sample(range(6 - ship_size + 1), 1)[0]
+                y = sample(range(6), 1)[0]
+                positions = [(x + i, y) for i in range(ship_size)]
+            else:
+                x = sample(range(6), 1)[0]
+                y = sample(range(6 - ship_size + 1), 1)[0]
+                positions = [(x, y + i) for i in range(ship_size)]
+
+            # 检查是否与现有船只重叠
+            if not any(pos in used_positions for pos in positions):
+                # 创建船只
+                ship_positions = [Position(x=x, y=y) for x, y in positions]
+                opponent.ships.append(PlayerShip(positions=ship_positions, hits=[]))
+                opponent.remaining_ships += 1
+                
+                # 更新已用位置
+                used_positions.update(positions)
+                placed = True
+
+    # 更新客户端
+    emit('ships_updated', {
+        'player_remaining_ships': player.remaining_ships,
+        'opponent_remaining_ships': opponent.remaining_ships
+    }, room=room_id)
+
+    return {'status': 'success', 'message': f'已设置对方船只数量为 {ship_count}'}
+
+
+@socketio.on('test_end_turn')
+def test_end_turn(data):
+    room_id = data['room_id']
+
+    room = room_manager.get_room(room_id)
+    if not room:
+        return {'status': 'error', 'message': '无效的房间'}
+
+    # 结束当前回合
+    if room.current_phase == 'battle':
+        # 进入结束阶段
+        room.current_phase = 'end'
+    elif room.current_phase == 'end':
+        # 切换到下一回合
+        current_index = room.attack_order.index(room.current_attacker)
+        next_index = (current_index + 1) % len(room.attack_order)
+        room.current_attacker = room.attack_order[next_index]
+        room.current_phase = 'preparation'
+        room.attacks_remaining = room.players[room.current_attacker].remaining_ships
+
+    return {'status': 'success', 'message': '回合已结束'}
+
+
+@socketio.on('test_win_game')
+def test_win_game(data):
+    room_id = data['room_id']
+    player_id = data['player_id']
+
+    room = room_manager.get_room(room_id)
+    if not room or player_id not in room.players:
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+
+    # 直接设置玩家为胜利
+    room.state = 'game_over'
+    room.winner = player_id
+    
+    emit('game_over', {'winner': player_id}, room=room_id)
+    return {'status': 'success', 'message': '游戏胜利已设置'}
+
+
+@socketio.on('test_lose_game')
+def test_lose_game(data):
+    room_id = data['room_id']
+    player_id = data['player_id']
+
+    room = room_manager.get_room(room_id)
+    if not room or player_id not in room.players:
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+
+    # 直接设置玩家为失败
+    opponent_id = next(p for p in room.players if p != player_id)
+    room.state = 'game_over'
+    room.winner = opponent_id
+    
+    emit('game_over', {'winner': opponent_id}, room=room_id)
+    return {'status': 'success', 'message': '游戏失败已设置'}
+
+
+@socketio.on('test_get_magic_cards_list')
+def test_get_magic_cards_list(data):
+    # 返回所有可用的魔法卡列表
+    cards_list = []
+    for card in magic_cards:
+        cards_list.append({
+            'name': card.name,
+            'speed': card.speed,
+            'type': card.type,
+            'description': card.description
+        })
+    
+    return {'status': 'success', 'magic_cards': cards_list}
+
+
+@socketio.on('test_auto_attack')
+def test_auto_attack(data):
+    room_id = data['room_id']
+    player_id = data['player_id']
+    attack_count = data.get('count', 1)
+
+    room = room_manager.get_room(room_id)
+    if not room or player_id not in room.players:
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+
+    opponent_id = next(p for p in room.players if p != player_id)
+    opponent = room.players[opponent_id]
+
+    # 记录攻击结果
+    attack_results = []
+
+    for _ in range(attack_count):
+        if room.attacks_remaining <= 0:
+            break
+
+        # 选择一个未攻击过的随机位置        
+        all_positions = [(x, y) for x in range(6) for y in range(6)]
+        attacked_positions = [(a.x, a.y) for a in room.players[player_id].attacks]
+        available_positions = [pos for pos in all_positions if pos not in attacked_positions]
+
+        if not available_positions:
+            break
+
+        target_x, target_y = random.choice(available_positions)
+
+        # 执行攻击
+        hit = False
+        ship_sunk = False
+        
+        for i, ship in enumerate(opponent.ships):
+            if Position(x=target_x, y=target_y) in ship.positions:
+                hit = True
+                
+                if ship.shield:
+                    ship.shield = False
+                elif not ship.invincible:
+                    ship.hits.append(Position(x=target_x, y=target_y))
+                    
+                    if len(ship.hits) == len(ship.positions):
+                        ship_sunk = True
+                        opponent.remaining_ships -= 1
+                
+                break
+
+        # 记录攻击
+        attack = type('Attack', (), {})
+        attack.x = target_x
+        attack.y = target_y
+        attack.hit = hit
+        attack.ship_sunk = ship_sunk
+        
+        room.players[player_id].attacks.append(attack)
+        room.attacks_remaining -= 1
+
+        # 收集攻击结果
+        attack_results.append({
+            'x': target_x,
+            'y': target_y,
+            'hit': hit,
+            'ship_sunk': ship_sunk
+        })
+
+        # 检查游戏是否结束
+        if opponent.remaining_ships <= 0:
+            room.state = 'game_over'
+            room.winner = player_id
+            emit('game_over', {'winner': player_id}, room=room_id)
+            break
+
+    return {'status': 'success', 'message': f'已执行 {len(attack_results)} 次自动攻击', 'attack_results': attack_results}
+
+
 
 @app.route('/lobby')
 def lobby():
@@ -1290,7 +1560,7 @@ def handle_attack(data):
             if has_forced_kill:
                 # 强制击杀效果，忽略无敌和盾牌状态，直接击杀
                 # 记录击中位置
-                defender_ships[i].hits = defender_ships[i].hits + [{'x': target_x, 'y': target_y}]
+                defender_ships[i].hits = defender_ships[i].hits + [Position(x=target_x, y=target_y)]
 
                 # 直接击沉，不管当前击中次数
                 ship_sunk = True
@@ -1424,7 +1694,7 @@ def handle_attack(data):
                     ship.shield = False
                 else:
                     # 记录击中位置
-                    defender_ships[i].hits = defender_ships[i].hits + [{'x': target_x, 'y': target_y}]
+                    defender_ships[i].hits = defender_ships[i].hits + [Position(x=target_x, y=target_y)]
 
                     # 检查船是否被击沉
                     if len(defender_ships[i].hits) == len(defender_ships[i].positions):
@@ -1513,11 +1783,11 @@ def handle_attack(data):
                         emit('game_over', {'winner': attacker_id}, room=room_id)
                         return {'status': 'success', 'game_over': True}
 
-                        # 发送战舰数更新事件
-                        emit('ships_updated', {
-                            'player_remaining_ships': room.players[attacker_id].remaining_ships,
-                            'opponent_remaining_ships': room.players[defender_id].remaining_ships
-                        }, room=room_id)
+                    # 发送战舰数更新事件
+                    emit('ships_updated', {
+                        'player_remaining_ships': room.players[attacker_id].remaining_ships,
+                        'opponent_remaining_ships': room.players[defender_id].remaining_ships
+                    }, room=room_id)
             break
 
     # 记录最后一次攻击（用于溅射等效果）

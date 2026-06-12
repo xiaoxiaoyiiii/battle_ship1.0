@@ -43,7 +43,7 @@ def add_game_log(room, text: str, event_type: str = 'info', payload: dict | None
 
 # 在线人数统计
 online_users = set()
-magic_cards: list[MagicCard]
+magic_cards: list["MagicCard"]
 @app.route('/api/online_count')
 def api_online_count():
     """获取当前在线人数"""
@@ -183,6 +183,7 @@ class Player:
         self.revealed_positions = []
         self.max_ships = None
         self.user_id = user_id
+        self.sunken_ships = []  # 被击沉的船，用于死者苏生/疗愈等效果
 
 
 class GameRoom:
@@ -237,6 +238,8 @@ class GameRoom:
         self.last_attack = None  # 记录最后一次攻击的信息
         self.game_logs: list[dict[str, Any]] = []
         self.rps_processed = False  # 记录猜拳结果是否已经处理过
+        self.skip_opponent_turn = None  # 用于 Freezing!/神之宣告跳过对方回合
+        self.skip_next_turn = None  # 用于跳过下一个玩家回合
 
     def init_player_magic(self, player_id: str, magic_cards):
         """初始化玩家魔法卡相关状态"""
@@ -646,6 +649,9 @@ def test_clear_all_effects(data):
         for ship in player.ships:
             ship.invincible = False
             ship.shield = False
+        # 清空沉船记录
+        if hasattr(player, 'sunken_ships'):
+            player.sunken_ships = []
         # 清除回合数据
         player.damage_dealt_this_turn = 0
 
@@ -708,7 +714,7 @@ def test_get_game_state(data):
             'damage_dealt_this_turn': getattr(player, 'damage_dealt_this_turn', 0),
             'ships': [{
                 'positions': [(p.x, p.y) for p in ship.positions],
-                'hits': [(p.x, p.y) for p in ship.hits],
+                'hits': [(p['x'], p['y']) if isinstance(p, dict) else (p.x, p.y) for p in ship.hits],
                 'invincible': ship.invincible,
                 'shield': ship.shield
             } for ship in player.ships]
@@ -1292,11 +1298,31 @@ def handle_attack(data):
                 room.players[defender_id].remaining_ships -= 1
                 defender_remaining_after = room.players[defender_id].remaining_ships
 
-                # 记录船数变化（用于平等条约）
+                # 记录被击沉的船到sunken_ships（用于死者苏生/疗愈）
+                room.players[defender_id].sunken_ships.append(defender_ships[i])
+
+                # 记录船数变化（用于平等条约），保存ship对象以便完全回滚
                 room.game_effects['last_ship_change'] = {
                     'player': defender_id,
-                    'count': defender_remaining_before - defender_remaining_after
+                    'count': defender_remaining_before - defender_remaining_after,
+                    'ship': defender_ships[i]  # 保存ship引用用于平等条约回滚
                 }
+
+                # 恶魔契约: 绑定船数增减 - 任意一方船被击杀，另一方也要牺牲一艘
+                if room.game_effects.get('demon_contract'):
+                    # 被击沉的是 defender 的船，attacker 要牺牲一艘
+                    sacrifice_player_id = attacker_id
+                    sacrifice_player = room.players[sacrifice_player_id]
+                    if sacrifice_player.ships:
+                        sacr_ship = random.choice(sacrifice_player.ships)
+                        sacrifice_player.ships.remove(sacr_ship)
+                        sacrifice_player.sunken_ships.append(sacr_ship)
+                        sacrifice_player.remaining_ships -= 1
+                        emit('ships_updated', {
+                            'player_remaining_ships': room.players[attacker_id].remaining_ships,
+                            'opponent_remaining_ships': room.players[defender_id].remaining_ships
+                        }, room=room_id)
+                        emit('message', {'text': '恶魔契约生效，对方牺牲一艘战舰'}, to=defender_id)
 
                 # 检查无暇圣心效果：如果有战舰被击沉，中断效果
                 if 'holy_heart' in room.game_effects:
@@ -1311,7 +1337,7 @@ def handle_attack(data):
                 if room.players[attacker_id].effect_flags.vampire:
                     room.draw_card(attacker_id)
                     emit('message', {'text': '饮血效果发动，抽一张卡'}, to=attacker_id)
-                
+
                 # 检查越战越勇效果
                 if room.players[attacker_id].effect_flags.battle_spirit:
                     room.attacks_remaining += 2
@@ -1372,6 +1398,16 @@ def handle_attack(data):
                         'opponent_remaining_ships': room.players[defender_id].remaining_ships
                     }, room=room_id)
 
+                    # 百亿补贴: 自己的船被击败时攻击次数+3
+                    if room.players[defender_id].effect_flags.subsidy:
+                        room.attacks_remaining += 3
+                        emit('message', {'text': '百亿补贴生效，攻击次数增加3次'}, to=defender_id)
+
+                    # 八方来财: 战舰数目变化时抽一张牌
+                    if room.players[defender_id].effect_flags.treasure_hunter:
+                        room.draw_card(defender_id)
+                        emit('message', {'text': '八方来财生效，摸一张牌'}, to=defender_id)
+
                 # 减少强制击杀效果的剩余次数
                 room.players[attacker_id].effect_flags.forced_kill -= 1
                 # 如果剩余次数为0，移除该效果
@@ -1397,11 +1433,40 @@ def handle_attack(data):
                         room.players[defender_id].remaining_ships -= 1
                         defender_remaining_after = room.players[defender_id].remaining_ships
 
-                        # 记录船数变化（用于平等条约）
+                        # 记录被击沉的船到sunken_ships（用于死者苏生/疗愈）
+                        room.players[defender_id].sunken_ships.append(defender_ships[i])
+
+                        # 记录船数变化（用于平等条约），保存ship对象以便完全回滚
                         room.game_effects['last_ship_change'] = {
                             'player': defender_id,
-                            'count': defender_remaining_before - defender_remaining_after
+                            'count': defender_remaining_before - defender_remaining_after,
+                            'ship': defender_ships[i]  # 保存ship引用用于平等条约回滚
                         }
+
+                        # 百亿补贴: 自己的船被击败时攻击次数+3
+                        if room.players[defender_id].effect_flags.subsidy:
+                            room.attacks_remaining += 3
+                            emit('message', {'text': '百亿补贴生效，攻击次数增加3次'}, to=defender_id)
+
+                        # 恶魔契约: 绑定船数增减
+                        if room.game_effects.get('demon_contract'):
+                            sacrifice_player_id = attacker_id
+                            sacrifice_player = room.players[sacrifice_player_id]
+                            if sacrifice_player.ships:
+                                sacr_ship = random.choice(sacrifice_player.ships)
+                                sacrifice_player.ships.remove(sacr_ship)
+                                sacrifice_player.sunken_ships.append(sacr_ship)
+                                sacrifice_player.remaining_ships -= 1
+                                emit('ships_updated', {
+                                    'player_remaining_ships': room.players[attacker_id].remaining_ships,
+                                    'opponent_remaining_ships': room.players[defender_id].remaining_ships
+                                }, room=room_id)
+                                emit('message', {'text': '恶魔契约生效，对方牺牲一艘战舰'}, to=defender_id)
+
+                        # 八方来财: 战舰数目变化时抽一张牌
+                        if room.players[defender_id].effect_flags.treasure_hunter:
+                            room.draw_card(defender_id)
+                            emit('message', {'text': '八方来财生效，摸一张牌'}, to=defender_id)
 
                         # 检查无暇圣心效果：如果有战舰被击沉，中断效果
                         if 'holy_heart' in room.game_effects:
@@ -1417,16 +1482,11 @@ def handle_attack(data):
                             room.draw_card(attacker_id)
                             emit('message', {'text': '饮血效果发动，抽一张卡'}, to=attacker_id)
                         
-                        # 检查越战越勇效果
+                        # 检查越战越勇效果（仅在击沉战舰时触发）
                         if room.players[attacker_id].effect_flags.battle_spirit:
                             room.attacks_remaining += 2
                             emit('message', {'text': '越战越勇效果发动，攻击次数增加2次'}, room=room_id)
-                    else:
-                        # 未击沉但造成了伤害，也触发越战越勇效果
-                        if room.players[attacker_id].effect_flags.battle_spirit:
-                            room.attacks_remaining += 2
-                            emit('message', {'text': '越战越勇效果发动，攻击次数增加2次'}, room=room_id)
-                        
+
                         # 更新本回合伤害统计
                         room.players[attacker_id].damage_dealt_this_turn += 1
 
@@ -1720,6 +1780,25 @@ def end_turn(data):
             room.rps_choices = {}
             room.rps_processed = False
 
+            # 神机妙算: 检查船数是否减少了x
+            for p_id in room.players:
+                player = room.players[p_id]
+                pred = getattr(player.effect_flags, 'prediction', 0)
+                if pred and isinstance(pred, int) and pred > 0:
+                    # 从game_effects中读取初始船数
+                    if f'prediction_initial_{p_id}' in room.game_effects:
+                        initial_count = room.game_effects[f'prediction_initial_{p_id}']
+                        current_count = len(player.ships)
+                        if initial_count - current_count == pred:
+                            # 预测成功：恢复船数
+                            diff = pred
+                            for _ in range(min(diff, len(player.sunken_ships))):
+                                revived = player.sunken_ships.pop()
+                                player.ships.append(revived)
+                                player.remaining_ships += 1
+                            del room.game_effects[f'prediction_initial_{p_id}']
+                        room.players[p_id].effect_flags.prediction = 0
+
             # 重置所有临时效果标志，包括no_draw标志
             for p_id in room.players:
                 # 保留场地魔法等永久效果，清除所有临时效果（包括no_draw）
@@ -1735,8 +1814,27 @@ def end_turn(data):
             }, room=room_id)
             return {'status': 'success', 'new_round': True}
         else:
+            # 检查skip机制（Freezing！/神之宣告跳过对方回合）
+            next_attacker = room.attack_order[next_index]
+            if room.skip_opponent_turn and room.skip_opponent_turn == next_attacker:
+                # 跳过这个玩家的整个回合
+                room.skip_opponent_turn = False
+                next_index = (next_index + 1) % len(room.attack_order)
+                next_attacker = room.attack_order[next_index]
+
+            if room.skip_next_turn and room.skip_next_turn == next_attacker:
+                # 跳过这个玩家，切换到下一个人
+                room.skip_next_turn = None
+                next_index = (next_index + 1) % len(room.attack_order)
+                next_attacker = room.attack_order[next_index]
+                # 新回合也视为结束阶段，需要再次检查skip
+                if room.skip_next_turn and room.skip_next_turn == next_attacker:
+                    room.skip_next_turn = None
+                    next_index = (next_index + 1) % len(room.attack_order)
+                    next_attacker = room.attack_order[next_index]
+
             # 切换到下一个攻击者的准备阶段
-            room.current_attacker = room.attack_order[next_index]
+            room.current_attacker = next_attacker
             room.current_phase = 'preparation'
             room.attacks_remaining = room.players[room.current_attacker].remaining_ships
 
@@ -1761,6 +1859,139 @@ def end_turn(data):
             return {'status': 'success'}
 
     return {'status': 'error', 'message': '无法结束当前回合'}
+
+
+
+
+# 教皇旨意弃卡攻击
+@socketio.on('papal_attack')
+def handle_papal_attack(data):
+    room_id = data['room_id']
+    player_id = data['player_id']
+    target_x = data['x']
+    target_y = data['y']
+    discard_card_index = data.get('discard_card_index')
+
+    room = room_manager.get_room(room_id)
+    if not room or player_id not in room.players:
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+
+    player = room.players[player_id]
+    opponent_id = next(p for p in room.players if p != player_id)
+    opponent = room.players[opponent_id]
+
+    # 检查教皇旨意是否生效
+    if room.game_effects.get('papal_edict') is not True and room.field_magic != '教皇旨意':
+        return {'status': 'error', 'message': '教皇旨意未生效'}
+
+    # 必须有手牌才能弃卡攻击
+    if not player.magic_hand:
+        return {'status': 'error', 'message': '没有可弃置的魔法卡'}
+
+    # 弃置指定的魔法卡（如果指定了）
+    if discard_card_index is not None and 0 <= discard_card_index < len(player.magic_hand):
+        discarded = player.magic_hand.pop(discard_card_index)
+        room.magic_discard.append(discarded)
+    elif discard_card_index is None:
+        # 默认弃置第一张
+        discarded = player.magic_hand.pop(0)
+        room.magic_discard.append(discarded)
+
+    # 执行两次攻击（因为教皇旨意每次弃卡攻击两次）
+    results = []
+    for _ in range(2):
+        # 复用普通攻击逻辑
+        result = _do_attack(room, room_id, player_id, target_x, target_y, opponent_id, opponent)
+        results.append(result)
+        # 如果第一次攻击已击杀所有船，停止第二次
+        if opponent.remaining_ships <= 0:
+            break
+
+    return {'status': 'success', 'results': results}
+
+
+# 普通攻击的提取函数
+def _do_attack(room, room_id, attacker_id, target_x, target_y, defender_id, defender):
+    """执行一次普通攻击（从handle_attack提取）"""
+    defender_ships = defender.ships
+    hit = False
+    ship_sunk = False
+
+    for i, ship in enumerate(defender_ships):
+        if {'x': target_x, 'y': target_y} in ship.positions:
+            hit = True
+            if 'holy_heart' in room.game_effects and not ship.invincible:
+                room.game_effects['holy_heart']['no_damage'] = False
+            if not ship.invincible and not ship.shield:
+                defender_ships[i].hits = defender_ships[i].hits + [{'x': target_x, 'y': target_y}]
+                if len(defender_ships[i].hits) == len(defender_ships[i].positions):
+                    ship_sunk = True
+                    defender.remaining_ships -= 1
+                    defender.sunken_ships.append(defender_ships[i])
+                    room.game_effects['last_ship_change'] = {
+                        'player': defender_id,
+                        'count': 1,
+                        'ship': defender_ships[i]
+                    }
+                    if room.game_effects.get('demon_contract'):
+                        sacrifice_player = attacker_id
+                        sacrifice_player_obj = room.players[sacrifice_player]
+                        if sacrifice_player_obj.ships:
+                            sacr_ship = random.choice(sacrifice_player_obj.ships)
+                            sacrifice_player_obj.ships.remove(sacr_ship)
+                            sacrifice_player_obj.sunken_ships.append(sacr_ship)
+                            sacrifice_player_obj.remaining_ships -= 1
+                            emit('ships_updated', {
+                                'player_remaining_ships': room.players[list(room.players.keys())[0]].remaining_ships,
+                                'opponent_remaining_ships': room.players[list(room.players.keys())[1]].remaining_ships
+                            }, room=room_id)
+                    if 'holy_heart' in room.game_effects:
+                        del room.game_effects['holy_heart']
+                        emit('holy_heart_interrupted', {'reason': '有战舰被击沉，无暇圣心效果中断'}, room=room_id)
+                    if room.players[attacker_id].effect_flags.vampire:
+                        room.draw_card(attacker_id)
+                    if room.players[attacker_id].effect_flags.last_stand:
+                        room.state = 'game_over'
+                        room.winner = attacker_id
+                        emit('game_over', {'winner': attacker_id}, room=room_id)
+                        return {'game_over': True}
+                    if room.game_effects.get('last_chance') and room.game_effects['last_chance']['caster'] == defender_id:
+                        room.state = 'game_over'
+                        room.winner = attacker_id
+                        emit('game_over', {'winner': attacker_id}, room=room_id)
+                        return {'game_over': True}
+                    if ship_sunk:
+                        emit('ships_updated', {
+                            'player_remaining_ships': room.players[attacker_id].remaining_ships,
+                            'opponent_remaining_ships': room.players[defender_id].remaining_ships
+                        }, room=room_id)
+                        if room.players[attacker_id].effect_flags.subsidy:
+                            room.attacks_remaining += 3
+                        if defender.effect_flags.subsidy:
+                            room.attacks_remaining += 3
+                    break
+            elif ship.shield:
+                ship.shield = False
+            break
+
+    room.last_attack = {'attacker': attacker_id, 'x': target_x, 'y': target_y, 'hit': hit, 'ship_sunk': ship_sunk, 'round': room.round}
+    attacker_attacks = room.players[attacker_id].attacks
+    attacker_attacks.append(Position(**{'x': target_x, 'y': target_y, 'hit': hit, 'ship_sunk': ship_sunk}))
+    emit('attack_result', {
+        'attacker': attacker_id, 'x': target_x, 'y': target_y,
+        'hit': hit, 'ship_sunk': ship_sunk,
+        'remaining_attacks': room.attacks_remaining,
+        'attacker_remaining_ships': room.players[attacker_id].remaining_ships,
+        'defender_remaining_ships': room.players[defender_id].remaining_ships
+    }, room=room_id)
+
+    if room.players[defender_id].remaining_ships <= 0:
+        room.state = 'game_over'
+        room.winner = attacker_id
+        emit('game_over', {'winner': attacker_id}, room=room_id)
+        return {'status': 'success', 'game_over': True}
+
+    return {'status': 'success'}
 
 
 @socketio.on('use_magic_card')
@@ -1839,6 +2070,11 @@ def handle_use_magic_card(data):
 def can_play_magic_card(room, player_id, card):
     # 确保speed是数字类型
     speed = int(card.speed)
+
+    # 禁忌果实: 双方都无法使用任何魔法卡，除失灵！与其他场地魔法卡
+    if room.field_magic == '禁忌果实':
+        if card.name != '失灵！' and card.type != '场地':
+            return False
 
     if speed == 3:
         # 速阶3的卡牌可以在任何时候使用
@@ -2493,28 +2729,51 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                             ship_sunk = True
                             opponent.remaining_ships -= 1
                             ships_changed = True
-                        
-                        # 检查回光返照效果
-                        if room.game_effects.get('last_chance') and room.game_effects['last_chance']['caster'] == opponent_id:
-                            # 对使用回光返照的玩家造成了伤害，回光返照使用者直接判负
-                            room.state = 'game_over'
-                            room.winner = caster_id
-                            add_game_log(room, f"{room.players[opponent_id].name or opponent_id} 触发回光返照失败并判负", 'result', {
-                                'winner': caster_id,
-                                'loser': opponent_id
-                            })
-                            # 记录战绩（若为已登录用户）
-                            try:
-                                # 如果是游客（sid），db.record_match 会忽略不存在的用户
-                                winner_user_id = room.players[caster_id].user_id
-                                loser_user_id = room.players[opponent_id].user_id
-                                # 只有当至少有一个是已登录用户时才记录
-                                if winner_user_id or loser_user_id:
-                                    db.record_match(winner_user_id or caster_id, loser_user_id or opponent_id, getattr(room, 'game_logs', None))
-                            except Exception:
-                                pass
-                            emit('game_over', {'winner': caster_id}, room=room.id)
-                            return {'status': 'success', 'game_over': True}
+
+                            # 保存被击沉的船到sunken_ships
+                            opponent.sunken_ships.append(ship)
+
+                            # 百亿补贴: 自己的船被击败时攻击次数+3
+                            if opponent.effect_flags.subsidy:
+                                room.attacks_remaining += 3
+                                emit('message', {'text': '百亿补贴生效，攻击次数增加3次'}, room=room.id)
+
+                            # 八方来财
+                            if opponent.effect_flags.treasure_hunter:
+                                room.draw_card(opponent_id)
+                                emit('message', {'text': '八方来财生效，摸一张牌'}, to=opponent_id)
+
+                            # 恶魔契约
+                            if room.game_effects.get('demon_contract'):
+                                sacrifice_player = caster
+                                if sacrifice_player.ships:
+                                    sacr_ship = random.choice(sacrifice_player.ships)
+                                    sacrifice_player.ships.remove(sacr_ship)
+                                    sacrifice_player.sunken_ships.append(sacr_ship)
+                                    sacrifice_player.remaining_ships -= 1
+                                    ships_changed = True
+
+                            # 检查回光返照效果
+                            if room.game_effects.get('last_chance') and room.game_effects['last_chance']['caster'] == opponent_id:
+                                # 对使用回光返照的玩家造成了伤害，回光返照使用者直接判负
+                                room.state = 'game_over'
+                                room.winner = caster_id
+                                add_game_log(room, f"{room.players[opponent_id].name or opponent_id} 触发回光返照失败并判负", 'result', {
+                                    'winner': caster_id,
+                                    'loser': opponent_id
+                                })
+                                # 记录战绩（若为已登录用户）
+                                try:
+                                    # 如果是游客（sid），db.record_match 会忽略不存在的用户
+                                    winner_user_id = room.players[caster_id].user_id
+                                    loser_user_id = room.players[opponent_id].user_id
+                                    # 只有当至少有一个是已登录用户时才记录
+                                    if winner_user_id or loser_user_id:
+                                        db.record_match(winner_user_id or caster_id, loser_user_id or opponent_id, getattr(room, 'game_logs', None))
+                                except Exception:
+                                    pass
+                                emit('game_over', {'winner': caster_id}, room=room.id)
+                                return {'status': 'success', 'game_over': True}
                     hit_count += 1
                     break
 
@@ -2618,15 +2877,15 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['affected_positions'] = affected_positions
 
     elif card.name == '越战越勇':
-        # 每造成一次伤害，攻击次数加2
-        if not room.last_attack or room.last_attack['attacker'] != caster_id or not room.last_attack['hit']:
+        # 每击沉一艘战舰，攻击次数净增加1
+        if not room.last_attack or room.last_attack['attacker'] != caster_id or not room.last_attack['ship_sunk']:
             result['success'] = False
-            result['message'] = '必须在击中对方战舰后使用'
+            result['message'] = '必须在击沉对方战舰后使用'
             return result
 
         # 添加越战越勇效果标记
         room.players[caster_id].effect_flags.battle_spirit = True
-        result['message'] = '越战越勇效果生效，本回合每造成一次伤害攻击次数加2'
+        result['message'] = '越战越勇效果生效，本回合击沉战舰时攻击次数净增加1'
 
     elif card.name == '神威！':
         # 选定3*3区域，暂时除外区域内战舰
@@ -2654,6 +2913,9 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
 
         # 如果只有一艘船被除外，直接击沉
         if len(excluded_ships) == 1:
+            ship = excluded_ships[0]
+            # 记录到sunken_ships
+            opponent.sunken_ships.append(ship)
             result['message'] = '目标区域内1艘战舰被击沉'
         else:
             # 记录暂时除外的战舰，下一回合回归
@@ -2712,10 +2974,32 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         # 移除受影响的船只，并为其所有格子生成命中事件
         for ship in to_remove:
             if ship in opponent.ships:
+                # 保存被摧毁的船到sunken_ships
+                opponent.sunken_ships.append(ship)
                 opponent.ships.remove(ship)
                 opponent.remaining_ships -= 1
                 ships_changed = True
                 sunk_count += 1
+
+                # 百亿补贴: 自己的船被击败时攻击次数+3
+                if opponent.effect_flags.subsidy:
+                    room.attacks_remaining += 3
+                    emit('message', {'text': '百亿补贴生效，攻击次数增加3次'}, room=room.id)
+
+                # 恶魔契约
+                if room.game_effects.get('demon_contract'):
+                    sacrifice_player = caster
+                    if sacrifice_player.ships:
+                        sacr_ship = random.choice(sacrifice_player.ships)
+                        sacrifice_player.ships.remove(sacr_ship)
+                        sacrifice_player.sunken_ships.append(sacr_ship)
+                        sacrifice_player.remaining_ships -= 1
+                        ships_changed = True
+
+                # 八方来财
+                if opponent.effect_flags.treasure_hunter:
+                    room.draw_card(opponent_id)
+                    emit('message', {'text': '八方来财生效，摸一张牌'}, to=opponent_id)
                 for ship_pos in ship.positions:
                     removed_positions.add((ship_pos.x, ship_pos.y))
                     caster.attacks.append(Position(**{
@@ -2789,23 +3073,43 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         for ship in to_remove:
             if ship in opponent.ships:
                 affected_positions = []
+                # 保存被摧毁的船到sunken_ships
+                opponent.sunken_ships.append(ship)
                 opponent.ships.remove(ship)
                 opponent.remaining_ships -= 1
                 ships_changed = True
                 sunk_count += 1
+
+                # 百亿补贴: 自己的船被击败时攻击次数+3
+                if opponent.effect_flags.subsidy:
+                    room.attacks_remaining += 3
+                    emit('message', {'text': '百亿补贴生效，攻击次数增加3次'}, room=room.id)
+
+                # 恶魔契约
+                if room.game_effects.get('demon_contract'):
+                    sacrifice_player = caster
+                    if sacrifice_player.ships:
+                        sacr_ship = random.choice(sacrifice_player.ships)
+                        sacrifice_player.ships.remove(sacr_ship)
+                        sacrifice_player.sunken_ships.append(sacr_ship)
+                        sacrifice_player.remaining_ships -= 1
+                        ships_changed = True
+                opponent.remaining_ships -= 1
+                ships_changed = True
+                sunk_count += 1
                 for ship_pos in ship.positions:
-                    removed_positions.add((ship_pos["x"], ship_pos["y"]))
+                    removed_positions.add((ship_pos.x, ship_pos.y))
                     caster.attacks.append(Position(**{
-                        'x': ship_pos["x"],
-                        'y': ship_pos["y"],
+                        'x': ship_pos.x,
+                        'y': ship_pos.y,
                         'hit': True,
                         'ship_sunk': True,
                         'is_sulfur': True
                     }))
                     attack_result = {
                         'attacker': caster_id,
-                        'x': ship_pos["x"],
-                        'y': ship_pos["y"],
+                        'x': ship_pos.x,
+                        'y': ship_pos.y,
                         'hit': True,
                         'ship_sunk': True,
                         'remaining_attacks': room.attacks_remaining,
@@ -2814,8 +3118,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                     }
                     emit('attack_result', attack_result, room=room.id)
                     affected_positions.append(Position(**{
-                        'x': ship_pos["x"],
-                        'y': ship_pos["y"],
+                        'x': ship_pos.x,
+                        'y': ship_pos.y,
                         'hit': True,
                         'ship_sunk': True
                     }))
@@ -2965,9 +3269,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             result['message'] = '必须在自己回合发动'
             return result
 
-        # 检查是否造成过伤害
-        has_damaged = any(a.hit for a in caster.attacks if a.round == room.round)
-        if has_damaged:
+        # 检查是否造成过伤害（使用damage_dealt_this_turn而非a.round，因为Position.round从未被赋值）
+        if caster.damage_dealt_this_turn > 0:
             result['success'] = False
             result['message'] = '本回合已造成伤害，无法发动'
             return result
@@ -3038,11 +3341,24 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
 
         # 无效化最后一次船数改变
         last_change = room.game_effects.pop('last_ship_change')
-        # 恢复船数
-        if last_change['player'] == caster_id:
-            caster.remaining_ships += last_change['count']
-        else:
-            opponent.remaining_ships += last_change['count']
+        # 恢复船数和被移除的ship
+        affected_player_id = last_change['player']
+        affected_player = room.players[affected_player_id]
+        count = last_change['count']
+        affected_player.remaining_ships += count
+
+        # 完全回滚: 把ship重新加回列表，从sunken_ships中移除
+        if 'ship' in last_change and last_change['ship'] is not None:
+            affected_player.ships.append(last_change['ship'])
+            # 从sunken_ships中移除
+            if last_change['ship'] in affected_player.sunken_ships:
+                affected_player.sunken_ships.remove(last_change['ship'])
+
+        # 广播更新
+        emit('ships_updated', {
+            'player_remaining_ships': room.players[list(room.players.keys())[0]].remaining_ships,
+            'opponent_remaining_ships': room.players[list(room.players.keys())[1]].remaining_ships
+        }, room=room.id)
 
         result['message'] = '成功无效化船数改变效果'
 
@@ -3059,20 +3375,32 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             result['message'] = '需要至少2艘战舰才能发动'
             return result
 
-        # 牺牲两艘船
-        caster.ships.pop()
-        caster.ships.pop()
-        caster.remaining_ships -= 2
+        # 牺牲两艘船（随机选择，因为无交互选择）
+        sacrificed_ships = []
+        for _ in range(2):
+            if caster.ships:
+                sacr = random.choice(caster.ships)
+                sacrificed_ships.append(sacr)
+                caster.ships.remove(sacr)
+                caster.sunken_ships.append(sacr)
+                caster.remaining_ships -= 1
 
         # 获取选择的效果
         effect_choice = room.magic_temp_data.get('effect_choice', 1)
         if effect_choice == 1:
-            # 让对方选择一艘船死亡
-            opponent.ships.pop()
-            opponent.remaining_ships -= 1
-            result['message'] = '牺牲两艘战舰，对方被迫选择一艘战舰摧毁'
+            # 让对方随机选择一艘船死亡
+            if opponent.ships:
+                sacr_opponent = random.choice(opponent.ships)
+                opponent.ships.remove(sacr_opponent)
+                opponent.sunken_ships.append(sacr_opponent)
+                opponent.remaining_ships -= 1
+                emit('ships_updated', {
+                    'player_remaining_ships': room.players[list(room.players.keys())[0]].remaining_ships,
+                    'opponent_remaining_ships': room.players[list(room.players.keys())[1]].remaining_ships
+                }, room=room.id)
+            result['message'] = '牺牲两艘战舰，对方一艘战舰被摧毁'
         else:
-            # 跳过对方所有阶段
+            # 跳过对方本回合所有阶段
             room.skip_opponent_turn = True
             result['message'] = '牺牲两艘战舰，跳过对方本回合所有阶段'
 
@@ -3139,9 +3467,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
 
         # 获取对方上一张魔法卡
         stolen_card = room.magic_history[-1]['card']
+        # 将偷到的卡加入手牌（只加一次）
         caster.magic_hand.append(stolen_card)
-        caster.magic_hand.append(stolen_card)
-        room.discard_card(caster_id, stolen_card)
 
         result['message'] = f'成功盗取对方的{stolen_card.name}'
 
@@ -3214,6 +3541,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         x = room.magic_temp_data['prediction']
         room.players[caster_id].effect_flags = room.players[caster_id].effect_flags
         room.players[caster_id].effect_flags.prediction = x
+        # 保存初始船数用于结束阶段检查
+        room.game_effects[f'prediction_initial_{caster_id}'] = len(caster.ships)
         result.message = f'宣言船数减少{x}，若预测成功则不会减少'
 
     # ==== 场地魔法卡 ====
@@ -3230,6 +3559,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         room.field_magic = card.name
 
         if card.name == '恶魔契约':
+            room.game_effects['demon_contract'] = True
             result.message = '恶魔契约生效，双方船数增减绑定'
         elif card.name == '禁忌果实':
             result.message = '禁忌果实生效，双方只能使用失灵！和场地魔法'
@@ -3242,7 +3572,13 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
     elif card.name == '失灵！':
         # 无效化对方上一张魔法卡
         if room.magic_history and room.magic_history[-1]['caster'] != caster_id:
-            last_magic = room.magic_history.pop()
+            last_magic = room.magic_history[-1]
+            # 加百列之光不受失灵影响
+            if last_magic.get('card', {}).get('name') == '加百列之光':
+                result.success = False
+                result.message = '加百列之光免疫失灵！'
+                return result
+            room.magic_history.pop()
             result.message = f'无效化了{last_magic["card"]["name"]}'
             result.negated = last_magic
         else:

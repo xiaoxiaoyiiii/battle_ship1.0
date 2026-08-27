@@ -89,7 +89,8 @@ def user_stats_view():
             return jsonify({'error': '未登录'}), 401
         stats = db.get_user(uid=uid)
     if not stats:
-        return jsonify({'error': '用户不存在'}), 404
+        # 用户不存在（如游客查询对手）时返回空战绩，避免前端轮询404
+        return jsonify({'stats': None, 'history': []})
     history = db.get_match_history(stats['id'], limit)
     return jsonify({'stats': stats, 'history': history})
 @app.route('/')

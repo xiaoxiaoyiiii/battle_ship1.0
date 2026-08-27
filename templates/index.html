@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>战舰游戏</title>
-    <!-- 修改CSS引用路径 -->
     <link rel="stylesheet" href="/static/style.css">
     <script src="/static/socket.io.js"></script>
 </head>
@@ -12,154 +11,37 @@
     <canvas id="particle-canvas"></canvas>
 <div class="game-container">
     <div class="nav" id="game-nav">
-        {% if username %}
-            <span>已登录: {{ username }}</span> | <a href="/logout">退出</a> |
-            <a href="/leaderboard" class="hide-in-game">排行榜</a> |
-            <a href="#" id="show-user-stats" class="hide-in-game">个人战绩</a> |
-            <a href="#" id="show-profile" class="hide-in-game">个人信息</a> |
-            <a href="#" id="toggle-theme" class="hide-in-game">深色模式</a>
-        {% else %}
-            <a href="/login" class="hide-in-game">登录</a> | <a href="/register" class="hide-in-game">注册</a> |
-            <a href="/leaderboard" class="hide-in-game">排行榜</a> |
-            <a href="#" id="toggle-theme" class="hide-in-game">深色模式</a>
-        {% endif %}
-        <!-- 个人信息模态弹窗 -->
-        <div id="profile-modal" class="modal-overlay hidden">
-            <div class="modal-content" style="max-width:400px;">
-                <span class="modal-close" id="profile-modal-close">×</span>
-                <h2>个人信息</h2>
-                <div id="profile-content" style="text-align:left;max-height:60vh;overflow-y:auto;">
-                    <form id="profile-form">
-                        <div style="text-align:center;margin-bottom:1em;">
-                            <img id="profile-avatar" src="/static/avatars/default.png" alt="头像"
-                                 style="width:80px;height:80px;border-radius:50%;object-fit:cover;border:1px solid #ccc;">
-                            <br>
-                            <input type="file" id="avatar-input" accept="image/*" style="margin-top:8px;">
-                        </div>
-                        <label style="display:block;margin-bottom:1em;">
-                            <span>用户名：</span>
-                            <span id="profile-username"></span>
-                        </label>
-                        <label style="display:block;margin-bottom:1em;">
-                            <span>个性签名：</span>
-                            <input type="text" id="profile-signature" maxlength="60" style="width:90%;">
-                        </label>
-                        <button type="submit" class="btn">保存修改</button>
-                    </form>
-                    <hr>
-                    <form id="change-password-form" style="margin-top:1em;">
-                        <label style="display:block;margin-bottom:0.5em;">
-                            <span>原密码：</span>
-                            <input type="password" id="old-password" maxlength="32" style="width:90%;">
-                        </label>
-                        <label style="display:block;margin-bottom:0.5em;">
-                            <span>新密码：</span>
-                            <input type="password" id="new-password" maxlength="32" style="width:90%;">
-                        </label>
-                        <button type="submit" class="btn">更改密码</button>
-                    </form>
-                    <div id="change-password-msg" style="color:green;margin-top:8px;"></div>
-                </div>
-            </div>
-        </div>
-        <button id="help-btn" class="btn secondary" style="margin-left:12px;">帮助</button>
-        <button id="settings-btn" class="btn secondary" style="margin-left:12px;">设置</button>
-        <button id="music-btn" class="btn secondary" style="margin-left:12px;">🎵</button>
-        <!-- 设置模态弹窗 -->
-        <div id="settings-modal" class="modal-overlay hidden">
-            <div class="modal-content" style="max-width:400px;">
-                <span class="modal-close" id="settings-modal-close">×</span>
-                <h2>界面设置</h2>
-                <div id="settings-content" style="text-align:left;max-height:60vh;overflow-y:auto;">
-                    <label style="display:block;margin-bottom:1em;">
-                        <span>主色（Primary Color）：</span>
-                        <input type="color" id="primary-color-picker" value="#1976d2"
-                               style="vertical-align:middle;margin-left:8px;">
-                    </label>
-                    <hr style="margin: 1em 0;">
-                    <h3>背景音乐设置</h3>
-                    <div style="margin-bottom:1em;">
-                        <label style="display:block;margin-bottom:0.5em;">
-                            <span>音量：</span>
-                            <input type="range" id="music-volume" min="0" max="100" value="50"
-                                   style="width:200px;vertical-align:middle;">
-                            <span id="volume-display">50%</span>
-                        </label>
-                    </div>
-                    <div style="margin-bottom:1em;">
-                        <label style="display:block;margin-bottom:0.5em;">
-                            <span>循环模式：</span>
-                            <select id="music-loop-mode" style="vertical-align:middle;">
-                                <option value="all">全部循环</option>
-                                <option value="single">单曲循环</option>
-                                <option value="none">不循环</option>
-                            </select>
-                        </label>
-                    </div>
-                    <div style="margin-bottom:1em;">
-                        <button id="music-toggle-play" class="btn">播放/暂停</button>
-                        <button id="music-next" class="btn">下一首</button>
-                        <button id="music-previous" class="btn">上一首</button>
-                    </div>
-                    <div style="margin-bottom:1em;">
-                        <label style="display:inline-block;margin-right:1em;">
-                            <input type="checkbox" id="music-muted"> 静音
-                        </label>
-                    </div>
-                    <div style="margin-bottom:1em;font-size:0.9em;color:var(--muted);">
-                        <p>当前播放: <span id="current-track">未播放</span></p>
-                    </div>
-                    <button id="settings-save-btn" class="btn">保存</button>
-                </div>
-            </div>
-        </div>
-        <!-- 帮助模态弹窗 -->
-        <div id="help-modal" class="modal-overlay hidden">
-            <div class="modal-content" style="max-width:600px;">
-                <span class="modal-close" id="help-modal-close">×</span>
-                <h2>游戏帮助</h2>
-                <div id="help-content" style="text-align:left;max-height:60vh;overflow-y:auto;">
-                    <h3>玩法简介</h3>
-                    <ul>
-                        <li>每位玩家布置6艘战舰，轮流攻击，率先击沉对方全部战舰获胜。</li>
-                        <li>可使用魔法卡牌，触发特殊效果。</li>
-                    </ul>
-                    <h3>魔法卡牌说明</h3>
-                    <div id="help-magic-cards"></div>
-                    <p style="color:var(--muted);font-size:0.95em;margin-top:1em;">如需详细规则请咨询管理员。</p>
-                </div>
-            </div>
-        </div>
-        <!-- 个人战绩模态弹窗 -->
-        <div id="user-stats-modal" class="modal-overlay hidden">
-            <div class="modal-content">
-                <span class="modal-close" id="user-stats-modal-close">×</span>
-                <h2>个人战绩</h2>
-                <div id="user-stats-content"><p>加载中...</p></div>
-            </div>
-        </div>
-        <!-- 对局详情模态弹窗 -->
-        <div id="match-detail-modal" class="modal-overlay hidden">
-            <div class="modal-content" style="max-width:600px;max-height:80vh;">
-                <span class="modal-close" id="match-detail-modal-close">×</span>
-                <h2>对局详情</h2>
-                <div id="match-detail-content" style="text-align:left;max-height:60vh;overflow-y:auto;">
-                    <p>加载中...</p>
-                </div>
-            </div>
+        <div class="nav-brand">⚓ 战舰游戏</div>
+        <div class="nav-menu">
+            {% if username %}
+                <span class="nav-user">已登录: {{ username }}</span>
+                <a href="/logout">退出</a>
+                <a href="/leaderboard" class="hide-in-game">排行榜</a>
+                <a href="#" id="show-user-stats" class="hide-in-game">个人战绩</a>
+                <a href="#" id="show-profile" class="hide-in-game">个人信息</a>
+                <a href="#" id="toggle-theme" class="hide-in-game">深色模式</a>
+            {% else %}
+                <a href="/login" class="hide-in-game">登录</a>
+                <a href="/register" class="hide-in-game">注册</a>
+                <a href="/leaderboard" class="hide-in-game">排行榜</a>
+                <a href="#" id="toggle-theme" class="hide-in-game">深色模式</a>
+            {% endif %}
+            <button id="help-btn" class="btn secondary">帮助</button>
+            <button id="settings-btn" class="btn secondary">设置</button>
+            <button id="music-btn" class="btn secondary">🎵</button>
         </div>
     </div>
 
     <!-- 开始界面 -->
     <div id="start-screen" class="screen active">
-        <h1>战舰游戏</h1>
+        <h1>⚓ 战舰游戏</h1>
         <div class="input-group">
             <input type="text" id="player-name" placeholder="输入你的名字">
         </div>
         <div class="button-group">
             <button id="find-match">匹配游戏</button>
-            <button id="ai-match">人机对战</button>
-            <button id="custom-room">自定义房间游戏</button>
+            <button id="ai-match" class="secondary">人机对战</button>
+            <button id="custom-room" class="secondary">自定义房间游戏</button>
         </div>
         <div id="match-status" class="hidden">
             <p>正在寻找匹配...</p>
@@ -167,8 +49,7 @@
         </div>
 
         <!-- 在线人数显示 -->
-        <div id="online-count-container"
-             style="margin-top: 20px; text-align: center; color: var(--muted); font-size: 0.9rem;">
+        <div id="online-count-container">
             当前在线人数: <span id="online-count">0</span>
         </div>
     </div>
@@ -181,7 +62,7 @@
         </div>
         <div class="button-group">
             <button id="custom-create-room">创建房间</button>
-            <button id="custom-join-room">加入房间</button>
+            <button id="custom-join-room" class="secondary">加入房间</button>
         </div>
         <div id="custom-room-id-input" class="input-group hidden">
             <input type="text" id="custom-room-code" placeholder="输入房间ID">
@@ -192,44 +73,43 @@
             <p>等待其他玩家加入...</p>
         </div>
         <div class="button-group">
-            <button id="back-to-main">返回主菜单</button>
+            <button id="back-to-main" class="secondary">返回主菜单</button>
         </div>
     </div>
-
 
     <!-- 登录模态弹窗 -->
-<div id="login-modal" class="modal-overlay hidden">
-    <div class="modal-content">
-        <span class="modal-close" id="login-modal-close">×</span>
-        <h2>登录</h2>
-        <div class="input-group">
-            <input type="text" id="login-username" placeholder="用户名" class="modal-input">
-        </div>
-        <div class="input-group">
-            <input type="password" id="login-password" placeholder="密码" class="modal-input">
-        </div>
-        <div class="button-group">
-            <button id="login-submit" class="modal-btn">登录</button>
+    <div id="login-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <span class="modal-close" id="login-modal-close">×</span>
+            <h2>登录</h2>
+            <div class="input-group">
+                <input type="text" id="login-username" placeholder="用户名" class="modal-input">
+            </div>
+            <div class="input-group">
+                <input type="password" id="login-password" placeholder="密码" class="modal-input">
+            </div>
+            <div class="button-group">
+                <button id="login-submit" class="modal-btn">登录</button>
+            </div>
         </div>
     </div>
-</div>
 
-<!-- 注册模态弹窗 -->
-<div id="register-modal" class="modal-overlay hidden">
-    <div class="modal-content">
-        <span class="modal-close" id="register-modal-close">×</span>
-        <h2>注册</h2>
-        <div class="input-group">
-            <input type="text" id="register-username" placeholder="用户名" class="modal-input">
-        </div>
-        <div class="input-group">
-            <input type="password" id="register-password" placeholder="密码" class="modal-input">
-        </div>
-        <div class="button-group">
-            <button id="register-submit" class="modal-btn">注册</button>
+    <!-- 注册模态弹窗 -->
+    <div id="register-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <span class="modal-close" id="register-modal-close">×</span>
+            <h2>注册</h2>
+            <div class="input-group">
+                <input type="text" id="register-username" placeholder="用户名" class="modal-input">
+            </div>
+            <div class="input-group">
+                <input type="password" id="register-password" placeholder="密码" class="modal-input">
+            </div>
+            <div class="button-group">
+                <button id="register-submit" class="modal-btn">注册</button>
+            </div>
         </div>
     </div>
-</div>
 
     <!-- 匹配成功等待界面 -->
     <div id="match-success-screen" class="screen">
@@ -251,9 +131,9 @@
             <div id="player-board" class="board"></div>
         </div>
         <p id="ships-placed">已放置: <span id="placed-count">0</span>/6</p>
-        <div style="display: flex; gap: 10px; margin-top: 15px;">
-            <button id="random-ships" class="btn">随机摆放</button>
-            <button id="confirm-ships" class="hidden btn">确认放置</button>
+        <div class="placement-actions">
+            <button id="random-ships">随机摆放</button>
+            <button id="confirm-ships" class="hidden">确认放置</button>
         </div>
     </div>
 
@@ -270,7 +150,6 @@
     </div>
 
     <!-- 游戏主界面 -->
-    <!-- 在游戏主界面添加场地魔法区域 -->
     <div id="game-screen" class="screen">
         <div class="game-main-container">
             <!-- 日志区域 -->
@@ -313,7 +192,7 @@
                     <div class="in-game-chat-input-row">
                         <input type="text" id="in-game-chat-input" maxlength="100" placeholder="输入聊天内容..."
                                autocomplete="off"/>
-                        <button id="in-game-chat-send" class="btn">发送</button>
+                        <button id="in-game-chat-send">发送</button>
                     </div>
                 </div>
                 <div class="game-info">
@@ -322,16 +201,16 @@
                         <h3>极限增援结算倒计时</h3>
                         <div class="countdown-text">剩余 <span id="reinforcement-remaining">0</span> 回合后将结算！</div>
                     </div>
-                    
+
                     <!-- 无暇圣心倒计回合显示 -->
                     <div id="holy-heart-countdown" class="holy-heart-countdown hidden">
                         <h3>无暇圣心结算倒计时</h3>
                         <div class="countdown-text">剩余 <span id="holy-heart-remaining">0</span> 回合后将结算！</div>
                     </div>
 
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div class="turn-indicator-inner">
                         <h2>第<span id="game-round">1</span>回合</h2>
-                        <button id="surrender-btn" class="surrender-btn">投降</button>
+                        <button id="surrender-btn" class="surrender-btn danger">投降</button>
                     </div>
                     <!-- 状态显示栏 - 显示延迟结算效果 -->
                     <div id="effect-status-bar" class="effect-status-bar">
@@ -345,40 +224,29 @@
                         </div>
                     </div>
 
-                    <!-- 添加场地魔法显示区域 -->
+                    <!-- 场地魔法显示区域 -->
                     <div class="field-magic-area">
                         <div id="current-field-magic" class="field-magic">当前生效的场地魔法: <span
                                 class="no-magic">无</span></div>
                     </div>
                     <div class="players-info">
                         <div class="player-info">
-                            <div style="display:flex;align-items:center;gap:10px;">
+                            <div class="player-flex-row">
                                 <img id="my-avatar-in-game" src="/static/avatars/default.png" alt="我的头像"
-                                     style="width:40px;height:40px;border-radius:50%;object-fit:cover;border:1px solid #ccc;">
+                                     class="avatar-sm">
                                 <div>
                                     <p>你: <span id="your-ships">6</span>艘战舰剩余</p>
-                                    <div id="my-username-info" style="font-size:0.95em;color:var(--muted);"></div>
+                                    <div id="my-username-info" class="username-info"></div>
                                 </div>
                             </div>
                         </div>
                         <div class="player-info">
-                            <div style="display:flex;align-items:center;gap:10px;">
+                            <div class="player-flex-row">
                                 <img id="opponent-avatar-in-game" src="/static/avatars/default.png" alt="对手头像"
-                                     style="width:40px;height:40px;border-radius:50%;object-fit:cover;border:1px solid #ccc;">
+                                     class="avatar-sm">
                                 <div>
                                     <p>对手: <span id="opponent-ships">6</span>艘战舰剩余</p>
-                                    <div id="opponent-username-info"
-                                         style="font-size:0.95em;color:var(--muted);display:inline-block;"></div>
-                                </div>
-                            </div>
-                        </div>
-                        <!-- 对手战绩模态弹窗 -->
-                        <div id="opponent-stats-modal" class="modal-overlay hidden">
-                            <div class="modal-content">
-                                <span class="modal-close" id="opponent-stats-modal-close">×</span>
-                                <h2>对手战绩</h2>
-                                <div id="opponent-stats-content">
-                                    <p>加载中...</p>
+                                    <div id="opponent-username-info" class="username-info"></div>
                                 </div>
                             </div>
                         </div>
@@ -422,25 +290,13 @@
                 </div>
 
                 <!-- 弃牌堆查看按钮 -->
-                <div style="text-align: center; margin-top: 10px;">
-                    <button id="view-discard-pile" class="btn btn-secondary">查看弃牌堆</button>
+                <div class="discard-pile-btn-row">
+                    <button id="view-discard-pile" class="btn btn-secondary secondary">查看弃牌堆</button>
                 </div>
-
-                <!-- 弃牌堆查看弹窗 -->
-                <div id="discard-pile-modal" class="modal-overlay hidden">
-                    <div class="modal-content discard-pile-content">
-                        <span class="modal-close" id="discard-pile-modal-close">×</span>
-                        <h2>弃牌堆</h2>
-                        <div class="discard-pile-container">
-                            <div id="discard-pile-cards"></div>
-                        </div>
-                    </div>
-                </div>
-                
             </div>
         </div>
     </div>
-    
+
     <!-- 大厅界面 -->
     <div id="lobby-screen" class="screen">
         <h2>游戏大厅</h2>
@@ -451,8 +307,8 @@
         </div>
         <div class="button-group">
             <button id="join-lobby-match">加入匹配</button>
-            <button id="leave-lobby-match" class="hidden">离开匹配</button>
-            <button id="back-to-main-from-lobby">返回首页</button>
+            <button id="leave-lobby-match" class="hidden secondary">离开匹配</button>
+            <button id="back-to-main-from-lobby" class="secondary">返回首页</button>
         </div>
     </div>
 
@@ -475,8 +331,8 @@
             </table>
             <div id="leaderboard-error" class="hidden"></div>
         </div>
-        <div style="text-align:center; margin-top:12px;">
-            <button id="back-to-main-from-leaderboard" class="btn">返回首页</button>
+        <div class="leaderboard-back-row">
+            <button id="back-to-main-from-leaderboard" class="secondary">返回首页</button>
         </div>
     </div>
 
@@ -488,9 +344,148 @@
             <button id="return-to-menu">返回主菜单</button>
         </div>
     </div>
+
+    <!-- 个人信息模态弹窗 -->
+    <div id="profile-modal" class="modal-overlay hidden">
+        <div class="modal-content narrow-modal">
+            <span class="modal-close" id="profile-modal-close">×</span>
+            <h2>个人信息</h2>
+            <div id="profile-content" class="modal-scroll-content">
+                <form id="profile-form">
+                    <div class="profile-avatar-row">
+                        <img id="profile-avatar" src="/static/avatars/default.png" alt="头像" class="avatar-lg">
+                        <br>
+                        <input type="file" id="avatar-input" accept="image/*">
+                    </div>
+                    <label class="profile-label">
+                        <span>用户名：</span>
+                        <span id="profile-username"></span>
+                    </label>
+                    <label class="profile-label">
+                        <span>个性签名：</span>
+                        <input type="text" id="profile-signature" maxlength="60">
+                    </label>
+                    <button type="submit" class="btn">保存修改</button>
+                </form>
+                <hr class="settings-section-gap">
+                <form id="change-password-form">
+                    <label class="profile-label-half">
+                        <span>原密码：</span>
+                        <input type="password" id="old-password" maxlength="32">
+                    </label>
+                    <label class="profile-label-half">
+                        <span>新密码：</span>
+                        <input type="password" id="new-password" maxlength="32">
+                    </label>
+                    <button type="submit" class="btn">更改密码</button>
+                </form>
+                <div id="change-password-msg"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 设置模态弹窗 -->
+    <div id="settings-modal" class="modal-overlay hidden">
+        <div class="modal-content narrow-modal">
+            <span class="modal-close" id="settings-modal-close">×</span>
+            <h2>界面设置</h2>
+            <div id="settings-content" class="modal-scroll-content">
+                <label class="profile-label">
+                    <span>主色（Primary Color）：</span>
+                    <input type="color" id="primary-color-picker" value="#1976d2">
+                </label>
+                <hr class="settings-section-gap">
+                <h3>背景音乐设置</h3>
+                <label class="profile-label-half">
+                    <span>音量：</span>
+                    <input type="range" id="music-volume" min="0" max="100" value="50">
+                    <span id="volume-display">50%</span>
+                </label>
+                <label class="profile-label-half">
+                    <span>循环模式：</span>
+                    <select id="music-loop-mode">
+                        <option value="all">全部循环</option>
+                        <option value="single">单曲循环</option>
+                        <option value="none">不循环</option>
+                    </select>
+                </label>
+                <div class="profile-label-half">
+                    <button id="music-toggle-play" class="btn">播放/暂停</button>
+                    <button id="music-next" class="btn">下一首</button>
+                    <button id="music-previous" class="btn">上一首</button>
+                </div>
+                <label class="profile-label-half">
+                    <input type="checkbox" id="music-muted"> 静音
+                </label>
+                <div class="muted-hint">
+                    <p>当前播放: <span id="current-track">未播放</span></p>
+                </div>
+                <button id="settings-save-btn" class="btn">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 帮助模态弹窗 -->
+    <div id="help-modal" class="modal-overlay hidden">
+        <div class="modal-content wide-modal">
+            <span class="modal-close" id="help-modal-close">×</span>
+            <h2>游戏帮助</h2>
+            <div id="help-content" class="modal-scroll-content">
+                <h3>玩法简介</h3>
+                <ul>
+                    <li>每位玩家布置6艘战舰，轮流攻击，率先击沉对方全部战舰获胜。</li>
+                    <li>可使用魔法卡牌，触发特殊效果。</li>
+                </ul>
+                <h3>魔法卡牌说明</h3>
+                <div id="help-magic-cards"></div>
+                <p class="muted-hint">如需详细规则请咨询管理员。</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 个人战绩模态弹窗 -->
+    <div id="user-stats-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <span class="modal-close" id="user-stats-modal-close">×</span>
+            <h2>个人战绩</h2>
+            <div id="user-stats-content"><p>加载中...</p></div>
+        </div>
+    </div>
+
+    <!-- 对局详情模态弹窗 -->
+    <div id="match-detail-modal" class="modal-overlay hidden">
+        <div class="modal-content wide-modal">
+            <span class="modal-close" id="match-detail-modal-close">×</span>
+            <h2>对局详情</h2>
+            <div id="match-detail-content" class="modal-scroll-content">
+                <p>加载中...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 对手战绩模态弹窗 -->
+    <div id="opponent-stats-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <span class="modal-close" id="opponent-stats-modal-close">×</span>
+            <h2>对手战绩</h2>
+            <div id="opponent-stats-content">
+                <p>加载中...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 弃牌堆查看弹窗 -->
+    <div id="discard-pile-modal" class="modal-overlay hidden">
+        <div class="modal-content discard-pile-content">
+            <span class="modal-close" id="discard-pile-modal-close">×</span>
+            <h2>弃牌堆</h2>
+            <div class="discard-pile-container">
+                <div id="discard-pile-cards"></div>
+            </div>
+        </div>
+    </div>
 </div>
 
-<!-- 修改JS引用路径 -->
 <!-- 确保正确的加载顺序 -->
 <script src="/static/magic_cards.js"></script>
 <!-- 先加载游戏核心逻辑 -->
@@ -583,4 +578,3 @@
 </script>
 </body>
 </html>
-

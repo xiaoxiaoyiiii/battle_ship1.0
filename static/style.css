@@ -916,6 +916,8 @@ body.cool-effects-enabled .cell.cool-flash {
     margin-bottom: 16px;
 }
 .discard-pile-content { width: 95%; max-width: 900px; }
+.narrow-modal { max-width: 400px; }
+.wide-modal { max-width: 600px; }
 .modal-close {
     position: absolute;
     top: 15px;

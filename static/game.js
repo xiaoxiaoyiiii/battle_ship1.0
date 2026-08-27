@@ -1,30 +1,36 @@
-// 基于原 game.js 的优化：添加粒子动画
+// 基于原 game.js 的优化：添加海洋气泡粒子动画
 function initParticles() {
     const canvas = document.getElementById('particle-canvas');
     const ctx = canvas.getContext('2d');
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
+    const primaryColor = getComputedStyle(document.documentElement).getPropertyValue('--primary-rgb').trim() || '21, 101, 192';
     const particles = [];
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 60; i++) {
         particles.push({
             x: Math.random() * canvas.width,
             y: Math.random() * canvas.height,
-            radius: Math.random() * 2 + 1,
-            speed: Math.random() * 0.5 + 0.1,
-            color: 'rgba(25,118,210,0.3)' // 基于 --primary
+            radius: Math.random() * 3 + 1,
+            speed: Math.random() * 0.6 + 0.2,
+            sway: Math.random() * Math.PI * 2,
+            swaySpeed: Math.random() * 0.02 + 0.005,
+            alpha: Math.random() * 0.25 + 0.08
         });
     }
 
     function animate() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         particles.forEach(p => {
-            p.y += p.speed;
-            if (p.y > canvas.height) p.y = 0;
+            p.y -= p.speed;
+            p.sway += p.swaySpeed;
+            p.x += Math.sin(p.sway) * 0.3;
+            if (p.y < -10) { p.y = canvas.height + 10; p.x = Math.random() * canvas.width; }
             ctx.beginPath();
             ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-            ctx.fillStyle = p.color;
-            ctx.fill();
+            ctx.strokeStyle = `rgba(${primaryColor}, ${p.alpha})`;
+            ctx.lineWidth = 1;
+            ctx.stroke();
         });
         requestAnimationFrame(animate);
     }
@@ -439,6 +445,16 @@ if (settingsSaveBtn && primaryColorPicker) {
 function applyPrimaryColor(color) {
     document.documentElement.style.setProperty('--primary', color);
     document.documentElement.style.setProperty('--primary-600', color);
+    document.documentElement.style.setProperty('--primary-rgb', hexToRgb(color));
+}
+
+// 十六进制颜色转 "r, g, b" 字符串（供 rgba(var(--primary-rgb), ...) 使用）
+function hexToRgb(hex) {
+    const h = String(hex).trim().replace('#', '');
+    const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+    const n = parseInt(full, 16);
+    if (isNaN(n)) return '21, 101, 192';
+    return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
 }
 
 // 页面加载时自动应用自定义主色

@@ -443,9 +443,14 @@ if (settingsSaveBtn && primaryColorPicker) {
 }
 
 function applyPrimaryColor(color) {
+    const dark = darkenHex(color, 0.25);
+    const light = lightenHex(color, 0.15);
     document.documentElement.style.setProperty('--primary', color);
-    document.documentElement.style.setProperty('--primary-600', color);
+    document.documentElement.style.setProperty('--primary-600', dark);
     document.documentElement.style.setProperty('--primary-rgb', hexToRgb(color));
+    document.documentElement.style.setProperty('--primary-gradient', `linear-gradient(135deg, ${dark}, ${light})`);
+    document.documentElement.style.setProperty('--primary-50', `rgba(${hexToRgb(color)}, 0.12)`);
+    document.documentElement.style.setProperty('--shadow-glow', `0 0 15px rgba(${hexToRgb(color)}, 0.5)`);
 }
 
 // 十六进制颜色转 "r, g, b" 字符串（供 rgba(var(--primary-rgb), ...) 使用）
@@ -455,6 +460,23 @@ function hexToRgb(hex) {
     const n = parseInt(full, 16);
     if (isNaN(n)) return '21, 101, 192';
     return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
+}
+
+// 按百分比加深十六进制颜色，非法输入时回退默认色
+function darkenHex(hex, amount) {
+    return shadeHex(hex, -amount);
+}
+
+// 按百分比提亮十六进制颜色，非法输入时回退默认色
+function lightenHex(hex, amount) {
+    return shadeHex(hex, amount);
+}
+
+function shadeHex(hex, amount) {
+    const rgb = hexToRgb(hex).split(',').map(Number);
+    if (rgb.length !== 3 || rgb.some(isNaN)) return '#1565c0';
+    const adjust = v => Math.max(0, Math.min(255, Math.round(v * (1 + amount))));
+    return `#${rgb.map(adjust).map(v => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
 // 页面加载时自动应用自定义主色

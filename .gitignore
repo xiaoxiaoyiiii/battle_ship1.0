@@ -3,6 +3,8 @@ __pycache__/
 .idea/
 *.pyc
 *.db
+*.db-shm
+*.db-wal
 1
 avatars/
 .trae/

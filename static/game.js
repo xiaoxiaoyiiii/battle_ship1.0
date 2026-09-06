@@ -107,7 +107,7 @@ document.addEventListener('DOMContentLoaded', function () {
         avatarCorner.style.top = '16px';
         avatarCorner.style.left = '16px';
         avatarCorner.style.zIndex = '1000';
-        avatarCorner.style.background = 'rgba(255,255,255,0.85)';
+        avatarCorner.style.background = 'var(--glass)';
         avatarCorner.style.borderRadius = '24px';
         avatarCorner.style.boxShadow = '0 2px 8px rgba(0,0,0,0.08)';
         avatarCorner.style.padding = '4px 12px 4px 4px';
@@ -121,7 +121,7 @@ document.addEventListener('DOMContentLoaded', function () {
         myNameSpan.style.marginLeft = '8px';
         myNameSpan.style.fontWeight = 'bold';
         myNameSpan.style.fontSize = '1.05em';
-        myNameSpan.style.color = '#333';
+        myNameSpan.style.color = 'var(--text)';
         avatarCorner.appendChild(myNameSpan);
         document.body.appendChild(avatarCorner);
     } else {
@@ -132,7 +132,7 @@ document.addEventListener('DOMContentLoaded', function () {
             myNameSpan.style.marginLeft = '8px';
             myNameSpan.style.fontWeight = 'bold';
             myNameSpan.style.fontSize = '1.05em';
-            myNameSpan.style.color = '#333';
+            myNameSpan.style.color = 'var(--text)';
             avatarCorner.appendChild(myNameSpan);
         }
     }
@@ -146,7 +146,7 @@ document.addEventListener('DOMContentLoaded', function () {
         opponentAvatarCorner.style.top = '16px';
         opponentAvatarCorner.style.right = '16px';
         opponentAvatarCorner.style.zIndex = '1000';
-        opponentAvatarCorner.style.background = 'rgba(255,255,255,0.85)';
+        opponentAvatarCorner.style.background = 'var(--glass)';
         opponentAvatarCorner.style.borderRadius = '24px';
         opponentAvatarCorner.style.boxShadow = '0 2px 8px rgba(0,0,0,0.08)';
         opponentAvatarCorner.style.padding = '4px 4px 4px 12px';
@@ -158,7 +158,7 @@ document.addEventListener('DOMContentLoaded', function () {
         oppNameSpan.style.marginRight = '8px';
         oppNameSpan.style.fontWeight = 'bold';
         oppNameSpan.style.fontSize = '1.05em';
-        oppNameSpan.style.color = '#333';
+        oppNameSpan.style.color = 'var(--text)';
         opponentAvatarCorner.appendChild(oppNameSpan);
         // 头像
         opponentAvatarCorner.appendChild(opponentAvatarInGame);
@@ -170,7 +170,7 @@ document.addEventListener('DOMContentLoaded', function () {
             oppNameSpan.style.marginRight = '8px';
             oppNameSpan.style.fontWeight = 'bold';
             oppNameSpan.style.fontSize = '1.05em';
-            oppNameSpan.style.color = '#333';
+            oppNameSpan.style.color = 'var(--text)';
             opponentAvatarCorner.insertBefore(oppNameSpan, opponentAvatarInGame);
         }
         opponentAvatarCorner.appendChild(opponentAvatarInGame);
@@ -286,7 +286,7 @@ if (myAvatarInGame) {
                     const s = data.stats;
                     let userStatsContents = `\
                         <table class="user-stats-table">\
-                            <tr><td>用户名</td><td>${s.username}</td></tr>\
+                            <tr><td>用户名</td><td>${escapeHtml(s.username)}</td></tr>\
                             <tr><td>胜场</td><td>${s.wins}</td></tr>\
                             <tr><td>负场</td><td>${s.losses}</td></tr>\
                             <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>\
@@ -322,7 +322,7 @@ if (opponentAvatarInGame) {
                     const s = data.stats;
                     let userStatsContents = `\
                         <table class="user-stats-table">\
-                            <tr><td>用户名</td><td>${s.username}</td></tr>\
+                            <tr><td>用户名</td><td>${escapeHtml(s.username)}</td></tr>\
                             <tr><td>胜场</td><td>${s.wins}</td></tr>\
                             <tr><td>负场</td><td>${s.losses}</td></tr>\
                             <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>\
@@ -990,6 +990,11 @@ function showMessage(text, options = {}) {
     }, duration);
 }
 
+// 统一提示封装：用页内 toast 替代原生 alert，避免阻隔式系统对话框
+function showAlert(text) {
+    showMessage(String(text), { type: 'warning' });
+}
+
 // 添加加载完成验证
 console.log("game.js 加载完成，playMagicCard 状态:", typeof window.playMagicCard);
 
@@ -1106,7 +1111,7 @@ function bindEventListeners() {
                 }).join('') : '<tr><td colspan="4" style="text-align:center;">暂无历史战绩</td></tr>';
                 userStatsContent.innerHTML = `
                     <table class="user-stats-table">
-                        <tr><td>用户名</td><td>${s.username}</td></tr>
+                        <tr><td>用户名</td><td>${escapeHtml(s.username)}</td></tr>
                         <tr><td>胜场</td><td>${s.wins}</td></tr>
                         <tr><td>负场</td><td>${s.losses}</td></tr>
                         <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>
@@ -1180,7 +1185,7 @@ function bindEventListeners() {
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
                     <div style="padding:12px;background:var(--surface);border-radius:8px;">
                         <div style="font-weight:bold;margin-bottom:8px;">对手</div>
-                        <div style="font-size:1.1em;">${matchData.winner_name || matchData.loser_name || '未知'}</div>
+                        <div style="font-size:1.1em;">${escapeHtml(matchData.winner_name || matchData.loser_name || '未知')}</div>
                     </div>
                     <div style="padding:12px;background:var(--surface);border-radius:8px;">
                         <div style="font-weight:bold;margin-bottom:8px;">结果</div>
@@ -1280,7 +1285,7 @@ function bindEventListeners() {
                 }).join('') : '<tr><td colspan="4" style="text-align:center;">暂无历史战绩</td></tr>';
                 userStatsContent.innerHTML = `
                     <table class="user-stats-table">
-                        <tr><td>用户名</td><td>${s.username}</td></tr>
+                        <tr><td>用户名</td><td>${escapeHtml(s.username)}</td></tr>
                         <tr><td>胜场</td><td>${s.wins}</td></tr>
                         <tr><td>负场</td><td>${s.losses}</td></tr>
                         <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>
@@ -1354,7 +1359,7 @@ function bindEventListeners() {
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
                     <div style="padding:12px;background:var(--surface);border-radius:8px;">
                         <div style="font-weight:bold;margin-bottom:8px;">对手</div>
-                        <div style="font-size:1.1em;">${matchData.winner_name || matchData.loser_name || '未知'}</div>
+                        <div style="font-size:1.1em;">${escapeHtml(matchData.winner_name || matchData.loser_name || '未知')}</div>
                     </div>
                     <div style="padding:12px;background:var(--surface);border-radius:8px;">
                         <div style="font-weight:bold;margin-bottom:8px;">结果</div>
@@ -1516,7 +1521,7 @@ function createRoom() {
                     if (joinResponse.status === 'success') {
                         gameState.playerId = joinResponse.player_id;
                     } else {
-                        alert(joinResponse.message);
+                        showAlert(joinResponse.message);
                     }
                 });
             }
@@ -1544,7 +1549,7 @@ function findMatch() {
         player_name: gameState.playerName
     }, (response) => {
         if (response.status === 'error') {
-            alert(response.message);
+            showAlert(response.message);
         }
     });
 }
@@ -1575,11 +1580,11 @@ function aiMatch() {
                     // 切换到游戏界面
                     switchScreen(gameScreen);
                 } else {
-                    alert(joinResponse.message);
+                    showAlert(joinResponse.message);
                 }
             });
         } else {
-            alert(response.message);
+            showAlert(response.message);
         }
     });
 }
@@ -1617,7 +1622,7 @@ function customCreateRoom() {
                     if (joinResponse.status === 'success') {
                         gameState.playerId = joinResponse.player_id;
                     } else {
-                        alert(joinResponse.message);
+                        showAlert(joinResponse.message);
                     }
                 });
             }
@@ -1644,7 +1649,7 @@ function customJoinRoom() {
             customCurrentRoomId.textContent = roomId;
             customRoomInfo.classList.remove('hidden');
         } else {
-            alert(response.message);
+            showAlert(response.message);
         }
     });
 }
@@ -1668,7 +1673,7 @@ function joinRoom() {
             currentRoomId.textContent = roomId;
             roomInfo.classList.remove('hidden');
         } else {
-            alert(response.message);
+            showAlert(response.message);
         }
     });
 }
@@ -1751,7 +1756,7 @@ function setupSocketListeners() {
                     const s = data.stats;
                     opponentStatsContent.innerHTML = `
                         <table class="user-stats-table">
-                            <tr><td>用户名</td><td>${s.username}</td></tr>
+                            <tr><td>用户名</td><td>${escapeHtml(s.username)}</td></tr>
                             <tr><td>胜场</td><td>${s.wins}</td></tr>
                             <tr><td>负场</td><td>${s.losses}</td></tr>
                             <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>
@@ -1765,6 +1770,9 @@ function setupSocketListeners() {
                 opponentStatsContent.innerHTML = `<p style="color:red;">${err.message}</p>`;
             });
         }
+
+        // 将 showOpponentStats 暴露为全局，供 bindEventListeners 引用（修复作用域崩溃）
+        window.showOpponentStats = showOpponentStats;
 
         switch (data.state) {
             case 'waiting':
@@ -1898,12 +1906,12 @@ function setupSocketListeners() {
 
         if (result.hit) {
             if (result.ship_sunk) {
-                addGameLog(`【第${round}回合】<span class="log-player">${playerName}</span>攻击了坐标<span class="log-coordinate">${coordinate}</span>，此处的船被击沉！`);
+                addGameLog(`【第${round}回合】<span class="log-player">${escapeHtml(playerName)}</span>攻击了坐标<span class="log-coordinate">${coordinate}</span>，此处的船被击沉！`);
             } else {
-                addGameLog(`【第${round}回合】<span class="log-player">${playerName}</span>攻击了坐标<span class="log-coordinate">${coordinate}</span>，此处有船！`);
+                addGameLog(`【第${round}回合】<span class="log-player">${escapeHtml(playerName)}</span>攻击了坐标<span class="log-coordinate">${coordinate}</span>，此处有船！`);
             }
         } else {
-            addGameLog(`【第${round}回合】<span class="log-player">${playerName}</span>攻击了坐标<span class="log-coordinate">${coordinate}</span>，此处没有船！`);
+            addGameLog(`【第${round}回合】<span class="log-player">${escapeHtml(playerName)}</span>攻击了坐标<span class="log-coordinate">${coordinate}</span>，此处没有船！`);
         }
     });
 
@@ -2077,14 +2085,14 @@ function setupSocketListeners() {
         console.log('连锁结算完成', data.results);
         // 应用连锁结算结果
         data.results.forEach(result => {
-            applyCardEffect(result.card);
+            applyCardEffect(result.card, result.caster);
             // 将使用过的卡牌加入弃牌堆
             gameState.discardPile.push(result.card);
 
             // 添加魔法卡使用日志
             const round = parseInt(gameRound.textContent) || 1;
             const playerName = result.caster === gameState.playerId ? gameState.playerName : gameState.opponentName;
-            addGameLog(`【第${round}回合】<span class="log-player">${playerName}</span>使用了魔法卡<span class="log-card">[${result.card.name}]</span>，发动效果：${result.card.description}！`);
+            addGameLog(`【第${round}回合】<span class="log-player">${escapeHtml(playerName)}</span>使用了魔法卡<span class="log-card">[${escapeHtml(result.card.name)}]</span>，发动效果：${escapeHtml(result.card.description)}！`);
 
             // 处理需要选择的魔法卡效果
             if (result.temp_data_id) {
@@ -2118,7 +2126,7 @@ function setupSocketListeners() {
         updateHandUI();
         // 如果是攻击阶段，恢复攻击状态
         if (gameState.currentPhase === 'battle') {
-            enableAttack();
+            if (typeof enableAttack === 'function') enableAttack();
         }
     });
 
@@ -2130,7 +2138,7 @@ function setupSocketListeners() {
     // 神之宣告结算完成通知
     socket.on('divine_decree_resolved', (data) => {
         const { caster, choice, message } = data;
-        addGameLog(`<span class="log-player">${caster === gameState.playerId ? gameState.playerName : gameState.opponentName}</span>完成神之宣告选择：效果${choice}。${message}`);
+        addGameLog(`<span class="log-player">${escapeHtml(caster === gameState.playerId ? gameState.playerName : gameState.opponentName)}</span>完成神之宣告选择：效果${escapeHtml(choice)}。${escapeHtml(message)}`);
         showMessage(message || '神之宣告已结算');
     });
 
@@ -2142,7 +2150,7 @@ function setupSocketListeners() {
     });
 
     socket.on('magic_chain_error', function (data) {
-        alert('魔法卡使用错误: ' + data.message);
+        showAlert('魔法卡使用错误: ' + data.message);
         // 错误恢复 - 将卡牌放回手牌
         if (data.card) {
             gameState.hand.push(data.card);
@@ -2343,7 +2351,7 @@ function setupSocketListeners() {
 
     socket.on('magic_applied', function (result) {
         showMessage(`魔法卡【${result.card.name}】效果生效: ${result.message}`);
-        applyCardEffect(result.card);
+        applyCardEffect(result.card, result.caster_id || result.caster);
         // 如果服务器返回了受影响的格子，确保客户端同步显示这些格子的攻击结果
         if (result.affected_positions && Array.isArray(result.affected_positions)) {
             result.affected_positions.forEach(pos => {
@@ -2493,10 +2501,13 @@ function setupSocketListeners() {
             }
         });
 
-        // 取消按钮事件
-        document.getElementById('taoyuan-cancel-btn').addEventListener('click', () => {
-            document.body.removeChild(taoyuanChoiceDiv);
-        });
+        // 取消按钮事件（元素可能不存在时跳过，避免崩溃）
+        const cancelBtn = document.getElementById('taoyuan-cancel-btn');
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => {
+                document.body.removeChild(taoyuanChoiceDiv);
+            });
+        }
     }
 
     // 确认桃园结义选择
@@ -2739,6 +2750,15 @@ function setupSocketListeners() {
         if (data && data.text) showMessage(data.text);
     });
 
+    // 显示服务端通用消息 / 错误（此前未监听导致提示不可见）
+    socket.on('game_message', (data) => {
+        if (data && (data.message || data.text)) showMessage(data.message || data.text);
+    });
+    socket.on('error', (data) => {
+        const msg = (data && (data.message || data.msg || data)) || '发生错误';
+        showMessage(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    });
+
     // 对手桃园结义结算等待提示
     socket.on('taoyuan_waiting', (data) => {
         // 创建等待提示界面
@@ -2849,7 +2869,7 @@ function fetchLeaderboard() {
             const losses = row.losses || 0;
             const total = wins + losses;
             const winrate = total ? Math.round((wins / total) * 100) + '%' : '-';
-            tr.innerHTML = `<td>${idx + 1}</td><td>${row.username}</td><td>${wins}</td><td>${losses}</td><td>${winrate}</td><td>${row.longest_streak || 0}</td>`;
+            tr.innerHTML = `<td>${idx + 1}</td><td>${escapeHtml(row.username)}</td><td>${wins}</td><td>${losses}</td><td>${winrate}</td><td>${row.longest_streak || 0}</td>`;
             leaderboardTableBody.appendChild(tr);
         });
     }).catch(err => {
@@ -3056,19 +3076,19 @@ function confirmShipPlacement() {
 
     if (!gameState.socket) {
         console.error('socket连接为null');
-        alert('socket连接为null，请重新创建或加入房间');
+        showAlert('socket连接为null，请重新创建或加入房间');
         return;
     }
 
     if (!gameState.roomId) {
         console.error('roomId为null');
-        alert('roomId为null，请重新创建或加入房间');
+        showAlert('roomId为null，请重新创建或加入房间');
         return;
     }
 
     if (!gameState.playerId) {
         console.error('playerId为null');
-        alert('playerId为null，请重新创建或加入房间');
+        showAlert('playerId为null，请重新创建或加入房间');
         return;
     }
 
@@ -3082,7 +3102,7 @@ function confirmShipPlacement() {
             console.log('Ships placed successfully');
         } else {
             console.error('Ships placement failed:', response.message);
-            alert('放置战舰失败: ' + response.message);
+            showAlert('放置战舰失败: ' + response.message);
         }
     });
 }
@@ -3109,11 +3129,11 @@ function handleAttack(x, y) {
 
     // 检查当前是否为战斗阶段
     if (gameState.currentPhase !== 'battle') {
-        alert('当前不是战斗阶段');
+        showAlert('当前不是战斗阶段');
         return;
     }
     if (attacksRemaining.textContent === "0") {
-        alert('无剩余攻击次数');
+        showAlert('无剩余攻击次数');
         return;
     }
 
@@ -3124,7 +3144,7 @@ function handleAttack(x, y) {
         y: y
     }, (response) => {
         if (response.status === 'error') {
-            alert(response.message);
+            showAlert(response.message);
         }
     });
 }
@@ -3302,7 +3322,7 @@ function resetGame() {
 // 新增：结束战斗阶段函数
 window.endBattlePhase = function () {
     if (!gameState.isMyTurn || gameState.currentPhase !== 'battle') {
-        alert('当前不是你的战斗阶段');
+        showAlert('当前不是你的战斗阶段');
         return;
     }
 
@@ -3311,7 +3331,7 @@ window.endBattlePhase = function () {
         player_id: gameState.playerId
     }, (response) => {
         if (response.status === 'error') {
-            alert(response.message);
+            showAlert(response.message);
         }
     });
 }
@@ -3362,7 +3382,7 @@ function showMagicTargetSelection(card, index) {
     const descriptor = needsTargetSelection(card.name);
 
     if (!descriptor) {
-        alert('此卡不需要选择目标');
+        showAlert('此卡不需要选择目标');
         return;
     }
 
@@ -3393,7 +3413,7 @@ function showMagicTargetSelection(card, index) {
                 confirmMagicTarget(areaObj);
                 cleanupPrompt();
             } else {
-                alert('请选择目标区域');
+                showAlert('请选择目标区域');
             }
         }, true);
 
@@ -3649,7 +3669,7 @@ function showMagicTargetSelection(card, index) {
                     const temp = new Set(selected);
                     temp.delete(k);
                     if (temp.size > 0 && !isConnected(temp)) {
-                        alert('移除该格会导致不连续，请选择其他格子');
+                        showAlert('移除该格会导致不连续，请选择其他格子');
                         return;
                     }
                     selected.delete(k);
@@ -3658,11 +3678,11 @@ function showMagicTargetSelection(card, index) {
                 }
 
                 if (selected.size >= L) {
-                    alert(`最多只能选择 ${L} 个格子`);
+                    showAlert(`最多只能选择 ${L} 个格子`);
                     return;
                 }
                 if (!isAdjacentToSelected(mx, my)) {
-                    alert('新增格子需与已选格子相邻');
+                    showAlert('新增格子需与已选格子相邻');
                     return;
                 }
                 selected.add(k);
@@ -3695,11 +3715,11 @@ function showMagicTargetSelection(card, index) {
         document.getElementById('cancel-target').addEventListener('click', cleanupAll);
         document.getElementById('confirm-continuous').addEventListener('click', () => {
             if (selected.size !== L) {
-                alert(`需要选择 ${L} 个格子`);
+                showAlert(`需要选择 ${L} 个格子`);
                 return;
             }
             if (!isConnected(selected)) {
-                alert('所选格子必须保持连续相邻');
+                showAlert('所选格子必须保持连续相邻');
                 return;
             }
             const payload = Array.from(selected).map(k => {
@@ -3785,7 +3805,7 @@ function showMagicTargetSelection(card, index) {
                     cell.style.outline = '';
                 } else {
                     if (selected.size >= count) {
-                        alert(`只能选择 ${count} 艘战舰`);
+                        showAlert(`只能选择 ${count} 艘战舰`);
                         return;
                     }
                     selected.add(key);
@@ -3800,7 +3820,7 @@ function showMagicTargetSelection(card, index) {
 
         document.getElementById('confirm-magic-ships').addEventListener('click', () => {
             if (selected.size !== count) {
-                alert(`请选中 ${count} 艘战舰`);
+                showAlert(`请选中 ${count} 艘战舰`);
                 return;
             }
             const arr = Array.from(selected).map(k => {
@@ -3840,7 +3860,7 @@ function showMagicTargetSelection(card, index) {
         return;
     }
 
-    alert('尚未实现该卡的目标选择方式');
+    showAlert('尚未实现该卡的目标选择方式');
 }
 
 // 添加魔法卡目标选择判断函数（返回目标选择描述）
@@ -3975,7 +3995,7 @@ function createSelectionBoard(size, boardId = 'selection-board', onConfirm = nul
     board.style.gap = '2px';
     board.style.margin = '20px auto';
     board.style.padding = '10px';
-    board.style.backgroundColor = '#333';
+    board.style.backgroundColor = 'var(--text)';
     board.style.borderRadius = '5px';
 
     // 创建选择单元格
@@ -4017,7 +4037,7 @@ function createSelectionBoard(size, boardId = 'selection-board', onConfirm = nul
             }
             board.remove();
         } else {
-            alert('请至少选择一个单元格');
+            showAlert('请至少选择一个单元格');
         }
     });
 
@@ -4049,18 +4069,18 @@ function playMagicCard(index) {
     // 检查卡牌是否可以在当前阶段使用
     if (!canPlayCard(card)) {
         const phaseName = gameState.currentPhase || '未开始';
-        alert(`无法使用${card.name}：当前阶段${phaseName}不允许使用速阶${card.speed}的魔法卡`);
+        showAlert(`无法使用${card.name}：当前阶段${phaseName}不允许使用速阶${card.speed}的魔法卡`);
         return;
     }
 
     // 特殊限制：溅射、雷达子弹需在自己上一击命中后才可使用
     if (!canPlayAfterHit(card)) {
-        alert(`${card.name} 需要你上一次攻击命中后才能发动`);
+        showAlert(`${card.name} 需要你上一次攻击命中后才能发动`);
         return;
     }
     if (gameState.fieldMagic === "禁忌果实") {
         if (!(card.name === "失灵！" || card.type === "场地")) {
-            alert(`无法使用${card.name}：场地魔法“禁忌果实”生效，非场地及失灵类魔法卡无法使用`);
+            showAlert(`无法使用${card.name}：场地魔法“禁忌果实”生效，非场地及失灵类魔法卡无法使用`);
             return;
         }
     }
@@ -4097,7 +4117,7 @@ function sendMagicCard(index, targets) {
             updateHandUI();
         } else {
             console.error('魔法卡使用失败:', response.message);
-            alert(`使用魔法卡失败: ${response.message || '未知错误'}`);
+            showAlert(`使用魔法卡失败: ${response.message || '未知错误'}`);
         }
     });
 }
@@ -4159,7 +4179,7 @@ function confirmMagicTarget(targetData) {
 
 
 // 扩展applyCardEffect函数
-function applyCardEffect(card) {
+function applyCardEffect(card, casterId) {
     console.log(`应用魔法效果: ${card.name}`);
     // 显示魔法效果动画
     showMagicAnimation(card);
@@ -4343,22 +4363,22 @@ function applyCardEffect(card) {
         // 场地魔法
         case '恶魔契约':
             showMessage('场地魔法【恶魔契约】生效，双方船数增减绑定');
-            document.getElementById('field-magic').textContent = '场地魔法: 恶魔契约';
+            updateFieldMagicUI(casterId || gameState.playerId, card);
             break;
 
         case '禁忌果实':
             showMessage('场地魔法【禁忌果实】生效，双方只能使用失灵！和场地魔法');
-            document.getElementById('field-magic').textContent = '场地魔法: 禁忌果实';
+            updateFieldMagicUI(casterId || gameState.playerId, card);
             break;
 
         case '伊甸园':
             showMessage('场地魔法【伊甸园】生效，攻击次数变为6-n');
-            document.getElementById('field-magic').textContent = '场地魔法: 伊甸园';
+            updateFieldMagicUI(casterId || gameState.playerId, card);
             break;
 
         case '教皇旨意':
             showMessage('场地魔法【教皇旨意】生效，攻击需要弃置魔法卡');
-            document.getElementById('field-magic').textContent = '场地魔法: 教皇旨意';
+            updateFieldMagicUI(casterId || gameState.playerId, card);
             break;
 
         // 已实现的魔法卡
@@ -4499,7 +4519,7 @@ function showReinforcementPrompt() {
             });
             if (document.body.contains(prompt)) document.body.removeChild(prompt);
         } else {
-            alert('请选择放置位置');
+            showAlert('请选择放置位置');
         }
     }, false);
 }
@@ -4705,9 +4725,9 @@ function updateHandUI() {
         }
 
         cardElement.innerHTML = `
-            <div class="card-name">${card.name}</div>
-            <div class="card-speed">速阶: ${card.speed}</div>
-            <div class="card-type">${card.type}魔法</div>
+            <div class="card-name">${escapeHtml(card.name)}</div>
+            <div class="card-speed">速阶: ${escapeHtml(card.speed)}</div>
+            <div class="card-type">${escapeHtml(card.type)}魔法</div>
         `;
 
         // 添加点击事件，实现点击选择/使用功能
@@ -4806,9 +4826,9 @@ function displayDiscardPile(discardPile) {
         const cardElement = document.createElement('div');
         cardElement.className = 'discard-pile-card';
         cardElement.innerHTML = `
-            <div class="discard-pile-card-name">${card.name}</div>
-            <div class="discard-pile-card-type">${card.type}·速阶${card.speed}</div>
-            <div class="discard-pile-card-desc">${card.description}</div>
+            <div class="discard-pile-card-name">${escapeHtml(card.name)}</div>
+            <div class="discard-pile-card-type">${escapeHtml(card.type)}·速阶${escapeHtml(card.speed)}</div>
+            <div class="discard-pile-card-desc">${escapeHtml(card.description)}</div>
         `;
         cardsContainer.appendChild(cardElement);
     });
@@ -5049,7 +5069,7 @@ function setupPhaseButtons() {
             player_id: gameState.playerId
         }, (response) => {
             if (response.status === 'error') {
-                alert(response.message);
+                showAlert(response.message);
             }
         });
     });
@@ -5061,7 +5081,7 @@ function setupPhaseButtons() {
 
         // 检查是否还有剩余攻击次数
         if (remainingAttacks > 0) {
-            alert('你还有剩余攻击次数，无法进入结束阶段');
+            showAlert('你还有剩余攻击次数，无法进入结束阶段');
             return; // 阻止进入结束阶段
         }
 
@@ -5070,7 +5090,7 @@ function setupPhaseButtons() {
             player_id: gameState.playerId
         }, (response) => {
             if (response.status === 'error') {
-                alert(response.message);
+                showAlert(response.message);
             }
         });
     });
@@ -5082,7 +5102,7 @@ function setupPhaseButtons() {
             player_id: gameState.playerId
         }, (response) => {
             if (response.status === 'error') {
-                alert(response.message);
+                showAlert(response.message);
             }
         });
     });

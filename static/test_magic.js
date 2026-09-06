@@ -792,8 +792,11 @@ class MagicTestSystem {
 // 初始化测试系统
 let magicTestSystem;
 window.addEventListener('load', function() {
-    magicTestSystem = new MagicTestSystem();
-    console.log("魔法卡测试系统已加载完成");
+    // 仅在调试模式(URL 带 ?test=1)下初始化测试系统，避免测试按钮侵入正常对局UI
+    if (new URLSearchParams(window.location.search).get('test') === '1') {
+        magicTestSystem = new MagicTestSystem();
+        console.log("魔法卡测试系统已加载完成 (调试模式)");
+    }
 });
 
 // 导出供外部使用

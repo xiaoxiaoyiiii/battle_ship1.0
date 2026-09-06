@@ -3,14 +3,18 @@ import sqlite3
 import time
 import uuid
 import logging
+import threading
 from pathlib import Path
+from werkzeug.security import check_password_hash
 
-# 配置日志
+# 配置日志（先确保数据目录存在，避免全新环境 import 失败）
+_DATA_DIR = Path(__file__).parent / 'data'
+_DATA_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('data/db.log'),
+        logging.FileHandler(_DATA_DIR / 'db.log'),
         logging.StreamHandler()
     ]
 )
@@ -22,6 +26,7 @@ class Database:
         self.db_path = Path(__file__).parent / 'data' / 'battleship.db'
         self.conn = None
         self.cursor = None
+        self._lock = threading.RLock()
         try:
             # 确保数据目录存在
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -29,6 +34,9 @@ class Database:
             # 建立数据库连接
             self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self.conn.row_factory = sqlite3.Row
+            # 提升并发健壮性：WAL 模式 + busy_timeout，减少多线程 "database is locked"
+            self.conn.execute('PRAGMA journal_mode=WAL')
+            self.conn.execute('PRAGMA busy_timeout=5000')
             self.cursor = self.conn.cursor()
             
             # 初始化数据库
@@ -472,11 +480,9 @@ class Database:
             logger.warning(f"尝试记录比赛但获胜者或失败者ID为空: winner_id={winner_id}, loser_id={loser_id}")
             return False
             
+        self._lock.acquire()
         try:
-            # 开始事务
-            self.conn.execute('BEGIN TRANSACTION')
-            
-            # 记录比赛结果
+            # 记录比赛结果（依赖连接隐式事务 + 末尾 commit 保证原子性，避免显式 BEGIN 冲突）
             mid = str(uuid.uuid4())
             t = int(time.time())
             self.cursor.execute('INSERT INTO matches (id, winner_id, loser_id, timestamp) VALUES (?,?,?,?)',
@@ -530,6 +536,8 @@ class Database:
             if self.conn:
                 self.conn.rollback()
             return False
+        finally:
+            self._lock.release()
     
     def get_match_history(self, uid: str, limit=20):
         if not uid:
@@ -624,17 +632,17 @@ class Database:
             logger.error(f"获取排行榜数据时发生未知错误: limit={limit}, 错误: {e}")
             return []
     
-    def get_token_by_password(self, username: str, password_hash: str):
-        """通过用户名和密码哈希获取并生成token"""
-        if not username or not password_hash:
-            logger.warning("尝试获取token但用户名或密码哈希为空")
+    def get_token_by_password(self, username: str, password: str):
+        """通过用户名和密码校验并生成token（使用 check_password_hash 验证）"""
+        if not username or not password:
+            logger.warning("尝试获取token但用户名或密码为空")
             return None
             
         try:
-            user = self.cursor.execute('SELECT id FROM users WHERE username = ? AND password_hash = ?',
-                         (username, password_hash)).fetchone()
+            user = self.cursor.execute('SELECT id, password_hash FROM users WHERE username = ?',
+                         (username,)).fetchone()
             
-            if user:
+            if user and check_password_hash(user['password_hash'], password):
                 token = str(uuid.uuid4())
                 self.cursor.execute('UPDATE users SET token = ? WHERE id = ?', (token, user['id']))
                 self.conn.commit()

@@ -44,10 +44,12 @@ def upload_avatar():
     if 'avatar' not in request.files:
         return jsonify({'error': '未选择文件'}), 400
     file = request.files['avatar']
-    if file.filename == '' or (
-            not '.' in file.filename and file.filename.rsplit('.', 1)[1].lower() in ALLOWED_AVATAR_EXTENSIONS):
+    if file.filename == '' or '.' not in file.filename:
         return jsonify({'error': '文件类型不支持'}), 400
-    filename = secure_filename(f"{uid}_avatar.{file.filename.rsplit('.', 1)[1].lower()}")
+    ext = file.filename.rsplit('.', 1)[1].lower()
+    if ext not in ALLOWED_AVATAR_EXTENSIONS:
+        return jsonify({'error': '文件类型不支持'}), 400
+    filename = secure_filename(f"{uid}_avatar.{ext}")
     save_path = os.path.join(AVATAR_UPLOAD_FOLDER, filename)
     file.save(save_path)
     avatar_url = f"/static/avatars/{filename}"
@@ -67,7 +69,7 @@ def change_password():
     if not old_password or not new_password:
         return jsonify({'success': False, 'msg': '请填写原密码和新密码'}), 400
     user = db.get_user(uid=uid)
-    if not user or not db or not check_password_hash(user['password_hash'], old_password):
+    if not user or not check_password_hash(user['password_hash'], old_password):
         return jsonify({'success': False, 'msg': '原密码错误'}), 403
     if len(new_password) < 6:
         return jsonify({'success': False, 'msg': '新密码长度至少6位'}), 400
@@ -80,7 +82,10 @@ def change_password():
 def user_stats_view():
     """查询个人战绩，支持通过 username 查询或当前登录用户。"""
     username = request.args.get('username')
-    limit = int(request.args.get('limit', 20))
+    try:
+        limit = int(request.args.get('limit', 20) or 20)
+    except (TypeError, ValueError):
+        limit = 20
     if username:
         stats = db.get_user(username=username)
     else:
@@ -163,9 +168,18 @@ def api_leaderboard():
 
 @app.route('/api/login', methods=['POST'])
 def api_login():
-    data = request.get_json()
-    token = db.get_token_by_password(data['username'], generate_password_hash(data['password']))
-    return token
+    data = request.get_json() or {}
+    username = data.get('username')
+    password = data.get('password')
+    if not username or not password:
+        return jsonify({'error': '用户名或密码不能为空'}), 400
+    user = db.get_user(username=username)
+    if not user or not check_password_hash(user['password_hash'], password):
+        return jsonify({'error': '用户名或密码错误'}), 401
+    token = db.get_token_by_password(username, password)
+    if not token:
+        return jsonify({'error': '登录失败'}), 500
+    return jsonify({'token': token})
 
 
 

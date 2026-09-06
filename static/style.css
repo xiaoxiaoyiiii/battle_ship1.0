@@ -126,15 +126,17 @@ body {
     -webkit-backdrop-filter: blur(14px);
     backdrop-filter: blur(14px);
     border: 1px solid var(--panel-border);
-    padding: 1.5rem 2rem 2rem;
-    border-radius: 16px;
+    padding: clamp(0.75rem, 2.4vw, 2rem);
+    border-radius: clamp(10px, 1.8vw, 16px);
     box-shadow: var(--shadow-panel);
     max-width: 1000px;
-    width: 100%;
+    width: min(100%, 1000px);
 }
 
 h1, h2, h3, p { text-align: center; margin-bottom: 1rem; }
-h1 { font-size: 2.2rem; letter-spacing: 2px; }
+h1 { font-size: clamp(1.5rem, 4.5vw, 2.2rem); letter-spacing: 2px; }
+h2 { font-size: clamp(1.15rem, 3.2vw, 1.6rem); }
+h3 { font-size: clamp(1rem, 2.6vw, 1.3rem); }
 
 .screen { display: none; }
 .screen.active { display: block; animation: fadeIn 0.4s ease; }
@@ -353,11 +355,13 @@ input:focus, select:focus {
 /* ---------- 6. 游戏主界面布局 ---------- */
 .game-main-container {
     display: flex;
+    flex-wrap: wrap;
     gap: 1rem;
     margin-top: 1rem;
     align-items: flex-start;
     justify-content: center;
 }
+.game-content { min-width: 0; }
 .game-content { position: relative; width: 100%; max-width: 900px; margin: 0 auto; }
 .boards-container {
     display: flex;
@@ -372,10 +376,9 @@ input:focus, select:focus {
 
 /* ---------- 7. 浮窗：游戏日志 ---------- */
 .log-container {
-    position: fixed;
-    top: 80px;
-    left: 20px;
-    width: 250px;
+    position: relative;
+    width: 100%;
+    max-width: 100%;
     background: var(--glass);
     -webkit-backdrop-filter: blur(10px);
     backdrop-filter: blur(10px);
@@ -383,14 +386,25 @@ input:focus, select:focus {
     border-radius: 12px;
     display: flex;
     flex-direction: column;
-    height: calc(100vh - 200px);
-    max-height: 600px;
+    height: auto;
+    max-height: 260px;
     transition: width 0.3s ease, box-shadow 0.2s ease;
-    flex-shrink: 0;
+    flex: 1 1 100%;
     z-index: 999;
     cursor: grab;
     box-shadow: var(--shadow-panel);
     overflow: hidden;
+}
+@media (min-width: 1440px) {
+    .log-container {
+        position: fixed;
+        top: 80px;
+        left: 20px;
+        width: 250px;
+        height: calc(100vh - 200px);
+        max-height: 600px;
+        flex: 0 0 auto;
+    }
 }
 .log-container:active { cursor: grabbing; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2); }
 .log-container.collapsed { width: 40px; }
@@ -446,10 +460,8 @@ input:focus, select:focus {
 
 /* ---------- 8. 浮窗：魔法卡预览 ---------- */
 .magic-preview-container {
-    position: fixed;
-    top: 80px;
-    right: 20px;
-    width: 300px;
+    position: relative;
+    width: 100%;
     background: var(--glass);
     -webkit-backdrop-filter: blur(10px);
     backdrop-filter: blur(10px);
@@ -458,10 +470,21 @@ input:focus, select:focus {
     box-shadow: var(--shadow-panel);
     z-index: 1000;
     padding: 15px;
-    max-height: calc(100vh - 100px);
+    max-height: 340px;
     overflow-y: auto;
+    margin-bottom: 20px;
     cursor: grab;
     transition: box-shadow 0.2s ease;
+}
+@media (min-width: 1440px) {
+    .magic-preview-container {
+        position: fixed;
+        top: 80px;
+        right: 20px;
+        width: 300px;
+        max-height: calc(100vh - 100px);
+        margin-bottom: 0;
+    }
 }
 .magic-preview-container:active { cursor: grabbing; }
 .preview-header {
@@ -562,16 +585,19 @@ input:focus, select:focus {
 /* ---------- 10. 棋盘与格子 ---------- */
 .board {
     display: grid;
-    grid-template-columns: repeat(6, 40px);
-    gap: 5px;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: clamp(3px, 0.6vw, 5px);
     background: var(--board-bg);
-    padding: 10px;
+    padding: clamp(5px, 1vw, 10px);
     border-radius: 10px;
     border: 1px solid var(--board-border);
+    width: 100%;
+    max-width: 340px;
+    margin: 0 auto;
 }
 .cell {
-    width: 40px;
-    height: 40px;
+    width: 100%;
+    aspect-ratio: 1 / 1;
     background: var(--cell-water);
     border: 1px solid var(--board-border);
     border-radius: 5px;
@@ -579,7 +605,7 @@ input:focus, select:focus {
     display: flex;
     justify-content: center;
     align-items: center;
-    font-size: 20px;
+    font-size: clamp(12px, 2.6vw, 20px);
     position: relative;
     transition: background 0.15s ease, transform 0.12s ease, box-shadow 0.2s ease;
 }
@@ -1325,23 +1351,15 @@ body.cool-effects-enabled .cell.cool-flash {
 .match-detail-logs::-webkit-scrollbar-thumb { background: var(--primary); border-radius: 4px; }
 
 /* ---------- 21. 响应式 ---------- */
-@media (max-width: 1200px) {
-    .magic-preview-container { width: 250px; right: 10px; }
+/* 中屏(≤1280px)：日志/魔法预览已默认转流式，避免固定的浮窗遮挡棋盘 */
+@media (max-width: 1439px) {
+    .boards-container { gap: 1.2rem; }
+    .in-game-chat-container { width: 280px; max-width: 40vw; }
 }
 @media (max-width: 992px) {
-    .magic-preview-container {
-        position: static;
-        width: 100%;
-        margin-bottom: 20px;
-        max-height: 300px;
-    }
-    .log-container {
-        position: static;
-        width: 100%;
-        height: auto;
-        max-height: 260px;
-        margin-bottom: 1rem;
-    }
+    .log-container { max-height: 240px; }
+    .magic-preview-container { max-height: 300px; }
+    .in-game-chat-container { width: 260px; max-width: 60vw; }
 }
 @media (max-width: 768px) {
     .nav a { padding: 0.3rem 0.6rem; font-size: 0.9rem; }
@@ -1356,5 +1374,12 @@ body.cool-effects-enabled .cell.cool-flash {
 }
 @media (max-width: 600px) {
     .in-game-chat-container { right: 2vw; bottom: 2vw; width: 96vw; max-width: 96vw; }
-    .game-container { padding: 1rem; }
+    .game-container { padding: 0.6rem; }
+    .boards-container { gap: 0.8rem; margin-top: 1.2rem; }
+    .board-wrapper { padding: 0.5rem 0.5rem 0.6rem; }
+    .players-info { flex-direction: column; align-items: center; gap: 8px; }
+    .log-container, .magic-preview-container { max-height: 220px; }
+    .button-group { gap: 0.6rem; }
+    .placement-actions { flex-wrap: wrap; }
+    .nav-brand { font-size: 1rem; }
 }

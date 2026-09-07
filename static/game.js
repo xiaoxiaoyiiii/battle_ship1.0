@@ -1013,7 +1013,16 @@ function applyRoomSync(data) {
         if (typeof opponentUsernameInfo !== 'undefined' && opponentUsernameInfo) opponentUsernameInfo.textContent = data.opponent_name;
     }
     saveActiveGame(data.room_id, data.player_id);
+
+    // 像正常进入对局一样，先隐藏所有其它界面，避免与主菜单/等待界面叠层错乱
+    ['startScreen', 'customRoomInfo', 'customRoomIdInput', 'customRoomScreen',
+     'matchSuccessScreen', 'shipPlacementScreen', 'rpsScreen', 'gameOverScreen']
+        .forEach(function (nm) {
+            try { if (window[nm] && window[nm].classList) window[nm].classList.remove('active'); } catch (e) {}
+        });
+    try { if (typeof gameNav !== 'undefined' && gameNav) gameNav.style.display = 'none'; } catch (e) {}
     try { if (typeof gameScreen !== 'undefined' && gameScreen) gameScreen.classList.add('active'); } catch (e) {}
+
     if (typeof gameRound !== 'undefined' && gameRound) gameRound.textContent = data.round || 1;
     if (typeof yourShips !== 'undefined' && yourShips) yourShips.textContent = data.remaining_ships;
     if (typeof opponentShips !== 'undefined' && opponentShips) opponentShips.textContent = data.opponent_remaining_ships;

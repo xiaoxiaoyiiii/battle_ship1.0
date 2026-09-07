@@ -795,6 +795,9 @@ setChatVisible(false);
         if (e.button !== 0) return; // 仅限左键
         dragging = true;
         const rect = chatContainer.getBoundingClientRect();
+        // 拖动前清除 transform/transition，避免与 left/top 定位叠加造成位移跳变
+        chatContainer.style.transform = 'none';
+        chatContainer.style.transition = 'none';
         startX = e.clientX; startY = e.clientY;
         startLeft = rect.left; startTop = rect.top;
         document.addEventListener('mousemove', onMouseMove);
@@ -2297,6 +2300,11 @@ function setupSocketListeners() {
                     if (result.caster === gameState.playerId) {
                         showShenjiDeclarePrompt(result);
                     }
+                } else if (result.temp_data_id === 'shield_choice') {
+                    // 仁王之盾：选择至多3艘自己的船
+                    if (result.caster === gameState.playerId) {
+                        showRenwangChoice();
+                    }
                 }
             }
         });
@@ -2600,11 +2608,7 @@ function setupSocketListeners() {
         let step = 1; // 1: 选择自己的卡, 2: 选择对方的卡
         let cards = [];
 
-        // 请求服务器获取卡牌数据
-        gameState.socket.emit('get_magic_temp_data', {
-            room_id: gameState.roomId,
-            player_id: gameState.playerId
-        }, (response) => {
+        const renderTaoyuanCards = (response) => {
             if (response.status === 'success' && response.data && response.data.cards) {
                 cards = response.data.cards;
 
@@ -2677,7 +2681,15 @@ function setupSocketListeners() {
                     });
                 });
             }
-        });
+        };
+        if (result.cards && Array.isArray(result.cards) && result.cards.length) {
+            renderTaoyuanCards({ status: 'success', data: { cards: result.cards } });
+        } else {
+            gameState.socket.emit('get_magic_temp_data', {
+                room_id: gameState.roomId,
+                player_id: gameState.playerId
+            }, renderTaoyuanCards);
+        }
 
         // 取消按钮事件（元素可能不存在时跳过，避免崩溃）
         const cancelBtn = document.getElementById('taoyuan-cancel-btn');
@@ -3305,6 +3317,16 @@ function handleAttack(x, y) {
 
     if (!gameState.isMyTurn) return;
     if (freezeAlert()) return;
+
+    // 教皇旨意：攻击需先弃一张魔法卡（服务端一次弃卡=攻击两次）
+    if (gameState.fieldMagic === '教皇旨意') {
+        if (!gameState.hand || gameState.hand.length === 0) {
+            showAlert('教皇旨意需要弃一张魔法卡才能攻击，但你没有手牌');
+            return;
+        }
+        showPapalDiscardChoice(x, y);
+        return;
+    }
 
     // 检查当前是否为战斗阶段
     if (gameState.currentPhase !== 'battle') {
@@ -5323,4 +5345,106 @@ function showShenjiDeclarePrompt() {
         }
         close();
     };
+}
+
+// 教皇旨意：选择一张手牌弃置后攻击（一次弃卡=攻击两次，由服务端执行）
+function showPapalDiscardChoice(x, y) {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:10002;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center';
+    const box = document.createElement('div');
+    box.style.cssText = 'background:#fff;color:#222;padding:18px 22px;border-radius:10px;min-width:300px;max-width:80vw;max-height:70vh;overflow:auto;text-align:center';
+    box.innerHTML = '<div style="font-weight:bold;margin-bottom:10px">教皇旨意 · 弃一张魔法卡攻击两次</div>';
+    const list = document.createElement('div');
+    list.style.cssText = 'display:flex;flex-direction:column;gap:6px;text-align:left';
+    if (!gameState.hand || gameState.hand.length === 0) {
+        list.innerHTML = '<div style="color:#c0392b">没有可弃置的魔法卡</div>';
+    } else {
+        gameState.hand.forEach((card, i) => {
+            const b = document.createElement('button');
+            b.textContent = (card.name || card.name) + '（速阶' + card.speed + '）';
+            b.style.cssText = 'padding:6px 10px;cursor:pointer;text-align:left';
+            b.onclick = () => {
+                if (gameState.socket) {
+                    gameState.socket.emit('papal_attack', {
+                        room_id: gameState.roomId,
+                        player_id: gameState.playerId,
+                        x: x, y: y,
+                        discard_card_index: i
+                    }, (resp) => {
+                        if (resp && resp.status === 'error') showAlert(resp.message);
+                    });
+                }
+                try { document.body.removeChild(overlay); } catch (e) {}
+            };
+            list.appendChild(b);
+        });
+    }
+    const close = document.createElement('button');
+    close.textContent = '取消';
+    close.style.cssText = 'margin-top:12px;padding:6px 16px;cursor:pointer';
+    close.onclick = () => { try { document.body.removeChild(overlay); } catch (e) {} };
+    box.appendChild(list);
+    box.appendChild(close);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+}
+
+// 仁王之盾：选择至多3艘自己的船进入护盾状态
+function showRenwangChoice() {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:10003;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center';
+    const box = document.createElement('div');
+    box.style.cssText = 'background:#fff;color:#222;padding:18px 22px;border-radius:10px;min-width:300px;text-align:center';
+    box.innerHTML = '<div style="font-weight:bold;margin-bottom:6px">仁王之盾 · 选择要保护的船（至多3艘）</div>';
+    const list = document.createElement('div');
+    list.style.cssText = 'display:flex;flex-direction:column;gap:6px;text-align:left;margin:8px 0';
+    const ships = gameState.ships || [];
+    const picked = new Set();
+    if (ships.length === 0) {
+        list.innerHTML = '<div style="color:#c0392b">没有可保护的战舰</div>';
+    } else {
+        ships.forEach((ship, idx) => {
+            const b = document.createElement('button');
+            const p = (ship.positions && ship.positions[0]) ? ('(' + ship.positions[0].x + ',' + ship.positions[0].y + ')') : ('#' + idx);
+            b.textContent = '选择船 ' + (idx + 1) + ' ' + p;
+            b.style.cssText = 'padding:6px 10px;cursor:pointer;text-align:left';
+            b.onclick = () => {
+                if (picked.has(idx)) { picked.delete(idx); b.style.borderColor = ''; }
+                else {
+                    if (picked.size >= 3) { showAlert('最多选择3艘船'); return; }
+                    picked.add(idx); b.style.borderColor = '#1976d2'; b.style.borderWidth = '2px';
+                }
+            };
+            list.appendChild(b);
+        });
+    }
+    const ok = document.createElement('button');
+    ok.textContent = '确定';
+    ok.style.cssText = 'margin:4px 6px 0 0;padding:6px 20px;cursor:pointer';
+    ok.onclick = () => {
+        const idxs = Array.from(picked);
+        if (idxs.length === 0) { showAlert('请至少选择一艘船'); return; }
+        if (gameState.socket) {
+            gameState.socket.emit('confirm_magic_target', {
+                room_id: gameState.roomId,
+                player_id: gameState.playerId,
+                temp_data_id: 'shield_choice',
+                target_data: { ship_indices: idxs }
+            }, (resp) => {
+                if (resp && resp.status === 'success') showMessage(resp.message || '护盾已添加');
+                else if (resp) showAlert(resp.message || '选择失败');
+            });
+        }
+        try { document.body.removeChild(overlay); } catch (e) {}
+    };
+    const cancel = document.createElement('button');
+    cancel.textContent = '取消';
+    cancel.style.cssText = 'padding:6px 16px;cursor:pointer';
+    cancel.onclick = () => { try { document.body.removeChild(overlay); } catch (e) {} };
+    box.appendChild(list);
+    const row = document.createElement('div');
+    row.appendChild(ok); row.appendChild(cancel);
+    box.appendChild(row);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
 }

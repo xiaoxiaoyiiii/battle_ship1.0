@@ -1336,19 +1336,27 @@ def handle_find_match(data):
 
 @socketio.on('cancel_match')
 def handle_cancel_match(data):
-    """处理玩家取消匹配请求"""
-    socket_sid = session.get('user_id', request.sid)
-
-    # 从匹配队列中移除玩家
-    if socket_sid in room_manager.match_queue[0]:
-        index = room_manager.match_queue[0].index(socket_sid)
-        room_manager.match_queue[0].pop(index)
-        room_manager.match_queue[1].pop(index)
-        if index < len(room_manager.match_queue[2]):
-            room_manager.match_queue[2].pop(index)
-
-    emit('match_canceled', {'status': 'success', 'message': '已取消匹配'})
-
+    """处理玩家取消匹配请求：队列以 socket sid 为 key（find_match 存 request.sid），
+    按当前连接的 request.sid 出队，兼容旧 user_id 形式兜底。"""
+    sid = request.sid
+    q = room_manager.match_queue
+    removed = False
+    if sid in q[0]:
+        idx = q[0].index(sid)
+        q[0].pop(idx); q[1].pop(idx)
+        if idx < len(q[2]): q[2].pop(idx)
+        removed = True
+    else:
+        # 兜底：按 user_id 列查找
+        try:
+            uid = session.get('user_id')
+        except Exception:
+            uid = None
+        if uid and uid in q[2]:
+            idx = q[2].index(uid)
+            q[0].pop(idx); q[1].pop(idx); q[2].pop(idx)
+            removed = True
+    emit('match_canceled', {'status': 'success', 'message': '已取消匹配'}, to=sid)
     return {'status': 'success', 'message': '已取消匹配'}
 
 
@@ -1435,8 +1443,7 @@ def handle_rps_choice(data):
             room.polar_reversal_applied = False
         else:
             room.attacks_remaining = max(0, room.players[winner].remaining_ships - frozen_ship_count(room.players[winner]))
-            if field_magic_name(room) == '伊甸园':
-                room.attacks_remaining = max(0, 6 - room.players[winner].remaining_ships)
+            _recalc_attacker_attacks(room)
 
         # 猜拳后抽卡逻辑：先手1张，后手2张
         # 先手抽1张
@@ -2095,8 +2102,7 @@ def switch_turn_after_end_phase(room, opponent_id):
     # 切换到对方回合
     room.current_attacker = opponent_id
     room.attacks_remaining = max(0, len(room.players[opponent_id].ships) - frozen_ship_count(room.players[opponent_id]))  # 根据战舰数量设置攻击次数（冻结的船不计入）
-    if field_magic_name(room) == '伊甸园':
-        room.attacks_remaining = max(0, 6 - room.players[opponent_id].remaining_ships)
+    _recalc_attacker_attacks(room)
     room.current_phase = 'preparation'
     
     # 重置本回合伤害统计
@@ -2894,7 +2900,9 @@ def _recalc_attacker_attacks(room):
     pid = room.current_attacker
     if not pid or pid not in room.players:
         return
-    if field_magic_name(room) == '伊甸园':
+    if field_magic_name(room) == '教皇旨意':
+        room.attacks_remaining = 0
+    elif field_magic_name(room) == '伊甸园':
         room.attacks_remaining = max(0, 6 - room.players[pid].remaining_ships)
     else:
         room.attacks_remaining = max(0, len(room.players[pid].ships) - frozen_ship_count(room.players[pid]))
@@ -3341,6 +3349,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             }
             result.message = f'抽了{len(drawn_cards)}张牌，请选择'
             result.temp_data_id = 'taoyuan_choice'
+            result['cards'] = [{'name': c.name, 'speed': c.speed, 'type': c.type, 'description': c.description} for c in drawn_cards]
             # 通知对手等待
             emit('taoyuan_waiting', {
                 'message': '对方正在结算桃园结义效果 请等待'

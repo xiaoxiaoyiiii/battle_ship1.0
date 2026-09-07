@@ -115,3 +115,45 @@ def test_shenji_apply_with_existing_prediction():
     res = server.apply_magic_effect(room, P1, card('神机妙算'), {})
     assert res.success is not False
     assert room.players[P1].effect_flags.prediction == 3
+
+
+# ---------- 桃园结义 / 取消匹配 / 教皇旨意（2026-09-07 第二批） ----------
+
+def test_taoyuan_result_carries_cards():
+    """桃园结义：结果随附抽到的卡牌（客户端无需二次请求即可渲染）。"""
+    room = make_room()
+    room.magic_deck = [MagicCard('轰炸'), MagicCard('冻结')]
+    room.players[P1].remaining_ships = 2
+    res = server.apply_magic_effect(room, P1, card('桃园结义'), {})
+    assert res.temp_data_id == 'taoyuan_choice'
+    assert isinstance(res['cards'], list) and len(res['cards']) == 2
+    assert res['cards'][0]['name'] in ('轰炸', '冻结')
+
+
+def test_cancel_match_by_sid(monkeypatch):
+    """取消匹配：按当前连接 sid 出队（修复登录用户匹配后无法取消）。"""
+    import types
+    room_manager = server.room_manager
+    # 直接构造队列
+    room_manager.match_queue = [['sidA', 'sidB'], ['A', 'B'], ['uidA', 'uidB']]
+    monkeypatch.setattr(server, 'request', types.SimpleNamespace(sid='sidA'))
+    monkeypatch.setattr(server, 'session', types.SimpleNamespace(get=lambda k: 'uidA'))
+    res = server.handle_cancel_match({})
+    assert res['status'] == 'success'
+    assert 'sidA' not in room_manager.match_queue[0]
+    assert len(room_manager.match_queue[0]) == 1
+    assert room_manager.match_queue[2] == ['uidB']
+
+
+def test_papal_recalc_zero_at_prep():
+    """教皇旨意：准备阶段攻击次数应直接为 0（与伊甸园同款结算时机）。"""
+    room = make_room()
+    room.field_magic = card('教皇旨意')
+    room.state = 'attacking'
+    room.current_phase = 'preparation'
+    room.current_attacker = P1
+    room.players[P1].ships = [PlayerShip(positions=[], hits=[])] * 5
+    room.players[P1].remaining_ships = 5
+    room.attacks_remaining = 5
+    server._recalc_attacker_attacks(room)
+    assert room.attacks_remaining == 0

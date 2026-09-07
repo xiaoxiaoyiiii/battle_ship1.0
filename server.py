@@ -1164,6 +1164,36 @@ def handle_connect():
     online_users.add(sid)
     print(f"Client connected: {sid}, online users: {len(online_users)}")
 
+    # 掉线重连兜底：若该登录用户仍在一局未结束的对局中（且已不在宽限外），
+    # 主动推送 resume_game，让客户端自动重连恢复（覆盖关标签页/浏览器后重开场景）。
+    try:
+        server_pid = session.get('user_id')
+    except Exception:
+        server_pid = None
+    if server_pid:
+        candidates = []
+        for room_id, room in room_manager.get_all_rooms().items():
+            if room.state == 'game_over':
+                continue
+            for pid, p in room.players.items():
+                # 座位属于该登录用户（自定义/人机房 key=user_id，匹配房 key=sid 但 user_id 一致），
+                # 且该座位登记的连接不是当前新连接（即刚掉线/换连接重开）
+                if p.user_id == server_pid and p.sid != sid:
+                    candidates.append((room_id, pid))
+        if len(candidates) == 1:
+            room_id, pid = candidates[0]
+            emit('resume_game', {
+                'room_id': room_id,
+                'player_id': pid,
+                'message': '检测到未结束的对局，正在恢复…',
+            }, to=sid)
+            # 预发放重连 token
+            room = room_manager.get_room(room_id)
+            if room:
+                tok = secrets.token_hex(16)
+                room.reconnect_tokens[pid] = tok
+                emit('reconnect_token', {'token': tok}, to=sid)
+
 
 @socketio.on('disconnect')
 def handle_disconnect():

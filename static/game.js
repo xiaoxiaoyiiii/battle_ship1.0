@@ -977,16 +977,16 @@ function hideOpponentGoneBanner() {
 function saveActiveGame(roomId, playerId) {
     try {
         const prev = loadActiveGame() || {};
-        sessionStorage.setItem(ACTIVE_GAME_KEY, JSON.stringify({ room_id: roomId, player_id: playerId, token: gameState.reconnectToken || prev.token || '' }));
+        localStorage.setItem(ACTIVE_GAME_KEY, JSON.stringify({ room_id: roomId, player_id: playerId, token: gameState.reconnectToken || prev.token || '' }));
     } catch (e) {}
 }
 function clearActiveGame() {
-    try { sessionStorage.removeItem(ACTIVE_GAME_KEY); } catch (e) {}
+    try { localStorage.removeItem(ACTIVE_GAME_KEY); } catch (e) {}
     gameState.inRoom = false;
     gameState.reconnectToken = null;
 }
 function loadActiveGame() {
-    try { return JSON.parse(sessionStorage.getItem(ACTIVE_GAME_KEY) || 'null'); } catch (e) { return null; }
+    try { return JSON.parse(localStorage.getItem(ACTIVE_GAME_KEY) || 'null'); } catch (e) { return null; }
 }
 function requestReconnectToken(roomId, playerId) {
     if (!gameState.socket) return;
@@ -1990,6 +1990,26 @@ function setupSocketListeners() {
             }, (resp) => {
                 if (resp && resp.status === 'error') console.log('重连失败:', resp.message);
             });
+        }
+    });
+    socket.on('resume_game', (data) => {
+        console.log('服务端提示恢复对局:', data);
+        if (data && data.room_id && data.player_id) {
+            saveActiveGame(data.room_id, data.player_id);
+            socket.emit('rejoin_room', {
+                room_id: data.room_id,
+                player_id: data.player_id,
+                token: (gameState.reconnectToken || (loadActiveGame() && loadActiveGame().token) || '')
+            }, (resp) => {
+                if (resp && resp.status === 'error') console.log('恢复对局失败:', resp.message);
+            });
+        }
+    });
+    socket.on('reconnect_token', (data) => {
+        if (data && data.token) {
+            gameState.reconnectToken = data.token;
+            const g = loadActiveGame();
+            if (g && g.room_id) saveActiveGame(g.room_id, g.player_id);
         }
     });
     socket.on('opponent_disconnected', (data) => {

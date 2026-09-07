@@ -2292,6 +2292,11 @@ function setupSocketListeners() {
                         // 明智埋葬选择UI
                         showBuryChoice(result);
                     }
+                } else if (result.temp_data_id === 'shenji_declare') {
+                    // 神机妙算宣言：仅施法者需要输入
+                    if (result.caster === gameState.playerId) {
+                        showShenjiDeclarePrompt(result);
+                    }
                 }
             }
         });
@@ -5285,4 +5290,37 @@ function setupPhaseButtons() {
             }
         });
     });
+}
+
+
+// 神机妙算宣言弹窗
+function showShenjiDeclarePrompt() {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center';
+    const box = document.createElement('div');
+    box.style.cssText = 'background:#fff;color:#222;padding:20px 24px;border-radius:10px;min-width:280px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.3)';
+    box.innerHTML =
+        '<div style="font-weight:bold;margin-bottom:8px">神机妙算 · 宣言预测</div>' +
+        '<div style="font-size:13px;color:#555;margin-bottom:10px">预测：对方结束阶段结束时，你的船数会减少多少（0-6）？</div>' +
+        '<input type="number" min="0" max="6" step="1" value="0" style="width:80px;padding:6px;text-align:center;font-size:16px">' +
+        '<div style="margin-top:12px"><button id="shenji-ok" style="padding:6px 20px;cursor:pointer">确定</button></div>';
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    const input = box.querySelector('input');
+    const ok = box.querySelector('#shenji-ok');
+    const close = function () { try { document.body.removeChild(overlay); } catch (e) {} };
+    ok.onclick = function () {
+        const v = Math.max(0, Math.min(6, parseInt(input.value || '0', 10) || 0));
+        if (gameState.socket) {
+            gameState.socket.emit('confirm_shenji_declare', {
+                room_id: gameState.roomId,
+                player_id: gameState.playerId,
+                prediction: v
+            }, function (resp) {
+                if (resp && resp.status === 'success') showMessage(resp.message || '宣言成功');
+                else if (resp) showAlert(resp.message || '宣言失败');
+            });
+        }
+        close();
+    };
 }

@@ -878,7 +878,9 @@ def test_shenji_declare_prediction(room):
 
 def test_shenji_requires_declaration(room):
     res = apply(room, P1, '神机妙算')
-    assert res.success is False
+    # 新流程：未宣言时请求玩家宣言（不再直接失败）
+    assert res.temp_data_id == 'shenji_declare'
+    assert room.magic_temp_data.get('pending_shenji', {}).get('caster') == P1
 
 
 # ---------------------------------------------------------------------------

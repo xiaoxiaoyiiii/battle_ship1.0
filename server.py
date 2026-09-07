@@ -1435,6 +1435,8 @@ def handle_rps_choice(data):
             room.polar_reversal_applied = False
         else:
             room.attacks_remaining = max(0, room.players[winner].remaining_ships - frozen_ship_count(room.players[winner]))
+            if field_magic_name(room) == '伊甸园':
+                room.attacks_remaining = max(0, 6 - room.players[winner].remaining_ships)
 
         # 猜拳后抽卡逻辑：先手1张，后手2张
         # 先手抽1张
@@ -2093,6 +2095,8 @@ def switch_turn_after_end_phase(room, opponent_id):
     # 切换到对方回合
     room.current_attacker = opponent_id
     room.attacks_remaining = max(0, len(room.players[opponent_id].ships) - frozen_ship_count(room.players[opponent_id]))  # 根据战舰数量设置攻击次数（冻结的船不计入）
+    if field_magic_name(room) == '伊甸园':
+        room.attacks_remaining = max(0, 6 - room.players[opponent_id].remaining_ships)
     room.current_phase = 'preparation'
     
     # 重置本回合伤害统计
@@ -2846,6 +2850,54 @@ def handle_rejoin_room(data):
     if was_reconnect:
         emit('room_sync', _build_room_sync(room, pid), to=request.sid)
     return {'status': 'success', 'reconnected': was_reconnect}
+
+
+def _apply_shenji_prediction(room, caster_id, x, result=None):
+    """神机妙算宣言落效：记录预测值并保存船数快照。"""
+    player = room.players[caster_id]
+    player.effect_flags = player.effect_flags
+    player.effect_flags.prediction = x
+    room.game_effects[f'prediction_initial_{caster_id}'] = {
+        'ships': player.remaining_ships,
+        'sunken': len(getattr(player, 'sunken_ships', []) or []),
+    }
+    room.magic_temp_data.pop('prediction', None)
+    room.magic_temp_data.pop('pending_shenji', None)
+    if result is not None:
+        result.message = f'宣言船数减少{x}，若预测成功则不会减少'
+
+
+@socketio.on('confirm_shenji_declare')
+def handle_confirm_shenji_declare(data):
+    """神机妙算宣言确认：写入预测值并生效。"""
+    room_id = data.get('room_id')
+    pid = data.get('player_id')
+    room = room_manager.get_room(room_id)
+    if not room or pid not in room.players or not _identity_ok(room, pid):
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+    pending = room.magic_temp_data.get('pending_shenji')
+    if not pending or pending.get('caster') != pid:
+        return {'status': 'error', 'message': '没有待宣言的神机妙算'}
+    try:
+        x = max(0, min(6, int(data.get('prediction', 0))))
+    except Exception:
+        return {'status': 'error', 'message': '宣言数值无效'}
+    _apply_shenji_prediction(room, pid, x)
+    for opid, op in room.players.items():
+        if opid != pid:
+            emit('message', {'text': f'对方宣言神机妙算：船数减少{x}时生效'}, to=op.sid)
+    return {'status': 'success', 'message': f'已宣言：船数减少{x}时不减少'}
+
+
+def _recalc_attacker_attacks(room):
+    """按当前攻击者在准备阶段结算攻击次数：伊甸园生效时 = 6-自身船数；否则按剩余船数-冻结。"""
+    pid = room.current_attacker
+    if not pid or pid not in room.players:
+        return
+    if field_magic_name(room) == '伊甸园':
+        room.attacks_remaining = max(0, 6 - room.players[pid].remaining_ships)
+    else:
+        room.attacks_remaining = max(0, len(room.players[pid].ships) - frozen_ship_count(room.players[pid]))
 
 
 # 添加处理连锁响应
@@ -4303,20 +4355,19 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['message'] = '牺牲一艘战舰，其他战舰进入无敌状态'
 
     elif card.name == '神机妙算':
-        # 宣言x，如果结束阶段船数减少x，那些船不会减少
+        # 宣言x：若结束阶段自己船数减少恰好x，那些船不减少。
+        # 尚未宣言 → 请求玩家宣言；已宣言（confirm 落临时数据）→ 直接生效。
         if 'prediction' not in room.magic_temp_data:
-            result.success = False
-            result.message = '需要宣言减少的船数'
-            return result
-
-        x = room.magic_temp_data['prediction']
-        room.players[caster_id].effect_flags = room.players[caster_id].effect_flags
-        room.players[caster_id].effect_flags.prediction = x
-        # 保存初始船数/沉船数快照用于结束阶段校验（击沉不从ships移除，故用沉船差值）
-        room.game_effects[f'prediction_initial_{caster_id}'] = {
-            'ships': caster.remaining_ships, 'sunken': len(caster.sunken_ships)
-        }
-        result.message = f'宣言船数减少{x}，若预测成功则不会减少'
+            room.magic_temp_data['pending_shenji'] = {'caster': caster_id}
+            result.temp_data_id = 'shenji_declare'
+            result.message = '请宣言预测减少的船数（0-6）'
+        else:
+            x = room.magic_temp_data.get('prediction')
+            try:
+                x = max(0, min(6, int(x)))
+            except Exception:
+                x = 0
+            _apply_shenji_prediction(room, caster_id, x, result)
 
     # ==== 场地魔法卡 ====
     elif card.type == '场地':
@@ -4331,6 +4382,12 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             result.message = '禁忌果实生效，双方只能使用失灵！和场地魔法'
         elif card.name == '伊甸园':
             result.message = '伊甸园生效，攻击次数变为6-n'
+            if room.state == 'attacking' and getattr(room, 'current_phase', None) == 'preparation' and room.current_attacker in room.players:
+                _recalc_attacker_attacks(room)
+                emit('attacks_updated', {
+                    'current_attacker': room.current_attacker,
+                    'attacks_remaining': room.attacks_remaining
+                }, room=room.id)
         elif card.name == '教皇旨意':
             result.message = '教皇旨意生效，攻击需要弃置魔法卡'
 

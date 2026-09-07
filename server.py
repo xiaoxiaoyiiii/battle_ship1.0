@@ -12,6 +12,14 @@ import db  # local database helpers for users and matches
 from api import app
 from file import read_json
 
+# eventlet 下必须先 monkey_patch：否则后台任务里的 time.sleep 会阻塞整个
+# 单线程 hub（掉线宽限 30s / 连锁超时 10s 都会让服务器假死）。
+try:
+    import eventlet
+    eventlet.monkey_patch()
+except ImportError:
+    pass
+
 
 def emit(event, data, to=None, room: str | None = None):
     json_data = json.dumps(data, default=lambda o: o.__dict__)
@@ -1169,11 +1177,13 @@ def handle_disconnect():
     if sid in room_manager.match_queue[0]:
         room_manager.remove_from_match_queue(sid)
 
-    # 掉线宽限：若该连接正坐在某未结束房间的座位上，启动 30s 重连窗口
+    # 掉线宽限：若该连接正坐在某未结束房间的座位上，启动 30s 重连窗口。
+    # 注意：不能在 disconnect 处理器内同步 emit（eventlet 下会卡住 hub），
+    # 因此把通知+计时整体放入后台任务（先让 disconnect 收尾完成）。
     for room_id, room in room_manager.get_all_rooms().items():
         for pid, p in list(room.players.items()):
             if p.sid == sid:
-                _start_disconnect_grace(room_id, room, pid)
+                socketio.start_background_task(_start_disconnect_grace, room_id, player_id=pid)
                 return
 
 
@@ -2653,14 +2663,17 @@ def _schedule_chain_timeout(room_id: str, token: int):
 DISCONNECT_GRACE_SECONDS = 30
 
 
-def _start_disconnect_grace(room_id: str, room, player_id: str):
-    """玩家掉线：启动 30s 重连窗口并通知对手。对局已结束或已在宽限中则跳过。"""
-    if room.state == 'game_over' or player_id in room.disconnected:
+def _start_disconnect_grace(room_id: str, player_id: str):
+    """玩家掉线：启动 30s 重连窗口并通知对手。由后台任务调用（避免在
+    disconnect 处理器内同步 emit 导致 eventlet hub 卡死）。"""
+    time.sleep(0.2)  # 让 disconnect 收尾完成
+    room = room_manager.get_room(room_id)
+    if not room or room.state == 'game_over' or player_id in room.disconnected:
         return
     room.disconnect_seq += 1
     deadline = time.time() + DISCONNECT_GRACE_SECONDS
     room.disconnected[player_id] = {'deadline': deadline, 'token': room.disconnect_seq}
-    for pid, p in room.players.items():
+    for pid, p in list(room.players.items()):
         if pid != player_id:
             emit('opponent_disconnected', {
                 'player_id': player_id,

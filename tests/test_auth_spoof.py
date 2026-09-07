@@ -36,9 +36,30 @@ def test_logged_user_matches_passes():
 
 
 def test_logged_user_acting_as_other_rejected():
-    """登录用户是 p2，却自称 p1 操作 -> 拒绝（即伪造他人身份）。"""
+    """登录用户是 p2，从自己的连接自称 p1 操作 -> 拒绝（伪造他人身份）。"""
     room = make_room()
-    assert server._identity_check(room, P1, server_pid=P2, sid='sid1') is False
+    # sid='sid9' 是攻击者自己的连接，既不是 p1 的入座 sid，也非 p2 的会话 id
+    assert server._identity_check(room, P1, server_pid=P2, sid='sid9') is False
+
+
+def test_match_room_sid_key_convention_ok():
+    """匹配房 key=入队时的 socket sid（即使已登录）：声称 player_id=本连接 sid 应通过。"""
+    room = GameRoom('rm')
+    room.players['sidA'] = Player(name='a', ships=[], attacks=[], remaining_ships=0, sid='sidA')
+    room.players['sidB'] = Player(name='b', ships=[], attacks=[], remaining_ships=0, sid='sidB')
+    # 登录用户（server_pid=uidA）在匹配房：声称 key=sidA、且是本连接 -> 通过
+    assert server._identity_check(room, 'sidA', server_pid='uidA', sid='sidA') is True
+    # 用他人连接伪造 sidA -> 拒绝
+    assert server._identity_check(room, 'sidA', server_pid='uidA', sid='sidB') is False
+
+
+def test_match_room_guest_ok():
+    """游客在匹配房（server_pid 为空）：声称 key=本连接 sid -> 通过；他人连接 -> 拒绝。"""
+    room = GameRoom('rm2')
+    room.players['sidX'] = Player(name='x', ships=[], attacks=[], remaining_ships=0, sid='sidX')
+    room.players['sidY'] = Player(name='y', ships=[], attacks=[], remaining_ships=0, sid='sidY')
+    assert server._identity_check(room, 'sidX', server_pid=None, sid='sidX') is True
+    assert server._identity_check(room, 'sidX', server_pid=None, sid='sidY') is False
 
 
 def test_guest_sid_match_passes():
@@ -80,7 +101,7 @@ def test_wrapper_logged_user_spoof_rejected(monkeypatch):
     import types
     room = make_room()
     monkeypatch.setattr(server, 'session', types.SimpleNamespace(get=lambda k: P2))
-    monkeypatch.setattr(server, 'request', types.SimpleNamespace(sid='sid1'))
+    monkeypatch.setattr(server, 'request', types.SimpleNamespace(sid='sid9'))  # 攻击者自己的连接
     assert server._identity_ok(room, P1) is False
     assert server._identity_ok(room, P2) is True
 

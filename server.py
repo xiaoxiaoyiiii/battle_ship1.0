@@ -559,12 +559,16 @@ room_manager = RoomManager()
 
 
 def _identity_check(room, claimed_player_id, server_pid, sid):
-    """纯身份校验（无副作用，便于单测）：
-    登录用户须与 server_pid 一致；游客须与入座登记的那条连接(sid)一致。"""
+    """纯身份校验（无副作用，便于单测）。房间 key 存在两种约定，两种都认：
+    - 自定义房/人机房（走 join_room）：key = 登录用户的 session user_id（游客=入座 sid）
+    - 匹配房：key = 入匹配队列时的 socket sid（无论是否登录，user_id 只存 Player.user_id）
+    因此只要满足任一即可：
+    1) 声称的 player_id == 会话 user_id（登录态，且容忍重连后 sid 变化）
+    2) 该座位登记的连接 == 当前连接（key=sid 的各流程，以及登录用户同连接场景）"""
     if not room or claimed_player_id not in room.players:
         return False
-    if server_pid:
-        return server_pid == claimed_player_id
+    if server_pid and claimed_player_id == server_pid:
+        return True
     return room.players[claimed_player_id].sid == sid
 
 

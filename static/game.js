@@ -1014,14 +1014,21 @@ function applyRoomSync(data) {
     }
     saveActiveGame(data.room_id, data.player_id);
 
-    // 像正常进入对局一样，先隐藏所有其它界面，避免与主菜单/等待界面叠层错乱
-    ['startScreen', 'customRoomInfo', 'customRoomIdInput', 'customRoomScreen',
-     'matchSuccessScreen', 'shipPlacementScreen', 'rpsScreen', 'gameOverScreen']
-        .forEach(function (nm) {
-            try { if (window[nm] && window[nm].classList) window[nm].classList.remove('active'); } catch (e) {}
-        });
-    try { if (typeof gameNav !== 'undefined' && gameNav) gameNav.style.display = 'none'; } catch (e) {}
-    try { if (typeof gameScreen !== 'undefined' && gameScreen) gameScreen.classList.add('active'); } catch (e) {}
+    // 像正常进入对局一样，先隐藏所有其它界面，避免与主菜单/大厅/等待界面叠层错乱。
+    // 注意：这些元素是模块级 const（不在 window 上），必须直接引用。
+    function rmActive(el) { try { if (el && el.classList) el.classList.remove('active'); } catch (e) {} }
+    function addHidden(el) { try { if (el && el.classList) el.classList.add('hidden'); } catch (e) {} }
+    if (typeof startScreen !== 'undefined') rmActive(startScreen);
+    if (typeof customRoomScreen !== 'undefined') rmActive(customRoomScreen);
+    if (typeof matchSuccessScreen !== 'undefined') rmActive(matchSuccessScreen);
+    if (typeof shipPlacementScreen !== 'undefined') rmActive(shipPlacementScreen);
+    if (typeof rpsScreen !== 'undefined') rmActive(rpsScreen);
+    if (typeof gameOverScreen !== 'undefined') rmActive(gameOverScreen);
+    if (typeof customRoomInfo !== 'undefined') addHidden(customRoomInfo);
+    if (typeof customRoomIdInput !== 'undefined') addHidden(customRoomIdInput);
+    if (typeof lobbyScreen !== 'undefined') addHidden(lobbyScreen);
+    if (typeof gameNav !== 'undefined' && gameNav) gameNav.style.display = 'none';
+    if (typeof gameScreen !== 'undefined' && gameScreen) gameScreen.classList.add('active');
 
     if (typeof gameRound !== 'undefined' && gameRound) gameRound.textContent = data.round || 1;
     if (typeof yourShips !== 'undefined' && yourShips) yourShips.textContent = data.remaining_ships;
@@ -1699,7 +1706,7 @@ function cancelMatch() {
 
 // 自定义房间游戏 - 创建房间
 function customCreateRoom() {
-    gameState.playerName = customPlayerNameInput.value || '玩家';
+    // 名称由服务端取登录账号名（游客默认），不再让玩家手输
     gameState.socket = io.connect('http://' + window.location.host);
     setupSocketListeners();
 
@@ -1711,10 +1718,9 @@ function customCreateRoom() {
                 customCurrentRoomId.textContent = gameState.roomId;
                 customRoomInfo.classList.remove('hidden');
 
-                // 自动加入创建的房间
+                // 自动加入创建的房间（名称用登录账号名）
                 gameState.socket.emit('join_room', {
-                    room_id: gameState.roomId,
-                    player_name: gameState.playerName
+                    room_id: gameState.roomId
                 }, (joinResponse) => {
                     if (joinResponse.status === 'success') {
                         gameState.playerId = joinResponse.player_id;
@@ -1729,7 +1735,6 @@ function customCreateRoom() {
 
 // 自定义房间游戏 - 加入房间
 function customJoinRoom() {
-    gameState.playerName = customPlayerNameInput.value || '玩家';
     const roomId = customRoomCodeInput.value.trim();
     if (!roomId) return;
 
@@ -1737,8 +1742,7 @@ function customJoinRoom() {
     setupSocketListeners();
 
     gameState.socket.emit('join_room', {
-        room_id: roomId,
-        player_name: gameState.playerName
+        room_id: roomId
     }, (response) => {
         if (response.status === 'success') {
             gameState.roomId = roomId;

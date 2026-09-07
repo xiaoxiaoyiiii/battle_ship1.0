@@ -346,7 +346,7 @@ def test_pingdeng_fails_without_change(room):
 def test_jinji_blocks_normal_magic(room):
     """双方都无法使用任何魔法卡，除去失灵！与其他场地魔法卡"""
     apply(room, P1, '禁忌果实')
-    assert room.field_magic == '禁忌果实'
+    assert room.field_magic.name == '禁忌果实'
     assert server.can_play_magic_card(room, P1, card('轰炸')) is False
     assert server.can_play_magic_card(room, P1, card('失灵！')) is True
     assert server.can_play_magic_card(room, P1, card('伊甸园')) is True
@@ -467,7 +467,7 @@ def test_tance_reveals_2x2(room):
 def test_yidian_attack_count_6_minus_n(room):
     """攻击次数变为 6-n（进入战斗阶段时结算）"""
     apply(room, P1, '伊甸园')
-    assert room.field_magic == '伊甸园'
+    assert room.field_magic.name == '伊甸园'
 
     room.players[P1].ships = [ship((0, 0)), ship((1, 1))]
     room.players[P1].remaining_ships = 2
@@ -809,11 +809,11 @@ def test_huoli_double_attacks_in_battle_phase(room):
 def test_jiabaili_negates_last_and_field(room):
     """无效化对方上一张魔法卡和当前场地魔法"""
     room.magic_history = [{'card': card('轰炸'), 'caster': P2}]
-    room.field_magic = '禁忌果实'
+    room.field_magic = card('禁忌果实')
     res = apply(room, P1, '加百列之光')
     assert res.success is True
     assert room.magic_history == []
-    assert room.field_magic == ''
+    assert room.field_magic is None
 
 
 # ---------------------------------------------------------------------------
@@ -939,7 +939,7 @@ def test_baizhe_restart_keep_hands(room):
 def test_field_magic_replacement(room):
     apply(room, P1, '恶魔契约')
     res = apply(room, P2, '禁忌果实')
-    assert room.field_magic == '禁忌果实'
+    assert room.field_magic.name == '禁忌果实'
 
 
 def test_field_card_real_flow_crash(room):
@@ -948,7 +948,7 @@ def test_field_card_real_flow_crash(room):
     played = card('禁忌果实')
     room.field_magic = played  # handle_use_magic_card 第2302行的行为
     apply(room, P1, '禁忌果实')
-    assert room.field_magic == '禁忌果实'
+    assert room.field_magic.name == '禁忌果实'
 
 
 # ---------------------------------------------------------------------------

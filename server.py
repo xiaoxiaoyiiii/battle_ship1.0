@@ -225,7 +225,7 @@ class GameRoom:
         self.round = 1
         self.winner = ""
         # 魔法卡相关状态
-        self.field_magic = ""  # 场地魔法 card
+        self.field_magic = None  # 场地区域（存卡牌实例，空=None）
         self.magic_history = []  # 魔法卡使用历史
         self.game_effects = {}  # 游戏效果跟踪
         self.current_phase = 'preparation'  # 当前阶段
@@ -558,6 +558,51 @@ class RoomManager:
 room_manager = RoomManager()
 
 
+def _identity_check(room, claimed_player_id, server_pid, sid):
+    """纯身份校验（无副作用，便于单测）：
+    登录用户须与 server_pid 一致；游客须与入座登记的那条连接(sid)一致。"""
+    if not room or claimed_player_id not in room.players:
+        return False
+    if server_pid:
+        return server_pid == claimed_player_id
+    return room.players[claimed_player_id].sid == sid
+
+
+def _identity_ok(room, claimed_player_id):
+    """从当前请求上下文取身份后校验，防止伪造他人 player_id 操作。
+    无请求上下文（如单元测试直调 handler）时跳过连接校验，仅保留成员校验。"""
+    try:
+        server_pid = session.get('user_id')
+    except RuntimeError:
+        server_pid = None
+    try:
+        sid = request.sid
+    except RuntimeError:
+        sid = None
+    if server_pid is None and sid is None:
+        return room is not None and claimed_player_id in room.players
+    return _identity_check(room, claimed_player_id, server_pid, sid)
+
+
+def field_magic_name(room):
+    """返回场地区域上的场地魔法卡名（字符串）；无场地时返回空字符串。"""
+    if not room or not room.field_magic:
+        return ""
+    fm = room.field_magic
+    return fm.name if hasattr(fm, 'name') else fm
+
+
+def _place_field_magic(room, caster_id, card):
+    """将场地魔法卡实例放入场地区域；若已有不同名的旧卡，将其（实例）移入弃牌堆。
+    返回被顶掉的旧卡（可能为 None）。"""
+    old = room.field_magic
+    room.field_magic = card
+    if old and getattr(old, 'name', None) != card.name:
+        room.magic_discard.append(old)
+    emit('field_magic_updated', {'player_id': caster_id, 'card': card}, room=room.id)
+    return old
+
+
 
 
 # 测试功能：添加所有魔法卡到手牌
@@ -649,7 +694,7 @@ def test_clear_all_effects(data):
 
     # 清除所有游戏效果
     room.game_effects = {}
-    room.field_magic = ""
+    room.field_magic = None
     room.polar_reversal_applied = False
     room.last_attack = None
     room.magic_temp_data = {}
@@ -751,7 +796,7 @@ def test_reset_game(data):
     room.attack_order = []
     room.current_attacker = ""
     room.attacks_remaining = 0
-    room.field_magic = ""
+    room.field_magic = None
     room.game_effects = {}
     room.polar_reversal_applied = False
     room.last_attack = None
@@ -1257,7 +1302,7 @@ def handle_place_ships(data):
     player_id = data['player_id']
     ships = data['ships']
     room = room_manager.get_room(room_id)
-    if not room or player_id not in room.players:
+    if not room or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
     room.players[player_id].ships = list(map(lambda x: PlayerShip(**x), ships))
@@ -1301,7 +1346,7 @@ def handle_rps_choice(data):
     choice = data['choice']  # 'rock', 'paper', 'scissors'
 
     room = room_manager.get_room(room_id)
-    if not room or player_id not in room.players:
+    if not room or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
     # AI房间：AI自动出拳
@@ -1484,7 +1529,7 @@ def handle_magic_target(data):
     temp_data_id = data['temp_data_id']
 
     room = room_manager.get_room(room_id)
-    if not room or player_id not in room.players:
+    if not room or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
     # 存储临时目标数据
@@ -1578,7 +1623,7 @@ def handle_attack(data):
     target_y = data['y']
 
     room = room_manager.get_room(room_id)
-    if not room or attacker_id not in room.players:
+    if not room or attacker_id not in room.players or not _identity_ok(room, attacker_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
     # 检查是否是当前攻击者
@@ -1915,14 +1960,14 @@ def enter_battle_phase(data):
     player_id = data['player_id']
 
     room = room_manager.get_room(room_id)
-    if not room or player_id not in room.players:
+    if not room or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
     # 检查是否是当前攻击者的准备阶段
     if room.current_attacker == player_id and room.current_phase == 'preparation':
         # 切换到战斗阶段
         room.current_phase = 'battle'
-        if room.field_magic == "伊甸园":
+        if field_magic_name(room) == "伊甸园":
             room.attacks_remaining = 6 - room.players[player_id].remaining_ships
 
         # 检查是否有攻击次数翻倍效果
@@ -1936,7 +1981,7 @@ def enter_battle_phase(data):
             }, room=room_id)
             # 移除翻倍效果，因为它只持续一个大回合
             room.players[player_id].effect_flags.double_attacks = False
-        if room.field_magic == "教皇旨意":
+        if field_magic_name(room) == "教皇旨意":
             room.attacks_remaining = 0
         # 广播阶段更新
         emit('phase_updated', {
@@ -1955,7 +2000,7 @@ def handle_enter_end_phase(data):
     player_id = data['player_id']
 
     room = room_manager.get_room(room_id)
-    if not room or player_id not in room.players:
+    if not room or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
     # 检查是否是当前攻击者的战斗阶段
@@ -2007,7 +2052,7 @@ def end_turn(data):
     player_id = data['player_id']
 
     room = room_manager.get_room(room_id)
-    if not room or player_id not in room.players:
+    if not room or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
     # 检查是否是当前攻击者的结束阶段
@@ -2301,7 +2346,7 @@ def handle_papal_attack(data):
     discard_card_index = data.get('discard_card_index')
 
     room = room_manager.get_room(room_id)
-    if not room or player_id not in room.players:
+    if not room or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
     player = room.players[player_id]
@@ -2309,7 +2354,7 @@ def handle_papal_attack(data):
     opponent = room.players[opponent_id]
 
     # 检查教皇旨意是否生效
-    if room.game_effects.get('papal_edict') is not True and room.field_magic != '教皇旨意':
+    if room.game_effects.get('papal_edict') is not True and field_magic_name(room) != '教皇旨意':
         return {'status': 'error', 'message': '教皇旨意未生效'}
 
     # 必须有手牌才能弃卡攻击
@@ -2428,7 +2473,7 @@ def handle_use_magic_card(data):
     targets = data.get('targets', [])
 
     room = room_manager.get_room(room_id)
-    if not room or player_id not in room.players:
+    if not room or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
     player = room.players[player_id]
@@ -2451,25 +2496,14 @@ def handle_use_magic_card(data):
         if c.name == card.name and c.speed == card.speed:
             player.magic_hand.pop(i)
             break
-    room.magic_discard.append(card)
+    if card.type != '场地':
+        room.magic_discard.append(card)
 
     # 记录最后使用的魔法卡
     room.last_magic = card
 
-    # 处理场地魔法 - 全场只能有一张场地魔法卡生效（field_magic 统一存卡名字符串）
-    if card.type == '场地':
-        # 旧场地卡送入弃牌堆（不在手牌中，不能用 discard_card）
-        old = room.field_magic
-        old_name = old.name if isinstance(old, MagicCard) else old
-        if old_name and old_name != card.name:
-            room.magic_discard.append(MagicCard(old_name))
-        # 设置新的场地魔法卡
-        room.field_magic = card.name
-        # 广播新的场地魔法卡
-        emit('field_magic_updated', {
-            'player_id': player_id,
-            'card': card
-        }, room=room_id)
+    # 场地魔法卡不再在此预置：改由结算（apply_magic_effect 场地分支）实例入区，
+    # 避免"打出即进弃牌堆 + 贴场"产生游离副本；被顶掉/被康时实例移入弃牌堆。
 
     # 添加到连锁栈
     chain_item = ChainItem(player_id, card, targets, time.time())
@@ -2514,7 +2548,7 @@ def can_play_magic_card(room, player_id, card):
     speed = int(card.speed)
 
     # 禁忌果实: 双方都无法使用任何魔法卡，除失灵！与其他场地魔法卡
-    if room.field_magic == '禁忌果实':
+    if field_magic_name(room) == '禁忌果实':
         if card.name != '失灵！' and card.type != '场地':
             return False
 
@@ -2593,7 +2627,7 @@ def chain_response(data):
     targets = data.get('targets', [])
 
     room = room_manager.get_room(room_id)
-    if not room or player_id not in room.players:
+    if not room or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
     if not room.chain_waiting:
@@ -2670,7 +2704,7 @@ def counter_magic_response(data):
     use_counter = data['use_counter']
 
     room = room_manager.get_room(room_id)
-    if not room or player_id not in room.players:
+    if not room or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
     if not room.pending_magic:
@@ -2727,13 +2761,13 @@ def handle_remove_field_magic(data):
     player_id = data['player_id']
 
     room = room_manager.get_room(room_id)
+    if not room or player_id not in room.players or not _identity_ok(room, player_id):
+        return {'status': 'error', 'message': '无效的房间或玩家'}
     if room and player_id in room.players:
         # 将场地魔法加入弃牌堆并清除场地（旧卡不在手牌，不能用 discard_card）
         if room.field_magic:
-            old = room.field_magic
-            old_name = old.name if isinstance(old, MagicCard) else old
-            room.magic_discard.append(MagicCard(old_name))
-            room.field_magic = ""
+            room.magic_discard.append(room.field_magic)
+            room.field_magic = None
         # 广播场地魔法更新
         emit('field_magic_updated', {
             'player_id': player_id,
@@ -2749,7 +2783,7 @@ def handle_confirm_reinforcement(data):
     player_id = data.get('player_id')
     position = data.get('position')
     room = room_manager.get_room(room_id)
-    if not room or not player_id or player_id not in room.players:
+    if not room or not player_id or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
     caster = room.players[player_id]
 
@@ -2797,7 +2831,7 @@ def handle_request_revealed_positions(data):
     room_id = data.get('room_id')
     player_id = data.get('player_id')
     room = room_manager.get_room(room_id)
-    if not room or not player_id or player_id not in room.players:
+    if not room or not player_id or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
     positions = room.players[player_id].revealed_positions
     # 只发送给请求者
@@ -2810,7 +2844,7 @@ def get_magic_temp_data(data):
     room_id = data.get('room_id')
     player_id = data.get('player_id')
     room = room_manager.get_room(room_id)
-    if not room or not player_id or player_id not in room.players:
+    if not room or not player_id or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
     return {'status': 'success', 'data': room.magic_temp_data}
 
@@ -2823,7 +2857,7 @@ def confirm_magic_target(data):
     target_data = data.get('target_data', {})
 
     room = room_manager.get_room(room_id)
-    if not room or not player_id or player_id not in room.players:
+    if not room or not player_id or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
     if temp_data_id == 'taoyuan_choice':
@@ -2949,7 +2983,7 @@ def get_discard_pile(data):
     player_id = data.get('player_id')
 
     room = room_manager.get_room(room_id)
-    if not room or not player_id or player_id not in room.players:
+    if not room or not player_id or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
     # 获取全局弃牌堆数据
@@ -3105,7 +3139,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
     
     elif card.name == '教皇旨意':
         # 场地魔法，攻击次数变为0，通过弃置魔法卡攻击
-        room.field_magic = card.name
+        _place_field_magic(room, caster_id, card)
         room.game_effects['papal_edict'] = True
         result['message'] = '教皇旨意已生效，双方攻击次数变为0，通过弃置魔法卡攻击对方两次'
 
@@ -4014,7 +4048,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         # 无效化场地魔法
         if room.field_magic:
             negated_count += 1
-        room.field_magic = ""
+            room.magic_discard.append(room.field_magic)
+        room.field_magic = None
 
         result['message'] = f'成功无效化{negated_count}个效果'
 
@@ -4054,18 +4089,9 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
 
     # ==== 场地魔法卡 ====
     elif card.type == '场地':
-        # 场地魔法处理 - 全场只能有一张场地魔法卡生效（统一存卡名字符串）
-        # 旧场地卡送入弃牌堆；同名覆盖时不重复弃牌（handle_use_magic_card 已预设新卡名）
-        old = room.field_magic
-        old_name = old.name if isinstance(old, MagicCard) else old
-        if old_name and old_name != card.name:
-            room.magic_discard.append(MagicCard(old_name))
-            emit('field_magic_updated', {
-                'player_id': caster_id,
-                'card': None
-            }, room=room.id)
-        # 设置新的场地魔法卡
-        room.field_magic = card.name
+        # 场地魔法处理 - 全场只能有一张场地魔法卡生效。
+        # 将实例放入场地区域；被顶掉的旧卡实例移入弃牌堆（不造副本）。
+        _place_field_magic(room, caster_id, card)
 
         if card.name == '恶魔契约':
             room.game_effects['demon_contract'] = True

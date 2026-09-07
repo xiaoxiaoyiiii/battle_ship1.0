@@ -188,7 +188,7 @@ def test_jiaohuang_papal_attack_two_hits(room):
 
 def test_jiaohuang_papal_attack_requires_card(room):
     room.game_effects['papal_edict'] = True
-    room.field_magic = '教皇旨意'
+    room.field_magic = card('教皇旨意')
     room.players[P1].magic_hand = []
     res = server.handle_papal_attack({
         'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 0

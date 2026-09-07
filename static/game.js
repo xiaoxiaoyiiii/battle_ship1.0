@@ -931,7 +931,95 @@ window.gameState = {
     chain: [],              // 连锁栈
     currentPhase: null,     // 当前游戏阶段
     fieldMagic: null,       // 场地魔法
-    selectedCardIndex: -1   // 当前选中的卡牌索引，-1表示未选中
+    selectedCardIndex: -1,  // 当前选中的卡牌索引，-1表示未选中
+    inRoom: false,          // 是否在对局房间中（用于掉线重连）
+    reconnectToken: null,   // 对局重连 token
+    frozen: false,          // 对手掉线宽限期内冻结操作
+    opponentGone: null      // 对手掉线信息 {deadline}
+}
+
+let opponentGoneTimer = null;
+let opponentGoneEl = null;
+const ACTIVE_GAME_KEY = 'battle_active_game';
+
+function freezeAlert() {
+    if (gameState.frozen) { showAlert('对手已掉线，等待重连中'); return true; }
+    return false;
+}
+function ensureOpponentGoneEl() {
+    if (opponentGoneEl) return opponentGoneEl;
+    opponentGoneEl = document.createElement('div');
+    opponentGoneEl.id = 'opponent-gone-banner';
+    opponentGoneEl.style.cssText = 'position:fixed;top:12px;right:12px;z-index:9999;background:#c0392b;color:#fff;padding:10px 16px;border-radius:8px;font-weight:bold;box-shadow:0 2px 10px rgba(0,0,0,.3);display:none';
+    document.body.appendChild(opponentGoneEl);
+    return opponentGoneEl;
+}
+function showOpponentGoneBanner(deadline) {
+    gameState.opponentGone = { deadline: deadline };
+    gameState.frozen = true;
+    const el = ensureOpponentGoneEl();
+    const tick = () => {
+        const left = Math.max(0, Math.ceil(gameState.opponentGone.deadline - Date.now() / 1000));
+        el.textContent = '对手已掉线 · 等待重连 ' + left + 's';
+        if (left <= 0 && opponentGoneTimer) { clearInterval(opponentGoneTimer); opponentGoneTimer = null; }
+    };
+    if (opponentGoneTimer) clearInterval(opponentGoneTimer);
+    tick();
+    opponentGoneTimer = setInterval(tick, 1000);
+    el.style.display = 'block';
+}
+function hideOpponentGoneBanner() {
+    gameState.opponentGone = null;
+    gameState.frozen = false;
+    if (opponentGoneTimer) { clearInterval(opponentGoneTimer); opponentGoneTimer = null; }
+    if (opponentGoneEl) opponentGoneEl.style.display = 'none';
+}
+function saveActiveGame(roomId, playerId) {
+    try {
+        const prev = loadActiveGame() || {};
+        sessionStorage.setItem(ACTIVE_GAME_KEY, JSON.stringify({ room_id: roomId, player_id: playerId, token: gameState.reconnectToken || prev.token || '' }));
+    } catch (e) {}
+}
+function clearActiveGame() {
+    try { sessionStorage.removeItem(ACTIVE_GAME_KEY); } catch (e) {}
+    gameState.inRoom = false;
+    gameState.reconnectToken = null;
+}
+function loadActiveGame() {
+    try { return JSON.parse(sessionStorage.getItem(ACTIVE_GAME_KEY) || 'null'); } catch (e) { return null; }
+}
+function requestReconnectToken(roomId, playerId) {
+    if (!gameState.socket) return;
+    gameState.socket.emit('get_reconnect_token', { room_id: roomId, player_id: playerId }, (resp) => {
+        if (resp && resp.status === 'success' && resp.token) {
+            gameState.reconnectToken = resp.token;
+            saveActiveGame(roomId, playerId);
+        }
+    });
+}
+function applyRoomSync(data) {
+    gameState.roomId = data.room_id;
+    gameState.playerId = data.player_id;
+    gameState.inRoom = true;
+    gameState.currentPhase = data.current_phase;
+    gameState.currentAttacker = data.current_attacker;
+    gameState.round = data.round;
+    gameState.hand = data.hand || [];
+    gameState.ships = data.ships || [];
+    gameState.myAttacks = data.attacks || [];
+    if (data.field_magic) gameState.fieldMagic = data.field_magic;
+    if (data.opponent_name) {
+        gameState.opponentName = data.opponent_name;
+        if (typeof opponentUsernameInfo !== 'undefined' && opponentUsernameInfo) opponentUsernameInfo.textContent = data.opponent_name;
+    }
+    saveActiveGame(data.room_id, data.player_id);
+    try { if (typeof gameScreen !== 'undefined' && gameScreen) gameScreen.classList.add('active'); } catch (e) {}
+    if (typeof gameRound !== 'undefined' && gameRound) gameRound.textContent = data.round || 1;
+    if (typeof yourShips !== 'undefined' && yourShips) yourShips.textContent = data.remaining_ships;
+    if (typeof opponentShips !== 'undefined' && opponentShips) opponentShips.textContent = data.opponent_remaining_ships;
+    if (typeof updateTurnIndicator === 'function') updateTurnIndicator(data.current_attacker, data.attacks_remaining);
+    if (typeof updatePhaseUI === 'function') updatePhaseUI();
+    if (typeof updateHandUI === 'function') updateHandUI();
 }
 
 // 页面加载时初始化WebSocket连接，用于在线人数统计
@@ -1743,6 +1831,13 @@ function setupSocketListeners() {
             console.log('设置playerId为:', gameState.playerId);
         }
 
+        // 掉线重连准备：记录对局上下文并按需领取重连 token
+        if (data.room_id && data.player_id) {
+            gameState.inRoom = true;
+            saveActiveGame(data.room_id, data.player_id);
+            if (!gameState.reconnectToken) requestReconnectToken(data.room_id, data.player_id);
+        }
+
         // 显示对手战绩弹窗并请求数据
         function showOpponentStats() {
             if (!opponentStatsModal || !opponentStatsContent || !gameState.opponentName) return;
@@ -1863,12 +1958,15 @@ function setupSocketListeners() {
                 if (data.winner === gameState.playerId) {
                     if (data.reason === 'surrender') {
                         gameResult.textContent = '对方已投降，你获胜了！';
+                    } else if (data.reason === 'opponent_disconnected') {
+                        gameResult.textContent = '对手掉线超时，你获胜了！';
                     } else {
                         gameResult.textContent = '恭喜你获胜了！';
                     }
                 } else {
                     gameResult.textContent = '很遗憾，你输了。';
                 }
+                clearActiveGame();
                 break;
             default:
                 console.error('Unknown game state:', data.state);
@@ -1878,6 +1976,48 @@ function setupSocketListeners() {
                 currentRoomId.textContent = gameState.roomId;
                 roomInfo.querySelector('.waiting-message').textContent = '未知游戏状态，请刷新页面';
         }
+    });
+
+    // ===== 掉线/重连（2026-09-07 新增）=====
+    socket.on('connect', () => {
+        const active = loadActiveGame();
+        if (active && active.room_id && active.player_id) {
+            console.log('尝试自动重连对局:', active.room_id);
+            socket.emit('rejoin_room', {
+                room_id: active.room_id,
+                player_id: active.player_id,
+                token: gameState.reconnectToken || active.token || ''
+            }, (resp) => {
+                if (resp && resp.status === 'error') console.log('重连失败:', resp.message);
+            });
+        }
+    });
+    socket.on('opponent_disconnected', (data) => {
+        console.log('对手掉线:', data);
+        showOpponentGoneBanner(data.deadline || (Date.now() / 1000 + (data.seconds || 30)));
+        showMessage('对手已掉线，等待重连…');
+    });
+    socket.on('opponent_reconnected', () => {
+        console.log('对手重连');
+        hideOpponentGoneBanner();
+        showMessage('对手已重连，对局继续');
+    });
+    socket.on('game_canceled', (data) => {
+        console.log('对局取消:', data);
+        hideOpponentGoneBanner();
+        clearActiveGame();
+        if (data && data.message) showAlert(data.message);
+        setTimeout(() => resetGame(), 1500);
+    });
+    socket.on('reconnect_warning', (data) => {
+        console.log('掉线警告:', data);
+        clearActiveGame();
+        if (data && data.message) showAlert(data.message);
+        setTimeout(() => resetGame(), 2000);
+    });
+    socket.on('room_sync', (data) => {
+        console.log('对局快照恢复:', data);
+        applyRoomSync(data);
     });
 
     socket.on('rps_result', (result) => {
@@ -3126,6 +3266,7 @@ function handleAttack(x, y) {
     if (gameState.currentMagicCard) return;
 
     if (!gameState.isMyTurn) return;
+    if (freezeAlert()) return;
 
     // 检查当前是否为战斗阶段
     if (gameState.currentPhase !== 'battle') {
@@ -3325,6 +3466,7 @@ window.endBattlePhase = function () {
         showAlert('当前不是你的战斗阶段');
         return;
     }
+    if (freezeAlert()) return;
 
     gameState.socket.emit('enter_end_phase', {
         room_id: gameState.roomId,
@@ -4065,6 +4207,7 @@ function playMagicCard(index) {
     console.log('playMagicCard called with index:', index);
     const card = gameState.hand[index];
     if (!card) return;
+    if (freezeAlert()) return;
 
     // 检查卡牌是否可以在当前阶段使用
     if (!canPlayCard(card)) {
@@ -5064,6 +5207,7 @@ function updatePhaseUI() {
 function setupPhaseButtons() {
     // 进入战斗阶段按钮
     document.getElementById('enter-battle-phase').addEventListener('click', () => {
+        if (freezeAlert()) return;
         gameState.socket.emit('enter_battle_phase', {
             room_id: gameState.roomId,
             player_id: gameState.playerId
@@ -5076,6 +5220,7 @@ function setupPhaseButtons() {
 
     // 进入结束阶段按钮
     document.getElementById('enter-end-phase').addEventListener('click', () => {
+        if (freezeAlert()) return;
         // 获取当前剩余攻击次数
         const remainingAttacks = parseInt(attacksRemaining.textContent, 10);
 
@@ -5097,6 +5242,7 @@ function setupPhaseButtons() {
 
     // 结束回合按钮
     document.getElementById('end-turn-btn').addEventListener('click', () => {
+        if (freezeAlert()) return;
         gameState.socket.emit('end_turn', {
             room_id: gameState.roomId,
             player_id: gameState.playerId

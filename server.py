@@ -2,6 +2,7 @@ import json
 import random
 import time
 import uuid
+import secrets
 from typing import Any, Callable
 import logging
 from flask import render_template, request, session, jsonify
@@ -244,6 +245,11 @@ class GameRoom:
         self.rps_processed = False  # 记录猜拳结果是否已经处理过
         self.skip_opponent_turn = None  # 用于 Freezing!/神之宣告跳过对方回合
         self.skip_next_turn = None  # 用于跳过下一个玩家回合
+        # 掉线/重连（2026-09-07 新增）
+        self.disconnected = {}        # player_id -> {'deadline': float, 'token': int}（宽限期内）
+        self.disconnect_seq = 0       # 掉线计时器代际令牌
+        self.reconnect_tokens = {}    # player_id -> 一次性重连 token
+        self.game_over_reason = None  # None | 'opponent_disconnected'
 
     def init_player_magic(self, player_id: str, magic_cards):
         """初始化玩家魔法卡相关状态"""
@@ -1163,6 +1169,13 @@ def handle_disconnect():
     if sid in room_manager.match_queue[0]:
         room_manager.remove_from_match_queue(sid)
 
+    # 掉线宽限：若该连接正坐在某未结束房间的座位上，启动 30s 重连窗口
+    for room_id, room in room_manager.get_all_rooms().items():
+        for pid, p in list(room.players.items()):
+            if p.sid == sid:
+                _start_disconnect_grace(room_id, room, pid)
+                return
+
 
 @socketio.on('chat_message')
 def handle_chat_message(data):
@@ -1629,6 +1642,9 @@ def handle_attack(data):
     room = room_manager.get_room(room_id)
     if not room or attacker_id not in room.players or not _identity_ok(room, attacker_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
+    frz = _frozen_reason(room, attacker_id)
+    if frz:
+        return {'status': 'error', 'message': frz}
 
     # 检查是否是当前攻击者
     if attacker_id != room.current_attacker:
@@ -1966,6 +1982,9 @@ def enter_battle_phase(data):
     room = room_manager.get_room(room_id)
     if not room or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
+    frz = _frozen_reason(room, player_id)
+    if frz:
+        return {'status': 'error', 'message': frz}
 
     # 检查是否是当前攻击者的准备阶段
     if room.current_attacker == player_id and room.current_phase == 'preparation':
@@ -2058,6 +2077,9 @@ def end_turn(data):
     room = room_manager.get_room(room_id)
     if not room or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
+    frz = _frozen_reason(room, player_id)
+    if frz:
+        return {'status': 'error', 'message': frz}
 
     # 检查是否是当前攻击者的结束阶段
     if room.current_attacker == player_id and room.current_phase == 'end':
@@ -2352,6 +2374,9 @@ def handle_papal_attack(data):
     room = room_manager.get_room(room_id)
     if not room or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
+    frz = _frozen_reason(room, player_id)
+    if frz:
+        return {'status': 'error', 'message': frz}
 
     player = room.players[player_id]
     opponent_id = next(p for p in room.players if p != player_id)
@@ -2479,6 +2504,9 @@ def handle_use_magic_card(data):
     room = room_manager.get_room(room_id)
     if not room or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
+    frz = _frozen_reason(room, player_id)
+    if frz:
+        return {'status': 'error', 'message': frz}
 
     player = room.players[player_id]
     opponent_id = next(p for p in room.players if p != player_id)
@@ -2619,6 +2647,162 @@ def _schedule_chain_timeout(room_id: str, token: int):
             room.chain_waiting = False
             resolve_chain(room)
     socketio.start_background_task(_timeout)
+
+
+# ============ 掉线宽限 / 重连 / 超时判负（2026-09-07 新增） ============
+DISCONNECT_GRACE_SECONDS = 30
+
+
+def _start_disconnect_grace(room_id: str, room, player_id: str):
+    """玩家掉线：启动 30s 重连窗口并通知对手。对局已结束或已在宽限中则跳过。"""
+    if room.state == 'game_over' or player_id in room.disconnected:
+        return
+    room.disconnect_seq += 1
+    deadline = time.time() + DISCONNECT_GRACE_SECONDS
+    room.disconnected[player_id] = {'deadline': deadline, 'token': room.disconnect_seq}
+    for pid, p in room.players.items():
+        if pid != player_id:
+            emit('opponent_disconnected', {
+                'player_id': player_id,
+                'seconds': DISCONNECT_GRACE_SECONDS,
+                'deadline': deadline,
+            }, to=p.sid)
+    socketio.start_background_task(_disconnect_timeout, room_id, player_id, room.disconnect_seq)
+
+
+def _disconnect_timeout(room_id: str, player_id: str, token: int):
+    """掉线宽限到期结算：未重连则按房间阶段决定取消对局或判对手胜利。"""
+    time.sleep(DISCONNECT_GRACE_SECONDS)
+    room = room_manager.get_room(room_id)
+    if not room:
+        return
+    entry = room.disconnected.get(player_id)
+    if not entry or entry.get('token') != token:
+        return  # 已重连或已由其它路径处理
+    room.disconnected.pop(player_id, None)
+
+    other = next((p for p in room.players if p != player_id), None)
+    ai_room = getattr(room, 'is_ai_room', False)
+    pre_battle = room.state in ('placing_ships', 'rock_paper_scissors')
+
+    if ai_room or pre_battle or other is None or other in room.disconnected or room.state == 'game_over':
+        # 人机房 / 未开战 / 双方都不在场：取消对局，不计战绩
+        emit('game_canceled', {
+            'reason': 'opponent_disconnected',
+            'message': '对局已取消（对手掉线）',
+        }, room=room_id)
+        room_manager.delete_room(room_id)
+        return
+
+    # 正式对局：在场方判胜，正常计入战绩（无特殊标签）
+    room.state = 'game_over'
+    room.winner = other
+    room.game_over_reason = 'opponent_disconnected'
+    try:
+        winner_user_id = room.players[other].user_id
+        loser_user_id = room.players[player_id].user_id
+        if winner_user_id or loser_user_id:
+            db.record_match(winner_user_id or other, loser_user_id or player_id, getattr(room, 'game_logs', None))
+    except Exception:
+        pass
+    emit('game_over', {'winner': other, 'reason': 'opponent_disconnected'}, room=room_id)
+    # 房间保留约 2 分钟：让掉线者重连时收到一次性警告
+    socketio.start_background_task(_cleanup_ended_room, room_id, 120)
+
+
+def _cleanup_ended_room(room_id: str, delay: float):
+    time.sleep(delay)
+    room_manager.delete_room(room_id)
+
+
+def _frozen_reason(room, player_id: str):
+    """对方处于掉线宽限期时返回拒绝文案；否则返回 None（可继续行动）。"""
+    for pid in room.disconnected:
+        if pid != player_id:
+            return '对手已掉线，等待重连中'
+    return None
+
+
+def _issue_reconnect_token(room, player_id: str) -> str:
+    tok = secrets.token_hex(16)
+    room.reconnect_tokens[player_id] = tok
+    return tok
+
+
+def _build_room_sync(room, player_id: str) -> dict:
+    """重连后下发整局快照，供前端重建界面。"""
+    p = room.players[player_id]
+    opp = next((room.players[o] for o in room.players if o != player_id), None)
+    return {
+        'room_id': room.id,
+        'state': room.state,
+        'current_phase': getattr(room, 'current_phase', None),
+        'current_attacker': room.current_attacker,
+        'attacks_remaining': room.attacks_remaining,
+        'round': room.round,
+        'attack_order': room.attack_order,
+        'player_id': player_id,
+        'player_name': p.name,
+        'opponent_name': opp.name if opp else None,
+        'is_ai_room': getattr(room, 'is_ai_room', False),
+        'winner': room.winner,
+        'game_over_reason': getattr(room, 'game_over_reason', None),
+        'field_magic': (room.field_magic.name if hasattr(room.field_magic, 'name') else room.field_magic) or "",
+        'remaining_ships': p.remaining_ships,
+        'ships': [{'positions': [{'x': s.x, 'y': s.y} for s in sh.positions]} for sh in p.ships],
+        'hand': [{'name': c.name, 'speed': c.speed, 'type': c.type, 'description': c.description} for c in p.magic_hand],
+        'attacks': [{'x': a.x, 'y': a.y, 'hit': a.hit} for a in getattr(p, 'attacks', [])],
+        'opponent_remaining_ships': opp.remaining_ships if opp else 0,
+    }
+
+
+@socketio.on('get_reconnect_token')
+def handle_get_reconnect_token(data):
+    room = room_manager.get_room(data.get('room_id'))
+    pid = data.get('player_id')
+    if not room or pid not in room.players or not _identity_ok(room, pid):
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+    return {'status': 'success', 'token': _issue_reconnect_token(room, pid)}
+
+
+@socketio.on('rejoin_room')
+def handle_rejoin_room(data):
+    """掉线重连：校验 token/会话身份后重绑 sid，取消宽限并下发整局快照。"""
+    room_id = data.get('room_id')
+    pid = data.get('player_id')
+    token = data.get('token')
+    room = room_manager.get_room(room_id)
+    if not room or pid not in room.players:
+        return {'status': 'error', 'message': '房间不存在'}
+    ok = bool(room.reconnect_tokens.get(pid) == token)
+    if not ok:
+        try:
+            ok = bool(session.get('user_id') == pid)
+        except Exception:
+            ok = False
+    if not ok:
+        return {'status': 'error', 'message': '身份校验失败'}
+
+    if room.state == 'game_over':
+        # 掉线超时结束：给败方一次警告，房间稍后清理
+        if room.game_over_reason == 'opponent_disconnected' and room.winner != pid:
+            emit('reconnect_warning', {'message': '对局已因你掉线超时结束，请勿中途掉线'}, to=request.sid)
+            socketio.start_background_task(_cleanup_ended_room, room_id, 3)
+        else:
+            emit('error', {'message': '对局已结束'}, to=request.sid)
+        return {'status': 'success'}
+
+    room.players[pid].sid = request.sid
+    join_room(room_id, request.sid)
+    was_reconnect = pid in room.disconnected
+    if was_reconnect:
+        room.disconnected.pop(pid, None)
+    for opid, op in room.players.items():
+        if opid != pid:
+            emit('opponent_reconnected', {'player_id': pid}, to=op.sid)
+    if was_reconnect:
+        emit('room_sync', _build_room_sync(room, pid), to=request.sid)
+    return {'status': 'success', 'reconnected': was_reconnect}
 
 
 # 添加处理连锁响应

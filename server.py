@@ -4127,12 +4127,13 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             result['message'] = '手牌为空，无法发动'
             return result
 
-        # 记录需要选择的牌
+        # 记录需要选择的牌（下标与手牌一致，客户端确认用 card_index）
         room.magic_temp_data = {
             'type': 'bury_choice',
             'caster': caster_id,
             'cards': caster.magic_hand
         }
+        result['cards'] = [{'name': c.name, 'speed': c.speed, 'type': c.type, 'description': c.description} for c in caster.magic_hand]
         result['message'] = '请选择要埋葬的卡牌'
         result['temp_data_id'] = 'bury_choice'
 

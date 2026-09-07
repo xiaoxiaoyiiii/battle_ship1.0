@@ -157,3 +157,12 @@ def test_papal_recalc_zero_at_prep():
     room.attacks_remaining = 5
     server._recalc_attacker_attacks(room)
     assert room.attacks_remaining == 0
+
+
+def test_bury_result_carries_cards():
+    """明智埋葬：结果随附可埋手牌（与桃园同款修复）。"""
+    room = make_room()
+    room.players[P1].magic_hand = [MagicCard('轰炸'), MagicCard('冻结')]
+    res = server.apply_magic_effect(room, P1, card('明智埋葬'), {})
+    assert res.temp_data_id == 'bury_choice'
+    assert isinstance(res['cards'], list) and len(res['cards']) == 2

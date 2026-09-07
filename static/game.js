@@ -2826,11 +2826,7 @@ function setupSocketListeners() {
         let selectedCard = null;
         let cards = [];
 
-        // 请求服务器获取卡牌数据
-        gameState.socket.emit('get_magic_temp_data', {
-            room_id: gameState.roomId,
-            player_id: gameState.playerId
-        }, (response) => {
+        const renderBuryCards = (response) => {
             if (response.status === 'success' && response.data && response.data.cards) {
                 cards = response.data.cards;
 
@@ -2856,7 +2852,7 @@ function setupSocketListeners() {
 
                         // 选中当前卡牌
                         cardElement.classList.add('selected');
-                        selectedCard = card.card_key;
+                        selectedCard = index;
 
                         // 确认选择
                         confirmBuryChoice(selectedCard);
@@ -2864,17 +2860,25 @@ function setupSocketListeners() {
                     });
                 });
             }
-        });
+        };
+        if (result.cards && Array.isArray(result.cards) && result.cards.length) {
+            renderBuryCards({ status: 'success', data: { cards: result.cards } });
+        } else {
+            gameState.socket.emit('get_magic_temp_data', {
+                room_id: gameState.roomId,
+                player_id: gameState.playerId
+            }, renderBuryCards);
+        }
     }
 
     // 确认明智埋葬选择
-    function confirmBuryChoice(cardKey) {
+    function confirmBuryChoice(cardIndex) {
         gameState.socket.emit('confirm_magic_target', {
             room_id: gameState.roomId,
             player_id: gameState.playerId,
             temp_data_id: 'bury_choice',
             target_data: {
-                card_key: cardKey
+                card_index: cardIndex
             }
         }, (response) => {
             if (response.status === 'success') {

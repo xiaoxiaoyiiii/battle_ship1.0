@@ -3153,6 +3153,9 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
 
         # 设置结果
         result['message'] = '败者食尘生效，立即重启正常对局但保留双方的手牌'
+        # 立即返回：败者食尘已清空双方战舰并重置为布船阶段，
+        # 不能落入末尾“对手剩余船数<=0 则游戏结束”的兜底判断（会误判 game_over）
+        return result
 
     # ==== 速阶2 魔法卡 ===
     elif card.name == '溅射':

@@ -676,14 +676,18 @@ class Database:
                 self.conn.close()
                 logger.debug("成功关闭数据库连接")
                 self.conn = None
-        except sqlite3.Error as e:
-            logger.error(f"关闭数据库资源时发生SQLite错误: {e}")
         except Exception as e:
-            logger.error(f"关闭数据库资源时发生未知错误: {e}")
+            # 注意：不引用 sqlite3.Error —— 解释器退出时 sqlite3 模块可能已被置 None，
+            # 在 except 子句中求值 sqlite3.Error 会抛 AttributeError（__del__ 场景）
+            logger.error(f"关闭数据库资源时发生错误: {e}")
     
     def __del__(self):
         """对象被销毁时自动关闭数据库连接"""
-        self.close()
+        try:
+            self.close()
+        except Exception:
+            # 解释器关闭阶段资源不可用时静默忽略
+            pass
 
 
 # 创建全局数据库实例，保持向后兼容

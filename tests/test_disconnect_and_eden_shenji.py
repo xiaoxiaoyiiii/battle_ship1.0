@@ -166,3 +166,29 @@ def test_bury_result_carries_cards():
     res = server.apply_magic_effect(room, P1, card('明智埋葬'), {})
     assert res.temp_data_id == 'bury_choice'
     assert isinstance(res['cards'], list) and len(res['cards']) == 2
+
+
+# ---------- 人机对战：AI 布船规则与玩家一致（2026-09-08） ----------
+
+def test_ai_placement_same_rules_as_human():
+    """AI 布船：6 艘单格船、坐标不重叠且在 0-5 内（与玩家规则一致）。"""
+    room = GameRoom('airoom')
+    room.is_ai_room = True
+    room.players['ai-x'] = Player(name='AI', ships=[], attacks=[], remaining_ships=0, user_id=None, sid='ai-x')
+    server._ai_place_ships(room, 'ai-x')
+    p = room.players['ai-x']
+    assert len(p.ships) == 6 and p.remaining_ships == 6
+    assert all(len(s.positions) == 1 for s in p.ships), 'AI 应为单格船'
+    coords = [(s.positions[0].x, s.positions[0].y) for s in p.ships]
+    assert len(set(coords)) == 6, '坐标不能重叠'
+    assert all(0 <= x < 6 and 0 <= y < 6 for x, y in coords), '坐标需在棋盘内'
+
+
+def test_ai_placement_respects_max_ships():
+    """灵气复苏等改变 max_ships 后，AI 布船数量跟随该上限。"""
+    room = GameRoom('airoom2')
+    room.is_ai_room = True
+    room.players['ai-y'] = Player(name='AI', ships=[], attacks=[], remaining_ships=0, user_id=None, sid='ai-y')
+    room.players['ai-y'].max_ships = 3
+    server._ai_place_ships(room, 'ai-y')
+    assert len(room.players['ai-y'].ships) == 3

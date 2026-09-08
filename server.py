@@ -2342,30 +2342,19 @@ def _ai_player_id(room):
 
 
 def _ai_place_ships(room, ai_id: str):
-    """为AI随机摆放6艘战舰（布局规则与测试桩一致）。"""
-    from random import sample
+    """为AI随机摆放战舰——规则与人类玩家完全一致：
+    单格船、数量取该玩家的 max_ships（默认6）、坐标 0-5 内不重叠。"""
+    import random as _rnd
     player = room.players[ai_id]
     player.ships = []
     player.remaining_ships = 0
-    used_positions = set()
-    for ship_size in [3, 2, 2, 1, 1, 1]:
-        placed = False
-        while not placed:
-            direction = sample(['horizontal', 'vertical'], 1)[0]
-            if direction == 'horizontal':
-                x = sample(range(6 - ship_size + 1), 1)[0]
-                y = sample(range(6), 1)[0]
-                positions = [(x + i, y) for i in range(ship_size)]
-            else:
-                x = sample(range(6), 1)[0]
-                y = sample(range(6 - ship_size + 1), 1)[0]
-                positions = [(x, y + i) for i in range(ship_size)]
-            if not any(pos in used_positions for pos in positions):
-                ship_positions = [Position(x=px, y=py) for px, py in positions]
-                player.ships.append(PlayerShip(positions=ship_positions, hits=[]))
-                player.remaining_ships += 1
-                used_positions.update(positions)
-                placed = True
+    # 与人类一致：默认 6 艘（或按 room/玩家已设定的 max_ships，如灵气复苏后）
+    max_ships = int(getattr(player, 'max_ships', 6) or 6)
+    all_positions = [(x, y) for x in range(6) for y in range(6)]
+    _rnd.shuffle(all_positions)
+    for (px, py) in all_positions[:max_ships]:
+        player.ships.append(PlayerShip(positions=[Position(x=px, y=py)], hits=[]))
+        player.remaining_ships += 1
 
 
 def _maybe_run_ai_turn(room):

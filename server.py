@@ -131,17 +131,6 @@ class MagicCard:
         self.description = card.description
 
 
-class CateredMagicCard:
-    caster_id: str
-    card: MagicCard
-    target_data: Any
-
-    def __init__(self, caster_id: str, card: MagicCard, target_data):
-        self.caster_id = caster_id
-        self.card = card
-        self.target_data = target_data
-
-
 class EffectFlags:
     treasure_hunter: bool = False
     prediction: bool = False
@@ -213,14 +202,14 @@ class GameRoom:
     magic_history: list[dict[str, Any]]  # 无写入
     game_effects: dict[str, Any]
     current_phase: str
-    last_magic: dict[str, Any] | None
     magic_temp_data: dict[str, Any]
-    pending_magic: CateredMagicCard | None
     magic_discard: list[MagicCard]
     magic_deck: list[MagicCard]
     chain: list[dict[str, Any]]
     chain_waiting: bool
     chain_timer: float
+    chain_window: str | None
+    chain_passes: int
     last_attack: Any
     effects:list[Effect]
     def __init__(self, room_id):
@@ -238,15 +227,15 @@ class GameRoom:
         self.magic_history = []  # 魔法卡使用历史
         self.game_effects = {}  # 游戏效果跟踪
         self.current_phase = 'preparation'  # 当前阶段
-        self.last_magic = None  # 上一张使用的魔法卡
-        self.pending_magic = None  # 待处理的魔法卡（等待对方是否使用失灵）
         self.magic_temp_data = {}  # 魔法卡临时数据
         self.magic_discard = []  # 全局弃牌堆（所有玩家使用过的魔法卡）
         self.magic_deck = []  # 全局共享魔法卡堆
         # 连锁相关状态
         self.chain = []  # 连锁栈
-        self.chain_waiting = False  # 是否正在等待玩家回应连锁
-        self.chain_timer = -1  # 连锁回应计时器
+        self.chain_waiting = False  # 是否有待响应的连锁窗口
+        self.chain_timer = -1  # 连锁回应计时器（代际令牌）
+        self.chain_window = None  # 当前响应窗口归属的玩家
+        self.chain_passes = 0  # 连续放弃次数（达 2 即结算）
         self.effects=[]
         self.last_attack = None  # 记录最后一次攻击的信息
         self.game_logs: list[dict[str, Any]] = []
@@ -821,6 +810,8 @@ def test_reset_game(data):
     room.magic_temp_data = {}
     room.chain = []
     room.chain_waiting = False
+    room.chain_window = None
+    room.chain_passes = 0
 
     # 重置玩家状态
     for player_id in room.players:
@@ -1496,13 +1487,15 @@ class ChainItem:
         self.card = card
         self.targets = targets
         self.timestamp = timestamp
-    
+        self.negated = False  # 被连锁中更上方的卡牌无效化
+
     def to_dict(self):
         return {
             'player_id': self.player_id,
             'card': self.card,
             'targets': self.targets,
-            'timestamp': self.timestamp
+            'timestamp': self.timestamp,
+            'negated': self.negated
         }
 
 
@@ -2550,6 +2543,10 @@ def handle_use_magic_card(data):
     player = room.players[player_id]
     opponent_id = next(p for p in room.players if p != player_id)
 
+    # 连锁响应窗口未关闭时，应通过 chain_response 响应，而不是再打出新牌
+    if room.chain_waiting:
+        return {'status': 'error', 'message': '连锁响应中，请先响应连锁'}
+
     # 看破！：被封锁的玩家本大回合无法使用魔法卡
     if player.magic_blocked:
         return {'status': 'error', 'message': '你的魔法卡已被看破，本回合无法使用'}
@@ -2570,9 +2567,6 @@ def handle_use_magic_card(data):
     if card.type != '场地':
         room.magic_discard.append(card)
 
-    # 记录最后使用的魔法卡
-    room.last_magic = card
-
     # 场地魔法卡不再在此预置：改由结算（apply_magic_effect 场地分支）实例入区，
     # 避免"打出即进弃牌堆 + 贴场"产生游离副本；被顶掉/被康时实例移入弃牌堆。
 
@@ -2585,27 +2579,9 @@ def handle_use_magic_card(data):
         'chain': room.chain
     }, room=room_id)
 
-    # 新的连锁逻辑：检查对方是否有速阶3的卡牌
-    opponent = room.players[opponent_id]
-    opponent_has_speed3 = any(int(c.speed) == 3 for c in opponent.magic_hand) and not opponent_id.startswith('ai-')
-
-    if opponent_has_speed3:
-        # 对方有速阶3的卡牌，开启连锁请求
-        room.chain_waiting = True
-        # 获取对方的速阶3卡牌列表
-        opponent_speed3_cards = [c for c in opponent.magic_hand if int(c.speed) == 3]
-        # 发送连锁请求，包含倒计时
-        emit('chain_request', {
-            'card': card,
-            'speed3_cards': opponent_speed3_cards,
-            'countdown': 10
-        }, to=room.players[opponent_id].sid)
-        # 服务端超时兜底，防止对端无响应时连锁永久挂起
-        room.chain_timer += 1
-        _schedule_chain_timeout(room_id, room.chain_timer)
-    else:
-        # 对方没有速阶3的卡牌，直接结算连锁
-        resolve_chain(room)
+    # 连锁响应窗口：先给对方；对方放弃后窗口回到最后压栈者（支持自连锁）
+    room.chain_passes = 0
+    _advance_chain_window(room, opponent_id)
 
     return {'status': 'success', 'message': f'魔法卡{card.name}已加入连锁'}
 
@@ -2644,23 +2620,105 @@ def can_play_magic_card(room, player_id, card):
     return False
 
 
+CHAIN_RESPONSE_SECONDS = 10
+
+
+def _opponent_of(room, player_id):
+    """返回房间内另一名玩家的 id；找不到则 None。"""
+    for pid in room.players:
+        if pid != player_id:
+            return pid
+    return None
+
+
+def _speed3_cards(room, player_id):
+    player = room.players.get(player_id)
+    if not player:
+        return []
+    return [c for c in player.magic_hand if int(c.speed) == 3]
+
+
+def _can_respond_chain(room, player_id):
+    """该玩家此刻能否打出速阶3响应连锁。AI 与已被看破者不参与。"""
+    if not player_id or player_id.startswith('ai-'):
+        return False
+    player = room.players.get(player_id)
+    if not player or player.magic_blocked:
+        return False
+    return bool(_speed3_cards(room, player_id))
+
+
+def _chain_target_below(room, caster_id):
+    """结算中：当前项已出栈，栈顶即“正下方那一项”（即将结算的下一张）。
+    无效化类效果只能指向对方紧邻的下一张；没有/是自己牌则返回 None。"""
+    if not room.chain:
+        return None
+    target = room.chain[-1]
+    if target.player_id == caster_id:
+        return None
+    return target
+
+
+def _advance_chain_window(room, player_id):
+    """把响应窗口交给 player_id；无法响应者自动记为放弃并顺延。
+    连续两次放弃（含自动放弃）后结算连锁。"""
+    while True:
+        if not player_id or player_id not in room.players:
+            return resolve_chain(room)
+        if _can_respond_chain(room, player_id):
+            room.chain_window = player_id
+            room.chain_waiting = True
+            room.chain_timer += 1
+            emit('chain_request', {
+                'card': room.chain[-1].card,
+                'speed3_cards': _speed3_cards(room, player_id),
+                'countdown': CHAIN_RESPONSE_SECONDS,
+            }, to=room.players[player_id].sid)
+            _schedule_chain_timeout(room.id, room.chain_timer)
+            return
+        # 无法响应：视为放弃
+        room.chain_passes += 1
+        if room.chain_passes >= 2:
+            return resolve_chain(room)
+        player_id = _opponent_of(room, player_id)
+
+
 def resolve_chain(room):
-    """结算连锁"""
+    """结算连锁：栈顶先出（后发先至）。被无效化的项跳过效果。"""
     results = []
 
-    # 按照连锁顺序结算（从后往前）
     while room.chain:
         chain_item = room.chain.pop()
         player_id = chain_item.player_id
         card = chain_item.card
         targets = chain_item.targets
 
+        # 已被上方某张无效化卡标记：跳过其效果
+        if chain_item.negated:
+            result = ChainResult(card=card, caster=player_id, success=False,
+                                 message=f'{card.name}被无效化')
+            result.negated_skip = True
+            # 场地魔法“贴了再拆”：先入场再被无效化拆除，避免凭空消失
+            if getattr(card, 'type', None) == '场地':
+                _place_field_magic(room, player_id, card)
+                if room.field_magic is card:
+                    room.magic_discard.append(card)
+                    room.field_magic = None
+                    emit('field_magic_updated',
+                         {'player_id': player_id, 'card': None}, room=room.id)
+            results.append(result)
+            continue
+
         # 应用卡牌效果
         result = apply_magic_effect(room, player_id, card, targets)
-        # 添加施法者信息到结果中
         result.caster = player_id
+
+        # 无效化类效果：把“正下方那一项”（下一个待结算项）标记为无效
+        if getattr(result, 'negate_target', False) and room.chain:
+            room.chain[-1].negated = True
+
         results.append(result)
-        # 记录魔法使用历史（失灵！/盗亦有道/加百列之光的作用目标）
+        # 记录魔法使用历史（盗亦有道等读取）
         if result.success:
             room.magic_history.append({'card': card, 'caster': player_id, 'timestamp': time.time()})
 
@@ -2672,19 +2730,27 @@ def resolve_chain(room):
     # 重置连锁状态
     room.chain = []
     room.chain_waiting = False
+    room.chain_window = None
+    room.chain_passes = 0
 
     return results
 
 
 def _schedule_chain_timeout(room_id: str, token: int):
-    """连锁超时兜底：对端长时间未响应时自动结算，避免连锁永久挂起。
+    """连锁超时兜底：窗口玩家长时间未响应时视为放弃并顺延/结算。
     代际令牌使旧定时器自动作废，防止与玩家正常响应竞态双重结算。"""
     def _timeout():
-        time.sleep(10)
+        time.sleep(CHAIN_RESPONSE_SECONDS)
         room = room_manager.get_room(room_id)
         if room and room.chain_waiting and room.chain_timer == token:
+            window_player = room.chain_window
             room.chain_waiting = False
-            resolve_chain(room)
+            room.chain_window = None
+            room.chain_passes += 1
+            if room.chain_passes >= 2 or window_player is None:
+                resolve_chain(room)
+            else:
+                _advance_chain_window(room, _opponent_of(room, window_player))
     socketio.start_background_task(_timeout)
 
 
@@ -2913,126 +2979,54 @@ def chain_response(data):
     if not room.chain_waiting:
         return {'status': 'error', 'message': '没有待处理的连锁请求'}
 
-    # 重置连锁等待状态
+    # 只有当前响应窗口的玩家可以响应
+    if room.chain_window and room.chain_window != player_id:
+        return {'status': 'error', 'message': '当前不是你的连锁响应窗口'}
+
+    # 关闭当前窗口
     room.chain_waiting = False
+    room.chain_window = None
 
     if chain and card:
         card = MagicCard(**card)
-        # 玩家选择连锁，处理新的魔法卡
         player = room.players[player_id]
-        # 看破！：被封锁的玩家无法连锁反制，直接结算当前连锁
+        # 防御：被看破者不能连锁（正常流程不会进入）
         if player.magic_blocked:
-            resolve_chain(room)
+            room.chain_passes += 1
+            if room.chain_passes >= 2:
+                resolve_chain(room)
+            else:
+                _advance_chain_window(room, _opponent_of(room, player_id))
             return {'status': 'error', 'message': '你的魔法卡已被看破，无法连锁'}
-        opponent_id = next(p for p in room.players if p != player_id)
-        opponent = room.players[opponent_id]
 
-        # 检查卡牌是否在玩家手牌中
+        # 卡牌在手且为速阶3
         if not any(c.name == card.name and c.speed == card.speed for c in player.magic_hand):
             return {'status': 'error', 'message': '你没有这张魔法卡'}
-
-        # 检查是否为速阶3卡牌
         if int(card.speed) != 3:
             return {'status': 'error', 'message': '只能使用速阶3的卡牌进行连锁'}
 
+        # 从手牌移除并进弃牌堆
+        for i, c in enumerate(player.magic_hand):
+            if c.name == card.name and c.speed == card.speed:
+                player.magic_hand.pop(i)
+                break
         room.magic_discard.append(card)
 
-        # 记录最后使用的魔法卡
-        room.last_magic = card
+        room.chain.append(ChainItem(player_id, card, targets, time.time()))
+        emit('magic_chain_updated', {'chain': room.chain}, room=room_id)
 
-        # 添加到连锁栈
-        chain_item = ChainItem(player_id, card, targets, time.time())
-        room.chain.append(chain_item)
-
-        # 广播连锁更新
-        emit('magic_chain_updated', {
-            'chain': room.chain
-        }, room=room_id)
-
-        # 检查对方是否有速阶3的卡牌可以继续连锁
-        opponent_has_speed3 = any(int(c.speed) == 3 for c in opponent.magic_hand) and not opponent_id.startswith('ai-')
-
-        if opponent_has_speed3:
-            # 对方有速阶3的卡牌，发送连锁请求
-            opponent_speed3_cards = [c for c in opponent.magic_hand if int(c.speed) == 3]
-            emit('chain_request', {
-                'card': card,
-                'speed3_cards': opponent_speed3_cards,
-                'countdown': 10
-            }, to=room.players[opponent_id].sid)
-            # 继续等待连锁
-            room.chain_waiting = True
-            # 服务端超时兜底，防止对端无响应时连锁永久挂起
-            room.chain_timer += 1
-            _schedule_chain_timeout(room_id, room.chain_timer)
-        else:
-            # 对方没有速阶3的卡牌，直接结算连锁
-            resolve_chain(room)
-
+        # 打出新牌：放弃计数清零，窗口交给对方（对方放弃后回到自己，支持自连锁）
+        room.chain_passes = 0
+        _advance_chain_window(room, _opponent_of(room, player_id))
         return {'status': 'success', 'message': f'魔法卡{card.name}已加入连锁'}
     else:
-        # 玩家选择不连锁，结算当前连锁
-        resolve_chain(room)
-        return {'status': 'success', 'message': '连锁已结算'}
-
-
-# 添加处理对方是否使用"失灵！"的响应
-@socketio.on('counter_magic_response')
-def counter_magic_response(data):
-    room_id = data['room_id']
-    player_id = data['player_id']
-    use_counter = data['use_counter']
-
-    room = room_manager.get_room(room_id)
-    if not room or player_id not in room.players or not _identity_ok(room, player_id):
-        return {'status': 'error', 'message': '无效的房间或玩家'}
-
-    if not room.pending_magic:
-        return {'status': 'error', 'message': '没有待处理的魔法卡'}
-
-    pending = room.pending_magic
-    caster_id = pending.caster_id
-    card = pending.card
-    target_data = pending.target_data
-
-    # 清除待处理魔法
-    room.pending_magic = None
-
-    if use_counter:
-        # 对方使用了"失灵！"
-        # 从对方手牌中移除"失灵！"
-        opponent = room.players[player_id]
-        for i, c in enumerate(opponent.magic_hand):
-            if c.name == '失灵！':
-                opponent.magic_hand.pop(i)
-                break
-
-        # 广播魔法被无效化
-        emit('magic_negated', {
-            'card': card,
-            'negated_by': player_id
-        }, room=room_id)
-        return {'status': 'success', 'message': '魔法已被无效化'}
-    else:
-        # 对方不使用"失灵！"，直接应用魔法效果
-        result = apply_magic_effect(room, caster_id, card, target_data)
-        # 记录魔法使用历史（失灵！/盗亦有道/加百列之光的作用目标）
-        if result.success:
-            room.magic_history.append({'card': card, 'caster': caster_id, 'timestamp': time.time()})
-        # 记录最后使用的魔法
-        room.last_magic = {
-            'card': card,
-            'caster': caster_id,
-            'timestamp': time.time()
-        }
-        # 只将带有temp_data_id的结果发送给施法者，其他结果广播给所有人
-        if getattr(result, 'temp_data_id', None):
-            # 只发送给施法者
-            emit('magic_applied', result, to=room.players[caster_id].sid)
+        # 放弃：连续两次放弃即结算
+        room.chain_passes += 1
+        if room.chain_passes >= 2:
+            resolve_chain(room)
         else:
-            # 广播给所有人
-            emit('magic_applied', result, room=room_id)
-        return {'status': 'success', 'result': result}
+            _advance_chain_window(room, _opponent_of(room, player_id))
+        return {'status': 'success', 'message': '放弃连锁'}
 
 
 @socketio.on('remove_field_magic')
@@ -4320,14 +4314,16 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['message'] = '已清空棋盘，请重新摆放战舰，本回合战斗阶段跳过。若对方在本大回合内对您的船造成伤害，您将直接判负'
 
     elif card.name == '加百列之光':
-        # 无效化对方上一张魔法卡和当前场地魔法
+        # 无效化对方上一张魔法卡（连锁中=栈顶下方那一项）和当前生效的场地魔法
         negated_count = 0
-        # 无效化对方上一张魔法卡
-        if room.magic_history and room.magic_history[-1]['caster'] != caster_id:
+        if room.chain and room.chain[-1].player_id != caster_id:
+            result.negate_target = True
+            negated_count += 1
+        elif not room.chain and room.magic_history and room.magic_history[-1]['caster'] != caster_id:
             room.magic_history.pop()
             negated_count += 1
 
-        # 无效化场地魔法
+        # 无效化当前已生效的场地魔法（贴了再拆）
         if room.field_magic:
             negated_count += 1
             room.magic_discard.append(room.field_magic)
@@ -4392,13 +4388,31 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
 
     # ==== 已实现的魔法卡 ====
     elif card.name == '失灵！':
-        # 无效化对方上一张魔法卡
-        if room.magic_history and room.magic_history[-1]['caster'] != caster_id:
-            last_magic = room.magic_history[-1]
-            # 加百列之光不受失灵影响（历史条目中 card 为 MagicCard 对象）
-            if getattr(last_magic.get('card'), 'name', None) == '加百列之光':
+        # 连锁结算中：康紧邻下方那一项（对方打出的“上一张”）
+        if room.chain:
+            target = room.chain[-1]
+            if target.player_id == caster_id:
+                result.success = False
+                result.message = '没有可无效化的魔法卡'
+                return result
+            tname = getattr(target.card, 'name', None)
+            if tname == '看破！':
+                result.success = False
+                result.message = '看破！优先于失灵！，无法无效化'
+                return result
+            if tname == '加百列之光':
                 result.success = False
                 result.message = '加百列之光免疫失灵！'
+                return result
+            result.negate_target = True
+            result.message = f'将无效化{target.card.name}'
+            return result
+        # 直接调用（无连锁栈）时回退历史记录，保持单卡契约
+        if room.magic_history and room.magic_history[-1]['caster'] != caster_id:
+            last_magic = room.magic_history[-1]
+            if getattr(last_magic.get('card'), 'name', None) in ('看破！', '加百列之光'):
+                result.success = False
+                result.message = '该魔法免疫失灵！'
                 return result
             room.magic_history.pop()
             result.message = f'无效化了{last_magic["card"].name}'

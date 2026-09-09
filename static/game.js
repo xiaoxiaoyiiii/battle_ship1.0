@@ -2429,55 +2429,6 @@ function setupSocketListeners() {
         });
     });
 
-    // 添加新的魔法卡相关事件监听
-    socket.on('ask_counter_magic', function (data) {
-        // 显示是否使用"失灵！"的对话框
-        const counterPrompt = document.createElement('div');
-        counterPrompt.className = 'magic-prompt';
-        counterPrompt.innerHTML = `
-            <h3>对方发动了魔法卡【${data.card.name}】</h3>
-            <p>是否使用"失灵！"无效化此魔法？</p>
-            <div class="counter-options">
-                <button id="use-counter">使用失灵！</button>
-                <button id="no-counter">不使用</button>
-            </div>
-        `;
-        document.body.appendChild(counterPrompt);
-
-        // 检查是否有"失灵！"
-        const hasCounter = gameState.hand.some(card => card.name === '失灵！');
-        document.getElementById('use-counter').disabled = !hasCounter;
-
-        document.getElementById('use-counter').addEventListener('click', () => {
-            gameState.socket.emit('counter_magic_response', {
-                room_id: gameState.roomId,
-                player_id: gameState.playerId,
-                use_counter: true
-            });
-            document.body.removeChild(counterPrompt);
-        });
-
-        document.getElementById('no-counter').addEventListener('click', () => {
-            gameState.socket.emit('counter_magic_response', {
-                room_id: gameState.roomId,
-                player_id: gameState.playerId,
-                use_counter: false
-            });
-            document.body.removeChild(counterPrompt);
-        });
-    });
-
-    socket.on('magic_negated', function (data) {
-        showMessage(`魔法卡【${data.card.name}】被对方无效化！`);
-        updateHandUI();
-    });
-
-    // 灵气复苏相关事件
-    socket.on('lingqi_waiting', function (data) {
-        // 显示等待提示
-        showMessage(data.message, { type: 'info' });
-    });
-    
     // 灵气复苏相关事件
     socket.on('lingqi_waiting', function (data) {
         // 显示等待提示

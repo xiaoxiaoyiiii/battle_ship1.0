@@ -1704,6 +1704,10 @@ def handle_attack(data):
     defender_id = next(p for p in room.players if p != attacker_id)
     defender_ships = room.players[defender_id].ships
 
+    # 神威！：被扣掉的区域不可攻击
+    if _cell_in_shenwei_hole(room, defender_id, target_x, target_y):
+        return {'status': 'error', 'message': '该区域已被神威！扣掉，无法攻击'}
+
     # 检查是否击中
     hit = False
     ship_sunk = False
@@ -2138,15 +2142,8 @@ def end_turn(data):
             for p_id in room.players:
                 room.players[p_id].magic_blocked = None
 
-            # 神威！：除外的战舰到期回归原位
-            if 'excluded_ships' in room.game_effects:
-                excluded = room.game_effects['excluded_ships']
-                if excluded['return_turn'] <= room.round:
-                    owner = room.players[excluded['player']]
-                    for ship in excluded['ships']:
-                        owner.ships.append(ship)
-                        owner.remaining_ships += 1
-                    del room.game_effects['excluded_ships']
+            # 神威！：除外的战舰到期回归原位，并恢复被扣掉的区域
+            _restore_due_shenwei(room, room.round)
 
             # 解冻到期的战舰（冻结跨本大回合+下一大回合，第三大回合开始时解除）
             for p_id in room.players:
@@ -2861,6 +2858,7 @@ def _build_room_sync(room, player_id: str) -> dict:
         'hand': [{'name': c.name, 'speed': c.speed, 'type': c.type, 'description': c.description} for c in p.magic_hand],
         'attacks': [{'x': a.x, 'y': a.y, 'hit': a.hit} for a in getattr(p, 'attacks', [])],
         'opponent_remaining_ships': opp.remaining_ships if opp else 0,
+        'shenwei_holes': list(room.game_effects.get('shenwei_holes') or []),
     }
 
 
@@ -3072,6 +3070,10 @@ def handle_confirm_reinforcement(data):
     x, y = position.get('x'), position.get('y')
     if (x, y) in opponent_attacks:
         return {'status': 'error', 'message': '该位置已被对方攻击，无法放置'}
+
+    # 神威！：被扣掉的区域不可放置
+    if _cell_in_shenwei_hole(room, player_id, x, y):
+        return {'status': 'error', 'message': '该区域已被神威！扣掉，无法放置'}
 
     # 验证没有和已有战舰冲突
     for ship in caster.ships:
@@ -3288,6 +3290,107 @@ def find_safe_position(room: GameRoom, player_id: str):
             if (x, y) not in opponent_attacks:
                 return {'x': x, 'y': y}
     return None
+
+
+# ============ 神威！“扣掉”区域（2026-09-10） ============
+def _shenwei_holes(room):
+    return room.game_effects.setdefault('shenwei_holes', [])
+
+
+def _add_shenwei_hole(room, player_id, area, return_turn):
+    """把某玩家棋盘上的一块 3x3 区域标记为“扣掉”。"""
+    _shenwei_holes(room).append({
+        'player': player_id,
+        'x1': area['x1'], 'y1': area['y1'],
+        'x2': area['x2'], 'y2': area['y2'],
+        'return_turn': return_turn,
+    })
+
+
+def _cell_in_shenwei_hole(room, player_id, x, y):
+    """该格子是否位于某玩家被扣掉的区域内。"""
+    for hole in _shenwei_holes(room):
+        if hole['player'] != player_id:
+            continue
+        if hole['x1'] <= x <= hole['x2'] and hole['y1'] <= y <= hole['y2']:
+            return True
+    return False
+
+
+def _clear_due_shenwei_holes(room, current_round):
+    """清除到期的扣洞标记，返回被恢复的区域列表。"""
+    holes = _shenwei_holes(room)
+    due = [h for h in holes if h['return_turn'] <= current_round]
+    for h in due:
+        holes.remove(h)
+    return due
+
+
+def _restore_due_shenwei(room, current_round):
+    """到期回归：恢复被扣掉的区域，并把除外的战舰放回原位。"""
+    entries = room.game_effects.get('excluded_ships') or []
+    due = [e for e in entries if e['return_turn'] <= current_round]
+    for entry in due:
+        entries.remove(entry)
+        owner = room.players[entry['player']]
+        for ship in entry['ships']:
+            owner.ships.append(ship)
+            owner.remaining_ships += 1
+    if not entries:
+        room.game_effects.pop('excluded_ships', None)
+    for hole in _clear_due_shenwei_holes(room, current_round):
+        emit('shenwei_hole_restored', {'player': hole['player']}, room=room.id)
+
+
+def _apply_ship_loss_linkage(room, caster_id, lost_player_id, count=1):
+    """船数减少时的通用联动：无暇圣心 / 百亿补贴 / 八方来财 / 恶魔契约。
+
+    与击沉路径保持一致，供神威！除外复用。
+    """
+    lost_player = room.players[lost_player_id]
+
+    # 无暇圣心：造成船数变化即视为“有伤害”，中断效果
+    if 'holy_heart' in room.game_effects:
+        room.game_effects['holy_heart']['no_damage'] = False
+
+    # 百亿补贴：自己的船被击败时攻击次数 +3
+    if lost_player.effect_flags.subsidy:
+        room.attacks_remaining += 3
+        emit('message', {'text': '百亿补贴生效，攻击次数增加3次'}, to=lost_player.sid)
+
+    # 八方来财：战舰数目变化时抽一张牌
+    if lost_player.effect_flags.treasure_hunter:
+        room.draw_card(lost_player_id)
+        emit('message', {'text': '八方来财生效，摸一张牌'}, to=lost_player.sid)
+
+    # 恶魔契约：一方船数减少，另一方也牺牲一艘（一次结算只触发一次）
+    if room.game_effects.get('demon_contract'):
+        sacrifice_id = _opponent_of(room, lost_player_id)
+        sacrifice_player = room.players.get(sacrifice_id) if sacrifice_id else None
+        if sacrifice_player and sacrifice_player.ships:
+            sacr_ship = random.choice(sacrifice_player.ships)
+            sacrifice_player.ships.remove(sacr_ship)
+            sacrifice_player.sunken_ships.append(sacr_ship)
+            sacrifice_player.remaining_ships -= 1
+            emit('message', {'text': '恶魔契约生效，对方牺牲一艘战舰'},
+                 to=sacrifice_player.sid)
+
+
+def _finish_game(room, winner_id, loser_id, reason):
+    """统一结算：设置胜利者、记战绩、广播 game_over。"""
+    room.state = 'game_over'
+    room.winner = winner_id
+    add_game_log(room, f"{room.players[winner_id].name or winner_id} 获胜，游戏结束",
+                 'result', {'winner': winner_id, 'loser': loser_id, 'reason': reason})
+    try:
+        winner_user_id = room.players[winner_id].user_id
+        loser_user_id = room.players[loser_id].user_id
+        if winner_user_id or loser_user_id:
+            db.record_match(winner_user_id or winner_id, loser_user_id or loser_id,
+                            getattr(room, 'game_logs', None))
+    except Exception:
+        pass
+    emit('game_over', {'winner': winner_id, 'reason': reason}, room=room.id)
 
 
 def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_data):
@@ -3670,62 +3773,67 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['message'] = '越战越勇效果生效，本回合击沉战舰时攻击次数净增加1'
 
     elif card.name == '神威！':
-        # 选定3*3区域，暂时除外区域内战舰
+        # 选定己方/对方棋盘上的 3*3 区域：该区域从棋盘上“扣掉”，
+        # 区域内战舰暂时除外，下一个大回合开始时回归原位、区域恢复。
         if 'target_area' not in target_data:
             result['success'] = False
             result['message'] = '需要选择目标区域'
             return result
 
         area = target_data['target_area']
-        excluded_ships = []
+        board = target_data.get('board', 'opponent')  # 'self' | 'opponent'
+        target_id = caster_id if board == 'self' else opponent_id
+        target_player = room.players[target_id]
 
-        # 收集区域内的战舰
-        for i in range(len(opponent.ships) - 1, -1, -1):
-            ship = opponent.ships[i]
+        # 收集并移除区域内的战舰
+        excluded_ships = []
+        for i in range(len(target_player.ships) - 1, -1, -1):
+            ship = target_player.ships[i]
             in_area = any(
                 area['x1'] <= pos.x <= area['x2'] and
                 area['y1'] <= pos.y <= area['y2']
                 for pos in ship.positions
             )
-
-            if in_area and len(ship.hits) < len(ship.positions):
+            if in_area:
                 excluded_ships.append(ship)
-                del opponent.ships[i]
-                opponent.remaining_ships -= 1
+                del target_player.ships[i]
+                target_player.remaining_ships -= 1
 
-        # 如果只有一艘船被除外，直接击沉
-        if len(excluded_ships) == 1:
-            ship = excluded_ships[0]
-            # 记录到sunken_ships
-            opponent.sunken_ships.append(ship)
-            # 与轰炸/硫磺火焰一致：补齐击沉联动
-            if 'holy_heart' in room.game_effects:
-                room.game_effects['holy_heart']['no_damage'] = False
-            caster.damage_dealt_this_turn += 1
-            if opponent.effect_flags.subsidy:
-                room.attacks_remaining += 3
-            if opponent.effect_flags.treasure_hunter:
-                room.draw_card(opponent_id)
-            if room.game_effects.get('demon_contract'):
-                sacrifice_player = caster
-                if sacrifice_player.ships:
-                    sacr_ship = random.choice(sacrifice_player.ships)
-                    sacrifice_player.ships.remove(sacr_ship)
-                    sacrifice_player.sunken_ships.append(sacr_ship)
-                    sacrifice_player.remaining_ships -= 1
-            emit('ships_updated', {
-                'player_remaining_ships': caster.remaining_ships,
-                'opponent_remaining_ships': opponent.remaining_ships
-            }, room=room.id)
+        # 把这片区域从棋盘上扣掉（下个大回合恢复）
+        return_turn = room.round + 1
+        _add_shenwei_hole(room, target_id, area, return_turn)
+        emit('shenwei_hole', {
+            'player': target_id, 'area': area, 'return_turn': return_turn
+        }, room=room.id)
+
+        # 卡面：仅当作用于对方棋盘且区域内恰好 1 艘船时，直接死亡
+        if board != 'self' and len(excluded_ships) == 1:
+            target_player.sunken_ships.append(excluded_ships[0])
+            _apply_ship_loss_linkage(room, caster_id, opponent_id, count=1)
             result['message'] = '目标区域内1艘战舰被击沉'
         else:
-            # 记录暂时除外的战舰，下一回合回归
-            room.game_effects['excluded_ships'] = {
+            room.game_effects.setdefault('excluded_ships', []).append({
                 'ships': excluded_ships,
-                'player': opponent_id,
-                'return_turn': room.round + 1
-            }
+                'player': target_id,
+                'return_turn': return_turn,
+            })
+            if excluded_ships:
+                _apply_ship_loss_linkage(room, caster_id, target_id,
+                                         count=len(excluded_ships))
             result['message'] = f'目标区域内{len(excluded_ships)}艘战舰被暂时除外'
+
+        emit('ships_updated', {
+            'player_remaining_ships': caster.remaining_ships,
+            'opponent_remaining_ships': opponent.remaining_ships
+        }, room=room.id)
+
+        # 斩杀线：对方船被清空直接获胜；己方自扣清空则判负
+        if opponent.remaining_ships <= 0 and room.state != 'game_over':
+            _finish_game(room, caster_id, opponent_id, '神威！清空对方棋盘')
+            result['message'] += '，对方战舰全灭，直接获胜'
+        elif caster.remaining_ships <= 0 and room.state != 'game_over':
+            _finish_game(room, opponent_id, caster_id, '神威！清空己方棋盘')
+            result['message'] += '，己方战舰全灭，判负'
 
     elif card.name == '冻结':
         # 冻结3*3区域内的船，使其无法攻击

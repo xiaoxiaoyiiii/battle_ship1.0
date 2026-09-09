@@ -289,7 +289,7 @@ def test_shenwei_excluded_ships_return_next_round(room):
     server.apply_magic_effect(room, P1, card('神威！'),
                               {'target_area': {'x1': 0, 'y1': 0, 'x2': 2, 'y2': 2}})
     assert len(room.players[P2].ships) == 1
-    assert len(room.game_effects['excluded_ships']['ships']) == 2
+    assert len(room.game_effects['excluded_ships'][0]['ships']) == 2
 
     # 走完一个大回合：P1 结束 -> P2 结束（触发新大回合分支）
     room.current_attacker = P1

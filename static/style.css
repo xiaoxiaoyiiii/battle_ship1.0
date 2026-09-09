@@ -774,6 +774,76 @@ input:focus, select:focus {
     z-index: -1;
 }
 
+
+/* 神威！：被扣掉的 3x3 区域（挖空效果） */
+.cell.shenwei-hole {
+    background: repeating-linear-gradient(
+        45deg,
+        rgba(0, 0, 0, 0.55),
+        rgba(0, 0, 0, 0.55) 6px,
+        rgba(20, 20, 20, 0.75) 6px,
+        rgba(20, 20, 20, 0.75) 12px
+    ) !important;
+    box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.9) !important;
+    opacity: 0.55;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+.cell.shenwei-hole::after {
+    content: '✕';
+    display: block;
+    text-align: center;
+    line-height: 100%;
+    color: rgba(255, 255, 255, 0.35);
+    font-size: 0.9em;
+}
+
+/* 神威！区域点选高亮 */
+.cell.selection-highlight {
+    outline: 3px solid rgba(255, 215, 0, 0.9);
+    outline-offset: -2px;
+    background-color: rgba(255, 215, 0, 0.18) !important;
+}
+
+/* 区域点选浮动确认条 */
+.area-picker-bar {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--surface-strong);
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+    z-index: 10000;
+}
+.area-picker-bar button {
+    padding: 8px 18px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    font-size: 0.95em;
+}
+.area-picker-bar #area-confirm { background: var(--primary); color: #fff; }
+.area-picker-bar #area-confirm:disabled { opacity: 0.45; cursor: not-allowed; }
+.area-picker-bar #area-cancel { background: rgba(255, 255, 255, 0.12); color: var(--text); }
+
+/* 神威！棋盘二选一 */
+.shenwei-board-picker { display: flex; gap: 12px; justify-content: center; margin-top: 12px; }
+.shenwei-board-picker button {
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: 1px solid var(--primary);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 0.95em;
+}
+.shenwei-board-picker button:hover { background: var(--primary); color: #fff; }
+.magic-hint { font-size: 0.85em; opacity: 0.75; margin: 6px 0 0; text-align: center; }
+
 /* 炫酷动效（可选开关） */
 body.cool-effects-enabled .cool-float { animation: floatY 2.2s ease-in-out infinite alternate; }
 @keyframes floatY { 0% { transform: translateY(0); } 100% { transform: translateY(-10px); } }

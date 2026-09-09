@@ -248,9 +248,54 @@ def test_shenwei_multiple_ships_excluded(room):
     room.players[P2].remaining_ships = 3
     apply(room, P1, '神威！', {'target_area': {'x1': 0, 'x2': 2, 'y1': 0, 'y2': 2}})
     assert len(room.players[P2].ships) == 1
-    excluded = room.game_effects['excluded_ships']
-    assert len(excluded['ships']) == 2
-    assert excluded['return_turn'] == room.round + 1
+    entries = room.game_effects['excluded_ships']
+    assert len(entries) == 1
+    assert len(entries[0]['ships']) == 2
+    assert entries[0]['return_turn'] == room.round + 1
+
+
+def test_shenwei_self_board_only_excludes(room):
+    """己方棋盘：只除外与回归，不触发单船死亡"""
+    room.players[P1].ships = [ship((1, 1))]
+    room.players[P1].remaining_ships = 1
+    res = apply(room, P1, '神威！',
+                {'target_area': {'x1': 0, 'x2': 2, 'y1': 0, 'y2': 2}, 'board': 'self'})
+    assert res.success is True
+    assert len(room.players[P1].sunken_ships) == 0      # 不死亡
+    assert len(room.players[P1].ships) == 0
+    assert len(room.game_effects['excluded_ships'][0]['ships']) == 1
+
+
+def test_shenwei_hole_blocks_attack(room):
+    """被扣掉的区域不可攻击"""
+    room.players[P2].ships = [ship((0, 0)), ship((1, 1)), ship((5, 5))]
+    room.players[P2].remaining_ships = 3
+    apply(room, P1, '神威！', {'target_area': {'x1': 0, 'x2': 2, 'y1': 0, 'y2': 2}})
+    assert server._cell_in_shenwei_hole(room, P2, 1, 1) is True
+    assert server._cell_in_shenwei_hole(room, P2, 5, 5) is False
+    res = attack(room, P1, 1, 1)
+    assert res['status'] == 'error'
+
+
+def test_shenwei_wipes_all_opponent_ships_wins(room):
+    """对方船被全部除外 = 直接获胜（斩杀）"""
+    room.players[P2].ships = [ship((0, 0)), ship((1, 1))]
+    room.players[P2].remaining_ships = 2
+    apply(room, P1, '神威！', {'target_area': {'x1': 0, 'x2': 2, 'y1': 0, 'y2': 2}})
+    assert room.players[P2].remaining_ships == 0
+    assert room.state == 'game_over'
+    assert room.winner == P1
+
+
+def test_shenwei_exclusion_triggers_linkage(room):
+    """除外的船算船数变化：触发八方来财抽牌"""
+    room.players[P2].ships = [ship((0, 0)), ship((1, 1)), ship((5, 5))]
+    room.players[P2].remaining_ships = 3
+    room.players[P2].effect_flags.treasure_hunter = True
+    room.magic_deck = [card('增援')]
+    before = len(room.players[P2].magic_hand)
+    apply(room, P1, '神威！', {'target_area': {'x1': 0, 'x2': 2, 'y1': 0, 'y2': 2}})
+    assert len(room.players[P2].magic_hand) == before + 1
 
 
 # ---------------------------------------------------------------------------

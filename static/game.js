@@ -932,6 +932,7 @@ window.gameState = {
     hand: [],               // 手牌
     discardPile: [],        // 弃牌堆
     chain: [],              // 连锁栈
+    shenweiHoles: [],       // 神威！扣掉的区域 [{player,x1,y1,x2,y2,return_turn}]
     currentPhase: null,     // 当前游戏阶段
     fieldMagic: null,       // 场地魔法
     selectedCardIndex: -1,  // 当前选中的卡牌索引，-1表示未选中
@@ -1010,6 +1011,7 @@ function applyRoomSync(data) {
     gameState.hand = data.hand || [];
     gameState.ships = data.ships || [];
     gameState.myAttacks = data.attacks || [];
+    gameState.shenweiHoles = data.shenwei_holes || [];
     if (data.field_magic) gameState.fieldMagic = data.field_magic;
     if (data.opponent_name) {
         gameState.opponentName = data.opponent_name;
@@ -2883,6 +2885,22 @@ function setupSocketListeners() {
         updateHandUI();
     });
 
+    // 神威！：扣掉 / 恢复 3x3 区域
+    socket.on('shenwei_hole', (data) => {
+        gameState.shenweiHoles = (gameState.shenweiHoles || []).filter(
+            h => !(h.player === data.player && h.x1 === data.area.x1 && h.y1 === data.area.y1));
+        gameState.shenweiHoles.push(Object.assign({ player: data.player }, data.area));
+        applyShenweiHoles();
+        showMessage(data.player === gameState.playerId
+            ? '你的棋盘被神威！扣掉了一块 3x3 区域'
+            : '对方棋盘被神威！扣掉了一块 3x3 区域');
+    });
+    socket.on('shenwei_hole_restored', (data) => {
+        gameState.shenweiHoles = (gameState.shenweiHoles || []).filter(h => h.player !== data.player);
+        applyShenweiHoles();
+        showMessage('神威！区域已恢复，战舰回归原位');
+    });
+
     // 新增：监听战舰数更新事件
     socket.on('ships_updated', (data) => {
         // 更新双方剩余战舰数
@@ -3120,6 +3138,24 @@ function initGameBoards() {
             opponentBoard.appendChild(cell);
         }
     }
+
+    applyShenweiHoles();
+}
+
+// 神威！：把被扣掉的 3x3 区域在棋盘上“挖空”显示
+function applyShenweiHoles() {
+    const holes = gameState.shenweiHoles || [];
+    document.querySelectorAll('.cell.shenwei-hole').forEach(c => c.classList.remove('shenwei-hole'));
+    holes.forEach(h => {
+        const boardEl = (h.player === gameState.playerId) ? gamePlayerBoard : opponentBoard;
+        if (!boardEl) return;
+        for (let y = h.y1; y <= h.y2; y++) {
+            for (let x = h.x1; x <= h.x2; x++) {
+                const cell = boardEl.querySelector(`.cell[data-x="${x}"][data-y="${y}"]`);
+                if (cell) cell.classList.add('shenwei-hole');
+            }
+        }
+    });
 }
 
 // 随机摆放战舰
@@ -3554,28 +3590,60 @@ function showMagicTargetSelection(card, index) {
         gameState.currentCardIndex = null;
     }
 
-    // AREA selection (square)
+    // AREA selection (square) —— 点选定位 + 确认，触摸可用
     if (descriptor.type === 'area') {
         const size = descriptor.size;
         targetPrompt.innerHTML = `
-            <h3>在对手棋盘上选择 ${size}x${size} 区域（悬停预览，点击确认）</h3>
-            <div style="text-align:center;margin-top:8px;">
+            <h3>在对手棋盘上选择 ${size}x${size} 区域</h3>
+            <p class="magic-hint">点一下定位区域，再点「确认」</p>
+        `;
+        document.body.appendChild(targetPrompt);
+
+        const picker = createBoardAreaPicker(opponentBoard, size, (areaObj) => {
+            confirmMagicTarget(areaObj);
+            cleanupPrompt();
+        });
+        gameState.selectionCleanup = picker ? picker.cleanup : null;
+        return;
+    }
+
+    // 神威！—— 先选己方/对方棋盘，再点选 3x3 区域
+    if (descriptor.type === 'shenwei') {
+        targetPrompt.innerHTML = `
+            <h3>神威！— 选择作用棋盘</h3>
+            <p class="magic-hint">己方：仅除外与回归；对方：区域仅 1 艘船时直接击沉</p>
+            <div class="shenwei-board-picker">
+                <button id="shenwei-pick-self">己方棋盘</button>
+                <button id="shenwei-pick-opp">对方棋盘</button>
+            </div>
+            <div style="text-align:center;margin-top:10px;">
                 <button id="cancel-target">取消</button>
             </div>
         `;
         document.body.appendChild(targetPrompt);
-
-        gameState.selectionCleanup = createSelectionBoard(size, 'opponent-board', (areaObj) => {
-            if (areaObj && areaObj.target_area) {
-                confirmMagicTarget(areaObj);
-                cleanupPrompt();
-            } else {
-                showAlert('请选择目标区域');
-            }
-        }, true);
-
         document.getElementById('cancel-target').addEventListener('click', cleanupPrompt);
-
+        document.getElementById('shenwei-pick-self').addEventListener('click', () => {
+            targetPrompt.innerHTML = `
+                <h3>神威！— 在己方棋盘点选 3x3 区域</h3>
+                <p class="magic-hint">点一下定位区域，再点「确认」</p>
+            `;
+            const picker = createBoardAreaPicker(gamePlayerBoard, 3, (areaObj) => {
+                confirmMagicTarget(Object.assign({ board: 'self' }, areaObj));
+                cleanupPrompt();
+            });
+            gameState.selectionCleanup = picker ? picker.cleanup : null;
+        });
+        document.getElementById('shenwei-pick-opp').addEventListener('click', () => {
+            targetPrompt.innerHTML = `
+                <h3>神威！— 在对方棋盘点选 3x3 区域</h3>
+                <p class="magic-hint">点一下定位区域，再点「确认」</p>
+            `;
+            const picker = createBoardAreaPicker(opponentBoard, 3, (areaObj) => {
+                confirmMagicTarget(Object.assign({ board: 'opponent' }, areaObj));
+                cleanupPrompt();
+            });
+            gameState.selectionCleanup = picker ? picker.cleanup : null;
+        });
         return;
     }
 
@@ -4028,9 +4096,89 @@ function needsTargetSelection(cardName) {
         '轰炸': { type: 'line', board: 'opponent' },                  // 行或列
         '硫磺火焰': { type: 'continuous', length: 6, board: 'opponent' }, // 6个连续格子
         '克苏鲁之眼': { type: 'single', board: 'self' },             // 选择自己的船暴露
-        '神之宣告': { type: 'own_ships', count: 2 }                   // 选择两艘自己的船牺牲
+        '神之宣告': { type: 'own_ships', count: 2 },                  // 选择两艘自己的船牺牲
+        '神威！': { type: 'shenwei' }                                 // 己方/对方 3x3 扣区
     };
     return map[cardName] || null;
+}
+
+// 通用区域点选器：在真实棋盘上点选 size×size 区域（触摸/鼠标均可用）。
+// 点一下定位并高亮，再点「确认」提交；桌面端保留悬停预览。
+function createBoardAreaPicker(boardEl, size, onConfirm) {
+    if (!boardEl || gameState.selectingOnBoard) return null;
+    gameState.selectingOnBoard = true;
+
+    const listeners = [];
+    let highlighted = [];
+    let current = null;
+
+    const clampStart = (mx, my) => ({
+        sx: Math.max(0, Math.min(mx, 6 - size)),
+        sy: Math.max(0, Math.min(my, 6 - size))
+    });
+
+    function clearHighlights() {
+        highlighted.forEach(c => c.classList.remove('selection-highlight'));
+        highlighted = [];
+    }
+
+    function highlight(sx, sy) {
+        clearHighlights();
+        for (let y = sy; y < sy + size; y++) {
+            for (let x = sx; x < sx + size; x++) {
+                if (x < 0 || x > 5 || y < 0 || y > 5) continue;
+                const cell = boardEl.querySelector(`.cell[data-x="${x}"][data-y="${y}"]`);
+                if (cell) { cell.classList.add('selection-highlight'); highlighted.push(cell); }
+            }
+        }
+        current = { x1: sx, y1: sy, x2: sx + size - 1, y2: sy + size - 1 };
+        const btn = document.getElementById('area-confirm');
+        if (btn) btn.disabled = false;
+    }
+
+    // 浮动确认条
+    const bar = document.createElement('div');
+    bar.className = 'area-picker-bar';
+    bar.innerHTML = `<button id="area-confirm" disabled>确认</button><button id="area-cancel">取消</button>`;
+    document.body.appendChild(bar);
+    bar.querySelector('#area-confirm').addEventListener('click', () => {
+        if (!current) { showAlert('请先点选一个区域'); return; }
+        const area = current;
+        cleanup();
+        if (typeof onConfirm === 'function') onConfirm({ target_area: area });
+    });
+    bar.querySelector('#area-cancel').addEventListener('click', cleanup);
+
+    boardEl.querySelectorAll('.cell').forEach(cell => {
+        const mx = parseInt(cell.dataset.x, 10);
+        const my = parseInt(cell.dataset.y, 10);
+        const onEnter = () => { if (!current) { const p = clampStart(mx, my); highlight(p.sx, p.sy); } };
+        const onLeave = () => { if (!current) clearHighlights(); };
+        const onPick = (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            const p = clampStart(mx, my);
+            highlight(p.sx, p.sy);
+        };
+        cell.addEventListener('mouseenter', onEnter);
+        cell.addEventListener('mouseleave', onLeave);
+        cell.addEventListener('click', onPick, true);
+        listeners.push({ cell, onEnter, onLeave, onPick });
+    });
+
+    function cleanup() {
+        listeners.forEach(({ cell, onEnter, onLeave, onPick }) => {
+            cell.removeEventListener('mouseenter', onEnter);
+            cell.removeEventListener('mouseleave', onLeave);
+            cell.removeEventListener('click', onPick, true);
+        });
+        clearHighlights();
+        if (bar.parentNode) bar.parentNode.removeChild(bar);
+        gameState.selectingOnBoard = false;
+        current = null;
+    }
+
+    return { cleanup };
 }
 
 // 创建区域选择面板 - 用于区域选择类魔法卡
@@ -4317,6 +4465,7 @@ function confirmMagicTarget(targetData) {
         payload.selected_cells = arr;
     } else if (targetData && targetData.target_area) {
         payload.target_area = targetData.target_area; // 直接传递 { target_area: {...} }
+        if (targetData.board) payload.board = targetData.board; // 神威！：作用棋盘
     } else if (targetData && targetData.target_line) {
         payload.target_line = targetData.target_line; // 行/列选择
     } else if (targetData && targetData.target_cells) {
@@ -4392,17 +4541,7 @@ function applyCardEffect(card, casterId) {
             break;
 
         case '神威！':
-            showMessage('神威效果生效，目标区域战舰被暂时除外');
-            // 添加范围攻击逻辑
-            if (gameState.selectedArea) {
-                gameState.socket.emit('area_attack', {
-                    room_id: gameState.roomId,
-                    player_id: gameState.playerId,
-                    area: gameState.selectedArea
-                });
-                // 清除已选择的区域
-                gameState.selectedArea = null;
-            }
+            showMessage('神威！生效，目标区域战舰被暂时除外');
             break;
 
         case '冻结':

@@ -1107,18 +1107,36 @@ function showAlert(text) {
 // 添加加载完成验证
 console.log("game.js 加载完成，playMagicCard 状态:", typeof window.playMagicCard);
 
-// 添加日志条目
-function addGameLog(logText) {
+// 添加日志条目（统一入口：服务端 game_log 事件）
+function addGameLog(logText, logType) {
+    if (!gameLogs) return;
     const logEntry = document.createElement('div');
-    logEntry.className = 'log-entry';
+    logEntry.className = 'log-entry' + (logType ? ' log-' + logType : '');
     logEntry.innerHTML = logText;
 
-    // 添加到日志容器的顶部
+    // 最新的排在最上面
     if (gameLogs.firstChild) {
         gameLogs.insertBefore(logEntry, gameLogs.firstChild);
     } else {
         gameLogs.appendChild(logEntry);
     }
+    // 只保留最近 200 条，避免长时间对局卡顿
+    while (gameLogs.childElementCount > 200) {
+        gameLogs.removeChild(gameLogs.lastChild);
+    }
+}
+
+// 把服务端日志条目渲染成统一格式
+function renderServerLog(entry) {
+    if (!entry || !entry.text) return;
+    const time = entry.ts ? new Date(entry.ts * 1000).toLocaleTimeString('zh-CN', { hour12: false }) : '';
+    const typeLabel = { attack: '攻击', magic: '魔法', result: '结果', info: '信息' }[entry.type] || '信息';
+    addGameLog(
+        `<span class="log-time">${escapeHtml(time)}</span>` +
+        `<span class="log-badge log-badge-${escapeHtml(entry.type || 'info')}">${typeLabel}</span>` +
+        `<span class="log-text">${escapeHtml(entry.text)}</span>`,
+        entry.type
+    );
 }
 
 // 绑定事件监听器
@@ -1563,9 +1581,14 @@ function bindEventListeners() {
     document.getElementById('enter-end-phase').addEventListener('click', endBattlePhase);
 
     // 日志切换按钮
-    toggleLogBtn.addEventListener('click', () => {
-        logContainer.classList.toggle('collapsed');
-    });
+    if (toggleLogBtn && logContainer) {
+        toggleLogBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const collapsed = logContainer.classList.toggle('collapsed');
+            toggleLogBtn.textContent = collapsed ? '▲' : '▼';
+            toggleLogBtn.setAttribute('aria-label', collapsed ? '展开日志' : '折叠日志');
+        });
+    }
 
     // 全局监听 header 中的链接以便做 SPA 跳转（防止完整页面刷新），同时支持登录/注册
     document.addEventListener('click', (e) => {
@@ -2077,20 +2100,7 @@ function setupSocketListeners() {
         // 更新攻击次数后，重新检查阶段UI，确保按钮显示正确
         updatePhaseUI();
 
-        // 添加攻击日志
-        const round = parseInt(gameRound.textContent) || 1;
-        const playerName = result.attacker === gameState.playerId ? gameState.playerName : gameState.opponentName;
-        const coordinate = `(${result.x},${result.y})`;
-
-        if (result.hit) {
-            if (result.ship_sunk) {
-                addGameLog(`【第${round}回合】<span class="log-player">${escapeHtml(playerName)}</span>攻击了坐标<span class="log-coordinate">${coordinate}</span>，此处的船被击沉！`);
-            } else {
-                addGameLog(`【第${round}回合】<span class="log-player">${escapeHtml(playerName)}</span>攻击了坐标<span class="log-coordinate">${coordinate}</span>，此处有船！`);
-            }
-        } else {
-            addGameLog(`【第${round}回合】<span class="log-player">${escapeHtml(playerName)}</span>攻击了坐标<span class="log-coordinate">${coordinate}</span>，此处没有船！`);
-        }
+        // 攻击日志由服务端 game_log 事件统一推送，避免前后端重复
     });
 
     // 添加处理攻击次数更新事件
@@ -2267,10 +2277,7 @@ function setupSocketListeners() {
             // 将使用过的卡牌加入弃牌堆
             gameState.discardPile.push(result.card);
 
-            // 添加魔法卡使用日志
-            const round = parseInt(gameRound.textContent) || 1;
-            const playerName = result.caster === gameState.playerId ? gameState.playerName : gameState.opponentName;
-            addGameLog(`【第${round}回合】<span class="log-player">${escapeHtml(playerName)}</span>使用了魔法卡<span class="log-card">[${escapeHtml(result.card.name)}]</span>，发动效果：${escapeHtml(result.card.description)}！`);
+            // 魔法卡日志由服务端 game_log 事件统一推送，避免前后端重复
 
             // 处理需要选择的魔法卡效果
             if (result.temp_data_id) {
@@ -2899,6 +2906,11 @@ function setupSocketListeners() {
         gameState.shenweiHoles = (gameState.shenweiHoles || []).filter(h => h.player !== data.player);
         applyShenweiHoles();
         showMessage('神威！区域已恢复，战舰回归原位');
+    });
+
+    // 服务端统一推送的局内日志
+    socket.on('game_log', (entry) => {
+        renderServerLog(entry);
     });
 
     // 新增：监听战舰数更新事件
@@ -4954,56 +4966,93 @@ function initPreviewDrag() {
     previewContainer.style.cursor = 'grab';
 }
 
+// 通用浮窗拖拽：以 getBoundingClientRect 为准，拖拽时切到 fixed 定位。
+// 修复旧实现 parseInt(getComputedStyle().left) 在相对定位下得到 NaN 导致的位移错乱。
+function makeDraggable(el, handle, options) {
+    if (!el || !handle || el.dataset.dragBound === '1') return;
+    el.dataset.dragBound = '1';
+    const opts = options || {};
+    let dragging = false, startX = 0, startY = 0, startLeft = 0, startTop = 0;
+
+    const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+
+    function bounds() {
+        const rect = el.getBoundingClientRect();
+        return {
+            maxLeft: Math.max(0, window.innerWidth - rect.width),
+            maxTop: Math.max(0, window.innerHeight - rect.height)
+        };
+    }
+
+    function begin(clientX, clientY) {
+        const rect = el.getBoundingClientRect();
+        // 关键：先把位置钉成 fixed + 具体像素，再记录起点，避免相对定位下 left=auto
+        el.style.position = 'fixed';
+        el.style.left = rect.left + 'px';
+        el.style.top = rect.top + 'px';
+        el.style.right = 'auto';
+        el.style.bottom = 'auto';
+        el.style.margin = '0';
+        startX = clientX; startY = clientY;
+        startLeft = rect.left; startTop = rect.top;
+        dragging = true;
+        el.style.cursor = 'grabbing';
+    }
+
+    function move(clientX, clientY) {
+        if (!dragging) return;
+        const b = bounds();
+        el.style.left = clamp(startLeft + (clientX - startX), 0, b.maxLeft) + 'px';
+        el.style.top = clamp(startTop + (clientY - startY), 0, b.maxTop) + 'px';
+    }
+
+    function end() {
+        if (!dragging) return;
+        dragging = false;
+        el.style.cursor = 'grab';
+        if (typeof opts.onEnd === 'function') opts.onEnd(el);
+    }
+
+    handle.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        if (e.target.closest('button, a, input, select, textarea')) return;
+        begin(e.clientX, e.clientY);
+        e.preventDefault();
+    });
+    document.addEventListener('mousemove', (e) => move(e.clientX, e.clientY));
+    document.addEventListener('mouseup', end);
+
+    // 触摸支持（手机上也能拖）
+    handle.addEventListener('touchstart', (e) => {
+        if (!e.touches || !e.touches.length) return;
+        if (e.target.closest('button, a, input, select, textarea')) return;
+        begin(e.touches[0].clientX, e.touches[0].clientY);
+        e.preventDefault();
+    }, { passive: false });
+    document.addEventListener('touchmove', (e) => {
+        if (!dragging || !e.touches || !e.touches.length) return;
+        move(e.touches[0].clientX, e.touches[0].clientY);
+        e.preventDefault();
+    }, { passive: false });
+    document.addEventListener('touchend', end);
+
+    // 窗口尺寸变化后把浮窗拉回视口内
+    window.addEventListener('resize', () => {
+        if (el.style.position !== 'fixed') return;
+        const b = bounds();
+        el.style.left = clamp(parseFloat(el.style.left) || 0, 0, b.maxLeft) + 'px';
+        el.style.top = clamp(parseFloat(el.style.top) || 0, 0, b.maxTop) + 'px';
+    });
+
+    el.style.cursor = 'grab';
+}
+
 // 初始化日志容器拖拽功能
 function initLogDrag() {
     const logContainer = document.querySelector('.log-container');
     if (!logContainer) return;
-
-    let isDragging = false;
-    let startX, startY, initialX, initialY;
-
-    // 鼠标按下事件
-    logContainer.addEventListener('mousedown', (e) => {
-        // 只有点击头部区域才允许拖拽
-        if (e.target.closest('.log-header') || e.target === logContainer) {
-            isDragging = true;
-
-            // 记录初始位置
-            initialX = parseInt(window.getComputedStyle(logContainer).left, 10);
-            initialY = parseInt(window.getComputedStyle(logContainer).top, 10);
-
-            // 记录鼠标按下位置
-            startX = e.clientX;
-            startY = e.clientY;
-
-            // 添加拖拽样式
-            logContainer.style.cursor = 'grabbing';
-        }
-    });
-
-    // 鼠标移动事件
-    document.addEventListener('mousemove', (e) => {
-        if (!isDragging) return;
-
-        // 计算偏移量
-        const dx = e.clientX - startX;
-        const dy = e.clientY - startY;
-
-        // 更新位置
-        logContainer.style.left = `${initialX + dx}px`;
-        logContainer.style.top = `${initialY + dy}px`;
-    });
-
-    // 鼠标释放事件
-    document.addEventListener('mouseup', () => {
-        if (isDragging) {
-            isDragging = false;
-            logContainer.style.cursor = 'grab';
-        }
-    });
-
-    // 初始化拖拽样式
-    logContainer.style.cursor = 'grab';
+    const header = logContainer.querySelector('.log-header');
+    makeDraggable(logContainer, header || logContainer);
 }
 
 function updateHandUI() {

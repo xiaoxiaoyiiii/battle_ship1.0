@@ -144,8 +144,8 @@ h3 { font-size: clamp(1rem, 2.6vw, 1.3rem); }
 
 /* 关键帧 */
 @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(20px); }
-    to { opacity: 1; transform: translateY(0); }
+    from { opacity: 0; }
+    to { opacity: 1; }
 }
 @keyframes slideUp {
     from { transform: translateY(50px); opacity: 0; }
@@ -407,7 +407,12 @@ input:focus, select:focus {
     }
 }
 .log-container:active { cursor: grabbing; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2); }
-.log-container.collapsed { width: 40px; }
+.log-container.collapsed {
+    width: 40px;
+    max-width: 40px;
+    min-width: 40px;
+    flex: 0 0 40px;
+}
 .log-header {
     display: flex;
     justify-content: space-between;
@@ -455,6 +460,21 @@ input:focus, select:focus {
     word-wrap: break-word;
 }
 .log-player { color: var(--danger); font-weight: bold; }
+.log-time { color: var(--muted); font-size: 0.85em; margin-right: 6px; }
+.log-badge {
+    display: inline-block;
+    padding: 0 6px;
+    margin-right: 6px;
+    border-radius: 4px;
+    font-size: 0.78em;
+    line-height: 1.5;
+    vertical-align: middle;
+}
+.log-badge-attack { background: rgba(255, 99, 71, 0.18); color: var(--danger); }
+.log-badge-magic { background: rgba(33, 150, 243, 0.18); color: var(--primary); }
+.log-badge-result { background: rgba(76, 175, 80, 0.20); color: #2e7d32; }
+.log-badge-info { background: rgba(158, 158, 158, 0.20); color: var(--muted); }
+.log-text { word-break: break-word; }
 .log-card { color: var(--accent); font-weight: bold; }
 .log-coordinate { font-weight: bold; }
 

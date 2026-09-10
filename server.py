@@ -46,12 +46,31 @@ class GameLog:
         }
 
 
+def _log_name(room, player_id):
+    """日志里统一用玩家名，取不到则退回 id。"""
+    p = room.players.get(player_id)
+    return (p.name or player_id) if p else player_id
+
+
 def add_game_log(room, text: str, event_type: str = 'info', payload: dict | None = None):
-    """Append a lightweight battle log entry for later history queries."""
+    """Append a lightweight battle log entry and push it to clients."""
     if not hasattr(room, 'game_logs'):
         room.game_logs = []
     entry = GameLog(text, event_type, payload)
     room.game_logs.append(entry.to_dict())
+    # 实时推送给房间内两个客户端（无 socket 上下文时 emit 内部已兜底）
+    try:
+        emit('game_log', entry.to_dict(), room=room.id)
+    except Exception:
+        pass
+
+
+def log_magic(room, caster_id, card, extra=''):
+    """统一记录魔法卡使用（连锁结算的唯一入口调用）。"""
+    name = _log_name(room, caster_id)
+    tail = f'，{extra}' if extra else ''
+    add_game_log(room, f'第{room.round}回合 · {name} 使用了【{card.name}】{tail}',
+                 'magic', {'caster': caster_id, 'card': card.name})
 
 
 # 在线人数统计
@@ -348,7 +367,7 @@ class GameRoom:
             defender_remaining_ships=self.players[defender_id].remaining_ships
         )
 
-        add_game_log(self, f"{attacker_id} 攻击 ({target.x},{target.y}) - {'命中' if hit else '未命中'}{'，击沉战舰' if ship_sunk else ''}",
+        add_game_log(self, f"第{self.round}回合 · {_log_name(self, attacker_id)} 攻击 ({target.x},{target.y}) — {'命中' if hit else '未命中'}{'，击沉战舰' if ship_sunk else ''}",
                      'attack', {
                          'attacker': attacker_id,
                          'target': {'x': target.x, 'y': target.y},
@@ -362,7 +381,7 @@ class GameRoom:
         if self.players[defender_id].remaining_ships == 0:
             self.state = 'game_over'
             self.winner = attacker_id
-            add_game_log(self, f"{attacker_id} 获胜，游戏结束", 'result', {'winner': attacker_id, 'loser': defender_id})
+            add_game_log(self, f"第{self.round}回合 · {_log_name(self, attacker_id)} 获胜，游戏结束", 'result', {'winner': attacker_id, 'loser': defender_id})
             # 记录战绩（若为已登录用户）
             try:
                 winner_user_id = self.players[attacker_id].user_id
@@ -1657,7 +1676,7 @@ def _check_last_chance(room, attacker_id: str, defender_id: str) -> bool:
     if room.game_effects.get('last_chance') and room.game_effects['last_chance']['caster'] == defender_id:
         room.state = 'game_over'
         room.winner = attacker_id
-        add_game_log(room, f"{room.players[defender_id].name or defender_id} 触发回光返照失败并判负", 'result', {
+        add_game_log(room, f"第{room.round}回合 · {_log_name(room, defender_id)} 触发回光返照失败并判负", 'result', {
             'winner': attacker_id,
             'loser': defender_id
         })
@@ -1787,7 +1806,7 @@ def handle_attack(data):
                     # 直接获胜
                     room.state = 'game_over'
                     room.winner = attacker_id
-                    add_game_log(room, f"{room.players[attacker_id].name or attacker_id} 触发绝处逢生并获胜", 'result', {
+                    add_game_log(room, f"第{room.round}回合 · {_log_name(room, attacker_id)} 触发绝处逢生并获胜", 'result', {
                         'winner': attacker_id,
                         'loser': defender_id
                     })
@@ -1918,7 +1937,7 @@ def handle_attack(data):
                         # 直接获胜
                         room.state = 'game_over'
                         room.winner = attacker_id
-                        add_game_log(room, f"{room.players[attacker_id].name or attacker_id} 触发绝处逢生并获胜", 'result', {
+                        add_game_log(room, f"第{room.round}回合 · {_log_name(room, attacker_id)} 触发绝处逢生并获胜", 'result', {
                             'winner': attacker_id,
                             'loser': defender_id
                         })
@@ -1978,7 +1997,7 @@ def handle_attack(data):
         defender_remaining_ships=room.players[defender_id].remaining_ships
     )
 
-    add_game_log(room, f"{room.players[attacker_id].name or attacker_id} 攻击 ({target_x},{target_y}) - {'命中' if hit else '未命中'}{'，击沉战舰' if ship_sunk else ''}",
+    add_game_log(room, f"第{room.round}回合 · {_log_name(room, attacker_id)} 攻击 ({target_x},{target_y}) — {'命中' if hit else '未命中'}{'，击沉战舰' if ship_sunk else ''}",
                  'attack', {
                      'attacker': attacker_id,
                      'target': {'x': target_x, 'y': target_y},
@@ -1992,7 +2011,7 @@ def handle_attack(data):
     if room.players[defender_id].remaining_ships == 0:
         room.state = 'game_over'
         room.winner = attacker_id
-        add_game_log(room, f"{room.players[attacker_id].name or attacker_id} 获胜，游戏结束", 'result', {
+        add_game_log(room, f"第{room.round}回合 · {_log_name(room, attacker_id)} 获胜，游戏结束", 'result', {
             'winner': attacker_id,
             'loser': defender_id
         })
@@ -2695,6 +2714,7 @@ def resolve_chain(room):
             result = ChainResult(card=card, caster=player_id, success=False,
                                  message=f'{card.name}被无效化')
             result.negated_skip = True
+            log_magic(room, player_id, card, '但被无效化')
             # 场地魔法“贴了再拆”：先入场再被无效化拆除，避免凭空消失
             if getattr(card, 'type', None) == '场地':
                 _place_field_magic(room, player_id, card)
@@ -2709,6 +2729,7 @@ def resolve_chain(room):
         # 应用卡牌效果
         result = apply_magic_effect(room, player_id, card, targets)
         result.caster = player_id
+        log_magic(room, player_id, card, result.message if getattr(result, 'success', False) else '')
 
         # 无效化类效果：把“正下方那一项”（下一个待结算项）标记为无效
         if getattr(result, 'negate_target', False) and room.chain:
@@ -3380,7 +3401,7 @@ def _finish_game(room, winner_id, loser_id, reason):
     """统一结算：设置胜利者、记战绩、广播 game_over。"""
     room.state = 'game_over'
     room.winner = winner_id
-    add_game_log(room, f"{room.players[winner_id].name or winner_id} 获胜，游戏结束",
+    add_game_log(room, f"第{room.round}回合 · {_log_name(room, winner_id)} 获胜，游戏结束",
                  'result', {'winner': winner_id, 'loser': loser_id, 'reason': reason})
     try:
         winner_user_id = room.players[winner_id].user_id
@@ -3643,7 +3664,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                                 # 对使用回光返照的玩家造成了伤害，回光返照使用者直接判负
                                 room.state = 'game_over'
                                 room.winner = caster_id
-                                add_game_log(room, f"{room.players[opponent_id].name or opponent_id} 触发回光返照失败并判负", 'result', {
+                                add_game_log(room, f"第{room.round}回合 · {_log_name(room, opponent_id)} 触发回光返照失败并判负", 'result', {
                                     'winner': caster_id,
                                     'loser': opponent_id
                                 })
@@ -4082,7 +4103,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['caster_id'] = caster_id
         
         # 添加游戏日志
-        add_game_log(room, f"{room.players[caster_id].name or caster_id} 使用了硫磺火焰，击杀了{sunk_count}艘战舰", 'magic', {
+        add_game_log(room, f"第{room.round}回合 · {_log_name(room, caster_id)} 使用了【硫磺火焰】，击杀了{sunk_count}艘战舰", 'magic', {
             'caster_id': caster_id,
             'card_name': card.name,
             'sunk_count': sunk_count,
@@ -4562,7 +4583,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
     if opponent and opponent.remaining_ships <= 0 and room.state != 'game_over':
         room.state = 'game_over'
         room.winner = caster_id
-        add_game_log(room, f"{room.players[caster_id].name or caster_id} 获胜，游戏结束", 'result', {'winner': caster_id, 'loser': opponent_id})
+        add_game_log(room, f"第{room.round}回合 · {_log_name(room, caster_id)} 获胜，游戏结束", 'result', {'winner': caster_id, 'loser': opponent_id})
         try:
             winner_user_id = room.players[caster_id].user_id
             loser_user_id = room.players[opponent_id].user_id

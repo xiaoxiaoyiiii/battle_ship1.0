@@ -5021,12 +5021,71 @@ function handleSurrender() {
     }
 }
 
-// 初始化预览框拖拽功能（复用统一拖拽：带边界限制，拖不出屏幕）
+// 初始化预览框拖拽功能
+// 注意：本窗口在正常文档流内（position:relative, width:100%），拖拽只做视觉偏移
+// （transform），不能改成 fixed 定位，否则会脱离布局变成悬浮窗。
 function initPreviewDrag() {
-    const previewContainer = document.getElementById('magic-card-preview');
-    if (!previewContainer) return;
-    const header = previewContainer.querySelector('.preview-header') || previewContainer;
-    makeDraggable(previewContainer, header);
+    const el = document.getElementById('magic-card-preview');
+    if (!el || el.dataset.dragBound === '1') return;
+    el.dataset.dragBound = '1';
+    const handle = el.querySelector('.preview-header') || el;
+
+    let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
+    const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+
+    function readOffset() {
+        const m = /translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)/.exec(el.style.transform || '');
+        return m ? [parseFloat(m[1]), parseFloat(m[2])] : [0, 0];
+    }
+
+    function begin(cx, cy) {
+        [ox, oy] = readOffset();
+        sx = cx; sy = cy;
+        dragging = true;
+        el.style.cursor = 'grabbing';
+    }
+
+    function move(cx, cy) {
+        if (!dragging) return;
+        const rect = el.getBoundingClientRect();
+        const baseLeft = rect.left - ox;   // 未偏移时的位置
+        const baseTop = rect.top - oy;
+        const maxDx = window.innerWidth - rect.width - baseLeft;
+        const maxDy = window.innerHeight - rect.height - baseTop;
+        const dx = clamp(ox + (cx - sx), -baseLeft, Math.max(-baseLeft, maxDx));
+        const dy = clamp(oy + (cy - sy), -baseTop, Math.max(-baseTop, maxDy));
+        el.style.transform = `translate(${dx}px, ${dy}px)`;
+    }
+
+    function end() {
+        if (!dragging) return;
+        dragging = false;
+        el.style.cursor = 'grab';
+    }
+
+    handle.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        if (e.target.closest('button, a, input, select, textarea')) return;
+        begin(e.clientX, e.clientY);
+        e.preventDefault();
+    });
+    document.addEventListener('mousemove', (e) => move(e.clientX, e.clientY));
+    document.addEventListener('mouseup', end);
+
+    handle.addEventListener('touchstart', (e) => {
+        if (!e.touches || !e.touches.length) return;
+        if (e.target.closest('button, a, input, select, textarea')) return;
+        begin(e.touches[0].clientX, e.touches[0].clientY);
+        e.preventDefault();
+    }, { passive: false });
+    document.addEventListener('touchmove', (e) => {
+        if (!dragging || !e.touches || !e.touches.length) return;
+        move(e.touches[0].clientX, e.touches[0].clientY);
+        e.preventDefault();
+    }, { passive: false });
+    document.addEventListener('touchend', end);
+
+    el.style.cursor = 'grab';
 }
 
 // 通用浮窗拖拽：以 getBoundingClientRect 为准，拖拽时切到 fixed 定位。

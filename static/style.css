@@ -376,9 +376,14 @@ input:focus, select:focus {
 
 /* ---------- 7. 浮窗：游戏日志 ---------- */
 .log-container {
-    position: relative;
-    width: 100%;
-    max-width: 100%;
+    /* 浮动窗：脱离页面流，日志再长也不会撑高网页 */
+    position: fixed;
+    top: 90px;
+    left: 20px;
+    width: 280px;
+    max-width: 88vw;
+    height: 40vh;
+    max-height: 360px;
     background: var(--glass);
     -webkit-backdrop-filter: blur(10px);
     backdrop-filter: blur(10px);
@@ -386,10 +391,7 @@ input:focus, select:focus {
     border-radius: 12px;
     display: flex;
     flex-direction: column;
-    height: auto;
-    max-height: 260px;
-    transition: width 0.3s ease, box-shadow 0.2s ease;
-    flex: 1 1 100%;
+    transition: box-shadow 0.2s ease;
     z-index: 999;
     cursor: grab;
     box-shadow: var(--shadow-panel);
@@ -397,10 +399,10 @@ input:focus, select:focus {
 }
 .log-container:active { cursor: grabbing; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2); }
 .log-container.collapsed {
-    width: 40px;
-    max-width: 40px;
-    min-width: 40px;
-    flex: 0 0 40px;
+    width: 44px;
+    max-width: 44px;
+    min-width: 44px;
+    height: 44px;
 }
 .log-header {
     display: flex;
@@ -543,11 +545,12 @@ input:focus, select:focus {
 
 /* ---------- 9. 浮窗：局内聊天 ---------- */
 .in-game-chat-container {
-    /* 页面内元素（与“待使用魔法卡”预览框一致）：不再浮在棋盘上 */
-    position: relative;
-    width: 100%;
-    max-width: 900px;
-    margin: 0 auto 20px auto;
+    /* 浮动窗：脱离页面流，聊天再长也不会撑高网页 */
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    width: 300px;
+    max-width: 88vw;
     background: var(--glass);
     -webkit-backdrop-filter: blur(10px);
     backdrop-filter: blur(10px);

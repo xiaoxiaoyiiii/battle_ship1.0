@@ -756,10 +756,10 @@ function setChatVisible(visible) {
 
 setChatVisible(false);
 
-// 使聊天框可拖动（页面内元素：只做视觉偏移）
+// 使聊天框可拖动（浮动窗，位置记在本地）
 (function enableDraggableChat() {
     if (!chatContainer || !chatHeader) return;
-    makeVisualDraggable(chatContainer, chatHeader);
+    makeFloatingDraggable(chatContainer, chatHeader, 'in_game_chat_pos');
 })();
 
 
@@ -993,22 +993,38 @@ function showAlert(text) {
 // 添加加载完成验证
 console.log("game.js 加载完成，playMagicCard 状态:", typeof window.playMagicCard);
 
-// 添加日志条目（统一入口：服务端 game_log 事件）
+// ============ 游戏日志窗口（2026-09-10 重写） ============
+const GAME_LOG_MAX_ENTRIES = 200;   // 仅保留最近 N 条，防止长时间对局卡顿
+
+// 清空日志（新开一局时调用）
+function clearGameLogs() {
+    if (gameLogs) gameLogs.innerHTML = '';
+}
+
+// 追加一条日志（最新在最上面，超量自动裁剪）
 function addGameLog(logText, logType) {
     if (!gameLogs) return;
     const logEntry = document.createElement('div');
     logEntry.className = 'log-entry' + (logType ? ' log-' + logType : '');
     logEntry.innerHTML = logText;
-
-    // 最新的排在最上面
-    if (gameLogs.firstChild) {
-        gameLogs.insertBefore(logEntry, gameLogs.firstChild);
-    } else {
-        gameLogs.appendChild(logEntry);
-    }
-    // 只保留最近 200 条，避免长时间对局卡顿
-    while (gameLogs.childElementCount > 200) {
+    gameLogs.insertBefore(logEntry, gameLogs.firstChild);
+    while (gameLogs.childElementCount > GAME_LOG_MAX_ENTRIES) {
         gameLogs.removeChild(gameLogs.lastChild);
+    }
+    // 新条目在顶部，滚回顶部让玩家看到最新一条
+    gameLogs.scrollTop = 0;
+}
+
+// 折叠 / 展开日志窗
+function toggleGameLog() {
+    const el = document.querySelector('.log-container');
+    if (!el) return;
+    const collapsed = el.classList.toggle('collapsed');
+    const btn = document.getElementById('toggle-log');
+    if (btn) {
+        btn.textContent = collapsed ? '▲' : '▼';
+        btn.setAttribute('aria-label', collapsed ? '展开日志' : '折叠日志');
+        btn.setAttribute('title', collapsed ? '展开日志' : '折叠日志');
     }
 }
 
@@ -1467,12 +1483,10 @@ function bindEventListeners() {
     document.getElementById('enter-end-phase').addEventListener('click', endBattlePhase);
 
     // 日志切换按钮
-    if (toggleLogBtn && logContainer) {
+    if (toggleLogBtn) {
         toggleLogBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            const collapsed = logContainer.classList.toggle('collapsed');
-            toggleLogBtn.textContent = collapsed ? '▲' : '▼';
-            toggleLogBtn.setAttribute('aria-label', collapsed ? '展开日志' : '折叠日志');
+            toggleGameLog();
         });
     }
 
@@ -1805,6 +1819,7 @@ function setupSocketListeners() {
                 break;
             case 'placing_ships':
                 console.log('Switching to ship placement screen');
+                clearGameLogs();   // 新一局：日志从零开始
 
                 // 设置playerId（使用socket.id）
                 if (gameState.socket && !gameState.playerId) {
@@ -4890,6 +4905,104 @@ function handleSurrender() {
     }
 }
 
+// ============ 浮动窗拖拽（2026-09-10 重写） ============
+// 适用于 fixed 定位的浮窗（日志窗 / 聊天窗）。拖动时按真实坐标重定位，
+// 始终至少保留一部分在视口内，可记住位置（localStorage）。支持鼠标与触摸。
+function makeFloatingDraggable(el, handle, storageKey) {
+    if (!el || !handle || el.dataset.floatDragBound === '1') return;
+    el.dataset.floatDragBound = '1';
+
+    const KEEP_VISIBLE = 48;   // 至少留多少像素在视口内
+    let dragging = false, startX = 0, startY = 0, startLeft = 0, startTop = 0;
+
+    function bounds() {
+        const w = el.offsetWidth || 200;
+        const h = el.offsetHeight || 120;
+        return { w: w, h: h };
+    }
+
+    function place(left, top) {
+        const b = bounds();
+        const maxLeft = Math.max(0, window.innerWidth - b.w);
+        const maxTop = Math.max(0, window.innerHeight - Math.min(b.h, KEEP_VISIBLE));
+        const minTop = -(b.h - Math.min(b.h, KEEP_VISIBLE));
+        el.style.left = Math.min(Math.max(-(b.w - KEEP_VISIBLE), left), maxLeft) + 'px';
+        el.style.top = Math.min(Math.max(minTop, top), maxTop) + 'px';
+        el.style.right = 'auto';
+        el.style.bottom = 'auto';
+    }
+
+    function restore() {
+        if (!storageKey) return false;
+        try {
+            const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
+            if (saved && typeof saved.left === 'number' && typeof saved.top === 'number') {
+                place(saved.left, saved.top);
+                return true;
+            }
+        } catch (_) { }
+        return false;
+    }
+
+    function save() {
+        if (!storageKey) return;
+        const r = el.getBoundingClientRect();
+        try { localStorage.setItem(storageKey, JSON.stringify({ left: r.left, top: r.top })); } catch (_) { }
+    }
+
+    function begin(cx, cy) {
+        const r = el.getBoundingClientRect();
+        startX = cx; startY = cy;
+        startLeft = r.left; startTop = r.top;
+        dragging = true;
+        el.classList.add('dragging');
+    }
+
+    function move(cx, cy) {
+        if (!dragging) return;
+        place(startLeft + (cx - startX), startTop + (cy - startY));
+    }
+
+    function end() {
+        if (!dragging) return;
+        dragging = false;
+        el.classList.remove('dragging');
+        save();
+    }
+
+    handle.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        if (e.target.closest('button, a, input, select, textarea')) return;
+        begin(e.clientX, e.clientY);
+        e.preventDefault();
+    });
+    window.addEventListener('mousemove', (e) => move(e.clientX, e.clientY));
+    window.addEventListener('mouseup', end);
+
+    handle.addEventListener('touchstart', (e) => {
+        if (!e.touches || !e.touches.length) return;
+        if (e.target.closest('button, a, input, select, textarea')) return;
+        begin(e.touches[0].clientX, e.touches[0].clientY);
+        e.preventDefault();
+    }, { passive: false });
+    window.addEventListener('touchmove', (e) => {
+        if (!dragging || !e.touches || !e.touches.length) return;
+        move(e.touches[0].clientX, e.touches[0].clientY);
+        e.preventDefault();
+    }, { passive: false });
+    window.addEventListener('touchend', end);
+
+    window.addEventListener('resize', () => {
+        const r = el.getBoundingClientRect();
+        place(r.left, r.top);
+    });
+
+    const restored = restore();
+    el.style.cursor = 'grab';
+    return { restore: restore, save: save, restored: restored };
+}
+
+
 // 文档流内元素的拖拽：只改 transform 做视觉偏移，不改 position/left/top，
 // 因此元素仍留在原布局中（与“待使用魔法卡”窗口一致）。带边界钳制 + 触摸支持。
 function makeVisualDraggable(el, handle) {
@@ -4967,7 +5080,11 @@ function initPreviewDrag() {
 function initLogDrag() {
     const logEl = document.querySelector('.log-container');
     if (!logEl) return;
-    makeVisualDraggable(logEl, logEl.querySelector('.log-header') || logEl);
+    const drag = makeFloatingDraggable(logEl, logEl.querySelector('.log-header') || logEl, 'game_log_pos');
+    // 手机窄屏且从未拖动过：默认折叠，避免挡住棋盘
+    if (drag && !drag.restored && window.innerWidth < 768 && !logEl.classList.contains('collapsed')) {
+        toggleGameLog();
+    }
 }
 
 function updateHandUI() {

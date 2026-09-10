@@ -3072,54 +3072,81 @@ def handle_remove_field_magic(data):
 
 @socketio.on('confirm_reinforcement_position')
 def handle_confirm_reinforcement(data):
+    """确认放置一艘（增援/复活）战舰。"""
     room_id = data.get('room_id')
     player_id = data.get('player_id')
-    position = data.get('position')
+    position = data.get('position') or {}
     room = room_manager.get_room(room_id)
     if not room or not player_id or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
-    caster = room.players[player_id]
 
-    # 验证是否存在等待的增援
-    pending = room.magic_temp_data.get('pending_reinforcement') if room.magic_temp_data else None
+    pending = room.magic_temp_data.get('pending_placement') if room.magic_temp_data else None
     if not pending or pending.get('caster') != player_id:
-        return {'status': 'error', 'message': '没有等待确认的增援'}
+        return {'status': 'error', 'message': '没有等待放置的战舰'}
 
-    # 验证位置合法且没有被对方攻击过
-    opponent_id = next(p for p in room.players if p != player_id)
-    opponent_attacks = [(a.x, a.y) for a in room.players[opponent_id].attacks]
     x, y = position.get('x'), position.get('y')
-    if (x, y) in opponent_attacks:
-        return {'status': 'error', 'message': '该位置已被对方攻击，无法放置'}
+    if x is None or y is None:
+        return {'status': 'error', 'message': '请选择放置位置'}
+    err = _placement_error(room, player_id, x, y)
+    if err:
+        return {'status': 'error', 'message': err}
 
-    # 神威！：被扣掉的区域不可放置
-    if _cell_in_shenwei_hole(room, player_id, x, y):
-        return {'status': 'error', 'message': '该区域已被神威！扣掉，无法放置'}
+    caster = room.players[player_id]
+    if pending['kind'] == 'revive':
+        if not caster.sunken_ships:
+            _finish_placement(room, player_id, 'revive')
+            return {'status': 'error', 'message': '没有可复活的战舰'}
+        revived = caster.sunken_ships.pop()
+        # 关键修复：清空命中并移到新位置，否则复活后打不沉（幽灵船）
+        revived.positions = [Position(x=x, y=y)]
+        revived.hits = []
+        revived.shield = False
+        revived.invincible = False
+        caster.ships.append(revived)
+        caster.remaining_ships += 1
+        msg = f'复活战舰已部署到 ({x},{y})'
+    else:
+        caster.ships.append(PlayerShip(positions=[Position(x=x, y=y)], hits=[]))
+        caster.remaining_ships += 1
+        msg = f'增援战舰已部署到 ({x},{y})'
 
-    # 验证没有和已有战舰冲突
-    for ship in caster.ships:
-        for pos in ship.positions:
-            if pos.x == x and pos.y == y:
-                return {'status': 'error', 'message': '该位置已被己方战舰占用'}
+    pending['remaining'] -= 1
+    pending['placed'] += 1
 
-    # 放置战舰
-    caster.ships.append(PlayerShip(**{
-        'id': f'magic_{get_uuid()}',
-        'positions': [Position(**{'x': x, 'y': y})],
-        'hits': []
-    }))
-    caster.remaining_ships = caster.remaining_ships + 1
-
-    # 清除临时数据
-    room.magic_temp_data.pop('pending_reinforcement', None)
-
-    # 广播更新
+    opponent_id = _opponent_of(room, player_id)
     emit('ships_updated', {
         'player_remaining_ships': caster.remaining_ships,
-        'opponent_remaining_ships': room.players[opponent_id].remaining_ships
-    }, room=room_id)
+        'opponent_remaining_ships': room.players[opponent_id].remaining_ships if opponent_id else 0
+    }, room=room.id)
+    # 同步放置后的己方棋盘（只发给本人），让新船立刻显示
+    emit('player_ships_updated', {
+        'ships': [{'positions': [{'x': p.x, 'y': p.y} for p in sh.positions], 'hits': []}
+                  for sh in caster.ships]
+    }, to=room.players[player_id].sid)
+    emit('message', {'text': msg}, to=room.players[player_id].sid)
 
-    emit('message', {'text': '增援放置完成'}, to=room.players[player_id].sid)
+    if pending['remaining'] > 0:
+        _emit_placement_request(room, player_id)
+    else:
+        _finish_placement(room, player_id, pending['kind'])
+    return {'status': 'success', 'message': msg}
+
+
+@socketio.on('cancel_placement')
+def handle_cancel_placement(data):
+    """放弃剩余放置（防止无空格时卡死）。已放置的保留，未放置的作废。"""
+    room_id = data.get('room_id')
+    player_id = data.get('player_id')
+    room = room_manager.get_room(room_id)
+    if not room or not player_id or player_id not in room.players or not _identity_ok(room, player_id):
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+
+    pending = room.magic_temp_data.get('pending_placement') if room.magic_temp_data else None
+    if not pending or pending.get('caster') != player_id:
+        return {'status': 'error', 'message': '没有等待放置的战舰'}
+
+    _finish_placement(room, player_id, pending['kind'])
+    emit('message', {'text': '已放弃剩余放置'}, to=room.players[player_id].sid)
     return {'status': 'success'}
 
 
@@ -3412,6 +3439,71 @@ def _finish_game(room, winner_id, loser_id, reason):
     except Exception:
         pass
     emit('game_over', {'winner': winner_id, 'reason': reason}, room=room.id)
+
+
+# ============ 复活 / 增援 统一放置流程（2026-09-10） ============
+def _placement_error(room, player_id, x, y):
+    """返回该格子不可放置的原因；None 表示可放置。
+    规则：棋盘内、未被对方打过、不在神威扣洞内、未被己方船占用。"""
+    if not (0 <= x <= 5 and 0 <= y <= 5):
+        return '坐标超出棋盘范围'
+    opponent_id = _opponent_of(room, player_id)
+    if opponent_id:
+        opp_attacks = [(a.x, a.y) for a in room.players[opponent_id].attacks]
+        if (x, y) in opp_attacks:
+            return '该位置已被对方攻击过，不能放置'
+    if _cell_in_shenwei_hole(room, player_id, x, y):
+        return '该区域已被神威！扣掉，不能放置'
+    for ship in room.players[player_id].ships:
+        for pos in ship.positions:
+            if pos.x == x and pos.y == y:
+                return '该位置已被己方战舰占用'
+    return None
+
+
+def _placement_blocked_cells(room, player_id):
+    """列出该玩家棋盘上不可放置的格子（已被攻击 / 己方占用 / 神威扣洞）。"""
+    blocked = set()
+    opponent_id = _opponent_of(room, player_id)
+    if opponent_id:
+        for a in room.players[opponent_id].attacks:
+            blocked.add((a.x, a.y))
+    for ship in room.players[player_id].ships:
+        for pos in ship.positions:
+            blocked.add((pos.x, pos.y))
+    for h in _shenwei_holes(room):
+        if h['player'] == player_id:
+            for x in range(h['x1'], h['x2'] + 1):
+                for y in range(h['y1'], h['y2'] + 1):
+                    blocked.add((x, y))
+    return [{'x': x, 'y': y} for (x, y) in sorted(blocked)]
+
+
+def _emit_placement_request(room, player_id):
+    p = room.magic_temp_data.get('pending_placement')
+    if not p:
+        return
+    emit('placement_request', {
+        'kind': p['kind'],
+        'remaining': p['remaining'],
+        'total': p['total'],
+        'placed': p['placed'],
+        'blocked': _placement_blocked_cells(room, player_id),
+    }, to=room.players[player_id].sid)
+
+
+def _start_placement(room, caster_id, kind, count):
+    """开启放置流程：kind='reinforce' 增援 / 'revive' 复活。"""
+    room.magic_temp_data['pending_placement'] = {
+        'caster': caster_id, 'kind': kind,
+        'remaining': count, 'total': count, 'placed': 0,
+    }
+    _emit_placement_request(room, caster_id)
+
+
+def _finish_placement(room, player_id, kind):
+    room.magic_temp_data.pop('pending_placement', None)
+    emit('placement_done', {'kind': kind}, to=room.players[player_id].sid)
 
 
 def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_data):
@@ -4367,39 +4459,37 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['message'] = '进入绝处逢生状态，击杀任何船直接获胜'
 
     elif card.name == '死者苏生':
-        # 复活一艘船
+        # 复活一艘船：必须有已阵亡的战舰，否则不可用
         if caster.remaining_ships >= 6:
             result['success'] = False
             result['message'] = '战舰数量已达上限'
             return result
 
-        if caster.sunken_ships and len(caster.sunken_ships) > 0:
-            # 从沉没的船中恢复最近一艘
-            revived_ship = caster.sunken_ships.pop()
-            caster.ships.append(revived_ship)
-            caster.remaining_ships += 1
-            result['message'] = '成功复活一艘战舰'
-        else:
+        if not caster.sunken_ships:
             result['success'] = False
             result['message'] = '没有可复活的战舰'
+            return result
+
+        _start_placement(room, caster_id, 'revive', 1)
+        result.temp_data_id = 'revive_choice'
+        result['message'] = '请选择复活战舰的部署位置（未被攻击过的空格）'
 
     elif card.name == '疗愈':
-        # 复活至多两艘被击杀的船
+        # 复活至多两艘被击杀的船：必须有沉船，逐艘选择位置
         if caster.remaining_ships >= 6:
             result['success'] = False
             result['message'] = '战舰数量已达上限'
             return result
 
-        revived = 0
-        # 尝试复活两艘船
-        if caster.sunken_ships:
-            while revived < 2 and caster.sunken_ships:
-                revived_ship = caster.sunken_ships.pop()
-                caster.ships.append(revived_ship)
-                caster.remaining_ships += 1
-                revived += 1
+        if not caster.sunken_ships:
+            result['success'] = False
+            result['message'] = '没有可复活的战舰'
+            return result
 
-        result['message'] = f'成功复活{revived}艘战舰'
+        count = min(2, len(caster.sunken_ships), 6 - caster.remaining_ships)
+        _start_placement(room, caster_id, 'revive', count)
+        result.temp_data_id = 'revive_choice'
+        result['message'] = f'请依次选择 {count} 艘复活战舰的部署位置（未被攻击过的空格）'
 
     elif card.name == '盗亦有道':
         # 获取对方打出的上一张魔法卡
@@ -4561,13 +4651,9 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             result.success = False
             result.message = '战舰数量已达上限'
         else:
-            # 存储临时数据以等待客户端确认位置
-            room.magic_temp_data = room.magic_temp_data
-            room.magic_temp_data['pending_reinforcement'] = {
-                'caster': caster_id
-            }
+            _start_placement(room, caster_id, 'reinforce', 1)
             result.temp_data_id = 'reinforcement_choice'
-            result.message = '请选择增援放置位置'
+            result.message = '请选择增援战舰的部署位置（未被攻击过的空格）'
 
     else:
         result.success = False

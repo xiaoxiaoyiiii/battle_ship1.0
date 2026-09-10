@@ -2913,6 +2913,24 @@ function setupSocketListeners() {
         renderServerLog(entry);
     });
 
+    // 增援 / 复活：服务端请求选择部署位置
+    socket.on('placement_request', (data) => {
+        showPlacementPrompt(data);
+    });
+    socket.on('placement_done', (data) => {
+        const p = document.getElementById('placement-prompt');
+        if (p) p.remove();
+        showMessage((data && data.kind === 'revive') ? '复活部署完成' : '增援部署完成');
+        if (typeof initGameBoards === 'function') initGameBoards();
+    });
+    // 自己棋盘上的战舰变化（复活/增援后同步显示）
+    socket.on('player_ships_updated', (data) => {
+        if (data && Array.isArray(data.ships)) {
+            gameState.ships = data.ships;
+            if (typeof initGameBoards === 'function') initGameBoards();
+        }
+    });
+
     // 新增：监听战舰数更新事件
     socket.on('ships_updated', (data) => {
         // 更新双方剩余战舰数
@@ -4700,8 +4718,7 @@ function applyCardEffect(card, casterId) {
             break;
 
         case '增援':
-            showMessage('增援效果生效，获得一艘新战舰');
-            showReinforcementPrompt();
+            showMessage('增援效果生效，请选择部署位置');
             break;
     }
 }
@@ -4807,30 +4824,90 @@ function updateFieldMagicUI(playerId, card) {
     }
 }
 
-function showReinforcementPrompt() {
+// 增援 / 复活：统一放置弹窗（灰格不可选、可确认、可放弃）
+function showPlacementPrompt(data) {
+    data = data || {};
+    const isRevive = data.kind === 'revive';
+    const total = data.total || 1;
+    const placed = data.placed || 0;
+    const remaining = (data.remaining != null) ? data.remaining : 1;
+
+    const existing = document.getElementById('placement-prompt');
+    if (existing) existing.remove();
+
+    const title = isRevive ? '复活战舰·选择部署位置' : '增援战舰·选择部署位置';
+    const step = total > 1 ? `（第 ${placed + 1}/${total} 艘）` : '';
+    const hint = isRevive
+        ? `这张卡会把阵亡的战舰重新部署到你的棋盘上。${step}点一个亮色格子选中，再点「确认」。灰色格子不能用（对方打过 / 已占用 / 被神威扣掉）。`
+        : `这张卡会给你补充一艘新战舰。${step}点一个亮色格子选中，再点「确认」。灰色格子不能用（对方打过 / 已占用 / 被神威扣掉）。`;
+
     const prompt = document.createElement('div');
-    prompt.className = 'reinforcement-prompt';
+    prompt.id = 'placement-prompt';
+    prompt.className = 'placement-prompt';
+
+    let cellsHtml = '';
+    for (let y = 0; y < 6; y++) {
+        for (let x = 0; x < 6; x++) {
+            cellsHtml += `<div class="placement-cell" data-x="${x}" data-y="${y}"></div>`;
+        }
+    }
     prompt.innerHTML = `
-        <h3>选择增援战舰位置</h3>
-        <div class="target-board" id="reinforcement-board"></div>
+        <h3>${title}</h3>
+        <p class="placement-hint">${hint}</p>
+        <div class="placement-grid">${cellsHtml}</div>
+        <div class="placement-actions">
+            <button id="placement-confirm" disabled>确认</button>
+            <button id="placement-cancel">放弃${remaining > 1 ? '剩余' : ''}</button>
+        </div>
+        <p class="placement-note">放弃后未放置的战舰作废，不影响本局继续。</p>
     `;
     document.body.appendChild(prompt);
 
-    // 创建6x6选择面板（小面板模式），并通过回调确认放置
-    createSelectionBoard(6, 'reinforcement-board', (res) => {
-        // res 可能为 { selected_cells: [...] } 或 legacy array
-        const cells = Array.isArray(res) ? res : (res.selected_cells || []);
-        const selectedPos = cells[0];
-        if (selectedPos) {
-            gameState.socket.emit('confirm_reinforcement_position', {
-                room_id: gameState.roomId,
-                position: selectedPos
-            });
-            if (document.body.contains(prompt)) document.body.removeChild(prompt);
-        } else {
-            showAlert('请选择放置位置');
+    const blocked = new Set((data.blocked || []).map(b => b.x + ',' + b.y));
+    let selected = null;
+
+    prompt.querySelectorAll('.placement-cell').forEach(cell => {
+        const key = cell.dataset.x + ',' + cell.dataset.y;
+        if (blocked.has(key)) {
+            cell.classList.add('blocked');
+            return;
         }
-    }, false);
+        cell.addEventListener('click', () => {
+            prompt.querySelectorAll('.placement-cell.selected').forEach(c => c.classList.remove('selected'));
+            cell.classList.add('selected');
+            selected = { x: parseInt(cell.dataset.x, 10), y: parseInt(cell.dataset.y, 10) };
+            const btn = document.getElementById('placement-confirm');
+            if (btn) btn.disabled = false;
+        });
+    });
+
+    document.getElementById('placement-cancel').addEventListener('click', () => {
+        gameState.socket.emit('cancel_placement', {
+            room_id: gameState.roomId, player_id: gameState.playerId
+        });
+        prompt.remove();
+    });
+
+    document.getElementById('placement-confirm').addEventListener('click', () => {
+        if (!selected) return;
+        gameState.socket.emit('confirm_reinforcement_position', {
+            room_id: gameState.roomId, player_id: gameState.playerId, position: selected
+        }, (resp) => {
+            if (resp && resp.status === 'error') {
+                // 关键：选错不关面板，把原因显示出来
+                showAlert(resp.message || '放置失败，请重新选择');
+                return;
+            }
+            // 成功：若还有剩余，服务端会再发 placement_request 刷新本面板
+            const p = document.getElementById('placement-prompt');
+            if (p) p.remove();
+        });
+    });
+}
+
+function showReinforcementPrompt() {
+    // 兼容旧调用点
+    showPlacementPrompt({ kind: 'reinforce', total: 1, placed: 0, remaining: 1, blocked: [] });
 }
 
 // 更新手牌UI

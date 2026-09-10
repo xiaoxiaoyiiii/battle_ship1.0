@@ -305,13 +305,25 @@ def test_zengyuan_waits_for_placement(room):
     """召唤战舰并部署在未被对方打过的格子"""
     res = apply(room, P1, '增援')
     assert res.success is True
-    assert room.magic_temp_data['pending_reinforcement']['caster'] == P1
+    assert room.magic_temp_data['pending_placement']['caster'] == P1
+    assert room.magic_temp_data['pending_placement']['kind'] == 'reinforce'
 
     ok = server.handle_confirm_reinforcement({
         'room_id': room.id, 'player_id': P1, 'position': {'x': 2, 'y': 2}
     })
     assert ok['status'] == 'success'
     assert room.players[P1].remaining_ships == 1
+    # 放置完成，待放置状态清空
+    assert 'pending_placement' not in room.magic_temp_data
+
+
+def test_zengyuan_can_be_cancelled(room):
+    """放弃放置不会卡死"""
+    apply(room, P1, '增援')
+    res = server.handle_cancel_placement({'room_id': room.id, 'player_id': P1})
+    assert res['status'] == 'success'
+    assert 'pending_placement' not in room.magic_temp_data
+    assert room.players[P1].remaining_ships == 0
 
 
 def test_zengyuan_rejects_attacked_cell(room):
@@ -606,16 +618,53 @@ def test_juechu_keeps_one_ship_and_wins_on_kill(room):
 # ---------------------------------------------------------------------------
 def test_sizhe_revives_last_sunken(room):
     s = ship((0, 0))
+    s.hits = [Position(0, 0)]          # 沉船：命中已满
     room.players[P1].sunken_ships = [s]
     room.players[P1].remaining_ships = 0
     res = apply(room, P1, '死者苏生')
     assert res.success is True
+    assert room.magic_temp_data['pending_placement']['kind'] == 'revive'
+
+    ok = server.handle_confirm_reinforcement({
+        'room_id': room.id, 'player_id': P1, 'position': {'x': 3, 'y': 3}})
+    assert ok['status'] == 'success'
     assert room.players[P1].remaining_ships == 1
-    assert s in room.players[P1].ships
+    # 复活后必须清空 hits（否则变成打不沉的幽灵船）
+    revived = [sh for sh in room.players[P1].ships if sh is s][0]
+    assert revived.hits == []
+    assert revived.positions[0].x == 3 and revived.positions[0].y == 3
 
 
 def test_sizhe_fails_without_sunken(room):
     res = apply(room, P1, '死者苏生')
+    assert res.success is False
+
+
+def test_revived_ship_can_be_sunk_again(room):
+    """复活后的船必须能再次被打沉（否则变成打不死的幽灵船）"""
+    s = ship((0, 0))
+    s.hits = [Position(0, 0)]           # 沉船：命中已满
+    room.players[P1].sunken_ships = [s]
+    room.players[P1].remaining_ships = 0
+    apply(room, P1, '死者苏生')
+    server.handle_confirm_reinforcement({
+        'room_id': room.id, 'player_id': P1, 'position': {'x': 4, 'y': 4}})
+
+    revived = [sh for sh in room.players[P1].ships if sh is s][0]
+    assert len(revived.hits) == 0
+    assert room.players[P1].remaining_ships == 1
+
+    # 对方攻击这个格子：应能击沉（船数 1 -> 0）
+    room.current_attacker = P2
+    room.current_phase = 'battle'
+    room.attacks_remaining = 6
+    server.handle_attack({'room_id': room.id, 'player_id': P2, 'x': 4, 'y': 4})
+    assert room.players[P1].remaining_ships == 0, '复活后的船打不沉 = 幽灵船'
+
+
+def test_liaoyu_placement_requires_sunken(room):
+    """疗愈无沉船时不可用"""
+    res = apply(room, P1, '疗愈')
     assert res.success is False
 
 
@@ -628,8 +677,16 @@ def test_liaoyu_revives_up_to_two(room):
     room.players[P1].remaining_ships = 0
     res = apply(room, P1, '疗愈')
     assert res.success is True
+    assert room.magic_temp_data['pending_placement']['remaining'] == 2
+
+    # 逐艘放置
+    for pos in [{'x': 4, 'y': 4}, {'x': 5, 'y': 5}]:
+        r = server.handle_confirm_reinforcement(
+            {'room_id': room.id, 'player_id': P1, 'position': pos})
+        assert r['status'] == 'success'
     assert room.players[P1].remaining_ships == 2
     assert len(room.players[P1].sunken_ships) == 1
+    assert 'pending_placement' not in room.magic_temp_data
 
 
 # ---------------------------------------------------------------------------

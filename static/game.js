@@ -752,6 +752,23 @@ function escapeHtml(str) {
 // 只在游戏主界面显示聊天框
 function setChatVisible(visible) {
     if (chatContainer) chatContainer.style.display = visible ? '' : 'none';
+    if (visible) {
+        // 显示后把位置拉回视口内（否则从大窗口恢复的位置可能落在屏幕外）
+        setTimeout(() => {
+            try {
+                if (chatContainer.style.position !== 'fixed') return;
+                const rect = chatContainer.getBoundingClientRect();
+                const maxLeft = Math.max(0, window.innerWidth - rect.width);
+                const maxTop = Math.max(0, window.innerHeight - rect.height);
+                const left = Math.max(0, Math.min(rect.left, maxLeft));
+                const top = Math.max(0, Math.min(rect.top, maxTop));
+                chatContainer.style.left = left + 'px';
+                chatContainer.style.top = top + 'px';
+                chatContainer.style.right = 'auto';
+                chatContainer.style.bottom = 'auto';
+            } catch (_) { }
+        }, 30);
+    }
 }
 
 setChatVisible(false);
@@ -1709,8 +1726,8 @@ function aiMatch() {
             }, (joinResponse) => {
                 if (joinResponse.status === 'success') {
                     gameState.playerId = joinResponse.player_id;
-                    // 切换到游戏界面
-                    switchScreen(gameScreen);
+                    // 不再直接跳战斗界面：由服务端 game_state(placing_ships)
+                    // 驱动「匹配成功 -> 布船 -> 猜拳 -> 战斗」，与普通匹配一致
                 } else {
                     showAlert(joinResponse.message);
                 }
@@ -3595,6 +3612,16 @@ function canPlayAfterHit(card) {
 
 // 添加魔法卡目标选择UI
 function showMagicTargetSelection(card, index) {
+    // 自愈：上次选区若没清理干净，先收尾（否则 selectingOnBoard 卡住，界面出不来又关不掉）
+    if (typeof gameState.selectionCleanup === 'function') {
+        try { gameState.selectionCleanup(); } catch (_) { }
+        gameState.selectionCleanup = null;
+    }
+    gameState.selectingOnBoard = false;
+    document.querySelectorAll('.magic-target-prompt').forEach(el => el.remove());
+    document.querySelectorAll('.area-picker-bar').forEach(el => el.remove());
+    document.querySelectorAll('.cell.selection-highlight').forEach(c => c.classList.remove('selection-highlight'));
+
     // 记录当前待选卡和索引，供确认时使用
     gameState.currentMagicCard = card;
     gameState.currentCardIndex = index;
@@ -3632,7 +3659,7 @@ function showMagicTargetSelection(card, index) {
         const picker = createBoardAreaPicker(opponentBoard, size, (areaObj) => {
             confirmMagicTarget(areaObj);
             cleanupPrompt();
-        });
+        }, cleanupPrompt);
         gameState.selectionCleanup = picker ? picker.cleanup : null;
         return;
     }
@@ -3660,7 +3687,7 @@ function showMagicTargetSelection(card, index) {
             const picker = createBoardAreaPicker(gamePlayerBoard, 3, (areaObj) => {
                 confirmMagicTarget(Object.assign({ board: 'self' }, areaObj));
                 cleanupPrompt();
-            });
+            }, cleanupPrompt);
             gameState.selectionCleanup = picker ? picker.cleanup : null;
         });
         document.getElementById('shenwei-pick-opp').addEventListener('click', () => {
@@ -3671,7 +3698,7 @@ function showMagicTargetSelection(card, index) {
             const picker = createBoardAreaPicker(opponentBoard, 3, (areaObj) => {
                 confirmMagicTarget(Object.assign({ board: 'opponent' }, areaObj));
                 cleanupPrompt();
-            });
+            }, cleanupPrompt);
             gameState.selectionCleanup = picker ? picker.cleanup : null;
         });
         return;
@@ -4134,7 +4161,7 @@ function needsTargetSelection(cardName) {
 
 // 通用区域点选器：在真实棋盘上点选 size×size 区域（触摸/鼠标均可用）。
 // 点一下定位并高亮，再点「确认」提交；桌面端保留悬停预览。
-function createBoardAreaPicker(boardEl, size, onConfirm) {
+function createBoardAreaPicker(boardEl, size, onConfirm, onCancel) {
     if (!boardEl || gameState.selectingOnBoard) return null;
     gameState.selectingOnBoard = true;
 
@@ -4177,7 +4204,10 @@ function createBoardAreaPicker(boardEl, size, onConfirm) {
         cleanup();
         if (typeof onConfirm === 'function') onConfirm({ target_area: area });
     });
-    bar.querySelector('#area-cancel').addEventListener('click', cleanup);
+    bar.querySelector('#area-cancel').addEventListener('click', () => {
+        cleanup();
+        if (typeof onCancel === 'function') onCancel();
+    });
 
     boardEl.querySelectorAll('.cell').forEach(cell => {
         const mx = parseInt(cell.dataset.x, 10);
@@ -4991,56 +5021,12 @@ function handleSurrender() {
     }
 }
 
-// 初始化预览框拖拽功能
+// 初始化预览框拖拽功能（复用统一拖拽：带边界限制，拖不出屏幕）
 function initPreviewDrag() {
     const previewContainer = document.getElementById('magic-card-preview');
     if (!previewContainer) return;
-
-    let isDragging = false;
-    let startX, startY, initialX, initialY;
-
-    // 鼠标按下事件
-    previewContainer.addEventListener('mousedown', (e) => {
-        // 只有点击头部区域才允许拖拽
-        if (e.target.closest('.preview-header') || e.target === previewContainer) {
-            isDragging = true;
-
-            // 记录初始位置
-            initialX = parseInt(window.getComputedStyle(previewContainer).left, 10);
-            initialY = parseInt(window.getComputedStyle(previewContainer).top, 10);
-
-            // 记录鼠标按下位置
-            startX = e.clientX;
-            startY = e.clientY;
-
-            // 添加拖拽样式
-            previewContainer.style.cursor = 'grabbing';
-        }
-    });
-
-    // 鼠标移动事件
-    document.addEventListener('mousemove', (e) => {
-        if (!isDragging) return;
-
-        // 计算偏移量
-        const dx = e.clientX - startX;
-        const dy = e.clientY - startY;
-
-        // 更新位置
-        previewContainer.style.left = `${initialX + dx}px`;
-        previewContainer.style.top = `${initialY + dy}px`;
-    });
-
-    // 鼠标释放事件
-    document.addEventListener('mouseup', () => {
-        if (isDragging) {
-            isDragging = false;
-            previewContainer.style.cursor = 'grab';
-        }
-    });
-
-    // 初始化拖拽样式
-    previewContainer.style.cursor = 'grab';
+    const header = previewContainer.querySelector('.preview-header') || previewContainer;
+    makeDraggable(previewContainer, header);
 }
 
 // 通用浮窗拖拽：以 getBoundingClientRect 为准，拖拽时切到 fixed 定位。

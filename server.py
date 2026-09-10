@@ -2117,7 +2117,7 @@ def switch_turn_after_end_phase(room, opponent_id):
 
     # 切换到对方回合
     room.current_attacker = opponent_id
-    room.attacks_remaining = max(0, len(room.players[opponent_id].ships) - frozen_ship_count(room.players[opponent_id]))  # 根据战舰数量设置攻击次数（冻结的船不计入）
+    room.attacks_remaining = max(0, room.players[opponent_id].remaining_ships - frozen_ship_count(room.players[opponent_id]))  # 存活战舰数减去冻结数
     _recalc_attacker_attacks(room)
     room.current_phase = 'preparation'
     
@@ -2979,7 +2979,8 @@ def _recalc_attacker_attacks(room):
     elif field_magic_name(room) == '伊甸园':
         room.attacks_remaining = max(0, 6 - room.players[pid].remaining_ships)
     else:
-        room.attacks_remaining = max(0, len(room.players[pid].ships) - frozen_ship_count(room.players[pid]))
+        # 用 remaining_ships：ships 列表含已沉没的战舰，不能直接取长度
+        room.attacks_remaining = max(0, room.players[pid].remaining_ships - frozen_ship_count(room.players[pid]))
 
 
 # 添加处理连锁响应

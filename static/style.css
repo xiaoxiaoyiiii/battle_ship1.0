@@ -881,6 +881,41 @@ input:focus, select:focus {
     margin: 10px 0 0;
 }
 
+/* 魔法卡使用广播：固定右上角浮层，不参与布局（避免挤压游戏窗口） */
+.magic-animation {
+    position: fixed;
+    top: 90px;
+    right: 24px;
+    z-index: 12000;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+}
+.magic-animation .magic-card-name {
+    background: var(--primary-gradient);
+    color: #fff;
+    padding: 8px 14px;
+    border-radius: 20px;
+    font-size: 0.95em;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+    opacity: 0;
+    transform: translateX(30px);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.magic-animation.active .magic-card-name {
+    opacity: 1;
+    transform: translateX(0);
+}
+.magic-animation.fade-out .magic-card-name {
+    opacity: 0;
+    transform: translateX(30px);
+}
+@media (max-width: 768px) {
+    .magic-animation { top: auto; bottom: 120px; right: 12px; }
+}
+
 /* 神威！：被扣掉的 3x3 区域（挖空效果） */
 .cell.shenwei-hole {
     background: repeating-linear-gradient(

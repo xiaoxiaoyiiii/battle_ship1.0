@@ -752,145 +752,14 @@ function escapeHtml(str) {
 // 只在游戏主界面显示聊天框
 function setChatVisible(visible) {
     if (chatContainer) chatContainer.style.display = visible ? '' : 'none';
-    if (visible) {
-        // 显示后把位置拉回视口内（否则从大窗口恢复的位置可能落在屏幕外）
-        setTimeout(() => {
-            try {
-                if (chatContainer.style.position !== 'fixed') return;
-                const rect = chatContainer.getBoundingClientRect();
-                const maxLeft = Math.max(0, window.innerWidth - rect.width);
-                const maxTop = Math.max(0, window.innerHeight - rect.height);
-                const left = Math.max(0, Math.min(rect.left, maxLeft));
-                const top = Math.max(0, Math.min(rect.top, maxTop));
-                chatContainer.style.left = left + 'px';
-                chatContainer.style.top = top + 'px';
-                chatContainer.style.right = 'auto';
-                chatContainer.style.bottom = 'auto';
-            } catch (_) { }
-        }, 30);
-    }
 }
 
 setChatVisible(false);
 
-// 使聊天框可拖动
+// 使聊天框可拖动（页面内元素：只做视觉偏移）
 (function enableDraggableChat() {
     if (!chatContainer || !chatHeader) return;
-
-    // 尝试恢复位置
-    const saved = localStorage.getItem('in_game_chat_pos');
-    if (saved) {
-        try {
-            const pos = JSON.parse(saved);
-            if (typeof pos.left === 'number' && typeof pos.top === 'number') {
-                chatContainer.style.left = pos.left + 'px';
-                chatContainer.style.top = pos.top + 'px';
-                chatContainer.style.right = 'auto';
-                chatContainer.style.bottom = 'auto';
-            }
-        } catch (_) { }
-    }
-
-    let dragging = false;
-    let startX = 0, startY = 0, startLeft = 0, startTop = 0;
-
-    function clamp(val, min, max) { return Math.max(min, Math.min(max, val)); }
-    function getBounds() {
-        const rect = chatContainer.getBoundingClientRect();
-        const vw = window.innerWidth, vh = window.innerHeight;
-        const maxLeft = vw - rect.width;
-        const maxTop = vh - rect.height;
-        return { maxLeft: Math.max(0, maxLeft), maxTop: Math.max(0, maxTop) };
-    }
-
-    function save() {
-        const rect = chatContainer.getBoundingClientRect();
-        localStorage.setItem('in_game_chat_pos', JSON.stringify({ left: rect.left, top: rect.top }));
-    }
-
-    function onMouseDown(e) {
-        if (e.button !== 0) return; // 仅限左键
-        dragging = true;
-        const rect = chatContainer.getBoundingClientRect();
-        // 拖动前清除 transform/transition，避免与 left/top 定位叠加造成位移跳变
-        chatContainer.style.transform = 'none';
-        chatContainer.style.transition = 'none';
-        startX = e.clientX; startY = e.clientY;
-        startLeft = rect.left; startTop = rect.top;
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
-        e.preventDefault();
-    }
-
-    function onMouseMove(e) {
-        if (!dragging) return;
-        const dx = e.clientX - startX;
-        const dy = e.clientY - startY;
-        const bounds = getBounds();
-        const nextLeft = clamp(startLeft + dx, 0, bounds.maxLeft);
-        const nextTop = clamp(startTop + dy, 0, bounds.maxTop);
-        chatContainer.style.left = nextLeft + 'px';
-        chatContainer.style.top = nextTop + 'px';
-        chatContainer.style.right = 'auto';
-        chatContainer.style.bottom = 'auto';
-    }
-
-    function onMouseUp() {
-        if (!dragging) return;
-        dragging = false;
-        document.removeEventListener('mousemove', onMouseMove);
-        document.removeEventListener('mouseup', onMouseUp);
-        save();
-    }
-
-    chatHeader.addEventListener('mousedown', onMouseDown);
-
-    // 触摸支持
-    chatHeader.addEventListener('touchstart', function (e) {
-        if (!e.touches || e.touches.length === 0) return;
-        const t = e.touches[0];
-        dragging = true;
-        const rect = chatContainer.getBoundingClientRect();
-        startX = t.clientX; startY = t.clientY;
-        startLeft = rect.left; startTop = rect.top;
-        document.addEventListener('touchmove', onTouchMove, { passive: false });
-        document.addEventListener('touchend', onTouchEnd);
-        e.preventDefault();
-    });
-    function onTouchMove(e) {
-        if (!dragging || !e.touches || e.touches.length === 0) return;
-        const t = e.touches[0];
-        const dx = t.clientX - startX;
-        const dy = t.clientY - startY;
-        const bounds = getBounds();
-        const nextLeft = clamp(startLeft + dx, 0, bounds.maxLeft);
-        const nextTop = clamp(startTop + dy, 0, bounds.maxTop);
-        chatContainer.style.left = nextLeft + 'px';
-        chatContainer.style.top = nextTop + 'px';
-        chatContainer.style.right = 'auto';
-        chatContainer.style.bottom = 'auto';
-        e.preventDefault();
-    }
-    function onTouchEnd() {
-        if (!dragging) return;
-        dragging = false;
-        document.removeEventListener('touchmove', onTouchMove);
-        document.removeEventListener('touchend', onTouchEnd);
-        save();
-    }
-
-    // 窗口缩放时，确保位置仍在视口内
-    window.addEventListener('resize', function () {
-        const rect = chatContainer.getBoundingClientRect();
-        const bounds = getBounds();
-        const left = clamp(rect.left, 0, bounds.maxLeft);
-        const top = clamp(rect.top, 0, bounds.maxTop);
-        chatContainer.style.left = left + 'px';
-        chatContainer.style.top = top + 'px';
-        chatContainer.style.right = 'auto';
-        chatContainer.style.bottom = 'auto';
-        save();
-    });
+    makeVisualDraggable(chatContainer, chatHeader);
 })();
 
 
@@ -5021,14 +4890,11 @@ function handleSurrender() {
     }
 }
 
-// 初始化预览框拖拽功能
-// 注意：本窗口在正常文档流内（position:relative, width:100%），拖拽只做视觉偏移
-// （transform），不能改成 fixed 定位，否则会脱离布局变成悬浮窗。
-function initPreviewDrag() {
-    const el = document.getElementById('magic-card-preview');
-    if (!el || el.dataset.dragBound === '1') return;
-    el.dataset.dragBound = '1';
-    const handle = el.querySelector('.preview-header') || el;
+// 文档流内元素的拖拽：只改 transform 做视觉偏移，不改 position/left/top，
+// 因此元素仍留在原布局中（与“待使用魔法卡”窗口一致）。带边界钳制 + 触摸支持。
+function makeVisualDraggable(el, handle) {
+    if (!el || !handle || el.dataset.visualDragBound === '1') return;
+    el.dataset.visualDragBound = '1';
 
     let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
     const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
@@ -5088,93 +4954,20 @@ function initPreviewDrag() {
     el.style.cursor = 'grab';
 }
 
-// 通用浮窗拖拽：以 getBoundingClientRect 为准，拖拽时切到 fixed 定位。
-// 修复旧实现 parseInt(getComputedStyle().left) 在相对定位下得到 NaN 导致的位移错乱。
-function makeDraggable(el, handle, options) {
-    if (!el || !handle || el.dataset.dragBound === '1') return;
-    el.dataset.dragBound = '1';
-    const opts = options || {};
-    let dragging = false, startX = 0, startY = 0, startLeft = 0, startTop = 0;
 
-    const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-
-    function bounds() {
-        const rect = el.getBoundingClientRect();
-        return {
-            maxLeft: Math.max(0, window.innerWidth - rect.width),
-            maxTop: Math.max(0, window.innerHeight - rect.height)
-        };
-    }
-
-    function begin(clientX, clientY) {
-        const rect = el.getBoundingClientRect();
-        // 关键：先把位置钉成 fixed + 具体像素，再记录起点，避免相对定位下 left=auto
-        el.style.position = 'fixed';
-        el.style.left = rect.left + 'px';
-        el.style.top = rect.top + 'px';
-        el.style.right = 'auto';
-        el.style.bottom = 'auto';
-        el.style.margin = '0';
-        startX = clientX; startY = clientY;
-        startLeft = rect.left; startTop = rect.top;
-        dragging = true;
-        el.style.cursor = 'grabbing';
-    }
-
-    function move(clientX, clientY) {
-        if (!dragging) return;
-        const b = bounds();
-        el.style.left = clamp(startLeft + (clientX - startX), 0, b.maxLeft) + 'px';
-        el.style.top = clamp(startTop + (clientY - startY), 0, b.maxTop) + 'px';
-    }
-
-    function end() {
-        if (!dragging) return;
-        dragging = false;
-        el.style.cursor = 'grab';
-        if (typeof opts.onEnd === 'function') opts.onEnd(el);
-    }
-
-    handle.addEventListener('mousedown', (e) => {
-        if (e.button !== 0) return;
-        if (e.target.closest('button, a, input, select, textarea')) return;
-        begin(e.clientX, e.clientY);
-        e.preventDefault();
-    });
-    document.addEventListener('mousemove', (e) => move(e.clientX, e.clientY));
-    document.addEventListener('mouseup', end);
-
-    // 触摸支持（手机上也能拖）
-    handle.addEventListener('touchstart', (e) => {
-        if (!e.touches || !e.touches.length) return;
-        if (e.target.closest('button, a, input, select, textarea')) return;
-        begin(e.touches[0].clientX, e.touches[0].clientY);
-        e.preventDefault();
-    }, { passive: false });
-    document.addEventListener('touchmove', (e) => {
-        if (!dragging || !e.touches || !e.touches.length) return;
-        move(e.touches[0].clientX, e.touches[0].clientY);
-        e.preventDefault();
-    }, { passive: false });
-    document.addEventListener('touchend', end);
-
-    // 窗口尺寸变化后把浮窗拉回视口内
-    window.addEventListener('resize', () => {
-        if (el.style.position !== 'fixed') return;
-        const b = bounds();
-        el.style.left = clamp(parseFloat(el.style.left) || 0, 0, b.maxLeft) + 'px';
-        el.style.top = clamp(parseFloat(el.style.top) || 0, 0, b.maxTop) + 'px';
-    });
-
-    el.style.cursor = 'grab';
+// 初始化预览框拖拽功能（页面内元素：只做视觉偏移）
+function initPreviewDrag() {
+    const el = document.getElementById('magic-card-preview');
+    if (!el) return;
+    makeVisualDraggable(el, el.querySelector('.preview-header') || el);
 }
 
-// 初始化日志容器拖拽功能
+
+// 初始化日志容器拖拽功能（页面内元素：只做视觉偏移）
 function initLogDrag() {
-    const logContainer = document.querySelector('.log-container');
-    if (!logContainer) return;
-    const header = logContainer.querySelector('.log-header');
-    makeDraggable(logContainer, header || logContainer);
+    const logEl = document.querySelector('.log-container');
+    if (!logEl) return;
+    makeVisualDraggable(logEl, logEl.querySelector('.log-header') || logEl);
 }
 
 function updateHandUI() {

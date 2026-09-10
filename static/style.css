@@ -395,17 +395,6 @@ input:focus, select:focus {
     box-shadow: var(--shadow-panel);
     overflow: hidden;
 }
-@media (min-width: 1440px) {
-    .log-container {
-        position: fixed;
-        top: 80px;
-        left: 20px;
-        width: 250px;
-        height: calc(100vh - 200px);
-        max-height: 600px;
-        flex: 0 0 auto;
-    }
-}
 .log-container:active { cursor: grabbing; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2); }
 .log-container.collapsed {
     width: 40px;
@@ -554,11 +543,11 @@ input:focus, select:focus {
 
 /* ---------- 9. 浮窗：局内聊天 ---------- */
 .in-game-chat-container {
-    position: fixed;
-    right: 32px;
-    bottom: 32px;
-    width: 320px;
-    max-width: 90vw;
+    /* 页面内元素（与“待使用魔法卡”预览框一致）：不再浮在棋盘上 */
+    position: relative;
+    width: 100%;
+    max-width: 900px;
+    margin: 0 auto 20px auto;
     background: var(--glass);
     -webkit-backdrop-filter: blur(10px);
     backdrop-filter: blur(10px);

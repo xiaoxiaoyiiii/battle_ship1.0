@@ -123,14 +123,34 @@ body {
     position: relative;
     z-index: 1;
     background: var(--panel);
-    -webkit-backdrop-filter: blur(14px);
-    backdrop-filter: blur(14px);
     border: 1px solid var(--panel-border);
     padding: clamp(0.75rem, 2.4vw, 2rem);
     border-radius: clamp(10px, 1.8vw, 16px);
     box-shadow: var(--shadow-panel);
     max-width: 1000px;
     width: min(100%, 1000px);
+}
+
+/*
+ * 毛玻璃背景层（issue #1）。
+ * ⚠️ 不要把 backdrop-filter / filter 直接写在 .game-container 上。
+ * 本容器是所有 position:fixed 元素的祖先——弹窗遮罩 .modal-overlay、
+ * 日志浮窗 .log-container、局内聊天 .in-game-chat-container、连锁提示
+ * .chain-prompt-container、.magic-preview-container（≥1440px）等；而带
+ * filter/backdrop-filter 的元素会成为其 fixed 后代的【包含块】，使它们
+ * 改以本容器（max-width:1000px）为基准定尺寸与定位 —— 表现为弹窗遮罩
+ * 只盖住中间一列、右侧棋盘浮窗贴不到视口边缘，即"不能正常地利用整个屏幕"。
+ * 毛玻璃改由没有 fixed 后代的 ::before 承担，视觉不变。
+ */
+.game-container::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+    pointer-events: none;
+    z-index: -1;
 }
 
 h1, h2, h3, p { text-align: center; margin-bottom: 1rem; }
@@ -1590,16 +1610,16 @@ body.cool-effects-enabled .cell.cool-flash {
 /* ---------- 弹窗小屏可用性兜底（2026-09-07）---------- */
 .modal-overlay,
 .taoyuan-choice-overlay {
+    flex-direction: column;      /* 主轴改为纵向，margin:auto 才能同时负责水平+垂直居中 */
+    justify-content: flex-start; /* 溢出时交给 margin:auto 收缩为 0，顶端内容才滚得回来 */
     align-items: flex-start;
     overflow-y: auto;
     padding: 4vh 2vw;
     box-sizing: border-box;
 }
-.modal-overlay::before,
-.taoyuan-choice-overlay::before {
-    content: '';
-    margin: auto;
-}
+/* 已删除原 ::before { content:''; margin:auto } 占位项：
+   它是零宽弹性项，在主轴上会分走一半自由空间，把弹窗推向右侧
+   （1650px 视口下偏右约 246px）；纵向居中由 .modal-content 的 margin:auto 完成。 */
 .modal-overlay .modal-content,
 .modal-overlay > .modal-content {
     flex: 0 0 auto;

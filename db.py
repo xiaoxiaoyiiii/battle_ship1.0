@@ -117,6 +117,21 @@ class Database:
             
             self.conn.commit()
             logger.info("数据库表创建成功")
+
+            # 常用查询索引：避免数据增长后战绩/登录查询退化为全表扫描
+            for stmt in (
+                'CREATE INDEX IF NOT EXISTS idx_matches_winner ON matches(winner_id)',
+                'CREATE INDEX IF NOT EXISTS idx_matches_loser ON matches(loser_id)',
+                'CREATE INDEX IF NOT EXISTS idx_matches_ts ON matches(timestamp)',
+                'CREATE INDEX IF NOT EXISTS idx_users_token ON users(token)',
+                'CREATE INDEX IF NOT EXISTS idx_chat_ts ON chat_messages(timestamp)',
+            ):
+                try:
+                    self.cursor.execute(stmt)
+                except sqlite3.Error as e:
+                    logger.warning(f"创建索引失败: {stmt} -> {e}")
+            self.conn.commit()
+            logger.info("数据库索引创建成功")
             
             # 便于直接查询的视图：match_history
             try:
@@ -155,9 +170,10 @@ class Database:
     def clear_temp_data(self):
         """重启时清空临时数据"""
         try:
-            self.cursor.execute('DELETE FROM active_games')
-            self.cursor.execute("UPDATE users SET token = ''")
-            self.conn.commit()
+            with self._lock:
+                self.cursor.execute('DELETE FROM active_games')
+                self.cursor.execute("UPDATE users SET token = ''")
+                self.conn.commit()
             logger.info("临时数据清除成功")
         except sqlite3.Error as e:
             logger.error(f"清除临时数据失败: {e}")
@@ -170,20 +186,33 @@ class Database:
             if self.conn:
                 self.conn.rollback()
     
+    # users 表允许被通用更新方法写入的列白名单：
+    # 列名会拼进 SQL，必须白名单化，避免调用方传入用户可控的列名造成注入。
+    _ALLOWED_USER_COLUMNS = frozenset({
+        'username', 'password_hash', 'signature', 'avatar', 'token',
+        'wins', 'losses', 'current_streak', 'longest_streak',
+    })
+
     def update_user(self, uid: str, **kwargs):
         """通用更新用户信息"""
         if not kwargs:
             return True
-        
+
         if not uid:
             logger.warning("尝试更新用户信息但未提供用户ID")
             return False
-            
+
+        invalid = [k for k in kwargs if k not in self._ALLOWED_USER_COLUMNS]
+        if invalid:
+            logger.error(f"更新用户信息时出现非法字段: {uid}, 字段: {invalid}")
+            return False
+
         try:
             query = 'UPDATE users SET ' + ', '.join([f"{k} = ?" for k in kwargs.keys()]) + ' WHERE id = ?'
             params = list(kwargs.values()) + [uid]
-            self.cursor.execute(query, params)
-            self.conn.commit()
+            with self._lock:
+                self.cursor.execute(query, params)
+                self.conn.commit()
             logger.info(f"成功更新用户信息: {uid}, 更新字段: {list(kwargs.keys())}")
             return True
         except sqlite3.IntegrityError as e:
@@ -258,9 +287,10 @@ class Database:
             return False
             
         try:
-            self.cursor.execute('INSERT OR REPLACE INTO active_games (user_id, room_id, updated_at) VALUES (?, ?, ?)',
-                         (uid, room_id, int(time.time())))
-            self.conn.commit()
+            with self._lock:
+                self.cursor.execute('INSERT OR REPLACE INTO active_games (user_id, room_id, updated_at) VALUES (?, ?, ?)',
+                             (uid, room_id, int(time.time())))
+                self.conn.commit()
             logger.debug(f"成功保存活跃游戏: uid={uid}, room_id={room_id}")
             return True
         except sqlite3.Error as e:
@@ -303,8 +333,9 @@ class Database:
         try:
             # 确保签名长度合理（防止过长）
             safe_signature = signature[:500] if signature else ''
-            self.cursor.execute('UPDATE users SET signature = ? WHERE id = ?', (safe_signature, uid))
-            self.conn.commit()
+            with self._lock:
+                self.cursor.execute('UPDATE users SET signature = ? WHERE id = ?', (safe_signature, uid))
+                self.conn.commit()
             logger.info(f"成功更新用户签名: uid={uid}")
             return True
         except sqlite3.IntegrityError as e:
@@ -329,8 +360,9 @@ class Database:
             return False
             
         try:
-            self.cursor.execute('UPDATE users SET avatar = ? WHERE id = ?', (avatar_path, uid))
-            self.conn.commit()
+            with self._lock:
+                self.cursor.execute('UPDATE users SET avatar = ? WHERE id = ?', (avatar_path, uid))
+                self.conn.commit()
             logger.info(f"成功更新用户头像: uid={uid}")
             return True
         except sqlite3.IntegrityError as e:
@@ -355,8 +387,9 @@ class Database:
             return False
             
         try:
-            self.cursor.execute('UPDATE users SET password_hash = ? WHERE id = ?', (password_hash, uid))
-            self.conn.commit()
+            with self._lock:
+                self.cursor.execute('UPDATE users SET password_hash = ? WHERE id = ?', (password_hash, uid))
+                self.conn.commit()
             logger.info(f"成功更新用户密码: uid={uid}")
             return True
         except sqlite3.IntegrityError as e:
@@ -406,9 +439,10 @@ class Database:
             safe_content = content[:500] if content else ''
             safe_username = username[:50] if username else '匿名'
             
-            self.cursor.execute('INSERT INTO chat_messages (user_id, username, content, timestamp) VALUES (?, ?, ?, ?)',
-                         (user_id, safe_username, safe_content, int(time.time())))
-            self.conn.commit()
+            with self._lock:
+                self.cursor.execute('INSERT INTO chat_messages (user_id, username, content, timestamp) VALUES (?, ?, ?, ?)',
+                             (user_id, safe_username, safe_content, int(time.time())))
+                self.conn.commit()
             logger.debug(f"成功添加聊天消息: user_id={user_id}, username={safe_username}")
             return True
         except sqlite3.Error as e:
@@ -454,9 +488,10 @@ class Database:
                 return None
                 
             uid = str(uuid.uuid4())
-            self.cursor.execute('INSERT INTO users (id, username, password_hash, created_at) VALUES (?,?,?,?)',
-                         (uid, username, password_hash, int(time.time())))
-            self.conn.commit()
+            with self._lock:
+                self.cursor.execute('INSERT INTO users (id, username, password_hash, created_at) VALUES (?,?,?,?)',
+                             (uid, username, password_hash, int(time.time())))
+                self.conn.commit()
             logger.info(f"成功创建用户: username={username}, uid={uid}")
             return uid
         except sqlite3.IntegrityError as e:
@@ -644,8 +679,9 @@ class Database:
             
             if user and check_password_hash(user['password_hash'], password):
                 token = str(uuid.uuid4())
-                self.cursor.execute('UPDATE users SET token = ? WHERE id = ?', (token, user['id']))
-                self.conn.commit()
+                with self._lock:
+                    self.cursor.execute('UPDATE users SET token = ? WHERE id = ?', (token, user['id']))
+                    self.conn.commit()
                 logger.info(f"成功为用户生成token: username={username}, user_id={user['id']}")
                 return token
             else:

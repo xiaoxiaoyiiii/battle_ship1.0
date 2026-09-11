@@ -138,7 +138,7 @@ python -m pytest tests/ -q
 ## 🧪 测试
 
 ```bash
-python -m pytest tests/ -q      # 121 passed
+python -m pytest tests/ -q      # 163 passed
 ```
 
 | 测试文件 | 覆盖 |
@@ -148,16 +148,17 @@ python -m pytest tests/ -q      # 121 passed
 | `test_magic_resolution_flows.py` | 跨回合结算闭环（增援/无暇圣心/教皇旨意弃卡等） |
 | `test_auth_spoof.py` | Socket 事件身份鉴权（防伪造 player_id） |
 | `test_disconnect_and_eden_shenji.py` | 掉线宽限/重连、伊甸园结算时机、神机妙算宣言、AI 布船规则 |
+| `test_fixes_regression.py` | 安全/健壮性修复回归（调试事件开关、游客匹配、输入校验、房间回收等） |
 
 ---
 
 ## 🔐 安全与运维注意
 
-- ⚠️ `api.py` 的 `SECRET_KEY` 目前为**硬编码**，部署到公网前建议改为环境变量注入的随机值。
-- ⚠️ `test_*` 调试事件对外暴露，公网部署建议加环境开关或移除。
-- `cors_allowed_origins="*"` 建议按部署域名收紧。
-- 使用 eventlet 运行**必须**在导入应用前调用 `eventlet.monkey_patch()`，否则后台计时任务中的 `time.sleep` 会阻塞整个单线程服务器。
-- 建议生产环境启用 HTTPS、数据库定期备份。
+- `SECRET_KEY`、`CORS_ORIGINS`、`PORT` 可通过环境变量注入；未配置 `SECRET_KEY` 时使用随机值（重启后 session 失效）。**生产部署务必设置 `SECRET_KEY`。**
+- 调试事件（`test_*`）**默认关闭**，仅本地设置 `ENABLE_TEST_EVENTS=1` 启用；生产页面已不加载 `test_magic.js`。
+- 登录/注册/改密有简易限流（同 IP 60 秒 10 次）；头像上传限 2MB 并校验图片魔数。
+- 生产运行必须使用 eventlet（`python server.py`）；`FLASK_DEBUG=1` 仅限本地调试。
+- 数据库（SQLite WAL）建议定期备份 `data/battleship.db`。
 
 ---
 

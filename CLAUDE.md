@@ -36,12 +36,23 @@ Flask + Flask-SocketIO 的实时双人海战棋，叠加 43 条魔法卡（41 �
 ```bash
 pip install -r requirements.txt
 python start_server.py        # 推荐（含依赖检查）
-python -m pytest tests/ -q    # 141 passed
+python -m pytest tests/ -q    # 163 passed
 ```
 
 > ⚠️ **必须在项目根目录运行**——`server.py` 用相对路径 `./static/magic_card.json`；`tests/test_all_magic_cards.py:1088` 也用硬编码相对路径，是全套测试中唯一对 CWD 敏感的。
 
-**实测基线（2026-09-11）**：`141 passed / 0 failed / 0.53s`，6 个测试文件。
+**实测基线（2026-09-11 修复批后）**：`163 passed / 0 failed / 0.68s`，7 个测试文件。
+
+> 🔧 **2026-09-11 安全/健壮性修复批**：本文件第 11 节的 P0/P1 问题已修复（详见 `docs/FIX_PLAN.md` 与 `tests/test_fixes_regression.py`）。要点：
+> - 12 个 `test_*` 事件默认关闭（`ENABLE_TEST_EVENTS=1` 启用）；`test_magic.js` 已从 index.html 移除
+> - `SECRET_KEY`/`CORS_ORIGINS`/`PORT`/`FLASK_DEBUG` 均改为环境变量；默认关 debug
+> - 游客匹配 bug（`None==None`）修复；匹配队列改为单结构列表 + RLock，同账号去重不会死循环
+> - 已结束房间由后台 reaper（`_reap_ended_rooms`，宽限 120s）统一回收，修复内存泄漏
+> - place_ships / attack / 魔法目标均有服务端校验；surrender 有 `_identity_ok`
+> - requirements.txt 已锁版本并补 eventlet；db 层写操作统一持锁 + 列名白名单 + 补索引
+> - game.js：`ensureSocket()` 统一连接管理（不再重复建连）；`#effect-indicators` 已补；猜拳文案映射已修正；「神之宣告」出牌前可选效果（`promptDivineDecreeChoice` → `targets: {effect_choice}`）
+> - eventlet `monkey_patch()` 已移至 server.py 首行（在所有 import 之前）
+> - 已删除死代码：`process_match_queue`、lobby 三方法（前端仍监听的 lobby 事件为历史遗留空壳）
 
 ---
 
@@ -149,11 +160,10 @@ game_logs, is_ai_room, shenwei_holes ...
 
 | 方法 | 行号 | 说明 |
 | --- | --- | --- |
-| `init_player_magic` | 270 | 清空手牌；**仅当 `magic_deck` 为空时**初始化并洗牌 |
-| `draw_card` | 289 | 受 `no_draw` 阻止；重名卡（**`失灵！` 例外**）丢弃牌堆 |
-| `attack` | 326 | ⚠️ **旧版攻击实现，已被 `handle_attack` 取代**，属死代码 |
+| `init_player_magic` | 274 | 清空手牌；**仅当 `magic_deck` 为空时**初始化并洗牌 |
+| `draw_card` | 293 | 受 `no_draw` 阻止；重名卡（**`失灵！` 例外**）丢弃牌堆 |
 
-> ⚠️ **三套攻击实现并存**：`GameRoom.attack`(326，死代码) / `handle_attack`(1697，**实际生效**) / `_do_attack`(2464，教皇旨意等特定路径)。改动攻击逻辑前**务必确认改的是哪一个**。
+> ✅ **攻击实现已统一（2026-09-11）**：原 `GameRoom.attack`（旧版死代码）与 `Effect` 钩子体系已删除。现在只有两条路径：`handle_attack`（普通攻击，强制击杀/普通共用一套 `_apply_ship_sunk_effects` 结算）与 `_do_attack`（教皇旨意弃卡攻击，不消耗常规次数）。`余音绕梁`（forced_kill 标记）/`火力全开`（double_attacks 标记）经 **EffectFlags 在真实路径生效**，不再依赖 Effect 钩子。
 
 ---
 
@@ -378,10 +388,10 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`。真人摆完船后
 
 ### 🟠 其他数据问题
 
-- **`盗亦有道`（4495-4507）只 append 到己方手牌、不从对方移除** → 卡牌被复制，可反复盗取
+- ~~`盗亦有道` 只 append 到己方手牌、不从对方移除~~ **已修复（2026-09-11）**：改为从弃牌堆转移 + 历史条目标记 stolen，防复制/防重复盗取
 - `加百列之光`（4536-4550）拆场地时**无归属判断**，会拆掉自己的场地
-- `神之宣告` 的 `effect_choice` 从 `magic_temp_data` 读，但**无任何 handler 写入** → 分支 2（跳过对方回合）不可达
-- 快照缺口见第 9 节
+- ~~`神之宣告` 分支 2 不可达~~ **已修复（2026-09-11）**：前端出牌前弹选择框（`promptDivineDecreeChoice`），后端从 `targets.effect_choice` 读取
+- ~~快照缺口见第 9 节~~ **已修复（2026-09-11）**：`_build_room_sync` 已补 chain/chain_waiting/active_effects/pending_placement
 
 ### 🟠 测试代码问题
 

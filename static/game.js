@@ -832,6 +832,29 @@ let opponentGoneTimer = null;
 let opponentGoneEl = null;
 const ACTIVE_GAME_KEY = 'battle_active_game';
 
+// 统一的 socket 获取入口：已有连接则复用，绝不重复建连。
+// 之前多处直接 io.connect 覆盖 gameState.socket，旧连接未关闭会变成孤儿，
+// 且 setupSocketListeners 会被重复调用导致同一事件被处理多次。
+function ensureSocket() {
+    if (gameState.socket) {
+        return gameState.socket;
+    }
+    gameState.socket = io.connect('http://' + window.location.host);
+    setupSocketListeners();
+    return gameState.socket;
+}
+
+// 连接就绪后执行回调；已连接则立即执行。
+// 使用 once 而非 on，避免反复调用时叠加重复监听。
+function onSocketReady(callback) {
+    const socket = ensureSocket();
+    if (socket.connected) {
+        callback(socket);
+    } else {
+        socket.once('connect', () => callback(socket));
+    }
+}
+
 function freezeAlert() {
     if (gameState.frozen) { showAlert('对手已掉线，等待重连中'); return true; }
     return false;
@@ -898,6 +921,23 @@ function applyRoomSync(data) {
     gameState.ships = data.ships || [];
     gameState.myAttacks = data.attacks || [];
     gameState.shenweiHoles = data.shenwei_holes || [];
+    // 连锁/效果上下文：重连后恢复连锁显示与响应窗口
+    if (Array.isArray(data.chain)) {
+        gameState.chain = data.chain;
+        if (typeof updateChainUI === 'function') updateChainUI();
+    }
+    if (typeof data.chain_waiting !== 'undefined') gameState.chainWaiting = data.chain_waiting;
+    if (typeof data.chain_window !== 'undefined') gameState.chainWindow = data.chain_window;
+    if (Array.isArray(data.active_effects)) gameState.activeEffects = data.active_effects;
+    if (data.pending_placement && typeof showPlacementPrompt === 'function') {
+        showPlacementPrompt({
+            kind: data.pending_placement.kind,
+            remaining: data.pending_placement.remaining,
+            total: data.pending_placement.total,
+            placed: data.pending_placement.placed,
+            blocked: data.pending_placement_blocked || [],
+        });
+    }
     if (data.field_magic) gameState.fieldMagic = data.field_magic;
     if (data.opponent_name) {
         gameState.opponentName = data.opponent_name;
@@ -931,10 +971,7 @@ function applyRoomSync(data) {
 
 // 页面加载时初始化WebSocket连接，用于在线人数统计
 document.addEventListener('DOMContentLoaded', function () {
-    if (!window.gameState.socket) {
-        window.gameState.socket = io.connect('http://' + window.location.host);
-        setupSocketListeners();
-    }
+    ensureSocket();
 });
 
 // 全局消息提示辅助函数
@@ -1534,19 +1571,17 @@ function bindEventListeners() {
 // 创建房间
 function createRoom() {
     gameState.playerName = playerNameInput.value || '玩家';
-    gameState.socket = io.connect('http://' + window.location.host);
-    setupSocketListeners();
 
-    // 等待Socket连接成功后再发送创建房间请求
-    gameState.socket.on('connect', () => {
-        gameState.socket.emit('create_room', {}, (response) => {
+    // 等待Socket连接成功后再发送创建房间请求（复用已有连接，避免重复建连）
+    onSocketReady((socket) => {
+        socket.emit('create_room', {}, (response) => {
             if (response.status === 'success') {
                 gameState.roomId = response.room_id;
                 currentRoomId.textContent = gameState.roomId;
                 roomInfo.classList.remove('hidden');
 
                 // 自动加入创建的房间
-                gameState.socket.emit('join_room', {
+                socket.emit('join_room', {
                     room_id: gameState.roomId,
                     player_name: gameState.playerName
                 }, (joinResponse) => {
@@ -1570,11 +1605,8 @@ function toggleCustomRoomOptions() {
 function findMatch() {
     gameState.playerName = playerNameInput.value || '玩家';
 
-    // 如果已经有socket连接，直接使用，不创建新连接
-    if (!gameState.socket) {
-        gameState.socket = io.connect('http://' + window.location.host);
-        setupSocketListeners();
-    }
+    // 复用/建立连接（ensureSocket 内部保证不重复建连）
+    ensureSocket();
 
     // 发送匹配请求
     gameState.socket.emit('find_match', {
@@ -1590,11 +1622,8 @@ function findMatch() {
 function aiMatch() {
     gameState.playerName = playerNameInput.value || '玩家';
 
-    // 如果已经有socket连接，直接使用，不创建新连接
-    if (!gameState.socket) {
-        gameState.socket = io.connect('http://' + window.location.host);
-        setupSocketListeners();
-    }
+    // 复用/建立连接（ensureSocket 内部保证不重复建连）
+    ensureSocket();
 
     // 发送人机对战请求
     gameState.socket.emit('create_ai_room', {
@@ -1635,19 +1664,16 @@ function cancelMatch() {
 // 自定义房间游戏 - 创建房间
 function customCreateRoom() {
     // 名称由服务端取登录账号名（游客默认），不再让玩家手输
-    gameState.socket = io.connect('http://' + window.location.host);
-    setupSocketListeners();
-
-    // 等待Socket连接成功后再发送创建房间请求
-    gameState.socket.on('connect', () => {
-        gameState.socket.emit('create_room', {}, (response) => {
+    // 等待Socket连接成功后再发送创建房间请求（复用已有连接）
+    onSocketReady((socket) => {
+        socket.emit('create_room', {}, (response) => {
             if (response.status === 'success') {
                 gameState.roomId = response.room_id;
                 customCurrentRoomId.textContent = gameState.roomId;
                 customRoomInfo.classList.remove('hidden');
 
                 // 自动加入创建的房间（名称用登录账号名）
-                gameState.socket.emit('join_room', {
+                socket.emit('join_room', {
                     room_id: gameState.roomId
                 }, (joinResponse) => {
                     if (joinResponse.status === 'success') {
@@ -1666,10 +1692,9 @@ function customJoinRoom() {
     const roomId = customRoomCodeInput.value.trim();
     if (!roomId) return;
 
-    gameState.socket = io.connect('http://' + window.location.host);
-    setupSocketListeners();
+    const socket = ensureSocket();
 
-    gameState.socket.emit('join_room', {
+    socket.emit('join_room', {
         room_id: roomId
     }, (response) => {
         if (response.status === 'success') {
@@ -1689,10 +1714,9 @@ function joinRoom() {
     const roomId = roomCodeInput.value.trim();
     if (!roomId) return;
 
-    gameState.socket = io.connect('http://' + window.location.host);
-    setupSocketListeners();
+    const socket = ensureSocket();
 
-    gameState.socket.emit('join_room', {
+    socket.emit('join_room', {
         room_id: roomId,
         player_name: gameState.playerName
     }, (response) => {
@@ -2189,10 +2213,9 @@ function setupSocketListeners() {
                         showTaoyuanChoice(result);
                     }
                 } else if (result.temp_data_id === 'divine_decree') {
-                    // 神之宣告选择：仅施法者需要选择
-                    if (result.caster === gameState.playerId) {
-                        showDivineDecreeChoice(result);
-                    }
+                    // 神之宣告的效果选择已在出牌前完成（见 promptDivineDecreeChoice），
+                    // 这里仅作兼容兜底：不再调用不存在的函数，避免中断整个连锁结算。
+                    console.warn('收到 divine_decree 选择请求，选择已在出牌前完成，忽略');
                 } else if (result.temp_data_id === 'lingqi_choice') {
                     // 只有当施法者是当前玩家时，才显示灵气复苏选择UI
                     if (result.caster === gameState.playerId) {
@@ -2932,11 +2955,8 @@ function showLeaderboard() {
 // 显示大厅
 function showLobby() {
     switchScreen(lobbyScreen);
-    // 如果还没有socket连接，创建连接
-    if (!gameState.socket) {
-        gameState.socket = io.connect('http://' + window.location.host);
-        setupSocketListeners();
-    }
+    // 复用/建立连接
+    ensureSocket();
     // 重置按钮状态（显示加入匹配，隐藏离开匹配）
     joinLobbyBtn.classList.remove('hidden');
     leaveLobbyBtn.classList.add('hidden');
@@ -2984,10 +3004,7 @@ function updateLobbyDisplay() {
 
 // 加入大厅匹配
 function joinLobbyMatch() {
-    if (!gameState.socket) {
-        gameState.socket = io.connect('http://' + window.location.host);
-        setupSocketListeners();
-    }
+    ensureSocket();
     gameState.socket.emit('join_lobby', {});
 }
 
@@ -3320,8 +3337,8 @@ function updateTurnIndicator(currentAttacker, remainingAttacks) {
 function getRPSName(choice) {
     const names = {
         'rock': '石头',
-        'paper': '剪刀',
-        'scissors': '布'
+        'paper': '布',
+        'scissors': '剪刀'
     };
     return names[choice] || choice;
 }
@@ -3348,6 +3365,23 @@ function hideRegister() {
     registerModal.classList.add('hidden');
 }
 
+// 从 fetch 返回的页面文本中提取服务端 flash 提示（fetch 跟随重定向会消费掉 session 中的 flash，
+// 因此必须在返回的 HTML 里就地取出并展示，否则刷新后提示会丢失）
+function extractFlashMessages(htmlText) {
+    try {
+        const doc = new DOMParser().parseFromString(htmlText, 'text/html');
+        const toast = doc.getElementById('flash-toast');
+        if (!toast) return { messages: [], hasError: false };
+        const items = Array.from(toast.querySelectorAll('.flash-item'));
+        return {
+            messages: items.map(el => el.textContent.trim()).filter(Boolean),
+            hasError: items.some(el => el.classList.contains('flash-error') || el.classList.contains('flash-danger') || el.classList.contains('flash-warning'))
+        };
+    } catch (e) {
+        return { messages: [], hasError: false };
+    }
+}
+
 // 登录提交处理
 async function handleLoginSubmit() {
     const username = loginUsernameInput.value.trim();
@@ -3363,18 +3397,15 @@ async function handleLoginSubmit() {
             body: new URLSearchParams({ username, password }),
             credentials: 'same-origin'
         });
-        // 如果服务器进行了重定向（登录成功会重定向到首页），则直接跳转
-        if (resp.redirected) {
+        const text = await resp.text();
+        // 登录成功：服务端重定向到了非 /login 页面
+        if (resp.redirected && new URL(resp.url).pathname !== '/login') {
             window.location.href = resp.url;
             return;
         }
-        const text = await resp.text();
-        if (text && text.includes('用户名或密码错误')) {
-            showMessage('用户名或密码错误', { type: 'error' });
-        } else {
-            // 无明显错误，刷新页面以同步登录状态
-            window.location.reload();
-        }
+        // 失败：就地展示服务端 flash 提示
+        const flash = extractFlashMessages(text);
+        showMessage(flash.messages.join('；') || '用户名或密码错误', { type: flash.hasError ? 'error' : 'error', duration: 4000 });
     } catch (err) {
         showMessage('登录失败，请稍后重试', { type: 'error' });
     }
@@ -3388,6 +3419,14 @@ async function handleRegisterSubmit() {
         showMessage('用户名和密码不能为空', { type: 'warning' });
         return;
     }
+    if (username.length < 3) {
+        showMessage('用户名长度至少 3 位', { type: 'warning' });
+        return;
+    }
+    if (password.length < 6) {
+        showMessage('密码长度至少 6 位', { type: 'warning' });
+        return;
+    }
     try {
         const resp = await fetch('/register', {
             method: 'POST',
@@ -3395,16 +3434,15 @@ async function handleRegisterSubmit() {
             body: new URLSearchParams({ username, password }),
             credentials: 'same-origin'
         });
-        if (resp.redirected) {
+        const text = await resp.text();
+        // 注册成功：服务端重定向到了非 /register 页面
+        if (resp.redirected && new URL(resp.url).pathname !== '/register') {
             window.location.href = resp.url;
             return;
         }
-        const text = await resp.text();
-        if (text && (text.includes('用户名已存在') || text.includes('注册失败'))) {
-            showMessage('注册失败: 用户名可能已存在', { type: 'error' });
-        } else {
-            window.location.reload();
-        }
+        // 失败：就地展示服务端 flash 提示
+        const flash = extractFlashMessages(text);
+        showMessage(flash.messages.join('；') || '注册失败，请稍后重试', { type: 'error', duration: 4000 });
     } catch (err) {
         showMessage('注册失败，请稍后重试', { type: 'error' });
     }
@@ -4335,6 +4373,12 @@ function playMagicCard(index) {
         }
     }
 
+    // 神之宣告：需要先选择要触发的效果，再出牌
+    if (card.name === '神之宣告') {
+        promptDivineDecreeChoice(index);
+        return;
+    }
+
     // 检查是否需要目标选择
     if (needsTargetSelection(card.name)) {
         showMagicTargetSelection(card, index);
@@ -4369,6 +4413,38 @@ function sendMagicCard(index, targets) {
             console.error('魔法卡使用失败:', response.message);
             showAlert(`使用魔法卡失败: ${response.message || '未知错误'}`);
         }
+    });
+}
+
+// 神之宣告：出牌前选择要触发的效果（1=摧毁对方一艘战舰，2=跳过对方本回合）
+function promptDivineDecreeChoice(cardIndex) {
+    const card = gameState.hand[cardIndex];
+    if (!card) return;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'taoyuan-choice-overlay';
+    overlay.style.zIndex = '10000';
+    overlay.innerHTML = `
+        <div class="taoyuan-choice-container">
+            <div class="taoyuan-choice-header">
+                <h3>神之宣告</h3>
+                <p>牺牲两艘战舰，选择要触发的效果：</p>
+            </div>
+            <div class="divine-decree-options" style="display:flex;flex-direction:column;gap:10px;padding:12px 0;">
+                <button class="phase-btn" data-choice="1">摧毁对方一艘战舰</button>
+                <button class="phase-btn" data-choice="2">跳过对方本回合所有阶段</button>
+                <button class="phase-btn" data-choice="0" style="opacity:.7;">取消</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+
+    overlay.querySelectorAll('button[data-choice]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const choice = parseInt(btn.dataset.choice, 10);
+            document.body.removeChild(overlay);
+            if (choice === 0) return;
+            sendMagicCard(cardIndex, { effect_choice: choice });
+        });
     });
 }
 
@@ -4494,16 +4570,7 @@ function applyCardEffect(card, casterId) {
 
         case '轰炸':
             showMessage('轰炸效果生效，目标行/列受到攻击');
-            // 添加轰炸逻辑
-            if (gameState.selectedLine) {
-                gameState.socket.emit('line_attack', {
-                    room_id: gameState.roomId,
-                    player_id: gameState.playerId,
-                    line: gameState.selectedLine
-                });
-                // 清除已选择的行/列
-                gameState.selectedLine = null;
-            }
+            // 轰炸的实际结算走 use_magic_card（target_line）链路，此处无需额外请求
             break;
 
         case '探测雷达':
@@ -4548,8 +4615,13 @@ function applyCardEffect(card, casterId) {
 
         case '百亿补贴':
             showMessage('百亿补贴效果生效，船被击败时攻击次数加3');
-            // 添加状态图标显示
-            document.getElementById('effect-indicators').innerHTML += '<div class="effect-icon" title="百亿补贴">补贴</div>';
+            // 添加状态图标显示（元素不存在时静默跳过，避免抛错）
+            {
+                const indicatorBox = document.getElementById('effect-indicators');
+                if (indicatorBox) {
+                    indicatorBox.innerHTML += '<div class="effect-icon" title="百亿补贴">补贴</div>';
+                }
+            }
             break;
 
         case '绝处逢生':
@@ -5277,10 +5349,7 @@ function init() {
     const autoRoom = urlParams.get('room');
     if (autoRoom) {
         // Ensure socket exists and listeners are set up
-        if (!gameState.socket) {
-            gameState.socket = io.connect('http://' + window.location.host);
-            setupSocketListeners();
-        }
+        ensureSocket();
         // 在 socket 连接后尝试加入房间
         if (gameState.socket.connected) {
             gameState.socket.emit('join_room', { room_id: autoRoom, player_name: gameState.playerName }, (resp) => {

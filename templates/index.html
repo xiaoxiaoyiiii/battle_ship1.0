@@ -9,6 +9,16 @@
 </head>
 <body>
     <canvas id="particle-canvas"></canvas>
+    <!-- Flask flash 消息提示（注册/登录/退出等操作结果） -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div id="flash-toast" class="flash-toast" role="alert">
+            {% for category, message in messages %}
+            <div class="flash-item flash-{{ category }}">{{ message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    {% endwith %}
 <div class="game-container">
     <div class="nav" id="game-nav">
         <div class="nav-brand">⚓ 战舰游戏</div>
@@ -491,6 +501,18 @@
 <script src="/static/game.js"></script>
 <!-- 背景音乐播放器 -->
 <script src="/static/music_player.js"></script>
+
+<!-- flash 消息自动消失 -->
+<script>
+    (function () {
+        var toast = document.getElementById('flash-toast');
+        if (!toast) return;
+        setTimeout(function () {
+            toast.classList.add('flash-toast-hide');
+            setTimeout(function () { toast.remove(); }, 500);
+        }, 3500);
+    })();
+</script>
 
 <!-- 在线人数更新脚本 -->
 <script>

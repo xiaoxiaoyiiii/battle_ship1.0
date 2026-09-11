@@ -3365,6 +3365,23 @@ function hideRegister() {
     registerModal.classList.add('hidden');
 }
 
+// 从 fetch 返回的页面文本中提取服务端 flash 提示（fetch 跟随重定向会消费掉 session 中的 flash，
+// 因此必须在返回的 HTML 里就地取出并展示，否则刷新后提示会丢失）
+function extractFlashMessages(htmlText) {
+    try {
+        const doc = new DOMParser().parseFromString(htmlText, 'text/html');
+        const toast = doc.getElementById('flash-toast');
+        if (!toast) return { messages: [], hasError: false };
+        const items = Array.from(toast.querySelectorAll('.flash-item'));
+        return {
+            messages: items.map(el => el.textContent.trim()).filter(Boolean),
+            hasError: items.some(el => el.classList.contains('flash-error') || el.classList.contains('flash-danger') || el.classList.contains('flash-warning'))
+        };
+    } catch (e) {
+        return { messages: [], hasError: false };
+    }
+}
+
 // 登录提交处理
 async function handleLoginSubmit() {
     const username = loginUsernameInput.value.trim();
@@ -3380,18 +3397,15 @@ async function handleLoginSubmit() {
             body: new URLSearchParams({ username, password }),
             credentials: 'same-origin'
         });
-        // 如果服务器进行了重定向（登录成功会重定向到首页），则直接跳转
-        if (resp.redirected) {
+        const text = await resp.text();
+        // 登录成功：服务端重定向到了非 /login 页面
+        if (resp.redirected && new URL(resp.url).pathname !== '/login') {
             window.location.href = resp.url;
             return;
         }
-        const text = await resp.text();
-        if (text && text.includes('用户名或密码错误')) {
-            showMessage('用户名或密码错误', { type: 'error' });
-        } else {
-            // 无明显错误，刷新页面以同步登录状态
-            window.location.reload();
-        }
+        // 失败：就地展示服务端 flash 提示
+        const flash = extractFlashMessages(text);
+        showMessage(flash.messages.join('；') || '用户名或密码错误', { type: flash.hasError ? 'error' : 'error', duration: 4000 });
     } catch (err) {
         showMessage('登录失败，请稍后重试', { type: 'error' });
     }
@@ -3405,6 +3419,14 @@ async function handleRegisterSubmit() {
         showMessage('用户名和密码不能为空', { type: 'warning' });
         return;
     }
+    if (username.length < 3) {
+        showMessage('用户名长度至少 3 位', { type: 'warning' });
+        return;
+    }
+    if (password.length < 6) {
+        showMessage('密码长度至少 6 位', { type: 'warning' });
+        return;
+    }
     try {
         const resp = await fetch('/register', {
             method: 'POST',
@@ -3412,16 +3434,15 @@ async function handleRegisterSubmit() {
             body: new URLSearchParams({ username, password }),
             credentials: 'same-origin'
         });
-        if (resp.redirected) {
+        const text = await resp.text();
+        // 注册成功：服务端重定向到了非 /register 页面
+        if (resp.redirected && new URL(resp.url).pathname !== '/register') {
             window.location.href = resp.url;
             return;
         }
-        const text = await resp.text();
-        if (text && (text.includes('用户名已存在') || text.includes('注册失败'))) {
-            showMessage('注册失败: 用户名可能已存在', { type: 'error' });
-        } else {
-            window.location.reload();
-        }
+        // 失败：就地展示服务端 flash 提示
+        const flash = extractFlashMessages(text);
+        showMessage(flash.messages.join('；') || '注册失败，请稍后重试', { type: 'error', duration: 4000 });
     } catch (err) {
         showMessage('注册失败，请稍后重试', { type: 'error' });
     }

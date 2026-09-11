@@ -160,10 +160,17 @@ def register():
         if _rate_limited('register'):
             flash('操作过于频繁，请稍后再试')
             return redirect(url_for('register'))
-        username = request.form.get('username')
-        password = request.form.get('password')
+        username = (request.form.get('username') or '').strip()
+        password = request.form.get('password') or ''
         if not username or not password:
             flash('用户名和密码不能为空')
+            return redirect(url_for('register'))
+        # 与 db.create_user 的存储层校验保持一致，提前给出精确原因
+        if len(username) < 3:
+            flash('用户名长度至少 3 位')
+            return redirect(url_for('register'))
+        if not all(c.isalnum() or c in '._-' for c in username):
+            flash('用户名只能包含字母、数字、点、下划线和短横线')
             return redirect(url_for('register'))
         if len(password) < 6:
             flash('密码长度至少 6 位')

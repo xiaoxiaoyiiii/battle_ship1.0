@@ -2714,15 +2714,17 @@ function setupSocketListeners() {
             if (response.status === 'success' && response.data && response.data.cards) {
                 cards = response.data.cards;
 
-                // 显示卡牌
+                // 显示卡牌（来源可能是牌堆或对方手牌）
                 cards.forEach((card, index) => {
                     const cardElement = document.createElement('div');
                     cardElement.className = 'taoyuan-card-item';
                     cardElement.dataset.index = index;
-                    cardElement.dataset.cardKey = card.card_key;
+                    cardElement.dataset.source = card.source || 'deck';
+
+                    const sourceLabel = (card.source === 'opponent_hand') ? '对方手牌' : '牌堆';
                     cardElement.innerHTML = `
                         <div class="taoyuan-card-name">${card.name}</div>
-                        <div class="taoyuan-card-type">${card.type}·速阶${card.speed}</div>
+                        <div class="taoyuan-card-type">${card.type}·速阶${card.speed} · ${sourceLabel}</div>
                         <div class="taoyuan-card-desc">${card.description}</div>
                     `;
                     cardsContainer.appendChild(cardElement);
@@ -2736,10 +2738,9 @@ function setupSocketListeners() {
 
                         // 选中当前卡牌
                         cardElement.classList.add('selected');
-                        selectedCard = index;
 
-                        // 确认选择
-                        confirmBuryChoice(selectedCard);
+                        // 确认选择（带上来源）
+                        confirmBuryChoice(index, card.source || 'deck');
                         document.body.removeChild(buryChoiceDiv);
                     });
                 });
@@ -2756,13 +2757,14 @@ function setupSocketListeners() {
     }
 
     // 确认明智埋葬选择
-    function confirmBuryChoice(cardIndex) {
+    function confirmBuryChoice(cardIndex, source) {
         gameState.socket.emit('confirm_magic_target', {
             room_id: gameState.roomId,
             player_id: gameState.playerId,
             temp_data_id: 'bury_choice',
             target_data: {
-                card_index: cardIndex
+                card_index: cardIndex,
+                source: source || 'deck'
             }
         }, (response) => {
             if (response.status === 'success') {

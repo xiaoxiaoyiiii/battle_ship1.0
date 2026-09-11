@@ -164,12 +164,16 @@ def test_papal_recalc_zero_at_prep():
 
 
 def test_bury_result_carries_cards():
-    """明智埋葬：结果随附可埋手牌（与桃园同款修复）。"""
+    """明智埋葬：结果随附候选卡（牌堆 + 对方手牌）。"""
     room = make_room()
-    room.players[P1].magic_hand = [MagicCard('轰炸'), MagicCard('冻结')]
+    room.magic_deck = [MagicCard('轰炸'), MagicCard('冻结')]
+    room.players[P2].magic_hand = [MagicCard('饮血')]
     res = server.apply_magic_effect(room, P1, card('明智埋葬'), {})
     assert res.temp_data_id == 'bury_choice'
-    assert isinstance(res['cards'], list) and len(res['cards']) == 2
+    assert isinstance(res['cards'], list) and len(res['cards']) == 3
+    # 2 张来自牌堆，1 张来自对方手牌
+    assert sum(1 for c in res['cards'] if c['source'] == 'deck') == 2
+    assert sum(1 for c in res['cards'] if c['source'] == 'opponent_hand') == 1
 
 
 # ---------- 人机对战：AI 布船规则与玩家一致（2026-09-08） ----------

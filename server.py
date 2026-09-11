@@ -1497,19 +1497,40 @@ def handle_magic_target(data):
         return {'status': 'success', 'message': '卡牌选择完成'}
 
     elif temp_data_id == 'bury_choice':
-        # 处理明智埋葬的选择
-        card_index = target_data['card_index']
+        # 处理明智埋葬的选择：来源可能是牌堆或对方手牌
         caster = room.players[player_id]
+        candidates = room.magic_temp_data.get('candidates') or []
 
-        if 0 <= card_index < len(caster.magic_hand):
-            # 将选中的卡放入弃牌堆
-            room.discard_card(player_id, caster.magic_hand[card_index])
-            # 抽一张新卡
-            room.draw_card(player_id)
-            room.magic_temp_data = {}
-            return {'status': 'success', 'message': '埋葬完成'}
+        source = target_data.get('source')
+        card_index = target_data.get('card_index')
 
-        return {'status': 'error', 'message': '无效的选择'}
+        # 兼容旧客户端：只传 card_index 时按牌堆处理
+        if source is None:
+            source = 'deck'
+            if card_index is None:
+                return {'status': 'error', 'message': '无效的选择'}
+
+        target_card = None
+        if source == 'deck':
+            deck = room.magic_deck or []
+            if isinstance(card_index, int) and 0 <= card_index < len(deck):
+                target_card = deck.pop(card_index)
+        elif source == 'opponent_hand':
+            opp_id = _opponent_of(room, player_id)
+            opp = room.players.get(opp_id) if opp_id else None
+            hand = (opp.magic_hand if opp else []) or []
+            if isinstance(card_index, int) and 0 <= card_index < len(hand):
+                target_card = hand.pop(card_index)
+
+        if target_card is None:
+            return {'status': 'error', 'message': '无效的选择'}
+
+        # 埋掉：进入全局弃牌堆
+        room.magic_discard.append(target_card)
+        # 自己再摸一张
+        room.draw_card(player_id)
+        room.magic_temp_data = {}
+        return {'status': 'success', 'message': '埋葬完成'}
 
     elif temp_data_id == 'shield_choice':
         # 处理仁王之盾的选择
@@ -2054,6 +2075,10 @@ def end_turn(data):
                 'state': 'rock_paper_scissors',
                 'round': room.round
             }, room=room_id)
+            # 新大回合开始，清掉上一回合残留的跳过标记。
+            # 否则若 skip 未能匹配到目标，会一直留着并在后续回合误跳。
+            room.skip_opponent_turn = None
+            room.skip_next_turn = None
             return {'status': 'success', 'new_round': True}
         else:
             # 检查skip机制（Freezing！/神之宣告跳过对方回合）
@@ -4172,21 +4197,29 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['message'] = '双方各暴露一艘战舰位置'
 
     elif card.name == 'Freezing！':
-        # 本回合未造成伤害时可发动，跳过对方回合
-        if room.current_attacker != caster_id:
+        # 发动条件（三条缺一不可）：
+        #   1. 自己先手（attack_order[0]）
+        #   2. 当前是结束阶段
+        #   3. 本回合没有让对方船数减少
+        if room.attack_order and room.attack_order[0] != caster_id:
             result['success'] = False
-            result['message'] = '必须在自己回合发动'
+            result['message'] = 'Freezing！只能在自己先手的回合发动'
             return result
 
-        # 检查是否造成过伤害（使用damage_dealt_this_turn而非a.round，因为Position.round从未被赋值）
+        if room.current_phase != 'end':
+            result['success'] = False
+            result['message'] = 'Freezing！只能在结束阶段发动'
+            return result
+
+        # damage_dealt_this_turn 只在击沉对方战舰时累加，等价于「让对方船数减少」
         if caster.damage_dealt_this_turn > 0:
             result['success'] = False
-            result['message'] = '本回合已造成伤害，无法发动'
+            result['message'] = '本回合已使对方船数减少，无法发动 Freezing！'
             return result
 
-        # 跳过对方回合
-        room.skip_next_turn = opponent_id
-        result['message'] = '成功跳过对方回合'
+        # 跳过对方本回合的所有阶段
+        room.skip_opponent_turn = opponent_id
+        result['message'] = 'Freezing！生效，跳过对方本回合的所有阶段'
 
     elif card.name == '五险一金':
         # 本回合未造成伤害则增加攻击次数
@@ -4203,20 +4236,32 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             result['message'] = '本回合已造成伤害，无法发动'
 
     elif card.name == '明智埋葬':
-        # 选择一张不在弃牌堆中的魔法卡，将其放入弃牌堆并抽一张牌
-        if not caster.magic_hand:
+        # 埋葬对象 = 牌堆中的卡 + 对方手牌（可埋葬对方手里的牌）
+        deck = room.magic_deck or []
+        opp_hand = opponent.magic_hand or []
+        if not deck and not opp_hand:
             result['success'] = False
-            result['message'] = '手牌为空，无法发动'
+            result['message'] = '牌堆与对方手牌均为空，无法发动'
             return result
 
-        # 记录需要选择的牌（下标与手牌一致，客户端确认用 card_index）
+        # 候选池：先牌堆，后对方手牌。客户端用 (source, index) 定位
+        candidates = []
+        for i, c in enumerate(deck):
+            candidates.append({'source': 'deck', 'index': i, 'card': c})
+        for i, c in enumerate(opp_hand):
+            candidates.append({'source': 'opponent_hand', 'index': i, 'card': c})
+
         room.magic_temp_data = {
             'type': 'bury_choice',
             'caster': caster_id,
-            'cards': caster.magic_hand
+            'candidates': candidates,
         }
-        result['cards'] = [{'name': c.name, 'speed': c.speed, 'type': c.type, 'description': c.description} for c in caster.magic_hand]
-        result['message'] = '请选择要埋葬的卡牌'
+        result['cards'] = [{
+            'name': c['card'].name, 'speed': c['card'].speed,
+            'type': c['card'].type, 'description': c['card'].description,
+            'source': c['source'],
+        } for c in candidates]
+        result['message'] = '请选择要埋葬的卡牌（牌堆或对方手牌）'
         result['temp_data_id'] = 'bury_choice'
 
     elif card.name == '仁王之盾':

@@ -875,17 +875,44 @@ def test_kesulu_mutual_reveal(room):
 # Freezing！
 # ---------------------------------------------------------------------------
 def test_freezing_skips_opponent_turn(room):
-    """本回合未造成伤害时跳过对方所有阶段"""
+    """先手 + 结束阶段 + 未让对方减船 → 跳过对方所有阶段"""
+    room.attack_order = [P1, P2]          # P1 先手
+    room.current_attacker = P1
+    room.current_phase = 'end'            # 必须结束阶段
     room.players[P1].damage_dealt_this_turn = 0
     res = apply(room, P1, 'Freezing！')
     assert res.success is True
-    assert room.skip_next_turn == P2
+    assert room.skip_opponent_turn == P2
 
 
 def test_freezing_fails_after_damage(room):
+    room.attack_order = [P1, P2]
+    room.current_attacker = P1
+    room.current_phase = 'end'
     room.players[P1].damage_dealt_this_turn = 1
     res = apply(room, P1, 'Freezing！')
     assert res.success is False
+
+
+def test_freezing_fails_when_not_first_player(room):
+    """后手不能发动"""
+    room.attack_order = [P2, P1]          # P2 先手，P1 是后手
+    room.current_attacker = P1
+    room.current_phase = 'end'
+    room.players[P1].damage_dealt_this_turn = 0
+    res = apply(room, P1, 'Freezing！')
+    assert res.success is False
+
+
+def test_freezing_fails_outside_end_phase(room):
+    """只在结束阶段可发动"""
+    room.attack_order = [P1, P2]
+    room.current_attacker = P1
+    room.players[P1].damage_dealt_this_turn = 0
+    for ph in ('preparation', 'battle'):
+        room.current_phase = ph
+        res = apply(room, P1, 'Freezing！')
+        assert res.success is False, f'{ph} 阶段不应能发动'
 
 
 # ---------------------------------------------------------------------------
@@ -922,24 +949,53 @@ def test_huiguang_requires_first_player(room):
 # 明智埋葬
 # ---------------------------------------------------------------------------
 def test_mingzhi_bury_and_draw(room):
-    """选一张手牌放入弃牌堆，再摸一张"""
-    give_hand(room.players[P1], ['冻结'])
-    give_deck(room, ['轰炸'])
+    """选一张牌堆中的卡埋掉，再摸一张"""
+    give_deck(room, ['轰炸', '冻结'])
     res = apply(room, P1, '明智埋葬')
     assert res.success is True
     assert res['temp_data_id'] == 'bury_choice'
+    # 候选里应含牌堆的两张
+    sources = [c['source'] for c in res['cards']]
+    assert sources.count('deck') == 2
 
     ok = server.handle_magic_target({
         'room_id': room.id, 'player_id': P1,
         'temp_data_id': 'bury_choice',
-        'target_data': {'card_index': 0}
+        'target_data': {'card_index': 0, 'source': 'deck'}
     })
     assert ok['status'] == 'success'
+    # 轰炸被埋进弃牌堆
+    assert any(c.name == '轰炸' for c in room.magic_discard)
+    # 自己摸到了剩下的那张
+    assert any(c.name == '冻结' for c in room.players[P1].magic_hand)
+
+
+def test_mingzhi_can_bury_opponent_hand(room):
+    """可以埋葬对方手牌中的卡"""
+    give_deck(room, ['轰炸'])
+    give_hand(room.players[P2], ['冻结'])
+
+    res = apply(room, P1, '明智埋葬')
+    assert res.success is True
+    # 候选中应含对方手牌
+    assert any(c['source'] == 'opponent_hand' for c in res['cards'])
+
+    ok = server.handle_magic_target({
+        'room_id': room.id, 'player_id': P1,
+        'temp_data_id': 'bury_choice',
+        'target_data': {'card_index': 0, 'source': 'opponent_hand'}
+    })
+    assert ok['status'] == 'success'
+    # 对方的冻结被埋掉了
+    assert not any(c.name == '冻结' for c in room.players[P2].magic_hand)
     assert any(c.name == '冻结' for c in room.magic_discard)
-    assert any(c.name == '轰炸' for c in room.players[P1].magic_hand)
 
 
-def test_mingzhi_fails_empty_hand(room):
+def test_mingzhi_fails_when_nothing_to_bury(room):
+    """牌堆与对方手牌都空时不可发动"""
+    room.magic_deck = []
+    room.players[P1].magic_hand = []
+    room.players[P2].magic_hand = []
     res = apply(room, P1, '明智埋葬')
     assert res.success is False
 

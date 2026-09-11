@@ -3506,6 +3506,28 @@ def _finish_placement(room, player_id, kind):
     room.magic_temp_data.pop('pending_placement', None)
     emit('placement_done', {'kind': kind}, to=room.players[player_id].sid)
 
+    # 增援/复活改变了自己的船数，而攻击次数是按船数算的，必须立刻重算。
+    # 例：绝境中增援一艘船 = 多一条命，同时本回合还多一次攻击。
+    # 只在轮到本人攻击时重算，避免改到对方的攻击次数。
+    _sync_attacks_after_ship_change(room, player_id)
+
+
+def _sync_attacks_after_ship_change(room, player_id):
+    """己方船数变化后同步攻击次数（仅当当前攻击者是本人时）。
+
+    伊甸园/教皇旨意下 attacks_remaining 的算法不同，统一交给
+    _recalc_attacker_attacks 处理，这里只负责判断该不该算。
+    """
+    if room.state != 'attacking':
+        return
+    if room.current_attacker != player_id:
+        return
+    _recalc_attacker_attacks(room)
+    emit('attacks_updated', {
+        'current_attacker': room.current_attacker,
+        'attacks_remaining': room.attacks_remaining
+    }, room=room.id)
+
 
 def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_data):
     result = ChainResult(card=card, caster=caster_id, success=True, message='')
@@ -4598,11 +4620,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         elif card.name == '伊甸园':
             result.message = '伊甸园生效，攻击次数变为6-n'
             if room.state == 'attacking' and getattr(room, 'current_phase', None) == 'preparation' and room.current_attacker in room.players:
-                _recalc_attacker_attacks(room)
-                emit('attacks_updated', {
-                    'current_attacker': room.current_attacker,
-                    'attacks_remaining': room.attacks_remaining
-                }, room=room.id)
+                _sync_attacks_after_ship_change(room, room.current_attacker)
         elif card.name == '教皇旨意':
             result.message = '教皇旨意生效，攻击需要弃置魔法卡'
 

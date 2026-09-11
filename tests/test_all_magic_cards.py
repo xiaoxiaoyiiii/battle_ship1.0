@@ -343,6 +343,60 @@ def test_zengyuan_full_board_rejected(room):
     assert res.success is False
 
 
+def test_zengyuan_updates_attacks_immediately(room):
+    """增援放置完成后，本回合攻击次数要立刻 +1（绝境中多一艘船=多一条命）。"""
+    room.players[P1].ships = [ship((0, 0)), ship((1, 1))]
+    room.players[P1].remaining_ships = 2
+    room.players[P2].remaining_ships = 3   # 对手尚有船，避免被判 game_over
+    room.attacks_remaining = 2
+    room.current_attacker = P1
+
+    apply(room, P1, '增援')
+    server.handle_confirm_reinforcement({
+        'room_id': room.id, 'player_id': P1, 'position': {'x': 3, 'y': 3}
+    })
+
+    assert room.players[P1].remaining_ships == 3
+    assert room.attacks_remaining == 3, '增援后攻击次数应随船数同步增加'
+
+
+def test_zengyuan_does_not_touch_opponent_turn(room):
+    """增援在对方回合放置时，不应改动对方的攻击次数。"""
+    room.players[P1].ships = [ship((0, 0))]
+    room.players[P1].remaining_ships = 1
+    room.players[P2].remaining_ships = 3
+    room.current_attacker = P2
+    room.attacks_remaining = 5
+
+    apply(room, P1, '增援')
+    server.handle_confirm_reinforcement({
+        'room_id': room.id, 'player_id': P1, 'position': {'x': 3, 'y': 3}
+    })
+
+    assert room.players[P1].remaining_ships == 2
+    assert room.attacks_remaining == 5, '对方回合不应被改攻击次数'
+
+
+def test_revive_updates_attacks_immediately(room):
+    """复活同样增加船数，攻击次数也应同步。"""
+    sunk = ship((0, 0))
+    sunk.hits = [Position(0, 0)]
+    room.players[P1].sunken_ships = [sunk]
+    room.players[P1].ships = [ship((1, 1)), ship((2, 2))]
+    room.players[P1].remaining_ships = 2
+    room.players[P2].remaining_ships = 3
+    room.attacks_remaining = 2
+    room.current_attacker = P1
+
+    apply(room, P1, '死者苏生')
+    server.handle_confirm_reinforcement({
+        'room_id': room.id, 'player_id': P1, 'position': {'x': 4, 'y': 4}
+    })
+
+    assert room.players[P1].remaining_ships == 3
+    assert room.attacks_remaining == 3, '复活后攻击次数应随船数同步增加'
+
+
 # ---------------------------------------------------------------------------
 # 恶魔契约（场地）
 # ---------------------------------------------------------------------------

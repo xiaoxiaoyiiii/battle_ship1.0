@@ -1610,16 +1610,16 @@ body.cool-effects-enabled .cell.cool-flash {
 /* ---------- 弹窗小屏可用性兜底（2026-09-07）---------- */
 .modal-overlay,
 .taoyuan-choice-overlay {
+    flex-direction: column;      /* 主轴改为纵向，margin:auto 才能同时负责水平+垂直居中 */
+    justify-content: flex-start; /* 溢出时交给 margin:auto 收缩为 0，顶端内容才滚得回来 */
     align-items: flex-start;
     overflow-y: auto;
     padding: 4vh 2vw;
     box-sizing: border-box;
 }
-.modal-overlay::before,
-.taoyuan-choice-overlay::before {
-    content: '';
-    margin: auto;
-}
+/* 已删除原 ::before { content:''; margin:auto } 占位项：
+   它是零宽弹性项，在主轴上会分走一半自由空间，把弹窗推向右侧
+   （1650px 视口下偏右约 246px）；纵向居中由 .modal-content 的 margin:auto 完成。 */
 .modal-overlay .modal-content,
 .modal-overlay > .modal-content {
     flex: 0 0 auto;

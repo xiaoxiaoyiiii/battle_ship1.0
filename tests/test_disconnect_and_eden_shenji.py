@@ -134,15 +134,19 @@ def test_cancel_match_by_sid(monkeypatch):
     """取消匹配：按当前连接 sid 出队（修复登录用户匹配后无法取消）。"""
     import types
     room_manager = server.room_manager
-    # 直接构造队列
-    room_manager.match_queue = [['sidA', 'sidB'], ['A', 'B'], ['uidA', 'uidB']]
+    # 直接构造队列（单结构列表）
+    room_manager.match_queue = [
+        {'sid': 'sidA', 'name': 'A', 'user_id': 'uidA'},
+        {'sid': 'sidB', 'name': 'B', 'user_id': 'uidB'},
+    ]
     monkeypatch.setattr(server, 'request', types.SimpleNamespace(sid='sidA'))
     monkeypatch.setattr(server, 'session', types.SimpleNamespace(get=lambda k: 'uidA'))
     res = server.handle_cancel_match({})
     assert res['status'] == 'success'
-    assert 'sidA' not in room_manager.match_queue[0]
-    assert len(room_manager.match_queue[0]) == 1
-    assert room_manager.match_queue[2] == ['uidB']
+    remaining = [e['sid'] for e in room_manager.match_queue]
+    assert 'sidA' not in remaining
+    assert remaining == ['sidB']
+    assert room_manager.match_queue[0]['user_id'] == 'uidB'
 
 
 def test_papal_recalc_zero_at_prep():

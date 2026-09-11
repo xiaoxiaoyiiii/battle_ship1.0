@@ -11,3 +11,6 @@ avatars/
 .trae/
 *.mp3
 *.log
+.workbuddy/
+_*.txt
+_*.py

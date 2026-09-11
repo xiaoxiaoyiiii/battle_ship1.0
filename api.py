@@ -1,5 +1,7 @@
 # 允许上传的头像文件类型
 import os
+import secrets
+import time
 
 from flask import Flask, session, jsonify, request, render_template, redirect, url_for, flash
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -8,11 +10,46 @@ from werkzeug.utils import secure_filename
 import db
 
 ALLOWED_AVATAR_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+# 头像魔数校验：只信任真实图片内容，而不是客户端声明的扩展名
+AVATAR_MAGIC_PREFIXES = (
+    b'\x89PNG\r\n\x1a\n',   # PNG
+    b'\xff\xd8\xff',        # JPEG
+    b'GIF87a',              # GIF87a
+    b'GIF89a',              # GIF89a
+)
+MAX_AVATAR_SIZE = 2 * 1024 * 1024  # 2MB
 AVATAR_UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'static', 'avatars')
 os.makedirs(AVATAR_UPLOAD_FOLDER, exist_ok=True)
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'),
             template_folder=os.path.join(os.path.dirname(__file__), 'templates'))
-app.config['SECRET_KEY'] = 'battleship_secret_key'
+# SECRET_KEY 从环境变量注入；未配置时使用一次性随机值（重启后 session 失效，
+# 属可接受的降级，避免源码中硬编码的密钥被用于伪造登录态）。
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or secrets.token_hex(32)
+# 上传体积上限，防止超大文件耗尽磁盘
+app.config['MAX_CONTENT_LENGTH'] = MAX_AVATAR_SIZE
+# Cookie 安全属性：禁止 JS 读取 + 限制跨站携带
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+
+# 简易限流：同一 IP 在窗口期内对登录/注册/改密的尝试次数上限
+_LOGIN_WINDOW = 60          # 窗口（秒）
+_LOGIN_MAX_ATTEMPTS = 10    # 窗口内最大尝试次数
+_login_attempts: dict = {}
+
+
+def _rate_limited(scope: str) -> bool:
+    """返回 True 表示当前请求应被拒绝（超过尝试上限）。"""
+    ip = request.remote_addr or 'unknown'
+    now = time.time()
+    key = f"{scope}:{ip}"
+    # 顺带清理过期 key，避免内存无限增长
+    if len(_login_attempts) > 5000:
+        for k in [k for k, v in _login_attempts.items() if not v or now - v[-1] > _LOGIN_WINDOW]:
+            _login_attempts.pop(k, None)
+    recent = [t for t in _login_attempts.get(key, []) if now - t < _LOGIN_WINDOW]
+    recent.append(now)
+    _login_attempts[key] = recent
+    return len(recent) > _LOGIN_MAX_ATTEMPTS
 
 # 获取用户个性化信息
 @app.route('/api/profile', methods=['GET'])
@@ -49,6 +86,17 @@ def upload_avatar():
     ext = file.filename.rsplit('.', 1)[1].lower()
     if ext not in ALLOWED_AVATAR_EXTENSIONS:
         return jsonify({'error': '文件类型不支持'}), 400
+    # 校验真实文件头（防止改扩展名上传任意内容）
+    head = file.stream.read(8)
+    file.stream.seek(0)
+    if not any(head.startswith(prefix) for prefix in AVATAR_MAGIC_PREFIXES):
+        return jsonify({'error': '文件内容不是有效的图片'}), 400
+    # 校验体积（MAX_CONTENT_LENGTH 已在框架层拦截超大请求，这里再兜底一次）
+    file.stream.seek(0, os.SEEK_END)
+    size = file.stream.tell()
+    file.stream.seek(0)
+    if size > MAX_AVATAR_SIZE:
+        return jsonify({'error': '图片不能超过 2MB'}), 400
     filename = secure_filename(f"{uid}_avatar.{ext}")
     save_path = os.path.join(AVATAR_UPLOAD_FOLDER, filename)
     file.save(save_path)
@@ -64,6 +112,8 @@ def change_password():
     uid = session.get('user_id')
     if not uid:
         return jsonify({'success': False, 'msg': '未登录'}), 401
+    if _rate_limited('change_password'):
+        return jsonify({'success': False, 'msg': '操作过于频繁，请稍后再试'}), 429
     old_password = request.form.get('old_password', '')
     new_password = request.form.get('new_password', '')
     if not old_password or not new_password:
@@ -107,10 +157,16 @@ def index():
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
+        if _rate_limited('register'):
+            flash('操作过于频繁，请稍后再试')
+            return redirect(url_for('register'))
         username = request.form.get('username')
         password = request.form.get('password')
         if not username or not password:
             flash('用户名和密码不能为空')
+            return redirect(url_for('register'))
+        if len(password) < 6:
+            flash('密码长度至少 6 位')
             return redirect(url_for('register'))
         if db.get_user(username=username):
             flash('用户名已存在')
@@ -132,6 +188,9 @@ def register():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
+        if _rate_limited('login'):
+            flash('操作过于频繁，请稍后再试')
+            return redirect(url_for('login'))
         username = request.form.get('username')
         password = request.form.get('password')
         user = db.get_user(username=username)
@@ -168,6 +227,8 @@ def api_leaderboard():
 
 @app.route('/api/login', methods=['POST'])
 def api_login():
+    if _rate_limited('api_login'):
+        return jsonify({'error': '操作过于频繁，请稍后再试'}), 429
     data = request.get_json() or {}
     username = data.get('username')
     password = data.get('password')

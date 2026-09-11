@@ -258,6 +258,7 @@
                             <button id="end-turn-btn" class="phase-btn" style="display:none;">结束结束阶段</button>
                         </div>
                     </div>
+                    <div id="effect-indicators" class="effect-indicators"></div>
                 </div>
                 <div class="boards-container">
                     <div class="board-wrapper">
@@ -488,8 +489,6 @@
 <!-- 先加载游戏核心逻辑 -->
 <script>window.__USERNAME = {{ username|tojson }};</script>
 <script src="/static/game.js"></script>
-<!-- 后加载测试脚本 -->
-<script src="/static/test_magic.js"></script>
 <!-- 背景音乐播放器 -->
 <script src="/static/music_player.js"></script>
 

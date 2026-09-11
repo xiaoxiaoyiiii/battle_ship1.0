@@ -36,12 +36,23 @@ Flask + Flask-SocketIO 的实时双人海战棋，叠加 43 条魔法卡（41 �
 ```bash
 pip install -r requirements.txt
 python start_server.py        # 推荐（含依赖检查）
-python -m pytest tests/ -q    # 141 passed
+python -m pytest tests/ -q    # 163 passed
 ```
 
 > ⚠️ **必须在项目根目录运行**——`server.py` 用相对路径 `./static/magic_card.json`；`tests/test_all_magic_cards.py:1088` 也用硬编码相对路径，是全套测试中唯一对 CWD 敏感的。
 
-**实测基线（2026-09-11）**：`141 passed / 0 failed / 0.53s`，6 个测试文件。
+**实测基线（2026-09-11 修复批后）**：`163 passed / 0 failed / 0.68s`，7 个测试文件。
+
+> 🔧 **2026-09-11 安全/健壮性修复批**：本文件第 11 节的 P0/P1 问题已修复（详见 `docs/FIX_PLAN.md` 与 `tests/test_fixes_regression.py`）。要点：
+> - 12 个 `test_*` 事件默认关闭（`ENABLE_TEST_EVENTS=1` 启用）；`test_magic.js` 已从 index.html 移除
+> - `SECRET_KEY`/`CORS_ORIGINS`/`PORT`/`FLASK_DEBUG` 均改为环境变量；默认关 debug
+> - 游客匹配 bug（`None==None`）修复；匹配队列改为单结构列表 + RLock，同账号去重不会死循环
+> - 已结束房间由后台 reaper（`_reap_ended_rooms`，宽限 120s）统一回收，修复内存泄漏
+> - place_ships / attack / 魔法目标均有服务端校验；surrender 有 `_identity_ok`
+> - requirements.txt 已锁版本并补 eventlet；db 层写操作统一持锁 + 列名白名单 + 补索引
+> - game.js：`ensureSocket()` 统一连接管理（不再重复建连）；`#effect-indicators` 已补；猜拳文案映射已修正；「神之宣告」出牌前可选效果（`promptDivineDecreeChoice` → `targets: {effect_choice}`）
+> - eventlet `monkey_patch()` 已移至 server.py 首行（在所有 import 之前）
+> - 已删除死代码：`process_match_queue`、lobby 三方法（前端仍监听的 lobby 事件为历史遗留空壳）
 
 ---
 

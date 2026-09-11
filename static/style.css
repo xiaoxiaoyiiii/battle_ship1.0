@@ -1640,3 +1640,25 @@ body.cool-effects-enabled .cell.cool-flash {
     float: right;
     z-index: 5;
 }
+
+/* 全局效果指示器（百亿补贴等持续效果的小标签） */
+.effect-indicators {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-height: 0;
+    margin-top: 6px;
+}
+.effect-indicators:empty {
+    display: none;
+}
+.effect-indicators .effect-icon {
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    line-height: 1.6;
+    background: rgba(255, 152, 0, 0.18);
+    border: 1px solid rgba(255, 152, 0, 0.55);
+    color: inherit;
+    cursor: default;
+}

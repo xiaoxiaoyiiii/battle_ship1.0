@@ -420,7 +420,11 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`。真人摆完船后
 
 | 文件 | 内容 |
 | --- | --- |
+| **`docs/DEPLOYMENT.md`** | **部署说明：服务器环境、必需环境变量、更新流程、事故记录 —— 部署前必读** |
 | `docs/SERVER_PY_ANALYSIS.md` | server.py 4733 行全量分析（类/事件/攻击结算/魔法分发/连锁） |
 | `docs/FRONTEND_TECH_ANALYSIS.md` | 前端 + 测试深度分析（827 行，58 个 socket.on、33 个 emit、函数索引、19 条 bug） |
 | `docs/CHAIN_ENGINE_SPEC.md` | 连锁引擎设计稿（⚠️ 部分已过时，见第 8 节） |
 | `README.md` | 面向用户的功能/玩法说明（⚠️ 测试数已过时） |
+
+> ⚠️ **部署前务必确认环境变量**：代码若新增 `os.environ.get('XXX')`，服务器 systemd 必须同步配置。
+> 漏配会导致「服务能起来但带着错误默认值运行」——2026-09-12 就因漏配 `CORS_ORIGINS` 导致线上所有操作卡十几秒。详见 `docs/DEPLOYMENT.md` 第 5 节。

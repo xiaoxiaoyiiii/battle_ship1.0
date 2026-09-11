@@ -272,3 +272,105 @@ def test_daoyouyoudao_cannot_steal_same_entry_twice(room):
 def test_update_user_rejects_unknown_column():
     import db as db_module
     assert db_module.db.update_user('nonexistent-uid', not_a_column='x') is False
+
+
+# ---------------------------------------------------------------------------
+# 10. 统一攻击路径（Phase 3.1）
+# ---------------------------------------------------------------------------
+def test_dead_attack_code_removed():
+    """GameRoom.attack / Effect 体系死代码应已删除。"""
+    assert not hasattr(server.GameRoom, 'attack')
+    assert not hasattr(server, 'Effect')
+    assert not hasattr(server.GameRoom, 'pop_effect')
+    assert not hasattr(server.GameRoom, 'apply_effect')
+
+
+def test_yuyin_forced_kill_via_real_attack_path(room):
+    """余音绕梁：真实攻击路径下强制击杀无视护盾，2 次后标记耗尽。"""
+    server.apply_magic_effect(room, P1, card('余音绕梁'), {})
+    assert room.players[P1].effect_flags.forced_kill == 2
+
+    # 对方是护盾船：普通攻击挡不下，强制击杀必须击沉
+    room.players[P2].ships = [ship((0, 0)), ship((1, 1))]
+    room.players[P2].ships[0].shield = True
+    room.players[P2].remaining_ships = 2
+    room.attacks_remaining = 6
+
+    res = server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 0})
+    assert res['status'] == 'success'
+    assert room.players[P2].remaining_ships == 1  # 护盾未能挡住强制击杀
+    assert room.players[P1].effect_flags.forced_kill == 1
+
+
+def test_forced_kill_exhausts_after_two(room):
+    server.apply_magic_effect(room, P1, card('余音绕梁'), {})
+    room.players[P2].ships = [ship((0, 0)), ship((1, 1))]
+    room.players[P2].remaining_ships = 2
+    room.attacks_remaining = 6
+
+    server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 0})
+    server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 1, 'y': 1})
+    assert room.players[P1].effect_flags.forced_kill <= 0
+
+
+def test_demon_contract_notifies_attacker(room, events):
+    """恶魔契约：牺牲的是攻击者的船，通知应发给攻击者（修复原通知对象错误）。"""
+    server.apply_magic_effect(room, P1, card('恶魔契约'), {})
+    room.players[P1].ships = [ship((4, 4)), ship((5, 5))]
+    room.players[P1].remaining_ships = 2
+    room.players[P2].ships = [ship((0, 0))]
+    room.players[P2].remaining_ships = 1
+
+    server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 0})
+    demon_msgs = [e for e in events if e[0] == 'message' and '恶魔契约' in e[1].get('text', '')]
+    assert demon_msgs, '应发送恶魔契约通知'
+    assert demon_msgs[0][2] == 'sid-p1'  # to == 攻击者 sid（原错误发给 defender）
+
+
+def test_papal_attack_no_attacker_subsidy(room, events):
+    """教皇旨意弃卡攻击：攻击者自己的百亿补贴不应给当前攻击池 +3（修复三处不一致）。"""
+    server.apply_magic_effect(room, P2, card('百亿补贴'), {})
+    room.players[P1].effect_flags.subsidy = True  # 攻击者误持补贴标记
+    room.players[P1].ships = [ship((4, 4)), ship((5, 5))]
+    room.players[P1].remaining_ships = 2
+    room.players[P2].ships = [ship((0, 0))]
+    room.players[P2].remaining_ships = 1
+    room.attacks_remaining = 0
+
+    server.handle_papal_attack({
+        'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 0,
+    })
+    # 补贴只应由"船被击败的一方"（P2）触发，攻击者标记不应生效
+    assert room.attacks_remaining == 0
+
+
+def test_papal_attack_elimination_records_match(room, events):
+    """教皇旨意弃卡击沉最后一艘船：应正常结束对局并记入战绩日志。"""
+    room.players[P1].magic_hand = [card('失灵！')]
+    room.players[P1].ships = [ship((4, 4))]
+    room.players[P1].remaining_ships = 1
+    room.players[P2].ships = [ship((0, 0))]
+    room.players[P2].remaining_ships = 1
+    room.field_magic = card('教皇旨意')
+
+    res = server.handle_papal_attack({
+        'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 0,
+    })
+    assert room.state == 'game_over'
+    assert room.winner == P1
+    assert room.game_logs  # 应写入对局日志（原实现遗漏）
+
+
+def test_huoli_full_fire_doubles_in_battle_phase(room):
+    """火力全开：进入战斗阶段时攻击次数翻倍（flag 路径）。"""
+    server.apply_magic_effect(room, P1, card('火力全开'), {})
+    assert room.players[P1].effect_flags.double_attacks is True
+    room.current_phase = 'preparation'
+    room.current_attacker = P1
+    room.players[P1].remaining_ships = 3
+    room.attacks_remaining = 3
+
+    res = server.enter_battle_phase({'room_id': room.id, 'player_id': P1})
+    assert res['status'] == 'success'
+    assert room.attacks_remaining == 6
+    assert room.players[P1].effect_flags.double_attacks is False  # 只持续一个大回合

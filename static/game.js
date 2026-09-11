@@ -4570,16 +4570,7 @@ function applyCardEffect(card, casterId) {
 
         case '轰炸':
             showMessage('轰炸效果生效，目标行/列受到攻击');
-            // 添加轰炸逻辑
-            if (gameState.selectedLine) {
-                gameState.socket.emit('line_attack', {
-                    room_id: gameState.roomId,
-                    player_id: gameState.playerId,
-                    line: gameState.selectedLine
-                });
-                // 清除已选择的行/列
-                gameState.selectedLine = null;
-            }
+            // 轰炸的实际结算走 use_magic_card（target_line）链路，此处无需额外请求
             break;
 
         case '探测雷达':

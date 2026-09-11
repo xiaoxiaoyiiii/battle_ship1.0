@@ -32,6 +32,15 @@
 
 **文档同步**：README（测试数、安全注意）、CLAUDE.md（修复批记录与基线 163 passed）已更新。
 
+### Phase 3.1 统一攻击路径（2026-09-11 第二批，170 passed）
+
+关键实测发现修正了原判断：`余音绕梁`/`火力全开` **并未失效**——它们的真实效果一直经 `EffectFlags`（`forced_kill`/`double_attacks`）在 `handle_attack`/`enter_battle_phase` 生效；`room.effects` 里的 Effect 钩子是不可达的**冗余副本**，若"复活"反而会导致强制击杀双扣、攻击次数双倍。因此正确动作是**删除而非接入**：
+
+- 删除死代码：`GameRoom.attack`（含其内部的攻击者扣船 bug）、`Effect` 类、`room.effects`/`pop_effect`/`apply_effect`、两处 Effect 注册、`_chain_target_below`
+- `handle_attack` 双分支（强制击杀 vs 普通，约 200 行重复）合并为单一结算流：击沉副作用抽为 `_apply_ship_sunk_effects`，攻击方增益抽为 `_apply_attacker_damage_buffs`，结束对局抽为 `_finish_game_win`
+- 语义漂移修复：恶魔契约通知改发给牺牲者（攻击者）本人；game_over 判据统一 `<= 0`；`_do_attack` 中"攻击者自己的百亿补贴 +3"误加已移除（只保留被击沉方触发，与测试化语义一致）；教皇旨意路径击沉最后一船现在会写对局日志（原遗漏）
+- 新增 7 个测试：死代码删除断言、余音绕梁真实路径强制击杀（含护盾穿透）、强制击杀耗尽、恶魔契约通知对象、教皇攻击补贴一致性、教皇攻击终局记日志、火力全开翻倍
+
 ---
 
 ## 修复原则与风险红线

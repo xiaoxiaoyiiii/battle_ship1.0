@@ -1629,20 +1629,9 @@ def _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id, ship, targ
         emit('message', {'text': '百亿补贴生效，攻击次数增加3次'}, to=defender.sid)
 
     # 恶魔契约: 绑定船数增减 - 任意一方船被击杀，另一方也要牺牲一艘
+    # 牺牲由该方玩家自己在棋盘上点选（AI 自动），不再随机。
     if room.game_effects.get('demon_contract'):
-        # 被击沉的是 defender 的船，attacker 要牺牲一艘
-        attacker = room.players[attacker_id]
-        if attacker.ships:
-            sacr_ship = random.choice(attacker.ships)
-            attacker.ships.remove(sacr_ship)
-            attacker.sunken_ships.append(sacr_ship)
-            attacker.remaining_ships -= 1
-            emit('ships_updated', {
-                'player_remaining_ships': room.players[attacker_id].remaining_ships,
-                'opponent_remaining_ships': room.players[defender_id].remaining_ships
-            }, room=room_id)
-            # 牺牲的是攻击者的船，通知应发给攻击者本人（修复原通知对象错误）
-            emit('message', {'text': '恶魔契约生效，你牺牲一艘战舰'}, to=attacker.sid)
+        _request_demon_contract_sacrifice(room, defender_id)
 
     # 八方来财: 战舰数目变化时抽一张牌
     if defender.effect_flags.treasure_hunter:
@@ -2390,6 +2379,44 @@ def _sanitize_magic_targets(targets):
     return targets, None
 
 
+def _pick_cell_from_target(target_data):
+    """从目标数据里取出玩家点选的单个格子 (x, y)；取不到返回 None。
+
+    兼容两种前端形态：
+    - `{'target_area': {'x1': x, 'y1': y, ...}}`（single 选择器 → 1x1 区域）
+    - `{'x': x, 'y': y}`
+    """
+    if not isinstance(target_data, dict):
+        return None
+
+    area = target_data.get('target_area')
+    if isinstance(area, dict):
+        try:
+            return int(area['x1']), int(area['y1'])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    if 'x' in target_data and 'y' in target_data:
+        try:
+            return int(target_data['x']), int(target_data['y'])
+        except (TypeError, ValueError):
+            return None
+
+    return None
+
+
+def _find_ship_at(player, cell):
+    """返回该玩家在指定格子上的一艘船；没有则返回 None。"""
+    if not cell:
+        return None
+    x, y = cell
+    for ship in getattr(player, 'ships', []) or []:
+        for pos in getattr(ship, 'positions', []) or []:
+            if pos.x == x and pos.y == y:
+                return ship
+    return None
+
+
 @socketio.on('use_magic_card')
 def handle_use_magic_card(data):
     room_id = data['room_id']
@@ -3060,6 +3087,33 @@ def handle_confirm_reinforcement(data):
     return {'status': 'success', 'message': msg}
 
 
+@socketio.on('confirm_sacrifice')
+def handle_confirm_sacrifice(data):
+    """恶魔契约：玩家在自己的棋盘上点选要牺牲的战舰。"""
+    room_id = data.get('room_id')
+    player_id = data.get('player_id')
+    position = data.get('position') or {}
+    room = room_manager.get_room(room_id)
+    if not room or not player_id or player_id not in room.players or not _identity_ok(room, player_id):
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+
+    pending = room.magic_temp_data.get('pending_sacrifice') if room.magic_temp_data else None
+    if not pending or pending.get('player') != player_id:
+        return {'status': 'error', 'message': '当前没有待牺牲的战舰'}
+
+    try:
+        cell = (int(position.get('x')), int(position.get('y')))
+    except (TypeError, ValueError):
+        return {'status': 'error', 'message': '请选择一艘自己的战舰'}
+
+    ship = _find_ship_at(room.players[player_id], cell)
+    if ship is None:
+        return {'status': 'error', 'message': '必须选择自己战舰所在的格子'}
+
+    _do_demon_contract_sacrifice(room, player_id, ship)
+    return {'status': 'success', 'message': '已牺牲一艘战舰'}
+
+
 @socketio.on('cancel_placement')
 def handle_cancel_placement(data):
     """放弃剩余放置（防止无空格时卡死）。已放置的保留，未放置的作废。"""
@@ -3347,17 +3401,79 @@ def _apply_ship_loss_linkage(room, caster_id, lost_player_id, count=1):
         room.draw_card(lost_player_id)
         emit('message', {'text': '八方来财生效，摸一张牌'}, to=lost_player.sid)
 
-    # 恶魔契约：一方船数减少，另一方也牺牲一艘（一次结算只触发一次）
+    # 恶魔契约：一方船数减少，另一方也要牺牲一艘 —— 由该玩家自己点选（不再随机）
     if room.game_effects.get('demon_contract'):
-        sacrifice_id = _opponent_of(room, lost_player_id)
-        sacrifice_player = room.players.get(sacrifice_id) if sacrifice_id else None
-        if sacrifice_player and sacrifice_player.ships:
-            sacr_ship = random.choice(sacrifice_player.ships)
-            sacrifice_player.ships.remove(sacr_ship)
-            sacrifice_player.sunken_ships.append(sacr_ship)
-            sacrifice_player.remaining_ships -= 1
-            emit('message', {'text': '恶魔契约生效，对方牺牲一艘战舰'},
-                 to=sacrifice_player.sid)
+        _request_demon_contract_sacrifice(room, lost_player_id)
+
+
+def _request_demon_contract_sacrifice(room, lost_player_id):
+    """恶魔契约触发：让另一方自己选择要牺牲的战舰（在其自方棋盘上点选）。
+
+    AI 玩家不参与交互，直接随机牺牲。
+    """
+    sacrifice_id = _opponent_of(room, lost_player_id)
+    sacrifice_player = room.players.get(sacrifice_id) if sacrifice_id else None
+    if not sacrifice_player or not sacrifice_player.ships:
+        return
+
+    # AI 无法点选，直接替它决定
+    if getattr(room, 'is_ai_room', False) and sacrifice_id == _ai_player_id(room):
+        _do_demon_contract_sacrifice(room, sacrifice_id,
+                                     random.choice(list(sacrifice_player.ships)))
+        return
+
+    room.magic_temp_data['pending_sacrifice'] = {
+        'player': sacrifice_id,
+        'reason': 'demon_contract',
+    }
+    emit('sacrifice_request', {
+        'reason': 'demon_contract',
+        'message': '恶魔契约生效：请点选一艘自己的战舰牺牲',
+        'ships': [
+            {'positions': [{'x': p.x, 'y': p.y} for p in sh.positions]}
+            for sh in sacrifice_player.ships
+        ],
+    }, to=sacrifice_player.sid)
+
+
+def _do_demon_contract_sacrifice(room, player_id, ship):
+    """执行恶魔契约的牺牲：移除该船，并公开广播，使双方都能看到沉没位置。"""
+    player = room.players.get(player_id)
+    if not player or ship is None or ship not in player.ships:
+        return
+
+    if room.magic_temp_data:
+        room.magic_temp_data.pop('pending_sacrifice', None)
+
+    player.ships.remove(ship)
+    player.sunken_ships.append(ship)
+    player.remaining_ships = max(0, player.remaining_ships - 1)
+
+    positions = [{'x': p.x, 'y': p.y} for p in ship.positions]
+    add_game_log(room,
+                 f'第{room.round}回合 · {_log_name(room, player_id)} 因恶魔契约牺牲一艘战舰',
+                 'magic',
+                 {'player': player_id, 'reason': 'demon_contract', 'positions': positions})
+
+    # 公开广播：自己与对手都能看到这艘船被划掉
+    emit('ship_sacrificed', {
+        'player': player_id,
+        'positions': positions,
+        'reason': 'demon_contract',
+    }, room=room.id)
+
+    # 船数按各自视角分别推送（广播同一份数据会导致双方看到的数字颠倒）
+    for pid, p in room.players.items():
+        opp_id = _opponent_of(room, pid)
+        emit('ships_updated', {
+            'player_remaining_ships': p.remaining_ships,
+            'opponent_remaining_ships': room.players[opp_id].remaining_ships if opp_id else 0,
+        }, to=p.sid)
+
+    # 牺牲后若对方已无船，判定结束
+    opp_id = _opponent_of(room, player_id)
+    if opp_id and room.players[opp_id].remaining_ships <= 0 and room.state != 'game_over':
+        _finish_game(room, player_id, opp_id, '对方战舰全部被击沉')
 
 
 def _finish_game(room, winner_id, loser_id, reason):
@@ -3688,15 +3804,10 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                                 room.draw_card(opponent_id)
                                 emit('message', {'text': '八方来财生效，摸一张牌'}, to=room.players[opponent_id].sid)
 
-                            # 恶魔契约
+                            # 恶魔契约（由牺牲方自己点选，AI 自动）
                             if room.game_effects.get('demon_contract'):
-                                sacrifice_player = caster
-                                if sacrifice_player.ships:
-                                    sacr_ship = random.choice(sacrifice_player.ships)
-                                    sacrifice_player.ships.remove(sacr_ship)
-                                    sacrifice_player.sunken_ships.append(sacr_ship)
-                                    sacrifice_player.remaining_ships -= 1
-                                    ships_changed = True
+                                _request_demon_contract_sacrifice(room, opponent_id)
+                                ships_changed = True
 
                             # 检查回光返照效果
                             if room.game_effects.get('last_chance') and room.game_effects['last_chance']['caster'] == opponent_id:
@@ -3959,15 +4070,10 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                     room.attacks_remaining += 3
                     emit('message', {'text': '百亿补贴生效，攻击次数增加3次'}, room=room.id)
 
-                # 恶魔契约
+                # 恶魔契约（由牺牲方自己点选，AI 自动）
                 if room.game_effects.get('demon_contract'):
-                    sacrifice_player = caster
-                    if sacrifice_player.ships:
-                        sacr_ship = random.choice(sacrifice_player.ships)
-                        sacrifice_player.ships.remove(sacr_ship)
-                        sacrifice_player.sunken_ships.append(sacr_ship)
-                        sacrifice_player.remaining_ships -= 1
-                        ships_changed = True
+                    _request_demon_contract_sacrifice(room, opponent_id)
+                    ships_changed = True
 
                 # 八方来财
                 if opponent.effect_flags.treasure_hunter:
@@ -4066,15 +4172,10 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                     room.attacks_remaining += 3
                     emit('message', {'text': '百亿补贴生效，攻击次数增加3次'}, room=room.id)
 
-                # 恶魔契约
+                # 恶魔契约（由牺牲方自己点选，AI 自动）
                 if room.game_effects.get('demon_contract'):
-                    sacrifice_player = caster
-                    if sacrifice_player.ships:
-                        sacr_ship = random.choice(sacrifice_player.ships)
-                        sacrifice_player.ships.remove(sacr_ship)
-                        sacrifice_player.sunken_ships.append(sacr_ship)
-                        sacrifice_player.remaining_ships -= 1
-                        ships_changed = True
+                    _request_demon_contract_sacrifice(room, opponent_id)
+                    ships_changed = True
                 for ship_pos in ship.positions:
                     removed_positions.add((ship_pos.x, ship_pos.y))
                     caster.attacks.append(Position(**{
@@ -4214,27 +4315,34 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['message'] = '接下来自己的攻击，每击杀一艘船，自己摸一张牌。'
 
     elif card.name == '克苏鲁之眼':
-        # 双方各暴露一艘船的位置
+        # 双方各暴露一艘船。施法者必须点选一艘【自己的船】所在格，不能选空格。
         if not caster.ships or not opponent.ships:
             result['success'] = False
             result['message'] = '双方都必须有战舰才能使用'
             return result
 
-        # 随机选择一艘船暴露
-        caster_ship = random.choice(caster.ships)
+        cell = _pick_cell_from_target(target_data)
+        if cell is None:
+            result['success'] = False
+            result['message'] = '请选择一艘自己的战舰'
+            return result
+
+        caster_ship = _find_ship_at(caster, cell)
+        if caster_ship is None:
+            result['success'] = False
+            result['message'] = '必须选择自己战舰所在的格子'
+            return result
+
+        # 对方那一艘仍由服务端随机挑（对方不参与本次交互）
         opponent_ship = random.choice(opponent.ships)
 
-        # 记录暴露的位置
         caster_positions = caster_ship.positions
         opponent_positions = opponent_ship.positions
-
-        room.players[caster_id].revealed_positions = room.players[caster_id].revealed_positions
-        room.players[opponent_id].revealed_positions = room.players[opponent_id].revealed_positions
 
         room.players[caster_id].revealed_positions.extend(opponent_positions)
         room.players[opponent_id].revealed_positions.extend(caster_positions)
 
-        # 立即发送给双方对应玩家
+        # 各自看到对方那艘船的位置
         emit('revealed_positions', {'positions': opponent_positions}, to=room.players[caster_id].sid)
         emit('revealed_positions', {'positions': caster_positions}, to=room.players[opponent_id].sid)
 

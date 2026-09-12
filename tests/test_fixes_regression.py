@@ -385,7 +385,7 @@ def test_forced_kill_exhausts_after_two(room):
 
 
 def test_demon_contract_notifies_attacker(room, events):
-    """恶魔契约：牺牲的是攻击者的船，通知应发给攻击者（修复原通知对象错误）。"""
+    """恶魔契约：待牺牲的是攻击者，选择请求应发给攻击者本人（原错误发给 defender）。"""
     server.apply_magic_effect(room, P1, card('恶魔契约'), {})
     room.players[P1].ships = [ship((4, 4)), ship((5, 5))]
     room.players[P1].remaining_ships = 2
@@ -393,9 +393,30 @@ def test_demon_contract_notifies_attacker(room, events):
     room.players[P2].remaining_ships = 1
 
     server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 0})
-    demon_msgs = [e for e in events if e[0] == 'message' and '恶魔契约' in e[1].get('text', '')]
-    assert demon_msgs, '应发送恶魔契约通知'
-    assert demon_msgs[0][2] == 'sid-p1'  # to == 攻击者 sid（原错误发给 defender）
+
+    reqs = [e for e in events if e[0] == 'sacrifice_request']
+    assert reqs, '应发送 sacrifice_request 让攻击者自己选'
+    assert reqs[0][2] == 'sid-p1', 'to 应为攻击者 sid'
+
+
+def test_demon_contract_sacrifice_is_public(room, events):
+    """牺牲结果要公开广播，双方都能看到这艘船沉没。"""
+    server.apply_magic_effect(room, P1, card('恶魔契约'), {})
+    room.players[P1].ships = [ship((4, 4)), ship((5, 5))]
+    room.players[P1].remaining_ships = 2
+    room.players[P2].ships = [ship((0, 0))]
+    room.players[P2].remaining_ships = 1
+    server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 0})
+
+    events.clear()
+    server.handle_confirm_sacrifice({
+        'room_id': room.id, 'player_id': P1, 'position': {'x': 4, 'y': 4}})
+
+    pubs = [e for e in events if e[0] == 'ship_sacrificed']
+    assert pubs, '应广播 ship_sacrificed'
+    assert pubs[0][1]['player'] == P1
+    assert pubs[0][1]['positions'] == [{'x': 4, 'y': 4}]
+    assert pubs[0][3] == room.id, '应为房间广播（双方可见），而非私聊'
 
 
 def test_papal_attack_no_attacker_subsidy(room, events):

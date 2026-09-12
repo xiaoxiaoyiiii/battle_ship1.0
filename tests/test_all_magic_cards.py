@@ -401,7 +401,7 @@ def test_revive_updates_attacks_immediately(room):
 # 恶魔契约（场地）
 # ---------------------------------------------------------------------------
 def test_demon_contract_binding_on_attack(room):
-    """对方船被击杀时，己方也必须牺牲一艘（一次攻击只结算一次）"""
+    """对方船被击杀时，己方也必须牺牲一艘 —— 由自己点选，不再随机"""
     apply(room, P1, '恶魔契约')
     assert room.game_effects.get('demon_contract') is True
 
@@ -412,7 +412,32 @@ def test_demon_contract_binding_on_attack(room):
 
     attack(room, P1, 0, 0)
     assert room.players[P2].remaining_ships == 0
-    assert len(room.players[P1].ships) == 1  # 攻击者被绑定牺牲一艘
+    # 不再立刻随机牺牲，而是等 P1 自己点选
+    assert len(room.players[P1].ships) == 2, '不应在未选择前就随机牺牲'
+    assert room.magic_temp_data['pending_sacrifice']['player'] == P1
+
+
+def test_demon_contract_sacrifice_requires_own_ship(room):
+    """恶魔契约的牺牲必须点自己船所在格，选空格要被拒。"""
+    apply(room, P1, '恶魔契约')
+    room.players[P1].ships = [ship((4, 4)), ship((5, 5))]
+    room.players[P1].remaining_ships = 2
+    room.players[P2].ships = [ship((0, 0))]
+    room.players[P2].remaining_ships = 1
+    attack(room, P1, 0, 0)
+
+    # 选空格 → 拒绝
+    bad = server.handle_confirm_sacrifice({
+        'room_id': room.id, 'player_id': P1, 'position': {'x': 1, 'y': 1}})
+    assert bad['status'] == 'error'
+    assert len(room.players[P1].ships) == 2
+
+    # 选自己的船 → 成功
+    good = server.handle_confirm_sacrifice({
+        'room_id': room.id, 'player_id': P1, 'position': {'x': 4, 'y': 4}})
+    assert good['status'] == 'success'
+    assert len(room.players[P1].ships) == 1
+    assert room.players[P1].remaining_ships == 1
 
 
 # ---------------------------------------------------------------------------
@@ -860,15 +885,38 @@ def test_daoyi_fails_when_own_last(room):
 # 克苏鲁之眼
 # ---------------------------------------------------------------------------
 def test_kesulu_mutual_reveal(room):
-    """双方各暴露一艘船的位置"""
+    """双方各暴露一艘船：施法者必须点选自己船所在的格子"""
+    room.players[P1].ships = [ship((0, 0))]
+    room.players[P1].remaining_ships = 1
+    room.players[P2].ships = [ship((5, 5))]
+    room.players[P2].remaining_ships = 1
+    res = apply(room, P1, '克苏鲁之眼',
+                {'target_area': {'x1': 0, 'y1': 0, 'x2': 0, 'y2': 0}})
+    assert res.success is True
+    assert {(5, 5)} <= {(p.x, p.y) for p in room.players[P1].revealed_positions}
+    assert {(0, 0)} <= {(p.x, p.y) for p in room.players[P2].revealed_positions}
+
+
+def test_kesulu_rejects_empty_cell(room):
+    """选空格不合法：必须是自己的船所在格"""
+    room.players[P1].ships = [ship((0, 0))]
+    room.players[P1].remaining_ships = 1
+    room.players[P2].ships = [ship((5, 5))]
+    room.players[P2].remaining_ships = 1
+    res = apply(room, P1, '克苏鲁之眼',
+                {'target_area': {'x1': 3, 'y1': 3, 'x2': 3, 'y2': 3}})
+    assert res.success is False
+    assert '战舰' in res.message
+
+
+def test_kesulu_rejects_missing_target(room):
+    """完全没给目标也应拒绝"""
     room.players[P1].ships = [ship((0, 0))]
     room.players[P1].remaining_ships = 1
     room.players[P2].ships = [ship((5, 5))]
     room.players[P2].remaining_ships = 1
     res = apply(room, P1, '克苏鲁之眼')
-    assert res.success is True
-    assert {(5, 5)} <= {(p.x, p.y) for p in room.players[P1].revealed_positions}
-    assert {(0, 0)} <= {(p.x, p.y) for p in room.players[P2].revealed_positions}
+    assert res.success is False
 
 
 # ---------------------------------------------------------------------------

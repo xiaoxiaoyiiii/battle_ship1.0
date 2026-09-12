@@ -825,7 +825,9 @@ window.gameState = {
     inRoom: false,          // 是否在对局房间中（用于掉线重连）
     reconnectToken: null,   // 对局重连 token
     frozen: false,          // 对手掉线宽限期内冻结操作
-    opponentGone: null      // 对手掉线信息 {deadline}
+    opponentGone: null,     // 对手掉线信息 {deadline}
+    sacrificedSelf: [],     // 自己因效果（恶魔契约等）牺牲的格子 → 画在自己棋盘上
+    sacrificedOpponent: []  // 对方牺牲的格子（公开信息）→ 画在对方棋盘上
 }
 
 let opponentGoneTimer = null;
@@ -2834,6 +2836,35 @@ function setupSocketListeners() {
         showMessage('神威！区域已恢复，战舰回归原位');
     });
 
+    // 恶魔契约：服务端要求选择一艘自己的战舰牺牲（在自己棋盘上点选，无额外弹窗）
+    socket.on('sacrifice_request', (data) => {
+        showSacrificePrompt(data);
+    });
+
+    // 某艘船因效果被牺牲 —— 公开事件，双方都能看到这艘船沉没
+    socket.on('ship_sacrificed', (data) => {
+        const positions = (data && data.positions) || [];
+        if (!positions.length) return;
+        const mine = data.player === gameState.playerId;
+        const sink = mine ? gameState.sacrificedSelf : gameState.sacrificedOpponent;
+
+        positions.forEach(p => sink.push({ x: p.x, y: p.y }));
+
+        if (mine) {
+            // 自己的船死了：从本地棋盘记录里移除这艘船
+            const keys = new Set(positions.map(p => p.x + ',' + p.y));
+            gameState.ships = (gameState.ships || [])
+                .map(ship => Object.assign({}, ship, {
+                    positions: (ship.positions || []).filter(p => !keys.has(p.x + ',' + p.y))
+                }))
+                .filter(ship => (ship.positions || []).length > 0);
+        }
+
+        if (typeof initGameBoards === 'function') initGameBoards();
+        showMessage(mine ? '恶魔契约：你牺牲了一艘战舰' : '恶魔契约：对方牺牲了一艘战舰',
+                    { type: 'warning' });
+    });
+
     // 服务端统一推送的局内日志
     socket.on('game_log', (entry) => {
         renderServerLog(entry);
@@ -3056,6 +3087,12 @@ function initGameBoards() {
                 cell.textContent = attack.hit ? '✕' : '○';
             }
 
+            // 自己因恶魔契约等效果牺牲的船：画叉
+            if ((gameState.sacrificedSelf || []).some(p => p.x === x && p.y === y)) {
+                cell.classList.add('hit', 'sacrificed');
+                cell.textContent = '✕';
+            }
+
             gamePlayerBoard.appendChild(cell);
         }
     }
@@ -3083,6 +3120,12 @@ function initGameBoards() {
                 const attack = gameState.myAttacks.find(a => a.x === x && a.y === y);
                 cell.classList.add(attack.hit ? 'hit' : 'miss');
                 cell.textContent = attack.hit ? '✕' : '○';
+            }
+
+            // 对方因恶魔契约等效果牺牲的船：公开信息，同样画叉
+            if ((gameState.sacrificedOpponent || []).some(p => p.x === x && p.y === y)) {
+                cell.classList.add('hit', 'sacrificed');
+                cell.textContent = '✕';
             }
 
             opponentBoard.appendChild(cell);
@@ -3942,18 +3985,34 @@ function showMagicTargetSelection(card, index) {
     // SINGLE selection (单格) - 默认选择对手棋盘，如需选择我方则 descriptor.board === 'self'
     if (descriptor.type === 'single') {
         const which = descriptor.board || 'opponent';
-        targetPrompt.innerHTML = `
-            <h3>选择一个目标格子</h3>
-            <div style="text-align:center;margin-top:8px;">
-                <button id="cancel-target">取消</button>
-            </div>
-        `;
+        // board==='self'（克苏鲁之眼）：只能点自己战舰所在的格子，空格不可选
+        const selfShipsOnly = (which === 'self');
+
+        targetPrompt.innerHTML = selfShipsOnly
+            ? `<h3>选择你要暴露的战舰</h3>
+               <p class="magic-hint">只能点自己战舰所在的格子（绿色高亮）</p>
+               <div style="text-align:center;margin-top:8px;">
+                   <button id="cancel-target">取消</button>
+               </div>`
+            : `<h3>选择一个目标格子</h3>
+               <div style="text-align:center;margin-top:8px;">
+                   <button id="cancel-target">取消</button>
+               </div>`;
         document.body.appendChild(targetPrompt);
 
-        const boardEl = which === 'self' ? gamePlayerBoard : opponentBoard;
+        const boardEl = selfShipsOnly ? gamePlayerBoard : opponentBoard;
         if (!boardEl) return;
         gameState.selectingOnBoard = true;
         const listeners = [];
+
+        // 自己船所在格集合
+        const ownCells = new Set();
+        if (selfShipsOnly) {
+            (gameState.ships || []).forEach(ship => {
+                (ship.positions || []).forEach(p => ownCells.add(p.x + ',' + p.y));
+            });
+        }
+
         const onClick = (e) => {
             e.stopPropagation();
             e.preventDefault();
@@ -3963,13 +4022,23 @@ function showMagicTargetSelection(card, index) {
             confirmMagicTarget({ x, y });
             cleanupAll();
         };
+
         boardEl.querySelectorAll('.cell').forEach(cell => {
+            const x = parseInt(cell.dataset.x, 10);
+            const y = parseInt(cell.dataset.y, 10);
+            if (selfShipsOnly && !ownCells.has(x + ',' + y)) {
+                cell.classList.add('pick-disabled');   // 空格：灰掉，点了没用
+                return;
+            }
+            if (selfShipsOnly) cell.classList.add('pick-ship');
             cell.addEventListener('click', onClick, true);
             listeners.push({ el: cell, handler: onClick });
         });
 
         function cleanupAll() {
             listeners.forEach(({ el, handler }) => el.removeEventListener('click', handler, true));
+            document.querySelectorAll('.cell.pick-ship, .cell.pick-disabled')
+                .forEach(c => c.classList.remove('pick-ship', 'pick-disabled'));
             gameState.selectingOnBoard = false;
             if (document.body.contains(targetPrompt)) document.body.removeChild(targetPrompt);
         }
@@ -4810,6 +4879,79 @@ function updateFieldMagicUI(playerId, card) {
         fieldElement.innerHTML = `当前生效的场地魔法: <span class="no-magic">无</span>`;
         fieldElement.className = 'field-magic';
     }
+}
+
+// 恶魔契约：在自己棋盘上点选要牺牲的战舰（不弹额外窗口，直接点格子）
+function showSacrificePrompt(data) {
+    // 清理可能残留的选区状态，避免 selectingOnBoard 卡死
+    if (typeof gameState.selectionCleanup === 'function') {
+        try { gameState.selectionCleanup(); } catch (_) { }
+        gameState.selectionCleanup = null;
+    }
+    gameState.selectingOnBoard = false;
+    document.querySelectorAll('.magic-target-prompt').forEach(el => el.remove());
+    document.querySelectorAll('.cell.pick-ship, .cell.pick-disabled')
+        .forEach(c => c.classList.remove('pick-ship', 'pick-disabled'));
+
+    const prompt = document.createElement('div');
+    prompt.className = 'magic-target-prompt';
+    prompt.innerHTML = `
+        <h3>恶魔契约：选择要牺牲的战舰</h3>
+        <p class="magic-hint">点自己战舰所在的格子（绿色高亮）即可，不需要再确认</p>
+    `;
+    document.body.appendChild(prompt);
+    showMessage((data && data.message) || '恶魔契约生效，请选择一艘自己的战舰牺牲',
+                { type: 'warning' });
+
+    gameState.selectingOnBoard = true;
+    const listeners = [];
+
+    // 自己船所在的格子
+    const ownCells = new Set();
+    (gameState.ships || []).forEach(ship => {
+        (ship.positions || []).forEach(p => ownCells.add(p.x + ',' + p.y));
+    });
+
+    const cleanup = () => {
+        listeners.forEach(({ el, handler }) => el.removeEventListener('click', handler, true));
+        document.querySelectorAll('.cell.pick-ship, .cell.pick-disabled')
+            .forEach(c => c.classList.remove('pick-ship', 'pick-disabled'));
+        gameState.selectingOnBoard = false;
+        if (document.body.contains(prompt)) document.body.removeChild(prompt);
+        gameState.selectionCleanup = null;
+    };
+
+    const onClick = (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const el = e.currentTarget;
+        const x = parseInt(el.dataset.x, 10);
+        const y = parseInt(el.dataset.y, 10);
+        gameState.socket.emit('confirm_sacrifice', {
+            room_id: gameState.roomId,
+            player_id: gameState.playerId,
+            position: { x, y }
+        }, (resp) => {
+            if (resp && resp.status === 'error') {
+                showAlert(resp.message || '牺牲失败，请重新选择');
+            }
+        });
+        cleanup();
+    };
+
+    (gamePlayerBoard ? gamePlayerBoard.querySelectorAll('.cell') : []).forEach(cell => {
+        const x = parseInt(cell.dataset.x, 10);
+        const y = parseInt(cell.dataset.y, 10);
+        if (!ownCells.has(x + ',' + y)) {
+            cell.classList.add('pick-disabled');   // 空格：灰掉，不可点
+            return;
+        }
+        cell.classList.add('pick-ship');
+        cell.addEventListener('click', onClick, true);
+        listeners.push({ el: cell, handler: onClick });
+    });
+
+    gameState.selectionCleanup = cleanup;
 }
 
 // 增援 / 复活：统一放置弹窗（灰格不可选、可确认、可放弃）

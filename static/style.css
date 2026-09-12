@@ -359,6 +359,8 @@ input:focus, select:focus {
 .username-info { font-size: 0.95em; color: var(--muted); }
 .player-flex-row { display: flex; align-items: center; gap: 10px; }
 .turn-indicator-inner { display: flex; justify-content: space-between; align-items: center; }
+/* 标题默认带 margin-bottom:1rem，会把 flex 里的投降按钮整体压下去，导致与标题错位 */
+.turn-indicator-inner h2 { margin-bottom: 0; }
 .placement-actions { display: flex; gap: 10px; margin-top: 15px; justify-content: center; }
 .discard-pile-btn-row { text-align: center; margin-top: 10px; }
 .leaderboard-back-row { text-align: center; margin-top: 12px; }
@@ -391,7 +393,8 @@ input:focus, select:focus {
     flex-wrap: wrap;
 }
 .board-container { display: flex; justify-content: center; margin-bottom: 1rem; }
-.board-wrapper { padding: 1rem 1.2rem 1.2rem; text-align: center; }
+/* 固定 flex 基准宽：否则两块棋盘各自按内容自适应，尺寸会一大一小 */
+.board-wrapper { flex: 0 1 340px; padding: 1rem 1.2rem 1.2rem; text-align: center; }
 .board-wrapper h3 { margin-bottom: 0.6rem; color: var(--text-subtle); }
 
 /* ---------- 7. 浮窗：游戏日志 ---------- */
@@ -470,6 +473,8 @@ input:focus, select:focus {
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
     word-wrap: break-word;
 }
+/* 日志空状态：开局还没有任何记录时给出提示，避免整个日志框是一片空白 */
+.log-empty { padding: 14px 6px; color: var(--muted); font-size: 0.9rem; line-height: 1.6; text-align: center; }
 .log-player { color: var(--danger); font-weight: bold; }
 .log-time { color: var(--muted); font-size: 0.85em; margin-right: 6px; }
 .log-badge {
@@ -589,6 +594,8 @@ input:focus, select:focus {
 @media (min-width: 1440px) {
     .magic-preview-container {
         position: fixed;
+        /* 注意：右下角是局内聊天浮窗（.in-game-chat-container，right:24px/bottom:24px）的默认位置，
+           预览框放下去会和它重叠，因此仍固定在右上角。 */
         top: 80px;
         right: 20px;
         width: 300px;

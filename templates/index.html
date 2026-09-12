@@ -24,7 +24,7 @@
         <div class="nav-brand">⚓ 战舰游戏</div>
         <div class="nav-menu">
             {% if username %}
-                <span class="nav-user">已登录: {{ username }}</span>
+                <span class="nav-user">已登录：{{ username }}</span>
                 <a href="/logout">退出</a>
                 <a href="/leaderboard" class="hide-in-game">排行榜</a>
                 <a href="#" id="show-user-stats" class="hide-in-game">个人战绩</a>
@@ -60,7 +60,7 @@
 
         <!-- 在线人数显示 -->
         <div id="online-count-container">
-            当前在线人数: <span id="online-count">0</span>
+            当前在线人数：<span id="online-count">0</span>
         </div>
     </div>
 
@@ -76,7 +76,7 @@
             <button id="custom-confirm-join">确认加入</button>
         </div>
         <div id="custom-room-info" class="hidden">
-            <p>房间ID: <span id="custom-current-room-id"></span></p>
+            <p>房间ID：<span id="custom-current-room-id"></span></p>
             <p>等待其他玩家加入...</p>
         </div>
         <div class="button-group">
@@ -122,7 +122,7 @@
     <div id="match-success-screen" class="screen">
         <h2>匹配成功！</h2>
         <div class="match-info">
-            <p>你的对手是: <span id="opponent-info"></span></p>
+            <p>你的对手是：<span id="opponent-info"></span></p>
             <p>游戏将在 <span id="countdown-timer">5</span> 秒后开始</p>
             <div id="countdown-bar" class="countdown-bar">
                 <div class="countdown-fill"></div>
@@ -137,7 +137,7 @@
         <div class="board-container">
             <div id="player-board" class="board"></div>
         </div>
-        <p id="ships-placed">已放置: <span id="placed-count">0</span>/6</p>
+        <p id="ships-placed">已放置：<span id="placed-count">0</span>/6</p>
         <div class="placement-actions">
             <button id="random-ships">随机摆放</button>
             <button id="confirm-ships" class="hidden">确认放置</button>
@@ -179,11 +179,11 @@
                     <div class="preview-content">
                         <div class="card-name">未选择魔法卡</div>
                         <div class="card-stats">
-                            <div class="stat-item">速阶: <span id="preview-speed">-</span></div>
-                            <div class="stat-item">类型: <span id="preview-type">-</span></div>
+                            <div class="stat-item">速阶：<span id="preview-speed">-</span></div>
+                            <div class="stat-item">类型：<span id="preview-type">-</span></div>
                         </div>
                         <div class="card-description">
-                            <h4>效果描述:</h4>
+                            <h4>效果描述：</h4>
                             <p id="preview-description">请选择一张魔法卡查看详细信息</p>
                         </div>
                         <div class="preview-instructions">
@@ -220,20 +220,20 @@
                         <button id="surrender-btn" class="surrender-btn danger">投降</button>
                     </div>
                     <!-- 状态显示栏 - 显示延迟结算效果 -->
-                    <div id="effect-status-bar" class="effect-status-bar">
+                    <div id="effect-status-bar" class="effect-status-bar hidden">
                         <div class="status-item hidden" id="reinforcement-status">
-                            <span class="status-label">极限增援:</span>
+                            <span class="status-label">极限增援：</span>
                             <span class="status-value">剩余 <span id="reinforcement-status-remaining">0</span> 回合</span>
                         </div>
                         <div class="status-item hidden" id="holy-heart-status">
-                            <span class="status-label">无暇圣心:</span>
+                            <span class="status-label">无暇圣心：</span>
                             <span class="status-value">剩余 <span id="holy-heart-status-remaining">0</span> 回合</span>
                         </div>
                     </div>
 
                     <!-- 场地魔法显示区域 -->
                     <div class="field-magic-area">
-                        <div id="current-field-magic" class="field-magic">当前生效的场地魔法: <span
+                        <div id="current-field-magic" class="field-magic">当前生效的场地魔法：<span
                                 class="no-magic">无</span></div>
                     </div>
                     <div class="players-info">
@@ -242,7 +242,7 @@
                                 <img id="my-avatar-in-game" src="/static/avatars/default.png" alt="我的头像"
                                      class="avatar-sm">
                                 <div>
-                                    <p>你: <span id="your-ships">6</span>艘战舰剩余</p>
+                                    <p>你：剩余 <span id="your-ships">6</span> 艘战舰</p>
                                     <div id="my-username-info" class="username-info"></div>
                                 </div>
                             </div>
@@ -252,7 +252,7 @@
                                 <img id="opponent-avatar-in-game" src="/static/avatars/default.png" alt="对手头像"
                                      class="avatar-sm">
                                 <div>
-                                    <p>对手: <span id="opponent-ships">6</span>艘战舰剩余</p>
+                                    <p>对手：剩余 <span id="opponent-ships">6</span> 艘战舰</p>
                                     <div id="opponent-username-info" class="username-info"></div>
                                 </div>
                             </div>
@@ -260,9 +260,9 @@
                     </div>
                     <div id="turn-indicator">
                         <div class="game-info">
-                            <div>当前阶段: <span id="current-phase">准备阶段</span></div>
-                            <div>当前回合: <span id="current-player">你</span></div>
-                            <div>剩余攻击次数: <span id="attacks-remaining">0</span></div>
+                            <div>当前阶段：<span id="current-phase">准备阶段</span></div>
+                            <div>当前回合：<span id="current-player">你</span></div>
+                            <div>剩余攻击次数：<span id="attacks-remaining">0</span></div>
                             <button id="enter-battle-phase" class="phase-btn">进入战斗阶段</button>
                             <button id="enter-end-phase" class="phase-btn" style="display:none;">结束战斗阶段</button>
                             <button id="end-turn-btn" class="phase-btn" style="display:none;">结束结束阶段</button>
@@ -286,7 +286,7 @@
                     <div class="chain-prompt">
                         <h3>连锁提示</h3>
                         <div class="chain-countdown">
-                            <span class="countdown-text">剩余时间: </span>
+                            <span class="countdown-text">剩余时间：</span>
                             <span id="chain-timer" class="countdown-number">10</span>
                             <span class="countdown-text">秒</span>
                         </div>
@@ -310,7 +310,7 @@
         <h2>游戏大厅</h2>
         <p>加入匹配队列，等待其他玩家...</p>
         <div class="lobby-info">
-            <p>当前大厅玩家: <span id="lobby-player-count">0</span></p>
+            <p>当前大厅玩家：<span id="lobby-player-count">0</span></p>
             <ul id="lobby-players-list"></ul>
         </div>
         <div class="button-group">
@@ -426,7 +426,7 @@
                     <input type="checkbox" id="music-muted"> 静音
                 </label>
                 <div class="muted-hint">
-                    <p>当前播放: <span id="current-track">未播放</span></p>
+                    <p>当前播放：<span id="current-track">未播放</span></p>
                 </div>
                 <button id="settings-save-btn" class="btn">保存</button>
             </div>

@@ -36,12 +36,13 @@ Flask + Flask-SocketIO 的实时双人海战棋，叠加 43 条魔法卡（41 �
 ```bash
 pip install -r requirements.txt
 python start_server.py        # 推荐（含依赖检查）
-python -m pytest tests/ -q    # 163 passed
+python -m pytest tests/ -q    # 191 passed（4 个已跟踪测试文件）+ 9 条 UI 契约测试
 ```
 
 > ⚠️ **必须在项目根目录运行**——`server.py` 用相对路径 `./static/magic_card.json`；`tests/test_all_magic_cards.py:1088` 也用硬编码相对路径，是全套测试中唯一对 CWD 敏感的。
 
-**实测基线（2026-09-11 修复批后）**：`163 passed / 0 failed / 0.68s`，7 个测试文件。
+**实测基线（2026-09-12 UI 修复批后）**：`200 passed / 0 failed`（`tests/test_all_magic_cards.py`、`test_db_core.py`、`test_disconnect_and_eden_shenji.py`、`test_fixes_regression.py`、`test_ui_review_fixes.py`）。
+> ⚠️ 另有 `tests/test_review_fixes_2026_09_12.py`、`tests/test_review_fixes_batch2.py` 两个**未提交**文件（2026-09-12 后端/安全审查批的产物），其中 35 条当前为红——对应修复还没落到代码，与 UI 修复批无关。
 
 > 🔧 **2026-09-11 安全/健壮性修复批**：本文件第 11 节的 P0/P1 问题已修复（详见 `docs/FIX_PLAN.md` 与 `tests/test_fixes_regression.py`）。要点：
 > - 12 个 `test_*` 事件默认关闭（`ENABLE_TEST_EVENTS=1` 启用）；`test_magic.js` 已从 index.html 移除
@@ -53,6 +54,14 @@ python -m pytest tests/ -q    # 163 passed
 > - game.js：`ensureSocket()` 统一连接管理（不再重复建连）；`#effect-indicators` 已补；猜拳文案映射已修正；「神之宣告」出牌前可选效果（`promptDivineDecreeChoice` → `targets: {effect_choice}`）
 > - eventlet `monkey_patch()` 已移至 server.py 首行（在所有 import 之前）
 > - 已删除死代码：`process_match_queue`、lobby 三方法（前端仍监听的 lobby 事件为历史遗留空壳）
+
+> 🔧 **2026-09-12 UI 审查修复批**（截图逐像素审查，详见 `docs/UI_REVIEW_FIXES.md`）：
+> - `#effect-status-bar` 默认 `hidden` + `initEffectStatusBarSync()`——不再渲染成一条空白横条
+> - `updatePhaseUI()` 阶段按钮 `block` → `inline-block`——不再贴在阶段卡片左边
+> - `.board-wrapper{flex:0 1 340px}`——两块棋盘不再一大一小（300×300，单格 42px）
+> - 游戏日志补空状态占位 `.log-empty`；玩家信息行文案改「你：剩余 6 艘战舰」；中文界面冒号统一全角
+> - `static/avatars/default.png` 由 1×1 透明图换成 96×96 占位头像
+> - 回归：`tests/test_ui_review_fixes.py`（9 条）+ `tools/ui_layout_check.mjs`（无头浏览器 9 项布局不变量）
 
 ---
 
@@ -423,6 +432,7 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`。真人摆完船后
 | **`docs/DEPLOYMENT.md`** | **部署说明：服务器环境、必需环境变量、更新流程、事故记录 —— 部署前必读** |
 | `docs/SERVER_PY_ANALYSIS.md` | server.py 4733 行全量分析（类/事件/攻击结算/魔法分发/连锁） |
 | `docs/FRONTEND_TECH_ANALYSIS.md` | 前端 + 测试深度分析（827 行，58 个 socket.on、33 个 emit、函数索引、19 条 bug） |
+| **`docs/UI_REVIEW_FIXES.md`** | **2026-09-12 截图 UI 审查修复记录（含逐条证据、端到端验证方式、有意不改的项）** |
 | `docs/CHAIN_ENGINE_SPEC.md` | 连锁引擎设计稿（⚠️ 部分已过时，见第 8 节） |
 | `README.md` | 面向用户的功能/玩法说明（⚠️ 测试数已过时） |
 

@@ -1036,14 +1036,28 @@ console.log("game.js 加载完成，playMagicCard 状态:", typeof window.playMa
 // ============ 游戏日志窗口（2026-09-10 重写） ============
 const GAME_LOG_MAX_ENTRIES = 200;   // 仅保留最近 N 条，防止长时间对局卡顿
 
+// 日志空状态（开局还没有任何记录时占位，避免日志框整个是一片空白）
+const GAME_LOG_EMPTY_HTML =
+    '<div class="log-empty">暂无日志<br>攻击、使用魔法卡等操作会记录在这里</div>';
+
+// 没有任何日志条目时才显示空状态
+function ensureGameLogEmptyState() {
+    if (!gameLogs) return;
+    if (gameLogs.querySelector('.log-entry')) return;
+    gameLogs.innerHTML = GAME_LOG_EMPTY_HTML;
+}
+
 // 清空日志（新开一局时调用）
 function clearGameLogs() {
-    if (gameLogs) gameLogs.innerHTML = '';
+    if (gameLogs) gameLogs.innerHTML = GAME_LOG_EMPTY_HTML;
+    ensureGameLogEmptyState();
 }
 
 // 追加一条日志（最新在最上面，超量自动裁剪）
 function addGameLog(logText, logType) {
     if (!gameLogs) return;
+    const emptyHint = gameLogs.querySelector('.log-empty');
+    if (emptyHint) emptyHint.remove();
     const logEntry = document.createElement('div');
     logEntry.className = 'log-entry' + (logType ? ' log-' + logType : '');
     logEntry.innerHTML = logText;
@@ -1180,10 +1194,10 @@ function showCardDetail(card) {
             <button type="button" class="card-detail-close" aria-label="关闭">✕</button>
             <div class="card-detail-name">${escapeHtml(card.name)}</div>
             <div class="card-detail-stats">
-                <span class="stat-item">速阶: ${escapeHtml(String(card.speed))}</span>
-                <span class="stat-item">类型: ${escapeHtml(card.type || '-')}</span>
+                <span class="stat-item">速阶：${escapeHtml(String(card.speed))}</span>
+                <span class="stat-item">类型：${escapeHtml(card.type || '-')}</span>
             </div>
-            <div class="card-detail-desc-title">效果描述:</div>
+            <div class="card-detail-desc-title">效果描述：</div>
             <div class="card-detail-desc">${escapeHtml(card.description || '（无描述）')}</div>
         </div>`;
     document.body.appendChild(overlay);
@@ -1375,7 +1389,7 @@ function bindEventListeners() {
             }
         }).catch(err => {
             console.error('获取个人战绩失败:', err);
-            userStatsContent.innerHTML = `<p style="color:red;">获取个人战绩失败: ${err.message}</p>`;
+            userStatsContent.innerHTML = `<p style="color:red;">获取个人战绩失败：${err.message}</p>`;
         });
     }
 
@@ -1549,7 +1563,7 @@ function bindEventListeners() {
             }
         }).catch(err => {
             console.error('获取个人战绩失败:', err);
-            userStatsContent.innerHTML = `<p style="color:red;">获取个人战绩失败: ${err.message}</p>`;
+            userStatsContent.innerHTML = `<p style="color:red;">获取个人战绩失败：${err.message}</p>`;
         });
     }
 
@@ -2180,7 +2194,7 @@ function setupSocketListeners() {
             rpsResult.textContent = result.message;
         } else {
             const winnerName = result.winner === gameState.playerId ? '你' : '对手';
-            rpsResult.textContent = `猜拳结果: 你选择了${getRPSName(result.choices[gameState.playerId])}, 对手选择了${getRPSName(result.choices[Object.keys(result.choices).find(k => k !== gameState.playerId)])}。${winnerName}获胜，先攻击！`;
+            rpsResult.textContent = `猜拳结果：你选择了${getRPSName(result.choices[gameState.playerId])}, 对手选择了${getRPSName(result.choices[Object.keys(result.choices).find(k => k !== gameState.playerId)])}。${winnerName}获胜，先攻击！`;
         }
     });
 
@@ -2436,7 +2450,7 @@ function setupSocketListeners() {
     });
 
     socket.on('magic_chain_error', function (data) {
-        showAlert('魔法卡使用错误: ' + data.message);
+        showAlert('魔法卡使用错误：' + data.message);
         // 错误恢复 - 将卡牌放回手牌
         if (data.card) {
             gameState.hand.push(data.card);
@@ -2454,14 +2468,14 @@ function setupSocketListeners() {
         data.speed3_cards.forEach((card, index) => {
             speed3CardsHTML += `<div class="chain-card-item" data-card-index="${index}" data-card-name="${card.name}" data-card-speed="${card.speed}">
                 <div class="chain-card-name">${card.name}</div>
-                <div class="chain-card-speed">速阶: ${card.speed}</div>
+                <div class="chain-card-speed">速阶：${card.speed}</div>
             </div>`;
         });
 
         chainPrompt.innerHTML = `
             <h3>连锁请求</h3>
             <p>${data.caster && data.caster === gameState.playerId ? '你发动了' : '对方发动了'}魔法卡【${data.card.name}】</p>
-            <div class="chain-countdown">剩余时间: <span id="chain-countdown-time">10</span>秒</div>
+            <div class="chain-countdown">剩余时间：<span id="chain-countdown-time">10</span>秒</div>
             <div class="chain-speed3-cards">
                 <h4>你拥有的速阶3魔法卡：</h4>
                 ${speed3CardsHTML}
@@ -2587,7 +2601,7 @@ function setupSocketListeners() {
     });
 
     socket.on('magic_applied', function (result) {
-        showMessage(`魔法卡【${result.card.name}】效果生效: ${result.message}`);
+        showMessage(`魔法卡【${result.card.name}】效果生效：${result.message}`);
         applyCardEffect(result.card, result.caster_id || result.caster);
         // 如果服务器返回了受影响的格子，确保客户端同步显示这些格子的攻击结果
         if (result.affected_positions && Array.isArray(result.affected_positions)) {
@@ -2766,7 +2780,7 @@ function setupSocketListeners() {
                 showMessage('桃园结义选择完成');
                 updateHandUI();
             } else {
-                showMessage(`选择失败: ${response.message}`, { type: 'error' });
+                showMessage(`选择失败：${response.message}`, { type: 'error' });
             }
         });
     }
@@ -2849,7 +2863,7 @@ function setupSocketListeners() {
             if (response.status === 'success') {
                 showMessage(response.message);
             } else {
-                showMessage(`选择失败: ${response.message}`, { type: 'error' });
+                showMessage(`选择失败：${response.message}`, { type: 'error' });
             }
         });
     }
@@ -2937,7 +2951,7 @@ function setupSocketListeners() {
             if (response.status === 'success') {
                 showMessage(response.message);
             } else {
-                showMessage(`选择失败: ${response.message}`, { type: 'error' });
+                showMessage(`选择失败：${response.message}`, { type: 'error' });
             }
         });
     }
@@ -3137,6 +3151,9 @@ function switchScreen(screen) {
         if (s) s.classList.remove('active');
     });
     if (screen) screen.classList.add('active');
+
+    // 进入对局界面时兜底显示日志空状态（避免出现一个空白日志框）
+    if (screen && screen.id === 'game-screen') ensureGameLogEmptyState();
 
     // 隐藏或显示在局内不应显示的导航项（登录/注册/排行榜）
     const hideEls = document.querySelectorAll('.hide-in-game');
@@ -3444,7 +3461,7 @@ function confirmShipPlacement() {
             console.log('Ships placed successfully');
         } else {
             console.error('Ships placement failed:', response.message);
-            showAlert('放置战舰失败: ' + response.message);
+            showAlert('放置战舰失败：' + response.message);
         }
     });
 }
@@ -3856,7 +3873,7 @@ function showMagicTargetSelection(card, index) {
         targetPrompt.innerHTML = `
             <h3>拖拽或点击选择一整行/列（拖拽时松开确认）</h3>
             <div class="magic-selection-controls">
-                <button id="toggle-line-dir">方向: 行</button>
+                <button id="toggle-line-dir">方向：行</button>
                 <button id="cancel-target">取消</button>
             </div>
         `;
@@ -3870,7 +3887,7 @@ function showMagicTargetSelection(card, index) {
         const toggleBtn = document.getElementById('toggle-line-dir');
         toggleBtn.addEventListener('click', () => {
             mode = mode === 'row' ? 'col' : 'row';
-            toggleBtn.textContent = `方向: ${mode === 'row' ? '行' : '列'}`;
+            toggleBtn.textContent = `方向：${mode === 'row' ? '行' : '列'}`;
         });
 
         const cells = Array.from(boardEl.querySelectorAll('.cell'));
@@ -4658,7 +4675,7 @@ function sendMagicCard(index, targets) {
             updateHandUI();
         } else {
             console.error('魔法卡使用失败:', response.message);
-            showAlert(`使用魔法卡失败: ${response.message || '未知错误'}`);
+            showAlert(`使用魔法卡失败：${response.message || '未知错误'}`);
         }
     });
 }
@@ -5048,11 +5065,11 @@ function updateFieldMagicUI(playerId, card) {
     if (card) {
         // 获取当前场地魔法的拥有者
         const owner = playerId === gameState.playerId ? '你的' : '对方的';
-        fieldElement.innerHTML = `当前生效的场地魔法: <span class="field-magic-card">${owner}${card.name}</span>`;
+        fieldElement.innerHTML = `当前生效的场地魔法：<span class="field-magic-card">${owner}${card.name}</span>`;
         fieldElement.className = `field-magic active`;
         gameState.fieldMagic = card.name;
     } else {
-        fieldElement.innerHTML = `当前生效的场地魔法: <span class="no-magic">无</span>`;
+        fieldElement.innerHTML = `当前生效的场地魔法：<span class="no-magic">无</span>`;
         fieldElement.className = 'field-magic';
     }
 }
@@ -5291,7 +5308,7 @@ function handleSurrender() {
                 // 等待服务器发送game_over事件
             } else {
                 // 投降失败
-                showMessage(`投降失败: ${response.message}`, { type: 'error' });
+                showMessage(`投降失败：${response.message}`, { type: 'error' });
             }
         });
     }
@@ -5496,7 +5513,7 @@ function updateHandUI() {
 
         cardElement.innerHTML = `
             <div class="card-name">${escapeHtml(card.name)}</div>
-            <div class="card-speed">速阶: ${escapeHtml(card.speed)}</div>
+            <div class="card-speed">速阶：${escapeHtml(card.speed)}</div>
             <div class="card-type">${escapeHtml(card.type)}魔法</div>
         `;
 
@@ -5572,7 +5589,7 @@ function loadDiscardPile() {
         if (response.status === 'success') {
             displayDiscardPile(response.discard_pile);
         } else {
-            showMessage(`加载弃牌堆失败: ${response.message}`, { type: 'error' });
+            showMessage(`加载弃牌堆失败：${response.message}`, { type: 'error' });
         }
     });
 }
@@ -5643,10 +5660,31 @@ function createMagicCardUI() {
     gameScreen.appendChild(magicUI);
 }
 
+// 状态显示栏（极限增援 / 无暇圣心）容器显隐同步：
+// 两个子项都隐藏时整个容器要收起，否则它只剩 padding + border，会渲染成一条空白横条。
+function initEffectStatusBarSync() {
+    const bar = document.getElementById('effect-status-bar');
+    if (!bar) return;
+    const items = Array.from(bar.querySelectorAll('.status-item'));
+    if (!items.length) return;
+    const sync = () => {
+        const anyVisible = items.some((el) => !el.classList.contains('hidden'));
+        bar.classList.toggle('hidden', !anyVisible);
+    };
+    if (bar.dataset.statusSyncBound !== '1') {
+        bar.dataset.statusSyncBound = '1';
+        const observer = new MutationObserver(sync);
+        items.forEach((el) => observer.observe(el, { attributes: true, attributeFilter: ['class'] }));
+    }
+    sync();
+}
+
 // 初始化
 function init() {
     // 绑定事件监听器
     bindEventListeners();
+    // 状态显示栏容器显隐（避免出现空横条）
+    initEffectStatusBarSync();
     // 如果服务端传来了用户名，预填并设置为当前玩家名
     if (window.__USERNAME) {
         gameState.playerName = window.__USERNAME || gameState.playerName;
@@ -5709,8 +5747,8 @@ function updateChainUI() {
         const chainItem = document.createElement('div');
         chainItem.className = 'chain-item';
         chainItem.innerHTML = `
-            <div>连锁 ${index + 1}: ${item.card.name}</div>
-            <div>玩家: ${item.playerId === gameState.playerId ? '你' : '对手'}</div>
+            <div>连锁 ${index + 1}：${item.card.name}</div>
+            <div>玩家：${item.playerId === gameState.playerId ? '你' : '对手'}</div>
         `;
         chainElement.appendChild(chainItem);
     });
@@ -5727,7 +5765,7 @@ function showChainableCards() {
             <button id="confirm-chain">确认发动</button>
             <button id="cancel-chain">结束连锁</button>
         </div>
-        <div class="chain-timer">剩余时间: <span id="chain-time">30</span>秒</div>
+        <div class="chain-timer">剩余时间：<span id="chain-time">30</span>秒</div>
     `;
     document.body.appendChild(chainPrompt);
 
@@ -5813,15 +5851,17 @@ function updatePhaseUI() {
 
     // 根据当前阶段和回合显示相应按钮
     if (isMyTurn) {
+        // 用 inline-block 而不是 block：block 级按钮不再受 #turn-indicator 的
+        // text-align:center 影响，会贴在阶段卡片左边，和居中的状态文字错位。
         switch (gameState.currentPhase) {
             case 'preparation':
-                enterBattleBtn.style.display = 'block';
+                enterBattleBtn.style.display = 'inline-block';
                 break;
             case 'battle':
-                enterEndBtn.style.display = 'block';
+                enterEndBtn.style.display = 'inline-block';
                 break;
             case 'end':
-                endTurnBtn.style.display = 'block';
+                endTurnBtn.style.display = 'inline-block';
                 break;
         }
     }

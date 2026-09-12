@@ -198,28 +198,30 @@ try {
     'B3 无目标卡不弹选择器、不残留状态',
     { pickersBefore: pickersBeforeB, pickersAfter: b3 && b3.pickers, pending: b3 && b3.pendingChainCard });
 
-  // ---------- C. 神之宣告：先选效果、再点选两艘自己船 ----------
+  // ---------- C. 神之宣告：先点选两艘自己船、再选效果（卡面顺序） ----------
   const c1 = await ev(fireChain([{ name: '神之宣告', speed: 3, type: '普通', description: '牺牲两艘' }]));
   check(c1 === 'ok', 'C1 触发 chain_request（神之宣告）', c1);
   const c2 = await ev(CLICK_CHAIN_ITEM);
   await sleep(300);
-  // 注意：猜拳按钮也带 data-choice（rock/scissors/paper），必须限定在弹窗内查询
-  const c3 = await ev('document.querySelectorAll(".divine-decree-options button[data-choice]").length');
-  check(c2 === 'clicked' && c3 >= 2, 'C2 先弹出效果选择框', { click: c2, choices: c3 });
+  // 卡面：「选定自己的两艘船死亡并选择接下来两个效果其一发动」—— 先选船。
+  const c3 = await ev('document.querySelectorAll("#confirm-magic-ships").length');
+  check(c2 === 'clicked' && c3 === 1, 'C2 先弹出「点选两艘自己的战舰」', { click: c2, pickers: c3 });
 
-  await ev('document.querySelector(\'.divine-decree-options button[data-choice="2"]\').click()');
-  await sleep(300);
-  const c4 = await ev('(function(){ return { pending: !!gameState.pendingChainCard, ships: document.querySelectorAll("#confirm-magic-ships").length, selected: (gameState.currentMagicCard||{}).name }; })()');
-  check(c4 && c4.ships === 1, 'C3 效果选完后弹出「点选两艘自己的战舰」', c4);
-
-  const c4b = await ev('(function(){ var ships = (gameState.ships || []).slice(0, 2);' +
+  const c3b = await ev('(function(){ var ships = (gameState.ships || []).slice(0, 2);' +
     ' if (ships.length < 2) return "no-ships";' +
     ' var cells = [];' +
     ' ships.forEach(function (sh) { var p = (sh.positions || [])[0]; if (p) cells.push(p); });' +
     ' if (cells.length < 2) return "no-cells";' +
     ' cells.forEach(function (pt) { var el = document.querySelector(\'#game-player-board .cell[data-x="\' + pt.x + \'"][data-y="\' + pt.y + \'"]\'); if (el) el.click(); });' +
     ' var btn = document.getElementById("confirm-magic-ships"); if (!btn) return "no-confirm"; btn.click(); return "confirmed"; })()');
-  check(c4b === 'confirmed', 'C3b 真实点选两艘自己的战舰并确认', c4b);
+  check(c3b === 'confirmed', 'C2b 真实点选两艘自己的战舰并确认', c3b);
+  await sleep(300);
+
+  // 注意：猜拳按钮也带 data-choice（rock/scissors/paper），必须限定在弹窗内查询
+  const c4 = await ev('document.querySelectorAll(".divine-decree-options button[data-choice]").length');
+  check(c4 >= 2, 'C3 选完两艘船后再弹出效果选择框', { choices: c4 });
+
+  await ev('document.querySelector(\'.divine-decree-options button[data-choice="2"]\').click()');
   await sleep(300);
   const c5 = await ev(snapshotEmit());
   const lastC = c5 && c5.last;

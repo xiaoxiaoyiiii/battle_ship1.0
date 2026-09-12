@@ -2494,16 +2494,13 @@ function setupSocketListeners() {
                 // 需要目标的速阶3卡（神威！/轰炸/冻结/硫磺火焰/探测雷达）此前
                 // 一律发 targets: []，服务端缺目标直接失败 —— 等于这些卡在连锁
                 // 响应窗口里根本打不出来。改为先走目标选择器，再回填 targets。
-                if (needsTargetSelection(selectedCard.name) || selectedCard.name === '神之宣告') {
+                if (needsTargetSelection(selectedCard.name)) {
                     gameState.pendingChainCard = { card: selectedCard, index: cardIndex };
-                    if (selectedCard.name === '神之宣告') {
-                        // 先选效果，再点选要牺牲的两艘船
-                        promptDivineDecreeChoice(cardIndex, selectedCard);
-                    } else {
-                        gameState.currentMagicCard = selectedCard;
-                        gameState.currentCardIndex = cardIndex;
-                        showMagicTargetSelection(selectedCard, cardIndex);
-                    }
+                    gameState.currentMagicCard = selectedCard;
+                    gameState.currentCardIndex = cardIndex;
+                    // 神之宣告（速阶3）也走这个入口：先在自己棋盘上点选两艘要牺牲的船，
+                    // 确认后再问效果，最后一起回填给 chain_response。
+                    showMagicTargetSelection(selectedCard, cardIndex);
                     return;
                 }
 
@@ -4417,13 +4414,9 @@ function playMagicCard(index) {
         }
     }
 
-    // 神之宣告：两步都走完才算出牌 —— 先选要发动的效果（promptDivineDecreeChoice），
-    // 再由 needsTargetSelection 的 own_ships 收集要牺牲的两艘船，
-    // 最后在 confirmMagicTarget 里把「效果 + 两艘船」一次性提交。
-    if (card.name === '神之宣告') {
-        promptDivineDecreeChoice(index);
-        return;
-    }
+    // 神之宣告：卡面顺序是「先选定自己两艘船死亡，再选择要发动的效果」。
+    // 两步都走完才算出牌 —— 第一步由 needsTargetSelection 的 own_ships 收集，
+    // 第二步在 confirmMagicTarget 里接着问（见 promptDivineDecreeChoice）。
 
     // 检查是否需要目标选择
     if (needsTargetSelection(card.name)) {
@@ -4463,13 +4456,16 @@ function sendMagicCard(index, targets) {
     });
 }
 
-// 神之宣告：第一步 —— 选择要触发的效果（1=摧毁对方一艘战舰，2=跳过对方本回合）。
-// 选完效果再走 own_ships 点选两艘要牺牲的船，最后一起提交（见 confirmMagicTarget）。
-function promptDivineDecreeChoice(cardIndex, cardOverride) {
-    // 连锁响应窗口里打出的神之宣告未必存在于「手牌同下标」，
-    // 因此允许显式传入卡牌对象（默认仍按手牌下标取）。
-    const card = cardOverride || gameState.hand[cardIndex];
+// 神之宣告：第二步 —— 两艘要牺牲的船选完之后，选择要触发的效果
+// （1=摧毁对方一艘战舰，2=跳过对方本回合）。
+// ctx：第一步入口处抓好的上下文 { card, cardIndex, chainPending }。
+//      card 允许显式传入，是因为连锁响应窗口里打出的卡未必在手牌同下标。
+// basePayload：第一步（own_ships）收集到的 selected_cells，确认后与效果一起提交。
+function promptDivineDecreeChoice(ctx, basePayload) {
+    const context = ctx || {};
+    const card = context.card || gameState.hand[context.cardIndex];
     if (!card) return;
+    const picked = basePayload || null;
 
     const overlay = document.createElement('div');
     overlay.className = 'taoyuan-choice-overlay';
@@ -4478,7 +4474,7 @@ function promptDivineDecreeChoice(cardIndex, cardOverride) {
         <div class="taoyuan-choice-container">
             <div class="taoyuan-choice-header">
                 <h3>神之宣告</h3>
-                <p>牺牲两艘战舰，选择要触发的效果：</p>
+                <p>已选定牺牲的两艘战舰，请选择要触发的效果：</p>
             </div>
             <div class="divine-decree-options" style="display:flex;flex-direction:column;gap:10px;padding:12px 0;">
                 <button class="phase-btn" data-choice="1">摧毁对方一艘战舰</button>
@@ -4492,15 +4488,28 @@ function promptDivineDecreeChoice(cardIndex, cardOverride) {
         btn.addEventListener('click', () => {
             const choice = parseInt(btn.dataset.choice, 10);
             document.body.removeChild(overlay);
-            if (choice === 0) return;
-            // 卡面要求牺牲两艘自己的战舰。此前这里直接 sendMagicCard，
-            // 服务端收不到 selected_cells，只能 random.shuffle 随机补两艘，
-            // 玩家根本没有选择权（own_ships 选择器也因此永远不可达）。
-            // 现在把效果选择挂起，走「点选两艘自己的船」→ confirmMagicTarget。
+            if (choice === 0) {
+                // 取消：卡牌不打出，清掉选区状态
+                gameState.pendingEffectChoice = null;
+                gameState.currentMagicCard = null;
+                gameState.currentCardIndex = null;
+                return;
+            }
+
+            if (picked) {
+                // 两步都齐了：并到一起提交（上下文沿用第一步的，state 已被清理也不怕）
+                gameState.pendingEffectChoice = null;
+                _dispatchMagicTarget(
+                    Object.assign({}, picked, { effect_choice: choice }), context);
+                return;
+            }
+
+            // 兜底：没有第一步的结果时，退回「先点选两艘自己的船」。
+            // 服务端收不到 selected_cells 会随机补两艘，玩家就没有选择权了。
             gameState.pendingEffectChoice = choice;
             gameState.currentMagicCard = card;
-            gameState.currentCardIndex = cardIndex;
-            showMagicTargetSelection(card, cardIndex);
+            gameState.currentCardIndex = context.cardIndex;
+            showMagicTargetSelection(card, context.cardIndex);
         });
     });
 }
@@ -4508,6 +4517,17 @@ function promptDivineDecreeChoice(cardIndex, cardOverride) {
 // 修改目标选择后的确认函数
 function confirmMagicTarget(targetData) {
     if (!gameState.currentMagicCard || gameState.currentCardIndex === null) return;
+
+    // ⚠️ 先把「提交这张卡所需的全部上下文」抓进局部变量。
+    // showMagicTargetSelection 的「确认」监听器在 confirmMagicTarget 返回之后
+    // 会把 currentMagicCard / currentCardIndex / pendingChainCard / pendingEffectChoice
+    // 统统清空；而神之宣告是两段式（先选船、再选效果），等效果选完再去读 gameState
+    // 只会读到 null —— 轻则卡牌索引丢失打不出去，重则把连锁响应误发成普通出牌。
+    const ctx = {
+        card: gameState.currentMagicCard,
+        cardIndex: gameState.currentCardIndex,
+        chainPending: gameState.pendingChainCard,
+    };
 
     // 兼容多种 targetData 格式：
     // - { target_area: {x1,y1,x2,y2} } （来自对手真实棋盘）
@@ -4555,32 +4575,51 @@ function confirmMagicTarget(targetData) {
         payload = targetData;
     }
 
-    // 神之宣告：把出牌前选好的效果一并带上（否则服务端只能退回默认效果）
+    // 神之宣告：船已经选好了，接着问要发动哪个效果 —— 效果选完才真正提交。
+    // 卡面是「选定自己的两艘船死亡，并选择接下来两个效果其一发动」，船在前、效果在后。
+    if (ctx.card.name === '神之宣告' && !gameState.pendingEffectChoice) {
+        promptDivineDecreeChoice(ctx, payload);
+        return;
+    }
+
+    // 神之宣告：把选好的效果一并带上（否则服务端只能退回默认效果）
     if (gameState.pendingEffectChoice) {
         payload.effect_choice = gameState.pendingEffectChoice;
         gameState.pendingEffectChoice = null;
     }
 
-    // 连锁响应窗口里打出的卡：目标要回填给 chain_response，而不是 use_magic_card
-    if (gameState.pendingChainCard) {
-        const pending = gameState.pendingChainCard;
-        gameState.pendingChainCard = null;
-        gameState.currentMagicCard = null;
-        gameState.currentCardIndex = null;
+    _dispatchMagicTarget(payload, ctx);
+}
+
+// 真正把目标选择结果提交出去：
+// 连锁响应窗口里打出的卡回填给 chain_response，否则走 use_magic_card。
+// ctx 必须由调用方在入口处抓好传进来 —— 走到这里时 gameState 里的选择状态可能已被清理。
+function _dispatchMagicTarget(payload, ctx) {
+    const context = ctx || {};
+    const cardIndex = (context.cardIndex === undefined || context.cardIndex === null)
+        ? gameState.currentCardIndex
+        : context.cardIndex;
+    const chainPending = (context.chainPending === undefined)
+        ? gameState.pendingChainCard
+        : context.chainPending;
+
+    if (chainPending) {
         gameState.pendingChainCard = null;
         gameState.pendingEffectChoice = null;
+        gameState.currentMagicCard = null;
+        gameState.currentCardIndex = null;
         gameState.socket.emit('chain_response', {
             room_id: gameState.roomId,
             player_id: gameState.playerId,
             chain: true,
-            card: pending.card,
+            card: chainPending.card,
             targets: payload
         });
         return;
     }
 
     // 发送并清理当前魔法卡选择状态
-    sendMagicCard(gameState.currentCardIndex, payload);
+    sendMagicCard(cardIndex, payload);
     gameState.currentMagicCard = null;
     gameState.currentCardIndex = null;
 }

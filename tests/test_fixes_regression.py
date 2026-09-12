@@ -221,6 +221,77 @@ def test_sanitize_targets_normalizes(room):
     assert targets['target_line']['index'] == 3
 
 
+def test_sanitize_target_area_missing_key():
+    _, err = server._sanitize_magic_targets({'target_area': {'x1': 0, 'y1': 0, 'x2': 2}})
+    assert err == '目标区域参数缺失'
+
+
+def test_sanitize_target_area_non_integer():
+    _, err = server._sanitize_magic_targets(
+        {'target_area': {'x1': 0, 'y1': 0, 'x2': 'a', 'y2': 2}}
+    )
+    assert err == '目标区域坐标非法'
+
+
+def test_sanitize_target_area_negative():
+    _, err = server._sanitize_magic_targets(
+        {'target_area': {'x1': -1, 'y1': 0, 'x2': 2, 'y2': 2}}
+    )
+    assert err == '目标区域坐标超出棋盘范围'
+
+
+def test_sanitize_target_line_wrong_type():
+    _, err = server._sanitize_magic_targets(
+        {'target_line': {'type': 'diagonal', 'index': 2}}
+    )
+    assert err == '目标行列参数非法'
+
+
+def test_sanitize_target_line_non_integer():
+    _, err = server._sanitize_magic_targets(
+        {'target_line': {'type': 'row', 'index': 'abc'}}
+    )
+    assert err == '目标行列坐标非法'
+
+
+def test_sanitize_target_line_out_of_range():
+    _, err = server._sanitize_magic_targets(
+        {'target_line': {'type': 'col', 'index': 6}}
+    )
+    assert err == '目标行列坐标超出棋盘范围'
+
+
+def test_sanitize_target_cells_non_dict():
+    _, err = server._sanitize_magic_targets({'target_cells': ['not-a-dict']})
+    assert err == '目标格子格式错误'
+
+
+def test_sanitize_target_cells_missing_key():
+    _, err = server._sanitize_magic_targets({'target_cells': [{'x': 0}]})
+    assert err == '目标格子坐标非法'
+
+
+def test_sanitize_target_cells_out_of_range():
+    _, err = server._sanitize_magic_targets(
+        {'target_cells': [{'x': 0, 'y': 6}]}
+    )
+    assert err == '目标格子坐标超出棋盘范围'
+
+
+def test_sanitize_target_cells_normalizes_integers():
+    targets, err = server._sanitize_magic_targets(
+        {'target_cells': [{'x': '1', 'y': '2'}]}
+    )
+    assert err is None
+    assert targets['target_cells'][0] == {'x': 1, 'y': 2}
+
+
+def test_sanitize_non_dict_passthrough():
+    """非 dict 形态（列表/None）原样透传，交由各卡牌分支处理。"""
+    assert server._sanitize_magic_targets(None) == (None, None)
+    assert server._sanitize_magic_targets([]) == ([], None)
+
+
 # ---------------------------------------------------------------------------
 # 7. 已结束房间回收（内存泄漏修复）
 # ---------------------------------------------------------------------------

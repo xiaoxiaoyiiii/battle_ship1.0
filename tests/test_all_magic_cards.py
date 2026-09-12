@@ -216,10 +216,13 @@ def test_yuezhan_grants_one_extra_attack(room):
 # 余音绕梁
 # ---------------------------------------------------------------------------
 def test_yuyin_forced_kill_next_attacks(room):
-    """生效后接下来的攻击强制击杀（可杀无敌/盾牌）"""
+    """生效后接下来的攻击强制击杀（可杀无敌/盾牌），且按攻击阶段而非击杀次数计数"""
+    # 卡面：只能在自己的准备阶段使用
+    room.current_phase = 'preparation'
     apply(room, P1, '余音绕梁')
     assert room.players[P1].effect_flags.forced_kill == 2
 
+    room.current_phase = 'battle'
     s = ship((0, 0), (0, 1))
     s.invincible = True
     room.players[P2].ships = [s]
@@ -227,6 +230,8 @@ def test_yuyin_forced_kill_next_attacks(room):
     attack(room, P1, 0, 0)
     # 强制击杀无视无敌
     assert room.players[P2].remaining_ships == 0
+    # 一次击杀不消耗攻击阶段数
+    assert room.players[P1].effect_flags.forced_kill == 2
 
 
 # ---------------------------------------------------------------------------
@@ -623,7 +628,7 @@ def test_yidian_attack_count_6_minus_n(room):
 # 神之宣告
 # ---------------------------------------------------------------------------
 def test_shenzhi_option1_kill_opponent_ship(room):
-    """牺牲己方两艘船，对方一艘船死亡"""
+    """牺牲己方两艘船；效果1 由【对方自己点选】一艘阵亡的船"""
     room.players[P1].ships = [ship((0, 0)), ship((1, 1)), ship((2, 2))]
     room.players[P1].remaining_ships = 3
     room.players[P2].ships = [ship((3, 3)), ship((4, 4))]
@@ -633,7 +638,33 @@ def test_shenzhi_option1_kill_opponent_ship(room):
     res = apply(room, P1, '神之宣告')
     assert res.success is True
     assert room.players[P1].remaining_ships == 1
+
+    # 卡面：让对方选择自己的一艘船使其死亡 → 应挂起等待对方点选
+    pending = room.magic_temp_data.get('pending_sacrifice')
+    assert pending and pending['player'] == P2 and pending['reason'] == 'divine_decree'
+    assert room.players[P2].remaining_ships == 2
+
+    ok = server.handle_confirm_sacrifice({'room_id': room.id, 'player_id': P2,
+                                          'position': {'x': 3, 'y': 3}})
+    assert ok['status'] == 'success'
     assert room.players[P2].remaining_ships == 1
+
+
+def test_shenzhi_honours_caster_selected_ships(room):
+    """前端点选的两艘自己船应被牺牲（原先服务端随机）"""
+    room.players[P1].ships = [ship((0, 0)), ship((1, 1)), ship((2, 2))]
+    room.players[P1].remaining_ships = 3
+    room.players[P2].ships = [ship((5, 5))]
+    room.players[P2].remaining_ships = 1
+
+    res = server.apply_magic_effect(room, P1, card('神之宣告'), {
+        'effect_choice': 2,
+        'selected_cells': [{'x': 1, 'y': 1}, {'x': 2, 'y': 2}],
+    })
+    assert res.success is True
+    left = {(p.x, p.y) for sh in room.players[P1].ships for p in sh.positions}
+    assert left == {(0, 0)}, '玩家点选的两艘应被牺牲'
+    assert room.players[P1].remaining_ships == 1
 
 
 def test_shenzhi_option2_skip_opponent_turn(room):
@@ -679,20 +710,33 @@ def test_juechu_requires_three_ships(room):
     assert res.success is False
 
 
-def test_juechu_keeps_one_ship_and_wins_on_kill(room):
-    """牺牲所有战舰只留一艘；之后击杀对方任何船直接获胜"""
+def test_juechu_sacrifices_all_and_places_one(room):
+    """牺牲所有战舰（进沉船堆）并在原本有战舰的格子放置唯一一艘；之后击杀任意船直接获胜"""
     room.players[P1].ships = [ship((0, 0)), ship((1, 1)), ship((2, 2))]
     room.players[P1].remaining_ships = 3
     give_hand(room.players[P1], ['轰炸', '冻结'])
 
     res = apply(room, P1, '绝处逢生')
     assert res.success is True
-    assert len(room.players[P1].ships) == 1
-    assert room.players[P1].remaining_ships == 1
+    assert len(room.players[P1].ships) == 0            # 先全部牺牲
+    assert len(room.players[P1].sunken_ships) == 3     # 进沉船堆，而不是凭空消失
+    assert room.players[P1].remaining_ships == 0
     assert room.players[P1].effect_flags.last_stand is True
+    assert room.magic_temp_data['pending_placement']['kind'] == 'last_stand'
+
+    # 只能放在"原本有自己战舰"的格子上
+    bad = server.handle_confirm_reinforcement({'room_id': room.id, 'player_id': P1,
+                                               'position': {'x': 5, 'y': 5}})
+    assert bad['status'] == 'error'
+    ok = server.handle_confirm_reinforcement({'room_id': room.id, 'player_id': P1,
+                                              'position': {'x': 1, 'y': 1}})
+    assert ok['status'] == 'success'
+    assert room.players[P1].remaining_ships == 1
+    assert len(room.players[P1].ships) == 1
 
     room.players[P2].ships = [ship((4, 4))]
     room.players[P2].remaining_ships = 1
+    room.attacks_remaining = 3
     attack(room, P1, 4, 4)
     assert room.state == 'game_over'
     assert room.winner == P1
@@ -757,20 +801,21 @@ def test_liaoyu_placement_requires_sunken(room):
 # 疗愈
 # ---------------------------------------------------------------------------
 def test_liaoyu_revives_up_to_two(room):
+    """卡面：选定至多两艘被击杀的船并【在原地复活】"""
     s1, s2, s3 = ship((0, 0)), ship((1, 1)), ship((2, 2))
+    for s in (s1, s2, s3):
+        s.hits = list(s.positions)          # 已沉：命中已满
+    room.players[P1].ships = [s1, s2, s3]
     room.players[P1].sunken_ships = [s1, s2, s3]
     room.players[P1].remaining_ships = 0
+
     res = apply(room, P1, '疗愈')
     assert res.success is True
-    assert room.magic_temp_data['pending_placement']['remaining'] == 2
-
-    # 逐艘放置
-    for pos in [{'x': 4, 'y': 4}, {'x': 5, 'y': 5}]:
-        r = server.handle_confirm_reinforcement(
-            {'room_id': room.id, 'player_id': P1, 'position': pos})
-        assert r['status'] == 'success'
     assert room.players[P1].remaining_ships == 2
     assert len(room.players[P1].sunken_ships) == 1
+    # 原地复活：位置不变、命中清空，可再次被攻击
+    assert s3.hits == [] and s2.hits == []
+    assert s2.positions[0].x == 1 and s2.positions[0].y == 1
     assert 'pending_placement' not in room.magic_temp_data
 
 
@@ -893,7 +938,7 @@ def test_daoyi_fails_when_own_last(room):
 # 克苏鲁之眼
 # ---------------------------------------------------------------------------
 def test_kesulu_mutual_reveal(room):
-    """双方各暴露一艘船：施法者必须点选自己船所在的格子"""
+    """施法者点选自己的一艘船暴露；随后【对方也点选一艘】暴露（只暴露不摧毁）"""
     room.players[P1].ships = [ship((0, 0))]
     room.players[P1].remaining_ships = 1
     room.players[P2].ships = [ship((5, 5))]
@@ -901,8 +946,17 @@ def test_kesulu_mutual_reveal(room):
     res = apply(room, P1, '克苏鲁之眼',
                 {'target_area': {'x1': 0, 'y1': 0, 'x2': 0, 'y2': 0}})
     assert res.success is True
-    assert {(5, 5)} <= {(p.x, p.y) for p in room.players[P1].revealed_positions}
+    # 施法者那艘已暴露给对方
     assert {(0, 0)} <= {(p.x, p.y) for p in room.players[P2].revealed_positions}
+
+    # 对方仍需自己点选一艘暴露
+    pending = room.magic_temp_data.get('pending_sacrifice')
+    assert pending and pending['player'] == P2 and pending['reason'] == 'kraken_eye'
+    ok = server.handle_confirm_sacrifice({'room_id': room.id, 'player_id': P2,
+                                          'position': {'x': 5, 'y': 5}})
+    assert ok['status'] == 'success'
+    assert {(5, 5)} <= {(p.x, p.y) for p in room.players[P1].revealed_positions}
+    assert room.players[P2].remaining_ships == 1, '只暴露位置，不摧毁战舰'
 
 
 def test_kesulu_rejects_empty_cell(room):

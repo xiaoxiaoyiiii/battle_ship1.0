@@ -357,9 +357,11 @@ def test_dead_attack_code_removed():
 
 
 def test_yuyin_forced_kill_via_real_attack_path(room):
-    """余音绕梁：真实攻击路径下强制击杀无视护盾，2 次后标记耗尽。"""
+    """余音绕梁：真实攻击路径下强制击杀无视护盾，按攻击阶段计数。"""
+    room.current_phase = 'preparation'
     server.apply_magic_effect(room, P1, card('余音绕梁'), {})
     assert room.players[P1].effect_flags.forced_kill == 2
+    room.current_phase = 'battle'
 
     # 对方是护盾船：普通攻击挡不下，强制击杀必须击沉
     room.players[P2].ships = [ship((0, 0)), ship((1, 1))]
@@ -370,18 +372,26 @@ def test_yuyin_forced_kill_via_real_attack_path(room):
     res = server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 0})
     assert res['status'] == 'success'
     assert room.players[P2].remaining_ships == 1  # 护盾未能挡住强制击杀
-    assert room.players[P1].effect_flags.forced_kill == 1
+    assert room.players[P1].effect_flags.forced_kill == 2, '击杀不消耗阶段数'
 
 
-def test_forced_kill_exhausts_after_two(room):
+def test_forced_kill_consumed_per_attack_phase(room):
+    """余音绕梁按攻击阶段消耗：可在一整个攻击阶段内多次强制击杀。"""
+    room.current_phase = 'preparation'
     server.apply_magic_effect(room, P1, card('余音绕梁'), {})
+    room.current_phase = 'battle'
     room.players[P2].ships = [ship((0, 0)), ship((1, 1))]
     room.players[P2].remaining_ships = 2
     room.attacks_remaining = 6
 
     server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 0})
     server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 1, 'y': 1})
-    assert room.players[P1].effect_flags.forced_kill <= 0
+    assert room.players[P1].effect_flags.forced_kill == 2, '同一攻击阶段内可多次强制击杀'
+
+    # 进入结束阶段才消耗一次
+    room.attacks_remaining = 0
+    server.handle_enter_end_phase({'room_id': room.id, 'player_id': P1})
+    assert room.players[P1].effect_flags.forced_kill == 1
 
 
 def test_demon_contract_notifies_attacker(room, events):

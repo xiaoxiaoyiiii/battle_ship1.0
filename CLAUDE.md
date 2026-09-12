@@ -36,12 +36,12 @@ Flask + Flask-SocketIO 的实时双人海战棋，叠加 43 条魔法卡（41 �
 ```bash
 pip install -r requirements.txt
 python start_server.py        # 推荐（含依赖检查）
-python -m pytest tests/ -q    # 240 passed
+python -m pytest tests/ -q    # 250 passed
 ```
 
 > ⚠️ **必须在项目根目录运行**——`server.py` 用相对路径 `./static/magic_card.json`；`tests/test_all_magic_cards.py:1088` 也用硬编码相对路径，是全套测试中唯一对 CWD 敏感的。
 
-**实测基线（2026-09-12 后端/安全审查修复批后）**：`240 passed / 0 failed`（`test_all_magic_cards.py`、`test_db_core.py`、`test_disconnect_and_eden_shenji.py`、`test_fixes_regression.py`、`test_ui_review_fixes.py`、`test_review_fixes_2026_09_12.py`、`test_review_fixes_batch2.py`）。
+**实测基线（2026-09-12 后端/安全审查修复批后）**：`250 passed / 0 failed`（`test_all_magic_cards.py`、`test_db_core.py`、`test_disconnect_and_eden_shenji.py`、`test_fixes_regression.py`、`test_ui_review_fixes.py`、`test_review_fixes_2026_09_12.py`、`test_review_fixes_batch2.py`）。
 
 > 🔧 **2026-09-12 后端/安全审查修复批**（权威清单见 `docs/FIXES_2026-09-12.md`）：7 个 P0 + 20 余个 P1。要点：
 > - **`@_test_event` 装饰器顺序修正**（此前写在 `@socketio.on` 外层 → 门禁完全失效、公网可判胜/白嫖卡/读对方船位）
@@ -51,6 +51,8 @@ python -m pytest tests/ -q    # 240 passed
 > - 「神机妙算」复活不再产生幽灵船；增援/复活不再退还已消耗的攻击次数
 > - 「明智埋葬」「仁王之盾」补上真实链路；百亿补贴按卡面归持卡者；平等条约快照过期；加百列之光/场地归属；回光返照过期；溅射不再让连锁崩溃
 > - 前端：`init()` 幂等（不再双绑事件）、补齐 `#profile-save-msg`/`#show-opponent-stats`/`#total-ships`、船数广播按收件人视角下发
+>
+> **第二批（同批提交）卡牌语义修正**：绝处逢生（牺牲全部 → 玩家在旧位置选一格放唯一一艘）、疗愈（原地复活）、余音绕梁（按攻击阶段而非击杀次数）、神之宣告（采用玩家点选的两艘 + 效果1 由对方点选）、克苏鲁之眼（对方也点选暴露）、失灵！（只能康"本大回合刚使用"的卡）；清理 6 个死监听、修复免空壳大厅（改用 find_match/cancel_match 与 /api/online_count）、补桃园取消按钮（`cancel_magic_selection`）、攻击坐标拒绝小数、空棋盘不再一击判胜、重连快照按 state 路由
 
 > 🔧 **2026-09-11 安全/健壮性修复批**：本文件第 11 节的 P0/P1 问题已修复（详见 `docs/FIX_PLAN.md` 与 `tests/test_fixes_regression.py`）。要点：
 > - 12 个 `test_*` 事件默认关闭（`ENABLE_TEST_EVENTS=1` 启用）；`test_magic.js` 已从 index.html 移除
@@ -184,7 +186,7 @@ game_logs, is_ai_room, shenwei_holes ...
 
 ---
 
-## 5. Socket.IO 事件（41 个，精确名）
+## 5. Socket.IO 事件（43 个，精确名）
 
 > ⚠️ **事件名易错**，以下为 grep 实测的精确字符串。常见误写：`use_magic`（实为 **`use_magic_card`**）、`end_turn_btn`（实为 **`end_turn`**）、`confirm_reinforcement`（实为 **`confirm_reinforcement_position`**）。
 

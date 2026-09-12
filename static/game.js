@@ -970,6 +970,49 @@ function applyRoomSync(data) {
     if (typeof updateTurnIndicator === 'function') updateTurnIndicator(data.current_attacker, data.attacks_remaining);
     if (typeof updatePhaseUI === 'function') updatePhaseUI();
     if (typeof updateHandUI === 'function') updateHandUI();
+
+    // 按服务端状态路由到正确界面（原先一律进 gameScreen：
+    // 在布船 / 猜拳 / 已结束阶段重连会落到错误的界面）
+    if (data.state === 'placing_ships') {
+        if (typeof switchScreen === 'function') switchScreen(shipPlacementScreen);
+        if (typeof initBoard === 'function') initBoard(playerBoard, true);
+    } else if (data.state === 'rock_paper_scissors') {
+        if (typeof switchScreen === 'function') switchScreen(rpsScreen);
+        if (typeof rpsResult !== 'undefined' && rpsResult) rpsResult.textContent = '等待双方出拳…';
+    } else if (data.state === 'game_over') {
+        if (typeof switchScreen === 'function') switchScreen(gameOverScreen);
+    } else {
+        if (typeof switchScreen === 'function') switchScreen(gameScreen);
+        if (typeof initGameBoards === 'function') initGameBoards();
+    }
+
+    // 服务端仍在等待我做的选择：重连后把对应面板重新弹出来
+    if (data.pending_sacrifice && typeof showSacrificePrompt === 'function') {
+        showSacrificePrompt({
+            reason: data.pending_sacrifice.reason,
+            message: data.pending_sacrifice.reason === 'kraken_eye'
+                ? '克苏鲁之眼：请点选一艘自己的战舰暴露位置'
+                : (data.pending_sacrifice.reason === 'divine_decree'
+                    ? '神之宣告：请点选一艘自己的战舰使其阵亡'
+                    : '恶魔契约：请点选一艘自己的战舰牺牲'),
+            ships: data.pending_sacrifice_ships || [],
+        });
+    }
+    if (data.pending_placement && typeof showPlacementPrompt === 'function') {
+        showPlacementPrompt({
+            kind: data.pending_placement.kind,
+            remaining: data.pending_placement.remaining,
+            total: data.pending_placement.total,
+            placed: data.pending_placement.placed,
+            blocked: data.pending_placement_blocked || [],
+            allowed: data.pending_placement_allowed || [],
+        });
+    } else if (data.pending_placement && data.pending_placement.kind) {
+        showMessage('有一艘待放置的战舰，请查看放置面板', { type: 'warning' });
+    }
+    if (data.magic_blocked) {
+        showMessage('你本回合的魔法卡已被「看破！」封锁', { type: 'warning' });
+    }
 }
 
 // 页面加载时初始化WebSocket连接，用于在线人数统计
@@ -1920,11 +1963,16 @@ function setupSocketListeners() {
     socket.on('match_queued', (response) => {
         console.log('已加入匹配队列:', response);
         matchStatus.classList.remove('hidden');
+        // 大厅按钮同步（服务端没有 lobby_joined/lobby_left 这类事件）
+        if (joinLobbyBtn) joinLobbyBtn.classList.add('hidden');
+        if (leaveLobbyBtn) leaveLobbyBtn.classList.remove('hidden');
     });
 
     socket.on('match_canceled', (response) => {
         console.log('匹配已取消:', response);
         matchStatus.classList.add('hidden');
+        if (joinLobbyBtn) joinLobbyBtn.classList.remove('hidden');
+        if (leaveLobbyBtn) leaveLobbyBtn.classList.add('hidden');
     });
 
     socket.on('game_state', (data) => {
@@ -2348,20 +2396,6 @@ function setupSocketListeners() {
     });
 
     // 极限增援结束监听
-    socket.on('reinforcement_finished', (data) => {
-        console.log('极限增援结束:', data);
-        // 隐藏极限增援倒计时
-        const countdownElement = document.getElementById('reinforcement-countdown');
-        // 隐藏状态显示栏中的极限增援
-        const statusElement = document.getElementById('reinforcement-status');
-
-        if (countdownElement) {
-            countdownElement.classList.add('hidden');
-        }
-        if (statusElement) {
-            statusElement.classList.add('hidden');
-        }
-    });
 
     // 添加场地魔法更新监听
     socket.on('field_magic_updated', function (data) {
@@ -2431,32 +2465,11 @@ function setupSocketListeners() {
     });
 
     // 等待神之宣告选择的通知
-    socket.on('divine_decree_waiting', (data) => {
-        showMessage(data.message || '对方正在选择神之宣告的效果，请稍候');
-    });
 
     // 神之宣告结算完成通知
-    socket.on('divine_decree_resolved', (data) => {
-        const { caster, choice, message } = data;
-        addGameLog(`<span class="log-player">${escapeHtml(caster === gameState.playerId ? gameState.playerName : gameState.opponentName)}</span>完成神之宣告选择：效果${escapeHtml(choice)}。${escapeHtml(message)}`);
-        showMessage(message || '神之宣告已结算');
-    });
 
     // 弃牌堆更新通知
-    socket.on('discard_pile_updated', (data) => {
-        console.log('收到弃牌堆更新:', data);
-        gameState.discardPile = data.discard;
-        displayDiscardPile(data.discard);
-    });
 
-    socket.on('magic_chain_error', function (data) {
-        showAlert('魔法卡使用错误：' + data.message);
-        // 错误恢复 - 将卡牌放回手牌
-        if (data.card) {
-            gameState.hand.push(data.card);
-            updateHandUI();
-        }
-    });
 
     socket.on('chain_request', function (data) {
         // 显示连锁选择对话框
@@ -2602,48 +2615,6 @@ function setupSocketListeners() {
         gameState.placedShips = 0;
     });
 
-    socket.on('magic_applied', function (result) {
-        showMessage(`魔法卡【${result.card.name}】效果生效：${result.message}`);
-        applyCardEffect(result.card, result.caster_id || result.caster);
-        // 如果服务器返回了受影响的格子，确保客户端同步显示这些格子的攻击结果
-        if (result.affected_positions && Array.isArray(result.affected_positions)) {
-            result.affected_positions.forEach(pos => {
-                updateAttackDisplay({
-                    attacker: result.caster_id || result.caster || result.card && result.card.caster,
-                    x: pos.x,
-                    y: pos.y,
-                    hit: !!pos.hit,
-                    ship_sunk: !!pos.ship_sunk,
-                    remaining_attacks: result.remaining_attacks,
-                    attacker_remaining_ships: result.attacker_remaining_ships,
-                    defender_remaining_ships: result.defender_remaining_ships
-                });
-            });
-            // 强制重绘棋盘以反映变化
-            initGameBoards();
-        }
-
-        // 处理需要选择的魔法卡效果
-        if (result.temp_data_id) {
-            if (result.temp_data_id === 'taoyuan_choice') {
-                // 只有当施法者是当前玩家时，才显示桃园结义选择UI
-                const caster = result.caster_id || result.caster;
-                if (caster === gameState.playerId) {
-                    // 桃园结义选择UI
-                    showTaoyuanChoice(result);
-                }
-            } else if (result.temp_data_id === 'lingqi_choice') {
-                // 只有当施法者是当前玩家时，才显示灵气复苏选择UI
-                const caster = result.caster_id || result.caster;
-                if (caster === gameState.playerId) {
-                    // 灵气复苏选择UI
-                    showLingqiChoice(result);
-                }
-            }
-        }
-
-        updateHandUI();
-    });
 
     // 显示桃园结义选择界面
     function showTaoyuanChoice(result) {
@@ -2662,6 +2633,9 @@ function setupSocketListeners() {
                     <h4 id="taoyuan-step-title">第一步：选择一张卡牌给自己</h4>
                 </div>
                 <div class="taoyuan-cards-container"></div>
+                <div style="text-align:center;margin-top:10px;">
+                    <button id="taoyuan-cancel-btn" class="secondary">取消（把牌放回牌堆）</button>
+                </div>
             </div>
         `;
         document.body.appendChild(taoyuanChoiceDiv);
@@ -2762,7 +2736,13 @@ function setupSocketListeners() {
         const cancelBtn = document.getElementById('taoyuan-cancel-btn');
         if (cancelBtn) {
             cancelBtn.addEventListener('click', () => {
-                document.body.removeChild(taoyuanChoiceDiv);
+                // 通知服务端放弃选择（把抽出的牌放回牌堆），再关闭浮窗
+                if (gameState.socket) {
+                    gameState.socket.emit('cancel_magic_selection', {
+                        room_id: gameState.roomId, player_id: gameState.playerId,
+                    });
+                }
+                try { document.body.removeChild(taoyuanChoiceDiv); } catch (e) {}
             });
         }
     }
@@ -2958,42 +2938,9 @@ function setupSocketListeners() {
         });
     }
 
-    // 大厅相关事件
-    socket.on('lobby_update', (data) => {
-        // 更新大厅玩家列表
-        if (lobbyPlayerCount && lobbyPlayersList) {
-            lobbyPlayerCount.textContent = data.players.length;
-            lobbyPlayersList.innerHTML = '';
-            data.players.forEach(player => {
-                const li = document.createElement('li');
-                li.textContent = player;
-                lobbyPlayersList.appendChild(li);
-            });
-        }
-    });
-
-    socket.on('lobby_joined', (data) => {
-        joinLobbyBtn.classList.add('hidden');
-        leaveLobbyBtn.classList.remove('hidden');
-        showMessage('已加入匹配队列', { type: 'success' });
-    });
-
-    socket.on('lobby_left', (data) => {
-        joinLobbyBtn.classList.remove('hidden');
-        leaveLobbyBtn.classList.add('hidden');
-        showMessage('已离开匹配队列', { type: 'info' });
-    });
-
-    socket.on('match_found', (data) => {
-        console.log('Match found:', data);
-        showMessage(`找到对手，房间ID: ${data.room_id}`);
-        // 如果在游戏主界面，自动尝试 join_room
-        if (gameState.roomId !== data.room_id) {
-            gameState.roomId = data.room_id;
-            // 告诉服务器加入该房间
-            socket.emit('join_room', { room_id: data.room_id, player_name: gameState.playerName });
-        }
-    });
+    // 说明：服务端从来没有 lobby_update / lobby_joined / lobby_left / match_found
+    // 这些事件（历史遗留空壳，已删除）。大厅按钮状态改由上面真实的
+    // match_queued / match_canceled 处理器同步。
 
     // 新增：监听手牌更新事件
     socket.on('hand_updated', (data) => {
@@ -3214,25 +3161,30 @@ function fetchLeaderboard() {
     });
 }
 
-// 更新大厅显示
+// 更新大厅显示：在线人数取真实接口（服务端没有 lobby_update 事件）
 function updateLobbyDisplay() {
-    // 请求服务器发送大厅更新
-    if (gameState.socket) {
-        // 可以通过发送一个特殊事件来请求更新，或者依赖服务器的广播
-        // 这里暂时不做额外请求，依赖 lobby_update 事件
-    }
+    fetch('/api/online_count').then(r => r.json()).then(data => {
+        if (lobbyPlayerCount && typeof data.online_count === 'number') {
+            lobbyPlayerCount.textContent = data.online_count;
+        }
+        if (lobbyPlayersList) {
+            lobbyPlayersList.innerHTML = '<li>匹配由服务器自动配对，点击「加入匹配」即可</li>';
+        }
+    }).catch(() => {});
 }
 
-// 加入大厅匹配
+// 加入大厅匹配：走真实的 find_match（后端无 join_lobby handler）
 function joinLobbyMatch() {
     ensureSocket();
-    gameState.socket.emit('join_lobby', {});
+    gameState.socket.emit('find_match', { player_name: gameState.playerName });
 }
 
-// 离开大厅匹配
+// 离开大厅匹配：走真实的 cancel_match（后端无 leave_lobby handler）
 function leaveLobbyMatch() {
     if (!gameState.socket) return;
-    gameState.socket.emit('leave_lobby', {});
+    gameState.socket.emit('cancel_match', {
+        room_id: gameState.roomId, player_id: gameState.playerId,
+    });
 }
 
 // 初始化棋盘
@@ -5154,6 +5106,7 @@ function showSacrificePrompt(data) {
 function showPlacementPrompt(data) {
     data = data || {};
     const isRevive = data.kind === 'revive';
+    const isLastStand = data.kind === 'last_stand';
     const total = data.total || 1;
     const placed = data.placed || 0;
     const remaining = (data.remaining != null) ? data.remaining : 1;
@@ -5161,11 +5114,14 @@ function showPlacementPrompt(data) {
     const existing = document.getElementById('placement-prompt');
     if (existing) existing.remove();
 
-    const title = isRevive ? '复活战舰·选择部署位置' : '增援战舰·选择部署位置';
+    const title = isLastStand ? '绝处逢生·放置唯一一艘战舰'
+        : (isRevive ? '复活战舰·选择部署位置' : '增援战舰·选择部署位置');
     const step = total > 1 ? `（第 ${placed + 1}/${total} 艘）` : '';
-    const hint = isRevive
-        ? `这张卡会把阵亡的战舰重新部署到你的棋盘上。${step}点一个亮色格子选中，再点「确认」。灰色格子不能用（对方打过 / 已占用 / 被神威扣掉）。`
-        : `这张卡会给你补充一艘新战舰。${step}点一个亮色格子选中，再点「确认」。灰色格子不能用（对方打过 / 已占用 / 被神威扣掉）。`;
+    const hint = isLastStand
+        ? `牺牲了全部战舰后，只能在${step}原本有自己战舰的格子（亮色）上放置唯一一艘。`
+        : (isRevive
+            ? `这张卡会把阵亡的战舰重新部署到你的棋盘上。${step}点一个亮色格子选中，再点「确认」。灰色格子不能用（对方打过 / 已占用 / 被神威扣掉）。`
+            : `这张卡会给你补充一艘新战舰。${step}点一个亮色格子选中，再点「确认」。灰色格子不能用（对方打过 / 已占用 / 被神威扣掉）。`);
 
     const prompt = document.createElement('div');
     prompt.id = 'placement-prompt';
@@ -5190,11 +5146,15 @@ function showPlacementPrompt(data) {
     document.body.appendChild(prompt);
 
     const blocked = new Set((data.blocked || []).map(b => b.x + ',' + b.y));
+    // 绝处逢生：服务端只给"原本有战舰"的合法格（allowed），其余一律禁点
+    const allowed = Array.isArray(data.allowed)
+        ? new Set(data.allowed.map(a => (a.x != null ? a.x : a[0]) + ',' + (a.y != null ? a.y : a[1])))
+        : null;
     let selected = null;
 
     prompt.querySelectorAll('.placement-cell').forEach(cell => {
         const key = cell.dataset.x + ',' + cell.dataset.y;
-        if (blocked.has(key)) {
+        if (blocked.has(key) || (allowed && !allowed.has(key))) {
             cell.classList.add('blocked');
             return;
         }

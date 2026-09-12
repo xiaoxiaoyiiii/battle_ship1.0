@@ -213,3 +213,106 @@ def test_reinforcement_endgame_records_match(room, monkeypatch, events):
     assert room.winner == P2
     assert len(calls) == 1, '极限增援终局也应写战绩'
     assert any(e[0] == 'game_state' for e in events)
+
+# ---------------------------------------------------------------------------
+# 第二批补充：卡牌语义修正（余音绕梁/疗愈/神之宣告/克苏鲁之眼/绝处逢生/失灵！）
+# ---------------------------------------------------------------------------
+def make_book_room():
+    return None
+
+
+def test_yuyin_requires_preparation_phase(room):
+    """卡面：余音绕梁只能在自己的准备阶段使用"""
+    room.current_phase = 'battle'
+    res = server.apply_magic_effect(room, P1, card('余音绕梁'), {})
+    assert res.success is False
+    assert not getattr(room.players[P1].effect_flags, 'forced_kill', 0)
+
+
+def test_liaoyu_revives_in_place(room):
+    """疗愈：原地复活（不再是"选一个未打过的新格子"）"""
+    sunk = ship((2, 2))
+    sunk.hits = list(sunk.positions)
+    room.players[P1].ships = [sunk]
+    room.players[P1].sunken_ships = [sunk]
+    room.players[P1].remaining_ships = 0
+    room.players[P1].attacks = [Position(2, 2)]
+    room.players[P2].attacks = [Position(2, 2)]
+
+    res = server.apply_magic_effect(room, P1, card('疗愈'), {})
+    assert res.success is True
+    assert room.players[P1].remaining_ships == 1
+    assert sunk.hits == [], '复活必须清空命中'
+    assert sunk.positions[0].x == 2 and sunk.positions[0].y == 2, '原地复活'
+    assert all(not (a.x == 2 and a.y == 2) for a in room.players[P1].attacks)
+    assert 'pending_placement' not in room.magic_temp_data
+
+
+def test_cancel_magic_selection_returns_cards_to_deck(room):
+    """取消桃园结义选择：已抽出的牌放回牌堆，不凭空消失"""
+    drawn = [card('轰炸'), card('疗愈')]
+    room.magic_deck = [card('冻结')]
+    room.magic_temp_data = {'type': 'taoyuan_choice', 'caster': P1, 'cards': drawn}
+
+    res = server.handle_cancel_magic_selection({'room_id': room.id, 'player_id': P1})
+    assert res['status'] == 'success'
+    assert room.magic_temp_data == {}
+    names = sorted(c.name for c in room.magic_deck)
+    assert names == sorted(['冻结', '轰炸', '疗愈'])
+
+
+def test_cancel_magic_selection_rejects_other_player(room):
+    room.magic_temp_data = {'type': 'taoyuan_choice', 'caster': P2, 'cards': []}
+    res = server.handle_cancel_magic_selection({'room_id': room.id, 'player_id': P1})
+    assert res['status'] == 'error'
+
+
+def test_cancel_magic_selection_refuses_placement(room):
+    room.magic_temp_data = {'pending_placement': {'caster': P1, 'kind': 'reinforce',
+                                                  'remaining': 1, 'total': 1, 'placed': 0}}
+    res = server.handle_cancel_magic_selection({'room_id': room.id, 'player_id': P1})
+    assert res['status'] == 'error'
+
+
+def test_attack_rejects_fractional_coordinates(room):
+    """1.9 这类小数不应被 int() 静默截断成 1"""
+    res = server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 1.9, 'y': 0})
+    assert res['status'] == 'error'
+    assert room.players[P1].attacks == []
+    assert room.attacks_remaining == 6
+
+
+def test_attack_on_empty_enemy_board_does_not_instant_win(room):
+    """对手还没有船（未布船/放置流程中途）时，一击不应判胜"""
+    room.players[P2].ships = []
+    room.players[P2].remaining_ships = 0
+    res = server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 0})
+    assert res.get('game_over') is not True
+    assert room.state != 'game_over'
+
+
+def test_room_sync_carries_state_flags_and_pending_picks(room):
+    """重连快照要带上状态标记与"待自己点选"的信息"""
+    room.players[P1].magic_blocked = True
+    room.players[P1].effect_flags.no_draw = True
+    room.magic_temp_data = {'pending_sacrifice': {'player': P1, 'reason': 'divine_decree'}}
+
+    snap = server._build_room_sync(room, P1)
+    assert snap['magic_blocked'] is True
+    assert snap['effect_flags'].get('no_draw') is True
+    assert snap['pending_sacrifice']['reason'] == 'divine_decree'
+    assert len(snap['pending_sacrifice_ships']) == len(room.players[P1].ships)
+
+    # 对手视角不应看到"待我方点选"
+    snap2 = server._build_room_sync(room, P2)
+    assert snap2['pending_sacrifice'] is None
+
+
+def test_shiling_cannot_negate_previous_round_magic(room):
+    """卡面：被影响的魔法卡必须为"当前时段刚使用的"""
+    room.round = 2
+    room.magic_history = [{'card': card('轰炸'), 'caster': P2, 'round': 1}]
+    res = server.apply_magic_effect(room, P1, card('失灵！'), {})
+    assert res.success is False
+    assert len(room.magic_history) == 1, '过期条目不应被吃掉'
+

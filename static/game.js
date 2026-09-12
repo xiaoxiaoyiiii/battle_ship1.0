@@ -1,4 +1,4 @@
-// 基于原 game.js 的优化：添加海洋气泡粒子动画
+﻿// 基于原 game.js 的优化：添加海洋气泡粒子动画
 function initParticles() {
     const canvas = document.getElementById('particle-canvas');
     const ctx = canvas.getContext('2d');
@@ -2369,9 +2369,10 @@ function setupSocketListeners() {
                         showTaoyuanChoice(result);
                     }
                 } else if (result.temp_data_id === 'divine_decree') {
-                    // 神之宣告的效果选择已在出牌前完成（见 promptDivineDecreeChoice），
+                    // 神之宣告的「选两艘船 + 选效果」都在出牌链路里问完了
+                    // （own_ships 选船 → promptDivineDecreeChoice 选效果）。
                     // 这里仅作兼容兜底：不再调用不存在的函数，避免中断整个连锁结算。
-                    console.warn('收到 divine_decree 选择请求，选择已在出牌前完成，忽略');
+                    console.warn('收到 divine_decree 选择请求，选择已在出牌链路完成，忽略');
                 } else if (result.temp_data_id === 'lingqi_choice') {
                     // 只有当施法者是当前玩家时，才显示灵气复苏选择UI
                     if (result.caster === gameState.playerId) {
@@ -2964,7 +2965,9 @@ function setupSocketListeners() {
         }
 
         if (typeof initGameBoards === 'function') initGameBoards();
-        showMessage(mine ? '恶魔契约：你牺牲了一艘战舰' : '恶魔契约：对方牺牲了一艘战舰',
+        // 卡片名按来源显示：恶魔契约 / 神之宣告 都走这条公开事件
+        const reasonText = data.reason === 'divine_decree' ? '神之宣告' : '恶魔契约';
+        showMessage(mine ? `${reasonText}：你牺牲了一艘战舰` : `${reasonText}：对方牺牲了一艘战舰`,
                     { type: 'warning' });
     });
 
@@ -4414,7 +4417,9 @@ function playMagicCard(index) {
         }
     }
 
-    // 神之宣告：需要先选择要触发的效果，再出牌
+    // 神之宣告：两步都走完才算出牌 —— 先选要发动的效果（promptDivineDecreeChoice），
+    // 再由 needsTargetSelection 的 own_ships 收集要牺牲的两艘船，
+    // 最后在 confirmMagicTarget 里把「效果 + 两艘船」一次性提交。
     if (card.name === '神之宣告') {
         promptDivineDecreeChoice(index);
         return;
@@ -4458,7 +4463,8 @@ function sendMagicCard(index, targets) {
     });
 }
 
-// 神之宣告：出牌前选择要触发的效果（1=摧毁对方一艘战舰，2=跳过对方本回合）
+// 神之宣告：第一步 —— 选择要触发的效果（1=摧毁对方一艘战舰，2=跳过对方本回合）。
+// 选完效果再走 own_ships 点选两艘要牺牲的船，最后一起提交（见 confirmMagicTarget）。
 function promptDivineDecreeChoice(cardIndex, cardOverride) {
     // 连锁响应窗口里打出的神之宣告未必存在于「手牌同下标」，
     // 因此允许显式传入卡牌对象（默认仍按手牌下标取）。
@@ -4487,7 +4493,7 @@ function promptDivineDecreeChoice(cardIndex, cardOverride) {
             const choice = parseInt(btn.dataset.choice, 10);
             document.body.removeChild(overlay);
             if (choice === 0) return;
-            // 卡面要求先牺牲两艘自己的战舰。此前这里直接 sendMagicCard，
+            // 卡面要求牺牲两艘自己的战舰。此前这里直接 sendMagicCard，
             // 服务端收不到 selected_cells，只能 random.shuffle 随机补两艘，
             // 玩家根本没有选择权（own_ships 选择器也因此永远不可达）。
             // 现在把效果选择挂起，走「点选两艘自己的船」→ confirmMagicTarget。

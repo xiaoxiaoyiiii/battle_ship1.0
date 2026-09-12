@@ -870,6 +870,52 @@ def test_wuxian_flag_dies_with_the_turn(room):
     assert 'wuxian' not in keep, 'wuxian 一旦进了白名单就变成跨回合永久，与卡面「这一回合」矛盾'
 
 
+def test_wuxian_blocked_by_pope_decree(room):
+    """教皇旨意优先级高于五险一金：攻击次数被压成 0 是场地规则，不给补次数。"""
+    room.players[P1].damage_dealt_this_turn = 0
+    room.players[P1].effect_flags.wuxian = True      # 先挂上保险
+    room.field_magic = card('教皇旨意')
+
+    # 归零也不该触发
+    room.attacks_remaining = 0
+    assert server._maybe_trigger_wuxian_yijin(room, P1) is False
+    assert room.attacks_remaining == 0, '教皇旨意生效时不能补次数'
+
+
+def test_wuxian_cannot_be_played_under_pope_decree(room):
+    """教皇旨意生效时五险一金这张牌一次都触发不了，应该直接拒绝出牌、别浪费。"""
+    room.field_magic = card('教皇旨意')
+    room.players[P1].damage_dealt_this_turn = 0
+    res = apply(room, P1, '五险一金')
+    assert res.success is False
+    assert '教皇旨意' in res.message
+    assert getattr(room.players[P1].effect_flags, 'wuxian', False) is False, '被拒时不该挂上标记'
+
+
+def test_wuxian_rejected_before_play_under_pope_decree(room):
+    """出牌前就拦掉 —— 卡不能被消耗掉，而且要给出具体原因（别只报「速阶2」）。"""
+    room.field_magic = card('教皇旨意')
+    room.players[P1].damage_dealt_this_turn = 0
+    room.players[P1].magic_hand = [card('五险一金')]
+
+    res = server.handle_use_magic_card({
+        'room_id': room.id, 'player_id': P1,
+        'card': {'name': '五险一金'}, 'targets': {}})
+    assert res['status'] == 'error'
+    assert '教皇旨意' in res['message']
+    assert [c.name for c in room.players[P1].magic_hand] == ['五险一金'], '被拒时手牌不该少'
+
+
+def test_wuxian_still_works_after_other_field_magic(room):
+    """别的场地魔法不该误伤 —— 只有教皇旨意压得住五险一金。"""
+    room.players[P1].damage_dealt_this_turn = 0
+    room.field_magic = card('伊甸园')
+    room.attacks_remaining = 0
+    res = apply(room, P1, '五险一金')
+    assert res.success is True
+    assert room.attacks_remaining == 3
+
+
 def test_wuxian_fails_after_damage(room):
     room.players[P1].damage_dealt_this_turn = 1
     res = apply(room, P1, '五险一金')

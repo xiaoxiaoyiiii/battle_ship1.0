@@ -2878,6 +2878,8 @@ def handle_use_magic_card(data):
         if card.name in END_PHASE_PLAYABLE:
             # 这类卡有专属条件，把具体原因告诉玩家，别只报「速阶2」
             reason = freezing_block_reason(room, player_id, card)
+        elif card.name == '五险一金' and field_magic_name(room) == '教皇旨意':
+            reason = '教皇旨意生效中，本回合攻击次数为0，五险一金无法发动'
         return {'status': 'error',
                 'message': reason or f'当前阶段{room.current_phase}无法使用速阶{card.speed}的魔法卡'}
 
@@ -2939,6 +2941,11 @@ def can_play_magic_card(room, player_id, card):
     # 避免"卡进了连锁、结算时才被拒"这种玩家看不到原因的失败。
     if card.name in END_PHASE_PLAYABLE:
         return freezing_block_reason(room, player_id, card) is None
+
+    # 五险一金：教皇旨意优先级更高，它生效时本回合攻击次数恒为 0，这张牌一次都
+    # 触发不了 —— 出牌前就拦掉，别让玩家白扔一张卡（结算时才拒的话卡已经没了）。
+    if card.name == '五险一金' and field_magic_name(room) == '教皇旨意':
+        return False
 
     # 确保speed是数字类型
     speed = int(card.speed)
@@ -3054,10 +3061,17 @@ def _maybe_trigger_wuxian_yijin(room, player_id):
     所有会让攻击次数归零的入口都要调它（攻击结算 / 进入战斗阶段 / 出牌瞬间已经是 0），
     否则会出现「已经 0 次了却永远等不到触发」的漏网情况。
 
+    ⚠️ 教皇旨意优先级更高：它生效时双方攻击次数被压成 0 是**场地规则**，
+    不是「你把攻击打光了」，所以这里绝不能给它补次数。
+
     返回 True 表示这次真的触发了。
     """
     player = room.players.get(player_id)
     if player is None or not getattr(player.effect_flags, 'wuxian', False):
+        return False
+
+    # 教皇旨意 > 五险一金：场地规则优先，补次数等于直接掀掉这张场地魔法
+    if field_magic_name(room) == '教皇旨意':
         return False
 
     # 只有「当前攻击者」的攻击次数才是他自己的
@@ -5331,6 +5345,13 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['message'] = 'Freezing！生效，跳过对方本回合的所有阶段'
 
     elif card.name == '五险一金':
+        # 教皇旨意生效中本回合任何人都没有攻击次数（场地规则），这张牌一次都触发不了，
+        # 直接拒绝出牌，别让它白白浪费。
+        if field_magic_name(room) == '教皇旨意':
+            result['success'] = False
+            result['message'] = '教皇旨意生效中，本回合攻击次数为0，五险一金无法发动'
+            return result
+
         # 本回合已经让对方减过船 → 这张牌无论如何都不会再触发了，直接拒绝，别浪费一张卡
         if caster.damage_dealt_this_turn > 0:
             result['success'] = False

@@ -836,7 +836,10 @@ window.gameState = {
     frozen: false,          // 对手掉线宽限期内冻结操作
     opponentGone: null,     // 对手掉线信息 {deadline}
     sacrificedSelf: [],     // 自己因效果（恶魔契约等）牺牲的格子 → 画在自己棋盘上
-    sacrificedOpponent: []  // 对方牺牲的格子（公开信息）→ 画在对方棋盘上
+    sacrificedOpponent: [], // 对方牺牲的格子（公开信息）→ 画在对方棋盘上
+    // 正等待自己点选一艘船牺牲（恶魔契约等）。棋盘每次重绘后靠它把高亮补回来，
+    // 否则伤害结算的重绘会把选区冲掉、让人以为「点了没反应」。
+    pendingSacrifice: null
 }
 
 let opponentGoneTimer = null;
@@ -2214,6 +2217,7 @@ function setupSocketListeners() {
         // 隐藏状态显示栏中的所有效果
         document.getElementById('reinforcement-status')?.classList.add('hidden');
         document.getElementById('holy-heart-status')?.classList.add('hidden');
+        renderActiveEffects([]);   // 结算界面不该再挂着「生效中」的角标
 
         switchScreen(gameOverScreen);
         // 根据胜利原因显示不同的提示
@@ -3010,6 +3014,11 @@ function setupSocketListeners() {
         opponentShips.textContent = data.opponent_remaining_ships;
     });
 
+    // 当前生效效果角标：完全由服务端广播驱动（服务端是唯一真相）。
+    socket.on('active_effects', (data) => {
+        renderActiveEffects(data && data.effects);
+    });
+
     // 服务器推送的通用消息
     socket.on('message', (data) => {
         if (data && data.text) showMessage(data.text);
@@ -3264,6 +3273,12 @@ function initGameBoards() {
     }
 
     applyShenweiHoles();
+
+    // 棋盘刚被重建（innerHTML=''），所有格子上的高亮/监听都没了。
+    // 如果此刻正等着玩家选一艘自己的船牺牲（恶魔契约等），必须把高亮补回去 ——
+    // 否则弹窗还在、格子却点不动：伤害结算的 attack_result 会重绘棋盘，
+    // 而 sacrifice_request 比它先到，正好被这一次重绘冲掉。
+    if (typeof paintSacrificeCells === 'function') paintSacrificeCells();
 }
 
 // 神威！：把被扣掉的 3x3 区域在棋盘上“挖空”显示
@@ -4748,13 +4763,10 @@ function applyCardEffect(card, casterId) {
 
         case '百亿补贴':
             showMessage('百亿补贴效果生效，船被击败时攻击次数加3');
-            // 添加状态图标显示（元素不存在时静默跳过，避免抛错）
-            {
-                const indicatorBox = document.getElementById('effect-indicators');
-                if (indicatorBox) {
-                    indicatorBox.innerHTML += '<div class="effect-icon" title="百亿补贴">补贴</div>';
-                }
-            }
+            // 角标不在这里挂 —— 由服务端 active_effects 广播统一渲染。
+            // 以前这里是 `indicatorBox.innerHTML += ...`，只加不删：
+            // 服务端其实每回合切换就把 subsidy 清掉了，角标却永远亮着，
+            // 玩家会以为效果是永久的。
             break;
 
         case '绝处逢生':
@@ -4944,16 +4956,45 @@ function updateFieldMagicUI(playerId, card) {
 }
 
 // 恶魔契约：在自己棋盘上点选要牺牲的战舰（不弹额外窗口，直接点格子）
+//
+// ⚠️ 这里刻意【不】给每个格子单独绑点击，而是用事件委托 + 状态驱动高亮：
+// 击沉结算时服务端先发 sacrifice_request、后发 attack_result，而后者会调用
+// initGameBoards() 把整个棋盘 innerHTML 重建 —— 逐格绑的监听和 pick-ship
+// 高亮会被瞬间冲掉，表现就是「弹窗还在，但怎么点都没反应」。
+// 现在：委托监听挂在容器上（重建格子也不失效），高亮由 paintSacrificeCells()
+// 根据 gameState.pendingSacrifice 每次重绘后重刷。
+function clearSacrificeSelection() {
+    gameState.pendingSacrifice = null;
+    gameState.selectingOnBoard = false;
+    gameState.selectionCleanup = null;
+    document.querySelectorAll('.cell.pick-ship, .cell.pick-disabled')
+        .forEach(c => c.classList.remove('pick-ship', 'pick-disabled'));
+    document.querySelectorAll('.magic-target-prompt').forEach(el => el.remove());
+}
+
+// 按当前 pendingSacrifice 状态把「可点/不可点」刷到棋盘上。
+// 幂等：initGameBoards 每次重绘后都会调它。
+function paintSacrificeCells() {
+    if (!gameState.pendingSacrifice || !gamePlayerBoard) return;
+
+    const ownCells = new Set();
+    (gameState.ships || []).forEach(ship => {
+        (ship.positions || []).forEach(p => ownCells.add(p.x + ',' + p.y));
+    });
+
+    gamePlayerBoard.querySelectorAll('.cell').forEach(cell => {
+        const key = cell.dataset.x + ',' + cell.dataset.y;
+        cell.classList.remove('pick-ship', 'pick-disabled');
+        cell.classList.add(ownCells.has(key) ? 'pick-ship' : 'pick-disabled');
+    });
+}
+
 function showSacrificePrompt(data) {
     // 清理可能残留的选区状态，避免 selectingOnBoard 卡死
     if (typeof gameState.selectionCleanup === 'function') {
         try { gameState.selectionCleanup(); } catch (_) { }
-        gameState.selectionCleanup = null;
     }
-    gameState.selectingOnBoard = false;
-    document.querySelectorAll('.magic-target-prompt').forEach(el => el.remove());
-    document.querySelectorAll('.cell.pick-ship, .cell.pick-disabled')
-        .forEach(c => c.classList.remove('pick-ship', 'pick-disabled'));
+    clearSacrificeSelection();
 
     const prompt = document.createElement('div');
     prompt.className = 'magic-target-prompt';
@@ -4965,30 +5006,25 @@ function showSacrificePrompt(data) {
     showMessage((data && data.message) || '恶魔契约生效，请选择一艘自己的战舰牺牲',
                 { type: 'warning' });
 
-    gameState.selectingOnBoard = true;
-    const listeners = [];
-
-    // 自己船所在的格子
-    const ownCells = new Set();
-    (gameState.ships || []).forEach(ship => {
-        (ship.positions || []).forEach(p => ownCells.add(p.x + ',' + p.y));
-    });
-
-    const cleanup = () => {
-        listeners.forEach(({ el, handler }) => el.removeEventListener('click', handler, true));
-        document.querySelectorAll('.cell.pick-ship, .cell.pick-disabled')
-            .forEach(c => c.classList.remove('pick-ship', 'pick-disabled'));
-        gameState.selectingOnBoard = false;
-        if (document.body.contains(prompt)) document.body.removeChild(prompt);
-        gameState.selectionCleanup = null;
+    // 记下「正等着选船」这个状态：棋盘重绘后由 paintSacrificeCells() 据此补回高亮
+    gameState.pendingSacrifice = {
+        reason: (data && data.reason) || 'demon_contract',
+        message: (data && data.message) || ''
     };
+    gameState.selectingOnBoard = true;
 
+    // 事件委托：只绑一次，且绑在容器上 —— 格子被重建也不影响
     const onClick = (e) => {
+        const el = e.target && e.target.closest ? e.target.closest('.cell.pick-ship') : null;
+        if (!el || !gamePlayerBoard.contains(el)) return;
         e.stopPropagation();
         e.preventDefault();
-        const el = e.currentTarget;
+
         const x = parseInt(el.dataset.x, 10);
         const y = parseInt(el.dataset.y, 10);
+        // 先清掉选区再发请求：否则服务端的 ships_updated 重绘棋盘时，
+        // 玩家已经点过的格子还亮着，看起来像没点。
+        clearSacrificeSelection();
         gameState.socket.emit('confirm_sacrifice', {
             room_id: gameState.roomId,
             player_id: gameState.playerId,
@@ -4998,22 +5034,17 @@ function showSacrificePrompt(data) {
                 showAlert(resp.message || '牺牲失败，请重新选择');
             }
         });
-        cleanup();
     };
 
-    (gamePlayerBoard ? gamePlayerBoard.querySelectorAll('.cell') : []).forEach(cell => {
-        const x = parseInt(cell.dataset.x, 10);
-        const y = parseInt(cell.dataset.y, 10);
-        if (!ownCells.has(x + ',' + y)) {
-            cell.classList.add('pick-disabled');   // 空格：灰掉，不可点
-            return;
-        }
-        cell.classList.add('pick-ship');
-        cell.addEventListener('click', onClick, true);
-        listeners.push({ el: cell, handler: onClick });
-    });
+    if (gamePlayerBoard) {
+        gamePlayerBoard.addEventListener('click', onClick, true);
+        gameState.selectionCleanup = () => {
+            gamePlayerBoard.removeEventListener('click', onClick, true);
+            clearSacrificeSelection();
+        };
+    }
 
-    gameState.selectionCleanup = cleanup;
+    paintSacrificeCells();
 }
 
 // 增援 / 复活：统一放置弹窗（灰格不可选、可确认、可放弃）
@@ -5556,6 +5587,20 @@ function initEffectStatusBarSync() {
         items.forEach((el) => observer.observe(el, { attributes: true, attributeFilter: ['class'] }));
     }
     sync();
+}
+
+// 当前生效效果角标：按服务端广播的列表【整体重画】。
+// 关键在「整体重画」——以前是 innerHTML += 追加，挂上就永远没人摘：
+// 百亿补贴每回合切换其实就会被服务端清掉，角标却一直亮着，看着像永久生效。
+// 服务端每次 effect_flags 变化（出牌结算完 / 回合切换 / 新大回合）都会推一份最新列表。
+function renderActiveEffects(effects) {
+    const box = document.getElementById('effect-indicators');
+    if (!box) return;
+    const list = Array.isArray(effects) ? effects : [];
+    box.innerHTML = list.map((name) => {
+        const safe = escapeHtml(String(name));
+        return `<div class="effect-icon" title="${safe}">${safe}</div>`;
+    }).join('');
 }
 
 // 初始化

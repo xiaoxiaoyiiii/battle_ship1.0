@@ -1549,6 +1549,73 @@ def test_normal_placement_still_goes_to_rps(room):
 # ---------------------------------------------------------------------------
 # 败者食尘
 # ---------------------------------------------------------------------------
+def test_baizhe_reset_gameboard_targets_sid_not_player_key(room, events):
+    """败者食尘的 reset_gameboard 必须发给 player.sid。
+
+    room.players 的 key 在自定义房 / 人机房里是 user_id（≠ socket sid）。
+    以前写成 to=p_id，事件根本送不到 —— 玩家界面毫无反应、只能手动刷新游戏
+    才会开始重新摆船。游客恰好 p_id == sid，所以这个 bug 只在登录用户身上出现。
+    """
+    room.players[P1].ships = [ship((0, 0)), ship((1, 1))]
+    room.players[P1].remaining_ships = 2
+    room.players[P2].ships = [ship((4, 4))]
+    room.players[P2].remaining_ships = 1
+
+    apply(room, P1, '败者食尘')
+
+    targets = sorted(t for (e, _d, t, _r) in events if e == 'reset_gameboard')
+    assert targets == ['sid-p1', 'sid-p2'], f'应发给两个 sid，实际 {targets}'
+    assert P1 not in targets and P2 not in targets, '不能把玩家 key 当成 sid 用'
+
+
+def test_lingqi_reset_gameboard_targets_sid_not_player_key(room, events):
+    """灵气复苏走的是同一段发放逻辑，同样必须发到 sid。"""
+    room.magic_temp_data = {'type': 'lingqi_choice', 'max_ships': 6}
+    events.clear()
+
+    server.confirm_magic_target({
+        'room_id': room.id, 'player_id': P1,
+        'temp_data_id': 'lingqi_choice', 'target_data': {'target_ships': 3}})
+
+    targets = sorted(t for (e, _d, t, _r) in events if e == 'reset_gameboard')
+    assert targets == ['sid-p1', 'sid-p2'], f'应发给两个 sid，实际 {targets}'
+    assert P1 not in targets and P2 not in targets, '不能把玩家 key 当成 sid 用'
+
+
+# 当前生效效果角标：服务端每次变化都要把「真相」推给本人
+def test_active_effects_broadcast_tracks_flag_lifecycle(room, events):
+    """百亿补贴的角标必须随真实状态出现 / 消失（以前前端只加不删，看着像永久）。"""
+    events.clear()
+    server._emit_active_effects(room)
+    got = [d for (e, d, _t, _r) in events if e == 'active_effects']
+    assert got and all(d['effects'] == [] for d in got), '没效果时列表应为空'
+
+    # 打出百亿补贴 → 角标出现
+    events.clear()
+    apply(room, P1, '百亿补贴')
+    server._emit_active_effects(room)
+    by_target = {t: d['effects'] for (e, d, t, _r) in events if e == 'active_effects'}
+    assert '百亿补贴' in by_target.get('sid-p1', []), '施法者应看到角标'
+    assert '百亿补贴' not in by_target.get('sid-p2', []), '对手不该看到我的角标'
+
+    # 回合切换会清掉 subsidy → 角标必须跟着消失
+    room.players[P1].effect_flags.__dict__ = {
+        k: v for k, v in room.players[P1].effect_flags.__dict__.items()
+        if k in ['holy_heart']}
+    events.clear()
+    server._emit_active_effects(room)
+    by_target = {t: d['effects'] for (e, d, t, _r) in events if e == 'active_effects'}
+    assert '百亿补贴' not in by_target.get('sid-p1', []), '标记被清后角标要消失'
+
+
+def test_active_effects_sent_to_both_players_by_sid(room, events):
+    """角标按 sid 直发本人（同样是 player.sid，不能拿玩家 key 当 sid）。"""
+    events.clear()
+    server._emit_active_effects(room)
+    targets = sorted(t for (e, _d, t, _r) in events if e == 'active_effects')
+    assert targets == ['sid-p1', 'sid-p2'], f'实际 {targets}'
+
+
 def test_baizhe_restart_keep_hands(room):
     """重启对局但保留手牌；生效大回合内攻击次数为0"""
     give_hand(room.players[P1], ['轰炸'])

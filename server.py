@@ -2374,6 +2374,9 @@ def end_turn(data):
                                                                 room.players[p_id].effect_flags.__dict__.items() if
                                                                 k in permanent_flags}
 
+            # 新一轮清空了所有临时效果，角标要跟着消失
+            _emit_active_effects(room)
+
             # 广播进入猜拳阶段
             emit('game_state', {
                 'state': 'rock_paper_scissors',
@@ -2420,6 +2423,9 @@ def end_turn(data):
                 room.players[p_id].effect_flags.__dict__ = {k: v for k, v in
                                                                 room.players[p_id].effect_flags.__dict__.items() if
                                                                 k in permanent_flags}
+
+            # 标记刚被清了一批，角标要跟着消失（否则百亿补贴等会一直亮着）
+            _emit_active_effects(room)
 
             # 广播回合和阶段更新
             emit('phase_updated', {
@@ -2989,6 +2995,38 @@ def _emit_ships_updated(room):
         }, to=player.sid)
 
 
+# 前端「当前生效效果」角标的数据源。
+# 角标以前是前端自己 `innerHTML +=` 挂上去的，挂上就再没人摘 —— 百亿补贴明明
+# 每回合切换就被清掉了，角标却一直亮着，玩家以为效果是永久的。
+# 现在改成服务端在状态变化后广播真相，前端只负责照着画，不会再出现「贴上就下不来」。
+_EFFECT_BADGES = (
+    ('subsidy', '百亿补贴'),
+    ('vampire', '饮血'),
+    ('treasure_hunter', '八方来财'),
+    ('prediction', '神机妙算'),
+    ('double_attacks', '火力全开'),
+    ('battle_spirit', '越战越勇'),
+    ('last_stand', '绝处逢生'),
+    ('no_draw', '无中生有'),
+)
+
+
+def _effect_badges(player):
+    """返回该玩家当前仍然生效的效果名（用于前端角标）。"""
+    flags = getattr(player, 'effect_flags', None)
+    if flags is None:
+        return []
+    return [label for attr, label in _EFFECT_BADGES if getattr(flags, attr, None)]
+
+
+def _emit_active_effects(room):
+    """把「当前生效效果」分别推给本人 —— 角标是给自己看的状态，不广播给对方。"""
+    for player in room.players.values():
+        if not getattr(player, 'sid', None):
+            continue
+        emit('active_effects', {'effects': _effect_badges(player)}, to=player.sid)
+
+
 def _revive_sunken_ships(room, player, count):
     """把 count 艘已沉没的战舰放回棋盘（神机妙算 / 复活类效果）。
 
@@ -3141,6 +3179,9 @@ def resolve_chain(room):
     room.chain_waiting = False
     room.chain_window = None
     room.chain_passes = 0
+
+    # 这一批卡的效果刚落地，双方的 effect_flags 可能变了 —— 刷新角标
+    _emit_active_effects(room)
 
     return results
 
@@ -4057,11 +4098,14 @@ def confirm_magic_target(data):
         room.lingqi_resurgence_applied = True
 
         # 通知双方进入重新摆放阶段，并发送新的船数限制
+        # ⚠️ to= 要的是 socket sid，不是 room.players 的 key。
+        # 自定义房/人机房里登录用户的 key 是 user_id（≠ sid），传 p_id 会石沉大海 ——
+        # 玩家那边界面毫无反应，只能手动刷新才发现要重新摆船。
         for p_id in room.players:
             emit('reset_gameboard', {
                 'new_max_ships': target_ships,
                 'message': f'灵气复苏生效，双方需要重新摆放{target_ships}艘战舰'
-            }, to=p_id)
+            }, to=room.players[p_id].sid)
 
         # 通知对手等待结束
         emit('lingqi_complete', {
@@ -4607,12 +4651,14 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         room.polar_reversal_applied = True
 
         # 通知双方进入重新摆放阶段，并发送新的船数限制
+        # ⚠️ 同灵气复苏：必须发到 player.sid。以前传的是 room.players 的 key（登录用户
+        # 就是 user_id ≠ sid），事件根本没送到 —— 玩家只能手动刷新游戏才会开始重新摆放。
         for p_id in room.players:
             player = room.players[p_id]
             emit('reset_gameboard', {
                 'new_max_ships': player.max_ships,
                 'message': '败者食尘生效，立即重启正常对局但保留双方的手牌'
-            }, to=p_id)
+            }, to=player.sid)
 
         # 设置结果
         result['message'] = '败者食尘生效，立即重启正常对局但保留双方的手牌'

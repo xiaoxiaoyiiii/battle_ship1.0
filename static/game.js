@@ -1075,9 +1075,168 @@ function renderServerLog(entry) {
     addGameLog(
         `<span class="log-time">${escapeHtml(time)}</span>` +
         `<span class="log-badge log-badge-${escapeHtml(entry.type || 'info')}">${typeLabel}</span>` +
-        `<span class="log-text">${escapeHtml(entry.text)}</span>`,
+        renderLogTextHtml(entry),
         entry.type
     );
+}
+
+// 从 window.magicCards 里按卡名取卡；不存在返回 null
+function lookupCard(name) {
+    const list = window.magicCards;
+    if (!Array.isArray(list) || !name) return null;
+    return list.find(c => c && c.name === name) || null;
+}
+
+// 解析日志里提到的卡名：优先用服务端 payload，兜底扫【X】并用卡表校验
+function findLogCardName(entry) {
+    const detail = entry && entry.detail;
+    if (detail && typeof detail === 'object') {
+        // 服务端两处日志的字段名不一致：log_magic 用 card，硫磺火焰用 card_name
+        const candidate = detail.card || detail.card_name;
+        if (typeof candidate === 'string' && lookupCard(candidate)) return candidate;
+    }
+    const m = /【([^】]{1,24})】/.exec(String((entry && entry.text) || ''));
+    if (m && lookupCard(m[1])) return m[1];
+    return null;
+}
+
+// 渲染日志正文：卡名包成可交互 span（悬停/点击），其余照旧转义
+function renderLogTextHtml(entry) {
+    const raw = String(entry.text || '');
+    const name = findLogCardName(entry);
+    if (!name) return `<span class="log-text">${escapeHtml(raw)}</span>`;
+
+    // 带【】的形态：连方括号一起做成可点区域，视觉上更醒目
+    const wrapped = '【' + name + '】';
+    let idx = raw.indexOf(wrapped);
+    let before, after, inner;
+    if (idx >= 0) {
+        before = raw.slice(0, idx);
+        after = raw.slice(idx + wrapped.length);
+        inner = '【' + escapeHtml(name) + '】';
+    } else {
+        // 没写【】就直接匹配卡名本身
+        idx = raw.indexOf(name);
+        if (idx < 0) return `<span class="log-text">${escapeHtml(raw)}</span>`;
+        before = raw.slice(0, idx);
+        after = raw.slice(idx + name.length);
+        inner = escapeHtml(name);
+    }
+
+    return `<span class="log-text">${escapeHtml(before)}` +
+        `<span class="log-card-ref" data-card="${escapeHtml(name)}">${inner}</span>` +
+        `${escapeHtml(after)}</span>`;
+}
+
+// ---------------------------------------------------------------------------
+// 日志卡名：桌面悬停浮层 + 点击详情小窗（手机无悬停，点一下直接出窗）
+// ---------------------------------------------------------------------------
+let cardTooltipEl = null;
+
+function showCardTooltip(anchorEl, card) {
+    hideCardTooltip();
+    if (!anchorEl || !card) return;
+
+    const tip = document.createElement('div');
+    tip.className = 'card-tooltip';
+    tip.innerHTML =
+        `<div class="card-tooltip-name">${escapeHtml(card.name)}</div>` +
+        `<div class="card-tooltip-stats">${escapeHtml(card.type || '')} · 速阶 ${escapeHtml(String(card.speed))}</div>` +
+        `<div class="card-tooltip-desc">${escapeHtml(card.description || '')}</div>`;
+    document.body.appendChild(tip);
+    cardTooltipEl = tip;
+
+    // 先量尺寸再定位：默认卡名下方居中，出界就翻到上方 / 贴边
+    const r = anchorEl.getBoundingClientRect();
+    const tw = tip.offsetWidth;
+    const th = tip.offsetHeight;
+    let top = r.bottom + 8;
+    if (top + th > window.innerHeight - 8) top = r.top - th - 8;
+    if (top < 8) top = 8;
+    let left = r.left + r.width / 2 - tw / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - tw - 8));
+
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+}
+
+function hideCardTooltip() {
+    if (cardTooltipEl && cardTooltipEl.parentNode) {
+        cardTooltipEl.parentNode.removeChild(cardTooltipEl);
+    }
+    cardTooltipEl = null;
+}
+
+function showCardDetail(card) {
+    closeCardDetail();
+    if (!card) return;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'card-detail-overlay';
+    overlay.id = 'card-detail-overlay';
+    overlay.innerHTML =
+        `<div class="card-detail-box">
+            <button type="button" class="card-detail-close" aria-label="关闭">✕</button>
+            <div class="card-detail-name">${escapeHtml(card.name)}</div>
+            <div class="card-detail-stats">
+                <span class="stat-item">速阶: ${escapeHtml(String(card.speed))}</span>
+                <span class="stat-item">类型: ${escapeHtml(card.type || '-')}</span>
+            </div>
+            <div class="card-detail-desc-title">效果描述:</div>
+            <div class="card-detail-desc">${escapeHtml(card.description || '（无描述）')}</div>
+        </div>`;
+    document.body.appendChild(overlay);
+
+    // 关闭：点遮罩空白 / 点 ✕ / 按 ESC
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) closeCardDetail();
+    });
+    const closeBtn = overlay.querySelector('.card-detail-close');
+    if (closeBtn) closeBtn.addEventListener('click', closeCardDetail);
+
+    const onKey = (e) => { if (e.key === 'Escape') closeCardDetail(); };
+    document.addEventListener('keydown', onKey);
+    overlay._onKey = onKey;
+}
+
+function closeCardDetail() {
+    const overlay = document.getElementById('card-detail-overlay');
+    if (!overlay) return;
+    if (overlay._onKey) document.removeEventListener('keydown', overlay._onKey);
+    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+}
+
+// 事件委托：日志条目会不断新增又被裁剪，逐条绑监听会漏绑且泄漏，所以只绑一次
+function initGameLogCardRefs() {
+    const host = document.getElementById('game-logs');
+    if (!host || host._cardRefsBound) return;
+    host._cardRefsBound = true;
+
+    host.addEventListener('click', (e) => {
+        const ref = e.target && e.target.closest && e.target.closest('.log-card-ref');
+        if (!ref) return;
+        const card = lookupCard(ref.dataset.card);
+        if (!card) return;
+        hideCardTooltip();
+        showCardDetail(card);
+    });
+
+    // 触摸设备没有 hover，不绑悬停事件
+    const canHover = !window.matchMedia || window.matchMedia('(hover: hover)').matches;
+    if (!canHover) return;
+
+    host.addEventListener('mouseover', (e) => {
+        const ref = e.target && e.target.closest && e.target.closest('.log-card-ref');
+        if (!ref) return;
+        const card = lookupCard(ref.dataset.card);
+        if (card) showCardTooltip(ref, card);
+    });
+    host.addEventListener('mouseout', (e) => {
+        const ref = e.target && e.target.closest && e.target.closest('.log-card-ref');
+        if (ref) hideCardTooltip();
+    });
+    // 滚动/折叠日志时收起浮层，避免它停在原地
+    host.addEventListener('scroll', hideCardTooltip, { passive: true });
 }
 
 // 绑定事件监听器
@@ -2869,6 +3028,9 @@ function setupSocketListeners() {
     socket.on('game_log', (entry) => {
         renderServerLog(entry);
     });
+
+    // 日志里的卡名支持悬停查看 / 点击详情（幂等，只绑一次）
+    initGameLogCardRefs();
 
     // 增援 / 复活：服务端请求选择部署位置
     socket.on('placement_request', (data) => {

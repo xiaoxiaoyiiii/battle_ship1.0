@@ -489,6 +489,85 @@ input:focus, select:focus {
 .log-card { color: var(--accent); font-weight: bold; }
 .log-coordinate { font-weight: bold; }
 
+/* ---------- 8.1 日志里的可交互卡名 ---------- */
+.log-card-ref {
+    color: var(--primary);
+    font-weight: bold;
+    cursor: pointer;
+    border-bottom: 1px dashed currentColor;
+    padding: 0 1px;
+    transition: background-color 0.12s ease, color 0.12s ease;
+}
+.log-card-ref:hover,
+.log-card-ref:focus {
+    background-color: rgba(33, 150, 243, 0.18);
+    color: var(--primary-600);
+}
+
+/* 悬停浮层：卡名 + 速阶 + 类型 + 完整描述 */
+.card-tooltip {
+    position: fixed;
+    z-index: 10050;
+    max-width: min(320px, 86vw);
+    padding: 10px 12px;
+    background: var(--surface-strong);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    pointer-events: none;   /* 浮层不挡鼠标，避免闪烁 */
+    font-size: 0.86em;
+    line-height: 1.5;
+}
+.card-tooltip-name { font-weight: bold; font-size: 1.05em; margin-bottom: 4px; }
+.card-tooltip-stats { color: var(--muted); font-size: 0.9em; margin-bottom: 6px; }
+.card-tooltip-desc { color: var(--text); }
+
+/* 点击后的详情小窗（居中浮层） */
+.card-detail-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10060;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4vh 4vw;
+    box-sizing: border-box;
+    overflow-y: auto;
+}
+.card-detail-box {
+    position: relative;
+    width: min(420px, 92vw);
+    max-height: 86vh;
+    overflow-y: auto;
+    margin: auto;
+    padding: 18px 20px 20px;
+    background: var(--surface-strong);
+    border: 1px solid var(--panel-border);
+    border-radius: 14px;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+}
+.card-detail-close {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--muted);
+    font-size: 1.05em;
+    line-height: 1;
+    cursor: pointer;
+}
+.card-detail-close:hover { background: rgba(0, 0, 0, 0.08); color: var(--danger); }
+.card-detail-name { font-size: 1.2em; font-weight: bold; margin-bottom: 8px; padding-right: 34px; }
+.card-detail-stats { display: flex; gap: 14px; color: var(--muted); margin-bottom: 12px; }
+.card-detail-desc-title { font-weight: bold; margin-bottom: 4px; }
+.card-detail-desc { line-height: 1.65; white-space: pre-wrap; }
+
 /* ---------- 8. 浮窗：魔法卡预览 ---------- */
 .magic-preview-container {
     position: relative;

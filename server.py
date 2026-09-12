@@ -2926,6 +2926,16 @@ def handle_use_magic_card(data):
         return {'status': 'error',
                 'message': reason or f'当前阶段{room.current_phase}无法使用速阶{card.speed}的魔法卡'}
 
+    # 依赖「自己上一发攻击」的卡，在这里就把条件判掉。
+    #
+    # ⚠️ 为什么必须放在扣牌【之前】：下面那几行会先把手牌移入弃牌堆、再压入连锁栈，
+    # 而这类卡要到 apply_magic_effect 结算时才发现条件不满足 —— 那时牌已经离手，
+    # 失败也不会退还。玩家实测：打空一发后用饮血，提示「当前无法使用饮血」，
+    # 但牌从手牌里消失了。溅射 / 雷达子弹 同理。
+    hit_reason = _last_attack_requirement_reason(room, player_id, card)
+    if hit_reason:
+        return {'status': 'error', 'message': hit_reason}
+
     # 找到并移除玩家手牌中的卡牌
     for i, c in enumerate(player.magic_hand):
         if c.name == card.name and c.speed == card.speed:
@@ -2972,6 +2982,36 @@ def freezing_block_reason(room, player_id, card):
         return 'Freezing！只能在结束阶段发动'
     if room.players[player_id].damage_dealt_this_turn > 0:
         return '本回合已使对方船数减少，无法发动 Freezing！'
+    return None
+
+
+def _last_attack_requirement_reason(room, player_id, card):
+    """依赖「自己上一发攻击」的卡，返回不满足条件的原因；满足则返回 None。
+
+    这三张卡的卡面都写着「可在…后选择使用」，共同前提是自己刚打完一发：
+      · 饮血     —— 须【击沉】一艘（卡面已同步为此口径）
+      · 溅射     —— 须【击中】（对命中格上下左右造成同等伤害）
+      · 雷达子弹 —— 须【击中】（扫描命中格周围八格）
+
+    必须在扣牌前调用：这些条件原先只在 apply_magic_effect 里判，那时牌已经
+    移出手牌并进了弃牌堆，失败也不退还 —— 玩家会看到「无法使用」+ 牌没了。
+    """
+    if card.name not in ('饮血', '溅射', '雷达子弹'):
+        return None
+
+    last = getattr(room, 'last_attack', None)
+    if not last or last.get('attacker') != player_id:
+        return f'{card.name}需要在自己攻击过之后才能使用'
+
+    if card.name == '饮血':
+        # 击沉才算数：卡面后半句是「每击杀一艘船摸一张牌」，
+        # 拿"命中"当门槛会让玩家打中一艘没沉的船就以为能发动。
+        if not last.get('ship_sunk'):
+            return '饮血需要在击沉对方一艘战舰后才能使用'
+    else:
+        if not last.get('hit'):
+            return f'{card.name}需要在自己上一发攻击命中对方后才能使用'
+
     return None
 
 
@@ -5392,15 +5432,26 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['affected_positions'] = affected_positions
 
     elif card.name == '饮血':
-        # 卡面："可在击中对方后选择使用" → 必须有自己上一次击中对方的记录
+        # 卡面："可在击中对方后选择使用" —— 发动前提是自己上一次攻击【击沉了一艘船】。
+        #
+        # ⚠️ 判定依据必须是 last_attack['ship_sunk'] 而不是 ['hit']：
+        #   hit 只说明那一格有船，ship_sunk 才是"击杀"。
+        #   卡面后半句是"接下来每击杀一艘船抽一张牌"，拿 hit 当门槛会让玩家
+        #   打中一艘没沉的船就以为能发动，实际摸不到牌。
         last = getattr(room, 'last_attack', None) or {}
-        if not (last.get('attacker') == caster_id and last.get('hit')):
+        if not (last.get('attacker') == caster_id and last.get('ship_sunk')):
             result['success'] = False
-            result['message'] = '需要在击中对方战舰后才能使用'
+            result['message'] = '需要在击沉对方一艘战舰后才能使用'
             return result
-        # 每击杀一艘船，抽一张牌
+
         room.players[caster_id].effect_flags.vampire = True
-        result['message'] = '接下来自己的攻击，每击杀一艘船，自己摸一张牌。'
+
+        # 刚打完的那一发「补算」：饮血是在击沉之后才打出的，若只对以后生效，
+        # 玩家会觉得自己刚打沉的那艘白沉了。这里立即补摸一张。
+        # （每张饮血只补一次 —— 它记录的就是"发动时那一次击沉"。）
+        room.draw_card(caster_id)
+        emit('message', {'text': '饮血发动，立即抽一张卡'}, to=room.players[caster_id].sid)
+        result['message'] = '饮血生效：已为刚才击沉的战舰抽一张牌，接下来每击杀一艘船再抽一张。'
 
     elif card.name == '克苏鲁之眼':
         # 双方各暴露一艘船。施法者必须点选一艘【自己的船】所在格，不能选空格。

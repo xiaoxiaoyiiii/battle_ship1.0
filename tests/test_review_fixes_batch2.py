@@ -213,9 +213,21 @@ def test_reinforcement_countdown_skips_activation_round(room):
 
 
 def test_yinxue_requires_prior_hit(room):
+    """饮血必须在击沉对方一艘战舰后才能发动。
+
+    2026-09-14 语义收紧：原先只需「击中」（hit），现改为「击沉」（ship_sunk）——
+    卡面后半句是"每击杀一艘船摸一张牌"，拿"命中"当门槛会让玩家打中一艘
+    没沉的船就以为能发动，实际什么都不会发生。
+    """
     res = server.apply_magic_effect(room, P1, card('饮血'), {})
     assert res.success is False
-    room.last_attack = {'attacker': P1, 'x': 0, 'y': 0, 'hit': True}
+
+    # 只命中未击沉 → 仍不可发动
+    room.last_attack = {'attacker': P1, 'x': 0, 'y': 0, 'hit': True, 'ship_sunk': False}
+    assert server.apply_magic_effect(room, P1, card('饮血'), {}).success is False
+
+    # 击沉 → 可发动
+    room.last_attack = {'attacker': P1, 'x': 0, 'y': 0, 'hit': True, 'ship_sunk': True}
     assert server.apply_magic_effect(room, P1, card('饮血'), {}).success is True
 
 

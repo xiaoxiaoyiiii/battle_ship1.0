@@ -1084,15 +1084,20 @@ def test_wuzhong_draw_two_and_lock_draw(room):
 def test_yinxue_draw_on_kill(room):
     """接下来自己的攻击每击杀一艘船摸一张牌"""
     give_deck(room, ['轰炸'])
-    # 卡面要求"击中对方后"才能使用
-    room.last_attack = {'attacker': P1, 'x': 0, 'y': 0, 'hit': True}
+    # 卡面要求"击沉对方一艘战舰后"才能使用（2026-09-14 由"击中"收紧为"击沉"）
+    room.last_attack = {'attacker': P1, 'x': 0, 'y': 0, 'hit': True, 'ship_sunk': True}
     apply(room, P1, '饮血')
     assert room.players[P1].effect_flags.vampire is True
 
-    room.players[P2].ships = [ship((0, 0))]
-    room.players[P2].remaining_ships = 1
-    attack(room, P1, 0, 0)
+    # 发动时已为刚才那艘沉船补摸一张（牌堆只有这一张）
     assert any(c.name == '轰炸' for c in room.players[P1].magic_hand)
+
+    # 之后的击杀仍会继续摸牌
+    give_deck(room, ['冻结'])
+    room.players[P2].ships = [ship((5, 5))]
+    room.players[P2].remaining_ships = 1
+    attack(room, P1, 5, 5)
+    assert any(c.name == '冻结' for c in room.players[P1].magic_hand)
 
 
 # ---------------------------------------------------------------------------

@@ -3529,12 +3529,15 @@ function updateAttackDisplay(result) {
         opponentShips.textContent = result.attacker_remaining_ships;
     }
 
-    // 记录最近一次攻击坐标与来源，供溅射动画使用
+    // 记录最近一次攻击坐标与来源，供溅射动画使用。
+    // shipSunk 也要存：饮血的发动前提是"击沉"而非"命中"，
+    // 少了它前端没法在出牌前拦掉，只能等服务端拒绝 —— 而那时牌已经被扣掉了。
     gameState.lastAttack = {
         x: result.x,
         y: result.y,
         attacker: result.attacker,
-        hit: result.hit
+        hit: result.hit,
+        shipSunk: !!result.ship_sunk
     };
 
     // 更新棋盘显示
@@ -3767,12 +3770,32 @@ function canPlayCard(card) {
     return false;
 }
 
-// 限制需命中后才能发动的卡
-function canPlayAfterHit(card) {
-    const needHit = card.name === '溅射' || card.name === '雷达子弹';
-    if (!needHit) return true;
+// 依赖「自己上一发攻击」的卡是否能发动。返回 null 表示可以；否则返回原因文案。
+// 与服务端 _last_attack_requirement_reason 保持同一口径：
+//   · 饮血     —— 须【击沉】（卡面：可在击沉对方一艘战舰后选择使用）
+//   · 溅射     —— 须【击中】
+//   · 雷达子弹 —— 须【击中】
+// ⚠️ 饮血此前漏在这里：它只在服务端结算时才判，而那时牌已经离手，失败也不退还。
+function afterHitBlockReason(card) {
+    if (!card) return null;
+    const needsLastAttack = card.name === '饮血' || card.name === '溅射' || card.name === '雷达子弹';
+    if (!needsLastAttack) return null;
+
     const last = gameState.lastAttack;
-    return !!(last && last.attacker === gameState.playerId && last.hit);
+    if (!last || last.attacker !== gameState.playerId) {
+        return '你这一局还没有攻击过';
+    }
+    if (card.name === '饮血') {
+        if (!last.shipSunk) return '需要你先击沉对方一艘战舰';
+        return null;
+    }
+    if (!last.hit) return '需要你上一发攻击命中对方';
+    return null;
+}
+
+// 限制需命中后才能发动的卡（保留旧签名供既有调用点使用）
+function canPlayAfterHit(card) {
+    return afterHitBlockReason(card) === null;
 }
 
 // 添加魔法卡目标选择UI
@@ -4484,10 +4507,13 @@ function playMagicCard(index) {
         return;
     }
 
-    // 特殊限制：溅射、雷达子弹需在自己上一击命中后才可使用
-    if (!canPlayAfterHit(card)) {
+    // 特殊限制：饮血 / 溅射 / 雷达子弹 都需要「自己上一发攻击」满足各自条件。
+    // 必须在这里拦下 —— 否则牌会被服务端扣掉，结算时才告诉你条件不满足，
+    // 而那时牌已经进了弃牌堆、不会退还（玩家实测过）。
+    const afterHitReason = afterHitBlockReason(card);
+    if (afterHitReason) {
         clearCardSelection();
-        showAlert(`${card.name} 需要你上一次攻击命中后才能发动`);
+        showAlert(`无法使用${card.name}：${afterHitReason}`);
         return;
     }
     if (gameState.fieldMagic === "禁忌果实") {

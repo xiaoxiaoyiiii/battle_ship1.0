@@ -92,7 +92,11 @@ async function main() {
 
   await sleep(2500);
   const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
-  const page = list.find((t) => t.type === 'page');
+  // ⚠️ 必须按 URL 选目标：列表里第一个 type==='page' 可能是 Edge 自己的
+  // edge://sync-confirmation-dialog（新 profile 首次启动就会出现），
+  // 连错页面会得到一堆 undefined，看起来像"函数没定义"。
+  const page = list.find((t) => t.type === 'page' && t.url.startsWith('http')) ||
+               list.find((t) => t.type === 'page');
   if (!page) throw new Error('找不到页面目标');
 
   ws = new WebSocket(page.webSocketDebuggerUrl);

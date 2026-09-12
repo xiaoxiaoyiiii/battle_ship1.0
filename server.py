@@ -1804,7 +1804,7 @@ def _check_last_chance(room, attacker_id: str, defender_id: str) -> bool:
     return False
 
 
-def _on_ship_destroyed(room, owner_id: str, ship, hits_added=None):
+def _on_ship_destroyed(room, owner_id: str, ship, hits_added=None, source='magic'):
     """一艘船被摧毁后的通用副作用（普通攻击与区域魔法共用同一份实现）。
 
     普通攻击路径原先在 _apply_ship_sunk_effects 里内联；溅射 / 轰炸 / 硫磺火焰
@@ -1814,6 +1814,11 @@ def _on_ship_destroyed(room, owner_id: str, ship, hits_added=None):
          变化因此**无法被平等条约无效化**（卡面允许无效化"船数改变效果"）；
       ② 无暇圣心**中断** —— 它们只把 no_damage 置 False，效果本身既没被中断
          也没有广播，等于"有船沉了但无暇圣心还在"。
+
+    source 记录这艘船是「怎么死的」，平等条约据此判断能不能无效化：
+      - 'attack' 普通炮击 / 教皇旨意弃卡攻击
+      - 'magic'  魔法卡造成的击沉（溅射 / 轰炸 / 硫磺火焰）
+    卡面只允许无效化【魔法卡】造成的船数改变，攻击造成的不在此列。
     """
     owner = room.players[owner_id]
     room.game_effects['last_ship_change'] = {
@@ -1822,6 +1827,7 @@ def _on_ship_destroyed(room, owner_id: str, ship, hits_added=None):
         'count': 1,
         'ship': ship,  # 保存 ship 引用，供平等条约完全回滚
         'hits_added': list(hits_added or []),
+        'source': source,
     }
 
     # 百亿补贴: 自己的船被击败时，自己的攻击次数 +3
@@ -1848,7 +1854,9 @@ def _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id, ship, targ
     defender.sunken_ships.append(ship)
 
     # 平等条约快照 + 百亿补贴 + 无暇圣心中断（与区域魔法共用）
-    _on_ship_destroyed(room, defender_id, ship, [Position(x=target_x, y=target_y)])
+    # source='attack'：炮击造成的船数减少，平等条约无效化不了（卡面只针对魔法卡）
+    _on_ship_destroyed(room, defender_id, ship, [Position(x=target_x, y=target_y)],
+                       source='attack')
 
     # 恶魔契约: 绑定船数增减 - 任意一方船被击杀，另一方也要牺牲一艘
     # 牺牲由该方玩家自己在棋盘上点选（AI 自动），不再随机。
@@ -5286,7 +5294,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['message'] = '战舰数目变化时抽一张牌'
 
     elif card.name == '平等条约':
-        # 船数改变时无效化导致改变的攻击/魔法
+        # 船数改变时无效化导致改变的【魔法卡】（攻击造成的不在此列）
         if 'last_ship_change' not in room.game_effects:
             result['success'] = False
             result['message'] = '没有可无效化的船数改变效果'
@@ -5298,6 +5306,14 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             room.game_effects.pop('last_ship_change', None)
             result['success'] = False
             result['message'] = '船数改变发生在上一个大回合，无法再无效化'
+            return result
+
+        # 卡面只允许无效化【魔法卡】造成的船数改变；普通炮击/教皇旨意造成的击沉
+        # 无法被无效化。这里必须保留快照（不能 pop）—— 否则接着摸到一张魔法卡
+        # 造成船数变化时，玩家会因为快照被提前消费而莫名其妙地无效化不了。
+        if room.game_effects['last_ship_change'].get('source') == 'attack':
+            result['success'] = False
+            result['message'] = '平等条约只能无效化魔法卡造成的船数减少，无法无效化炮击造成的击沉'
             return result
 
         # 无效化最后一次船数改变

@@ -116,19 +116,44 @@ def test_treaty_snapshot_expires_after_round(room):
 
 
 def test_treaty_rollback_also_removes_subsidy_bonus(room):
+    """魔法卡造成的击沉被无效化时，百亿补贴发的 +3 也要一并撤销。
+
+    改版后炮击造成的击沉不再可被无效化（卡面只针对魔法卡），
+    所以这里用魔法来源的快照来覆盖「回滚连带撤销补贴」这条逻辑。
+    """
     server.apply_magic_effect(room, P2, card('百亿补贴'), {})
-    room.players[P2].ships = [ship((0, 0)), ship((1, 0))]
-    room.players[P2].remaining_ships = 2
+    victim = ship((0, 0))
+    room.players[P2].ships = [victim]
+    room.players[P2].remaining_ships = 1
     room.round = 1
 
-    server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 0})
-    assert room.players[P2].remaining_ships == 1
+    # 走统一副作用入口，来源标为魔法（溅射/轰炸/硫磺火焰走的就是这条）
+    server._on_ship_destroyed(room, P2, victim, source='magic')
+    room.players[P2].remaining_ships = 0
     assert room.players[P2].effect_flags.subsidy_bonus == 3
+    assert room.game_effects['last_ship_change'].get('subsidy_granted') is True
 
     res = server.apply_magic_effect(room, P2, card('平等条约'), {})
     assert res.success is True
-    assert room.players[P2].remaining_ships == 2, '船数应被回滚'
+    assert room.players[P2].remaining_ships == 1, '船数应被回滚'
     assert room.players[P2].effect_flags.subsidy_bonus == 0, '补贴也应一并撤销'
+
+
+def test_treaty_cannot_rollback_attack_kill_any_more(room):
+    """炮击造成的击沉：改版后平等条约无效化不了（补贴也不该被撤销）。"""
+    server.apply_magic_effect(room, P2, card('百亿补贴'), {})
+    room.players[P2].ships = [ship((0, 0))]
+    room.players[P2].remaining_ships = 1
+    room.round = 1
+
+    server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 0})
+    assert room.players[P2].remaining_ships == 0
+    assert room.players[P2].effect_flags.subsidy_bonus == 3
+
+    res = server.apply_magic_effect(room, P2, card('平等条约'), {})
+    assert res.success is False
+    assert room.players[P2].remaining_ships == 0, '炮击击沉不该被回滚'
+    assert room.players[P2].effect_flags.subsidy_bonus == 3, '补贴也不该被撤销'
 
 
 # ---------------------------------------------------------------------------

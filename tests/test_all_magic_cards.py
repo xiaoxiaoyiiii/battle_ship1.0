@@ -465,17 +465,58 @@ def test_bafang_draw_on_ship_change(room):
 # ---------------------------------------------------------------------------
 # 平等条约
 # ---------------------------------------------------------------------------
-def test_pingdeng_negates_ship_change(room):
-    """使船数改变的攻击无效化（恢复船只）"""
+def test_pingdeng_cannot_negate_attack_kill(room):
+    """炮击造成的击沉【无法】被无效化 —— 卡面只针对魔法卡。"""
     room.players[P2].ships = [ship((0, 0))]
     room.players[P2].remaining_ships = 1
     attack(room, P1, 0, 0)
     assert room.players[P2].remaining_ships == 0
+    assert room.game_effects['last_ship_change']['source'] == 'attack'
 
     res = apply(room, P1, '平等条约')
-    assert res.success is True
+    assert res.success is False
+    assert '炮击' in res.message
+    # 船没回来（击沉时船仍留在 ships 里，所以看 remaining_ships 与沉船堆），
+    # 快照也不能被吃掉
+    assert room.players[P2].remaining_ships == 0
+    assert room.players[P2].ships[0] in room.players[P2].sunken_ships
+    assert 'last_ship_change' in room.game_effects
+
+
+def test_pingdeng_negates_magic_ship_change(room):
+    """魔法卡造成的船数改变仍然可以被无效化（保留的那一半效果）。"""
+    victim = ship((0, 0))
+    room.players[P2].ships = []
+    room.players[P2].remaining_ships = 0
+    room.game_effects['last_ship_change'] = {
+        'round': room.round, 'player': P2, 'count': 1,
+        'ship': victim, 'hits_added': [], 'source': 'magic',
+    }
+
+    res = apply(room, P1, '平等条约')
+    assert res.success is True, res
     assert room.players[P2].remaining_ships == 1
-    assert len(room.players[P2].ships) == 1
+    assert victim in room.players[P2].ships
+    assert 'last_ship_change' not in room.game_effects
+
+
+def test_pingdeng_rejected_attack_keeps_snapshot_usable(room):
+    """攻击被拒后快照必须留着，否则随后的魔法船数变化会莫名无效化不了。"""
+    room.players[P2].ships = [ship((0, 0))]
+    room.players[P2].remaining_ships = 1
+    attack(room, P1, 0, 0)
+
+    first = apply(room, P1, '平等条约')
+    assert first.success is False
+    assert 'last_ship_change' in room.game_effects, '被拒时不能消费快照'
+
+    # 换成魔法来源（模拟随后的区域魔法击沉）后应能无效化
+    room.game_effects['last_ship_change']['source'] = 'magic'
+    room.players[P2].remaining_ships = 0
+    second = apply(room, P1, '平等条约')
+    assert second.success is True
+    assert room.players[P2].remaining_ships == 1
+    assert 'last_ship_change' not in room.game_effects
 
 
 def test_pingdeng_fails_without_change(room):

@@ -2354,7 +2354,16 @@ function setupSocketListeners() {
         if (typeof updateChainUI === 'function') updateChainUI();
         // 应用连锁结算结果
         data.results.forEach(result => {
-            applyCardEffect(result.card, result.caster);
+            // ⚠️ 结算失败的卡不能再说「效果生效」。
+            // 例如平等条约现在无法无效化炮击造成的击沉，服务端会回 success=false；
+            // 若照旧调用 applyCardEffect，双方都会看到「船数改变效果被无效化」的假消息，
+            // 而实际上船根本没回来。
+            if (result.success === false) {
+                showMessage(`${result.card.name}未能生效：${result.message || '条件不满足'}`,
+                            { type: 'warning' });
+            } else {
+                applyCardEffect(result.card, result.caster);
+            }
             // 将使用过的卡牌加入弃牌堆
             gameState.discardPile.push(result.card);
 

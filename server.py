@@ -1359,6 +1359,14 @@ def handle_place_ships(data):
             else:
                 room.attacks_remaining = saved.get('attacks_remaining', room.attacks_remaining)
 
+            # 败者食尘第二句「生效的大回合内双方攻击次数都为0」。
+            # ⚠️ 必须在这里处理：那条规则原先挂在"猜拳结束"分支上
+            # （见 determine_rps_winner），而败者食尘现在不重新猜拳，
+            # 走不到那里 —— 不补这一处，攻击次数归零就会静默失效。
+            if getattr(room, 'polar_reversal_applied', False):
+                room.polar_reversal_applied = False
+                room.attacks_remaining = 0
+
             emit('game_message', {
                 'message': '双方已重新摆放战舰，继续当前回合',
                 'type': 'info'
@@ -3355,6 +3363,14 @@ def resolve_chain(room):
     # 这一批卡的效果刚落地，双方的 effect_flags 可能变了 —— 刷新角标
     _emit_active_effects(room)
 
+    # 手牌也要重推：结算期间有多条路径会改变手牌，而它们各自的 emit 并不齐备 ——
+    # 盗亦有道把偷来的牌 append 进手牌、桃园结义分配候选牌、无中生有等摸牌效果。
+    # 漏推的表现是玩家看到"打出的牌还在手上"或"偷到了但没显示"。
+    # 这里在连锁收尾统一同步一次，双方各自收自己的那份。
+    for p in room.players.values():
+        if getattr(p, 'sid', None):
+            emit('hand_updated', {'hand': p.magic_hand}, to=p.sid)
+
     return results
 
 
@@ -3916,6 +3932,11 @@ def chain_response(data):
                 player.magic_hand.pop(i)
                 break
         room.magic_discard.append(card)
+
+        # ⚠️ 必须推送手牌：前端手牌是照服务端数据渲染的，不推就停在旧状态 ——
+        # 玩家会看到"连锁里打出的牌还在手上"（实测反馈）。此前这条路径只发了
+        # magic_chain_updated（连锁栈），手牌更新从未下发，所有速阶3响应都受影响。
+        emit('hand_updated', {'hand': player.magic_hand}, to=player.sid)
 
         room.chain.append(ChainItem(player_id, card, targets, time.time()))
         emit('magic_chain_updated', {'chain': room.chain}, room=room_id)
@@ -4848,53 +4869,77 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['message'] = '教皇旨意已生效，双方攻击次数变为0，通过弃置魔法卡攻击对方两次'
 
     elif card.name == '败者食尘':
-        # 记录败者食尘打出前双方的船数，已修复
-        original_caster_ships = caster.remaining_ships
-        original_opponent_ships = opponent.remaining_ships
-        
-        # 交换双方的船数限制：将双方的max_ships设置为对方的原始船数
-        caster.max_ships = original_opponent_ships
-        opponent.max_ships = original_caster_ships
-
-        # 重置房间状态，进入重新摆放阶段
-        room.state = 'placing_ships'
-        room.attack_order = []
-        room.current_attacker = ""
-        room.attacks_remaining = 0
-
-        # 完全初始化棋盘，使其像刚开局那样干净
+        # 卡面："立即重启正常对局但保留双方的手牌。
+        #        败者食尘生效的大回合内双方的攻击次数都为0。"
+        #
+        # 「重启正常对局」= 双方棋盘清空、各回 6 艘重新摆放（作者确认）。
+        # ⚠️ 原实现是【交换双方的船数】（caster.max_ships = opponent_ships），
+        # 卡面里根本没有这回事 —— 实测玩家反馈"重置后船数不对"即源于此。
+        # 这里改为双方一律重置为默认船数（6）。
+        DEFAULT_SHIPS = 6
         for p_id in room.players:
             player = room.players[p_id]
-            # 重置战舰数据
             player.ships = []
-            player.remaining_ships = 0
-            # 清除攻击记录
             player.attacks = []
-            # 清除被攻击记录
-            if hasattr(player, 'opponent_attacks'):
-                player.opponent_attacks = []
-            # 清除其他相关状态
+            player.remaining_ships = 0
             player.needs_reset = True
             player.revealed_positions = []
-            # 清除所有与棋盘相关的状态
+            player.max_ships = DEFAULT_SHIPS
+            # 棋盘相关的一次性状态也清掉，避免上一局残留（冻结/无敌/护盾）
+            player.sunken_ships = []
+            if hasattr(player, 'opponent_attacks'):
+                player.opponent_attacks = []
+            for ship in list(getattr(player, 'ships', []) or []):
+                ship.frozen = False
+                ship.invincible = False
+                ship.shield = False
 
-        # 添加败者食尘标记，用于设置攻击次数为0
+        # 只保留手牌 —— 场地魔法、生效中的效果、弃牌堆统统回到开局状态
+        # （作者确认：「只保留手牌，其余全部重置」）
+        room.field_magic = None
+        room.field_magic_owner = None
+        room.game_effects = {}
+        room.magic_discard = []
+        room.magic_temp_data = {}
+        room.chain = []
+        room.chain_waiting = False
+        room.chain_window = None
+        room.chain_passes = 0
+        room.last_attack = None
+        room.skip_opponent_turn = None
+        # 双方的玩家级效果标记清零（EffectFlags 整个换新）
+        for p_id in room.players:
+            room.players[p_id].effect_flags = EffectFlags()
+            room.players[p_id].magic_blocked = False
+
+        # 与灵气复苏同样保存进度：重新摆放完成后回到原先后手与阶段，不重新猜拳。
+        room.lingqi_saved_state = {
+            'attack_order': list(room.attack_order),
+            'current_attacker': room.current_attacker,
+            'current_phase': room.current_phase,
+            'round': room.round,
+            'attacks_remaining': room.attacks_remaining,
+        }
+        # 复用灵气复苏的"摆放完成即恢复"分支
+        room.lingqi_resurgence_applied = True
+
+        room.state = 'placing_ships'
+        # 卡面第二句：本大回合内双方攻击次数为 0。
+        # 这里先置 0（摆放期间本就没有攻击），摆放完成回到攻击阶段时会再确认一次
+        # （见 handle_place_ships 里的 polar_reversal_applied 分支）。
+        room.attacks_remaining = 0
         room.polar_reversal_applied = True
 
-        # 通知双方进入重新摆放阶段，并发送新的船数限制
-        # ⚠️ 同灵气复苏：必须发到 player.sid。以前传的是 room.players 的 key（登录用户
-        # 就是 user_id ≠ sid），事件根本没送到 —— 玩家只能手动刷新游戏才会开始重新摆放。
         for p_id in room.players:
             player = room.players[p_id]
             emit('reset_gameboard', {
                 'new_max_ships': player.max_ships,
-                'message': '败者食尘生效，立即重启正常对局但保留双方的手牌'
+                'message': '败者食尘生效，双方棋盘已重置为6艘，请重新摆放（手牌保留）'
             }, to=player.sid)
 
-        # 设置结果
-        result['message'] = '败者食尘生效，立即重启正常对局但保留双方的手牌'
-        # 立即返回：败者食尘已清空双方战舰并重置为布船阶段，
-        # 不能落入末尾“对手剩余船数<=0 则游戏结束”的兜底判断（会误判 game_over）
+        result['message'] = '败者食尘生效：双方棋盘重置为6艘并重新摆放，手牌保留；本大回合双方攻击次数为0'
+        # 立即返回：已清空双方战舰并重置为布船阶段，
+        # 不能落入末尾"对手剩余船数<=0 则游戏结束"的兜底判断（会误判 game_over）
         return result
 
     # ==== 速阶2 魔法卡 ===

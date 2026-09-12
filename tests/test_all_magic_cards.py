@@ -1758,9 +1758,10 @@ def test_baizhe_restart_keep_hands(room):
     # 棋盘清空
     assert room.players[P1].ships == []
     assert room.players[P2].ships == []
-    # 船数限制互换
-    assert room.players[P1].max_ships == 2
-    assert room.players[P2].max_ships == 3
+    # 「重启正常对局」= 双方一律回到默认 6 艘，不是交换双方船数
+    # （2026-09-14 修正：旧实现把 max_ships 互换，与卡面不符）
+    assert room.players[P1].max_ships == 6
+    assert room.players[P2].max_ships == 6
 
 
 # ---------------------------------------------------------------------------

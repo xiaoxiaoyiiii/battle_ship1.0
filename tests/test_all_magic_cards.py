@@ -1120,6 +1120,98 @@ def test_lingqi_adjust_ship_count(room):
     assert room.state == 'placing_ships'
 
 
+def _replay_lingqi(room, caster, n):
+    """出牌 → 选船数 → 双方重新摆放，走真实入口。"""
+    room.players[caster].magic_hand = [card('灵气复苏')]
+    server.apply_magic_effect(room, caster, card('灵气复苏'), {})
+    server.confirm_magic_target({
+        'room_id': room.id, 'player_id': caster,
+        'temp_data_id': 'lingqi_choice',
+        'target_data': {'target_ships': n}
+    })
+    for p in (P1, P2):
+        ships = [{'positions': [{'x': i, 'y': 0}], 'hits': []} for i in range(n)]
+        server.handle_place_ships({'room_id': room.id, 'player_id': p, 'ships': ships})
+
+
+def test_lingqi_preserves_turn_and_phase(room):
+    """重新摆放后不重新猜拳：先后手、阶段、回合数按原对局继续。"""
+    room.current_attacker = P2
+    room.current_phase = 'preparation'
+    room.attack_order = [P1, P2]
+    room.round = 4
+    for p, n in ((P1, 3), (P2, 4)):
+        room.players[p].ships = [ship((i, 0)) for i in range(n)]
+        room.players[p].remaining_ships = n
+
+    _replay_lingqi(room, P2, 2)
+
+    assert room.state == 'attacking', '不应停在猜拳阶段'
+    assert room.current_attacker == P2, '先后手应保持原样'
+    assert room.current_phase == 'preparation', '阶段应保持原样'
+    assert room.attack_order == [P1, P2]
+    assert room.round == 4
+    assert room.players[P1].remaining_ships == 2
+    assert room.players[P2].remaining_ships == 2
+
+
+def test_lingqi_recalcs_attacks_in_preparation(room):
+    """准备阶段：攻击次数按新船数重算。"""
+    room.current_attacker = P1
+    room.current_phase = 'preparation'
+    room.attack_order = [P1, P2]
+    room.attacks_remaining = 5
+    room.players[P1].ships = [ship((i, 0)) for i in range(3)]
+    room.players[P1].remaining_ships = 3
+
+    _replay_lingqi(room, P1, 2)
+
+    assert room.current_phase == 'preparation'
+    assert room.attacks_remaining == 2, '准备阶段应按新船数(2)重算'
+
+
+def test_lingqi_keeps_attacks_in_battle_phase(room):
+    """战斗阶段：保留原本剩余攻击次数，不凭空增加。"""
+    room.current_attacker = P1
+    room.current_phase = 'battle'
+    room.attack_order = [P1, P2]
+    room.attacks_remaining = 1
+    room.players[P1].ships = [ship((i, 0)) for i in range(3)]
+    room.players[P1].remaining_ships = 3
+    room.players[P2].ships = [ship((i, 5)) for i in range(3)]   # 对手也要有船，否则判 game_over
+    room.players[P2].remaining_ships = 3
+
+    _replay_lingqi(room, P1, 4)
+
+    assert room.state == 'attacking'
+    assert room.current_phase == 'battle'
+    assert room.attacks_remaining == 1, '战斗阶段不应凭空补满攻击次数'
+
+
+def test_lingqi_clears_its_own_flags(room):
+    """标记用完即清，避免影响后续对局。"""
+    room.current_attacker = P1
+    room.attack_order = [P1, P2]
+    room.players[P1].ships = [ship((0, 0))]
+    room.players[P1].remaining_ships = 1
+
+    _replay_lingqi(room, P1, 1)
+
+    assert not getattr(room, 'lingqi_resurgence_applied', False)
+    assert not getattr(room, 'lingqi_saved_state', None)
+
+
+def test_normal_placement_still_goes_to_rps(room):
+    """没有灵气复苏标记时，正常开局仍应进入猜拳。"""
+    room.state = 'placing_ships'
+    room.players[P1].ships = []
+    room.players[P2].ships = []
+    for p in (P1, P2):
+        ships = [{'positions': [{'x': i, 'y': 0}], 'hits': []} for i in range(6)]
+        server.handle_place_ships({'room_id': room.id, 'player_id': p, 'ships': ships})
+    assert room.state == 'rock_paper_scissors'
+
+
 # ---------------------------------------------------------------------------
 # 败者食尘
 # ---------------------------------------------------------------------------

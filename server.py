@@ -1259,20 +1259,45 @@ def handle_place_ships(data):
     # 检查是否所有玩家都已放置战舰
     all_placed = all(len(p.ships) > 0 for p in room.players.values())
     if all_placed:
+        # 灵气复苏：这是中途重新摆放，不重新猜拳。
+        # 恢复到施法前的先后手与阶段，只把棋盘换成新船数。
+        if getattr(room, 'lingqi_resurgence_applied', False):
+            room.lingqi_resurgence_applied = False
+            saved = getattr(room, 'lingqi_saved_state', None) or {}
+            room.lingqi_saved_state = None
+
+            room.attack_order = saved.get('attack_order') or list(room.players.keys())
+            room.current_attacker = saved.get('current_attacker') or room.attack_order[0]
+            room.round = saved.get('round', room.round)
+            room.current_phase = saved.get('current_phase', 'preparation')
+            room.state = 'attacking'
+
+            # 攻击次数随船数变化：准备阶段还没开打，按新船数重算；
+            # 战斗/结束阶段保留原本剩余次数，避免凭空多出攻击。
+            if room.current_phase == 'preparation':
+                _recalc_attacker_attacks(room)
+            else:
+                room.attacks_remaining = saved.get('attacks_remaining', room.attacks_remaining)
+
+            emit('game_message', {
+                'message': '双方已重新摆放战舰，继续当前回合',
+                'type': 'info'
+            }, room=room_id)
+            emit('game_state', {
+                'state': 'attacking',
+                'current_attacker': room.current_attacker,
+                'current_phase': room.current_phase,
+                'attacks_remaining': room.attacks_remaining,
+                'round': room.round,
+            }, room=room_id)
+            # 若当前攻击者是 AI，继续驱动其回合
+            _maybe_run_ai_turn(room)
+            return {'status': 'success'}
+
         room.state = 'rock_paper_scissors'
         # 重置猜拳选择和处理标记，确保新的猜拳阶段从空开始
         room.rps_choices = {}
         room.rps_processed = False
-
-        # 检查是否是灵气复苏或两极反转后的重新摆放
-        if hasattr(room, 'lingqi_resurgence_applied') and room.lingqi_resurgence_applied:
-            # 发送双方船数已调整的广播
-            emit('game_message', {
-                'message': '双方船数已调整，进入猜拳阶段',
-                'type': 'info'
-            }, room=room_id)
-            # 清除标记
-            room.lingqi_resurgence_applied = False
 
         emit('game_state', {'state': 'rock_paper_scissors'}, room=room_id)
 
@@ -3177,11 +3202,19 @@ def confirm_magic_target(data):
         # 清除临时数据
         room.magic_temp_data = {}
 
-        # 重置房间状态，进入重新摆放阶段
+        # 记录当前对局进度：灵气复苏只重置棋盘与船数，
+        # 先后手、阶段、回合数都按原对局继续 —— 不重新猜拳。
+        room.lingqi_saved_state = {
+            'attack_order': list(room.attack_order),
+            'current_attacker': room.current_attacker,
+            'current_phase': room.current_phase,
+            'round': room.round,
+            'attacks_remaining': room.attacks_remaining,
+        }
+
+        # 只切到摆放阶段；attack_order / current_attacker / current_phase 保留不动，
+        # 待双方重新摆放完成后再回到攻击阶段（见 handle_place_ships）。
         room.state = 'placing_ships'
-        room.attack_order = []
-        room.current_attacker = ""
-        room.attacks_remaining = 0
 
         # 添加灵气复苏应用标记，用于后续广播
         room.lingqi_resurgence_applied = True

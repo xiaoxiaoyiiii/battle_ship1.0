@@ -423,3 +423,86 @@ def test_daoyouyoudao_full_chain_resolution(room):
     names = [c.name for c in room.players[P1].magic_hand]
     assert '盗亦有道' not in names, '盗亦有道应已用掉'
     assert '轰炸' in names, f'盗亦有道必须偷到对手的轰炸，实际手牌：{names}'
+
+
+# ---------------------------------------------------------------------------
+# 绝处逢生生效期间的出牌封锁：提示必须说明真实原因
+#
+# 旧行为：绝处逢生生效时出牌被拒，理由却被报成「当前阶段battle无法使用
+# 速阶1的魔法卡」—— 阶段明明是对的，玩家据此以为游戏坏了。
+# ---------------------------------------------------------------------------
+def test_last_stand_blocks_active_play_with_correct_reason(room):
+    """主动出牌被拒时，理由必须是「绝处逢生生效」，而不是甩锅给阶段。"""
+    room.players[P1].effect_flags.last_stand = True
+    room.players[P1].magic_hand = [card('增援')]
+
+    res = server.handle_use_magic_card({
+        'room_id': room.id, 'player_id': P1,
+        'card': {'name': '增援'}, 'targets': {},
+    })
+
+    assert res.get('status') == 'error'
+    assert '绝处逢生' in res['message'], f'提示应点名绝处逢生，实际：{res["message"]}'
+    assert '当前阶段' not in res['message'], (
+        f'不该甩锅给阶段（误导），实际：{res["message"]}')
+
+
+def test_last_stand_blocks_speed3_play_too(room):
+    """速阶 3 卡同样被封锁 —— 它平时不受阶段限制，最容易漏判。"""
+    room.players[P1].effect_flags.last_stand = True
+    room.players[P1].magic_hand = [card('八方来财')]
+
+    res = server.handle_use_magic_card({
+        'room_id': room.id, 'player_id': P1,
+        'card': {'name': '八方来财'}, 'targets': {},
+    })
+
+    assert res.get('status') == 'error'
+    assert '绝处逢生' in res['message'], f'实际：{res["message"]}'
+
+
+def test_last_stand_player_cannot_respond_chain(room):
+    """绝处逢生生效中的玩家不参与连锁响应，窗口根本不该为他打开。"""
+    room.players[P1].effect_flags.last_stand = True
+    room.players[P1].magic_hand = [card('失灵！')]
+
+    assert server._can_respond_chain(room, P1) is False
+
+
+def test_last_stand_player_rejected_if_forges_chain_response(room):
+    """即使绕过前端直接发 chain_response，服务端也必须拒绝（按放弃处理）。"""
+    room.players[P1].effect_flags.last_stand = True
+    room.players[P1].magic_hand = [card('失灵！')]
+    room.chain = [ChainItem(P2, card('轰炸'), [], 0)]
+    room.chain_waiting = True
+    room.chain_window = P1
+    room.chain_timer = 1
+
+    res = server.chain_response({
+        'room_id': room.id, 'player_id': P1, 'chain': True,
+        'card': {'name': '失灵！', 'speed': 3}, 'targets': [],
+    })
+
+    assert res.get('status') == 'error', res
+    assert not any(c.name == '失灵！' for c in room.chain), '不得把牌压进连锁栈'
+    assert room.players[P1].magic_hand, '牌不该从手牌里消失'
+
+
+def test_chain_opens_normally_without_last_stand(room):
+    """反证：没有绝处逢生时，连锁响应窗口照常打开（别把功能的正常路径改坏）。"""
+    room.players[P1].magic_hand = [card('失灵！')]
+    assert server._can_respond_chain(room, P1) is True
+
+
+def test_other_block_reason_still_reported(room):
+    """反证：禁忌果实等其他封锁理由不受影响，仍报自己的原因。"""
+    room.field_magic = card('禁忌果实')
+    room.players[P1].magic_hand = [card('增援')]
+
+    res = server.handle_use_magic_card({
+        'room_id': room.id, 'player_id': P1,
+        'card': {'name': '增援'}, 'targets': {},
+    })
+
+    assert res.get('status') == 'error'
+    assert '禁忌果实' in res['message'], f'实际：{res["message"]}'

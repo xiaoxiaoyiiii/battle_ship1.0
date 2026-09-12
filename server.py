@@ -2911,11 +2911,18 @@ def handle_use_magic_card(data):
     # 检查是否可以在当前阶段使用
     if not can_play_magic_card(room, player_id, card):
         reason = None
-        if card.name in END_PHASE_PLAYABLE:
+        if player.effect_flags.last_stand:
+            # 绝处逢生：生效回合内自己的其余魔法卡全部无效。
+            # 这条必须排在阶段兜底之前 —— 否则玩家会收到「当前阶段battle无法
+            # 使用速阶1」这种与真实原因毫无关系的提示（阶段明明是对的）。
+            reason = '绝处逢生生效中，本回合你的其余魔法卡全部无效'
+        elif card.name in END_PHASE_PLAYABLE:
             # 这类卡有专属条件，把具体原因告诉玩家，别只报「速阶2」
             reason = freezing_block_reason(room, player_id, card)
         elif card.name == '五险一金' and field_magic_name(room) == '教皇旨意':
             reason = '教皇旨意生效中，本回合攻击次数为0，五险一金无法发动'
+        elif field_magic_name(room) == '禁忌果实' and not (card.name == '失灵！' or card.type == '场地'):
+            reason = '场地魔法“禁忌果实”生效中，非场地及失灵类魔法卡无法使用'
         return {'status': 'error',
                 'message': reason or f'当前阶段{room.current_phase}无法使用速阶{card.speed}的魔法卡'}
 
@@ -3200,6 +3207,11 @@ def _can_respond_chain(room, player_id):
         return False
     player = room.players.get(player_id)
     if not player or player.magic_blocked:
+        return False
+    # 绝处逢生：生效回合内自己的其余魔法卡全部无效 —— 连锁响应也不例外。
+    # chain_response 里 can_play_magic_card 会拒掉，但那要等玩家点完卡才知道；
+    # 在这里拦掉，窗口就不会打开，也不会被白白点一次。
+    if player.effect_flags.last_stand:
         return False
     if player_id.startswith('ai-'):
         if getattr(room, 'ai_difficulty', 'normal') != 'hard':

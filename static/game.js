@@ -1,4 +1,4 @@
-﻿// 基于原 game.js 的优化：添加海洋气泡粒子动画
+// 基于原 game.js 的优化：添加海洋气泡粒子动画
 function initParticles() {
     const canvas = document.getElementById('particle-canvas');
     const ctx = canvas.getContext('2d');
@@ -840,7 +840,11 @@ window.gameState = {
     sacrificedOpponent: [], // 对方牺牲的格子（公开信息）→ 画在对方棋盘上
     // 正等待自己点选一艘船牺牲（恶魔契约等）。棋盘每次重绘后靠它把高亮补回来，
     // 否则伤害结算的重绘会把选区冲掉、让人以为「点了没反应」。
-    pendingSacrifice: null
+    pendingSacrifice: null,
+    // 当前生效的效果角标（服务端 active_effects / room_sync 下发）。
+    // 出牌门禁要读它判断「绝处逢生」，所以必须有初值 —— 此前只在 room_sync
+    // 里被赋值，未重连过的玩家这里是 undefined，读取方得各自容错。
+    activeEffects: []
 }
 
 let opponentGoneTimer = null;
@@ -2436,6 +2440,19 @@ function setupSocketListeners() {
     // 连锁响应弹窗（10 秒倒计时 + 点选速阶 3 卡）。
     // 抽成具名函数是为了让「重连正好落在响应窗口内」也能把弹窗补回来。
     function showChainRequestPrompt(data) {
+        // 绝处逢生生效中：自己的其余魔法卡全部无效，连锁响应同样打不出去。
+        // 服务端（chain_response → can_play_magic_card）一定会拒绝，所以别弹这个
+        // 窗口让玩家白点一次 —— 那会让窗口凭空消失、也没有任何解释。
+        // 直接替玩家放弃，并把原因说清楚。
+        if (isLastStandActive()) {
+            showMessage('绝处逢生生效中，本回合你的其余魔法卡全部无效，已自动放弃连锁', { type: 'warning' });
+            gameState.socket.emit('chain_response', {
+                room_id: gameState.roomId,
+                player_id: gameState.playerId,
+                chain: false
+            });
+            return;
+        }
         playSfx('chain');
         // 显示连锁选择对话框
         const chainPrompt = document.createElement('div');
@@ -3705,8 +3722,29 @@ function isFirstPlayer() {
     return order.length > 0 && order[0] === gameState.playerId;
 }
 
+// 绝处逢生是否正在生效：生效回合内自己的其余魔法卡全部无效
+// （服务端 can_play_magic_card 第一条就拦这个，前端要给出同样的理由）。
+// 服务端有两种下发口径，都要认：
+//   · active_effects 事件    → 中文标签数组，如 ['绝处逢生', '百亿补贴']
+//   · room_sync（重连快照）  → game_effects 的键名数组，如 ['last_stand_cells']
+// 只读游戏状态、不改它，纯判定。
+function isLastStandActive() {
+    const effects = gameState.activeEffects;
+    if (!Array.isArray(effects)) return false;
+    return effects.some((name) => {
+        const s = String(name);
+        return s === '绝处逢生' || s === 'last_stand' || s.indexOf('last_stand') === 0;
+    });
+}
+
 // 修改canPlayCard函数
 function canPlayCard(card) {
+    // 绝处逢生生效中：自己的其余魔法卡一律不能使用。
+    // 这条必须排在速阶判定之前 —— 否则速阶1/2会被下面的阶段判断拒掉，
+    // 玩家看到的是「当前阶段不允许使用速阶1」这种与真实原因无关的提示。
+    if (isLastStandActive()) {
+        return false;
+    }
     // 特例：Freezing！ 只能在自己先手回合的结束阶段发动
     if (END_PHASE_PLAYABLE_CARDS.indexOf(card.name) >= 0) {
         return isFirstPlayer() &&
@@ -4422,7 +4460,12 @@ function playMagicCard(index) {
         // 出牌被拒：必须清掉选中态，否则下一次单击会被当成
         // 「同一张已选中的卡」立刻重试 —— 玩家看到提示弹两遍。
         clearCardSelection();
-        if (END_PHASE_PLAYABLE_CARDS.indexOf(card.name) >= 0) {
+        if (isLastStandActive()) {
+            // 绝处逢生生效中，跟「阶段 / 回合」毫无关系。
+            // 旧实现会一路掉到最后一个 else，弹出「当前阶段battle不允许使用
+            // 速阶1的魔法卡」—— 阶段明明是对的，玩家据此以为游戏坏了。
+            showAlert(`无法使用${card.name}：绝处逢生生效中，本回合你的其余魔法卡全部无效`);
+        } else if (END_PHASE_PLAYABLE_CARDS.indexOf(card.name) >= 0) {
             // 这类卡有专属的条件提示，别让玩家看到「速阶2」这种内部术语
             const reasons = [];
             if (!isFirstPlayer()) reasons.push('你这一局是后手');

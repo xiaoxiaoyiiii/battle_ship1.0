@@ -4162,7 +4162,11 @@ function showMagicTargetSelection(card, index) {
         // 自己船所在格集合
         const ownCells = new Set();
         if (selfShipsOnly) {
+            // 只收【还活着】的船：沉船仍留在 gameState.ships 里（击沉只减船数、
+            // 不把船移出列表），不过滤的话点自己沉船的格子也会被当成有效选择 ——
+            // 克苏鲁之眼就能靠这个拿一艘早沉的船来「暴露」。
             (gameState.ships || []).forEach(ship => {
+                if (ship.alive === false) return;
                 (ship.positions || []).forEach(p => ownCells.add(p.x + ',' + p.y));
             });
         }
@@ -4977,9 +4981,12 @@ function clearSacrificeSelection() {
 function paintSacrificeCells() {
     if (!gameState.pendingSacrifice || !gamePlayerBoard) return;
 
+    // 可点格子只认【服务端下发的候选】：它已经滤掉了已沉的船。
+    // 以前是从 gameState.ships 自己推 —— 沉船还留在那个列表里，于是
+    // 「点自己沉船的格子」也会被点亮，克苏鲁之眼就能拿沉船来抵账。
     const ownCells = new Set();
-    (gameState.ships || []).forEach(ship => {
-        (ship.positions || []).forEach(p => ownCells.add(p.x + ',' + p.y));
+    (gameState.pendingSacrifice.ships || []).forEach(sh => {
+        (sh.positions || []).forEach(p => ownCells.add(p.x + ',' + p.y));
     });
 
     gamePlayerBoard.querySelectorAll('.cell').forEach(cell => {
@@ -5006,10 +5013,12 @@ function showSacrificePrompt(data) {
     showMessage((data && data.message) || '恶魔契约生效，请选择一艘自己的战舰牺牲',
                 { type: 'warning' });
 
-    // 记下「正等着选船」这个状态：棋盘重绘后由 paintSacrificeCells() 据此补回高亮
+    // 记下「正等着选船」这个状态：棋盘重绘后由 paintSacrificeCells() 据此补回高亮。
+    // ships 用服务端下发的那份（已滤掉沉船），前端不再自己从 gameState.ships 推。
     gameState.pendingSacrifice = {
         reason: (data && data.reason) || 'demon_contract',
-        message: (data && data.message) || ''
+        message: (data && data.message) || '',
+        ships: (data && Array.isArray(data.ships)) ? data.ships : []
     };
     gameState.selectingOnBoard = true;
 
@@ -5869,10 +5878,15 @@ function showRenwangChoice() {
     list.style.cssText = 'display:flex;flex-direction:column;gap:6px;text-align:left;margin:8px 0';
     const ships = gameState.ships || [];
     const picked = new Set();
-    if (ships.length === 0) {
+    // 已沉的船不能选：护盾加在沉船上等于白白浪费一次选择。
+    // 注意保留**原始下标** —— 服务端的 ship_indices 是按 player.ships 的位置取的。
+    const aliveIdx = [];
+    ships.forEach((ship, idx) => { if (ship.alive !== false) aliveIdx.push(idx); });
+    if (aliveIdx.length === 0) {
         list.innerHTML = '<div style="color:#c0392b">没有可保护的战舰</div>';
     } else {
-        ships.forEach((ship, idx) => {
+        aliveIdx.forEach((idx) => {
+            const ship = ships[idx];
             const b = document.createElement('button');
             const p = (ship.positions && ship.positions[0]) ? ('(' + ship.positions[0].x + ',' + ship.positions[0].y + ')') : ('#' + idx);
             b.textContent = '选择船 ' + (idx + 1) + ' ' + p;

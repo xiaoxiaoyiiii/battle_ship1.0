@@ -1846,6 +1846,11 @@ def _on_ship_destroyed(room, owner_id: str, ship, hits_added=None, source='magic
             'reason': '有战舰被击沉，无暇圣心效果中断'
         }, room=room.id)
 
+    # 把己方棋盘重新推给本人：不然前端手里那份还是摆船时自己拼的，
+    # 既不知道哪艘已经沉了（没有 alive 标记），也不知道船被移除，
+    # 「选一艘自己的船」类的卡就会把沉船也画成可点。
+    _emit_player_ships(room, owner_id)
+
 
 def _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id, ship, target_x, target_y):
     """击沉一艘战舰后的共同副作用（handle_attack / _do_attack 共用）。
@@ -2822,12 +2827,43 @@ def _pick_cell_from_target(target_data):
     return None
 
 
-def _find_ship_at(player, cell):
-    """返回该玩家在指定格子上的一艘船；没有则返回 None。"""
+def _is_ship_alive(player, ship):
+    """这艘船是否还活着（没沉、也没被牺牲掉）。
+
+    ⚠️ 本项目的「击沉」只减 `player.remaining_ships`，**不会把船从 `player.ships` 里移走**
+    —— 沉船留在列表里供复活类效果回收。所以任何「让玩家挑一艘自己的船」的地方都必须
+    先过这一层，否则会出这些事：
+      · 克苏鲁之眼：对手拿一艘早就沉了的船来「暴露」，等于什么都没暴露
+      · 恶魔契约 / 神之宣告：拿沉船抵账 = 零代价发动
+      · 仁王之盾：把护盾加在一艘沉船上，白白浪费
+    判定同时看两份依据（沉船堆 / 命中数），任一成立即视为已死，避免两边不同步时漏判。
+    """
+    if ship is None:
+        return False
+    if ship in (getattr(player, 'sunken_ships', None) or []):
+        return False
+    positions = getattr(ship, 'positions', None) or []
+    hits = getattr(ship, 'hits', None) or []
+    return len(hits) < len(positions)
+
+
+def _alive_ships(player):
+    """该玩家目前还活着的船（顺序与 player.ships 一致，便于按原下标回传）。"""
+    return [sh for sh in (getattr(player, 'ships', None) or []) if _is_ship_alive(player, sh)]
+
+
+def _find_ship_at(player, cell, alive_only=False):
+    """返回该玩家在指定格子上的一艘船；没有则返回 None。
+
+    alive_only=True 时跳过已沉的船 —— 「选一艘自己的船」类的卡都必须这么用，
+    否则点到自己沉船所在的格子也会被当成有效选择（见 _is_ship_alive）。
+    """
     if not cell:
         return None
     x, y = cell
     for ship in getattr(player, 'ships', []) or []:
+        if alive_only and not _is_ship_alive(player, ship):
+            continue
         for pos in getattr(ship, 'positions', []) or []:
             if pos.x == x and pos.y == y:
                 return ship
@@ -2998,6 +3034,9 @@ def _emit_player_ships(room, player_id):
             # 冻结状态必须一起下发：冻结的船不提供攻击次数，
             # 玩家此前在棋盘上完全看不出哪几艘被冻住了。
             'frozen': bool(getattr(sh, 'frozen', None)),
+            # 存活状态：沉船仍留在 ships 列表里，前端自己判断不出死活；
+            # 「选一艘自己的船」类的卡要靠它把沉船灰掉（克苏鲁之眼/仁王之盾…）。
+            'alive': _is_ship_alive(player, sh),
         } for sh in player.ships]
     }, to=player.sid)
 
@@ -3565,7 +3604,9 @@ def _build_room_sync(room, player_id: str) -> dict:
         'field_magic': (room.field_magic.name if hasattr(room.field_magic, 'name') else room.field_magic) or "",
         'remaining_ships': p.remaining_ships,
         'ships': [{'positions': [{'x': pos.x, 'y': pos.y} for pos in sh.positions],
-                   'frozen': bool(getattr(sh, 'frozen', None))} for sh in p.ships],
+                   'frozen': bool(getattr(sh, 'frozen', None)),
+                   # 存活状态：重连后前端也要能把沉船从「可选的自己的船」里排除掉
+                   'alive': _is_ship_alive(p, sh)} for sh in p.ships],
         'hand': [{'name': c.name, 'speed': c.speed, 'type': c.type, 'description': c.description} for c in p.magic_hand],
         'attacks': [{'x': a.x, 'y': a.y, 'hit': a.hit} for a in getattr(p, 'attacks', [])],
         # 对手打在我方棋盘上的格：前端自己棋盘的伤损/沉船只认这份数据，
@@ -3623,7 +3664,10 @@ def _build_room_sync(room, player_id: str) -> dict:
             else None
         ),
         'pending_sacrifice_ships': (
-            [{'positions': [{'x': q.x, 'y': q.y} for q in sh.positions]} for sh in p.ships]
+            # 只给活船 —— 与 _request_ship_pick 下发的候选保持一致，
+            # 否则重连之后又能点到自己的沉船
+            [{'positions': [{'x': q.x, 'y': q.y} for q in sh.positions]}
+             for sh in _alive_ships(p)]
             if isinstance(room.magic_temp_data, dict)
             and (room.magic_temp_data.get('pending_sacrifice') or {}).get('player') == player_id
             else []
@@ -3954,9 +3998,10 @@ def handle_confirm_sacrifice(data):
     except (TypeError, ValueError):
         return {'status': 'error', 'message': '请选择一艘自己的战舰'}
 
-    ship = _find_ship_at(room.players[player_id], cell)
+    ship = _find_ship_at(room.players[player_id], cell, alive_only=True)
     if ship is None:
-        return {'status': 'error', 'message': '必须选择自己战舰所在的格子'}
+        return {'status': 'error',
+                'message': '必须选择自己【还活着】的战舰所在的格子（已沉没的船不能选）'}
 
     if reason == 'kraken_eye':
         # 克苏鲁之眼：只把位置暴露给对方，不摧毁这艘船
@@ -4206,18 +4251,27 @@ def confirm_magic_target(data):
         if not isinstance(raw_indices, list) or not raw_indices:
             return {'status': 'error', 'message': '请至少选择一艘战舰'}
         applied = 0
+        skipped = 0
         for idx in raw_indices[:3]:
             try:
                 idx = int(idx)
             except (TypeError, ValueError):
                 continue
-            if 0 <= idx < len(caster.ships):
-                caster.ships[idx].shield = True
-                applied += 1
+            if not (0 <= idx < len(caster.ships)):
+                continue
+            # 已沉的船不给加盾：护盾加在沉船上等于白白浪费一次选择
+            if not _is_ship_alive(caster, caster.ships[idx]):
+                skipped += 1
+                continue
+            caster.ships[idx].shield = True
+            applied += 1
         if applied == 0:
-            return {'status': 'error', 'message': '无效的选择'}
+            return {'status': 'error', 'message': '无效的选择（已沉没的船不能加护盾）'}
         room.magic_temp_data = {}
-        return {'status': 'success', 'message': f'为{applied}艘战舰添加了护盾'}
+        msg = f'为{applied}艘战舰添加了护盾'
+        if skipped:
+            msg += f'（{skipped}艘已沉没，已跳过）'
+        return {'status': 'success', 'message': msg}
 
     return {'status': 'error', 'message': '无效的临时数据ID'}
 
@@ -4367,16 +4421,22 @@ def _apply_ship_loss_linkage(room, caster_id, lost_player_id, count=1):
 
 
 def _request_ship_pick(room, chooser_id, reason, message):
-    """让指定玩家在自己的棋盘上点选一艘战舰（恶魔契约 / 神之宣告 / 克苏鲁之眼 共用）。
+    """让指定玩家在自己的棋盘上点选一艘【活着的】战舰（恶魔契约 / 神之宣告 / 克苏鲁之眼 共用）。
 
     AI 不参与交互：直接返回替它选中的那艘；人类玩家则挂起等待 confirm_sacrifice。
+    候选只给活船 —— 沉船还留在 player.ships 里，混进去会让玩家（或 AI）
+    拿一艘早就沉了的船抵账，等于零代价。
     """
     chooser = room.players.get(chooser_id) if chooser_id else None
-    if not chooser or not chooser.ships:
+    if not chooser:
+        return None
+
+    alive = _alive_ships(chooser)
+    if not alive:
         return None
 
     if getattr(room, 'is_ai_room', False) and chooser_id == _ai_player_id(room):
-        return random.choice(list(chooser.ships))
+        return random.choice(alive)
 
     room.magic_temp_data['pending_sacrifice'] = {
         'player': chooser_id,
@@ -4385,9 +4445,10 @@ def _request_ship_pick(room, chooser_id, reason, message):
     emit('sacrifice_request', {
         'reason': reason,
         'message': message,
+        # 只下发活船：前端直接拿这份来点亮可点格子（服务端即唯一真相）
         'ships': [
             {'positions': [{'x': p.x, 'y': p.y} for p in sh.positions]}
-            for sh in chooser.ships
+            for sh in alive
         ],
     }, to=chooser.sid)
     return None
@@ -5296,10 +5357,10 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             result['message'] = '请选择一艘自己的战舰'
             return result
 
-        caster_ship = _find_ship_at(caster, cell)
+        caster_ship = _find_ship_at(caster, cell, alive_only=True)
         if caster_ship is None:
             result['success'] = False
-            result['message'] = '必须选择自己战舰所在的格子'
+            result['message'] = '必须选择自己【还活着】的战舰所在的格子（已沉没的船不能选）'
             return result
 
         caster_positions = caster_ship.positions
@@ -5496,15 +5557,14 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                     pos = (int(c.get('x')), int(c.get('y')))
                 except (AttributeError, TypeError, ValueError):
                     continue
-                ship_at = _find_ship_at(caster, pos)
-                if (ship_at is not None and ship_at not in chosen
-                        and ship_at not in caster.sunken_ships):
+                # alive_only：点到沉船的格子不算数（否则牺牲变成零代价）
+                ship_at = _find_ship_at(caster, pos, alive_only=True)
+                if ship_at is not None and ship_at not in chosen:
                     chosen.append(ship_at)
         if len(chosen) < 2:
             # 只从"还活着"的船里补：已沉的船在 ships 里仍占位，不排除会把
             # 牺牲变成零代价（沉船堆还会出现重复条目）
-            pool = [s for s in caster.ships
-                    if s not in chosen and s not in caster.sunken_ships]
+            pool = [s for s in _alive_ships(caster) if s not in chosen]
             random.shuffle(pool)
             chosen.extend(pool[:2 - len(chosen)])
         if len(chosen) < 2:

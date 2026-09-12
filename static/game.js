@@ -3041,7 +3041,12 @@ function setupSocketListeners() {
 
     // 当前生效效果角标：完全由服务端广播驱动（服务端是唯一真相）。
     socket.on('active_effects', (data) => {
-        renderActiveEffects(data && data.effects);
+        // 绝处逢生等效果的出牌门禁（isLastStandActive）要读 gameState.activeEffects，
+        // 所以除了画角标，还必须把效果存进状态 —— 否则未重连的玩家这里永远是初值 []，
+        // canPlayCard 的 last_stand 拦截形同虚设，连锁窗口也会照常弹出、点完无解释消失。
+        const effects = (data && data.effects) || [];
+        gameState.activeEffects = effects;
+        renderActiveEffects(effects);
     });
 
     // 服务器推送的通用消息

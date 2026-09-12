@@ -222,6 +222,37 @@ async function main() {
     check(/绝处逢生/.test(chainToast), '放弃时给出了原因', chainToast);
   }
 
+  // ---- 7. 关键回归：active_effects 事件必须把效果写进 gameState.activeEffects ----
+  // 此前 handler 只调 renderActiveEffects 画角标，没存状态 —— 结果未重连的玩家
+  // gameState.activeEffects 永远是初值 []，isLastStandActive 恒为 false，
+  // 上面所有「绝处逢生拦截」对真实对局全部失效。
+  const hasActiveEffectsListener = await ev(`(function(){
+    var s = gameState.socket;
+    if (!s || !s._callbacks) return false;
+    return !!s._callbacks['$active_effects'];
+  })()`);
+
+  if (!hasActiveEffectsListener) {
+    check(false, 'active_effects 事件回写状态', '页面上没有 active_effects 监听器（socket 未就绪）');
+  } else {
+    const stored = await ev(`(function(){
+      gameState.activeEffects = [];
+      var s = gameState.socket;
+      s._callbacks['$active_effects'].forEach(function(cb){
+        cb({ effects: ['绝处逢生', '百亿补贴'] });
+      });
+      return gameState.activeEffects;
+    })()`);
+    check(Array.isArray(stored) && stored.indexOf('绝处逢生') >= 0,
+      'active_effects 事件把效果写进 gameState.activeEffects', stored);
+    // 角标也该画出来（顺带确认 renderActiveEffects 仍被调用）
+    const badges = await ev(`(function(){
+      var box = document.getElementById('effect-indicators');
+      return box ? box.textContent : '';
+    })()`);
+    check(/绝处逢生/.test(badges), '角标也照常渲染', badges);
+  }
+
   console.log('');
   if (problems.length) {
     console.log(`✗ ${problems.length} 项未通过：`);

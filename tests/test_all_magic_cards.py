@@ -789,13 +789,85 @@ def test_shenzhi_requires_two_ships(room):
 # ---------------------------------------------------------------------------
 # 五险一金
 # ---------------------------------------------------------------------------
-def test_wuxian_plus_three_when_no_damage(room):
-    """本回合未造成伤害则攻击次数+3"""
+def test_wuxian_arms_instead_of_granting_immediately(room):
+    """出牌只是「挂上保险」—— 不能一打出就白送 3 次。
+
+    卡面：「这一回合自己的攻击次数第一次用尽时，若自己未曾对对方造成一点伤害，
+    则自己的攻击次数再加3。」所以时机是【攻击次数第一次归零】，不是出牌瞬间。
+    """
     room.players[P1].damage_dealt_this_turn = 0
     before = room.attacks_remaining
     res = apply(room, P1, '五险一金')
     assert res.success is True
-    assert room.attacks_remaining == before + 3
+    assert room.attacks_remaining == before, '出牌时不该立刻加 3'
+    assert room.players[P1].effect_flags.wuxian is True, '应挂上待触发的标记'
+
+
+def test_wuxian_triggers_when_attacks_first_hit_zero(room):
+    """攻击次数第一次归零、且本回合没让对方减船 → +3，并且只触发一次。"""
+    room.players[P1].damage_dealt_this_turn = 0
+    room.attacks_remaining = 1
+    apply(room, P1, '五险一金')
+    assert room.players[P1].effect_flags.wuxian is True
+
+    # 打一发（未命中）→ 次数归零 → 触发
+    attack(room, P1, 5, 5)
+    assert room.attacks_remaining == 3, '归零时应补上 3 次'
+    assert room.players[P1].effect_flags.wuxian is False, '触发后标记要清掉'
+
+    # 再打光这 3 发 → 不能二次触发
+    for _ in range(3):
+        room.attacks_remaining -= 1
+    room.attacks_remaining = max(0, room.attacks_remaining)
+    server._maybe_trigger_wuxian_yijin(room, P1)
+    assert room.attacks_remaining == 0, '只能触发一次'
+
+
+def test_wuxian_not_triggered_after_dealing_damage(room):
+    """归零那一刻若已经让对方减过船，就不给 +3。"""
+    room.players[P2].ships = [ship((0, 0))]
+    room.players[P2].remaining_ships = 1
+    room.players[P1].damage_dealt_this_turn = 0
+    room.attacks_remaining = 1
+    apply(room, P1, '五险一金')
+
+    attack(room, P1, 0, 0)          # 命中并击沉 → damage_dealt_this_turn 变 1
+    assert room.players[P1].damage_dealt_this_turn > 0
+    assert room.attacks_remaining == 0, '造成过伤害就不该补次数'
+
+
+def test_wuxian_triggers_when_played_at_zero_attacks(room):
+    """出牌时攻击次数就已经是 0（还停在战斗阶段）→ 条件当场成立，立刻 +3。"""
+    room.players[P1].damage_dealt_this_turn = 0
+    room.attacks_remaining = 0
+    res = apply(room, P1, '五险一金')
+    assert res.success is True
+    assert room.attacks_remaining == 3, '已经归零时出牌应立即触发'
+    assert room.players[P1].effect_flags.wuxian is False
+
+
+def test_wuxian_badge_clears_after_trigger(room, events):
+    """触发后标记被消耗，角标要跟着消失（不能像以前那样一直亮着）。"""
+    room.players[P1].damage_dealt_this_turn = 0
+    room.attacks_remaining = 0
+    events.clear()
+    apply(room, P1, '五险一金')
+
+    seen = [d['effects'] for (e, d, t, _r) in events
+            if e == 'active_effects' and t == 'sid-p1']
+    assert seen, '触发时应刷新一次角标'
+    assert '五险一金' not in seen[-1], f'触发后不该还挂着角标，实际 {seen[-1]}'
+
+
+def test_wuxian_flag_dies_with_the_turn(room):
+    """D1：没触发就作废 —— 标记不在 permanent_flags 里，回合切换会被清掉。"""
+    room.players[P1].effect_flags.wuxian = True
+    # 复刻回合切换时的白名单过滤
+    keep = ['holy_heart', 'reinforcement_check', 'no_draw', 'prediction', 'forced_kill']
+    room.players[P1].effect_flags.__dict__ = {
+        k: v for k, v in room.players[P1].effect_flags.__dict__.items() if k in keep}
+    assert getattr(room.players[P1].effect_flags, 'wuxian', False) is False
+    assert 'wuxian' not in keep, 'wuxian 一旦进了白名单就变成跨回合永久，与卡面「这一回合」矛盾'
 
 
 def test_wuxian_fails_after_damage(room):

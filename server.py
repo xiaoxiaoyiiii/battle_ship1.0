@@ -229,6 +229,10 @@ class EffectFlags:
     last_stand: bool = False  # 绝处逢生效果
     double_attacks: bool = False
     battle_spirit: bool = False
+    # 五险一金：出牌时只「挂上保险」，等本回合攻击次数第一次归零、
+    # 且那时确实没让对方减船，才真正 +3（见 _maybe_trigger_wuxian_yijin）。
+    # 不放进 permanent_flags，所以回合切换会被清掉 —— 没触发就作废，符合卡面「这一回合」。
+    wuxian: bool = False
 
 
 class Player:
@@ -2085,6 +2089,11 @@ def handle_attack(data):
     # 攻击次数为0时，不自动切换攻击者，让玩家手动进入结束阶段
     # 玩家需要点击"进入结束阶段"按钮来结束当前回合
     if room.attacks_remaining == 0:
+        # 五险一金：本回合攻击次数第一次归零 —— 若此刻确实没让对方减船，则 +3
+        # （触发后攻击次数不再是 0，下面的广播会把最新次数带给前端）
+        _maybe_trigger_wuxian_yijin(room, attacker_id)
+
+    if room.attacks_remaining == 0:
         # 只发送攻击次数更新，不切换攻击者
         emit('attacks_updated', {
             'current_attacker': room.current_attacker,
@@ -2131,6 +2140,12 @@ def enter_battle_phase(data):
             room.players[player_id].effect_flags.double_attacks = False
         if field_magic_name(room) == "教皇旨意":
             room.attacks_remaining = 0
+
+        # 五险一金：进战斗阶段时攻击次数就可能是 0（教皇旨意直接把次数压成 0），
+        # 这也算「本回合第一次归零」，要给它触发机会。
+        if room.attacks_remaining <= 0:
+            _maybe_trigger_wuxian_yijin(room, player_id)
+
         # 广播阶段更新
         emit('phase_updated', {
             'current_phase': room.current_phase,
@@ -3001,6 +3016,7 @@ def _emit_ships_updated(room):
 # 现在改成服务端在状态变化后广播真相，前端只负责照着画，不会再出现「贴上就下不来」。
 _EFFECT_BADGES = (
     ('subsidy', '百亿补贴'),
+    ('wuxian', '五险一金'),
     ('vampire', '饮血'),
     ('treasure_hunter', '八方来财'),
     ('prediction', '神机妙算'),
@@ -3025,6 +3041,48 @@ def _emit_active_effects(room):
         if not getattr(player, 'sid', None):
             continue
         emit('active_effects', {'effects': _effect_badges(player)}, to=player.sid)
+
+
+def _maybe_trigger_wuxian_yijin(room, player_id):
+    """五险一金：本回合攻击次数【第一次归零】且那时没让对方减船 → 攻击次数 +3。
+
+    卡面：「这一回合自己的攻击次数第一次用尽时，若自己未曾对对方造成一点伤害，
+    则自己的攻击次数再加3」。关键是「什么时候结算」：出牌只是挂上保险
+    （effect_flags.wuxian），真正的 +3 要等攻击次数第一次变成 0 才结算 ——
+    不是一打出就白送 3 次。触发后立刻清标记，保证只生效一次。
+
+    所有会让攻击次数归零的入口都要调它（攻击结算 / 进入战斗阶段 / 出牌瞬间已经是 0），
+    否则会出现「已经 0 次了却永远等不到触发」的漏网情况。
+
+    返回 True 表示这次真的触发了。
+    """
+    player = room.players.get(player_id)
+    if player is None or not getattr(player.effect_flags, 'wuxian', False):
+        return False
+
+    # 只有「当前攻击者」的攻击次数才是他自己的
+    if room.current_attacker != player_id:
+        return False
+    if room.attacks_remaining > 0:
+        return False
+    # 这一回合让对方减过船就不给
+    if player.damage_dealt_this_turn > 0:
+        return False
+
+    player.effect_flags.wuxian = False   # 只触发一次
+    room.attacks_remaining += 3
+
+    add_game_log(room, f'第{room.round}回合 · {_log_name(room, player_id)} 触发五险一金，攻击次数 +3',
+                 'magic', {'player': player_id, 'card': '五险一金'})
+    emit('message', {'text': '五险一金生效：攻击次数已用尽且未造成伤害，攻击次数 +3'},
+         to=player.sid)
+    emit('attacks_updated', {
+        'current_attacker': room.current_attacker,
+        'attacks_remaining': room.attacks_remaining
+    }, room=room.id)
+    # 标记已消耗，角标要跟着消失
+    _emit_active_effects(room)
+    return True
 
 
 def _revive_sunken_ships(room, player, count):
@@ -5273,18 +5331,20 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['message'] = 'Freezing！生效，跳过对方本回合的所有阶段'
 
     elif card.name == '五险一金':
-        # 本回合未造成伤害则增加攻击次数
-        if caster.damage_dealt_this_turn == 0:
-            room.attacks_remaining += 3
-            result['message'] = '未造成伤害，攻击次数+3'
-            # 广播攻击次数更新
-            emit('attacks_updated', {
-                'current_attacker': room.current_attacker,
-                'attacks_remaining': room.attacks_remaining
-            }, room=room.id)
-        else:
+        # 本回合已经让对方减过船 → 这张牌无论如何都不会再触发了，直接拒绝，别浪费一张卡
+        if caster.damage_dealt_this_turn > 0:
             result['success'] = False
             result['message'] = '本回合已造成伤害，无法发动'
+            return result
+
+        # 只「挂上保险」：真正的 +3 要等本回合攻击次数第一次归零时才结算，
+        # 不是一打出就白送 3 次（见 _maybe_trigger_wuxian_yijin）。
+        caster.effect_flags.wuxian = True
+        if _maybe_trigger_wuxian_yijin(room, caster_id):
+            # 出牌时攻击次数本来就已是 0：条件当场成立
+            result['message'] = '攻击次数已用尽且未造成伤害，攻击次数 +3'
+        else:
+            result['message'] = '五险一金已生效：用完本回合所有攻击次数且未造成伤害时，攻击次数 +3'
 
     elif card.name == '明智埋葬':
         # 埋葬对象 = 牌堆中的卡 + 对方手牌（可埋葬对方手里的牌）

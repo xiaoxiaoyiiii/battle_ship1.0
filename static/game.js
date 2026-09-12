@@ -5323,6 +5323,8 @@ function makeFloatingDraggable(el, handle, storageKey) {
     }
 
     function begin(cx, cy) {
+        // 紧凑（移动端）布局下浮窗已回到文档流，拖拽既无意义又会和滚动抢手势
+        if (window.__adaptiveDragDisabled) return;
         const r = el.getBoundingClientRect();
         startX = cx; startY = cy;
         startLeft = r.left; startTop = r.top;
@@ -5365,6 +5367,9 @@ function makeFloatingDraggable(el, handle, storageKey) {
     window.addEventListener('touchend', end);
 
     window.addEventListener('resize', () => {
+        // 紧凑布局下这些浮窗已经被搬进文档流（面板槽），此处的 rect 是流内位置，
+        // 回写成 left/top 会把宽屏下的浮窗坐标写坏（表现为聊天框跑到左上角）
+        if (window.__adaptiveDragDisabled) return;
         const r = el.getBoundingClientRect();
         place(r.left, r.top);
     });
@@ -5390,6 +5395,8 @@ function makeVisualDraggable(el, handle) {
     }
 
     function begin(cx, cy) {
+        // 同上：紧凑布局下不做视觉拖拽
+        if (window.__adaptiveDragDisabled) return;
         [ox, oy] = readOffset();
         sx = cx; sy = cy;
         dragging = true;

@@ -271,6 +271,11 @@
                     </div>
                     <div id="effect-indicators" class="effect-indicators"></div>
                 </div>
+                <!-- 棋盘切换条（仅在单屏放不下两块棋盘时由自适应布局显示） -->
+                <div class="board-tabs" id="board-tabs" role="tablist" aria-label="棋盘切换">
+                    <button type="button" class="board-tab active" data-board-tab="me" role="tab">我的棋盘</button>
+                    <button type="button" class="board-tab" data-board-tab="opp" role="tab">对手棋盘</button>
+                </div>
                 <div class="boards-container">
                     <div class="board-wrapper">
                         <h3>你的棋盘</h3>
@@ -295,6 +300,22 @@
                             <!-- 速阶3卡牌列表将动态添加这里 -->
                         </div>
                         <button id="chain-cancel" class="chain-cancel-btn">取消</button>
+                    </div>
+                </div>
+
+                <!-- 移动端自适应面板槽：卡牌详情 / 日志 / 聊天 三选一，永不同时占屏 -->
+                <div id="aux-dock" class="aux-dock" data-open="false" data-tab="card">
+                    <div class="dock-tabs" role="tablist" aria-label="信息面板">
+                        <button type="button" class="dock-tab active" data-dock-tab="card" role="tab">卡牌</button>
+                        <button type="button" class="dock-tab" data-dock-tab="log" role="tab">日志</button>
+                        <button type="button" class="dock-tab" data-dock-tab="chat" role="tab">聊天</button>
+                        <button type="button" class="dock-toggle" id="dock-toggle" aria-expanded="false"
+                                aria-label="展开或收起面板" title="展开/收起面板">▲</button>
+                    </div>
+                    <div class="dock-body" id="aux-dock-body">
+                        <section class="dock-panel" data-dock-panel="card"></section>
+                        <section class="dock-panel" data-dock-panel="log"></section>
+                        <section class="dock-panel" data-dock-panel="chat"></section>
                     </div>
                 </div>
 
@@ -501,6 +522,8 @@
 <!-- 先加载游戏核心逻辑 -->
 <script>window.__USERNAME = {{ username|tojson }};</script>
 <script src="/static/game.js"></script>
+<!-- 移动端自适应布局：按可用空间在「桌面浮窗」与「一屏网格」之间切换（见 style.css 第 22 节） -->
+<script src="/static/adaptive_layout.js"></script>
 <!-- 背景音乐播放器 -->
 <script src="/static/music_player.js"></script>
 

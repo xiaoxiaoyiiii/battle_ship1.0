@@ -1817,3 +1817,357 @@ body.cool-effects-enabled .cell.cool-flash {
     color: inherit;
     cursor: default;
 }
+
+/* ==========================================================================
+   22. 紧凑（移动端自适应）布局 —— 2026-09-12
+   --------------------------------------------------------------------------
+   由 static/adaptive_layout.js 计算后写上 body.layout-compact / layout-tight，
+   并在 #game-screen 上写 data-boards=side|stack|tabs。
+
+   修的是根因，不是症状：对局界面原本是"桌面多浮窗"范式（日志 / 局内聊天 /
+   卡牌预览三个 position:fixed 窗口盖在一条长文档上），断点阶梯只改尺寸、不改
+   结构，于是压到手机上就出现「棋盘被挤出首屏 / 浮窗互相叠压 / 毛玻璃互相采样
+   糊成一片 / 手牌在最底下够不着」。
+
+   紧凑模式改成【一屏网格】，页面本身不滚动：
+       HUD(第1行) / 棋盘舞台(第3行) / 手牌条(第4行) / 面板槽(第5行)
+   三个原浮窗搬进面板槽三选一，物理上不可能再互相叠压；棋盘尺寸由舞台实际可用
+   空间反推；舞台放不下两块棋盘时自动切成「我的/对手」切换。
+
+   ⚠️ 宽屏（>=1200 且 >=700）不受影响：以下规则全部挂在 body.layout-compact 下。
+   ========================================================================== */
+
+/* 棋盘切换条 / 面板槽在宽屏下不参与布局（面板由 adaptive_layout.js 放回原位） */
+.board-tabs { display: none; }
+.aux-dock { display: none; }
+
+body.layout-compact.layout-ingame {
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+    padding: 0;
+    display: block;
+    overscroll-behavior: none;
+}
+body.layout-compact.layout-ingame .game-container {
+    width: 100%;
+    max-width: none;
+    padding: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background: transparent;
+}
+body.layout-compact.layout-ingame .game-container::before { display: none; }
+body.layout-compact.layout-ingame .game-main-container { display: block; margin-top: 0; }
+body.layout-compact.layout-ingame .game-content {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+    gap: 4px;
+    width: 100%;
+    max-width: none;
+    height: var(--stage-vh, 100dvh);
+    padding: 4px 6px calc(4px + env(safe-area-inset-bottom, 0px));
+    box-sizing: border-box;
+}
+body.layout-compact.layout-ingame .game-content > .game-info { grid-row: 1; }
+body.layout-compact.layout-ingame .game-content > .board-tabs { grid-row: 2; }
+body.layout-compact.layout-ingame .game-content > .boards-container { grid-row: 3; }
+body.layout-compact.layout-ingame .game-content > #magic-system { grid-row: 4; }
+body.layout-compact.layout-ingame .game-content > .aux-dock { grid-row: 5; }
+body.layout-compact.layout-ingame .discard-pile-btn-row { display: none; }
+
+/* ---------- 22.1 HUD：原来的四块 400px 压成 1~2 行 chip ---------- */
+body.layout-compact.layout-ingame .game-content > .game-info {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 3px 6px;
+    margin: 0;
+    padding: 0 2px;
+    font-size: 0.78rem;
+    line-height: 1.25;
+}
+body.layout-compact.layout-ingame .game-content > .game-info > * { margin: 0; }
+body.layout-compact.layout-ingame .players-info {
+    /* 一行放得下就一行；放不下宁可换行，也不横向溢出把按钮切掉 */
+    display: flex; flex-direction: row; flex-wrap: wrap;
+    align-items: center; gap: 2px 4px; margin: 0; min-width: 0;
+    max-width: 100%;
+}
+body.layout-compact.layout-ingame .player-info { padding: 0; min-width: 0; }
+body.layout-compact.layout-ingame .player-flex-row {
+    display: flex; align-items: center; gap: 4px;
+    background: var(--surface-muted);
+    border-radius: 999px;
+    padding: 0 8px 0 0;
+    min-height: 40px;
+    box-sizing: border-box;
+}
+body.layout-compact.layout-ingame .player-flex-row > div {
+    display: flex; align-items: center; gap: 4px; min-width: 0;
+}
+body.layout-compact.layout-ingame .player-info p { margin: 0; font-size: 0.68rem; white-space: nowrap; }
+body.layout-compact.layout-ingame #show-opponent-stats { font-size: 0.6rem; padding: 0 4px; }
+body.layout-compact.layout-ingame .avatar-sm { width: 22px; height: 22px; flex: 0 0 auto; }
+body.layout-compact.layout-ingame #my-username-info,
+body.layout-compact.layout-ingame #opponent-username-info { display: none; }
+
+/* 角落头像浮标在紧凑模式下回到 HUD 当普通 chip，不再浮在内容上 */
+body.layout-compact.layout-ingame #avatar-corner,
+body.layout-compact.layout-ingame #opponent-avatar-corner {
+    position: static !important;
+    top: auto !important; left: auto !important; right: auto !important; bottom: auto !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    padding: 0 0 0 2px !important;
+    margin: 0 !important;
+    z-index: auto !important;
+}
+/* 角标原本是 fixed 胶囊，进 chip 后必须钉成"一行水平"，
+   否则会被 flex 压窄、头像与名字竖着叠起来 */
+body.layout-compact.layout-ingame #avatar-corner,
+body.layout-compact.layout-ingame #opponent-avatar-corner {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    flex: 0 0 auto;
+    gap: 4px;
+    white-space: nowrap;
+}
+/* 宽屏时对手角标是"名字在左、头像在右"的镜像；进了 chip 后要还原成头像在前 */
+body.layout-compact.layout-ingame #opponent-avatar-corner { flex-direction: row-reverse !important; }
+/* 自己叫什么自己知道；紧凑模式下把昵称位让给"剩余 N 艘战舰"，
+   否则两个 chip 在 320~336px 宽下必然换行，白白吃掉一行高度。
+   对手昵称保留（那是真的有用），超长时省略号截断。 */
+body.layout-compact.layout-ingame #my-username-corner { display: none !important; }
+body.layout-compact.layout-ingame #opponent-username-corner {
+    margin: 0 2px !important;
+    font-size: 0.72rem !important;
+    max-width: 52px;
+    font-size: 0.68rem !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+body.layout-compact.layout-ingame .field-magic-area { padding: 0; }
+body.layout-compact.layout-ingame .field-magic {
+    margin: 0; padding: 0 8px; font-size: 0.74rem; line-height: 40px;
+    background: var(--surface-muted); border-radius: 999px; white-space: nowrap;
+}
+body.layout-compact.layout-ingame .turn-indicator-inner { display: inline-flex; align-items: center; gap: 6px; }
+body.layout-compact.layout-ingame .turn-indicator-inner h2 { margin: 0; font-size: 0.8rem; }
+body.layout-compact.layout-ingame #turn-indicator { display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 0; }
+body.layout-compact.layout-ingame #turn-indicator > .game-info {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 0.76rem; margin: 0;
+}
+/* 阶段按钮的文案已经表达了当前阶段；"当前回合"与"剩余攻击次数"重复，紧凑模式下都是冗余的 */
+body.layout-compact.layout-ingame #turn-indicator > .game-info > div:first-child,
+body.layout-compact.layout-ingame #turn-indicator > .game-info > div:nth-child(2) { display: none; }
+/* 没有生效的场地魔法时不显示"当前生效的场地魔法：无"这个纯噪音 chip（由 JS 打标记） */
+body.layout-compact.layout-ingame #game-screen[data-field-magic="none"] .field-magic-area { display: none; }
+body.layout-compact.layout-ingame .phase-btn,
+body.layout-compact.layout-ingame .surrender-btn,
+body.layout-compact.layout-ingame #show-opponent-stats {
+    min-height: 40px;
+    margin: 0;
+    padding: 0 10px;
+    font-size: 0.76rem;
+    display: inline-block;
+    box-sizing: border-box;
+}
+
+/* ---------- 22.2 棋盘舞台：尺寸反推，永不溢出、永不被盖 ---------- */
+body.layout-compact.layout-ingame .boards-container {
+    display: flex;
+    gap: 4px;
+    margin: 0;
+    min-width: 0;
+    min-height: 0;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+body.layout-compact.layout-ingame .boards-container[data-mode="side"] { flex-direction: row; }
+body.layout-compact.layout-ingame .boards-container[data-mode="stack"],
+body.layout-compact.layout-ingame .boards-container[data-mode="tabs"] { flex-direction: column; }
+body.layout-compact.layout-ingame .boards-container[data-mode="tabs"] > .board-wrapper { display: none; }
+body.layout-compact.layout-ingame .boards-container[data-mode="tabs"] > .board-wrapper.active { display: flex; }
+body.layout-compact.layout-ingame .board-wrapper {
+    flex: 0 0 auto;
+    padding: 2px;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+}
+body.layout-compact.layout-ingame .board-wrapper h3 { margin: 0 0 2px; font-size: 0.68rem; }
+body.layout-compact.layout-ingame .board {
+    /* 只锁宽度：高度由 .cell 的 aspect-ratio 反推，格子永远是正方形。
+       若同时锁 height + max-height，舞台变矮时会被压成"扁格子" */
+    width: var(--board-size, 240px);
+    height: auto;
+    max-width: 100%;
+    margin: 0;
+    gap: clamp(2px, 0.5vw, 4px);
+    padding: clamp(3px, 0.8vw, 8px);
+}
+
+/* ---------- 22.3 手牌条：常驻舞台下方，横向滚动 ---------- */
+body.layout-compact.layout-ingame #magic-system { margin: 0; min-height: 0; }
+body.layout-compact.layout-ingame #magic-system.hand-empty { display: none; }
+body.layout-compact.layout-ingame #magic-system .magic-hand-container {
+    margin: 0; padding: 4px 6px; border-radius: 10px;
+}
+body.layout-compact.layout-ingame #magic-system .magic-hand-container > h3 { display: none; }
+body.layout-compact.layout-ingame .magic-hand {
+    gap: 6px; margin: 0; padding: 0 0 2px;
+    flex-wrap: nowrap; justify-content: flex-start;
+    overflow-x: auto; overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+}
+body.layout-compact.layout-ingame .magic-card { flex: 0 0 auto; width: 64px; height: 92px; padding: 4px; }
+body.layout-compact.layout-ingame .magic-card .card-name { font-size: 0.7rem; margin-bottom: 2px; padding-bottom: 2px; }
+body.layout-compact.layout-ingame .magic-card .card-speed,
+body.layout-compact.layout-ingame .magic-card .card-type { font-size: 0.62rem; }
+body.layout-compact.layout-ingame #chain-display:empty { display: none; }
+
+/* ---------- 22.4 面板槽：卡牌详情 / 日志 / 聊天 三选一，永不叠压 ---------- */
+body.layout-compact.layout-ingame .game-content > .aux-dock {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    /* 上限由 JS 按"展开后棋盘仍能拿到最小尺寸"反推，避免开面板把棋盘压成芝麻 */
+    max-height: var(--dock-max, 60dvh);
+    background: var(--glass);
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+    overflow: hidden;
+}
+body.layout-compact.layout-ingame .dock-tabs {
+    display: flex; gap: 4px; padding: 3px 4px; background: var(--primary-gradient);
+}
+body.layout-compact.layout-ingame .dock-tab {
+    flex: 1 1 0; min-width: 0; min-height: 40px;
+    border: none; border-radius: 8px;
+    background: rgba(255, 255, 255, 0.18); color: #fff;
+    font-size: 0.8rem; font-weight: 600; cursor: pointer;
+    padding: 0 6px;
+}
+body.layout-compact.layout-ingame .dock-tab.active { background: #fff; color: var(--primary); }
+body.layout-compact.layout-ingame .dock-toggle {
+    flex: 0 0 44px; min-height: 40px;
+    border: none; border-radius: 8px;
+    background: rgba(255, 255, 255, 0.18); color: #fff;
+    font-size: 0.8rem; cursor: pointer; padding: 0;
+}
+body.layout-compact.layout-ingame #aux-dock[data-open="false"] .dock-body { display: none; }
+body.layout-compact.layout-ingame .dock-body {
+    /* 高度由 .aux-dock 的 max-height 约束、自己 flex 撑满剩余空间：
+       把上限放在 body 上时，整个 dock 仍可能撑破所在网格行 */
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: 6px;
+}
+body.layout-compact.layout-ingame .dock-panel { display: none; }
+body.layout-compact.layout-ingame #aux-dock[data-tab="card"] .dock-panel[data-dock-panel="card"],
+body.layout-compact.layout-ingame #aux-dock[data-tab="log"] .dock-panel[data-dock-panel="log"],
+body.layout-compact.layout-ingame #aux-dock[data-tab="chat"] .dock-panel[data-dock-panel="chat"] { display: block; }
+
+/* 三个原浮窗进入面板槽后一律失去"浮动"身份 */
+body.layout-compact.layout-ingame .dock-panel .log-container {
+    position: static !important;
+    top: auto !important; left: auto !important; right: auto !important; bottom: auto !important;
+    width: auto !important; max-width: none !important; min-width: 0 !important;
+    height: auto !important; max-height: none !important;
+    background: transparent; border: none; border-radius: 0; box-shadow: none;
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+    cursor: default !important;
+}
+body.layout-compact.layout-ingame .log-header { display: none; }
+body.layout-compact.layout-ingame .log-container.collapsed .log-content { display: block; }
+body.layout-compact.layout-ingame .log-content { max-height: 38dvh; padding: 0; }
+body.layout-compact.layout-ingame .dock-panel #in-game-chat-container {
+    position: static !important;
+    top: auto !important; left: auto !important; right: auto !important; bottom: auto !important;
+    width: auto !important; max-width: none !important;
+    background: transparent; border: none; border-radius: 0; box-shadow: none;
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+}
+body.layout-compact.layout-ingame #in-game-chat-header { display: none; }
+body.layout-compact.layout-ingame .in-game-chat-messages { min-height: 84px; max-height: 32dvh; padding: 2px 2px 6px; }
+body.layout-compact.layout-ingame .dock-panel #magic-card-preview {
+    position: static !important;
+    width: auto; max-height: none; margin: 0; padding: 0;
+    background: transparent; border: none; border-radius: 0; box-shadow: none;
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+    overflow: visible; transform: none !important; cursor: default;
+}
+body.layout-compact.layout-ingame .preview-header { margin-bottom: 6px; padding-bottom: 6px; }
+body.layout-compact.layout-ingame .preview-instructions { display: none; }
+body.layout-compact.layout-ingame .card-name { font-size: 1rem; margin-bottom: 6px; }
+body.layout-compact.layout-ingame .card-stats { margin-bottom: 6px; padding: 6px; }
+body.layout-compact.layout-ingame .card-description { margin-bottom: 6px; }
+/* 未选卡时不再占地方：只留一行提示 */
+body.layout-compact.layout-ingame #magic-card-preview[data-empty="true"] .card-stats,
+body.layout-compact.layout-ingame #magic-card-preview[data-empty="true"] .card-description h4 { display: none; }
+body.layout-compact.layout-ingame .dock-panel .discard-pile-btn-row {
+    display: block; margin: 8px 0 0; text-align: center;
+}
+body.layout-compact.layout-ingame .dock-panel .discard-pile-btn-row button { min-height: 40px; }
+body.layout-compact.layout-ingame .dock-panel[data-dock-panel="log"] #show-opponent-stats {
+    display: block; width: 100%; margin: 8px 0 0; text-align: center;
+}
+
+/* ---------- 22.5 棋盘切换条（仅在舞台放不下两块棋盘时出现） ---------- */
+body.layout-compact.layout-ingame #game-screen[data-boards="tabs"] .board-tabs { display: flex; gap: 4px; }
+body.layout-compact.layout-ingame .board-tab {
+    flex: 1 1 0; min-width: 0; min-height: 40px;
+    border: 1px solid var(--panel-border); border-radius: 8px;
+    background: var(--surface-muted); color: var(--text);
+    font-size: 0.8rem; cursor: pointer;
+}
+body.layout-compact.layout-ingame .board-tab.active {
+    background: var(--primary); color: #fff; border-color: var(--primary);
+}
+
+/* ---------- 22.6 矮屏（横屏手机）：再挤一层，把高度让给棋盘 ---------- */
+/* 横屏手机上"高度"才是稀缺资源，于是把 HUD / 面板槽改成右侧一列，
+   让棋盘独吞左侧整列高度（同一块 6x6 棋盘此时反而比竖屏更大）。 */
+body.layout-tight.layout-ingame .game-content {
+    grid-template-columns: minmax(0, 1fr) minmax(150px, 210px);
+    grid-template-rows: auto auto minmax(0, 1fr);
+    gap: 2px 4px;
+    padding: 2px 4px calc(2px + env(safe-area-inset-bottom, 0px));
+}
+body.layout-tight.layout-ingame .game-content > .game-info { grid-column: 2; grid-row: 1; }
+body.layout-tight.layout-ingame .game-content > .board-tabs { grid-column: 2; grid-row: 2; }
+body.layout-tight.layout-ingame .game-content > .boards-container { grid-column: 1; grid-row: 1 / span 3; }
+body.layout-tight.layout-ingame .game-content > .aux-dock { grid-column: 2; grid-row: 3; }
+body.layout-tight.layout-ingame .game-content > #magic-system { display: none; }
+body.layout-tight.layout-ingame .game-content > .game-info { font-size: 0.72rem; gap: 2px 4px; }
+/* 右侧窄列里玩家 chip 改成纵向堆叠，否则两段文字会互相挤压、溢出列外 */
+body.layout-tight.layout-ingame .players-info { flex-direction: column; align-items: stretch; gap: 2px; }
+body.layout-tight.layout-ingame .player-flex-row { width: 100%; }
+/* 面板槽收起时不要撑满整行，否则变成一大块空白面板 */
+body.layout-tight.layout-ingame .aux-dock { align-self: start; }
+body.layout-tight.layout-ingame .player-flex-row,
+body.layout-tight.layout-ingame .phase-btn,
+body.layout-tight.layout-ingame .surrender-btn,
+body.layout-tight.layout-ingame #show-opponent-stats,
+body.layout-tight.layout-ingame .dock-tab,
+body.layout-tight.layout-ingame .dock-toggle,
+body.layout-tight.layout-ingame .board-tab,
+body.layout-tight.layout-ingame .field-magic { min-height: 36px; line-height: 36px; }
+body.layout-tight.layout-ingame .dock-tab,
+body.layout-tight.layout-ingame .dock-toggle,
+body.layout-tight.layout-ingame .board-tab { line-height: 1; }
+
+

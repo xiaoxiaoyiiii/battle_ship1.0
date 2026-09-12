@@ -1,7 +1,7 @@
 # CLAUDE.md — 战舰棋 + 魔法卡
 
-> 面向 AI 代理的项目索引。**先读这里，再按需读源码**——`server.py` 4733 行、`game.js` 5625 行，不要一次读完。
-> 基于 commit `35a3131` 实测编写。最后更新：2026-09-11。
+> 面向 AI 代理的项目索引。**先读这里，再按需读源码**——`server.py` 5246 行、`game.js` 6032 行，不要一次读完。
+> 基于 commit `35a3131` 实测编写。最后更新：2026-09-12（移动端自适应布局批）。
 
 ---
 
@@ -17,10 +17,11 @@ Flask + Flask-SocketIO 的实时双人海战棋，叠加 43 条魔法卡（41 �
 
 | 文件 | 行数 | 说明 |
 | --- | --- | --- |
-| `server.py` | **4733** | 游戏核心：SocketIO、房间、状态机、魔法卡结算 |
-| `static/game.js` | **5625** | 前端全部逻辑（巨型单文件，无模块化） |
-| `static/style.css` | 1622 | 样式 + 深/浅色主题 |
-| `templates/index.html` | 577 | SPA 模板 |
+| `server.py` | **5246** | 游戏核心：SocketIO、房间、状态机、魔法卡结算 |
+| `static/game.js` | **6032** | 前端全部逻辑（巨型单文件，无模块化） |
+| `static/style.css` | 2173 | 样式 + 深/浅色主题 + 第 22 节「紧凑（移动端自适应）布局」 |
+| `templates/index.html` | 623 | SPA 模板 |
+| `static/adaptive_layout.js` | 396 | 移动端自适应布局：按可用空间在「桌面浮窗」与「一屏网格」间切换 |
 | `db.py` | 784 | SQLite DAO |
 | `api.py` | 186 | Flask 路由 |
 | `static/magic_card.json` | 84 | 后端卡牌数据 |
@@ -36,13 +37,15 @@ Flask + Flask-SocketIO 的实时双人海战棋，叠加 43 条魔法卡（41 �
 ```bash
 pip install -r requirements.txt
 python start_server.py        # 推荐（含依赖检查）
-python -m pytest tests/ -q    # 250 passed
+python -m pytest tests/ -q    # 260 passed
 ```
 
 > ⚠️ **必须在项目根目录运行**——`server.py` 用相对路径 `./static/magic_card.json`；`tests/test_all_magic_cards.py:1088` 也用硬编码相对路径，是全套测试中唯一对 CWD 敏感的。
 
-**实测基线（2026-09-12 后端/安全审查修复批后）**：`250 passed / 0 failed`（`test_all_magic_cards.py`、`test_db_core.py`、`test_disconnect_and_eden_shenji.py`、`test_fixes_regression.py`、`test_ui_review_fixes.py`、`test_review_fixes_2026_09_12.py`、`test_review_fixes_batch2.py`）。
+**实测基线（2026-09-12 移动端自适应布局批后）**：`260 passed / 0 failed`（`test_all_magic_cards.py`、`test_db_core.py`、`test_disconnect_and_eden_shenji.py`、`test_fixes_regression.py`、`test_ui_review_fixes.py`、`test_review_fixes_2026_09_12.py`、`test_review_fixes_batch2.py`、`test_mobile_adaptive_layout.py`）。
 
+> 🔧 **2026-09-12 移动端自适应布局批**（详见 `docs/MOBILE_ADAPTIVE_LAYOUT.md`）：对局界面在手机上不可用——桌面多浮窗范式被等比压到手机（断点只改尺寸不改结构）。实测红基线 32 项不通过：320×568 下棋盘 100% 在首屏外且滚过去后 36/36 格被浮窗盖住、日志∩预览 273×181、聊天∩阶段卡 337×123、手牌 `#magic-system` 落在 y≈1577、格子 20.3~35px。修法：新增 `static/adaptive_layout.js`，按【可用空间】选布局（`wide` 保持原样 / `compact` 一屏网格 / 矮屏右列 / 放不下时手牌收进面板槽），三个浮窗搬进 `#aux-dock` 三选一，棋盘尺寸由舞台反推（只锁宽度保正方格），触屏停用浮窗拖拽。修复后 10 项×6 视口全部通过，宽屏（≥1200×700）布局一行未动。
+>
 > 🔧 **2026-09-12 后端/安全审查修复批**（权威清单见 `docs/FIXES_2026-09-12.md`）：7 个 P0 + 20 余个 P1。要点：
 > - **`@_test_event` 装饰器顺序修正**（此前写在 `@socketio.on` 外层 → 门禁完全失效、公网可判胜/白嫖卡/读对方船位）
 > - `handle_attack` 补攻击次数与终局校验（此前次数=0 仍可无限攻击、终局后可重复记战绩）
@@ -71,7 +74,9 @@ python -m pytest tests/ -q    # 250 passed
 > - `.board-wrapper{flex:0 1 340px}`——两块棋盘不再一大一小（300×300，单格 42px）
 > - 游戏日志补空状态占位 `.log-empty`；玩家信息行文案改「你：剩余 6 艘战舰」；中文界面冒号统一全角
 > - `static/avatars/default.png` 由 1×1 透明图换成 96×96 占位头像
-> - 回归：`tests/test_ui_review_fixes.py`（9 条）+ `tools/ui_layout_check.mjs`（无头浏览器 9 项布局不变量）
+> - 回归：`tests/test_ui_review_fixes.py`（9 条）+ `tools/ui_layout_check.mjs`（无头浏览器布局不变量，见下一批）
+
+> 🔧 **2026-09-12 移动端自适应布局批**（`tools/ui_layout_check.mjs` 已扩成两段式：宽屏 1600×1000 跑原有 9 项，另在 320×568 / 336×664 / 390×844 / 430×932 / 664×336 横屏 / 768×1024 六个视口上跑 10 项移动端不变量，含"展开面板槽后"复测）。详见 `docs/MOBILE_ADAPTIVE_LAYOUT.md`。
 
 ---
 
@@ -443,6 +448,7 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`。真人摆完船后
 | `docs/SERVER_PY_ANALYSIS.md` | server.py 4733 行全量分析（类/事件/攻击结算/魔法分发/连锁） |
 | `docs/FRONTEND_TECH_ANALYSIS.md` | 前端 + 测试深度分析（827 行，58 个 socket.on、33 个 emit、函数索引、19 条 bug） |
 | **`docs/UI_REVIEW_FIXES.md`** | **2026-09-12 截图 UI 审查修复记录（含逐条证据、端到端验证方式、有意不改的项）** |
+| **`docs/MOBILE_ADAPTIVE_LAYOUT.md`** | **2026-09-12 移动端自适应布局：实测问题清单、四种布局模式、端到端不变量与取舍** |
 | `docs/CHAIN_ENGINE_SPEC.md` | 连锁引擎设计稿（⚠️ 部分已过时，见第 8 节） |
 | `README.md` | 面向用户的功能/玩法说明（⚠️ 测试数已过时） |
 

@@ -268,43 +268,62 @@ function updateOpponentAvatarInGame(opponentId) {
         });
 }
 
+// 战绩弹窗容器：优先复用 index.html 里的静态弹窗。
+// 旧实现每次都 document.createElement 一个 id 同为 user-stats-modal 的弹窗并 append 到 body，
+// 关闭时只加 hidden 不移除 —— 每点一次头像就多一个重复 id 的遮罩，永不回收。
+function getStatsModalContent() {
+    let modal = document.getElementById('user-stats-modal');
+    let content = document.getElementById('user-stats-content');
+    if (modal && modal.dataset.dynamic === '1' && content) return content;
+    if (!modal || !content) {
+        modal = document.createElement('div');
+        modal.id = 'user-stats-modal';
+        modal.className = 'modal-overlay';
+        modal.dataset.dynamic = '1';
+        modal.innerHTML = '<div class="modal-content"><span class="modal-close">×</span>'
+            + '<h2>个人战绩</h2><div id="user-stats-content"></div></div>';
+        document.body.appendChild(modal);
+        content = modal.querySelector('#user-stats-content');
+        const close = () => { modal.classList.add('hidden'); };
+        modal.querySelector('.modal-close').onclick = close;
+        modal.onclick = (e) => { if (e.target === modal) close(); };
+    }
+    return content;
+}
+
+// 迷你战绩表（头像入口用）。
+// 旧实现把 <table> 包在 <p> 里 —— 非法嵌套，解析器会提前闭合 <p>。
+function renderMiniStatsTable(s) {
+    if (!s) return '<p>未找到战绩数据</p>';
+    return '<table class="user-stats-table">'
+        + '<tr><td>用户名</td><td>' + escapeHtml(s.username) + '</td></tr>'
+        + '<tr><td>胜场</td><td>' + s.wins + '</td></tr>'
+        + '<tr><td>负场</td><td>' + s.losses + '</td></tr>'
+        + '<tr><td>当前连胜</td><td>' + s.current_streak + '</td></tr>'
+        + '<tr><td>最长连胜</td><td>' + s.longest_streak + '</td></tr>'
+        + '</table>';
+}
+
 // 点击头像查看战绩
 if (myAvatarInGame) {
     myAvatarInGame.style.cursor = 'pointer';
     myAvatarInGame.addEventListener('click', () => {
-        // 如果没有弹窗则自动创建
-
         // 优先使用 gameState.playerName，再退回到服务器渲染的全局用户名或页面元素
         const username = (window.gameState && window.gameState.playerName) || window.__USERNAME || (document.getElementById('profile-username') && document.getElementById('profile-username').textContent) || '';
         if (!username) {
             showMessage('未登录，无法查看战绩', { type: 'warning' });
             return;
         }
-        fetch(`/user_stats?username=${encodeURIComponent(username)}`)
+        fetch('/user_stats?username=' + encodeURIComponent(username))
             .then(r => r.json()).then(data => {
-                if (data.stats) {
-                    const s = data.stats;
-                    let userStatsContents = `\
-                        <table class="user-stats-table">\
-                            <tr><td>用户名</td><td>${escapeHtml(s.username)}</td></tr>\
-                            <tr><td>胜场</td><td>${s.wins}</td></tr>\
-                            <tr><td>负场</td><td>${s.losses}</td></tr>\
-                            <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>\
-                            <tr><td>最长连胜</td><td>${s.longest_streak}</td></tr>\
-                        </table>`;
-                    let userStatsModal = document.createElement('div');
-                    userStatsModal.id = 'user-stats-modal';
-                    userStatsModal.className = 'modal-overlay';
-                    userStatsModal.innerHTML = '<div class="modal-content"><span class="modal-close" id="user-stats-modal-close">×</span><h2>个人战绩</h2><div id="user-stats-content1"><p>' + userStatsContents + '</p></div></div>';
-                    document.body.appendChild(userStatsModal);
-                    // 绑定关闭事件
-                    userStatsModal.querySelector('.modal-close').onclick = () => userStatsModal.classList.add('hidden');
-                    userStatsModal.onclick = (e) => {
-                        if (e.target === userStatsModal) userStatsModal.classList.add('hidden');
-                    };
-                } else {
+                if (!data.stats) {
                     showMessage('未找到战绩数据', { type: 'warning' });
+                    return;
                 }
+                const content = getStatsModalContent();
+                if (!content) return;
+                content.innerHTML = renderMiniStatsTable(data.stats);
+                document.getElementById('user-stats-modal').classList.remove('hidden');
             }).catch(err => {
                 showMessage('获取战绩失败' + err, { type: 'error' });
             });
@@ -316,35 +335,19 @@ if (opponentAvatarInGame) {
     opponentAvatarInGame.addEventListener('click', () => {
         const username = (window.gameState && window.gameState.opponentName) || (document.getElementById('opponent-username-info') && document.getElementById('opponent-username-info').textContent) || '';
         if (!username) return showMessage('对手信息不可用', { type: 'warning' });
-        fetch(`/user_stats?username=${encodeURIComponent(username)}`)
+        fetch('/user_stats?username=' + encodeURIComponent(username))
             .then(r => r.json()).then(data => {
-                if (data.stats) {
-                    const s = data.stats;
-                    let userStatsContents = `\
-                        <table class="user-stats-table">\
-                            <tr><td>用户名</td><td>${escapeHtml(s.username)}</td></tr>\
-                            <tr><td>胜场</td><td>${s.wins}</td></tr>\
-                            <tr><td>负场</td><td>${s.losses}</td></tr>\
-                            <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>\
-                            <tr><td>最长连胜</td><td>${s.longest_streak}</td></tr>\
-                        </table>`;
-                    let userStatsModal = document.createElement('div');
-                    userStatsModal.id = 'user-stats-modal';
-                    userStatsModal.className = 'modal-overlay';
-                    userStatsModal.innerHTML = '<div class="modal-content"><span class="modal-close" id="user-stats-modal-close">×</span><h2>个人战绩</h2><div id="user-stats-content2"><p>' + userStatsContents + '</p></div></div>';
-                    document.body.appendChild(userStatsModal);
-                    // 绑定关闭事件
-                    userStatsModal.querySelector('.modal-close').onclick = () => userStatsModal.classList.add('hidden');
-                    userStatsModal.onclick = (e) => {
-                        if (e.target === userStatsModal) userStatsModal.classList.add('hidden');
-                    };
-                } else {
+                if (!data.stats) {
                     showMessage('未找到对手战绩', { type: 'warning' });
+                    return;
                 }
+                const content = getStatsModalContent();
+                if (!content) return;
+                content.innerHTML = renderMiniStatsTable(data.stats);
+                document.getElementById('user-stats-modal').classList.remove('hidden');
             }).catch(err => showMessage('获取战绩失败' + err, { type: 'error' }));
     });
 }
-
 // 个人信息相关元素
 const showProfileBtn = document.getElementById('show-profile');
 const profileModal = document.getElementById('profile-modal');
@@ -673,6 +676,8 @@ const customRoomIdInput = document.getElementById('custom-room-id-input');
 const customConfirmJoinBtn = document.getElementById('custom-confirm-join');
 const customRoomInfo = document.getElementById('custom-room-info');
 const customCurrentRoomId = document.getElementById('custom-current-room-id');
+const copyInviteLinkBtn = document.getElementById('copy-invite-link');
+const inviteLinkMsg = document.getElementById('invite-link-msg');
 const customPlayerNameInput = document.getElementById('custom-player-name');
 const customRoomCodeInput = document.getElementById('custom-room-code');
 const backToMainBtn = document.getElementById('back-to-main');
@@ -822,6 +827,9 @@ window.gameState = {
     shenweiHoles: [],       // 神威！扣掉的区域 [{player,x1,y1,x2,y2,return_turn}]
     currentPhase: null,     // 当前游戏阶段
     fieldMagic: null,       // 场地魔法
+    revealedCells: [],      // 已被卡牌显形的对方格子（服务端是持久记录，本地也要留住）
+    pendingChainCard: null, // 连锁响应窗口里已选好、正在点目标的速阶3卡
+    pendingEffectChoice: null, // 神之宣告：出牌前选好的效果
     selectedCardIndex: -1,  // 当前选中的卡牌索引，-1表示未选中
     inRoom: false,          // 是否在对局房间中（用于掉线重连）
     reconnectToken: null,   // 对局重连 token
@@ -923,6 +931,8 @@ function applyRoomSync(data) {
     gameState.hand = data.hand || [];
     gameState.ships = data.ships || [];
     gameState.myAttacks = data.attacks || [];
+    // 对手打在我棋盘上的格：不恢复的话，重连后自己的伤损/沉船会全部显示成完好
+    gameState.opponentAttacks = data.opponent_attacks || [];
     gameState.shenweiHoles = data.shenwei_holes || [];
     // 连锁/效果上下文：重连后恢复连锁显示与响应窗口
     if (Array.isArray(data.chain)) {
@@ -931,6 +941,19 @@ function applyRoomSync(data) {
     }
     if (typeof data.chain_waiting !== 'undefined') gameState.chainWaiting = data.chain_waiting;
     if (typeof data.chain_window !== 'undefined') gameState.chainWindow = data.chain_window;
+    // 重连正好落在连锁响应窗口内：把响应弹窗补回来（否则窗口一过就再也没有机会响应）
+    if (data.chain_waiting && data.chain_window && data.chain_window === gameState.playerId) {
+        const speed3 = (gameState.hand || []).filter(c => c && c.speed === 3);
+        const chainItems = data.chain || [];
+        const lastItem = chainItems[chainItems.length - 1] || {};
+        if (speed3.length > 0 && typeof showChainRequestPrompt === 'function') {
+            showChainRequestPrompt({
+                speed3_cards: speed3,
+                caster: lastItem.caster || null,
+                countdown: 10,
+            });
+        }
+    }
     if (Array.isArray(data.active_effects)) gameState.activeEffects = data.active_effects;
     if (data.pending_placement && typeof showPlacementPrompt === 'function') {
         showPlacementPrompt({
@@ -1297,6 +1320,70 @@ function initGameLogCardRefs() {
     host.addEventListener('scroll', hideCardTooltip, { passive: true });
 }
 
+// 卡牌图鉴：去重后的全部卡面 + 按速阶/类型筛选 + 关键词搜索 + 使用次数排序
+// （卡面数据源是 window.magicCards，使用次数来自只读接口 /api/card_usage，拉一次就缓存）
+let cardUsage = {};
+let cardUsageLoaded = false;
+
+function loadCardUsage() {
+    if (cardUsageLoaded) return Promise.resolve(cardUsage);
+    cardUsageLoaded = true;
+    return fetch('/api/card_usage')
+        .then(r => (r && r.ok) ? r.json() : {})
+        .then(d => { cardUsage = (d && d.usage) || {}; return cardUsage; })
+        .catch(() => ({}));   // 拉不到就不显示次数，不影响图鉴本身
+}
+
+function compendiumCards() {
+    if (!window.magicCards) return [];
+    const seen = new Set();
+    return window.magicCards.filter(card => {
+        // 失灵！在数据里有 3 条完全相同的条目（设计如此），图鉴只展示一张
+        const key = card.name + '|' + card.type + '|' + card.speed + '|' + card.description;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
+function renderCardCompendium() {
+    if (!helpMagicCards) return;
+    const all = compendiumCards();
+    const q = ((document.getElementById('compendium-search') || {}).value || '').trim().toLowerCase();
+    const speed = (document.getElementById('compendium-speed') || {}).value || '';
+    const type = (document.getElementById('compendium-type') || {}).value || '';
+    const sort = (document.getElementById('compendium-sort') || {}).value || '';
+
+    const list = all.filter(card => {
+        if (speed && String(card.speed) !== speed) return false;
+        if (type && card.type !== type) return false;
+        if (q) {
+            const hay = (card.name + ' ' + (card.description || '')).toLowerCase();
+            if (hay.indexOf(q) < 0) return false;
+        }
+        return true;
+    });
+
+    if (sort === 'uses') {
+        // 用得多不多是玩家最关心的信息之一；同次数按卡名稳定排序
+        list.sort((a, b) => (cardUsage[b.name] || 0) - (cardUsage[a.name] || 0)
+            || String(a.name).localeCompare(String(b.name), 'zh'));
+    }
+
+    helpMagicCards.innerHTML = list.map(card => {
+        const uses = cardUsage[card.name] || 0;
+        return `
+        <div class="magic-card-help" data-card-name="${card.name}" data-card-speed="${card.speed}" data-card-type="${card.type}" data-card-uses="${uses}">
+            <b>${card.name}</b> <span class="compendium-meta">${card.type}·速阶${card.speed}</span>
+            ${uses > 0 ? '<span class="compendium-uses">使用 ' + uses + ' 次</span>' : ''}
+            <div class="compendium-desc">${card.description}</div>
+        </div>`;
+    }).join('') || '<p class="muted-hint">没有符合条件的卡牌</p>';
+
+    const counter = document.getElementById('compendium-count');
+    if (counter) counter.textContent = '共 ' + list.length + ' / ' + all.length + ' 张';
+}
+
 // 绑定事件监听器
 function bindEventListeners() {
 
@@ -1304,22 +1391,16 @@ function bindEventListeners() {
     // 帮助按钮事件
     if (helpBtn) helpBtn.addEventListener('click', () => {
         if (helpModal) helpModal.classList.remove('hidden');
-        if (helpMagicCards && window.magicCards) {
-            // 去重：同名同描述同速阶同类型只显示一次
-            const seen = new Set();
-            const uniqueCards = window.magicCards.filter(card => {
-                const key = card.name + '|' + card.type + '|' + card.speed + '|' + card.description;
-                if (seen.has(key)) return false;
-                seen.add(key);
-                return true;
-            });
-            helpMagicCards.innerHTML = uniqueCards.map(card => `
-                            <div class="magic-card-help" style="border:1px solid #ccc;border-radius:6px;padding:8px;margin-bottom:8px;background:var(--glass);">
-                                <b>${card.name}</b> <span style="color:#888;">(${card.type}·速阶${card.speed})</span><br>
-                                <span style="font-size:0.98em;">${card.description}</span>
-                            </div>
-                        `).join('');
-        }
+        renderCardCompendium();
+        // 先按已有数据画出来，统计到了再重绘一次（拉不到也不会卡住图鉴）
+        loadCardUsage().then(() => renderCardCompendium());
+    });
+    // 图鉴的搜索/筛选：输入即重绘（41 张卡的量级，不需要防抖）
+    ['compendium-search', 'compendium-speed', 'compendium-type', 'compendium-sort'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('input', renderCardCompendium);
+        el.addEventListener('change', renderCardCompendium);
     });
     if (helpModalClose) helpModalClose.addEventListener('click', () => helpModal.classList.add('hidden'));
     if (helpModal) helpModal.addEventListener('click', (e) => {
@@ -1336,156 +1417,6 @@ function bindEventListeners() {
     if (opponentStatsModal) opponentStatsModal.addEventListener('click', (e) => {
         if (e.target === opponentStatsModal) opponentStatsModal.classList.add('hidden');
     });
-    // 显示个人战绩弹窗并请求数据
-    function showUserStats() {
-        console.log('showUserStats 函数被调用');
-        
-        if (!userStatsModal || !userStatsContent) {
-            console.error('DOM元素不存在：userStatsModal 或 userStatsContent');
-            return;
-        }
-        
-        userStatsModal.classList.remove('hidden');
-        userStatsContent.innerHTML = '<p>加载中...</p>';
-        
-        fetch('/user_stats').then(resp => {
-            if (!resp.ok) throw new Error('未登录或获取失败');
-            return resp.json();
-        }).then(data => {
-            console.log('获取到战绩数据:', data);
-            
-            if (data.stats) {
-                const s = data.stats;
-                const history = data.history || [];
-                const formatLogs = (logs = []) => {
-                    if (!logs.length) return '—';
-                    return logs.map(l => {
-                        const ts = l.ts ? new Date(l.ts * 1000).toLocaleTimeString() : '';
-                        const text = escapeHtml(l.text || '');
-                        return ts ? `[${ts}] ${text}` : text;
-                    }).join('<br>');
-                };
-                const historyRows = history.length ? history.map((h, index) => {
-                    const opponentName = h.winner_id === s.id ? (h.loser_name || h.loser_id || '未知') : (h.winner_name || h.winner_id || '未知');
-                    const resultText = h.winner_id === s.id ? '胜' : '负';
-                    const timeText = h.timestamp ? new Date(h.timestamp * 1000).toLocaleString() : '';
-                    const isWin = h.winner_id === s.id;
-                    const bgColor = isWin ? '#4caf50' : '#f44336';
-                    const hoverColor = isWin ? '#66bb6a' : '#d32f2f';
-                    return `<button class="match-history-btn" data-match-index="${index}" style="
-                        background-color: ${bgColor};
-                        color: white;
-                        padding: 10px 15px;
-                        border: none;
-                        border-radius: 8px;
-                        cursor: pointer;
-                        font-size: 0.95em;
-                        transition: all 0.3s;
-                        width: 100%;
-                        text-align: left;
-                        margin-bottom: 8px;
-                    " onmouseover="this.style.backgroundColor='${hoverColor}'" onmouseout="this.style.backgroundColor='${bgColor}'">
-                        <div style="display:flex;justify-content:space-between;align-items:center;">
-                            <div style="flex:1;">
-                                <span style="font-weight:bold;">${timeText}</span>
-                                <span style="margin-left:10px;">vs ${escapeHtml(opponentName)}</span>
-                            </div>
-                            <span style="font-weight:bold;font-size:1.1em;">${resultText}</span>
-                        </div>
-                    </button>`;
-                }).join('') : '<tr><td colspan="4" style="text-align:center;">暂无历史战绩</td></tr>';
-                userStatsContent.innerHTML = `
-                    <table class="user-stats-table">
-                        <tr><td>用户名</td><td>${escapeHtml(s.username)}</td></tr>
-                        <tr><td>胜场</td><td>${s.wins}</td></tr>
-                        <tr><td>负场</td><td>${s.losses}</td></tr>
-                        <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>
-                        <tr><td>最长连胜</td><td>${s.longest_streak}</td></tr>
-                    </table>
-                    <div class="user-history" style="margin-top:12px;">
-                        <h3 style="margin-bottom:8px;">历史战绩</h3>
-                        <table class="user-stats-table" style="font-size:0.95em;">
-                            <thead>
-                                <tr><th>时间</th><th>对手</th><th>结果</th><th>局内日志</th></tr>
-                            </thead>
-                            <tbody>${historyRows}</tbody>
-                        </table>
-                    </div>
-                `;
-                
-                // 添加对局按钮点击事件监听（修复作用域问题）
-                setTimeout(() => {
-                    const matchButtons = document.querySelectorAll('.match-history-btn');
-                    console.log(`找到 ${matchButtons.length} 个对局按钮`);
-                    matchButtons.forEach(btn => {
-                        btn.addEventListener('click', (e) => {
-                            const matchIndex = parseInt(btn.dataset.matchIndex);
-                            console.log(`点击了对局按钮，索引: ${matchIndex}`);
-                            if (history && history[matchIndex]) {
-                                showMatchDetail(history[matchIndex], s.id);
-                            }
-                        });
-                    });
-                }, 100);
-            } else {
-                userStatsContent.innerHTML = '<p>未找到战绩数据</p>';
-            }
-        }).catch(err => {
-            console.error('获取个人战绩失败:', err);
-            userStatsContent.innerHTML = `<p style="color:red;">获取个人战绩失败：${err.message}</p>`;
-        });
-    }
-
-    // 显示对局详情
-    function showMatchDetail(matchData, playerId) {
-        console.log('showMatchDetail 函数被调用，matchData:', matchData, 'playerId:', playerId);
-        
-        if (!matchDetailModal || !matchDetailContent) {
-            console.error('DOM元素不存在：matchDetailModal 或 matchDetailContent');
-            return;
-        }
-        
-        matchDetailModal.classList.remove('hidden');
-        
-        const isWin = matchData.winner_id === playerId;
-        const resultText = isWin ? '胜' : '负';
-        const resultColor = isWin ? '#4caf50' : '#f44336';
-        const timeText = matchData.timestamp ? new Date(matchData.timestamp * 1000).toLocaleString() : '';
-        
-        const formatDetailLogs = (logs = []) => {
-            if (!logs.length) return '无局内日志';
-            return logs.map(l => {
-                const ts = l.ts ? new Date(l.ts * 1000).toLocaleTimeString() : '';
-                const text = escapeHtml(l.text || '');
-                return ts ? `[${ts}] ${text}` : text;
-            }).join('<br>');
-        };
-        
-        matchDetailContent.innerHTML = `
-            <div style="margin-bottom:16px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-                    <h3 style="margin:0;font-size:1.2em;">对局信息</h3>
-                    <span style="font-size:0.9em;color:var(--muted);">${timeText}</span>
-                </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
-                    <div style="padding:12px;background:var(--surface);border-radius:8px;">
-                        <div style="font-weight:bold;margin-bottom:8px;">对手</div>
-                        <div style="font-size:1.1em;">${escapeHtml(matchData.winner_name || matchData.loser_name || '未知')}</div>
-                    </div>
-                    <div style="padding:12px;background:var(--surface);border-radius:8px;">
-                        <div style="font-weight:bold;margin-bottom:8px;">结果</div>
-                        <div style="font-size:1.5em;font-weight:bold;color:${resultColor};padding:4px 8px;border-radius:4px;display:inline-block;">${resultText}</div>
-                    </div>
-                </div>
-                <div style="padding:12px;background:var(--surface);border-radius:8px;">
-                    <div style="font-weight:bold;margin-bottom:8px;">局内日志</div>
-                    <div style="max-height:300px;overflow-y:auto;font-size:0.9em;line-height:1.6;padding:8px;background:var(--glass);border-radius:4px;">
-                        ${formatDetailLogs(matchData.logs)}
-                    </div>
-                </div>
-        `;
-    }
-
     // 个人战绩按钮事件
     if (showUserStatsBtn) showUserStatsBtn.addEventListener('click', (e) => {
         e.preventDefault();
@@ -1510,154 +1441,174 @@ function bindEventListeners() {
         if (e.target === matchDetailModal) matchDetailModal.classList.add('hidden');
     });
 
+    // ---------- 个人战绩 / 对局详情（全文件唯一实现） ----------
+    // 注：历史上这里有两份逐字重复的定义，后一份静默覆盖前一份，已合并为一份。
+
+    // 对手裸 ID：人机房在 users 表里没有记录（AI 的 user_id 为 None），
+    // 前端回退到裸 ID 会显示成「vs ai-4530c8」，这里统一识别并映射为「电脑」。
+    function opponentRawId(matchData, myId) {
+        return matchData.winner_id === myId ? matchData.loser_id : matchData.winner_id;
+    }
+    function isAiOpponent(matchData, myId) {
+        const rawId = opponentRawId(matchData, myId);
+        return typeof rawId === 'string' && rawId.indexOf('ai-') === 0;
+    }
+    function opponentDisplayName(matchData, myId) {
+        if (isAiOpponent(matchData, myId)) return '电脑';
+        const isWin = matchData.winner_id === myId;
+        const name = isWin ? matchData.loser_name : matchData.winner_name;
+        return name || opponentRawId(matchData, myId) || '未知';
+    }
+
+    function buildStatsTable(s) {
+        return '<table class="user-stats-table">'
+            + '<tr><td>用户名</td><td>' + escapeHtml(s.username) + '</td></tr>'
+            + '<tr><td>胜场</td><td>' + s.wins + '</td></tr>'
+            + '<tr><td>负场</td><td>' + s.losses + '</td></tr>'
+            + '<tr><td>当前连胜</td><td>' + s.current_streak + '</td></tr>'
+            + '<tr><td>最长连胜</td><td>' + s.longest_streak + '</td></tr>'
+            + '</table>';
+    }
+
+    // 历史战绩列表：必须用 div 列表承载。
+    // 旧写法把 <button> 塞进 table 的 tbody —— 那并非合法的表格子元素，HTML 解析器会
+    // 启用 foster parenting 把它挪到 table 之前，表头于是孤立地留在整段列表下方
+    // （2026-09-13 修复）。
+    function buildHistoryList(history, s) {
+        if (!history.length) return '<p class="history-empty">暂无历史战绩</p>';
+        let html = '<div class="history-head">'
+            + '<span class="hist-time">时间</span>'
+            + '<span class="hist-opp">对手</span>'
+            + '<span class="hist-result">结果</span>'
+            + '</div>';
+        history.forEach((h, index) => {
+            const isWin = h.winner_id === s.id;
+            const timeText = h.timestamp ? new Date(h.timestamp * 1000).toLocaleString() : '';
+            const aiTag = isAiOpponent(h, s.id) ? '<span class="hist-tag">人机</span>' : '';
+            html += '<button type="button" class="match-history-btn ' + (isWin ? 'win' : 'lose') + '"'
+                + ' data-match-index="' + index + '" title="点击查看本局详情">'
+                + '<span class="hist-time">' + escapeHtml(timeText) + '</span>'
+                + '<span class="hist-opp">vs ' + escapeHtml(opponentDisplayName(h, s.id)) + aiTag + '</span>'
+                + '<span class="hist-result">' + (isWin ? '胜' : '负') + '</span>'
+                + '</button>';
+        });
+        return html;
+    }
+
+    // 战绩正文（无头 UI 回归检查直接调用 window.renderUserStatsHTML）
+    function renderUserStatsHTML(s, history, opts) {
+        const options = opts || {};
+        const hasAi = history.some(h => isAiOpponent(h, s.id));
+        return buildStatsTable(s)
+            + (hasAi ? '<p class="user-stats-note">人机对局保留在历史中，不计入胜场 / 连胜，也不进排行榜。</p>' : '')
+            + '<div class="user-history">'
+            + '<h3>历史战绩</h3>'
+            + '<div class="history-list">' + buildHistoryList(history, s) + '</div>'
+            + (options.hasMore ? '<button type="button" class="history-more">加载更多</button>' : '')
+            + '</div>';
+    }
+    window.renderUserStatsHTML = renderUserStatsHTML;
+
+    // 单次 20 条，最多 100 条（与服务端 db.get_match_history 的上限一致）
+    const STATS_PAGE_SIZE = 20;
+    const STATS_MAX_ROWS = 100;
+    let statsHistoryLimit = STATS_PAGE_SIZE;
+
+    function bindHistoryButtons(container, history, myId) {
+        container.querySelectorAll('.match-history-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const matchIndex = parseInt(btn.dataset.matchIndex, 10);
+                if (history[matchIndex]) showMatchDetail(history[matchIndex], myId);
+            });
+        });
+        const moreBtn = container.querySelector('.history-more');
+        if (moreBtn) {
+            moreBtn.addEventListener('click', () => {
+                statsHistoryLimit = Math.min(statsHistoryLimit + STATS_PAGE_SIZE, STATS_MAX_ROWS);
+                showUserStats();
+            });
+        }
+    }
+
     // 显示个人战绩弹窗并请求数据
     function showUserStats() {
-        console.log('showUserStats 函数被调用');
-        
         if (!userStatsModal || !userStatsContent) {
             console.error('DOM元素不存在：userStatsModal 或 userStatsContent');
             return;
         }
-        
         userStatsModal.classList.remove('hidden');
         userStatsContent.innerHTML = '<p>加载中...</p>';
-        
-        fetch('/user_stats').then(resp => {
+
+        fetch('/user_stats?limit=' + statsHistoryLimit).then(resp => {
             if (!resp.ok) throw new Error('未登录或获取失败');
             return resp.json();
         }).then(data => {
-            console.log('获取到战绩数据:', data);
-            
-            if (data.stats) {
-                const s = data.stats;
-                const history = data.history || [];
-                const formatLogs = (logs = []) => {
-                    if (!logs.length) return '—';
-                    return logs.map(l => {
-                        const ts = l.ts ? new Date(l.ts * 1000).toLocaleTimeString() : '';
-                        const text = escapeHtml(l.text || '');
-                        return ts ? `[${ts}] ${text}` : text;
-                    }).join('<br>');
-                };
-                const historyRows = history.length ? history.map((h, index) => {
-                    const opponentName = h.winner_id === s.id ? (h.loser_name || h.loser_id || '未知') : (h.winner_name || h.winner_id || '未知');
-                    const resultText = h.winner_id === s.id ? '胜' : '负';
-                    const timeText = h.timestamp ? new Date(h.timestamp * 1000).toLocaleString() : '';
-                    const isWin = h.winner_id === s.id;
-                    const bgColor = isWin ? '#4caf50' : '#f44336';
-                    const hoverColor = isWin ? '#66bb6a' : '#d32f2f';
-                    return `<button class="match-history-btn" data-match-index="${index}" style="
-                        background-color: ${bgColor};
-                        color: white;
-                        padding: 10px 15px;
-                        border: none;
-                        border-radius: 8px;
-                        cursor: pointer;
-                        font-size: 0.95em;
-                        transition: all 0.3s;
-                        width: 100%;
-                        text-align: left;
-                        margin-bottom: 8px;
-                    " onmouseover="this.style.backgroundColor='${hoverColor}'" onmouseout="this.style.backgroundColor='${bgColor}'">
-                        <div style="display:flex;justify-content:space-between;align-items:center;">
-                            <div style="flex:1;">
-                                <span style="font-weight:bold;">${timeText}</span>
-                                <span style="margin-left:10px;">vs ${escapeHtml(opponentName)}</span>
-                            </div>
-                            <span style="font-weight:bold;font-size:1.1em;">${resultText}</span>
-                        </div>
-                    </button>`;
-                }).join('') : '<tr><td colspan="4" style="text-align:center;">暂无历史战绩</td></tr>';
-                userStatsContent.innerHTML = `
-                    <table class="user-stats-table">
-                        <tr><td>用户名</td><td>${escapeHtml(s.username)}</td></tr>
-                        <tr><td>胜场</td><td>${s.wins}</td></tr>
-                        <tr><td>负场</td><td>${s.losses}</td></tr>
-                        <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>
-                        <tr><td>最长连胜</td><td>${s.longest_streak}</td></tr>
-                    </table>
-                    <div class="user-history" style="margin-top:12px;">
-                        <h3 style="margin-bottom:8px;">历史战绩</h3>
-                        <table class="user-stats-table" style="font-size:0.95em;">
-                            <thead>
-                                <tr><th>时间</th><th>对手</th><th>结果</th><th>局内日志</th></tr>
-                            </thead>
-                            <tbody>${historyRows}</tbody>
-                        </table>
-                    </div>
-                `;
-                
-                // 添加对局按钮点击事件监听（修复作用域问题）
-                setTimeout(() => {
-                    const matchButtons = document.querySelectorAll('.match-history-btn');
-                    console.log(`找到 ${matchButtons.length} 个对局按钮`);
-                    matchButtons.forEach(btn => {
-                        btn.addEventListener('click', (e) => {
-                            const matchIndex = parseInt(btn.dataset.matchIndex);
-                            console.log(`点击了对局按钮，索引: ${matchIndex}`);
-                            if (history && history[matchIndex]) {
-                                showMatchDetail(history[matchIndex], s.id);
-                            }
-                        });
-                    });
-                }, 100);
-            } else {
+            if (!data.stats) {
                 userStatsContent.innerHTML = '<p>未找到战绩数据</p>';
+                return;
             }
+            const s = data.stats;
+            const history = data.history || [];
+            userStatsContent.innerHTML = renderUserStatsHTML(s, history, {
+                hasMore: history.length >= statsHistoryLimit && statsHistoryLimit < STATS_MAX_ROWS
+            });
+            // innerHTML 赋值后节点已同步就绪，直接绑定即可
+            // （原先用 setTimeout(..., 100) 等 DOM，纯属多余且可能被重建打断）
+            bindHistoryButtons(userStatsContent, history, s.id);
         }).catch(err => {
             console.error('获取个人战绩失败:', err);
-            userStatsContent.innerHTML = `<p style="color:red;">获取个人战绩失败：${err.message}</p>`;
+            userStatsContent.innerHTML = '<p style="color:red;">获取个人战绩失败：' + err.message + '</p>';
         });
     }
 
+    function renderMatchDetailHTML(matchData, playerId) {
+        const isWin = matchData.winner_id === playerId;
+        const resultText = isWin ? '胜' : '负';
+        const resultColor = isWin ? 'var(--success)' : 'var(--danger)';
+        const timeText = matchData.timestamp ? new Date(matchData.timestamp * 1000).toLocaleString() : '';
+        const aiTag = isAiOpponent(matchData, playerId) ? ' <span class="hist-tag hist-tag-dark">人机</span>' : '';
+        // 之前这里写的是 winner_name || loser_name：赢的局 winner_name 就是自己，
+        // 「对手」栏会显示成自己；现在按胜负取真正的一方。
+        const opponentName = opponentDisplayName(matchData, playerId);
+        const logs = matchData.logs || [];
+        const logsHtml = logs.length
+            ? logs.map(l => {
+                const ts = l.ts ? new Date(l.ts * 1000).toLocaleTimeString() : '';
+                const text = escapeHtml(l.text || '');
+                return ts ? '[' + ts + '] ' + text : text;
+            }).join('<br>')
+            : '无局内日志';
+        return '<div style="margin-bottom:16px;">'
+            + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
+            + '<h3 style="margin:0;font-size:1.2em;">对局信息</h3>'
+            + '<span style="font-size:0.9em;color:var(--muted);">' + escapeHtml(timeText) + '</span>'
+            + '</div>'
+            + '<div class="match-detail-info-grid">'
+            + '<div class="match-detail-info-box">'
+            + '<div class="match-detail-label">对手</div>'
+            + '<div class="match-detail-value">' + escapeHtml(opponentName) + aiTag + '</div>'
+            + '</div>'
+            + '<div class="match-detail-info-box">'
+            + '<div class="match-detail-label">结果</div>'
+            + '<div class="match-detail-result" style="color:' + resultColor + ';">' + resultText + '</div>'
+            + '</div>'
+            + '</div>'
+            + '<div class="match-detail-info-box">'
+            + '<div class="match-detail-label">局内日志</div>'
+            + '<div class="match-detail-logs">' + logsHtml + '</div>'
+            + '</div>'
+            + '</div>';
+    }
+    window.renderMatchDetailHTML = renderMatchDetailHTML;
+
     // 显示对局详情
     function showMatchDetail(matchData, playerId) {
-        console.log('showMatchDetail 函数被调用，matchData:', matchData, 'playerId:', playerId);
-        
         if (!matchDetailModal || !matchDetailContent) {
             console.error('DOM元素不存在：matchDetailModal 或 matchDetailContent');
             return;
         }
-        
         matchDetailModal.classList.remove('hidden');
-        
-        const isWin = matchData.winner_id === playerId;
-        const resultText = isWin ? '胜' : '负';
-        const resultColor = isWin ? '#4caf50' : '#f44336';
-        const timeText = matchData.timestamp ? new Date(matchData.timestamp * 1000).toLocaleString() : '';
-        
-        const formatDetailLogs = (logs = []) => {
-            if (!logs.length) return '无局内日志';
-            return logs.map(l => {
-                const ts = l.ts ? new Date(l.ts * 1000).toLocaleTimeString() : '';
-                const text = escapeHtml(l.text || '');
-                return ts ? `[${ts}] ${text}` : text;
-            }).join('<br>');
-        };
-        
-        matchDetailContent.innerHTML = `
-            <div style="margin-bottom:16px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-                    <h3 style="margin:0;font-size:1.2em;">对局信息</h3>
-                    <span style="font-size:0.9em;color:var(--muted);">${timeText}</span>
-                </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
-                    <div style="padding:12px;background:var(--surface);border-radius:8px;">
-                        <div style="font-weight:bold;margin-bottom:8px;">对手</div>
-                        <div style="font-size:1.1em;">${escapeHtml(matchData.winner_name || matchData.loser_name || '未知')}</div>
-                    </div>
-                    <div style="padding:12px;background:var(--surface);border-radius:8px;">
-                        <div style="font-weight:bold;margin-bottom:8px;">结果</div>
-                        <div style="font-size:1.5em;font-weight:bold;color:${resultColor};padding:4px 8px;border-radius:4px;display:inline-block;">${resultText}</div>
-                    </div>
-                </div>
-                <div style="padding:12px;background:var(--surface);border-radius:8px;">
-                    <div style="font-weight:bold;margin-bottom:8px;">局内日志</div>
-                    <div style="max-height:300px;overflow-y:auto;font-size:0.9em;line-height:1.6;padding:8px;background:var(--glass);border-radius:4px;">
-                        ${formatDetailLogs(matchData.logs)}
-                    </div>
-                </div>
-        `;
+        matchDetailContent.innerHTML = renderMatchDetailHTML(matchData, playerId);
     }
 
     // 开始界面
@@ -1674,6 +1625,7 @@ function bindEventListeners() {
 
     // 自定义房间游戏界面
     customCreateRoomBtn.addEventListener('click', customCreateRoom);
+if (copyInviteLinkBtn) copyInviteLinkBtn.addEventListener('click', copyInviteLink);
     customJoinRoomBtn.addEventListener('click', () => customRoomIdInput.classList.remove('hidden'));
     customConfirmJoinBtn.addEventListener('click', customJoinRoom);
     backToMainBtn.addEventListener('click', () => {
@@ -1789,38 +1741,7 @@ function bindEventListeners() {
 }
 
 // 创建房间
-function createRoom() {
-    gameState.playerName = playerNameInput.value || '玩家';
-
-    // 等待Socket连接成功后再发送创建房间请求（复用已有连接，避免重复建连）
-    onSocketReady((socket) => {
-        socket.emit('create_room', {}, (response) => {
-            if (response.status === 'success') {
-                gameState.roomId = response.room_id;
-                currentRoomId.textContent = gameState.roomId;
-                roomInfo.classList.remove('hidden');
-
-                // 自动加入创建的房间
-                socket.emit('join_room', {
-                    room_id: gameState.roomId,
-                    player_name: gameState.playerName
-                }, (joinResponse) => {
-                    if (joinResponse.status === 'success') {
-                        gameState.playerId = joinResponse.player_id;
-                    } else {
-                        showAlert(joinResponse.message);
-                    }
-                });
-            }
-        });
-    });
-}
-
 // 切换自定义房间选项显示
-function toggleCustomRoomOptions() {
-    customRoomOptions.classList.toggle('hidden');
-}
-
 // 寻找匹配
 function findMatch() {
     gameState.playerName = playerNameInput.value || '玩家';
@@ -1845,9 +1766,14 @@ function aiMatch() {
     // 复用/建立连接（ensureSocket 内部保证不重复建连）
     ensureSocket();
 
+    // 人机难度：easy = 电脑不出魔法卡（新手保底），normal / hard = 电脑会出牌
+    const difficultyEl = document.getElementById('ai-difficulty');
+    const difficulty = (difficultyEl && difficultyEl.value) || 'normal';
+
     // 发送人机对战请求
     gameState.socket.emit('create_ai_room', {
-        player_name: gameState.playerName
+        player_name: gameState.playerName,
+        difficulty: difficulty
     }, (response) => {
         if (response.status === 'success') {
             gameState.roomId = response.room_id;
@@ -1878,6 +1804,33 @@ function cancelMatch() {
                 matchStatus.classList.add('hidden');
             }
         });
+    }
+}
+
+// 邀请链接：前端早就有 ?room=XXXX 的自动入房逻辑，但一直没有任何入口生成它。
+// 复制失败（非 HTTPS / 老浏览器 / 无权限）时降级成 prompt 让玩家手动复制。
+function copyInviteLink() {
+    const roomId = gameState.roomId || (customCurrentRoomId && customCurrentRoomId.textContent) || '';
+    if (!roomId) {
+        if (inviteLinkMsg) inviteLinkMsg.textContent = '还没有房间号，请先创建房间';
+        return;
+    }
+    const url = window.location.origin + window.location.pathname + '?room=' + encodeURIComponent(roomId);
+
+    const done = (ok) => {
+        if (!inviteLinkMsg) return;
+        inviteLinkMsg.textContent = ok ? '已复制！发给好友即可直接入房' : '复制失败，请手动复制上面的链接';
+        setTimeout(() => { if (inviteLinkMsg) inviteLinkMsg.textContent = ''; }, 4000);
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(() => done(true)).catch(() => {
+            window.prompt('复制下面的邀请链接发给好友：', url);
+            done(false);
+        });
+    } else {
+        window.prompt('复制下面的邀请链接发给好友：', url);
+        done(false);
     }
 }
 
@@ -1929,28 +1882,6 @@ function customJoinRoom() {
 }
 
 // 加入房间
-function joinRoom() {
-    gameState.playerName = playerNameInput.value || '玩家';
-    const roomId = roomCodeInput.value.trim();
-    if (!roomId) return;
-
-    const socket = ensureSocket();
-
-    socket.emit('join_room', {
-        room_id: roomId,
-        player_name: gameState.playerName
-    }, (response) => {
-        if (response.status === 'success') {
-            gameState.roomId = roomId;
-            gameState.playerId = response.player_id;
-            currentRoomId.textContent = roomId;
-            roomInfo.classList.remove('hidden');
-        } else {
-            showAlert(response.message);
-        }
-    });
-}
-
 // 设置Socket监听器
 function setupSocketListeners() {
     const socket = gameState.socket;
@@ -2248,6 +2179,10 @@ function setupSocketListeners() {
 
     socket.on('attack_result', (result) => {
         console.log('Attack result:', result);
+        // 击沉 > 命中 > 落空，优先级从高到低
+        if (result.ship_sunk) playSfx('sunk');
+        else if (result.hit) playSfx('hit');
+        else playSfx('miss');
         updateAttackDisplay(result);
         attacksRemaining.textContent = result.remaining_attacks;
 
@@ -2266,6 +2201,7 @@ function setupSocketListeners() {
 
     socket.on('turn_change', (data) => {
         console.log('Turn change:', data);
+        if (data.current_attacker === gameState.playerId) playSfx('turn');
         gameState.currentPhase = data.phase;  // 添加阶段更新
         updateTurnIndicator(data.current_attacker, data.attacks_remaining);
         updatePhaseUI();  // 更新阶段UI
@@ -2273,6 +2209,7 @@ function setupSocketListeners() {
 
     socket.on('game_over', (data) => {
         console.log('Game over:', data);
+        playSfx(data.winner === gameState.playerId ? 'win' : 'lose');
 
         // 隐藏状态显示栏中的所有效果
         document.getElementById('reinforcement-status')?.classList.add('hidden');
@@ -2411,6 +2348,10 @@ function setupSocketListeners() {
 
     socket.on('chain_resolved', function (data) {
         console.log('连锁结算完成', data.results);
+        // 服务端结算后只发 chain_resolved，不再发 magic_chain_updated，
+        // 这里必须自己清空连锁栈 —— 否则「当前连锁 (N)」会一直挂着旧内容。
+        gameState.chain = [];
+        if (typeof updateChainUI === 'function') updateChainUI();
         // 应用连锁结算结果
         data.results.forEach(result => {
             applyCardEffect(result.card, result.caster);
@@ -2471,7 +2412,12 @@ function setupSocketListeners() {
     // 弃牌堆更新通知
 
 
-    socket.on('chain_request', function (data) {
+    socket.on('chain_request', function (data) { showChainRequestPrompt(data); });
+
+    // 连锁响应弹窗（10 秒倒计时 + 点选速阶 3 卡）。
+    // 抽成具名函数是为了让「重连正好落在响应窗口内」也能把弹窗补回来。
+    function showChainRequestPrompt(data) {
+        playSfx('chain');
         // 显示连锁选择对话框
         const chainPrompt = document.createElement('div');
         chainPrompt.className = 'magic-prompt';
@@ -2542,8 +2488,25 @@ function setupSocketListeners() {
                 clearInterval(countdownTimer);
                 const cardIndex = parseInt(cardElement.dataset.cardIndex);
                 const selectedCard = data.speed3_cards[cardIndex];
+                document.body.removeChild(chainPrompt);
 
-                // 发送连锁响应，包含选择的卡牌
+                // 需要目标的速阶3卡（神威！/轰炸/冻结/硫磺火焰/探测雷达）此前
+                // 一律发 targets: []，服务端缺目标直接失败 —— 等于这些卡在连锁
+                // 响应窗口里根本打不出来。改为先走目标选择器，再回填 targets。
+                if (needsTargetSelection(selectedCard.name) || selectedCard.name === '神之宣告') {
+                    gameState.pendingChainCard = { card: selectedCard, index: cardIndex };
+                    if (selectedCard.name === '神之宣告') {
+                        // 先选效果，再点选要牺牲的两艘船
+                        promptDivineDecreeChoice(cardIndex, selectedCard);
+                    } else {
+                        gameState.currentMagicCard = selectedCard;
+                        gameState.currentCardIndex = cardIndex;
+                        showMagicTargetSelection(selectedCard, cardIndex);
+                    }
+                    return;
+                }
+
+                // 无需目标的卡：直接响应连锁
                 gameState.socket.emit('chain_response', {
                     room_id: gameState.roomId,
                     player_id: gameState.playerId,
@@ -2551,10 +2514,9 @@ function setupSocketListeners() {
                     card: selectedCard,
                     targets: []
                 });
-                document.body.removeChild(chainPrompt);
             });
         });
-    });
+    }
 
     // 灵气复苏相关事件
     socket.on('lingqi_waiting', function (data) {
@@ -2576,6 +2538,7 @@ function setupSocketListeners() {
         gameState.attacks = [];
         gameState.myAttacks = [];
         gameState.opponentAttacks = [];
+        gameState.revealedCells = [];   // 服务端在重开棋盘时也会清空已显形记录，本地同步
         gameState.remainingShips = 0;
         gameState.opponentRemainingShips = 0;
         gameState.maxShips = data.new_max_ships;
@@ -2954,8 +2917,10 @@ function setupSocketListeners() {
 
     // 新增：监听手牌更新事件
     socket.on('hand_updated', (data) => {
+        const grew = Array.isArray(data.hand) && data.hand.length > (gameState.hand || []).length;
         gameState.hand = data.hand;
         updateHandUI();
+        if (grew) playSfx('draw');
     });
 
     // 神威！：扣掉 / 恢复 3x3 区域
@@ -3087,18 +3052,15 @@ function setupSocketListeners() {
     // 服务器返回的被揭示的位置（仅对触发方发送）
     socket.on('revealed_positions', (data) => {
         if (!data || !Array.isArray(data.positions)) return;
-        // 高亮显示这些格子几秒钟
-        const positions = data.positions;
-        positions.forEach(pos => {
+        // 卡面是「显形」，服务端也是持久记录（只有重开棋盘类效果才清空）——
+        // 原先只高亮 4 秒就撤掉，玩家一眨眼就再也找不到那艘船了。
+        data.positions.forEach(pos => {
+            if (!gameState.revealedCells.some(c => c.x === pos.x && c.y === pos.y)) {
+                gameState.revealedCells.push({ x: pos.x, y: pos.y });
+            }
             const cell = opponentBoard.querySelector(`.cell[data-x='${pos.x}'][data-y='${pos.y}']`);
             if (cell) cell.classList.add('revealed');
         });
-        setTimeout(() => {
-            positions.forEach(pos => {
-                const cell = opponentBoard.querySelector(`.cell[data-x='${pos.x}'][data-y='${pos.y}']`);
-                if (cell) cell.classList.remove('revealed');
-            });
-        }, 4000);
     });
 
 }
@@ -3225,9 +3187,14 @@ function initGameBoards() {
             cell.dataset.x = x;
             cell.dataset.y = y;
 
-            // 显示自己的战舰
-            if (gameState.ships.some(ship => ship.positions.some(pos => pos.x === x && pos.y === y))) {
+            // 显示自己的战舰（冻结中的要能一眼看出来：它本回合不提供攻击次数）
+            const ownShip = gameState.ships.find(ship => ship.positions.some(pos => pos.x === x && pos.y === y));
+            if (ownShip) {
                 cell.classList.add('ship');
+                if (ownShip.frozen) {
+                    cell.classList.add('frozen');
+                    cell.title = '这艘船被冻结了：本回合不提供攻击次数';
+                }
             }
 
             // 显示被攻击的位置
@@ -3276,6 +3243,11 @@ function initGameBoards() {
             if ((gameState.sacrificedOpponent || []).some(p => p.x === x && p.y === y)) {
                 cell.classList.add('hit', 'sacrificed');
                 cell.textContent = '✕';
+            }
+
+            // 已被卡牌显形的格子：重绘棋盘后也要保留（否则一次 initGameBoards 就把线索擦没了）
+            if ((gameState.revealedCells || []).some(c => c.x === x && c.y === y)) {
+                cell.classList.add('revealed');
             }
 
             opponentBoard.appendChild(cell);
@@ -3528,6 +3500,13 @@ function updateTurnIndicator(currentAttacker, remainingAttacks) {
     initGameBoards(); // 重新初始化棋盘以更新可点击状态
 }
 
+// 音效调用壳：sfx.js 没加载 / 浏览器不支持 Web Audio 时静默降级，不影响对局
+function playSfx(name) {
+    try {
+        if (window.sfx && typeof window.sfx.play === 'function') window.sfx.play(name);
+    } catch (e) { /* ignore */ }
+}
+
 // 获取猜拳名称
 function getRPSName(choice) {
     const names = {
@@ -3761,6 +3740,8 @@ function showMagicTargetSelection(card, index) {
         }
         gameState.currentMagicCard = null;
         gameState.currentCardIndex = null;
+        gameState.pendingChainCard = null;
+        gameState.pendingEffectChoice = null;
     }
 
     // AREA selection (square) —— 点选定位 + 确认，触摸可用
@@ -4264,6 +4245,8 @@ function showMagicTargetSelection(card, index) {
             if (document.body.contains(targetPrompt)) document.body.removeChild(targetPrompt);
             gameState.currentMagicCard = null;
             gameState.currentCardIndex = null;
+            gameState.pendingChainCard = null;
+            gameState.pendingEffectChoice = null;
         });
 
         document.getElementById('cancel-target').addEventListener('click', () => {
@@ -4279,6 +4262,9 @@ function showMagicTargetSelection(card, index) {
             if (document.body.contains(targetPrompt)) document.body.removeChild(targetPrompt);
             gameState.currentMagicCard = null;
             gameState.currentCardIndex = null;
+            gameState.pendingChainCard = null;
+            gameState.pendingEffectChoice = null;
+            gameState.pendingEffectChoice = null;
         });
 
         return;
@@ -4387,186 +4373,7 @@ function createBoardAreaPicker(boardEl, size, onConfirm, onCancel) {
 // 支持两种模式：
 // - 小面板模式（默认）：创建 size x size 的选择面板
 // - 对手棋盘模式（isOpponentBoard === true）：在对手真实棋盘上悬停预览、点击确认区域
-function createSelectionBoard(size, boardId = 'selection-board', onConfirm = null, isOpponentBoard = false) {
-    // 若选择在真实对手棋盘上
-    if (isOpponentBoard) {
-        const boardEl = document.getElementById(boardId) || opponentBoard;
-        if (!boardEl) return null;
-
-        // 防重入
-        if (gameState.selectingOnBoard) return null;
-        gameState.selectingOnBoard = true;
-
-        const attachedListeners = [];
-        let lastHighlighted = [];
-
-        function clearHighlights() {
-            lastHighlighted.forEach(c => {
-                c.style.outline = '';
-                c.classList.remove('selection-highlight');
-            });
-            lastHighlighted = [];
-        }
-
-        function highlightArea(startX, startY) {
-            clearHighlights();
-            for (let y = startY; y < startY + size; y++) {
-                for (let x = startX; x < startX + size; x++) {
-                    if (x >= 0 && x < 6 && y >= 0 && y < 6) {
-                        const cell = boardEl.querySelector(`.cell[data-x="${x}"][data-y="${y}"]`);
-                        if (cell) {
-                            cell.style.outline = '3px solid rgba(255,215,0,0.9)';
-                            cell.classList.add('selection-highlight');
-                            lastHighlighted.push(cell);
-                        }
-                    }
-                }
-            }
-        }
-
-        // 鼠标移入时预览（使用 capture to ensure we run first）
-        boardEl.querySelectorAll('.cell').forEach(cell => {
-            const mx = parseInt(cell.dataset.x, 10);
-            const my = parseInt(cell.dataset.y, 10);
-
-            const onEnter = (e) => {
-                // 计算合法的起点（保证不会越界）
-                const startX = Math.max(0, Math.min(mx, 6 - size));
-                const startY = Math.max(0, Math.min(my, 6 - size));
-                highlightArea(startX, startY);
-            };
-
-            const onLeave = (e) => {
-                clearHighlights();
-            };
-
-            // 点击确认（使用 capture 阶段阻止普通点击触发攻击）
-            const onClick = (e) => {
-                e.stopPropagation();
-                e.preventDefault();
-                // 以当前 hover 为起点并保证不越界
-                const startX = Math.max(0, Math.min(mx, 6 - size));
-                const startY = Math.max(0, Math.min(my, 6 - size));
-                const area = {
-                    x1: startX,
-                    y1: startY,
-                    x2: startX + size - 1,
-                    y2: startY + size - 1
-                };
-                if (typeof onConfirm === 'function') {
-                    onConfirm({ target_area: area });
-                }
-                // 清理
-                clearHighlights();
-                cleanup();
-            };
-
-            cell.addEventListener('mouseenter', onEnter);
-            cell.addEventListener('mouseleave', onLeave);
-            // capture true so we intercept before other click handlers
-            cell.addEventListener('click', onClick, true);
-
-            attachedListeners.push({ el: cell, handlers: { onEnter, onLeave, onClick } });
-        });
-
-        function cleanup() {
-            attachedListeners.forEach(({ el, handlers }) => {
-                el.removeEventListener('mouseenter', handlers.onEnter);
-                el.removeEventListener('mouseleave', handlers.onLeave);
-                el.removeEventListener('click', handlers.onClick, true);
-                el.style.outline = '';
-                el.classList.remove('selection-highlight');
-            });
-            clearHighlights();
-            gameState.selectingOnBoard = false;
-            // 移除可能残留的提示div
-            const exist = document.getElementById('selection-overlay');
-            if (exist) exist.remove();
-        }
-
-        // 返回 cleanup 以便外部可取消
-        return cleanup;
-    }
-
-    // 小面板模式（原有逻辑）
-    // 清除现有选择面板
-    const existingBoard = document.getElementById(boardId);
-    if (existingBoard) existingBoard.remove();
-
-    // 创建选择面板容器
-    const board = document.createElement('div');
-    board.id = boardId;
-    board.className = 'selection-board';
-    board.style.display = 'grid';
-    board.style.gridTemplateColumns = `repeat(${size}, 40px)`;
-    board.style.gap = '2px';
-    board.style.margin = '20px auto';
-    board.style.padding = '10px';
-    board.style.backgroundColor = 'var(--text)';
-    board.style.borderRadius = '5px';
-
-    // 创建选择单元格
-    for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-            const cell = document.createElement('div');
-            cell.className = 'selection-cell';
-            cell.style.width = '40px';
-            cell.style.height = '40px';
-            cell.style.backgroundColor = '#666';
-            cell.style.cursor = 'pointer';
-            cell.dataset.x = x;
-            cell.dataset.y = y;
-
-            // 添加点击选择效果
-            cell.addEventListener('click', () => {
-                cell.classList.toggle('selected');
-            });
-
-            board.appendChild(cell);
-        }
-    }
-
-    // 添加确认按钮
-    const confirmBtn = document.createElement('button');
-    confirmBtn.textContent = '确认选择';
-    confirmBtn.className = 'magic-confirm-btn';
-    confirmBtn.style.marginTop = '10px';
-    confirmBtn.style.padding = '5px 15px';
-
-    // 创建确认按钮事件处理函数
-    confirmBtn.addEventListener('click', () => {
-        const selectedCells = getSelectedCells(boardId);
-        if (selectedCells.length > 0) {
-            if (typeof onConfirm === 'function') {
-                onConfirm({ selected_cells: selectedCells });
-            } else {
-                confirmMagicTarget(selectedCells);
-            }
-            board.remove();
-        } else {
-            showAlert('请至少选择一个单元格');
-        }
-    });
-
-    board.appendChild(confirmBtn);
-    document.body.appendChild(board);
-
-    // 返回 null（没有需要外部 cleanup 的事件）
-    return null;
-}
-
 // 获取选中的单元格坐标
-function getSelectedCells(boardId = 'selection-board') {
-    const selectedCells = [];
-    document.querySelectorAll(`#${boardId} .selection-cell.selected`).forEach(cell => {
-        selectedCells.push({
-            x: parseInt(cell.dataset.x),
-            y: parseInt(cell.dataset.y)
-        });
-    });
-    return selectedCells;
-}
-
 // 发动魔法卡
 function playMagicCard(index) {
     console.log('playMagicCard called with index:', index);
@@ -4626,6 +4433,7 @@ function playMagicCard(index) {
 function sendMagicCard(index, targets) {
     const card = gameState.hand[index];
     if (!card) return;
+    playSfx('play_card');
 
     console.log('发送魔法卡:', card.name);
     gameState.socket.emit('use_magic_card', {
@@ -4651,8 +4459,10 @@ function sendMagicCard(index, targets) {
 }
 
 // 神之宣告：出牌前选择要触发的效果（1=摧毁对方一艘战舰，2=跳过对方本回合）
-function promptDivineDecreeChoice(cardIndex) {
-    const card = gameState.hand[cardIndex];
+function promptDivineDecreeChoice(cardIndex, cardOverride) {
+    // 连锁响应窗口里打出的神之宣告未必存在于「手牌同下标」，
+    // 因此允许显式传入卡牌对象（默认仍按手牌下标取）。
+    const card = cardOverride || gameState.hand[cardIndex];
     if (!card) return;
 
     const overlay = document.createElement('div');
@@ -4677,7 +4487,14 @@ function promptDivineDecreeChoice(cardIndex) {
             const choice = parseInt(btn.dataset.choice, 10);
             document.body.removeChild(overlay);
             if (choice === 0) return;
-            sendMagicCard(cardIndex, { effect_choice: choice });
+            // 卡面要求先牺牲两艘自己的战舰。此前这里直接 sendMagicCard，
+            // 服务端收不到 selected_cells，只能 random.shuffle 随机补两艘，
+            // 玩家根本没有选择权（own_ships 选择器也因此永远不可达）。
+            // 现在把效果选择挂起，走「点选两艘自己的船」→ confirmMagicTarget。
+            gameState.pendingEffectChoice = choice;
+            gameState.currentMagicCard = card;
+            gameState.currentCardIndex = cardIndex;
+            showMagicTargetSelection(card, cardIndex);
         });
     });
 }
@@ -4730,6 +4547,30 @@ function confirmMagicTarget(targetData) {
     } else {
         // 未识别格式，直接发送原始数据
         payload = targetData;
+    }
+
+    // 神之宣告：把出牌前选好的效果一并带上（否则服务端只能退回默认效果）
+    if (gameState.pendingEffectChoice) {
+        payload.effect_choice = gameState.pendingEffectChoice;
+        gameState.pendingEffectChoice = null;
+    }
+
+    // 连锁响应窗口里打出的卡：目标要回填给 chain_response，而不是 use_magic_card
+    if (gameState.pendingChainCard) {
+        const pending = gameState.pendingChainCard;
+        gameState.pendingChainCard = null;
+        gameState.currentMagicCard = null;
+        gameState.currentCardIndex = null;
+        gameState.pendingChainCard = null;
+        gameState.pendingEffectChoice = null;
+        gameState.socket.emit('chain_response', {
+            room_id: gameState.roomId,
+            player_id: gameState.playerId,
+            chain: true,
+            card: pending.card,
+            targets: payload
+        });
+        return;
     }
 
     // 发送并清理当前魔法卡选择状态
@@ -4791,7 +4632,7 @@ function applyCardEffect(card, casterId) {
             break;
 
         case '越战越勇':
-            showMessage('越战越勇效果生效，攻击次数增加2次');
+            showMessage('越战越勇效果生效，接下来击沉对方战舰时攻击次数净增加1');
             break;
 
         case '神威！':
@@ -4893,14 +4734,11 @@ function applyCardEffect(card, casterId) {
             break;
 
         case '加百列之光':
+            // 场地拆除完全交给服务端：它按 field_magic_owner 判断归属，
+            // 只拆对方的场地，并广播 field_magic_updated 刷新双方 UI。
+            // 这里此前又 emit 了一次 remove_field_magic，而服务端允许归属者
+            // 删除自己的场地 —— 施法者自己的场地就这样被前端「补刀」拆掉了。
             showMessage('加百列之光效果生效，对方魔法和场地魔法被无效化');
-            // 通知服务器移除场地魔法
-            gameState.socket.emit('remove_field_magic', {
-                room_id: gameState.roomId,
-                player_id: gameState.playerId
-            });
-            // 本地更新UI
-            updateFieldMagicUI(gameState.playerId, null);
             break;
 
         case '钢筋铁骨':
@@ -5045,6 +4883,9 @@ function updateFieldMagicUI(playerId, card) {
     } else {
         fieldElement.innerHTML = `当前生效的场地魔法：<span class="no-magic">无</span>`;
         fieldElement.className = 'field-magic';
+        // 场地被拆除/顶替时必须同步清掉本地状态：此前只改文案，
+        // gameState.fieldMagic 仍留着旧卡名（教皇旨意等判断会读到过期的场地）。
+        gameState.fieldMagic = null;
     }
 }
 
@@ -5208,11 +5049,6 @@ function showPlacementPrompt(data) {
             if (p) p.remove();
         });
     });
-}
-
-function showReinforcementPrompt() {
-    // 兼容旧调用点
-    showPlacementPrompt({ kind: 'reinforce', total: 1, placed: 0, remaining: 1, blocked: [] });
 }
 
 // 更新手牌UI
@@ -5750,73 +5586,6 @@ function updateChainUI() {
 }
 
 // 添加显示可连锁卡牌的函数
-function showChainableCards() {
-    const chainPrompt = document.createElement('div');
-    chainPrompt.className = 'magic-prompt';
-    chainPrompt.innerHTML = `
-        <h3>选择要发动的连锁魔法卡</h3>
-        <div id="chainable-cards" class="card-selection"></div>
-        <div class="chain-buttons">
-            <button id="confirm-chain">确认发动</button>
-            <button id="cancel-chain">结束连锁</button>
-        </div>
-        <div class="chain-timer">剩余时间：<span id="chain-time">30</span>秒</div>
-    `;
-    document.body.appendChild(chainPrompt);
-
-    const container = document.getElementById('chainable-cards');
-    gameState.hand.forEach((card, index) => {
-        // 只显示速阶大于当前卡牌的魔法卡
-        if (card.speed > gameState.chain[gameState.chain.length - 1].card.speed) {
-            const cardElement = createCardElement(card, index);
-            cardElement.addEventListener('click', () => {
-                document.querySelectorAll('#chainable-cards .card').forEach(el => el.classList.remove('selected'));
-                cardElement.classList.add('selected');
-                document.getElementById('confirm-chain').disabled = false;
-            });
-            container.appendChild(cardElement);
-        }
-    });
-
-    // 添加连锁超时机制
-    let timeLeft = 30;
-    const timerElement = document.getElementById('chain-time');
-    const timerInterval = setInterval(() => {
-        timeLeft--;
-        timerElement.textContent = timeLeft;
-        if (timeLeft <= 0) {
-            clearInterval(timerInterval);
-            // 超时自动结束连锁
-            gameState.socket.emit('chain_response', {
-                room_id: gameState.roomId,
-                player_id: gameState.playerId,
-                chain: false
-            });
-            document.body.removeChild(chainPrompt);
-        }
-    }, 1000);
-
-    document.getElementById('confirm-chain').addEventListener('click', () => {
-        clearInterval(timerInterval);
-        const selectedCard = document.querySelector('#chainable-cards .card.selected');
-        if (selectedCard) {
-            const index = parseInt(selectedCard.dataset.index);
-            playMagicCard(index);
-        }
-        document.body.removeChild(chainPrompt);
-    });
-
-    document.getElementById('cancel-chain').addEventListener('click', () => {
-        clearInterval(timerInterval);
-        gameState.socket.emit('chain_response', {
-            room_id: gameState.roomId,
-            player_id: gameState.playerId,
-            chain: false
-        });
-        document.body.removeChild(chainPrompt);
-    });
-}
-
 // 更新阶段UI
 function updatePhaseUI() {
     const phaseElement = document.getElementById('current-phase');

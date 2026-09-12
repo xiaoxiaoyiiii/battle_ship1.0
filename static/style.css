@@ -747,6 +747,64 @@ input:focus, select:focus {
     border-color: #5d4f3c;
     box-shadow: inset 0 2px 3px rgba(255, 255, 255, 0.35), inset 0 -2px 3px rgba(0, 0, 0, 0.3);
 }
+.compendium-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin: 8px 0 12px;
+}
+.compendium-controls input[type="search"] {
+    flex: 1 1 180px;
+    min-width: 140px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(128, 128, 128, 0.5);
+    background: var(--glass, rgba(255, 255, 255, 0.08));
+    color: inherit;
+}
+.compendium-controls select {
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid rgba(128, 128, 128, 0.5);
+    background: var(--glass, rgba(255, 255, 255, 0.08));
+    color: inherit;
+}
+.compendium-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 8px;
+}
+.compendium-meta {
+    color: #888;
+    font-size: 0.92em;
+}
+.compendium-desc {
+    font-size: 0.96em;
+    margin-top: 4px;
+}
+.invite-link-msg {
+    margin-left: 8px;
+    font-size: 0.9em;
+    opacity: 0.85;
+}
+/* 冻结中的己方战舰：本回合不提供攻击次数，必须显眼（被击中的格子仍显示火焰） */
+.cell.ship.frozen:not(.hit) {
+    background: var(--cell-bg) !important;
+    border-color: #6fc3ff;
+    box-shadow: inset 0 0 10px 2px rgba(111, 195, 255, 0.55);
+}
+.cell.ship.frozen:not(.hit)::before {
+    content: '❄';
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: clamp(11px, 2.4vw, 17px);
+    color: #bfe6ff;
+    pointer-events: none;
+}
 .cell.hit {
     background: var(--hit-fire) !important;
     color: #fff;
@@ -1623,6 +1681,9 @@ body.cool-effects-enabled .cell.cool-flash {
 
 .match-history-btn {
     background-color: var(--success);
+    /* 第 3 节的通用 button 规则带 background-image 渐变，会盖在内联/类背景色之上，
+       导致胜负配色完全看不出来（截图里三行胜利记录全是蓝色）→ 必须显式关掉。 */
+    background-image: none;
     color: white;
     padding: 10px 15px;
     border: none;
@@ -1634,11 +1695,14 @@ body.cool-effects-enabled .cell.cool-flash {
     text-align: left;
     margin-bottom: 8px;
 }
+.match-history-btn.win { background-color: var(--success); }
+.match-history-btn.lose { background-color: var(--danger); }
 .match-history-btn:hover {
     background-color: #2fbf85;
     transform: translateY(-2px);
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
 }
+.match-history-btn.lose:hover { background-color: #d32f2f; }
 
 #match-detail-modal .modal-content { max-width: 600px; max-height: 80vh; }
 .match-detail-content { padding: 20px; }
@@ -2169,5 +2233,76 @@ body.layout-tight.layout-ingame .field-magic { min-height: 36px; line-height: 36
 body.layout-tight.layout-ingame .dock-tab,
 body.layout-tight.layout-ingame .dock-toggle,
 body.layout-tight.layout-ingame .board-tab { line-height: 1; }
+
+
+/* ---------- 23. 个人战绩 / 对手战绩 / 对局详情弹窗（2026-09-13） ---------- */
+/* JS 一直在用 .user-stats-table / .user-history，但样式表里从未定义过这两个类；
+   历史战绩原先还把 <button> 直接塞进 <table><tbody>——非法子元素，HTML 解析器会
+   foster parent 把它挪到 <table> 之前，表头于是孤立在整段列表的最下方。
+   现在历史列表是不依赖 table 的三列网格，表头与数据行共用同一套列宽。 */
+.user-stats-table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
+.user-stats-table td,
+.user-stats-table th {
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    font-variant-numeric: tabular-nums;
+}
+.user-stats-table td:first-child { color: var(--muted); white-space: nowrap; width: 1%; }
+.user-stats-table td:last-child { text-align: right; font-weight: 600; }
+.user-stats-note { margin: 8px 2px 0; font-size: 0.85em; color: var(--muted); }
+
+.user-history { margin-top: 14px; }
+.user-history h3 { margin: 0 0 8px; font-size: 1.05em; }
+.history-head,
+.match-history-btn {
+    display: grid;
+    grid-template-columns: 10.5em minmax(0, 1fr) 2.5em;
+    align-items: center;
+    gap: 8px;
+}
+.history-head { padding: 0 15px 6px; font-size: 0.85em; color: var(--muted); }
+.history-head .hist-result { text-align: right; }
+.history-empty { padding: 14px 2px; text-align: center; color: var(--muted); }
+.hist-time { white-space: nowrap; }
+.hist-opp { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-result { text-align: right; font-weight: 700; }
+.hist-tag {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 6px;
+    border-radius: 999px;
+    font-size: 0.78em;
+    font-weight: 500;
+    background: rgba(255, 255, 255, 0.22);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+}
+.hist-tag-dark { background: var(--surface-muted); border-color: var(--panel-border); color: var(--muted); }
+.history-more {
+    width: 100%;
+    margin-top: 4px;
+    background: transparent;
+    color: var(--primary);
+    border: 1px dashed var(--primary);
+    box-shadow: none;
+}
+.match-detail-logs {
+    max-height: 300px;
+    overflow-y: auto;
+    padding: 8px;
+    font-size: 0.9em;
+    line-height: 1.6;
+    background: var(--glass);
+    border-radius: 4px;
+}
+
+/* 窄屏装不下「时间 | 对手 | 结果」三列：表头收起，结果跨两行放右侧 */
+@media (max-width: 560px) {
+    .history-head { display: none; }
+    .match-history-btn { grid-template-columns: minmax(0, 1fr) 2.2em; gap: 2px 8px; }
+    .match-history-btn .hist-time { font-size: 0.85em; opacity: 0.9; }
+    .match-history-btn .hist-result { grid-column: 2; grid-row: 1 / span 2; }
+}
+
 
 

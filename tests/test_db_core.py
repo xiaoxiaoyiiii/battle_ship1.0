@@ -200,10 +200,18 @@ def test_get_match_history_empty_uid(temp_db):
 
 
 def test_get_leaderboard_clamps_limit(temp_db):
-    for i in range(5):
-        _make_user(temp_db, f'user{i}')
+    # 每个账号都要真打过一局才会进榜（0 局账号会被过滤，见 db._get_leaderboard）
+    winner = _make_user(temp_db, 'winner0')
+    for i in range(4):
+        other = _make_user(temp_db, f'user{i}')
+        temp_db.record_match(winner, other)
     assert len(temp_db.get_leaderboard(limit=9999)) == 5
     assert len(temp_db.get_leaderboard(limit=0)) >= 1
+
+
+def test_get_leaderboard_hides_accounts_without_games(temp_db):
+    _make_user(temp_db, 'newbie')
+    assert temp_db.get_leaderboard() == [], '一场没打过的账号不该出现在排行榜上'
 
 
 def test_get_leaderboard_orders_by_wins(temp_db):

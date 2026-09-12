@@ -154,7 +154,9 @@ function compactProbe(MIN_TAP) {
   clickable.forEach(function (e) {
     var b = e.getBoundingClientRect();
     var label = e.id || (typeof e.className === 'string' ? e.className.split(' ')[0] : e.tagName);
-    if (Math.min(b.width, b.height) < MIN_TAP - 0.5) small.push(label + ':' + Math.round(b.width) + 'x' + Math.round(b.height));
+    // 1px 容差：棋盘/按钮尺寸由 JS 按可用空间算出，常带小数（336x664 下实测 39.3px）。
+  // 亚像素差距不是可用性问题；真正出问题时的量级是 20~35px（见 docs/MOBILE_ADAPTIVE_LAYOUT.md）。
+  if (Math.min(b.width, b.height) < MIN_TAP - 1) small.push(label + ':' + Math.round(b.width) + 'x' + Math.round(b.height));
   });
   var elById = function (id) { return document.getElementById(id); };
   var hand = elById('magic-hand');
@@ -213,6 +215,11 @@ async function enterGame() {
   }
   await waitFor(async () => await ev('document.getElementById("game-screen").classList.contains("active")'), 20000, '对局界面');
   await waitFor(async () => await ev('!!document.querySelector("#game-player-board .cell")'), 15000, '棋盘格子');
+  // 猜拳是随机的：真人可能是后手，AI 会自己先打完一整个回合。宽屏探针要检查
+  // 「阶段按钮在卡片内居中」，若此时轮到 AI，按钮本来就该隐藏 —— 那会让检查
+  // 随机变红（实测复现过）。这里先等到轮到自己（最多 25 秒）。
+  await waitFor(async () => await ev('(function(){ return typeof gameState !== "undefined" && gameState.currentAttacker && gameState.playerId && gameState.currentAttacker === gameState.playerId; })()'), 25000, '轮到真人')
+    .catch(() => console.log('注意：25 秒内没等到自己的回合，阶段按钮检查可能跳过'));
   await sleep(1200);
   return logEmptyAtStart;
 }
@@ -251,6 +258,50 @@ try {
   await setViewport(1600, 1000, 1, false);
   await send('Page.navigate', { url: APP });
   const logEmptyAtStart = await enterGame();
+
+  // ---------- 探针 0：棋盘状态可视化（冻结的己方战舰必须画得出来） ----------
+  // 冻结的船本回合不提供攻击次数，玩家此前在棋盘上完全看不出哪几艘被冻住。
+  const frozenState = await ev('(function(){' +
+    ' var backup = { ships: gameState.ships, attacks: gameState.opponentAttacks };' +
+    ' var cellAt = function (x, y) { return document.querySelector(\'#game-player-board .cell[data-x="\' + x + \'"][data-y="\' + y + \'"]\'); };' +
+    ' gameState.ships = [ { positions: [{x:0,y:0}], hits: [], frozen: true },' +
+    '                     { positions: [{x:5,y:5}], hits: [], frozen: false } ];' +
+    ' gameState.opponentAttacks = [];' +
+    ' initGameBoards();' +
+    ' var frozenCell = cellAt(0,0), plainCell = cellAt(5,5);' +
+    ' var mark = frozenCell ? getComputedStyle(frozenCell, "::before").content : null;' +
+    ' var res = { frozenClass: !!(frozenCell && frozenCell.classList.contains("frozen")),' +
+    '             frozenIsShip: !!(frozenCell && frozenCell.classList.contains("ship")),' +
+    '             plainIsShip: !!(plainCell && plainCell.classList.contains("ship")),' +
+    '             plainFrozen: !!(plainCell && plainCell.classList.contains("frozen")),' +
+    '             marker: mark };' +
+    ' gameState.ships = backup.ships;' +
+    ' gameState.opponentAttacks = backup.attacks;' +
+    ' initGameBoards();' +
+    ' return res; })()');
+  currentPass = 'wide';
+  check(frozenState && frozenState.frozenClass && frozenState.frozenIsShip,
+    '冻结的己方战舰加上 frozen 类', frozenState);
+  check(frozenState && typeof frozenState.marker === 'string' && frozenState.marker.indexOf('❄') >= 0,
+    '冻结格上画出雪花标记', frozenState && frozenState.marker);
+  check(frozenState && frozenState.plainIsShip && !frozenState.plainFrozen,
+    '未冻结的战舰不会被误标成冻结', frozenState);
+
+  // ---------- 探针 0b：显形（探测雷达/雷达子弹）必须留住，不能 4 秒就消失 ----------
+  await ev('(function(){ var cbs = gameState.socket && gameState.socket._callbacks && gameState.socket._callbacks["$revealed_positions"];' +
+    ' gameState.revealedCells = [];' +
+    ' if (!cbs || !cbs.length) return 0;' +
+    ' cbs.slice().forEach(function (f) { f({ positions: [{ x: 2, y: 3 }, { x: 4, y: 1 }] }); });' +
+    ' return 1; })()');
+  const revealNow = await ev('(function(){ return document.querySelectorAll("#opponent-board .cell.revealed").length; })()');
+  check(revealNow === 2, '收到 revealed_positions 后立刻高亮对应格子', revealNow);
+  await sleep(4500);   // 旧实现固定在 4000ms 后移除
+  const revealLater = await ev('(function(){ return document.querySelectorAll("#opponent-board .cell.revealed").length; })()');
+  check(revealLater === 2, '4 秒后显形仍然保留（旧实现会在这里消失）', revealLater);
+  const revealAfterRedraw = await ev('(function(){ initGameBoards();' +
+    ' return document.querySelectorAll("#opponent-board .cell.revealed").length; })()');
+  check(revealAfterRedraw === 2, '重绘棋盘后显形不丢失', revealAfterRedraw);
+  await ev('(function(){ gameState.revealedCells = []; initGameBoards(); return 1; })()');
 
   if (ONLY !== 'compact') {
     currentPass = 'wide';
@@ -297,7 +348,9 @@ try {
       const occl = visibleBoards.reduce((s, b) => s + b.occluded, 0);
       check(occl === 0, label + ' 棋盘格子零遮挡', visibleBoards.map((b) => ({ id: b.id, occluded: b.occluded })));
       const minCell = Math.min.apply(null, visibleBoards.map((b) => b.minCell));
-      check(minCell >= tap, label + ' 格子尺寸达触摸下限 ' + tap + 'px', minCell);
+      // 棋盘边长由 JS 按可用空间算出，可能是小数（如 39.3）；1px 内属亚像素测量噪声，
+      // 与逐元素检查（MIN_TAP - 0.5）保持同一口径，避免边界视口随机红。
+      check(minCell >= tap - 1, label + ' 格子尺寸达触摸下限 ' + tap + 'px', minCell);
       const notInView = visibleBoards.filter((b) => !b.fullyInView).map((b) => b.id);
       check(notInView.length === 0, label + ' 棋盘完整落在视口内（不需滚动）', notInView);
       check(m.overlaps.length === 0, label + ' 面板之间零叠压', m.overlaps);

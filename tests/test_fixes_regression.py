@@ -380,8 +380,9 @@ def test_forced_kill_consumed_per_attack_phase(room):
     room.current_phase = 'preparation'
     server.apply_magic_effect(room, P1, card('余音绕梁'), {})
     room.current_phase = 'battle'
-    room.players[P2].ships = [ship((0, 0)), ship((1, 1))]
-    room.players[P2].remaining_ships = 2
+    # 第三艘不打的船：打光会被判终局，handle_enter_end_phase 会被门禁拒绝
+    room.players[P2].ships = [ship((0, 0)), ship((1, 1)), ship((2, 2))]
+    room.players[P2].remaining_ships = 3
     room.attacks_remaining = 6
 
     server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 0})
@@ -414,8 +415,10 @@ def test_demon_contract_sacrifice_is_public(room, events):
     server.apply_magic_effect(room, P1, card('恶魔契约'), {})
     room.players[P1].ships = [ship((4, 4)), ship((5, 5))]
     room.players[P1].remaining_ships = 2
-    room.players[P2].ships = [ship((0, 0))]
-    room.players[P2].remaining_ships = 1
+    # 对手留一艘不打的船，避免这一炮直接结束对局
+    # （终局后的 confirm_sacrifice 现在会被门禁拒绝，那是预期行为）
+    room.players[P2].ships = [ship((0, 0)), ship((5, 0))]
+    room.players[P2].remaining_ships = 2
     server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 0})
 
     events.clear()

@@ -427,8 +427,10 @@ def test_demon_contract_sacrifice_requires_own_ship(room):
     apply(room, P1, '恶魔契约')
     room.players[P1].ships = [ship((4, 4)), ship((5, 5))]
     room.players[P1].remaining_ships = 2
-    room.players[P2].ships = [ship((0, 0))]
-    room.players[P2].remaining_ships = 1
+    # 对手留一艘不打的船：否则这一炮直接把对局打结束，
+    # 终局后的 confirm_sacrifice 会被门禁拒绝（那才是正确行为）
+    room.players[P2].ships = [ship((0, 0)), ship((5, 0))]
+    room.players[P2].remaining_ships = 2
     attack(room, P1, 0, 0)
 
     # 选空格 → 拒绝

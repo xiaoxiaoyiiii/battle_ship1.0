@@ -1,8 +1,30 @@
 # 连锁与无效化引擎 · 设计稿（CHAIN_ENGINE_SPEC）
 
-> 状态：**设计稿，待拍板后实施**。实施走分支，测试全绿后再谈 push。
-> 目标：把"连锁 + 无效化"从 server.py 的散落分支中抽出，做成单一结算引擎；
-> 同时清掉僵尸代码。
+> 状态：**⚠️ 设计稿 + 部分过期**。文中的"现状病灶/僵尸代码"描述的是**实施前**的情况，
+> 那些问题后来都修掉了（但引擎也没有按第 3 节那样拆成 `engine/`）。**先读下面这段校准**。
+> 当前实现的权威说明见 `CLAUDE.md` §8。
+
+---
+
+## 0. 实测校准（2026-09-13，全文件 grep 核对）
+
+| 文档说法 | 实测结果 |
+| --- | --- |
+| §2「失灵康不到目标」「无效化 ≠ 阻止结算」 | **已修**：`resolve_chain` 逐项出栈时按 `ChainItem.negated` 跳过效果，无效化在结算前生效（结算文案「无效化了X（若其效果已结算则不会回滚）」） |
+| §2「误伤旧牌」（`magic_history[-1]` 抓到很早以前的牌） | **已修**：失灵限定"本大回合刚使用"的卡，并校验 `round` |
+| §2/§4 `room.pending_magic` + `counter_magic_response` | **已删干净**：`server.py` 全文件 **0 命中**；前端对应 emit/监听也一并清理 |
+| §2/§4 `room.last_magic`（只写不读） | **属性已不存在**（`room.last_magic`/`self.last_magic` **0 命中**）；只剩结算函数里的**局部变量** `last_magic = room.magic_history[-1]` |
+| §3 计划新增 `engine/chain.py` / `resolution.py` / `negation.py` | **未按此拆分**：实现仍在 `server.py` 内（`_can_respond_chain` / `_advance_chain_window` / `resolve_chain` / `_schedule_chain_timeout`），仓库里没有 `engine/` 目录 |
+| §3 计划新增 `chain_window` / `chain_passes` | **已实现**；超时的代际令牌存在 **`room.chain_timer`**（**没有** `chain_token` 字段，token 只是 `_schedule_chain_timeout(room_id, token)` 的参数） |
+
+**与实现的 2 处有意偏差**（不是 bug，别照着文档改回去）：
+
+1. 被无效化的**场地魔法**仍执行"贴了再拆"（避免卡片凭空消失），与 §1.3 的字面描述不同。
+2. 「平等条约」**不走** `negate_target` 连锁标记，而是读 `game_effects['last_ship_change']`
+   的快照回滚船数变化。
+
+回归测试：`tests/test_guardrails.py`（连锁纯函数 + 超时代际令牌）与
+`tests/test_all_magic_cards.py`（42 张卡逐条结算）。
 
 ---
 
@@ -38,6 +60,8 @@
 
 ## 2. 现状病灶（实测）
 
+> ⚠️ **本节描述的是实施前的情况，已全部修复**（见开头 §0 校准表）。保留仅为历史记录。
+
 - **失灵康不到目标**：`magic_history` 只在"结算成功后"写入，而栈是反序结算——失灵先出栈，此时它要康的那张牌还没进历史 → 返回"没有可无效化的魔法卡"。
 - **误伤旧牌**：`magic_history` 全场累积，`[-1]` 可能是很早以前的一张牌，失灵会把它 pop 掉。
 - **无效化 ≠ 阻止结算**：现在只是 `history.pop()`，目标效果早已执行。
@@ -64,6 +88,8 @@
 ---
 
 ## 4. 僵尸代码清单（待删）
+
+> ⚠️ **已全部删除**（`server.py` 全文件 grep 0 命中）。保留仅为历史记录。
 
 - `room.pending_magic` + handler `counter_magic_response`（恒 None，恒报错）。
 - 前端 `game.js` 的 `counter_magic_response` emit 与 `magic_negated` 监听。

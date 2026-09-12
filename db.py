@@ -4,6 +4,7 @@ import time
 import uuid
 import logging
 import threading
+import os
 from pathlib import Path
 from werkzeug.security import check_password_hash
 
@@ -23,7 +24,10 @@ logger = logging.getLogger('database')
 
 class Database:
     def __init__(self):
-        self.db_path = Path(__file__).parent / 'data' / 'battleship.db'
+        # BATTLESHIP_DB_PATH 用于把数据库指到别处（测试隔离用）。
+        # 此前 pytest 直接跑在仓库里会往正式库写假对局。
+        override = os.environ.get('BATTLESHIP_DB_PATH')
+        self.db_path = Path(override) if override else (Path(__file__).parent / 'data' / 'battleship.db')
         self.conn = None
         self.cursor = None
         self._lock = threading.RLock()
@@ -114,6 +118,16 @@ class Database:
                       logs     TEXT
                   )
                   ''')
+
+            # 卡牌使用统计（图鉴里显示"用得多不多"，也是后续平衡调整的依据）
+            self.cursor.execute('''
+                  CREATE TABLE IF NOT EXISTS card_usage
+                  (
+                      card_name  TEXT PRIMARY KEY,
+                      uses       INTEGER NOT NULL DEFAULT 0,
+                      updated_at INTEGER
+                  )
+                  ''')
             
             self.conn.commit()
             logger.info("数据库表创建成功")
@@ -125,6 +139,7 @@ class Database:
                 'CREATE INDEX IF NOT EXISTS idx_matches_ts ON matches(timestamp)',
                 'CREATE INDEX IF NOT EXISTS idx_users_token ON users(token)',
                 'CREATE INDEX IF NOT EXISTS idx_chat_ts ON chat_messages(timestamp)',
+                'CREATE INDEX IF NOT EXISTS idx_card_usage_uses ON card_usage(uses DESC)',
             ):
                 try:
                     self.cursor.execute(stmt)
@@ -516,7 +531,12 @@ class Database:
                 self.conn.rollback()
             return None
     
-    def record_match(self, winner_id: str, loser_id: str, logs=None):
+    def record_match(self, winner_id: str, loser_id: str, logs=None, count_stats=True):
+        """写入一条对局记录。
+
+        count_stats=False 时只写历史（matches / match_logs），不更新任何用户的
+        胜场、负场与连胜 —— 人机对局走这条路：打得再多也刷不了排行榜。
+        """
         if not winner_id or not loser_id:
             logger.warning(f"尝试记录比赛但获胜者或失败者ID为空: winner_id={winner_id}, loser_id={loser_id}")
             return False
@@ -542,24 +562,27 @@ class Database:
                 except Exception as e:
                     logger.error(f"记录比赛日志时发生未知错误: match_id={mid}, 错误: {e}")
 
-            # 增加胜负统计与连胜逻辑
-            # 先取目前的 streak 值以便更新 longest_streak
-            winner = self.cursor.execute('SELECT current_streak, longest_streak FROM users WHERE id = ?', (winner_id,)).fetchone()
-            if winner:
-                new_streak = (winner['current_streak'] or 0) + 1
-                new_longest = max(new_streak, (winner['longest_streak'] or 0))
-                self.cursor.execute('UPDATE users SET wins = wins + 1, current_streak = ?, longest_streak = ? WHERE id = ?',
-                          (new_streak, new_longest, winner_id))
-            else:
-                # 如果用户不存在（可能是游客），仍允许插入 match 但不更新 stats
-                logger.debug(f"比赛获胜者不存在于用户表: {winner_id}")
+            # 增加胜负统计与连胜逻辑（count_stats=False 的人机对局跳过这一段）
+            if count_stats:
+                # 先取目前的 streak 值以便更新 longest_streak
+                winner = self.cursor.execute('SELECT current_streak, longest_streak FROM users WHERE id = ?', (winner_id,)).fetchone()
+                if winner:
+                    new_streak = (winner['current_streak'] or 0) + 1
+                    new_longest = max(new_streak, (winner['longest_streak'] or 0))
+                    self.cursor.execute('UPDATE users SET wins = wins + 1, current_streak = ?, longest_streak = ? WHERE id = ?',
+                              (new_streak, new_longest, winner_id))
+                else:
+                    # 如果用户不存在（可能是游客），仍允许插入 match 但不更新 stats
+                    logger.debug(f"比赛获胜者不存在于用户表: {winner_id}")
 
-            loser = self.cursor.execute('SELECT * FROM users WHERE id = ?', (loser_id,)).fetchone()
-            if loser:
-                self.cursor.execute('UPDATE users SET losses = losses + 1, current_streak = 0 WHERE id = ?', (loser_id,))
+                loser = self.cursor.execute('SELECT * FROM users WHERE id = ?', (loser_id,)).fetchone()
+                if loser:
+                    self.cursor.execute('UPDATE users SET losses = losses + 1, current_streak = 0 WHERE id = ?', (loser_id,))
+                else:
+                    # 如果用户不存在（可能是游客），仍允许插入 match 但不更新 stats
+                    logger.debug(f"比赛失败者不存在于用户表: {loser_id}")
             else:
-                # 如果用户不存在（可能是游客），仍允许插入 match 但不更新 stats
-                logger.debug(f"比赛失败者不存在于用户表: {loser_id}")
+                logger.debug(f"人机对局仅记录历史，不计入战绩: match_id={mid}")
 
             # 提交事务
             self.conn.commit()
@@ -642,6 +665,36 @@ class Database:
             logger.error(f"获取比赛历史时发生未知错误: uid={uid}, limit={limit}, 错误: {e}")
             return []
     
+    def record_card_use(self, card_name, count=1):
+        """记一次卡牌使用。失败只记日志，绝不影响对局。"""
+        if not card_name:
+            return False
+        try:
+            with self._lock:
+                self.cursor.execute(
+                    'INSERT INTO card_usage (card_name, uses, updated_at) VALUES (?, ?, ?) '
+                    'ON CONFLICT(card_name) DO UPDATE SET uses = uses + excluded.uses, '
+                    'updated_at = excluded.updated_at',
+                    (str(card_name), int(count), int(time.time())))
+                self.conn.commit()
+            return True
+        except Exception as e:
+            # 统计失败绝不能影响对局流程（属性名写错 / 库被锁等一并兜住）
+            logger.error(f"记录卡牌使用失败: {card_name} -> {e}")
+            return False
+
+    def get_card_usage(self):
+        """全部卡牌使用次数：{卡名: 次数}。读失败返回空字典。"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('SELECT card_name, uses FROM card_usage')
+            rows = cursor.fetchall()
+            cursor.close()
+            return {r['card_name']: r['uses'] for r in rows}
+        except sqlite3.Error as e:
+            logger.error(f"读取卡牌使用统计失败: {e}")
+            return {}
+
     def _get_leaderboard(self, limit=10):
         try:
             # 确保limit在合理范围内
@@ -650,7 +703,11 @@ class Database:
             # 使用独立的游标避免递归使用游标错误
             cursor = self.conn.cursor()
             cursor.execute(
-                'SELECT id, username, wins, losses, current_streak, longest_streak, avatar FROM users ORDER BY wins DESC, longest_streak DESC LIMIT ?',
+                # 过滤掉一场都没打过的账号：人机对局已不计入统计，新注册账号
+                # 全是 0 胜 0 负，不过滤的话排行榜前列会被它们占满。
+                'SELECT id, username, wins, losses, current_streak, longest_streak, avatar '
+                'FROM users WHERE (COALESCE(wins, 0) + COALESCE(losses, 0)) > 0 '
+                'ORDER BY wins DESC, longest_streak DESC LIMIT ?',
                 (safe_limit,))
             rows = cursor.fetchall()
             cursor.close()
@@ -812,9 +869,19 @@ def create_user(username: str, password_hash: str):
     return db.create_user(username, password_hash)
 
 
-def record_match(winner_id: str, loser_id: str, logs=None):
-    """记录比赛"""
-    return db.record_match(winner_id, loser_id, logs)
+def record_match(winner_id: str, loser_id: str, logs=None, count_stats=True):
+    """记录比赛（count_stats=False 时只写历史、不计入胜场/连胜）"""
+    return db.record_match(winner_id, loser_id, logs, count_stats)
+
+
+def record_card_use(card_name: str, count: int = 1):
+    """记一次卡牌使用（server.py 用模块级函数调用）"""
+    return db.record_card_use(card_name, count)
+
+
+def get_card_usage():
+    """卡牌使用次数 {卡名: 次数}（api.py 用模块级函数调用）"""
+    return db.get_card_usage()
 
 
 def get_match_history(uid: str, limit=20):

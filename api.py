@@ -233,8 +233,22 @@ def leaderboard():
 
 @app.route('/api/leaderboard')
 def api_leaderboard():
-    rows = db.get_leaderboard(100)
+    # 支持分页：此前硬编码 100，?limit= 被完全忽略
+    # （实测 /api/leaderboard?limit=2 仍返回全部行）。
+    try:
+        limit = int(request.args.get('limit', 100))
+    except (TypeError, ValueError):
+        limit = 100
+    limit = max(1, min(limit, 100))
+    rows = db.get_leaderboard(limit)
     return jsonify(rows)
+
+
+@app.route('/api/card_usage')
+def api_card_usage():
+    """卡牌使用次数（公开只读）。图鉴用它显示"这张卡有多常用"。"""
+    usage = db.get_card_usage()
+    return jsonify({'usage': usage, 'total': sum(int(v or 0) for v in usage.values())})
 
 
 @app.route('/api/login', methods=['POST'])

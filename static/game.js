@@ -811,6 +811,7 @@ window.gameState = {
     placedShips: 0,
     maxShips: 6,            // 默认可摆放的船数为6
     isMyTurn: false,
+    attackOrder: [],        // 攻击顺序 [先手, 后手]；用于判断「自己是否先手」
     myAttacks: [],
     opponentAttacks: [],
     lastAttack: null,
@@ -1677,8 +1678,9 @@ function bindEventListeners() {
         }
     });
 
-    // 结束战斗阶段按钮事件
-    document.getElementById('enter-end-phase').addEventListener('click', endBattlePhase);
+    // 「结束战斗阶段」按钮的绑定统一在 setupPhaseButtons() 里做。
+    // 这里原本还有一份 addEventListener(endBattlePhase)，导致每次点击发两次
+    // enter_end_phase：第二次必然失败并弹出「当前不是你的战斗阶段」，纯粹是噪音。
 
     // 日志切换按钮
     if (toggleLogBtn) {
@@ -2073,6 +2075,10 @@ function setupSocketListeners() {
                 gameRound.textContent = data.round || 1;
                 gameState.currentPhase = data.current_phase || 'preparation';
                 gameState.currentAttacker = data.current_attacker;
+                // 记录攻击顺序（[先手, 后手]），供「是否先手」类判定使用
+                if (Array.isArray(data.attack_order) && data.attack_order.length) {
+                    gameState.attackOrder = data.attack_order;
+                }
                 initGameBoards();
                 updateTurnIndicator(data.current_attacker, data.attacks_remaining);
                 updatePhaseUI(); // 确保调用阶段UI更新
@@ -2454,7 +2460,7 @@ function setupSocketListeners() {
 
         chainPrompt.innerHTML = `
             <h3>连锁请求</h3>
-            <p>对方发动了魔法卡【${data.card.name}】</p>
+            <p>${data.caster && data.caster === gameState.playerId ? '你发动了' : '对方发动了'}魔法卡【${data.card.name}】</p>
             <div class="chain-countdown">剩余时间: <span id="chain-countdown-time">10</span>秒</div>
             <div class="chain-speed3-cards">
                 <h4>你拥有的速阶3魔法卡：</h4>
@@ -3687,24 +3693,6 @@ function resetGame() {
     window.location.href = '/';
 }
 
-// 新增：结束战斗阶段函数
-window.endBattlePhase = function () {
-    if (!gameState.isMyTurn || gameState.currentPhase !== 'battle') {
-        showAlert('当前不是你的战斗阶段');
-        return;
-    }
-    if (freezeAlert()) return;
-
-    gameState.socket.emit('enter_end_phase', {
-        room_id: gameState.roomId,
-        player_id: gameState.playerId
-    }, (response) => {
-        if (response.status === 'error') {
-            showAlert(response.message);
-        }
-    });
-}
-
 // 在初始化时调用按钮设置
 window.addEventListener('load', () => {
     init();
@@ -3713,8 +3701,25 @@ window.addEventListener('load', () => {
 });
 
 
+// 结束阶段默认禁止使用魔法卡，但以下卡设计上就在结束阶段发动。
+// （服务端 server.py 的 END_PHASE_PLAYABLE 有一份对应名单，改动需同步。）
+const END_PHASE_PLAYABLE_CARDS = ['Freezing！'];
+
+// 是否为「先手」（猜拳胜者）。判定条件与后端 freezing_block_reason 保持一致，
+// 否则会出现「前端点得下去、后端拒绝」的割裂体验。
+function isFirstPlayer() {
+    const order = gameState.attackOrder || [];
+    return order.length > 0 && order[0] === gameState.playerId;
+}
+
 // 修改canPlayCard函数
 function canPlayCard(card) {
+    // 特例：Freezing！ 只能在自己先手回合的结束阶段发动
+    if (END_PHASE_PLAYABLE_CARDS.indexOf(card.name) >= 0) {
+        return isFirstPlayer() &&
+            gameState.currentPhase === 'end' &&
+            gameState.currentAttacker === gameState.playerId;
+    }
     // 速阶1: 只能在自己的准备阶段使用
     if (card.speed === 1) {
         return gameState.currentPhase === 'preparation' && gameState.currentAttacker === gameState.playerId;
@@ -4589,8 +4594,17 @@ function playMagicCard(index) {
 
     // 检查卡牌是否可以在当前阶段使用
     if (!canPlayCard(card)) {
-        const phaseName = gameState.currentPhase || '未开始';
-        showAlert(`无法使用${card.name}：当前阶段${phaseName}不允许使用速阶${card.speed}的魔法卡`);
+        if (END_PHASE_PLAYABLE_CARDS.indexOf(card.name) >= 0) {
+            // 这类卡有专属的条件提示，别让玩家看到「速阶2」这种内部术语
+            const reasons = [];
+            if (!isFirstPlayer()) reasons.push('你这一局是后手');
+            if (gameState.currentAttacker !== gameState.playerId) reasons.push('不是你的回合');
+            if (gameState.currentPhase !== 'end') reasons.push('不是结束阶段');
+            showAlert(`${card.name}只能在自己先手回合的结束阶段发动（${reasons.join('；') || '条件不满足'}）`);
+        } else {
+            const phaseName = gameState.currentPhase || '未开始';
+            showAlert(`无法使用${card.name}：当前阶段${phaseName}不允许使用速阶${card.speed}的魔法卡`);
+        }
         return;
     }
 
@@ -5822,7 +5836,9 @@ function setupPhaseButtons() {
             room_id: gameState.roomId,
             player_id: gameState.playerId
         }, (response) => {
-            if (response.status === 'error') {
+            // ack 可能是 undefined（服务端 handler 没回值），直接读 .status 会抛
+            // TypeError 把错误提示吞掉，所以这里必须先判空。
+            if (response && response.status === 'error') {
                 showAlert(response.message);
             }
         });
@@ -5844,7 +5860,7 @@ function setupPhaseButtons() {
             room_id: gameState.roomId,
             player_id: gameState.playerId
         }, (response) => {
-            if (response.status === 'error') {
+            if (response && response.status === 'error') {
                 showAlert(response.message);
             }
         });
@@ -5857,7 +5873,7 @@ function setupPhaseButtons() {
             room_id: gameState.roomId,
             player_id: gameState.playerId
         }, (response) => {
-            if (response.status === 'error') {
+            if (response && response.status === 'error') {
                 showAlert(response.message);
             }
         });

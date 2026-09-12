@@ -7,8 +7,8 @@
 import pytest
 
 import server
-from server import (GameRoom, MagicCard, Player, PlayerShip, Position,
-                    room_manager)
+from server import (ChainItem, GameRoom, MagicCard, Player, PlayerShip,
+                    Position, room_manager)
 
 P1, P2 = 'p1', 'p2'
 
@@ -961,6 +961,127 @@ def test_freezing_fails_outside_end_phase(room):
         room.current_phase = ph
         res = apply(room, P1, 'Freezing！')
         assert res.success is False, f'{ph} 阶段不应能发动'
+
+
+# --- 走真实出牌入口的回归（此前只测 apply_magic_effect，漏掉了 can_play_magic_card
+# 里的阶段校验，导致「结束阶段禁用魔法卡」把这张卡彻底堵死却没人发现）-----------
+
+def _play_freezing(room, who):
+    """走真实 socket 入口出牌。"""
+    room.players[who].magic_hand = [card('Freezing！')]
+    return server.handle_use_magic_card({
+        'room_id': room.id, 'player_id': who,
+        'card': {'name': 'Freezing！'}, 'targets': {}
+    })
+
+
+def test_freezing_rejected_before_end_phase_via_entry(room):
+    """准备/战斗阶段出牌应被直接拒绝（而不是进连锁后再静默失败）"""
+    room.attack_order = [P1, P2]
+    room.current_attacker = P1
+    room.players[P1].damage_dealt_this_turn = 0
+    for ph in ('preparation', 'battle'):
+        room.current_phase = ph
+        res = _play_freezing(room, P1)
+        assert res['status'] == 'error', f'{ph} 阶段不应能打出'
+        assert '结束阶段' in res['message']
+
+
+def test_freezing_rejected_when_not_first_player_via_entry(room):
+    """后手出牌应被拒，且给出「先手」原因"""
+    room.attack_order = [P2, P1]        # P2 先手，P1 后手
+    room.current_attacker = P1
+    room.current_phase = 'end'
+    room.players[P1].damage_dealt_this_turn = 0
+    res = _play_freezing(room, P1)
+    assert res['status'] == 'error'
+    assert '先手' in res['message']
+
+
+def test_freezing_rejected_after_ship_loss_via_entry(room):
+    """已让对方减船时应被拒"""
+    room.attack_order = [P1, P2]
+    room.current_attacker = P1
+    room.current_phase = 'end'
+    room.players[P1].damage_dealt_this_turn = 1
+    res = _play_freezing(room, P1)
+    assert res['status'] == 'error'
+    assert '船数减少' in res['message']
+
+
+def test_freezing_full_flow_skips_opponent_via_entry(room):
+    """全链路：结束阶段出牌 → 结束回合 → 对手回合被跳过"""
+    room.attack_order = [P1, P2]
+    room.current_attacker = P1
+    room.current_phase = 'end'
+    room.attacks_remaining = 0
+    room.players[P1].damage_dealt_this_turn = 0
+
+    res = _play_freezing(room, P1)
+    assert res['status'] == 'success', res
+    assert room.skip_opponent_turn == P2
+
+    server.end_turn({'room_id': room.id, 'player_id': P1})
+    assert room.current_attacker == P1, 'P2 的回合应被跳过'
+    assert room.current_phase == 'preparation'
+
+
+def test_freezing_effect_survives_pending_chain_when_caster_holds_speed3(room):
+    """施法者手上还有速阶3卡时（真实对局的常态），Freezing！ 依然要生效。
+
+    曾经的漏洞：出牌会压入连锁栈，响应窗口先给对方、对方无法响应后
+    又绕回施法者本人；此时若施法者手上有速阶3卡（可以自连锁），
+    窗口就会挂起等 10 秒，apply_magic_effect 根本没执行。
+    玩家在这 10 秒内点「结束回合」，skip_opponent_turn 就永远不会生效，
+    并且在下一个大回合开始时被静默清空。
+    """
+    room.attack_order = [P1, P2]
+    room.current_attacker = P1
+    room.current_phase = 'end'
+    room.attacks_remaining = 0
+    room.players[P1].damage_dealt_this_turn = 0
+
+    # 施法者手上同时握有速阶3卡 —— 这正是触发挂起窗口的条件
+    room.players[P1].magic_hand = [card('Freezing！'), card('加百列之光')]
+    res = server.handle_use_magic_card({
+        'room_id': room.id, 'player_id': P1,
+        'card': {'name': 'Freezing！'}, 'targets': {}
+    })
+    assert res['status'] == 'success', res
+
+    # 效果还没结算（挂在连锁里），此时必须拒绝结束回合 —— 否则效果会丢
+    pending = server.end_turn({'room_id': room.id, 'player_id': P1})
+    assert pending['status'] == 'error', '连锁挂起时不该放行换人'
+    assert room.current_attacker == P1, '回合不该被交出去'
+
+    # 响应窗口关闭（玩家点取消 / 倒计时归零）→ 连锁结算 → 效果落地
+    server.resolve_chain(room)
+    assert room.skip_opponent_turn == P2, 'Freezing！ 的效果被连锁窗口吞掉了'
+
+    server.end_turn({'room_id': room.id, 'player_id': P1})
+    assert room.current_attacker == P1, 'P2 的回合应被跳过'
+    assert room.current_phase == 'preparation'
+
+
+def test_end_turn_blocked_while_chain_pending(room):
+    """连锁未结算时不允许结束回合 —— 否则卡牌效果会在换人后才生效。"""
+    room.attack_order = [P1, P2]
+    room.current_attacker = P1
+    room.current_phase = 'end'
+    room.attacks_remaining = 0
+    room.chain = [ChainItem(P1, card('Freezing！'), {}, 0)]
+    room.chain_waiting = True
+
+    res = server.end_turn({'room_id': room.id, 'player_id': P1})
+    assert res['status'] == 'error', '连锁挂起时结束回合应被拒绝'
+    assert room.current_attacker == P1
+
+    # 连锁结算完之后恢复正常
+    room.chain = []
+    room.chain_waiting = False
+    res = server.end_turn({'room_id': room.id, 'player_id': P1})
+    assert res['status'] == 'success', res
+    assert room.current_attacker == P2
 
 
 # ---------------------------------------------------------------------------

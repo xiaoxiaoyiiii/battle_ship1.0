@@ -1330,6 +1330,12 @@ def handle_rps_choice(data):
         # 决定猜拳结果
         result = determine_rps_winner(room)
         emit('rps_result', result, room=room_id)
+
+        # 平局：order 为空，不进攻击阶段，等双方重新出拳
+        # （determine_rps_winner 已清空 rps_choices 并复位 rps_processed）
+        if result.status == 'tie' or len(result.order) < 2:
+            return {'status': 'success', 'message': '平局，重新猜拳'}
+
         # 设置攻击顺序
         room.attack_order = result.order
         winner = room.attack_order[0]  # 先手
@@ -1364,7 +1370,10 @@ def handle_rps_choice(data):
             'attacks_remaining': room.attacks_remaining,
             'winner_card': winner_card,
             'loser_cards': [loser_card1, loser_card2],
-            'round': room.round
+            'round': room.round,
+            # 攻击顺序：[先手, 后手]。前端需要它来判断「自己是否先手」
+            # （Freezing！ 这类卡只在先手方可用）
+            'attack_order': list(room.attack_order),
         }, room=room_id)
 
     return {'status': 'success'}
@@ -1919,6 +1928,11 @@ def handle_enter_end_phase(data):
 
         return {'status': 'success', 'message': '已进入结束阶段'}
 
+    # 兜底：不满足条件时必须回一个 dict。
+    # 返回 None 会让前端 ack 回调拿到 undefined，读 response.status 直接抛
+    # TypeError，把真正的错误提示整个吞掉（控制台里只剩一行莫名其妙的报错）。
+    return {'status': 'error', 'message': '当前不是你的战斗阶段'}
+
 
 def switch_turn_after_end_phase(room, opponent_id):
     # 模拟结束阶段处理时间
@@ -1955,6 +1969,13 @@ def end_turn(data):
     frz = _frozen_reason(room, player_id)
     if frz:
         return {'status': 'error', 'message': frz}
+
+    # 连锁未结算时禁止结束回合。
+    # 卡牌效果在 resolve_chain 里才真正执行，若此时放行换人，
+    # 效果会落在「下一个人已经是当前攻击者」之后 —— Freezing！ 这种
+    # 「跳过对方回合」的效果就这么凭空丢了（还不会被任何人察觉）。
+    if room.chain or room.chain_waiting:
+        return {'status': 'error', 'message': '连锁结算中，请等待响应窗口结束后再结束回合'}
 
     # 检查是否是当前攻击者的结束阶段
     if room.current_attacker == player_id and room.current_phase == 'end':
@@ -2456,7 +2477,12 @@ def handle_use_magic_card(data):
 
     # 检查是否可以在当前阶段使用
     if not can_play_magic_card(room, player_id, card):
-        return {'status': 'error', 'message': f'当前阶段{room.current_phase}无法使用速阶{card.speed}的魔法卡'}
+        reason = None
+        if card.name in END_PHASE_PLAYABLE:
+            # 这类卡有专属条件，把具体原因告诉玩家，别只报「速阶2」
+            reason = freezing_block_reason(room, player_id, card)
+        return {'status': 'error',
+                'message': reason or f'当前阶段{room.current_phase}无法使用速阶{card.speed}的魔法卡'}
 
     # 找到并移除玩家手牌中的卡牌
     for i, c in enumerate(player.magic_hand):
@@ -2485,10 +2511,34 @@ def handle_use_magic_card(data):
     return {'status': 'success', 'message': f'魔法卡{card.name}已加入连锁'}
 
 
+# 结束阶段默认禁止使用魔法卡，但以下卡设计上就在结束阶段发动。
+# （前端 static/game.js 的 canPlayCard 有一份对应名单，改动需同步。）
+END_PHASE_PLAYABLE = ('Freezing！',)
+
+
+def freezing_block_reason(room, player_id, card):
+    """Freezing！ 的专属发动条件；不满足时返回原因，满足返回 None。
+
+    三条缺一不可：自己先手 / 结束阶段 / 本回合没让对方船数减少。
+    """
+    if room.attack_order and room.attack_order[0] != player_id:
+        return 'Freezing！只能在自己先手的回合发动'
+    if room.current_phase != 'end':
+        return 'Freezing！只能在结束阶段发动'
+    if room.players[player_id].damage_dealt_this_turn > 0:
+        return '本回合已使对方船数减少，无法发动 Freezing！'
+    return None
+
+
 def can_play_magic_card(room, player_id, card):
     # 绝处逢生：生效回合内自己的其余魔法卡全部无效（last_stand 随回合标志重置自然过期）
     if room.players[player_id].effect_flags.last_stand:
         return False
+
+    # Freezing！ 有专属条件（先手 / 结束阶段 / 未让对方减船），在此一并拦掉，
+    # 避免"卡进了连锁、结算时才被拒"这种玩家看不到原因的失败。
+    if card.name in END_PHASE_PLAYABLE:
+        return freezing_block_reason(room, player_id, card) is None
 
     # 确保speed是数字类型
     speed = int(card.speed)
@@ -2514,8 +2564,9 @@ def can_play_magic_card(room, player_id, card):
         # 战斗阶段可以使用速阶1和速阶2的卡牌
         return speed in [1, 2]
     elif room.current_phase == 'end':
-        # 结束阶段不能使用魔法卡
-        return False
+        # 结束阶段默认不能使用魔法卡；
+        # 例外：Freezing！ 的设计就是「自己先手回合的结束阶段」发动。
+        return card.name in END_PHASE_PLAYABLE
     return False
 
 
@@ -2559,6 +2610,9 @@ def _advance_chain_window(room, player_id):
             room.chain_timer += 1
             emit('chain_request', {
                 'card': room.chain[-1].card,
+                # 告诉客户端这张卡是谁打的：响应窗口会绕回最后压栈者自己
+                # （自连锁），此时前端不能再写「对方发动了」。
+                'caster': room.chain[-1].player_id,
                 'speed3_cards': _speed3_cards(room, player_id),
                 'countdown': CHAIN_RESPONSE_SECONDS,
             }, to=room.players[player_id].sid)

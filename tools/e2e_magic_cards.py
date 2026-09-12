@@ -278,12 +278,18 @@ def run_card(env, name: str, targets: dict, pre, attacked: set):
             'position': {'x': 0, 'y': 5}})
         entry['followup'] = resp.get('status', '') if resp else 'no-ack'
     elif temp_id == 'bury_choice':
-        resp = actor.emit('select_magic_target', {
+        # 前端真实链路走的是 confirm_magic_target（不是 select_magic_target），
+        # 且 card_index 是候选总表里的扁平下标：牌堆在前，0 = 牌堆第 0 张。
+        resp = actor.emit('confirm_magic_target', {
             'room_id': actor.room, 'player_id': actor.pid,
-            'temp_data_id': temp_id, 'target_data': {'card_index': 0}})
+            'temp_data_id': temp_id,
+            'target_data': {'card_index': 0, 'source': 'deck', 'source_index': 0}})
         entry['followup'] = resp.get('message', '') if resp else 'no-ack'
+        # 必须真的葬进弃牌堆并摸到牌；摸不到时服务端会在消息里写明原因
+        if resp and resp.get('status') == 'success' and '摸到了' not in entry['followup']:
+            entry['followup'] += '（**没摸到牌**）'
     elif temp_id == 'shield_choice':
-        resp = actor.emit('select_magic_target', {
+        resp = actor.emit('confirm_magic_target', {
             'room_id': actor.room, 'player_id': actor.pid,
             'temp_data_id': temp_id, 'target_data': {'ship_indices': [0, 1]}})
         entry['followup'] = resp.get('message', '') if resp else 'no-ack'

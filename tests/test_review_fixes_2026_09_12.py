@@ -399,16 +399,27 @@ def test_draw_card_duplicate_name_does_not_raise(room):
 
 # 16. 明智埋葬 / 仁王之盾 走真实链路
 def test_bury_choice_via_confirm_magic_target(room):
-    room.players[P1].magic_hand = [card('轰炸'), card('疗愈')]
-    room.magic_deck = [card('失灵！')]
-    room.magic_temp_data = {'type': 'bury_choice', 'caster': P1}
+    """明智埋葬：选中的那张牌进弃牌堆，施法者再摸一张。
+
+    旧实现把 card_index 当成「施法者自己手牌的下标」——手牌为空时报
+    「无效的选择」（既不埋牌也不摸牌），手牌非空时埋掉的是自己的牌，
+    选中的那张始终留在牌堆里。详见 tests/test_mingzhi_burial_fix.py。
+    """
+    room.magic_deck = [card('轰炸'), card('疗愈')]
+    room.players[P1].magic_hand = []      # 刚把明智埋葬打出去：手牌为空
+    room.magic_temp_data = {
+        'type': 'bury_choice', 'caster': P1,
+        'candidates': [{'source': 'deck', 'index': 0, 'name': '轰炸'},
+                       {'source': 'deck', 'index': 1, 'name': '疗愈'}],
+    }
 
     res = server.confirm_magic_target({
         'room_id': room.id, 'player_id': P1,
-        'temp_data_id': 'bury_choice', 'target_data': {'card_index': 0}})
+        'temp_data_id': 'bury_choice', 'target_data': {'card_index': 0, 'source': 'deck'}})
     assert res['status'] == 'success'
-    names = [c.name for c in room.players[P1].magic_hand]
-    assert '轰炸' not in names and '疗愈' in names and '失灵！' in names
+    assert [c.name for c in room.magic_discard] == ['轰炸']            # 选中的牌进弃牌堆
+    assert [c.name for c in room.magic_deck] == []                     # 且真的从牌堆移除
+    assert [c.name for c in room.players[P1].magic_hand] == ['疗愈']    # 自己摸到剩下那张
     assert room.magic_temp_data == {}
 
 

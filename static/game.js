@@ -2874,8 +2874,12 @@ function setupSocketListeners() {
         let cards = [];
 
         const renderBuryCards = (response) => {
-            if (response.status === 'success' && response.data && response.data.cards) {
-                cards = response.data.cards;
+            if (!response || response.status !== 'success' || !response.data) return;
+            // 主链路（chain_resolved 结果）用 data.cards；
+            // 兜底查询 get_magic_temp_data 时服务端返回的是 data.candidates（纯数据）
+            const list = response.data.cards || response.data.candidates;
+            if (Array.isArray(list) && list.length) {
+                cards = list;
 
                 // 显示卡牌（来源可能是牌堆或对方手牌）
                 cards.forEach((card, index) => {
@@ -2902,8 +2906,8 @@ function setupSocketListeners() {
                         // 选中当前卡牌
                         cardElement.classList.add('selected');
 
-                        // 确认选择（带上来源）
-                        confirmBuryChoice(index, card.source || 'deck');
+                        // 确认选择（带上来源 + 该卡在来源列表内的下标）
+                        confirmBuryChoice(index, card.source || 'deck', card.index);
                         document.body.removeChild(buryChoiceDiv);
                     });
                 });
@@ -2920,15 +2924,21 @@ function setupSocketListeners() {
     }
 
     // 确认明智埋葬选择
-    function confirmBuryChoice(cardIndex, source) {
+    // cardIndex 是候选总表（牌堆在前、对方手牌在后）里的扁平下标，
+    // sourceIndex 是该卡在自己来源列表内的下标 —— 服务端优先用后者精确定位。
+    function confirmBuryChoice(cardIndex, source, sourceIndex) {
+        const targetData = {
+            card_index: cardIndex,
+            source: source || 'deck'
+        };
+        if (typeof sourceIndex === 'number') {
+            targetData.source_index = sourceIndex;
+        }
         gameState.socket.emit('confirm_magic_target', {
             room_id: gameState.roomId,
             player_id: gameState.playerId,
             temp_data_id: 'bury_choice',
-            target_data: {
-                card_index: cardIndex,
-                source: source || 'deck'
-            }
+            target_data: targetData
         }, (response) => {
             if (response.status === 'success') {
                 showMessage(response.message);
@@ -4573,6 +4583,11 @@ function playMagicCard(index) {
             if (gameState.currentAttacker !== gameState.playerId) reasons.push('不是你的回合');
             if (gameState.currentPhase !== 'end') reasons.push('不是结束阶段');
             showAlert(`${card.name}只能在自己先手回合的结束阶段发动（${reasons.join('；') || '条件不满足'}）`);
+        } else if (gameState.currentAttacker !== gameState.playerId) {
+            // 另一种同样常见的原因：不是你的回合。旧文案一律甩锅给「阶段」，
+            // 玩家在准备阶段拿着速阶2的卡会看到「当前阶段preparation不允许使用速阶2」，
+            // 完全是误导（服务端本来就允许准备阶段用速阶2）。
+            showAlert(`无法使用${card.name}：现在不是你的回合`);
         } else {
             const phaseName = gameState.currentPhase || '未开始';
             showAlert(`无法使用${card.name}：当前阶段${phaseName}不允许使用速阶${card.speed}的魔法卡`);
@@ -4817,7 +4832,11 @@ function applyCardEffect(card, casterId) {
             break;
 
         case '明智埋葬':
-            showMessage('明智埋葬效果生效，埋葬卡牌并抽一张新牌');
+            // 这一刻还什么都没埋、也没摸牌（要等玩家点选后服务端才结算）。
+            // 旧文案「埋葬卡牌并抽一张新牌」会让人以为效果已完成 —— 而且双方都会看到。
+            showMessage(casterId === gameState.playerId
+                ? '明智埋葬：请选择要埋葬的卡牌（牌堆或对方手牌）'
+                : '对方发动了明智埋葬，正在选择要埋葬的卡牌');
             break;
 
         case '仁王之盾':

@@ -1518,10 +1518,125 @@ def determine_rps_winner(room: GameRoom):
     )
 
 
+# ============ 明智埋葬：选择解析与结算（两条链路共用同一份实现） ============
+def _bury_choice_target(room, target_data):
+    """把客户端提交的选择解析成 (source, index, 期望卡名)；失败返回 (None, 错误信息)。
+
+    候选卡由 apply_magic_effect 按「牌堆在前、对方手牌在后」的扁平顺序下发：
+    - card_index 是候选总表里的扁平下标（前端 cards.forEach 的 index）；
+    - source_index 是该卡在自己来源列表（牌堆 / 对方手牌）内的下标。
+    两者都要能落到同一张牌上：优先用 source_index 精确定位，否则用扁平下标
+    到候选表里换取真实的 (source, index)；没有候选表（旧数据/测试直调）时，
+    card_index 就按来源列表内的下标理解。
+    """
+    source = target_data.get('source')
+    if source is None:
+        source = 'deck'
+    if source not in ('deck', 'opponent_hand'):
+        return None, '无效的选择'
+
+    def _as_index(value):
+        # 注意 bool 是 int 的子类，True/False 不能当下标用
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return None
+        return value
+
+    candidates = (room.magic_temp_data or {}).get('candidates') or []
+
+    def _candidate_name(idx):
+        for c in candidates:
+            if c.get('source') == source and c.get('index') == idx:
+                return c.get('name')
+        return None
+
+    expected = None
+    index = _as_index(target_data.get('source_index'))
+    if index is None:
+        flat = _as_index(target_data.get('card_index'))
+        if flat is not None and flat < len(candidates):
+            candidate = candidates[flat]
+            # 扁平下标只有与来源一致时才采用，否则退回「来源列表内下标」的约定
+            if candidate.get('source') == source:
+                index = _as_index(candidate.get('index'))
+                expected = candidate.get('name')
+        if index is None:
+            index = flat
+    else:
+        expected = _candidate_name(index)
+
+    if index is None:
+        return None, '无效的选择'
+    return (source, index, expected), None
+
+
+def _apply_bury_choice(room, player_id, target_data):
+    """结算明智埋葬：把选中的牌（牌堆或对方手牌）放进弃牌堆，施法者再摸一张。
+
+    ⚠️ 必须从原位置真移除。只 append 到弃牌堆的话，同一张牌会同时留在
+    牌堆/对方手牌里，对方还能再用一次（复制卡）。
+    """
+    resolved, err = _bury_choice_target(room, target_data)
+    if resolved is None:
+        return {'status': 'error', 'message': err}
+    source, index, expected = resolved
+
+    opponent = None
+    if source == 'deck':
+        pile = room.magic_deck if isinstance(room.magic_deck, list) else []
+    else:
+        opponent_id = _opponent_of(room, player_id)
+        opponent = room.players.get(opponent_id) if opponent_id else None
+        if opponent is None:
+            return {'status': 'error', 'message': '无效的选择'}
+        pile = opponent.magic_hand
+
+    if not (0 <= index < len(pile)):
+        return {'status': 'error', 'message': '无效的选择'}
+
+    if expected and pile[index].name != expected:
+        # 候选下发后位置可能被同一连锁里的其它卡改动（抽取/洗牌）：
+        # 按下标埋会埋错牌，改按卡名找回原来那张。
+        moved = next((i for i, c in enumerate(pile) if c.name == expected), None)
+        if moved is None:
+            return {'status': 'error', 'message': '选中的卡牌已不在原处'}
+        index = moved
+
+    buried = pile.pop(index)
+    room.magic_discard.append(buried)
+
+    # 无论有没有摸到牌，这次选择都已经用完：先清空待选择状态，避免重复结算
+    room.magic_temp_data = {}
+
+    # draw_card 内部会 emit hand_updated（摸到重名卡时那张会自动进弃牌堆）。
+    # 先记下摸牌前的牌堆张数：摸牌后牌堆可能正好空掉，
+    # 用它才能区分「本来就没牌可摸」和「摸到重名牌被丢弃」。
+    deck_size_before = len(room.magic_deck) if isinstance(room.magic_deck, list) else 0
+    drawn = room.draw_card(player_id)
+    if opponent is not None:
+        # 对方手牌少了一张，需要单独同步（draw_card 只通知施法者自己）
+        emit('hand_updated', {'hand': opponent.magic_hand}, to=opponent.sid)
+
+    # 摸牌可能被规则挡下（牌堆空 / 无中生有封锁 / 摸到重名牌自动进弃牌堆）。
+    # 这些情况原先都是静默的，玩家只会看到「没有摸到牌」而不知为何 —— 如实说明。
+    if drawn is not None:
+        detail = f'埋葬了「{buried.name}」，并摸到了「{drawn.name}」'
+    elif room.players[player_id].effect_flags.no_draw:
+        detail = f'埋葬了「{buried.name}」，但「无中生有」生效中，本大回合无法摸牌'
+    elif deck_size_before == 0:
+        detail = f'埋葬了「{buried.name}」，但牌堆已空，没能摸到牌'
+    else:
+        detail = f'埋葬了「{buried.name}」，摸到的牌与手牌重复，已直接进弃牌堆'
+
+    add_game_log(room, f'第{room.round}回合 · {_log_name(room, player_id)} 的【明智埋葬】{detail}',
+                 'magic', {'caster': player_id, 'card': '明智埋葬', 'buried': buried.name})
+    return {'status': 'success', 'message': detail}
+
+
 # select_magic_target 允许客户端提交的字段白名单（其余一律丢弃）
 _SELECTION_TARGET_KEYS = {
     'caster_choice', 'opponent_choice', 'card_index', 'ship_indices',
     'effect_choice', 'prediction', 'index', 'target_area', 'target_line',
+    'source', 'source_index',
 }
 
 
@@ -1569,40 +1684,8 @@ def handle_magic_target(data):
         return {'status': 'success', 'message': '卡牌选择完成'}
 
     elif temp_data_id == 'bury_choice':
-        # 处理明智埋葬的选择：来源可能是牌堆或对方手牌
-        caster = room.players[player_id]
-        candidates = room.magic_temp_data.get('candidates') or []
-
-        source = target_data.get('source')
-        card_index = target_data.get('card_index')
-
-        # 兼容旧客户端：只传 card_index 时按牌堆处理
-        if source is None:
-            source = 'deck'
-            if card_index is None:
-                return {'status': 'error', 'message': '无效的选择'}
-
-        target_card = None
-        if source == 'deck':
-            deck = room.magic_deck or []
-            if isinstance(card_index, int) and 0 <= card_index < len(deck):
-                target_card = deck.pop(card_index)
-        elif source == 'opponent_hand':
-            opp_id = _opponent_of(room, player_id)
-            opp = room.players.get(opp_id) if opp_id else None
-            hand = (opp.magic_hand if opp else []) or []
-            if isinstance(card_index, int) and 0 <= card_index < len(hand):
-                target_card = hand.pop(card_index)
-
-        if target_card is None:
-            return {'status': 'error', 'message': '无效的选择'}
-
-        # 埋掉：进入全局弃牌堆
-        room.magic_discard.append(target_card)
-        # 自己再摸一张
-        room.draw_card(player_id)
-        room.magic_temp_data = {}
-        return {'status': 'success', 'message': '埋葬完成'}
+        # 与 confirm_magic_target 共用同一份解析/结算逻辑，避免两条链路再次漂移
+        return _apply_bury_choice(room, player_id, target_data)
 
     elif temp_data_id == 'shield_choice':
         # 处理仁王之盾的选择
@@ -3575,21 +3658,17 @@ def confirm_magic_target(data):
         return {'status': 'success', 'message': '灵气复苏船数选择完成'}
 
     elif temp_data_id == 'bury_choice':
-        # 明智埋葬：弃掉手牌中的第 N 张，再抽一张新卡。
-        # 原实现只写在无人调用的 select_magic_target 里，前端走的是本函数，
-        # 于是真实对局中「明智埋葬」永远返回"无效的临时数据ID"、完全不生效。
-        caster = room.players[player_id]
-        try:
-            card_index = int(target_data.get('card_index'))
-        except (TypeError, ValueError):
-            return {'status': 'error', 'message': '无效的选择'}
-        if not (0 <= card_index < len(caster.magic_hand)):
-            return {'status': 'error', 'message': '无效的选择'}
-        room.discard_card(player_id, caster.magic_hand[card_index])
-        room.draw_card(player_id)
-        room.magic_temp_data = {}
-        emit('hand_updated', {'hand': caster.magic_hand}, to=caster.sid)
-        return {'status': 'success', 'message': '埋葬完成'}
+        # 明智埋葬：把选中的牌（牌堆中或对方手牌中的那张）放进弃牌堆，
+        # 施法者再摸一张牌。
+        #
+        # ⚠️ 原实现把 card_index 当成「施法者自己手牌的下标」：
+        #   手牌为空（刚把明智埋葬打出去后的常见情况）时直接报「无效的选择」，
+        #   既不埋牌也不摸牌；手牌非空时埋掉的是自己的牌，而选中的那张
+        #   从头到尾没进弃牌堆。这里改为与 select_magic_target 共用同一实现。
+        temp = room.magic_temp_data or {}
+        if temp.get('type') != 'bury_choice' or temp.get('caster') != player_id:
+            return {'status': 'error', 'message': '当前没有待处理的明智埋葬选择'}
+        return _apply_bury_choice(room, player_id, target_data)
 
     elif temp_data_id == 'shield_choice':
         # 仁王之盾：至多 3 艘己方战舰进入护盾状态（同样补上真实链路）
@@ -3636,7 +3715,8 @@ def handle_cancel_magic_selection(data):
 
     cards = temp.get('cards')
     if isinstance(cards, list):
-        room.magic_deck.extend(cards)   # 抽出来的牌放回牌堆，不凭空消失
+        # 只放回真正的卡牌实例（明智埋葬的候选是纯数据，混进牌堆会污染牌堆）
+        room.magic_deck.extend(c for c in cards if isinstance(c, MagicCard))
     room.magic_temp_data = {}
     emit('message', {'text': '已取消本次选择'}, to=room.players[player_id].sid)
     return {'status': 'success', 'message': '已取消本次选择'}
@@ -4752,23 +4832,24 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             result['message'] = '牌堆与对方手牌均为空，无法发动'
             return result
 
-        # 候选池：先牌堆，后对方手牌。客户端用 (source, index) 定位
+        # 候选池：先牌堆，后对方手牌（扁平下标 = 前端展示顺序）。
+        # 只存纯数据、不存 MagicCard 实例：magic_temp_data 会被
+        # get_magic_temp_data 原样 emit，实例无法 JSON 序列化。
         candidates = []
-        for i, c in enumerate(deck):
-            candidates.append({'source': 'deck', 'index': i, 'card': c})
-        for i, c in enumerate(opp_hand):
-            candidates.append({'source': 'opponent_hand', 'index': i, 'card': c})
+        for source, pile in (('deck', deck), ('opponent_hand', opp_hand)):
+            for i, c in enumerate(pile):
+                candidates.append({
+                    'source': source, 'index': i, 'name': c.name, 'speed': c.speed,
+                    'type': c.type, 'description': c.description,
+                })
 
         room.magic_temp_data = {
             'type': 'bury_choice',
             'caster': caster_id,
             'candidates': candidates,
         }
-        result['cards'] = [{
-            'name': c['card'].name, 'speed': c['card'].speed,
-            'type': c['card'].type, 'description': c['card'].description,
-            'source': c['source'],
-        } for c in candidates]
+        # index 是该卡在自己来源列表内的下标，前端回传 source_index 用它精确定位
+        result['cards'] = [dict(c) for c in candidates]
         result['message'] = '请选择要埋葬的卡牌（牌堆或对方手牌）'
         result['temp_data_id'] = 'bury_choice'
 

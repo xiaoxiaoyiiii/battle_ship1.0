@@ -146,8 +146,13 @@ def user_stats_view():
     if not stats:
         # 用户不存在（如游客查询对手）时返回空战绩，避免前端轮询404
         return jsonify({'stats': None, 'history': []})
+    # 安全：只下发展示所需字段。db.get_user 是 SELECT *，直接返回会泄露
+    # password_hash（可离线爆破）与 token（账号接管），且本接口无需登录即可调用。
+    public_fields = ('id', 'username', 'wins', 'losses', 'current_streak',
+                     'longest_streak', 'created_at', 'signature', 'avatar')
+    public_stats = {k: stats[k] for k in public_fields if k in stats}
     history = db.get_match_history(stats['id'], limit)
-    return jsonify({'stats': stats, 'history': history})
+    return jsonify({'stats': public_stats, 'history': history})
 @app.route('/')
 def index():
     # 渲染主页面并传递登录信息

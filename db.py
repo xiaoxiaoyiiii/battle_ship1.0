@@ -460,7 +460,13 @@ class Database:
         try:
             # 确保limit在合理范围内
             safe_limit = min(max(1, limit), 100)  # 限制在1-100之间
-            rows = self.cursor.execute('SELECT * FROM chat_messages ORDER BY timestamp DESC LIMIT ?', (safe_limit,)).fetchall()
+            # 用独立游标：共享 self.cursor 在并发（eventlet 协程）下会与写操作错位
+            with self._lock:
+                cursor = self.conn.cursor()
+                rows = cursor.execute(
+                    'SELECT * FROM chat_messages ORDER BY timestamp DESC LIMIT ?',
+                    (safe_limit,)).fetchall()
+                cursor.close()
             result = [dict(r) for r in rows][::-1]  # 倒序排列，最新的在最后
             logger.debug(f"获取聊天消息: limit={safe_limit}, 结果数量={len(result)}")
             return result
@@ -674,14 +680,20 @@ class Database:
             return None
             
         try:
-            user = self.cursor.execute('SELECT id, password_hash FROM users WHERE username = ?',
-                         (username,)).fetchone()
-            
+            with self._lock:
+                cursor = self.conn.cursor()
+                user = cursor.execute('SELECT id, password_hash FROM users WHERE username = ?',
+                                      (username,)).fetchone()
+                cursor.close()
+
             if user and check_password_hash(user['password_hash'], password):
                 token = str(uuid.uuid4())
                 with self._lock:
-                    self.cursor.execute('UPDATE users SET token = ? WHERE id = ?', (token, user['id']))
+                    # 独立游标 + 锁：避免与其它写操作共用同一游标导致 SQL/参数错配
+                    cursor = self.conn.cursor()
+                    cursor.execute('UPDATE users SET token = ? WHERE id = ?', (token, user['id']))
                     self.conn.commit()
+                    cursor.close()
                 logger.info(f"成功为用户生成token: username={username}, user_id={user['id']}")
                 return token
             else:

@@ -137,7 +137,7 @@
         <div class="board-container">
             <div id="player-board" class="board"></div>
         </div>
-        <p id="ships-placed">已放置：<span id="placed-count">0</span>/6</p>
+        <p id="ships-placed">已放置：<span id="placed-count">0</span>/<span id="total-ships">6</span></p>
         <div class="placement-actions">
             <button id="random-ships">随机摆放</button>
             <button id="confirm-ships" class="hidden">确认放置</button>
@@ -254,6 +254,7 @@
                                 <div>
                                     <p>对手：剩余 <span id="opponent-ships">6</span> 艘战舰</p>
                                     <div id="opponent-username-info" class="username-info"></div>
+                                    <button id="show-opponent-stats" class="btn" style="display:none;">查看对手战绩</button>
                                 </div>
                             </div>
                         </div>
@@ -374,6 +375,7 @@
                         <input type="text" id="profile-signature" maxlength="60">
                     </label>
                     <button type="submit" class="btn">保存修改</button>
+                    <div id="profile-save-msg" style="margin-top:8px;font-size:13px;"></div>
                 </form>
                 <hr class="settings-section-gap">
                 <form id="change-password-form">

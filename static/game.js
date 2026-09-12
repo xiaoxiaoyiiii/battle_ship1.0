@@ -2587,13 +2587,15 @@ function setupSocketListeners() {
         lobbyScreen.classList.add('hidden');
 
         // 更新可摆放船数显示
-        const shipsPlaced = document.getElementById('ships-placed');
+        // 注意：shipsPlaced 是 <p> 容器，直接写 textContent 会抹掉内部的
+        // <span id="placed-count">，导致之后"已放置 x/y"再也不更新。
+        const placedCountEl = document.getElementById('placed-count');
         const totalShips = document.getElementById('total-ships');
         if (totalShips) {
             totalShips.textContent = data.new_max_ships;
         }
-        if (shipsPlaced) {
-            shipsPlaced.textContent = 0;
+        if (placedCountEl) {
+            placedCountEl.textContent = 0;
         }
 
         // 重置已放置船数
@@ -3146,7 +3148,8 @@ function setupSocketListeners() {
 
 // 切换屏幕
 function switchScreen(screen) {
-    const screens = [startScreen, customRoomScreen, shipPlacementScreen, rpsScreen, gameScreen, leaderboardScreen, lobbyScreen, gameOverScreen];
+    const screens = [startScreen, customRoomScreen, shipPlacementScreen, rpsScreen, gameScreen,
+                     leaderboardScreen, lobbyScreen, gameOverScreen, matchSuccessScreen];
     screens.forEach(s => {
         if (s) s.classList.remove('active');
     });
@@ -5680,7 +5683,13 @@ function initEffectStatusBarSync() {
 }
 
 // 初始化
+// 防止 DOMContentLoaded 与 window.load 各调一次 init() 导致事件被重复绑定
+// （重复绑定会让"日志折叠"等 toggle 类按钮连点两次而失效）
+let __initialized = false;
+
 function init() {
+    if (__initialized) return;
+    __initialized = true;
     // 绑定事件监听器
     bindEventListeners();
     // 状态显示栏容器显隐（避免出现空横条）
@@ -5748,7 +5757,7 @@ function updateChainUI() {
         chainItem.className = 'chain-item';
         chainItem.innerHTML = `
             <div>连锁 ${index + 1}：${item.card.name}</div>
-            <div>玩家：${item.playerId === gameState.playerId ? '你' : '对手'}</div>
+            <div>玩家：${(item.playerId || item.player_id || item.caster) === gameState.playerId ? '你' : '对手'}</div>
         `;
         chainElement.appendChild(chainItem);
     });

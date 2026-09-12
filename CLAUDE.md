@@ -36,13 +36,21 @@ Flask + Flask-SocketIO 的实时双人海战棋，叠加 43 条魔法卡（41 �
 ```bash
 pip install -r requirements.txt
 python start_server.py        # 推荐（含依赖检查）
-python -m pytest tests/ -q    # 191 passed（4 个已跟踪测试文件）+ 9 条 UI 契约测试
+python -m pytest tests/ -q    # 240 passed
 ```
 
 > ⚠️ **必须在项目根目录运行**——`server.py` 用相对路径 `./static/magic_card.json`；`tests/test_all_magic_cards.py:1088` 也用硬编码相对路径，是全套测试中唯一对 CWD 敏感的。
 
-**实测基线（2026-09-12 UI 修复批后）**：`200 passed / 0 failed`（`tests/test_all_magic_cards.py`、`test_db_core.py`、`test_disconnect_and_eden_shenji.py`、`test_fixes_regression.py`、`test_ui_review_fixes.py`）。
-> ⚠️ 另有 `tests/test_review_fixes_2026_09_12.py`、`tests/test_review_fixes_batch2.py` 两个**未提交**文件（2026-09-12 后端/安全审查批的产物），其中 35 条当前为红——对应修复还没落到代码，与 UI 修复批无关。
+**实测基线（2026-09-12 后端/安全审查修复批后）**：`240 passed / 0 failed`（`test_all_magic_cards.py`、`test_db_core.py`、`test_disconnect_and_eden_shenji.py`、`test_fixes_regression.py`、`test_ui_review_fixes.py`、`test_review_fixes_2026_09_12.py`、`test_review_fixes_batch2.py`）。
+
+> 🔧 **2026-09-12 后端/安全审查修复批**（权威清单见 `docs/FIXES_2026-09-12.md`）：7 个 P0 + 20 余个 P1。要点：
+> - **`@_test_event` 装饰器顺序修正**（此前写在 `@socketio.on` 外层 → 门禁完全失效、公网可判胜/白嫖卡/读对方船位）
+> - `handle_attack` 补攻击次数与终局校验（此前次数=0 仍可无限攻击、终局后可重复记战绩）
+> - `rejoin_room` 令牌判空（`None == None` 可劫持座位）、`/user_stats` 不再泄露 `password_hash`/`token`
+> - `select_magic_target` 只接受选择类字段（此前可注入 `pending_placement` 无限增援）
+> - 「神机妙算」复活不再产生幽灵船；增援/复活不再退还已消耗的攻击次数
+> - 「明智埋葬」「仁王之盾」补上真实链路；百亿补贴按卡面归持卡者；平等条约快照过期；加百列之光/场地归属；回光返照过期；溅射不再让连锁崩溃
+> - 前端：`init()` 幂等（不再双绑事件）、补齐 `#profile-save-msg`/`#show-opponent-stats`/`#total-ships`、船数广播按收件人视角下发
 
 > 🔧 **2026-09-11 安全/健壮性修复批**：本文件第 11 节的 P0/P1 问题已修复（详见 `docs/FIX_PLAN.md` 与 `tests/test_fixes_regression.py`）。要点：
 > - 12 个 `test_*` 事件默认关闭（`ENABLE_TEST_EVENTS=1` 启用）；`test_magic.js` 已从 index.html 移除

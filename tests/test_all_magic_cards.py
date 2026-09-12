@@ -522,14 +522,20 @@ def test_liuhuang_ship_count_correct(room):
 # 百亿补贴
 # ---------------------------------------------------------------------------
 def test_baiyi_subsidy_on_own_ship_lost(room):
-    """自己的船被击败时攻击次数+3"""
-    apply(room, P2, '百亿补贴')
+    """自己的船被击败时【自己】的攻击次数 +3（不是加给当前攻击者）"""
+    apply(room, P2, '百亿补贴')          # 持卡者是 P2，此刻攻击者是 P1
     room.players[P2].ships = [ship((0, 0))]
     room.players[P2].remaining_ships = 1
-    before = room.attacks_remaining
+    before = room.attacks_remaining      # 属于 P1 的攻击池
     attack(room, P1, 0, 0)
-    # 攻击消耗1次，补贴+3
-    assert room.attacks_remaining == before - 1 + 3
+
+    # P1 的攻击池只被自己消耗 1 次，不应拿到 P2 的补贴
+    assert room.attacks_remaining == before - 1
+    # 补贴累计在持卡者身上，轮到 P2 时计入其攻击次数
+    assert room.players[P2].effect_flags.subsidy_bonus == 3
+    room.current_attacker = P2
+    server._recalc_attacker_attacks(room)
+    assert room.attacks_remaining == room.players[P2].remaining_ships + 3
 
 
 # ---------------------------------------------------------------------------
@@ -812,6 +818,8 @@ def test_wuzhong_draw_two_and_lock_draw(room):
 def test_yinxue_draw_on_kill(room):
     """接下来自己的攻击每击杀一艘船摸一张牌"""
     give_deck(room, ['轰炸'])
+    # 卡面要求"击中对方后"才能使用
+    room.last_attack = {'attacker': P1, 'x': 0, 'y': 0, 'hit': True}
     apply(room, P1, '饮血')
     assert room.players[P1].effect_flags.vampire is True
 

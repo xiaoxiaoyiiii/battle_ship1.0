@@ -831,6 +831,7 @@ window.gameState = {
     pendingChainCard: null, // 连锁响应窗口里已选好、正在点目标的速阶3卡
     pendingEffectChoice: null, // 神之宣告：出牌前选好的效果
     selectedCardIndex: -1,  // 当前选中的卡牌索引，-1表示未选中
+    selectedCardKey: null,  // 选中的是哪张卡（name+speed）——手牌一变下标就不可信了
     inRoom: false,          // 是否在对局房间中（用于掉线重连）
     reconnectToken: null,   // 对局重连 token
     frozen: false,          // 对手掉线宽限期内冻结操作
@@ -2218,6 +2219,10 @@ function setupSocketListeners() {
         document.getElementById('reinforcement-status')?.classList.add('hidden');
         document.getElementById('holy-heart-status')?.classList.add('hidden');
         renderActiveEffects([]);   // 结算界面不该再挂着「生效中」的角标
+        // 对局结束，手牌选中态一并清掉
+        gameState.selectedCardIndex = -1;
+        gameState.selectedCardKey = null;
+        if (typeof updateHandUI === 'function') updateHandUI();
 
         switchScreen(gameOverScreen);
         // 根据胜利原因显示不同的提示
@@ -2550,6 +2555,9 @@ function setupSocketListeners() {
         gameState.myAttacks = [];
         gameState.opponentAttacks = [];
         gameState.revealedCells = [];   // 服务端在重开棋盘时也会清空已显形记录，本地同步
+        // 重开一局：手牌虽然保留，但选中态要清掉（下标含义随时可能变）
+        gameState.selectedCardIndex = -1;
+        gameState.selectedCardKey = null;
         gameState.remainingShips = 0;
         gameState.opponentRemainingShips = 0;
         gameState.maxShips = data.new_max_ships;
@@ -4407,10 +4415,13 @@ function playMagicCard(index) {
     console.log('playMagicCard called with index:', index);
     const card = gameState.hand[index];
     if (!card) return;
-    if (freezeAlert()) return;
+    if (freezeAlert()) { clearCardSelection(); return; }
 
     // 检查卡牌是否可以在当前阶段使用
     if (!canPlayCard(card)) {
+        // 出牌被拒：必须清掉选中态，否则下一次单击会被当成
+        // 「同一张已选中的卡」立刻重试 —— 玩家看到提示弹两遍。
+        clearCardSelection();
         if (END_PHASE_PLAYABLE_CARDS.indexOf(card.name) >= 0) {
             // 这类卡有专属的条件提示，别让玩家看到「速阶2」这种内部术语
             const reasons = [];
@@ -4432,11 +4443,13 @@ function playMagicCard(index) {
 
     // 特殊限制：溅射、雷达子弹需在自己上一击命中后才可使用
     if (!canPlayAfterHit(card)) {
+        clearCardSelection();
         showAlert(`${card.name} 需要你上一次攻击命中后才能发动`);
         return;
     }
     if (gameState.fieldMagic === "禁忌果实") {
         if (!(card.name === "失灵！" || card.type === "场地")) {
+            clearCardSelection();
             showAlert(`无法使用${card.name}：场地魔法“禁忌果实”生效，非场地及失灵类魔法卡无法使用`);
             return;
         }
@@ -4469,17 +4482,23 @@ function sendMagicCard(index, targets) {
         targets: targets
     }, (response) => {
         // 只有在服务器确认成功后才更新本地状态
-        if (response.status === 'success') {
+        if (response && response.status === 'success') {
             console.log('魔法卡使用成功');
             // 从手牌中移除
             gameState.hand.splice(index, 1);
             // 添加到弃牌堆
             gameState.discardPile.push(card);
+            // 手牌少了一张，旧下标会落到别的牌上 —— 先清选中态再刷新
+            gameState.selectedCardIndex = -1;
+            gameState.selectedCardKey = null;
             // 更新UI
             updateHandUI();
         } else {
-            console.error('魔法卡使用失败:', response.message);
-            showAlert(`使用魔法卡失败：${response.message || '未知错误'}`);
+            // 出牌失败同样要清选中态：否则这张卡还挂着「已选中」，
+            // 玩家下一次单击就会立刻重试，提示连弹两遍。
+            clearCardSelection();
+            console.error('魔法卡使用失败:', response && response.message);
+            showAlert(`使用魔法卡失败：${(response && response.message) || '未知错误'}`);
         }
     });
 }
@@ -5415,9 +5434,37 @@ function initLogDrag() {
     }
 }
 
+// 清掉手牌的「选中」状态。
+// 选中态以前从不重置，会出两种事：
+//   · 出牌被拒后卡仍算「已选中」→ 下一次单击是【立刻重试】而不是先选中，
+//     提示弹两遍，看起来像重复投递
+//   · 手牌变化后旧下标落到别的牌上 → 那张牌被【自动标成选中】，点一下直接进出牌流程
+// 所有会让选中失效的时机都要调它。
+function clearCardSelection() {
+    if (gameState.selectedCardIndex < 0 && !gameState.selectedCardKey) return;
+    gameState.selectedCardIndex = -1;
+    gameState.selectedCardKey = null;
+    updateHandUI();
+}
+
+// 选中态的「身份标识」：光记下标不够 —— 手牌一增一减，同一个下标就指向别的牌了。
+function cardSelectionKey(card) {
+    return card ? (card.name + '\u0000' + card.speed) : null;
+}
+
 function updateHandUI() {
     const handElement = document.getElementById('magic-hand');
     if (!handElement) return;
+
+    // 手牌可能刚变过（出牌 / 摸牌 / 被埋葬）。按下标取到的牌若已不是当初选的那张，
+    // 就把选中态清掉 —— 否则会出现「打完一张，下一张自动选中、点一下直接出牌」。
+    if (gameState.selectedCardIndex >= 0) {
+        const current = gameState.hand[gameState.selectedCardIndex];
+        if (cardSelectionKey(current) !== gameState.selectedCardKey) {
+            gameState.selectedCardIndex = -1;
+            gameState.selectedCardKey = null;
+        }
+    }
 
     handElement.innerHTML = '';
     gameState.hand.forEach((card, index) => {
@@ -5439,12 +5486,14 @@ function updateHandUI() {
         // 添加点击事件，实现点击选择/使用功能
         cardElement.addEventListener('click', () => {
             // 如果是已选中状态，尝试使用卡牌
-            if (gameState.selectedCardIndex === index) {
+            if (gameState.selectedCardIndex === index
+                    && gameState.selectedCardKey === cardSelectionKey(card)) {
                 // 尝试使用卡牌
                 playMagicCard(index);
             } else {
-                // 选中卡牌，更新预览
+                // 选中卡牌，更新预览（记下身份，手牌一变就能识别出下标已失效）
                 gameState.selectedCardIndex = index;
+                gameState.selectedCardKey = cardSelectionKey(card);
                 updateHandUI(); // 重新渲染手牌，更新选中状态
                 updateCardPreview(card, index); // 更新卡牌预览信息
             }

@@ -2428,9 +2428,10 @@ function setupSocketListeners() {
                         showTaoyuanChoice(result);
                     }
                 } else if (result.temp_data_id === 'divine_decree') {
-                    // 神之宣告的效果选择已在出牌前完成（见 promptDivineDecreeChoice），
+                    // 神之宣告的「选两艘船 + 选效果」都在出牌链路里问完了
+                    // （own_ships 选船 → promptDivineDecreeChoice 选效果）。
                     // 这里仅作兼容兜底：不再调用不存在的函数，避免中断整个连锁结算。
-                    console.warn('收到 divine_decree 选择请求，选择已在出牌前完成，忽略');
+                    console.warn('收到 divine_decree 选择请求，选择已在出牌链路完成，忽略');
                 } else if (result.temp_data_id === 'lingqi_choice') {
                     // 只有当施法者是当前玩家时，才显示灵气复苏选择UI
                     if (result.caster === gameState.playerId) {
@@ -2989,7 +2990,9 @@ function setupSocketListeners() {
         }
 
         if (typeof initGameBoards === 'function') initGameBoards();
-        showMessage(mine ? '恶魔契约：你牺牲了一艘战舰' : '恶魔契约：对方牺牲了一艘战舰',
+        // 卡片名按来源显示：恶魔契约 / 神之宣告 都走这条公开事件
+        const reasonText = data.reason === 'divine_decree' ? '神之宣告' : '恶魔契约';
+        showMessage(mine ? `${reasonText}：你牺牲了一艘战舰` : `${reasonText}：对方牺牲了一艘战舰`,
                     { type: 'warning' });
     });
 
@@ -4592,11 +4595,9 @@ function playMagicCard(index) {
         }
     }
 
-    // 神之宣告：需要先选择要触发的效果，再出牌
-    if (card.name === '神之宣告') {
-        promptDivineDecreeChoice(index);
-        return;
-    }
+    // 神之宣告：卡面顺序是「先选定自己两艘船死亡，再选要发动的效果」。
+    // 两步都走完才算出牌 —— 第一步由 needsTargetSelection 的 own_ships 收集，
+    // 第二步在 confirmMagicTarget 里接着问（见 promptDivineDecreeChoice）。
 
     // 检查是否需要目标选择
     if (needsTargetSelection(card.name)) {
@@ -4635,10 +4636,13 @@ function sendMagicCard(index, targets) {
     });
 }
 
-// 神之宣告：出牌前选择要触发的效果（1=摧毁对方一艘战舰，2=跳过对方本回合）
-function promptDivineDecreeChoice(cardIndex) {
+// 神之宣告：第二步 —— 选完两艘船之后，选择要触发的效果
+// （1=摧毁对方一艘战舰，2=跳过对方本回合）
+// basePayload 携带第一步选好的 selected_cells，出牌时一起提交。
+function promptDivineDecreeChoice(cardIndex, basePayload) {
     const card = gameState.hand[cardIndex];
     if (!card) return;
+    const extra = basePayload || {};
 
     const overlay = document.createElement('div');
     overlay.className = 'taoyuan-choice-overlay';
@@ -4647,7 +4651,7 @@ function promptDivineDecreeChoice(cardIndex) {
         <div class="taoyuan-choice-container">
             <div class="taoyuan-choice-header">
                 <h3>神之宣告</h3>
-                <p>牺牲两艘战舰，选择要触发的效果：</p>
+                <p>已选定牺牲的战舰，请选择要触发的效果：</p>
             </div>
             <div class="divine-decree-options" style="display:flex;flex-direction:column;gap:10px;padding:12px 0;">
                 <button class="phase-btn" data-choice="1">摧毁对方一艘战舰</button>
@@ -4662,7 +4666,7 @@ function promptDivineDecreeChoice(cardIndex) {
             const choice = parseInt(btn.dataset.choice, 10);
             document.body.removeChild(overlay);
             if (choice === 0) return;
-            sendMagicCard(cardIndex, { effect_choice: choice });
+            sendMagicCard(cardIndex, Object.assign({}, extra, { effect_choice: choice }));
         });
     });
 }
@@ -4670,6 +4674,11 @@ function promptDivineDecreeChoice(cardIndex) {
 // 修改目标选择后的确认函数
 function confirmMagicTarget(targetData) {
     if (!gameState.currentMagicCard || gameState.currentCardIndex === null) return;
+
+    // 先把当前选择状态抓进局部变量：own_ships 选完船后会立刻清空 gameState，
+    // 而神之宣告还要再问一步效果，不能等到那时候才去读。
+    const cardIndex = gameState.currentCardIndex;
+    const card = gameState.currentMagicCard;
 
     // 兼容多种 targetData 格式：
     // - { target_area: {x1,y1,x2,y2} } （来自对手真实棋盘）
@@ -4717,8 +4726,17 @@ function confirmMagicTarget(targetData) {
         payload = targetData;
     }
 
+    // 神之宣告：两艘船已经选好了，接着问要发动哪个效果，最后一次性提交两者。
+    // （以前这一步被提前到出牌前，选船结果根本没收集，服务端只能随机替玩家选两艘。）
+    if (card && card.name === '神之宣告') {
+        promptDivineDecreeChoice(cardIndex, payload);
+        gameState.currentMagicCard = null;
+        gameState.currentCardIndex = null;
+        return;
+    }
+
     // 发送并清理当前魔法卡选择状态
-    sendMagicCard(gameState.currentCardIndex, payload);
+    sendMagicCard(cardIndex, payload);
     gameState.currentMagicCard = null;
     gameState.currentCardIndex = null;
 }

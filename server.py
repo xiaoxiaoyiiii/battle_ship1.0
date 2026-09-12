@@ -4875,10 +4875,10 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             result['message'] = '需要至少2艘战舰才能发动'
             return result
 
+        # 逐个走统一结算：移船 + 记日志 + 公开广播 ship_sacrificed + 按视角刷船数。
+        # 以前这里是自己 remove/append 就完事，结果对方完全看不到这两艘船沉了。
         for sacr in chosen[:2]:
-            caster.ships.remove(sacr)
-            caster.sunken_ships.append(sacr)
-            caster.remaining_ships -= 1
+            _do_demon_contract_sacrifice(room, caster_id, sacr, 'divine_decree')
 
         # 获取选择的效果：优先采用出牌时携带的 effect_choice（前端出牌前选择），
         # 其次回退到临时数据，缺省为 1（摧毁对方一艘战舰）。

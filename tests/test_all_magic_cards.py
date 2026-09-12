@@ -676,6 +676,66 @@ def test_shenzhi_option2_skip_opponent_turn(room):
     assert room.skip_opponent_turn == P2
 
 
+def _sacrifice_events(events):
+    return [d for (e, d, _to, _room) in events if e == 'ship_sacrificed']
+
+
+def test_shenzhi_broadcasts_own_two_sacrifices_publicly(room, events):
+    """自己牺牲的两艘船必须公开广播，否则对方完全看不到。
+
+    这里回归的是一个真实漏洞：这两艘船以前是就地 remove/append 处理掉的，
+    既不广播也不刷新船数 —— 对方棋盘上什么都没变化，等于凭空消失。
+    """
+    room.players[P1].ships = [ship((0, 0)), ship((1, 1)), ship((2, 2))]
+    room.players[P1].remaining_ships = 3
+    room.players[P2].ships = [ship((5, 5))]
+    room.players[P2].remaining_ships = 1
+
+    res = server.apply_magic_effect(room, P1, card('神之宣告'), {
+        'effect_choice': 2,
+        'selected_cells': [{'x': 1, 'y': 1}, {'x': 2, 'y': 2}],
+    })
+    assert res.success is True
+
+    got = _sacrifice_events(events)
+    assert len(got) == 2, f'两艘牺牲的船都要广播，实际 {len(got)} 条'
+
+    # 必须是房间级广播（room=room.id），只发给施法者自己的话对方看不到
+    rooms = [r for (e, _d, _to, r) in events if e == 'ship_sacrificed']
+    assert all(r == room.id for r in rooms), 'ship_sacrificed 必须广播到整个房间'
+
+    cells = sorted(tuple(sorted((p['x'], p['y']) for p in d['positions'])) for d in got)
+    assert cells == [((1, 1),), ((2, 2),)], '广播的位置应正是玩家点选的两艘'
+    assert all(d['player'] == P1 and d['reason'] == 'divine_decree' for d in got)
+
+
+def test_shenzhi_option1_broadcasts_opponent_ship_too(room, events):
+    """效果1：对方点选的那艘船同样要公开广播（双方都能看到它沉了）。"""
+    room.players[P1].ships = [ship((0, 0)), ship((1, 1)), ship((2, 2))]
+    room.players[P1].remaining_ships = 3
+    room.players[P2].ships = [ship((3, 3)), ship((4, 4))]
+    room.players[P2].remaining_ships = 2
+
+    res = server.apply_magic_effect(room, P1, card('神之宣告'), {
+        'effect_choice': 1,
+        'selected_cells': [{'x': 1, 'y': 1}, {'x': 2, 'y': 2}],
+    })
+    assert res.success is True
+    # 人类对手要自己点选，此时已挂起等待
+    pending = room.magic_temp_data.get('pending_sacrifice')
+    assert pending and pending['player'] == P2
+
+    ok = server.handle_confirm_sacrifice({'room_id': room.id, 'player_id': P2,
+                                          'position': {'x': 3, 'y': 3}})
+    assert ok['status'] == 'success'
+
+    got = _sacrifice_events(events)
+    assert len(got) == 3, f'己方两艘 + 对方一艘 = 3 条广播，实际 {len(got)} 条'
+    by_player = [(d['player'], d['positions'][0]['x'], d['positions'][0]['y']) for d in got]
+    assert (P1, 1, 1) in by_player and (P1, 2, 2) in by_player
+    assert (P2, 3, 3) in by_player
+
+
 def test_shenzhi_requires_two_ships(room):
     room.players[P1].ships = [ship((0, 0))]
     room.players[P1].remaining_ships = 1

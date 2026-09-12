@@ -1502,6 +1502,7 @@ class ChainItem:
         self.targets = targets
         self.timestamp = timestamp
         self.negated = False  # 被连锁中更上方的卡牌无效化
+        self.negated_by = None  # 康掉它的卡名（用于「X被Y无效化」的明确提示）
 
     def to_dict(self):
         return {
@@ -1509,7 +1510,8 @@ class ChainItem:
             'card': self.card,
             'targets': self.targets,
             'timestamp': self.timestamp,
-            'negated': self.negated
+            'negated': self.negated,
+            'negated_by': self.negated_by
         }
 
 
@@ -3235,8 +3237,12 @@ def _speed3_cards(room, player_id):
 
 
 def _ai_can_negate_chain_top(room, ai_id: str) -> bool:
-    """困难难度下，AI 只在「康得动」时才开窗：不能康自己打的牌，
-    也不能康看破！/加百列之光（这两条是卡面写明的规则，硬康只会被服务端拒绝、
+    """困难难度下，AI 只在「康得动」时才开窗。
+
+    ⚠️ 这里排除了「栈顶是自己打的牌」——这是 AI 的【策略选择】，不是规则限制：
+    自连锁康自己的牌在规则上已经允许（见失灵！/加百列之光的分支），但 AI
+    康自己的牌几乎总是自伤，所以让它别这么做。
+    同时不能康看破！/加百列之光（卡面写明的免疫，硬康只会被服务端拒绝、
     白白把窗口拖到超时）。"""
     if not room.chain:
         return False
@@ -3312,10 +3318,15 @@ def resolve_chain(room):
 
         # 已被上方某张无效化卡标记：跳过其效果
         if chain_item.negated:
+            # 把「被谁康的」写进提示：只说「X被无效化」玩家分不清是"被对手康了"
+            # 还是"自己发动失败"，实测会误判成"效果没生效"。
+            by = getattr(chain_item, 'negated_by', None)
+            detail = f'{card.name}被{by}无效化' if by else f'{card.name}被无效化'
             result = ChainResult(card=card, caster=player_id, success=False,
-                                 message=f'{card.name}被无效化')
+                                 message=detail)
             result.negated_skip = True
-            log_magic(room, player_id, card, '但被无效化')
+            result.negated_by = by
+            log_magic(room, player_id, card, f'但被{by}无效化' if by else '但被无效化')
             # 被无效化的场地卡：只进弃牌堆，绝不能顶掉/拆掉场上已有的场地。
             # （原实现用 _place_field_magic "贴了再拆"，会把场上另一张场地
             #   连带扫进弃牌堆 —— 一次无效化同时干掉两张场地。）
@@ -3333,6 +3344,8 @@ def resolve_chain(room):
         # 无效化类效果：把“正下方那一项”（下一个待结算项）标记为无效
         if getattr(result, 'negate_target', False) and room.chain:
             room.chain[-1].negated = True
+            # 记下是谁康的，供结算时写出「X被Y无效化」这种明确因果
+            room.chain[-1].negated_by = card.name
 
         results.append(result)
         # 记录魔法使用历史（盗亦有道等读取）
@@ -5939,12 +5952,18 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['message'] = '已清空棋盘，请重新摆放战舰，本回合战斗阶段跳过。若对方在本大回合内对您的船造成伤害，您将直接判负'
 
     elif card.name == '加百列之光':
-        # 无效化对方上一张魔法卡（连锁中=栈顶下方那一项）和当前生效的场地魔法
+        # 无效化「正下方那一项」（连锁结算中当前项已出栈，chain[-1] 即下一个
+        # 待结算项）和当前生效的场地魔法。
+        #
+        # ⚠️ 不判归属：此前要求 chain[-1].player_id != caster_id，导致【自连锁】
+        # 时康不掉自己前面打出的牌 —— 实测场景：对方出牌 → 我失灵 → 我又加百列，
+        # 结算时加百列看到正下方是自己的失灵就不康，失灵照常无效化了对方那张牌。
+        # 作者裁定：同一连锁里后手应能推翻前手，一律康正下方那一项。
         negated_count = 0
-        if room.chain and room.chain[-1].player_id != caster_id:
+        if room.chain:
             result.negate_target = True
             negated_count += 1
-        elif not room.chain and room.magic_history and room.magic_history[-1]['caster'] != caster_id:
+        elif room.magic_history and room.magic_history[-1]['caster'] != caster_id:
             room.magic_history.pop()
             negated_count += 1
 
@@ -6028,13 +6047,11 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
 
     # ==== 已实现的魔法卡 ====
     elif card.name == '失灵！':
-        # 连锁结算中：康紧邻下方那一项（对方打出的“上一张”）
+        # 连锁结算中：康紧邻下方那一项（下一个待结算项）。
+        # ⚠️ 与「加百列之光」同口径：不判归属 —— 自连锁时要能康掉自己前面
+        # 打出的牌（作者裁定：同一连锁里后手能推翻前手）。
         if room.chain:
             target = room.chain[-1]
-            if target.player_id == caster_id:
-                result.success = False
-                result.message = '没有可无效化的魔法卡'
-                return result
             tname = getattr(target.card, 'name', None)
             if tname == '看破！':
                 result.success = False

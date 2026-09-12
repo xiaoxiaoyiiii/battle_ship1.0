@@ -2371,9 +2371,20 @@ function setupSocketListeners() {
             // 例如平等条约现在无法无效化炮击造成的击沉，服务端会回 success=false；
             // 若照旧调用 applyCardEffect，双方都会看到「船数改变效果被无效化」的假消息，
             // 而实际上船根本没回来。
+            //
+            // 另外要分清两种 success=false，它们的含义完全不同：
+            //   · negated_skip —— 这张牌【被别人康掉了】，不是它自己不行
+            //   · 其它          —— 这张牌【发动条件不满足】，是它自己的问题
+            // 混用同一句「X未能生效：…」会让玩家误以为康没成功（实测踩过）。
             if (result.success === false) {
-                showMessage(`${result.card.name}未能生效：${result.message || '条件不满足'}`,
-                            { type: 'warning' });
+                if (result.negated_skip) {
+                    const by = result.negated_by || '对方的无效化效果';
+                    showMessage(`【${result.card.name}】被${by}无效化了`,
+                                { type: 'warning' });
+                } else {
+                    showMessage(`${result.card.name}未能生效：${result.message || '条件不满足'}`,
+                                { type: 'warning' });
+                }
             } else {
                 applyCardEffect(result.card, result.caster);
             }

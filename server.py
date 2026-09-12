@@ -162,7 +162,11 @@ class MagicCard:
             self.type = type
             self.description = description
             return
-        card = list(filter(lambda x: x.name == name, magic_cards))[0]
+        # 客户端可能只传 name；按名查卡。找不到时抛 ValueError（而非 IndexError），
+        # 由调用方捕获并返回错误响应，避免恶意/残缺卡牌数据直接让 handler 崩溃。
+        card = next((c for c in magic_cards if c.name == name), None)
+        if card is None:
+            raise ValueError(f"未知的魔法卡: {name!r}")
         self.speed = card.speed
         self.type = card.type
         self.description = card.description
@@ -2365,7 +2369,11 @@ def _sanitize_magic_targets(targets):
 def handle_use_magic_card(data):
     room_id = data['room_id']
     player_id = data['player_id']
-    card = MagicCard(**data['card'])
+    try:
+        card = MagicCard(**data['card'])
+    except (ValueError, TypeError, KeyError) as e:
+        # 卡牌数据非法（未知卡名 / 非 dict / 缺字段）：返回错误而非让 handler 崩溃
+        return {'status': 'error', 'message': f'魔法卡数据无效: {e}'}
     targets = data.get('targets', [])
 
     room = room_manager.get_room(room_id)
@@ -2899,7 +2907,10 @@ def chain_response(data):
     room.chain_window = None
 
     if chain and card:
-        card = MagicCard(**card)
+        try:
+            card = MagicCard(**card)
+        except (ValueError, TypeError, KeyError) as e:
+            return {'status': 'error', 'message': f'魔法卡数据无效: {e}'}
         player = room.players[player_id]
         # 防御：被看破者不能连锁（正常流程不会进入）
         if player.magic_blocked:

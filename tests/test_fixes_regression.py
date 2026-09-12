@@ -374,3 +374,57 @@ def test_huoli_full_fire_doubles_in_battle_phase(room):
     assert res['status'] == 'success'
     assert room.attacks_remaining == 6
     assert room.players[P1].effect_flags.double_attacks is False  # 只持续一个大回合
+
+
+# ---------------------------------------------------------------------------
+# 11. 魔法卡数据健壮性：未知卡名不得让 handler 崩溃（原 IndexError）
+# ---------------------------------------------------------------------------
+def test_magic_card_unknown_name_raises_value_error():
+    """MagicCard(name=...) 找不到卡时抛 ValueError，而非 IndexError。"""
+    import pytest
+    with pytest.raises(ValueError):
+        MagicCard(name='这张卡不存在于牌堆')
+
+
+def test_magic_card_valid_name_still_resolves():
+    """合法卡名仍能从全局牌堆解析出 speed/type/description。"""
+    c = MagicCard(name='失灵！')
+    assert c.speed == 3
+    assert c.type == '普通'
+
+
+def test_use_magic_card_invalid_card_name_returns_error(room, monkeypatch):
+    """use_magic_card 收到未知卡名时返回错误响应，不抛异常。"""
+    monkeypatch.setattr(server, 'session', types.SimpleNamespace(get=lambda k, d=None: None))
+    monkeypatch.setattr(server, 'request', types.SimpleNamespace(sid='sid-p1'))
+    res = server.handle_use_magic_card({
+        'room_id': room.id, 'player_id': P1,
+        'card': {'name': '完全不存在的卡牌'},
+    })
+    assert res['status'] == 'error'
+    assert '无效' in res['message']
+
+
+def test_use_magic_card_non_dict_card_returns_error(room, monkeypatch):
+    """card 字段不是 dict 时（如字符串）也应返回错误，不崩溃。"""
+    monkeypatch.setattr(server, 'session', types.SimpleNamespace(get=lambda k, d=None: None))
+    monkeypatch.setattr(server, 'request', types.SimpleNamespace(sid='sid-p1'))
+    res = server.handle_use_magic_card({
+        'room_id': room.id, 'player_id': P1,
+        'card': 'not-a-dict',
+    })
+    assert res['status'] == 'error'
+
+
+def test_chain_response_invalid_card_name_returns_error(room, monkeypatch):
+    """chain_response 收到未知卡名时返回错误响应，不抛异常。"""
+    room.chain_waiting = True
+    room.chain_window = P1
+    monkeypatch.setattr(server, 'session', types.SimpleNamespace(get=lambda k, d=None: None))
+    monkeypatch.setattr(server, 'request', types.SimpleNamespace(sid='sid-p1'))
+    res = server.chain_response({
+        'room_id': room.id, 'player_id': P1,
+        'chain': True, 'card': {'name': '完全不存在的卡牌'},
+    })
+    assert res['status'] == 'error'
+    assert '无效' in res['message']

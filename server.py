@@ -3277,8 +3277,14 @@ def resolve_chain(room):
         results.append(result)
         # 记录魔法使用历史（盗亦有道等读取）
         if result.success:
-            room.magic_history.append({'card': card, 'caster': player_id,
-                                       'timestamp': time.time(), 'round': room.round})
+            entry = {'card': card, 'caster': player_id,
+                     'timestamp': time.time(), 'round': room.round}
+            # 这张牌若在本轮连锁里已被「盗亦有道」偷走，写历史时要把标记带上 ——
+            # 否则回退分支扫到这条没有 stolen 的记录，会允许同一张牌被再偷一次。
+            ledger = room.game_effects.get('stolen_cards') or {}
+            if id(card) in ledger:
+                entry['stolen'] = True
+            room.magic_history.append(entry)
 
     # 广播连锁结算结果
     emit('chain_resolved', {
@@ -3290,6 +3296,9 @@ def resolve_chain(room):
     room.chain_waiting = False
     room.chain_window = None
     room.chain_passes = 0
+    # 盗亦有道的"已盗取"台账已完成合并，清掉避免无限增长
+    # （卡牌实例被回收后 id() 可能被新对象复用，留着会误判新牌为已盗取）
+    room.game_effects.pop('stolen_cards', None)
 
     # 这一批卡的效果刚落地，双方的 effect_flags 可能变了 —— 刷新角标
     _emit_active_effects(room)
@@ -4586,10 +4595,17 @@ def _finish_placement(room, player_id, kind):
         room.game_effects.pop('last_stand_cells', None)
     emit('placement_done', {'kind': kind}, to=room.players[player_id].sid)
 
-    # 增援/复活改变了自己的船数，攻击次数要按【增量】跟着变：
-    # 例：绝境中增援一艘船 = 多一条命，同时本回合还多一次攻击。
-    # 注意不能用 _recalc_attacker_attacks 从头算——那会把已经用掉的次数退还。
-    _sync_attacks_after_ship_change(room, player_id, placed)
+    if kind == 'last_stand':
+        # 绝处逢生：场上只剩这唯一一艘船，攻击次数必须【重算为 1】，
+        # 不能按增量 +1 —— 那会保留发动前那一堆旧额度（实测：发动前 5 次，
+        # 放完船变 6 次，与"只剩一艘船"完全脱节）。
+        # 跨回合累积的百亿补贴加成属于持卡者本人，按既定规则保留叠加。
+        _apply_last_stand_attacks(room, player_id)
+    else:
+        # 增援/复活改变了自己的船数，攻击次数要按【增量】跟着变：
+        # 例：绝境中增援一艘船 = 多一条命，同时本回合还多一次攻击。
+        # 注意不能用 _recalc_attacker_attacks 从头算——那会把已经用掉的次数退还。
+        _sync_attacks_after_ship_change(room, player_id, placed)
 
 
 def _sync_attacks_after_ship_change(room, player_id, ships_added=1):
@@ -4613,6 +4629,36 @@ def _sync_attacks_after_ship_change(room, player_id, ships_added=1):
         per_ship = 1
     if per_ship:
         room.attacks_remaining = max(0, room.attacks_remaining + per_ship * ships_added)
+    emit('attacks_updated', {
+        'current_attacker': room.current_attacker,
+        'attacks_remaining': room.attacks_remaining
+    }, room=room.id)
+
+
+def _apply_last_stand_attacks(room, player_id):
+    """绝处逢生放置完唯一一艘战舰后，把攻击次数【重算】为「1 + 保留的额外加成」。
+
+    与 _sync_attacks_after_ship_change 的区别：后者按增量加减、保留旧额度，
+    对绝处逢生不适用 —— 它牺牲了全部战舰，旧额度是按"牺牲前那一堆船"算出来的，
+    留着就会出现"只剩 1 艘船却有 5 次攻击"。
+
+    场地魔法仍按其规则换算：
+      · 教皇旨意：攻击次数恒 0（改为弃卡攻击），不受绝处逢生影响
+      · 伊甸园：次数 = 6 - 自身船数 = 6 - 1 = 5
+      · 其余：1 次
+    """
+    if room.state != 'attacking' or room.current_attacker != player_id:
+        return
+    field = field_magic_name(room)
+    if field == '教皇旨意':
+        base = 0
+    elif field == '伊甸园':
+        base = max(0, 6 - room.players[player_id].remaining_ships)
+    else:
+        base = 1
+    # 百亿补贴等跨回合累积的加成属于持卡者自己，继续保留
+    bonus = int(getattr(room.players[player_id].effect_flags, 'subsidy_bonus', 0) or 0)
+    room.attacks_remaining = max(0, base + bonus)
     emit('attacks_updated', {
         'current_attacker': room.current_attacker,
         'attacks_remaining': room.attacks_remaining
@@ -5612,14 +5658,39 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             result['message'] = '需要至少3艘战舰才能发动'
             return result
 
-        original_cells = [(p.x, p.y) for sh in caster.ships for p in sh.positions]
-        # 牺牲全部：进沉船堆（可被复活类卡牌回收），而不是凭空消失。
-        # 已沉的船不重复入堆，否则复活类卡牌会把已沉的船再恢复一次。
-        for sh in list(caster.ships):
+        # 只取【活船】：沉船还留在 caster.ships 里，把它们也算进"牺牲"会重复入堆，
+        # 复活类卡牌据此会把已经沉掉的船再恢复一次。
+        sacrificed = _alive_ships(caster)
+        original_cells = [(p.x, p.y) for sh in sacrificed for p in sh.positions]
+
+        # 牺牲 = 走完整击沉流程，不再"凭空消失"：
+        #   ① 从 caster.ships 移入 caster.sunken_ships（供复活类回收）
+        #   ② 置满命中，让"这艘船已经没了"在双方棋盘与 _is_ship_alive 上口径一致
+        #   ③ 触发击沉通用副作用（平等条约快照 / 无瑕圣心中断 / 百亿补贴 / 八方来财 / 恶魔契约）
+        #
+        # ⚠️ 通用副作用只结算【一次】，不能逐艘调 _on_ship_destroyed ——
+        # 那会把 last_ship_change 快照反复覆盖、并触发 N 次无瑕圣心中断与 N 次恶魔契约。
+        for sh in sacrificed:
+            sh.hits = list(sh.positions)  # 满命中 = 已沉
+            if sh in caster.ships:
+                caster.ships.remove(sh)
             if sh not in caster.sunken_ships:
                 caster.sunken_ships.append(sh)
-        caster.ships = []
         caster.remaining_ships = 0
+
+        if sacrificed:
+            # source='sacrifice'：这是自己牺牲、不是被对方打沉的。平等条约只允许
+            # 无效化【魔法卡造成】的船数变化，绝处逢生的自牺牲不在此列。
+            _on_ship_destroyed(room, caster_id, sacrificed[-1], source='sacrifice')
+            # 逐艘公开广播，让双方棋盘都画出"这艘船没了"，而不是无声消失
+            for sh in sacrificed:
+                emit('ship_sacrificed', {
+                    'player': caster_id,
+                    'positions': [{'x': p.x, 'y': p.y} for p in sh.positions],
+                    'reason': 'last_stand',
+                }, room=room.id)
+            _emit_ships_updated(room)
+            _emit_player_ships(room, caster_id)
 
         # 神机妙算按"沉船差值"判定，牺牲不是被击沉，需同步快照避免误判
         snap = room.game_effects.get(f'prediction_initial_{caster_id}')
@@ -5670,16 +5741,47 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['message'] = f'疗愈生效，{revived} 艘战舰在原地复活'
 
     elif card.name == '盗亦有道':
-        # 获取对方打出的上一张魔法卡
-        if not room.magic_history or room.magic_history[-1]['caster'] == caster_id:
+        # 卡面：立即获取对方打出的上一张魔法卡。
+        #
+        # ⚠️ 不能在连锁里读 room.magic_history：连锁是 LIFO（后发先至）结算，
+        # 盗亦有道先出栈时，它要偷的那张对手的牌【还没轮到结算、自然还没写进历史】，
+        # 于是恒报「对方没有使用过魔法卡」。这与失灵！当初康不到目标是同一个病灶，
+        # 修法也一致 —— 读【连锁栈】而不是读历史。
+        # 结算中当前项已出栈，故 chain[-1] 即"紧邻下方那一项"（下一个待结算项）。
+        stolen_card = None
+        stolen_entry = None
+        stolen_from_chain = False
+
+        target = room.chain[-1] if room.chain else None
+        if target is not None and target.player_id != caster_id:
+            # 连锁内：偷栈上紧邻的下方那一项
+            stolen_card = target.card
+            stolen_from_chain = True
+        else:
+            # 非连锁（对手的牌已结算完）或栈顶是自己：回退到全局历史里对方最近的一张
+            for entry in reversed(room.magic_history):
+                if entry['caster'] != caster_id and not entry.get('negated_skip'):
+                    stolen_entry = entry
+                    stolen_card = entry['card']
+                    break
+
+        if stolen_card is None:
             result['success'] = False
             result['message'] = '对方没有使用过魔法卡'
             return result
 
-        stolen_entry = room.magic_history[-1]
-        stolen_card = stolen_entry['card']
         # 同一条历史只能被偷一次，否则可反复盗取同一张卡造成卡牌增殖
-        if stolen_entry.get('stolen'):
+        if stolen_entry is not None and stolen_entry.get('stolen'):
+            result['success'] = False
+            result['message'] = '该魔法卡已被盗取过'
+            return result
+
+        # 连锁内偷到的牌【还没结算】，此刻不可能有历史条目可标记。把"这张牌已被盗取"
+        # 记在房间级台账里，等 resolve_chain 真正结算它、写入历史时再合并进去。
+        # （不能在这里往 magic_history 塞占位条目 —— 那会让同一张牌出现两条记录，
+        #   回退分支扫到没标记的那条就会重复盗取，等于凭空造牌。）
+        ledger = room.game_effects.setdefault('stolen_cards', {})
+        if id(stolen_card) in ledger:
             result['success'] = False
             result['message'] = '该魔法卡已被盗取过'
             return result
@@ -5691,7 +5793,11 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                 room.magic_discard.pop(i)
                 break
 
-        stolen_entry['stolen'] = True
+        if stolen_from_chain:
+            ledger[id(stolen_card)] = True
+        else:
+            stolen_entry['stolen'] = True
+
         caster.magic_hand.append(stolen_card)
 
         result['message'] = f'成功盗取对方的{stolen_card.name}'

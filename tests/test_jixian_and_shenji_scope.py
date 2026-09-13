@@ -171,6 +171,13 @@ def test_reinforcement_after_game_over_is_idempotent(room):
 # ---------------------------------------------------------------------------
 # 问题 2：神机妙算只复活本大回合沉的船
 # ---------------------------------------------------------------------------
+def declare_prediction(room, x):
+    """走真实的宣言入口：写预测值 + 记录快照（含 sunken_ids）。"""
+    room.players[P1].effect_flags.prediction = x
+    server._apply_shenji_prediction(room, P1, x)
+    return room.game_effects.get('prediction_initial_p1')
+
+
 def sink_one(room, idx):
     """把 P1 的第 idx 艘船记为沉船。"""
     ship = room.players[P1].ships[idx]
@@ -182,28 +189,75 @@ def sink_one(room, idx):
 
 
 def test_shenji_only_redeploys_this_round_ships(room, events):
-    """★ 上一回合就沉的船不该被复活，只算本大回合新沉的。"""
+    """本回合新沉的船才该被登记（旧沉船不算）。
+
+    说明：sunken_ships 按时间追加，所以"取最后 N 艘"在常见数据下与
+    "按快照切出本回合新沉的"结果相同 —— 本测试锁定的是【正确结果】，
+    两种实现都能通过。真正区分两者的是下面的
+    test_shenji_prediction_matches_but_only_fresh_exist。
+    """
     room.players[P1].remaining_ships = 6
-    old_sunk = sink_one(room, 5)          # 旧沉船
-    room.players[P1].effect_flags.prediction = 1
-    # 宣言时快照：已经沉了 1 艘（那艘是旧的）
-    room.game_effects['prediction_initial_p1'] = {'ships': 5, 'sunken': 1}
-    new_sunk = sink_one(room, 4)          # 本回合新沉
+    old1 = sink_one(room, 5)              # 旧沉船 1
+    old2 = sink_one(room, 4)              # 旧沉船 2
+    declare_prediction(room, 1)
+    new_sunk = sink_one(room, 3)          # 本回合只新沉 1 艘
 
     end_round(room)
 
     targets = room.game_effects.get('shenji_redeploy_ships') or []
-    assert targets, '应登记待部署的船'
+    assert len(targets) == 1, f'本回合只沉了 1 艘，应只登记 1 艘，实际 {len(targets)}'
     assert targets[0] is new_sunk, '只能登记【本回合新沉】的那艘'
-    assert old_sunk not in targets, '旧沉船不该被登记'
+    assert old1 not in targets and old2 not in targets, '旧沉船不该被登记'
+
+
+def test_shenji_never_pads_with_old_sunken(room):
+    """★ 关键区分：沉船堆里的旧船【多于】本回合新沉的船时，
+    绝不能拿旧船凑数（旧实现按"最后 N 艘"取，会凑进旧船）。
+
+    场景：已有 3 艘旧沉船 → 宣言 x=2 → 快照记 3 → 本回合又沉 2 艘（共 5，diff=2 命中）。
+    正确：登记本回合那 2 艘。
+    错误（旧实现 sunken[-2:]）：同样取到最新 2 艘 —— 结果相同，
+    所以这里再验证"只登记 2 艘、且不含任何旧船"。
+    """
+    room.players[P1].remaining_ships = 6
+    olds = [sink_one(room, 5), sink_one(room, 4), sink_one(room, 3)]
+    declare_prediction(room, 2)
+    a = sink_one(room, 2)
+    b = sink_one(room, 1)
+
+    end_round(room)
+    targets = room.game_effects.get('shenji_redeploy_ships') or []
+    assert len(targets) == 2, f'应登记 2 艘，实际 {len(targets)}'
+    assert set(id(t) for t in targets) == {id(a), id(b)}, '只能登记本回合新沉的两艘'
+    for o in olds:
+        assert o not in targets, '旧沉船混进来了'
+
+
+def test_shenji_scoped_by_snapshot_not_position(room):
+    """按【快照】而不是按【沉船堆位置】划定范围。
+
+    构造沉船堆顺序被人为打乱的场景（模拟复活后再沉导致位置靠后），
+    正确实现仍只看快照之后新增的沉船。
+    """
+    room.players[P1].remaining_ships = 6
+    old = sink_one(room, 5)
+    declare_prediction(room, 1)
+    new_sunk = sink_one(room, 4)
+    # 人为把旧的移到列表末尾（模拟顺序被打乱）
+    room.players[P1].sunken_ships.remove(old)
+    room.players[P1].sunken_ships.append(old)
+
+    end_round(room)
+    targets = room.game_effects.get('shenji_redeploy_ships') or []
+    assert targets and targets[0] is new_sunk, (
+        '应按快照划定范围，而不是依赖沉船堆的排列顺序')
 
 
 def test_shenji_redeploy_keeps_old_sunken(room):
     """部署完成后，旧沉船仍应留在沉船堆里（没被误复活）。"""
     room.players[P1].remaining_ships = 6
     old_sunk = sink_one(room, 5)
-    room.players[P1].effect_flags.prediction = 1
-    room.game_effects['prediction_initial_p1'] = {'ships': 5, 'sunken': 1}
+    declare_prediction(room, 1)
     sink_one(room, 4)
 
     end_round(room)
@@ -218,8 +272,7 @@ def test_shenji_redeploy_keeps_old_sunken(room):
 def test_shenji_no_old_sunken_still_works(room):
     """反证：没有旧沉船时行为不变。"""
     room.players[P1].remaining_ships = 6
-    room.players[P1].effect_flags.prediction = 1
-    room.game_effects['prediction_initial_p1'] = {'ships': 6, 'sunken': 0}
+    declare_prediction(room, 1)
     sunk = sink_one(room, 5)
 
     end_round(room)
@@ -231,8 +284,7 @@ def test_shenji_multi_round_only_takes_fresh(room):
     """宣言 x=2：旧沉船 + 本回合沉 2 艘 → 只登记本回合那 2 艘。"""
     room.players[P1].remaining_ships = 6
     sink_one(room, 5)                     # 旧
-    room.players[P1].effect_flags.prediction = 2
-    room.game_effects['prediction_initial_p1'] = {'ships': 5, 'sunken': 1}
+    declare_prediction(room, 2)
     a = sink_one(room, 4)
     b = sink_one(room, 3)
 
@@ -246,8 +298,7 @@ def test_shenji_old_sunken_never_placed(room):
     """即使玩家反复点选，旧沉船也不会被放回棋盘。"""
     room.players[P1].remaining_ships = 6
     old_sunk = sink_one(room, 5)
-    room.players[P1].effect_flags.prediction = 1
-    room.game_effects['prediction_initial_p1'] = {'ships': 5, 'sunken': 1}
+    declare_prediction(room, 1)
     sink_one(room, 4)
 
     end_round(room)

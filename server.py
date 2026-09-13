@@ -2528,7 +2528,7 @@ def end_turn(data):
                             # 旧实现直接调 _revive_sunken_ships（原地复活、无交互），
                             # 实测玩家反馈"预言成功之后没有出现放置界面"。
                             _begin_shenji_redeploy(room, p_id, pred,
-                                                   already_sunken=saved.get('sunken', 0))
+                                                   already_sunken_ids=saved.get('sunken_ids'))
                             del room.game_effects[f'prediction_initial_{p_id}']
                         room.players[p_id].effect_flags.prediction = 0
                     else:
@@ -4041,6 +4041,11 @@ def _apply_shenji_prediction(room, caster_id, x, result=None):
     room.game_effects[f'prediction_initial_{caster_id}'] = {
         'ships': player.remaining_ships,
         'sunken': len(getattr(player, 'sunken_ships', []) or []),
+        # 同时记下当时已沉的船（按 id 快照）。
+        # ⚠️ 只记数量不够：sunken_ships 的排列顺序并不保证等于沉没的先后
+        # （复活用 pop() 从末尾取、旧船也可能被重新沉回去），
+        # 结算时靠"数量切片"会取错船。用 id 差集才准确。
+        'sunken_ids': [id(s) for s in (getattr(player, 'sunken_ships', []) or [])],
     }
     room.magic_temp_data.pop('prediction', None)
     room.magic_temp_data.pop('pending_shenji', None)
@@ -4995,36 +5000,42 @@ def _start_placement(room, caster_id, kind, count):
     _emit_placement_request(room, caster_id)
 
 
-def _begin_shenji_redeploy(room, player_id, count, already_sunken=0):
+def _begin_shenji_redeploy(room, player_id, count, already_sunken_ids=None):
     """神机妙算预言成功：让玩家逐艘重新部署"原本会减少的那些船"。
 
     卡面：「那些原本会减少的船不会减少并在【原位置或者对方没有打过的位置重新部署】。」
     —— "重新部署"是玩家的主动选择，不能替他决定。
 
     ⚠️ 只算【本次判定所属的那个大回合内】沉的船（作者确认）。
-    上一回合就沉掉的船不属于"原本会减少的船"，不该被复活 ——
-    因此用 already_sunken（预言生效那一刻的沉船数）把旧沉船排除在外。
+    上一回合就沉掉的船不属于"原本会减少的船"，不该被复活。
 
-    这些船此刻还躺在 sunken_ships 里。玩家每点一个格子就取一艘出来放上去。
-    可选格子 = 各自的原位置（豁免"已被对方打过"）∪ 对方未打过的空格。
+    用【宣言时已沉船的 id 快照】做差集来判定"哪些是本回合新沉的" ——
+    不能按 sunken_ships 的排列位置切分：那个列表的顺序并不保证等于沉没先后
+    （复活用 pop() 从末尾取、旧船也可能被重新沉回去），按位置会取错船。
     """
     player = room.players.get(player_id)
     if player is None:
         return 0
     sunken = list(getattr(player, 'sunken_ships', []) or [])
-    # 本大回合新沉的那些（sunken_ships 是"越早沉的越靠前"的追加顺序）
-    fresh = sunken[max(0, int(already_sunken)):]
+    if already_sunken_ids is None:
+        # 兼容旧快照（没有 sunken_ids 字段）：退回"按数量取最新 N 艘"。
+        # 那个假设不总是成立，但总比什么都不做好。
+        fresh = sunken[-int(count):] if count else []
+    else:
+        before = set(already_sunken_ids)
+        fresh = [s for s in sunken if id(s) not in before]
     n = min(int(count), len(fresh))
     if n <= 0:
         return 0
+    chosen = fresh[:n]
     # 把候选船的原位置记下来，供放置校验豁免
     original_cells = []
-    for ship in fresh[:n]:
+    for ship in chosen:
         for pos in ship.positions:
             original_cells.append([pos.x, pos.y])
-    # 标记这几艘是"本次要重新部署"的，放置时按顺序取
+    # 登记本次要重新部署的船，放置时按顺序取
     room.game_effects['shenji_redeploy_cells'] = original_cells
-    room.game_effects['shenji_redeploy_ships'] = fresh[:n]
+    room.game_effects['shenji_redeploy_ships'] = chosen
     _start_placement(room, player_id, 'shenji_redeploy', n)
     return n
 

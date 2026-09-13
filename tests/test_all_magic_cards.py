@@ -1564,8 +1564,13 @@ def test_shenji_declare_prediction(room):
     res = apply(room, P1, '神机妙算')
     assert res.success is True
     assert room.players[P1].effect_flags.prediction == 2
-    # 修正后存初始快照（船数+沉船数），用沉船差值校验
-    assert room.game_effects[f'prediction_initial_{P1}'] == {'ships': 2, 'sunken': 0}
+    # 修正后存初始快照（船数+沉船数+已沉船的 id 快照），用沉船差值校验
+    snap = room.game_effects[f'prediction_initial_{P1}']
+    assert snap['ships'] == 2
+    assert snap['sunken'] == 0
+    # sunken_ids：结算时靠它区分"本大回合新沉的船"与旧沉船
+    # （不能按 sunken_ships 的排列位置切分 —— 那个顺序不保证等于沉没先后）
+    assert snap['sunken_ids'] == []
 
 
 def test_shenji_requires_declaration(room):

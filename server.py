@@ -2410,7 +2410,22 @@ def end_turn(data):
         current_index = room.attack_order.index(room.current_attacker)
         next_index = (current_index + 1) % len(room.attack_order)
 
-        # 如果是最后一个玩家结束回合，开始新的大回合
+        # ── 跳过回合（Freezing！/ 神之宣告）──────────────────────────────
+        # ⚠️ 这段必须在 `next_index == 0` 的"进入新大回合"判断【之前】执行。
+        # 旧实现放在后面的 else 分支里，于是"跳过对方后索引绕回起点"这件事
+        # 根本不会被那个判断看到 —— 结果只是轮回到自己连续行动，
+        # 而不是作者要的"跳过对方整个回合、直接开始新大回合（重新猜拳+摸牌）"。
+        next_attacker = room.attack_order[next_index]
+        if room.skip_opponent_turn and room.skip_opponent_turn == next_attacker:
+            room.skip_opponent_turn = None
+            next_index = (next_index + 1) % len(room.attack_order)
+            next_attacker = room.attack_order[next_index]
+        if room.skip_next_turn and room.skip_next_turn == next_attacker:
+            room.skip_next_turn = None
+            next_index = (next_index + 1) % len(room.attack_order)
+            next_attacker = room.attack_order[next_index]
+
+        # 如果是最后一个玩家结束回合（或跳过对方后绕回起点），开始新的大回合
         if next_index == 0:
             # 进入新回合，重置状态
             room.round += 1
@@ -2573,27 +2588,14 @@ def end_turn(data):
             # 否则若 skip 未能匹配到目标，会一直留着并在后续回合误跳。
             room.skip_opponent_turn = None
             room.skip_next_turn = None
+            # 阶段也要重置：Freezing！ 是在【结束阶段】打出的，跳过后若把
+            # current_phase 留在 'end'，新大回合一开始就处于结束阶段 ——
+            # 猜拳完直接能交回合、且准备/战斗阶段的 UI 与校验全都不对。
+            room.current_phase = 'preparation'
             return {'status': 'success', 'new_round': True}
         else:
-            # 检查skip机制（Freezing！/神之宣告跳过对方回合）
-            next_attacker = room.attack_order[next_index]
-            if room.skip_opponent_turn and room.skip_opponent_turn == next_attacker:
-                # 跳过这个玩家的整个回合
-                room.skip_opponent_turn = False
-                next_index = (next_index + 1) % len(room.attack_order)
-                next_attacker = room.attack_order[next_index]
-
-            if room.skip_next_turn and room.skip_next_turn == next_attacker:
-                # 跳过这个玩家，切换到下一个人
-                room.skip_next_turn = None
-                next_index = (next_index + 1) % len(room.attack_order)
-                next_attacker = room.attack_order[next_index]
-                # 新回合也视为结束阶段，需要再次检查skip
-                if room.skip_next_turn and room.skip_next_turn == next_attacker:
-                    room.skip_next_turn = None
-                    next_index = (next_index + 1) % len(room.attack_order)
-                    next_attacker = room.attack_order[next_index]
-
+            # 跳过判定已经在上面的 `next_index == 0` 判断之前做完了
+            # （否则"跳过对方后绕回起点"不会被识别为新大回合）。
             # 切换到下一个攻击者的准备阶段
             room.current_attacker = next_attacker
             room.current_phase = 'preparation'
@@ -5203,6 +5205,32 @@ def _apply_last_stand_attacks(room, player_id):
     }, room=room.id)
 
 
+def _tear_down_field_magic(room, caster_id):
+    """拆除当前生效的场地魔法（失灵！/ 加百列之光 共用）。
+
+    作者裁定：这两张无效化类卡「过了一会」也要能拆已贴出的场地 ——
+    有连锁栈时照旧康连锁项，没有连锁栈时改成拆场地；
+    自己贴的和对方贴的都可以拆。
+
+    拆除时：
+      · 场地实例进弃牌堆；
+      · 清掉它留下的房间级标记（恶魔契约 / 教皇旨意），并按新规则
+        纠正受影响的攻击次数（如教皇旨意被拆后恢复常规次数）；
+      · 广播 field_magic_updated，双方棋盘一起刷新。
+
+    返回被拆掉的卡（None 表示场上本来就没有场地）。
+    """
+    field = room.field_magic
+    if not field:
+        return None
+    room.magic_discard.append(field)
+    _clear_field_magic_effects(room)
+    room.field_magic = None
+    room.field_magic_owner = None
+    emit('field_magic_updated', {'player_id': caster_id, 'card': None}, room=room.id)
+    return field
+
+
 def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_data):
     result = ChainResult(card=card, caster=caster_id, success=True, message='')
     opponent_id = next(p for p in room.players if p != caster_id)
@@ -6443,31 +6471,42 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['message'] = '已清空棋盘，请重新摆放战舰，本回合战斗阶段跳过。若对方在本大回合内对您的船造成伤害，您将直接判负'
 
     elif card.name == '加百列之光':
-        # 无效化「正下方那一项」（连锁结算中当前项已出栈，chain[-1] 即下一个
-        # 待结算项）和当前生效的场地魔法。
+        # 无效化：连锁栈里有牌就康「正下方那一项」；没有连锁栈则主动拆场地魔法。
+        # （作者裁定：这两条是二选一 —— 这解决了"场地早贴上了、过了一会想反悔"
+        #   却因为没有连锁窗口而做不到的问题。）
         #
         # ⚠️ 不判归属：此前要求 chain[-1].player_id != caster_id，导致【自连锁】
         # 时康不掉自己前面打出的牌 —— 实测场景：对方出牌 → 我失灵 → 我又加百列，
         # 结算时加百列看到正下方是自己的失灵就不康，失灵照常无效化了对方那张牌。
         # 作者裁定：同一连锁里后手应能推翻前手，一律康正下方那一项。
         negated_count = 0
+        chain_negated = False
         if room.chain:
             result.negate_target = True
+            chain_negated = True
             negated_count += 1
-        elif room.magic_history and room.magic_history[-1]['caster'] != caster_id:
+        elif room.field_magic is None and room.magic_history \
+                and room.magic_history[-1]['caster'] != caster_id:
+            # 既没有连锁项、场上也没有场地：回退到"对方最近用过的那张"
+            # （原行为，别让这张卡在这种情形下变成纯粹的空牌）
             room.magic_history.pop()
+            chain_negated = True
             negated_count += 1
 
-        # 无效化当前已生效的场地魔法（只针对对方的场地，不能拆自己的）
-        if room.field_magic and getattr(room, 'field_magic_owner', None) != caster_id:
+        # 没有连锁项时：拆掉当前生效的场地魔法（自己贴的与对方贴的都可以拆）
+        torn = None
+        if not chain_negated and room.field_magic:
+            torn = _tear_down_field_magic(room, caster_id)
             negated_count += 1
-            room.magic_discard.append(room.field_magic)
-            _clear_field_magic_effects(room)
-            room.field_magic = None
-            room.field_magic_owner = None
-            emit('field_magic_updated', {'player_id': caster_id, 'card': None}, room=room.id)
 
-        result['message'] = f'成功无效化{negated_count}个效果'
+        if negated_count == 0:
+            result['success'] = False
+            result['message'] = '没有可无效化的魔法卡或场地魔法'
+            return result
+        if torn is not None:
+            result['message'] = f'成功无效化场地魔法「{getattr(torn, "name", "")}」'
+        else:
+            result['message'] = '成功无效化连锁中的魔法卡'
 
     elif card.name == '钢筋铁骨':
         # 牺牲一艘船，其他船进入无敌状态
@@ -6555,7 +6594,17 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             result.negate_target = True
             result.message = f'将无效化{target.card.name}'
             return result
-        # 直接调用（无连锁栈）时回退历史记录。
+
+        # 没有连锁栈：优先主动拆掉已贴出的场地魔法。
+        # 作者裁定 —— 这解决了"场地早贴上了、过了一会想反悔"却因为没有
+        # 连锁窗口而做不到的问题（原实现在这种情况下只能回退到历史记录）。
+        # 自己贴的与对方贴的都可以拆。
+        if room.field_magic:
+            torn = _tear_down_field_magic(room, caster_id)
+            result.message = f'成功无效化场地魔法「{getattr(torn, "name", "")}」'
+            return result
+
+        # 直接调用（无连锁栈、场上也没有场地）时回退历史记录。
         # 卡面："无效化对方使用的上一张魔法卡，被影响的魔法卡必须为当前时段刚使用的。"
         if room.magic_history and room.magic_history[-1]['caster'] != caster_id:
             last_magic = room.magic_history[-1]

@@ -1321,20 +1321,27 @@ def test_freezing_rejected_after_ship_loss_via_entry(room):
 
 
 def test_freezing_full_flow_skips_opponent_via_entry(room):
-    """全链路：结束阶段出牌 → 结束回合 → 对手回合被跳过"""
+    """全链路：结束阶段出牌 → 结束回合 → P2 被跳过，直接进新大回合。
+
+    2026-09-14 规则修正（作者裁定）：Freezing！ 跳过的不是"小回合轮转"，
+    而是【直接进下一个大回合】—— 重新猜拳 + 重新发牌。
+    旧行为只把索引绕回自己（P1 连续行动），不触发新大回合。
+    """
     room.attack_order = [P1, P2]
     room.current_attacker = P1
     room.current_phase = 'end'
     room.attacks_remaining = 0
     room.players[P1].damage_dealt_this_turn = 0
+    room.round = 5
 
     res = _play_freezing(room, P1)
     assert res['status'] == 'success', res
     assert room.skip_opponent_turn == P2
 
     server.end_turn({'room_id': room.id, 'player_id': P1})
-    assert room.current_attacker == P1, 'P2 的回合应被跳过'
-    assert room.current_phase == 'preparation'
+    assert room.round == 6, '应进入新大回合'
+    assert room.state == 'rock_paper_scissors', '应重新猜拳'
+    assert room.current_phase != 'end'
 
 
 def test_freezing_effect_survives_pending_chain_when_caster_holds_speed3(room):
@@ -1369,9 +1376,10 @@ def test_freezing_effect_survives_pending_chain_when_caster_holds_speed3(room):
     server.resolve_chain(room)
     assert room.skip_opponent_turn == P2, 'Freezing！ 的效果被连锁窗口吞掉了'
 
+    room.round = 5
     server.end_turn({'room_id': room.id, 'player_id': P1})
-    assert room.current_attacker == P1, 'P2 的回合应被跳过'
-    assert room.current_phase == 'preparation'
+    assert room.round == 6, 'P2 的回合应被跳过'
+    assert room.state == 'rock_paper_scissors', '跳过后直接重新猜拳（新大回合）'
 
 
 def test_end_turn_blocked_while_chain_pending(room):
@@ -1521,14 +1529,28 @@ def test_huoli_in_battle_phase_doubles_immediately(room):
 # ---------------------------------------------------------------------------
 # 加百列之光
 # ---------------------------------------------------------------------------
-def test_jiabaili_negates_last_and_field(room):
-    """无效化对方上一张魔法卡和当前场地魔法"""
+def test_jiabaili_negates_field_when_no_chain(room):
+    """没有连锁栈时：加百列之光主动拆掉场上的场地魔法。
+
+    2026-09-14 规则修正（作者裁定）：有连锁栈就康连锁项，没有则拆场地 —— 二选一。
+    这让"场地早贴上了、过了一会想反悔"有解（旧实现在无连锁时只回退历史记录，
+    场上那张场地反而拆不掉）。
+    """
     room.magic_history = [{'card': card('轰炸'), 'caster': P2}]
     room.field_magic = card('禁忌果实')
     res = apply(room, P1, '加百列之光')
     assert res.success is True
-    assert room.magic_history == []
-    assert room.field_magic is None
+    assert room.field_magic is None, '场地应被拆掉'
+    # 无连锁时不再顺带康历史里那张（二选一口径）
+    assert len(room.magic_history) == 1, '历史不该被清（那条不是本次的目标）'
+
+
+def test_jiabaili_negates_chain_item_when_present(room):
+    """有连锁栈时：康连锁项（此时不额外拆场地）。"""
+    room.chain = [ChainItem(P2, card('轰炸'), {}, 0)]
+    res = apply(room, P1, '加百列之光')
+    assert res.success is True
+    assert getattr(res, 'negate_target', False) is True, '应标记无效化连锁项'
 
 
 # ---------------------------------------------------------------------------

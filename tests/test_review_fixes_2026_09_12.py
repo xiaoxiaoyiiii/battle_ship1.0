@@ -324,13 +324,19 @@ def test_rps_normal_flow_sets_order(room):
 
 
 # 12. 场地魔法归属与效果清理
-def test_gabriel_does_not_remove_own_field_magic(room):
+def test_gabriel_can_remove_own_field_magic(room):
+    """2026-09-14 规则修正（作者裁定）：自己贴的场地也能拆。
+
+    旧实现要求 `field_magic_owner != caster_id`（只拆对方的），
+    现在改为「有连锁栈就康连锁，没有连锁栈就主动拆场地，归属不限」——
+    目的是让"场地早贴上了、过了一会想反悔"有解。
+    """
     room.field_magic = card('恶魔契约')
     room.field_magic_owner = P1
     room.game_effects['demon_contract'] = True
     server.apply_magic_effect(room, P1, card('加百列之光'), {})
-    assert room.field_magic is not None
-    assert room.game_effects.get('demon_contract') is True
+    assert room.field_magic is None, '自己贴的场地也该被拆掉'
+    assert 'demon_contract' not in room.game_effects, '房间级标记要一并清掉'
 
 
 def test_gabriel_removes_opponent_field_and_clears_effects(room):

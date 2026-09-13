@@ -1921,6 +1921,28 @@ def _check_last_chance(room, attacker_id: str, defender_id: str) -> bool:
     return False
 
 
+def _mark_ship_sunken(player, ship):
+    """把一艘船登记进沉船堆（带去重）。
+
+    ⚠️ 全项目登记沉船都必须走这里。本项目的「击沉」不会把船移出 ships，
+    所以同一艘船对象会在"沉→复活→再沉"的循环里被反复登记；不去重就会在
+    sunken_ships 里留下重复引用，进而造成：
+      · 幽灵计数：复活类 pop() 到重复条目时船其实还活着 → 只加 remaining_ships、
+        棋盘上却没有船复活（玩家实测报的"疗愈后战舰并没有复活"）；
+      · 一艘船被复活两次，船数突破 6 艘上限。
+    返回 True 表示本次真的新增了一条。
+    """
+    if ship is None:
+        return False
+    sunken = getattr(player, 'sunken_ships', None)
+    if sunken is None:
+        player.sunken_ships = sunken = []
+    if ship in sunken:
+        return False
+    sunken.append(ship)
+    return True
+
+
 def _on_ship_destroyed(room, owner_id: str, ship, hits_added=None, source='magic'):
     """一艘船被摧毁后的通用副作用（普通攻击与区域魔法共用同一份实现）。
 
@@ -1973,7 +1995,7 @@ def _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id, ship, targ
     """
     defender = room.players[defender_id]
     defender.remaining_ships -= 1
-    defender.sunken_ships.append(ship)
+    _mark_ship_sunken(defender, ship)   # 去重，见该函数说明
 
     # 平等条约快照 + 百亿补贴 + 无暇圣心中断（与区域魔法共用）
     # source='attack'：炮击造成的船数减少，平等条约无效化不了（卡面只针对魔法卡）
@@ -3388,17 +3410,35 @@ def _notify_treasure_hunter(room, times=1, exclude_player_id=None):
 
 
 def _revive_sunken_ships(room, player, count):
-    """把 count 艘已沉没的战舰放回棋盘（神机妙算 / 复活类效果）。
+    """把 count 艘已沉没的战舰放回棋盘（疗愈 / 神机妙算等复活类效果）。
 
     关键：必须清空 hits 并把原位置从双方攻击历史里移除。
     否则 hits 已等于 positions（船已沉），且这些格子谁都"已经打过"，
     该船将永远无法被击沉 → remaining_ships 永远 > 0 → 对手永远无法获胜。
+
+    ⚠️ 必须校验"这艘船确实还没回到棋盘"：
+    本项目的击沉不移出 ships，若 sunken_ships 里混进重复条目（历史数据、
+    或修复前的旧对局），pop() 可能取到一艘其实还活着的船。此时若照旧
+    remaining_ships += 1，就会出现"船数涨了、棋盘上没船"的幽灵计数 ——
+    实测玩家报的"疗愈后战舰并没有复活"即由此而来。
     """
     revived_any = 0
-    for _ in range(min(int(count), len(player.sunken_ships))):
+    guard = 0
+    while revived_any < int(count) and player.sunken_ships and guard < 32:
+        guard += 1
         revived = player.sunken_ships.pop()
+        # 这艘船其实没沉（重复条目）：丢弃这条幽灵记录，不计数
+        if revived in player.ships and _is_ship_alive(player, revived):
+            continue
         if revived not in player.ships:
             player.ships.append(revived)
+        # ⚠️ 必须把该船在沉船堆里的【所有】记录一起清掉，不能只靠上面那一次 pop。
+        # _is_ship_alive 的第一道判据是「船在 sunken_ships 里就视为已沉」——
+        # 只要还留着一条重复记录，这艘船就仍被判为死船：hits 明明清空、
+        # remaining_ships 也加了，前端按 alive=False 继续把它画成沉船 ——
+        # 实测玩家报的"疗愈后战舰并没有复活"正是这个机制。
+        while revived in player.sunken_ships:
+            player.sunken_ships.remove(revived)
         # 注意：被击沉的船通常仍留在 ships 列表里，所以清空命中要无条件执行
         revived.hits = []
         for pos in revived.positions:
@@ -4292,12 +4332,17 @@ def handle_confirm_reinforcement(data):
             _finish_placement(room, player_id, 'revive')
             return {'status': 'error', 'message': '没有可复活的战舰'}
         revived = caster.sunken_ships.pop()
+        # 清掉该船在沉船堆里的所有重复记录：_is_ship_alive 只要看到船还在
+        # sunken_ships 里就判定它已沉，留一条就会让"复活"在棋盘上不生效
+        while revived in caster.sunken_ships:
+            caster.sunken_ships.remove(revived)
         # 关键修复：清空命中并移到新位置，否则复活后打不沉（幽灵船）
         revived.positions = [Position(x=x, y=y)]
         revived.hits = []
         revived.shield = False
         revived.invincible = False
-        caster.ships.append(revived)
+        if revived not in caster.ships:
+            caster.ships.append(revived)
         caster.remaining_ships += 1
         msg = f'复活战舰已部署到 ({x},{y})'
     elif pending['kind'] == 'last_stand':
@@ -4875,7 +4920,7 @@ def _do_demon_contract_sacrifice(room, player_id, ship, reason='demon_contract')
         room.magic_temp_data.pop('pending_sacrifice', None)
 
     player.ships.remove(ship)
-    player.sunken_ships.append(ship)
+    _mark_ship_sunken(player, ship)
     player.remaining_ships = max(0, player.remaining_ships - 1)
 
     positions = [{'x': p.x, 'y': p.y} for p in ship.positions]
@@ -5410,7 +5455,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                             caster.damage_dealt_this_turn += 1
 
                             # 保存被击沉的船到sunken_ships
-                            opponent.sunken_ships.append(ship)
+                            _mark_ship_sunken(opponent, ship)
 
                             # 平等条约快照 + 百亿补贴 + 无暇圣心中断（与普通攻击共用）
                             _on_ship_destroyed(room, opponent_id, ship, [Position(**pos)])
@@ -5578,7 +5623,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
 
         # 卡面：仅当作用于对方棋盘且区域内恰好 1 艘船时，直接死亡
         if board != 'self' and len(excluded_ships) == 1:
-            target_player.sunken_ships.append(excluded_ships[0])
+            _mark_ship_sunken(target_player, excluded_ships[0])
             _apply_ship_loss_linkage(room, caster_id, opponent_id, count=1)
             result['message'] = '目标区域内1艘战舰被击沉'
         else:
@@ -5654,7 +5699,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         for ship in to_remove:
             if ship in opponent.ships:
                 # 保存被摧毁的船到sunken_ships
-                opponent.sunken_ships.append(ship)
+                _mark_ship_sunken(opponent, ship)
                 opponent.ships.remove(ship)
                 opponent.remaining_ships -= 1
                 ships_changed = True
@@ -5743,7 +5788,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         for ship in to_remove:
             if ship in opponent.ships:
                 # 保存被摧毁的船到sunken_ships
-                opponent.sunken_ships.append(ship)
+                _mark_ship_sunken(opponent, ship)
                 opponent.ships.remove(ship)
                 opponent.remaining_ships -= 1
                 ships_changed = True
@@ -6198,7 +6243,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             if sh in caster.ships:
                 caster.ships.remove(sh)
             if sh not in caster.sunken_ships:
-                caster.sunken_ships.append(sh)
+                _mark_ship_sunken(caster, sh)
         caster.remaining_ships = 0
 
         if sacrificed:
@@ -6402,7 +6447,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         popped = alive_ships[-1]
         caster.ships.remove(popped)
         if popped not in caster.sunken_ships:
-            caster.sunken_ships.append(popped)
+            _mark_ship_sunken(caster, popped)
         caster.remaining_ships -= 1
 
         # 其他船进入无敌状态

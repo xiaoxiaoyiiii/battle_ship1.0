@@ -546,8 +546,33 @@ def _clear_field_magic_effects(room):
 
     否则「加百列之光」拆掉恶魔契约/教皇旨意后，其效果仍永久生效。
     """
+    was_papal = bool(room.game_effects.get('papal_edict'))
     room.game_effects.pop('demon_contract', None)
     room.game_effects.pop('papal_edict', None)
+
+    # 教皇旨意把攻击次数压成了 0。不恢复的话，玩家会在没有教皇旨意的回合里
+    # "有船却一次也打不出去" —— 与「生效时必须归零」是同一件事的两面。
+    #
+    # ⚠️ 调用方的清理顺序不统一：_place_field_magic 是【先换 field_magic 再调这里】，
+    # 而加百列拆场地是【先调这里再清 field_magic】。若直接用 _recalc_attacker_attacks，
+    # 后一种情况下 field_magic 还是教皇旨意、算出来仍是 0，恢复等于没做。
+    # 因此这里显式按"教皇旨意已不存在"来算，不依赖 field_magic 的当前值。
+    # 只在战斗阶段恢复：准备/结束阶段的次数由进战斗阶段时统一重算。
+    if was_papal and room.state == 'attacking' and room.current_phase == 'battle':
+        pid = room.current_attacker
+        if pid and pid in room.players:
+            bonus = int(getattr(room.players[pid].effect_flags, 'subsidy_bonus', 0) or 0)
+            current_field = field_magic_name(room)
+            if current_field == '伊甸园':
+                base = max(0, 6 - room.players[pid].remaining_ships)
+            else:
+                base = max(0, room.players[pid].remaining_ships
+                           - frozen_ship_count(room.players[pid]))
+            room.attacks_remaining = max(0, base + bonus)
+            emit('attacks_updated', {
+                'current_attacker': pid,
+                'attacks_remaining': room.attacks_remaining
+            }, room=room.id)
 
 
 def _place_field_magic(room, caster_id, card):
@@ -4879,6 +4904,18 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         # 场地魔法，攻击次数变为0，通过弃置魔法卡攻击
         _place_field_magic(room, caster_id, card)
         room.game_effects['papal_edict'] = True
+
+        # ⚠️ 必须【在这里】立即归零，不能只依赖"进入战斗阶段"那一刻。
+        # 教皇旨意是速阶1，而 can_play_magic_card 允许速阶1在【战斗阶段】使用 ——
+        # 从战斗阶段打出时，enter_battle_phase 的阶段转换早已发生（或压根不再发生），
+        # attacks_remaining 会一直停在旧值（实测：6），于是
+        # handle_enter_end_phase 的 "还有剩余攻击次数" 门禁永远拒绝 → 对局卡死。
+        room.attacks_remaining = 0
+        emit('attacks_updated', {
+            'current_attacker': room.current_attacker,
+            'attacks_remaining': room.attacks_remaining
+        }, room=room.id)
+
         result['message'] = '教皇旨意已生效，双方攻击次数变为0，通过弃置魔法卡攻击对方两次'
 
     elif card.name == '败者食尘':

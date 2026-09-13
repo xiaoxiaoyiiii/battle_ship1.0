@@ -235,6 +235,57 @@ class EffectFlags:
     wuxian: bool = False
 
 
+# ---------------------------------------------------------------------------
+# 效果标记的生命周期分类
+# ---------------------------------------------------------------------------
+# 两处回合清理（end_turn 的普通换回合 / 大回合重新猜拳）都引用这里，
+# 避免各写一份白名单而互相漂移 —— 此前一处写 1 个字段、一处写 5 个，
+# 且两边都塞了 'holy_heart'/'reinforcement_check' 这种根本不属于 EffectFlags
+# 的名字（它们住在 room.game_effects 里，永远匹配不到，是无效条目）。
+#
+# 分类依据是卡面原文：
+#   越战越勇 "接下来【这一回合内】"      → 本回合，换回合即清
+#   五险一金 "【这一回合】…第一次用尽时"  → 本回合，换回合即清
+#   火力全开（double_attacks）本回合      → 换回合即清
+#   绝处逢生 "在绝处逢生生效的【回合】"    → 本回合，换回合即清
+#
+# 下面这些写的是"接下来…"，没有回合限定，但按作者裁定统一为【本大回合】：
+#   百亿补贴 / 饮血 / 八方来财 —— 跨小回合保留，大回合结束时清。
+#   （此前它们在小回合切换就被清掉，于是对手回合里攒到的加成还没轮到自己
+#     的回合就没了，玩家永远拿不到。）
+FLAGS_KEEP_ACROSS_TURN = frozenset({
+    'no_draw',          # 无中生有：接下来这一个大回合内
+    'prediction',       # 神机妙算：到对方结束阶段结束之后
+    'forced_kill',      # 余音绕梁：本回合 + 下一个回合的攻击阶段
+    'subsidy',          # 百亿补贴：接下来（本大回合内）
+    'subsidy_bonus',    # 百亿补贴已累计的额外攻击次数，与上面同生命周期
+    'vampire',          # 饮血：接下来自己的攻击
+    'treasure_hunter',  # 八方来财：接下来场上战舰数主动变化
+})
+
+# 大回合结束（重新猜拳）时的白名单：按作者裁定，以上都只持续本大回合，全部清掉。
+# 保留常量名以便日后有真正的"永久"效果时在此登记。
+FLAGS_KEEP_ACROSS_ROUND = frozenset()
+
+
+def _prune_effect_flags(room, keep):
+    """按白名单裁剪双方的 effect_flags，返回是否有变化。
+
+    用 __dict__ 过滤即可：EffectFlags 的字段是"类属性 + 注解"，
+    没被显式赋过值的字段不在实例 __dict__ 里，读取时走类属性默认值（False/0），
+    所以裁剪后实例依然是完整可用的对象。
+    """
+    changed = False
+    for p_id in room.players:
+        flags = room.players[p_id].effect_flags
+        before = dict(flags.__dict__)
+        after = {k: v for k, v in before.items() if k in keep}
+        if after != before:
+            flags.__dict__ = after
+            changed = True
+    return changed
+
+
 class Player:
     magic_hand: list[MagicCard]
     effect_flags: EffectFlags
@@ -541,49 +592,76 @@ def field_magic_name(room):
     return fm.name if hasattr(fm, 'name') else fm
 
 
-def _clear_field_magic_effects(room):
-    """场地被顶替/拆除时，清理它留下的房间级效果标记。
+def _clear_field_magic_effects(room, prev_field_name=None):
+    """场地被顶替/拆除时，清理它留下的房间级效果标记，并纠正受影响的攻击次数。
 
-    否则「加百列之光」拆掉恶魔契约/教皇旨意后，其效果仍永久生效。
+    否则「加百列之光」拆掉恶魔契约/教皇旨意/伊甸园后，其效果仍永久生效。
+
+    prev_field_name：刚离场的场地卡名。调用方若已经改动 room.field_magic，
+    必须显式传入（见 _place_field_magic），否则这里读到的是新卡名。
     """
-    was_papal = bool(room.game_effects.get('papal_edict'))
+    had_papal = bool(room.game_effects.get('papal_edict'))
+    # 未显式传入时（加百列拆场地的路径：先调这里、后清 field_magic）就地读取
+    prev_field = prev_field_name if prev_field_name is not None else field_magic_name(room)
     room.game_effects.pop('demon_contract', None)
     room.game_effects.pop('papal_edict', None)
 
-    # 教皇旨意把攻击次数压成了 0。不恢复的话，玩家会在没有教皇旨意的回合里
-    # "有船却一次也打不出去" —— 与「生效时必须归零」是同一件事的两面。
+    # 攻击次数是按【当前场地规则】算出来的，场地一没，那个数就不再有效：
+    #   · 教皇旨意：次数被压成 0 —— 不恢复的话玩家"有船却一次也打不出去"
+    #   · 伊甸园：次数 = 6-船数 —— 不重算的话，场地被拆了还能白拿额外次数
+    #     （实测：2 艘船时白拿 2 次攻击）
+    #
+    # ⚠️ 必须覆盖【所有相位】，不能只在 battle 里做。
+    #   拆场地的守卫原先写了 current_phase == 'battle'，于是准备阶段的路径整段被跳过：
+    #   准备阶段打出教皇旨意（次数归零）→ 场地被拆除 → 进战斗阶段时
+    #   两个特例分支都不命中，次数停在 0 → 玩家 4 艘船零输出。
+    #   （进战斗阶段的 _recalc 兜底也一并补上了，两处都要有。）
     #
     # ⚠️ 调用方的清理顺序不统一：_place_field_magic 是【先换 field_magic 再调这里】，
-    # 而加百列拆场地是【先调这里再清 field_magic】。若直接用 _recalc_attacker_attacks，
-    # 后一种情况下 field_magic 还是教皇旨意、算出来仍是 0，恢复等于没做。
-    # 因此这里显式按"教皇旨意已不存在"来算，不依赖 field_magic 的当前值。
-    # 只在战斗阶段恢复：准备/结束阶段的次数由进战斗阶段时统一重算。
-    if was_papal and room.state == 'attacking' and room.current_phase == 'battle':
-        pid = room.current_attacker
-        if pid and pid in room.players:
-            bonus = int(getattr(room.players[pid].effect_flags, 'subsidy_bonus', 0) or 0)
-            current_field = field_magic_name(room)
-            if current_field == '伊甸园':
-                base = max(0, 6 - room.players[pid].remaining_ships)
-            else:
-                base = max(0, room.players[pid].remaining_ships
-                           - frozen_ship_count(room.players[pid]))
-            room.attacks_remaining = max(0, base + bonus)
-            emit('attacks_updated', {
-                'current_attacker': pid,
-                'attacks_remaining': room.attacks_remaining
-            }, room=room.id)
+    #   而加百列拆场地是【先调这里再清 field_magic】。因此用 prev_field 判断，
+    #   不依赖 field_magic 调用后的值 —— 否则后一种情况会按"旧场地还在"去算。
+    if room.state != 'attacking':
+        return
+    pid = room.current_attacker
+    if not pid or pid not in room.players:
+        return
+    # 场地没变过、且与影响攻击次数的场地无关 → 无需纠正
+    if not had_papal and prev_field not in ('伊甸园', '教皇旨意'):
+        return
+    # ⚠️ 不能用 _recalc_attacker_attacks：它读 field_magic_name(room)，
+    # 而加百列拆场地的路径是【先调这里、后清 field_magic】—— 此刻 field_magic
+    # 还指向那张已离场的卡，重算结果不变，纠正等于没做（实测：伊甸园被拆后仍是 4 次）。
+    # 这里显式按"那张场地已不存在"来算，只看【当前仍在场的场地】。
+    stay_field = field_magic_name(room)
+    if prev_field is not None and stay_field == prev_field:
+        stay_field = None      # field_magic 尚未被清，说明它就是要拆掉的那张
+    bonus = int(getattr(room.players[pid].effect_flags, 'subsidy_bonus', 0) or 0)
+    if stay_field == '伊甸园':
+        base = max(0, 6 - room.players[pid].remaining_ships)
+    elif stay_field == '教皇旨意':
+        base = 0
+    else:
+        base = max(0, room.players[pid].remaining_ships
+                   - frozen_ship_count(room.players[pid]))
+    room.attacks_remaining = max(0, base + bonus)
+    emit('attacks_updated', {
+        'current_attacker': pid,
+        'attacks_remaining': room.attacks_remaining
+    }, room=room.id)
 
 
 def _place_field_magic(room, caster_id, card):
     """将场地魔法卡实例放入场地区域；若已有不同名的旧卡，将其（实例）移入弃牌堆。
     返回被顶掉的旧卡（可能为 None）。"""
     old = room.field_magic
+    old_name = getattr(old, 'name', None)   # 换掉之前先记下旧场地名
     room.field_magic = card
     room.field_magic_owner = caster_id
-    if old and getattr(old, 'name', None) != card.name:
+    if old and old_name != card.name:
         room.magic_discard.append(old)
-        _clear_field_magic_effects(room)
+        # 必须把旧卡名显式传进去：此时 room.field_magic 已经指向新卡，
+        # 让被调用方自己读会误判成"旧场地还在"，攻击次数就不重算了。
+        _clear_field_magic_effects(room, prev_field_name=old_name)
     emit('field_magic_updated', {'player_id': caster_id, 'card': card}, room=room.id)
     return old
 
@@ -2040,6 +2118,14 @@ def handle_attack(data):
             # 盾牌状态，抵挡一次伤害
             ship_sunk = False
             ship.shield = False
+            # 盾挡下一击：必须明确广播"这一炮被挡了"。否则双方只看到一次普通
+            # "命中"，防守方会以为自己的船挨了一炮（实际毫发无伤），
+            # 也完全不知道自己的盾已经用掉。
+            emit('shield_absorbed', {
+                'player': defender_id,
+                'positions': [{'x': p.x, 'y': p.y} for p in ship.positions],
+            }, room=room_id)
+            _emit_player_ships(room, defender_id)
         else:
             # 记录击中位置
             defender_ships[i].hits = defender_ships[i].hits + [Position(x=target_x, y=target_y)]
@@ -2160,10 +2246,19 @@ def enter_battle_phase(data):
     if room.current_attacker == player_id and room.current_phase == 'preparation':
         # 切换到战斗阶段
         room.current_phase = 'battle'
-        if field_magic_name(room) == "伊甸园":
-            room.attacks_remaining = 6 - room.players[player_id].remaining_ships
 
-        # 检查是否有攻击次数翻倍效果
+        # ⚠️ 无条件按【当前场地规则】重算攻击次数。
+        #
+        # 旧实现只处理伊甸园与教皇旨意两个特例，其余情况原样保留准备阶段的值。
+        # 于是出现两条实测缺陷：
+        #   ① 准备阶段打出教皇旨意（次数被压成 0）→ 场地被拆除 → 进战斗阶段时
+        #      两个特例都不命中 → 次数停在 0：玩家 4 艘船却一发都打不出去。
+        #   ② 准备阶段挂着伊甸园（次数=6-船数）→ 场地被顶替/拆除 → 次数不被纠正。
+        # _recalc_attacker_attacks 已经是"按当前场地规则算"的唯一权威实现，
+        # 直接用它兜底，特例自然被覆盖，也不会再随场地增减而漂移。
+        _recalc_attacker_attacks(room)
+
+        # 攻击次数翻倍（火力全开）：乘法规则，_recalc 不含，单独处理
         if room.players[player_id].effect_flags.double_attacks:
             # 翻倍当前攻击次数：冻结船不提供攻击次数，且保留百亿补贴累计加成
             base_attacks = max(
@@ -2178,8 +2273,12 @@ def enter_battle_phase(data):
             }, room=room_id)
             # 移除翻倍效果，因为它只持续一个大回合
             room.players[player_id].effect_flags.double_attacks = False
-        if field_magic_name(room) == "教皇旨意":
-            room.attacks_remaining = 0
+
+        # 重算后必须广播，否则前端仍显示准备阶段的旧值
+        emit('attacks_updated', {
+            'current_attacker': room.current_attacker,
+            'attacks_remaining': room.attacks_remaining
+        }, room=room_id)
 
         # 五险一金：进战斗阶段时攻击次数就可能是 0（教皇旨意直接把次数压成 0），
         # 这也算「本回合第一次归零」，要给它触发机会。
@@ -2421,15 +2520,11 @@ def end_turn(data):
                             del room.game_effects[f'prediction_initial_{p_id}']
                         room.players[p_id].effect_flags.prediction = 0
 
-            # 重置所有临时效果标志，包括no_draw标志
-            for p_id in room.players:
-                # 保留场地魔法等永久效果，清除所有临时效果（包括no_draw）
-                permanent_flags = ['holy_heart']  # 永久效果白名单（reinforcement_check不是玩家效果）
-                room.players[p_id].effect_flags.__dict__ = {k: v for k, v in
-                                                                room.players[p_id].effect_flags.__dict__.items() if
-                                                                k in permanent_flags}
+            # 大回合结束（重新猜拳）：本大回合内的所有效果到此为止。
+            # 分类见 FLAGS_KEEP_ACROSS_ROUND 的说明。
+            _prune_effect_flags(room, FLAGS_KEEP_ACROSS_ROUND)
 
-            # 新一轮清空了所有临时效果，角标要跟着消失
+            # 标记刚被清了一批，角标要跟着消失（否则百亿补贴等会一直亮着）
             _emit_active_effects(room)
 
             # 广播进入猜拳阶段
@@ -2742,19 +2837,28 @@ def _do_attack(room, room_id, attacker_id, target_x, target_y, defender_id, defe
     hit = False
     ship_sunk = False
 
+    # 余音绕梁：强制击杀（与 handle_attack 同口径）。此前这条路径完全没读它，
+    # 于是教皇旨意下的弃卡攻击打不穿「无敌/盾牌」的船，flag 一直挂着不消费。
+    has_forced_kill = int(getattr(room.players[attacker_id].effect_flags,
+                                  'forced_kill', 0) or 0) > 0
+
     for i, ship in enumerate(defender_ships):
         if {'x': target_x, 'y': target_y} in ship.positions:
             hit = True
             if 'holy_heart' in room.game_effects and not ship.invincible:
                 room.game_effects['holy_heart']['no_damage'] = False
-            if not ship.invincible and not ship.shield:
+            if has_forced_kill or (not ship.invincible and not ship.shield):
                 defender_ships[i].hits = defender_ships[i].hits + [Position(x=target_x, y=target_y)]
                 if len(defender_ships[i].hits) == len(defender_ships[i].positions):
                     ship_sunk = True
                     _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id,
                                              defender_ships[i], target_x, target_y)
-                    if room.players[attacker_id].effect_flags.vampire:
-                        room.draw_card(attacker_id)
+                    # 统一走攻击方增益（饮血摸牌 / 越战越勇 +1 / 伤害统计）。
+                    # 此前这里手抄了一份"只判 vampire"的实现，导致：
+                    #   · 越战越勇不生效
+                    #   · damage_dealt_this_turn 恒为 0 → Freezing！ 被误判为
+                    #     "本回合没让对方减船"而放行，白送一个跳过对方整回合的效果
+                    _apply_attacker_damage_buffs(room, room_id, attacker_id)
                     if room.players[attacker_id].effect_flags.last_stand:
                         _finish_game_win(room, room_id, attacker_id, defender_id,
                                          f"第{room.round}回合 · {_log_name(room, attacker_id)} 触发绝处逢生并获胜")
@@ -2764,6 +2868,13 @@ def _do_attack(room, room_id, attacker_id, target_x, target_y, defender_id, defe
                     _emit_ships_updated(room)
             elif ship.shield:
                 ship.shield = False
+                # 盾挡下一击：要明确告诉双方"这一炮被挡了"，否则前端只会看到
+                # 一次普通命中，玩家以为船受伤/沉了
+                emit('shield_absorbed', {
+                    'player': defender_id,
+                    'positions': [{'x': p.x, 'y': p.y} for p in ship.positions],
+                }, room=room_id)
+                _emit_player_ships(room, defender_id)
             break
 
     room.last_attack = {'attacker': attacker_id, 'x': target_x, 'y': target_y, 'hit': hit, 'ship_sunk': ship_sunk, 'round': room.round}
@@ -3119,6 +3230,11 @@ def _emit_player_ships(room, player_id):
             # 存活状态：沉船仍留在 ships 列表里，前端自己判断不出死活；
             # 「选一艘自己的船」类的卡要靠它把沉船灰掉（克苏鲁之眼/仁王之盾…）。
             'alive': _is_ship_alive(player, sh),
+            # 盾牌 / 无敌也要下发：仁王之盾一次性挡伤、钢筋铁骨让全船无敌，
+            # 前端此前拿不到这两个状态，既画不出标记，也不知道盾已经被消耗掉
+            # （图标做不出来，或画出来下不去）。
+            'shield': bool(getattr(sh, 'shield', False)),
+            'invincible': bool(getattr(sh, 'invincible', False)),
         } for sh in player.ships]
     }, to=player.sid)
 
@@ -3408,6 +3524,21 @@ def resolve_chain(room):
     for p in room.players.values():
         if getattr(p, 'sid', None):
             emit('hand_updated', {'hand': p.magic_hand}, to=p.sid)
+
+    # 船数 / 自己的棋盘 / 阶段也要一并重推。
+    # 结算期间有一批卡会直接改船或改阶段，而它们的分支里【一个 emit 都没有】：
+    #   · 仁王之盾  —— 给至多 3 艘船加 shield，前端完全收不到（连加盾都不知道）
+    #   · 钢筋铁骨  —— 牺牲 1 艘 + 其余无敌；前端仍显示 6 艘、无敌无标记
+    #   · 回光返照  —— 清空自己的棋盘并把阶段推到 end
+    # 靠每张卡各自补 emit 容易漏（已经漏过三次），统一在这里兜底最稳：
+    # 与上面 active_effects / hand_updated 并列，覆盖所有在结算里改状态的卡。
+    _emit_ships_updated(room)
+    for pid in room.players:
+        _emit_player_ships(room, pid)
+    emit('phase_updated', {
+        'current_phase': room.current_phase,
+        'current_attacker': room.current_attacker
+    }, room=room.id)
 
     return results
 
@@ -4304,6 +4435,8 @@ def confirm_magic_target(data):
             return {'status': 'error', 'message': f'无效的船数选择，应在1-{max_ships}之间'}
 
         # 重置双方的战舰数据
+        # 双方棋盘都要换掉 → 尚未归还的神威除外船不再是这批棋盘上的船
+        _discard_excluded_ships(room)
         for p_id in room.players:
             player = room.players[p_id]
             player.ships = []
@@ -4388,6 +4521,11 @@ def confirm_magic_target(data):
         if applied == 0:
             return {'status': 'error', 'message': '无效的选择（已沉没的船不能加护盾）'}
         room.magic_temp_data = {}
+        # 加盾后必须把己方棋盘重推给本人：shield 是这一回合的战术信息
+        # （一次性挡伤，剩几艘有盾直接决定后面几炮打谁），前端此前完全收不到，
+        # 连"我加了盾"都没有任何反馈。
+        _emit_player_ships(room, player_id)
+        emit('message', {'text': f'已为{applied}艘战舰添加护盾'}, to=caster.sid)
         msg = f'为{applied}艘战舰添加了护盾'
         if skipped:
             msg += f'（{skipped}艘已沉没，已跳过）'
@@ -4501,19 +4639,52 @@ def _clear_due_shenwei_holes(room, current_round):
 
 
 def _restore_due_shenwei(room, current_round):
-    """到期回归：恢复被扣掉的区域，并把除外的战舰放回原位。"""
+    """到期回归：恢复被扣掉的区域，并把除外的战舰放回原位。
+
+    ⚠️ 归还前必须确认那艘船【仍属于当前棋盘】。
+    「重摆棋盘」类效果（回光返照 / 灵气复苏 / 绝处逢生 / 败者食尘）会把
+    player.ships 整批换掉，被除外的旧船对象已经不在棋盘上了；无条件 append
+    会让它们以"幽灵船"的身份回来 —— 实测 6 艘变 8 艘，突破上限且坐标与现有船重叠。
+    重摆路径会调 _discard_excluded_ships() 把过期条目丢掉（见那里的说明），
+    这里再做一次防御：不在棋盘上的船一律不归还。
+    """
     entries = room.game_effects.get('excluded_ships') or []
     due = [e for e in entries if e['return_turn'] <= current_round]
     for entry in due:
         entries.remove(entry)
         owner = room.players[entry['player']]
         for ship in entry['ships']:
+            if ship in owner.ships:
+                continue          # 已经在棋盘上，不重复加
+            if getattr(ship, '_detached', False):
+                continue          # 棋盘已被重摆，这艘船属于上一批
             owner.ships.append(ship)
             owner.remaining_ships += 1
     if not entries:
         room.game_effects.pop('excluded_ships', None)
     for hole in _clear_due_shenwei_holes(room, current_round):
         emit('shenwei_hole_restored', {'player': hole['player']}, room=room.id)
+
+
+def _discard_excluded_ships(room, player_id=None):
+    """棋盘被重摆时调用：放弃尚未归还的「神威！除外」船只。
+
+    重摆会把 player.ships 整批换新，被除外的旧船对象已不属于棋盘；
+    若仍留在 excluded_ships 里，到期会以幽灵船身份 append 回来
+    （实测：6 艘变 8 艘，突破上限、坐标与现有船重叠）。
+    player_id 为 None 时处理全部玩家（败者食尘这类双方一起重摆的场景）。
+    """
+    entries = room.game_effects.get('excluded_ships')
+    if not entries:
+        return
+    if player_id is None:
+        room.game_effects.pop('excluded_ships', None)
+        return
+    kept = [e for e in entries if e.get('player') != player_id]
+    if kept:
+        room.game_effects['excluded_ships'] = kept
+    else:
+        room.game_effects.pop('excluded_ships', None)
 
 
 def _apply_ship_loss_linkage(room, caster_id, lost_player_id, count=1):
@@ -4871,10 +5042,34 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result.message = '无暇圣心已激活，剩余2回合后结算'
 
     elif card.name == '火力全开':
-        # 本回合攻击次数翻倍
-        # （真实结算在 enter_battle_phase 读取 double_attacks 标记，此处只设标记）
-        room.players[caster_id].effect_flags.double_attacks = True
-        result.message = '本回合攻击次数翻倍'
+        # 本回合攻击次数翻倍。
+        #
+        # ⚠️ 不能只设标记等 enter_battle_phase 去消费：那是速阶1的卡，
+        # can_play_magic_card 允许它在【战斗阶段】使用，而阶段转换早已发生
+        # （且 enter_battle_phase 在 phase 已是 battle 时直接返回 error），
+        # 标记就永远没人读 —— 实测：战斗阶段打出后 attacks 仍是 6 不翻倍，
+        # 标记一直挂着，玩家白扔一张牌还以为生效了。
+        # 卡面是「在这一个大回合内自己的攻击阶段时，自己的攻击次数翻倍」，
+        # 所以：还在准备阶段就留给 enter_battle_phase 翻（那时才知道最终次数）；
+        # 已经进入战斗阶段就【立即】翻当前次数。
+        flags = room.players[caster_id].effect_flags
+        in_battle = (room.state == 'attacking'
+                     and room.current_phase == 'battle'
+                     and room.current_attacker == caster_id)
+        if in_battle and not flags.double_attacks:
+            base_attacks = max(0, caster.remaining_ships
+                               - frozen_ship_count(caster))
+            bonus = int(getattr(flags, 'subsidy_bonus', 0) or 0)
+            room.attacks_remaining = base_attacks * 2 + bonus
+            flags.double_attacks = False      # 已当场消费，不再留给阶段转换
+            emit('attacks_updated', {
+                'current_attacker': room.current_attacker,
+                'attacks_remaining': room.attacks_remaining
+            }, room=room.id)
+            result.message = f'本回合攻击次数翻倍，当前攻击次数为{room.attacks_remaining}'
+        else:
+            flags.double_attacks = True
+            result.message = '本回合攻击次数翻倍'
 
     elif card.name == '灵气复苏':
         # 计算双方最大船数，已修复
@@ -4927,6 +5122,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         # 卡面里根本没有这回事 —— 实测玩家反馈"重置后船数不对"即源于此。
         # 这里改为双方一律重置为默认船数（6）。
         DEFAULT_SHIPS = 6
+        # 双方棋盘都要换掉 → 尚未归还的神威除外船不再是这批棋盘上的船
+        _discard_excluded_ships(room)
         for p_id in room.players:
             player = room.players[p_id]
             player.ships = []
@@ -5968,6 +6165,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             return result
 
         # 清空棋盘重新摆放6艘船
+        # 棋盘换新 → 尚未归还的神威除外船不再是这批棋盘上的船
+        _discard_excluded_ships(room, caster_id)
         caster.ships = []
         caster.attacks = []
         caster.remaining_ships = 0

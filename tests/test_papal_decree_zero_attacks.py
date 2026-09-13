@@ -182,15 +182,41 @@ def test_removing_papal_restores_attacks(room):
     assert room.attacks_remaining == 6
 
 
-def test_removing_papal_outside_battle_does_not_touch_attacks(room):
-    """准备阶段拆掉教皇旨意不该乱改次数（由进战斗阶段时统一重算）。"""
+def test_removing_papal_outside_battle_also_restores(room):
+    """准备阶段拆掉教皇旨意同样要恢复攻击次数。
+
+    2026-09-14 扩大范围：恢复逻辑原先只覆盖 battle 相位（守卫写了
+    current_phase == 'battle'），于是"准备阶段打出教皇旨意 → 场地被拆除 →
+    进战斗阶段"这条路整段被跳过 —— 进战斗阶段时两个特例分支都不命中，
+    次数停在 0，玩家 4 艘船零输出（实测复现）。
+    现在拆场地的纠正在所有相位都执行，且进战斗阶段本身也无条件重算。
+    """
     room.players[P1].magic_hand = [card('教皇旨意')]
     use(room, P1, '教皇旨意')
+    assert room.attacks_remaining == 0
     room.current_phase = 'preparation'
-    room.attacks_remaining = 0
 
     server._clear_field_magic_effects(room)
-    assert room.attacks_remaining == 0, '非战斗阶段不在这里恢复'
+    assert room.attacks_remaining == 6, (
+        f'准备阶段拆场也要恢复（6 艘船），实际 {room.attacks_remaining}')
+
+
+def test_prep_phase_remove_then_battle_no_deadlock(room):
+    """★ 完整卡死路径：准备阶段打教皇旨意 → 拆场 → 进战斗阶段。"""
+    room.players[P1].magic_hand = [card('教皇旨意')]
+    use(room, P1, '教皇旨意')
+
+    # 模拟加百列拆场地（先 clear 再清 field_magic，与真实代码顺序一致）
+    server._clear_field_magic_effects(room)
+    room.field_magic = None
+    room.field_magic_owner = None
+
+    assert server.enter_battle_phase({'room_id': room.id, 'player_id': P1})['status'] == 'success'
+    assert room.attacks_remaining == 6, (
+        f'进入战斗阶段必须按当前规则重算，实际 {room.attacks_remaining}')
+    # 真的能开炮
+    res = server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 5, 'y': 5})
+    assert res.get('status') == 'success', f'应能正常攻击，实际 {res}'
 
 
 # ---------------------------------------------------------------------------

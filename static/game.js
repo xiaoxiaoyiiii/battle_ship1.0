@@ -3043,6 +3043,15 @@ function setupSocketListeners() {
         }
     });
 
+    // 盾牌挡下一击：必须明确提示，否则双方只看到一次普通"命中"，
+    // 防守方会以为自己的船挨了一炮（其实毫发无伤）。
+    socket.on('shield_absorbed', (data) => {
+        const mine = data && data.player === gameState.playerId;
+        showMessage(mine ? '你的战舰用护盾挡下了这次攻击'
+                         : '对方的战舰用护盾挡下了这次攻击',
+                    { type: 'info' });
+    });
+
     // 新增：监听战舰数更新事件
     socket.on('ships_updated', (data) => {
         // 更新双方剩余战舰数
@@ -3245,9 +3254,27 @@ function initGameBoards() {
             const ownShip = gameState.ships.find(ship => ship.positions.some(pos => pos.x === x && pos.y === y));
             if (ownShip) {
                 cell.classList.add('ship');
+                // 已沉的船：沉船仍留在 ships 列表里，服务端用 alive 标记死活，
+                // 前端据此灰掉（否则棋盘上看不出哪艘已经没了）
+                if (ownShip.alive === false) {
+                    cell.classList.add('sunk');
+                    cell.title = '这艘船已被击沉';
+                }
                 if (ownShip.frozen) {
                     cell.classList.add('frozen');
                     cell.title = '这艘船被冻结了：本回合不提供攻击次数';
+                }
+                // 盾牌：仁王之盾一次性挡伤。不画出来的话，盾被打掉时玩家
+                // 只会看到一次普通"命中"，还以为自己掉了一艘船。
+                if (ownShip.shield) {
+                    cell.classList.add('shielded');
+                    cell.title = '这艘船带护盾，可抵挡一次伤害';
+                }
+                // 无敌：钢筋铁骨期间打不沉。不画出来的话，玩家会朝无敌船
+                // 白白浪费炮弹，也不知道自己这回合的船其实打不沉。
+                if (ownShip.invincible) {
+                    cell.classList.add('invincible');
+                    cell.title = '这艘船处于无敌状态，本回合打不沉';
                 }
             }
 

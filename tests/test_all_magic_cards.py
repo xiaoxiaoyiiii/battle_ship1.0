@@ -1461,15 +1461,38 @@ def test_mingzhi_fails_when_nothing_to_bury(room):
 # 火力全开
 # ---------------------------------------------------------------------------
 def test_huoli_double_attacks_in_battle_phase(room):
-    """本大回合攻击阶段攻击次数翻倍"""
+    """本大回合攻击阶段攻击次数翻倍（准备阶段打出 → 进战斗时翻倍）"""
     room.players[P1].ships = [ship((0, 0)), ship((1, 1))]
     room.players[P1].remaining_ships = 2
-    apply(room, P1, '火力全开')
+    # 必须在【准备阶段】出牌：2026-09-14 起，战斗阶段打出会当场翻倍并消费标记
+    # （否则速阶1在战斗阶段打出时，enter_battle_phase 早已过去，标记永远没人读）
     room.current_phase = 'preparation'
     room.attacks_remaining = 2
+    apply(room, P1, '火力全开')
+    assert room.players[P1].effect_flags.double_attacks is True, '准备阶段只挂标记'
     server.enter_battle_phase({'room_id': room.id, 'player_id': P1})
     assert room.attacks_remaining == 4
     assert room.players[P1].effect_flags.double_attacks is False
+
+
+def test_huoli_in_battle_phase_doubles_immediately(room):
+    """战斗阶段打出火力全开 → 当场翻倍，不能等一个永远不会再来的阶段转换。
+
+    实测缺陷（2026-09-14 修复前）：战斗阶段打出后 attacks 仍是 6 不翻倍，
+    标记一直挂着没人读，玩家白扔一张牌还以为生效了。
+    """
+    room.players[P1].ships = [ship((0, 0)), ship((1, 1)), ship((2, 2))]
+    room.players[P1].remaining_ships = 3
+    room.current_phase = 'preparation'      # 必须先处于准备阶段，enter_battle_phase 才会执行
+    server.enter_battle_phase({'room_id': room.id, 'player_id': P1})
+    assert room.current_phase == 'battle'
+    # 进战斗阶段无条件按当前规则重算：3 艘活船 = 3 次
+    assert room.attacks_remaining == 3
+
+    res = apply(room, P1, '火力全开')
+    assert res.success is True
+    assert room.attacks_remaining == 6, '战斗阶段打出应立即翻倍'
+    assert room.players[P1].effect_flags.double_attacks is False, '标记应已消费'
 
 
 # ---------------------------------------------------------------------------

@@ -468,12 +468,14 @@ def test_papal_attack_elimination_records_match(room, events):
 
 def test_huoli_full_fire_doubles_in_battle_phase(room):
     """火力全开：进入战斗阶段时攻击次数翻倍（flag 路径）。"""
-    server.apply_magic_effect(room, P1, card('火力全开'), {})
-    assert room.players[P1].effect_flags.double_attacks is True
+    # 必须在【准备阶段】出牌：2026-09-14 起，战斗阶段打出会当场翻倍并消费标记
+    # （否则速阶1在战斗阶段打出时，enter_battle_phase 早已过去，标记永远没人读）
     room.current_phase = 'preparation'
     room.current_attacker = P1
     room.players[P1].remaining_ships = 3
     room.attacks_remaining = 3
+    server.apply_magic_effect(room, P1, card('火力全开'), {})
+    assert room.players[P1].effect_flags.double_attacks is True
 
     res = server.enter_battle_phase({'room_id': room.id, 'player_id': P1})
     assert res['status'] == 'success'

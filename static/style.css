@@ -805,6 +805,50 @@ input:focus, select:focus {
     color: #bfe6ff;
     pointer-events: none;
 }
+/* 护盾中的己方战舰（仁王之盾）：一次性挡伤。
+   不画出来的话，盾被打掉时玩家只会看到一次普通"命中"，以为船受伤了。 */
+.cell.ship.shielded:not(.hit) {
+    border-color: #ffd76f;
+    box-shadow: inset 0 0 10px 2px rgba(255, 215, 111, 0.55);
+}
+.cell.ship.shielded:not(.hit)::before {
+    content: '🛡';
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: clamp(10px, 2.2vw, 15px);
+    pointer-events: none;
+}
+/* 无敌中的己方战舰（钢筋铁骨）：本回合打不沉。
+   不画出来的话，玩家会朝无敌船白费炮弹。 */
+.cell.ship.invincible:not(.hit) {
+    border-color: #c08cff;
+    box-shadow: inset 0 0 10px 2px rgba(192, 140, 255, 0.55);
+}
+.cell.ship.invincible:not(.hit)::before {
+    content: '★';
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: clamp(10px, 2.2vw, 15px);
+    color: #e3d0ff;
+    pointer-events: none;
+}
+/* 已被击沉的己方战舰：沉船仍留在 ships 列表里，靠 alive=false 灰掉 */
+.cell.ship.sunk:not(.hit) {
+    opacity: 0.35;
+    filter: grayscale(0.8);
+}
+/* 冻结 + 护盾/无敌 同时存在时，冻结图标优先（它影响攻击次数，信息量更大） */
+.cell.ship.frozen.shielded::before,
+.cell.ship.frozen.invincible::before {
+    content: '❄';
+    color: #bfe6ff;
+}
 .cell.hit {
     background: var(--hit-fire) !important;
     color: #fff;

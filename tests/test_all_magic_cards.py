@@ -341,11 +341,34 @@ def test_zengyuan_rejects_attacked_cell(room):
     assert res['status'] == 'error'
 
 
-def test_zengyuan_full_board_rejected(room):
+def test_zengyuan_no_ship_cap(room):
+    """增援没有"6 艘上限"（作者确认：船数只受棋盘格数限制）。
+
+    2026-09-14 规则修正：原先 remaining_ships >= 6 会直接判失败，
+    但那时牌已经离手（handle_use_magic_card 先扣牌再结算），玩家被白吞一张卡
+    —— 实测玩家报的"弹出船数已达上限无法使用，但增援卡牌被吞掉了"。
+    """
     room.players[P1].ships = [ship((i, 0)) for i in range(6)]
     room.players[P1].remaining_ships = 6
     res = apply(room, P1, '增援')
-    assert res.success is False
+    assert res.success is True, '不该再有船数上限'
+    assert room.magic_temp_data.get('pending_placement', {}).get('kind') == 'reinforce', (
+        '应进入放置流程，而不是拒绝')
+
+
+def test_zengyuan_can_exceed_six_ships(room):
+    """真的能摆到 7 艘（只受棋盘格数限制）。"""
+    room.players[P1].ships = [ship((i, 0)) for i in range(6)]
+    room.players[P1].remaining_ships = 6
+    room.players[P2].remaining_ships = 3
+    room.current_attacker = P1
+    room.attacks_remaining = 6
+    apply(room, P1, '增援')
+
+    out = server.handle_confirm_reinforcement(
+        {'room_id': room.id, 'player_id': P1, 'position': {'x': 3, 'y': 3}})
+    assert out.get('status') == 'success', out
+    assert room.players[P1].remaining_ships == 7, '应能超过 6 艘'
 
 
 def test_zengyuan_updates_attacks_immediately(room):

@@ -233,12 +233,16 @@ def test_normal_heal_still_works(room):
     assert p.sunken_ships == []
 
 
-def test_heal_rejects_when_full(room):
-    """反证：船满时仍拒绝疗愈。"""
+def test_heal_no_ship_cap(room):
+    """反证：疗愈也没有"6 艘上限"（作者确认：船数只受棋盘格数限制）。
+
+    没有沉船时依然会被拒 —— 但理由必须是"没有可复活的战舰"，而不是船数上限。
+    """
     p = room.players[P1]
     res = server.apply_magic_effect(room, P1, card('疗愈'), {})
     assert res.success is False
-    assert '上限' in res.message
+    assert '上限' not in res.message, f'不该再提船数上限，实际：{res.message}'
+    assert '没有可复活' in res.message
 
 
 def test_heal_rejects_without_sunken(room):

@@ -3409,6 +3409,27 @@ def _notify_treasure_hunter(room, times=1, exclude_player_id=None):
     return total
 
 
+def _clear_attacks_on_cells(room, positions):
+    """把指定格子从双方的攻击历史里移除。
+
+    复活 / 增援 / 重新部署之后必须做这一步，否则会出两种问题：
+      · 前端仍按旧的攻击记录把这些格子画成"已命中"，玩家看到刚放上去的船
+        挂着一个 ✕；
+      · handle_attack 会以"你已经攻击过这个位置了"拒绝对方再打这里 ——
+        这艘船永远打不沉，变成幽灵船，对手永远无法获胜。
+
+    原先只有 _revive_sunken_ships 做了这一步，放置流程（增援/复活/绝处逢生/
+    神机妙算）全都漏了 —— 实测玩家报的"摆完后格子状态不对"就是这个。
+    """
+    cells = {(p.x, p.y) for p in (positions or [])}
+    if not cells:
+        return
+    for pid in room.players:
+        room.players[pid].attacks = [
+            a for a in room.players[pid].attacks if (a.x, a.y) not in cells
+        ]
+
+
 def _revive_sunken_ships(room, player, count):
     """把 count 艘已沉没的战舰放回棋盘（疗愈 / 神机妙算等复活类效果）。
 
@@ -3443,11 +3464,7 @@ def _revive_sunken_ships(room, player, count):
         revived.hits = []
         for pos in revived.positions:
             pos.hit = False
-        cells = {(p.x, p.y) for p in revived.positions}
-        for pid in room.players:
-            room.players[pid].attacks = [
-                a for a in room.players[pid].attacks if (a.x, a.y) not in cells
-            ]
+        _clear_attacks_on_cells(room, revived.positions)
         player.remaining_ships += 1
         revived_any += 1
     # 八方来财：魔法卡造成的船数增加（疗愈 / 神机妙算复活）属于主动变化，
@@ -4326,6 +4343,7 @@ def handle_confirm_reinforcement(data):
         if revived not in caster.ships:
             caster.ships.append(revived)
         caster.remaining_ships += 1
+        _clear_attacks_on_cells(room, revived.positions)
         msg = f'神机妙算：战舰已重新部署到 ({x},{y})'
     elif pending['kind'] == 'revive':
         if not caster.sunken_ships:
@@ -4344,15 +4362,20 @@ def handle_confirm_reinforcement(data):
         if revived not in caster.ships:
             caster.ships.append(revived)
         caster.remaining_ships += 1
+        _clear_attacks_on_cells(room, revived.positions)
         msg = f'复活战舰已部署到 ({x},{y})'
     elif pending['kind'] == 'last_stand':
         # 绝处逢生的"唯一一艘战舰"：牺牲掉的船留在沉船堆，这里放一艘新的
-        caster.ships.append(PlayerShip(positions=[Position(x=x, y=y)], hits=[]))
+        new_ship = PlayerShip(positions=[Position(x=x, y=y)], hits=[])
+        caster.ships.append(new_ship)
         caster.remaining_ships += 1
+        _clear_attacks_on_cells(room, new_ship.positions)
         msg = f'绝处逢生：唯一一艘战舰已部署到 ({x},{y})'
     else:
-        caster.ships.append(PlayerShip(positions=[Position(x=x, y=y)], hits=[]))
+        new_ship = PlayerShip(positions=[Position(x=x, y=y)], hits=[])
+        caster.ships.append(new_ship)
         caster.remaining_ships += 1
+        _clear_attacks_on_cells(room, new_ship.positions)
         msg = f'增援战舰已部署到 ({x},{y})'
 
     pending['remaining'] -= 1
@@ -4992,14 +5015,25 @@ def _placement_error(room, player_id, x, y, allow_cells=None, ignore_sunken=Fals
     return None
 
 
-def _placement_blocked_cells(room, player_id):
-    """列出该玩家棋盘上不可放置的格子（已被攻击 / 己方占用 / 神威扣洞）。"""
+def _placement_blocked_cells(room, player_id, ignore_sunken=False):
+    """列出该玩家棋盘上不可放置的格子（已被攻击 / 己方占用 / 神威扣洞）。
+
+    ⚠️ 必须与 _placement_error 的口径一致 —— 两套独立实现已经漂移过一次：
+    这里把【所有】己方船（含沉船）的位置都算作占用，而 _placement_error 在
+    ignore_sunken=True 时会跳过沉船，于是神机妙算重新部署时空格被误画成灰色，
+    玩家以为"只能摆在原本沉船的地方"。
+
+    ignore_sunken：跳过已沉的船（它们的格子其实是空的）。
+    """
     blocked = set()
     opponent_id = _opponent_of(room, player_id)
     if opponent_id:
         for a in room.players[opponent_id].attacks:
             blocked.add((a.x, a.y))
-    for ship in room.players[player_id].ships:
+    owner = room.players[player_id]
+    for ship in owner.ships:
+        if ignore_sunken and not _is_ship_alive(owner, ship):
+            continue
         for pos in ship.positions:
             blocked.add((pos.x, pos.y))
     for h in _shenwei_holes(room):
@@ -5026,9 +5060,12 @@ def _emit_placement_request(room, player_id):
         payload['allowed'] = room.game_effects.get('last_stand_cells') or []
     elif p['kind'] == 'shenji_redeploy':
         # 神机妙算：原位置（即便被对方打过）+ 对方未打过的空格都可选。
-        # blocked 里要去掉这些原位置，否则前端会把它们画成不可点。
+        # ⚠️ blocked 必须按"沉船不占位"的口径重算，不能沿用默认那份：
+        # 默认口径把【所有】己方船（含沉船）都算作占用，于是旧沉船的位置
+        # 也会被画成灰色 —— 实测玩家以为"只能摆在原本沉船的地方"。
         allow = {(int(a[0]), int(a[1]))
                  for a in (room.game_effects.get('shenji_redeploy_cells') or [])}
+        payload['blocked'] = _placement_blocked_cells(room, player_id, ignore_sunken=True)
         payload['allowed'] = [{'x': x, 'y': y} for (x, y) in sorted(allow)]
         payload['blocked'] = [b for b in payload['blocked']
                               if (b['x'], b['y']) not in allow]
@@ -6273,12 +6310,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['message'] = '已牺牲全部战舰，请在所有原本有战舰的格子上选择一格放置唯一一艘战舰'
 
     elif card.name == '死者苏生':
-        # 复活一艘船：必须有已阵亡的战舰，否则不可用
-        if caster.remaining_ships >= 6:
-            result['success'] = False
-            result['message'] = '战舰数量已达上限'
-            return result
-
+        # 复活一艘船：必须有已阵亡的战舰，否则不可用。
+        # 没有"6 艘上限"（作者确认：船数只受棋盘格数限制）。
         if not caster.sunken_ships:
             result['success'] = False
             result['message'] = '没有可复活的战舰'
@@ -6289,20 +6322,16 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['message'] = '请选择复活战舰的部署位置（未被攻击过的空格）'
 
     elif card.name == '疗愈':
-        # 复活至多两艘被击杀的船：必须有沉船，逐艘选择位置
-        if caster.remaining_ships >= 6:
-            result['success'] = False
-            result['message'] = '战舰数量已达上限'
-            return result
-
+        # 复活至多两艘被击杀的船（原地复活）。
+        # 没有"6 艘上限"（作者确认：船数只受棋盘格数限制）。
         if not caster.sunken_ships:
             result['success'] = False
             result['message'] = '没有可复活的战舰'
             return result
 
         # 卡面："选定自己至多两艘被击杀的船并将他们在原地复活。"
-        # 原先走的是"选一个未被打过的新格子"的放置流程，与卡面不符。
-        count = min(2, len(caster.sunken_ships), 6 - caster.remaining_ships)
+        # 原先走的是"选一个未打过的空格"的放置流程，与卡面不符。
+        count = min(2, len(caster.sunken_ships))
         revived = _revive_sunken_ships(room, caster, count)
         _emit_ships_updated(room)
         _emit_player_ships(room, caster_id)
@@ -6539,14 +6568,13 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result.message = '本回合对方魔法卡被无效化'
 
     elif card.name == '增援':
-        # 召唤一艘战舰：等待玩家选择放置位置
-        if caster.remaining_ships >= 6:
-            result.success = False
-            result.message = '战舰数量已达上限'
-        else:
-            _start_placement(room, caster_id, 'reinforce', 1)
-            result.temp_data_id = 'reinforcement_choice'
-            result.message = '请选择增援战舰的部署位置（未被攻击过的空格）'
+        # 召唤一艘战舰：等待玩家选择放置位置。
+        # ⚠️ 没有"6 艘上限"这种东西 —— 作者确认船数只受棋盘格数（36 格）限制。
+        # 旧实现在 remaining_ships >= 6 时直接拒绝，但那时牌已经离手
+        # （handle_use_magic_card 先扣牌再结算），玩家被白吞一张卡。
+        _start_placement(room, caster_id, 'reinforce', 1)
+        result.temp_data_id = 'reinforcement_choice'
+        result.message = '请选择增援战舰的部署位置（未被攻击过的空格）'
 
     else:
         result.success = False

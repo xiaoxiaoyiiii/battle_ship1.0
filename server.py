@@ -2436,7 +2436,10 @@ def end_turn(data):
 
                 # 当剩余回合归0时，执行极限增援结算
                 if remaining_turns <= 0:
-                    # 执行极限增援效果：船数少的一方获胜
+                    # 卡面："船数少的一方直接获胜" —— 只说少的一方。
+                    # 船数【相同】时没有"少的一方"，按作者裁定：不结算、继续对局。
+                    # （旧实现用 random.choice 随机选一个获胜者，等于把胜负交给运气，
+                    #   而且玩家/AI 双方看到的结果不透明，实测被当成"双方都被判胜"。）
                     player1_id = list(room.players.keys())[0]
                     player2_id = list(room.players.keys())[1]
                     player1_ships = room.players[player1_id].remaining_ships
@@ -2447,9 +2450,12 @@ def end_turn(data):
                     elif player2_ships < player1_ships:
                         winner = player2_id
                     else:
-                        # 船数相同，随机选择获胜者或继续游戏
-                        # 按照需求，当倒计回合归0时直接判定，所以即使船数相同也要选择
-                        winner = random.choice([player1_id, player2_id])
+                        # 平局：不结算，把这张卡作废（避免每回合反复判定）
+                        room.game_effects.pop('reinforcement_check', None)
+                        emit('message', {
+                            'text': '极限增援结算时双方船数相同，无人获胜，效果结束'
+                        }, room=room_id)
+                        return {'status': 'success'}
 
                     # 统一收尾：记日志 + 记战绩 + 广播 game_over
                     # （原先这条终局路径只置状态不写战绩）
@@ -2521,7 +2527,8 @@ def end_turn(data):
                             # "重新部署"是玩家的主动选择，必须给摆放界面。
                             # 旧实现直接调 _revive_sunken_ships（原地复活、无交互），
                             # 实测玩家反馈"预言成功之后没有出现放置界面"。
-                            _begin_shenji_redeploy(room, p_id, pred)
+                            _begin_shenji_redeploy(room, p_id, pred,
+                                                   already_sunken=saved.get('sunken', 0))
                             del room.game_effects[f'prediction_initial_{p_id}']
                         room.players[p_id].effect_flags.prediction = 0
                     else:
@@ -4252,10 +4259,20 @@ def handle_confirm_reinforcement(data):
 
     caster = room.players[player_id]
     if pending['kind'] == 'shenji_redeploy':
-        if not caster.sunken_ships:
+        # 从登记好的"本大回合新沉的船"里取一艘（不能用 pop()：沉船堆里还混着
+        # 更早回合沉的船，那些不属于"原本会减少的船"）
+        targets = room.game_effects.get('shenji_redeploy_ships') or []
+        revived = None
+        while targets:
+            cand = targets.pop(0)
+            if cand in caster.sunken_ships:
+                revived = cand
+                break
+        room.game_effects['shenji_redeploy_ships'] = targets
+        if revived is None:
             _finish_placement(room, player_id, 'shenji_redeploy')
             return {'status': 'error', 'message': '没有可重新部署的战舰'}
-        revived = caster.sunken_ships.pop()
+        caster.sunken_ships.remove(revived)
         # 与复活类一致：清空命中并移到新位置，否则复活后打不沉（幽灵船）
         revived.positions = [Position(x=x, y=y)]
         revived.hits = []
@@ -4978,28 +4995,36 @@ def _start_placement(room, caster_id, kind, count):
     _emit_placement_request(room, caster_id)
 
 
-def _begin_shenji_redeploy(room, player_id, count):
+def _begin_shenji_redeploy(room, player_id, count, already_sunken=0):
     """神机妙算预言成功：让玩家逐艘重新部署"原本会减少的那些船"。
 
     卡面：「那些原本会减少的船不会减少并在【原位置或者对方没有打过的位置重新部署】。」
     —— "重新部署"是玩家的主动选择，不能替他决定。
 
-    这些船此刻还躺在 sunken_ships 里（击沉只减 remaining_ships、不移出 ships，
-    但预言成功时它们已被记为沉船）。玩家每点一个格子就取一艘出来放上去。
+    ⚠️ 只算【本次判定所属的那个大回合内】沉的船（作者确认）。
+    上一回合就沉掉的船不属于"原本会减少的船"，不该被复活 ——
+    因此用 already_sunken（预言生效那一刻的沉船数）把旧沉船排除在外。
+
+    这些船此刻还躺在 sunken_ships 里。玩家每点一个格子就取一艘出来放上去。
     可选格子 = 各自的原位置（豁免"已被对方打过"）∪ 对方未打过的空格。
     """
     player = room.players.get(player_id)
     if player is None:
         return 0
-    n = min(int(count), len(player.sunken_ships))
+    sunken = list(getattr(player, 'sunken_ships', []) or [])
+    # 本大回合新沉的那些（sunken_ships 是"越早沉的越靠前"的追加顺序）
+    fresh = sunken[max(0, int(already_sunken)):]
+    n = min(int(count), len(fresh))
     if n <= 0:
         return 0
     # 把候选船的原位置记下来，供放置校验豁免
     original_cells = []
-    for ship in player.sunken_ships[-n:]:
+    for ship in fresh[:n]:
         for pos in ship.positions:
             original_cells.append([pos.x, pos.y])
+    # 标记这几艘是"本次要重新部署"的，放置时按顺序取
     room.game_effects['shenji_redeploy_cells'] = original_cells
+    room.game_effects['shenji_redeploy_ships'] = fresh[:n]
     _start_placement(room, player_id, 'shenji_redeploy', n)
     return n
 
@@ -5012,6 +5037,7 @@ def _finish_placement(room, player_id, kind):
         room.game_effects.pop('last_stand_cells', None)
     if kind == 'shenji_redeploy':
         room.game_effects.pop('shenji_redeploy_cells', None)
+        room.game_effects.pop('shenji_redeploy_ships', None)
     emit('placement_done', {'kind': kind}, to=room.players[player_id].sid)
 
     if kind == 'last_stand':

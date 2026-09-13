@@ -5258,13 +5258,26 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             result.message = '无法抽取卡牌'
 
     elif card.name == '无中生有':
-        # 抽两张牌，本回合双方无法获得魔法卡
-        card1 = room.draw_card(caster_id)
-        card2 = room.draw_card(caster_id)
+        # 抽两张牌，本回合双方无法获得魔法卡。
+        #
+        # ⚠️ draw_card 可能返回 None（牌堆已空 / 已被 no_draw 挡下 / 摸到重名牌
+        # 自动进弃牌堆），旧实现无论实际抽到几张都报"抽了2张牌"——
+        # 实测玩家因此以为卡坏了（"手牌只有无中生有时只摸上来一张"，
+        # 真实原因是全局共享的 43 张牌堆快摸完了）。
+        # 这里按实际抽到的张数给提示，让玩家能区分"规则限制"和"牌堆空了"。
+        drawn = 0
+        for _ in range(2):
+            if room.draw_card(caster_id) is not None:
+                drawn += 1
         # 设置禁止抽卡标记
         room.players[caster_id].effect_flags.no_draw = True
         room.players[opponent_id].effect_flags.no_draw = True
-        result.message = '抽了2张牌，本回合双方无法获得魔法卡'
+        if drawn == 2:
+            result.message = '抽了2张牌，本回合双方无法获得魔法卡'
+        elif drawn == 1:
+            result.message = '只抽到1张牌（牌堆不足），本回合双方无法获得魔法卡'
+        else:
+            result.message = '牌堆已空，没有抽到牌；本回合双方仍无法获得魔法卡'
 
     elif card.name == '极限增援':
         # 两个大回合后，船少的一方获胜，已修复

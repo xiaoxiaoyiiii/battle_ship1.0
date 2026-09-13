@@ -206,38 +206,114 @@ def test_no_draw_without_treasure_hunter(room):
 
 
 def test_notify_helper_is_noop_without_flag(room):
-    """辅助函数本身：未持卡返回 0 且不摸牌。"""
+    """辅助函数本身：无人持卡时不摸牌。"""
     room.magic_deck = [card(n) for n in DECK]
-    assert server._notify_treasure_hunter(room, P1, 1) == 0
+    assert server._notify_treasure_hunter(room, 1) == 0
     assert room.players[P1].magic_hand == []
 
 
 def test_notify_helper_draws_for_holder(room):
     """辅助函数本身：持卡则摸 times 张。"""
     setup(room)
-    assert server._notify_treasure_hunter(room, P1, 3) == 3
+    assert server._notify_treasure_hunter(room, 3) == 3
     assert len(room.players[P1].magic_hand) == 3
 
 
 def test_notify_helper_emits_message(room, events):
     """摸牌要有提示，玩家才知道是八方来财生效。"""
     setup(room)
-    server._notify_treasure_hunter(room, P1, 2)
+    server._notify_treasure_hunter(room, 2)
     texts = [d.get('text', '') for e, d, to, r in events if e == 'message']
     assert any('八方来财' in t for t in texts), f'应有提示，实际：{texts}'
 
 
-def test_notify_helper_only_affects_holder(room):
-    """对手的船数变化不会让持卡者摸牌（各算各的）。"""
+def test_notify_helper_hits_every_holder(room):
+    """★ 判定对象是【全场的船数变化】，摸牌的是【持卡者】—— 两者解耦。
+
+    双方都持八方来财时，一次船数变化两人各摸一张。
+    """
     setup(room)
-    room.players[P2].effect_flags.treasure_hunter = False
-    server._notify_treasure_hunter(room, P2, 1)
-    assert room.players[P2].magic_hand == [], '未持卡者不该摸牌'
+    room.players[P2].effect_flags.treasure_hunter = True
+    assert server._notify_treasure_hunter(room, 1) == 2, '两位持卡者各摸一张'
+    assert len(room.players[P1].magic_hand) == 1
+    assert len(room.players[P2].magic_hand) == 1
+
+
+def test_notify_helper_excludes_attacker_holder(room):
+    """"己方击败对方的船不算"：攻击方自己持卡时被排除，被击沉方照常摸。"""
+    room.magic_deck = [card(n) for n in DECK]
+    room.players[P1].effect_flags.treasure_hunter = True   # 攻击方持卡
+    room.players[P2].effect_flags.treasure_hunter = True   # 被击沉方也持卡
+
+    assert server._notify_treasure_hunter(room, 1, exclude_player_id=P1) == 1
+    assert room.players[P1].magic_hand == [], '攻击方（己方击败对方）不摸'
+    assert len(room.players[P2].magic_hand) == 1, '被击沉方照常摸'
 
 
 # ---------------------------------------------------------------------------
-# 主动 / 被动 的边界
+# 作者澄清的语义：判定对象是【全场】的船数主动变化，摸牌的是持卡者
 # ---------------------------------------------------------------------------
+def test_opponent_revive_also_triggers_holder(room):
+    """★ 对方用死者苏生复活【对方自己】的船 → 持卡者也要摸牌。
+
+    卡面「场上的战舰数目主动发生了变化」说的是全场；
+    "己方击败对方的船不算"只排除【攻击造成的减少】。
+    """
+    setup(room)                      # 只有 P1 持卡
+    # 让 P2 有沉船可复活
+    sunk = room.players[P2].ships[0]
+    sunk.hits = list(sunk.positions)
+    room.players[P2].sunken_ships = [sunk]
+    room.players[P2].remaining_ships = 5
+
+    server._revive_sunken_ships(room, room.players[P2], 1)
+
+    hand = [c.name for c in room.players[P1].magic_hand]
+    assert len(hand) == 1, f'对方复活自己的船，持卡者应摸一张，实际：{hand}'
+
+
+def test_opponent_reinforce_also_triggers_holder(room):
+    """对方用增援 → 持卡者也要摸牌（非攻击造成的船数增加）。"""
+    setup(room)
+    room.players[P2].remaining_ships = 5      # 腾出位置
+    room.players[P2].ships = room.players[P2].ships[:5]
+
+    server._notify_treasure_hunter(room, 1)   # 放置流程里的调用点（不含变化方）
+
+    assert len(room.players[P1].magic_hand) == 1
+
+
+def test_holder_attack_sinking_opponent_does_not_draw(room):
+    """★ 卡面排除项：持卡者【自己】开炮击沉对方的船 → 不摸牌。"""
+    setup(room)
+    room.current_attacker = P1
+    server._apply_ship_sunk_effects(
+        room, room.id, P1, P2, room.players[P2].ships[5], 5, 5)
+
+    assert room.players[P1].magic_hand == [], (
+        f'"己方击败对方的船不算"，实际摸了：{[c.name for c in room.players[P1].magic_hand]}')
+
+
+def test_opponent_attack_sinking_holder_does_draw(room):
+    """★ 对方开炮击沉【持卡者自己】的船 → 持卡者要摸牌。"""
+    setup(room)
+    room.current_attacker = P2
+    server._apply_ship_sunk_effects(
+        room, room.id, P2, P1, room.players[P1].ships[5], 5, 0)
+
+    assert len(room.players[P1].magic_hand) == 1, (
+        '是对方击败了我方，属于主动变化')
+
+
+def test_magic_sinking_holder_by_self_still_draws(room):
+    """持卡者用【魔法卡】击沉对方的船 → 仍要摸牌。
+
+    卡面排除的是"击败"（攻击），魔法卡造成的变化照算。
+    """
+    setup(room)
+    server._apply_ship_loss_linkage(room, P1, P2, count=1)
+    assert len(room.players[P1].magic_hand) == 1, (
+        '魔法卡不是"击败"，不该被排除')
 def test_initial_placement_is_not_a_change(room):
     """开局布船不算"主动变化"（那是初始状态，不是变化）。"""
     setup(room)

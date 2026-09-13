@@ -970,6 +970,9 @@ function applyRoomSync(data) {
             total: data.pending_placement.total,
             placed: data.pending_placement.placed,
             blocked: data.pending_placement_blocked || [],
+            // 神机妙算 / 绝处逢生的合法格：重连后面板要能把这些格子重新点亮，
+            // 否则玩家回来发现"原位置点不动了"
+            allowed: data.pending_placement_allowed || [],
         });
     }
     if (data.field_magic) gameState.fieldMagic = data.field_magic;
@@ -5187,6 +5190,8 @@ function showPlacementPrompt(data) {
     data = data || {};
     const isRevive = data.kind === 'revive';
     const isLastStand = data.kind === 'last_stand';
+    // 神机妙算预言成功：把"原本会减少的船"重新部署（原位置 或 对方未打过的格子）
+    const isShenji = data.kind === 'shenji_redeploy';
     const total = data.total || 1;
     const placed = data.placed || 0;
     const remaining = (data.remaining != null) ? data.remaining : 1;
@@ -5195,13 +5200,16 @@ function showPlacementPrompt(data) {
     if (existing) existing.remove();
 
     const title = isLastStand ? '绝处逢生·放置唯一一艘战舰'
-        : (isRevive ? '复活战舰·选择部署位置' : '增援战舰·选择部署位置');
+        : (isShenji ? '神机妙算·预言成功，重新部署战舰'
+            : (isRevive ? '复活战舰·选择部署位置' : '增援战舰·选择部署位置'));
     const step = total > 1 ? `（第 ${placed + 1}/${total} 艘）` : '';
     const hint = isLastStand
         ? `牺牲了全部战舰后，只能在${step}原本有自己战舰的格子（亮色）上放置唯一一艘。`
-        : (isRevive
-            ? `这张卡会把阵亡的战舰重新部署到你的棋盘上。${step}点一个亮色格子选中，再点「确认」。灰色格子不能用（对方打过 / 已占用 / 被神威扣掉）。`
-            : `这张卡会给你补充一艘新战舰。${step}点一个亮色格子选中，再点「确认」。灰色格子不能用（对方打过 / 已占用 / 被神威扣掉）。`);
+        : (isShenji
+            ? `预言成功，这些战舰不会沉没。${step}可以把它们放回原位置（亮色格子），或者放到对方没有打过的空格。点一个亮色格子选中，再点「确认」。`
+            : (isRevive
+                ? `这张卡会把阵亡的战舰重新部署到你的棋盘上。${step}点一个亮色格子选中，再点「确认」。灰色格子不能用（对方打过 / 已占用 / 被神威扣掉）。`
+                : `这张卡会给你补充一艘新战舰。${step}点一个亮色格子选中，再点「确认」。灰色格子不能用（对方打过 / 已占用 / 被神威扣掉）。`));
 
     const prompt = document.createElement('div');
     prompt.id = 'placement-prompt';

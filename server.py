@@ -2516,9 +2516,16 @@ def end_turn(data):
                         saved = room.game_effects[f'prediction_initial_{p_id}']
                         diff = len(player.sunken_ships) - saved['sunken']
                         if diff == pred:
-                            # 预测成功：把减少的船恢复（仍在ships中的不重复加入）
-                            _revive_sunken_ships(room, player, pred)
+                            # 预言成功：卡面是「那些原本会减少的船不会减少并在
+                            # 【原位置或者对方没有打过的位置重新部署】」——
+                            # "重新部署"是玩家的主动选择，必须给摆放界面。
+                            # 旧实现直接调 _revive_sunken_ships（原地复活、无交互），
+                            # 实测玩家反馈"预言成功之后没有出现放置界面"。
+                            _begin_shenji_redeploy(room, p_id, pred)
                             del room.game_effects[f'prediction_initial_{p_id}']
+                        room.players[p_id].effect_flags.prediction = 0
+                    else:
+                        # 快照缺失（旧对局/异常中断）：退回原地复活，至少不吞效果
                         room.players[p_id].effect_flags.prediction = 0
 
             # 大回合结束（重新猜拳）：本大回合内的所有效果到此为止。
@@ -3933,9 +3940,13 @@ def _build_room_sync(room, player_id: str) -> dict:
             and (room.magic_temp_data.get('pending_placement') or {}).get('caster') == player_id
             else []
         ),
-        # 绝处逢生的合法格（只允许放在原本有战舰的位置）
+        # 放置流程的"必须放这些格"名单：
+        #   · 绝处逢生      → last_stand_cells（只能放原本有战舰的位置）
+        #   · 神机妙算重新部署 → shenji_redeploy_cells（原位置即便被对方打过也可选）
+        # 重连时必须一起下发，否则面板恢复后这些格子会被画成不可点。
         'pending_placement_allowed': (
-            room.game_effects.get('last_stand_cells') or []
+            (room.game_effects.get('shenji_redeploy_cells')
+             or room.game_effects.get('last_stand_cells') or [])
             if isinstance(room.magic_temp_data, dict)
             and (room.magic_temp_data.get('pending_placement') or {}).get('caster') == player_id
             else []
@@ -4224,13 +4235,37 @@ def handle_confirm_reinforcement(data):
                    for a in (room.game_effects.get('last_stand_cells') or [])}
         if (x, y) not in allowed:
             return {'status': 'error', 'message': '只能放在原本有自己战舰的格子上'}
+    elif pending['kind'] == 'shenji_redeploy':
+        # 神机妙算重新部署：允许"各自的原位置"（这些格子必然被对方打过）
+        # 或"对方没有打过的空格"。用 allow_cells 把原位置豁免掉。
+        # ignore_sunken：沉船还留在 ships 里，不跳过的话连原位都算被占用。
+        allow = {(int(a[0]), int(a[1]))
+                 for a in (room.game_effects.get('shenji_redeploy_cells') or [])}
+        err = _placement_error(room, player_id, x, y,
+                               allow_cells=allow, ignore_sunken=True)
+        if err:
+            return {'status': 'error', 'message': err}
     else:
         err = _placement_error(room, player_id, x, y)
         if err:
             return {'status': 'error', 'message': err}
 
     caster = room.players[player_id]
-    if pending['kind'] == 'revive':
+    if pending['kind'] == 'shenji_redeploy':
+        if not caster.sunken_ships:
+            _finish_placement(room, player_id, 'shenji_redeploy')
+            return {'status': 'error', 'message': '没有可重新部署的战舰'}
+        revived = caster.sunken_ships.pop()
+        # 与复活类一致：清空命中并移到新位置，否则复活后打不沉（幽灵船）
+        revived.positions = [Position(x=x, y=y)]
+        revived.hits = []
+        revived.shield = False
+        revived.invincible = False
+        if revived not in caster.ships:
+            caster.ships.append(revived)
+        caster.remaining_ships += 1
+        msg = f'神机妙算：战舰已重新部署到 ({x},{y})'
+    elif pending['kind'] == 'revive':
         if not caster.sunken_ships:
             _finish_placement(room, player_id, 'revive')
             return {'status': 'error', 'message': '没有可复活的战舰'}
@@ -4857,19 +4892,33 @@ def _finish_game(room, winner_id, loser_id, reason):
 
 
 # ============ 复活 / 增援 统一放置流程（2026-09-10） ============
-def _placement_error(room, player_id, x, y):
+def _placement_error(room, player_id, x, y, allow_cells=None, ignore_sunken=False):
     """返回该格子不可放置的原因；None 表示可放置。
-    规则：棋盘内、未被对方打过、不在神威扣洞内、未被己方船占用。"""
+    规则：棋盘内、未被对方打过、不在神威扣洞内、未被己方船占用。
+
+    allow_cells：一组 (x, y)，这些格子即使"已被对方打过"也放行。
+    神机妙算预言成功后的"重新部署"要用它 —— 卡面写的是
+    「在原位置**或者**对方没有打过的位置重新部署」，而原位置必然是被打过的，
+    不加这个豁免就会把"回原位"这条路整个堵死。
+
+    ignore_sunken：本项目的「击沉」只减 remaining_ships、**不会把船移出 ships**
+    （沉船留在列表里供复活回收）。所以占位检查会把"沉船的原位置"也算成已占用，
+    导致预言成功后连原位都放不回去。为 True 时跳过已沉的船。
+    """
     if not (0 <= x <= 5 and 0 <= y <= 5):
         return '坐标超出棋盘范围'
+    allow = allow_cells or set()
     opponent_id = _opponent_of(room, player_id)
     if opponent_id:
         opp_attacks = [(a.x, a.y) for a in room.players[opponent_id].attacks]
-        if (x, y) in opp_attacks:
+        if (x, y) in opp_attacks and (x, y) not in allow:
             return '该位置已被对方攻击过，不能放置'
     if _cell_in_shenwei_hole(room, player_id, x, y):
         return '该区域已被神威！扣掉，不能放置'
-    for ship in room.players[player_id].ships:
+    owner = room.players[player_id]
+    for ship in owner.ships:
+        if ignore_sunken and not _is_ship_alive(owner, ship):
+            continue          # 沉船不占位：它的位置本来就空着
         for pos in ship.positions:
             if pos.x == x and pos.y == y:
                 return '该位置已被己方战舰占用'
@@ -4908,16 +4957,51 @@ def _emit_placement_request(room, player_id):
     if p['kind'] == 'last_stand':
         # 只允许放在原本有战舰的格子：交给前端做高亮/禁点
         payload['allowed'] = room.game_effects.get('last_stand_cells') or []
+    elif p['kind'] == 'shenji_redeploy':
+        # 神机妙算：原位置（即便被对方打过）+ 对方未打过的空格都可选。
+        # blocked 里要去掉这些原位置，否则前端会把它们画成不可点。
+        allow = {(int(a[0]), int(a[1]))
+                 for a in (room.game_effects.get('shenji_redeploy_cells') or [])}
+        payload['allowed'] = [{'x': x, 'y': y} for (x, y) in sorted(allow)]
+        payload['blocked'] = [b for b in payload['blocked']
+                              if (b['x'], b['y']) not in allow]
+        payload['message'] = '预言成功：请选择这艘战舰重新部署的位置（原位置或对方未打过的格子）'
     emit('placement_request', payload, to=room.players[player_id].sid)
 
 
 def _start_placement(room, caster_id, kind, count):
-    """开启放置流程：kind='reinforce' 增援 / 'revive' 复活。"""
+    """开启放置流程：kind='reinforce' 增援 / 'revive' 复活 / 'shenji_redeploy' 神机妙算重新部署。"""
     room.magic_temp_data['pending_placement'] = {
         'caster': caster_id, 'kind': kind,
         'remaining': count, 'total': count, 'placed': 0,
     }
     _emit_placement_request(room, caster_id)
+
+
+def _begin_shenji_redeploy(room, player_id, count):
+    """神机妙算预言成功：让玩家逐艘重新部署"原本会减少的那些船"。
+
+    卡面：「那些原本会减少的船不会减少并在【原位置或者对方没有打过的位置重新部署】。」
+    —— "重新部署"是玩家的主动选择，不能替他决定。
+
+    这些船此刻还躺在 sunken_ships 里（击沉只减 remaining_ships、不移出 ships，
+    但预言成功时它们已被记为沉船）。玩家每点一个格子就取一艘出来放上去。
+    可选格子 = 各自的原位置（豁免"已被对方打过"）∪ 对方未打过的空格。
+    """
+    player = room.players.get(player_id)
+    if player is None:
+        return 0
+    n = min(int(count), len(player.sunken_ships))
+    if n <= 0:
+        return 0
+    # 把候选船的原位置记下来，供放置校验豁免
+    original_cells = []
+    for ship in player.sunken_ships[-n:]:
+        for pos in ship.positions:
+            original_cells.append([pos.x, pos.y])
+    room.game_effects['shenji_redeploy_cells'] = original_cells
+    _start_placement(room, player_id, 'shenji_redeploy', n)
+    return n
 
 
 def _finish_placement(room, player_id, kind):
@@ -4926,6 +5010,8 @@ def _finish_placement(room, player_id, kind):
     room.magic_temp_data.pop('pending_placement', None)
     if kind == 'last_stand':
         room.game_effects.pop('last_stand_cells', None)
+    if kind == 'shenji_redeploy':
+        room.game_effects.pop('shenji_redeploy_cells', None)
     emit('placement_done', {'kind': kind}, to=room.players[player_id].sid)
 
     if kind == 'last_stand':

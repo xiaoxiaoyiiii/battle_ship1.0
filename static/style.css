@@ -1433,6 +1433,199 @@ body.cool-effects-enabled .cell.cool-flash {
     z-index: 1000;
     pointer-events: none;
 }
+
+/* ===========================================================================
+   阶段转换的「优先权询问」弹窗
+   参照游戏王 YGO 的优先权确认：对方推进阶段前先问我要不要响应。
+   设计：金色 accent 表达"这是一个机会窗口"，倒计时做成圆环，
+   底部「拒绝所有阶段转换时点」做成开关（可随时切回）。
+   =========================================================================== */
+.priority-prompt {
+    position: fixed;
+    inset: 0;
+    z-index: 9000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(10, 20, 35, 0.45);
+    -webkit-backdrop-filter: blur(3px);
+    backdrop-filter: blur(3px);
+    animation: priorityFadeIn 0.18s ease-out;
+}
+@keyframes priorityFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+.priority-panel {
+    width: min(420px, 92vw);
+    max-height: 86vh;
+    overflow-y: auto;
+    padding: 22px 24px 18px;
+    border-radius: 18px;
+    background: var(--glass);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+    border: 1px solid rgba(232, 163, 61, 0.55);
+    box-shadow:
+        0 18px 48px rgba(6, 18, 34, 0.38),
+        0 0 0 1px rgba(255, 255, 255, 0.35) inset;
+    text-align: center;
+    animation: priorityRise 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes priorityRise {
+    from { transform: translateY(14px) scale(0.98); opacity: 0; }
+    to { transform: translateY(0) scale(1); opacity: 1; }
+}
+.priority-head { margin-bottom: 14px; }
+.priority-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    letter-spacing: 0.16em;
+    color: #7a4a00;
+    background: linear-gradient(135deg, #ffd88a, #e8a33d);
+    box-shadow: 0 2px 8px rgba(232, 163, 61, 0.45);
+}
+.priority-head h3 {
+    margin: 10px 0 0;
+    font-size: 1.06rem;
+    color: var(--primary-600, var(--primary));
+}
+/* 倒计时圆环 */
+.priority-ring {
+    width: 54px;
+    height: 54px;
+    margin: 6px auto 12px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 1.15rem;
+    color: #7a4a00;
+    background: conic-gradient(#e8a33d var(--ring-deg, 360deg), rgba(232, 163, 61, 0.18) 0);
+    transition: background 0.3s linear;
+}
+.priority-ring::before {
+    content: '';
+    position: absolute;
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    background: var(--glass);
+}
+.priority-ring span { position: relative; }
+.priority-ring.urgent { color: var(--danger); background: conic-gradient(var(--danger) var(--ring-deg, 360deg), rgba(229, 57, 53, 0.16) 0); }
+
+.priority-hint {
+    margin: 0 0 12px;
+    font-size: 0.86rem;
+    color: var(--muted-strong, var(--muted));
+    line-height: 1.5;
+}
+.priority-cards {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin-bottom: 14px;
+}
+.priority-empty {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--muted);
+    opacity: 0.85;
+}
+.priority-card {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 96px;
+    padding: 9px 13px;
+    border-radius: 11px;
+    cursor: pointer;
+    border: 1px solid rgba(var(--primary-rgb, 21, 101, 192), 0.35);
+    background: linear-gradient(160deg, rgba(255, 255, 255, 0.95), rgba(227, 242, 253, 0.9));
+    box-shadow: 0 2px 6px rgba(6, 18, 34, 0.1);
+    transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+    font: inherit;
+    color: inherit;
+}
+.priority-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent);
+    box-shadow: 0 6px 16px rgba(232, 163, 61, 0.35);
+}
+.priority-card:active { transform: translateY(0); }
+.priority-card-name { font-weight: 700; font-size: 0.92rem; }
+.priority-card-speed { font-size: 0.72rem; color: var(--muted); }
+
+/* 「拒绝所有阶段转换时点」开关 */
+.priority-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px;
+    margin-bottom: 14px;
+    border-radius: 11px;
+    cursor: pointer;
+    font-size: 0.84rem;
+    text-align: left;
+    background: rgba(var(--primary-rgb, 21, 101, 192), 0.06);
+    border: 1px dashed rgba(var(--primary-rgb, 21, 101, 192), 0.28);
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+.priority-toggle:hover { background: rgba(var(--primary-rgb, 21, 101, 192), 0.11); }
+.priority-toggle input[type="checkbox"] {
+    width: 17px;
+    height: 17px;
+    flex: 0 0 auto;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+.priority-toggle span { font-weight: 600; }
+.priority-toggle em {
+    display: block;
+    font-style: normal;
+    font-size: 0.74rem;
+    color: var(--muted);
+    opacity: 0.9;
+}
+.priority-actions { display: flex; justify-content: center; }
+.priority-cancel-btn {
+    min-width: 132px;
+    padding: 9px 22px;
+    border-radius: 10px;
+    cursor: pointer;
+    font: inherit;
+    font-weight: 600;
+    color: #fff;
+    border: none;
+    background: linear-gradient(135deg, #6b7c93, #4a5a70);
+    box-shadow: 0 4px 12px rgba(6, 18, 34, 0.22);
+    transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
+}
+.priority-cancel-btn:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.08);
+    box-shadow: 0 7px 18px rgba(6, 18, 34, 0.3);
+}
+.priority-cancel-btn:active { transform: translateY(0); }
+
+/* 深色主题下的适配（金色 accent 保持，玻璃层换成深色） */
+html.theme-dark .priority-panel {
+    background: rgba(22, 32, 46, 0.92);
+    border-color: rgba(232, 163, 61, 0.5);
+}
+html.theme-dark .priority-ring::before { background: rgba(22, 32, 46, 0.92); }
+html.theme-dark .priority-card {
+    background: linear-gradient(160deg, rgba(38, 52, 70, 0.95), rgba(28, 40, 56, 0.92));
+    border-color: rgba(232, 163, 61, 0.3);
+}
+html.theme-dark .priority-toggle { background: rgba(232, 163, 61, 0.08); }
+html.theme-dark .priority-hint { color: rgba(226, 236, 248, 0.78); }
+
 .chain-prompt {
     background: var(--glass);
     -webkit-backdrop-filter: blur(10px);

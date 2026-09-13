@@ -844,7 +844,12 @@ window.gameState = {
     // 当前生效的效果角标（服务端 active_effects / room_sync 下发）。
     // 出牌门禁要读它判断「绝处逢生」，所以必须有初值 —— 此前只在 room_sync
     // 里被赋值，未重连过的玩家这里是 undefined，读取方得各自容错。
-    activeEffects: []
+    activeEffects: [],
+    // 「拒绝所有阶段转换时点」开关（服务端 decline_priority 的本地镜像）。
+    // 勾上后服务端不再向我发优先权询问；开关本身可随时取消勾选。
+    declinePriority: false,
+    // 优先权询问里已选好、正在点目标的速阶3卡（与 pendingChainCard 同构）
+    pendingPriorityCard: null
 }
 
 let opponentGoneTimer = null;
@@ -2451,6 +2456,16 @@ function setupSocketListeners() {
 
     socket.on('chain_request', function (data) { showChainRequestPrompt(data); });
 
+    // 阶段转换的「优先权询问」：对方要推进阶段（进战斗 / 进结束）时，
+    // 先问我要不要打出一张速阶3。参照游戏王 YGO 的优先权确认。
+    socket.on('priority_request', function (data) { showPriorityPrompt(data); });
+    // 拒绝开关的状态回执
+    socket.on('priority_setting_updated', function (data) {
+        gameState.declinePriority = !!(data && data.decline);
+        const box = document.getElementById('decline-priority-toggle');
+        if (box) box.checked = gameState.declinePriority;
+    });
+
     // 连锁响应弹窗（10 秒倒计时 + 点选速阶 3 卡）。
     // 抽成具名函数是为了让「重连正好落在响应窗口内」也能把弹窗补回来。
     function showChainRequestPrompt(data) {
@@ -2561,6 +2576,119 @@ function setupSocketListeners() {
                     card: selectedCard,
                     targets: []
                 });
+            });
+        });
+    }
+
+    // ── 阶段转换的优先权询问（速阶3抢时点的仲裁）────────────────────────
+    // 对方要「进入战斗阶段」或「进入结束阶段」时，先问我要不要打出一张速阶3。
+    // 参照游戏王 YGO 的优先权确认：即使我手上没有速阶3也会问（只有「取消」），
+    // 因为作者要求"玩家要有选择权"。
+    // 弹窗底部有「拒绝所有阶段转换时点」开关 —— 勾上后本局不再弹（可随时取消勾选）。
+    function showPriorityPrompt(data) {
+        data = data || {};
+        const actionText = data.action === 'enter_end' ? '进入结束阶段' : '进入战斗阶段';
+        const cards = Array.isArray(data.speed3_cards) ? data.speed3_cards : [];
+        const countdown = data.countdown || 10;
+
+        // 清掉可能残留的旧弹窗（重连 / 连续询问时不叠加）
+        document.querySelectorAll('.priority-prompt').forEach(el => el.remove());
+        playSfx('chain');
+
+        let cardsHTML = '';
+        if (cards.length) {
+            cardsHTML = cards.map((card, index) => `
+                <button type="button" class="priority-card" data-card-index="${index}">
+                    <span class="priority-card-name">${escapeHtml(card.name)}</span>
+                    <span class="priority-card-speed">速阶 ${escapeHtml(String(card.speed))}</span>
+                </button>`).join('');
+        } else {
+            cardsHTML = '<p class="priority-empty">你手上没有速阶3的魔法卡</p>';
+        }
+
+        const prompt = document.createElement('div');
+        prompt.className = 'priority-prompt';
+        prompt.innerHTML = `
+            <div class="priority-panel">
+                <div class="priority-head">
+                    <span class="priority-badge">优先权</span>
+                    <h3>对方即将${actionText}</h3>
+                </div>
+                <div class="priority-ring" id="priority-ring">
+                    <span id="priority-countdown">${countdown}</span>
+                </div>
+                <p class="priority-hint">你可以打出一张速阶3卡牌后再让对方继续；不打就点「取消」。</p>
+                <div class="priority-cards">${cardsHTML}</div>
+                <label class="priority-toggle">
+                    <input type="checkbox" id="decline-priority-toggle"${gameState.declinePriority ? ' checked' : ''}>
+                    <span>拒绝所有阶段转换时点</span>
+                    <em>勾上后本局不再询问（可随时取消）</em>
+                </label>
+                <div class="priority-actions">
+                    <button type="button" id="priority-cancel" class="priority-cancel-btn">取消</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(prompt);
+
+        let left = countdown;
+        const ring = prompt.querySelector('#priority-ring');
+        const tick = () => {
+            const el = prompt.querySelector('#priority-countdown');
+            if (el) el.textContent = left;
+            // 圆环按剩余比例收缩；少于 3 秒变红提醒
+            if (ring) {
+                const deg = Math.max(0, Math.min(360, (left / countdown) * 360));
+                ring.style.setProperty('--ring-deg', deg + 'deg');
+                ring.classList.toggle('urgent', left <= 3);
+            }
+        };
+        tick();
+        const timer = setInterval(() => {
+            left -= 1;
+            tick();
+            if (left <= 0) {
+                clearInterval(timer);
+                answer(false);
+            }
+        }, 1000);
+
+        function answer(respond, card) {
+            clearInterval(timer);
+            const toggle = prompt.querySelector('#decline-priority-toggle');
+            const declineAll = !!(toggle && toggle.checked);
+            gameState.declinePriority = declineAll;
+            gameState.socket.emit('priority_response', {
+                room_id: gameState.roomId,
+                player_id: gameState.playerId,
+                respond: respond,
+                card: card || null,
+                targets: [],
+                decline_all: declineAll,
+            });
+            prompt.remove();
+        }
+
+        prompt.querySelector('#priority-cancel')
+            .addEventListener('click', () => answer(false));
+
+        prompt.querySelectorAll('.priority-card').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const idx = parseInt(btn.dataset.cardIndex, 10);
+                const card = cards[idx];
+                if (!card) return;
+                // 需要目标的速阶3：先走目标选择器，确认后回填给 priority_response
+                // （与连锁响应窗口同一套处理，见 pendingChainCard）
+                if (needsTargetSelection(card.name)) {
+                    clearInterval(timer);
+                    prompt.remove();
+                    gameState.pendingPriorityCard = { card: card, index: idx };
+                    gameState.currentMagicCard = card;
+                    gameState.currentCardIndex = -1;
+                    showMagicTargetSelection(card, -1);
+                    return;
+                }
+                answer(true, card);
             });
         });
     }
@@ -3875,6 +4003,7 @@ function showMagicTargetSelection(card, index) {
         gameState.currentMagicCard = null;
         gameState.currentCardIndex = null;
         gameState.pendingChainCard = null;
+        gameState.pendingPriorityCard = null;
         gameState.pendingEffectChoice = null;
     }
 
@@ -4673,7 +4802,10 @@ function promptDivineDecreeChoice(ctx, basePayload) {
 
 // 修改目标选择后的确认函数
 function confirmMagicTarget(targetData) {
-    if (!gameState.currentMagicCard || gameState.currentCardIndex === null) return;
+    // 优先权询问里选好目标的情况：pendingPriorityCard 已记下要打的卡，
+    // currentMagicCard 也在 showPriorityPrompt 里同步设过，两者取其一即可。
+    if (!gameState.currentMagicCard && !gameState.pendingPriorityCard) return;
+    if (gameState.currentCardIndex === null && !gameState.pendingPriorityCard) return;
 
     // ⚠️ 先把「提交这张卡所需的全部上下文」抓进局部变量。
     // showMagicTargetSelection 的「确认」监听器在 confirmMagicTarget 返回之后
@@ -4684,6 +4816,7 @@ function confirmMagicTarget(targetData) {
         card: gameState.currentMagicCard,
         cardIndex: gameState.currentCardIndex,
         chainPending: gameState.pendingChainCard,
+        priorityPending: gameState.pendingPriorityCard,
     };
 
     // 兼容多种 targetData 格式：
@@ -4759,6 +4892,28 @@ function _dispatchMagicTarget(payload, ctx) {
     const chainPending = (context.chainPending === undefined)
         ? gameState.pendingChainCard
         : context.chainPending;
+    // 优先权询问里打的速阶3（方案 D）：与连锁同构，
+    // 目标选好后回填给 priority_response，而不是 use_magic_card。
+    const priorityPending = (context.priorityPending === undefined)
+        ? gameState.pendingPriorityCard
+        : context.priorityPending;
+
+    if (priorityPending) {
+        gameState.pendingPriorityCard = null;
+        gameState.pendingChainCard = null;
+        gameState.pendingEffectChoice = null;
+        gameState.currentMagicCard = null;
+        gameState.currentCardIndex = null;
+        gameState.socket.emit('priority_response', {
+            room_id: gameState.roomId,
+            player_id: gameState.playerId,
+            respond: true,
+            card: priorityPending.card,
+            targets: payload,
+            decline_all: !!gameState.declinePriority
+        });
+        return;
+    }
 
     if (chainPending) {
         gameState.pendingChainCard = null;

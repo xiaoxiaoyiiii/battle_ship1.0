@@ -26,6 +26,17 @@ const USERNAME = argOf('--username', '');
 // 登录态检查用：传入 Flask session 值即可（未登录时「个人战绩」入口不会渲染，点击检查会跳过）
 const COOKIE = argOf('--cookie', '');
 const PORT = 9334;
+
+// 挑选真正的应用页面。
+// 注意：不能只写 list.find(t => t.type === 'page')：headless Edge 启动时会自带一个
+// edge://sync-confirmation-dialog 页面，且它在 /json/list 里【稳定排在第一位】
+// （本机实测 3/3 次），于是所有断言都跑在那个内置页上 ——
+// 症状是「读不到 gameState / 全项假红」，而不是报错，极难排查。
+function pickPage(list) {
+  const isApp = (t) => t.type === 'page' && /^(https?|file):/.test(t.url || '');
+  return list.find(isApp) || list.find((t) => t.type === 'page' && t.url !== 'about:blank'
+    && !/^(edge|chrome|devtools):/.test(t.url || '')) || list.find((t) => t.type === 'page');
+}
 const EDGE_CANDIDATES = [
   'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
   'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
@@ -197,7 +208,7 @@ try {
   for (let i = 0; i < 60; i++) {
     try {
       const list = await (await fetch('http://127.0.0.1:' + PORT + '/json/list')).json();
-      target = list.find((t) => t.type === 'page');
+      target = pickPage(list);
       if (target) break;
     } catch (e) { /* browser still starting */ }
     await sleep(500);

@@ -32,7 +32,10 @@ const EDGE_CANDIDATES = [
   'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
 ];
 const BROWSER = EDGE_CANDIDATES.find((p) => fs.existsSync(p));
-const PROFILE = 'C:/Windows/Temp/chain_target_check_profile';
+// ⚠️ profile 目录固定用【项目内】的 .tmp 而不是 C:/Windows/Temp：
+// 后者在本机出现过 ACL 损坏（目录删不掉、Edge 起不来、调试端口连不上），
+// 表现为"检查中断: 无法连接无头浏览器调试端口"，很容易被误判成代码问题。
+const PROFILE = new URL('../.tmp/chain_target_check_profile', import.meta.url).pathname.replace(/^\//, '');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 if (!BROWSER) { console.error('找不到 Edge/Chrome，跳过连锁目标检查'); process.exit(0); }
@@ -122,7 +125,11 @@ try {
   for (let i = 0; i < 60; i++) {
     try {
       const list = await (await fetch('http://127.0.0.1:' + PORT + '/json/list')).json();
-      target = list.find((t) => t.type === 'page');
+      // ⚠️ 必须先挑 http/about:blank 的页面：headless Edge 启动时会自带一个
+      // edge://sync-confirmation-dialog 页面且排在前面，直接取第一个 page
+      // 会连到那个内置页上（页面里没有 gameState，全部断言假红）。
+      target = list.find((t) => t.type === 'page' && /^(https?|about|file):/.test(t.url || ''))
+        || list.find((t) => t.type === 'page');
       if (target) break;
     } catch (e) { /* browser still starting */ }
     await sleep(500);

@@ -14,3 +14,8 @@ avatars/
 .workbuddy/
 _*.txt
 _*.py
+
+# 本地临时目录：pytest 隔离库、无头浏览器 profile 都放这里
+# （放 C:/Windows/Temp 出现过 ACL 损坏 → Edge 起不来、调试端口连不上）
+.tmp/
+.pytest_cache/

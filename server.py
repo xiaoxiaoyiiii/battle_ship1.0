@@ -378,6 +378,23 @@ class GameRoom:
         self.reconnect_tokens = {}    # player_id -> 一次性重连 token
         self.game_over_reason = None  # None | 'opponent_disconnected'
 
+        # ── 阶段转换的「优先权询问」 ──────────────────────────────────
+        # 速阶3卡牌"任何时候都能使用"，于是双方会在阶段推进这类操作上抢时点：
+        # 我推进阶段的同时对方出牌，谁先谁后没有定义（实测确认）。
+        # 参照游戏王 YGO 的优先权确认：推进阶段前先问对方"要不要响应一下"。
+        # 与连锁窗口（chain_*）是两套独立状态 —— 连锁窗口优先，询问期间不开
+        # 新的连锁窗口，避免双重弹窗。
+        self.priority_pending = None   # {'actor','responder','action','countdown'} 或 None
+        self.priority_token = 0        # 代际令牌：旧定时器自动作废，防双重结算
+        # 响应者在窗口里打出了速阶3 → 连锁结算完后要"续做"的那个阶段转换。
+        # {'actor','action'} 或 None。⚠️ 必须在这里初始化：此前只在
+        # _resolve_priority 里现赋，未打出卡时该属性不存在，任何
+        # getattr/直读都可能踩 AttributeError。
+        self.priority_continue = None
+        # 拒绝开关：player_id -> bool。为 True 时不再向他弹这类询问
+        # （作者要求做成可随时切回的开关，不是一次性按钮）。
+        self.decline_priority = {}
+
     def init_player_magic(self, player_id: str, magic_cards):
         """初始化玩家魔法卡相关状态"""
         # 初始化玩家的魔法卡状态
@@ -777,6 +794,12 @@ def test_clear_all_effects(data):
             player.sunken_ships = []
         # 清除回合数据
         player.damage_dealt_this_turn = 0
+        # 清空手牌：E2E 需要"手上有什么卡"完全可控
+        # （这个事件本来就叫"清除所有效果"，手牌也算一种对局状态；
+        #   不带上它，测试就分不清"我发的那张卡"和开局抽到的卡）
+        player.magic_hand = []
+        if getattr(player, 'sid', None):
+            emit('hand_updated', {'hand': []}, to=player.sid)
 
     return {'status': 'success', 'message': '已清除所有魔法效果'}
 
@@ -823,9 +846,22 @@ def test_get_game_state(data):
         'room_id': room_id,
         'state': room.state,
         'current_attacker': room.current_attacker,
+        'current_phase': room.current_phase,
         'attacks_remaining': room.attacks_remaining,
         'field_magic': room.field_magic.name if hasattr(room.field_magic, 'name') else room.field_magic,
         'game_effects': list(room.game_effects.keys()),
+        # 优先权询问（方案 D）状态：E2E 要靠它判断"阶段有没有被推进"
+        'priority_pending': (
+            {'actor': room.priority_pending.get('actor'),
+             'responder': room.priority_pending.get('responder'),
+             'action': room.priority_pending.get('action')}
+            if getattr(room, 'priority_pending', None) else None
+        ),
+        'decline_priority': dict(getattr(room, 'decline_priority', None) or {}),
+        # 连锁窗口状态：E2E 用它确认"连锁挂起时不该弹优先权询问"
+        'chain': [{'card': ci.card.name, 'player': ci.player_id,
+                   'negated': ci.negated} for ci in (room.chain or [])],
+        'chain_window': room.chain_window,
         'players': {}
     }
 
@@ -2254,7 +2290,7 @@ def handle_attack(data):
 
 @socketio.on('enter_battle_phase')
 @_require_live_room
-def enter_battle_phase(data):
+def enter_battle_phase(data, _priority_confirmed=False):
     room_id = data['room_id']
     player_id = data['player_id']
 
@@ -2267,6 +2303,13 @@ def enter_battle_phase(data):
 
     # 检查是否是当前攻击者的准备阶段
     if room.current_attacker == player_id and room.current_phase == 'preparation':
+        # ⚠️ 速阶3抢时点的仲裁：推进阶段前先问对方"要不要响应"。
+        # 他放弃/超时后，_priority_continue 会带着 _priority_confirmed=True
+        # 重新调用本函数，那时才真正推进。
+        # 不询问的情形（人机房 / 对方已拒绝 / 有连锁挂起…）直接放行。
+        if not _priority_confirmed and _ask_priority(room, player_id, 'enter_battle'):
+            return {'status': 'success', 'awaiting_priority': True}
+
         # 切换到战斗阶段
         room.current_phase = 'battle'
 
@@ -2321,7 +2364,7 @@ def enter_battle_phase(data):
 # 添加结束战斗阶段，进入结束阶段
 @socketio.on('enter_end_phase')
 @_require_live_room
-def handle_enter_end_phase(data):
+def handle_enter_end_phase(data, _priority_confirmed=False):
     room_id = data['room_id']
     player_id = data['player_id']
 
@@ -2334,7 +2377,11 @@ def handle_enter_end_phase(data):
         # 检查是否还有剩余攻击次数
         if room.attacks_remaining > 0:
             return {'status': 'error', 'message': '你还有剩余攻击次数，无法进入结束阶段'}
-        
+
+        # ⚠️ 速阶3抢时点的仲裁：同 enter_battle_phase —— 推进前先问对方。
+        if not _priority_confirmed and _ask_priority(room, player_id, 'enter_end'):
+            return {'status': 'success', 'awaiting_priority': True}
+
         # 进入结束阶段
         room.current_phase = 'end'
 
@@ -3654,6 +3701,15 @@ def resolve_chain(room):
         'current_attacker': room.current_attacker
     }, room=room.id)
 
+    # 优先权询问的收尾：响应者在窗口里打了速阶3，连锁现在结算完了，
+    # 该把他拦下的那次阶段转换补上（否则发起者的回合永远停在原地）。
+    # ⚠️ 先取出再清空：_priority_continue 会再进 enter_battle_phase，
+    # 那条路径可能又开一次询问，不清就会重入。
+    cont = getattr(room, 'priority_continue', None)
+    if cont:
+        room.priority_continue = None
+        _priority_continue(room, cont['actor'], cont['action'])
+
     return results
 
 
@@ -3712,6 +3768,264 @@ def _schedule_chain_timeout(room_id: str, token: int):
             else:
                 _advance_chain_window(room, _opponent_of(room, window_player))
     socketio.start_background_task(_timeout)
+
+
+# ============================================================================
+# 阶段转换的「优先权询问」（速阶3抢时点的仲裁）
+# ============================================================================
+# 背景：速阶3卡牌"任何时候都能使用"，双方都能在任意时刻插入自己的牌。
+# 而游戏只有一个仲裁点（连锁响应窗口），它：① 对方没有速阶3时会自动跳过、
+# 不给选择权；② 不覆盖阶段推进这类非出牌操作。
+# 实测：P2 在 P1 的准备阶段出速阶3，P1 随后仍能直接 enter_battle_phase，
+# 两张牌的效果落地顺序没有任何定义。
+#
+# 方案 D（作者选定）：保留现有窗口机制，把"自动跳过"改成"总是询问"，
+# 参照游戏王 YGO 的优先权确认。并新增「拒绝」开关防止占时间。
+#
+# 只问两个入口（作者裁定）：
+#   · 进入战斗阶段（准备 → 战斗）
+#   · 进入结束阶段（战斗 → 结束）
+# 交回合不问（它本来就被连锁窗口拦着）；攻击不问（每回合 3-6 次，
+# 一局上百次弹窗会毁掉体验）。
+PRIORITY_SECONDS = CHAIN_RESPONSE_SECONDS   # 与连锁窗口统一为 10 秒
+
+
+def _has_request_context():
+    """当前是否处在真实的 socket 请求上下文里。
+
+    与 _identity_ok 的"无上下文则跳过连接校验"是同一个惯例：
+    单元测试直调 handler 时不该被询问机制挡住（没有真人可以点响应，
+    弹窗也发不出去），否则所有调用 enter_battle_phase 的测试都会失败。
+    """
+    try:
+        request.sid
+        return True
+    except RuntimeError:
+        return False
+
+
+def _should_ask_priority(room, actor_id, responder_id):
+    """判断这次阶段转换是否需要先询问对方。返回 True/False。
+
+    阻断条件（都不询问，直接放行）：
+      · 无 socket 请求上下文（单元测试直调 handler）
+      · 人机房 —— AI 不会主动响应，弹窗只会让人干等
+      · 对方已掉线（在宽限期内）
+      · 对局已结束
+      · 对方已开启「拒绝」开关
+      · 已有连锁窗口挂起 —— 连锁窗口优先，避免双重弹窗
+      · 已有未处理的询问 —— 不叠加
+    """
+    if not _has_request_context():
+        return False
+    if getattr(room, 'is_ai_room', False):
+        return False
+    if not responder_id or responder_id not in room.players:
+        return False
+    if room.state == 'game_over':
+        return False
+    if responder_id in getattr(room, 'disconnected', {}):
+        return False
+    if (getattr(room, 'decline_priority', None) or {}).get(responder_id):
+        return False
+    if room.chain or room.chain_waiting:
+        return False
+    if getattr(room, 'priority_pending', None):
+        return False
+    return True
+
+
+def _ask_priority(room, actor_id, action, on_decline=None):
+    """向对手发起「是否响应」询问。
+
+    返回 True 表示【已发出询问】——此时调用方必须立刻返回，
+    真正的操作要等对方的响应（或超时）到了再执行，由 _resolve_priority 负责。
+    返回 False 表示【无需询问】（人机房 / 对方已拒绝 / 有连锁挂起…），
+    调用方可以继续执行原操作。
+
+    action：给前端显示的文案键，如 'enter_battle' / 'enter_end'。
+    on_decline：不需要 —— 真正要做的事由调用方在"无需询问"分支里自己执行；
+                等待响应时，_resolve_priority 会重新走一遍调用方的入口函数
+                （见 _priority_continue）。
+    """
+    responder_id = _opponent_of(room, actor_id)
+    if not _should_ask_priority(room, actor_id, responder_id):
+        return False
+
+    room.priority_token += 1
+    token = room.priority_token
+    room.priority_pending = {
+        'actor': actor_id,
+        'responder': responder_id,
+        'action': action,
+        # 告知对方"他手上有没有速阶3卡"——没有也照样问（作者裁定：
+        # 玩家要有选择权），但前端可以据此把提示写得更清楚。
+        'speed3_cards': _speed3_cards(room, responder_id),
+        'countdown': PRIORITY_SECONDS,
+    }
+    emit('priority_request', {
+        'action': action,
+        'actor': actor_id,
+        'speed3_cards': _speed3_cards(room, responder_id),
+        'countdown': PRIORITY_SECONDS,
+    }, to=room.players[responder_id].sid)
+    _schedule_priority_timeout(room.id, token)
+    return True
+
+
+def _schedule_priority_timeout(room_id: str, token: int):
+    """询问超时兜底：视为对方放弃，继续执行原操作。
+    代际令牌使旧定时器自动作废，防止与玩家正常响应竞态双重执行。"""
+    def _timeout():
+        time.sleep(PRIORITY_SECONDS)
+        room = room_manager.get_room(room_id)
+        if room and room.priority_pending and room.priority_token == token:
+            _resolve_priority(room, respond=False)
+    socketio.start_background_task(_timeout)
+
+
+def _clear_priority(room):
+    """清掉待处理的询问状态（不触发后续动作）。"""
+    room.priority_pending = None
+    room.priority_token += 1
+
+
+def _resolve_priority(room, respond=False, card=None, targets=None):
+    """询问有结果了：对方放弃（或超时），或他打出了一张速阶3。
+
+    respond=False → 继续执行被拦下的那个操作（重新走一遍入口）
+    respond=True  → 先把他的牌入链；连锁结算完再继续原操作
+    """
+    pending = getattr(room, 'priority_pending', None)
+    if not pending:
+        return
+    actor_id = pending['actor']
+    responder_id = pending['responder']
+    action = pending['action']
+    # 先清状态（代际令牌 +1 使超时定时器作废）
+    _clear_priority(room)
+
+    if respond and card is not None:
+        resp = _play_speed3_as_priority(room, responder_id, card, targets or [])
+        if resp is not None and resp.get('status') == 'error':
+            # 出牌失败（没这张牌 / 不是速阶3 / 被封锁…）：
+            # 退回"放弃"处理，并把原因回给本人，避免对局卡住
+            emit('message', {'text': resp.get('message', '响应失败，已视为取消')},
+                 to=room.players[responder_id].sid)
+            _priority_continue(room, actor_id, action)
+            return
+        # 出牌成功 → 已入链；连锁结算完后由这里继续原操作
+        if room.chain or room.chain_waiting:
+            # 结算完成后再继续：把续做动作挂上，交给 resolve_chain 之后触发
+            room.priority_continue = {'actor': actor_id, 'action': action}
+            return
+        # 没有连锁要结算（理论上不会走到，入链必然有窗口）——直接续做
+        _priority_continue(room, actor_id, action)
+        return
+
+    _priority_continue(room, actor_id, action)
+
+
+def _priority_continue(room, actor_id, action):
+    """询问结束后，继续执行被拦下的那个操作。
+
+    ⚠️ 必须【脱离当前请求上下文】再执行（2026-09-13 实测踩坑）：
+    本函数是在 *响应者* 的 socket 请求里被调用的（priority_response /
+    超时后台任务），而它要代 *发起者* 重放 enter_battle_phase /
+    handle_enter_end_phase。那两个 handler 开头都有 _identity_ok，
+    会拿 request.sid（= 响应者的连接）去比对发起者座位的 sid —— 必然不匹配，
+    于是重放静默失败（返回 error），阶段永远停在 preparation，
+    玩家点完「取消」后整个回合就死了。
+
+    实测证据：priority_pending 被清空、阶段仍是 preparation，
+    发起者收不到任何事件。
+
+    做法与 disconnect 处理器同一惯例：把重放丢进后台任务，
+    那时已无请求上下文，_identity_ok 走"仅成员校验"分支（与单测一致）。
+    """
+    def _run():
+        time.sleep(0)
+        if room.state == 'game_over':
+            return
+        if action == 'enter_battle':
+            enter_battle_phase({'room_id': room.id, 'player_id': actor_id},
+                               _priority_confirmed=True)
+        elif action == 'enter_end':
+            handle_enter_end_phase({'room_id': room.id, 'player_id': actor_id},
+                                   _priority_confirmed=True)
+
+    try:
+        socketio.start_background_task(_run)
+    except Exception:
+        # 没有 eventlet/socketio 上下文（如单测直调）时同步执行即可
+        _run()
+
+
+def _play_speed3_as_priority(room, player_id, card_data, targets):
+    """优先权询问里打出的速阶3：走与出牌相同的校验与入链。
+
+    复用 handle_use_magic_card，但入口处会因 chain_waiting 拦截 ——
+    这里是询问场景，没有连锁窗口，所以直接调用即可。
+    """
+    return handle_use_magic_card({
+        'room_id': room.id,
+        'player_id': player_id,
+        'card': card_data,
+        'targets': targets,
+    })
+
+
+@socketio.on('priority_response')
+@_require_live_room
+def priority_response(data):
+    """客户端对「是否响应阶段转换」的回答。
+
+    data: {
+      room_id, player_id,
+      respond: bool,        # False = 取消（继续原操作）
+      card: {...} | None,   # respond=True 时打出的速阶3
+      targets: [...] ,
+      decline_all: bool,    # 是否同时勾上「拒绝所有阶段转换时点」开关
+    }
+    """
+    room_id = data.get('room_id')
+    player_id = data.get('player_id')
+    room = room_manager.get_room(room_id)
+    if not room or player_id not in room.players or not _identity_ok(room, player_id):
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+
+    # 拒绝开关（可随时切回）：勾上后本局不再向他弹这类询问
+    if 'decline_all' in data:
+        room.decline_priority[player_id] = bool(data.get('decline_all'))
+
+    pending = getattr(room, 'priority_pending', None)
+    if not pending:
+        return {'status': 'error', 'message': '没有待处理的响应询问'}
+    if pending['responder'] != player_id:
+        return {'status': 'error', 'message': '当前不是你的响应窗口'}
+
+    respond = bool(data.get('respond'))
+    if respond and not data.get('card'):
+        return {'status': 'error', 'message': '请选择要打出的速阶3卡牌'}
+
+    _resolve_priority(room, respond=respond,
+                      card=data.get('card'), targets=data.get('targets') or [])
+    return {'status': 'success'}
+
+
+@socketio.on('set_decline_priority')
+@_require_live_room
+def set_decline_priority(data):
+    """单独切换「拒绝所有阶段转换时点」开关（不依赖某次询问）。"""
+    room_id = data.get('room_id')
+    player_id = data.get('player_id')
+    room = room_manager.get_room(room_id)
+    if not room or player_id not in room.players or not _identity_ok(room, player_id):
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+    decline = bool(data.get('decline'))
+    room.decline_priority[player_id] = decline
+    emit('priority_setting_updated', {'decline': decline}, to=room.players[player_id].sid)
+    return {'status': 'success', 'decline': decline}
 
 
 # ============ 掉线宽限 / 重连 / 超时判负（2026-09-07 新增） ============

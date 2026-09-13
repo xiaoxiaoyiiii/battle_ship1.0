@@ -1986,9 +1986,7 @@ def _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id, ship, targ
         _request_demon_contract_sacrifice(room, defender_id)
 
     # 八方来财: 战舰数目变化时抽一张牌
-    if defender.effect_flags.treasure_hunter:
-        room.draw_card(defender_id)
-        emit('message', {'text': '八方来财生效，摸一张牌'}, to=defender.sid)
+    _notify_treasure_hunter(room, defender_id, 1)
 
     # 检查无暇圣心效果：如果有战舰被击沉，中断效果
     if 'holy_heart' in room.game_effects:
@@ -3336,6 +3334,32 @@ def _maybe_trigger_wuxian_yijin(room, player_id):
     return True
 
 
+def _notify_treasure_hunter(room, player_id, times=1):
+    """八方来财：场上战舰数目【主动变化】时，持卡者摸一张牌。
+
+    卡面：「接下来如果场上的战舰数目主动发生了变化，每发生一次变化，自己摸一张牌。
+           己方击败对方的船不算主动发生变化。」
+
+    ⚠️ 这条以前只写在"船被击败"的五个分支里（减少方向），
+    增加方向（死者苏生 / 增援 / 疗愈 / 神机妙算 / 神威归还）一处都没挂 ——
+    实测：用死者苏生复活自己的船，船数 5→6，八方来财毫无反应。
+    卡面说的是"发生变化"，增减都算，所以把这条抽成统一入口，
+    两边的船数变更点都调它，避免再各写一份、再漏一半。
+
+    times：一次结算里变了 N 艘就摸 N 张。
+    """
+    player = room.players.get(player_id)
+    if player is None or not getattr(player.effect_flags, 'treasure_hunter', False):
+        return 0
+    drawn = 0
+    for _ in range(max(0, int(times))):
+        room.draw_card(player_id)
+        drawn += 1
+    if drawn:
+        emit('message', {'text': f'八方来财生效，摸{drawn}张牌'}, to=player.sid)
+    return drawn
+
+
 def _revive_sunken_ships(room, player, count):
     """把 count 艘已沉没的战舰放回棋盘（神机妙算 / 复活类效果）。
 
@@ -3359,6 +3383,11 @@ def _revive_sunken_ships(room, player, count):
             ]
         player.remaining_ships += 1
         revived_any += 1
+    # 八方来财：船数主动增加（复活类效果）也要摸牌
+    if revived_any:
+        owner_id = next((pid for pid, p in room.players.items() if p is player), None)
+        if owner_id:
+            _notify_treasure_hunter(room, owner_id, revived_any)
     return revived_any
 
 
@@ -4215,6 +4244,10 @@ def handle_confirm_reinforcement(data):
     pending['remaining'] -= 1
     pending['placed'] += 1
 
+    # 八方来财：船数主动增加（死者苏生 / 增援 / 绝处逢生的唯一一艘）要摸牌。
+    # 这三条路径共用这段放置流程，挂在这里一处即可覆盖。
+    _notify_treasure_hunter(room, player_id, 1)
+
     opponent_id = _opponent_of(room, player_id)
     _emit_ships_updated(room)
     # 同步放置后的己方棋盘（只发给本人），让新船立刻显示
@@ -4653,6 +4686,7 @@ def _restore_due_shenwei(room, current_round):
     for entry in due:
         entries.remove(entry)
         owner = room.players[entry['player']]
+        returned = 0
         for ship in entry['ships']:
             if ship in owner.ships:
                 continue          # 已经在棋盘上，不重复加
@@ -4660,6 +4694,10 @@ def _restore_due_shenwei(room, current_round):
                 continue          # 棋盘已被重摆，这艘船属于上一批
             owner.ships.append(ship)
             owner.remaining_ships += 1
+            returned += 1
+        # 八方来财：神威除外到期归还 = 船数主动增加
+        if returned:
+            _notify_treasure_hunter(room, entry['player'], returned)
     if not entries:
         room.game_effects.pop('excluded_ships', None)
     for hole in _clear_due_shenwei_holes(room, current_round):
@@ -4702,9 +4740,7 @@ def _apply_ship_loss_linkage(room, caster_id, lost_player_id, count=1):
     _grant_subsidy_bonus(room, lost_player_id)
 
     # 八方来财：战舰数目变化时抽一张牌
-    if lost_player.effect_flags.treasure_hunter:
-        room.draw_card(lost_player_id)
-        emit('message', {'text': '八方来财生效，摸一张牌'}, to=lost_player.sid)
+    _notify_treasure_hunter(room, lost_player_id, 1)
 
     # 恶魔契约：一方船数减少，另一方也要牺牲一艘 —— 由该玩家自己点选（不再随机）
     if room.game_effects.get('demon_contract'):
@@ -5242,9 +5278,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                             _on_ship_destroyed(room, opponent_id, ship, [Position(**pos)])
 
                             # 八方来财
-                            if opponent.effect_flags.treasure_hunter:
-                                room.draw_card(opponent_id)
-                                emit('message', {'text': '八方来财生效，摸一张牌'}, to=room.players[opponent_id].sid)
+                            _notify_treasure_hunter(room, opponent_id, 1)
 
                             # 恶魔契约（由牺牲方自己点选，AI 自动）：
                             # 一次结算里多艘沉没时只请求一次，否则后一次会覆盖前一次的待牺牲
@@ -5500,9 +5534,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                     ships_changed = True
 
                 # 八方来财
-                if opponent.effect_flags.treasure_hunter:
-                    room.draw_card(opponent_id)
-                    emit('message', {'text': '八方来财生效，摸一张牌'}, to=room.players[opponent_id].sid)
+                _notify_treasure_hunter(room, opponent_id, 1)
                 for ship_pos in ship.positions:
                     removed_positions.add((ship_pos.x, ship_pos.y))
                     caster.attacks.append(Position(**{
@@ -5582,9 +5614,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                 caster.damage_dealt_this_turn += 1
 
                 # 八方来财: 战舰数目变化时抽一张牌
-                if opponent.effect_flags.treasure_hunter:
-                    room.draw_card(opponent_id)
-                    emit('message', {'text': '八方来财生效，摸一张牌'}, to=room.players[opponent_id].sid)
+                _notify_treasure_hunter(room, opponent_id, 1)
 
                 # 平等条约快照 + 百亿补贴 + 无暇圣心中断（与普通攻击共用）
                 _on_ship_destroyed(room, opponent_id, ship)

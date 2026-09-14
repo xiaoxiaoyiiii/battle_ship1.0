@@ -3201,6 +3201,23 @@ function setupSocketListeners() {
         opponentShips.textContent = data.opponent_remaining_ships;
     });
 
+    // 「谁打过哪些格子」的全量重发：复活 / 增援 / 重新部署把格子从服务端
+    // 攻击历史里清掉之后，必须用它刷新本地缓存，否则那个格子会一直画着 ✕
+    // 并且【没有绑定点击监听】（initGameBoards 只在 !alreadyAttacked 时才绑），
+    // 对手就永远点不动它。
+    socket.on('board_attacks_updated', (data) => {
+        const norm = (list) => (Array.isArray(list) ? list : []).map((a) => ({
+            x: a.x, y: a.y, hit: !!a.hit, shipSunk: !!a.ship_sunk,
+        }));
+        if (data && Array.isArray(data.my_attacks)) {
+            gameState.myAttacks = norm(data.my_attacks);
+        }
+        if (data && Array.isArray(data.opponent_attacks)) {
+            gameState.opponentAttacks = norm(data.opponent_attacks);
+        }
+        initGameBoards();
+    });
+
     // 当前生效效果角标：完全由服务端广播驱动（服务端是唯一真相）。
     // 服务端按收件人视角分别下发 self / opponent —— 双方都能看到对方挂着什么。
     socket.on('active_effects', (data) => {

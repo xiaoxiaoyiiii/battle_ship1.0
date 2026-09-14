@@ -3486,8 +3486,39 @@ def _notify_treasure_hunter(room, times=1, exclude_player_id=None):
     return total
 
 
+def _emit_board_attacks(room):
+    """把「谁打过哪些格子」按收件人视角重新下发。
+
+    ⚠️ 为什么必须有这个广播：前端的 myAttacks / opponentAttacks 是【本地缓存】，
+    而 initGameBoards() 只在 `!alreadyAttacked` 时才给对手棋盘的格子绑点击监听。
+    复活/增援/重新部署把格子从服务端攻击历史里清掉之后，如果不重发：
+
+      · 当初打过这一格的对手，那颗仍画着 ✕、【没有点击监听】——
+        作者实测报的「疗愈在原地复活之后对方无法攻击这个格子」就是这个：
+        服务端数据其实已经放行，但前端连点都点不动。
+      · 复活的这一方，自己棋盘上那格也仍留着对方的 ✕，看起来像还没活。
+
+    两个列表都发，收到哪边就用哪个。
+    """
+    for pid, player in room.players.items():
+        opp_id = _opponent_of(room, pid)
+        opp = room.players.get(opp_id) if opp_id else None
+
+        def _cells(owner):
+            if owner is None:
+                return []
+            return [{'x': a.x, 'y': a.y, 'hit': bool(a.hit),
+                     'ship_sunk': bool(getattr(a, 'ship_sunk', False))}
+                    for a in getattr(owner, 'attacks', [])]
+
+        emit('board_attacks_updated', {
+            'my_attacks': _cells(player),
+            'opponent_attacks': _cells(opp),
+        }, to=player.sid)
+
+
 def _clear_attacks_on_cells(room, positions):
-    """把指定格子从双方的攻击历史里移除。
+    """把指定格子从双方的攻击历史里移除，并把结果重新下发给两端。
 
     复活 / 增援 / 重新部署之后必须做这一步，否则会出两种问题：
       · 前端仍按旧的攻击记录把这些格子画成"已命中"，玩家看到刚放上去的船
@@ -3497,14 +3528,24 @@ def _clear_attacks_on_cells(room, positions):
 
     原先只有 _revive_sunken_ships 做了这一步，放置流程（增援/复活/绝处逢生/
     神机妙算）全都漏了 —— 实测玩家报的"摆完后格子状态不对"就是这个。
+
+    ⚠️ 2026-09-14 补充：清服务端数据【还不够】。前端那两个列表是本地缓存，
+    必须用 _emit_board_attacks 重发一次 —— 否则玩家点不动那个格子
+    （见该函数的注释）。
     """
     cells = {(p.x, p.y) for p in (positions or [])}
     if not cells:
         return
+    changed = False
     for pid in room.players:
+        before = len(room.players[pid].attacks)
         room.players[pid].attacks = [
             a for a in room.players[pid].attacks if (a.x, a.y) not in cells
         ]
+        if len(room.players[pid].attacks) != before:
+            changed = True
+    if changed:
+        _emit_board_attacks(room)
 
 
 def _revive_sunken_ships(room, player, count):

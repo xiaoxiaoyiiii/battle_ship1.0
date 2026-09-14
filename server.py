@@ -2176,12 +2176,15 @@ def handle_attack(data):
             continue
         hit = True
 
-        # 更新无暇圣心效果：如果有伤害，标记no_damage为False（无敌状态不算造成伤害）
-        if 'holy_heart' in room.game_effects and not ship.invincible:
-            room.game_effects['holy_heart']['no_damage'] = False
-
         # 检查攻击者是否有强制击杀效果
         has_forced_kill = room.players[attacker_id].effect_flags.forced_kill > 0
+
+        # 更新无暇圣心效果：如果有伤害，标记no_damage为False。
+        # 无敌 / 被盾挡下都不算造成伤害；强制击杀无视盾，算造成伤害。
+        if ('holy_heart' in room.game_effects
+                and not ship.invincible
+                and (not ship.shield or has_forced_kill)):
+            room.game_effects['holy_heart']['no_damage'] = False
 
         if has_forced_kill:
             # 强制击杀效果：忽略无敌和盾牌状态，记录击中位置并直接击沉
@@ -2216,8 +2219,12 @@ def handle_attack(data):
             else:
                 ship_sunk = False
 
-        # 造成伤害（含强制击杀）时才触发攻击方增益与胜负检查
-        if has_forced_kill or (not ship.invincible and not ship.shield):
+        # 造成伤害（含强制击杀）时才触发攻击方增益与胜负检查。
+        # ⚠️ 必须用 shield_blocked 判断，不能用 not ship.shield：
+        #    上面的盾分支已经把 ship.shield 置 False，再读它永远是 True，
+        #    于是被盾挡下的那一炮也会触发绝处逢生直接获胜 / 回光返照判负 /
+        #    饮血抽牌 / 越战越勇 +1 —— 船毫发无伤却送了对面一堆收益。
+        if has_forced_kill or (not ship.invincible and not shield_blocked):
             # 检查回光返照效果：造成伤害即判负
             if _check_last_chance(room, attacker_id, defender_id):
                 return {'status': 'success', 'game_over': True}

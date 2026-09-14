@@ -253,3 +253,85 @@ def test_candidate_cell_is_attackable_after_placement(room, events):
 
     assert res['status'] == 'success', f'对方必须能打绝处逢生落点（{res}）'
     assert (1, 0) in attacked_cells(room, P2)
+
+
+# ===========================================================================
+# 破盾那一炮【不造成伤害】：不能触发"造成伤害后"的一切效果
+# ===========================================================================
+# 病灶：handle_attack 里用 `not ship.shield` 判断"有没有造成伤害"，
+# 但盾分支已经把 ship.shield 置成 False —— 于是被盾挡下的那一炮
+# 也走进了"造成伤害"分支，触发绝处逢生直接获胜 / 回光返照判负 /
+# 饮血抽牌 / 越战越勇 +1，还把无暇圣心的 no_damage 提前打成 False。
+def test_shield_block_does_not_trigger_last_stand_win(room, events):
+    """绝处逢生：被盾挡下的一炮不算造成伤害，不能直接获胜。"""
+    shield_p2_ship_at(room, 3, 5)
+    room.players[P1].effect_flags.last_stand = True
+
+    resp = attack(room, 3, 5)
+
+    assert resp.get('game_over') is not True, '破盾那一炮不该触发绝处逢生获胜'
+    assert room.state != 'game_over'
+
+
+def test_shield_block_does_not_trigger_vampire_draw(room, events):
+    """饮血：被盾挡下不算造成伤害，不能抽牌。"""
+    shield_p2_ship_at(room, 3, 5)
+    room.players[P1].effect_flags.vampire = True
+    before = len(room.players[P1].magic_hand)
+
+    attack(room, 3, 5)
+
+    assert len(room.players[P1].magic_hand) == before, '破盾那一炮不该触发饮血抽牌'
+
+
+def test_shield_block_does_not_trigger_battle_spirit(room, events):
+    """越战越勇：被盾挡下不算造成伤害，不能 +1 攻击。"""
+    shield_p2_ship_at(room, 3, 5)
+    room.players[P1].effect_flags.battle_spirit = True
+    before = room.attacks_remaining
+
+    attack(room, 3, 5)
+
+    # 正常消耗 1 次；如果越战越勇误触发会变成 before（-1 再 +1）
+    assert room.attacks_remaining == before - 1, '破盾那一炮不该触发越战越勇 +1'
+
+
+def test_shield_block_does_not_trigger_last_chance_loss(room, events):
+    """回光返照：被盾挡下不算造成伤害，防守方不该因此判负。"""
+    shield_p2_ship_at(room, 3, 5)
+    # 防守方 P2 挂了回光返照
+    room.game_effects['last_chance'] = {'caster': P2, 'round': room.round}
+
+    attack(room, 3, 5)
+
+    assert room.state != 'game_over', '破盾那一炮不该触发回光返照判负'
+    assert room.winner != P1
+
+
+def test_shield_block_keeps_holy_heart_no_damage(room, events):
+    """无暇圣心：被盾挡下没有造成伤害，no_damage 必须保持 True。"""
+    shield_p2_ship_at(room, 3, 5)
+    room.game_effects['holy_heart'] = {
+        'caster': P1, 'remaining_turns': 2, 'no_damage': True, 'turn': room.round + 2,
+    }
+
+    attack(room, 3, 5)
+
+    assert room.game_effects['holy_heart']['no_damage'] is True, \
+        '破盾那一炮没造成伤害，无暇圣心 no_damage 不该被打成 False'
+
+
+def test_forced_kill_through_shield_still_breaks_holy_heart(room, events):
+    """强制击杀无视盾：这一炮确实造成伤害（击沉），无暇圣心必须被打断。"""
+    shield_p2_ship_at(room, 3, 5)
+    room.players[P1].effect_flags.forced_kill = 1
+    room.game_effects['holy_heart'] = {
+        'caster': P2, 'remaining_turns': 2, 'no_damage': True, 'turn': room.round + 2,
+    }
+
+    attack(room, 3, 5)
+
+    # 强制击沉会触发无暇圣心中断（效果被删除），总之不能还以 no_damage=True 活着
+    hh = room.game_effects.get('holy_heart')
+    assert hh is None or hh.get('no_damage') is False, \
+        '强制击杀穿盾造成伤害，无暇圣心必须被打断'

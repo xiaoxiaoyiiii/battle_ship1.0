@@ -428,6 +428,9 @@ if (settingsBtn && settingsModal && settingsModalClose) {
         // 读取当前主色
         const cur = localStorage.getItem('battleship_primary_color') || getComputedStyle(document.documentElement).getPropertyValue('--primary') || '#1976d2';
         if (primaryColorPicker) primaryColorPicker.value = cur.trim().replace(/^#|^rgb\((.+)\)$/g, m => m.startsWith('#') ? m : '#1976d2');
+        // 打开时把「不再询问阶段转换时点」勾选框对齐当前状态
+        // （弹窗里勾过、或换了房间之后，这里必须跟着变）
+        if (typeof syncDeclinePriorityUI === 'function') syncDeclinePriorityUI();
         settingsModal.classList.remove('hidden');
     };
     settingsModalClose.onclick = () => settingsModal.classList.add('hidden');
@@ -852,6 +855,8 @@ window.gameState = {
     // 「拒绝所有阶段转换时点」开关（服务端 decline_priority 的本地镜像）。
     // 勾上后服务端不再向我发优先权询问；开关本身可随时取消勾选。
     declinePriority: false,
+    // 已经把这个偏好推给哪个房间了（每个房间推一次就够）
+    declinePrioritySyncedRoom: null,
     // 优先权询问里已选好、正在点目标的速阶3卡（与 pendingChainCard 同构）
     pendingPriorityCard: null
 }
@@ -2473,8 +2478,7 @@ function setupSocketListeners() {
     // 拒绝开关的状态回执
     socket.on('priority_setting_updated', function (data) {
         gameState.declinePriority = !!(data && data.decline);
-        const box = document.getElementById('decline-priority-toggle');
-        if (box) box.checked = gameState.declinePriority;
+        syncDeclinePriorityUI();
     });
 
     // 连锁响应弹窗（10 秒倒计时 + 点选速阶 3 卡）。
@@ -2668,7 +2672,9 @@ function setupSocketListeners() {
             clearInterval(timer);
             const toggle = prompt.querySelector('#decline-priority-toggle');
             const declineAll = !!(toggle && toggle.checked);
+            // 顺手在这里改的也要记住：本局（服务端）+ 以后各局（本地偏好）
             gameState.declinePriority = declineAll;
+            saveDeclinePriorityPref(declineAll);
             gameState.socket.emit('priority_response', {
                 room_id: gameState.roomId,
                 player_id: gameState.playerId,
@@ -6216,6 +6222,8 @@ function init() {
     // 效果角标的事件委托（桌面 hover / 手机点击）。角标会被反复重绘，
     // 所以用委托挂一次，绝不能逐个绑定。
     bindEffectIndicators();
+    // 「拒绝所有阶段转换时点」开关（对局界面里那个入口）
+    bindDeclinePriorityToggle();
     // 如果服务端传来了用户名，预填并设置为当前玩家名
     if (window.__USERNAME) {
         gameState.playerName = window.__USERNAME || gameState.playerName;
@@ -6333,6 +6341,10 @@ function updatePhaseUI() {
     // 教皇旨意：战斗阶段给我方一个「弃卡换攻击 +2」的显式入口。
     // 不靠"点棋盘才发现次数是 0"才弹窗 —— 那样玩家根本不知道有这条路。
     if (typeof updatePapalDiscardButton === 'function') updatePapalDiscardButton();
+    // 设置面板里那个勾选框要跟当前状态一致（弹窗里勾过也要同步过来），
+    // 并且把本地偏好推给服务端 —— 服务端那份是房间级的，换房就重置了
+    syncDeclinePriorityUI();
+    ensureDeclinePrioritySynced();
 }
 
 // 添加阶段按钮事件监听
@@ -6504,6 +6516,89 @@ function updatePapalDiscardButton() {
     const mine = gameState.currentAttacker === gameState.playerId
         && gameState.currentPhase === 'battle';
     btn.style.display = (active && mine) ? 'inline-block' : 'none';
+}
+
+// ── 「不再询问阶段转换时点」开关 ────────────────────────────────
+// 两个入口，共用同一份状态：
+//   · 优先权弹窗里的 #decline-priority-toggle（弹窗里顺手勾）
+//   · 设置面板里的 #decline-priority-setting（随时改回来）
+// ⚠️ 第二个入口是必须的：勾上之后就不再弹窗了，只有弹窗内那个开关的话
+// 玩家永远没机会取消勾选 —— 相当于把自己锁死。
+//
+// 偏好存在 localStorage：服务端那份是【房间级】的，切房间就重置；
+// 但玩家说"不想被问"是个跨局的意愿，所以本地记住，进新局时再同步上去。
+const DECLINE_PRIORITY_KEY = 'battleship_decline_priority';
+
+function loadDeclinePriorityPref() {
+    try {
+        return localStorage.getItem(DECLINE_PRIORITY_KEY) === '1';
+    } catch (e) {
+        return false;
+    }
+}
+
+function saveDeclinePriorityPref(on) {
+    try {
+        localStorage.setItem(DECLINE_PRIORITY_KEY, on ? '1' : '0');
+    } catch (e) { /* 隐私模式下写不了，忽略即可 */ }
+}
+
+// 进了新房间要把本地偏好同步给服务端（否则新房间又会开始询问）
+function pushDeclinePriorityPref() {
+    if (!gameState.socket || !gameState.roomId || !gameState.playerId) return;
+    gameState.socket.emit('set_decline_priority', {
+        room_id: gameState.roomId,
+        player_id: gameState.playerId,
+        decline: !!gameState.declinePriority,
+    });
+}
+
+// 每个房间只需同步一次（updatePhaseUI 会被频繁调用）
+function ensureDeclinePrioritySynced() {
+    if (!gameState.roomId) return;
+    if (gameState.declinePrioritySyncedRoom === gameState.roomId) return;
+    gameState.declinePrioritySyncedRoom = gameState.roomId;
+    pushDeclinePriorityPref();
+}
+
+function setDeclinePriority(on, opts) {
+    const options = opts || {};
+    gameState.declinePriority = !!on;
+    saveDeclinePriorityPref(gameState.declinePriority);
+    syncDeclinePriorityUI();
+    if (options.notify !== false && gameState.socket && gameState.roomId) {
+        gameState.socket.emit('set_decline_priority', {
+            room_id: gameState.roomId,
+            player_id: gameState.playerId,
+            decline: gameState.declinePriority,
+        }, (resp) => {
+            if (resp && resp.status === 'error') showAlert(resp.message);
+        });
+    }
+    if (options.silent !== true) {
+        showMessage(gameState.declinePriority
+            ? '已关闭阶段转换时点询问（在「设置」里可随时恢复）'
+            : '已恢复阶段转换时点询问');
+    }
+}
+
+function syncDeclinePriorityUI() {
+    const on = !!gameState.declinePriority;
+    const inPrompt = document.getElementById('decline-priority-toggle');
+    if (inPrompt) inPrompt.checked = on;
+    const inSettings = document.getElementById('decline-priority-setting');
+    if (inSettings) inSettings.checked = on;
+}
+
+function bindDeclinePriorityToggle() {
+    const box = document.getElementById('decline-priority-setting');
+    if (box && box.dataset.bound !== '1') {
+        box.dataset.bound = '1';
+        box.addEventListener('change', () => setDeclinePriority(box.checked));
+    }
+    // 启动时把本地偏好读进来（弹窗里那个勾选框也据此显示）
+    gameState.declinePriority = loadDeclinePriorityPref();
+    syncDeclinePriorityUI();
 }
 
 // 仁王之盾：选择至多3艘自己的船进入护盾状态

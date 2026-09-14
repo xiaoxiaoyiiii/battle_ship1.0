@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>战舰游戏</title>
-    <link rel="stylesheet" href="/static/style.css">
-    <script src="/static/socket.io.js"></script>
+    <link rel="stylesheet" href="/static/style.css?v={{ asset_v('style.css') }}">
+    <script src="/static/socket.io.js?v={{ asset_v('socket.io.js') }}"></script>
 </head>
 <body>
     <canvas id="particle-canvas"></canvas>
@@ -468,6 +468,23 @@
                 <div class="muted-hint">
                     <p>当前播放：<span id="current-track">未播放</span></p>
                 </div>
+                <hr class="settings-section-gap">
+                <h3>对局设置</h3>
+                <!--
+                    「不再询问阶段转换时点」。
+                    ⚠️ 必须有这个常驻入口：该开关原先只存在于优先权弹窗内部，
+                    一旦勾上就不再弹窗 → 永远没机会取消勾选（把玩家自己锁死）。
+                    放在设置里而不是对局界面：对局信息区的布局有严格的移动端
+                    不变量（触控目标 ≥40px / 横屏不产生滚动），多塞一个控件会破坏它。
+                    这里是模态框，不受那些约束，而且"这是个设置"也更符合直觉。
+                -->
+                <label class="settings-toggle-row" for="decline-priority-setting">
+                    <input type="checkbox" id="decline-priority-setting">
+                    <span class="settings-toggle-text">
+                        <strong>不再询问阶段转换时点</strong>
+                        <em>勾上后，对方推进阶段时不会再弹「要不要响应」的询问。随时可以在这里取消。</em>
+                    </span>
+                </label>
                 <button id="settings-save-btn" class="btn">保存</button>
             </div>
         </div>
@@ -554,15 +571,15 @@
 </div>
 
 <!-- 确保正确的加载顺序 -->
-<script src="/static/magic_cards.js"></script>
+<script src="/static/magic_cards.js?v={{ asset_v('magic_cards.js') }}"></script>
 <!-- 先加载游戏核心逻辑 -->
 <script>window.__USERNAME = {{ username|tojson }};</script>
-<script src="/static/sfx.js"></script>
-<script src="/static/game.js"></script>
+<script src="/static/sfx.js?v={{ asset_v('sfx.js') }}"></script>
+<script src="/static/game.js?v={{ asset_v('game.js') }}"></script>
 <!-- 移动端自适应布局：按可用空间在「桌面浮窗」与「一屏网格」之间切换（见 style.css 第 22 节） -->
-<script src="/static/adaptive_layout.js"></script>
+<script src="/static/adaptive_layout.js?v={{ asset_v('adaptive_layout.js') }}"></script>
 <!-- 背景音乐播放器 -->
-<script src="/static/music_player.js"></script>
+<script src="/static/music_player.js?v={{ asset_v('music_player.js') }}"></script>
 
 <!-- flash 消息自动消失 -->
 <script>

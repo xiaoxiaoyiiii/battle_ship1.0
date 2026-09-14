@@ -8,6 +8,7 @@
  *   · 点「取消」→ 发出 priority_response {respond:false}
  *   · 勾选「拒绝所有阶段转换时点」→ 随响应一起上报 decline_all
  *   · 倒计时到 0 → 自动取消
+ *   · 设置面板里的常驻开关：能勾、能取消、记 localStorage、换房间会补推给服务端
  *   · 反证：chain_request 的弹窗不受影响
  *
  * 用法：node tools/priority_prompt_check.mjs --url http://127.0.0.1:5000/
@@ -96,6 +97,9 @@ async function installProbe() {
     gameState.roomId = 'r1';
     gameState.playerId = 'me';
     gameState.declinePriority = false;
+    // 标记"r1 这个房间已经同步过了"：updatePhaseUI() 里有 ensureDeclinePrioritySynced()
+    // 会自动补推一次 set_decline_priority，不挡住的话前面几个场景的 emit 计数会被它带偏。
+    gameState.declinePrioritySyncedRoom = 'r1';
     // 关掉可能残留的倒计时定时器
     if (window.__priorityTimer) { clearInterval(window.__priorityTimer); }
     return Object.keys(window.__realCallbacks).filter(function(k){
@@ -277,6 +281,117 @@ if (Array.isArray(dispatched) && dispatched.length) {
     '★ 目标被回填进 targets（旧实现会丢）', p.targets);
 }
 check(await ev('gameState.pendingPriorityCard === null'), 'pendingPriorityCard 已清空');
+
+// ---- 8. 设置面板里的常驻开关（修「勾上后就再也取消不了」的死结）----
+// 原先开关只存在于优先权弹窗内，而勾上就不再弹窗 → 玩家永远没机会取消勾选。
+// 现在设置面板里有一个常驻 checkbox，和弹窗里那个共用同一份状态。
+// 为什么不放对局界面：对局信息区有严格的移动端不变量（触控目标 ≥40px /
+// 横屏不产生纵向滚动），多塞一个控件会破坏它 —— 设置弹窗没有那些约束。
+console.log('');
+console.log('--- 场景 8：设置面板里的常驻开关 ---');
+await installProbe();
+await ev(`(function(){
+  localStorage.removeItem('battleship_decline_priority');
+  gameState.declinePriority = false;
+  syncDeclinePriorityUI();
+  return true;
+})()`);
+await sleep(200);
+
+const boxInit = await ev(`(function(){
+  var box = document.getElementById('decline-priority-setting');
+  if (!box) return null;
+  var modal = document.getElementById('settings-modal');
+  var label = box.closest('label') || box.parentElement;
+  return {
+    inSettings: !!(modal && modal.contains(box)),
+    modalHiddenByDefault: !!(modal && modal.classList.contains('hidden')),
+    checked: box.checked,
+    text: label ? label.textContent.trim() : '',
+    // 说明文字就在这一行里（em），别用 '#settings-content .muted-hint'：
+    // 设置面板里还有音乐播放器的同款提示，会先匹配到「当前播放：未播放」。
+    hint: (label && label.querySelector('em') ? label.querySelector('em').textContent : '').trim()
+  };
+})()`);
+check(!!boxInit, '★ 设置面板里有常驻的「不再询问阶段转换时点」开关');
+check(!!boxInit && boxInit.inSettings, '开关挂在设置弹窗里（不占对局界面）', boxInit);
+check(!!boxInit && /不再询问|时点/.test(boxInit.text), '开关文案说明了作用', boxInit && boxInit.text);
+check(!!boxInit && /随时/.test(boxInit.hint), '旁边写明了「随时可以取消」（否则玩家不敢勾）', boxInit && boxInit.hint);
+// 整行都是 label（点文字也能勾），所以实际可点高度远大于裸复选框的 13px
+check(!!boxInit && boxInit.modalHiddenByDefault, '设置弹窗默认关闭，不干扰对局界面', boxInit);
+check(!!boxInit && boxInit.checked === false, '初始未勾选', boxInit && boxInit.checked);
+
+// 手机上要按得到：把设置弹窗真的打开量一次（隐藏元素量出来是 0×0）
+await ev(`(function(){ document.getElementById('settings-btn').click(); return true; })()`);
+await sleep(400);
+const rowTap = await ev(`(function(){
+  var box = document.getElementById('decline-priority-setting');
+  var label = box.closest('label');
+  var lr = label.getBoundingClientRect(), br = box.getBoundingClientRect();
+  return {
+    modalOpen: !document.getElementById('settings-modal').classList.contains('hidden'),
+    row: Math.round(lr.height),
+    box: Math.round(br.width) + 'x' + Math.round(br.height)
+  };
+})()`);
+check(!!rowTap && rowTap.modalOpen, '点「设置」能打开设置弹窗', rowTap);
+check(!!rowTap && rowTap.row >= 40,
+  '★ 开关是一整行可点（行高 ≥40px，手机上按得到）', rowTap);
+await ev(`(function(){ document.getElementById('settings-modal-close').click(); return true; })()`);
+await sleep(200);
+
+// 勾上 → 发出 set_decline_priority(true)，并写进 localStorage
+await ev(`(function(){ document.getElementById('decline-priority-setting').click(); return true; })()`);
+await sleep(300);
+let sent = await ev('window.__emitted || []');
+let setDeclines = sent.filter((e) => e.name === 'set_decline_priority');
+check(setDeclines.length === 1 && setDeclines[0].payload.decline === true,
+  '★ 勾上开关就发出 set_decline_priority(decline=true)', setDeclines);
+check(await ev('gameState.declinePriority === true') === true, '本地状态同步为 true');
+check(await ev(`localStorage.getItem('battleship_decline_priority')`) === '1',
+  '偏好写进了 localStorage（服务端那份是房间级的，换局会被重置）');
+
+// ★ 关键：不需要任何弹窗，再点一下就能恢复（这正是原来的死结）
+await ev(`(function(){ document.getElementById('decline-priority-setting').click(); return true; })()`);
+await sleep(300);
+sent = await ev('window.__emitted || []');
+setDeclines = sent.filter((e) => e.name === 'set_decline_priority');
+check(setDeclines.length === 2 && setDeclines[1].payload.decline === false,
+  '★★ 不需要弹窗就能恢复询问（修掉了「勾上就再也改不回来」的死结）', setDeclines);
+check(await ev('gameState.declinePriority === false') === true, '本地状态同步回 false');
+check(await ev(`localStorage.getItem('battleship_decline_priority')`) === '0', 'localStorage 也跟着回到 0');
+
+// 弹窗里勾过之后，设置面板那个勾选框也要跟着变（两个入口一份状态）
+await ev(`(function(){ setDeclinePriority(true, { notify: false, silent: true }); return true; })()`);
+await sleep(200);
+check(await ev(`document.getElementById('decline-priority-setting').checked`) === true,
+  '弹窗里勾过之后设置面板同步为已勾选');
+
+// 本地偏好要能跨"重新打开页面"存活：把内存状态清掉再走一遍初始化
+const reloaded = await ev(`(function(){
+  gameState.declinePriority = false;
+  gameState.declinePrioritySyncedRoom = null;
+  document.getElementById('decline-priority-setting').checked = false;
+  bindDeclinePriorityToggle();
+  return { state: gameState.declinePriority,
+           box: document.getElementById('decline-priority-setting').checked };
+})()`);
+check(reloaded && reloaded.state === true && reloaded.box === true,
+  '★ 重新载入时从 localStorage 恢复偏好，并回填到勾选框', reloaded);
+
+// 进了新房间要把偏好推给服务端 —— 不推的话新房间又开始问
+await ev(`(function(){
+  window.__emitted = [];
+  gameState.roomId = 'r2';
+  gameState.playerId = 'me';
+  ensureDeclinePrioritySynced();
+  ensureDeclinePrioritySynced();
+  return true;
+})()`);
+await sleep(200);
+const roomSync = (await ev('window.__emitted || []')).filter((e) => e.name === 'set_decline_priority');
+check(roomSync.length === 1 && roomSync[0].payload.decline === true,
+  '★ 进新房间时把偏好同步给服务端，同一房间只推一次', roomSync);
 
 console.log('');
 if (problems.length) {

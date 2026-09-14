@@ -22,6 +22,30 @@ AVATAR_UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'static', 'avatar
 os.makedirs(AVATAR_UPLOAD_FOLDER, exist_ok=True)
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'),
             template_folder=os.path.join(os.path.dirname(__file__), 'templates'))
+
+
+@app.context_processor
+def _inject_asset_version():
+    """给模板提供 asset_v()：静态资源加 mtime 版本号。
+
+    为什么需要：index.html 里写死了 `/static/game.js`（没有版本号），
+    浏览器在【页面不刷新】时根本不会重新拉这个文件 —— 服务端换了代码，
+    玩家那边仍在跑旧 JS，表现就是"功能明明上线了却看不到"。
+    实测踩过：优先权询问上线后玩家反馈"时点没有出现"，
+    而本地/线上分层测试全绿，就是因为对方页面挂着旧的 game.js。
+
+    带上 `?v=<mtime>` 之后，文件一变 URL 就变，浏览器必然重新下载。
+    """
+    static_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
+
+    def asset_v(rel_path: str) -> str:
+        try:
+            return str(int(os.path.getmtime(os.path.join(static_root, rel_path))))
+        except OSError:
+            return '0'
+
+    return {'asset_v': asset_v}
+
 # SECRET_KEY 从环境变量注入；未配置时使用一次性随机值（重启后 session 失效，
 # 属可接受的降级，避免源码中硬编码的密钥被用于伪造登录态）。
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or secrets.token_hex(32)

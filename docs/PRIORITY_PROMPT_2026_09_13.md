@@ -129,7 +129,7 @@
 | --- | --- | --- |
 | 单元 | `tests/test_priority_prompt.py`（**29 条**） | 全绿 |
 | 全量 | `python -m pytest tests/ -q` | **664 passed** |
-| 前端渲染 | `tools/priority_prompt_check.mjs`（**32 项**，喂真实事件） | 全部通过 |
+| 前端渲染 | `tools/priority_prompt_check.mjs`（**50 项**，喂真实事件） | 全部通过 |
 | 真 socket e2e | `tools/e2e_priority_prompt.py`（**30 项**，9 个场景） | 全部通过 |
 | 真实浏览器 | `tools/priority_live_check.mjs`（**17 项**，两个真页面 + 真服务端） | 全部通过 |
 | 既有无头套件 | ui_layout / card_compendium / card_selection / sfx / bgm / ai_difficulty / room_invite / stats_modal / state_visual / last_stand / yinxue / chain_negation / shenji_redeploy / chain_target | 全部通过 |
@@ -170,3 +170,65 @@ PASS  ★ 取消后阶段推进到 battle  ->  "battle"
   `chain` / `chain_window`。它由 `@_test_event` 门禁关闭，默认不可用。
 - **`test_clear_all_effects` 补了清手牌**：E2E 需要"手上有什么卡"完全可控。
   不带上它，测试就分不清"我发的那张卡"和开局抽到的卡。
+
+---
+
+## 7. 上线后作者反馈「时点没出现、开关也没出现」
+
+作者反馈：**阶段转换的时点没有出现，而且那个自动取消所有时点的按钮也没有出现。**
+
+按层排查，**每一层都是通的**：
+
+| 层 | 怎么验的 | 结果 |
+| --- | --- | --- |
+| 生产后端 | `tools/prod_priority_check.py` 打 `http://8.133.180.159:5000`（不走 test 事件，纯真实玩家路径） | A/B 有一方真的收到 `priority_request`，载荷 `{'action':'enter_battle_phase','countdown':10}` |
+| 生产前端 | `node tools/priority_prompt_check.mjs --url http://8.133.180.159:5000/` | 全部通过（面板、倒计时、开关都在） |
+| 本地真实双浏览器 | `tools/priority_live_check.mjs` | 全部通过（防守方浏览器真的弹出了面板） |
+
+排查过程中确认了两个**确实存在、由本批引入**的问题，都修了：
+
+### 7.1 ★ 静态资源没有版本号 → 没刷新过的页面一直在跑旧 `game.js`
+
+`index.html` 引的是 `static/game.js`，没有任何缓存参数。服务端给的
+`Cache-Control: no-cache` + ETag 只保证"重新请求时会拿到新的"，
+**但没刷新的页面根本不会重新请求** —— 作者浏览器里跑的就是改动前的 `game.js`，
+那个版本里没有优先权弹窗，也没有开关。
+
+修法：`api.py` 加 `asset_v(rel_path)`（返回文件 mtime），`index.html` 里所有本地
+静态资源都带上 `?v=`：`game.js?v=1789361892` 这种。改了文件 mtime 就变，
+浏览器自然重新拉。
+
+> 通用教训：**这个项目没有构建工具、静态资源不带指纹**。凡是改了
+> `game.js` / `style.css` / `magic_cards.js` 这类文件，光部署是不够的，
+> 必须让 URL 变化（或用户强刷），否则老页面永远看不见新代码。
+
+### 7.2 ★ 开关只在弹窗里 → 勾上之后自己把自己锁死
+
+「拒绝所有阶段转换时点」这个开关原先**只存在于优先权弹窗内部**。
+而它一旦被勾上，服务端就不再发询问 → 弹窗不再出现 →
+**玩家永远没有机会把它取消**。作者说的"那个自动取消所有时点的按钮没有出现"，
+大概率就是这个：上一局（或上一次误点）勾上之后，弹窗再也不来了，按钮自然也看不见。
+
+中途试过在对局界面放一个常驻按钮，但**撞了两条移动端不变量**
+（`ui_layout_check.mjs` 报 `阶段按钮在卡片内水平居中`、
+`landscape-664x336 展开面板槽后仍不产生纵向滚动`，外加触控目标 ≥40px 不达标）——
+`.game-info` 那块区域塞不下任何控件。
+
+最终做法：放进**设置弹窗**的「对局设置」区，`#decline-priority-setting`。
+模态框不受那三条不变量约束，而且"这是个设置"也更符合直觉。
+两个入口（弹窗内的 `#decline-priority-toggle` 与设置里的 checkbox）**共用同一份状态**，
+`syncDeclinePriorityUI()` 同时同步两处。
+
+顺带补上两条持久化，否则"记住我的选择"这件事只在单个房间内成立：
+
+- **localStorage**（`battleship_decline_priority`）：服务端那份 `decline_priority`
+  是**房间级**的（`GameRoom.__init__` 初始化），换房就重置。玩家"不想被问"
+  是个跨局意愿，所以本地记住，`bindDeclinePriorityToggle()` 启动时读回。
+- **进新房间补推**：`ensureDeclinePrioritySynced()` 挂在 `updatePhaseUI()` 上，
+  每个房间推一次（按 `declinePrioritySyncedRoom` 去重，不会刷屏）。
+
+回归：`tools/priority_prompt_check.mjs` 场景 8 已改写为针对设置面板的 checkbox
+（全套共 **50 项**，含"不需要任何弹窗就能改回来"这条专门守死结的断言）。
+反证：把 `bindDeclinePriorityToggle` 的绑定目标改回已删除的 `#decline-priority-btn`
+→ 立刻 5 项红，确认这些断言真的在守这个行为。
+

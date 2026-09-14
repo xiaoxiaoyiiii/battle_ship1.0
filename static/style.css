@@ -2242,6 +2242,45 @@ html.theme-dark .priority-hint { color: rgba(226, 236, 248, 0.78); }
     outline: none;
 }
 
+/* 「不再询问阶段转换时点」开关（设置面板里的常驻入口）
+   ⚠️ 它原先只存在于优先权弹窗内 —— 勾上就不再弹窗 → 永远无法取消（死结）。
+   现在设置面板里有一个常驻 checkbox，和弹窗里那个共用同一份状态。
+   为什么不放对局界面：对局信息区的布局有严格的移动端不变量
+   （触控目标 ≥40px / 横屏不产生滚动），多塞一个控件就会破坏它。
+   整行都可以点（label 包住勾选框 + 说明），比裸 13px 复选框好按得多。 */
+.settings-toggle-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    margin: 6px 0 2px;
+    border-radius: 11px;
+    cursor: pointer;
+    background: rgba(var(--primary-rgb, 21, 101, 192), 0.06);
+    border: 1px dashed rgba(var(--primary-rgb, 21, 101, 192), 0.28);
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+.settings-toggle-row:hover { background: rgba(var(--primary-rgb, 21, 101, 192), 0.11); }
+.settings-toggle-row input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 auto;
+    margin-top: 1px;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+.settings-toggle-text { display: block; }
+.settings-toggle-text strong { display: block; font-size: 0.88rem; font-weight: 600; }
+.settings-toggle-text em {
+    display: block;
+    font-style: normal;
+    font-size: 0.74rem;
+    color: var(--muted);
+    margin-top: 3px;
+    line-height: 1.45;
+}
+html.theme-dark .settings-toggle-row { background: rgba(232, 163, 61, 0.08); }
+
 /* 效果说明浮层：桌面 hover / 手机点击展开 */
 .effect-popover {
     position: fixed;

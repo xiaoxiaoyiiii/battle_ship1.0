@@ -4023,16 +4023,16 @@ function showMagicTargetSelection(card, index) {
     // AREA selection (square) —— 点选定位 + 确认，触摸可用
     if (descriptor.type === 'area') {
         const size = descriptor.size;
-        targetPrompt.innerHTML = `
-            <h3>在对手棋盘上选择 ${size}x${size} 区域</h3>
-            <p class="magic-hint">点一下定位区域，再点「确认」</p>
-        `;
-        document.body.appendChild(targetPrompt);
-
+        // 提示与确认合并在同一条浮动条上。
+        // 此前这里会再挂一个 .magic-target-prompt 裸 div，而那个类名当时
+        // 【没有任何 CSS】—— 等于玩家只看得到一条确认条，不知道要点棋盘。
         const picker = createBoardAreaPicker(opponentBoard, size, (areaObj) => {
             confirmMagicTarget(areaObj);
             cleanupPrompt();
-        }, cleanupPrompt);
+        }, cleanupPrompt, {
+            title: `在对手棋盘上选择 ${size}×${size} 区域`,
+            hint: '点一下棋盘定位，可以随时改点；确认后生效',
+        });
         gameState.selectionCleanup = picker ? picker.cleanup : null;
         return;
     }
@@ -4079,21 +4079,13 @@ function showMagicTargetSelection(card, index) {
 
     // LINE selection (row or column) e.g., 轰炸 — 支持拖拽与方向切换
     if (descriptor.type === 'line') {
-        // ensure styles
-        if (!document.getElementById('magic-selection-styles')) {
-            const s = document.createElement('style');
-            s.id = 'magic-selection-styles';
-            s.textContent = `
-                .magic-selection-overlay { background-color: rgba(255,69,0,0.28); transition: background-color .12s ease, box-shadow .12s ease; }
-                .magic-selection-overlay.col { background-color: rgba(30,144,255,0.28); }
-                .magic-selection-controls { display:flex; gap:8px; justify-content:center; margin-top:8px; }
-                .inline-confirm { background:#222; color:#fff; padding:8px; border-radius:4px; box-shadow:0 4px 14px rgba(0,0,0,.5); }
-            `;
-            document.head.appendChild(s);
-        }
-
+        // ⚠️ 样式统一在 style.css 的「范围选择的选中态」一节里定义。
+        // 这里原本会注入一段 <style id="magic-selection-styles">，而下面的
+        // 「连选」分支用的是【同一个 id】—— 谁先打开谁生效，后打开的那种模式
+        // 样式永远不生效（实测：先开轰炸再开硫磺火焰，绿色变成了橙红色）。
         targetPrompt.innerHTML = `
             <h3>拖拽或点击选择一整行/列（拖拽时松开确认）</h3>
+            <p id="line-picker-info" class="selection-info pending">把鼠标移到棋盘上，或拖拽到目标行/列</p>
             <div class="magic-selection-controls">
                 <button id="toggle-line-dir">方向：行</button>
                 <button id="cancel-target">取消</button>
@@ -4110,6 +4102,11 @@ function showMagicTargetSelection(card, index) {
         toggleBtn.addEventListener('click', () => {
             mode = mode === 'row' ? 'col' : 'row';
             toggleBtn.textContent = `方向：${mode === 'row' ? '行' : '列'}`;
+            const info = document.getElementById('line-picker-info');
+            if (info) {
+                info.className = 'selection-info pending';
+                info.textContent = `当前方向：${mode === 'row' ? '整行' : '整列'}`;
+            }
         });
 
         const cells = Array.from(boardEl.querySelectorAll('.cell'));
@@ -4117,15 +4114,24 @@ function showMagicTargetSelection(card, index) {
         let lastIndex = null;
 
         function clearHighlights() {
-            cells.forEach(c => c.classList.remove('magic-selection-overlay'));
+            cells.forEach(c => c.classList.remove('magic-selection-overlay', 'col', 'sel-mode-line'));
         }
 
         function highlightIndex(idx) {
             clearHighlights();
             if (mode === 'row') {
-                boardEl.querySelectorAll(`.cell[data-y="${idx}"]`).forEach(c => c.classList.add('magic-selection-overlay'));
+                boardEl.querySelectorAll(`.cell[data-y="${idx}"]`).forEach(c => c.classList.add('magic-selection-overlay', 'sel-mode-line'));
             } else {
-                boardEl.querySelectorAll(`.cell[data-x="${idx}"]`).forEach(c => c.classList.add('magic-selection-overlay', 'col'));
+                boardEl.querySelectorAll(`.cell[data-x="${idx}"]`).forEach(c => c.classList.add('magic-selection-overlay', 'col', 'sel-mode-line'));
+            }
+            // 说清楚落在哪一行/列 —— 旧实现只有一片几乎看不见的淡色，玩家无法确认落点。
+            const info = document.getElementById('line-picker-info');
+            if (info) {
+                info.className = 'selection-info';
+                info.innerHTML = '<span class="sel-dot"></span>' +
+                    (mode === 'row'
+                        ? `已选中：第 ${idx + 1} 行（整行 6 格）`
+                        : `已选中：第 ${idx + 1} 列（整列 6 格）`);
             }
         }
 
@@ -4222,7 +4228,7 @@ function showMagicTargetSelection(card, index) {
                         cell.removeEventListener('click', onClick, true);
                     });
                 }
-                cell.classList.remove('magic-selection-overlay', 'col');
+                cell.classList.remove('magic-selection-overlay', 'col', 'sel-mode-line');
             });
             if (document.body.contains(targetPrompt)) document.body.removeChild(targetPrompt);
             gameState.selectingOnBoard = false;
@@ -4237,21 +4243,14 @@ function showMagicTargetSelection(card, index) {
     // CONTINUOUS selection (自由连续 n 格) e.g., 硫磺火焰 — 自由连选 6 格
     if (descriptor.type === 'continuous') {
         const L = descriptor.length;
-        // ensure styles
-        if (!document.getElementById('magic-selection-styles')) {
-            const s = document.createElement('style');
-            s.id = 'magic-selection-styles';
-            s.textContent = `
-                .magic-selection-overlay { background-color: rgba(255,140,0,0.24); transition: background-color .12s ease, transform .12s ease; }
-                .magic-selection-overlay.vert { background-color: rgba(34,139,34,0.24); }
-            `;
-            document.head.appendChild(s);
-        }
+        // 样式统一在 style.css（见「范围选择的选中态」一节的说明：
+        // 这里原本注入的 <style> 与「整行整列」分支抢同一个 id，互相覆盖）。
 
         targetPrompt.innerHTML = `
             <h3>自由选择连续 ${L} 个格子（点击选中/取消，每个新增格需与已选格相邻）</h3>
+            <p id="cont-picker-info" class="selection-info pending">已选 0 / ${L} 格</p>
             <div style="text-align:center;margin-top:8px;">
-                <button id="confirm-continuous">确认</button>
+                <button id="confirm-continuous" disabled>确认</button>
                 <button id="cancel-target">取消</button>
             </div>
         `;
@@ -4303,12 +4302,25 @@ function showMagicTargetSelection(card, index) {
         }
 
         function refreshHighlights() {
-            cells.forEach(c => c.classList.remove('magic-selection-overlay', 'vert'));
+            cells.forEach(c => c.classList.remove('magic-selection-overlay', 'vert', 'sel-mode-cont'));
             cells.forEach(c => {
                 const cx = parseInt(c.dataset.x, 10);
                 const cy = parseInt(c.dataset.y, 10);
-                if (selected.has(key(cx, cy))) c.classList.add('magic-selection-overlay');
+                if (selected.has(key(cx, cy))) c.classList.add('magic-selection-overlay', 'sel-mode-cont');
             });
+            // 实时报数 + 未选满就禁用确认，玩家不用自己数格子。
+            const info = document.getElementById('cont-picker-info');
+            if (info) {
+                if (selected.size === L) {
+                    info.className = 'selection-info';
+                    info.innerHTML = `<span class="sel-dot"></span>已选 ${selected.size} / ${L} 格 — 可以确认了`;
+                } else {
+                    info.className = 'selection-info pending';
+                    info.textContent = `已选 ${selected.size} / ${L} 格（还需 ${L - selected.size} 格）`;
+                }
+            }
+            const okBtn = document.getElementById('confirm-continuous');
+            if (okBtn) okBtn.disabled = selected.size !== L;
         }
 
         cells.forEach(cell => {
@@ -4359,7 +4371,7 @@ function showMagicTargetSelection(card, index) {
                         cell.removeEventListener('click', onClick, true);
                     });
                 }
-                cell.classList.remove('magic-selection-overlay', 'vert');
+                cell.classList.remove('magic-selection-overlay', 'vert', 'sel-mode-cont');
                 cell.style.cursor = '';
             });
             if (document.body.contains(targetPrompt)) document.body.removeChild(targetPrompt);
@@ -4569,9 +4581,10 @@ function needsTargetSelection(cardName) {
 
 // 通用区域点选器：在真实棋盘上点选 size×size 区域（触摸/鼠标均可用）。
 // 点一下定位并高亮，再点「确认」提交；桌面端保留悬停预览。
-function createBoardAreaPicker(boardEl, size, onConfirm, onCancel) {
+function createBoardAreaPicker(boardEl, size, onConfirm, onCancel, opts) {
     if (!boardEl || gameState.selectingOnBoard) return null;
     gameState.selectingOnBoard = true;
+    const options = opts || {};
 
     const listeners = [];
     let highlighted = [];
@@ -4583,7 +4596,7 @@ function createBoardAreaPicker(boardEl, size, onConfirm, onCancel) {
     });
 
     function clearHighlights() {
-        highlighted.forEach(c => c.classList.remove('selection-highlight'));
+        highlighted.forEach(c => c.classList.remove('selection-highlight', 'sel-mode-area'));
         highlighted = [];
     }
 
@@ -4593,18 +4606,38 @@ function createBoardAreaPicker(boardEl, size, onConfirm, onCancel) {
             for (let x = sx; x < sx + size; x++) {
                 if (x < 0 || x > 5 || y < 0 || y > 5) continue;
                 const cell = boardEl.querySelector(`.cell[data-x="${x}"][data-y="${y}"]`);
-                if (cell) { cell.classList.add('selection-highlight'); highlighted.push(cell); }
+                if (cell) {
+                    cell.classList.add('selection-highlight', 'sel-mode-area');
+                    highlighted.push(cell);
+                }
             }
         }
         current = { x1: sx, y1: sy, x2: sx + size - 1, y2: sy + size - 1 };
         const btn = document.getElementById('area-confirm');
         if (btn) btn.disabled = false;
+        // 明确写出「选中的是哪一块」：旧实现只有棋盘上一片淡色，玩家看不出落点。
+        const info = document.getElementById('area-picker-info');
+        if (info) {
+            info.className = 'selection-info';
+            info.innerHTML = '<span class="sel-dot"></span>' +
+                `${size}×${size} 已选中：第 ${sx + 1}–${sx + size} 列，第 ${sy + 1}–${sy + size} 行`;
+        }
     }
 
-    // 浮动确认条
+    // 浮动确认条（可选带标题/说明：区域类卡牌的「点哪里」提示就放在这里，
+    // 免得再挂一个没有样式的裸 div 跟它重叠）
     const bar = document.createElement('div');
     bar.className = 'area-picker-bar';
-    bar.innerHTML = `<button id="area-confirm" disabled>确认</button><button id="area-cancel">取消</button>`;
+    const titleHTML = options.title
+        ? `<div class="selection-info pending" style="flex-basis:100%;margin:0 0 2px;">${escapeHtml(options.title)}</div>`
+        : '';
+    const hintHTML = options.hint
+        ? `<div class="magic-hint" style="flex-basis:100%;margin:0 0 6px;">${escapeHtml(options.hint)}</div>`
+        : '';
+    bar.style.flexWrap = 'wrap';
+    bar.innerHTML = titleHTML + hintHTML
+        + `<span id="area-picker-info" class="selection-info pending">点击棋盘上的格子来选择区域</span>`
+        + `<button id="area-confirm" disabled>确认</button><button id="area-cancel">取消</button>`;
     document.body.appendChild(bar);
     bar.querySelector('#area-confirm').addEventListener('click', () => {
         if (!current) { showAlert('请先点选一个区域'); return; }

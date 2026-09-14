@@ -1139,12 +1139,110 @@ input:focus, select:focus {
     font-size: 0.9em;
 }
 
-/* 神威！区域点选高亮 */
-.cell.selection-highlight {
-    outline: 3px solid rgba(255, 215, 0, 0.9);
-    outline-offset: -2px;
-    background-color: rgba(255, 215, 0, 0.18) !important;
+/* ===== 范围选择的「选中态」=====
+   作者反馈：范围选择的提示太弱，根本看不见自己选了哪里。
+
+   根因（实测 tools/target_selection_check.mjs）：
+     · .cell 的水面色 --cell-water 是【不透明渐变】，.cell.ship 更是
+       background: var(--ship-metal) !important（不透明金属色）；
+     · 而高亮只写了 background-color —— background-color 画在
+       background-image 【底下】，于是淡色填充被渐变完全盖住，屏幕上等于没画；
+     · 轰炸 / 硫磺火焰 连 outline / box-shadow 都没有 → 高亮 100% 不可见。
+   所以这里必须用 background 简写 + !important 才能真正盖上去。
+
+   另外三种模式此前各自在 game.js 里注入 <style>，而且轰炸与硫磺火焰抢
+   同一个 id="magic-selection-styles"，后加载的那种模式样式永远不生效。
+   现在统一在本文件定义，game.js 只负责加类名。 */
+.cell.sel-mode-area { --sel-rgb: 255, 196, 0; }   /* 区域点选：金 */
+.cell.sel-mode-line { --sel-rgb: 255, 92, 0; }    /* 整行 / 整列：橙红 */
+.cell.sel-mode-cont { --sel-rgb: 22, 190, 90; }   /* 自由连选：绿 */
+
+.cell.selection-highlight,
+.cell.magic-selection-overlay {
+    background: rgba(var(--sel-rgb), 0.58) !important;
+    outline: 2px solid rgba(255, 255, 255, 0.95);
+    outline-offset: -3px;
+    animation: magicSelPulse 1.05s ease-in-out infinite;
+    position: relative;
+    z-index: 4;
+    cursor: crosshair;
 }
+
+/* 呼吸效果只能走 box-shadow：
+   上面那条 background 是 !important，而 CSS 里 !important 声明优先级【高于动画】，
+   动画去改 background-color 是不会生效的。 */
+@keyframes magicSelPulse {
+    0%, 100% { box-shadow: inset 0 0 5px rgba(var(--sel-rgb), 0.5); }
+    50%      { box-shadow: inset 0 0 24px rgba(var(--sel-rgb), 1); }
+}
+
+/* 选区信息条：明确写出「选中的是哪一块」 */
+.selection-info {
+    margin: 6px 0 0;
+    font-size: 0.95em;
+    font-weight: 600;
+    text-align: center;
+    color: var(--text);
+    letter-spacing: 0.02em;
+}
+.selection-info .sel-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+    background: rgb(var(--sel-rgb, 255, 196, 0));
+    box-shadow: 0 0 8px rgb(var(--sel-rgb, 255, 196, 0));
+}
+.selection-info.pending { opacity: 0.72; font-weight: 500; }
+.area-picker-bar .selection-info {
+    margin: 0;
+    margin-right: 6px;
+    align-self: center;
+}
+
+/* 目标选择提示框：此前【完全没有样式】—— 只是把裸 div 挂到 body 末尾，
+   在长页面上几乎注意不到，玩家根本不知道要点棋盘。这里给它一个醒目的浮动面板。 */
+.magic-target-prompt {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%);
+    z-index: 10000;
+    max-width: min(92vw, 600px);
+    box-sizing: border-box;
+    padding: 14px 20px;
+    background: var(--surface-strong);
+    border: 1px solid rgba(var(--primary-rgb), 0.65);
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    text-align: center;
+}
+.magic-target-prompt h3 {
+    margin: 0;
+    font-size: 1.02em;
+    line-height: 1.45;
+}
+/* 区域点选时，同时还有一条 .area-picker-bar 也在 bottom:24px，
+   两个面板会叠在一起 —— 把提示框抬到确认条上方。 */
+body:has(.area-picker-bar) .magic-target-prompt { bottom: 92px; }
+.magic-selection-controls { display: flex; gap: 8px; justify-content: center; margin-top: 10px; }
+.inline-confirm {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    background: var(--surface-strong);
+    color: var(--text);
+    border: 1px solid rgba(var(--primary-rgb), 0.6);
+    border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+    z-index: 10001;
+}
+.inline-confirm button { cursor: pointer; }
+
+/* 神威！区域点选高亮（沿用同一套视觉，颜色由 sel-mode-* 决定） */
 
 /* 单选己方战舰（克苏鲁之眼 / 恶魔契约）：可选格高亮，空格灰掉 */
 .cell.pick-ship {

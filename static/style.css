@@ -2196,15 +2196,29 @@ html.theme-dark .priority-hint { color: rgba(226, 236, 248, 0.78); }
 }
 
 /* 全局效果指示器（百亿补贴等持续效果的小标签） */
+/* ── 生效中效果角标 ──
+   挂在【对局中真正可见的两个角落头像】下面（左=你 / 右=对手，镜像对称）。
+   角落容器运行时是 display:block，所以这个 flex 行会自动落到头像+名字下面。 */
 .effect-indicators {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
     min-height: 0;
     margin-top: 6px;
+    max-width: 240px;
 }
 .effect-indicators:empty {
     display: none;
+}
+/* 对手那侧靠右对齐，和右上角的头像对齐 */
+#opponent-avatar-corner .effect-indicators,
+.effect-indicators[data-side="opponent"] {
+    justify-content: flex-end;
+}
+/* 角落里空间有限：窄屏上把角标压小一点，别盖住棋盘 */
+@media (max-width: 560px) {
+    .effect-indicators { max-width: 44vw; gap: 4px; }
+    .effect-indicators .effect-icon { font-size: 11px; padding: 1px 6px; }
 }
 .effect-indicators .effect-icon {
     padding: 2px 8px;
@@ -2214,7 +2228,62 @@ html.theme-dark .priority-hint { color: rgba(226, 236, 248, 0.78); }
     background: rgba(255, 152, 0, 0.18);
     border: 1px solid rgba(255, 152, 0, 0.55);
     color: inherit;
-    cursor: default;
+    font-family: inherit;
+    /* 可点开：必须给出"能交互"的暗示（旧实现是 cursor:default + 原生 title，
+       玩家根本不知道可以看说明） */
+    cursor: help;
+    transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
+}
+.effect-indicators .effect-icon:hover,
+.effect-indicators .effect-icon:focus-visible {
+    background: rgba(255, 152, 0, 0.34);
+    box-shadow: 0 0 0 2px rgba(255, 152, 0, 0.35);
+    transform: translateY(-1px);
+    outline: none;
+}
+
+/* 效果说明浮层：桌面 hover / 手机点击展开 */
+.effect-popover {
+    position: fixed;
+    z-index: 10050;
+    max-width: min(88vw, 340px);
+    box-sizing: border-box;
+    padding: 12px 14px;
+    background: var(--surface-strong);
+    color: var(--text);
+    border: 1px solid rgba(255, 152, 0, 0.6);
+    border-radius: 10px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+    font-size: 13px;
+    line-height: 1.55;
+    pointer-events: none;   /* 纯展示：不挡鼠标，避免 hover 抖动 */
+}
+.effect-popover.hidden { display: none; }
+.effect-popover-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.effect-popover-who {
+    flex: none;
+    padding: 1px 7px;
+    border-radius: 8px;
+    font-size: 11px;
+    background: rgba(255, 152, 0, 0.22);
+    border: 1px solid rgba(255, 152, 0, 0.5);
+}
+.effect-popover-name {
+    font-weight: 700;
+    font-size: 14px;
+}
+.effect-popover-body { opacity: 0.92; }
+.effect-popover-expiry {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed rgba(255, 255, 255, 0.18);
+    font-size: 12px;
+    opacity: 0.85;
 }
 
 /* ==========================================================================

@@ -845,6 +845,10 @@ window.gameState = {
     // 出牌门禁要读它判断「绝处逢生」，所以必须有初值 —— 此前只在 room_sync
     // 里被赋值，未重连过的玩家这里是 undefined，读取方得各自容错。
     activeEffects: [],
+    // 生效中效果角标的数据（服务端按收件人视角分别下发 self / opponent）。
+    // 浮层靠这两份数据按卡名回查说明，所以角标重绘后也能正确展开。
+    activeEffectsSelf: [],
+    activeEffectsOpponent: [],
     // 「拒绝所有阶段转换时点」开关（服务端 decline_priority 的本地镜像）。
     // 勾上后服务端不再向我发优先权询问；开关本身可随时取消勾选。
     declinePriority: false,
@@ -970,6 +974,11 @@ function applyRoomSync(data) {
         }
     }
     if (Array.isArray(data.active_effects)) gameState.activeEffects = data.active_effects;
+    // 重连快照里带的效果角标：此前没带，重连后要等下一次 active_effects 广播才恢复，
+    // 玩家会以为效果没了。这里直接渲染回来。
+    if (data.effect_badges) {
+        renderActiveEffects(data.effect_badges);
+    }
     if (data.pending_placement && typeof showPlacementPrompt === 'function') {
         showPlacementPrompt({
             kind: data.pending_placement.kind,
@@ -2232,7 +2241,7 @@ function setupSocketListeners() {
         // 隐藏状态显示栏中的所有效果
         document.getElementById('reinforcement-status')?.classList.add('hidden');
         document.getElementById('holy-heart-status')?.classList.add('hidden');
-        renderActiveEffects([]);   // 结算界面不该再挂着「生效中」的角标
+        renderActiveEffects({ self: [], opponent: [] });   // 结算界面不该再挂着「生效中」的角标
         // 对局结束，手牌选中态一并清掉
         gameState.selectedCardIndex = -1;
         gameState.selectedCardKey = null;
@@ -3193,8 +3202,9 @@ function setupSocketListeners() {
     });
 
     // 当前生效效果角标：完全由服务端广播驱动（服务端是唯一真相）。
+    // 服务端按收件人视角分别下发 self / opponent —— 双方都能看到对方挂着什么。
     socket.on('active_effects', (data) => {
-        renderActiveEffects(data && data.effects);
+        renderActiveEffects(data || { self: [], opponent: [] });
     });
 
     // 服务器推送的通用消息
@@ -5996,14 +6006,172 @@ function initEffectStatusBarSync() {
 // 关键在「整体重画」——以前是 innerHTML += 追加，挂上就永远没人摘：
 // 百亿补贴每回合切换其实就会被服务端清掉，角标却一直亮着，看着像永久生效。
 // 服务端每次 effect_flags 变化（出牌结算完 / 回合切换 / 新大回合）都会推一份最新列表。
-function renderActiveEffects(effects) {
-    const box = document.getElementById('effect-indicators');
-    if (!box) return;
-    const list = Array.isArray(effects) ? effects : [];
-    box.innerHTML = list.map((name) => {
-        const safe = escapeHtml(String(name));
-        return `<div class="effect-icon" title="${safe}">${safe}</div>`;
-    }).join('');
+// 角标该挂在哪个容器里。
+//
+// ⚠️ 对局中玩家真正看到的头像是左上/右上两个【固定定位】的角落头像
+// （#avatar-corner / #opponent-avatar-corner，由本文件开头那段脚本把
+// <img> 从 .player-info 里搬过去）。所以角标必须挂进这两个容器，
+// 挂在 .player-info 里的话根本不挨着头像。
+// 兜底：角落头像还没建出来时先挂到 .player-info，免得渲染不出来。
+function effectBoxFor(side) {
+    const id = side === 'opponent' ? 'opponent-effect-indicators' : 'my-effect-indicators';
+    const cornerId = side === 'opponent' ? 'opponent-avatar-corner' : 'avatar-corner';
+
+    // 角落头像存在就一定要挂它下面；不存在才退到 .player-info。
+    // ⚠️ 不能"建好了就不再动"：首次渲染可能早于角落头像创建，
+    // 那样容器会一直留在兜底位置，永远不挨着头像。
+    const host = document.getElementById(cornerId)
+        || document.querySelectorAll('.players-info .player-info')[side === 'opponent' ? 1 : 0]
+        || document.body;
+
+    let box = document.getElementById(id);
+    if (!box) {
+        box = document.createElement('div');
+        box.id = id;
+        box.className = 'effect-indicators';
+        box.dataset.side = side;
+    }
+    if (box.parentElement !== host) {
+        // appendChild 会把它挪到 host 末尾，正好落在头像+名字下面
+        host.appendChild(box);
+    }
+    return box;
+}
+
+function renderActiveEffects(payload) {
+    // 兼容：旧调用点传的是纯字符串数组（表示"我自己的效果"）
+    const data = Array.isArray(payload)
+        ? { self: payload, opponent: [] }
+        : (payload || { self: [], opponent: [] });
+    const mine = normalizeEffectList(data.self);
+    const theirs = normalizeEffectList(data.opponent);
+
+    // 记住原始数据：浮层靠角标上的 data 属性回查，重绘后依然可用
+    gameState.activeEffectsSelf = mine;
+    gameState.activeEffectsOpponent = theirs;
+
+    effectBoxFor('self').innerHTML = mine.map((e) => effectBadgeHTML(e, 'self')).join('');
+    effectBoxFor('opponent').innerHTML = theirs.map((e) => effectBadgeHTML(e, 'opponent')).join('');
+
+    // 角标重绘后旧浮层失去锚点，直接收起
+    hideEffectPopover();
+}
+
+// 兼容旧的纯字符串数组（老快照 / 老客户端），避免升级瞬间渲染不出来
+function normalizeEffectList(list) {
+    if (!Array.isArray(list)) return [];
+    return list.map((e) => {
+        if (typeof e === 'string') return { name: e, description: '', expires: '' };
+        return {
+            name: String((e && e.name) || ''),
+            description: String((e && e.description) || ''),
+            expires: String((e && e.expires) || ''),
+        };
+    }).filter((e) => e.name);
+}
+
+function effectBadgeHTML(effect, side) {
+    const safeName = escapeHtml(effect.name);
+    return `<button type="button" class="effect-icon" data-side="${side}"`
+        + ` data-effect-name="${safeName}"`
+        + ` aria-label="查看效果：${safeName}">${safeName}</button>`;
+}
+
+// ---------------------------------------------------------------- 效果浮层
+// 桌面：鼠标移上去显示、移开隐藏。
+// 手机：点一下打开，再点一下（或点别处）关闭 —— 触屏没有 hover。
+let effectPopoverEl = null;
+let effectPopoverTimer = null;
+
+function ensureEffectPopover() {
+    if (effectPopoverEl && document.body.contains(effectPopoverEl)) return effectPopoverEl;
+    const el = document.createElement('div');
+    el.className = 'effect-popover hidden';
+    el.setAttribute('role', 'tooltip');
+    document.body.appendChild(el);
+    effectPopoverEl = el;
+    return el;
+}
+
+function hideEffectPopover() {
+    if (effectPopoverTimer) { clearTimeout(effectPopoverTimer); effectPopoverTimer = null; }
+    if (effectPopoverEl) {
+        effectPopoverEl.classList.add('hidden');
+        effectPopoverEl.dataset.for = '';
+    }
+}
+
+function showEffectPopover(anchor, effect) {
+    if (!anchor || !effect) return;
+    const el = ensureEffectPopover();
+    if (effectPopoverTimer) { clearTimeout(effectPopoverTimer); effectPopoverTimer = null; }
+    const who = anchor.dataset.side === 'opponent' ? '对方' : '你';
+    el.innerHTML = `
+        <div class="effect-popover-head">
+            <span class="effect-popover-who">${escapeHtml(who)}</span>
+            <span class="effect-popover-name">${escapeHtml(effect.name)}</span>
+        </div>
+        <div class="effect-popover-body">${escapeHtml(effect.description || '这张卡没有额外说明')}</div>
+        ${effect.expires ? `<div class="effect-popover-expiry">⏳ ${escapeHtml(effect.expires)}</div>` : ''}
+    `;
+    el.classList.remove('hidden');
+    el.dataset.for = effect.name;
+
+    // 贴着角标定位，并保证不超出视口
+    const r = anchor.getBoundingClientRect();
+    const box = el.getBoundingClientRect();
+    let left = r.left + r.width / 2 - box.width / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - box.width - 8));
+    let top = r.bottom + 8;
+    if (top + box.height > window.innerHeight - 8) top = Math.max(8, r.top - box.height - 8);
+    el.style.left = `${Math.round(left)}px`;
+    el.style.top = `${Math.round(top)}px`;
+}
+
+// 从角标反查它对应的效果数据（重绘后依然有效，不依赖闭包里的对象）
+function effectOfBadge(btn) {
+    const side = btn.dataset.side === 'opponent' ? 'opponent' : 'self';
+    const list = side === 'opponent'
+        ? (gameState.activeEffectsOpponent || [])
+        : (gameState.activeEffectsSelf || []);
+    return list.find((e) => e.name === btn.dataset.effectName) || null;
+}
+
+// 事件委托挂一次即可（角标会被反复重绘，逐个绑定会漏）
+function bindEffectIndicators() {
+    // 挂在 document 上：既覆盖角标，也能捕获"点别处关闭浮层"。
+    // 角标数量很少，closest 判空的开销可以忽略。
+    if (document.documentElement.dataset.effectBound === '1') return;
+    document.documentElement.dataset.effectBound = '1';
+
+    document.addEventListener('mouseover', (ev) => {
+        const btn = ev.target.closest && ev.target.closest('.effect-icon');
+        if (!btn) return;
+        const effect = effectOfBadge(btn);
+        if (effect) showEffectPopover(btn, effect);
+    });
+    document.addEventListener('mouseout', (ev) => {
+        const btn = ev.target.closest && ev.target.closest('.effect-icon');
+        if (!btn) return;
+        // 留一点缓冲，避免鼠标经过边缘时闪一下
+        if (effectPopoverTimer) clearTimeout(effectPopoverTimer);
+        effectPopoverTimer = setTimeout(hideEffectPopover, 130);
+    });
+    // 手机端：触屏没有 hover，点一下切换
+    document.addEventListener('click', (ev) => {
+        const btn = ev.target.closest && ev.target.closest('.effect-icon');
+        if (!btn) { hideEffectPopover(); return; }
+        const el = ensureEffectPopover();
+        const sameOpen = !el.classList.contains('hidden') && el.dataset.for === btn.dataset.effectName;
+        if (sameOpen) {
+            hideEffectPopover();
+        } else {
+            const effect = effectOfBadge(btn);
+            if (effect) showEffectPopover(btn, effect);
+        }
+    });
+    window.addEventListener('scroll', hideEffectPopover, true);
+    window.addEventListener('resize', hideEffectPopover);
 }
 
 // 初始化
@@ -6018,6 +6186,9 @@ function init() {
     bindEventListeners();
     // 状态显示栏容器显隐（避免出现空横条）
     initEffectStatusBarSync();
+    // 效果角标的事件委托（桌面 hover / 手机点击）。角标会被反复重绘，
+    // 所以用委托挂一次，绝不能逐个绑定。
+    bindEffectIndicators();
     // 如果服务端传来了用户名，预填并设置为当前玩家名
     if (window.__USERNAME) {
         gameState.playerName = window.__USERNAME || gameState.playerName;

@@ -876,7 +876,7 @@ def test_wuxian_badge_clears_after_trigger(room, events):
     events.clear()
     apply(room, P1, '五险一金')
 
-    seen = [d['effects'] for (e, d, t, _r) in events
+    seen = [[b['name'] for b in d['self']] for (e, d, t, _r) in events
             if e == 'active_effects' and t == 'sid-p1']
     assert seen, '触发时应刷新一次角标'
     assert '五险一金' not in seen[-1], f'触发后不该还挂着角标，实际 {seen[-1]}'
@@ -1780,19 +1780,26 @@ def test_lingqi_reset_gameboard_targets_sid_not_player_key(room, events):
 
 # 当前生效效果角标：服务端每次变化都要把「真相」推给本人
 def test_active_effects_broadcast_tracks_flag_lifecycle(room, events):
-    """百亿补贴的角标必须随真实状态出现 / 消失（以前前端只加不删，看着像永久）。"""
+    """百亿补贴的角标必须随真实状态出现 / 消失（以前前端只加不删，看着像永久）。
+
+    ⚠️ 推送形状已改成按收件人视角的 {self, opponent}：
+    作者要求「双方都可见正在生效的效果」，所以对手现在【能看到】我的角标
+    （通过他自己的 opponent 字段），与旧断言「对手不该看到我的角标」相反。
+    """
     events.clear()
     server._emit_active_effects(room)
     got = [d for (e, d, _t, _r) in events if e == 'active_effects']
-    assert got and all(d['effects'] == [] for d in got), '没效果时列表应为空'
+    assert got and all(d['self'] == [] and d['opponent'] == [] for d in got), '没效果时两边都应为空'
 
     # 打出百亿补贴 → 角标出现
     events.clear()
     apply(room, P1, '百亿补贴')
     server._emit_active_effects(room)
-    by_target = {t: d['effects'] for (e, d, t, _r) in events if e == 'active_effects'}
-    assert '百亿补贴' in by_target.get('sid-p1', []), '施法者应看到角标'
-    assert '百亿补贴' not in by_target.get('sid-p2', []), '对手不该看到我的角标'
+    by_self = {t: [b['name'] for b in d['self']] for (e, d, t, _r) in events if e == 'active_effects'}
+    by_opp = {t: [b['name'] for b in d['opponent']] for (e, d, t, _r) in events if e == 'active_effects'}
+    assert '百亿补贴' in by_self.get('sid-p1', []), '施法者自己的列表里要有'
+    assert '百亿补贴' not in by_self.get('sid-p2', []), '它不是对手自己的效果'
+    assert '百亿补贴' in by_opp.get('sid-p2', []), '★ 对手应该能看到我挂着什么（双方可见）'
 
     # 回合切换会清掉 subsidy → 角标必须跟着消失
     room.players[P1].effect_flags.__dict__ = {
@@ -1800,8 +1807,10 @@ def test_active_effects_broadcast_tracks_flag_lifecycle(room, events):
         if k in ['holy_heart']}
     events.clear()
     server._emit_active_effects(room)
-    by_target = {t: d['effects'] for (e, d, t, _r) in events if e == 'active_effects'}
-    assert '百亿补贴' not in by_target.get('sid-p1', []), '标记被清后角标要消失'
+    by_self = {t: [b['name'] for b in d['self']] for (e, d, t, _r) in events if e == 'active_effects'}
+    by_opp = {t: [b['name'] for b in d['opponent']] for (e, d, t, _r) in events if e == 'active_effects'}
+    assert '百亿补贴' not in by_self.get('sid-p1', []), '标记被清后角标要消失'
+    assert '百亿补贴' not in by_opp.get('sid-p2', []), '对手那边也要跟着消失'
 
 
 def test_active_effects_sent_to_both_players_by_sid(room, events):

@@ -3353,33 +3353,71 @@ def _emit_ships_updated(room):
 # 角标以前是前端自己 `innerHTML +=` 挂上去的，挂上就再没人摘 —— 百亿补贴明明
 # 每回合切换就被清掉了，角标却一直亮着，玩家以为效果是永久的。
 # 现在改成服务端在状态变化后广播真相，前端只负责照着画，不会再出现「贴上就下不来」。
+# ── 「生效中效果」角标 ────────────────────────────────────────────────
+# 每个效果是 (effect_flags 字段, 显示名, 失效时机)。
+#
+# 失效时机必须与代码里的真实清理点一致，不能凭卡面猜：
+#   · 小回合切换（end_turn）只保留 permanent_flags 里那几个：
+#       ['holy_heart', 'reinforcement_check', 'no_draw', 'prediction', 'forced_kill']
+#     所以 no_draw / prediction 能跨小回合活下来 → 大回合结束才清；
+#   · 其余（百亿补贴 / 饮血 / 八方来财 / 火力全开 …）交出回合就清；
+#   · 五险一金是「触发一次即失效」的机制，既不是回合末也不是大回合末；
+#   · 大回合结束统一走 _prune_effect_flags(room, FLAGS_KEEP_ACROSS_ROUND)（空集）。
+_EFFECT_EXPIRY_ROUND = '本大回合结束（重新猜拳）时失效'
+_EFFECT_EXPIRY_TURN = '本回合结束时失效'
+_EFFECT_EXPIRY_TRIGGER = '本回合攻击次数第一次归零时触发一次，触发后失效'
+
 _EFFECT_BADGES = (
-    ('subsidy', '百亿补贴'),
-    ('wuxian', '五险一金'),
-    ('vampire', '饮血'),
-    ('treasure_hunter', '八方来财'),
-    ('prediction', '神机妙算'),
-    ('double_attacks', '火力全开'),
-    ('battle_spirit', '越战越勇'),
-    ('last_stand', '绝处逢生'),
-    ('no_draw', '无中生有'),
+    ('subsidy', '百亿补贴', _EFFECT_EXPIRY_TURN),
+    ('wuxian', '五险一金', _EFFECT_EXPIRY_TRIGGER),
+    ('vampire', '饮血', _EFFECT_EXPIRY_TURN),
+    ('treasure_hunter', '八方来财', _EFFECT_EXPIRY_TURN),
+    ('prediction', '神机妙算', _EFFECT_EXPIRY_ROUND),
+    ('double_attacks', '火力全开', _EFFECT_EXPIRY_TURN),
+    ('battle_spirit', '越战越勇', _EFFECT_EXPIRY_TURN),
+    ('last_stand', '绝处逢生', _EFFECT_EXPIRY_TURN),
+    ('no_draw', '无中生有', _EFFECT_EXPIRY_ROUND),
 )
+
+# 效果名 → 卡面原文。前端悬停/点击角标时要显示「这个效果到底做什么」，
+# 文字直接复用卡牌数据，避免两处各写一份而漂移。
+_CARD_DESCRIPTION = {c.name: (c.description or '') for c in magic_cards}
 
 
 def _effect_badges(player):
-    """返回该玩家当前仍然生效的效果名（用于前端角标）。"""
+    """返回该玩家当前仍生效的效果，带卡面说明与失效时机（供前端角标与浮层用）。"""
     flags = getattr(player, 'effect_flags', None)
     if flags is None:
         return []
-    return [label for attr, label in _EFFECT_BADGES if getattr(flags, attr, None)]
+    out = []
+    for attr, label, expiry in _EFFECT_BADGES:
+        if not getattr(flags, attr, None):
+            continue
+        out.append({
+            'name': label,
+            'description': _CARD_DESCRIPTION.get(label, ''),
+            'expires': expiry,
+        })
+    return out
 
 
 def _emit_active_effects(room):
-    """把「当前生效效果」分别推给本人 —— 角标是给自己看的状态，不广播给对方。"""
-    for player in room.players.values():
+    """把「当前生效效果」推给双方。
+
+    ⚠️ 此前只发本人（注释写着"角标是给自己看的状态，不广播给对方"），
+    于是玩家完全看不到对手身上挂着什么。作者要求双方都可见：
+    这些效果本来就是对方明牌打出的卡造成的，公开不泄露任何信息。
+    每条同时带上卡面说明与失效时机，前端悬停/点击即可展开。
+    """
+    for pid, player in room.players.items():
         if not getattr(player, 'sid', None):
             continue
-        emit('active_effects', {'effects': _effect_badges(player)}, to=player.sid)
+        opp_id = _opponent_of(room, pid)
+        opp = room.players.get(opp_id) if opp_id else None
+        emit('active_effects', {
+            'self': _effect_badges(player),
+            'opponent': _effect_badges(opp) if opp else [],
+        }, to=player.sid)
 
 
 def _maybe_trigger_wuxian_yijin(room, player_id):
@@ -4316,6 +4354,12 @@ def _build_room_sync(room, player_id: str) -> dict:
         'chain_window': getattr(room, 'chain_window', None),
         # 生效中的房间级效果（仅名称，避免下发复杂对象）
         'active_effects': sorted(room.game_effects.keys()) if isinstance(room.game_effects, dict) else [],
+        # 双方「生效中效果」角标：重连后不能丢，否则玩家会以为效果没了。
+        # 此前快照里完全没带这份数据，只能等下一次 _emit_active_effects 才恢复。
+        'effect_badges': {
+            'self': _effect_badges(p),
+            'opponent': _effect_badges(opp) if opp else [],
+        },
         # 复活/增援放置中途：仅下发给正在放置的玩家
         'pending_placement': (
             room.magic_temp_data.get('pending_placement')

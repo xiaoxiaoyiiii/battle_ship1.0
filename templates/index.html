@@ -268,6 +268,12 @@
                             </div>
                         </div>
                     </div>
+                    <!--
+                        生效中效果角标：由 game.js 挂到【对局中真正可见的两个头像】下面
+                        （左上 #avatar-corner = 你，右上 #opponent-avatar-corner = 对手）。
+                        注意不能写在这里：那两个头像 <img> 会被脚本搬到固定定位的角落，
+                        这一行里其实已经没有头像了。
+                    -->
                     <div id="turn-indicator">
                         <div class="game-info">
                             <div>当前阶段：<span id="current-phase">准备阶段</span></div>
@@ -278,7 +284,6 @@
                             <button id="end-turn-btn" class="phase-btn" style="display:none;">结束结束阶段</button>
                         </div>
                     </div>
-                    <div id="effect-indicators" class="effect-indicators"></div>
                 </div>
                 <!-- 棋盘切换条（仅在单屏放不下两块棋盘时由自适应布局显示） -->
                 <div class="board-tabs" id="board-tabs" role="tablist" aria-label="棋盘切换">

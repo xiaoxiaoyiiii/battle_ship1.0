@@ -222,8 +222,59 @@ def test_prep_phase_remove_then_battle_no_deadlock(room):
 # ---------------------------------------------------------------------------
 # 反证：教皇旨意的其他行为不受影响
 # ---------------------------------------------------------------------------
-def test_papal_attack_still_works(room):
-    """弃卡攻击不消耗常规次数，仍可用。"""
+def test_papal_discard_grants_two_attacks(room):
+    """弃一张魔法卡 → 攻击次数 +2，之后走普通攻击。
+
+    作者裁定（2026-09-14）：「弃置魔法卡之后应该是让自己攻击次数+2
+    然后可以和正常攻击逻辑一样」。
+    旧实现（本用例曾断言）是"服务端一次性对着同一格打两发、次数仍为 0"。
+    """
+    room.players[P1].magic_hand = [card('教皇旨意'), card('轰炸')]
+    server.enter_battle_phase({'room_id': room.id, 'player_id': P1})
+    use(room, P1, '教皇旨意')
+    assert room.attacks_remaining == 0, '教皇旨意生效后次数为 0'
+
+    res = server.handle_papal_discard({
+        'room_id': room.id, 'player_id': P1, 'discard_card_index': 0,
+    })
+    assert res.get('status') == 'success', res
+    assert room.attacks_remaining == 2, '★ 弃一张卡应换来 2 次攻击'
+
+    # 换来的次数要能真的打出去（走普通攻击通道）
+    res2 = server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 5, 'y': 5})
+    assert res2.get('status') == 'success', f'弃卡后应能正常攻击，实际 {res2}'
+    assert room.attacks_remaining == 1, '普通攻击每次消耗 1 次'
+
+
+def test_papal_discard_requires_battle_phase(room):
+    """准备阶段不能弃卡换次数（攻击阶段才允许）。"""
+    room.players[P1].magic_hand = [card('教皇旨意'), card('轰炸')]
+    use(room, P1, '教皇旨意')
+    room.current_phase = 'preparation'
+    res = server.handle_papal_discard({
+        'room_id': room.id, 'player_id': P1, 'discard_card_index': 0,
+    })
+    assert res.get('status') == 'error', res
+    assert room.attacks_remaining == 0, '被拒时不该加次数'
+
+
+def test_papal_discard_rejects_without_hand(room):
+    """没有手牌就换不了次数（也不能零代价拿到攻击）。"""
+    room.players[P1].magic_hand = [card('教皇旨意')]
+    server.enter_battle_phase({'room_id': room.id, 'player_id': P1})
+    use(room, P1, '教皇旨意')
+    res = server.handle_papal_discard({
+        'room_id': room.id, 'player_id': P1, 'discard_card_index': 0,
+    })
+    assert res.get('status') == 'error', res
+    assert room.attacks_remaining == 0, '没弃成卡就不能有次数'
+
+
+def test_papal_attack_legacy_event_only_discards(room):
+    """旧事件名 papal_attack 仍然可用，但只做弃卡换次数（x/y 不再使用）。
+
+    浏览器可能缓存着旧的 game.js，这个入口得留着，否则老页面点了没反应。
+    """
     room.players[P1].magic_hand = [card('教皇旨意'), card('轰炸')]
     server.enter_battle_phase({'room_id': room.id, 'player_id': P1})
     use(room, P1, '教皇旨意')
@@ -233,7 +284,8 @@ def test_papal_attack_still_works(room):
         'x': 5, 'y': 5,
     })
     assert res.get('status') == 'success', res
-    assert room.attacks_remaining == 0, '弃卡攻击不消耗常规次数，仍为 0'
+    assert room.attacks_remaining == 2, '旧入口也要换成 2 次'
+    assert room.players[P2].remaining_ships == 6, '★ 旧入口不再直接打那一格'
 
 
 def test_other_field_magic_untouched(room):

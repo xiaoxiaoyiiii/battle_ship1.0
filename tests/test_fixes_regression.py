@@ -432,35 +432,54 @@ def test_demon_contract_sacrifice_is_public(room, events):
     assert pubs[0][3] == room.id, '应为房间广播（双方可见），而非私聊'
 
 
-def test_papal_attack_no_attacker_subsidy(room, events):
-    """教皇旨意弃卡攻击：攻击者自己的百亿补贴不应给当前攻击池 +3（修复三处不一致）。"""
+def test_papal_discard_no_attacker_subsidy(room, events):
+    """教皇旨意弃卡换次数：攻击者自己的百亿补贴不应给当前攻击池 +3。
+
+    改版后弃卡只加固定 2 次（PAPAL_DISCARD_BONUS），不再读补贴标记。
+
+    ⚠️ 必须真的把场地设成教皇旨意：旧版本这条测试没设场地，弃卡其实被拒了，
+    而断言恰好是 `attacks_remaining == 0`（被拒时本来就是 0）—— 等于假通过。
+    """
     server.apply_magic_effect(room, P2, card('百亿补贴'), {})
     room.players[P1].effect_flags.subsidy = True  # 攻击者误持补贴标记
     room.players[P1].ships = [ship((4, 4)), ship((5, 5))]
     room.players[P1].remaining_ships = 2
     room.players[P2].ships = [ship((0, 0))]
     room.players[P2].remaining_ships = 1
+    room.field_magic = card('教皇旨意')
     room.attacks_remaining = 0
+    room.current_attacker = P1
+    room.current_phase = 'battle'
+    room.players[P1].magic_hand = [card('轰炸')]
 
-    server.handle_papal_attack({
-        'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 0,
+    res = server.handle_papal_discard({
+        'room_id': room.id, 'player_id': P1, 'discard_card_index': 0,
     })
+    assert res.get('status') == 'success', res
     # 补贴只应由"船被击败的一方"（P2）触发，攻击者标记不应生效
-    assert room.attacks_remaining == 0
+    assert room.attacks_remaining == 2, f'只该是固定的 +2，实际 {room.attacks_remaining}'
 
 
-def test_papal_attack_elimination_records_match(room, events):
-    """教皇旨意弃卡击沉最后一艘船：应正常结束对局并记入战绩日志。"""
-    room.players[P1].magic_hand = [card('失灵！')]
+def test_papal_discard_elimination_records_match(room, events):
+    """教皇旨意换来的攻击击沉最后一艘船：应正常结束对局并记入战绩日志。
+
+    改版后攻击走 handle_attack，这里先弃卡换次数、再打那一炮。
+    """
+    room.players[P1].magic_hand = [card('失灵！'), card('轰炸')]
     room.players[P1].ships = [ship((4, 4))]
     room.players[P1].remaining_ships = 1
     room.players[P2].ships = [ship((0, 0))]
     room.players[P2].remaining_ships = 1
     room.field_magic = card('教皇旨意')
+    room.current_attacker = P1
+    room.current_phase = 'battle'
+    room.attacks_remaining = 0
 
-    res = server.handle_papal_attack({
-        'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 0,
+    server.handle_papal_discard({
+        'room_id': room.id, 'player_id': P1, 'discard_card_index': 0,
     })
+    assert room.attacks_remaining == 2, '先换到 2 次'
+    server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 0})
     assert room.state == 'game_over'
     assert room.winner == P1
     assert room.game_logs  # 应写入对局日志（原实现遗漏）

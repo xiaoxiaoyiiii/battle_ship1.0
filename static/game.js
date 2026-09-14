@@ -3654,14 +3654,22 @@ function handleAttack(x, y) {
     if (!gameState.isMyTurn) return;
     if (freezeAlert()) return;
 
-    // 教皇旨意：攻击需先弃一张魔法卡（服务端一次弃卡=攻击两次）
+    // 教皇旨意：攻击次数被压成 0，必须【弃一张魔法卡换 2 次攻击】。
+    // ⚠️ 只有"次数为 0"时才拦下来引导去弃卡；已经换到次数之后就【走正常攻击】——
+    // 作者裁定："弃置魔法卡之后应该是让自己攻击次数+2 然后可以和正常攻击逻辑一样"。
+    // 旧实现是拿到次数也一律走 papal_attack（服务端对着同一个格子一次打两发），
+    // 玩家既选不了目标，也走不到这里的正常路径。
     if (gameState.fieldMagic === '教皇旨意') {
-        if (!gameState.hand || gameState.hand.length === 0) {
-            showAlert('教皇旨意需要弃一张魔法卡才能攻击，但你没有手牌');
+        const left = parseInt(attacksRemaining.textContent, 10) || 0;
+        if (left <= 0) {
+            if (!gameState.hand || gameState.hand.length === 0) {
+                showAlert('教皇旨意：攻击次数为 0，需要弃一张魔法卡换 2 次攻击，但你没有手牌');
+                return;
+            }
+            showPapalDiscardChoice();
             return;
         }
-        showPapalDiscardChoice(x, y);
-        return;
+        // 有次数了 → 落到下面走普通攻击
     }
 
     // 检查当前是否为战斗阶段
@@ -5326,6 +5334,8 @@ function updateFieldMagicUI(playerId, card) {
         // gameState.fieldMagic 仍留着旧卡名（教皇旨意等判断会读到过期的场地）。
         gameState.fieldMagic = null;
     }
+    // 教皇旨意会改变"怎么攻击"，按钮显隐要跟着场地走
+    if (typeof updatePapalDiscardButton === 'function') updatePapalDiscardButton();
 }
 
 // 恶魔契约：在自己棋盘上点选要牺牲的战舰（不弹额外窗口，直接点格子）
@@ -6302,6 +6312,10 @@ function updatePhaseUI() {
                 break;
         }
     }
+
+    // 教皇旨意：战斗阶段给我方一个「弃卡换攻击 +2」的显式入口。
+    // 不靠"点棋盘才发现次数是 0"才弹窗 —— 那样玩家根本不知道有这条路。
+    if (typeof updatePapalDiscardButton === 'function') updatePapalDiscardButton();
 }
 
 // 添加阶段按钮事件监听
@@ -6342,6 +6356,19 @@ function setupPhaseButtons() {
             }
         });
     });
+
+    // 教皇旨意：弃卡换攻击次数（显式入口；点棋盘发现次数为 0 时也会弹同一个窗）
+    const papalBtn = document.getElementById('papal-discard-btn');
+    if (papalBtn) {
+        papalBtn.addEventListener('click', () => {
+            if (freezeAlert()) return;
+            if (!gameState.hand || gameState.hand.length === 0) {
+                showAlert('没有可弃置的魔法卡，无法换取攻击次数');
+                return;
+            }
+            showPapalDiscardChoice();
+        });
+    }
 
     // 结束回合按钮
     document.getElementById('end-turn-btn').addEventListener('click', () => {
@@ -6390,13 +6417,21 @@ function showShenjiDeclarePrompt() {
     };
 }
 
-// 教皇旨意：选择一张手牌弃置后攻击（一次弃卡=攻击两次，由服务端执行）
-function showPapalDiscardChoice(x, y) {
+// 教皇旨意：选一张手牌弃置，换来 2 次攻击次数。
+//
+// ⚠️ 这个函数【不再接 x/y】：作者裁定弃卡只负责"加次数"，
+// 攻击本身交给玩家点格子走普通 attack（和正常攻击逻辑一致）。
+// 旧版是"先点格子 → 弹窗选卡 → 服务端对着那个格子一次性打两发"，
+// 导致玩家无法选择打哪两格，也享受不到普通攻击路径的联动。
+function showPapalDiscardChoice() {
     const overlay = document.createElement('div');
+    overlay.className = 'papal-discard-overlay';
     overlay.style.cssText = 'position:fixed;inset:0;z-index:10002;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center';
     const box = document.createElement('div');
+    box.className = 'papal-discard-box';
     box.style.cssText = 'background:#fff;color:#222;padding:18px 22px;border-radius:10px;min-width:300px;max-width:80vw;max-height:70vh;overflow:auto;text-align:center';
-    box.innerHTML = '<div style="font-weight:bold;margin-bottom:10px">教皇旨意 · 弃一张魔法卡攻击两次</div>';
+    box.innerHTML = '<div style="font-weight:bold;margin-bottom:6px">教皇旨意 · 弃一张魔法卡</div>'
+        + '<div style="font-size:13px;opacity:.75;margin-bottom:10px">弃置后攻击次数 +2，然后点对手棋盘就能正常攻击</div>';
     const list = document.createElement('div');
     list.style.cssText = 'display:flex;flex-direction:column;gap:6px;text-align:left';
     if (!gameState.hand || gameState.hand.length === 0) {
@@ -6404,17 +6439,27 @@ function showPapalDiscardChoice(x, y) {
     } else {
         gameState.hand.forEach((card, i) => {
             const b = document.createElement('button');
-            b.textContent = (card.name || card.name) + '（速阶' + card.speed + '）';
+            b.type = 'button';
+            b.className = 'papal-discard-card';
+            b.textContent = (card.name || '') + '（速阶' + card.speed + '）';
             b.style.cssText = 'padding:6px 10px;cursor:pointer;text-align:left';
             b.onclick = () => {
                 if (gameState.socket) {
-                    gameState.socket.emit('papal_attack', {
+                    gameState.socket.emit('papal_discard', {
                         room_id: gameState.roomId,
                         player_id: gameState.playerId,
-                        x: x, y: y,
                         discard_card_index: i
                     }, (resp) => {
-                        if (resp && resp.status === 'error') showAlert(resp.message);
+                        if (resp && resp.status === 'error') {
+                            showAlert(resp.message);
+                        } else if (resp && resp.status === 'success') {
+                            showMessage(resp.message || '攻击次数 +2，现在可以正常攻击了');
+                            // 本地也把这张牌去掉，别等下一次 hand_updated 才更新
+                            if (gameState.hand && gameState.hand[i]) {
+                                gameState.hand.splice(i, 1);
+                                if (typeof updateHandUI === 'function') updateHandUI();
+                            }
+                        }
                     });
                 }
                 try { document.body.removeChild(overlay); } catch (e) {}
@@ -6423,6 +6468,7 @@ function showPapalDiscardChoice(x, y) {
         });
     }
     const close = document.createElement('button');
+    close.type = 'button';
     close.textContent = '取消';
     close.style.cssText = 'margin-top:12px;padding:6px 16px;cursor:pointer';
     close.onclick = () => { try { document.body.removeChild(overlay); } catch (e) {} };
@@ -6430,6 +6476,17 @@ function showPapalDiscardChoice(x, y) {
     box.appendChild(close);
     overlay.appendChild(box);
     document.body.appendChild(overlay);
+}
+
+// 教皇旨意生效时，给玩家一个显式入口主动换次数
+// （否则只能靠"点棋盘发现次数是 0"才会弹出来）。
+function updatePapalDiscardButton() {
+    const btn = document.getElementById('papal-discard-btn');
+    if (!btn) return;
+    const active = gameState.fieldMagic === '教皇旨意';
+    const mine = gameState.currentAttacker === gameState.playerId
+        && gameState.currentPhase === 'battle';
+    btn.style.display = (active && mine) ? 'inline-block' : 'none';
 }
 
 // 仁王之盾：选择至多3艘自己的船进入护盾状态

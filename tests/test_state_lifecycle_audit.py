@@ -287,7 +287,11 @@ def setup_papal(room):
 
 
 def test_papal_attack_respects_forced_kill(room):
-    """余音绕梁在弃卡攻击路径也要生效（能打穿无敌船）。"""
+    """余音绕梁在教皇旨意的新流程下要生效（弃卡换次数 → 普通攻击能打穿无敌船）。
+
+    ⚠️ 教皇旨意已改版：弃卡只负责「攻击次数 +2」，攻击本身走普通 attack 通道。
+    所以这里先弃卡、再用 handle_attack 打那一炮。
+    """
     setup_papal(room)
     room.players[P2].ships = [PlayerShip(positions=[Position(5, 5)], hits=[])]
     room.players[P2].ships[0].invincible = True
@@ -295,14 +299,16 @@ def test_papal_attack_respects_forced_kill(room):
     room.players[P1].effect_flags.forced_kill = 2
     room.players[P1].magic_hand = [card('轰炸'), card('冻结')]
 
-    server.handle_papal_attack({
-        'room_id': room.id, 'player_id': P1, 'x': 5, 'y': 5, 'discard_card_index': 0,
+    server.handle_papal_discard({
+        'room_id': room.id, 'player_id': P1, 'discard_card_index': 0,
     })
+    assert room.attacks_remaining == 2, '弃卡应换来 2 次攻击'
+    server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 5, 'y': 5})
     assert room.players[P2].remaining_ships == 0, '无敌船应被强制击杀'
 
 
 def test_papal_attack_records_damage(room):
-    """弃卡攻击击沉后必须记 damage_dealt_this_turn。
+    """弃卡换来的攻击击沉后必须记 damage_dealt_this_turn。
 
     否则 Freezing！ 会被误判为"本回合没让对方减船"而放行，
     白送一个跳过对方整回合的效果。
@@ -310,15 +316,16 @@ def test_papal_attack_records_damage(room):
     setup_papal(room)
     room.players[P1].magic_hand = [card('轰炸'), card('Freezing！')]
     before = room.players[P2].remaining_ships
-    server.handle_papal_attack({
-        'room_id': room.id, 'player_id': P1, 'x': 5, 'y': 5, 'discard_card_index': 0,
+    server.handle_papal_discard({
+        'room_id': room.id, 'player_id': P1, 'discard_card_index': 0,
     })
+    server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 5, 'y': 5})
     assert room.players[P2].remaining_ships < before, '这一炮应该击沉了船'
     assert room.players[P1].damage_dealt_this_turn > 0, '伤害统计必须记录'
 
 
 def test_papal_attack_battle_spirit(room):
-    """越战越勇在弃卡攻击路径也要生效（+1 次攻击）。"""
+    """越战越勇在教皇旨意的新流程下要生效（击沉后 +1 次攻击）。"""
     setup_papal(room)
     room.players[P1].effect_flags.battle_spirit = True
     room.players[P1].magic_hand = [card('轰炸'), card('冻结')]
@@ -326,10 +333,12 @@ def test_papal_attack_battle_spirit(room):
     room.players[P2].ships = [PlayerShip(positions=[Position(5, 5)], hits=[])]
     room.players[P2].remaining_ships = 1
 
-    server.handle_papal_attack({
-        'room_id': room.id, 'player_id': P1, 'x': 5, 'y': 5, 'discard_card_index': 0,
+    server.handle_papal_discard({
+        'room_id': room.id, 'player_id': P1, 'discard_card_index': 0,
     })
-    assert room.attacks_remaining == 1, f'越战越勇应 +1，实际 {room.attacks_remaining}'
+    server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 5, 'y': 5})
+    # 弃卡 +2 换到 2 次，打掉 1 次 → 剩 1；越战越勇再 +1 → 2
+    assert room.attacks_remaining == 2, f'越战越勇应 +1，实际 {room.attacks_remaining}'
 
 
 # ---------------------------------------------------------------------------
@@ -438,11 +447,10 @@ def test_shield_absorb_broadcasts_event(room, events):
 
 
 def test_papal_attack_shield_absorb_broadcasts(room, events):
-    """教皇旨意弃卡攻击路径同样要广播盾挡下。
+    """教皇旨意的新流程同样要广播「盾挡下」。
 
-    注意弃卡攻击会打两次：第一发被盾挡下（船毫发无伤），
-    第二发盾已消耗，所以会真的命中。这里只断言"盾被消耗 + 有广播"，
-    不给第二发的结果下断言（那是既有规则）。
+    改版后弃卡只加次数，攻击走 handle_attack —— 这条就验证
+    "弃卡换来的那一炮"依然会广播 shield_absorbed。
     """
     setup_papal(room)
     room.players[P2].ships = [PlayerShip(positions=[Position(5, 5)], hits=[])]
@@ -450,9 +458,10 @@ def test_papal_attack_shield_absorb_broadcasts(room, events):
     room.players[P2].remaining_ships = 1
     room.players[P1].magic_hand = [card('轰炸'), card('冻结')]
 
-    server.handle_papal_attack({
-        'room_id': room.id, 'player_id': P1, 'x': 5, 'y': 5, 'discard_card_index': 0,
+    server.handle_papal_discard({
+        'room_id': room.id, 'player_id': P1, 'discard_card_index': 0,
     })
+    server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 5, 'y': 5})
     absorbed = [d for e, d, to, r in events if e == 'shield_absorbed']
-    assert absorbed, '弃卡攻击路径也要广播盾挡下'
+    assert absorbed, '弃卡换来的这一炮也要广播盾挡下'
     assert room.players[P2].ships[0].shield is False, '盾应被消耗'

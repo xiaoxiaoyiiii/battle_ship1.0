@@ -2024,7 +2024,7 @@ def _on_ship_destroyed(room, owner_id: str, ship, hits_added=None, source='magic
 
 
 def _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id, ship, target_x, target_y):
-    """击沉一艘战舰后的共同副作用（handle_attack / _do_attack 共用）。
+    """击沉一艘战舰后的共同副作用（普通攻击 / 区域魔法 共用）。
 
     包含：船数扣减、沉船记录、平等条约快照、百亿补贴、恶魔契约、
     八方来财、无暇圣心中断。
@@ -2847,17 +2847,108 @@ def _ai_turn_loop(room_id: str):
         print(f'AI turn error: {e}')
 
 
-# 教皇旨意弃卡攻击
+# ── 教皇旨意：弃一张魔法卡 → 自己的攻击次数 +2 ──────────────────────
+#
+# 卡面：「双方的攻击次数都变为0，攻击方式改为弃置一张魔法卡攻击对方两次」。
+#
+# 作者裁定（2026-09-14）：弃卡的效果应该是【让自己攻击次数 +2】，
+# 之后【和正常攻击逻辑一样】—— 逐个格子点、每次消耗 1 次、走 handle_attack。
+#
+# 旧实现是"服务端一次性对着同一个格子打两发"，实测（tools/e2e_papal_baseline.py）
+# 有三个问题：
+#   · 弃卡后 attacks_remaining 仍然是 0 —— 玩家没有"次数"，也就无法选择打哪两格；
+#   · 弃卡之后仍然走不了普通 attack 通道（实测报「本回合攻击次数已用尽」）；
+#   · 走的是另一条 _do_attack 路径，与普通攻击的联动历史上漏过好几次
+#     （余音绕梁 / 越战越勇 / 饮血 都曾在这条路上漏掉）。
+PAPAL_DISCARD_BONUS = 2
+
+
+def _papal_active(room):
+    """教皇旨意是否生效（场地实例与房间级标记，任一成立即可）。"""
+    return (room.game_effects.get('papal_edict') is True
+            or field_magic_name(room) == '教皇旨意')
+
+
+def _papal_discard_grant(room, player_id, discard_card_index=None):
+    """弃一张魔法卡，给自己 +PAPAL_DISCARD_BONUS 次攻击。
+
+    只改攻击次数，不执行攻击本身 —— 攻击交给玩家点格子走 handle_attack，
+    这样余音绕梁 / 饮血 / 越战越勇 / 百亿补贴 / 八方来财 等联动全都自动生效。
+    """
+    player = room.players[player_id]
+
+    if not _papal_active(room):
+        return {'status': 'error', 'message': '教皇旨意未生效'}
+    if room.current_attacker != player_id:
+        return {'status': 'error', 'message': '还没到你的攻击回合'}
+    if room.current_phase != 'battle':
+        return {'status': 'error', 'message': '当前不是战斗阶段'}
+    if not player.magic_hand:
+        return {'status': 'error', 'message': '没有可弃置的魔法卡'}
+
+    if discard_card_index is None:
+        idx = 0
+    else:
+        try:
+            idx = int(discard_card_index)
+        except (TypeError, ValueError):
+            return {'status': 'error', 'message': '无效的弃卡位置'}
+        # 越界索引：旧实现里越界会"一张不弃却照打两次"（零代价攻击），必须拒绝
+        if not (0 <= idx < len(player.magic_hand)):
+            return {'status': 'error', 'message': '无效的弃卡位置'}
+
+    discarded = player.magic_hand.pop(idx)
+    room.magic_discard.append(discarded)
+    room.attacks_remaining += PAPAL_DISCARD_BONUS
+
+    emit('hand_updated', {'hand': player.magic_hand}, to=player.sid)
+    emit('attacks_updated', {
+        'current_attacker': room.current_attacker,
+        'attacks_remaining': room.attacks_remaining,
+    }, room=room.id)
+    add_game_log(room,
+                 f'第{room.round}回合 · {_log_name(room, player_id)} 教皇旨意弃置「{discarded.name}」，'
+                 f'攻击次数 +{PAPAL_DISCARD_BONUS}',
+                 'magic', {'player': player_id, 'card': discarded.name})
+    emit('message', {'text': f'已弃置「{discarded.name}」：攻击次数 +{PAPAL_DISCARD_BONUS}，'
+                             f'现在可以正常攻击了'},
+         to=player.sid)
+
+    return {
+        'status': 'success',
+        'discarded': discarded.name,
+        'attacks_remaining': room.attacks_remaining,
+        'message': f'已弃置「{discarded.name}」，攻击次数 +{PAPAL_DISCARD_BONUS}',
+    }
+
+
+@socketio.on('papal_discard')
+@_require_live_room
+def handle_papal_discard(data):
+    """教皇旨意：弃一张魔法卡换 2 次攻击。"""
+    room = room_manager.get_room(data.get('room_id'))
+    player_id = data.get('player_id')
+    if not room or player_id not in room.players or not _identity_ok(room, player_id):
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+    if room.state == 'game_over':
+        return {'status': 'error', 'message': '对局已结束'}
+    frz = _frozen_reason(room, player_id)
+    if frz:
+        return {'status': 'error', 'message': frz}
+    return _papal_discard_grant(room, player_id, data.get('discard_card_index'))
+
+
 @socketio.on('papal_attack')
 @_require_live_room
 def handle_papal_attack(data):
-    room_id = data['room_id']
-    player_id = data['player_id']
-    target_x = data['x']
-    target_y = data['y']
-    discard_card_index = data.get('discard_card_index')
+    """旧事件名，保留兼容（浏览器可能还缓存着旧的 game.js）。
 
-    room = room_manager.get_room(room_id)
+    ⚠️ 改版后这个入口只做"弃卡换次数"，参数里的 x/y【不再使用】。
+    旧版是直接把两发打在指定的那个格子上；现在改成给次数、由玩家自己点格子，
+    这样才符合作者要求的"和正常攻击逻辑一样"。
+    """
+    room = room_manager.get_room(data.get('room_id'))
+    player_id = data.get('player_id')
     if not room or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
     if room.state == 'game_over':
@@ -2866,120 +2957,10 @@ def handle_papal_attack(data):
     if frz:
         return {'status': 'error', 'message': frz}
 
-    # 弃卡攻击同样受回合/阶段约束（此前可在对手回合任意攻击）
-    if room.current_attacker != player_id:
-        return {'status': 'error', 'message': '还没到你的攻击回合'}
-    if room.current_phase != 'battle':
-        return {'status': 'error', 'message': '当前不是战斗阶段'}
-
-    player = room.players[player_id]
-    opponent_id = next(p for p in room.players if p != player_id)
-    opponent = room.players[opponent_id]
-
-    # 检查教皇旨意是否生效
-    if room.game_effects.get('papal_edict') is not True and field_magic_name(room) != '教皇旨意':
-        return {'status': 'error', 'message': '教皇旨意未生效'}
-
-    # 必须有手牌才能弃卡攻击
-    if not player.magic_hand:
-        return {'status': 'error', 'message': '没有可弃置的魔法卡'}
-
-    # 弃置指定的魔法卡（如果指定了）
-    if discard_card_index is None:
-        # 默认弃置第一张
-        discarded = player.magic_hand.pop(0)
-        room.magic_discard.append(discarded)
-    else:
-        try:
-            discard_card_index = int(discard_card_index)
-        except (TypeError, ValueError):
-            return {'status': 'error', 'message': '无效的弃卡位置'}
-        if not (0 <= discard_card_index < len(player.magic_hand)):
-            # 越界索引：原先一张不弃却照打两次（零代价攻击），直接拒绝
-            return {'status': 'error', 'message': '无效的弃卡位置'}
-        discarded = player.magic_hand.pop(discard_card_index)
-        room.magic_discard.append(discarded)
-
-    # 执行两次攻击（因为教皇旨意每次弃卡攻击两次）
-    results = []
-    for _ in range(2):
-        # 复用普通攻击逻辑
-        result = _do_attack(room, room_id, player_id, target_x, target_y, opponent_id, opponent)
-        results.append(result)
-        # 如果第一次攻击已击杀所有船，停止第二次
-        if opponent.remaining_ships <= 0:
-            break
-
-    return {'status': 'success', 'results': results}
-
-
-# 普通攻击的提取函数
-def _do_attack(room, room_id, attacker_id, target_x, target_y, defender_id, defender):
-    """执行一次弃卡攻击（教皇旨意路径；不消耗常规攻击次数）。
-
-    击沉副作用复用 _apply_ship_sunk_effects，与普通攻击路径保持一致。
-    """
-    defender_ships = defender.ships
-    hit = False
-    ship_sunk = False
-
-    # 余音绕梁：强制击杀（与 handle_attack 同口径）。此前这条路径完全没读它，
-    # 于是教皇旨意下的弃卡攻击打不穿「无敌/盾牌」的船，flag 一直挂着不消费。
-    has_forced_kill = int(getattr(room.players[attacker_id].effect_flags,
-                                  'forced_kill', 0) or 0) > 0
-
-    for i, ship in enumerate(defender_ships):
-        if {'x': target_x, 'y': target_y} in ship.positions:
-            hit = True
-            if 'holy_heart' in room.game_effects and not ship.invincible:
-                room.game_effects['holy_heart']['no_damage'] = False
-            if has_forced_kill or (not ship.invincible and not ship.shield):
-                defender_ships[i].hits = defender_ships[i].hits + [Position(x=target_x, y=target_y)]
-                if len(defender_ships[i].hits) == len(defender_ships[i].positions):
-                    ship_sunk = True
-                    _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id,
-                                             defender_ships[i], target_x, target_y)
-                    # 统一走攻击方增益（饮血摸牌 / 越战越勇 +1 / 伤害统计）。
-                    # 此前这里手抄了一份"只判 vampire"的实现，导致：
-                    #   · 越战越勇不生效
-                    #   · damage_dealt_this_turn 恒为 0 → Freezing！ 被误判为
-                    #     "本回合没让对方减船"而放行，白送一个跳过对方整回合的效果
-                    _apply_attacker_damage_buffs(room, room_id, attacker_id)
-                    if room.players[attacker_id].effect_flags.last_stand:
-                        _finish_game_win(room, room_id, attacker_id, defender_id,
-                                         f"第{room.round}回合 · {_log_name(room, attacker_id)} 触发绝处逢生并获胜")
-                        return {'game_over': True}
-                    if _check_last_chance(room, attacker_id, defender_id):
-                        return {'game_over': True}
-                    _emit_ships_updated(room)
-            elif ship.shield:
-                ship.shield = False
-                # 盾挡下一击：要明确告诉双方"这一炮被挡了"，否则前端只会看到
-                # 一次普通命中，玩家以为船受伤/沉了
-                emit('shield_absorbed', {
-                    'player': defender_id,
-                    'positions': [{'x': p.x, 'y': p.y} for p in ship.positions],
-                }, room=room_id)
-                _emit_player_ships(room, defender_id)
-            break
-
-    room.last_attack = {'attacker': attacker_id, 'x': target_x, 'y': target_y, 'hit': hit, 'ship_sunk': ship_sunk, 'round': room.round}
-    attacker_attacks = room.players[attacker_id].attacks
-    attacker_attacks.append(Position(**{'x': target_x, 'y': target_y, 'hit': hit, 'ship_sunk': ship_sunk}))
-    emit('attack_result', {
-        'attacker': attacker_id, 'x': target_x, 'y': target_y,
-        'hit': hit, 'ship_sunk': ship_sunk,
-        'remaining_attacks': room.attacks_remaining,
-        'attacker_remaining_ships': room.players[attacker_id].remaining_ships,
-        'defender_remaining_ships': room.players[defender_id].remaining_ships
-    }, room=room_id)
-
-    if (room.players[defender_id].remaining_ships <= 0
-            and len(room.players[defender_id].ships) > 0):
-        _finish_game_win(room, room_id, attacker_id, defender_id)
-        return {'status': 'success', 'game_over': True}
-
-    return {'status': 'success'}
+    res = _papal_discard_grant(room, player_id, data.get('discard_card_index'))
+    if isinstance(res, dict) and res.get('status') == 'success':
+        res['message'] += '（旧入口：x/y 已不再使用，请用普通攻击点选格子）'
+    return res
 
 
 def _sanitize_magic_targets(targets):

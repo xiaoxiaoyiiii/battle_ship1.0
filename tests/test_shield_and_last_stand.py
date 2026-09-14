@@ -253,3 +253,226 @@ def test_candidate_cell_is_attackable_after_placement(room, events):
 
     assert res['status'] == 'success', f'对方必须能打绝处逢生落点（{res}）'
     assert (1, 0) in attacked_cells(room, P2)
+
+
+# ===========================================================================
+# 溅射：盾挡下的目标格不应进 attacks（同普通攻击路径）
+# ===========================================================================
+def apply_splash(room, events):
+    """用 apply_magic_effect 直接结算溅射，绕过出牌/选卡链路。"""
+    return server.apply_magic_effect(room, P1, MagicCard('溅射'), {})
+
+
+def make_splash_room(extra_last_attack=None):
+    room = GameRoom('splash-shield-room')
+    room.players[P1] = Player(name='p1',
+                              ships=[PlayerShip(positions=[Position(3, 3)], hits=[])],
+                              attacks=[], remaining_ships=1, sid='sid-p1')
+    room.players[P2] = Player(name='p2',
+                              ships=[PlayerShip(positions=[Position(3, 2)], hits=[])],
+                              attacks=[], remaining_ships=1, sid='sid-p2')
+    room.state = 'attacking'
+    room.current_attacker = P1
+    room.current_phase = 'battle'
+    room.attack_order = [P1, P2]
+    room.attacks_remaining = 6
+    room.round = 5
+    room.last_attack = {'attacker': P1, 'x': 3, 'y': 3, 'hit': True}
+    if extra_last_attack:
+        room.last_attack.update(extra_last_attack)
+    room_manager.rooms[room.id] = room
+    return room
+
+
+def test_splash_shielded_cell_not_recorded_in_attacks(events):
+    """★ 溅射路径：盾挡下的格子不能进 attacks（和普通攻击路径保持一致）。"""
+    room = make_splash_room()
+    try:
+        ship = room.players[P2].ships[0]
+        ship.shield = True  # 溅射方向 up=(3,2) 正好命中此船
+
+        apply_splash(room, events)
+
+        assert ship.shield is False, '盾应被消耗'
+        assert ship.hits == [], '盾挡下后不应造成伤害'
+        assert (3, 2) not in attacked_cells(room), \
+            f'盾挡下的溅射格不该进 attacks，实际 {attacked_cells(room)}'
+    finally:
+        room_manager.rooms.pop(room.id, None)
+
+
+def test_splash_shield_absorbed_event_is_broadcast(events):
+    """溅射路径：盾挡下时也要广播 shield_absorbed 事件。"""
+    room = make_splash_room()
+    try:
+        ship = room.players[P2].ships[0]
+        ship.shield = True
+
+        apply_splash(room, events)
+
+        absorbed = [e for e in events if e[0] == 'shield_absorbed']
+        assert absorbed, '溅射盾挡下必须广播 shield_absorbed'
+    finally:
+        room_manager.rooms.pop(room.id, None)
+
+
+def test_splash_can_target_shielded_cell_again_after_turn(events):
+    """溅射消耗盾后，同一回合后续可以用普通攻击打这格（位置未被锁死）。"""
+    room = make_splash_room()
+    try:
+        ship = room.players[P2].ships[0]
+        ship.shield = True
+
+        apply_splash(room, events)
+        # 盾已消耗但格子未被标记"已攻击" —— 校验直接看 attacks 列表
+        assert (3, 2) not in attacked_cells(room)
+        # 重置攻击次数让后续炮击能通过次数校验（测试目的是验证位置不被锁）
+        room.attacks_remaining = 3
+        res = attack(room, 3, 2, attacker=P1)
+        assert res['status'] == 'success', f'(3,2) 不应被锁死（盾已消耗），但收到 {res}'
+    finally:
+        room_manager.rooms.pop(room.id, None)
+
+
+# ===========================================================================
+# 轰炸：护盾应该能挡下（卡面没说"强制击杀/无视盾"，和硫磺火焰区分开）
+# ===========================================================================
+def make_bomb_room():
+    room = GameRoom('bomb-shield-room')
+    room.players[P1] = Player(name='p1',
+                              ships=[PlayerShip(positions=[Position(0, 2)], hits=[])],
+                              attacks=[], remaining_ships=1, sid='sid-p1')
+    room.players[P2] = Player(name='p2',
+                              ships=[PlayerShip(positions=[Position(1, 2), Position(2, 2)], hits=[])],
+                              attacks=[], remaining_ships=1, sid='sid-p2')
+    room.state = 'attacking'
+    room.current_attacker = P1
+    room.current_phase = 'battle'
+    room.attack_order = [P1, P2]
+    room.attacks_remaining = 6
+    room.round = 5
+    room_manager.rooms[room.id] = room
+    return room
+
+
+def test_bomb_respects_shield(events):
+    """★ 轰炸不能直接炸沉有盾的船（卡面没说无视盾，盾能挡一次）。"""
+    room = make_bomb_room()
+    try:
+        ship = room.players[P2].ships[0]
+        ship.shield = True
+
+        result = server.apply_magic_effect(
+            room, P1, MagicCard('轰炸'),
+            {'target_line': {'type': 'row', 'index': 2}}
+        )
+
+        assert result.success is True
+        # 盾被消耗但船存活
+        assert ship.shield is False, '盾应被消耗'
+        assert len(room.players[P2].ships) == 1, '有盾船不应被炸沉'
+        assert room.players[P2].remaining_ships == 1
+    finally:
+        room_manager.rooms.pop(room.id, None)
+
+
+def test_bomb_shielded_cells_not_recorded_in_attacks(events):
+    """★ 轰炸+盾：被盾挡下的格子不应进 attacks（和普通攻击/溅射一致）。"""
+    room = make_bomb_room()
+    try:
+        ship = room.players[P2].ships[0]
+        ship.shield = True
+
+        server.apply_magic_effect(
+            room, P1, MagicCard('轰炸'),
+            {'target_line': {'type': 'row', 'index': 2}}
+        )
+
+        # 盾挡下的格子不能被标记为"已攻击"
+        attacks_set = {(a.x, a.y) for a in room.players[P1].attacks}
+        shielded_positions = {(1, 2), (2, 2)}  # 这艘船在轰炸行上的格子
+        assert attacks_set.isdisjoint(shielded_positions), \
+            f'盾挡下的轰炸格不该进 attacks，有交集: {attacks_set & shielded_positions}'
+    finally:
+        room_manager.rooms.pop(room.id, None)
+
+
+def test_bomb_shield_absorbed_event_is_broadcast(events):
+    """轰炸盾挡下也要广播 shield_absorbed 事件。"""
+    room = make_bomb_room()
+    try:
+        ship = room.players[P2].ships[0]
+        ship.shield = True
+
+        server.apply_magic_effect(
+            room, P1, MagicCard('轰炸'),
+            {'target_line': {'type': 'row', 'index': 2}}
+        )
+
+        absorbed = [e for e in events if e[0] == 'shield_absorbed']
+        assert absorbed, '轰炸盾挡下必须广播 shield_absorbed'
+    finally:
+        room_manager.rooms.pop(room.id, None)
+
+
+def test_bomb_sunk_ship_positions_are_still_recorded(events):
+    """反证：没有盾的船被炸沉后，它的格子仍然要进 attacks。"""
+    room = make_bomb_room()
+    try:
+        # 把 P2 的船改成无盾
+        ship = room.players[P2].ships[0]
+        ship.shield = False
+
+        server.apply_magic_effect(
+            room, P1, MagicCard('轰炸'),
+            {'target_line': {'type': 'row', 'index': 2}}
+        )
+
+        assert len(room.players[P2].ships) == 0, '无盾船应被炸沉'
+        attacks_set = {(a.x, a.y) for a in room.players[P1].attacks}
+        assert {(1, 2), (2, 2)}.issubset(attacks_set), \
+            f'被击沉船的格子必须进 attacks，缺少: {(1,2),(2,2)} - attacks={attacks_set}'
+    finally:
+        room_manager.rooms.pop(room.id, None)
+
+
+def test_bomb_mixed_shielded_and_unshielded(events):
+    """混合场景：轰炸行上有一艘有盾船和一艘无盾船。"""
+    room = GameRoom('bomb-mixed-room')
+    room.players[P1] = Player(name='p1',
+                              ships=[PlayerShip(positions=[Position(0, 2)], hits=[])],
+                              attacks=[], remaining_ships=1, sid='sid-p1')
+    # P2 有两艘船：一艘有盾（格 1,2），一艘无盾（格 3,2），都在第 2 行
+    s_shielded = PlayerShip(positions=[Position(1, 2)], hits=[])
+    s_shielded.shield = True
+    s_normal = PlayerShip(positions=[Position(3, 2)], hits=[])
+    room.players[P2] = Player(name='p2',
+                              ships=[s_shielded, s_normal],
+                              attacks=[], remaining_ships=2, sid='sid-p2')
+    room.state = 'attacking'
+    room.current_attacker = P1
+    room.current_phase = 'battle'
+    room.attack_order = [P1, P2]
+    room.attacks_remaining = 6
+    room.round = 5
+    room_manager.rooms[room.id] = room
+
+    try:
+        result = server.apply_magic_effect(
+            room, P1, MagicCard('轰炸'),
+            {'target_line': {'type': 'row', 'index': 2}}
+        )
+
+        # 有盾船存活但盾被消耗
+        assert len(room.players[P2].ships) == 1, '有盾船应存活，无盾船应被炸沉'
+        remaining_ship = room.players[P2].ships[0]
+        assert remaining_ship.positions == [Position(1, 2)], '应该是有盾船存活'
+        assert remaining_ship.shield is False, '盾应被消耗'
+        assert room.players[P2].remaining_ships == 1
+
+        # 记录里只有无盾船的格子，盾挡的不应出现
+        attacks_set = {(a.x, a.y) for a in room.players[P1].attacks}
+        assert (3, 2) in attacks_set, '无盾船被炸沉，格子应进 attacks'
+        assert (1, 2) not in attacks_set, '盾挡的格子不该进 attacks'
+    finally:
+        room_manager.rooms.pop(room.id, None)

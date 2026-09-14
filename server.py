@@ -6086,17 +6086,24 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             # 检查是否击中
             hit = False
             ship_sunk = False
+            shield_blocked = False
             for i, ship in enumerate(opponent.ships):
                 if Position(**pos) in ship.positions and Position(**pos) not in ship.hits:
-                    # 溅射伤害不受无敌影响（文本），但受护盾影响（护盾抵挡一次）
-                    # 造成伤害：解除无暇圣心"双方未受伤"判定
-                    if 'holy_heart' in room.game_effects:
-                        room.game_effects['holy_heart']['no_damage'] = False
                     if ship.shield:
+                        # 盾挡溅射：消耗盾，船毫发无伤
                         hit = True
-                        ship.shield=False
+                        ship.shield = False
                         ship_sunk = False
+                        shield_blocked = True
+                        # 盾挡下要明确广播，否则前端只看到一次"命中"
+                        # （与普通攻击路径 handle_attack 保持一致）
+                        emit('shield_absorbed', {
+                            'player': opponent_id,
+                            'positions': [{'x': p.x, 'y': p.y} for p in ship.positions],
+                        }, room=room.id)
+                        _emit_player_ships(room, opponent_id)
                     else:
+                        # 溅射伤害不受无敌影响（文本）
                         hit = True
                         ship.hits.append(Position(**pos))
                         if len(ship.hits) == len(ship.positions):
@@ -6105,6 +6112,10 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                             ships_changed = True
                             # 记录本回合造成的伤害（五险一金/Freezing! 判定）
                             caster.damage_dealt_this_turn += 1
+
+                            # 解除无暇圣心"双方未受伤"判定（仅真正造成伤害时）
+                            if 'holy_heart' in room.game_effects:
+                                room.game_effects['holy_heart']['no_damage'] = False
 
                             # 保存被击沉的船到sunken_ships
                             _mark_ship_sunken(opponent, ship)
@@ -6129,17 +6140,23 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                             if _check_last_chance(room, caster_id, opponent_id):
                                 result['game_over'] = True
                                 return result
+                        else:
+                            # 命中但未沉：解除无暇圣心"未受伤"判定
+                            if 'holy_heart' in room.game_effects:
+                                room.game_effects['holy_heart']['no_damage'] = False
                     hit_count += 1
                     break
 
-            # 记录攻击（包括未命中）
-            caster.attacks.append(Position(**{
-                'x': pos['x'],
-                'y': pos['y'],
-                'hit': hit,
-                'ship_sunk': ship_sunk,
-                'is_splash': True
-            }))
+            # 记录攻击：盾挡下的那一格【不记】
+            # （与普通攻击路径保持一致 —— 盾挡下不算"打过"这一格，同回合还能再打）
+            if not shield_blocked:
+                caster.attacks.append(Position(**{
+                    'x': pos['x'],
+                    'y': pos['y'],
+                    'hit': hit,
+                    'ship_sunk': ship_sunk,
+                    'is_splash': True
+                }))
 
             # 发送单点攻击结果，保持与普通攻击一致的 UI 更新
             attack_result = {
@@ -6341,35 +6358,53 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         else:
             positions = [{'x': line['index'], 'y': y} for y in range(6)]
 
-        # 找出所有与该行/列相交的船只，整艘摧毁
-        to_remove = [ship for ship in opponent.ships if len(ship.hits) < len(ship.positions) and any(pos in ship.positions for pos in positions)]
+        # 找出所有与该行/列相交的船只，区分有盾和无盾
+        # 卡面描述"全部死亡"——但护盾可以抵挡一次伤害（仁王之盾卡面）
+        # 硫磺火焰明确写了"强制击杀/无视盾牌"，轰炸没有，所以盾应该能挡
+        all_affected = [
+            ship for ship in opponent.ships
+            if len(ship.hits) < len(ship.positions)
+            and any(pos in ship.positions for pos in positions)
+        ]
+        shielded = [s for s in all_affected if s.shield]
+        to_remove = [s for s in all_affected if not s.shield]
+
         sunk_count = 0
         ships_changed = False
-        removed_positions = set()
+        removed_positions = set()      # 被击沉船的格子（要进 attacks）
+        shield_positions = set()       # 被盾挡下的格子（不进 attacks）
 
-        # 移除受影响的船只，并为其所有格子生成命中事件
+        # 有盾船：消耗盾，船不沉，格子不记 attacks（和普通攻击/溅射一致）
+        for ship in shielded:
+            ship.shield = False
+            for ship_pos in ship.positions:
+                if (ship_pos.x, ship_pos.y) in [(p['x'], p['y']) for p in positions]:
+                    shield_positions.add((ship_pos.x, ship_pos.y))
+            # 盾挡下要广播（与普通攻击路径保持一致）
+            emit('shield_absorbed', {
+                'player': opponent_id,
+                'positions': [{'x': p.x, 'y': p.y} for p in ship.positions],
+            }, room=room.id)
+            _emit_player_ships(room, opponent_id)
+
+        # 无盾船：正常炸沉
         for ship in to_remove:
             if ship in opponent.ships:
-                # 保存被摧毁的船到sunken_ships
                 _mark_ship_sunken(opponent, ship)
                 opponent.ships.remove(ship)
                 opponent.remaining_ships -= 1
                 ships_changed = True
                 sunk_count += 1
-                # 记录本回合伤害（五险一金/Freezing!）
                 caster.damage_dealt_this_turn += 1
 
-                # 平等条约快照 + 百亿补贴 + 无暇圣心中断（与普通攻击共用）
                 _on_ship_destroyed(room, opponent_id, ship)
 
-                # 恶魔契约：一次结算里多艘沉没时只请求一次
                 if (room.game_effects.get('demon_contract')
                         and not (room.magic_temp_data or {}).get('pending_sacrifice')):
                     _request_demon_contract_sacrifice(room, opponent_id)
                     ships_changed = True
 
-                # 八方来财
-                _notify_treasure_hunter(room, 1)   # 魔法卡造成的变化：全场持卡者都摸
+                _notify_treasure_hunter(room, 1)
                 for ship_pos in ship.positions:
                     removed_positions.add((ship_pos.x, ship_pos.y))
                     caster.attacks.append(Position(**{
@@ -6391,33 +6426,36 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                     }
                     emit('attack_result', attack_result, room=room.id)
 
-        # 对于该行/列中未命中的格子也发出未命中事件，以保持 UI 一致性
+        # 该行/列中未命中、也没被盾挡下的格子：发未命中事件 + 记 attacks
         for pos in positions:
-            if (pos['x'], pos['y']) not in removed_positions:
-                caster.attacks.append(Position(**{
-                    'x': pos['x'],
-                    'y': pos['y'],
-                    'hit': False,
-                    'ship_sunk': False,
-                    'is_bomb': True
-                }))
-                attack_result = {
-                    'attacker': caster_id,
-                    'x': pos['x'],
-                    'y': pos['y'],
-                    'hit': False,
-                    'ship_sunk': False,
-                    'remaining_attacks': room.attacks_remaining,
-                    'attacker_remaining_ships': room.players[caster_id].remaining_ships,
-                    'defender_remaining_ships': opponent.remaining_ships
-                }
-                emit('attack_result', attack_result, room=room.id)
+            key = (pos['x'], pos['y'])
+            if key in removed_positions or key in shield_positions:
+                continue
+            caster.attacks.append(Position(**{
+                'x': pos['x'],
+                'y': pos['y'],
+                'hit': False,
+                'ship_sunk': False,
+                'is_bomb': True
+            }))
+            attack_result = {
+                'attacker': caster_id,
+                'x': pos['x'],
+                'y': pos['y'],
+                'hit': False,
+                'ship_sunk': False,
+                'remaining_attacks': room.attacks_remaining,
+                'attacker_remaining_ships': room.players[caster_id].remaining_ships,
+                'defender_remaining_ships': opponent.remaining_ships
+            }
+            emit('attack_result', attack_result, room=room.id)
 
         # 若有船只数量变化，广播更新
         if ships_changed:
             _emit_ships_updated(room)
 
-        result['message'] = f'轰炸成功击沉{sunk_count}艘战舰'
+        shielded_msg = f'，其中{len(shielded)}艘的护盾抵挡了伤害' if shielded else ''
+        result['message'] = f'轰炸成功击沉{sunk_count}艘战舰{shielded_msg}'
 
     elif card.name == '硫磺火焰':
         # 对选定的连续6格释放硫磺火焰，强制击杀这些格子上所属的所有战舰（无视护盾/无敌）

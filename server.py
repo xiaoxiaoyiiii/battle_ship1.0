@@ -2324,14 +2324,14 @@ def enter_battle_phase(data, _priority_confirmed=False):
         # 直接用它兜底，特例自然被覆盖，也不会再随场地增减而漂移。
         _recalc_attacker_attacks(room)
 
-        # 攻击次数翻倍（火力全开）：乘法规则，_recalc 不含，单独处理
+        # 攻击次数翻倍（火力全开）：直接翻【当前】攻击次数。
+        #
+        # ⚠️ 不能重算「船数 - 冻结数」再 ×2（旧实现）：那等于把场地魔法
+        # 压过的次数又还原回来了。作者实测：自己先打了教皇旨意（本回合
+        # 攻击次数归 0），对方用火力全开却照样拿到 2×船数 的次数。
+        # 卡面是"自己的攻击次数翻倍"，所以基准就是 attacks_remaining 本身。
         if room.players[player_id].effect_flags.double_attacks:
-            # 翻倍当前攻击次数：冻结船不提供攻击次数，且保留百亿补贴累计加成
-            base_attacks = max(
-                0, room.players[player_id].remaining_ships - frozen_ship_count(room.players[player_id]))
-            room.attacks_remaining = (base_attacks * 2
-                                      + int(getattr(room.players[player_id].effect_flags,
-                                                    'subsidy_bonus', 0) or 0))
+            room.attacks_remaining = max(0, room.attacks_remaining) * 2
             # 广播攻击次数更新
             emit('attacks_updated', {
                 'current_attacker': room.current_attacker,
@@ -5663,15 +5663,18 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         # 卡面是「在这一个大回合内自己的攻击阶段时，自己的攻击次数翻倍」，
         # 所以：还在准备阶段就留给 enter_battle_phase 翻（那时才知道最终次数）；
         # 已经进入战斗阶段就【立即】翻当前次数。
+        #
+        # ⚠️ 基准是【当前攻击次数】attacks_remaining，不是「船数 - 冻结数」。
+        # 旧实现按船数重算，会把教皇旨意等场地压过的次数还原回来 ——
+        # 作者实测：自己先打教皇旨意（次数归 0），对方火力全开却照样
+        # 拿到 2×船数 的次数。翻倍就该是「现在有几次，就变成几次的两倍」，
+        # 已经是 0 的话翻倍仍是 0。
         flags = room.players[caster_id].effect_flags
         in_battle = (room.state == 'attacking'
                      and room.current_phase == 'battle'
                      and room.current_attacker == caster_id)
         if in_battle and not flags.double_attacks:
-            base_attacks = max(0, caster.remaining_ships
-                               - frozen_ship_count(caster))
-            bonus = int(getattr(flags, 'subsidy_bonus', 0) or 0)
-            room.attacks_remaining = base_attacks * 2 + bonus
+            room.attacks_remaining = max(0, room.attacks_remaining) * 2
             flags.double_attacks = False      # 已当场消费，不再留给阶段转换
             emit('attacks_updated', {
                 'current_attacker': room.current_attacker,

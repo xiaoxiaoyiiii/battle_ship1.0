@@ -4713,6 +4713,16 @@ function sendMagicCard(index, targets) {
     if (!card) return;
     playSfx('play_card');
 
+    // ⚠️ 先记下这张牌的【身份】和出牌那一刻它在手牌里的位置。
+    // 服务器响应是异步的，回来之前可能已经收到 hand_updated
+    // （对方打无中生有 / 自己因效果摸牌 / 连锁里别人改手牌…），
+    // 那时 gameState.hand 已经是新数组，旧下标指向的完全是另一张牌。
+    // 实测（tools/repro_splice_index.mjs）：手牌 ["饮血","冻结"] 打出饮血，
+    // 期间摸到一张「八方来财」插到 0 号位，回调里 splice(0,1) 删掉的是
+    // 【八方来财】—— 打出去的饮血还留在手上，玩家看到的是"手牌被莫名吞掉"。
+    const sentKey = cardSelectionKey(card);
+    const sentIndex = index;
+
     console.log('发送魔法卡:', card.name);
     gameState.socket.emit('use_magic_card', {
         room_id: gameState.roomId,
@@ -4723,8 +4733,27 @@ function sendMagicCard(index, targets) {
         // 只有在服务器确认成功后才更新本地状态
         if (response && response.status === 'success') {
             console.log('魔法卡使用成功');
-            // 从手牌中移除
-            gameState.hand.splice(index, 1);
+            // 从手牌中移除：优先按身份找，找不到再退回下标。
+            //
+            // 按身份找是因为手牌可能已被 hand_updated 整份替换过；
+            // 同名同速阶的卡（如 3 张「失灵！」）会有多张命中，这时用
+            // "出牌时它在第几位"来消歧 —— 取第 sentIndex 个命中项，
+            // 仍然比直接用 sentIndex 当数组下标安全得多。
+            let removeAt = -1;
+            const hits = [];
+            for (let i = 0; i < gameState.hand.length; i++) {
+                if (cardSelectionKey(gameState.hand[i]) === sentKey) hits.push(i);
+            }
+            if (hits.length) {
+                removeAt = hits[Math.min(sentIndex, hits.length - 1)];
+            } else if (sentIndex >= 0 && sentIndex < gameState.hand.length) {
+                // 身份已经不在手牌里（服务器可能已推过新手牌）—— 什么都不删，
+                // 免得又误删一张。只有当下标仍然合法且手牌没变过时才兜底。
+                removeAt = (gameState.hand.length === sentIndex + 1) ? sentIndex : -1;
+            }
+            if (removeAt >= 0) {
+                gameState.hand.splice(removeAt, 1);
+            }
             // 添加到弃牌堆
             gameState.discardPile.push(card);
             // 手牌少了一张，旧下标会落到别的牌上 —— 先清选中态再刷新

@@ -275,6 +275,20 @@
                         这一行里其实已经没有头像了。
                     -->
                     <div id="turn-indicator">
+                        <!--
+                            「不再询问阶段转换时点」局内开关。
+                            ⚠️ 必须是 #turn-indicator 的【绝对定位】子元素，不能和阶段按钮
+                            排在同一行：宽屏有一条不变量「阶段按钮在卡片内水平居中」
+                            （ui_layout_check.mjs 逐按钮量中心点，容差 3px），
+                            多一个 inline-block 就会把它们整体挤偏。
+                            绝对定位不参与流式布局 → 居中不受影响、卡片高度也不变
+                            （横屏 664x336 那条「不展开面板槽时零纵向滚动」余量只有 1px）。
+                        -->
+                        <button type="button" id="phase-timing-toggle" class="phase-timing-toggle"
+                                aria-pressed="false" title="阶段转换时点询问：点一下可以关掉/打开">
+                            <span class="ptt-label">阶段时点</span>
+                            <span class="ptt-state" id="phase-timing-state">询问中</span>
+                        </button>
                         <div class="game-info">
                             <div>当前阶段：<span id="current-phase">准备阶段</span></div>
                             <div>当前回合：<span id="current-player">你</span></div>
@@ -468,23 +482,6 @@
                 <div class="muted-hint">
                     <p>当前播放：<span id="current-track">未播放</span></p>
                 </div>
-                <hr class="settings-section-gap">
-                <h3>对局设置</h3>
-                <!--
-                    「不再询问阶段转换时点」。
-                    ⚠️ 必须有这个常驻入口：该开关原先只存在于优先权弹窗内部，
-                    一旦勾上就不再弹窗 → 永远没机会取消勾选（把玩家自己锁死）。
-                    放在设置里而不是对局界面：对局信息区的布局有严格的移动端
-                    不变量（触控目标 ≥40px / 横屏不产生滚动），多塞一个控件会破坏它。
-                    这里是模态框，不受那些约束，而且"这是个设置"也更符合直觉。
-                -->
-                <label class="settings-toggle-row" for="decline-priority-setting">
-                    <input type="checkbox" id="decline-priority-setting">
-                    <span class="settings-toggle-text">
-                        <strong>不再询问阶段转换时点</strong>
-                        <em>勾上后，对方推进阶段时不会再弹「要不要响应」的询问。随时可以在这里取消。</em>
-                    </span>
-                </label>
                 <button id="settings-save-btn" class="btn">保存</button>
             </div>
         </div>

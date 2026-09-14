@@ -893,8 +893,65 @@ input:focus, select:focus {
     border-radius: 10px;
     text-align: center;
     animation: breathGlow 2.6s ease-in-out infinite;
+    /* 局内开关（#phase-timing-toggle）绝对定位的参照。
+       ⚠️ 别把这个改成 static：那会让开关回到流式布局里，
+       把阶段按钮挤得不居中（ui_layout_check 的宽屏不变量会红）。 */
+    position: relative;
 }
 .phase-btn { margin: 4px; }
+
+/* 「不再询问阶段转换时点」局内开关（阶段卡片右上角）
+   —— 绝对定位：不占流式布局，因此既不挤偏居中的阶段按钮、也不增加卡片高度
+   （横屏 664x336 的"零纵向滚动"余量只有 1px）。
+   尺寸按移动端触控目标设计：min-height 40px / min-width 54px
+   （ui_layout_check 要求 #game-screen 内的可点元素 ≥40px，横屏放宽到 36px）。 */
+#phase-timing-toggle.phase-timing-toggle {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 3;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    min-width: 54px;
+    min-height: 40px;
+    margin: 0;
+    padding: 4px 6px;
+    border-radius: 9px;
+    border: 1px solid rgba(var(--primary-rgb, 21, 101, 192), 0.45);
+    background: rgba(var(--primary-rgb, 21, 101, 192), 0.10);
+    color: var(--text);
+    font-size: 0.62rem;
+    line-height: 1.15;
+    cursor: pointer;
+}
+#phase-timing-toggle.phase-timing-toggle .ptt-state { font-weight: 700; }
+#phase-timing-toggle.phase-timing-toggle:hover { background: rgba(var(--primary-rgb, 21, 101, 192), 0.2); }
+/* 已关闭询问：换成醒目的暖色，一眼能看出"现在不会问了" */
+#phase-timing-toggle.phase-timing-toggle.is-off {
+    border-color: rgba(255, 152, 0, 0.75);
+    background: rgba(255, 152, 0, 0.20);
+}
+html.theme-dark #phase-timing-toggle.phase-timing-toggle {
+    border-color: rgba(232, 163, 61, 0.55);
+    background: rgba(232, 163, 61, 0.14);
+}
+/* 紧凑布局里阶段卡片被压成一行（实测 193x42，按钮右侧只剩 1px），
+   卡片里根本放不下第二个 40px 触控目标 —— 硬塞就会压住「进入战斗阶段」。
+   所以在紧凑/矮屏布局下把它改成【屏幕右上角的浮标】：那里四周是空的，
+   既不压棋盘也不压头像角标（ui_layout_check 有一条"开关不压任何东西"的不变量守着）。 */
+body.layout-compact.layout-ingame #phase-timing-toggle.phase-timing-toggle,
+body.layout-tight.layout-ingame #phase-timing-toggle.phase-timing-toggle {
+    position: fixed;
+    top: 6px;
+    right: 6px;
+    min-width: 54px;
+    min-height: 40px;
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.22);
+}
+body.layout-compact.layout-ingame #phase-timing-toggle.phase-timing-toggle .ptt-label { display: block; }
 
 /* 场地魔法 */
 .field-magic-area {
@@ -2242,44 +2299,8 @@ html.theme-dark .priority-hint { color: rgba(226, 236, 248, 0.78); }
     outline: none;
 }
 
-/* 「不再询问阶段转换时点」开关（设置面板里的常驻入口）
-   ⚠️ 它原先只存在于优先权弹窗内 —— 勾上就不再弹窗 → 永远无法取消（死结）。
-   现在设置面板里有一个常驻 checkbox，和弹窗里那个共用同一份状态。
-   为什么不放对局界面：对局信息区的布局有严格的移动端不变量
-   （触控目标 ≥40px / 横屏不产生滚动），多塞一个控件就会破坏它。
-   整行都可以点（label 包住勾选框 + 说明），比裸 13px 复选框好按得多。 */
-.settings-toggle-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 10px 12px;
-    margin: 6px 0 2px;
-    border-radius: 11px;
-    cursor: pointer;
-    background: rgba(var(--primary-rgb, 21, 101, 192), 0.06);
-    border: 1px dashed rgba(var(--primary-rgb, 21, 101, 192), 0.28);
-    transition: background 0.15s ease, border-color 0.15s ease;
-}
-.settings-toggle-row:hover { background: rgba(var(--primary-rgb, 21, 101, 192), 0.11); }
-.settings-toggle-row input[type="checkbox"] {
-    width: 18px;
-    height: 18px;
-    flex: 0 0 auto;
-    margin-top: 1px;
-    accent-color: var(--accent);
-    cursor: pointer;
-}
-.settings-toggle-text { display: block; }
-.settings-toggle-text strong { display: block; font-size: 0.88rem; font-weight: 600; }
-.settings-toggle-text em {
-    display: block;
-    font-style: normal;
-    font-size: 0.74rem;
-    color: var(--muted);
-    margin-top: 3px;
-    line-height: 1.45;
-}
-html.theme-dark .settings-toggle-row { background: rgba(232, 163, 61, 0.08); }
+/* 「不再询问阶段转换时点」开关的样式在 #turn-indicator 那一段
+   （`.phase-timing-toggle`，2026-09-14 从设置面板搬到局内）。 */
 
 /* 效果说明浮层：桌面 hover / 手机点击展开 */
 .effect-popover {

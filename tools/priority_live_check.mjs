@@ -237,6 +237,62 @@ const during = await stateOf(atkTab);
 check(during.game_state.current_phase === 'preparation',
   '★ 询问期间发起者的阶段没被推进（本次修的核心）', during.game_state.current_phase);
 
+// ────────────────────────────────────────────────────────────────
+// 等待期间发起方必须被冻结（作者反馈：「对方不能暂停行动」）
+// 以前只有阶段转换本身被拦下，发起方在 10 秒里照样能开炮/出牌，
+// 这个仲裁窗口就等于没有。
+// ────────────────────────────────────────────────────────────────
+const waitUI = await atkTab.ev(`(function(){
+  var banner = document.getElementById('priority-waiting-banner');
+  var btn = document.getElementById('enter-battle-phase');
+  return {
+    waiting: !!gameState.priorityWaiting,
+    bannerShown: !!banner && getComputedStyle(banner).display !== 'none',
+    bannerText: banner ? banner.textContent : '',
+    btnDisabled: btn ? btn.disabled : null
+  };
+})()`);
+check(waitUI.waiting === true, '★ 发起方收到"等待对方响应"状态', waitUI);
+check(waitUI.bannerShown && /等待对方响应/.test(waitUI.bannerText),
+  '★ 发起方界面上显示等待横幅（不是一动不动）', waitUI);
+check(waitUI.btnDisabled === true, '★ 等待期间阶段按钮被禁用', waitUI);
+
+// 再点一次「进入战斗阶段」→ 必须被拒（否则双击就绕过了询问）
+const bypass = await atkTab.ev(`new Promise(function(res){
+  gameState.socket.emit('enter_battle_phase', { room_id: gameState.roomId,
+    player_id: gameState.playerId }, function(r){ res(r); });
+})`);
+await sleep(600);
+const afterBypass = await stateOf(atkTab);
+check(bypass && bypass.status === 'error' && /等待对方响应/.test(bypass.message || ''),
+  '★ 等待期间重复点阶段按钮会被拒绝（双击不能绕过询问）', bypass);
+check(afterBypass.game_state.current_phase === 'preparation',
+  '★ 被拒之后阶段仍然没被推进', afterBypass.game_state.current_phase);
+
+// 攻击也要被拒。
+// ⚠️ 这条走的是「阶段还没推进」这道既有门禁（此刻阶段仍是 preparation），
+// 不是冻结本身；"战斗阶段 + 等待窗口"下攻击被冻结挡住的情形由
+// tests/test_priority_prompt.py::test_actor_cannot_attack_while_waiting 精确覆盖。
+const atkDuring = await atkTab.ev(`new Promise(function(res){
+  gameState.socket.emit('attack', { room_id: gameState.roomId,
+    player_id: gameState.playerId, x: 0, y: 0 }, function(r){ res(r); });
+})`);
+check(atkDuring && atkDuring.status === 'error',
+  '★ 等待期间发起方无法继续攻击（服务端拒绝）', atkDuring);
+
+// 出牌也要被拒
+await atkTab.ev(`new Promise(function(res){
+  gameState.socket.emit('test_add_specific_magic_card', { room_id: gameState.roomId,
+    player_id: gameState.playerId, card_name: '五险一金' }, function(r){ res(r); });
+})`);
+await sleep(400);
+const playDuring = await atkTab.ev(`new Promise(function(res){
+  gameState.socket.emit('use_magic_card', { room_id: gameState.roomId,
+    player_id: gameState.playerId, card: { name: '五险一金' }, targets: {} }, function(r){ res(r); });
+})`);
+check(playDuring && playDuring.status === 'error' && /等待对方响应/.test(playDuring.message || ''),
+  '★ 等待期间发起方不能出牌', playDuring);
+
 // ---------------------------------------------------------------- 点取消，阶段应推进
 await dfnTab.ev(`(function(){
   var b = document.querySelector('#priority-cancel');
@@ -250,6 +306,17 @@ check(after.game_state.current_phase === 'battle',
   '★ 取消后阶段推进到 battle', after.game_state.current_phase);
 const gone = await dfnTab.ev(`document.querySelectorAll('.priority-prompt').length`);
 check(gone === 0, '防守方面板已关闭', gone);
+
+// 等待结束后发起方必须解冻
+const afterWaitUI = await atkTab.ev(`(function(){
+  var banner = document.getElementById('priority-waiting-banner');
+  return {
+    waiting: !!gameState.priorityWaiting,
+    bannerShown: !!banner && getComputedStyle(banner).display !== 'none'
+  };
+})()`);
+check(afterWaitUI.waiting === false && afterWaitUI.bannerShown === false,
+  '★ 响应到达后发起方解冻（横幅撤掉）', afterWaitUI);
 
 console.log('');
 if (problems.length) {

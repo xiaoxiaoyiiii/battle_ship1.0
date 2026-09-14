@@ -174,6 +174,45 @@ await B.ev(`(function(){
   return true;
 })()`);
 
+// 等两边都不在"对手掉线宽限期"里。
+// ⚠️ 无头浏览器偶尔会闪断一下，服务端会进入 30 秒宽限并把所有写操作冻结 ——
+// 那时连锁结算不了、出牌也不生效，本用例会以"极限增援没生效"假红。
+// 实测踩到过：日志里出现「对手已掉线，等待重连…」。这是环境抖动，不是产品 bug。
+async function waitUnfrozen(maxMs = 45000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < maxMs) {
+    const f1 = await A.ev('!!gameState.frozen');
+    const f2 = await B.ev('!!gameState.frozen');
+    if (!f1 && !f2) return true;
+    await sleep(1000);
+  }
+  return false;
+}
+
+// 打出极限增援并确认效果真的挂上了；闪断导致的失败重试几次
+async function castReinforcement(maxAttempts = 4) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    await waitUnfrozen();
+    await atkTab.ev(`new Promise(function(res){
+      gameState.socket.emit('test_add_specific_magic_card', { room_id: gameState.roomId,
+        player_id: ${JSON.stringify(atkPid)}, card_name: '极限增援' }, function(r){ res(r); });
+    })`);
+    await sleep(400);
+    const ack = await atkTab.ev(`new Promise(function(res){
+      gameState.socket.emit('use_magic_card', { room_id: gameState.roomId,
+        player_id: ${JSON.stringify(atkPid)}, card: { name: '极限增援' }, targets: {} },
+        function(r){ res(r); });
+    })`);
+    await waitChainClear();
+    await sleep(600);
+    const s = await gs(atkTab);
+    console.log(`出牌第 ${attempt} 次 ack = ${JSON.stringify(ack)}，生效效果 = ${JSON.stringify(s.game_state.game_effects)}`);
+    if (s.game_state.game_effects.indexOf('reinforcement_check') >= 0) return true;
+    console.log('  ↳ 没挂上（多半是对方闪断把操作冻住了），重试');
+  }
+  return false;
+}
+
 let attacker = null;
 for (let i = 0; i < 12 && !attacker; i++) {
   await A.ev(`new Promise(function(res){
@@ -240,24 +279,15 @@ async function waitChainClear(maxMs = 14000) {
 }
 
 // 让当前攻击者打出「极限增援」（速阶1 → 准备阶段）
-await atkTab.ev(`new Promise(function(res){
-  gameState.socket.emit('test_add_specific_magic_card', { room_id: gameState.roomId,
-    player_id: ${JSON.stringify(atkPid)}, card_name: '极限增援' }, function(r){ res(r); });
-})`);
-await sleep(400);
+const castOk = await castReinforcement();
+await sleep(300);
 let st = await gs(atkTab);
-if (st.game_state.current_phase !== 'preparation') {
-  console.log('（当前不在准备阶段，先把回合走完再打）phase =', st.game_state.current_phase);
+for (const tab of [A, B]) {
+  const msgs = await tab.ev('(window.__msg || [])');
+  if (msgs && msgs.length) console.log('  ' + tab.name + ' 提示:', JSON.stringify(msgs));
 }
-const cast = await atkTab.ev(`new Promise(function(res){
-  gameState.socket.emit('use_magic_card', { room_id: gameState.roomId,
-    player_id: ${JSON.stringify(atkPid)}, card: { name: '极限增援' }, targets: {} }, function(r){ res(r); });
-})`);
-await waitChainClear();
-await sleep(500);
-st = await gs(atkTab);
-check(st.game_state.game_effects.indexOf('reinforcement_check') >= 0,
-  '★ 前置条件：极限增援已生效', { ack: cast, effects: st.game_state.game_effects });
+check(castOk && st.game_state.game_effects.indexOf('reinforcement_check') >= 0,
+  '★ 前置条件：极限增援已生效', { castOk, effects: st.game_state.game_effects });
 
 // 双方船数调成相等
 await atkTab.ev(`new Promise(function(res){

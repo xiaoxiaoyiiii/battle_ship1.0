@@ -2138,6 +2138,13 @@ def handle_attack(data):
     if room.chain or room.chain_waiting:
         return {'status': 'error', 'message': '连锁结算中，请等待响应窗口结束后再攻击'}
 
+    # 已被拦下的阶段转换：等待对方响应期间不能继续开炮。
+    # 这是这个窗口存在的意义 —— 对方正在决定要不要打速阶3，
+    # 这边要是能把攻击先打完，"拦下来问一句"就没有任何意义了。
+    wait = _priority_wait_reason(room, attacker_id)
+    if wait:
+        return {'status': 'error', 'message': wait}
+
     # 次数校验：此前缺失，改客户端（或前端连点绕过 DOM 判断）即可无限攻击
     if room.attacks_remaining <= 0:
         return {'status': 'error', 'message': '本回合攻击次数已用尽'}
@@ -2306,6 +2313,13 @@ def enter_battle_phase(data, _priority_confirmed=False):
     if frz:
         return {'status': 'error', 'message': frz}
 
+    # 已被拦下的阶段转换：发起方在等待对方响应期间不能继续推进阶段。
+    # （不加这条，双击「进入战斗阶段」就能绕过询问 —— 见 _priority_wait_reason）
+    if not _priority_confirmed:
+        wait = _priority_wait_reason(room, player_id)
+        if wait:
+            return {'status': 'error', 'message': wait}
+
     # 检查是否是当前攻击者的准备阶段
     if room.current_attacker == player_id and room.current_phase == 'preparation':
         # ⚠️ 速阶3抢时点的仲裁：推进阶段前先问对方"要不要响应"。
@@ -2376,6 +2390,12 @@ def handle_enter_end_phase(data, _priority_confirmed=False):
     room = room_manager.get_room(room_id)
     if not room or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
+
+    # 已被拦下的阶段转换：等待对方响应期间不能进入结束阶段
+    if not _priority_confirmed:
+        wait = _priority_wait_reason(room, player_id)
+        if wait:
+            return {'status': 'error', 'message': wait}
 
     # 检查是否是当前攻击者的战斗阶段
     if room.current_attacker == player_id and room.current_phase == 'battle':
@@ -2449,6 +2469,11 @@ def end_turn(data):
     frz = _frozen_reason(room, player_id)
     if frz:
         return {'status': 'error', 'message': frz}
+
+    # 已被拦下的阶段转换：等待对方响应期间不能交回合
+    wait = _priority_wait_reason(room, player_id)
+    if wait:
+        return {'status': 'error', 'message': wait}
 
     # 连锁未结算时禁止结束回合。
     # 卡牌效果在 resolve_chain 里才真正执行，若此时放行换人，
@@ -3154,6 +3179,12 @@ def handle_use_magic_card(data):
     # 连锁响应窗口未关闭时，应通过 chain_response 响应，而不是再打出新牌
     if room.chain_waiting:
         return {'status': 'error', 'message': '连锁响应中，请先响应连锁'}
+
+    # 已被拦下的阶段转换：等待对方响应期间发起方不能继续出牌。
+    # （响应者不受影响 —— 他此刻要做的正是"响应"，走 priority_response。）
+    wait = _priority_wait_reason(room, player_id)
+    if wait:
+        return {'status': 'error', 'message': wait}
 
     # 看破！：被封锁的玩家本大回合无法使用魔法卡
     if player.magic_blocked:
@@ -3927,9 +3958,44 @@ def _has_request_context():
         return False
 
 
+# 阶段转换的显示名（只在提示文案里用）
+PRIORITY_ACTION_TEXT = {
+    'enter_battle': '进入战斗阶段',
+    'enter_end': '进入结束阶段',
+}
+
+
+def _priority_pending_for(room, player_id):
+    """如果该玩家正是"被拦下的那次阶段转换"的发起者，返回 pending，否则 None。"""
+    pending = getattr(room, 'priority_pending', None)
+    if pending and pending.get('actor') == player_id:
+        return pending
+    return None
+
+
+def _priority_wait_reason(room, player_id):
+    """发起方在等待对方响应期间，其余写操作一律冻结；返回拒绝原因，否则 None。
+
+    ⚠️ 为什么必须冻（作者实测反馈：「在等待阶段转换的响应的时候，对方不能暂停行动」）：
+    这个 10 秒窗口的**全部意义**就是仲裁"谁先动手"。可旧实现只拦了阶段转换本身，
+    发起方在等待期间仍然能继续开炮、出牌、交回合 ——
+    对方正在决定要不要打速阶3，这边已经把攻击打完了；
+    窗口结束时 _priority_continue 再把阶段转换补上。
+    于是"拦下来问一句"形同虚设，双方看到的效果顺序仍然没有定义。
+
+    连带修掉的另一个洞：`_should_ask_priority` 看到已有 pending 会返回 False，
+    于是发起方**再点一次**「进入战斗阶段」会直接跳过询问、当场推进
+    （双击即可绕过询问）。
+    """
+    pending = _priority_pending_for(room, player_id)
+    if not pending:
+        return None
+    action = PRIORITY_ACTION_TEXT.get(pending.get('action'), '阶段转换')
+    return f'正在等待对方响应「{action}」，请稍候再操作'
+
+
 def _should_ask_priority(room, actor_id, responder_id):
     """判断这次阶段转换是否需要先询问对方。返回 True/False。
-
     阻断条件（都不询问，直接放行）：
       · 无 socket 请求上下文（单元测试直调 handler）
       · 人机房 —— AI 不会主动响应，弹窗只会让人干等
@@ -3992,6 +4058,15 @@ def _ask_priority(room, actor_id, action, on_decline=None):
         'speed3_cards': _speed3_cards(room, responder_id),
         'countdown': PRIORITY_SECONDS,
     }, to=room.players[responder_id].sid)
+    # 同时告诉【发起方】"你被拦下了，正在等对方"。
+    # 以前只发 priority_request 给响应者，发起方那边毫无提示：
+    # 点了「进入战斗阶段」之后界面一动不动，既不知道在等谁、也不知道等多久，
+    # 甚至可以在等待期间继续操作（见 _priority_wait_reason 的说明）。
+    emit('priority_waiting', {
+        'action': action,
+        'action_text': PRIORITY_ACTION_TEXT.get(action, '阶段转换'),
+        'countdown': PRIORITY_SECONDS,
+    }, to=room.players[actor_id].sid)
     _schedule_priority_timeout(room.id, token)
     return True
 
@@ -4008,9 +4083,22 @@ def _schedule_priority_timeout(room_id: str, token: int):
 
 
 def _clear_priority(room):
-    """清掉待处理的询问状态（不触发后续动作）。"""
+    """清掉待处理的询问状态（不触发后续动作）。
+
+    顺带通知【发起方】"等待结束、可以继续操作了" ——
+    前端要靠它把冻结的按钮恢复回来。漏发的话发起方会一直停在
+    "等待对方响应"的界面里点不动（比卡死更难查：服务端其实已经继续了）。
+    """
+    pending = getattr(room, 'priority_pending', None)
+    actor_id = pending.get('actor') if pending else None
     room.priority_pending = None
     room.priority_token += 1
+    if actor_id and actor_id in room.players:
+        sid = getattr(room.players[actor_id], 'sid', None)
+        if sid:
+            emit('priority_waiting_end', {
+                'action': pending.get('action'),
+            }, to=sid)
 
 
 def _resolve_priority(room, respond=False, card=None, targets=None):
@@ -4428,6 +4516,15 @@ def _build_room_sync(room, player_id: str) -> dict:
         ],
         'chain_waiting': getattr(room, 'chain_waiting', False),
         'chain_window': getattr(room, 'chain_window', None),
+        # 阶段转换询问：重连正好落在等待窗口里时，发起方要能把
+        # 「正在等待对方响应」的提示和冻结状态恢复回来（只给自己的那份）。
+        'priority_waiting': (
+            {
+                'action': room.priority_pending.get('action'),
+                'action_text': PRIORITY_ACTION_TEXT.get(room.priority_pending.get('action'), '阶段转换'),
+            }
+            if _priority_pending_for(room, player_id) else None
+        ),
         # 生效中的房间级效果（仅名称，避免下发复杂对象）
         'active_effects': sorted(room.game_effects.keys()) if isinstance(room.game_effects, dict) else [],
         # 双方「生效中效果」角标：重连后不能丢，否则玩家会以为效果没了。

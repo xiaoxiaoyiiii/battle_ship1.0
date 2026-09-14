@@ -503,6 +503,32 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
    （目录删不掉、Edge 起不来），表现为"无法连接无头浏览器调试端口"。
    已改到项目内 `.tmp/`（已加 `.gitignore`）。
 
+### 🟡 2026-09-14 优先权询问第二批：等待冻结 + 开关搬到局内
+
+> 详见 `docs/PRIORITY_PROMPT_2026_09_13.md` 第 8 节。作者：「在等待阶段转换的响应的时候，
+> 对方不能暂停行动」「开关做成一个开关放在局内，而不是在设置中」。
+
+**★ 等待窗口以前根本没拦住任何东西**：`handle_attack` / `handle_use_magic_card` / `end_turn`
+当时都只挡连锁窗口、不看 `priority_pending` —— 对方正在决定要不要打速阶3，发起方却能把攻击先打完，
+"拦下来问一句"等于没拦。而且 `_should_ask_priority` 看到已有 pending 会返回 False，
+**双击「进入战斗阶段」就能绕过询问**。
+
+修法：`_priority_wait_reason(room, player_id)` 冻结发起方的 5 个写操作
+（`handle_attack` / `handle_use_magic_card` / `end_turn` / `enter_battle_phase` /
+`handle_enter_end_phase`，后两个在 `_priority_confirmed` 续做重放时放行）；
+新增 `priority_waiting`（发给**发起方**，前端据此显示横幅 + 禁用阶段按钮）与
+`priority_waiting_end` 事件，`_build_room_sync` 补 `priority_waiting`（重连要能恢复）。
+**只冻发起方** —— 响应者此刻要做的正是"响应"，走 `priority_response`。
+
+开关：从设置面板搬到阶段卡片右上角（`#phase-timing-toggle`），设置里那份已删。
+两个布局坑（都是实测出来的）：
+① 不能和阶段按钮同行（宽屏「阶段按钮在卡片内水平居中」不变量会被挤偏）→ 用 `position: absolute`；
+② **窄屏卡片里放不下第二个 40px 触控目标**（实测 193×42 的卡片里，按钮右侧只剩 1px）→
+`layout-compact` / `layout-tight` 下改成屏幕右上角的固定浮标。
+`ui_layout_check.mjs` 因此新增一条不变量：**「阶段时点」开关不压任何东西**
+（阶段按钮/棋盘/手牌/面板槽/头像角标/回合标题/投降按钮）。只验居中是不够的 ——
+居中照样能压住按钮，第一次实现就是这么翻车的。
+
 ### 🟡 2026-09-14「打完一张，剩下的手牌莫名消失」批
 
 > 详见 `docs/HAND_DESYNC_2026_09_14.md`。作者：「每一次有手牌通过之后，剩下的

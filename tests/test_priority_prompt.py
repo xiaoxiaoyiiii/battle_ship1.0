@@ -80,6 +80,155 @@ def pri_requests(events):
     return [d for e, d, to, r in events if e == 'priority_request']
 
 
+def waits(events):
+    """发给【发起方】的 priority_waiting 载荷。"""
+    return [d for e, d, to, r in events if e == 'priority_waiting']
+
+
+# ===========================================================================
+# 等待期间的冻结（作者 2026-09-14 反馈：「在等待阶段转换的响应的时候，
+# 对方不能暂停行动」—— 以前发起方在 10 秒窗口里还能继续开炮/出牌，
+# 这个仲裁窗口就形同虚设）
+# ===========================================================================
+def test_waiting_notifies_the_actor(room, events):
+    """★ 发起方必须收到 priority_waiting（否则他那边界面一动不动、也不知道在等谁）。"""
+    server.enter_battle_phase({'room_id': room.id, 'player_id': P1})
+
+    got = waits(events)
+    assert got, '必须给发起方推 priority_waiting'
+    assert got[-1]['action'] == 'enter_battle'
+    assert got[-1]['action_text'] == '进入战斗阶段'
+    assert got[-1]['countdown'] == server.PRIORITY_SECONDS
+    targets = [to for e, d, to, r in events if e == 'priority_waiting']
+    assert targets == ['sid-p1'], '只该发给发起方，不该发给响应者'
+
+
+def test_actor_cannot_attack_while_waiting(room, events):
+    """★ 等待期间发起方不能再开炮 —— 这是这个窗口存在的意义。"""
+    room.current_phase = 'battle'
+    room.attacks_remaining = 6
+    server.enter_battle_phase({'room_id': room.id, 'player_id': P1}) if False else None
+    # 直接构造等待状态（攻击只需要 pending，不需要阶段转换本身）
+    server._ask_priority(room, P1, 'enter_end')
+    assert room.priority_pending is not None
+
+    res = server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 5})
+
+    assert res['status'] == 'error'
+    assert '等待对方响应' in res['message'], res
+    assert room.attacks_remaining == 6, '被拒的攻击不该扣次数'
+
+
+def test_actor_cannot_play_card_while_waiting(room, events):
+    """等待期间发起方不能再出牌。"""
+    room.players[P1].magic_hand = [card('五险一金')]
+    server._ask_priority(room, P1, 'enter_battle')
+
+    res = server.handle_use_magic_card({
+        'room_id': room.id, 'player_id': P1,
+        'card': {'name': '五险一金'}, 'targets': {},
+    })
+
+    assert res['status'] == 'error'
+    assert '等待对方响应' in res['message'], res
+    # 牌必须还在手上（不能"拒了但牌没了"）
+    assert [c.name for c in room.players[P1].magic_hand] == ['五险一金']
+
+
+def test_actor_cannot_end_turn_while_waiting(room, events):
+    """等待期间发起方不能交回合（否则换人之后他的阶段转换还会补做，顺序全乱）。"""
+    room.current_phase = 'end'
+    server._ask_priority(room, P1, 'enter_end')
+
+    res = server.end_turn({'room_id': room.id, 'player_id': P1})
+
+    assert res['status'] == 'error'
+    assert '等待对方响应' in res['message'], res
+    assert room.current_attacker == P1, '回合不该被交出去'
+
+
+def test_double_click_cannot_bypass_the_ask(room, events):
+    """★ 双击「进入战斗阶段」不能绕过询问。
+
+    `_should_ask_priority` 看到已有 pending 会返回 False，
+    于是第二次点击会直接推进阶段 —— 询问被绕过。加了冻结之后必须拒绝。
+    """
+    room.players[P2].magic_hand = [card('失灵！')]
+    first = server.enter_battle_phase({'room_id': room.id, 'player_id': P1})
+    assert first.get('awaiting_priority') is True
+
+    second = server.enter_battle_phase({'room_id': room.id, 'player_id': P1})
+
+    assert second['status'] == 'error', f'第二次点击必须被拒，实际 {second}'
+    assert room.current_phase == 'preparation', '阶段仍然不该推进'
+
+
+def test_responder_is_not_frozen(room, events):
+    """响应者不受冻结影响：他此刻要做的正是"响应"，走 priority_response。"""
+    room.players[P2].magic_hand = [card('失灵！')]
+    server.enter_battle_phase({'room_id': room.id, 'player_id': P1})
+
+    # 响应者出牌响应应当成功
+    res = server.priority_response({
+        'room_id': room.id, 'player_id': P2, 'respond': True,
+        'card': {'name': '失灵！'}, 'targets': [],
+    })
+    assert res['status'] == 'success', res
+
+
+def test_freeze_lifts_after_response(room, events):
+    """★ 等待结束后发起方恢复可操作，并收到 priority_waiting_end。"""
+    server.enter_battle_phase({'room_id': room.id, 'player_id': P1})
+    assert server._priority_wait_reason(room, P1), '等待期间应被冻结'
+
+    server.priority_response({'room_id': room.id, 'player_id': P2, 'respond': False})
+
+    assert server._priority_wait_reason(room, P1) is None, '响应之后必须解冻'
+    ends = [d for e, d, to, r in events if e == 'priority_waiting_end']
+    assert ends, '必须通知发起方"等待结束"，否则他那边一直点不动'
+    targets = [to for e, d, to, r in events if e == 'priority_waiting_end']
+    assert targets == ['sid-p1']
+
+
+def test_freeze_lifts_after_timeout(room, events):
+    """超时（对方没响应）同样解冻。"""
+    server.enter_battle_phase({'room_id': room.id, 'player_id': P1})
+    assert server._priority_wait_reason(room, P1)
+
+    server._resolve_priority(room, respond=False)   # 超时路径
+
+    assert server._priority_wait_reason(room, P1) is None
+    assert room.priority_pending is None
+
+
+def test_no_freeze_when_nothing_pending(room, events):
+    """没有待响应状态时不该误冻。"""
+    assert server._priority_wait_reason(room, P1) is None
+    room.current_phase = 'battle'
+    room.attacks_remaining = 6
+    room.players[P2].ships = room.players[P2].ships[:5]
+    room.players[P2].remaining_ships = 5
+
+    res = server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 5})
+
+    assert res['status'] == 'success', res
+
+
+def test_only_the_actor_is_frozen(room, events):
+    """冻结只针对发起方，不能误伤响应者的其它操作。
+
+    响应者攻击会被"还没到你的攻击回合"拒绝 —— 是另一条规则，不是等待冻结。
+    """
+    room.current_phase = 'battle'
+    room.attacks_remaining = 6
+    server._ask_priority(room, P1, 'enter_end')
+
+    res = server.handle_attack({'room_id': room.id, 'player_id': P2, 'x': 0, 'y': 0})
+
+    assert res['status'] == 'error'
+    assert '等待对方响应' not in res['message'], f'响应者不该被等待冻结挡住：{res}'
+
+
 # ===========================================================================
 # 核心：进战斗阶段要询问，阶段暂不推进
 # ===========================================================================

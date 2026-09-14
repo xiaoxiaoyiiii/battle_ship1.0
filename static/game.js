@@ -428,9 +428,6 @@ if (settingsBtn && settingsModal && settingsModalClose) {
         // 读取当前主色
         const cur = localStorage.getItem('battleship_primary_color') || getComputedStyle(document.documentElement).getPropertyValue('--primary') || '#1976d2';
         if (primaryColorPicker) primaryColorPicker.value = cur.trim().replace(/^#|^rgb\((.+)\)$/g, m => m.startsWith('#') ? m : '#1976d2');
-        // 打开时把「不再询问阶段转换时点」勾选框对齐当前状态
-        // （弹窗里勾过、或换了房间之后，这里必须跟着变）
-        if (typeof syncDeclinePriorityUI === 'function') syncDeclinePriorityUI();
         settingsModal.classList.remove('hidden');
     };
     settingsModalClose.onclick = () => settingsModal.classList.add('hidden');
@@ -858,11 +855,16 @@ window.gameState = {
     // 已经把这个偏好推给哪个房间了（每个房间推一次就够）
     declinePrioritySyncedRoom: null,
     // 优先权询问里已选好、正在点目标的速阶3卡（与 pendingChainCard 同构）
-    pendingPriorityCard: null
+    pendingPriorityCard: null,
+    // 我发起的阶段转换正被拦下、在等对方响应（服务端 priority_waiting 下发）。
+    // 非空时阶段按钮全部禁用 —— 与后端的 _priority_wait_reason 同一口径。
+    priorityWaiting: null
 }
 
 let opponentGoneTimer = null;
 let opponentGoneEl = null;
+let priorityWaitEl = null;
+let priorityWaitTimer = null;
 const ACTIVE_GAME_KEY = 'battle_active_game';
 
 // 统一的 socket 获取入口：已有连接则复用，绝不重复建连。
@@ -919,6 +921,46 @@ function hideOpponentGoneBanner() {
     gameState.frozen = false;
     if (opponentGoneTimer) { clearInterval(opponentGoneTimer); opponentGoneTimer = null; }
     if (opponentGoneEl) opponentGoneEl.style.display = 'none';
+}
+
+// ── 「我的阶段转换正被拦下、等对方响应」横幅 ──────────────────────
+// 用固定定位的横幅而不是往阶段卡片里加东西：
+// 阶段卡片有严格的移动端布局不变量（横屏零纵向滚动的余量只有 1px），
+// 而固定定位完全不参与布局，零风险。样式与「对手已掉线」横幅同一套。
+function ensurePriorityWaitEl() {
+    if (priorityWaitEl) return priorityWaitEl;
+    priorityWaitEl = document.createElement('div');
+    priorityWaitEl.id = 'priority-waiting-banner';
+    priorityWaitEl.style.cssText = 'position:fixed;top:12px;right:12px;z-index:9998;background:#e8a33d;color:#3a2500;padding:10px 16px;border-radius:8px;font-weight:bold;box-shadow:0 2px 10px rgba(0,0,0,.3);display:none';
+    document.body.appendChild(priorityWaitEl);
+    return priorityWaitEl;
+}
+
+// deadline 为秒级时间戳；不传则只显示文案不显示倒计时
+function showPriorityWaitingBanner(actionText, deadline) {
+    gameState.priorityWaiting = { action_text: actionText, deadline: deadline || null };
+    const el = ensurePriorityWaitEl();
+    const tick = () => {
+        let text = `已发起「${actionText}」 · 等待对方响应`;
+        if (gameState.priorityWaiting && gameState.priorityWaiting.deadline) {
+            const left = Math.max(0, Math.ceil(gameState.priorityWaiting.deadline - Date.now() / 1000));
+            text += ' ' + left + 's';
+        }
+        el.textContent = text;
+    };
+    if (priorityWaitTimer) clearInterval(priorityWaitTimer);
+    tick();
+    priorityWaitTimer = setInterval(tick, 1000);
+    el.style.display = 'block';
+    updatePhaseUI();
+}
+
+function hidePriorityWaitingBanner() {
+    if (!gameState.priorityWaiting) return;
+    gameState.priorityWaiting = null;
+    if (priorityWaitTimer) { clearInterval(priorityWaitTimer); priorityWaitTimer = null; }
+    if (priorityWaitEl) priorityWaitEl.style.display = 'none';
+    updatePhaseUI();
 }
 function saveActiveGame(roomId, playerId) {
     try {
@@ -1010,6 +1052,14 @@ function applyRoomSync(data) {
         if (typeof opponentUsernameInfo !== 'undefined' && opponentUsernameInfo) opponentUsernameInfo.textContent = data.opponent_name;
     }
     saveActiveGame(data.room_id, data.player_id);
+
+    // 重连正好落在"等待对方响应阶段转换"的窗口里：横幅与按钮禁用要恢复，
+    // 否则玩家重连回来看到按钮能点，一点却被服务端拒绝（口径不一致）。
+    if (data.priority_waiting && data.priority_waiting.action_text) {
+        showPriorityWaitingBanner(data.priority_waiting.action_text, null);
+    } else {
+        hidePriorityWaitingBanner();
+    }
 
     // 像正常进入对局一样，先隐藏所有其它界面，避免与主菜单/大厅/等待界面叠层错乱。
     // 注意：这些元素是模块级 const（不在 window 上），必须直接引用。
@@ -2255,6 +2305,7 @@ function setupSocketListeners() {
         document.getElementById('reinforcement-status')?.classList.add('hidden');
         document.getElementById('holy-heart-status')?.classList.add('hidden');
         renderActiveEffects({ self: [], opponent: [] });   // 结算界面不该再挂着「生效中」的角标
+        hidePriorityWaitingBanner();                        // 对局结束：等待横幅一并撤掉
         // 对局结束，手牌选中态一并清掉
         gameState.selectedCardIndex = -1;
         gameState.selectedCardKey = null;
@@ -2483,6 +2534,17 @@ function setupSocketListeners() {
     // 阶段转换的「优先权询问」：对方要推进阶段（进战斗 / 进结束）时，
     // 先问我要不要打出一张速阶3。参照游戏王 YGO 的优先权确认。
     socket.on('priority_request', function (data) { showPriorityPrompt(data); });
+    // 我发起的阶段转换被拦下了：显示"等待对方响应"+倒计时，并把阶段按钮全部禁用。
+    // 后端同一时刻也在冻结我的攻击/出牌/交回合（_priority_wait_reason），
+    // 两边口径必须一致 —— 否则玩家会看到"按钮能点但服务端拒绝"的割裂。
+    socket.on('priority_waiting', function (data) {
+        data = data || {};
+        const actionText = data.action_text || '阶段转换';
+        const secs = Number(data.countdown) || 10;
+        showPriorityWaitingBanner(actionText, Date.now() / 1000 + secs);
+    });
+    // 等待结束（对方响应了 / 超时了 / 被取消）：解冻
+    socket.on('priority_waiting_end', function () { hidePriorityWaitingBanner(); });
     // 拒绝开关的状态回执
     socket.on('priority_setting_updated', function (data) {
         gameState.declinePriority = !!(data && data.decline);
@@ -6427,6 +6489,15 @@ function updatePhaseUI() {
         }
     }
 
+    // 我发起的阶段转换正被拦下（在等对方响应）：按钮留着但禁用。
+    // 不能直接隐藏 —— 玩家会以为界面坏了；保留 + 置灰 + 横幅说明才看得懂。
+    const waiting = !!gameState.priorityWaiting;
+    [enterBattleBtn, enterEndBtn, endTurnBtn].forEach((b) => {
+        if (!b) return;
+        b.disabled = waiting;
+        b.classList.toggle('is-waiting', waiting);
+    });
+
     // 教皇旨意：战斗阶段给我方一个「弃卡换攻击 +2」的显式入口。
     // 不靠"点棋盘才发现次数是 0"才弹窗 —— 那样玩家根本不知道有这条路。
     if (typeof updatePapalDiscardButton === 'function') updatePapalDiscardButton();
@@ -6609,10 +6680,12 @@ function updatePapalDiscardButton() {
 
 // ── 「不再询问阶段转换时点」开关 ────────────────────────────────
 // 两个入口，共用同一份状态：
+//   · 局内开关 #phase-timing-toggle（阶段卡片右上角，常驻、随时可切）
 //   · 优先权弹窗里的 #decline-priority-toggle（弹窗里顺手勾）
-//   · 设置面板里的 #decline-priority-setting（随时改回来）
-// ⚠️ 第二个入口是必须的：勾上之后就不再弹窗了，只有弹窗内那个开关的话
+// ⚠️ 局内那个常驻入口是必须的：勾上之后就不再弹窗了，只有弹窗内那个开关的话
 // 玩家永远没机会取消勾选 —— 相当于把自己锁死。
+// 作者 2026-09-14 明确要求"做成一个开关放在局内，而不是在设置中"，
+// 所以设置面板里那份已删掉，只留局内这一个。
 //
 // 偏好存在 localStorage：服务端那份是【房间级】的，切房间就重置；
 // 但玩家说"不想被问"是个跨局的意愿，所以本地记住，进新局时再同步上去。
@@ -6666,26 +6739,32 @@ function setDeclinePriority(on, opts) {
     }
     if (options.silent !== true) {
         showMessage(gameState.declinePriority
-            ? '已关闭阶段转换时点询问（在「设置」里可随时恢复）'
+            ? '已关闭阶段转换时点询问（点阶段卡片右上角的开关可随时恢复）'
             : '已恢复阶段转换时点询问');
     }
 }
 
+// 三个入口共用同一份状态：局内开关 / 优先权弹窗里的勾选框 / 本地偏好。
 function syncDeclinePriorityUI() {
     const on = !!gameState.declinePriority;
     const inPrompt = document.getElementById('decline-priority-toggle');
     if (inPrompt) inPrompt.checked = on;
-    const inSettings = document.getElementById('decline-priority-setting');
-    if (inSettings) inSettings.checked = on;
+    const inGame = document.getElementById('phase-timing-toggle');
+    if (inGame) {
+        inGame.setAttribute('aria-pressed', on ? 'true' : 'false');
+        inGame.classList.toggle('is-off', on);
+        const state = document.getElementById('phase-timing-state');
+        if (state) state.textContent = on ? '已关闭' : '询问中';
+    }
 }
 
 function bindDeclinePriorityToggle() {
-    const box = document.getElementById('decline-priority-setting');
-    if (box && box.dataset.bound !== '1') {
-        box.dataset.bound = '1';
-        box.addEventListener('change', () => setDeclinePriority(box.checked));
+    const btn = document.getElementById('phase-timing-toggle');
+    if (btn && btn.dataset.bound !== '1') {
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => setDeclinePriority(!gameState.declinePriority));
     }
-    // 启动时把本地偏好读进来（弹窗里那个勾选框也据此显示）
+    // 启动时把本地偏好读进来（弹窗里那个勾选框、局内开关都据此显示）
     gameState.declinePriority = loadDeclinePriorityPref();
     syncDeclinePriorityUI();
 }

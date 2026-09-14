@@ -97,6 +97,37 @@ function wideProbe() {
   var preview = rect(document.getElementById('magic-card-preview'));
   var chat = rect(document.getElementById('in-game-chat-container'));
   function overlap(a, b) { if (!a || !b) return 'n/a'; var ox = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)); var oy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y)); return Math.round(ox) + 'x' + Math.round(oy); }
+  // 局内的「阶段时点」开关（常驻控件）不能压住任何东西 —— 与紧凑布局同一口径。
+  // ⚠️ 这里只能用 wideProbe 自己的 rect()，没有 compactProbe 的 R()/shown()。
+  var pillClash = '';
+  (function () {
+    var vis = function (e) { if (!e) return false; var cs = getComputedStyle(e); if (cs.display === 'none' || cs.visibility === 'hidden') return false; var b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
+    var pill = document.getElementById('phase-timing-toggle');
+    if (!vis(pill)) return;
+    var pr = rect(pill);
+    var zones = [['阶段按钮', 'enter-battle-phase'], ['结束阶段按钮', 'enter-end-phase'],
+                 ['交回合按钮', 'end-turn-btn'], ['教皇弃卡按钮', 'papal-discard-btn'],
+                 ['我的棋盘', 'game-player-board'], ['对手棋盘', 'opponent-board'],
+                 ['手牌', 'magic-system'], ['面板槽', 'aux-dock'],
+                 ['头像角标', 'avatar-corner'], ['对手角标', 'opponent-avatar-corner'],
+                 ['投降按钮', 'surrender-btn']];
+    for (var k = 0; k < zones.length; k++) {
+      var el = document.getElementById(zones[k][1]);
+      if (!vis(el)) continue;
+      if (el.contains(pill) || pill.contains(el)) continue;
+      var z3 = rect(el);
+      var oxx = Math.max(0, Math.min(pr.x + pr.w, z3.x + z3.w) - Math.max(pr.x, z3.x));
+      var oyy = Math.max(0, Math.min(pr.y + pr.h, z3.y + z3.h) - Math.max(pr.y, z3.y));
+      if (oxx > 1 && oyy > 1) pillClash += zones[k][0] + '=' + Math.round(oxx) + 'x' + Math.round(oyy) + ' ';
+    }
+    var h2 = document.querySelector('.turn-indicator-inner h2');
+    if (vis(h2)) {
+      var h2r = rect(h2);
+      var ox2 = Math.max(0, Math.min(pr.x + pr.w, h2r.x + h2r.w) - Math.max(pr.x, h2r.x));
+      var oy2 = Math.max(0, Math.min(pr.y + pr.h, h2r.y + h2r.h) - Math.max(pr.y, h2r.y));
+      if (ox2 > 1 && oy2 > 1) pillClash += '回合标题=' + Math.round(ox2) + 'x' + Math.round(oy2) + ' ';
+    }
+  })();
   return {
     phase: document.getElementById('current-phase').textContent,
     statusBarDisplay: getComputedStyle(bar).display,
@@ -114,7 +145,8 @@ function wideProbe() {
     logEntries: document.querySelectorAll('#game-logs .log-entry').length,
     logTextLen: ((document.getElementById('game-logs') || {}).innerText || '').trim().length,
     attacks: (document.getElementById('attacks-remaining') || {}).textContent,
-    ships: (document.getElementById('your-ships') || {}).textContent
+    ships: (document.getElementById('your-ships') || {}).textContent,
+    pillClash: pillClash
   };
 }
 
@@ -159,6 +191,35 @@ function compactProbe(MIN_TAP) {
     var oy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
     if (ox > 1 && oy > 1) overlaps.push(panels[i].name + '∩' + panels[j].name + '=' + Math.round(ox) + 'x' + Math.round(oy));
   }
+  // 局内的「阶段时点」开关是常驻控件 —— 它压住任何东西都是 bug。
+  // （宽屏放在阶段卡片右上角；紧凑/矮屏改成屏幕右上角浮标，因为卡片里只剩 1px 空间）
+  var pillClash = '';
+  (function () {
+    var pill = document.getElementById('phase-timing-toggle');
+    if (!pill || !shown(pill)) return;
+    var pr = R(pill);
+    var zones = [['阶段按钮', document.getElementById('enter-battle-phase')],
+                 ['结束阶段按钮', document.getElementById('enter-end-phase')],
+                 ['交回合按钮', document.getElementById('end-turn-btn')],
+                 ['教皇弃卡按钮', document.getElementById('papal-discard-btn')],
+                 ['我的棋盘', document.getElementById('game-player-board')],
+                 ['对手棋盘', document.getElementById('opponent-board')],
+                 ['手牌', document.getElementById('magic-system')],
+                 ['面板槽', document.getElementById('aux-dock')],
+                 ['头像角标', document.getElementById('avatar-corner')],
+                 ['对手角标', document.getElementById('opponent-avatar-corner')],
+                 ['回合标题', document.querySelector('.turn-indicator-inner h2')],
+                 ['投降按钮', document.getElementById('surrender-btn')]];
+    for (var k = 0; k < zones.length; k++) {
+      var el = zones[k][1];
+      if (!el || !shown(el)) continue;
+      if (el.contains(pill) || pill.contains(el)) continue;
+      var z3 = R(el);
+      var oxx = Math.max(0, Math.min(pr.x + pr.w, z3.x + z3.w) - Math.max(pr.x, z3.x));
+      var oyy = Math.max(0, Math.min(pr.y + pr.h, z3.y + z3.h) - Math.max(pr.y, z3.y));
+      if (oxx > 1 && oyy > 1) pillClash += zones[k][0] + '=' + Math.round(oxx) + 'x' + Math.round(oyy) + ' ';
+    }
+  })();
   var small = [];
   var clickable = [].slice.call(document.querySelectorAll('#game-screen button, #game-screen .cell, #game-screen .magic-card, #game-screen input, #game-screen .dock-tab'))
     .filter(function (e) { return shown(e); });
@@ -183,6 +244,7 @@ function compactProbe(MIN_TAP) {
     panels: panels,
     overlaps: overlaps,
     smallTargets: small,
+    pillClash: pillClash,
     handCards: hand ? hand.querySelectorAll('.magic-card').length : 0,
     handRect: handRect,
     handVisible: handRect ? (handRect.bottom <= vh + 1 && handRect.y >= -1 && handRect.h > 0) : false,
@@ -325,6 +387,7 @@ try {
     check(m.cells[0] === m.cells[1] && m.cells[0] === 36, '两块棋盘格子数一致（6x6）', m.cells);
     const offs = m.visibleButtons.map((b) => b.offset);
     check(offs.length > 0 && offs.every((o) => Math.abs(o) <= 3), '阶段按钮在卡片内水平居中', m.visibleButtons);
+    check(!m.pillClash, '「阶段时点」局内开关不压任何东西（宽屏放在阶段卡片右上角）', m.pillClash || 'ok');
     check(m.titleCenterY !== null && m.surrenderCenterY !== null && Math.abs(m.titleCenterY - m.surrenderCenterY) <= 3, '投降按钮与回合标题垂直对齐', { title: m.titleCenterY, surrender: m.surrenderCenterY });
     const parts = String(m.overlap).split('x').map(Number);
     check(parts[0] === 0 || parts[1] === 0, '右上角预览框与右下角聊天窗不重叠', { overlap: m.overlap, preview: m.previewPanel, chat: m.chatPanel });
@@ -351,8 +414,10 @@ try {
       if (m.overlaps.length) console.log('     叠压: ' + m.overlaps.join(' | '));
       console.log('     手牌 ' + m.handCards + ' 张 区域=' + JSON.stringify(m.handRect) + ' 全在视口内=' + m.handVisible);
       console.log('     固定层: ' + (m.fixedOverlays.join(', ') || '无'));
+      if (m.pillClash) console.log('     阶段时点开关压住了: ' + m.pillClash);
 
       check(m.hOverflow <= 1, label + ' 无水平溢出', m.hOverflow);
+      check(!m.pillClash, label + ' 「阶段时点」局内开关不压任何东西（按钮/棋盘/手牌/角标）', m.pillClash || 'ok');
       check(!m.pageScrolls, label + ' 对局页不产生纵向滚动（一屏）', { scrollHeight: m.scrollHeight, vh: m.innerHeight });
       const visibleBoards = m.boards.filter((b) => b.present);
       check(visibleBoards.length >= 1, label + ' 至少一块棋盘可见', visibleBoards.map((b) => b.id));

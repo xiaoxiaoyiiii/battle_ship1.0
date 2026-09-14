@@ -232,3 +232,86 @@ PASS  ★ 取消后阶段推进到 battle  ->  "battle"
 反证：把 `bindDeclinePriorityToggle` 的绑定目标改回已删除的 `#decline-priority-btn`
 → 立刻 5 项红，确认这些断言真的在守这个行为。
 
+---
+
+## 8. 作者二次反馈：「等待时对方不能暂停行动」+「开关要放在局内」
+
+> 阶段转换时点实装还是有点失败了。在等待阶段转换的响应的时候，对方不能暂停行动。
+> 询问阶段转换开关效果是在局内开关的，就是做成一个开关放在局内，而不是在设置中。
+
+作者选定：**① 等待期间把发起方冻住；② 开关做成局内常驻，设置面板里那份删掉。**
+
+### 8.1 ★ 等待窗口以前根本没"拦住"任何东西
+
+`_ask_priority` 只做了两件事：把 `priority_pending` 记上、给对方发 `priority_request`。
+**发起方那边零提示**，而且他仍然能继续开炮、出牌、交回合 ——
+`handle_attack` / `handle_use_magic_card` / `end_turn` 当时都只挡连锁窗口，不看 `priority_pending`。
+
+于是这个窗口的意义被架空了：对方正在决定要不要打速阶3，这边已经把攻击打完了，
+窗口结束时 `_priority_continue` 再把阶段转换补上 —— "拦下来问一句"等于没拦。
+
+连带的第二个洞：`_should_ask_priority` 看到已有 `pending` 会返回 False，
+于是**双击**「进入战斗阶段」会直接跳过询问、当场推进阶段。
+
+**修法**（`_priority_wait_reason`）：
+
+- 新增冻结判定：`priority_pending['actor'] == player_id` → 返回拒绝文案。
+- 挂到 5 个写操作上：`handle_attack` / `handle_use_magic_card` / `end_turn` /
+  `enter_battle_phase` / `handle_enter_end_phase`（后两个在 `_priority_confirmed` 时放行，
+  那是续做重放路径）。
+- 只冻发起方。响应者不受影响 —— 他此刻要做的正是"响应"，走 `priority_response`
+  （`test_only_the_actor_is_frozen` 用"拒绝原因是另一条规则"来区分这两者）。
+- 新增事件：`priority_waiting`（发给**发起方**，带 `action_text` / `countdown`）、
+  `priority_waiting_end`（`_clear_priority` 里发，漏发的话发起方会永远停在"等待中"）。
+- `_build_room_sync` 补 `priority_waiting`：重连正好落在窗口里时能恢复冻结状态。
+
+### 8.2 局内开关：绝对定位 + 窄屏改浮标
+
+按作者要求，开关从设置面板搬到**对局信息区（阶段卡片 `#turn-indicator`）右上角**，
+设置面板那一整块已删除。
+
+两个布局坑（都是实测量出来的，不是猜的）：
+
+1. **不能和阶段按钮排在同一行**。宽屏有一条不变量「阶段按钮在卡片内水平居中」
+   （逐按钮量中心点、容差 3px），多一个 `inline-block` 就会把它们整体挤偏。
+   改用 `position: absolute`（`#turn-indicator` 加 `position: relative`）→ 不参与流式布局，
+   居中不受影响、卡片高度也不变（横屏 664x336 的"零纵向滚动"余量只有 1px）。
+2. **窄屏卡片里根本放不下第二个触控目标**。实测各视口下"阶段按钮右侧剩余空间"：
+
+   | 视口 | 卡片 | 按钮右侧剩余 |
+   | --- | --- | --- |
+   | 1600×1000 | 900×160 | **383px** |
+   | 1000×900 / 430×932 / 390×844 / 320×568 / 768×1024 | 193×42 | **1px** |
+   | 664×336（横屏） | 193×38 | **1px** |
+
+   也就是说紧凑/矮屏下硬塞就会压住「进入战斗阶段」——
+   第一次实现就是这么翻车的，截图交给视觉桥一看就露了（"询问中 appears overlaid on the blue button"）。
+   所以 `body.layout-compact/layout-tight` 下把它改成**屏幕右上角的固定浮标**
+   （`position: fixed; top/right: 6px`），那里四周是空的。
+
+顺带给 `ui_layout_check.mjs` 加了一条新不变量：
+**「阶段时点」开关不压任何东西**（阶段按钮 / 两个棋盘 / 手牌 / 面板槽 / 两个头像角标 /
+回合标题 / 投降按钮），宽屏与 6 个紧凑视口各查一遍。这条才是真正守住"控件不打架"的东西 ——
+只验居中是不够的，居中照样能压住按钮。
+
+### 8.3 回归与验证
+
+| 层次 | 产物 | 结果 |
+| --- | --- | --- |
+| 单元 | `tests/test_priority_prompt.py` 新增 **11 条**（等待提示只发发起方 / 攻击·出牌·交回合·进阶段全被拒 / 双击不能绕过 / 响应者不受影响 / 响应后·超时后解冻 / 无事不误冻） | 全绿 |
+| 全量 | `python -m pytest tests/ -q` | **729 passed** |
+| 无头前端 | `tools/priority_prompt_check.mjs`（新增场景 8 局内开关 + 场景 9 等待冻结） | 全部通过 |
+| 真实双浏览器 | `tools/priority_live_check.mjs`（等待期间横幅/按钮禁用/重复点击被拒/取消后解冻） | 全部通过 |
+| 布局不变量 | `ui_layout_check.mjs`（含新加的"开关不压任何东西"，6 视口 + 宽屏） | 全部通过 |
+| 既有无头套件 | hand_play / reinforcement_tie / effect_badge / target_selection / papal_discard / chain_target / sfx / bgm / card_compendium / room_invite / stats_modal | 全部通过 |
+
+**反证**：把 `handle_attack` 里的冻结判定改成 `wait = None`
+→ `test_actor_cannot_attack_while_waiting` 立刻红，确认断言真的在守这个行为。
+
+### 8.4 顺手修掉的一个测试工具假红
+
+`tools/reinforcement_tie_check.mjs` 偶发红：无头浏览器闪断会让服务端进入 30 秒掉线宽限，
+期间所有写操作被冻结 → 连锁结算不了 → 极限增援没生效，看起来像产品 bug。
+已加 `waitUnfrozen()`（等两边都不在宽限期）+ 出牌重试，并在输出里打印提示文本，
+避免以后把环境抖动误判成回归。
+

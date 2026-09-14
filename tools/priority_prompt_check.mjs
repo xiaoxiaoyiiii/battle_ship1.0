@@ -8,7 +8,9 @@
  *   · 点「取消」→ 发出 priority_response {respond:false}
  *   · 勾选「拒绝所有阶段转换时点」→ 随响应一起上报 decline_all
  *   · 倒计时到 0 → 自动取消
- *   · 设置面板里的常驻开关：能勾、能取消、记 localStorage、换房间会补推给服务端
+ *   · 局内的「阶段时点」开关（阶段卡片右上角，绝对定位不破布局）
+ *   · 发起方的等待冻结：priority_waiting → 横幅 + 按钮禁用；priority_waiting_end → 解冻
+ *   · 发起方的等待冻结：priority_waiting → 横幅 + 按钮禁用；priority_waiting_end → 解冻
  *   · 反证：chain_request 的弹窗不受影响
  *
  * 用法：node tools/priority_prompt_check.mjs --url http://127.0.0.1:5000/
@@ -284,75 +286,73 @@ check(await ev('gameState.pendingPriorityCard === null'), 'pendingPriorityCard �
 
 // ---- 8. 设置面板里的常驻开关（修「勾上后就再也取消不了」的死结）----
 // 原先开关只存在于优先权弹窗内，而勾上就不再弹窗 → 玩家永远没机会取消勾选。
-// 现在设置面板里有一个常驻 checkbox，和弹窗里那个共用同一份状态。
-// 为什么不放对局界面：对局信息区有严格的移动端不变量（触控目标 ≥40px /
-// 横屏不产生纵向滚动），多塞一个控件会破坏它 —— 设置弹窗没有那些约束。
+// 作者 2026-09-14 明确要求：「做成一个开关放在局内，而不是在设置中」，
+// 所以现在只有两个入口：阶段卡片右上角的 #phase-timing-toggle（常驻）+ 弹窗里那个。
 console.log('');
-console.log('--- 场景 8：设置面板里的常驻开关 ---');
+console.log('--- 场景 8：局内的常驻开关 ---');
 await installProbe();
 await ev(`(function(){
   localStorage.removeItem('battleship_decline_priority');
   gameState.declinePriority = false;
   syncDeclinePriorityUI();
+  // 开关在 #game-screen 里，屏幕没 active 时量出来是 0×0（尺寸断言会假红）
+  var s = document.getElementById('game-screen');
+  if (s) s.classList.add('active');
   return true;
 })()`);
-await sleep(200);
+await sleep(300);
 
 const boxInit = await ev(`(function(){
-  var box = document.getElementById('decline-priority-setting');
-  if (!box) return null;
-  var modal = document.getElementById('settings-modal');
-  var label = box.closest('label') || box.parentElement;
+  var btn = document.getElementById('phase-timing-toggle');
+  if (!btn) return null;
+  var phaseCard = document.getElementById('turn-indicator');
+  var cs = getComputedStyle(btn);
+  var r = btn.getBoundingClientRect();
   return {
-    inSettings: !!(modal && modal.contains(box)),
-    modalHiddenByDefault: !!(modal && modal.classList.contains('hidden')),
-    checked: box.checked,
-    text: label ? label.textContent.trim() : '',
-    // 说明文字就在这一行里（em），别用 '#settings-content .muted-hint'：
-    // 设置面板里还有音乐播放器的同款提示，会先匹配到「当前播放：未播放」。
-    hint: (label && label.querySelector('em') ? label.querySelector('em').textContent : '').trim()
+    inPhaseCard: !!(phaseCard && phaseCard.contains(btn)),
+    // 必须是绝对定位：否则它会把居中的阶段按钮挤偏（宽屏有条不变量守这个）
+    position: cs.position,
+    text: btn.textContent.replace(/\\s+/g, ' ').trim(),
+    state: (document.getElementById('phase-timing-state') || {}).textContent || '',
+    size: Math.round(r.width) + 'x' + Math.round(r.height),
+    pressed: btn.getAttribute('aria-pressed'),
+    inSettings: !!document.getElementById('decline-priority-setting'),
+    inPromptToggleExists: true
   };
 })()`);
-check(!!boxInit, '★ 设置面板里有常驻的「不再询问阶段转换时点」开关');
-check(!!boxInit && boxInit.inSettings, '开关挂在设置弹窗里（不占对局界面）', boxInit);
-check(!!boxInit && /不再询问|时点/.test(boxInit.text), '开关文案说明了作用', boxInit && boxInit.text);
-check(!!boxInit && /随时/.test(boxInit.hint), '旁边写明了「随时可以取消」（否则玩家不敢勾）', boxInit && boxInit.hint);
-// 整行都是 label（点文字也能勾），所以实际可点高度远大于裸复选框的 13px
-check(!!boxInit && boxInit.modalHiddenByDefault, '设置弹窗默认关闭，不干扰对局界面', boxInit);
-check(!!boxInit && boxInit.checked === false, '初始未勾选', boxInit && boxInit.checked);
+check(!!boxInit, '★ 对局信息区里有常驻的「阶段时点」开关');
+check(!!boxInit && boxInit.inPhaseCard, '开关就在阶段卡片（#turn-indicator）里', boxInit);
+check(!!boxInit && boxInit.inSettings === false,
+  '★ 设置面板里那份已删除（按作者要求只留局内）', boxInit && boxInit.inSettings);
+check(!!boxInit && (boxInit.position === 'absolute' || boxInit.position === 'fixed'),
+  '★ 开关脱离流式布局（absolute / fixed），不会把阶段按钮挤得不居中', boxInit && boxInit.position);
+check(!!boxInit && /阶段时点/.test(boxInit.text), '开关文案说明了作用', boxInit && boxInit.text);
+check(!!boxInit && boxInit.state === '询问中', '默认状态显示「询问中」', boxInit && boxInit.state);
+check(!!boxInit && boxInit.size.split('x').map(Number).every((v) => v >= 40),
+  '★ 开关满足移动端触控目标 ≥40px', boxInit && boxInit.size);
+check(!!boxInit && boxInit.pressed === 'false', '默认 aria-pressed=false', boxInit && boxInit.pressed);
 
-// 手机上要按得到：把设置弹窗真的打开量一次（隐藏元素量出来是 0×0）
-await ev(`(function(){ document.getElementById('settings-btn').click(); return true; })()`);
-await sleep(400);
-const rowTap = await ev(`(function(){
-  var box = document.getElementById('decline-priority-setting');
-  var label = box.closest('label');
-  var lr = label.getBoundingClientRect(), br = box.getBoundingClientRect();
-  return {
-    modalOpen: !document.getElementById('settings-modal').classList.contains('hidden'),
-    row: Math.round(lr.height),
-    box: Math.round(br.width) + 'x' + Math.round(br.height)
-  };
-})()`);
-check(!!rowTap && rowTap.modalOpen, '点「设置」能打开设置弹窗', rowTap);
-check(!!rowTap && rowTap.row >= 40,
-  '★ 开关是一整行可点（行高 ≥40px，手机上按得到）', rowTap);
-await ev(`(function(){ document.getElementById('settings-modal-close').click(); return true; })()`);
-await sleep(200);
-
-// 勾上 → 发出 set_decline_priority(true)，并写进 localStorage
-await ev(`(function(){ document.getElementById('decline-priority-setting').click(); return true; })()`);
+// 点一下 → 发出 set_decline_priority(true)，写进 localStorage，按钮自己变成「已关闭」
+await ev(`(function(){ document.getElementById('phase-timing-toggle').click(); return true; })()`);
 await sleep(300);
 let sent = await ev('window.__emitted || []');
 let setDeclines = sent.filter((e) => e.name === 'set_decline_priority');
 check(setDeclines.length === 1 && setDeclines[0].payload.decline === true,
-  '★ 勾上开关就发出 set_decline_priority(decline=true)', setDeclines);
+  '★ 点一下开关就发出 set_decline_priority(decline=true)', setDeclines);
 check(await ev('gameState.declinePriority === true') === true, '本地状态同步为 true');
 check(await ev(`localStorage.getItem('battleship_decline_priority')`) === '1',
   '偏好写进了 localStorage（服务端那份是房间级的，换局会被重置）');
+const offState = await ev(`(function(){
+  var btn = document.getElementById('phase-timing-toggle');
+  return { state: document.getElementById('phase-timing-state').textContent,
+           isOff: btn.classList.contains('is-off'),
+           pressed: btn.getAttribute('aria-pressed') };
+})()`);
+check(offState.state === '已关闭' && offState.isOff && offState.pressed === 'true',
+  '按钮自己显示成「已关闭」（不是静默无反应）', offState);
 
 // ★ 关键：不需要任何弹窗，再点一下就能恢复（这正是原来的死结）
-await ev(`(function(){ document.getElementById('decline-priority-setting').click(); return true; })()`);
+await ev(`(function(){ document.getElementById('phase-timing-toggle').click(); return true; })()`);
 await sleep(300);
 sent = await ev('window.__emitted || []');
 setDeclines = sent.filter((e) => e.name === 'set_decline_priority');
@@ -361,23 +361,23 @@ check(setDeclines.length === 2 && setDeclines[1].payload.decline === false,
 check(await ev('gameState.declinePriority === false') === true, '本地状态同步回 false');
 check(await ev(`localStorage.getItem('battleship_decline_priority')`) === '0', 'localStorage 也跟着回到 0');
 
-// 弹窗里勾过之后，设置面板那个勾选框也要跟着变（两个入口一份状态）
+// 弹窗里勾过之后，局内开关也要跟着变（两个入口一份状态）
 await ev(`(function(){ setDeclinePriority(true, { notify: false, silent: true }); return true; })()`);
 await sleep(200);
-check(await ev(`document.getElementById('decline-priority-setting').checked`) === true,
-  '弹窗里勾过之后设置面板同步为已勾选');
+check(await ev(`document.getElementById('phase-timing-state').textContent`) === '已关闭',
+  '弹窗里勾过之后，局内开关同步为「已关闭」');
 
 // 本地偏好要能跨"重新打开页面"存活：把内存状态清掉再走一遍初始化
 const reloaded = await ev(`(function(){
   gameState.declinePriority = false;
   gameState.declinePrioritySyncedRoom = null;
-  document.getElementById('decline-priority-setting').checked = false;
+  document.getElementById('phase-timing-state').textContent = '询问中';
   bindDeclinePriorityToggle();
   return { state: gameState.declinePriority,
-           box: document.getElementById('decline-priority-setting').checked };
+           state2: document.getElementById('phase-timing-state').textContent };
 })()`);
-check(reloaded && reloaded.state === true && reloaded.box === true,
-  '★ 重新载入时从 localStorage 恢复偏好，并回填到勾选框', reloaded);
+check(reloaded && reloaded.state === true && reloaded.state2 === '已关闭',
+  '★ 重新载入时从 localStorage 恢复偏好，并回填到局内开关', reloaded);
 
 // 进了新房间要把偏好推给服务端 —— 不推的话新房间又开始问
 await ev(`(function(){
@@ -392,6 +392,68 @@ await sleep(200);
 const roomSync = (await ev('window.__emitted || []')).filter((e) => e.name === 'set_decline_priority');
 check(roomSync.length === 1 && roomSync[0].payload.decline === true,
   '★ 进新房间时把偏好同步给服务端，同一房间只推一次', roomSync);
+
+// ────────────────────────────────────────────────────────────
+// 场景 9：发起方的"等待对方响应"状态（冻结）
+// 作者反馈：「在等待阶段转换的响应的时候，对方不能暂停行动」——
+// 以前发起方在 10 秒窗口里还能继续开炮/出牌，等于把仲裁窗口架空了。
+// 现在服务端会冻结他，前端要同步显示"等待中"+ 禁用阶段按钮。
+// ────────────────────────────────────────────────────────────
+console.log('');
+console.log('--- 场景 9：等待对方响应时的冻结 ---');
+await installProbe();
+await ev(`(function(){
+  gameState.roomId = 'r1';
+  gameState.playerId = 'me';
+  gameState.currentAttacker = 'me';
+  gameState.currentPhase = 'preparation';
+  updatePhaseUI();
+  return true;
+})()`);
+await sleep(200);
+const beforeWait = await ev(`(function(){
+  var b = document.getElementById('enter-battle-phase');
+  return { display: getComputedStyle(b).display, disabled: b.disabled,
+           banner: !!document.getElementById('priority-waiting-banner') };
+})()`);
+check(beforeWait.disabled === false, '前置条件：正常情况下阶段按钮是可点的', beforeWait);
+
+// 服务端下发 priority_waiting（与真实事件同名同载荷）
+await fire('priority_waiting', { action: 'enter_battle', action_text: '进入战斗阶段', countdown: 10 });
+await sleep(400);
+const waitState = await ev(`(function(){
+  var b = document.getElementById('enter-battle-phase');
+  var banner = document.getElementById('priority-waiting-banner');
+  return {
+    disabled: b.disabled,
+    bannerShown: !!banner && getComputedStyle(banner).display !== 'none',
+    bannerText: banner ? banner.textContent : '',
+    waiting: !!gameState.priorityWaiting
+  };
+})()`);
+check(waitState.waiting === true, '★ 收到 priority_waiting 后本地进入等待状态', waitState);
+check(waitState.disabled === true, '★ 等待期间阶段按钮被禁用（点了也没用，服务端也会拒）', waitState);
+check(waitState.bannerShown && /等待对方响应/.test(waitState.bannerText),
+  '★ 界面上明确显示「等待对方响应」横幅（不是静默卡住）', waitState);
+
+// 再点一下被禁用的按钮不应该发出任何请求
+await ev(`(function(){ window.__emitted = []; document.getElementById('enter-battle-phase').click(); return true; })()`);
+await sleep(250);
+const blockedClicks = (await ev('window.__emitted || []')).filter((e) => e.name === 'enter_battle_phase');
+check(blockedClicks.length === 0, '★ 禁用状态下点不动（不会重复发阶段转换）', blockedClicks);
+
+// 等待结束 → 解冻
+await fire('priority_waiting_end', { action: 'enter_battle' });
+await sleep(400);
+const afterEnd = await ev(`(function(){
+  var b = document.getElementById('enter-battle-phase');
+  var banner = document.getElementById('priority-waiting-banner');
+  return { disabled: b.disabled, waiting: !!gameState.priorityWaiting,
+           bannerShown: !!banner && getComputedStyle(banner).display !== 'none' };
+})()`);
+check(afterEnd.waiting === false && afterEnd.disabled === false,
+  '★ 收到 priority_waiting_end 后解冻（按钮恢复可点）', afterEnd);
+check(afterEnd.bannerShown === false, '横幅撤掉', afterEnd);
 
 console.log('');
 if (problems.length) {

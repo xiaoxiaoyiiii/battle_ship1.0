@@ -848,6 +848,8 @@ def test_get_game_state(data):
         'current_attacker': room.current_attacker,
         'current_phase': room.current_phase,
         'attacks_remaining': room.attacks_remaining,
+        # 大回合数：E2E 要能观测"极限增援 / 无暇圣心"这类按大回合计数的效果
+        'round': room.round,
         'field_magic': room.field_magic.name if hasattr(room.field_magic, 'name') else room.field_magic,
         'game_effects': list(room.game_effects.keys()),
         # 优先权询问（方案 D）状态：E2E 要靠它判断"阶段有没有被推进"
@@ -2532,34 +2534,48 @@ def end_turn(data):
                     player1_ships = room.players[player1_id].remaining_ships
                     player2_ships = room.players[player2_id].remaining_ships
 
+                    winner = None
                     if player1_ships < player2_ships:
                         winner = player1_id
                     elif player2_ships < player1_ships:
                         winner = player2_id
                     else:
-                        # 平局：不结算，把这张卡作废（避免每回合反复判定）
+                        # 平局：把这张卡作废（避免每回合反复判定），但【绝对不要在这里
+                        # return】—— 这一段位于 `if next_index == 0:` 内部，后面还有
+                        # 「换人 / 进入新大回合 + 重置阶段 + 广播」的收尾。
+                        # 以前这里直接 `return {'status': 'success'}`，把收尾整段跳过：
+                        #   · room.state 不回到 rock_paper_scissors
+                        #   · current_phase 留在 'end'、current_attacker 不变
+                        #   · 一条 turn_change / phase_updated / game_state 都不发
+                        # 而 room.round 已经 +1 了。客户端因此收不到任何状态变更，
+                        # 界面停在旧阶段：交回合按钮不见了，只剩一个点了没反应的
+                        # 「进入结束阶段」——作者反馈的"卡死、按钮直接消失"。
+                        # 实测：tools/reinforcement_tie_check.mjs。
                         room.game_effects.pop('reinforcement_check', None)
                         emit('message', {
                             'text': '极限增援结算时双方船数相同，无人获胜，效果结束'
                         }, room=room_id)
-                        return {'status': 'success'}
+                        # 别让下面那行又把 check 塞回 game_effects（否则下个大回合再判一次）
+                        check = None
 
-                    # 统一收尾：记日志 + 记战绩 + 广播 game_over
-                    # （原先这条终局路径只置状态不写战绩）
-                    loser = player2_id if winner == player1_id else player1_id
-                    _finish_game_win(room, room_id, winner, loser,
-                                     f"第{room.round}回合 · 极限增援生效，船数少的一方获胜")
+                    if winner is not None:
+                        # 统一收尾：记日志 + 记战绩 + 广播 game_over
+                        # （原先这条终局路径只置状态不写战绩）
+                        loser = player2_id if winner == player1_id else player1_id
+                        _finish_game_win(room, room_id, winner, loser,
+                                         f"第{room.round}回合 · 极限增援生效，船数少的一方获胜")
 
-                    # 广播游戏结束
-                    emit('game_state', {
-                        'state': 'game_over',
-                        'winner': winner,
-                        'reason': '极限增援生效，船数少的一方等到了增援并获胜了！'
-                    }, room=room_id)
-                    return {'status': 'success', 'game_over': True, 'winner': winner}
+                        # 广播游戏结束
+                        emit('game_state', {
+                            'state': 'game_over',
+                            'winner': winner,
+                            'reason': '极限增援生效，船数少的一方等到了增援并获胜了！'
+                        }, room=room_id)
+                        return {'status': 'success', 'game_over': True, 'winner': winner}
 
-                # 更新game_effects中的剩余回合
-                room.game_effects['reinforcement_check'] = check
+                # 更新game_effects中的剩余回合（平局时 check 已被置空，不再塞回去）
+                if check is not None:
+                    room.game_effects['reinforcement_check'] = check
 
             # 更新并检查无暇圣心效果
             if 'holy_heart' in room.game_effects:

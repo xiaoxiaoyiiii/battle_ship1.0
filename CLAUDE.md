@@ -536,6 +536,32 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 异常或非数组状态都会留下"清空了却没填回来"的空白手牌区，且此后每次刷新手牌都抛异常。
 **凡是"先清空再填充"的渲染，都要先校验数据、并保证失败时保留上一帧。**
 
+### 🟡 2026-09-14「极限增援平局把回合卡死」批
+
+> 详见 `docs/REINFORCEMENT_TIE_2026_09_14.md`。作者：「当双方船数相等时不会判定
+> 谁获胜，但是游戏会直接卡死，无法进行下一步操作，就是不能结束阶段了按钮直接消失了」。
+
+**根因**：`end_turn` 的 `if next_index == 0:` 那一段是【进入新大回合】的收尾
+（`room.state='rock_paper_scissors'` / `current_phase='preparation'` / 广播 `game_state`），
+极限增援的结算夹在中间。平局分支写的是 `emit(message)` 之后 **`return {'status': 'success'}`** ——
+把整段收尾跳过了，而 `room.round` 已经 +1。结果：回合不推进、阶段留在 `end`、
+一条状态事件都不发 → 客户端界面停在旧阶段、交回合按钮不存在/按了没反应。
+
+**实测反证**（`tools/reinforcement_tie_check.mjs`，真实双浏览器）：把旧 `return` 加回去，
+服务端停在 `{state: attacking, phase: end}`，**两个客户端都还停在 game-screen**
+（收不到新回合广播）；去掉它 → `state=rock_paper_scissors`、round 正常 +1、
+双方都切到猜拳界面、打完拳能继续。
+
+**修法**：平局分支只做「`pop` 掉效果 + 播报一句 + `check = None`」，**不 return**，
+让流程照常走完收尾。`check = None` 不能少 —— 收尾那行
+`room.game_effects['reinforcement_check'] = check` 会把效果塞回去，下个大回合再判一次。
+
+**⚠️ 通用教训（同一形状已出现三次）**：在一段"做完这件事还要继续往下做"的流程里，
+**分支里随手 `return` 会静默吞掉后续收尾**（换人 / 重置阶段 / 广播）。
+已踩过：绝处逢生与连锁续做、优先权 `_priority_continue`、极限增援平局。
+判断标准：这个 `return` 是"提前结束整个操作"，还是"只想跳过这一步"？
+后者一律改成置标志位、让流程自然往下走。
+
 ---
 
 ## 12. 开发约定
@@ -573,6 +599,7 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 | **`docs/DEFECT_FIXES_2026_09_13.md`** | **2026-09-13 全量缺陷审计与修复：实测方法、逐条缺陷与复现方式、修复内容、剩余待办** |
 | **`docs/PRIORITY_PROMPT_2026_09_13.md`** | **2026-09-13/14 阶段转换「优先权询问」（方案 D）：决策依据、实现位置、4 条实施中发现的真实缺陷与复现证据、5 层验证结果** |
 | **`docs/HAND_DESYNC_2026_09_14.md`** | **2026-09-14「打完一张，剩下的手牌莫名消失」：真实浏览器复现、根因（前端本地删牌的兜底分支按下标删错人）、修法与反证** |
+| **`docs/REINFORCEMENT_TIE_2026_09_14.md`** | **2026-09-14「极限增援平局把回合卡死」：根因（结算分支从 `end_turn` 提前 `return`，吞掉换人+重置阶段+广播）、反证与修法** |
 | `docs/CHAIN_ENGINE_SPEC.md` | 连锁引擎设计稿（⚠️ 实施前的文档，开头已补 2026-09-13 实测校准表） |
 | `README.md` | 面向用户的功能/玩法说明（测试数/文件清单已校准） |
 

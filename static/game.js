@@ -950,7 +950,15 @@ function applyRoomSync(data) {
     gameState.currentPhase = data.current_phase;
     gameState.currentAttacker = data.current_attacker;
     gameState.round = data.round;
-    gameState.hand = data.hand || [];
+    // ⚠️ 以前是 `data.hand || []`：快照万一没带 hand（结构变更/字段漏传），
+    // 手牌会被直接清空，而且此后只有刷新页面才能恢复。
+    // 只有确实拿到数组才覆盖，否则保持现状并要一份权威手牌。
+    if (Array.isArray(data.hand)) {
+        gameState.hand = data.hand.filter((c) => c && typeof c === 'object' && c.name);
+    } else {
+        console.warn('[hand] room_sync 没带 hand 数组，保留当前手牌并请求重同步');
+        requestHandSync('room_sync:no-hand-array');
+    }
     gameState.ships = data.ships || [];
     gameState.myAttacks = data.attacks || [];
     // 对手打在我棋盘上的格：不恢复的话，重连后自己的伤损/沉船会全部显示成完好
@@ -3111,11 +3119,16 @@ function setupSocketListeners() {
     // match_queued / match_canceled 处理器同步。
 
     // 新增：监听手牌更新事件
+    //
+    // ⚠️ 这个 handler 以前直接 `gameState.hand = data.hand;`，没有任何校验。
+    // 只要有一次 payload 不带 hand（结构不符 / 前端是旧缓存版本 / 某条新路径
+    // 忘了带字段），gameState.hand 就变成 undefined —— 而 updateHandUI 是在
+    // 清空容器之后才遍历 hand 的，于是整块手牌区域变成空白，并且**此后每一次
+    // 刷新手牌都会抛异常，永远保持空白，只有刷新页面才能恢复**。
+    // 这正是作者反馈的「打完一张，剩下的手牌莫名消失，刷新又回来」。
+    // 服务端是手牌的唯一权威：结构不对就忽略它并要求重同步，绝不拿它覆盖。
     socket.on('hand_updated', (data) => {
-        const grew = Array.isArray(data.hand) && data.hand.length > (gameState.hand || []).length;
-        gameState.hand = data.hand;
-        updateHandUI();
-        if (grew) playSfx('draw');
+        applyHandPayload(data, 'hand_updated');
     });
 
     // 神威！：扣掉 / 恢复 3x3 区域
@@ -4820,26 +4833,36 @@ function sendMagicCard(index, targets) {
         // 只有在服务器确认成功后才更新本地状态
         if (response && response.status === 'success') {
             console.log('魔法卡使用成功');
-            // 从手牌中移除：优先按身份找，找不到再退回下标。
+            // 从手牌中移除：只按身份找，找不到就什么都不删。
             //
-            // 按身份找是因为手牌可能已被 hand_updated 整份替换过；
-            // 同名同速阶的卡（如 3 张「失灵！」）会有多张命中，这时用
-            // "出牌时它在第几位"来消歧 —— 取第 sentIndex 个命中项，
-            // 仍然比直接用 sentIndex 当数组下标安全得多。
-            let removeAt = -1;
+            // ⚠️ 这里以前有一个"找不到就按下标兜底"的分支：
+            //     removeAt = (gameState.hand.length === sentIndex + 1) ? sentIndex : -1
+            // 它是**永远错的**：能走到这个分支，就说明打出的那张牌已经不在手牌里了
+            // （手牌里没有任何一张的 name+speed 和它相同），也就是说服务端早已推过
+            // 新手牌；这时再按旧下标删一张，删掉的必然是【别的牌】。
+            //
+            // 实测（tools/hand_play_check.mjs，真实浏览器 + 真服务端）：
+            //   手牌 ["五险一金","看破！"]，点第 0 张打出。
+            //   handle_use_magic_card 扣牌后会走 _advance_chain_window，
+            //   对方手上没有速阶3 → 它【在同一个请求里同步 resolve_chain】，
+            //   而 resolve_chain 收尾会向双方各推一次 hand_updated（此时只剩 "看破！"）。
+            //   所以真实时序是 "hand_updated(1 张)" 先到、ack 后到（工具里有断言守这条）。
+            //   ack 里按身份找不到 → 兜底条件 1 === 0+1 成立 → 把 "看破！" 删掉
+            //   → 界面手牌变成 0 张，而服务端还有 1 张。玩家看到的就是
+            //   「打完一张，剩下的手牌莫名其妙全没了，刷新页面又回来」。
+            //
+            // 同名同速阶的卡（如 3 张「失灵！」）会有多张命中，这时仍用
+            // "出牌时它在第几位"来消歧 —— 取第 sentIndex 个命中项。
             const hits = [];
             for (let i = 0; i < gameState.hand.length; i++) {
                 if (cardSelectionKey(gameState.hand[i]) === sentKey) hits.push(i);
             }
             if (hits.length) {
-                removeAt = hits[Math.min(sentIndex, hits.length - 1)];
-            } else if (sentIndex >= 0 && sentIndex < gameState.hand.length) {
-                // 身份已经不在手牌里（服务器可能已推过新手牌）—— 什么都不删，
-                // 免得又误删一张。只有当下标仍然合法且手牌没变过时才兜底。
-                removeAt = (gameState.hand.length === sentIndex + 1) ? sentIndex : -1;
-            }
-            if (removeAt >= 0) {
-                gameState.hand.splice(removeAt, 1);
+                gameState.hand.splice(hits[Math.min(sentIndex, hits.length - 1)], 1);
+            } else {
+                // 牌已经不在手牌里了 —— 服务端才是权威，等它的 hand_updated，
+                // 绝不按下标猜着删一张。
+                console.log('打出的牌已不在本地手牌中（服务端已同步），不本地删除');
             }
             // 添加到弃牌堆
             gameState.discardPile.push(card);
@@ -5840,9 +5863,63 @@ function cardSelectionKey(card) {
     return card ? (card.name + '\u0000' + card.speed) : null;
 }
 
+// 服务端下发的「一份手牌」统一入口：校验 → 落地 → 渲染。
+//
+// 为什么不让各处自己赋值：手牌只有一个权威来源（服务端），而前端有多个会读到它的
+// 地方（渲染、出牌、连锁、教皇旨意弃牌）。任何一处把 gameState.hand 写坏，界面就会
+// 一脸空白且再也回不来 —— 必须把校验收在一个地方。
+function applyHandPayload(data, source) {
+    const incoming = data && data.hand;
+    if (!Array.isArray(incoming)) {
+        // 结构不对：宁可保持现状也不要覆盖。同时向服务端要一份权威手牌，
+        // 让界面自己纠正过来（不必等玩家刷新页面）。
+        console.warn(`[hand] ${source} 没带 hand 数组，已忽略：`, data);
+        requestHandSync(`${source}:no-hand-array`);
+        return false;
+    }
+    const clean = incoming.filter((c) => c && typeof c === 'object' && c.name);
+    if (clean.length !== incoming.length) {
+        // payload 里有坏条目：剔掉，但同样要一份权威数据兜底
+        console.warn(`[hand] ${source} 含 ${incoming.length - clean.length} 个无效条目，已剔除`);
+        requestHandSync(`${source}:bad-entries`);
+    }
+    const grew = clean.length > (Array.isArray(gameState.hand) ? gameState.hand.length : 0);
+    gameState.hand = clean;
+    updateHandUI();
+    if (grew) playSfx('draw');
+    return true;
+}
+
+// 主动向服务端要一份权威手牌。
+// 节流：同一个原因 2 秒内只发一次，避免"推错了 → 要同步 → 又推错"打转。
+let lastHandSyncAt = 0;
+function requestHandSync(reason) {
+    if (!gameState.socket || !gameState.roomId || !gameState.playerId) return;
+    const now = Date.now();
+    if (now - lastHandSyncAt < 2000) return;
+    lastHandSyncAt = now;
+    console.warn(`[hand] 请求服务端重发手牌（原因：${reason}）`);
+    gameState.socket.emit('request_hand_sync', {
+        room_id: gameState.roomId,
+        player_id: gameState.playerId,
+    }, (resp) => {
+        if (resp && resp.status === 'error') {
+            console.warn('[hand] 重同步失败：', resp.message);
+        }
+    });
+}
+
 function updateHandUI() {
     const handElement = document.getElementById('magic-hand');
     if (!handElement) return;
+
+    // hand 被写坏时不要让它继续坏下去：先纠正成空数组再要一份权威数据。
+    // （这里必须在清空 DOM 之前处理 —— 以前是清空之后才遍历，一抛异常就是整块空白。）
+    if (!Array.isArray(gameState.hand)) {
+        console.warn('[hand] gameState.hand 不是数组，已重置并请求重同步：', gameState.hand);
+        gameState.hand = [];
+        requestHandSync('hand-not-array');
+    }
 
     // 手牌可能刚变过（出牌 / 摸牌 / 被埋葬）。按下标取到的牌若已不是当初选的那张，
     // 就把选中态清掉 —— 否则会出现「打完一张，下一张自动选中、点一下直接出牌」。
@@ -5854,8 +5931,12 @@ function updateHandUI() {
         }
     }
 
-    handElement.innerHTML = '';
+    // 先在一个 Fragment 里把整份手牌搭好，最后一次性换掉容器内容。
+    // 好处：中途任何一张牌出问题都不会留下"清空了却没填回去"的空白手牌区。
+    const frag = document.createDocumentFragment();
+    let rendered = 0;
     gameState.hand.forEach((card, index) => {
+        if (!card || !card.name) return;   // 坏条目直接跳过，renderd 计数会暴露它
         const cardElement = document.createElement('div');
         cardElement.classList.add('magic-card');
         cardElement.dataset.index = index;
@@ -5887,8 +5968,16 @@ function updateHandUI() {
             }
         });
 
-        handElement.appendChild(cardElement);
+        frag.appendChild(cardElement);
+        rendered += 1;
     });
+
+    handElement.replaceChildren(frag);
+
+    if (rendered !== gameState.hand.length) {
+        // 渲染出来的张数和状态里的不一致 —— 状态被污染了，要一份权威数据纠正
+        requestHandSync('render-count-mismatch');
+    }
 
     // 更新卡牌预览
     if (gameState.selectedCardIndex >= 0 && gameState.selectedCardIndex < gameState.hand.length) {

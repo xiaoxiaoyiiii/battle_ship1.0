@@ -871,6 +871,9 @@ def test_get_game_state(data):
         game_state['players'][player_id] = {
             'remaining_ships': player.remaining_ships,
             'magic_hand_count': len(player.magic_hand),
+            # 手牌卡名：E2E 要能判断"客户端收到的手牌"和"服务端真实手牌"是不是同一份。
+            # 只比数量会漏掉"张数对但内容错"和"发错人"这两类问题。
+            'magic_hand': [getattr(c, 'name', None) for c in player.magic_hand],
             'effect_flags': vars(player.effect_flags) if hasattr(player, 'effect_flags') else {},
             'damage_dealt_this_turn': getattr(player, 'damage_dealt_this_turn', 0),
             'ships': [{
@@ -2922,6 +2925,29 @@ def _papal_discard_grant(room, player_id, discard_card_index=None):
     }
 
 
+@socketio.on('request_hand_sync')
+def handle_request_hand_sync(data):
+    """客户端发现手牌状态对不上时，主动要一份权威手牌。
+
+    为什么需要这个事件：前端的手牌只有一个来源（hand_updated 的 payload），
+    一旦某次推送丢了、或 payload 结构不对（旧缓存版本的前端 + 新版服务端），
+    界面就会一直显示错误的手牌，**只有刷新页面才能恢复**（刷新走重连快照）。
+    作者反馈的「手牌莫名消失，刷新又回来了」正是这种"客户端状态坏了但没人纠正它"。
+
+    有了它，前端自己就能对不上就纠正，不用等玩家刷新。
+    只回给请求者本人，不泄露对手手牌。
+    """
+    room = room_manager.get_room((data or {}).get('room_id'))
+    player_id = (data or {}).get('player_id')
+    if not room or not player_id or player_id not in room.players:
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+    if not _identity_ok(room, player_id):
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+    player = room.players[player_id]
+    emit('hand_updated', {'hand': player.magic_hand, 'resync': True}, to=player.sid)
+    return {'status': 'success', 'count': len(player.magic_hand)}
+
+
 @socketio.on('papal_discard')
 @_require_live_room
 def handle_papal_discard(data):
@@ -3165,6 +3191,18 @@ def handle_use_magic_card(data):
             break
     if card.type != '场地':
         room.magic_discard.append(card)
+
+    # 手牌变了就立刻以服务端为准推给玩家。
+    #
+    # ⚠️ 此前这里【一个 emit 都没有】：扣牌之后要等到连锁结算（resolve_chain 收尾
+    # 那次统一重推）客户端才知道牌离手了。中间这段时间前端只能靠自己"打出成功
+    # 后本地删一张"来凑（sendMagicCard 的 splice）。可这条本地推断会出错：
+    #   · 出牌后紧接着收到别的 hand_updated，本地下标/内容已经换了
+    #   · 效果自己也会改手牌（摸牌、被埋葬、盗亦有道），本地推断覆盖不到
+    # 一旦本地推断和真实手牌错开，界面就会显示不存在的手牌 —— 也就是作者反馈的
+    # 「打完一张，剩下的手牌就不对了 / 没了，刷新才恢复」。
+    # 服务端是手牌的唯一权威，改了就说，别让前端猜。
+    emit('hand_updated', {'hand': player.magic_hand}, to=player.sid)
 
     # 场地魔法卡不再在此预置：改由结算（apply_magic_effect 场地分支）实例入区，
     # 避免"打出即进弃牌堆 + 贴场"产生游离副本；被顶掉/被康时实例移入弃牌堆。

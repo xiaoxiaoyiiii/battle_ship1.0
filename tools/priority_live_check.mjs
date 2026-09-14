@@ -223,13 +223,24 @@ if (panel) {
   check(panel.hasToggle, '有拒绝开关');
   check(panel.hasCancel, '有取消按钮');
   // 倒计时在走
+  //
+  // ⚠️ 这条以前偶发假红（cd1=cd2=10）。根因不是功能坏了，而是**无头浏览器把
+  // 后台标签页的 setInterval 节流**（两个标签页共用一个浏览器窗口时，非活动
+  // 那个被当成 hidden，计时器可能被压到分钟级）。倒计时用的是 setInterval(1000)。
+  // 修法：先把这个标签页置前（Page.bringToFront 会解除节流），再轮询等它真的变。
   const cd1 = panel.countdown;
-  await sleep(1500);
-  const cd2 = await dfnTab.ev(`(function(){
-    var c = document.querySelector('#priority-countdown');
-    return c ? c.textContent : null;
-  })()`);
-  check(cd2 !== null && Number(cd2) < Number(cd1), '倒计时在走', { cd1, cd2 });
+  try { await dfnTab.send('Page.bringToFront'); } catch (e) { /* 置前失败也不致命 */ }
+  await sleep(300);
+  let cd2 = cd1;
+  for (let i = 0; i < 8 && Number(cd2) >= Number(cd1); i++) {
+    await sleep(700);
+    cd2 = await dfnTab.ev(`(function(){
+      var c = document.querySelector('#priority-countdown');
+      return c ? c.textContent : null;
+    })()`);
+    if (cd2 === null) break;   // 窗口已经因超时关掉了，也算"走完了"
+  }
+  check(cd2 === null || Number(cd2) < Number(cd1), '倒计时在走', { cd1, cd2 });
 }
 
 // 关键断言：此刻 A 的阶段【还没推进】

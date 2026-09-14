@@ -838,6 +838,14 @@ window.gameState = {
     opponentGone: null,     // 对手掉线信息 {deadline}
     sacrificedSelf: [],     // 自己因效果（恶魔契约等）牺牲的格子 → 画在自己棋盘上
     sacrificedOpponent: [], // 对方牺牲的格子（公开信息）→ 画在对方棋盘上
+    // 「仁王之盾」被打破的格子：打了一炮被盾挡下，船毫发无伤。
+    // ⚠️ 它【不算已攻击】：同一回合还能再打这一格（服务端也不记进 attacks）。
+    // 画成"破盾"标记而不是普通命中叉，玩家才看得懂发生了什么。
+    shieldBrokenMine: [],       // 我打出来的破盾格 → 画在对方棋盘
+    shieldBrokenOpponent: [],   // 对方打出来的破盾格 → 画在我自己棋盘
+    // 「绝处逢生」的候选格：牺牲前原本有战舰的那几格，唯一一艘新船必在其中。
+    // 公开信息，双方棋盘都高亮；这些格子【不是红叉】，对方照样能打。
+    lastStandCells: [],
     // 正等待自己点选一艘船牺牲（恶魔契约等）。棋盘每次重绘后靠它把高亮补回来，
     // 否则伤害结算的重绘会把选区冲掉、让人以为「点了没反应」。
     pendingSacrifice: null,
@@ -1006,6 +1014,10 @@ function applyRoomSync(data) {
     // 对手打在我棋盘上的格：不恢复的话，重连后自己的伤损/沉船会全部显示成完好
     gameState.opponentAttacks = data.opponent_attacks || [];
     gameState.shenweiHoles = data.shenwei_holes || [];
+    // 绝处逢生的候选格（公开信息）：重连后高亮不能丢，否则玩家又以为那几格不能打
+    if (Array.isArray(data.last_stand_cells)) {
+        gameState.lastStandCells = data.last_stand_cells;
+    }
     // 连锁/效果上下文：重连后恢复连锁显示与响应窗口
     if (Array.isArray(data.chain)) {
         gameState.chain = data.chain;
@@ -3219,6 +3231,25 @@ function setupSocketListeners() {
         const positions = (data && data.positions) || [];
         if (!positions.length) return;
         const mine = data.player === gameState.playerId;
+
+        // ⚠️ 绝处逢生的自牺牲【不画叉】。
+        // 它的六个格子是"唯一一艘新船可能落点"，对方必须能打；画成红叉
+        // （玩家眼里等于"已打过、别再点"）会让人以为这几格打不了（作者实测反馈）。
+        // 改成由 last_stand_cells 事件下发候选格，前端画成高亮。
+        if (data.reason === 'last_stand') {
+            if (mine) {
+                // 自己的船全没了：本地棋盘记录一并清掉
+                const keys = new Set(positions.map(p => p.x + ',' + p.y));
+                gameState.ships = (gameState.ships || [])
+                    .map(ship => Object.assign({}, ship, {
+                        positions: (ship.positions || []).filter(p => !keys.has(p.x + ',' + p.y))
+                    }))
+                    .filter(ship => (ship.positions || []).length > 0);
+            }
+            if (typeof initGameBoards === 'function') initGameBoards();
+            return;   // 文案交给 last_stand_cells 那条统一播报
+        }
+
         const sink = mine ? gameState.sacrificedSelf : gameState.sacrificedOpponent;
 
         positions.forEach(p => sink.push({ x: p.x, y: p.y }));
@@ -3238,6 +3269,18 @@ function setupSocketListeners() {
         const reasonText = data.reason === 'divine_decree' ? '神之宣告' : '恶魔契约';
         showMessage(mine ? `${reasonText}：你牺牲了一艘战舰` : `${reasonText}：对方牺牲了一艘战舰`,
                     { type: 'warning' });
+    });
+
+    // 绝处逢生：牺牲前原本有战舰的格子（唯一一艘新船必在其中）。
+    // 双方都要高亮 —— 对方据此知道该往哪儿打，而且这些格子照样能点。
+    socket.on('last_stand_cells', (data) => {
+        const cells = (data && Array.isArray(data.cells)) ? data.cells : [];
+        gameState.lastStandCells = cells.filter(c => c && typeof c.x === 'number' && typeof c.y === 'number');
+        if (typeof initGameBoards === 'function') initGameBoards();
+        if (gameState.lastStandCells.length) {
+            showMessage('绝处逢生：对方牺牲了全部战舰，唯一一艘会放在高亮的格子之一（这些格子可以打）',
+                        { type: 'warning' });
+        }
     });
 
     // 服务端统一推送的局内日志
@@ -3532,6 +3575,13 @@ function initGameBoards() {
                 cell.textContent = '✕';
             }
 
+            // 对方打过来、被我的护盾挡下的那一炮：画"破盾"标记，不画命中叉。
+            // （这一格在他那边不算已攻击，他还能再打一次）
+            if ((gameState.shieldBrokenOpponent || []).some(p => p.x === x && p.y === y)) {
+                cell.classList.add('shield-broken');
+                cell.title = '护盾挡住了这一炮，本回合还能被再打一次';
+            }
+
             gamePlayerBoard.appendChild(cell);
         }
     }
@@ -3565,6 +3615,20 @@ function initGameBoards() {
             if ((gameState.sacrificedOpponent || []).some(p => p.x === x && p.y === y)) {
                 cell.classList.add('hit', 'sacrificed');
                 cell.textContent = '✕';
+            }
+
+            // 我打过去被对方护盾挡下的那一炮：画"破盾"标记（不是命中叉）。
+            // 服务端没把这一格记进"已攻击"，所以它仍然有 click 监听、还能再打。
+            if ((gameState.shieldBrokenMine || []).some(p => p.x === x && p.y === y)) {
+                cell.classList.add('shield-broken');
+                cell.title = '这一炮被护盾挡下，船毫发无伤 —— 本回合还能再打这一格';
+            }
+
+            // 绝处逢生的候选格（公开信息）：高亮提示"唯一一艘可能在这几格之一"。
+            // ⚠️ 绝不能画成叉或加 hit/miss 类 —— 那会让玩家以为"已经打过、打不了"。
+            if ((gameState.lastStandCells || []).some(p => p.x === x && p.y === y)) {
+                cell.classList.add('last-stand-candidate');
+                if (!cell.textContent) cell.title = '绝处逢生的唯一一艘战舰可能在这一格';
             }
 
             // 已被卡牌显形的格子：重绘棋盘后也要保留（否则一次 initGameBoards 就把线索擦没了）
@@ -3794,8 +3858,39 @@ function handleAttack(x, y) {
 
 // 更新攻击显示
 function updateAttackDisplay(result) {
+    const mine = result.attacker === gameState.playerId;
+
+    // 这一炮被「仁王之盾」挡下：不算"已攻击"，改记成"破盾"标记。
+    //
+    // ⚠️ 关键差别：普通命中会把坐标推进 myAttacks/opponentAttacks，
+    // 而那两个数组同时决定了【格子还能不能点】（initGameBoards 只给
+    // "没打过的格子"绑 click）。盾挡下的这一炮船毫发无伤，把它算成"已打过"
+    // 就等于白送对手一个永久免打区（作者实测反馈：格子变红叉、同一回合再也打不了）。
+    if (result.shield_blocked) {
+        const sink = mine ? gameState.shieldBrokenMine : gameState.shieldBrokenOpponent;
+        if (!sink.some(p => p.x === result.x && p.y === result.y)) {
+            sink.push({ x: result.x, y: result.y });
+        }
+        if (mine) {
+            yourShips.textContent = result.attacker_remaining_ships;
+            opponentShips.textContent = result.defender_remaining_ships;
+        } else {
+            yourShips.textContent = result.defender_remaining_ships;
+            opponentShips.textContent = result.attacker_remaining_ships;
+        }
+        gameState.lastAttack = {
+            x: result.x, y: result.y, attacker: result.attacker,
+            hit: true, shipSunk: false, shieldBlocked: true
+        };
+        initGameBoards();
+        return;
+    }
+
     // 如果是自己的攻击
-    if (result.attacker === gameState.playerId) {
+    if (mine) {
+        // 这一格真挨了一炮：把之前的"破盾"标记清掉（现在是真实结果了）
+        gameState.shieldBrokenMine = (gameState.shieldBrokenMine || [])
+            .filter(p => !(p.x === result.x && p.y === result.y));
         gameState.myAttacks.push({
             x: result.x,
             y: result.y,
@@ -3805,6 +3900,8 @@ function updateAttackDisplay(result) {
         yourShips.textContent = result.attacker_remaining_ships;
         opponentShips.textContent = result.defender_remaining_ships;
     } else {
+        gameState.shieldBrokenOpponent = (gameState.shieldBrokenOpponent || [])
+            .filter(p => !(p.x === result.x && p.y === result.y));
         // 如果是对手的攻击
         gameState.opponentAttacks.push({
             x: result.x,
@@ -3830,7 +3927,6 @@ function updateAttackDisplay(result) {
     // 更新棋盘显示
     initGameBoards();
 }
-
 // 更新回合指示器
 function updateTurnIndicator(currentAttacker, remainingAttacks) {
     gameState.isMyTurn = currentAttacker === gameState.playerId;

@@ -868,6 +868,43 @@ input:focus, select:focus {
     transition: box-shadow 0.3s;
 }
 
+/* 「仁王之盾」被打破的格子。
+   ⚠️ 它必须和 `.hit`（红叉）明确区分：这一炮被盾吃了、船毫发无伤，
+   而且这一格【本回合还能再打】。画成红叉会让玩家以为已经打过、打不了了（作者实测反馈）。
+   用青蓝虚线圈 + 盾牌裂开的字符，一眼能看出"盾碎了、不是船被打了"。 */
+.cell.shield-broken {
+    background: rgba(56, 189, 248, 0.22) !important;
+    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.85) inset;
+    border-color: rgba(56, 189, 248, 0.9) !important;
+}
+.cell.shield-broken::after {
+    content: '⛨';
+    color: #0ea5e9;
+    font-weight: 700;
+    opacity: 0.95;
+    text-shadow: 0 0 4px rgba(255, 255, 255, 0.85);
+}
+html.theme-dark .cell.shield-broken::after { color: #7dd3fc; text-shadow: none; }
+
+/* 「绝处逢生」的候选格：唯一一艘新船必在这几格之一，公开高亮给对方。
+   ⚠️ 用金色虚框 + 问号，绝不能用 .hit（红叉）——
+   那看起来就是"已经打过、别点了"，对方会以为这几格打不了（作者实测反馈）。 */
+.cell.last-stand-candidate {
+    box-shadow: 0 0 0 2px rgba(255, 196, 0, 0.9) inset;
+    border-color: rgba(255, 196, 0, 0.95) !important;
+    background-image: repeating-linear-gradient(45deg,
+        rgba(255, 196, 0, 0.20) 0 6px, rgba(255, 196, 0, 0.06) 6px 12px) !important;
+}
+.cell.last-stand-candidate::after {
+    content: '?';
+    color: #b45309;
+    font-weight: 700;
+}
+html.theme-dark .cell.last-stand-candidate::after { color: #fbbf24; }
+/* 已经打过的格子优先显示真实结果，候选高亮让位（否则"问号盖住红叉"） */
+.cell.last-stand-candidate.hit::after,
+.cell.last-stand-candidate.miss::after { content: none; }
+
 /* ---------- 11. 猜拳 / 回合 / 玩家信息 ---------- */
 .rps-choices { display: flex; justify-content: center; gap: 1rem; margin-bottom: 1rem; }
 .rps-choice { padding: 1rem 1.6rem; font-size: 1.2rem; }

@@ -1660,7 +1660,8 @@ class ChainItem:
 
 
 class AttackResult:
-    def __init__(self, attacker: str, x: int, y: int, hit: bool, ship_sunk: bool, remaining_attacks: int, attacker_remaining_ships: int, defender_remaining_ships: int):
+    def __init__(self, attacker: str, x: int, y: int, hit: bool, ship_sunk: bool, remaining_attacks: int, attacker_remaining_ships: int, defender_remaining_ships: int,
+                 shield_blocked: bool = False):
         self.attacker = attacker
         self.x = x
         self.y = y
@@ -1669,7 +1670,11 @@ class AttackResult:
         self.remaining_attacks = remaining_attacks
         self.attacker_remaining_ships = attacker_remaining_ships
         self.defender_remaining_ships = defender_remaining_ships
-    
+        # 这一炮被「仁王之盾」挡下了（盾破了、船毫发无伤）。
+        # 前端要据此画一个【破盾】标记，而不是普通的命中叉 —— 而且这一格
+        # 【不算"已攻击"】，同一回合还能再打一次（见 handle_attack 里的说明）。
+        self.shield_blocked = shield_blocked
+
     def to_dict(self):
         return {
             'attacker': self.attacker,
@@ -1679,7 +1684,8 @@ class AttackResult:
             'ship_sunk': self.ship_sunk,
             'remaining_attacks': self.remaining_attacks,
             'attacker_remaining_ships': self.attacker_remaining_ships,
-            'defender_remaining_ships': self.defender_remaining_ships
+            'defender_remaining_ships': self.defender_remaining_ships,
+            'shield_blocked': self.shield_blocked
         }
 
 
@@ -2164,6 +2170,7 @@ def handle_attack(data):
     # 检查是否击中（统一路径：强制击杀与普通攻击共用一套结算）
     hit = False
     ship_sunk = False
+    shield_blocked = False
     for i, ship in enumerate(defender_ships):
         if {'x': target_x, 'y': target_y} not in ship.positions:
             continue
@@ -2188,6 +2195,7 @@ def handle_attack(data):
         elif ship.shield:
             # 盾牌状态，抵挡一次伤害
             ship_sunk = False
+            shield_blocked = True
             ship.shield = False
             # 盾挡下一击：必须明确广播"这一炮被挡了"。否则双方只看到一次普通
             # "命中"，防守方会以为自己的船挨了一炮（实际毫发无伤），
@@ -2247,12 +2255,21 @@ def handle_attack(data):
     room.attacks_remaining = max(0, room.attacks_remaining)
 
     # 记录本次攻击到attacks列表（修复重复攻击校验与AI追踪失效）
-    room.players[attacker_id].attacks.append(Position(**{
-        'x': target_x,
-        'y': target_y,
-        'hit': hit,
-        'ship_sunk': ship_sunk
-    }))
+    #
+    # ⚠️ 被盾挡下的那一炮【不记】。
+    # `attacks` 的含义是"这一格已经打过了"：前端据此画叉并**不再绑定点击**，
+    # 服务端也用它做重复攻击校验。可盾牌只是把这一炮吃掉、船毫发无伤 ——
+    # 把格子算成"已打过"，玩家就会看到"打了一炮 → 格子变红叉 → 同一回合再也点不动"，
+    # 而他的船明明还完好地停在那儿（作者实测反馈）。
+    # 不记之后：同一回合可以再打这一格（盾已经破了，这一炮就正常结算伤害）。
+    # 攻击次数照扣 —— 盾挡掉的是一发炮弹，这一点没有变化。
+    if not shield_blocked:
+        room.players[attacker_id].attacks.append(Position(**{
+            'x': target_x,
+            'y': target_y,
+            'hit': hit,
+            'ship_sunk': ship_sunk
+        }))
 
     # 准备攻击结果
     attack_result = AttackResult(
@@ -2263,15 +2280,18 @@ def handle_attack(data):
         ship_sunk=ship_sunk,
         remaining_attacks=room.attacks_remaining,
         attacker_remaining_ships=room.players[attacker_id].remaining_ships,
-        defender_remaining_ships=room.players[defender_id].remaining_ships
+        defender_remaining_ships=room.players[defender_id].remaining_ships,
+        shield_blocked=shield_blocked
     )
 
-    add_game_log(room, f"第{room.round}回合 · {_log_name(room, attacker_id)} 攻击 ({target_x},{target_y}) — {'命中' if hit else '未命中'}{'，击沉战舰' if ship_sunk else ''}",
+    _shield_note = '，被护盾挡下' if shield_blocked else ('，击沉战舰' if ship_sunk else '')
+    add_game_log(room, f"第{room.round}回合 · {_log_name(room, attacker_id)} 攻击 ({target_x},{target_y}) — {'命中' if hit else '未命中'}{_shield_note}",
                  'attack', {
                      'attacker': attacker_id,
                      'target': {'x': target_x, 'y': target_y},
                      'hit': hit,
-                     'ship_sunk': ship_sunk
+                     'ship_sunk': ship_sunk,
+                     'shield_blocked': shield_blocked
                  })
 
     emit('attack_result', attack_result, room=room_id)
@@ -2527,6 +2547,11 @@ def end_turn(data):
 
             # 回光返照只持续自己发动的那一个大回合
             room.game_effects.pop('last_chance', None)
+
+            # 绝处逢生的"候选格高亮"只在本大回合有效：新大回合双方棋盘信息重置，
+            # 再亮着六个格子就是过期线索了（唯一一艘船还在，但线索不该跨回合留着）。
+            if room.game_effects.pop('last_stand_cells', None):
+                emit('last_stand_cells', {'cells': []}, room=room_id)
 
             # 新大回合：双方本回合伤害统计归零
             # （此前唯一重置点在死代码 switch_turn_after_end_phase 内，
@@ -4557,6 +4582,12 @@ def _build_room_sync(room, player_id: str) -> dict:
             and (room.magic_temp_data.get('pending_placement') or {}).get('caster') == player_id
             else []
         ),
+        # 绝处逢生的候选格：公开信息（对方要据此知道唯一一艘新船可能在哪），
+        # 重连后必须补回来，否则高亮没了、玩家又以为"这几格不能打"。
+        'last_stand_cells': [
+            {'x': cx, 'y': cy}
+            for (cx, cy) in (room.game_effects.get('last_stand_cells') or [])
+        ],
         # 玩家级状态标记：重连后 UI 需要知道"被看破 / 无中生有 / 余音绕梁"等
         'magic_blocked': bool(getattr(p, 'magic_blocked', False)),
         'effect_flags': {k: v for k, v in vars(p.effect_flags).items() if v},
@@ -6887,6 +6918,15 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             snap['sunken'] = len(caster.sunken_ships)
 
         room.game_effects['last_stand_cells'] = original_cells
+        # 把"原本有战舰的格子"公开给双方 —— 对方要据此知道唯一一艘新船可能在哪，
+        # 而且这些格子必须【能打】。
+        #
+        # ⚠️ 以前这里只发 ship_sacrificed（reason='last_stand'），前端把它当成
+        # 「牺牲的船」画成红叉 —— 而红叉在玩家眼里就是"已打过、别再点了"，
+        # 结果对方看着六个叉子根本不知道能打哪儿、也以为打不了（作者实测反馈）。
+        # 现在改成下发一份"候选格"名单，前端画成高亮而不是叉。
+        cells_payload = [{'x': cx, 'y': cy} for (cx, cy) in original_cells]
+        emit('last_stand_cells', {'cells': cells_payload}, room=room.id)
         # 生效回合内其余魔法卡无效 + 击杀任何船直接获胜
         room.players[caster_id].effect_flags.last_stand = True
         _start_placement(room, caster_id, 'last_stand', 1)

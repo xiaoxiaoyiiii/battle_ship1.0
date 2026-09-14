@@ -3155,6 +3155,15 @@ def handle_use_magic_card(data):
             reason = '教皇旨意生效中，本回合攻击次数为0，五险一金无法发动'
         elif field_magic_name(room) == '禁忌果实' and not (card.name == '失灵！' or card.type == '场地'):
             reason = '场地魔法“禁忌果实”生效中，非场地及失灵类魔法卡无法使用'
+        elif int(card.speed) != 3 and room.current_attacker != player_id:
+            # ⚠️ 必须排在阶段兜底之前。
+            #
+            # can_play_magic_card 里「速阶1/2 只能在自己的回合使用」这一条，
+            # 是玩家最常撞上的拒绝原因，但此前没有对应的文案分支 —— 于是掉进
+            # 最后的阶段兜底，弹出「当前阶段preparation无法使用速阶2的魔法卡」。
+            # 阶段本身完全合法（准备阶段本来就允许速阶2），玩家据此以为游戏坏了、
+            # 跑去反馈「轰炸在准备阶段用不了」，实际原因只是没轮到他。
+            reason = f'速阶{card.speed}的魔法卡只能在自己的回合使用（现在不是你的回合）'
         return {'status': 'error',
                 'message': reason or f'当前阶段{room.current_phase}无法使用速阶{card.speed}的魔法卡'}
 

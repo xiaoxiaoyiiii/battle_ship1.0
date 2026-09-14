@@ -956,7 +956,9 @@ function applyRoomSync(data) {
     if (typeof data.chain_window !== 'undefined') gameState.chainWindow = data.chain_window;
     // 重连正好落在连锁响应窗口内：把响应弹窗补回来（否则窗口一过就再也没有机会响应）
     if (data.chain_waiting && data.chain_window && data.chain_window === gameState.playerId) {
-        const speed3 = (gameState.hand || []).filter(c => c && c.speed === 3);
+        // 速阶同样先转数字再比（与服务端 _speed3_cards 的 int(c.speed) == 3 一致）。
+        // 用 === 比的话，speed 是字符串时会漏掉真正能响应的速阶3卡。
+        const speed3 = (gameState.hand || []).filter(c => c && Number(c.speed) === 3);
         const chainItems = data.chain || [];
         const lastItem = chainItems[chainItems.length - 1] || {};
         if (speed3.length > 0 && typeof showChainRequestPrompt === 'function') {
@@ -3923,20 +3925,31 @@ function canPlayCard(card) {
             gameState.currentPhase === 'end' &&
             gameState.currentAttacker === gameState.playerId;
     }
+    // ⚠️ 速阶一律先转成数字再比较。
+    // 此前写的是 card.speed === 1 / === 2 / === 3（严格相等）：
+    // 只要 card.speed 是字符串 "2"（或 undefined），三个分支全部落空，
+    // 函数直接掉到最后的 return false —— 于是【本来能用的卡被前端拦下】，
+    // 并弹出「当前阶段preparation不允许使用速阶2」这种冤枉阶段的提示。
+    // 服务端 can_play_magic_card 用的是 int(card.speed)，两边口径必须一致。
+    // 实测复现：tools/diag_bomb_alert.mjs 里 speed 传 "2" 时
+    // 准备阶段 + 自己回合的「轰炸」被判为不可用。
+    const speed = Number(card.speed);
     // 速阶1: 只能在自己的准备阶段使用
-    if (card.speed === 1) {
+    if (speed === 1) {
         return gameState.currentPhase === 'preparation' && gameState.currentAttacker === gameState.playerId;
     }
     // 速阶2: 可以在自己的准备阶段和战斗阶段使用
-    else if (card.speed === 2) {
+    else if (speed === 2) {
         return (gameState.currentPhase === 'preparation' || gameState.currentPhase === 'battle') &&
             gameState.currentAttacker === gameState.playerId;
     }
     // 速阶3: 任何时候都可以使用
-    else if (card.speed === 3) {
+    else if (speed === 3) {
         return true;
     }
-    return false;
+    // 速阶读不出来（数据缺失）不能当作"不允许"：放行给服务端裁定，
+    // 服务端有权威校验；这里静默拦下只会让玩家看到一条与事实不符的提示。
+    return true;
 }
 
 // 依赖「自己上一发攻击」的卡是否能发动。返回 null 表示可以；否则返回原因文案。

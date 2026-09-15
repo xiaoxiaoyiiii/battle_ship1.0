@@ -297,7 +297,11 @@ def _wallpaper_remote_blocked() -> bool:
         return False
     addr = (request.remote_addr or '').strip().lower()
     if not addr:
-        return False
+        # 无法识别来源地址时一律拒绝：这是安全边界，绝不能 fail-open。
+        # 某些 WSGI 部署（反向代理未正确转发 / Unix socket）会让 REMOTE_ADDR
+        # 为空；此时若放行，等于把"列出本机壁纸 / 按任意路径读文件"的能力
+        # 暴露给任何能连到这台服务器的人。
+        return True
     return not (addr in ('localhost', '::1') or addr.startswith('127.') or addr.startswith('::ffff:127.'))
 
 

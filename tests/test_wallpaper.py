@@ -303,6 +303,27 @@ def test_api_wallpapers_blocked_for_remote_client(lib, client):
     assert '本机' in data['reason']
 
 
+@pytest.mark.parametrize('remote_addr', ['', None])
+def test_api_wallpapers_blocks_when_remote_addr_unknown(lib, client, remote_addr):
+    """REMOTE_ADDR 为空时必须 fail-closed：某些部署（反向代理未转发 / Unix socket）
+    会让 REMOTE_ADDR 缺失，此时若放行，远端就能列出本机壁纸、按任意路径读文件。"""
+    make_folder(lib, '111', {'type': 'video', 'title': '甲', 'file': 'a.mp4'}, {'a.mp4': MP4_HEAD})
+    res = client.get('/api/wallpapers', environ_base={'REMOTE_ADDR': remote_addr})
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data['available'] is False
+    assert data['items'] == []
+
+
+def test_scan_path_blocks_when_remote_addr_unknown(lib, client):
+    """按路径导入同样要在 REMOTE_ADDR 缺失时拒绝——这是任意文件读取的入口。"""
+    make_folder(lib, '111', {'type': 'video', 'title': '甲', 'file': 'a.mp4'}, {'a.mp4': MP4_HEAD})
+    res = client.post('/api/wallpaper/scan_path', json={'path': str(lib)},
+                      headers={'X-Battleship-Wallpaper': '1'},
+                      environ_base={'REMOTE_ADDR': ''})
+    assert res.status_code == 403
+
+
 def test_allow_remote_env_opens_scan(monkeypatch, lib, client):
     make_folder(lib, '111', {'type': 'video', 'title': '甲', 'file': 'a.mp4'}, {'a.mp4': MP4_HEAD})
     monkeypatch.setenv('BATTLESHIP_WALLPAPER_ALLOW_REMOTE', '1')

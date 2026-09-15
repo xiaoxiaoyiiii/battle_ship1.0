@@ -9,6 +9,7 @@
    id 是注册表里的键，绝不能拿 URL 里的字符串去拼路径。
 """
 import json
+import os
 
 import pytest
 
@@ -410,3 +411,67 @@ def test_index_page_includes_wallpaper_layer(client):
     assert 'id="wallpaper-video"' in html
     assert 'wallpaper.js' in html
     assert 'id="wp-scan"' in html
+
+
+# ---------- VDF 解析（Steam 库目录发现） ----------
+
+def test_vdf_library_paths_parses_multiple_entries(tmp_path):
+    """libraryfolders.vdf 里多个 "path" 行都要抠出来，且 Windows 双反斜杠要转成 os.sep。"""
+    vdf = tmp_path / 'libraryfolders.vdf'
+    vdf.write_text(
+        '"libraryfolders"\n'
+        '{\n'
+        '\t"0"\n'
+        '\t{\n'
+        '\t\t"path"\t\t"C:\\\\Program Files (x86)\\\\Steam"\n'
+        '\t\t"label"\t\t""\n'
+        '\t}\n'
+        '\t"1"\n'
+        '\t{\n'
+        '\t\t"path"\t\t"D:\\\\SteamLibrary"\n'
+        '\t}\n'
+        '}\n',
+        encoding='utf-8')
+    paths = wallpaper._vdf_library_paths(str(vdf))
+    assert len(paths) == 2
+    assert 'C:' + os.sep + 'Program Files (x86)' + os.sep + 'Steam' in paths
+    assert 'D:' + os.sep + 'SteamLibrary' in paths
+
+
+def test_vdf_library_paths_ignores_non_path_lines(tmp_path):
+    vdf = tmp_path / 'libraryfolders.vdf'
+    vdf.write_text('"libraryfolders"\n{\n\t"0"\n\t{\n\t\t"label"\t\t"SSD"\n\t}\n}\n', encoding='utf-8')
+    assert wallpaper._vdf_library_paths(str(vdf)) == []
+
+
+def test_vdf_library_paths_missing_file(tmp_path):
+    assert wallpaper._vdf_library_paths(str(tmp_path / 'nope.vdf')) == []
+
+
+# ---------- 远端拦截：IPv4-mapped IPv6 与空地址 ----------
+
+def test_wallpaper_allows_ipv4_mapped_loopback(lib, client):
+    """生产环境（反向代理 / 容器）常把 127.0.0.1 映射成 ::ffff:127.0.0.1，必须放行。"""
+    make_folder(lib, '111', {'type': 'video', 'title': '甲', 'file': 'a.mp4'}, {'a.mp4': MP4_HEAD})
+    data = client.get('/api/wallpapers', environ_base={'REMOTE_ADDR': '::ffff:127.0.0.1'}).get_json()
+    assert data['available'] is True
+    assert len(data['items']) == 1
+
+
+def test_wallpaper_allows_ipv6_loopback(lib, client):
+    make_folder(lib, '111', {'type': 'video', 'title': '甲', 'file': 'a.mp4'}, {'a.mp4': MP4_HEAD})
+    data = client.get('/api/wallpapers', environ_base={'REMOTE_ADDR': '::1'}).get_json()
+    assert data['available'] is True
+
+
+def test_wallpaper_allows_empty_remote_addr(lib, client):
+    """remote_addr 为空（如 Unix socket）时不拦截，保持可用。"""
+    make_folder(lib, '111', {'type': 'video', 'title': '甲', 'file': 'a.mp4'}, {'a.mp4': MP4_HEAD})
+    data = client.get('/api/wallpapers', environ_base={'REMOTE_ADDR': ''}).get_json()
+    assert data['available'] is True
+
+
+def test_wallpaper_blocks_non_loopback_ipv6(lib, client):
+    make_folder(lib, '111', {'type': 'video', 'title': '甲', 'file': 'a.mp4'}, {'a.mp4': MP4_HEAD})
+    data = client.get('/api/wallpapers', environ_base={'REMOTE_ADDR': '2001:db8::1'}).get_json()
+    assert data['available'] is False

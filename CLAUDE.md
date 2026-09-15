@@ -1,7 +1,8 @@
 # CLAUDE.md — 战舰棋 + 魔法卡
 
 > 面向 AI 代理的项目索引。**先读这里，再按需读源码**——`server.py` 5757 行、`game.js` 5821 行，不要一次读完。
-> 基于 commit `837ab0e` 实测编写。最后更新：2026-09-13（缺陷审计修复批，见 `docs/DEFECT_FIXES_2026_09_13.md`）。
+> 基于 commit `837ab0e` 实测编写。最后更新：2026-09-15（动态壁纸批，见 `docs/WALLPAPER_ENGINE.md`）。
+> 前一次更新：2026-09-13（缺陷审计修复批，见 `docs/DEFECT_FIXES_2026_09_13.md`）。
 >
 > ⚠️ **行号会随每次提交漂移**（本次审计实测：全文件行号普遍偏移 +80~100）。
 > 本文件里的行号仅供定位参考，**以 grep 结果为准**。
@@ -22,13 +23,15 @@ Flask + Flask-SocketIO 的实时双人海战棋，叠加 43 条魔法卡（41 �
 | --- | --- | --- |
 | `server.py` | **5757** | 游戏核心：SocketIO、房间、状态机、魔法卡结算 |
 | `static/game.js` | **5821** | 前端全部逻辑（巨型单文件，无模块化） |
-| `static/style.css` | 2309 | 样式 + 深/浅色主题 + 第 22 节「紧凑（移动端自适应）布局」 |
-| `templates/index.html` | 654 | SPA 模板 |
+| `static/style.css` | 3119 | 样式 + 深/浅色主题 + 第 22 节「紧凑（移动端自适应）布局」+ 第 24 节「动态壁纸层」+ 第 25 节「视觉增强」 |
+| `templates/index.html` | 738 | SPA 模板 |
 | `static/sfx.js` | 156 | 战斗音效：Web Audio 现场合成（无素材依赖） |
 | `static/music_player.js` | 401 | 背景音乐：优先放 mp3，找不到时自动切**合成环境音** |
 | `static/adaptive_layout.js` | 419 | 移动端自适应布局：按可用空间在「桌面浮窗」与「一屏网格」间切换 |
+| `static/wallpaper.js` | 521 | 动态壁纸引擎：应用/参数/持久化/扫描列表/路径与直链导入 |
+| `wallpaper.py` | 545 | 壁纸库扫描：定位 Steam 创意工坊、解析 project.json、登记可播放媒体 |
 | `db.py` | 900 | SQLite DAO（含 `card_usage` 卡牌使用统计） |
-| `api.py` | 274 | Flask 路由（13 个，含 `/api/card_usage`） |
+| `api.py` | 386 | Flask 路由（13 个 + 4 个壁纸路由） |
 | `static/magic_card.json` | 84 | 后端卡牌数据 |
 | `static/magic_cards.js` | 49 | 前端卡牌数据 |
 | `file.py` | 3 | JSON 读取工具 |
@@ -42,12 +45,13 @@ Flask + Flask-SocketIO 的实时双人海战棋，叠加 43 条魔法卡（41 �
 ```bash
 pip install -r requirements.txt
 python start_server.py        # 推荐（含依赖检查）
-python -m pytest tests/ -q    # 398 passed
+python -m pytest tests/ -q    # 790 passed
 ```
 
 > ⚠️ **必须在项目根目录运行**——`server.py` 用相对路径 `./static/magic_card.json`；`tests/test_all_magic_cards.py:1088` 也用硬编码相对路径，是全套测试中唯一对 CWD 敏感的。
+> 本机 venv：`.venv/Scripts/python.exe`（3.12）。`python`（PATH 上的 3.13）**没装 Flask**，直接用它跑测试会 `ModuleNotFoundError`。
 
-**实测基线（2026-09-13 缺陷审计修复批后）**：`398 passed / 0 failed`（`test_all_magic_cards.py`、`test_db_core.py`、`test_disconnect_and_eden_shenji.py`、`test_fixes_regression.py`、`test_ui_review_fixes.py`、`test_review_fixes_2026_09_12.py`、`test_review_fixes_batch2.py`、`test_mobile_adaptive_layout.py`、`test_mingzhi_burial_fix.py` 21 条）。
+**实测基线（2026-09-15 动态壁纸批后）**：`790 passed / 0 failed`（上一批 2026-09-13 为 398，本次新增 `test_wallpaper.py` 50 条）。
 
 > 🔧 **2026-09-13 个人战绩弹窗 / 人机战绩统计批**（详见 `docs/STATS_AND_AI_RANKING_FIXES.md`）：6 处实测缺陷 —— ①历史行把 `<button>` 塞进 `<table><tbody>` 触发 foster parenting，表头「时间 对手 结果 局内日志」孤立在列表最下方；②胜负配色被通用 `button` 规则的 `background-image` 渐变盖掉，三条胜绩全蓝；③`.user-stats-table` / `.user-history` 在样式表里从未定义；④人机对手显示成裸 ID `ai-4530c8`；⑤胜局的「对局详情」把「对手」显示成自己；⑥**人机对局计入 `users.wins` / 连胜**（排行榜 `ORDER BY wins DESC` → 打电脑即可刷榜）。修法：历史列表改 div 三列网格、`.match-history-btn{background-image:none}` + `.win`/`.lose`、`ai-` 前缀映射「电脑」并加「人机」标签、按胜负取对手、`db.record_match(count_stats=)` + `server._count_stats_for(room)`（人机只写历史、不计统计，6 处调用点全部显式传参）；并合并两份重复的 `showUserStats`/`showMatchDetail`、去掉 `setTimeout` 绑事件与「每次点头像都 append 一个重复 id 弹窗」，新增「加载更多」。回归：`tests/test_stats_display_fixes.py`（14 条）+ `tools/stats_modal_check.mjs`（无头 Edge，27 项，含 `--username` 真实账号端到端）；历史脏数据用 `tools/recompute_ranked_stats.py --apply` 对齐（本机已执行：z1w6qn 3 胜 → 0）。
 
@@ -626,6 +630,34 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 而倒计时正好用 `setInterval(1000)`。修法：断言前先 `Page.bringToFront` 解除节流，
 再轮询等它真的变化。同类工具若出现"计时器不动"的假红，先想这一条。
 
+### 🟢 2026-09-15 动态壁纸（Wallpaper Engine 接入）+ 视觉增强批
+
+> 详见 `docs/WALLPAPER_ENGINE.md`。需求：「想把 UI 设计得更酷炫一点，能导入自己的
+> Wallpaper Engine 壁纸就好了」。新增 `wallpaper.py` / `static/wallpaper.js` /
+> `tests/test_wallpaper.py`（50 条）/ `tools/wallpaper_check.mjs`（32 项）/
+> `static/style.css` 第 24、25 节；`api.py` 新增 4 个路由。
+
+**四条通用教训（比功能本身更值得记）**
+
+1. **兜底逻辑会把"不能用的东西"报成"能用"**：创意工坊每张壁纸都带一张 `preview.jpg`，
+   场景型/网页型壁纸的 `file` 指向 `scene.pkg`/`index.html`（不在媒体白名单里）→
+   兜底取"目录里最大的媒体文件"就把 preview 挑出来了，于是玩家点到一张**静止缩略图冒充的
+   动态壁纸**。不报错、完全错。**凡"找不到就用兜底"的逻辑，先问：兜底对象可能是"另一种用途的同名文件"吗？**
+2. **URL 只按"路径"生成时，原地换文件浏览器不认**：id = `sha1(realpath)`，玩家覆盖同一个
+   壁纸文件后地址一字不变 → 吃 `max-age` 里的旧副本。修法：`?v=<mtime>`。排查时先怀疑
+   缓存（无头浏览器还是持久 profile，localStorage 也带着上一轮状态）。
+3. **`play()` 的拒绝原因必须分开报**：`NotSupportedError`/`MediaError` = 文件根本解不了，
+   `NotAllowedError` = 只是自动播放策略拦了。混为一谈会让玩家对着一个永远播不出来的东西
+   反复点击。
+4. **只读本机能力的接口要按"谁能调"分级**：扫描/按路径导入 = 回环地址 + 自定义请求头
+   （自定义头会让跨站请求触发 CORS 预检，而本站没有任何放行头）；
+   取媒体文件 = 不限制回环，因为 id 不可枚举且注册只可能发生在回环请求里。这样手机/局域网
+   访问同一台服务器时壁纸照样显示，不会出现"电脑能看、手机没了"。
+
+**视觉增强踩到的两条硬规则**（已写进第 12 节第 11、12 条）：不改盒模型尺寸；
+含 `fixed` 后代的元素不许 `transform`/`filter`。另外：有壁纸时把 `.game-container` 那层
+14px 毛玻璃减到 5px —— 14px 是给纯渐变背景调的，套在壁纸上会把画面抹成一团色块。
+
 ---
 
 ## 12. 开发约定
@@ -647,6 +679,22 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
    2026-09-13 已按实测重写——**引用本文件任何一条结论前，先用 grep 到代码里确认**。
 10. **跑 e2e 的服务端要隔离数据库**：`BATTLESHIP_DB_PATH=C:\Windows\Temp\e2e.db`。
    全卡 e2e 会真的打 42 张牌，不隔离就会往正式库写 40 多条卡牌使用统计。
+11. **改 `style.css` 之后必跑 `node tools/ui_layout_check.mjs --url ...`**。它逐视口断言
+   棋盘 300×300 / 单格 42px / 浮窗零叠压 / 对局页一屏不滚动 —— 这些不是"风格"，是回归基线。
+   视觉增强只允许动颜色、阴影、渐变、`transform`、`opacity`、动画，**不许动盒模型尺寸**。
+12. **含 `position:fixed` 后代的元素不能加 `transform` / `filter` / `backdrop-filter`**。
+   这类元素：`.game-container` / `.game-content` / `.game-main-container` /
+   `.screen`（即 `#game-screen`）。加上去会让日志、聊天、卡牌预览、连锁提示这些浮窗
+   **改以它为基准定位**，表现为"浮窗跑到页面中间"。要毛玻璃就加在**叶子面板**上，
+   或让 `.game-container::before`（伪元素不是任何东西的祖先）承担 —— 见 style.css 第 2 节与第 24 节。
+13. **`tests/` 之外还有一批无头浏览器工具**（`tools/*.mjs`）。它们比 pytest 更接近真实：
+   真的起浏览器、真的走 socket。改前端时优先跑对应那个：
+   壁纸 → `wallpaper_check.mjs`（自造壁纸库+自起服务端，不依赖本机装没装 Wallpaper Engine）、
+   手牌 → `hand_play_check.mjs`、布局 → `ui_layout_check.mjs`、音效 → `sfx_check.mjs`、BGM → `bgm_check.mjs`。
+   ⚠️ 无头浏览器用**持久 profile**，localStorage 里带着上一轮的状态；"改了代码页面却不变"
+   先确认拿到的是不是缓存/旧状态（壁纸批就因此白查了一轮）。
+14. **本机跑测试/工具用 `.venv/Scripts/python.exe`**。PATH 上的 `python` 是 WorkBuddy 自带的
+   3.13，**没装 Flask**，用它跑 pytest 会直接 `ModuleNotFoundError`。
 
 ---
 
@@ -665,6 +713,7 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 | **`docs/HAND_DESYNC_2026_09_14.md`** | **2026-09-14「打完一张，剩下的手牌莫名消失」：真实浏览器复现、根因（前端本地删牌的兜底分支按下标删错人）、修法与反证** |
 | **`docs/REINFORCEMENT_TIE_2026_09_14.md`** | **2026-09-14「极限增援平局把回合卡死」：根因（结算分支从 `end_turn` 提前 `return`，吞掉换人+重置阶段+广播）、反证与修法** |
 | **`docs/SHIELD_AND_LASTSTAND_2026_09_14.md`** | **2026-09-14「破盾格还能再打」「绝处逢生候选格能打」：同一个病灶（把"动作"当"结果"记进 attacks，格子被永久/整回合锁死）、五种格子状态的视觉区分** |
+| **`docs/WALLPAPER_ENGINE.md`** | **2026-09-15 动态壁纸（Wallpaper Engine 接入）：三条导入通道与各自可见范围、创意工坊目录解析与 preview 陷阱、媒体路由的安全模型、视觉增强的两条硬规则（不改盒模型 / 含 fixed 后代的元素不许 transform）** |
 | `docs/CHAIN_ENGINE_SPEC.md` | 连锁引擎设计稿（⚠️ 实施前的文档，开头已补 2026-09-13 实测校准表） |
 | `README.md` | 面向用户的功能/玩法说明（测试数/文件清单已校准） |
 

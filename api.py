@@ -3,11 +3,13 @@ import os
 import secrets
 import time
 
-from flask import Flask, session, jsonify, request, render_template, redirect, url_for, flash
+from flask import (Flask, session, jsonify, request, render_template, redirect,
+                   url_for, flash, send_file)
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
 import db
+import wallpaper
 
 ALLOWED_AVATAR_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 # 头像魔数校验：只信任真实图片内容，而不是客户端声明的扩展名
@@ -273,6 +275,93 @@ def api_card_usage():
     """卡牌使用次数（公开只读）。图鉴用它显示"这张卡有多常用"。"""
     usage = db.get_card_usage()
     return jsonify({'usage': usage, 'total': sum(int(v or 0) for v in usage.values())})
+
+
+# ---------------------------------------------------------------------------
+# 动态壁纸（Wallpaper Engine）
+# ---------------------------------------------------------------------------
+# 三条通道的可见范围是刻意分开的：
+#   · 扫描本机壁纸库 / 按路径导入 —— 会暴露"这台机器上有什么"，且路径由用户
+#     直接指定，因此**只允许回环地址**（本机访问），另加一道自定义请求头校验：
+#     自定义头会让跨站请求触发 CORS 预检，而本站没有任何 CORS 放行头，
+#     于是别的网页无法借用户的浏览器读本机文件。
+#   · 取媒体文件 —— id 是路径的 sha1 前 14 位，不可枚举；注册只可能发生在回环
+#     请求里。不额外限制，局域网/手机访问同一台服务器时壁纸才会正常显示。
+# 需要把扫描能力开放到非本机（例如自建服务器），设 BATTLESHIP_WALLPAPER_ALLOW_REMOTE=1。
+WALLPAPER_HEADER = 'X-Battleship-Wallpaper'
+
+
+def _wallpaper_remote_blocked() -> bool:
+    """True = 本次请求不是本机发起的，扫描类接口应当拒绝。"""
+    if os.environ.get('BATTLESHIP_WALLPAPER_ALLOW_REMOTE') == '1':
+        return False
+    addr = (request.remote_addr or '').strip().lower()
+    if not addr:
+        return False
+    return not (addr in ('localhost', '::1') or addr.startswith('127.') or addr.startswith('::ffff:127.'))
+
+
+@app.route('/api/wallpapers')
+def api_wallpapers():
+    """列出本机 Wallpaper Engine 创意工坊里可播放的壁纸。"""
+    if _wallpaper_remote_blocked():
+        # 这里故意返回 200 + available=false：前端照常渲染，直接显示一段说明，
+        # 不必为一个"本来就该被拒绝"的场景写异常分支。
+        return jsonify({
+            'available': False, 'success': False, 'items': [], 'dirs': 0,
+            'reason': '扫描本机壁纸库只在本机（localhost）访问时可用；在别的设备上请用下面的「直链」导入。',
+        })
+    data = wallpaper.scan(force=request.args.get('refresh') in ('1', 'true', 'yes'))
+    dirs = data['dirs']
+    reason = '' if dirs else ('没有找到 Wallpaper Engine 的创意工坊目录'
+                              '（Steam 里没装过壁纸，或壁纸装在别的库）——可以往下填「壁纸文件夹」路径。')
+    return jsonify({
+        'available': True,
+        'success': True,
+        'dirs': len(dirs),
+        'reason': reason,
+        'items': data['items'],
+    })
+
+
+@app.route('/api/wallpaper/scan_path', methods=['POST'])
+def api_wallpaper_scan_path():
+    """按本机路径导入壁纸：壁纸文件夹 / 装着壁纸的父目录 / 单个媒体文件。"""
+    if _wallpaper_remote_blocked():
+        return jsonify({'success': False, 'items': [], 'error': '按路径导入只在本机（localhost）访问时可用。'}), 403
+    if request.headers.get(WALLPAPER_HEADER) != '1':
+        return jsonify({'success': False, 'items': [], 'error': '缺少本机校验头。'}), 403
+    payload = request.get_json(silent=True) or {}
+    result = wallpaper.import_path(payload.get('path') or '')
+    if not result['ok']:
+        return jsonify({'success': False, 'error': result['error'], 'items': []}), 400
+    return jsonify({'success': True, 'error': '', 'items': result['items']})
+
+
+@app.route('/api/wallpaper/media/<wid>')
+def api_wallpaper_media(wid):
+    """下发壁纸本体。conditional=True 让浏览器可以按 Range 拖动进度。"""
+    entry = wallpaper.get_media(wid)
+    if not entry:
+        return jsonify({'error': '壁纸不存在或未注册（%s）' % wid}), 404
+    path = entry['media']
+    if not os.path.isfile(path):
+        return jsonify({'error': '壁纸文件已不在原位置'}), 404
+    return send_file(path, mimetype=wallpaper.mime_for(path),
+                     conditional=True, max_age=3600)
+
+
+@app.route('/api/wallpaper/preview/<wid>')
+def api_wallpaper_preview(wid):
+    """下发壁纸缩略图（创意工坊目录里的 preview.*）。"""
+    entry = wallpaper.get_preview(wid)
+    if not entry:
+        return jsonify({'error': '没有这张壁纸的缩略图'}), 404
+    path = entry['preview']
+    if not os.path.isfile(path):
+        return jsonify({'error': '缩略图已不在原位置'}), 404
+    return send_file(path, mimetype=wallpaper.mime_for(path),
+                     conditional=True, max_age=3600)
 
 
 @app.route('/api/login', methods=['POST'])

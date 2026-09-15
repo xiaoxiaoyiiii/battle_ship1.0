@@ -8,6 +8,16 @@
     <script src="/static/socket.io.js?v={{ asset_v('socket.io.js') }}"></script>
 </head>
 <body>
+    <!-- 动态壁纸层（Wallpaper Engine / 本地视频 / 本地图片）
+         固定在 z-index 0，且排在粒子画布之前 —— 同层级按 DOM 顺序绘制，
+         气泡因此会浮在壁纸之上。所有交互都用不到它，故 pointer-events:none。 -->
+    <div id="wallpaper-layer" class="wallpaper-layer" data-kind="none" aria-hidden="true">
+        <video id="wallpaper-video" class="wallpaper-media hidden" muted loop playsinline
+               preload="auto" disablepictureinpicture></video>
+        <img id="wallpaper-image" class="wallpaper-media hidden" alt="">
+        <div class="wallpaper-scrim"></div>
+        <div class="wallpaper-vignette"></div>
+    </div>
     <canvas id="particle-canvas"></canvas>
     <!-- Flask flash 消息提示（注册/登录/退出等操作结果） -->
     {% with messages = get_flashed_messages(with_categories=true) %}
@@ -39,6 +49,7 @@
             <button id="help-btn" class="btn secondary">帮助</button>
             <button id="settings-btn" class="btn secondary">设置</button>
             <button id="music-btn" class="btn secondary">🎵</button>
+            <button id="wallpaper-btn" class="btn secondary" title="动态壁纸（Wallpaper Engine）">🎬</button>
         </div>
     </div>
 
@@ -482,6 +493,57 @@
                 <div class="muted-hint">
                     <p>当前播放：<span id="current-track">未播放</span></p>
                 </div>
+                <hr class="settings-section-gap">
+                <h3>动态壁纸</h3>
+                <div id="wp-section" class="wp-section">
+                    <p class="muted-hint" id="wp-now-playing">当前壁纸：无</p>
+                    <label class="profile-label-half">
+                        <span>不透明度：</span>
+                        <input type="range" id="wp-opacity" min="20" max="100" value="100">
+                        <span id="wp-opacity-display">100%</span>
+                    </label>
+                    <label class="profile-label-half">
+                        <span>压暗遮罩：</span>
+                        <input type="range" id="wp-dim" min="0" max="90" value="35">
+                        <span id="wp-dim-display">35%</span>
+                    </label>
+                    <label class="profile-label-half">
+                        <span>模糊：</span>
+                        <input type="range" id="wp-blur" min="0" max="24" value="0">
+                        <span id="wp-blur-display">0px</span>
+                    </label>
+                    <label class="profile-label-half">
+                        <span>铺满方式：</span>
+                        <select id="wp-fit">
+                            <option value="cover">裁剪铺满（cover）</option>
+                            <option value="contain">完整显示（contain）</option>
+                            <option value="fill">拉伸铺满（fill）</option>
+                        </select>
+                    </label>
+                    <div class="profile-label-half wp-buttons">
+                        <button id="wp-scan" class="btn" type="button">🔍 扫描本机壁纸库</button>
+                        <button id="wp-toggle-play" class="btn" type="button">⏸ 暂停播放</button>
+                        <button id="wp-clear" class="btn secondary" type="button">恢复默认背景</button>
+                    </div>
+                    <div id="wp-list" class="wp-list"></div>
+                    <label class="profile-label">
+                        <span>本机路径（壁纸文件夹，或单个视频/图片文件）：</span>
+                        <input type="text" id="wp-path"
+                               placeholder="D:\Steam\steamapps\workshop\content\431960">
+                        <button id="wp-path-import" class="btn" type="button">导入</button>
+                    </label>
+                    <label class="profile-label">
+                        <span>图片 / 视频直链：</span>
+                        <input type="text" id="wp-url" placeholder="https://example.com/wallpaper.mp4">
+                        <button id="wp-url-import" class="btn" type="button">应用</button>
+                    </label>
+                    <div id="wp-status" class="muted-hint wp-status"></div>
+                    <p class="muted-hint wp-help">
+                        扫描与「按路径导入」只在本机（localhost）访问时可用，远端请用直链。<br>
+                        场景型（scene.pkg）与网页型（.html）壁纸浏览器无法播放，下面会逐张标出原因。<br>
+                        壁纸太亮压不住界面时，把「压暗遮罩」加到 50% 以上；深色模式下壁纸观感最好。
+                    </p>
+                </div>
                 <button id="settings-save-btn" class="btn">保存</button>
             </div>
         </div>
@@ -577,6 +639,8 @@
 <script src="/static/adaptive_layout.js?v={{ asset_v('adaptive_layout.js') }}"></script>
 <!-- 背景音乐播放器 -->
 <script src="/static/music_player.js?v={{ asset_v('music_player.js') }}"></script>
+<!-- 动态壁纸引擎（Wallpaper Engine / 本地视频 / 图片） -->
+<script src="/static/wallpaper.js?v={{ asset_v('wallpaper.js') }}"></script>
 
 <!-- flash 消息自动消失 -->
 <script>

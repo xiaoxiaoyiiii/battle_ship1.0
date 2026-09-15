@@ -23,6 +23,7 @@
 | 🌀 场地魔法 | 恶魔契约 / 禁忌果实 / 伊甸园 / 教皇旨意，同时仅 1 张生效，可被顶替或无效化 |
 | 🔌 断线重连 | 掉线 30 秒宽限：重连恢复整局；超时判负/取消；对手掉线显示倒计时 |
 | 🎵 背景音乐 | 优先播放 `static/music/` 下的 mp3；目录为空时**自动切换到内置合成环境音**（Web Audio 现场合成，零素材），设置面板可静音/调音量 |
+| 🖼️ 动态壁纸 | 把**自己的 Wallpaper Engine 壁纸**设成游戏背景：一键扫描本机创意工坊 / 粘贴壁纸文件夹路径 / 粘贴图片视频直链；不透明度、压暗遮罩、模糊、铺满方式四档可调，偏好记在浏览器本地。场景型（scene.pkg）与网页型壁纸会在列表里标出"为什么不能播" |
 | 🔔 战斗音效 | 命中 / 落空 / 击沉 / 摸牌 / 出牌 / 连锁 / 回合 / 胜负，全部由 Web Audio 现场合成（无需音频素材），设置面板可单独静音 |
 | ⏱️ 回合思考计时 | 默认 90 秒（`TURN_TIMEOUT_SECONDS` 可调，0 = 关闭）。超时只做一次保底动作（进战斗 / 随机开火一发 / 交出回合），**不判负**；每做一次操作就重新计时 |
 | 💬 局内聊天 | 房间内实时聊天，窗口可拖拽 |
@@ -46,9 +47,10 @@
 
 ```
 battle_ship1.0/
-├── api.py                 # Flask 应用与 HTTP 路由（登录/注册/排行/资料/首页）
+├── api.py                 # Flask 应用与 HTTP 路由（登录/注册/排行/资料/首页/壁纸）
 ├── server.py              # 核心：SocketIO 事件、房间管理、游戏状态机、魔法卡结算
 ├── db.py                  # 数据访问层（users / matches / chat_messages / active_games / match_logs）
+├── wallpaper.py           # 动态壁纸：定位 Steam 创意工坊库、解析 project.json、登记可播放的媒体
 ├── file.py                # JSON 读取工具（加载卡牌配置）
 ├── start_server.py        # 一键启动脚本（依赖检查 + flask run）
 ├── start_server.bat       # Windows 双击启动
@@ -57,14 +59,16 @@ battle_ship1.0/
 │   └── index.html         # 单页应用：游戏界面、登录注册、排行榜、设置等
 ├── static/
 │   ├── game.js            # 前端游戏逻辑（棋盘、状态机、Socket 事件、UI 渲染）
-│   ├── style.css          # 全站样式（深/浅色主题、棋盘、卡牌、响应式）
+│   ├── style.css          # 全站样式（深/浅色主题、棋盘、卡牌、响应式、动态壁纸层）
 │   ├── magic_card.json    # 卡牌数据（后端读取）
 │   ├── magic_cards.js     # 卡牌数据（前端读取，与 JSON 保持一致）
 │   ├── music_player.js    # 背景音乐控制（优先放 static/music/ 下的 mp3；没有则切内置合成环境音）
 │   ├── sfx.js             # 战斗音效（Web Audio 现场合成，无需素材）
+│   ├── wallpaper.js       # 动态壁纸引擎（应用/参数/持久化/扫描列表/路径与直链导入）
+│   ├── adaptive_layout.js # 移动端自适应布局
 │   └── socket.io.js       # Socket.IO 客户端库（本地副本）
-├── tests/                 # pytest 回归测试（398 个用例）
-└── tools/                 # 开发辅助脚本（截图、验收、数据修复等）
+├── tests/                 # pytest 回归测试（790 个用例）
+└── tools/                 # 开发辅助脚本（截图、验收、数据修复、无头浏览器回归等）
 ```
 
 ---
@@ -128,6 +132,43 @@ python -m pytest tests/ -q
 
 ---
 
+## 🖼️ 动态壁纸（Wallpaper Engine）
+
+导航栏点 🎬（或「设置」）打开「动态壁纸」区块，三条导入通道：
+
+| 通道 | 可用范围 | 怎么用 |
+|---|---|---|
+| 扫描本机壁纸库 | 仅 localhost | 点「🔍 扫描本机壁纸库」，自动定位 `steamapps/workshop/content/431960`，列出所有壁纸（带缩略图），点一张即可 |
+| 粘贴本机路径 | 仅 localhost | 把壁纸文件夹（或装壁纸的父目录、或单个 mp4/webm/gif/png）路径粘进去点「导入」 |
+| 粘贴图片/视频直链 | 任何环境 | 站点部署在远端时用这条（浏览器直接去取，不经服务端） |
+
+四个滑杆即时生效：**不透明度 / 压暗遮罩 / 模糊 / 铺满方式**，偏好存在浏览器本地。
+还有「暂停播放」与「恢复默认背景」。
+
+**能播什么、不能播什么**
+
+| Wallpaper Engine 类型 | 结果 |
+|---|---|
+| 视频型（mp4 / webm） | ✅ 可直接当背景 |
+| 图片型（含 gif / apng 动图） | ✅ |
+| 视频型但是 mkv / mov / avi | ❌ 浏览器解不了，列表里注明原因 |
+| 场景型（scene.pkg） | ❌ 需要 Wallpaper Engine 自己的渲染器；想用请先在 WE 里导出成视频 |
+| 网页型（index.html） | ❌ 是一整套本地网页，出于安全考虑没有内嵌 |
+
+不能播的壁纸**仍然列出来**并写明原因（而不是凭空消失），但点了没反应。
+
+> 扫描与按路径导入会读本机磁盘，因此**只允许本机（localhost）访问时使用**；
+> 远端访客看到的是"请在直链里填地址"的提示。需要在自己服务器上开放：
+> `BATTLESHIP_WALLPAPER_ALLOW_REMOTE=1`。
+> 壁纸文件本身不限制回环（id 是路径哈希、不可枚举），所以手机/局域网访问同一台服务器时
+> 壁纸依然显示得出来。
+
+壁纸太亮压不住界面时，把「压暗遮罩」调到 50% 以上；**深色模式下壁纸观感最好**。
+
+> 实现细节、安全模型与踩过的坑见 [`docs/WALLPAPER_ENGINE.md`](./docs/WALLPAPER_ENGINE.md)。
+
+---
+
 ## 🗄️ 数据模型（SQLite）
 
 | 表 / 视图 | 用途 |
@@ -144,7 +185,7 @@ python -m pytest tests/ -q
 ## 🧪 测试
 
 ```bash
-python -m pytest tests/ -q      # 398 passed
+python -m pytest tests/ -q      # 790 passed
 ```
 
 | 测试文件 | 覆盖 |
@@ -160,8 +201,11 @@ python -m pytest tests/ -q      # 398 passed
 | `test_defect_fixes_round1.py` | 2026-09-13 缺陷审计修复回归（终局门禁 / 出拳校验 / 沉船计数 / 区域击杀副作用） |
 | `test_guardrails.py` | 测试护栏：12 个 `test_*` 事件参数化拒绝 + 连锁窗口推进 / 超时代际令牌 |
 | `test_ai_magic.py` | 人机 AI 出牌（白名单不得留下待处理状态 / 三档难度 / 困难档用失灵！响应连锁） |
+| `test_wallpaper.py` | 动态壁纸：创意工坊目录解析（场景型/mkv/越界 file）、回环门禁、媒体与缩略图路由 |
 
 > 测试通过 `tests/conftest.py` 把数据库指向临时目录，**不会写仓库里的 `data/battleship.db`**。
+> 无头浏览器回归：`tools/wallpaper_check.mjs`（壁纸全链路，会自己造假壁纸库并起服务端）、
+> `tools/ui_layout_check.mjs`（布局不变量，改样式后必跑）。
 
 ---
 
@@ -170,6 +214,7 @@ python -m pytest tests/ -q      # 398 passed
 - `SECRET_KEY`、`CORS_ORIGINS`、`PORT` 可通过环境变量注入；未配置 `SECRET_KEY` 时使用随机值（重启后 session 失效）。**生产部署务必设置 `SECRET_KEY`。**
 - 调试事件（`test_*`）**默认关闭**，仅本地设置 `ENABLE_TEST_EVENTS=1` 启用；生产页面已不加载 `test_magic.js`。
 - 登录/注册/改密有简易限流（同 IP 60 秒 10 次）；头像上传限 2MB 并校验图片魔数。
+- 动态壁纸的**扫描/按路径导入只允许回环地址**，且 `scan_path` 另需自定义请求头（跨站请求会因此触发 CORS 预检而被挡），可读的文件也仅限扩展名与**魔数**都合法的图片/视频。
 - 生产运行必须使用 eventlet（`python server.py`）；`FLASK_DEBUG=1` 仅限本地调试。
 - 数据库（SQLite WAL）建议定期备份 `data/battleship.db`。
 
@@ -178,6 +223,7 @@ python -m pytest tests/ -q      # 398 passed
 ## 📖 延伸阅读
 
 - 代码架构与逐模块说明：[`CLAUDE.md`](./CLAUDE.md)（面向 AI 代理的项目索引）
+- 动态壁纸实现与安全模型：[`docs/WALLPAPER_ENGINE.md`](./docs/WALLPAPER_ENGINE.md)
 - 历代修复记录：[`docs/`](./docs)（含 `DEFECT_FIXES_2026_09_13.md`、`UI_REVIEW_FIXES.md`、`MOBILE_ADAPTIVE_LAYOUT.md` 等）
 
 ---

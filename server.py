@@ -402,8 +402,10 @@ class GameRoom:
 
         # 仅在第一次调用时初始化全局共享魔法卡堆
         if not self.magic_deck:
-            # 复制并洗牌创建全局共享卡堆
-            self.magic_deck = magic_cards.copy()
+            # 复制并洗牌创建全局共享卡堆。
+            # 剔除 HIDDEN_CARD_NAMES（暂时隐藏的卡）：牌堆里没有 ⇒ 谁也摸不到，
+            # 而卡池、结算分支、前端文案都不动。
+            self.magic_deck = [c for c in magic_cards if c.name not in HIDDEN_CARD_NAMES]
             random.shuffle(self.magic_deck)
 
     def draw_card(self, player_id: str):
@@ -456,6 +458,14 @@ class GameRoom:
     
 # 添加魔法卡牌数据定义（与客户端 magic_cards.js 保持一致）
 magic_cards = list(map(lambda x: MagicCard(**x), read_json('./static/magic_card.json')))
+
+# 暂时隐藏的魔法卡：**不进牌堆**，因此谁也摸不到（只对新开的对局生效）。
+# 收口点唯一：能进手牌的路径只有 init_player_magic 建的这个共享牌堆
+# （draw_card / 桃园结义候选牌都从它 pop；其余 append 都在 @_test_event 里）。
+# 卡牌数据、apply_magic_effect 分支、前端文案、帮助里的图鉴全部保留 ——
+# 复原方法：把卡名从这个集合里删掉（集合留空亦可），无需改动其它文件。
+# 设计稿：docs/superpowers/specs/2026-09-16-hide-gangjintiegu-design.md
+HIDDEN_CARD_NAMES = {'钢筋铁骨'}
 
 # CORS：默认只放行本地开发地址；生产用环境变量 CORS_ORIGINS 指定域名（逗号分隔）。
 _cors_origins = [

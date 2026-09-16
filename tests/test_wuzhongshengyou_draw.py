@@ -4,8 +4,8 @@
 玩家实测：手牌只有「无中生有」时打出它，却只摸上来一张牌。
 
 排查结论：服务端在牌堆充足时**稳定摸 2 张**（60 组随机牌堆 + 特殊牌堆穷举验证）。
-真正的原因是**全局共享牌堆只有 43 张**，双方对局中持续摸牌，快摸完时自然抽不满 ——
-这是物理限制，作者确认「抽不满正常」。
+真正的原因是**全局共享牌堆是一副有限的牌**（卡池 43 条，见文末的牌堆规模测试），
+双方对局中持续摸牌，快摸完时自然抽不满 —— 这是物理限制，作者确认「抽不满正常」。
 
 但旧实现的提示文案**无论实际抽到几张都报"抽了2张牌"**，玩家因此以为卡坏了。
 本文件锁定"提示必须如实反映实际抽到的张数"，让玩家能区分：
@@ -194,9 +194,21 @@ def test_residual_no_draw_blocks_all(room):
 # 牌堆规模（供理解"为什么有时抽不满"）
 # ---------------------------------------------------------------------------
 def test_deck_size_is_finite(room):
-    """牌堆是一副有限的全局共享牌（43 条），双方共用 —— 抽不满是物理限制。"""
+    """牌堆是一副有限的全局共享牌，双方共用 —— 抽不满是物理限制。
+
+    卡池 43 条；**实际进牌堆的张数 = 卡池减去 `server.HIDDEN_CARD_NAMES`**
+    （暂时隐藏的卡不进牌堆，见 tests/test_hidden_cards.py）。
+    """
     deck = server.magic_cards
     assert len(deck) == 43, f'卡池应 43 条，实际 {len(deck)}'
     names = [c.name for c in deck]
     dups = {n for n in names if names.count(n) > 1}
     assert dups == {'失灵！'}, f'只有「失灵！」是多份，实际重复：{dups}'
+
+    hidden = sum(1 for n in names if n in server.HIDDEN_CARD_NAMES)
+    assert hidden == len(server.HIDDEN_CARD_NAMES), '隐藏名单里的每个卡名都应当真实存在于卡池'
+
+    room.init_player_magic(P1, server.magic_cards)
+    assert len(room.magic_deck) == len(deck) - hidden, (
+        f'牌堆应 {len(deck) - hidden} 张（卡池 {len(deck)} 减去隐藏 {hidden}），'
+        f'实际 {len(room.magic_deck)}')

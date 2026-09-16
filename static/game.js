@@ -6785,11 +6785,13 @@ function showPapalDiscardChoice() {
                             showAlert(resp.message);
                         } else if (resp && resp.status === 'success') {
                             showMessage(resp.message || '攻击次数 +2，现在可以正常攻击了');
-                            // 本地也把这张牌去掉，别等下一次 hand_updated 才更新
-                            if (gameState.hand && gameState.hand[i]) {
-                                gameState.hand.splice(i, 1);
-                                if (typeof updateHandUI === 'function') updateHandUI();
-                            }
+                            // ⚠️ 绝不能在这里本地删牌：服务端 _papal_discard_grant 扣牌后
+                            // 【已经】推了一次权威 hand_updated（3 张→2 张），ack 只是后到。
+                            // 旧实现在这里又 `hand.splice(i, 1)` 删一张 → 多删一张，
+                            // 作者实测「3 张弃掉 1 张，结果只剩 1 张」。
+                            // 与 2026-09-14 修的 sendMagicCard 是同一族：服务端才是权威，
+                            // 前端的本地删牌兜底一律不要。
+                            // 回归：tools/papal_discard_check.mjs 的 ★★ 那条断言。
                         }
                     });
                 }

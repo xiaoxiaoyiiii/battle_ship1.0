@@ -91,10 +91,26 @@ await ev(`(function(){
     if (el) el.classList.add('active');
   }
   window.__sent = [];
+  // ⚠️ 留住真实 socket：下面要借它把服务端事件真的投递给页面自己的 hand_updated 处理器。
+  // 只造一个"只回调 ack"的假 socket 是不够的 —— 那正是这个工具原先漏掉"弃一张少两张"
+  // 的原因：真实服务端在 ack 之前【已经】推过一次权威 hand_updated。
+  window.__realSocket = gameState.socket;
   gameState.socket = {
     emit: function(name, payload, cb){
       window.__sent.push({ name: name, payload: payload });
-      // 按真实服务端的响应形状回调，这样"本地删手牌 + 成功提示"那段才会执行
+      if (name === 'papal_discard') {
+        // 如实重放服务端顺序：_papal_discard_grant 先 pop 掉那张并 emit('hand_updated')，
+        // 函数返回后才走到 ack。
+        var idx = payload.discard_card_index;
+        var rest = (gameState.hand || []).slice();
+        rest.splice(idx, 1);
+        if (window.__realSocket && typeof window.__realSocket.onevent === 'function') {
+          window.__realSocket.onevent({ data: ['hand_updated', { hand: rest }] });
+        } else if (typeof applyHandPayload === 'function') {
+          applyHandPayload({ hand: rest });
+        }
+      }
+      // 按真实服务端的响应形状回调
       if (typeof cb === 'function') {
         if (name === 'papal_discard') {
           cb({ status: 'success', discarded: '冻结', attacks_remaining: 2,
@@ -114,6 +130,7 @@ await ev(`(function(){
   gameState.hand = [
     { name: '冻结', speed: 2, type: '普通' },
     { name: '轰炸', speed: 2, type: '普通' },
+    { name: '疗愈', speed: 1, type: '普通' },
   ];
   window.__alerts = [];
   window.showAlert = function(m){ window.__alerts.push(String(m)); };
@@ -164,9 +181,9 @@ check(!!dlg, '★ 次数为 0 时点对手棋盘会弹弃卡窗', dlg);
 check(!sentAfterBoardClick.some((s) => s.name === 'attack'),
   '★ 次数为 0 时不能直接发出普通 attack', sentAfterBoardClick.map((s) => s.name));
 check(!!dlg && /\+2/.test(dlg.text), '弹窗写明了弃卡的作用是 +2（不是"打两次"）', dlg && dlg.text);
-check(!!dlg && dlg.cards.length === 2, '弹窗列出了手牌', dlg && dlg.cards);
+check(!!dlg && dlg.cards.length === 3, '弹窗列出了手牌', dlg && dlg.cards);
 
-// ---- 3. 选一张 → 发 papal_discard，不带 x/y ----
+// ---- 3. 选一张 → 发 papal_discard，不带 x/y，且手牌只少一张 ----
 await ev(`(function(){
   var b = document.querySelector('.papal-discard-box .papal-discard-card');
   if (b) b.click();
@@ -181,8 +198,16 @@ check(disc.length === 1 && disc[0].payload.discard_card_index === 0,
 check(disc.length === 1 && disc[0].payload.x === undefined && disc[0].payload.y === undefined,
   '★ 不再带 x/y（旧实现是用坐标一次性打两发）', disc[0] && disc[0].payload);
 check(await ev(`document.querySelectorAll('.papal-discard-box').length`) === 0, '选完弹窗关闭');
-check(await ev(`(gameState.hand || []).length`) === 1, '本地手牌也少了一张',
-  await ev(`(gameState.hand || []).map(function(c){return c.name;})`));
+
+// ★★ 作者实测的那个 bug：3 张弃 1 张，应当剩 2 张。
+// 服务端 pop 后【已经】推过权威 hand_updated（3→2），前端 ack 回调若再本地删一张
+// 就会变成 1 —— 旧实现正是如此（与 2026-09-14 修的 sendMagicCard 同一族）。
+const afterDiscard = await ev(`(gameState.hand || []).map(function(c){return c.name;})`);
+const handDom = await ev(`document.querySelectorAll('#magic-system .magic-card, #magic-system .card').length`);
+check(afterDiscard.length === 2, '★★ 弃掉 1 张后应剩 2 张（3−1，作者报的 bug）', afterDiscard);
+check(afterDiscard.indexOf('冻结') === -1 && afterDiscard.indexOf('轰炸') >= 0
+      && afterDiscard.indexOf('疗愈') >= 0, '被弃的那张不在了、另外两张都在', afterDiscard);
+console.log('       手牌 DOM 卡片数:', handDom);
 const discMsgs = await ev('window.__alerts || []');
 check(discMsgs.some((m) => /\+2/.test(m)), '弃卡后给出「攻击次数 +2」的提示', discMsgs);
 

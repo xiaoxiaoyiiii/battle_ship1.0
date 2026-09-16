@@ -2561,7 +2561,8 @@ def end_turn(data):
             # 绝处逢生的"候选格高亮"只在本大回合有效：新大回合双方棋盘信息重置，
             # 再亮着六个格子就是过期线索了（唯一一艘船还在，但线索不该跨回合留着）。
             if room.game_effects.pop('last_stand_cells', None):
-                emit('last_stand_cells', {'cells': []}, room=room_id)
+                room.game_effects.pop('last_stand_owner', None)
+                emit('last_stand_cells', {'cells': [], 'owner': None}, room=room_id)
 
             # 新大回合：双方本回合伤害统计归零
             # （此前唯一重置点在死代码 switch_turn_after_end_phase 内，
@@ -4701,6 +4702,8 @@ def _build_room_sync(room, player_id: str) -> dict:
             {'x': cx, 'y': cy}
             for (cx, cy) in (room.game_effects.get('last_stand_cells') or [])
         ],
+        # 这批候选格属于谁的棋盘（前端据此决定高亮画在哪块棋盘上）
+        'last_stand_owner': room.game_effects.get('last_stand_owner'),
         # 玩家级状态标记：重连后 UI 需要知道"被看破 / 无中生有 / 余音绕梁"等
         'magic_blocked': bool(getattr(p, 'magic_blocked', False)),
         'effect_flags': {k: v for k, v in vars(p.effect_flags).items() if v},
@@ -5821,6 +5824,7 @@ def _finish_placement(room, player_id, kind):
     room.magic_temp_data.pop('pending_placement', None)
     if kind == 'last_stand':
         room.game_effects.pop('last_stand_cells', None)
+        room.game_effects.pop('last_stand_owner', None)
     if kind == 'shenji_redeploy':
         room.game_effects.pop('shenji_redeploy_cells', None)
         room.game_effects.pop('shenji_redeploy_ships', None)
@@ -7038,6 +7042,11 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             snap['sunken'] = len(caster.sunken_ships)
 
         room.game_effects['last_stand_cells'] = original_cells
+        # ⚠️ 必须记下这批候选格是【谁棋盘上的】。两块棋盘各有自己的 0-5 坐标，
+        # 不下发归属的话前端无从判断该高亮哪块 —— 实测（2026-09-16 作者反馈）
+        # 施法者自己放绝处逢生时，他那几个候选格被画到了**对手棋盘**上，
+        # 看着像"敌方可能在这儿"，直接误导他自己的攻击。
+        room.game_effects['last_stand_owner'] = caster_id
         # 把"原本有战舰的格子"公开给双方 —— 对方要据此知道唯一一艘新船可能在哪，
         # 而且这些格子必须【能打】。
         #
@@ -7046,7 +7055,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         # 结果对方看着六个叉子根本不知道能打哪儿、也以为打不了（作者实测反馈）。
         # 现在改成下发一份"候选格"名单，前端画成高亮而不是叉。
         cells_payload = [{'x': cx, 'y': cy} for (cx, cy) in original_cells]
-        emit('last_stand_cells', {'cells': cells_payload}, room=room.id)
+        emit('last_stand_cells', {'cells': cells_payload, 'owner': caster_id}, room=room.id)
         # 生效回合内其余魔法卡无效 + 击杀任何船直接获胜
         room.players[caster_id].effect_flags.last_stand = True
         _start_placement(room, caster_id, 'last_stand', 1)

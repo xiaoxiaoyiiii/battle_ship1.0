@@ -846,6 +846,9 @@ window.gameState = {
     // 「绝处逢生」的候选格：牺牲前原本有战舰的那几格，唯一一艘新船必在其中。
     // 公开信息，双方棋盘都高亮；这些格子【不是红叉】，对方照样能打。
     lastStandCells: [],
+    // 上面那批候选格属于【谁的棋盘】（服务端 last_stand_cells.owner 下发）。
+    // 两块棋盘各有自己的 0-5 坐标，画错棋盘会让玩家以为"敌方可能在这几格"。
+    lastStandOwner: null,
     // 正等待自己点选一艘船牺牲（恶魔契约等）。棋盘每次重绘后靠它把高亮补回来，
     // 否则伤害结算的重绘会把选区冲掉、让人以为「点了没反应」。
     pendingSacrifice: null,
@@ -1049,6 +1052,8 @@ function applyRoomSync(data) {
     // 绝处逢生的候选格（公开信息）：重连后高亮不能丢，否则玩家又以为那几格不能打
     if (Array.isArray(data.last_stand_cells)) {
         gameState.lastStandCells = data.last_stand_cells;
+        // 候选格属于谁的棋盘也要一起恢复 —— 只恢复格子会让高亮又画错棋盘
+        gameState.lastStandOwner = data.last_stand_owner || null;
     }
     // 连锁/效果上下文：重连后恢复连锁显示与响应窗口
     if (Array.isArray(data.chain)) {
@@ -2626,99 +2631,160 @@ function setupSocketListeners() {
             return;
         }
         playSfx('chain');
-        // 显示连锁选择对话框
+
+        const cards = Array.isArray(data.speed3_cards) ? data.speed3_cards : [];
+        const total = data.countdown || 10;
+        let left = total;
+        // 桌面有 hover 就「移上去看效果」；触摸设备没有 hover，改成「点一次看、再点一次打出」。
+        // 与日志卡名同一套判据（game.js 的 initGameLogCardRefs）。
+        const canHover = !window.matchMedia || window.matchMedia('(hover: hover)').matches;
+        // 效果描述来自前端卡面数据（window.magicCards），服务端 payload 里只有 name/speed
+        const fullOf = (c) => lookupCard(c && c.name) || c || {};
+
+        let cardsHTML = '';
+        if (cards.length) {
+            cardsHTML = cards.map((c, index) => {
+                const desc = String(fullOf(c).description || '');
+                const brief = desc.length > 46 ? desc.slice(0, 46) + '…' : desc;
+                return `<button type="button" class="priority-card chain-request-card" data-card-index="${index}">
+                    <span class="priority-card-name chain-request-card-name">${escapeHtml(String(c.name))}</span>
+                    <span class="priority-card-speed chain-request-card-speed">速阶 ${escapeHtml(String(c.speed))}</span>
+                    ${brief ? `<span class="chain-request-card-desc">${escapeHtml(brief)}</span>` : ''}
+                </button>`;
+            }).join('');
+        } else {
+            cardsHTML = '<p class="priority-empty chain-request-empty">你手上没有速阶3的魔法卡</p>';
+        }
+
+        const cardsHint = canHover
+            ? '把鼠标移到卡上可以看效果，点一下即打出。不响应请点「不响应」。'
+            : '点一下先看效果，再点一下才打出。不响应请点「不响应」。';
+
+        // 清掉可能残留的旧弹窗（重连 / 连续连锁时不叠加），并收掉可能还挂着的悬停浮层
+        document.querySelectorAll('.chain-request-prompt').forEach(el => el.remove());
+        hideCardTooltip();
+
+        // 结构与 class 与阶段转换的优先权弹窗同源：
+        // **外层**只用 `chain-request-prompt`（它是"这是哪个弹窗"的语义锚点 ——
+        //   `.priority-prompt` 会被 showPriorityPrompt 的清理逻辑删掉，共用它会误删连锁弹窗）；
+        // **内层**复用 `priority-*` 作视觉基类（面板/徽标/圆环/卡牌/按钮，深色主题与
+        //   "剩余 3 秒变红"都自动继承），`chain-request-*` 只放连锁专属差异（蓝色 accent、描述行）。
+        // 改整体质感只需改 .priority-* 一处，两个弹窗同时生效。
         const chainPrompt = document.createElement('div');
-        chainPrompt.className = 'magic-prompt';
-
-        // 生成速阶3卡牌列表HTML
-        let speed3CardsHTML = '';
-        data.speed3_cards.forEach((card, index) => {
-            speed3CardsHTML += `<div class="chain-card-item" data-card-index="${index}" data-card-name="${card.name}" data-card-speed="${card.speed}">
-                <div class="chain-card-name">${card.name}</div>
-                <div class="chain-card-speed">速阶：${card.speed}</div>
-            </div>`;
-        });
-
+        chainPrompt.className = 'chain-request-prompt';
         chainPrompt.innerHTML = `
-            <h3>连锁请求</h3>
-            <p>${data.caster && data.caster === gameState.playerId ? '你发动了' : '对方发动了'}魔法卡【${data.card.name}】</p>
-            <div class="chain-countdown">剩余时间：<span id="chain-countdown-time">10</span>秒</div>
-            <div class="chain-speed3-cards">
-                <h4>你拥有的速阶3魔法卡：</h4>
-                ${speed3CardsHTML}
-            </div>
-            <p class="chain-prompt-text">是否打出接续连锁？</p>
-            <div class="chain-options">
-                <button id="chain-cancel" class="chain-cancel-btn">取消</button>
+            <div class="priority-panel chain-request-panel">
+                <div class="priority-head chain-request-head">
+                    <span class="priority-badge chain-request-badge">连锁</span>
+                    <h3>${data.caster && data.caster === gameState.playerId ? '你发动了' : '对方发动了'}魔法卡【${escapeHtml(String((data.card && data.card.name) || '未知卡'))}】</h3>
+                </div>
+                <div class="priority-ring chain-request-ring" id="chain-request-ring">
+                    <span id="chain-countdown-time">${total}</span>
+                </div>
+                <p class="priority-hint chain-request-hint">${cardsHint}</p>
+                <div class="priority-cards chain-request-cards">${cardsHTML}</div>
+                <div class="priority-actions chain-request-actions">
+                    <button type="button" id="chain-cancel" class="priority-cancel-btn chain-request-cancel">不响应</button>
+                </div>
             </div>
         `;
         document.body.appendChild(chainPrompt);
 
-        // 倒计时功能
-        let countdown = data.countdown || 10;
-        const countdownTimer = setInterval(() => {
-            countdown--;
-            // 使用chainPrompt.querySelector获取当前对话框内的倒计时元素
-            const countdownTimeElement = chainPrompt.querySelector('#chain-countdown-time');
-            if (countdownTimeElement) {
-                countdownTimeElement.textContent = countdown;
+        // 倒计时圆环：与优先权弹窗同一个 --ring-deg 机制，≤3 秒变红
+        const ring = chainPrompt.querySelector('#chain-request-ring');
+        const tick = () => {
+            const el = chainPrompt.querySelector('#chain-countdown-time');
+            if (el) el.textContent = left;
+            if (ring) {
+                const deg = Math.max(0, Math.min(360, (left / total) * 360));
+                ring.style.setProperty('--ring-deg', deg + 'deg');
+                ring.classList.toggle('urgent', left <= 3);
             }
-            if (countdown <= 0) {
-                clearInterval(countdownTimer);
-                // 倒计时结束，自动默认"否"
+        };
+        tick();
+
+        const closePrompt = () => {
+            clearInterval(countdownTimer);
+            hideCardTooltip();
+            if (chainPrompt.parentNode) chainPrompt.parentNode.removeChild(chainPrompt);
+        };
+
+        // 倒计时结束 → 自动「不响应」（与旧行为一致）
+        const countdownTimer = setInterval(() => {
+            left -= 1;
+            tick();
+            if (left <= 0) {
                 gameState.socket.emit('chain_response', {
                     room_id: gameState.roomId,
                     player_id: gameState.playerId,
                     chain: false
                 });
-                document.body.removeChild(chainPrompt);
+                closePrompt();
             }
         }, 1000);
 
-        // 取消按钮 - 使用chainPrompt.querySelector获取当前对话框内的按钮
+        // 不响应
         const cancelButton = chainPrompt.querySelector('#chain-cancel');
         if (cancelButton) {
             cancelButton.addEventListener('click', () => {
-                clearInterval(countdownTimer);
                 gameState.socket.emit('chain_response', {
                     room_id: gameState.roomId,
                     player_id: gameState.playerId,
                     chain: false
                 });
-                document.body.removeChild(chainPrompt);
+                closePrompt();
             });
         }
 
-        // 点击速阶3卡牌选择连锁 - 使用chainPrompt.querySelectorAll获取当前对话框内的卡牌元素
-        const cardItems = chainPrompt.querySelectorAll('.chain-card-item');
-        cardItems.forEach(cardElement => {
-            cardElement.addEventListener('click', () => {
-                clearInterval(countdownTimer);
-                const cardIndex = parseInt(cardElement.dataset.cardIndex);
-                const selectedCard = data.speed3_cards[cardIndex];
-                document.body.removeChild(chainPrompt);
+        const respondWith = (cardIndex, selectedCard) => {
+            closePrompt();
 
-                // 需要目标的速阶3卡（神威！/轰炸/冻结/硫磺火焰/探测雷达）此前
-                // 一律发 targets: []，服务端缺目标直接失败 —— 等于这些卡在连锁
-                // 响应窗口里根本打不出来。改为先走目标选择器，再回填 targets。
-                if (needsTargetSelection(selectedCard.name)) {
-                    gameState.pendingChainCard = { card: selectedCard, index: cardIndex };
-                    gameState.currentMagicCard = selectedCard;
-                    gameState.currentCardIndex = cardIndex;
-                    // 神之宣告（速阶3）也走这个入口：先在自己棋盘上点选两艘要牺牲的船，
-                    // 确认后再问效果，最后一起回填给 chain_response。
-                    showMagicTargetSelection(selectedCard, cardIndex);
+            // 需要目标的速阶3卡（神威！/轰炸/冻结/硫磺火焰/探测雷达）此前
+            // 一律发 targets: []，服务端缺目标直接失败 —— 等于这些卡在连锁
+            // 响应窗口里根本打不出来。改为先走目标选择器，再回填 targets。
+            if (needsTargetSelection(selectedCard.name)) {
+                gameState.pendingChainCard = { card: selectedCard, index: cardIndex };
+                gameState.currentMagicCard = selectedCard;
+                gameState.currentCardIndex = cardIndex;
+                // 神之宣告（速阶3）也走这个入口：先在自己棋盘上点选两艘要牺牲的船，
+                // 确认后再问效果，最后一起回填给 chain_response。
+                showMagicTargetSelection(selectedCard, cardIndex);
+                return;
+            }
+
+            // 无需目标的卡：直接响应连锁
+            gameState.socket.emit('chain_response', {
+                room_id: gameState.roomId,
+                player_id: gameState.playerId,
+                chain: true,
+                card: selectedCard,
+                targets: []
+            });
+        };
+
+        // 触摸设备：第一次点只弹「卡牌详情」，第二次点同一张才真的打出去，
+        // 免得"想看效果"被当成"确认出牌"。
+        let detailShownIndex = -1;
+        chainPrompt.querySelectorAll('.chain-request-card').forEach((cardElement) => {
+            const cardIndex = parseInt(cardElement.dataset.cardIndex, 10);
+            const selectedCard = cards[cardIndex];
+            if (!selectedCard) return;
+
+            if (canHover) {
+                cardElement.addEventListener('mouseenter', () => showCardTooltip(cardElement, fullOf(selectedCard)));
+                cardElement.addEventListener('mouseleave', hideCardTooltip);
+            }
+
+            cardElement.addEventListener('click', () => {
+                if (!canHover && detailShownIndex !== cardIndex) {
+                    detailShownIndex = cardIndex;
+                    chainPrompt.querySelectorAll('.chain-request-card')
+                        .forEach(el => el.classList.remove('detail-shown'));
+                    cardElement.classList.add('detail-shown');
+                    showCardDetail(fullOf(selectedCard));
                     return;
                 }
-
-                // 无需目标的卡：直接响应连锁
-                gameState.socket.emit('chain_response', {
-                    room_id: gameState.roomId,
-                    player_id: gameState.playerId,
-                    chain: true,
-                    card: selectedCard,
-                    targets: []
-                });
+                respondWith(cardIndex, selectedCard);
             });
         });
     }
@@ -3322,10 +3388,15 @@ function setupSocketListeners() {
     socket.on('last_stand_cells', (data) => {
         const cells = (data && Array.isArray(data.cells)) ? data.cells : [];
         gameState.lastStandCells = cells.filter(c => c && typeof c.x === 'number' && typeof c.y === 'number');
+        // 归属：这批格子是【谁棋盘上的】。没有它就只能瞎猜棋盘，实测会画到对手棋盘上。
+        gameState.lastStandOwner = (data && data.owner) || null;
         if (typeof initGameBoards === 'function') initGameBoards();
         if (gameState.lastStandCells.length) {
-            showMessage('绝处逢生：对方牺牲了全部战舰，唯一一艘会放在高亮的格子之一（这些格子可以打）',
-                        { type: 'warning' });
+            const mine = gameState.playerId && gameState.lastStandOwner === gameState.playerId;
+            showMessage(mine
+                ? '绝处逢生：唯一一艘会放在高亮的格子之一（点一格放置）'
+                : '绝处逢生：对方牺牲了全部战舰，唯一一艘会在高亮的格子之一（这些格子可以打）',
+                { type: 'warning' });
         }
     });
 
@@ -3571,6 +3642,10 @@ function initBoard(boardElement, isEditable = false) {
 
 // 初始化游戏棋盘
 function initGameBoards() {
+    // 绝处逢生候选格属于【谁的棋盘】——两块棋盘各有自己的 0-5 坐标，画错棋盘会误导攻击。
+    // owner 为空（旧载荷 / 已清空）时按"不是我"处理，与修复前的行为保持一致。
+    const lastStandIsMine = () => !!(gameState.lastStandOwner && gameState.playerId
+        && gameState.lastStandOwner === gameState.playerId);
     // 初始化玩家棋盘
     gamePlayerBoard.innerHTML = '';
     for (let y = 0; y < 6; y++) {
@@ -3628,6 +3703,14 @@ function initGameBoards() {
                 cell.title = '护盾挡住了这一炮，本回合还能被再打一次';
             }
 
+            // 绝处逢生的候选格（**我的棋盘**上的）：我自己放的那次，唯一一艘必在这几格之一。
+            // 修复前这里只写在对手棋盘的循环里 —— 于是自己放绝处逢生时，
+            // 属于我棋盘的候选格被画到了对手棋盘上（作者实测反馈）。
+            if (lastStandIsMine() && (gameState.lastStandCells || []).some(p => p.x === x && p.y === y)) {
+                cell.classList.add('last-stand-candidate');
+                if (!cell.textContent) cell.title = '绝处逢生的唯一一艘战舰可能在这一格（你的棋盘）';
+            }
+
             gamePlayerBoard.appendChild(cell);
         }
     }
@@ -3670,11 +3753,13 @@ function initGameBoards() {
                 cell.title = '这一炮被护盾挡下，船毫发无伤 —— 本回合还能再打这一格';
             }
 
-            // 绝处逢生的候选格（公开信息）：高亮提示"唯一一艘可能在这几格之一"。
-            // ⚠️ 绝不能画成叉或加 hit/miss 类 —— 那会让玩家以为"已经打过、打不了"。
-            if ((gameState.lastStandCells || []).some(p => p.x === x && p.y === y)) {
+            // 绝处逢生的候选格（**对方棋盘**上的）：只有当这批候选格属于对方棋盘时才画这里。
+            // ⚠️ 属于我自己棋盘的候选格绝不能画到这块棋盘上 —— 看起来就是"敌方可能在这几格"，
+            // 会直接误导我自己的攻击（作者 2026-09-16 实测反馈）。
+            // ⚠️ 仍然绝不能画成叉或加 hit/miss 类 —— 那会让玩家以为"已经打过、打不了"。
+            if (!lastStandIsMine() && (gameState.lastStandCells || []).some(p => p.x === x && p.y === y)) {
                 cell.classList.add('last-stand-candidate');
-                if (!cell.textContent) cell.title = '绝处逢生的唯一一艘战舰可能在这一格';
+                if (!cell.textContent) cell.title = '绝处逢生的唯一一艘战舰可能在这一格（对方棋盘）';
             }
 
             // 已被卡牌显形的格子：重绘棋盘后也要保留（否则一次 initGameBoards 就把线索擦没了）

@@ -506,3 +506,59 @@ def test_other_block_reason_still_reported(room):
 
     assert res.get('status') == 'error'
     assert '禁忌果实' in res['message'], f'实际：{res["message"]}'
+
+
+# ---------------------------------------------------------------------------
+# 候选格归属（2026-09-16）：last_stand_cells 必须带「这是谁的棋盘」
+#
+# 作者实测：自己放绝处逢生后，属于**自己棋盘**的候选格被画到了**对手棋盘**上，
+# 看起来像"敌方可能在这几格"，直接误导自己的攻击。
+# 两块棋盘各有自己的 0-5 坐标，前端只有拿到 owner 才知道该高亮哪一块。
+# ---------------------------------------------------------------------------
+def _last_stand_payload(events):
+    payloads = [d for (e, d, _t, _r) in events if e == 'last_stand_cells' and d.get('cells')]
+    assert payloads, '应当下发了带候选格的 last_stand_cells'
+    return payloads[-1]
+
+
+def test_last_stand_cells_payload_carries_owner(room, events):
+    """★ 载荷必须带 owner，否则前端无从判断该高亮哪块棋盘。"""
+    room.players[P1].ships = [ship((0, 0)), ship((1, 1)), ship((2, 2))]
+    room.players[P1].remaining_ships = 3
+
+    apply(room, P1, '绝处逢生')
+
+    payload = _last_stand_payload(events)
+    assert payload.get('owner') == P1, f'候选格载荷缺少正确的 owner：{payload}'
+    assert room.game_effects.get('last_stand_owner') == P1
+    assert len(payload.get('cells') or []) == 3, '候选格应当是"原本有战舰的那几格"'
+
+
+def test_room_sync_carries_last_stand_owner(room):
+    """重连快照也要带归属，否则重连后高亮又会画错棋盘。
+
+    注意：绝处逢生要求至少 3 艘战舰才能发动（卡面实现如此），
+    给 2 艘时 apply 会直接失败、owner 根本不会写入 —— 那样测试会假红。
+    """
+    room.players[P1].ships = [ship((0, 0)), ship((1, 1)), ship((2, 2))]
+    room.players[P1].remaining_ships = 3
+
+    res = apply(room, P1, '绝处逢生')
+    assert res.success is True, res.message
+
+    sync = server._build_room_sync(room, P2)          # 从"对手"视角看这份快照
+    assert sync.get('last_stand_owner') == P1, sync.get('last_stand_owner')
+    assert len(sync.get('last_stand_cells') or []) == 3
+
+
+def test_last_stand_owner_cleared_with_cells(room):
+    """归属必须跟候选格一起清 —— 留下孤儿 owner 会让清空后还在高亮。"""
+    room.players[P1].ships = [ship((0, 0)), ship((1, 1)), ship((2, 2))]
+    room.players[P1].remaining_ships = 3
+
+    res = place_last_stand(room, P1, 0, 0)
+    assert res['status'] == 'success', res
+
+    assert 'last_stand_cells' not in room.game_effects
+    assert 'last_stand_owner' not in room.game_effects, (
+        '候选格清了、归属没清 → 留下孤儿状态，下次渲染还会高亮')

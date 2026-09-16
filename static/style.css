@@ -1616,6 +1616,46 @@ body.cool-effects-enabled .cell.cool-flash {
     box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.18);
 }
 
+/* ===========================================================================
+   连锁请求弹窗（2026-09-16 重做）
+   DOM 同时挂 .priority-* 与 .chain-request-*：前者是**共用视觉基类**
+   （面板/徽标/圆环/卡牌/按钮，含深色主题与"剩余 3 秒变红"），
+   这里只写连锁专属的差异 —— accent 颜色与新增的「卡牌描述摘要」行。
+   改整体质感只需改上面 .priority-* 一处，两个弹窗同时生效。
+   accent 用站点主色而非优先权的金色：金色在这套设计里表示"阶段转换的机会窗口"，
+   连锁是另一种语义，两个窗口长得一模一样会让玩家分不清。
+   =========================================================================== */
+.chain-request-panel { border-color: rgba(var(--primary-rgb, 21, 101, 192), 0.55); }
+.chain-request-badge {
+    border-color: rgba(var(--primary-rgb, 21, 101, 192), 0.45);
+    background: rgba(var(--primary-rgb, 21, 101, 192), 0.16);
+    color: var(--primary);
+}
+html.theme-dark .chain-request-panel { border-color: rgba(var(--primary-rgb, 21, 101, 192), 0.5); }
+
+/* 卡牌信息：卡名 / 速阶占一行，描述摘要单独一行（桌面不悬停也看得到大意） */
+.chain-request-card { flex-direction: column; align-items: flex-start; }
+.chain-request-card-desc {
+    display: block;
+    margin-top: 6px;
+    font-size: 0.74rem;
+    line-height: 1.45;
+    text-align: left;
+    color: var(--muted);
+}
+/* 触摸设备「点一次看效果」：给出"已选中 / 再看一次就打出"的反馈 */
+.chain-request-card.detail-shown {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(var(--primary-rgb, 21, 101, 192), 0.35);
+}
+.chain-request-card.detail-shown::after {
+    content: '再看一次即打出';
+    display: block;
+    margin-top: 4px;
+    font-size: 0.7rem;
+    color: var(--primary);
+}
+
 /* ---------- 16. 连锁提示 ---------- */
 .chain-prompt-container {
     position: fixed;
@@ -1632,7 +1672,8 @@ body.cool-effects-enabled .cell.cool-flash {
    设计：金色 accent 表达"这是一个机会窗口"，倒计时做成圆环，
    底部「拒绝所有阶段转换时点」做成开关（可随时切回）。
    =========================================================================== */
-.priority-prompt {
+.priority-prompt,
+.chain-request-prompt {
     position: fixed;
     inset: 0;
     z-index: 9000;

@@ -220,7 +220,7 @@ async function main() {
     const fired = await ev('window.__chainProbe || []');
     const gaveUp = fired.some((e) => e.name === 'chain_response' && e.payload && e.payload.chain === false);
     check(gaveUp, '绝处逢生生效时连锁窗口直接放弃（不弹窗）', fired);
-    const promptShown = await ev('document.querySelectorAll(".magic-prompt").length');
+    const promptShown = await ev('document.querySelectorAll(".chain-request-prompt, .magic-prompt").length');
     check(promptShown === 0, '不该弹出连锁响应窗口', { promptShown });
     const chainToast = (await drainToasts()).join(' | ');
     check(/绝处逢生/.test(chainToast), '放弃时给出了原因', chainToast);

@@ -102,7 +102,7 @@ function fireChain(cards) {
     ' cbs.slice().forEach(function (f) { f(payload); }); return "ok"; })()';
 }
 
-const CLICK_CHAIN_ITEM = '(function(){ var el = document.querySelector(".chain-card-item"); if(!el) return "no-item"; el.click(); return "clicked"; })()';
+const CLICK_CHAIN_ITEM = '(function(){ var el = document.querySelector(".chain-request-card"); if(!el) return "no-item"; el.click(); return "clicked"; })()';
 
 function snapshotEmit() {
   return '(function(){ if (!window.__cap) return "no-cap";' +
@@ -110,7 +110,7 @@ function snapshotEmit() {
     ' return { count: window.__cap.length, last: last, events: window.__cap.map(function(c){return c.ev;}),' +
     '   pendingChainCard: !!gameState.pendingChainCard,' +
     '   pickers: document.querySelectorAll(".magic-target-prompt, #confirm-magic-ships, #area-confirm").length,' +
-    '   chainItems: document.querySelectorAll(".chain-card-item").length }; })()';
+    '   chainItems: document.querySelectorAll(".chain-request-card").length }; })()';
 }
 
 try {
@@ -164,7 +164,7 @@ try {
   // ---------- A. 需要目标的卡：冻结（3x3 区域） ----------
   const a1 = await ev(fireChain([{ name: '冻结', speed: 3, type: '普通', description: '冻结 3x3 区域' }]));
   check(a1 === 'ok', 'A1 触发 chain_request（冻结）', a1);
-  check(await ev('document.querySelectorAll(".chain-card-item").length') === 1, 'A2 弹出连锁选择框并列出速阶3卡');
+  check(await ev('document.querySelectorAll(".chain-request-card").length') === 1, 'A2 弹出连锁选择框并列出速阶3卡');
 
   const a3 = await ev(CLICK_CHAIN_ITEM);
   check(a3 === 'clicked', 'A3 点击速阶3卡', a3);
@@ -238,6 +238,56 @@ try {
     && Array.isArray(lastC.data.targets.selected_cells) && lastC.data.targets.selected_cells.length === 2,
     'C5 同时带上 effect_choice 与 selected_cells', lastC && lastC.data && lastC.data.targets);
   check(await ev('gameState.pendingChainCard === null || gameState.pendingChainCard === undefined'), 'C6 状态已清理');
+
+  // ---------- D. 卡牌效果预览（2026-09-16 新增） ----------
+  // 作者要求：连锁请求里鼠标移上去能看效果、手机点一下弹窗介绍效果。
+  const d1 = await ev(fireChain([{ name: '轰炸', speed: 3, type: '普通', description: '对一行或一列的所有格子发动攻击' }]));
+  check(d1 === 'ok', 'D1 触发 chain_request（轰炸）', d1);
+  await sleep(250);
+
+  const d2 = await ev('(function(){ var el = document.querySelector(".chain-request-card .chain-request-card-desc");' +
+    ' return el ? el.textContent.trim() : null; })()');
+  check(!!d2 && d2.length > 0, 'D2 卡面上直接显示效果描述摘要（不悬停也看得到大意）', d2);
+
+  // 桌面：悬停出浮层（复用日志卡名那套 showCardTooltip）
+  await ev('(function(){ document.querySelector(".chain-request-card")' +
+    '.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true })); return true; })()');
+  await sleep(200);
+  const d3 = await ev('(function(){ var t = document.querySelector(".card-tooltip"); return t ? t.textContent : null; })()');
+  check(!!d3 && /一行或一列/.test(d3), 'D3 桌面悬停弹出效果浮层（含完整描述）', d3 && d3.slice(0, 50));
+  await ev('(function(){ document.querySelector(".chain-request-card")' +
+    '.dispatchEvent(new MouseEvent("mouseleave", { bubbles: true })); return true; })()');
+  await sleep(200);
+  check(await ev('document.querySelectorAll(".card-tooltip").length') === 0, 'D4 鼠标移开后浮层收起');
+
+  // 与优先权弹窗同源：内层复用 priority-* 视觉基类
+  const d5 = await ev('(function(){ return {' +
+    ' panel: document.querySelectorAll(".chain-request-prompt .priority-panel").length,' +
+    ' badge: document.querySelectorAll(".chain-request-prompt .priority-badge").length,' +
+    ' ring: document.querySelectorAll(".chain-request-prompt .priority-ring").length,' +
+    ' card: document.querySelectorAll(".chain-request-prompt .priority-card").length }; })()');
+  check(d5 && d5.panel === 1 && d5.badge === 1 && d5.ring === 1 && d5.card === 1,
+    'D5 复用优先权面板的视觉基类（面板/徽标/圆环/卡牌）', d5);
+  await ev('(function(){ var el = document.querySelector(".chain-request-prompt"); if (el) el.remove(); return true; })()');
+
+  // 触摸设备（无 hover）：点一次看效果、再点一次才打出
+  await ev('(function(){ window.__realMM = window.matchMedia;' +
+    ' window.matchMedia = function(q){ return { matches: false, media: q, addListener: function(){},' +
+    ' removeListener: function(){} }; }; return true; })()');
+  const d6 = await ev(fireChain([{ name: '失灵！', speed: 3, type: '普通', description: '无效化对方刚使用的一张魔法卡' }]));
+  check(d6 === 'ok', 'D6 触摸模式触发 chain_request', d6);
+  await sleep(250);
+  const d7 = await ev('(function(){ window.__cap = []; document.querySelector(".chain-request-card").click();' +
+    ' return { detail: document.querySelectorAll(".card-detail-overlay").length, emitted: (window.__cap || []).length }; })()');
+  check(d7 && d7.detail === 1 && d7.emitted === 0,
+    'D7 触摸设备第一次点只弹效果详情、不发出牌', d7);
+  await ev('(function(){ var c = document.querySelector(".card-detail-close"); if (c) c.click(); return true; })()');
+  await sleep(200);
+  const d8 = await ev('(function(){ document.querySelector(".chain-request-card").click();' +
+    ' return (window.__cap || []).map(function(c){ return c.ev; }); })()');
+  check(Array.isArray(d8) && d8.indexOf('chain_response') >= 0, 'D8 再点一次才真的打出（chain_response）', d8);
+  await ev('(function(){ window.matchMedia = window.__realMM; return true; })()');
+  await ev('(function(){ var el = document.querySelector(".chain-request-prompt"); if (el) el.remove(); return true; })()');
 
   if (SHOT) { const s = await send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(SHOT, Buffer.from(s.data, 'base64')); console.log('截图已保存: ' + SHOT); }
   check(jsProblems.length === 0, '页面无 JS 异常/报错', jsProblems);

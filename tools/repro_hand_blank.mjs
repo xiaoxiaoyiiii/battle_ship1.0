@@ -216,7 +216,7 @@ async function dismissOverlays(tab) {
     var acted = [];
     var pc = document.querySelector('#priority-cancel');
     if (pc) { pc.click(); acted.push('priority-cancel'); }
-    var cc = document.querySelector('.chain-pass-btn, .chain-cancel-btn, #chain-pass');
+    var cc = document.querySelector('.chain-request-cancel, .chain-pass-btn, .chain-cancel-btn, #chain-cancel, #chain-pass');
     if (cc) { cc.click(); acted.push('chain-pass'); }
     return acted;
   })()`);
@@ -252,7 +252,7 @@ async function finishPendingUI(tab) {
       if (cells.length) { cells[0].click(); return 'pick-cell'; }
       var pc = document.querySelector('#priority-cancel');
       if (pc) { pc.click(); return 'priority-cancel'; }
-      var cc = document.querySelector('.chain-pass-btn, .chain-cancel-btn, #chain-pass');
+      var cc = document.querySelector('.chain-request-cancel, .chain-pass-btn, .chain-cancel-btn, #chain-cancel, #chain-pass');
       if (cc) { cc.click(); return 'chain-pass'; }
       return null;
     })()`);

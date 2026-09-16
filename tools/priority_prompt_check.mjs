@@ -90,7 +90,7 @@ async function installProbe() {
       window.__realCallbacks = (gameState.socket && gameState.socket._callbacks) || {};
     }
     // 关掉可能残留的弹窗，保证每次从干净状态开始
-    document.querySelectorAll('.priority-prompt, .magic-prompt').forEach(function(el){ el.remove(); });
+    document.querySelectorAll('.priority-prompt, .chain-request-prompt, .magic-prompt').forEach(function(el){ el.remove(); });
     window.__emitted = [];
     gameState.socket = {
       emit: function(name, payload){ window.__emitted.push({name:name, payload:payload}); },
@@ -232,7 +232,7 @@ await fire('chain_request', {
   speed3_cards: [{ name: '失灵！', speed: 3 }], countdown: 10,
 });
 await sleep(400);
-const chainShown = await ev(`document.querySelectorAll('.magic-prompt').length`);
+const chainShown = await ev(`document.querySelectorAll('.chain-request-prompt').length`);
 check(chainShown >= 1, '连锁弹窗照常弹出', chainShown);
 const priorityShown = await ev(`document.querySelectorAll('.priority-prompt').length`);
 check(priorityShown === 0, '两类弹窗不会互相触发', priorityShown);

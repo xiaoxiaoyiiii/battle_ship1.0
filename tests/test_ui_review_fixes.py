@@ -89,8 +89,10 @@ def test_game_screen_uses_fullwidth_colons():
     for text in ('当前阶段：', '当前回合：', '剩余攻击次数：', '当前生效的场地魔法：',
                  '速阶：', '类型：', '效果描述：'):
         assert text in HTML, '%s 未使用全角冒号' % text
-    # game.js 里动态拼的几处（手牌速阶、场地魔法、连锁倒计时）
-    for text in ('速阶：', '当前生效的场地魔法：', '剩余时间：'):
+    # game.js 里动态拼的几处（手牌速阶、场地魔法）
+    # ⚠️ 连锁请求的倒计时 2026-09-16 改成了圆环（只显示秒数，不再有「剩余时间：」这行文案），
+    #    所以这里不再校验该字符串；圆环本身由 tools/chain_target_check.mjs 断言。
+    for text in ('速阶：', '当前生效的场地魔法：'):
         assert text in JS, 'game.js 缺少 %s' % text
     assert '当前生效的场地魔法: ' not in JS
     assert '速阶: ' not in JS

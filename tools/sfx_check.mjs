@@ -220,7 +220,7 @@ try {
   }));
   check(chainFired === 'ok' && (await ev('window.__played.slice()')).indexOf('chain') >= 0,
     '连锁请求播放 chain', await ev('window.__played.slice()'));
-  await ev('(function(){ var el = document.querySelector(".magic-prompt"); if (el) el.remove(); return 1; })()');
+  await ev('(function(){ var el = document.querySelector(".chain-request-prompt, .magic-prompt"); if (el) el.remove(); return 1; })()');
 
   // 设置面板里的静音开关
   const cb = await ev('(function(){ var el = document.getElementById("sfx-muted"); return el ? { exists: true, checked: el.checked } : { exists: false }; })()');

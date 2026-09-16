@@ -3637,8 +3637,8 @@ def _emit_board_attacks(room):
         }, to=player.sid)
 
 
-def _clear_attacks_on_cells(room, positions):
-    """把指定格子从双方的攻击历史里移除，并把结果重新下发给两端。
+def _clear_attacks_on_cells(room, positions, board_owner_id):
+    """把指定格子从【对手打到这块棋盘上】的攻击历史里移除，并把结果重新下发给两端。
 
     复活 / 增援 / 重新部署之后必须做这一步，否则会出两种问题：
       · 前端仍按旧的攻击记录把这些格子画成"已命中"，玩家看到刚放上去的船
@@ -3646,25 +3646,30 @@ def _clear_attacks_on_cells(room, positions):
       · handle_attack 会以"你已经攻击过这个位置了"拒绝对方再打这里 ——
         这艘船永远打不沉，变成幽灵船，对手永远无法获胜。
 
-    原先只有 _revive_sunken_ships 做了这一步，放置流程（增援/复活/绝处逢生/
-    神机妙算）全都漏了 —— 实测玩家报的"摆完后格子状态不对"就是这个。
-
     ⚠️ 2026-09-14 补充：清服务端数据【还不够】。前端那两个列表是本地缓存，
     必须用 _emit_board_attacks 重发一次 —— 否则玩家点不动那个格子
     （见该函数的注释）。
+
+    ⚠️ 2026-09-16 修正：**只能清对手那份**。两个坐标空间是不同的 ——
+    `room.players[p].attacks` 记的是「p 打到**对方**棋盘上的格子」。
+    所以"我要把船放回**我的** (x,y)"这件事只跟**对手**的记录有关。
+    旧实现把这一格从**双方**列表里都删，于是同一坐标在两边都存在时
+    （例如双方都打过 (0,0)，实战里很常见）会把"我打在对方棋盘的 ✕"一起误删：
+      · 自己看对方棋盘，那一格的 ✕ 凭空消失；
+      · handle_attack 的"你已经攻击过这个位置"校验查的正是自己那份列表，
+        被清后失效 → 能重复打那一格，等于白赚一炮。
     """
     cells = {(p.x, p.y) for p in (positions or [])}
-    if not cells:
+    if not cells or not board_owner_id:
         return
-    changed = False
-    for pid in room.players:
-        before = len(room.players[pid].attacks)
-        room.players[pid].attacks = [
-            a for a in room.players[pid].attacks if (a.x, a.y) not in cells
-        ]
-        if len(room.players[pid].attacks) != before:
-            changed = True
-    if changed:
+    opponent_id = _opponent_of(room, board_owner_id)
+    if not opponent_id or opponent_id not in room.players:
+        return
+    before = len(room.players[opponent_id].attacks)
+    room.players[opponent_id].attacks = [
+        a for a in room.players[opponent_id].attacks if (a.x, a.y) not in cells
+    ]
+    if len(room.players[opponent_id].attacks) != before:
         _emit_board_attacks(room)
 
 
@@ -3702,7 +3707,9 @@ def _revive_sunken_ships(room, player, count):
         revived.hits = []
         for pos in revived.positions:
             pos.hit = False
-        _clear_attacks_on_cells(room, revived.positions)
+        # 这块棋盘属于 player：只清【对手】打在这里的记录
+        _owner_id = next((pid for pid, pl in room.players.items() if pl is player), None)
+        _clear_attacks_on_cells(room, revived.positions, _owner_id)
         player.remaining_ships += 1
         revived_any += 1
     # 八方来财：魔法卡造成的船数增加（疗愈 / 神机妙算复活）属于主动变化，
@@ -5023,7 +5030,7 @@ def handle_confirm_reinforcement(data):
         if revived not in caster.ships:
             caster.ships.append(revived)
         caster.remaining_ships += 1
-        _clear_attacks_on_cells(room, revived.positions)
+        _clear_attacks_on_cells(room, revived.positions, player_id)
         msg = f'神机妙算：战舰已重新部署到 ({x},{y})'
     elif pending['kind'] == 'revive':
         if not caster.sunken_ships:
@@ -5042,20 +5049,20 @@ def handle_confirm_reinforcement(data):
         if revived not in caster.ships:
             caster.ships.append(revived)
         caster.remaining_ships += 1
-        _clear_attacks_on_cells(room, revived.positions)
+        _clear_attacks_on_cells(room, revived.positions, player_id)
         msg = f'复活战舰已部署到 ({x},{y})'
     elif pending['kind'] == 'last_stand':
         # 绝处逢生的"唯一一艘战舰"：牺牲掉的船留在沉船堆，这里放一艘新的
         new_ship = PlayerShip(positions=[Position(x=x, y=y)], hits=[])
         caster.ships.append(new_ship)
         caster.remaining_ships += 1
-        _clear_attacks_on_cells(room, new_ship.positions)
+        _clear_attacks_on_cells(room, new_ship.positions, player_id)
         msg = f'绝处逢生：唯一一艘战舰已部署到 ({x},{y})'
     else:
         new_ship = PlayerShip(positions=[Position(x=x, y=y)], hits=[])
         caster.ships.append(new_ship)
         caster.remaining_ships += 1
-        _clear_attacks_on_cells(room, new_ship.positions)
+        _clear_attacks_on_cells(room, new_ship.positions, player_id)
         msg = f'增援战舰已部署到 ({x},{y})'
 
     pending['remaining'] -= 1

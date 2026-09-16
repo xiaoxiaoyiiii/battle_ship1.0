@@ -281,7 +281,14 @@ def test_liaoyu_revives_in_place(room):
     assert room.players[P1].remaining_ships == 1
     assert sunk.hits == [], '复活必须清空命中'
     assert sunk.positions[0].x == 2 and sunk.positions[0].y == 2, '原地复活'
-    assert all(not (a.x == 2 and a.y == 2) for a in room.players[P1].attacks)
+    # (2,2) 是 P1 棋盘上的格子：要清的是【对手打过这里】那条记录（P2.attacks），
+    # 清掉后对方才能再打这一格、前端才不画 ✕。
+    # ⚠️ 不能断言 P1.attacks 那条也被清 —— 那是"P1 打在**对方**棋盘的 (2,2)"，
+    # 另一个坐标空间；清了会误删对方棋盘上的 ✕ 并让人重复打那一格（2026-09-16 修正）。
+    assert all(not (a.x == 2 and a.y == 2) for a in room.players[P2].attacks), \
+        '对方打在我这格的记录必须清掉，否则这艘船打不沉'
+    assert any(a.x == 2 and a.y == 2 for a in room.players[P1].attacks), \
+        '我自己打在对方棋盘的 (2,2) 不该被复活碰掉'
     assert 'pending_placement' not in room.magic_temp_data
 
 

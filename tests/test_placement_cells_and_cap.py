@@ -153,11 +153,11 @@ def test_shenji_free_cells_not_blocked(room, events):
 # 问题 2：放置后格子状态
 # ---------------------------------------------------------------------------
 def test_reinforce_clears_attack_history(room):
-    """增援放到某格后，该格要从双方攻击历史里移除。"""
+    """增援放到某格后，该格要从【对手】的攻击历史里移除（施法者自己那份不动）。"""
     room.players[P1].remaining_ships = 5
     room.players[P1].ships = room.players[P1].ships[:5]
     room.players[P2].attacks.append(Position(x=3, y=3))   # 对方打过
-    room.players[P1].attacks.append(Position(x=3, y=3))   # 自己也打过
+    room.players[P1].attacks.append(Position(x=3, y=3))   # 我也打过对方棋盘的同一坐标
 
     room.players[P1].magic_hand = [card('增援')]
     server.apply_magic_effect(room, P1, card('增援'), {})
@@ -166,20 +166,61 @@ def test_reinforce_clears_attack_history(room):
         {'room_id': room.id, 'player_id': P1, 'position': {'x': 1, 'y': 1}})
 
     assert not any(a.x == 1 and a.y == 1 for a in room.players[P2].attacks)
-    assert not any(a.x == 1 and a.y == 1 for a in room.players[P1].attacks)
+    assert any(a.x == 3 and a.y == 3 for a in room.players[P1].attacks), \
+        '我自己打在对方棋盘的 (3,3) 不该被这次放置碰掉'
 
 
 def test_clear_attacks_helper(room):
-    """_clear_attacks_on_cells 清双方的历史。"""
-    room.players[P1].attacks.append(Position(x=2, y=2))
-    room.players[P2].attacks.append(Position(x=2, y=2))
+    """_clear_attacks_on_cells 只清【对手打在这块棋盘上】的记录。
+
+    (2,2) 是 P1 棋盘上的格子：`P2.attacks` 里那条是该清的。
+    而 `P1.attacks` 里的 (2,2) 是"P1 打在**对方**棋盘上的那一炮"——
+    两个坐标空间，纬度不同，绝不能动（2026-09-16 修正）。
+    """
+    room.players[P1].attacks.append(Position(x=2, y=2))   # 我打在对方棋盘的
+    room.players[P2].attacks.append(Position(x=2, y=2))   # 对方打在我棋盘的
     room.players[P2].attacks.append(Position(x=4, y=4))
 
-    server._clear_attacks_on_cells(room, [Position(x=2, y=2)])
+    server._clear_attacks_on_cells(room, [Position(x=2, y=2)], P1)
 
-    assert not any(a.x == 2 and a.y == 2 for a in room.players[P1].attacks)
-    assert not any(a.x == 2 and a.y == 2 for a in room.players[P2].attacks)
+    assert not any(a.x == 2 and a.y == 2 for a in room.players[P2].attacks), \
+        '对手打在我这格的记录必须清掉，否则他不能再打（幽灵船）'
+    assert any(a.x == 2 and a.y == 2 for a in room.players[P1].attacks), \
+        '我自己打在对方棋盘的同一坐标被误清：✕ 会消失、还能重复打那一格'
     assert any(a.x == 4 and a.y == 4 for a in room.players[P2].attacks), '别的格不该被误清'
+
+
+def test_shenji_redeploy_keeps_own_attack_history(room):
+    """★ 把船放回【我的】原位，不该擦掉【我打在对方棋盘上】的记录。
+
+    这正是上一条修正的用户可见后果：双方都打过 (0,0) 时（实战很常见），
+    旧实现会把我的那条一起删掉 → 我看对方棋盘的 ✕ 凭空消失，
+    且 handle_attack 的"已打过"校验失效 → 白赚一炮。
+    """
+    room.players[P1].attacks.append(Position(x=0, y=0))   # 我打过对方棋盘的 (0,0)
+    room.players[P2].attacks.append(Position(x=0, y=0))   # 对方打过我的 (0,0)
+
+    p = room.players[P1]
+    ship = p.ships[0]
+    ship.hits = list(ship.positions)
+    server._mark_ship_sunken(p, ship)
+    p.remaining_ships = 5
+
+    server._apply_shenji_prediction(room, P1, 1)
+    room.game_effects['prediction_initial_p1']['sunken_ids'] = []
+    server._begin_shenji_redeploy(room, P1, 1, already_sunken_ids=[])
+    out = server.handle_confirm_reinforcement(
+        {'room_id': room.id, 'player_id': P1, 'position': {'x': 0, 'y': 0}})
+    assert out.get('status') == 'success', out
+
+    assert any(a.x == 0 and a.y == 0 for a in room.players[P1].attacks), \
+        '我打在对方棋盘 (0,0) 的记录被误清 → ✕ 会消失、还能重复打那一格'
+
+    # 原来的修复不能被破坏：对方仍然能打我这格
+    room.current_attacker = P2
+    room.attacks_remaining = 6
+    atk = server.handle_attack({'room_id': room.id, 'player_id': P2, 'x': 0, 'y': 0})
+    assert atk.get('status') == 'success', f'对方应能攻击该格，实际：{atk}'
 
 
 def test_shenji_original_cell_becomes_attackable(room):

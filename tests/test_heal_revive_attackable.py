@@ -184,7 +184,7 @@ def test_broadcast_keeps_hit_flag(room, events):
 def test_no_broadcast_when_nothing_cleared(room, events):
     """没有任何格子被清时不发这份广播（避免无意义的重绘）。"""
     events.clear()
-    server._clear_attacks_on_cells(room, [Position(0, 0)])
+    server._clear_attacks_on_cells(room, [Position(0, 0)], P1)
     assert not [1 for (e, _d, _t, _r) in events if e == 'board_attacks_updated']
 
 
@@ -192,9 +192,13 @@ def test_reinforcement_also_broadcasts(room, events):
     """增援 / 重新部署走的是同一个清理函数，也必须重发。
 
     （作者报的"摆完后格子状态不对"和这次是同一个病灶。）
+
+    ⚠️ 记录要写在【对手】那份里：(3,3) 是 P1 棋盘上的格子，只有 P2.attacks
+    里那条才代表"对方打过这里"。写进 P1.attacks 是另一个坐标空间
+    （P1 打在对方棋盘的记录），2026-09-16 起不会被这份清理函数碰。
     """
-    room.players[P1].attacks = [Position(x=3, y=3, hit=False)]
+    room.players[P2].attacks = [Position(x=3, y=3, hit=False)]
     events.clear()
-    server._clear_attacks_on_cells(room, [Position(3, 3)])
+    server._clear_attacks_on_cells(room, [Position(3, 3)], P1)
     assert badges_of(events, 'sid-p1', 'my_attacks'), \
         '增援路径同样要重发 board_attacks_updated'

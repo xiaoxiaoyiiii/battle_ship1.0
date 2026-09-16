@@ -695,6 +695,16 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
    先确认拿到的是不是缓存/旧状态（壁纸批就因此白查了一轮）。
 14. **本机跑测试/工具用 `.venv/Scripts/python.exe`**。PATH 上的 `python` 是 WorkBuddy 自带的
    3.13，**没装 Flask**，用它跑 pytest 会直接 `ModuleNotFoundError`。
+15. **本机连 GitHub / PyPI 时通时断，外网操作优先经云服务器中转**（服务器可稳定直连 GitHub，
+   仓库已配 Deploy Key）。`bash tools/relay.sh start` 起一个 SSH 动态转发（SOCKS5，默认
+   `127.0.0.1:1080`；PID/日志在 `$HOME/.battleship-relay.*`），之后：
+   - 走中转的 git：`bash tools/relay.sh git fetch origin`、`bash tools/relay.sh git push origin main`
+   - 单次命令：`git -c http.proxy=socks5h://127.0.0.1:1080 <命令>`
+   - ⚠️ **大文件别走中转**。实测（2026-09-15 同时段、同一 5MB 素材）：清华 PyPI 镜像
+     **4.8 MB/s** > 本机直连 GitHub 2.5 MB/s（但会随机 reset）> 中转 **1.3 MB/s**。
+     pip 用 `bash tools/relay.sh pip install -r requirements.txt`（走清华镜像）。
+   - 与 `push.sh` 互补：日常 git 操作用 `relay.sh`；要"本机提交 → 服务器应用补丁 → 推 GitHub"
+     时用 `push.sh`（它把服务器当 GitHub 的出入口，而不是当网络代理）。
 
 ---
 

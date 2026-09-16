@@ -2157,7 +2157,7 @@ def handle_attack(data):
     # 已被拦下的阶段转换：等待对方响应期间不能继续开炮。
     # 这是这个窗口存在的意义 —— 对方正在决定要不要打速阶3，
     # 这边要是能把攻击先打完，"拦下来问一句"就没有任何意义了。
-    wait = _priority_wait_reason(room, attacker_id)
+    wait = _action_wait_reason(room, attacker_id)
     if wait:
         return {'status': 'error', 'message': wait}
 
@@ -2346,7 +2346,7 @@ def enter_battle_phase(data, _priority_confirmed=False):
     # 已被拦下的阶段转换：发起方在等待对方响应期间不能继续推进阶段。
     # （不加这条，双击「进入战斗阶段」就能绕过询问 —— 见 _priority_wait_reason）
     if not _priority_confirmed:
-        wait = _priority_wait_reason(room, player_id)
+        wait = _action_wait_reason(room, player_id)
         if wait:
             return {'status': 'error', 'message': wait}
 
@@ -2423,7 +2423,7 @@ def handle_enter_end_phase(data, _priority_confirmed=False):
 
     # 已被拦下的阶段转换：等待对方响应期间不能进入结束阶段
     if not _priority_confirmed:
-        wait = _priority_wait_reason(room, player_id)
+        wait = _action_wait_reason(room, player_id)
         if wait:
             return {'status': 'error', 'message': wait}
 
@@ -2501,7 +2501,7 @@ def end_turn(data):
         return {'status': 'error', 'message': frz}
 
     # 已被拦下的阶段转换：等待对方响应期间不能交回合
-    wait = _priority_wait_reason(room, player_id)
+    wait = _action_wait_reason(room, player_id)
     if wait:
         return {'status': 'error', 'message': wait}
 
@@ -3217,7 +3217,7 @@ def handle_use_magic_card(data):
 
     # 已被拦下的阶段转换：等待对方响应期间发起方不能继续出牌。
     # （响应者不受影响 —— 他此刻要做的正是"响应"，走 priority_response。）
-    wait = _priority_wait_reason(room, player_id)
+    wait = _action_wait_reason(room, player_id)
     if wait:
         return {'status': 'error', 'message': wait}
 
@@ -4489,6 +4489,96 @@ def _ensure_reaper():
     socketio.start_background_task(_room_reaper)
 
 
+def _shenji_wait_reason(room, player_id: str):
+    """神机妙算宣言窗口开着时，只冻结【非施法者】；否则返回 None。
+
+    为什么必须有：宣言窗口原先只是个标志，没有任何门禁引用它 —— 对方在
+    "对方正在宣言"的这段时间里可以照常开炮、出牌、交回合。实测它还会进一步
+    造成结算误判（见 _snapshot_shenji_baseline 的说明）。
+
+    施法者自己不能冻：他此刻要做的正是宣言（confirm_shenji_declare）。
+    """
+    pending = (room.magic_temp_data or {}).get('pending_shenji') or {}
+    caster = pending.get('caster')
+    if not caster or caster == player_id:
+        return None
+    return '对方正在宣言神机妙算，请等待宣言完成'
+
+
+def _action_wait_reason(room, player_id: str):
+    """写操作统一门禁：神机妙算宣言窗口 > 阶段转换优先权。"""
+    return _shenji_wait_reason(room, player_id) or _priority_wait_reason(room, player_id)
+
+
+def _snapshot_shenji_baseline(room, caster_id: str):
+    """在**牌生效那一刻**（也就是玩家打出这张卡的瞬间）拍下船数基线。
+
+    ⚠️ 基线必须固定在出牌那一刻，不能等到"宣言确认"才拍。
+    旧实现把快照写在 confirm 里，于是"出牌 → 对方开炮 → 才宣言"这条时序下，
+    confirm 之前被打沉的船被并进基线，diff 少算 → `diff == pred` 误判预言成功
+    （作者实测：宣言 1 艘、实际被打沉 2 艘，却提示预言成功）。
+
+    同时记下当时每艘已沉船的 id：只记数量不够，sunken_ships 的排列顺序并不
+    保证等于沉没先后（复活用 pop() 从末尾取、旧船也可能被重新沉回去）。
+    """
+    player = room.players.get(caster_id)
+    if player is None:
+        return
+    sunken = list(getattr(player, 'sunken_ships', []) or [])
+    room.game_effects[f'prediction_initial_{caster_id}'] = {
+        'ships': player.remaining_ships,
+        'sunken': len(sunken),
+        'sunken_ids': [id(s) for s in sunken],
+    }
+
+
+SHENJI_DECLARE_SECONDS = 30
+
+
+def _shenji_declare_timeout_fired(room_id: str, token):
+    """超时回调的实体（独立出来便于单测直接调用，不必真的 sleep）。
+
+    超时语义 = 与玩家自己点「取消」一致：清掉宣言窗口、本次效果作废。
+    基线也要一起清掉，否则会留下一个没人消费的快照。
+    """
+    room = room_manager.get_room(room_id)
+    if not room:
+        return
+    pending = (room.magic_temp_data or {}).get('pending_shenji') or {}
+    if pending.get('token') != token:
+        return                      # 代际令牌：已宣言 / 已取消，旧定时器作废
+    caster = pending.get('caster')
+    room.magic_temp_data.pop('pending_shenji', None)
+    if caster:
+        room.game_effects.pop(f'prediction_initial_{caster}', None)
+    emit('shenji_waiting_end', {'reason': 'declaration_timeout'}, room=room.id)
+    emit('message', {'text': '神机妙算宣言超时，本次效果作废'}, room=room.id)
+
+
+def _schedule_shenji_declare_timeout(room_id: str, token):
+    """宣言超时兜底：冻结对方之后，不能让一个人挂机把两边一起卡死。"""
+    def _timeout():
+        time.sleep(SHENJI_DECLARE_SECONDS)
+        _shenji_declare_timeout_fired(room_id, token)
+    socketio.start_background_task(_timeout)
+
+
+def _open_shenji_declare_window(room, caster_id, result):
+    """打开神机妙算宣言窗口：拍基线、通知对方等待、挂超时。"""
+    token = int(time.time() * 1000)
+    room.magic_temp_data['pending_shenji'] = {'caster': caster_id, 'token': token}
+    _snapshot_shenji_baseline(room, caster_id)
+    result.temp_data_id = 'shenji_declare'
+    result.message = '请宣言预测减少的船数（0-6）'
+    opponent_id = _opponent_of(room, caster_id)
+    if opponent_id:
+        emit('shenji_waiting', {
+            'caster': caster_id,
+            'text': '等待对方神机妙算宣言中',
+        }, to=room.players[opponent_id].sid)
+    _schedule_shenji_declare_timeout(room.id, token)
+
+
 def _frozen_reason(room, player_id: str):
     """对方处于掉线宽限期时返回拒绝文案；否则返回 None（可继续行动）。"""
     for pid in room.disconnected:
@@ -4559,6 +4649,12 @@ def _build_room_sync(room, player_id: str) -> dict:
                 'action_text': PRIORITY_ACTION_TEXT.get(room.priority_pending.get('action'), '阶段转换'),
             }
             if _priority_pending_for(room, player_id) else None
+        ),
+        # 神机妙算宣言窗口：重连落在窗口里时，**对方**要能恢复
+        # 「等待对方神机妙算宣言中」横幅与被冻结的状态（只给非施法者那份）。
+        'shenji_waiting': (
+            {'text': '等待对方神机妙算宣言中'}
+            if _shenji_wait_reason(room, player_id) else None
         ),
         # 生效中的房间级效果（仅名称，避免下发复杂对象）
         'active_effects': sorted(room.game_effects.keys()) if isinstance(room.game_effects, dict) else [],
@@ -4674,19 +4770,18 @@ def handle_rejoin_room(data):
 
 
 def _apply_shenji_prediction(room, caster_id, x, result=None):
-    """神机妙算宣言落效：记录预测值并保存船数快照。"""
+    """神机妙算宣言落效：**只写数值 x** —— 基线早在出牌那一刻就拍好了。
+
+    ⚠️ 绝不能在已有基线时重拍：重拍会把"宣言确认之前打掉的船"并进基线，
+    造成 diff 少算、误判预言成功（作者实测的 ② 号问题）。
+    """
     player = room.players[caster_id]
     player.effect_flags = player.effect_flags
     player.effect_flags.prediction = x
-    room.game_effects[f'prediction_initial_{caster_id}'] = {
-        'ships': player.remaining_ships,
-        'sunken': len(getattr(player, 'sunken_ships', []) or []),
-        # 同时记下当时已沉的船（按 id 快照）。
-        # ⚠️ 只记数量不够：sunken_ships 的排列顺序并不保证等于沉没的先后
-        # （复活用 pop() 从末尾取、旧船也可能被重新沉回去），
-        # 结算时靠"数量切片"会取错船。用 id 差集才准确。
-        'sunken_ids': [id(s) for s in (getattr(player, 'sunken_ships', []) or [])],
-    }
+    if f'prediction_initial_{caster_id}' not in room.game_effects:
+        # 基线缺失的老路径（magic_temp_data['prediction'] 直接落效 / 旧对局）：
+        # 补拍一次总比没有强，但这是兜底，不是正常时序。
+        _snapshot_shenji_baseline(room, caster_id)
     room.magic_temp_data.pop('prediction', None)
     room.magic_temp_data.pop('pending_shenji', None)
     if result is not None:
@@ -4712,6 +4807,8 @@ def handle_confirm_shenji_declare(data):
     _apply_shenji_prediction(room, pid, x)
     for opid, op in room.players.items():
         if opid != pid:
+            # 宣言完成 → 解除对方的等待横幅与行动冻结
+            emit('shenji_waiting_end', {'reason': 'declared'}, to=op.sid)
             emit('message', {'text': f'对方宣言神机妙算：船数减少{x}时生效'}, to=op.sid)
     return {'status': 'success', 'message': f'已宣言：船数减少{x}时不减少'}
 
@@ -5646,10 +5743,16 @@ def _emit_placement_request(room, player_id):
         # ⚠️ blocked 必须按"沉船不占位"的口径重算，不能沿用默认那份：
         # 默认口径把【所有】己方船（含沉船）都算作占用，于是旧沉船的位置
         # 也会被画成灰色 —— 实测玩家以为"只能摆在原本沉船的地方"。
+        #
+        # ⚠️ 这里【不能】下发 allowed：allowed 在前端是**白名单**语义
+        # （game.js: `if (blocked.has(key) || (allowed && !allowed.has(key)))`
+        # 直接禁点且不绑 click），那是绝处逢生"只准放在原本有船的格子"用的。
+        # 神机妙算下发它 = 除了原位置全部点不动，玩家报的"只能摆在原位置/
+        # 被打过的格子、放不到没打过的空格"就是这么来的。
+        # 原位置的处理在下面：把它们从 blocked 里剔除即可，点得动。
         allow = {(int(a[0]), int(a[1]))
                  for a in (room.game_effects.get('shenji_redeploy_cells') or [])}
         payload['blocked'] = _placement_blocked_cells(room, player_id, ignore_sunken=True)
-        payload['allowed'] = [{'x': x, 'y': y} for (x, y) in sorted(allow)]
         payload['blocked'] = [b for b in payload['blocked']
                               if (b['x'], b['y']) not in allow]
         payload['message'] = '预言成功：请选择这艘战舰重新部署的位置（原位置或对方未打过的格子）'
@@ -7132,11 +7235,10 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
 
     elif card.name == '神机妙算':
         # 宣言x：若结束阶段自己船数减少恰好x，那些船不减少。
-        # 尚未宣言 → 请求玩家宣言；已宣言（confirm 落临时数据）→ 直接生效。
+        # 尚未宣言 → 打开宣言窗口（同时拍基线、冻结对方、挂超时）；
+        # 已宣言（confirm 落临时数据）→ 直接生效。
         if 'prediction' not in room.magic_temp_data:
-            room.magic_temp_data['pending_shenji'] = {'caster': caster_id}
-            result.temp_data_id = 'shenji_declare'
-            result.message = '请宣言预测减少的船数（0-6）'
+            _open_shenji_declare_window(room, caster_id, result)
         else:
             x = room.magic_temp_data.get('prediction')
             try:

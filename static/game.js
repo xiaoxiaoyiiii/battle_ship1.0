@@ -866,13 +866,17 @@ window.gameState = {
     pendingPriorityCard: null,
     // 我发起的阶段转换正被拦下、在等对方响应（服务端 priority_waiting 下发）。
     // 非空时阶段按钮全部禁用 —— 与后端的 _priority_wait_reason 同一口径。
-    priorityWaiting: null
+    priorityWaiting: null,
+    // 对方正在宣言神机妙算（服务端 shenji_waiting 下发）。
+    // 非空时我也不能行动 —— 与后端的 _shenji_wait_reason 同一口径。
+    shenjiWaiting: null
 }
 
 let opponentGoneTimer = null;
 let opponentGoneEl = null;
 let priorityWaitEl = null;
 let priorityWaitTimer = null;
+let shenjiWaitEl = null;
 const ACTIVE_GAME_KEY = 'battle_active_game';
 
 // 统一的 socket 获取入口：已有连接则复用，绝不重复建连。
@@ -968,6 +972,34 @@ function hidePriorityWaitingBanner() {
     gameState.priorityWaiting = null;
     if (priorityWaitTimer) { clearInterval(priorityWaitTimer); priorityWaitTimer = null; }
     if (priorityWaitEl) priorityWaitEl.style.display = 'none';
+    updatePhaseUI();
+}
+
+// ── 「对方正在宣言神机妙算」横幅 ────────────────────────────────
+// 与上面那条同一套做法（固定定位、不加进阶段卡片）。
+// 位置错开 64px：两条横幅可能同时出现（我在等对方响应阶段转换，
+// 同时对方在宣言神机妙算），叠在一起会互相盖住。
+function ensureShenjiWaitEl() {
+    if (shenjiWaitEl) return shenjiWaitEl;
+    shenjiWaitEl = document.createElement('div');
+    shenjiWaitEl.id = 'shenji-waiting-banner';
+    shenjiWaitEl.style.cssText = 'position:fixed;top:64px;right:12px;z-index:9998;background:#3d7de8;color:#fff;padding:10px 16px;border-radius:8px;font-weight:bold;box-shadow:0 2px 10px rgba(0,0,0,.3);display:none';
+    document.body.appendChild(shenjiWaitEl);
+    return shenjiWaitEl;
+}
+
+function showShenjiWaitingBanner(text) {
+    gameState.shenjiWaiting = { text: text || '等待对方神机妙算宣言中' };
+    const el = ensureShenjiWaitEl();
+    el.textContent = gameState.shenjiWaiting.text;
+    el.style.display = 'block';
+    updatePhaseUI();
+}
+
+function hideShenjiWaitingBanner() {
+    if (!gameState.shenjiWaiting) return;
+    gameState.shenjiWaiting = null;
+    if (shenjiWaitEl) shenjiWaitEl.style.display = 'none';
     updatePhaseUI();
 }
 function saveActiveGame(roomId, playerId) {
@@ -1071,6 +1103,13 @@ function applyRoomSync(data) {
         showPriorityWaitingBanner(data.priority_waiting.action_text, null);
     } else {
         hidePriorityWaitingBanner();
+    }
+
+    // 同一件事，神机妙算宣言窗口：重连回来要能恢复「等待对方宣言中」的横幅与冻结。
+    if (data.shenji_waiting && data.shenji_waiting.text) {
+        showShenjiWaitingBanner(data.shenji_waiting.text);
+    } else {
+        hideShenjiWaitingBanner();
     }
 
     // 像正常进入对局一样，先隐藏所有其它界面，避免与主菜单/大厅/等待界面叠层错乱。
@@ -2318,6 +2357,7 @@ function setupSocketListeners() {
         document.getElementById('holy-heart-status')?.classList.add('hidden');
         renderActiveEffects({ self: [], opponent: [] });   // 结算界面不该再挂着「生效中」的角标
         hidePriorityWaitingBanner();                        // 对局结束：等待横幅一并撤掉
+        hideShenjiWaitingBanner();
         // 对局结束，手牌选中态一并清掉
         gameState.selectedCardIndex = -1;
         gameState.selectedCardKey = null;
@@ -2557,6 +2597,12 @@ function setupSocketListeners() {
     });
     // 等待结束（对方响应了 / 超时了 / 被取消）：解冻
     socket.on('priority_waiting_end', function () { hidePriorityWaitingBanner(); });
+
+    // 对方正在宣言神机妙算：显示等待横幅 + 冻结我的行动（服务端同时会拒绝）。
+    socket.on('shenji_waiting', function (data) {
+        showShenjiWaitingBanner(data && data.text);
+    });
+    socket.on('shenji_waiting_end', function () { hideShenjiWaitingBanner(); });
     // 拒绝开关的状态回执
     socket.on('priority_setting_updated', function (data) {
         gameState.declinePriority = !!(data && data.decline);
@@ -6587,7 +6633,7 @@ function updatePhaseUI() {
 
     // 我发起的阶段转换正被拦下（在等对方响应）：按钮留着但禁用。
     // 不能直接隐藏 —— 玩家会以为界面坏了；保留 + 置灰 + 横幅说明才看得懂。
-    const waiting = !!gameState.priorityWaiting;
+    const waiting = !!gameState.priorityWaiting || !!gameState.shenjiWaiting;
     [enterBattleBtn, enterEndBtn, endTurnBtn].forEach((b) => {
         if (!b) return;
         b.disabled = waiting;

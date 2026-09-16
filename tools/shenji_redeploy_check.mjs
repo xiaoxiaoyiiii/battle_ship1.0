@@ -4,7 +4,9 @@
  *
  * 覆盖：
  *   · 收到 kind=shenji_redeploy 的 placement_request → 弹出面板且标题/提示正确
- *   · 原位置（已被对方打过）在 allowed 里 → 必须可点，不能画成灰色
+ *   · 原位置（已被对方打过，后端已把它从 blocked 里剔除）→ 必须可点，不能画成灰色
+ *   · ★ 对方没打过的空格也能点（2026-09-16 修：后端不再下发 allowed 白名单，
+ *     否则前端会把它当白名单，除原位置外全部禁点）
  *   · 点选后能确认提交
  *   · 反证：其他 kind（增援/复活/绝处逢生）的文案与行为不受影响
  *
@@ -28,7 +30,9 @@ if (!EDGE) { console.error('找不到 Edge/Chrome，跳过检查'); process.exit
 
 const browser = spawn(EDGE, ['--headless=new', '--disable-gpu', '--no-first-run',
   '--no-default-browser-check', '--remote-debugging-port=' + PORT,
-  '--user-data-dir=C:/Windows/Temp/shenji_redeploy_profile', APP], { stdio: 'ignore' });
+  // ⚠️ profile 放项目内 .tmp/，不放 C:/Windows/Temp：本机该目录出现过 ACL 损坏
+  // （目录删不掉、Edge 起不来、调试端口连不上）。项目内 .tmp/ 已加 .gitignore。
+  '--user-data-dir=' + new URL('../.tmp/shenji_redeploy_profile', import.meta.url).pathname.replace(/^\//, ''), APP], { stdio: 'ignore' });
 
 const problems = [];
 function check(ok, label, detail) {
@@ -97,12 +101,16 @@ async function panelInfo() {
   })()`);
 }
 
-// ---- 1. 神机妙算：面板要弹出来，且原位置可点 ----
+// ---- 1. 神机妙算：面板要弹出来；原位置与"对方没打过的空格"都要能点 ----
+// ⚠️ 这里【故意不下发 allowed】—— 自 2026-09-16 起后端不再下发它。
+// allowed 在前端是**白名单**语义（不在名单里的一律禁点且不绑 click），
+// 那是绝处逢生「只准放在原本有船的格子」用的；神机妙算一度也下发它，
+// 于是"除了原位置全部点不动" —— 玩家实测报的"放不到对方没打过的空格"。
+// 后端现在的做法：把原位置从 blocked 里剔除，其余照常可点。
 let r = await fire('placement_request', {
   kind: 'shenji_redeploy',
   remaining: 1, total: 1, placed: 0,
-  allowed: [{ x: 0, y: 0 }],
-  blocked: [{ x: 5, y: 5 }],
+  blocked: [{ x: 3, y: 3 }],
   message: '预言成功：请选择这艘战舰重新部署的位置（原位置或对方未打过的格子）',
 });
 check(r === 'ok', '页面注册了 placement_request 监听', r);
@@ -115,8 +123,11 @@ if (info) {
   check(/原位置/.test(info.hint), '提示说明了可以放回原位置', info.hint);
   const cls00 = info.cells['0,0'] || '';
   check(!/blocked|disabled/.test(cls00), '原位置 (0,0) 未被画成不可点', cls00);
-  const cls55 = info.cells['5,5'] || '';
-  check(/blocked|disabled/.test(cls55), '被 blocked 的 (5,5) 不可点', cls55);
+  const cls23 = info.cells['2,3'] || '';
+  check(!/blocked|disabled/.test(cls23),
+    '★ 对方没打过的空格 (2,3) 也能点（问题③回归）', cls23);
+  const cls33 = info.cells['3,3'] || '';
+  check(/blocked|disabled/.test(cls33), '被 blocked 的 (3,3) 不可点', cls33);
 }
 
 // ---- 2. 点选原位置并确认 ----
@@ -132,6 +143,28 @@ const selected = await ev(`(function(){
   return p.querySelector('.placement-cell[data-x="0"][data-y="0"]').className;
 })()`);
 check(/selected/.test(selected), '原位置可以被选中', selected);
+
+// ★ 关键回归：对方没打过的空格必须真的能点（不只是"没画灰"）
+await ev(`(function(){
+  var p = document.getElementById('placement-prompt');
+  p.querySelector('.placement-cell[data-x="2"][data-y="3"]').click();
+  return true;
+})()`);
+await sleep(200);
+const selectedEmpty = await ev(`(function(){
+  var p = document.getElementById('placement-prompt');
+  return p.querySelector('.placement-cell[data-x="2"][data-y="3"]').className;
+})()`);
+check(/selected/.test(selectedEmpty),
+  '★ 对方没打过的空格 (2,3) 能被选中（问题③的真实回归）', selectedEmpty);
+
+// 放回原位再确认，保持后续步骤状态不变
+await ev(`(function(){
+  var p = document.getElementById('placement-prompt');
+  p.querySelector('.placement-cell[data-x="0"][data-y="0"]').click();
+  return true;
+})()`);
+await sleep(150);
 
 const canConfirm = await ev(`(function(){
   var b = document.getElementById('placement-confirm');

@@ -112,12 +112,20 @@ def test_prediction_success_emits_placement_request(room, events):
     assert payload.get('message'), '要有明确提示文案'
 
 
-def test_redeploy_allowed_contains_original_cells(room, events):
-    """原位置必须在 allowed 里（否则前端会把它们画成不可点）。"""
+def test_redeploy_sends_no_whitelist(room, events):
+    """★ 不能再下发 allowed 白名单（2026-09-16 修）。
+
+    `allowed` 在前端是**白名单**语义（game.js: `blocked 命中 或 不在 allowed 里`
+    → 直接禁点且不绑 click），那是绝处逢生「只准放在原本有船的格子」用的。
+    神机妙算一度也下发它，于是**除了原位置全部点不动** —— 玩家实测报的
+    「只能摆在原位置/被打过的格子，放不到对方没打过的空格」就是这么来的。
+
+    改法：原位置改为「从 blocked 里剔除」（见下一条用例），不再下发白名单。
+    """
     run_prediction(room, x=1)
     reqs = [d for e, d, to, r in events if e == 'placement_request']
-    allowed = {(a['x'], a['y']) for a in reqs[-1].get('allowed') or []}
-    assert (0, 0) in allowed, f'被击沉那艘的原位置应在可选范围内，实际：{allowed}'
+    assert not (reqs[-1].get('allowed')), (
+        f'神机妙算不该下发 allowed 白名单，实际：{reqs[-1].get("allowed")}')
 
 
 def test_redeploy_original_cell_not_blocked(room, events):

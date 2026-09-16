@@ -905,6 +905,37 @@ html.theme-dark .cell.last-stand-candidate::after { color: #fbbf24; }
 .cell.last-stand-candidate.hit::after,
 .cell.last-stand-candidate.miss::after { content: none; }
 
+/* 「冻结」的 3×3 区域（2026-09-16 新增）：只标"区域"，不标具体哪几艘。
+   船上的雪花（.frozen，服务端只发给被冻的人）保持原样、与此互不干扰。
+   ⚠️ 与 .shield-broken 的区分：后者是实心青底 + ⛨ 字形（单格、盾碎），
+   这里是**冷蓝斜纹**、整片 3×3，一眼能看出是"一片区域"而不是单格事件。
+   ⚠️ 同样绝不加 hit/miss（那会让玩家以为这几格打过了/打不了）。 */
+.cell.frozen-area {
+    border-color: rgba(96, 165, 250, 0.9) !important;
+    box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.55) inset;
+    background-image: repeating-linear-gradient(-45deg,
+        rgba(96, 165, 250, 0.22) 0 6px, rgba(96, 165, 250, 0.05) 6px 12px) !important;
+}
+html.theme-dark .cell.frozen-area {
+    border-color: rgba(147, 197, 253, 0.85) !important;
+    background-image: repeating-linear-gradient(-45deg,
+        rgba(147, 197, 253, 0.20) 0 6px, rgba(147, 197, 253, 0.04) 6px 12px) !important;
+}
+
+/* 「疗愈」原地复活的格子（显形给对手）：要与通用显形 .revealed（暖黄内发光）明确区分。
+   用**翠绿斜纹 + 绿框**，并在悬停说明里写明是疗愈复活（cell.title）。 */
+.cell.revealed-heal {
+    border-color: rgba(16, 185, 129, 0.95) !important;
+    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.5) inset;
+    background-image: repeating-linear-gradient(45deg,
+        rgba(16, 185, 129, 0.20) 0 6px, rgba(16, 185, 129, 0.05) 6px 12px) !important;
+}
+html.theme-dark .cell.revealed-heal {
+    border-color: rgba(52, 211, 153, 0.9) !important;
+    background-image: repeating-linear-gradient(45deg,
+        rgba(52, 211, 153, 0.18) 0 6px, rgba(52, 211, 153, 0.04) 6px 12px) !important;
+}
+
 /* ---------- 11. 猜拳 / 回合 / 玩家信息 ---------- */
 .rps-choices { display: flex; justify-content: center; gap: 1rem; margin-bottom: 1rem; }
 .rps-choice { padding: 1rem 1.6rem; font-size: 1.2rem; }

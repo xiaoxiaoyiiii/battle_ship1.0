@@ -849,6 +849,9 @@ window.gameState = {
     // 上面那批候选格属于【谁的棋盘】（服务端 last_stand_cells.owner 下发）。
     // 两块棋盘各有自己的 0-5 坐标，画错棋盘会让玩家以为"敌方可能在这几格"。
     lastStandOwner: null,
+    // 冻结的 3×3 区域（服务端 frozen_area 下发）：{x1,y1,x2,y2,owner,caster,frozen,until_round}。
+    // owner = 这片区域在哪块棋盘上（受害者）。船上的雪花仍只给被冻的人看，这里是"区域"。
+    frozenArea: null,
     // 正等待自己点选一艘船牺牲（恶魔契约等）。棋盘每次重绘后靠它把高亮补回来，
     // 否则伤害结算的重绘会把选区冲掉、让人以为「点了没反应」。
     pendingSacrifice: null,
@@ -1005,6 +1008,15 @@ function hideShenjiWaitingBanner() {
     if (shenjiWaitEl) shenjiWaitEl.style.display = 'none';
     updatePhaseUI();
 }
+
+// 桃园结义的「等对方选牌」是全屏浮层（挡住一切点击），只有 taoyuan_complete 会撤掉它。
+// 因此凡是"这一局不用再等了"的时刻都必须主动收掉，否则玩家会被它永久挡住：
+//   · 对方取消选择（服务端现在会补发 taoyuan_complete，见 handle_cancel_magic_selection）
+//   · 对局结束（例如对方在选择中掉线后被判负）
+//   · 棋盘重开
+function dismissTaoyuanWaitingOverlay() {
+    document.querySelectorAll('.taoyuan-waiting-overlay').forEach(el => el.remove());
+}
 function saveActiveGame(roomId, playerId) {
     try {
         const prev = loadActiveGame() || {};
@@ -1055,6 +1067,8 @@ function applyRoomSync(data) {
         // 候选格属于谁的棋盘也要一起恢复 —— 只恢复格子会让高亮又画错棋盘
         gameState.lastStandOwner = data.last_stand_owner || null;
     }
+    // 冻结区域：重连后也要恢复，否则玩家又会忘记冻的是哪片
+    gameState.frozenArea = data.frozen_area || null;
     // 连锁/效果上下文：重连后恢复连锁显示与响应窗口
     if (Array.isArray(data.chain)) {
         gameState.chain = data.chain;
@@ -2363,6 +2377,9 @@ function setupSocketListeners() {
         renderActiveEffects({ self: [], opponent: [] });   // 结算界面不该再挂着「生效中」的角标
         hidePriorityWaitingBanner();                        // 对局结束：等待横幅一并撤掉
         hideShenjiWaitingBanner();
+        // 对局结束也必须收掉桃园的全屏等待浮层：对方在选择中掉线被判负时，
+        // 等着的这一方否则会被那层浮层一直挡住（同 handle_cancel_magic_selection 那个病灶）
+        dismissTaoyuanWaitingOverlay();
         // 对局结束，手牌选中态一并清掉
         gameState.selectedCardIndex = -1;
         gameState.selectedCardKey = null;
@@ -2925,6 +2942,9 @@ function setupSocketListeners() {
         gameState.myAttacks = [];
         gameState.opponentAttacks = [];
         gameState.revealedCells = [];   // 服务端在重开棋盘时也会清空已显形记录，本地同步
+        gameState.lastStandOwner = null;   // 归属也要一起清，免得重开后又高亮错棋盘
+        gameState.frozenArea = null;       // 冻结区域同理
+        dismissTaoyuanWaitingOverlay();    // 重开棋盘：桃园全屏等待浮层一并收掉
         // 重开一局：手牌虽然保留，但选中态要清掉（下标含义随时可能变）
         gameState.selectedCardIndex = -1;
         gameState.selectedCardKey = null;
@@ -3400,6 +3420,12 @@ function setupSocketListeners() {
         }
     });
 
+    // 冻结的 3×3 区域：双方都要看到（施法方原先什么都收不到，过一会儿就忘了冻的是哪片）
+    socket.on('frozen_area', (data) => {
+        gameState.frozenArea = (data && !data.cleared) ? data : null;
+        if (typeof initGameBoards === 'function') initGameBoards();
+    });
+
     // 服务端统一推送的局内日志
     socket.on('game_log', (entry) => {
         renderServerLog(entry);
@@ -3505,25 +3531,33 @@ function setupSocketListeners() {
 
     // 桃园结义结算完成提示
     socket.on('taoyuan_complete', (data) => {
-        // 移除等待提示
-        const waitingOverlay = document.querySelector('.taoyuan-waiting-overlay');
-        if (waitingOverlay) {
-            waitingOverlay.remove();
-        }
+        // 移除等待提示（取消时服务端也会发这个事件，见 handle_cancel_magic_selection）
+        dismissTaoyuanWaitingOverlay();
         showMessage(data.message);
     });
 
     // 服务器返回的被揭示的位置（仅对触发方发送）
     socket.on('revealed_positions', (data) => {
         if (!data || !Array.isArray(data.positions)) return;
-        // 卡面是「显形」，服务端也是持久记录（只有重开棋盘类效果才清空）——
-        // 原先只高亮 4 秒就撤掉，玩家一眨眼就再也找不到那艘船了。
+        // kind：'heal' = 疗愈原地复活（对方该知道船又回到这一格了）；
+        // 缺省 = 旧的通用显形（探测雷达 / 克苏鲁之眼等），行为不变。
+        const kind = data.kind || null;
         data.positions.forEach(pos => {
-            if (!gameState.revealedCells.some(c => c.x === pos.x && c.y === pos.y)) {
-                gameState.revealedCells.push({ x: pos.x, y: pos.y });
+            let entry = gameState.revealedCells.find(c => c.x === pos.x && c.y === pos.y);
+            if (!entry) {
+                entry = { x: pos.x, y: pos.y, kind: kind };
+                gameState.revealedCells.push(entry);
+            } else if (kind && !entry.kind) {
+                entry.kind = kind;          // 后到的更具体来源，覆盖"通用显形"
             }
             const cell = opponentBoard.querySelector(`.cell[data-x='${pos.x}'][data-y='${pos.y}']`);
-            if (cell) cell.classList.add('revealed');
+            if (cell) {
+                cell.classList.add('revealed');
+                if (entry.kind === 'heal') {
+                    cell.classList.add('revealed-heal');
+                    cell.title = '疗愈：这艘战舰原地复活，仍在这一格';
+                }
+            }
         });
     });
 
@@ -3646,6 +3680,22 @@ function initGameBoards() {
     // owner 为空（旧载荷 / 已清空）时按"不是我"处理，与修复前的行为保持一致。
     const lastStandIsMine = () => !!(gameState.lastStandOwner && gameState.playerId
         && gameState.lastStandOwner === gameState.playerId);
+
+    // 冻结的 3×3 区域同样按归属画：owner 是受害者，所以区域只画在**受害者的那块棋盘**上。
+    // 船上的雪花不受影响（服务端只发给被冻的人，前端照旧画在自己的船上）。
+    const frozenArea = gameState.frozenArea;
+    const frozenAreaIsMine = !!(frozenArea && frozenArea.owner && gameState.playerId
+        && frozenArea.owner === gameState.playerId);
+    const inFrozenArea = (x, y) => !!(frozenArea
+        && x >= frozenArea.x1 && x <= frozenArea.x2
+        && y >= frozenArea.y1 && y <= frozenArea.y2);
+    const frozenAreaTitle = () => {
+        if (!frozenArea) return '';
+        const n = Number(frozenArea.frozen || 0);
+        return frozenAreaIsMine
+            ? `冻结区域：对方冻结了这片 3×3 区域${n ? '（' + n + ' 艘被冻）' : ''}，被冻的船本回合不提供攻击次数`
+            : `冻结区域：你冻结的这片 3×3 区域${n ? '（' + n + ' 艘被冻）' : ''}，区域内对方的船本回合不提供攻击次数`;
+    };
     // 初始化玩家棋盘
     gamePlayerBoard.innerHTML = '';
     for (let y = 0; y < 6; y++) {
@@ -3711,6 +3761,13 @@ function initGameBoards() {
                 if (!cell.textContent) cell.title = '绝处逢生的唯一一艘战舰可能在这一格（你的棋盘）';
             }
 
+            // 冻结区域（**我的棋盘**上）：对方冻了这片 3×3。
+            // 只加区域类，绝不加 hit/miss（否则玩家以为这几格打过了/打不了）。
+            if (frozenAreaIsMine && inFrozenArea(x, y)) {
+                cell.classList.add('frozen-area');
+                if (!cell.title) cell.title = frozenAreaTitle();
+            }
+
             gamePlayerBoard.appendChild(cell);
         }
     }
@@ -3762,9 +3819,22 @@ function initGameBoards() {
                 if (!cell.textContent) cell.title = '绝处逢生的唯一一艘战舰可能在这一格（对方棋盘）';
             }
 
+            // 冻结区域（**对手棋盘**上）：这片是我冻的 —— 施法方原先什么都看不到，
+            // 过一会儿就忘了自己冻的是哪片（作者实测）
+            if (!frozenAreaIsMine && inFrozenArea(x, y)) {
+                cell.classList.add('frozen-area');
+                if (!cell.title) cell.title = frozenAreaTitle();
+            }
+
             // 已被卡牌显形的格子：重绘棋盘后也要保留（否则一次 initGameBoards 就把线索擦没了）
             if ((gameState.revealedCells || []).some(c => c.x === x && c.y === y)) {
+                const rc = gameState.revealedCells.find(c => c.x === x && c.y === y);
                 cell.classList.add('revealed');
+                // 疗愈原地复活的格子用专属标记 + 悬停说明，与雷达显形等区分开
+                if (rc && rc.kind === 'heal') {
+                    cell.classList.add('revealed-heal');
+                    if (!cell.title) cell.title = '疗愈：这艘战舰原地复活，仍在这一格';
+                }
             }
 
             opponentBoard.appendChild(cell);

@@ -28,13 +28,36 @@ from file import read_json
 # 默认关闭，避免公网玩家通过 test_* 事件作弊（直接判胜、白嫖卡牌、读取对方船位等）。
 ENABLE_TEST_EVENTS = os.environ.get('ENABLE_TEST_EVENTS') == '1'
 
+# 调试面板（按 F8 唤出）的账号白名单：逗号分隔的 user_id。
+# ⚠️ 12 个 test_* handler 里**没有任何身份校验**（它们靠上面那个开关兜底），
+# 所以只要在公网把开关打开，就等于对**所有访客**开放作弊。配置这个白名单之后，
+# 即使开关打开，也只有名单里的登录账号能用（其余一律拒绝）。
+# 留空 = 与旧行为一致（开关打开谁都能用）—— 只适合本地/自建环境。
+DEBUG_ADMIN_USER_IDS = {
+    u.strip() for u in os.environ.get('DEBUG_ADMIN_USER_IDS', '').split(',') if u.strip()
+}
+
+
+def _debug_actor_allowed() -> bool:
+    """当前调用者是否被允许使用调试事件（配合 ENABLE_TEST_EVENTS 一起判断）。"""
+    if not DEBUG_ADMIN_USER_IDS:
+        return True                      # 未配白名单 → 沿用旧行为
+    try:
+        uid = session.get('user_id')
+    except RuntimeError:
+        uid = None                       # 无请求上下文（单测直调 / 后台重放）
+    return bool(uid) and str(uid) in DEBUG_ADMIN_USER_IDS
+
 
 def _test_event(fn):
-    """包装调试事件：未启用时静默拒绝，防止公网滥用。"""
+    """包装调试事件：未启用时静默拒绝，防止公网滥用。
+    启用后若配了 DEBUG_ADMIN_USER_IDS，则只放行白名单账号。"""
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         if not ENABLE_TEST_EVENTS:
             return {'status': 'error', 'message': '调试事件未启用'}
+        if not _debug_actor_allowed():
+            return {'status': 'error', 'message': '调试事件未对你的账号开放'}
         return fn(*args, **kwargs)
     return wrapper
 
@@ -693,6 +716,21 @@ def _place_field_magic(room, caster_id, card):
     return old
 
 
+
+
+@socketio.on('debug_status')
+def handle_debug_status(data=None):
+    """调试面板（F8）用它判断"我这台客户端能不能显示面板"。
+
+    只回布尔值，**不泄露任何对局数据**；即便返回 True，具体动作仍要过
+    @_test_event 的开关 + 白名单两道校验。
+    """
+    allowed = bool(ENABLE_TEST_EVENTS and _debug_actor_allowed())
+    return {
+        'enabled': bool(ENABLE_TEST_EVENTS),
+        'allowed': allowed,
+        'allowlist': bool(DEBUG_ADMIN_USER_IDS),
+    }
 
 
 # 测试功能：添加所有魔法卡到手牌
@@ -2555,6 +2593,13 @@ def end_turn(data):
                     # 解冻同样要让玩家看到（否则棋盘上一直挂着雪花）
                     _emit_player_ships(room, p_id)
 
+            # 冻结区域记录与解冻同步清理：条件与上面 `s.frozen < room.round` 一致，
+            # 否则棋盘上会一直挂着那片斜纹、玩家以为还在冻结
+            _fa = room.game_effects.get('frozen_area') if isinstance(room.game_effects, dict) else None
+            if _fa and int(_fa.get('until_round') or 0) < int(room.round):
+                room.game_effects.pop('frozen_area', None)
+                emit('frozen_area', {'cleared': True}, room=room_id)
+
             # 回光返照只持续自己发动的那一个大回合
             room.game_effects.pop('last_chance', None)
 
@@ -3674,7 +3719,30 @@ def _clear_attacks_on_cells(room, positions, board_owner_id):
         _emit_board_attacks(room)
 
 
-def _revive_sunken_ships(room, player, count):
+def _reveal_cells_to(room, player_id, positions, kind=None):
+    """把若干格子「显形」给某个玩家（写进持久的 revealed_positions 并立刻下发）。
+
+    kind 供前端区分来源：'heal' = 疗愈原地复活（对方需要知道"船又回到这一格了"）；
+    缺省 = 旧的通用显形（探测雷达 / 克苏鲁之眼等），保持原样不动。
+
+    ⚠️ 只用于【本来就已经公开】的格子（例：沉船的原位置，双方都看见过）。
+    死者苏生 / 增援 / 神机妙算重新部署是玩家自选的新位置，给他们做显形等于
+    直接泄露新船位 —— 那三张卡不要调用这个函数。
+    """
+    player = room.players.get(player_id)
+    if player is None or not positions:
+        return
+    payload = []
+    for pos in positions:
+        x, y = int(pos.x), int(pos.y)
+        if not any(p.x == x and p.y == y for p in player.revealed_positions):
+            player.revealed_positions.append(Position(x=x, y=y))
+        payload.append({'x': x, 'y': y})
+    if payload:
+        emit('revealed_positions', {'positions': payload, 'kind': kind}, to=player.sid)
+
+
+def _revive_sunken_ships(room, player, count, reveal_to=None):
     """把 count 艘已沉没的战舰放回棋盘（疗愈 / 神机妙算等复活类效果）。
 
     关键：必须清空 hits 并把原位置从双方攻击历史里移除。
@@ -3711,6 +3779,10 @@ def _revive_sunken_ships(room, player, count):
         # 这块棋盘属于 player：只清【对手】打在这里的记录
         _owner_id = next((pid for pid, pl in room.players.items() if pl is player), None)
         _clear_attacks_on_cells(room, revived.positions, _owner_id)
+        # 原地复活：这一格对方"本来就知道"（那是他打沉的沉船位置），
+        # 但对局中很容易忘。显形给他，前端用专属标记 + 悬停说明区分于雷达显形。
+        if reveal_to is not None:
+            _reveal_cells_to(room, reveal_to, revived.positions, kind='heal')
         player.remaining_ships += 1
         revived_any += 1
     # 八方来财：魔法卡造成的船数增加（疗愈 / 神机妙算复活）属于主动变化，
@@ -4704,6 +4776,9 @@ def _build_room_sync(room, player_id: str) -> dict:
         ],
         # 这批候选格属于谁的棋盘（前端据此决定高亮画在哪块棋盘上）
         'last_stand_owner': room.game_effects.get('last_stand_owner'),
+        # 冻结的 3×3 区域（区域属于受害者棋盘，owner 即受害者）：
+        # 重连后必须补回来，否则玩家又会忘记冻的是哪片
+        'frozen_area': dict(room.game_effects.get('frozen_area') or {}) or None,
         # 玩家级状态标记：重连后 UI 需要知道"被看破 / 无中生有 / 余音绕梁"等
         'magic_blocked': bool(getattr(p, 'magic_blocked', False)),
         'effect_flags': {k: v for k, v in vars(p.effect_flags).items() if v},
@@ -5410,6 +5485,8 @@ def handle_cancel_magic_selection(data):
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
     temp = room.magic_temp_data or {}
+    # 在清空 magic_temp_data 之前先把"这是哪个选择流程"记下来 —— 取消时要用它通知对手
+    cancelled_kind = temp.get('type')
     pending = temp.get('pending_placement')
     if pending and pending.get('caster') == player_id:
         return {'status': 'error', 'message': '放置尚未完成，请用放置面板的「放弃」'}
@@ -5421,6 +5498,21 @@ def handle_cancel_magic_selection(data):
         # 只放回真正的卡牌实例（明智埋葬的候选是纯数据，混进牌堆会污染牌堆）
         room.magic_deck.extend(c for c in cards if isinstance(c, MagicCard))
     room.magic_temp_data = {}
+
+    # ⚠️ 必须同时通知对手。桃园结义在对手侧是一层**全屏等待浮层**
+    # （.taoyuan-waiting-overlay，z-index 10000，挡住一切），而它只认 taoyuan_complete；
+    # 取消时一个事件都不发 → 对手永久卡在那层浮层上、什么都点不了
+    # （作者 2026-09-16 实测）。灵气复苏只发一条 toast，不必挡屏，但同样一并同步，
+    # 免得两条流程行为不一致（下次改的人又要重新踩一遍）。
+    if cancelled_kind in ('taoyuan_choice', 'lingqi_choice'):
+        opponent_id = _opponent_of(room, player_id)
+        if opponent_id and opponent_id in room.players:
+            label = '桃园结义' if cancelled_kind == 'taoyuan_choice' else '灵气复苏'
+            emit('taoyuan_complete' if cancelled_kind == 'taoyuan_choice' else 'lingqi_complete',
+                 {'cancelled': True,
+                  'message': f'对方取消了{label}（已放回牌堆），本回合继续'},
+                 to=room.players[opponent_id].sid)
+
     emit('message', {'text': '已取消本次选择'}, to=room.players[player_id].sid)
     return {'status': 'success', 'message': '已取消本次选择'}
 
@@ -6136,6 +6228,10 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                 ship.invincible = False
                 ship.shield = False
 
+        # 冻结区域记录也一并清掉（重开棋盘后区域标记不该残留）
+        if isinstance(room.game_effects, dict):
+            room.game_effects.pop('frozen_area', None)
+
         # 只保留手牌 —— 场地魔法、生效中的效果、弃牌堆统统回到开局状态
         # （作者确认：「只保留手牌，其余全部重置」）
         room.field_magic = None
@@ -6449,6 +6545,23 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             # 立刻把「哪几艘被冻住了」同步给被冻结的一方（画在ta自己的棋盘上）
             _emit_player_ships(room, opponent_id)
         result['message'] = f'冻结了{frozen_count}艘战舰'
+
+        # ★ 记录"冻的是哪片 3×3 区域"并**下发给双方**（2026-09-16）。
+        # 作者实测：施法方原先什么都收不到（上面那个 _emit_player_ships 只发受害者），
+        # 过一会儿就忘了自己冻的是哪片；受害者也只看到自己的船上有雪花、看不出区域边界。
+        # 区域属于【受害者棋盘】，所以带 owner 让前端按归属决定画在哪块棋盘上
+        # （与 last_stand_cells 同一套归属模式）。
+        # ⚠️ 即便一艘都没冻住也照发：那片区域是公开信息（双方都看到了选区），
+        # 前端会按 frozen 数量决定怎么描述。
+        room.game_effects['frozen_area'] = {
+            'x1': int(area['x1']), 'y1': int(area['y1']),
+            'x2': int(area['x2']), 'y2': int(area['y2']),
+            'owner': opponent_id,        # 这片区域在哪块棋盘上（受害者）
+            'caster': caster_id,         # 谁冻的
+            'frozen': frozen_count,
+            'until_round': room.round + 1,
+        }
+        emit('frozen_area', dict(room.game_effects['frozen_area']), room=room.id)
 
 
     elif card.name == '轰炸':
@@ -7085,7 +7198,9 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         # 卡面："选定自己至多两艘被击杀的船并将他们在原地复活。"
         # 原先走的是"选一个未打过的空格"的放置流程，与卡面不符。
         count = min(2, len(caster.sunken_ships))
-        revived = _revive_sunken_ships(room, caster, count)
+        # reveal_to=对手：疗愈是【原地复活】，那些格子的位置对方本来就知道
+        # （是他打沉的），显形只是防止他忘记、不是泄露新信息（作者 2026-09-16 要求）
+        revived = _revive_sunken_ships(room, caster, count, reveal_to=_opponent_of(room, caster_id))
         _emit_ships_updated(room)
         _emit_player_ships(room, caster_id)
         result['message'] = f'疗愈生效，{revived} 艘战舰在原地复活'

@@ -22,6 +22,7 @@ from flask_socketio import SocketIO, join_room, emit as semit
 
 import db  # local database helpers for users and matches
 import achievements  # 徽章判据（纯函数，唯一一份 evaluate()）
+import quick_chat  # 局内快捷语表 + 频率规则（纯数据/纯函数，前端从接口取同一份）
 from api import app
 from file import read_json
 
@@ -429,6 +430,19 @@ class GameRoom:
         # 拒绝开关：player_id -> bool。为 True 时不再向他弹这类询问
         # （作者要求做成可随时切回的开关，不是一次性按钮）。
         self.decline_priority = {}
+
+        # ── 局内快捷语（第 4 批）───────────────────────────────────────
+        # 频率状态住【房间级】，不能放模块级全局：否则 A 房间里连点会把
+        # B 房间里另一个人的额度一起吃光（两个房间共用一个计数器）。
+        # key 一律是 player_id：
+        #   quick_chat_recent: player_id -> [发送时间戳…]（升序，只留窗口内的）
+        #   quick_chat_last:   player_id -> {'id': msg_id, 'ts': 时间戳}
+        # 唯一的消费点是 handle_quick_chat()（读写都只在那里）。
+        # ⚠️ 必须在这里初始化 —— 漏了就会在第一个真人身上 AttributeError
+        #    （第 2 批的硬规矩：新增房间级状态要 ① __init__ 初始化
+        #     ② 有明确消费点 ③ 有回归测试）。
+        self.quick_chat_recent: dict[str, list[float]] = {}
+        self.quick_chat_last: dict[str, dict[str, Any]] = {}
 
     def init_player_magic(self, player_id: str, magic_cards):
         """初始化玩家魔法卡相关状态"""
@@ -1409,6 +1423,96 @@ def handle_chat_message(data):
     else:
         # fallback: 仅回发给自己
         emit('chat_message', {'username': username, 'message': msg, 'isMe': True}, room=request.sid)
+
+
+# ---------------------------------------------------------------------------
+# 局内快捷语（第 4 批，契约见 docs/BATCH_2_3_4_PLAN.md §4）
+# ---------------------------------------------------------------------------
+def _quick_chat_fail(message: str):
+    """把失败原因**明确**回给发起者：不发出去、也要让人知道为什么。
+
+    绝不静默 return —— 静默的失败表现是"点了没反应"，本项目吃过多次
+    （见 CLAUDE.md 第 11 节）。原因只回给发起者（`to=request.sid`）：
+    对手没必要看到"你发太快了"。单测直调 handler（无请求上下文）时退化为
+    房间外广播，与项目里既有的 `emit('error', {...}, to=request.sid)` 同一写法。
+    """
+    try:
+        sid = request.sid
+    except RuntimeError:
+        sid = None
+    if sid:
+        emit('error', {'message': message}, to=sid)
+    else:
+        emit('error', {'message': message})
+    return {'status': 'error', 'message': message}
+
+
+@socketio.on('quick_chat')
+def handle_quick_chat(data):
+    """局内快捷语：广播给房间双方 + 记一句对局日志。
+
+    房间 / 身份的取法与 handle_attack / end_turn 完全一致：payload 带
+    `room_id` + `player_id`，再走 `room_manager.get_room()` 与 `_identity_ok()`。
+
+    ⚠️ 三件【绝对不许】发生的事（契约 §4.3，三条各有回归测试）：
+      1. 不许消耗 / 修改 `attacks_remaining`（发句话不是一次行动）；
+      2. 不许改变 `state` / `current_phase`（不推进任何流程）；
+      3. 不许往 `room.chain` 里塞东西、不许打开响应窗口，也不许动
+         `pending_placement` / `pending_sacrifice`。
+    因此这里**刻意不挂** `@_require_live_room`：终局之后正是「结束」组
+    （GG，打得好 / 再来一局？）最该能发的时候。
+
+    校验顺序：房间 → 身份 → 白名单 → 频率；每一步失败都 emit 一条 `error`，
+    且**不广播**（白名单外 / 越界的消息一个字都不许进对手的屏幕）。
+    """
+    # 客户端可能发来任何东西（字符串 / 列表 / None）—— 不是 dict 就一律当空载荷，
+    # 让它走"房间不存在"这条路，而不是在这里 AttributeError。
+    if not isinstance(data, dict):
+        data = {}
+    room_id = data.get('room_id')
+    player_id = data.get('player_id')
+    msg_id = data.get('msg_id')
+
+    # ① 房间必须存在
+    room = room_manager.get_room(room_id)
+    if not room:
+        return _quick_chat_fail('房间不存在')
+
+    # ② 身份（伪造他人的 player_id 会在这里被挡；无请求上下文时只校验成员）
+    if player_id not in room.players or not _identity_ok(room, player_id):
+        return _quick_chat_fail('无效的房间或玩家')
+
+    # ③ msg_id 必须在白名单内 —— 文案只从 quick_chat.by_id() 取
+    item = quick_chat.by_id(msg_id)
+    if item is None:
+        return _quick_chat_fail('无效的快捷语')
+
+    # ④ 频率：窗口内最多 3 条 + 同一句窗口内不重复（规则在 quick_chat.check_rate）
+    now = time.time()
+    recent = [t for t in room.quick_chat_recent.get(player_id, [])
+              if now - t < quick_chat.WINDOW_SECONDS]
+    ok, reason = quick_chat.check_rate(recent, now, room.quick_chat_last.get(player_id), msg_id)
+    room.quick_chat_recent[player_id] = recent  # 顺手淘汰过期时间戳，避免无限增长
+    if not ok:
+        return _quick_chat_fail(reason)
+
+    # 通过：**真的发出去之后**才记账（被拒的不留痕，否则拒绝也会占满窗口）
+    recent.append(now)
+    room.quick_chat_recent[player_id] = recent
+    room.quick_chat_last[player_id] = {'id': msg_id, 'ts': now}
+
+    name = _log_name(room, player_id)
+    emit('quick_chat', {
+        'player_id': player_id,
+        'name': name,
+        'msg_id': msg_id,
+        'text': item['text'],   # 文案的唯一来源是 quick_chat.py，前端不写死
+        'ts': int(now),
+    }, room=room.id)
+    # 记进双方的对局日志（沿用既有的日志助手：它自己会把 game_log 推给房间）
+    add_game_log(room, f'{name}：{item["text"]}', 'quick_chat',
+                 {'player_id': player_id, 'msg_id': msg_id})
+    return {'status': 'success', 'msg_id': msg_id, 'text': item['text']}
 
 
 @socketio.on('find_match')

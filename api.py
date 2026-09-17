@@ -13,6 +13,7 @@ from werkzeug.utils import secure_filename
 import db
 import achievements
 import profile_spec
+import quick_chat
 import wallpaper
 
 ALLOWED_AVATAR_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
@@ -811,6 +812,22 @@ def api_card_usage():
     """卡牌使用次数（公开只读）。图鉴用它显示"这张卡有多常用"。"""
     usage = db.get_card_usage()
     return jsonify({'usage': usage, 'total': sum(int(v or 0) for v in usage.values())})
+
+
+@app.route('/api/quick_chat', methods=['GET'])
+def api_quick_chat():
+    """局内快捷语表（公开只读，**不要求登录**）。
+
+    游客也能对局，而这里全是静态文案、没有任何用户数据 —— 与
+    `/api/leaderboard` 同类，加 401 只会让游客的对局面板空着。
+    文案的唯一来源是 `quick_chat.py`（socket 事件 `quick_chat` 用的是同一份），
+    前端只负责渲染，不许在 `game.js` 里再抄一份文案。
+    """
+    return jsonify({
+        'success': True,
+        'groups': list(quick_chat.GROUPS),
+        'items': quick_chat.catalog(),
+    })
 
 
 # ---------------------------------------------------------------------------

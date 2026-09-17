@@ -312,6 +312,25 @@
                         </div>
                     </div>
                 </div>
+
+                <!--
+                    局内快捷语（第 4 批）。
+                    ⚠️ 三条硬约束：
+                      ① 绝不能用 .modal-overlay（那是全屏遮罩，会挡住棋盘、点不动格子）；
+                         这里的浮层是纯展示的，pointer-events 只在自己身上，没有遮罩层。
+                      ② 按钮位置和 #phase-timing-toggle 同一套路：宽屏挂在阶段卡片角上，
+                         紧凑/矮屏改成屏幕角落的固定浮标 —— 窄屏阶段卡片里塞不下第二个
+                         40px 触控目标（历史上「阶段时点」开关就因此翻过车）。
+                      ③ 文案一个字都不写在这里：全部来自 GET /api/quick_chat，
+                         由 game.js 渲染（前后端各写一份必然漂移）。
+                -->
+                <button type="button" id="quick-chat-btn" class="quick-chat-btn"
+                        aria-expanded="false" aria-controls="quick-chat-panel" title="局内快捷语">
+                    <span class="qc-btn-label">快捷语</span>
+                </button>
+                <div id="quick-chat-panel" class="quick-chat-panel" role="group"
+                     aria-label="局内快捷语" aria-hidden="true" hidden></div>
+                <div id="quick-chat-toast" class="quick-chat-toast" role="status" aria-live="polite"></div>
                 <!-- 棋盘切换条（仅在单屏放不下两块棋盘时由自适应布局显示） -->
                 <div class="board-tabs" id="board-tabs" role="tablist" aria-label="棋盘切换">
                     <button type="button" class="board-tab active" data-board-tab="me" role="tab">我的棋盘</button>

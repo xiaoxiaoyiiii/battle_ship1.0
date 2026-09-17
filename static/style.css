@@ -1074,6 +1074,171 @@ body.layout-tight.layout-ingame #phase-timing-toggle.phase-timing-toggle {
 }
 body.layout-compact.layout-ingame #phase-timing-toggle.phase-timing-toggle .ptt-label { display: block; }
 
+/* ---------- 局内快捷语 / 表情（第 4 批） ----------
+   入口按钮 + 非模态浮层 + 轻提示。文案全部来自 GET /api/quick_chat（见 game.js）。
+   ⚠️ 这里【没有】.modal-overlay：快捷语浮层只是一个普通浮标，
+     不会出现全屏遮罩，因此棋盘、手牌、阶段按钮照样能点。 */
+#quick-chat-btn.quick-chat-btn {
+    /* 紧凑 / 矮屏（手机、横屏手机）：屏幕【左上角】浮标。
+       为什么卡片里放不下：阶段卡片在紧凑布局里只有 ~94px 宽（实测 320x568 下卡片
+       94x17、664x336 下 94x17），那个 40px 触控目标实测会与「投降」按钮重叠 9x37、
+       与棋盘重叠 50x15 —— 与「阶段时点」开关当初被赶出卡片是同一个原因。
+       top 取 98px 是按【实测扫描】选出来的（0/52/98/144/190/236 六档，六个视口）：
+       320x568 下 y=0 压「投降」+回合标题、y=52 压「我的头像」chip（24x22）、
+       y≥190 压棋盘；只有 98 与 144 两档在全部六个视口上零重叠。取小的那个。
+       z-index 必须高于右上角那块卡牌预览浮窗（.magic-preview-container，z-index 1000）：
+       第一版给了 60，结果浮层展开时上半截被预览压住，玩家点快捷语条目时点击被预览
+       接走（实测 elementFromPoint 返回 preview-content 而不是那个 button）→
+       "看着在、点不动"。 */
+    position: fixed;
+    top: 98px;
+    left: 6px;
+    z-index: 1150;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 64px;
+    min-height: 40px;
+    margin: 0;
+    padding: 4px 8px;
+    border-radius: 9px;
+    border: 1px solid rgba(var(--primary-rgb, 21, 101, 192), 0.45);
+    background: rgba(var(--primary-rgb, 21, 101, 192), 0.10);
+    color: var(--text);
+    font-size: 0.68rem;
+    line-height: 1.15;
+    cursor: pointer;
+}
+#quick-chat-btn.quick-chat-btn:hover { background: rgba(var(--primary-rgb, 21, 101, 192), 0.2); }
+/* 浮层开着时按钮保持"按下"观感，一眼知道再点一下会收起来 */
+#quick-chat-btn.quick-chat-btn[aria-expanded="true"] {
+    border-color: rgba(var(--primary-rgb, 21, 101, 192), 0.85);
+    background: rgba(var(--primary-rgb, 21, 101, 192), 0.26);
+}
+html.theme-dark #quick-chat-btn.quick-chat-btn {
+    border-color: rgba(232, 163, 61, 0.55);
+    background: rgba(232, 163, 61, 0.14);
+}
+
+/* 快捷语浮层：非模态。
+   z-index 1200 —— 必须高于右上角那块卡牌预览浮窗（.magic-preview-container，1000），
+   低于全屏弹窗（10000~12000）。二者都是 fixed 元素、在同一条层叠轴上，
+   所以直接比数值即可（实测确认：z-index 60 时浮层被预览压住、条目点不动）。 */
+.quick-chat-panel {
+    position: fixed;
+    top: 144px;
+    left: 6px;
+    z-index: 1200;
+    max-width: min(320px, calc(100vw - 24px));
+    max-height: min(60vh, 420px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 8px;
+    border-radius: 12px;
+    border: 1px solid var(--panel-border);
+    background: var(--surface, rgba(255, 255, 255, 0.97));
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.22);
+    font-size: 0.78rem;
+    animation: quickChatIn 0.14s ease-out;
+}
+.quick-chat-panel[hidden] { display: none; }
+html.theme-dark .quick-chat-panel { background: rgba(18, 30, 44, 0.97); }
+@keyframes quickChatIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.quick-chat-group { margin: 0 0 6px; }
+.quick-chat-group:last-child { margin-bottom: 0; }
+.quick-chat-group-title {
+    margin: 0 0 4px 2px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: var(--muted, #6b7683);
+}
+.quick-chat-group-list { display: flex; flex-wrap: wrap; gap: 4px; }
+/* 每条：button.quick-chat-item[data-msg-id]（DOM 契约） */
+.quick-chat-item {
+    min-height: 32px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(var(--primary-rgb, 21, 101, 192), 0.35);
+    background: rgba(var(--primary-rgb, 21, 101, 192), 0.10);
+    color: var(--text);
+    font-size: 0.74rem;
+    line-height: 1.2;
+    text-align: left;
+    cursor: pointer;
+}
+.quick-chat-item:hover { background: rgba(var(--primary-rgb, 21, 101, 192), 0.22); }
+/* 加载中 / 加载失败 / 空：都是普通文本，不是按钮 */
+.quick-chat-hint { margin: 2px; font-size: 0.74rem; color: var(--muted, #6b7683); }
+
+/* 收到别人快捷语的轻提示：横幅式浮标，几秒后自动消失（game.js 控制）。
+   固定定位 + pointer-events:none → 它永远不会挡到任何可点区域。 */
+.quick-chat-toast {
+    position: fixed;
+    top: 56px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9998;
+    max-width: min(88vw, 420px);
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(var(--primary-rgb, 21, 101, 192), 0.45);
+    background: rgba(20, 32, 46, 0.9);
+    color: #fff;
+    font-size: 0.82rem;
+    line-height: 1.3;
+    text-align: center;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.18s ease, visibility 0.18s ease;
+}
+.quick-chat-toast.is-show { opacity: 1; visibility: visible; }
+
+/* 紧凑布局（手机竖屏）：位置与宽屏相同（都是左上角浮标），这里只补一条阴影，
+   让它在紧凑布局里更像"浮标"而不是卡片的一部分。
+   浮层也继续挂在按钮正下方（top:98px）—— 实测手机上浮层从 y=98 起、宽 ≤300px 时
+   与右上角的「阶段时点」开关（6~46 那一列，x ≥ W-60）零重叠。 */
+body.layout-compact.layout-ingame #quick-chat-btn.quick-chat-btn,
+body.layout-tight.layout-ingame #quick-chat-btn.quick-chat-btn {
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.22);
+}
+body.layout-compact.layout-ingame .quick-chat-panel,
+body.layout-tight.layout-ingame .quick-chat-panel {
+    max-width: min(300px, calc(100vw - 20px));
+    max-height: min(56vh, 380px);
+}
+/* 宽屏（≥1200 且高≥700）：左上角被「我的头像」胶囊占着（实测重叠 54x16），
+   右上角被对手头像胶囊 + 右上角卡牌预览占着，顶部整条都是别人的地盘。
+   改成【左下角浮标】：实测 (6, 视口高-64) 处棋盘 / 手牌 / 日志 / 聊天 / 面板槽
+   全部不重叠，中心点也真的落在按钮自己身上。
+   浮层跟着按钮往上展开（bottom 锚定），这样即使视口很矮也不会溢出去。 */
+body:not(.layout-compact):not(.layout-tight).layout-ingame #quick-chat-btn.quick-chat-btn {
+    top: auto;
+    bottom: 24px;
+    left: 6px;
+}
+body:not(.layout-compact):not(.layout-tight).layout-ingame .quick-chat-panel {
+    top: auto;
+    bottom: 74px;
+    left: 6px;
+}
+/* 浮层同样贴着屏幕右上角展开（向量与按钮一致，这里只压窄屏的可用宽高） */
+body.layout-compact.layout-ingame .quick-chat-panel,
+body.layout-tight.layout-ingame .quick-chat-panel {
+    max-width: min(320px, calc(100vw - 12px));
+    max-height: min(56vh, 380px);
+}
+body.layout-compact.layout-ingame .quick-chat-toast,
+body.layout-tight.layout-ingame .quick-chat-toast {
+    /* 窄屏顶部已经被两个浮标占住，提示条往下挪一格（它 pointer-events:none，不挡点击） */
+    top: 150px;
+    font-size: 0.78rem;
+}
+
 /* 场地魔法 */
 .field-magic-area {
     display: block;

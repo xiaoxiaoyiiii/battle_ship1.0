@@ -1485,13 +1485,221 @@ function toggleGameLog() {
 function renderServerLog(entry) {
     if (!entry || !entry.text) return;
     const time = entry.ts ? new Date(entry.ts * 1000).toLocaleTimeString('zh-CN', { hour12: false }) : '';
-    const typeLabel = { attack: '攻击', magic: '魔法', result: '结果', info: '信息' }[entry.type] || '信息';
+    // quick_chat：第 4 批快捷语走的是服务端 game_log 通道（那才是写进 room.game_logs /
+    // 对局历史的同一份来源），缺这条映射就会被渲染成通用的「信息」徽标。
+    const typeLabel = { attack: '攻击', magic: '魔法', result: '结果', info: '信息', quick_chat: '快捷语' }[entry.type] || '信息';
     addGameLog(
         `<span class="log-time">${escapeHtml(time)}</span>` +
         `<span class="log-badge log-badge-${escapeHtml(entry.type || 'info')}">${typeLabel}</span>` +
         renderLogTextHtml(entry),
         entry.type
     );
+}
+
+// ============ 局内快捷语（第 4 批） ============
+// 三条硬规矩（冻结契约，别改）：
+//   ① 文案一个字都不写在本文件里 —— 全部来自 GET /api/quick_chat 的
+//      {groups, items:[{id, group, text}]}。前后端各写一份必然漂移，本项目已吃过多次。
+//      这里只允许出现按钮自身的中文标签（如「快捷语」）与加载失败时的提示。
+//   ② 面板是非模态浮层，绝不用 .modal-overlay：那是全屏遮罩，会挡住棋盘、格子点不动。
+//   ③ 收到快捷语只做两件事：写进对局日志（复用 addGameLog）+ 轻提示。
+//      不碰棋盘 / 手牌 / 阶段 / 连锁 —— 收到之后对局界面其他部分必须一模一样。
+const QUICK_CHAT_API = '/api/quick_chat';
+const QUICK_CHAT_TOAST_MS = 4000;   // 轻提示停留时长
+let quickChatPanelData = null;      // 第一次成功拉到后缓存（文案是静态表，不必每开一次拉一次）
+let quickChatPanelLoading = null;   // 进行中的请求；失败会置回 null 以便下次重试
+let quickChatToastTimer = null;
+
+function getQuickChatEls() {
+    return {
+        btn: document.getElementById('quick-chat-btn'),
+        panel: document.getElementById('quick-chat-panel'),
+        toast: document.getElementById('quick-chat-toast'),
+    };
+}
+
+// 拉取快捷语表。失败（404 / 网络断 / 结构不对）一律返回 null，由调用方显示提示文案，
+// 绝不上抛 —— 接口暂时没就绪时不允许把对局界面打崩。
+function fetchQuickChatData() {
+    if (quickChatPanelData) return Promise.resolve(quickChatPanelData);
+    if (quickChatPanelLoading) return quickChatPanelLoading;
+    quickChatPanelLoading = fetch(QUICK_CHAT_API, { headers: { 'Accept': 'application/json' } })
+        .then((resp) => {
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            return resp.json();
+        })
+        .then((data) => {
+            if (!data || data.success !== true || !Array.isArray(data.items)) {
+                throw new Error('bad payload');
+            }
+            // group 名按【接口给的顺序】首次出现顺序去重；没有 group 的归到末尾
+            const groups = [];
+            const buckets = {};
+            data.items.forEach((item) => {
+                if (!item || typeof item.id !== 'string' || typeof item.text !== 'string') return;
+                const g = (typeof item.group === 'string' && item.group) ? item.group : '';
+                if (!buckets[g]) { buckets[g] = []; groups.push(g); }
+                buckets[g].push({ id: item.id, text: item.text });
+            });
+            quickChatPanelData = { groups: groups, buckets: buckets };
+            return quickChatPanelData;
+        })
+        .catch(() => {
+            quickChatPanelLoading = null;   // 允许下次重试
+            return null;
+        });
+    return quickChatPanelLoading;
+}
+
+function setQuickChatPanelOpen(open) {
+    const { btn, panel } = getQuickChatEls();
+    if (panel) {
+        panel.hidden = !open;
+        panel.setAttribute('aria-hidden', open ? 'false' : 'true');
+    }
+    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+function isQuickChatPanelOpen() {
+    const { panel } = getQuickChatEls();
+    return !!(panel && !panel.hidden);
+}
+
+// 按 group 渲染。每条都是 button.quick-chat-item[data-msg-id]（DOM 契约）。
+function renderQuickChatPanel(data) {
+    const { panel } = getQuickChatEls();
+    if (!panel) return;
+    panel.textContent = '';
+    if (!data || !data.groups.length) {
+        const hint = document.createElement('div');
+        hint.className = 'quick-chat-hint';
+        hint.textContent = '快捷语暂时加载不出来';
+        panel.appendChild(hint);
+        return;
+    }
+    data.groups.forEach((groupName) => {
+        const items = data.buckets[groupName] || [];
+        if (!items.length) return;
+        const groupEl = document.createElement('div');
+        groupEl.className = 'quick-chat-group';
+        if (groupName) {
+            const title = document.createElement('div');
+            title.className = 'quick-chat-group-title';
+            title.textContent = groupName;
+            groupEl.appendChild(title);
+        }
+        const list = document.createElement('div');
+        list.className = 'quick-chat-group-list';
+        items.forEach((item) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'quick-chat-item';
+            btn.dataset.msgId = item.id;
+            btn.textContent = item.text;
+            list.appendChild(btn);
+        });
+        groupEl.appendChild(list);
+        panel.appendChild(groupEl);
+    });
+}
+
+function showQuickChatPanel() {
+    const { panel } = getQuickChatEls();
+    if (!panel) return;
+    // 先把"加载中"填进去再打开：否则异步取数期间面板是空白的，看着像坏了
+    if (!quickChatPanelData) {
+        panel.textContent = '';
+        const hint = document.createElement('div');
+        hint.className = 'quick-chat-hint';
+        hint.textContent = '加载中…';
+        panel.appendChild(hint);
+    }
+    setQuickChatPanelOpen(true);
+    fetchQuickChatData().then((data) => {
+        if (!isQuickChatPanelOpen()) return;   // 已经收起来了就别再动 DOM
+        renderQuickChatPanel(data);
+    });
+}
+
+function toggleQuickChatPanel() {
+    if (isQuickChatPanelOpen()) setQuickChatPanelOpen(false);
+    else showQuickChatPanel();
+}
+
+// 轻提示：形如「名字：文案」，几秒后自动消失。只动 #quick-chat-toast 自己。
+function showQuickChatToast(name, text) {
+    const { toast } = getQuickChatEls();
+    if (!toast) return;
+    toast.textContent = (name ? name + '：' : '') + text;
+    toast.classList.add('is-show');
+    if (quickChatToastTimer) clearTimeout(quickChatToastTimer);
+    quickChatToastTimer = setTimeout(() => {
+        toast.classList.remove('is-show');
+        quickChatToastTimer = null;
+    }, QUICK_CHAT_TOAST_MS);
+}
+
+function sendQuickChat(msgId) {
+    const socket = gameState.socket;
+    if (!socket || !msgId) return;
+    if (!gameState.roomId || !gameState.playerId) {
+        showAlert('还没进入对局，发不了快捷语');
+        return;
+    }
+    // 与 end_turn / use_magic_card 同一套取值写法
+    socket.emit('quick_chat', {
+        room_id: gameState.roomId,
+        player_id: gameState.playerId,
+        msg_id: msgId
+    }, (response) => {
+        // 服务端可能拒绝（频率限制 / 越界 id）。提示一句，但绝不动对局状态。
+        if (response && response.status === 'error') showAlert(response.message || '快捷语发送失败');
+    });
+}
+
+// 收到快捷语：只弹轻提示。
+// ⚠️ 日志**不在这里写**：服务端广播 quick_chat 的同时还走既有日志助手把一条
+// type='quick_chat' 的条目 push 给房间（客户端由 game_log → renderServerLog 渲染），
+// 那才是写进 room.game_logs / 对局历史的同一份来源。这里再 addGameLog 一次，
+// 真机上每条快捷语都会在日志里出现两遍（广播一次 + game_log 一次）。
+// 同理：只碰 #quick-chat-toast 一个节点，不碰棋盘 / 手牌 / 阶段 / 连锁。
+function handleQuickChatReceived(payload) {
+    if (!payload || !payload.text) return;
+    const name = payload.name || '对手';
+    const isMine = !!(gameState.playerId && payload.player_id === gameState.playerId);
+    // 自己发的那条不弹提示（自己刚点过，弹了是噪音）；回显只写日志
+    if (!isMine) showQuickChatToast(name, String(payload.text));
+}
+
+// 绑定入口与面板（幂等：init 只跑一次；重绘不会碰这两个节点）
+function initQuickChatUI() {
+    const { btn, panel } = getQuickChatEls();
+    if (!btn || !panel) return;
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleQuickChatPanel();
+    });
+    // 面板里只有一种可点目标：条目。用事件委托，重绘也不必重绑。
+    panel.addEventListener('click', (e) => {
+        const item = e.target && e.target.closest ? e.target.closest('.quick-chat-item') : null;
+        if (!item) return;
+        e.stopPropagation();
+        sendQuickChat(item.dataset.msgId);
+        setQuickChatPanelOpen(false);   // 点完就收起来
+    });
+    // 点面板/按钮以外的地方收起；按 Esc 也收起
+    document.addEventListener('click', (e) => {
+        if (!isQuickChatPanelOpen()) return;
+        if (btn.contains(e.target) || panel.contains(e.target)) return;
+        setQuickChatPanelOpen(false);
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && isQuickChatPanelOpen()) setQuickChatPanelOpen(false);
+    });
+    // 断线重连后表可能变过（后端改动），让下次打开重新拉一次
+    if (gameState.socket) {
+        gameState.socket.on('reconnect', () => { quickChatPanelData = null; quickChatPanelLoading = null; });
+    }
 }
 
 // 从 window.magicCards 里按卡名取卡；不存在返回 null
@@ -4932,6 +5140,11 @@ function setupSocketListeners() {
         renderServerLog(entry);
     });
 
+    // 局内快捷语（第 4 批）：只写日志 + 轻提示，不动棋盘 / 手牌 / 阶段 / 连锁
+    socket.on('quick_chat', (payload) => {
+        handleQuickChatReceived(payload);
+    });
+
     // 日志里的卡名支持悬停查看 / 点击详情（幂等，只绑一次）
     initGameLogCardRefs();
 
@@ -8203,6 +8416,8 @@ function init() {
     bindEffectIndicators();
     // 「拒绝所有阶段转换时点」开关（对局界面里那个入口）
     bindDeclinePriorityToggle();
+    // 局内快捷语入口（第 4 批）：入口 / 面板 / 收起 三件事都绑在这里
+    initQuickChatUI();
     // 「我是谁」+ 可编辑项池子：登录态才有（游客 401），只用于判断名片上要不要
     // 显示「编辑资料」，绝不用它做权限判断 —— 保存时服务端还会再判一次。
     loadSelfIdentity();

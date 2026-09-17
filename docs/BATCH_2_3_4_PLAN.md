@@ -318,12 +318,82 @@ profile_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,
 
 ---
 
+## 9. 第 3 批实施记录（2026-09-17 落地）
+
+**改动**：`db.py`（两表 + 3 索引 + 9 DAO + 加列迁移 `_add_column_if_missing` / `_migrate_schema`）、
+`api.py`（4 接口 + 隐私过滤 + 5 个助手）、`profile_spec.py`（`show_guestbook` 并入 `WRITABLE_FIELDS`，8 → 9 字段）、
+`static/game.js` + `static/style.css`（查看面互动条 + 留言板 + 编辑面第 4 个展示开关）、
+`tests/test_social.py`（47，新建）、`tests/test_profile_card.py`（`_payload()` 8 → 9）、
+`tools/social_check.mjs`（46，新建）、`tools/profile_leaderboard_check.mjs`（假红修复，见下）。
+
+**实测（冻结树上重跑）**
+
+| 层 | 结果 |
+| --- | --- |
+| pytest | **1070 passed**（1023 基线 + 47） |
+| `tools/social_check.mjs`（本批新建） | **46 PASS / 0 FAIL** |
+| `profile_card_check` 57 ｜ `achievements_check` 35 ｜ `profile_leaderboard_check` 47 ｜ `stats_modal_check` 21 ｜ `chain_preview_check` 25 ｜ `hand_play_check` 15 ｜ `last_stand_board_check` 16 | 全绿 |
+| `ui_layout_check`（**必须单跑**，见第 1 批的浏览器争用） | **100 PASS / 0 FAIL** |
+| 协议 e2e `tools/e2e_batch_2026_09_17.py` | ✓ 全部通过 |
+| `dom_contract_check --plan BATCH_2_3_4_PLAN.md` | 第 3 批 **15 个 id 全部落地**（运行期渲染）；只剩第 4 批的 `quick-chat-btn/panel/toast` |
+| 浏览器工具合计 | **362 项，0 FAIL**（第 2 批后是 339） |
+
+**部署与生产验证**：本机 `1c6169a` → 服务器与 GitHub `26e9c10` → 生产 PID **101753**，服务 active，健康检查 HTTP 200
+（`deploy.sh` 在服务器归档上又跑了一遍全套 pytest：1070 passed）。
+
+- **加列迁移在生产真库上确实生效**（本批最容易线上 500 的一步）：`PRAGMA table_info(user_profile)` 里
+  `show_guestbook INTEGER DEFAULT 1`、`NULL` 老行 **0** 条；`profile_likes` / `profile_messages` 两表 + **3 个索引**都在，`deleted` 软删列在。
+- 生产 HTTP 只读冒烟 **20 项全绿**：新前端已上线（`game.js` 含 `guestbook-input`/`guestbook-send`/`profile-like`/
+  `profile-flower`/`guestbook-private`/`profile-show-guestbook`/`guestbook-del` 七个标记）、4 个接口未登录一律 401、
+  `/user_stats` 他人视角下发 `show_guestbook=1` + `counts`/`mine`（键名恰为 `{like,flower}`）且**不下发留言内容**、无凭据泄露。
+- 生产 UI 探针（游客身份**只读**，生产数据零写入）**8 项全绿**：线上名片查看面渲染出互动条（计数是服务端真数字不是 undefined）
+  与留言板区块、公开的留言板显示留言区而不是「未开放」占位、零 JS 异常。
+
+**实施中发现的三个真问题**
+
+1. **`before_id=0` 是个"看着成功"的无效游标**：服务端语义是「取 id < before_id」，第一页传 0 →
+   `total=N` 但 `messages=[]`，**永远看不到留言、刷新照样空**。修法：第一页**不带**该参数，翻页才带上一页最后一条的 id。
+   👉 `tools/social_check.mjs` 按此写（第一页只用 `limit`）；别在别处传 `before_id=0`。
+2. **保存路径的静默丢弃**：`save_user_profile_extra` 的 INSERT/UPSERT **漏了 `show_guestbook` 列** ——
+   开关点了、界面也变了、库里没变。只有「真注册 → 真点保存 → 回头读服务端」的端到端抓得到
+   （`tools/social_check.mjs` 第 32～34 项就是这条守卫）。
+3. **隐私过滤只有服务端拦得住**（★ 本批最重要的验证教训）：把服务端的隐私分支关掉做红基线，
+   **DOM 断言（37/38）照样全绿** —— 因为前端看到 `show_guestbook=0` 就提前 return、压根不去拉留言。
+   只有以**别人的身份直接读接口**才发现内容泄露。👉 两个视角必须**各有服务端真值断言**（第 41/43 项），前端断言不能替代它。
+   顺带：只断言"主人看得到 1 条"是不够的（那个版本在红基线下也是绿的），必须**两侧都断言**。
+
+**顺带的工具修复（假红，全部出在工具自己身上）**
+
+- `profile_leaderboard_check` 的 L3：桩里写的头像 `/static/avatars/u1_avatar.png` **仓库里根本不存在** →
+  `<img>` 必 404 → 页面自带的 `onerror` 兜底把 `src` 改写成默认头像 → 断言读到的已经是兜底值。
+  绿了很久纯属"断言比 404 事件先到"，第 3 批把渲染耗时拖长后就翻红。修法：桩改用**能真加载**的 1×1 data URL
+  （页面那个兜底是**对的**——线上头像文件真实存在——要改的是桩）。
+- 新建 `tools/social_check.mjs` 时自己踩的四个坑：① 点赞是**乐观预演**，"界面变了"≠"请求回来了"，
+  请求没 settle 就点第二下会被连点保护吞掉 → 必须等**请求真的 settle**；② `/logout` 是 302 跳首页，
+  "等地址变成 /logout"必然超时；③ Node 的 fetch **不跨跳转带 cookie**，注册成功的 flash 读不到 →
+  改看"注册完能不能以这个身份读到自己"；④ 拿**主人**的 cookie 读 `guestbook_private` 永远是 false
+  （那正是契约要求的"本人视角完整"），别人视角的真值必须用**别人的会话**读。
+- 挑 CDP 页面时**必须留 `type === 'page'` 的兜底**：初始页是 `about:blank`，只认 `https?|file` 会一个都挑不到，
+  报出来的却是「无法连接无头浏览器调试端口」（其实浏览器好好的）。
+- ⚠️ **别用 PowerShell 的 `Get-Content -Raw | Set-Content` 改 UTF-8 源码**：本机默认按 GBK 读写，会把中文注释写成
+  **非法 UTF-8**，`node --check` 报 `Invalid or unexpected token`、`read` 工具直接读不了
+  （本批把 `tools/social_check.mjs` 弄坏过一次，只能整文件重写）。这与第 12 节「不要用脚本做全局字符串替换」是同一条教训。
+
+**一个待拍板的产品决策（本批新增）**：留言接口除了契约里的「每人对同一人每天 ≤ 20 条」，还**复用了登录那套按 IP 的限流**
+（60 秒内 10 次，与登录/注册**共用一个桶**）→ 同一出口 IP 下的所有人共享这 10 次/分钟，
+而"每天 20 条"因此**只能分两分钟以上才可能打满**（一秒内连发会先撞 IP 限流的 429）。
+反刷屏是好事，但用户感知上会先撞到 429。要么保留（倾向保留：人不会一分钟留 10 条），要么调宽/改成按账号限流 —— 需作者拍板。
+
+---
+
 ## 8. 三批的执行顺序与依赖
 
 ```
 第 2 批：A 每局结算收口 + counters 表 ──► B achievements.py + 接口 ──► C 前端徽章区块 + 工具
-第 3 批：D 点赞/送花 + E 留言板（可并行）──► F 前端互动条 + 工具
-第 4 批：G 快捷语常量表 + 服务端事件 ──► H 前端浮层 + 工具
+        ✅ 已完成并上线（`dc33031`，记录见第 7 节）
+第 3 批：D 点赞/送花/留言板后端 + 加列迁移 ──► E 前端互动条 + 留言板 ──► 工具与收口
+        ✅ 已完成并上线（`26e9c10`，记录见第 9 节）
+第 4 批：G 快捷语常量表 + 服务端事件 ──► H 前端浮层 + 工具   ← **下一步**
 ```
 
 **依赖**：第 3、4 批与第 2 批互不依赖，**但它们都要改 `db.py` / `api.py` / `game.js` / `style.css`

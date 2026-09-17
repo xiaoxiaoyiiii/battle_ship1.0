@@ -1,8 +1,8 @@
 # CLAUDE.md — 战舰棋 + 魔法卡
 
-> 面向 AI 代理的项目索引。**先读这里，再按需读源码**——`server.py` 7700+ 行、`game.js` 7300+ 行，不要一次读完。
-> 本文件最后更新：2026-09-17（缺陷批，见 `docs/BATCH_2026_09_17.md`）。
-> 前一次更新：2026-09-15（动态壁纸批，见 `docs/WALLPAPER_ENGINE.md`）、2026-09-13（缺陷审计批，见 `docs/DEFECT_FIXES_2026_09_13.md`）。
+> 面向 AI 代理的项目索引。**先读这里，再按需读源码**——`server.py` 7900+ 行、`game.js` 8700+ 行，不要一次读完。
+> 本文件最后更新：2026-09-17（点赞 / 送花 / 留言板批，见 `docs/BATCH_2_3_4_PLAN.md`）。
+> 前一次更新：2026-09-17（徽章成就批）、2026-09-17（缺陷批，见 `docs/BATCH_2026_09_17.md`）。
 >
 > ⚠️ **行号会随每次提交漂移**（2026-09-17 实测：全文件行号普遍偏移 +80~200）。
 > 本文件里的行号仅供定位参考，**以 grep 结果为准**。
@@ -17,17 +17,18 @@ Flask + Flask-SocketIO 的实时双人海战棋，叠加 43 条魔法卡（41 �
 - **仓库**：`xiaoxiaoyiiii/battle_ship1.0`（GitHub）
 - **生产运行**：eventlet
 
-### 文件规模（换行符口径 = 数 `\n`，2026-09-17 第 2 批后实测；**会漂移，定位一律靠 grep**）
+### 文件规模（换行符口径 = 数 `\n`，2026-09-17 第 3 批后实测；**会漂移，定位一律靠 grep**）
 
-核心 6 个：`server.py` **7969** ｜ `static/game.js` **8215** ｜ `static/style.css` **3976** ｜
-`templates/index.html` **863** ｜ `db.py` **1513** ｜ `api.py` **615**
+核心 6 个：`server.py` **7969** ｜ `static/game.js` **8767** ｜ `static/style.css` **4156** ｜
+`templates/index.html` **863** ｜ `db.py` **2024** ｜ `api.py` **922**
 
-其余：`wallpaper.py` 545 ｜ `static/wallpaper.js` 533 ｜ `static/adaptive_layout.js` 418 ｜
-`static/music_player.js` 400 ｜ `profile_spec.py` 404 ｜ `achievements.py` 254 ｜ `static/sfx.js` 155 ｜
-`static/magic_card.json` 84 ｜ `static/magic_cards.js` 49 ｜ `file.py` 3
+其余：`profile_spec.py` 411 ｜ `achievements.py` 254 ｜ `wallpaper.py` 545 ｜ `static/wallpaper.js` 533 ｜
+`static/adaptive_layout.js` 418 ｜ `static/music_player.js` 400 ｜ `static/sfx.js` 155 ｜
+`static/magic_card.json` 84 ｜ `static/magic_cards.js` 49 ｜ `file.py` 3 ｜
+测试与工具：`tests/*.py` 合计 **16776** ｜ `tools/social_check.mjs` 540
 
 `style.css` 分节：…第 22 节「紧凑（移动端自适应）布局」/ 第 24 节「动态壁纸层」/ 第 25 节「视觉增强」/
-第 26 节「个人名片 / 设置页 / 徽章墙」。
+第 26 节「个人名片 / 设置页 / 徽章墙」（26.2c 是查看面的互动条 + 留言板）。
 > ⚠️ **行数统计口径**：用 `(Get-Content f -Raw)` 数换行符，**不要用** `Measure-Object -Line`（它漏空行，会少报）。
 
 ---
@@ -37,7 +38,7 @@ Flask + Flask-SocketIO 的实时双人海战棋，叠加 43 条魔法卡（41 �
 ```bash
 pip install -r requirements.txt
 python start_server.py        # 推荐（含依赖检查）
-python -m pytest tests/ -q    # 1023 passed
+python -m pytest tests/ -q    # 1070 passed
 ```
 
 > ⚠️ **必须在项目根目录运行**——`server.py` 用相对路径 `./static/magic_card.json`；`tests/test_all_magic_cards.py:1088` 也用硬编码相对路径，是全套测试中唯一对 CWD 敏感的。
@@ -50,7 +51,7 @@ python -m pytest tests/ -q    # 1023 passed
 > 同一个原因，仓库里的 `.pytest_cache/` 也**不可写**（`WinError 5` 警告刷屏），加 `-p no:cacheprovider` 关掉缓存就行。
 > ⚠️ `.tmp/` 被清理掉之后，**记得先建回 `pytemp` 再跑 pytest**（2026-09-17 因为删了它，白排查了一轮 97 个 error）。
 
-**实测基线（2026-09-17 徽章批后）**：`1023 passed / 0 failed`（名片改版批 936 + 徽章批 87）。
+**实测基线（2026-09-17 第 3 批后）**：`1070 passed / 0 failed`（名片改版批 936 + 徽章批 87 + 点赞留言板批 47）。
 
 > 🔧 **2026-09-13 个人战绩弹窗 / 人机战绩统计批**（详见 `docs/STATS_AND_AI_RANKING_FIXES.md`）：6 处实测缺陷 —— ①历史行把 `<button>` 塞进 `<table><tbody>` 触发 foster parenting，表头「时间 对手 结果 局内日志」孤立在列表最下方；②胜负配色被通用 `button` 规则的 `background-image` 渐变盖掉，三条胜绩全蓝；③`.user-stats-table` / `.user-history` 在样式表里从未定义；④人机对手显示成裸 ID `ai-4530c8`；⑤胜局的「对局详情」把「对手」显示成自己；⑥**人机对局计入 `users.wins` / 连胜**（排行榜 `ORDER BY wins DESC` → 打电脑即可刷榜）。修法：历史列表改 div 三列网格、`.match-history-btn{background-image:none}` + `.win`/`.lose`、`ai-` 前缀映射「电脑」并加「人机」标签、按胜负取对手、`db.record_match(count_stats=)` + `server._count_stats_for(room)`（人机只写历史、不计统计，6 处调用点全部显式传参）；并合并两份重复的 `showUserStats`/`showMatchDetail`、去掉 `setTimeout` 绑事件与「每次点头像都 append 一个重复 id 弹窗」，新增「加载更多」。回归：`tests/test_stats_display_fixes.py`（14 条）+ `tools/stats_modal_check.mjs`（无头 Edge，27 项，含 `--username` 真实账号端到端）；历史脏数据用 `tools/recompute_ranked_stats.py --apply` 对齐（本机已执行：z1w6qn 3 胜 → 0）。
 
@@ -459,58 +460,18 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 | 无复盘/观战 | 回合计时（第 31 条）与卡牌使用统计（第 32 条）已完成 | P2-9/10 |
 | `/user_stats` 公可枚举用户名（含任意用户完整局内日志） | 凭据字段已不泄露；是否收紧属于产品决策 | 安全/体验 |
 
-### 🟡 2026-09-13/14 阶段转换「优先权询问」批（方案 D）
+### 🟡 2026-09-13/14 阶段转换「优先权询问」批（方案 D，分两批）
 
-> 详见 `docs/PRIORITY_PROMPT_2026_09_13.md`。作者实测「速阶3任何时候都能用，
-> 容易和对方同时使用的卡牌抢时点」。修法：参照游戏王 YGO 的**优先权确认**，
-> 在**进战斗 / 进结束**两个入口先问对方"要不要响应"，10 秒窗口，
-> 超时/取消则继续原操作。另加「拒绝所有阶段转换时点」**开关**（可随时切回）。
+> 详见 `docs/PRIORITY_PROMPT_2026_09_13.md`。因「速阶3 任何时候都能用、容易抢时点」，在**进战斗 / 进结束**两个入口先问对方要不要响应（10 秒窗口，超时/取消则照原样继续），另加「拒绝所有阶段转换时点」开关（已从设置搬到局内阶段卡片右上角 `#phase-timing-toggle`）。
 
-**这一批最有价值的教训（都是"静默失败"，不报错、极难排查）：**
+**四条通用教训**（细节与逐条实测证据见该文档）
 
-1. **★ 在响应者的 socket 请求里重放另一个玩家的操作，会被身份校验拦下**。
-   `_priority_continue` 要代发起者重放 `enter_battle_phase`，而该 handler 的
-   `_identity_ok` 拿 `request.sid`（响应者的连接）去比对发起者的座位 —— 必然失败。
-   症状：玩家点「取消」后 `priority_pending` 清空、阶段却永远停在 `preparation`，
-   双方零提示，整个回合死掉。**修法：把重放丢进 `socketio.start_background_task`。**
-   全项目通用规律：**任何"代他人重放 handler"的代码都要先脱离请求上下文。**
-2. **`priority_continue` 曾只在赋值处出现**：没在 `__init__` 初始化、也没人消费
-   （响应者打了卡就再没人补做阶段转换）。新增房间级状态务必同时做到
-   ① `__init__` 初始化 ② 有明确的消费点 ③ 有回归测试。
-3. **无头工具全都在测 Edge 的内置页**：headless Edge 自带一个
-   `edge://sync-confirmation-dialog/`，且它在 `/json/list` 里**稳定排在页面第一位**
-   （实测 3/3）。17 个工具都写的 `list.find(t => t.type === 'page')` → 连错页。
-   症状是"读不到 `gameState` / 全项假红"，**不报错**。
-   已加共用 `pickPage(list)`，只认 `https?|file` 开头的页面。
-4. **无头 profile 别放 `C:/Windows/Temp`**：本机该目录出现过 ACL 损坏
-   （目录删不掉、Edge 起不来），表现为"无法连接无头浏览器调试端口"。
-   已改到项目内 `.tmp/`（已加 `.gitignore`）。
+1. **★ 在别人的 socket 请求里重放另一个玩家的操作，会被身份校验拦下**（`_identity_ok` 拿的是响应者的 `request.sid`）→ 症状是"服务端状态已清空、阶段却永远不动、双方零提示"。**任何"代他人重放 handler"的代码都要先 `socketio.start_background_task` 脱离请求上下文。**
+2. **等待窗口必须真的拦住东西**：`handle_attack` / `handle_use_magic_card` / `end_turn` 曾只挡连锁、不看 `priority_pending`（等于没拦），而且"双击进入战斗"就能绕过询问 → 统一走 `_priority_wait_reason()` 冻结发起方 5 个写操作，且**只冻发起方**（响应者此刻要做的正是响应）。
+3. **新增房间级状态必须三件齐**：`__init__` 初始化 + 明确的消费点 + 回归测试（`priority_continue` 曾三样都缺）。
+4. **布局不变量要按"不压任何东西"写**，只验居中是不够的（居中照样能压住按钮）—— 窄屏卡片里放不下第二个 40px 触控目标，最终改成固定浮标。
 
-### 🟡 2026-09-14 优先权询问第二批：等待冻结 + 开关搬到局内
-
-> 详见 `docs/PRIORITY_PROMPT_2026_09_13.md` 第 8 节。作者：「在等待阶段转换的响应的时候，
-> 对方不能暂停行动」「开关做成一个开关放在局内，而不是在设置中」。
-
-**★ 等待窗口以前根本没拦住任何东西**：`handle_attack` / `handle_use_magic_card` / `end_turn`
-当时都只挡连锁窗口、不看 `priority_pending` —— 对方正在决定要不要打速阶3，发起方却能把攻击先打完，
-"拦下来问一句"等于没拦。而且 `_should_ask_priority` 看到已有 pending 会返回 False，
-**双击「进入战斗阶段」就能绕过询问**。
-
-修法：`_priority_wait_reason(room, player_id)` 冻结发起方的 5 个写操作
-（`handle_attack` / `handle_use_magic_card` / `end_turn` / `enter_battle_phase` /
-`handle_enter_end_phase`，后两个在 `_priority_confirmed` 续做重放时放行）；
-新增 `priority_waiting`（发给**发起方**，前端据此显示横幅 + 禁用阶段按钮）与
-`priority_waiting_end` 事件，`_build_room_sync` 补 `priority_waiting`（重连要能恢复）。
-**只冻发起方** —— 响应者此刻要做的正是"响应"，走 `priority_response`。
-
-开关：从设置面板搬到阶段卡片右上角（`#phase-timing-toggle`），设置里那份已删。
-两个布局坑（都是实测出来的）：
-① 不能和阶段按钮同行（宽屏「阶段按钮在卡片内水平居中」不变量会被挤偏）→ 用 `position: absolute`；
-② **窄屏卡片里放不下第二个 40px 触控目标**（实测 193×42 的卡片里，按钮右侧只剩 1px）→
-`layout-compact` / `layout-tight` 下改成屏幕右上角的固定浮标。
-`ui_layout_check.mjs` 因此新增一条不变量：**「阶段时点」开关不压任何东西**
-（阶段按钮/棋盘/手牌/面板槽/头像角标/回合标题/投降按钮）。只验居中是不够的 ——
-居中照样能压住按钮，第一次实现就是这么翻车的。
+**工具侧两条**：无头 Edge 自带 `edge://sync-confirmation-dialog/` 且**稳定排在 `/json/list` 第一位** → 挑页要按 URL 过滤，但**必须留 `type === 'page'` 兜底**（初始页是 `about:blank`，只认 `https?|file` 会一个都挑不到，报出来的却是"无法连接无头浏览器调试端口"）；无头 profile 一律放项目内 `.tmp/`（`C:/Windows/Temp` 出过 ACL 损坏）。
 
 ### 🟡 2026-09-14「打完一张，剩下的手牌莫名消失」批
 
@@ -738,6 +699,21 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 2. **判据与组装各只能有一份**：`achievements.evaluate()` 是唯一判据；`db.get_achievement_stats()` 是唯一组装点（结算与接口共用）。⚠️ 后者**必须是模块级函数** —— 测试与调用方都按模块级包装打桩，写进 `Database` 类会让 `self.xxx` 绕过打桩，表现为「测试里明明 12 场，接口按 0 算」的假红。
 3. **按视角下发数据**：别人视角只发**已解锁**徽章（连 id 与判据文案都不发），但 `badge_count.total` 照发 —— 否则前端把「已解锁 N / 总数」显示成「N / N」。
 4. **`unlocked` 取「判据达标 ∪ 库里已授予」的并集**：会出现 `unlocked:true` + `unlocked_at:0`（刚跨门槛、结算还没记时间），这是有意的，别当异常；新账号 0 枚解锁时徽章墙**仍要显示**（整墙灰位＝收集目标）。
+
+### 🟢 2026-09-17 点赞 / 送花 / 留言板批（第 3 批）
+
+> 详见 `docs/BATCH_2_3_4_PLAN.md` §3（冻结契约）与 §9（实施记录）。两表 `profile_likes`/`profile_messages`（+3 索引、软删 `deleted`）、
+> `show_guestbook` **加列迁移**、4 个接口 + 服务端隐私过滤、查看面互动条 + 留言板 + 编辑面第 4 个展示开关（保存载荷 8 → **9 字段**）、
+> `tests/test_social.py`（47）、`tools/social_check.mjs`（46）。自测 **1070 passed**、浏览器工具合计 **362 项全绿**，已上线 `26e9c10`。
+
+**四条教训**
+
+1. **★ 隐私这类"过滤"只有服务端拦得住 —— 前端断言会假绿**。红基线实测：把服务端隐私分支关掉，**DOM 断言照样全绿**（前端看到 `show_guestbook=0` 就提前 return、压根不拉留言），只有以**别人的身份直接读接口**才发现内容泄露；而且只断言"主人看得到 N 条"也不够，**两侧都要断言**。
+2. **给已存在的老表加列只能靠「判存在再加」**：`CREATE TABLE IF NOT EXISTS` 对已存在的表是空操作，生产库那条 `ALTER TABLE ... ADD COLUMN ... DEFAULT 1`（`PRAGMA table_info` 先判）才是开关能不能用的关键 —— 上线后用 `PRAGMA table_info` 在**真库**上确认过。这类失败只记日志不外抛（`init_db()` 在 import 期跑，不能为一个展示开关把进程打崩）。
+3. **游标接口的第一页不能传 `0`**：`before_id` 语义是「取 id < N」，传 0 会返回 `total=N` 但 `messages=[]` → **看着成功、永远看不到留言**（第一页应当**不带**该参数）。
+4. **点赞是"乐观预演"**：点下去界面立刻变，所以"界面变了"≠"请求回来了"；断言要等**请求真的 settle**，否则连点保护会把第二下吞掉（工具假红）。同类还有 `/logout` 是 302 跳首页、Node 的 fetch **不跨跳转带 cookie**（注册成功的 flash 读不到）。
+5. ⚠️ **别用 PowerShell 的 `Get-Content -Raw | Set-Content` 改 UTF-8 源码**：本机默认按 GBK 读写，会把中文注释写成**非法 UTF-8**（`node --check` 报 `Invalid or unexpected token`、`read` 工具直接读不了）。与第 12 节第 8 条同源。
+
 ---
 
 ## 12. 开发约定

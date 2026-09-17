@@ -195,7 +195,11 @@ def test_baizhe_clears_field_magic_and_effects(room):
     server.apply_magic_effect(room, P1, card('败者食尘'), {})
 
     assert room.field_magic is None, '场地魔法应被清除'
-    assert room.game_effects == {}, '房间级效果应被清除'
+    # 卡面第二句「生效的大回合内双方攻击次数为 0」需要一个大回合级的标记
+    # （2026-09-17 新增）：旧实现只在放置完成时置一次 0，进战斗阶段会被按船数
+    # 重算回 6。除这个标记之外，房间级效果必须清空。
+    assert set(room.game_effects) == {'zero_attacks_round'}, '房间级效果应被清除'
+    assert room.game_effects['zero_attacks_round'] == room.round
     assert room.magic_discard == [], '弃牌堆应被清空'
     assert room.players[P1].effect_flags.vampire is False, '玩家效果标记应清零'
     assert room.players[P2].magic_blocked is False, '看破封锁应解除'

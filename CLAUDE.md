@@ -1,10 +1,10 @@
 # CLAUDE.md — 战舰棋 + 魔法卡
 
-> 面向 AI 代理的项目索引。**先读这里，再按需读源码**——`server.py` 5757 行、`game.js` 5821 行，不要一次读完。
-> 基于 commit `837ab0e` 实测编写。最后更新：2026-09-15（动态壁纸批，见 `docs/WALLPAPER_ENGINE.md`）。
-> 前一次更新：2026-09-13（缺陷审计修复批，见 `docs/DEFECT_FIXES_2026_09_13.md`）。
+> 面向 AI 代理的项目索引。**先读这里，再按需读源码**——`server.py` 7700+ 行、`game.js` 7300+ 行，不要一次读完。
+> 本文件最后更新：2026-09-17（缺陷批，见 `docs/BATCH_2026_09_17.md`）。
+> 前一次更新：2026-09-15（动态壁纸批，见 `docs/WALLPAPER_ENGINE.md`）、2026-09-13（缺陷审计批，见 `docs/DEFECT_FIXES_2026_09_13.md`）。
 >
-> ⚠️ **行号会随每次提交漂移**（本次审计实测：全文件行号普遍偏移 +80~100）。
+> ⚠️ **行号会随每次提交漂移**（2026-09-17 实测：全文件行号普遍偏移 +80~200）。
 > 本文件里的行号仅供定位参考，**以 grep 结果为准**。
 
 ---
@@ -21,17 +21,17 @@ Flask + Flask-SocketIO 的实时双人海战棋，叠加 43 条魔法卡（41 �
 
 | 文件 | 行数 | 说明 |
 | --- | --- | --- |
-| `server.py` | **5757** | 游戏核心：SocketIO、房间、状态机、魔法卡结算 |
-| `static/game.js` | **5821** | 前端全部逻辑（巨型单文件，无模块化） |
-| `static/style.css` | 3119 | 样式 + 深/浅色主题 + 第 22 节「紧凑（移动端自适应）布局」+ 第 24 节「动态壁纸层」+ 第 25 节「视觉增强」 |
-| `templates/index.html` | 738 | SPA 模板 |
+| `server.py` | **7743** | 游戏核心：SocketIO、房间、状态机、魔法卡结算 |
+| `static/game.js` | **7332** | 前端全部逻辑（巨型单文件，无模块化） |
+| `static/style.css` | 3292 | 样式 + 深/浅色主题 + 第 22 节「紧凑（移动端自适应）布局」+ 第 24 节「动态壁纸层」+ 第 25 节「视觉增强」 |
+| `templates/index.html` | 740 | SPA 模板 |
 | `static/sfx.js` | 156 | 战斗音效：Web Audio 现场合成（无素材依赖） |
 | `static/music_player.js` | 401 | 背景音乐：优先放 mp3，找不到时自动切**合成环境音** |
 | `static/adaptive_layout.js` | 419 | 移动端自适应布局：按可用空间在「桌面浮窗」与「一屏网格」间切换 |
 | `static/wallpaper.js` | 521 | 动态壁纸引擎：应用/参数/持久化/扫描列表/路径与直链导入 |
 | `wallpaper.py` | 545 | 壁纸库扫描：定位 Steam 创意工坊、解析 project.json、登记可播放媒体 |
-| `db.py` | 900 | SQLite DAO（含 `card_usage` 卡牌使用统计） |
-| `api.py` | 386 | Flask 路由（13 个 + 4 个壁纸路由） |
+| `db.py` | 937 | SQLite DAO（含 `card_usage` 卡牌使用统计、`get_user_rank` 榜单名次） |
+| `api.py` | 389 | Flask 路由（13 个 + 4 个壁纸路由） |
 | `static/magic_card.json` | 84 | 后端卡牌数据 |
 | `static/magic_cards.js` | 49 | 前端卡牌数据 |
 | `file.py` | 3 | JSON 读取工具 |
@@ -45,13 +45,14 @@ Flask + Flask-SocketIO 的实时双人海战棋，叠加 43 条魔法卡（41 �
 ```bash
 pip install -r requirements.txt
 python start_server.py        # 推荐（含依赖检查）
-python -m pytest tests/ -q    # 790 passed
+python -m pytest tests/ -q    # 860 passed
 ```
 
 > ⚠️ **必须在项目根目录运行**——`server.py` 用相对路径 `./static/magic_card.json`；`tests/test_all_magic_cards.py:1088` 也用硬编码相对路径，是全套测试中唯一对 CWD 敏感的。
-> 本机 venv：`.venv/Scripts/python.exe`（3.12）。`python`（PATH 上的 3.13）**没装 Flask**，直接用它跑测试会 `ModuleNotFoundError`。
+> 本机解释器：PATH 上的 `python`（当前 3.12.10，**已装 flask**）或历史 venv `.venv/Scripts/python.exe`。
+> 若报 `ModuleNotFoundError: flask`，说明选错了解释器（别再照旧文档改成 venv）。
 
-**实测基线（2026-09-15 动态壁纸批后）**：`790 passed / 0 failed`（上一批 2026-09-13 为 398，本次新增 `test_wallpaper.py` 50 条）。
+**实测基线（2026-09-17 缺陷批后）**：`860 passed / 0 failed`（上一批 2026-09-15 为 790，本次新增 35 条）。
 
 > 🔧 **2026-09-13 个人战绩弹窗 / 人机战绩统计批**（详见 `docs/STATS_AND_AI_RANKING_FIXES.md`）：6 处实测缺陷 —— ①历史行把 `<button>` 塞进 `<table><tbody>` 触发 foster parenting，表头「时间 对手 结果 局内日志」孤立在列表最下方；②胜负配色被通用 `button` 规则的 `background-image` 渐变盖掉，三条胜绩全蓝；③`.user-stats-table` / `.user-history` 在样式表里从未定义；④人机对手显示成裸 ID `ai-4530c8`；⑤胜局的「对局详情」把「对手」显示成自己；⑥**人机对局计入 `users.wins` / 连胜**（排行榜 `ORDER BY wins DESC` → 打电脑即可刷榜）。修法：历史列表改 div 三列网格、`.match-history-btn{background-image:none}` + `.win`/`.lose`、`ai-` 前缀映射「电脑」并加「人机」标签、按胜负取对手、`db.record_match(count_stats=)` + `server._count_stats_for(room)`（人机只写历史、不计统计，6 处调用点全部显式传参）；并合并两份重复的 `showUserStats`/`showMatchDetail`、去掉 `setTimeout` 绑事件与「每次点头像都 append 一个重复 id 弹窗」，新增「加载更多」。回归：`tests/test_stats_display_fixes.py`（14 条）+ `tools/stats_modal_check.mjs`（无头 Edge，27 项，含 `--username` 真实账号端到端）；历史脏数据用 `tools/recompute_ranked_stats.py --apply` 对齐（本机已执行：z1w6qn 3 胜 → 0）。
 
@@ -658,6 +659,41 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 含 `fixed` 后代的元素不许 `transform`/`filter`。另外：有壁纸时把 `.game-container` 那层
 14px 毛玻璃减到 5px —— 14px 是给纯渐变背景调的，套在壁纸上会把画面抹成一团色块。
 
+### 🟡 2026-09-17 缺陷批（8 条对局缺陷 + 3 条 UI 需求）
+
+> 详见 `docs/BATCH_2026_09_17.md`。作者一次性提了 11 条，逐条修完并实测。
+> 索引：冻结计数只算活船（#2#7）/ 败者食尘的大回合级归零（#3）/ 越战越勇发动即 +1（#4）/
+> 条件不满足**不吞牌**（#5）/ 死者苏生不得摆到刚沉的格子（#6）/ 回光返照清错棋盘（#8）/
+> 仁王之盾改在棋盘上点船（#1）/ 连锁弹窗可预览对方那张卡（#9）/
+> 排行榜加头像与个人信息详情（#10#11）。
+
+**★ 通用教训一：统计口径必须区分"活船 / 死船"，而且同一个口径会在多处复用。**
+本项目的「击沉」**不把船移出 `player.ships`**（沉船留在列表里供复活回收；
+但轰炸/硫磺火焰/牺牲会 `remove()`），于是「扫 `player.ships` 数一数」这种写法到处是坑：
+
+| 出问题的地方 | 症状 |
+| --- | --- |
+| `frozen_ship_count`（攻击次数 = 存活数 − 冻结数） | 冻住的船后来被打沉 → 死船被**重复扣一次**，攻击次数少 1 |
+| `冻结` 分支的播报计数 | 「冻结了 3 艘战舰」里混进了已经沉掉的 |
+| `_placement_blocked_cells` / `_placement_error`（放置合法性） | 轰炸/硫磺火焰移出 `ships` 的船，它的原格被当成空格 → 死者苏生能摆回"刚沉掉的那一格" |
+
+修法统一为两个小工具：`_alive_ships()`（活船）与 `_own_occupied_cells()`（己方占位，
+`ships` ∪ `sunken_ships`）。**凡是要"数船 / 判断这一格有没有船"的新代码，一律先问
+"沉船算不算"** —— 答错不会报错，只会悄悄少一次攻击、或多一个能摆的位置。
+
+**★ 通用教训二：同一个业务判断有两份实现，就一定会漂移。**
+`_placement_error`（服务端校验）与 `_placement_blocked_cells`（下发给前端的灰格）
+是同一件事的两份实现，此前已经漂移过一次（一处把沉船算占用、一处不算 → 前端画出
+"看着能点、点了报错"的格子）。这次直接让两者**共用 `_own_occupied_cells`**。
+同类的还有 `_recalc_attacker_attacks` / `_sync_attacks_after_ship_change` /
+`_apply_last_stand_attacks` —— 三个都会写 `attacks_remaining`，所以"败者食尘本大回合恒为 0"
+这条规则必须在**三个入口都拦一次**（`_attacks_forced_zero`），漏一个那个 0 就会被覆盖。
+
+**★ 顺带记一条 UI 侧的同类缺陷**：`#show-opponent-stats` 按钮与右上角头像容器此前引用的是
+裸标识符 `showOpponentStats`，而它要等 `game_state` 处理器跑过才有定义 —— 早期点击直接
+`ReferenceError`，弹窗永远出不来且**没有任何提示**。凡"点一下弹窗"的入口，都要在
+`init()` 阶段就具备可用的实现（这次改成统一的 `showUserProfile()`，并加了兜底提示）。
+
 ---
 
 ## 12. 开发约定
@@ -690,11 +726,14 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 13. **`tests/` 之外还有一批无头浏览器工具**（`tools/*.mjs`）。它们比 pytest 更接近真实：
    真的起浏览器、真的走 socket。改前端时优先跑对应那个：
    壁纸 → `wallpaper_check.mjs`（自造壁纸库+自起服务端，不依赖本机装没装 Wallpaper Engine）、
-   手牌 → `hand_play_check.mjs`、布局 → `ui_layout_check.mjs`、音效 → `sfx_check.mjs`、BGM → `bgm_check.mjs`。
+   手牌 → `hand_play_check.mjs`、布局 → `ui_layout_check.mjs`、音效 → `sfx_check.mjs`、BGM → `bgm_check.mjs`、
+   仁王之盾选船 → `renwang_board_check.mjs`、连锁弹窗卡预览 → `chain_preview_check.mjs`、
+   排行榜/个人信息 → `profile_leaderboard_check.mjs`；协议级 e2e → `tools/e2e_batch_2026_09_17.py`（真实双客户端）。
    ⚠️ 无头浏览器用**持久 profile**，localStorage 里带着上一轮的状态；"改了代码页面却不变"
    先确认拿到的是不是缓存/旧状态（壁纸批就因此白查了一轮）。
-14. **本机跑测试/工具用 `.venv/Scripts/python.exe`**。PATH 上的 `python` 是 WorkBuddy 自带的
-   3.13，**没装 Flask**，用它跑 pytest 会直接 `ModuleNotFoundError`。
+14. **跑测试/工具用「能 import flask 的那个解释器」**。当前 PATH 上的 `python`（3.12.10）已装
+   flask，直接用它；历史 venv 是 `.venv/Scripts/python.exe`。报 `ModuleNotFoundError: flask`
+   就是选错了解释器。
 15. **本机连 GitHub / PyPI 时通时断，外网操作优先经云服务器中转**（服务器可稳定直连 GitHub，
    仓库已配 Deploy Key）。`bash tools/relay.sh start` 起一个 SSH 动态转发（SOCKS5，默认
    `127.0.0.1:1080`；PID/日志在 `$HOME/.battleship-relay.*`），之后：
@@ -705,6 +744,10 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
      pip 用 `bash tools/relay.sh pip install -r requirements.txt`（走清华镜像）。
    - 与 `push.sh` 互补：日常 git 操作用 `relay.sh`；要"本机提交 → 服务器应用补丁 → 推 GitHub"
      时用 `push.sh`（它把服务器当 GitHub 的出入口，而不是当网络代理）。
+16. **提交 / 推送说明只写"修了什么 bug"**（作者 2026-09-17 明确要求）：一句话级别，
+   **不写**根因分析、排查过程、验证清单、改了哪些文件，也**不写**调试后门 / 测试桩 /
+   内部工具的实现细节。细节写进 `docs/` 与代码注释里，`git log` 保持扫一眼就懂。
+   例：`修冻结计数、败者食尘归零、越战越勇即时+1、条件不满足不吞牌`。
 
 ---
 
@@ -724,6 +767,7 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 | **`docs/REINFORCEMENT_TIE_2026_09_14.md`** | **2026-09-14「极限增援平局把回合卡死」：根因（结算分支从 `end_turn` 提前 `return`，吞掉换人+重置阶段+广播）、反证与修法** |
 | **`docs/SHIELD_AND_LASTSTAND_2026_09_14.md`** | **2026-09-14「破盾格还能再打」「绝处逢生候选格能打」：同一个病灶（把"动作"当"结果"记进 attacks，格子被永久/整回合锁死）、五种格子状态的视觉区分** |
 | **`docs/WALLPAPER_ENGINE.md`** | **2026-09-15 动态壁纸（Wallpaper Engine 接入）：三条导入通道与各自可见范围、创意工坊目录解析与 preview 陷阱、媒体路由的安全模型、视觉增强的两条硬规则（不改盒模型 / 含 fixed 后代的元素不许 transform）** |
+| **`docs/BATCH_2026_09_17.md`** | **2026-09-17 缺陷批（11 条）：逐条现象/根因/修法/验证 —— 冻结计数只算活船、败者食尘大回合级归零、越战越勇即时 +1、条件不满足不吞牌（`_refund_card_to_hand`）、死者苏生放置格、回光返照清错棋盘、仁王之盾棋盘选船、连锁弹窗卡预览、排行榜头像与个人信息详情** |
 | `docs/CHAIN_ENGINE_SPEC.md` | 连锁引擎设计稿（⚠️ 实施前的文档，开头已补 2026-09-13 实测校准表） |
 | `README.md` | 面向用户的功能/玩法说明（测试数/文件清单已校准） |
 

@@ -264,7 +264,48 @@ profile_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,
 
 ---
 
-## 5. 三批的执行顺序与依赖
+## 7. 第 2 批实施记录（2026-09-17 落地）
+
+**改动**：`db.py`（两表 + 5 DAO）、`server.py`（结算收口 + 4 助手 + 2 口径助手）、`achievements.py`（12 枚）、
+`api.py`（3 个接口）、`static/game.js` + `static/style.css`（徽章墙）、
+`tests/test_achievements.py`（47）+ `tests/test_achievements_counters.py`（40）、`tools/achievements_check.mjs`。
+
+**实测（冻结树上重跑）**：pytest **1023 passed**；协议 e2e ✓；
+`achievements_check` 35 ｜ `profile_card_check` 57 ｜ `profile_leaderboard_check` 47 ｜
+`ui_layout_check` 100 ｜ `stats_modal_check` 21 ｜ `chain_preview_check` 25 ｜ `hand_play_check` 15 ｜
+`last_stand_board_check` 16（浏览器工具合计 **339 项，0 FAIL**）；`dom_contract_check` ✓（限第 1/2 批契约）。
+
+**部署**：`7948342` → 服务器 `dc33031` → 生产 PID 101068，健康检查 HTTP 200。
+生产只读冒烟：两张新表与列名正确；`/user_stats` 游客视角 `badge_count {total:12, unlocked:3}`、
+**只发 3 枚已解锁、无未解锁 id 泄露、无凭据泄露**；三个接口未登录 401；
+生产 UI 探针 ✅ 线上账号名片渲染 `first_win/streak5/rank1` 三枚、`.locked` 计数 0、标题「已解锁 3 / 12」。
+
+**实施中发现的四个真问题**
+
+1. **★ 我误用了「旧代码服务端」当证据**（A 票指出）：`:5000` 上那个 python 进程是 19:45 起的，
+   而 `server.py` 20:07 才改完 —— 用它跑 e2e 就算全过也**不能作为本版代码的证据**。
+   👉 规矩：**改完后端必须先重启本地服务端再跑工具**；判断"服务端是不是新的"用一条新路由探针
+   （本次用 `GET /api/achievements`：新代码 401、旧代码 404）。
+2. **正则守卫会被注释误伤**：`test_every_record_match_call_site_passes_count_stats` 扫 `server.py` 全文
+   （注释也算），A 在注释里写了带括号的调用形式 → 误报「漏传 count_stats」。
+   👉 注释里别写「函数名+括号」；全角省略号同样命中。
+3. **打桩接缝决定实现该放哪**：我把组装下沉进 `Database` 类后，测试（按模块级包装打桩）被绕过
+   → `self.get_user_counters` 读到真库的 0 → 假红。改成**模块级函数**后正常。
+4. **守卫必须点真实入口**：C 票的工具里有一条「非查看面不输出 id」是绿的，但它调的是渲染函数的
+   **默认值**；而真实调用方写死了 `ids: true` —— 首页老容器其实也在输出那 12 个 id
+   （实测 `{"homeIds":12,"viewIds":12}`）。已修 `fetchProfile(..., {ids})` 并补 D1/D1b 守卫。
+
+**两个已知问题（刻意未改，属产品决策）**
+
+- **自牺牲计入对方击沉数**：恶魔契约 / 神之宣告 / 绝处逢生 把自己船登记进 `sunken_ships`，
+  于是算进**对方**的 `sunk_total`。精确区分需新增登记字段。
+- **开局前投降可刷徽章**（`flawless5` 等）：`handle_surrender` 不要求对局已开始，而**改动前**
+  这条路径就已经 `users.wins++`（排行榜同样可刷）。要堵应源头一次性堵（房间从未开局就不记 match），
+  那会改动既有胜负口径，需作者拍板。
+
+---
+
+## 8. 三批的执行顺序与依赖
 
 ```
 第 2 批：A 每局结算收口 + counters 表 ──► B achievements.py + 接口 ──► C 前端徽章区块 + 工具

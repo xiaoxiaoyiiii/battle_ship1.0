@@ -1079,20 +1079,23 @@ body.layout-compact.layout-ingame #phase-timing-toggle.phase-timing-toggle .ptt-
    ⚠️ 这里【没有】.modal-overlay：快捷语浮层只是一个普通浮标，
      不会出现全屏遮罩，因此棋盘、手牌、阶段按钮照样能点。 */
 #quick-chat-btn.quick-chat-btn {
-    /* 紧凑 / 矮屏（手机、横屏手机）：屏幕【左上角】浮标。
+    /* 紧凑 / 矮屏（手机、横屏手机）：屏幕左上角区域的浮标。
        为什么卡片里放不下：阶段卡片在紧凑布局里只有 ~94px 宽（实测 320x568 下卡片
        94x17、664x336 下 94x17），那个 40px 触控目标实测会与「投降」按钮重叠 9x37、
        与棋盘重叠 50x15 —— 与「阶段时点」开关当初被赶出卡片是同一个原因。
-       top 取 98px 是按【实测扫描】选出来的（0/52/98/144/190/236 六档，六个视口）：
-       320x568 下 y=0 压「投降」+回合标题、y=52 压「我的头像」chip（24x22）、
-       y≥190 压棋盘；只有 98 与 144 两档在全部六个视口上零重叠。取小的那个。
+       (left, top) 是按【实测网格扫描】选出来的：把按钮摆到 7×7 个候选格点上，
+       在 320x568 / 336x664 / 390x844 / 430x932 / 664x336 / 768x1024 六个视口上逐个量
+       与棋盘 / 手牌 / 面板槽 / 两个头像 chip / 投降 / 阶段按钮 / 阶段时点开关 / 回合标题
+       的重叠，只有 11 个格点六个视口全绿，这里取其中留白最稳的 (80, 98)。
+       实测被否掉的：y=0/24 压「投降」与回合标题、y=52~70 压「我的头像」chip、
+       x≥128 的顶部格点压「对手头像」chip、y≥190 压棋盘。
        z-index 必须高于右上角那块卡牌预览浮窗（.magic-preview-container，z-index 1000）：
        第一版给了 60，结果浮层展开时上半截被预览压住，玩家点快捷语条目时点击被预览
        接走（实测 elementFromPoint 返回 preview-content 而不是那个 button）→
        "看着在、点不动"。 */
     position: fixed;
-    top: 98px;
-    left: 6px;
+    top: 52px;
+    left: 40px;
     z-index: 1150;
     display: inline-flex;
     align-items: center;
@@ -1126,8 +1129,8 @@ html.theme-dark #quick-chat-btn.quick-chat-btn {
    所以直接比数值即可（实测确认：z-index 60 时浮层被预览压住、条目点不动）。 */
 .quick-chat-panel {
     position: fixed;
-    top: 144px;
-    left: 6px;
+    top: 98px;
+    left: 40px;
     z-index: 1200;
     max-width: min(320px, calc(100vw - 24px));
     max-height: min(60vh, 420px);
@@ -1208,7 +1211,8 @@ body.layout-tight.layout-ingame #quick-chat-btn.quick-chat-btn {
 }
 body.layout-compact.layout-ingame .quick-chat-panel,
 body.layout-tight.layout-ingame .quick-chat-panel {
-    max-width: min(300px, calc(100vw - 20px));
+    /* 紧凑布局下浮层开在按钮正下方；宽度按"左边距 80 + 右侧留 6"反推，绝不横向溢出 */
+    max-width: min(300px, calc(100vw - 92px));
     max-height: min(56vh, 380px);
 }
 /* 宽屏（≥1200 且高≥700）：左上角被「我的头像」胶囊占着（实测重叠 54x16），

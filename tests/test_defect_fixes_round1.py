@@ -451,3 +451,56 @@ def test_room_sync_carries_frozen_flag(room):
 
     flags = [sh['frozen'] for sh in sync['ships']]
     assert flags == [True, False], '重连快照要带上冻结状态，否则重连后看不见'
+
+
+# ---------------------------------------------------------------------------
+# 单人房 StopIteration 防护：next(room.players) 在只有 1 人时会抛异常，
+# 且 handle_surrender 原先在抛异常前已把 state 置成 game_over，导致房间卡死。
+# ---------------------------------------------------------------------------
+def make_single_player_room():
+    """只有 1 个玩家的等待房（create_room 后、join_room 前的状态）。"""
+    r = GameRoom('single-room')
+    r.players[P1] = Player(name='p1', ships=[], attacks=[],
+                           remaining_ships=0, sid='sid-p1', user_id='u1')
+    r.state = 'waiting'
+    room_manager.rooms[r.id] = r
+    return r
+
+
+def test_surrender_single_player_no_stopiteration(events):
+    room = make_single_player_room()
+
+    res = server.handle_surrender({'room_id': room.id, 'player_id': P1})
+
+    assert res['status'] == 'error'
+    # 关键：state 不能被改成 game_over，否则房间卡死且不会广播 game_over
+    assert room.state == 'waiting'
+    assert not room.winner
+    # 不应有 game_over 广播
+    assert not any(e[0] == 'game_over' for e in events)
+
+
+def test_use_magic_card_single_player_no_stopiteration(events):
+    room = make_single_player_room()
+
+    res = server.handle_use_magic_card({
+        'room_id': room.id, 'player_id': P1,
+        'card': {'name': '无中生有', 'speed': 1, 'type': '普通'},
+        'targets': {},
+    })
+
+    assert res['status'] == 'error'
+
+
+def test_confirm_magic_target_single_player_no_stopiteration(events):
+    room = make_single_player_room()
+
+    for temp_id, payload in (
+        ('taoyuan_choice', {'caster_choice': 0}),
+        ('lingqi_choice', {'target_ships': 4}),
+    ):
+        res = server.confirm_magic_target({
+            'room_id': room.id, 'player_id': P1,
+            'temp_data_id': temp_id, 'target_data': payload,
+        })
+        assert res['status'] == 'error', f'{temp_id} 单人房应返回 error 而非抛异常'

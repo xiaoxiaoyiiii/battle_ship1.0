@@ -3671,7 +3671,9 @@ def handle_use_magic_card(data):
         return {'status': 'error', 'message': frz}
 
     player = room.players[player_id]
-    opponent_id = next(p for p in room.players if p != player_id)
+    opponent_id = next((p for p in room.players if p != player_id), None)
+    if opponent_id is None:
+        return {'status': 'error', 'message': '无效的房间或玩家'}
 
     # 连锁响应窗口未关闭时，应通过 chain_response 响应，而不是再打出新牌
     if room.chain_waiting:
@@ -5797,7 +5799,9 @@ def confirm_magic_target(data):
 
         # 分配卡牌
         caster = room.players[player_id]
-        opponent_id = next(p for p in room.players if p != player_id)
+        opponent_id = next((p for p in room.players if p != player_id), None)
+        if opponent_id is None:
+            return {'status': 'error', 'message': '无效的房间或玩家'}
         opponent = room.players[opponent_id]
 
         if 'cards' not in room.magic_temp_data:
@@ -5868,7 +5872,9 @@ def confirm_magic_target(data):
 
         # 获取施法者和对手
         caster = room.players[player_id]
-        opponent_id = next(p for p in room.players if p != player_id)
+        opponent_id = next((p for p in room.players if p != player_id), None)
+        if opponent_id is None:
+            return {'status': 'error', 'message': '无效的房间或玩家'}
         opponent = room.players[opponent_id]
 
         # 验证选择是否有效
@@ -8102,11 +8108,17 @@ def handle_surrender(data):
     if player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '你不在这个房间'}
 
+    # 投降需要有对手：单人等待房没有可判定的胜方。
+    # 必须在改 state 之前取对手——否则 next() 抛 StopIteration 时房间已经
+    # 被置成 game_over，_finalize_match / game_over 广播都没跑，房间会卡死。
+    opponent_id = next((p for p in room.players if p != player_id), None)
+    if opponent_id is None:
+        return {'status': 'error', 'message': '没有对手可以投降'}
+
     # 设置游戏结束状态
     room.state = 'game_over'
 
     # 投降玩家失败，对手获胜
-    opponent_id = next(p for p in room.players if p != player_id)
     room.winner = opponent_id
 
     # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）

@@ -694,6 +694,22 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 `ReferenceError`，弹窗永远出不来且**没有任何提示**。凡"点一下弹窗"的入口，都要在
 `init()` 阶段就具备可用的实现（这次改成统一的 `showUserProfile()`，并加了兜底提示）。
 
+**★ 通用教训三：`initGameBoards()` 会整块重建棋盘 —— 任何"等待玩家点格子"的交互，
+都必须写成「状态 + 事件委托 + 重绘后重刷」，否则面板还在、格子点不动。**
+本批上线后作者实测「仁王之盾选船时点不了任何有船的格子、也没有绿色高亮」，
+根因就是第一版用了「逐格绑 click + 逐格加 `.pick-ship`」，而
+`showRenwangChoice()` 是在 `chain_resolved` 处理器里被调用的 —— 服务端紧接着补推
+`ships_updated` / `player_ships_updated` 触发重绘，高亮与监听当场被冲掉。
+项目里早有现成解法（`paintSacrificeCells()` 上方那段注释写的就是同一件事），
+第一版没照着做，等于把老坑重新挖了一遍。**改法**：选区状态放 `gameState`
+（`pendingSacrifice` / `renwangPick`），点击委托绑在 `#game-player-board` 容器上，
+高亮由 `paint*Cells()` 在 `initGameBoards()` 收尾重刷。
+
+⚠️ **这一条的教训比缺陷本身更重要**：工具当时是"手动调 `showRenwangChoice()` 再点"，
+真机却是"结算回调里开面板 + 紧接着重绘" → **工具全绿、线上全坏**。
+现在 `tools/renwang_board_check.mjs` 里补了两段：显式重绘后仍可点，以及**真机链路**
+（塞牌 → 真实出牌 → 等连锁结算 → 面板自动弹出后立刻能点）。
+
 ---
 
 ## 12. 开发约定

@@ -21,6 +21,7 @@ from flask import render_template, request, session, jsonify
 from flask_socketio import SocketIO, join_room, emit as semit
 
 import db  # local database helpers for users and matches
+import achievements  # 徽章判据（纯函数，唯一一份 evaluate()）
 from api import app
 from file import read_json
 
@@ -1658,6 +1659,12 @@ def handle_rps_choice(data):
         loser_card2 = room.draw_card(loser)
 
         room.state = 'attacking'
+        # 对局**真正开始**的时刻（猜拳结束、进入 attacking）。
+        # 「闪电战」的用时以它为起点，而不是 room.created_at —— 自定义房间可能
+        # 建好后放很久才有人入座，那段等待时间不该算进对局用时。
+        # 只打点一次：重连恢复（`room.state = 'attacking'` 的另一处）不会覆盖它。
+        if not getattr(room, 'match_started_at', None):
+            room.match_started_at = time.time()
         # 设置当前阶段为准备阶段
         room.current_phase = 'preparation'
         # AI先手时自动驱动其回合
@@ -2011,6 +2018,152 @@ def _count_stats_for(room) -> bool:
     return not getattr(room, 'is_ai_room', False)
 
 
+# ============ 对局结算收口（2026-09-17 第 2 批） ============
+# 对局结束写库原先散在 6 处，各自 `try/except` 包着 `db.record_match`。
+# 本批要加「累计击沉 / 场次 / 零伤获胜 / 最快用时」四项每局事实，再照着原样改 6 个
+# 地方就是 6 份实现 —— 与「通用教训二：同一个业务判断有两份实现，就一定会漂移」
+# 同源。所以先收口：6 处统一调 `_finalize_match()`，加统计只改一处。
+#
+# ⚠️ 注释与文档里**不要写出调用形式**（`db.record_match` 后面跟括号）：
+# `tests/test_stats_display_fixes.py::test_every_record_match_call_site_passes_count_stats`
+# 用正则扫全文（注释也算），会把注释里的字面量当成一处"漏传 count_stats"的调用点。
+# 本文件里该方法只应出现在 `_finalize_match` 内部，且必须带 `count_stats=`。
+
+
+def _match_duration_sec(room) -> int:
+    """本局用时（秒）。拿不到开始时间就返回 0（= "没有可信用时"，不是 0 秒获胜）。"""
+    start = _match_started_at(room)
+    if not start:
+        return 0
+    elapsed = int(time.time() - start)
+    return elapsed if elapsed > 0 else 0
+
+
+def _achievement_stats(uid: str) -> dict:
+    """组装 `achievements.evaluate()` 需要的输入（结算路径用）。
+
+    ⚠️ 组装**只有一份实现**：`db.get_achievement_stats()` —— 接口/图鉴路径（`api.py`）
+    调的是同一个。曾经这里与 api.py 各拼一份：当时两份都覆盖了
+    `achievements.CONTEXT_KEYS` 全集，所以结论一致；但那是巧合而非保证 ——
+    谁漏加一个键，对应判据就会静默恒假（`achievement_context` 把缺字段按 0 算，不报错），
+    正是本项目反复踩的「同一个业务判断有两份实现，就一定会漂移」。
+    """
+    return db.get_achievement_stats(uid)
+
+
+def _bump_match_counters(room, winner, loser, winner_user_id, loser_user_id):
+    """把这一局的「每局事实」累加进 `user_counters`。
+
+    | 字段 | 这一局的值 |
+    | --- | --- |
+    | `sunk_total` | **对方的**沉船数（口径见 `_dead_ship_count`） |
+    | `matches_played` | 双方各 +1（真人对局才有意义 —— 人机由调用方拦掉） |
+    | `flawless_wins` | 赢家全场没被打中过 → +1 |
+    | `fastest_win_sec` | 赢家本局用时（只在拿到开始时间时给；DAO 负责"取最小非零"） |
+
+    输的一方拿不到 `flawless_wins` / `fastest_win_sec` —— 这两个字段的定义就是
+    "获胜时的表现"，输了不该产生候选值。
+    """
+    duration = _match_duration_sec(room)
+    if winner_user_id:
+        db.bump_user_counters(
+            winner_user_id,
+            sunk_total=_dead_ship_count(loser),
+            matches_played=1,
+            flawless_wins=0 if _took_any_damage(winner) else 1,
+            fastest_win_sec=duration,
+        )
+    if loser_user_id:
+        db.bump_user_counters(
+            loser_user_id,
+            sunk_total=_dead_ship_count(winner),
+            matches_played=1,
+        )
+
+
+def _grant_match_achievements(room, candidates):
+    """按最新 stats 评估徽章、授予新增的，并给房间播报一句。
+
+    `candidates` 是 `[(player, user_id), ...]`；返回 `[(user_id, [badge_id...]), ...]`，
+    只含**本次新解锁**的（`grant_user_achievements` 靠主键幂等，不会把老徽章再念一遍）。
+
+    判据**不在这里**：一律走 `achievements.evaluate()`（计划 §2.2.2 冻结的唯一一份）。
+    """
+    newly = []
+    for player, uid in (candidates or ()):
+        if not uid:
+            continue
+        granted = db.grant_user_achievements(uid, achievements.evaluate(_achievement_stats(uid)))
+        if not granted:
+            continue
+        newly.append((uid, granted))
+        try:
+            display = getattr(player, 'name', None) or '玩家'
+            names = '、'.join((achievements.name_of(bid) or bid) for bid in granted)
+            # 沿用现有播报风格：整房间一条 message（`_finish_game` 等出口本来就
+            # 紧接着 emit('game_over', room=...)），所以这里 emit 到房间是安全的。
+            emit('message', {'text': f'{display} 解锁了新徽章：{names}'}, room=room.id)
+        except Exception:
+            # 播报失败不影响已经写进库的解锁
+            pass
+    return newly
+
+
+def _finalize_match(room, winner_id, loser_id):
+    """对局结算的**唯一收口**：写战绩 → 累加每局统计 → 评估并授予徽章 → 播报。
+
+    6 处对局结束（`_finish_game_win` / `_finish_game` / 掉线判胜 / 投降 / 回光返照判负 /
+    魔法卡消灭最后一艘船）全部改调这里，别再各自写 `db.record_match` 调用。
+
+    返回 `[(user_id, [badge_id...]), ...]`（本次新解锁的徽章）。
+
+    **语义与改动前逐点对齐**（收口不能顺手改行为）：
+      · 取不到 `room.players[...]`（KeyError）→ 整段不做（原来 `try` 包住了一切）；
+      · 双方都不是登录用户 → 不写战绩、也不累计任何个人统计；
+      · 人机对局 → 仍然写历史，但**不计统计、不发徽章**（`_count_stats_for`，
+        与「人机不计入 wins / 连胜」同一口径：打电脑刷不出徽章）。
+
+    **调用方不需要再包 `try/except`**：本函数内部吞掉所有异常（统计绝不允许把
+    对局结算搞崩 —— 第 1 批就定下的风格，`db.py` 里每个 DAO 也是这么写的）。
+    """
+    newly = []
+    try:
+        winner = room.players[winner_id]
+        loser = room.players[loser_id]
+    except Exception:
+        return newly
+
+    winner_user_id = getattr(winner, 'user_id', None)
+    loser_user_id = getattr(loser, 'user_id', None)
+    count_stats = _count_stats_for(room)
+
+    # ① 写战绩（历史 + 胜负 / 连胜）
+    if winner_user_id or loser_user_id:
+        try:
+            db.record_match(winner_user_id or winner_id, loser_user_id or loser_id,
+                            getattr(room, 'game_logs', None), count_stats=count_stats)
+        except Exception:
+            pass
+
+    if not count_stats:
+        # 人机对局到此为止：只留下可回看的历史，不累计统计、不发徽章
+        return newly
+
+    # ② 每局统计
+    try:
+        _bump_match_counters(room, winner, loser, winner_user_id, loser_user_id)
+    except Exception:
+        pass
+
+    # ③ 徽章（判据在 achievements.evaluate，这里只负责组装 stats 与授予）
+    try:
+        newly = _grant_match_achievements(room, ((winner, winner_user_id), (loser, loser_user_id)))
+    except Exception:
+        pass
+
+    return newly
+
+
 def _check_last_chance(room, attacker_id: str, defender_id: str) -> bool:
     """回光返照：对使用者的船造成伤害则其直接判负。返回是否触发。"""
     eff = room.game_effects.get('last_chance')
@@ -2021,15 +2174,8 @@ def _check_last_chance(room, attacker_id: str, defender_id: str) -> bool:
             'winner': attacker_id,
             'loser': defender_id
         })
-        # 记录战绩（若为已登录用户）
-        try:
-            winner_user_id = room.players[attacker_id].user_id
-            loser_user_id = room.players[defender_id].user_id
-            if winner_user_id or loser_user_id:
-                db.record_match(winner_user_id or attacker_id, loser_user_id or defender_id,
-                                getattr(room, 'game_logs', None), count_stats=_count_stats_for(room))
-        except Exception:
-            pass
+        # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
+        _finalize_match(room, attacker_id, defender_id)
         emit('game_over', {'winner': attacker_id}, room=room.id)
         return True
     return False
@@ -2156,15 +2302,8 @@ def _finish_game_win(room, room_id, winner_id, loser_id, log_message=None):
     room.winner = winner_id
     add_game_log(room, log_message or f"第{room.round}回合 · {_log_name(room, winner_id)} 获胜，游戏结束",
                  'result', {'winner': winner_id, 'loser': loser_id})
-    try:
-        winner_user_id = room.players[winner_id].user_id
-        loser_user_id = room.players[loser_id].user_id
-        # 只有当至少有一个是已登录用户时才记录
-        if winner_user_id or loser_user_id:
-            db.record_match(winner_user_id or winner_id, loser_user_id or loser_id,
-                            getattr(room, 'game_logs', None), count_stats=_count_stats_for(room))
-    except Exception:
-        pass
+    # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
+    _finalize_match(room, winner_id, loser_id)
     emit('game_over', {'winner': winner_id}, room=room_id)
 
 
@@ -3236,6 +3375,74 @@ def _is_ship_alive(player, ship):
 def _alive_ships(player):
     """该玩家目前还活着的船（顺序与 player.ships 一致，便于按原下标回传）。"""
     return [sh for sh in (getattr(player, 'ships', None) or []) if _is_ship_alive(player, sh)]
+
+
+def _dead_ship_count(player) -> int:
+    """该玩家**已经沉掉**的船数（第 2 批的「累计击沉」口径）。
+
+    ⚠️ 不许写成 `len(player.ships)`：本项目的击沉大多**不把船移出 `ships`**
+    （沉船留在列表里供复活回收），扫 `ships` 数长度会得到「一艘都没沉」这种完全
+    相反的结论 —— 第 1 批为这个口径专门写过一节（`frozen_ship_count`、
+    冻结播报、放置合法性都栽过）。
+
+    不许只读 `len(sunken_ships)`：那只是**登记表**，虽然 `_mark_ship_sunken()`
+    是唯一登记入口，但只要有一条路径忘了登记（本项目真发生过：幽灵计数那批），
+    单看登记表就会漏计。所以取**两份来源的并集**（与 `_own_occupied_cells` 同一形状）：
+
+      · `ships` 里**已经不活**的（`_is_ship_alive` 为假）—— 与 `_alive_ships()`
+        用同一个判据，两者互补：一个数活的、一个数死的；
+      · `sunken_ships` 里**已经不在 `ships` 中**的 —— 轰炸 / 硫磺火焰 / 牺牲会
+        `ships.remove(...)`，这些船只剩在登记表里。
+
+    复活会把船从 `sunken_ships` 里 pop 掉且 `hits < positions`，于是两边都不算它。
+
+    ⚠️ **已知的口径边界**：自牺牲（恶魔契约 / 神之宣告 / 绝处逢生）也走
+    `_mark_ship_sunken`，所以"己方自牺牲"会被算进**对方的**击沉数。要精确区分
+    "被对方打沉"与"自己牺牲"需要额外的登记字段，本批不做（计划只要求「活船变死船」）。
+    """
+    ships = getattr(player, 'ships', None) or []
+    dead = set()
+    for ship in ships:
+        if ship is not None and not _is_ship_alive(player, ship):
+            dead.add(id(ship))
+    for ship in (getattr(player, 'sunken_ships', None) or []):
+        if ship is None:
+            continue
+        if ship not in ships:
+            dead.add(id(ship))
+    return len(dead)
+
+
+def _took_any_damage(player) -> bool:
+    """该玩家这局是否有过任何**实际伤害**（船被打中过）。
+
+    「零伤获胜」的判据：被盾挡下的一炮不算伤害（仁王之盾把炮弹吃掉、船毫发无伤，
+    盾挡的那一发也不会进 `hits` —— 这是 2026-09-14 那批定下的口径），
+    无敌（infinite）与只显形不掉血的攻击同理：它们都**不往 `hits` 里写**，
+    所以「扫 hits」天然就是「实际受伤」。
+    """
+    for ship in (getattr(player, 'ships', None) or []):
+        if getattr(ship, 'hits', None):
+            return True
+    return False
+
+
+def _match_started_at(room) -> float:
+    """对局开始时间戳（用于「闪电战」的用时判定）。没有就返回 0，**不编**。
+
+    优先取 `room.match_started_at`（猜拳结束、真正进入 attacking 时打点，
+    见 `handle_rps_choice`）；老房间/测试构造的 room 没有这个字段，退回
+    `room.created_at`（建房时间，真实存在但含"等人入座"的时间）。
+    两个都没有就返回 0 —— 调用方据此判定「本次没有可信用时」而不是当成 0 秒。
+    """
+    for attr in ('match_started_at', 'created_at'):
+        value = getattr(room, attr, None)
+        try:
+            if value:
+                return float(value)
+        except (TypeError, ValueError):
+            continue
+    return 0.0
 
 
 def _thaw_ship(ship) -> bool:
@@ -4501,14 +4708,8 @@ def _disconnect_timeout(room_id: str, player_id: str, token: int):
     room.state = 'game_over'
     room.winner = other
     room.game_over_reason = 'opponent_disconnected'
-    try:
-        winner_user_id = room.players[other].user_id
-        loser_user_id = room.players[player_id].user_id
-        if winner_user_id or loser_user_id:
-            db.record_match(winner_user_id or other, loser_user_id or player_id,
-                            getattr(room, 'game_logs', None), count_stats=_count_stats_for(room))
-    except Exception:
-        pass
+    # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
+    _finalize_match(room, other, player_id)
     emit('game_over', {'winner': other, 'reason': 'opponent_disconnected'}, room=room_id)
     # 房间保留约 2 分钟：让掉线者重连时收到一次性警告
     socketio.start_background_task(_cleanup_ended_room, room_id, 120)
@@ -5893,14 +6094,8 @@ def _finish_game(room, winner_id, loser_id, reason):
     room.winner = winner_id
     add_game_log(room, f"第{room.round}回合 · {_log_name(room, winner_id)} 获胜，游戏结束",
                  'result', {'winner': winner_id, 'loser': loser_id, 'reason': reason})
-    try:
-        winner_user_id = room.players[winner_id].user_id
-        loser_user_id = room.players[loser_id].user_id
-        if winner_user_id or loser_user_id:
-            db.record_match(winner_user_id or winner_id, loser_user_id or loser_id,
-                            getattr(room, 'game_logs', None), count_stats=_count_stats_for(room))
-    except Exception:
-        pass
+    # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
+    _finalize_match(room, winner_id, loser_id)
     emit('game_over', {'winner': winner_id, 'reason': reason}, room=room.id)
 
 
@@ -7715,14 +7910,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         room.state = 'game_over'
         room.winner = caster_id
         add_game_log(room, f"第{room.round}回合 · {_log_name(room, caster_id)} 获胜，游戏结束", 'result', {'winner': caster_id, 'loser': opponent_id})
-        try:
-            winner_user_id = room.players[caster_id].user_id
-            loser_user_id = room.players[opponent_id].user_id
-            if winner_user_id or loser_user_id:
-                db.record_match(winner_user_id or caster_id, loser_user_id or opponent_id,
-                                getattr(room, 'game_logs', None), count_stats=_count_stats_for(room))
-        except Exception:
-            pass
+        # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
+        _finalize_match(room, caster_id, opponent_id)
         emit('game_over', {'winner': caster_id}, room=room.id)
 
     return result
@@ -7753,16 +7942,8 @@ def handle_surrender(data):
     opponent_id = next(p for p in room.players if p != player_id)
     room.winner = opponent_id
 
-    # 记录战绩（若为已登录用户）
-    try:
-        winner_user_id = room.players[opponent_id].user_id
-        loser_user_id = room.players[player_id].user_id
-        # 只有当至少有一个是已登录用户时才记录
-        if winner_user_id or loser_user_id:
-            db.record_match(winner_user_id or opponent_id, loser_user_id or player_id,
-                            getattr(room, 'game_logs', None), count_stats=_count_stats_for(room))
-    except Exception:
-        pass
+    # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
+    _finalize_match(room, opponent_id, player_id)
     # 向房间发送游戏结束事件
     emit('game_over', {
         'winner': opponent_id,

@@ -319,9 +319,16 @@ unlocked_card_bgs(stats) -> set[str]
 2. **两块面，不是一个**：实测 `#profile-modal`（编辑）与 `#opponent-stats-modal`（查看，
    四个入口共用）是两个容器。第一版契约把两个态都塞进 `#profile-modal`，会逼四个入口改道、
    并丢掉上一批要求保留的**对局历史列表**。已在动手前修正契约（`docs/..._PLAN.md` §3.1）。
-3. **`#profile-view-*` 只在查看面输出**：首页老容器 `#user-stats-content` 也渲染同一张卡，
-   两个容器同时带这套 id → 同一个文档里撞 id → `getElementById` 只拿到靠前的那个 = 点了没反应。
-   实现上用 `buildProfileCard(s, {ids:true})` 只给查看面出 id。
+3. **`#profile-view-*` 的撞 id 隐患 —— ⚠️ 这一条在第 2 批期间被实测纠正过，原结论是错的**：
+   原文写「只在查看面输出、首页老容器只出 class」，**与代码不符**：`fetchProfile()` 里
+   `ids` 写死为 `true`，而它有两个调用点（查看面 `showUserProfile`、首页老战绩容器
+   `showUserStats`）→ **两个容器都会输出那 12 个 id**。当时没炸只是因为所有读取方都是
+   容器内 scoped 查询（`container.querySelector`）。
+   **实测证据**（无头工具点的**真实入口**，不是读源码猜）：把首页那处改回出 id 时
+   `{"homeIds":12,"viewIds":12}` = **同一文档 24 个同名 id**。
+   **修法**：`fetchProfile(username, limit, opts)` 增加 `ids`，由调用方声明 ——
+   查看面 `{ids:true}`、首页老容器 `{ids:false}`；并加了 `profile_card_check.mjs` 的 D1/D1b
+   守卫（**点真实入口**验证；直接调渲染函数看默认值会漏掉这个 bug —— 这正是第一版工具漏掉它的原因）。
 4. **主题预设的旧自定义色会压住预设**：`applyPrimaryColor` 写的是 documentElement 上的**内联
    `--primary*`**，优先级高于任何 CSS —— 只清 localStorage 的话「切回预设」等于没切。
    必须同时清内联变量。

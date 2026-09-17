@@ -339,13 +339,41 @@ const profileSaveMsg = document.getElementById('profile-save-msg');
 // 用来判断"看的是不是自己" —— 只有看自己才在名片上渲染「编辑资料」。
 let profileSelfName = null;
 let profileCatalog = null;
+// 自己视角的徽章目录（**含未解锁**）。查看面取数走的是 `/user_stats`，而按第 2 批契约
+// `/user_stats` 只下发已解锁的徽章（避免暴露别人的进度）—— 所以"自己看自己"时必须
+// 另外拿 `/api/profile` 那一份，否则名片上永远只有已解锁的、看不到灰掉的未解锁位。
+let profileSelfAchievements = null;
+let profileSelfBadgeCount = null;
+let profileSelfBadgesPromise = null;
+
+// 把 /api/profile 拿回来的自己视角数据收进缓存（init 与"临时补拉"两条路都走它）
+function takeSelfProfile(profile) {
+    if (!profile) return;
+    profileSelfName = profile.username || profileSelfName;
+    profileCatalog = profile.catalog || profileCatalog;
+    if (Array.isArray(profile.achievements)) {
+        profileSelfAchievements = profile.achievements;
+        profileSelfBadgeCount = profile.badge_count || null;
+    }
+}
+
+// 自己视角的徽章目录：已有缓存直接给，没有就补拉一次（同一个请求复用，不重复打）
+function ensureSelfBadges() {
+    if (Array.isArray(profileSelfAchievements)) return Promise.resolve(profileSelfAchievements);
+    if (!profileSelfBadgesPromise) {
+        profileSelfBadgesPromise = fetch('/api/profile')
+            .then(r => (r.ok ? r.json() : null))
+            .then(res => { takeSelfProfile(res && res.profile); return profileSelfAchievements; })
+            .catch(() => null);
+    }
+    return profileSelfBadgesPromise;
+}
+
 function loadSelfIdentity() {
     if (loadSelfIdentity.done) return;
     loadSelfIdentity.done = true;
     fetch('/api/profile').then(r => (r.ok ? r.json() : null)).then(res => {
-        if (!res || !res.profile) return;
-        profileSelfName = res.profile.username || null;
-        profileCatalog = res.profile.catalog || null;
+        takeSelfProfile(res && res.profile);
     }).catch(() => { /* 游客：按未登录处理 */ });
 }
 
@@ -1862,10 +1890,104 @@ function bindEventListeners() {
             + '-' + String(d.getDate()).padStart(2, '0');
     }
 
+    // 徽章（第 2 批）：**展示兜底**只有名称 —— 判据与"解锁没解锁"一律以服务端下发的
+    // `unlocked` 字段为准，前端绝不自己算「够不够格」（第 2 批硬规矩第 4 条：
+    // 只在前端灰掉等于没校验；反过来，前端自己算解锁就会与服务端的 `evaluate()` 漂移）。
+    // 这张表存在的唯一理由：接口万一只给了裸 id，徽章也不该显示成 `first_win` 这种英文 id。
+    const PROFILE_BADGE_FALLBACK = {
+        first_win: '首胜', veteran10: '十场老兵', streak5: '五连胜', streak10: '十连胜',
+        sunk50: '五十沉', sunk200: '两百沉', flawless: '零伤获胜', flawless5: '完美指挥',
+        speedrun: '闪电战', cardmaster: '卡牌大师', allrounder: '全能选手', rank1: '榜首'
+    };
+    // 分组 → 徽章上的小图标（纯装饰）。分组中文名由服务端给（achievements.groups()），
+    // 这里认不出来就用默认图标 —— 加新分组时不会因此渲染成空白。
+    const PROFILE_BADGE_GLYPH = {
+        '里程碑': '⚓', '连胜': '🔥', '击沉': '💥', '完美': '🛡️', '卡牌': '🎴', '榜单': '👑'
+    };
+
+    // 把接口下发的任意一条徽章归一化成渲染用的形状。
+    // defaultUnlocked：这条数据隐含的解锁状态（`/user_stats` 只发已解锁的 → true）
+    function profileBadgeItem(raw, defaultUnlocked) {
+        const item = (raw && typeof raw === 'object') ? raw : { id: raw };
+        const id = String(item.id || '').trim();
+        if (!id) return null;
+        const name = String(item.name || PROFILE_BADGE_FALLBACK[id] || id);
+        // 只有**明确**是 false 才算未解锁：`/user_stats` 那一路根本没有这个字段，
+        // 缺字段时按调用方给的 defaultUnlocked（别人视角 = 已解锁）处理。
+        const unlocked = (item.unlocked === undefined || item.unlocked === null)
+            ? defaultUnlocked === true
+            : item.unlocked !== false && item.unlocked !== 0;
+        return {
+            id: id,
+            name: name,
+            desc: String(item.desc || ''),
+            requirement: String(item.requirement || ''),
+            group: String(item.group || ''),
+            unlocked: unlocked,
+            unlocked_at: Number(item.unlocked_at) || 0
+        };
+    }
+
+    // 徽章清单。selfCatalog = 自己视角的完整目录（含未解锁），由 /api/profile 提供；
+    // 别人视角没有它，只有 `stats.achievements` 里那几枚已解锁的。
+    //
+    // ⚠️ 前端**不补**未解锁项：别人视角缺的未解锁徽章就该缺着（契约要求"看别人只显示已解锁"），
+    // 拿自己那份目录去补会变成"看到别人的进度"。
+    function profileBadgeList(s, selfCatalog) {
+        const out = [];
+        const seen = {};
+        const push = (item) => { if (item && !seen[item.id]) { seen[item.id] = 1; out.push(item); } };
+        if (Array.isArray(selfCatalog) && selfCatalog.length) {
+            selfCatalog.forEach(it => push(profileBadgeItem(it, false)));
+        } else {
+            const raw = s && s.achievements;
+            if (Array.isArray(raw)) {
+                raw.forEach(it => push(profileBadgeItem(it, true)));
+            } else if (raw && typeof raw === 'object') {
+                // 容错形态：{badge_id: unlocked_at}
+                Object.keys(raw).forEach(id => push(profileBadgeItem({ id: id, unlocked_at: raw[id] }, true)));
+            }
+        }
+        // 已解锁的排前面（解锁时间新的更靠前），未解锁的按原顺序跟在后面
+        const unlocked = out.filter(b => b.unlocked)
+            .sort((a, b) => (b.unlocked_at || 0) - (a.unlocked_at || 0));
+        const locked = out.filter(b => !b.unlocked);
+        return unlocked.concat(locked);
+    }
+
+    // 徽章总数：接口的 badge_count 优先（**别人视角也给了它**）。
+    // ⚠️ 不能用"下发了几枚"当总数 —— 别人视角只下发已解锁的，那样会把
+    // 「已解锁 2 / 12」显示成「已解锁 2 / 2」。只有拿到**完整目录**（自己视角的
+    // selfCatalog）时才允许用它的条数兜底；否则总数未知，标题只显示「已解锁 N」。
+    function profileBadgeTotal(s, selfCatalog, items) {
+        const fromApi = s && s.badge_count;
+        const n = (fromApi && typeof fromApi === 'object') ? Number(fromApi.total) : Number(fromApi);
+        if (n > 0) return n;
+        if (Array.isArray(selfCatalog) && selfCatalog.length) return selfCatalog.length;
+        return 0;
+    }
+
+    function profileBadgeHtml(b) {
+        const locked = !b.unlocked;
+        const title = locked
+            ? ('未解锁' + (b.requirement ? '：' + b.requirement : ''))
+            : (b.name + (b.desc ? ' · ' + b.desc : ''));
+        const glyph = locked ? '?' : (PROFILE_BADGE_GLYPH[b.group] || '🏅');
+        return '<span class="badge' + (locked ? ' locked' : '') + '"'
+            + ' data-badge="' + escapeHtml(b.id) + '"'
+            + ' data-group="' + escapeHtml(b.group) + '"'
+            + ' title="' + escapeHtml(title) + '">'
+            + '<em class="badge-glyph">' + escapeHtml(glyph) + '</em>'
+            + '<em class="badge-name">' + escapeHtml(b.name) + '</em>'
+            + '</span>';
+    }
+
     // 名片要显示的**全部**内容都在这里算出来 —— 查看态/编辑态、两个容器都吃这一份，
     // 免得"同一份东西两份实现"再次漂移。
-    function profileCardModel(s) {
+    // opts.badges → 自己视角的完整徽章目录（只有看自己时才传；见 profileBadgeList）
+    function profileCardModel(s, opts) {
         s = s || {};
+        opts = opts || {};
         const wins = Number(s.wins) || 0;
         const losses = Number(s.losses) || 0;
         const total = wins + losses;
@@ -1873,6 +1995,8 @@ function bindEventListeners() {
         const joinDate = formatProfileDate(s.created_at);
         const fav = (Array.isArray(s.fav_cards) ? s.fav_cards : [])
             .filter(c => c && c.name);
+        const badges = profileBadgeList(s, opts.badges);
+        const badgeUnlocked = badges.filter(b => b.unlocked).length;
         return {
             avatar: profileAvatarSrc(s),
             name: String(s.username || '未知玩家'),
@@ -1887,6 +2011,15 @@ function bindEventListeners() {
             wins: wins,
             losses: losses,
             favCards: fav,
+            badges: badges,
+            badgeUnlocked: badgeUnlocked,
+            badgeTotal: profileBadgeTotal(s, opts.badges, badges),
+            // 有没有**徽章项**决定要不要显示这一块 —— 不是"已解锁几枚"。
+            // 自己视角拿到的是完整目录（12 枚，新号可能 0 枚解锁）：这时候恰恰要显示
+            // 一整墙灰位，否则新玩家根本不知道有徽章这回事（这一条按 B 票 2026-09-17
+            // 的补充修正过：原 C 票规格写的是"已解锁为 0 也隐藏"，两者冲突，以"能看到
+            // 收集目标"为准）。完全没有徽章项（接口没给 / 看的人没有数据）才整块收起。
+            showBadges: badges.length > 0,
             frame: profileFrameId(s),
             bg: profileBgId(s),
             showStats: profileToggleValue(s.show_stats, 1) === 1,
@@ -1910,10 +2043,11 @@ function bindEventListeners() {
     // opts.history        → 传了才渲染历史战绩区块
     // opts.hasMore        → 历史还有下一页时渲染「加载更多」
     // opts.historyPrivate → 对方没公开历史时的占位文案
+    // opts.badges         → 自己视角的完整徽章目录（含未解锁）；别人视角不传
     function buildProfileCard(s, opts) {
         opts = opts || {};
         const withIds = opts.ids === true;
-        const m = profileCardModel(s);
+        const m = profileCardModel(s, opts);
         // ⚠️ 这里刻意写成字面量属性（而不是 'id="' + name + '"'）：
         // tools/dom_contract_check.mjs 是靠源码里的 `id="…"` 字面量来判断
         // "这个契约 id 是由 JS 运行期渲染的"，拼接出来的它认不出来，会误报成悬空 id。
@@ -1959,6 +2093,27 @@ function bindEventListeners() {
         html += '<div' + idsOn('id="profile-view-stats"') + ' class="pf-stats' + (m.showStats ? '' : ' hidden') + '">'
             + (m.showStats ? statBlockHtml : '')
             + '</div>';
+
+        // 徽章墙（第 2 批）。已解锁的正常显示，未解锁的加 .locked 并在 title 里写解锁条件。
+        //   自己看自己 → 全部徽章（含未解锁的灰位），目录来自 /api/profile；
+        //   看别人     → 只有已解锁的那几枚（接口压根不下发未解锁的，前端也不去补，
+        //                否则等于把别人的进度暴露出来）。
+        // 判据是"有没有徽章**项**"：一枚都没解锁但有 12 个灰位时**照样显示**
+        // （新玩家要看得到收集目标）；完全拿不到徽章项时才整块 hidden，
+        // 而且**不留空标题**（第 1 批「空区块占位」的教训）。
+        if (m.showBadges) {
+            html += '<div' + idsOn('id="profile-view-badges"') + ' class="pf-block pf-badges">'
+                + '<h4 class="pf-block-title">徽章墙'
+                + '<span class="pf-badges-count">已解锁 ' + escapeHtml(String(m.badgeUnlocked))
+                + (m.badgeTotal > 0 ? ' / ' + escapeHtml(String(m.badgeTotal)) : '') + '</span></h4>'
+                + '<div class="badge-grid">' + m.badges.map(b => profileBadgeHtml(b)).join('') + '</div>'
+                + '</div>';
+        } else {
+            // 完全拿不到徽章项时：契约要求这个 id 存在（查看面的 id 由 idsOn 统一管理），
+            // 所以渲染成一个收起来的空块 —— 不渲染的话契约对账会报"id 没落地"。
+            html += '<div' + idsOn('id="profile-view-badges"') + ' class="pf-block pf-badges hidden"></div>';
+        }
+
         const showFav = m.showFav && m.favCards.length > 0;
         html += '<div' + idsOn('id="profile-view-favcards"') + ' class="pf-block pf-favcards' + (showFav ? '' : ' hidden') + '">'
             + '<h4 class="pf-block-title">最爱用的卡</h4>'
@@ -2032,7 +2187,10 @@ function bindEventListeners() {
             canEdit: options.canEdit === true,
             history: Array.isArray(history) ? history : [],
             hasMore: options.hasMore === true,
-            historyPrivate: options.historyPrivate === true
+            historyPrivate: options.historyPrivate === true,
+            // 自己视角的完整徽章目录（含未解锁）。别人视角不传 —— /user_stats 本来就
+            // 只发已解锁的，前端也不该拿自己那份去补（那是别人的进度）。
+            badges: Array.isArray(options.badges) ? options.badges : null
         });
     }
     window.renderUserStatsHTML = renderUserStatsHTML;
@@ -2084,11 +2242,28 @@ function bindEventListeners() {
 
     // 统一的个人信息取数：username 为空 = 查当前登录用户（带分页），
     // 否则查指定账号（排行榜 / 对局内对手）。四个入口共用，字段不会各写一份。
-    function fetchProfile(username, limit) {
+    // opts.ids：是否在渲染结果里输出 `#profile-view-*` / `#profile-view-badges` 这套 id。
+    //
+    // ⚠️ 2026-09-17 实测纠正：这套 id **原先在两个容器里都会输出** —— 本函数写死了
+    // `ids: true`，而它有两个调用点：查看面（`showUserProfile`）与首页老战绩容器
+    // （`showUserStats` → `#user-stats-content`）。同一文档里两个容器带同一批 id 时，
+    // `document.getElementById` 只会拿到靠前的那个 —— 表现是「点了没反应」，
+    // 正是本项目最难查的一类故障（第 1 批的注释曾误以为老容器只出 class）。
+    // 当时没炸只是因为所有读取方都用容器内 scoped 查询（`container.querySelector`）。
+    // 现在按调用方显式声明：**只有查看面出 id**。
+    function fetchProfile(username, limit, opts) {
+        const withIds = !!(opts && opts.ids);
         const url = username
             ? ('/user_stats?limit=' + limit + '&username=' + encodeURIComponent(username))
             : ('/user_stats?limit=' + limit);
-        return fetch(url).then(resp => {
+        // 先按账号名判断"这是不是自己"，好在取 /user_stats 之前就把自己那份完整徽章目录
+        // （含未解锁）准备好 —— 顺序反了的话，名片会先渲染出"只有已解锁"的一版。
+        const preSelf = (username === undefined || username === null || username === '')
+            ? true : profileIsSelf(null, username);
+        const badgesReady = preSelf
+            ? ensureSelfBadges().then(() => profileSelfAchievements)
+            : Promise.resolve(null);
+        return badgesReady.then(selfBadges => fetch(url).then(resp => {
             if (!resp.ok) throw new Error('未登录或获取失败');
             return resp.json();
         }).then(data => {
@@ -2100,15 +2275,17 @@ function bindEventListeners() {
             const isSelf = (username === undefined || username === null || username === '')
                 ? true : profileIsSelf(data.stats);
             const html = renderUserStatsHTML(data.stats, history, {
-                ids: true,
+                ids: withIds,
                 canEdit: isSelf,
                 // 对方关了"公开对局历史"时接口给的是空数组，要靠开关区分
                 // 「真没有历史」和「没公开」
                 historyPrivate: !isSelf && Number(data.stats.show_history) === 0,
-                hasMore: history.length >= limit && limit < STATS_MAX_ROWS
+                hasMore: history.length >= limit && limit < STATS_MAX_ROWS,
+                // 只有看自己时才给完整目录；看别人时上面的 Promise 直接给 null
+                badges: isSelf ? selfBadges : null
             });
             return { html, stats: data.stats, history };
-        });
+        }));
     }
 
     // 打开某个账号的个人信息查看面（排行榜点名字/头像、局内两个头像、查看对手战绩都走它）
@@ -2121,7 +2298,7 @@ function bindEventListeners() {
         opponentStatsContent.innerHTML = '<p>加载中…</p>';
         currentProfileUsername = username || '';
         window.__viewedProfileName = currentProfileUsername;
-        fetchProfile(username, STATS_PAGE_SIZE).then(r => {
+        fetchProfile(username, STATS_PAGE_SIZE, { ids: true }).then(r => {
             opponentStatsContent.innerHTML = r.html;
             currentProfileStats = r.stats;
             bindHistoryButtons(opponentStatsContent, r.history, r.stats && r.stats.id);
@@ -2148,7 +2325,8 @@ function bindEventListeners() {
         userStatsModal.classList.remove('hidden');
         userStatsContent.innerHTML = '<p>加载中...</p>';
 
-        fetchProfile(null, statsHistoryLimit).then(r => {
+        // 首页老战绩容器：**不**输出 #profile-view-* 那套 id（同文档撞 id 会让 getElementById 拿错）
+        fetchProfile(null, statsHistoryLimit, { ids: false }).then(r => {
             userStatsContent.innerHTML = r.html;
             // innerHTML 赋值后节点已同步就绪，直接绑定即可
             // （原先用 setTimeout(..., 100) 等 DOM，纯属多余且可能被重建打断）

@@ -163,7 +163,38 @@ class Database:
                       PRIMARY KEY (user_id, card_name)
                   )
                   ''')
-            
+
+            # ---- 徽章 / 成就（2026-09-17 第 2 批）----
+            # 每局事实的累计：一次写入发生在**对局结束时**（`server._finalize_match`）。
+            # 成就判据大多来自跨局累计，而 users 表只有 wins/losses/连胜，
+            # 「累计击沉」「零伤获胜」「最快获胜用时」哪都没存 —— 就是这张表。
+            # 同样是「只加新表、不动 users 列」，老库启动自动补齐。
+            self.cursor.execute('''
+                  CREATE TABLE IF NOT EXISTS user_counters
+                  (
+                      user_id          TEXT PRIMARY KEY,
+                      sunk_total       INTEGER DEFAULT 0,
+                      matches_played   INTEGER DEFAULT 0,
+                      flawless_wins    INTEGER DEFAULT 0,
+                      fastest_win_sec  INTEGER DEFAULT 0,
+                      updated_at       INTEGER
+                  )
+                  ''')
+
+            # 已解锁的成就。判据本身可以随时用 achievements.evaluate() 重算，
+            # 这张表存的是「**首次**解锁时间」：用于展示（"3 天前解锁"）、排序，
+            # 以及"只进不退"（判据后来变小了也不回收）。
+            # 主键 (user_id, badge_id) 让重复授予天然幂等 —— INSERT OR IGNORE 即可。
+            self.cursor.execute('''
+                  CREATE TABLE IF NOT EXISTS user_achievements
+                  (
+                      user_id     TEXT,
+                      badge_id    TEXT,
+                      unlocked_at INTEGER,
+                      PRIMARY KEY (user_id, badge_id)
+                  )
+                  ''')
+
             self.conn.commit()
             logger.info("数据库表创建成功")
 
@@ -976,6 +1007,235 @@ class Database:
             logger.error(f"读取个人累计出牌时发生未知错误: uid={uid}, 错误: {e}")
             return 0
 
+    # ------------------------------------------------------------------
+    # 徽章 / 成就（2026-09-17 第 2 批）
+    # ------------------------------------------------------------------
+    # 同样沿用第 1 批的风格：读失败返回安全默认值、写失败只记日志返回 False ——
+    # 统计是"附带的"，绝不允许它把对局结算搞崩。
+    #
+    # 契约见 docs/BATCH_2_3_4_PLAN.md §2.2.1（A 票实现，B/C 票按此调用）：
+    #   get_user_counters / bump_user_counters / get_user_achievements /
+    #   grant_user_achievements / get_distinct_cards_used
+    _COUNTER_DEFAULTS = {
+        'sunk_total': 0,
+        'matches_played': 0,
+        'flawless_wins': 0,
+        'fastest_win_sec': 0,
+    }
+    # 可累加的列（fastest_win_sec 是「取最小非零」，单独处理，不在这里）
+    _COUNTER_ADD_FIELDS = ('sunk_total', 'matches_played', 'flawless_wins')
+
+    def _counters_defaults(self, uid: str) -> dict:
+        """没记录时的默认计数（**不写库**）—— 与 user_profile 的做法一致。"""
+        row = dict(self._COUNTER_DEFAULTS)
+        row['user_id'] = uid
+        row['updated_at'] = 0
+        return row
+
+    def get_user_counters(self, uid: str) -> dict:
+        """读每局累计计数。没有记录时返回全 0 默认值（不写库）。"""
+        if not uid:
+            return self._counters_defaults(uid)
+        try:
+            cursor = self.conn.cursor()
+            row = cursor.execute(
+                'SELECT sunk_total, matches_played, flawless_wins, '
+                'fastest_win_sec, updated_at FROM user_counters WHERE user_id = ?',
+                (uid,)).fetchone()
+            cursor.close()
+            if not row:
+                return self._counters_defaults(uid)
+            data = {k: row[k] for k in row.keys()}
+            data['user_id'] = uid
+            # 老行可能是 NULL（列有 DEFAULT 但显式写过 NULL），统一夹成非负整数
+            for key in self._COUNTER_DEFAULTS:
+                data[key] = max(0, int(data.get(key) or 0))
+            data['updated_at'] = int(data.get('updated_at') or 0)
+            return data
+        except sqlite3.Error as e:
+            logger.error(f"读取每局计数失败: uid={uid}, 错误: {e}")
+            return self._counters_defaults(uid)
+        except Exception as e:
+            logger.error(f"读取每局计数时发生未知错误: uid={uid}, 错误: {e}")
+            return self._counters_defaults(uid)
+
+    def bump_user_counters(self, uid: str, **deltas) -> bool:
+        """累加式更新每局计数（UPSERT，写操作持锁）。只在 `_finalize_match` 里调。
+
+        · `sunk_total` / `matches_played` / `flawless_wins`：**加** delta（只接受非负整数；
+          负数视为调用方 bug，记日志后忽略 —— 统计只增不减，否则负数会静默倒扣徽章进度）。
+        · `fastest_win_sec`：**取最小非零**。0 / None / 负数一律表示"这一局没有可信用时
+          （或该玩家没赢）"，不参与比较 —— 否则第一次写入的 0 会永远压死后面的真实用时，
+          「闪电战」就再也解不开了。
+
+        没有任何可写的 delta 时返回 True（"无事可做"不是失败）。
+        """
+        if not uid:
+            logger.warning("尝试累加每局计数但未提供用户ID")
+            return False
+
+        unknown = [k for k in deltas if k not in self._COUNTER_DEFAULTS]
+        if unknown:
+            # 不抛异常：调用方多传了键不该让整局结算失败，但必须留下痕迹
+            logger.warning(f"累加每局计数收到未知字段（已忽略）: uid={uid}, keys={unknown}")
+
+        adds = {}
+        for key in self._COUNTER_ADD_FIELDS:
+            if key not in deltas:
+                continue
+            raw = deltas[key]
+            if raw is None:
+                continue
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                logger.warning(f"每局计数 {key} 不是整数（已忽略）: uid={uid}, value={raw!r}")
+                continue
+            if value < 0:
+                logger.warning(f"每局计数 {key} 收到负数（已忽略）: uid={uid}, value={value}")
+                continue
+            if value:
+                adds[key] = value
+
+        fastest = 0
+        if 'fastest_win_sec' in deltas and deltas['fastest_win_sec'] is not None:
+            try:
+                candidate = int(deltas['fastest_win_sec'])
+            except (TypeError, ValueError):
+                logger.warning(f"最快获胜用时不是整数（已忽略）: uid={uid}, value={deltas['fastest_win_sec']!r}")
+                candidate = 0
+            fastest = candidate if candidate > 0 else 0
+
+        if not adds and not fastest:
+            return True
+
+        try:
+            with self._lock:
+                self.cursor.execute(
+                    'INSERT INTO user_counters '
+                    '(user_id, sunk_total, matches_played, flawless_wins, fastest_win_sec, updated_at) '
+                    'VALUES (?, ?, ?, ?, ?, ?) '
+                    'ON CONFLICT(user_id) DO UPDATE SET '
+                    'sunk_total = COALESCE(user_counters.sunk_total, 0) + excluded.sunk_total, '
+                    'matches_played = COALESCE(user_counters.matches_played, 0) + excluded.matches_played, '
+                    'flawless_wins = COALESCE(user_counters.flawless_wins, 0) + excluded.flawless_wins, '
+                    # 取最小非零：0 表示"还没有/本次没有"，不覆盖已有值
+                    'fastest_win_sec = CASE '
+                    '    WHEN excluded.fastest_win_sec = 0 '
+                    '        THEN COALESCE(user_counters.fastest_win_sec, 0) '
+                    '    WHEN COALESCE(user_counters.fastest_win_sec, 0) = 0 '
+                    '        THEN excluded.fastest_win_sec '
+                    '    WHEN excluded.fastest_win_sec < user_counters.fastest_win_sec '
+                    '        THEN excluded.fastest_win_sec '
+                    '    ELSE user_counters.fastest_win_sec END, '
+                    'updated_at = excluded.updated_at',
+                    (uid, adds.get('sunk_total', 0), adds.get('matches_played', 0),
+                     adds.get('flawless_wins', 0), fastest, int(time.time())))
+                self.conn.commit()
+            return True
+        except sqlite3.Error as e:
+            logger.error(f"累加每局计数失败: uid={uid}, 错误: {e}")
+            try:
+                if self.conn:
+                    self.conn.rollback()
+            except Exception:
+                pass
+            return False
+        except Exception as e:
+            logger.error(f"累加每局计数时发生未知错误: uid={uid}, 错误: {e}")
+            try:
+                if self.conn:
+                    self.conn.rollback()
+            except Exception:
+                pass
+            return False
+
+    def get_user_achievements(self, uid: str) -> dict:
+        """已解锁的徽章 `{badge_id: unlocked_at}`。读失败返回空字典。"""
+        if not uid:
+            return {}
+        try:
+            cursor = self.conn.cursor()
+            rows = cursor.execute(
+                'SELECT badge_id, unlocked_at FROM user_achievements WHERE user_id = ?',
+                (uid,)).fetchall()
+            cursor.close()
+            return {r['badge_id']: max(0, int(r['unlocked_at'] or 0)) for r in rows if r['badge_id']}
+        except sqlite3.Error as e:
+            logger.error(f"读取已解锁徽章失败: uid={uid}, 错误: {e}")
+            return {}
+        except Exception as e:
+            logger.error(f"读取已解锁徽章时发生未知错误: uid={uid}, 错误: {e}")
+            return {}
+
+    def grant_user_achievements(self, uid: str, badge_ids) -> list:
+        """授予徽章，**只写入本次新增的**，返回新增的 id 列表（用于播报）。
+
+        幂等：主键 (user_id, badge_id) + INSERT OR IGNORE，重复授予不会重复插入、
+        也不会刷新首解时间（"只进不退"）。逐条判断 rowcount 而不是看总行数 ——
+        这样返回值精确等于"这一局新解锁的"，播报不会把老徽章再念一遍。
+        """
+        if not uid:
+            return []
+        try:
+            candidates = list(badge_ids or [])
+        except TypeError:
+            logger.warning(f"授予徽章收到不可迭代的 badge_ids: uid={uid}, value={badge_ids!r}")
+            return []
+
+        granted = []
+        seen = set()
+        now = int(time.time())
+        try:
+            with self._lock:
+                for raw in candidates:
+                    badge_id = str(raw or '').strip()
+                    if not badge_id or badge_id in seen:
+                        continue
+                    seen.add(badge_id)
+                    self.cursor.execute(
+                        'INSERT OR IGNORE INTO user_achievements '
+                        '(user_id, badge_id, unlocked_at) VALUES (?, ?, ?)',
+                        (uid, badge_id, now))
+                    if self.cursor.rowcount == 1:
+                        granted.append(badge_id)
+                self.conn.commit()
+            return granted
+        except sqlite3.Error as e:
+            logger.error(f"授予徽章失败: uid={uid}, 错误: {e}")
+            try:
+                if self.conn:
+                    self.conn.rollback()
+            except Exception:
+                pass
+            return []
+        except Exception as e:
+            logger.error(f"授予徽章时发生未知错误: uid={uid}, 错误: {e}")
+            try:
+                if self.conn:
+                    self.conn.rollback()
+            except Exception:
+                pass
+            return []
+
+    def get_distinct_cards_used(self, uid: str) -> int:
+        """该用户用过多少张**不同**的卡（徽章「全能选手」的判据）。读失败返回 0。"""
+        if not uid:
+            return 0
+        try:
+            cursor = self.conn.cursor()
+            row = cursor.execute(
+                'SELECT COUNT(DISTINCT card_name) AS n FROM user_card_usage WHERE user_id = ?',
+                (uid,)).fetchone()
+            cursor.close()
+            return int(row['n'] or 0) if row else 0
+        except sqlite3.Error as e:
+            logger.error(f"读取出卡种类数失败: uid={uid}, 错误: {e}")
+            return 0
+        except Exception as e:
+            logger.error(f"读取出卡种类数时发生未知错误: uid={uid}, 错误: {e}")
+            return 0
+
     def get_token_by_password(self, username: str, password: str):
         """通过用户名和密码校验并生成token（使用 check_password_hash 验证）"""
         if not username or not password:
@@ -1169,6 +1429,83 @@ def get_user_card_usage(uid: str, limit: int = 3):
 def get_user_card_uses_total(uid: str):
     """个人累计出牌次数"""
     return db.get_user_card_uses_total(uid)
+
+
+# ---- 徽章 / 成就（server.py 结算与 api.py 图鉴都走模块级函数）----
+def get_user_counters(uid: str):
+    """每局累计计数（无记录时返回全 0 默认值，不写库）"""
+    return db.get_user_counters(uid)
+
+
+def bump_user_counters(uid: str, **deltas):
+    """累加每局计数（只在 server._finalize_match 里调）"""
+    return db.bump_user_counters(uid, **deltas)
+
+
+def get_user_achievements(uid: str):
+    """已解锁徽章 {badge_id: unlocked_at}"""
+    return db.get_user_achievements(uid)
+
+
+def grant_user_achievements(uid: str, badge_ids):
+    """授予徽章，返回本次**新增**的 id 列表"""
+    return db.grant_user_achievements(uid, badge_ids)
+
+
+def get_distinct_cards_used(uid: str):
+    """用过的不同卡名张数"""
+    return db.get_distinct_cards_used(uid)
+
+
+def _safe_dao(fn, default):
+    """调一个 DAO 包装并把任何异常吞成默认值。
+
+    用于「这个字段读不到也不该让接口 500」的场合（例如并行开发期某个 DAO 还没落地、
+    或者库被锁）。`tests/test_achievements.py::test_endpoints_survive_missing_daos`
+    就是在钉这条：缺 DAO 时接口要降级，不是崩。
+    """
+    try:
+        return fn()
+    except Exception as e:      # noqa: BLE001 —— 兜底就是为了不崩
+        logger.warning(f'读取徽章判据数据失败，按默认值处理: {e}')
+        return default
+
+
+def get_achievement_stats(uid: str, base: dict = None, user: dict = None, rank=None):
+    """徽章判定用的 stats —— **唯一一份组装实现**，结算与接口两条路径共用。
+
+    结算路径 `server._finalize_match` 与接口/图鉴路径 `api.py` 都调这里。
+    曾经两处各拼一份：当时两份都覆盖了 `achievements.CONTEXT_KEYS` 全集、结论一致，
+    但那是巧合而非保证 —— 谁漏加一个键，对应判据就会**静默恒假**
+    （`achievement_context` 把缺字段按 0 算，不报错）。
+
+    ⚠️ 刻意写成**模块级函数**而不是 `Database` 的方法：本项目的测试与调用方都通过
+    模块级包装打桩（`db.get_user_counters = ...`）。放进类里会让 `self.xxx` 绕过打桩，
+    表现为「测试里明明是 12 场，接口却按 0 算」这种查半天的假红（我改的第一版就踩了）。
+
+    :param base: 已拿到的 users 字段（缺的键会补）
+    :param user: 已取到的 users 行（给了就不再查一次）
+    :param rank: 已算好的名次（None 时才自己算）
+    """
+    if not uid:
+        return {}
+    row = user if isinstance(user, dict) else _safe_dao(lambda: get_user(uid=uid), {})
+    row = row if isinstance(row, dict) else {}
+    stats = dict(base) if isinstance(base, dict) else {}
+    for key in ('wins', 'losses', 'longest_streak', 'created_at'):
+        stats.setdefault(key, row.get(key))
+    counters = _safe_dao(lambda: get_user_counters(uid), {})
+    counters = counters if isinstance(counters, dict) else {}
+    stats.update({
+        'matches_played': counters.get('matches_played'),
+        'sunk_total': counters.get('sunk_total'),
+        'flawless_wins': counters.get('flawless_wins'),
+        'fastest_win_sec': counters.get('fastest_win_sec'),
+    })
+    stats['card_uses_total'] = _safe_dao(lambda: get_user_card_uses_total(uid), 0)
+    stats['distinct_cards'] = _safe_dao(lambda: get_distinct_cards_used(uid), 0)
+    stats['rank'] = rank if rank is not None else _safe_dao(lambda: get_user_rank(uid), None)
+    return stats
 
 
 def get_token_by_password(username: str, password_hash: str):

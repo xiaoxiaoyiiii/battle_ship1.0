@@ -149,17 +149,50 @@ profile_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,
 3. **删除权限**：留言**本人**可删、**页面主人**可删（软删 `deleted = 1`，保留审计）。
 4. **可见性**：留言板是否公开受主页主人的隐私开关控制（新增 `show_guestbook`，默认**公开**）。
 
-### 3.3 接口
+### 3.3 接口契约（冻结）
 
-`POST /api/profile/like`（kind=like|flower，可取消）、`GET/POST /api/profile/messages`、
-`POST /api/profile/message/delete`。全部要求登录；**自己不能给自己点赞/送花**。
+| 接口 | 请求 | 响应 |
+| --- | --- | --- |
+| `POST /api/profile/like` | `{"username": 目标, "kind": "like"\|"flower", "on": true\|false}` | `{"success":true,"counts":{"like":N,"flower":M},"mine":{"like":bool,"flower":bool}}` |
+| `GET /api/profile/messages` | `?username=X&limit=20&before_id=N` | `{"messages":[{"id","from_name","content","created_at","can_delete"}],"has_more":bool,"total":N,"guestbook_private":bool}` |
+| `POST /api/profile/message` | `{"username": 目标, "content": "…"}` | `{"success":true,"message":{…与上面同形状…}}` |
+| `POST /api/profile/message/delete` | `{"id": N}` | `{"success":true}` |
 
-### 3.4 前端
+**逐条校验（服务端裁决，不靠前端灰掉）**
 
-查看面底部互动条（第 1 批 mockup 里已有位置）：`#profile-actions-like` / `-flower` / 留言区
-`#profile-guestbook`。留言板分页 + 删除按钮（按权限显示）。
+- 全部要求登录（401）；**目标账号不存在 → 404**（不要静默成功）。
+- **不能给自己点赞 / 送花 / 留言** → 400 + 明确原因。
+- `kind` 必须在白名单内；`on` 归一化为 bool。
+- 留言 `content`：去控制字符与首尾空白、**≤100 字**、空内容 400；
+  频率：复用 `api.py` 的 `_rate_limited('profile_message')`，另加**每人对同一人每天 ≤ 20 条**。
+- 删除权限：**留言本人**或**页面主人**，其余 403；软删（`deleted = 1`），保留审计。
+- `can_delete` 由**服务端**算好下发（前端只负责按它显示按钮）。
 
-### 3.5 不做（避免范围膨胀）
+### 3.4 隐私
+
+`user_profile` 新增 `show_guestbook`（**默认 1 = 公开**）。看别人且其为 0 时：
+`messages` 返回 `[]` 且 `guestbook_private = true`（前端显示「该玩家未开放留言板」，不是留白）。
+点赞 / 送花的**计数始终可见**（那是"人气"不是"内容"）。
+
+### 3.5 DOM 契约（冻结）
+
+```
+#profile-view 内（查看面，两个视角共用）
+  .pf-actions …
+    button#profile-like  + span#profile-like-count
+    button#profile-flower + span#profile-flower-count
+  #profile-guestbook
+    textarea#guestbook-input + button#guestbook-send + span#guestbook-count（字数 N/100）
+    #guestbook-list > .guestbook-item[data-id] > .guestbook-text + .guestbook-meta + button.guestbook-del[data-id]
+    #guestbook-empty      （无留言占位）
+    #guestbook-more       （加载更多）
+    #guestbook-private    （未开放留言板时的占位）
+```
+
+- **自己看自己**：点赞/送花按钮 `disabled` 且 `title` 写「不能给自己点赞」；留言输入区隐藏。
+- 只有 `can_delete === true` 的留言才渲染删除按钮。
+
+### 3.6 不做（避免范围膨胀）
 
 - 不做回复/楼中楼、不做 @提醒、不做图片、不做举报后台（只留 `deleted` 字段与删除接口）。
 
@@ -187,6 +220,48 @@ profile_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,
 - 工具：`tools/quick_chat_check.mjs` —— 真双客户端：A 发「快点儿吧，我等的花都谢了」，
   B 必须收到且文案一致；超过频率被拒；不消耗攻击次数；不进连锁窗口。
 
+### 4.3 快捷语表（冻结 —— 单一来源，前后端不许各写一份文案）
+
+**来源**：`server.py` 里的常量 `QUICK_CHAT = [{"id","group","text"}...]`，前端**从接口拿**
+（`GET /api/quick_chat`），前端不写死任何文案 —— 两处各写一份必然漂移（本项目已吃过多次）。
+
+| id | group | 文案 |
+| --- | --- | --- |
+| `hi` | 开局 | 你好，开打吧！ |
+| `lets_go` | 开局 | 来，先手我拿走了 |
+| **`hurry_flowers`** | **催促** | **快点儿吧，我等的花都谢了** ← 作者指定，必须有 |
+| `think_fast` | 催促 | 想好了没呀？ |
+| `nice_shot` | 交手 | 打得漂亮！ |
+| `oops` | 交手 | 哎呀，手滑了 |
+| `lucky` | 交手 | 这运气也没谁了 |
+| `almost` | 交手 | 就差一点 |
+| `watch_this` | 交手 | 看我这手 |
+| `ouch` | 被击沉 | 我的船！ |
+| `surrender_soon` | 投降前 | 我快撑不住了… |
+| `gg` | 结束 | GG，打得好 |
+| `rematch` | 结束 | 再来一局？ |
+| `thanks` | 结束 | 多谢指教 |
+
+**服务端规则**：事件 `quick_chat`（客户端 → 服务端，带 `room_id` / `player_id` / `msg_id`）
+→ 校验 `msg_id` 在白名单内 + 身份（`_identity_ok`）+ 频率
+（**每 10 秒最多 3 条**、同一 id 10 秒内不重复）→ 广播 `quick_chat` 给房间双方
+（`player_id` / `name` / `msg_id` / `text` / `ts`）并写进 `room.game_logs`。
+**不消耗攻击次数、不改变阶段、不打开连锁窗口**（这三条要写在注释里，并各有测试）。
+
+### 4.4 前端
+
+- 入口按钮 `#quick-chat-btn`（对局界面、阶段卡片附近），列表容器 `#quick-chat-panel`
+  里每条 `button.quick-chat-item[data-msg-id]`。
+- ⚠️ **不能用 `.modal-overlay`**（那是全屏遮罩会挡住棋盘）；用**非模态浮层**，
+  并且要满足 `ui_layout_check.mjs` 的既有不变量（棋盘零遮挡、窄屏不压其他控件）。
+- 收到 `quick_chat` 时在对局日志里显示（复用现有日志渲染），并用 `#quick-chat-toast` 轻提示。
+
+### 4.5 工具（`tools/quick_chat_check.mjs`）
+
+真双客户端（两个页面 / 两个 socket）：A 发 **`hurry_flowers`**，B 必须收到且文案**逐字**
+等于「快点儿吧，我等的花都谢了」；越界 `msg_id` 被拒；超过频率的第 4 条被拒；
+发送前后**攻击次数不变、阶段不变、`room.chain` 为空**。
+
 ---
 
 ## 5. 三批的执行顺序与依赖
@@ -197,4 +272,13 @@ profile_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,
 第 4 批：G 快捷语常量表 + 服务端事件 ──► H 前端浮层 + 工具
 ```
 
-**依赖**：第 3 批不依赖第 2 批；第 4 批独立。**但每批都要跑第 1 批与既有的全部回归工具**。
+**依赖**：第 3、4 批与第 2 批互不依赖，**但它们都要改 `db.py` / `api.py` / `game.js` / `style.css`
+这几个同一批文件 —— 所以必须一批做完再做下一批**（同一文件并行 = 必然冲突）。
+每批都要跑第 1 批与既有的全部回归工具。
+
+## 6. 环境提醒
+
+- 本机 `:5000` 上可能残留**上一轮的 python 服务端**（`job_kill` 只杀 pwsh 作业、**不杀 python 子进程**）。
+  用之前先确认它是不是你要的那个（`.tmp/server.log` 里会写实际使用的库路径），
+  否则会出现「我明明起了新服务端，页面却是旧代码」这种查半天的问题。
+- 跑 pytest 前先 `New-Item -ItemType Directory -Force .tmp\pytemp`（`.tmp` 被清理过就会 97 个 error，与代码无关）。

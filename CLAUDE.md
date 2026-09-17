@@ -17,25 +17,17 @@ Flask + Flask-SocketIO 的实时双人海战棋，叠加 43 条魔法卡（41 �
 - **仓库**：`xiaoxiaoyiiii/battle_ship1.0`（GitHub）
 - **生产运行**：eventlet
 
-### 文件规模（换行符口径，以 read 工具为准）
+### 文件规模（换行符口径 = 数 `\n`，2026-09-17 第 2 批后实测；**会漂移，定位一律靠 grep**）
 
-| 文件 | 行数 | 说明 |
-| --- | --- | --- |
-| `server.py` | **7743** | 游戏核心：SocketIO、房间、状态机、魔法卡结算 |
-| `static/game.js` | **7332** | 前端全部逻辑（巨型单文件，无模块化） |
-| `static/style.css` | 3292 | 样式 + 深/浅色主题 + 第 22 节「紧凑（移动端自适应）布局」+ 第 24 节「动态壁纸层」+ 第 25 节「视觉增强」 |
-| `templates/index.html` | 740 | SPA 模板 |
-| `static/sfx.js` | 156 | 战斗音效：Web Audio 现场合成（无素材依赖） |
-| `static/music_player.js` | 401 | 背景音乐：优先放 mp3，找不到时自动切**合成环境音** |
-| `static/adaptive_layout.js` | 419 | 移动端自适应布局：按可用空间在「桌面浮窗」与「一屏网格」间切换 |
-| `static/wallpaper.js` | 521 | 动态壁纸引擎：应用/参数/持久化/扫描列表/路径与直链导入 |
-| `wallpaper.py` | 545 | 壁纸库扫描：定位 Steam 创意工坊、解析 project.json、登记可播放媒体 |
-| `db.py` | 937 | SQLite DAO（含 `card_usage` 卡牌使用统计、`get_user_rank` 榜单名次） |
-| `api.py` | 389 | Flask 路由（13 个 + 4 个壁纸路由） |
-| `static/magic_card.json` | 84 | 后端卡牌数据 |
-| `static/magic_cards.js` | 49 | 前端卡牌数据 |
-| `file.py` | 3 | JSON 读取工具 |
+核心 6 个：`server.py` **7969** ｜ `static/game.js` **8215** ｜ `static/style.css` **3976** ｜
+`templates/index.html` **863** ｜ `db.py` **1513** ｜ `api.py` **615**
 
+其余：`wallpaper.py` 545 ｜ `static/wallpaper.js` 533 ｜ `static/adaptive_layout.js` 418 ｜
+`static/music_player.js` 400 ｜ `profile_spec.py` 404 ｜ `achievements.py` 254 ｜ `static/sfx.js` 155 ｜
+`static/magic_card.json` 84 ｜ `static/magic_cards.js` 49 ｜ `file.py` 3
+
+`style.css` 分节：…第 22 节「紧凑（移动端自适应）布局」/ 第 24 节「动态壁纸层」/ 第 25 节「视觉增强」/
+第 26 节「个人名片 / 设置页 / 徽章墙」。
 > ⚠️ **行数统计口径**：用 `(Get-Content f -Raw)` 数换行符，**不要用** `Measure-Object -Line`（它漏空行，会少报）。
 
 ---
@@ -45,7 +37,7 @@ Flask + Flask-SocketIO 的实时双人海战棋，叠加 43 条魔法卡（41 �
 ```bash
 pip install -r requirements.txt
 python start_server.py        # 推荐（含依赖检查）
-python -m pytest tests/ -q    # 936 passed
+python -m pytest tests/ -q    # 1023 passed
 ```
 
 > ⚠️ **必须在项目根目录运行**——`server.py` 用相对路径 `./static/magic_card.json`；`tests/test_all_magic_cards.py:1088` 也用硬编码相对路径，是全套测试中唯一对 CWD 敏感的。
@@ -58,7 +50,7 @@ python -m pytest tests/ -q    # 936 passed
 > 同一个原因，仓库里的 `.pytest_cache/` 也**不可写**（`WinError 5` 警告刷屏），加 `-p no:cacheprovider` 关掉缓存就行。
 > ⚠️ `.tmp/` 被清理掉之后，**记得先建回 `pytemp` 再跑 pytest**（2026-09-17 因为删了它，白排查了一轮 97 个 error）。
 
-**实测基线（2026-09-17 名片改版批后）**：`936 passed / 0 failed`（上一批 2026-09-17 缺陷批为 864，本次新增 72）。
+**实测基线（2026-09-17 徽章批后）**：`1023 passed / 0 failed`（名片改版批 936 + 徽章批 87）。
 
 > 🔧 **2026-09-13 个人战绩弹窗 / 人机战绩统计批**（详见 `docs/STATS_AND_AI_RANKING_FIXES.md`）：6 处实测缺陷 —— ①历史行把 `<button>` 塞进 `<table><tbody>` 触发 foster parenting，表头「时间 对手 结果 局内日志」孤立在列表最下方；②胜负配色被通用 `button` 规则的 `background-image` 渐变盖掉，三条胜绩全蓝；③`.user-stats-table` / `.user-history` 在样式表里从未定义；④人机对手显示成裸 ID `ai-4530c8`；⑤胜局的「对局详情」把「对手」显示成自己；⑥**人机对局计入 `users.wins` / 连胜**（排行榜 `ORDER BY wins DESC` → 打电脑即可刷榜）。修法：历史列表改 div 三列网格、`.match-history-btn{background-image:none}` + `.win`/`.lose`、`ai-` 前缀映射「电脑」并加「人机」标签、按胜负取对手、`db.record_match(count_stats=)` + `server._count_stats_for(room)`（人机只写历史、不计统计，6 处调用点全部显式传参）；并合并两份重复的 `showUserStats`/`showMatchDetail`、去掉 `setTimeout` 绑事件与「每次点头像都 append 一个重复 id 弹窗」，新增「加载更多」。回归：`tests/test_stats_display_fixes.py`（14 条）+ `tools/stats_modal_check.mjs`（无头 Edge，27 项，含 `--username` 真实账号端到端）；历史脏数据用 `tools/recompute_ranked_stats.py --apply` 对齐（本机已执行：z1w6qn 3 胜 → 0）。
 
@@ -723,47 +715,29 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 
 ### 🟢 2026-09-17 个人信息名片 / 界面设置改版批（第 1 批）
 
-> 详见 `docs/PROFILE_CARD_2026_09_17.md`（设计稿 + §13 实施记录）与 `docs/PROFILE_CARD_2026_09_17_PLAN.md`（票 + 契约）。
-> 新增两表 `user_profile` / `user_card_usage`、`profile_spec.py`、`/api/profile/card`、主题预设 5+1、
-> `tests/test_profile_card.py`（72）、`tools/profile_card_check.mjs`（53）、`tools/dom_contract_check.mjs`。
-> 自测 **936 passed**（864 + 72）+ 浏览器工具合计 290 项全绿。
+> 详见 `docs/PROFILE_CARD_2026_09_17.md`（设计稿 + §13 实施记录）与 `docs/PROFILE_CARD_2026_09_17_PLAN.md`（冻结契约）。
+> 两表 `user_profile`/`user_card_usage`、`profile_spec.py`、`/api/profile/card`、主题预设 5+1、
+> `tests/test_profile_card.py`（72）、`tools/profile_card_check.mjs`、`tools/dom_contract_check.mjs`。
 
-**★ 教训一：开关必须有下发给「别人视角」的路径，否则就是假控件。**
-`show_stats` / `show_fav_cards` 第一版只写进了「自己的接口」，`/user_stats` 只发了 `show_history`
-→ 前端在「看别人」时读到 `undefined`、按默认值当成「显示」→ **玩家关掉开关，别人照样看得到**。
-三个 `show_*` 必须**同进同出、同一套语义**（0 = 对所有人隐藏，含自己）。
-判断标准：这个开关的效果，**别人视角**走的是哪条链路？
+**五条教训（细节与实测证据见设计稿 §13.3）**
+1. **开关必须有下发给「别人视角」的路径** —— 只发给自己就是假控件（`show_stats`/`show_fav_cards` 第一版如此：玩家关掉，别人照样看得到）。
+2. **「查看面」与「编辑面」是两块面** —— 动手前先 grep 现有入口与容器，别把两态硬塞进一个弹窗（会逼入口改道并丢功能）。
+3. **同一份渲染被两个容器调用时，「不撞 id」要由调用方声明**（`fetchProfile(..., {ids})`），不能靠函数默认值；守卫必须点**真实入口**（直接调渲染函数只测到默认值）。⚠️ 本条被实测纠正过一次，见设计稿 §13.3。
+4. **内联变量优先级高于任何 CSS** —— 切主题预设要同时清 localStorage 与内联 `--primary*`。
+5. **控件搬进「默认隐藏的分区」后，所有通往它的入口都要跟着切分区** —— 否则「点了按钮什么也没发生」。
 
-**★ 教训二：「查看面」和「编辑面」是两块面，别硬塞成一块。**
-实测 `#opponent-stats-modal`（查看，**四个入口**共用）与 `#profile-modal`（编辑）各司其职。
-第一版契约把两态都塞进 `#profile-modal`，会逼四个入口改道、并丢掉上一批要求的对局历史列表。
-**动手前先 grep 一遍现有入口与容器，再定契约。**
+**工具假红清单（新增工具前先过一遍）**：① 残留无头 Edge 占着调试端口/锁着 profile → 新浏览器**静默起不来**，工具连上旧实例（工具开头按 profile 路径预清理）；② `Page.navigate` 返回后 `readyState` 可能仍是**旧文档**（要等「地址真的变了」）；③ 无头浏览器是**持久 profile**，上一轮 localStorage 还在；④ **弹窗可见 ≠ 内容就绪**（先渲染「加载中…」再异步取数，要等目标节点出现）；⑤ 工具与真机**共用页面状态**会互相污染。**修法一律落进工具本身。**
+### 🟢 2026-09-17 徽章 / 成就批（第 2 批）
 
-**★ 教训三：同一张卡渲染进两个容器 → 同一个文档里撞 id → `getElementById` 只拿到靠前的那个。**
-`#profile-view-*` 只允许在查看面输出（`buildProfileCard(s, {ids:true})`），首页老容器
-`#user-stats-content` 渲染同一张卡时只出 class。撞 id 的表现仍然是**「点了没反应」**。
+> 详见 `docs/BATCH_2_3_4_PLAN.md`。两表 `user_counters`/`user_achievements`、`achievements.py`（12 枚，判据只有 `evaluate()` 一处）、
+> 结算收口 `server._finalize_match`（**6 处写库合并成 1 处调用点**）、`/api/achievements`、前端徽章墙 +
+> `tools/achievements_check.mjs`、`tests/test_achievements*.py`（87 条）。自测 **1023 passed**、浏览器工具合计 339 项全绿。
 
-**★ 教训四：内联变量优先级高于任何 CSS —— 切预设必须同时清 localStorage 与内联变量。**
-`applyPrimaryColor` 写的是 `documentElement.style.setProperty('--primary', …)`，
-只清 localStorage 的话「切回预设」等于没切。
-
-**★ 教训五：把控件搬进「默认隐藏的分区」后，所有通往它的入口都要跟着切分区。**
-导航栏 🎬（壁纸）与 🎵（音乐）原本只 `remove('hidden')` + `scrollIntoView`，设置页改成
-左导航分区后，玩家点进去看到的是「外观与主题」、目标控件**根本不在文档流里** →
-「点了按钮什么也没发生」。修法：统一走 `openSettingsModal(pane)`（**唯一一份**切分区实现），
-并给 `profile_card_check.mjs` 加了 T7/T8 两条永久守卫。
-👉 这类改动要**逐个入口走一遍**（本项目「改共用函数先 grep 全部调用点」的同族规矩）。
-
-**★ 工具假红清单（四类，新增工具前先过一遍）**：
-① 残留的无头 Edge 占着调试端口 + 锁着 profile → 新浏览器**静默起不来**，工具连上旧实例
-（工具开头按 profile 路径预清理）；
-② `Page.navigate` 返回后 `readyState` 可能仍是**旧文档**的 complete → 断言打在上一页
-（要等「地址真的变了」）；
-③ 无头浏览器是**持久 profile**，上一轮的 localStorage 还在（主题预设那条断言第二次必红）；
-④ 工具与真机**共用页面状态**时会互相污染（`last_stand_board_check` 先跑真机对局，AI 随机打中的
-格子可能正是后面注入的坐标 → 改成断言「**新**画上命中/落空」）。
-**修法一律落进工具本身**，不要只留一句「这个红是假的」。
-
+**四条教训**
+1. **每局统计要先「收口」再加**：写库原先散在 6 处，各自加计数器就是 6 份实现 → 先做 `_finalize_match`，之后加统计只改一处。⚠️ 那条用**正则扫 `server.py` 全文**的既有守卫会连**注释**一起扫 —— 注释里别写出「函数名+括号」的调用形式（全角省略号同样命中）。
+2. **判据与组装各只能有一份**：`achievements.evaluate()` 是唯一判据；`db.get_achievement_stats()` 是唯一组装点（结算与接口共用）。⚠️ 后者**必须是模块级函数** —— 测试与调用方都按模块级包装打桩，写进 `Database` 类会让 `self.xxx` 绕过打桩，表现为「测试里明明 12 场，接口按 0 算」的假红。
+3. **按视角下发数据**：别人视角只发**已解锁**徽章（连 id 与判据文案都不发），但 `badge_count.total` 照发 —— 否则前端把「已解锁 N / 总数」显示成「N / N」。
+4. **`unlocked` 取「判据达标 ∪ 库里已授予」的并集**：会出现 `unlocked:true` + `unlocked_at:0`（刚跨门槛、结算还没记时间），这是有意的，别当异常；新账号 0 枚解锁时徽章墙**仍要显示**（整墙灰位＝收集目标）。
 ---
 
 ## 12. 开发约定

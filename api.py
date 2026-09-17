@@ -10,6 +10,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
 import db
+import achievements
 import profile_spec
 import wallpaper
 
@@ -130,6 +131,63 @@ def _fav_cards(uid, limit=3):
     return result
 
 
+# ---------------------------------------------------------------------------
+# 成就 / 徽章（2026-09-17 第 2 批）
+# ---------------------------------------------------------------------------
+# 判定规则只有一份：`achievements.evaluate()`。接口层这里只负责**凑数据**与
+# **决定下发哪些**，绝不自己写 `sunk_total >= 50` 这种比较（第 1 批的教训：
+# 同一个业务判断有两份实现就一定会漂移）。
+
+
+def _safe_read(call, default, label):
+    """读统计时兜一层：读不到就给默认值 + 打印日志。
+
+    徽章是**展示层**，一次读库失败不该把整张名片变成 500（与 `_card_speeds` 同一套处理）。
+    但也不静默 —— 日志里能看出是哪一项没读到，便于排查「怎么少了一枚徽章」。
+    """
+    try:
+        return call()
+    except Exception as e:      # noqa: BLE001 —— 统计失败不影响名片/战绩下发
+        print(f'[achievements] 读取 {label} 失败，按默认值处理: {e}')
+        return default
+
+
+def _user_counters(uid):
+    """每局累计事实（累计击沉 / 场次 / 零伤获胜 / 最快用时）。读不到给全 0。"""
+    rows = _safe_read(lambda: db.get_user_counters(uid), {}, 'user_counters')
+    return rows if isinstance(rows, dict) else {}
+
+
+def _achievement_stats(uid, user=None, rank=None, base=None):
+    """徽章判定用的 stats（`achievements.CONTEXT_KEYS` 的超集）。
+
+    ⚠️ 组装**只有一份实现**：`db.get_achievement_stats()`（结算路径 `server._finalize_match`
+    调的是同一个）。这里只做「把已经拿到的 user / rank 传下去、省一次查库」。
+    两处各拼一份的话，谁漏一个键，对应判据就会静默恒假（缺字段按 0 算，不报错）。
+    """
+    return db.get_achievement_stats(uid, base=base, user=user, rank=rank)
+
+
+def _badge_rows(uid):
+    """已解锁记录 {badge_id: unlocked_at}（表里只有「首次解锁时间」这个事实）。"""
+    rows = _safe_read(lambda: db.get_user_achievements(uid), {}, 'user_achievements')
+    return rows if isinstance(rows, dict) else {}
+
+
+def build_badge_view(uid, user=None, rank=None, unlocked_only_flag=False):
+    """算一份徽章视图：`(items, badge_count)`。
+
+    `unlocked_only_flag=True` 时只返回已解锁的（别人视角 —— 未解锁的连 id 与判据文案
+    都不下发，避免暴露别人的进度）。过滤规则只写在这一处。
+    """
+    stats = _achievement_stats(uid, user=user, rank=rank)
+    items = achievements.catalog(stats, _badge_rows(uid))
+    count = achievements.count_unlocked(items)
+    if unlocked_only_flag:
+        items = achievements.unlocked_only(items)
+    return items, count
+
+
 # 自己的名片里保留的 users 字段（白名单 —— 绝不整行下发）
 _PROFILE_USER_FIELDS = ('id', 'username', 'signature', 'avatar', 'wins', 'losses',
                         'current_streak', 'longest_streak', 'created_at')
@@ -141,10 +199,11 @@ def build_own_profile(uid):
     if not user:
         return None
     profile = {k: user.get(k) for k in _PROFILE_USER_FIELDS}
+    rank = db.get_user_rank(uid)
     stats = _profile_unlock_stats(uid, user)
     extra = db.get_user_profile_extra(uid)
     profile.update({
-        'rank': db.get_user_rank(uid),
+        'rank': rank,
         'title_id': extra.get('title_id') or '',
         'tags': extra.get('tags') or [],
         'status_text': extra.get('status_text') or '',
@@ -156,6 +215,10 @@ def build_own_profile(uid):
         'fav_cards': _fav_cards(uid),
         'catalog': profile_spec.catalog(stats),
     })
+    # 徽章：自己视角拿**全量**（含未解锁项与判据文案），前端好画灰格与"还差什么"。
+    badges, badge_count = build_badge_view(uid, user=user, rank=rank)
+    profile['achievements'] = badges
+    profile['badge_count'] = badge_count
     return profile
 
 
@@ -310,6 +373,14 @@ def user_stats_view():
     public_stats['show_fav_cards'] = int(extra.get('show_fav_cards') or 0)
     public_stats['show_history'] = int(extra.get('show_history') or 0)
 
+    # 徽章：**他人视角只下发已解锁的**（计划 §2.4）。
+    # 未解锁项的 id 与判据文案都不发 —— 否则别人能看出"他还差几场拿十连胜"，
+    # 那是把别人的进度泄露出去。总数照给，前端才能显示「3 / 12」。
+    badge_items, badge_count = build_badge_view(
+        stats['id'], user=stats, rank=public_stats['rank'], unlocked_only_flag=True)
+    public_stats['achievements'] = badge_items
+    public_stats['badge_count'] = badge_count
+
     # 隐私：对局历史默认不公开（show_history=0）。**本人永远完整** —— 否则
     # 「我的对局记录」这个功能就作废了。未登录访问他人主页 = 他人视角。
     # （只有 history 由服务端过滤数据；战绩亮点 / 最爱用的卡是"标志位 + 数据都发"，
@@ -321,6 +392,22 @@ def user_stats_view():
     else:
         history = []
     return jsonify({'stats': public_stats, 'history': history})
+
+
+# 徽章图鉴（自己视角：全部 12 枚 + 是否解锁 + 判据文案 + 首次解锁时间）
+@app.route('/api/achievements', methods=['GET'])
+def achievements_view():
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'error': '未登录'}), 401
+    user = db.get_user(uid=uid)
+    if not user:
+        return jsonify({'error': '账号不存在'}), 401
+    # 判据在 achievements.evaluate() 里只有一份；这里只是把它算出来下发。
+    items, count = build_badge_view(uid, user=user)
+    return jsonify({'achievements': items, 'badge_count': count})
+
+
 @app.route('/')
 def index():
     # 渲染主页面并传递登录信息

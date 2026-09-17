@@ -223,6 +223,12 @@ try {
   // ---------- 1. 查看态 → 编辑态 ----------
   await ev('(function(){ document.getElementById("show-profile").click(); return true; })()');
   await waitFor(async () => (await ev(MODAL('opponent-stats-modal'))) === true, 12000, '查看态打开');
+  // ⚠️ **弹窗可见 ≠ 内容就绪**：名片先渲染「加载中…」再异步取数。本地服务端快到看不出差别，
+  // 但接口一变重（第 2 批给 /user_stats 多带了徽章数据）就会读到加载态 →
+  // E1/E2 变成「名片没渲染」这种**假红**（生产探针也踩过同一个坑）。
+  // 所以这里必须等到 `#profile-view` 真的出现。
+  await waitFor(async () => await ev('!!document.querySelector("#opponent-stats-content #profile-view")'),
+    20000, '查看态渲染完成');
   const viewFirst = await ev(`(function(){
     var c = document.getElementById('opponent-stats-content');
     return { card: !!c.querySelector('#profile-view'),
@@ -333,6 +339,7 @@ try {
   // ---------- 2. 查看面（自己） ----------
   await ev(`(function(){ window.showUserProfile(${JSON.stringify(ME)}); return true; })()`);
   await waitFor(async () => (await ev(MODAL('opponent-stats-modal'))) === true, 12000, '查看面打开');
+  await waitFor(async () => await ev('!!document.querySelector("#opponent-stats-content #profile-view")'), 20000, '自己视角渲染完成');
   const mine = await ev(`(function(){
     var c = document.getElementById('opponent-stats-content');
     var q = function (s) { return c.querySelector(s); };
@@ -366,6 +373,7 @@ try {
   await sleep(200);
   await ev('(function(){ window.showUserProfile("bravo_u"); return true; })()');
   await waitFor(async () => (await ev(MODAL('opponent-stats-modal'))) === true, 12000, '查看别人');
+  await waitFor(async () => await ev('!!document.querySelector("#opponent-stats-content #profile-view")'), 20000, '别人视角渲染完成');
   const other = await ev(`(function(){
     var c = document.getElementById('opponent-stats-content');
     var e = c.querySelector('#profile-history-empty');
@@ -430,6 +438,29 @@ try {
     var wp = document.getElementById('wp-section');
     return { miss: miss, wpVisibleInWpPane: !!wp }; })()`);
   check(movers && movers.miss.length === 0, '★ T5 搬进分区的旧控件 id 一个都没丢', movers);
+
+  // ---------- 7. 同文档不得出现两套同名 id（真机链路） ----------
+  // ⚠️ 这条必须**点真实入口**去验：直接调 renderUserStatsHTML(..., {}) 只会测到"函数默认值"，
+  // 而查出来的问题恰恰在调用方写死了 `ids: true`（首页老容器也会输出 #profile-view-*）。
+  // 同一文档里两个容器带同一批 id 时，document.getElementById 只拿得到靠前的那个 ——
+  // 表现是「点了没反应」，本项目最难查的一类故障（2026-09-17 实测纠正过第 1 批的误解：
+  // 老容器「只出 class 不出 id」那句注释与代码不符）。
+  await ev('(function(){ var m = document.getElementById("settings-modal"); if (m) m.classList.add("hidden"); return true; })()');
+  await ev('(function(){ var m = document.getElementById("opponent-stats-modal"); if (m) m.classList.add("hidden"); return true; })()');
+  await ev('(function(){ var a = document.getElementById("show-user-stats"); if (a) a.click(); return true; })()');
+  await sleep(1800);
+  const dupIds = await ev(`(function(){
+    var home = document.getElementById('user-stats-content');
+    var view = document.getElementById('opponent-stats-content');
+    var n = function (el) { return el ? el.querySelectorAll('[id^="profile-view"]').length : null; };
+    var txt = home ? home.innerText.replace(/\\s+/g, '') : '';
+    return { homeIds: n(home), viewIds: n(view),
+      homeRendered: txt.length > 0 && txt.indexOf('加载中') === -1 }; })()`);
+  check(dupIds && dupIds.homeIds === 0,
+    '★ D1 首页「个人战绩」老容器**不输出** #profile-view-* 那套 id（同文档不许撞 id）', dupIds);
+  check(dupIds && dupIds.homeRendered === true,
+    'D1b 该断言不是假绿：老容器确实渲染出内容了（只是不带那套 id）', dupIds && dupIds.homeRendered);
+  await ev('(function(){ var m = document.getElementById("user-stats-modal"); if (m) m.classList.add("hidden"); return true; })()');
 
   // ★ 入口按钮必须落在**对应分区**上：设置页重排后，「点了按钮却看不到那块设置」
   //   是最容易漏的回归（🎬 壁纸 / 🎵 音乐 都会中招：只 remove('hidden') 而不切分区，

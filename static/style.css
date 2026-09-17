@@ -3572,6 +3572,53 @@ html:not(.theme-dark) .pf-stats .stat b { text-shadow: none; }
 }
 .pf-favcards .fav-meta { display: block; margin-top: 3px; font-size: 0.72rem; color: var(--accent); }
 
+/* ===== 26.2b 徽章墙（第 2 批） ===== */
+/* ⚠️ 这一块刻意**不**把 grid 挂在 .pf-badges 自己身上：.pf-favcards 那次踩过坑 ——
+   块本身是 grid 时，它的直接子元素 .pf-block-title 会被当成第一格里的一项、
+   被挤到卡片左边。这里用「外层普通块 + 内层 .badge-grid」两层，标题永远独占一行。 */
+.pf-badges .pf-badges-count { margin-left: 8px; font-weight: 400; color: var(--accent); }
+.badge-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+    gap: 10px;
+}
+/* 已解锁：霓虹描边（颜色全部走现有变量，换主题预设/浅色主题自动跟着变） */
+.pf-badges .badge {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    padding: 10px 6px;
+    border-radius: 12px;
+    text-align: center;
+    background: linear-gradient(160deg, rgba(var(--primary-rgb), 0.18), rgba(var(--primary-rgb), 0.05));
+    border: 1px solid rgba(var(--primary-rgb), 0.45);
+    box-shadow: 0 0 12px rgba(var(--primary-rgb), 0.28);
+}
+.pf-badges .badge-glyph { font-size: 1.35rem; line-height: 1; font-style: normal; }
+.pf-badges .badge-name {
+    max-width: 100%;
+    font-size: 0.7rem;
+    font-style: normal;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* 未解锁：灰掉 + 虚线框 + 问号（glyph 由 game.js 给 '?'）。
+   ⚠️ 用 opacity 压暗，**不用 filter/grayscale** —— 项目第 12 节第 12 条。 */
+.pf-badges .badge.locked {
+    background: var(--surface-muted);
+    border: 1px dashed var(--border-strong);
+    box-shadow: none;
+    opacity: 0.55;
+}
+.pf-badges .badge.locked .badge-glyph { color: var(--muted); }
+.pf-badges .badge.locked .badge-name { color: var(--muted); }
+/* 浅色主题下霓虹会糊成一团，只在深色里留（与 .pf-stats 同一处理） */
+html:not(.theme-dark) .pf-badges .badge { box-shadow: none; }
+
 /* 历史战绩：行的样式是第 23 节既有的 .match-history-btn（胜负配色），这里只排容器。
    容器 game.js 同时给了 id="profile-history-list" 与 class="history-list"，两个选择器都写上，
    免得以后只改其中一边时这里的 gap 静默失效。 */
@@ -3915,6 +3962,9 @@ body.layout-tight .settings-nav-item.active { box-shadow: inset 0 -3px 0 var(--p
 
 @media (max-width: 560px) {
     .pf-favcards { grid-template-columns: minmax(0, 1fr); }
+    /* 窄屏徽章格子小一点，保证一行还能放下 3 枚且不横向溢出 */
+    .badge-grid { grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 8px; }
+    .pf-badges .badge { padding: 8px 4px; }
     .pf-hero { gap: 10px; }
     .pf-avatar { width: 72px; height: 72px; border-radius: 18px; }
     .pf-stats { gap: 8px; padding-left: 14px; padding-right: 14px; }

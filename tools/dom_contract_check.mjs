@@ -117,14 +117,26 @@ if (PLAN.length === 0) {
   console.log('（未找到 docs/*_PLAN.md，跳过 A 段）');
 } else {
   const planIds = new Set();
-  for (const f of PLAN) for (const m of read(f).matchAll(/#([A-Za-z][\w-]{2,})/g)) planIds.add(m[1]);
+  const owners = new Map();      // id -> 出现在哪些契约文件里（报告里带出来，便于判断该不该现在就该有）
+  for (const f of PLAN) {
+    for (const m of read(f).matchAll(/#([A-Za-z][\w-]{2,})/g)) {
+      planIds.add(m[1]);
+      if (!owners.has(m[1])) owners.set(m[1], []);
+      const base = path.basename(f);
+      if (!owners.get(m[1]).includes(base)) owners.get(m[1]).push(base);
+    }
+  }
   planIdCount = planIds.size;
   // 契约里的 id 允许两种落地方式：写在 index.html 里，或由 JS 在运行期渲染出来
   // （名片卡片就是后者：`#profile-view*` 由 game.js 生成进 #opponent-stats-content）。
   // 两种都不算缺失；真正要抓的是「哪都没有」——那才是点了没反应。
   const absent = [...planIds].filter((id) => !htmlIds.has(id) && !DYNAMIC.has(id) && !createdAtRuntime(id));
   planRuntime = [...planIds].filter((id) => !htmlIds.has(id) && createdAtRuntime(id));
-  check(absent.length === 0, `A. 契约文档里的 id 都已经落地（index.html 或 JS 运行期渲染；缺 ${absent.length} 个）`, absent);
+  // ⚠️ 报告里带出「这个 id 属于哪份契约文件」：多批计划并存时，未开工批次的 id 一定会被算进来，
+  // 只有标出出处，看的人才知道「这是下一批的，不是本批漏了」。
+  check(absent.length === 0,
+    `A. 契约文档里的 id 都已经落地（index.html 或 JS 运行期渲染；缺 ${absent.length} 个）`,
+    absent.map((id) => `${id} ← 来自 ${(owners.get(id) || ['?']).join(', ')}`));
 }
 
 // ---------- B. 代码引用的 id ----------

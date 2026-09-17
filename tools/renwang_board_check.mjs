@@ -173,7 +173,7 @@ try {
 
   // 拦截 socket.emit，断言真实 payload
   const stub = await ev('(function(){ window.__cap = []; var s = gameState.socket;' +
-    ' if (!s) return "no-socket"; s.emit = function (ev, data, cb) { window.__cap.push({ ev: ev, data: data }); if (typeof cb === "function") { try { cb({status:"success", message:"ok"}); } catch (e) {} } };' +
+    ' if (!s) return "no-socket"; window.__origEmit = s.emit; s.emit = function (ev, data, cb) { window.__cap.push({ ev: ev, data: data }); if (typeof cb === "function") { try { cb({status:"success", message:"ok"}); } catch (e) {} } };' +
     ' return "stubbed"; })()');
   check(stub === 'stubbed', 'R0 拦截前端 emit（走真实函数、断言真实 payload）', stub);
 
@@ -185,6 +185,23 @@ try {
   check(st0 && st0.pickShip >= 3, 'R2 存活战舰格标成可点（.pick-ship）', st0 && st0.pickShip);
   check(st0 && st0.pickDisabled >= 1, 'R3 已沉战舰格被灰掉（.pick-disabled）', st0 && st0.pickDisabled);
   check(st0 && st0.confirmDisabled === true, 'R3b 一艘都没选时确认按钮禁用', st0 && st0.confirmDisabled);
+
+  // ★ 真机复现：showRenwangChoice 是在 chain_resolved 处理器里被调用的，
+  // 而服务端紧接着还会推 ships_updated / player_ships_updated —— 前端一收到就
+  // initGameBoards() 把棋盘整块重建。这里显式重绘一次，模拟那个时序。
+  // 旧实现是「逐格绑 click + 逐格加 class」，重绘后高亮和监听全没了，
+  // 表现就是玩家报的「点不了任何有船的格子、也没有绿色高亮」。
+  await ev('(function(){ if (typeof initGameBoards === "function") initGameBoards(); return true; })()');
+  await sleep(200);
+  const stR = await ev(SELECTION_STATE);
+  check(stR && stR.prompt === true, 'R3d 棋盘重绘后面板还在（提示不该消失）', stR && stR.prompt);
+  check(stR && stR.pickShip >= 3, '★ R3e 棋盘重绘后绿色高亮仍在（.pick-ship）', stR && stR.pickShip);
+  const afterRepaintClick = await ev(`(function(){ var e = document.querySelector('${cellSelector(alive[0].x + ',' + alive[0].y)}'); if (!e) return "no-cell"; e.click(); return document.querySelectorAll("#game-player-board .cell.pick-selected").length; })()`);
+  check(afterRepaintClick === 1, '★ R3f 棋盘重绘后仍能点选（旧实现点了没反应）', afterRepaintClick);
+  // 复位：把刚才这一次点击取消掉
+  await ev(`(function(){ var e = document.querySelector('${cellSelector(alive[0].x + ',' + alive[0].y)}'); if (e) e.click(); return true; })()`);
+  const stReset = await ev(SELECTION_STATE);
+  check(stReset && stReset.selected === 0, 'R3g 复位：取消后回到 0 选中', stReset && stReset.selected);
 
   // 点沉船格：不应被选中
   const deadClick = await ev(`(function(){ var e = document.querySelector('${cellSelector(deadCell)}'); if (!e) return "no-cell"; e.click(); return document.querySelectorAll("#game-player-board .cell.pick-selected").length; })()`);
@@ -244,6 +261,60 @@ try {
   check(!!cap2 && cap2.ev === 'cancel_magic_selection', 'R9b 取消要向服务端释放待选择状态', cap2 && cap2.ev);
   const st7 = await ev(SELECTION_STATE);
   check(st7 && st7.prompt === false && st7.selected === 0, 'R9c 取消后同样清干净', st7 && { p: st7.prompt, sel: st7.selected });
+
+  // ---------- R10 真机链路：走服务端真实结算触发面板（不是手动调函数） ----------
+  // 这一节是玩家报的那个 bug 的原始现场：showRenwangChoice() 由 chain_resolved
+  // 处理器触发，服务端紧接着补推 ships_updated / player_ships_updated，前端重绘棋盘。
+  await ev('(function(){ var s = gameState.socket; if (window.__origEmit) s.emit = window.__origEmit; return true; })()');
+  const gsReady = await ev('(function(){ return !!(gameState.roomId && gameState.socket && gameState.playerId); })()');
+  check(gsReady === true, 'R10 前置：对局上下文就绪（走真实 socket）', gsReady);
+
+  // 轮到自己才打得出来（仁王之盾是速阶1）：不是自己的回合就用测试桩交回合
+  for (let i = 0; i < 6; i++) {
+    const mine = await ev('(function(){ return gameState.currentAttacker === gameState.playerId; })()');
+    if (mine) break;
+    await ev('(function(){ gameState.socket.emit("test_end_turn", { room_id: gameState.roomId }); return true; })()');
+    await sleep(700);
+  }
+  const added = await ev('(function(){ gameState.socket.emit("test_add_specific_magic_card", { room_id: gameState.roomId, player_id: gameState.playerId, card_name: "仁王之盾" }); return "added"; })()');
+  check(added === 'added', 'R10b 给手牌塞一张仁王之盾（测试桩）', added);
+  await sleep(400);
+
+  const shotBefore = await ev('(function(){ return document.querySelectorAll("#game-player-board .cell.pick-ship").length; })()');
+  const realPlay = await ev('(function(){ window.__lastAck = null;' +
+    ' gameState.socket.emit("use_magic_card", { room_id: gameState.roomId, player_id: gameState.playerId, card: { name: "仁王之盾" }, targets: {} },' +
+    ' function (r) { window.__lastAck = r; }); return "sent"; })()');
+  check(realPlay === 'sent', 'R10c 通过真实链路打出仁王之盾', realPlay);
+  // 连锁要等对方放弃响应（对方手上有速阶3会弹响应窗：替它点「不响应」）
+  let stReal = null;
+  for (let i = 0; i < 40; i++) {
+    await sleep(500);
+    stReal = await ev(SELECTION_STATE);
+    if (stReal && stReal.prompt) break;
+    // 我方被问到"要不要响应"时直接放弃（这局不是我方在康牌）
+    await ev('(function(){ var b = document.getElementById("chain-cancel"); if (b) { b.click(); return true; } return false; })()');
+  }
+  const ack = await ev('(function(){ return window.__lastAck; })()');
+  check(stReal && stReal.prompt === true, '★ R10d 服务端结算后面板自动弹出', { prompt: stReal && stReal.prompt, ack });
+  check(stReal && stReal.pickShip >= 1, '★ R10e 面板弹出时就有绿色高亮（重绘后没被冲掉）',
+    { pickShip: stReal && stReal.pickShip, beforePlay: shotBefore });
+  const realClick = await ev(`(function(){ var e = document.querySelector('${cellSelector(alive[0].x + ',' + alive[0].y)}'); if (!e) return "no-cell"; e.click(); return document.querySelectorAll("#game-player-board .cell.pick-selected").length; })()`);
+  check(realClick === 1, '★ R10f 面板弹出后真的点得动（玩家报的「点了没反应」）', realClick);
+
+  const realConfirm = await ev('(function(){ window.__confirmAck = null;' +
+    ' var b = document.getElementById("renwang-confirm"); if (!b) return "no-btn";' +
+    ' var s = gameState.socket; s.emit = function (ev, data, cb) { window.__confirmSent = { ev: ev, data: data }; if (typeof cb === "function") { try { cb({ status: "success", message: "stub" }); } catch (e) {} } };' +
+    ' b.click(); return "clicked"; })()');
+  await sleep(300);
+  const confirmSent = await ev('(function(){ return window.__confirmSent || null; })()');
+  check(realConfirm === 'clicked', 'R10g 点确认', realConfirm);
+  check(!!confirmSent && confirmSent.ev === 'confirm_magic_target' && confirmSent.data.temp_data_id === 'shield_choice',
+    'R10h 真实链路下发出的仍是 confirm_magic_target / shield_choice', confirmSent && confirmSent.data && confirmSent.data.temp_data_id);
+  check(!!confirmSent && Array.isArray(confirmSent.data.target_data.ship_indices)
+    && confirmSent.data.target_data.ship_indices.length === 1,
+    'R10i 带上刚点选的那一艘的下标', confirmSent && confirmSent.data && confirmSent.data.target_data);
+  await ev('(function(){ var s = gameState.socket; if (window.__origEmit) s.emit = window.__origEmit; return true; })()');
+  await sleep(300);
 
   check(jsProblems.length === 0, '全程无 JS 异常 / console.error', jsProblems.slice(0, 4));
 

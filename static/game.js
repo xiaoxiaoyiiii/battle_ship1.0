@@ -877,6 +877,9 @@ window.gameState = {
     // 正等待自己点选一艘船牺牲（恶魔契约等）。棋盘每次重绘后靠它把高亮补回来，
     // 否则伤害结算的重绘会把选区冲掉、让人以为「点了没反应」。
     pendingSacrifice: null,
+    // 正等待自己点选至多 3 艘船加护盾（仁王之盾）：{max, picked, cells}。
+    // 同样靠它让 paintRenwangCells() 在棋盘重绘后补回高亮 + 保住已选。
+    renwangPick: null,
     // 当前生效的效果角标（服务端 active_effects / room_sync 下发）。
     // 出牌门禁要读它判断「绝处逢生」，所以必须有初值 —— 此前只在 room_sync
     // 里被赋值，未重连过的玩家这里是 undefined，读取方得各自容错。
@@ -3967,10 +3970,14 @@ function initGameBoards() {
     applyShenweiHoles();
 
     // 棋盘刚被重建（innerHTML=''），所有格子上的高亮/监听都没了。
-    // 如果此刻正等着玩家选一艘自己的船牺牲（恶魔契约等），必须把高亮补回去 ——
-    // 否则弹窗还在、格子却点不动：伤害结算的 attack_result 会重绘棋盘，
-    // 而 sacrifice_request 比它先到，正好被这一次重绘冲掉。
+    // 如果此刻正等着玩家选一艘自己的船牺牲（恶魔契约等）或选船加护盾（仁王之盾），
+    // 必须把高亮补回去 —— 否则弹窗还在、格子却点不动：
+    //   · 伤害结算的 attack_result 会重绘棋盘，而 sacrifice_request 比它先到；
+    //   · 仁王之盾是在 chain_resolved 处理器里开的选船面板，而服务端紧接着就推
+    //     ships_updated / player_ships_updated（同样触发本函数），玩家的实测现象
+    //     就是「点不了任何有船的格子、也没有绿色高亮」。
     if (typeof paintSacrificeCells === 'function') paintSacrificeCells();
+    if (typeof paintRenwangCells === 'function') paintRenwangCells();
 }
 
 // 神威！：把被扣掉的 3x3 区域在棋盘上“挖空”显示
@@ -7196,30 +7203,108 @@ function bindDeclinePriorityToggle() {
 // 2026-09-17 改版（作者要求）：旧实现弹一个「选择船 1 (3,4) / 选择船 2 …」的
 // 按钮列表 —— 玩家得自己在坐标里猜哪艘是哪艘。改为与克苏鲁之眼同一套交互：
 // **直接在【自己的棋盘】上点船**，绿框高亮可点、再点一下取消，选满后点确认提交。
+//
+// ⚠️ 必须用「状态 + 事件委托 + 重绘后重刷」这套写法（与恶魔契约/神之宣告同款）：
+// showRenwangChoice() 是在 chain_resolved 处理器里被调用的，而服务端紧接着还会推
+// ships_updated / player_ships_updated —— 前端一收到就 initGameBoards() 把棋盘
+// innerHTML 整块重建。第一版是「逐格绑 click + 逐格加 class」，重绘后高亮和监听
+// 全被冲掉，玩家实测就是「正在选择的时候点不了任何有船的格子、也没有绿色高亮」。
+// 现在：委托监听挂在 #game-player-board 容器上（格子重建也不失效），高亮由
+// paintRenwangCells() 根据 gameState.renwangPick 在每次重绘后重刷。
+function renwangPickableCells() {
+    // 只收【还活着】的船：沉船仍留在 gameState.ships 里（alive === false），
+    // 服务端也会跳过它们。返回 {「x,y」: player.ships 里的原始下标}，
+    // 下标要原样回传（服务端 ship_indices 就是按这个顺序取的）。
+    const map = new Map();
+    (gameState.ships || []).forEach((ship, idx) => {
+        if (ship.alive === false) return;
+        (ship.positions || []).forEach(p => map.set(p.x + ',' + p.y, idx));
+    });
+    return map;
+}
+
+function clearRenwangPick() {
+    gameState.renwangPick = null;
+    gameState.selectingOnBoard = false;
+    if (gameState.selectionCleanup === clearRenwangPick) gameState.selectionCleanup = null;
+    document.querySelectorAll('.cell.pick-ship, .cell.pick-disabled, .cell.pick-selected')
+        .forEach(c => c.classList.remove('pick-ship', 'pick-disabled', 'pick-selected'));
+    document.querySelectorAll('.magic-target-prompt').forEach(el => el.remove());
+}
+
+// 按当前 renwangPick 状态把「可点 / 灰掉 / 已选」刷到棋盘上。
+// 幂等：initGameBoards() 每次重绘后都会调它（同 paintSacrificeCells）。
+function paintRenwangCells() {
+    const pick = gameState.renwangPick;
+    if (!pick || !gamePlayerBoard) return;
+
+    const map = renwangPickableCells();
+    pick.cells = map;
+    // 期间被打沉的船不再算数（否则会把死船的下标提交上去、白白浪费一次选择）
+    pick.picked = pick.picked.filter(key => map.has(key));
+
+    gamePlayerBoard.querySelectorAll('.cell').forEach(cell => {
+        const key = cell.dataset.x + ',' + cell.dataset.y;
+        cell.classList.remove('pick-ship', 'pick-disabled', 'pick-selected');
+        if (!map.has(key)) {
+            cell.classList.add('pick-disabled');   // 空格 / 沉船格：灰掉，点了没用
+            return;
+        }
+        cell.classList.add('pick-ship');
+        if (pick.picked.indexOf(key) >= 0) cell.classList.add('pick-selected');
+    });
+
+    const info = document.getElementById('renwang-info');
+    if (info) {
+        info.className = pick.picked.length ? 'selection-info' : 'selection-info pending';
+        info.innerHTML = `<span class="sel-dot"></span>已选 ${pick.picked.length} / ${pick.max} 艘` +
+            (pick.picked.length ? ' — 可以确认了' : '');
+    }
+    const btn = document.getElementById('renwang-confirm');
+    if (btn) btn.disabled = pick.picked.length === 0;
+}
+
+// 事件委托：只绑一次，且绑在容器上 —— 格子被重建也不影响
+function bindRenwangBoardClick() {
+    if (!gamePlayerBoard || gamePlayerBoard.dataset.renwangBound === '1') return;
+    gamePlayerBoard.dataset.renwangBound = '1';
+    gamePlayerBoard.addEventListener('click', (e) => {
+        const pick = gameState.renwangPick;
+        if (!pick) return;   // 没在选船：完全不干预棋盘的其它点击
+        const el = e.target && e.target.closest ? e.target.closest('.cell.pick-ship') : null;
+        if (!el || !gamePlayerBoard.contains(el)) return;
+        e.stopPropagation();
+        e.preventDefault();
+        const key = el.dataset.x + ',' + el.dataset.y;
+        const at = pick.picked.indexOf(key);
+        if (at >= 0) {
+            pick.picked.splice(at, 1);          // 再点一次 = 取消这艘
+        } else {
+            if (pick.picked.length >= pick.max) {
+                showAlert(`最多选择 ${pick.max} 艘战舰`);
+                return;
+            }
+            pick.picked.push(key);
+        }
+        paintRenwangCells();
+    }, true);
+}
+
 function showRenwangChoice() {
     const MAX_SHIPS = 3;
-    const boardEl = gamePlayerBoard || document.getElementById('player-board');
-    if (!boardEl) {
+    if (!gamePlayerBoard) {
         showAlert('棋盘还没准备好，请稍后再试');
         return;
     }
     // 自愈：上一次选区若没清理干净，先收尾（否则 selectingOnBoard 卡住）
     if (typeof gameState.selectionCleanup === 'function') {
         try { gameState.selectionCleanup(); } catch (_) { }
-        gameState.selectionCleanup = null;
     }
-    document.querySelectorAll('.magic-target-prompt').forEach(el => el.remove());
+    clearRenwangPick();
 
-    // 格子 → 战舰下标。必须保留**原始下标**：服务端的 ship_indices 是按
-    // player.ships 的位置取的（player_ships_updated 也是按同一顺序下发）。
-    // 只收【还活着】的船：沉船仍留在列表里（alive === false），不过滤的话
-    // 会把护盾加在沉船上、白白浪费一次选择（服务端同样会跳过它）。
-    const ships = gameState.ships || [];
-    const cellToIndex = new Map();
-    ships.forEach((ship, idx) => {
-        if (ship.alive === false) return;
-        (ship.positions || []).forEach(p => cellToIndex.set(p.x + ',' + p.y, idx));
-    });
+    gameState.renwangPick = { max: MAX_SHIPS, picked: [], cells: new Map() };
+    gameState.selectingOnBoard = true;
+    gameState.selectionCleanup = clearRenwangPick;
 
     const prompt = document.createElement('div');
     prompt.className = 'magic-target-prompt';
@@ -7234,79 +7319,25 @@ function showRenwangChoice() {
         </div>`;
     document.body.appendChild(prompt);
 
-    const pickedCells = [];                 // 选中的格子 key（按点击顺序）
-    const pickedIndices = new Set();        // 选中的战舰下标（同船一格，天然去重）
-    const listeners = [];
-    let closed = false;
+    bindRenwangBoardClick();
+    paintRenwangCells();
 
-    const confirmBtn = prompt.querySelector('#renwang-confirm');
-    const info = prompt.querySelector('#renwang-info');
-
-    function refresh() {
-        if (info) {
-            info.className = pickedCells.length ? 'selection-info' : 'selection-info pending';
-            info.innerHTML = `<span class="sel-dot"></span>已选 ${pickedCells.length} / ${MAX_SHIPS} 艘` +
-                (pickedCells.length ? ' — 可以确认了' : '');
-        }
-        if (confirmBtn) confirmBtn.disabled = pickedCells.length === 0;
-    }
-
-    function cleanup() {
-        if (closed) return;
-        closed = true;
-        listeners.forEach(({ el, handler }) => el.removeEventListener('click', handler, true));
-        boardEl.querySelectorAll('.cell.pick-ship, .cell.pick-disabled, .cell.pick-selected')
-            .forEach(c => c.classList.remove('pick-ship', 'pick-disabled', 'pick-selected'));
-        gameState.selectingOnBoard = false;
-        if (gameState.selectionCleanup === cleanup) gameState.selectionCleanup = null;
-        if (document.body.contains(prompt)) document.body.removeChild(prompt);
-    }
-
-    gameState.selectingOnBoard = true;
-    gameState.selectionCleanup = cleanup;
-
-    let aliveCells = 0;
-    boardEl.querySelectorAll('.cell').forEach(cell => {
-        const key = cell.dataset.x + ',' + cell.dataset.y;
-        if (!cellToIndex.has(key)) {
-            cell.classList.add('pick-disabled');   // 空格 / 沉船格：灰掉，点了没用
-            return;
-        }
-        aliveCells += 1;
-        cell.classList.add('pick-ship');
-        const onClick = (e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            const at = pickedCells.indexOf(key);
-            if (at >= 0) {
-                pickedCells.splice(at, 1);
-                pickedIndices.delete(cellToIndex.get(key));
-                cell.classList.remove('pick-selected');
-                refresh();
-                return;
-            }
-            if (pickedCells.length >= MAX_SHIPS) {
-                showAlert(`最多选择 ${MAX_SHIPS} 艘战舰`);
-                return;
-            }
-            pickedCells.push(key);
-            pickedIndices.add(cellToIndex.get(key));
-            cell.classList.add('pick-selected');
-            refresh();
-        };
-        cell.addEventListener('click', onClick, true);
-        listeners.push({ el: cell, handler: onClick });
-    });
-    refresh();
-
-    if (!aliveCells) {
+    if (!renwangPickableCells().size) {
         showMessage('你没有可保护的战舰（已沉没的船不能加护盾）', { type: 'warning' });
     }
 
-    confirmBtn.addEventListener('click', () => {
-        const idxs = Array.from(pickedIndices);
+    prompt.querySelector('#renwang-confirm').addEventListener('click', () => {
+        const pick = gameState.renwangPick;
+        if (!pick) return;
+        // 用【当前】最新的下标映射换算，避免棋盘重绘/船被击沉后下标过期
+        const map = pick.cells && pick.cells.size ? pick.cells : renwangPickableCells();
+        const idxs = [];
+        pick.picked.forEach(key => {
+            const idx = map.get(key);
+            if (idx !== undefined && idxs.indexOf(idx) < 0) idxs.push(idx);
+        });
         if (!idxs.length) { showAlert('请至少选择一艘战舰'); return; }
-        if (!gameState.socket) { cleanup(); return; }
+        if (!gameState.socket) { clearRenwangPick(); return; }
         gameState.socket.emit('confirm_magic_target', {
             room_id: gameState.roomId,
             player_id: gameState.playerId,
@@ -7315,7 +7346,7 @@ function showRenwangChoice() {
         }, (resp) => {
             if (resp && resp.status === 'success') showMessage(resp.message || '护盾已添加');
             else if (resp) showAlert(resp.message || '选择失败');
-            cleanup();
+            clearRenwangPick();
         });
     });
 
@@ -7327,6 +7358,6 @@ function showRenwangChoice() {
                 room_id: gameState.roomId, player_id: gameState.playerId
             });
         }
-        cleanup();
+        clearRenwangPick();
     });
 }

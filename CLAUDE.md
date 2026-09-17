@@ -438,41 +438,21 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 
 ### 🔴 2026-09-13 本轮修复（缺陷审计批）
 
-| # | 问题（修复前实测现象） | 修法 |
-| --- | --- | --- |
-| 1 | **终局后 `place_ships` 把 `game_over` 倒回 `rock_paper_scissors`**：对局复活，该房间此后永不被 reaper 回收 | 新增 `@_require_live_room` 门禁 |
-| 2 | **终局后 `surrender` 可翻转胜负**（胜者在结算界面点投降即变负，登录用户还会二次记账） | 同上 |
-| 3 | **`rps_choice` 非法值**：`players[0]` 出非法拳 → 结算 handler 抛 KeyError、猜拳卡死；`players[1]` 出非法拳 → **非法方获胜** | handler 枚举校验 + `determine_rps_winner` 兜底 |
-| 4 | 终局后仍可出魔法卡进连锁 / `end_turn` / `enter_end_phase` 推进回合 | 门禁覆盖 16 个写操作 handler |
-| 5 | **连锁窗口开着时仍可继续攻击**（`end_turn` 却已被拦，同一状态两种口径） | `handle_attack` 补同一条件 |
-| 6 | **桃园结义「对方再选一张」被忽略**（前端发了 `opponent_choice`，后端固定取第一张） | `confirm_magic_target` 采用该字段 |
-| 7 | **加百列之光被前端「补刀」**：后端已按归属保留施法者自己的场地，前端又 emit `remove_field_magic` 把它拆了 | 删除该 emit（场地拆除全权交服务端 + 广播） |
-| 8 | **神之宣告牺牲的两艘船其实是随机的**：`playMagicCard` 提前 return，`own_ships` 选择器不可达 | 效果选择后接点选两艘自己的船 |
-| 9 | **已沉船仍留在 `player.ships`** → 钢筋铁骨 `pop()` 可能弹到沉船（零代价发动）、沉船堆重复条目致复活时船数虚增 | 钢筋铁骨 / 神之宣告 / 绝处逢生 一律只取"活船" |
-| 10 | **建了但没人入座的房间永不回收**（每次误点建房泄漏一个 GameRoom） | reaper 增加 `_WAITING_ROOM_TTL`（1 小时） |
-| 11 | **重连后自己棋盘的伤损全部消失** | 快照补 `opponent_attacks` + 前端恢复 |
-| 12 | 重连落在连锁响应窗口内无法响应 | 响应弹窗抽成 `showChainRequestPrompt`，`room_sync` 时按窗口归属补弹 |
-| 13 | 连锁结算后「当前连锁 (N)」永久残留 | `chain_resolved` 里清空并刷新 |
-| 14 | `get_magic_temp_data` 把桃园候选牌**泄露给对手** | 只下发给当事人 |
-| 15 | **跑一次 pytest 就往正式库写假对局**（库内已沉淀数百条 u1/p1 记录） | `tests/conftest.py` 用环境变量隔离数据库 |
-| 16 | 越战越勇文案「+2」与实现/卡面「净 +1」不符 | 文案已改 |
-| 17 | `/api/leaderboard` 硬编码 100，`?limit=` 被完全忽略（实测 `?limit=2` 仍返回全部） | 支持 limit 并钳制到 1~100 |
-| 18 | 前端死函数 `createRoom`/`joinRoom`/`toggleCustomRoomOptions`/`createSelectionBoard`/`getSelectedCells`/`showReinforcementPrompt`/`showChainableCards`（含调用未定义函数的不可达分支），共 304 行 | 逐个 grep 确认零调用后删除（页面零 JS 异常复测通过） |
-| 19 | **连锁响应窗口内无法给「需要目标」的速阶 3 卡选目标**：点卡后固定发 `targets: []`，神威！/轰炸/冻结/硫磺火焰/探测雷达 的后端分支缺目标会直接失败 | 点卡后先走目标选择器、确认后再把 targets 回填给 `chain_response`；新增 `tools/chain_target_check.mjs`（24 项无头浏览器断言） |
-| 20 | **平等条约无法无效化区域魔法造成的船数变化**（溅射/轰炸/硫磺火焰各自内联结算、不写快照）；**无瑕圣心**在区域击沉时只置 no_damage、不中断 | 新增 `_on_ship_destroyed` 统一副作用：普通攻击与三种区域魔法共用同一份（快照 + 百亿补贴 + 无瑕圣心中断） |
-| 21 | `select_magic_target` 与 `confirm_magic_target` 是两套独立实现，语义已漂移（桃园剩余牌进弃牌堆 vs 放回牌堆、忽略对方自选的 opponent_choice） | `select_magic_target` 只做白名单过滤，随后委托给在用实现 |
-| 22 | 12 个 `test_*` 高危事件只有 1 个有回归覆盖；**连锁超时 / 窗口推进 / 能否响应零覆盖** | 新增 `tests/test_guardrails.py`（24 条：12 个事件参数化拒绝 + 连锁纯函数与超时代际令牌） |
-| 23 | **AI 手上有牌却一张都不出**，也不参与连锁（人机对战完全用不上 41 张卡） | 新增 `_AI_SAFE_CARDS` 白名单 + `_ai_choose_magic_card`（纯函数）+ `_ai_maybe_play_magic`；**三档难度** `easy`（不出牌）/ `normal`（每回合一张安全卡，默认）/ `hard`（再用【失灵！】响应连锁），前端首页 `#ai-difficulty` 下拉框 | 
-| 24 | AI 出牌会**打开连锁窗口**，而连锁未结算时 `handle_attack`/`end_turn` 会被门禁拒绝 → AI 回合停在半途、真人干等 | `_ai_turn_loop` 出牌后**先等窗口关闭再开炮**；收尾的 `enter_end_phase`/`end_turn` 各带 20 次重试 |
-| 25 | **冻结的船在棋盘上完全看不出来**：服务端只改了 `ship.frozen`，前端从未收到过这个状态 → 玩家不知道哪几艘船本回合不提供攻击次数 | `_emit_player_ships` / `_build_room_sync` 带上 `frozen`；冻结时与解冻时都推送；前端 `initGameBoards` 加 `frozen` 类 + CSS `:before` 雪花。回归：3 条 pytest + `ui_layout_check.mjs` 3 项浏览器断言 |
-| 26 | 自定义房间**没有任何入口生成邀请链接**（`?room=XXXX` 自动入房早就写好，只能口头报房间号） | 房间号旁新增「🔗 复制邀请链接」按钮 + `copyInviteLink()`（剪贴板不可用时降级 prompt）。回归：`tools/room_invite_check.mjs`（7 项，含真实建房与降级路径） |
-| 27 | **排行榜被 0 局账号占满**（人机不计统计后新账号全是 0 胜 0 负却排在前列）；**背景音乐 6 条路径全 404 却静默停摆**，玩家完全不知道发生了什么 | 排行榜过滤 `wins+losses > 0`；`music_player.js` 统计失败音轨，整轮失败就明确提示「未找到背景音乐文件」而不是静默 `playNext` |
-| 28 | **全站零音效**（唯一的 `new Audio()` 是 BGM，而 `static/music/` 目录根本不存在，6 条预设路径全 404） | 新增 `static/sfx.js`：用 Web Audio **现场合成** 9 个音效（命中/落空/击沉/摸牌/出牌/连锁/回合/胜负），**不需要任何音频素材**；game.js 挂钩 `attack_result`/`game_over`/`turn_change`/`hand_updated`/`chain_request`/`sendMagicCard`；设置面板加「音效静音」开关。回归：`tools/sfx_check.mjs`（17 项，桩 AudioContext + 真实事件） |
-| 29 | **卡牌图鉴只有一段平铺列表**（无检索、无筛选，41 张卡里想找一张只能翻） | 帮助弹窗升级为图鉴：去重展示 41 张唯一卡 + **按速阶/类型筛选** + **卡名/效果关键词搜索** + 「共 N / 41 张」计数 + 空状态提示。回归：`tools/card_compendium_check.mjs`（16 项） |
-| 30 | **探测雷达/雷达子弹的显形只亮 4 秒**（服务端是持久记录，前端 `setTimeout` 4 秒后就把高亮擦掉；而且任何一次棋盘重绘都会丢） | 改为持久高亮：存进 `gameState.revealedCells`、重绘时重新上色、重开棋盘时清空。回归：`ui_layout_check.mjs` 新增 3 项（含「4 秒后仍在」与「重绘后仍在」） |
-| 31 | **没有任何回合计时**：此前只有连锁窗口有 10 秒超时，炮击/准备阶段可以无限长考，对手只能干等 | 新增后台看门狗 `_auto_act_on_timeouts`（`TURN_TIMEOUT_SECONDS`，默认 90 秒）：超时只做一次**保底动作**（准备→进战斗 / 战斗→随机开火一发 / 结束→交出回合），**不判负**；门禁装饰器在每次成功操作后重置计时（只惩罚完全卡住的人）；人机房 / 连锁窗口 / 等待点选 / 有人掉线宽限中一律不催。回归：`tests/test_turn_timer.py`（15 条）+ 真 socket e2e（3 秒超时下 10.2 秒自动开火并广播「思考超时」） |
-| 32 | **卡牌没有任何使用数据**（图鉴只有卡面，看不出哪张卡常被用） | 新增 `card_usage` 表 + `GET /api/card_usage` + 出牌时记账（`record_card_use`，入链时刻计一次）；图鉴每张卡显示「使用 N 次」角标并支持**按使用次数排序**。回归：`tests/test_card_usage.py`（9 条）+ `card_compendium_check.mjs` 新增 3 项 + 真 socket e2e（打出一张卡后接口计数 0→1） |
-| 33 | **BGM 永远不响**：`static/music/` 目录不存在，6 条预设路径全 404 —— 上一轮只做到「明确报错」，播放器仍然是废的 | 整轮音轨失败后自动切到**内置合成环境音**（Web Audio：三正弦 + 极慢 LFO 扫低通，零素材），界面写明「已自动切换」；暂停/继续/音量/静音都作用到合成音；上/下一首不再把 404 循环拉起来。顺带修掉**自动播放被拦时的 5 条 console.error 刷屏**，以及它把「已切到合成音」的状态覆盖回未播放。回归：`tools/bgm_check.mjs`（13 项） |
+> ⚠️ 这一批 33 条已经全部修完并写进 `docs/DEFECT_FIXES_2026_09_13.md`（逐条证据 + 复现方式）。
+> 这里只保留**分类索引**，别再当待办；要看细节去读那篇文档。
+> 详细行数从略 —— 本文件有注入大小上限，长表格会把它顶爆（2026-09-17 实测被截断过一次）。
+
+| 分类 | 已修的问题（关键词） |
+| --- | --- |
+| 终局/状态机 | 终局后 `place_ships` 让对局复活；终局后 `surrender` 翻转胜负；`rps_choice` 非法值卡死/非法方获胜；终局后仍可出牌/推进阶段（16 个写操作 handler 加 `@_require_live_room`） |
+| 攻击与连锁 | 连锁窗口开着时仍可攻击（同一状态两种口径）；连锁响应窗口内无法给"需要目标"的速阶3卡选目标；平等条约无法无效化区域魔法造成的船数变化 |
+| 卡牌语义 | 桃园结义忽略对方自选；加百列之光被前端"补刀"拆场地；神之宣告牺牲的两艘船其实是随机的；已沉船仍留在 `ships` 导致零代价发动/幽灵计数；越战越勇文案与卡面不符 |
+| 房间与内存 | 建了没人入座的房间永不回收（`_WAITING_ROOM_TTL`）；已结束房间由 reaper 统一回收 |
+| 数据与接口 | `/api/leaderboard` 忽略 `?limit=`；`get_magic_temp_data` 把桃园候选牌泄露给对手；跑 pytest 往正式库写假对局（`tests/conftest.py` 隔离库） |
+| 前端 | 重连后自己棋盘伤损消失（快照补 `opponent_attacks`）；重连落在连锁窗口内无法响应；「当前连锁 (N)」永久残留；304 行死函数清理 |
+| 测试与 AI | 12 个 `test_*` 事件零覆盖 → `tests/test_guardrails.py`；AI 手上有牌不出 → 三档难度 + `_AI_SAFE_CARDS` 白名单；AI 出牌开连锁窗口把回合卡住 |
+| 表现层 | 冻结的船看不出冻结（`frozen` 下发 + 雪花）；探测雷达显形只亮 4 秒（改持久）；全站零音效（Web Audio 合成）；BGM 永远不响（播放器 + 合成兜底）；卡牌图鉴无检索（筛选/搜索/使用次数）；自定义房无邀请链接入口 |
+
 
 ### 🟠 仍未处理（按"感知收益 ÷ 成本"排序）
 

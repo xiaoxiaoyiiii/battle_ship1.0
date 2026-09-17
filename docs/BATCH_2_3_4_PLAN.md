@@ -174,6 +174,19 @@ profile_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,
 `messages` 返回 `[]` 且 `guestbook_private = true`（前端显示「该玩家未开放留言板」，不是留白）。
 点赞 / 送花的**计数始终可见**（那是"人气"不是"内容"）。
 
+⚠️ **写入通道（2026-09-17 实施中补的裁决）**：`show_guestbook` **并入既有的
+`POST /api/profile/card`** —— 保存载荷从 8 个字段变成 **9 个**（新增 `show_guestbook`，0/1）。
+理由：第 1 批定的规矩是「8 个字段必须全发、缺一个 400」，因为"允许缺字段＝保持原值"会变成
+「保存了但没生效」这种最难查的静默失败；留言板隐私与那三个展示开关是同一类东西，
+就该走同一条通道，不要为它单开一个接口。落地面：`profile_spec.WRITABLE_FIELDS` /
+`validate_payload` / `_PROFILE_DEFAULTS` 三处都要有它，`/api/profile` 与 `/user_stats`
+都要下发；前端编辑面「名片」分区加第四个开关 **`#profile-show-guestbook`**
+（与另三个开关同一份，别在设置页再放一份）。既有的「8 字段」测试要跟着改成 9 个。
+
+⚠️ **`show_guestbook` 是给「第 1 批已建的表」加列**，而本项目没有迁移机制：
+`CREATE TABLE IF NOT EXISTS` **不可能**加列，必须用「`PRAGMA table_info` 判存在 →
+`ALTER TABLE ... ADD COLUMN`」的幂等助手（失败只记日志）。生产库已有该表，做错这一步就是线上 500。
+
 ### 3.5 DOM 契约（冻结）
 
 ```

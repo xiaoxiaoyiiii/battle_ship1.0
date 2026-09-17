@@ -552,6 +552,56 @@ profile_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,
 
 ---
 
+## 11. 追加批：结算「本局刚解锁」提示 + 特权外观（2026-09-17）
+
+作者原话：① 补一个「本局刚解锁 ⚓首胜」之类的**成就结算提示**；② 把他的账号**全部徽章 /
+头像框 / 名片底色 / 称号都解锁**；③ 名字改成**彩虹渐变色**（别人眼中也看得到，且**别人不能拥有**）。
+
+### 11.1 做法
+
+| 需求 | 落点 |
+| --- | --- |
+| 结算提示 | `server._grant_match_achievements` 在原有"整房间一条 message"之外，**再给本人单发** `achievements_unlocked`（`{items:[{id,name,desc,group,requirement}], count}`）；前端在结算界面渲染 `#achievement-unlock-panel`（"本局刚解锁 N 枚徽章" + 图标/名称/说明），并在对局日志里留一行 |
+| 全解锁 | 新表 **`user_perks(user_id, perk, granted_at)`** + `unlock_all_cosmetics` 特权：`api._profile_unlock_stats()` 注入 `_unlock_all_cosmetics` 标记，`profile_spec._unlocked()` 见到标记就**整池放行**。因为注入点就是"自己的名片 catalog"与"保存校验"共用的那一个函数，两处口径不会漂移 |
+| 彩虹名字 | `rainbow_name` 特权 + `api._name_style()`：名字样式随 **`/api/profile`、`/user_stats`、`/api/leaderboard` 逐行**下发，前端加 `.name-rainbow`（`background-clip:text` 渐变）。**资格判定在数据层** —— 没有任何自助接口能领特权 |
+
+**徽章"全部解锁"是数据而不是代码**：往 `user_achievements` 写 12 行即可（判据取
+「达标 ∪ 已授予」的并集，第 2 批定下的口径），不需要改判据。
+
+⚠️ **"别人不能拥有"是靠数据层保证的**：`user_perks` 只有 `grant/revoke` 两个运维函数，
+**没有任何路由**（`tests/test_perks_and_unlock_notice.py::test_no_self_service_perk_endpoint`
+逐条断言 `/api/perk`、`/api/grant_perk` … 都是 404）。只在前端灰掉等于没做。
+
+### 11.2 实施中发现的四个真问题
+
+1. **★ 函数作用域里的 const 被模块级函数引用 → 运行时 `ReferenceError`**。
+   结算面板要画徽章图标，我复用了徽章墙那份 `PROFILE_BADGE_GLYPH`，但它当时声明在**名片渲染函数内部** ——
+   模块级的 `renderAchievementUnlockPanel()` 根本看不到它。表现是"结算面板不出现 + 控制台一条未捕获异常"
+   （工具 Z1 抓到）。修法：把映射**提到模块级**，两处共用一份（不再各写一份 → 不会漂移）。
+   👉 教训：**跨函数复用常量前先确认它声明在哪个作用域**；`node --check` 抓不到这种错。
+2. **`create_room` 的 ack 不返回 `player_id`**（只有 `room_id`）。工具照抄别处写法用了
+   `created.player_id` → `undefined` → 摆船 payload 里没有 `player_id` → 服务端 `data['player_id']`
+   `KeyError` → **不回 ack** → 工具在 `Runtime.evaluate` 上超时。
+   症状看着像"浏览器卡住"，真凶在**服务端日志**里。自定义房里登录玩家的座位 key 就是
+   `session['user_id']`（即自己的 uid）。
+3. **同一个浏览器里两个标签页共享 cookie** → 想造"游客对手"必须**两个独立 profile 的浏览器进程**，
+   否则 B 那个"游客"标签页带着 A 的登录态（第一次跑时 B 入座返回的 player_id 竟是 A 的 uid，房间塌成一个人）。
+4. **登录必须重载页面**：socket 的身份取自**连接握手那一刻的 session**，用 fetch 登录后不刷新，
+   这条连接仍然是游客 → 结算时服务端拿不到 user_id → 不给这个账号记徽章。
+
+### 11.3 实测
+
+- pytest：**1172 passed**（新增 `tests/test_perks_and_unlock_notice.py` 21 条）
+- `tools/unlock_notice_check.mjs`（新建，两个独立浏览器、真结算路径）：**PASS**
+  —— 见它逐条覆盖"面板出现且写明解锁了哪几枚 / 对手看不到 / 日志留行 / 彩虹名字自己与别人都看得到
+  且真的是 gradient / 编辑面 0 个灰项 / 排行榜逐行下发"
+- 受影响的既有工具复跑：`achievements_check` 35 ｜ `profile_card_check` 57 ｜
+  `profile_leaderboard_check` 47 ｜ `ui_layout_check` 100，全部 **0 FAIL**
+- ⚠️ 工具可重复性：结算提示只在"这一局真的新解锁"时才出现，所以**每次跑之前要重置该账号的徽章与战绩**
+  （`.tmp/seed_perk_user.py` 就是干这个的，一次性脚本、不进仓库）。
+
+---
+
 ## 8. 三批的执行顺序与依赖
 
 ```

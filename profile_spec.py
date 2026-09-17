@@ -179,6 +179,15 @@ _CARD_BG_RULES = {
 
 
 def _unlocked(rules, stats):
+    """按规则算出已解锁集合。
+
+    ⚠️ **特权账号直接全解锁**：`stats` 里带 `unlock_all_cosmetics` 标记时，
+    池子里的每一项都算已解锁。这个标记由 **api 层**按 `user_perks` 表注入
+    （见 `PERK_UNLOCK_ALL`）——本模块保持纯函数、不碰 IO，与第 2 批
+    「判据只有一处」的写法一致：判据仍在 rules 里，特权只是"跳过阈值"。
+    """
+    if has_unlock_all(stats):
+        return set(rules)
     ctx = unlock_context(stats)
     return {pid for pid, rule in rules.items() if rule(ctx)}
 
@@ -196,6 +205,25 @@ def unlocked_frames(stats):
 def unlocked_card_bgs(stats):
     """已解锁的名片底色 id 集合。"""
     return _unlocked(_CARD_BG_RULES, stats)
+
+
+# ---------------------------------------------------------------------------
+# 特权（user_perks 表里的字符串）
+# ---------------------------------------------------------------------------
+# 这两个字符串是**唯一的一份**定义：db 层只存字符串，api 层用它读表/注入标记。
+PERK_UNLOCK_ALL = 'unlock_all_cosmetics'   # 称号 / 头像框 / 名片底色 全部解锁
+PERK_RAINBOW_NAME = 'rainbow_name'         # 彩虹渐变名字（别人也看得到，别人拿不到）
+
+VALID_PERKS = (PERK_UNLOCK_ALL, PERK_RAINBOW_NAME)
+
+# 注入进 stats 的标记键（前缀下划线避免与 users 表的真实列重名）
+UNLOCK_ALL_FLAG = '_unlock_all_cosmetics'
+
+
+def has_unlock_all(stats):
+    """该账号是否持有"外观全解锁"特权（api 层注入的标记）。"""
+    stats = stats if isinstance(stats, dict) else {}
+    return bool(stats.get(UNLOCK_ALL_FLAG))
 
 
 # ---------------------------------------------------------------------------

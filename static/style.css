@@ -4321,5 +4321,94 @@ body.layout-tight .settings-nav-item.active { box-shadow: inset 0 -3px 0 var(--p
     .settings-pane .profile-label-half > span:first-child { min-width: 0; }
 }
 
+/* ===========================================================================
+   27. 结算：本局刚解锁的徽章 + 特权名字样式（2026-09-17 追加）
+   =========================================================================== */
+
+/* ── 本局刚解锁（结算界面里的一块） ──
+   只用颜色/描边/动画，**不动盒模型尺寸**（第 12 节第 11 条）；
+   也不要给含 fixed 后代的元素加 transform（这里就是个普通块，没有 fixed 后代）。 */
+.achievement-unlock {
+    max-width: 520px;
+    margin: 14px auto 4px;
+    padding: 12px 16px;
+    border-radius: 14px;
+    border: 1px solid rgba(var(--primary-rgb, 21, 101, 192), 0.45);
+    background: linear-gradient(180deg, rgba(var(--primary-rgb, 21, 101, 192), 0.16), rgba(var(--primary-rgb, 21, 101, 192), 0.06));
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+    text-align: left;
+    animation: achievementUnlockIn 0.32s ease-out;
+    }
+.achievement-unlock .au-title {
+    margin: 0 0 8px;
+    font-size: 0.95rem;
+    letter-spacing: 0.02em;
+}
+.achievement-unlock .au-count {
+    display: inline-block;
+    min-width: 1.4em;
+    padding: 0 6px;
+    margin: 0 2px;
+    border-radius: 999px;
+    background: rgba(var(--primary-rgb, 21, 101, 192), 0.85);
+    color: #fff;
+    text-align: center;
+    font-weight: 700;
+}
+.achievement-unlock .au-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.achievement-unlock .au-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.06);
+}
+.achievement-unlock .au-glyph { font-size: 1.35rem; font-style: normal; line-height: 1; }
+.achievement-unlock .au-text { display: flex; flex-direction: column; }
+.achievement-unlock .au-name { font-size: 0.9rem; }
+.achievement-unlock .au-desc { font-size: 0.74rem; color: var(--muted, #8a94a2); }
+html.theme-dark .achievement-unlock .au-item { background: rgba(255, 255, 255, 0.05); }
+
+@keyframes achievementUnlockIn {
+    from { opacity: 0; transform: translateY(6px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .achievement-unlock { animation: none; }
+}
+
+/* ── 彩虹渐变名字（特权外观） ──
+   ⚠️ 资格判定在**服务端**（user_perks 表里的 rainbow_name），前端只认服务端下发的
+   name_style === 'rainbow' 加这个类；所以"别人不能拥有"是数据层保证的，
+   不是在这里藏一个开关（只在前端藏等于没做）。
+   实现：背景裁切到文字（-webkit-text-fill-color 透明 + background-clip:text）；
+   不支持 background-clip:text 的浏览器会退化成普通文字颜色，不会变成看不见的空白。 */
+.name-rainbow {
+    background-image: linear-gradient(90deg,
+        #ff4d4d 0%, #ff9f1a 16%, #ffe14d 32%, #4dd964 48%, #3ec7ff 64%, #7a6bff 80%, #ff5fd2 100%);
+    background-size: 100% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: #ff8ad8;                     /* 兜底：不支持 text-fill-color 时也是一个像样的颜色 */
+    font-weight: 700;
+}
+/* 悬停/点亮时给一点流光（只动 background-position，不动布局） */
+.name-rainbow:hover { background-size: 220% 100%; background-position: 0% 0%; }
+@media (prefers-reduced-motion: reduce) {
+    .name-rainbow:hover { background-size: 100% 100%; }
+}
+/* 排行榜里名字是 <span>，名片里是 <h3>：两者都靠上面这条统一生效，这里只补一处对齐 */
+.leaderboard-name.name-rainbow { display: inline-block; }
+
 
 

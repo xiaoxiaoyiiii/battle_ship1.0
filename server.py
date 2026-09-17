@@ -2207,6 +2207,14 @@ def _grant_match_achievements(room, candidates):
             # 沿用现有播报风格：整房间一条 message（`_finish_game` 等出口本来就
             # 紧接着 emit('game_over', room=...)），所以这里 emit 到房间是安全的。
             emit('message', {'text': f'{display} 解锁了新徽章：{names}'}, room=room.id)
+            # ★ 结算提示：再**只发给本人**一条结构化事件。
+            #   上面那条是给全房间看的（对手也看得到有人解锁了），而"本局刚解锁了哪几枚"
+            #   是玩家自己的结算反馈 —— 前端拿它在结算界面弹一块「本局刚解锁」。
+            #   只发本人：对手不需要收到，也避免以后有人拿它做"偷看别人进度"的入口。
+            items = [d for d in (achievements.details(bid) for bid in granted) if d]
+            sid = getattr(player, 'sid', None)
+            if sid and items:
+                emit('achievements_unlocked', {'items': items, 'count': len(items)}, room=sid)
         except Exception:
             # 播报失败不影响已经写进库的解锁
             pass

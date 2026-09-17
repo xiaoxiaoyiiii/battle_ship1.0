@@ -252,3 +252,22 @@ def newly_unlocked(stats, already):
     """
     known = set(already or ())
     return [b['id'] for b in BADGES if b['id'] not in known and _RULES[b['id']](achievement_context(stats))]
+
+
+def details(badge_id):
+    """徽章 id → 下发用的详情 `{id, name, desc, group, requirement}`；未知 id 给空字典。
+
+    结算提示（`achievements_unlocked` 事件）用它组装 payload —— 这样**文案的唯一来源
+    仍然是 BADGES**，server.py 不必知道徽章长什么样（也不用去碰 `_BY_ID` 私有表）。
+    图标不在这里：前端按 `group` 查自己的 glyph 映射（与徽章墙保持同一套图标）。
+    """
+    badge = _BY_ID.get(badge_id)
+    if not badge:
+        return {}
+    return {
+        'id': badge['id'],
+        'name': badge.get('name') or badge['id'],
+        'desc': badge.get('desc') or '',
+        'group': badge.get('group') or '',
+        'requirement': badge.get('requirement') or '',
+    }

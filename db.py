@@ -246,6 +246,21 @@ class Database:
                   )
                   ''')
 
+            # ---- 特权（2026-09-17）----
+            # 存放**不靠战绩解锁**的东西：外观全解锁、彩虹渐变名字等。
+            # 主键 (user_id, perk) 让授予天然幂等（INSERT OR IGNORE）。
+            # ⚠️ **没有自助接口**：只由运维在库里授予 —— 所以"别人不能拥有彩虹名字"
+            #    是数据层保证的，而不是前端灰一下（只在前端灰掉等于没做）。
+            self.cursor.execute('''
+                  CREATE TABLE IF NOT EXISTS user_perks
+                  (
+                      user_id    TEXT,
+                      perk       TEXT,
+                      granted_at INTEGER,
+                      PRIMARY KEY (user_id, perk)
+                  )
+                  ''')
+
             # ---- 点赞 / 送花 / 留言板（2026-09-17 第 3 批 D 票）----
             # `profile_likes` 的主键 (from, to, kind) 让"取消再点"天然幂等：
             # 点 = INSERT OR IGNORE，取消 = DELETE。**不存计数列** ——
@@ -1318,6 +1333,94 @@ class Database:
                 pass
             return False
 
+    # ------------------------------------------------------------------
+    # 特权（user_perks）：外观全解锁 / 彩虹名字 …
+    # 与其它 DAO 同一风格：读失败返回空值、写失败返回 False，绝不抛。
+    # ------------------------------------------------------------------
+    def list_user_perks(self, uid: str) -> set:
+        """该账号持有的特权集合。读不到就是空集合（等价于没有特权）。"""
+        if not uid:
+            return set()
+        try:
+            cursor = self.conn.cursor()
+            rows = cursor.execute('SELECT perk FROM user_perks WHERE user_id = ?', (uid,)).fetchall()
+            cursor.close()
+            return {str(r['perk']) for r in rows if r['perk']}
+        except sqlite3.Error as e:
+            logger.error(f"读取特权失败: uid={uid}, 错误: {e}")
+            return set()
+        except Exception as e:
+            logger.error(f"读取特权时发生未知错误: uid={uid}, 错误: {e}")
+            return set()
+
+    def get_perks_map(self, uids) -> dict:
+        """批量取 `{uid: set(perk)}`。
+
+        排行榜一页 100 行，逐行查会打 100 次库 —— 这里一条 SQL 取完
+        （`IN (...)` 参数化，不拼字符串）。
+        """
+        ids = [str(u) for u in (uids or []) if u]
+        if not ids:
+            return {}
+        try:
+            marks = ','.join('?' for _ in ids)
+            cursor = self.conn.cursor()
+            rows = cursor.execute(
+                f'SELECT user_id, perk FROM user_perks WHERE user_id IN ({marks})', ids).fetchall()
+            cursor.close()
+            out = {}
+            for r in rows:
+                if r['user_id'] and r['perk']:
+                    out.setdefault(str(r['user_id']), set()).add(str(r['perk']))
+            return out
+        except sqlite3.Error as e:
+            logger.error(f"批量读取特权失败: 错误: {e}")
+            return {}
+        except Exception as e:
+            logger.error(f"批量读取特权时发生未知错误: 错误: {e}")
+            return {}
+
+    def has_user_perk(self, uid: str, perk: str) -> bool:
+        """该账号是否持有某个特权。"""
+        return str(perk or '') in self.list_user_perks(uid)
+
+    def grant_user_perk(self, uid: str, perk: str) -> bool:
+        """授予特权（幂等）。成功或本来就有都返回 True。"""
+        perk = str(perk or '').strip()
+        if not uid or not perk:
+            return False
+        try:
+            with self._lock:
+                cursor = self.conn.cursor()
+                cursor.execute(
+                    'INSERT OR IGNORE INTO user_perks (user_id, perk, granted_at) VALUES (?, ?, ?)',
+                    (uid, perk, int(time.time())))
+                self.conn.commit()
+                cursor.close()
+            return True
+        except sqlite3.Error as e:
+            logger.error(f"授予特权失败: uid={uid}, perk={perk}, 错误: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"授予特权时发生未知错误: uid={uid}, perk={perk}, 错误: {e}")
+            return False
+
+    def revoke_user_perk(self, uid: str, perk: str) -> bool:
+        """收回特权（运维用；幂等）。"""
+        perk = str(perk or '').strip()
+        if not uid or not perk:
+            return False
+        try:
+            with self._lock:
+                cursor = self.conn.cursor()
+                cursor.execute('DELETE FROM user_perks WHERE user_id = ? AND perk = ?', (uid, perk))
+                self.conn.commit()
+                cursor.close()
+            return True
+        except sqlite3.Error as e:
+            logger.error(f"收回特权失败: uid={uid}, perk={perk}, 错误: {e}")
+            return False
+
     def get_user_achievements(self, uid: str) -> dict:
         """已解锁的徽章 `{badge_id: unlocked_at}`。读失败返回空字典。"""
         if not uid:
@@ -1892,6 +1995,33 @@ def get_user_card_usage(uid: str, limit: int = 3):
 def get_user_card_uses_total(uid: str):
     """个人累计出牌次数"""
     return db.get_user_card_uses_total(uid)
+
+
+# ---- 特权（外观全解锁 / 彩虹名字）----
+# ⚠️ 只给运维/脚本用，**不要**挂到任何自助接口上：特权能被自己领就不叫特权了。
+def list_user_perks(uid: str):
+    """该账号持有的特权集合"""
+    return db.list_user_perks(uid)
+
+
+def get_perks_map(uids):
+    """批量 `{uid: set(perk)}`（排行榜用，避免 N 次查询）"""
+    return db.get_perks_map(uids)
+
+
+def has_user_perk(uid: str, perk: str):
+    """是否持有某特权"""
+    return db.has_user_perk(uid, perk)
+
+
+def grant_user_perk(uid: str, perk: str):
+    """授予特权（幂等）"""
+    return db.grant_user_perk(uid, perk)
+
+
+def revoke_user_perk(uid: str, perk: str):
+    """收回特权（幂等）"""
+    return db.revoke_user_perk(uid, perk)
 
 
 # ---- 徽章 / 成就（server.py 结算与 api.py 图鉴都走模块级函数）----

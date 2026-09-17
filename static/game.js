@@ -1453,6 +1453,52 @@ function clearGameLogs() {
 }
 
 // 追加一条日志（最新在最上面，超量自动裁剪）
+// ==================== 结算：本局刚解锁的徽章（第 4 批追加） ====================
+//
+// 服务端在结算时做两件事：
+//   ① 给**整个房间**一条 message：「XX 解锁了新徽章：五连胜」（对手也看得到）；
+//   ② 给**本人**一条 `achievements_unlocked`（结构化：id/name/desc/group/requirement）。
+// 这里只负责把 ② 渲染成结算界面上的一块「本局刚解锁 ⚓首胜」。
+//
+// 事件顺序：`_finalize_match` 在 `emit('game_over')` 之前跑，所以 ② 通常比 game_over 先到；
+// 为了不依赖顺序，两条路都调 renderAchievementUnlockPanel()（一次缓冲、一次兜底刷新）。
+//
+// 图标不在这里写死：复用徽章墙那份 PROFILE_BADGE_GLYPH（按 group 取），
+// 免得同一个徽章在徽章墙和结算提示里长得不一样。
+// 分组 → 徽章上的小图标（纯装饰）。
+// ⚠️ **模块级**（2026-09-17 从名片渲染函数里提上来的）：结算提示也要画徽章图标，
+//    而两处各写一份映射必然漂移（"同一个徽章在徽章墙和结算提示里长得不一样"）。
+//    第一版结算函数引用了函数内的同名 const → 运行时 `ReferenceError`，
+//    表现是"结算面板不出现 + 控制台一条未捕获异常"（工具 Z1 抓到的就是它）。
+//    分组中文名由服务端给（achievements.groups()），认不出来就用默认图标。
+const PROFILE_BADGE_GLYPH = {
+    '里程碑': '⚓', '连胜': '🔥', '击沉': '💥', '完美': '🛡️', '卡牌': '🎴', '榜单': '👑'
+};
+
+let pendingUnlockBadges = [];
+
+function renderAchievementUnlockPanel() {
+    const panel = document.getElementById('achievement-unlock-panel');
+    if (!panel) return;
+    const items = pendingUnlockBadges.filter(b => b && b.id);
+    if (!items.length) {
+        panel.classList.add('hidden');
+        panel.innerHTML = '';
+        return;
+    }
+    const cards = items.map(b => {
+        const glyph = PROFILE_BADGE_GLYPH[b.group] || '🏅';
+        return '<li class="au-item">'
+            + '<em class="au-glyph">' + escapeHtml(glyph) + '</em>'
+            + '<span class="au-text"><strong class="au-name">' + escapeHtml(b.name || b.id) + '</strong>'
+            + (b.desc ? '<span class="au-desc">' + escapeHtml(b.desc) + '</span>' : '')
+            + '</span></li>';
+    }).join('');
+    panel.innerHTML = '<h3 class="au-title">本局刚解锁 <span class="au-count">' + items.length + '</span> 枚徽章</h3>'
+        + '<ul class="au-list">' + cards + '</ul>';
+    panel.classList.remove('hidden');
+}
+
 function addGameLog(logText, logType) {
     if (!gameLogs) return;
     const emptyHint = gameLogs.querySelector('.log-empty');
@@ -2107,12 +2153,6 @@ function bindEventListeners() {
         sunk50: '五十沉', sunk200: '两百沉', flawless: '零伤获胜', flawless5: '完美指挥',
         speedrun: '闪电战', cardmaster: '卡牌大师', allrounder: '全能选手', rank1: '榜首'
     };
-    // 分组 → 徽章上的小图标（纯装饰）。分组中文名由服务端给（achievements.groups()），
-    // 这里认不出来就用默认图标 —— 加新分组时不会因此渲染成空白。
-    const PROFILE_BADGE_GLYPH = {
-        '里程碑': '⚓', '连胜': '🔥', '击沉': '💥', '完美': '🛡️', '卡牌': '🎴', '榜单': '👑'
-    };
-
     // 把接口下发的任意一条徽章归一化成渲染用的形状。
     // defaultUnlocked：这条数据隐含的解锁状态（`/user_stats` 只发已解锁的 → true）
     function profileBadgeItem(raw, defaultUnlocked) {
@@ -2208,6 +2248,10 @@ function bindEventListeners() {
         return {
             avatar: profileAvatarSrc(s),
             name: String(s.username || '未知玩家'),
+            // 名字样式（特权外观）：'rainbow' = 彩虹渐变。**服务端下发的**，
+            // 别人看你的名片也会带上（见 api.py 的 _name_style），
+            // 前端只负责加个类，不做任何"判断谁有资格"的事 —— 资格在服务端的数据层。
+            nameStyle: String(s.name_style || ''),
             signature: String(s.signature || ''),
             level: profileLevel(total),
             title: profileTitleName(s),
@@ -2359,7 +2403,8 @@ function bindEventListeners() {
             + '<span' + idsOn('id="profile-view-level"') + ' class="lvl">Lv.' + m.level + '</span>'
             + '</div>';
         html += '<div class="pf-who">'
-            + '<h3' + idsOn('id="profile-view-name"') + ' class="pf-name">' + escapeHtml(m.name)
+            + '<h3' + idsOn('id="profile-view-name"') + ' class="pf-name'
+            + (m.nameStyle === 'rainbow' ? ' name-rainbow' : '') + '">' + escapeHtml(m.name)
             + '<span' + idsOn('id="profile-view-title"') + ' class="title-chip' + (m.title ? '' : ' hidden') + '">'
             + escapeHtml(m.title) + '</span></h3>'
             + '<p' + idsOn('id="profile-view-status"') + ' class="state">'
@@ -4073,6 +4118,10 @@ function setupSocketListeners() {
         if (typeof updateHandUI === 'function') updateHandUI();
 
         switchScreen(gameOverScreen);
+        // 本局新解锁的徽章：服务端在结算时**只发给本人**一条 achievements_unlocked，
+        // 它比 game_over 先到（_finalize_match 在 emit game_over 之前），所以这里做一次
+        // 兜底刷新 —— 无论事件先后，结算界面上都会出现「本局刚解锁 …」。
+        renderAchievementUnlockPanel();
         // 根据胜利原因显示不同的提示
         if (data.winner === gameState.playerId) {
             if (data.reason === 'surrender') {
@@ -4083,6 +4132,19 @@ function setupSocketListeners() {
         } else {
             gameResult.textContent = '很遗憾，你输了。';
         }
+    });
+
+    socket.on('achievements_unlocked', (data) => {
+        // 只发给本人的结算反馈。缓冲 + 立刻渲染（那块面板长在结算屏里，
+        // 此刻可能还没切过去，但内容先填好，切屏后就能直接看到）。
+        const items = (data && Array.isArray(data.items)) ? data.items : [];
+        if (!items.length) return;
+        pendingUnlockBadges = items.slice();
+        renderAchievementUnlockPanel();
+        // 对局日志里也留一行（玩家翻日志时能看到是哪局解锁的）
+        const names = items.map(b => b.name || b.id).join('、');
+        addGameLog('<span class="log-badge log-badge-info">成就</span>'
+            + '<span class="log-text">本局解锁了新徽章：' + escapeHtml(names) + '</span>', 'info');
     });
 
     // 添加阶段更新监听
@@ -5338,13 +5400,15 @@ function fetchLeaderboard() {
             // 头像 + 名字都要能点：打开那个人的个人信息（个人信息面板见 showUserProfile）
             const username = String(row.username || '');
             const avatar = row.avatar ? String(row.avatar) : '/static/avatars/default.png';
+            // 名字样式（特权外观，服务端逐行下发；见 api.py 的 /api/leaderboard）
+            const nameCls = 'leaderboard-name' + (String(row.name_style || '') === 'rainbow' ? ' name-rainbow' : '');
             tr.innerHTML = `<td>${idx + 1}</td>`
                 + `<td class="leaderboard-user-cell">`
                 + `<button type="button" class="leaderboard-user" data-username="${escapeHtml(username)}"`
                 + ` title="点击查看个人信息">`
                 + `<img class="leaderboard-avatar" src="${escapeHtml(avatar)}" alt=""`
                 + ` onerror="this.onerror=null;this.src='/static/avatars/default.png'">`
-                + `<span class="leaderboard-name">${escapeHtml(username || '未知玩家')}</span>`
+                + `<span class="${nameCls}">${escapeHtml(username || '未知玩家')}</span>`
                 + `</button></td>`
                 + `<td>${wins}</td><td>${losses}</td><td>${winrate}</td>`
                 + `<td>${row.longest_streak || 0}</td>`;
@@ -6004,6 +6068,9 @@ async function handleRegisterSubmit() {
 
 // 重置游戏
 function resetGame() {
+    // 新一局开始：清掉上一局的「本局刚解锁」缓冲，免得旧徽章在新结算里再弹一次
+    pendingUnlockBadges = [];
+    renderAchievementUnlockPanel();
     // 断开socket连接（如果存在）
     if (gameState.socket) {
         gameState.socket.disconnect();

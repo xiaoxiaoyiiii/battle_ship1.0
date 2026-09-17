@@ -429,6 +429,11 @@
     <!-- 游戏结束界面 -->
     <div id="game-over-screen" class="screen">
         <h2 id="game-result"></h2>
+        <!-- 本局刚解锁的徽章（结算提示）。
+             服务端在结算时把 `achievements_unlocked` **只发给本人**（房间广播那句
+             「XX 解锁了新徽章：YY」是给双方看的），这里渲染成"本局刚解锁 ⚓首胜"。
+             没有新解锁时整块隐藏 —— 由 game.js 的 renderAchievementUnlockPanel() 决定。 -->
+        <div id="achievement-unlock-panel" class="achievement-unlock hidden"></div>
         <div class="game-over-buttons">
             <button id="play-again">再来一局</button>
             <button id="return-to-menu">返回主菜单</button>

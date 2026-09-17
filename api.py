@@ -119,7 +119,29 @@ def _profile_unlock_stats(uid, user=None):
     stats = {k: user.get(k) for k in
              ('wins', 'losses', 'longest_streak', 'current_streak', 'created_at')}
     stats['card_uses_total'] = db.get_user_card_uses_total(uid)
+    # 特权（`user_perks` 表）：持有"外观全解锁"就注入标记，`profile_spec` 认它即全解锁。
+    # ⚠️ 必须放在**这一个**函数里 —— 它同时被"自己的名片（catalog 的 unlocked 标志）"
+    # 和"保存校验（validate_payload）"用到；分散注入必然漂移（第 2 批的教训）。
+    try:
+        if db.has_user_perk(uid, profile_spec.PERK_UNLOCK_ALL):
+            stats[profile_spec.UNLOCK_ALL_FLAG] = True
+    except Exception:
+        pass
     return stats
+
+
+def _name_style(uid):
+    """名字样式。空字符串 = 普通；`rainbow` = 彩虹渐变（特权）。
+
+    这是**下发给别人**的字段：别人看你的名片/排行榜时也要能看到彩虹名字，
+    所以它必须进公开 payload，而不是只发给自己。
+    """
+    try:
+        if uid and db.has_user_perk(uid, profile_spec.PERK_RAINBOW_NAME):
+            return 'rainbow'
+    except Exception:
+        pass
+    return ''
 
 
 def _fav_cards(uid, limit=3):
@@ -492,6 +514,7 @@ def build_own_profile(uid):
     extra = db.get_user_profile_extra(uid)
     profile.update({
         'rank': rank,
+        'name_style': _name_style(uid),
         'title_id': extra.get('title_id') or '',
         'tags': extra.get('tags') or [],
         'status_text': extra.get('status_text') or '',
@@ -680,6 +703,8 @@ def user_stats_view():
     view = _reaction_view(stats['id'], session.get('user_id'))
     public_stats['counts'] = view['counts']
     public_stats['mine'] = view['mine']
+    # 名字样式（特权外观）：**必须下发给别人**，否则彩虹名字只有本人在自己名片里看得到。
+    public_stats['name_style'] = _name_style(stats['id'])
 
     # 徽章：**他人视角只下发已解锁的**（计划 §2.4）。
     # 未解锁项的 id 与判据文案都不发 —— 否则别人能看出"他还差几场拿十连胜"，
@@ -804,6 +829,16 @@ def api_leaderboard():
         limit = 100
     limit = max(1, min(limit, 100))
     rows = db.get_leaderboard(limit)
+    # 名字样式（特权外观）批量补上：一页最多 100 行，逐行查会打 100 次库 ——
+    # 用 `get_perks_map` 一条 SQL 取完。没有特权的行给空串（前端按空串走普通样式）。
+    try:
+        perks = db.get_perks_map([r.get('id') for r in (rows or [])])
+        rainbow = profile_spec.PERK_RAINBOW_NAME
+        for row in rows or []:
+            row['name_style'] = 'rainbow' if rainbow in (perks.get(str(row.get('id'))) or set()) else ''
+    except Exception:
+        for row in rows or []:
+            row.setdefault('name_style', '')
     return jsonify(rows)
 
 

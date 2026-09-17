@@ -326,7 +326,43 @@ unlocked_card_bgs(stats) -> set[str]
    `--primary*`**，优先级高于任何 CSS —— 只清 localStorage 的话「切回预设」等于没切。
    必须同时清内联变量。
 
-### 13.4 工具侧的三个假红（都改在工具里，不留在人工记忆里）
+### 13.4 上线与生产验证（2026-09-17）
+
+提交 `b2c46c1` → `push.sh` 推 GitHub（本机与服务器 tree 哈希一致 `677cad7`）→ `deploy.sh`
+（整包跑全量 936 passed → `git reset --hard` → 重启 → 健康检查 HTTP 200），
+线上 PID 99934、`battleship` active。
+
+**只读层（脚本 + curl，未写任何生产数据）**
+
+| 检查 | 结果 |
+| --- | --- |
+| 生产库两张新表 | `user_profile` / `user_card_usage` 均存在，列名与契约一致 |
+| `GET /user_stats?username=<真实账号>` | 13 个新字段**一个不缺**；`password_hash` / `token` 未下发 |
+| 隐私（游客看他人） | `history` 为 **0 行**、`show_history = 0` ✔ 过滤生效 |
+| `GET /api/profile`（未登录） | 401 |
+| `POST /api/profile/card`（未登录） | 401 |
+| 下发 HTML | 含 `#theme-preset-grid` / `#profile-edit` / `#profile-card-save` / `#settings-nav-item`×4 / `#wp-section` / `#profile-show-history` / `#opponent-stats-content` |
+| 下发 CSS / JS | `data-theme-preset` 5 段；`game.js` 含 `buildProfileCard` |
+
+**UI 层（无头 Edge 只读探针，不注册账号、不改数据）：13 项全过**
+线上真实账号 小小弈11 的名片实测渲染：`Lv.10 · 最高连胜 9 · 胜率 69% · 总场次 45`（由 31 胜 14 负算出）、
+`第 1 名`、加入时间，**历史区块显示「该玩家未公开对局历史」**（隐私端到端生效）；
+设置页左导航、主题预设换色（`#1565c0 → #22d3ee`）、`localStorage` 持久化、
+🎬/🎵 两个入口落在 `wp` / `sound` 分区 —— 全部通过。
+
+⚠️ **生产探针踩到的一个时序坑**（本地工具永远看不到）：弹窗**可见 ≠ 内容就绪** ——
+名片先渲染「加载中…」再异步取数，本地服务端快到看不出差别，线上必须等
+`#profile-view` 真的出现再断言，否则读到的是加载态。探针已改成两段等待。
+
+### 13.5 本批仍未做（下一批的入口）
+
+- 徽章墙 / 成就系统、他人主页的「约战 / 加好友」（第 2 批）
+- 点赞 / 送花 / 留言板（第 3 批）
+- 对局内快捷语 / 表情（第 4 批）
+- 需要登录才能验的**编辑态保存**目前只在本地隔离库验过（`profile_card_check.mjs` 真注册真落库）；
+  生产上未注册测试账号，如需线上验证编辑链路，请用自己的账号点一遍或允许我建一次性小号。
+
+### 13.6 工具侧的四个假红（都改在工具里，不留在人工记忆里）
 
 | 假红 | 真因 | 修法 |
 | --- | --- | --- |

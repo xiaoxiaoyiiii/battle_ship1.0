@@ -3366,6 +3366,15 @@ select:focus-visible {
  */
 
 /* ===== 26.1 弹窗外壳 ===== */
+/* 编辑面永远压在查看面之上。
+   ⚠️ 本项目所有 .modal-overlay 的 z-index 都是 10000 —— 谁在 DOM 里靠后谁赢，
+   而 #opponent-stats-modal（查看面）排在 #profile-modal（编辑面）之后，
+   于是「点编辑资料」时编辑面会被查看面盖住（作者 2026-09-17 实测）。
+   真正的顺序保证在 game.js 的 closeOverlaysExcept()（打开前先关掉别的），
+   这里只是兜底：万一以后有路径让两个同时开着，编辑面也不能被压住。 */
+#profile-modal { z-index: 10050; }
+/* 设置面同理：它常被 🎬 / 🎵 / 「去改密码」从别的浮层里叫出来 */
+#settings-modal { z-index: 10060; }
 .profile-modal-card { max-width: 660px; padding: 18px 20px 20px; }
 .settings-modal-card { max-width: 780px; padding: 18px 20px 20px; }
 .pf-view-modal { max-width: 560px; padding: 14px 16px 18px; }

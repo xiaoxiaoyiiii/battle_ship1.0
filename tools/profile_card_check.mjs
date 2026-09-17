@@ -235,6 +235,23 @@ try {
   const opened = await ev(OPEN_EDITOR);
   await waitFor(async () => (await ev(MODAL('profile-modal'))) === true, 12000, '编辑面打开');
   check(opened === 'clicked', '★ E3 名片上的「编辑资料」打开编辑面 #profile-modal', opened);
+  // ★ 作者 2026-09-17 实测：「点编辑资料，编辑面开在个人信息窗口**下面**，得先手动关掉查看面」。
+  // 根因是所有 .modal-overlay 共用 z-index 10000、DOM 里靠后的赢。这里把「查看面必须已关闭」
+  // 与「编辑面确实在最上面（点得到）」两条都钉死 —— 只断言"编辑面存在"是抓不到这个 bug 的。
+  const stack = await ev(`(function(){
+    var view = document.getElementById('opponent-stats-modal');
+    var editor = document.getElementById('profile-modal');
+    var btn = document.getElementById('profile-card-save');
+    var r = btn ? btn.getBoundingClientRect() : null;
+    var top = null;
+    if (r) { var el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); top = el ? (el.id || el.className) : null; }
+    return { viewHidden: view ? view.classList.contains('hidden') : null,
+      editorHidden: editor ? editor.classList.contains('hidden') : null,
+      saveClickable: !!r && r.width > 0 && r.height > 0,
+      topElementId: top }; })()`);
+  check(stack && stack.viewHidden === true, '★ E3b 打开编辑面时查看面必须已经关掉（不再被压在下面）', stack);
+  check(stack && stack.editorHidden === false && stack.saveClickable === true,
+    '★ E3c 编辑面的「保存」真的在最上面、点得到（没有别的浮层挡着）', stack);
   check(await ev('!!document.getElementById("profile-edit")'), 'E4 编辑面里是 #profile-edit 编辑器');
   const nav = await ev(`(function(){
     var items = [].slice.call(document.querySelectorAll('.pf-editor-nav-item'));

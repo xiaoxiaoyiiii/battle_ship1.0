@@ -53,8 +53,10 @@ python -m pytest tests/ -q    # 936 passed
 > 若报 `ModuleNotFoundError: flask`，说明选错了解释器（别再照旧文档改成 venv）。
 > ⚠️ **若大批用例在 setup 阶段报 `PermissionError: [WinError 5] ... Temp\pytest-of-Administrator`**：
 > 那是本机临时目录的 ACL 坏了（删不掉、`takeown` 也拒绝），**不是你的改动**。重定向临时目录即可：
-> `$env:TMP="$PWD\.tmp\pytemp"; $env:TEMP=$env:TMP; python -m pytest tests/ -q -p no:cacheprovider`。
+> `New-Item -ItemType Directory -Force .tmp\pytemp | Out-Null`（**目录要先存在**，否则 pytest 一样会报错）
+> 然后 `$env:TMP="$PWD\.tmp\pytemp"; $env:TEMP=$env:TMP; python -m pytest tests/ -q -p no:cacheprovider`。
 > 同一个原因，仓库里的 `.pytest_cache/` 也**不可写**（`WinError 5` 警告刷屏），加 `-p no:cacheprovider` 关掉缓存就行。
+> ⚠️ `.tmp/` 被清理掉之后，**记得先建回 `pytemp` 再跑 pytest**（2026-09-17 因为删了它，白排查了一轮 97 个 error）。
 
 **实测基线（2026-09-17 名片改版批后）**：`936 passed / 0 failed`（上一批 2026-09-17 缺陷批为 864，本次新增 72）。
 

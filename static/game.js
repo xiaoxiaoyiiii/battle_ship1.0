@@ -473,9 +473,31 @@ function showSettingsPane(pane) {
     return name;
 }
 
-// 打开设置弹窗（可指定落在哪个分类上），供 #profile-goto-account 等入口复用
+// 浮层互斥：打开一个浮层前，把不该留在它后面的关掉。
+//
+// ⚠️ 2026-09-17 作者实测「点编辑资料，编辑面开在个人信息窗口**下面**，得先手动关掉查看面才能看到」。
+// 根因：本项目所有弹窗都是 `.modal-overlay`、**z-index 全是 10000** —— 谁在 DOM 里靠后谁赢，
+// 而 `#opponent-stats-modal`（查看面）在 index.html 里排在 `#profile-modal`（编辑面）之后
+// → 编辑面必然被盖住。所以「先关掉别的」是唯一可靠的顺序保证；CSS 里给编辑面留了 z-index 兜底。
+// ⚠️ 本函数必须是**顶层**函数：查看面/编辑面那套渲染在嵌套作用域里，设置面在顶层，
+//    只有顶层定义才能让两边都调到（否则点设置会 ReferenceError）。
+// 新增浮层时请加进清单，并在打开前调用本函数。
+function closeOverlaysExcept(keepId) {
+    // 清单放在函数体里：避免顶层 const 的 TDZ —— 本函数可能在脚本加载完之前就被调到。
+    const ids = ['opponent-stats-modal', 'profile-modal', 'settings-modal',
+                 'user-stats-modal', 'match-detail-modal', 'help-modal'];
+    ids.forEach((id) => {
+        if (keepId && id === keepId) return;
+        const el = document.getElementById(id);
+        if (el && !el.classList.contains('hidden')) el.classList.add('hidden');
+    });
+}
+window.closeOverlaysExcept = closeOverlaysExcept;
+
+// 打开设置弹窗（可指定落在哪个分类上），供 #profile-goto-account / 🎬 / 🎵 等入口复用
 function openSettingsModal(pane) {
     if (!settingsModal) return false;
+    closeOverlaysExcept('settings-modal');   // 同上的浮层互斥：别让查看面/编辑面压在设置面下面
     themePickerTouched = false;
     if (primaryColorPicker) primaryColorPicker.value = currentPrimaryHex();
     showSettingsPane(pane || 'look');
@@ -2092,6 +2114,7 @@ function bindEventListeners() {
     // 打开某个账号的个人信息查看面（排行榜点名字/头像、局内两个头像、查看对手战绩都走它）
     function showUserProfile(username) {
         if (!opponentStatsModal || !opponentStatsContent) return;
+        closeOverlaysExcept('opponent-stats-modal');   // 别让编辑面/设置面压在查看面下面
         const title = document.getElementById('opponent-stats-title');
         if (title) title.textContent = (username ? username + ' 的个人信息' : '个人信息');
         opponentStatsModal.classList.remove('hidden');
@@ -2306,6 +2329,9 @@ function bindEventListeners() {
     // 数据现拉 —— 不复用查看面那份，免得把脏状态带进编辑态。
     function openMyProfileEditor() {
         const modal = document.getElementById('profile-modal');
+        // ★ 先把查看面（以及设置面）关掉：三者的 z-index 相同，不关的话编辑面会**藏在查看面下面**
+        //（作者 2026-09-17 实测：「还得自己手动关掉个人信息窗口才能看到编辑资料的窗口」）。
+        closeOverlaysExcept('profile-modal');
         return fetch('/api/profile').then(r => {
             if (!r.ok) throw new Error('未登录');
             return r.json();
@@ -2393,6 +2419,7 @@ function bindEventListeners() {
         if (gotoAccount) gotoAccount.addEventListener('click', (e) => {
             e.preventDefault();
             setProfileMode('view');          // 先收起编辑面
+            closeOverlaysExcept('settings-modal');   // 查看面也别留在设置面下面（同一个坑）
             openSettingsModal('acct');       // 再开到「账号与隐私」（改密码在那）
         });
         const gotoSelf = document.getElementById('settings-goto-profile');

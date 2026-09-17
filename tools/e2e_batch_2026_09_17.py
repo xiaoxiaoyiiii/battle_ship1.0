@@ -194,6 +194,11 @@ def main():
               'V3b 播报的船数 = 区域内【存活】战舰数', {'expected': expected, 'msg': msg})
 
         # ---------------- V4 回光返照：清对方打在我方棋盘的记录 ----------------
+        # ⚠️ 「绝处逢生放置格」不在这里测：它需要"出牌 → 连锁结算 → 下发放置请求"，
+        # 而本工具是【两个 python-socketio 客户端】，结算是在响应方那次请求里跑的，
+        # 跨客户端 emit 会让响应方的 transport 掉线（实测旧代码 eb2b5b4 同样复现，
+        # 属工具场景的产物、不是服务端缺陷）。那一条改由浏览器工具
+        # `tools/last_stand_board_check.mjs` 第 4 节验证（真实页面 + 人机对手）。
         actor.log.clear()
         resp = play(actor, '回光返照')
         check(resp and resp.get('status') == 'success', 'V4a 回光返照发动成功', resp)

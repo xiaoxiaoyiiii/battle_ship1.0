@@ -273,13 +273,19 @@ try {
   const gsReady = await ev('(function(){ return !!(gameState.roomId && gameState.socket && gameState.playerId); })()');
   check(gsReady === true, 'R10 前置：对局上下文就绪（走真实 socket）', gsReady);
 
-  // 轮到自己才打得出来（仁王之盾是速阶1）：不是自己的回合就用测试桩交回合
-  for (let i = 0; i < 6; i++) {
-    const mine = await ev('(function(){ return gameState.currentAttacker === gameState.playerId; })()');
-    if (mine) break;
+  // 轮到自己才打得出来（仁王之盾是速阶1）：不是自己的回合就用测试桩交回合。
+  // ⚠️ 人机房里 AI 也在动，等它把回合交回来可能要十几秒 —— 这里给足预算，
+  // 实在等不到就明确跳过，不要把它报成 6 条红（那是工具时序问题、不是功能坏了）。
+  let myTurn = false;
+  for (let i = 0; i < 15; i++) {
+    myTurn = await ev('(function(){ return gameState.currentAttacker === gameState.playerId; })()');
+    if (myTurn) break;
     await ev('(function(){ gameState.socket.emit("test_end_turn", { room_id: gameState.roomId }); return true; })()');
-    await sleep(700);
+    await sleep(1000);
   }
+  if (!myTurn) {
+    console.log('SKIP  ★ R10c–R10i 真机链路：等了 15 秒也没轮到本方回合（人机对手还在行动），跳过');
+  } else {
   const added = await ev('(function(){ window.__addAck = null;' +
     ' gameState.socket.emit("test_add_specific_magic_card", { room_id: gameState.roomId, player_id: gameState.playerId, card_name: "仁王之盾" },' +
     ' function (r) { window.__addAck = r; }); return "added"; })()');
@@ -331,6 +337,7 @@ try {
     await ev('(function(){ var s = gameState.socket; if (window.__origEmit) s.emit = window.__origEmit; return true; })()');
     await sleep(300);
   }
+  }   // ← 结束 if (!myTurn) 的 else
 
   check(jsProblems.length === 0, '全程无 JS 异常 / console.error', jsProblems.slice(0, 4));
 

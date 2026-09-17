@@ -5976,6 +5976,25 @@ def _placement_blocked_cells(room, player_id, ignore_sunken=False):
     return [{'x': x, 'y': y} for (x, y) in sorted(blocked)]
 
 
+def _cell_xy(cell):
+    """把格子的两种形态统一成 (x, y)：`[x, y]` / `(x, y)` / `{'x':..,'y':..}`。
+
+    `last_stand_cells` 在 `game_effects` 里存的是 `[x, y]`，而 `_build_room_sync`
+    下发时转成 `{'x':..,'y':..}`；读取方两边都可能拿到，别再各写一份解包。
+    拿不到就返回 None。
+    """
+    if isinstance(cell, dict):
+        x, y = cell.get('x'), cell.get('y')
+    elif isinstance(cell, (list, tuple)) and len(cell) >= 2:
+        x, y = cell[0], cell[1]
+    else:
+        return None
+    try:
+        return (int(x), int(y))
+    except (TypeError, ValueError):
+        return None
+
+
 def _emit_placement_request(room, player_id):
     p = room.magic_temp_data.get('pending_placement')
     if not p:
@@ -5990,6 +6009,19 @@ def _emit_placement_request(room, player_id):
     if p['kind'] == 'last_stand':
         # 只允许放在原本有战舰的格子：交给前端做高亮/禁点
         payload['allowed'] = room.game_effects.get('last_stand_cells') or []
+        # ⚠️ 白名单与黑名单绝不能互相矛盾（2026-09-17 实测回归，作者报「绝处逢生
+        # 生效后没有可用位置供玩家选择」）：
+        #   绝处逢生把【全部】战舰都牺牲了 —— 每艘都 `ships.remove()` 并记进
+        #   `sunken_ships`。而 blocked 现在按「ships ∪ sunken_ships」算己方占位
+        #   （那是为死者苏生/增援加的"刚沉掉那格不能摆"口径）→ 这 6 个候选格
+        #   全被判成"已占用"。前端是 `if (blocked.has(key) || (allowed && !allowed.has(key)))`
+        #   —— blocked 优先，于是六个格子全灰、一个都点不了。
+        # 绝处逢生的合法性由服务端按 allowed 单独校验（见 handle_confirm_reinforcement），
+        # 所以这里只要把候选格从 blocked 里剔除，就能恢复"只在这几格里选"的原意。
+        allow = {_cell_xy(a) for a in payload['allowed']}
+        allow.discard(None)
+        payload['blocked'] = [b for b in payload['blocked']
+                              if (b['x'], b['y']) not in allow]
     elif p['kind'] == 'shenji_redeploy':
         # 神机妙算：原位置（即便被对方打过）+ 对方未打过的空格都可选。
         # ⚠️ blocked 必须按"沉船不占位"的口径重算，不能沿用默认那份：

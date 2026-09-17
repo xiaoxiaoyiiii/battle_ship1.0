@@ -429,6 +429,85 @@ def test_attack_record_of_old_sunken_cell_is_kept(room):
         '原沉船格的攻击历史不该消失（否则那一格对对方"变回未知"）'
 
 
+# ---------------------------------------------------------------------------
+# 5b. 绝处逢生：白名单与黑名单不许互相矛盾（2026-09-17 实测回归）
+# ---------------------------------------------------------------------------
+def _placement_payload(events, sid):
+    got = [d for e, d, to, r in events if e == 'placement_request' and to == sid]
+    assert got, '应下发 placement_request'
+    return got[-1]
+
+
+def test_last_stand_placement_always_has_clickable_cells(room, events):
+    """★ 作者实测回归：绝处逢生生效后「没有可用位置供玩家选择了」。
+
+    病灶：绝处逢生把【全部】战舰牺牲掉（`ships.remove()` + 记进 `sunken_ships`），
+    而 `_placement_blocked_cells` 在 2026-09-17 之后按「ships ∪ sunken_ships」
+    算己方占位（那是给死者苏生/增援加的"刚沉掉那格不能摆"口径）→ 6 个候选格
+    全被判成"已占用"。前端是 `blocked.has(key)` 优先于白名单，于是全灰、点不动。
+
+    这里守的不变量：**allowed 与 blocked 绝不能有交集**（否则白名单形同虚设）。
+    """
+    p1 = board(room, P1, [(0, 0), (1, 0), (2, 0), (3, 0)])
+    p1.magic_hand = [card('绝处逢生')]
+
+    use(room, P1, '绝处逢生')
+    server.resolve_chain(room)
+
+    payload = _placement_payload(events, 'sid-p1')
+    allowed = {(a[0] if isinstance(a, (list, tuple)) else a['x'],
+                a[1] if isinstance(a, (list, tuple)) else a['y'])
+               for a in (payload.get('allowed') or [])}
+    blocked = {(b['x'], b['y']) for b in payload.get('blocked') or []}
+
+    assert payload['kind'] == 'last_stand'
+    assert len(allowed) == 4, f'四个原格都该是候选：{allowed}'
+    assert not (allowed & blocked), (
+        '候选格不得同时出现在 blocked 里（否则前端 blocked 优先 → 一个都点不了）：'
+        f'交集={allowed & blocked}')
+    clickable = allowed - blocked
+    assert len(clickable) == 4, f'必须有格子可点，实际 {clickable}'
+
+
+def test_last_stand_still_confirmable_after_blocked_fix(room):
+    """端到端：修好 blocked 之后，原格仍能被服务端接受并放下那一艘船。"""
+    p1 = board(room, P1, [(0, 0), (1, 0), (2, 0)])
+    p1.magic_hand = [card('绝处逢生')]
+
+    use(room, P1, '绝处逢生')
+    server.resolve_chain(room)
+    assert p1.remaining_ships == 0, '绝处逢生应牺牲全部战舰'
+
+    out = server.handle_confirm_reinforcement(
+        {'room_id': room.id, 'player_id': P1, 'position': {'x': 1, 'y': 0}})
+    assert out.get('status') == 'success', out
+    assert p1.remaining_ships == 1
+
+
+def test_cell_xy_accepts_both_shapes():
+    """候选格的两种形态（[x,y] 与 {'x':..}）都要能解包。"""
+    assert server._cell_xy([2, 3]) == (2, 3)
+    assert server._cell_xy((2, 3)) == (2, 3)
+    assert server._cell_xy({'x': 2, 'y': 3}) == (2, 3)
+    assert server._cell_xy('nope') is None
+    assert server._cell_xy(None) is None
+
+
+def test_revive_still_blocks_sunken_cells(room, events):
+    """反证：死者苏生/增援那条口径不能被这次修复改回去（原格仍必须灰掉）。"""
+    p1 = board(room, P1, [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 5)])
+    _ship_removed_by_magic(room, P1, (5, 5))
+    p1.magic_hand = [card('死者苏生')]
+
+    use(room, P1, '死者苏生')
+    server.resolve_chain(room)
+
+    payload = _placement_payload(events, 'sid-p1')
+    blocked = {(b['x'], b['y']) for b in payload.get('blocked') or []}
+    assert (5, 5) in blocked, '死者苏生仍不许摆到刚沉掉的那一格'
+    assert 'allowed' not in payload, 'allowed 是绝处逢生的白名单语义，别乱下发'
+
+
 def test_shenji_redeploy_still_allows_original_cell(room, events):
     """反证：神机妙算的"重新部署"仍可放回原位置（ignore_sunken 语义不变）。"""
     p1 = board(room, P1, [(0, 0), (1, 0), (2, 0)])

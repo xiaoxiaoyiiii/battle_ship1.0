@@ -45,14 +45,17 @@ Flask + Flask-SocketIO 的实时双人海战棋，叠加 43 条魔法卡（41 �
 ```bash
 pip install -r requirements.txt
 python start_server.py        # 推荐（含依赖检查）
-python -m pytest tests/ -q    # 860 passed
+python -m pytest tests/ -q    # 864 passed
 ```
 
 > ⚠️ **必须在项目根目录运行**——`server.py` 用相对路径 `./static/magic_card.json`；`tests/test_all_magic_cards.py:1088` 也用硬编码相对路径，是全套测试中唯一对 CWD 敏感的。
 > 本机解释器：PATH 上的 `python`（当前 3.12.10，**已装 flask**）或历史 venv `.venv/Scripts/python.exe`。
 > 若报 `ModuleNotFoundError: flask`，说明选错了解释器（别再照旧文档改成 venv）。
+> ⚠️ **若大批用例在 setup 阶段报 `PermissionError: [WinError 5] ... Temp\pytest-of-Administrator`**：
+> 那是本机临时目录的 ACL 坏了（删不掉、`takeown` 也拒绝），**不是你的改动**。重定向临时目录即可：
+> `$env:TMP="$PWD\.tmp\pytemp"; $env:TEMP=$env:TMP; python -m pytest tests/ -q`。
 
-**实测基线（2026-09-17 缺陷批后）**：`860 passed / 0 failed`（上一批 2026-09-15 为 790，本次新增 35 条）。
+**实测基线（2026-09-17 缺陷批后）**：`864 passed / 0 failed`（上一批 2026-09-15 为 790，本批新增 35 条）。
 
 > 🔧 **2026-09-13 个人战绩弹窗 / 人机战绩统计批**（详见 `docs/STATS_AND_AI_RANKING_FIXES.md`）：6 处实测缺陷 —— ①历史行把 `<button>` 塞进 `<table><tbody>` 触发 foster parenting，表头「时间 对手 结果 局内日志」孤立在列表最下方；②胜负配色被通用 `button` 规则的 `background-image` 渐变盖掉，三条胜绩全蓝；③`.user-stats-table` / `.user-history` 在样式表里从未定义；④人机对手显示成裸 ID `ai-4530c8`；⑤胜局的「对局详情」把「对手」显示成自己；⑥**人机对局计入 `users.wins` / 连胜**（排行榜 `ORDER BY wins DESC` → 打电脑即可刷榜）。修法：历史列表改 div 三列网格、`.match-history-btn{background-image:none}` + `.win`/`.lose`、`ai-` 前缀映射「电脑」并加「人机」标签、按胜负取对手、`db.record_match(count_stats=)` + `server._count_stats_for(room)`（人机只写历史、不计统计，6 处调用点全部显式传参）；并合并两份重复的 `showUserStats`/`showMatchDetail`、去掉 `setTimeout` 绑事件与「每次点头像都 append 一个重复 id 弹窗」，新增「加载更多」。回归：`tests/test_stats_display_fixes.py`（14 条）+ `tools/stats_modal_check.mjs`（无头 Edge，27 项，含 `--username` 真实账号端到端）；历史脏数据用 `tools/recompute_ranked_stats.py --apply` 对齐（本机已执行：z1w6qn 3 胜 → 0）。
 
@@ -698,6 +701,22 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 **没搜"还有谁在渲染个人信息"**。
 👉 **改法是 grep 渲染出来的文案**（`当前连胜`、`胜场`），比 grep 函数名有效得多 ——
 函数名各写各的，文案不会骗人。这次的第二套实现就是靠 `grep 当前连胜` 翻出来的。
+
+**★ 通用教训五：改「共用的工具函数」时，必须把每一个调用点都过一遍。**
+为修死者苏生（#6），我把"己方占位"的口径改成「`ships` ∪ `sunken_ships`」，加在
+`_placement_blocked_cells()` 里 —— 而**所有**放置流程共用它（增援 / 复活 / 绝处逢生 /
+神机妙算）。结果绝处逢生的 6 个候选格全被算成"已占用"，而前端 `blocked` 又优先于白名单
+（`allowed`）→ 六格全灰、玩家一个都点不了（作者实测：「没有可用位置供玩家选择了」）。
+绝处逢生当初躲过了设计者的眼睛，是因为它**不走 `_placement_error`**（合法性由服务端按
+`allowed` 单独校验），我改 blocked 时压根没想到它也在用。
+
+👉 两条规矩：
+① **白名单与黑名单永远不许有交集** —— 这次直接在发 payload 前把 `allowed` 从 `blocked` 里剔除；
+② **改共用函数先 grep 出全部调用点，按 kind 逐个表态**。这条与"通用教训二"（两份实现会漂移）
+是同一枚硬币的两面。
+验证也要跟着换层：坏点在**下发给前端的 payload**上，光测服务端校验口径是测不出来的 ——
+现在由浏览器工具 `tools/last_stand_board_check.mjs` 第 4 节在真页面上出牌验证
+（修复前实测 `blocked=36 / clickable=0`）。
 
 ---
 

@@ -19,3 +19,5 @@ _*.py
 # （放 C:/Windows/Temp 出现过 ACL 损坏 → Edge 起不来、调试端口连不上）
 .tmp/
 .pytest_cache/
+
+tests/e2e_magic_report.json

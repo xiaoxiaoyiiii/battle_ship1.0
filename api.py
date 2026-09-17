@@ -177,6 +177,9 @@ def user_stats_view():
     public_fields = ('id', 'username', 'wins', 'losses', 'current_streak',
                      'longest_streak', 'created_at', 'signature', 'avatar')
     public_stats = {k: stats[k] for k in public_fields if k in stats}
+    # 排行榜名次：个人信息面板要显示"第 N 名"（榜外账号也算得出名次）。
+    # 算不出来（库异常）时给 None，前端显示占位符，不影响其余字段。
+    public_stats['rank'] = db.get_user_rank(stats['id'])
     history = db.get_match_history(stats['id'], limit)
     return jsonify({'stats': public_stats, 'history': history})
 @app.route('/')

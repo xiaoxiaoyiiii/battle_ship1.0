@@ -224,6 +224,49 @@ def test_get_leaderboard_orders_by_wins(temp_db):
 
 
 # ---------------------------------------------------------------------------
+# get_user_rank：个人信息面板要显示的"排行榜名次"（2026-09-17）
+# ---------------------------------------------------------------------------
+def test_get_user_rank_matches_leaderboard_order(temp_db):
+    """名次必须与排行榜的排序口径一致（wins DESC, longest_streak DESC）。"""
+    top = _make_user(temp_db, 'top')
+    mid = _make_user(temp_db, 'mid')
+    low = _make_user(temp_db, 'low')
+    for _ in range(3):
+        temp_db.record_match(top, low)
+    temp_db.record_match(mid, low)
+
+    board = [r['id'] for r in temp_db.get_leaderboard()]
+    assert board == [top, mid, low], f'排行榜顺序变了：{board}'
+    assert temp_db.get_user_rank(top) == 1
+    assert temp_db.get_user_rank(mid) == 2
+    assert temp_db.get_user_rank(low) == 3
+
+
+def test_get_user_rank_works_outside_top_n(temp_db):
+    """榜外账号也要算得出名次（不能靠"取前 N 名找自己"）。"""
+    a = _make_user(temp_db, 'alpha')
+    b = _make_user(temp_db, 'bravo')
+    c = _make_user(temp_db, 'charlie')
+    dummy = _make_user(temp_db, 'dummy')
+    for _ in range(3):
+        temp_db.record_match(a, dummy)
+    for _ in range(2):
+        temp_db.record_match(b, dummy)
+    temp_db.record_match(c, dummy)
+
+    top2 = {r['id'] for r in temp_db.get_leaderboard(limit=2)}
+    assert c not in top2, '前提：该账号确实在榜外'
+    assert temp_db.get_user_rank(a) == 1
+    assert temp_db.get_user_rank(b) == 2
+    assert temp_db.get_user_rank(c) == 3, '榜外账号仍应算出第 3 名'
+
+
+def test_get_user_rank_unknown_or_empty_uid(temp_db):
+    assert temp_db.get_user_rank('') is None
+    assert temp_db.get_user_rank('nobody') is None
+
+
+# ---------------------------------------------------------------------------
 # update_user_signature：截断 + 空 uid
 # ---------------------------------------------------------------------------
 def test_update_user_signature_truncates(temp_db):

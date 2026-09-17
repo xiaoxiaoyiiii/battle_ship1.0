@@ -200,6 +200,28 @@ document.addEventListener('DOMContentLoaded', function () {
     window.addEventListener('gameStateUpdate', updateOpponentAvatarCorner);
     setInterval(updateOpponentAvatarCorner, 20000);
 
+    // 点右上角的对手头像 / 名字 → 打开对手的个人信息（2026-09-17 作者要求：
+    // 对局内看对手资料要能看到头像、签名、排行榜名次与历史战绩）。
+    // 绑在容器上，头像被重新加载/替换也不受影响。
+    const opponentCornerEl = document.getElementById('opponent-avatar-corner');
+    if (opponentCornerEl && opponentCornerEl.dataset.profileBound !== '1') {
+        opponentCornerEl.dataset.profileBound = '1';
+        opponentCornerEl.style.cursor = 'pointer';
+        opponentCornerEl.title = '点击查看对手个人信息';
+        opponentCornerEl.addEventListener('click', () => {
+            const oppName = (window.gameState && window.gameState.opponentName) || '';
+            // 优先走统一的个人信息面板（init() 之后一定已就绪，不依赖
+            // game_state 处理器是否已经跑过）；再兜底到游戏内那份 alias。
+            if (oppName && typeof window.showUserProfile === 'function') {
+                window.showUserProfile(oppName);
+            } else if (typeof window.showOpponentStats === 'function') {
+                window.showOpponentStats();
+            } else {
+                showMessage('对手信息还没准备好，请稍后再试', { type: 'warning' });
+            }
+        });
+    }
+
     // 控制游戏未开始时隐藏相关元素
     function controlGameElementsVisibility() {
         // 获取元素
@@ -1569,7 +1591,17 @@ function bindEventListeners() {
     // 对手战绩按钮事件
     if (showOpponentStatsBtn) showOpponentStatsBtn.addEventListener('click', (e) => {
         e.preventDefault();
-        showOpponentStats();
+        // 走与「点对手头像」一致的统一入口。⚠️ 不能直接写裸标识符
+        // `showOpponentStats`：它只是游戏内 alias（要等 game_state 处理器跑过
+        // 才有定义），早期点击会 ReferenceError，弹窗永远出不来。
+        const oppName = (window.gameState && window.gameState.opponentName) || '';
+        if (oppName && typeof window.showUserProfile === 'function') {
+            window.showUserProfile(oppName);
+        } else if (typeof window.showOpponentStats === 'function') {
+            window.showOpponentStats();
+        } else {
+            showMessage('对手信息还没准备好，请稍后再试', { type: 'warning' });
+        }
     });
     if (opponentStatsModalClose) opponentStatsModalClose.addEventListener('click', () => {
         opponentStatsModal.classList.add('hidden');
@@ -1620,13 +1652,46 @@ function bindEventListeners() {
         return name || opponentRawId(matchData, myId) || '未知';
     }
 
+    // 个人信息头部：头像 + 用户名 + 个性签名 + 排行榜名次（2026-09-17）。
+    // 首页「个人战绩」、对局内「查看对手战绩 / 点对手头像」、排行榜里点名字，
+    // 三处共用这一份渲染 —— 此前对手弹窗只有 5 行裸表格，没有头像也没有名次。
+    function profileAvatarSrc(s) {
+        return (s && s.avatar) ? String(s.avatar) : '/static/avatars/default.png';
+    }
+    function profileRankValue(s) {
+        const rank = parseInt(s && s.rank, 10);
+        return (rank && rank > 0) ? String(rank) : '';
+    }
+    function buildProfileHead(s) {
+        const signature = (s && s.signature) ? String(s.signature) : '';
+        const rank = profileRankValue(s);
+        return '<div class="profile-head">'
+            + '<img class="profile-avatar" src="' + escapeHtml(profileAvatarSrc(s)) + '" alt="头像"'
+            + ' onerror="this.onerror=null;this.src=\'/static/avatars/default.png\'">'
+            + '<div class="profile-head-main">'
+            + '<div class="profile-name">' + escapeHtml(String((s && s.username) || '未知玩家')) + '</div>'
+            + '<div class="profile-signature">'
+            + (signature ? escapeHtml(signature) : '还没有填写个性签名')
+            + '</div>'
+            + '</div>'
+            + (rank ? '<div class="profile-rank">第 ' + escapeHtml(rank) + ' 名</div>' : '')
+            + '</div>';
+    }
+
     function buildStatsTable(s) {
+        const wins = Number(s.wins) || 0;
+        const losses = Number(s.losses) || 0;
+        const total = wins + losses;
+        const winrate = total ? Math.round((wins / total) * 100) + '%' : '—';
+        const rank = profileRankValue(s);
         return '<table class="user-stats-table">'
-            + '<tr><td>用户名</td><td>' + escapeHtml(s.username) + '</td></tr>'
-            + '<tr><td>胜场</td><td>' + s.wins + '</td></tr>'
-            + '<tr><td>负场</td><td>' + s.losses + '</td></tr>'
-            + '<tr><td>当前连胜</td><td>' + s.current_streak + '</td></tr>'
-            + '<tr><td>最长连胜</td><td>' + s.longest_streak + '</td></tr>'
+            + '<tr><td>用户名</td><td>' + escapeHtml(String(s.username || '')) + '</td></tr>'
+            + '<tr><td>排行榜名次</td><td>' + (rank ? '第 ' + escapeHtml(rank) + ' 名' : '—') + '</td></tr>'
+            + '<tr><td>胜场</td><td>' + wins + '</td></tr>'
+            + '<tr><td>负场</td><td>' + losses + '</td></tr>'
+            + '<tr><td>胜率</td><td>' + winrate + '</td></tr>'
+            + '<tr><td>当前连胜</td><td>' + (Number(s.current_streak) || 0) + '</td></tr>'
+            + '<tr><td>最长连胜</td><td>' + (Number(s.longest_streak) || 0) + '</td></tr>'
             + '</table>';
     }
 
@@ -1659,7 +1724,8 @@ function bindEventListeners() {
     function renderUserStatsHTML(s, history, opts) {
         const options = opts || {};
         const hasAi = history.some(h => isAiOpponent(h, s.id));
-        return buildStatsTable(s)
+        return buildProfileHead(s)
+            + buildStatsTable(s)
             + (hasAi ? '<p class="user-stats-note">人机对局保留在历史中，不计入胜场 / 连胜，也不进排行榜。</p>' : '')
             + '<div class="user-history">'
             + '<h3>历史战绩</h3>'
@@ -1690,6 +1756,44 @@ function bindEventListeners() {
         }
     }
 
+    // 统一的个人信息取数：username 为空 = 查当前登录用户（带分页），
+    // 否则查指定账号（排行榜 / 对局内对手）。三处入口共用，字段不会各写一份。
+    function fetchProfile(username, limit) {
+        const url = username
+            ? ('/user_stats?limit=' + limit + '&username=' + encodeURIComponent(username))
+            : ('/user_stats?limit=' + limit);
+        return fetch(url).then(resp => {
+            if (!resp.ok) throw new Error('未登录或获取失败');
+            return resp.json();
+        }).then(data => {
+            if (!data.stats) {
+                return { html: '<p>未找到战绩数据</p>', stats: null, history: [] };
+            }
+            const history = data.history || [];
+            const html = renderUserStatsHTML(data.stats, history, {
+                hasMore: history.length >= limit && limit < STATS_MAX_ROWS
+            });
+            return { html, stats: data.stats, history };
+        });
+    }
+
+    // 打开某个账号的个人信息弹窗（排行榜点名字/头像、对局内点对手头像都走它）
+    function showUserProfile(username) {
+        if (!opponentStatsModal || !opponentStatsContent) return;
+        const title = document.getElementById('opponent-stats-title');
+        if (title) title.textContent = (username ? username + ' 的个人信息' : '个人信息');
+        opponentStatsModal.classList.remove('hidden');
+        opponentStatsContent.innerHTML = '<p>加载中…</p>';
+        fetchProfile(username, STATS_PAGE_SIZE).then(r => {
+            opponentStatsContent.innerHTML = r.html;
+            bindHistoryButtons(opponentStatsContent, r.history, r.stats && r.stats.id);
+        }).catch(err => {
+            opponentStatsContent.innerHTML =
+                '<p style="color:var(--danger);">获取个人信息失败：' + escapeHtml(err.message) + '</p>';
+        });
+    }
+    window.showUserProfile = showUserProfile;
+
     // 显示个人战绩弹窗并请求数据
     function showUserStats() {
         if (!userStatsModal || !userStatsContent) {
@@ -1699,22 +1803,11 @@ function bindEventListeners() {
         userStatsModal.classList.remove('hidden');
         userStatsContent.innerHTML = '<p>加载中...</p>';
 
-        fetch('/user_stats?limit=' + statsHistoryLimit).then(resp => {
-            if (!resp.ok) throw new Error('未登录或获取失败');
-            return resp.json();
-        }).then(data => {
-            if (!data.stats) {
-                userStatsContent.innerHTML = '<p>未找到战绩数据</p>';
-                return;
-            }
-            const s = data.stats;
-            const history = data.history || [];
-            userStatsContent.innerHTML = renderUserStatsHTML(s, history, {
-                hasMore: history.length >= statsHistoryLimit && statsHistoryLimit < STATS_MAX_ROWS
-            });
+        fetchProfile(null, statsHistoryLimit).then(r => {
+            userStatsContent.innerHTML = r.html;
             // innerHTML 赋值后节点已同步就绪，直接绑定即可
             // （原先用 setTimeout(..., 100) 等 DOM，纯属多余且可能被重建打断）
-            bindHistoryButtons(userStatsContent, history, s.id);
+            bindHistoryButtons(userStatsContent, r.history, r.stats && r.stats.id);
         }).catch(err => {
             console.error('获取个人战绩失败:', err);
             userStatsContent.innerHTML = '<p style="color:red;">获取个人战绩失败：' + err.message + '</p>';
@@ -2120,31 +2213,13 @@ function setupSocketListeners() {
         }
 
         // 显示对手战绩弹窗并请求数据
+        // 2026-09-17：改为走统一的个人信息面板（头像 / 个性签名 / 排行榜名次 /
+        // 胜率 / 历史战绩 + 对局详情），而不是原来那 5 行裸表格。
         function showOpponentStats() {
-            if (!opponentStatsModal || !opponentStatsContent || !gameState.opponentName) return;
-            opponentStatsModal.classList.remove('hidden');
-            opponentStatsContent.innerHTML = '<p>加载中...</p>';
-            fetch('/user_stats?username=' + encodeURIComponent(gameState.opponentName)).then(resp => {
-                if (!resp.ok) throw new Error('未找到对手或未登录');
-                return resp.json();
-            }).then(data => {
-                if (data.stats) {
-                    const s = data.stats;
-                    opponentStatsContent.innerHTML = `
-                        <table class="user-stats-table">
-                            <tr><td>用户名</td><td>${escapeHtml(s.username)}</td></tr>
-                            <tr><td>胜场</td><td>${s.wins}</td></tr>
-                            <tr><td>负场</td><td>${s.losses}</td></tr>
-                            <tr><td>当前连胜</td><td>${s.current_streak}</td></tr>
-                            <tr><td>最长连胜</td><td>${s.longest_streak}</td></tr>
-                        </table>
-                    `;
-                } else {
-                    opponentStatsContent.innerHTML = '<p>未找到对手战绩数据</p>';
-                }
-            }).catch(err => {
-                opponentStatsContent.innerHTML = `<p style="color:red;">${err.message}</p>`;
-            });
+            if (!gameState.opponentName) return;
+            if (typeof window.showUserProfile === 'function') {
+                window.showUserProfile(gameState.opponentName);
+            }
         }
 
         // 将 showOpponentStats 暴露为全局，供 bindEventListeners 引用（修复作用域崩溃）
@@ -2673,9 +2748,15 @@ function setupSocketListeners() {
             cardsHTML = '<p class="priority-empty chain-request-empty">你手上没有速阶3的魔法卡</p>';
         }
 
+        // 对方（或自己）刚发动的那张卡：卡名做成可预览的锚点。
+        // 作者要求：连锁窗口里必须能看"对方发动的是什么效果"，只给个卡名等于让人猜。
+        // 与手牌同一套判据：桌面悬停出浮层，触摸设备点一下出详情小窗。
+        const activatedName = String((data.card && data.card.name) || '未知卡');
+        const activatedCard = fullOf(data.card);
+
         const cardsHint = canHover
-            ? '把鼠标移到卡上可以看效果，点一下即打出。不响应请点「不响应」。'
-            : '点一下先看效果，再点一下才打出。不响应请点「不响应」。';
+            ? '把鼠标移到卡上可以看效果，点一下即打出；上面的卡名也能看对方那张卡。不响应请点「不响应」。'
+            : '点一下先看效果，再点一下才打出；上面的卡名可以看对方那张卡。不响应请点「不响应」。';
 
         // 清掉可能残留的旧弹窗（重连 / 连续连锁时不叠加），并收掉可能还挂着的悬停浮层
         document.querySelectorAll('.chain-request-prompt').forEach(el => el.remove());
@@ -2693,7 +2774,7 @@ function setupSocketListeners() {
             <div class="priority-panel chain-request-panel">
                 <div class="priority-head chain-request-head">
                     <span class="priority-badge chain-request-badge">连锁</span>
-                    <h3>${data.caster && data.caster === gameState.playerId ? '你发动了' : '对方发动了'}魔法卡【${escapeHtml(String((data.card && data.card.name) || '未知卡'))}】</h3>
+                    <h3>${data.caster && data.caster === gameState.playerId ? '你发动了' : '对方发动了'}魔法卡<button type="button" class="chain-request-card-ref" id="chain-request-activated">【${escapeHtml(activatedName)}】</button></h3>
                 </div>
                 <div class="priority-ring chain-request-ring" id="chain-request-ring">
                     <span id="chain-countdown-time">${total}</span>
@@ -2739,6 +2820,22 @@ function setupSocketListeners() {
                 closePrompt();
             }
         }, 1000);
+
+        // 对方刚发动的那张卡：桌面悬停看效果，触摸设备点一下出详情。
+        // 只做"看"，不改变响应行为（点它不等于打出、也不等于不响应）。
+        const activatedRef = chainPrompt.querySelector('#chain-request-activated');
+        if (activatedRef) {
+            if (canHover) {
+                activatedRef.addEventListener('mouseenter', () => showCardTooltip(activatedRef, activatedCard));
+                activatedRef.addEventListener('mouseleave', hideCardTooltip);
+            }
+            activatedRef.addEventListener('click', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                hideCardTooltip();
+                showCardDetail(activatedCard);
+            });
+        }
 
         // 不响应
         const cancelButton = chainPrompt.querySelector('#chain-cancel');
@@ -3621,13 +3718,39 @@ function fetchLeaderboard() {
             const losses = row.losses || 0;
             const total = wins + losses;
             const winrate = total ? Math.round((wins / total) * 100) + '%' : '-';
-            tr.innerHTML = `<td>${idx + 1}</td><td>${escapeHtml(row.username)}</td><td>${wins}</td><td>${losses}</td><td>${winrate}</td><td>${row.longest_streak || 0}</td>`;
+            // 头像 + 名字都要能点：打开那个人的个人信息（个人信息面板见 showUserProfile）
+            const username = String(row.username || '');
+            const avatar = row.avatar ? String(row.avatar) : '/static/avatars/default.png';
+            tr.innerHTML = `<td>${idx + 1}</td>`
+                + `<td class="leaderboard-user-cell">`
+                + `<button type="button" class="leaderboard-user" data-username="${escapeHtml(username)}"`
+                + ` title="点击查看个人信息">`
+                + `<img class="leaderboard-avatar" src="${escapeHtml(avatar)}" alt=""`
+                + ` onerror="this.onerror=null;this.src='/static/avatars/default.png'">`
+                + `<span class="leaderboard-name">${escapeHtml(username || '未知玩家')}</span>`
+                + `</button></td>`
+                + `<td>${wins}</td><td>${losses}</td><td>${winrate}</td>`
+                + `<td>${row.longest_streak || 0}</td>`;
             leaderboardTableBody.appendChild(tr);
         });
+        bindLeaderboardUserClick();
     }).catch(err => {
         leaderboardTableBody.innerHTML = '';
         leaderboardError.classList.remove('hidden');
         leaderboardError.textContent = '无法加载排行榜：' + err.message;
+    });
+}
+
+// 排行榜行点击：事件委托只绑一次（表格内容会被整段重建，逐行绑监听会泄漏/漏绑）
+function bindLeaderboardUserClick() {
+    if (!leaderboardTableBody || leaderboardTableBody.dataset.userClickBound === '1') return;
+    leaderboardTableBody.dataset.userClickBound = '1';
+    leaderboardTableBody.addEventListener('click', (e) => {
+        const btn = e.target && e.target.closest ? e.target.closest('.leaderboard-user') : null;
+        if (!btn) return;
+        const username = btn.dataset.username;
+        if (!username) return;
+        if (typeof window.showUserProfile === 'function') window.showUserProfile(username);
     });
 }
 
@@ -7068,67 +7191,142 @@ function bindDeclinePriorityToggle() {
     syncDeclinePriorityUI();
 }
 
-// 仁王之盾：选择至多3艘自己的船进入护盾状态
+// 仁王之盾：选择至多 3 艘自己的船进入护盾状态。
+//
+// 2026-09-17 改版（作者要求）：旧实现弹一个「选择船 1 (3,4) / 选择船 2 …」的
+// 按钮列表 —— 玩家得自己在坐标里猜哪艘是哪艘。改为与克苏鲁之眼同一套交互：
+// **直接在【自己的棋盘】上点船**，绿框高亮可点、再点一下取消，选满后点确认提交。
 function showRenwangChoice() {
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:10003;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center';
-    const box = document.createElement('div');
-    box.style.cssText = 'background:#fff;color:#222;padding:18px 22px;border-radius:10px;min-width:300px;text-align:center';
-    box.innerHTML = '<div style="font-weight:bold;margin-bottom:6px">仁王之盾 · 选择要保护的船（至多3艘）</div>';
-    const list = document.createElement('div');
-    list.style.cssText = 'display:flex;flex-direction:column;gap:6px;text-align:left;margin:8px 0';
-    const ships = gameState.ships || [];
-    const picked = new Set();
-    // 已沉的船不能选：护盾加在沉船上等于白白浪费一次选择。
-    // 注意保留**原始下标** —— 服务端的 ship_indices 是按 player.ships 的位置取的。
-    const aliveIdx = [];
-    ships.forEach((ship, idx) => { if (ship.alive !== false) aliveIdx.push(idx); });
-    if (aliveIdx.length === 0) {
-        list.innerHTML = '<div style="color:#c0392b">没有可保护的战舰</div>';
-    } else {
-        aliveIdx.forEach((idx) => {
-            const ship = ships[idx];
-            const b = document.createElement('button');
-            const p = (ship.positions && ship.positions[0]) ? ('(' + ship.positions[0].x + ',' + ship.positions[0].y + ')') : ('#' + idx);
-            b.textContent = '选择船 ' + (idx + 1) + ' ' + p;
-            b.style.cssText = 'padding:6px 10px;cursor:pointer;text-align:left';
-            b.onclick = () => {
-                if (picked.has(idx)) { picked.delete(idx); b.style.borderColor = ''; }
-                else {
-                    if (picked.size >= 3) { showAlert('最多选择3艘船'); return; }
-                    picked.add(idx); b.style.borderColor = '#1976d2'; b.style.borderWidth = '2px';
-                }
-            };
-            list.appendChild(b);
-        });
+    const MAX_SHIPS = 3;
+    const boardEl = gamePlayerBoard || document.getElementById('player-board');
+    if (!boardEl) {
+        showAlert('棋盘还没准备好，请稍后再试');
+        return;
     }
-    const ok = document.createElement('button');
-    ok.textContent = '确定';
-    ok.style.cssText = 'margin:4px 6px 0 0;padding:6px 20px;cursor:pointer';
-    ok.onclick = () => {
-        const idxs = Array.from(picked);
-        if (idxs.length === 0) { showAlert('请至少选择一艘船'); return; }
-        if (gameState.socket) {
-            gameState.socket.emit('confirm_magic_target', {
-                room_id: gameState.roomId,
-                player_id: gameState.playerId,
-                temp_data_id: 'shield_choice',
-                target_data: { ship_indices: idxs }
-            }, (resp) => {
-                if (resp && resp.status === 'success') showMessage(resp.message || '护盾已添加');
-                else if (resp) showAlert(resp.message || '选择失败');
+    // 自愈：上一次选区若没清理干净，先收尾（否则 selectingOnBoard 卡住）
+    if (typeof gameState.selectionCleanup === 'function') {
+        try { gameState.selectionCleanup(); } catch (_) { }
+        gameState.selectionCleanup = null;
+    }
+    document.querySelectorAll('.magic-target-prompt').forEach(el => el.remove());
+
+    // 格子 → 战舰下标。必须保留**原始下标**：服务端的 ship_indices 是按
+    // player.ships 的位置取的（player_ships_updated 也是按同一顺序下发）。
+    // 只收【还活着】的船：沉船仍留在列表里（alive === false），不过滤的话
+    // 会把护盾加在沉船上、白白浪费一次选择（服务端同样会跳过它）。
+    const ships = gameState.ships || [];
+    const cellToIndex = new Map();
+    ships.forEach((ship, idx) => {
+        if (ship.alive === false) return;
+        (ship.positions || []).forEach(p => cellToIndex.set(p.x + ',' + p.y, idx));
+    });
+
+    const prompt = document.createElement('div');
+    prompt.className = 'magic-target-prompt';
+    prompt.id = 'renwang-prompt';
+    prompt.innerHTML = `
+        <h3>仁王之盾 · 选择要保护的战舰（至多 ${MAX_SHIPS} 艘）</h3>
+        <p class="magic-hint">直接点你自己棋盘上绿色高亮的战舰格；再点一次取消选择。</p>
+        <div class="selection-info pending" id="renwang-info">已选 0 / ${MAX_SHIPS} 艘</div>
+        <div style="text-align:center;margin-top:8px;">
+            <button id="renwang-confirm" disabled>确认</button>
+            <button id="renwang-cancel">取消</button>
+        </div>`;
+    document.body.appendChild(prompt);
+
+    const pickedCells = [];                 // 选中的格子 key（按点击顺序）
+    const pickedIndices = new Set();        // 选中的战舰下标（同船一格，天然去重）
+    const listeners = [];
+    let closed = false;
+
+    const confirmBtn = prompt.querySelector('#renwang-confirm');
+    const info = prompt.querySelector('#renwang-info');
+
+    function refresh() {
+        if (info) {
+            info.className = pickedCells.length ? 'selection-info' : 'selection-info pending';
+            info.innerHTML = `<span class="sel-dot"></span>已选 ${pickedCells.length} / ${MAX_SHIPS} 艘` +
+                (pickedCells.length ? ' — 可以确认了' : '');
+        }
+        if (confirmBtn) confirmBtn.disabled = pickedCells.length === 0;
+    }
+
+    function cleanup() {
+        if (closed) return;
+        closed = true;
+        listeners.forEach(({ el, handler }) => el.removeEventListener('click', handler, true));
+        boardEl.querySelectorAll('.cell.pick-ship, .cell.pick-disabled, .cell.pick-selected')
+            .forEach(c => c.classList.remove('pick-ship', 'pick-disabled', 'pick-selected'));
+        gameState.selectingOnBoard = false;
+        if (gameState.selectionCleanup === cleanup) gameState.selectionCleanup = null;
+        if (document.body.contains(prompt)) document.body.removeChild(prompt);
+    }
+
+    gameState.selectingOnBoard = true;
+    gameState.selectionCleanup = cleanup;
+
+    let aliveCells = 0;
+    boardEl.querySelectorAll('.cell').forEach(cell => {
+        const key = cell.dataset.x + ',' + cell.dataset.y;
+        if (!cellToIndex.has(key)) {
+            cell.classList.add('pick-disabled');   // 空格 / 沉船格：灰掉，点了没用
+            return;
+        }
+        aliveCells += 1;
+        cell.classList.add('pick-ship');
+        const onClick = (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            const at = pickedCells.indexOf(key);
+            if (at >= 0) {
+                pickedCells.splice(at, 1);
+                pickedIndices.delete(cellToIndex.get(key));
+                cell.classList.remove('pick-selected');
+                refresh();
+                return;
+            }
+            if (pickedCells.length >= MAX_SHIPS) {
+                showAlert(`最多选择 ${MAX_SHIPS} 艘战舰`);
+                return;
+            }
+            pickedCells.push(key);
+            pickedIndices.add(cellToIndex.get(key));
+            cell.classList.add('pick-selected');
+            refresh();
+        };
+        cell.addEventListener('click', onClick, true);
+        listeners.push({ el: cell, handler: onClick });
+    });
+    refresh();
+
+    if (!aliveCells) {
+        showMessage('你没有可保护的战舰（已沉没的船不能加护盾）', { type: 'warning' });
+    }
+
+    confirmBtn.addEventListener('click', () => {
+        const idxs = Array.from(pickedIndices);
+        if (!idxs.length) { showAlert('请至少选择一艘战舰'); return; }
+        if (!gameState.socket) { cleanup(); return; }
+        gameState.socket.emit('confirm_magic_target', {
+            room_id: gameState.roomId,
+            player_id: gameState.playerId,
+            temp_data_id: 'shield_choice',
+            target_data: { ship_indices: idxs }
+        }, (resp) => {
+            if (resp && resp.status === 'success') showMessage(resp.message || '护盾已添加');
+            else if (resp) showAlert(resp.message || '选择失败');
+            cleanup();
+        });
+    });
+
+    prompt.querySelector('#renwang-cancel').addEventListener('click', () => {
+        // 取消要告诉服务端释放待选择状态，否则 magic_temp_data 会一直挂着
+        // shield_choice（玩家之后的操作都被当成"还在选护盾"）。
+        if (gameState.socket && gameState.roomId) {
+            gameState.socket.emit('cancel_magic_selection', {
+                room_id: gameState.roomId, player_id: gameState.playerId
             });
         }
-        try { document.body.removeChild(overlay); } catch (e) {}
-    };
-    const cancel = document.createElement('button');
-    cancel.textContent = '取消';
-    cancel.style.cssText = 'padding:6px 16px;cursor:pointer';
-    cancel.onclick = () => { try { document.body.removeChild(overlay); } catch (e) {} };
-    box.appendChild(list);
-    const row = document.createElement('div');
-    row.appendChild(ok); row.appendChild(cancel);
-    box.appendChild(row);
-    overlay.appendChild(box);
-    document.body.appendChild(overlay);
+        cleanup();
+    });
 }

@@ -729,6 +729,39 @@ class Database:
         except Exception as e:
             logger.error(f"获取排行榜数据时发生未知错误: limit={limit}, 错误: {e}")
             return []
+
+    def get_user_rank(self, uid: str):
+        """某个账号的排行榜名次（1 起）。查不到返回 None。
+
+        排序口径必须与 `_get_leaderboard` 完全一致（wins DESC, longest_streak DESC，
+        且只统计真打过一局的账号），否则"个人信息里的名次"和排行榜页对不上。
+        用 COUNT(*) 直接算严格在前的账号数，榜外账号（limit 之外）也能拿到名次 ——
+        不能再靠"取前 100 名找自己"那套，那样榜外只会显示"—"。
+        """
+        if not uid:
+            return None
+        try:
+            cursor = self.conn.cursor()
+            row = cursor.execute(
+                'SELECT wins, longest_streak FROM users WHERE id = ?', (uid,)).fetchone()
+            if not row:
+                cursor.close()
+                return None
+            cursor.execute(
+                'SELECT COUNT(*) AS ahead FROM users '
+                'WHERE (COALESCE(wins, 0) + COALESCE(losses, 0)) > 0 '
+                'AND (COALESCE(wins, 0) > ? '
+                '     OR (COALESCE(wins, 0) = ? AND COALESCE(longest_streak, 0) > ?))',
+                (row['wins'] or 0, row['wins'] or 0, row['longest_streak'] or 0))
+            ahead = cursor.fetchone()
+            cursor.close()
+            return int(ahead['ahead'] or 0) + 1
+        except sqlite3.Error as e:
+            logger.error(f"查询排行榜名次时发生数据库错误: uid={uid}, 错误: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"查询排行榜名次时发生未知错误: uid={uid}, 错误: {e}")
+            return None
     
     def get_token_by_password(self, username: str, password: str):
         """通过用户名和密码校验并生成token（使用 check_password_hash 验证）"""
@@ -892,6 +925,11 @@ def get_match_history(uid: str, limit=20):
 def get_leaderboard(limit=10):
     """获取排行榜"""
     return db._get_leaderboard(limit)
+
+
+def get_user_rank(uid: str):
+    """某个账号的排行榜名次（api.py 用模块级函数调用）"""
+    return db.get_user_rank(uid)
 
 
 def get_token_by_password(username: str, password_hash: str):

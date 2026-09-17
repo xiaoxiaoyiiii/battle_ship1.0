@@ -1385,6 +1385,13 @@ body:has(.area-picker-bar) .magic-target-prompt { bottom: 92px; }
     opacity: 0.45;
     filter: grayscale(0.7);
 }
+/* 已选中的己方战舰（仁王之盾多选）：比"可点"更深，一眼看出选了几艘 */
+.cell.pick-selected {
+    background-color: rgba(76, 175, 80, 0.62) !important;
+    outline: 3px solid rgba(27, 150, 60, 1);
+    box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.55);
+    animation: none;
+}
 @keyframes pickShipPulse {
     0%, 100% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.0); }
     50%      { box-shadow: 0 0 8px 2px rgba(76, 175, 80, 0.55); }
@@ -1685,6 +1692,25 @@ html.theme-dark .chain-request-panel { border-color: rgba(var(--primary-rgb, 21,
     margin-top: 4px;
     font-size: 0.7rem;
     color: var(--primary);
+}
+
+/* 标题里「对方发动的那张卡」的卡名：可悬停 / 可点，做成明显的可交互锚点。
+   只用字号/下划线/颜色表达，不改盒模型（弹窗尺寸不因此漂移）。 */
+.chain-request-card-ref {
+    margin: 0 2px;
+    padding: 0 4px;
+    border: 0;
+    border-bottom: 1px dashed rgba(var(--primary-rgb, 21, 101, 192), 0.85);
+    border-radius: 4px 4px 0 0;
+    background: rgba(var(--primary-rgb, 21, 101, 192), 0.12);
+    color: inherit;
+    font: inherit;
+    font-weight: 700;
+    line-height: inherit;
+    cursor: pointer;
+}
+.chain-request-card-ref:hover {
+    background: rgba(var(--primary-rgb, 21, 101, 192), 0.26);
 }
 
 /* ---------- 16. 连锁提示 ---------- */
@@ -2824,6 +2850,81 @@ body.layout-tight.layout-ingame .board-tab { line-height: 1; }
 .user-stats-table td:first-child { color: var(--muted); white-space: nowrap; width: 1%; }
 .user-stats-table td:last-child { text-align: right; font-weight: 600; }
 .user-stats-note { margin: 8px 2px 0; font-size: 0.85em; color: var(--muted); }
+
+/* 个人信息头部（头像 / 用户名 / 个性签名 / 排行榜名次）：2026-09-17 新增。
+   首页「个人战绩」、对局内对手资料、排行榜点名字三处共用。只加在叶子面板上，
+   不动任何既有盒模型尺寸。 */
+.profile-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding-bottom: 10px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+}
+.profile-avatar {
+    flex: 0 0 auto;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--glass);
+    border: 2px solid rgba(var(--primary-rgb), 0.45);
+}
+.profile-head-main { flex: 1 1 auto; min-width: 0; }
+.profile-name {
+    font-size: 1.15em;
+    font-weight: 700;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.profile-signature {
+    margin-top: 2px;
+    font-size: 0.86em;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+}
+.profile-rank {
+    flex: 0 0 auto;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.82em;
+    font-weight: 700;
+    color: var(--primary);
+    background: rgba(var(--primary-rgb), 0.14);
+    border: 1px solid rgba(var(--primary-rgb), 0.35);
+    white-space: nowrap;
+}
+
+/* 排行榜「玩家」列：头像 + 名字整体可点（打开那个人的个人信息） */
+.leaderboard-user {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 100%;
+    padding: 2px 4px;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+    background-image: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.leaderboard-user:hover { background: rgba(var(--primary-rgb), 0.14); }
+.leaderboard-avatar {
+    flex: 0 0 auto;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--glass);
+    border: 1px solid rgba(var(--primary-rgb), 0.4);
+}
+.leaderboard-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .user-history { margin-top: 14px; }
 .user-history h3 { margin: 0 0 8px; font-size: 1.05em; }

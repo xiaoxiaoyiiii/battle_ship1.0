@@ -212,7 +212,8 @@ try {
 
   // ---------- 对局内的入口 ----------
   await ev('(function(){ document.getElementById("opponent-stats-modal").classList.add("hidden");' +
-    ' window.gameState = window.gameState || gameState; gameState.opponentName = "bravo_u"; return true; })()');
+    ' window.gameState = window.gameState || gameState; gameState.opponentName = "bravo_u";' +
+    ' window.__USERNAME = "z1w6qn"; gameState.playerName = "z1w6qn"; return true; })()');
   const corner = await ev('(function(){ var c = document.getElementById("opponent-avatar-corner");' +
     ' return { exists: !!c, bound: c ? c.dataset.profileBound : null, title: c ? c.title : null }; })()');
   check(corner && corner.exists === true, 'G1 右上角对手头像容器存在', corner);
@@ -223,12 +224,40 @@ try {
   check(m2 && m2.hasHead === true && (m2.rank || '').indexOf('第 7 名') >= 0,
     'G3 对局内点对手头像 → 同一份详细信息（含名次/头像/签名）', m2 && { rank: m2.rank, avatar: m2.avatar });
 
+  // ★ 局内头像 <img> 自己身上不许再有第二套渲染（老实现渲染的是只有胜负/连胜的裸表格，
+  //   而且它与胶囊的委托会同时触发 —— 玩家实测「局内头像的个人信息跟排行榜里的不一样」）。
+  const miniGone = await ev('(function(){ return typeof window.renderMiniStatsTable; })()');
+  check(miniGone === 'undefined', '★ G3b 局内头像的旧「迷你战绩表」渲染器已删除（只留一份实现）', miniGone);
+  const imgClick = await ev('(function(){' +
+    ' document.getElementById("user-stats-modal").classList.add("hidden");' +
+    ' document.getElementById("opponent-stats-modal").classList.add("hidden");' +
+    ' var img = document.getElementById("opponent-avatar-in-game"); if (!img) return "no-img"; img.click(); return "clicked"; })()');
+  await waitFor(async () => await ev('!document.getElementById("opponent-stats-modal").classList.contains("hidden")'), 10000, '点头像<img>打开弹窗');
+  const mImg = await ev(MODAL_STATE);
+  const legacyOpen = await ev('(function(){ return !document.getElementById("user-stats-modal").classList.contains("hidden"); })()');
+  check(imgClick === 'clicked', '★ G3c 直接点对局内的对手头像 <img>', imgClick);
+  check(mImg && mImg.hasHead === true && mImg.historyRows === 2,
+    '★ G3d 点 <img> 打开的也是同一份详情（头像块 + 历史战绩）', mImg && { head: mImg.hasHead, rows: mImg.historyRows });
+  check(legacyOpen === false, '★ G3e 不再弹出那张旧的迷你战绩弹窗（#user-stats-modal）', legacyOpen);
+
+  // 左上角「我」的胶囊：同一份面板
+  const myCorner = await ev('(function(){ var c = document.getElementById("avatar-corner");' +
+    ' return { exists: !!c, bound: c ? c.dataset.profileBound : null, title: c ? c.title : null }; })()');
+  check(myCorner && myCorner.exists === true && myCorner.bound === '1',
+    '★ G5 左上角自己的头像也绑定了同一入口', myCorner);
+  await ev('(function(){ document.getElementById("opponent-stats-modal").classList.add("hidden");' +
+    ' document.getElementById("avatar-corner").click(); return true; })()');
+  await waitFor(async () => await ev('!document.getElementById("opponent-stats-modal").classList.contains("hidden")'), 10000, '点自己头像打开弹窗');
+  const m3 = await ev(MODAL_STATE);
+  check(m3 && m3.hasHead === true && m3.signature === '今天也要赢一局',
+    '★ G6 点自己的头像 → 同样是带头像/签名/名次的详情面板', m3 && { head: m3.hasHead, sig: m3.signature });
+
   // 「查看对手战绩」按钮走同一入口
   await ev('(function(){ document.getElementById("opponent-stats-modal").classList.add("hidden"); document.getElementById("show-opponent-stats").click(); return true; })()');
   await waitFor(async () => await ev('!document.getElementById("opponent-stats-modal").classList.contains("hidden")'), 10000, '按钮打开弹窗');
-  const m3 = await ev(MODAL_STATE);
-  check(m3 && m3.hasHead === true && m3.historyRows === 2, 'G4「查看对手战绩」按钮也走同一份详情',
-    m3 && { head: m3.hasHead, rows: m3.historyRows });
+  const m4 = await ev(MODAL_STATE);
+  check(m4 && m4.hasHead === true && m4.historyRows === 2, 'G4「查看对手战绩」按钮也走同一份详情',
+    m4 && { head: m4.hasHead, rows: m4.historyRows });
 
   // ---------- 工具兼容：renderUserStatsHTML 收到精简对象也不能抛 ----------
   const lean = await ev('(function(){ var c = document.getElementById("user-stats-content");' +

@@ -222,6 +222,29 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
+    // 点左上角自己的头像 / 名字 → 同一份个人信息面板（2026-09-17）。
+    // 此前这里挂的是`#my-avatar-in-game` 上的一段老实现：它渲染一张只有
+    // 胜负/连胜的裸表格，和排行榜点名字弹出的详情完全不是一个东西，玩家实测
+    // 报的「局内头像的个人信息跟排行榜里的不一样」就是它。
+    const myCornerEl = document.getElementById('avatar-corner');
+    if (myCornerEl && myCornerEl.dataset.profileBound !== '1') {
+        myCornerEl.dataset.profileBound = '1';
+        myCornerEl.style.cursor = 'pointer';
+        myCornerEl.title = '点击查看我的个人信息';
+        myCornerEl.addEventListener('click', () => {
+            if (typeof window.showUserProfile !== 'function') return;
+            // 登录用户按账号名查（能拿到名次/签名/头像）；游客没有账号记录，
+            // 走不带 username 的会话查询只会 401，直接给出明确提示。
+            const myName = window.__USERNAME
+                || (window.gameState && window.gameState.playerName) || '';
+            if (!myName) {
+                showMessage('未登录，无法查看个人信息', { type: 'warning' });
+                return;
+            }
+            window.showUserProfile(myName);
+        });
+    }
+
     // 控制游戏未开始时隐藏相关元素
     function controlGameElementsVisibility() {
         // 获取元素
@@ -290,86 +313,16 @@ function updateOpponentAvatarInGame(opponentId) {
         });
 }
 
-// 战绩弹窗容器：优先复用 index.html 里的静态弹窗。
-// 旧实现每次都 document.createElement 一个 id 同为 user-stats-modal 的弹窗并 append 到 body，
-// 关闭时只加 hidden 不移除 —— 每点一次头像就多一个重复 id 的遮罩，永不回收。
-function getStatsModalContent() {
-    let modal = document.getElementById('user-stats-modal');
-    let content = document.getElementById('user-stats-content');
-    if (modal && modal.dataset.dynamic === '1' && content) return content;
-    if (!modal || !content) {
-        modal = document.createElement('div');
-        modal.id = 'user-stats-modal';
-        modal.className = 'modal-overlay';
-        modal.dataset.dynamic = '1';
-        modal.innerHTML = '<div class="modal-content"><span class="modal-close">×</span>'
-            + '<h2>个人战绩</h2><div id="user-stats-content"></div></div>';
-        document.body.appendChild(modal);
-        content = modal.querySelector('#user-stats-content');
-        const close = () => { modal.classList.add('hidden'); };
-        modal.querySelector('.modal-close').onclick = close;
-        modal.onclick = (e) => { if (e.target === modal) close(); };
-    }
-    return content;
-}
-
-// 迷你战绩表（头像入口用）。
-// 旧实现把 <table> 包在 <p> 里 —— 非法嵌套，解析器会提前闭合 <p>。
-function renderMiniStatsTable(s) {
-    if (!s) return '<p>未找到战绩数据</p>';
-    return '<table class="user-stats-table">'
-        + '<tr><td>用户名</td><td>' + escapeHtml(s.username) + '</td></tr>'
-        + '<tr><td>胜场</td><td>' + s.wins + '</td></tr>'
-        + '<tr><td>负场</td><td>' + s.losses + '</td></tr>'
-        + '<tr><td>当前连胜</td><td>' + s.current_streak + '</td></tr>'
-        + '<tr><td>最长连胜</td><td>' + s.longest_streak + '</td></tr>'
-        + '</table>';
-}
-
-// 点击头像查看战绩
-if (myAvatarInGame) {
-    myAvatarInGame.style.cursor = 'pointer';
-    myAvatarInGame.addEventListener('click', () => {
-        // 优先使用 gameState.playerName，再退回到服务器渲染的全局用户名或页面元素
-        const username = (window.gameState && window.gameState.playerName) || window.__USERNAME || (document.getElementById('profile-username') && document.getElementById('profile-username').textContent) || '';
-        if (!username) {
-            showMessage('未登录，无法查看战绩', { type: 'warning' });
-            return;
-        }
-        fetch('/user_stats?username=' + encodeURIComponent(username))
-            .then(r => r.json()).then(data => {
-                if (!data.stats) {
-                    showMessage('未找到战绩数据', { type: 'warning' });
-                    return;
-                }
-                const content = getStatsModalContent();
-                if (!content) return;
-                content.innerHTML = renderMiniStatsTable(data.stats);
-                document.getElementById('user-stats-modal').classList.remove('hidden');
-            }).catch(err => {
-                showMessage('获取战绩失败' + err, { type: 'error' });
-            });
-    });
-}
-
-if (opponentAvatarInGame) {
-    opponentAvatarInGame.style.cursor = 'pointer';
-    opponentAvatarInGame.addEventListener('click', () => {
-        const username = (window.gameState && window.gameState.opponentName) || (document.getElementById('opponent-username-info') && document.getElementById('opponent-username-info').textContent) || '';
-        if (!username) return showMessage('对手信息不可用', { type: 'warning' });
-        fetch('/user_stats?username=' + encodeURIComponent(username))
-            .then(r => r.json()).then(data => {
-                if (!data.stats) {
-                    showMessage('未找到对手战绩', { type: 'warning' });
-                    return;
-                }
-                const content = getStatsModalContent();
-                if (!content) return;
-                content.innerHTML = renderMiniStatsTable(data.stats);
-                document.getElementById('user-stats-modal').classList.remove('hidden');
-            }).catch(err => showMessage('获取战绩失败' + err, { type: 'error' }));
-    });
-}
+// 对局内两个头像的点击入口全部走【统一的个人信息面板】（2026-09-17 修正）。
+//
+// ⚠️ 这里原本是两段独立的老实现（各自 fetch + renderMiniStatsTable），渲染的是一张
+// 只有 用户名/胜场/负场/当前连胜/最长连胜 的裸表格，既没有头像、签名、排行榜名次，
+// 也没有历史战绩 —— 与排行榜里点名字弹出来的那份详情完全不是一个东西。
+// 更要命的是头像 <img> 就在角落胶囊里，点它时【自己的监听】和【胶囊的委托】会同时
+// 触发：一张迷你表 + 一张详情表同时打开，玩家看到的是那张旧的。
+// 现在：删掉两段老实现与 renderMiniStatsTable/getStatsModalContent（已无引用），
+// 全部由 init() 里绑定的 `#avatar-corner` / `#opponent-avatar-corner` 点击 →
+// window.showUserProfile() 打开与排行榜同款的面板。
 // 个人信息相关元素
 const showProfileBtn = document.getElementById('show-profile');
 const profileModal = document.getElementById('profile-modal');

@@ -263,15 +263,21 @@ def catalog(stats):
 # 保存校验
 # ---------------------------------------------------------------------------
 WRITABLE_FIELDS = ('title_id', 'tags', 'status_text', 'frame_id', 'card_bg_id',
-                   'show_stats', 'show_fav_cards', 'show_history')
+                   'show_stats', 'show_fav_cards', 'show_history', 'show_guestbook')
 
-_FLAG_KEYS = ('show_stats', 'show_fav_cards', 'show_history')
+# ⚠️ `show_guestbook`（留言板公开）是第 3 批加的**第四个展示开关**。
+# 它走的是与另外三个完全相同的通道（`POST /api/profile/card`，9 个字段全发），
+# 而不是单独开一个接口 —— 理由就是下面那条规矩：允许缺字段 = 保持原值
+# 会变成"保存了但没生效"这种最难查的静默失败；留言板隐私属于同一类展示开关，
+# 就该跟另外三个同进同出。默认 1 = 公开（计划 §3.4）。
+_FLAG_KEYS = ('show_stats', 'show_fav_cards', 'show_history', 'show_guestbook')
 
 # 展示开关的文案（错误提示里用中文键名，别把 snake_case 甩给玩家）
 _FLAG_LABELS = {
     'show_stats': '战绩展示',
     'show_fav_cards': '最爱用的卡展示',
     'show_history': '对局历史公开',
+    'show_guestbook': '留言板公开',
 }
 
 
@@ -317,8 +323,9 @@ def validate_payload(payload, stats):
     | `frame_id` / `card_bg_id` | 池内且已解锁 | 拒绝 |
     | `show_*` | 0 / 1 | 拒绝 |
 
-    ⚠️ 8 个字段**必须全部出现**在请求体里。缺字段一律拒绝并点名，
-    而不是"保持原值"—— 后者会变成"保存了但没生效"这种最难查的静默失败。
+    ⚠️ 9 个字段**必须全部出现**在请求体里（第 3 批加了 `show_guestbook`，
+    原来是 8 个）。缺字段一律拒绝并点名，而不是"保持原值"—— 后者会变成
+    "保存了但没生效"这种最难查的静默失败。
     """
     if not isinstance(payload, dict):
         return {}, ['请求体必须是 JSON 对象']

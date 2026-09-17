@@ -67,9 +67,17 @@ function check(ok, label, detail) {
   if (!ok) problems.push(label);
 }
 
+// ⚠️ 桩里的头像必须是**真的能加载出来**的图（这里用 1×1 透明的 data URL）。
+// 第一版写的是 `/static/avatars/u1_avatar.png` —— 仓库里根本不存在这个文件，于是
+// `<img>` 一定 404，而页面自带 `onerror` 兜底会把 src 改写成默认头像。L3 断言的是
+// 「这一行显示的是该玩家自己的头像」，此时读到的却已经是兜底值 —— 取决于是
+// 断言先跑还是 404 事件先到，纯看时序（工具绿了很久，第 3 批改完渲染耗时后翻红）。
+// 页面那个兜底是**对的行为**（线上头像文件真实存在，不会 404），要改的是桩。
+const FAKE_AVATAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
+
 const BOARD = [
   { id: 'u1', username: 'z1w6qn', wins: 12, losses: 4, current_streak: 3, longest_streak: 6,
-    avatar: '/static/avatars/u1_avatar.png' },
+    avatar: FAKE_AVATAR },
   { id: 'u2', username: 'bravo_u', wins: 7, losses: 9, current_streak: 0, longest_streak: 3,
     avatar: null },
 ];
@@ -190,7 +198,7 @@ try {
   const b = await ev(BOARD_STATE);
   check(b && b.rows === 2, 'L1 排行榜渲染出全部行', b && b.rows);
   check(b && b.heads.length === 6 && b.heads[1] === '玩家', 'L2 表头仍 6 列（头像与名字同一格）', b && b.heads);
-  check(b && b.avatars[0] === '/static/avatars/u1_avatar.png', 'L3 第一行显示该玩家的头像', b && b.avatars[0]);
+  check(b && b.avatars[0] === FAKE_AVATAR, 'L3 第一行显示该玩家的头像', b && b.avatars[0]);
   check(b && b.avatars[1] === '/static/avatars/default.png', 'L3b 没设头像时回退默认头像', b && b.avatars[1]);
   check(b && b.users[0] === 'z1w6qn' && b.users[1] === 'bravo_u', 'L4 每行都有可点的玩家按钮（带 data-username）', b && b.users);
   check(b && /z1w6qn/.test(b.texts[0] || ''), 'L4b 名字仍显示在头像旁', b && b.texts[0]);

@@ -21,6 +21,57 @@ logging.basicConfig(
 )
 logger = logging.getLogger('database')
 
+# 留言开关的列定义（第 3 批 D 票）。`user_profile` 是第 1 批建的表，生产库里**已经有数据**，
+# 而本项目没有 ALTER / 迁移机制 —— 所以 `CREATE TABLE IF NOT EXISTS` 加不上这一列，
+# 必须走下面的 `_add_column_if_missing`（见 `Database._migrate_schema` 的说明）。
+_GUESTBOOK_COLUMN = 'show_guestbook'
+_GUESTBOOK_COLUMN_DDL = 'INTEGER DEFAULT 1'
+
+
+def _add_column_if_missing(cursor, table: str, column: str, ddl: str) -> bool:
+    """幂等加列：PRAGMA table_info 判存在 → ALTER TABLE ADD COLUMN。
+
+    返回 True = 【本次真的加了这一列】，False = 已经有了 / 加不上。
+
+    **为什么必须有这个助手**：本项目只有 `CREATE TABLE IF NOT EXISTS`，没有迁移机制。
+    `user_profile` 是第 1 批建的表，生产库里已经有行；对已存在的表再写一遍
+    `CREATE TABLE IF NOT EXISTS` 是**空操作**，新列永远不会出现 —— 而读取端
+    （`get_user_profile_extra` / `db.set_show_guestbook`）一 SELECT 这一列就会
+    `no such column`，表现为**线上 500**。这正是本助手存在的原因。
+
+    **失败只记日志、由调用方决定是否致命**：这里的每一处异常都不往外抛 ——
+    `init_db()` 在 import 期就会跑（模块级 `db = Database()`），
+    为了一个展示用的开关把整个进程弄崩不值得。加列失败时相关功能降级
+    （留言板按"未开放"处理），其余一切照常。
+
+    SQLite 的 `ALTER TABLE ADD COLUMN` 支持带常量默认值（`DEFAULT 1`），
+    于是**老行会被自动填成 1**（= 公开，与计划 §3.4 的默认值一致），无需回填 UPDATE。
+
+    ⚠️ 表名/列名会拼进 SQL，只接受本模块内写死的常量（绝不接受调用方传入）。
+    """
+    if not table.isidentifier() or not column.isidentifier():
+        logger.error(f"拒绝为可疑的表/列名加列: table={table!r}, column={column!r}")
+        return False
+    try:
+        rows = cursor.execute(f'PRAGMA table_info({table})').fetchall()
+    except sqlite3.Error as e:
+        logger.error(f"读取表结构失败，跳过加列: {table}.{column} -> {e}")
+        return False
+    if not rows:
+        logger.warning(f"表不存在，跳过加列: {table}.{column}")
+        return False
+    # PRAGMA table_info 的列顺序是 (cid, name, type, notnull, dflt_value, pk)
+    existing = {row[1] for row in rows}
+    if column in existing:
+        return False
+    try:
+        cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} {ddl}')
+    except sqlite3.Error as e:
+        logger.error(f"加列失败（旧库可能被占用或列已存在）: {table}.{column} -> {e}")
+        return False
+    logger.info(f"已为 {table} 补上新列: {column} {ddl}")
+    return True
+
 
 class Database:
     def __init__(self):
@@ -195,6 +246,46 @@ class Database:
                   )
                   ''')
 
+            # ---- 点赞 / 送花 / 留言板（2026-09-17 第 3 批 D 票）----
+            # `profile_likes` 的主键 (from, to, kind) 让"取消再点"天然幂等：
+            # 点 = INSERT OR IGNORE，取消 = DELETE。**不存计数列** ——
+            # 计数一律 COUNT 出来，避免"计数与明细对不上"这类经典漂移。
+            self.cursor.execute('''
+                  CREATE TABLE IF NOT EXISTS profile_likes
+                  (
+                      from_user_id TEXT,
+                      to_user_id   TEXT,
+                      kind         TEXT,
+                      created_at   INTEGER,
+                      PRIMARY KEY (from_user_id, to_user_id, kind)
+                  )
+                  ''')
+
+            # 留言板。软删（deleted=1）保留审计：删除接口只改标志位，
+            # 行还在表里，`list` 一律带 `deleted = 0` 过滤。
+            # `id` 自增主键同时充当**分页游标**：按 id 倒序分页，不依赖
+            # created_at（同一秒内连发多条时时间戳会并列，用它分页会跳行/重行）。
+            self.cursor.execute('''
+                  CREATE TABLE IF NOT EXISTS profile_messages
+                  (
+                      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                      to_user_id   TEXT,
+                      from_user_id TEXT,
+                      from_name    TEXT,
+                      content      TEXT,
+                      created_at   INTEGER,
+                      deleted      INTEGER DEFAULT 0
+                  )
+                  ''')
+
+            # ---- 加列迁移（第 3 批 D 票）----
+            # `user_profile` 是第 1 批建的表，生产库已有该表（于是上面的
+            # CREATE TABLE IF NOT EXISTS 对它完全无效），而本项目没有 ALTER 迁移机制。
+            # 所以 `show_guestbook` 必须在这里**显式**补列：老行由
+            # `DEFAULT 1`（= 公开，计划 §3.4）自动填好，不需要回填 UPDATE。
+            # 幂等：第一次以后 PRAGMA 就查到列了，直接返回。
+            self._migrate_schema()
+
             self.conn.commit()
             logger.info("数据库表创建成功")
 
@@ -209,6 +300,16 @@ class Database:
                 # 「最爱用的卡」= 按 user_id 取 uses 前 3，走这条复合索引
                 'CREATE INDEX IF NOT EXISTS idx_user_card_usage_uses '
                 'ON user_card_usage(user_id, uses DESC)',
+                # 留言板列表 = WHERE to_user_id=? AND deleted=0 AND id<? ORDER BY id DESC，
+                # 这条复合索引覆盖前三段（id 是主键，收尾排序由它兜住）
+                'CREATE INDEX IF NOT EXISTS idx_profile_messages_box '
+                'ON profile_messages(to_user_id, deleted, id DESC)',
+                # 「每人对同一人每天 ≤ 20 条」的计数 = WHERE from=? AND to=? AND created_at 区间
+                'CREATE INDEX IF NOT EXISTS idx_profile_messages_pair '
+                'ON profile_messages(from_user_id, to_user_id, created_at)',
+                # 点赞/送花计数 = WHERE to_user_id=? [AND kind=?]
+                'CREATE INDEX IF NOT EXISTS idx_profile_likes_to '
+                'ON profile_likes(to_user_id, kind)',
             ):
                 try:
                     self.cursor.execute(stmt)
@@ -251,6 +352,32 @@ class Database:
                 self.conn.rollback()
             raise
     
+    def _migrate_schema(self):
+        """给**已存在的老表**补新列（本项目唯一的迁移入口，`init_db()` 里跑一次）。
+
+        **为什么不能靠 `CREATE TABLE IF NOT EXISTS`**：那一句对已存在的表是空操作。
+        `user_profile` 是第 1 批建的表，生产库里已经有行 —— 想往它上面加
+        `show_guestbook`，只有 `ALTER TABLE ... ADD COLUMN` 一条路。
+        写错这一步的症状是**线上 500**（读端一 SELECT 新列就 `no such column`），
+        而不是启动报错，所以特意放在 `init_db()` 里、且**幂等**。
+
+        幂等性：`_add_column_if_missing` 先用 `PRAGMA table_info` 查列，
+        已经有了就直接返回 —— 每次启动多跑一次也只是一次 PRAGMA。
+
+        失败策略：只记日志、绝不往外抛。这个方法在 import 期（模块级 `db = Database()`）
+        就会执行，为了一个展示开关把进程打崩不值得；加列失败时留言板按"未开放"降级。
+        """
+        self._add_column_if_missing('user_profile', _GUESTBOOK_COLUMN, _GUESTBOOK_COLUMN_DDL)
+
+    def _add_column_if_missing(self, table: str, column: str, ddl: str) -> bool:
+        """`ALTER TABLE ADD COLUMN` 的幂等包装（见模块级 `_add_column_if_missing`）。"""
+        try:
+            with self._lock:
+                return _add_column_if_missing(self.cursor, table, column, ddl)
+        except Exception as e:      # noqa: BLE001 —— 迁移失败不许影响启动
+            logger.error(f"加列迁移异常，已跳过: {table}.{column} -> {e}")
+            return False
+
     def clear_temp_data(self):
         """重启时清空临时数据"""
         try:
@@ -846,6 +973,10 @@ class Database:
         'show_stats': 1,
         'show_fav_cards': 1,
         'show_history': 0,      # 隐私默认：对局历史不公开
+        # 留言板是否公开（第 3 批）。计划 §3.4：**默认公开**。
+        # ⚠️ 这一列在第 1 批建表时不存在，由 `_migrate_schema()` 用 ALTER 补上 ——
+        # 老行拿到的是 `DEFAULT 1`，与这里的默认值一致（都表示"公开"）。
+        'show_guestbook': 1,
     }
 
     def _profile_defaults(self, uid: str) -> dict:
@@ -864,7 +995,7 @@ class Database:
             cursor = self.conn.cursor()
             row = cursor.execute(
                 'SELECT title_id, tags, status_text, frame_id, card_bg_id, '
-                'show_stats, show_fav_cards, show_history, updated_at '
+                'show_stats, show_fav_cards, show_history, show_guestbook, updated_at '
                 'FROM user_profile WHERE user_id = ?', (uid,)).fetchone()
             cursor.close()
             if not row:
@@ -872,7 +1003,7 @@ class Database:
             data = {k: row[k] for k in row.keys()}
             data['user_id'] = uid
             data['tags'] = self._parse_tags(data.get('tags'))
-            for flag in ('show_stats', 'show_fav_cards', 'show_history'):
+            for flag in ('show_stats', 'show_fav_cards', 'show_history', 'show_guestbook'):
                 data[flag] = 1 if data.get(flag) is None else int(data[flag])
             data['updated_at'] = int(data.get('updated_at') or 0)
             return data
@@ -882,6 +1013,40 @@ class Database:
         except Exception as e:
             logger.error(f"读取个人名片时发生未知错误: uid={uid}, 错误: {e}")
             return self._profile_defaults(uid)
+
+    def set_show_guestbook(self, uid: str, on) -> bool:
+        """单独写入「留言板是否公开」（第 3 批）。
+
+        ⚠️ **正常路径不走这个方法**：第 3 批的契约把 `show_guestbook` 并进了
+        `POST /api/profile/card`（9 个字段全发），由 `save_user_profile_extra`
+        整行写入 —— 与另外三个展示开关同一条通道（同进同出，避免"保存了没生效"）。
+        这里保留一个"只改这一列"的入口，供不需要整行写入的调用方（运维脚本、
+        以后的"快速开关"）使用；它**不碰其余列**，不会把名片其它字段冲掉。
+        """
+        if not uid:
+            logger.warning("尝试保存留言板开关但未提供用户ID")
+            return False
+        flag = 1 if on in (1, True, '1') else 0
+        try:
+            with self._lock:
+                self.cursor.execute(
+                    'INSERT INTO user_profile (user_id, show_guestbook, updated_at) '
+                    'VALUES (?, ?, ?) '
+                    'ON CONFLICT(user_id) DO UPDATE SET '
+                    'show_guestbook = excluded.show_guestbook, updated_at = excluded.updated_at',
+                    (uid, flag, int(time.time())))
+                self.conn.commit()
+            return True
+        except sqlite3.Error as e:
+            logger.error(f"保存留言板开关失败: uid={uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+        except Exception as e:
+            logger.error(f"保存留言板开关时发生未知错误: uid={uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
 
     @staticmethod
     def _parse_tags(raw):
@@ -915,25 +1080,28 @@ class Database:
         tags = row.get('tags')
         row['tags'] = json.dumps([t for t in tags if isinstance(t, str)],
                                  ensure_ascii=False) if isinstance(tags, list) else '[]'
-        for flag in ('show_stats', 'show_fav_cards', 'show_history'):
+        for flag in ('show_stats', 'show_fav_cards', 'show_history', 'show_guestbook'):
             row[flag] = 1 if row[flag] in (1, True, '1') else 0
         try:
             with self._lock:
                 self.cursor.execute(
                     'INSERT INTO user_profile '
                     '(user_id, title_id, tags, status_text, frame_id, card_bg_id, '
-                    ' show_stats, show_fav_cards, show_history, updated_at) '
-                    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
+                    ' show_stats, show_fav_cards, show_history, show_guestbook, updated_at) '
+                    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
                     'ON CONFLICT(user_id) DO UPDATE SET '
                     'title_id = excluded.title_id, tags = excluded.tags, '
                     'status_text = excluded.status_text, frame_id = excluded.frame_id, '
                     'card_bg_id = excluded.card_bg_id, show_stats = excluded.show_stats, '
                     'show_fav_cards = excluded.show_fav_cards, '
-                    'show_history = excluded.show_history, updated_at = excluded.updated_at',
+                    'show_history = excluded.show_history, '
+                    'show_guestbook = excluded.show_guestbook, '
+                    'updated_at = excluded.updated_at',
                     (uid, str(row['title_id'] or ''), row['tags'],
                      str(row['status_text'] or ''), str(row['frame_id'] or 'none'),
                      str(row['card_bg_id'] or 'deep'), row['show_stats'],
-                     row['show_fav_cards'], row['show_history'], int(time.time())))
+                     row['show_fav_cards'], row['show_history'], row['show_guestbook'],
+                     int(time.time())))
                 self.conn.commit()
             return True
         except sqlite3.Error as e:
@@ -1236,6 +1404,301 @@ class Database:
             logger.error(f"读取出卡种类数时发生未知错误: uid={uid}, 错误: {e}")
             return 0
 
+    # ------------------------------------------------------------------
+    # 点赞 / 送花 / 留言板（2026-09-17 第 3 批 D 票）
+    # ------------------------------------------------------------------
+    # 契约见 `docs/BATCH_2_3_4_PLAN.md` §3.1 / §3.3。
+    #
+    # 风格与第 1、2 批一致：**失败只记日志、返回安全默认值**。
+    # 互动是展示层，一次读库失败不该把名片/留言板变成 500。
+    #
+    # ⚠️ 每个 DAO 都必须有对应的**模块级包装函数**（文件末尾）——本项目的测试
+    # 与调用方都按模块级名字打桩，只在类里实现会让打桩被绕过（第 2 批踩过：
+    # `self.xxx` 读真库 → 假红）。
+    _REACTION_KINDS = ('like', 'flower')
+
+    def _empty_reaction_counts(self) -> dict:
+        """没有互动时的计数（**不写库**）。"""
+        return {'like': 0, 'flower': 0}
+
+    def set_profile_reaction(self, from_uid: str, to_uid: str, kind: str, on) -> bool:
+        """点赞 / 送花：`on=True` 幂等新增、`on=False` 幂等取消。返回是否成功。
+
+        · 主键 (from, to, kind) 保证「重复点同一张」不会点出两条（`INSERT OR IGNORE`）。
+        · 取消一个不存在的反应也返回 True —— 取消是幂等的，"本来就没有"不是失败。
+        · ⚠️ 这里**不校验**"不能给自己点赞/送花"、kind 白名单、目标是否存在：
+          那些是**服务端裁决**，由 `api.py` 统一做（本函数只负责写库），
+          这样校验规则只有一份，不会出现"接口放行、DAO 拦下"这种两份漂移。
+        """
+        if not from_uid or not to_uid or not kind:
+            logger.warning(f"点赞/送花参数不完整（已忽略）: from={from_uid!r}, to={to_uid!r}, kind={kind!r}")
+            return False
+        try:
+            with self._lock:
+                if on:
+                    self.cursor.execute(
+                        'INSERT OR IGNORE INTO profile_likes '
+                        '(from_user_id, to_user_id, kind, created_at) VALUES (?, ?, ?, ?)',
+                        (str(from_uid), str(to_uid), str(kind), int(time.time())))
+                else:
+                    self.cursor.execute(
+                        'DELETE FROM profile_likes '
+                        'WHERE from_user_id = ? AND to_user_id = ? AND kind = ?',
+                        (str(from_uid), str(to_uid), str(kind)))
+                self.conn.commit()
+            return True
+        except sqlite3.Error as e:
+            logger.error(f"写入点赞/送花失败: from={from_uid}, to={to_uid}, kind={kind} -> {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+        except Exception as e:
+            logger.error(f"写入点赞/送花时发生未知错误: from={from_uid}, to={to_uid} -> {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+
+    def get_profile_reaction_counts(self, uid: str) -> dict:
+        """某人收到的点赞 / 送花计数 → `{'like': N, 'flower': M}`。
+
+        计数是"人气"而不是"内容"，**始终可见**（计划 §3.3）—— 所以接口层
+        不因为 `show_guestbook=0` 就把它藏起来。读失败返回全 0。
+        """
+        counts = self._empty_reaction_counts()
+        if not uid:
+            return counts
+        try:
+            cursor = self.conn.cursor()
+            rows = cursor.execute(
+                'SELECT kind, COUNT(*) AS n FROM profile_likes '
+                'WHERE to_user_id = ? GROUP BY kind', (uid,)).fetchall()
+            cursor.close()
+            for row in rows:
+                if row['kind'] in counts:
+                    counts[row['kind']] = int(row['n'] or 0)
+            return counts
+        except sqlite3.Error as e:
+            logger.error(f"读取点赞/送花计数失败: uid={uid}, 错误: {e}")
+            return counts
+        except Exception as e:
+            logger.error(f"读取点赞/送花计数时发生未知错误: uid={uid}, 错误: {e}")
+            return counts
+
+    def get_my_reactions(self, from_uid: str, to_uid: str) -> dict:
+        """我（`from_uid`）对目标（`to_uid`）的两种反应状态 → `{'like': bool, 'flower': bool}`。
+
+        前端据此决定按钮是否点亮。`from_uid` 为空（未登录视角）时返回全 False。
+        """
+        mine = {'like': False, 'flower': False}
+        if not from_uid or not to_uid:
+            return mine
+        try:
+            cursor = self.conn.cursor()
+            rows = cursor.execute(
+                'SELECT kind FROM profile_likes WHERE from_user_id = ? AND to_user_id = ?',
+                (from_uid, to_uid)).fetchall()
+            cursor.close()
+            for row in rows:
+                if row['kind'] in mine:
+                    mine[row['kind']] = True
+            return mine
+        except sqlite3.Error as e:
+            logger.error(f"读取我的互动状态失败: from={from_uid}, to={to_uid}, 错误: {e}")
+            return mine
+        except Exception as e:
+            logger.error(f"读取我的互动状态时发生未知错误: from={from_uid}, to={to_uid}, 错误: {e}")
+            return mine
+
+    def _profile_message_row(self, row) -> dict:
+        """一行留言 → 下发给前端的**白名单形状**。
+
+        只给契约里的字段（有意**不下发** `to_user_id` / `deleted`：
+        前者是主人自己的 id、后者是内部审计状态，前端一个都用不上）。
+        """
+        return {
+            'id': int(row['id']),
+            'from_uid': row['from_user_id'] or '',
+            'from_name': row['from_name'] or '匿名',
+            'content': row['content'] or '',
+            'created_at': int(row['created_at'] or 0),
+        }
+
+    def add_profile_message(self, to_uid: str, from_uid: str, from_name: str,
+                            content: str) -> int:
+        """写一条留言，返回新行 `id`；失败返回 0（调用方据此回 500）。
+
+        ⚠️ 与 `set_profile_reaction` 同样**不做业务校验**（自我留言、长度、频率
+        一律由 `api.py` 裁决）。存储层只做两件兜底：截断到 500 字防爆行、
+        `from_name` 空值落「匿名」。
+        """
+        if not to_uid or not from_uid or not content:
+            logger.warning(f"留言参数不完整（已忽略）: to={to_uid!r}, from={from_uid!r}")
+            return 0
+        safe_content = str(content)[:500]
+        safe_name = (str(from_name).strip()[:50] if from_name else '') or '匿名'
+        try:
+            with self._lock:
+                self.cursor.execute(
+                    'INSERT INTO profile_messages '
+                    '(to_user_id, from_user_id, from_name, content, created_at, deleted) '
+                    'VALUES (?, ?, ?, ?, ?, 0)',
+                    (str(to_uid), str(from_uid), safe_name, safe_content, int(time.time())))
+                new_id = int(self.cursor.lastrowid or 0)
+                self.conn.commit()
+            return new_id
+        except sqlite3.Error as e:
+            logger.error(f"写入留言失败: to={to_uid}, from={from_uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return 0
+        except Exception as e:
+            logger.error(f"写入留言时发生未知错误: to={to_uid}, from={from_uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return 0
+
+    def list_profile_messages(self, to_uid: str, limit: int = 20, before_id=None) -> dict:
+        """留言列表（**只含 `deleted = 0`**），按 id 倒序 + 游标分页。
+
+        返回 `{'messages': [...], 'has_more': bool, 'total': N}`：
+        · `total` 是该主页**未被软删**的留言总数（分页与"共 N 条"都要用）。
+        · `before_id` 给上一页最小 id，取"比它更早"的一页（游标分页，
+          不用 OFFSET —— 有人删留言时 OFFSET 会跳行/重行）。
+        · 排序一律按 `id` 而非 `created_at`：同一秒连发的多条时间戳会并列，
+          按时间戳排序的结果不稳定。写死 `id DESC` 才有确定性。
+        · 多取一行判断 `has_more`，省一次 COUNT。
+        · 读失败返回空列表 + total 0（宁可显示"还没有留言"，也不 500）。
+        """
+        result = {'messages': [], 'has_more': False, 'total': 0}
+        if not to_uid:
+            return result
+        try:
+            safe_limit = min(max(1, int(limit)), 50)
+        except (TypeError, ValueError):
+            safe_limit = 20
+        try:
+            before = None
+            if before_id not in (None, ''):
+                before = int(before_id)
+        except (TypeError, ValueError):
+            before = None
+        try:
+            cursor = self.conn.cursor()
+            total_row = cursor.execute(
+                'SELECT COUNT(*) AS n FROM profile_messages '
+                'WHERE to_user_id = ? AND deleted = 0', (to_uid,)).fetchone()
+            total = int(total_row['n'] or 0) if total_row else 0
+            if before is None:
+                rows = cursor.execute(
+                    'SELECT * FROM profile_messages '
+                    'WHERE to_user_id = ? AND deleted = 0 '
+                    'ORDER BY id DESC LIMIT ?',
+                    (to_uid, safe_limit + 1)).fetchall()
+            else:
+                rows = cursor.execute(
+                    'SELECT * FROM profile_messages '
+                    'WHERE to_user_id = ? AND deleted = 0 AND id < ? '
+                    'ORDER BY id DESC LIMIT ?',
+                    (to_uid, before, safe_limit + 1)).fetchall()
+            cursor.close()
+            has_more = len(rows) > safe_limit
+            page = rows[:safe_limit]
+            return {
+                'messages': [self._profile_message_row(r) for r in page],
+                'has_more': has_more,
+                'total': total,
+            }
+        except sqlite3.Error as e:
+            logger.error(f"读取留言列表失败: to={to_uid}, 错误: {e}")
+            return result
+        except Exception as e:
+            logger.error(f"读取留言列表时发生未知错误: to={to_uid}, 错误: {e}")
+            return result
+
+    def get_profile_message(self, msg_id) -> dict:
+        """按 id 取一条留言（**不过滤 deleted**）。
+
+        删除权限校验必须能读到已软删的行 —— 否则"删两次"会从"幂等成功"
+        变成 404，而调用方分不出"不存在"与"已删过"。读失败/不存在返回 None。
+        """
+        try:
+            mid = int(msg_id)
+        except (TypeError, ValueError):
+            return None
+        try:
+            cursor = self.conn.cursor()
+            row = cursor.execute(
+                'SELECT * FROM profile_messages WHERE id = ?', (mid,)).fetchone()
+            cursor.close()
+            if not row:
+                return None
+            data = self._profile_message_row(row)
+            # 删除权限需要这两个字段，但它们**不属于下发形状**：
+            # `to_user_id` 是主人自己、`deleted` 是内部审计状态，都不给前端。
+            # 单独放在下划线开头的内部键里，接口层用完即弃（组装响应时不会带出去）。
+            data['_to_user_id'] = row['to_user_id'] or ''
+            data['_deleted'] = int(row['deleted'] or 0)
+            return data
+        except sqlite3.Error as e:
+            logger.error(f"读取单条留言失败: id={msg_id}, 错误: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"读取单条留言时发生未知错误: id={msg_id}, 错误: {e}")
+            return None
+
+    def soft_delete_profile_message(self, msg_id) -> bool:
+        """软删留言（`deleted = 1`，保留审计）。返回是否成功。
+
+        **不在这里判权限** —— 谁能删由 `api.py` 裁决（留言本人或页面主人，
+        其余 403）。存储层只管把标志位写下去。
+        重复删除返回 True（`rowcount == 0` 也算成功）：幂等，"已经删过了"不是失败。
+        """
+        try:
+            mid = int(msg_id)
+        except (TypeError, ValueError):
+            return False
+        try:
+            with self._lock:
+                self.cursor.execute(
+                    'UPDATE profile_messages SET deleted = 1 WHERE id = ? AND deleted = 0',
+                    (mid,))
+                self.conn.commit()
+            return True
+        except sqlite3.Error as e:
+            logger.error(f"软删留言失败: id={msg_id}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+        except Exception as e:
+            logger.error(f"软删留言时发生未知错误: id={msg_id}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+
+    def count_profile_messages_since(self, from_uid: str, to_uid: str, since: int) -> int:
+        """`since` 之后「from → to」发出的留言条数（含已软删的）。
+
+        用途：**每人对同一人每天 ≤ 20 条**的频率限制。刻意把软删的也算进去 ——
+        否则"发了 20 条 → 全删掉 → 再发 20 条"就绕过了限制。读失败返回 0
+        （宁可放行一条，也不因为统计读不到就把玩家堵死）。
+        """
+        if not from_uid or not to_uid:
+            return 0
+        try:
+            cursor = self.conn.cursor()
+            row = cursor.execute(
+                'SELECT COUNT(*) AS n FROM profile_messages '
+                'WHERE from_user_id = ? AND to_user_id = ? AND created_at >= ?',
+                (str(from_uid), str(to_uid), int(since))).fetchone()
+            cursor.close()
+            return int(row['n'] or 0) if row else 0
+        except sqlite3.Error as e:
+            logger.error(f"统计当日留言条数失败: from={from_uid}, to={to_uid}, 错误: {e}")
+            return 0
+        except Exception as e:
+            logger.error(f"统计当日留言条数时发生未知错误: from={from_uid}, to={to_uid}, 错误: {e}")
+            return 0
+
     def get_token_by_password(self, username: str, password: str):
         """通过用户名和密码校验并生成token（使用 check_password_hash 验证）"""
         if not username or not password:
@@ -1455,6 +1918,54 @@ def grant_user_achievements(uid: str, badge_ids):
 def get_distinct_cards_used(uid: str):
     """用过的不同卡名张数"""
     return db.get_distinct_cards_used(uid)
+
+
+# ---- 点赞 / 送花 / 留言板（api.py 与测试都走模块级函数）----
+# ⚠️ 必须与类方法成对存在：本项目按模块级名字打桩（`db.list_profile_messages = ...`），
+# 只实现类方法会让打桩被绕过 —— 第 2 批为此吃过一次假红。
+def set_show_guestbook(uid: str, on):
+    """写「留言板是否公开」（单独一列，不走名片整行写入）"""
+    return db.set_show_guestbook(uid, on)
+
+
+def set_profile_reaction(from_uid: str, to_uid: str, kind: str, on):
+    """点赞 / 送花（幂等增删）"""
+    return db.set_profile_reaction(from_uid, to_uid, kind, on)
+
+
+def get_profile_reaction_counts(uid: str):
+    """某人收到的互动计数 {like, flower}"""
+    return db.get_profile_reaction_counts(uid)
+
+
+def get_my_reactions(from_uid: str, to_uid: str):
+    """我对某人的互动状态 {like: bool, flower: bool}"""
+    return db.get_my_reactions(from_uid, to_uid)
+
+
+def add_profile_message(to_uid: str, from_uid: str, from_name: str, content: str):
+    """写一条留言，返回新行 id（失败 0）"""
+    return db.add_profile_message(to_uid, from_uid, from_name, content)
+
+
+def list_profile_messages(to_uid: str, limit: int = 20, before_id=None):
+    """留言列表 {messages, has_more, total}（只含未软删的）"""
+    return db.list_profile_messages(to_uid, limit, before_id)
+
+
+def get_profile_message(msg_id):
+    """按 id 取一条留言（含已软删的，供删除权限校验）"""
+    return db.get_profile_message(msg_id)
+
+
+def soft_delete_profile_message(msg_id):
+    """软删留言（deleted = 1）"""
+    return db.soft_delete_profile_message(msg_id)
+
+
+def count_profile_messages_since(from_uid: str, to_uid: str, since: int):
+    """`since` 之后 from → to 的留言条数（每日上限用）"""
+    return db.count_profile_messages_since(from_uid, to_uid, since)
 
 
 def _safe_dao(fn, default):

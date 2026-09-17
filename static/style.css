@@ -3619,6 +3619,186 @@ html:not(.theme-dark) .pf-stats .stat b { text-shadow: none; }
 /* 浅色主题下霓虹会糊成一团，只在深色里留（与 .pf-stats 同一处理） */
 html:not(.theme-dark) .pf-badges .badge { box-shadow: none; }
 
+/* ===== 26.2c 互动条 / 留言板（第 3 批 B3-E） ===== */
+/* ⚠️ 本节三条硬约束（票面）：
+   ① 颜色**零写死** —— 全部走 --primary / --primary-rgb / --accent / --border*
+      这些既有变量（第 26 节开头那段就是这条规矩的来源）；
+   ② **不许改现有元素的盒模型尺寸** —— 这里只新增类，既有选择器一行没动；
+   ③ 含 position:fixed 后代的元素不许 transform / filter / backdrop-filter ——
+      卡片在 .modal-overlay（就是 fixed 浮层）里面，所以这里只用边框 / 底色 / 阴影，
+      一个 filter 与 transform 都没有（第 12 节第 12 条）。
+   窄屏（390 / 336）不许横向溢出：所有可能变长的文字都配了 overflow-wrap: anywhere，
+   按钮一律 flex-wrap 落行，不靠"够不够宽"赌运气。 */
+
+/* --- 互动条（.pf-actions 里的点赞 / 送花） --- */
+/* 按钮当"色块"用，必须显式 background-image: none —— 本项目第 3 节的通用 button
+   规则带 var(--primary-gradient)，不清掉的话点亮的圆角会被渐变糊成一块
+   （第 23 节 .match-history-btn 踩过同一个坑，第 26 节开头也记了一笔）。 */
+.pf-actions .pf-like,
+.pf-actions .pf-flower {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0.34rem 0.7rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    line-height: 1.2;
+    background-image: none;
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    color: var(--text-subtle);
+    cursor: pointer;
+}
+.pf-actions .pf-like:hover:not(:disabled),
+.pf-actions .pf-flower:hover:not(:disabled) {
+    color: var(--text);
+    border-color: rgba(var(--primary-rgb), 0.6);
+}
+/* 点亮的态：底色用主色低透明度，**不写死具体颜色** */
+.pf-actions .pf-like.on,
+.pf-actions .pf-flower.on {
+    color: var(--primary);
+    border-color: rgba(var(--primary-rgb), 0.7);
+    background: rgba(var(--primary-rgb), 0.14);
+    box-shadow: 0 0 10px rgba(var(--primary-rgb), 0.25);
+}
+html:not(.theme-dark) .pf-actions .pf-like.on,
+html:not(.theme-dark) .pf-actions .pf-flower.on { box-shadow: none; }
+.pf-actions .pf-like-icon { font-size: 0.9rem; line-height: 1; }
+.pf-actions .pf-like-count {
+    min-width: 1ch;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    color: var(--accent);
+}
+.pf-actions .pf-like:disabled,
+.pf-actions .pf-flower:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: transparent;
+}
+
+/* --- 留言板 --- */
+/* 计数跟着块标题走（与徽章墙的「已解锁 N / M」同一排法） */
+.pf-guestbook .pf-guestbook-count { margin-left: 8px; font-weight: 400; color: var(--accent); }
+.pf-guestbook .pf-guestbook-count.over { color: var(--danger); }
+
+.guestbook-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+.guestbook-input {
+    flex: 1 1 200px;
+    /* min-width:0 不能少：textarea 有 UA 默认宽度（约 20 列 ≈ 180px+），
+       只写 flex-basis 在 336px 窄屏上会把名片顶出横向滚动条 */
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    padding: 8px 10px;
+    border-radius: 10px;
+    font: inherit;
+    font-size: 0.84rem;
+    line-height: 1.45;
+    color: var(--text);
+    background: var(--surface-muted);
+    border: 1px solid var(--border-strong);
+}
+.guestbook-input::placeholder { color: var(--muted); }
+.guestbook-input:focus {
+    outline: none;
+    border-color: rgba(var(--primary-rgb), 0.7);
+    box-shadow: 0 0 0 2px rgba(var(--primary-rgb), 0.2);
+}
+.guestbook-form .guestbook-send {
+    flex: 0 0 auto;
+    padding: 0.4rem 0.9rem;
+    border-radius: 9px;
+    font-size: 0.8rem;
+    background-image: none;          /* 同上：别被通用 button 渐变盖掉 */
+}
+.guestbook-form .guestbook-send:disabled { opacity: 0.6; cursor: progress; }
+
+/* 留言列表：每条一个 .guestbook-item[data-id] */
+.guestbook-list { display: grid; gap: 8px; margin-top: 10px; }
+.guestbook-item {
+    min-width: 0;
+    padding: 9px 12px;
+    border-radius: 11px;
+    background: rgba(var(--primary-rgb), 0.06);
+    border: 1px solid rgba(var(--primary-rgb), 0.16);
+}
+.guestbook-text {
+    margin: 0;
+    font-size: 0.86rem;
+    line-height: 1.5;
+    color: var(--text);
+    overflow-wrap: anywhere;         /* 长串/连续英文不撑破弹窗 */
+    white-space: pre-wrap;           /* 保留玩家敲的换行，但不当 HTML 解释（渲染时已转义） */
+}
+.guestbook-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    font-size: 0.72rem;
+    color: var(--muted);
+}
+.guestbook-meta .guestbook-who { color: var(--text-subtle); font-weight: 600; overflow-wrap: anywhere; }
+.guestbook-meta .guestbook-time { font-variant-numeric: tabular-nums; }
+/* 删除按钮：只有服务端下发 can_delete === true 时 game.js 才渲染它。
+   当"文字链"用，所以渐变与底色都要清掉（通用 button 规则会盖上来）。
+   ⚠️ 这里**不写 rgba(红)** —— 项目没有 --danger-rgb，写死就违反了本节的
+   「颜色零写死」；改用透明度作用在 var(--danger) 上，换主题自动跟着走。 */
+.guestbook-meta .guestbook-del {
+    margin-left: auto;
+    padding: 1px 8px;
+    border-radius: 7px;
+    font-size: 0.7rem;
+    color: var(--danger);
+    background-image: none;
+    background: transparent;
+    border: 1px solid currentColor;
+    opacity: 0.75;
+    cursor: pointer;
+}
+.guestbook-meta .guestbook-del:hover:not(:disabled) { opacity: 1; }
+.guestbook-meta .guestbook-del:disabled { opacity: 0.5; cursor: progress; }
+
+.guestbook-empty {
+    margin: 10px 0 0;
+    padding: 12px 2px;
+    text-align: center;
+    font-size: 0.82rem;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+}
+.guestbook-private {
+    margin-top: 8px;
+    padding: 12px;
+    border-radius: 10px;
+    text-align: center;
+    font-size: 0.82rem;
+    color: var(--muted);
+    background: var(--surface-muted);
+    border: 1px dashed var(--border-strong);
+}
+.guestbook-hint { margin: 8px 0 0; font-size: 0.76rem; color: var(--muted); }
+.guestbook-more {
+    display: block;
+    width: 100%;
+    margin-top: 10px;
+    background-image: none;
+    font-size: 0.82rem;
+}
+.guestbook-more:disabled { opacity: 0.6; cursor: progress; }
+.guestbook-msg { margin: 8px 0 0; font-size: 0.76rem; color: var(--success); overflow-wrap: anywhere; }
+.guestbook-msg.error { color: var(--danger); }
+
+/* 窄屏：互动条与留言表单都改成整行堆叠，避免在 336/390 上挤成一条 */
+@media (max-width: 430px) {
+    .pf-actions .pf-like-label { display: none; }   /* 只留图标 + 数字 */
+    .guestbook-form .guestbook-send { flex: 1 1 100%; }
+}
+
 /* 历史战绩：行的样式是第 23 节既有的 .match-history-btn（胜负配色），这里只排容器。
    容器 game.js 同时给了 id="profile-history-list" 与 class="history-list"，两个选择器都写上，
    免得以后只改其中一边时这里的 gap 静默失效。 */

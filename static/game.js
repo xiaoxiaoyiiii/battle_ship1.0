@@ -2026,8 +2026,88 @@ function bindEventListeners() {
             showFav: profileToggleValue(s.show_fav_cards, 1) === 1,
             rankText: rank ? '第 ' + rank + ' 名' : '',
             recordText: wins + ' 胜 ' + losses + ' 负',
-            joinText: joinDate ? '加入于 ' + joinDate : ''
+            joinText: joinDate ? '加入于 ' + joinDate : '',
+            // ---- 第 3 批：互动条 / 留言板 ----
+            // 点赞与送花的计数**始终可见**（契约 §3.4：那是"人气"不是"内容"，
+            // 不受任何展示开关与留言板隐私控制）。
+            // `mine` 的初值只信接口：/api/profile/like 成功后由响应里的 mine 覆盖，
+            // /user_stats 没给这个字段时一律按"没点过"（点一下就知道真实值，
+            // 绝不能自己猜成 true —— 那会让按钮显示成已点亮却没在服务端生效）。
+            likeCount: profileLikeCount(s, 'like'),
+            flowerCount: profileLikeCount(s, 'flower'),
+            likeMine: profileLikeMine(s, 'like'),
+            flowerMine: profileLikeMine(s, 'flower'),
+            guestbookPrivate: Number(s.show_guestbook) === 0,
+            self: opts.self === true
         };
+    }
+
+    // 点赞 / 送花的计数：接口给了就用，没给按 0（后端 D 票在并行做，接口未落地时
+    // 名片照样要能渲染，不能因为少一个字段就整张卡打不开）。
+    function profileLikeCount(s, kind) {
+        if (!s) return 0;
+        const box = s.like_counts || s.counts;
+        const raw = (box && typeof box === 'object') ? box[kind] : s['likes_' + kind];
+        const n = Number(raw);
+        return (isFinite(n) && n > 0) ? Math.floor(n) : 0;
+    }
+    function profileLikeMine(s, kind) {
+        if (!s) return false;
+        const box = s.like_mine || s.mine;
+        const raw = (box && typeof box === 'object') ? box[kind] : s[kind + '_mine'];
+        return raw === true || raw === 1 || raw === '1';
+    }
+
+    // 互动条（查看面自己的名片才有；本函数只在 withIds 时被调用）。
+    // ⚠️ 「自己看自己」由服务端裁决（契约 §3.3：不能给自己点赞 → 400），
+    // 这里 disabled + title 只是不让玩家白点一次 —— 第 1 批硬规矩第 4 条。
+    function profileActionButtonsHtml(m) {
+        const self = m.self === true;
+        const selfTitle = '不能给自己点赞';
+        const selfTitleFlower = '不能给自己送花';
+        return '<button type="button" class="pf-like' + (m.likeMine ? ' on' : '') + '"'
+            + ' id="profile-like"' + (self ? ' disabled' : '')
+            + ' title="' + escapeHtml(self ? selfTitle : (m.likeMine ? '取消点赞' : '点个赞')) + '">'
+            + '<span class="pf-like-icon" aria-hidden="true">👍</span><span class="pf-like-label">点赞</span>'
+            + '<span class="pf-like-count" id="profile-like-count">' + escapeHtml(String(m.likeCount)) + '</span>'
+            + '</button>'
+            + '<button type="button" class="pf-flower' + (m.flowerMine ? ' on' : '') + '"'
+            + ' id="profile-flower"' + (self ? ' disabled' : '')
+            + ' title="' + escapeHtml(self ? selfTitleFlower : (m.flowerMine ? '取消送花' : '送一朵花')) + '">'
+            + '<span class="pf-like-icon" aria-hidden="true">🌸</span><span class="pf-like-label">送花</span>'
+            + '<span class="pf-like-count" id="profile-flower-count">' + escapeHtml(String(m.flowerCount)) + '</span>'
+            + '</button>';
+    }
+
+    // 留言板外壳（只在查看面渲染）。这里**只铺骨架不填数据** —— 留言列表由
+    // openGuestbook() 异步取，这样"接口挂了"也不会把整张名片带崩（只多一行提示）。
+    //   · guestbook_private === true → 显示「该玩家未开放留言板」的占位，
+    //     但输入区 / 列表 / 计数这些 id 仍然渲染出来（契约 §3.5 要求 id 存在，
+    //     只靠 hidden 收起 —— 少了 id 才是"点了没反应"的根源）。
+    //   · self === true → 藏掉输入区（自己不能给自己留言），并写明这是你自己的名片。
+    function guestbookBlockHtml(m) {
+        const self = m.self === true;
+        const privateG = m.guestbookPrivate === true;
+        const inputHidden = self || privateG;
+        let html = '<div id="profile-guestbook" class="pf-block pf-guestbook">';
+        html += '<h4 class="pf-block-title">留言板'
+            + '<span class="pf-guestbook-count" id="guestbook-count">0/' + String(GUESTBOOK_MAX) + '</span></h4>';
+        html += '<div id="guestbook-private" class="guestbook-private' + (privateG ? '' : ' hidden') + '">'
+            + '该玩家未开放留言板</div>';
+        html += '<div class="guestbook-form' + (inputHidden ? ' hidden' : '') + '">'
+            + '<textarea id="guestbook-input" class="guestbook-input" rows="2" maxlength="' + String(GUESTBOOK_MAX) + '"'
+            + ' placeholder="说点什么吧（最多 ' + String(GUESTBOOK_MAX) + ' 字）"></textarea>'
+            + '<button type="button" class="guestbook-send" id="guestbook-send">发表留言</button>'
+            + '</div>';
+        if (self) {
+            html += '<p class="guestbook-hint" id="guestbook-self-hint">这是你自己的名片，别人给你留的话都在这儿。</p>';
+        }
+        html += '<p class="guestbook-msg" id="guestbook-msg" role="status"></p>';
+        html += '<div id="guestbook-list" class="guestbook-list"></div>';
+        html += '<p id="guestbook-empty" class="guestbook-empty hidden">还没有留言</p>';
+        html += '<button type="button" id="guestbook-more" class="guestbook-more hidden">加载更多</button>';
+        html += '</div>';
+        return html;
     }
 
     function profileStatHtml(key, value, label) {
@@ -2044,6 +2124,13 @@ function bindEventListeners() {
     // opts.hasMore        → 历史还有下一页时渲染「加载更多」
     // opts.historyPrivate → 对方没公开历史时的占位文案
     // opts.badges         → 自己视角的完整徽章目录（含未解锁）；别人视角不传
+    //
+    // 第 3 批（B3-E）在这张卡里追加了两块，**都只渲染进查看面**（withIds 为真时）：
+    //   · .pf-actions 里的互动条（点赞 / 送花）—— 见 profileActionButtonsHtml
+    //   · #profile-guestbook 留言板 —— 见 guestbookBlockHtml
+    // 两者都只出「壳」：真实数据由 openGuestbook() 异步灌进 #guestbook-list，
+    // 互动条点击就地改 DOM（applyProfileLikeState）。**任何一次互动都不整卡重渲染** ——
+    // 重渲染会冲掉留言板输入到一半的内容与弹窗滚动位置。
     function buildProfileCard(s, opts) {
         opts = opts || {};
         const withIds = opts.ids === true;
@@ -2080,6 +2167,7 @@ function bindEventListeners() {
             + (opts.canEdit
                 ? '<button type="button"' + idsOn('id="profile-edit-btn"') + ' class="btn pf-edit-btn">编辑资料</button>'
                 : '')
+            + (withIds ? profileActionButtonsHtml(m) : '')
             + '</div>';
         html += '</div>';
 
@@ -2145,6 +2233,9 @@ function bindEventListeners() {
             + '<span class="pf-meta-item">' + escapeHtml(m.rankText || '暂未上榜') + '</span>'
             + '<span class="pf-meta-item pf-record">' + escapeHtml(m.recordText) + '</span>'
             + '</div>';
+        // 留言板（第 3 批）。位置固定在名片末尾（#profile-view-meta 之后），
+        // 交互条在 .pf-actions 里 —— 两块的详细说明见 prepareGuestbook/applyProfileLikeState。
+        if (withIds) html += guestbookBlockHtml(m);
         html += '</div>';
         return html;
     }
@@ -2190,7 +2281,10 @@ function bindEventListeners() {
             historyPrivate: options.historyPrivate === true,
             // 自己视角的完整徽章目录（含未解锁）。别人视角不传 —— /user_stats 本来就
             // 只发已解锁的，前端也不该拿自己那份去补（那是别人的进度）。
-            badges: Array.isArray(options.badges) ? options.badges : null
+            badges: Array.isArray(options.badges) ? options.badges : null,
+            // 第 3 批：看的是不是自己（决定留言输入区收不收、互动条灰不灰）。
+            // 只影响这两块；接口层的权限（不能给自己留言/点赞）仍然由服务端裁决。
+            self: options.self === true
         });
     }
     window.renderUserStatsHTML = renderUserStatsHTML;
@@ -2200,6 +2294,10 @@ function bindEventListeners() {
     // 单次 20 条，最多 100 条（与服务端 db.get_match_history 的上限一致）
     const STATS_PAGE_SIZE = 20;
     const STATS_MAX_ROWS = 100;
+    // 留言单条长度上限（与契约 §3.3 的 100 字一致；服务端才是最终裁决，
+    // 这里只做"当场拦住"，不让玩家白等一次往返）。
+    const GUESTBOOK_MAX = 100;
+    const GUESTBOOK_PAGE = 20;
     let statsHistoryLimit = STATS_PAGE_SIZE;
     // 当前正在看谁的名片 / 当前名片数据（"加载更多"与保存后重渲染都要用）
     let currentProfileUsername = '';
@@ -2227,16 +2325,431 @@ function bindEventListeners() {
         }
     }
 
-    // 查看面里的「编辑资料」按钮（只有看自己时才会渲染出来）。
+    // 查看面里的互动按钮（编辑资料 / 点赞 / 送花 / 留言板）。
     // 用委托绑在容器上：整块 innerHTML 每次打开都会被换掉，逐次绑定必然失效。
+    // 委托还有个额外好处：点赞/留言只就地改 DOM（不重渲染整卡），这条监听不会被打断。
     function bindProfileCardButtons(container) {
         if (!container || container.dataset.profileCardBound === '1') return;
         container.dataset.profileCardBound = '1';
         container.addEventListener('click', (e) => {
-            const btn = e.target && e.target.closest ? e.target.closest('.pf-edit-btn') : null;
+            const target = (e.target && e.target.closest) ? e.target.closest(
+                '.pf-edit-btn, #profile-like, #profile-flower, #guestbook-send, .guestbook-del, #guestbook-more') : null;
+            if (!target) return;
+            if (target.classList.contains('pf-edit-btn')) {
+                e.preventDefault();
+                openMyProfileEditor();
+                return;
+            }
+            if (target.id === 'profile-like' || target.id === 'profile-flower') {
+                e.preventDefault();
+                toggleProfileLike(target.id === 'profile-like' ? 'like' : 'flower');
+                return;
+            }
+            if (target.id === 'guestbook-send') {
+                e.preventDefault();
+                sendGuestbookMessage();
+                return;
+            }
+            if (target.classList.contains('guestbook-del')) {
+                e.preventDefault();
+                deleteGuestbookMessage(target.dataset.id, container);
+                return;
+            }
+            if (target.id === 'guestbook-more') {
+                e.preventDefault();
+                loadGuestbookMore();
+            }
+        });
+    }
+
+    // ==================== 第 3 批 B3-E：点赞 / 送花 ====================
+    //
+    // 两条硬要求（票面）：
+    //   ① **不许整卡重渲染** —— 成功后只改那几个 span/button 的文案与类，卡片其余部分
+    //      （留言板输入框里没发出去的草稿、弹窗滚动位置、加载更多已经展开的留言）
+    //      一个字都不动。所以这里没有一处调 fetchProfile / innerHTML 重建整卡。
+    //   ② 接口挂了**不能把整张卡打崩** —— 只多一行红字提示，按钮恢复可点、状态回滚。
+    //      （后端 D 票在并行做：契约未落地时这条路一定走得到，必须实测过。）
+    //
+    // 交互态放在模块变量里而不是 dataset 上：dataset 存的是字符串，'false' 是真值，
+    // 这个项目已经因为"字符串当布尔用"栽过一次（classList/attr 那类）。
+    const profileLikeState = { likeCount: 0, flowerCount: 0, likeMine: false, flowerMine: false };
+    let profileLikeTarget = '';       // 当前这张名片是谁的（点赞/留言都要发给他）
+    let profileCardIsSelf = false;
+    const profileLikePending = { like: false, flower: false };
+
+    function profileViewContainer() {
+        return document.getElementById('opponent-stats-content');
+    }
+
+    function applyProfileLikeState() {
+        const box = profileViewContainer();
+        if (!box) return;
+        const paint = (btnId, countId, mine, count) => {
+            const btn = box.querySelector('#' + btnId);
+            const cnt = box.querySelector('#' + countId);
+            if (cnt) cnt.textContent = String(count);
             if (!btn) return;
-            e.preventDefault();
-            openMyProfileEditor();
+            btn.classList.toggle('on', mine === true);
+            // 自己看自己时按钮是 disabled 的，title 由渲染时写死，这里不要覆盖
+            if (!btn.disabled) btn.title = mine ? '取消' : (btnId === 'profile-like' ? '点个赞' : '送一朵花');
+        };
+        paint('profile-like', 'profile-like-count', profileLikeState.likeMine, profileLikeState.likeCount);
+        paint('profile-flower', 'profile-flower-count', profileLikeState.flowerMine, profileLikeState.flowerCount);
+    }
+
+    // 这行提示只属于互动条/留言板，不碰卡片别处
+    function setProfileActionMsg(text, isError) {
+        const box = profileViewContainer();
+        if (!box) return;
+        const el = box.querySelector('#guestbook-msg');
+        if (!el) return;
+        el.textContent = text || '';
+        el.classList.toggle('error', text ? isError !== false : false);
+    }
+
+    // 统一读响应体：**不能用 res.json()** —— 失败时后端可能返回 HTML 错误页，
+    // 解析抛错就成了"页面异常"（工具全程盯着 Runtime.exceptionThrown）。
+    function profileReadJson(res) {
+        return res.text().then(t => {
+            let data = null;
+            try { data = t ? JSON.parse(t) : null; } catch (err) { data = null; }
+            if (!res.ok) {
+                const msg = (data && (data.error || data.msg)) || ('请求失败（HTTP ' + res.status + '）');
+                return { ok: false, data: data, error: msg };
+            }
+            if (data === null) return { ok: false, data: null, error: '服务端返回了无法解析的数据' };
+            return { ok: true, data: data, error: '' };
+        }, () => ({ ok: false, data: null, error: '网络错误' }));
+    }
+
+    // 点赞 / 送花：真发 POST，成功后按响应里的 counts / mine 就地更新。
+    // 失败 → 状态回滚 + 一行提示 + 按钮保持可重试（不是把卡片打崩，也不是假装成功）。
+    function toggleProfileLike(kind) {
+        const box = profileViewContainer();
+        const username = profileLikeTarget;
+        if (!box || !username) return;
+        if (profileCardIsSelf) {
+            setProfileActionMsg('不能给自己点赞。', true);
+            return;
+        }
+        if (profileLikePending[kind]) return;         // 连点只算一次
+        const mineKey = kind === 'like' ? 'likeMine' : 'flowerMine';
+        const countKey = kind === 'like' ? 'likeCount' : 'flowerCount';
+        const btn = box.querySelector(kind === 'like' ? '#profile-like' : '#profile-flower');
+        if (btn && btn.disabled) return;
+        const wasMine = profileLikeState[mineKey] === true;
+        const wasCount = profileLikeState[countKey];
+        const on = !wasMine;
+        profileLikePending[kind] = true;
+        // 乐观预演：只改数字与点亮态，好让点击立刻有反应（失败会回滚）
+        profileLikeState[mineKey] = on;
+        profileLikeState[countKey] = Math.max(0, wasCount + (on ? 1 : -1));
+        applyProfileLikeState();
+        setProfileActionMsg('', false);
+        fetch('/api/profile/like', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: username, kind: kind, on: on })
+        }).then(res => profileReadJson(res)).then(r => {
+            profileLikePending[kind] = false;
+            if (!r.ok) {
+                profileLikeState[mineKey] = wasMine;
+                profileLikeState[countKey] = wasCount;
+                applyProfileLikeState();
+                setProfileActionMsg(r.error, true);
+                return;
+            }
+            // 服务端说了算：counts / mine 一律以响应为准（别拿本地的乐观值当结果）
+            const counts = r.data && r.data.counts;
+            if (counts && typeof counts === 'object') {
+                const n = Number(counts[kind]);
+                if (isFinite(n) && n >= 0) profileLikeState[countKey] = Math.floor(n);
+            }
+            const mine = r.data && r.data.mine;
+            if (mine && typeof mine === 'object') {
+                profileLikeState[mineKey] = mine[kind] === true || mine[kind] === 1;
+            }
+            applyProfileLikeState();
+            setProfileActionMsg('', false);
+        }).catch(() => {
+            profileLikePending[kind] = false;
+            profileLikeState[mineKey] = wasMine;
+            profileLikeState[countKey] = wasCount;
+            applyProfileLikeState();
+            setProfileActionMsg('网络错误，点赞没成功，可以再点一次。', true);
+        });
+    }
+
+    // ==================== 第 3 批 B3-E：留言板 ====================
+    //
+    // 数据只放内存：留言板按"每次打开名片"重新拉一页（20 条），
+    // 「加载更多」用 before_id 往前翻。删除按钮**只在服务端下发的 can_delete === true
+    // 时渲染** —— 权限由服务端算，前端不猜（硬规矩第 4 条）。
+    const guestbookState = {
+        username: '', self: false, privateG: false, loaded: false,
+        messages: [], total: 0, hasMore: false, beforeId: 0
+    };
+
+    function guestbookReset(username, self) {
+        guestbookState.username = username || '';
+        guestbookState.self = self === true;
+        guestbookState.privateG = false;
+        guestbookState.loaded = false;
+        guestbookState.messages = [];
+        guestbookState.total = 0;
+        guestbookState.hasMore = false;
+        guestbookState.beforeId = 0;
+    }
+
+    function guestbookEl(id) {
+        const box = profileViewContainer();
+        return box ? box.querySelector('#' + id) : null;
+    }
+
+    function guestbookItemHtml(msg) {
+        // 只有服务端算出来 can_delete 才给删除按钮
+        const del = (msg.can_delete === true)
+            ? '<button type="button" class="guestbook-del" data-id="' + escapeHtml(String(msg.id)) + '" title="删除这条留言">删除</button>'
+            : '';
+        return '<div class="guestbook-item" data-id="' + escapeHtml(String(msg.id)) + '">'
+            + '<p class="guestbook-text">' + escapeHtml(String(msg.content || '')) + '</p>'
+            + '<div class="guestbook-meta">'
+            + '<span class="guestbook-who">' + escapeHtml(String(msg.from_name || '匿名玩家')) + '</span>'
+            + '<span class="guestbook-time">' + escapeHtml(guestbookTimeText(msg.created_at)) + '</span>'
+            + del
+            + '</div>'
+            + '</div>';
+    }
+
+    function guestbookTimeText(value) {
+        const n = Number(value);
+        if (value && isFinite(n) && n > 0) {
+            const d = new Date(n * 1000);
+            if (!isNaN(d.getTime())) return d.toLocaleString();
+        }
+        return value ? String(value) : '';
+    }
+
+    function guestbookRenderList() {
+        const list = guestbookEl('guestbook-list');
+        if (list) list.innerHTML = guestbookState.messages.map(guestbookItemHtml).join('');
+        guestbookUpdateChrome();
+    }
+
+    // 空占位文案：真没有留言 / 自己看自己，两种都要说清楚，**不留白**。
+    // （未开放留言板那一路由 #guestbook-private 自己的块显示，不靠这里兜。）
+    function guestbookEmptyText() {
+        if (guestbookState.self) return '这是你自己的名片，还没有人给你留言';
+        return '还没有留言';
+    }
+
+    // ⚠️ #guestbook-count 是**输入框的字数计**（契约 §3.5：N/100），
+    // 所有权只属于 guestbookUpdateCount()。这里绝不能拿它显示留言条数 ——
+    // 第一版就是这么写的，结果打开名片后计数被改成 "0/0"，玩家看到的是 `0/0` 而不是 `0/100`。
+    // 留言条数改由「加载更多」按钮与空占位承载。
+    function guestbookUpdateChrome() {
+        const empty = guestbookEl('guestbook-empty');
+        if (empty) {
+            // 只在**一条都没显示**时用这行；有留言时它必须是收起的
+            // （否则会出现"上面一条留言、下面写还没有留言"的自相矛盾）
+            empty.textContent = guestbookEmptyText();
+            empty.classList.toggle('hidden', !guestbookState.loaded || guestbookState.messages.length > 0);
+        }
+        const more = guestbookEl('guestbook-more');
+        if (more) {
+            more.classList.toggle('hidden', !guestbookState.hasMore);
+            const shown = guestbookState.messages.length;
+            const rest = Math.max(0, guestbookState.total - shown);
+            more.textContent = rest > 0 ? ('加载更多（还有 ' + rest + ' 条）') : '加载更多';
+        }
+    }
+
+    function guestbookUpdateCount() {
+        const input = guestbookEl('guestbook-input');
+        const count = guestbookEl('guestbook-count');
+        if (!count) return;
+        const n = input ? String(input.value || '').length : 0;
+        count.textContent = n + '/' + GUESTBOOK_MAX;
+        count.classList.toggle('over', n > GUESTBOOK_MAX);
+    }
+
+    // 输入区实时计数（N/100）。maxlength 已经挡住了溢出，这里主要是给玩家看到进度，
+    // 并且**超出上限时当场拦住并提示**（契约 §3.2 第 2 条：不是静默丢弃）。
+    function bindGuestbookInput() {
+        const input = guestbookEl('guestbook-input');
+        if (!input || input.dataset.gbBound === '1') return;
+        input.dataset.gbBound = '1';
+        input.addEventListener('input', () => {
+            const n = String(input.value || '').length;
+            guestbookUpdateCount();
+            if (n > GUESTBOOK_MAX) {
+                setProfileActionMsg('留言最多 ' + GUESTBOOK_MAX + ' 字，现在是 ' + n + ' 字。', true);
+            } else {
+                const msg = guestbookEl('guestbook-msg');
+                if (msg && msg.classList.contains('error')) setProfileActionMsg('', false);
+            }
+        });
+    }
+
+    // 打开一张名片后的留言板准备：重置状态 → 拉第一页。
+    // 接口挂了只写一行提示（输入区照旧可用，按钮可重试），**不抛异常、不重建整卡**。
+    function prepareGuestbook(username, stats, self) {
+        guestbookReset(username, self);
+        guestbookState.privateG = !!(stats && Number(stats.show_guestbook) === 0);
+        const priv = guestbookEl('guestbook-private');
+        if (priv) priv.classList.toggle('hidden', !guestbookState.privateG);
+        // 输入区：自己看自己 / 对方没开放留言板 → 收起（契约 §3.5）
+        const form = profileViewContainer() ? profileViewContainer().querySelector('.guestbook-form') : null;
+        if (form) form.classList.toggle('hidden', guestbookState.self || guestbookState.privateG);
+        bindGuestbookInput();
+        guestbookUpdateCount();
+        if (!username) return;
+        if (guestbookState.privateG) {
+            // 未开放留言板：显示占位（不是留白），不去打扰接口
+            guestbookState.loaded = true;
+            guestbookUpdateChrome();
+            guestbookRenderList();
+            return;
+        }
+        if (guestbookState.self) {
+            // 自己看自己：留言板照常可看（那是别人留给你的），但输入区已收起
+            setProfileActionMsg('这是你自己的名片，不能给自己留言。', false);
+        }
+        loadGuestbookMore(true);
+    }
+
+    function loadGuestbookMore(isFirst) {
+        const username = guestbookState.username;
+        if (!username) return;
+        const more = guestbookEl('guestbook-more');
+        if (!isFirst) {
+            if (more) { more.disabled = true; more.textContent = '加载中…'; }
+        }
+        // ⚠️ 第一页**不能带 before_id**（含 before_id=0）。服务端把它解析成整数 0，
+        // 而游标语义是"取 id < before_id 的消息" —— 传 0 就等于一条都不要，
+        // 表现是"打开名片永远看不到留言，刷新后照样空"（实测踩过：接口
+        // /api/profile/messages?before_id=0 返回 total=1 但 messages=[]）。
+        // 翻页才带，且只带上一页最后一条的 id。
+        const cursor = (isFirst || !guestbookState.beforeId) ? '' : ('&before_id=' + guestbookState.beforeId);
+        fetch('/api/profile/messages?username=' + encodeURIComponent(username)
+            + '&limit=' + GUESTBOOK_PAGE + cursor)
+            .then(res => profileReadJson(res))
+            .then(r => {
+                if (more) { more.disabled = false; more.textContent = '加载更多'; }
+                if (!r.ok) {
+                    // 接口未落地 / 出错：给一行可重试的提示，卡片其余部分照常。
+                    // ⚠️ 这里**不动 #guestbook-count** —— 那是输入框的字数计（N/100），
+                    // 显示成 '—' 会让玩家以为字数上限没了。
+                    setProfileActionMsg(r.error + '（留言板暂时打不开）', true);
+                    const empty = guestbookEl('guestbook-empty');
+                    if (empty) { empty.textContent = '留言板暂时打不开'; empty.classList.remove('hidden'); }
+                    const moreEl = guestbookEl('guestbook-more');
+                    if (moreEl) moreEl.classList.add('hidden');
+                    return;
+                }
+                const data = r.data || {};
+                const list = Array.isArray(data.messages) ? data.messages : [];
+                // 第一页覆盖，后续页追加（接口按 id 倒序给，越往后越旧）
+                guestbookState.messages = isFirst ? list.slice() : guestbookState.messages.concat(list);
+                const total = Number(data.total);
+                guestbookState.total = (isFinite(total) && total >= 0) ? Math.floor(total) : guestbookState.messages.length;
+                // 契约 §3.4：未开放时后端返回空数组 + guestbook_private = true
+                guestbookState.privateG = data.guestbook_private === true;
+                // has_more 也兜一层：只要"已显示的条数 < 总数"就必须还能翻下一页，
+                // 否则后端漏发这个字段时，第 21 条留言就永远看不到了（本项目吃过"兜底
+                // 分支把能用的东西报成不能用"的亏，这里反过来取"能翻就翻"）。
+                const moreByCount = guestbookState.messages.length < guestbookState.total;
+                guestbookState.hasMore = (data.has_more === true || moreByCount) && list.length > 0;
+                // 下一页游标 = 本页最后一条（最旧的那条）的 id
+                const last = guestbookState.messages[guestbookState.messages.length - 1];
+                const lastId = last ? parseInt(last.id, 10) : 0;
+                if (lastId > 0) guestbookState.beforeId = lastId;
+                guestbookState.loaded = true;
+                const priv = guestbookEl('guestbook-private');
+                if (priv) priv.classList.toggle('hidden', !guestbookState.privateG);
+                const form = profileViewContainer() ? profileViewContainer().querySelector('.guestbook-form') : null;
+                if (form) form.classList.toggle('hidden', guestbookState.self || guestbookState.privateG);
+                guestbookUpdateChrome();
+                guestbookRenderList();
+            })
+            .catch(() => {
+                if (more) { more.disabled = false; more.textContent = '加载更多'; }
+                setProfileActionMsg('网络错误（留言板暂时打不开）', true);
+            });
+    }
+
+    function sendGuestbookMessage() {
+        const input = guestbookEl('guestbook-input');
+        const btn = guestbookEl('guestbook-send');
+        if (!input) return;
+        if (profileCardIsSelf) {
+            setProfileActionMsg('不能给自己留言。', true);
+            return;
+        }
+        const raw = String(input.value || '');
+        const content = raw.trim();
+        if (!content) {
+            setProfileActionMsg('留言内容不能为空。', true);
+            return;
+        }
+        if (content.length > GUESTBOOK_MAX) {
+            setProfileActionMsg('留言最多 ' + GUESTBOOK_MAX + ' 字，现在是 ' + content.length + ' 字。', true);
+            return;
+        }
+        if (btn) { btn.disabled = true; btn.textContent = '发送中…'; }
+        fetch('/api/profile/message', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: guestbookState.username, content: content })
+        }).then(res => profileReadJson(res)).then(r => {
+            if (btn) { btn.disabled = false; btn.textContent = '发表留言'; }
+            if (!r.ok) {
+                // 内容原样留在输入框里，改一改就能重发
+                setProfileActionMsg(r.error, true);
+                return;
+            }
+            const msg = (r.data && r.data.message) ? r.data.message : null;
+            if (msg && msg.id !== undefined && msg.id !== null) {
+                guestbookState.messages.unshift(msg);
+                guestbookState.total += 1;
+                guestbookState.loaded = true;
+                input.value = '';
+                guestbookUpdateCount();
+                guestbookUpdateChrome();
+                guestbookRenderList();
+            }
+            setProfileActionMsg('留言成功。', false);
+        }).catch(() => {
+            if (btn) { btn.disabled = false; btn.textContent = '发表留言'; }
+            setProfileActionMsg('网络错误，留言没发出去，可以再试一次。', true);
+        });
+    }
+
+    function deleteGuestbookMessage(id, container) {
+        const mid = parseInt(id, 10);
+        if (!mid) return;
+        const btn = container ? container.querySelector('.guestbook-del[data-id="' + id + '"]') : null;
+        if (btn) { btn.disabled = true; btn.textContent = '删除中…'; }
+        fetch('/api/profile/message/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: mid })
+        }).then(res => profileReadJson(res)).then(r => {
+            if (!r.ok) {
+                if (btn) { btn.disabled = false; btn.textContent = '删除'; }
+                setProfileActionMsg(r.error, true);
+                return;
+            }
+            // 就地移除这一条 —— 不重拉整页，也不重渲染整卡
+            guestbookState.messages = guestbookState.messages.filter(m => String(m.id) !== String(id));
+            guestbookState.total = Math.max(0, guestbookState.total - 1);
+            guestbookUpdateChrome();
+            guestbookRenderList();
+            setProfileActionMsg('已删除。', false);
+        }).catch(() => {
+            if (btn) { btn.disabled = false; btn.textContent = '删除'; }
+            setProfileActionMsg('网络错误，删除没成功。', true);
         });
     }
 
@@ -2282,9 +2795,10 @@ function bindEventListeners() {
                 historyPrivate: !isSelf && Number(data.stats.show_history) === 0,
                 hasMore: history.length >= limit && limit < STATS_MAX_ROWS,
                 // 只有看自己时才给完整目录；看别人时上面的 Promise 直接给 null
-                badges: isSelf ? selfBadges : null
+                badges: isSelf ? selfBadges : null,
+                self: isSelf
             });
-            return { html, stats: data.stats, history };
+            return { html, stats: data.stats, history, isSelf: isSelf };
         }));
     }
 
@@ -2301,8 +2815,20 @@ function bindEventListeners() {
         fetchProfile(username, STATS_PAGE_SIZE, { ids: true }).then(r => {
             opponentStatsContent.innerHTML = r.html;
             currentProfileStats = r.stats;
+            // 第 3 批：互动条与留言板的当前目标 + 初始状态。
+            // ⚠️ 全程**不重渲染整卡**：点赞就地改 DOM，留言只重画 #guestbook-list。
+            // 重渲染会冲掉输入到一半的留言草稿与弹窗滚动位置（票面明确禁止）。
+            profileLikeTarget = String((r.stats && r.stats.username) || username || '');
+            profileCardIsSelf = r.isSelf === true;
+            profileLikePending.like = false;
+            profileLikePending.flower = false;
+            profileLikeState.likeCount = r.stats ? profileLikeCount(r.stats, 'like') : 0;
+            profileLikeState.flowerCount = r.stats ? profileLikeCount(r.stats, 'flower') : 0;
+            profileLikeState.likeMine = r.stats ? profileLikeMine(r.stats, 'like') : false;
+            profileLikeState.flowerMine = r.stats ? profileLikeMine(r.stats, 'flower') : false;
             bindHistoryButtons(opponentStatsContent, r.history, r.stats && r.stats.id);
             bindProfileCardButtons(opponentStatsContent);
+            prepareGuestbook(profileLikeTarget, r.stats, profileCardIsSelf);
         }).catch(err => {
             opponentStatsContent.innerHTML =
                 '<p style="color:var(--danger);">获取个人信息失败：' + escapeHtml(err.message) + '</p>';
@@ -2418,6 +2944,11 @@ function bindEventListeners() {
     function renderProfileEditor(data) {
         const s = data || {};
         profileEditData = s;
+        // ⚠️ 必须**在这里**（每张卡渲染出来的那一刻）就把第四个开关补进去。
+        // 只在 collectProfileEditorPayload() 里补过的第一版是错的：那个函数要等"保存"
+        // 才跑，于是玩家打开编辑面看到的只有 3 个开关、第 4 个在人点保存之后才冒出来
+        // ——实测就是这么翻车的（探针在打开编辑面后查 `#profile-show-guestbook` 为 null）。
+        ensureGuestbookToggle();
         const catalog = (s.catalog && typeof s.catalog === 'object') ? s.catalog : (profileCatalog || {});
         const statusInput = document.getElementById('profile-edit-status');
         if (statusInput) {
@@ -2474,12 +3005,30 @@ function bindEventListeners() {
         setProfileToggle('profile-show-stats', profileToggleValue(s.show_stats, 1));
         setProfileToggle('profile-show-favcards', profileToggleValue(s.show_fav_cards, 1));
         setProfileToggle('profile-show-history', profileToggleValue(s.show_history, 0));
+        // 第 3 批：留言板开关（**并入既有的 POST /api/profile/card**，保存载荷 8 → 9 字段）
+        setProfileToggle('profile-show-guestbook', profileToggleValue(s.show_guestbook, 1));
         return s;
     }
     window.renderProfileEditor = renderProfileEditor;
 
-    // 编辑态当前选了什么 —— **必须 8 个字段全发**：服务端的校验缺字段直接 400 点名，
-    // 不是"只写改动过的字段"那种局部更新接口。
+    // 第四个展示开关（开放留言板）。
+    // ⚠️ 由 JS 注入而不是写在 index.html 里：本票的文件独占清单只有
+    // `static/game.js` + `static/style.css`，加不了 index.html 那一行。
+    // 注入是幂等的（已存在就返回），并且放在 `.pf-toggles` 里与另外三个**同一份** ——
+    // 第 1 批定过「展示开关只在编辑面一份」，不许在设置页再放一个。
+    // 运行期创建这点 dom_contract_check 认：它靠源码里的 `id="…"` 字面量判断。
+    function ensureGuestbookToggle() {
+        if (document.getElementById('profile-show-guestbook')) return;
+        const box = document.querySelector('#profile-edit .pf-pane[data-pane="card"] .pf-toggles');
+        if (!box) return;      // index.html 还没铺好这一区时静默跳过（缺开关比抛异常好）
+        const label = document.createElement('label');
+        label.innerHTML = '<input type="checkbox" id="profile-show-guestbook" checked>'
+            + '<span>开放留言板（关闭后别人看不到留言，只能看到提示）</span>';
+        box.appendChild(label);
+    }
+
+    // 编辑态当前选了什么 —— **必须把服务端要求的字段全发**（现在是 9 个）：
+    // 服务端的校验缺字段直接 400 点名，不是"只写改动过的字段"那种局部更新接口。
     function collectProfileEditorPayload() {
         const el = (id) => document.getElementById(id);
         const selTitle = document.querySelector('#profile-title-list .pf-opt[data-title].selected');
@@ -2491,6 +3040,7 @@ function bindEventListeners() {
             const box = el(id);
             return box ? (box.checked ? 1 : 0) : fallback;
         };
+        ensureGuestbookToggle();
         return {
             title_id: selTitle ? (selTitle.dataset.title || '') : '',
             tags: tags,
@@ -2499,7 +3049,9 @@ function bindEventListeners() {
             card_bg_id: selBg ? selBg.dataset.bg : 'deep',
             show_stats: checked('profile-show-stats', 1),
             show_fav_cards: checked('profile-show-favcards', 1),
-            show_history: checked('profile-show-history', 0)
+            show_history: checked('profile-show-history', 0),
+            // 缺失时按 1（公开）—— 与表定义 `show_guestbook INTEGER DEFAULT 1` 一致
+            show_guestbook: checked('profile-show-guestbook', 1)
         };
     }
 

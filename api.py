@@ -1,6 +1,7 @@
 # 允许上传的头像文件类型
 import json
 import os
+import re
 import secrets
 import time
 
@@ -132,6 +133,292 @@ def _fav_cards(uid, limit=3):
 
 
 # ---------------------------------------------------------------------------
+# 点赞 / 送花 / 留言板（2026-09-17 第 3 批 D 票）
+# ---------------------------------------------------------------------------
+# 冻结契约见 `docs/BATCH_2_3_4_PLAN.md` §3.3。四个接口：
+#   POST /api/profile/like          点 / 取消 赞与送花
+#   GET  /api/profile/messages      留言列表（游标分页）
+#   POST /api/profile/message       发留言
+#   POST /api/profile/message/delete 删留言（本人或主人）
+#
+# ⚠️ **所有校验都在服务端**（第 1 批的教训：只在前端灰掉等于没校验）。
+# 前端拿到的 `can_delete` / `mine` 都是服务端算好的**结论**，不是"你自己判断"。
+
+# `kind` 白名单。用元组而非集合，报错文案里的顺序才稳定。
+_REACTION_KINDS = ('like', 'flower')
+_MESSAGE_MAX_LEN = 100          # 单条留言字数上限（计划 §3.2）
+_MESSAGE_DAILY_LIMIT = 20       # 每人对同一人每天 ≤ 20 条（计划 §3.3）
+_MESSAGE_DEFAULT_LIMIT = 20     # 留言列表默认每页条数
+_MESSAGE_MAX_LIMIT = 50         # 留言列表单页上限（防止一次拉全表）
+
+# 需要清掉的控制字符：C0（含 \x00-\x1f）与 C1（\x7f-\x9f）。
+# 换行 / 制表符**保留** —— 留言是多行文本框，把换行也吃掉会让排版塌掉。
+# 用正则而不是 `str.strip`：控制字符可能夹在文本中间（`abc\x00def`），
+# 只去首尾等于没去，前端渲染时可能把后面的内容吃掉。
+_CONTROL_CHARS_RE = re.compile(r'[\x00-\x08\x0b-\x1f\x7f-\x9f]')
+
+
+def _target_user(payload_or_args, key='username'):
+    """按用户名找目标账号，返回 `(user_dict 或 None, 错误响应 或 None)`。
+
+    「目标不存在 → 404，不要静默成功」（计划 §3.3）—— 静默成功最坑：
+    玩家给一个不存在的名字点了赞，界面显示成功，其实什么都没写。
+    """
+    raw = ''
+    try:
+        raw = payload_or_args.get(key) or ''
+    except AttributeError:
+        raw = ''
+    username = str(raw).strip()
+    if not username:
+        return None, (jsonify({'success': False, 'error': '缺少 username 参数'}), 400)
+    user = db.get_user(username=username)
+    if not user:
+        return None, (jsonify({'success': False, 'error': f'账号不存在：{username}'}), 404)
+    return user, None
+
+
+def _reaction_view(target_uid, viewer_uid):
+    """互动数据（计数 + 我的状态）。计数**始终可见**，与留言板开关无关。"""
+    counts = db.get_profile_reaction_counts(target_uid) or {}
+    mine = db.get_my_reactions(viewer_uid or '', target_uid) or {}
+    return {
+        'counts': {'like': int(counts.get('like') or 0),
+                   'flower': int(counts.get('flower') or 0)},
+        'mine': {'like': bool(mine.get('like')), 'flower': bool(mine.get('flower'))},
+    }
+
+
+def _public_message(msg, viewer_uid, owner_uid):
+    """一条留言 → 下发形状（**白名单**）+ 服务端算好的 `can_delete`。
+
+    ⚠️ `can_delete` 必须服务端算（计划 §3.3）：前端按它显示按钮，
+    权限规则只此一份 —— 前端自己判就会出现"按钮在但点了 403"或更糟的
+    "别人能删"。规则 = **留言本人 或 页面主人**。
+    同时剥掉 db 层带过来的内部键（`_to_user_id` / `_deleted`）。
+    """
+    from_uid = msg.get('from_uid') or ''
+    return {
+        'id': int(msg.get('id') or 0),
+        'from_name': msg.get('from_name') or '匿名',
+        'content': msg.get('content') or '',
+        'created_at': int(msg.get('created_at') or 0),
+        'can_delete': bool(viewer_uid) and (viewer_uid == from_uid or viewer_uid == owner_uid),
+    }
+
+
+def _clean_message_content(raw) -> str:
+    """留言内容归一化：去控制字符 + 去首尾空白（计划 §3.2）。
+
+    长度**不在这里截断** —— 超长要明确 400（"不是静默丢弃"），
+    截断会让玩家以为发成功了、内容却被砍掉半句。
+    """
+    text = '' if raw is None else str(raw)
+    return _CONTROL_CHARS_RE.sub('', text).strip()
+
+
+def _day_start_ts(now=None) -> int:
+    """今天 00:00 的时间戳（本地时区，与玩家感知的"今天"一致）。
+
+    「每人对同一人每天 ≤ 20 条」需要一个窗口起点。用本地零点而不是
+    "最近 24 小时"：玩家在午夜前后各发 20 条时，用滚动窗口会被拒得莫名其妙。
+    """
+    now = time.time() if now is None else now
+    lt = time.localtime(now)
+    return int(time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1)))
+
+
+def _get_json_payload():
+    """请求体归一化：JSON 优先，退回复表单；两者都不是返回 None。"""
+    payload = request.get_json(silent=True)
+    if payload is None and request.form:
+        payload = request.form.to_dict()
+    return payload if isinstance(payload, dict) else None
+
+
+# 点赞 / 送花（on=true 点、on=false 取消）
+@app.route('/api/profile/like', methods=['POST'])
+def profile_like():
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+
+    payload = _get_json_payload()
+    if payload is None:
+        return jsonify({'success': False, 'error': '请求体必须是 JSON 对象'}), 400
+
+    target, err = _target_user(payload)
+    if err:
+        return err
+
+    # 不能给自己点赞 / 送花（计划 §3.3）。这里必须由服务端拦：前端只是把按钮灰掉。
+    if target['id'] == uid:
+        return jsonify({'success': False, 'error': '不能给自己点赞或送花'}), 400
+
+    kind = str(payload.get('kind') or '').strip()
+    if kind not in _REACTION_KINDS:
+        return jsonify({'success': False,
+                        'error': f'kind 必须是 {"/".join(_REACTION_KINDS)} 之一'}), 400
+
+    on = payload.get('on', True)
+    # `on` 归一化为 bool：接受 true/false、1/0、"1"/"0"/"true"/"false"。
+    # 其他值（含 None）一律当"取消"，避免把垃圾输入当成"点赞"。
+    if isinstance(on, str):
+        on = on.strip().lower() in ('1', 'true', 'yes', 'on')
+    else:
+        on = bool(on)
+
+    if not db.set_profile_reaction(uid, target['id'], kind, on):
+        return jsonify({'success': False, 'error': '操作失败，请稍后重试'}), 500
+
+    # 响应**回读计数**而不是本地加减：并发下本地 +1 会算错，
+    # 而且回读天然幂等（重复点同一下，计数不变）。
+    view = _reaction_view(target['id'], uid)
+    return jsonify({'success': True, 'counts': view['counts'], 'mine': view['mine']})
+
+
+# 留言列表（游标分页）
+@app.route('/api/profile/messages', methods=['GET'])
+def profile_messages():
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+
+    target, err = _target_user(request.args)
+    if err:
+        return err
+
+    try:
+        limit = int(request.args.get('limit') or _MESSAGE_DEFAULT_LIMIT)
+    except (TypeError, ValueError):
+        limit = _MESSAGE_DEFAULT_LIMIT
+    limit = max(1, min(limit, _MESSAGE_MAX_LIMIT))
+
+    try:
+        before_id = request.args.get('before_id')
+        before_id = int(before_id) if before_id not in (None, '') else None
+    except (TypeError, ValueError):
+        before_id = None
+
+    extra = db.get_user_profile_extra(target['id']) or {}
+    show_guestbook = 1 if extra.get('show_guestbook') is None else int(extra.get('show_guestbook'))
+    is_self = uid == target['id']
+
+    # 隐私（计划 §3.4）：**别人视角**且主人关了留言板 → 空列表 + `guestbook_private=true`
+    # （前端据此显示"该玩家未开放留言板"，而不是留白）。
+    # 本人视角永远完整 —— 否则"我的留言板"就看不见自己的留言了。
+    if not is_self and not show_guestbook:
+        # ⚠️ 计数与"我的状态"照发：关的是**留言内容**的可见性，
+        # 点赞/送花是"人气"不是"内容"，**始终可见**（§3.4 明文）。
+        # 漏了这一段，前端在私密主页上会拿到 undefined 的 counts →
+        # 点赞数显示成空/0，玩家以为自己收到的人气没了。
+        view = _reaction_view(target['id'], uid)
+        return jsonify({'success': True, 'messages': [], 'has_more': False,
+                        'total': 0, 'guestbook_private': True,
+                        'username': target.get('username') or '',
+                        'counts': view['counts'], 'mine': view['mine']})
+
+    page = db.list_profile_messages(target['id'], limit, before_id)
+    messages = [_public_message(m, uid, target['id'])
+                for m in (page.get('messages') or [])]
+    view = _reaction_view(target['id'], uid)
+    return jsonify({'success': True,
+                    'messages': messages,
+                    'has_more': bool(page.get('has_more')),
+                    'total': int(page.get('total') or 0),
+                    'guestbook_private': False,
+                    'username': target.get('username') or '',
+                    'counts': view['counts'],
+                    'mine': view['mine']})
+
+
+# 发留言
+@app.route('/api/profile/message', methods=['POST'])
+def post_profile_message():
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+
+    # 频率限制：复用现有的按 IP 限流（同一套窗口/上限）。
+    # ⚠️ 只加在**写**接口上。GET /api/profile/messages 不限流 —— 列表是翻页读，
+    # 限流会让"点两下加载更多"就吃到 429。
+    if _rate_limited('profile_message'):
+        return jsonify({'success': False, 'error': '留言太频繁了，请稍后再试'}), 429
+
+    payload = _get_json_payload()
+    if payload is None:
+        return jsonify({'success': False, 'error': '请求体必须是 JSON 对象'}), 400
+
+    target, err = _target_user(payload)
+    if err:
+        return err
+
+    # 不能给自己留言（计划 §3.3）—— 留言板是"别人留给你"的，自嗨没有意义。
+    if target['id'] == uid:
+        return jsonify({'success': False, 'error': '不能给自己留言'}), 400
+
+    content = _clean_message_content(payload.get('content'))
+    if not content:
+        return jsonify({'success': False, 'error': '留言内容不能为空'}), 400
+    if len(content) > _MESSAGE_MAX_LEN:
+        return jsonify({'success': False,
+                        'error': f'留言不能超过 {_MESSAGE_MAX_LEN} 字（当前 {len(content)} 字）'}), 400
+
+    # 每人对同一人每天上限。先于写库检查（顺序也重要：这一步比写便宜）。
+    used = db.count_profile_messages_since(uid, target['id'], _day_start_ts())
+    if used >= _MESSAGE_DAILY_LIMIT:
+        return jsonify({'success': False,
+                        'error': f'今天给同一个人最多留言 {_MESSAGE_DAILY_LIMIT} 条，'
+                                 f'明天再来吧'}), 429
+
+    me = db.get_user(uid=uid) or {}
+    from_name = me.get('username') or session.get('username') or '匿名'
+    msg_id = db.add_profile_message(target['id'], uid, from_name, content)
+    if not msg_id:
+        return jsonify({'success': False, 'error': '留言失败，请稍后重试'}), 500
+
+    created = db.get_profile_message(msg_id)
+    if not created:
+        # 极端情况：写成功却读不到。回一个由入参拼出的等价形状，
+        # 而不是让玩家看到"发送失败"（其实已经发出去了）。
+        created = {'id': msg_id, 'from_uid': uid, 'from_name': from_name,
+                   'content': content, 'created_at': int(time.time())}
+    return jsonify({'success': True,
+                    'message': _public_message(created, uid, target['id'])})
+
+
+# 删留言（留言本人 或 页面主人，其余 403；软删保留审计）
+@app.route('/api/profile/message/delete', methods=['POST'])
+def delete_profile_message():
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+
+    payload = _get_json_payload()
+    if payload is None:
+        return jsonify({'success': False, 'error': '请求体必须是 JSON 对象'}), 400
+
+    try:
+        msg_id = int(payload.get('id'))
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': '缺少有效的留言 id'}), 400
+
+    msg = db.get_profile_message(msg_id)
+    if not msg:
+        return jsonify({'success': False, 'error': '留言不存在'}), 404
+
+    # 权限 = 留言本人 或 页面主人（计划 §3.3）。两者都不是 → 403（不是 404：
+    # 留言确实存在，别人删不掉这件事要说清楚）。
+    owner_uid = msg.get('_to_user_id') or ''
+    if uid != (msg.get('from_uid') or '') and uid != owner_uid:
+        return jsonify({'success': False, 'error': '你没有权限删除这条留言'}), 403
+
+    if not db.soft_delete_profile_message(msg_id):
+        return jsonify({'success': False, 'error': '删除失败，请稍后重试'}), 500
+    return jsonify({'success': True})
+
+
+# ---------------------------------------------------------------------------
 # 成就 / 徽章（2026-09-17 第 2 批）
 # ---------------------------------------------------------------------------
 # 判定规则只有一份：`achievements.evaluate()`。接口层这里只负责**凑数据**与
@@ -212,9 +499,17 @@ def build_own_profile(uid):
         'show_stats': int(extra.get('show_stats') or 0),
         'show_fav_cards': int(extra.get('show_fav_cards') or 0),
         'show_history': int(extra.get('show_history') or 0),
+        # 留言板开关（第 3 批）：第 4 个展示开关，与另外三个同进同出 ——
+        # 编辑面拿它初始化 `#profile-show-guestbook` 复选框。
+        'show_guestbook': int(extra.get('show_guestbook') if extra.get('show_guestbook') is not None else 1),
         'fav_cards': _fav_cards(uid),
         'catalog': profile_spec.catalog(stats),
     })
+    # 互动数据：自己的名片也要有（查看面两个视角共用一套渲染），
+    # 自己看自己时 `mine` 恒为 false —— 不能给自己点赞/送花。
+    view = _reaction_view(uid, uid)
+    profile['counts'] = view['counts']
+    profile['mine'] = view['mine']
     # 徽章：自己视角拿**全量**（含未解锁项与判据文案），前端好画灰格与"还差什么"。
     badges, badge_count = build_badge_view(uid, user=user, rank=rank)
     profile['achievements'] = badges
@@ -372,6 +667,18 @@ def user_stats_view():
     public_stats['show_stats'] = int(extra.get('show_stats') or 0)
     public_stats['show_fav_cards'] = int(extra.get('show_fav_cards') or 0)
     public_stats['show_history'] = int(extra.get('show_history') or 0)
+    # 留言板开关（第 3 批）：**别人视角也要下发** —— 前端靠它决定
+    # 「显示留言」还是「该玩家未开放留言板」。老行由 DEFAULT 1 兜底，缺值按公开。
+    public_stats['show_guestbook'] = int(
+        extra.get('show_guestbook') if extra.get('show_guestbook') is not None else 1)
+
+    # 点赞 / 送花 / 留言板（第 3 批）：查看面两个视角共用一份互动数据。
+    # ⚠️ 计数与"我的状态"**始终可见**，不受 `show_guestbook` 影响 ——
+    # 那是"人气"不是"内容"（计划 §3.4）。留言列表本身由
+    # `GET /api/profile/messages` 下发（它另做隐私过滤），这里不重复带。
+    view = _reaction_view(stats['id'], session.get('user_id'))
+    public_stats['counts'] = view['counts']
+    public_stats['mine'] = view['mine']
 
     # 徽章：**他人视角只下发已解锁的**（计划 §2.4）。
     # 未解锁项的 id 与判据文案都不发 —— 否则别人能看出"他还差几场拿十连胜"，

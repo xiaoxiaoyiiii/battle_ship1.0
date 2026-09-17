@@ -63,9 +63,15 @@ def _login(client, uid, username):
 
 
 def _payload(**over):
-    """一份合法的保存请求（8 个字段齐全，计划 §2.4 的请求形状）。"""
+    """一份合法的保存请求（**9 个字段**齐全）。
+
+    第 3 批 D 票把 `show_guestbook`（留言板公开，默认 1）并进了同一条保存通道 ——
+    它和另外三个 `show_*` 一样"必须全发"，所以这里的形状也跟着从 8 个变 9 个。
+    契约来源：`docs/BATCH_2_3_4_PLAN.md` §3.4 + 主会话对写入通道的裁决。
+    """
     body = {'title_id': 'rookie', 'tags': [], 'status_text': '', 'frame_id': 'none',
-            'card_bg_id': 'deep', 'show_stats': 1, 'show_fav_cards': 1, 'show_history': 0}
+            'card_bg_id': 'deep', 'show_stats': 1, 'show_fav_cards': 1,
+            'show_history': 0, 'show_guestbook': 1}
     body.update(over)
     return body
 

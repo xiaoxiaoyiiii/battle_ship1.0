@@ -153,12 +153,21 @@ unlocked_card_bgs(stats) -> set[str]
 
 | 字段 | 默认 | 别人能看到吗 |
 | --- | --- | --- |
-| 头像、用户名、胜场 / 胜率、称号、徽章、标签、状态、名片外观 | 可见 | 是 |
+| 头像、用户名、称号、标签、一句话状态、名片底色 / 头像框 | 可见 | 是（「这个人是谁」不受开关控制） |
+| 战绩亮点（最高连胜 / 胜率 / 场次） | 可见（`show_stats = 1`） | 关掉后**对所有人隐藏** |
+| 最爱用的卡 | 可见（`show_fav_cards = 1`） | 关掉后**对所有人隐藏** |
 | 对局历史（`history`） | **不公开**（`show_history = 0`） | 否（返回空数组） |
 | 自己的主页 | —— | **永远返回完整历史**（否则「我的对局记录」功能作废） |
 
+⚠️ **三个 `show_*` 是同一套语义**（2026-09-17 实施时补正）：`0` = 该区块对**所有人**隐藏
+（包括自己），`1` = 对所有人可见。第一版契约只在 `/user_stats` 里下发了 `show_history`，
+另两个开关在「看别人」时被前端读到 `undefined` → 默认显示 → **开关形同虚设**
+（典型的「看着能用其实没用」）。实施时已把三个字段一起下发，并明确**不区分视角** ——
+两套语义（自己一套、别人一套）必然漂移。
+
 实现要点：`/user_stats` 判断「请求者是不是本人」时用 `session['user_id'] == stats['id']`。
 未登录访问他人主页 = 他人视角（受隐私约束）。
+`show_history` 与另两个的唯一区别在**默认值**：它对别人默认关，而「自己看自己」永远完整。
 
 ## 8. 前端结构
 
@@ -267,4 +276,65 @@ unlocked_card_bgs(stats) -> set[str]
 
 ## 13. 实施记录（落地后回填）
 
-*（待填：实际改动文件、测试数变化、工具输出、踩到的坑）*
+## 13. 实施记录（2026-09-17 落地）
+
+### 13.1 实际改动文件
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `profile_spec.py`（新） | 池子 + 解锁规则（唯一一份）+ `catalog()` + `validate_payload()`，纯函数无 IO |
+| `db.py` | `user_profile` / `user_card_usage` 两张表 + 1 条索引 + 5 个 DAO 与模块级包装（UPSERT 持锁、列名白名单、失败只记日志）；**未动 `users` 表结构** |
+| `api.py` | `GET /api/profile` 追加个性字段 + `catalog`；新增 `POST /api/profile/card`；`/user_stats` 追加公开字段 + 三个 `show_*` + 隐私过滤 |
+| `server.py` | `record_card_use(card, count, user_id=None)`；调用点传 `Player.user_id`（**不是** `room.players` 的 key） |
+| `static/game.js` | 删 `buildProfileHead` / `buildStatsTable`；新增 `profileCardModel` / `buildProfileCard` / `renderProfileEditor` / `collectProfileEditorPayload` / `saveProfileCard` / `setProfileMode` / `bindProfileCardUI` / 主题预设四件套 |
+| `templates/index.html` | 编辑面（左导航 + 4 分区 + 底部保存行）+ 设置面（左导航 + 4 分区）；**所有旧 id 一个没删** |
+| `static/style.css` | 新增一节：`.pf-card`（方案 A 分层名片）+ `.pf-editor` + 设置页 + `html[data-theme-preset]` 四套覆盖 |
+| `tests/test_profile_card.py`（新） | 72 条 |
+| `tools/profile_card_check.mjs`（新） | 51 项，**真注册登录 + 真保存落库**，只桩「别人主页」的数据 |
+| `tools/dom_contract_check.mjs`（新） | DOM 契约对账：区分「运行期渲染」与「真悬空」 |
+| `tools/profile_leaderboard_check.mjs` | 断言随新结构更新（功能一条没减） |
+| `tools/last_stand_board_check.mjs` | 1d 改为断言「**新**画上命中/落空」（见 13.3） |
+
+### 13.2 实测输出（全部在落地后重新跑过）
+
+| 层 | 命令 | 结果 |
+| --- | --- | --- |
+| pytest | `python -m pytest tests/ -q` | **936 passed**（基线 864 + 72，零回归） |
+| 协议 e2e | `python tools/e2e_batch_2026_09_17.py` | 全部通过 |
+| 新工具 | `node tools/profile_card_check.mjs` | **51 PASS / 0 FAIL** |
+| 个人信息守卫 | `node tools/profile_leaderboard_check.mjs` | 47 PASS 全通过（三个入口仍指向同一份面板） |
+| 布局不变量 | `node tools/ui_layout_check.mjs` | 全部通过（含 6 个窄视口，CSS +613 行后未破） |
+| 战绩弹窗 | `node tools/stats_modal_check.mjs` | 21 PASS |
+| 连锁预览 | `node tools/chain_preview_check.mjs` | 25 PASS |
+| 绝处逢生棋盘 | `node tools/last_stand_board_check.mjs` | 16 PASS（连跑 3 次稳定） |
+| DOM 契约 | `node tools/dom_contract_check.mjs` | 全部通过 |
+
+### 13.3 实施中发现的四个真问题（都不是「照着设计稿写」能避开的）
+
+1. **★ 设计稿漏了两个开关的下发（假控件）**：§2.5 只要求 `/user_stats` 给出 `show_history`，
+   于是「看别人」这条路径上 `show_stats` / `show_fav_cards` 读到 `undefined` → 前端按默认值
+   当成「显示」→ **玩家关掉这两个开关后，别人照样看得到**。已裁决并补上：三个 `show_*`
+   **同一套语义**（0 = 对所有人隐藏，含自己），并加了 3 条 pytest 钉死「不区分视角」。
+   👉 教训：**开关必须有下发给「别人视角」的路径**，只发给自己等于没做。
+2. **两块面，不是一个**：实测 `#profile-modal`（编辑）与 `#opponent-stats-modal`（查看，
+   四个入口共用）是两个容器。第一版契约把两个态都塞进 `#profile-modal`，会逼四个入口改道、
+   并丢掉上一批要求保留的**对局历史列表**。已在动手前修正契约（`docs/..._PLAN.md` §3.1）。
+3. **`#profile-view-*` 只在查看面输出**：首页老容器 `#user-stats-content` 也渲染同一张卡，
+   两个容器同时带这套 id → 同一个文档里撞 id → `getElementById` 只拿到靠前的那个 = 点了没反应。
+   实现上用 `buildProfileCard(s, {ids:true})` 只给查看面出 id。
+4. **主题预设的旧自定义色会压住预设**：`applyPrimaryColor` 写的是 documentElement 上的**内联
+   `--primary*`**，优先级高于任何 CSS —— 只清 localStorage 的话「切回预设」等于没切。
+   必须同时清内联变量。
+
+### 13.4 工具侧的三个假红（都改在工具里，不留在人工记忆里）
+
+| 假红 | 真因 | 修法 |
+| --- | --- | --- |
+| `profile_card_check` 首次跑「等待超时：页面加载」 | 上一次运行残留的无头 Edge 占着调试端口、锁着 profile，新浏览器**静默起不来**，工具连上的是旧实例 | 工具开头按 profile 路径**预清理**残留进程 |
+| 同上，A1/A2 偶发失败 | `Page.navigate` 返回后 `readyState` 仍是**旧文档**的 complete，断言打在上一页 | `goto()` 改为等「地址真的变了」+「新文档加载完」 |
+| `last_stand_board_check` 1d 偶发红 | 它先跑真机对局（§4），AI 随机打中的格子可能正好是 §1 的注入坐标；而既定行为**就是**让已打过的候选格显示真实结果 | 改为断言「**新**画上命中/落空」，并在失败时打印前后类名 |
+| `profile_card_check` T2 主色断言第二次必红 | 无头浏览器用**持久 profile**，上一轮已把预设存进 localStorage | 先切回「深海」归零，再切「熔岩」再断言 |
+
+**共同点**：全都是「**测试环境的状态**没被清干净」造成的假红 —— 与本项目此前记过的
+「无头 profile 别放 C:/Windows/Temp」「持久 profile 带着上一轮状态」是同一类问题。
+**新增工具时先把这四条当作检查清单过一遍。**

@@ -91,6 +91,59 @@ html.theme-dark {
                linear-gradient(180deg, #0a1428 0%, #0e1f3c 55%, #102544 100%);
 }
 
+/* 主题预设（2026-09-17 名片改版）—— `html[data-theme-preset="…"]` 由设置页写入
+   （game.js 的 applyThemePreset()）。deep / classic **故意不在这里覆盖**：
+   深海 = html.theme-dark 那套，经典 = :root 那套，两个"预设"就是现状本身。
+
+   ⚠️ 这两组必须排在上面 html.theme-dark 之后 —— 与它特异性相同（html + 一个属性选择器），
+   只能靠源码顺序决定谁生效；写到前面去会被深色主题整块盖掉，表现为"选了预设没反应"。
+
+   覆盖的变量比设计稿点名的六个多两个（--primary-50 / --shadow-glow）：这两个同样是
+   "由主色派生"的，而 game.js 的自定义主色路径（applyPrimaryColor）**也会写它们**，
+   切回预设时靠 removeProperty 撤销 —— 只覆盖六个的话，浅色主题下会出现
+   "主色变了、.secondary:hover 的底色还是浅蓝"这种半截效果。
+   --secondary-dark 只被第 2198 节「游戏结束」那一处渐变用到，与名片无关，留在原主题值。 */
+html[data-theme-preset="lava"] {
+    --primary: #f97316;
+    --primary-600: #c2410c;
+    --primary-rgb: 249, 115, 22;
+    --primary-50: rgba(249, 115, 22, 0.14);
+    --primary-gradient: linear-gradient(135deg, #c2410c, #f97316);
+    --shadow-glow: 0 0 18px rgba(249, 115, 22, 0.45);
+    --accent: #fbbf24;
+    --secondary: #ef4444;
+}
+html[data-theme-preset="cyber"] {
+    --primary: #22d3ee;
+    --primary-600: #7c3aed;
+    --primary-rgb: 34, 211, 238;
+    --primary-50: rgba(34, 211, 238, 0.14);
+    --primary-gradient: linear-gradient(135deg, #7c3aed, #22d3ee);
+    --shadow-glow: 0 0 18px rgba(34, 211, 238, 0.45);
+    --accent: #f472b6;
+    --secondary: #a855f7;
+}
+html[data-theme-preset="dusk"] {
+    --primary: #f472b6;
+    --primary-600: #be185d;
+    --primary-rgb: 244, 114, 182;
+    --primary-50: rgba(244, 114, 182, 0.14);
+    --primary-gradient: linear-gradient(135deg, #be185d, #f472b6);
+    --shadow-glow: 0 0 18px rgba(244, 114, 182, 0.45);
+    --accent: #fcd34d;
+    --secondary: #818cf8;
+}
+html[data-theme-preset="aurora"] {
+    --primary: #34d399;
+    --primary-600: #0f766e;
+    --primary-rgb: 52, 211, 153;
+    --primary-50: rgba(52, 211, 153, 0.14);
+    --primary-gradient: linear-gradient(135deg, #0f766e, #34d399);
+    --shadow-glow: 0 0 18px rgba(52, 211, 153, 0.45);
+    --accent: #a3e635;
+    --secondary: #38bdf8;
+}
+
 /* ---------- 2. 基础重置与背景 ---------- */
 * {
     margin: 0;
@@ -3287,6 +3340,578 @@ select:focus-visible {
 
 /* 8) 导航栏的 🎬 按钮与 🎵 对齐 */
 .nav #wallpaper-btn { padding: 0.4rem 0.85rem; font-size: 0.92rem; }
+
+/* ---------- 26. 个人名片 / 设置页（2026-09-17 名片改版） ---------- */
+/*
+ * 视觉基准：.tmp/design_preview/preview.html 的**方案 A（分层名片）+ 深海主题**。
+ * 体积上的"大封面 + 头像压边 + 三块大数字 + 最爱用的卡 + 深色玻璃拟态 + 霓虹描边"
+ * 都在这里；颜色**一个写死的都没有** —— 全部走项目现有变量
+ * （--primary / --primary-rgb / --primary-600 / --primary-gradient / --secondary / --accent），
+ * 所以换主题预设（第 1 节那四组）、切浅色主题都自动跟着变。
+ *
+ * 两块面（契约见 docs/PROFILE_CARD_2026_09_17_PLAN.md §3.1）：
+ *   .pf-card   → 查看面：game.js 的 buildProfileCard() 渲染进 #opponent-stats-content，
+ *                自己与别人共用同一份 DOM（差别只有"编辑资料"按钮）。
+ *   .pf-editor → 编辑面：#profile-modal 里的左导航 + 四个 [data-pane] 分区。
+ *
+ * ⚠️ 两条硬规矩（CLAUDE.md 第 12 节第 11、12 条）：
+ *   ① 不改现有元素的盒模型尺寸 —— 本节只新增类、只在两个弹窗内部生效，
+ *      棋盘 / 格子 / 手牌 / HUD 的既有尺寸一行没碰；
+ *   ② 含 position:fixed 后代的元素不许 transform / filter / backdrop-filter ——
+ *      本节的作用对象是弹窗里的叶子节点；弹窗本身（.modal-overlay）就是 fixed 浮层，
+ *      所以这里一个 filter 都没加，玻璃感只用半透明底色 + 1px 描边做。
+ *   ⚠️ 另外：本项目第 3 节的通用 `button` 规则带 `background: var(--primary-gradient)`，
+ *      凡是"按钮当色块/标签用"的地方都必须显式 background-image: none，否则会被渐变盖掉
+ *      （第 23 节 .match-history-btn 已经踩过一次同样的坑）。
+ */
+
+/* ===== 26.1 弹窗外壳 ===== */
+.profile-modal-card { max-width: 660px; padding: 18px 20px 20px; }
+.settings-modal-card { max-width: 780px; padding: 18px 20px 20px; }
+.pf-view-modal { max-width: 560px; padding: 14px 16px 18px; }
+/* 标题收窄：封面色块 / 左导航跟在下面，标题不需要再拉一条通栏分隔线 */
+.profile-modal-card > .pf-modal-title,
+.settings-modal-card > .pf-modal-title {
+    border-bottom: 0;
+    padding-bottom: 0;
+    margin: 0 0 14px;
+    font-size: 1.05rem;
+    letter-spacing: 0.5px;
+}
+
+/* ===== 26.2 查看面：分层名片（方案 A） ===== */
+.pf-card {
+    position: relative;
+    overflow: hidden;
+    padding-bottom: 16px;          /* 末尾是 #profile-view-meta 时它自带下间距，空则靠这一条兜底 */
+    border-radius: 16px;
+    background: var(--surface-strong);
+    border: 1px solid rgba(var(--primary-rgb), 0.26);
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.28);
+    text-align: left;
+}
+
+/* 大封面：主题主色渐变 + 一层极淡的斜纹；data-bg 是玩家选的名片底色 */
+.pf-cover {
+    position: relative;
+    height: 128px;
+    background:
+        radial-gradient(460px 180px at 78% 0%, rgba(var(--primary-rgb), 0.5), transparent 70%),
+        var(--primary-gradient);
+}
+.pf-cover::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: repeating-linear-gradient(115deg, rgba(255, 255, 255, 0.06) 0 2px, transparent 2px 9px);
+}
+/* 底色：deep 不给规则 = 跟随当前主题；其余五套是固定调色板（与设计稿一致） */
+.pf-cover[data-bg="graphite"] { background: radial-gradient(460px 180px at 78% 0%, rgba(148, 163, 184, 0.4), transparent 70%), linear-gradient(135deg, #334155, #0f172a); }
+.pf-cover[data-bg="cyber"]    { background: radial-gradient(460px 180px at 78% 0%, rgba(34, 211, 238, 0.45), transparent 70%), linear-gradient(135deg, #7c3aed, #22d3ee); }
+.pf-cover[data-bg="lava"]     { background: radial-gradient(460px 180px at 78% 0%, rgba(251, 191, 36, 0.45), transparent 70%), linear-gradient(135deg, #c2410c, #f97316); }
+.pf-cover[data-bg="dusk"]     { background: radial-gradient(460px 180px at 78% 0%, rgba(252, 211, 77, 0.4), transparent 70%), linear-gradient(135deg, #be185d, #f472b6); }
+.pf-cover[data-bg="aurora"]   { background: radial-gradient(460px 180px at 78% 0%, rgba(163, 230, 53, 0.4), transparent 70%), linear-gradient(135deg, #0f766e, #34d399); }
+
+.pf-hero {
+    position: relative;
+    z-index: 2;                    /* 压在封面之上，头像才能"压边" */
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 14px;
+    padding: 0 18px;
+    margin-top: -42px;
+}
+/* ⚠️ 顺序修正：game.js 的 DOM 顺序是 头像 → 资料 → **签名** → 按钮，
+   直接排的话「编辑资料」会被签名挤到第二行（设计稿里它在第一行右侧）。
+   order 只改视觉顺序、不改 DOM 顺序（键盘 Tab 顺序仍按 DOM 走，这里全是非交互内容也没影响）。 */
+.pf-avatar-wrap { order: 1; }
+.pf-who { order: 2; }
+.pf-actions { order: 3; }
+.pf-signature { order: 4; }
+.pf-avatar-wrap { position: relative; flex: 0 0 auto; }
+.pf-avatar {
+    display: block;
+    width: 84px;
+    height: 84px;
+    border-radius: 20px;
+    object-fit: cover;
+    background: var(--surface-elevated);
+    border: 3px solid var(--surface-strong);
+    box-shadow: 0 0 0 2px rgba(var(--primary-rgb), 0.6), 0 10px 24px rgba(0, 0, 0, 0.35);
+}
+.pf-avatar-wrap .lvl {
+    position: absolute;
+    right: -6px;
+    bottom: -6px;
+    padding: 1px 7px;
+    border-radius: 8px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: #14213a;
+    background: linear-gradient(135deg, var(--accent), #fff3d4);
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.45);
+}
+/* 头像边框：data-frame 由 game.js 直接写在 <img> 上 */
+.pf-avatar[data-frame="silver"]  { box-shadow: 0 0 0 3px #cbd5e1, 0 10px 24px rgba(0, 0, 0, 0.35); }
+.pf-avatar[data-frame="gold"]    { box-shadow: 0 0 0 3px var(--accent), 0 0 18px rgba(240, 178, 90, 0.55), 0 10px 24px rgba(0, 0, 0, 0.35); }
+.pf-avatar[data-frame="aurora"]  { box-shadow: 0 0 0 3px var(--secondary), 0 0 20px rgba(141, 128, 248, 0.6), 0 10px 24px rgba(0, 0, 0, 0.35); }
+.pf-avatar[data-frame="crimson"] { box-shadow: 0 0 0 3px #ef4444, 0 0 18px rgba(239, 68, 68, 0.55), 0 10px 24px rgba(0, 0, 0, 0.35); }
+
+.pf-who { flex: 1 1 auto; min-width: 0; padding-bottom: 2px; }
+.pf-who .pf-name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 0;
+    font-size: 1.22rem;
+    color: var(--text);
+    overflow-wrap: anywhere;
+}
+.pf-who .title-chip {
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    white-space: nowrap;
+    color: #14213a;
+    background: linear-gradient(135deg, var(--accent), #ffedbe);
+}
+.pf-who .state {
+    margin: 5px 0 0;
+    font-size: 0.84rem;
+    color: var(--text-subtle);
+    overflow-wrap: anywhere;
+}
+.pf-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.pf-tags:empty { margin-top: 0; }
+.pf-tags .tag {
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    color: var(--primary);
+    border: 1px solid rgba(var(--primary-rgb), 0.45);
+    background: rgba(var(--primary-rgb), 0.12);
+}
+/* 签名独占一行（在 .pf-hero 里换行到第二排），与"一句话状态"并存 */
+.pf-signature {
+    flex: 1 0 100%;
+    margin: 10px 0 0;
+    font-size: 0.82rem;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+}
+.pf-actions { flex: 0 0 auto; display: flex; gap: 8px; align-items: center; padding-bottom: 4px; }
+.pf-actions:empty { display: none; }      /* 看别人时 game.js 不渲染按钮 */
+.pf-actions .pf-edit-btn { padding: 0.45rem 1rem; border-radius: 10px; font-size: 0.84rem; }
+
+/* 三块大数字 */
+.pf-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    padding: 16px 18px 0;
+}
+.pf-stats .stat {
+    padding: 11px 8px;
+    border-radius: 12px;
+    text-align: center;
+    background: rgba(var(--primary-rgb), 0.07);
+    border: 1px solid rgba(var(--primary-rgb), 0.18);
+}
+.pf-stats .stat b {
+    display: block;
+    font-size: 1.5rem;
+    line-height: 1.15;
+    color: var(--text);
+    text-shadow: 0 0 14px rgba(var(--primary-rgb), 0.45);
+}
+.pf-stats .stat span { font-size: 0.72rem; color: var(--muted); }
+/* 浅色主题下霓虹会糊成一团，只在深色里留 */
+html:not(.theme-dark) .pf-stats .stat b { text-shadow: none; }
+
+/* 区块（最爱用的卡 / 历史战绩） */
+.pf-card .pf-block { padding: 16px 18px 0; }
+.pf-card .pf-block-title {
+    margin: 0 0 10px;
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    color: var(--muted);
+}
+/* ⚠️ 这个块同时挂了 .pf-block 与 .pf-favcards，块标题是它的直接子元素 ——
+   标题必须跨满整行，否则会被挤进第一列、排在卡片左边。 */
+.pf-favcards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.pf-favcards .pf-block-title { grid-column: 1 / -1; margin-bottom: 0; }
+.pf-favcards .fav {
+    min-width: 0;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: linear-gradient(160deg, rgba(var(--primary-rgb), 0.14), rgba(var(--primary-rgb), 0.04));
+    border: 1px solid rgba(var(--primary-rgb), 0.2);
+}
+.pf-favcards .fav-name {
+    display: block;
+    font-size: 0.88rem;
+    font-weight: 700;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.pf-favcards .fav-meta { display: block; margin-top: 3px; font-size: 0.72rem; color: var(--accent); }
+
+/* 历史战绩：行的样式是第 23 节既有的 .match-history-btn（胜负配色），这里只排容器。
+   容器 game.js 同时给了 id="profile-history-list" 与 class="history-list"，两个选择器都写上，
+   免得以后只改其中一边时这里的 gap 静默失效。 */
+.pf-card .history-list,
+.pf-card #profile-history-list { display: grid; gap: 6px; }
+.pf-card .history-empty { padding: 12px 2px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+.pf-card .history-more { font-size: 0.82rem; }
+
+.pf-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 16px;
+    padding: 12px 18px 0;
+    border-top: 1px solid var(--border);
+    font-size: 0.76rem;
+    color: var(--muted);
+}
+.pf-meta:empty { display: none; }
+.pf-meta-item { white-space: nowrap; }
+
+/* ===== 26.3 通用表单件（只在两个弹窗里用） ===== */
+.pf-field { display: block; margin-bottom: 16px; }
+.pf-field:last-child { margin-bottom: 0; }
+.pf-field-label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-subtle);
+}
+.pf-field-label .pf-hint { margin-left: 8px; font-weight: 400; }
+.pf-hint { display: inline-block; margin-top: 5px; font-size: 0.74rem; color: var(--muted); }
+.pf-pane input[type="text"],
+.pf-pane input[type="password"] { width: 100%; margin-right: 0; }
+.pf-username { display: inline-block; font-size: 0.95rem; font-weight: 700; color: var(--text); overflow-wrap: anywhere; }
+
+/* ===== 26.4 编辑面：左导航 + 四个分区 ===== */
+.pf-editor { display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 20px; align-items: start; }
+.pf-editor-panes { min-width: 0; }
+.pf-editor-nav { display: flex; flex-direction: column; gap: 6px; }
+.pf-editor-nav-item,
+.settings-nav-item,
+.theme-card,
+.pf-opt,
+.pf-bg,
+.pf-frame { background-image: none; box-shadow: none; }
+.pf-editor-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 11px;
+    border-radius: 10px;
+    font-size: 0.86rem;
+    font-weight: 600;
+    text-align: left;
+    color: var(--text-subtle);
+    background: transparent;
+    border: 1px solid transparent;
+}
+.pf-editor-nav-item:hover,
+.settings-nav-item:hover { transform: none; filter: none; box-shadow: none; background: rgba(var(--primary-rgb), 0.1); }
+.pf-editor-nav-item.active {
+    color: var(--text);
+    background: rgba(var(--primary-rgb), 0.16);
+    border-color: rgba(var(--primary-rgb), 0.45);
+}
+.pf-nav-ic { font-size: 0.95rem; line-height: 1; }
+
+/* 展示开关（label + checkbox 一行一条） */
+.pf-toggles { display: flex; flex-direction: column; }
+.pf-toggles label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    font-size: 0.86rem;
+    color: var(--text-subtle);
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+}
+.pf-toggles label:last-child { border-bottom: 0; }
+.pf-toggles input[type="checkbox"],
+.settings-mute-row input[type="checkbox"] {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    accent-color: var(--primary);
+}
+
+/* 名片底色色块（6 个预设，与 .pf-cover[data-bg] 一一对应） */
+.pf-bg-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.pf-bg {
+    position: relative;
+    width: 58px;
+    height: 34px;
+    padding: 0;
+    border-radius: 9px;
+    border: 2px solid transparent;
+    cursor: pointer;
+}
+.pf-bg[data-bg="deep"]     { background: linear-gradient(135deg, #1f6fb8, #38a3f0); }
+.pf-bg[data-bg="graphite"] { background: linear-gradient(135deg, #334155, #0f172a); }
+.pf-bg[data-bg="cyber"]    { background: linear-gradient(135deg, #7c3aed, #22d3ee); }
+.pf-bg[data-bg="lava"]     { background: linear-gradient(135deg, #c2410c, #f97316); }
+.pf-bg[data-bg="dusk"]     { background: linear-gradient(135deg, #be185d, #f472b6); }
+.pf-bg[data-bg="aurora"]   { background: linear-gradient(135deg, #0f766e, #34d399); }
+.pf-bg.selected { border-color: var(--text); box-shadow: 0 0 0 2px rgba(var(--primary-rgb), 0.5); }
+.pf-bg.locked,
+.pf-bg:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* 头像边框（5 个，与 .pf-avatar[data-frame] 一一对应） */
+.pf-frame-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.pf-frame {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    width: 66px;
+    padding: 8px 6px;
+    border-radius: 12px;
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+}
+.pf-frame-ring {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: linear-gradient(140deg, var(--primary), var(--secondary));
+}
+.pf-frame[data-frame="none"] .pf-frame-ring { background: var(--surface-elevated); border: 1px dashed var(--border-strong); }
+.pf-frame[data-frame="silver"] .pf-frame-ring { box-shadow: 0 0 0 3px #cbd5e1; }
+.pf-frame[data-frame="gold"] .pf-frame-ring { box-shadow: 0 0 0 3px var(--accent); }
+.pf-frame[data-frame="aurora"] .pf-frame-ring { box-shadow: 0 0 0 3px var(--secondary); }
+.pf-frame[data-frame="crimson"] .pf-frame-ring { box-shadow: 0 0 0 3px #ef4444; }
+.pf-frame-name { font-size: 0.7rem; color: var(--muted); }
+.pf-frame.selected { border-color: rgba(var(--primary-rgb), 0.55); background: rgba(var(--primary-rgb), 0.12); }
+.pf-frame.locked,
+.pf-frame:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* 称号 / 标签选项（未解锁：game.js 会给 disabled + .locked，并把解锁条件写进 title） */
+.pf-opt-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.pf-opt {
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    color: var(--text-subtle);
+    background: rgba(var(--primary-rgb), 0.07);
+    border: 1px solid var(--border);
+    cursor: pointer;
+}
+.pf-opt.selected {
+    color: #fff;
+    border-color: transparent;
+    background: var(--primary-gradient);
+    background-image: var(--primary-gradient);   /* 覆盖上面那组 background-image: none */
+}
+.pf-opt.locked,
+.pf-opt:disabled { opacity: 0.45; cursor: not-allowed; }
+.pf-tag-count { margin-left: 8px; font-size: 0.74rem; font-weight: 400; color: var(--muted); }
+
+/* 头像上传行 */
+.pf-avatar-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.pf-avatar-edit {
+    flex: none;
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--surface-elevated);
+    border: 2px solid rgba(var(--primary-rgb), 0.45);
+}
+.pf-drop {
+    display: block;
+    flex: 1 1 220px;
+    min-width: 0;
+    padding: 12px;
+    border-radius: 12px;
+    border: 1.5px dashed var(--border-strong);
+    background: rgba(var(--primary-rgb), 0.05);
+    cursor: pointer;              /* 整块是 <label>，点哪儿都能选文件 */
+}
+.pf-drop input[type="file"] { width: 100%; margin: 0; font-size: 0.82rem; color: var(--text-subtle); }
+.pf-drop input[type="file"]::file-selector-button {
+    margin-right: 10px;
+    padding: 0.35rem 0.8rem;
+    border: 0;
+    border-radius: 8px;
+    font: inherit;
+    font-size: 0.82rem;
+    color: #fff;
+    background: var(--primary-gradient);
+    cursor: pointer;
+}
+
+/* 「密码与隐私」跳转行 + 底部保存行 */
+.pf-goto-row { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
+.pf-goto-row .pf-hint { display: block; margin-bottom: 10px; }
+.pf-edit-foot {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+}
+.pf-edit-foot #profile-save-msg { font-size: 0.82rem; color: var(--success); }
+.pf-edit-foot #profile-save-msg:empty { display: none; }
+
+/* ===== 26.5 设置页：左导航 + 四个分区 ===== */
+.settings-wrap { display: grid; grid-template-columns: 176px minmax(0, 1fr); gap: 18px; align-items: start; }
+.settings-panes { min-width: 0; }
+.settings-nav { display: flex; flex-direction: column; gap: 6px; }
+.settings-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 11px;
+    border-radius: 10px;
+    font-size: 0.86rem;
+    font-weight: 600;
+    text-align: left;
+    color: var(--text-subtle);
+    background: transparent;
+    border: 1px solid transparent;
+}
+.settings-nav-item.active {
+    color: var(--text);
+    background: rgba(var(--primary-rgb), 0.16);
+    border-color: rgba(var(--primary-rgb), 0.45);
+    box-shadow: inset 3px 0 0 var(--primary);   /* 不做 border-left：那会让文字横向跳 2px */
+}
+.settings-block-title {
+    margin: 0 0 10px;
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    color: var(--text-subtle);
+}
+/* 同一分区里的第二、三个小标题前面加分隔线（靠"前面还有兄弟"判断，不用 :first-child 特判） */
+.settings-pane > * + .settings-block-title { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
+
+/* 主题预设卡（.selected 由 game.js 的 syncThemePresetUI() 维护，这里画勾） */
+.theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 10px; }
+.theme-card {
+    position: relative;
+    padding: 10px;
+    border-radius: 12px;
+    text-align: left;
+    color: var(--text);
+    background: rgba(var(--primary-rgb), 0.06);
+    border: 1px solid var(--border);
+    cursor: pointer;
+}
+.theme-card .theme-strip {
+    display: block;
+    height: 30px;
+    margin-bottom: 8px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #1f6fb8, #38a3f0);
+}
+.theme-card[data-preset="lava"] .theme-strip    { background: linear-gradient(135deg, #c2410c, #f97316); }
+.theme-card[data-preset="cyber"] .theme-strip   { background: linear-gradient(135deg, #7c3aed, #22d3ee); }
+.theme-card[data-preset="dusk"] .theme-strip    { background: linear-gradient(135deg, #be185d, #f472b6); }
+.theme-card[data-preset="aurora"] .theme-strip  { background: linear-gradient(135deg, #0f766e, #34d399); }
+.theme-card[data-preset="classic"] .theme-strip { background: linear-gradient(135deg, #1565c0, #1e88e5); }
+.theme-card b { display: block; font-size: 0.84rem; }
+.theme-card small { display: block; font-size: 0.72rem; color: var(--muted); }
+.theme-card.selected {
+    background: rgba(var(--primary-rgb), 0.12);
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(var(--primary-rgb), 0.35);
+}
+.theme-card.selected::after {
+    content: '✓';
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--primary);
+}
+
+/* 设置分区里的既有行（.profile-label / .profile-label-half）：只在本节范围内改成对齐的 flex 行。
+   这两个类现在只剩设置页在用（个人信息那边已换成 .pf-field）。 */
+.settings-pane .profile-label,
+.settings-pane .profile-label-half {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+.settings-pane .profile-label-half > span:first-child { min-width: 84px; }
+.settings-pane .profile-label input[type="text"] { flex: 1 1 200px; min-width: 0; margin-right: 0; }
+.settings-pane .profile-label-half input[type="range"] { flex: 1 1 140px; min-width: 0; margin-right: 0; }
+.settings-mute-row { gap: 18px; }
+.settings-mute-row label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+#theme-preset-hint { margin-top: 8px; }
+
+/* ===== 26.6 窄屏：左导航变顶部横向标签，两栏变单列 =====
+   ⚠️ 两条触发条件都要写：
+   · body.layout-compact / layout-tight —— adaptive_layout.js 按**可用空间**给的（横屏手机等）；
+   · max-width 媒体查询 —— 窄窗口下 adaptive_layout 可能还没判定（比如在首页开弹窗）。
+   只写其中一条，另一种情况下设置页就会挤成两栏、横向溢出。 */
+body.layout-compact .pf-editor,
+body.layout-tight .pf-editor,
+body.layout-compact .settings-wrap,
+body.layout-tight .settings-wrap { grid-template-columns: minmax(0, 1fr); }
+
+body.layout-compact .pf-editor-nav,
+body.layout-tight .pf-editor-nav,
+body.layout-compact .settings-nav,
+body.layout-tight .settings-nav {
+    flex-direction: row;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+}
+body.layout-compact .pf-editor-nav-item,
+body.layout-tight .pf-editor-nav-item,
+body.layout-compact .settings-nav-item,
+body.layout-tight .settings-nav-item { flex: 0 0 auto; white-space: nowrap; }
+body.layout-compact .settings-nav-item.active,
+body.layout-tight .settings-nav-item.active { box-shadow: inset 0 -3px 0 var(--primary); }
+
+@media (max-width: 720px) {
+    .pf-editor,
+    .settings-wrap { grid-template-columns: minmax(0, 1fr); }
+    .pf-editor-nav,
+    .settings-nav { flex-direction: row; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
+    .pf-editor-nav-item,
+    .settings-nav-item { flex: 0 0 auto; white-space: nowrap; }
+    .settings-nav-item.active { box-shadow: inset 0 -3px 0 var(--primary); }
+}
+
+@media (max-width: 560px) {
+    .pf-favcards { grid-template-columns: minmax(0, 1fr); }
+    .pf-hero { gap: 10px; }
+    .pf-avatar { width: 72px; height: 72px; border-radius: 18px; }
+    .pf-stats { gap: 8px; padding-left: 14px; padding-right: 14px; }
+    .pf-stats .stat b { font-size: 1.25rem; }
+    .settings-pane .profile-label-half > span:first-child { min-width: 0; }
+}
 
 
 

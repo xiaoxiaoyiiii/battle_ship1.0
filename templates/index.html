@@ -416,136 +416,256 @@
         </div>
     </div>
 
-    <!-- 个人信息模态弹窗 -->
+    <!-- 个人信息模态弹窗（2026-09-17 名片改版）——⚠️ 这里是【编辑面】。
+         查看面是下面的 #opponent-stats-modal：game.js 把分层名片渲染进 #opponent-stats-content，
+         四个入口共用（排行榜名字/头像、局内自己头像、局内对手头像、#show-opponent-stats）。
+         不要把查看态卡片塞回这个弹窗 —— 那会逼四个入口改道，还会丢掉对局历史列表。
+         契约：docs/PROFILE_CARD_2026_09_17_PLAN.md §3.1。
+         分区可见性只有一条规矩：**没带 .hidden 的那个分区可见**（全局 .hidden = display:none !important），
+         由 game.js 的 setProfileEditorPane() 切换，默认显示 [data-pane="card"]。 -->
     <div id="profile-modal" class="modal-overlay hidden">
-        <div class="modal-content narrow-modal">
+        <div class="modal-content profile-modal-card">
             <span class="modal-close" id="profile-modal-close">×</span>
-            <h2>个人信息</h2>
-            <div id="profile-content" class="modal-scroll-content">
-                <form id="profile-form">
-                    <div class="profile-avatar-row">
-                        <img id="profile-avatar" src="/static/avatars/default.png" alt="头像" class="avatar-lg">
-                        <br>
-                        <input type="file" id="avatar-input" accept="image/*">
-                    </div>
-                    <label class="profile-label">
-                        <span>用户名：</span>
-                        <span id="profile-username"></span>
-                    </label>
-                    <label class="profile-label">
-                        <span>个性签名：</span>
-                        <input type="text" id="profile-signature" maxlength="60">
-                    </label>
-                    <button type="submit" class="btn">保存修改</button>
-                    <div id="profile-save-msg" style="margin-top:8px;font-size:13px;"></div>
-                </form>
-                <hr class="settings-section-gap">
-                <form id="change-password-form">
-                    <label class="profile-label-half">
-                        <span>原密码：</span>
-                        <input type="password" id="old-password" maxlength="32">
-                    </label>
-                    <label class="profile-label-half">
-                        <span>新密码：</span>
-                        <input type="password" id="new-password" maxlength="32">
-                    </label>
-                    <button type="submit" class="btn">更改密码</button>
-                </form>
-                <div id="change-password-msg"></div>
+            <h2 class="pf-modal-title">个人信息</h2>
+            <div id="profile-edit" class="pf-editor hidden">
+                <nav class="pf-editor-nav">
+                    <button type="button" class="pf-editor-nav-item active" data-pane="card"><span class="pf-nav-ic">🎴</span>名片</button>
+                    <button type="button" class="pf-editor-nav-item" data-pane="avatar"><span class="pf-nav-ic">🖼️</span>头像与边框</button>
+                    <button type="button" class="pf-editor-nav-item" data-pane="title"><span class="pf-nav-ic">🏷️</span>称号与标签</button>
+                    <button type="button" class="pf-editor-nav-item" data-pane="account"><span class="pf-nav-ic">🔒</span>账号与密码</button>
+                </nav>
+                <div class="pf-editor-panes">
+                    <section class="pf-pane" data-pane="card">
+                        <label class="pf-field">
+                            <span class="pf-field-label">一句话状态</span>
+                            <input type="text" id="profile-edit-status" maxlength="30" placeholder="例如：找队友打三局，接受挑战">
+                            <small class="pf-hint">显示在名片上 · 留空即不显示 · 最长 30 字</small>
+                        </label>
+                        <div class="pf-field">
+                            <span class="pf-field-label">名片底色</span>
+                            <div id="profile-bg-row" class="pf-bg-row">
+                                <button type="button" class="pf-bg" data-bg="deep" title="深海"></button>
+                                <button type="button" class="pf-bg" data-bg="graphite" title="石墨"></button>
+                                <button type="button" class="pf-bg" data-bg="cyber" title="赛博"></button>
+                                <button type="button" class="pf-bg" data-bg="lava" title="熔岩"></button>
+                                <button type="button" class="pf-bg" data-bg="dusk" title="暮光"></button>
+                                <button type="button" class="pf-bg" data-bg="aurora" title="极光"></button>
+                            </div>
+                        </div>
+                        <div class="pf-field">
+                            <span class="pf-field-label">名片上显示什么</span>
+                            <div class="pf-toggles">
+                                <label><input type="checkbox" id="profile-show-stats" checked><span>战绩亮点（最高连胜 / 胜率 / 总场次）</span></label>
+                                <label><input type="checkbox" id="profile-show-favcards" checked><span>最爱用的卡</span></label>
+                                <label><input type="checkbox" id="profile-show-history"><span>允许别人看到我的对局历史</span></label>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="pf-pane hidden" data-pane="avatar">
+                        <div class="pf-field">
+                            <span class="pf-field-label">头像</span>
+                            <div class="pf-avatar-row">
+                                <img id="profile-avatar" src="/static/avatars/default.png" alt="头像" class="pf-avatar-edit">
+                                <!-- 整块做成 <label>：点虚线框任意位置都能选文件，不用精确点中那个原生控件 -->
+                                <label class="pf-drop">
+                                    <input type="file" id="avatar-input" accept="image/*">
+                                    <small class="pf-hint">支持 PNG / JPG，选好即上传生效</small>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="pf-field">
+                            <span class="pf-field-label">头像边框</span>
+                            <div id="profile-frame-row" class="pf-frame-row">
+                                <button type="button" class="pf-frame" data-frame="none" title="不使用边框"><span class="pf-frame-ring"></span><span class="pf-frame-name">无</span></button>
+                                <button type="button" class="pf-frame" data-frame="silver" title="白银边框"><span class="pf-frame-ring"></span><span class="pf-frame-name">白银</span></button>
+                                <button type="button" class="pf-frame" data-frame="gold" title="黄金边框"><span class="pf-frame-ring"></span><span class="pf-frame-name">黄金</span></button>
+                                <button type="button" class="pf-frame" data-frame="aurora" title="极光边框"><span class="pf-frame-ring"></span><span class="pf-frame-name">极光</span></button>
+                                <button type="button" class="pf-frame" data-frame="crimson" title="绯红边框"><span class="pf-frame-ring"></span><span class="pf-frame-name">绯红</span></button>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="pf-pane hidden" data-pane="title">
+                        <div class="pf-field">
+                            <span class="pf-field-label">展示的称号<small class="pf-hint">战绩解锁后自己挑一个</small></span>
+                            <div id="profile-title-list" class="pf-opt-grid"></div>
+                        </div>
+                        <div class="pf-field">
+                            <span class="pf-field-label">个人标签<small class="pf-hint">最多 3 个</small><span id="profile-tag-count" class="pf-tag-count">已选 0 / 3</span></span>
+                            <div id="profile-tag-list" class="pf-opt-grid"></div>
+                        </div>
+                    </section>
+
+                    <section class="pf-pane hidden" data-pane="account">
+                        <form id="profile-form">
+                            <label class="pf-field">
+                                <span class="pf-field-label">用户名</span>
+                                <span id="profile-username" class="pf-username">—</span>
+                            </label>
+                            <label class="pf-field">
+                                <span class="pf-field-label">个性签名</span>
+                                <input type="text" id="profile-signature" maxlength="60">
+                                <small class="pf-hint">最长 60 字 · 改完点「保存签名」</small>
+                            </label>
+                            <button type="submit" class="btn">保存签名</button>
+                        </form>
+                        <div class="pf-field pf-goto-row">
+                            <span class="pf-field-label">密码与隐私</span>
+                            <p class="pf-hint">改密码、对局历史是否公开，都在「界面设置 → 账号与隐私」里。</p>
+                            <button type="button" id="profile-goto-account" class="btn secondary">前往账号与隐私</button>
+                        </div>
+                    </section>
+                </div>
+            </div>
+            <div class="pf-edit-foot">
+                <button type="button" id="profile-card-save" class="btn">保存名片</button>
+                <button type="button" id="profile-edit-cancel" class="btn secondary">取消</button>
+                <div id="profile-save-msg"></div>
             </div>
         </div>
     </div>
 
-    <!-- 设置模态弹窗 -->
+    <!-- 界面设置模态弹窗（2026-09-17 改版：左导航 + 四个分区）
+         分区可见性只有一条规矩：**没带 .hidden 的那个分区可见**（全局 .hidden = display:none !important）。
+         game.js 的 showSettingsPane() / setProfileEditorPane() 就是这么切的，默认显示 [data-pane="look"]。
+         ⚠️ 不要再引入第二套"当前面板"标记（比如 .active）—— 两套一起用会同时亮两个面板。
+         ⚠️ 改密码表单只在下面 [data-pane="acct"] 里一份；名片展示开关只在 #profile-modal 里一份。 -->
     <div id="settings-modal" class="modal-overlay hidden">
-        <div class="modal-content narrow-modal">
+        <div class="modal-content settings-modal-card">
             <span class="modal-close" id="settings-modal-close">×</span>
-            <h2>界面设置</h2>
-            <div id="settings-content" class="modal-scroll-content">
-                <label class="profile-label">
-                    <span>主色（Primary Color）：</span>
-                    <input type="color" id="primary-color-picker" value="#1976d2">
-                </label>
-                <hr class="settings-section-gap">
-                <h3>背景音乐设置</h3>
-                <label class="profile-label-half">
-                    <span>音量：</span>
-                    <input type="range" id="music-volume" min="0" max="100" value="50">
-                    <span id="volume-display">50%</span>
-                </label>
-                <label class="profile-label-half">
-                    <span>循环模式：</span>
-                    <select id="music-loop-mode">
-                        <option value="all">全部循环</option>
-                        <option value="single">单曲循环</option>
-                        <option value="none">不循环</option>
-                    </select>
-                </label>
-                <div class="profile-label-half">
-                    <button id="music-toggle-play" class="btn">播放/暂停</button>
-                    <button id="music-next" class="btn">下一首</button>
-                    <button id="music-previous" class="btn">上一首</button>
+            <h2 class="pf-modal-title">界面设置</h2>
+            <div class="settings-wrap">
+                <nav class="settings-nav">
+                    <button type="button" class="settings-nav-item active" data-pane="look"><span class="pf-nav-ic">🎨</span>外观与主题</button>
+                    <button type="button" class="settings-nav-item" data-pane="sound"><span class="pf-nav-ic">🔊</span>音效与音乐</button>
+                    <button type="button" class="settings-nav-item" data-pane="wp"><span class="pf-nav-ic">🖼️</span>动态壁纸</button>
+                    <button type="button" class="settings-nav-item" data-pane="acct"><span class="pf-nav-ic">🔒</span>账号与隐私</button>
+                </nav>
+                <div class="settings-panes">
+                    <section class="settings-pane" data-pane="look">
+                        <h4 class="settings-block-title">主题预设</h4>
+                        <div id="theme-preset-grid" class="theme-grid">
+                            <button type="button" class="theme-card selected" data-preset="deep"><span class="theme-strip"></span><b>深海</b><small>默认 · 冷蓝</small></button>
+                            <button type="button" class="theme-card" data-preset="lava"><span class="theme-strip"></span><b>熔岩</b><small>高对比暖色</small></button>
+                            <button type="button" class="theme-card" data-preset="cyber"><span class="theme-strip"></span><b>赛博</b><small>紫青霓虹</small></button>
+                            <button type="button" class="theme-card" data-preset="dusk"><span class="theme-strip"></span><b>暮光</b><small>柔和粉紫</small></button>
+                            <button type="button" class="theme-card" data-preset="aurora"><span class="theme-strip"></span><b>极光</b><small>青绿清爽</small></button>
+                            <button type="button" class="theme-card" data-preset="classic"><span class="theme-strip"></span><b>经典</b><small>原来的配色</small></button>
+                        </div>
+                        <h4 class="settings-block-title">主色微调</h4>
+                        <label class="profile-label">
+                            <span>主色（Primary Color）：</span>
+                            <input type="color" id="primary-color-picker" value="#1976d2">
+                        </label>
+                        <p class="muted-hint" id="theme-preset-hint"></p>
+                    </section>
+
+                    <section class="settings-pane hidden" data-pane="sound">
+                        <h4 class="settings-block-title">音效与音乐</h4>
+                        <label class="profile-label-half">
+                            <span>音量：</span>
+                            <input type="range" id="music-volume" min="0" max="100" value="50">
+                            <span id="volume-display">50%</span>
+                        </label>
+                        <label class="profile-label-half">
+                            <span>循环模式：</span>
+                            <select id="music-loop-mode">
+                                <option value="all">全部循环</option>
+                                <option value="single">单曲循环</option>
+                                <option value="none">不循环</option>
+                            </select>
+                        </label>
+                        <div class="profile-label-half">
+                            <button id="music-toggle-play" class="btn">播放/暂停</button>
+                            <button id="music-next" class="btn">下一首</button>
+                            <button id="music-previous" class="btn">上一首</button>
+                        </div>
+                        <div class="profile-label-half settings-mute-row">
+                            <label><input type="checkbox" id="music-muted"> 音乐静音</label>
+                            <label><input type="checkbox" id="sfx-muted"> 音效静音</label>
+                        </div>
+                        <div class="muted-hint">
+                            <p>当前播放：<span id="current-track">未播放</span></p>
+                        </div>
+                    </section>
+                    <section class="settings-pane hidden" data-pane="wp">
+                        <h4 class="settings-block-title">动态壁纸</h4>
+                        <div id="wp-section" class="wp-section">
+                            <p class="muted-hint" id="wp-now-playing">当前壁纸：无</p>
+                            <label class="profile-label-half">
+                                <span>不透明度：</span>
+                                <input type="range" id="wp-opacity" min="20" max="100" value="100">
+                                <span id="wp-opacity-display">100%</span>
+                            </label>
+                            <label class="profile-label-half">
+                                <span>压暗遮罩：</span>
+                                <input type="range" id="wp-dim" min="0" max="90" value="35">
+                                <span id="wp-dim-display">35%</span>
+                            </label>
+                            <label class="profile-label-half">
+                                <span>模糊：</span>
+                                <input type="range" id="wp-blur" min="0" max="24" value="0">
+                                <span id="wp-blur-display">0px</span>
+                            </label>
+                            <label class="profile-label-half">
+                                <span>铺满方式：</span>
+                                <select id="wp-fit">
+                                    <option value="cover">裁剪铺满（cover）</option>
+                                    <option value="contain">完整显示（contain）</option>
+                                    <option value="fill">拉伸铺满（fill）</option>
+                                </select>
+                            </label>
+                            <div class="profile-label-half wp-buttons">
+                                <button id="wp-scan" class="btn" type="button">🔍 扫描本机壁纸库</button>
+                                <button id="wp-toggle-play" class="btn" type="button">⏸ 暂停播放</button>
+                                <button id="wp-clear" class="btn secondary" type="button">恢复默认背景</button>
+                            </div>
+                            <div id="wp-list" class="wp-list"></div>
+                            <label class="profile-label">
+                                <span>本机路径（壁纸文件夹，或单个视频/图片文件）：</span>
+                                <input type="text" id="wp-path"
+                                       placeholder="D:\Steam\steamapps\workshop\content\431960">
+                                <button id="wp-path-import" class="btn" type="button">导入</button>
+                            </label>
+                            <label class="profile-label">
+                                <span>图片 / 视频直链：</span>
+                                <input type="text" id="wp-url" placeholder="https://example.com/wallpaper.mp4">
+                                <button id="wp-url-import" class="btn" type="button">应用</button>
+                            </label>
+                            <div id="wp-status" class="muted-hint wp-status"></div>
+                            <p class="muted-hint wp-help">
+                                扫描与「按路径导入」只在本机（localhost）访问时可用，远端请用直链。<br>
+                                场景型（scene.pkg）与网页型（.html）壁纸浏览器无法播放，下面会逐张标出原因。<br>
+                                壁纸太亮压不住界面时，把「压暗遮罩」加到 50% 以上；深色模式下壁纸观感最好。
+                            </p>
+                        </div>
+                    </section>
+
+                    <section class="settings-pane hidden" data-pane="acct">
+                        <h4 class="settings-block-title">账号与密码</h4>
+                        <form id="change-password-form">
+                            <label class="profile-label-half">
+                                <span>原密码：</span>
+                                <input type="password" id="old-password" maxlength="32">
+                            </label>
+                            <label class="profile-label-half">
+                                <span>新密码：</span>
+                                <input type="password" id="new-password" maxlength="32">
+                            </label>
+                            <button type="submit" class="btn">更改密码</button>
+                        </form>
+                        <div id="change-password-msg"></div>
+                        <h4 class="settings-block-title">隐私</h4>
+                        <p class="muted-hint">
+                            对局历史是否公开、名片上显示哪些内容，都在「个人信息 → 编辑资料」里改；
+                            这里刻意不再放一份控件（同一个设置两份控件必然漂移）。
+                        </p>
+                        <button type="button" id="settings-goto-profile" class="btn secondary">前往个人信息编辑</button>
+                    </section>
                 </div>
-                <label class="profile-label-half">
-                    <input type="checkbox" id="music-muted"> 静音
-            <label style="margin-left:16px;"><input type="checkbox" id="sfx-muted"> 音效静音</label>
-                </label>
-                <div class="muted-hint">
-                    <p>当前播放：<span id="current-track">未播放</span></p>
-                </div>
-                <hr class="settings-section-gap">
-                <h3>动态壁纸</h3>
-                <div id="wp-section" class="wp-section">
-                    <p class="muted-hint" id="wp-now-playing">当前壁纸：无</p>
-                    <label class="profile-label-half">
-                        <span>不透明度：</span>
-                        <input type="range" id="wp-opacity" min="20" max="100" value="100">
-                        <span id="wp-opacity-display">100%</span>
-                    </label>
-                    <label class="profile-label-half">
-                        <span>压暗遮罩：</span>
-                        <input type="range" id="wp-dim" min="0" max="90" value="35">
-                        <span id="wp-dim-display">35%</span>
-                    </label>
-                    <label class="profile-label-half">
-                        <span>模糊：</span>
-                        <input type="range" id="wp-blur" min="0" max="24" value="0">
-                        <span id="wp-blur-display">0px</span>
-                    </label>
-                    <label class="profile-label-half">
-                        <span>铺满方式：</span>
-                        <select id="wp-fit">
-                            <option value="cover">裁剪铺满（cover）</option>
-                            <option value="contain">完整显示（contain）</option>
-                            <option value="fill">拉伸铺满（fill）</option>
-                        </select>
-                    </label>
-                    <div class="profile-label-half wp-buttons">
-                        <button id="wp-scan" class="btn" type="button">🔍 扫描本机壁纸库</button>
-                        <button id="wp-toggle-play" class="btn" type="button">⏸ 暂停播放</button>
-                        <button id="wp-clear" class="btn secondary" type="button">恢复默认背景</button>
-                    </div>
-                    <div id="wp-list" class="wp-list"></div>
-                    <label class="profile-label">
-                        <span>本机路径（壁纸文件夹，或单个视频/图片文件）：</span>
-                        <input type="text" id="wp-path"
-                               placeholder="D:\Steam\steamapps\workshop\content\431960">
-                        <button id="wp-path-import" class="btn" type="button">导入</button>
-                    </label>
-                    <label class="profile-label">
-                        <span>图片 / 视频直链：</span>
-                        <input type="text" id="wp-url" placeholder="https://example.com/wallpaper.mp4">
-                        <button id="wp-url-import" class="btn" type="button">应用</button>
-                    </label>
-                    <div id="wp-status" class="muted-hint wp-status"></div>
-                    <p class="muted-hint wp-help">
-                        扫描与「按路径导入」只在本机（localhost）访问时可用，远端请用直链。<br>
-                        场景型（scene.pkg）与网页型（.html）壁纸浏览器无法播放，下面会逐张标出原因。<br>
-                        壁纸太亮压不住界面时，把「压暗遮罩」加到 50% 以上；深色模式下壁纸观感最好。
-                    </p>
-                </div>
-                <button id="settings-save-btn" class="btn">保存</button>
             </div>
+            <button id="settings-save-btn" class="btn">保存</button>
         </div>
     </div>
 
@@ -606,9 +726,12 @@
         </div>
     </div>
 
-    <!-- 对手 / 任意玩家个人信息模态弹窗（对局内点对手头像、排行榜点名字都开它） -->
+    <!-- 对手 / 任意玩家个人信息模态弹窗（对局内点对手头像、排行榜点名字都开它）
+         ⚠️ 这是【查看面】：game.js 把分层名片 .pf-card 渲染进 #opponent-stats-content，
+         自己与别人共用同一份渲染（差别只在于「编辑资料」按钮仅自己可见）。
+         壳里的 #opponent-stats-modal-close / #opponent-stats-title / #opponent-stats-content 三个 id 必须保留。 -->
     <div id="opponent-stats-modal" class="modal-overlay hidden">
-        <div class="modal-content">
+        <div class="modal-content pf-view-modal">
             <span class="modal-close" id="opponent-stats-modal-close">×</span>
             <h2 id="opponent-stats-title">对手个人信息</h2>
             <div id="opponent-stats-content">

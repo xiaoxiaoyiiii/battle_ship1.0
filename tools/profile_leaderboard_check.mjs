@@ -78,6 +78,11 @@ const STATS = {
   stats: {
     id: 'u2', username: 'bravo_u', wins: 7, losses: 9, current_streak: 0, longest_streak: 3,
     signature: '今天也要赢一局', avatar: '/static/avatars/u2_avatar.png', rank: 7,
+    // 2026-09-17 名片批新增的公开字段（T1 的 /user_stats 会下发这些）
+    title_id: 'hunter', title_name: '深海猎手', tags: ['aggressive', 'nightowl'],
+    status_text: '今晚也来两局', frame_id: 'gold', card_bg_id: 'cyber',
+    fav_cards: [{ name: '失灵！', speed: 3, uses: 41 }, { name: '增援', speed: 1, uses: 12 }],
+    show_stats: 1, show_fav_cards: 1, show_history: 1, created_at: 1780000000,
   },
   history: [
     { match_id: 1, winner_id: 'u2', loser_id: 'u1', winner_name: 'bravo_u', loser_name: 'z1w6qn',
@@ -105,21 +110,39 @@ const BOARD_STATE = '(function(){' +
   '   users: rows.map(function (r) { var b = r.querySelector(".leaderboard-user"); return b ? b.dataset.username : null; }),' +
   '   texts: rows.map(function (r) { return r.innerText.replace(/\\s+/g, " ").trim(); }) }; })()';
 
+// 查看面（#opponent-stats-content）里的那张分层名片。
+// ⚠️ 一律用 content.querySelector 作用域查询：同一个文档里 #user-stats-content
+//    也可能渲染同一张卡（只是不带 id），getElementById 会取到靠前的那个。
 const MODAL_STATE = '(function(){' +
   ' var modal = document.getElementById("opponent-stats-modal");' +
   ' var content = document.getElementById("opponent-stats-content");' +
   ' var q = function (sel) { return content.querySelector(sel); };' +
-  ' var rows = [].slice.call(content.querySelectorAll(".user-stats-table tr")).map(function (tr) {' +
-  '   return [].slice.call(tr.querySelectorAll("td")).map(function (td) { return td.textContent.trim(); }); });' +
+  ' var attr = function (sel, name) { var el = q(sel); return el && el.getAttribute ? el.getAttribute(name) : null; };' +
+  ' var text = function (sel) { var el = q(sel); return el ? el.textContent.trim() : null; };' +
+  ' var statMap = {};' +
+  ' [].slice.call(content.querySelectorAll("#profile-view-stats .stat")).forEach(function (s) {' +
+  '   statMap[s.dataset.stat] = ((s.querySelector("b") || {}).textContent || "").trim(); });' +
+  ' var emptyEl = q("#profile-history-empty");' +
   ' return { hidden: modal.classList.contains("hidden"),' +
   '   title: (document.getElementById("opponent-stats-title") || {}).textContent,' +
-  '   hasHead: !!q(".profile-head"),' +
-  '   avatar: (q(".profile-avatar") || {}).getAttribute ? q(".profile-avatar").getAttribute("src") : null,' +
-  '   name: (q(".profile-name") || {}).textContent,' +
-  '   signature: (q(".profile-signature") || {}).textContent,' +
-  '   rank: (q(".profile-rank") || {}).textContent,' +
-  '   rows: rows,' +
-  '   historyRows: content.querySelectorAll(".match-history-btn").length }; })()';
+  '   hasCard: !!q("#profile-view.pf-card"),' +
+  '   avatar: attr("#profile-view-avatar", "src"),' +
+  '   avatarFrame: attr("#profile-view-avatar", "data-frame"),' +
+  '   cardBg: attr("#profile-view", "data-bg"),' +
+  '   level: text("#profile-view-level"),' +
+  '   name: text("#profile-view-name"),' +
+  '   titleChip: text("#profile-view-title"),' +
+  '   signature: text(".profile-signature"),' +
+  '   status: text("#profile-view-status"),' +
+  '   tags: [].slice.call(content.querySelectorAll("#profile-view-tags .tag")).map(function (t) { return t.textContent.trim(); }),' +
+  '   stats: statMap,' +
+  '   favNames: [].slice.call(content.querySelectorAll("#profile-view-favcards .fav-name")).map(function (n) { return n.textContent.trim(); }),' +
+  '   favHidden: !!(q("#profile-view-favcards") && q("#profile-view-favcards").classList.contains("hidden")),' +
+  '   meta: [].slice.call(content.querySelectorAll("#profile-view-meta .pf-meta-item")).map(function (n) { return n.textContent.trim(); }),' +
+  '   editBtn: !!q("#profile-edit-btn"),' +
+  '   historyRows: content.querySelectorAll(".match-history-btn").length,' +
+  '   historyEmpty: emptyEl ? (emptyEl.classList.contains("hidden") ? "" : emptyEl.textContent.trim()) : null,' +
+  '   moreBtn: !!q("#profile-history-more") }; })()';
 
 try {
   browser = spawn(BROWSER, [
@@ -175,25 +198,36 @@ try {
   // 点头像/名字 → 打开个人信息
   const clicked = await ev('(function(){ var b = document.querySelectorAll("#leaderboard-table .leaderboard-user")[1]; if (!b) return "no-btn"; b.click(); return "clicked"; })()');
   await waitFor(async () => await ev('!document.getElementById("opponent-stats-modal").classList.contains("hidden")'), 10000, '个人信息弹窗打开');
+  await waitFor(async () => await ev('!!document.querySelector("#opponent-stats-content #profile-view")'), 10000, '名片渲染');
   const m = await ev(MODAL_STATE);
   check(clicked === 'clicked', 'L5 点排行榜里的名字/头像', clicked);
   check(m && m.hidden === false, 'L5b 弹出个人信息弹窗（不再跳走页面）', m && !m.hidden);
   check(m && (m.title || '').indexOf('bravo_u') >= 0, 'L5c 弹窗标题写明是谁', m && m.title);
-  check(m && m.hasHead === true, 'P1 有头像区块（.profile-head）', m && m.hasHead);
+  check(m && m.hasCard === true, 'P1 有分层名片（#profile-view.pf-card）', m && m.hasCard);
   // 注意：桩里的头像 URL 在本机并不存在，img 的 onerror 会把它换成默认头像，
   // 所以"用了服务端下发的 URL"要按纯渲染结果断言（不经过图片加载）。
   const rendered = await ev('(function(){ return window.renderUserStatsHTML(' + JSON.stringify(STATS.stats) + ', [], {}); })()');
   check(typeof rendered === 'string' && rendered.indexOf('/static/avatars/u2_avatar.png') >= 0,
-    'P2 渲染时使用服务端下发的头像 URL', (rendered || '').indexOf('profile-avatar') >= 0);
+    'P2 渲染时使用服务端下发的头像 URL', (rendered || '').slice(0, 0) + 'avatar-in-html=' +
+      (typeof rendered === 'string' && rendered.indexOf('/static/avatars/u2_avatar.png') >= 0));
   check(m && !!m.avatar && m.avatar.length > 0, 'P2b 头像 img 一定有个可用的 src（缺图时回退默认头像）', m && m.avatar);
-  check(m && m.name === 'bravo_u', 'P3 显示用户名', m && m.name);
+  check(m && m.avatarFrame === 'gold' && m.cardBg === 'cyber',
+    'P2c 头像框 / 名片底色按接口下发的 id 上到 data 属性', m && { frame: m.avatarFrame, bg: m.cardBg });
+  check(m && (m.name || '').indexOf('bravo_u') >= 0, 'P3 显示用户名', m && m.name);
+  check(m && (m.level || '').indexOf('Lv.') === 0, 'P3b 显示等级位', m && m.level);
   check(m && m.signature === '今天也要赢一局', 'P4 显示个性签名', m && m.signature);
-  check(m && (m.rank || '').indexOf('第 7 名') >= 0, 'P5 显示排行榜名次', m && m.rank);
-  const rowMap = {};
-  (m && m.rows || []).forEach((r) => { rowMap[r[0]] = r[1]; });
-  check(rowMap['排行榜名次'] === '第 7 名', 'P6 信息表里有名次行', rowMap['排行榜名次']);
-  check(rowMap['胜率'] === '44%', 'P7 信息表里有胜率行（7 胜 9 负 → 44%）', rowMap['胜率']);
-  check(rowMap['胜场'] === '7' && rowMap['负场'] === '9', 'P8 胜负场仍在', { w: rowMap['胜场'], l: rowMap['负场'] });
+  check(m && m.titleChip === '深海猎手', 'P4b 显示称号 chip', m && m.titleChip);
+  check(m && m.status === '今晚也来两局', 'P4c 显示一句话状态', m && m.status);
+  check(m && (m.tags || []).join(',') === '激进,夜猫子', 'P4d 标签按 id → 中文名渲染', m && m.tags);
+  const meta = (m && m.meta || []).join(' | ');
+  check(meta.indexOf('第 7 名') >= 0, 'P5 显示排行榜名次', m && m.meta);
+  check(meta.indexOf('加入于') >= 0, 'P6 显示加入时间', m && m.meta);
+  check(meta.indexOf('7 胜 9 负') >= 0, 'P8 胜场 / 负场仍在', meta);
+  check(m && m.stats && m.stats.rate === '44%', 'P7 三块大数字里有胜率（7 胜 9 负 → 44%）', m && m.stats);
+  check(m && m.stats && m.stats.streak === '3' && m.stats.matches === '16',
+    'P7b 另外两块是最高连胜 / 总场次', m && m.stats);
+  check(m && (m.favNames || []).join(',') === '失灵！,增援', 'P7c 显示最爱用的卡', m && m.favNames);
+  check(m && m.editBtn === false, 'P11 看别人时**不**渲染「编辑资料」', m && m.editBtn);
   check(m && m.historyRows === 2, 'P9 带历史战绩列表', m && m.historyRows);
 
   // 历史行仍可点开对局详情
@@ -221,8 +255,9 @@ try {
   await ev('(function(){ document.getElementById("opponent-avatar-corner").click(); return true; })()');
   await waitFor(async () => await ev('!document.getElementById("opponent-stats-modal").classList.contains("hidden")'), 10000, '点头像打开弹窗');
   const m2 = await ev(MODAL_STATE);
-  check(m2 && m2.hasHead === true && (m2.rank || '').indexOf('第 7 名') >= 0,
-    'G3 对局内点对手头像 → 同一份详细信息（含名次/头像/签名）', m2 && { rank: m2.rank, avatar: m2.avatar });
+  check(m2 && m2.hasCard === true && (m2.meta || []).join(' ').indexOf('第 7 名') >= 0,
+    'G3 对局内点对手头像 → 同一份详细信息（含名次/头像/签名）',
+    m2 && { card: m2.hasCard, meta: m2.meta, avatar: m2.avatar });
 
   // ★ 局内头像 <img> 自己身上不许再有第二套渲染（老实现渲染的是只有胜负/连胜的裸表格，
   //   而且它与胶囊的委托会同时触发 —— 玩家实测「局内头像的个人信息跟排行榜里的不一样」）。
@@ -236,8 +271,8 @@ try {
   const mImg = await ev(MODAL_STATE);
   const legacyOpen = await ev('(function(){ return !document.getElementById("user-stats-modal").classList.contains("hidden"); })()');
   check(imgClick === 'clicked', '★ G3c 直接点对局内的对手头像 <img>', imgClick);
-  check(mImg && mImg.hasHead === true && mImg.historyRows === 2,
-    '★ G3d 点 <img> 打开的也是同一份详情（头像块 + 历史战绩）', mImg && { head: mImg.hasHead, rows: mImg.historyRows });
+  check(mImg && mImg.hasCard === true && mImg.historyRows === 2,
+    '★ G3d 点 <img> 打开的也是同一份详情（名片 + 历史战绩）', mImg && { card: mImg.hasCard, rows: mImg.historyRows });
   check(legacyOpen === false, '★ G3e 不再弹出那张旧的迷你战绩弹窗（#user-stats-modal）', legacyOpen);
 
   // 左上角「我」的胶囊：同一份面板
@@ -249,26 +284,39 @@ try {
     ' document.getElementById("avatar-corner").click(); return true; })()');
   await waitFor(async () => await ev('!document.getElementById("opponent-stats-modal").classList.contains("hidden")'), 10000, '点自己头像打开弹窗');
   const m3 = await ev(MODAL_STATE);
-  check(m3 && m3.hasHead === true && m3.signature === '今天也要赢一局',
-    '★ G6 点自己的头像 → 同样是带头像/签名/名次的详情面板', m3 && { head: m3.hasHead, sig: m3.signature });
+  check(m3 && m3.hasCard === true && m3.signature === '今天也要赢一局',
+    '★ G6 点自己的头像 → 同样是带头像/签名/名次的详情面板', m3 && { card: m3.hasCard, sig: m3.signature });
 
   // 「查看对手战绩」按钮走同一入口
   await ev('(function(){ document.getElementById("opponent-stats-modal").classList.add("hidden"); document.getElementById("show-opponent-stats").click(); return true; })()');
   await waitFor(async () => await ev('!document.getElementById("opponent-stats-modal").classList.contains("hidden")'), 10000, '按钮打开弹窗');
   const m4 = await ev(MODAL_STATE);
-  check(m4 && m4.hasHead === true && m4.historyRows === 2, 'G4「查看对手战绩」按钮也走同一份详情',
-    m4 && { head: m4.hasHead, rows: m4.historyRows });
+  check(m4 && m4.hasCard === true && m4.historyRows === 2, 'G4「查看对手战绩」按钮也走同一份详情',
+    m4 && { card: m4.hasCard, rows: m4.historyRows });
 
   // ---------- 工具兼容：renderUserStatsHTML 收到精简对象也不能抛 ----------
   const lean = await ev('(function(){ var c = document.getElementById("user-stats-content");' +
     ' try { c.innerHTML = window.renderUserStatsHTML({ id: "x", username: "lean", wins: 1, losses: 0, current_streak: 1, longest_streak: 1 }, [], {}); }' +
     ' catch (e) { return "throw: " + e.message; }' +
-    ' var img = c.querySelector(".profile-avatar");' +
-    ' return { src: img ? img.getAttribute("src") : null, rank: (c.querySelector(".profile-rank") || {}).textContent || null,' +
-    '   sig: (c.querySelector(".profile-signature") || {}).textContent || null, rows: c.querySelectorAll(".user-stats-table tr").length }; })()');
+    ' var img = c.querySelector(".pf-avatar");' +
+    ' var empty = c.querySelector(".history-empty");' +
+    ' return { src: img ? img.getAttribute("src") : null,' +
+    '   meta: [].slice.call(c.querySelectorAll(".pf-meta-item")).map(function (n) { return n.textContent.trim(); }).join(" | "),' +
+    '   sig: (c.querySelector(".profile-signature") || {}).textContent || null,' +
+    '   favHidden: !!(c.querySelector(".pf-favcards") && c.querySelector(".pf-favcards").classList.contains("hidden")),' +
+    '   emptyText: empty ? empty.textContent.trim() : null,' +
+    '   ids: c.querySelectorAll("[id^=profile-]").length }; })()');
   check(typeof lean === 'object' && lean !== null, 'T1 renderUserStatsHTML 兼容精简数据（不抛异常）', lean);
   check(lean && lean.src === '/static/avatars/default.png', 'T2 缺 avatar 时回退默认头像', lean && lean.src);
-  check(lean && lean.rows === 7, 'T3 信息表仍是 .user-stats-table（7 行）', lean && lean.rows);
+  check(lean && lean.meta.indexOf('暂未上榜') >= 0 && lean.meta.indexOf('1 胜 0 负') >= 0,
+    'T3 元信息行给出名次占位与胜负场', lean && lean.meta);
+  check(lean && lean.favHidden === true, 'T3b 没有最爱用的卡时整块隐藏', lean && lean.favHidden);
+  check(lean && lean.emptyText === '暂无历史战绩', 'T3c 没有历史时给出空占位', lean && lean.emptyText);
+  // 契约：只有"查看面"那一次渲染才允许带 #profile-view-* 这套 id，
+  // 别的容器带上就会在同一个文档里撞 id（getElementById 只会拿到靠前的那个）
+  check(lean && lean.ids === 0, 'T4 非查看面的渲染不输出 #profile-view-* 这套 id（防重复 id）', lean && lean.ids);
+  const idVariant = await ev('(function(){ return window.renderUserStatsHTML({ id: "x", username: "lean" }, [], { ids: true, canEdit: true }).indexOf("id=\\"profile-edit-btn\\"") >= 0; })()');
+  check(idVariant === true, 'T5 查看面变体（ids + canEdit）才渲染「编辑资料」', idVariant);
 
   check(jsProblems.length === 0, '全程无 JS 异常 / console.error', jsProblems.slice(0, 4));
 } catch (err) {

@@ -334,20 +334,43 @@ const profileUsername = document.getElementById('profile-username');
 const profileSignature = document.getElementById('profile-signature');
 const profileSaveMsg = document.getElementById('profile-save-msg');
 
-// 个人信息弹窗逻辑
-if (showProfileBtn && profileModal && profileModalClose) {
-    showProfileBtn.onclick = () => {
-        fetch('/api/profile').then(r => r.json()).then(res => {
-            if (res.profile) {
-                profileUsername.textContent = res.profile.username;
-                profileSignature.value = res.profile.signature || '';
-                profileAvatar.src = res.profile.avatar || '/static/avatars/default.png';
-            }
-        });
-        profileModal.classList.remove('hidden');
-        profileSaveMsg.textContent = '';
+// 「我是谁」+ 可编辑项的池子（2026-09-17 名片批）。
+// 只在 init() 里拉一次：GET /api/profile 未登录会 401，按游客处理（保持 null）。
+// 用来判断"看的是不是自己" —— 只有看自己才在名片上渲染「编辑资料」。
+let profileSelfName = null;
+let profileCatalog = null;
+function loadSelfIdentity() {
+    if (loadSelfIdentity.done) return;
+    loadSelfIdentity.done = true;
+    fetch('/api/profile').then(r => (r.ok ? r.json() : null)).then(res => {
+        if (!res || !res.profile) return;
+        profileSelfName = res.profile.username || null;
+        profileCatalog = res.profile.catalog || null;
+    }).catch(() => { /* 游客：按未登录处理 */ });
+}
+
+// 头像/签名改完之后把当前打开的那张名片刷一遍（看的是谁由 showUserProfile 记着）
+function refreshViewedProfileCard() {
+    const name = window.__viewedProfileName;
+    if (name && typeof window.showUserProfile === 'function') window.showUserProfile(name);
+}
+
+// 页头「个人信息」= 看自己那张名片（查看态，右上角有「编辑资料」进编辑面）。
+// 表单不再直接摊开：打开即干净名片，这也是这批改版的主要目的。
+if (showProfileBtn) {
+    showProfileBtn.onclick = (e) => {
+        if (e && e.preventDefault) e.preventDefault();
+        const myName = window.__USERNAME || '';
+        if (myName && typeof window.showUserProfile === 'function') {
+            window.showUserProfile(myName);
+            return;
+        }
+        if (typeof showMessage === 'function') showMessage('未登录，无法查看个人信息', { type: 'warning' });
     };
-    profileModalClose.onclick = () => profileModal.classList.add('hidden');
+}
+// 编辑面的关闭：× 与点遮罩都只收起弹窗（未保存的改动由「取消」负责丢弃）
+if (profileModalClose) profileModalClose.onclick = () => profileModal.classList.add('hidden');
+if (profileModal) {
     profileModal.onclick = (e) => {
         if (e.target === profileModal) profileModal.classList.add('hidden');
     };
@@ -363,6 +386,8 @@ if (profileForm) {
             .then(r => r.json()).then(res => {
                 if (res.success) {
                     profileSaveMsg.textContent = '签名已保存';
+                    profileSaveMsg.style.color = '';
+                    refreshViewedProfileCard();
                 } else {
                     profileSaveMsg.textContent = '保存失败';
                     profileSaveMsg.style.color = 'red';
@@ -371,7 +396,7 @@ if (profileForm) {
     };
 }
 
-// 头像上传
+// 头像上传（控件的 id 与行为都保持原样，只是成功后再把名片刷一遍）
 if (avatarInput) {
     avatarInput.onchange = function () {
         const file = avatarInput.files[0];
@@ -383,6 +408,8 @@ if (avatarInput) {
                 if (res.success && res.avatar) {
                     profileAvatar.src = res.avatar + '?t=' + Date.now();
                     profileSaveMsg.textContent = '头像已更新';
+                    profileSaveMsg.style.color = '';
+                    refreshViewedProfileCard();
                 } else {
                     profileSaveMsg.textContent = res.error || '头像上传失败';
                     profileSaveMsg.style.color = 'red';
@@ -400,9 +427,11 @@ const settingsSaveBtn = document.getElementById('settings-save-btn');
 // 设置弹窗逻辑
 if (settingsBtn && settingsModal && settingsModalClose) {
     settingsBtn.onclick = () => {
-        // 读取当前主色
-        const cur = localStorage.getItem('battleship_primary_color') || getComputedStyle(document.documentElement).getPropertyValue('--primary') || '#1976d2';
-        if (primaryColorPicker) primaryColorPicker.value = cur.trim().replace(/^#|^rgb\((.+)\)$/g, m => m.startsWith('#') ? m : '#1976d2');
+        // 读取当前主色（老用户存过的自定义色不能丢）
+        themePickerTouched = false;
+        if (primaryColorPicker) primaryColorPicker.value = currentPrimaryHex();
+        // 每次打开设置默认停在「外观与主题」（左导航第一项）
+        showSettingsPane('look');
         settingsModal.classList.remove('hidden');
     };
     settingsModalClose.onclick = () => settingsModal.classList.add('hidden');
@@ -411,13 +440,47 @@ if (settingsBtn && settingsModal && settingsModalClose) {
     };
 }
 
+// 取色器：边拖边生效（原来的行为是"点保存才生效"，现在多了一套主题预设，
+// 必须知道玩家到底动没动过取色器，见下面 settingsSaveBtn 的注释）。
+if (primaryColorPicker) {
+    primaryColorPicker.addEventListener('input', () => {
+        themePickerTouched = true;
+        applyCustomPrimaryColor(primaryColorPicker.value);
+    });
+}
+
 if (settingsSaveBtn && primaryColorPicker) {
     settingsSaveBtn.onclick = () => {
-        const color = primaryColorPicker.value;
-        localStorage.setItem('battleship_primary_color', color);
-        applyPrimaryColor(color);
+        // ⚠️ 只有玩家真的动过取色器才写 battleship_primary_color。
+        // 否则"选了主题预设 → 点保存"会把取色器里那个还没更新的旧自定义色当成
+        // 新的自定义色写回去，预设当场被覆盖（等于选了个寂寞）。
+        if (themePickerTouched) {
+            applyCustomPrimaryColor(primaryColorPicker.value);
+        }
         if (settingsModal) settingsModal.classList.add('hidden');
     };
+}
+
+// 设置页左导航：每次只显示一个 .settings-pane（pane 名与 data-pane 一致）
+function showSettingsPane(pane) {
+    const name = pane || 'look';
+    document.querySelectorAll('#settings-modal .settings-pane[data-pane]').forEach(section => {
+        section.classList.toggle('hidden', section.dataset.pane !== name);
+    });
+    document.querySelectorAll('#settings-modal .settings-nav-item[data-pane]').forEach(item => {
+        item.classList.toggle('active', item.dataset.pane === name);
+    });
+    return name;
+}
+
+// 打开设置弹窗（可指定落在哪个分类上），供 #profile-goto-account 等入口复用
+function openSettingsModal(pane) {
+    if (!settingsModal) return false;
+    themePickerTouched = false;
+    if (primaryColorPicker) primaryColorPicker.value = currentPrimaryHex();
+    showSettingsPane(pane || 'look');
+    settingsModal.classList.remove('hidden');
+    return true;
 }
 
 function applyPrimaryColor(color) {
@@ -457,15 +520,96 @@ function shadeHex(hex, amount) {
     return `#${rgb.map(adjust).map(v => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
-// 页面加载时自动应用自定义主色
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function () {
-        const color = localStorage.getItem('battleship_primary_color');
-        if (color) applyPrimaryColor(color);
+// ---------------------------------------------------------------------------
+// 主题预设（2026-09-17 个人信息名片批）
+//
+// 具名预设只做一件事：把 html[data-theme-preset="…"] 设上，颜色变量由 CSS 覆盖
+// （style.css 那一节，T2 写）。主色仍然可以被玩家手动改（#primary-color-picker），
+// 两种状态互斥：
+//   选具名预设 → 清掉 battleship_primary_color（否则旧的自定义色会一直压着预设）
+//   手动改主色 → 预设记为 custom，并显示 #theme-preset-hint
+// applyPrimaryColor() 往 documentElement 写的是**内联**变量，它优先级高于任何
+// CSS 规则，所以切回预设时必须逐个 removeProperty，只清 localStorage 是不够的。
+// ---------------------------------------------------------------------------
+const THEME_PRESETS = ['deep', 'lava', 'cyber', 'dusk', 'aurora', 'classic'];
+// 这些是 applyPrimaryColor() 会写进 documentElement.style 的变量名
+const PRIMARY_INLINE_VARS = ['--primary', '--primary-600', '--primary-rgb',
+    '--primary-gradient', '--primary-50', '--shadow-glow'];
+let themePickerTouched = false;
+
+function clearInlinePrimaryColor() {
+    PRIMARY_INLINE_VARS.forEach(name => document.documentElement.style.removeProperty(name));
+}
+
+// `<input type=color>` 只认 #rrggbb；本地存过的可能是 rgb(r, g, b) 或 #abc
+function normalizeHexColor(value, fallback) {
+    const raw = String(value == null ? '' : value).trim();
+    const m = raw.match(/^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
+    if (m) {
+        return '#' + [m[1], m[2], m[3]]
+            .map(n => Math.max(0, Math.min(255, parseInt(n, 10))).toString(16).padStart(2, '0'))
+            .join('');
+    }
+    const short = raw.match(/^#([0-9a-f]{3})$/i);
+    if (short) return '#' + short[1].split('').map(c => c + c).join('').toLowerCase();
+    if (/^#[0-9a-f]{6}$/i.test(raw)) return raw.toLowerCase();
+    return fallback || '#1976d2';
+}
+
+function currentPrimaryHex() {
+    const stored = localStorage.getItem('battleship_primary_color');
+    if (stored) return normalizeHexColor(stored);
+    const computed = (getComputedStyle(document.documentElement).getPropertyValue('--primary') || '').trim();
+    return normalizeHexColor(computed, '#1976d2');
+}
+
+// 把「当前主题」同步到设置页那排预设卡上（.selected 由 CSS 画勾）
+function syncThemePresetUI(preset) {
+    const current = preset || localStorage.getItem('battleship_theme_preset') || 'deep';
+    document.querySelectorAll('#theme-preset-grid .theme-card[data-preset]').forEach(card => {
+        card.classList.toggle('selected', card.dataset.preset === current);
     });
-} else {
+    const hint = document.getElementById('theme-preset-hint');
+    if (hint) hint.classList.toggle('hidden', current !== 'custom');
+}
+
+function applyThemePreset(name) {
+    const preset = THEME_PRESETS.indexOf(name) >= 0 ? name : 'deep';
+    document.documentElement.dataset.themePreset = preset;
+    localStorage.setItem('battleship_theme_preset', preset);
+    // 具名预设 = 不再使用自定义主色：清掉存量 + 清掉内联变量（后者会压过 CSS 预设）
+    localStorage.removeItem('battleship_primary_color');
+    clearInlinePrimaryColor();
+    syncThemePresetUI(preset);
+    if (primaryColorPicker) primaryColorPicker.value = currentPrimaryHex();
+    return preset;
+}
+
+function applyCustomPrimaryColor(color) {
+    const hex = normalizeHexColor(color, '#1976d2');
+    localStorage.setItem('battleship_primary_color', hex);
+    localStorage.setItem('battleship_theme_preset', 'custom');
+    document.documentElement.dataset.themePreset = 'custom';
+    applyPrimaryColor(hex);
+    syncThemePresetUI('custom');
+    if (primaryColorPicker) primaryColorPicker.value = hex;
+    return hex;
+}
+
+// 页面加载时恢复主题：具名预设优先于残留的旧主色（老用户只存了主色的，
+// 仍然按自定义色恢复 —— 那批颜色不能丢）
+function restoreThemeFromStorage() {
+    const preset = localStorage.getItem('battleship_theme_preset');
+    if (preset && THEME_PRESETS.indexOf(preset) >= 0) return applyThemePreset(preset);
     const color = localStorage.getItem('battleship_primary_color');
-    if (color) applyPrimaryColor(color);
+    if (color) return applyCustomPrimaryColor(color);
+    return applyThemePreset(preset || 'deep');
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', restoreThemeFromStorage);
+} else {
+    restoreThemeFromStorage();
 }
 
 // 音乐控制相关元素
@@ -480,11 +624,12 @@ const musicMuted = document.getElementById('music-muted');
 const currentTrack = document.getElementById('current-track');
 
 // 音乐按钮逻辑
+// ⚠️ 2026-09-17：设置页改「左导航 + 分区」后，音乐控件在 `sound` 分区里、默认是隐藏的。
+// 只 remove('hidden') 的话点 🎵 会落在「外观与主题」上，玩家以为音乐设置没了。
+// 所以走 openSettingsModal('sound') —— 切分区只有那一份实现。
 if (musicBtn) {
     musicBtn.onclick = () => {
-        if (settingsModal) {
-            settingsModal.classList.remove('hidden');
-        }
+        openSettingsModal('sound');
     };
 }
 
@@ -1608,47 +1753,223 @@ function bindEventListeners() {
         return name || opponentRawId(matchData, myId) || '未知';
     }
 
-    // 个人信息头部：头像 + 用户名 + 个性签名 + 排行榜名次（2026-09-17）。
-    // 首页「个人战绩」、对局内「查看对手战绩 / 点对手头像」、排行榜里点名字，
-    // 三处共用这一份渲染 —— 此前对手弹窗只有 5 行裸表格，没有头像也没有名次。
+    // ==================== 个人信息名片（2026-09-17 第 1 批） ====================
+    //
+    // 查看态 = 这张分层名片，渲染进 #opponent-stats-content（#profile-view 根节点）；
+    // 编辑态 = #profile-modal 里的 #profile-edit（index.html 里由 T2 铺好，这里只填数据）。
+    // 四个入口共用 window.showUserProfile(username)：排行榜点名字/头像、局内左上自己头像、
+    // 局内右上对手头像、#show-opponent-stats。
+    //
+    // ⚠️ 上一轮的教训（CLAUDE.md §11 通用教训四）：个人信息曾经有两套渲染 —— 局内点头像
+    // 弹的是另一张只有胜负/连胜的迷你表格。这次动手前后都 grep 过渲染文案
+    // （当前连胜 / 胜场 / 胜率 / 最高连胜 / 第 N 名），确认只剩这一套。
+    //
+    // ⚠️ 为什么 id 是可选的（opts.ids）：#profile-view-* 这套 id 按契约属于"查看面"。
+    // 首页「个人战绩」那个老容器（#user-stats-content）也会渲染同一张卡，两个容器同时
+    // 存在就会出现重复 id —— 那时 document.getElementById 只会拿到文档里靠前的那个，
+    // 症状是"点了另一个弹窗里的东西没反应"。所以除查看面外一律只出 class、不出 id。
+    const PROFILE_DEFAULT_AVATAR = '/static/avatars/default.png';
+    // 标签中文名以接口下发的 catalog 为准；这张表只是"没登录 / 拿不到 catalog"时的兜底
+    // （id 与 docs/PROFILE_CARD_2026_09_17.md §5.2 一致，12 项）
+    const PROFILE_TAG_FALLBACK = {
+        aggressive: '激进', steady: '稳健', fast: '速攻', turtle: '蹲坑',
+        cardflow: '卡牌流', chain: '连锁控', rookie: '萌新', pro: '大佬',
+        nightowl: '夜猫子', needmate: '求带', serious: '不苟言笑', chatty: '爱聊'
+    };
+
     function profileAvatarSrc(s) {
-        return (s && s.avatar) ? String(s.avatar) : '/static/avatars/default.png';
+        return (s && s.avatar) ? String(s.avatar) : PROFILE_DEFAULT_AVATAR;
     }
     function profileRankValue(s) {
         const rank = parseInt(s && s.rank, 10);
         return (rank && rank > 0) ? String(rank) : '';
     }
-    function buildProfileHead(s) {
-        const signature = (s && s.signature) ? String(s.signature) : '';
-        const rank = profileRankValue(s);
-        return '<div class="profile-head">'
-            + '<img class="profile-avatar" src="' + escapeHtml(profileAvatarSrc(s)) + '" alt="头像"'
-            + ' onerror="this.onerror=null;this.src=\'/static/avatars/default.png\'">'
-            + '<div class="profile-head-main">'
-            + '<div class="profile-name">' + escapeHtml(String((s && s.username) || '未知玩家')) + '</div>'
-            + '<div class="profile-signature">'
-            + (signature ? escapeHtml(signature) : '还没有填写个性签名')
-            + '</div>'
-            + '</div>'
-            + (rank ? '<div class="profile-rank">第 ' + escapeHtml(rank) + ' 名</div>' : '')
-            + '</div>';
+    function profileCatalogList(key, fallbackIds) {
+        const list = (profileCatalog && Array.isArray(profileCatalog[key])) ? profileCatalog[key] : null;
+        return (list && list.length) ? list.map(t => t && t.id).filter(Boolean) : fallbackIds.slice();
+    }
+    function profileBgId(s) {
+        const ids = profileCatalogList('card_bgs', ['deep', 'graphite', 'cyber', 'lava', 'dusk', 'aurora']);
+        const id = String((s && s.card_bg_id) || 'deep');
+        return ids.indexOf(id) >= 0 ? id : 'deep';
+    }
+    function profileFrameId(s) {
+        const ids = profileCatalogList('frames', ['none', 'silver', 'gold', 'aurora', 'crimson']);
+        const id = String((s && s.frame_id) || 'none');
+        return ids.indexOf(id) >= 0 ? id : 'none';
+    }
+    function profileTitleName(s) {
+        if (!s) return '';
+        if (s.title_name) return String(s.title_name);
+        const id = s.title_id ? String(s.title_id) : '';
+        if (!id) return '';
+        const titles = (profileCatalog && Array.isArray(profileCatalog.titles)) ? profileCatalog.titles : [];
+        const hit = titles.filter(t => t && t.id === id)[0];
+        return hit ? String(hit.name || id) : '';
+    }
+    // tags 可能是 id 数组、也可能是 [{id,name}]，中文名优先取接口给的
+    function profileTagNames(tags) {
+        const raw = Array.isArray(tags) ? tags : [];
+        const pool = (profileCatalog && Array.isArray(profileCatalog.tags)) ? profileCatalog.tags : [];
+        const byId = {};
+        pool.forEach(t => { if (t && t.id) byId[t.id] = t.name || t.id; });
+        const out = [];
+        raw.forEach(item => {
+            const id = (item && typeof item === 'object') ? item.id : item;
+            if (!id) return;
+            const name = (item && typeof item === 'object' && item.name)
+                || byId[id] || PROFILE_TAG_FALLBACK[id];
+            if (name && out.indexOf(name) < 0) out.push(name);
+        });
+        return out.slice(0, 3);
+    }
+    // 后端没有"等级"这个字段，这里按总场次换算（每 5 场 1 级，封顶 99），纯展示
+    function profileLevel(total) {
+        return Math.min(99, 1 + Math.floor((Number(total) || 0) / 5));
+    }
+    function profileToggleValue(value, defaultValue) {
+        if (value === undefined || value === null || value === '') return defaultValue;
+        return Number(value) === 0 ? 0 : 1;
+    }
+    function formatProfileDate(value) {
+        const n = Number(value);
+        if (!value || isNaN(n) || n <= 0) return '';
+        const d = new Date(n * 1000);
+        if (isNaN(d.getTime())) return '';
+        return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+            + '-' + String(d.getDate()).padStart(2, '0');
     }
 
-    function buildStatsTable(s) {
+    // 名片要显示的**全部**内容都在这里算出来 —— 查看态/编辑态、两个容器都吃这一份，
+    // 免得"同一份东西两份实现"再次漂移。
+    function profileCardModel(s) {
+        s = s || {};
         const wins = Number(s.wins) || 0;
         const losses = Number(s.losses) || 0;
         const total = wins + losses;
-        const winrate = total ? Math.round((wins / total) * 100) + '%' : '—';
         const rank = profileRankValue(s);
-        return '<table class="user-stats-table">'
-            + '<tr><td>用户名</td><td>' + escapeHtml(String(s.username || '')) + '</td></tr>'
-            + '<tr><td>排行榜名次</td><td>' + (rank ? '第 ' + escapeHtml(rank) + ' 名' : '—') + '</td></tr>'
-            + '<tr><td>胜场</td><td>' + wins + '</td></tr>'
-            + '<tr><td>负场</td><td>' + losses + '</td></tr>'
-            + '<tr><td>胜率</td><td>' + winrate + '</td></tr>'
-            + '<tr><td>当前连胜</td><td>' + (Number(s.current_streak) || 0) + '</td></tr>'
-            + '<tr><td>最长连胜</td><td>' + (Number(s.longest_streak) || 0) + '</td></tr>'
-            + '</table>';
+        const joinDate = formatProfileDate(s.created_at);
+        const fav = (Array.isArray(s.fav_cards) ? s.fav_cards : [])
+            .filter(c => c && c.name);
+        return {
+            avatar: profileAvatarSrc(s),
+            name: String(s.username || '未知玩家'),
+            signature: String(s.signature || ''),
+            level: profileLevel(total),
+            title: profileTitleName(s),
+            status: String(s.status_text || ''),
+            tags: profileTagNames(s.tags),
+            streak: Number(s.longest_streak) || 0,
+            rateText: total ? Math.round((wins / total) * 100) + '%' : '—',
+            total: total,
+            wins: wins,
+            losses: losses,
+            favCards: fav,
+            frame: profileFrameId(s),
+            bg: profileBgId(s),
+            showStats: profileToggleValue(s.show_stats, 1) === 1,
+            showFav: profileToggleValue(s.show_fav_cards, 1) === 1,
+            rankText: rank ? '第 ' + rank + ' 名' : '',
+            recordText: wins + ' 胜 ' + losses + ' 负',
+            joinText: joinDate ? '加入于 ' + joinDate : ''
+        };
+    }
+
+    function profileStatHtml(key, value, label) {
+        return '<div class="stat" data-stat="' + key + '">'
+            + '<b>' + escapeHtml(String(value)) + '</b>'
+            + '<span>' + escapeHtml(label) + '</span>'
+            + '</div>';
+    }
+
+    // 只读分层名片（查看态）。返回 HTML 字符串，由调用方决定塞进哪个容器。
+    // opts.ids            → 是否输出 #profile-view-* 这套 id（只有查看面可以）
+    // opts.canEdit        → 是否渲染「编辑资料」（只有看自己时）
+    // opts.history        → 传了才渲染历史战绩区块
+    // opts.hasMore        → 历史还有下一页时渲染「加载更多」
+    // opts.historyPrivate → 对方没公开历史时的占位文案
+    function buildProfileCard(s, opts) {
+        opts = opts || {};
+        const withIds = opts.ids === true;
+        const m = profileCardModel(s);
+        // ⚠️ 这里刻意写成字面量属性（而不是 'id="' + name + '"'）：
+        // tools/dom_contract_check.mjs 是靠源码里的 `id="…"` 字面量来判断
+        // "这个契约 id 是由 JS 运行期渲染的"，拼接出来的它认不出来，会误报成悬空 id。
+        const idsOn = (literal) => (withIds ? ' ' + literal : '');
+        const history = Array.isArray(opts.history) ? opts.history : null;
+
+        let html = '<div' + idsOn('id="profile-view"') + ' class="profile-card-view pf-card" data-bg="' + escapeHtml(m.bg) + '">';
+        html += '<div class="pf-cover" data-bg="' + escapeHtml(m.bg) + '"></div>';
+        html += '<div class="pf-hero">';
+        html += '<div class="pf-avatar-wrap">'
+            + '<img' + idsOn('id="profile-view-avatar"') + ' class="pf-avatar" data-frame="' + escapeHtml(m.frame) + '"'
+            + ' src="' + escapeHtml(m.avatar) + '" alt="头像"'
+            + ' onerror="this.onerror=null;this.src=\'/static/avatars/default.png\'">'
+            + '<span' + idsOn('id="profile-view-level"') + ' class="lvl">Lv.' + m.level + '</span>'
+            + '</div>';
+        html += '<div class="pf-who">'
+            + '<h3' + idsOn('id="profile-view-name"') + ' class="pf-name">' + escapeHtml(m.name)
+            + '<span' + idsOn('id="profile-view-title"') + ' class="title-chip' + (m.title ? '' : ' hidden') + '">'
+            + escapeHtml(m.title) + '</span></h3>'
+            + '<p' + idsOn('id="profile-view-status"') + ' class="state">'
+            + escapeHtml(m.status || '这位玩家还没有写状态') + '</p>'
+            + '<div' + idsOn('id="profile-view-tags"') + ' class="pf-tags">'
+            + m.tags.map(t => '<span class="tag">' + escapeHtml(t) + '</span>').join('')
+            + '</div>'
+            + '</div>';
+        // 个性签名（上一批作者明确要保留的一项资料）；签名与"一句话状态"并存
+        html += '<p class="pf-signature profile-signature">'
+            + escapeHtml(m.signature || '还没有填写个性签名') + '</p>';
+        html += '<div class="pf-actions">'
+            + (opts.canEdit
+                ? '<button type="button"' + idsOn('id="profile-edit-btn"') + ' class="btn pf-edit-btn">编辑资料</button>'
+                : '')
+            + '</div>';
+        html += '</div>';
+
+        // 三个 show_* 是**同一套语义**：0 = 该区块对所有人隐藏（自己也不显示），
+        // 1 = 对所有人可见。所以这里不看"是不是自己"，只看字段值。
+        // 隐藏时元素仍然渲染出来（契约要求这两个 id 存在）但内容为空 ——
+        // 只加 hidden 而留着数据的话，别人打开开发者工具还是能读到。
+        const statBlockHtml = profileStatHtml('streak', m.streak, '最高连胜')
+            + profileStatHtml('rate', m.rateText, '胜率')
+            + profileStatHtml('matches', m.total, '总场次');
+        html += '<div' + idsOn('id="profile-view-stats"') + ' class="pf-stats' + (m.showStats ? '' : ' hidden') + '">'
+            + (m.showStats ? statBlockHtml : '')
+            + '</div>';
+        const showFav = m.showFav && m.favCards.length > 0;
+        html += '<div' + idsOn('id="profile-view-favcards"') + ' class="pf-block pf-favcards' + (showFav ? '' : ' hidden') + '">'
+            + '<h4 class="pf-block-title">最爱用的卡</h4>'
+            + (showFav ? m.favCards.map(c => '<div class="fav">'
+                + '<span class="fav-name">' + escapeHtml(String(c.name)) + '</span>'
+                + '<span class="fav-meta">'
+                + (Number(c.speed) > 0 ? '速阶 ' + Number(c.speed) + ' · ' : '')
+                + (Number(c.uses) || 0) + ' 次</span>'
+                + '</div>').join('') : '')
+            + '</div>';
+
+        if (history) {
+            const hasAi = history.some(h => isAiOpponent(h, s.id));
+            const emptyText = opts.historyPrivate ? '该玩家未公开对局历史' : '暂无历史战绩';
+            html += '<div' + idsOn('id="profile-view-history"') + ' class="pf-block profile-history user-history">'
+                + '<h4 class="pf-block-title">历史战绩</h4>'
+                + (hasAi ? '<p class="user-stats-note">人机对局保留在历史中，不计入胜场 / 连胜，也不进排行榜。</p>' : '')
+                + '<div' + idsOn('id="profile-history-list"') + ' class="history-list">'
+                + buildHistoryList(history, s) + '</div>'
+                + '<p' + idsOn('id="profile-history-empty"') + ' class="history-empty' + (history.length ? ' hidden' : '') + '">'
+                + escapeHtml(emptyText) + '</p>'
+                + (opts.hasMore ? '<button type="button"' + idsOn('id="profile-history-more"')
+                    + ' class="history-more">加载更多</button>' : '')
+                + '</div>';
+        }
+
+        html += '<div' + idsOn('id="profile-view-meta"') + ' class="pf-meta">'
+            + '<span class="pf-meta-item">' + escapeHtml(m.joinText || '加入时间未知') + '</span>'
+            + '<span class="pf-meta-item">' + escapeHtml(m.rankText || '暂未上榜') + '</span>'
+            + '<span class="pf-meta-item pf-record">' + escapeHtml(m.recordText) + '</span>'
+            + '</div>';
+        html += '</div>';
+        return html;
     }
 
     // 历史战绩列表：必须用 div 列表承载。
@@ -1656,7 +1977,8 @@ function bindEventListeners() {
     // 启用 foster parenting 把它挪到 table 之前，表头于是孤立地留在整段列表下方
     // （2026-09-13 修复）。
     function buildHistoryList(history, s) {
-        if (!history.length) return '<p class="history-empty">暂无历史战绩</p>';
+        // 空占位由调用方渲染（#profile-history-empty 要区分"真没有"与"没公开"）
+        if (!history.length) return '';
         let html = '<div class="history-head">'
             + '<span class="hist-time">时间</span>'
             + '<span class="hist-opp">对手</span>'
@@ -1676,25 +1998,32 @@ function bindEventListeners() {
         return html;
     }
 
-    // 战绩正文（无头 UI 回归检查直接调用 window.renderUserStatsHTML）
+    // 战绩正文 = 那张只读名片（+ 历史战绩）。
+    // 名字与签名保持不变：无头 UI 回归检查（stats_modal_check / profile_leaderboard_check）
+    // 直接调它往容器里塞 HTML，历史上也有别处引用过这个入口。
+    // ids 默认关闭 —— 只有"查看面"（#opponent-stats-content）才允许带
+    // #profile-view-* 这套 id，别的容器带上就会在同一个文档里撞 id。
     function renderUserStatsHTML(s, history, opts) {
         const options = opts || {};
-        const hasAi = history.some(h => isAiOpponent(h, s.id));
-        return buildProfileHead(s)
-            + buildStatsTable(s)
-            + (hasAi ? '<p class="user-stats-note">人机对局保留在历史中，不计入胜场 / 连胜，也不进排行榜。</p>' : '')
-            + '<div class="user-history">'
-            + '<h3>历史战绩</h3>'
-            + '<div class="history-list">' + buildHistoryList(history, s) + '</div>'
-            + (options.hasMore ? '<button type="button" class="history-more">加载更多</button>' : '')
-            + '</div>';
+        return buildProfileCard(s || {}, {
+            ids: options.ids === true,
+            canEdit: options.canEdit === true,
+            history: Array.isArray(history) ? history : [],
+            hasMore: options.hasMore === true,
+            historyPrivate: options.historyPrivate === true
+        });
     }
     window.renderUserStatsHTML = renderUserStatsHTML;
+    window.buildProfileCard = buildProfileCard;
+    window.profileCardModel = profileCardModel;
 
     // 单次 20 条，最多 100 条（与服务端 db.get_match_history 的上限一致）
     const STATS_PAGE_SIZE = 20;
     const STATS_MAX_ROWS = 100;
     let statsHistoryLimit = STATS_PAGE_SIZE;
+    // 当前正在看谁的名片 / 当前名片数据（"加载更多"与保存后重渲染都要用）
+    let currentProfileUsername = '';
+    let currentProfileStats = null;
 
     function bindHistoryButtons(container, history, myId) {
         container.querySelectorAll('.match-history-btn').forEach(btn => {
@@ -1707,13 +2036,32 @@ function bindEventListeners() {
         if (moreBtn) {
             moreBtn.addEventListener('click', () => {
                 statsHistoryLimit = Math.min(statsHistoryLimit + STATS_PAGE_SIZE, STATS_MAX_ROWS);
-                showUserStats();
+                // 「加载更多」要接着看**当前这个人**的历史：以前这里写死成
+                // showUserStats()，在对手面板里点"更多"会跳到自己的战绩。
+                if (container === opponentStatsContent && currentProfileUsername) {
+                    showUserProfile(currentProfileUsername);
+                } else {
+                    showUserStats();
+                }
             });
         }
     }
 
+    // 查看面里的「编辑资料」按钮（只有看自己时才会渲染出来）。
+    // 用委托绑在容器上：整块 innerHTML 每次打开都会被换掉，逐次绑定必然失效。
+    function bindProfileCardButtons(container) {
+        if (!container || container.dataset.profileCardBound === '1') return;
+        container.dataset.profileCardBound = '1';
+        container.addEventListener('click', (e) => {
+            const btn = e.target && e.target.closest ? e.target.closest('.pf-edit-btn') : null;
+            if (!btn) return;
+            e.preventDefault();
+            openMyProfileEditor();
+        });
+    }
+
     // 统一的个人信息取数：username 为空 = 查当前登录用户（带分页），
-    // 否则查指定账号（排行榜 / 对局内对手）。三处入口共用，字段不会各写一份。
+    // 否则查指定账号（排行榜 / 对局内对手）。四个入口共用，字段不会各写一份。
     function fetchProfile(username, limit) {
         const url = username
             ? ('/user_stats?limit=' + limit + '&username=' + encodeURIComponent(username))
@@ -1726,23 +2074,35 @@ function bindEventListeners() {
                 return { html: '<p>未找到战绩数据</p>', stats: null, history: [] };
             }
             const history = data.history || [];
+            // 不带 username = 查自己；带 username 时按缓存的账号名比对
+            const isSelf = (username === undefined || username === null || username === '')
+                ? true : profileIsSelf(data.stats);
             const html = renderUserStatsHTML(data.stats, history, {
+                ids: true,
+                canEdit: isSelf,
+                // 对方关了"公开对局历史"时接口给的是空数组，要靠开关区分
+                // 「真没有历史」和「没公开」
+                historyPrivate: !isSelf && Number(data.stats.show_history) === 0,
                 hasMore: history.length >= limit && limit < STATS_MAX_ROWS
             });
             return { html, stats: data.stats, history };
         });
     }
 
-    // 打开某个账号的个人信息弹窗（排行榜点名字/头像、对局内点对手头像都走它）
+    // 打开某个账号的个人信息查看面（排行榜点名字/头像、局内两个头像、查看对手战绩都走它）
     function showUserProfile(username) {
         if (!opponentStatsModal || !opponentStatsContent) return;
         const title = document.getElementById('opponent-stats-title');
         if (title) title.textContent = (username ? username + ' 的个人信息' : '个人信息');
         opponentStatsModal.classList.remove('hidden');
         opponentStatsContent.innerHTML = '<p>加载中…</p>';
+        currentProfileUsername = username || '';
+        window.__viewedProfileName = currentProfileUsername;
         fetchProfile(username, STATS_PAGE_SIZE).then(r => {
             opponentStatsContent.innerHTML = r.html;
+            currentProfileStats = r.stats;
             bindHistoryButtons(opponentStatsContent, r.history, r.stats && r.stats.id);
+            bindProfileCardButtons(opponentStatsContent);
         }).catch(err => {
             opponentStatsContent.innerHTML =
                 '<p style="color:var(--danger);">获取个人信息失败：' + escapeHtml(err.message) + '</p>';
@@ -1750,9 +2110,15 @@ function bindEventListeners() {
     }
     window.showUserProfile = showUserProfile;
 
-    // 显示个人战绩弹窗并请求数据
+    // 显示个人战绩弹窗并请求数据。
+    // 首页「个人战绩」看的其实就是自己那张名片 —— 但这里仍然渲染进它自己的容器
+    // （#user-stats-content，只出 class 不出 id），因为 index.html 里那个入口与弹窗
+    // 是老链路，另有回归工具盯着；两个容器同时带 #profile-view-* 会撞 id。
     function showUserStats() {
         if (!userStatsModal || !userStatsContent) {
+            // 老容器没了（新版布局）→ 退回查看面看自己
+            const myName = window.__USERNAME || '';
+            if (myName) { showUserProfile(myName); return; }
             console.error('DOM元素不存在：userStatsModal 或 userStatsContent');
             return;
         }
@@ -1769,6 +2135,331 @@ function bindEventListeners() {
             userStatsContent.innerHTML = '<p style="color:red;">获取个人战绩失败：' + err.message + '</p>';
         });
     }
+
+    // ==================== 编辑态（#profile-modal 里的 #profile-edit） ====================
+    //
+    // 解锁与否**只在服务端做最终裁决**：前端把未解锁项 disabled + title 写清条件，
+    // 只是不让玩家白点一次，服务端仍然会把越权请求整次拒掉（400 + error）。
+    const PROFILE_TAG_LIMIT = 3;
+    let profileEditData = null;   // 编辑态当前这份数据（保存/取消都要用）
+
+    function profileIsSelf(stats, username) {
+        const name = (username !== undefined && username !== null && username !== '')
+            ? String(username)
+            : String((stats && stats.username) || '');
+        return !!(profileSelfName && name && profileSelfName === name);
+    }
+
+    function setProfileSaveMsg(text, isError) {
+        const el = document.getElementById('profile-save-msg');
+        if (!el) return;
+        el.textContent = text || '';
+        el.style.color = text ? (isError ? 'var(--danger)' : 'var(--success)') : '';
+    }
+
+    function setProfileToggle(id, value) {
+        const el = document.getElementById(id);
+        if (el) el.checked = Number(value) === 1;
+    }
+
+    // 一排"白名单选项"按钮（底色 / 头像框）：选中态 + 未解锁的灰掉并写明条件
+    function fillProfileOptionRow(selector, dataKey, catalogList, currentId) {
+        const list = Array.isArray(catalogList) ? catalogList : [];
+        document.querySelectorAll(selector).forEach(btn => {
+            const id = btn.dataset[dataKey];
+            const item = list.filter(t => t && t.id === id)[0];
+            const locked = !!(item && item.unlocked === false);
+            btn.classList.toggle('selected', id === currentId);
+            btn.classList.toggle('locked', locked);
+            btn.disabled = locked;
+            if (locked) {
+                btn.title = '未解锁：' + String(item.requirement || item.desc || '达成条件后解锁');
+            } else {
+                btn.removeAttribute('title');
+            }
+        });
+    }
+
+    function updateProfileTagCount() {
+        const el = document.getElementById('profile-tag-count');
+        if (!el) return;
+        const n = document.querySelectorAll('#profile-tag-list .pf-opt[data-tag].selected').length;
+        el.textContent = '已选 ' + n + ' / ' + PROFILE_TAG_LIMIT;
+    }
+
+    // 编辑态内的分类导航（名片 / 头像 / 称号 / 账号）
+    function setProfileEditorPane(pane) {
+        const name = pane || 'card';
+        document.querySelectorAll('#profile-edit .pf-pane[data-pane]').forEach(p => {
+            p.classList.toggle('hidden', p.dataset.pane !== name);
+        });
+        document.querySelectorAll('#profile-edit .pf-editor-nav-item[data-pane]').forEach(item => {
+            item.classList.toggle('active', item.dataset.pane === name);
+        });
+        return name;
+    }
+
+    function setProfileMode(mode) {
+        const want = (mode === 'edit') ? 'edit' : 'view';
+        const modal = document.getElementById('profile-modal');
+        const editBox = document.getElementById('profile-edit');
+        if (editBox) editBox.classList.toggle('hidden', want !== 'edit');
+        if (modal) {
+            // 查看态长在另一个弹窗里（#opponent-stats-modal），所以回查看态 = 收起编辑面
+            if (want === 'edit') modal.classList.remove('hidden');
+            else modal.classList.add('hidden');
+        }
+        if (want === 'edit') setProfileEditorPane('card');
+        return want;
+    }
+    window.setProfileMode = setProfileMode;
+
+    function renderProfileEditor(data) {
+        const s = data || {};
+        profileEditData = s;
+        const catalog = (s.catalog && typeof s.catalog === 'object') ? s.catalog : (profileCatalog || {});
+        const statusInput = document.getElementById('profile-edit-status');
+        if (statusInput) {
+            // maxlength 由 index.html 的控件属性负责（契约里是 30）
+            statusInput.value = String(s.status_text || '');
+        }
+        const usernameEl = document.getElementById('profile-username');
+        if (usernameEl) usernameEl.textContent = String(s.username || '');
+        const signatureInput = document.getElementById('profile-signature');
+        if (signatureInput) signatureInput.value = String(s.signature || '');
+        const avatarEl = document.getElementById('profile-avatar');
+        if (avatarEl) avatarEl.src = profileAvatarSrc(s);
+
+        fillProfileOptionRow('#profile-bg-row .pf-bg', 'bg', catalog.card_bgs, profileBgId(s));
+        fillProfileOptionRow('#profile-frame-row .pf-frame', 'frame', catalog.frames, profileFrameId(s));
+
+        const currentTitle = String(s.title_id || '');
+        const titleList = document.getElementById('profile-title-list');
+        if (titleList) {
+            const titles = Array.isArray(catalog.titles) ? catalog.titles : [];
+            let html = '<button type="button" class="pf-opt' + (currentTitle ? '' : ' selected')
+                + '" data-title="">不展示</button>';
+            titles.forEach(t => {
+                if (!t || !t.id) return;
+                const locked = t.unlocked === false;
+                const tip = locked ? '未解锁：' + String(t.requirement || t.desc || '达成条件后解锁') : '';
+                html += '<button type="button" class="pf-opt'
+                    + (t.id === currentTitle ? ' selected' : '') + (locked ? ' locked' : '') + '"'
+                    + ' data-title="' + escapeHtml(String(t.id)) + '"'
+                    + (locked ? ' disabled title="' + escapeHtml(tip) + '"' : '')
+                    + '>' + escapeHtml(String(t.name || t.id)) + '</button>';
+            });
+            titleList.innerHTML = html;
+        }
+
+        const currentTags = (Array.isArray(s.tags) ? s.tags : [])
+            .map(t => ((t && typeof t === 'object') ? t.id : t)).filter(Boolean);
+        const tagList = document.getElementById('profile-tag-list');
+        if (tagList) {
+            const tags = Array.isArray(catalog.tags) ? catalog.tags : [];
+            tagList.innerHTML = tags.map(t => {
+                if (!t || !t.id) return '';
+                const locked = t.unlocked === false;
+                const tip = locked ? '未解锁：' + String(t.requirement || '达成条件后解锁') : '';
+                return '<button type="button" class="pf-opt'
+                    + (currentTags.indexOf(t.id) >= 0 ? ' selected' : '') + (locked ? ' locked' : '') + '"'
+                    + ' data-tag="' + escapeHtml(String(t.id)) + '"'
+                    + (locked ? ' disabled title="' + escapeHtml(tip) + '"' : '')
+                    + '>' + escapeHtml(String(t.name || t.id)) + '</button>';
+            }).join('');
+        }
+        updateProfileTagCount();
+
+        setProfileToggle('profile-show-stats', profileToggleValue(s.show_stats, 1));
+        setProfileToggle('profile-show-favcards', profileToggleValue(s.show_fav_cards, 1));
+        setProfileToggle('profile-show-history', profileToggleValue(s.show_history, 0));
+        return s;
+    }
+    window.renderProfileEditor = renderProfileEditor;
+
+    // 编辑态当前选了什么 —— **必须 8 个字段全发**：服务端的校验缺字段直接 400 点名，
+    // 不是"只写改动过的字段"那种局部更新接口。
+    function collectProfileEditorPayload() {
+        const el = (id) => document.getElementById(id);
+        const selTitle = document.querySelector('#profile-title-list .pf-opt[data-title].selected');
+        const selBg = document.querySelector('#profile-bg-row .pf-bg[data-bg].selected');
+        const selFrame = document.querySelector('#profile-frame-row .pf-frame[data-frame].selected');
+        const tags = [].slice.call(document.querySelectorAll('#profile-tag-list .pf-opt[data-tag].selected'))
+            .map(b => b.dataset.tag).filter(Boolean);
+        const checked = (id, fallback) => {
+            const box = el(id);
+            return box ? (box.checked ? 1 : 0) : fallback;
+        };
+        return {
+            title_id: selTitle ? (selTitle.dataset.title || '') : '',
+            tags: tags,
+            status_text: el('profile-edit-status') ? el('profile-edit-status').value : '',
+            frame_id: selFrame ? selFrame.dataset.frame : 'none',
+            card_bg_id: selBg ? selBg.dataset.bg : 'deep',
+            show_stats: checked('profile-show-stats', 1),
+            show_fav_cards: checked('profile-show-favcards', 1),
+            show_history: checked('profile-show-history', 0)
+        };
+    }
+
+    // 打开编辑面：只有看自己才会走到这里（按钮只在看自己时渲染）。
+    // 数据现拉 —— 不复用查看面那份，免得把脏状态带进编辑态。
+    function openMyProfileEditor() {
+        const modal = document.getElementById('profile-modal');
+        return fetch('/api/profile').then(r => {
+            if (!r.ok) throw new Error('未登录');
+            return r.json();
+        }).then(res => {
+            if (!res || !res.profile) throw new Error('未登录');
+            profileCatalog = res.profile.catalog || profileCatalog;
+            profileSelfName = res.profile.username || profileSelfName;
+            renderProfileEditor(res.profile);
+            if (modal) modal.classList.remove('hidden');
+            setProfileMode('edit');
+            setProfileSaveMsg('');
+            return res.profile;
+        }).catch(err => {
+            setProfileSaveMsg('打开编辑失败：' + err.message, true);
+            if (typeof showMessage === 'function') showMessage('未登录，无法编辑个人信息', { type: 'warning' });
+            return null;
+        });
+    }
+    window.openMyProfileEditor = openMyProfileEditor;
+
+    function cancelProfileEdit() {
+        // 丢弃未保存的改动：不复用编辑态那份脏数据，重新拉一次
+        profileEditData = null;
+        setProfileSaveMsg('');
+        setProfileMode('view');
+        const name = currentProfileUsername || profileSelfName || '';
+        if (name) showUserProfile(name);
+        return true;
+    }
+
+    function saveProfileCard() {
+        const payload = collectProfileEditorPayload();
+        setProfileSaveMsg('保存中…');
+        return fetch('/api/profile/card', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        }).then(r => r.json().catch(() => ({})).then(body => ({ ok: r.ok, body: body })))
+            .then(({ ok, body }) => {
+                if (!ok || !body || body.success !== true || !body.profile) {
+                    // 未解锁的称号/边框等一律整次拒绝，把原因原样显示出来（不静默）
+                    setProfileSaveMsg((body && body.error) || '保存失败', true);
+                    return null;
+                }
+                profileCatalog = body.profile.catalog || profileCatalog;
+                renderProfileEditor(body.profile);
+                setProfileMode('view');
+                setProfileSaveMsg('已保存');
+                const name = currentProfileUsername || body.profile.username || '';
+                if (name) showUserProfile(name);
+                return body.profile;
+            })
+            .catch(err => {
+                setProfileSaveMsg('保存失败：' + err.message, true);
+                return null;
+            });
+    }
+    window.saveProfileCard = saveProfileCard;
+
+    // 主题预设 / 设置左导航 / 编辑面的事件绑定。只绑一次（init 幂等）。
+    function bindProfileCardUI() {
+        if (bindProfileCardUI.done) return;
+        bindProfileCardUI.done = true;
+
+        const themeGrid = document.getElementById('theme-preset-grid');
+        if (themeGrid) {
+            themeGrid.addEventListener('click', (e) => {
+                const card = e.target && e.target.closest ? e.target.closest('.theme-card[data-preset]') : null;
+                if (!card) return;
+                applyThemePreset(card.dataset.preset);
+            });
+        }
+        syncThemePresetUI();
+
+        const settingsNav = document.querySelector('#settings-modal .settings-nav');
+        if (settingsNav) {
+            settingsNav.addEventListener('click', (e) => {
+                const item = e.target && e.target.closest ? e.target.closest('.settings-nav-item[data-pane]') : null;
+                if (!item) return;
+                showSettingsPane(item.dataset.pane);
+            });
+        }
+
+        const gotoAccount = document.getElementById('profile-goto-account');
+        if (gotoAccount) gotoAccount.addEventListener('click', (e) => {
+            e.preventDefault();
+            setProfileMode('view');          // 先收起编辑面
+            openSettingsModal('acct');       // 再开到「账号与隐私」（改密码在那）
+        });
+        const gotoSelf = document.getElementById('settings-goto-profile');
+        if (gotoSelf) gotoSelf.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (settingsModal) settingsModal.classList.add('hidden');
+            openMyProfileEditor();
+        });
+
+        const saveBtn = document.getElementById('profile-card-save');
+        if (saveBtn) saveBtn.addEventListener('click', (e) => { e.preventDefault(); saveProfileCard(); });
+        const cancelBtn = document.getElementById('profile-edit-cancel');
+        if (cancelBtn) cancelBtn.addEventListener('click', (e) => { e.preventDefault(); cancelProfileEdit(); });
+
+        // 静态的「编辑资料」（如果 T2 写进了 index.html），查看面里那份走上面的委托
+        const staticEditBtn = document.getElementById('profile-edit-btn');
+        if (staticEditBtn) staticEditBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            openMyProfileEditor();
+        });
+
+        const editBox = document.getElementById('profile-edit');
+        if (editBox) {
+            editBox.addEventListener('click', (e) => {
+                const target = e.target;
+                if (!target || !target.closest) return;
+                const navItem = target.closest('.pf-editor-nav-item[data-pane]');
+                if (navItem) { setProfileEditorPane(navItem.dataset.pane); return; }
+                const titleBtn = target.closest('#profile-title-list .pf-opt[data-title]');
+                if (titleBtn && !titleBtn.disabled) {
+                    document.querySelectorAll('#profile-title-list .pf-opt[data-title]')
+                        .forEach(b => b.classList.toggle('selected', b === titleBtn));
+                    setProfileSaveMsg('');
+                    return;
+                }
+                const tagBtn = target.closest('#profile-tag-list .pf-opt[data-tag]');
+                if (tagBtn && !tagBtn.disabled) {
+                    const chosen = document.querySelectorAll('#profile-tag-list .pf-opt[data-tag].selected');
+                    if (!tagBtn.classList.contains('selected') && chosen.length >= PROFILE_TAG_LIMIT) {
+                        setProfileSaveMsg('最多只能选 ' + PROFILE_TAG_LIMIT + ' 个标签', true);
+                        return;
+                    }
+                    tagBtn.classList.toggle('selected');
+                    setProfileSaveMsg('');
+                    updateProfileTagCount();
+                    return;
+                }
+                const bgBtn = target.closest('#profile-bg-row .pf-bg[data-bg]');
+                if (bgBtn && !bgBtn.disabled) {
+                    document.querySelectorAll('#profile-bg-row .pf-bg[data-bg]')
+                        .forEach(b => b.classList.toggle('selected', b === bgBtn));
+                    setProfileSaveMsg('');
+                    return;
+                }
+                const frameBtn = target.closest('#profile-frame-row .pf-frame[data-frame]');
+                if (frameBtn && !frameBtn.disabled) {
+                    document.querySelectorAll('#profile-frame-row .pf-frame[data-frame]')
+                        .forEach(b => b.classList.toggle('selected', b === frameBtn));
+                    setProfileSaveMsg('');
+                }
+            });
+        }
+
+        // 查看面里的「编辑资料」用委托（整块 innerHTML 每次都被换掉）
+        bindProfileCardButtons(opponentStatsContent);
+    }
+    bindProfileCardUI();
 
     function renderMatchDetailHTML(matchData, playerId) {
         const isWin = matchData.winner_id === playerId;
@@ -6755,6 +7446,9 @@ function init() {
     bindEffectIndicators();
     // 「拒绝所有阶段转换时点」开关（对局界面里那个入口）
     bindDeclinePriorityToggle();
+    // 「我是谁」+ 可编辑项池子：登录态才有（游客 401），只用于判断名片上要不要
+    // 显示「编辑资料」，绝不用它做权限判断 —— 保存时服务端还会再判一次。
+    loadSelfIdentity();
     // 如果服务端传来了用户名，预填并设置为当前玩家名
     if (window.__USERNAME) {
         gameState.playerName = window.__USERNAME || gameState.playerName;

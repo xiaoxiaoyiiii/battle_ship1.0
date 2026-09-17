@@ -95,15 +95,26 @@ def _require_live_room(fn):
     return wrapper
 
 
-def record_card_use(card, count=1):
+def record_card_use(card, count=1, user_id=None):
     """记一次卡牌使用（卡牌图鉴里「使用次数」的来源）。
 
     只做统计，任何异常都吞掉：统计不该影响对局。场地魔法同样计数。
+
+    `user_id` 可选：给了就**同时**写全局表与个人表（`user_card_usage`，
+    个人信息名片里「最爱用的卡」的来源）。个人统计是 2026-09-17 新增的，
+    老调用点不传就只写全局表，行为与以前一致。
+
+    ⚠️ 传进来的必须是**真实用户 id**（`Player.user_id`）。`room.players` 的 key
+    有两套约定：匹配房里它是 socket sid，不是用户 id（见 CLAUDE.md 第 6 节），
+    拿它当 user_id 会把统计写到不存在的账号上。
     """
     try:
         name = getattr(card, 'name', card)
-        if name:
-            db.record_card_use(name, count)
+        if not name:
+            return
+        db.record_card_use(name, count)
+        if user_id:
+            db.record_user_card_use(user_id, name, count)
     except Exception:
         pass
 
@@ -3367,7 +3378,9 @@ def handle_use_magic_card(data):
     # 避免"打出即进弃牌堆 + 贴场"产生游离副本；被顶掉/被康时实例移入弃牌堆。
 
     # 统计"打出次数"（被康掉也算打出过，所以记在入链时刻而不是结算时刻）
-    record_card_use(card)
+    # 个人统计取施法者的 Player.user_id：匹配房里 room.players 的 key 是 socket
+    # sid，不能当用户 id 用；游客没有 user_id，那就只写全局表。
+    record_card_use(card, user_id=getattr(player, 'user_id', None))
 
     # 添加到连锁栈
     chain_item = ChainItem(player_id, card, targets, time.time())

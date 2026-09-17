@@ -443,12 +443,24 @@
         if (els.pauseBtn) els.pauseBtn.addEventListener('click', function () { togglePause(); });
         if (els.clearBtn) els.clearBtn.addEventListener('click', function () { clear(); });
 
-        // 导航栏的 🎬 按钮：和 🎵 一样把设置面板打开，并滚到壁纸这一段
+        // 导航栏的 🎬 按钮：打开设置并落在「动态壁纸」分区
         var navBtn = $('wallpaper-btn');
         if (navBtn) {
             navBtn.addEventListener('click', function () {
-                var modal = $('settings-modal');
-                if (modal) modal.classList.remove('hidden');
+                // ⚠️ 2026-09-17 设置页改「左导航 + 分区」后，壁纸区块默认**不在文档流里**
+                // （默认停在「外观与主题」）。只 remove('hidden') + scrollIntoView 的话，
+                // 玩家点 🎬 会看到「外观与主题」、壁纸设置一个都看不见 ——
+                // 表现是「点壁纸按钮什么也没发生」。
+                // 切分区只由 game.js 的 openSettingsModal 那一份实现负责（它是顶层函数，
+                // 本文件是普通脚本，能直接调）；取不到时才退回点它自己的导航项。
+                if (typeof openSettingsModal === 'function') {
+                    openSettingsModal('wp');
+                } else {
+                    var modal = $('settings-modal');
+                    if (modal) modal.classList.remove('hidden');
+                    var wpNav = document.querySelector('.settings-nav-item[data-pane="wp"]');
+                    if (wpNav) wpNav.click();
+                }
                 var section = $('wp-section');
                 if (section && section.scrollIntoView) section.scrollIntoView({ block: 'start' });
                 refreshList();

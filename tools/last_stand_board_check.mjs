@@ -204,7 +204,19 @@ function countExpr(board, cls) {
 }
 
 // ---- 1. owner = 我 → 高亮必须在我的棋盘 ----
-let r = await fire([{ x: 1, y: 1 }, { x: 3, y: 4 }], 'me');
+// ⚠️ 注入前先记下这两格原有的 hit/miss 类：本节在第 4 节（真机人机对局）之后跑，
+// 那局里 AI 可能**已经打过**这两格之一。而既定行为是「已打过的候选格让位显示真实结果」
+// （见 docs/SHIELD_AND_LASTSTAND_2026_09_14.md），所以直接数 `.last-stand-candidate.hit`
+// 会把「本来就打过的结果」误判成「候选格被画成了叉」。只断言**没有被新画上**结果。
+const CAND = [{ x: 1, y: 1 }, { x: 3, y: 4 }];
+const clsOf = (cells) => `(function(){
+  return ${JSON.stringify(cells)}.map(function (c) {
+    var el = document.querySelector('#game-player-board .cell[data-x="' + c.x + '"][data-y="' + c.y + '"]');
+    return el ? { x: c.x, y: c.y, hit: el.classList.contains('hit'), miss: el.classList.contains('miss') } : null;
+  }); })()`;
+const beforeCls = await ev(clsOf(CAND));
+
+let r = await fire(CAND, 'me');
 check(r === 'ok', '1a 触发 last_stand_cells（owner = 我）', r);
 await sleep(350);
 const mineOnMine = await ev(countExpr('game-player-board', 'last-stand-candidate'));
@@ -212,9 +224,17 @@ const mineOnOpp = await ev(countExpr('opponent-board', 'last-stand-candidate'));
 check(mineOnMine === 2, '★ 1b 我放的候选格高亮在【我的】棋盘（2 格）', mineOnMine);
 check(mineOnOpp === 0, '★ 1c 绝不在【对手】棋盘上出现（作者报的 bug）', mineOnOpp);
 
-// 候选格不能被画成叉（09-14 的教训：一画叉玩家就以为打不了）
-const wronglyHit = await ev(`document.querySelectorAll('#game-player-board .cell.last-stand-candidate.hit, #game-player-board .cell.last-stand-candidate.miss').length`);
-check(wronglyHit === 0, '1d 候选格没有被画成命中/落空（否则玩家以为打不了）', wronglyHit);
+// 候选格不能被（新）画成叉：09-14 的教训 —— 一画叉玩家就以为打不了
+const afterCls = await ev(clsOf(CAND));
+const newlyMarked = (afterCls || []).filter((a, i) => {
+  const b = (beforeCls || [])[i];
+  if (!a) return false;
+  if (!b) return a.hit || a.miss;               // 注入前拿不到（棋盘刚重建）→ 按新标记算
+  return (a.hit && !b.hit) || (a.miss && !b.miss);
+});
+check(newlyMarked.length === 0,
+  '1d 候选格没有被（新）画成命中/落空（本来就打过的格子照旧显示真实结果，不算违规）',
+  { newlyMarked, before: beforeCls, after: afterCls });
 
 // ---- 2. owner = 对方 → 高亮必须在攻击目标棋盘 ----
 r = await fire([{ x: 2, y: 2 }], 'opp');

@@ -128,6 +128,41 @@ class Database:
                       updated_at INTEGER
                   )
                   ''')
+
+            # ---- 个人信息名片（2026-09-17 第 1 批）----
+            # ⚠️ 本项目**没有 ALTER / 迁移机制**，只有 CREATE TABLE IF NOT EXISTS：
+            # 生产库要加字段只能新建表，**不要动 users 表的列**。
+            # 这两张表老库启动时自动补齐，不需要停机、不需要迁移脚本。
+            # 存的全是**白名单 id**（称号/标签/边框/底色），没有自由文本 ——
+            # 于是既注入不了 CSS，也伪造不了称号文字，且不需要任何审核流程。
+            self.cursor.execute('''
+                  CREATE TABLE IF NOT EXISTS user_profile
+                  (
+                      user_id         TEXT PRIMARY KEY,
+                      title_id        TEXT    DEFAULT '',
+                      tags            TEXT    DEFAULT '[]',
+                      status_text     TEXT    DEFAULT '',
+                      frame_id        TEXT    DEFAULT 'none',
+                      card_bg_id      TEXT    DEFAULT 'deep',
+                      show_stats      INTEGER DEFAULT 1,
+                      show_fav_cards  INTEGER DEFAULT 1,
+                      show_history    INTEGER DEFAULT 0,
+                      updated_at      INTEGER
+                  )
+                  ''')
+
+            # 个人卡牌使用统计。card_usage 是**全局**表（主键 card_name），
+            # 「最爱用的卡」必须按用户统计，所以单开一张。
+            self.cursor.execute('''
+                  CREATE TABLE IF NOT EXISTS user_card_usage
+                  (
+                      user_id    TEXT,
+                      card_name  TEXT,
+                      uses       INTEGER NOT NULL DEFAULT 0,
+                      updated_at INTEGER,
+                      PRIMARY KEY (user_id, card_name)
+                  )
+                  ''')
             
             self.conn.commit()
             logger.info("数据库表创建成功")
@@ -140,6 +175,9 @@ class Database:
                 'CREATE INDEX IF NOT EXISTS idx_users_token ON users(token)',
                 'CREATE INDEX IF NOT EXISTS idx_chat_ts ON chat_messages(timestamp)',
                 'CREATE INDEX IF NOT EXISTS idx_card_usage_uses ON card_usage(uses DESC)',
+                # 「最爱用的卡」= 按 user_id 取 uses 前 3，走这条复合索引
+                'CREATE INDEX IF NOT EXISTS idx_user_card_usage_uses '
+                'ON user_card_usage(user_id, uses DESC)',
             ):
                 try:
                     self.cursor.execute(stmt)
@@ -762,7 +800,182 @@ class Database:
         except Exception as e:
             logger.error(f"查询排行榜名次时发生未知错误: uid={uid}, 错误: {e}")
             return None
-    
+
+    # ------------------------------------------------------------------
+    # 个人信息名片（2026-09-17 第 1 批）
+    # ------------------------------------------------------------------
+    # 风格：全部「失败只记日志、返回安全默认值」—— 名片是展示层，任何一次
+    # 读写失败都不该让页面或对局崩掉。
+    _PROFILE_DEFAULTS = {
+        'title_id': '',
+        'tags': '[]',
+        'status_text': '',
+        'frame_id': 'none',
+        'card_bg_id': 'deep',
+        'show_stats': 1,
+        'show_fav_cards': 1,
+        'show_history': 0,      # 隐私默认：对局历史不公开
+    }
+
+    def _profile_defaults(self, uid: str) -> dict:
+        """没记录时的默认名片（**不写库**）。tags 直接给已解析的空列表。"""
+        row = dict(self._PROFILE_DEFAULTS)
+        row['user_id'] = uid
+        row['tags'] = []
+        row['updated_at'] = 0
+        return row
+
+    def get_user_profile_extra(self, uid: str) -> dict:
+        """读名片个性字段。没有记录时返回默认值（不写库）。"""
+        if not uid:
+            return self._profile_defaults(uid)
+        try:
+            cursor = self.conn.cursor()
+            row = cursor.execute(
+                'SELECT title_id, tags, status_text, frame_id, card_bg_id, '
+                'show_stats, show_fav_cards, show_history, updated_at '
+                'FROM user_profile WHERE user_id = ?', (uid,)).fetchone()
+            cursor.close()
+            if not row:
+                return self._profile_defaults(uid)
+            data = {k: row[k] for k in row.keys()}
+            data['user_id'] = uid
+            data['tags'] = self._parse_tags(data.get('tags'))
+            for flag in ('show_stats', 'show_fav_cards', 'show_history'):
+                data[flag] = 1 if data.get(flag) is None else int(data[flag])
+            data['updated_at'] = int(data.get('updated_at') or 0)
+            return data
+        except sqlite3.Error as e:
+            logger.error(f"读取个人名片失败: uid={uid}, 错误: {e}")
+            return self._profile_defaults(uid)
+        except Exception as e:
+            logger.error(f"读取个人名片时发生未知错误: uid={uid}, 错误: {e}")
+            return self._profile_defaults(uid)
+
+    @staticmethod
+    def _parse_tags(raw):
+        """tags 列是 JSON 数组文本。脏数据（非数组 / 非法 JSON）一律当空。"""
+        if isinstance(raw, list):
+            return [str(t) for t in raw if isinstance(t, str)]
+        try:
+            parsed = json.loads(raw) if raw else []
+        except (TypeError, ValueError):
+            logger.warning(f"名片 tags 解析失败，按空处理: {raw!r}")
+            return []
+        if not isinstance(parsed, list):
+            return []
+        return [t for t in parsed if isinstance(t, str)]
+
+    def save_user_profile_extra(self, uid: str, fields: dict) -> bool:
+        """UPSERT 写入名片字段（写操作持锁）。
+
+        只接受 `_PROFILE_DEFAULTS` 里的列名 —— 调用方即使传了别的键也写不进去，
+        避免把列名拼进 SQL。缺的键用默认值补齐（整行语义，不做部分更新）。
+        """
+        if not uid:
+            logger.warning("尝试保存个人名片但未提供用户ID")
+            return False
+        fields = fields if isinstance(fields, dict) else {}
+        row = dict(self._PROFILE_DEFAULTS)
+        for key in self._PROFILE_DEFAULTS:
+            if key in fields:
+                row[key] = fields[key]
+        # tags 列表 → JSON 文本；非法结构一律落成 '[]'
+        tags = row.get('tags')
+        row['tags'] = json.dumps([t for t in tags if isinstance(t, str)],
+                                 ensure_ascii=False) if isinstance(tags, list) else '[]'
+        for flag in ('show_stats', 'show_fav_cards', 'show_history'):
+            row[flag] = 1 if row[flag] in (1, True, '1') else 0
+        try:
+            with self._lock:
+                self.cursor.execute(
+                    'INSERT INTO user_profile '
+                    '(user_id, title_id, tags, status_text, frame_id, card_bg_id, '
+                    ' show_stats, show_fav_cards, show_history, updated_at) '
+                    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
+                    'ON CONFLICT(user_id) DO UPDATE SET '
+                    'title_id = excluded.title_id, tags = excluded.tags, '
+                    'status_text = excluded.status_text, frame_id = excluded.frame_id, '
+                    'card_bg_id = excluded.card_bg_id, show_stats = excluded.show_stats, '
+                    'show_fav_cards = excluded.show_fav_cards, '
+                    'show_history = excluded.show_history, updated_at = excluded.updated_at',
+                    (uid, str(row['title_id'] or ''), row['tags'],
+                     str(row['status_text'] or ''), str(row['frame_id'] or 'none'),
+                     str(row['card_bg_id'] or 'deep'), row['show_stats'],
+                     row['show_fav_cards'], row['show_history'], int(time.time())))
+                self.conn.commit()
+            return True
+        except sqlite3.Error as e:
+            logger.error(f"保存个人名片失败: uid={uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+        except Exception as e:
+            logger.error(f"保存个人名片时发生未知错误: uid={uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+
+    def record_user_card_use(self, uid: str, card_name: str, count: int = 1) -> bool:
+        """某个账号打出某张卡的次数 +count。失败只记日志，绝不影响对局。"""
+        if not uid or not card_name:
+            return False
+        try:
+            with self._lock:
+                self.cursor.execute(
+                    'INSERT INTO user_card_usage (user_id, card_name, uses, updated_at) '
+                    'VALUES (?, ?, ?, ?) '
+                    'ON CONFLICT(user_id, card_name) DO UPDATE SET '
+                    'uses = uses + excluded.uses, updated_at = excluded.updated_at',
+                    (str(uid), str(card_name), int(count), int(time.time())))
+                self.conn.commit()
+            return True
+        except Exception as e:
+            # 与全局 card_usage 同一口径：统计失败绝不能影响对局流程
+            logger.error(f"记录个人卡牌使用失败: uid={uid}, {card_name} -> {e}")
+            return False
+
+    def get_user_card_usage(self, uid: str, limit: int = 3) -> list:
+        """某人最常用的卡：[{"name","uses"}]，按 uses DESC（并列时按卡名稳定排序）。"""
+        if not uid:
+            return []
+        try:
+            safe_limit = min(max(1, int(limit)), 20)
+        except (TypeError, ValueError):
+            safe_limit = 3
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                'SELECT card_name, uses FROM user_card_usage WHERE user_id = ? '
+                'ORDER BY uses DESC, card_name ASC LIMIT ?', (uid, safe_limit))
+            rows = cursor.fetchall()
+            cursor.close()
+            return [{'name': r['card_name'], 'uses': int(r['uses'] or 0)} for r in rows]
+        except sqlite3.Error as e:
+            logger.error(f"读取个人卡牌统计失败: uid={uid}, 错误: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"读取个人卡牌统计时发生未知错误: uid={uid}, 错误: {e}")
+            return []
+
+    def get_user_card_uses_total(self, uid: str) -> int:
+        """个人累计出牌次数（称号「卡牌大师」的判据）。读失败返回 0。"""
+        if not uid:
+            return 0
+        try:
+            cursor = self.conn.cursor()
+            row = cursor.execute(
+                'SELECT COALESCE(SUM(uses), 0) AS total FROM user_card_usage '
+                'WHERE user_id = ?', (uid,)).fetchone()
+            cursor.close()
+            return int(row['total'] or 0) if row else 0
+        except sqlite3.Error as e:
+            logger.error(f"读取个人累计出牌失败: uid={uid}, 错误: {e}")
+            return 0
+        except Exception as e:
+            logger.error(f"读取个人累计出牌时发生未知错误: uid={uid}, 错误: {e}")
+            return 0
+
     def get_token_by_password(self, username: str, password: str):
         """通过用户名和密码校验并生成token（使用 check_password_hash 验证）"""
         if not username or not password:
@@ -930,6 +1143,32 @@ def get_leaderboard(limit=10):
 def get_user_rank(uid: str):
     """某个账号的排行榜名次（api.py 用模块级函数调用）"""
     return db.get_user_rank(uid)
+
+
+# ---- 个人信息名片（api.py / server.py 都走模块级函数）----
+def get_user_profile_extra(uid: str):
+    """读名片个性字段（无记录时返回默认值）"""
+    return db.get_user_profile_extra(uid)
+
+
+def save_user_profile_extra(uid: str, fields: dict):
+    """UPSERT 名片字段"""
+    return db.save_user_profile_extra(uid, fields)
+
+
+def record_user_card_use(uid: str, card_name: str, count: int = 1):
+    """记一次个人卡牌使用（server.py 出牌时调用）"""
+    return db.record_user_card_use(uid, card_name, count)
+
+
+def get_user_card_usage(uid: str, limit: int = 3):
+    """某人最常用的卡 Top-N"""
+    return db.get_user_card_usage(uid, limit)
+
+
+def get_user_card_uses_total(uid: str):
+    """个人累计出牌次数"""
+    return db.get_user_card_uses_total(uid)
 
 
 def get_token_by_password(username: str, password_hash: str):

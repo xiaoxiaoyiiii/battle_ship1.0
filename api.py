@@ -1,4 +1,5 @@
 # 允许上传的头像文件类型
+import json
 import os
 import secrets
 import time
@@ -9,6 +10,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
 import db
+import profile_spec
 import wallpaper
 
 ALLOWED_AVATAR_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
@@ -77,14 +79,121 @@ def _rate_limited(scope: str) -> bool:
     _login_attempts[key] = recent
     return len(recent) > _LOGIN_MAX_ATTEMPTS
 
+# ---------------------------------------------------------------------------
+# 个人信息名片（2026-09-17 第 1 批）
+# ---------------------------------------------------------------------------
+# 两个"人"要分清：
+#   · 自己的名片（GET /api/profile, POST /api/profile/card）—— 完整个性字段 + 池子
+#   · 别人看到的名片（GET /user_stats）—— 公开字段 + 隐私过滤
+# 解锁判定只在服务端做（profile_spec 是唯一的一份规则），前端拿 catalog 只是为了
+# 把未解锁项灰掉并写出解锁条件。
+
+_CARD_SPEEDS = None
+
+
+def _card_speeds():
+    """卡名 → 速阶。卡表读失败就全给 0，不影响名片下发。"""
+    global _CARD_SPEEDS
+    if _CARD_SPEEDS is None:
+        table = {}
+        try:
+            path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                'static', 'magic_card.json')
+            with open(path, 'r', encoding='utf-8') as f:
+                cards = json.load(f)
+            for card in cards:
+                if isinstance(card, dict) and card.get('name'):
+                    table[card['name']] = int(card.get('speed') or 0)
+        except Exception as e:      # noqa: BLE001 —— 名片不能因为卡表坏了就 500
+            print(f'[profile] 读取卡表失败，速阶按 0 处理: {e}')
+        _CARD_SPEEDS = table
+    return _CARD_SPEEDS
+
+
+def _profile_unlock_stats(uid, user=None):
+    """解锁判定用的 stats：现有字段 + 个人累计出牌（新表汇总）。"""
+    user = user if user is not None else (db.get_user(uid=uid) or {})
+    stats = {k: user.get(k) for k in
+             ('wins', 'losses', 'longest_streak', 'current_streak', 'created_at')}
+    stats['card_uses_total'] = db.get_user_card_uses_total(uid)
+    return stats
+
+
+def _fav_cards(uid, limit=3):
+    """最爱用的卡：卡名 + 速阶（取自卡表，查不到给 0）+ 使用次数。"""
+    speeds = _card_speeds()
+    result = []
+    for row in db.get_user_card_usage(uid, limit):
+        name = row.get('name') or ''
+        result.append({'name': name, 'speed': speeds.get(name, 0),
+                       'uses': int(row.get('uses') or 0)})
+    return result
+
+
+# 自己的名片里保留的 users 字段（白名单 —— 绝不整行下发）
+_PROFILE_USER_FIELDS = ('id', 'username', 'signature', 'avatar', 'wins', 'losses',
+                        'current_streak', 'longest_streak', 'created_at')
+
+
+def build_own_profile(uid):
+    """自己的完整名片（GET 与 POST 的响应同形状）。查不到用户返回 None。"""
+    user = db.get_user(uid=uid)
+    if not user:
+        return None
+    profile = {k: user.get(k) for k in _PROFILE_USER_FIELDS}
+    stats = _profile_unlock_stats(uid, user)
+    extra = db.get_user_profile_extra(uid)
+    profile.update({
+        'rank': db.get_user_rank(uid),
+        'title_id': extra.get('title_id') or '',
+        'tags': extra.get('tags') or [],
+        'status_text': extra.get('status_text') or '',
+        'frame_id': extra.get('frame_id') or profile_spec.DEFAULT_FRAME_ID,
+        'card_bg_id': extra.get('card_bg_id') or profile_spec.DEFAULT_CARD_BG_ID,
+        'show_stats': int(extra.get('show_stats') or 0),
+        'show_fav_cards': int(extra.get('show_fav_cards') or 0),
+        'show_history': int(extra.get('show_history') or 0),
+        'fav_cards': _fav_cards(uid),
+        'catalog': profile_spec.catalog(stats),
+    })
+    return profile
+
+
 # 获取用户个性化信息
 @app.route('/api/profile', methods=['GET'])
 def get_profile():
     uid = session.get('user_id')
     if not uid:
         return jsonify({'error': '未登录'}), 401
-    profile = db.get_user_profile(uid)
+    profile = build_own_profile(uid)
     return jsonify({'profile': profile})
+
+
+# 保存个人名片（称号 / 标签 / 状态 / 边框 / 底色 / 三个展示开关）
+@app.route('/api/profile/card', methods=['POST'])
+def save_profile_card():
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+
+    user = db.get_user(uid=uid)
+    if not user:
+        return jsonify({'success': False, 'error': '账号不存在'}), 401
+
+    payload = request.get_json(silent=True)
+    if payload is None:
+        payload = request.form.to_dict() if request.form else None
+    if not isinstance(payload, dict):
+        return jsonify({'success': False, 'error': '请求体必须是 JSON 对象'}), 400
+
+    fields, errors = profile_spec.validate_payload(payload, _profile_unlock_stats(uid, user))
+    if errors:
+        # 拒绝整次保存（不做部分写入）：未解锁的称号不能因为"别的字段合法"而漏进去
+        return jsonify({'success': False, 'error': '；'.join(errors)}), 400
+
+    if not db.save_user_profile_extra(uid, fields):
+        return jsonify({'success': False, 'error': '保存失败，请稍后重试'}), 500
+    return jsonify({'success': True, 'profile': build_own_profile(uid)})
 
 
 # 修改签名
@@ -174,13 +283,43 @@ def user_stats_view():
         return jsonify({'stats': None, 'history': []})
     # 安全：只下发展示所需字段。db.get_user 是 SELECT *，直接返回会泄露
     # password_hash（可离线爆破）与 token（账号接管），且本接口无需登录即可调用。
+    # 新增名片字段时**继续走这份白名单**，不要图省事整行下发 —— 一旦整行下发，
+    # 以后往 users 表加的任何敏感列都会自动泄露。
     public_fields = ('id', 'username', 'wins', 'losses', 'current_streak',
                      'longest_streak', 'created_at', 'signature', 'avatar')
     public_stats = {k: stats[k] for k in public_fields if k in stats}
     # 排行榜名次：个人信息面板要显示"第 N 名"（榜外账号也算得出名次）。
     # 算不出来（库异常）时给 None，前端显示占位符，不影响其余字段。
     public_stats['rank'] = db.get_user_rank(stats['id'])
-    history = db.get_match_history(stats['id'], limit)
+
+    # 名片个性字段（称号 / 标签 / 状态 / 边框 / 底色 / 最爱用的卡）
+    extra = db.get_user_profile_extra(stats['id'])
+    title_id = extra.get('title_id') or ''
+    public_stats['title_id'] = title_id
+    public_stats['title_name'] = profile_spec.title_name(title_id)
+    public_stats['tags'] = extra.get('tags') or []
+    public_stats['status_text'] = extra.get('status_text') or ''
+    public_stats['frame_id'] = extra.get('frame_id') or profile_spec.DEFAULT_FRAME_ID
+    public_stats['card_bg_id'] = extra.get('card_bg_id') or profile_spec.DEFAULT_CARD_BG_ID
+    public_stats['fav_cards'] = _fav_cards(stats['id'], 3)
+    # 三个展示开关**一起下发**（计划 §2.5，2026-09-17 裁决补上后两个）。
+    # 语义统一：0 = 该区块对所有人隐藏（包括自己），1 = 可见，由前端按标志位决定画不画。
+    # ⚠️ 只下发 show_history 会让"看别人"这条路径读到 undefined → 前端按默认值当成"显示"
+    # → 玩家关掉的开关在别人眼里完全无效（假控件）。三个必须同进同出。
+    public_stats['show_stats'] = int(extra.get('show_stats') or 0)
+    public_stats['show_fav_cards'] = int(extra.get('show_fav_cards') or 0)
+    public_stats['show_history'] = int(extra.get('show_history') or 0)
+
+    # 隐私：对局历史默认不公开（show_history=0）。**本人永远完整** —— 否则
+    # 「我的对局记录」这个功能就作废了。未登录访问他人主页 = 他人视角。
+    # （只有 history 由服务端过滤数据；战绩亮点 / 最爱用的卡是"标志位 + 数据都发"，
+    #   因为那两个区块的数据本身不算隐私，隐藏与否交给前端按同一个标志位判断。）
+    viewer = session.get('user_id')
+    is_self = bool(viewer) and viewer == stats['id']
+    if is_self or public_stats['show_history']:
+        history = db.get_match_history(stats['id'], limit)
+    else:
+        history = []
     return jsonify({'stats': public_stats, 'history': history})
 @app.route('/')
 def index():

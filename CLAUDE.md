@@ -45,7 +45,7 @@ Flask + Flask-SocketIO 的实时双人海战棋，叠加 43 条魔法卡（41 �
 ```bash
 pip install -r requirements.txt
 python start_server.py        # 推荐（含依赖检查）
-python -m pytest tests/ -q    # 864 passed
+python -m pytest tests/ -q    # 936 passed
 ```
 
 > ⚠️ **必须在项目根目录运行**——`server.py` 用相对路径 `./static/magic_card.json`；`tests/test_all_magic_cards.py:1088` 也用硬编码相对路径，是全套测试中唯一对 CWD 敏感的。
@@ -53,9 +53,10 @@ python -m pytest tests/ -q    # 864 passed
 > 若报 `ModuleNotFoundError: flask`，说明选错了解释器（别再照旧文档改成 venv）。
 > ⚠️ **若大批用例在 setup 阶段报 `PermissionError: [WinError 5] ... Temp\pytest-of-Administrator`**：
 > 那是本机临时目录的 ACL 坏了（删不掉、`takeown` 也拒绝），**不是你的改动**。重定向临时目录即可：
-> `$env:TMP="$PWD\.tmp\pytemp"; $env:TEMP=$env:TMP; python -m pytest tests/ -q`。
+> `$env:TMP="$PWD\.tmp\pytemp"; $env:TEMP=$env:TMP; python -m pytest tests/ -q -p no:cacheprovider`。
+> 同一个原因，仓库里的 `.pytest_cache/` 也**不可写**（`WinError 5` 警告刷屏），加 `-p no:cacheprovider` 关掉缓存就行。
 
-**实测基线（2026-09-17 缺陷批后）**：`864 passed / 0 failed`（上一批 2026-09-15 为 790，本批新增 35 条）。
+**实测基线（2026-09-17 名片改版批后）**：`936 passed / 0 failed`（上一批 2026-09-17 缺陷批为 864，本次新增 72）。
 
 > 🔧 **2026-09-13 个人战绩弹窗 / 人机战绩统计批**（详见 `docs/STATS_AND_AI_RANKING_FIXES.md`）：6 处实测缺陷 —— ①历史行把 `<button>` 塞进 `<table><tbody>` 触发 foster parenting，表头「时间 对手 结果 局内日志」孤立在列表最下方；②胜负配色被通用 `button` 规则的 `background-image` 渐变盖掉，三条胜绩全蓝；③`.user-stats-table` / `.user-history` 在样式表里从未定义；④人机对手显示成裸 ID `ai-4530c8`；⑤胜局的「对局详情」把「对手」显示成自己；⑥**人机对局计入 `users.wins` / 连胜**（排行榜 `ORDER BY wins DESC` → 打电脑即可刷榜）。修法：历史列表改 div 三列网格、`.match-history-btn{background-image:none}` + `.win`/`.lose`、`ai-` 前缀映射「电脑」并加「人机」标签、按胜负取对手、`db.record_match(count_stats=)` + `server._count_stats_for(room)`（人机只写历史、不计统计，6 处调用点全部显式传参）；并合并两份重复的 `showUserStats`/`showMatchDetail`、去掉 `setTimeout` 绑事件与「每次点头像都 append 一个重复 id 弹窗」，新增「加载更多」。回归：`tests/test_stats_display_fixes.py`（14 条）+ `tools/stats_modal_check.mjs`（无头 Edge，27 项，含 `--username` 真实账号端到端）；历史脏数据用 `tools/recompute_ranked_stats.py --apply` 对齐（本机已执行：z1w6qn 3 胜 → 0）。
 
@@ -718,6 +719,49 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 现在由浏览器工具 `tools/last_stand_board_check.mjs` 第 4 节在真页面上出牌验证
 （修复前实测 `blocked=36 / clickable=0`）。
 
+### 🟢 2026-09-17 个人信息名片 / 界面设置改版批（第 1 批）
+
+> 详见 `docs/PROFILE_CARD_2026_09_17.md`（设计稿 + §13 实施记录）与 `docs/PROFILE_CARD_2026_09_17_PLAN.md`（票 + 契约）。
+> 新增两表 `user_profile` / `user_card_usage`、`profile_spec.py`、`/api/profile/card`、主题预设 5+1、
+> `tests/test_profile_card.py`（72）、`tools/profile_card_check.mjs`（53）、`tools/dom_contract_check.mjs`。
+> 自测 **936 passed**（864 + 72）+ 浏览器工具合计 290 项全绿。
+
+**★ 教训一：开关必须有下发给「别人视角」的路径，否则就是假控件。**
+`show_stats` / `show_fav_cards` 第一版只写进了「自己的接口」，`/user_stats` 只发了 `show_history`
+→ 前端在「看别人」时读到 `undefined`、按默认值当成「显示」→ **玩家关掉开关，别人照样看得到**。
+三个 `show_*` 必须**同进同出、同一套语义**（0 = 对所有人隐藏，含自己）。
+判断标准：这个开关的效果，**别人视角**走的是哪条链路？
+
+**★ 教训二：「查看面」和「编辑面」是两块面，别硬塞成一块。**
+实测 `#opponent-stats-modal`（查看，**四个入口**共用）与 `#profile-modal`（编辑）各司其职。
+第一版契约把两态都塞进 `#profile-modal`，会逼四个入口改道、并丢掉上一批要求的对局历史列表。
+**动手前先 grep 一遍现有入口与容器，再定契约。**
+
+**★ 教训三：同一张卡渲染进两个容器 → 同一个文档里撞 id → `getElementById` 只拿到靠前的那个。**
+`#profile-view-*` 只允许在查看面输出（`buildProfileCard(s, {ids:true})`），首页老容器
+`#user-stats-content` 渲染同一张卡时只出 class。撞 id 的表现仍然是**「点了没反应」**。
+
+**★ 教训四：内联变量优先级高于任何 CSS —— 切预设必须同时清 localStorage 与内联变量。**
+`applyPrimaryColor` 写的是 `documentElement.style.setProperty('--primary', …)`，
+只清 localStorage 的话「切回预设」等于没切。
+
+**★ 教训五：把控件搬进「默认隐藏的分区」后，所有通往它的入口都要跟着切分区。**
+导航栏 🎬（壁纸）与 🎵（音乐）原本只 `remove('hidden')` + `scrollIntoView`，设置页改成
+左导航分区后，玩家点进去看到的是「外观与主题」、目标控件**根本不在文档流里** →
+「点了按钮什么也没发生」。修法：统一走 `openSettingsModal(pane)`（**唯一一份**切分区实现），
+并给 `profile_card_check.mjs` 加了 T7/T8 两条永久守卫。
+👉 这类改动要**逐个入口走一遍**（本项目「改共用函数先 grep 全部调用点」的同族规矩）。
+
+**★ 工具假红清单（四类，新增工具前先过一遍）**：
+① 残留的无头 Edge 占着调试端口 + 锁着 profile → 新浏览器**静默起不来**，工具连上旧实例
+（工具开头按 profile 路径预清理）；
+② `Page.navigate` 返回后 `readyState` 可能仍是**旧文档**的 complete → 断言打在上一页
+（要等「地址真的变了」）；
+③ 无头浏览器是**持久 profile**，上一轮的 localStorage 还在（主题预设那条断言第二次必红）；
+④ 工具与真机**共用页面状态**时会互相污染（`last_stand_board_check` 先跑真机对局，AI 随机打中的
+格子可能正是后面注入的坐标 → 改成断言「**新**画上命中/落空」）。
+**修法一律落进工具本身**，不要只留一句「这个红是假的」。
+
 ---
 
 ## 12. 开发约定
@@ -752,7 +796,12 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
    壁纸 → `wallpaper_check.mjs`（自造壁纸库+自起服务端，不依赖本机装没装 Wallpaper Engine）、
    手牌 → `hand_play_check.mjs`、布局 → `ui_layout_check.mjs`、音效 → `sfx_check.mjs`、BGM → `bgm_check.mjs`、
    仁王之盾选船 → `renwang_board_check.mjs`、连锁弹窗卡预览 → `chain_preview_check.mjs`、
-   排行榜/个人信息 → `profile_leaderboard_check.mjs`；协议级 e2e → `tools/e2e_batch_2026_09_17.py`（真实双客户端）。
+   排行榜/个人信息 → `profile_leaderboard_check.mjs`、个人信息名片改版 → `profile_card_check.mjs`；
+   **`dom_contract_check.mjs`（不需要浏览器、不起服务端，改完前端随时跑）**：查「代码引用了但页面里不存在的 id」——
+   这类引用的表现是 `getElementById` 拿到 `null`、被 `if (el)` 兜掉，**不报错、只是点了没反应**
+   （`#show-opponent-stats` 那次踩过）。它会区分「运行期由 JS 创建」（正常）与「哪都没创建」（真悬空），
+   并比对新版改动计划里冻结的 id 是否真的落地；
+   协议级 e2e → `tools/e2e_batch_2026_09_17.py`（真实双客户端）。
    ⚠️ 无头浏览器用**持久 profile**，localStorage 里带着上一轮的状态；"改了代码页面却不变"
    先确认拿到的是不是缓存/旧状态（壁纸批就因此白查了一轮）。
 14. **跑测试/工具用「能 import flask 的那个解释器」**。当前 PATH 上的 `python`（3.12.10）已装
@@ -792,7 +841,8 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 | **`docs/SHIELD_AND_LASTSTAND_2026_09_14.md`** | **2026-09-14「破盾格还能再打」「绝处逢生候选格能打」：同一个病灶（把"动作"当"结果"记进 attacks，格子被永久/整回合锁死）、五种格子状态的视觉区分** |
 | **`docs/WALLPAPER_ENGINE.md`** | **2026-09-15 动态壁纸（Wallpaper Engine 接入）：三条导入通道与各自可见范围、创意工坊目录解析与 preview 陷阱、媒体路由的安全模型、视觉增强的两条硬规则（不改盒模型 / 含 fixed 后代的元素不许 transform）** |
 | **`docs/BATCH_2026_09_17.md`** | **2026-09-17 缺陷批（11 条）：逐条现象/根因/修法/验证 —— 冻结计数只算活船、败者食尘大回合级归零、越战越勇即时 +1、条件不满足不吞牌（`_refund_card_to_hand`）、死者苏生放置格、回光返照清错棋盘、仁王之盾棋盘选船、连锁弹窗卡预览、排行榜头像与个人信息详情** |
-| **`docs/PROFILE_CARD_2026_09_17.md`** | **2026-09-17 个人信息名片 / 界面设置改版设计稿（第 1 批）：方案 A 分层名片 + 深海主题、双态弹窗、设置左导航、称号/标签/状态/头像框/底色/展示开关、称号按战绩解锁（服务端裁决）、隐私默认不公开对局历史；含四批分批与「本批不做」清单** |
+| **`docs/PROFILE_CARD_2026_09_17.md`** | **2026-09-17 个人信息名片 / 界面设置改版设计稿（第 1 批）：方案 A 分层名片 + 深海主题、双态弹窗、设置左导航、称号/标签/状态/头像框/底色/展示开关、称号按战绩解锁（服务端裁决）、隐私默认不公开对局历史；含四批分批与「本批不做」清单，§13 是实施记录（实测输出 + 实施中发现的 4 个真问题 + 工具假红清单）** |
+| **`docs/PROFILE_CARD_2026_09_17_PLAN.md`** | **同一批次的实现计划（票 + 依赖图）：冻结的接口契约（8 字段全发、三个 `show_*` 同进同出）与 DOM 契约（查看面 `#opponent-stats-modal` 与编辑面 `#profile-modal` 是**两块面**）、文件独占分工、每票完成判据 —— 动手前先读它，别照旧设计稿的初版契约改** |
 | `docs/CHAIN_ENGINE_SPEC.md` | 连锁引擎设计稿（⚠️ 实施前的文档，开头已补 2026-09-13 实测校准表） |
 | `README.md` | 面向用户的功能/玩法说明（测试数/文件清单已校准） |
 

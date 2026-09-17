@@ -1477,6 +1477,146 @@ const PROFILE_BADGE_GLYPH = {
 
 let pendingUnlockBadges = [];
 
+// ==================== 等级 / 经验（2026-09-17 追加） ====================
+//
+// ⚠️ 前端**不算等级、不算"下一级要多少经验"** —— 那些都由服务端的 `leveling` 算，
+//    随 `/api/profile` 的 `level_info` 与结算事件 `xp_gained` 的 `segments` 下发。
+//    前端这里只做两件事：把数字画出来 + 按段播滚动动画。
+//    （两份曲线实现必然漂移，第 2 批已经吃过一次"判据两份实现"的亏。）
+
+/** 把等级视图画到一块 bar 上（首页条 / 名片条 / 结算条共用）。 */
+function paintLevelBar(fillEl, textEl, levelEl, info) {
+    const v = info || {};
+    const ratio = Number(v.ratio);
+    if (fillEl) fillEl.style.width = Math.round((isFinite(ratio) ? Math.min(1, Math.max(0, ratio)) : 0) * 100) + '%';
+    if (textEl) {
+        textEl.textContent = v.capped
+            ? ('满级 ' + (v.max_level || 100))
+            : (Number(v.into || 0) + ' / ' + Number(v.need || 0));
+    }
+    if (levelEl) levelEl.textContent = String(v.level || 1);
+}
+
+/** 首页的「Lv.N + 经验条」。登录后才显示；拿不到就整块隐藏。 */
+function refreshMyLevelStrip(info) {
+    const strip = document.getElementById('my-level-strip');
+    if (!strip) return;
+    const paint = (v) => {
+        if (!v) { strip.classList.add('hidden'); return; }
+        paintLevelBar(document.getElementById('mls-fill'), document.getElementById('mls-text'),
+            document.getElementById('mls-level'), v);
+        strip.classList.remove('hidden');
+    };
+    if (info) { paint(info); return; }
+    if (!window.__USERNAME) { paint(null); return; }     // 游客没有等级
+    fetch('/api/profile', { headers: { 'Accept': 'application/json' } })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => paint(d && d.profile && d.profile.level_info))
+        .catch(() => paint(null));
+}
+
+// ---- 结算：本局经验的滚动动画 ----
+let xpAnimToken = 0;          // 世代令牌：新的一局开始时把上一次动画作废
+let lastXpView = null;        // 最近一次结算后的等级视图（用于顺手刷新首页条）
+
+function renderXpBreakdown(rows) {
+    const box = document.getElementById('xp-breakdown');
+    if (!box) return;
+    const list = Array.isArray(rows) ? rows : [];
+    box.textContent = list.length ? ('（' + list.map(r => r.label + ' +' + r.xp).join('，') + '）') : '';
+}
+
+function showXpPanel(payload) {
+    const panel = document.getElementById('xp-gain-panel');
+    if (!panel || !payload) return;
+    const delta = Number(payload.delta || 0);
+    const before = payload.before || {};
+    const after = payload.after || {};
+    const segs = Array.isArray(payload.segments) ? payload.segments.slice() : [];
+    renderXpBreakdown(payload.breakdown);
+
+    const deltaEl = document.getElementById('xp-delta');
+    if (deltaEl) deltaEl.textContent = '+' + delta;
+    const lvNow = document.getElementById('xp-level-now');
+    if (lvNow) lvNow.textContent = String(before.level || 1);
+    const fill = document.getElementById('xp-bar-fill');
+    const text = document.getElementById('xp-progress-text');
+    const up = document.getElementById('xp-levelup');
+    if (up) up.classList.add('hidden');
+    panel.classList.remove('hidden');
+
+    // 起点：本级进度
+    const seg0 = segs[0] || { ratio_from: before.ratio || 0, from: before.into || 0, need: before.need || 0 };
+    if (fill) fill.style.width = Math.round((Number(seg0.ratio_from) || 0) * 100) + '%';
+    if (text) text.textContent = Number(seg0.from || 0) + ' / ' + Number(seg0.need || 0);
+
+    if (!segs.length || delta <= 0) {
+        lastXpView = after;
+        return;
+    }
+
+    const token = ++xpAnimToken;
+    let segIndex = 0;
+    const SEG_MS = 700;                 // 一段（一级内）滚动时长
+    const RESET_MS = 420;               // 升级后"条子清空重来"的停顿
+
+    function playSegment() {
+        if (token !== xpAnimToken) return;           // 被新一局作废
+        const seg = segs[segIndex];
+        if (!seg) {
+            if (text) text.textContent = after.capped
+                ? ('满级 ' + (after.max_level || 100))
+                : (Number(after.into || 0) + ' / ' + Number(after.need || 0));
+            if (lvNow) lvNow.textContent = String(after.level || 1);
+            lastXpView = after;
+            return;
+        }
+        const from = Number(seg.ratio_from) || 0;
+        const to = Number(seg.ratio_to) || 0;
+        const need = Number(seg.need || 0);
+        const xpFrom = Number(seg.from || 0);
+        const xpTo = Number(seg.to || 0);
+        const t0 = performance.now();
+        function tick(now) {
+            if (token !== xpAnimToken) return;
+            const p = Math.min(1, (now - t0) / SEG_MS);
+            const ratio = from + (to - from) * p;
+            if (fill) fill.style.width = Math.round(ratio * 100) + '%';
+            if (text) text.textContent = Math.round(xpFrom + (xpTo - xpFrom) * p) + ' / ' + need;
+            if (p < 1) { requestAnimationFrame(tick); return; }
+            // 这一段填完了
+            if (seg.level_up) {
+                // 升级：先把"升级了"闪一下，再把条子清空，然后继续加
+                const fromLv = Number(seg.level || 1);
+                const toLv = fromLv + 1;
+                if (up) {
+                    const f = document.getElementById('xp-from');
+                    const t = document.getElementById('xp-to');
+                    if (f) f.textContent = String(fromLv);
+                    if (t) t.textContent = String(toLv);
+                    up.classList.remove('hidden');
+                    up.classList.add('flash');
+                    setTimeout(() => up.classList.remove('flash'), RESET_MS + 200);
+                }
+                if (lvNow) lvNow.textContent = String(toLv);
+                setTimeout(() => {
+                    if (token !== xpAnimToken) return;
+                    if (up) up.classList.add('hidden');
+                    if (fill) fill.style.width = '0%';
+                    if (text) text.textContent = '0 / ' + need;
+                    segIndex++;
+                    playSegment();
+                }, RESET_MS);
+            } else {
+                segIndex++;
+                playSegment();
+            }
+        }
+        requestAnimationFrame(tick);
+    }
+    playSegment();
+}
+
 function renderAchievementUnlockPanel() {
     const panel = document.getElementById('achievement-unlock-panel');
     if (!panel) return;
@@ -2253,7 +2393,10 @@ function bindEventListeners() {
             // 前端只负责加个类，不做任何"判断谁有资格"的事 —— 资格在服务端的数据层。
             nameStyle: String(s.name_style || ''),
             signature: String(s.signature || ''),
-            level: profileLevel(total),
+            // 等级：**以服务端的 level_info 为准**（经验/等级/进度都由它算）。
+            // 老接口没给 level_info 时退回原来的"按场次估算"，保证不会显示成 undefined。
+            level: (s.level_info && Number(s.level_info.level)) || profileLevel(total),
+            levelInfo: s.level_info || null,
             title: profileTitleName(s),
             status: String(s.status_text || ''),
             tags: profileTagNames(s.tags),
@@ -2402,13 +2545,23 @@ function bindEventListeners() {
             + ' onerror="this.onerror=null;this.src=\'/static/avatars/default.png\'">'
             + '<span' + idsOn('id="profile-view-level"') + ' class="lvl">Lv.' + m.level + '</span>'
             + '</div>';
+        // 经验条（等级 / 本级进度都来自服务端的 level_info；接口没给就不画这一块）
+        if (m.levelInfo) {
+            const li = m.levelInfo;
+            const pct = li.capped ? 100 : Math.round((Number(li.ratio) || 0) * 100);
+            html += '<div' + idsOn('id="profile-view-xp"') + ' class="pf-xp">'
+                + '<div class="pf-xp-bar"><i style="width:' + pct + '%"></i></div>'
+                + '<span class="pf-xp-text">'
+                + (li.capped ? ('满级 ' + (li.max_level || 100))
+                             : (Number(li.into || 0) + ' / ' + Number(li.need || 0) + ' 经验'))
+                + '</span></div>';
+        }
         html += '<div class="pf-who">'
             + '<h3' + idsOn('id="profile-view-name"') + ' class="pf-name'
             + (m.nameStyle === 'rainbow' ? ' name-rainbow' : '') + '">' + escapeHtml(m.name)
             + '<span' + idsOn('id="profile-view-title"') + ' class="title-chip' + (m.title ? '' : ' hidden') + '">'
             + escapeHtml(m.title) + '</span></h3>'
-            + '<p' + idsOn('id="profile-view-status"') + ' class="state">'
-            + escapeHtml(m.status || '这位玩家还没有写状态') + '</p>'
+            + '<p' + idsOn('id="profile-view-status"') + ' class="state">'            + escapeHtml(m.status || '这位玩家还没有写状态') + '</p>'
             + '<div' + idsOn('id="profile-view-tags"') + ' class="pf-tags">'
             + m.tags.map(t => '<span class="tag">' + escapeHtml(t) + '</span>').join('')
             + '</div>'
@@ -3907,6 +4060,9 @@ function setupSocketListeners() {
 
                 // 显示对手信息
                 opponentInfo.textContent = gameState.opponentName;
+                // 顺手把对手的称号 / 标签 / 等级显示出来（异步取公开的 /user_stats，
+                // 与名片同一份数据源；取不到就留空，绝不影响开局倒计时）
+                showOpponentChips(gameState.opponentName);
 
                 // 开始5秒倒计时
                 let countdown = 5;
@@ -4145,6 +4301,18 @@ function setupSocketListeners() {
         const names = items.map(b => b.name || b.id).join('、');
         addGameLog('<span class="log-badge log-badge-info">成就</span>'
             + '<span class="log-text">本局解锁了新徽章：' + escapeHtml(names) + '</span>', 'info');
+    });
+
+    socket.on('xp_gained', (data) => {
+        // 结算经验：只发给本人（服务端按 sid 单发）。面板长在结算屏里，
+        // 事件比 game_over 先到，所以这里直接开播；game_over 那边再兜一次。
+        try {
+            showXpPanel(data);
+            // 顺手把首页的等级条更新成"这一局之后"的状态（不用再打一次接口）
+            if (data && data.after) refreshMyLevelStrip(data.after);
+        } catch (e) {
+            console.warn('经验动画失败（不影响结算）:', e && e.message);
+        }
     });
 
     // 添加阶段更新监听
@@ -6067,10 +6235,53 @@ async function handleRegisterSubmit() {
 }
 
 // 重置游戏
+/**
+ * 匹配成功的 5 秒等待界面里显示对手的**称号 / 标签 / 等级**。
+ *
+ * 数据来自公开的 `/user_stats`（与名片、排行榜同一份来源 —— 不新开接口）。
+ * 5 秒内足够取回；失败/游客对手（查不到这个人）就清空，不打断倒计时。
+ *
+ * ⚠️ **只用接口给的名字，不去调前端的映射函数**：`profileTitleName` /
+ *    `profileTagNames` 声明在名片渲染那个函数作用域里，模块级函数够不到 ——
+ *    第一版就是这么写的，结果是"名字有了、标签一个不显示"，而且因为跑在
+ *    `.then()` 里连异常都不显眼（同一天里第二次踩这个作用域的坑）。
+ *    现在服务端把 `title_name` 与 `tag_names` 直接下发，这里只负责拼 DOM。
+ */
+function showOpponentChips(username) {
+    const box = document.getElementById('opponent-chips');
+    if (!box) return;
+    box.innerHTML = '';
+    box.classList.add('hidden');
+    if (!username) return;
+    fetch('/user_stats?username=' + encodeURIComponent(username), { headers: { 'Accept': 'application/json' } })
+        .then(r => (r.ok ? r.json() : null))
+        .then(d => {
+            const s = (d && d.stats) || null;
+            if (!s) return;
+            const parts = [];
+            const lv = s.level_info && Number(s.level_info.level);
+            if (lv) parts.push('<span class="match-chip lv">Lv.' + escapeHtml(String(lv)) + '</span>');
+            const title = String(s.title_name || '');
+            if (title) parts.push('<span class="match-chip title">' + escapeHtml(title) + '</span>');
+            // tag_names 是服务端给的中文名；老接口没给就退回裸 id（总比不显示强）
+            const tagNames = Array.isArray(s.tag_names) && s.tag_names.length
+                ? s.tag_names : (Array.isArray(s.tags) ? s.tags : []);
+            tagNames.forEach(t => {
+                if (t) parts.push('<span class="match-chip tag">' + escapeHtml(String(t)) + '</span>');
+            });
+            box.innerHTML = parts.join('');
+            box.classList.toggle('hidden', parts.length === 0);
+        })
+        .catch(() => { /* 取不到就算了：等待界面照常倒计时 */ });
+}
+
 function resetGame() {
-    // 新一局开始：清掉上一局的「本局刚解锁」缓冲，免得旧徽章在新结算里再弹一次
+    // 新一局开始：清掉上一局的「本局刚解锁」缓冲与经验动画世代
     pendingUnlockBadges = [];
     renderAchievementUnlockPanel();
+    xpAnimToken++;                     // 作废上一局的滚动动画（避免它接着改新一局的条）
+    const xpPanel = document.getElementById('xp-gain-panel');
+    if (xpPanel) xpPanel.classList.add('hidden');
     // 断开socket连接（如果存在）
     if (gameState.socket) {
         gameState.socket.disconnect();
@@ -6106,6 +6317,9 @@ window.addEventListener('load', () => {
     init();
     setupPhaseButtons(); // 添加这行
     initCardPreview(); // 初始化卡牌预览功能
+    // 首页「Lv.N + 经验条」：登录了才显示（游客没有等级）。
+    // 放在 load 之后异步取，取不到就把整块藏起来（绝不挡住首页）。
+    refreshMyLevelStrip();
 });
 
 

@@ -74,6 +74,15 @@
             <button id="cancel-match">取消匹配</button>
         </div>
 
+        <!-- 我的等级 / 经验条（2026-09-17 追加）。
+             数据来自 /api/profile 的 level_info（等级与"本级进度"都由服务端算），
+             登录后才有；未登录整块隐藏（游客没等级）。 -->
+        <div id="my-level-strip" class="my-level-strip hidden">
+            <span class="mls-lv">Lv.<b id="mls-level">1</b></span>
+            <div class="mls-bar"><div class="mls-fill" id="mls-fill"></div></div>
+            <span class="mls-text" id="mls-text">0 / 0</span>
+        </div>
+
         <!-- 在线人数显示 -->
         <div id="online-count-container">
             当前在线人数：<span id="online-count">0</span>
@@ -143,6 +152,10 @@
         <h2>匹配成功！</h2>
         <div class="match-info">
             <p>你的对手是：<span id="opponent-info"></span></p>
+            <!-- 对手的称号 / 标签 / 等级（2026-09-17 追加）。
+                 数据取自公开的 /user_stats（与名片同一份来源），在 5 秒倒计时里异步填进来；
+                 拿不到就保持空白，不影响开局。 -->
+            <div id="opponent-chips" class="match-chips"></div>
             <p>游戏将在 <span id="countdown-timer">5</span> 秒后开始</p>
             <div id="countdown-bar" class="countdown-bar">
                 <div class="countdown-fill"></div>
@@ -434,6 +447,22 @@
              「XX 解锁了新徽章：YY」是给双方看的），这里渲染成"本局刚解锁 ⚓首胜"。
              没有新解锁时整块隐藏 —— 由 game.js 的 renderAchievementUnlockPanel() 决定。 -->
         <div id="achievement-unlock-panel" class="achievement-unlock hidden"></div>
+        <!-- 本局经验 / 等级（2026-09-17 追加）。
+             服务端结算时把 `xp_gained` 单发给本人：里面带**动画分段**
+             （每段：本级从哪填到哪、够不够升级），前端只按段播滚动条；
+             升级的那一段会播"条子清空重来"，然后继续加。 -->
+        <div id="xp-gain-panel" class="xp-gain hidden">
+            <div class="xp-gain-head">
+                <span class="xp-gain-delta">本局获得 <b id="xp-delta">+0</b> 经验</span>
+                <span class="xp-gain-level">Lv.<b id="xp-level-now">1</b></span>
+            </div>
+            <div class="xp-bar" id="xp-bar"><div class="xp-bar-fill" id="xp-bar-fill"></div></div>
+            <div class="xp-gain-foot">
+                <span id="xp-progress-text">0 / 0</span>
+                <span id="xp-breakdown" class="xp-breakdown"></span>
+            </div>
+            <div id="xp-levelup" class="xp-levelup hidden">升级！Lv.<b id="xp-from">1</b> → Lv.<b id="xp-to">2</b></div>
+        </div>
         <div class="game-over-buttons">
             <button id="play-again">再来一局</button>
             <button id="return-to-menu">返回主菜单</button>

@@ -22,6 +22,8 @@ from flask_socketio import SocketIO, join_room, emit as semit
 
 import db  # local database helpers for users and matches
 import achievements  # 徽章判据（纯函数，唯一一份 evaluate()）
+import leveling  # 等级曲线 / 每局经验 / 升级动画分段（唯一一份规则）
+import profile_spec  # 特权常量（level_101 等）
 import quick_chat  # 局内快捷语表 + 频率规则（纯数据/纯函数，前端从接口取同一份）
 from api import app
 from file import read_json
@@ -2273,7 +2275,60 @@ def _finalize_match(room, winner_id, loser_id):
     except Exception:
         pass
 
+    # ④ 经验 / 等级（2026-09-17 追加）—— 与徽章一样，**只给登录用户**、只走这个收口。
+    try:
+        _grant_match_xp(room, ((winner_id, winner, winner_user_id, True),
+                               (loser_id, loser, loser_user_id, False)))
+    except Exception:
+        pass
+
     return newly
+
+
+def _grant_match_xp(room, rows):
+    """结算发经验，并把"这一局涨了多少、要播几段动画"单独推给本人。
+
+    `rows` = `[(player_id, player, user_id, is_winner), ...]`。
+
+    为什么把**动画分段**放在服务端算：等级曲线只有 `leveling` 一份实现，
+    前端要是自己算"下一级要多少"，就成了两份实现（第 2 批的教训）。
+    所以这里下发 `segments`（每段：本级从 from 填到 to、够不够升级），前端只负责播动画。
+
+    经验规则见 `leveling.match_xp`：参与 10 / 胜利 15 / 每击沉 2 / 零伤 10 / 闪电战 5。
+    人机对局不发（与"打电脑不记统计、不发徽章"同一口径，`count_stats` 已经拦在前面了）。
+    """
+    for pid, player, uid, is_winner in (rows or ()):
+        if not uid:
+            continue
+        try:
+            cap = leveling.LEVEL_101 if db.has_user_perk(uid, profile_spec.PERK_LEVEL_101) \
+                else leveling.MAX_LEVEL
+            # 这一局的表现：击沉数 = 对方沉船数；零伤 = 自己一艘没沉；快局看对局时长
+            foe = room.players.get(rows[1][0] if pid == rows[0][0] else rows[0][0])
+            sunk = len(getattr(foe, 'sunken_ships', []) or []) if foe else 0
+            flawless = bool(is_winner) and not (getattr(player, 'sunken_ships', []) or [])
+            duration = _match_duration_sec(room)
+            fast = bool(is_winner) and duration is not None and 0 < duration <= 180
+            delta = leveling.match_xp(is_winner, sunk=sunk, flawless=flawless, fast=fast)
+            before = db.get_user_xp(uid)
+            after = db.add_user_xp(uid, delta)
+            sid = getattr(player, 'sid', None)
+            if not sid:
+                continue
+            emit('xp_gained', {
+                'player_id': pid,
+                'delta': int(max(0, after - before)),
+                'xp_before': int(before),
+                'xp_after': int(after),
+                'win': bool(is_winner),
+                'breakdown': leveling.xp_breakdown(is_winner, sunk=sunk, flawless=flawless, fast=fast),
+                'before': leveling.level_view(before, cap),
+                'after': leveling.level_view(after, cap),
+                'segments': leveling.segments(before, after, cap),
+            }, room=sid)
+        except Exception:
+            # 发经验失败不许把结算搞崩（与徽章同一条规矩）
+            continue
 
 
 def _check_last_chance(room, attacker_id: str, defender_id: str) -> bool:

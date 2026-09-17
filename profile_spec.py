@@ -213,8 +213,9 @@ def unlocked_card_bgs(stats):
 # 这两个字符串是**唯一的一份**定义：db 层只存字符串，api 层用它读表/注入标记。
 PERK_UNLOCK_ALL = 'unlock_all_cosmetics'   # 称号 / 头像框 / 名片底色 全部解锁
 PERK_RAINBOW_NAME = 'rainbow_name'         # 彩虹渐变名字（别人也看得到，别人拿不到）
+PERK_LEVEL_101 = 'level_101'               # 等级上限 101（普通账号封顶 100）
 
-VALID_PERKS = (PERK_UNLOCK_ALL, PERK_RAINBOW_NAME)
+VALID_PERKS = (PERK_UNLOCK_ALL, PERK_RAINBOW_NAME, PERK_LEVEL_101)
 
 # 注入进 stats 的标记键（前缀下划线避免与 users 表的真实列重名）
 UNLOCK_ALL_FLAG = '_unlock_all_cosmetics'

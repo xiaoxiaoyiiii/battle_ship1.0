@@ -246,6 +246,19 @@ class Database:
                   )
                   ''')
 
+            # ---- 等级 / 经验（2026-09-17 追加）----
+            # ⚠️ **只存 xp，不存 level**：等级一律由 `leveling.level_from_xp()` 推出来。
+            #    存两个字段迟早出现"经验涨了但等级没更新"这种对不上的状态（第 2 批
+            #    "同一件事两份实现必然漂移"的教训）。主键就是 user_id，一人一行。
+            self.cursor.execute('''
+                  CREATE TABLE IF NOT EXISTS user_xp
+                  (
+                      user_id    TEXT PRIMARY KEY,
+                      xp         INTEGER NOT NULL DEFAULT 0,
+                      updated_at INTEGER
+                  )
+                  ''')
+
             # ---- 特权（2026-09-17）----
             # 存放**不靠战绩解锁**的东西：外观全解锁、彩虹渐变名字等。
             # 主键 (user_id, perk) 让授予天然幂等（INSERT OR IGNORE）。
@@ -1334,6 +1347,99 @@ class Database:
             return False
 
     # ------------------------------------------------------------------
+    # 等级 / 经验（user_xp）
+    # 与其它 DAO 同一风格：读失败返回 0/空、写失败返回 False，绝不抛。
+    # ------------------------------------------------------------------
+    def get_user_xp(self, uid: str) -> int:
+        """累计经验。没有记录 = 0（不写库）。"""
+        if not uid:
+            return 0
+        try:
+            cursor = self.conn.cursor()
+            row = cursor.execute('SELECT xp FROM user_xp WHERE user_id = ?', (uid,)).fetchone()
+            cursor.close()
+            return max(0, int(row['xp'])) if row else 0
+        except sqlite3.Error as e:
+            logger.error(f"读取经验失败: uid={uid}, 错误: {e}")
+            return 0
+        except Exception as e:
+            logger.error(f"读取经验时发生未知错误: uid={uid}, 错误: {e}")
+            return 0
+
+    def get_xp_map(self, uids) -> dict:
+        """批量 `{uid: xp}`（排行榜一页 100 行，逐行查会打 100 次库）。"""
+        ids = [str(u) for u in (uids or []) if u]
+        if not ids:
+            return {}
+        try:
+            marks = ','.join('?' for _ in ids)
+            cursor = self.conn.cursor()
+            rows = cursor.execute(
+                f'SELECT user_id, xp FROM user_xp WHERE user_id IN ({marks})', ids).fetchall()
+            cursor.close()
+            return {str(r['user_id']): max(0, int(r['xp'] or 0)) for r in rows if r['user_id']}
+        except sqlite3.Error as e:
+            logger.error(f"批量读取经验失败: 错误: {e}")
+            return {}
+        except Exception as e:
+            logger.error(f"批量读取经验时发生未知错误: 错误: {e}")
+            return {}
+
+    def add_user_xp(self, uid: str, delta: int) -> int:
+        """给用户加经验，返回**加完之后**的累计值。
+
+        · `delta <= 0` 直接返回当前值（不做减法 —— 经验只增不减，避免误传负数把玩家打回原形）；
+        · 用 UPSERT，第一次写就建行；
+        · 写失败返回当前值（调用方据此决定要不要播动画）。
+        """
+        if not uid:
+            return 0
+        try:
+            delta = int(delta)
+        except (TypeError, ValueError):
+            return self.get_user_xp(uid)
+        if delta <= 0:
+            return self.get_user_xp(uid)
+        try:
+            with self._lock:
+                cursor = self.conn.cursor()
+                cursor.execute(
+                    'INSERT INTO user_xp (user_id, xp, updated_at) VALUES (?, ?, ?) '
+                    'ON CONFLICT(user_id) DO UPDATE SET xp = xp + excluded.xp, updated_at = excluded.updated_at',
+                    (uid, delta, int(time.time())))
+                self.conn.commit()
+                row = cursor.execute('SELECT xp FROM user_xp WHERE user_id = ?', (uid,)).fetchone()
+                cursor.close()
+            return max(0, int(row['xp'])) if row else delta
+        except sqlite3.Error as e:
+            logger.error(f"增加经验失败: uid={uid}, delta={delta}, 错误: {e}")
+            return self.get_user_xp(uid)
+        except Exception as e:
+            logger.error(f"增加经验时发生未知错误: uid={uid}, 错误: {e}")
+            return self.get_user_xp(uid)
+
+    def set_user_xp(self, uid: str, xp: int) -> bool:
+        """直接设置累计经验（运维用，例如给某个账号定级）。"""
+        if not uid:
+            return False
+        try:
+            with self._lock:
+                cursor = self.conn.cursor()
+                cursor.execute(
+                    'INSERT INTO user_xp (user_id, xp, updated_at) VALUES (?, ?, ?) '
+                    'ON CONFLICT(user_id) DO UPDATE SET xp = excluded.xp, updated_at = excluded.updated_at',
+                    (uid, max(0, int(xp)), int(time.time())))
+                self.conn.commit()
+                cursor.close()
+            return True
+        except sqlite3.Error as e:
+            logger.error(f"设置经验失败: uid={uid}, 错误: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"设置经验时发生未知错误: uid={uid}, 错误: {e}")
+            return False
+
+    # ------------------------------------------------------------------
     # 特权（user_perks）：外观全解锁 / 彩虹名字 …
     # 与其它 DAO 同一风格：读失败返回空值、写失败返回 False，绝不抛。
     # ------------------------------------------------------------------
@@ -1995,6 +2101,27 @@ def get_user_card_usage(uid: str, limit: int = 3):
 def get_user_card_uses_total(uid: str):
     """个人累计出牌次数"""
     return db.get_user_card_uses_total(uid)
+
+
+# ---- 等级 / 经验 ----
+def get_user_xp(uid: str):
+    """累计经验（无记录 = 0）"""
+    return db.get_user_xp(uid)
+
+
+def get_xp_map(uids):
+    """批量 `{uid: xp}`（排行榜用，避免 N 次查询）"""
+    return db.get_xp_map(uids)
+
+
+def add_user_xp(uid: str, delta: int):
+    """加经验，返回加完之后的累计值"""
+    return db.add_user_xp(uid, delta)
+
+
+def set_user_xp(uid: str, xp: int):
+    """直接设置累计经验（运维用）"""
+    return db.set_user_xp(uid, xp)
 
 
 # ---- 特权（外观全解锁 / 彩虹名字）----

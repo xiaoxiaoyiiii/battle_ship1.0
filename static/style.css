@@ -4410,5 +4410,104 @@ html.theme-dark .achievement-unlock .au-item { background: rgba(255, 255, 255, 0
 /* 排行榜里名字是 <span>，名片里是 <h3>：两者都靠上面这条统一生效，这里只补一处对齐 */
 .leaderboard-name.name-rainbow { display: inline-block; }
 
+/* ===========================================================================
+   28. 等级 / 经验条 + 匹配成功的对手信息（2026-09-17 追加）
+   =========================================================================== */
+
+/* ── 通用经验条（首页条 / 名片条 / 结算条共用一套观感） ──
+   只动颜色与宽度，不动任何盒模型尺寸（第 12 节第 11 条）。 */
+.xp-bar, .mls-bar, .pf-xp-bar {
+    position: relative;
+    height: 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.14);
+    overflow: hidden;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+.xp-bar-fill, .mls-fill, .pf-xp-bar > i {
+    display: block;
+    height: 100%;
+    width: 0;
+    border-radius: 999px;
+    background-image: linear-gradient(90deg, #3ec7ff, #7a6bff 55%, #ff5fd2);
+    transition: width 0.08s linear;      /* 逐帧动画自己控宽，这里只要一点点平滑 */
+}
+/* 满级：整条换成金色*/
+.xp-bar.capped .xp-bar-fill, .mls-bar.capped .mls-fill { background-image: linear-gradient(90deg, #ffd24d, #ff9f1a); }
+
+/* ── 首页的等级条 ── */
+.my-level-strip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 10px auto 0;
+    max-width: 340px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--panel-border, rgba(255, 255, 255, 0.18));
+    background: rgba(255, 255, 255, 0.06);
+    font-size: 0.82rem;
+}
+.my-level-strip .mls-lv { font-weight: 700; white-space: nowrap; }
+.my-level-strip .mls-bar { flex: 1 1 auto; }
+.my-level-strip .mls-text { white-space: nowrap; color: var(--muted, #8a94a2); }
+
+/* ── 名片里的经验条 ── */
+.pf-xp { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.pf-xp .pf-xp-bar { flex: 1 1 auto; height: 8px; }
+.pf-xp .pf-xp-text { font-size: 0.72rem; color: var(--muted, #8a94a2); white-space: nowrap; }
+
+/* ── 结算：本局经验 + 滚动升级动画 ── */
+.xp-gain {
+    max-width: 520px;
+    margin: 12px auto 4px;
+    padding: 12px 16px;
+    border-radius: 14px;
+    border: 1px solid rgba(62, 199, 255, 0.42);
+    background: linear-gradient(180deg, rgba(62, 199, 255, 0.14), rgba(122, 107, 255, 0.07));
+    text-align: left;
+}
+.xp-gain-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.xp-gain-delta b { color: #7fe0ff; font-size: 1.12rem; }
+.xp-gain-level { font-weight: 700; }
+.xp-gain-foot {
+    display: flex; justify-content: space-between; gap: 10px;
+    margin-top: 6px; font-size: 0.74rem; color: var(--muted, #8a94a2);
+}
+.xp-breakdown { text-align: right; }
+.xp-levelup {
+    margin-top: 8px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    display: inline-block;
+    font-weight: 700;
+    color: #1b2330;
+    background-image: linear-gradient(90deg, #ffd24d, #ff9f1a);
+}
+.xp-levelup.flash { animation: xpLevelUpFlash 0.5s ease-out 2; }
+@keyframes xpLevelUpFlash {
+    0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 210, 77, 0.75); }
+    60% { transform: scale(1.06); box-shadow: 0 0 0 10px rgba(255, 210, 77, 0); }
+    100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 210, 77, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .xp-levelup.flash { animation: none; }
+    .xp-bar-fill, .mls-fill, .pf-xp-bar > i { transition: none; }
+}
+
+/* ── 匹配成功界面：对手的等级 / 称号 / 标签 ── */
+.match-chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 4px 0 8px; }
+.match-chip {
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 0.76rem;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: rgba(255, 255, 255, 0.08);
+}
+.match-chip.lv { border-color: rgba(62, 199, 255, 0.6); color: #9fe8ff; font-weight: 700; }
+.match-chip.title { border-color: rgba(255, 210, 77, 0.6); color: #ffe08a; }
+.match-chip.tag { color: var(--muted, #9aa6b4); }
+html.theme-dark .match-chip { background: rgba(255, 255, 255, 0.06); }
+
 
 

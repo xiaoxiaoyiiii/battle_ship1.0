@@ -12,6 +12,7 @@ from werkzeug.utils import secure_filename
 
 import db
 import achievements
+import leveling
 import profile_spec
 import quick_chat
 import wallpaper
@@ -142,6 +143,27 @@ def _name_style(uid):
     except Exception:
         pass
     return ''
+
+
+def _level_cap(uid):
+    """等级上限：持 `level_101` 特权的账号 101，其余 100。"""
+    try:
+        if uid and db.has_user_perk(uid, profile_spec.PERK_LEVEL_101):
+            return leveling.LEVEL_101
+    except Exception:
+        pass
+    return leveling.MAX_LEVEL
+
+
+def level_view_for(uid, xp=None):
+    """某人的等级视图（经验 + 等级 + 本级进度）。
+
+    **一处组装**：`/api/profile`、`/user_stats`、`/api/leaderboard` 都调它，
+    避免"三处各算一遍等级"（第 2 批的教训：同一件事两份实现必然漂移）。
+    """
+    if xp is None:
+        xp = db.get_user_xp(uid)
+    return leveling.level_view(xp, _level_cap(uid))
 
 
 def _fav_cards(uid, limit=3):
@@ -515,6 +537,7 @@ def build_own_profile(uid):
     profile.update({
         'rank': rank,
         'name_style': _name_style(uid),
+        'level_info': level_view_for(uid),
         'title_id': extra.get('title_id') or '',
         'tags': extra.get('tags') or [],
         'status_text': extra.get('status_text') or '',
@@ -680,6 +703,13 @@ def user_stats_view():
     public_stats['title_id'] = title_id
     public_stats['title_name'] = profile_spec.title_name(title_id)
     public_stats['tags'] = extra.get('tags') or []
+    # 标签的**中文名**也一并下发。
+    # 为什么多发这一份：前端有两处要用标签名（名片、匹配成功的等待界面），
+    # 而"id → 名字"的映射在服务端本来就是权威的（`profile_spec.tag_name`）。
+    # ⚠️ 前端那份映射函数当时声明在**某个函数作用域里**，模块级代码调不到
+    #    （同 PROFILE_BADGE_GLYPH 那个坑，2026-09-17 一天里踩了两次）——
+    #    直接让服务端把名字给出来，前端就不必再去够那个作用域。
+    public_stats['tag_names'] = [profile_spec.tag_name(t) for t in (extra.get('tags') or [])]
     public_stats['status_text'] = extra.get('status_text') or ''
     public_stats['frame_id'] = extra.get('frame_id') or profile_spec.DEFAULT_FRAME_ID
     public_stats['card_bg_id'] = extra.get('card_bg_id') or profile_spec.DEFAULT_CARD_BG_ID
@@ -705,6 +735,8 @@ def user_stats_view():
     public_stats['mine'] = view['mine']
     # 名字样式（特权外观）：**必须下发给别人**，否则彩虹名字只有本人在自己名片里看得到。
     public_stats['name_style'] = _name_style(stats['id'])
+    # 等级 / 经验：别人看你的名片也要看到等级与经验条（与"看自己"同一份视图）
+    public_stats['level_info'] = level_view_for(stats['id'])
 
     # 徽章：**他人视角只下发已解锁的**（计划 §2.4）。
     # 未解锁项的 id 与判据文案都不发 —— 否则别人能看出"他还差几场拿十连胜"，
@@ -833,12 +865,21 @@ def api_leaderboard():
     # 用 `get_perks_map` 一条 SQL 取完。没有特权的行给空串（前端按空串走普通样式）。
     try:
         perks = db.get_perks_map([r.get('id') for r in (rows or [])])
+        xps = db.get_xp_map([r.get('id') for r in (rows or [])])
         rainbow = profile_spec.PERK_RAINBOW_NAME
+        lvl101 = profile_spec.PERK_LEVEL_101
         for row in rows or []:
-            row['name_style'] = 'rainbow' if rainbow in (perks.get(str(row.get('id'))) or set()) else ''
+            rid = str(row.get('id'))
+            pset = perks.get(rid) or set()
+            row['name_style'] = 'rainbow' if rainbow in pset else ''
+            # 等级也跟着排行榜走（经验同样批量取，别逐行查库）
+            row['level'] = leveling.level_view(
+                xps.get(rid, 0),
+                leveling.LEVEL_101 if lvl101 in pset else leveling.MAX_LEVEL)['level']
     except Exception:
         for row in rows or []:
             row.setdefault('name_style', '')
+            row.setdefault('level', 1)
     return jsonify(rows)
 
 

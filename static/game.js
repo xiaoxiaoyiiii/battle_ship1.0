@@ -2557,8 +2557,13 @@ function bindEventListeners() {
                 + '</span></div>';
         }
         html += '<div class="pf-who">'
-            + '<h3' + idsOn('id="profile-view-name"') + ' class="pf-name'
-            + (m.nameStyle === 'rainbow' ? ' name-rainbow' : '') + '">' + escapeHtml(m.name)
+            // ⚠️ 彩虹类只能加在**包住名字文本**的 span 上，不能加在 <h3> 上：
+            //    称号 chip 是 h3 的子元素，而 `-webkit-text-fill-color: transparent`
+            //    **是可继承属性** → 称号文字会一起变透明（2026-09-17 实测：
+            //    「不败神话」只剩一个金色药丸、字看不见了）。这条回归是加彩虹名字时引入的。
+            + '<h3' + idsOn('id="profile-view-name"') + ' class="pf-name">'
+            + '<span class="pf-name-text' + (m.nameStyle === 'rainbow' ? ' name-rainbow' : '') + '">'
+            + escapeHtml(m.name) + '</span>'
             + '<span' + idsOn('id="profile-view-title"') + ' class="title-chip' + (m.title ? '' : ' hidden') + '">'
             + escapeHtml(m.title) + '</span></h3>'
             + '<p' + idsOn('id="profile-view-status"') + ' class="state">'            + escapeHtml(m.status || '这位玩家还没有写状态') + '</p>'

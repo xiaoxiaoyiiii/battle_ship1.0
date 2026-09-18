@@ -4404,6 +4404,16 @@ html.theme-dark .achievement-unlock .au-item { background: rgba(255, 255, 255, 0
 }
 /* 悬停/点亮时给一点流光（只动 background-position，不动布局） */
 .name-rainbow:hover { background-size: 220% 100%; background-position: 0% 0%; }
+/* ⚠️ 兜底：**任何**嵌在彩虹元素里的子元素都不许继承那个透明文字色。
+   `-webkit-text-fill-color` 是可继承属性，称号 chip（.title-chip）曾经因此变成
+   "只剩金色药丸、字看不见"（2026-09-17 实测）。虽然现在彩虹类只加在名字文本那一层，
+   这里仍然显式复位一次 —— 以后往名字行里再塞徽标（段位/等级）也不会重蹈覆辙。 */
+.name-rainbow .title-chip,
+.name-rainbow .rank-chip,
+.name-rainbow .pf-badge {
+    -webkit-text-fill-color: initial;
+    background-clip: border-box;
+}
 @media (prefers-reduced-motion: reduce) {
     .name-rainbow:hover { background-size: 100% 100%; }
 }

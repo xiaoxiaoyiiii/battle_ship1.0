@@ -129,13 +129,24 @@ const OPEN_PROFILE = (name) => `(async function () {
 
 // 名字是否**真的**渲染成渐变：不能只看有没有那个类，
 // 要看计算后的 background-image 里有没有 gradient（类加了但样式没生效 = 假绿）
+//
+// ⚠️ 彩虹类现在加在**名字文本那一层**（`#profile-view-name .pf-name-text`），
+//    不是加在 <h3> 上 —— 加在 h3 上时 `-webkit-text-fill-color: transparent` 会
+//    **继承给同级的称号 chip**，把「不败神话」也弄成透明的（只剩金色药丸）。
+//    所以这里读内层 span，并**同时断言称号 chip 的文字不是透明的**（那条回归的守卫）。
 const NAME_STYLE = `(function () {
-  var el = document.querySelector('#opponent-stats-content #profile-view-name');
-  if (!el) return { missing: true };
+  var h3 = document.querySelector('#opponent-stats-content #profile-view-name');
+  if (!h3) return { missing: true };
+  var el = h3.querySelector('.pf-name-text') || h3;
   var cs = getComputedStyle(el);
+  var chip = h3.querySelector('.title-chip');
+  var chipFill = chip ? getComputedStyle(chip).webkitTextFillColor : null;
+  var chipColor = chip ? getComputedStyle(chip).color : null;
   return { cls: el.className, text: (el.textContent || '').trim().slice(0, 20),
     bg: (cs.backgroundImage || '').slice(0, 60),
-    isGradient: /gradient/i.test(cs.backgroundImage || '') }; })()`;
+    isGradient: /gradient/i.test(cs.backgroundImage || ''),
+    chipText: chip ? (chip.textContent || '').trim() : null,
+    chipFill: chipFill, chipColor: chipColor }; })()`;
 
 try {
   // ⚠️ **两个独立的浏览器进程**，不是同一个浏览器的两个标签页。
@@ -182,6 +193,10 @@ try {
   check(mine && mine.cls && mine.cls.indexOf('name-rainbow') >= 0,
     '★ 6 自己名片上的名字带 name-rainbow', mine && mine.cls);
   check(mine && mine.isGradient === true, '★ 7 而且**真的**渲染成渐变（computed background-image 里有 gradient）', mine && mine.bg);
+  // ★ 回归守卫：彩虹名字不能把同行的称号 chip 也弄透明（-webkit-text-fill-color 会继承）
+  check(mine && (mine.chipFill === null || !/rgba?\(0,\s*0,\s*0,\s*0\)|transparent/i.test(mine.chipFill)),
+    '★★ 7b 称号 chip 的文字**没有被彩虹名字弄成透明**（不继承 text-fill-color）',
+    mine && { chip: mine.chipText, fill: mine.chipFill, color: mine.chipColor });
 
   // ---------- 3. 别人视角：彩虹名字也看得到 ----------
   await B.front();

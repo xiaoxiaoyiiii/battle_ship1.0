@@ -182,6 +182,20 @@ def env(sockets):
         # 真正开打的时间戳（`_match_started_at` 优先取它）—— 赛前投降那条用例会清零它
         room.match_started_at = time.time() if started else 0
         room.state = 'attacking'
+        # ⚠️ **把多因子计分的加成项显式排掉**，让"干净一局 == base（赢 +20 / 输 −15）"
+        #    在本文件里重新成立 —— 否则下面那些 `100 + ranks.WIN_POINTS` 式断言全会红，
+        #    而且报错信息指向不了真正的原因。
+        #
+        #    为什么要排：`GameRoom.__init__` 里 `self.round = 1`，而 `blitz` 的判据是
+        #    「≤180 秒 **或** ≤5 个大回合」→ **1 ≤ 5 恒真**，于是这个夹具建出来的房
+        #    每一局胜者都白拿 +6（落库 126 而不是 120）。
+        #    ⚠️ 注意"round=1 的房间算闪电战"**在真链路上也是对的**（一局只打了一个
+        #    大回合确实就是速胜），所以这里**不是把产品改掉**，只是让本文件的用例
+        #    变成"不含加成的基准局"；多因子本身由 `tests/test_rank_points.py` 逐项测。
+        if started:
+            room.round = 6                              # 排掉闪电战（≤5 大回合）
+            room.match_started_at = time.time() - 1000  # 排掉速败减免（≤180 秒）
+        # 双方 `ships` 保持空 → sunk = lost = 0：没有击沉/零伤，也没有虽败犹荣
         return room, ca, cb, ua, ub
 
     def _track(*uids):

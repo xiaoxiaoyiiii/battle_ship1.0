@@ -100,13 +100,31 @@ def test_points_above_captain_saturate_not_wrap():
     assert ranks.rank_view(3000)['progress'] > ranks.rank_view(2700)['progress']
 
 
-def test_captain_label_shows_points_and_server_rank():
-    """船长及以上的文案 = 「船长Ⅲ 2300分 #60」（不带进度，带全服排名）。"""
-    assert ranks.rank_view(2300, server_rank=60)['label'] == '船长Ⅲ 2300分 #60'
-    assert ranks.rank_view(2300)['label'] == '船长Ⅲ 2300分'
+def test_captain_label_shows_sub_progress_and_server_rank():
+    """船长及以上的文案 = 「船长Ⅲ 1000分 #60」——**同样是本小段位进度分**。
+
+    ⚠️ 口径在 2026-09-18 由作者裁决统一：低段位一直显示"本小段位已攒的分"
+    （水手长Ⅱ 90分），船长段**也照这条来**。第一版给船长段显示的是累计分，
+    于是作者说「船长Ⅲ1200分」「船长Ⅲ1000分」时都对不上 —— 那两个数都小于
+    船长Ⅲ 的起点 2300，"船长Ⅲ + 四位数"在累计口径下根本不成立。
+    """
+    # 2300 = 船长Ⅲ 起点 → 进度 0
+    assert ranks.rank_view(2300, server_rank=60)['label'] == '船长Ⅲ 0分 #60'
+    assert ranks.rank_view(2300)['label'] == '船长Ⅲ 0分'
+    # 作者要的那个数：船长Ⅲ 小段位内 1000 分 = 累计 3300
+    v = ranks.rank_view(3300, server_rank=12)
+    assert v['label'] == '船长Ⅲ 1000分 #12', v
+    assert v['points'] == 3300 and v['progress'] == 1000
+    # 他最初举的例子：船长Ⅲ 1200分 = 累计 3500（现在也自洽了）
+    assert ranks.rank_view(3500)['label'] == '船长Ⅲ 1200分'
+    # 船长Ⅰ/Ⅱ 同理（也是进度分）
+    assert ranks.rank_view(2119)['label'] == '船长Ⅰ 19分'
+    assert ranks.rank_view(2400)['label'] == '船长Ⅲ 100分'
     # 船长以下仍是"进度分"，不带排名
     assert ranks.rank_view(790)['label'] == '水手长Ⅱ 90分'
     assert ranks.rank_view(790, server_rank=60)['label'] == '水手长Ⅱ 90分'
+    # 累计分始终在 points 里（段位榜显示的就是它）
+    assert ranks.rank_view(790)['points'] == 790
 
 
 def test_admiral_label_has_no_points():

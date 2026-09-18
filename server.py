@@ -2329,7 +2329,7 @@ def _grant_match_achievements(room, candidates):
     return newly
 
 
-def _finalize_match(room, winner_id, loser_id):
+def _finalize_match(room, winner_id, loser_id, streak_ctx=None):
     """对局结算的**唯一收口**：写战绩 → 累加每局统计 → 评估并授予徽章 → 播报。
 
     6 处对局结束（`_finish_game_win` / `_finish_game` / 掉线判胜 / 投降 / 回光返照判负 /
@@ -2345,6 +2345,10 @@ def _finalize_match(room, winner_id, loser_id):
 
     **调用方不需要再包 `try/except`**：本函数内部吞掉所有异常（统计绝不允许把
     对局结算搞崩 —— 第 1 批就定下的风格，`db.py` 里每个 DAO 也是这么写的）。
+
+    `streak_ctx`（2026-09-18 多因子批）：**赛前**连胜 / 连败上下文，由本函数开头
+    自己算好（见下面 ⓪ 段）。参数是留给**测试**显式注入的（默认 None = 自己算），
+    正常调用方一个都不传 —— 6 处调用点因此不需要改签名。
     """
     newly = []
     try:
@@ -2356,6 +2360,18 @@ def _finalize_match(room, winner_id, loser_id):
     winner_user_id = getattr(winner, 'user_id', None)
     loser_user_id = getattr(loser, 'user_id', None)
     count_stats = _count_stats_for(room)
+
+    # ⓪ **赛前上下文必须在写库之前取**（★ 这一段的位置就是这条功能的命门）。
+    #    `record_match`（下一段 ①）会把这一局算进胜者的连胜，并把**败者的连胜清零**
+    #    —— 那之后再读库，"本局是第几连胜 / 连败"读到的是**含本局**的值：
+    #    表现为"第一局胜利就显示 1 连胜加成"（首胜不该有连胜加成），而且**不报错**。
+    #    连败没有单独的列，要从 `matches` 表按 timestamp 倒着数，同样只能在写库前数。
+    if streak_ctx is None:
+        try:
+            streak_ctx = _streak_context(winner, winner_user_id, loser, loser_user_id)
+        except Exception:
+            # 取不到就当"没有连胜/连败历史"（少给两个加成，但绝不许把结算搞崩）
+            streak_ctx = {}
 
     # ① 写战绩（历史 + 胜负 / 连胜）
     if winner_user_id or loser_user_id:
@@ -2394,7 +2410,7 @@ def _finalize_match(room, winner_id, loser_id):
     #    一分不加；赛前投降（还没猜完拳、没有开打打点）也不给分。事件在这里只**组装**，
     #    发送时机由 `_dispatch_rank_events` 决定（必须在调用方的 `game_over` 之后到前端）。
     try:
-        rank_events = _settle_ranked_match(room, winner_id, loser_id) \
+        rank_events = _settle_ranked_match(room, winner_id, loser_id, streak_ctx) \
             if _ranked_settlement_allowed(room, count_stats) else []
     except Exception:
         rank_events = []
@@ -2472,6 +2488,82 @@ def _match_really_started(room) -> bool:
     return bool(getattr(room, 'match_started_at', None))
 
 
+def _streak_context(winner, winner_user_id, loser, loser_user_id) -> dict:
+    """取「**赛前**」的连胜 / 连败上下文（多因子加减分用）。
+
+    ⚠️ **必须在任何写库动作之前调用** —— 唯一调用点是 `_finalize_match` 开头的 ⓪ 段，
+       那里还没轮到 `record_match`。原因：
+         · `users.current_streak` 只数**连胜**，且 `record_match` 会把它
+           `+1`（胜者）/ 清零（败者）—— 写完之后再读就是**含本局**的值，
+           于是"第一局胜利"会拿到 1 连胜加成（首胜根本不该有连胜加成）；
+         · 连败**没有单独的列**，只能从 `matches` 表按 `timestamp` 倒着数连续负场，
+           而 `record_match` 恰恰会往那张表里插入本局这一行。
+       两个都不是"报错"，而是**静默算错** —— 所以这条顺序是这条功能的命门。
+
+    返回 `{'win_streak_before', 'winner_loss_streak_before', 'lose_streak_before'}`：
+      · `win_streak_before` = **胜者**赛前的连胜数（`current_streak`，本局胜之前）；
+      · `winner_loss_streak_before` = **胜者**赛前的连败数 → 这就是本局**终结**的连败数
+        （「终止连败」加成看的是**自己**之前连败了几场，见下面那条 ⚠️）；
+      · `lose_streak_before` = **败者**赛前的连败数 → 给败者的「连败保护」用。
+
+    ⚠️ **`winner_loss_streak_before` 与 `lose_streak_before` 是两个人的事，别合并**。
+       第一版把"终结的连败数"直接等同于"败者赛前的连败数"，于是语义整个反了：
+       **打赢一个正在连败的人会拿加成，而真正自己止住连败的人一分没有**。
+       两个人的连败数都要查，只是分别用在两个人身上。
+       （实测证据：真实 socket 连打三局，B 连败两场后赢下第三局 —— 明细里没有
+        `streak_break`，而按定义那正是它该出现的场合。）
+
+    ⚠️ 只读，不写库：用**独立游标**查 `matches`（与 db.py 里"共享游标会与写操作错位"
+      那条注释同一个理由）。本函数失败一律返回全 0（少给两个加成，但绝不能把结算搞崩）。
+    """
+    ctx = {'win_streak_before': 0, 'winner_loss_streak_before': 0, 'lose_streak_before': 0}
+
+    row = db.get_user(uid=winner_user_id) if winner_user_id else None
+    if row:
+        try:
+            ctx['win_streak_before'] = max(0, int(row.get('current_streak') or 0))
+        except (TypeError, ValueError):
+            ctx['win_streak_before'] = 0
+
+    ctx['winner_loss_streak_before'] = _consecutive_losses(winner_user_id)
+    ctx['lose_streak_before'] = _consecutive_losses(loser_user_id)
+    return ctx
+
+
+def _consecutive_losses(uid) -> int:
+    """某人**当前**连续输了几场（从 `matches` 表按 timestamp 倒着数）。
+
+    ⚠️ **必须在 `record_match` 写库之前调用** —— 它会把本局那一行也插进 `matches`，
+    晚一步数出来就是**含本局**的值（"第一局胜利"会被算成刚终结了 1 连败）。
+
+    连败没有单独的列（`users.current_streak` 只数连胜、输一局就被清零），
+    所以只能从历史数。只读、独立游标、失败返回 0。
+    """
+    if not uid:
+        return 0
+    cursor = None
+    try:
+        cursor = db.db.conn.cursor()
+        cursor.execute(
+            'SELECT winner_id FROM matches WHERE winner_id = ? OR loser_id = ? '
+            'ORDER BY timestamp DESC LIMIT 50',
+            (uid, uid))
+        streak = 0
+        for match_row in cursor.fetchall():
+            if str(match_row['winner_id']) == str(uid):
+                break          # 上一场是胜仗：连败到这里就断了
+            streak += 1
+        return streak
+    except Exception:                                             # noqa: BLE001
+        return 0
+    finally:
+        try:
+            if cursor is not None:
+                cursor.close()
+        except Exception:                                         # noqa: BLE001
+            pass
+
+
 def _ranked_settlement_allowed(room, count_stats: bool) -> bool:
     """这一局该不该加减段位分：三条**同时**满足才结算。
 
@@ -2525,21 +2617,51 @@ def _dispatch_rank_events(room, events):
         _emit_rank_events_now(events)
 
 
-def _settle_ranked_match(room, winner_id, loser_id):
-    """排位结算：胜者 `+ranks.WIN_POINTS`(20) / 败者 `+ranks.LOSE_POINTS`(-15)，组装 `rank_changed`。
+def _settle_ranked_match(room, winner_id, loser_id, streak_ctx=None):
+    """排位结算：多因子算分（`ranks.match_points`）→ 落库 → 组装 `rank_changed`。
 
     返回 `[(sid, payload), ...]`，每个**真人**玩家一条（`Player.user_id` 为空的游客
     与 AI 直接跳过，绝不写库）。
+
+    每局加/扣多少由 `ranks.points_breakdown` 一处算出来（`docs/RANKED_2026_09_17.md` §2.5
+    冻结的计分表）：胜负基础分 + 连胜 / 终止连败 / 闪电战 / 零伤 / 击沉 / 越级挑战 等因子，
+    败局另有减免项并封在 `ranks.POINTS_LOSS_FLOOR`。**这里不重算任何因子**，
+    只负责"把赛前事实取齐、算出来、落库、组装事件"。
 
     几个必须守住的点（都是冻结契约里写死的）：
       · **先读旧分再写**，`after` 一律**重新读库**得到 —— 不许用 `before + delta` 算
         （0 分封底时那样算是错的：5 分输一局实际只掉 5 分）；
       · `clamped` 透传 `ranks.apply_delta(before, delta)` 的第二个返回值；
-      · `delta` 填**实际**变化量 `after - before`；
+      · `delta` 填**实际**变化量 `after - before`；`breakdown_total` 是**理论**值
+        （封底前）—— 两个都要有，前端要拿它解释"为什么扣得比 −15 少"；
       · 大舰长要**两个玩家都写完分之后**再统一算一次船长池（先写的那个看到的是旧池子）；
       · `before` / `after` 是 `ranks.rank_view(...)` 的**原样返回**，`server_rank` 用
-        `db.get_rank_position(uid)` 取（结算之后再取一次，让名次反映最新状态）。
+        `db.get_rank_position(uid)` 取（结算之后再取一次，让名次反映最新状态）；
+      · `streak_ctx` 是**赛前**上下文（由 `_finalize_match` 开头取好，见 `_streak_context`）。
+
+    ⚠️ **沉船数用 `_dead_ship_count`**（不是 `len(player.ships)`：本项目沉船**不移出**
+      `ships`，那样数会得到"一艘都没沉"）。`sunk` = 对手棋盘上被击沉的船数，
+      `lost` = 自己沉的船数；同理"零伤"取 `_dead_ship_count(自己) == 0`。
     """
+    ctx = dict(streak_ctx or {})
+    uname = getattr(room, 'players', None) or {}
+
+    def _tier_of(uid, player):
+        """段位下标——**结算前**取（写库后取到的就不是"赛前段位"了）。"""
+        if not uid:
+            return 0
+        try:
+            row = db.get_user_rank_row(uid)
+            return int(ranks.points_tier_index(row.get('points') or 0))
+        except Exception:
+            return 0
+
+    # 这一局的两份"赛前事实"：用时 / 大回合数（双方共用）+ 双方段位
+    seconds = int(_match_duration_sec(room))
+    rounds = max(0, int(getattr(room, 'round', 0) or 0))
+    tiers = {pid: _tier_of(getattr(uname.get(pid), 'user_id', None), uname.get(pid))
+             for pid in (winner_id, loser_id)}
+
     rows = []
     for pid, is_winner in ((winner_id, True), (loser_id, False)):
         player = room.players.get(pid)
@@ -2547,9 +2669,38 @@ def _settle_ranked_match(room, winner_id, loser_id):
         if not uid:
             # 游客（或人机）：没有账号可写，跳过。绝不为此建一行 0 分的段位记录。
             continue
+        foe_id = loser_id if is_winner else winner_id
+        foe = room.players.get(foe_id)
+        # 口径统一：沉船数一律走 `_dead_ship_count`（沉船不移出 `ships`，别数列表长度）
+        sunk = _dead_ship_count(foe) if foe is not None else 0
+        lost = _dead_ship_count(player)
+        tier = tiers.get(pid, 0)
+        opp_tier = tiers.get(foe_id, 0)
+        factors = {
+            'win_streak': (max(0, int(ctx.get('win_streak_before') or 0)) + 1)
+                          if is_winner else 0,
+            'lose_streak': (max(0, int(ctx.get('lose_streak_before') or 0)) + 1)
+                           if not is_winner else 0,
+            # ⚠️ **「终止连败」看的是胜者自己**赛前连了几场败（本局赢下来把它终结了），
+            # 不是"败者赛前连败数"。第一版取的是后者（`ctx['loss_streak_broken']`
+            # 直接等于败者的 `lose_streak_before`），语义整个反了 —— 后果是
+            # **打赢一个正在连败的人反而拿加成**，而真正"自己止住连败"的人一分没有。
+            # 实测抓到的（真实 socket 连打三局）：B 连败两场后赢下第三局，
+            # 明细分文没有 `streak_break`；而按定义那正是它该出现的场合。
+            'loss_streak_broken': max(0, int(ctx.get('winner_loss_streak_before') or 0))
+                                  if is_winner else 0,
+            'seconds': seconds,
+            'rounds': rounds,
+            'sunk': sunk,
+            'lost': lost,
+            'my_tier': tier,
+            'opp_tier': opp_tier,
+        }
+        # 分只由 ranks 一处算（明细 + 总数同源，见 points_breakdown 里那条断言）
+        base, bonuses, total = ranks.points_breakdown(bool(is_winner), **factors)
+        delta = int(total)
         before_row = db.get_user_rank_row(uid)
         before_pts = int(before_row.get('points') or 0)
-        delta = ranks.WIN_POINTS if is_winner else ranks.LOSE_POINTS
         # 0 分封底：clamped 由 apply_delta 判定；真正落库的值以写完后重读为准
         _predicted, clamped = ranks.apply_delta(before_pts, delta)
         db.add_rank_points(uid, delta)
@@ -2561,6 +2712,9 @@ def _settle_ranked_match(room, winner_id, loser_id):
             'before_pts': before_pts,
             'before_admiral': bool(before_row.get('is_admiral')),
             'before_server_rank': db.get_rank_position(uid),
+            'base': int(base),
+            'bonuses': bonuses,
+            'breakdown_total': int(total),
         })
 
     if not rows:
@@ -2628,6 +2782,14 @@ def _settle_ranked_match(room, winner_id, loser_id):
             'admiral_demoted': admiral_demoted,
             # 没晋升时说明"还差什么"（前端可能拿它显示条件）
             'admiral_reason': admiral_reason,
+            # ---- 多因子明细（2026-09-18 追加；上面一个字段都没删/没改名）----
+            # `delta` 是**实际**变化量（0 分封底时可能是 0），`breakdown_total` 是
+            # **理论**值（封底之前）—— 两个都要有：前端靠它解释"为什么这局扣得比 −15 少"。
+            'base': int(row['base']),
+            'bonuses': [dict(b) for b in row['bonuses']],
+            'breakdown_total': int(row['breakdown_total']),
+            # 进度条动画路径（与 leveling.segments 同形；曲线只有 ranks 一份实现）
+            'segments': ranks.segments(row['before_pts'], after_pts),
         }))
     return events
 

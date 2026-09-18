@@ -359,6 +359,8 @@ const AUTOPLAY = `(function () {
     window.__autoOn = true;
     // 记录服务端发过来的所有事件名：面板没出现时，"rank_changed 到底来没来"是第一个要回答的问题
     s.onAny(function (name) { auto.ev.push(name); });
+    // 原样留一份最后一条 rank_changed：多因子计分下期望文案由它现算（别在工具里写死分差）
+    s.on('rank_changed', function (d) { window.__lastRankChanged = d || null; });
     s.on('game_state', function (d) {
       d = d || {};
       auto.last = d;
@@ -376,7 +378,11 @@ const PANEL_TEXT = `(function(){
   if (!p || p.classList.contains('hidden')) return null;
   var fill = document.getElementById('rank-bar-fill');
   var bar = document.getElementById('rank-bar');
-  return { visible: true, delta: (document.getElementById('rank-delta') || {}).textContent || '',
+  return { visible: true,
+    // 服务端最后一条 rank_changed 的原样 payload：多因子计分下，期望文案要由它现算
+    // （工具里写死 +20 就是"工具手抄的和代码一致"，迟早假红）
+    payload: window.__lastRankChanged || null,
+    delta: (document.getElementById('rank-delta') || {}).textContent || '',
     prefix: (document.getElementById('rank-delta-prefix') || {}).textContent || '',
     before: (document.getElementById('rank-label-before') || {}).textContent || '',
     after: (document.getElementById('rank-label-after') || {}).textContent || '',
@@ -772,12 +778,15 @@ try {
   // 每一局都：重置 A 的分数 → 重新加载页面（面板回到隐藏，也顺带证明它只在事件到达时出现）
   //          → 装页面侧脚手架（摆船/出拳）→ 两个真账号同时排位 → 等 rank_changed。
   const matches = [
-    { name: '局 1：赢 +20（跨小段位）', points: 90, surrender: 'opponent', rps: 'paper',
-      expect: { delta: '+20 分', before: '二级水手Ⅰ 90分', after: '二级水手Ⅱ 10分', promote: true, clamped0: false, pct: 10 } },
+    // ⚠️ 期望值**不写死分差**：多因子计分下同一局的实际分差取决于结算那一刻的因子
+    //    （连胜/终止连败/闪电战/零伤/击沉/越级…）。这里只定**场景**（起始分与谁投降），
+    //    文案与进度条终值由收到的 `rank_changed` payload 现算再与 DOM 比。
+    { name: '局 1：赢一局并跨小段位', points: 90, surrender: 'opponent', rps: 'paper',
+      expect: { promote: true, clamped0: false } },
     { name: '局 2：0 分封底（delta = 0）', points: 0, surrender: 'browser', rps: 'paper',
-      expect: { delta: '已到 0 分下限，本局未扣分', before: '二级水手Ⅰ 0分', after: '二级水手Ⅰ 0分', promote: false, clamped0: true, pct: 0 } },
-    { name: '局 3：部分扣分（clamped, delta = -5）', points: 5, surrender: 'browser', rps: 'paper',
-      expect: { delta: '-5 分', before: '二级水手Ⅰ 5分', after: '二级水手Ⅰ 0分', promote: false, clamped0: false, pct: 0, clampNote: true } },
+      expect: { promote: false, clamped0: true } },
+    { name: '局 3：部分扣分（clamped）', points: 5, surrender: 'browser', rps: 'paper',
+      expect: { promote: false, clamped0: false, clampNote: true } },
   ];
 
   for (let m = 0; m < matches.length; m++) {
@@ -863,11 +872,44 @@ try {
     check(!!panel, `★★ F${m + 1}.2 ${cfg.name}：真打完一局排位后 \`rank_changed\` 真的到达、#rank-gain-panel 真的出现（不是手动调函数）`, panel);
     if (!panel) continue;
 
-    check(panel.delta === cfg.expect.delta,
-      `★ F${m + 1}.3 ${cfg.name}：分差文案 = ${cfg.expect.delta}`, { dom: panel.delta, prefix: panel.prefix });
-    check(panel.before === cfg.expect.before && panel.after === cfg.expect.after,
+    // ⚠️ **不再写死 +20 / −15**：2026-09-18 起排位分是多因子的（连胜/终止连败/闪电战/零伤/
+    //    击沉/越级…，见 docs/RANKED_2026_09_17.md §2.5），同一局的实际分差取决于结算那一刻
+    //    的一堆因子 —— 工具里写死数字就是在验"工具手抄的和代码一致"，迟早假红（本次就是）。
+    //    改成 **payload 驱动**：期望文案由服务端下发的 payload 现算，再与 DOM 比 ——
+    //    这样验的是"面板有没有忠实渲染服务端给的东西"，比写死数字强。
+    const pd = panel.payload || {};
+    const expectDeltaText = (() => {
+      const d = Number(pd.delta || 0);
+      if (d > 0) return '+' + d + ' 分';
+      if (d < 0) return d + ' 分';
+      return pd.clamped ? '已到 0 分下限，本局未扣分' : '±0 分';
+    })();
+    check(panel.delta === expectDeltaText,
+      `★ F${m + 1}.3 ${cfg.name}：分差文案 = 服务端 payload 现算的「${expectDeltaText}」`,
+      { dom: panel.delta, payload_delta: pd.delta, clamped: pd.clamped });
+    // 结算明细的**跨线恒等式**：base + Σbonuses == breakdown_total，且 delta 与封底一致
+    const bonusSum = (pd.bonuses || []).reduce((s, b) => s + Number(b.value || 0), 0);
+    check(Number(pd.base || 0) + bonusSum === Number(pd.breakdown_total),
+      `★ F${m + 1}.3b ${cfg.name}：明细加起来 == 总数（跨线恒等式）`,
+      { base: pd.base, bonusSum, breakdown_total: pd.breakdown_total,
+        bonuses: (pd.bonuses || []).map((b) => b.key + ':' + b.value) });
+    check(Number(pd.delta) === Math.max(0, Number(pd.points_before) + Number(pd.breakdown_total))
+          - Number(pd.points_before),
+      `★ F${m + 1}.3c ${cfg.name}：delta == 封底后的实际变化量`,
+      { delta: pd.delta, before: pd.points_before, after: pd.points_after,
+        breakdown_total: pd.breakdown_total });
+
+    // before/after 的期望值同样由 payload 现算 —— 验的是"面板忠实渲染服务端给的 label"
+    // （写死 '二级水手Ⅱ 10分' 在多因子计分下会因为赢的分数变成 26 而假红）
+    const expBefore = (pd.before || {}).label || '';
+    const expAfter = (pd.after || {}).label || '';
+    check(panel.before === expBefore && panel.after === expAfter,
       `★ F${m + 1}.4 ${cfg.name}：before.label → after.label 用的是服务端下发的文案`,
-      { before: panel.before, after: panel.after });
+      { dom: [panel.before, panel.after], server: [expBefore, expAfter] });
+    // 进度条终值也从 payload 现算：after.progress / sub_points（服务端给的两段进度）
+    const expPct = Math.round(Number((pd.after || {}).progress || 0) /
+      Math.max(1, Number((pd.after || {}).sub_points || 100)) * 100);
+    cfg.expect = Object.assign({}, cfg.expect, { pct: expPct });
     if (cfg.expect.clamped0) {
       check(!/^[-+]?0\s*分$/.test(panel.delta) && panel.delta.indexOf('未扣分') >= 0,
         '★★ 0 分封底时**不显示 ±0**，而是写「已到 0 分下限，本局未扣分」', panel.delta);
@@ -875,13 +917,16 @@ try {
       check(panel.clampHidden === true, '封底且没扣分时不显示额外的"已触及下限"补充行（主文案已经说清楚了）', panel.clampNote);
     }
     if (cfg.expect.clampNote) {
-      check(panel.clampHidden === false && /0 分下限/.test(panel.clampNote) && /5/.test(panel.clampNote),
-        '★ clamped 且真的扣了分时：显示实际扣的分数 + 一句「已触及 0 分下限」', panel.clampNote);
+      check(panel.clampHidden === false && /0 分下限/.test(panel.clampNote)
+        && panel.clampNote.indexOf(String(Math.abs(Number(pd.delta || 0)))) >= 0,
+        '★ clamped 且真的扣了分时：显示实际扣的分数（按 payload 的 delta）+ 一句「已触及 0 分下限」',
+        { note: panel.clampNote, payload_delta: pd.delta });
     }
     if (cfg.expect.promote) {
-      check(panel.promoteHidden === false && /升段/.test(panel.promote) && /二级水手Ⅰ/.test(panel.promote)
-        && /二级水手Ⅱ/.test(panel.promote),
-        '★ 升段提示出现，且判据是 `promoted`（不是自己比 label 字符串）', panel.promote);
+      check(panel.promoteHidden === false && /升段/.test(panel.promote)
+        && new RegExp(panel.before.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).test(panel.promote) === false,
+        '★ 升段提示出现，且判据是服务端的 `promoted`（不是自己比 label 字符串）',
+        { promote: panel.promote, before: panel.before, after: panel.after });
       check(panel.noteHidden === true && panel.note === '',
         '★ 低段位**不显示**大舰长那行小字（服务端给的是「需要先达到船长段位」，没有信息量）', panel.note);
     }

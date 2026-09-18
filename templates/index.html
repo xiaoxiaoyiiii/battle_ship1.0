@@ -830,6 +830,57 @@
                     <span id="compendium-count" class="muted-hint"></span>
                 </div>
                 <div id="help-magic-cards" class="compendium-grid"></div>
+
+                <!-- 段位介绍（段位帮助批）：**整块由 game.js 渲染进下面这六个容器**。
+                     ⚠️ 这里的 id 是冻结契约，一个字母都不能改（`tools/rank_help_check.mjs` 按它们断言）：
+                       #help-rank-section        整块的根
+                       #help-rank-tiers          9 个段位图鉴（每行一个 .help-rank-tier）
+                       #help-rank-scoring        计分规则容器（两张表）
+                       #help-rank-scoring-win    胜局表
+                       #help-rank-scoring-lose   败局表
+                       #help-rank-error          规则拉取失败时的提示位（默认 hidden）
+                     ⚠️ 壳里**不留任何数字/文案**：段位名、起始分、计分表全部来自
+                       `/api/rank_constants`（+ `/api/profile` 的 catalog 给解锁外观），
+                       在这里硬编码「胜利 +20」就等于把同一条业务判断写了两份，迟早漂移。 -->
+                <section id="help-rank-section">
+                    <h3>段位与排位</h3>
+                    <!-- 小节标题只是给这块内容分栏用，别改别人的 id。 -->
+                    <h4 class="help-rank-sub">九段图鉴</h4>
+                    <div id="help-rank-tiers" class="help-rank-tiers">
+                        <p class="muted-hint">段位资料加载中…</p>
+                    </div>
+                    <h4 class="help-rank-sub">排位赛规则</h4>
+                    <ul class="help-rank-rules">
+                        <li><b>怎么进排位</b>：首页点「排位对战」加入队列，配对成功后打一场排位赛。
+                            <b>需要登录</b> —— 游客点它只会被提示先去登录，不会排队。</li>
+                        <li><b>什么情况不给分</b>：赛前投降、人机局、自定义房 ——
+                            这些对局不计排位分（也不会掉分），只有排位队列里配对出来的对局才结算。</li>
+                        <li><b>0 分封底</b>：排位分最低 <span class="help-rank-strong">0 分</span>，不会掉成负数；
+                            触底那一局会在结算面板上写明「已到 0 分下限」。</li>
+                        <li>每个段位分 <b>Ⅰ / Ⅱ / Ⅲ</b> 三个小段位、每小段同样多的分；
+                            赢了往上走、输了往下掉，跨小段位会自动进位 / 降级。</li>
+                    </ul>
+                    <h4 class="help-rank-sub">计分规则</h4>
+                    <div id="help-rank-scoring" class="help-rank-scoring">
+                        <p id="help-rank-scoring-placeholder" class="muted-hint">计分规则加载中…</p>
+                        <!-- 两张小表：胜局 / 败局。每一格都由 game.js 按
+                             `/api/rank_constants` 的 `scoring` 渲染，这里**不写任何数字**。 -->
+                        <div id="help-rank-scoring-win" class="help-rank-score-table"></div>
+                        <div id="help-rank-scoring-lose" class="help-rank-score-table"></div>
+                    </div>
+                    <p id="help-rank-error" class="muted-hint help-rank-error" hidden></p>
+                    <h4 class="help-rank-sub">在哪里看段位</h4>
+                    <ul class="help-rank-rules">
+                        <li>个人信息里的<b>段位块</b>（图标 + 段位文案 + 进度条）：点自己的头像打开。</li>
+                        <li><b>匹配等待界面</b>：双方各自的段位图标与文案都显示在对手 / 自己那一行。</li>
+                        <li><b>排行榜 → 「段位榜」页签</b>：按排位分排序，突出段位高低。</li>
+                        <li>个人信息编辑面有「<b>段位公开</b>」开关：关掉之后别人在你的个人信息里
+                            看不到段位（<b>本人永远看得到自己的</b>）。</li>
+                        <li>⚠️ <b>段位榜不受这个开关影响</b>：榜是公共竞技数据，
+                            关掉「段位公开」之后你仍然在榜上 —— 开关只管个人信息里那一块。</li>
+                    </ul>
+                </section>
+
                 <p class="muted-hint">如需详细规则请咨询管理员。</p>
             </div>
         </div>

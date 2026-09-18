@@ -190,7 +190,7 @@ def test_rank_view_for_unknown_uid_degrades_instead_of_raising():
 
 
 def test_rank_view_for_captain_carries_points_and_server_rank(make_user):
-    """船长：`船长Ⅲ 2300分 #N`（累计分 + 全服名次）。"""
+    """船长：`船长Ⅲ 0分 #N`（累计分 + 全服名次）。"""
     uid, _ = make_user(points=2300)
     pos = db_module.get_rank_position(uid)
     assert pos >= 1, '写过积分的账号必须有全服名次'
@@ -199,7 +199,7 @@ def test_rank_view_for_captain_carries_points_and_server_rank(make_user):
     assert db_module.count_rank_at_least(ranks.CAPTAIN_FLOOR) < ranks.ADMIRAL_MIN_CAPTAINS
 
     view = api.rank_view_for(uid)
-    assert view['label'] == f'船长Ⅲ 2300分 #{pos}', view
+    assert view['label'] == f'船长Ⅲ 0分 #{pos}', view
     assert view['server_rank'] == pos and view['server_rank'] is not None
     assert view['tier_id'] == 'captain' and view['tier_index'] == ranks.CAPTAIN['index']
     assert view['points'] == 2300 and view['is_admiral'] is False
@@ -288,10 +288,12 @@ def test_ranked_leaderboard_order_positions_and_users_join(make_user):
     assert nobody_name not in [x['username'] for x in board]
 
     # 段位字段由服务端算好（前端不重算曲线）
-    assert entry_a['label'] == f'船长Ⅲ 2400分 #{entry_a["position"]}'
+    # ⚠️ 船长段文案 2026-09-18 起统一成"本小段位进度分"（与低段位同口径）：
+    #    2400 = 船长Ⅲ 起点 2300 + 100 → 「船长Ⅲ 100分」；2100 = 船长Ⅰ 起点 → 0 分。
+    assert entry_a['label'] == f'船长Ⅲ 100分 #{entry_a["position"]}'
     assert entry_a['server_rank'] == entry_a['position']
     assert entry_a['tier_id'] == 'captain'
-    assert entry_c['label'] == f'船长Ⅰ 2100分 #{entry_c["position"]}'
+    assert entry_c['label'] == f'船长Ⅰ 0分 #{entry_c["position"]}'
     # 榜上没人够到大舰长（池子还没填，见文件头）
     assert all(x['is_admiral'] is False for x in board)
 
@@ -361,7 +363,7 @@ def test_own_profile_always_carries_rank_info(make_user):
     assert info is not None, '自己的名片必须有段位'
     assert set(info) >= RANK_VIEW_KEYS
     assert info['points'] == 2300
-    assert info['label'].startswith('船长Ⅲ 2300分 #')
+    assert info['label'].startswith('船长Ⅲ 0分 #')
     assert profile['show_rank'] == 1, '开关本身也要下发（编辑面初始化复选框）'
 
     # 关掉「段位公开」之后，**自己**的名片里仍然有段位
@@ -370,7 +372,7 @@ def test_own_profile_always_carries_rank_info(make_user):
     again = _client(uid, username).get('/api/profile').get_json()['profile']
     assert again['show_rank'] == 0
     assert again['rank_info']['points'] == 2300
-    assert again['rank_info']['label'].startswith('船长Ⅲ 2300分 #')
+    assert again['rank_info']['label'].startswith('船长Ⅲ 0分 #')
 
 
 # ===========================================================================
@@ -388,7 +390,7 @@ def test_user_stats_self_has_full_rank_info(make_user):
     assert info is not None
     assert set(info) >= RANK_VIEW_KEYS
     assert info['points'] == 2300
-    assert info['label'].startswith('船长Ⅲ 2300分 #')
+    assert info['label'].startswith('船长Ⅲ 0分 #')
     assert info['server_rank'] == db_module.get_rank_position(uid)
     assert info['sub'] == 'Ⅲ' and info['tier_id'] == 'captain'
 
@@ -425,7 +427,7 @@ def test_rank_privacy_blocks_other_viewers_but_never_the_owner(make_user):
     assert mine['show_rank'] == 0
     assert mine['rank_info'] is not None
     assert mine['rank_info']['points'] == 2300
-    assert mine['rank_info']['label'].startswith('船长Ⅲ 2300分 #')
+    assert mine['rank_info']['label'].startswith('船长Ⅲ 0分 #')
     assert mine['rank_info']['server_rank'] is not None
 
     # ④ 匿名访问 = 他人视角
@@ -439,7 +441,7 @@ def test_rank_privacy_blocks_other_viewers_but_never_the_owner(make_user):
     seen = _stats_of(outsider, a_name)
     assert seen['show_rank'] == 1
     assert seen['rank_info']['points'] == 2300
-    assert seen['rank_info']['label'].startswith('船长Ⅲ 2300分 #')
+    assert seen['rank_info']['label'].startswith('船长Ⅲ 0分 #')
 
     # ⑥ 只影响自己：B 的段位一直公开（别把过滤做成全局）
     b_seen = _stats_of(owner, b_name)
@@ -477,7 +479,7 @@ def test_ranked_leaderboard_ignores_show_rank(make_user):
     entry = _entry_of(payload, a)
     assert entry is not None, '关掉「段位公开」**不影响**段位榜（榜是公共竞技数据）'
     assert entry['points'] == 2400 and entry['username'] == a_name
-    assert entry['label'].startswith('船长Ⅲ 2400分 #')
+    assert entry['label'].startswith('船长Ⅲ 100分 #')
     # 匿名视角同样在榜
     assert _entry_of(_board().get_json(), a) is not None
     # 榜上不下发任何名片隐私字段（榜与名片是两码事）
@@ -577,7 +579,7 @@ def test_admiral_not_promoted_when_captain_pool_is_too_small(make_user, monkeypa
     assert view['captain_pool_rank'] == 1
     assert view['is_admiral'] is False, \
         f'船长池不满 {ranks.ADMIRAL_MIN_CAPTAINS} 人时不该产生大舰长'
-    assert view['label'] == f'船长Ⅲ 2400分 #{view["server_rank"]}', view
+    assert view['label'] == f'船长Ⅲ 100分 #{view["server_rank"]}', view
 
 
 def test_admiral_promoted_once_pool_is_full_and_rank_is_top(make_user):

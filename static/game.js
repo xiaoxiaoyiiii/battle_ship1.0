@@ -1579,6 +1579,335 @@ function rankTierText(info) {
  * 页面加载时取一次自己的段位（匹配等待界面要显示它 —— 那 5 秒里不许现拉）。
  * 游客 / 接口失败 → 保持 null，等待界面就只显示对手那部分（不显示假段位）。
  */
+// ---- 帮助页的「段位与排位」块（段位帮助批）----
+// ⚠️ 全部数字/文案**都从服务端拿**，这里一个字都不许硬编码：
+//    · 段位名 / 起始分 / 小段位 / 计分表  → `GET /api/rank_constants`（= `ranks.constants()`）
+//    · 每个段位解锁的称号 / 头像框 / 名片底色 → `GET /api/profile` 的 `catalog`，按
+//      `requirement === '段位达到 <段位名>'` 归组（**不在这里抄一份解锁表**）
+//    帮助页写「胜利 +20」而代码里改成 +25 之后，帮助就变成了谎话，而且没有任何报错 ——
+//    这条铁律已经在 `ranks.py` / `leveling.py` 里各立过一次了。
+//
+// ⚠️ 下面这些常量与函数全是**模块级**：帮助入口可能在任何时候被点，
+//    而 `bindEventListeners()` 里的东西模块级代码够不到（本项目为此踩过两次
+//    `ReferenceError` 被 `.then()` 吞掉、页面上一点提示都没有）。
+const HELP_RANK_IDS = {
+    section: 'help-rank-section',
+    tiers: 'help-rank-tiers',
+    scoring: 'help-rank-scoring',
+    win: 'help-rank-scoring-win',
+    lose: 'help-rank-scoring-lose',
+    error: 'help-rank-error'
+};
+const HELP_RANK_CATEGORY_LABELS = [
+    ['titles', '称号'],
+    ['frames', '头像框'],
+    ['card_bgs', '名片底色']
+];
+let rankHelpConstants = null;      // /api/rank_constants 的结果（拉一次缓存）
+let rankHelpConstantsPromise = null;
+let rankHelpCatalogPromise = null; // 卡片目录补充拉取（未登录 / 没打开过名片时）
+
+/** 取一个帮助页容器。页面里没有就返回 null（而不是抛）。 */
+function helpRankEl(key) {
+    const id = HELP_RANK_IDS[key];
+    return id ? document.getElementById(id) : null;
+}
+
+/**
+ * 解锁外观按「段位达到 X」归组。
+ *
+ * 判据只有一条：`requirement` 与 `段位达到 <段位名>` **逐字相等**（段位名来自服务端
+ * 下发的 `tiers`）。这条文案的唯一来源是 `profile_spec._fill_rank_requirements`
+ * （它按 `rank_tier` 现算），所以前端不重算、也不硬编码「哪一档解锁什么」。
+ */
+function rankUnlockIndexFromCatalog(catalog) {
+    const out = {};
+    if (!catalog || typeof catalog !== 'object') return out;
+    for (const [key, label] of HELP_RANK_CATEGORY_LABELS) {
+        const list = Array.isArray(catalog[key]) ? catalog[key] : [];
+        for (const item of list) {
+            if (!item || typeof item !== 'object') continue;
+            const req = String(item.requirement || '').trim();
+            if (req.indexOf('段位达到 ') !== 0) continue;
+            const tierName = req.slice('段位达到 '.length).trim();
+            if (!tierName) continue;
+            if (!out[tierName]) out[tierName] = [];
+            out[tierName].push({
+                label: label,
+                // 未解锁的加个标记：帮助页是"图鉴"，要一眼看出哪一档给什么
+                name: String(item.name || ''),
+                unlocked: item.unlocked !== false
+            });
+        }
+    }
+    return out;
+}
+
+/** 一个段位行的"解锁外观"那一栏（池子里没有 → 空串，由调用方兜"暂无"）。 */
+function rankUnlockText(unlocks) {
+    if (!Array.isArray(unlocks) || unlocks.length === 0) return '';
+    return unlocks.map(u => u.label + ' ' + u.name).join('、');
+}
+
+/** 数值带符号（`+20` / `−15`；0 显示 `0`）。U+2212 是真正的减号，与设计稿一致。 */
+function rankSignedValue(value) {
+    const n = Number(value);
+    if (!isFinite(n) || n === 0) return '0';
+    return (n > 0 ? '+' : '−') + Math.abs(n);
+}
+
+/**
+ * 计分项的分值显示。
+ *
+ * ⚠️ `value` **两种形态都要吃**（服务端现状如此，别按一种写死）：
+ *   · 数字（`20` / `-15`）→ 这里补符号，显示成 `+20` / `−15`；
+ *   · 字符串（`+2 × N（封顶 +10）` / `+8 / +12` / `负值补平`）→ **已经是给人看的文案**，
+ *     原样显示，绝不二次加工（拼符号会把 `+8 / +12` 变成 `++8 / +12`）。
+ */
+function rankScoringValueText(value) {
+    if (typeof value === 'number' && isFinite(value)) return rankSignedValue(value);
+    if (value === null || value === undefined) return '';
+    const text = String(value).trim();
+    if (text === '') return '';
+    // 纯数字串也走补符号那条（服务端若把 20 发成 "20" 也不会漏掉符号）
+    if (/^[+-]?\d+(\.\d+)?$/.test(text)) return rankSignedValue(Number(text));
+    return text;
+}
+
+/** 一个计分因子行（`标签 | 分值 | 条件`）。condition 缺省时不显示第三格。 */
+function rankScoringRowHtml(row) {
+    const item = (row && typeof row === 'object') ? row : {};
+    const condition = String(item.condition || '');
+    const text = rankScoringValueText(item.value);
+    const isMinus = (typeof item.value === 'number' && item.value < 0)
+        || (!text || text.charAt(0) === '−' || text.charAt(0) === '-');
+    return '<div class="help-rank-score-row">' +
+        '<span class="help-rank-score-label">' + String(item.label || item.key || '') + '</span>' +
+        '<span class="help-rank-score-value' + (isMinus ? ' is-minus' : '') + '">' + text + '</span>' +
+        (condition ? '<span class="help-rank-score-cond">' + condition + '</span>' : '') +
+        '</div>';
+}
+
+/** 一张计分小表；没有行就给一句「暂不可用」（**绝不编数字顶上**）。 */
+function rankScoringTableHtml(rows, emptyText) {
+    const list = Array.isArray(rows) ? rows.filter(r => r && typeof r === 'object') : [];
+    if (list.length === 0) return '<p class="muted-hint">' + emptyText + '</p>';
+    return list.map(rankScoringRowHtml).join('');
+}
+
+/**
+ * 段位图鉴那一栏：每行 = 图标 + 段位名 + 起始分 + 该段位解锁的外观。
+ *
+ * ⚠️ 名字与 id 全部来自服务端的 `tiers`（`tier_id` / `tier_name`）——
+ *    前端**不建 id → 中文名的映射**（那又是一份会漂移的实现）。
+ * ⚠️ 前 8 个段位才有「起始 N 分」；大舰长是晋升制，写的是晋升条件。
+ */
+function renderRankHelpTiers(constants, catalog) {
+    const box = helpRankEl('tiers');
+    if (!box) return;
+    const tiers = Array.isArray(constants && constants.tiers) ? constants.tiers : [];
+    const starts = (constants && constants.start_points_of_tier) || {};
+    const subs = Array.isArray(constants && constants.subs) ? constants.subs : [];
+    const perTier = (Number(constants && constants.sub_points) || 0) * subs.length;
+    const unlocks = rankUnlockIndexFromCatalog(catalog);
+    const limit = Number(constants && constants.admiral_rank_limit);
+    const minCaptains = Number(constants && constants.admiral_min_captains);
+
+    if (tiers.length === 0) {
+        // 帮不到就**保留上一帧**：只有第一次打开才没有上一帧，那时给一句提示
+        if (!box.querySelector('.help-rank-tier')) {
+            box.innerHTML = '<p class="muted-hint">段位资料暂不可用</p>';
+        }
+        return;
+    }
+
+    const html = tiers.map((tier, i) => {
+        const t = (tier && typeof tier === 'object') ? tier : {};
+        const tid = String(t.id || '');
+        const name = String(t.name || '');
+        const last = (i === tiers.length - 1);
+        const start = Number(starts[tid]);
+        // 只有「靠分数晋级」的段位有起始分；大舰长没有（`start_points_of_tier` 里也没有它）
+        const startHtml = isFinite(start)
+            ? '<span class="help-rank-start">' + start + ' 分</span>' +
+              (subs.length && perTier
+                  ? '<span class="help-rank-subs">小段位 ' + subs.join(' / ') + ' · 每段 ' + perTier + ' 分</span>'
+                  : '')
+            : '';
+        const text = rankUnlockText(unlocks[name]);
+        const note = last
+            ? ('晋升条件：先达到「' + (tiers[tiers.length - 2] ? String(tiers[tiers.length - 2].name || '') : '') + '」，' +
+               '且在该段位内排名前 ' + (isFinite(limit) ? limit : '?') + '、' +
+               '该段位人数不少于 ' + (isFinite(minCaptains) ? minCaptains : '?') + ' 人')
+            : '';
+        return '<div class="help-rank-tier' + (last ? ' is-top' : '') + '" data-tier="' + tid + '">' +
+            '<span class="help-rank-icon">' + rankIconMarkup(tid, 26) + '</span>' +
+            '<span class="help-rank-name">' + name + '</span>' +
+            '<span class="help-rank-meta">' + startHtml + '</span>' +
+            '<span class="help-rank-unlock">' + (text ? ('解锁：' + text) : '暂无额外解锁项') + '</span>' +
+            (note ? '<span class="help-rank-note">' + note + '</span>' : '') +
+            '</div>';
+    }).join('');
+
+    box.innerHTML = html;
+}
+
+/** 计分规则那两张小表（胜局 / 败局）。结构不对时**保留上一帧** + 报错提示。 */
+function renderRankHelpScoring(constants) {
+    const scoring = constants && constants.scoring;
+    const winBox = helpRankEl('win');
+    const loseBox = helpRankEl('lose');
+    const errBox = helpRankEl('error');
+    const scoringBox = helpRankEl('scoring');
+    const placeholder = document.getElementById('help-rank-scoring-placeholder');
+    const usable = (rows) => Array.isArray(rows) && rows.some(r => r && typeof r === 'object');
+    const winOk = !!(scoring && typeof scoring === 'object' && usable(scoring.win));
+    const loseOk = !!(scoring && typeof scoring === 'object' && usable(scoring.lose));
+
+    if (!winOk && !loseOk) {
+        // ⚠️ 「先清空再填充」的渲染：**先校验数据**，失败时保留上一帧
+        //    （`updateHandUI` 那条教训：清空了却没填回来 = 页面留白且没有任何提示）。
+        //    这里**不编一份数字顶上**：宁可显示"暂不可用"，也不显示一份可能与代码不符的计分表。
+        if (scoringBox) scoringBox.classList.add('is-empty');
+        if (errBox) {
+            errBox.textContent = '计分规则暂不可用（没能从服务端取到 scoring 规则快照）——'
+                + '这里的数字一律以服务端为准，不显示推算值。';
+            errBox.hidden = false;
+        }
+        if (placeholder && !winBox.querySelector('.help-rank-score-row')
+            && !loseBox.querySelector('.help-rank-score-row')) {
+            placeholder.hidden = true;          // 别再挂着"加载中…"误导玩家
+        }
+        return;
+    }
+
+    // 两张表**各自校验**：一半坏了不该把另一半好的一起丢掉（"先校验再渲染"的粒度要够细）
+    if (scoringBox) scoringBox.classList.remove('is-empty');
+    if (errBox) { errBox.hidden = true; errBox.textContent = ''; }
+    if (placeholder) placeholder.hidden = true;
+    if (winOk && winBox) {
+        winBox.innerHTML = '<div class="help-rank-score-head"><span>加分项</span><span>分值</span>'
+            + '<span>条件</span></div>' + rankScoringTableHtml(scoring.win, '暂无胜局计分项');
+    } else if (winBox) {
+        winBox.innerHTML = '<p class="muted-hint">胜局计分项暂不可用</p>';
+    }
+    if (loseOk && loseBox) {
+        loseBox.innerHTML = '<div class="help-rank-score-head"><span>扣分项</span><span>分值</span>'
+            + '<span>条件</span></div>' + rankScoringTableHtml(scoring.lose, '暂无败局计分项');
+    } else if (loseBox) {
+        loseBox.innerHTML = '<p class="muted-hint">败局计分项暂不可用</p>';
+    }
+    // 封底 / 闪电战阈值这类"表外的数"也**照服务端下发的值**补一句（缺就不写）
+    const caps = [];
+    if (isFinite(Number(scoring.loss_floor))) {
+        caps.push('败局单局扣分不低于 ' + rankSignedValue(scoring.loss_floor) + ' 分');
+    }
+    if (isFinite(Number(scoring.blitz_seconds)) && isFinite(Number(scoring.blitz_rounds))) {
+        caps.push('「闪电战」判定：' + scoring.blitz_seconds + ' 秒内或 '
+            + scoring.blitz_rounds + ' 个大回合内结束');
+    }
+    if (isFinite(Number(constants.min_points))) {
+        caps.push('总分最低 ' + constants.min_points + ' 分（0 分封底）');
+    }
+    if (scoringBox && caps.length) {
+        const old = scoringBox.querySelector('.help-rank-score-caps');
+        if (old) old.remove();          // 重绘前先清掉上一帧那句，避免越积越多
+        const p = document.createElement('p');
+        p.className = 'muted-hint help-rank-score-caps';
+        p.textContent = caps.join('；') + '。';
+        scoringBox.appendChild(p);
+    }
+}
+
+/** 段位块的一句话提示：拉不到就说清楚，别留白。 */
+function setRankHelpError(text) {
+    const errBox = helpRankEl('error');
+    if (errBox) {
+        errBox.textContent = text;
+        errBox.hidden = false;
+    }
+    // 计分表那一格的**占位文案**也换成"暂不可用"。
+    // ⚠️ 这里只动"还没有真表"的那一格（有 `.help-rank-score-row` 就说明上一帧还在，一个字都不碰）：
+    //    否则首次打开时那句「计分规则加载中…」会一直挂着 —— 看着像还在加载，其实早就失败了。
+    const placeholder = document.getElementById('help-rank-scoring-placeholder');
+    const winBox = helpRankEl('win');
+    const loseBox = helpRankEl('lose');
+    if (winBox && loseBox && !winBox.querySelector('.help-rank-score-row')
+        && !loseBox.querySelector('.help-rank-score-row')) {
+        winBox.innerHTML = '<p class="muted-hint">计分规则暂不可用</p>';
+        loseBox.innerHTML = '';
+        if (placeholder) placeholder.hidden = true;
+    }
+}
+
+/** 拉 `/api/rank_constants`（缓存一次；失败**不缓存**，下次点帮助还能再试）。 */
+function loadRankHelpConstants() {
+    if (rankHelpConstants) return Promise.resolve(rankHelpConstants);
+    if (rankHelpConstantsPromise) return rankHelpConstantsPromise;
+    rankHelpConstantsPromise = fetch('/api/rank_constants', { headers: { 'Accept': 'application/json' } })
+        .then(r => (r && r.ok) ? r.json() : null)
+        .then(d => {
+            if (d && typeof d === 'object') rankHelpConstants = d;
+            return rankHelpConstants;
+        })
+        .catch(() => null)
+        .then(v => { rankHelpConstantsPromise = null; return v; });
+    return rankHelpConstantsPromise;
+}
+
+/**
+ * 名片目录（`catalog`）：先吃已经缓存的那份，没有就补拉一次 `/api/profile`。
+ * 未登录 / 拉不到 → 返回 null，此时图鉴照画（只是不显示解锁外观）。
+ */
+function ensureRankHelpCatalog() {
+    if (profileCatalog) return Promise.resolve(profileCatalog);
+    if (!rankHelpCatalogPromise) {
+        rankHelpCatalogPromise = fetch('/api/profile', { headers: { 'Accept': 'application/json' } })
+            .then(r => (r && r.ok) ? r.json() : null)
+            .then(res => {
+                takeSelfProfile(res && res.profile);
+                return profileCatalog;
+            })
+            .catch(() => null)
+            .then(v => { rankHelpCatalogPromise = null; return v; });
+    }
+    return rankHelpCatalogPromise;
+}
+
+/**
+ * 帮助页的「段位与排位」块。**打开帮助时调它**（入口仍是原来的 `#help-btn`，不新增按钮）。
+ *
+ * 顺序：先把**已有的**数据画出来（第二次打开就是瞬时的），再去补那些没拿到的；
+ * 拿不到就显示 `#help-rank-error` 并**保留上一帧**，绝不清空容器留白。
+ */
+function renderRankHelp() {
+    const section = helpRankEl('section');
+    if (!section) return;
+    section.hidden = false;
+
+    if (rankHelpConstants) {
+        renderRankHelpTiers(rankHelpConstants, profileCatalog);
+        renderRankHelpScoring(rankHelpConstants);
+    }
+    // 目录可能比规则后到（没打开过名片时），所以两次渲染都要能独立触发
+    ensureRankHelpCatalog().then(cat => {
+        if (cat && rankHelpConstants) renderRankHelpTiers(rankHelpConstants, cat);
+    }).catch(() => { /* 目录拿不到：图鉴不显示解锁项，不算错误 */ });
+
+    loadRankHelpConstants().then(data => {
+        if (!data) {
+            setRankHelpError('段位规则加载失败：没能从服务端取到段位表与计分规则 ——'
+                + '下面显示的是上一次成功加载的内容。');
+            return;
+        }
+        renderRankHelpTiers(data, profileCatalog);
+        renderRankHelpScoring(data);
+    }).catch(() => {
+        setRankHelpError('段位规则加载失败：没能从服务端取到段位表与计分规则 ——'
+            + '下面显示的是上一次成功加载的内容。');
+    });
+}
+
 function loadMyRankInfo() {
     if (myRankInfoPromise) return myRankInfoPromise;
     if (!window.__USERNAME) {
@@ -2382,6 +2711,10 @@ function bindEventListeners() {
         renderCardCompendium();
         // 先按已有数据画出来，统计到了再重绘一次（拉不到也不会卡住图鉴）
         loadCardUsage().then(() => renderCardCompendium());
+        // 段位介绍（段位帮助批）：数字/文案全部来自 `/api/rank_constants`，
+        // 拉不到就显示 #help-rank-error 并保留上一帧（不清空留白）。
+        // ⚠️ 单独包一层 try：这块出错绝不能把上面的卡牌图鉴一起带下水。
+        try { renderRankHelp(); } catch (e) { /* 段位块偶发失败不影响图鉴 */ }
     });
     // 图鉴的搜索/筛选：输入即重绘（41 张卡的量级，不需要防抖）
     ['compendium-search', 'compendium-speed', 'compendium-type', 'compendium-sort'].forEach(id => {

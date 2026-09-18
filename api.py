@@ -1088,6 +1088,31 @@ def api_ranked_leaderboard():
     })
 
 
+# 段位规则快照（公开只读，**匿名可访问** —— 帮助页要在没登录时也能看段位介绍）
+@app.route('/api/rank_constants')
+def api_rank_constants():
+    """`ranks.constants()` 的原样下发（段位表 / 起始分 / 计分表 / 大舰长晋升条件）。
+
+    只给帮助页与结算面板**读**，没有任何用户数据，所以不要求登录
+    （与 `/api/leaderboard` / `/api/ranked_leaderboard` 同类）。
+
+    ⚠️ **读失败要给降级，不许 500**：这是纯展示层的数据，一次读失败不该让
+    帮助页整体打不开。但是也**不许编一份数字顶上** —— 前端收到空的 `scoring`
+    会显示「计分规则暂不可用」而不是显示一份假的计分表（本项目通用教训二：
+    帮助里写 +20、代码里是 +25 这种漂移不报错，只是让帮助变成谎话）。
+    """
+    try:
+        data = ranks.constants()
+    except Exception as e:      # noqa: BLE001 —— 展示层读不到就给空壳，别把帮助页打成 500
+        print(f'[ranks] 读取段位规则快照失败，按空壳处理: {e}')
+        return jsonify({'error': '段位规则暂不可用', 'scoring': {}}), 200
+    if not isinstance(data, dict):
+        # 契约是 dict；真出现别的形状也按空壳走，不把异常抛给前端
+        print(f'[ranks] 段位规则快照形状异常（{type(data).__name__}），按空壳处理')
+        return jsonify({'error': '段位规则暂不可用', 'scoring': {}}), 200
+    return jsonify(data)
+
+
 @app.route('/api/card_usage')
 def api_card_usage():
     """卡牌使用次数（公开只读）。图鉴用它显示"这张卡有多常用"。"""

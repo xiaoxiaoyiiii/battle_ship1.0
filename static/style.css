@@ -4820,7 +4820,154 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, rgba(255, 2
 }
 
 /* ===========================================================================
-   30. 大厅系统（2026-09-18）
+   30. 帮助页的「段位与排位」块（段位帮助批，2026-09-18 追加）
+   =========================================================================== */
+/*
+ * 作用对象只有帮助弹窗（#help-modal）里那一块，**不碰任何既有元素**。
+ *
+ * 四条自我约束（与第 29 节同一份，都是本项目踩过的坑）：
+ *   ① **不改任何既有元素的盒模型尺寸** —— 这里只给自己的新类定尺寸，
+ *      `#help-modal` / `.modal-content.wide-modal` / `.compendium-grid` 一行没动
+ *      （CLAUDE.md 第 12 节第 11 条：改完 style.css 必跑 `tools/ui_layout_check.mjs`）。
+ *   ② **不给含 position:fixed 后代的元素加 transform / filter / backdrop-filter**
+ *      —— 这里全是帮助弹窗里的叶子行 / 文本 / 图标（第 12 节第 12 条）。
+ *   ③ 段位图标**颜色仍在第 29 节**（`.rank-icon[data-tier="…"]`）—— 本节一个字都不重写，
+ *      否则"高段位更重"就有两份实现、迟早漂移。
+ *   ④ 第 3 节的通用 `button` 规则带 `background: var(--primary-gradient)` ——
+ *      本节用的都是 span / div / 表格行，不受影响；真用到按钮色的地方见第 26/23 节教训。
+ *
+ * 版式为什么这么排：帮助弹窗是 `wide-modal`（宽屏够宽、320px 窄屏极窄），
+ * 所以图鉴一行用**两列 grid**（图标 | 其余内容），窄屏（≤520px）才回退成
+ * 图标 + 名称在上、其余在下 —— 320px 下也不会把段位行挤成一条竖线。
+ */
+#help-rank-section { margin-top: 1.4rem; }
+#help-rank-section h3 { margin-top: 0; }
+.help-rank-sub {
+    margin: 1rem 0 0.5rem;
+    font-size: 0.95rem;
+    letter-spacing: 0.02em;
+    color: var(--text-subtle, var(--text));
+}
+/* 顶段那一行加一点金光，与第 29 节的配色同一色系（只加颜色与阴影，不动尺寸） */
+.help-rank-tier.is-top {
+    border-color: rgba(255, 210, 77, 0.42);
+    background: linear-gradient(180deg, rgba(255, 210, 77, 0.12), rgba(255, 255, 255, 0.02));
+}
+/* 图鉴：一行一个段位（外层靠 grid + 两列，见上面的注释） */
+.help-rank-tiers { display: block; min-width: 0; max-width: 100%; }
+/* ⚠️ 第一列写**像素**而不是 `auto`：`auto` 列会按内容算 min-content，
+   窄屏下叠加 column-gap 会把整行顶出容器几个像素（实测 320×568 溢出 8px、
+   每一行都比容器宽）。像素列 + `minmax(0,1fr)` 的第二列才不会溢。 */
+.help-rank-tier {
+    display: grid;
+    grid-template-columns: 26px minmax(0, 1fr);
+    column-gap: 10px;
+    row-gap: 2px;
+    align-items: center;
+    margin: 0 0 6px;
+    padding: 8px 10px;
+    border: 1px solid var(--panel-border, rgba(255, 255, 255, 0.2));
+    border-radius: 10px;
+    /* ⚠️ 窄屏防溢出：整行**不许**横向撑破（`min-width:0` 是 grid/flex 子项能收缩的前提） */
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;              /* 兜底：任何子项都不可能把这一行撑出横向滚动 */
+    overflow-wrap: anywhere;
+}
+.help-rank-tier > * { min-width: 0; }
+.help-rank-icon { display: inline-flex; align-items: center; flex: 0 0 auto; }
+.help-rank-name { font-weight: 800; font-size: 0.98rem; letter-spacing: 0.02em; min-width: 0; overflow-wrap: anywhere; }
+.help-rank-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; min-width: 0; }
+.help-rank-start { font-weight: 700; color: var(--text, inherit); }
+.help-rank-subs { font-size: 0.74rem; color: var(--muted, #8a94a2); min-width: 0; overflow-wrap: anywhere; }
+.help-rank-unlock {
+    grid-column: 2;
+    font-size: 0.8rem;
+    color: var(--muted, #8a94a2);
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.help-rank-note {
+    grid-column: 2;
+    font-size: 0.74rem;
+    color: #ffd24d;
+    opacity: 0.92;
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+/* 计分规则：两张小表（标签 | 分值 | 条件）。
+   ⚠️ 这里用 **flex** 而不是 grid：分值那一格是 `nowrap` 的长串
+   （`+1 × 击沉数（封顶 +6）`），grid 的自动列会按它的 max-content 算宽度，
+   在窄屏上把整行顶出去（实测 390×844 行宽 392 > 容器 292）。
+   flex + `min-width:0` + `flex-wrap` 才会老老实实按容器宽度折行。 */
+.help-rank-scoring { min-width: 0; max-width: 100%; }
+.help-rank-scoring.is-empty { opacity: 0.75; }
+.help-rank-score-head,
+.help-rank-score-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 8px;
+    padding: 4px 2px;
+    min-width: 0;
+    max-width: 100%;
+}
+.help-rank-score-head > *,
+.help-rank-score-row > * { min-width: 0; }
+.help-rank-score-head {
+    font-size: 0.74rem;
+    font-weight: 700;
+    color: var(--muted, #8a94a2);
+    border-bottom: 1px solid var(--panel-border, rgba(255, 255, 255, 0.2));
+}
+.help-rank-score-head > *:nth-child(1) { flex: 1 1 80px; }
+.help-rank-score-head > *:nth-child(2) { flex: 0 0 64px; text-align: right; }
+.help-rank-score-head > *:nth-child(3) { flex: 2 1 110px; }
+.help-rank-score-row { border-bottom: 1px dashed rgba(255, 255, 255, 0.08); }
+.help-rank-score-row:last-of-type { border-bottom: none; }
+.help-rank-score-label { flex: 1 1 80px; font-weight: 600; overflow-wrap: anywhere; }
+.help-rank-score-value {
+    flex: 0 0 64px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+    overflow: hidden;              /* nowrap 的长串按格子裁掉，不许把行顶宽 */
+    text-overflow: ellipsis;
+    color: #ffd24d;
+}
+.help-rank-score-row .help-rank-score-value.is-minus { color: #ff9a9a; }
+.help-rank-score-cond {
+    flex: 2 1 110px;
+    font-size: 0.78rem;
+    color: var(--muted, #8a94a2);
+    overflow-wrap: anywhere;
+}
+.help-rank-score-caps { margin-top: 0.5rem; }
+/* 拉不到规则时的提示位（默认 hidden）。⚠️ 必须带 [hidden] 兜底：
+   `hidden` 属性只给 `display:none` 的**弱**声明，被任何 display 规则盖掉就会显形。 */
+#help-rank-error[hidden] { display: none !important; }
+#help-rank-error { margin: 0.4rem 0 0; color: #ffb0b0; }
+/* 规则文案列表：与帮助页其它列表同一套（只补一点行距，不改既有 ul 规则） */
+.help-rank-rules { margin: 0.2rem 0 0.6rem; padding-left: 1.1rem; }
+.help-rank-rules li { margin: 0.25rem 0; line-height: 1.55; }
+.help-rank-strong { font-weight: 800; color: #ffd24d; }
+/* 窄屏（≤520px，含 320×568）：一列排下来，图标 + 名称一行，其余缩进到第二行 */
+@media (max-width: 520px) {
+    .help-rank-tier { row-gap: 4px; padding: 8px; }
+    .help-rank-subs { font-size: 0.7rem; }
+    /* 头两格各占一半，条件那一格换行独占一行（flex-basis 100% = 强制折行）。
+       这样"≤180 秒 或 ≤5 个大回合"不会把 320px 的行撑出横向滚动。 */
+    .help-rank-score-head > *:nth-child(1),
+    .help-rank-score-row .help-rank-score-label { flex: 1 1 auto; }
+    .help-rank-score-row .help-rank-score-value { flex: 0 0 auto; }
+    .help-rank-score-head > *:nth-child(3),
+    .help-rank-score-row .help-rank-score-cond { flex: 0 0 100%; }
+}
+
+/* ===========================================================================
+   31. 大厅系统（2026-09-18）
    ---------------------------------------------------------------------------
    契约见 docs/LOBBY_2026_09_18.md §3。三条硬约束（沿用本项目的既有规矩）：
 

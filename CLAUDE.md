@@ -28,7 +28,11 @@ Flask + Flask-SocketIO 的实时双人海战棋，叠加 43 条魔法卡（41 �
 测试与工具：`tests/*.py` 合计 **17343**（本批新增 `tests/test_lobby.py` 567）｜ `tools/lobby_check.mjs` 319 ｜ `tools/social_check.mjs` 540
 
 `style.css` 分节：…第 22 节「紧凑（移动端自适应）布局」/ 第 24 节「动态壁纸层」/ 第 25 节「视觉增强」/
-第 26 节「个人名片 / 设置页 / 徽章墙」（26.2c 是查看面的互动条 + 留言板）/ 第 29 节「段位」/ 第 30 节「大厅系统」。
+第 26 节「个人名片 / 设置页 / 徽章墙」（26.2c 是查看面的互动条 + 留言板）/ 第 29 节「段位」/
+第 30 节「帮助页的段位与排位块」/ 第 31 节「大厅系统」。
+> ⚠️ **第 30、31 节是同一天各自追加的**（段位帮助批 vs 大厅批），合并时在文件末尾撞在一起 ——
+> 两边都是"在 EOF 追加一节"，所以是**纯追加冲突**：解法是**两节都留、把大厅那节重编号成 31**
+> （远程的 30 已经在 origin 上了，改它代价更大）。
 > ⚠️ **行数统计口径**：用 `(Get-Content f -Raw)` 数换行符，**不要用** `Measure-Object -Line`（它漏空行，会少报）。
 
 ---
@@ -67,7 +71,7 @@ python -m pytest tests/ -q    # 1070 passed
 > 若干卡牌语义与前端 `init()` 幂等。
 >
 > 🔧 **2026-09-12 明智埋葬真实链路修复**（详见 `docs/FIXES_2026-09-12.md` 第七节）：实测症状为「选中牌后**牌不进弃牌堆、自己也不摸牌**」（手牌为空时直接报「无效的选择」）。根因是 `confirm_magic_target` 里那份**独立实现**把前端下发的候选下标 `card_index` 当成**施法者自己手牌的下标**，选中的那张（牌堆/对方手牌）从未被取出。修法：`select_magic_target` 与 `confirm_magic_target` 共用 `_bury_choice_target()` + `_apply_bury_choice()`（下标统一为 `(source, index)`，前端回传 `source_index`；必须先 `pop` 再进弃牌堆，否则同一张牌会同时留在原处）；补对方手牌同步、施法者校验、`magic_temp_data` 只存纯数据。回归：`tests/test_mingzhi_burial_fix.py`（21 条）。
-> - 追加排查「没有触发摸牌效果」：真实浏览器端到端（无头 Edge + CDP，真点手牌与弹窗）实测**链路是通的**（手牌 `["增援"]`→`["增援","五险一金"]`，弃牌堆 +选中的那张，日志有记录）。会让人觉得「没摸到牌」的是三种**规则性静默**情况：牌堆已空 / `no_draw`（无中生有）生效中 / 摸到与手牌重名的牌自动进弃牌堆 —— 现在都会在**成功提示与对局日志里写明原因**（旧提示一律谎报「并摸了一张牌」）。另修前端误导文案：`applyCardEffect` 在玩家**还没点选**时就弹「埋葬卡牌并抽一张新牌」；`playMagicCard` 把「不是你的回合」误报成「当前阶段 preparation 不允许用速阶2」。
+> - 追加排查「没有触发摸牌效果」：真实浏览器端到端实测**链路是通的**；让人觉得「没摸到牌」的是三种**规则性静默**（牌堆已空 / `no_draw` 生效中 / 摸到重名卡进弃牌堆）—— 现在都会在提示与日志里**写明原因**（旧提示一律谎报「并摸了一张牌」）。另修两处前端误导文案。细节见 `docs/FIXES_2026-09-12.md`。
 >
 > **第二批（同批提交）卡牌语义修正**：绝处逢生（牺牲全部 → 玩家在旧位置选一格放唯一一艘）、疗愈（原地复活）、余音绕梁（按攻击阶段而非击杀次数）、神之宣告（采用玩家点选的两艘 + 效果1 由对方点选）、克苏鲁之眼（对方也点选暴露）、失灵！（只能康"本大回合刚使用"的卡）；清理 6 个死监听、修复免空壳大厅（改用 find_match/cancel_match 与 /api/online_count）、补桃园取消按钮（`cancel_magic_selection`）、攻击坐标拒绝小数、空棋盘不再一击判胜、重连快照按 state 路由
 
@@ -680,17 +684,16 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 
 ### 🟢 2026-09-18 段位 / 排位批
 
-> 详见 `docs/RANKED_2026_09_17.md`、计划文档 §13。新增 `ranks.py`（段位规则唯一一份）、
-> `user_rank` 表、`static/rank_icons.js`、`tools/ranked_check.mjs`。
-> ⚠️ **契约变更**：名片保存载荷 **9 → 10 字段**（`show_rank`，缺一个整次 400）；
-> 池子 **7/5/6 → 12/10/11**；`match_queue` 平行数组 **3 → 4**（mode）。
-> ⚠️ `ADMIRAL_MIN_CAPTAINS=50` → **本服现在没人能到大舰长**（有意）；
-> 调小用 `RANK_ADMIRAL_MIN_CAPTAINS`（另有 `RANK_WIN_POINTS`/`RANK_LOSE_POINTS`）。
+> 详见 `docs/RANKED_2026_09_17.md`、计划文档 §13（**契约、多因子计分表、文案口径都在那篇里**）。
+> 新增 `ranks.py` / `user_rank` 表 / `static/rank_icons.js` / `tools/ranked_check.mjs` /
+> `tools/rank_help_check.mjs`。`ADMIRAL_MIN_CAPTAINS=50` → **本服现在没人能到大舰长**（有意）。
+> ⚠️ 本地验证服务**避开 5060/5061**：Fetch 规范列的被阻止端口，Node `fetch` 与 Chrome 拒发
+> 而 curl 正常 → 看着像"服务器卡死"，实为工具假红。
 
 ### 🟢 2026-09-18 大厅系统批
 
 > 详见 `docs/LOBBY_2026_09_18.md`（**冻结契约**）。新增 `LobbyManager` + 5 个上行 / 4 个下行事件、
-> `#lobby-screen` 三列界面（在线玩家 / 房间列表 / 公屏）、`style.css` 第 30 节、
+> `#lobby-screen` 三列界面（在线玩家 / 房间列表 / 公屏）、`style.css` 第 31 节、
 > `tests/test_lobby.py`（40）、`tools/lobby_check.mjs`（**双浏览器** 27 项）。
 
 **改造前的实情**：`#lobby-screen` 是个空壳（列不出人、看不到房间、没有公屏），

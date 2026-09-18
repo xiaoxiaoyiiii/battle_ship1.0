@@ -301,6 +301,23 @@ def test_illegal_mode_falls_back_to_casual(monkeypatch, bad):
     assert not [e for e in sent if e['name'] == 'error']
 
 
+def test_normalize_match_mode_only_accepts_literal_ranked():
+    """★ 排位门禁的纯函数层：只认逐字的 'ranked'，其余一律 'casual'。
+
+    这是「游客误入排位池」刷分口子的第一道闸 —— `mode` 是入排位池的开关，
+    宁可把写错的值当休闲，也不要猜前端想说什么。
+    ⚠️ 刻意不做大小写宽容：'RANKED' / 'Rank' 都必须是 casual，否则前端
+    发错大小写就会把休闲局算成排位（刷分）。直接测纯函数，不依赖整条
+    handle_find_match 链路 —— 链路层那条 `test_illegal_mode_falls_back_to_casual`
+    已经覆盖了，但纯函数层也得钉死，免得有人「优化」成 casefold()。
+    """
+    assert server._normalize_match_mode('ranked') == server.MATCH_MODE_RANKED
+    # 大小写混写 / 截断 / 空白 / 数字 / None / 空串 → 一律休闲
+    for bad in ('RANKED', 'Rank', 'rank', 'ranked ', ' ranked', 'casual',
+                '', '1', 1, 0, None, True, False, [], {}):
+        assert server._normalize_match_mode(bad) == server.MATCH_MODE_CASUAL, bad
+
+
 # ===========================================================================
 # 3. 只在同 mode 之间配对
 # ===========================================================================

@@ -293,6 +293,46 @@ def test_sanitize_non_dict_passthrough():
 
 
 # ---------------------------------------------------------------------------
+# 6b. _pick_cell_from_target：从目标数据取单个格子（克苏鲁之眼等卡用）
+# ---------------------------------------------------------------------------
+def test_pick_cell_from_target_area_form():
+    """target_area 形态取 (x1, y1)。"""
+    assert server._pick_cell_from_target(
+        {'target_area': {'x1': 2, 'y1': 3, 'x2': 2, 'y2': 3}}) == (2, 3)
+    # 字符串数字也要能归一化
+    assert server._pick_cell_from_target(
+        {'target_area': {'x1': '2', 'y1': '3'}}) == (2, 3)
+
+
+def test_pick_cell_from_target_xy_form():
+    """{'x': x, 'y': y} 形态直接取。"""
+    assert server._pick_cell_from_target({'x': 1, 'y': 4}) == (1, 4)
+    assert server._pick_cell_from_target({'x': '0', 'y': '5'}) == (0, 5)
+
+
+def test_pick_cell_from_target_prefers_area_over_xy():
+    """同时有 target_area 和 x/y 时，以 target_area 为准（前端 single 选择器形态）。"""
+    assert server._pick_cell_from_target(
+        {'target_area': {'x1': 2, 'y1': 2}, 'x': 9, 'y': 9}) == (2, 2)
+
+
+def test_pick_cell_from_target_rejects_missing_keys():
+    """缺键 / 非整数 → None（不抛、不猜）。"""
+    assert server._pick_cell_from_target({'target_area': {'x1': 0}}) is None      # 缺 y1
+    assert server._pick_cell_from_target({'target_area': {}}) is None
+    assert server._pick_cell_from_target({'x': 1}) is None                         # 缺 y
+    assert server._pick_cell_from_target({'y': 1}) is None                         # 缺 x
+    assert server._pick_cell_from_target({'target_area': {'x1': 'a', 'y1': 0}}) is None
+    assert server._pick_cell_from_target({'x': 'b', 'y': 0}) is None
+
+
+def test_pick_cell_from_target_rejects_non_dict():
+    """非 dict / 空 dict → None。"""
+    for bad in (None, [], '', 123, 'x', {'foo': 1}):
+        assert server._pick_cell_from_target(bad) is None, bad
+
+
+# ---------------------------------------------------------------------------
 # 7. 已结束房间回收（内存泄漏修复）
 # ---------------------------------------------------------------------------
 def test_reaper_removes_ended_rooms(room):

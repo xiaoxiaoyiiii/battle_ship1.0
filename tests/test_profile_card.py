@@ -421,6 +421,27 @@ def test_validate_payload_returns_no_fields_on_error():
     assert set(fields) == set(profile_spec.WRITABLE_FIELDS)
 
 
+def test_to_flag_normalizes_bool_int_and_string():
+    """0/1 归一化：bool / int / 字符串都要接受，非法值返回 None（不静默降级）。"""
+    to_flag = profile_spec._to_flag
+    # 合法 → 归一化到 0/1
+    assert to_flag(True) == 1
+    assert to_flag(False) == 0
+    assert to_flag(1) == 1
+    assert to_flag(0) == 0
+    assert to_flag('1') == 1
+    assert to_flag('0') == 0
+    assert to_flag(' 1 ') == 1          # 前后空白要 strip
+    # 非法 → None，调用方据此报错（不能当成 0）
+    assert to_flag(2) is None
+    assert to_flag(-1) is None
+    assert to_flag('yes') is None
+    assert to_flag('') is None
+    assert to_flag(None) is None
+    assert to_flag([]) is None
+    assert to_flag({}) is None
+
+
 # ===========================================================================
 # 5. 隐私：show_history 两种视角
 # ===========================================================================

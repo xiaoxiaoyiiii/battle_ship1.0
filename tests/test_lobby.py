@@ -189,6 +189,27 @@ def test_name_is_cleaned_and_truncated():
     assert by_key['s3'] == 'x' * server.LOBBY_NAME_MAX_LEN
 
 
+def test_lobby_clean_name_handles_none_and_non_string():
+    """名字清洗的纯函数层：None / 数字 / 列表 / 字典都不能抛。
+
+    `_lobby_clean_name` 是大厅三个入口（session / find_match / 订阅）共用的清洗器，
+    前端可能发任何类型 —— 宁可把 `123` 显示成 `'123'`，也不能 TypeError 把在线表崩掉。
+    """
+    clean = server._lobby_clean_name
+    assert clean(None) == '游客'            # None → 空串 → 回落
+    assert clean('') == '游客'
+    assert clean('   ') == '游客'           # 全空白 → 回落
+    assert clean([]) == '游客'              # 空列表 falsy → 当空串 → 回落
+    assert clean({}) == '游客'              # 空字典 falsy → 回落
+    assert clean(123) == '123'              # 数字转字符串
+    assert clean({'x': 1}) == "{'x': 1}"    # 非空字典转字符串（不抛）
+    assert clean('  甲  ') == '甲'          # 去首尾空白
+    assert clean('x' * 100) == 'x' * server.LOBBY_NAME_MAX_LEN  # 截断
+    # 自定义回落
+    assert clean(None, fallback='无名氏') == '无名氏'
+    assert clean(None, fallback='') == ''   # 回落为空串也行
+
+
 def test_subscribe_is_idempotent():
     lm = server.lobby_manager
     assert lm.subscribe('s1', '甲') is True

@@ -462,7 +462,7 @@ try {
   const posts = await ev('window.__cardPosts');
   const lastPost = posts[posts.length - 1] || {};
   const keys = Object.keys(lastPost).sort();
-  check(keys.length === 9, '★ 32 保存时确实发了 9 个字段（含 show_guestbook；缺一个服务端就 400）', keys);
+  check(keys.length === 10, '★ 32 保存时确实发了 10 个字段（含 show_guestbook / show_rank；缺一个服务端就 400）', keys);
   check(lastPost.show_guestbook === 0, '★ 33 请求体里 show_guestbook = 0（关掉了）', lastPost.show_guestbook);
 
   // 保存是异步的：等它真落库（别拿"点了按钮"当证据）

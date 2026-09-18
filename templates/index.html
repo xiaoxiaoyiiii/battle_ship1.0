@@ -810,6 +810,8 @@
 <!-- 先加载游戏核心逻辑 -->
 <script>window.__USERNAME = {{ username|tojson }};</script>
 <script src="/static/sfx.js?v={{ asset_v('sfx.js') }}"></script>
+<!-- 段位图标（纯 SVG，无素材）：必须在 game.js 之前——game.js 直接取 window.rankIconHtml -->
+<script src="/static/rank_icons.js?v={{ asset_v('rank_icons.js') }}"></script>
 <script src="/static/game.js?v={{ asset_v('game.js') }}"></script>
 <!-- 移动端自适应布局：按可用空间在「桌面浮窗」与「一屏网格」之间切换（见 style.css 第 22 节） -->
 <script src="/static/adaptive_layout.js?v={{ asset_v('adaptive_layout.js') }}"></script>

@@ -8,6 +8,10 @@ import os
 from pathlib import Path
 from werkzeug.security import check_password_hash
 
+# 段位门槛（船长段起始分）只在 `ranks.py` 定义一处；本层只读它，不重写常量。
+# `ranks.py` 是纯模块（只依赖 stdlib），所以 db → ranks 这条依赖没有环。
+import ranks
+
 # 配置日志（先确保数据目录存在，避免全新环境 import 失败）
 _DATA_DIR = Path(__file__).parent / 'data'
 _DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -26,6 +30,11 @@ logger = logging.getLogger('database')
 # 必须走下面的 `_add_column_if_missing`（见 `Database._migrate_schema` 的说明）。
 _GUESTBOOK_COLUMN = 'show_guestbook'
 _GUESTBOOK_COLUMN_DDL = 'INTEGER DEFAULT 1'
+
+# 段位开关的列定义（段位批 A 票）。同一条路：`user_profile` 生产库里已有行，
+# 必须显式补列。默认 **1 = 公开**（与其它展示开关一致：默认看得见）。
+_SHOW_RANK_COLUMN = 'show_rank'
+_SHOW_RANK_COLUMN_DDL = 'INTEGER DEFAULT 1'
 
 
 def _add_column_if_missing(cursor, table: str, column: str, ddl: str) -> bool:
@@ -306,6 +315,25 @@ class Database:
                   )
                   ''')
 
+            # ---- 段位（排位积分，段位批 A 票）----
+            # 一行一人。**不存"段位等级"** —— 等级/小段位/进度全部由
+            # `ranks.py` 从 `points` 现算（单一真相源，避免"分数改了段位没改"）。
+            # `is_admiral` 是唯一的例外：大舰长是**动态**称号（要求全服船长数达标），
+            # 达标那一刻写 1 之后**不再自动撤销**，但每次读取仍会按门槛复算 ->
+            # 见 `ranks.is_admiral`。存这一列是为了"曾经当过大舰长"的审计痕迹。
+            # `ranked_wins/losses` 只统计**排位对局**，与人机/自定义房无关。
+            self.cursor.execute('''
+                  CREATE TABLE IF NOT EXISTS user_rank
+                  (
+                      user_id      TEXT PRIMARY KEY,
+                      points       INTEGER NOT NULL DEFAULT 0,
+                      is_admiral   INTEGER NOT NULL DEFAULT 0,
+                      ranked_wins  INTEGER NOT NULL DEFAULT 0,
+                      ranked_losses INTEGER NOT NULL DEFAULT 0,
+                      updated_at   INTEGER
+                  )
+                  ''')
+
             # ---- 加列迁移（第 3 批 D 票）----
             # `user_profile` 是第 1 批建的表，生产库已有该表（于是上面的
             # CREATE TABLE IF NOT EXISTS 对它完全无效），而本项目没有 ALTER 迁移机制。
@@ -338,6 +366,13 @@ class Database:
                 # 点赞/送花计数 = WHERE to_user_id=? [AND kind=?]
                 'CREATE INDEX IF NOT EXISTS idx_profile_likes_to '
                 'ON profile_likes(to_user_id, kind)',
+                # 段位榜 = ORDER BY points DESC（并列时按 updated_at 定序，
+                # 让"同样分数谁先到谁在前"稳定，不随行顺序抖动）
+                'CREATE INDEX IF NOT EXISTS idx_user_rank_points '
+                'ON user_rank(points DESC, updated_at)',
+                # 大舰长门槛要数"全服船长段的人数" = WHERE points >= 2100
+                'CREATE INDEX IF NOT EXISTS idx_user_rank_points_asc '
+                'ON user_rank(points)',
             ):
                 try:
                     self.cursor.execute(stmt)
@@ -396,6 +431,7 @@ class Database:
         就会执行，为了一个展示开关把进程打崩不值得；加列失败时留言板按"未开放"降级。
         """
         self._add_column_if_missing('user_profile', _GUESTBOOK_COLUMN, _GUESTBOOK_COLUMN_DDL)
+        self._add_column_if_missing('user_profile', _SHOW_RANK_COLUMN, _SHOW_RANK_COLUMN_DDL)
 
     def _add_column_if_missing(self, table: str, column: str, ddl: str) -> bool:
         """`ALTER TABLE ADD COLUMN` 的幂等包装（见模块级 `_add_column_if_missing`）。"""
@@ -1005,6 +1041,8 @@ class Database:
         # ⚠️ 这一列在第 1 批建表时不存在，由 `_migrate_schema()` 用 ALTER 补上 ——
         # 老行拿到的是 `DEFAULT 1`，与这里的默认值一致（都表示"公开"）。
         'show_guestbook': 1,
+        # 段位是否公开（段位批）。**默认公开**；同样靠 `_migrate_schema()` 加列。
+        'show_rank': 1,
     }
 
     def _profile_defaults(self, uid: str) -> dict:
@@ -1023,7 +1061,7 @@ class Database:
             cursor = self.conn.cursor()
             row = cursor.execute(
                 'SELECT title_id, tags, status_text, frame_id, card_bg_id, '
-                'show_stats, show_fav_cards, show_history, show_guestbook, updated_at '
+                'show_stats, show_fav_cards, show_history, show_guestbook, show_rank, updated_at '
                 'FROM user_profile WHERE user_id = ?', (uid,)).fetchone()
             cursor.close()
             if not row:
@@ -1031,7 +1069,7 @@ class Database:
             data = {k: row[k] for k in row.keys()}
             data['user_id'] = uid
             data['tags'] = self._parse_tags(data.get('tags'))
-            for flag in ('show_stats', 'show_fav_cards', 'show_history', 'show_guestbook'):
+            for flag in ('show_stats', 'show_fav_cards', 'show_history', 'show_guestbook', 'show_rank'):
                 data[flag] = 1 if data.get(flag) is None else int(data[flag])
             data['updated_at'] = int(data.get('updated_at') or 0)
             return data
@@ -1076,6 +1114,38 @@ class Database:
                 self.conn.rollback()
             return False
 
+    def set_show_rank(self, uid: str, on) -> bool:
+        """单独写入「段位是否公开」（段位批 A 票）。
+
+        ⚠️ 与 `set_show_guestbook` 同样的定位：**正常路径不走这里**。
+        `show_rank` 并进了 `POST /api/profile/card`（10 个字段全发），由
+        `save_user_profile_extra` 整行写入。这里只留一个"只改这一列"的运维入口。
+        """
+        if not uid:
+            logger.warning("尝试保存段位开关但未提供用户ID")
+            return False
+        flag = 1 if on in (1, True, '1') else 0
+        try:
+            with self._lock:
+                self.cursor.execute(
+                    'INSERT INTO user_profile (user_id, show_rank, updated_at) '
+                    'VALUES (?, ?, ?) '
+                    'ON CONFLICT(user_id) DO UPDATE SET '
+                    'show_rank = excluded.show_rank, updated_at = excluded.updated_at',
+                    (uid, flag, int(time.time())))
+                self.conn.commit()
+            return True
+        except sqlite3.Error as e:
+            logger.error(f"保存段位开关失败: uid={uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+        except Exception as e:
+            logger.error(f"保存段位开关时发生未知错误: uid={uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+
     @staticmethod
     def _parse_tags(raw):
         """tags 列是 JSON 数组文本。脏数据（非数组 / 非法 JSON）一律当空。"""
@@ -1108,15 +1178,15 @@ class Database:
         tags = row.get('tags')
         row['tags'] = json.dumps([t for t in tags if isinstance(t, str)],
                                  ensure_ascii=False) if isinstance(tags, list) else '[]'
-        for flag in ('show_stats', 'show_fav_cards', 'show_history', 'show_guestbook'):
+        for flag in ('show_stats', 'show_fav_cards', 'show_history', 'show_guestbook', 'show_rank'):
             row[flag] = 1 if row[flag] in (1, True, '1') else 0
         try:
             with self._lock:
                 self.cursor.execute(
                     'INSERT INTO user_profile '
                     '(user_id, title_id, tags, status_text, frame_id, card_bg_id, '
-                    ' show_stats, show_fav_cards, show_history, show_guestbook, updated_at) '
-                    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
+                    ' show_stats, show_fav_cards, show_history, show_guestbook, show_rank, updated_at) '
+                    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
                     'ON CONFLICT(user_id) DO UPDATE SET '
                     'title_id = excluded.title_id, tags = excluded.tags, '
                     'status_text = excluded.status_text, frame_id = excluded.frame_id, '
@@ -1124,11 +1194,13 @@ class Database:
                     'show_fav_cards = excluded.show_fav_cards, '
                     'show_history = excluded.show_history, '
                     'show_guestbook = excluded.show_guestbook, '
+                    'show_rank = excluded.show_rank, '
                     'updated_at = excluded.updated_at',
                     (uid, str(row['title_id'] or ''), row['tags'],
                      str(row['status_text'] or ''), str(row['frame_id'] or 'none'),
                      str(row['card_bg_id'] or 'deep'), row['show_stats'],
                      row['show_fav_cards'], row['show_history'], row['show_guestbook'],
+                     row['show_rank'],
                      int(time.time())))
                 self.conn.commit()
             return True
@@ -1438,6 +1510,284 @@ class Database:
         except Exception as e:
             logger.error(f"设置经验时发生未知错误: uid={uid}, 错误: {e}")
             return False
+
+    # ------------------------------------------------------------------
+    # 段位（user_rank）：排位积分
+    #
+    # 分工：**本层只存 `points`，不算段位**。等级 / 小段位 / 进度条 / 升级判定
+    # 全部由 `ranks.py` 从 `points` 现算 —— 与 `leveling.py` 同一条规矩。
+    # 存一份"段位名"就会出现"分数改了段位没改"的漂移，所以不存。
+    #
+    # 排序口径（全服名次、段位榜、船长池名次三处共用，必须一致）：
+    #     points DESC, COALESCE(updated_at,0) ASC, user_id ASC
+    # 后两段是**定序用的**：同分时"先到的排前面"稳定，不会随查询计划抖动
+    # （否则同分玩家的 #60 / #61 会来回跳，看着像 bug）。
+    # ------------------------------------------------------------------
+    _RANK_ORDER_BY = ('ORDER BY points DESC, COALESCE(updated_at, 0) ASC, user_id ASC')
+
+    @staticmethod
+    def _rank_row_dict(row) -> dict:
+        """把一行 `user_rank` 收敛成纯 dict（不把 sqlite3.Row 漏给调用方）。"""
+        if not row:
+            return {'points': 0, 'is_admiral': 0, 'ranked_wins': 0,
+                    'ranked_losses': 0, 'updated_at': 0}
+        return {
+            'points': max(0, int(row['points'] or 0)),
+            'is_admiral': 1 if row['is_admiral'] else 0,
+            'ranked_wins': max(0, int(row['ranked_wins'] or 0)),
+            'ranked_losses': max(0, int(row['ranked_losses'] or 0)),
+            'updated_at': int(row['updated_at'] or 0),
+        }
+
+    def get_user_rank_row(self, uid: str) -> dict:
+        """某人的排位积分行。**没有记录就返回全 0 的默认行**（不写库）。
+
+        ⚠️ 返回默认行而不是 None：调用方（api / server）一律拿 dict 用，
+        让"没打过排位"与"打过但 0 分"走同一条渲染路径 —— 段位要显示成
+        「二级水手Ⅰ 0分」而不是空白。
+        """
+        if not uid:
+            return self._rank_row_dict(None)
+        try:
+            cursor = self.conn.cursor()
+            row = cursor.execute(
+                'SELECT points, is_admiral, ranked_wins, ranked_losses, updated_at '
+                'FROM user_rank WHERE user_id = ?', (uid,)).fetchone()
+            cursor.close()
+            return self._rank_row_dict(row)
+        except sqlite3.Error as e:
+            logger.error(f"读取段位失败: uid={uid}, 错误: {e}")
+            return self._rank_row_dict(None)
+        except Exception as e:
+            logger.error(f"读取段位时发生未知错误: uid={uid}, 错误: {e}")
+            return self._rank_row_dict(None)
+
+    def get_rank_map(self, uids) -> dict:
+        """批量 `{uid: rank_row}`（排行榜一页 100 行，逐行查会打 100 次库）。
+
+        ⚠️ 只返回**库里有行**的账号 —— 与 `get_user_rank_row` 的"返回默认行"
+        策略相反，这是有意的：调用方拿它给一页列表补数据，没行的地方
+        用 `_rank_row_dict(None)` 兜底即可；如果这里给每个 uid 都塞默认行，
+        调用方就分不清"真的 0 分"和"根本没打过排位"了。
+        """
+        ids = [str(u) for u in (uids or []) if u]
+        if not ids:
+            return {}
+        try:
+            marks = ','.join('?' for _ in ids)
+            cursor = self.conn.cursor()
+            rows = cursor.execute(
+                'SELECT user_id, points, is_admiral, ranked_wins, ranked_losses, updated_at '
+                f'FROM user_rank WHERE user_id IN ({marks})', ids).fetchall()
+            cursor.close()
+            return {str(r['user_id']): self._rank_row_dict(r) for r in rows if r['user_id']}
+        except sqlite3.Error as e:
+            logger.error(f"批量读取段位失败: 错误: {e}")
+            return {}
+        except Exception as e:
+            logger.error(f"批量读取段位时发生未知错误: 错误: {e}")
+            return {}
+
+    def add_rank_points(self, uid: str, delta: int, is_admiral=None) -> dict:
+        """加/减排位积分，返回**写完之后**的整行。
+
+        · 底分由 SQL 的 `MAX(0, ...)` 兜住（0 分封底，不出现负分）；
+        · `is_admiral=None` 表示"不动这一列"，传 1/0 则显式改写；
+        · 用 UPSERT，第一次写就建行；
+        · 写失败返回**读出来的当前行**（调用方据此播动画，不会播成假数据）。
+        """
+        if not uid:
+            return self._rank_row_dict(None)
+        try:
+            delta = int(delta)
+        except (TypeError, ValueError):
+            return self.get_user_rank_row(uid)
+        try:
+            with self._lock:
+                cursor = self.conn.cursor()
+                # ⚠️ 这里必须**绑两次 delta**：VALUES 里那个是给"首次建行"用的
+                # （封底 MAX(0, ?)），ON CONFLICT 里那个才是真正参与累加的原始值。
+                # 只用前者会踩一个很隐蔽的坑：`excluded.points` 已经被夹成 0，
+                # 于是 `user_rank.points + excluded.points` 等于**没减分**
+                # （实测：20 分输一局仍是 20 分，只有胜负场次在涨）。
+                cursor.execute(
+                    'INSERT INTO user_rank (user_id, points, is_admiral, ranked_wins, '
+                    'ranked_losses, updated_at) VALUES (?, MAX(0, ?), ?, ?, ?, ?) '
+                    'ON CONFLICT(user_id) DO UPDATE SET '
+                    'points = MAX(0, user_rank.points + ?), '
+                    'is_admiral = COALESCE(?, user_rank.is_admiral), '
+                    'ranked_wins = user_rank.ranked_wins + excluded.ranked_wins, '
+                    'ranked_losses = user_rank.ranked_losses + excluded.ranked_losses, '
+                    'updated_at = excluded.updated_at',
+                    (uid, delta,
+                     1 if is_admiral else 0,
+                     1 if delta > 0 else 0,
+                     1 if delta < 0 else 0,
+                     int(time.time()),
+                     delta,
+                     None if is_admiral is None else (1 if is_admiral else 0)))
+                self.conn.commit()
+                row = cursor.execute(
+                    'SELECT points, is_admiral, ranked_wins, ranked_losses, updated_at '
+                    'FROM user_rank WHERE user_id = ?', (uid,)).fetchone()
+                cursor.close()
+            return self._rank_row_dict(row)
+        except sqlite3.Error as e:
+            logger.error(f"增减段位积分失败: uid={uid}, delta={delta}, 错误: {e}")
+            return self.get_user_rank_row(uid)
+        except Exception as e:
+            logger.error(f"增减段位积分时发生未知错误: uid={uid}, 错误: {e}")
+            return self.get_user_rank_row(uid)
+
+    def set_rank_points(self, uid: str, points: int, is_admiral=None) -> bool:
+        """直接设置排位积分（运维用 / 测试用）。只改 points，不动胜负场次。"""
+        if not uid:
+            return False
+        try:
+            with self._lock:
+                cursor = self.conn.cursor()
+                cursor.execute(
+                    'INSERT INTO user_rank (user_id, points, is_admiral, updated_at) '
+                    'VALUES (?, MAX(0, ?), ?, ?) '
+                    'ON CONFLICT(user_id) DO UPDATE SET '
+                    'points = MAX(0, excluded.points), '
+                    'is_admiral = COALESCE(?, user_rank.is_admiral), '
+                    'updated_at = excluded.updated_at',
+                    (uid, int(points), 1 if is_admiral else 0, int(time.time()),
+                     None if is_admiral is None else (1 if is_admiral else 0)))
+                self.conn.commit()
+                cursor.close()
+            return True
+        except sqlite3.Error as e:
+            logger.error(f"设置段位积分失败: uid={uid}, 错误: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"设置段位积分时发生未知错误: uid={uid}, 错误: {e}")
+            return False
+
+    def ranked_leaderboard(self, limit: int = 100, offset: int = 0) -> list:
+        """段位榜一页：按积分倒序，返回 `[{user_id, points, is_admiral, ...}]`。
+
+        ⚠️ **只列"打过排位"的账号**（表里有行才在榜上）。这与战绩排行榜
+        「只统计真打过一局的账号」是同一条口径 —— 否则全站注册用户都会
+        以「二级水手Ⅰ 0分」占据榜尾。
+        """
+        try:
+            limit = max(1, min(int(limit), 200))
+            offset = max(0, int(offset))
+        except (TypeError, ValueError):
+            limit, offset = 100, 0
+        try:
+            cursor = self.conn.cursor()
+            rows = cursor.execute(
+                'SELECT user_id, points, is_admiral, ranked_wins, ranked_losses, updated_at '
+                f'FROM user_rank {self._RANK_ORDER_BY} LIMIT ? OFFSET ?',
+                (limit, offset)).fetchall()
+            cursor.close()
+            out = []
+            for i, r in enumerate(rows):
+                item = self._rank_row_dict(r)
+                item['user_id'] = str(r['user_id'])
+                item['position'] = offset + i + 1
+                out.append(item)
+            return out
+        except sqlite3.Error as e:
+            logger.error(f"读取段位榜失败: 错误: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"读取段位榜时发生未知错误: 错误: {e}")
+            return []
+
+    def count_rank_at_least(self, points: int) -> int:
+        """积分 ≥ 门槛的账号数（大舰长门槛要数"全服船长段有多少人"）。"""
+        try:
+            cursor = self.conn.cursor()
+            row = cursor.execute(
+                'SELECT COUNT(*) AS n FROM user_rank WHERE points >= ?',
+                (max(0, int(points)),)).fetchone()
+            cursor.close()
+            return int(row['n'] or 0)
+        except (sqlite3.Error, TypeError, ValueError) as e:
+            logger.error(f"统计段位人数失败: 错误: {e}")
+            return 0
+        except Exception as e:
+            logger.error(f"统计段位人数时发生未知错误: 错误: {e}")
+            return 0
+
+    def captains_ordered(self, limit: int = 60) -> list:
+        """「船长池」：积分 ≥ 船长门槛的账号，按同一排序口径取前 N。
+
+        大舰长升级判定看的是**这张池子里的名次**，而不是全服名次
+        （见 `ranks.can_promote_to_admiral`）—— 两个名次是两回事：
+        池名次用于判定，全服名次用于展示。
+        """
+        try:
+            limit = max(1, min(int(limit), 500))
+        except (TypeError, ValueError):
+            limit = 60
+        try:
+            cursor = self.conn.cursor()
+            rows = cursor.execute(
+                'SELECT user_id, points, is_admiral, ranked_wins, ranked_losses, updated_at '
+                f'FROM user_rank WHERE points >= ? {self._RANK_ORDER_BY} LIMIT ?',
+                (max(0, int(ranks.CAPTAIN_FLOOR)), limit)).fetchall()
+            cursor.close()
+            out = []
+            for i, r in enumerate(rows):
+                item = self._rank_row_dict(r)
+                item['user_id'] = str(r['user_id'])
+                item['pool_position'] = i + 1
+                out.append(item)
+            return out
+        except sqlite3.Error as e:
+            logger.error(f"读取船长池失败: 错误: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"读取船长池时发生未知错误: 错误: {e}")
+            return []
+
+    def get_rank_position(self, uid: str) -> int:
+        """某人的**全服段位名次**（1 起）。没打过排位返回 0。
+
+        ⚠️ 与 `get_user_rank`（战绩榜名次，按 wins）**不是一回事**，
+        名字刻意错开以免调用方拿错。排序口径与 `ranked_leaderboard` 一致，
+        用 COUNT(*) 直接算严格在前的行数 —— 榜外账号（100 名之后）也能拿到名次。
+        """
+        if not uid:
+            return 0
+        try:
+            cursor = self.conn.cursor()
+            row = cursor.execute(
+                'SELECT points, COALESCE(updated_at, 0) AS ts, user_id FROM user_rank '
+                'WHERE user_id = ?', (uid,)).fetchone()
+            if not row:
+                cursor.close()
+                return 0
+            ahead = cursor.execute(
+                'SELECT COUNT(*) AS n FROM user_rank WHERE '
+                'points > ? OR (points = ? AND '
+                '(COALESCE(updated_at, 0) < ? OR (COALESCE(updated_at, 0) = ? AND user_id < ?)))',
+                (row['points'], row['points'], row['ts'], row['ts'], row['user_id'])).fetchone()
+            cursor.close()
+            return int(ahead['n'] or 0) + 1
+        except sqlite3.Error as e:
+            logger.error(f"读取段位名次失败: uid={uid}, 错误: {e}")
+            return 0
+        except Exception as e:
+            logger.error(f"读取段位名次时发生未知错误: uid={uid}, 错误: {e}")
+            return 0
+
+    def get_rank_position_map(self, uids) -> dict:
+        """批量 `{uid: 全服段位名次}`（段位榜一页要用）。没行 / 失败的不出现在结果里。"""
+        ids = [str(u) for u in (uids or []) if u]
+        if not ids:
+            return {}
+        out = {}
+        for uid in ids:
+            pos = self.get_rank_position(uid)
+            if pos > 0:
+                out[uid] = pos
+        return out
 
     # ------------------------------------------------------------------
     # 特权（user_perks）：外观全解锁 / 彩虹名字 …
@@ -2122,6 +2472,60 @@ def add_user_xp(uid: str, delta: int):
 def set_user_xp(uid: str, xp: int):
     """直接设置累计经验（运维用）"""
     return db.set_user_xp(uid, xp)
+
+
+# ---- 段位（排位积分）----
+# ⚠️ 与其它批次同一条规矩：**模块级函数必须与类方法成对存在**。
+# api.py / server.py / 测试都按模块级名字调用与打桩，只实现类方法会被绕过
+# （第 2 批为此吃过一次假红：测试里明明 12 场，接口按 0 算）。
+def get_user_rank_row(uid: str):
+    """某人的排位积分行（无记录 = 全 0 的默认行）"""
+    return db.get_user_rank_row(uid)
+
+
+def get_rank_map(uids):
+    """批量 `{uid: rank_row}`（只含库里有行的账号）"""
+    return db.get_rank_map(uids)
+
+
+def add_rank_points(uid: str, delta: int, is_admiral=None):
+    """加/减排位积分，返回写完之后的那一行"""
+    return db.add_rank_points(uid, delta, is_admiral)
+
+
+def set_rank_points(uid: str, points: int, is_admiral=None):
+    """直接设置排位积分（运维 / 测试用）"""
+    return db.set_rank_points(uid, points, is_admiral)
+
+
+def ranked_leaderboard(limit: int = 100, offset: int = 0):
+    """段位榜一页（按积分倒序）"""
+    return db.ranked_leaderboard(limit, offset)
+
+
+def count_rank_at_least(points: int):
+    """积分 ≥ 门槛的账号数"""
+    return db.count_rank_at_least(points)
+
+
+def captains_ordered(limit: int = 60):
+    """船长池（积分 ≥ 船长起始分），带 `pool_position`"""
+    return db.captains_ordered(limit)
+
+
+def get_rank_position(uid: str):
+    """全服段位名次（1 起；没打过排位 = 0）"""
+    return db.get_rank_position(uid)
+
+
+def get_rank_position_map(uids):
+    """批量 `{uid: 全服段位名次}`"""
+    return db.get_rank_position_map(uids)
+
+
+def set_show_rank(uid: str, on):
+    """写「段位是否公开」（单独一列，不走名片整行写入）"""
+    return db.set_show_rank(uid, on)
 
 
 # ---- 特权（外观全解锁 / 彩虹名字）----

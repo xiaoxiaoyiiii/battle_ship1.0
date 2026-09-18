@@ -165,7 +165,7 @@ try {
   const saved = await B.ev(`fetch('/api/profile/card', { method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title_id: 'immortal', tags: ['aggressive', 'nightowl'], status_text: '等你来打',
-      frame_id: 'crimson', card_bg_id: 'aurora', show_stats: 1, show_fav_cards: 1, show_history: 0, show_guestbook: 1 }) })
+      frame_id: 'crimson', card_bg_id: 'aurora', show_stats: 1, show_fav_cards: 1, show_history: 0, show_guestbook: 1, show_rank: 1 }) })
     .then(r => r.json()).catch(e => ({ __err: String(e) }))`);
   check(saved && saved.success === true, '3 对手设置称号 + 两个标签', saved && (saved.success || saved.error));
 

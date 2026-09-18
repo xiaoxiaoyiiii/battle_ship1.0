@@ -633,7 +633,7 @@ def _set_guestbook(client, on):
     resp = client.post('/api/profile/card', json={
         'title_id': '', 'tags': [], 'status_text': '', 'frame_id': 'none',
         'card_bg_id': 'deep', 'show_stats': 1, 'show_fav_cards': 1,
-        'show_history': 0, 'show_guestbook': 1 if on else 0,
+        'show_history': 0, 'show_guestbook': 1 if on else 0, 'show_rank': 1,
     })
     assert resp.status_code == 200, _json(resp)
     return resp
@@ -713,11 +713,17 @@ def test_guestbook_flag_round_trips_and_owner_sees_others_messages(make_user):
 
 
 def test_card_save_requires_show_guestbook_and_validates_its_value(make_user):
-    """契约：第 9 个字段必须发（缺 → 400 点名），且只接受 0/1。"""
+    """契约：展示开关必须发（缺 → 400 点名），且只接受 0/1。
+
+    ⚠️ 段位批把载荷从 9 个字段加到 **10** 个（多了 `show_rank`）。这里的 body
+    要跟着补全，否则缺的字段变成 `show_rank`，报错文案就不是本用例要验的那个了
+    —— 第一版正是这么假红的（断言 `'留言板公开' in err` 拿不到）。
+    """
     me, me_name = make_user()
     client = _client(me, me_name)
     body = {'title_id': '', 'tags': [], 'status_text': '', 'frame_id': 'none',
-            'card_bg_id': 'deep', 'show_stats': 1, 'show_fav_cards': 1, 'show_history': 0}
+            'card_bg_id': 'deep', 'show_stats': 1, 'show_fav_cards': 1, 'show_history': 0,
+            'show_rank': 1}
 
     resp = client.post('/api/profile/card', json=body)
     assert resp.status_code == 400

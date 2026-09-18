@@ -549,6 +549,9 @@ def build_own_profile(uid):
         # 留言板开关（第 3 批）：第 4 个展示开关，与另外三个同进同出 ——
         # 编辑面拿它初始化 `#profile-show-guestbook` 复选框。
         'show_guestbook': int(extra.get('show_guestbook') if extra.get('show_guestbook') is not None else 1),
+        # 段位开关（段位批）：第 5 个展示开关，同样同进同出（保存载荷 9 → 10 字段）。
+        # 编辑面拿它初始化 `#profile-show-rank` 复选框。
+        'show_rank': int(extra.get('show_rank') if extra.get('show_rank') is not None else 1),
         'fav_cards': _fav_cards(uid),
         'catalog': profile_spec.catalog(stats),
     })
@@ -725,6 +728,12 @@ def user_stats_view():
     # 「显示留言」还是「该玩家未开放留言板」。老行由 DEFAULT 1 兜底，缺值按公开。
     public_stats['show_guestbook'] = int(
         extra.get('show_guestbook') if extra.get('show_guestbook') is not None else 1)
+    # 段位开关（段位批）：**别人视角也要下发** —— 前端靠它决定
+    # 名片/匹配界面画不画段位。老行由 DEFAULT 1 兜底，缺值按公开。
+    # ⚠️ 注意它只控制"**展示**要不要画"，不影响段位榜 —— 榜上的人照样在榜上
+    #    （榜是公共竞技数据，不是个人名片的一部分）。
+    public_stats['show_rank'] = int(
+        extra.get('show_rank') if extra.get('show_rank') is not None else 1)
 
     # 点赞 / 送花 / 留言板（第 3 批）：查看面两个视角共用一份互动数据。
     # ⚠️ 计数与"我的状态"**始终可见**，不受 `show_guestbook` 影响 ——

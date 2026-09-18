@@ -71,7 +71,7 @@ def _payload(**over):
     """
     body = {'title_id': 'rookie', 'tags': [], 'status_text': '', 'frame_id': 'none',
             'card_bg_id': 'deep', 'show_stats': 1, 'show_fav_cards': 1,
-            'show_history': 0, 'show_guestbook': 1}
+            'show_history': 0, 'show_guestbook': 1, 'show_rank': 1}
     body.update(over)
     return body
 
@@ -88,20 +88,25 @@ def _stats(**over):
 # 0. 契约形状：池子条目与 catalog
 # ===========================================================================
 def test_pools_have_frozen_sizes_and_ids():
-    """7 称号 / 12 标签 / 5 头像框 / 6 底色，id 是冻结契约（计划 §2.1）。"""
-    assert len(profile_spec.TITLES) == 7
+    """12 称号 / 12 标签 / 10 头像框 / 11 底色，id 是冻结契约（计划 §2.1）。
+
+    ⚠️ 段位批给三个池子各加了 5 项**段位解锁**的外观（原 7/5/6 → 12/10/11）。
+    新项排在池子末尾，所以下面"前 N 项 id 顺序"的断言保持不变 ——
+    这是有意的：池子顺序 = 前端选项顺序，新东西追加在后面，老玩家的界面不变。
+    """
+    assert len(profile_spec.TITLES) == 12
     assert len(profile_spec.TAGS) == 12
-    assert len(profile_spec.FRAMES) == 5
-    assert len(profile_spec.CARD_BGS) == 6
+    assert len(profile_spec.FRAMES) == 10
+    assert len(profile_spec.CARD_BGS) == 11
 
     assert [t['id'] for t in profile_spec.TAGS] == [
         'aggressive', 'steady', 'fast', 'turtle', 'cardflow', 'chain',
         'rookie', 'pro', 'nightowl', 'needmate', 'serious', 'chatty']
-    assert [t['id'] for t in profile_spec.TITLES] == [
+    assert [t['id'] for t in profile_spec.TITLES][:7] == [
         'rookie', 'sailor', 'hunter', 'streak10', 'immortal', 'veteran', 'cardmaster']
-    assert [f['id'] for f in profile_spec.FRAMES] == [
+    assert [f['id'] for f in profile_spec.FRAMES][:5] == [
         'none', 'silver', 'gold', 'aurora', 'crimson']
-    assert [b['id'] for b in profile_spec.CARD_BGS] == [
+    assert [b['id'] for b in profile_spec.CARD_BGS][:6] == [
         'deep', 'graphite', 'cyber', 'lava', 'dusk', 'aurora']
 
     for pool in (profile_spec.TITLES, profile_spec.FRAMES, profile_spec.CARD_BGS):
@@ -117,7 +122,7 @@ def test_catalog_shape_and_unlocked_flags():
     cat = profile_spec.catalog(_stats(wins=10, longest_streak=5, losses=10))
     assert set(cat) == {'titles', 'tags', 'frames', 'card_bgs'}
     assert {k: len(v) for k, v in cat.items()} == {
-        'titles': 7, 'tags': 12, 'frames': 5, 'card_bgs': 6}
+        'titles': 12, 'tags': 12, 'frames': 10, 'card_bgs': 11}
 
     for key in ('titles', 'frames', 'card_bgs'):
         for item in cat[key]:
@@ -563,11 +568,12 @@ def test_profile_endpoint_shape(make_user):
     for key in ('id', 'username', 'signature', 'avatar', 'wins', 'losses',
                 'current_streak', 'longest_streak', 'created_at', 'rank',
                 'title_id', 'tags', 'status_text', 'frame_id', 'card_bg_id',
-                'show_stats', 'show_fav_cards', 'show_history', 'fav_cards', 'catalog'):
+                'show_stats', 'show_fav_cards', 'show_history', 'show_guestbook',
+                'show_rank', 'fav_cards', 'catalog'):
         assert key in profile, f'/api/profile 缺少 {key}'
     assert profile['fav_cards'][0] == {'name': '失灵！', 'speed': 3, 'uses': 41}
     assert {k: len(v) for k, v in profile['catalog'].items()} == {
-        'titles': 7, 'tags': 12, 'frames': 5, 'card_bgs': 6}
+        'titles': 12, 'tags': 12, 'frames': 10, 'card_bgs': 11}
     assert 'password_hash' not in profile and 'token' not in profile
 
 

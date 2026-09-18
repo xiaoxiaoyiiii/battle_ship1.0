@@ -13,6 +13,7 @@
 | `longest_streak` | `users` 表 |
 | `created_at` | `users` 表（epoch 秒，用于「注册满 180 天」） |
 | `card_uses_total` | `user_card_usage` 表按 user_id 汇总（由调用方传入） |
+| `rank_tier` | `user_rank` 表 → `ranks.points_tier_index(points)`（段位批加，见下） |
 
 ⚠️ **契约冻结**（`docs/PROFILE_CARD_2026_09_17_PLAN.md` §2.1）：池子 id、字段名、
 函数名都不要改名 —— T2/T3 的前端与 T4 的工具都按这份契约写。
@@ -20,8 +21,14 @@
 「池子定义」与「解锁条件」只有一份来源：前端 `button.pf-opt[data-title]` 的
 `title` 属性、`catalog` 的 `requirement` 字段、错误提示都取自它。
 （这正是本项目「通用教训二：同一个业务判断有两份实现，就一定会漂移」的应对。）
+
+⚠️ **段位解锁项（段位批）走的是同一条思路**：条目里直接写 `rank_tier`
+（= `ranks` 里的段位下标），`requirement` 文案与判定函数都由它**现算**。
+阈值只写一遍，所以"写着船长、判定按大副"这种漂移在结构上不可能发生。
 """
 import time
+
+import ranks                # 纯模块（只依赖 stdlib），阈值都从它取
 
 MAX_TAGS = 3              # 标签最多 3 个（超出丢弃）
 MAX_STATUS_LEN = 30       # 一句话状态 ≤30 字（超出截断）
@@ -47,6 +54,19 @@ TITLES = [
      "requirement": "注册满 180 天"},
     {"id": "cardmaster", "name": "卡牌大师", "desc": "手里有整本卡牌的账",
      "requirement": "累计出牌 ≥ 100"},
+    # ---- 段位解锁（段位批）----
+    # `requirement` 留空：下面 `_fill_rank_requirements` 按 `rank_tier` 现填。
+    # 段位越高，称号越"贵"（作者："段位越高需要越精致越高级"）。
+    {"id": "storm_helmsman", "name": "风暴舵手", "desc": "再大的浪也稳得住舵",
+     "rank_tier": 2},
+    {"id": "deep_navigator", "name": "深海领航", "desc": "闭着眼也能摸回航道",
+     "rank_tier": 5},
+    {"id": "iron_soul", "name": "铁骨", "desc": "轮机舱里的铁与火",
+     "rank_tier": 6},
+    {"id": "unsinkable", "name": "不沉之舰", "desc": "沉过一次的人才知道这四个字多重",
+     "rank_tier": 7},
+    {"id": "sea_emperor", "name": "海皇", "desc": "整片海域只认一个名字",
+     "rank_tier": 8},
 ]
 
 # 12 个标签（设计稿 §5.2），id 用拼音短名（计划 §2.1 冻结）
@@ -77,6 +97,17 @@ FRAMES = [
      "requirement": "胜场 ≥ 30"},
     {"id": "crimson", "name": "绯红", "desc": "暗红双环，打得够多才有",
      "requirement": "总场次 ≥ 50"},
+    # ---- 段位解锁（段位批）----
+    {"id": "bronze_compass", "name": "青铜罗盘", "desc": "指针有点旧，但从不指错",
+     "rank_tier": 2},
+    {"id": "silver_chain", "name": "银链锚", "desc": "一圈缠着锚链的银环",
+     "rank_tier": 4},
+    {"id": "golden_wheel", "name": "黄金舵轮", "desc": "舵轮镶金，转起来有分量",
+     "rank_tier": 6},
+    {"id": "mithril_ring", "name": "秘银环", "desc": "细看有细密纹路在流动",
+     "rank_tier": 7},
+    {"id": "king_aura", "name": "海皇光环", "desc": "环外还有一圈极淡的光",
+     "rank_tier": 8},
 ]
 
 # 6 个名片底色（设计稿 §5.4）
@@ -93,6 +124,17 @@ CARD_BGS = [
      "requirement": "总场次 ≥ 30"},
     {"id": "aurora", "name": "极光", "desc": "青绿极光铺满整张卡",
      "requirement": "胜场 ≥ 50"},
+    # ---- 段位解锁（段位批）----
+    {"id": "shoal", "name": "浅滩", "desc": "暖沙色，一眼能看清水底",
+     "rank_tier": 1},
+    {"id": "storm", "name": "风暴", "desc": "铅灰云层压在卡面上",
+     "rank_tier": 3},
+    {"id": "abyss", "name": "深渊", "desc": "几乎全黑，只有一线冷光",
+     "rank_tier": 5},
+    {"id": "molten_gold", "name": "鎏金", "desc": "暗底上淌着熔金纹",
+     "rank_tier": 7},
+    {"id": "starfield", "name": "星海", "desc": "整片星海泡在海里",
+     "rank_tier": 8},
 ]
 
 DEFAULT_TITLE_ID = ''      # 空 = 不展示称号（库里的默认值）
@@ -138,6 +180,9 @@ def unlock_context(stats):
         'longest_streak': _as_int(stats.get('longest_streak')),
         'created_at': _as_int(stats.get('created_at')),
         'card_uses_total': _as_int(stats.get('card_uses_total')),
+        # 段位下标（0=二级水手 … 7=船长，8=大舰长）。**缺省 0**：没打过排位
+        # 就是最低段位，不凭空送段位外观；上界夹到 8（脏数据不该解锁海皇）。
+        'rank_tier': min(ranks.ADMIRAL['index'], _as_int(stats.get('rank_tier'))),
     }
 
 
@@ -176,6 +221,45 @@ _CARD_BG_RULES = {
     'dusk': lambda c: c['matches'] >= 30,
     'aurora': lambda c: c['wins'] >= 50,
 }
+
+
+# ---------------------------------------------------------------------------
+# 段位解锁项：文案与判定都从条目里的 `rank_tier` 现算（阈值只写一遍）
+# ---------------------------------------------------------------------------
+def _fill_rank_requirements(pool):
+    """给带 `rank_tier` 的条目补上 `requirement` 文案（在 import 期跑一次）。
+
+    ⚠️ **为什么不是手写文案**：手写就成两处阈值了 —— 文案说「船长」、判定写
+    `rank_tier >= 5`（大副）这种漂移不会报错，只会让玩家看着条件解不开。
+    现在文案是 `rank_tier` 的函数，"段位达到 船长"与 `c['rank_tier'] >= 7`
+    必然一致。段位名同样取自 `ranks`，不在这里再抄一份中文。
+    """
+    for item in pool:
+        tier = item.get('rank_tier')
+        if tier is not None:
+            item['requirement'] = '段位达到 ' + ranks.tier_of_index(tier)['name']
+    return pool
+
+
+def _rank_rules(pool):
+    """从池子里挑出段位解锁项，生成 `{id: 判定}`。
+
+    ⚠️ `t=` 默认参数不能省：lambda 里的循环变量是**晚绑定**的，写成
+    `lambda c: c['rank_tier'] >= item['rank_tier']` 会让所有段位项都用
+    最后一个条目的阈值（本项目已经在 `game.js` 的 `ReferenceError` 上
+    踩过一次"看着对、跑起来全错"的同类坑）。
+    """
+    return {item['id']: (lambda c, t=item['rank_tier']: c['rank_tier'] >= t)
+            for item in pool if item.get('rank_tier') is not None}
+
+
+_fill_rank_requirements(TITLES)
+_fill_rank_requirements(FRAMES)
+_fill_rank_requirements(CARD_BGS)
+
+_TITLE_RULES.update(_rank_rules(TITLES))
+_FRAME_RULES.update(_rank_rules(FRAMES))
+_CARD_BG_RULES.update(_rank_rules(CARD_BGS))
 
 
 def _unlocked(rules, stats):
@@ -272,13 +356,23 @@ def catalog(stats):
 
     titles / frames / card_bgs 每项：{id, name, desc, unlocked, requirement}
     tags 每项：{id, name}
+
+    ⚠️ 下发字段是**白名单展开**，不是 `{**item}`。段位解锁项在池子里多带一个
+    `rank_tier`（内部阈值，前端用不着），直接展开会把它漏给前端 ——
+    而契约只有 5 个键（`tests/test_profile_card.py` 就是按这 5 个断言的）。
+    `requirement` 文案里已经写明「段位达到 船长」，前端要显示的信息不缺。
     """
     title_ok = unlocked_titles(stats)
     frame_ok = unlocked_frames(stats)
     bg_ok = unlocked_card_bgs(stats)
 
     def dump(pool, unlocked):
-        return [{**item, 'unlocked': item['id'] in unlocked} for item in pool]
+        out = []
+        for item in pool:
+            out.append({'id': item['id'], 'name': item['name'], 'desc': item['desc'],
+                        'requirement': item['requirement'],
+                        'unlocked': item['id'] in unlocked})
+        return out
 
     return {
         'titles': dump(TITLES, title_ok),
@@ -292,14 +386,18 @@ def catalog(stats):
 # 保存校验
 # ---------------------------------------------------------------------------
 WRITABLE_FIELDS = ('title_id', 'tags', 'status_text', 'frame_id', 'card_bg_id',
-                   'show_stats', 'show_fav_cards', 'show_history', 'show_guestbook')
+                   'show_stats', 'show_fav_cards', 'show_history', 'show_guestbook',
+                   'show_rank')
 
 # ⚠️ `show_guestbook`（留言板公开）是第 3 批加的**第四个展示开关**。
 # 它走的是与另外三个完全相同的通道（`POST /api/profile/card`，9 个字段全发），
 # 而不是单独开一个接口 —— 理由就是下面那条规矩：允许缺字段 = 保持原值
 # 会变成"保存了但没生效"这种最难查的静默失败；留言板隐私属于同一类展示开关，
 # 就该跟另外三个同进同出。默认 1 = 公开（计划 §3.4）。
-_FLAG_KEYS = ('show_stats', 'show_fav_cards', 'show_history', 'show_guestbook')
+#
+# `show_rank`（段位是否公开）是段位批加的**第五个**，走完全相同的路：
+# 载荷 9 → 10 字段。同样默认 1 = 公开。
+_FLAG_KEYS = ('show_stats', 'show_fav_cards', 'show_history', 'show_guestbook', 'show_rank')
 
 # 展示开关的文案（错误提示里用中文键名，别把 snake_case 甩给玩家）
 _FLAG_LABELS = {
@@ -307,6 +405,7 @@ _FLAG_LABELS = {
     'show_fav_cards': '最爱用的卡展示',
     'show_history': '对局历史公开',
     'show_guestbook': '留言板公开',
+    'show_rank': '段位公开',
 }
 
 
@@ -352,9 +451,9 @@ def validate_payload(payload, stats):
     | `frame_id` / `card_bg_id` | 池内且已解锁 | 拒绝 |
     | `show_*` | 0 / 1 | 拒绝 |
 
-    ⚠️ 9 个字段**必须全部出现**在请求体里（第 3 批加了 `show_guestbook`，
-    原来是 8 个）。缺字段一律拒绝并点名，而不是"保持原值"—— 后者会变成
-    "保存了但没生效"这种最难查的静默失败。
+    ⚠️ 10 个字段**必须全部出现**在请求体里（第 3 批加到 9 个，
+    段位批加到 10 个 —— 多了 `show_rank`）。缺字段一律拒绝并点名，
+    而不是"保持原值"—— 后者会变成"保存了但没生效"这种最难查的静默失败。
     """
     if not isinstance(payload, dict):
         return {}, ['请求体必须是 JSON 对象']

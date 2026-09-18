@@ -37,6 +37,7 @@
                 <span class="nav-user">已登录：{{ username }}</span>
                 <a href="/logout">退出</a>
                 <a href="/leaderboard" class="hide-in-game">排行榜</a>
+                <a href="/lobby" id="nav-lobby" class="hide-in-game">游戏大厅</a>
                 <a href="#" id="show-user-stats" class="hide-in-game">个人战绩</a>
                 <a href="#" id="show-profile" class="hide-in-game">个人信息</a>
                 <a href="#" id="toggle-theme" class="hide-in-game">深色模式</a>
@@ -44,6 +45,7 @@
                 <a href="/login" class="hide-in-game">登录</a>
                 <a href="/register" class="hide-in-game">注册</a>
                 <a href="/leaderboard" class="hide-in-game">排行榜</a>
+                <a href="/lobby" id="nav-lobby-guest" class="hide-in-game">游戏大厅</a>
                 <a href="#" id="toggle-theme" class="hide-in-game">深色模式</a>
             {% endif %}
             <button id="help-btn" class="btn secondary">帮助</button>
@@ -73,6 +75,7 @@
                 <option value="hard">电脑：困难</option>
             </select>
             <button id="custom-room" class="secondary">自定义房间游戏</button>
+            <button id="lobby-btn" class="secondary">游戏大厅</button>
         </div>
         <div id="match-status" class="hidden">
             <p>正在寻找匹配...</p>
@@ -416,17 +419,55 @@
         </div>
     </div>
 
-    <!-- 大厅界面 -->
+    <!-- 大厅界面（2026-09-18 大厅批，冻结契约见 docs/LOBBY_2026_09_18.md §3.2）。
+         ⚠️ 旧 id 一个都不能删（join-lobby-match / leave-lobby-match /
+            back-to-main-from-lobby / lobby-player-count / lobby-players-list）——
+            game.js 顶部有 getElementById 引用，删了就是"点了没反应"。
+         ⚠️ 列表内容全部由 JS 渲染（renderLobbyState），这里只放容器。 -->
     <div id="lobby-screen" class="screen">
         <h2>游戏大厅</h2>
-        <p>加入匹配队列，等待其他玩家...</p>
-        <div class="lobby-info">
-            <p>当前大厅玩家：<span id="lobby-player-count">0</span></p>
-            <ul id="lobby-players-list"></ul>
+        <p class="lobby-subtitle">匹配、房间、公屏 —— 都在这一页。</p>
+
+        <div class="lobby-topbar">
+            <span class="lobby-stat">在线玩家 <b id="lobby-player-count">0</b></span>
+            <span class="lobby-stat">大厅中 <b id="lobby-in-lobby-count">0</b></span>
+            <span class="lobby-stat">休闲队列 <b id="lobby-queue-casual">0</b></span>
+            <span class="lobby-stat">排位队列 <b id="lobby-queue-ranked">0</b></span>
+            <button id="lobby-refresh" class="btn secondary" type="button">刷新</button>
         </div>
+
+        <div class="lobby-columns">
+            <section class="lobby-panel">
+                <h3>在线玩家</h3>
+                <ul id="lobby-players-list" class="lobby-list"></ul>
+            </section>
+
+            <section class="lobby-panel">
+                <h3>房间列表</h3>
+                <ul id="lobby-rooms-list" class="lobby-list"></ul>
+                <div class="lobby-create-row">
+                    <input type="text" id="lobby-room-name" maxlength="20" placeholder="房间名（可留空）">
+                    <label class="lobby-checkbox" title="取消勾选 = 私密房，只能凭 6 位房间号加入">
+                        <input type="checkbox" id="lobby-room-public" checked> 公开
+                    </label>
+                    <button id="lobby-create-room" class="btn secondary" type="button">创建房间</button>
+                </div>
+            </section>
+
+            <section class="lobby-panel">
+                <h3>大厅公屏</h3>
+                <div id="lobby-chat-messages" class="lobby-chat-messages"></div>
+                <div class="lobby-chat-row">
+                    <input type="text" id="lobby-chat-input" maxlength="120" placeholder="说点什么…">
+                    <button id="lobby-chat-send" class="btn secondary" type="button">发送</button>
+                </div>
+            </section>
+        </div>
+
         <div class="button-group">
-            <button id="join-lobby-match">加入匹配</button>
-            <button id="leave-lobby-match" class="hidden secondary">离开匹配</button>
+            <button id="join-lobby-match">快速匹配</button>
+            <button id="lobby-ranked-match" class="secondary">排位匹配</button>
+            <button id="leave-lobby-match" class="hidden secondary">取消匹配</button>
             <button id="back-to-main-from-lobby" class="secondary">返回首页</button>
         </div>
     </div>

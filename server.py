@@ -18,7 +18,7 @@ import secrets
 from typing import Any
 import logging
 from flask import render_template, request, session, jsonify, has_request_context
-from flask_socketio import SocketIO, join_room, emit as semit
+from flask_socketio import SocketIO, join_room, leave_room, emit as semit
 
 import db  # local database helpers for users and matches
 import achievements  # 徽章判据（纯函数，唯一一份 evaluate()）
@@ -177,12 +177,14 @@ def log_magic(room, caster_id, card, extra=''):
 
 
 # 在线人数统计
-online_users = set()
+# ⚠️ 唯一真相源是 `lobby_manager.presence`（定义在 RoomManager 之后）。
+# 此前这里是一个裸 sid 集合 `online_users`——它没有名字，所以大厅列不出"谁在线"，
+# 想补名字就只能再维护第二份结构（两份在线表 = 必然漂移，见 CLAUDE.md 通用教训二）。
 magic_cards: list["MagicCard"]
 @app.route('/api/online_count')
 def api_online_count():
     """获取当前在线人数"""
-    return jsonify({'online_count': len(online_users)})
+    return jsonify({'online_count': lobby_manager.online_count()})
 
 class Position:
     x: int
@@ -385,6 +387,12 @@ class GameRoom:
         self.created_at = time.time()  # 用于回收「建了但一直没人入座」的房间
         self.players = {}
         self.state = 'waiting'  # waiting, placing_ships, rock_paper_scissors, attacking, game_over
+        # 大厅可见性（2026-09-18 大厅批）：**新增房间级状态三件齐** ——
+        #   ① 这里初始化 ② 消费点 = _lobby_visible_rooms() + handle_create_room 的写入
+        #   ③ 回归测试 tests/test_lobby.py::test_room_defaults_are_lobby_safe
+        # 默认 public=True 是有意的：大厅要能列出等待中的房间，默认私密等于这个功能不存在。
+        self.name = ''       # 房间名（空 = 前端回落成"{房主名}的房间"）
+        self.public = True   # False = 私密房，只认 6 位房间号，不出现在大厅列表
         self.rps_choices = {}
         self.attack_order = []
         self.current_attacker = ""
@@ -539,6 +547,20 @@ socketio = SocketIO(app, cors_allowed_origins=_cors_origins)
 
 # 聊天消息最大长度
 MAX_CHAT_MSG_LEN = 100
+
+# ---------------------------------------------------------------------------
+# 大厅系统（Lobby）—— 2026-09-18。冻结契约见 docs/LOBBY_2026_09_18.md。
+# ---------------------------------------------------------------------------
+# 改这里必须同步：docs/LOBBY_2026_09_18.md / tests/test_lobby.py / tools/lobby_check.mjs。
+LOBBY_ROOM = '__lobby__'          # socket.io 房间名（房间 id 是 uuid4()[:6] 十六进制，撞不上）
+LOBBY_CHAT_MAX_LEN = 120          # 大厅公屏单条上限（服务端截断，不报错）
+LOBBY_CHAT_MIN_INTERVAL = 1.0     # 同一连接两条之间的最小间隔（秒），防刷
+LOBBY_CHAT_BACKLOG = 30           # 新进大厅者补发的最近消息条数
+LOBBY_MAX_PLAYERS = 200           # lobby_state.players 上限
+LOBBY_STATE_TICK_SECONDS = 4.0    # 兜底定时广播间隔（只在有成员时才真的 emit）
+LOBBY_PROFILE_TTL = 60.0          # 头像/称号缓存时长，避免每次广播都查库
+LOBBY_NAME_MAX_LEN = 24           # 玩家名在大厅里的显示上限
+LOBBY_ROOM_NAME_MAX_LEN = 20      # 大厅建房时的房间名上限
 
 # ---------------------------------------------------------------------------
 # 匹配模式（2026-09-17 排位批）
@@ -696,6 +718,399 @@ class RoomManager:
 
 # 创建RoomManager实例
 room_manager = RoomManager()
+
+
+# ---------------------------------------------------------------------------
+# 大厅（Lobby）—— 2026-09-18。冻结契约见 docs/LOBBY_2026_09_18.md。
+# ---------------------------------------------------------------------------
+# 改造前的现状：`#lobby-screen` 是个空壳（列不出人、看不到房间、没有公屏），
+# 且`online_users` 是个**裸 sid 集合**，连名字都没有。这里把它整个换掉。
+#
+# 两个结构，职责不同、不许混：
+#   _presence  —— 在线表（= 在线人数口径）。连接建立即入表，断开即出表。
+#   _members   —— 大厅成员（_presence 的**子集**）。只有真的站在大厅页面上的
+#                 连接才收 lobby_state 推送；否则每个对局中的玩家都被大厅广播打扰。
+def _lobby_clean_name(name, fallback: str = '游客') -> str:
+    """玩家名的统一清洗：去首尾空白 → 截断 → 空串回落。
+
+    ⚠️ 大厅的名字有三个来源（session / find_match 的 payload / 大厅订阅的 payload），
+    必须在**入口处**统一，不能各写各的截断长度。
+    """
+    text = str(name or '').strip()
+    if not text:
+        return fallback
+    return text[:LOBBY_NAME_MAX_LEN]
+
+
+class LobbyManager:
+    """大厅状态：在线表 + 成员表 + 公屏聊天。
+
+    所有读写都持同一把锁（eventlet 下 threading 已被 monkey_patch，锁是绿的）。
+    """
+
+    def __init__(self):
+        self._lock = threading.RLock()
+        # sid -> {'name','user_id','connected_at','profile','profile_at'}
+        self._presence: dict[str, dict] = {}
+        # sid -> {'name','joined_at'}（presence 的子集）
+        self._members: dict[str, dict] = {}
+        # 公屏最近消息（只保留 LOBBY_CHAT_BACKLOG 条）
+        self._chat: list[dict] = []
+        # 单调序号：前端靠它做"这条我有没有"的判断。没有它就只能靠文案/时间猜，
+        # 而补发的历史与实时推送**会重叠**（见 applyLobbyChatHistory 的注释）。
+        self._chat_seq = 0
+        # sid -> 上一条发言时间（防刷）
+        self._last_chat_at: dict[str, float] = {}
+
+    # ---- 在线表 -----------------------------------------------------------
+    def add_connection(self, sid: str, name=None, user_id=None) -> None:
+        """连接建立时登记。名字可能还不知道（游客在首页才输入），后面再补。"""
+        with self._lock:
+            row = self._presence.get(sid)
+            if row is None:
+                row = {'name': '', 'user_id': None, 'connected_at': time.time(),
+                       'profile': None, 'profile_at': 0.0}
+                self._presence[sid] = row
+            if name:
+                row['name'] = _lobby_clean_name(name)
+            if user_id is not None:
+                row['user_id'] = user_id
+
+    def update_identity(self, sid: str, name=None, user_id=None) -> None:
+        """补写身份（游客名 / 登录态）。连接不在表里时自动补登。"""
+        if sid not in self._presence:
+            self.add_connection(sid, name, user_id)
+            return
+        with self._lock:
+            row = self._presence[sid]
+            if name:
+                row['name'] = _lobby_clean_name(name)
+            if user_id is not None:
+                row['user_id'] = user_id
+
+    def remove_connection(self, sid: str) -> bool:
+        """连接断开：同时退出在线表、成员表与防刷记录。"""
+        with self._lock:
+            existed = self._presence.pop(sid, None) is not None
+            self._members.pop(sid, None)
+            self._last_chat_at.pop(sid, None)
+        return existed
+
+    def online_count(self) -> int:
+        with self._lock:
+            return len(self._presence)
+
+    def presence(self) -> dict:
+        """在线表快照（浅拷贝，供 build_lobby_state 遍历用）。"""
+        with self._lock:
+            return {sid: dict(row) for sid, row in self._presence.items()}
+
+    def profile_of(self, sid: str) -> dict:
+        """取该连接的头像 / 称号缓存；过期或缺失时查库并回写（TTL = LOBBY_PROFILE_TTL）。
+
+        ⚠️ 必须缓存：`lobby_state` 每 4 秒兜底广播一次，逐人查库等于每秒几十次查询。
+        游客（没有 user_id）直接返回空缓存，不查库。
+        """
+        now = time.time()
+        with self._lock:
+            row = self._presence.get(sid)
+            if row is None:
+                return {'avatar': '', 'title': '', 'name_style': ''}
+            cached = row.get('profile')
+            if cached is not None and now - float(row.get('profile_at') or 0) < LOBBY_PROFILE_TTL:
+                return dict(cached)
+            uid = row.get('user_id')
+        profile = _lobby_lookup_profile(uid)
+        with self._lock:
+            row = self._presence.get(sid)
+            if row is not None:
+                row['profile'] = profile
+                row['profile_at'] = now
+        return dict(profile)
+
+    # ---- 大厅成员 ---------------------------------------------------------
+    def subscribe(self, sid: str, name=None, user_id=None) -> bool:
+        """进入大厅。幂等：重复调用只刷新名字，不重复入表。"""
+        self.update_identity(sid, name, user_id)
+        with self._lock:
+            if sid in self._members:
+                if name:
+                    self._members[sid]['name'] = _lobby_clean_name(name)
+                return False
+            self._members[sid] = {'name': _lobby_clean_name(name), 'joined_at': time.time()}
+        return True
+
+    def unsubscribe(self, sid: str) -> bool:
+        with self._lock:
+            return self._members.pop(sid, None) is not None
+
+    def is_member(self, sid: str) -> bool:
+        with self._lock:
+            return sid in self._members
+
+    def member_count(self) -> int:
+        with self._lock:
+            return len(self._members)
+
+    def members(self) -> list[str]:
+        with self._lock:
+            return list(self._members.keys())
+
+    # ---- 公屏聊天 ---------------------------------------------------------
+    def chat_allowed(self, sid: str, now: float = None) -> bool:
+        """频率闸门：同一连接两条之间至少间隔 LOBBY_CHAT_MIN_INTERVAL 秒。"""
+        now = time.time() if now is None else now
+        with self._lock:
+            last = self._last_chat_at.get(sid)
+            if last is not None and now - last < LOBBY_CHAT_MIN_INTERVAL:
+                return False
+            self._last_chat_at[sid] = now
+        return True
+
+    def add_chat(self, sid: str, name: str, message: str) -> dict | None:
+        """入库一条公屏消息。空白消息返回 None（调用方据此静默丢弃）。"""
+        text = str(message or '').strip()[:LOBBY_CHAT_MAX_LEN]
+        if not text:
+            return None
+        with self._lock:
+            self._chat_seq += 1
+            item = {'key': sid, 'name': _lobby_clean_name(name),
+                    'message': text, 'ts': time.time(), 'seq': self._chat_seq}
+            self._chat.append(item)
+            if len(self._chat) > LOBBY_CHAT_BACKLOG:
+                del self._chat[:len(self._chat) - LOBBY_CHAT_BACKLOG]
+        return item
+
+    def recent_chat(self) -> list[dict]:
+        with self._lock:
+            return [dict(m) for m in self._chat]
+
+
+lobby_manager = LobbyManager()
+
+
+def _lobby_lookup_profile(uid) -> dict:
+    """查一个账号在大厅里要展示的外观字段（头像 / 称号 / 名字样式）。
+
+    只读公开外观，**不碰任何隐私开关字段**（show_stats / show_guestbook 等）——
+    大厅不是名片，不下发名片隐私数据。
+    """
+    blank = {'avatar': '', 'title': '', 'name_style': ''}
+    if not uid:
+        return blank
+    uid = str(uid)
+    try:
+        user = db.get_user(uid=uid) or {}
+        extra = db.get_user_profile_extra(uid) or {}
+        perks = db.get_perks_map([uid]).get(uid) or set()
+        title_id = str(extra.get('title_id') or '')
+        return {
+            'avatar': str(user.get('avatar') or ''),
+            'title': profile_spec.title_name(title_id) if title_id else '',
+            'name_style': 'rainbow' if profile_spec.PERK_RAINBOW_NAME in perks else '',
+        }
+    except Exception:
+        return blank
+
+
+def _lobby_sids_by_room_state() -> tuple:
+    """一次遍历算出两拨人：真正在打的（in_game）与只是在房里等人的（in_room）。
+
+    ⚠️ **必须区分这两拨**：建房者一按下「创建房间」就坐在自己的房里了，
+    而那个房间的 state 是 'waiting' —— 把它算成"对局中"的话，大厅里所有
+    开过房的人永远显示"对局中"，而他们其实完全可以被别人拉进一局。
+    （浏览器工具实测抓到的：A 建房后在自己那一行显示"对局中"。）
+    """
+    in_game, in_room = set(), set()
+    for room in room_manager.get_all_rooms().values():
+        state = getattr(room, 'state', None)
+        if state == 'game_over':
+            continue
+        bucket = in_room if state == 'waiting' else in_game
+        for player in room.players.values():
+            if player.sid:
+                bucket.add(player.sid)
+    return in_game, in_room
+
+
+def _lobby_player_status(sid: str, in_game: set, in_room: set) -> str:
+    """大厅里的四态之一：matching / in_game / in_room / idle。
+
+    ⚠️ 顺序不能反：匹配中**优先于**对局中。匹配成功后队列条目立刻被 pop，
+    两者不会同时成立；但先判对局会让"刚配到、还没进房"的一瞬显示成空闲。
+    """
+    if room_manager.has_player_in_match_queue(sid):
+        return 'matching'
+    if sid in in_game:
+        return 'in_game'
+    if sid in in_room:
+        return 'in_room'
+    return 'idle'
+
+
+def _lobby_visible_rooms() -> list[dict]:
+    """大厅房间列表。四条可见规则见 docs/LOBBY_2026_09_18.md §1.4。
+
+    最容易被漏掉的是第 4 条「房主仍在线」：房间的回收 TTL 是 1 小时
+    （_WAITING_ROOM_TTL），房主关掉标签页后房间还要在内存里躺一小时 ——
+    不加这条就会在大厅里挂出一堆"点进去没人"的僵尸房。
+    """
+    online = set(lobby_manager.presence().keys())
+    rows = []
+    for room in room_manager.get_all_rooms().values():
+        if getattr(room, 'state', None) != 'waiting':
+            continue
+        if getattr(room, 'is_ai_room', False):
+            continue
+        if not bool(getattr(room, 'public', True)):
+            continue
+        players = list(room.players.values())
+        if len(players) != 1:
+            continue
+        host = players[0]
+        if not host.sid or host.sid not in online:
+            continue
+        rows.append({
+            'room_id': room.id,
+            'name': str(getattr(room, 'name', '') or '') or f'{host.name}的房间',
+            'host': host.name,
+            'players': 1,
+            'capacity': 2,
+            'created_at': int(getattr(room, 'created_at', 0) or 0),
+        })
+    rows.sort(key=lambda r: r['created_at'])
+    return rows
+
+
+def build_lobby_state() -> dict:
+    """组装一份 lobby_state（契约见 docs/LOBBY_2026_09_18.md §1.3）。
+
+    每次广播现算：房间/队列/在线都在内存里，只有等级与段位要查库，且都是
+    **批量**接口（一次 IN (...) 取完），绝不逐人查。
+    """
+    now = time.time()
+    presence = lobby_manager.presence()
+    members = set(lobby_manager.members())
+    in_game, in_room = _lobby_sids_by_room_state()
+
+    # 队列分 mode 计数（休闲 / 排位共用同一个队列）
+    queue = list(room_manager.match_queue)
+    ranked_n = sum(1 for e in queue if e.get('mode') == MATCH_MODE_RANKED)
+    casual_n = len(queue) - ranked_n
+
+    # 按连接时间排序，超出上限直接截断（契约 §5：本批不做分页）
+    ordered = sorted(presence.items(), key=lambda kv: kv[1].get('connected_at') or 0)
+    ordered = ordered[:LOBBY_MAX_PLAYERS]
+
+    uids = [str(row.get('user_id')) for _, row in ordered if row.get('user_id')]
+    try:
+        xp_map = db.get_xp_map(uids) if uids else {}
+    except Exception:
+        xp_map = {}
+    try:
+        rank_map = db.get_rank_map(uids) if uids else {}
+    except Exception:
+        rank_map = {}
+
+    players = []
+    for sid, row in ordered:
+        uid = row.get('user_id')
+        uid_s = str(uid) if uid else ''
+        profile = lobby_manager.profile_of(sid)
+        level = 1
+        if uid_s:
+            try:
+                level = leveling.level_from_xp(int(xp_map.get(uid_s, 0) or 0))
+            except Exception:
+                level = 1
+        rank = None
+        points_row = rank_map.get(uid_s) if uid_s else None
+        if points_row is not None:
+            try:
+                points = points_row.get('points') if isinstance(points_row, dict) else points_row
+                view = ranks.rank_view(points)
+                rank = {'tier_id': view['tier_id'], 'tier_name': view['tier_name'],
+                        'label': view['label']}
+            except Exception:
+                rank = None
+        players.append({
+            'key': sid,
+            'name': row.get('name') or '游客',
+            'guest': not bool(uid_s),
+            'in_lobby': sid in members,
+            'status': _lobby_player_status(sid, in_game, in_room),
+            'avatar': profile.get('avatar') or '',
+            'level': level,
+            'name_style': profile.get('name_style') or '',
+            'title': profile.get('title') or '',
+            'rank': rank,
+        })
+
+    return {
+        'ts': int(now),
+        'online_count': len(presence),
+        'lobby_count': len(members),
+        'queue': {'casual': casual_n, 'ranked': ranked_n},
+        'players': players,
+        'rooms': _lobby_visible_rooms(),
+    }
+
+
+def _broadcast_lobby_state() -> dict:
+    """给所有大厅成员推一份状态。没有成员时**不 emit**（省掉无意义的序列化）。"""
+    if lobby_manager.member_count() <= 0:
+        return {'sent': 0}
+    state = build_lobby_state()
+    socketio.emit('lobby_state', state, to=LOBBY_ROOM)
+    return {'sent': lobby_manager.member_count(), 'state': state}
+
+
+def _lobby_broadcast_soon() -> None:
+    """在**后台任务**里补一次广播。
+
+    ⚠️ `disconnect` 处理器里不能同步 emit（eventlet 会把 hub 卡住，
+    见 CLAUDE.md §9 与 handle_disconnect 里的注释），所以断开路径走这里。
+    """
+    try:
+        socketio.start_background_task(_lobby_broadcast_task)
+    except Exception:
+        pass
+
+
+def _lobby_broadcast_task():
+    try:
+        _broadcast_lobby_state()
+    except Exception:
+        pass
+
+
+_LOBBY_TICKER_STARTED = False
+
+
+def _lobby_ticker_loop():
+    """兜底定时广播：只在有成员时真的 emit。
+
+    为什么需要它：广播点是**逐个 hook 上去的**（订阅/匹配/建房/掉线…），
+    漏掉任何一条路径，玩家就会看到一份停住不动的列表 —— 而这类"没报错、
+    只是不动"的故障是本项目最难查的一类（见 CLAUDE.md 通用教训）。
+    定时兜底把最坏情况从"永远不动"压到"最多 4 秒后自己好"。
+    """
+    while True:
+        time.sleep(LOBBY_STATE_TICK_SECONDS)
+        try:
+            if lobby_manager.member_count() > 0:
+                _broadcast_lobby_state()
+        except Exception:
+            pass
+
+
+def _ensure_lobby_ticker():
+    global _LOBBY_TICKER_STARTED
+    if _LOBBY_TICKER_STARTED:
+        return
+    _LOBBY_TICKER_STARTED = True
+    socketio.start_background_task(_lobby_ticker_loop)
+
 
 
 def _identity_check(room, claimed_player_id, server_pid, sid):
@@ -1316,6 +1731,7 @@ def lobby():
 
 @socketio.on('create_room')
 def handle_create_room(data):
+    data = data if isinstance(data, dict) else {}
     room_id = room_manager.create_room()
     # 优先使用登录后的 user_id，否则使用 sid（游客模式）
     player_id = session.get('user_id', request.sid)
@@ -1324,6 +1740,10 @@ def handle_create_room(data):
     join_room(room_id, request.sid)
     room = room_manager.get_room(room_id)
     if room:
+        # 大厅批：房间名与可见性（两个字段都可选，不传时沿用 GameRoom 的默认值）。
+        # ⚠️ 名字必须清洗 + 截断：它是玩家可控输入，且会被广播给整个大厅。
+        room.name = str(data.get('name') or '').strip()[:LOBBY_ROOM_NAME_MAX_LEN]
+        room.public = bool(data.get('public', True))
         room.players[player_id] = Player(**{
             'name': player_name,
             'ships': [],
@@ -1332,6 +1752,8 @@ def handle_create_room(data):
             'user_id': player_id,
             'sid': request.sid  # 传递sid给Player构造函数
         })
+    # 大厅批：建房这条路也带名字（游客从大厅直接建房时名字只在这里出现）。
+    lobby_manager.update_identity(request.sid, player_name, session.get('user_id'))
     return {'status': 'success', 'room_id': room_id}
 
 @socketio.on('join_room')
@@ -1340,6 +1762,8 @@ def handle_join_room(data):
     # 优先使用登录后的 user_id，否则使用 sid（游客模式）
     player_id = session.get('user_id', request.sid)
     player_name = session.get('username', data.get('player_name', '匿名玩家'))
+    # 大厅批：入座这条路的连接可能还没登记过名字（游客直接凭房间号进来）。
+    lobby_manager.update_identity(request.sid, player_name, session.get('user_id'))
 
     room = room_manager.get_room(room_id)
     if not room:
@@ -1391,6 +1815,9 @@ def handle_join_room(data):
                 'opponent_name': room.players[opponent_id].name
             }, to=player.sid)
 
+    # 大厅批：房间列表变了（有人入座 / 房间已满）→ 推一次状态。
+    _lobby_broadcast_soon()
+
     # 返回响应给客户端，包含player_id
     return {'status': 'success', 'player_id': player_id}
 
@@ -1400,8 +1827,10 @@ def handle_join_room(data):
 def handle_connect():
     """处理客户端连接事件"""
     sid = request.sid
-    online_users.add(sid)
-    print(f"Client connected: {sid}, online users: {len(online_users)}")
+    # 在线表（唯一真相源，/api/online_count 也读它）。登录用户此刻就有名字；
+    # 游客的名字要等首页输入后随 find_match / lobby_subscribe 送上来。
+    lobby_manager.add_connection(sid, session.get('username'), session.get('user_id'))
+    print(f"Client connected: {sid}, online users: {lobby_manager.online_count()}")
 
     # 启动已结束房间的后台回收任务与回合计时看门狗（均幂等）
     try:
@@ -1410,6 +1839,10 @@ def handle_connect():
         pass
     try:
         _ensure_turn_timer()
+    except Exception:
+        pass
+    try:
+        _ensure_lobby_ticker()
     except Exception:
         pass
 
@@ -1448,13 +1881,16 @@ def handle_connect():
 def handle_disconnect():
     """处理客户端断开连接事件"""
     sid = request.sid
-    if sid in online_users:
-        online_users.remove(sid)
-    print(f"Client disconnected: {sid}, online users: {len(online_users)}")
-    
+    lobby_manager.remove_connection(sid)
+    print(f"Client disconnected: {sid}, online users: {lobby_manager.online_count()}")
+
     # 清理相关数据：从匹配队列移除该连接
     if room_manager.has_player_in_match_queue(sid):
         room_manager.remove_from_match_queue(sid)
+
+    # 大厅批：有人掉线 → 在线列表/房间列表都要变。**不能在这里同步 emit**
+    # （eventlet 下会卡住 hub），所以放进后台任务（见 _lobby_broadcast_soon）。
+    _lobby_broadcast_soon()
 
     # 掉线宽限：若该连接正坐在某未结束房间的座位上，启动 30s 重连窗口。
     # 注意：不能在 disconnect 处理器内同步 emit（eventlet 下会卡住 hub），
@@ -1599,6 +2035,10 @@ def handle_find_match(data):
     user_id = session.get('user_id')
     mode = _normalize_match_mode(data.get('mode'))
 
+    # 大厅批：游客的名字到这一刻才知道（首页输入框），补写在线表，
+    # 否则大厅里这个连接会一直显示成"游客"。
+    lobby_manager.update_identity(socket_sid, session.get('username') or player_name, user_id)
+
     # 排位必须登录：游客入排位池只会占着队列配不上（排位结算要写 user_rank）。
     if mode == MATCH_MODE_RANKED and not user_id:
         emit('error', {'message': '排位模式需要先登录'})
@@ -1686,6 +2126,10 @@ def handle_find_match(data):
                 **rank_fields
             }, to=me['sid'])
 
+    # 大厅批：入队 / 配对成功都会改变 status（idle→matching / matching→in_game），
+    # 推一次让还站在大厅里的人看到列表变化。
+    _broadcast_lobby_state()
+
     return {'status': 'success', 'message': '开始寻找匹配'}
 
 
@@ -1699,7 +2143,124 @@ def handle_cancel_match(data):
     sid = request.sid
     room_manager.remove_from_match_queue(sid)
     emit('match_canceled', {'status': 'success', 'message': '已取消匹配'}, to=sid)
+    # 大厅批：出队 → status 回到 idle，推一次。
+    _broadcast_lobby_state()
     return {'status': 'success', 'message': '已取消匹配'}
+
+
+# ---------------------------------------------------------------------------
+# 大厅系统事件（2026-09-18）。冻结契约见 docs/LOBBY_2026_09_18.md §1.1 / §1.2。
+# ---------------------------------------------------------------------------
+# 事件名一览（改名前先 grep 全仓，前端 game.js 里有对应的 socket.on/emit）：
+#   客户端 → 服务端：lobby_subscribe / lobby_unsubscribe / lobby_refresh
+#                    / lobby_create_room / lobby_chat_send
+#   服务端 → 客户端：lobby_hello / lobby_state / lobby_chat_history / lobby_chat
+def _lobby_subscriber_name(sid, data) -> str:
+    """订阅者显示名：登录态优先，其次 payload 里的 player_name，最后回落到在线表。"""
+    if isinstance(data, dict):
+        given = str(data.get('player_name') or '').strip()
+        if given:
+            return given
+    row = lobby_manager.presence().get(sid) or {}
+    return row.get('name') or '游客'
+
+
+@socketio.on('lobby_subscribe')
+def handle_lobby_subscribe(data=None):
+    """进入大厅并订阅实时状态。**幂等**：重复调用只是刷新名字、重发一次当前状态。"""
+    data = data if isinstance(data, dict) else {}
+    sid = request.sid
+    user_id = session.get('user_id')
+    name = session.get('username') or _lobby_subscriber_name(sid, data)
+    lobby_manager.subscribe(sid, name, user_id)
+    # 订阅 = 加入 socket.io 房间，之后 _broadcast_lobby_state 一次 emit 全员收到
+    join_room(LOBBY_ROOM, sid)
+
+    # 身份键：前端靠它标"我"（lobby_state 是一条广播，没法逐人改 is_me）
+    emit('lobby_hello', {'key': sid, 'name': _lobby_clean_name(name),
+                         'guest': not bool(user_id)}, to=sid)
+    # 补发公屏最近消息 + 立刻给一份状态（不用等下一次广播）
+    emit('lobby_chat_history', {'messages': lobby_manager.recent_chat()}, to=sid)
+    emit('lobby_state', build_lobby_state(), to=sid)
+    # 通知其他人：大厅人数 + 玩家的 in_lobby 标记变了
+    _broadcast_lobby_state()
+    return {'status': 'success', 'key': sid}
+
+
+@socketio.on('lobby_unsubscribe')
+def handle_lobby_unsubscribe(data=None):
+    """离开大厅：退订。**保留在线表**（人还连着，只是不在大厅页面上）。"""
+    sid = request.sid
+    lobby_manager.unsubscribe(sid)
+    try:
+        leave_room(LOBBY_ROOM, sid)
+    except Exception:
+        pass
+    _broadcast_lobby_state()
+    return {'status': 'success'}
+
+
+@socketio.on('lobby_refresh')
+def handle_lobby_refresh(data=None):
+    """手动刷新：未订阅时顺带订阅（刷新按钮不该把人踢出大厅）。"""
+    sid = request.sid
+    if not lobby_manager.is_member(sid):
+        return handle_lobby_subscribe(data)
+    emit('lobby_state', build_lobby_state(), to=sid)
+    return {'status': 'success'}
+
+
+@socketio.on('lobby_create_room')
+def handle_lobby_create_room(data=None):
+    """在大厅里直接建房。
+
+    复用 create_room 处理器（同一套：登记座位 / join socket.io 房间 / 房间名与可见性），
+    避免大厅和自定义房间页各写一份建房逻辑（两份实现必然漂移）。
+    """
+    data = data if isinstance(data, dict) else {}
+    payload = {
+        'player_name': _lobby_subscriber_name(request.sid, data),
+        'name': data.get('name'),
+        'public': data.get('public', True),
+    }
+    result = handle_create_room(payload)
+    if not isinstance(result, dict) or result.get('status') != 'success':
+        return result if isinstance(result, dict) else {'status': 'error', 'message': '建房失败'}
+    _broadcast_lobby_state()
+    room = room_manager.get_room(result.get('room_id'))
+    return {
+        'status': 'success',
+        'room_id': result.get('room_id'),
+        'name': str(getattr(room, 'name', '') or ''),
+        'public': bool(getattr(room, 'public', True)),
+    }
+
+
+@socketio.on('lobby_chat_send')
+def handle_lobby_chat_send(data=None):
+    """大厅公屏发言。
+
+    三条闸门（顺序不能换）：
+      ① 必须是**大厅成员** —— 否则任何连接都能往公屏灌字；
+      ② 频率（LOBBY_CHAT_MIN_INTERVAL）—— 防刷屏；
+      ③ 内容清洗（空白丢弃、超长截断）由 lobby_manager.add_chat 负责。
+    """
+    data = data if isinstance(data, dict) else {}
+    sid = request.sid
+    if not lobby_manager.is_member(sid):
+        return {'status': 'error', 'message': '请先进入大厅'}
+    if not lobby_manager.chat_allowed(sid):
+        emit('error', {'message': f'发言太快了，请等 {LOBBY_CHAT_MIN_INTERVAL:.0f} 秒'}, to=sid)
+        return {'status': 'error', 'message': '发言太快了'}
+    row = lobby_manager.presence().get(sid) or {}
+    name = session.get('username') or row.get('name') or '游客'
+    item = lobby_manager.add_chat(sid, name, data.get('message'))
+    if item is None:
+        return {'status': 'error', 'message': '消息不能为空'}
+    emit('lobby_chat', item, to=LOBBY_ROOM)
+    return {'status': 'success', 'ts': item['ts']}
+
+
 
 
 

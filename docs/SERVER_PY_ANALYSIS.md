@@ -13,7 +13,7 @@
 | 导入 + monkey_patch | 1–21 | 依赖、eventlet 补丁 |
 | `emit()` 封装 | 24–30 | 全局发送函数（含无上下文的 SocketIO 兜底） |
 | 日志工具 | 33–73 | `GameLog` / `add_game_log` / `log_magic` / `_log_name` |
-| 在线人数 | 77–82 | `online_users` + `/api/online_count` |
+| 在线人数 | 77–82 | `online_users` + `/api/online_count` —— ⚠️ **2026-09-18 大厅批已删除 `online_users`**，改由 `LobbyManager.presence` 统一供数（见 `docs/LOBBY_2026_09_18.md` §2.1） |
 | 数据类 | 84–208 | `Position` / `PlayerShip` / `MagicCard` / `EffectFlags` / `Effect` / `Player` |
 | `GameRoom` | 210–394 | 房间状态机 + 攻击内联实现 |
 | 卡表 & socketio | 397–403 | `magic_cards` 加载、`socketio` 实例、`MAX_CHAT_MSG_LEN` |

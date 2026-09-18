@@ -4819,6 +4819,400 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, rgba(255, 2
     .rank-bar-fill { transition: none; }
 }
 
+/* ===========================================================================
+   30. 大厅系统（2026-09-18）
+   ---------------------------------------------------------------------------
+   契约见 docs/LOBBY_2026_09_18.md §3。三条硬约束（沿用本项目的既有规矩）：
+
+   ① **颜色零写死** —— 全部走 --primary / --primary-rgb / --border* / --muted /
+      --glass / --panel-border，这样换主题预设（第 1 节四组）与深浅色主题自动跟随；
+   ② **不用 transform / filter / backdrop-filter** —— 第 12 节第 12 条。本节所有
+      面板都是叶子节点，但保持这条纪律，免得日后往里塞浮窗时踩坑；
+   ③ 按钮当"色块"用时必须显式 background-image: none —— 第 3 节的通用 button
+      规则带 var(--primary-gradient)，会盖掉背景色（第 23、26 节都踩过）。
+
+   ⚠️ 旧的 .lobby-info（第 3 节与后面一处）随着本次改版**不再有 DOM 使用点**，
+      但那条规则与 .board-wrapper 共用选择器，删它风险大于收益，故保留原样。
+   =========================================================================== */
+
+#lobby-screen {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 12px 24px;
+}
+
+.lobby-subtitle {
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.86rem;
+    margin: -4px 0 14px;
+}
+
+/* ---------- 30.1 顶部状态条 ---------- */
+.lobby-topbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 14px;
+}
+
+.lobby-stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 14px;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    color: var(--text-subtle);
+    background: var(--glass);
+    border: 1px solid var(--panel-border);
+}
+
+.lobby-stat b {
+    color: var(--primary);
+    font-size: 0.95rem;
+    font-variant-numeric: tabular-nums;
+}
+
+#lobby-refresh {
+    padding: 5px 14px;
+    font-size: 0.82rem;
+}
+
+/* ---------- 30.2 三列面板 ---------- */
+.lobby-columns {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.15fr);
+    gap: 14px;
+    align-items: stretch;
+    margin-bottom: 16px;
+}
+
+.lobby-panel {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 300px;
+    max-height: 400px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: var(--glass);
+    border: 1px solid var(--panel-border);
+    box-shadow: var(--shadow-panel);
+}
+
+.lobby-panel h3 {
+    margin: 0 0 10px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--text-subtle);
+}
+
+.lobby-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    overflow-y: auto;
+}
+
+.lobby-empty {
+    padding: 14px 6px;
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--muted);
+}
+
+/* ---------- 30.3 在线玩家 ---------- */
+/* 两行网格而不是一行 flex：三列布局下每块面板只有 ~250px 宽，一行里塞下
+   「头像 + 名字 + 等级 + 段位 + 状态徽章」时，名字会被挤成"截…"
+   （实测截图：名字只剩一个省略号）。改成头像占左列、名字与元信息各占一行的两行网格，
+   名字能拿满右侧剩余宽度。 */
+.lobby-player {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr);
+    align-items: center;
+    column-gap: 8px;
+    row-gap: 1px;
+    padding: 5px 8px;
+    border-radius: 10px;
+    border: 1px solid transparent;
+}
+
+/* 只有非游客（有名片可看）才给手型 —— 游客点了什么都不会发生，别给错误暗示 */
+.lobby-player[data-username]:not([data-username=""]) {
+    cursor: pointer;
+}
+
+.lobby-player[data-username]:not([data-username=""]):hover {
+    background: rgba(var(--primary-rgb), 0.08);
+}
+
+.lobby-me {
+    border-color: rgba(var(--primary-rgb), 0.55);
+    background: rgba(var(--primary-rgb), 0.10);
+}
+
+.lobby-avatar {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 1px solid var(--panel-border);
+    background: var(--surface-muted);
+}
+
+.lobby-player-main {
+    grid-column: 2;
+    grid-row: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.lobby-player-name {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.lobby-player-me,
+.lobby-player-guest,
+.lobby-player-title {
+    flex: 0 0 auto;
+    font-size: 0.68rem;
+    padding: 1px 6px;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+
+.lobby-player-me {
+    background: var(--primary);
+    color: #fff;
+}
+
+.lobby-player-guest {
+    border: 1px solid var(--border);
+    color: var(--muted);
+}
+
+.lobby-player-title {
+    border: 1px solid rgba(var(--primary-rgb), 0.45);
+    color: var(--primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 8em;
+}
+
+.lobby-player-meta {
+    grid-column: 2;
+    grid-row: 2;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    font-size: 0.7rem;
+    color: var(--muted);
+}
+
+.lobby-level {
+    font-variant-numeric: tabular-nums;
+}
+
+.lobby-rank {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    max-width: 9em;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.lobby-status {
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+}
+
+.lobby-status-idle {
+    color: var(--muted);
+}
+
+.lobby-status-matching {
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
+.lobby-status-in_room {
+    color: var(--secondary);
+    border-color: var(--secondary);
+}
+
+.lobby-status-in_game {
+    color: var(--primary);
+    border-color: rgba(var(--primary-rgb), 0.55);
+}
+
+/* ---------- 30.4 房间列表 ---------- */
+.lobby-room {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    background: rgba(var(--primary-rgb), 0.05);
+}
+
+.lobby-room + .lobby-room {
+    margin-top: 6px;
+}
+
+.lobby-room-main {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.lobby-room-name {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.lobby-room-host {
+    font-size: 0.7rem;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.lobby-room-seats {
+    flex: 0 0 auto;
+    font-size: 0.75rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.lobby-room-join {
+    flex: 0 0 auto;
+    padding: 3px 12px;
+    font-size: 0.78rem;
+}
+
+.lobby-create-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--border);
+}
+
+#lobby-room-name,
+#lobby-chat-input {
+    flex: 1 1 90px;
+    min-width: 0;
+    padding: 0.35rem 0.6rem;
+    font-size: 0.82rem;
+}
+
+.lobby-checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.78rem;
+    color: var(--text-subtle);
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.lobby-checkbox input {
+    width: auto;
+    padding: 0;
+}
+
+#lobby-create-room,
+#lobby-chat-send {
+    flex: 0 0 auto;
+    padding: 0.35rem 0.9rem;
+    font-size: 0.8rem;
+}
+
+/* ---------- 30.5 公屏 ---------- */
+.lobby-chat-messages {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding-right: 2px;
+    font-size: 0.8rem;
+    line-height: 1.4;
+}
+
+.lobby-chat-item {
+    word-break: break-word;
+}
+
+.lobby-chat-item.me .lobby-chat-name {
+    color: var(--primary);
+}
+
+.lobby-chat-time {
+    margin-right: 6px;
+    font-size: 0.7rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.lobby-chat-name {
+    font-weight: 600;
+    color: var(--text-subtle);
+}
+
+.lobby-chat-text {
+    color: var(--text);
+}
+
+.lobby-chat-row {
+    display: flex;
+    gap: 6px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--border);
+}
+
+/* ---------- 30.6 窄屏：三列变单列 ---------- */
+@media (max-width: 900px) {
+    .lobby-columns {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .lobby-panel {
+        min-height: 200px;
+        max-height: 300px;
+    }
+}
+
+
 
 
 

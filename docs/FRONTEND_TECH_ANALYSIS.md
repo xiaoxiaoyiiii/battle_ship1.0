@@ -697,6 +697,12 @@ case '轰炸':
 | `'leave_lobby'` | 2997 | ❌ 无 handler |
 
 **影响**：**整个大厅（Lobby）功能是空壳** —— `joinLobbyMatch`/`leaveLobbyMatch` 发出的事件无人接收，`lobby_update` 永不推送，`updateLobbyDisplay()`（**2977-2983**）本身也是空实现并自带注释承认"暂时不做额外请求"。
+
+> ✅ **【2026-09-18 已过时，读到这里请改读 `docs/LOBBY_2026_09_18.md`】** 大厅已经整个重做：
+> 空壳事件全删，改为 `lobby_subscribe` / `lobby_unsubscribe` / `lobby_refresh` /
+> `lobby_create_room` / `lobby_chat_send` 五个真实事件，服务端推 `lobby_state`（在线玩家 +
+> 房间列表 + 队列人数）与 `lobby_chat`，`updateLobbyDisplay()` 已被
+> `renderLobbyState()` 取代。本节其余内容仅作**历史记录**保留。
 **次级影响**：`discard_pile_updated` 缺失意味着弃牌堆只能靠手点 `#view-discard-pile` → `get_discard_pile`(5176) 拉取，不会实时更新。
 
 ### 11.7 🟠 `resetGame()` 的赋值目标疑似错误

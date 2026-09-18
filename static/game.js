@@ -975,6 +975,23 @@ const leaveLobbyBtn = document.getElementById('leave-lobby-match');
 const backFromLobbyBtn = document.getElementById('back-to-main-from-lobby');
 const lobbyPlayerCount = document.getElementById('lobby-player-count');
 const lobbyPlayersList = document.getElementById('lobby-players-list');
+// 大厅批（2026-09-18）新增元素。契约见 docs/LOBBY_2026_09_18.md §3.2。
+// ⚠️ 这些 id 必须真的存在于 templates/index.html —— 引用了但页面里没有的 id
+//    表现是 getElementById 拿到 null、被 if (el) 兜掉，**不报错、只是点了没反应**
+//    （tools/dom_contract_check.mjs 就是查这个的）。
+const lobbyBtn = document.getElementById('lobby-btn');
+const lobbyRefreshBtn = document.getElementById('lobby-refresh');
+const lobbyRankedBtn = document.getElementById('lobby-ranked-match');
+const lobbyInLobbyCount = document.getElementById('lobby-in-lobby-count');
+const lobbyQueueCasual = document.getElementById('lobby-queue-casual');
+const lobbyQueueRanked = document.getElementById('lobby-queue-ranked');
+const lobbyRoomsList = document.getElementById('lobby-rooms-list');
+const lobbyRoomNameInput = document.getElementById('lobby-room-name');
+const lobbyRoomPublic = document.getElementById('lobby-room-public');
+const lobbyCreateRoomBtn = document.getElementById('lobby-create-room');
+const lobbyChatMessages = document.getElementById('lobby-chat-messages');
+const lobbyChatInput = document.getElementById('lobby-chat-input');
+const lobbyChatSendBtn = document.getElementById('lobby-chat-send');
 
 
 // 登录/注册模态弹窗及控件
@@ -1004,6 +1021,11 @@ window.gameState = {
     myAttacks: [],
     opponentAttacks: [],
     lastAttack: null,
+    // 大厅（2026-09-18 大厅批）：最近一份 lobby_state、自己的身份键、
+    // 是否已订阅（离开大厅页面时要退订，否则对局中还在收大厅广播）。
+    lobbyState: null,
+    lobbyKey: null,
+    lobbySubscribed: false,
     deck: [],               // 牌堆
     hand: [],               // 手牌
     discardPile: [],        // 弃牌堆
@@ -4037,9 +4059,40 @@ if (copyInviteLinkBtn) copyInviteLinkBtn.addEventListener('click', copyInviteLin
         });
     }
 
-    // 大厅按钮事件绑定
+    // 大厅按钮事件绑定（2026-09-18 大厅批）
     if (joinLobbyBtn) joinLobbyBtn.addEventListener('click', joinLobbyMatch);
     if (leaveLobbyBtn) leaveLobbyBtn.addEventListener('click', leaveLobbyMatch);
+    if (lobbyRankedBtn) lobbyRankedBtn.addEventListener('click', lobbyRankedMatch);
+    if (lobbyRefreshBtn) lobbyRefreshBtn.addEventListener('click', refreshLobby);
+    if (lobbyCreateRoomBtn) lobbyCreateRoomBtn.addEventListener('click', createLobbyRoom);
+    if (lobbyChatSendBtn) lobbyChatSendBtn.addEventListener('click', sendLobbyChat);
+    // 公屏输入框回车即发（没绑的话玩家按回车什么都不会发生）
+    if (lobbyChatInput) lobbyChatInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); sendLobbyChat(); }
+    });
+    // 首页的「游戏大厅」入口
+    if (lobbyBtn) lobbyBtn.addEventListener('click', () => {
+        history.pushState({}, '', '/lobby');
+        showLobby();
+    });
+    // 列表用**事件委托**绑一次：内容每次 lobby_state 都会被整段重建，
+    // 逐行绑监听会漏绑/泄漏（排行榜那边踩过同一个坑，见 bindLeaderboardUserClick）。
+    if (lobbyPlayersList) {
+        lobbyPlayersList.addEventListener('click', (e) => {
+            const row = e.target && e.target.closest ? e.target.closest('.lobby-player') : null;
+            if (!row) return;
+            const username = row.dataset.username;
+            if (!username) return;                       // 游客没有名片，点不开
+            if (typeof window.showUserProfile === 'function') window.showUserProfile(username);
+        });
+    }
+    if (lobbyRoomsList) {
+        lobbyRoomsList.addEventListener('click', (e) => {
+            const btn = e.target && e.target.closest ? e.target.closest('.lobby-room-join') : null;
+            if (!btn) return;
+            joinLobbyRoom(btn.dataset.room);
+        });
+    }
     if (backFromLobbyBtn) backFromLobbyBtn.addEventListener('click', () => {
         history.pushState({}, '', '/');
         switchScreen(startScreen);
@@ -4477,6 +4530,7 @@ function setupSocketListeners() {
         }
         // 大厅按钮同步（服务端没有 lobby_joined/lobby_left 这类事件）
         if (joinLobbyBtn) joinLobbyBtn.classList.add('hidden');
+        if (lobbyRankedBtn) lobbyRankedBtn.classList.add('hidden');
         if (leaveLobbyBtn) leaveLobbyBtn.classList.remove('hidden');
     });
 
@@ -4486,6 +4540,26 @@ function setupSocketListeners() {
         resetRankedQueueUI();          // 排位那套也要复位（否则按钮永远回不来）
         if (joinLobbyBtn) joinLobbyBtn.classList.remove('hidden');
         if (leaveLobbyBtn) leaveLobbyBtn.classList.add('hidden');
+        if (lobbyRankedBtn) lobbyRankedBtn.classList.remove('hidden');
+    });
+
+    // ---- 大厅（2026-09-18 大厅批，契约见 docs/LOBBY_2026_09_18.md §1.2）----
+    // lobby_hello 只发给刚订阅的那个连接，带的是**我自己的身份键**。
+    // lobby_state 是一条广播（服务端不可能逐人改 is_me），所以"我"由前端比对。
+    socket.on('lobby_hello', (data) => {
+        gameState.lobbyKey = (data && data.key) ? String(data.key) : null;
+        gameState.lobbySubscribed = true;
+        if (gameState.lobbyState) renderLobbyState(gameState.lobbyState);
+    });
+    socket.on('lobby_state', (state) => {
+        renderLobbyState(state);
+    });
+    socket.on('lobby_chat_history', (data) => {
+        // ⚠️ 用合并（只补缺的）而不是"清空重铺"：实时消息可能已经先到了
+        applyLobbyChatHistory((data && data.messages) || []);
+    });
+    socket.on('lobby_chat', (item) => {
+        appendLobbyChat(item);
     });
 
     socket.on('game_state', (data) => {
@@ -6058,6 +6132,10 @@ function switchScreen(screen) {
     });
     if (screen) screen.classList.add('active');
 
+    // 大厅批：切走就退订（否则打完一局还在收大厅广播）。函数声明会提升，
+    // 这里调它不存在时序问题。
+    leaveLobbySubscription(screen);
+
     // 进入对局界面时兜底显示日志空状态（避免出现一个空白日志框）
     if (screen && screen.id === 'game-screen') ensureGameLogEmptyState();
 
@@ -6078,17 +6156,9 @@ function showLeaderboard() {
     fetchLeaderboard();
 }
 
-// 显示大厅
-function showLobby() {
-    switchScreen(lobbyScreen);
-    // 复用/建立连接
-    ensureSocket();
-    // 重置按钮状态（显示加入匹配，隐藏离开匹配）
-    joinLobbyBtn.classList.remove('hidden');
-    leaveLobbyBtn.classList.add('hidden');
-    // 请求大厅更新
-    updateLobbyDisplay();
-}
+// 显示大厅 —— 实现见下方「大厅系统（2026-09-18）」分节（showLobby）。
+// ⚠️ 不要再在这里补一份：同名函数声明后出现的会覆盖前面的，
+//    两份实现并存正是本项目"改了没生效"的经典来源。
 
 function fetchLeaderboard() {
     if (!leaderboardTableBody || !leaderboardError) return;
@@ -6147,25 +6217,273 @@ function bindLeaderboardUserClick() {
     });
 }
 
-// 更新大厅显示：在线人数取真实接口（服务端没有 lobby_update 事件）
-function updateLobbyDisplay() {
-    fetch('/api/online_count').then(r => r.json()).then(data => {
-        if (lobbyPlayerCount && typeof data.online_count === 'number') {
-            lobbyPlayerCount.textContent = data.online_count;
-        }
-        if (lobbyPlayersList) {
-            lobbyPlayersList.innerHTML = '<li>匹配由服务器自动配对，点击「加入匹配」即可</li>';
-        }
-    }).catch(() => {});
+// ---------------------------------------------------------------------------
+// 大厅系统（2026-09-18）。冻结契约见 docs/LOBBY_2026_09_18.md。
+// ---------------------------------------------------------------------------
+// 与改造前的区别：以前这一页只有一个"数字 + 一句提示"，数字还只在进入页面时
+// 拉一次。现在服务端会持续推 lobby_state（订阅/匹配/建房/掉线 + 4 秒兜底），
+// 这一页整个由 renderLobbyState() 按最后一份状态重画。
+//
+// ⚠️ 列表内容**全部**是玩家可控输入（名字、房间名、公屏），插值一律走 escapeHtml。
+// 四态（契约 §1.3）：空闲 / 匹配中 / 在房间（建了房在等人，仍可被别人拉走）/ 对局中
+const LOBBY_STATUS_TEXT = { idle: '空闲', matching: '匹配中', in_room: '在房间', in_game: '对局中' };
+
+// 大厅里用的玩家名：优先首页输入框（游客），其次 gameState，最后兜底。
+function lobbyPlayerName() {
+    const typed = playerNameInput && playerNameInput.value ? playerNameInput.value.trim() : '';
+    return typed || gameState.playerName || '玩家';
 }
 
-// 加入大厅匹配：走真实的 find_match（后端无 join_lobby handler）
+// 进入大厅：订阅 + 拉一份状态。幂等（重复进不会重复订阅）。
+function showLobby() {
+    switchScreen(lobbyScreen);
+    const socket = ensureSocket();
+    // 先复位按钮状态：真正的排队状态由 match_queued / match_canceled 同步
+    if (joinLobbyBtn) joinLobbyBtn.classList.remove('hidden');
+    if (leaveLobbyBtn) leaveLobbyBtn.classList.add('hidden');
+    if (lobbyRankedBtn) lobbyRankedBtn.classList.remove('hidden');
+    gameState.lobbySubscribed = true;
+    onSocketReady((s) => {
+        s.emit('lobby_subscribe', { player_name: lobbyPlayerName() }, () => {});
+    });
+    return socket;
+}
+
+// 离开大厅页面：退订（否则打对局时还在收大厅广播）。switchScreen 每次都会调它。
+function leaveLobbySubscription(nextScreen) {
+    if (nextScreen && nextScreen.id === 'lobby-screen') return;
+    if (!gameState.lobbySubscribed) return;
+    gameState.lobbySubscribed = false;
+    gameState.lobbyKey = null;
+    if (gameState.socket) gameState.socket.emit('lobby_unsubscribe', {});
+}
+
+// 按最后一份 lobby_state 重画整个大厅。
+function renderLobbyState(state) {
+    if (!state || typeof state !== 'object') return;
+    gameState.lobbyState = state;
+    if (lobbyPlayerCount) lobbyPlayerCount.textContent = String(state.online_count || 0);
+    if (lobbyInLobbyCount) lobbyInLobbyCount.textContent = String(state.lobby_count || 0);
+    const queue = state.queue || {};
+    if (lobbyQueueCasual) lobbyQueueCasual.textContent = String(queue.casual || 0);
+    if (lobbyQueueRanked) lobbyQueueRanked.textContent = String(queue.ranked || 0);
+    renderLobbyPlayers(Array.isArray(state.players) ? state.players : []);
+    renderLobbyRooms(Array.isArray(state.rooms) ? state.rooms : []);
+}
+
+// 在线玩家列表。自己的那一行靠 lobby_hello.key 比对（lobby_state 是广播，
+// 服务端没法逐人改 is_me）。
+function renderLobbyPlayers(players) {
+    if (!lobbyPlayersList) return;
+    lobbyPlayersList.innerHTML = '';
+    if (!players.length) {
+        lobbyPlayersList.innerHTML = '<li class="lobby-empty">当前没有其他在线玩家</li>';
+        return;
+    }
+    players.forEach((p) => {
+        const li = document.createElement('li');
+        const mine = !!gameState.lobbyKey && p.key === gameState.lobbyKey;
+        li.className = 'lobby-player' + (mine ? ' lobby-me' : '');
+        li.dataset.username = p.guest ? '' : String(p.name || '');
+        const avatar = p.avatar ? String(p.avatar) : '/static/avatars/default.png';
+        const nameCls = 'lobby-player-name'
+            + (String(p.name_style || '') === 'rainbow' ? ' name-rainbow' : '');
+        const status = LOBBY_STATUS_TEXT[p.status] || '空闲';
+        const rankIcon = (p.rank && p.rank.tier_id && typeof window.rankIconHtml === 'function')
+            ? window.rankIconHtml(p.rank.tier_id, 18) : '';
+        const rankLabel = (p.rank && p.rank.label) ? escapeHtml(p.rank.label) : '';
+        const title = p.title ? '<span class="lobby-player-title">' + escapeHtml(p.title) + '</span>' : '';
+        const guest = p.guest ? '<span class="lobby-player-guest">游客</span>' : '';
+        const meTag = mine ? '<span class="lobby-player-me">我</span>' : '';
+        li.innerHTML = '<img class="lobby-avatar" src="' + escapeHtml(avatar) + '" alt=""'
+            + ' onerror="this.onerror=null;this.src=\'/static/avatars/default.png\'">'
+            + '<span class="lobby-player-main">'
+            + '<span class="' + nameCls + '">' + escapeHtml(p.name || '游客') + '</span>'
+            + meTag + guest + title
+            + '</span>'
+            + '<span class="lobby-player-meta">'
+            + '<span class="lobby-level">Lv.' + String(p.level || 1) + '</span>'
+            + '<span class="lobby-rank">' + rankIcon + rankLabel + '</span>'
+            + '<span class="lobby-status lobby-status-' + escapeHtml(String(p.status || 'idle')) + '">'
+            + escapeHtml(status) + '</span>'
+            + '</span>';
+        lobbyPlayersList.appendChild(li);
+    });
+}
+
+// 房间列表：只列等待中、公开、房主仍在线的房间（服务端已经过滤，这里只渲染）。
+function renderLobbyRooms(rooms) {
+    if (!lobbyRoomsList) return;
+    lobbyRoomsList.innerHTML = '';
+    if (!rooms.length) {
+        lobbyRoomsList.innerHTML = '<li class="lobby-empty">暂无等待中的房间，点下面的「创建房间」开一桌</li>';
+        return;
+    }
+    rooms.forEach((r) => {
+        const li = document.createElement('li');
+        li.className = 'lobby-room';
+        li.innerHTML = '<span class="lobby-room-main">'
+            + '<span class="lobby-room-name">' + escapeHtml(r.name || r.room_id) + '</span>'
+            + '<span class="lobby-room-host">房主 ' + escapeHtml(r.host || '') + '</span>'
+            + '</span>'
+            + '<span class="lobby-room-seats">' + String(r.players || 1) + '/' + String(r.capacity || 2) + '</span>'
+            + '<button type="button" class="btn secondary lobby-room-join" data-room="'
+            + escapeHtml(String(r.room_id || '')) + '">加入</button>';
+        lobbyRoomsList.appendChild(li);
+    });
+}
+
+// 大厅建房：走服务端的 lobby_create_room（内部复用 create_room，不另写一份建房逻辑）
+function createLobbyRoom() {
+    const name = lobbyRoomNameInput ? lobbyRoomNameInput.value.trim() : '';
+    const isPublic = lobbyRoomPublic ? !!lobbyRoomPublic.checked : true;
+    onSocketReady((socket) => {
+        socket.emit('lobby_create_room', {
+            name: name, public: isPublic, player_name: lobbyPlayerName(),
+        }, (response) => {
+            if (!response || response.status !== 'success') {
+                showAlert((response && response.message) || '创建房间失败');
+                return;
+            }
+            gameState.roomId = response.room_id;
+            if (customCurrentRoomId) customCurrentRoomId.textContent = response.room_id;
+            if (customRoomInfo) customRoomInfo.classList.remove('hidden');
+            if (lobbyRoomNameInput) lobbyRoomNameInput.value = '';
+            switchScreen(customRoomScreen);
+        });
+    });
+}
+
+// 从大厅加入某个房间（复用既有的 join_room 事件与自定义房间页的展示）
+function joinLobbyRoom(roomId) {
+    if (!roomId) return;
+    onSocketReady((socket) => {
+        socket.emit('join_room', { room_id: roomId, player_name: lobbyPlayerName() }, (response) => {
+            if (!response || response.status !== 'success') {
+                showAlert((response && response.message) || '加入房间失败');
+                return;
+            }
+            gameState.roomId = roomId;
+            gameState.playerId = response.player_id;
+            if (customCurrentRoomId) customCurrentRoomId.textContent = roomId;
+            if (customRoomInfo) customRoomInfo.classList.remove('hidden');
+            switchScreen(customRoomScreen);
+        });
+    });
+}
+
+// 公屏渲染。时间戳兜底成 '--:--:--'，别把 ts=0 渲染成 1970 年。
+//
+// ⚠️ **绝对不要"先清空再填充"**（CLAUDE.md 的硬规矩：凡是先清空再填充的渲染，
+//    都要先校验数据、并保证失败时保留上一帧）。这里第一版就踩了：
+//    lobby_chat_history 一到就 clearLobbyChat() 再铺历史，而"补发的历史"与
+//    "实时推送"**是会重叠的**——自己刚发的那条已经上屏了，紧接着来的历史把它
+//    整段冲掉（浏览器工具实测抓到过：A 自己的消息在自己的公屏里消失，
+//    而 B 那边看得到）。改法是按服务端的单调序号 seq 合并：
+//    历史只**补**缺的（插在最前面），已有的原样留着。
+function buildLobbyChatItem(item) {
+    if (!item) return null;
+    const mine = !!gameState.lobbyKey && item.key === gameState.lobbyKey;
+    const div = document.createElement('div');
+    div.className = 'lobby-chat-item' + (mine ? ' me' : '');
+    // data-key / data-seq 只是排查与去重用，不影响渲染
+    div.dataset.key = String(item.key || '');
+    div.dataset.seq = item.seq === undefined ? '' : String(item.seq);
+    let time = '--:--:--';
+    const ts = Number(item.ts || 0);
+    if (ts > 0) {
+        try {
+            time = new Date(ts * 1000).toLocaleTimeString('zh-CN', { hour12: false });
+        } catch (e) { /* 时间只是装饰，渲染失败不影响消息本身 */ }
+    }
+    div.innerHTML = '<span class="lobby-chat-time">' + escapeHtml(time) + '</span>'
+        + '<span class="lobby-chat-name">' + escapeHtml(item.name || '游客') + '：</span>'
+        + '<span class="lobby-chat-text">' + escapeHtml(item.message || '') + '</span>';
+    return div;
+}
+
+// 该条是否已经在屏幕上（有 seq 就按 seq 比，没有就退化成"文案+作者"比）
+function lobbyChatRendered(item) {
+    if (!lobbyChatMessages || !item) return false;
+    const seq = item.seq === undefined ? '' : String(item.seq);
+    if (seq) return !!lobbyChatMessages.querySelector('.lobby-chat-item[data-seq="' + seq + '"]');
+    const text = String(item.message || '');
+    return Array.prototype.some.call(
+        lobbyChatMessages.querySelectorAll('.lobby-chat-item'),
+        (el) => {
+            const t = el.querySelector('.lobby-chat-text');
+            return el.dataset.key === String(item.key || '') && t && t.textContent === text;
+        });
+}
+
+function appendLobbyChat(item) {
+    if (!lobbyChatMessages || !item) return;
+    if (lobbyChatRendered(item)) return;            // 重复投递（历史 ∩ 实时）直接忽略
+    const div = buildLobbyChatItem(item);
+    if (!div) return;
+    lobbyChatMessages.appendChild(div);
+    lobbyChatMessages.scrollTop = lobbyChatMessages.scrollHeight;
+}
+
+// 补发历史：**只补缺的**，插在现有内容之前（历史一定比实时消息旧）
+function applyLobbyChatHistory(messages) {
+    if (!lobbyChatMessages) return;
+    const frag = document.createDocumentFragment();
+    let added = 0;
+    (messages || []).forEach((m) => {
+        if (!m || lobbyChatRendered(m)) return;
+        const div = buildLobbyChatItem(m);
+        if (!div) return;
+        frag.appendChild(div);
+        added += 1;
+    });
+    if (added) lobbyChatMessages.insertBefore(frag, lobbyChatMessages.firstChild);
+    lobbyChatMessages.scrollTop = lobbyChatMessages.scrollHeight;
+}
+
+function sendLobbyChat() {
+    if (!lobbyChatInput) return;
+    const text = lobbyChatInput.value.trim();
+    if (!text) return;
+    onSocketReady((socket) => {
+        socket.emit('lobby_chat_send', { message: text }, (response) => {
+            if (response && response.status === 'error') {
+                showAlert(response.message || '发送失败');
+                return;
+            }
+            lobbyChatInput.value = '';
+        });
+    });
+}
+
+// 手动刷新（服务端未订阅时会顺带订阅）
+function refreshLobby() {
+    onSocketReady((socket) => {
+        socket.emit('lobby_refresh', {}, () => {});
+    });
+}
+
+// 快速匹配：走真实的 find_match（后端没有 join_lobby handler）
 function joinLobbyMatch() {
-    ensureSocket();
-    gameState.socket.emit('find_match', { player_name: gameState.playerName });
+    gameState.playerName = lobbyPlayerName();
+    onSocketReady((socket) => {
+        socket.emit('find_match', { player_name: gameState.playerName, mode: 'casual' }, (response) => {
+            if (response && response.status === 'error') showAlert(response.message);
+        });
+    });
 }
 
-// 离开大厅匹配：走真实的 cancel_match（后端无 leave_lobby handler）
+// 大厅里的排位匹配：与首页的 #ranked-match 同一条链路，只是入队 mode=ranked
+function lobbyRankedMatch() {
+    gameState.playerName = lobbyPlayerName();
+    onSocketReady((socket) => {
+        socket.emit('find_match', { player_name: gameState.playerName, mode: 'ranked' }, (response) => {
+            if (response && response.status === 'error') showAlert(response.message);
+        });
+    });
+}
+
+// 取消匹配：走真实的 cancel_match（后端没有 leave_lobby handler）
 function leaveLobbyMatch() {
     if (!gameState.socket) return;
     gameState.socket.emit('cancel_match', {

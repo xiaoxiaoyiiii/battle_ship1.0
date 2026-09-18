@@ -1,8 +1,8 @@
 # CLAUDE.md — 战舰棋 + 魔法卡
 
-> 面向 AI 代理的项目索引。**先读这里，再按需读源码**——`server.py` 7900+ 行、`game.js` 8700+ 行，不要一次读完。
-> 本文件最后更新：2026-09-17（点赞 / 送花 / 留言板批，见 `docs/BATCH_2_3_4_PLAN.md`）。
-> 前一次更新：2026-09-17（徽章成就批）、2026-09-17（缺陷批，见 `docs/BATCH_2026_09_17.md`）。
+> 面向 AI 代理的项目索引。**先读这里，再按需读源码**——`server.py` 9000+ 行、`game.js` 10100+ 行，不要一次读完。
+> 本文件最后更新：2026-09-18（大厅系统批，见 `docs/LOBBY_2026_09_18.md`）。
+> 前一次更新：2026-09-18（段位/排位批）、2026-09-17（点赞留言板批，见 `docs/BATCH_2_3_4_PLAN.md`）。
 >
 > ⚠️ **行号会随每次提交漂移**（2026-09-17 实测：全文件行号普遍偏移 +80~200）。
 > 本文件里的行号仅供定位参考，**以 grep 结果为准**。
@@ -17,18 +17,18 @@ Flask + Flask-SocketIO 的实时双人海战棋，叠加 43 条魔法卡（41 �
 - **仓库**：`xiaoxiaoyiiii/battle_ship1.0`（GitHub）
 - **生产运行**：eventlet
 
-### 文件规模（换行符口径 = 数 `\n`，2026-09-17 第 3 批后实测；**会漂移，定位一律靠 grep**）
+### 文件规模（换行符口径 = 数 `\n`，2026-09-18 大厅批后实测；**会漂移，定位一律靠 grep**）
 
-核心 6 个：`server.py` **7969** ｜ `static/game.js` **8767** ｜ `static/style.css` **4156** ｜
-`templates/index.html` **863** ｜ `db.py` **2024** ｜ `api.py` **922**
+核心 6 个：`server.py` **9005** ｜ `static/game.js` **10173** ｜ `static/style.css` **5219** ｜
+`templates/index.html` **1036** ｜ `db.py` **2686** ｜ `api.py` **1221**
 
 其余：`profile_spec.py` 411 ｜ `achievements.py` 254 ｜ `wallpaper.py` 545 ｜ `static/wallpaper.js` 533 ｜
 `static/adaptive_layout.js` 418 ｜ `static/music_player.js` 400 ｜ `static/sfx.js` 155 ｜
 `static/magic_card.json` 84 ｜ `static/magic_cards.js` 49 ｜ `file.py` 3 ｜
-测试与工具：`tests/*.py` 合计 **16776** ｜ `tools/social_check.mjs` 540
+测试与工具：`tests/*.py` 合计 **17343**（本批新增 `tests/test_lobby.py` 567）｜ `tools/lobby_check.mjs` 319 ｜ `tools/social_check.mjs` 540
 
 `style.css` 分节：…第 22 节「紧凑（移动端自适应）布局」/ 第 24 节「动态壁纸层」/ 第 25 节「视觉增强」/
-第 26 节「个人名片 / 设置页 / 徽章墙」（26.2c 是查看面的互动条 + 留言板）。
+第 26 节「个人名片 / 设置页 / 徽章墙」（26.2c 是查看面的互动条 + 留言板）/ 第 29 节「段位」/ 第 30 节「大厅系统」。
 > ⚠️ **行数统计口径**：用 `(Get-Content f -Raw)` 数换行符，**不要用** `Measure-Object -Line`（它漏空行，会少报）。
 
 ---
@@ -51,11 +51,14 @@ python -m pytest tests/ -q    # 1070 passed
 > 同一个原因，仓库里的 `.pytest_cache/` 也**不可写**（`WinError 5` 警告刷屏），加 `-p no:cacheprovider` 关掉缓存就行。
 > ⚠️ `.tmp/` 被清理掉之后，**记得先建回 `pytemp` 再跑 pytest**（2026-09-17 因为删了它，白排查了一轮 97 个 error）。
 
-**实测基线（2026-09-17 第 3 批后）**：`1070 passed / 0 failed`（名片改版批 936 + 徽章批 87 + 点赞留言板批 47）。
+**实测基线（2026-09-18 大厅批后）**：`1387 passed / 9 failed`（大厅批 40 条全绿）。
+> ⚠️ 那 9 条失败**全部来自 `tests/test_scene_extract.py`** —— 它是上一次会话留下的**未提交**半成品
+> （`git status` 里是 `??`），与本批无关。**本批开工前的基线就是同样这 9 条**（1347 passed），
+> 判断有没有回归请与"开工前同样 9 条"比，而不是与 `0 failed` 比。
 
-> 🔧 **2026-09-13 个人战绩弹窗 / 人机战绩统计批**（详见 `docs/STATS_AND_AI_RANKING_FIXES.md`）：6 处实测缺陷 —— ①历史行把 `<button>` 塞进 `<table><tbody>` 触发 foster parenting，表头「时间 对手 结果 局内日志」孤立在列表最下方；②胜负配色被通用 `button` 规则的 `background-image` 渐变盖掉，三条胜绩全蓝；③`.user-stats-table` / `.user-history` 在样式表里从未定义；④人机对手显示成裸 ID `ai-4530c8`；⑤胜局的「对局详情」把「对手」显示成自己；⑥**人机对局计入 `users.wins` / 连胜**（排行榜 `ORDER BY wins DESC` → 打电脑即可刷榜）。修法：历史列表改 div 三列网格、`.match-history-btn{background-image:none}` + `.win`/`.lose`、`ai-` 前缀映射「电脑」并加「人机」标签、按胜负取对手、`db.record_match(count_stats=)` + `server._count_stats_for(room)`（人机只写历史、不计统计，6 处调用点全部显式传参）；并合并两份重复的 `showUserStats`/`showMatchDetail`、去掉 `setTimeout` 绑事件与「每次点头像都 append 一个重复 id 弹窗」，新增「加载更多」。回归：`tests/test_stats_display_fixes.py`（14 条）+ `tools/stats_modal_check.mjs`（无头 Edge，27 项，含 `--username` 真实账号端到端）；历史脏数据用 `tools/recompute_ranked_stats.py --apply` 对齐（本机已执行：z1w6qn 3 胜 → 0）。
+> 🔧 **2026-09-13 个人战绩弹窗 / 人机战绩统计批**（**完整内容见 `docs/STATS_AND_AI_RANKING_FIXES.md`**）：6 处实测缺陷。最值得记的两条 —— ① `<button>` 塞进 `<table><tbody>` 触发 **foster parenting**，表头被挤到列表最下方；② **人机对局计入 `users.wins` / 连胜**（`ORDER BY wins DESC` → 打电脑即可刷榜），修法是 `db.record_match(count_stats=)` + `_count_stats_for(room)`，**6 处调用点全部显式传参**。回归：`tests/test_stats_display_fixes.py`（14）+ `tools/stats_modal_check.mjs`（27 项）。
 
-> 🔧 **2026-09-12 移动端自适应布局批**（详见 `docs/MOBILE_ADAPTIVE_LAYOUT.md`）：对局界面在手机上不可用——桌面多浮窗范式被等比压到手机（断点只改尺寸不改结构）。实测红基线 32 项不通过：320×568 下棋盘 100% 在首屏外且滚过去后 36/36 格被浮窗盖住、日志∩预览 273×181、聊天∩阶段卡 337×123、手牌 `#magic-system` 落在 y≈1577、格子 20.3~35px。修法：新增 `static/adaptive_layout.js`，按【可用空间】选布局（`wide` 保持原样 / `compact` 一屏网格 / 矮屏右列 / 放不下时手牌收进面板槽），三个浮窗搬进 `#aux-dock` 三选一，棋盘尺寸由舞台反推（只锁宽度保正方格），触屏停用浮窗拖拽。修复后 10 项×6 视口全部通过，宽屏（≥1200×700）布局一行未动。`tools/ui_layout_check.mjs` 已扩成两段式：宽屏 1600×1000 跑原有 9 项，另在 320×568 / 336×664 / 390×844 / 430×932 / 664×336 横屏 / 768×1024 六个视口跑 10 项移动端不变量（含"展开面板槽后"复测）。
+> 🔧 **2026-09-12 移动端自适应布局批**（**完整内容见 `docs/MOBILE_ADAPTIVE_LAYOUT.md`，此处只留结论**）：手机上一屏放不下桌面多浮窗范式。新增 `static/adaptive_layout.js` 按**可用空间**选布局（`wide`/`compact`/矮屏右列/手牌进面板槽），三个浮窗搬进 `#aux-dock`，棋盘尺寸由舞台反推，触屏停用拖拽；宽屏（≥1200×700）一行未动。`tools/ui_layout_check.mjs` 已扩成两段式（宽屏 9 项 + 6 个移动视口各 10 项不变量）。
 >
 > 🔧 **2026-09-12 后端/安全审查修复批**（权威清单见 `docs/FIXES_2026-09-12.md`）：7 个 P0 + 20 余个 P1。要点：
 > - **`@_test_event` 装饰器顺序修正**（此前写在 `@socketio.on` 外层 → 门禁完全失效、公网可判胜/白嫖卡/读对方船位）
@@ -205,7 +208,7 @@ game_logs, is_ai_room, shenwei_holes ...
 
 ---
 
-## 5. Socket.IO 事件（43 个，精确名）
+## 5. Socket.IO 事件（55 个，精确名；数法：`(Select-String -Path server.py -Pattern '@socketio\.on\(').Count`）
 
 > ⚠️ **事件名易错**，以下为 grep 实测的精确字符串。常见误写：`use_magic`（实为 **`use_magic_card`**）、`end_turn_btn`（实为 **`end_turn`**）、`confirm_reinforcement`（实为 **`confirm_reinforcement_position`**）。
 
@@ -251,6 +254,19 @@ game_logs, is_ai_room, shenwei_holes ...
 | 3052 | `remove_field_magic` |
 | 2950 | `confirm_shenji_declare` |
 | 2414 | `papal_attack` |
+
+### 大厅（5，2026-09-18 大厅批，契约见 `docs/LOBBY_2026_09_18.md`）
+
+| 事件 | 说明 |
+| --- | --- |
+| `lobby_subscribe` | 进大厅 + 订阅实时状态（幂等；回 `lobby_hello`/`lobby_chat_history`/`lobby_state`） |
+| `lobby_unsubscribe` | 离开大厅（**保留在线表**：离开大厅 ≠ 掉线） |
+| `lobby_refresh` | 手动刷新（未订阅时顺带订阅） |
+| `lobby_create_room` | 在大厅建房（内部复用 `create_room`，不另写一份建房逻辑） |
+| `lobby_chat_send` | 大厅公屏发言（成员 + 1s 防刷 + 120 字截断） |
+
+> 服务端 → 客户端新增 4 个：`lobby_hello`（**只发给订阅者**，带身份键 `key`）/ `lobby_state`（广播给 `'__lobby__'` 房间）/
+> `lobby_chat` / `lobby_chat_history`。⚠️ `lobby_state` 是一条广播，**没法逐人改 `is_me`**，所以前端拿 `lobby_hello.key` 自己比对。
 
 ### 掉线重连（2）
 
@@ -425,7 +441,7 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 | 游客之间永远匹配不上（`None == None`） | 匹配循环显式放行 None；**实测两个游客成功配对** |
 | `getRPSName` 布/剪刀互换 | 映射已正确（`paper→布`、`scissors→剪刀`） |
 | `surrender` 无 `_identity_ok` | 已加身份校验 + 终局守卫 |
-| 大厅（Lobby）8 个空壳事件监听 | 已清理；大厅改走 `find_match`/`cancel_match`。⚠️ `/lobby` 路由仍在但页面无入口 |
+| 大厅（Lobby）8 个空壳事件监听 | 旧空壳已清理（改走 `find_match`/`cancel_match`）；**2026-09-18 大厅批已把整个大厅做成真系统**，见下一节 |
 | `gameState.chain` 永不填充 | 已填充且能显示（`#chain-display` 由 JS 动态注入，不在 index.html 里） |
 | `switchScreen` 漏 `matchSuccessScreen` | 已注册（9 屏齐全） |
 | `Effect` 钩子 / `GameRoom.attack` / `process_match_queue` / `apply_effect` / `_chain_target_below` / `line_attack` | 已全部删除（grep 0 命中） |
@@ -575,26 +591,18 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 > `tests/test_wallpaper.py`（50 条）/ `tools/wallpaper_check.mjs`（32 项）/
 > `static/style.css` 第 24、25 节；`api.py` 新增 4 个路由。
 
-**四条通用教训（比功能本身更值得记）**
+**两条通用教训（完整版见文档）**
 
-1. **兜底逻辑会把"不能用的东西"报成"能用"**：创意工坊每张壁纸都带一张 `preview.jpg`，
-   场景型/网页型壁纸的 `file` 指向 `scene.pkg`/`index.html`（不在媒体白名单里）→
-   兜底取"目录里最大的媒体文件"就把 preview 挑出来了，于是玩家点到一张**静止缩略图冒充的
-   动态壁纸**。不报错、完全错。**凡"找不到就用兜底"的逻辑，先问：兜底对象可能是"另一种用途的同名文件"吗？**
-2. **URL 只按"路径"生成时，原地换文件浏览器不认**：id = `sha1(realpath)`，玩家覆盖同一个
-   壁纸文件后地址一字不变 → 吃 `max-age` 里的旧副本。修法：`?v=<mtime>`。排查时先怀疑
-   缓存（无头浏览器还是持久 profile，localStorage 也带着上一轮状态）。
-3. **`play()` 的拒绝原因必须分开报**：`NotSupportedError`/`MediaError` = 文件根本解不了，
-   `NotAllowedError` = 只是自动播放策略拦了。混为一谈会让玩家对着一个永远播不出来的东西
-   反复点击。
-4. **只读本机能力的接口要按"谁能调"分级**：扫描/按路径导入 = 回环地址 + 自定义请求头
-   （自定义头会让跨站请求触发 CORS 预检，而本站没有任何放行头）；
-   取媒体文件 = 不限制回环，因为 id 不可枚举且注册只可能发生在回环请求里。这样手机/局域网
-   访问同一台服务器时壁纸照样显示，不会出现"电脑能看、手机没了"。
+1. **兜底逻辑会把"不能用的东西"报成"能用"**：场景型壁纸的 `file` 指向 `scene.pkg`（不在媒体
+   白名单里）→ 兜底"取目录里最大的媒体文件"就把 `preview.jpg` 挑出来了，玩家点到一张**静止
+   缩略图冒充的动态壁纸**。不报错、完全错。**凡"找不到就用兜底"的逻辑，先问：兜底对象可能是
+   "另一种用途的同名文件"吗？**
+2. **只读本机能力的接口要按"谁能调"分级**：扫描/按路径导入 = 回环 + 自定义请求头（跨站会触发
+   CORS 预检）；取媒体文件 = 不限制回环（id 不可枚举、注册只可能发生在回环请求里）——
+   这样手机/局域网访问时壁纸照样显示。
 
-**视觉增强踩到的两条硬规则**（已写进第 12 节第 11、12 条）：不改盒模型尺寸；
-含 `fixed` 后代的元素不许 `transform`/`filter`。另外：有壁纸时把 `.game-container` 那层
-14px 毛玻璃减到 5px —— 14px 是给纯渐变背景调的，套在壁纸上会把画面抹成一团色块。
+**视觉增强的两条硬规则**（已写进第 12 节第 11、12 条）：不改盒模型尺寸；含 `fixed` 后代的
+元素不许 `transform`/`filter`。
 
 ### 🟡 2026-09-17 缺陷批（8 条对局缺陷 + 3 条 UI 需求）
 
@@ -605,72 +613,39 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 > 排行榜加头像与个人信息详情（#10#11）。
 
 **★ 通用教训一：统计口径必须区分"活船 / 死船"，而且同一个口径会在多处复用。**
-本项目的「击沉」**不把船移出 `player.ships`**（沉船留在列表里供复活回收；
-但轰炸/硫磺火焰/牺牲会 `remove()`），于是「扫 `player.ships` 数一数」这种写法到处是坑：
+本项目的「击沉」**不把船移出 `player.ships`**（沉船留在列表里供复活回收；但轰炸/硫磺火焰/
+牺牲会 `remove()`），于是「扫 `player.ships` 数一数」到处是坑：`frozen_ship_count` 把死船
+重复扣一次（攻击次数少 1）；`冻结` 播报里混进已沉的；`_placement_blocked_cells` 把移出
+`ships` 的船的原格当成空格（死者苏生能摆回"刚沉掉的那一格"）。修法是统一到
+`_alive_ships()`（活船）与 `_own_occupied_cells()`（己方占位 = `ships` ∪ `sunken_ships`）。
+**凡要"数船 / 判这一格有没有船"的新代码，先问"沉船算不算"** —— 答错不报错，只会悄悄少一次
+攻击、或多一个能摆的位置。
 
-| 出问题的地方 | 症状 |
-| --- | --- |
-| `frozen_ship_count`（攻击次数 = 存活数 − 冻结数） | 冻住的船后来被打沉 → 死船被**重复扣一次**，攻击次数少 1 |
-| `冻结` 分支的播报计数 | 「冻结了 3 艘战舰」里混进了已经沉掉的 |
-| `_placement_blocked_cells` / `_placement_error`（放置合法性） | 轰炸/硫磺火焰移出 `ships` 的船，它的原格被当成空格 → 死者苏生能摆回"刚沉掉的那一格" |
+**★ 通用教训二：同一个业务判断有两份实现，就一定会漂移。** `_placement_error`（服务端校验）
+与 `_placement_blocked_cells`（下发给前端的灰格）此前已漂移过一次（前端画出"看着能点、点了
+报错"的格子）→ 让两者**共用 `_own_occupied_cells`**。同类还有三个都会写 `attacks_remaining`
+的函数，所以"败者食尘本大回合恒为 0"必须在**三个入口都拦一次**（`_attacks_forced_zero`）。
 
-修法统一为两个小工具：`_alive_ships()`（活船）与 `_own_occupied_cells()`（己方占位，
-`ships` ∪ `sunken_ships`）。**凡是要"数船 / 判断这一格有没有船"的新代码，一律先问
-"沉船算不算"** —— 答错不会报错，只会悄悄少一次攻击、或多一个能摆的位置。
+**★ 通用教训三：`initGameBoards()` 会整块重建棋盘 —— 任何"等待玩家点格子"的交互都必须写成
+「状态 + 事件委托 + 重绘后重刷」。** 仁王之盾选船第一版用「逐格绑 click + 逐格加 `.pick-ship`」，
+而面板是在 `chain_resolved` 回调里开的、服务端紧接着补推 `ships_updated` 触发重绘 →
+高亮与监听当场被冲掉。⚠️ **这一条比缺陷本身更重要**：工具当时是"手动调 `showRenwangChoice()`
+再点"，真机却是"回调里开面板 + 紧接着重绘" → **工具全绿、线上全坏**。现在
+`tools/renwang_board_check.mjs` 补了**真机链路**（塞牌 → 真实出牌 → 等连锁结算 → 面板弹出后
+立刻能点）。
 
-**★ 通用教训二：同一个业务判断有两份实现，就一定会漂移。**
-`_placement_error`（服务端校验）与 `_placement_blocked_cells`（下发给前端的灰格）
-是同一件事的两份实现，此前已经漂移过一次（一处把沉船算占用、一处不算 → 前端画出
-"看着能点、点了报错"的格子）。这次直接让两者**共用 `_own_occupied_cells`**。
-同类的还有 `_recalc_attacker_attacks` / `_sync_attacks_after_ship_change` /
-`_apply_last_stand_attacks` —— 三个都会写 `attacks_remaining`，所以"败者食尘本大回合恒为 0"
-这条规则必须在**三个入口都拦一次**（`_attacks_forced_zero`），漏一个那个 0 就会被覆盖。
+**★ 通用教训四：「统一入口」之后必须反查"还有谁在渲染同一份东西"。** 个人信息面板上线后
+作者实测"局内点头像出现的介绍跟排行榜里的不一样"——`game.js` 里还留着第二套
+`renderMiniStatsTable()`，挂在头像自己的 click 上。👉 **改法是 grep 渲染出来的文案**
+（`当前连胜`、`胜场`），比 grep 函数名有效得多 —— 函数名各写各的，文案不会骗人。
 
-**★ 顺带记一条 UI 侧的同类缺陷**：`#show-opponent-stats` 按钮与右上角头像容器此前引用的是
-裸标识符 `showOpponentStats`，而它要等 `game_state` 处理器跑过才有定义 —— 早期点击直接
-`ReferenceError`，弹窗永远出不来且**没有任何提示**。凡"点一下弹窗"的入口，都要在
-`init()` 阶段就具备可用的实现（这次改成统一的 `showUserProfile()`，并加了兜底提示）。
-
-**★ 通用教训三：`initGameBoards()` 会整块重建棋盘 —— 任何"等待玩家点格子"的交互，
-都必须写成「状态 + 事件委托 + 重绘后重刷」，否则面板还在、格子点不动。**
-本批上线后作者实测「仁王之盾选船时点不了任何有船的格子、也没有绿色高亮」，
-根因就是第一版用了「逐格绑 click + 逐格加 `.pick-ship`」，而
-`showRenwangChoice()` 是在 `chain_resolved` 处理器里被调用的 —— 服务端紧接着补推
-`ships_updated` / `player_ships_updated` 触发重绘，高亮与监听当场被冲掉。
-项目里早有现成解法（`paintSacrificeCells()` 上方那段注释写的就是同一件事），
-第一版没照着做，等于把老坑重新挖了一遍。**改法**：选区状态放 `gameState`
-（`pendingSacrifice` / `renwangPick`），点击委托绑在 `#game-player-board` 容器上，
-高亮由 `paint*Cells()` 在 `initGameBoards()` 收尾重刷。
-
-⚠️ **这一条的教训比缺陷本身更重要**：工具当时是"手动调 `showRenwangChoice()` 再点"，
-真机却是"结算回调里开面板 + 紧接着重绘" → **工具全绿、线上全坏**。
-现在 `tools/renwang_board_check.mjs` 里补了两段：显式重绘后仍可点，以及**真机链路**
-（塞牌 → 真实出牌 → 等连锁结算 → 面板自动弹出后立刻能点）。
-
-**★ 通用教训四：「统一入口」之后必须反查"还有谁在渲染同一份东西"。**
-个人信息面板同一批上线后，作者又实测「局内点头像出现的介绍跟排行榜里的不一样」——
-`game.js` 里还留着**第二套**渲染：`renderMiniStatsTable()`（只有胜负/连胜的裸表格），
-挂在头像 `<img>` 自己的 click 上；而头像就在角落胶囊里，点它时两套监听同时触发，
-玩家看到的是那张旧的。上一轮只改了"按钮 / 胶囊 / 排行榜"三个入口，
-**没搜"还有谁在渲染个人信息"**。
-👉 **改法是 grep 渲染出来的文案**（`当前连胜`、`胜场`），比 grep 函数名有效得多 ——
-函数名各写各的，文案不会骗人。这次的第二套实现就是靠 `grep 当前连胜` 翻出来的。
-
-**★ 通用教训五：改「共用的工具函数」时，必须把每一个调用点都过一遍。**
-为修死者苏生（#6），我把"己方占位"的口径改成「`ships` ∪ `sunken_ships`」，加在
-`_placement_blocked_cells()` 里 —— 而**所有**放置流程共用它（增援 / 复活 / 绝处逢生 /
-神机妙算）。结果绝处逢生的 6 个候选格全被算成"已占用"，而前端 `blocked` 又优先于白名单
-（`allowed`）→ 六格全灰、玩家一个都点不了（作者实测：「没有可用位置供玩家选择了」）。
-绝处逢生当初躲过了设计者的眼睛，是因为它**不走 `_placement_error`**（合法性由服务端按
-`allowed` 单独校验），我改 blocked 时压根没想到它也在用。
-
-👉 两条规矩：
-① **白名单与黑名单永远不许有交集** —— 这次直接在发 payload 前把 `allowed` 从 `blocked` 里剔除；
-② **改共用函数先 grep 出全部调用点，按 kind 逐个表态**。这条与"通用教训二"（两份实现会漂移）
-是同一枚硬币的两面。
-验证也要跟着换层：坏点在**下发给前端的 payload**上，光测服务端校验口径是测不出来的 ——
-现在由浏览器工具 `tools/last_stand_board_check.mjs` 第 4 节在真页面上出牌验证
-（修复前实测 `blocked=36 / clickable=0`）。
+**★ 通用教训五：改「共用的工具函数」时，必须把每一个调用点都过一遍。** 为修死者苏生，
+把"己方占位"口径改成 `ships` ∪ `sunken_ships` 加进 `_placement_blocked_cells()` ——
+而**所有**放置流程共用它，结果绝处逢生的 6 个候选格全被算成"已占用"，前端 `blocked` 又优先
+于白名单 `allowed` → 六格全灰、一个都点不了。两条规矩：① **白名单与黑名单永远不许有交集**；
+② **改共用函数先 grep 出全部调用点，按 kind 逐个表态**。验证也要跟着换层：坏点在**下发给前端
+的 payload** 上，光测服务端校验口径测不出来 —— 现在由 `tools/last_stand_board_check.mjs` 第 4
+节在真页面上出牌验证（修复前实测 `blocked=36 / clickable=0`）。
 
 ### 🟢 2026-09-17 个人信息名片 / 界面设置改版批（第 1 批）
 
@@ -721,6 +696,39 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 > ⚠️ `ADMIRAL_MIN_CAPTAINS=50` → **本服现在没人能到大舰长**（有意）；
 > 调小用 `RANK_ADMIRAL_MIN_CAPTAINS`（另有 `RANK_WIN_POINTS`/`RANK_LOSE_POINTS`）。
 
+### 🟢 2026-09-18 大厅系统批
+
+> 详见 `docs/LOBBY_2026_09_18.md`（**冻结契约**）。新增 `LobbyManager` + 5 个上行 / 4 个下行事件、
+> `#lobby-screen` 三列界面（在线玩家 / 房间列表 / 公屏）、`style.css` 第 30 节、
+> `tests/test_lobby.py`（40）、`tools/lobby_check.mjs`（**双浏览器** 27 项）。
+
+**改造前的实情**：`#lobby-screen` 是个空壳（列不出人、看不到房间、没有公屏），
+**首页和导航栏都没有入口**（只能手敲 `/lobby`），而 `online_users` 是个**裸 sid 集合**——
+连名字都没有，想列"谁在线"根本列不出来。
+
+**四条教训**
+
+1. **★ 大厅这类功能必须用「两个真实浏览器」验，单浏览器一定假绿。** 大厅的全部价值就是
+   "别人那边立刻能看到"，自己 emit 自己断言只能证明"我把请求发出去了"。
+   `tools/lobby_check.mjs` 因此起**两个独立 profile/端口**的 Edge（共用一个 profile 时第二个
+   **静默起不来**，两个"玩家"其实是同一个人）。
+2. **★ 在线表只能有一份。** 旧 `online_users` 是裸 sid 集合、没有名字，想补名字就会多出第二份
+   在线结构（两份 = 必然漂移，见通用教训二）。改法是把它整个删掉，`/api/online_count` 改读
+   `lobby_manager.presence`。另设 `_members`（presence 的**子集**）—— 只有真的站在大厅页面上的
+   连接才收推送，否则每个对局中的玩家都被大厅广播打扰。
+3. **★ 状态判据要区分"在等待房里等人"与"在打"。** 第一版把 `state != 'game_over'` 一律算
+   `in_game`，于是"按下创建房间"的人在大厅里显示成**对局中**（浏览器工具实测抓到）。
+   现在 status 是**四态**：`idle` / `matching` / `in_room` / `in_game`。
+4. **★ 房间列表必须过滤"房主已离线"。** 房间回收 TTL 是 **1 小时**（`_WAITING_ROOM_TTL`），
+   房主关掉标签页后房间还要在内存里躺一小时 —— 不加这条就会挂出一堆"点进去没人"的僵尸房。
+
+**顺带修掉的一个真 bug（就是 CLAUDE.md 那条老规矩的又一次复现）**：
+公屏的 `lobby_chat_history` 第一版是**"清空重铺"**，而"补发的历史"与"实时推送"**会重叠** ——
+自己刚发的那条已经上屏了，紧接着来的历史把它整段冲掉（**A 自己看不到、B 看得到**，
+正是"工具全绿、线上全坏"的形状）。修法：服务端给每条消息一个单调 `seq`，前端**只补缺的**
+（`applyLobbyChatHistory` 插在最前面），彻底不碰已有内容。
+👉 与"先清空再填充"那条同源：**任何"清空重铺"的渲染都要先问"这一帧里会不会有别人的新数据"。**
+
 ---
 
 ## 12. 开发约定
@@ -755,7 +763,8 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
    壁纸 → `wallpaper_check.mjs`（自造壁纸库+自起服务端，不依赖本机装没装 Wallpaper Engine）、
    手牌 → `hand_play_check.mjs`、布局 → `ui_layout_check.mjs`、音效 → `sfx_check.mjs`、BGM → `bgm_check.mjs`、
    仁王之盾选船 → `renwang_board_check.mjs`、连锁弹窗卡预览 → `chain_preview_check.mjs`、
-   排行榜/个人信息 → `profile_leaderboard_check.mjs`、个人信息名片改版 → `profile_card_check.mjs`；
+   排行榜/个人信息 → `profile_leaderboard_check.mjs`、个人信息名片改版 → `profile_card_check.mjs`、
+   大厅 → `lobby_check.mjs`（**双浏览器**：大厅的价值就是"别人那边立刻能看到"，单浏览器测不出来）；
    **`dom_contract_check.mjs`（不需要浏览器、不起服务端，改完前端随时跑）**：查「代码引用了但页面里不存在的 id」——
    这类引用的表现是 `getElementById` 拿到 `null`、被 `if (el)` 兜掉，**不报错、只是点了没反应**
    （`#show-opponent-stats` 那次踩过）。它会区分「运行期由 JS 创建」（正常）与「哪都没创建」（真悬空），
@@ -800,7 +809,8 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 | **`docs/SHIELD_AND_LASTSTAND_2026_09_14.md`** | **2026-09-14「破盾格还能再打」「绝处逢生候选格能打」：同一个病灶（把"动作"当"结果"记进 attacks，格子被永久/整回合锁死）、五种格子状态的视觉区分** |
 | **`docs/WALLPAPER_ENGINE.md`** | **2026-09-15 动态壁纸（Wallpaper Engine 接入）：三条导入通道与各自可见范围、创意工坊目录解析与 preview 陷阱、媒体路由的安全模型、视觉增强的两条硬规则（不改盒模型 / 含 fixed 后代的元素不许 transform）** |
 | **`docs/BATCH_2026_09_17.md`** | **2026-09-17 缺陷批（11 条）：逐条现象/根因/修法/验证 —— 冻结计数只算活船、败者食尘大回合级归零、越战越勇即时 +1、条件不满足不吞牌（`_refund_card_to_hand`）、死者苏生放置格、回光返照清错棋盘、仁王之盾棋盘选船、连锁弹窗卡预览、排行榜头像与个人信息详情** |
-| **`docs/PROFILE_CARD_2026_09_17.md`** | **2026-09-17 个人信息名片 / 界面设置改版设计稿（第 1 批）：方案 A 分层名片 + 深海主题、双态弹窗、设置左导航、称号/标签/状态/头像框/底色/展示开关、称号按战绩解锁（服务端裁决）、隐私默认不公开对局历史；含四批分批与「本批不做」清单，§13 是实施记录（实测输出 + 实施中发现的 4 个真问题 + 工具假红清单）** |
+| **`docs/PROFILE_CARD_2026_09_17.md`** | **2026-09-17 个人信息名片 / 界面设置改版设计稿（第 1 批）：分层名片 + 双态弹窗、设置左导航、称号/标签/头像框/底色/展示开关、隐私默认不公开对局历史；§13 是实施记录（4 个真问题 + 工具假红清单）** |
+| **`docs/LOBBY_2026_09_18.md`** | **2026-09-18 大厅系统：冻结契约（5 个上行事件 / 4 个下行事件 / `lobby_state` 字段 / status 四态 / 房间列表四条可见规则）、`LobbyManager` 与在线表口径、实施中实测到的 3 个真问题（房主离线的僵尸房、建房者被显示成"对局中"、公屏历史"清空重铺"冲掉实时消息）** |
 | **`docs/PROFILE_CARD_2026_09_17_PLAN.md`** | **同一批次的实现计划（票 + 依赖图）：冻结的接口契约（8 字段全发、三个 `show_*` 同进同出）与 DOM 契约（查看面 `#opponent-stats-modal` 与编辑面 `#profile-modal` 是**两块面**）、文件独占分工、每票完成判据 —— 动手前先读它，别照旧设计稿的初版契约改** |
 | `docs/CHAIN_ENGINE_SPEC.md` | 连锁引擎设计稿（⚠️ 实施前的文档，开头已补 2026-09-13 实测校准表） |
 | `README.md` | 面向用户的功能/玩法说明（测试数/文件清单已校准） |

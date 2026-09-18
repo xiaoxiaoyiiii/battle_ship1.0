@@ -17,6 +17,7 @@ import uuid
 
 import pytest
 
+import api
 import db as db_module
 import profile_spec
 import ranks
@@ -677,3 +678,62 @@ def test_index_html_loads_rank_icons_before_game_js():
         html = f.read()
     assert '/static/rank_icons.js' in html
     assert html.index('rank_icons.js') < html.index('/static/game.js')
+
+
+# ===========================================================================
+# 6. 段位奖励的"实装"守卫（2026-09-18 补：这两条各自对应一个真 bug）
+# ===========================================================================
+def test_rank_cosmetics_unlock_through_api_stats():
+    """★ 到段位就该解锁 —— 而且必须走**接口那条路**（`api._profile_unlock_stats`）。
+
+    为什么单独一条：`profile_spec.unlock_context` 对缺失的 `rank_tier` 一律按 0 算，
+    而 `api._profile_unlock_stats` 曾经**压根没注入 `rank_tier`** —— 于是段位外观
+    **一件都解不开**，而接口、前端、纯函数测试**全都不报错**。
+    只测 `profile_spec.unlocked_*`（纯函数）是**测不到**这个 bug 的：
+    那些用例自己传 `rank_tier`，永远绿。
+    """
+    uid, _ = _uid()
+    # 0 段位：一件段位外观都不该解锁
+    st0 = api._profile_unlock_stats(uid)
+    assert st0['rank_tier'] == 0, st0
+    assert not [t for t in profile_spec.unlocked_titles(st0)
+                if profile_spec._BY_ID['titles'][t].get('rank_tier')], '还没打排位就解锁了段位外观'
+
+    # 推到船长段（2100）：解锁门槛 ≤ 船长的那些
+    db_module.set_rank_points(uid, ranks.CAPTAIN_FLOOR)
+    st1 = api._profile_unlock_stats(uid)
+    assert st1['rank_tier'] == 7, st1
+    for pool, unlocked in ((profile_spec.TITLES, profile_spec.unlocked_titles(st1)),
+                           (profile_spec.FRAMES, profile_spec.unlocked_frames(st1)),
+                           (profile_spec.CARD_BGS, profile_spec.unlocked_card_bgs(st1))):
+        for item in pool:
+            if item.get('rank_tier') is not None and item['rank_tier'] <= 7:
+                assert item['id'] in unlocked, f"船长段应当解锁 {item['id']}"
+
+    # 大舰长段位（8）再往上：海皇 / 海皇光环 / 星海
+    db_module.set_rank_points(uid, 3000)
+    st2 = api._profile_unlock_stats(uid)
+    assert st2['rank_tier'] == 7, '分数到不了大舰长（它是晋升制），rank_tier 仍应是 7'
+    assert 'sea_emperor' not in profile_spec.unlocked_titles(st2), \
+        '大舰长是晋升制，光有分数不该直接给海皇'
+
+
+def test_every_cosmetic_has_css():
+    """★ 池子里每一件外观都必须有样式规则 —— 否则"解锁了"等于"看不见"。
+
+    这条对应另一个真 bug：5 个头像框 + 5 个名片底色在 `profile_spec.py` 里存在、
+    能解锁、能保存，但 `style.css` 里**一行规则都没有** → 玩家选了完全看不出差别，
+    表现就是「我拿到段位奖励了但看不到」。
+
+    判据按既有约定（别改）：头像框看 `.pf-avatar[data-frame="X"]`，
+    名片底色看 `.pf-cover[data-bg="X"]`。
+    """
+    css = _static_text('style.css')
+    missing = []
+    for frame in profile_spec.FRAMES:
+        if f'[data-frame="{frame["id"]}"]' not in css:
+            missing.append('frame:' + frame['id'])
+    for bg in profile_spec.CARD_BGS:
+        if f'[data-bg="{bg["id"]}"]' not in css:
+            missing.append('bg:' + bg['id'])
+    assert not missing, f'这些外观在池子里但没有样式（选了看不见）: {missing}'

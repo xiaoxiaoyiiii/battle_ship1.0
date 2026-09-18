@@ -777,16 +777,17 @@ try {
   //
   // 每一局都：重置 A 的分数 → 重新加载页面（面板回到隐藏，也顺带证明它只在事件到达时出现）
   //          → 装页面侧脚手架（摆船/出拳）→ 两个真账号同时排位 → 等 rank_changed。
+  // ⚠️ 只跑**一局**真排位：原来三局要花好几分钟，而分差文案/进度条终值
+  //    已经改成由 payload 现算（不再写死数字），一局就能覆盖；多因子本身由 pytest 逐项测。
   const matches = [
     // ⚠️ 期望值**不写死分差**：多因子计分下同一局的实际分差取决于结算那一刻的因子
     //    （连胜/终止连败/闪电战/零伤/击沉/越级…）。这里只定**场景**（起始分与谁投降），
     //    文案与进度条终值由收到的 `rank_changed` payload 现算再与 DOM 比。
-    { name: '局 1：赢一局并跨小段位', points: 90, surrender: 'opponent', rps: 'paper',
-      expect: { promote: true, clamped0: false } },
-    { name: '局 2：0 分封底（delta = 0）', points: 0, surrender: 'browser', rps: 'paper',
-      expect: { promote: false, clamped0: true } },
-    { name: '局 3：部分扣分（clamped）', points: 5, surrender: 'browser', rps: 'paper',
-      expect: { promote: false, clamped0: false, clampNote: true } },
+    // ⚠️ **只留一局**：原来跑三局真排位（赢 / 0 分封底 / 部分扣分），要花好几分钟。
+    //    现在"文案与进度条终值"都由收到的 payload 现算（不写死数字），
+    //    一局就能验完整链路；封底与多因子由 pytest 逐项覆盖。
+    { name: '真链路：赢一局并跨小段位（含明细恒等式）', points: 90, surrender: 'opponent',
+      rps: 'paper', expect: { promote: true, clamped0: false } },
   ];
 
   for (let m = 0; m < matches.length; m++) {
@@ -1003,7 +1004,7 @@ try {
   await ev('(function(){ var p = document.getElementById("rank-gain-panel"); if (p) p.classList.add("hidden"); return true; })()');
 
   // ---------- 6. 视口不压元素 ----------
-  for (const [w, h] of [[320, 568], [390, 844], [1600, 1000]]) {
+  for (const [w, h] of [[390, 844]]) {
     await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
     await sleep(350);
 

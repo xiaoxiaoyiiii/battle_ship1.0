@@ -1,39 +1,21 @@
 # CLAUDE.md — 战舰棋 + 魔法卡
 
-> 面向 AI 代理的项目索引。**先读这里，再按需读源码**——`server.py` 9000+ 行、`game.js` 10100+ 行，不要一次读完。
-> 本文件最后更新：2026-09-18（大厅系统批，见 `docs/LOBBY_2026_09_18.md`）。
-> 前一次更新：2026-09-18（段位/排位批）、2026-09-17（点赞留言板批，见 `docs/BATCH_2_3_4_PLAN.md`）。
->
-> ⚠️ **行号会随每次提交漂移**（2026-09-17 实测：全文件行号普遍偏移 +80~200）。
-> 本文件里的行号仅供定位参考，**以 grep 结果为准**。
+> 面向 AI 代理的索引。**先读这里，别一次读完 `server.py`（8500+ 行）/ `static/game.js`（9000+ 行）/ `static/style.css`（4800+ 行）—— 一律先 grep 定位再分段读。**
+> ⚠️ 行号每次提交都会漂移，**本文件里任何行号都只当线索，以 grep 结果为准**。
+> ⚠️ **本文件每次对话都会整份注入**，新增内容请控制在几十字级别 —— 长记录写进 `docs/`。
+> 最后更新：2026-09-18（大厅批 + 段位外观/帮助页）。
 
 ---
 
-## 0. 项目速览
+## 0. 速览
 
-Flask + Flask-SocketIO 的实时双人海战棋，叠加 43 条魔法卡（41 唯一卡名）/ 场地魔法 / 连锁系统。含账号、战绩排行、人机对战、自定义房间、断线重连。
+Flask + Flask-SocketIO 的实时双人海战棋，43 条魔法卡 / 场地魔法 / 连锁系统；含账号、战绩排行、段位与排位、等级经验、名片外观、大厅、人机、自定义房、断线重连。
 
-- **线上**：http://8.133.180.159:5000/
-- **仓库**：`xiaoxiaoyiiii/battle_ship1.0`（GitHub）
-- **生产运行**：eventlet
-
-### 文件规模（换行符口径 = 数 `\n`，2026-09-18 大厅批后实测；**会漂移，定位一律靠 grep**）
-
-核心 6 个：`server.py` **9005** ｜ `static/game.js` **10173** ｜ `static/style.css` **5219** ｜
-`templates/index.html` **1036** ｜ `db.py` **2686** ｜ `api.py` **1221**
-
-其余：`profile_spec.py` 411 ｜ `achievements.py` 254 ｜ `wallpaper.py` 545 ｜ `static/wallpaper.js` 533 ｜
-`static/adaptive_layout.js` 418 ｜ `static/music_player.js` 400 ｜ `static/sfx.js` 155 ｜
-`static/magic_card.json` 84 ｜ `static/magic_cards.js` 49 ｜ `file.py` 3 ｜
-测试与工具：`tests/*.py` 合计 **17343**（本批新增 `tests/test_lobby.py` 567）｜ `tools/lobby_check.mjs` 319 ｜ `tools/social_check.mjs` 540
-
-`style.css` 分节：…第 22 节「紧凑（移动端自适应）布局」/ 第 24 节「动态壁纸层」/ 第 25 节「视觉增强」/
-第 26 节「个人名片 / 设置页 / 徽章墙」（26.2c 是查看面的互动条 + 留言板）/ 第 29 节「段位」/
-第 30 节「帮助页的段位与排位块」/ 第 31 节「大厅系统」。
-> ⚠️ **第 30、31 节是同一天各自追加的**（段位帮助批 vs 大厅批），合并时在文件末尾撞在一起 ——
-> 两边都是"在 EOF 追加一节"，所以是**纯追加冲突**：解法是**两节都留、把大厅那节重编号成 31**
-> （远程的 30 已经在 origin 上了，改它代价更大）。
-> ⚠️ **行数统计口径**：用 `(Get-Content f -Raw)` 数换行符，**不要用** `Measure-Object -Line`（它漏空行，会少报）。
+- 线上 http://8.133.180.159:5000/ ｜ 仓库 `xiaoxiaoyiiii/battle_ship1.0` ｜ 生产跑 eventlet
+- 核心文件：`server.py`（事件 + 对局）｜ `api.py`（HTTP）｜ `db.py`（SQLite/WAL）｜
+  `static/game.js` + `templates/index.html` + `static/style.css`（前端单页）
+- 纯规则模块（都**只有一份实现**，前端不许重算）：`ranks.py` 段位 ｜ `leveling.py` 等级经验 ｜
+  `achievements.py` 徽章 ｜ `profile_spec.py` 名片外观与解锁 ｜ `wallpaper.py` 壁纸
 
 ---
 
@@ -41,784 +23,216 @@ Flask + Flask-SocketIO 的实时双人海战棋，叠加 43 条魔法卡（41 �
 
 ```bash
 pip install -r requirements.txt
-python start_server.py        # 推荐（含依赖检查）
-python -m pytest tests/ -q    # 1070 passed
+python start_server.py        # 推荐；注意它**硬编码 --port=5000**，换端口要直接 python server.py
+python -m pytest tests/ -q    # 基线见下
 ```
 
-> ⚠️ **必须在项目根目录运行**——`server.py` 用相对路径 `./static/magic_card.json`；`tests/test_all_magic_cards.py:1088` 也用硬编码相对路径，是全套测试中唯一对 CWD 敏感的。
-> 本机解释器：PATH 上的 `python`（当前 3.12.10，**已装 flask**）或历史 venv `.venv/Scripts/python.exe`。
-> 若报 `ModuleNotFoundError: flask`，说明选错了解释器（别再照旧文档改成 venv）。
-> ⚠️ **若大批用例在 setup 阶段报 `PermissionError: [WinError 5] ... Temp\pytest-of-Administrator`**：
-> 那是本机临时目录的 ACL 坏了（删不掉、`takeown` 也拒绝），**不是你的改动**。重定向临时目录即可：
-> `New-Item -ItemType Directory -Force .tmp\pytemp | Out-Null`（**目录要先存在**，否则 pytest 一样会报错）
-> 然后 `$env:TMP="$PWD\.tmp\pytemp"; $env:TEMP=$env:TMP; python -m pytest tests/ -q -p no:cacheprovider`。
-> 同一个原因，仓库里的 `.pytest_cache/` 也**不可写**（`WinError 5` 警告刷屏），加 `-p no:cacheprovider` 关掉缓存就行。
-> ⚠️ `.tmp/` 被清理掉之后，**记得先建回 `pytemp` 再跑 pytest**（2026-09-17 因为删了它，白排查了一轮 97 个 error）。
+- ⚠️ **必须在项目根目录跑**（`server.py` 用相对路径 `./static/magic_card.json`）。
+- 解释器：PATH 上的 `python`（3.12.10，已装 flask）。报 `ModuleNotFoundError: flask` 就是选错了。
+- ⚠️ 本机临时目录 ACL 坏过，pytest 若在 setup 报 `PermissionError: Temp\pytest-of-Administrator`，
+  先 `New-Item -ItemType Directory -Force .tmp\pytemp`，再
+  `$env:TMP="$PWD\.tmp\pytemp"; $env:TEMP=$env:TMP; python -m pytest tests/ -q -p no:cacheprovider`。
+- **实测基线（2026-09-18）**：`~1360 passed`；跑完约 12 秒。
 
-**实测基线（2026-09-18 大厅批后）**：`1387 passed / 9 failed`（大厅批 40 条全绿）。
-> ⚠️ 那 9 条失败**全部来自 `tests/test_scene_extract.py`** —— 它是上一次会话留下的**未提交**半成品
-> （`git status` 里是 `??`），与本批无关。**本批开工前的基线就是同样这 9 条**（1347 passed），
-> 判断有没有回归请与"开工前同样 9 条"比，而不是与 `0 failed` 比。
-
-> 🔧 **2026-09-13 个人战绩弹窗 / 人机战绩统计批**（**完整内容见 `docs/STATS_AND_AI_RANKING_FIXES.md`**）：6 处实测缺陷。最值得记的两条 —— ① `<button>` 塞进 `<table><tbody>` 触发 **foster parenting**，表头被挤到列表最下方；② **人机对局计入 `users.wins` / 连胜**（`ORDER BY wins DESC` → 打电脑即可刷榜），修法是 `db.record_match(count_stats=)` + `_count_stats_for(room)`，**6 处调用点全部显式传参**。回归：`tests/test_stats_display_fixes.py`（14）+ `tools/stats_modal_check.mjs`（27 项）。
-
-> 🔧 **2026-09-12 移动端自适应布局批**（**完整内容见 `docs/MOBILE_ADAPTIVE_LAYOUT.md`，此处只留结论**）：手机上一屏放不下桌面多浮窗范式。新增 `static/adaptive_layout.js` 按**可用空间**选布局（`wide`/`compact`/矮屏右列/手牌进面板槽），三个浮窗搬进 `#aux-dock`，棋盘尺寸由舞台反推，触屏停用拖拽；宽屏（≥1200×700）一行未动。`tools/ui_layout_check.mjs` 已扩成两段式（宽屏 9 项 + 6 个移动视口各 10 项不变量）。
->
-> 🔧 **2026-09-12 后端/安全审查修复批**（**权威清单见 `docs/FIXES_2026-09-12.md`**）：7 个 P0 + 20 余个 P1。
-> 最该记的两条：① **`@_test_event` 装饰器写在了 `@socketio.on` 外层** → 门禁完全失效、
-> 公网可判胜/白嫖卡/读对方船位（装饰器顺序必须在内侧）；② **12 个 `test_*` 事件当时没有任何鉴权**。
-> 其余：攻击次数/终局校验、`rejoin_room` 令牌判空、`select_magic_target` 只收选择类字段、
-> 若干卡牌语义与前端 `init()` 幂等。
->
-> 🔧 **2026-09-12 明智埋葬真实链路修复**（详见 `docs/FIXES_2026-09-12.md` 第七节）：实测症状为「选中牌后**牌不进弃牌堆、自己也不摸牌**」（手牌为空时直接报「无效的选择」）。根因是 `confirm_magic_target` 里那份**独立实现**把前端下发的候选下标 `card_index` 当成**施法者自己手牌的下标**，选中的那张（牌堆/对方手牌）从未被取出。修法：`select_magic_target` 与 `confirm_magic_target` 共用 `_bury_choice_target()` + `_apply_bury_choice()`（下标统一为 `(source, index)`，前端回传 `source_index`；必须先 `pop` 再进弃牌堆，否则同一张牌会同时留在原处）；补对方手牌同步、施法者校验、`magic_temp_data` 只存纯数据。回归：`tests/test_mingzhi_burial_fix.py`（21 条）。
-> - 追加排查「没有触发摸牌效果」：真实浏览器端到端实测**链路是通的**；让人觉得「没摸到牌」的是三种**规则性静默**（牌堆已空 / `no_draw` 生效中 / 摸到重名卡进弃牌堆）—— 现在都会在提示与日志里**写明原因**（旧提示一律谎报「并摸了一张牌」）。另修两处前端误导文案。细节见 `docs/FIXES_2026-09-12.md`。
->
-> **第二批（同批提交）卡牌语义修正**：绝处逢生（牺牲全部 → 玩家在旧位置选一格放唯一一艘）、疗愈（原地复活）、余音绕梁（按攻击阶段而非击杀次数）、神之宣告（采用玩家点选的两艘 + 效果1 由对方点选）、克苏鲁之眼（对方也点选暴露）、失灵！（只能康"本大回合刚使用"的卡）；清理 6 个死监听、修复免空壳大厅（改用 find_match/cancel_match 与 /api/online_count）、补桃园取消按钮（`cancel_magic_selection`）、攻击坐标拒绝小数、空棋盘不再一击判胜、重连快照按 state 路由
-
-> 🔧 **2026-09-11 安全/健壮性修复批**（详见 `docs/FIX_PLAN.md` 与 `tests/test_fixes_regression.py`）：
-> 12 个 `test_*` 事件改由 `ENABLE_TEST_EVENTS` 开关控制；`SECRET_KEY`/`CORS_ORIGINS`/`PORT`/`FLASK_DEBUG`
-> 改环境变量；游客匹配 bug（`None==None`）修复、匹配队列改单结构列表 + RLock；已结束房间由
-> reaper 回收；`eventlet.monkey_patch()` 移到所有 import 之前；`ensureSocket()` 统一连接管理。
-
-> 🔧 **2026-09-12 UI 审查修复批**（截图逐像素审查，详见 `docs/UI_REVIEW_FIXES.md`）：
-> - `#effect-status-bar` 默认 `hidden` + `initEffectStatusBarSync()`——不再渲染成一条空白横条
-> - `updatePhaseUI()` 阶段按钮 `block` → `inline-block`——不再贴在阶段卡片左边
-> - `.board-wrapper{flex:0 1 340px}`——两块棋盘不再一大一小（300×300，单格 42px）
-> - 游戏日志补空状态占位 `.log-empty`；玩家信息行文案改「你：剩余 6 艘战舰」；中文界面冒号统一全角
-> - `static/avatars/default.png` 由 1×1 透明图换成 96×96 占位头像
-> - 回归：`tests/test_ui_review_fixes.py`（9 条）+ `tools/ui_layout_check.mjs`（无头浏览器布局不变量，见上一批）
+### 无头浏览器工具（`tools/*.mjs`，比 pytest 更接近真实）
+改前端后跑对应那个，**别每次全跑**（单个工具几分钟）：
+布局 → `ui_layout_check.mjs` ｜ 名片 → `profile_card_check.mjs` ｜ 排行榜/个人信息 → `profile_leaderboard_check.mjs` ｜
+段位/排位 → `ranked_check.mjs` ｜ 段位帮助页 → `rank_help_check.mjs` ｜ 手牌 → `hand_play_check.mjs` ｜
+壁纸 → `wallpaper_check.mjs` ｜ 徽章 → `achievements_check.mjs` ｜ 等级 → `level_check.mjs` ｜
+音效/BGM → `sfx_check.mjs` / `bgm_check.mjs` ｜ 连锁卡预览 → `chain_preview_check.mjs` ｜ 仁王之盾 → `renwang_board_check.mjs` ｜
+大厅 → `lobby_check.mjs`（**双浏览器** —— 大厅的价值就是"别人那边立刻能看到"，单浏览器测不出来）
+- **`dom_contract_check.mjs`**：不用浏览器、不用服务端、几秒钟 —— 查「代码引用了但页面里不存在的 id」，
+  这类引用的表现是 `getElementById` 拿到 `null` 被 `if (el)` 兜掉、**不报错、只是点了没反应**。
+- ⚠️ 工具要的服务端必须带 `CORS_ORIGINS=http://127.0.0.1:<端口>`，否则 socket.io **静默连不上**（页面无报错）。
+- ⚠️ 本地验证端口**避开 5060/5061**（Fetch 规范的被阻止端口，Node `fetch`/Chrome 拒发而 curl 正常 → 看着像服务器卡死）。
+- ⚠️ 无头浏览器用持久 profile，开头按 profile 路径预清理残留进程，profile 放项目内 `.tmp/`。
 
 ---
 
-## 2. 架构
+## 2. 架构与启动时序
 
 ```
-浏览器 (index.html + game.js)
-  │ Socket.IO                     │ HTTP fetch
-  ▼                               ▼
-server.py (41 个 socketio 事件)   api.py (Flask 路由)
-  └──────────► db.py (SQLite) ◄───┘
-        data/battleship.db (WAL)
+浏览器(index.html + game.js) --socket.io--> server.py <--复用--> api.py(Flask app)
+                                    |                      |
+                                    +------> db.py(SQLite) <+
 ```
+`server.py` 通过 `from api import app` 复用 Flask 实例，再挂 `SocketIO(app)`。
 
-`server.py` 通过 `from api import app` **复用** `api.py` 的 Flask 实例，再挂 `socketio = SocketIO(app, cors_allowed_origins="*")`。
-
-### ✅ eventlet monkey_patch 时序（2026-09-13 复核：已正确）
-
-```python
-1: # eventlet 下必须先 monkey_patch，且必须早于任何可能使用 socket/ssl/threading
-2: # 的标准库导入：否则后台任务里的 time.sleep 会阻塞整个单线程 hub
-3: # （掉线宽限 30s / 连锁超时 10s 都会让服务器假死）。
-4: try:
-5:     import eventlet
-6:     eventlet.monkey_patch()
-7: except ImportError:
-8:     pass
-```
-
-`monkey_patch()` 现在位于 **文件第 4~8 行、所有 import 之前**（前面只有注释），是 2026-09-11 那批修好的。**新增任何 import 时必须继续排在它之后**——一旦有人在它上面 import 了会创建线程/套接字的标准库，后台任务就会阻塞 eventlet hub。
+⚠️ **`eventlet.monkey_patch()` 必须在文件最前面、所有 import 之前**（现在在第 4~8 行）。
+它下面一旦有人 import 了会建线程/套接字的标准库，后台任务（掉线宽限 30s、连锁超时 10s）就会阻塞 hub。
+**新增 import 一律排在它之后。**
 
 ---
 
 ## 3. 游戏流程
 
 ```
-state:  waiting → placing_ships → rock_paper_scissors → attacking → game_over
-phase:                                        preparation → battle → end
+state: waiting → placing_ships → rock_paper_scissors → attacking → game_over
+phase:                        preparation → battle → end
 ```
-
-| 阶段 | 说明 |
-| --- | --- |
-| `placing_ships` | 各摆 **6 艘单格船** |
-| `rock_paper_scissors` | 猜拳定先手；平局清空重来 |
-| `preparation` | 可用**速阶 1** 卡、部分场地卡 |
-| `battle` | 炮击；攻击次数 = 存活战舰数（受效果影响） |
-| `end` | 攻击次数用尽后交出回合 |
-
-**规则要点**：
-- 攻击次数 = `存活船数 - 冻结船数`（`frozen_ship_count`）
-- 先手抽 1 张，后手抽 2 张
-- 胜利条件：击沉对方全部战舰
-- **回合思考计时**：`TURN_TIMEOUT_SECONDS`（默认 90 秒，0 = 关闭）。超时只做一次**保底动作**、不判负；每做一次有效操作就重新计时（见 §11 第 31 条）
+- 各摆 6 艘单格船；猜拳定先手（先手抽 1 张、后手 2 张）；攻击次数 = **存活船数 − 冻结船数**；击沉对方全部船即胜。
+- `TURN_TIMEOUT_SECONDS`（默认 90，0=关）：超时只做保底动作（进战斗 / 随机开火 / 交回合），**不判负**，每次有效操作重新计时。
 
 ---
 
-## 4. 核心数据结构（`server.py`）
+## 4. 关键数据结构（`server.py`）
 
-| 类 | 行号 | 关键字段 |
-| --- | --- | --- |
-| `Position` | 84 | `x, y, hit, ship_sunk, is_sulfur, is_bomb, is_splash`。`__eq__` 支持与 dict 比较 |
-| `PlayerShip` | 110 | `positions, hits, invincible, shield, frozen` |
-| `MagicCard` | 134 | `name, speed, type, description`。只传 name 时自动从全局 `magic_cards` 查补 |
-| `EffectFlags` | 153 | 玩家级标记：`treasure_hunter(八方来财), prediction(神机妙算), subsidy(百亿补贴), no_draw, forced_kill(int), vampire(饮血), last_stand(绝处逢生), double_attacks, battle_spirit(越战越勇)` |
-| ~~`Effect`~~ | — | **已删除**（2026-09-11：唯一遍历点 `GameRoom.attack` 不可达，余音绕梁/火力全开已改走 EffectFlags） |
-| `Player` | 178 | `name, user_id, sid, ships, attacks, remaining_ships, magic_hand, effect_flags, damage_dealt_this_turn, sunken_ships, revealed_positions, max_ships, magic_blocked` |
-| `GameRoom` | 210 | 见下 |
-| `RoomManager` | 405 | `rooms, match_queue`（三列平行数组 `[sids, names, user_ids]`） |
-| `RPSResult` | 1483 | 猜拳结果 |
-| `ChainItem` | 1503 | 连锁栈项，含 **`negated`** 标记 |
-| `AttackResult` | 1521 | 攻击结果广播载体 |
-| `ChainResult` | 1545 | 连锁结算结果 |
+| 类 | 关键点 |
+| --- | --- |
+| `Position` | `x,y,hit,ship_sunk,is_sulfur,is_bomb,is_splash`；`__eq__` 支持与 dict 比 |
+| `PlayerShip` | `positions, hits, invincible, shield, frozen`。**存活判据 = `len(hits) < len(positions)`** |
+| `Player` | `name, user_id, sid, ships, attacks, remaining_ships, magic_hand, effect_flags, sunken_ships, revealed_positions, max_ships, magic_blocked` |
+| `GameRoom` | 见下 |
+| `RoomManager` | `rooms`；`match_queue` 是**单结构 dict 列表** `{'sid','name','user_id','mode'}`（**不是**平行数组） |
 
-### `GameRoom` 关键字段
+`GameRoom` 要点：`state/current_phase/round/winner/current_attacker/attacks_remaining`；
+`field_magic`（⚠️ 存**卡牌实例对象**，取值用 `field_magic_name(room)`）；
+`magic_deck`（双方共用一副）/`magic_discard`/`magic_history`/`magic_temp_data`；
+`chain`/`chain_window`/`chain_passes`；`game_effects`（`demon_contract`/`holy_heart`/`last_chance`/…）；
+`game_logs`/`is_ai_room`/`ranked`/`shenwei_holes`；掉线宽限 `disconnect_timers`/`grace_token`。
 
-```python
-# 基础
-id, players: dict[str, Player], state, current_phase, round, winner
-current_attacker, attacks_remaining, attack_order, rps_choices, rps_processed
-
-# 魔法卡
-field_magic           # ⚠️ 存【卡牌实例对象】，不是字符串！空为 None
-magic_deck            # 全局共享牌堆（双方共用一副）
-magic_discard         # 全局弃牌堆
-magic_history         # 使用历史
-magic_temp_data       # 临时目标数据
-
-# 连锁
-chain: list[ChainItem]
-chain_window          # 当前响应窗口归属
-chain_passes          # 连续放弃计数
-chain_timer（超时代际令牌，注意没有 chain_token 字段）
-
-# 房间级效果
-game_effects: dict    # 'demon_contract' / 'holy_heart' / 'last_chance'
-                      # / 'last_ship_change' / 'excluded_ships' 等
-
-# 掉线重连
-disconnect_timers / grace_token ...
-
-# 其他
-game_logs, is_ai_room, shenwei_holes ...
-```
-
-### `GameRoom` 方法
-
-| 方法 | 行号 | 说明 |
-| --- | --- | --- |
-| `init_player_magic` | 274 | 清空手牌；**仅当 `magic_deck` 为空时**初始化并洗牌 |
-| `draw_card` | 293 | 受 `no_draw` 阻止；重名卡（**`失灵！` 例外**）丢弃牌堆 |
-
-> ✅ **攻击实现已统一（2026-09-11）**：原 `GameRoom.attack`（旧版死代码）与 `Effect` 钩子体系已删除。现在只有两条路径：`handle_attack`（普通攻击，强制击杀/普通共用一套 `_apply_ship_sunk_effects` 结算）与 `_do_attack`（教皇旨意弃卡攻击，不消耗常规次数）。`余音绕梁`（forced_kill 标记）/`火力全开`（double_attacks 标记）经 **EffectFlags 在真实路径生效**，不再依赖 Effect 钩子。
+> 攻击只有两条路径：`handle_attack`（普通）与 `_do_attack`（教皇旨意弃卡攻击）。旧的 `GameRoom.attack`
+> 与 `Effect` 钩子体系**已删除**；余音绕梁/火力全开走 `EffectFlags`。
 
 ---
 
-## 5. Socket.IO 事件（56 个，精确名；数法：`(Select-String -Path server.py -Pattern '@socketio\.on\(').Count`）
+## 5. Socket.IO 事件名（易错，以 grep 为准）
 
-> ⚠️ **事件名易错**，以下为 grep 实测的精确字符串。常见误写：`use_magic`（实为 **`use_magic_card`**）、`end_turn_btn`（实为 **`end_turn`**）、`confirm_reinforcement`（实为 **`confirm_reinforcement_position`**）。
+⚠️ 常见误写：`use_magic`（实为 **`use_magic_card`**）、`end_turn_btn`（实为 **`end_turn`**）、
+`confirm_reinforcement`（实为 **`confirm_reinforcement_position`**）。
 
-### 主流程（9）
-
-| 行号 | 事件 |
-| --- | --- |
-| 1170 | `connect` |
-| 1208 | `disconnect` |
-| 1090 | `create_room` |
-| 1110 | `join_room` |
-| 856 | `create_ai_room` |
-| 1256 | `find_match` |
-| 1347 | `cancel_match` |
-| 1374 | `place_ships` |
-| 1417 | `rps_choice` |
-
-### 对战（10）
-
-| 行号 | 事件 |
-| --- | --- |
-| 1696 | `attack` |
-| 2042 | `enter_battle_phase` |
-| 2085 | `enter_end_phase` |
-| 2138 | `end_turn` |
-| 2414 | `papal_attack` |
-| 3154 | `request_revealed_positions` |
-| 3074 | `confirm_reinforcement_position` |
-| 3136 | `cancel_placement` |
-| 4690 | `surrender` |
-| 1230 | `chat_message` |
-
-### 魔法卡与连锁（9）
-
-| 行号 | 事件 |
-| --- | --- |
-| **2545** | **`use_magic_card`**（出牌主入口） |
-| 1602 | `select_magic_target` |
-| 3177 | `confirm_magic_target` |
-| 3167 | `get_magic_temp_data` |
-| 3304 | `get_discard_pile` |
-| 2987 | `chain_response` |
-| 3052 | `remove_field_magic` |
-| 2950 | `confirm_shenji_declare` |
-| 2414 | `papal_attack` |
-
-### 大厅（5，2026-09-18 大厅批，契约见 `docs/LOBBY_2026_09_18.md`）
-
-| 事件 | 说明 |
-| --- | --- |
-| `lobby_subscribe` | 进大厅 + 订阅实时状态（幂等；回 `lobby_hello`/`lobby_chat_history`/`lobby_state`） |
-| `lobby_unsubscribe` | 离开大厅（**保留在线表**：离开大厅 ≠ 掉线） |
-| `lobby_refresh` | 手动刷新（未订阅时顺带订阅） |
-| `lobby_create_room` | 在大厅建房（内部复用 `create_room`，不另写一份建房逻辑） |
-| `lobby_chat_send` | 大厅公屏发言（成员 + 1s 防刷 + 120 字截断） |
-| `close_room` | **解散自己主持的、还没开打的房**（三条校验：仍 `waiting` + 房内恰好 1 人 + 就是调用者自己） |
-
-> 服务端 → 客户端新增 4 个：`lobby_hello`（**只发给订阅者**，带身份键 `key`）/ `lobby_state`（广播给 `'__lobby__'` 房间）/
-> `lobby_chat` / `lobby_chat_history`。⚠️ `lobby_state` 是一条广播，**没法逐人改 `is_me`**，所以前端拿 `lobby_hello.key` 自己比对。
-
-### 掉线重连（2）
-
-| 行号 | 事件 |
-| --- | --- |
-| 2886 | `get_reconnect_token` |
-| 2895 | `rejoin_room` |
-
-### 🔧 调试事件（12）—— 已由 `@_test_event` 门禁关闭（默认不可用）
-
-| 行号 | 事件 | 危害 |
-| --- | --- | --- |
-| 957 | `test_win_game` | **直接判胜** |
-| 974 | `test_lose_game` | 直接判负 |
-| 635 | `test_add_all_magic_cards` | **白嫖全部卡** |
-| 747 | `test_add_specific_magic_card` | 加指定卡 |
-| 877 | `test_set_opponent_ships` | **改对手船数** |
-| 656 | `test_set_player_ships` | 改己方船数 |
-| 774 | `test_get_game_state` | **泄露双方完整船位** |
-| 713 | `test_clear_all_effects` | 清效果 |
-| 812 | `test_reset_game` | 重置对局 |
-| 934 | `test_end_turn` | 强制结束回合 |
-| 1007 | `test_auto_attack` | 自动攻击 |
-| 992 | `test_get_magic_cards_list` | 列全部卡 |
-
-> ✅ **2026-09-13 实测**：12 个 handler 全部带 `@_test_event`（装饰器在 `@socketio.on` 内侧，顺序正确），未设 `ENABLE_TEST_EVENTS=1` 时一律返回「调试事件未启用」；`static/test_magic.js` 已从 `index.html` 移除（文件仍在仓库里，但页面不加载）。
-> ⚠️ 这 12 个 handler **仍然没有 `_identity_ok`**：一旦有人为了调试把 `ENABLE_TEST_EVENTS=1` 打开，它们就是完全敞开的。
-
-### 服务端 → 客户端（主要）
-
-`game_state`（总控）、`attack_result`、`ships_updated`、`hand_updated`、`game_over`、`field_magic_updated`、`holy_heart_interrupted`、`rps_result`、`match_queued`、`match_canceled`、`magic_chain_updated`、`chain_resolved`、`game_message`、`message`、`error`、`chat_message`
+- 主流程：`connect` `disconnect` `create_room` `join_room` `create_ai_room` `find_match` `cancel_match` `place_ships` `rps_choice`
+- 对战：`attack` `enter_battle_phase` `enter_end_phase` `end_turn` `papal_attack` `surrender` `chat_message` `request_revealed_positions` `confirm_reinforcement_position` `cancel_placement`
+- 魔法/连锁：`use_magic_card` `select_magic_target` `confirm_magic_target` `get_magic_temp_data` `get_discard_pile` `chain_response` `remove_field_magic` `confirm_shenji_declare`
+- 重连：`get_reconnect_token` `rejoin_room` ｜ 另有 `request_hand_sync`（手牌自愈）
+- 大厅：`lobby_subscribe` `lobby_unsubscribe` `lobby_refresh` `lobby_create_room` `lobby_chat_send` `close_room`
+  （契约见 `docs/LOBBY_2026_09_18.md`；`lobby_state` 是**广播**，没法逐人改 is_me → 前端拿 `lobby_hello.key` 自己比）
+- 服务端→客户端：`game_state` `attack_result` `ships_updated` `hand_updated` `game_over` `rps_result` `match_queued` `match_canceled` `magic_chain_updated` `chain_resolved` `field_magic_updated` `game_message` `message` `error` `achievements_unlocked` `xp_gained` `rank_changed`
+- ⚠️ 12 个**调试事件**（`test_win_game` / `test_get_game_state` / `test_set_opponent_ships` …）全部带
+  `@_test_event`，未设 `ENABLE_TEST_EVENTS=1` 时一律拒绝。**它们没有 `_identity_ok`** —— 一旦为调试打开就是完全敞开的。
+- ⚠️ `test_win_game` **只设 state/winner 再 emit，不调 `_finalize_match`** —— 用它验"打完一局给分"会
+  "成功但毫无反应"。真结算走**炮击击沉 / 投降 / 掉线判胜**。
 
 ---
 
 ## 6. 身份鉴权（关键陷阱）
 
-`room.players` 的 key 有**两套约定**：
+`room.players` 的 key 有两套约定：
+- 自定义房 / 人机房：登录用户 = `session['user_id']`；游客 = 入座时的 `request.sid`。
+- **匹配房**：**一律是入队时的 socket sid**（真实 user_id 只存 `Player.user_id`）。
+  ⚠️ 客户端自己的 `sio.sid` 与它**不一定相同** → 一律用服务端下发的 `player_id`。
 
-| 场景 | key |
-| --- | --- |
-| 自定义房 / 人机房（`handle_join_room`） | 登录用户 = `session['user_id']`；游客 = 入座时的 `request.sid` |
-| **匹配房**（`handle_find_match:1269`） | **一律是入队时的 socket sid**（登录与否都一样；真实 user_id 只存 `Player.user_id`） |
+`_identity_check(room, claimed, server_pid, sid)`（① 登录态 claim == session ② 座位登记的 sid == 当前连接）；
+`_identity_ok` 在**无请求上下文**时跳过连接校验（为单测留的口子，不是漏洞）。
 
-```python
-_identity_check(room, claimed, server_pid, sid)   # 583
-# ① claimed == session['user_id']（登录态，容忍重连换 sid）
-# ② room.players[claimed].sid == sid（座位登记的连接 == 当前连接）
-
-_identity_ok(room, claimed)                        # 597
-# 无请求上下文时（单测直调）跳过连接校验，仅保留成员校验
-```
-
-> `_identity_ok` 的无上下文分支是**为测试留的口子**，不是漏洞——但 `test_*` 事件是**真的没调鉴权**。
-
-### 目标选择链路
-
-```
-前端选择器 → confirmMagicTarget({target_area|target_line|ship_indices|...})
-          → 归一化 payload（game.js:4380-4420 附近，兼容 5 种形态）
-          → socket.emit('use_magic_card', {targets})
-          → handle_use_magic_card (2545)
-          → apply_magic_effect 读 target_data['target_area'/'target_line']
-```
-
-后端读取字段：`target_area` `{x1,y1,x2,y2}`（神威！/冻结/探测雷达）、`target_line` `{type:'row'|'col', index}`（**轰炸** 3977）。
-
-> ⚠️ **废弃死代码**：`game.js:4499` 有 `socket.emit('line_attack')`，`gameState.selectedLine` 全文只被赋 `null`（从未赋真实值）→ `if` 恒假、emit 永不执行。**后端无 `line_attack` handler**。轰炸功能**正常**（走上面的 `use_magic_card` 链路）。同类废弃代码还有 `area_attack`（已在最新版移除）。
->
-> **这类误判已发生两次**：曾有人据"`selectedArea` 是死代码"断言"范围攻击功能已坏"，实为误报。**判断功能是否正常必须追完整链路（前端 emit 名 ↔ 后端 `@socketio.on` 名），不能只看单点。**
+⚠️ **在别人的 socket 请求里重放另一个玩家的操作会被身份校验拦下** → 症状是"服务端状态已清、阶段却不动、
+双方零提示"。代他人重放 handler 必须先用 `socketio.start_background_task` 脱离请求上下文。
 
 ---
 
 ## 7. 魔法卡
 
-- **43 条 / 41 唯一卡名**（`失灵！` ×3，**故意**——`draw_card` 去重对其特例放行）
-- 速阶：**1=13 / 2=15 / 3=15**；类型：普通 39 + **场地 4**（恶魔契约 / 禁忌果实 / 伊甸园 / 教皇旨意）
-- **前后端数据实测零差异**（43/43 逐字段一致，含 description 与顺序）
-
-核心分发函数：**`apply_magic_effect(room, caster_id, card, target_data)`**（2026-09-13 实测：约 1240 行，**42 处 `card.name ==` 覆盖 41 个唯一卡名**，与 JSON 双向一一对应；行号已漂移到 4000+ 区间，用 grep 定位）
-
-场地魔法：`_place_field_magic`(621) 存入 `room.field_magic`（**实例对象**）；顶替旧卡时旧卡实例进弃牌堆。
-
----
-
-## 8. 连锁与无效化引擎
-
-**已实现**（不是设计稿）。`docs/CHAIN_ENGINE_SPEC.md` 是一份**实施前的设计稿**，
-2026-09-13 已在它开头补了实测校准表：文档里抱怨的毛病当时都修掉了，但引擎
-**并没有**按它第 3 节那样拆成 `engine/` 目录 —— 实现仍在 `server.py` 里。
-
-| 组件 | 行号 | 说明 |
-| --- | --- | --- |
-| `_can_respond_chain` | 2657 | 能否响应 |
-| `_advance_chain_window` | 2678 | 推进响应窗口 |
-| `resolve_chain` | 2702 | 逐项出栈结算（**negated 项跳过效果**） |
-| `_schedule_chain_timeout` | 2757 | 超时调度 |
-| `chain_response` | 2987 | 玩家响应 handler |
-| `_speed3_cards` | 2650 | 取速阶 3 手牌 |
-
-**机制**：栈 = `room.chain: list[ChainItem]`，每项带 `negated` 标记；结算 LIFO（后发先至）；响应窗口 10 秒超时。
-
-**⚠️ 与 SPEC 的两处偏差**（有意为之，别照文档改回去）：
-1. SPEC 说 negated 项"不改场地"，实现里**仍执行"贴了再拆"**（2791 附近，注释说明是为"避免凭空消失"）—— 有意为之
-2. `平等条约` **不走** `negate_target` 连锁标记，改为读 `game_effects['last_ship_change']` 快照回滚（4368-4401）
-
-**⚠️ SPEC 过期点（2026-09-13 实测）**：§4 列的僵尸代码 `pending_magic` / `counter_magic_response`
-**已全部清理（全文件 0 命中）**；`room.last_magic` **属性也已不存在**（只剩结算函数里的局部变量
-`last_magic = room.magic_history[-1]`）；§2 抱怨的两条**均已修复**。**读 SPEC 前先读本节。**
+- **43 条 / 41 唯一卡名**（`失灵！` ×3 是**故意的**，`draw_card` 去重对它特例放行）；速阶 1=13 / 2=15 / 3=15；
+  类型：普通 39 + 场地 4（恶魔契约 / 禁忌果实 / 伊甸园 / 教皇旨意）。
+- 核心分发 `apply_magic_effect(room, caster_id, card, target_data)`（约 1240 行，42 处 `card.name ==`）。
+- ⚠️ **改卡要同步 4 处**：`static/magic_card.json`、`static/magic_cards.js`、`apply_magic_effect` 分支、测试。
+  前两者须逐字符一致（一致性测试不校验 `description`，需人工留意）。
+- 目标选择：前端 `confirmMagicTarget({target_area|target_line|ship_indices|…})` → `use_magic_card` → 服务端读
+  `target_area {x1,y1,x2,y2}`（神威/冻结/探测雷达）与 `target_line {type:'row'|'col',index}`（轰炸）。
 
 ---
 
-## 9. 掉线重连
+## 8. 连锁引擎（已实现，不是设计稿）
 
-| 组件 | 行号 | 说明 |
-| --- | --- | --- |
-| `_start_disconnect_grace` | 2779 | 掉线宽限（**30 秒**） |
-| `_disconnect_timeout` | 2799 | 超时判负/取消 |
-| `_issue_reconnect_token` | 2852 | 发重连 token |
-| `_build_room_sync` | 2858 | 重连快照 |
-| `handle_rejoin_room` | 2896 | 重连恢复 |
-
-> ✅ **2026-09-13 实测**：快照已补全（33 字段），含 `chain` / `chain_waiting` / `chain_window` / `active_effects` / `pending_placement` / `pending_sacrifice` / `opponent_attacks`（本次新增）等。
-> 重连落在连锁窗口内时，前端会按 `chain_window` 归属补弹响应窗口。
-
-**eventlet 注意**：`disconnect` handler 内**不能同步 emit**（会卡死 hub），代码中有多处相关注释。
+栈 = `room.chain: list[ChainItem]`（每项带 `negated`），LIFO 结算，响应窗口 10 秒；
+关键函数 `_can_respond_chain` / `_advance_chain_window` / `resolve_chain` / `_schedule_chain_timeout` / `chain_response`。
+⚠️ 两处**有意**偏离 `docs/CHAIN_ENGINE_SPEC.md`：① negated 项仍执行"贴了再拆"（避免凭空消失）；
+② `平等条约` 不走 `negate_target`，改读 `game_effects['last_ship_change']` 快照回滚。**别照那份文档改回去**（它 §4 列的僵尸代码已清空）。
 
 ---
 
-## 10. 人机对战
+## 9. 掉线重连 & 人机
 
-| 组件 | 行号（会漂移，用 grep 定位） |
-| --- | --- |
-| `_ai_player_id` / `_ai_place_ships` | 2540 附近 |
-| `_maybe_run_ai_turn` / `_ai_turn_loop` | 2564 附近 |
-| `handle_create_ai_room` | 764 |
-| **`_AI_SAFE_CARDS` / `_ai_choose_magic_card` / `_ai_maybe_play_magic`** | AI 出牌白名单与选牌（2026-09-13 新增） |
-| **`_ai_can_negate_chain_top` / `_ai_chain_respond`** | 困难难度：AI 用【失灵！】响应连锁 |
-
-AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficulty` ∈ `easy|normal|hard`。真人摆完船后为 AI 自动布船；AI 在真人出拳后自动出拳。
-
-**三档难度（2026-09-13 新增，前端首页 `#ai-difficulty` 下拉框）**
-
-| 难度 | 行为 |
-| --- | --- |
-| `easy` 简单 | **只炮击、不出牌**（保留"打电脑保底能赢"的新手体验） |
-| `normal` 普通（默认） | 每回合额外打出一张**安全卡**（见 `_AI_SAFE_CARDS`） |
-| `hard` 困难 | 普通 + 对方出牌且康得动时，用【失灵！】响应连锁 |
-
-⚠️ **白名单不是随便扩的**：桃园结义 / 明智埋葬 / 神机妙算 / 仁王之盾 / 灵气复苏 / 增援 /
-死者苏生 / 绝处逢生 都会**等待施法者自己**点选或放置，AI 打出去就会把整局卡死在那一回合。
-要加卡，先在 `tests/test_ai_magic.py::test_ai_safe_card_leaves_no_pending_state` 里过一遍。
-
-⚠️ **AI 出牌可能打开连锁窗口**，而连锁未结算时 `handle_attack` / `end_turn` 都会被门禁拒绝
-（见 §11 第 5 条）。因此 `_ai_turn_loop` 出牌后会**先等窗口关闭再开炮**，收尾的
-`enter_end_phase` / `end_turn` 也带重试 —— 少了任何一处，AI 回合就会停在半途、真人只能干等。
+- 掉线宽限 30 秒；`_build_room_sync` 是重连快照（33 字段，含 chain / 放置流程 / `opponent_attacks` / `ranked`）。
+  ⚠️ **`disconnect` handler 内不能同步 emit**（会卡死 hub），代码里有注释。
+- 人机：AI id = `'ai-'+room_id`，`room.is_ai_room=True`，三档 `ai_difficulty` ∈ easy（只炮击）/ normal（每回合一张安全卡）/
+  hard（还会用「失灵！」响应连锁）。⚠️ AI 出牌白名单不是随便扩的：桃园结义 / 明智埋葬 / 神机妙算 / 仁王之盾 /
+  灵气复苏 / 增援 / 死者苏生 / 绝处逢生 都会等施法者自己点选，AI 打出去会把回合卡死 ——
+  要加卡先过 `tests/test_ai_magic.py::test_ai_safe_card_leaves_no_pending_state`。
 
 ---
 
-## 11. 已知问题（2026-09-13 全量实测重写）
-
-> ⚠️ **本节此前整章过期**：所列的 P0/P1 早已全部修好，却仍被当成待办，导致重复排查。
-> 2026-09-13 用「真实 socket 双客户端 + 无头浏览器 + 全量测试」重测后重写。
-> 逐条证据、复现命令与剩余待办见 `docs/DEFECT_FIXES_2026_09_13.md`。
-
-### ✅ 早已修复（勿再当待办）
-
-| 曾经的问题 | 现状与验证 |
-| --- | --- |
-| 12 个 `test_*` 事件无鉴权 / 生产页面加载 `test_magic.js` | 全部加 `@_test_event` 门禁（默认关闭）；`index.html` 已不加载该脚本 |
-| `showDivineDecreeChoice` 未定义 → ReferenceError | 已改用 `promptDivineDecreeChoice`（出牌前选效果） |
-| `#effect-indicators` 不存在 → 百亿补贴 TypeError | `index.html` 中该元素存在，调用处另有存在性守卫 |
-| 游客之间永远匹配不上（`None == None`） | 匹配循环显式放行 None；**实测两个游客成功配对** |
-| `getRPSName` 布/剪刀互换 | 映射已正确（`paper→布`、`scissors→剪刀`） |
-| `surrender` 无 `_identity_ok` | 已加身份校验 + 终局守卫 |
-| 大厅（Lobby）8 个空壳事件监听 | 旧空壳已清理（改走 `find_match`/`cancel_match`）；**2026-09-18 大厅批已把整个大厅做成真系统**，见下一节 |
-| `gameState.chain` 永不填充 | 已填充且能显示（`#chain-display` 由 JS 动态注入，不在 index.html 里） |
-| `switchScreen` 漏 `matchSuccessScreen` | 已注册（9 屏齐全） |
-| `Effect` 钩子 / `GameRoom.attack` / `process_match_queue` / `apply_effect` / `_chain_target_below` / `line_attack` | 已全部删除（grep 0 命中） |
-| `_build_room_sync` 缺 chain / 放置流程状态 | 已补齐（32 字段），本次又补了 `opponent_attacks` |
-| 胜负判据 `==0`/`<=0` 混用 | 胜负路径 7 处已统一为 `<=0` |
-| eventlet `monkey_patch()` 排在 `db`/`api` 导入之后 | **2026-09-13 复核：已在文件第 4 行、所有 import 之前**（2026-09-11 修好，文档此前未同步） |
-
-### 🔴 2026-09-13 本轮修复（缺陷审计批）
-
-> ⚠️ 这一批 33 条已经全部修完并写进 `docs/DEFECT_FIXES_2026_09_13.md`（逐条证据 + 复现方式）。
-> 这里只保留**分类索引**，别再当待办；要看细节去读那篇文档。
-> 详细行数从略 —— 本文件有注入大小上限，长表格会把它顶爆（2026-09-17 实测被截断过一次）。
-
-| 分类 | 已修的问题（关键词） |
-| --- | --- |
-| 终局/状态机 | 终局后 `place_ships` 让对局复活；终局后 `surrender` 翻转胜负；`rps_choice` 非法值卡死/非法方获胜；终局后仍可出牌/推进阶段（16 个写操作 handler 加 `@_require_live_room`） |
-| 攻击与连锁 | 连锁窗口开着时仍可攻击（同一状态两种口径）；连锁响应窗口内无法给"需要目标"的速阶3卡选目标；平等条约无法无效化区域魔法造成的船数变化 |
-| 卡牌语义 | 桃园结义忽略对方自选；加百列之光被前端"补刀"拆场地；神之宣告牺牲的两艘船其实是随机的；已沉船仍留在 `ships` 导致零代价发动/幽灵计数；越战越勇文案与卡面不符 |
-| 房间与内存 | 建了没人入座的房间永不回收（`_WAITING_ROOM_TTL`）；已结束房间由 reaper 统一回收 |
-| 数据与接口 | `/api/leaderboard` 忽略 `?limit=`；`get_magic_temp_data` 把桃园候选牌泄露给对手；跑 pytest 往正式库写假对局（`tests/conftest.py` 隔离库） |
-| 前端 | 重连后自己棋盘伤损消失（快照补 `opponent_attacks`）；重连落在连锁窗口内无法响应；「当前连锁 (N)」永久残留；304 行死函数清理 |
-| 测试与 AI | 12 个 `test_*` 事件零覆盖 → `tests/test_guardrails.py`；AI 手上有牌不出 → 三档难度 + `_AI_SAFE_CARDS` 白名单；AI 出牌开连锁窗口把回合卡住 |
-| 表现层 | 冻结的船看不出冻结（`frozen` 下发 + 雪花）；探测雷达显形只亮 4 秒（改持久）；全站零音效（Web Audio 合成）；BGM 永远不响（播放器 + 合成兜底）；卡牌图鉴无检索（筛选/搜索/使用次数）；自定义房无邀请链接入口 |
-
-
-### 🟠 仍未处理（按"感知收益 ÷ 成本"排序）
-
-| 项 | 说明 | 产出归属 |
-| --- | --- | --- |
-| 无复盘/观战 | 回合计时（第 31 条）与卡牌使用统计（第 32 条）已完成 | P2-9/10 |
-| `/user_stats` 公可枚举用户名（含任意用户完整局内日志） | 凭据字段已不泄露；是否收紧属于产品决策 | 安全/体验 |
-
-### 🟡 2026-09-13/14 阶段转换「优先权询问」批（方案 D，分两批）
-
-> 详见 `docs/PRIORITY_PROMPT_2026_09_13.md`。因「速阶3 任何时候都能用、容易抢时点」，在**进战斗 / 进结束**两个入口先问对方要不要响应（10 秒窗口，超时/取消则照原样继续），另加「拒绝所有阶段转换时点」开关（已从设置搬到局内阶段卡片右上角 `#phase-timing-toggle`）。
-
-**四条通用教训**（细节与逐条实测证据见该文档）
-
-1. **★ 在别人的 socket 请求里重放另一个玩家的操作，会被身份校验拦下**（`_identity_ok` 拿的是响应者的 `request.sid`）→ 症状是"服务端状态已清空、阶段却永远不动、双方零提示"。**任何"代他人重放 handler"的代码都要先 `socketio.start_background_task` 脱离请求上下文。**
-2. **等待窗口必须真的拦住东西**：`handle_attack` / `handle_use_magic_card` / `end_turn` 曾只挡连锁、不看 `priority_pending`（等于没拦），而且"双击进入战斗"就能绕过询问 → 统一走 `_priority_wait_reason()` 冻结发起方 5 个写操作，且**只冻发起方**（响应者此刻要做的正是响应）。
-3. **新增房间级状态必须三件齐**：`__init__` 初始化 + 明确的消费点 + 回归测试（`priority_continue` 曾三样都缺）。
-4. **布局不变量要按"不压任何东西"写**，只验居中是不够的（居中照样能压住按钮）—— 窄屏卡片里放不下第二个 40px 触控目标，最终改成固定浮标。
-
-**工具侧两条**：无头 Edge 自带 `edge://sync-confirmation-dialog/` 且**稳定排在 `/json/list` 第一位** → 挑页要按 URL 过滤，但**必须留 `type === 'page'` 兜底**（初始页是 `about:blank`，只认 `https?|file` 会一个都挑不到，报出来的却是"无法连接无头浏览器调试端口"）；无头 profile 一律放项目内 `.tmp/`（`C:/Windows/Temp` 出过 ACL 损坏）。
-
-### 🟡 2026-09-14「打完一张，剩下的手牌莫名消失」批
-
-> 详见 `docs/HAND_DESYNC_2026_09_14.md`。作者：「每一次有手牌通过之后，剩下的
-> 自己的手牌总是会莫名其妙消失……刷新网页之后就会重新出现」。
-> 真实浏览器 + 真服务端复现（`tools/hand_play_check.mjs`）：
-> 手牌 2 张打第 1 张 → **界面 0 张、服务端还有 1 张**。
-
-**根因（一个"永远错的兜底分支"）**：`handle_use_magic_card` 扣牌后会走
-`_advance_chain_window`；对手没有速阶3时它会**在同一个请求里同步 `resolve_chain`**，
-而 `resolve_chain` 收尾会向双方各推一次 `hand_updated`。所以客户端拿到的顺序是
-**"新手牌先到、`use_magic_card` 的 ack 后到"**。前端 `sendMagicCard` 的 ack 回调
-要本地删牌，旧实现里有个兜底：
-
-```js
-} else if (sentIndex >= 0 && sentIndex < gameState.hand.length) {
-    removeAt = (gameState.hand.length === sentIndex + 1) ? sentIndex : -1;
-}
-```
-
-**能走到这个分支就说明牌早已离手**，这时按旧下标删一张删掉的必然是别的牌；
-而"打出倒数第二张"恰好满足它的判断条件 → 把剩下的最后一张也删掉 → 手牌清空。
-手牌越接近打完越容易撞上，所以作者"无法描述具体场景"。
-
-**修法**：① 删掉该兜底分支（按身份找不到就什么都不删，服务端才是权威）；
-② `handle_use_magic_card` 扣牌后**立刻**推一次权威手牌（此前一个 emit 都没有，
-前端才不得不自己猜）；③ `hand_updated` / `room_sync` 收手牌统一走
-`applyHandPayload()` 校验（结构不对就忽略并要重同步）；④ 新增 **`request_hand_sync`**
-事件 —— 客户端发现对不上就能自愈，**不必等玩家刷新页面**（这正是"刷新才好"的病根）。
-
-**教训**：`updateHandUI` 是**先清空容器、再遍历 `gameState.hand`** —— 任何一次
-异常或非数组状态都会留下"清空了却没填回来"的空白手牌区，且此后每次刷新手牌都抛异常。
-**凡是"先清空再填充"的渲染，都要先校验数据、并保证失败时保留上一帧。**
-
-### 🟡 2026-09-14「极限增援平局把回合卡死」批
-
-> 详见 `docs/REINFORCEMENT_TIE_2026_09_14.md`。作者：「当双方船数相等时不会判定
-> 谁获胜，但是游戏会直接卡死，无法进行下一步操作，就是不能结束阶段了按钮直接消失了」。
-
-**根因**：`end_turn` 的 `if next_index == 0:` 那一段是【进入新大回合】的收尾
-（`room.state='rock_paper_scissors'` / `current_phase='preparation'` / 广播 `game_state`），
-极限增援的结算夹在中间。平局分支写的是 `emit(message)` 之后 **`return {'status': 'success'}`** ——
-把整段收尾跳过了，而 `room.round` 已经 +1。结果：回合不推进、阶段留在 `end`、
-一条状态事件都不发 → 客户端界面停在旧阶段、交回合按钮不存在/按了没反应。
-
-**实测反证**（`tools/reinforcement_tie_check.mjs`，真实双浏览器）：把旧 `return` 加回去，
-服务端停在 `{state: attacking, phase: end}`，**两个客户端都还停在 game-screen**
-（收不到新回合广播）；去掉它 → `state=rock_paper_scissors`、round 正常 +1、
-双方都切到猜拳界面、打完拳能继续。
-
-**修法**：平局分支只做「`pop` 掉效果 + 播报一句 + `check = None`」，**不 return**，
-让流程照常走完收尾。`check = None` 不能少 —— 收尾那行
-`room.game_effects['reinforcement_check'] = check` 会把效果塞回去，下个大回合再判一次。
-
-**⚠️ 通用教训（同一形状已出现三次）**：在一段"做完这件事还要继续往下做"的流程里，
-**分支里随手 `return` 会静默吞掉后续收尾**（换人 / 重置阶段 / 广播）。
-已踩过：绝处逢生与连锁续做、优先权 `_priority_continue`、极限增援平局。
-判断标准：这个 `return` 是"提前结束整个操作"，还是"只想跳过这一步"？
-后者一律改成置标志位、让流程自然往下走。
-
-### 🟡 2026-09-14「破盾格还能再打」「绝处逢生候选格能打」批
-
-> 详见 `docs/SHIELD_AND_LASTSTAND_2026_09_14.md`。作者：「攻击到带盾的船之后那个格子
-> 会直接变成红叉叉 不能再次攻击了」「绝处逢生…让原本有船的六个格子高亮标给对方
-> 然后不要是红叉叉 不然的话打不了」。
-
-**★ 同一个病灶：「这一格打过了」被当成铁律**。`player.attacks` → `board_attacks_updated`
-→ `gameState.myAttacks / opponentAttacks` 这条链**同时决定**：① 画不画 ✕
-② `initGameBoards()` 给不给这个格子绑 `click`（**没绑就等于点不动**）。
-所以任何"不该算作已打过"的交互一进这个数组，格子就被锁死。
-
-| 现象 | 病灶 |
-| --- | --- |
-| 打带盾的船 → 格子变红叉、同一回合再也打不了 | 盾把炮弹吃了、船**毫发无伤**，却照样记进 `attacks` |
-| 绝处逢生的六个原格 → 红叉、对方以为打不了 | 自牺牲走了通用的「牺牲」通道，前端一律画叉 |
-
-**仁王之盾**：盾挡下的一炮**不记进 `attacks`**（攻击次数照扣 —— 盾吃掉的是一发炮弹），
-`AttackResult` 新增 `shield_blocked`；前端据此记进 `shieldBrokenMine/Opponent`
-（**不是** `myAttacks`）→ 格子仍有 click 监听，同一回合可再打，第二炮正常结算伤害。
-样式：青蓝虚框 + 盾牌字符 `⛨`，与红叉明确区分。
-
-**绝处逢生**：结算时下发 `last_stand_cells`（原格公开给双方，唯一新船必在其中），
-换大回合清空并补发空列表，`_build_room_sync` 带上它。
-前端 `ship_sacrificed{reason:'last_stand'}` 直接 return：**不画叉、也不播报**
-（旧实现卡名写死成「恶魔契约」）。候选格渲染成金色斜纹 + `?`，不加 `hit/miss` 类，
-所以照旧能点。已打过的候选格让位显示真实结果。
-
-**⚠️ 通用教训**：**"已做过某事"的记录，只应该在"这件事真的发生了"时才写**。
-这两处记的都是"动作"而不是"结果"（盾挡下了/自牺牲了，动作发生了但结果没发生）。
-把动作当结果记，就会把交互永久或整回合锁死 —— 而且表现是**"点了没反应"**，最难查。
-
-### 顺带修掉的工具假红
-
-`tools/priority_live_check.mjs` 的「倒计时在走」偶发失败（`cd1=cd2=10`）：无头浏览器把
-**后台标签页**的 `setInterval` 节流（两个标签页共用一个窗口，非活动那个被当成 hidden），
-而倒计时正好用 `setInterval(1000)`。修法：断言前先 `Page.bringToFront` 解除节流，
-再轮询等它真的变化。同类工具若出现"计时器不动"的假红，先想这一条。
-
-### 🟢 2026-09-15 动态壁纸（Wallpaper Engine 接入）+ 视觉增强批
-
-> 详见 `docs/WALLPAPER_ENGINE.md`。需求：「想把 UI 设计得更酷炫一点，能导入自己的
-> Wallpaper Engine 壁纸就好了」。新增 `wallpaper.py` / `static/wallpaper.js` /
-> `tests/test_wallpaper.py`（50 条）/ `tools/wallpaper_check.mjs`（32 项）/
-> `static/style.css` 第 24、25 节；`api.py` 新增 4 个路由。
-
-**两条通用教训（完整版见文档）**
-
-1. **兜底逻辑会把"不能用的东西"报成"能用"**：场景型壁纸的 `file` 指向 `scene.pkg`（不在媒体
-   白名单里）→ 兜底"取目录里最大的媒体文件"就把 `preview.jpg` 挑出来了，玩家点到一张**静止
-   缩略图冒充的动态壁纸**。不报错、完全错。**凡"找不到就用兜底"的逻辑，先问：兜底对象可能是
-   "另一种用途的同名文件"吗？**
-2. **只读本机能力的接口要按"谁能调"分级**：扫描/按路径导入 = 回环 + 自定义请求头（跨站会触发
-   CORS 预检）；取媒体文件 = 不限制回环（id 不可枚举、注册只可能发生在回环请求里）——
-   这样手机/局域网访问时壁纸照样显示。
-
-**视觉增强的两条硬规则**（已写进第 12 节第 11、12 条）：不改盒模型尺寸；含 `fixed` 后代的
-元素不许 `transform`/`filter`。
-
-### 🟡 2026-09-17 缺陷批（8 条对局缺陷 + 3 条 UI 需求）
-
-> 详见 `docs/BATCH_2026_09_17.md`。作者一次性提了 11 条，逐条修完并实测。
-> 索引：冻结计数只算活船（#2#7）/ 败者食尘的大回合级归零（#3）/ 越战越勇发动即 +1（#4）/
-> 条件不满足**不吞牌**（#5）/ 死者苏生不得摆到刚沉的格子（#6）/ 回光返照清错棋盘（#8）/
-> 仁王之盾改在棋盘上点船（#1）/ 连锁弹窗可预览对方那张卡（#9）/
-> 排行榜加头像与个人信息详情（#10#11）。
-
-**★ 通用教训一：统计口径必须区分"活船 / 死船"，而且同一个口径会在多处复用。**
-本项目的「击沉」**不把船移出 `player.ships`**（沉船留在列表里供复活回收；但轰炸/硫磺火焰/
-牺牲会 `remove()`），于是「扫 `player.ships` 数一数」到处是坑：`frozen_ship_count` 把死船
-重复扣一次（攻击次数少 1）；`冻结` 播报里混进已沉的；`_placement_blocked_cells` 把移出
-`ships` 的船的原格当成空格（死者苏生能摆回"刚沉掉的那一格"）。修法是统一到
-`_alive_ships()`（活船）与 `_own_occupied_cells()`（己方占位 = `ships` ∪ `sunken_ships`）。
-**凡要"数船 / 判这一格有没有船"的新代码，先问"沉船算不算"** —— 答错不报错，只会悄悄少一次
-攻击、或多一个能摆的位置。
-
-**★ 通用教训二：同一个业务判断有两份实现，就一定会漂移。** `_placement_error`（服务端校验）
-与 `_placement_blocked_cells`（下发给前端的灰格）此前已漂移过一次（前端画出"看着能点、点了
-报错"的格子）→ 让两者**共用 `_own_occupied_cells`**。同类还有三个都会写 `attacks_remaining`
-的函数，所以"败者食尘本大回合恒为 0"必须在**三个入口都拦一次**（`_attacks_forced_zero`）。
-
-**★ 通用教训三：`initGameBoards()` 会整块重建棋盘 —— 任何"等待玩家点格子"的交互都必须写成
-「状态 + 事件委托 + 重绘后重刷」。** 仁王之盾选船第一版用「逐格绑 click + 逐格加 `.pick-ship`」，
-而面板是在 `chain_resolved` 回调里开的、服务端紧接着补推 `ships_updated` 触发重绘 →
-高亮与监听当场被冲掉。⚠️ **这一条比缺陷本身更重要**：工具当时是"手动调 `showRenwangChoice()`
-再点"，真机却是"回调里开面板 + 紧接着重绘" → **工具全绿、线上全坏**。现在
-`tools/renwang_board_check.mjs` 补了**真机链路**（塞牌 → 真实出牌 → 等连锁结算 → 面板弹出后
-立刻能点）。
-
-**★ 通用教训四：「统一入口」之后必须反查"还有谁在渲染同一份东西"。** 个人信息面板上线后
-作者实测"局内点头像出现的介绍跟排行榜里的不一样"——`game.js` 里还留着第二套
-`renderMiniStatsTable()`，挂在头像自己的 click 上。👉 **改法是 grep 渲染出来的文案**
-（`当前连胜`、`胜场`），比 grep 函数名有效得多 —— 函数名各写各的，文案不会骗人。
-
-**★ 通用教训五：改「共用的工具函数」时，必须把每一个调用点都过一遍。** 为修死者苏生，
-把"己方占位"口径改成 `ships` ∪ `sunken_ships` 加进 `_placement_blocked_cells()` ——
-而**所有**放置流程共用它，结果绝处逢生的 6 个候选格全被算成"已占用"，前端 `blocked` 又优先
-于白名单 `allowed` → 六格全灰、一个都点不了。两条规矩：① **白名单与黑名单永远不许有交集**；
-② **改共用函数先 grep 出全部调用点，按 kind 逐个表态**。验证也要跟着换层：坏点在**下发给前端
-的 payload** 上，光测服务端校验口径测不出来 —— 现在由 `tools/last_stand_board_check.mjs` 第 4
-节在真页面上出牌验证（修复前实测 `blocked=36 / clickable=0`）。
-
-### 🟢 2026-09-17 个人信息名片 / 界面设置改版批（第 1 批）
-
-> 详见 `docs/PROFILE_CARD_2026_09_17.md`（设计稿 + §13 实施记录）与 `docs/PROFILE_CARD_2026_09_17_PLAN.md`（冻结契约）。
-> 两表 `user_profile`/`user_card_usage`、`profile_spec.py`、`/api/profile/card`、主题预设 5+1、
-> `tests/test_profile_card.py`（72）、`tools/profile_card_check.mjs`、`tools/dom_contract_check.mjs`。
-
-**五条教训（细节与实测证据见设计稿 §13.3）**
-1. **开关必须有下发给「别人视角」的路径** —— 只发给自己就是假控件（`show_stats`/`show_fav_cards` 第一版如此：玩家关掉，别人照样看得到）。
-2. **「查看面」与「编辑面」是两块面** —— 动手前先 grep 现有入口与容器，别把两态硬塞进一个弹窗（会逼入口改道并丢功能）。
-3. **同一份渲染被两个容器调用时，「不撞 id」要由调用方声明**（`fetchProfile(..., {ids})`），不能靠函数默认值；守卫必须点**真实入口**（直接调渲染函数只测到默认值）。⚠️ 本条被实测纠正过一次，见设计稿 §13.3。
-4. **内联变量优先级高于任何 CSS** —— 切主题预设要同时清 localStorage 与内联 `--primary*`。
-5. **控件搬进「默认隐藏的分区」后，所有通往它的入口都要跟着切分区** —— 否则「点了按钮什么也没发生」。
-
-**工具假红清单（新增工具前先过一遍）**：① 残留无头 Edge 占着调试端口/锁着 profile → 新浏览器**静默起不来**，工具连上旧实例（工具开头按 profile 路径预清理）；② `Page.navigate` 返回后 `readyState` 可能仍是**旧文档**（要等「地址真的变了」）；③ 无头浏览器是**持久 profile**，上一轮 localStorage 还在；④ **弹窗可见 ≠ 内容就绪**（先渲染「加载中…」再异步取数，要等目标节点出现）；⑤ 工具与真机**共用页面状态**会互相污染。**修法一律落进工具本身。**
-### 🟢 2026-09-17 徽章 / 成就批（第 2 批）
-
-> 详见 `docs/BATCH_2_3_4_PLAN.md`。两表 `user_counters`/`user_achievements`、`achievements.py`（12 枚，判据只有 `evaluate()` 一处）、
-> 结算收口 `server._finalize_match`（**6 处写库合并成 1 处调用点**）、`/api/achievements`、前端徽章墙 +
-> `tools/achievements_check.mjs`、`tests/test_achievements*.py`（87 条）。自测 **1023 passed**、浏览器工具合计 339 项全绿。
-
-**四条教训**
-1. **每局统计要先「收口」再加**：写库原先散在 6 处，各自加计数器就是 6 份实现 → 先做 `_finalize_match`，之后加统计只改一处。⚠️ 那条用**正则扫 `server.py` 全文**的既有守卫会连**注释**一起扫 —— 注释里别写出「函数名+括号」的调用形式（全角省略号同样命中）。
-2. **判据与组装各只能有一份**：`achievements.evaluate()` 是唯一判据；`db.get_achievement_stats()` 是唯一组装点（结算与接口共用）。⚠️ 后者**必须是模块级函数** —— 测试与调用方都按模块级包装打桩，写进 `Database` 类会让 `self.xxx` 绕过打桩，表现为「测试里明明 12 场，接口按 0 算」的假红。
-3. **按视角下发数据**：别人视角只发**已解锁**徽章（连 id 与判据文案都不发），但 `badge_count.total` 照发 —— 否则前端把「已解锁 N / 总数」显示成「N / N」。
-4. **`unlocked` 取「判据达标 ∪ 库里已授予」的并集**：会出现 `unlocked:true` + `unlocked_at:0`（刚跨门槛、结算还没记时间），这是有意的，别当异常；新账号 0 枚解锁时徽章墙**仍要显示**（整墙灰位＝收集目标）。
-
-### 🟢 2026-09-17 点赞 / 送花 / 留言板批（第 3 批）
-
-> 详见 `docs/BATCH_2_3_4_PLAN.md` §3（冻结契约）与 §9（实施记录）。两表 `profile_likes`/`profile_messages`（+3 索引、软删 `deleted`）、
-> `show_guestbook` **加列迁移**、4 个接口 + 服务端隐私过滤、查看面互动条 + 留言板 + 编辑面第 4 个展示开关（保存载荷 8 → **9 字段**）、
-> `tests/test_social.py`（47）、`tools/social_check.mjs`（46）。自测 **1070 passed**、浏览器工具合计 **362 项全绿**，已上线 `26e9c10`。
-
-**四条教训**
-
-1. **★ 隐私这类"过滤"只有服务端拦得住 —— 前端断言会假绿**。红基线实测：把服务端隐私分支关掉，**DOM 断言照样全绿**（前端看到 `show_guestbook=0` 就提前 return、压根不拉留言），只有以**别人的身份直接读接口**才发现内容泄露；而且只断言"主人看得到 N 条"也不够，**两侧都要断言**。
-2. **给已存在的老表加列只能靠「判存在再加」**：`CREATE TABLE IF NOT EXISTS` 对已存在的表是空操作，生产库那条 `ALTER TABLE ... ADD COLUMN ... DEFAULT 1`（`PRAGMA table_info` 先判）才是开关能不能用的关键 —— 上线后用 `PRAGMA table_info` 在**真库**上确认过。这类失败只记日志不外抛（`init_db()` 在 import 期跑，不能为一个展示开关把进程打崩）。
-3. **游标接口的第一页不能传 `0`**：`before_id` 语义是「取 id < N」，传 0 会返回 `total=N` 但 `messages=[]` → **看着成功、永远看不到留言**（第一页应当**不带**该参数）。
-4. **点赞是"乐观预演"**：点下去界面立刻变，所以"界面变了"≠"请求回来了"；断言要等**请求真的 settle**，否则连点保护会把第二下吞掉（工具假红）。同类还有 `/logout` 是 302 跳首页、Node 的 fetch **不跨跳转带 cookie**（注册成功的 flash 读不到）。
-5. ⚠️ **别用 PowerShell 的 `Get-Content -Raw | Set-Content` 改 UTF-8 源码**：本机默认按 GBK 读写，会把中文注释写成**非法 UTF-8**（`node --check` 报 `Invalid or unexpected token`、`read` 工具直接读不了）。与第 12 节第 8 条同源。
-
-### 🟢 2026-09-18 段位 / 排位批
-
-> 详见 `docs/RANKED_2026_09_17.md`、计划文档 §13（**契约、多因子计分表、文案口径都在那篇里**）。
-> 新增 `ranks.py` / `user_rank` 表 / `static/rank_icons.js` / `tools/ranked_check.mjs` /
-> `tools/rank_help_check.mjs`。`ADMIRAL_MIN_CAPTAINS=50` → **本服现在没人能到大舰长**（有意）。
-> ⚠️ 本地验证服务**避开 5060/5061**：Fetch 规范列的被阻止端口，Node `fetch` 与 Chrome 拒发
-> 而 curl 正常 → 看着像"服务器卡死"，实为工具假红。
-
-### 🟢 2026-09-18 大厅系统批
-
-> 详见 `docs/LOBBY_2026_09_18.md`（**冻结契约**）。新增 `LobbyManager` + 5 个上行 / 4 个下行事件、
-> `#lobby-screen` 三列界面（在线玩家 / 房间列表 / 公屏）、`style.css` 第 31 节、
-> `tests/test_lobby.py`（40）、`tools/lobby_check.mjs`（**双浏览器** 27 项）。
-
-**改造前的实情**：`#lobby-screen` 是个空壳（列不出人、看不到房间、没有公屏），
-**首页和导航栏都没有入口**（只能手敲 `/lobby`），而 `online_users` 是个**裸 sid 集合**——
-连名字都没有，想列"谁在线"根本列不出来。
-
-**四条教训**
-
-1. **★ 大厅这类功能必须用「两个真实浏览器」验，单浏览器一定假绿。** 大厅的全部价值就是
-   "别人那边立刻能看到"，自己 emit 自己断言只能证明"我把请求发出去了"。
-   `tools/lobby_check.mjs` 因此起**两个独立 profile/端口**的 Edge（共用一个 profile 时第二个
-   **静默起不来**，两个"玩家"其实是同一个人）。
-2. **★ 在线表只能有一份。** 旧 `online_users` 是裸 sid 集合、没有名字，想补名字就会多出第二份
-   在线结构（两份 = 必然漂移，见通用教训二）。改法是把它整个删掉，`/api/online_count` 改读
-   `lobby_manager.presence`。另设 `_members`（presence 的**子集**）—— 只有真的站在大厅页面上的
-   连接才收推送，否则每个对局中的玩家都被大厅广播打扰。
-3. **★ 状态判据要区分"在等待房里等人"与"在打"。** 第一版把 `state != 'game_over'` 一律算
-   `in_game`，于是"按下创建房间"的人在大厅里显示成**对局中**（浏览器工具实测抓到）。
-   现在 status 是**四态**：`idle` / `matching` / `in_room` / `in_game`。
-4. **★ 房间列表必须过滤"房主已离线"。** 房间回收 TTL 是 **1 小时**（`_WAITING_ROOM_TTL`），
-   房主关掉标签页后房间还要在内存里躺一小时 —— 不加这条就会挂出一堆"点进去没人"的僵尸房。
-
-5. **★ 上线后作者实测到的真缺陷：连点「创建房间」→ 大厅堆出 7 间同名房。**
-   复现确认「一次点击 = 一间房」（ack 正常、界面也正常跳屏），**不是**双击或重复绑定 ——
-   是**旧房永不回收**：等待房 TTL 是 **1 小时**，而大厅的可见规则只要求「房主仍在线」，
-   房主就是他自己，当然一直在线上。**两条规则各自都没错，合起来却把 7 间房全留在了榜上。**
-   修法三件：① 建房前 `_recycle_host_waiting_rooms` 回收自己上一间等待房
-   （**一个玩家同时只能主持一间**；⚠️ 只回收 `waiting` 的，已开打的绝不能碰）；
-   ② 列表层按房主去重兜底；③ 新增 `close_room` + 自定义房界面的「解散房间」——
-   等待房此前**没有任何主动出口**，建错了只能干等一小时。
-   👉 通用：**凡"自动过期"兜底的资源，都要问一句"过期之前它会一直挂在谁眼前"** ——
-   1 小时的 TTL 对内存是够用的，对**列表**是灾难。
-
-**顺带修掉的一个真 bug（就是 CLAUDE.md 那条老规矩的又一次复现）**：
-公屏的 `lobby_chat_history` 第一版是**"清空重铺"**，而"补发的历史"与"实时推送"**会重叠** ——
-自己刚发的那条已经上屏了，紧接着来的历史把它整段冲掉（**A 自己看不到、B 看得到**，
-正是"工具全绿、线上全坏"的形状）。修法：服务端给每条消息一个单调 `seq`，前端**只补缺的**
-（`applyLobbyChatHistory` 插在最前面），彻底不碰已有内容。
-👉 与"先清空再填充"那条同源：**任何"清空重铺"的渲染都要先问"这一帧里会不会有别人的新数据"。**
+## 10. 踩过的坑（值得记的结论，细节在各 docs）
+
+1. **同一个业务判断有两份实现就一定会漂移**：放置合法性、攻击次数、段位曲线都栽过。
+   → 规则只留一份（`ranks.py`/`leveling.py`/`achievements.py` 就是为此存在），前端只渲染。
+2. **"会兜底"的取数函数不能当判据**：拿 `_match_started_at`（无打点时退回 `created_at`，**恒非 0**）当
+   "开没开打"的门禁 = 没门禁 → 赛前投降能刷分。同形状还坑过壁纸批（兜底挑到 `preview.jpg` 冒充动态壁纸）。
+3. **"先清空再填充"的渲染必须先校验数据、失败时保留上一帧**（`updateHandUI` 清空后没填回来 → 空白手牌）。
+4. **"已做过某事"的记录只在事情真的发生时才写**：把"动作"当"结果"记进 `attacks` → 盾挡下的格子被永久锁死。
+5. **取数顺序是命门**：连胜/连败必须在 `record_match` **写库之前**取，否则读到含本局的值（首胜白拿连胜加成）——**不报错**。
+6. **模块级函数不许引用函数作用域里的东西**（一天踩过两次 → `ReferenceError` 被 `.then()` 吞掉、页面零提示）。
+7. **恒等式断言拦不住"方向写反"**：`base+Σ==total` 全绿，但判据写反会让每局败仗白送 10 分 → 要补显式守卫。
+8. **统一入口之后必须反查"还有谁在渲染同一份东西"**：`game.js` 里藏着第二套个人信息渲染，
+   靠 **grep 渲染出来的文案**（`当前连胜`）翻出来，比 grep 函数名有效。
+9. **改共用函数先 grep 出全部调用点、按 kind 逐个表态**（改放置口径时绝处逢生被漏掉 → 六格全灰点不动）。
+10. **白名单与黑名单永远不许有交集**（`allowed` 必须从 `blocked` 里剔除）。
+11. **新增房间级状态要三件齐**：`__init__` 初始化 + 明确消费点 + 回归用例；
+    分支里**别随手 `return`**（会静默吞掉后续收尾：换人 / 重置阶段 / 广播 —— 同形状栽过三次）。
+12. **隐私过滤只有服务端拦得住**：前端断言会假绿（前端看到开关就提前 return、压根不拉数据），
+    必须**以别人的身份直读接口**、且**两侧都断言**。
+13. **"解锁/开关"类逻辑最容易"看着有、其实永远不触发"**：段位外观曾经因为解锁上下文里**少注入一个
+    `rank_tier`**，判定一律按 0 段位算 → 一件都解不开，而接口/前端/测试**全都不报错**。
+    → 加此类功能时，**必须有一条"到段位就该解锁"的端到端断言**（走真接口，不是只测纯函数）。
+14. **给已存在的老表加列只能"判存在再加"**：`CREATE TABLE IF NOT EXISTS` 对已有表是空操作，
+    必须 `PRAGMA table_info` + `ALTER TABLE`（`_add_column_if_missing`），失败只记日志不外抛。
+15. **工具假红先怀疑工具**：残留无头进程会让新浏览器静默起不来；`Page.navigate` 后 `readyState` 可能还是旧文档；
+    弹窗可见 ≠ 内容就绪；持久 profile 带着上轮 localStorage；后台标签页的 `setInterval` 被节流。
+16. **"自动过期"兜底的资源要问一句"过期之前它一直挂在谁眼前"**：等待房 TTL 是 1 小时、大厅又只按
+    "房主仍在线"过滤，而房主就是他自己 → 连点「创建房间」在大厅堆出 **7 间同名房**。
+    治本是"一人同时只能主持一间 + 给玩家一个主动解散的出口"，不是调小 TTL。
+17. **在线表只能有一份**：旧的裸 sid 集合没有名字，想补名字就会长出第二份在线结构 → 直接删掉旧表，
+    `/api/online_count` 与大厅统一读 `lobby_manager.presence`。
+18. **删/改 CSS 前先 grep 类名**：远程一次重构把帮助页整节样式删掉，而 `index.html`/`game.js`/检查工具
+    都还在用那些类 → **功能还在、样式没了**，且检查工具只验溢出，照样全绿。合并时已恢复（第 30 节）。
 
 ---
 
-## 12. 开发约定
+## 11. 开发约定
 
-1. **改魔法卡要同步 4 处**：`magic_card.json`、`magic_cards.js`、`apply_magic_effect` 分支、测试。前两者须逐字符一致（当前一致性测试不校验 `description`，需人工留意）
-2. **`失灵！` 重复 3 份是故意的**，勿"修正"
-3. **`field_magic` 存实例对象**，用 `field_magic_name(room)` 取值
-4. **改攻击逻辑先确认三套实现改的是哪个**（见第 4 节）
-5. **不要一次读完 `server.py`/`game.js`** —— 先 grep 定位再分段读
-6. **重活交子智能体**（独立上下文，不撑爆主会话）
-7. **修 bug 前必须实测复现** —— 本项目静态分析已出过多次误报（见第 6 节）
-8. **不要用脚本做全局字符串替换**（尤其涉及 `` ` `` 与 `${}` 时）：2026-09-13 有一次
-   `` `$` `` → `$` 的全量替换，静默改坏了 `game.js` 里 **10 处**模板字符串
-   （颜色转换 / 日志渲染 / 倒计时 / 自动布船 / 选区 key / 连锁卡列表），
-   语法检查全红。改法是**只改目标块**（正则锚定整段）+ 改完立刻 `node --check`
-   + 跑无头工具（它们会真的走这些代码路径）。
-9. **文档与代码已脱节**：`CHAIN_ENGINE_SPEC.md`、`README.md` 均有过时内容。
-   历史教训：`CLAUDE.md` 第 11 节的「已知问题」曾**整章过期**（所列 P0/P1 全部早已修好），
-   2026-09-13 已按实测重写——**引用本文件任何一条结论前，先用 grep 到代码里确认**。
-10. **跑 e2e 的服务端要隔离数据库**：`BATTLESHIP_DB_PATH=C:\Windows\Temp\e2e.db`。
-   全卡 e2e 会真的打 42 张牌，不隔离就会往正式库写 40 多条卡牌使用统计。
-11. **改 `style.css` 之后必跑 `node tools/ui_layout_check.mjs --url ...`**。它逐视口断言
-   棋盘 300×300 / 单格 42px / 浮窗零叠压 / 对局页一屏不滚动 —— 这些不是"风格"，是回归基线。
-   视觉增强只允许动颜色、阴影、渐变、`transform`、`opacity`、动画，**不许动盒模型尺寸**。
-12. **含 `position:fixed` 后代的元素不能加 `transform` / `filter` / `backdrop-filter`**。
-   这类元素：`.game-container` / `.game-content` / `.game-main-container` /
-   `.screen`（即 `#game-screen`）。加上去会让日志、聊天、卡牌预览、连锁提示这些浮窗
-   **改以它为基准定位**，表现为"浮窗跑到页面中间"。要毛玻璃就加在**叶子面板**上，
-   或让 `.game-container::before`（伪元素不是任何东西的祖先）承担 —— 见 style.css 第 2 节与第 24 节。
-13. **`tests/` 之外还有一批无头浏览器工具**（`tools/*.mjs`）。它们比 pytest 更接近真实：
-   真的起浏览器、真的走 socket。改前端时优先跑对应那个：
-   壁纸 → `wallpaper_check.mjs`（自造壁纸库+自起服务端，不依赖本机装没装 Wallpaper Engine）、
-   手牌 → `hand_play_check.mjs`、布局 → `ui_layout_check.mjs`、音效 → `sfx_check.mjs`、BGM → `bgm_check.mjs`、
-   仁王之盾选船 → `renwang_board_check.mjs`、连锁弹窗卡预览 → `chain_preview_check.mjs`、
-   排行榜/个人信息 → `profile_leaderboard_check.mjs`、个人信息名片改版 → `profile_card_check.mjs`、
-   大厅 → `lobby_check.mjs`（**双浏览器**：大厅的价值就是"别人那边立刻能看到"，单浏览器测不出来）；
-   **`dom_contract_check.mjs`（不需要浏览器、不起服务端，改完前端随时跑）**：查「代码引用了但页面里不存在的 id」——
-   这类引用的表现是 `getElementById` 拿到 `null`、被 `if (el)` 兜掉，**不报错、只是点了没反应**
-   （`#show-opponent-stats` 那次踩过）。它会区分「运行期由 JS 创建」（正常）与「哪都没创建」（真悬空），
-   并比对新版改动计划里冻结的 id 是否真的落地；
-   协议级 e2e → `tools/e2e_batch_2026_09_17.py`（真实双客户端）。
-   ⚠️ 无头浏览器用**持久 profile**，localStorage 里带着上一轮的状态；"改了代码页面却不变"
-   先确认拿到的是不是缓存/旧状态（壁纸批就因此白查了一轮）。
-14. **跑测试/工具用「能 import flask 的那个解释器」**。当前 PATH 上的 `python`（3.12.10）已装
-   flask，直接用它；历史 venv 是 `.venv/Scripts/python.exe`。报 `ModuleNotFoundError: flask`
-   就是选错了解释器。
-15. **本机连 GitHub / PyPI 时通时断，外网操作优先经云服务器中转**（服务器可稳定直连 GitHub，
-   仓库已配 Deploy Key）。`bash tools/relay.sh start` 起一个 SSH 动态转发（SOCKS5，默认
-   `127.0.0.1:1080`；PID/日志在 `$HOME/.battleship-relay.*`），之后：
-   - 走中转的 git：`bash tools/relay.sh git fetch origin`、`bash tools/relay.sh git push origin main`
-   - 单次命令：`git -c http.proxy=socks5h://127.0.0.1:1080 <命令>`
-   - ⚠️ **大文件别走中转**。实测（2026-09-15 同时段、同一 5MB 素材）：清华 PyPI 镜像
-     **4.8 MB/s** > 本机直连 GitHub 2.5 MB/s（但会随机 reset）> 中转 **1.3 MB/s**。
-     pip 用 `bash tools/relay.sh pip install -r requirements.txt`（走清华镜像）。
-   - 与 `push.sh` 互补：日常 git 操作用 `relay.sh`；要"本机提交 → 服务器应用补丁 → 推 GitHub"
-     时用 `push.sh`（它把服务器当 GitHub 的出入口，而不是当网络代理）。
-16. **提交 / 推送说明只写"修了什么 bug"**（作者 2026-09-17 明确要求）：一句话级别，
-   **不写**根因分析、排查过程、验证清单、改了哪些文件，也**不写**调试后门 / 测试桩 /
-   内部工具的实现细节。细节写进 `docs/` 与代码注释里，`git log` 保持扫一眼就懂。
-   例：`修冻结计数、败者食尘归零、越战越勇即时+1、条件不满足不吞牌`。
+1. **不要一次读完大文件** —— 先 grep 定位。
+2. **重活交子智能体**（独立上下文，不撑爆主会话）。
+3. **修 bug 前先实测复现** —— 本项目静态分析已多次误报。
+4. **不要用脚本做全局字符串替换**（涉及反引号与 `${}` 时尤其危险，曾静默改坏 10 处模板字符串）；
+   改完立刻 `node --check` + 跑对应无头工具。
+5. **⚠️ 别用 PowerShell 的 `Get-Content -Raw | Set-Content` 改 UTF-8 源码**：本机按 GBK 读写会把中文注释写成
+   非法 UTF-8（`node --check` 报错、read 工具读不了）。用编辑工具，或 python 显式 `encoding='utf-8'`。
+6. **改 `style.css` 之后必跑 `node tools/ui_layout_check.mjs --url …`**：它逐视口钉棋盘 300×300 / 单格 42px /
+   浮窗零叠压 / 对局页一屏不滚动。视觉改动只允许动颜色/阴影/渐变/transform/opacity/动画，**不许动盒模型尺寸**。
+7. **含 `position:fixed` 后代的元素不能加 `transform`/`filter`/`backdrop-filter`**
+   （`.game-container`/`.game-content`/`.game-main-container`/`.screen`），否则浮窗会改以它为基准定位。
+8. **跑 e2e / 工具要隔离数据库**：`BATTLESHIP_DB_PATH=.tmp/xxx.db`，别往正式库写测试数据。
+9. **本机连 GitHub/PyPI 时通时断**：`bash tools/relay.sh …` 走云服务器中转；日常发布用
+   `bash push.sh`（服务器当 GitHub 出入口）+ `bash deploy.sh`（拉代码 + 重启 + 健康检查）。
+   本机与远端 SHA 会不一致（服务器重新 apply 补丁）→ **用 `git rev-parse HEAD^{tree}` 对比内容**；
+   若分叉先 `git fetch server main:refs/remotes/server/main --force` 再 `git rebase server/main`。
+10. **提交 / 推送说明只写"改了什么"**：一句话，**不写**根因分析、排查过程、验证清单、改了哪些文件，
+    **也不写**账号参数调整（等级 / 段位 / 解锁 / 特权）。细节写进 `docs/` 与代码注释。
+11. **⚠️ 本文件每次对话整份注入** —— 新增一条要顺手删一条同样长的旧内容；长文写 `docs/`。
 
 ---
 
-## 13. 深度文档
+## 12. 深度文档（按需读，不要全读）
 
-| 文件 | 内容 |
-| --- | --- |
-| **`docs/DEPLOYMENT.md`** | **部署说明：服务器环境、必需环境变量、更新流程、事故记录 —— 部署前必读** |
-| `docs/SERVER_PY_ANALYSIS.md` | server.py 4733 行全量分析（类/事件/攻击结算/魔法分发/连锁） |
-| `docs/FRONTEND_TECH_ANALYSIS.md` | 前端 + 测试深度分析（827 行，58 个 socket.on、33 个 emit、函数索引、19 条 bug） |
-| **`docs/UI_REVIEW_FIXES.md`** | **2026-09-12 截图 UI 审查修复记录（含逐条证据、端到端验证方式、有意不改的项）** |
-| **`docs/MOBILE_ADAPTIVE_LAYOUT.md`** | **2026-09-12 移动端自适应布局：实测问题清单、四种布局模式、端到端不变量与取舍** |
-| **`docs/STATS_AND_AI_RANKING_FIXES.md`** | **2026-09-13 个人战绩弹窗 / 人机战绩统计：6 条缺陷的根因与实测证据、数据口径变更、验证方式** |
-| **`docs/DEFECT_FIXES_2026_09_13.md`** | **2026-09-13 全量缺陷审计与修复：实测方法、逐条缺陷与复现方式、修复内容、剩余待办** |
-| **`docs/PRIORITY_PROMPT_2026_09_13.md`** | **2026-09-13/14 阶段转换「优先权询问」（方案 D）：决策依据、实现位置、4 条实施中发现的真实缺陷与复现证据、5 层验证结果** |
-| **`docs/HAND_DESYNC_2026_09_14.md`** | **2026-09-14「打完一张，剩下的手牌莫名消失」：真实浏览器复现、根因（前端本地删牌的兜底分支按下标删错人）、修法与反证** |
-| **`docs/REINFORCEMENT_TIE_2026_09_14.md`** | **2026-09-14「极限增援平局把回合卡死」：根因（结算分支从 `end_turn` 提前 `return`，吞掉换人+重置阶段+广播）、反证与修法** |
-| **`docs/SHIELD_AND_LASTSTAND_2026_09_14.md`** | **2026-09-14「破盾格还能再打」「绝处逢生候选格能打」：同一个病灶（把"动作"当"结果"记进 attacks，格子被永久/整回合锁死）、五种格子状态的视觉区分** |
-| **`docs/WALLPAPER_ENGINE.md`** | **2026-09-15 动态壁纸（Wallpaper Engine 接入）：三条导入通道与各自可见范围、创意工坊目录解析与 preview 陷阱、媒体路由的安全模型、视觉增强的两条硬规则（不改盒模型 / 含 fixed 后代的元素不许 transform）** |
-| **`docs/BATCH_2026_09_17.md`** | **2026-09-17 缺陷批（11 条）：逐条现象/根因/修法/验证 —— 冻结计数只算活船、败者食尘大回合级归零、越战越勇即时 +1、条件不满足不吞牌（`_refund_card_to_hand`）、死者苏生放置格、回光返照清错棋盘、仁王之盾棋盘选船、连锁弹窗卡预览、排行榜头像与个人信息详情** |
-| **`docs/PROFILE_CARD_2026_09_17.md`** | **2026-09-17 个人信息名片 / 界面设置改版设计稿（第 1 批）：分层名片 + 双态弹窗、设置左导航、称号/标签/头像框/底色/展示开关、隐私默认不公开对局历史；§13 是实施记录（4 个真问题 + 工具假红清单）** |
-| **`docs/LOBBY_2026_09_18.md`** | **2026-09-18 大厅系统：冻结契约（5 个上行事件 / 4 个下行事件 / `lobby_state` 字段 / status 四态 / 房间列表四条可见规则）、`LobbyManager` 与在线表口径、实施中实测到的 4 个真问题（房主离线的僵尸房、建房者被显示成"对局中"、公屏历史"清空重铺"冲掉实时消息、连点建房堆出 7 间同名房）** |
-| **`docs/PROFILE_CARD_2026_09_17_PLAN.md`** | **同一批次的实现计划（票 + 依赖图）：冻结的接口契约（8 字段全发、三个 `show_*` 同进同出）与 DOM 契约（查看面 `#opponent-stats-modal` 与编辑面 `#profile-modal` 是**两块面**）、文件独占分工、每票完成判据 —— 动手前先读它，别照旧设计稿的初版契约改** |
-| `docs/CHAIN_ENGINE_SPEC.md` | 连锁引擎设计稿（⚠️ 实施前的文档，开头已补 2026-09-13 实测校准表） |
-| `README.md` | 面向用户的功能/玩法说明（测试数/文件清单已校准） |
+`docs/DEPLOYMENT.md`（部署与事故）｜ `docs/BATCH_2_3_4_PLAN.md`（第 2/3/4 批 + 段位批 §13）｜
+`docs/RANKED_2026_09_17.md`（段位系统：规则、契约、多因子计分、帮助页、实施教训）｜
+`docs/PROFILE_CARD_2026_09_17.md` + `…_PLAN.md`（个人信息名片/外观）｜
+`docs/BATCH_2026_09_17.md`（11 条对局缺陷）｜ `docs/DEFECT_FIXES_2026_09_13.md`（全量缺陷审计）｜
+`docs/PRIORITY_PROMPT_2026_09_13.md`（阶段转换优先权）｜ `docs/HAND_DESYNC_2026_09_14.md`（手牌消失）｜
+`docs/REINFORCEMENT_TIE_2026_09_14.md`（增援平局卡死）｜ `docs/SHIELD_AND_LASTSTAND_2026_09_14.md`（破盾格/绝处逢生）｜
+`docs/WALLPAPER_ENGINE.md`（动态壁纸）｜ `docs/STATS_AND_AI_RANKING_FIXES.md`（战绩弹窗/人机统计）｜
+`docs/MOBILE_ADAPTIVE_LAYOUT.md`（移动端布局）｜ `docs/UI_REVIEW_FIXES.md`（UI 审查）｜
+`docs/LOBBY_2026_09_18.md`（大厅系统：契约 + 4 个实测问题）｜ `README.md`（用户向说明）
 
-> ⚠️ **部署前务必确认环境变量**：代码若新增 `os.environ.get('XXX')`，服务器 systemd 必须同步配置。
-> 漏配会导致「服务能起来但带着错误默认值运行」——2026-09-12 就因漏配 `CORS_ORIGINS` 导致线上所有操作卡十几秒。详见 `docs/DEPLOYMENT.md` 第 5 节。
+> ⚠️ **部署前确认环境变量**：代码新增 `os.environ.get('XXX')` 时，服务器 systemd 必须同步配置 ——
+> 漏配会导致"服务能起来但带着错误默认值运行"（曾因漏配 `CORS_ORIGINS` 让线上所有操作卡十几秒）。

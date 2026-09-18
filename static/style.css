@@ -4819,192 +4819,65 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, rgba(255, 2
     .rank-bar-fill { transition: none; }
 }
 
-/* ===========================================================================
-   30. 帮助页的「段位与排位」块（段位帮助批，2026-09-18 追加）
-   =========================================================================== */
-/*
- * 作用对象只有帮助弹窗（#help-modal）里那一块，**不碰任何既有元素**。
- *
- * 四条自我约束（与第 29 节同一份，都是本项目踩过的坑）：
- *   ① **不改任何既有元素的盒模型尺寸** —— 这里只给自己的新类定尺寸，
- *      `#help-modal` / `.modal-content.wide-modal` / `.compendium-grid` 一行没动
- *      （CLAUDE.md 第 12 节第 11 条：改完 style.css 必跑 `tools/ui_layout_check.mjs`）。
- *   ② **不给含 position:fixed 后代的元素加 transform / filter / backdrop-filter**
- *      —— 这里全是帮助弹窗里的叶子行 / 文本 / 图标（第 12 节第 12 条）。
- *   ③ 段位图标**颜色仍在第 29 节**（`.rank-icon[data-tier="…"]`）—— 本节一个字都不重写，
- *      否则"高段位更重"就有两份实现、迟早漂移。
- *   ④ 第 3 节的通用 `button` 规则带 `background: var(--primary-gradient)` ——
- *      本节用的都是 span / div / 表格行，不受影响；真用到按钮色的地方见第 26/23 节教训。
- *
- * 版式为什么这么排：帮助弹窗是 `wide-modal`（宽屏够宽、320px 窄屏极窄），
- * 所以图鉴一行用**两列 grid**（图标 | 其余内容），窄屏（≤520px）才回退成
- * 图标 + 名称在上、其余在下 —— 320px 下也不会把段位行挤成一条竖线。
- */
-#help-rank-section { margin-top: 1.4rem; }
-#help-rank-section h3 { margin-top: 0; }
-.help-rank-sub {
-    margin: 1rem 0 0.5rem;
-    font-size: 0.95rem;
-    letter-spacing: 0.02em;
-    color: var(--text-subtle, var(--text));
-}
-/* 顶段那一行加一点金光，与第 29 节的配色同一色系（只加颜色与阴影，不动尺寸） */
-.help-rank-tier.is-top {
-    border-color: rgba(255, 210, 77, 0.42);
-    background: linear-gradient(180deg, rgba(255, 210, 77, 0.12), rgba(255, 255, 255, 0.02));
-}
-/* 图鉴：一行一个段位（外层靠 grid + 两列，见上面的注释） */
-.help-rank-tiers { display: block; min-width: 0; max-width: 100%; }
-/* ⚠️ 第一列写**像素**而不是 `auto`：`auto` 列会按内容算 min-content，
-   窄屏下叠加 column-gap 会把整行顶出容器几个像素（实测 320×568 溢出 8px、
-   每一行都比容器宽）。像素列 + `minmax(0,1fr)` 的第二列才不会溢。 */
-.help-rank-tier {
-    display: grid;
-    grid-template-columns: 26px minmax(0, 1fr);
-    column-gap: 10px;
-    row-gap: 2px;
-    align-items: center;
-    margin: 0 0 6px;
-    padding: 8px 10px;
-    border: 1px solid var(--panel-border, rgba(255, 255, 255, 0.2));
-    border-radius: 10px;
-    /* ⚠️ 窄屏防溢出：整行**不许**横向撑破（`min-width:0` 是 grid/flex 子项能收缩的前提） */
-    min-width: 0;
-    max-width: 100%;
-    overflow: hidden;              /* 兜底：任何子项都不可能把这一行撑出横向滚动 */
-    overflow-wrap: anywhere;
-}
-.help-rank-tier > * { min-width: 0; }
-.help-rank-icon { display: inline-flex; align-items: center; flex: 0 0 auto; }
-.help-rank-name { font-weight: 800; font-size: 0.98rem; letter-spacing: 0.02em; min-width: 0; overflow-wrap: anywhere; }
-.help-rank-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; min-width: 0; }
-.help-rank-start { font-weight: 700; color: var(--text, inherit); }
-.help-rank-subs { font-size: 0.74rem; color: var(--muted, #8a94a2); min-width: 0; overflow-wrap: anywhere; }
-.help-rank-unlock {
-    grid-column: 2;
-    font-size: 0.8rem;
-    color: var(--muted, #8a94a2);
-    min-width: 0;
-    overflow-wrap: anywhere;
-}
-.help-rank-note {
-    grid-column: 2;
-    font-size: 0.74rem;
-    color: #ffd24d;
-    opacity: 0.92;
-    min-width: 0;
-    white-space: normal;
-    overflow-wrap: anywhere;
-}
-/* 计分规则：两张小表（标签 | 分值 | 条件）。
-   ⚠️ 这里用 **flex** 而不是 grid：分值那一格是 `nowrap` 的长串
-   （`+1 × 击沉数（封顶 +6）`），grid 的自动列会按它的 max-content 算宽度，
-   在窄屏上把整行顶出去（实测 390×844 行宽 392 > 容器 292）。
-   flex + `min-width:0` + `flex-wrap` 才会老老实实按容器宽度折行。 */
-.help-rank-scoring { min-width: 0; max-width: 100%; }
-.help-rank-scoring.is-empty { opacity: 0.75; }
-.help-rank-score-head,
-.help-rank-score-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 2px 8px;
-    padding: 4px 2px;
-    min-width: 0;
-    max-width: 100%;
-}
-.help-rank-score-head > *,
-.help-rank-score-row > * { min-width: 0; }
-.help-rank-score-head {
-    font-size: 0.74rem;
-    font-weight: 700;
-    color: var(--muted, #8a94a2);
-    border-bottom: 1px solid var(--panel-border, rgba(255, 255, 255, 0.2));
-}
-.help-rank-score-head > *:nth-child(1) { flex: 1 1 80px; }
-.help-rank-score-head > *:nth-child(2) { flex: 0 0 64px; text-align: right; }
-.help-rank-score-head > *:nth-child(3) { flex: 2 1 110px; }
-.help-rank-score-row { border-bottom: 1px dashed rgba(255, 255, 255, 0.08); }
-.help-rank-score-row:last-of-type { border-bottom: none; }
-.help-rank-score-label { flex: 1 1 80px; font-weight: 600; overflow-wrap: anywhere; }
-.help-rank-score-value {
-    flex: 0 0 64px;
-    font-weight: 800;
-    font-variant-numeric: tabular-nums;
-    text-align: right;
-    white-space: nowrap;
-    overflow: hidden;              /* nowrap 的长串按格子裁掉，不许把行顶宽 */
-    text-overflow: ellipsis;
-    color: #ffd24d;
-}
-.help-rank-score-row .help-rank-score-value.is-minus { color: #ff9a9a; }
-.help-rank-score-cond {
-    flex: 2 1 110px;
-    font-size: 0.78rem;
-    color: var(--muted, #8a94a2);
-    overflow-wrap: anywhere;
-}
-.help-rank-score-caps { margin-top: 0.5rem; }
-/* 拉不到规则时的提示位（默认 hidden）。⚠️ 必须带 [hidden] 兜底：
-   `hidden` 属性只给 `display:none` 的**弱**声明，被任何 display 规则盖掉就会显形。 */
-#help-rank-error[hidden] { display: none !important; }
-#help-rank-error { margin: 0.4rem 0 0; color: #ffb0b0; }
-/* 规则文案列表：与帮助页其它列表同一套（只补一点行距，不改既有 ul 规则） */
-.help-rank-rules { margin: 0.2rem 0 0.6rem; padding-left: 1.1rem; }
-.help-rank-rules li { margin: 0.25rem 0; line-height: 1.55; }
-.help-rank-strong { font-weight: 800; color: #ffd24d; }
-/* 窄屏（≤520px，含 320×568）：一列排下来，图标 + 名称一行，其余缩进到第二行 */
-@media (max-width: 520px) {
-    .help-rank-tier { row-gap: 4px; padding: 8px; }
-    .help-rank-subs { font-size: 0.7rem; }
-    /* 头两格各占一半，条件那一格换行独占一行（flex-basis 100% = 强制折行）。
-       这样"≤180 秒 或 ≤5 个大回合"不会把 320px 的行撑出横向滚动。 */
-    .help-rank-score-head > *:nth-child(1),
-    .help-rank-score-row .help-rank-score-label { flex: 1 1 auto; }
-    .help-rank-score-row .help-rank-score-value { flex: 0 0 auto; }
-    .help-rank-score-head > *:nth-child(3),
-    .help-rank-score-row .help-rank-score-cond { flex: 0 0 100%; }
-}
-
 
 /* ============================================================================
-   31. 段位解锁的外观（段位批补装，2026-09-18）
-   —— 5 个头像框 + 5 个名片底色。之前只有 `profile_spec.py` 里的 id 与解锁规则，
-      样式一条都没有，所以选了完全看不出差别。
-   约定与既有那套一模一样（别改）：
-     · 头像框 → `.pf-avatar[data-frame="X"]`（真卡片上的头像）+
-                `.pf-frame[data-frame="X"] .pf-frame-ring`（编辑面的选择色块）；
+   31. 段位解锁的外观（段位批，2026-09-18）—— 含**动态**高级外观
+   —— 5 个头像框 + 5 个名片底色。约定与既有那套一致（别改）：
+     · 头像框 → `.pf-avatar[data-frame="X"]`（真卡片头像）+
+                `.pf-frame[data-frame="X"] .pf-frame-ring`（编辑面选择色块）
      · 名片底色 → `.pf-cover[data-bg="X"]`（卡片大封面）+
-                  `.pf-bg[data-bg="X"]`（编辑面的色块）。
-   段位越高越"贵"：青铜 → 银链 → 黄金 → 秘银 → 海皇（双环 + 呼吸光晕）。
-   只动颜色/阴影/动画，不动任何盒模型尺寸（第 11 节第 6 条）。
+                  `.pf-bg[data-bg="X"]`（编辑面色块）
+   ⚠️ 界面上要能选到，还得在 `templates/index.html` 里有对应按钮 ——
+      `fillProfileOptionRow()` 只给**已有**按钮打勾，不创建按钮。曾经漏了这一步，
+      表现是"池子里有、解锁了、样式也写了，但编辑面里找不到"。
+   段位越高越"贵"：青铜 → 银链 → 黄金 → 秘银（旋转） → 海皇（旋转 + 呼吸光环）。
+   只动颜色/阴影/渐变/位移/透明度，**不动任何盒模型尺寸**（第 11 节第 6 条）。
    ============================================================================ */
 
-/* ---- 头像框：水手长 / 二副 / 轮机长 / 船长 / 大舰长 ---- */
+@keyframes rankSpin    { to { transform: rotate(360deg); } }
+@keyframes rankBreath  { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+@keyframes rankFlow    { 0% { background-position: 0% 50%, 0 0; } 100% { background-position: 200% 50%, 0 0; } }
+@keyframes rankDrift   { 0% { background-position: 0 0, 0 0, 0 0, 0 0, 0 0, 50% 0%, 0 0; } 100% { background-position: 60px 90px, -50px 70px, 40px -60px, -70px 40px, 30px 80px, 50% 0%, 0 0; } }
+@keyframes rankTwinkle { 0%, 100% { opacity: 0.85; } 50% { opacity: 1; } }
+
+/* ---- 头像框（真卡片上的头像）---- */
 .pf-avatar[data-frame="bronze_compass"]  { box-shadow: 0 0 0 3px #b08d5a, 0 0 14px rgba(176, 141, 90, 0.45), 0 10px 24px rgba(0, 0, 0, 0.35); }
 .pf-avatar[data-frame="silver_chain"]    { box-shadow: 0 0 0 3px #cbd5e1, 0 0 0 6px rgba(203, 213, 225, 0.35), 0 0 16px rgba(203, 213, 225, 0.45), 0 10px 24px rgba(0, 0, 0, 0.35); }
-.pf-avatar[data-frame="golden_wheel"]    { box-shadow: 0 0 0 3px #f0c46a, 0 0 0 6px rgba(240, 196, 106, 0.3), 0 0 22px rgba(240, 196, 106, 0.6), 0 10px 24px rgba(0, 0, 0, 0.35); }
-.pf-avatar[data-frame="mithril_ring"]    { box-shadow: 0 0 0 3px #a8c7ff, 0 0 0 7px rgba(168, 199, 255, 0.32), 0 0 26px rgba(168, 199, 255, 0.65), 0 10px 24px rgba(0, 0, 0, 0.35); }
-.pf-avatar[data-frame="king_aura"]       { box-shadow: 0 0 0 3px #ffd98a, 0 0 0 8px rgba(255, 217, 138, 0.35), 0 0 34px rgba(255, 217, 138, 0.8), 0 10px 24px rgba(0, 0, 0, 0.35); animation: rankFrameAura 2.6s ease-in-out infinite; }
-@keyframes rankFrameAura {
-    0%, 100% { box-shadow: 0 0 0 3px #ffd98a, 0 0 0 8px rgba(255, 217, 138, 0.28), 0 0 28px rgba(255, 217, 138, 0.65), 0 10px 24px rgba(0, 0, 0, 0.35); }
-    50%      { box-shadow: 0 0 0 3px #ffe9b0, 0 0 0 9px rgba(255, 217, 138, 0.45), 0 0 40px rgba(255, 217, 138, 0.95), 0 10px 24px rgba(0, 0, 0, 0.35); }
+.pf-avatar[data-frame="golden_wheel"]    { box-shadow: 0 0 0 3px #f0c46a, 0 0 0 6px rgba(240, 196, 106, 0.3), 0 0 22px rgba(240, 196, 106, 0.6), 0 10px 24px rgba(0, 0, 0, 0.35); animation: rankBreath 3.4s ease-in-out infinite; }
+/* 秘银环（船长）：冷银双环 + 呼吸辉光 */
+.pf-avatar[data-frame="mithril_ring"]    { box-shadow: 0 0 0 3px #a8c7ff, 0 0 0 7px rgba(168, 199, 255, 0.32), 0 0 26px rgba(168, 199, 255, 0.65), 0 10px 24px rgba(0, 0, 0, 0.35); animation: rankBreath 2.8s ease-in-out infinite; }
+/* 海皇光环（大舰长）：三重环 + 会呼吸的金色光环 */
+.pf-avatar[data-frame="king_aura"]       { box-shadow: 0 0 0 3px #ffd98a, 0 0 0 8px rgba(255, 217, 138, 0.35), 0 0 34px rgba(255, 217, 138, 0.8), 0 10px 24px rgba(0, 0, 0, 0.35); animation: rankKingAura 2.6s ease-in-out infinite; }
+@keyframes rankKingAura {
+    0%, 100% { box-shadow: 0 0 0 3px #ffd98a, 0 0 0 8px rgba(255, 217, 138, 0.28), 0 0 26px rgba(255, 217, 138, 0.6), 0 10px 24px rgba(0, 0, 0, 0.35); }
+    50%      { box-shadow: 0 0 0 3px #ffe9b0, 0 0 0 10px rgba(255, 217, 138, 0.5), 0 0 46px rgba(255, 217, 138, 1), 0 10px 24px rgba(0, 0, 0, 0.35); }
 }
-/* 编辑面的选择色块（与上面一一对应，颜色保持一致） */
+
+/* ---- 编辑面的选择色块（高级的做成会转的环）---- */
 .pf-frame[data-frame="bronze_compass"] .pf-frame-ring { box-shadow: 0 0 0 3px #b08d5a, 0 0 10px rgba(176, 141, 90, 0.5); }
 .pf-frame[data-frame="silver_chain"]   .pf-frame-ring { box-shadow: 0 0 0 3px #cbd5e1, 0 0 0 6px rgba(203, 213, 225, 0.3); }
-.pf-frame[data-frame="golden_wheel"]   .pf-frame-ring { box-shadow: 0 0 0 3px #f0c46a, 0 0 0 6px rgba(240, 196, 106, 0.28), 0 0 14px rgba(240, 196, 106, 0.6); }
-.pf-frame[data-frame="mithril_ring"]   .pf-frame-ring { box-shadow: 0 0 0 3px #a8c7ff, 0 0 0 7px rgba(168, 199, 255, 0.3), 0 0 16px rgba(168, 199, 255, 0.65); }
-.pf-frame[data-frame="king_aura"]      .pf-frame-ring { box-shadow: 0 0 0 3px #ffd98a, 0 0 0 8px rgba(255, 217, 138, 0.32), 0 0 18px rgba(255, 217, 138, 0.8); }
+.pf-frame[data-frame="golden_wheel"]   .pf-frame-ring { background: conic-gradient(from 0deg, #7a4c10, #f0c46a, #fff3c4, #f0c46a, #7a4c10); animation: rankSpin 6s linear infinite; box-shadow: 0 0 0 3px #f0c46a, 0 0 14px rgba(240, 196, 106, 0.6); }
+.pf-frame[data-frame="mithril_ring"]   .pf-frame-ring { background: conic-gradient(from 0deg, #4b6fa8, #a8c7ff, #ffffff, #a8c7ff, #4b6fa8); animation: rankSpin 3.4s linear infinite; box-shadow: 0 0 0 3px #a8c7ff, 0 0 18px rgba(168, 199, 255, 0.75); }
+.pf-frame[data-frame="king_aura"]      .pf-frame-ring { background: conic-gradient(from 0deg, #a9741c, #ffd98a, #fffbe8, #ffd98a, #a9741c); animation: rankSpin 2.4s linear infinite; box-shadow: 0 0 0 3px #ffd98a, 0 0 0 8px rgba(255, 217, 138, 0.35), 0 0 22px rgba(255, 217, 138, 0.95); }
 
-/* ---- 名片底色：一级水手浅滩 / 三副风暴 / 大副深渊 / 船长鎏金 / 大舰长星海 ---- */
+/* ---- 名片底色（卡片大封面）---- */
 .pf-cover[data-bg="shoal"]       { background: radial-gradient(460px 180px at 78% 0%, rgba(255, 224, 160, 0.5), transparent 70%), linear-gradient(135deg, #c9a06a, #4a3a26); }
-.pf-cover[data-bg="storm"]       { background: radial-gradient(460px 200px at 30% 10%, rgba(148, 163, 184, 0.55), transparent 72%), repeating-linear-gradient(115deg, rgba(255, 255, 255, 0.05) 0 2px, transparent 2px 9px), linear-gradient(135deg, #475569, #0b1220); }
-.pf-cover[data-bg="abyss"]       { background: radial-gradient(520px 200px at 82% 100%, rgba(56, 189, 248, 0.25), transparent 70%), linear-gradient(160deg, #05080f, #0a1526 55%, #020509); }
-.pf-cover[data-bg="molten_gold"] { background: radial-gradient(420px 170px at 22% 8%, rgba(255, 196, 88, 0.55), transparent 68%), repeating-linear-gradient(105deg, rgba(255, 170, 60, 0.16) 0 3px, transparent 3px 14px), linear-gradient(135deg, #3a2408, #150d04); }
-.pf-cover[data-bg="starfield"]   { background: radial-gradient(2px 2px at 18% 26%, rgba(255, 255, 255, 0.95), transparent 60%), radial-gradient(1.6px 1.6px at 62% 14%, rgba(255, 255, 255, 0.85), transparent 60%), radial-gradient(1.6px 1.6px at 82% 42%, rgba(200, 225, 255, 0.9), transparent 60%), radial-gradient(1.4px 1.4px at 36% 62%, rgba(255, 255, 255, 0.8), transparent 60%), radial-gradient(1.2px 1.2px at 72% 74%, rgba(220, 235, 255, 0.85), transparent 60%), radial-gradient(520px 220px at 70% 8%, rgba(96, 165, 250, 0.35), transparent 70%), linear-gradient(150deg, #060b1c, #0b1733 60%, #03060f); }
+/* 风暴：云层缓慢横移 */
+.pf-cover[data-bg="storm"]       { background: radial-gradient(460px 200px at 30% 10%, rgba(148, 163, 184, 0.55), transparent 72%), repeating-linear-gradient(115deg, rgba(255, 255, 255, 0.06) 0 2px, transparent 2px 10px), linear-gradient(135deg, #475569, #0b1220); background-size: auto, 220% 100%, auto; animation: rankFlow 26s linear infinite; }
+/* 深渊：一线冷光在呼吸 */
+.pf-cover[data-bg="abyss"]       { background: radial-gradient(520px 200px at 82% 100%, rgba(56, 189, 248, 0.28), transparent 70%), linear-gradient(160deg, #05080f, #0a1526 55%, #020509); animation: rankBreath 5.5s ease-in-out infinite; }
+/* 鎏金（船长）：熔金纹在暗底上流动 */
+.pf-cover[data-bg="molten_gold"] { background: radial-gradient(420px 170px at 22% 8%, rgba(255, 196, 88, 0.5), transparent 68%), repeating-linear-gradient(105deg, rgba(255, 176, 64, 0.22) 0 3px, transparent 3px 15px), linear-gradient(135deg, #3a2408, #150d04); background-size: auto, 260% 100%, auto; animation: rankFlow 14s linear infinite; }
+/* 星海（大舰长）：星点缓慢漂移 + 整体轻微闪烁 */
+.pf-cover[data-bg="starfield"]   { background: radial-gradient(2px 2px at 18% 26%, rgba(255, 255, 255, 0.95), transparent 60%), radial-gradient(1.6px 1.6px at 62% 14%, rgba(255, 255, 255, 0.85), transparent 60%), radial-gradient(1.6px 1.6px at 82% 42%, rgba(200, 225, 255, 0.9), transparent 60%), radial-gradient(1.4px 1.4px at 36% 62%, rgba(255, 255, 255, 0.8), transparent 60%), radial-gradient(1.2px 1.2px at 72% 74%, rgba(220, 235, 255, 0.85), transparent 60%), radial-gradient(520px 220px at 70% 8%, rgba(96, 165, 250, 0.35), transparent 70%), linear-gradient(150deg, #060b1c, #0b1733 60%, #03060f); animation: rankDrift 40s linear infinite, rankTwinkle 6s ease-in-out infinite; }
+/* 编辑面色块 */
 .pf-bg[data-bg="shoal"]       { background: linear-gradient(135deg, #c9a06a, #6b5230); }
 .pf-bg[data-bg="storm"]       { background: linear-gradient(135deg, #475569, #0b1220); }
 .pf-bg[data-bg="abyss"]       { background: linear-gradient(135deg, #0a1526, #010306); }
-.pf-bg[data-bg="molten_gold"] { background: linear-gradient(135deg, #7a4c10, #241505); }
-.pf-bg[data-bg="starfield"]   { background: radial-gradient(2px 2px at 26% 30%, #fff, transparent 60%), radial-gradient(2px 2px at 70% 64%, #cfe3ff, transparent 60%), linear-gradient(135deg, #0b1733, #03060f); }
+.pf-bg[data-bg="molten_gold"] { background: repeating-linear-gradient(105deg, #ffb040 0 4px, #7a4c10 4px 14px); background-size: 200% 100%; animation: rankFlow 9s linear infinite; }
+.pf-bg[data-bg="starfield"]   { background: radial-gradient(2px 2px at 26% 30%, #fff, transparent 60%), radial-gradient(2px 2px at 70% 64%, #cfe3ff, transparent 60%), linear-gradient(135deg, #0b1733, #03060f); animation: rankTwinkle 4s ease-in-out infinite; }
+
+/* 系统设置里关掉动画时，全站动画必须让路（无障碍） */
+@media (prefers-reduced-motion: reduce) {
+    .pf-avatar[data-frame], .pf-frame .pf-frame-ring, .pf-cover[data-bg], .pf-bg[data-bg] { animation: none !important; }
+}

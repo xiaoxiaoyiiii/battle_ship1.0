@@ -123,6 +123,12 @@
                 <span id="invite-link-msg" class="invite-link-msg"></span>
             </p>
             <p>等待其他玩家加入...</p>
+            <!-- 解散房间（大厅批补）：等待房既不会自动回收（TTL 1 小时），
+                 玩家此前也没有任何主动出口 —— 建错了只能干等一小时。 -->
+            <p id="custom-close-room-row">
+                <button id="custom-close-room" class="secondary" type="button">解散房间</button>
+                <span id="custom-close-room-msg" class="invite-link-msg"></span>
+            </p>
         </div>
         <div class="button-group">
             <button id="back-to-main" class="secondary">返回主菜单</button>

@@ -60,31 +60,21 @@ python -m pytest tests/ -q    # 1070 passed
 
 > 🔧 **2026-09-12 移动端自适应布局批**（**完整内容见 `docs/MOBILE_ADAPTIVE_LAYOUT.md`，此处只留结论**）：手机上一屏放不下桌面多浮窗范式。新增 `static/adaptive_layout.js` 按**可用空间**选布局（`wide`/`compact`/矮屏右列/手牌进面板槽），三个浮窗搬进 `#aux-dock`，棋盘尺寸由舞台反推，触屏停用拖拽；宽屏（≥1200×700）一行未动。`tools/ui_layout_check.mjs` 已扩成两段式（宽屏 9 项 + 6 个移动视口各 10 项不变量）。
 >
-> 🔧 **2026-09-12 后端/安全审查修复批**（权威清单见 `docs/FIXES_2026-09-12.md`）：7 个 P0 + 20 余个 P1。要点：
-> - **`@_test_event` 装饰器顺序修正**（此前写在 `@socketio.on` 外层 → 门禁完全失效、公网可判胜/白嫖卡/读对方船位）
-> - `handle_attack` 补攻击次数与终局校验（此前次数=0 仍可无限攻击、终局后可重复记战绩）
-> - `rejoin_room` 令牌判空（`None == None` 可劫持座位）、`/user_stats` 不再泄露 `password_hash`/`token`
-> - `select_magic_target` 只接受选择类字段（此前可注入 `pending_placement` 无限增援）
-> - 「神机妙算」复活不再产生幽灵船；增援/复活不再退还已消耗的攻击次数
-> - 「明智埋葬」「仁王之盾」补上真实链路；百亿补贴按卡面归持卡者；平等条约快照过期；加百列之光/场地归属；回光返照过期；溅射不再让连锁崩溃
->   - ⚠️ 其中「明智埋葬」当时**并未真正修好**（补的分支把候选下标当成施法者自己手牌的下标）：已于同日重新修复，见下行
-> - 前端：`init()` 幂等（不再双绑事件）、补齐 `#profile-save-msg`/`#show-opponent-stats`/`#total-ships`、船数广播按收件人视角下发
+> 🔧 **2026-09-12 后端/安全审查修复批**（**权威清单见 `docs/FIXES_2026-09-12.md`**）：7 个 P0 + 20 余个 P1。
+> 最该记的两条：① **`@_test_event` 装饰器写在了 `@socketio.on` 外层** → 门禁完全失效、
+> 公网可判胜/白嫖卡/读对方船位（装饰器顺序必须在内侧）；② **12 个 `test_*` 事件当时没有任何鉴权**。
+> 其余：攻击次数/终局校验、`rejoin_room` 令牌判空、`select_magic_target` 只收选择类字段、
+> 若干卡牌语义与前端 `init()` 幂等。
 >
 > 🔧 **2026-09-12 明智埋葬真实链路修复**（详见 `docs/FIXES_2026-09-12.md` 第七节）：实测症状为「选中牌后**牌不进弃牌堆、自己也不摸牌**」（手牌为空时直接报「无效的选择」）。根因是 `confirm_magic_target` 里那份**独立实现**把前端下发的候选下标 `card_index` 当成**施法者自己手牌的下标**，选中的那张（牌堆/对方手牌）从未被取出。修法：`select_magic_target` 与 `confirm_magic_target` 共用 `_bury_choice_target()` + `_apply_bury_choice()`（下标统一为 `(source, index)`，前端回传 `source_index`；必须先 `pop` 再进弃牌堆，否则同一张牌会同时留在原处）；补对方手牌同步、施法者校验、`magic_temp_data` 只存纯数据。回归：`tests/test_mingzhi_burial_fix.py`（21 条）。
 > - 追加排查「没有触发摸牌效果」：真实浏览器端到端（无头 Edge + CDP，真点手牌与弹窗）实测**链路是通的**（手牌 `["增援"]`→`["增援","五险一金"]`，弃牌堆 +选中的那张，日志有记录）。会让人觉得「没摸到牌」的是三种**规则性静默**情况：牌堆已空 / `no_draw`（无中生有）生效中 / 摸到与手牌重名的牌自动进弃牌堆 —— 现在都会在**成功提示与对局日志里写明原因**（旧提示一律谎报「并摸了一张牌」）。另修前端误导文案：`applyCardEffect` 在玩家**还没点选**时就弹「埋葬卡牌并抽一张新牌」；`playMagicCard` 把「不是你的回合」误报成「当前阶段 preparation 不允许用速阶2」。
 >
 > **第二批（同批提交）卡牌语义修正**：绝处逢生（牺牲全部 → 玩家在旧位置选一格放唯一一艘）、疗愈（原地复活）、余音绕梁（按攻击阶段而非击杀次数）、神之宣告（采用玩家点选的两艘 + 效果1 由对方点选）、克苏鲁之眼（对方也点选暴露）、失灵！（只能康"本大回合刚使用"的卡）；清理 6 个死监听、修复免空壳大厅（改用 find_match/cancel_match 与 /api/online_count）、补桃园取消按钮（`cancel_magic_selection`）、攻击坐标拒绝小数、空棋盘不再一击判胜、重连快照按 state 路由
 
-> 🔧 **2026-09-11 安全/健壮性修复批**：本文件第 11 节的 P0/P1 问题已修复（详见 `docs/FIX_PLAN.md` 与 `tests/test_fixes_regression.py`）。要点：
-> - 12 个 `test_*` 事件默认关闭（`ENABLE_TEST_EVENTS=1` 启用）；`test_magic.js` 已从 index.html 移除
-> - `SECRET_KEY`/`CORS_ORIGINS`/`PORT`/`FLASK_DEBUG` 均改为环境变量；默认关 debug
-> - 游客匹配 bug（`None==None`）修复；匹配队列改为单结构列表 + RLock，同账号去重不会死循环
-> - 已结束房间由后台 reaper（`_reap_ended_rooms`，宽限 120s）统一回收，修复内存泄漏
-> - place_ships / attack / 魔法目标均有服务端校验；surrender 有 `_identity_ok`
-> - requirements.txt 已锁版本并补 eventlet；db 层写操作统一持锁 + 列名白名单 + 补索引
-> - game.js：`ensureSocket()` 统一连接管理（不再重复建连）；`#effect-indicators` 已补；猜拳文案映射已修正；「神之宣告」出牌前可选效果（`promptDivineDecreeChoice` → `targets: {effect_choice}`）
-> - eventlet `monkey_patch()` 已移至 server.py 首行（在所有 import 之前）
-> - 已删除死代码：`process_match_queue`、lobby 三方法（前端仍监听的 lobby 事件为历史遗留空壳）
+> 🔧 **2026-09-11 安全/健壮性修复批**（详见 `docs/FIX_PLAN.md` 与 `tests/test_fixes_regression.py`）：
+> 12 个 `test_*` 事件改由 `ENABLE_TEST_EVENTS` 开关控制；`SECRET_KEY`/`CORS_ORIGINS`/`PORT`/`FLASK_DEBUG`
+> 改环境变量；游客匹配 bug（`None==None`）修复、匹配队列改单结构列表 + RLock；已结束房间由
+> reaper 回收；`eventlet.monkey_patch()` 移到所有 import 之前；`ensureSocket()` 统一连接管理。
 
 > 🔧 **2026-09-12 UI 审查修复批**（截图逐像素审查，详见 `docs/UI_REVIEW_FIXES.md`）：
 > - `#effect-status-bar` 默认 `hidden` + `initEffectStatusBarSync()`——不再渲染成一条空白横条
@@ -208,7 +198,7 @@ game_logs, is_ai_room, shenwei_holes ...
 
 ---
 
-## 5. Socket.IO 事件（55 个，精确名；数法：`(Select-String -Path server.py -Pattern '@socketio\.on\(').Count`）
+## 5. Socket.IO 事件（56 个，精确名；数法：`(Select-String -Path server.py -Pattern '@socketio\.on\(').Count`）
 
 > ⚠️ **事件名易错**，以下为 grep 实测的精确字符串。常见误写：`use_magic`（实为 **`use_magic_card`**）、`end_turn_btn`（实为 **`end_turn`**）、`confirm_reinforcement`（实为 **`confirm_reinforcement_position`**）。
 
@@ -264,6 +254,7 @@ game_logs, is_ai_room, shenwei_holes ...
 | `lobby_refresh` | 手动刷新（未订阅时顺带订阅） |
 | `lobby_create_room` | 在大厅建房（内部复用 `create_room`，不另写一份建房逻辑） |
 | `lobby_chat_send` | 大厅公屏发言（成员 + 1s 防刷 + 120 字截断） |
+| `close_room` | **解散自己主持的、还没开打的房**（三条校验：仍 `waiting` + 房内恰好 1 人 + 就是调用者自己） |
 
 > 服务端 → 客户端新增 4 个：`lobby_hello`（**只发给订阅者**，带身份键 `key`）/ `lobby_state`（广播给 `'__lobby__'` 房间）/
 > `lobby_chat` / `lobby_chat_history`。⚠️ `lobby_state` 是一条广播，**没法逐人改 `is_me`**，所以前端拿 `lobby_hello.key` 自己比对。
@@ -722,6 +713,17 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 4. **★ 房间列表必须过滤"房主已离线"。** 房间回收 TTL 是 **1 小时**（`_WAITING_ROOM_TTL`），
    房主关掉标签页后房间还要在内存里躺一小时 —— 不加这条就会挂出一堆"点进去没人"的僵尸房。
 
+5. **★ 上线后作者实测到的真缺陷：连点「创建房间」→ 大厅堆出 7 间同名房。**
+   复现确认「一次点击 = 一间房」（ack 正常、界面也正常跳屏），**不是**双击或重复绑定 ——
+   是**旧房永不回收**：等待房 TTL 是 **1 小时**，而大厅的可见规则只要求「房主仍在线」，
+   房主就是他自己，当然一直在线上。**两条规则各自都没错，合起来却把 7 间房全留在了榜上。**
+   修法三件：① 建房前 `_recycle_host_waiting_rooms` 回收自己上一间等待房
+   （**一个玩家同时只能主持一间**；⚠️ 只回收 `waiting` 的，已开打的绝不能碰）；
+   ② 列表层按房主去重兜底；③ 新增 `close_room` + 自定义房界面的「解散房间」——
+   等待房此前**没有任何主动出口**，建错了只能干等一小时。
+   👉 通用：**凡"自动过期"兜底的资源，都要问一句"过期之前它会一直挂在谁眼前"** ——
+   1 小时的 TTL 对内存是够用的，对**列表**是灾难。
+
 **顺带修掉的一个真 bug（就是 CLAUDE.md 那条老规矩的又一次复现）**：
 公屏的 `lobby_chat_history` 第一版是**"清空重铺"**，而"补发的历史"与"实时推送"**会重叠** ——
 自己刚发的那条已经上屏了，紧接着来的历史把它整段冲掉（**A 自己看不到、B 看得到**，
@@ -810,7 +812,7 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 | **`docs/WALLPAPER_ENGINE.md`** | **2026-09-15 动态壁纸（Wallpaper Engine 接入）：三条导入通道与各自可见范围、创意工坊目录解析与 preview 陷阱、媒体路由的安全模型、视觉增强的两条硬规则（不改盒模型 / 含 fixed 后代的元素不许 transform）** |
 | **`docs/BATCH_2026_09_17.md`** | **2026-09-17 缺陷批（11 条）：逐条现象/根因/修法/验证 —— 冻结计数只算活船、败者食尘大回合级归零、越战越勇即时 +1、条件不满足不吞牌（`_refund_card_to_hand`）、死者苏生放置格、回光返照清错棋盘、仁王之盾棋盘选船、连锁弹窗卡预览、排行榜头像与个人信息详情** |
 | **`docs/PROFILE_CARD_2026_09_17.md`** | **2026-09-17 个人信息名片 / 界面设置改版设计稿（第 1 批）：分层名片 + 双态弹窗、设置左导航、称号/标签/头像框/底色/展示开关、隐私默认不公开对局历史；§13 是实施记录（4 个真问题 + 工具假红清单）** |
-| **`docs/LOBBY_2026_09_18.md`** | **2026-09-18 大厅系统：冻结契约（5 个上行事件 / 4 个下行事件 / `lobby_state` 字段 / status 四态 / 房间列表四条可见规则）、`LobbyManager` 与在线表口径、实施中实测到的 3 个真问题（房主离线的僵尸房、建房者被显示成"对局中"、公屏历史"清空重铺"冲掉实时消息）** |
+| **`docs/LOBBY_2026_09_18.md`** | **2026-09-18 大厅系统：冻结契约（5 个上行事件 / 4 个下行事件 / `lobby_state` 字段 / status 四态 / 房间列表四条可见规则）、`LobbyManager` 与在线表口径、实施中实测到的 4 个真问题（房主离线的僵尸房、建房者被显示成"对局中"、公屏历史"清空重铺"冲掉实时消息、连点建房堆出 7 间同名房）** |
 | **`docs/PROFILE_CARD_2026_09_17_PLAN.md`** | **同一批次的实现计划（票 + 依赖图）：冻结的接口契约（8 字段全发、三个 `show_*` 同进同出）与 DOM 契约（查看面 `#opponent-stats-modal` 与编辑面 `#profile-modal` 是**两块面**）、文件独占分工、每票完成判据 —— 动手前先读它，别照旧设计稿的初版契约改** |
 | `docs/CHAIN_ENGINE_SPEC.md` | 连锁引擎设计稿（⚠️ 实施前的文档，开头已补 2026-09-13 实测校准表） |
 | `README.md` | 面向用户的功能/玩法说明（测试数/文件清单已校准） |

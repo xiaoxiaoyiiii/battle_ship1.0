@@ -948,28 +948,69 @@ def _lobby_player_status(sid: str, in_game: set, in_room: set) -> str:
     return 'idle'
 
 
+def _recycle_host_waiting_rooms(player_id: str) -> list:
+    """回收该玩家**之前主持的、还没人入座**的等待房，返回被回收的 room_id 列表。
+
+    ★ 为什么必须有它（2026-09-18 大厅批上线后实测的缺陷）：
+    作者截图里大厅房间列表挂着 **7 间一模一样的房**（同名、同房主、都是 1/2）。
+    复现确认「一次点击 = 一间房」（ack 正常、界面也正常跳到自定义房界面），
+    所以不是双击/重复绑定 —— 是**玩家每回大厅点一次「创建房间」就多一间，而旧房
+    永远不会消失**：
+
+      · 等待房的回收 TTL 是 1 小时（`_WAITING_ROOM_TTL`）；
+      · 大厅的可见规则只要求「房主仍在线」，而房主就是他自己 —— 当然一直在线上。
+
+    于是两条规则各自都"没错"，合起来却把 7 间房全留在了榜上。
+    规则改成：**一个玩家同时最多主持一间等待中的房**，再次建房 = 换一间。
+    （只回收 `waiting` 且房内恰好 1 人、且那个人就是自己的房 —— 已经开打的、
+    或者已经有人入座的房一律不碰。）
+    """
+    reaped = []
+    for room_id, room in list(room_manager.get_all_rooms().items()):
+        if getattr(room, 'state', None) != 'waiting':
+            continue
+        entries = list(room.players.items())
+        if len(entries) != 1 or entries[0][0] != player_id:
+            continue
+        room_manager.delete_room(room_id)
+        reaped.append(room_id)
+    return reaped
+
+
 def _lobby_visible_rooms() -> list[dict]:
-    """大厅房间列表。四条可见规则见 docs/LOBBY_2026_09_18.md §1.4。
+    """大厅房间列表。可见规则见 docs/LOBBY_2026_09_18.md §1.4。
 
     最容易被漏掉的是第 4 条「房主仍在线」：房间的回收 TTL 是 1 小时
     （_WAITING_ROOM_TTL），房主关掉标签页后房间还要在内存里躺一小时 ——
     不加这条就会在大厅里挂出一堆"点进去没人"的僵尸房。
+
+    第 5 条（**同一房主只列最新的一间**）是防御性的：正常路径下
+    `_recycle_host_waiting_rooms` 已经保证一个玩家只有一间等待房，但历史遗留
+    （本批上线前建的房）、或者日后新增的建房路径都可能绕过它 —— 列表层再兜一次，
+    大厅就永远不会出现"同一个人的一串同名房"。
     """
     online = set(lobby_manager.presence().keys())
     rows = []
-    for room in room_manager.get_all_rooms().values():
+    seen_hosts = set()
+    # 按建房时间**倒序**扫：同一房主先命中的就是最新的那一间
+    ordered = sorted(room_manager.get_all_rooms().values(),
+                     key=lambda r: getattr(r, 'created_at', 0) or 0, reverse=True)
+    for room in ordered:
         if getattr(room, 'state', None) != 'waiting':
             continue
         if getattr(room, 'is_ai_room', False):
             continue
         if not bool(getattr(room, 'public', True)):
             continue
-        players = list(room.players.values())
-        if len(players) != 1:
+        entries = list(room.players.items())
+        if len(entries) != 1:
             continue
-        host = players[0]
+        host_key, host = entries[0]
         if not host.sid or host.sid not in online:
             continue
+        if host_key in seen_hosts:
+            continue          # 同一房主的第二间（见上面的第 5 条）
+        seen_hosts.add(host_key)
         rows.append({
             'room_id': room.id,
             'name': str(getattr(room, 'name', '') or '') or f'{host.name}的房间',
@@ -1732,10 +1773,13 @@ def lobby():
 @socketio.on('create_room')
 def handle_create_room(data):
     data = data if isinstance(data, dict) else {}
-    room_id = room_manager.create_room()
     # 优先使用登录后的 user_id，否则使用 sid（游客模式）
     player_id = session.get('user_id', request.sid)
     player_name = session.get('username', data.get('player_name', '匿名玩家'))
+    # ★ 先回收自己上一间等待房，再建新的：一个玩家同时只能主持一间等待中的房。
+    # 少了这一步，每点一次「创建房间」大厅里就多挂一间同名房（实测 7 间）。
+    _recycle_host_waiting_rooms(player_id)
+    room_id = room_manager.create_room()
     # 明确指定socket_id加入Socket.IO房间
     join_room(room_id, request.sid)
     room = room_manager.get_room(room_id)
@@ -2261,6 +2305,34 @@ def handle_lobby_chat_send(data=None):
     return {'status': 'success', 'ts': item['ts']}
 
 
+@socketio.on('close_room')
+def handle_close_room(data=None):
+    """解散自己主持的、还没开打的房。
+
+    为什么要有它：大厅批上线后实测到"同一连接连点 7 次建房 → 大厅挂出 7 间同名房"，
+    根因是等待房既不会自动回收（TTL 1 小时），玩家也**没有任何主动解散的出口** ——
+    建错了只能干等一小时。这是那个出口。
+
+    三条校验（少一条就是漏洞）：
+      ① 房必须存在且仍是 `waiting`（已开打的房不许被房主一键解散，那会坑对手）；
+      ② 房内**恰好 1 人**（只有房主自己，没有别人正在等他）；
+      ③ 那 1 人就是**调用者自己** —— 用与建房同一条口径取 key
+         （登录态 = session user_id，游客 = sid），否则任何人都能解散别人的房。
+    """
+    data = data if isinstance(data, dict) else {}
+    room_id = str(data.get('room_id') or '')
+    player_id = session.get('user_id', request.sid)
+    room = room_manager.get_room(room_id) if room_id else None
+    if room is None:
+        return {'status': 'error', 'message': '房间不存在'}
+    if getattr(room, 'state', None) != 'waiting':
+        return {'status': 'error', 'message': '对局已开始，不能解散'}
+    entries = list(room.players.items())
+    if len(entries) != 1 or entries[0][0] != player_id:
+        return {'status': 'error', 'message': '只能解散自己创建的房间'}
+    room_manager.delete_room(room_id)
+    _broadcast_lobby_state()
+    return {'status': 'success', 'room_id': room_id}
 
 
 

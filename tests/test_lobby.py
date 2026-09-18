@@ -583,6 +583,126 @@ def test_chat_broadcast_and_identity_key(sockets):
     assert msg_a['key'] == msg_b['key']
 
 
+
+# ===========================================================================
+# 7. 「连点创建房间 → 大厅堆出一串同名房」（2026-09-18 实测缺陷的回归）
+# ===========================================================================
+# 缺陷原貌（作者截图）：大厅房间列表挂着 **7 间一模一样的房**（同名、同房主、都是 1/2）。
+# 实测复现确认「一次点击 = 一间房」（ack 正常、界面也正常跳到自定义房界面），
+# 所以**不是**双击或重复绑定 —— 而是旧房永远不会消失：
+#   · 等待房的回收 TTL 是 1 小时（_WAITING_ROOM_TTL）；
+#   · 大厅的可见规则只要求「房主仍在线」，而房主就是他自己，当然一直在线上。
+# 两条规则各自都"没错"，合起来却把 7 间房全留在了榜上。
+def test_repeated_create_recycles_previous_waiting_room(sockets):
+    """★ 同一连接连点 N 次「创建房间」→ 大厅里只该剩 1 间，服务端也只该剩 1 间。"""
+    c = sockets()
+    c.emit('lobby_subscribe', {'player_name': '房主'})
+    c.get_received()
+    for _ in range(5):
+        c.emit('lobby_create_room', {'name': '', 'public': True})
+    state = _last(c, 'lobby_state')
+    assert len(state['rooms']) == 1, f'连点 5 次应当只剩 1 间，实际 {state["rooms"]}'
+    waiting = [r for r in server.room_manager.get_all_rooms().values()
+               if r.state == 'waiting']
+    assert len(waiting) == 1, f'服务端也只该剩 1 间等待房，实际 {len(waiting)}'
+
+
+def test_repeated_create_via_plain_create_room_also_recycles(monkeypatch):
+    """自定义房页面的「创建房间」走的是同一个 create_room，必须同样收敛。"""
+    _as_request(monkeypatch, 'sid-host', uid='u-host', name='房主')
+    ids = [server.handle_create_room({})['room_id'] for _ in range(4)]
+    alive = [rid for rid in ids if server.room_manager.get_room(rid) is not None]
+    assert alive == [ids[-1]], f'只该留下最后建的那一间，实际留下 {alive}'
+
+
+def test_recycle_leaves_started_room_alone(monkeypatch):
+    """★ 已开打的房不许被「再次建房」回收掉 —— 那会坑掉正在等你的对手。"""
+    _as_request(monkeypatch, 'sid-host', uid='u-host', name='房主')
+    first = server.handle_create_room({})
+    server.room_manager.get_room(first['room_id']).state = 'placing_ships'
+    second = server.handle_create_room({})
+    assert server.room_manager.get_room(first['room_id']) is not None, '已开打的房不该被回收'
+    assert server.room_manager.get_room(second['room_id']) is not None
+
+
+def test_recycle_leaves_other_players_room_alone(monkeypatch):
+    """回收只看"是不是自己的房"，不能碰别人的。"""
+    _as_request(monkeypatch, 'sid-a', uid='u-a', name='甲')
+    mine = server.handle_create_room({})
+    _as_request(monkeypatch, 'sid-b', uid='u-b', name='乙')
+    other = server.handle_create_room({})
+    assert server.room_manager.get_room(mine['room_id']) is not None, '甲的房不该被乙建房时回收'
+    assert server.room_manager.get_room(other['room_id']) is not None
+
+
+def test_room_list_lists_only_newest_room_per_host():
+    """★ 防御层：即使真存在同一个人的多间等待房，大厅也只列**最新**的一间。
+
+    正常路径下 _recycle_host_waiting_rooms 已经保证了一人一间，但历史遗留
+    （本批上线前建的房）或日后新增的建房路径都可能绕过它 —— 列表层再兜一次。
+    """
+    old = _make_waiting_room('s-host', host='小明', name='第一间')
+    old.created_at = 100.0
+    new = _make_waiting_room('s-host', host='小明', name='第二间')
+    new.created_at = 200.0
+    rooms = server.build_lobby_state()['rooms']
+    assert len(rooms) == 1, f'同一房主只该列一间，实际 {rooms}'
+    assert rooms[0]['name'] == '第二间', '留下的应当是最新的那一间'
+
+
+# ===========================================================================
+# 8. 解散房间（等待房此前没有任何主动出口）
+# ===========================================================================
+def test_close_room_removes_waiting_room(sockets):
+    c = sockets()
+    c.emit('lobby_subscribe', {'player_name': '房主'})
+    c.get_received()
+    c.emit('lobby_create_room', {'name': '临时房', 'public': True})
+    room_id = _last(c, 'lobby_state')['rooms'][0]['room_id']
+    c.emit('close_room', {'room_id': room_id})
+    assert server.room_manager.get_room(room_id) is None, '解散后房间应当真的没了'
+    assert _last(c, 'lobby_state')['rooms'] == [], '大厅列表也该同步'
+
+
+def test_close_room_rejects_other_peoples_room(sockets):
+    """★ 路人不能解散别人的房（这条是漏洞守卫，不是体验问题）。"""
+    host = sockets()
+    host.emit('lobby_subscribe', {'player_name': '房主'})
+    host.get_received()
+    host.emit('lobby_create_room', {'name': '别人的房', 'public': True})
+    room_id = _last(host, 'lobby_state')['rooms'][0]['room_id']
+
+    other = sockets()
+    other.emit('lobby_subscribe', {'player_name': '路人'})
+    other.get_received()
+    other.emit('close_room', {'room_id': room_id})
+    assert server.room_manager.get_room(room_id) is not None, '路人不能解散别人的房'
+
+
+def test_close_room_rejects_started_room(sockets):
+    """已开打的房不许被房主一键解散（那会坑掉正在等他的对手）。"""
+    c = sockets()
+    c.emit('lobby_subscribe', {'player_name': '房主'})
+    c.get_received()
+    c.emit('lobby_create_room', {'name': 'x', 'public': True})
+    room_id = _last(c, 'lobby_state')['rooms'][0]['room_id']
+    server.room_manager.get_room(room_id).state = 'placing_ships'
+    c.emit('close_room', {'room_id': room_id})
+    assert server.room_manager.get_room(room_id) is not None, '已开打的房不许解散'
+
+
+def test_close_room_unknown_room_is_noop(sockets):
+    c = sockets()
+    c.emit('close_room', {'room_id': 'nope'})
+    assert server.room_manager.get_room('nope') is None
+
+
+def test_close_room_requires_room_id(sockets):
+    c = sockets()
+    c.emit('close_room', {})
+    assert server.room_manager.get_all_rooms() is not None      # 不抛异常即可
+
+
 def test_match_marks_player_as_matching(sockets):
     a = sockets()
     a.emit('lobby_subscribe', {'player_name': '甲'})

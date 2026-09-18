@@ -853,6 +853,9 @@ const customRoomInfo = document.getElementById('custom-room-info');
 const customCurrentRoomId = document.getElementById('custom-current-room-id');
 const copyInviteLinkBtn = document.getElementById('copy-invite-link');
 const inviteLinkMsg = document.getElementById('invite-link-msg');
+// 解散房间（大厅批补）：等待房不自动回收，玩家需要一个主动出口
+const customCloseRoomBtn = document.getElementById('custom-close-room');
+const customCloseRoomMsg = document.getElementById('custom-close-room-msg');
 const customPlayerNameInput = document.getElementById('custom-player-name');
 const customRoomCodeInput = document.getElementById('custom-room-code');
 const backToMainBtn = document.getElementById('back-to-main');
@@ -4024,6 +4027,7 @@ function bindEventListeners() {
 if (copyInviteLinkBtn) copyInviteLinkBtn.addEventListener('click', copyInviteLink);
     customJoinRoomBtn.addEventListener('click', () => customRoomIdInput.classList.remove('hidden'));
     customConfirmJoinBtn.addEventListener('click', customJoinRoom);
+    if (customCloseRoomBtn) customCloseRoomBtn.addEventListener('click', closeCustomRoom);
     backToMainBtn.addEventListener('click', () => {
         history.pushState({}, '', '/');
         switchScreen(startScreen);
@@ -4498,6 +4502,32 @@ function customJoinRoom() {
         } else {
             showAlert(response.message);
         }
+    });
+}
+
+// 解散自己主持的、还没开打的房（2026-09-18 大厅批补的出口）。
+//
+// 背景：等待房既不会自动回收（服务端 _WAITING_ROOM_TTL = 1 小时），玩家此前也没有
+// 任何主动解散的入口 —— 建错了只能干等一小时，大厅列表里还会一直挂着。
+// 服务端会校验「房内恰好 1 人且就是调用者自己」，所以这里不需要做权限判断。
+function closeCustomRoom() {
+    const roomId = gameState.roomId
+        || (customCurrentRoomId ? customCurrentRoomId.textContent.trim() : '');
+    if (!roomId) return;
+    onSocketReady((socket) => {
+        socket.emit('close_room', { room_id: roomId }, (response) => {
+            if (!response || response.status !== 'success') {
+                showAlert((response && response.message) || '解散房间失败');
+                return;
+            }
+            gameState.roomId = null;
+            gameState.playerId = null;
+            if (customRoomInfo) customRoomInfo.classList.add('hidden');
+            if (customRoomIdInput) customRoomIdInput.classList.add('hidden');
+            if (customCloseRoomMsg) customCloseRoomMsg.textContent = '';
+            if (customCurrentRoomId) customCurrentRoomId.textContent = '';
+            showMessage('房间已解散');
+        });
     });
 }
 

@@ -128,7 +128,15 @@ async function launch(tag, port) {
   }
   return {
     tag: tag, ev: ev, send: send, waitFor: waitFor,
-    close: () => { try { ws.close(); } catch (e) {} try { proc.kill(); } catch (e) {} },
+    // ⚠️ 收尾也要按 profile 清理：`proc.kill()` 只杀掉直接子进程，Edge 还会留下一串
+    //    孙进程继续占着连接 —— 下一次跑工具时它们就是"多出来的在线玩家"，
+    //    会让在线人数、房间列表等断言莫名其妙地对不上（实测踩过一次：
+    //    在线人数显示 3，而工具只开了 2 个浏览器）。
+    close: () => {
+      try { ws.close(); } catch (e) { /* ignore */ }
+      try { proc.kill(); } catch (e) { /* ignore */ }
+      preClean(tag);
+    },
   };
 }
 
@@ -158,7 +166,9 @@ const ROOMS = '(function(){'
   + '   var nm = r.querySelector(".lobby-room-name");'
   + '   var hs = r.querySelector(".lobby-room-host");'
   + '   var st = r.querySelector(".lobby-room-seats");'
-  + '   out.push({ name: nm ? nm.textContent.trim() : "", host: hs ? hs.textContent.trim() : "", seats: st ? st.textContent.trim() : "" });'
+  + '   var jb = r.querySelector(".lobby-room-join");'
+  + '   out.push({ name: nm ? nm.textContent.trim() : "", host: hs ? hs.textContent.trim() : "",'
+  + '     seats: st ? st.textContent.trim() : "", roomId: jb ? (jb.dataset.room || "") : "" });'
   + ' }); return out; })()';
 
 const CHAT_TEXTS = '(function(){'
@@ -261,7 +271,14 @@ try {
   await B.waitFor(async () => await B.ev('document.getElementById("lobby-queue-casual").textContent.trim() === "0"'), 15000, '队列回到 0');
   check(true, '取消匹配后队列回到 0（B 那边同步）');
 
-  // --- 7. 公开房 ------------------------------------------------------------
+  // --- 7. 私密房不上榜（先做，因为它会被下一节建房回收掉）-------------------
+  await A.ev('gameState.socket.emit("lobby_create_room", { name: "私密房", public: false }, function(){}); 1');
+  await sleep(1500);
+  const roomsAfterPrivate = await B.ev(ROOMS);
+  check(roomsAfterPrivate.every((r) => r.name !== '私密房'),
+    '私密房不出现在别人的大厅列表里', roomsAfterPrivate);
+
+  // --- 8. 公开房 ------------------------------------------------------------
   await A.ev('(function(){ var i = document.getElementById("lobby-room-name"); i.value = "测试房";'
     + ' var p = document.getElementById("lobby-room-public"); p.checked = true;'
     + ' document.getElementById("lobby-create-room").click(); return 1; })()');
@@ -278,17 +295,41 @@ try {
   check(!!target && target.host.indexOf('甲') >= 0, '房间行显示房主', target);
   check(!!target && target.seats === '1/2', '房间行显示座位 1/2', target);
 
-  // --- 8. 私密房不上榜 ------------------------------------------------------
-  await A.ev('(function(){ history.pushState({}, "", "/"); switchScreen(startScreen); return 1; })()');
+  // --- 9. ★ 重复建房只留一间（2026-09-18 实测缺陷的回归）--------------------
+  // 缺陷原貌：作者截图里大厅挂着 **7 间一模一样的房**。复现确认「一次点击 = 一间房」，
+  // 不是双击/重复绑定 —— 是旧房永不回收（等待房 TTL 1 小时 + 房主一直在线）。
+  // 修法：一个玩家同时只能主持一间等待房，再次建房先回收旧的。
+  const backToLobby = '(function(){ history.pushState({}, "", "/"); switchScreen(startScreen); return 1; })()';
+  for (let i = 0; i < 2; i++) {
+    await A.ev(backToLobby);
+    await A.ev(ENTER_LOBBY('甲'));
+    await A.waitFor(async () => await A.ev('gameState.lobbySubscribed === true'), 10000, 'A 回到大厅');
+    await A.ev('(function(){ var i = document.getElementById("lobby-room-name"); i.value = "重复房";'
+      + ' var p = document.getElementById("lobby-room-public"); p.checked = true;'
+      + ' document.getElementById("lobby-create-room").click(); return 1; })()');
+    await A.waitFor(async () => await A.ev('!!document.getElementById("custom-current-room-id").textContent.trim()'), 20000, 'A 再次建房');
+  }
+  await sleep(1200);
+  const roomsAfterRepeat = await B.ev(ROOMS);
+  check(roomsAfterRepeat.length === 1,
+    '★ 连点建房后大厅里仍只有 1 间（不堆同名房）', roomsAfterRepeat);
+  check(roomsAfterRepeat.every((r) => r.name === '重复房'),
+    '留下的应当是最后建的那一间', roomsAfterRepeat);
+
+  // --- 10. ★ 解散房间 --------------------------------------------------------
+  await A.ev('document.getElementById("custom-close-room").click()');
+  await B.waitFor(async () => (await B.ev(ROOMS)).length === 0, 15000, 'B 的列表变空');
+  check(true, '★ 房主「解散房间」后，别人的列表里立刻消失');
+  const closedHidden = await A.ev('document.getElementById("custom-room-info").classList.contains("hidden")');
+  check(closedHidden === true, '解散后房主那边也收起了房间信息块');
+
+  // --- 11. 离开大厅 ≠ 掉线 --------------------------------------------------
+  // A 用直接 emit 再开一间（点按钮会跳屏，这里要让 A 留在大厅上做退订断言）
+  await A.ev(backToLobby);
   await A.ev(ENTER_LOBBY('甲'));
   await A.waitFor(async () => await A.ev('gameState.lobbySubscribed === true'), 10000, 'A 回到大厅');
-  await A.ev('gameState.socket.emit("lobby_create_room", { name: "私密房", public: false }, function(){}); 1');
+  await A.ev('gameState.socket.emit("lobby_create_room", { name: "测试房", public: true }, function(){}); 1');
   await sleep(1500);
-  const roomsAfterPrivate = await B.ev(ROOMS);
-  check(roomsAfterPrivate.every((r) => r.name !== '私密房'),
-    '私密房不出现在别人的大厅列表里', roomsAfterPrivate);
-
-  // --- 9. 离开大厅 ≠ 掉线 ---------------------------------------------------
   await A.ev('document.getElementById("back-to-main-from-lobby").click()');
   await A.waitFor(async () => await A.ev('gameState.lobbySubscribed === false'), 10000, 'A 退订');
   check(true, 'A 返回首页后 lobbySubscribed=false（真的退订了）');
@@ -297,14 +338,18 @@ try {
   check(!!stillThere, 'A 离开大厅后**仍显示在线**（离开大厅 ≠ 掉线）', stillThere);
   const roomsStill = await B.ev(ROOMS);
   check(roomsStill.some((r) => r.name === '测试房'), '房主仍在线，房间仍挂在列表里', roomsStill);
+  // ⚠️ 房间号要**现取**：上面第 9 节把 A 的旧房回收过，早先捕获的 roomId 已经失效
+  //    （第一版就是拿旧 id 去比，报了个"B 从大厅进入房间"的假红）。
+  const joinRoomId = (roomsStill.find((r) => r.name === '测试房') || {}).roomId;
+  check(!!joinRoomId, '房间行带得出房间号（加入按钮的 data-room）', joinRoomId);
 
   await B.ev('(function(){ var rows = document.querySelectorAll("#lobby-rooms-list .lobby-room");'
     + ' for (var i = 0; i < rows.length; i++) {'
     + '   var n = rows[i].querySelector(".lobby-room-name");'
     + '   if (n && n.textContent.trim() === "测试房") { rows[i].querySelector(".lobby-room-join").click(); return 1; }'
     + ' } return 0; })()');
-  await B.waitFor(async () => await B.ev('gameState.roomId === ' + jsStr(roomId)), 20000, 'B 从大厅进入房间');
-  check(true, 'B 点「加入」真的进了这个房（gameState.roomId 一致）', roomId);
+  await B.waitFor(async () => await B.ev('gameState.roomId === ' + jsStr(joinRoomId)), 20000, 'B 从大厅进入房间');
+  check(true, 'B 点「加入」真的进了这个房（gameState.roomId 一致）', joinRoomId);
 
   // --- 布局 -----------------------------------------------------------------
   const layout = await B.ev('(function(){'

@@ -4836,9 +4836,8 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, rgba(255, 2
 
 @keyframes rankSpin    { to { transform: rotate(360deg); } }
 @keyframes rankBreath  { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
-@keyframes rankFlow    { 0% { background-position: 0% 50%, 0 0; } 100% { background-position: 200% 50%, 0 0; } }
-@keyframes rankDrift   { 0% { background-position: 0 0, 0 0, 0 0, 0 0, 0 0, 50% 0%, 0 0; } 100% { background-position: 60px 90px, -50px 70px, 40px -60px, -70px 40px, 30px 80px, 50% 0%, 0 0; } }
 @keyframes rankTwinkle { 0%, 100% { opacity: 0.85; } 50% { opacity: 1; } }
+@keyframes rankSwatchFlow { 0% { background-position: 0 0, 0 0; } 100% { background-position: 96px 96px, 0 0; } }
 
 /* ---- 头像框（真卡片上的头像）---- */
 .pf-avatar[data-frame="bronze_compass"]  { box-shadow: 0 0 0 3px #b08d5a, 0 0 14px rgba(176, 141, 90, 0.45), 0 10px 24px rgba(0, 0, 0, 0.35); }
@@ -4862,19 +4861,70 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, rgba(255, 2
 
 /* ---- 名片底色（卡片大封面）---- */
 .pf-cover[data-bg="shoal"]       { background: radial-gradient(460px 180px at 78% 0%, rgba(255, 224, 160, 0.5), transparent 70%), linear-gradient(135deg, #c9a06a, #4a3a26); }
-/* 风暴：云层缓慢横移 */
-.pf-cover[data-bg="storm"]       { background: radial-gradient(460px 200px at 30% 10%, rgba(148, 163, 184, 0.55), transparent 72%), repeating-linear-gradient(115deg, rgba(255, 255, 255, 0.06) 0 2px, transparent 2px 10px), linear-gradient(135deg, #475569, #0b1220); background-size: auto, 220% 100%, auto; animation: rankFlow 26s linear infinite; }
+/* 风暴：雨幕按整块 tile 斜向流动（无缝），云团在上层缓慢漂移 */
+.pf-cover[data-bg="storm"] {
+    background-image:
+        radial-gradient(460px 200px at 30% 10%, rgba(148, 163, 184, 0.55), transparent 72%),
+        repeating-linear-gradient(115deg, rgba(255, 255, 255, 0.07) 0 2px, rgba(255, 255, 255, 0) 2px 10px),
+        repeating-linear-gradient(70deg, rgba(180, 200, 220, 0.05) 0 2px, rgba(180, 200, 220, 0) 2px 17px),
+        linear-gradient(135deg, #475569, #0b1220);
+    background-size: auto, 90px 90px, 130px 130px, auto;
+    animation: rankStormFlow 9s linear infinite;
+}
+@keyframes rankStormFlow {
+    0%   { background-position: 0 0, 0 0, 0 0, 0 0; }
+    100% { background-position: 0 0, 90px 90px, 130px 130px, 0 0; }
+}
+
 /* 深渊：一线冷光在呼吸 */
 .pf-cover[data-bg="abyss"]       { background: radial-gradient(520px 200px at 82% 100%, rgba(56, 189, 248, 0.28), transparent 70%), linear-gradient(160deg, #05080f, #0a1526 55%, #020509); animation: rankBreath 5.5s ease-in-out infinite; }
-/* 鎏金（船长）：熔金纹在暗底上流动 */
-.pf-cover[data-bg="molten_gold"] { background: radial-gradient(420px 170px at 22% 8%, rgba(255, 196, 88, 0.5), transparent 68%), repeating-linear-gradient(105deg, rgba(255, 176, 64, 0.22) 0 3px, transparent 3px 15px), linear-gradient(135deg, #3a2408, #150d04); background-size: auto, 260% 100%, auto; animation: rankFlow 14s linear infinite; }
-/* 星海（大舰长）：星点缓慢漂移 + 整体轻微闪烁 */
-.pf-cover[data-bg="starfield"]   { background: radial-gradient(2px 2px at 18% 26%, rgba(255, 255, 255, 0.95), transparent 60%), radial-gradient(1.6px 1.6px at 62% 14%, rgba(255, 255, 255, 0.85), transparent 60%), radial-gradient(1.6px 1.6px at 82% 42%, rgba(200, 225, 255, 0.9), transparent 60%), radial-gradient(1.4px 1.4px at 36% 62%, rgba(255, 255, 255, 0.8), transparent 60%), radial-gradient(1.2px 1.2px at 72% 74%, rgba(220, 235, 255, 0.85), transparent 60%), radial-gradient(520px 220px at 70% 8%, rgba(96, 165, 250, 0.35), transparent 70%), linear-gradient(150deg, #060b1c, #0b1733 60%, #03060f); animation: rankDrift 40s linear infinite, rankTwinkle 6s ease-in-out infinite; }
+/* 鎏金（船长）：熔金在暗底上**持续流动** —— 矿脉按整块 tile 平移（无缝），
+   外加一道高光横扫。⚠️ 动的是"看得见的矿脉层"，不是那团几乎看不见的径向光。 */
+.pf-cover[data-bg="molten_gold"] {
+    background-image:
+        linear-gradient(100deg, transparent 38%, rgba(255, 228, 156, 0.32) 50%, transparent 62%),
+        repeating-linear-gradient(118deg, rgba(255, 178, 64, 0.34) 0 3px, rgba(255, 178, 64, 0) 3px 13px),
+        repeating-linear-gradient(62deg, rgba(255, 138, 30, 0.20) 0 2px, rgba(255, 138, 30, 0) 2px 19px),
+        radial-gradient(46% 62% at 22% 16%, rgba(255, 208, 112, 0.55), transparent 72%),
+        radial-gradient(40% 60% at 84% 96%, rgba(255, 150, 40, 0.30), transparent 74%),
+        linear-gradient(135deg, #2d1a06, #120a02 58%, #1e1207);
+    background-size: 260% 100%, 120px 120px, 160px 160px, auto, auto, auto;
+    animation: rankGoldFlow 6s linear infinite;
+}
+@keyframes rankGoldFlow {
+    0%   { background-position: -70% 0, 0 0, 0 0, 0 0, 0 0, 0 0; }
+    100% { background-position: 170% 0, 120px 120px, 160px 160px, 0 0, 0 0, 0 0; }
+}
+
+/* 星海（大舰长）：三层星点（远近不同速度）+ 冷暖两团星云 + 缓慢明暗。
+   星点层都用 px tile 平移整数块 → 无缝，且三层速度不同 → 有景深。 */
+.pf-cover[data-bg="starfield"] {
+    background-image:
+        radial-gradient(1.6px 1.6px at 22px 34px, rgba(255, 255, 255, 0.95), transparent 55%),
+        radial-gradient(1.3px 1.3px at 118px 86px, rgba(226, 240, 255, 0.85), transparent 55%),
+        radial-gradient(1.1px 1.1px at 62px 152px, rgba(255, 255, 255, 0.75), transparent 55%),
+        radial-gradient(1.4px 1.4px at 92px 28px, rgba(255, 255, 255, 0.9), transparent 55%),
+        radial-gradient(1.1px 1.1px at 154px 122px, rgba(200, 225, 255, 0.8), transparent 55%),
+        radial-gradient(70% 90% at 76% 4%, rgba(96, 150, 250, 0.42), transparent 72%),
+        radial-gradient(60% 80% at 12% 92%, rgba(168, 118, 255, 0.30), transparent 74%),
+        linear-gradient(150deg, #05081a, #0a1430 58%, #02040c);
+    background-size: 180px 180px, 180px 180px, 180px 180px, 120px 120px, 120px 120px, auto, auto, auto;
+    animation: rankStarDrift 48s linear infinite, rankStarTwinkle 7s ease-in-out infinite;
+}
+@keyframes rankStarDrift {
+    0%   { background-position: 0 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0; }
+    100% { background-position: 180px 180px, -180px 180px, 180px -180px, -120px -120px, 120px 120px, 0 0, 0 0, 0 0; }
+}
+@keyframes rankStarTwinkle {
+    0%, 100% { filter: brightness(1); }
+    50%      { filter: brightness(1.22); }
+}
+
 /* 编辑面色块 */
 .pf-bg[data-bg="shoal"]       { background: linear-gradient(135deg, #c9a06a, #6b5230); }
 .pf-bg[data-bg="storm"]       { background: linear-gradient(135deg, #475569, #0b1220); }
 .pf-bg[data-bg="abyss"]       { background: linear-gradient(135deg, #0a1526, #010306); }
-.pf-bg[data-bg="molten_gold"] { background: repeating-linear-gradient(105deg, #ffb040 0 4px, #7a4c10 4px 14px); background-size: 200% 100%; animation: rankFlow 9s linear infinite; }
+.pf-bg[data-bg="molten_gold"] { background: repeating-linear-gradient(118deg, #ffc45c 0 3px, #6b3f0c 3px 12px), linear-gradient(135deg, #3a2408, #150d04); background-size: 96px 96px, auto; animation: rankSwatchFlow 5s linear infinite; }
 .pf-bg[data-bg="starfield"]   { background: radial-gradient(2px 2px at 26% 30%, #fff, transparent 60%), radial-gradient(2px 2px at 70% 64%, #cfe3ff, transparent 60%), linear-gradient(135deg, #0b1733, #03060f); animation: rankTwinkle 4s ease-in-out infinite; }
 
 /* 系统设置里关掉动画时，全站动画必须让路（无障碍） */

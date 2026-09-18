@@ -4519,5 +4519,306 @@ html.theme-dark .achievement-unlock .au-item { background: rgba(255, 255, 255, 0
 .match-chip.tag { color: var(--muted, #9aa6b4); }
 html.theme-dark .match-chip { background: rgba(255, 255, 255, 0.06); }
 
+/* ===========================================================================
+   29. 段位：图标配色 / 段位块 / 排位入口 / 段位榜 / 结算积分动画（2026-09-18 追加）
+   =========================================================================== */
+/*
+ * 本节的四条自我约束（都是本项目踩过的坑）：
+ *   ① **不改任何既有元素的盒模型尺寸** —— 本节只新增类与新增控件自己的尺寸；
+ *      「段位越高越重」的视觉全部靠颜色 / 渐变 / 阴影 / 图标本身的像素尺寸，
+ *      不靠改 padding / height / width（CLAUDE.md 第 12 节第 11 条）。
+ *   ② **不给含 position:fixed 后代的元素加 transform / filter** —— 本节的作用对象
+ *      都是叶子节点（图标 SVG / 行 / 面板），`.game-container` / `.game-main-container` /
+ *      `.screen` 这些一个都没碰（第 12 节第 12 条）。
+ *   ③ 段位图标**颜色只在这里**：`rank_icons.js` 里一律 `currentColor`，
+ *      所以 `.rank-icon[data-tier="…"]` 是唯一的配色点（低段位青铜灰 → 船长鎏金 → 大舰长亮金）。
+ *   ④ 第 3 节的通用 `button` 规则带 `background: var(--primary-gradient)`，
+ *      「按钮当色块用」的地方必须显式 background-image（见第 26/23 节同一处教训）。
+ */
+
+/* ---------- 29.1 段位图标：9 个段位各一个颜色 ---------- */
+/* 依次往上：冷灰 → 青铜 → 钢蓝 → 紫 → 青 → 鎏金 → 亮金。 */
+.rank-icon { display: inline-block; vertical-align: -0.22em; flex: 0 0 auto; }
+.rank-icon[data-tier="sailor2"]  { color: #8b95a1; }
+.rank-icon[data-tier="sailor1"]  { color: #a3b1bb; }
+.rank-icon[data-tier="bosun"]    { color: #b98d5a; }
+.rank-icon[data-tier="mate3"]    { color: #7d8ce8; }
+.rank-icon[data-tier="mate2"]    { color: #6f7fe6; }
+.rank-icon[data-tier="mate1"]    { color: #9a6ff0; }
+.rank-icon[data-tier="engineer"] { color: #3fc8b4; }
+.rank-icon[data-tier="captain"]  { color: #ffcb3d; }
+.rank-icon[data-tier="admiral"] {
+    color: #ffe58a;
+    /* 大舰长是**唯一**带光晕的一枚：一眼可辨，且不占任何布局空间（filter 不参与布局）。 */
+    filter: drop-shadow(0 0 5px rgba(255, 214, 102, 0.85));
+}
+
+/* ---------- 29.2 个人信息查看面的段位块（#profile-view-rank） ---------- */
+.pf-rank {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 10px 0 2px;
+    padding: 8px 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 210, 77, 0.26);
+    background: linear-gradient(180deg, rgba(255, 210, 77, 0.10), rgba(255, 255, 255, 0.02));
+}
+.pf-rank .pf-rank-icon { display: inline-flex; align-items: center; flex: 0 0 auto; }
+.pf-rank .pf-rank-label { font-weight: 700; letter-spacing: 0.02em; }
+.pf-rank .pf-rank-bar {
+    flex: 1 1 90px;
+    min-width: 60px;
+    height: 8px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.14);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+    overflow: hidden;
+}
+.pf-rank .pf-rank-bar > i {
+    display: block;
+    height: 100%;
+    width: 0;
+    border-radius: 999px;
+    background-image: linear-gradient(90deg, #c9a227, #ffd24d);
+}
+.pf-rank .pf-rank-next { font-size: 0.72rem; color: var(--muted, #8a94a2); white-space: nowrap; }
+.pf-rank.is-admiral {
+    border-color: rgba(255, 233, 163, 0.6);
+    box-shadow: 0 0 16px rgba(255, 214, 102, 0.26);
+}
+/* 段位块的底色是金色系，浅色主题下要压一点，否则白底金字看不清 */
+html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, rgba(255, 210, 77, 0.18), rgba(255, 255, 255, 0.5)); }
+
+/* ---------- 29.3 匹配等待界面：段位 chip + 自己的段位 ---------- */
+/* ⚠️ 同一个 #opponent-chips 里已经有称号 / 标签 chip：段位 chip 必须跟它们
+   同一行、同样高度，并且在窄屏上**换行**而不是把别的 chip 挤出去。 */
+.match-chip.rank {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 100%;
+    border-color: rgba(255, 210, 77, 0.55);
+    color: #ffe08a;
+    font-weight: 600;
+    background-image: none;         /* 第 3 节通用 button 规则不作用于 span，这里只是保险 */
+}
+.match-chip.rank .rank-chip-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.match-chip.rank.self { border-color: rgba(62, 199, 255, 0.5); color: #cfe9ff; }
+.match-self-rank { margin-top: 0; }
+
+/* ---------- 29.4 开始界面：排位入口 ---------- */
+/* 只动颜色/描边（尺寸跟 #find-match 一致，都由通用 button 规则给）。 */
+#ranked-match {
+    background-image: linear-gradient(135deg, #ffd24d, #ff9f1a);
+    border-color: rgba(255, 210, 77, 0.85);
+    color: #241c05;
+    font-weight: 800;
+}
+#ranked-match:hover { background-image: linear-gradient(135deg, #ffe07a, #ffb03a); }
+#ranked-status { margin: 0.2rem auto 0.6rem; }
+#ranked-status p { margin: 0 0 0.5rem; color: #ffe08a; font-weight: 700; }
+#cancel-ranked {
+    background: rgba(255, 255, 255, 0.12);
+    background-image: none;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    color: var(--text);
+}
+
+/* ---------- 29.5 排行榜：页签条 + 段位榜 ---------- */
+.leaderboard-tabs {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin: 0 auto 12px;
+    flex-wrap: wrap;
+}
+.leaderboard-tabs .lb-tab {
+    padding: 6px 18px;
+    border-radius: 999px;
+    border: 1px solid var(--panel-border, rgba(255, 255, 255, 0.2));
+    background: rgba(255, 255, 255, 0.06);
+    background-image: none;         /* 通用 button 规则的渐变会盖掉选中态，必须显式清掉 */
+    color: var(--text);
+    font-weight: 600;
+    cursor: pointer;
+}
+.leaderboard-tabs .lb-tab.active {
+    background-image: linear-gradient(135deg, var(--primary), var(--info, var(--primary)));
+    color: #fff;
+    border-color: transparent;
+    box-shadow: 0 2px 10px rgba(var(--primary-rgb), 0.35);
+}
+#leaderboard-ranked-container {
+    max-width: 720px;
+    margin: 0 auto 12px auto;
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+    background: var(--glass);
+    box-shadow: var(--shadow-panel);
+}
+#ranked-table { width: 100%; border-collapse: collapse; margin-top: 8px; table-layout: fixed; }
+/* 窄屏（320/390）：5 列 + 图标 + 段位文案很容易把表撑得比容器宽。
+   固定列宽 + 段位列自动换行 = 容器**不出现横向滚动**（容器只滚纵向）。
+   这几条只作用在新增的 #ranked-table 上，既有那张表一行没碰。 */
+#ranked-table .ranked-pos { width: 3.4em; }
+#ranked-table .ranked-points { width: 4.4em; }
+#ranked-table .ranked-record { width: 5.4em; }
+#ranked-table .ranked-tier { white-space: normal; word-break: break-word; }
+#ranked-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    text-align: center;
+    padding: 10px;
+    background: var(--primary-gradient);
+    color: #fff;
+}
+#ranked-table th, #ranked-table td {
+    padding: 8px 6px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+}
+#ranked-error { color: var(--danger); text-align: center; margin-top: 8px; }
+
+/* 「段位高低一眼可辨」——作者对**这一页**的核心诉求。
+   做法：整行底色 + 左侧色条（inset 阴影，不占布局）+ 段位文字更重，顶端两段再加发光。
+   ⚠️ 这些效果都写在 `> td` 上：`border-collapse: collapse` 的 table 里给 <tr> 上
+      background/box-shadow 有些浏览器不画（"加了 class 却看不见"的典型假绿）。 */
+#ranked-table .ranked-row .ranked-label { font-weight: 500; color: var(--muted, #8a94a2); }
+/* ⚠️ 字重必须写在 `.ranked-label` **自己**身上：上面那条已经声明了 font-weight，
+   于是"继承自 td 的 800"根本不会生效 —— 「高段位更重」就只剩颜色，
+   而工具用 getComputedStyle 对比字重时抓到的正是这个（第一版就这么被抓住的）。 */
+#ranked-table .ranked-row .ranked-tier-icon { display: inline-flex; align-items: center; margin-right: 6px; }
+/* 「图标 + 段位文案」同行的效果只在**放得下**的时候要：320px 下强行 nowrap 会把
+   容器撑出横向滚动（实测 sw 287 > cw 245）。所以窄屏让它换行，宽屏才不换。 */
+@media (min-width: 560px) {
+    #ranked-table .ranked-row .ranked-tier { white-space: nowrap; }
+}
+
+#ranked-table .ranked-row.high-tier > td {
+    background-image: linear-gradient(90deg, rgba(120, 190, 255, 0.14), rgba(120, 190, 255, 0.02));
+    font-weight: 700;
+}
+#ranked-table .ranked-row.high-tier > td:first-child {
+    box-shadow: inset 4px 0 0 #56b6ff;
+}
+#ranked-table .ranked-row.high-tier .ranked-label { font-weight: 700; color: #9fe0ff; }
+#ranked-table .ranked-row.high-tier .ranked-points { color: #cfe9ff; font-weight: 800; }
+
+#ranked-table .ranked-row.top-tier > td {
+    background-image: linear-gradient(90deg, rgba(255, 203, 61, 0.20), rgba(255, 203, 61, 0.03));
+    font-weight: 800;
+}
+#ranked-table .ranked-row.top-tier > td:first-child {
+    box-shadow: inset 4px 0 0 #ffcb3d, 0 0 12px rgba(255, 203, 61, 0.28);
+}
+#ranked-table .ranked-row.top-tier .ranked-label {
+    font-weight: 800;
+    color: #fff3c4;
+    text-shadow: 0 0 10px rgba(255, 214, 102, 0.8);
+}
+#ranked-table .ranked-row.top-tier .ranked-points { color: #ffe58a; font-weight: 800; }
+
+#ranked-table .ranked-loading td,
+#ranked-table .ranked-empty td { text-align: center; padding: 14px; color: var(--muted, #8a94a2); }
+
+/* ---------- 29.6 结算：段位积分滚动面板（#rank-gain-panel） ---------- */
+.rank-gain {
+    max-width: 520px;
+    margin: 12px auto 4px;
+    padding: 12px 16px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 210, 77, 0.42);
+    background: linear-gradient(180deg, rgba(255, 210, 77, 0.14), rgba(255, 159, 26, 0.06));
+    text-align: left;
+}
+.rank-gain-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.rank-gain-delta b { color: #ffd24d; font-size: 1.12rem; }
+.rank-gain.is-loss .rank-gain-delta b { color: #ff8a8a; }
+.rank-gain-role { font-weight: 700; font-size: 0.82rem; color: var(--muted, #8a94a2); }
+.rank-gain-body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+.rank-gain-tier { display: inline-flex; align-items: center; gap: 6px; }
+.rank-gain-label { font-weight: 700; }
+.rank-gain-arrow { color: var(--muted, #8a94a2); }
+.rank-bar {
+    position: relative;
+    height: 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.14);
+    overflow: hidden;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+.rank-bar-fill {
+    display: block;
+    height: 100%;
+    width: 0;
+    border-radius: 999px;
+    background-image: linear-gradient(90deg, #c9a227, #ffd24d);
+}
+.rank-bar.capped .rank-bar-fill { background-image: linear-gradient(90deg, #ffd24d, #fff3c4); }
+.rank-gain-foot {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 6px;
+    font-size: 0.74rem;
+    color: var(--muted, #8a94a2);
+}
+.rank-gain-foot .hidden { display: none; }
+.rank-promote {
+    margin-top: 8px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    display: inline-block;
+    font-weight: 700;
+    color: #241c05;
+    background-image: linear-gradient(90deg, #ffd24d, #ff9f1a);
+}
+.rank-promote.flash { animation: xpLevelUpFlash 0.5s ease-out 2; }
+.rank-admiral-note {
+    margin-top: 6px;
+    font-size: 0.74rem;
+    color: var(--muted, #8a94a2);
+}
+/* 0 分封底那一行：只在 clamped 时出现（delta 是实际变化量，封底时可能是 0） */
+.rank-clamp-note {
+    margin-top: 6px;
+    font-size: 0.74rem;
+    color: #ffb0b0;
+}
+/* 大舰长晋升：整块换金光（只加光与色，不动尺寸） */
+.rank-gain.is-admiral {
+    border-color: rgba(255, 233, 163, 0.85);
+    background: linear-gradient(180deg, rgba(255, 226, 138, 0.26), rgba(255, 170, 26, 0.10));
+    box-shadow: 0 0 22px rgba(255, 214, 102, 0.35);
+}
+.rank-gain.is-admiral .rank-promote {
+    background-image: linear-gradient(90deg, #fff3c4, #ffcb3d);
+    box-shadow: 0 0 14px rgba(255, 214, 102, 0.7);
+}
+.rank-gain.is-top-tier .rank-gain-label { color: #ffe08a; }
+
+@media (prefers-reduced-motion: reduce) {
+    .rank-promote.flash { animation: none; }
+    .rank-bar-fill { transition: none; }
+}
+
+
 
 

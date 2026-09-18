@@ -25,8 +25,25 @@
 
 小级、大段、进度一律由 `rank_view()` 推出来。存"当前段位"这种冗余字段迟早
 出现"分到了但段位没更新"的对不上状态（等级系统同一条教训）。
+
+## 可调的三个数
+
+`RANK_WIN_POINTS` / `RANK_LOSE_POINTS` / `RANK_ADMIRAL_MIN_CAPTAINS` 三个环境变量
+可以覆盖赢分 / 输分 / 大舰长护栏（都是纯调参，默认值 = 设计稿的值）。
 """
+import os
 import time
+
+
+def _env_int(name, default):
+    """读一个整数环境变量，非法/缺失一律回默认值（绝不因为配置写错打崩进程）。"""
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == '':
+        return default
+    try:
+        return int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
 
 # ---------------------------------------------------------------------------
 # 段位表
@@ -58,13 +75,20 @@ TOP_POINTS = len(NORMAL_TIERS) * len(SUBS) * SUB_POINTS   # 船长Ⅲ 的起始�
 CAPTAIN_FLOOR = CAPTAIN['index'] * len(SUBS) * SUB_POINTS
 
 # ---- 每局加减分（默认值；作者只给了"+20"的例子，扣分幅度是这里定的）----
-WIN_POINTS = 20
-LOSE_POINTS = -15
+# 这三个数**可以用环境变量覆盖**（见下面的 `_env_int`）—— 它们是纯调参，
+# 上线后想微调不该再走一次"改代码 + 提交 + 部署"。默认值就是设计稿里的值，
+# 服务器不配这几个变量时行为完全不变（测试也按默认值断言）。
+WIN_POINTS = _env_int('RANK_WIN_POINTS', 20)
+LOSE_POINTS = _env_int('RANK_LOSE_POINTS', -15)
 MIN_POINTS = 0                 # 最低 0 分
 
 # ---- 大舰长晋升 ----
 ADMIRAL_RANK_LIMIT = 50        # 船长池内排名 ≤ 50 才晋升
-ADMIRAL_MIN_CAPTAINS = 50      # ⚠️ 船长池不足 50 人时不产生大舰长（否则人少时人人都是大舰长）
+# ⚠️ 船长池不足这么多人时**不产生大舰长**（否则人少时人人都是大舰长，这个段位就没意义了）。
+# ⚠️ 这条护栏的副作用是：**本服现在没有任何人能达到大舰长**（全服一共十几个人）。
+#    这是有意的（作者已确认），也留了环境变量 `RANK_ADMIRAL_MIN_CAPTAINS`：
+#    想在小服里做一次大舰长晋升演示，把它调小（例如 2）重启即可，不必改代码。
+ADMIRAL_MIN_CAPTAINS = _env_int('RANK_ADMIRAL_MIN_CAPTAINS', 50)
 ADMIRAL_STICKY = False         # 默认**动态**：条件不再满足会掉回船长
 
 
@@ -155,10 +179,14 @@ def rank_view(points, is_admiral=False, server_rank=None, captain_pool_rank=None
         # ⚠️ 排名前的空格不能省：船长是「船长Ⅲ 2300分 #60」，大舰长不带分数
         # 但同样是「大舰长 #20」。第一版写成了 `大舰长#20`，两种文案不一致。
         label = ADMIRAL['name'] + ((' #' + str(server_rank)) if server_rank else '')
+        # ⚠️ 键集必须与下面那条分支**完全一致**（大舰长也要有 `saturated`）：
+        # 同一个"段位视图"出现两种形状，调用方就得对每个键写 `if key in view` ——
+        # 前端同事实测时正是被这条绊了一下（它没有 `saturated`，只能改用
+        # `to_next is None` 判"没有下一级"）。空 `sub` 是**唯一**一处有意的差异。
         return {'tier_id': ADMIRAL['id'], 'tier_name': ADMIRAL['name'],
                 'tier_index': ADMIRAL['index'], 'sub': '', 'progress': 0,
                 'points': p, 'to_next': None, 'sub_points': SUB_POINTS,
-                'is_admiral': True, 'label': label,
+                'is_admiral': True, 'saturated': True, 'label': label,
                 'server_rank': server_rank, 'captain_pool_rank': captain_pool_rank}
 
     idx = points_tier_index(p)

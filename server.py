@@ -17,7 +17,7 @@ import uuid
 import secrets
 from typing import Any
 import logging
-from flask import render_template, request, session, jsonify
+from flask import render_template, request, session, jsonify, has_request_context
 from flask_socketio import SocketIO, join_room, emit as semit
 
 import db  # local database helpers for users and matches
@@ -25,6 +25,7 @@ import achievements  # 徽章判据（纯函数，唯一一份 evaluate()）
 import leveling  # 等级曲线 / 每局经验 / 升级动画分段（唯一一份规则）
 import profile_spec  # 特权常量（level_101 等）
 import quick_chat  # 局内快捷语表 + 频率规则（纯数据/纯函数，前端从接口取同一份）
+import ranks  # 段位规则 / 每局加减分 / 大舰长晋升（唯一一份，结算与接口共用）
 from api import app
 from file import read_json
 
@@ -390,6 +391,13 @@ class GameRoom:
         self.attacks_remaining = 0
         self.round = 1
         self.winner = ""
+        # 排位房标记（2026-09-17 排位批）：只有**匹配成功**的房才可能为 True，
+        # 自定义房 / 人机房恒 False。唯一消费点是结算里的段位加减分
+        # （`_settle_ranked_match`：`room.ranked and count_stats and 有开打时间`）
+        # 与下发（`game_state` / `_build_room_sync` 的 `ranked` / `mode`）。
+        # ⚠️ 必须在这里初始化（第 2 批的硬规矩：新增房间级状态要
+        #   ① __init__ 初始化 ② 明确消费点 ③ 回归测试）—— 漏了就会在别处 AttributeError。
+        self.ranked = False
         # 魔法卡相关状态
         self.field_magic = None  # 场地区域（存卡牌实例，空=None）
         self.magic_history = []  # 魔法卡使用历史
@@ -532,12 +540,52 @@ socketio = SocketIO(app, cors_allowed_origins=_cors_origins)
 # 聊天消息最大长度
 MAX_CHAT_MSG_LEN = 100
 
+# ---------------------------------------------------------------------------
+# 匹配模式（2026-09-17 排位批）
+# ---------------------------------------------------------------------------
+# 排位 / 休闲是**同一个队列**里的两种 mode：入队时记在队列条目上，配对时只在
+# 同 mode 之间配（ranked 只能配到 ranked）。非法值一律当休闲，绝不因为前端多传
+# 一个字段就把游客塞进排位池。
+MATCH_MODE_CASUAL = 'casual'
+MATCH_MODE_RANKED = 'ranked'
+MATCH_MODES = (MATCH_MODE_CASUAL, MATCH_MODE_RANKED)
+
+
+def _normalize_match_mode(value) -> str:
+    """把前端传来的 `mode` 归一化：**只认逐字的 'ranked'**，其余（None / 非法 / 大小写混写）一律 'casual'。
+
+    刻意不做大小写宽容：`mode` 是入排位池的开关，宁可把写错的值当休闲
+    （游客误入排位池 = 排位局里坐着两个写不进库的账号），也不要猜前端想说什么。
+    """
+    return MATCH_MODE_RANKED if value == MATCH_MODE_RANKED else MATCH_MODE_CASUAL
+
+
+def _room_match_mode(room) -> str:
+    """房间当前的模式（`ranked` 是唯一真相源，mode 由它推出来，不另存一份）。"""
+    return MATCH_MODE_RANKED if bool(getattr(room, 'ranked', False)) else MATCH_MODE_CASUAL
+
+
+def _rank_payload(room) -> dict:
+    """`game_state` 系列 payload 里的段位字段（`ranked` + `mode`）。
+
+    重连快照（`_build_room_sync`）用的是同一份口径 —— 重连后前端不知道自己在打排位，
+    结算表现就会错（打了排位却按休闲渲染）。
+    """
+    ranked = bool(getattr(room, 'ranked', False))
+    return {'ranked': ranked, 'mode': MATCH_MODE_RANKED if ranked else MATCH_MODE_CASUAL}
+
+
 class RoomManager:
     def __init__(self):
         # 游戏房间数据结构
         self.rooms: dict[str, GameRoom] = {}
         # 匹配队列：单结构列表，避免"三列平行数组"在并发下错位。
-        # 每项形如 {'sid': str, 'name': str, 'user_id': str | None}
+        # 每项形如 {'sid': str, 'name': str, 'user_id': str | None, 'mode': str}
+        # ⚠️ `mode` 是 2026-09-17 排位批新增的第 4 个字段（'casual' / 'ranked'），
+        #    **只在同 mode 之间配对**。所有使用点：入队 / 出队 / 去重 / 取消 /
+        #    配对扫描（add_to_match_queue / remove_from_match_queue /
+        #    has_player_in_match_queue / handle_find_match / handle_disconnect /
+        #    handle_cancel_match）—— 改成平行数组的话漏一处就是错位。
         self.match_queue: list[dict] = []
         # 保护 rooms / match_queue 的读写（eventlet 下 threading 已被 monkey_patch）
         self._lock = threading.RLock()
@@ -547,8 +595,12 @@ class RoomManager:
         """创建新房间，返回房间ID"""
         if not room_id:
             room_id = str(uuid.uuid4())[:6]
+        room = GameRoom(room_id)
+        # 自定义房（create_room / join_room）**恒为休闲局**：双方可以互相刷分，
+        # 所以排位标记只可能由匹配流程（handle_find_match）置 True。
+        room.ranked = False
         with self._lock:
-            self.rooms[room_id] = GameRoom(room_id)
+            self.rooms[room_id] = room
         return room_id
 
     def create_ai_room(self, player_id: str, player_name: str, player_user_id=None,
@@ -557,6 +609,8 @@ class RoomManager:
         room_id = str(uuid.uuid4())[:6]
         room = GameRoom(room_id)
         room.is_ai_room = True
+        # 人机局不给段位分（打电脑不能刷段位，与"人机不计 users.wins / 不发徽章"同一口径）。
+        room.ranked = False
         room.ai_difficulty = difficulty if difficulty in AI_DIFFICULTIES else 'normal'
         with self._lock:
             self.rooms[room_id] = room
@@ -575,6 +629,8 @@ class RoomManager:
             if len(room.players) >= 2:
                 return False
 
+            # 自定义房恒为休闲局（排位房只由匹配流程直接建，不走这里）。
+            room.ranked = False
             room.players[player_id] = Player(**{
                 'name': player_name,
                 'ships': [],
@@ -602,12 +658,22 @@ class RoomManager:
         return self.rooms
 
     # 匹配功能方法
-    def add_to_match_queue(self, player_id: str, player_name: str, user_id: str = None) -> bool:
-        """添加玩家到匹配队列，返回是否成功"""
+    def add_to_match_queue(self, player_id: str, player_name: str, user_id: str = None,
+                           mode: str = MATCH_MODE_CASUAL) -> bool:
+        """添加玩家到匹配队列，返回是否成功。
+
+        `mode` 是**队列条目上的第四个字段**（2026-09-17 排位批）。队列本身仍是
+        「单结构列表」（每项一个 dict，见 `match_queue` 的注释）—— 早年那版
+        **三列平行数组** `[sids, names, user_ids]` 已被 2026-09-11 的有序性修复
+        取代，因为"平行数组漏改一个使用点就是错位"（把 A 的 mode 配给 B）。
+        所以这里扩的是 dict 的键，不是列表的列；口径不变、错位风险更小。
+        """
+        mode = _normalize_match_mode(mode)
         with self._lock:
             if any(e['sid'] == player_id for e in self.match_queue):
                 return False
-            self.match_queue.append({'sid': player_id, 'name': player_name, 'user_id': user_id})
+            self.match_queue.append({'sid': player_id, 'name': player_name,
+                                     'user_id': user_id, 'mode': mode})
         return True
 
     def remove_from_match_queue(self, player_id: str) -> bool:
@@ -1307,9 +1373,11 @@ def handle_join_room(data):
 
         # 为每个玩家添加对方的名字
         # 准备发送给两个玩家的游戏状态
+        # `ranked` / `mode` 一并下发：自定义房恒为休闲局（见 create_room）。
         game_state_data = {
             'state': 'placing_ships',
-            'room_id': room_id
+            'room_id': room_id,
+            **_rank_payload(room)
         }
 
         # 为每个玩家添加对方的名字
@@ -1519,40 +1587,69 @@ def handle_quick_chat(data):
 
 @socketio.on('find_match')
 def handle_find_match(data):
-    """处理玩家匹配请求"""
+    """处理玩家匹配请求。
+
+    payload 可选 `mode`：`'ranked'`（排位）/ 其余一律 `'casual'`（休闲）。
+    排位**必须登录** —— 游客排位要明确拒绝（emit `error`），而不是排进去之后
+    永远配不上（因为排位房里结算要 `Player.user_id` 才能写库）。
+    """
     socket_sid = request.sid
     db_user_id = session.get('user_id', socket_sid)
     player_name = data.get('player_name', '匿名玩家')
     user_id = session.get('user_id')
+    mode = _normalize_match_mode(data.get('mode'))
+
+    # 排位必须登录：游客入排位池只会占着队列配不上（排位结算要写 user_rank）。
+    if mode == MATCH_MODE_RANKED and not user_id:
+        emit('error', {'message': '排位模式需要先登录'})
+        return {'status': 'error', 'message': '排位模式需要先登录'}
 
     # 检查玩家是否已经在匹配队列中
     if room_manager.has_player_in_match_queue(socket_sid):
         return {'status': 'error', 'message': '你已经在匹配队列中'}
 
-    # 将玩家加入队列
-    room_manager.add_to_match_queue(socket_sid, player_name, user_id)
-    emit('match_queued', {'status': 'success', 'message': '已加入匹配队列'})
+    # 将玩家加入队列（mode 一起存进队列条目，配对时只在同 mode 之间配）
+    room_manager.add_to_match_queue(socket_sid, player_name, user_id, mode)
+    emit('match_queued', {'status': 'success', 'message': '已加入匹配队列', 'mode': mode})
 
     # 尝试匹配：队列操作全程持锁，事件在锁外发送，避免并发下队列错位。
-    # 配对规则：跳过与队首同一登录账号的记录（同一账号多标签页），直到找到
-    # 可配对的对手；找不到时把队首放回并等待新玩家，绝不能回队后重试（会死循环）。
+    # 配对规则（两条，缺一条就会出真问题）：
+    #   ① **同 mode 才配**：ranked 只能配到 ranked、casual 只能配到 casual
+    #      （混配就等于让休闲玩家白拿段位分）；非法 mode 已在入队时归一成 casual。
+    #   ② 跳过同一登录账号的记录（同一账号多标签页不能自己打自己）。
+    # ⚠️ 这里按「队列里第一对可配的两人」扫描，而不是只拿队首去找搭档：
+    #    队首是 casual、第二个是 ranked 时，旧写法会让队首找不到搭档就 break，
+    #    后面那两个 ranked 明明能配却永远配不上（要等第三个休闲玩家入队才动）。
+    #    扫描每次至少配掉两人 / 或直接 break，所以不会死循环。
     matched = []
     with room_manager._lock:
         while len(room_manager.match_queue) >= 2:
-            p1 = room_manager.match_queue.pop(0)
-            partner_idx = None
-            for i, p in enumerate(room_manager.match_queue):
-                if p1['user_id'] is None or p['user_id'] is None or p1['user_id'] != p['user_id']:
-                    partner_idx = i
+            pair = None
+            entries = list(room_manager.match_queue)
+            for i in range(len(entries)):
+                for j in range(i + 1, len(entries)):
+                    a, b = entries[i], entries[j]
+                    if a.get('mode') != b.get('mode'):
+                        continue
+                    if a.get('user_id') is not None and a.get('user_id') == b.get('user_id'):
+                        continue          # 同一账号的第二个标签页：不配
+                    pair = (i, j)
                     break
-            if partner_idx is None:
-                # 队列里全是同一账号的重复记录：放回队首，等待新玩家入队
-                room_manager.match_queue.insert(0, p1)
+                if pair:
+                    break
+            if pair is None:
+                # 没有可配的对（全是同账号重复记录 / 剩下的都在等另一种 mode 的人）：
+                # 队列原样保留，等新玩家入队，绝不能原地重试（会死循环）。
                 break
-            p2 = room_manager.match_queue.pop(partner_idx)
+            i, j = pair
+            p2 = room_manager.match_queue.pop(j)
+            p1 = room_manager.match_queue.pop(i)
 
             room_id = room_manager.create_room()
             room = room_manager.get_room(room_id)
+            # 匹配成功建房时打排位标记（自定义房/人机房恒 False，见 create_room /
+            # create_ai_room）。两个人 mode 相同（上面刚判过），取 p1 的即可。
+            room.ranked = (p1.get('mode') == MATCH_MODE_RANKED)
             room.players[p1['sid']] = Player(**{
                 'name': p1['name'],
                 'ships': [],
@@ -1577,13 +1674,16 @@ def handle_find_match(data):
     for room_id, p1, p2 in matched:
         join_room(room_id, p1['sid'])
         join_room(room_id, p2['sid'])
+        room = room_manager.get_room(room_id)
+        rank_fields = _rank_payload(room) if room else {}
         for me, opp in ((p1, p2), (p2, p1)):
             emit('game_state', {
                 'state': 'placing_ships',
                 'room_id': room_id,
                 'player_id': me['sid'],
                 'player_name': me['name'],
-                'opponent_name': opp['name']
+                'opponent_name': opp['name'],
+                **rank_fields
             }, to=me['sid'])
 
     return {'status': 'success', 'message': '开始寻找匹配'}
@@ -1591,7 +1691,11 @@ def handle_find_match(data):
 
 @socketio.on('cancel_match')
 def handle_cancel_match(data):
-    """处理玩家取消匹配请求：队列以 socket sid 为 key，按当前连接出队。"""
+    """处理玩家取消匹配请求：队列以 socket sid 为 key，按当前连接出队。
+
+    排位与休闲**共用同一个队列**，所以取消逻辑不需要分 mode —— 按 sid 定位即可
+    （排位排队也能被取消，前端「取消排位」按钮走的就是这个事件）。
+    """
     sid = request.sid
     room_manager.remove_from_match_queue(sid)
     emit('match_canceled', {'status': 'success', 'message': '已取消匹配'}, to=sid)
@@ -1687,6 +1791,7 @@ def handle_place_ships(data):
                 'current_phase': room.current_phase,
                 'attacks_remaining': room.attacks_remaining,
                 'round': room.round,
+                **_rank_payload(room),
             }, room=room_id)
             # 若当前攻击者是 AI，继续驱动其回合
             _maybe_run_ai_turn(room)
@@ -1697,7 +1802,7 @@ def handle_place_ships(data):
         room.rps_choices = {}
         room.rps_processed = False
 
-        emit('game_state', {'state': 'rock_paper_scissors'}, room=room_id)
+        emit('game_state', {'state': 'rock_paper_scissors', **_rank_payload(room)}, room=room_id)
 
     return {'status': 'success'}
 
@@ -1786,6 +1891,7 @@ def handle_rps_choice(data):
             # 攻击顺序：[先手, 后手]。前端需要它来判断「自己是否先手」
             # （Freezing！ 这类卡只在先手方可用）
             'attack_order': list(room.attack_order),
+            **_rank_payload(room),
         }, room=room_id)
 
     return {'status': 'success'}
@@ -2282,6 +2388,21 @@ def _finalize_match(room, winner_id, loser_id):
     except Exception:
         pass
 
+    # ⑤ 排位段位加减分（2026-09-17 排位批）—— 同样只追加，不动上面四段。
+    #    门槛见 `_ranked_settlement_allowed`：排位房 + 计统计 + **真开打**，三条全满足
+    #    才结算；休闲局 / 自定义房 / 人机局（`count_stats` 为假，上面已经 return 了）
+    #    一分不加；赛前投降（还没猜完拳、没有开打打点）也不给分。事件在这里只**组装**，
+    #    发送时机由 `_dispatch_rank_events` 决定（必须在调用方的 `game_over` 之后到前端）。
+    try:
+        rank_events = _settle_ranked_match(room, winner_id, loser_id) \
+            if _ranked_settlement_allowed(room, count_stats) else []
+    except Exception:
+        rank_events = []
+    try:
+        _dispatch_rank_events(room, rank_events)
+    except Exception:
+        pass
+
     return newly
 
 
@@ -2329,6 +2450,186 @@ def _grant_match_xp(room, rows):
         except Exception:
             # 发经验失败不许把结算搞崩（与徽章同一条规矩）
             continue
+
+
+# ============ 排位结算（2026-09-17 排位批） ============
+# 加减段位分的**唯一收口点**就是 `_finalize_match` 末尾那一段：6 处对局结束
+# （获胜 / 投降 / 断线判胜 / 回光返照 / 极限增援 / 卡牌消灭最后一艘船）都汇到那里，
+# 所以"结算加分"只有一份实现 —— 与第 2 批为战绩 / 统计 / 徽章立下的规矩相同。
+
+
+def _match_really_started(room) -> bool:
+    """这局到底有没有**真开打**（只看显式打点，不许退回 `created_at`）。
+
+    与 `_match_started_at` 的区别正是这条：后者在没有 `room.match_started_at` 时会退回
+    `room.created_at`（建房时间，**含"等人入座"的等待时间**）—— 那个回退是给"闪电战用时"
+    口径用的，不是给"这局开没开打"用的。拿它当开打判据的话，**任何真实房间都算已开打**
+    （`created_at` 在 `GameRoom.__init__` 里无条件打点），门禁就形同虚设。
+
+    `match_started_at` 的唯一打点是 `handle_rps_choice`（猜拳结束、真正进入 attacking 时），
+    所以"有没有这个打点"就是"有没有真开打"。
+    """
+    return bool(getattr(room, 'match_started_at', None))
+
+
+def _ranked_settlement_allowed(room, count_stats: bool) -> bool:
+    """这一局该不该加减段位分：三条**同时**满足才结算。
+
+    ① `room.ranked` —— 排位房（匹配成功时置位）；自定义房 / 人机房恒 False
+       （自定义房双方可以互相刷分，人机房打电脑必胜）；
+    ② `count_stats` —— 人机局不算（与"人机不计 users.wins / 不发徽章"同一口径）；
+    ③ `_match_really_started(room)` —— **没真开打的不给分**：两个账号匹配成功后
+       在摆船阶段直接投降、让对手白拿 +20，是最直接的刷分口子，必须堵。
+
+    ⚠️ ③ **不能**写成 `_match_started_at(room) != 0`：那个函数在没有打点时退回
+    `created_at`（真实房间恒非 0），用它当门禁等于没拦（详见 `_match_really_started`）。
+    """
+    if not bool(getattr(room, 'ranked', False)):
+        return False
+    if not count_stats:
+        return False
+    return _match_really_started(room)
+
+
+def _emit_rank_events_now(events):
+    """把 `[(sid, payload), ...]` 逐个发给本人（只发本人那一份，对手不需要）。"""
+    for sid, payload in (events or ()):
+        if not sid:
+            continue
+        try:
+            emit('rank_changed', payload, room=sid)
+        except Exception:
+            # 发事件失败不许把已经落库的加减分搞崩（与徽章 / 经验同一条规矩）
+            continue
+
+
+def _dispatch_rank_events(room, events):
+    """决定段位事件"什么时候"发：必须在 `game_over` **之后**到前端。
+
+    ⚠️ 结算发生在**别人的 socket 请求**上下文里（投降 / 断线判胜 / 出牌打死最后一艘船
+    都会走到这里），而 6 处调用点都是「先 `_finalize_match`，紧接着 `emit('game_over')`」。
+    同步在这里 emit 的话 `rank_changed` 会**先于**结算面板到达，前端就会先弹段位面板。
+    所以：有请求上下文时交给后台任务（脱离请求上下文后再发，那时 game_over 已经发出去了）
+    —— 这正是本项目「在别人的 socket 请求里做事要先 start_background_task」那条硬教训；
+    没有请求上下文（单测直调 / 自己已经在后台任务里）时直接发，保证顺序确定、可测。
+    """
+    if not events:
+        return
+    try:
+        in_request = bool(has_request_context())
+    except Exception:
+        in_request = False
+    if in_request:
+        socketio.start_background_task(_emit_rank_events_now, events)
+    else:
+        _emit_rank_events_now(events)
+
+
+def _settle_ranked_match(room, winner_id, loser_id):
+    """排位结算：胜者 `+ranks.WIN_POINTS`(20) / 败者 `+ranks.LOSE_POINTS`(-15)，组装 `rank_changed`。
+
+    返回 `[(sid, payload), ...]`，每个**真人**玩家一条（`Player.user_id` 为空的游客
+    与 AI 直接跳过，绝不写库）。
+
+    几个必须守住的点（都是冻结契约里写死的）：
+      · **先读旧分再写**，`after` 一律**重新读库**得到 —— 不许用 `before + delta` 算
+        （0 分封底时那样算是错的：5 分输一局实际只掉 5 分）；
+      · `clamped` 透传 `ranks.apply_delta(before, delta)` 的第二个返回值；
+      · `delta` 填**实际**变化量 `after - before`；
+      · 大舰长要**两个玩家都写完分之后**再统一算一次船长池（先写的那个看到的是旧池子）；
+      · `before` / `after` 是 `ranks.rank_view(...)` 的**原样返回**，`server_rank` 用
+        `db.get_rank_position(uid)` 取（结算之后再取一次，让名次反映最新状态）。
+    """
+    rows = []
+    for pid, is_winner in ((winner_id, True), (loser_id, False)):
+        player = room.players.get(pid)
+        uid = getattr(player, 'user_id', None) if player else None
+        if not uid:
+            # 游客（或人机）：没有账号可写，跳过。绝不为此建一行 0 分的段位记录。
+            continue
+        before_row = db.get_user_rank_row(uid)
+        before_pts = int(before_row.get('points') or 0)
+        delta = ranks.WIN_POINTS if is_winner else ranks.LOSE_POINTS
+        # 0 分封底：clamped 由 apply_delta 判定；真正落库的值以写完后重读为准
+        _predicted, clamped = ranks.apply_delta(before_pts, delta)
+        db.add_rank_points(uid, delta)
+        rows.append({
+            'player': player,
+            'uid': uid,
+            'is_winner': bool(is_winner),
+            'clamped': bool(clamped),
+            'before_pts': before_pts,
+            'before_admiral': bool(before_row.get('is_admiral')),
+            'before_server_rank': db.get_rank_position(uid),
+        })
+
+    if not rows:
+        return []
+
+    # 大舰长：两个玩家都写完分之后统一算一次船长池
+    pool_size = db.count_rank_at_least(ranks.CAPTAIN_FLOOR)
+    pool = db.captains_ordered(limit=500)
+    pool_positions = {}
+    for item in (pool or ()):
+        key = str(item.get('user_id'))
+        if key not in pool_positions:
+            pool_positions[key] = item.get('pool_position')
+
+    events = []
+    for row in rows:
+        uid = row['uid']
+        # 池内名次（不在船长池里 → None）。晋升判定与展示都用这一份口径。
+        pool_position = pool_positions.get(str(uid))
+
+        after_row = db.get_user_rank_row(uid)
+        after_pts = int(after_row.get('points') or 0)
+
+        # 大舰长晋升 / 掉回船长：判据与中文原因都由 ranks 给（别在这里自己编文案）
+        ok, admiral_reason = ranks.can_promote_to_admiral(after_pts, pool_position, pool_size)
+        admiral_promoted = bool(ok) and not row['before_admiral']
+        admiral_demoted = bool(row['before_admiral']) and not ok
+        if ok:
+            db.add_rank_points(uid, 0, is_admiral=True)
+        elif row['before_admiral'] and not ranks.ADMIRAL_STICKY:
+            # `ranks.ADMIRAL_STICKY` 默认 False → **动态**称号：条件不满足要掉回船长。
+            # 开启粘性（True）时不动这一列 —— 那正是"粘性"的含义，
+            # 与 `ranks.is_admiral` 的判据保持一致（它也是先看粘性标记）。
+            db.add_rank_points(uid, 0, is_admiral=False)
+
+        # 写完（含上面那次 0 分改写）再读一次：下发的一切都反映最新落库状态
+        final_row = db.get_user_rank_row(uid)
+        after_pts = int(final_row.get('points') or 0)
+        after_admiral = bool(final_row.get('is_admiral'))
+        server_rank = db.get_rank_position(uid)
+
+        # 升降级摘要（小级 / 大段）：只认 ranks.solve_delta，别在 server 里重算
+        summary = ranks.solve_delta(row['before_pts'], after_pts)
+        before_view = ranks.rank_view(row['before_pts'], is_admiral=row['before_admiral'],
+                                      server_rank=row['before_server_rank'],
+                                      captain_pool_rank=pool_position)
+        after_view = ranks.rank_view(after_pts, is_admiral=after_admiral,
+                                     server_rank=server_rank,
+                                     captain_pool_rank=pool_position)
+
+        events.append((getattr(row['player'], 'sid', None), {
+            'role': 'winner' if row['is_winner'] else 'loser',
+            # 实际生效的分差（封底时可能小于 -15）
+            'delta': int(after_pts - row['before_pts']),
+            'clamped': row['clamped'],
+            'points_before': int(row['before_pts']),
+            'points_after': int(after_pts),
+            'before': before_view,
+            'after': after_view,
+            'promoted': bool(summary['promoted']),
+            'demoted': bool(summary['demoted']),
+            'tier_up': bool(summary['tier_up']),
+            'tier_down': bool(summary['tier_down']),
+            'admiral_promoted': admiral_promoted,
+            'admiral_demoted': admiral_demoted,
+            # 没晋升时说明"还差什么"（前端可能拿它显示条件）
+            'admiral_reason': admiral_reason,
+        }))
+    return events
 
 
 def _check_last_chance(room, attacker_id: str, defender_id: str) -> bool:
@@ -3006,7 +3307,8 @@ def end_turn(data):
                         emit('game_state', {
                             'state': 'game_over',
                             'winner': winner,
-                            'reason': '极限增援生效，船数少的一方等到了增援并获胜了！'
+                            'reason': '极限增援生效，船数少的一方等到了增援并获胜了！',
+                            **_rank_payload(room),
                         }, room=room_id)
                         return {'status': 'success', 'game_over': True, 'winner': winner}
 
@@ -3041,7 +3343,8 @@ def end_turn(data):
                         emit('game_state', {
                             'state': 'game_over',
                             'winner': winner,
-                            'reason': '无暇圣心笼罩大地 愿这方世界不再有战争'
+                            'reason': '无暇圣心笼罩大地 愿这方世界不再有战争',
+                            **_rank_payload(room),
                         }, room=room_id)
                         return {'status': 'success', 'game_over': True, 'winner': winner}
 
@@ -3085,7 +3388,8 @@ def end_turn(data):
             # 广播进入猜拳阶段
             emit('game_state', {
                 'state': 'rock_paper_scissors',
-                'round': room.round
+                'round': room.round,
+                **_rank_payload(room),
             }, room=room_id)
             # 新大回合开始，清掉上一回合残留的跳过标记。
             # 否则若 skip 未能匹配到目标，会一直留着并在后续回合误跳。
@@ -5152,6 +5456,9 @@ def _build_room_sync(room, player_id: str) -> dict:
         'player_name': p.name,
         'opponent_name': opp.name if opp else None,
         'is_ai_room': getattr(room, 'is_ai_room', False),
+        # 重连快照也要带排位标记：否则重连后前端以为在打休闲局，结算表现就会错。
+        'ranked': bool(getattr(room, 'ranked', False)),
+        'mode': _room_match_mode(room),
         'winner': room.winner,
         'game_over_reason': getattr(room, 'game_over_reason', None),
         'field_magic': (room.field_magic.name if hasattr(room.field_magic, 'name') else room.field_magic) or "",

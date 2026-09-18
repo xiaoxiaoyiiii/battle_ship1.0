@@ -55,7 +55,7 @@ python -m pytest tests/ -q    # 1070 passed
 
 > 🔧 **2026-09-13 个人战绩弹窗 / 人机战绩统计批**（详见 `docs/STATS_AND_AI_RANKING_FIXES.md`）：6 处实测缺陷 —— ①历史行把 `<button>` 塞进 `<table><tbody>` 触发 foster parenting，表头「时间 对手 结果 局内日志」孤立在列表最下方；②胜负配色被通用 `button` 规则的 `background-image` 渐变盖掉，三条胜绩全蓝；③`.user-stats-table` / `.user-history` 在样式表里从未定义；④人机对手显示成裸 ID `ai-4530c8`；⑤胜局的「对局详情」把「对手」显示成自己；⑥**人机对局计入 `users.wins` / 连胜**（排行榜 `ORDER BY wins DESC` → 打电脑即可刷榜）。修法：历史列表改 div 三列网格、`.match-history-btn{background-image:none}` + `.win`/`.lose`、`ai-` 前缀映射「电脑」并加「人机」标签、按胜负取对手、`db.record_match(count_stats=)` + `server._count_stats_for(room)`（人机只写历史、不计统计，6 处调用点全部显式传参）；并合并两份重复的 `showUserStats`/`showMatchDetail`、去掉 `setTimeout` 绑事件与「每次点头像都 append 一个重复 id 弹窗」，新增「加载更多」。回归：`tests/test_stats_display_fixes.py`（14 条）+ `tools/stats_modal_check.mjs`（无头 Edge，27 项，含 `--username` 真实账号端到端）；历史脏数据用 `tools/recompute_ranked_stats.py --apply` 对齐（本机已执行：z1w6qn 3 胜 → 0）。
 
-> 🔧 **2026-09-12 移动端自适应布局批**（详见 `docs/MOBILE_ADAPTIVE_LAYOUT.md`）：对局界面在手机上不可用——桌面多浮窗范式被等比压到手机（断点只改尺寸不改结构）。实测红基线 32 项不通过：320×568 下棋盘 100% 在首屏外且滚过去后 36/36 格被浮窗盖住、日志∩预览 273×181、聊天∩阶段卡 337×123、手牌 `#magic-system` 落在 y≈1577、格子 20.3~35px。修法：新增 `static/adaptive_layout.js`，按【可用空间】选布局（`wide` 保持原样 / `compact` 一屏网格 / 矮屏右列 / 放不下时手牌收进面板槽），三个浮窗搬进 `#aux-dock` 三选一，棋盘尺寸由舞台反推（只锁宽度保正方格），触屏停用浮窗拖拽。修复后 10 项×6 视口全部通过，宽屏（≥1200×700）布局一行未动。
+> 🔧 **2026-09-12 移动端自适应布局批**（详见 `docs/MOBILE_ADAPTIVE_LAYOUT.md`）：对局界面在手机上不可用——桌面多浮窗范式被等比压到手机（断点只改尺寸不改结构）。实测红基线 32 项不通过：320×568 下棋盘 100% 在首屏外且滚过去后 36/36 格被浮窗盖住、日志∩预览 273×181、聊天∩阶段卡 337×123、手牌 `#magic-system` 落在 y≈1577、格子 20.3~35px。修法：新增 `static/adaptive_layout.js`，按【可用空间】选布局（`wide` 保持原样 / `compact` 一屏网格 / 矮屏右列 / 放不下时手牌收进面板槽），三个浮窗搬进 `#aux-dock` 三选一，棋盘尺寸由舞台反推（只锁宽度保正方格），触屏停用浮窗拖拽。修复后 10 项×6 视口全部通过，宽屏（≥1200×700）布局一行未动。`tools/ui_layout_check.mjs` 已扩成两段式：宽屏 1600×1000 跑原有 9 项，另在 320×568 / 336×664 / 390×844 / 430×932 / 664×336 横屏 / 768×1024 六个视口跑 10 项移动端不变量（含"展开面板槽后"复测）。
 >
 > 🔧 **2026-09-12 后端/安全审查修复批**（权威清单见 `docs/FIXES_2026-09-12.md`）：7 个 P0 + 20 余个 P1。要点：
 > - **`@_test_event` 装饰器顺序修正**（此前写在 `@socketio.on` 外层 → 门禁完全失效、公网可判胜/白嫖卡/读对方船位）
@@ -89,9 +89,7 @@ python -m pytest tests/ -q    # 1070 passed
 > - `.board-wrapper{flex:0 1 340px}`——两块棋盘不再一大一小（300×300，单格 42px）
 > - 游戏日志补空状态占位 `.log-empty`；玩家信息行文案改「你：剩余 6 艘战舰」；中文界面冒号统一全角
 > - `static/avatars/default.png` 由 1×1 透明图换成 96×96 占位头像
-> - 回归：`tests/test_ui_review_fixes.py`（9 条）+ `tools/ui_layout_check.mjs`（无头浏览器布局不变量，见下一批）
-
-> 🔧 **2026-09-12 移动端自适应布局批**（`tools/ui_layout_check.mjs` 已扩成两段式：宽屏 1600×1000 跑原有 9 项，另在 320×568 / 336×664 / 390×844 / 430×932 / 664×336 横屏 / 768×1024 六个视口上跑 10 项移动端不变量，含"展开面板槽后"复测）。详见 `docs/MOBILE_ADAPTIVE_LAYOUT.md`。
+> - 回归：`tests/test_ui_review_fixes.py`（9 条）+ `tools/ui_layout_check.mjs`（无头浏览器布局不变量，见上一批）
 
 ---
 
@@ -713,6 +711,15 @@ AI 玩家 id = `'ai-' + room_id`；`room.is_ai_room = True`；`room.ai_difficult
 3. **游标接口的第一页不能传 `0`**：`before_id` 语义是「取 id < N」，传 0 会返回 `total=N` 但 `messages=[]` → **看着成功、永远看不到留言**（第一页应当**不带**该参数）。
 4. **点赞是"乐观预演"**：点下去界面立刻变，所以"界面变了"≠"请求回来了"；断言要等**请求真的 settle**，否则连点保护会把第二下吞掉（工具假红）。同类还有 `/logout` 是 302 跳首页、Node 的 fetch **不跨跳转带 cookie**（注册成功的 flash 读不到）。
 5. ⚠️ **别用 PowerShell 的 `Get-Content -Raw | Set-Content` 改 UTF-8 源码**：本机默认按 GBK 读写，会把中文注释写成**非法 UTF-8**（`node --check` 报 `Invalid or unexpected token`、`read` 工具直接读不了）。与第 12 节第 8 条同源。
+
+### 🟢 2026-09-18 段位 / 排位批
+
+> 详见 `docs/RANKED_2026_09_17.md`、计划文档 §13。新增 `ranks.py`（段位规则唯一一份）、
+> `user_rank` 表、`static/rank_icons.js`、`tools/ranked_check.mjs`。
+> ⚠️ **契约变更**：名片保存载荷 **9 → 10 字段**（`show_rank`，缺一个整次 400）；
+> 池子 **7/5/6 → 12/10/11**；`match_queue` 平行数组 **3 → 4**（mode）。
+> ⚠️ `ADMIRAL_MIN_CAPTAINS=50` → **本服现在没人能到大舰长**（有意）；
+> 调小用 `RANK_ADMIRAL_MIN_CAPTAINS`（另有 `RANK_WIN_POINTS`/`RANK_LOSE_POINTS`）。
 
 ---
 

@@ -207,6 +207,47 @@ def test_admiral_is_dynamic_by_default():
     assert ranks.is_admiral(row, captain_pool_rank=3, captain_pool_size=100) is True
 
 
+def test_env_int_knob_reads_and_falls_back():
+    """赢分 / 输分 / 大舰长护栏三个数可以用环境变量调；**写错一律回默认值**。
+
+    这条是给"上线后想微调一下"准备的：调参不该再走一次改代码 + 提交 + 部署。
+    但配置写错（`abc` / 空串）绝不能把进程打崩 —— 所以非法值必须静默回默认。
+    """
+    import os
+    key = 'RANK_TEST_KNOB'
+    assert ranks._env_int(key, 7) == 7                    # 没设 → 默认
+    os.environ[key] = '42'
+    assert ranks._env_int(key, 7) == 42                    # 设了 → 生效
+    os.environ[key] = 'abc'
+    assert ranks._env_int(key, 7) == 7                     # 非法 → 默认
+    os.environ[key] = '   '
+    assert ranks._env_int(key, 7) == 7                     # 空白 → 默认
+    os.environ[key] = '-15'
+    assert ranks._env_int(key, 7) == -15                   # 负数是合法值（输分就是负的）
+    del os.environ[key]
+    # 默认值必须就是设计稿的值（服务器不配这几个变量时行为完全不变）
+    assert ranks.WIN_POINTS == 20
+    assert ranks.LOSE_POINTS == -15
+    assert ranks.ADMIRAL_MIN_CAPTAINS == 50
+
+
+def test_rank_view_has_one_shape():
+    """⚠️ `rank_view` 的两条分支**键集必须完全一致**（只有 `sub` 是有意的差异）。
+
+    大舰长那条分支第一版漏了 `saturated`，而普通分支里有 —— 同一个"段位视图"
+    出现两种形状，调用方（前端 / 接口）就得对每个键写 `if key in view`。
+    前端同事实测时正是被这条绊了一下。这里把"形状一致"钉死。
+    """
+    normal = ranks.rank_view(2300)
+    admiral = ranks.rank_view(2300, is_admiral=True)
+    assert set(normal) == set(admiral), (sorted(set(normal) - set(admiral)),
+                                         sorted(set(admiral) - set(normal)))
+    assert admiral['sub'] == '' and admiral['saturated'] is True
+    assert isinstance(normal['saturated'], bool)
+    # 两个视图返回的必须是**新 dict**（调用方会往里塞 server_rank 之外的东西）
+    assert normal is not ranks.rank_view(2300)
+
+
 def test_constants_snapshot_for_frontend():
     """接口下发的规则快照：前端画进度条不猜任何常数。"""
     c = ranks.constants()

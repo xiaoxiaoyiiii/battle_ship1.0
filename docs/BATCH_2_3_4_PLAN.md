@@ -668,6 +668,60 @@ profile_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,
 
 ---
 
+## 13. 追加批：段位系统 + 排位模式（2026-09-17/18）
+
+> **完整设计稿、冻结契约与实施记录在 `docs/RANKED_2026_09_17.md`** —— 这里只留索引，
+> 别在这份文档里复制一遍（两份契约必然漂移，这正是本项目反复踩过的坑）。
+
+| 项 | 内容 |
+| --- | --- |
+| 需求 | 9 段位 × 3 小段位（Ⅰ/Ⅱ/Ⅲ）× 100 分；赢 +20 / 输 −15 / 0 分封底；大舰长 = 船长段 + 船长池前 50；船长/大舰长显示全服排名；个人信息显示段位 + 隐私开关；排行榜页加段位榜（突出段位高低）；每段位一枚逐级精致的图标；高段位额外解锁称号/头像框/底色 |
+| 新增文件 | `ranks.py`（段位数学唯一真相源）｜`static/rank_icons.js`（9 枚 SVG）｜`tests/test_ranks.py`｜`tests/test_ranked_match.py`｜`tests/test_ranked_api.py`｜`tools/ranked_check.mjs`｜`docs/RANKED_2026_09_17.md` |
+| 改动文件 | `db.py`（`user_rank` 表 + 9 个 DAO + `show_rank` 加列迁移）｜`profile_spec.py`（保存载荷 9 → **10** 字段 + `rank_tier` 解锁上下文 + 15 项段位外观）｜`server.py`（排位配对 + 结算加减分 + `rank_changed`）｜`api.py`（`/api/ranked_leaderboard` + `rank_info` + 隐私过滤）｜`game.js` / `style.css` / `index.html` |
+| 分批 | A 引擎+数据+规格+图标 → B 服务端排位 → C 接口 → D 前端+工具（B/C/D **文件互不重叠**，可并行） |
+| 契约变更（**会影响别的批次**） | ① 名片保存载荷 **9 → 10 字段**（新增 `show_rank`），缺字段整次 400；② `catalog` 池子尺寸 **7/5/6 → 12/10/11**；③ `match_queue` 条目多一个 `mode` 键（见下）；④ 新事件 `rank_changed` |
+
+> ⚠️ **订正一条长期过期的描述**：`CLAUDE.md` §4 一直写着 `match_queue` 是
+> 「三列平行数组 `[sids, names, user_ids]`」—— 那是 **2026-09-11 之前**的形状。
+> 2026-09-11 的有序性修复已经把它换成**单结构列表**（每项一个 dict，
+> `{'sid','name','user_id'}`），理由正是"平行数组漏改一个使用点就是错位"。
+> 所以本次排位批扩的是 **dict 的键**（加 `'mode'`），不是"3 列变 4 列"。
+> 实施时按旧描述动手会白走一圈 —— 这正是"引用本文件任何结论前先用 grep 到代码里确认"的又一例。
+
+### 13.1 实施中发现的真问题
+
+（逐条细节见 `docs/RANKED_2026_09_17.md` §9，这里只列结论）
+
+1. **`match_queue` 的"三列平行数组"是过期描述**（2026-09-11 已改成单结构 dict 列表）——
+   照旧描述动手会白走一圈。
+2. **★「会兜底」的取数函数不能当判据**：`_match_started_at(room)` 会退回 `room.created_at`
+   （无条件存在）→ 门禁恒真 → **赛前投降照常给分**，也就是"匹配成功立刻投降"能把分刷给对面。
+   红基线实测：败者 100 分投降后变成 **85**。改用只看显式打点的 `_match_really_started`。
+   与壁纸批"兜底取到 preview.jpg 冒充动态壁纸"是同一形状的坑。
+3. **`test_win_game` 调试桩不结算**（只设 state/winner 再 emit `game_over`，不调
+   `_finalize_match`）→ 用它验"打完一局给分"会得到"成功但没反应"，且**看不出原因**。
+   真链路要用**投降**。
+4. **`place_ships` 的 payload 必须有 `hits`**（`PlayerShip(**x)` 否则 TypeError）：
+   表现是**不回 ack、船没放上**，但 `rps_choice` 不看 state，双方出拳后照样进 `attacking`
+   → "打完一局"的验证**假绿得非常彻底**。所以 e2e 必须**断言 place_ships 的 ack**。
+5. **0 分封底时 `delta` 是 0 不是 −15**（`delta` 按契约填实际变化量）→ 前端不许直接渲染它。
+6. `server.py` **原本没有 `import ranks`**，不补的话整段结算被 `try/except` **静默吞掉**。
+7. 前端工具的服务端**必须带 `CORS_ORIGINS`**，否则 socket.io 静默连不上（页面无报错）。
+
+### 13.2 实测
+
+- pytest：**1306 passed / 0 failed**（新增 106 条：`test_ranks` 54 + `test_ranked_match` 33 +
+  `test_ranked_api` 19）
+- `tools/ranked_check.mjs`（新建）：**101 项全绿**，含三局**真链路**排位
+- `.tmp/rank_e2e.py`（协议级双客户端，真登录 + 真 socket）：**27 项全绿**
+- 回归复跑：`dom_contract_check` ✓ ｜ `ui_layout_check` 全部通过 ｜ `profile_card_check` ✓ ｜
+  `profile_leaderboard_check` ✓ ｜ `social_check` PASSED ｜ `level_check` PASSED ｜
+  `achievements_check` ✓ ｜ `unlock_notice_check` PASSED
+- 段位榜"突出段位高低"的**客观实测**：图标 20px → 28px（轮机长）→ **34px**（船长），
+  标签字重 500 → 700 → **800**、配色灰 → 亮蓝 → 金，行高 49 → **55px**（见设计稿 §9.4）
+
+---
+
 ## 8. 三批的执行顺序与依赖
 
 ```

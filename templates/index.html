@@ -61,6 +61,11 @@
         </div>
         <div class="button-group">
             <button id="find-match">匹配游戏</button>
+            <!-- 排位对战（段位批）。与休闲匹配是**同一个匹配队列**，只是入队时带 mode=ranked：
+                 只能同 mode 配对，且排位必须登录（游客点它服务端会 emit error）。
+                 点下去隐藏 #find-match、显示 #ranked-status + #cancel-ranked；
+                 出错要能恢复按钮（否则按一次就卡在「正在寻找」）。 -->
+            <button id="ranked-match">排位对战</button>
             <button id="ai-match" class="secondary">人机对战</button>
             <select id="ai-difficulty" class="secondary" title="人机难度：简单=电脑不出魔法卡；普通/困难=会打出手上的魔法卡">
                 <option value="easy">电脑：简单</option>
@@ -72,6 +77,14 @@
         <div id="match-status" class="hidden">
             <p>正在寻找匹配...</p>
             <button id="cancel-match">取消匹配</button>
+        </div>
+
+        <!-- 排位排队状态（段位批）。与上面的休闲匹配**互斥**：
+             进入排位排队时会先把休闲那套收干净，反之亦然（两者是同一个队列，
+             服务端 `has_player_in_match_queue` 会拒掉第二个）。 -->
+        <div id="ranked-status" class="hidden">
+            <p>正在寻找排位对手…</p>
+            <button id="cancel-ranked">取消排位</button>
         </div>
 
         <!-- 我的等级 / 经验条（2026-09-17 追加）。
@@ -156,6 +169,9 @@
                  数据取自公开的 /user_stats（与名片同一份来源），在 5 秒倒计时里异步填进来；
                  拿不到就保持空白，不影响开局。 -->
             <div id="opponent-chips" class="match-chips"></div>
+            <!-- 自己的段位（段位批）。数据来自 /api/profile 的 rank_info，**页面加载时取一次**就缓存住
+                 （不在这 5 秒里现拉）；游客 / 没登录时整块隐藏。 -->
+            <div id="match-self-rank" class="match-chips match-self-rank hidden"></div>
             <p>游戏将在 <span id="countdown-timer">5</span> 秒后开始</p>
             <div id="countdown-bar" class="countdown-bar">
                 <div class="countdown-fill"></div>
@@ -418,6 +434,13 @@
     <!-- 排行榜界面 -->
     <div id="leaderboard-screen" class="screen">
         <h2>排行榜</h2>
+        <!-- 页签条（段位批）：「战绩榜」= 原有那张表，「段位榜」= 段位分排名。
+             ⚠️ 段位榜的数据**点页签时才拉**（不在页面加载/读秒时拉）——
+             /api/ranked_leaderboard 要现算名次与船长池，白拉一次是纯浪费。 -->
+        <div id="leaderboard-tabs" class="leaderboard-tabs" role="tablist">
+            <button type="button" id="lb-tab-record" class="lb-tab active" data-tab="record" role="tab">战绩榜</button>
+            <button type="button" id="lb-tab-ranked" class="lb-tab" data-tab="ranked" role="tab">段位榜</button>
+        </div>
         <div id="leaderboard-container">
             <table id="leaderboard-table">
                 <thead>
@@ -433,6 +456,23 @@
                 <tbody></tbody>
             </table>
             <div id="leaderboard-error" class="hidden"></div>
+        </div>
+        <!-- 段位榜（段位批）。列：名次 / 玩家 / 段位（图标 + label）/ 排位分 / 战绩。
+             高段位的行要明显更「重」（左侧色条 + 发光 + 更大的图标），见 style.css 第 29 节。 -->
+        <div id="leaderboard-ranked-container" class="hidden">
+            <table id="ranked-table">
+                <thead>
+                <tr>
+                    <th>名次</th>
+                    <th>玩家</th>
+                    <th>段位</th>
+                    <th>排位分</th>
+                    <th>战绩</th>
+                </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+            <div id="ranked-error" class="hidden"></div>
         </div>
         <div class="leaderboard-back-row">
             <button id="back-to-main-from-leaderboard" class="secondary">返回首页</button>
@@ -462,6 +502,37 @@
                 <span id="xp-breakdown" class="xp-breakdown"></span>
             </div>
             <div id="xp-levelup" class="xp-levelup hidden">升级！Lv.<b id="xp-from">1</b> → Lv.<b id="xp-to">2</b></div>
+        </div>
+        <!-- 本局段位积分（段位批）。接在经验条后面，做法与 #xp-gain-panel 一致：
+             数字滚动 + 进度条增长，涨满一个小段位就「清空重来」继续涨。
+             ⚠️ 只有收到 socket 事件 `rank_changed` 时才会出现 —— 休闲局永远收不到，
+             所以这一块在休闲对局里**永远不显示**（不是靠 mode 判断，是靠事件本身）。 -->
+        <div id="rank-gain-panel" class="rank-gain hidden">
+            <div class="rank-gain-head">
+                <span class="rank-gain-delta"><span id="rank-delta-prefix">本局段位分 </span><b id="rank-delta">+0</b></span>
+                <span class="rank-gain-role" id="rank-role"></span>
+            </div>
+            <div class="rank-gain-body">
+                <div class="rank-gain-tier">
+                    <span class="rank-gain-icon" id="rank-icon-before"></span>
+                    <span class="rank-gain-label" id="rank-label-before">—</span>
+                </div>
+                <div class="rank-gain-arrow" aria-hidden="true">→</div>
+                <div class="rank-gain-tier">
+                    <span class="rank-gain-icon" id="rank-icon-after"></span>
+                    <span class="rank-gain-label" id="rank-label-after">—</span>
+                </div>
+            </div>
+            <div class="rank-bar" id="rank-bar"><div class="rank-bar-fill" id="rank-bar-fill"></div></div>
+            <div class="rank-gain-foot">
+                <span id="rank-progress-text">0 / 100</span>
+                <span id="rank-points-text" class="rank-points-text"></span>
+            </div>
+            <div id="rank-promote" class="rank-promote hidden"></div>
+            <!-- 0 分封底那一行（只在 clamped 时出现）：
+                 delta 是**实际**变化量，封底时可能是 0 —— 那时绝不能显示「±0」。 -->
+            <div id="rank-clamp-note" class="rank-clamp-note hidden"></div>
+            <div id="rank-admiral-note" class="rank-admiral-note hidden"></div>
         </div>
         <div class="game-over-buttons">
             <button id="play-again">再来一局</button>
@@ -511,6 +582,11 @@
                                 <label><input type="checkbox" id="profile-show-stats" checked><span>战绩亮点（最高连胜 / 胜率 / 总场次）</span></label>
                                 <label><input type="checkbox" id="profile-show-favcards" checked><span>最爱用的卡</span></label>
                                 <label><input type="checkbox" id="profile-show-history"><span>允许别人看到我的对局历史</span></label>
+                                <!-- 第 5 个展示开关（段位批）。文案与服务端 profile_spec 的
+                                     `_FLAG_LABELS['show_rank']`（「段位公开」）保持一致。
+                                     ⚠️ 保存载荷现在是 **10 个字段**：这个开关必须跟着
+                                     collectProfileEditorPayload() 一起发，缺一个整次 400。 -->
+                                <label><input type="checkbox" id="profile-show-rank" checked><span>段位公开</span></label>
                             </div>
                         </div>
                     </section>

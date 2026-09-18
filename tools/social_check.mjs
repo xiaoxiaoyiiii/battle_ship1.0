@@ -446,7 +446,9 @@ try {
       sameGroup: toggles ? toggles.querySelectorAll('input[type=checkbox]').length : 0 }; })()`);
   check(toggle && toggle.checked === true, '29 默认是勾选（开放留言板，与表默认值一致）', toggle);
   check(toggle && toggle.pane === 'card', '★ 30 它与另外三个展示开关同在一个「名片」分区的 .pf-toggles 里', toggle);
-  check(toggle && toggle.sameGroup === 4, '★ 31 同一组里正好 4 个开关（没有在设置页再放一份）', toggle && toggle.sameGroup);
+  // ⚠️ 段位批把展示开关从 4 个加到 5 个（多了 `#profile-show-rank`「段位公开」），
+  //    所以"同组正好 N 个"这个数要跟着涨；它真正守的是"同一组、别处没有再放一份"。
+  check(toggle && toggle.sameGroup === 5, '★ 31 同一组里正好 5 个开关（没有在设置页再放一份）', toggle && toggle.sameGroup);
 
   // 关掉留言板 + 保存（真实 POST）
   await ev(`(function () {

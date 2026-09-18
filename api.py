@@ -15,6 +15,7 @@ import achievements
 import leveling
 import profile_spec
 import quick_chat
+import ranks
 import wallpaper
 
 ALLOWED_AVATAR_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
@@ -520,6 +521,108 @@ def build_badge_view(uid, user=None, rank=None, unlocked_only_flag=False):
     return items, count
 
 
+# ---------------------------------------------------------------------------
+# 段位（2026-09-17/18 段位批）
+# ---------------------------------------------------------------------------
+# 规则全在 `ranks.py`（纯模块、一份实现），`db` 层只管存 points —— 接口这里**只组装**：
+# 读行 → 补两个名次 → 交给 `ranks.rank_view()`。绝不在这里重算段位 / 小级 / 文案
+# （"同一个业务判断有两份实现就一定会漂移"，CLAUDE.md §11 通用教训二）。
+#
+# ⚠️ **只读，绝不写库**：`is_admiral` 的落库由结算侧（server 的结算路径）负责；
+#    接口层写一次，"动态晋升"就变成"看谁访问得多"了。
+# ⚠️ 两个"排名"别混（docs/RANKED_2026_09_17.md §1）：
+#    · `server_rank`       —— 全服名次，只用于**展示**（船长/大舰长文案里的 `#N`）；
+#    · `captain_pool_rank` —— 船长池内名次，只用于**大舰长晋升判定**。
+#    另外 `db.get_rank_position`（段位名次）与 `db.get_user_rank`（战绩榜名次，按 wins）
+#    是两回事，名字刻意错开，别拿错。
+
+
+def _users_brief_map(uids):
+    """批量取 `{uid: {'username', 'avatar'}}` —— 榜页 100 行不能逐行查库。
+
+    `db` 层没有现成的批量 users 读（`get_leaderboard` 是另一张榜的整表扫，
+    `get_user` 是单行），所以这里直接读一条**参数化**的 `IN (...)`：
+    只 SELECT `id, username, avatar` 三列，**绝不整行读**（`users` 里有
+    `password_hash` / `token`，凭证一旦进了响应就是安全事故）。
+
+    读失败返回空 map → 榜上用户名/头像落成空串、页面照常出（降级而不是 500，
+    与 `_card_speeds` / `_safe_read` 同一套口径）。
+    """
+    ids = [str(u) for u in (uids or []) if u]
+    if not ids:
+        return {}
+    try:
+        # `db.db` 是 db 模块里的单例（`Database()`），与各 DAO 共用同一条 sqlite
+        # 连接（`row_factory = sqlite3.Row`，所以这里能按列名取值）。
+        conn = getattr(getattr(db, 'db', None), 'conn', None)
+        if conn is None:
+            return {}
+        marks = ','.join('?' for _ in ids)
+        cursor = conn.cursor()
+        rows = cursor.execute(
+            f'SELECT id, username, avatar FROM users WHERE id IN ({marks})', ids).fetchall()
+        cursor.close()
+        return {str(r['id']): {'username': r['username'] or '', 'avatar': r['avatar'] or ''}
+                for r in rows if r['id']}
+    except Exception as e:      # noqa: BLE001 —— 展示层读不到不该把整张榜打成 500
+        print(f'[ranked] 批量读取用户名/头像失败，榜上按空串处理: {e}')
+        return {}
+
+
+def rank_view_for(uid, server_rank=None, captain_pool_rank=None, is_admiral=None,
+                  pool_map=None, pool_size=None):
+    """把某人的排位积分换算成段位视图（`ranks.rank_view` 的原样返回）。
+
+    `server_rank` / `captain_pool_rank` / `is_admiral` 都可以由调用方**算好后传进来**：
+    段位榜一页最多 200 行，逐行去查船长池（`captains_ordered` 一次返回 500 行）
+    等于白打 200 次重查询 —— 榜那边算**一次** `pool_map` / `pool_size` 批量传进来即可。
+
+    · `server_rank` 缺省时用 `db.get_rank_position(uid)`；`0` = 没打过排位 → 传 `None`
+      （否则文案会变成 `#0`，作者明确要求不许出现）；
+    · `captain_pool_rank` 缺省时：**只在该玩家积分 ≥ `ranks.CAPTAIN_FLOOR` 时**
+      才去船长池找自己的 `pool_position`，否则 `None`（不够船长段本来就没有池内名次）；
+    · `is_admiral` 缺省时按 `ranks.is_admiral(row, 池内名次, 池子人数)` 现算，
+      池子人数 = `db.count_rank_at_least(ranks.CAPTAIN_FLOOR)`；
+      积分还没到船长段时连这次 COUNT 都省掉（判据第一关就不过，池子人数无关紧要）。
+
+    **只读、绝不写库。**
+    """
+    row = _safe_read(lambda: db.get_user_rank_row(uid), None, 'user_rank 段位行')
+    row = row if isinstance(row, dict) else {}
+    points = ranks.normalize_points(row.get('points'))
+
+    if server_rank is None:
+        pos = _safe_read(lambda: db.get_rank_position(uid), 0, 'rank_position 段位名次')
+        try:
+            pos = int(pos or 0)
+        except (TypeError, ValueError):
+            pos = 0
+        server_rank = pos or None       # 0 = 没打过排位 → None
+
+    if captain_pool_rank is None and points >= ranks.CAPTAIN_FLOOR:
+        if pool_map is not None:
+            captain_pool_rank = pool_map.get(str(uid))
+        else:
+            pool = _safe_read(lambda: db.captains_ordered(limit=500), [], 'captains 船长池')
+            for entry in (pool or []):
+                if str(entry.get('user_id')) == str(uid):
+                    captain_pool_rank = entry.get('pool_position')
+                    break
+
+    if is_admiral is None:
+        if points < ranks.CAPTAIN_FLOOR:
+            is_admiral = False
+        else:
+            if pool_size is None:
+                pool_size = _safe_read(
+                    lambda: db.count_rank_at_least(ranks.CAPTAIN_FLOOR), 0,
+                    'captain_pool_size 船长池人数')
+            is_admiral = bool(ranks.is_admiral(row, captain_pool_rank, pool_size))
+
+    return ranks.rank_view(points, is_admiral=bool(is_admiral),
+                           server_rank=server_rank, captain_pool_rank=captain_pool_rank)
+
+
 # 自己的名片里保留的 users 字段（白名单 —— 绝不整行下发）
 _PROFILE_USER_FIELDS = ('id', 'username', 'signature', 'avatar', 'wins', 'losses',
                         'current_streak', 'longest_streak', 'created_at')
@@ -552,6 +655,10 @@ def build_own_profile(uid):
         # 段位开关（段位批）：第 5 个展示开关，同样同进同出（保存载荷 9 → 10 字段）。
         # 编辑面拿它初始化 `#profile-show-rank` 复选框。
         'show_rank': int(extra.get('show_rank') if extra.get('show_rank') is not None else 1),
+        # 段位视图（`ranks.rank_view` 的原样返回）：**自己视角恒下发**。
+        # 自己的段位自己当然看得到 —— 那个开关管的是"别人能不能看"，
+        # 要是连自己都被开关挡住，"我的段位"就没了（第 1 批 `show_stats` 的教训）。
+        'rank_info': rank_view_for(uid),
         'fav_cards': _fav_cards(uid),
         'catalog': profile_spec.catalog(stats),
     })
@@ -735,6 +842,20 @@ def user_stats_view():
     public_stats['show_rank'] = int(
         extra.get('show_rank') if extra.get('show_rank') is not None else 1)
 
+    # 段位（段位批）：开关本身已经下发（上面那行），这里按「本人 or 公开」决定明细。
+    # ⚠️ 不给**空 dict** —— 前端拿到空 dict 会画出「二级水手Ⅰ 0分」这种**假**信息，
+    #    `None` 才是"对方未公开段位"这个明确语义（契约 §5.1）。
+    # ⚠️ 未公开时 `points` / `server_rank` / `captain_pool_rank` 一个都不下发
+    #    （不给 `None` 占位，干脆不放这几个键）。
+    # ⚠️ **只有服务端拦得住**：前端断言会假绿（第 3 批的硬教训），
+    #    所以测试里必须**以别人的身份直接读接口**断言 `rank_info is None`。
+    viewer = session.get('user_id')
+    is_self = bool(viewer) and viewer == stats['id']
+    if is_self or public_stats['show_rank']:
+        public_stats['rank_info'] = rank_view_for(stats['id'])
+    else:
+        public_stats['rank_info'] = None
+
     # 点赞 / 送花 / 留言板（第 3 批）：查看面两个视角共用一份互动数据。
     # ⚠️ 计数与"我的状态"**始终可见**，不受 `show_guestbook` 影响 ——
     # 那是"人气"不是"内容"（计划 §3.4）。留言列表本身由
@@ -759,8 +880,8 @@ def user_stats_view():
     # 「我的对局记录」这个功能就作废了。未登录访问他人主页 = 他人视角。
     # （只有 history 由服务端过滤数据；战绩亮点 / 最爱用的卡是"标志位 + 数据都发"，
     #   因为那两个区块的数据本身不算隐私，隐藏与否交给前端按同一个标志位判断。）
-    viewer = session.get('user_id')
-    is_self = bool(viewer) and viewer == stats['id']
+    # `viewer` / `is_self` 复用上面段位那一段算好的（同一份口径只算一次，
+    # 免得两处各判一次后漂移）。
     if is_self or public_stats['show_history']:
         history = db.get_match_history(stats['id'], limit)
     else:
@@ -890,6 +1011,81 @@ def api_leaderboard():
             row.setdefault('name_style', '')
             row.setdefault('level', 1)
     return jsonify(rows)
+
+
+# 段位榜（公开只读，**匿名可访问** —— 与战绩榜 `/api/leaderboard` 同类）
+@app.route('/api/ranked_leaderboard')
+def api_ranked_leaderboard():
+    """段位榜一页：`{leaderboard, total, constants}`。
+
+    三条口径（docs/RANKED_2026_09_17.md §5）：
+
+    1. **只列库里有排位记录的账号**（`db.ranked_leaderboard` 已保证）：没打过排位的
+       账号不该以「二级水手Ⅰ 0分」占满榜尾（与战绩榜"只统计真打过一局的"同一条）；
+    2. **不理会 `show_rank`**：榜是公共竞技数据，玩家关掉"段位公开"之后**仍然在榜上**
+       —— 这是产品裁决，不是漏了过滤（开关只管个人信息里那块）。同时这里**不下发**
+       任何名片隐私字段，段位榜与名片是两码事；
+    3. **批量**：一页最多 200 行，用户名/头像一条 `IN (...)` 取完，船长池与池子人数
+       各算一次（逐行查 = 200 次重查询）。
+    """
+    try:
+        limit = int(request.args.get('limit', 100))
+    except (TypeError, ValueError):
+        limit = 100
+    limit = max(1, min(limit, 200))         # 越界夹住：limit=9999 → 200，limit=0 → 1
+    try:
+        offset = int(request.args.get('offset', 0))
+    except (TypeError, ValueError):
+        offset = 0
+    offset = max(0, offset)
+
+    rows = _safe_read(lambda: db.ranked_leaderboard(limit, offset), [],
+                      'ranked_leaderboard 段位榜')
+    rows = rows if isinstance(rows, list) else []
+
+    # 用户名 / 头像：**批量**取（一页 200 行别逐行查库），查不到就是空串。
+    briefs = _users_brief_map([r.get('user_id') for r in rows])
+
+    # 船长池与池子人数：只在**这一页真的有人够到船长段**时才查，
+    # 而且只查一次，然后由 `rank_view_for(..., pool_map=, pool_size=)` 批量复用。
+    pool_map, pool_size = None, None
+    if any(int(r.get('points') or 0) >= ranks.CAPTAIN_FLOOR for r in rows):
+        pool_map = {}
+        for entry in (_safe_read(lambda: db.captains_ordered(limit=500), [],
+                                 'captains 船长池') or []):
+            pool_map[str(entry.get('user_id'))] = entry.get('pool_position')
+        pool_size = _safe_read(
+            lambda: db.count_rank_at_least(ranks.CAPTAIN_FLOOR), 0,
+            'captain_pool_size 船长池人数')
+
+    leaderboard = []
+    for row in rows:
+        uid = str(row.get('user_id') or '')
+        brief = briefs.get(uid) or {}
+        entry = {
+            'user_id': uid,
+            'username': brief.get('username') or '',
+            'avatar': brief.get('avatar') or '',
+            'points': int(row.get('points') or 0),
+            'ranked_wins': int(row.get('ranked_wins') or 0),
+            'ranked_losses': int(row.get('ranked_losses') or 0),
+            # 全服名次由 db 算好（1 起）。它与 `server_rank` 是同一个数：
+            # `ranked_leaderboard` 的 position 与 `get_rank_position` 的 COUNT(*)
+            # 用的是**同一条排序口径**（points DESC, updated_at ASC, user_id ASC），
+            # 传进来就能省掉每行一次 COUNT。
+            'position': int(row.get('position') or 0),
+        }
+        entry.update(rank_view_for(uid, server_rank=(int(row.get('position') or 0) or None),
+                                   pool_map=pool_map, pool_size=pool_size))
+        leaderboard.append(entry)
+
+    return jsonify({
+        'leaderboard': leaderboard,
+        # 库里有排位记录的账号总数（不是注册用户数）
+        'total': int(_safe_read(lambda: db.count_rank_at_least(0), 0, 'ranked_total') or 0),
+        # 规则快照：前端画进度条/写文案不用猜（`ranks.constants()` 是唯一一份）
+        'constants': ranks.constants(),
+    })
 
 
 @app.route('/api/card_usage')

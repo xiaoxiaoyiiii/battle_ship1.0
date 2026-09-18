@@ -837,6 +837,11 @@ const aiMatchBtn = document.getElementById('ai-match');
 const customRoomBtn = document.getElementById('custom-room');
 const matchStatus = document.getElementById('match-status');
 const cancelMatchBtn = document.getElementById('cancel-match');
+// 排位排队那一套（段位批）。**不与休闲那套共用 id / 状态**，但两者是同一个队列，
+// 所以互相之间要"进一个先清另一个"（见 rankedMatch / findMatch）。
+const rankedMatchBtn = document.getElementById('ranked-match');
+const rankedStatus = document.getElementById('ranked-status');
+const cancelRankedBtn = document.getElementById('cancel-ranked');
 const playerNameInput = document.getElementById('player-name');
 
 // 自定义房间游戏界面元素
@@ -953,6 +958,15 @@ const leaderboardScreen = document.getElementById('leaderboard-screen');
 const backFromLeaderboardBtn = document.getElementById('back-to-main-from-leaderboard');
 const leaderboardTableBody = document.querySelector('#leaderboard-table tbody');
 const leaderboardError = document.getElementById('leaderboard-error');
+// 段位榜（段位批）：页签条 + 独立的一张表 + 自己的错误条。
+// ⚠️ 段位榜**不打进 #leaderboard-table**：那张表的表头是「胜/负/胜率/最长连胜」，
+//    段位榜的列完全不同（名次/玩家/段位/排位分/战绩），塞进去只能改表头，
+//    而 #leaderboard-table 的表头是既有回归工具盯着的（profile_leaderboard_check）。
+const leaderboardTabs = document.getElementById('leaderboard-tabs');
+const leaderboardRecordBox = document.getElementById('leaderboard-container');
+const leaderboardRankedBox = document.getElementById('leaderboard-ranked-container');
+const rankedTableBody = document.querySelector('#ranked-table tbody');
+const rankedError = document.getElementById('ranked-error');
 
 // 大厅界面元素
 const lobbyScreen = document.getElementById('lobby-screen');
@@ -1518,6 +1532,253 @@ function refreshMyLevelStrip(info) {
 // ---- 结算：本局经验的滚动动画 ----
 let xpAnimToken = 0;          // 世代令牌：新的一局开始时把上一次动画作废
 let lastXpView = null;        // 最近一次结算后的等级视图（用于顺手刷新首页条）
+
+// ==================== 段位（2026-09-18 段位批） ====================
+//
+// ⚠️ 前端**不算段位**：`label` / `progress` / `to_next` / `tier_id` / `tier_index`
+//    一律吃服务端下发的那份 `rank_info`（= `ranks.rank_view()` 的原样返回）。
+//    与等级系统同一条规矩 —— 曲线只要有两份实现就一定会漂移；段位这里更进一步：
+//    `label` 是**给玩家看的完整文案**（`水手长Ⅱ 90分` / `船长Ⅲ 2300分 #60` /
+//    `大舰长 #20`），前端直接显示它，**绝不自己拼**（拼法一改就两边不一致）。
+//
+// ⚠️ 本段全部是**模块级**函数：结算面板的入口是模块级的 socket 处理器，
+//    够不到 `bindEventListeners()` 里那些渲染函数。本项目为此踩过两次
+//    「模块级代码引用函数作用域里的东西 → ReferenceError 被 .then() 吞掉、
+//    页面上一点提示都没有」（`PROFILE_BADGE_GLYPH`、`profileTitleName`）。
+//    所以这里只依赖 window 上的全局（`window.rankIconHtml`）与 DOM 本身。
+
+let myRankInfo = null;            // 自己的段位视图（页面加载时取一次并缓存）
+let myRankInfoPromise = null;     // 上面那次请求的 promise（复用，绝不重复拉）
+let myRankInfoLoaded = false;     // 已经拉过（哪怕是失败）——防止回调里递归重试
+let rankAnimToken = 0;            // 段位动画世代令牌：新一局作废上一局的滚动
+let rankedQueuePending = false;   // 自己是否正在排位排队（收到 error 时要复位按钮）
+
+// 只为"要不要显示船长段那行小字" / "这一行算不算顶端段位"的守卫用
+// （段位下标 `tier_index` 由服务端下发，这里只是常数比较，不参与任何算分）
+const RANK_CAPTAIN_TIER_INDEX = 7;
+
+/** 段位图标。`window.rankIconHtml` 来自 static/rank_icons.js（在 game.js **之前**加载）。 */
+function rankIconMarkup(tierId, size) {
+    if (!tierId || typeof window.rankIconHtml !== 'function') return '';
+    try { return String(window.rankIconHtml(String(tierId), size)); } catch (e) { return ''; }
+}
+
+/** 玩家看的段位文案 —— **服务端下发什么就显示什么**（`rank_view()['label']`）。 */
+function rankLabelOf(info) {
+    if (!info || typeof info !== 'object') return '';
+    return String(info.label || '');
+}
+
+/** 「船长Ⅲ」这种段位名：两个字段都来自服务端（大舰长的 `sub` 是空串）。 */
+function rankTierText(info) {
+    if (!info || typeof info !== 'object') return '';
+    return String(info.tier_name || '') + String(info.sub || '');
+}
+
+/**
+ * 页面加载时取一次自己的段位（匹配等待界面要显示它 —— 那 5 秒里不许现拉）。
+ * 游客 / 接口失败 → 保持 null，等待界面就只显示对手那部分（不显示假段位）。
+ */
+function loadMyRankInfo() {
+    if (myRankInfoPromise) return myRankInfoPromise;
+    if (!window.__USERNAME) {
+        myRankInfoLoaded = true;
+        myRankInfoPromise = Promise.resolve(null);
+        return myRankInfoPromise;
+    }
+    myRankInfoPromise = fetch('/api/profile', { headers: { 'Accept': 'application/json' } })
+        .then(r => (r.ok ? r.json() : null))
+        .then(d => {
+            const info = d && d.profile && d.profile.rank_info;
+            if (info && typeof info === 'object') myRankInfo = info;
+            return myRankInfo;
+        })
+        .catch(() => null)
+        .then(v => { myRankInfoLoaded = true; return v; });
+    return myRankInfoPromise;
+}
+
+/**
+ * 结算面板 `#rank-gain-panel`：段位积分的滚动动画。
+ *
+ * 做法与经验条（`showXpPanel`）**同一套**：数字滚动 + 进度条增长；
+ * 涨到本小级满分就「走满 → 清空重来 → 继续涨」（升小段位），掉分则反向。
+ * 事件 `rank_changed` 是**逐人单发**的，休闲局永远收不到 —— 所以这块面板
+ * 在休闲对局里永远不会出现（不需要前端判 mode）。
+ */
+function showRankGainPanel(payload) {
+    const panel = document.getElementById('rank-gain-panel');
+    if (!panel || !payload) return;
+    const before = (payload.before && typeof payload.before === 'object') ? payload.before : {};
+    const after = (payload.after && typeof payload.after === 'object') ? payload.after : {};
+    const delta = Number(payload.delta || 0);
+    const sub = Number(after.sub_points || before.sub_points) || 100;
+
+    // ---------- 静态文案（动画只动条子与数字） ----------
+    // ⚠️ `delta` 是**实际**变化量（契约），所以 0 分封底时它会是 **0** 而不是 -15。
+    //    直接渲染 delta 会让败者看到「±0」，看着像 bug —— 四种情况分开写，
+    //    **全部能从现有字段判出来**（不需要新字段）：
+    //      delta > 0            → 「+20 分」
+    //      delta < 0            → 「-15 分」
+    //      clamped && delta == 0 → 「已到 0 分下限，本局未扣分」（不写 ±0，也不播掉分动画）
+    //      clamped && delta < 0  → 显示实际扣的分数 + 一句「已触及 0 分下限」
+    const deltaEl = document.getElementById('rank-delta');
+    const deltaPrefixEl = document.getElementById('rank-delta-prefix');
+    const clampNoteEl = document.getElementById('rank-clamp-note');
+    const clamped = payload.clamped === true;
+    const noChange = (delta === 0);
+    if (deltaEl) {
+        if (clamped && noChange) deltaEl.textContent = '已到 0 分下限，本局未扣分';
+        else deltaEl.textContent = (delta > 0 ? '+' : '') + String(delta) + ' 分';
+    }
+    if (deltaPrefixEl) deltaPrefixEl.textContent = (clamped && noChange) ? '' : '本局段位分 ';
+    if (clampNoteEl) {
+        const showClampNote = clamped && !noChange;
+        clampNoteEl.textContent = showClampNote ? '已触及 0 分下限（实际扣 ' + Math.abs(delta) + ' 分）' : '';
+        clampNoteEl.classList.toggle('hidden', !showClampNote);
+    }
+    const roleEl = document.getElementById('rank-role');
+    if (roleEl) roleEl.textContent = (payload.role === 'loser') ? '排位失利' : '排位获胜';
+    const beforeIcon = document.getElementById('rank-icon-before');
+    if (beforeIcon) beforeIcon.innerHTML = rankIconMarkup(before.tier_id, 30);
+    const afterIcon = document.getElementById('rank-icon-after');
+    if (afterIcon) afterIcon.innerHTML = rankIconMarkup(after.tier_id, 30);
+    const beforeLabelEl = document.getElementById('rank-label-before');
+    if (beforeLabelEl) beforeLabelEl.textContent = rankLabelOf(before) || '—';
+    const afterLabelEl = document.getElementById('rank-label-after');
+    if (afterLabelEl) afterLabelEl.textContent = rankLabelOf(after) || '—';
+    const pointsEl = document.getElementById('rank-points-text');
+    if (pointsEl) pointsEl.textContent = '累计排位分 ' + String(Number(after.points || 0));
+
+    // ---------- 升段 / 掉段那一行 ----------
+    // ⚠️ 判据只用服务端给的 `tier_up` / `promoted` / `demoted` / `admiral_*`，
+    //    **不许**自己比较 `label` 字符串（文案一改判据就废）。
+    const promoteEl = document.getElementById('rank-promote');
+    let promoteText = '';
+    if (payload.admiral_promoted) {
+        promoteText = '晋升大舰长！' + rankLabelOf(after);
+    } else if (payload.admiral_demoted) {
+        promoteText = '掉出大舰长段位：' + rankLabelOf(after);
+    } else if (payload.tier_up) {
+        promoteText = '升段！' + rankTierText(before) + ' → ' + rankTierText(after);
+    } else if (payload.tier_down) {
+        promoteText = '掉段：' + rankTierText(before) + ' → ' + rankTierText(after);
+    } else if (payload.promoted) {
+        promoteText = '升段！' + rankTierText(before) + ' → ' + rankTierText(after);
+    } else if (payload.demoted) {
+        promoteText = '掉级：' + rankTierText(before) + ' → ' + rankTierText(after);
+    }
+    if (promoteEl) {
+        promoteEl.textContent = promoteText;
+        promoteEl.classList.toggle('hidden', !promoteText);
+        promoteEl.classList.remove('flash');
+    }
+
+    // ---------- 大舰长那行小字 ----------
+    // ⚠️ 只在**船长段位**显示：低段位时服务端给的 `admiral_reason` 是
+    //    「需要先达到船长段位」，对玩家没有信息量，不该占位置。
+    const noteEl = document.getElementById('rank-admiral-note');
+    if (noteEl) {
+        const reason = String(payload.admiral_reason || '');
+        const inCaptainTier = Number(after.tier_index) === RANK_CAPTAIN_TIER_INDEX
+            || Number(before.tier_index) === RANK_CAPTAIN_TIER_INDEX;
+        const showNote = !payload.admiral_promoted && !!reason && inCaptainTier
+            && reason.indexOf('需要先达到船长段位') < 0;
+        noteEl.textContent = showNote ? reason : '';
+        noteEl.classList.toggle('hidden', !showNote);
+    }
+
+    panel.classList.toggle('is-admiral', !!payload.admiral_promoted);
+    panel.classList.toggle('is-top-tier',
+        Number(after.tier_index) >= RANK_CAPTAIN_TIER_INDEX || !!payload.admiral_promoted);
+    // 封底且一分没扣：不算"掉分"，不套掉分配色（也就不会让进度条演成掉分）
+    panel.classList.toggle('is-loss', delta < 0);
+    panel.classList.remove('hidden');
+
+    // ---------- 进度条 ----------
+    const fill = document.getElementById('rank-bar-fill');
+    const bar = document.getElementById('rank-bar');
+    const text = document.getElementById('rank-progress-text');
+    const from = Math.max(0, Math.min(1, (Number(before.progress) || 0) / sub));
+    const to = Math.max(0, Math.min(1, (Number(after.progress) || 0) / sub));
+    // `to_next === null` = 后面没有小级了（船长Ⅲ / 大舰长）：进度条不代表"离下一级多远"，
+    // 只表示"已经攒到这里"，所以画满并收起「N / 100」的文案，改显示累计分。
+    const saturated = (after.to_next === null || after.to_next === undefined);
+    if (bar) bar.classList.toggle('capped', saturated || !!payload.admiral_promoted);
+    if (text) text.classList.toggle('hidden', saturated);
+
+    const token = ++rankAnimToken;
+    const SEG_MS = 650;      // 一段滚动时长
+    const RESET_MS = 380;    // 走满后"清空重来"的停顿
+
+    function paint(p) {
+        if (!text || text.classList.contains('hidden')) return;
+        text.textContent = Math.round(p * sub) + ' / ' + sub;
+    }
+    function setWidth(r) {
+        if (fill) fill.style.width = Math.round(Math.max(0, Math.min(1, r)) * 100) + '%';
+    }
+
+    // 分段：跨小段位的那一次要"走满 → 清空 → 继续加"（掉分反向）。
+    // 起点/终点都是服务端给的 progress，前端只是把它们插值成动画。
+    const segs = [];
+    if (delta === 0) {
+        segs.push({ a: from, b: to });
+    } else if (payload.admiral_promoted) {
+        segs.push({ a: from, b: 1 });
+    } else if (delta > 0 && payload.promoted) {
+        segs.push({ a: from, b: 1, resetAfter: true });
+        segs.push({ a: 0, b: to });
+    } else if (delta < 0 && payload.demoted) {
+        segs.push({ a: from, b: 0, resetAfter: true });
+        segs.push({ a: 1, b: to });
+    } else {
+        segs.push({ a: from, b: (isFinite(to) ? to : from) });
+    }
+
+    setWidth(segs[0].a);
+    paint(segs[0].a);
+
+    let segIndex = 0;
+    function playNext() {
+        if (token !== rankAnimToken) return;      // 被新一局作废
+        const seg = segs[segIndex];
+        if (!seg) { paint(to); return; }
+        segIndex++;
+        const t0 = performance.now();
+        function tick(now) {
+            if (token !== rankAnimToken) return;
+            const p = Math.min(1, (now - t0) / SEG_MS);
+            const r = seg.a + (seg.b - seg.a) * p;
+            setWidth(r);
+            paint(r);
+            if (p < 1) { requestAnimationFrame(tick); return; }
+            if (seg.resetAfter) {
+                // 正好在此刻跨过了小段位：闪一下那行提示、把条子清空/填满，再继续
+                if (promoteEl && !promoteEl.classList.contains('hidden')) {
+                    promoteEl.classList.add('flash');
+                    setTimeout(() => promoteEl.classList.remove('flash'), RESET_MS + 220);
+                }
+                setTimeout(() => {
+                    if (token !== rankAnimToken) return;
+                    setWidth(delta > 0 ? 0 : 1);
+                    playNext();
+                }, RESET_MS);
+                return;
+            }
+            playNext();
+        }
+        requestAnimationFrame(tick);
+    }
+    playNext();
+}
+
+/** 新一局开始时收起段位面板并作废上一局的动画（与 xpAnimToken 同一条规矩）。 */
+function hideRankGainPanel() {
+    rankAnimToken++;
+    const panel = document.getElementById('rank-gain-panel');
+    if (panel) panel.classList.add('hidden');
+}
 
 function renderXpBreakdown(rows) {
     const box = document.getElementById('xp-breakdown');
@@ -2433,6 +2694,11 @@ function bindEventListeners() {
             likeMine: profileLikeMine(s, 'like'),
             flowerMine: profileLikeMine(s, 'flower'),
             guestbookPrivate: Number(s.show_guestbook) === 0,
+            // ---- 段位批：段位块 ----
+            // 服务端把 `label` / `progress` / `to_next` / `sub_points` 全算好了，这里只判"有没有"。
+            // 别人 + 关掉「段位公开」时接口给的是 **null**（不是空 dict）→ 整块不渲染；
+            // 绝不许退化成「二级水手Ⅰ 0分」这种假数据（那比不显示更糟）。
+            rank: (s && s.rank_info && typeof s.rank_info === 'object') ? s.rank_info : null,
             self: opts.self === true
         };
     }
@@ -2581,6 +2847,29 @@ function bindEventListeners() {
             + (withIds ? profileActionButtonsHtml(m) : '')
             + '</div>';
         html += '</div>';
+
+        // 段位块（段位批）：图标 + 服务端下发的 `label` + 小段位进度条。
+        // ⚠️ 一个数都不算：宽度用服务端的 `progress / sub_points`，
+        //    「还差 N 分」用服务端的 `to_next`；`to_next` 为 null（船长Ⅲ / 大舰长，
+        //    后面没有小级了）时**不画进度条、也不写"还差 N 分"**。
+        //    `label` 直接显示（普通 `水手长Ⅱ 90分` / 船长 `船长Ⅲ 2300分 #60` / `大舰长 #20`）。
+        if (m.rank) {
+            const ri = m.rank;
+            const sub = Number(ri.sub_points) || 0;
+            const prog = Number(ri.progress) || 0;
+            const hasNext = (ri.to_next !== null && ri.to_next !== undefined);
+            const pct = (hasNext && sub > 0)
+                ? Math.max(0, Math.min(100, Math.round((prog / sub) * 100))) : 100;
+            html += '<div' + idsOn('id="profile-view-rank"') + ' class="pf-rank'
+                + (ri.is_admiral ? ' is-admiral' : '') + '" data-tier="' + escapeHtml(String(ri.tier_id || '')) + '">'
+                + '<span class="pf-rank-icon">' + rankIconMarkup(ri.tier_id, 30) + '</span>'
+                + '<span class="pf-rank-label">' + escapeHtml(rankLabelOf(ri)) + '</span>'
+                + (hasNext
+                    ? '<span class="pf-rank-bar"><i style="width:' + pct + '%"></i></span>'
+                        + '<span class="pf-rank-next">还差 ' + escapeHtml(String(Number(ri.to_next) || 0)) + ' 分</span>'
+                    : '')
+                + '</div>';
+        }
 
         // 三个 show_* 是**同一套语义**：0 = 该区块对所有人隐藏（自己也不显示），
         // 1 = 对所有人可见。所以这里不看"是不是自己"，只看字段值。
@@ -3418,6 +3707,9 @@ function bindEventListeners() {
         setProfileToggle('profile-show-history', profileToggleValue(s.show_history, 0));
         // 第 3 批：留言板开关（**并入既有的 POST /api/profile/card**，保存载荷 8 → 9 字段）
         setProfileToggle('profile-show-guestbook', profileToggleValue(s.show_guestbook, 1));
+        // 段位批：段位开关（同样并入同一个接口，载荷 9 → **10** 字段）。
+        // 缺省 1（公开）—— 与表定义 `show_rank INTEGER DEFAULT 1` 一致。
+        setProfileToggle('profile-show-rank', profileToggleValue(s.show_rank, 1));
         return s;
     }
     window.renderProfileEditor = renderProfileEditor;
@@ -3435,11 +3727,20 @@ function bindEventListeners() {
         const label = document.createElement('label');
         label.innerHTML = '<input type="checkbox" id="profile-show-guestbook" checked>'
             + '<span>开放留言板（关闭后别人看不到留言，只能看到提示）</span>';
-        box.appendChild(label);
+        // 段位批的「段位公开」现在直接写在 index.html 里。它是第 **5** 个开关，
+        // 所以留言板要插在它**前面**（池子顺序 = 界面上看到的顺序，插到后面顺序就反了）。
+        // ⚠️ 要比的是那个 `<label>` 的父节点，不是 `<input>` 的 —— input 的父节点是 label 自己，
+        //    第一版就是这么写错的（结果插到了末尾，顺序断言当场抓到）。
+        const rankBox = document.getElementById('profile-show-rank');
+        const rankLabel = rankBox && rankBox.closest ? rankBox.closest('label') : null;
+        if (rankLabel && rankLabel.parentNode === box) box.insertBefore(label, rankLabel);
+        else box.appendChild(label);
     }
 
-    // 编辑态当前选了什么 —— **必须把服务端要求的字段全发**（现在是 9 个）：
+    // 编辑态当前选了什么 —— **必须把服务端要求的字段全发**（现在是 10 个）：
     // 服务端的校验缺字段直接 400 点名，不是"只写改动过的字段"那种局部更新接口。
+    // ⚠️ 段位批把 9 加到 **10**（多了 `show_rank`）——只加界面不加这里的话，
+    //    开关点得动、保存直接 400，而且报错文案是「缺少字段 show_rank」。
     function collectProfileEditorPayload() {
         const el = (id) => document.getElementById(id);
         const selTitle = document.querySelector('#profile-title-list .pf-opt[data-title].selected');
@@ -3462,7 +3763,9 @@ function bindEventListeners() {
             show_fav_cards: checked('profile-show-favcards', 1),
             show_history: checked('profile-show-history', 0),
             // 缺失时按 1（公开）—— 与表定义 `show_guestbook INTEGER DEFAULT 1` 一致
-            show_guestbook: checked('profile-show-guestbook', 1)
+            show_guestbook: checked('profile-show-guestbook', 1),
+            // 第 5 个开关（段位批）。缺省 1 = 公开，与 `show_rank INTEGER DEFAULT 1` 一致。
+            show_rank: checked('profile-show-rank', 1)
         };
     }
 
@@ -3686,6 +3989,9 @@ function bindEventListeners() {
         switchScreen(customRoomScreen);
     });
     cancelMatchBtn.addEventListener('click', cancelMatch);
+    // 排位那一套（段位批）：按钮与取消各绑一次（init 幂等，这里不会被绑两遍）
+    if (rankedMatchBtn) rankedMatchBtn.addEventListener('click', rankedMatch);
+    if (cancelRankedBtn) cancelRankedBtn.addEventListener('click', cancelRankedMatch);
     playAgainBtn.addEventListener('click', resetGame);
 
     // 返回主菜单按钮事件处理
@@ -3720,6 +4026,16 @@ if (copyInviteLinkBtn) copyInviteLinkBtn.addEventListener('click', copyInviteLin
         history.pushState({}, '', '/');
         switchScreen(startScreen);
     });
+
+    // 排行榜页签（段位批）：事件委托绑一次（页签条本身不会被重建，逐个别绑也行，
+    // 但委托更耐改）。段位榜的数据只在这里触发 —— 点页签才拉。
+    if (leaderboardTabs) {
+        leaderboardTabs.addEventListener('click', (e) => {
+            const btn = e.target && e.target.closest ? e.target.closest('.lb-tab[data-tab]') : null;
+            if (!btn) return;
+            setLeaderboardTab(btn.dataset.tab);
+        });
+    }
 
     // 大厅按钮事件绑定
     if (joinLobbyBtn) joinLobbyBtn.addEventListener('click', joinLobbyMatch);
@@ -3814,16 +4130,199 @@ if (copyInviteLinkBtn) copyInviteLinkBtn.addEventListener('click', copyInviteLin
 function findMatch() {
     gameState.playerName = playerNameInput.value || '玩家';
 
+    // 休闲与排位是**同一个队列**（服务端 `has_player_in_match_queue` 会拒掉第二个），
+    // 所以开休闲排队前先把排位那套状态收干净，反之见 rankedMatch()。
+    rankedQueuePending = false;
+    resetRankedQueueUI();
+
     // 复用/建立连接（ensureSocket 内部保证不重复建连）
     ensureSocket();
 
-    // 发送匹配请求
+    // 发送匹配请求（mode 明确发 'casual'：服务端把缺省/非法值也当 casual，这里写清楚更不容易漂）
     gameState.socket.emit('find_match', {
-        player_name: gameState.playerName
+        player_name: gameState.playerName,
+        mode: 'casual'
     }, (response) => {
         if (response.status === 'error') {
             showAlert(response.message);
         }
+    });
+}
+
+/**
+ * 排位排队 UI 复位：收起「正在寻找排位对手…」、把「排位对战」按钮放回来。
+ *
+ * ⚠️ **三条路径都要走到它**：取消成功、服务端拒绝（未登录 → `emit('error')`）、
+ *    匹配成功。只做其中两条就会卡在「正在寻找」——而玩家看到的是
+ *    「按一次之后再点也没反应」，属于本项目最难查的那类故障。
+ */
+function resetRankedQueueUI() {
+    rankedQueuePending = false;
+    if (rankedStatus) rankedStatus.classList.add('hidden');
+    if (cancelRankedBtn) cancelRankedBtn.classList.add('hidden');
+    if (rankedMatchBtn) rankedMatchBtn.classList.remove('hidden');
+}
+
+/**
+ * 排位对战入口 `#ranked-match`。
+ *
+ * 与休闲匹配的区别只有入队时的 `mode: 'ranked'`（同一个队列、同一套配对逻辑）；
+ * 但**排位必须登录** —— 游客点它会收到 `error`（文案「排位模式需要先登录」），
+ * 前端收到后必须把按钮恢复，不能停在「正在寻找」。
+ */
+function rankedMatch() {
+    gameState.playerName = playerNameInput.value || '玩家';
+    const socket = ensureSocket();
+
+    // 先把自己这一套摆好、把休闲那套收干净（两套状态不许同时挂着）
+    rankedQueuePending = true;
+    if (matchStatus) matchStatus.classList.add('hidden');
+    if (findMatchBtn) findMatchBtn.classList.remove('hidden');
+    if (rankedMatchBtn) rankedMatchBtn.classList.add('hidden');
+    if (rankedStatus) rankedStatus.classList.remove('hidden');
+    if (cancelRankedBtn) cancelRankedBtn.classList.remove('hidden');
+
+    socket.emit('find_match', { player_name: gameState.playerName, mode: 'ranked' }, (response) => {
+        // 服务端两条路都会走：ack 里 status:'error' + `emit('error')`。两边都复位才稳。
+        if (response && response.status === 'error') {
+            resetRankedQueueUI();
+            showAlert(response.message);
+        }
+    });
+}
+
+/** 取消排位排队：无论服务端怎么答，本地都把 UI 复位（不许卡在"正在寻找"）。 */
+function cancelRankedMatch() {
+    if (!gameState.socket) { resetRankedQueueUI(); return; }
+    gameState.socket.emit('cancel_match', {}, () => resetRankedQueueUI());
+}
+
+// ==================== 排行榜：战绩榜 / 段位榜两个页签（段位批） ====================
+
+let leaderboardTab = 'record';       // 当前页签（'record' | 'ranked'）
+let rankedFetchToken = 0;            // 段位榜请求令牌：切页签/重拉时作废上一次
+
+/**
+ * 切页签。**段位榜的数据只在这里（点页签时）才拉** ——
+ * 页面加载、读秒、切到排行榜页都不拉（`/api/ranked_leaderboard` 要现算名次与船长池）。
+ */
+function setLeaderboardTab(tab) {
+    const want = (tab === 'ranked') ? 'ranked' : 'record';
+    leaderboardTab = want;
+    if (leaderboardRecordBox) leaderboardRecordBox.classList.toggle('hidden', want !== 'record');
+    if (leaderboardRankedBox) leaderboardRankedBox.classList.toggle('hidden', want !== 'ranked');
+    if (leaderboardTabs) {
+        [].slice.call(leaderboardTabs.querySelectorAll('.lb-tab')).forEach(b => {
+            const on = b.dataset.tab === want;
+            b.classList.toggle('active', on);
+            b.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+    }
+    if (want === 'ranked') fetchRankedLeaderboard();
+    return want;
+}
+
+/** 段位榜一行。高段位的行靠 CSS 加权（左侧色条 + 发光 + 更大的图标），见 style.css 第 29 节。 */
+function rankedRowHtml(row) {
+    const r = (row && typeof row === 'object') ? row : {};
+    // `tier_index` 是服务端给的段位下标（0 二级水手 … 7 船长 / 8 大舰长），前端只做阈值比较。
+    const idx = Number(r.tier_index);
+    const tierIndex = isFinite(idx) ? idx : 0;
+    // ⚠️ 顶端那一档是**船长及以上（≥7）**，不是只有大舰长：本服 `ADMIRAL_MIN_CAPTAINS=50`
+    //    意味着现在没人能到大舰长，只认 8 的话"高段位更重"在最常见的情况（船长）根本不生效。
+    const top = (tierIndex >= RANK_CAPTAIN_TIER_INDEX) || r.is_admiral === true;
+    const high = !top && tierIndex >= 6;                // 轮机长 = 中间那一档
+    // 图标尺寸是"行有多重"的一部分（作者要求段位高低一眼可辨）。
+    // ⚠️ 这里传像素给 SVG，不动任何既有元素的盒模型尺寸。
+    const size = top ? 34 : (high ? 28 : 20);
+    const cls = 'ranked-row' + (top ? ' top-tier' : (high ? ' high-tier' : ''));
+    const username = String(r.username || '');
+    const avatar = r.avatar ? String(r.avatar) : '/static/avatars/default.png';
+    return '<tr class="' + cls + '" data-tier="' + escapeHtml(String(r.tier_id || '')) + '"'
+        + ' data-tier-index="' + escapeHtml(String(tierIndex)) + '">'
+        + '<td class="ranked-pos">' + escapeHtml(String(Number(r.position) || 0)) + '</td>'
+        + '<td class="leaderboard-user-cell">'
+        + '<button type="button" class="leaderboard-user" data-username="' + escapeHtml(username) + '"'
+        + ' title="点击查看个人信息">'
+        + '<img class="leaderboard-avatar" src="' + escapeHtml(avatar) + '" alt=""'
+        + ' onerror="this.onerror=null;this.src=\'/static/avatars/default.png\'">'
+        + '<span class="leaderboard-name">' + escapeHtml(username || '未知玩家') + '</span>'
+        + '</button></td>'
+        + '<td class="ranked-tier"><span class="ranked-tier-icon">' + rankIconMarkup(r.tier_id, size) + '</span>'
+        + '<span class="ranked-label">' + escapeHtml(rankLabelOf(r)) + '</span></td>'
+        + '<td class="ranked-points">' + escapeHtml(String(Number(r.points) || 0)) + '</td>'
+        + '<td class="ranked-record">' + escapeHtml(String(Number(r.ranked_wins) || 0)) + ' 胜 '
+        + escapeHtml(String(Number(r.ranked_losses) || 0)) + ' 负</td>'
+        + '</tr>';
+}
+
+/**
+ * 渲染段位榜。
+ * ⚠️ 「先清空再填充」的渲染必须先校验数据、失败时**保留上一帧**
+ *    （`updateHandUI` 那条教训）：所以这里清空之前先把新表拼成一个字符串，
+ *    数据形状不对就原样返回，只在错误条上说明。
+ */
+function renderRankedTable(data) {
+    if (!rankedTableBody) return;
+    const rows = (data && Array.isArray(data.leaderboard)) ? data.leaderboard : null;
+    const keepPrevious = () => {
+        if (!rankedTableBody.querySelector('.ranked-row')) {
+            rankedTableBody.innerHTML = '<tr class="ranked-empty"><td colspan="5">段位榜暂时取不到</td></tr>';
+        }
+    };
+    if (!rows) {
+        keepPrevious();
+        if (rankedError) {
+            rankedError.classList.remove('hidden');
+            rankedError.textContent = '段位榜数据异常（接口没给 leaderboard 数组）';
+        }
+        return;
+    }
+    if (!rows.length) {
+        rankedTableBody.innerHTML = '<tr class="ranked-empty"><td colspan="5">还没有人打过排位</td></tr>';
+        return;
+    }
+    rankedTableBody.innerHTML = rows.map(rankedRowHtml).join('');
+    bindRankedUserClick();
+}
+
+/** 段位榜取数。先渲染「加载中…」再异步取（弹窗可见 ≠ 内容就绪）。 */
+function fetchRankedLeaderboard() {
+    if (!rankedTableBody) return Promise.resolve();
+    const token = ++rankedFetchToken;
+    if (rankedError) { rankedError.classList.add('hidden'); rankedError.textContent = ''; }
+    rankedTableBody.innerHTML = '<tr class="ranked-loading"><td colspan="5">加载中…</td></tr>';
+    return fetch('/api/ranked_leaderboard?limit=100&offset=0', { headers: { 'Accept': 'application/json' } })
+        .then(resp => {
+            if (!resp.ok) throw new Error('网络错误 ' + resp.status);
+            return resp.json();
+        })
+        .then(data => {
+            if (token !== rankedFetchToken) return;      // 已经被后一次请求作废
+            renderRankedTable(data);
+        })
+        .catch(err => {
+            if (token !== rankedFetchToken) return;
+            if (!rankedTableBody.querySelector('.ranked-row')) {
+                rankedTableBody.innerHTML = '<tr class="ranked-empty"><td colspan="5">段位榜暂时取不到</td></tr>';
+            }
+            if (rankedError) {
+                rankedError.classList.remove('hidden');
+                rankedError.textContent = '无法加载段位榜：' + err.message;
+            }
+        });
+}
+
+/** 段位榜行点击：与战绩榜同一套（事件委托只绑一次，表会被整段重建）。 */
+function bindRankedUserClick() {
+    if (!rankedTableBody || rankedTableBody.dataset.userClickBound === '1') return;
+    rankedTableBody.dataset.userClickBound = '1';
+    rankedTableBody.addEventListener('click', (e) => {
+        const btn = e.target && e.target.closest ? e.target.closest('.leaderboard-user') : null;
+        if (!btn) return;
+        const username = btn.dataset.username;
+        if (!username) return;
+        if (typeof window.showUserProfile === 'function') window.showUserProfile(username);
     });
 }
 
@@ -3961,7 +4460,21 @@ function setupSocketListeners() {
     // 匹配相关事件处理
     socket.on('match_queued', (response) => {
         console.log('已加入匹配队列:', response);
-        matchStatus.classList.remove('hidden');
+        // ⚠️ 排位与休闲**共用这一个事件**，靠 payload 里的 `mode` 区分：
+        //    排位时不能再显示「正在寻找匹配...」（那会让玩家以为点的是休闲），
+        //    两条状态互斥，进一个就清另一个。
+        const isRanked = !!(response && response.mode === 'ranked');
+        if (isRanked) {
+            rankedQueuePending = true;
+            if (matchStatus) matchStatus.classList.add('hidden');
+            if (findMatchBtn) findMatchBtn.classList.remove('hidden');
+            if (rankedStatus) rankedStatus.classList.remove('hidden');
+            if (cancelRankedBtn) cancelRankedBtn.classList.remove('hidden');
+            if (rankedMatchBtn) rankedMatchBtn.classList.add('hidden');
+        } else {
+            matchStatus.classList.remove('hidden');
+            resetRankedQueueUI();
+        }
         // 大厅按钮同步（服务端没有 lobby_joined/lobby_left 这类事件）
         if (joinLobbyBtn) joinLobbyBtn.classList.add('hidden');
         if (leaveLobbyBtn) leaveLobbyBtn.classList.remove('hidden');
@@ -3970,12 +4483,18 @@ function setupSocketListeners() {
     socket.on('match_canceled', (response) => {
         console.log('匹配已取消:', response);
         matchStatus.classList.add('hidden');
+        resetRankedQueueUI();          // 排位那套也要复位（否则按钮永远回不来）
         if (joinLobbyBtn) joinLobbyBtn.classList.remove('hidden');
         if (leaveLobbyBtn) leaveLobbyBtn.classList.add('hidden');
     });
 
     socket.on('game_state', (data) => {
         console.log('Game state received:', data);
+        // 这一局是不是排位（段位批）：服务端在 `game_state` 里带 `ranked` / `mode`，
+        // 重连快照也带（否则重连之后不知道自己在打排位）。前端只用它做展示判断，
+        // 加减分的门槛完全在服务端。
+        gameState.ranked = !!data.ranked;
+        gameState.mode = String(data.mode || (data.ranked ? 'ranked' : 'casual'));
         // 隐藏所有屏幕和信息面板
         customRoomInfo.classList.add('hidden');
         customRoomIdInput.classList.add('hidden');
@@ -4065,9 +4584,11 @@ function setupSocketListeners() {
 
                 // 显示对手信息
                 opponentInfo.textContent = gameState.opponentName;
-                // 顺手把对手的称号 / 标签 / 等级显示出来（异步取公开的 /user_stats，
+                // 顺手把对手的称号 / 标签 / 等级 / 段位显示出来（异步取公开的 /user_stats，
                 // 与名片同一份数据源；取不到就留空，绝不影响开局倒计时）
                 showOpponentChips(gameState.opponentName);
+                // 自己的段位（页面加载时已经取过一次并缓存，这里不新拉接口）
+                showMyRankChip();
 
                 // 开始5秒倒计时
                 let countdown = 5;
@@ -4317,6 +4838,19 @@ function setupSocketListeners() {
             if (data && data.after) refreshMyLevelStrip(data.after);
         } catch (e) {
             console.warn('经验动画失败（不影响结算）:', e && e.message);
+        }
+    });
+
+    socket.on('rank_changed', (data) => {
+        // 排位结算：**逐人单发**（服务端按 sid 发，对手看到的是他自己那份）。
+        // 休闲局永远收不到这个事件 —— 所以 `#rank-gain-panel` 在休闲对局里不显示，
+        // 前端**不需要**再用 mode 判一次。
+        // 事件顺序：服务端把它排在 `game_over` 之后（它甚至走 background task 脱离请求上下文），
+        // 所以到达时结算屏已经切好了。
+        try {
+            showRankGainPanel(data);
+        } catch (e) {
+            console.warn('段位动画失败（不影响结算）:', e && e.message);
         }
     });
 
@@ -5451,6 +5985,9 @@ function setupSocketListeners() {
     });
     socket.on('error', (data) => {
         const msg = (data && (data.message || data.msg || data)) || '发生错误';
+        // 排位排队被服务端拒绝（未登录 → 「排位模式需要先登录」）时必须**恢复按钮状态**，
+        // 否则按一次就永远卡在「正在寻找排位对手…」。
+        if (rankedQueuePending) resetRankedQueueUI();
         showMessage(typeof msg === 'string' ? msg : JSON.stringify(msg));
     });
 
@@ -5536,6 +6073,8 @@ function switchScreen(screen) {
 // 展示并加载排行榜
 function showLeaderboard() {
     switchScreen(leaderboardScreen);
+    // 每次进这一页都从「战绩榜」开始（段位榜要现算名次，别在导航时就拉）
+    setLeaderboardTab('record');
     fetchLeaderboard();
 }
 
@@ -6268,6 +6807,17 @@ function showOpponentChips(username) {
             if (lv) parts.push('<span class="match-chip lv">Lv.' + escapeHtml(String(lv)) + '</span>');
             const title = String(s.title_name || '');
             if (title) parts.push('<span class="match-chip title">' + escapeHtml(title) + '</span>');
+            // 段位 chip（段位批）：**对方关掉「段位公开」时接口给的是 null**，
+            // 这时不显示这一条（也**不显示「隐藏」字样**去挤掉别的 chip）。
+            // 文案直接用服务端的 `label`（`水手长Ⅱ 90分` / `船长Ⅲ 2300分 #60` / `大舰长 #20`）。
+            const rank = (s.rank_info && typeof s.rank_info === 'object') ? s.rank_info : null;
+            if (rank && Number(s.show_rank) !== 0) {
+                const label = rankLabelOf(rank);
+                if (label) {
+                    parts.push('<span class="match-chip rank">' + rankIconMarkup(rank.tier_id, 24)
+                        + '<span class="rank-chip-text">' + escapeHtml(label) + '</span></span>');
+                }
+            }
             // tag_names 是服务端给的中文名；老接口没给就退回裸 id（总比不显示强）
             const tagNames = Array.isArray(s.tag_names) && s.tag_names.length
                 ? s.tag_names : (Array.isArray(s.tags) ? s.tags : []);
@@ -6280,11 +6830,44 @@ function showOpponentChips(username) {
         .catch(() => { /* 取不到就算了：等待界面照常倒计时 */ });
 }
 
+/**
+ * 匹配等待界面里**自己的段位**（`#match-self-rank`）。
+ *
+ * 数据来自 `/api/profile`，**页面加载时取一次缓存**（`loadMyRankInfo()`）——
+ * 那 5 秒倒计时里绝不现拉接口。游客 / 取不到 → 整块隐藏（不显示假段位）。
+ *
+ * ⚠️ 模块级函数：`#opponent-chips` 的同一个位置在 `game_state` 处理器里被调用，
+ *    而那个处理器够不到 `bindEventListeners()` 内部（本项目的老坑）。
+ */
+function showMyRankChip() {
+    const box = document.getElementById('match-self-rank');
+    if (!box) return;
+    const paint = (info) => {
+        if (!info || typeof info !== 'object') {
+            box.innerHTML = '';
+            box.classList.add('hidden');
+            return;
+        }
+        const label = rankLabelOf(info);
+        if (!label) { box.innerHTML = ''; box.classList.add('hidden'); return; }
+        box.innerHTML = '<span class="match-chip rank self">' + rankIconMarkup(info.tier_id, 24)
+            + '<span class="rank-chip-text">你 ' + escapeHtml(label) + '</span></span>';
+        box.classList.remove('hidden');
+    };
+    if (myRankInfo) { paint(myRankInfo); return; }
+    if (myRankInfoLoaded) { paint(null); return; }   // 拉过了就是没有（游客 / 失败）
+    loadMyRankInfo().then(() => {
+        // 复用同一次请求（不会因为这里再拉一次接口）
+        if (myRankInfo) paint(myRankInfo); else paint(null);
+    });
+}
+
 function resetGame() {
-    // 新一局开始：清掉上一局的「本局刚解锁」缓冲与经验动画世代
+    // 新一局开始：清掉上一局的「本局刚解锁」缓冲与经验 / 段位动画世代
     pendingUnlockBadges = [];
     renderAchievementUnlockPanel();
     xpAnimToken++;                     // 作废上一局的滚动动画（避免它接着改新一局的条）
+    hideRankGainPanel();               // 段位面板同理（含作废它的动画）
     const xpPanel = document.getElementById('xp-gain-panel');
     if (xpPanel) xpPanel.classList.add('hidden');
     // 断开socket连接（如果存在）
@@ -6325,6 +6908,9 @@ window.addEventListener('load', () => {
     // 首页「Lv.N + 经验条」：登录了才显示（游客没有等级）。
     // 放在 load 之后异步取，取不到就把整块藏起来（绝不挡住首页）。
     refreshMyLevelStrip();
+    // 自己的段位（段位批）：**也在这里取一次**并缓存 —— 匹配成功的 5 秒等待界面
+    // 要显示自己的段位，而那时候现拉接口会跟倒计时抢时间。
+    loadMyRankInfo();
 });
 
 

@@ -4967,5 +4967,44 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, rgba(255, 2
 }
 
 
+/* ============================================================================
+   31. 段位解锁的外观（段位批补装，2026-09-18）
+   —— 5 个头像框 + 5 个名片底色。之前只有 `profile_spec.py` 里的 id 与解锁规则，
+      样式一条都没有，所以选了完全看不出差别。
+   约定与既有那套一模一样（别改）：
+     · 头像框 → `.pf-avatar[data-frame="X"]`（真卡片上的头像）+
+                `.pf-frame[data-frame="X"] .pf-frame-ring`（编辑面的选择色块）；
+     · 名片底色 → `.pf-cover[data-bg="X"]`（卡片大封面）+
+                  `.pf-bg[data-bg="X"]`（编辑面的色块）。
+   段位越高越"贵"：青铜 → 银链 → 黄金 → 秘银 → 海皇（双环 + 呼吸光晕）。
+   只动颜色/阴影/动画，不动任何盒模型尺寸（第 11 节第 6 条）。
+   ============================================================================ */
 
+/* ---- 头像框：水手长 / 二副 / 轮机长 / 船长 / 大舰长 ---- */
+.pf-avatar[data-frame="bronze_compass"]  { box-shadow: 0 0 0 3px #b08d5a, 0 0 14px rgba(176, 141, 90, 0.45), 0 10px 24px rgba(0, 0, 0, 0.35); }
+.pf-avatar[data-frame="silver_chain"]    { box-shadow: 0 0 0 3px #cbd5e1, 0 0 0 6px rgba(203, 213, 225, 0.35), 0 0 16px rgba(203, 213, 225, 0.45), 0 10px 24px rgba(0, 0, 0, 0.35); }
+.pf-avatar[data-frame="golden_wheel"]    { box-shadow: 0 0 0 3px #f0c46a, 0 0 0 6px rgba(240, 196, 106, 0.3), 0 0 22px rgba(240, 196, 106, 0.6), 0 10px 24px rgba(0, 0, 0, 0.35); }
+.pf-avatar[data-frame="mithril_ring"]    { box-shadow: 0 0 0 3px #a8c7ff, 0 0 0 7px rgba(168, 199, 255, 0.32), 0 0 26px rgba(168, 199, 255, 0.65), 0 10px 24px rgba(0, 0, 0, 0.35); }
+.pf-avatar[data-frame="king_aura"]       { box-shadow: 0 0 0 3px #ffd98a, 0 0 0 8px rgba(255, 217, 138, 0.35), 0 0 34px rgba(255, 217, 138, 0.8), 0 10px 24px rgba(0, 0, 0, 0.35); animation: rankFrameAura 2.6s ease-in-out infinite; }
+@keyframes rankFrameAura {
+    0%, 100% { box-shadow: 0 0 0 3px #ffd98a, 0 0 0 8px rgba(255, 217, 138, 0.28), 0 0 28px rgba(255, 217, 138, 0.65), 0 10px 24px rgba(0, 0, 0, 0.35); }
+    50%      { box-shadow: 0 0 0 3px #ffe9b0, 0 0 0 9px rgba(255, 217, 138, 0.45), 0 0 40px rgba(255, 217, 138, 0.95), 0 10px 24px rgba(0, 0, 0, 0.35); }
+}
+/* 编辑面的选择色块（与上面一一对应，颜色保持一致） */
+.pf-frame[data-frame="bronze_compass"] .pf-frame-ring { box-shadow: 0 0 0 3px #b08d5a, 0 0 10px rgba(176, 141, 90, 0.5); }
+.pf-frame[data-frame="silver_chain"]   .pf-frame-ring { box-shadow: 0 0 0 3px #cbd5e1, 0 0 0 6px rgba(203, 213, 225, 0.3); }
+.pf-frame[data-frame="golden_wheel"]   .pf-frame-ring { box-shadow: 0 0 0 3px #f0c46a, 0 0 0 6px rgba(240, 196, 106, 0.28), 0 0 14px rgba(240, 196, 106, 0.6); }
+.pf-frame[data-frame="mithril_ring"]   .pf-frame-ring { box-shadow: 0 0 0 3px #a8c7ff, 0 0 0 7px rgba(168, 199, 255, 0.3), 0 0 16px rgba(168, 199, 255, 0.65); }
+.pf-frame[data-frame="king_aura"]      .pf-frame-ring { box-shadow: 0 0 0 3px #ffd98a, 0 0 0 8px rgba(255, 217, 138, 0.32), 0 0 18px rgba(255, 217, 138, 0.8); }
 
+/* ---- 名片底色：一级水手浅滩 / 三副风暴 / 大副深渊 / 船长鎏金 / 大舰长星海 ---- */
+.pf-cover[data-bg="shoal"]       { background: radial-gradient(460px 180px at 78% 0%, rgba(255, 224, 160, 0.5), transparent 70%), linear-gradient(135deg, #c9a06a, #4a3a26); }
+.pf-cover[data-bg="storm"]       { background: radial-gradient(460px 200px at 30% 10%, rgba(148, 163, 184, 0.55), transparent 72%), repeating-linear-gradient(115deg, rgba(255, 255, 255, 0.05) 0 2px, transparent 2px 9px), linear-gradient(135deg, #475569, #0b1220); }
+.pf-cover[data-bg="abyss"]       { background: radial-gradient(520px 200px at 82% 100%, rgba(56, 189, 248, 0.25), transparent 70%), linear-gradient(160deg, #05080f, #0a1526 55%, #020509); }
+.pf-cover[data-bg="molten_gold"] { background: radial-gradient(420px 170px at 22% 8%, rgba(255, 196, 88, 0.55), transparent 68%), repeating-linear-gradient(105deg, rgba(255, 170, 60, 0.16) 0 3px, transparent 3px 14px), linear-gradient(135deg, #3a2408, #150d04); }
+.pf-cover[data-bg="starfield"]   { background: radial-gradient(2px 2px at 18% 26%, rgba(255, 255, 255, 0.95), transparent 60%), radial-gradient(1.6px 1.6px at 62% 14%, rgba(255, 255, 255, 0.85), transparent 60%), radial-gradient(1.6px 1.6px at 82% 42%, rgba(200, 225, 255, 0.9), transparent 60%), radial-gradient(1.4px 1.4px at 36% 62%, rgba(255, 255, 255, 0.8), transparent 60%), radial-gradient(1.2px 1.2px at 72% 74%, rgba(220, 235, 255, 0.85), transparent 60%), radial-gradient(520px 220px at 70% 8%, rgba(96, 165, 250, 0.35), transparent 70%), linear-gradient(150deg, #060b1c, #0b1733 60%, #03060f); }
+.pf-bg[data-bg="shoal"]       { background: linear-gradient(135deg, #c9a06a, #6b5230); }
+.pf-bg[data-bg="storm"]       { background: linear-gradient(135deg, #475569, #0b1220); }
+.pf-bg[data-bg="abyss"]       { background: linear-gradient(135deg, #0a1526, #010306); }
+.pf-bg[data-bg="molten_gold"] { background: linear-gradient(135deg, #7a4c10, #241505); }
+.pf-bg[data-bg="starfield"]   { background: radial-gradient(2px 2px at 26% 30%, #fff, transparent 60%), radial-gradient(2px 2px at 70% 64%, #cfe3ff, transparent 60%), linear-gradient(135deg, #0b1733, #03060f); }

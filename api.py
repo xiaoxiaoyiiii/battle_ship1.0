@@ -121,6 +121,17 @@ def _profile_unlock_stats(uid, user=None):
     stats = {k: user.get(k) for k in
              ('wins', 'losses', 'longest_streak', 'current_streak', 'created_at')}
     stats['card_uses_total'] = db.get_user_card_uses_total(uid)
+    # 段位（user_rank）—— 段位解锁的称号/头像框/名片底色全靠它判。
+    # ⚠️ **这一行曾经漏了**：`profile_spec.unlock_context` 对缺失的 `rank_tier`
+    #    一律按 0（二级水手）算，于是所有"段位达到 X"的外观**永远解不开**，
+    #    而接口、前端、测试全都不报错 —— 表现是"段位到了但奖励看不到"。
+    #    改这一段时注意：本函数同时供给 `catalog`（解锁标志）与 `validate_payload`
+    #    （保存校验），所以只在这里注入一次，别在别处再算一份。
+    try:
+        row = db.get_user_rank_row(uid) or {}
+        stats['rank_tier'] = ranks.points_tier_index(row.get('points') or 0)
+    except Exception:                                             # noqa: BLE001
+        stats['rank_tier'] = 0
     # 特权（`user_perks` 表）：持有"外观全解锁"就注入标记，`profile_spec` 认它即全解锁。
     # ⚠️ 必须放在**这一个**函数里 —— 它同时被"自己的名片（catalog 的 unlocked 标志）"
     # 和"保存校验（validate_payload）"用到；分散注入必然漂移（第 2 批的教训）。

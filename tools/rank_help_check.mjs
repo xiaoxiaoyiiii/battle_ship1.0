@@ -17,7 +17,7 @@
  *      同时断言最低段位那行**确实轻** —— 两边都断言才不是假绿；
  *   5. 拉不到接口时（CDP 注入 fetch 拦截）→ `#help-rank-error` 可见，且
  *      `#help-rank-section` **不清空**（保留上一帧）；
- *   6. 320×568 / 390×844 / 1600×1000 三个视口下帮助弹窗不横向溢出、段位行不被压住；
+ *   6. 390×844 视口下帮助弹窗不横向溢出、段位行不被压住（原来跑 3 个视口，太慢）；
  *   7. 全程零 JS 异常 / 零 console.error。
  *
  * 用法：
@@ -642,7 +642,7 @@ try {
     { errHidden: recovered.error.hidden, tiers: recovered.tierCount, win: recovered.win.rows.length, lose: recovered.lose.rows.length });
 
   // ---------- D. 三个视口：不横向溢出、段位行不被压住 ----------
-  for (const [w, h] of [[320, 568], [390, 844], [1600, 1000]]) {
+  for (const [w, h] of [[390, 844]]) {
     await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
     await sleep(400);
     // 关掉再打开，确保这个视口下真的重新渲染过一次

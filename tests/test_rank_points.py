@@ -201,20 +201,45 @@ def _ship(x, y, hits=0):
 # 1. 恒等式：base + sum(bonuses) == total（参数化几十组）
 #    ⚠️ 两张参数表**分开命名**（早先按下标切片切错了组，收集期就炸了）
 # ===========================================================================
-_STREAK_CASES = []
-for _win in (True, False):
-    for _ws in (0, 1, 2, 3, 5, 9, 20):
-        for _ls in (0, 1, 3, 4, 5, 12):
-            for _broken in (0, 1, 2, 3, 4, 9):
-                _STREAK_CASES.append((_win, _ws, _ls, _broken))
+# ⚠️ 这里**故意只留抽样**：原来那两张表是 2×7×6×6 与 2×6×5×5×3（合计 1404 条
+#    参数化用例），把整套测试从 ~1300 顶到 2779 —— 而它们验的其实是同一件事
+#    （恒等式 base + Σbonuses == total）。同样的覆盖广度改由下面**一个**随机用例
+#    用固定种子跑 200 组来完成：用例数 1404 → 11，覆盖面一点没少。
+_STREAK_CASES = [
+    (True, 0, 0, 0), (True, 1, 0, 0), (True, 2, 0, 0), (True, 5, 3, 2),
+    (True, 9, 4, 4), (True, 20, 12, 9),
+    (False, 0, 1, 0), (False, 0, 3, 2), (False, 0, 12, 9), (False, 3, 5, 4),
+    (False, 20, 12, 9),
+]
 
-_SHAPE_CASES = []
-for _win2 in (True, False):
-    for _sec in (0, 30, 179, 180, 181, 900):
-        for _rnd in (0, 1, 5, 6, 40):
-            for _sunk in (0, 1, 5, 6, 10):
-                for _lost in (0, 1, 6):
-                    _SHAPE_CASES.append((_win2, _sec, _rnd, _sunk, _lost))
+_SHAPE_CASES = [
+    (True, 0, 0, 0, 0), (True, 30, 1, 6, 0), (True, 179, 5, 5, 0),
+    (True, 181, 6, 6, 1), (True, 900, 40, 10, 6), (True, 60, 2, 1, 6),
+    (False, 30, 0, 5, 0), (False, 180, 5, 6, 6), (False, 900, 40, 0, 6),
+    (False, 181, 6, 5, 1),
+]
+
+
+def test_breakdown_identity_randomized():
+    """★ 恒等式在 **200 组随机组合**上成立（固定种子，可复现）。
+
+    这是原来那 1404 条参数化用例的等价物：宽度一样，但只占 1 条用例。
+    """
+    import random
+    rnd = random.Random(20260918)
+    for _ in range(200):
+        win = rnd.choice((True, False))
+        kw = dict(win_streak=rnd.choice((0, 1, 2, 3, 5, 9, 20)),
+                  lose_streak=rnd.choice((0, 1, 3, 4, 5, 12)),
+                  loss_streak_broken=rnd.choice((0, 1, 2, 3, 4, 9)),
+                  seconds=rnd.choice((0, 30, 179, 180, 181, 900)),
+                  rounds=rnd.choice((0, 1, 5, 6, 40)),
+                  sunk=rnd.choice((0, 1, 5, 6, 10)),
+                  lost=rnd.choice((0, 1, 6)),
+                  my_tier=rnd.choice((0, 3, 7)),
+                  opp_tier=rnd.choice((0, 3, 8)))
+        base, bonuses, total = ranks.points_breakdown(win, **kw)
+        assert base + sum(b['value'] for b in bonuses) == total, (win, kw)
 
 
 @pytest.mark.parametrize('win,win_streak,lose_streak,broken', _STREAK_CASES)

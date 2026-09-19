@@ -23,6 +23,7 @@ from flask_socketio import SocketIO, join_room, leave_room, emit as semit
 
 import db  # local database helpers for users and matches
 import achievements  # 徽章判据（纯函数，唯一一份 evaluate()）
+import dm  # 私聊的形状与规则（纯数据/纯函数：推送 payload 的字段清单只此一份）
 import leveling  # 等级曲线 / 每局经验 / 升级动画分段（唯一一份规则）
 import profile_spec  # 特权常量（level_101 等）
 import quick_chat  # 局内快捷语表 + 频率规则（纯数据/纯函数，前端从接口取同一份）
@@ -1007,7 +1008,7 @@ def _recycle_host_waiting_rooms(player_id: str) -> list:
         entries = list(room.players.items())
         if len(entries) != 1 or entries[0][0] != player_id:
             continue
-        room_manager.delete_room(room_id)
+        _drop_room(room_id, '建房时回收自己上一间等待房')
         reaped.append(room_id)
     return reaped
 
@@ -1268,6 +1269,53 @@ def _release_presence_game(room) -> None:
             continue
 
 
+def _drop_my_other_waiting_rooms(player_id, keep_room_id: str) -> list:
+    """把这个人**独自占着**的其它等待房清掉，返回被清掉的房号列表。
+
+    什么时候会有这种房：邀战修好之后**发起方也会进房**（`sendFriendInvite` 里的自动入房），
+    于是"我已经在自己那间等待房里，又接受了另一个人的邀请"会把我的座位留在旧房里 ——
+    那间房**只有我一个人**，既不自动回收（等待房 TTL 1 小时），大厅列表里还挂着，
+    而且我同时占着两间房（`handle_join_room` 本身不拦这个）。
+    口径与大厅批 `_recycle_host_waiting_rooms`（一人同时只能主持一间等待房）一致，
+    只是那里只管"**自己建的**房"，这里扩到"任何我独自占着的等待房"。
+
+    ⚠️ 房里**还有别人**时一律不删（有人在等我）—— 不替玩家做决定，只在日志里说一声。
+    """
+    reaped = []
+    for rid, room in list(room_manager.get_all_rooms().items()):
+        if rid == keep_room_id or getattr(room, 'state', None) != 'waiting':
+            continue
+        seats = list(room.players.keys())
+        if len(seats) == 1 and seats[0] == player_id:
+            _drop_room(rid, '他进了另一间房，而这一间等待房里只有他自己')
+            reaped.append(rid)
+        elif player_id in seats:
+            print(f'[room] 他同时还在等待房 {rid} 里，但那里还有别人在等 —— 不替他清')
+    return reaped
+
+
+def _drop_room(room_id: str, why: str) -> bool:
+    """删一间房，并把房里**还连着的真人**从「对局中」摘出来（幂等）。
+
+    ⚠️ 为什么要收成一个口（2026-09-19 双浏览器实测踩到）：
+    `_release_presence_game` 原来只在**结算**（`_finalize_match`）与**掉线**
+    （`handle_disconnect`）两处调用，注释里那句「房间回收那几条路不用再挂 ——
+    人已经在 disconnect 那一步摘过了」对**「解散房间」（`close_room`）不成立**：
+    那条路上人是**连着**的、房却没了 → 他此后在好友面板里永远显示「对局中」，
+    并被「局中不许邀战」那道护栏**永久拦住**（症状：解散之后再也邀不了战，只能刷新页面）。
+    同形状还有两条：**对手掉线 → 对局取消**、**等待房 TTL 回收**（房主可能还连着）。
+
+    ⚠️ 别把 `_release_presence_game` 的调用从 `_finalize_match` / `handle_disconnect`
+    挪走：那两处的语义比「删房」更早（结算时房还在，房里的人要一起摘）。
+    """
+    room = room_manager.get_room(room_id)
+    if room is not None:
+        _release_presence_game(room)
+    ok = room_manager.delete_room(room_id)
+    print(f'[room] 删除房间 {room_id}（{why}）')
+    return ok
+
+
 def _friend_relation_safe(from_uid, to_uid) -> str:
     """取 `from_uid` → `to_uid` 的好友关系，**绝不外抛**。
 
@@ -1421,6 +1469,35 @@ def push_friend_invite(to_uid, room_id, from_uid, from_username) -> bool:
         'from_user_id': from_uid,
         'from_username': from_username,
     })
+
+
+def push_friend_message(to_uid, message) -> bool:
+    """把一条私聊推给收件人的**每一张标签页**（`api.py` 的发送接口调它）。
+
+    契约（§4「Socket 事件」）冻结的 payload：
+      `id` / `from_uid` / `from_username` / `from_avatar` / `body` / `created_at` / `stamp`
+
+    ⚠️ 与 `push_friend_request` / `push_friend_invite` **共用同一个发车口**
+    （`_push_friend_event`）：三道门槛（uid 非空 → `presence.is_online` → 逐 sid 发）
+    与"多标签页每张都收到"的口径只此一份。本函数**只负责拼 payload**，
+    自己再写一遍 `socketio.emit(..., room=sid)` 就是第二份实现 —— 两份必然漂移
+    （本项目"推送只有一份实现"这条是硬规矩，见 `api.py` 顶部那段注释）。
+
+    ⚠️ payload 里**带 `body` 与 `stamp`**（而不是只给一个 id 让前端回拉）：
+    收件人可能正停在好友列表上、根本没打开那段会话，这时补一条
+    "小红：在吗"的提示才是有用的；只给 id 的话前端什么也渲染不出来。
+
+    ⚠️ 对方离线 → 返回 False，**不发、不抛**（消息已经落库，等他下次打开会话
+    自己就拉到了）。调用方（HTTP 接口）**不许**因此回 error —— 这点与邀请不同：
+    邀请必须是实时的，私聊不是。
+
+    ⚠️ payload 的形状由 `dm.push_payload` **裁好**（唯一一份字段清单，契约 §4）。
+    这里再走一次它：`api.py` 传进来的是**接口自己那份 dict**（带 `mine` / `to_uid`
+    这类视角字段），多兜一道就不会因为"api 那边哪天多塞一个内部键"把收件人
+    看到的东西改掉 —— 推给别人的 payload 必须只由这一处的形状决定。
+    """
+    body = dm.push_payload(message)
+    return _push_friend_event(to_uid, 'friend_message', body)
 
 
 def _identity_check(room, claimed_player_id, server_pid, sid):
@@ -2091,6 +2168,28 @@ def handle_join_room(data):
         emit('error', {'message': '房间不存在'}, room=request.sid)
         return {'status': 'error', 'message': '房间不存在'}
 
+    # 进新房之前先把自己**独自占着**的其它等待房清掉（见 `_drop_my_other_waiting_rooms`）：
+    # 不清的话旧房会变成没人管的僵尸房，我还同时占着两间。
+    _drop_my_other_waiting_rooms(player_id, room_id)
+
+    # ⚠️ **同一身份的重入**要先认出来：`room.players` 的 key 是 `session['user_id']`
+    #    （游客是 sid），所以"同一个账号开第二个标签页 / 刷新后经 `?room=` 再进一次"
+    #    如果走下面那条"新增座位"，只会**覆盖自己那个 key** —— 长度永远到不了 2
+    #    → 这间房**永远开不了局**，而每次 join 的 ack 都是 success、页面上零提示。
+    #    （2026-09-19 双浏览器实测钉出来的，症状与"约战开不了局"一模一样。）
+    #    正确语义：同一身份 = **同一个座位**，这里只把座位上的连接换成新来这条。
+    #    ⚠️ 只在 `waiting` 时这么做：局已经开打的刷新走既有的重连链路
+    #    （`get_reconnect_token` / `rejoin_room`），别在这里抢它的活。
+    seated = room.players.get(player_id)
+    if seated is not None and getattr(room, 'state', None) == 'waiting':
+        seated.sid = request.sid          # 之后所有 emit 都发到这条新连接上
+        if player_name:
+            seated.name = player_name
+        join_room(room_id, request.sid)
+        _lobby_broadcast_soon()
+        _bind_presence_game(room)
+        return {'status': 'success', 'player_id': player_id, 'seat': 'reused'}
+
     if len(room.players) >= 2:
         emit('error', {'message': '房间已满'}, room=request.sid)
         return {'status': 'error', 'message': '房间已满'}
@@ -2654,7 +2753,9 @@ def handle_close_room(data=None):
     entries = list(room.players.items())
     if len(entries) != 1 or entries[0][0] != player_id:
         return {'status': 'error', 'message': '只能解散自己创建的房间'}
-    room_manager.delete_room(room_id)
+    # ⚠️ 走 `_drop_room`：这条路上人是**连着**的，房没了就必须把「对局中」摘掉 ——
+    #    否则「局中不许邀战」那道护栏会把他**永久拦住**（实测踩过：解散之后再也邀不了战）。
+    _drop_room(room_id, '房主解散等待房')
     _broadcast_lobby_state()
     return {'status': 'success', 'room_id': room_id}
 
@@ -6336,7 +6437,8 @@ def _disconnect_timeout(room_id: str, player_id: str, token: int):
             'reason': 'opponent_disconnected',
             'message': '对局已取消（对手掉线）',
         }, room=room_id)
-        room_manager.delete_room(room_id)
+        # 房里可能还有人连着（掉线的是**对手**）→ 同样走收口，别留下「对局中」
+        _drop_room(room_id, '对手掉线/未开局，取消对局')
         return
 
     # 正式对局：在场方判胜，正常计入战绩（无特殊标签）
@@ -6375,7 +6477,7 @@ def _reap_ended_rooms(now: float = None):
         if state == 'waiting':
             created = getattr(room, 'created_at', None)
             if created is not None and now - created > _WAITING_ROOM_TTL:
-                room_manager.delete_room(room_id)
+                _drop_room(room_id, '等待房超过 TTL')
                 reaped.append(room_id)
             continue
         if state != 'game_over':
@@ -6387,7 +6489,7 @@ def _reap_ended_rooms(now: float = None):
             room._game_over_since = now
             continue
         if now - ended > _ROOM_GRACE_SECONDS:
-            room_manager.delete_room(room_id)
+            _drop_room(room_id, '已结束房宽限期到')
             reaped.append(room_id)
     return reaped
 
@@ -9638,7 +9740,14 @@ def create_custom_room_for_invite():
 try:
     import api as _api    # ⚠️ 本文件是 `from api import app`，`api` 这个名字**没绑定** ——
                           # 直接写 `api.xxx` 会 NameError 被下面的 except 吞成一句警告。
-    _api.register_friend_backend(sys.modules[__name__])
+    _api.register_friend_backend(
+        sys.modules[__name__],
+        # 好友能力按名字登记（`api.py` 侧 `_friend_backend(name)` 现取）。
+        # 注入的是**模块对象自己**，所以下面这几个名字只是"这份契约的清单"：
+        # 少写一个不会报错，只会让 `api.py` 那一侧静默拿到 None（推送失效），
+        # 所以新增推送函数时**必须**在这里补一行（私聊批就是这么加的）。
+        push_friend_message='push_friend_message',
+    )
 except Exception as _e:                                          # noqa: BLE001
     # 注入失败只记日志：好友的实时提示会降级成"对方刷新后自己看到"，
     # 绝不能让整个服务起不来。

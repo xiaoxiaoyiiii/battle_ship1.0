@@ -12,6 +12,7 @@ from werkzeug.utils import secure_filename
 
 import db
 import achievements
+import dm
 import leveling
 import profile_spec
 import quick_chat
@@ -1294,6 +1295,19 @@ def api_login():
 #    详见 `_friend_socketio` 与 `_friend_new_room` 的注释。
 
 
+def _int_or_zero(raw):
+    """把 DAO 回来的计数收敛成 `int`（`None` / 非数字一律 0）。
+
+    为什么需要：统计类 DAO 失败时返回 0、但**打桩/降级路径**可能给出 None；
+    `None` 直接进 jsonify 会变成 JSON `null`，前端 `unread > 0` 判真值时
+    会静默走错分支（本项目"取数函数兜底值当判据"踩过同形状）。
+    """
+    try:
+        return int(raw or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _friend_level(uid):
     """等级（数字）。读不到按 1 级 —— 用**现有唯一一份**实现，不在这里重算曲线。"""
     view = _safe_read(lambda: level_view_for(uid), {}, '好友等级视图')
@@ -1380,19 +1394,29 @@ def _friend_presence_view(uids):
 _FRIEND_BACKEND_MODULE = None
 
 
-def register_friend_backend(module):
+def register_friend_backend(module, **names):
     """由 `server.py` 在 import 期把**它自己那个模块对象**交过来（见模块顶部说明）。
 
     ⚠️ 只存模块、**不存函数对象**：推送/建房函数在调用那一刻按名字现取。
     存函数对象会在 import 期就把 `server.push_friend_invite` 绑死，
     `monkeypatch.setattr(server, 'push_friend_invite', ...)` 这类打桩**全部被架空**
     —— 测试静默打到空处还会是绿的。
+
+    `**names` 是**能力清单**（`server.py` 那边写成 `push_friend_message='push_friend_message'`）。
+    它**不改"按名字现取"这条机制**，只做一件事：**在 import 期把清单里缺失的名字喊出来**。
+    为什么值得加 —— `_friend_backend(name)` 拿不到函数时只 print 一句就返回 None，
+    调用方于是静默失败（接口照回 ok、对方什么也没收到）；而这类"功能看着有、
+    其实永远不触发"的坑**在 pytest 里测不到**（pytest 里 server 就叫 `server`，
+    一切正常），只有服务启动那一眼能看出来。
     """
     global _FRIEND_BACKEND_MODULE
     if module is None:
         print('[friends] 注入的后端模块是 None，忽略')
         return False
     _FRIEND_BACKEND_MODULE = module
+    for key, fn_name in sorted(names.items()):
+        if not callable(getattr(module, fn_name, None)):
+            print(f'[friends] 清单里的 {key} 在后端模块里不存在（该能力会静默失效）: {fn_name}')
     return True
 
 
@@ -1502,10 +1526,10 @@ def build_friends_payload(uid):
     """`GET /api/friends` 的响应体（**唯一一份组装实现**）。
 
     形状冻结：
-      `friends`  [{'user_id','username','avatar','level','rank_label','online','in_game'}]
+      `friends`  [{'user_id','username','avatar','level','rank_label','online','in_game','unread'}]
       `incoming` / `outgoing`  [{'user_id','username','avatar','created_at'}]
       `limits`   {'max_friends': 50, 'requests_per_hour': 10}
-      `counts`   {'friends': N, 'incoming': N}
+      `counts`   {'friends': N, 'incoming': N, 'unread_total': N}
     """
     friend_rows = db.list_friends(uid) or []
     incoming_rows = db.list_incoming_requests(uid) or []
@@ -1522,6 +1546,13 @@ def build_friends_payload(uid):
 
     online_map, in_game_map = _friend_presence_view(all_uids)
 
+    # 未读私聊：**一条 GROUP BY 拿全**（`db.unread_by_friend`），不逐行 count。
+    # ⚠️ 未读**只进 friend 行与 unread_total**，绝不混进 `counts.incoming` ——
+    #    入口红点的契约是"待确认好友申请数"，被 `friends_check` T8b 钉着；
+    #    把未读并进去会让"红点=申请数"那条既有断言失真（契约 §1 明文）。
+    unread_map = db.unread_by_friend(uid)
+    unread_map = unread_map if isinstance(unread_map, dict) else {}
+
     friends = []
     for row in friend_rows:
         other = str(row.get('user_id') or '')
@@ -1536,6 +1567,8 @@ def build_friends_payload(uid):
             'rank_label': _friend_rank_label(other),
             'online': bool(online_map.get(other)),
             'in_game': bool(in_game_map.get(other)),
+            # 未读数是**服务端算好的事实**（前端不许自己数组加减，契约 §5 前端纪律）
+            'unread': _int_or_zero(unread_map.get(other)),
         })
 
     # 排序：在线在前 → 在局中在后 → 用户名。
@@ -1567,7 +1600,13 @@ def build_friends_payload(uid):
         'outgoing': _brief_list(outgoing_rows),
         'limits': {'max_friends': MAX_FRIENDS,
                    'requests_per_hour': FRIEND_REQUESTS_PER_HOUR},
-        'counts': {'friends': len(friends), 'incoming': len(incoming_rows)},
+        'counts': {'friends': len(friends),
+                   'incoming': len(incoming_rows),
+                   # 未读私聊总数（**入口红点不读它**，见上面的注释与契约 §1）。
+                   # 用 `count_unread_messages` 而不是把上面那些 unread 加起来：
+                   # 加起来只覆盖**还是好友**的人，而解除好友之后未读仍在库里，
+                   # 两个数字会悄悄对不上（这是同一件事的两份算法）。
+                   'unread_total': _int_or_zero(db.count_unread_messages(uid))},
     }
 
 
@@ -1758,6 +1797,18 @@ def api_friend_invite():
     if other == str(uid):
         return jsonify({'status': 'error', 'error': '不能邀请自己'}), 400
 
+    # ⚠️ 发起方**自己不能正在局中**：邀战会把**发起方也带进这间新房**
+    #    （前端 `sendFriendInvite` 成功后调 `joinRoomById`；否则房里永远只有对方一人、
+    #    开不了局）。局中再进一间会把自己那局搞乱，所以先拦一道。
+    #    判据走 `presence`；取不到 presence 就**放行**（不硬拦，宁可少拦也不错拦）。
+    pres = _presence_module()
+    if pres is not None:
+        try:
+            if pres.is_in_game(uid):
+                return jsonify({'status': 'error', 'error': '你正在对局中，结束这局再邀战'}), 409
+        except Exception:                                            # noqa: BLE001
+            pass
+
     # 先判在线，再建房 —— 顺序不能反：反了会给离线好友房间里留一堆僵尸房。
     if not _friend_invite_targets(other):
         return jsonify({'status': 'error', 'error': '对方不在线'})
@@ -1773,6 +1824,205 @@ def api_friend_invite():
         return jsonify({'status': 'error', 'error': '推送失败，请稍后再试'})
 
     return jsonify({'status': 'ok', 'room_id': room_id})
+
+
+# ---------------------------------------------------------------------------
+# 好友私聊（2026-09-19 私聊批）
+# ---------------------------------------------------------------------------
+# 三个接口，契约冻结（前端与端到端工具按同一份写，**名字与字段一个都不能改**）：
+#   GET  /api/friends/messages?username=<name>&limit=50&before=<id>   取会话（最新的在后）
+#   POST /api/friends/messages  {username, body}                      发一条
+#   POST /api/friends/messages/read  {username}                       把某人发来的标已读
+#
+# 四条贯穿全篇的规矩（与好友那六个接口同一套）：
+# 1. **全部要求登录**（401 `{'error':'未登录'}`）—— 私聊内容是私密数据。
+# 2. **只下发白名单字段**（见 `_public_dm_message`），绝不整行 `SELECT *` 铺给前端。
+# 3. **规则只有一份实现**：长度 / 频率 / 时间格式全在 `dm.py`，这里只组装。
+# 4. **业务校验在接口层**（好友关系、空/超长、频率），DAO 只管写库。
+#
+# ⚠️ 时间**只下发 `stamp`**，不让前端拿 `created_at` 自己算 —— 契约 §3 明文：
+#    `stamp` 的唯一实现在 `dm.py`，前端只渲染。两份格式化必然漂移（本项目的
+#    "同一规则两份实现"老病根），而且跨年那条规则一旦漂移，用户翻旧记录会看到错年份。
+
+# 取会话时默认一次给多少条（契约 §4：默认最近 50 条）。
+DM_PAGE_SIZE = dm.PAGE_SIZE
+# 单页上限：前端传再大的 limit 也只给这么多 —— 聊天记录永久保留，
+# 不设上限的话 `?limit=100000` 就是一次把整个会话塞进内存（单请求打垮服务）。
+DM_MAX_PAGE_SIZE = dm.MAX_PAGE_SIZE
+
+
+def _public_dm_message(row, me_uid):
+    """一条私聊 → **下发形状**（唯一一份组装实现）。字段逐字来自契约 §4。
+
+    `mine` 由**服务端**按当前视角算：前端拿它决定 `.dm-row[data-mine]` 的左右对齐。
+    让前端自己比较 `from_uid == 我的 uid` 看似也行，但那需要前端知道"我的 uid"
+    （契约里从头到尾没下发过自己的 uid），所以这个判断只能在这里做。
+
+    返回的 dict **刻意带上 `from_uid` / `to_uid`**（契约的 GET/POST 形状里有它们）：
+    前端目前用不到，但"谁发给谁"是这段会话的基本事实，且验接口时不用再去猜。
+    """
+    return {
+        'id': _int_or_zero(row.get('id')),
+        'from_uid': str(row.get('from_uid') or ''),
+        'to_uid': str(row.get('to_uid') or ''),
+        'body': str(row.get('body') or ''),
+        'created_at': _int_or_zero(row.get('created_at')),
+        # ⚠️ `stamp` 必须**现算**（`dm.stamp` 是唯一实现）：库里只存 `created_at`
+        #    （契约 §2 的表结构就是这两列），把 stamp 也存一列就是同一事实两份真相，
+        #    而"跨年"与否还取决于**看的人此刻是哪一年**，本来就不该落库。
+        'stamp': dm.stamp(row.get('created_at')),
+        'mine': str(row.get('from_uid') or '') == str(me_uid or ''),
+    }
+
+
+def _dm_target(payload_or_args, uid):
+    """私聊的统一前置：登录已验 → 找目标 → **必须是好友**。
+
+    返回 `(target_user, 错误响应)`，与 `_target_user` 同形，便于调用方一行早退。
+
+    三条拒绝（契约 §4 的错误码）：
+      · 404 账号不存在（`_target_user` 已给，且带中文原因）；
+      · 400 不能和自己私聊（自己给自己发消息没有意义，而且未读计数会自己给自己涨）；
+      · 403 **不是好友 / 已被拉黑** —— 用 `get_friend_relation` 判，只有 `'friends'` 放行。
+
+    ⚠️ `blocked_me` / `blocked_by_me` 一律 403，且**文案不区分方向**：
+    告诉客户端"你被我拉黑了"等于把拉黑这件事回传给被拉黑的人（他会换号继续骚扰），
+    "是我拉黑的对方"也不该由这个接口泄露。所以两边给同一句话
+    （与 `api_friend_request` 里那句 `'暂时无法向该玩家发送好友申请'` 同一口径）。
+    """
+    target, err = _target_user(payload_or_args)
+    if err:
+        return None, err
+    other = str(target['id'])
+    if other == str(uid):
+        return None, (jsonify({'status': 'error', 'error': '不能和自己私聊'}), 400)
+    if db.get_friend_relation(uid, other) != 'friends':
+        return None, (jsonify({'status': 'error', 'error': '你们还不是好友，无法私聊'}), 403)
+    return target, None
+
+
+@app.route('/api/friends/messages', methods=['GET'])
+def api_friend_messages():
+    """取与某人的一段会话（**两个方向合成同一条会话**，最新的在后）。
+
+    `?before=<id>` 往更早翻页（游标分页，契约 §1）。
+    响应：`{'status':'ok','has_more':bool,'messages':[...]}`。
+    """
+    uid, err = _friends_require_login()
+    if err:
+        return err
+
+    target, err = _dm_target(request.args, uid)
+    if err:
+        return err
+
+    try:
+        limit = int(request.args.get('limit') or DM_PAGE_SIZE)
+    except (TypeError, ValueError):
+        limit = DM_PAGE_SIZE
+    limit = max(1, min(limit, DM_MAX_PAGE_SIZE))
+
+    try:
+        before_id = request.args.get('before')
+        before_id = int(before_id) if before_id not in (None, '') else None
+    except (TypeError, ValueError):
+        # 坏游标当"没给游标"（= 取最新一页），不要 400：前端拼错 URL 时
+        # 用户看到的是"最新消息"而不是一个报错框，代价只是多点一次「加载更早」。
+        before_id = None
+
+    rows = db.list_friend_messages(uid, target['id'], limit, before_id)
+    messages = [_public_dm_message(r, uid) for r in (rows or [])]
+
+    # `has_more` 由**库**回答"还有没有更早的"，不是"这页取满了就推断还有"：
+    # 后者在"恰好剩 limit 条"时会给出 True，前端于是显示一个点了没反应的按钮
+    # （本项目栽过"看着有、其实永远不触发"的同形状）。
+    # 游标取本页**最早那条**的 id：没有更早的（本页为空）时给 0，问题自然为假。
+    oldest = messages[0]['id'] if messages else 0
+    has_more = bool(oldest) and bool(db.has_more_friend_messages(uid, target['id'], oldest))
+
+    return jsonify({'status': 'ok', 'has_more': has_more, 'messages': messages})
+
+
+@app.route('/api/friends/messages', methods=['POST'])
+def api_friend_message_send():
+    """发一条私聊。
+
+    401 未登录 ｜ 404 账号不存在 ｜ 403 不是好友或已被拉黑 ｜
+    400 空消息 / 超长（点名"最多 300 字"）｜ 429 发得太频繁
+    200 `{'status':'ok','message':{…}}`
+
+    ⚠️ 正文归一化**只做一次**（`dm.normalize_body`）：先归一化再判长度。
+    顺序反了的话，`'  '`（纯空白 + 一个换行）会先通过长度检查、归一化后成空串，
+    库里就多了一条"空白消息"（前端渲染成一行空气）。同理，
+    `'\n' * 400` 归一化后是空串 → 400「消息不能为空」，而不是"超长"。
+    """
+    uid, err = _friends_require_login()
+    if err:
+        return err
+
+    payload = _get_json_payload() or {}
+    target, err = _dm_target(payload, uid)
+    if err:
+        return err
+
+    body = dm.normalize_body(payload.get('body'))
+    reason = dm.body_error(body)
+    if reason:
+        return jsonify({'status': 'error', 'error': reason}), 400
+
+    # 频率：数**最近一分钟我真的发出去的**条数（`db` 里的真实行数就是账本）。
+    # ⚠️ 为什么不用进程级全局 dict：那份账会把所有人串成一条队列（甲刷屏、乙被 429），
+    #    多 worker 下还各存一份、与服务事实对不上。用库里的行数则天然按发送者隔离、
+    #    重启不丢，且与"消息真的落库了"是同一件事 —— 被拒的那条不占配额。
+    since = int(time.time()) - dm.RATE_WINDOW_SECONDS
+    if int(db.count_friend_messages_since(uid, since) or 0) >= dm.PER_MINUTE:
+        return jsonify({'status': 'error',
+                        'error': f'发得太频繁了，每分钟最多 {dm.PER_MINUTE} 条'}), 429
+
+    row = db.add_friend_message(uid, target['id'], body)
+    if not row:
+        # 写失败只回 500，**不乐观地回 ok** —— 回 ok 的话前端会拿一条库里
+        # 根本不存在的消息渲染出来，刷新就消失（"接口说成功、其实什么都没发生"）。
+        return jsonify({'status': 'error', 'error': '发送失败，请稍后重试'}), 500
+
+    message = _public_dm_message(row, uid)
+
+    # 推给收件人的**每一张标签页**（多标签页每张都要收到）。走注入的
+    # `server.push_friend_message`（**推送只有一份实现**，见本文件顶部那段注释）。
+    # ⚠️ 与"邀战"不同：推送失败**照样回 ok** —— 消息已经落库，对方下次打开会话
+    #    就拉到了。回 error 会让发送方以为没发出去、然后重发一遍（重复消息）。
+    # ⚠️ payload 里额外带 `from_username` / `from_avatar`（契约 §4 的 socket 形状），
+    #    让没打开会话的收件人也能直接弹一句"小红：在吗"。
+    # ⚠️ 用 `dm.push_payload` **裁成推送形状**再交出去：接口自己那份 `message`
+    #    带 `mine` / `to_uid`（发送方视角的字段），整份推过去等于把视角字段漏给
+    #    收件人 —— 而且以后往接口 dict 里加内部键就会顺手发出去。字段清单只有
+    #    `dm.PUSH_PAYLOAD_KEYS` 一份（`server.push_friend_message` 也走同一个函数）。
+    username, avatar = _my_friend_identity(uid)
+    push_payload = dict(message, from_username=username, from_avatar=avatar)
+    _push_friend_event('push_friend_message', target['id'], dm.push_payload(push_payload))
+
+    return jsonify({'status': 'ok', 'message': message})
+
+
+@app.route('/api/friends/messages/read', methods=['POST'])
+def api_friend_messages_read():
+    """把**某人发给我的**全部未读标为已读，返回本次标记的条数。
+
+    响应：`{'status':'ok','read':N}`。幂等：重复调用返回 0。
+    ⚠️ 这个接口**与入口红点无关**：红点仍是"待确认好友申请数"（契约 §1），
+    未读只在好友行内（`unread`）与 `counts.unread_total` 体现。
+    """
+    uid, err = _friends_require_login()
+    if err:
+        return err
+
+    payload = _get_json_payload() or {}
+    target, err = _dm_target(payload, uid)
+    if err:
+        return err
+
+    marked = db.mark_friend_messages_read(uid, target['id'])
+    return jsonify({'status': 'ok', 'read': _int_or_zero(marked)})
 
 
 

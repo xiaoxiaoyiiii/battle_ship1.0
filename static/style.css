@@ -5736,3 +5736,189 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, rgba(255, 2
 @media (prefers-reduced-motion: reduce) {
     .friend-invite-toast { animation: none; }
 }
+
+/* ============================================================================
+   34. 好友私聊 · 会话视图（私聊批，2026-09-19）
+   ---------------------------------------------------------------------------
+   契约见 docs/FRIEND_DM_2026_09_19.md §5（冻结 id）。本节**全是新增类**，
+   既有选择器一行没动；四条自我约束沿用第 33 节那一份（都是本项目踩过的坑）：
+
+     ① **不动任何既有元素的盒模型尺寸**（CLAUDE.md 第 11 节第 6 条）：
+        唯一的尺寸类是 `.dm-list`（高度上限）与 `.friend-unread`（行内小圆点）——
+        都是本批新增的元素，不是既有元素。特别地 **`.friend-row` 一个数都没改**：
+        它已经被 390x844 那几条溢出断言钉着，动它就是拿既有绿断言去赌。
+     ② **不给含 position:fixed 后代的元素加 transform/filter/backdrop-filter**：
+        本节的作用对象全在 `#friends-modal` 里（`.modal-overlay` 自己就是 fixed 浮层），
+        都是叶子节点，一个 transform / filter 都没用（第 11 节第 7 条）。
+     ③ 颜色**零写死**：一律走 --primary / --primary-rgb / --surface-* / --border* /
+        --text* / --glass，换主题预设与深浅色主题自动跟随（第 33 节同款）。
+     ④ 窄屏（390x844）不许横向溢出：气泡 `max-width:78%` + `overflow-wrap:anywhere`，
+        输入框 `flex:1 1 auto; min-width:0`，发送按钮 `flex-shrink:0`。
+
+   ⚠️ **编号说明**：按票面要求本节编号 34（现有 30=帮助页 / 31=段位外观 / 32=大厅 /
+      33=好友面板）。顺带记一笔：第 33 节自己的小标题写的是 `32.x`，属**上一批的编号笔误**，
+      不是本节的编号基准 —— 本节起统一按「节号从 34 开始 + 自己的 34.x 小标题」写，
+      免得下一个人以为还能接着 33 往下数。
+   ============================================================================ */
+
+/* ⚠️ 会话视图用 **`hidden` 属性** 与列表视图互斥（§5 就是这么冻结的）。
+   浏览器默认的 `[hidden]{display:none}` 守不住这里的局面：下面 `.dm-list` 给了
+   `display:flex`、`.dm-head` 给了 `display:flex`，**作者样式压过 UA 默认**，
+   于是"设了 hidden 还看得见"。所以必须显式补一条，作用域限定在本弹窗内
+   （既有 `.hidden` 类走的是另一套 `!important`，两者互不干扰）。
+   ⚠️ 用 **`!important`**：本弹窗里还有一个 `.friends-msg`（`#dm-msg`），
+   它由 JS 摘 .hidden 类控制，但那一路走的也是 display —— 两条机制撞上时
+   "隐藏"必须赢（项目里 `#help-rank-error[hidden]` 就是同一处教训）。 */
+#friends-modal [hidden] { display: none !important; }
+
+.dm-panel { display: flex; flex-direction: column; gap: 8px; }
+
+/* 会话头：返回按钮 + 对方用户名。 */
+.dm-head { display: flex; align-items: center; gap: 10px; }
+.dm-head .dm-back {
+    flex-shrink: 0;
+    padding: 0.24rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    line-height: 1.3;
+    cursor: pointer;
+    background-image: none;          /* 第 3 节通用 button 规则带渐变，当色块用必须显式清掉 */
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    color: var(--text-subtle);
+}
+.dm-head .dm-back:hover { color: var(--text); border-color: rgba(var(--primary-rgb), 0.6); }
+.dm-head .dm-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-weight: 600;
+    color: var(--text);
+    overflow-wrap: anywhere;
+}
+
+/* 「加载更早的消息」：has_more 为假时由 JS 摘掉 hidden（§5）。 */
+.dm-load-more {
+    align-self: center;
+    padding: 0.24rem 0.8rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    line-height: 1.3;
+    cursor: pointer;
+    background-image: none;
+    background: transparent;
+    border: 1px dashed var(--border-strong);
+    color: var(--muted);
+}
+.dm-load-more:hover:not(:disabled) { color: var(--text); border-color: rgba(var(--primary-rgb), 0.6); }
+.dm-load-more:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* 消息列表：**唯一的滚动容器**。往上翻靠 #dm-load-more 插到顶部，插完由 game.js
+   还原 scrollTop（插前后同一条消息的 getBoundingClientRect().top 偏差 ≤ 2px）。 */
+.dm-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: min(56vh, 420px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--glass);
+    scrollbar-width: thin;
+}
+.dm-list::-webkit-scrollbar { width: 8px; }
+.dm-list::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+
+/* 单条消息。**左右分栏**区分"我 / 对方"（视觉可辨），底色也一起区别对待 ——
+   只靠一种手段（比如只靠对齐）在窄屏气泡贴边时容易看不出来。
+   class 上另带 data-mine="1|0" 属性（§5 冻结），滚动/回归断言只认那个属性。 */
+.dm-row { display: flex; flex-direction: column; max-width: 78%; min-width: 0; }
+.dm-row[data-mine="1"] { align-self: flex-end; align-items: flex-end; }
+.dm-row[data-mine="0"] { align-self: flex-start; align-items: flex-start; }
+.dm-row .dm-body {
+    padding: 7px 11px;
+    border-radius: 14px;
+    font-size: 0.88rem;
+    line-height: 1.45;
+    color: var(--text);
+    white-space: pre-wrap;           /* body 里的换行照原样显示，但不重算任何格式 */
+    overflow-wrap: anywhere;         /* 长串（URL/连打）不许把气泡顶出容器 */
+}
+.dm-row[data-mine="1"] .dm-body {
+    background: rgba(var(--primary-rgb), 0.18);
+    border: 1px solid rgba(var(--primary-rgb), 0.5);
+    border-bottom-right-radius: 4px;
+}
+.dm-row[data-mine="0"] .dm-body {
+    background: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+}
+/* 时间戳：**只渲染服务端给的 stamp**（'09-19 15:40'），前端一个字都不重算 ——
+   规则只有一份实现，在 dm.py 的 stamp()（CLAUDE.md 第 10 节第 1 条）。 */
+.dm-row .dm-stamp {
+    margin: 3px 4px 0;
+    font-size: 0.7rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.dm-empty { margin: 4px 0; color: var(--muted); font-size: 0.86rem; text-align: center; }
+
+/* 输入行。`min-width:0` 缺了的话窄屏上输入框会把整行顶宽（第 33 节 .friend-main 同款病灶）。 */
+.dm-foot { display: flex; align-items: center; gap: 8px; }
+.dm-foot .dm-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0.42rem 0.7rem;
+    border-radius: 10px;
+    font-size: 0.88rem;
+    background: var(--surface-strong);
+    border: 1px solid var(--border);
+    color: var(--text);
+}
+.dm-foot .dm-input:focus {
+    outline: none;
+    border-color: rgba(var(--primary-rgb), 0.7);
+    box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.18);
+}
+.dm-foot .dm-send {
+    flex-shrink: 0;
+    padding: 0.42rem 1rem;
+    border-radius: 999px;
+    font-size: 0.84rem;
+    font-weight: 600;
+    cursor: pointer;
+    background-image: none;
+    background: var(--primary);
+    border: 1px solid var(--primary);
+    color: #fff;
+}
+.dm-foot .dm-send:hover:not(:disabled) { filter: brightness(1.08); }
+.dm-foot .dm-send:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* 好友行上的未读数（0 时 hidden；数字**只认服务端**的 friend.unread）。 */
+.friend-row .friend-unread {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: var(--primary);
+    color: #fff;
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    box-shadow: 0 0 8px rgba(var(--primary-rgb), 0.45);
+}
+
+/* 窄屏：会话视图贴满宽，输入行不落行（落行会把发送按钮顶到看不见的地方）。 */
+@media (max-width: 420px) {
+    .dm-list { max-height: 46vh; }
+    .dm-row { max-width: 88%; }
+}

@@ -129,12 +129,30 @@ async function probeFriendsApi(cookie) {
 //    "用户名或密码错误"的 flash）。所以"拿到了 cookie"根本不等于"登录成功了"——
 //    必须拿它去 /api/profile 反查一次 username 才算数。否则后面所有以该身份发起的
 //    请求全是 401，而现象是"断言莫名其妙地红"，很难往回追。
-async function nodeAuth(base, username) {
-  const post = (p) => fetch(base + p, {
+//
+// ⚠️⚠️ 第二个坑（2026-09-19 私聊批实测）：`api.py` 对 `/login` 有**同 IP 限流**
+//    （`_rate_limited('login')`，60 秒窗口内 10 次）。超了之后 `/login` 回 302 到
+//    `/login` 并 flash「操作过于频繁，请稍后再试」—— 于是"cookie 拿到了但 /api/profile
+//    是 401"，本工具会**静默降级成离线模式**（探测那一步判成"接口没上线"、全链路那几条
+//    被 SKIP 或判红），而真正的原因跟前后端都没关系。
+//    本工具跑一次要登录 3~4 个账号（探针 + 靶子 + A + B），和别的工具一起跑很容易撞上
+//    （大家共用 127.0.0.1 这一个 remote_addr）。所以登录要**认得出被限流**并等窗口过去。
+const LOGIN_BUSY_RE = /操作过于频繁/;
+
+// 一次登录尝试。返回 {setCookie, ok, limited}
+// 判据用**响应正文里的 flash**，不用 Location（flash 只在那一次渲染里出现，
+// 而 `redirect: 'manual'` 拿到的正文里恰好带着它）。
+async function loginAttempt(base, username) {
+  const r = await fetch(base + 'login', {
     method: 'POST', redirect: 'manual',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ username: username, password: PW }).toString()
   });
+  const text = await r.text().catch(() => '');
+  return { setCookie: readCookie(r), limited: LOGIN_BUSY_RE.test(text), http: r.status };
+}
+
+async function nodeAuth(base, username) {
   const verify = async (cookie) => {
     if (!cookie) return '';
     try {
@@ -145,12 +163,30 @@ async function nodeAuth(base, username) {
       return me === username ? cookie : '';
     } catch (e) { return ''; }
   };
-
-  let cookie = await verify(readCookie(await post('login')));
+  const register = () => fetch(base + 'register', {
+    method: 'POST', redirect: 'manual',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ username: username, password: PW }).toString()
+  });
+  // ⚠️ 顺序很要紧：**先注册**。`/register` 也走同一套 IP 限流，但注册成功时它会
+  //    **直接种好 session**（api.py 里 `session['user_id'] = uid`），所以正常路径下
+  //    一次 `/login` 都不用发 —— 省配额，也避免"先试登录（账号还不存在，白扣一次配额）"。
+  // ⚠️ 但**只注册一次**：第二次同一账号再去 /register 会回「用户名已存在」并且**不会**
+  //    种 session（第一版写成"注册 4 次"就是这样白等 20 秒的）。之后一律走登录重试。
+  const reg = await register();
+  let cookie = await verify(readCookie(reg));
   if (cookie) return cookie;
-  await post('register');
-  cookie = await verify(readCookie(await post('login')));
-  return cookie;   // 空串 = 真的没登进去（调用方的断言会红，不是静默假绿）
+  // 被限流多久就等多久：窗口是 60 秒，最多等 ~70 秒（宁可慢，也别把"限流"误判成"登不上"）。
+  // ⚠️ 只有"限流"才值得等：登录**成功但 cookie 没用**（或账号真有问题）时死等 70 秒
+  //    只会把一次假红拖成一次很慢的假红，所以那种情况直接退出循环、让调用方的断言说话。
+  for (let i = 0; i < 14; i++) {
+    await sleep(5000);
+    const a = await loginAttempt(base, username);
+    cookie = await verify(a.setCookie);
+    if (cookie) return cookie;
+    if (!a.limited) break;
+  }
+  return '';   // 真没登进去（调用方的断言会红，不是静默假绿）
 }
 function readCookie(resp) {
   const raw = resp.headers.getSetCookie ? resp.headers.getSetCookie() : [resp.headers.get('set-cookie')].filter(Boolean);
@@ -973,7 +1009,14 @@ async function main() {
         const o = await ev(`(function(){
           return { room: (typeof gameState !== 'undefined' && gameState.roomId) || null,
                    href: location.search }; })()`);
-        return (o && o.room) ? o : null;
+        // ⚠️⚠️ 判据必须是"进的是**这一间**"，不能是"roomId 有值"。
+        //    上面 T3a（B 点「邀战」）现在会让**发起方自己先进一间房**（`sendFriendInvite` 里
+        //    的自动入房），所以点击之前 `gameState.roomId` **已经有值**了 ——
+        //    旧判据在点击生效前就满足，取样拿到的是**上一间房**，于是
+        //    T3i 会以 `{joined:{room:<上一间>}, expect:<本次那间>}` 的形状红。
+        //    这与 T3f-4 那条是同一个形状（那边已经收紧过），本项目栽过第二次了：
+        //    **`waitFor` 的条件要写成"期望的那个具体值"，不能是"值域里有东西"**。
+        return (o && String(o.room) === String(realRoom)) ? o : null;
       }, 20000, '真链路点「进入房间」后真的进了那个房').catch(() => null);
       check(!!joinedReal && String(joinedReal.room) === realRoom
             && String(joinedReal.href).indexOf('room=' + realRoom) >= 0,

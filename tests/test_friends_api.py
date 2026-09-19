@@ -45,7 +45,11 @@ import server
 # `GET /api/friends` 的顶层键（**冻结**：多一个少一个都算契约漂移）
 PAYLOAD_KEYS = {'friends', 'incoming', 'outgoing', 'limits', 'counts'}
 # friends 每一项的键（冻结）
-FRIEND_KEYS = {'user_id', 'username', 'avatar', 'level', 'rank_label', 'online', 'in_game'}
+# ⚠️ 私聊批（2026-09-19）按契约 §4 加了 `unread`。这里是**本次唯一一处改动**：
+#    这份测试原本把 `unread` 当"多出来的键"判漂移，而契约明文要求它存在
+#    （`docs/FRIEND_DM_2026_09_19.md` §4：「每个 friend 行**新增 `unread`**」）。
+FRIEND_KEYS = {'user_id', 'username', 'avatar', 'level', 'rank_label', 'online', 'in_game',
+               'unread'}
 # incoming / outgoing 每一项的键（冻结）
 REQUEST_KEYS = {'user_id', 'username', 'avatar', 'created_at'}
 # 任何响应里都不许出现的字段（本项目硬教训：接口整行下发会泄露凭证）
@@ -190,12 +194,15 @@ def test_request_shows_up_in_incoming_and_outgoing(make_user):
     mine = _get(_client(a, a_name))
     assert _names(mine['outgoing']) == [b], mine['outgoing']
     assert mine['incoming'] == []
-    assert mine['counts'] == {'friends': 0, 'incoming': 0}
+    # `unread_total` 是私聊批（2026-09-19，契约 §4）加的未读私聊总数。
+    # 这里**逐键整份比对**（而不是 `in`）：多出第三个键同样算契约漂移；
+    # 顺带钉住"我方没收到任何私聊 → 未读必须是 0"。
+    assert mine['counts'] == {'friends': 0, 'incoming': 0, 'unread_total': 0}
 
     theirs = _get(_client(b, b_name))
     assert _names(theirs['incoming']) == [a], theirs['incoming']
     assert theirs['outgoing'] == []
-    assert theirs['counts'] == {'friends': 0, 'incoming': 1}
+    assert theirs['counts'] == {'friends': 0, 'incoming': 1, 'unread_total': 0}
 
     # incoming 的 user_id 是**发起人**（前端拿它显示"谁要加你"）
     assert theirs['incoming'][0]['username'] == a_name
@@ -539,7 +546,9 @@ def test_friends_payload_never_leaks_credentials_or_stats(make_user):
         for row in payload['incoming'] + payload['outgoing']:
             assert set(row) == REQUEST_KEYS, row
         assert set(payload['limits']) == {'max_friends', 'requests_per_hour'}
-        assert set(payload['counts']) == {'friends', 'incoming'}
+        # ⚠️ 私聊批（2026-09-19）按契约 §4 加了 `unread_total`（未读私聊总数）。
+        #    入口红点**不读它** —— 红点仍是 `incoming`（见本文件第 8 块与那一行注释）。
+        assert set(payload['counts']) == {'friends', 'incoming', 'unread_total'}
 
 
 # ===========================================================================
@@ -939,3 +948,57 @@ def test_requests_switch_is_not_exposed_to_other_viewers(make_user):
     assert 'friend_requests_open' not in seen
     anon = server.app.test_client().get(f'/user_stats?username={b_name}').get_json()['stats']
     assert 'friend_requests_open' not in anon, pushed
+
+
+# ===========================================================================
+# 邀战的护栏：**发起方自己正在局中时不许邀战**
+#
+# ⚠️ 背景（用户实测报的"约战开不了局"）：`POST /api/friends/invite` 建出来的是一间
+#    **空房**，而 `handle_join_room` 只在**满 2 人**时才把阶段推到 `placing_ships`。
+#    所以前端修成"邀请成功后**发起方也进这间房**"（`sendFriendInvite` → `joinRoomById`）。
+#    既然发起方会被带进新房，就必须先拦住"他正在打一局"的情况 —— 否则他那一局的对手
+#    会一直干等（而服务端这边没有任何机制会发现）。
+# ===========================================================================
+def test_invite_refused_when_inviter_is_in_game(make_user, monkeypatch):
+    """自己在局中 → 409 + 中文原因，且**不建房**（否则会留一间没人进来的僵尸房）。"""
+    a, a_name = make_user()
+    b, b_name = make_user()
+
+    fake = types.ModuleType('presence')
+    fake.is_in_game = lambda uid: str(uid) == str(a)      # 只有发起方在局中
+    fake.is_online = lambda uid: True
+    fake.online_uids = lambda: {str(a), str(b)}
+    fake.sids_of = lambda uid: ['sid-b'] if str(uid) == str(b) else ['sid-a']
+    monkeypatch.setitem(sys.modules, 'presence', fake)
+
+    resp = _post(_client(a, a_name), '/api/friends/invite', username=b_name)
+    assert resp.status_code == 409, resp.get_data(as_text=True)
+    body = resp.get_json()
+    assert body['status'] == 'error' and '对局' in body['error'], body
+
+
+def test_invite_still_works_when_presence_has_no_in_game(monkeypatch, make_user):
+    """`presence` 没有 `is_in_game`（并行开发中途/降级）时**必须放行**，不许把邀战拦死。
+
+    ⚠️ 这是"扫一眼就过"的那类降级：判据取不到时宁可少拦，也不错拦 ——
+    拦死会让整个邀战功能在最需要它的时候失效（而且看不出原因）。
+    """
+    a, a_name = make_user()
+    b, b_name = make_user()
+
+    fake = types.ModuleType('presence')
+    fake.is_online = lambda uid: True
+    fake.online_uids = lambda: {str(a), str(b)}
+    fake.sids_of = lambda uid: ['sid-b'] if str(uid) == str(b) else ['sid-a']
+    monkeypatch.setitem(sys.modules, 'presence', fake)
+
+    pushed = []
+    monkeypatch.setattr(server, 'push_friend_invite',
+                        lambda *args: (pushed.append(args), True)[1], raising=False)
+    monkeypatch.setattr(server, 'create_custom_room_for_invite',
+                        lambda: 'room-dm-guard', raising=False)
+
+    resp = _post(_client(a, a_name), '/api/friends/invite', username=b_name)
+    assert resp.status_code == 200, resp.get_data(as_text=True)
+    assert resp.get_json()['status'] == 'ok', resp.get_json()
+    assert len(pushed) == 1, pushed

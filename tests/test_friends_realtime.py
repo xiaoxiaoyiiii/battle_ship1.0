@@ -701,3 +701,27 @@ def test_disconnect_clears_online_and_in_game(monkeypatch):
     assert presence.sids_of(uid) == []
     assert presence.is_in_game(uid) is False
     server.room_manager.rooms.pop(room_id, None)
+
+
+def test_close_room_clears_in_game_mark(sockets):
+    """★ 解散等待房必须把「对局中」标记摘掉（否则邀战被永久拦住）。
+
+    ⚠️ 守的是一个真实死锁（2026-09-19 双浏览器实测）：
+    `handle_close_room` 原来只删房、不清 `presence`，而「局中不许邀战」那道护栏读的正是
+    这个标记 → **解散之后再也邀不了战**，只能刷新页面。
+    同形状还有「对手掉线→取消对局」与「等待房 TTL 回收」两处，都走 `_drop_room` 收口。
+    """
+    uid = _mk_user()
+    c = sockets(uid)
+    c.emit('lobby_subscribe', {'player_name': '房主'})
+    c.emit('lobby_create_room', {'name': '临时房', 'public': True})
+    room_id = ''
+    for ev in c.get_received():
+        if ev['name'] == 'lobby_state' and ev['args'][0].get('rooms'):
+            room_id = ev['args'][0]['rooms'][0]['room_id']
+    assert room_id, '建房后应当能从 lobby_state 拿到房间号'
+    assert presence.is_in_game(uid) is True, '入座之后就应当被标成「对局中」'
+
+    c.emit('close_room', {'room_id': room_id})
+    assert server.room_manager.get_room(room_id) is None, '解散后房间应当真的没了'
+    assert presence.is_in_game(uid) is False, '解散之后必须不再显示「对局中」（否则邀战会被永久拦住）'

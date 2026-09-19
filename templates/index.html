@@ -1012,17 +1012,24 @@
         </div>
     </div>
 
-    <!-- 好友面板（好友批）。
+    <!-- 好友面板（好友批）+ 好友私聊（私聊批，2026-09-19）。
          ⚠️ 层级写法照既有弹窗：`.modal-overlay`（position:fixed，z-index 10000）+ `.modal-content`。
          本弹窗的祖先链里没有任何 transform/filter/backdrop-filter ——
          `.game-container` 那一层不许加（加了 fixed 浮层会改以它为基准定位，见 CLAUDE.md 第 11 节第 7 条）。
          三个分区容器（#friends-list / #friends-requests / #friends-outgoing）与 #friends-empty
          都是**常驻骨架**：数据来了只换它们的内容，绝不清空整块再重建 —— 拉取失败时要保留上一帧
-         （项目硬教训第 3 条：`updateHandUI` 清空后没填回来 → 空白手牌）。 -->
+         （项目硬教训第 3 条：`updateHandUI` 清空后没填回来 → 空白手牌）。
+
+         ⚠️ 私聊会话视图（§5 冻结 id 的那批）**放在同一个弹窗里**，靠 `hidden` 属性与列表视图互斥，
+         绝不新开第二个弹窗：多一个弹窗就多一处 z-index / 互斥 / 焦点管理要维护（id 清单见
+         docs/FRIEND_DM_2026_09_19.md §5）。
+         ⚠️ `#dm-list` / `#dm-empty` / `#dm-load-more` 都是**常驻骨架**（同上面那条教训），
+            只有会话标题 / 输入框 / 发送按钮会按会话清空 —— 换会话时先清空再填充，
+            是因为那里的"上一帧"属于**另一个人**，留着才是真的错。 -->
     <div id="friends-modal" class="modal-overlay hidden">
         <div class="modal-content friends-modal">
             <span class="modal-close" id="friends-close">×</span>
-            <h2>好友</h2>
+            <h2 id="friends-title">好友</h2>
             <div id="friends-body">
                 <section class="friends-section">
                     <h4 class="friends-section-title">好友列表</h4>
@@ -1037,6 +1044,23 @@
                     <div id="friends-outgoing" class="friends-list"></div>
                 </section>
                 <p id="friends-empty" class="friends-empty hidden">还没有好友。在个人信息里点「加好友」，或去排行榜找个人吧。</p>
+            </div>
+            <!-- 会话视图（与 #friends-body 互斥显示）。入口暂时放在好友窗口里，UI 之后由合作者改。 -->
+            <div id="dm-panel" class="dm-panel" hidden>
+                <div class="dm-head">
+                    <button type="button" class="dm-back" id="dm-back" title="返回好友列表">‹ 返回</button>
+                    <span class="dm-title" id="dm-title"></span>
+                </div>
+                <button type="button" class="dm-load-more" id="dm-load-more" hidden>加载更早的消息</button>
+                <div class="dm-list" id="dm-list"></div>
+                <p class="dm-empty" id="dm-empty" hidden>还没有聊过，打个招呼吧</p>
+                <div class="dm-foot">
+                    <!-- maxlength=300 与服务端 dm.MAX_BODY_LEN 同一口径（超长由服务端拒绝，见 §4） -->
+                    <input type="text" class="dm-input" id="dm-input" maxlength="300" autocomplete="off"
+                           placeholder="说点什么…（最多 300 字）">
+                    <button type="button" class="dm-send" id="dm-send">发送</button>
+                </div>
+                <p id="dm-msg" class="friends-msg" role="status"></p>
             </div>
             <p id="friends-msg" class="friends-msg" role="status"></p>
         </div>

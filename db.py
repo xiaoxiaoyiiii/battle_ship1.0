@@ -366,6 +366,26 @@ class Database:
                   )
                   ''')
 
+            # ---- 好友私聊（2026-09-19 私聊批）----
+            # **不建会话表**（契约 §2 明文）：一对好友之间的会话由消息行本身表达
+            # （`(from,to)` 任一方向都算同一段）。多一张会话表就多一处要与消息行
+            # 同步的状态 —— 本项目的老病根（"同一件事有两份真相就会漂移"）。
+            # `read_at` 用 0 表示未读、非 0 存标记那一刻的 epoch：一列两用，
+            # 既回答"读没读"又留下"什么时候读的"审计痕迹，不必再加一列。
+            # ⚠️ 新表用 `CREATE TABLE IF NOT EXISTS` 就够 —— 不需要
+            # `_add_column_if_missing`（那是给 `user_profile` 这类**老表**加列用的）。
+            self.cursor.execute('''
+                  CREATE TABLE IF NOT EXISTS friend_messages
+                  (
+                      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                      from_uid   TEXT    NOT NULL,
+                      to_uid     TEXT    NOT NULL,
+                      body       TEXT    NOT NULL,
+                      created_at INTEGER NOT NULL,
+                      read_at    INTEGER DEFAULT 0
+                  )
+                  ''')
+
             # ---- 加列迁移（第 3 批 D 票）----
             # `user_profile` 是第 1 批建的表，生产库已有该表（于是上面的
             # CREATE TABLE IF NOT EXISTS 对它完全无效），而本项目没有 ALTER 迁移机制。
@@ -408,6 +428,16 @@ class Database:
                 # 好友列表 / 计数 / 关系判断恒为 WHERE user_id=? AND status=?
                 'CREATE INDEX IF NOT EXISTS idx_user_friends_user '
                 'ON user_friends(user_id, status)',
+                # 私聊会话翻页 = WHERE (from=? AND to=?) OR (from=? AND to=?) AND id<?
+                # ORDER BY id —— 这条复合索引覆盖"某一对好友"这个前缀，
+                # 收尾排序由 id（主键）兜住，不必排序整个表。
+                'CREATE INDEX IF NOT EXISTS idx_friend_messages_pair '
+                'ON friend_messages(from_uid, to_uid, id)',
+                # 未读计数 / 好友行上的未读数 = WHERE to_uid=? AND read_at=0；
+                # 标记已读是 WHERE to_uid=? AND from_uid=? AND read_at=0，
+                # 三段都能命中这条索引。
+                'CREATE INDEX IF NOT EXISTS idx_friend_messages_unread '
+                'ON friend_messages(to_uid, read_at)',
             ):
                 try:
                     self.cursor.execute(stmt)
@@ -2765,6 +2795,276 @@ class Database:
             logger.error(f"统计窗口内好友申请数时发生未知错误: uid={uid}, 错误: {e}")
             return 0
 
+    # ------------------------------------------------------------------
+    # 好友私聊（2026-09-19 私聊批）
+    # ------------------------------------------------------------------
+    # 与前面几批同一套风格：**读写都不抛** —— 读失败返回空/0，写失败返回 None/0。
+    # 私聊是展示层，一次读库失败不该把聊天窗变成 500（宁可显示"还没有聊过"）。
+    #
+    # ⚠️ 业务校验（是不是好友、拉黑、正文空/超长、频率）**一律不在这一层**，
+    # 由 `api.py` 裁决（契约 §4）—— 存储层出现"接口放行、DAO 拦下"就是两份规则漂移。
+    # 本层只保证两件存储层的硬事实：① `body` 不会写进 NULL；② `read_at` 0=未读。
+    #
+    # ⚠️ 每个 DAO 都必须有对应的**模块级包装函数**（文件末尾）—— 调用方与测试
+    # 都按模块级名字打桩，只在类里实现会让打桩被绕过（第 2 批踩过：假红/假绿）。
+    # `api.py` 一律调 `db.xxx(...)`，不许写 `db.db.xxx`。
+
+    @staticmethod
+    def _friend_message_row(row) -> dict:
+        """一行消息 → dict（**只含表白白名单字段**，不整行下发）。
+
+        刻意**不带** `read_at`：它是"服务端自己的账"，前端只需要 `mine`
+        （由 `api.py` 按当前视角算）。下发未读状态只会让前端多一条可以算错的规则。
+        """
+        return {
+            'id': int(row['id'] or 0),
+            'from_uid': str(row['from_uid'] or ''),
+            'to_uid': str(row['to_uid'] or ''),
+            'body': str(row['body'] or ''),
+            'created_at': int(row['created_at'] or 0),
+        }
+
+    def add_friend_message(self, from_uid: str, to_uid: str, body: str):
+        """写一条私聊，返回**新行的完整 dict（含 id）**；失败返回 None。
+
+        为什么返回整行而不是 id：接口要立刻把这条消息下发/推给对方
+        （契约里 POST 的响应与 socket payload 都是这条的同一形状）。
+        返回 id 的话调用方还得再读一次库，而"写成功却读不到"那一下必须自己编形状
+        （`post_profile_message` 就有这么一段兜底）——
+        一次 `INSERT` + 一次 `lastrowid` 回读既少一次查询，也不会出现两处形状。
+
+        ⚠️ **不在这里做长度/好友校验**（见本节顶部）。`body` 为空串时直接拒写：
+        空消息在库里没有任何意义（接口层已经会 400），写进去只会让"未读计数"凭空 +1。
+        """
+        from_uid, to_uid = str(from_uid or ''), str(to_uid or '')
+        if not from_uid or not to_uid or not body:
+            logger.warning(f"私聊参数不完整（已忽略）: from={from_uid!r}, to={to_uid!r}")
+            return None
+        now = int(time.time())
+        try:
+            with self._lock:
+                self.cursor.execute(
+                    'INSERT INTO friend_messages (from_uid, to_uid, body, created_at, read_at) '
+                    'VALUES (?, ?, ?, ?, 0)',
+                    (from_uid, to_uid, str(body), now))
+                new_id = int(self.cursor.lastrowid or 0)
+                self.conn.commit()
+            if not new_id:
+                return None
+            return {'id': new_id, 'from_uid': from_uid, 'to_uid': to_uid,
+                    'body': str(body), 'created_at': now}
+        except sqlite3.Error as e:
+            logger.error(f"写入私聊失败: from={from_uid}, to={to_uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return None
+        except Exception as e:
+            logger.error(f"写入私聊时发生未知错误: from={from_uid}, to={to_uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return None
+
+    def list_friend_messages(self, me: str, other: str, limit: int = 50, before_id=None) -> list:
+        """某一对好友之间的会话，**按 id 正序返回（最早的在前、最新的在后）**。
+
+        契约 §4：前端拿到就直接往 `#dm-list` 追加渲染，所以**最新的必须在最后**。
+
+        · 两个方向都取（`me → other` 与 `other → me`）—— 会话由消息行本身表达，
+          没有会话表（见建表处的说明）。方向写反在 SQL 里**不会报错**，
+          只会静默地少一半消息，所以这条 SQL 必须显式带 OR 的两段。
+        · 实现上是**按 id 倒序取 `limit` 条、再翻转成正序**：直接正序取的话
+          `LIMIT` 会截到**最旧的** N 条（聊久了就永远看不到最新那句）。
+        · `before_id` 给当前页最小 id，取"比它更早"的一页（游标分页）。
+          比 `LIMIT/OFFSET` 稳：新消息插入时 OFFSET 会跳行/重行，而 id 游标不会。
+        · 读失败返回 `[]`（宁可显示"还没有聊过"，也不 500）。
+        """
+        me, other = str(me or ''), str(other or '')
+        if not me or not other:
+            return []
+        try:
+            safe_limit = min(max(1, int(limit)), 100)
+        except (TypeError, ValueError):
+            safe_limit = 50
+        try:
+            before = None
+            if before_id not in (None, ''):
+                before = int(before_id)
+        except (TypeError, ValueError):
+            before = None
+        try:
+            sql = (
+                'SELECT id, from_uid, to_uid, body, created_at FROM friend_messages '
+                'WHERE ((from_uid = ? AND to_uid = ?) OR (from_uid = ? AND to_uid = ?))')
+            params = [me, other, other, me]
+            if before is not None:
+                sql += ' AND id < ?'
+                params.append(before)
+            sql += ' ORDER BY id DESC LIMIT ?'
+            params.append(safe_limit)
+            cursor = self.conn.cursor()
+            rows = cursor.execute(sql, params).fetchall()
+            cursor.close()
+            # 倒序取完再翻转：契约要求"最新的在后"
+            return [self._friend_message_row(r) for r in reversed(rows)]
+        except sqlite3.Error as e:
+            logger.error(f"读取私聊列表失败: me={me}, other={other}, 错误: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"读取私聊列表时发生未知错误: me={me}, other={other}, 错误: {e}")
+            return []
+
+    def has_more_friend_messages(self, me: str, other: str, before_id) -> bool:
+        """`before_id` 之前还有没有更早的消息（契约里 GET 的 `has_more`）。
+
+        ⚠️ 单独一条 `EXISTS`，**不靠"这一页取满了就是还有"推断**：
+        恰好剩 50 条时那种推断会给出 `has_more=True`，前端于是显示一个点了
+        什么也不出现的「加载更早的消息」按钮（本项目栽过"看着有、其实永远不触发"
+        的同形状）。判据必须自己去问库里那句"还有没有"。
+
+        读失败返回 False（宁可少一个按钮，也不要让用户点到一个空操作）。
+        """
+        me, other = str(me or ''), str(other or '')
+        if not me or not other:
+            return False
+        try:
+            before = int(before_id)
+        except (TypeError, ValueError):
+            return False
+        try:
+            cursor = self.conn.cursor()
+            row = cursor.execute(
+                'SELECT 1 FROM friend_messages '
+                'WHERE ((from_uid = ? AND to_uid = ?) OR (from_uid = ? AND to_uid = ?)) '
+                'AND id < ? LIMIT 1',
+                (me, other, other, me, before)).fetchone()
+            cursor.close()
+            return bool(row)
+        except sqlite3.Error as e:
+            logger.error(f"判断私聊是否还有更早失败: me={me}, other={other}, 错误: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"判断私聊是否还有更早时发生未知错误: me={me}, other={other}, 错误: {e}")
+            return False
+
+    def count_friend_messages_since(self, from_uid: str, since_ts) -> int:
+        """`since_ts` 之后**我发出**的私聊条数（**频率判据**，每分钟 20 条）。
+
+        只看 `from_uid`（不限收件人）：限流约束的是"这个人发得多快"，
+        与发给谁无关 —— 否则群发式骚扰从"一人 20 条/分"变成"每人 20 条/分"。
+        读失败返回 0（宁可放行一条，也不因为统计读不到就把玩家堵死，
+        与 `count_profile_messages_since` / `count_requests_since` 同口径）。
+        """
+        if not from_uid:
+            return 0
+        try:
+            since = int(since_ts or 0)
+        except (TypeError, ValueError):
+            return 0
+        try:
+            cursor = self.conn.cursor()
+            row = cursor.execute(
+                'SELECT COUNT(*) AS n FROM friend_messages '
+                'WHERE from_uid = ? AND created_at >= ?',
+                (str(from_uid), since)).fetchone()
+            cursor.close()
+            return int(row['n'] or 0) if row else 0
+        except sqlite3.Error as e:
+            logger.error(f"统计窗口内私聊条数失败: from={from_uid}, 错误: {e}")
+            return 0
+        except Exception as e:
+            logger.error(f"统计窗口内私聊条数时发生未知错误: from={from_uid}, 错误: {e}")
+            return 0
+
+    def mark_friend_messages_read(self, me: str, other: str) -> int:
+        """把 **`other` 发给我的**全部未读标成已读，返回**本次标记的条数**。
+
+        · 只标 `to_uid = me AND from_uid = other`：把"我发出去的"也标了就永远没有未读
+          （方向写反不报错，只会让未读数恒为 0 —— 所以这里三个条件缺一不可）。
+        · `AND read_at = 0` 是为了让返回值有意义：契约里 `read` 是
+          "把某人发来的都标已读"这一次动作**新标了几条**，重复调用应当返回 0
+          （而不是每次都返回历史总数）。前端不拿它当判据，但它是"真的写下去了"的证据。
+        · 失败返回 0（与"一条也没标"同形）—— 未读是展示层，写失败不该 500。
+        """
+        me, other = str(me or ''), str(other or '')
+        if not me or not other:
+            return 0
+        try:
+            with self._lock:
+                self.cursor.execute(
+                    'UPDATE friend_messages SET read_at = ? '
+                    'WHERE to_uid = ? AND from_uid = ? AND read_at = 0',
+                    (int(time.time()), me, other))
+                marked = int(self.cursor.rowcount or 0)
+                self.conn.commit()
+            return marked
+        except sqlite3.Error as e:
+            logger.error(f"标记私聊已读失败: me={me}, other={other}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return 0
+        except Exception as e:
+            logger.error(f"标记私聊已读时发生未知错误: me={me}, other={other}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return 0
+
+    def count_unread_messages(self, me: str, other=None) -> int:
+        """**别人发给我**的未读条数；`other=None` 时是总数。
+
+        只数 `to_uid = me`（未读是收件人视角的事）—— 数成两个方向的话，
+        自己发的每一条都会给自己加一个未读红点。读失败返回 0。
+        """
+        me = str(me or '')
+        if not me:
+            return 0
+        try:
+            sql = ('SELECT COUNT(*) AS n FROM friend_messages '
+                   'WHERE to_uid = ? AND read_at = 0')
+            params = [me]
+            if other:
+                sql += ' AND from_uid = ?'
+                params.append(str(other))
+            cursor = self.conn.cursor()
+            row = cursor.execute(sql, params).fetchone()
+            cursor.close()
+            return int(row['n'] or 0) if row else 0
+        except sqlite3.Error as e:
+            logger.error(f"统计私聊未读失败: me={me}, other={other}, 错误: {e}")
+            return 0
+        except Exception as e:
+            logger.error(f"统计私聊未读时发生未知错误: me={me}, other={other}, 错误: {e}")
+            return 0
+
+    def unread_by_friend(self, me: str) -> dict:
+        """`{对方 uid: 未读数}`（**只含 > 0 的**）—— `GET /api/friends` 行内未读数用。
+
+        为什么要一条 GROUP BY 而不是 N 次 `count_unread_messages(me, other)`：
+        好友上限 50，逐行查就是 50 次查询（本项目在好友列表的用户名/头像上
+        已经因为同一原因改成批量读）。读失败返回 `{}`（等价于"全 0 未读"）。
+        """
+        me = str(me or '')
+        if not me:
+            return {}
+        try:
+            cursor = self.conn.cursor()
+            rows = cursor.execute(
+                'SELECT from_uid, COUNT(*) AS n FROM friend_messages '
+                'WHERE to_uid = ? AND read_at = 0 GROUP BY from_uid', (me,)).fetchall()
+            cursor.close()
+            out = {}
+            for r in rows:
+                sender = str(r['from_uid'] or '')
+                n = int(r['n'] or 0)
+                if sender and n > 0:
+                    out[sender] = n
+            return out
+        except sqlite3.Error as e:
+            logger.error(f"统计各好友未读失败: me={me}, 错误: {e}")
+            return {}
+        except Exception as e:
+            logger.error(f"统计各好友未读时发生未知错误: me={me}, 错误: {e}")
+            return {}
+
     def get_token_by_password(self, username: str, password: str):
         """通过用户名和密码校验并生成token（使用 check_password_hash 验证）"""
         if not username or not password:
@@ -3210,6 +3510,46 @@ def list_outgoing_requests(uid: str):
 def count_requests_since(uid: str, since_ts):
     """`since_ts` 之后我发出的 pending 条数（限流判据）"""
     return db.count_requests_since(uid, since_ts)
+
+
+# ---------------------------------------------------------------------------
+# 好友私聊（2026-09-19 私聊批）—— 模块级包装
+# ---------------------------------------------------------------------------
+# 同上：`api.py` **必须**调这些模块级名字（不许写 `db.db.xxx`），
+# 否则测试里的 `db.add_friend_message = ...` 打桩会被静默绕过。
+def add_friend_message(from_uid: str, to_uid: str, body: str):
+    """写一条私聊，返回新行 dict（含 id）；失败 None"""
+    return db.add_friend_message(from_uid, to_uid, body)
+
+
+def list_friend_messages(me: str, other: str, limit: int = 50, before_id=None):
+    """一对好友之间的会话（**正序**，最新的在后；`before_id` 往更早翻页）"""
+    return db.list_friend_messages(me, other, limit, before_id)
+
+
+def has_more_friend_messages(me: str, other: str, before_id):
+    """`before_id` 之前还有没有更早的消息（契约里的 `has_more`）"""
+    return db.has_more_friend_messages(me, other, before_id)
+
+
+def count_friend_messages_since(from_uid: str, since_ts):
+    """`since_ts` 之后我发出的私聊条数（每分钟 20 条的判据）"""
+    return db.count_friend_messages_since(from_uid, since_ts)
+
+
+def mark_friend_messages_read(me: str, other: str):
+    """把 other 发给我的未读全部标已读，返回本次标记条数"""
+    return db.mark_friend_messages_read(me, other)
+
+
+def count_unread_messages(me: str, other=None):
+    """别人发给我的未读条数；`other=None` 时是总数"""
+    return db.count_unread_messages(me, other)
+
+
+def unread_by_friend(me: str):
+    """`{对方 uid: 未读数}`（只含 > 0）—— 好友列表行内未读数"""
+    return db.unread_by_friend(me)
 
 
 def _safe_dao(fn, default):

@@ -5492,6 +5492,21 @@ function setupSocketListeners() {
         }
     });
 
+    // 好友私聊：收到一条私聊（私聊批，2026-09-19）。
+    // payload 恰好 7 个字段（dm.PUSH_PAYLOAD_KEYS 是唯一一份清单）：
+    //   {id, from_uid, from_username, from_avatar, body, created_at, stamp}
+    // ⚠️ **没有 `mine`** —— 服务端有意不下发"发送方视角"的字段（§4 的坑 4），
+    //    所以这条事件永远只可能是"别人发给我的"，渲染时一律 data-mine="0"。
+    // ⚠️ 与本批三条好友事件一样整块 try/catch：它在对局中随时可能到，
+    //    抛异常不该把当前这局搅黄。
+    socket.on('friend_message', (data) => {
+        try {
+            handleFriendMessageEvent(data);
+        } catch (e) {
+            console.warn('处理好友私聊失败（不影响对局）:', e && e.message);
+        }
+    });
+
     // 添加阶段更新监听
     socket.on('phase_updated', (data) => {
         gameState.currentPhase = data.current_phase;
@@ -10298,6 +10313,16 @@ function init() {
 //    异常会被**吞掉**、页面上零提示（CLAUDE.md 第 10 节第 6 条，本项目一天踩过两次）。
 //
 // 返回值：一个 Promise（true = 已进房）。调用方按需 `.then()`，不 await 也不影响既有行为。
+// 画出"房间已就绪、等对手进来"这一态：房号 + 复制邀请链接 +「等待其他玩家加入...」。
+// ⚠️ **复用创建房间那条路用的同一个面板**（`#custom-room-info` 就在 `#custom-room-screen` 里），
+//    别另造一套等待 UI：两份实现必然漂移（本项目的老病根），而且 index.html 那个面板已经
+//    带好了房号、复制链接与"等待其他玩家加入"文案，正是这里要的。
+function showCustomRoomWaiting(roomId) {
+    if (customCurrentRoomId) customCurrentRoomId.textContent = roomId || '';
+    if (customRoomInfo) customRoomInfo.classList.remove('hidden');
+    if (customRoomScreen && typeof switchScreen === 'function') switchScreen(customRoomScreen);
+}
+
 function joinRoomById(roomId, opts) {
     const options = opts || {};
     if (!roomId) return Promise.resolve(false);
@@ -10329,9 +10354,14 @@ function joinRoomById(roomId, opts) {
                     url.searchParams.set('room', roomId);
                     window.history.replaceState(null, '', url.pathname + url.search);
                 } catch (e) { /* 无所谓，入房已经成功 */ }
-                if (typeof switchScreen === 'function' && shipPlacementScreen) {
-                    switchScreen(shipPlacementScreen);
-                }
+                // ⚠️⚠️ **不要在这里切布船屏**：`handle_join_room` 只在**满 2 人**时才把阶段推到
+                //     `placing_ships` 并下发 `game_state`；一个人先进房时服务端**什么都不发**。
+                //     早先这里是无条件 `switchScreen(shipPlacementScreen)`，于是"先进房那个人"
+                //     会停在一块**没有对手、也永远不会推进**的布船棋盘上 —— 用户实测报的
+                //     "卡死在错误的布船界面"就是这个形状（被邀请方等不到发起方时也一样）。
+                //     正确口径与 `customCreateRoom()` 那条路**完全一致**：先停在房间等待面板，
+                //     等 `game_state(state='placing_ships')` 到了再由它切屏（见那个 handler 的注释）。
+                showCustomRoomWaiting(roomId);
                 resolve(true);
             } else {
                 if (options.quiet !== true) {
@@ -10869,15 +10899,23 @@ function showRenwangChoice() {
  * 好友功能（好友批，2026-09-19）—— 面板 / 入口红点 / 查看面加好友 / 邀战提示 / 结算加好友
  *
  * 契约（后端在并行实现，字段名与事件名一个都不能改）：
- *   GET  /api/friends            → {friends:[{user_id,username,avatar,level,rank_label,online,in_game}],
+ *   GET  /api/friends            → {friends:[{user_id,username,avatar,level,rank_label,online,in_game,unread}],
  *                                   incoming:[{user_id,username,avatar,created_at}],
  *                                   outgoing:[{user_id,username,avatar,created_at}],
- *                                   limits:{max_friends,requests_per_hour}, counts:{friends,incoming}}
+ *                                   limits:{max_friends,requests_per_hour},
+ *                                   counts:{friends,incoming,unread_total}}
  *   POST /api/friends/request  {username} → {status:'sent'|'already_friends'|'already_pending'|'blocked'|'self'|'error'}
  *   POST /api/friends/respond  {username, accept:bool} → {status:'accepted'|'declined'|'error'}
  *   POST /api/friends/remove   {username} → {status:'ok'|'error'}
  *   POST /api/friends/block    {username} → {status:'ok'|'error'}
  *   POST /api/friends/invite   {username} → {status:'ok',room_id} 或 {status:'error',error:'中文原因'}
+ *   好友私聊（私聊批，契约见 docs/FRIEND_DM_2026_09_19.md §4）：
+ *   GET  /api/friends/messages?username=<name>&limit=50&before=<id>
+ *                                → {status:'ok',has_more:bool,messages:[{id,from_uid,to_uid,body,created_at,stamp,mine}]}
+ *   POST /api/friends/messages {username, body} → {status:'ok',message:{…同一条…}}
+ *   POST /api/friends/messages/read {username}  → {status:'ok',read:3}
+ *   ⚠️ 时间只渲染服务端给的 `stamp`；未读数**只认** `friend.unread` 与 /read 的成功回执，
+ *      前端不自增也不自算（规则只有一份实现，在 dm.py）。
  *   未登录一律 401；申请过频 429；好友满 400。
  *   ⚠️ 服务端给的是 `{status:'error', error:'中文原因'}` —— 前端**原样显示那个 error**，
  *      绝不自己编一套文案（自己编的那套迟早跟后端的真实原因对不上）。
@@ -11055,9 +11093,11 @@ function syncFriendsBadge(data) {
 
 // ---------- 行渲染 ----------
 
-// 好友行：头像 + 用户名 + 等级 + 段位 label + 状态点 + 邀战 / 删除。
+// 好友行：头像 + 用户名 + 等级 + 段位 label + 状态点 + 未读数 + 私聊 / 邀战 / 删除。
 // ⚠️ 排序**不在前端做** —— 服务端已经把「在线在前、对局中次之」排好了，照序渲染即可
 //    （CLAUDE.md 第 10 节第 1 条：同一个业务判断有两份实现就一定会漂移）。
+// ⚠️ 未读数**只认服务端给的 `f.unread`**（§4）：前端既不自增也不自算总数，
+//    数字为 0（或字段缺失/不是数）时摘 `hidden` 的**只有**这个 span，不影响这一行的其它部分。
 function friendRowHtml(f) {
     const online = f.online === true;
     const inGame = f.in_game === true;
@@ -11065,6 +11105,7 @@ function friendRowHtml(f) {
     const stateText = inGame ? '对局中' : (online ? '在线' : '离线');
     // 离线时「邀战」禁用，并把**原因写在按钮上**（不是只灰掉不给理由）
     const inviteTitle = online ? '邀请他打一局' : '对方不在线，暂时不能邀战';
+    const unread = Math.max(0, Number(f.unread) || 0);
     return '<div class="friend-row ' + cls + '" data-username="' + escapeHtml(f.username) + '">'
         + '<img class="friend-avatar" alt="头像" src="' + escapeHtml(String(f.avatar || '/static/avatars/default.png')) + '"'
         + ' onerror="this.onerror=null;this.src=\'/static/avatars/default.png\'">'
@@ -11073,7 +11114,12 @@ function friendRowHtml(f) {
         + '<span class="friend-meta">' + escapeHtml(friendsMetaText(f)) + '</span>'
         + '</div>'
         + '<span class="friend-state"><i class="friend-dot"></i>' + stateText + '</span>'
+        + '<span class="friend-unread"' + (unread > 0 ? '' : ' hidden') + '>' + unread + '</span>'
         + '<div class="friend-ops">'
+        // 「私聊」排在「邀战」前面：本批的入口就是它，别让它在窄屏落行后被挤到看不见的地方。
+        // ⚠️ 它**不受在线状态影响**（离线也能留言，消息落库、对方下次打开就能看到）。
+        + '<button type="button" class="friend-op friend-op-dm" data-friend-action="dm"'
+        + ' title="和 TA 私聊">私聊</button>'
         + '<button type="button" class="friend-op friend-op-invite" data-friend-action="invite"'
         + (online ? '' : ' disabled') + ' title="' + escapeHtml(inviteTitle) + '">邀战</button>'
         + '<button type="button" class="friend-op friend-op-danger" data-friend-action="remove"'
@@ -11138,6 +11184,10 @@ function openFriendsModal() {
     const modal = document.getElementById('friends-modal');
     if (!modal) return;
     if (typeof closeOverlaysExcept === 'function') closeOverlaysExcept('friends-modal');
+    // ⚠️ 每次打开都回到**列表视图**（私聊批）：会话视图要么接着显示"上次那个人的聊天记录"，
+    //    要么就得自己记住"要不要恢复"——两样都会让「点好友 → 私聊」的入口时灵时不灵。
+    //    统一回列表视图，行为只有一种（§5：两个视图共用 #friends-modal，用 hidden 切换）。
+    closeDmConversation();
     modal.classList.remove('hidden');
     refreshFriendsPanel();
 }
@@ -11180,6 +11230,11 @@ function refreshFriendsPanel() {
         friendsState = d;
         syncFriendsBadge(d);
         renderFriendsPanel(d);
+        // ⚠️ 「标已读」与这一趟重拉会打架（私聊批）：如果**标已读还在飞**，而这次响应是
+        //    它之前快照的（服务端还没把 read_at 写进去），行上就会把未读数又画回来 ——
+        //    症状是"打开了会话，未读闪一下又出现"。这里等它回来时把那个人的数字再抹一次。
+        //    抹的依据仍然是服务端（POST /read 的成功回执），不是前端自己减。
+        if (dmReadInFlightFor) setFriendRowUnread(dmReadInFlightFor, 0);
         setFriendsMsg('', false);
         // 面板开着的时候顺手校准查看面里那个按钮的关系态（不用重新拉接口）
         const modalOpen = document.getElementById('friends-modal');
@@ -11372,9 +11427,24 @@ function sendFriendInvite(username, btn) {
     friendApiPost('/api/friends/invite', { username: name }).then(res => {
         if (btn) btn.disabled = false;
         if (res.ok && res.data.status === 'ok' && res.data.room_id) {
-            showMessage('已邀请 ' + name + ' 打一局', { type: 'success' });
-            // 邀请已发出，提示位顺手说一句房间号，方便口头确认
-            setFriendsMsg('已邀请 ' + name + '（房间 ' + res.data.room_id + '）', false);
+            const inviteRoom = String(res.data.room_id);
+            showMessage('已邀请 ' + name + '，正在房间里等 TA…', { type: 'success' });
+            // 提示位顺手说一句房间号，方便口头确认
+            setFriendsMsg('已邀请 ' + name + '（房间 ' + inviteRoom + '）', false);
+            // ⚠️⚠️ **发起方必须自己进这间房** —— 漏了这一步整条链就是死的：
+            //    `POST /api/friends/invite` 建出来的是一间**空房**（服务端只建房、不坐人），
+            //    而 `join_room` 只在**满 2 人**时才把阶段推到 `placing_ships`。
+            //    所以发起方不进房 = 房间里永远只有被邀请那一个人 → **永远开不了局**，
+            //    对方还会一直停在"布船界面等对手"（用户实测报的正是这个）。
+            //    入房走**既有那份实现**（`joinRoomById`），与 toast 里的「进入房间」同一条路 ——
+            //    绝不在这里另写一套 emit + switchScreen。
+            if (typeof closeFriendsModal === 'function') closeFriendsModal();
+            joinRoomById(inviteRoom, { quiet: true }).then(ok => {
+                if (!ok) {
+                    showAlert('房间已建好（' + inviteRoom + '），但自动进入失败，'
+                        + '请让好友用这个房间号进来，或重开一间');
+                }
+            });
         } else {
             // 契约里 `error` 字段就是服务端给的中文原因（例如「对方不在线」）——原样显示
             showAlert(res.ok ? apiReason(res.data, '邀请失败') : res.reason);
@@ -11444,6 +11514,10 @@ function bindFriendsModal() {
             });
         } else if (action === 'invite') {
             sendFriendInvite(username, el);
+        } else if (action === 'dm') {
+            // 打开这个人的会话（私聊批）：**同一个弹窗内切换视图**，不新开弹窗。
+            // 置灰判断放在 openDmConversation 里（它要先清掉上一场的行），这里不重复判。
+            openDmConversation(username);
         }
     });
 }
@@ -11586,6 +11660,416 @@ function handleRecentOpponentEvent(data) {
     }
 }
 
+// ---------- 好友私聊（私聊批，2026-09-19） ----------
+//
+// 契约见 docs/FRIEND_DM_2026_09_19.md §3（纯规则）/ §4（接口）/ §5（DOM，冻结 id）。
+// 三条硬规矩在本节的具体落法（与前几批同一口径，别在这里破例）：
+//   ① **时间只渲染服务端给的 `stamp`**（'09-19 15:40'）—— 前端一个字都不重算格式。
+//      格式化规则只有一份实现，在 `dm.py` 的 `stamp()`；前端再算一次就是"两份实现必然漂移"。
+//   ② **未读只认服务端**：要么来自 `GET /api/friends` 的 `friend.unread`（渲染时），
+//      要么来自 `POST /api/friends/messages/read` 的成功回执（那条会话归零）。
+//      本节的**唯一一种累加方式**是"面板开着时重拉一次 GET /api/friends"，
+//      绝不在前端 `+1`（自增与"重拉"两处各算一遍 = 同一个数两份实现）。
+//   ③ **发送成功用响应里那条 message 追加**，不自己造一条 —— 自己造的 id / stamp
+//      会与库里那一条对不上（§5 最后一条）。
+//
+// ⚠️ 视图互斥：`#friends-body`（列表）与 `#dm-panel`（会话）共用 `#friends-modal`，
+//    用 `hidden` 属性切换（§5）；`#friends-title` 也跟着在两个标题之间切。
+
+const DM_PAGE_LIMIT = 50;                 // 与服务端默认分页一致（§4 的 limit 参数）
+const DM_NEAR_BOTTOM_PX = 40;             // "贴在底部"的判定带；超出就说明玩家正在往上翻
+const DM_ANCHOR_TOLERANCE_PX = 2;         // 插到顶部后允许的位置偏差（回归工具按同一口径断言）
+
+// 当前会话对象（关掉视图后**刻意保留**：这时来的实时消息要归到"不是当前会话"那一类）
+let dmFriendName = '';
+// 屏幕上**此刻真的在显示**谁的会话（'' = 没在显示）。
+// ⚠️ 它与 dmFriendName 必须分开：前者管"实时消息要不要当场标已读"，
+//    后者管"这条消息属于谁"。合成一个变量就会出现"面板关了也当正在看"→ 未读永远不亮。
+let dmOpenName = '';
+let dmHasMore = false;                    // 服务端给的 has_more（只有它说了算，前端不推算）
+let dmLoadMoreBusy = false;
+let dmSending = false;                    // 发送中：禁用按钮防重复提交
+// 已经渲染过的消息 id（换会话时重建）。用它做去重：同一会话的重拉与实时推送可能交错，
+// 没有它就会出现同一条消息渲染两遍（而两遍的 id 相同，肉眼很难发现）。
+let dmRenderedIds = new Set();
+// 已读那一路的"在途"状态：避免连点/连续收消息时把同一段会话反复标已读。
+let dmReadBusy = false;
+// 标已读请求发出**之后**又到达的实时消息 id：在途时不能丢，回来要补一次（见 markDmRead）。
+let dmPendingReadIds = new Set();
+// 非空 = 那个人的会话**正在标已读**（用来挡"重拉回来的旧帧把未读数写回去"，见 refreshFriendsPanel）。
+let dmReadInFlightFor = '';
+// 「加载更早」那一次**自己量的**滚动位置偏差（像素；null = 还没量过）。
+// 为什么放模块级：它是给**回归工具**看的证据（tools/friend_dm_check.mjs 的 D7f 直接读
+// `dmAnchorDrift`），而工具拿不到函数内部的局部量。产品逻辑不读它，只写。
+let dmAnchorDriftPx = null;
+function dmAnchorDrift() { return dmAnchorDriftPx; }
+
+// 面板开着（两个视图都算）
+function isFriendsModalOpen() {
+    const m = document.getElementById('friends-modal');
+    return !!(m && !m.classList.contains('hidden'));
+}
+// 会话视图**真的**在屏幕上：视图开着 + 面板开着 + 看的就是这个人。
+// ⚠️ `document.hasFocus()` 一起判：浏览器被切到后台时不该把消息悄悄标已读（否则未读等于没有）。
+//    无头回归里 `document.hasFocus()` 为 true（窗口是前台），所以这条不会让断言假红。
+function isDmConversationVisible(username) {
+    const name = String(username || '');
+    if (!name || !dmOpenName || dmOpenName !== name) return false;
+    const panel = document.getElementById('dm-panel');
+    if (!panel || panel.hidden) return false;
+    if (!isFriendsModalOpen()) return false;
+    return (typeof document.hasFocus !== 'function') || document.hasFocus();
+}
+// 把未读数写回某个好友行 —— **改的是 DOM 里那一个 span**，不碰任何模块级计数
+// （未读数在页面上只有这一个落点，不存在"两份状态"）。digit 为空 → 隐藏。
+function setFriendRowUnread(username, value) {
+    const name = String(username || '');
+    if (!name) return;
+    const rows = document.querySelectorAll('#friends-list .friend-row');
+    for (let i = 0; i < rows.length; i++) {
+        if (String(rows[i].dataset.username || '') !== name) continue;
+        const badge = rows[i].querySelector('.friend-unread');
+        if (!badge) return;
+        const n = Math.max(0, Number(value) || 0);
+        badge.textContent = String(n);
+        badge.hidden = !(n > 0);
+        return;
+    }
+}
+// 撤回关系缓存用的 `forgetFriendRelation`（既有实现）在这里**用不上**：
+// 私聊不改变好友关系，缓存里那份关系照旧有效。留着这句注释是免得下一个人以为漏了。
+
+// ---------- 消息渲染 ----------
+// 一条消息 → 一行。`id` 写进 data-id，滚动锚定与去重都靠它。
+// ⚠️ data-mine 是§5 冻结的属性（"1"=我发的 / "0"=对方发的）：视觉左右分栏走 CSS，
+//    断言只认这个属性 —— 别用 class 兼职表达"谁发的"。
+function dmRowHtml(m) {
+    // ⚠️ 只有**会话接口**（GET/POST /messages）那一条路才带 `mine`；
+    //    socket 推送的 payload **没有**这个字段（服务端有意不下发发送方视角的字段），
+    //    所以这里必须用 `=== true` 判，缺字段时自然落到"对方发的"。
+    const mine = (m && m.mine === true) ? '1' : '0';
+    const id = (m && m.id !== undefined && m.id !== null) ? String(m.id) : '';
+    return '<div class="dm-row" data-mine="' + mine + '" data-id="' + escapeHtml(id) + '">'
+        + '<span class="dm-body">' + escapeHtml(String((m && m.body) || '')) + '</span>'
+        // 时间戳就是服务端那句 stamp，原样贴出来（不 new Date、不补零、不换格式）
+        + '<span class="dm-stamp">' + escapeHtml(String((m && m.stamp) || '')) + '</span>'
+        + '</div>';
+}
+function dmIsNearBottom(box) {
+    if (!box) return true;
+    return (box.scrollHeight - box.scrollTop - box.clientHeight) <= DM_NEAR_BOTTOM_PX;
+}
+function dmScrollToBottom() {
+    const box = document.getElementById('dm-list');
+    if (!box) return;
+    box.scrollTop = box.scrollHeight;
+}
+// 渲染整段会话（换会话 / "加载更早"看的是**这一整帧**）。
+// `stickBottom`：把视口钉到底部（进会话、自己发消息时用；往上翻出来的旧帧一律 false）。
+function renderDmMessages(messages, stickBottom) {
+    const box = document.getElementById('dm-list');
+    if (!box) return;
+    const list = Array.isArray(messages) ? messages : [];
+    box.innerHTML = list.map(dmRowHtml).join('');
+    dmRenderedIds = new Set();
+    list.forEach((m) => { if (m && m.id !== undefined && m.id !== null) dmRenderedIds.add(String(m.id)); });
+    updateDmEmpty();
+    if (stickBottom) dmScrollToBottom();
+}
+// 空会话占位：#dm-empty 只在"确实一条都没有"时显示（§5）。
+function updateDmEmpty() {
+    const box = document.getElementById('dm-list');
+    const empty = document.getElementById('dm-empty');
+    if (!box || !empty) return;
+    empty.hidden = box.querySelector('.dm-row') !== null;
+}
+// 「加载更早的消息」按 has_more 显隐。⚠️ 前端**不推算** has_more（服务端用一条 EXISTS 问库，
+// 见 §6.2 坑 3：靠"这页取满了"推会在恰好剩一整页时多一个点了没反应的按钮）。
+// ⚠️ 按钮自己就是 `#dm-load-more`，所以这里同时管"加载中"的禁用态（防连点重复取同一页）。
+function updateDmLoadMore() {
+    const btn = document.getElementById('dm-load-more');
+    if (!btn) return;
+    btn.hidden = !dmHasMore;
+    btn.disabled = dmLoadMoreBusy;
+}
+// 追加一条（实时消息 / 自己刚发出的那条）。
+// 两个 defensive 点：
+//   · 正在会话头里看的不是这个人 → 不追加（调用方判过，这里再兜一层）；
+//   · id 已经渲染过 → 不追加（同一会话的重拉与推送交错时会出现重复）。
+function appendDmMessage(m, stickBottom) {
+    const box = document.getElementById('dm-list');
+    if (!box || !m) return false;
+    const id = (m.id !== undefined && m.id !== null) ? String(m.id) : '';
+    if (id && dmRenderedIds.has(id)) return false;
+    if (id) dmRenderedIds.add(id);
+    box.insertAdjacentHTML('beforeend', dmRowHtml(m));
+    updateDmEmpty();
+    if (stickBottom) dmScrollToBottom();
+    return true;
+}
+// 取一次会话。resolve **永不 reject**：网络/解析失败一律 {ok:false}，
+// 免得异常被 .then() 吞掉、页面上零提示（本项目第 10 节第 6 条同形状）。
+function fetchDmMessages(username, beforeId) {
+    const name = String(username || '');
+    if (!name) return Promise.resolve({ ok: false, messages: [], hasMore: false });
+    let url = '/api/friends/messages?username=' + encodeURIComponent(name);
+    if (beforeId) url += '&before=' + encodeURIComponent(String(beforeId));
+    return fetch(url, { headers: { 'Accept': 'application/json' } })
+        .then(resp => resp.text().then(text => {
+            let body = null;
+            try { body = text ? JSON.parse(text) : null; } catch (e) { body = null; }
+            if (!resp.ok || !body || body.status !== 'ok' || !Array.isArray(body.messages)) {
+                return { ok: false, messages: [], hasMore: false, reason: apiReason(body, '') };
+            }
+            // ⚠️ 服务端按 id 正序返回（最新的在后）—— 前端**不再排序**，照序渲染。
+            return { ok: true, messages: body.messages, hasMore: body.has_more === true };
+        }))
+        .catch(() => ({ ok: false, messages: [], hasMore: false }));
+}
+
+// ---------- 会话视图的开关 ----------
+// 进会话：标题 = 对方用户名（§5）。先清空上一场（输入框 / 消息列表 / 分页按钮），
+// 因为那里的"上一帧"属于**另一个人**，留着才是真的错（与三个列表容器"保留上一帧"相反）。
+function openDmConversation(username) {
+    const name = String(username || '');
+    if (!name) return;
+    const panel = document.getElementById('dm-panel');
+    const body = document.getElementById('friends-body');
+    if (!panel || !body) return;
+
+    dmFriendName = name;
+    dmOpenName = name;
+    dmHasMore = false;
+    dmLoadMoreBusy = false;
+    dmReadBusy = false;
+    dmPendingReadIds = new Set();
+    dmRenderedIds = new Set();
+    const title = document.getElementById('dm-title');
+    if (title) title.textContent = name;
+    const input = document.getElementById('dm-input');
+    if (input) input.value = '';
+    const box = document.getElementById('dm-list');
+    if (box) box.innerHTML = '';
+    updateDmEmpty();
+    updateDmLoadMore();
+    if (input && input.focus && typeof input.focus === 'function') {
+        // 打开就把光标放进输入框，少一步点击（键盘用户尤其明显）
+        try { input.focus(); } catch (e) { /* 无头环境下 focus 可能不生效，不影响别的 */ }
+    }
+
+    body.hidden = true;
+    panel.hidden = false;
+    const h2 = document.getElementById('friends-title');
+    if (h2) h2.hidden = true;      // 标题由 .dm-head 里的 #dm-title 承担，避免两个标题叠着
+
+    // 先取最新一页（含 has_more / 每条 mine），再标已读。
+    // ⚠️ 顺序不能反：先标已读再取数，中间到达的消息会被这一次"标已读"连坐，而它其实还没渲染出来。
+    return fetchDmMessages(name).then(res => {
+        if (dmOpenName !== name) return false;        // 这趟回来时玩家已经走了 → 一个字都不写
+        if (!res.ok) {
+            setDmMsg('聊天记录加载失败，请稍后重试', true);
+            return false;
+        }
+        dmHasMore = res.hasMore === true;
+        renderDmMessages(res.messages, true);
+        updateDmLoadMore();
+        setDmMsg('', false);
+        // 视图已经在屏幕上了 → 这一刻起这个人的消息都算"当面看的"，立刻标已读。
+        markDmRead(name);
+        return true;
+    });
+}
+// 回列表视图。**保留 dmFriendName**（这时来的实时消息要归到"不是当前会话"那一类，
+// 于是未读数计进好友行）；只把 dmOpenName 清掉 —— 它才是"此刻正显示"的那个判据。
+function closeDmConversation() {
+    dmOpenName = '';
+    const panel = document.getElementById('dm-panel');
+    const body = document.getElementById('friends-body');
+    if (panel) panel.hidden = true;
+    if (body) body.hidden = false;
+    const h2 = document.getElementById('friends-title');
+    if (h2) h2.hidden = false;
+    setDmMsg('', false);
+}
+// 会话视图里那一行提示位（发送失败的中文原因 / 加载失败）。
+function setDmMsg(text, isError) {
+    const el = document.getElementById('dm-msg');
+    if (!el) return;
+    el.textContent = text || '';
+    el.classList.toggle('is-error', isError === true);
+}
+
+// ---------- 标已读 ----------
+// 打开会话即标已读；成功后**就地**把这个好友行的未读数归零。
+// ⚠️ 归零的依据是**服务端的成功回执**，不是前端自己减 1（§5：数字只认服务端）。
+//    `read: 0` 也照常归零：那表示服务端那边已经没有未读了（例如别的标签页刚标过）。
+// ⚠️ 重入保护：标已读期间又来了消息（dmPendingReadIds 非空）→ 回来补一次，
+//    否则最后那几条会一直挂着未读，直到玩家下次打开会话。
+function markDmRead(username) {
+    const name = String(username || '');
+    if (!name || !window.__USERNAME) return Promise.resolve(false);   // 游客：接口一定 401，省掉这次往返
+    if (dmReadBusy) return Promise.resolve(false);
+    dmReadBusy = true;
+    dmReadInFlightFor = name;
+    return friendApiPost('/api/friends/messages/read', { username: name }).then(res => {
+        dmReadBusy = false;
+        dmReadInFlightFor = '';
+        if (!res.ok || !res.data || res.data.status !== 'ok') {
+            // 失败不改任何数字：留给下一次打开会话 / 重拉接口去对齐
+            return false;
+        }
+        setFriendRowUnread(name, 0);
+        const again = dmPendingReadIds.size > 0;
+        dmPendingReadIds = new Set();
+        if (again) markDmRead(name);        // 在途期间又到了新消息 → 补一次
+        return true;
+    });
+}
+
+// ---------- 往上翻：加载更早的消息 ----------
+// ⚠️⚠️ 这一段是整个私聊最容易做错的地方：**把旧消息插到列表顶部时必须不跳滚动位置**。
+//     `prepend` 之后容器的内容高度变高、而 `scrollTop` 不变 —— 玩家眼里就是"画面整个
+//     往下跳了一屏"（正在读的那条跑掉了）。所以：插之前记下首条的屏幕位置，
+//     插完按高度差把 scrollTop 补回去，并用同一口径自检偏差。
+function loadEarlierDmMessages() {
+    const name = dmOpenName;
+    if (!name || dmLoadMoreBusy || !dmHasMore) return Promise.resolve(false);
+    const box = document.getElementById('dm-list');
+    if (!box) return Promise.resolve(false);
+    const first = box.querySelector('.dm-row');
+    const beforeId = (first && first.dataset) ? String(first.dataset.id || '') : '';
+    if (!beforeId) return Promise.resolve(false);        // 没有游标（列表是空的）→ 无从往上翻
+
+    // ⚠️⚠️ 量"要补多少"不能用 `box.scrollHeight` 的前后差：`insertAdjacentHTML` 之后
+    //    **同步**读 `box.scrollHeight` 会读到**过期值** —— 实测（tools/friend_dm_check.mjs
+    //    的 D7f）它比真实内容高度少 17.66px，于是 scrollTop 补少了那么多，画面往下一跳。
+    //    改成量**锚点自己在屏幕上的位置**：它在屏幕上被推下去多少，scrollTop 就补多少。
+    //    好处是它同时把"列表之外"的位移也一起算进去了 —— 实测还有第二处位移：
+    //    取完最后一页后 `#dm-load-more` 变成 `hidden`，弹窗矮了 17.66px，上面的内容
+    //    整体上移，正在读的那条消息也跟着上移。只补列表内部的高度差是**补不掉**这一处的。
+    // ⚠️ 选择器里的 id 用 escapeHtml 转义（与渲染那条路同一套），不用 CSS.escape：
+    //    id 来自服务端、是纯数字，但万一它带了引号，escapeHtml 之后放进双引号里一定安全。
+    const anchorSel = '.dm-row[data-id="' + escapeHtml(beforeId) + '"]';
+    const anchorNode = box.querySelector(anchorSel);
+    const prevTop = anchorNode ? anchorNode.getBoundingClientRect().top : null;
+    dmAnchorDriftPx = null;                              // 本次的自检结果（null = 还没测）
+
+    dmLoadMoreBusy = true;
+    updateDmLoadMore();
+    return fetchDmMessages(name, beforeId).then(res => {
+        dmLoadMoreBusy = false;
+        if (dmOpenName !== name) {                       // 这趟回来时已经换了会话 → 一个字都不写
+            updateDmLoadMore();
+            return false;
+        }
+        if (!res.ok) {
+            updateDmLoadMore();
+            setDmMsg('更早的消息加载失败，请稍后重试', true);
+            return false;
+        }
+        dmHasMore = res.hasMore === true;
+        // ⚠️ 只插"没渲染过的"（本页与已有内容可能重叠，插重了会多出重复行）
+        const older = res.messages.filter(m => m && m.id !== undefined && m.id !== null
+            && !dmRenderedIds.has(String(m.id)));
+        older.forEach(m => { dmRenderedIds.add(String(m.id)); });
+        if (older.length) box.insertAdjacentHTML('afterbegin', older.map(dmRowHtml).join(''));
+        // 还原：先把**列表之外**的位移补掉（`#dm-load-more` 的显隐会改弹窗高度），
+        // 再把列表内部因插入而产生的偏移补掉 —— 两步一起做，锚点就**精确**停在原处。
+        updateDmEmpty();
+        updateDmLoadMore();
+        const afterOuter = box.querySelector(anchorSel);
+        if (anchorNode && prevTop !== null && afterOuter) {
+            box.scrollTop = box.scrollTop + (afterOuter.getBoundingClientRect().top - prevTop);
+        }
+        // 自检：偏差超过容差说明上面那条补法失效（比如别处也改了高度）。记进模块级变量给
+        // 回归工具断言（`window.dmAnchorDrift`），控制台只留一句，不打断玩家。
+        const anchor = box.querySelector(anchorSel);
+        if (anchor && prevTop !== null) {
+            dmAnchorDriftPx = Math.abs(anchor.getBoundingClientRect().top - prevTop);
+            if (dmAnchorDriftPx > DM_ANCHOR_TOLERANCE_PX) {
+                console.warn('插入更早的消息后滚动位置漂移 ' + Math.round(dmAnchorDriftPx) + 'px（容忍 '
+                    + DM_ANCHOR_TOLERANCE_PX + 'px）');
+            }
+        }
+        setDmMsg('', false);
+        return true;
+    });
+}
+
+// ---------- 发送 ----------
+function sendDmMessage() {
+    const input = document.getElementById('dm-input');
+    const btn = document.getElementById('dm-send');
+    const name = dmOpenName;
+    if (!input || !name || dmSending) return Promise.resolve(false);
+    const body = String(input.value || '').trim();
+    if (!body) return Promise.resolve(false);           // 空消息本地就挡掉，不发这一趟
+    dmSending = true;
+    if (btn) btn.disabled = true;                       // 防重复提交（票面要求）
+
+    return friendApiPost('/api/friends/messages', { username: name, body: body }).then(res => {
+        dmSending = false;
+        if (btn) btn.disabled = false;
+        if (!res.ok || !res.data || res.data.status !== 'ok' || !res.data.message) {
+            // 失败原因**原样**用服务端那句中文（超长 / 太频繁 / 不是好友…），绝不自己编文案
+            setDmMsg(res.ok ? apiReason(res.data, '发送失败') : res.reason, true);
+            return false;
+        }
+        // ⚠️ 用**响应里那条 message** 追加（§5）：自己造一条的话 id 与 stamp 会跟库里不一致，
+        //    而 id 是往上翻的游标、stamp 是唯一的"时间真源"。
+        appendDmMessage(res.data.message, true);
+        input.value = '';
+        setDmMsg('', false);
+        return true;
+    });
+}
+
+// ---------- 实时：收到一条私聊 ----------
+// 两种归处，二选一（**不在两处各算一遍**）：
+//   · 属于**当前正打开的会话** → 当场追加 + 立刻标已读（沿用 markDmRead 那一条路）；
+//   · 否则 → 重拉一次 `GET /api/friends`，未读数由**服务端算好的 `friend.unread`** 渲染出来。
+//     （为什么选"重拉"而不是"前端给那一行 +1"：+1 就是第二份实现 —— 它与服务端的
+//      count_unread_messages 迟早对不上，而且那行不在屏幕上时还得先想"要不要补拉"。）
+function handleFriendMessageEvent(data) {
+    const fromName = String((data && data.from_username) || '');
+    const body = String((data && data.body) || '');
+    if (!fromName) return;                              // 没有来处就无从归位（只记日志也没有落点）
+    if (isDmConversationVisible(fromName)) {
+        appendDmMessage(data, true);
+        dmPendingReadIds.add(String((data && data.id) || ''));   // 在途标已读时的"补一次"用得上
+        markDmRead(fromName);
+        return;
+    }
+    // 面板开着才重拉：不打开面板的话未读数根本不在屏幕上（入口红点按 §1 **不读未读**），
+    // 下次打开面板本来就会拉一次最新的。
+    if (isFriendsModalOpen()) refreshFriendsPanel();
+    // 顺手提一句（复用既有 showMessage，不新造 toast）。对局中也会弹，与其它三条好友事件一致。
+    showMessage(fromName + '：' + body, { type: 'info', duration: 5000 });
+}
+
+// ---------- DM 的按钮绑定 ----------
+// ⚠️ 与三个列表不同：会话视图的骨架是**常驻**的（#dm-list / #dm-input / #dm-send 从不被重建），
+//    所以这里的监听器只绑一次就够，不需要走事件委托。
+function bindDmPanel() {
+    const back = document.getElementById('dm-back');
+    if (back) back.addEventListener('click', (e) => {
+        e.preventDefault();
+        closeDmConversation();
+        // 回到列表视图：数字以服务端为准（刚才标过已读，这一次会把最新值画回来）
+        refreshFriendsPanel();
+    });
+    const more = document.getElementById('dm-load-more');
+    if (more) more.addEventListener('click', (e) => { e.preventDefault(); loadEarlierDmMessages(); });
+    const send = document.getElementById('dm-send');
+    if (send) send.addEventListener('click', (e) => { e.preventDefault(); sendDmMessage(); });
+    const input = document.getElementById('dm-input');
+    if (input) input.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' || e.isComposing) return;   // 中文输入法组字中按回车不算发送
+        e.preventDefault();
+        sendDmMessage();
+    });
+}
+
 // ---------- 四个 socket 事件的业务处理（注册在 init 的 socket 段落里） ----------
 
 // 收到好友申请：红点 +1，并弹一条**轻提示**（复用既有 showMessage，不新造 toast）。
@@ -11633,8 +12117,13 @@ function initFriendsUI() {
     bindFriendsModal();
     bindProfileFriendButtons();
     bindFriendInviteToast();
+    bindDmPanel();            // 好友私聊：会话视图那几个常驻按钮（私聊批）
     // 红点初始状态：0 → 隐藏（只在收到 friend_request 事件后才亮）
     renderFriendsBadge();
 }
 window.initFriendsUI = initFriendsUI;
 window.showFriendsModal = openFriendsModal;
+// 私聊那一次"往上翻"自己量到的滚动偏差（像素）。导出到 window 是为了**回归工具**能读到它：
+// 工具已经在页面里用 getBoundingClientRect 独立量了一遍（D7f），这一份是产品代码的自证，
+// 两边口径相同（容差 DM_ANCHOR_TOLERANCE_PX）—— 对不上就说明"页面上的补法"和"量法"不是一回事。
+window.dmAnchorDrift = dmAnchorDrift;

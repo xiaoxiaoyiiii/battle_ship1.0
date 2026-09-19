@@ -266,6 +266,127 @@ def test_stamp_never_raises_on_dirty_input():
     assert dm.stamp(10 ** 20, now) == ''      # 超出平台 time_t 范围
 
 
+def test_stamp_falls_back_to_message_year_when_now_is_unparseable():
+    """`now` 脏到 `time.localtime(now)` 也抛时，用**消息自己的年份**判跨年。
+
+    ⚠️ 这条守的是 `stamp()` 里第二段 `try/except`：`now` 不是脏到 `int(now)`
+    抛（第一段已经兜住），而是 `int()` 成功但 `localtime()` 抛（例如一个巨大的
+    整数超出平台 time_t）。这时不能回空串 —— 消息本身的时间是好的，只是"参考
+    年份"算不出来。兜底用消息自己的年份，跨年规则退化成"同年"（不显示年份），
+    总比把整条消息打成空 stamp 强。
+    """
+    ts = int(time.mktime((2026, 9, 19, 15, 40, 0, 0, 0, -1)))
+    # 一个 `int()` 能过、但 `localtime()` 会 OverflowError 的值
+    bad_now = 10 ** 20
+    assert dm.stamp(ts, bad_now) == '09-19 15:40', 'now 坏了不该让整条 stamp 变空'
+
+
+def test_push_payload_returns_exactly_the_push_keys():
+    """`push_payload` 的输出字段**恰好**是 `PUSH_PAYLOAD_KEYS`（多一个少一个都不行）。
+
+    ⚠️ 这是"推送给收件人的 payload 形状"的唯一真源。多一个内部字段（比如 `mine`）
+    会把发送方视角的数据泄露给收件人；少一个字段前端就渲染不出来。
+    """
+    msg = {'id': 13, 'from_uid': 'u-a', 'from_username': '小红', 'from_avatar': '',
+           'body': '在吗', 'created_at': 1758273605, 'stamp': '09-19 15:40'}
+    out = dm.push_payload(msg)
+    assert set(out) == set(dm.PUSH_PAYLOAD_KEYS), f'字段集漂移: {sorted(out)}'
+
+
+def test_push_payload_coerces_numeric_fields_to_int_and_strings_to_str():
+    """`id` / `created_at` 强制 int（脏值 → 0）；其余强制 str（None → ''）。
+
+    ⚠️ 这条守的是"接口给的 dict 上带了什么类型都不该漏进 payload"。
+    前端拿到 `null.body` 会静默显示成空，`null.created_at` 在某些 JSON 序列化
+    路径下会变成字符串 'null' —— 类型收敛是推送形状契约的一部分。
+    """
+    msg = {'id': '13', 'from_uid': 7, 'from_username': None, 'from_avatar': None,
+           'body': None, 'created_at': '1758273605', 'stamp': None}
+    out = dm.push_payload(msg)
+    assert out['id'] == 13 and isinstance(out['id'], int)
+    assert out['created_at'] == 1758273605 and isinstance(out['created_at'], int)
+    assert out['from_uid'] == '7'          # 非字符串一律 str()
+    assert out['from_username'] == ''      # None → 空串
+    assert out['from_avatar'] == ''
+    assert out['body'] == ''
+    assert out['stamp'] == ''
+
+
+def test_push_payload_coerces_garbage_numeric_fields_to_zero():
+    """`id` / `created_at` 给无法 int() 的值 → 0，**不许抛**。
+
+    DAO 理论上不会产出这种值，但推送路径在 HTTP 请求的热路径上，一条脏行
+    不该把整次发送打成 500。
+    """
+    msg = {'id': 'not-a-number', 'created_at': object(),
+           'from_uid': '', 'from_username': '', 'from_avatar': '',
+           'body': 'x', 'stamp': 'x'}
+    out = dm.push_payload(msg)
+    assert out['id'] == 0
+    assert out['created_at'] == 0
+
+
+def test_push_payload_fills_missing_fields_with_safe_defaults():
+    """缺字段一律给安全空值（0 / ''），**不让 KeyError 冒出来**。
+
+    `api.py` 传进来的是接口自己那份 dict，理论上字段齐全，但推送路径不该
+    假设这件事 —— 缺一个字段就 500 的话，一条私聊能把整个发送链路打断。
+    """
+    out = dm.push_payload({})
+    assert out == {'id': 0, 'from_uid': '', 'from_username': '', 'from_avatar': '',
+                   'body': '', 'created_at': 0, 'stamp': ''}
+
+
+def test_push_payload_accepts_none_and_returns_all_defaults():
+    """`message=None` 不抛，返回全默认值的 dict。"""
+    out = dm.push_payload(None)
+    assert set(out) == set(dm.PUSH_PAYLOAD_KEYS)
+    assert out['id'] == 0 and out['body'] == ''
+
+
+def test_push_payload_does_not_mutate_the_input_dict():
+    """返回**新 dict**，调用方（`api.py`）那份还要原样回给发送方。
+
+    ⚠️ `push_payload` 内部用 `dict(message or {})` 浅拷贝输入，就地改它会让
+    接口回给发送方的那条消息也被改掉（比如 `mine` 被 pop 掉、`id` 被改成 int）。
+    """
+    msg = {'id': 13, 'from_uid': 'u-a', 'from_username': '小红', 'from_avatar': '',
+           'body': '在吗', 'created_at': 1758273605, 'stamp': '09-19 15:40',
+           'mine': True, 'to_uid': 'u-b'}
+    snapshot = dict(msg)
+    dm.push_payload(msg)
+    assert msg == snapshot, '输入 dict 不该被修改'
+
+
+def test_push_payload_strips_sender_perspective_fields():
+    """`mine` / `to_uid` 这类**发送方视角**字段不许出现在推送 payload 里。
+
+    ⚠️ `mine` 是"是不是我发的"，对收件人恒为 False，推过去没意义还多一个可漂移
+    的点；`to_uid` 是收件人自己，推给他等于告诉他"你是收件人"——废话。
+    这两个字段在接口的 GET/POST 形状里有，但推送形状（`PUSH_PAYLOAD_KEYS`）
+    故意没有它们，`push_payload` 必须按这份白名单裁。
+    """
+    msg = {'id': 1, 'from_uid': 'u-a', 'from_username': 'A', 'from_avatar': '',
+           'body': 'hi', 'created_at': 100, 'stamp': 's',
+           'mine': True, 'to_uid': 'u-b'}
+    out = dm.push_payload(msg)
+    assert 'mine' not in out
+    assert 'to_uid' not in out
+
+
+def test_conversation_key_is_sorted_and_direction_independent():
+    """A→B 与 B→A 是**同一段**会话（排序后的二元组）。
+
+    ⚠️ 这是"两个方向的消息合成同一条会话"的可读表达。库里没有会话表，
+    会话由消息行本身表达；这个函数只用于日志/调试，但排序规则错了会让
+    日志里同一段会话出现两个 key、排查时对不上。
+    """
+    assert dm.conversation_key('A', 'B') == ('A', 'B')
+    assert dm.conversation_key('B', 'A') == ('A', 'B'), '方向不影响结果'
+    # 非字符串归一化成空串；None 也不抛
+    assert dm.conversation_key(None, 7) == ('', '7')
+
+
 # ===========================================================================
 # 2 · 关系门禁：只有好友能私聊
 # ===========================================================================

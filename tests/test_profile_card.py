@@ -421,6 +421,117 @@ def test_validate_payload_returns_no_fields_on_error():
     assert set(fields) == set(profile_spec.WRITABLE_FIELDS)
 
 
+# ---------------------------------------------------------------------------
+# validate_payload：标签校验的各个分支
+# ---------------------------------------------------------------------------
+def test_validate_tags_must_be_a_list():
+    """`tags` 不是数组 → 拒绝（字符串 / dict / None 都不行）。
+
+    ⚠️ 写成 `if not isinstance(tags, list)` 是有意的：前端用 JSON 数组发，
+    但有人可能用逗号分隔的字符串凑数 —— 那种写法会把 `"a,b"` 当成一个标签，
+    或者拆出脏数据。直接拒绝比猜清楚。
+    """
+    for bad in ('pro', {'a': 1}, 123, None):
+        fields, errors = profile_spec.validate_payload(_payload(tags=bad), _stats())
+        assert fields == {}, bad
+        assert errors and '标签' in errors[0], (bad, errors)
+
+
+def test_validate_tags_reject_non_string_elements():
+    """标签数组里的元素必须是字符串；数字 / dict 等 → 拒绝。"""
+    fields, errors = profile_spec.validate_payload(_payload(tags=['pro', 123]), _stats())
+    assert fields == {} and errors
+    assert '标签格式' in errors[0], errors
+
+
+def test_validate_tags_ignore_blank_strings_and_dedupe():
+    """空串标签直接忽略（不算错）；重复标签只留一份。"""
+    fields, errors = profile_spec.validate_payload(
+        _payload(tags=['pro', '', '  ', 'pro']), _stats())
+    assert errors == [], errors
+    assert fields['tags'] == ['pro'], f'空串忽略 + 去重: {fields["tags"]}'
+
+
+def test_validate_tags_reject_unknown_tag_ids():
+    """不在池子里的标签 id → 拒绝（点名是哪个）。"""
+    fields, errors = profile_spec.validate_payload(_payload(tags=['not_a_tag']), _stats())
+    assert fields == {} and errors
+    assert '未知的标签' in errors[0] and 'not_a_tag' in errors[0], errors
+
+
+def test_validate_tags_cap_at_max_three():
+    """超过 `MAX_TAGS`(=3) 个 → **截断**（不报错，设计稿 §4：超出丢弃）。
+
+    ⚠️ 截断不是拒绝：玩家选了 5 个标签，服务端只存前 3 个，比"整次保存失败"
+    体验好。但必须显式钉住这个行为 —— 改成拒绝的话用户会困惑"我明明选好了"。
+    """
+    five = [t['id'] for t in profile_spec.TAGS[:5]]
+    fields, errors = profile_spec.validate_payload(_payload(tags=five), _stats())
+    assert errors == []
+    assert len(fields['tags']) == profile_spec.MAX_TAGS == 3
+    assert fields['tags'] == five[:3]
+
+
+# ---------------------------------------------------------------------------
+# validate_payload：_to_flag 的归一化（六个 show_* 开关共用）
+# ---------------------------------------------------------------------------
+def test_to_flag_accepts_bool_int_and_string_zero_one():
+    """`_to_flag` 归一化：bool / int 0|1 / 字符串 '0'|'1' 都能识别。
+
+    ⚠️ 前端可能发 `true`（JSON bool）、`1`（数字）、或 `'1'`（字符串）——
+    三种都得认，否则"我明明关了开关，保存后又开了"。
+    """
+    assert profile_spec._to_flag(True) == 1
+    assert profile_spec._to_flag(False) == 0
+    assert profile_spec._to_flag(1) == 1
+    assert profile_spec._to_flag(0) == 0
+    assert profile_spec._to_flag('1') == 1
+    assert profile_spec._to_flag('0') == 0
+    assert profile_spec._to_flag(' 1 ') == 1, '带空白的字符串也要能 trim'
+
+
+def test_to_flag_returns_none_for_invalid_values():
+    """无法识别的值（2 / 'yes' / None / 列表）→ None（调用方据此报错）。
+
+    ⚠️ 不能静默降级成 0 或 1：降级成 0 会把"玩家想开的开关"偷偷关掉，
+    降级成 1 会把"玩家想关的开关"偷偷打开 —— 两种都是静默失败。
+    """
+    for bad in (2, -1, 'yes', None, [], {}, 1.5):
+        assert profile_spec._to_flag(bad) is None, bad
+
+
+def test_validate_rejects_invalid_flag_values():
+    """六个 `show_*` / `friend_requests_open` 任一不是 0/1 → 整次拒绝并点名。
+
+    ⚠️ 用集合相等钉"恰好六个开关"：多一个字段也得走同一套归一化，
+    否则"新开关没校验"会变成静默通过。
+    """
+    for key in profile_spec._FLAG_KEYS:
+        fields, errors = profile_spec.validate_payload(_payload(**{key: 2}), _stats())
+        assert fields == {}, key
+        assert errors, f'{key} = 2 必须被拒绝'
+        # 错误文案要带中文键名（别把 snake_case 甩给玩家）
+        assert profile_spec._FLAG_LABELS[key] in errors[0], (key, errors)
+
+
+def test_validate_status_text_must_be_a_string():
+    """`status_text` 不是字符串 → 拒绝（数字 / list 等不算一句话状态）。"""
+    fields, errors = profile_spec.validate_payload(_payload(status_text=123), _stats())
+    assert fields == {} and errors
+    assert '一句话状态' in errors[0], errors
+
+
+def test_validate_status_text_strips_control_and_truncates():
+    """`status_text` 去控制字符 + 去首尾空白 + 截断到 30 字（不报错）。"""
+    long = '好' * 100
+    fields, errors = profile_spec.validate_payload(_payload(status_text=long), _stats())
+    assert errors == []
+    assert len(fields['status_text']) == profile_spec.MAX_STATUS_LEN
+    # 控制字符清掉、换行压空格
+    fields2, _ = profile_spec.validate_payload(_payload(status_text='a\x00b\nc'), _stats())
+    assert fields2['status_text'] == 'ab c'
+
+
 # ===========================================================================
 # 5. 隐私：show_history 两种视角
 # ===========================================================================

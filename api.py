@@ -15,6 +15,7 @@ import achievements
 import dm
 import leveling
 import profile_spec
+import changelog
 import quick_chat
 import ranks
 import wallpaper
@@ -1158,6 +1159,21 @@ def api_quick_chat():
         'groups': list(quick_chat.GROUPS),
         'items': quick_chat.catalog(),
     })
+
+
+@app.route('/api/changelog', methods=['GET'])
+def api_changelog():
+    """更新公告（公开只读，**不要求登录**）。
+
+    为什么公开：登录页上的人也该看得到"这次改了什么"，而这里全是静态文案、
+    没有任何用户数据（与 `/api/quick_chat`、`/api/leaderboard` 同类）。
+
+    ⚠️ 文案的唯一来源是 `changelog.py` —— 前端只渲染，**不许在 `game.js` 里再抄一份**
+    （本仓库栽过"同一份内容两份实现必然漂移"）。
+    `latest` 是给前端判断"有没有新公告"用的（与 `localStorage` 里存的时间比对）。
+    """
+    limit = request.args.get('limit', default=10, type=int)
+    return jsonify({'status': 'ok', **changelog.view(limit)})
 
 
 # ---------------------------------------------------------------------------

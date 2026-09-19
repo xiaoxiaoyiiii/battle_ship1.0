@@ -40,7 +40,8 @@ python -m pytest tests/ -q    # 基线见下
 段位/排位 → `ranked_check.mjs` ｜ 段位帮助页 → `rank_help_check.mjs` ｜ 手牌 → `hand_play_check.mjs` ｜
 壁纸 → `wallpaper_check.mjs` ｜ 徽章 → `achievements_check.mjs` ｜ 等级 → `level_check.mjs` ｜
 音效/BGM → `sfx_check.mjs` / `bgm_check.mjs` ｜ 连锁卡预览 → `chain_preview_check.mjs` ｜ 仁王之盾 → `renwang_board_check.mjs` ｜
-大厅 → `lobby_check.mjs`（**双浏览器** —— 大厅的价值就是"别人那边立刻能看到"，单浏览器测不出来）
+大厅 → `lobby_check.mjs`（**双浏览器** —— 大厅的价值就是"别人那边立刻能看到"，单浏览器测不出来）｜
+更新公告 → `changelog_check.mjs`（入口 / 自动弹一次 / 文案逐字来自接口 / 浮层互斥）
 - **`dom_contract_check.mjs`**：不用浏览器、不用服务端、几秒钟 —— 查「代码引用了但页面里不存在的 id」，
   这类引用的表现是 `getElementById` 拿到 `null` 被 `if (el)` 兜掉、**不报错、只是点了没反应**。
 - ⚠️ 工具要的服务端必须带 `CORS_ORIGINS=http://127.0.0.1:<端口>`，否则 socket.io **静默连不上**（页面无报错）。
@@ -225,6 +226,8 @@ phase:                        preparation → battle → end
 10. **提交 / 推送说明只写"改了什么"**：一句话，**不写**根因分析、排查过程、验证清单、改了哪些文件，
     **也不写**账号参数调整（等级 / 段位 / 解锁 / 特权）。细节写进 `docs/` 与代码注释。
 11. **⚠️ 本文件每次对话整份注入** —— 新增一条要顺手删一条同样长的旧内容；长文写 `docs/`。
+12. **每批更新往 `changelog.py` 最上面加一条玩家公告**：口语、≤ 40 字、不写技术词与账号参数。
+    那是玩家唯一看得到的"这次改了什么"，漏加不报错但等于没写（规矩见 `docs/UPDATES_2026_09_19.md`）。
 
 ---
 
@@ -238,8 +241,10 @@ phase:                        preparation → battle → end
 `docs/REINFORCEMENT_TIE_2026_09_14.md`（增援平局卡死）｜ `docs/SHIELD_AND_LASTSTAND_2026_09_14.md`（破盾格/绝处逢生）｜
 `docs/WALLPAPER_ENGINE.md`（动态壁纸）｜ `docs/STATS_AND_AI_RANKING_FIXES.md`（战绩弹窗/人机统计）｜
 `docs/MOBILE_ADAPTIVE_LAYOUT.md`（移动端布局）｜ `docs/UI_REVIEW_FIXES.md`（UI 审查）｜
-`docs/LOBBY_2026_09_18.md`（大厅系统：契约 + 4 个实测问题）｜ `docs/FRIENDS_2026_09_18.md`（好友功能）｜
-`docs/UI_REBUILD_PROPOSAL.md`（UI 完全重构建议：现状体检 + 7 期路线）｜ `README.md`（用户向说明）
+`docs/LOBBY_2026_09_18.md`（大厅系统：契约 + 4 个实测问题）｜
+`docs/FRIENDS_2026_09_18.md`（好友功能：产品判断 / 接线陷阱 / 契约）｜
+`docs/UI_REBUILD_PROPOSAL.md`（UI 完全重构建议：现状体检 + 7 期路线）｜
+`docs/UPDATES_2026_09_19.md`（更新公告：文案规矩 + 每批加一条）｜ `README.md`（用户向说明）
 
 > ⚠️ **部署前确认环境变量**：代码新增 `os.environ.get('XXX')` 时，服务器 systemd 必须同步配置 ——
 > 漏配会导致"服务能起来但带着错误默认值运行"（曾因漏配 `CORS_ORIGINS` 让线上所有操作卡十几秒）。

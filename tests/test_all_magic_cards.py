@@ -734,10 +734,14 @@ def test_shenzhi_honours_caster_selected_ships(room):
 
 
 def test_shenzhi_option2_skip_opponent_turn(room):
-    room.players[P1].ships = [ship((0, 0)), ship((1, 1))]
-    room.players[P1].remaining_ships = 2
+    # ⚠️ 这里是 **3 艘**，不是 2 艘：2026-09-19 起发动条件收紧为「船数必须 > 2」
+    #    （牺牲两艘后至少留一艘；≤2 会被直接拒绝，见
+    #    `test_shenzhixuanga_refuses_when_two_ships_or_fewer`）。
+    room.players[P1].ships = [ship((0, 0)), ship((1, 1)), ship((2, 2))]
+    room.players[P1].remaining_ships = 3
     room.magic_temp_data = {'effect_choice': 2}
-    apply(room, P1, '神之宣告')
+    res = apply(room, P1, '神之宣告')
+    assert res.success is True, res.message
     # 修正后存玩家ID（与 end_turn 的比较语义一致）
     assert room.skip_opponent_turn == P2
 
@@ -1904,3 +1908,151 @@ def test_frontend_card_data_matches_backend():
                 for m in pattern.finditer(js_text)]
     backend_seq = [(c['name'], int(c['speed']), c['type']) for c in backend]
     assert frontend == backend_seq
+
+
+# ---------------------------------------------------------------------------
+# 神之宣告的发动条件（2026-09-19 从 `<2` 收紧为 `<=2`）
+# ---------------------------------------------------------------------------
+def test_shenzhixuanga_refuses_when_two_ships_or_fewer(room):
+    """★ 船数 ≤ 2 时不许发动，并**直接报出**「您的船数不足」。
+
+    判据若仍是 `< 2`，2 艘那一档会被静默放行 —— 牺牲两艘后自己剩 0 艘、紧接着被判负，
+    那不是玩家想要的取舍（作者明确要求拦掉）。这里顺带断言"一艘都没被牺牲"：
+    只要有一艘被送掉，就说明拦的位置太晚（已经动过棋盘了）。
+    """
+    for n in (2, 1, 0):
+        room.players[P1].ships = [ship((i, 0)) for i in range(n)]
+        room.players[P1].remaining_ships = n
+        res = apply(room, P1, '神之宣告', {'effect_choice': 1})
+        assert res.success is False, f'{n} 艘时不该发动成功'
+        assert res.message == '您的船数不足，无法使用神之宣告', res.message
+        assert len(room.players[P1].ships) == n, f'{n} 艘时一艘都不该被牺牲'
+
+
+def test_shenzhixuanga_still_works_with_three_ships(room):
+    """3 艘是新的边界：可以发动，牺牲 2 艘后剩 1 艘（别改回 `<2`）。"""
+    room.players[P1].ships = [ship((0, 0)), ship((1, 0)), ship((2, 0))]
+    room.players[P1].remaining_ships = 3
+    room.players[P2].ships = [ship((3, 3))]
+    room.players[P2].remaining_ships = 1
+    room.magic_temp_data = {'effect_choice': 2}          # 跳过对方回合，免去"等对方点选"
+    res = apply(room, P1, '神之宣告', {'effect_choice': 2})
+    assert res.success is True, res.message
+    assert room.players[P1].remaining_ships == 1, room.players[P1].remaining_ships
+
+
+# ---------------------------------------------------------------------------
+# 重摆棋盘必须终止「持续生效的范围效果」（2026-09-19 作者实测报的 bug）
+#
+# 原来的形状：四处重摆只调了 `_discard_excluded_ships()`（丢"神威除外船"），
+# 却没人清「神威扣掉的区域」→ 棋盘换了新船，那片区域**继续挡攻击**（玩家："神威一直生效"）。
+# 冻结的那片区域同理。现在统一走 `server._clear_board_effects()`。
+# ---------------------------------------------------------------------------
+def _shenwei_on(room, caster, victim, area):
+    """让 `caster` 对 `victim` 的棋盘打神威！，返回结果（洞与除外船都记在 victim 名下）。"""
+    res = apply(room, caster, '神威！', {'target_area': area})
+    assert res.success is True, res.message
+    assert server._cell_in_shenwei_hole(room, victim, area['x1'], area['y1']) is True
+    return res
+
+
+def test_clear_board_effects_only_touches_the_given_players(room, events):
+    """★ 收口函数只清**指定玩家**名下的状态（回光返照不该越权清对方棋盘的标记）。
+
+    两块棋盘各留一个洞：P2 打 P1 的棋盘、P1 打 P2 的棋盘，然后只清 P1。
+    """
+    room.players[P1].ships = [ship((0, 0)), ship((5, 5))]
+    room.players[P1].remaining_ships = 2
+    room.players[P2].ships = [ship((3, 3)), ship((0, 0))]
+    room.players[P2].remaining_ships = 2
+    _shenwei_on(room, P2, P1, {'x1': 0, 'x2': 2, 'y1': 0, 'y2': 2})
+    _shenwei_on(room, P1, P2, {'x1': 3, 'x2': 5, 'y1': 3, 'y2': 5})
+
+    events.clear()
+    server._clear_board_effects(room, [P1], '单测')
+
+    assert server._cell_in_shenwei_hole(room, P1, 1, 1) is False, '自己棋盘上的洞要清'
+    assert server._cell_in_shenwei_hole(room, P2, 4, 4) is True, '不该动对方的棋盘'
+    restored = [e for e in events if e[0] == 'shenwei_hole_restored']
+    assert [(e[1] or {}).get('player') for e in restored] == [P1], restored
+
+
+def test_lingqi_resurgence_clears_shenwei_holes_and_excluded_ships(room, events):
+    """★ 灵气复苏（双方重摆）→ 神威扣掉的区域与除外船都必须终止。"""
+    # ⚠️ 施法者自己也必须有船：`神威！`结算时会检查"己方棋盘是否被清空"，
+    #    0 艘会被判负 → state 变 game_over → 后面的写操作全被 `_require_live_room` 挡掉。
+    room.players[P1].ships = [ship((5, 5))]
+    room.players[P1].remaining_ships = 1
+    room.players[P2].ships = [ship((0, 0)), ship((1, 1)), ship((4, 4)), ship((5, 5))]
+    room.players[P2].remaining_ships = 4
+    _shenwei_on(room, P1, P2, {'x1': 0, 'x2': 2, 'y1': 0, 'y2': 2})
+    assert room.game_effects.get('excluded_ships'), '神威应当留下了除外的船'
+
+    room.magic_temp_data = {'max_ships': 6}
+    events.clear()
+    out = server.confirm_magic_target({
+        'room_id': room.id, 'player_id': P1, 'temp_data_id': 'lingqi_choice',
+        'target_data': {'target_ships': 6},
+    })
+    assert out.get('status') == 'success', out
+
+    assert server._cell_in_shenwei_hole(room, P2, 1, 1) is False, '重摆后那片区域不该还挡攻击'
+    assert not room.game_effects.get('excluded_ships'), '重摆后不该还留着除外船'
+    assert any(e[0] == 'shenwei_hole_restored' for e in events), '必须通知前端恢复区域'
+
+
+def test_afterglow_clears_only_the_casters_board_effects(room, events):
+    """★ 回光返照只重摆**自己**的棋盘 → 只清自己那片（对方的洞留在对方棋盘上）。"""
+    room.players[P1].ships = [ship((0, 0))]
+    room.players[P1].remaining_ships = 1
+    room.players[P2].ships = [ship((3, 3)), ship((4, 4))]
+    room.players[P2].remaining_ships = 2
+    _shenwei_on(room, P2, P1, {'x1': 0, 'x2': 2, 'y1': 0, 'y2': 2})     # 洞在 P1 棋盘
+    _shenwei_on(room, P1, P2, {'x1': 3, 'x2': 5, 'y1': 3, 'y2': 5})     # 洞在 P2 棋盘
+
+    room.attack_order = [P1, P2]        # 回光返照只能在自己先手时发动
+    events.clear()
+    res = apply(room, P1, '回光返照')
+    assert res.success is True, res.message
+
+    assert server._cell_in_shenwei_hole(room, P1, 1, 1) is False, '自己棋盘的洞要清'
+    assert server._cell_in_shenwei_hole(room, P2, 4, 4) is True, '对方棋盘的洞不许被顺手清掉'
+
+
+def test_frozen_area_cleared_when_that_board_is_rebuilt(room, events):
+    """★ 冻结的那片区域也是"持续生效的范围"：重摆被冻的那块棋盘时必须终止。"""
+    room.players[P2].ships = [ship((0, 0)), ship((1, 1))]
+    room.players[P2].remaining_ships = 2
+    apply(room, P1, '冻结', {'target_area': {'x1': 0, 'x2': 2, 'y1': 0, 'y2': 2}})
+    assert (room.game_effects.get('frozen_area') or {}).get('owner') == P2, room.game_effects
+
+    room.attack_order = [P2, P1]
+    events.clear()
+    res = apply(room, P2, '回光返照')
+    assert res.success is True, res.message
+
+    assert room.game_effects.get('frozen_area') is None, '重摆之后冻结区域不该还在生效'
+    assert any(e[0] == 'frozen_area' and (e[1] or {}).get('cleared') for e in events), \
+        '必须通知前端把那片区域清掉'
+
+
+def test_last_stand_clears_own_holes_and_excluded_ships(room):
+    """★ 绝处逢生同样是"重摆自己棋盘"：除外船必须丢掉。
+
+    ⚠️ 少这一句的后果不是"区域还亮着"那么轻：除外的船到期会以**幽灵船**身份 append 回来
+    （本项目实测过 6 艘变 8 艘，突破上限且坐标与现有船重叠）。
+    这里只验"清理钩子跑过"，不验绝处逢生自己的放置流程（那是另一批的事）。
+    """
+    room.players[P1].ships = [ship((0, 0)),
+                              ship((3, 3)), ship((4, 4)), ship((5, 5))]
+    room.players[P1].remaining_ships = 4
+    room.players[P2].ships = [ship((0, 0)), ship((1, 1)),
+                              ship((3, 3)), ship((4, 4)), ship((5, 5))]
+    room.players[P2].remaining_ships = 5
+    _shenwei_on(room, P1, P2, {'x1': 0, 'x2': 2, 'y1': 0, 'y2': 2})
+    assert room.game_effects.get('excluded_ships')
+
+    apply(room, P2, '绝处逢生', {})
+
+    assert server._cell_in_shenwei_hole(room, P2, 1, 1) is False, '自己棋盘上的洞要清'
+    assert not room.game_effects.get('excluded_ships'), '除外船必须丢掉（否则会变幽灵船）'

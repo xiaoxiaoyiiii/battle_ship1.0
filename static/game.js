@@ -2746,6 +2746,13 @@ function bindEventListeners() {
 
     // 帮助按钮事件
     if (helpBtn) helpBtn.addEventListener('click', () => {
+        // ⚠️ 浮层互斥：这里**曾经是全项目唯一漏调** `closeOverlaysExcept` 的入口
+        //    （设置 / 名片 / 战绩 / 好友 / 公告那几处都有）。后果实测过：先开「更新公告」
+        //    再点「帮助」→ 两个浮层同时开着，两者 z-index 都是 10000、帮助在 DOM 里靠后，
+        //    于是**帮助压住公告**，公告读不了也点不动（只能点 × 关帮助）。
+        //    `#help-modal` 本身就是 `.modal-overlay`，按类名取的全量互斥自动覆盖它 ——
+        //    不需要往任何清单里加 id。
+        if (typeof closeOverlaysExcept === 'function') closeOverlaysExcept('help-modal');
         if (helpModal) helpModal.classList.remove('hidden');
         renderCardCompendium();
         // 先按已有数据画出来，统计到了再重绘一次（拉不到也不会卡住图鉴）
@@ -10265,6 +10272,10 @@ function init() {
     // ⚠️ 只绑事件、**不拉数据** —— /api/friends 必须等玩家点开面板才请求
     //    （首页无谓地打一次接口，游客还会白吃一个 401）。
     initFriendsUI();
+    // 更新公告（公告批）：绑定入口 + 「有没有新公告」那一次判断。
+    // ⚠️ 这里**只绑事件**（面板的取数等玩家点开才做）；"自动弹一次"是异步且可失败的，
+    //    拉不到就什么都不做（见 initChangelogUI 的注释）。
+    initChangelogUI();
     // 「我是谁」+ 可编辑项池子：登录态才有（游客 401），只用于判断名片上要不要
     // 显示「编辑资料」，绝不用它做权限判断 —— 保存时服务端还会再判一次。
     loadSelfIdentity();
@@ -12127,3 +12138,136 @@ window.showFriendsModal = openFriendsModal;
 // 工具已经在页面里用 getBoundingClientRect 独立量了一遍（D7f），这一份是产品代码的自证，
 // 两边口径相同（容差 DM_ANCHOR_TOLERANCE_PX）—— 对不上就说明"页面上的补法"和"量法"不是一回事。
 window.dmAnchorDrift = dmAnchorDrift;
+
+// ===========================================================================
+// 更新公告（公告批，2026-09-19）
+// ---------------------------------------------------------------------------
+// 数据只有**一个来源**：`GET /api/changelog`（文案写在 `changelog.py` 里）。
+// 前端不写死任何一条 —— 两份实现必然漂移（本项目的老病根），所以这里只做三件事：
+//   ① 把服务端给的「时间 + 一句话」渲染出来（时间**原样渲染**，前端不重算格式，
+//      与私聊的 `stamp` 同一原则）；
+//   ② 有比本地记录更新的条目时，**已登录**用户进站自动弹一次；
+//   ③ 入口上留一个小红点，直到看过为止。
+// ⚠️ 三条纪律：
+//   · 拉不到就**静默**（公告是锦上添花，绝不许挡住任何东西：不加 loading、不弹错误）；
+//   · 用 `textContent` 渲染，不把服务端文本塞进 `innerHTML`；
+//   · 这里全是**模块级**函数，只能引用同为模块级的东西（本项目栽过两次
+//     「模块级函数引用了函数作用域里的变量 → ReferenceError 被 .then() 吞掉」）。
+// ===========================================================================
+
+// 「看过的最新时间」：存的就是接口给的 `latest` 字符串本身（不自己造版本号）
+const CHANGELOG_SEEN_KEY = 'battleship_seen_changelog';
+// 取到的公告（整个响应缓存一次）：面板渲染与"有没有新公告"共用同一份，不重复打接口
+let changelogPayload = null;
+
+function fetchChangelog() {
+    if (changelogPayload) return Promise.resolve(changelogPayload);
+    return fetch('/api/changelog', { headers: { 'Accept': 'application/json' } })
+        .then(resp => (resp.ok ? resp.json() : null))
+        .then(body => {
+            if (!body || !Array.isArray(body.entries)) return null;
+            changelogPayload = body;
+            return body;
+        })
+        .catch(() => null);         // 网络失败：静默，调用方按 null 处理
+}
+
+function renderChangelog(body) {
+    const box = document.getElementById('changelog-list');
+    if (!box) return;
+    box.textContent = '';           // 一次性重建（公告是静态内容，不需要保留上一帧）
+    const entries = (body && Array.isArray(body.entries)) ? body.entries : [];
+    entries.forEach(entry => {
+        const sec = document.createElement('section');
+        sec.className = 'changelog-entry';
+        const date = document.createElement('h3');
+        date.className = 'changelog-date';
+        date.textContent = String((entry && entry.date) || '');
+        sec.appendChild(date);
+        const ul = document.createElement('ul');
+        ul.className = 'changelog-items';
+        ((entry && entry.items) || []).forEach(text => {
+            const li = document.createElement('li');
+            li.textContent = String(text);      // ⚠️ textContent：服务端文本不进 innerHTML
+            ul.appendChild(li);
+        });
+        sec.appendChild(ul);
+        box.appendChild(sec);
+    });
+}
+
+function updateChangelogDot(hasNew) {
+    const dot = document.getElementById('changelog-dot');
+    if (dot) dot.classList.toggle('hidden', !hasNew);
+}
+
+function closeChangelog() {
+    const modal = document.getElementById('changelog-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function markChangelogSeen(latest) {
+    // 写失败（无痕模式 / 存储被禁）**不算错**，只是下次可能再弹一次
+    if (latest) {
+        try { localStorage.setItem(CHANGELOG_SEEN_KEY, String(latest)); } catch (e) { /* 忽略 */ }
+    }
+    updateChangelogDot(false);
+}
+
+function openChangelog() {
+    const modal = document.getElementById('changelog-modal');
+    if (!modal) return;
+    // 浮层互斥：按类名取全量 `.modal-overlay`（见 closeOverlaysExcept）—— 手抄 id 清单会漏
+    if (typeof closeOverlaysExcept === 'function') closeOverlaysExcept('changelog-modal');
+    modal.classList.remove('hidden');
+    fetchChangelog().then(body => {
+        if (body) {
+            renderChangelog(body);
+            markChangelogSeen(body.latest);     // 打开过就算看过（顺手清红点）
+        }
+        // body 为 null（拉不到）时保持空面板：不弹错误、不挡住任何东西
+    });
+}
+window.openChangelog = openChangelog;
+
+function readSeenChangelog() {
+    try { return String(localStorage.getItem(CHANGELOG_SEEN_KEY) || ''); } catch (e) { return ''; }
+}
+
+function maybeAnnounceChangelog() {
+    // ⚠️ **游客不自动弹，但红点照常算**：红点是"有更新"的提示、不是打断，而弹窗会打断
+    //    登录动作。所以这里先分叉，别一刀切 return（一刀切会让游客连红点都看不到）。
+    if (!window.__USERNAME) {
+        fetchChangelog().then(body => {
+            if (!body || !body.latest) return;
+            updateChangelogDot(readSeenChangelog() !== String(body.latest));
+        });
+        return;
+    }
+    // 正在一局里（本地记着"进行中的对局"）就不打扰：那种情况页面自己会去重连
+    try { if (localStorage.getItem(ACTIVE_GAME_KEY)) return; } catch (e) { /* 忽略 */ }
+    fetchChangelog().then(body => {
+        if (!body || !body.latest) return;
+        const hasNew = readSeenChangelog() !== String(body.latest);
+        updateChangelogDot(hasNew);
+        if (!hasNew) return;
+        // 已经有别的浮层开着（登录 / 注册 / 名片…）就先不抢：红点留着，玩家点入口照样看得到
+        const opened = document.querySelector('.modal-overlay:not(.hidden)');
+        if (opened) return;
+        openChangelog();
+    });
+}
+
+function initChangelogUI() {
+    const btn = document.getElementById('changelog-btn');
+    const close = document.getElementById('changelog-close');
+    const modal = document.getElementById('changelog-modal');
+    if (btn) btn.addEventListener('click', (e) => { e.preventDefault(); openChangelog(); });
+    if (close) close.addEventListener('click', (e) => { e.preventDefault(); closeChangelog(); });
+    // 点遮罩空白处关闭（与既有弹窗一致的手感）
+    if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) closeChangelog(); });
+    // ⚠️ 自动弹延后一点：init() 里还有"恢复上一局 / 登录态"等收尾要做，
+    //    立刻弹会和它们抢屏幕（`maybeAnnounceChangelog` 自己也会再确认一次"没有别的浮层开着"）
+    setTimeout(maybeAnnounceChangelog, 900);
+}
+window.initChangelogUI = initChangelogUI;

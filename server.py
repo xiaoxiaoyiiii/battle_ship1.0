@@ -5873,7 +5873,7 @@ def _refund_card_to_hand(room, player_id, card, result) -> bool:
     而一大批卡的条件要到 `apply_magic_effect` 结算时才发现不满足 ——
     那些分支一律 `result['success'] = False; return result`，牌既不退还也不回手，
     玩家看到「不满足某某条件」的同时牌没了（实测报的「效果没生效却把牌吞掉了」）。
-    涉及：死者苏生/疗愈没有沉船、绝处逢生不足 3 艘、神之宣告不足 2 艘、
+    涉及：死者苏生/疗愈没有沉船、绝处逢生不足 3 艘、神之宣告不足 3 艘、
     平等条约没有船数变化、余音绕梁不在准备阶段、桃园结义撞上无中生有、
     区域卡没选目标、失灵！/加百列之光没有可无效化的目标 …
 
@@ -7469,8 +7469,8 @@ def confirm_magic_target(data):
             return {'status': 'error', 'message': f'无效的船数选择，应在1-{max_ships}之间'}
 
         # 重置双方的战舰数据
-        # 双方棋盘都要换掉 → 尚未归还的神威除外船不再是这批棋盘上的船
-        _discard_excluded_ships(room)
+        # 双方棋盘都要换掉 → 除外船不再是这批棋盘上的船；**范围效果也要终止**
+        _clear_board_effects(room, list(room.players), '灵气复苏')
         for p_id in room.players:
             player = room.players[p_id]
             player.ships = []
@@ -7720,6 +7720,58 @@ def _restore_due_shenwei(room, current_round):
         room.game_effects.pop('excluded_ships', None)
     for hole in _clear_due_shenwei_holes(room, current_round):
         emit('shenwei_hole_restored', {'player': hole['player']}, room=room.id)
+
+
+def _clear_board_effects(room, player_ids, why: str) -> None:
+    """**重摆棋盘**时终止"持续生效的范围类"效果（幂等）。
+
+    为什么需要它（作者 2026-09-19 实测报的）：重摆棋盘的卡（灵气复苏 / 回光返照 /
+    败者食尘 / 绝处逢生）原来只调了 `_discard_excluded_ships()` —— 丢掉了「神威**除外**的船」，
+    却**没人清「神威扣掉的区域」**（`game_effects['shenwei_holes']`）。
+    于是棋盘已经换上新船，那片区域**继续挡攻击**，直到原本的 `return_turn` 才解除 ——
+    玩家看到的就是「神威一直生效」。冻结的那片区域（`game_effects['frozen_area']`）同理。
+
+    清三样：
+      · `excluded_ships` → 走既有 `_discard_excluded_ships()`（重摆后旧船不属于新棋盘，
+        不清的话到期会以"幽灵船"身份 append 回来 —— 7469 那条注释记录过 6 艘变 8 艘）
+      · `shenwei_holes`  → 删掉受影响玩家的洞，并按玩家 `emit('shenwei_hole_restored', ...)`
+        （前端就是**按玩家**清空全部洞再重画，见 `applyShenweiHoles()`）
+      · `frozen_area`    → 看 `owner`（那片区域记在**受害者棋盘**上）落在受影响玩家里的那块，
+        `pop` 并 `emit('frozen_area', {'cleared': True})`
+
+    ⚠️ **只清"这次真的重摆了棋盘的玩家"**：回光返照只重摆自己 → 就不能顺手清掉对方棋盘上的
+       区域标记（那是对方的公开信息，而且对方棋盘根本没被换）。
+    ⚠️ 事件只在**真的清掉过东西**时才发：无事也发会让客户端白重画一遍棋盘。
+    """
+    ids = [str(p) for p in (player_ids or [])]
+    if not ids:
+        return
+    # ① 除外船（每个受影响玩家各一次；`None` 才是"双方一起"）
+    for pid in ids:
+        _discard_excluded_ships(room, pid)
+
+    effects = room.game_effects if isinstance(room.game_effects, dict) else None
+
+    # ② 神威扣掉的区域
+    if effects is not None:
+        holes = effects.get('shenwei_holes') or []
+        for pid in ids:
+            mine = [h for h in holes if str(h.get('player')) == pid]
+            if not mine:
+                continue
+            for h in mine:
+                holes.remove(h)
+            emit('shenwei_hole_restored', {'player': pid}, room=room.id)
+        if not holes:
+            effects.pop('shenwei_holes', None)
+
+        # ③ 冻结的那片区域（记在受害者棋盘上，所以看 owner）
+        area = effects.get('frozen_area')
+        if isinstance(area, dict) and str(area.get('owner')) in ids:
+            effects.pop('frozen_area', None)
+            emit('frozen_area', {'cleared': True}, room=room.id)
+
+    print(f'[board] {why}：已终止受影响棋盘上的范围效果（{",".join(ids)}）')
 
 
 def _discard_excluded_ships(room, player_id=None):
@@ -8365,8 +8417,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         # 卡面里根本没有这回事 —— 实测玩家反馈"重置后船数不对"即源于此。
         # 这里改为双方一律重置为默认船数（6）。
         DEFAULT_SHIPS = 6
-        # 双方棋盘都要换掉 → 尚未归还的神威除外船不再是这批棋盘上的船
-        _discard_excluded_ships(room)
+        # 双方棋盘都要换掉 → 除外船不再是这批棋盘上的船；**范围效果也要终止**
+        _clear_board_effects(room, list(room.players), '败者食尘')
         for p_id in room.players:
             player = room.players[p_id]
             player.ships = []
@@ -9219,10 +9271,13 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['message'] = '船被击败时攻击次数加3'
 
     elif card.name == '神之宣告':
-        # 牺牲两艘船，选择一个效果
-        if caster.remaining_ships < 2:
+        # 牺牲两艘船，选择一个效果。
+        # ⚠️ 判据是 **<= 2**（即需要 3 艘以上），不是 `< 2`（作者 2026-09-19 明确要求）：
+        #    牺牲两艘之后至少得留一艘 —— 否则"打出这张牌"等于把自己送到 0 艘，
+        #    紧接着就被判负，那不是玩家想要的取舍。
+        if caster.remaining_ships <= 2:
             result['success'] = False
-            result['message'] = '需要至少2艘战舰才能发动'
+            result['message'] = '您的船数不足，无法使用神之宣告'
             return result
 
         # 牺牲两艘船：优先采用玩家点选的两艘（前端 own_ships → selected_cells），
@@ -9247,7 +9302,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             chosen.extend(pool[:2 - len(chosen)])
         if len(chosen) < 2:
             result['success'] = False
-            result['message'] = '需要至少2艘战舰才能发动'
+            result['message'] = '您的船数不足，无法使用神之宣告'
             return result
 
         # 逐个走统一结算：移船 + 记日志 + 公开广播 ship_sacrificed + 按视角刷船数。
@@ -9309,6 +9364,11 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             if sh not in caster.sunken_ships:
                 _mark_ship_sunken(caster, sh)
         caster.remaining_ships = 0
+
+        # ⚠️ 绝处逢生同样是"重摆自己棋盘"（全部牺牲 + 只放 1 艘）：这里也得终止
+        #    自己棋盘上的范围效果与除外船 —— 少这一句，除外的船到期会 append 回来
+        #    变成幽灵船（本项目实测过 6 艘变 8 艘）。
+        _clear_board_effects(room, [caster_id], '绝处逢生')
 
         if sacrificed:
             # source='sacrifice'：这是自己牺牲、不是被对方打沉的。平等条约只允许
@@ -9457,8 +9517,9 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             return result
 
         # 清空棋盘重新摆放6艘船
-        # 棋盘换新 → 尚未归还的神威除外船不再是这批棋盘上的船
-        _discard_excluded_ships(room, caster_id)
+        # 棋盘换新 → 除外船不再是这批棋盘上的船；**范围效果也要终止**
+        # ⚠️ 只清**自己**棋盘上的（对方棋盘没被重摆，那上面的区域照旧）
+        _clear_board_effects(room, [caster_id], '回光返照')
         caster.ships = []
         caster.remaining_ships = 0
         # ⚠️ 要清的是【对方打在我方棋盘上的记录】＝ `opponent.attacks`，

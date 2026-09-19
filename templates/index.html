@@ -65,6 +65,12 @@
                  游客也能点（照常弹面板），三个写接口未登录一律 401 → 前端提示「请先登录」。 -->
             <a href="#" id="friends-btn" class="hide-in-game">好友<span
                     id="friends-badge" class="friends-badge hidden">0</span></a>
+            <!-- 更新公告（公告批，2026-09-19）。与「帮助」同一条导航排。
+                 ⚠️ 红点默认 hidden：只在"接口说有新公告"时才显示（见 maybeAnnounceChangelog）。
+                    默认亮着会变成"永远消不掉的红点"，比不加还烦人。 -->
+            <button id="changelog-btn" class="btn secondary hide-in-game"
+                    title="看看这次改了什么">更新公告<span id="changelog-dot"
+                    class="changelog-dot hidden">·</span></button>
             <button id="help-btn" class="btn secondary">帮助</button>
             <button id="settings-btn" class="btn secondary">设置</button>
             <button id="music-btn" class="btn secondary">🎵</button>
@@ -880,6 +886,20 @@
     </div>
 
     <!-- 帮助模态弹窗 -->
+    <!-- 更新公告（公告批，2026-09-19）。骨架照 #help-modal：.modal-overlay + .modal-content +
+         滚动容器（.modal-scroll-content）。
+         ⚠️ **必须**是 .modal-overlay：浮层互斥是「按类名取全量元素」实现的（见 closeOverlaysExcept），
+            手抄 id 清单一定会漏 —— 另一个会话刚为这个形状补过回归测试
+            （tests/test_screen_overlay_registry.py）。 -->
+    <div id="changelog-modal" class="modal-overlay hidden">
+        <div class="modal-content wide-modal">
+            <span class="modal-close" id="changelog-close">×</span>
+            <h2>更新公告</h2>
+            <p class="changelog-hint">每次更新都会在这里写清改了什么。</p>
+            <div id="changelog-list" class="modal-scroll-content"></div>
+        </div>
+    </div>
+
     <div id="help-modal" class="modal-overlay hidden">
         <div class="modal-content wide-modal">
             <span class="modal-close" id="help-modal-close">×</span>

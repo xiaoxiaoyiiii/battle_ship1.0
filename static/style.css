@@ -5922,3 +5922,59 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, rgba(255, 2
     .dm-list { max-height: 46vh; }
     .dm-row { max-width: 88%; }
 }
+
+/* ============================================================================
+   35. 更新公告（公告批，2026-09-19）
+   ---------------------------------------------------------------------------
+   契约见 docs/UPDATES_2026_09_19.md。本节**全是新增类**（`.changelog-*`），
+   既有选择器一行没动 —— 面板本身复用既有的 `.modal-overlay` / `.modal-content` /
+   `.modal-scroll-content` / `.modal-close`，所以这里只补内容排版。
+
+   三条自我约束（沿用第 33/34 节那一份，都是本项目踩过的坑）：
+     ① **不给任何既有元素加尺寸**（CLAUDE.md 第 11 节第 6 条）：唯一的尺寸类是
+        `.changelog-dot`（本入口自己的小圆点，不是既有元素）。
+     ② 颜色**零写死**：走 --muted / --accent / --danger / --panel-border 这些既有变量，
+        深色主题与主题预设自动跟着变。
+     ③ 时间是服务端给的原文，这里只负责层级与留白，**不做任何格式化**。
+   ============================================================================ */
+
+/* 入口上的"有新公告"小红点（与 .friends-badge 同一套配色思路，但不显示数字） */
+.changelog-dot {
+    display: inline-block;
+    margin-left: 5px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--danger);
+    vertical-align: super;
+}
+
+#changelog-modal .changelog-hint {
+    margin: 0 0 12px;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.changelog-entry + .changelog-entry {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--panel-border);
+}
+
+.changelog-date {
+    margin: 0 0 6px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.changelog-items {
+    margin: 0;
+    padding-left: 18px;
+    line-height: 1.75;
+}
+
+.changelog-items li {
+    margin: 2px 0;
+    overflow-wrap: anywhere;      /* 窄屏：长句也横向溢不出去 */
+}

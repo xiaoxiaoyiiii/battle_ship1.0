@@ -509,15 +509,17 @@ function showSettingsPane(pane) {
 // → 编辑面必然被盖住。所以「先关掉别的」是唯一可靠的顺序保证；CSS 里给编辑面留了 z-index 兜底。
 // ⚠️ 本函数必须是**顶层**函数：查看面/编辑面那套渲染在嵌套作用域里，设置面在顶层，
 //    只有顶层定义才能让两边都调到（否则点设置会 ReferenceError）。
-// 新增浮层时请加进清单，并在打开前调用本函数。
+// 新增浮层时无需改本函数：只要带 `.modal-overlay` 就自动参与互斥。
 function closeOverlaysExcept(keepId) {
-    // 清单放在函数体里：避免顶层 const 的 TDZ —— 本函数可能在脚本加载完之前就被调到。
-    const ids = ['opponent-stats-modal', 'profile-modal', 'settings-modal',
-                 'user-stats-modal', 'match-detail-modal', 'help-modal'];
-    ids.forEach((id) => {
-        if (keepId && id === keepId) return;
-        const el = document.getElementById(id);
-        if (el && !el.classList.contains('hidden')) el.classList.add('hidden');
+    // 📌 清单不再手抄：直接扫 DOM 里所有 `.modal-overlay`。
+    //    这里曾经是硬编码 6 个 id，而 index.html 已有 9 个 `.modal-overlay` ——
+    //    漏掉的 #login-modal / #register-modal / #discard-pile-modal 不参与互斥，
+    //    会被后开的面板压住（见本文件上方那条注释描述的坑）。
+    //    改成按类名取后，新增浮层只要带 `.modal-overlay` 就自动参与互斥。
+    if (typeof document === 'undefined' || !document.querySelectorAll) return;
+    document.querySelectorAll('.modal-overlay').forEach((el) => {
+        if (keepId && el.id === keepId) return;
+        if (!el.classList.contains('hidden')) el.classList.add('hidden');
     });
 }
 window.closeOverlaysExcept = closeOverlaysExcept;
@@ -1353,9 +1355,14 @@ function applyRoomSync(data) {
     if (typeof shipPlacementScreen !== 'undefined') rmActive(shipPlacementScreen);
     if (typeof rpsScreen !== 'undefined') rmActive(rpsScreen);
     if (typeof gameOverScreen !== 'undefined') rmActive(gameOverScreen);
+    // ⚠️ 屏的显隐只有 `active` 一套机制。这里曾经给 `#lobby-screen` 加 `hidden`，
+    //    而 `.hidden{display:none !important}` 会压过 `.screen.active`，且全仓没有任何地方
+    //    把屏上的 `hidden` 摘掉 —— 走过这条路径后，点「游戏大厅」能加上 active 却依然
+    //    display:none，页面一片空白。屏上只能用 rmActive/switchScreen。
     if (typeof customRoomInfo !== 'undefined') addHidden(customRoomInfo);
     if (typeof customRoomIdInput !== 'undefined') addHidden(customRoomIdInput);
-    if (typeof lobbyScreen !== 'undefined') addHidden(lobbyScreen);
+    if (typeof lobbyScreen !== 'undefined') rmActive(lobbyScreen);
+    if (typeof leaderboardScreen !== 'undefined') rmActive(leaderboardScreen);
     if (typeof gameNav !== 'undefined' && gameNav) gameNav.style.display = 'none';
     if (typeof gameScreen !== 'undefined' && gameScreen) gameScreen.classList.add('active');
 
@@ -4935,13 +4942,9 @@ function setupSocketListeners() {
         // 隐藏所有屏幕和信息面板
         customRoomInfo.classList.add('hidden');
         customRoomIdInput.classList.add('hidden');
-        startScreen.classList.remove('active');
-        customRoomScreen.classList.remove('active');
-        matchSuccessScreen.classList.remove('active');
-        shipPlacementScreen.classList.remove('active');
-        rpsScreen.classList.remove('active');
-        gameScreen.classList.remove('active');
-        gameOverScreen.classList.remove('active');
+        // 屏清单一律走 hideAllScreens()（唯一来源）。这里原先是手抄的，漏了
+        // lobbyScreen / leaderboardScreen —— 在大厅点人机对战会两个屏同时 active。
+        hideAllScreens();
 
         // 保存玩家名称和对手名称（支持多种字段名）
         const playerNameFromData = data.player_name || data.playerName || data.player || null;
@@ -5052,11 +5055,10 @@ function setupSocketListeners() {
                         matchSuccessScreen.classList.remove('active');
                         shipPlacementScreen.classList.add('active');
                         initBoard(playerBoard, true);
-                        // 确保界面正确切换
-                        startScreen.classList.add('hidden');
-                        customRoomScreen.classList.add('hidden');
+                        // 确保界面正确切换。屏走 active，只有面板类容器用 hidden。
+                        startScreen.classList.remove('active');
+                        customRoomScreen.classList.remove('active');
                         matchStatus.classList.add('hidden');
-                        lobbyScreen.classList.add('hidden');
                         // 保存房间ID
                         if (data.room_id) {
                             gameState.roomId = data.room_id;
@@ -5868,23 +5870,17 @@ function setupSocketListeners() {
         gameState.maxShips = data.new_max_ships;
         gameState.placedShips = 0;
 
-        // 隐藏所有其他屏幕
-        startScreen.classList.remove('active');
-        customRoomScreen.classList.remove('active');
-        matchSuccessScreen.classList.remove('active');
-        rpsScreen.classList.remove('active');
-        gameScreen.classList.remove('active');
-        gameOverScreen.classList.remove('active');
+        // 隐藏所有其他屏幕（唯一来源，见 hideAllScreens）
+        hideAllScreens();
 
         // 直接进入放置战舰界面
         shipPlacementScreen.classList.add('active');
         initBoard(playerBoard, true);
 
-        // 确保界面正确切换
-        startScreen.classList.add('hidden');
-        customRoomScreen.classList.add('hidden');
+        // 确保界面正确切换（同上：屏不加 hidden）
+        startScreen.classList.remove('active');
+        customRoomScreen.classList.remove('active');
         matchStatus.classList.add('hidden');
-        lobbyScreen.classList.add('hidden');
 
         // 更新可摆放船数显示
         // 注意：shipsPlaced 是 <p> 容器，直接写 textContent 会抹掉内部的
@@ -6486,13 +6482,30 @@ function setupSocketListeners() {
 
 }
 
+// ── 屏注册表（UI 重构建议 §3.2）────────────────────
+// 全仓只有这一份「有哪些屏」。以前 game_state 与 reset_gameboard 里各手抄一份，
+// 两份都漏了 lobbyScreen / leaderboardScreen → 在大厅点人机对战会两个屏同时 active。
+// 新增屏时：先加进 index.html，再在这里登记。
+function allScreens() {
+    return [startScreen, customRoomScreen, matchSuccessScreen, shipPlacementScreen, rpsScreen,
+            gameScreen, gameOverScreen, leaderboardScreen, lobbyScreen,
+            // 兜底：页面里任何带 .screen 的元素（防漏登记）
+            ...Array.from(document.querySelectorAll('.screen'))];
+}
+
+// 隐藏所有屏。⚠️ 只动 `active`，绝不动 `hidden`（单向锁死，见 applyRoomSync 注释）。
+function hideAllScreens() {
+    const seen = new Set();
+    allScreens().forEach(function (el) {
+        if (!el || seen.has(el)) return;
+        seen.add(el);
+        el.classList.remove('active');
+    });
+}
+
 // 切换屏幕
 function switchScreen(screen) {
-    const screens = [startScreen, customRoomScreen, shipPlacementScreen, rpsScreen, gameScreen,
-                     leaderboardScreen, lobbyScreen, gameOverScreen, matchSuccessScreen];
-    screens.forEach(s => {
-        if (s) s.classList.remove('active');
-    });
+    hideAllScreens();
     if (screen) screen.classList.add('active');
 
     // 大厅批：切走就退订（否则打完一局还在收大厅广播）。函数声明会提升，

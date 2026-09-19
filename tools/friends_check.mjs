@@ -1222,7 +1222,8 @@ async function main() {
         var msg = document.getElementById('profile-save-msg');
         if (msg) msg.textContent = '';               // 清掉上一轮的「已保存」，好让下面等的是**本次**回执
         document.getElementById('profile-card-save').click();
-        // 归一到 0/1 再比：DOM 的 .checked 是 boolean，false === 0 为假（别拿它直接跟 want 比）
+        // 注意类型：DOM 的 .checked 是 boolean，别拿它跟 0/1 直接比（false === 0 为假）——
+        // 这里统一归一到 0/1 再比，省得把"其实全对"的载荷判成红。
         return { ok: (atSave ? 1 : 0) === want, want: want, atSave: atSave };
       })()`;
       // 现场一次性取全：元素在不在、勾没勾、这一排到底有几个开关（含 JS 注入的留言板那个）
@@ -1257,10 +1258,8 @@ async function main() {
       // ---- T9b：取消勾选 → 保存 → 载荷里必须是 0，且是 11 个字段 ----
       const before9 = mark();
       const unchecked = await ev(setToggleAndSave(0));
-      // ⚠️ `atSave` 是"点保存那一刻读到的真实值"：它必须已经是没勾的（boolean false）。
+      // ⚠️ `atSave` 是"点保存那一刻读到的真实值"：它必须已经是 0。
       //    这一条与下面的 T9b-2 各管一半 —— 一个管"点掉了没"，一个管"载荷真的带上它了没"。
-      //    ⚠️ 注意别写成 `atSave === 0`：`.checked` 是 **boolean**，`false === 0` 是假，
-      //    会把"其实全对"的那一轮判成红（我自己就白追了一轮）。
       check(unchecked && unchecked.ok === true && unchecked.atSave === false,
         '★ T9b-0 把「允许他人加我为好友」取消勾选，并在点保存那一刻确实是没勾的（走真实 click）', unchecked);
       const last9 = (await waitPostedBody(before9)) || {};

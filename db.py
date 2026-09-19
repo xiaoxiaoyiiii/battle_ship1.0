@@ -36,6 +36,14 @@ _GUESTBOOK_COLUMN_DDL = 'INTEGER DEFAULT 1'
 _SHOW_RANK_COLUMN = 'show_rank'
 _SHOW_RANK_COLUMN_DDL = 'INTEGER DEFAULT 1'
 
+# 好友申请开关（好友批）：**默认 1 = 开放申请**。
+# 它不是展示开关（管的是"别人能不能加我"，属于社交权限），但**故意走进同一条通道**：
+# `user_profile` 表 + `_migrate_schema` 加列 + `POST /api/profile/card` 一起保存。
+# 理由是这套机制已经跑熟三批（含"老表加列只能判存在再加"那条教训），
+# 为一个布尔值再开一张表只会多一份要同步的真相。
+_FRIEND_REQ_COLUMN = 'friend_requests_open'
+_FRIEND_REQ_COLUMN_DDL = 'INTEGER DEFAULT 1'
+
 
 def _add_column_if_missing(cursor, table: str, column: str, ddl: str) -> bool:
     """幂等加列：PRAGMA table_info 判存在 → ALTER TABLE ADD COLUMN。
@@ -334,6 +342,30 @@ class Database:
                   )
                   ''')
 
+            # ---- 好友（社交批）----
+            # 一条边一行，`(user_id, friend_id)` 是主键 —— 同一条边重复写天然幂等。
+            # 三种 status 的**行数**是有意的，别当成冗余：
+            #   pending  → **一条**（发起方 → 对方）
+            #   accepted → **两条对称边**（A→B 与 B→A，在接受那一刻一起写）
+            #   blocked  → **一条**（拉黑方 → 被拉黑方）
+            # 为什么 accepted 要写两条：加好友是双向的，而拉黑/申请是单向的。
+            # 若改成"一直只存一条无向边"，每次判断都得同时看两个方向 —— 方向写反
+            # 不会报错、只会静默失配（本项目在段位/连胜上栽过同类）。两条边 + 一个
+            # `WHERE user_id=?` 让「我的好友列表」是一次最简单的索引命中。
+            # ⚠️ 这是**新表**，`CREATE TABLE IF NOT EXISTS` 对它有效 —— 不需要
+            # `_add_column_if_missing`（那是给 `user_profile` 这类老表加列用的）。
+            self.cursor.execute('''
+                  CREATE TABLE IF NOT EXISTS user_friends
+                  (
+                      user_id    TEXT,
+                      friend_id  TEXT,
+                      status     TEXT,
+                      created_at INTEGER,
+                      updated_at INTEGER,
+                      PRIMARY KEY (user_id, friend_id)
+                  )
+                  ''')
+
             # ---- 加列迁移（第 3 批 D 票）----
             # `user_profile` 是第 1 批建的表，生产库已有该表（于是上面的
             # CREATE TABLE IF NOT EXISTS 对它完全无效），而本项目没有 ALTER 迁移机制。
@@ -373,6 +405,9 @@ class Database:
                 # 大舰长门槛要数"全服船长段的人数" = WHERE points >= 2100
                 'CREATE INDEX IF NOT EXISTS idx_user_rank_points_asc '
                 'ON user_rank(points)',
+                # 好友列表 / 计数 / 关系判断恒为 WHERE user_id=? AND status=?
+                'CREATE INDEX IF NOT EXISTS idx_user_friends_user '
+                'ON user_friends(user_id, status)',
             ):
                 try:
                     self.cursor.execute(stmt)
@@ -432,6 +467,7 @@ class Database:
         """
         self._add_column_if_missing('user_profile', _GUESTBOOK_COLUMN, _GUESTBOOK_COLUMN_DDL)
         self._add_column_if_missing('user_profile', _SHOW_RANK_COLUMN, _SHOW_RANK_COLUMN_DDL)
+        self._add_column_if_missing('user_profile', _FRIEND_REQ_COLUMN, _FRIEND_REQ_COLUMN_DDL)
 
     def _add_column_if_missing(self, table: str, column: str, ddl: str) -> bool:
         """`ALTER TABLE ADD COLUMN` 的幂等包装（见模块级 `_add_column_if_missing`）。"""
@@ -1043,6 +1079,9 @@ class Database:
         'show_guestbook': 1,
         # 段位是否公开（段位批）。**默认公开**；同样靠 `_migrate_schema()` 加列。
         'show_rank': 1,
+        # 是否允许别人加我好友（好友批）。**默认开放**（决策④：新玩家不该被
+        # "只能加同局的人"卡死）；关掉之后陌生人申请一律被拒。
+        'friend_requests_open': 1,
     }
 
     def _profile_defaults(self, uid: str) -> dict:
@@ -1061,7 +1100,8 @@ class Database:
             cursor = self.conn.cursor()
             row = cursor.execute(
                 'SELECT title_id, tags, status_text, frame_id, card_bg_id, '
-                'show_stats, show_fav_cards, show_history, show_guestbook, show_rank, updated_at '
+                'show_stats, show_fav_cards, show_history, show_guestbook, show_rank, '
+                'friend_requests_open, updated_at '
                 'FROM user_profile WHERE user_id = ?', (uid,)).fetchone()
             cursor.close()
             if not row:
@@ -1069,7 +1109,8 @@ class Database:
             data = {k: row[k] for k in row.keys()}
             data['user_id'] = uid
             data['tags'] = self._parse_tags(data.get('tags'))
-            for flag in ('show_stats', 'show_fav_cards', 'show_history', 'show_guestbook', 'show_rank'):
+            for flag in ('show_stats', 'show_fav_cards', 'show_history', 'show_guestbook',
+                         'show_rank', 'friend_requests_open'):
                 data[flag] = 1 if data.get(flag) is None else int(data[flag])
             data['updated_at'] = int(data.get('updated_at') or 0)
             return data
@@ -1178,15 +1219,17 @@ class Database:
         tags = row.get('tags')
         row['tags'] = json.dumps([t for t in tags if isinstance(t, str)],
                                  ensure_ascii=False) if isinstance(tags, list) else '[]'
-        for flag in ('show_stats', 'show_fav_cards', 'show_history', 'show_guestbook', 'show_rank'):
+        for flag in ('show_stats', 'show_fav_cards', 'show_history', 'show_guestbook',
+                     'show_rank', 'friend_requests_open'):
             row[flag] = 1 if row[flag] in (1, True, '1') else 0
         try:
             with self._lock:
                 self.cursor.execute(
                     'INSERT INTO user_profile '
                     '(user_id, title_id, tags, status_text, frame_id, card_bg_id, '
-                    ' show_stats, show_fav_cards, show_history, show_guestbook, show_rank, updated_at) '
-                    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
+                    ' show_stats, show_fav_cards, show_history, show_guestbook, show_rank, '
+                    ' friend_requests_open, updated_at) '
+                    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
                     'ON CONFLICT(user_id) DO UPDATE SET '
                     'title_id = excluded.title_id, tags = excluded.tags, '
                     'status_text = excluded.status_text, frame_id = excluded.frame_id, '
@@ -1195,12 +1238,13 @@ class Database:
                     'show_history = excluded.show_history, '
                     'show_guestbook = excluded.show_guestbook, '
                     'show_rank = excluded.show_rank, '
+                    'friend_requests_open = excluded.friend_requests_open, '
                     'updated_at = excluded.updated_at',
                     (uid, str(row['title_id'] or ''), row['tags'],
                      str(row['status_text'] or ''), str(row['frame_id'] or 'none'),
                      str(row['card_bg_id'] or 'deep'), row['show_stats'],
                      row['show_fav_cards'], row['show_history'], row['show_guestbook'],
-                     row['show_rank'],
+                     row['show_rank'], row['friend_requests_open'],
                      int(time.time())))
                 self.conn.commit()
             return True
@@ -2258,6 +2302,469 @@ class Database:
             logger.error(f"统计当日留言条数时发生未知错误: from={from_uid}, to={to_uid}, 错误: {e}")
             return 0
 
+    # ------------------------------------------------------------------
+    # 好友（社交批）
+    # ------------------------------------------------------------------
+    # 风格与前面几批一致：**读写都不抛** —— 读失败返回空/0，写失败返回
+    # False / 'error'（调用方据此回 500）。社交是展示层，一次读库失败不该
+    # 把好友面板变成 500。
+    #
+    # ⚠️ 每个 DAO 都必须有对应的**模块级包装函数**（文件末尾）—— 本项目的测试
+    # 与调用方都按模块级名字打桩，只在类里实现会让打桩被绕过（第 2 批踩过：
+    # `self.xxx` 读真库 → 假红）。所以 `api.py` 一律调 `db.xxx(...)`。
+    #
+    # ⚠️ 业务校验（上限 50 / 每小时 10 次 / 目标存不存在 / 是不是自己）**不在这里**，
+    # 一律由 `api.py` 裁决 —— 否则会出现"接口放行、DAO 拦下"这种两份规则漂移。
+    # 本层只保证两件存储层的硬事实：① 同一条边不会写出两行；② accepted 一次写两条。
+    #
+    # 状态取值：'pending' | 'accepted' | 'blocked'（白名单见 `USER_FRIEND_STATUSES`）。
+    _FRIEND_EDGE_COLUMNS = 'user_id, friend_id, status, created_at, updated_at'
+
+    @staticmethod
+    def _friend_edge_dict(row) -> dict:
+        """一行边 → dict（**只含表白名单字段**，不整行下发）。"""
+        return {
+            'user_id': row['user_id'] or '',
+            'friend_id': row['friend_id'] or '',
+            'status': row['status'] or '',
+            'created_at': int(row['created_at'] or 0),
+            'updated_at': int(row['updated_at'] or 0),
+        }
+
+    def get_friend_edges(self, uid: str) -> list:
+        """该 uid **作为起点**的所有边（三种 status 全给，不合并方向）。
+
+        调用方要"我的好友"请用 `get_friend_ids` / `list_friends`（只取 accepted）；
+        这个原始接口是给关系判断与调试用的。读失败返回 `[]`。
+        """
+        if not uid:
+            return []
+        try:
+            cursor = self.conn.cursor()
+            rows = cursor.execute(
+                f'SELECT {self._FRIEND_EDGE_COLUMNS} FROM user_friends '
+                'WHERE user_id = ? ORDER BY created_at, friend_id', (str(uid),)).fetchall()
+            cursor.close()
+            return [self._friend_edge_dict(r) for r in rows]
+        except sqlite3.Error as e:
+            logger.error(f"读取好友边失败: uid={uid}, 错误: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"读取好友边时发生未知错误: uid={uid}, 错误: {e}")
+            return []
+
+    def get_friend_ids(self, uid: str) -> list:
+        """只取 **accepted** 的对端 id。
+
+        accepted 恒为两条对称边，所以 `WHERE user_id = ?` 一条语句就够，
+        不需要"两个方向都查再求并集"（那正是方向写反会静默失配的地方）。
+        """
+        if not uid:
+            return []
+        try:
+            cursor = self.conn.cursor()
+            rows = cursor.execute(
+                "SELECT friend_id FROM user_friends "
+                "WHERE user_id = ? AND status = 'accepted' "
+                "ORDER BY created_at, friend_id", (str(uid),)).fetchall()
+            cursor.close()
+            return [str(r['friend_id']) for r in rows if r['friend_id']]
+        except sqlite3.Error as e:
+            logger.error(f"读取好友 id 列表失败: uid={uid}, 错误: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"读取好友 id 列表时发生未知错误: uid={uid}, 错误: {e}")
+            return []
+
+    def get_friend_relation(self, a, b) -> str:
+        """a 视角下 a 与 b 的关系（**判断顺序即优先级**）：
+
+        `'none'` | `'self'` | `'friends'` | `'pending_out'` | `'pending_in'`
+        | `'blocked_by_me'` | `'blocked_me'`
+
+        · `pending_out` = 我发出（我→他），`pending_in` = 他发来（他→我）；
+        · `blocked_by_me` = **我拉黑了他**（我→他 是 blocked），
+          `blocked_me` = **他拉黑了我**（他→我 是 blocked）。
+
+        ⚠️ `friends` / `blocked_*` 判断在 pending 之前：accepted / blocked 时
+        两个方向的 pending 边早被清掉了（见 `accept_friend_request` /
+        `block_user`），所以"blocked 却报 pending_in"这种自相矛盾的返回不该出现。
+
+        读失败按 `'none'` 处理（宁可让接口按"还不是好友"渲染，也不 500）。
+        """
+        a, b = str(a or ''), str(b or '')
+        if not a or not b:
+            return 'none'
+        if a == b:
+            return 'self'
+        try:
+            cursor = self.conn.cursor()
+            rows = cursor.execute(
+                'SELECT user_id, status FROM user_friends '
+                'WHERE (user_id = ? AND friend_id = ?) '
+                '   OR (user_id = ? AND friend_id = ?)',
+                (a, b, b, a)).fetchall()
+            cursor.close()
+        except sqlite3.Error as e:
+            logger.error(f"读取好友关系失败: a={a}, b={b}, 错误: {e}")
+            return 'none'
+        except Exception as e:
+            logger.error(f"读取好友关系时发生未知错误: a={a}, b={b}, 错误: {e}")
+            return 'none'
+        out_status, in_status = None, None
+        for row in rows:
+            if str(row['user_id']) == a:
+                out_status = row['status']
+            elif str(row['user_id']) == b:
+                in_status = row['status']
+        if out_status == 'blocked':
+            return 'blocked_by_me'
+        if in_status == 'blocked':
+            return 'blocked_me'
+        if out_status == 'accepted' or in_status == 'accepted':
+            return 'friends'
+        if out_status == 'pending':
+            return 'pending_out'
+        if in_status == 'pending':
+            return 'pending_in'
+        return 'none'
+
+    def send_friend_request(self, from_uid: str, to_uid: str) -> str:
+        """发起好友申请，返回 `'sent'` | `'already_friends'` | `'already_pending'`
+        | `'blocked'` | `'self'` | `'error'`。
+
+        · `'self'`：不能加自己（**这里判**，不靠接口层 —— 这条是存储层的硬事实）。
+        · `'blocked'`：**任一方向**存在 blocked 边。被拉黑方**不许**再申请回来
+          （契约里的"对方不能再申请"），而且这里**不透出是哪一方拉黑的** ——
+          否则等于告诉被拉黑的人"你被谁拉黑了"。
+        · `'already_friends'` / `'already_pending'`：accepted 边或**任一方向**的
+          pending 边存在。反向 pending 也算 already_pending：对方已经申请过我，
+          应当去"接受"，而不是再造一条相反的 pending 出来（那样两个方向各一条
+          pending，界面上两边都显示"待确认"，谁先点谁赢，语义就糊了）。
+        · 幂等：主键 `(user_id, friend_id)` + `INSERT OR IGNORE`，
+          同一秒内连发两次也只会有**一条** pending。
+        · ⚠️ 上限（50 好友）与限流（每小时 10 次）**不在这里**，由 `api.py` 判：
+          那两条要下发常量、要回 400/429，属于接口裁决。
+        """
+        from_uid, to_uid = str(from_uid or ''), str(to_uid or '')
+        if not from_uid or not to_uid:
+            logger.warning(f"好友申请参数不完整（已忽略）: from={from_uid!r}, to={to_uid!r}")
+            return 'error'
+        if from_uid == to_uid:
+            return 'self'
+        relation = self.get_friend_relation(from_uid, to_uid)
+        if relation in ('blocked_by_me', 'blocked_me'):
+            return 'blocked'
+        if relation == 'friends':
+            return 'already_friends'
+        if relation in ('pending_out', 'pending_in'):
+            return 'already_pending'
+        try:
+            now = int(time.time())
+            with self._lock:
+                self.cursor.execute(
+                    'INSERT OR IGNORE INTO user_friends '
+                    '(user_id, friend_id, status, created_at, updated_at) '
+                    "VALUES (?, ?, 'pending', ?, ?)",
+                    (from_uid, to_uid, now, now))
+                self.conn.commit()
+            return 'sent'
+        except sqlite3.Error as e:
+            logger.error(f"发起好友申请失败: from={from_uid}, to={to_uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return 'error'
+        except Exception as e:
+            logger.error(f"发起好友申请时发生未知错误: from={from_uid}, to={to_uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return 'error'
+
+    def accept_friend_request(self, me_uid: str, other_uid: str) -> bool:
+        """接受**对方 → 我**的 pending 申请。成功（含已接受）返回 True，失败 False。
+
+        ⚠️ 方向是死的：只认 `(other → me, pending)` 这一行。反过来（我申请了别人、
+        却去点"接受"）**返回 False** —— 那本来就不该有东西可接受。
+        契约里的"重复接受幂等"由**已存在的 accepted 边**兜住：第二次调用时
+        `already_accepted` 成立，直接返回 True，不会写出重复边（主键也拦一道）。
+
+        accepted 必须**一次写两条对称边**（A→B 与 B→A），且与"清掉 pending"
+        在**同一个事务**里提交：分开提交的话，中间挂掉会留下"pending 没了、
+        accepted 只有一条"的半截状态，而"我的好友列表"只看自己那一行 →
+        其中一方的好友列表**永远少一个人**，还不报错。
+        """
+        me_uid, other_uid = str(me_uid or ''), str(other_uid or '')
+        if not me_uid or not other_uid or me_uid == other_uid:
+            return False
+        try:
+            now = int(time.time())
+            with self._lock:
+                already = self.cursor.execute(
+                    'SELECT 1 FROM user_friends '
+                    "WHERE user_id = ? AND friend_id = ? AND status = 'accepted'",
+                    (me_uid, other_uid)).fetchone()
+            if already:
+                # 已经接受过了：幂等成功，且**不再写边**（写第二遍也只是被主键忽略）。
+                return True
+            with self._lock:
+                pending = self.cursor.execute(
+                    'SELECT 1 FROM user_friends '
+                    "WHERE user_id = ? AND friend_id = ? AND status = 'pending'",
+                    (other_uid, me_uid)).fetchone()
+                if not pending:
+                    return False
+                self.cursor.execute(
+                    "UPDATE user_friends SET status = 'accepted', updated_at = ? "
+                    "WHERE user_id = ? AND friend_id = ? AND status = 'pending'",
+                    (now, other_uid, me_uid))
+                for src, dst in ((me_uid, other_uid), (other_uid, me_uid)):
+                    self.cursor.execute(
+                        'INSERT OR IGNORE INTO user_friends '
+                        '(user_id, friend_id, status, created_at, updated_at) '
+                        "VALUES (?, ?, 'accepted', ?, ?)",
+                        (src, dst, now, now))
+                self.conn.commit()
+            return True
+        except sqlite3.Error as e:
+            logger.error(f"接受好友申请失败: me={me_uid}, other={other_uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+        except Exception as e:
+            logger.error(f"接受好友申请时发生未知错误: me={me_uid}, other={other_uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+
+    def remove_friend(self, a_uid: str, b_uid: str) -> bool:
+        """双向解除好友：两条 accepted 边一起删。
+
+        **幂等**：删一条根本不存在的边也返回 True —— "本来就不是好友"不是失败
+        （与 `soft_delete_profile_message` 同口径：`rowcount == 0` 也算成功）。
+        ⚠️ 有意**只删 accepted**：不能让"删除好友"顺手把申请或拉黑边也抹掉。
+        """
+        a_uid, b_uid = str(a_uid or ''), str(b_uid or '')
+        if not a_uid or not b_uid:
+            return False
+        try:
+            with self._lock:
+                self.cursor.execute(
+                    'DELETE FROM user_friends '
+                    "WHERE status = 'accepted' AND "
+                    '((user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?))',
+                    (a_uid, b_uid, b_uid, a_uid))
+                deleted = int(self.cursor.rowcount or 0)
+                self.conn.commit()
+            logger.info(f"解除好友: {a_uid} <-> {b_uid}，删除 {deleted} 条边")
+            return True
+        except sqlite3.Error as e:
+            logger.error(f"解除好友失败: a={a_uid}, b={b_uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+        except Exception as e:
+            logger.error(f"解除好友时发生未知错误: a={a_uid}, b={b_uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+
+    def remove_friend_request(self, a_uid: str, b_uid: str) -> bool:
+        """删掉 **两个方向**的 pending 边（"拒绝"与"撤回申请"）。
+
+        为什么单独开一个方法而不并入 `remove_friend`：`remove_friend` 的契约是
+        "双向删除**好友**（两条 accepted 边）"，把 pending 也顺手删掉的话，
+        日后想"解除好友但保留对方待处理的申请"就没人做得到 —— 语义混在一起
+        正是两份实现漂移的起点。这里只碰 pending，**绝不动 accepted / blocked**。
+
+        幂等：没有 pending 也返回 True（"本来就没有待处理申请"不是失败）。
+        """
+        a_uid, b_uid = str(a_uid or ''), str(b_uid or '')
+        if not a_uid or not b_uid:
+            return False
+        try:
+            with self._lock:
+                self.cursor.execute(
+                    'DELETE FROM user_friends '
+                    "WHERE status = 'pending' AND "
+                    '((user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?))',
+                    (a_uid, b_uid, b_uid, a_uid))
+                deleted = int(self.cursor.rowcount or 0)
+                self.conn.commit()
+            logger.info(f"删除好友申请: {a_uid} <-> {b_uid}，删除 {deleted} 条 pending")
+            return True
+        except sqlite3.Error as e:
+            logger.error(f"删除好友申请失败: a={a_uid}, b={b_uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+        except Exception as e:
+            logger.error(f"删除好友申请时发生未知错误: a={a_uid}, b={b_uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+
+    def block_user(self, me_uid: str, other_uid: str) -> bool:
+        """拉黑：清掉**两个方向**的 pending / accepted 边，再写一条 `me → other` 的 blocked。
+
+        `DELETE ... OR ...` 覆盖两个方向是刻意的：只清"我这一侧"的话，
+        对方那条 `other → me` 的 accepted 边还在，"对方的好友列表里仍有我" ——
+        拉黑之后还能看到被拉黑的人，等于没拉黑。
+        拉黑是幂等的：重复拉黑只是重写同一条边（`INSERT OR REPLACE` 顺手刷新 `updated_at`）。
+        """
+        me_uid, other_uid = str(me_uid or ''), str(other_uid or '')
+        if not me_uid or not other_uid or me_uid == other_uid:
+            return False
+        try:
+            now = int(time.time())
+            with self._lock:
+                # pending / accepted 两个方向全清（blocked 边不动，别把别人的拉黑记录删了）
+                self.cursor.execute(
+                    'DELETE FROM user_friends '
+                    "WHERE status IN ('pending', 'accepted') AND "
+                    '((user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?))',
+                    (me_uid, other_uid, other_uid, me_uid))
+                self.cursor.execute(
+                    'INSERT OR REPLACE INTO user_friends '
+                    '(user_id, friend_id, status, created_at, updated_at) '
+                    "VALUES (?, ?, 'blocked', "
+                    "        COALESCE((SELECT created_at FROM user_friends "
+                    '                  WHERE user_id = ? AND friend_id = ?), ?), ?)',
+                    (me_uid, other_uid, me_uid, other_uid, now, now))
+                self.conn.commit()
+            return True
+        except sqlite3.Error as e:
+            logger.error(f"拉黑失败: me={me_uid}, other={other_uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+        except Exception as e:
+            logger.error(f"拉黑时发生未知错误: me={me_uid}, other={other_uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+
+    def count_friends(self, uid: str) -> int:
+        """accepted 好友数（**上限 50 的判据**就是它）。读失败返回 0。"""
+        if not uid:
+            return 0
+        try:
+            cursor = self.conn.cursor()
+            row = cursor.execute(
+                "SELECT COUNT(*) AS n FROM user_friends "
+                "WHERE user_id = ? AND status = 'accepted'", (str(uid),)).fetchone()
+            cursor.close()
+            return int(row['n'] or 0) if row else 0
+        except sqlite3.Error as e:
+            logger.error(f"统计好友数失败: uid={uid}, 错误: {e}")
+            return 0
+        except Exception as e:
+            logger.error(f"统计好友数时发生未知错误: uid={uid}, 错误: {e}")
+            return 0
+
+    def list_friends(self, uid: str) -> list:
+        """好友列表 `[{'user_id', 'created_at'}]`（只 accepted，新增在前）。读失败返回 `[]`。
+
+        ⚠️ 只有 id 与时间：`username` / `avatar` / 等级 / 段位 / 在线状态都由
+        `api.py` 组装（等级与段位的规则各自只有一份实现，不能在这里重算）。
+        """
+        if not uid:
+            return []
+        try:
+            cursor = self.conn.cursor()
+            rows = cursor.execute(
+                "SELECT friend_id, created_at FROM user_friends "
+                "WHERE user_id = ? AND status = 'accepted' "
+                "ORDER BY created_at DESC, friend_id", (str(uid),)).fetchall()
+            cursor.close()
+            return [{'user_id': str(r['friend_id'] or ''),
+                     'created_at': int(r['created_at'] or 0)}
+                    for r in rows if r['friend_id']]
+        except sqlite3.Error as e:
+            logger.error(f"读取好友列表失败: uid={uid}, 错误: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"读取好友列表时发生未知错误: uid={uid}, 错误: {e}")
+            return []
+
+    def list_incoming_requests(self, uid: str) -> list:
+        """**别人发给我**的待确认申请 `[{'user_id', 'created_at'}]`（`* → 我` 且 pending）。
+
+        `user_id` 是**对方**（申请发起人）—— 前端拿它显示"谁要加你"。
+        读失败返回 `[]`。
+        """
+        if not uid:
+            return []
+        try:
+            cursor = self.conn.cursor()
+            rows = cursor.execute(
+                "SELECT user_id, created_at FROM user_friends "
+                "WHERE friend_id = ? AND status = 'pending' "
+                "ORDER BY created_at DESC, user_id", (str(uid),)).fetchall()
+            cursor.close()
+            return [{'user_id': str(r['user_id'] or ''),
+                     'created_at': int(r['created_at'] or 0)}
+                    for r in rows if r['user_id']]
+        except sqlite3.Error as e:
+            logger.error(f"读取收到的申请失败: uid={uid}, 错误: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"读取收到的申请时发生未知错误: uid={uid}, 错误: {e}")
+            return []
+
+    def list_outgoing_requests(self, uid: str) -> list:
+        """**我发出去**的待确认申请 `[{'user_id', 'created_at'}]`（`我 → *` 且 pending）。
+
+        `user_id` 是**对方**（被申请人）—— 与 incoming 的形状一致，前端两个列表
+        共用一套渲染。读失败返回 `[]`。
+        """
+        if not uid:
+            return []
+        try:
+            cursor = self.conn.cursor()
+            rows = cursor.execute(
+                "SELECT friend_id, created_at FROM user_friends "
+                "WHERE user_id = ? AND status = 'pending' "
+                "ORDER BY created_at DESC, friend_id", (str(uid),)).fetchall()
+            cursor.close()
+            return [{'user_id': str(r['friend_id'] or ''),
+                     'created_at': int(r['created_at'] or 0)}
+                    for r in rows if r['friend_id']]
+        except sqlite3.Error as e:
+            logger.error(f"读取发出的申请失败: uid={uid}, 错误: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"读取发出的申请时发生未知错误: uid={uid}, 错误: {e}")
+            return []
+
+    def count_requests_since(self, uid: str, since_ts) -> int:
+        """我发出的 pending 里 `created_at >= since_ts` 的条数（**限流判据**，每小时 10 次）。
+
+        只数 pending 是刻意的：被接受/拒绝/拉黑之后的申请不再占用配额，
+        否则"加满了 10 个好友"的人一小时之内再也发不出任何申请。
+        读失败返回 0（宁可放行一条，也不因为统计读不到就把玩家堵死 ——
+        与 `count_profile_messages_since` 同口径）。
+        """
+        if not uid:
+            return 0
+        try:
+            since = int(since_ts or 0)
+        except (TypeError, ValueError):
+            return 0
+        try:
+            cursor = self.conn.cursor()
+            row = cursor.execute(
+                "SELECT COUNT(*) AS n FROM user_friends "
+                "WHERE user_id = ? AND status = 'pending' AND created_at >= ?",
+                (str(uid), since)).fetchone()
+            cursor.close()
+            return int(row['n'] or 0) if row else 0
+        except sqlite3.Error as e:
+            logger.error(f"统计窗口内好友申请数失败: uid={uid}, 错误: {e}")
+            return 0
+        except Exception as e:
+            logger.error(f"统计窗口内好友申请数时发生未知错误: uid={uid}, 错误: {e}")
+            return 0
+
     def get_token_by_password(self, username: str, password: str):
         """通过用户名和密码校验并生成token（使用 check_password_hash 验证）"""
         if not username or not password:
@@ -2627,6 +3134,82 @@ def soft_delete_profile_message(msg_id):
 def count_profile_messages_since(from_uid: str, to_uid: str, since: int):
     """`since` 之后 from → to 的留言条数（每日上限用）"""
     return db.count_profile_messages_since(from_uid, to_uid, since)
+
+
+# ---------------------------------------------------------------------------
+# 好友（社交批）—— 模块级包装
+# ---------------------------------------------------------------------------
+# ⚠️ 这一层不是"顺手加一层"：本项目的测试与调用方**一律按模块级名字打桩**
+# （`db.count_friends = lambda uid: 50`）。只在类里实现的话，`api.py` 里写
+# `db.count_friends(...)` 打到真库、测试却以为打上了桩 —— 表现为假红/假绿，
+# 第 2 批为此查了半天。**`api.py` 必须调这些模块级名字，不许写 `db.db.xxx`。**
+# 状态白名单也放模块级：接口层要用它做参数校验，不该去摸 `db.db` 的私有属性。
+USER_FRIEND_STATUSES = ('pending', 'accepted', 'blocked')
+
+
+def get_friend_edges(uid: str):
+    """该 uid 作为起点的所有边（三种 status 全给）"""
+    return db.get_friend_edges(uid)
+
+
+def get_friend_ids(uid: str):
+    """只 accepted 的对端 id"""
+    return db.get_friend_ids(uid)
+
+
+def get_friend_relation(a, b):
+    """a 视角下的关系：none/self/friends/pending_out/pending_in/blocked_by_me/blocked_me"""
+    return db.get_friend_relation(a, b)
+
+
+def send_friend_request(from_uid: str, to_uid: str):
+    """发起好友申请（sent/already_friends/already_pending/blocked/self/error）"""
+    return db.send_friend_request(from_uid, to_uid)
+
+
+def accept_friend_request(me_uid: str, other_uid: str):
+    """接受「对方 → 我」的 pending（成功写两条 accepted 边）"""
+    return db.accept_friend_request(me_uid, other_uid)
+
+
+def remove_friend(a_uid: str, b_uid: str):
+    """双向解除好友（两条 accepted 边都删；幂等）"""
+    return db.remove_friend(a_uid, b_uid)
+
+
+def remove_friend_request(a_uid: str, b_uid: str):
+    """删除两向的 pending 边（"拒绝" / "撤回申请"；幂等）"""
+    return db.remove_friend_request(a_uid, b_uid)
+
+
+def block_user(me_uid: str, other_uid: str):
+    """拉黑：清两向 pending/accepted + 写一条 blocked"""
+    return db.block_user(me_uid, other_uid)
+
+
+def count_friends(uid: str):
+    """accepted 好友数（上限 50 的判据）"""
+    return db.count_friends(uid)
+
+
+def list_friends(uid: str):
+    """好友列表 `[{'user_id', 'created_at'}]`（只 accepted）"""
+    return db.list_friends(uid)
+
+
+def list_incoming_requests(uid: str):
+    """别人发给我的待确认申请 `[{'user_id', 'created_at'}]`"""
+    return db.list_incoming_requests(uid)
+
+
+def list_outgoing_requests(uid: str):
+    """我发出去的待确认申请 `[{'user_id', 'created_at'}]`"""
+    return db.list_outgoing_requests(uid)
+
+
+def count_requests_since(uid: str, since_ts):
+    """`since_ts` 之后我发出的 pending 条数（限流判据）"""
+    return db.count_requests_since(uid, since_ts)
 
 
 def _safe_dao(fn, default):

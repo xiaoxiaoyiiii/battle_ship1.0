@@ -164,7 +164,7 @@ def test_validate_payload_accepts_every_pool_id_for_perk_user(users):
     payload = {
         'title_id': 'immortal', 'tags': [], 'status_text': '', 'frame_id': 'crimson',
         'card_bg_id': 'aurora', 'show_stats': 1, 'show_fav_cards': 1,
-        'show_history': 0, 'show_guestbook': 1, 'show_rank': 1,
+        'show_history': 0, 'show_guestbook': 1, 'show_rank': 1, 'friend_requests_open': 1,
     }
     fields, errors = profile_spec.validate_payload(payload, stats)
     assert errors == [], errors
@@ -178,7 +178,7 @@ def test_validate_payload_still_rejects_for_normal_user(users):
     payload = {
         'title_id': 'immortal', 'tags': [], 'status_text': '', 'frame_id': 'crimson',
         'card_bg_id': 'aurora', 'show_stats': 1, 'show_fav_cards': 1,
-        'show_history': 0, 'show_guestbook': 1, 'show_rank': 1,
+        'show_history': 0, 'show_guestbook': 1, 'show_rank': 1, 'friend_requests_open': 1,
     }
     fields, errors = profile_spec.validate_payload(payload, stats)
     assert errors, '普通账号选未解锁项必须被拒'

@@ -6,7 +6,7 @@ import secrets
 import time
 
 from flask import (Flask, session, jsonify, request, render_template, redirect,
-                   url_for, flash, send_file)
+                   url_for, flash, send_file, current_app)
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
@@ -28,6 +28,13 @@ AVATAR_MAGIC_PREFIXES = (
 )
 MAX_AVATAR_SIZE = 2 * 1024 * 1024  # 2MB
 AVATAR_UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'static', 'avatars')
+
+# 好友上限与申请频率（社交批）。**定义在这里而不是写死在函数里**：
+# `GET /api/friends` 要把它们放进 `limits` 下发给前端，前端拿它显示"还可以再加 N 位"
+# 并提前把按钮灰掉；写死在函数体里就会出现"前端文案里的 50 和服务端判的 50
+# 是两次手抄"，改一处必然漂移（本项目在段位曲线上栽过同形状的坑）。
+MAX_FRIENDS = 50                  # 好友数上限（accepted 计数）
+FRIEND_REQUESTS_PER_HOUR = 10     # 每小时可发出的好友申请数（只数 pending）
 os.makedirs(AVATAR_UPLOAD_FOLDER, exist_ok=True)
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'),
             template_folder=os.path.join(os.path.dirname(__file__), 'templates'))
@@ -666,6 +673,11 @@ def build_own_profile(uid):
         # 段位开关（段位批）：第 5 个展示开关，同样同进同出（保存载荷 9 → 10 字段）。
         # 编辑面拿它初始化 `#profile-show-rank` 复选框。
         'show_rank': int(extra.get('show_rank') if extra.get('show_rank') is not None else 1),
+        # 好友申请开关（好友批，决策④的"设置里可关"）：走同一条保存通道，
+        # 但**只下发给本人**（不进 `public_stats`）—— 别人不需要知道"这个人关掉了申请"，
+        # 点下去由服务端回一句中文原因就够了。
+        'friend_requests_open': int(
+            extra.get('friend_requests_open') if extra.get('friend_requests_open') is not None else 1),
         # 段位视图（`ranks.rank_view` 的原样返回）：**自己视角恒下发**。
         # 自己的段位自己当然看得到 —— 那个开关管的是"别人能不能看"，
         # 要是连自己都被开关挡住，"我的段位"就没了（第 1 批 `show_stats` 的教训）。
@@ -1250,6 +1262,517 @@ def api_login():
     if not token:
         return jsonify({'error': '登录失败'}), 500
     return jsonify({'token': token})
+
+
+# ---------------------------------------------------------------------------
+# 好友（社交批）
+# ---------------------------------------------------------------------------
+# 六个接口，契约冻结（另一个智能体与前端按同一份写，**名字一个都不能改**）：
+#   GET  /api/friends           好友 / 收到的申请 / 发出的申请 + 上限 + 计数
+#   POST /api/friends/request   {username}
+#   POST /api/friends/respond   {username, accept}
+#   POST /api/friends/remove    {username}
+#   POST /api/friends/block     {username}
+#   POST /api/friends/invite    {username}  建房 + 推给对方
+#
+# 三条贯穿全篇的规矩：
+# 1. **全部要求登录**（未登录 401 `{'error':'未登录'}`）。好友是私密数据，
+#    连"某人有没有好友"都不该匿名看到。
+# 2. **只下发白名单字段**。本项目有一条硬教训：接口整行下发会泄露
+#    `password_hash` / `token`（`users` 表里就有这两列）。所以这里
+#    `username`/`avatar` 一律走 `_users_brief_map`（只 SELECT 三列），
+#    `level`/`rank_label` 走现成的单份实现（`level_view_for` / `rank_view_for`），
+#    **绝不**把 user dict 铺进响应。
+# 3. **上限与限流在接口层判**（DAO 只管写库）：要下发常量、要回 400/429。
+#
+# ⚠️ 为什么这里**不** `import server`（哪怕在函数里也不行）：
+#    `server.py` 是 `from api import app` —— 一旦 `api` 顶部 import `server`
+#    就是**循环导入**（`server` 还没跑完 `app` 那一句，`api` 就来要 `room_manager`）。
+#    邀请接口要"建房 + 推送给对方"，两条都不需要 `server`：
+#      · 建房 → 函数内延迟导入 `server.room_manager.create_room()`（见 `_friend_new_room`）；
+#      · 推送 → `current_app.extensions['socketio']`（`SocketIO(app)` 自己注册的）。
+#    详见 `_friend_socketio` 与 `_friend_new_room` 的注释。
+
+
+def _friend_level(uid):
+    """等级（数字）。读不到按 1 级 —— 用**现有唯一一份**实现，不在这里重算曲线。"""
+    view = _safe_read(lambda: level_view_for(uid), {}, '好友等级视图')
+    view = view if isinstance(view, dict) else {}
+    try:
+        return int(view.get('level') or 1)
+    except (TypeError, ValueError):
+        return 1
+
+
+def _friend_rank_label(uid):
+    """段位文案（`船长Ⅲ 0分 #3` 这种）。读不到给空串。
+
+    ⚠️ 文案**只在 `ranks.py` 里拼**（`rank_view_for` → `ranks.rank_view`），
+    这里绝不自己拼"X 段" —— 两处各拼一份必然漂移（段位批的明文规矩）。
+    """
+    view = _safe_read(lambda: rank_view_for(uid), {}, '好友段位视图')
+    view = view if isinstance(view, dict) else {}
+    return str(view.get('label') or '')
+
+
+def _presence_module():
+    """拿到 `presence` 模块；拿不到返回 None。
+
+    ⚠️ `presence.py` 是**同批另一个智能体**创建的纯内存模块（只认 uid，
+    不 import `server`），存在的唯一目的就是让 `api.py` 能回答"谁在线/在局中"
+    **而不去 import `server`**（那会循环导入 —— `server.py` 里是 `from api import app`）。
+
+    所以这里的降级必须彻底：模块还没落地（并行开发期）或它自己炸了，
+    一律当"全员离线"，**绝不允许把 `GET /api/friends` 打成 500** ——
+    在线状态只是列表上的一个小绿点，丢了不影响好友列表本身。
+    逐个函数再包一层 try：模块在但某个函数还没实现（并行开发中途）也要兜住。
+    """
+    try:
+        import presence                          # noqa: PLC0415 —— 放在函数里是有意的
+        return presence
+    except Exception as e:      # noqa: BLE001 —— 没落地/炸了都按"离线"处理
+        print(f'[friends] presence 模块不可用，在线状态按离线处理: {e}')
+        return None
+
+
+def _friend_presence_view(uids):
+    """批量算在线/在局中 → `({uid: bool}, {uid: bool})`。
+
+    分两次问 `presence`（`online_uids()` 一次拿全量集合，比逐个 `is_online`
+    省 N 次调用）；任一步失败就整体退化成"全离线"，不做半真半假的混合。
+    """
+    online, in_game = {}, {}
+    wanted = [str(u) for u in (uids or []) if u]
+    if not wanted:
+        return online, in_game
+    module = _presence_module()
+    if module is None:
+        return online, in_game
+    online_set = set()
+    try:
+        online_set = {str(u) for u in (module.online_uids() or [])}
+    except Exception as e:      # noqa: BLE001
+        print(f'[friends] presence.online_uids() 失败，按离线处理: {e}')
+    for uid in wanted:
+        online[uid] = uid in online_set
+        try:
+            in_game[uid] = bool(module.is_in_game(uid)) if uid in online_set else False
+        except Exception as e:      # noqa: BLE001
+            print(f'[friends] presence.is_in_game({uid}) 失败，按 False 处理: {e}')
+            in_game[uid] = False
+    return online, in_game
+
+
+# ---------------------------------------------------------------------------
+# 好友功能的"实时推送 / 建房"由 server.py 在 import 期注入（见 server.py 末尾）。
+#
+# ⚠️⚠️ **这里绝对不能 `import server`**（曾经就是那么写的，踩了个大坑）：
+#   应用是用 `python server.py` 启动的，那时本模块名是 **`__main__`**，而
+#   `import server` 会**把整个 server.py 再执行一遍**、得到**另一个模块对象**。
+#   于是：
+#     · 那份 `socketio` 不是正在服务的那个 → 事件 emit 出去**静默丢弃**
+#       （表现："接口回 sent/ok，对方什么也没收到"，且服务端零报错）；
+#     · 那份 `room_manager` 建的房在真进程里**根本不存在** → 邀请的 room_id 是野的；
+#     · 生产是 `run_prod.py` 启动的，模块名又是正常的 `server` →
+#       **本地坏、线上好**（或反之），属于最难查的一类环境相关 bug。
+#   注入之后，两份实现都不需要了：推送与建房仍然各只有 server.py 里那一份。
+# ---------------------------------------------------------------------------
+_FRIEND_BACKEND_MODULE = None
+
+
+def register_friend_backend(module):
+    """由 `server.py` 在 import 期把**它自己那个模块对象**交过来（见模块顶部说明）。
+
+    ⚠️ 只存模块、**不存函数对象**：推送/建房函数在调用那一刻按名字现取。
+    存函数对象会在 import 期就把 `server.push_friend_invite` 绑死，
+    `monkeypatch.setattr(server, 'push_friend_invite', ...)` 这类打桩**全部被架空**
+    —— 测试静默打到空处还会是绿的。
+    """
+    global _FRIEND_BACKEND_MODULE
+    if module is None:
+        print('[friends] 注入的后端模块是 None，忽略')
+        return False
+    _FRIEND_BACKEND_MODULE = module
+    return True
+
+
+def _friend_backend(name):
+    """按名字取后端能力（实时推送 / 建房）；没注入或名字不存在都返回 `None`。"""
+    module = _FRIEND_BACKEND_MODULE
+    if module is None:
+        return None
+    fn = getattr(module, name, None)
+    return fn if callable(fn) else None
+
+
+def _push_friend_event(func_name, *args):
+    """把好友类实时事件交给注入进来的推送函数（**实时只有一份实现**）。
+
+    返回 `True` = 真的推出去了；`False` = 对方离线 / 后端没注入 / 抛异常。
+    调用方**必须**据此决定要不要回 `ok` —— socket.io 对不存在的房间是**静默丢弃**，
+    在这里"乐观地回 ok"就会造出"接口说成功、对方什么也没收到"的假成功。
+    """
+    fn = _friend_backend(func_name)
+    if fn is None:
+        print(f'[friends] 后端没有 {func_name}（server 没起来？），推送失败')
+        return False
+    try:
+        return bool(fn(*args))
+    except Exception as e:      # noqa: BLE001 —— 推送失败只记日志，绝不把请求打成 500
+        print(f'[friends] {func_name} 推送失败: {e}')
+        return False
+
+
+def _my_friend_identity(uid):
+    """推送事件里要带的"我是谁"（用户名 + 头像）。
+
+    只取两个展示字段；**绝不**把 user dict 整个铺进 payload（`users` 表有凭证列）。
+    """
+    username = ''
+    avatar = ''
+    try:
+        username = str(session.get('username') or '')
+    except Exception:           # noqa: BLE001 —— 无请求上下文时拿不到就留空
+        username = ''
+    try:
+        avatar = str((db.get_user(uid=uid) or {}).get('avatar') or '')
+    except Exception as e:      # noqa: BLE001
+        print(f'[friends] 读取头像失败，按空处理: {e}')
+    return username, avatar
+
+
+def _friend_invite_targets(uid):
+    """把邀请事件推给某个 uid 的**所有连接**。
+
+    返回 `None` 表示"推不出去"（对方离线 / `presence` 不可用），调用方据此
+    返回 `{'status':'error','error':'对方不在线'}` —— **不硬编一个 sid**：
+    编出来的 sid 发出去是**静默丢弃**（socket.io 对不存在的房间不报错），
+    表现就是"接口说成功、对方什么也没收到"，这是最难查的一类假成功。
+
+    `presence.sids_of(uid)` 是契约里**可选**的能力（另一个智能体不一定提供），
+    所以有就用、没有就用 uid 当房间名发给 `presence` 侧；两者都拿不到就是离线。
+    """
+    module = _presence_module()
+    if module is None:
+        return None
+    try:
+        if not module.is_online(uid):
+            return None
+    except Exception as e:      # noqa: BLE001 —— 判断不了就当离线，宁可回 error
+        print(f'[friends] presence.is_online({uid}) 失败，按离线处理: {e}')
+        return None
+    sids_of = getattr(module, 'sids_of', None)
+    if not callable(sids_of):
+        return None
+    try:
+        sids = [str(s) for s in (sids_of(uid) or []) if s]
+    except Exception as e:      # noqa: BLE001
+        print(f'[friends] presence.sids_of({uid}) 失败，按离线处理: {e}')
+        return None
+    if not sids:
+        return None
+    return sids
+
+
+def _friend_new_room():
+    """建一个自定义房，返回 room_id（失败返回 ''）。
+
+    建房能力由 `server.py` 注入（`register_friend_backend`）—— **不要在这里 import
+    server**，理由见本文件顶部那段注释（`__main__` 与 `server` 会是两个模块对象）。
+
+    ⚠️ 复用 `room_manager.create_room()`（**不重写一份建房逻辑**）：房间的
+    `ranked=False`、清理、宽限计时等口径全在那一个地方，自建一个 GameRoom
+    必然漏掉其中几条。`create_room()` 只碰 `uuid` 与 `self.rooms`，不读
+    `session` / `request`，所以在 HTTP 请求里调用是安全的（对比
+    `handle_create_room` 那个 socket 事件：它要 `request.sid` 才能把自己入座，
+    在 HTTP 里**不能**直接复用）。
+    """
+    fn = _friend_backend('create_custom_room_for_invite')
+    if fn is None:
+        print('[friends] 后端没有 create_custom_room_for_invite（server 没起来？），无法建房')
+        return ''
+    try:
+        return str(fn() or '')
+    except Exception as e:      # noqa: BLE001 —— 建房失败只记日志，接口回 error 不 500
+        print(f'[friends] 建房失败: {e}')
+        return ''
+
+
+def build_friends_payload(uid):
+    """`GET /api/friends` 的响应体（**唯一一份组装实现**）。
+
+    形状冻结：
+      `friends`  [{'user_id','username','avatar','level','rank_label','online','in_game'}]
+      `incoming` / `outgoing`  [{'user_id','username','avatar','created_at'}]
+      `limits`   {'max_friends': 50, 'requests_per_hour': 10}
+      `counts`   {'friends': N, 'incoming': N}
+    """
+    friend_rows = db.list_friends(uid) or []
+    incoming_rows = db.list_incoming_requests(uid) or []
+    outgoing_rows = db.list_outgoing_requests(uid) or []
+
+    # 一次把所有涉及的 uid 的 username/avatar 查出来（只 SELECT 三列的批量读）。
+    # 好友列表最多 50 行，逐行 db.get_user 就是 50 次查询，还会把
+    # password_hash 读进内存 —— 用 _users_brief_map 一次搞定且不碰凭证列。
+    all_uids = [str(r.get('user_id') or '') for r in friend_rows]
+    all_uids += [str(r.get('user_id') or '') for r in incoming_rows]
+    all_uids += [str(r.get('user_id') or '') for r in outgoing_rows]
+    brief = _safe_read(lambda: _users_brief_map(all_uids), {}, '好友用户名/头像')
+    brief = brief if isinstance(brief, dict) else {}
+
+    online_map, in_game_map = _friend_presence_view(all_uids)
+
+    friends = []
+    for row in friend_rows:
+        other = str(row.get('user_id') or '')
+        if not other:
+            continue
+        info = brief.get(other) or {}
+        friends.append({
+            'user_id': other,
+            'username': info.get('username') or '',
+            'avatar': info.get('avatar') or '',
+            'level': _friend_level(other),
+            'rank_label': _friend_rank_label(other),
+            'online': bool(online_map.get(other)),
+            'in_game': bool(in_game_map.get(other)),
+        })
+
+    # 排序：在线在前 → 在局中在后 → 用户名。
+    # `in_game` 排在**后面**（不在局中的更靠前）：好友都在线时，先把"闲着能一起打"
+    # 的排上来才有用。用户名用 `lower()` 比较，免得大小写把同一批人拆成两段；
+    # 最后再带上 user_id 兜底 —— 同名（或都读不到用户名）时排序必须**稳定**，
+    # 否则每次刷新列表顺序都在抖。
+    friends.sort(key=lambda f: (not f['online'], f['in_game'],
+                                (f['username'] or '').lower(), f['user_id']))
+
+    def _brief_list(rows):
+        out = []
+        for row in rows:
+            other = str(row.get('user_id') or '')
+            if not other:
+                continue
+            info = brief.get(other) or {}
+            out.append({
+                'user_id': other,
+                'username': info.get('username') or '',
+                'avatar': info.get('avatar') or '',
+                'created_at': int(row.get('created_at') or 0),
+            })
+        return out
+
+    return {
+        'friends': friends,
+        'incoming': _brief_list(incoming_rows),
+        'outgoing': _brief_list(outgoing_rows),
+        'limits': {'max_friends': MAX_FRIENDS,
+                   'requests_per_hour': FRIEND_REQUESTS_PER_HOUR},
+        'counts': {'friends': len(friends), 'incoming': len(incoming_rows)},
+    }
+
+
+def _payload_bool(raw, default=False):
+    """把 JSON/表单里的"布尔"归一化。
+
+    前端可能发 `true` / `"true"` / `1` / `"1"`（`request.form` 一路全是字符串）。
+    分不出真假时给 `default`：`respond` 的 `accept` 缺省必须落成 **False**——
+    把拿不准的输入当"接受"是最坏的方向（一个畸形请求就能让别人白加你好友）。
+    """
+    if raw is None:
+        return default
+    if isinstance(raw, str):
+        text = raw.strip().lower()
+        if text in ('1', 'true', 'yes', 'on'):
+            return True
+        if text in ('0', 'false', 'no', 'off', ''):
+            return False
+        return default
+    return bool(raw)
+
+
+def _friends_require_login():
+    """统一的登录门禁：未登录返回 `(None, 401 响应)`，已登录返回 `(uid, None)`。
+
+    ⚠️ 返回体逐字是 `{'error': '未登录'}`（契约冻结）—— 不要顺手加 `success`
+    或换文案，前端与另一个智能体的测试都按这个键取值。
+    """
+    uid = session.get('user_id')
+    if not uid:
+        return None, (jsonify({'error': '未登录'}), 401)
+    return uid, None
+
+
+@app.route('/api/friends', methods=['GET'])
+def api_friends_list():
+    """我的好友 + 收到的申请 + 发出的申请 + 上限 + 计数。"""
+    uid, err = _friends_require_login()
+    if err:
+        return err
+    return jsonify(build_friends_payload(uid))
+
+
+@app.route('/api/friends/request', methods=['POST'])
+def api_friend_request():
+    """发起好友申请。
+
+    401 未登录 ｜ 404 账号不存在 ｜ 400 自己加自己 / 好友已满 ｜ 429 申请太频繁
+    200 `{'status': ...}`（status 的取值由 DAO 给，接口不重写这套判断）
+    """
+    uid, err = _friends_require_login()
+    if err:
+        return err
+
+    payload = _get_json_payload() or {}
+    target, err = _target_user(payload)
+    if err:
+        return err
+
+    # 「不能加自己」在 DAO 里也有（`send_friend_request` 返回 'self'），
+    # 但这里先回 400：契约里 `status='self'` 也要能拿到，两条路都留着 ——
+    # 走 400 是给"接口调用方"的明确信号，走 'self' 是给 DAO 直调方的。
+    if str(target['id']) == str(uid):
+        return jsonify({'status': 'self'}), 400
+
+    # 对方关掉了"允许他人加我好友"（设置里的开关，默认开）→ 明确拒绝。
+    # ⚠️ 必须显式判 `== 0`：`get_user_profile_extra` 是**带兜底的取数函数**
+    #    （没记录时给默认值 1），拿"取不到"当"关着"正是本项目踩过的
+    #    "会兜底的取数函数当门禁"那一类。
+    target_extra = db.get_user_profile_extra(target['id']) or {}
+    target_open = target_extra.get('friend_requests_open')
+    if int(target_open if target_open is not None else 1) == 0:
+        return jsonify({'status': 'error', 'error': '对方暂时不接受好友申请'}), 403
+
+    # 好友数上限：**用 `count_friends` 判，不数 `friends` 列表长度** ——
+    # `GET /api/friends` 那一份是"组装+排序"后的结果，拿它当判据等于
+    # "取数函数当门禁"（本项目栽过：会兜底的取数函数恒非 0 → 门禁失效）。
+    if int(db.count_friends(uid) or 0) >= MAX_FRIENDS:
+        return jsonify({'error': '好友数量已达上限'}), 400
+
+    # 限流：只看**我发出的 pending**（被接受/拉黑的不再占配额）。
+    since = int(time.time()) - 3600
+    if int(db.count_requests_since(uid, since) or 0) >= FRIEND_REQUESTS_PER_HOUR:
+        return jsonify({'error': '申请太频繁，请稍后再试'}), 429
+
+    status = db.send_friend_request(uid, target['id'])
+    # ⚠️ **写库成功之后必须推事件** —— 否则对方在线也看不到任何提示，
+    #    只能等他自己去翻好友面板（前端那个 `friend_request` 处理函数会是死代码）。
+    if status == 'sent':
+        username, avatar = _my_friend_identity(uid)
+        _push_friend_event('push_friend_request', target['id'], uid, username, avatar)
+    if status == 'blocked':
+        # 拉黑关系：`status` 只说"不成"，前端 `apiReason()` 只认 error/message ——
+        # 不带原因的话页面只能弹一句通用文案（实测：body 只有 status → 兜不到原因）。
+        # ⚠️ 文案**不区分方向**（谁拉黑了谁）：服务端有意不告诉客户端这件事。
+        return jsonify({'status': status, 'error': '暂时无法向该玩家发送好友申请'})
+    return jsonify({'status': status})
+
+
+@app.route('/api/friends/respond', methods=['POST'])
+def api_friend_respond():
+    """回应好友申请。
+
+    `accept=false`（拒绝）= 删掉那条 `对方 → 我` 的 pending，**不是**拉黑：
+    拒绝之后对方还能再申请（拉黑是另一个接口的事）。
+    重复接受是**幂等**的（DAO 认已存在的 accepted 边）。
+    """
+    uid, err = _friends_require_login()
+    if err:
+        return err
+
+    payload = _get_json_payload() or {}
+    target, err = _target_user(payload)
+    if err:
+        return err
+
+    if _payload_bool(payload.get('accept'), default=False):
+        if not db.accept_friend_request(uid, target['id']):
+            return jsonify({'status': 'error'})
+        # 同上：接受之后要主动告诉**发起人**（他可能正开着页面等）。
+        username, avatar = _my_friend_identity(uid)
+        _push_friend_event('push_friend_accepted', target['id'], uid, username, avatar)
+        return jsonify({'status': 'accepted'})
+    # 拒绝 = 删掉待处理的申请（两向都清，避免"我拒绝了他、他那边的 pending 还在"）。
+    # ⚠️ 不能复用 `remove_friend`：那个只删 **accepted** 边，对 pending 是空操作 ——
+    # 用了就会"接口回 declined、申请还在"，对方列表里那条申请永远不会消失。
+    if not db.remove_friend_request(uid, target['id']):
+        return jsonify({'status': 'error'})
+    return jsonify({'status': 'declined'})
+
+
+@app.route('/api/friends/remove', methods=['POST'])
+def api_friend_remove():
+    """删除好友（双向）。幂等：本来就不是好友也返回 ok。"""
+    uid, err = _friends_require_login()
+    if err:
+        return err
+
+    payload = _get_json_payload() or {}
+    target, err = _target_user(payload)
+    if err:
+        return err
+
+    if str(target['id']) == str(uid):
+        return jsonify({'status': 'error', 'error': '不能删除自己'}), 400
+    if not db.remove_friend(uid, target['id']):
+        return jsonify({'status': 'error'})
+    return jsonify({'status': 'ok'})
+
+
+@app.route('/api/friends/block', methods=['POST'])
+def api_friend_block():
+    """拉黑：两向 pending/accepted 清掉，写一条 `我 → 他` 的 blocked。幂等。"""
+    uid, err = _friends_require_login()
+    if err:
+        return err
+
+    payload = _get_json_payload() or {}
+    target, err = _target_user(payload)
+    if err:
+        return err
+
+    if str(target['id']) == str(uid):
+        return jsonify({'status': 'error', 'error': '不能拉黑自己'}), 400
+    if not db.block_user(uid, target['id']):
+        return jsonify({'status': 'error'})
+    return jsonify({'status': 'ok'})
+
+
+@app.route('/api/friends/invite', methods=['POST'])
+def api_friend_invite():
+    """邀请在线好友开一局自定义房：建房 + 把房间号推给对方。
+
+    ⚠️ 这里**不做"是不是好友"的校验**是有意的：邀请是对局行为、不是社交关系
+    变更，而且自定义房本来就能用房间号邀请任何在线的人。加上好友校验会让
+    "刚删了好友还想再拉一把"变成死路，收益也不存在。
+    """
+    uid, err = _friends_require_login()
+    if err:
+        return err
+
+    payload = _get_json_payload() or {}
+    target, err = _target_user(payload)
+    if err:
+        return err
+
+    other = str(target['id'])
+    if other == str(uid):
+        return jsonify({'status': 'error', 'error': '不能邀请自己'}), 400
+
+    # 先判在线，再建房 —— 顺序不能反：反了会给离线好友房间里留一堆僵尸房。
+    if not _friend_invite_targets(other):
+        return jsonify({'status': 'error', 'error': '对方不在线'})
+
+    room_id = _friend_new_room()
+    if not room_id:
+        return jsonify({'status': 'error', 'error': '建房失败，请稍后再试'})
+
+    username, _avatar = _my_friend_identity(uid)
+    # ⚠️ **推送只有一份实现**：走 `server.push_friend_invite`（那里读 `server.socketio`
+    #    并逐 sid 发，多标签页都收得到）。本文件不再自己 emit —— 两份实现必然漂移。
+    if not _push_friend_event('push_friend_invite', other, room_id, uid, username):
+        return jsonify({'status': 'error', 'error': '推送失败，请稍后再试'})
+
+    return jsonify({'status': 'ok', 'room_id': room_id})
 
 
 

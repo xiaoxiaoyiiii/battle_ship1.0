@@ -450,24 +450,28 @@ def test_rank_indexes_exist():
 
 
 # ===========================================================================
-# 4. profile_spec：10 字段契约 + 段位解锁外观
+# 4. profile_spec：11 字段契约 + 段位解锁外观
 # ===========================================================================
-def test_writable_fields_is_ten_now():
-    """⚠️ 段位批把保存载荷从 9 个字段加到 **10** 个（多了 `show_rank`）。
+def test_writable_fields_is_eleven_now():
+    """⚠️ 段位批把保存载荷从 9 个字段加到 10 个（多了 `show_rank`）；
+    好友批加到 **11** 个（多了 `friend_requests_open` —— 决策④的"设置里可关"）。
 
     这条是给未来的自己看的：任何"少发一个字段"的前端都会整次保存被拒。
     """
-    assert len(profile_spec.WRITABLE_FIELDS) == 10
+    assert len(profile_spec.WRITABLE_FIELDS) == 11
     assert 'show_rank' in profile_spec.WRITABLE_FIELDS
+    assert 'friend_requests_open' in profile_spec.WRITABLE_FIELDS
     assert profile_spec._FLAG_KEYS == ('show_stats', 'show_fav_cards', 'show_history',
-                                       'show_guestbook', 'show_rank')
+                                       'show_guestbook', 'show_rank',
+                                       'friend_requests_open')
     assert profile_spec._FLAG_LABELS['show_rank'] == '段位公开'
+    assert profile_spec._FLAG_LABELS['friend_requests_open'] == '允许他人加我好友'
 
 
 def _full_payload(**over):
     body = {'title_id': 'rookie', 'tags': [], 'status_text': '', 'frame_id': 'none',
             'card_bg_id': 'deep', 'show_stats': 1, 'show_fav_cards': 1,
-            'show_history': 0, 'show_guestbook': 1, 'show_rank': 1}
+            'show_history': 0, 'show_guestbook': 1, 'show_rank': 1, 'friend_requests_open': 1}
     body.update(over)
     return body
 

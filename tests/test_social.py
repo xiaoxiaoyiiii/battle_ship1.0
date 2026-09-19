@@ -633,7 +633,7 @@ def _set_guestbook(client, on):
     resp = client.post('/api/profile/card', json={
         'title_id': '', 'tags': [], 'status_text': '', 'frame_id': 'none',
         'card_bg_id': 'deep', 'show_stats': 1, 'show_fav_cards': 1,
-        'show_history': 0, 'show_guestbook': 1 if on else 0, 'show_rank': 1,
+        'show_history': 0, 'show_guestbook': 1 if on else 0, 'show_rank': 1, 'friend_requests_open': 1,
     })
     assert resp.status_code == 200, _json(resp)
     return resp
@@ -723,7 +723,7 @@ def test_card_save_requires_show_guestbook_and_validates_its_value(make_user):
     client = _client(me, me_name)
     body = {'title_id': '', 'tags': [], 'status_text': '', 'frame_id': 'none',
             'card_bg_id': 'deep', 'show_stats': 1, 'show_fav_cards': 1, 'show_history': 0,
-            'show_rank': 1}
+            'show_rank': 1, 'friend_requests_open': 1}
 
     resp = client.post('/api/profile/card', json=body)
     assert resp.status_code == 400

@@ -71,7 +71,7 @@ def _payload(**over):
     """
     body = {'title_id': 'rookie', 'tags': [], 'status_text': '', 'frame_id': 'none',
             'card_bg_id': 'deep', 'show_stats': 1, 'show_fav_cards': 1,
-            'show_history': 0, 'show_guestbook': 1, 'show_rank': 1}
+            'show_history': 0, 'show_guestbook': 1, 'show_rank': 1, 'friend_requests_open': 1}
     body.update(over)
     return body
 

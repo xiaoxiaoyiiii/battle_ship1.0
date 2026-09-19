@@ -3,7 +3,7 @@
 > 面向 AI 代理的索引。**先读这里，别一次读完 `server.py`（8500+ 行）/ `static/game.js`（9000+ 行）/ `static/style.css`（4800+ 行）—— 一律先 grep 定位再分段读。**
 > ⚠️ 行号每次提交都会漂移，**本文件里任何行号都只当线索，以 grep 结果为准**。
 > ⚠️ **本文件每次对话都会整份注入**，新增内容请控制在几十字级别 —— 长记录写进 `docs/`。
-> 最后更新：2026-09-18（大厅批 + 段位外观/帮助页）。
+> 最后更新：2026-09-19（好友批 + 大厅批）。
 
 ---
 
@@ -195,6 +195,12 @@ phase:                        preparation → battle → end
     `/api/online_count` 与大厅统一读 `lobby_manager.presence`。
 18. **删/改 CSS 前先 grep 类名**：远程一次重构把帮助页整节样式删掉，而 `index.html`/`game.js`/检查工具
     都还在用那些类 → **功能还在、样式没了**，且检查工具只验溢出，照样全绿。合并时已恢复（第 30 节）。
+19. **`python server.py` 启动时模块名是 `__main__`** → **任何模块都不许在运行期 `import server`**：
+    那会把整个 server.py 再执行一遍成**另一个模块对象**，那份 `socketio` 发不出事件（**静默丢弃**，
+    接口照样回 ok）、那份 `room_manager` 建的房在真进程里不存在；而生产是 `run_prod.py` 起的、
+    模块名正常 → **本地坏、线上好**。跨模块能力一律由 server.py 在 import 期**注入模块对象**、
+    调用时按名字现取（注入**函数对象**会把测试里所有 monkeypatch 静默架空）。
+    ⚠️ 这类 bug **pytest 永远测不到**（pytest 里 server 就叫 `server`、是同一份），守卫只能是**源码级**断言。
 
 ---
 
@@ -233,6 +239,7 @@ phase:                        preparation → battle → end
 `docs/WALLPAPER_ENGINE.md`（动态壁纸）｜ `docs/STATS_AND_AI_RANKING_FIXES.md`（战绩弹窗/人机统计）｜
 `docs/MOBILE_ADAPTIVE_LAYOUT.md`（移动端布局）｜ `docs/UI_REVIEW_FIXES.md`（UI 审查）｜
 `docs/LOBBY_2026_09_18.md`（大厅系统：契约 + 4 个实测问题）｜ `README.md`（用户向说明）
+`docs/FRIENDS_2026_09_18.md`（好友功能：产品判断 / 接线陷阱 / 契约）｜ `README.md`（用户向说明）
 
 > ⚠️ **部署前确认环境变量**：代码新增 `os.environ.get('XXX')` 时，服务器 systemd 必须同步配置 ——
 > 漏配会导致"服务能起来但带着错误默认值运行"（曾因漏配 `CORS_ORIGINS` 让线上所有操作卡十几秒）。

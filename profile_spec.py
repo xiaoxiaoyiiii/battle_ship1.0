@@ -387,7 +387,7 @@ def catalog(stats):
 # ---------------------------------------------------------------------------
 WRITABLE_FIELDS = ('title_id', 'tags', 'status_text', 'frame_id', 'card_bg_id',
                    'show_stats', 'show_fav_cards', 'show_history', 'show_guestbook',
-                   'show_rank')
+                   'show_rank', 'friend_requests_open')
 
 # ⚠️ `show_guestbook`（留言板公开）是第 3 批加的**第四个展示开关**。
 # 它走的是与另外三个完全相同的通道（`POST /api/profile/card`，9 个字段全发），
@@ -397,7 +397,12 @@ WRITABLE_FIELDS = ('title_id', 'tags', 'status_text', 'frame_id', 'card_bg_id',
 #
 # `show_rank`（段位是否公开）是段位批加的**第五个**，走完全相同的路：
 # 载荷 9 → 10 字段。同样默认 1 = 公开。
-_FLAG_KEYS = ('show_stats', 'show_fav_cards', 'show_history', 'show_guestbook', 'show_rank')
+# `friend_requests_open`（是否允许别人加我好友）是好友批加的，**复用同一套开关通道**，
+# 但语义上它**不是展示开关**（管的是社交权限，不进 `public_stats`）。
+# 之所以不另开一套：这五个 `_to_flag` 归一化 + "缺字段一律拒绝"的规矩已经跑熟三批，
+# 再抄一份只会多一处会漂移的实现。
+_FLAG_KEYS = ('show_stats', 'show_fav_cards', 'show_history', 'show_guestbook', 'show_rank',
+              'friend_requests_open')
 
 # 展示开关的文案（错误提示里用中文键名，别把 snake_case 甩给玩家）
 _FLAG_LABELS = {
@@ -406,6 +411,7 @@ _FLAG_LABELS = {
     'show_history': '对局历史公开',
     'show_guestbook': '留言板公开',
     'show_rank': '段位公开',
+    'friend_requests_open': '允许他人加我好友',
 }
 
 
@@ -451,8 +457,9 @@ def validate_payload(payload, stats):
     | `frame_id` / `card_bg_id` | 池内且已解锁 | 拒绝 |
     | `show_*` | 0 / 1 | 拒绝 |
 
-    ⚠️ 10 个字段**必须全部出现**在请求体里（第 3 批加到 9 个，
-    段位批加到 10 个 —— 多了 `show_rank`）。缺字段一律拒绝并点名，
+    ⚠️ 11 个字段**必须全部出现**在请求体里（第 3 批加到 9 个，
+    段位批加到 10 个 —— 多了 `show_rank`；好友批加到 11 个 —— 多了
+    `friend_requests_open`）。缺字段一律拒绝并点名，
     而不是"保持原值"—— 后者会变成"保存了但没生效"这种最难查的静默失败。
     """
     if not isinstance(payload, dict):

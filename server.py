@@ -15,6 +15,7 @@ import threading
 import time
 import uuid
 import secrets
+import sys
 from typing import Any
 import logging
 from flask import render_template, request, session, jsonify, has_request_context
@@ -26,6 +27,7 @@ import leveling  # 等级曲线 / 每局经验 / 升级动画分段（唯一一�
 import profile_spec  # 特权常量（level_101 等）
 import quick_chat  # 局内快捷语表 + 频率规则（纯数据/纯函数，前端从接口取同一份）
 import ranks  # 段位规则 / 每局加减分 / 大舰长晋升（唯一一份，结算与接口共用）
+import presence  # 在线 / 对局中状态（纯内存零依赖：api.py 也要读它，见 presence.py 头部说明）
 from api import app
 from file import read_json
 
@@ -267,13 +269,28 @@ class EffectFlags:
     no_draw: bool = False
     forced_kill: int = 0  # 强制击杀次数
     vampire: bool = False  # 饮血效果
-    last_stand: bool = False  # 绝处逢生效果
+    # 绝处逢生【拆分两个标记，生命周期不同】—— 此前合成一个，于是"击杀即胜"
+    # 跟着回合清理一起过期，只在发动当回合有效（作者实测反馈）。
+    #   last_stand     ：发动回合内自己的其余魔法卡全部无效 → 只持续本回合
+    #   last_stand_win ：此后任意回合击杀对方战舰即直接获胜 → 活到对局结束
+    last_stand: bool = False  # 绝处逢生：发动回合的锁卡
+    last_stand_win: bool = False  # 绝处逢生：本局后续击杀即胜
     double_attacks: bool = False
     battle_spirit: bool = False
     # 五险一金：出牌时只「挂上保险」，等本回合攻击次数第一次归零、
     # 且那时确实没让对方减船，才真正 +3（见 _maybe_trigger_wuxian_yijin）。
     # 不放进 permanent_flags，所以回合切换会被清掉 —— 没触发就作废，符合卡面「这一回合」。
     wuxian: bool = False
+
+
+# EffectFlags 里允许下发给前端的标记名（`_build_room_sync` 的 active_effects）。
+# ⚠️ 只登记**玩家身上**的效果标记。房间级效果住在 room.game_effects，语义完全不同，
+# 混进这份名单会出事：last_stand_cells / last_stand_owner 都以 'last_stand' 开头，
+# 前端按前缀匹配就会把"候选格还在场"误判成"锁卡生效中"。
+_PUBLIC_EFFECT_FLAGS = frozenset(
+    name for name, value in vars(EffectFlags).items()
+    if not name.startswith('_') and isinstance(value, (bool, int))
+)
 
 
 # ---------------------------------------------------------------------------
@@ -290,10 +307,20 @@ class EffectFlags:
 #   火力全开（double_attacks）本回合      → 换回合即清
 #   绝处逢生 "在绝处逢生生效的【回合】"    → 本回合，换回合即清
 #
+# ⚠️ 上面这句只对绝处逢生的【锁卡】部分成立。它还有后半截
+#    "只要自己击杀了对方的任何一艘船，自己直接获胜" —— 作者明确裁定这部分
+#    **不随回合过期，活到对局结束**，所以拆成了独立标记 last_stand_win。
+#    两个标记的字段含义差异见 EffectFlags 里的注释，改动时必须一起看。
+#
 # 下面这些写的是"接下来…"，没有回合限定，但按作者裁定统一为【本大回合】：
 #   百亿补贴 / 饮血 / 八方来财 —— 跨小回合保留，大回合结束时清。
 #   （此前它们在小回合切换就被清掉，于是对手回合里攒到的加成还没轮到自己
 #     的回合就没了，玩家永远拿不到。）
+#
+# ⚠️ 这份名单是【唯一实现】。end_turn 里曾经另有一份写死的 permanent_flags
+#    内联列表，两份一漂移就出事：绝处逢生的"击杀即胜"新标记加进来时只改了
+#    注释、没加进任何一份名单，于是换小回合就被清掉（作者实测反馈）。改动时
+#    只改这里，别在调用点再抄一份。
 FLAGS_KEEP_ACROSS_TURN = frozenset({
     'no_draw',          # 无中生有：接下来这一个大回合内
     'prediction',       # 神机妙算：到对方结束阶段结束之后
@@ -302,11 +329,19 @@ FLAGS_KEEP_ACROSS_TURN = frozenset({
     'subsidy_bonus',    # 百亿补贴已累计的额外攻击次数，与上面同生命周期
     'vampire',          # 饮血：接下来自己的攻击
     'treasure_hunter',  # 八方来财：接下来场上战舰数主动变化
+    # 绝处逢生的"击杀即胜"：活到对局结束（大回合白名单为空集，见下）
+    'last_stand_win',
 })
 
-# 大回合结束（重新猜拳）时的白名单：按作者裁定，以上都只持续本大回合，全部清掉。
-# 保留常量名以便日后有真正的"永久"效果时在此登记。
-FLAGS_KEEP_ACROSS_ROUND = frozenset()
+# 大回合结束（重新猜拳）时的白名单。
+# ⚠️ 这份名单同样是【唯一实现】—— end_turn 的大回合分支直接调它，
+#    别在那里另抄一份（小回合那边就抄过一份，见 FLAGS_KEEP_ACROSS_TURN 的说明）。
+#
+# 按作者裁定，百亿补贴等"接下来…"的效果都只持续本大回合，全部清掉；
+# 唯一要跨大回合活下来的是绝处逢生的"击杀即胜"（活到对局结束）。
+FLAGS_KEEP_ACROSS_ROUND = frozenset({
+    'last_stand_win',
+})
 
 
 def _prune_effect_flags(room, keep):
@@ -1153,6 +1188,240 @@ def _ensure_lobby_ticker():
     socketio.start_background_task(_lobby_ticker_loop)
 
 
+# ===========================================================================
+# 好友功能（2026-09-18 好友批）· 实时侧：在线状态 / 事件推送 / 结算钩子
+# ---------------------------------------------------------------------------
+# 与 `api.py`（HTTP 侧好友接口）冻结的契约：
+#   · 状态全在 `presence.py`（纯内存零依赖 —— api.py 要读它，而 api.py 被本文件
+#     `from api import app` 反向依赖，写在本文件里就是循环导入）；
+#   · 服务端→客户端的事件只有 4 个：`friend_request` / `friend_accepted` /
+#     `friend_invite` / `recent_opponent`，名字与字段冻结，前端照这份写；
+#   · `api.py` 只通过下面 3 个 `push_*` 推事件，**不要在 api.py 里直接 emit**
+#     （那边是 HTTP 请求上下文，没有 `request.sid`，`flask_socketio.emit` 会乱发）。
+#   · 全部只在**对方在线**时发；`friend_request` / `friend_invite` 要按
+#     `presence.sids_of(uid)` 发给他的**每一张标签页**。
+# ===========================================================================
+
+# 好友关系取值（`db.get_friend_relation` 的返回值 × `recent_opponent.relation`）。
+# ⚠️ 只有这一份：`_friend_relation_safe` 的兜底、`recent_opponent` 的下发都用它。
+#    `blocked_by_me` / `blocked_me` 前端按"不能加好友"渲染（契约里没列，但 db 会返回；
+#    多一种取值不会让前端崩，少一种才会 —— 未知取值一律降级成 'none'）。
+FRIEND_RELATIONS = (
+    'none', 'self', 'friends', 'pending_out', 'pending_in',
+    'blocked_by_me', 'blocked_me',
+)
+
+
+def _live_uids(room) -> list:
+    """房间里**真人登录账号**的 user_id 列表（AI 与游客跳过，重复的只留一个）。
+
+    `room.players` 的 key 有两套约定（自定义/人机房 = user_id，匹配房 = socket sid），
+    所以**只认 `Player.user_id`** —— 拿 key 当 uid 会把事件发给不存在的账号
+    （CLAUDE.md 第 6 节，`record_card_use` 的注释里也栽过同一形状）。
+    """
+    out = []
+    try:
+        for player in room.players.values():
+            uid = getattr(player, 'user_id', None)
+            # AI 的 user_id 是 None；游客的 user_id == 入座时的 sid，这里也没法区分，
+            # 所以判据只要求"有非空 user_id"，更严的口径在 `_recent_opponent_payloads`
+            # （双方都得有 uid 才发，游客对局自然被跳过）。
+            if uid and uid not in out:
+                out.append(uid)
+    except Exception:
+        return out
+    return out
+
+
+def _bind_presence_game(room) -> None:
+    """有人**进入对局**时把房间里的真人标成"对局中"（幂等，重复调没副作用）。
+
+    挂点（**"真人坐进一局"的全部入口**，之后再也没有人能进 `room.players`）：
+      · `handle_create_room`（建房自己入座）
+      · `handle_join_room`（加入别人的房 / 人机房入座）
+      · `handle_find_match`（配对成功后）
+      · `handle_create_ai_room`（人机房建房）
+      · `handle_rejoin_room`（掉线重连回一局没结束的对局，把断线时摘掉的标回来）
+    为什么是这个粒度而不是"开局 / 放置完成 / 进入 attacking"等更多点：那些点更多、
+    更分散，而且**同一个状态会被写更多次**（本项目"同一个判断有两份实现就一定会漂移"）。
+    入座是关键事实，后面阶段怎么变都不改变"他在局里"。
+    """
+    for uid in _live_uids(room):
+        try:
+            presence.set_in_game(uid, True)
+        except Exception:
+            continue
+
+
+def _release_presence_game(room) -> None:
+    """对局**结束 / 人走了**时把房间里的人标成"不在局中"（幂等）。
+
+    两个出口：`_finalize_match`（唯一结算收口，含人机那条早退路径）与
+    `handle_disconnect`（这个连接离开座位）。掉线判胜 / 房间回收那几条路不用再挂 ——
+    人已经在 disconnect 那一步摘过了。
+    ⚠️ 别在这里顺手 `return` 掉别的收尾（本项目同形状栽过三次）。
+    """
+    for uid in _live_uids(room):
+        try:
+            presence.set_in_game(uid, False)
+        except Exception:
+            continue
+
+
+def _friend_relation_safe(from_uid, to_uid) -> str:
+    """取 `from_uid` → `to_uid` 的好友关系，**绝不外抛**。
+
+    `db.get_friend_relation` 由好友批的另一个智能体在 `db.py` 里实现，本文件可能
+    先落地（或那个 DAO 临时出错）——所以这里走 `getattr` 防御式调用，取不到就
+    一律当 `'none'`。⚠️ 结算绝不能因为缺一个 DAO 就崩（`_finalize_match` 的
+    第 1 批规矩就是"统计/播报失败不许把结算搞崩"）。
+    """
+    if not from_uid or not to_uid:
+        return 'none'
+    if str(from_uid) == str(to_uid):
+        return 'self'
+    try:
+        getter = getattr(db, 'get_friend_relation', None)
+        if not callable(getter):
+            return 'none'
+        value = getter(from_uid, to_uid)
+    except Exception:
+        return 'none'
+    if not isinstance(value, str):
+        return 'none'
+    return value if value in FRIEND_RELATIONS else 'none'
+
+
+def _opponent_display_name(player, uid) -> str:
+    """对手在结算提示里的显示名：优先 `Player.name`（入座时的用户名），兜底查库。"""
+    name = getattr(player, 'name', None)
+    if name:
+        return str(name)
+    try:
+        row = db.get_user(uid=uid) or {}
+        return str(row.get('username') or uid)
+    except Exception:
+        return str(uid)
+
+
+def _recent_opponent_payloads(winner, loser, winner_user_id, loser_user_id):
+    """组装结算时要发的 `recent_opponent`：`[(uid, payload), ...]`，**一人一条**。
+
+    只对**双方都是真人登录账号**的对局发（人机 / 游客局返回空 —— 跟"打电脑不记
+    统计、不发徽章"同一口径）。`relation` 是"我 → 对手"的关系，两边各算各的，
+    所以不能把一份 payload 发两次。
+
+    ⚠️⚠️ 判据必须是"这个 uid **真的查得到账号**"，**不是"非空"**：
+    自定义房里游客的 `Player.user_id` 是**入座时的 socket sid**
+    （`handle_create_room` / `handle_join_room` 都写 `session.get('user_id', request.sid)`），
+    非空、但根本不是账号。只判非空的话，登录玩家打完一局会在结算屏上看到一个
+    **可点的「加好友」**，点下去必然 404「账号不存在」（端到端实测复现过：
+    `a_recent` 里那个 `user_id` 就是 sid、`username` 是入座名"路边游客"）。
+    匹配房没这个问题（`Player.user_id = session.get('user_id')`，游客恒 None），
+    所以缺陷只在"登录玩家开自定义房 + 没登录的人点邀请链接进来"这条路上。
+    """
+    if not winner_user_id or not loser_user_id:
+        return []
+    try:
+        if not (db.get_user(uid=winner_user_id) and db.get_user(uid=loser_user_id)):
+            return []
+    except Exception as e:                                          # noqa: BLE001
+        # 播报失败不许把结算搞崩（`_finalize_match` 的第 1 批规矩），静默不发即可
+        print(f'[friends] 结算播报查账号失败，本次不发 recent_opponent: {e}')
+        return []
+    try:
+        w_uid, l_uid = str(winner_user_id), str(loser_user_id)
+        return [
+            (w_uid, {
+                'user_id': l_uid,
+                'username': _opponent_display_name(loser, l_uid),
+                'avatar': getattr(loser, 'avatar', '') or '',
+                'relation': _friend_relation_safe(w_uid, l_uid),
+            }),
+            (l_uid, {
+                'user_id': w_uid,
+                'username': _opponent_display_name(winner, w_uid),
+                'avatar': getattr(winner, 'avatar', '') or '',
+                'relation': _friend_relation_safe(l_uid, w_uid),
+            }),
+        ]
+    except Exception:
+        return []
+
+
+def _push_friend_event(to_uid, event_name: str, payload: dict) -> bool:
+    """把一条好友事件发给 `to_uid` 的**每一张在线标签页**；返回"有没有送出去"。
+
+    三道门槛，顺序不能换：
+      ① `to_uid` 非空 ② `presence.is_online(to_uid)`（**离线一律不发**，返回 False）
+      ③ 逐 sid 发（`presence.sids_of`）。
+    ⚠️ 用 `socketio.emit(..., room=sid)` 而**不是** `flask_socketio.emit`：后者要
+    `request.sid` / 请求上下文，而这几个 push 函数是给 `api.py` 的 HTTP 请求
+    调用的（以及无请求上下文的单测直调），`room=<sid>` 在两种上下文里都成立。
+    """
+    if not to_uid:
+        return False
+    try:
+        if not presence.is_online(to_uid):
+            return False
+        sids = presence.sids_of(to_uid)
+    except Exception:
+        return False
+    if not sids:
+        return False
+    delivered = False
+    for sid in sids:
+        if not sid:
+            continue
+        try:
+            socketio.emit(event_name, payload, room=sid)
+            delivered = True
+        except Exception:
+            # 单张标签页发失败不影响其余的（也不许把调用方 —— 常常是一个 HTTP 请求
+            # 或者一次结算 —— 搞崩）
+            continue
+    return delivered
+
+
+def push_friend_request(to_uid, from_uid, from_username, from_avatar) -> bool:
+    """给在线的 `to_uid` 推一条好友申请（`api.py` 的申请接口调它）。
+
+    payload 字段冻结：`from_user_id` / `from_username` / `from_avatar`。
+    对方不在线 → 返回 False（**不发、不抛**；申请本身已经落库，等他上线自己看列表）。
+    """
+    return _push_friend_event(to_uid, 'friend_request', {
+        'from_user_id': from_uid,
+        'from_username': from_username,
+        'from_avatar': from_avatar,
+    })
+
+
+def push_friend_accepted(to_uid, user_id, username, avatar) -> bool:
+    """给在线的 `to_uid` 推"你发出的申请被接受了"（`api.py` 的同意接口调它）。
+
+    这里的 `user_id` / `username` / `avatar` 是**同意方**（= 新好友）的资料。
+    payload 字段冻结：`user_id` / `username` / `avatar`。
+    """
+    return _push_friend_event(to_uid, 'friend_accepted', {
+        'user_id': user_id,
+        'username': username,
+        'avatar': avatar,
+    })
+
+
+def push_friend_invite(to_uid, room_id, from_uid, from_username) -> bool:
+    """好友邀你打一局（`api.py` 的邀请接口调它）。
+
+    payload 字段冻结：`room_id` / `from_user_id` / `from_username`。
+    对方不在线 → 返回 False。⚠️ 本函数**不依赖 request 上下文**（邀请是 HTTP 接口
+    发起的），所以绝不能用 `flask_socketio.emit` 那种要 `request.sid` 的写法。
+    """
+    return _push_friend_event(to_uid, 'friend_invite', {
+        'room_id': room_id,
+        'from_user_id': from_uid,
+        'from_username': from_username,
+    })
+
 
 def _identity_check(room, claimed_player_id, server_pid, sid):
     """纯身份校验（无副作用，便于单测）。房间 key 存在两种约定，两种都认：
@@ -1545,6 +1814,10 @@ def handle_create_ai_room(data):
     
     # 让玩家加入房间
     join_room(room_id)
+
+    # 好友功能：人机房同样算"对局中"（真人那一侧的标记由 join_room 那一步补上；
+    # 这里挂了也不会有副作用 —— AI 的 user_id 是 None，`_live_uids` 会跳过）。
+    _bind_presence_game(room_manager.get_room(room_id))
     
     # 返回房间信息
     return {
@@ -1798,6 +2071,10 @@ def handle_create_room(data):
         })
     # 大厅批：建房这条路也带名字（游客从大厅直接建房时名字只在这里出现）。
     lobby_manager.update_identity(request.sid, player_name, session.get('user_id'))
+    # 好友功能：进房即"对局中"（好友申请要提示"对局中"）。挂在 return 之前的收尾位上，
+    # 不在任何分支里 —— 分支里随手 return 会静默吞掉这类收尾（本项目栽过三次）。
+    if room:
+        _bind_presence_game(room)
     return {'status': 'success', 'room_id': room_id}
 
 @socketio.on('join_room')
@@ -1861,6 +2138,8 @@ def handle_join_room(data):
 
     # 大厅批：房间列表变了（有人入座 / 房间已满）→ 推一次状态。
     _lobby_broadcast_soon()
+    # 好友功能：进房即"对局中"。挂在 return 前的收尾位上（不在任何分支里）。
+    _bind_presence_game(room)
 
     # 返回响应给客户端，包含player_id
     return {'status': 'success', 'player_id': player_id}
@@ -1875,6 +2154,25 @@ def handle_connect():
     # 游客的名字要等首页输入后随 find_match / lobby_subscribe 送上来。
     lobby_manager.add_connection(sid, session.get('username'), session.get('user_id'))
     print(f"Client connected: {sid}, online users: {lobby_manager.online_count()}")
+
+    # 好友功能（2026-09-18）：在**上面那张大厅在线表之外**，再记一份"按 uid 的在线/对局中"。
+    # ⚠️ 这是**合并期留下的已知重复**：大厅批（2026-09-18）把旧的裸 sid 集合 `online_users`
+    #    整个删掉、统一读 `lobby_manager.presence`（见 CLAUDE.md 坑 #17：在线表只能有一份）；
+    #    而好友批独立地开了 `presence.py` 记 uid→sids + in_game（好友面板要显示"对局中"，
+    #    大厅那张表只有 sid/名字、没有这个维度）。两批并行开发、各自解决了同一半问题。
+    #    现状：**两张表并存**，`lobby_manager.presence` 管大厅展示与在线人数，
+    #    `presence.py` 管好友侧（/api/friends 的 online / in_game）。口径不同：
+    #    同一 uid 两个标签页在大厅表里是 2 个 sid、在 presence 里是 1 个人 2 条连接。
+    #    → 以后要收口成一份时，**从这里改**（别只改一半，那正是坑 #1 的形状）。
+    # 放在最前面（早于下面那些 try/except 与 `resume_game` 分支）：连上就算在线，
+    # 任何后续分支都**不许**把它漏掉（分支里随手 return 会静默吞掉收尾，栽过三次）。
+    try:
+        _uid = session.get('user_id')
+    except Exception:
+        _uid = None                     # 无 session（游客 / 异常）→ 不登记，照旧走 sid 那套
+    if _uid:
+        presence.mark_online(_uid)
+        presence.add_sid(_uid, sid)
 
     # 启动已结束房间的后台回收任务与回合计时看门狗（均幂等）
     try:
@@ -1928,6 +2226,22 @@ def handle_disconnect():
     lobby_manager.remove_connection(sid)
     print(f"Client disconnected: {sid}, online users: {lobby_manager.online_count()}")
 
+    # 好友功能（2026-09-18）：注销这个连接（先摘 sid 再减计数，顺序反过来会让
+    # `sids_of` 短暂留着一条已经死掉的连接）。⚠️ 必须在**下面那个 `return` 之前**
+    # 做完 —— 座位匹配成功就直接返回了，放到后面等于掉线时永远不注销。
+    # ⚠️ 这里只动纯内存，**绝不 emit**（disconnect 里同步 emit 会卡死 eventlet hub，
+    #    见下面那段注释与 CLAUDE.md 第 9 节）。
+    try:
+        _uid = session.get('user_id')
+    except Exception:
+        _uid = None
+    if _uid:
+        try:
+            presence.remove_sid(_uid, sid)
+            presence.mark_offline(_uid)
+        except Exception:
+            pass
+
     # 清理相关数据：从匹配队列移除该连接
     if room_manager.has_player_in_match_queue(sid):
         room_manager.remove_from_match_queue(sid)
@@ -1942,6 +2256,13 @@ def handle_disconnect():
     for room_id, room in room_manager.get_all_rooms().items():
         for pid, p in list(room.players.items()):
             if p.sid == sid:
+                # 人已经走了：把他的"对局中"标记摘掉（重连回来时再挂上；挂着不清会
+                # 让离线账号永远显示"对局中"）。纯内存操作，同样不是 emit。
+                try:
+                    if getattr(p, 'user_id', None):
+                        presence.set_in_game(p.user_id, False)
+                except Exception:
+                    pass
                 socketio.start_background_task(_start_disconnect_grace, room_id, player_id=pid)
                 return
 
@@ -2159,6 +2480,9 @@ def handle_find_match(data):
         join_room(room_id, p1['sid'])
         join_room(room_id, p2['sid'])
         room = room_manager.get_room(room_id)
+        # 好友功能：配对成功即"对局中"（匹配房里 key 是 sid，真人 uid 在 Player.user_id 上
+        # —— `_live_uids` 只认后者，拿 key 当 uid 会标记到不存在的账号上）。
+        _bind_presence_game(room)
         rank_fields = _rank_payload(room) if room else {}
         for me, opp in ((p1, p2), (p2, p1)):
             emit('game_state', {
@@ -3015,7 +3339,10 @@ def _finalize_match(room, winner_id, loser_id, streak_ctx=None):
             pass
 
     if not count_stats:
-        # 人机对局到此为止：只留下可回看的历史，不累计统计、不发徽章
+        # 人机对局到此为止：只留下可回看的历史，不累计统计、不发徽章。
+        # ⚠️ 但"对局中 → 不在局中"这一步**不能跟着被跳过**（人机房结束也要摘标记，
+        #    否则打完人机的账号会永远显示"对局中"）—— 所以先摘标记再 return。
+        _release_presence_game(room)
         return newly
 
     # ② 每局统计
@@ -3051,6 +3378,25 @@ def _finalize_match(room, winner_id, loser_id, streak_ctx=None):
         _dispatch_rank_events(room, rank_events)
     except Exception:
         pass
+
+    # ⑥ 好友功能：结算钩子（2026-09-18）—— 给**双方各发一条** `recent_opponent`，
+    #    让结算面板上能直接"加他好友 / 同意申请"。挂在这里的理由：`_finalize_match`
+    #    是对局结束的**唯一收口**（6 处结束路径全调它），挂在别处就会漏路径 /
+    #    出现 6 份实现（"同一个判断有两份实现就一定会漂移"）。
+    #    顺序：放在 ⑤ 之后、`return` 之前 —— 既要排在段位事件之后，也不许占用人机
+    #    那条早退路径（人机/游客本来就一条都不发，`_recent_opponent_payloads` 返回空）。
+    #    ⚠️ 整段自己吞异常：好友关系 DAO（`db.get_friend_relation`，好友批另一个
+    #    智能体实现）可能还没落地或临时出错，**绝不能因此把结算搞崩** ——
+    #    `_friend_relation_safe` 已经兜了一手，这里再加一层。
+    try:
+        for _uid, _payload in _recent_opponent_payloads(
+                winner, loser, winner_user_id, loser_user_id):
+            _push_friend_event(_uid, 'recent_opponent', _payload)
+    except Exception:
+        pass
+
+    # 结算完成 = 这局不再是"对局中"（人机那条早退路径上面已经摘过了，这里幂等）。
+    _release_presence_game(room)
 
     return newly
 
@@ -3697,10 +4043,21 @@ def handle_attack(data):
             # 饮血 / 越战越勇 / 伤害统计
             _apply_attacker_damage_buffs(room, room_id, attacker_id)
 
-            # 检查绝处逢生效果：直接获胜
-            if room.players[attacker_id].effect_flags.last_stand:
+            # 检查绝处逢生效果：击杀任何一艘战舰直接获胜。
+            #
+            # ⚠️ 两个条件都不能少：
+            # ① last_stand_win 而不是 last_stand —— 后者是"发动回合锁卡"的标记，
+            #    换小回合就被清，用它会把效果限制在发动当回合（作者实测反馈：
+            #    "只会在绝处逢生生效的那一个回合有效 到了下一个回合就没有了"）。
+            # ② 必须【真的打死了一艘船】才判胜。原先只判"造成了伤害"就获胜，
+            #    于是普通命中（甚至一次没打沉的炮）都能直接赢 —— 那不是卡面写的
+            #    "击杀了对方的任何一艘船"。船沉了才走 _apply_ship_sunk_effects，
+            #    到这一行 remaining_ships 已经扣过，所以判胜即"击杀"。
+            #    强制击杀（余音绕梁）本身就是击杀，同样算数。
+            if (room.players[attacker_id].effect_flags.last_stand_win
+                    and (ship_sunk or has_forced_kill)):
                 _finish_game_win(room, room_id, attacker_id, defender_id,
-                                 f"第{room.round}回合 · {_log_name(room, attacker_id)} 触发绝处逢生并获胜")
+                                 f"第{room.round}回合 · {_log_name(room, attacker_id)} 绝处逢生击杀敌舰获胜")
                 return {'status': 'success', 'game_over': True}
 
             # 注意：强制击杀按【攻击阶段】计数，不按击杀次数消耗，
@@ -4206,14 +4563,13 @@ def end_turn(data):
             # 统一走 _recalc：伊甸园/教皇旨意下按场地规则计算
             _recalc_attacker_attacks(room)
 
-            # 重置所有临时效果标志 - 但保留no_draw标志直到大回合结束
-            for p_id in room.players:
-                # 保留场地魔法等永久效果和no_draw标志，清除其他临时效果（prediction需存活到对方结束阶段）
-                # 余音绕梁要活到"下一个回合自己的攻击阶段"，故一并保留
-                permanent_flags = ['holy_heart', 'reinforcement_check', 'no_draw', 'prediction', 'forced_kill']
-                room.players[p_id].effect_flags.__dict__ = {k: v for k, v in
-                                                                room.players[p_id].effect_flags.__dict__.items() if
-                                                                k in permanent_flags}
+            # 重置所有临时效果标志 —— 保留名单以 FLAGS_KEEP_ACROSS_TURN 为唯一声明。
+            #
+            # ⚠️ 这里原本是写死的内联列表，与上面的常量各存一份，注释却指着常量说
+            #    "分类见 FLAGS_KEEP_ACROSS_TURN"。两份一漂移就出事：绝处逢生的
+            #    "击杀即胜"（last_stand_win）两边都没登记 → 换小回合就被清掉，
+            #    效果只在发动当回合有效（作者实测反馈）。现在统一走常量。
+            _prune_effect_flags(room, FLAGS_KEEP_ACROSS_TURN)
 
             # 标记刚被清了一批，角标要跟着消失（否则百亿补贴等会一直亮着）
             _emit_active_effects(room)
@@ -5030,17 +5386,26 @@ def _emit_ships_updated(room):
 _EFFECT_EXPIRY_ROUND = '本大回合结束（重新猜拳）时失效'
 _EFFECT_EXPIRY_TURN = '本回合结束时失效'
 _EFFECT_EXPIRY_TRIGGER = '本回合攻击次数第一次归零时触发一次，触发后失效'
+_EFFECT_EXPIRY_MATCH = '本局一直有效'
 
+# ⚠️ 绝处逢生挂【两个】角标，生命周期不同（见 EffectFlags 的注释）：
+#   锁卡那条换小回合就灭，击杀即胜那条一直亮到对局结束。合成一条的话，
+#   玩家要么以为击杀即胜过期了，要么以为还能继续锁卡，两种都会误判。
+#
+# 元组第 4 位是**可选的显示后缀**：两条角标的卡名都是「绝处逢生」（角标名必须
+# 是真实卡名，浮层靠它取卡面说明 —— 有测试钉着这条契约），光看卡名分不出是哪条，
+# 所以另给一个后缀让前端拼成「绝处逢生·锁卡 / 绝处逢生·击杀即胜」。
 _EFFECT_BADGES = (
-    ('subsidy', '百亿补贴', _EFFECT_EXPIRY_TURN),
-    ('wuxian', '五险一金', _EFFECT_EXPIRY_TRIGGER),
-    ('vampire', '饮血', _EFFECT_EXPIRY_TURN),
-    ('treasure_hunter', '八方来财', _EFFECT_EXPIRY_TURN),
-    ('prediction', '神机妙算', _EFFECT_EXPIRY_ROUND),
-    ('double_attacks', '火力全开', _EFFECT_EXPIRY_TURN),
-    ('battle_spirit', '越战越勇', _EFFECT_EXPIRY_TURN),
-    ('last_stand', '绝处逢生', _EFFECT_EXPIRY_TURN),
-    ('no_draw', '无中生有', _EFFECT_EXPIRY_ROUND),
+    ('subsidy', '百亿补贴', _EFFECT_EXPIRY_TURN, ''),
+    ('wuxian', '五险一金', _EFFECT_EXPIRY_TRIGGER, ''),
+    ('vampire', '饮血', _EFFECT_EXPIRY_TURN, ''),
+    ('treasure_hunter', '八方来财', _EFFECT_EXPIRY_TURN, ''),
+    ('prediction', '神机妙算', _EFFECT_EXPIRY_ROUND, ''),
+    ('double_attacks', '火力全开', _EFFECT_EXPIRY_TURN, ''),
+    ('battle_spirit', '越战越勇', _EFFECT_EXPIRY_TURN, ''),
+    ('last_stand', '绝处逢生', _EFFECT_EXPIRY_TURN, '锁卡'),
+    ('last_stand_win', '绝处逢生', _EFFECT_EXPIRY_MATCH, '击杀即胜'),
+    ('no_draw', '无中生有', _EFFECT_EXPIRY_ROUND, ''),
 )
 
 # 效果名 → 卡面原文。前端悬停/点击角标时要显示「这个效果到底做什么」，
@@ -5054,11 +5419,15 @@ def _effect_badges(player):
     if flags is None:
         return []
     out = []
-    for attr, label, expiry in _EFFECT_BADGES:
+    for attr, label, expiry, suffix in _EFFECT_BADGES:
         if not getattr(flags, attr, None):
             continue
         out.append({
             'name': label,
+            'key': attr,
+            # 显示名 = 卡名 +（可选）后缀。**卡名单独保留**，前端浮层靠 name 取卡面说明；
+            # label 只用于展示。绝处逢生两条角标就是靠这个后缀区分开的。
+            'label': f'{label}·{suffix}' if suffix else label,
             'description': _CARD_DESCRIPTION.get(label, ''),
             'expires': expiry,
         })
@@ -6301,8 +6670,22 @@ def _build_room_sync(room, player_id: str) -> dict:
             {'text': '等待对方神机妙算宣言中'}
             if _shenji_wait_reason(room, player_id) else None
         ),
-        # 生效中的房间级效果（仅名称，避免下发复杂对象）
-        'active_effects': sorted(room.game_effects.keys()) if isinstance(room.game_effects, dict) else [],
+        # 生效中的效果标记名（只给玩家身上的 effect_flags，不含房间级 game_effects）。
+        #
+        # ⚠️ 这里以前发的是 `room.game_effects.keys()`，字段名却叫 active_effects ——
+        # 前端把它当"我身上有哪些效果"读，而这份名单里的 last_stand_cells /
+        # last_stand_owner 都**恰好以 last_stand 开头**，于是任何一个"绝处逢生
+        # 候选格还在场"的时刻，前端都判定"锁卡生效中"（房间级效果 ≠ 玩家效果，
+        # 两者语义完全不同）。现在只发真正的效果标记名。
+        'active_effects': sorted(
+            k for k, v in vars(p.effect_flags).items()
+            if v and k in _PUBLIC_EFFECT_FLAGS
+        ),
+        # ⚠️ 绝处逢生的两个标记**显式下发**，前端不许靠卡名猜。
+        # 它们的显示名都含"绝处逢生"，靠名字前缀匹配会把"击杀即胜"当成"锁卡"，
+        # 于是锁卡过期后前端仍按"魔法卡被锁"给玩家弹拒绝提示（而服务端其实放行）。
+        'last_stand_lock': bool(getattr(p.effect_flags, 'last_stand', False)),
+        'last_stand_win': bool(getattr(p.effect_flags, 'last_stand_win', False)),
         # 双方「生效中效果」角标：重连后不能丢，否则玩家会以为效果没了。
         # 此前快照里完全没带这份数据，只能等下一次 _emit_active_effects 才恢复。
         'effect_badges': {
@@ -6408,6 +6791,8 @@ def handle_rejoin_room(data):
 
     room.players[pid].sid = request.sid
     join_room(room_id, request.sid)
+    # 好友功能：重连回一局没结束的对局 → 重新挂上"对局中"（disconnect 时摘过）。
+    _bind_presence_game(room)
     was_reconnect = pid in room.disconnected
     if was_reconnect:
         room.disconnected.pop(pid, None)
@@ -8858,7 +9243,14 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         cells_payload = [{'x': cx, 'y': cy} for (cx, cy) in original_cells]
         emit('last_stand_cells', {'cells': cells_payload, 'owner': caster_id}, room=room.id)
         # 生效回合内其余魔法卡无效 + 击杀任何船直接获胜
-        room.players[caster_id].effect_flags.last_stand = True
+        # ⚠️ 两个标记生命周期不同，别合并：
+        #   last_stand     —— 锁卡，换小回合就被清（卡面写的是"在……生效的回合"）
+        #   last_stand_win —— 击杀即胜，作者裁定"接下来所有回合"都有效，活到对局结束
+        caster.effect_flags.last_stand = True
+        caster.effect_flags.last_stand_win = True
+        # 角标要在发动当场就亮起来。这里没有走"裁剪返回 True 才发"的那条路
+        # （新标记是直接赋值的），所以得显式广播一次。
+        _emit_active_effects(room)
         _start_placement(room, caster_id, 'last_stand', 1)
         result.temp_data_id = 'last_stand_choice'
         result['message'] = '已牺牲全部战舰，请在所有原本有战舰的格子上选择一格放置唯一一艘战舰'
@@ -9219,6 +9611,38 @@ def handle_surrender(data):
         'reason': 'surrender'  # 添加投降原因标记
     }, room=room_id)
     return {'status': 'success'}
+
+
+def create_custom_room_for_invite():
+    """给"好友邀战"建一个自定义房（**唯一实现**）。
+
+    好友对战一律走自定义房：不给段位分、不计战绩。api.py 通过注入调用这个函数
+    （见文件末尾），所以这里的 `room_manager` 永远是**正在服务**的那一份。
+    """
+    return room_manager.create_room()
+
+
+# ---------------------------------------------------------------------------
+# 把"实时推送 / 建房"交给 api.py 用（好友功能）
+#
+# api.py 不能 import 本模块：应用以 `python server.py` 启动时本模块名是 `__main__`，
+# `import server` 会把整个文件再执行一遍成另一个模块对象 —— 那份 socketio 发不出事件
+# （申请/接受**静默丢弃**，接口照样回 sent/ok）、那份 room_manager 建的房在真进程里
+# 根本不存在（邀战回一个野 room_id）。而生产是 run_prod.py 起的，模块名又正常 ——
+# 属于"本地坏、线上好"的环境相关 bug，详见 api.py 顶部那段注释。
+#
+# 所以反过来：由这里在 import 期把**本模块对象自己**（`sys.modules[__name__]`，
+# 无论叫 `__main__` 还是 `server`，都一定是正在跑的那一份）交给 api.py。
+# 推送与建房仍然各只有一份实现；api 侧按名字现取，测试里的 monkeypatch 照样有效。
+# ---------------------------------------------------------------------------
+try:
+    import api as _api    # ⚠️ 本文件是 `from api import app`，`api` 这个名字**没绑定** ——
+                          # 直接写 `api.xxx` 会 NameError 被下面的 except 吞成一句警告。
+    _api.register_friend_backend(sys.modules[__name__])
+except Exception as _e:                                          # noqa: BLE001
+    # 注入失败只记日志：好友的实时提示会降级成"对方刷新后自己看到"，
+    # 绝不能让整个服务起不来。
+    print(f'[friends] 注入后端模块失败（好友实时提示将不可用）: {_e}')
 
 
 if __name__ == '__main__':

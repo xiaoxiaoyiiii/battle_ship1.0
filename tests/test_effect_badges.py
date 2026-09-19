@@ -127,7 +127,7 @@ def test_description_matches_card_data(room):
     """说明必须就是卡牌数据里的原文，不能各写一份。"""
     from server import magic_cards
     by_name = {c.name: c.description for c in magic_cards}
-    for attr, label, _expiry in server._EFFECT_BADGES:
+    for attr, label, _expiry, _suffix in server._EFFECT_BADGES:
         if label not in by_name:
             continue
         badges = server._effect_badges(_fake_player_with(attr))
@@ -141,10 +141,15 @@ def _fake_player_with(attr):
 
 
 def test_all_badge_labels_exist_as_cards():
-    """角标里的每个名字都必须是真实卡名（否则说明文字取不到）。"""
+    """角标里的每个名字都必须是真实卡名（否则说明文字取不到）。
+
+    ⚠️ 元组第 4 位是【显示后缀】，不参与这条契约：绝处逢生有两条角标
+    （锁卡 / 击杀即胜），生命周期不同必须分开显示，但两者的角标名都必须是
+    真实卡名「绝处逢生」，否则浮层取不到卡面原文。
+    """
     from server import magic_cards
     names = {c.name for c in magic_cards}
-    missing = [label for _attr, label, _e in server._EFFECT_BADGES if label not in names]
+    missing = [label for _attr, label, _e, _s in server._EFFECT_BADGES if label not in names]
     assert not missing, f'这些角标名不是卡名，说明文字会取空：{missing}'
 
 

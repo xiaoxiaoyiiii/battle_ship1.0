@@ -29,6 +29,17 @@
         </div>
         {% endif %}
     {% endwith %}
+
+    <!-- 好友邀战提示（好友批）。收到 socket 事件 `friend_invite` 时出现：
+         文案含对方用户名与房间号，点「进入房间」复用**既有的** ?room=XXXX 自动入房逻辑
+         （game.js 的 joinRoomById，就是页加载时那段 `new URLSearchParams(location.search).get('room')`
+         用的同一个入口）—— 这里绝不再写第二套入房实现。
+         `#friend-invite-text` 只由 game.js 用 textContent 填（不拼 HTML）。 -->
+    <div id="friend-invite-toast" class="friend-invite-toast hidden" role="alert">
+        <span class="fit-icon" aria-hidden="true">⚔️</span>
+        <span id="friend-invite-text" class="fit-text">有人邀你打一局</span>
+        <button type="button" id="friend-invite-enter" class="fit-enter">进入房间</button>
+    </div>
 <div class="game-container">
     <div class="nav" id="game-nav">
         <div class="nav-brand">⚓ 战舰游戏</div>
@@ -48,6 +59,12 @@
                 <a href="/lobby" id="nav-lobby-guest" class="hide-in-game">游戏大厅</a>
                 <a href="#" id="toggle-theme" class="hide-in-game">深色模式</a>
             {% endif %}
+            <!-- 好友入口（好友批）。与「排行榜」同一条导航排。
+                 ⚠️ 写在 if 块**外面**、全页只此一份：两半各写一个会在渲染结果里
+                 #friends-btn / #friends-badge 各出现两次（撞 id → getElementById 拿错那个）。
+                 游客也能点（照常弹面板），三个写接口未登录一律 401 → 前端提示「请先登录」。 -->
+            <a href="#" id="friends-btn" class="hide-in-game">好友<span
+                    id="friends-badge" class="friends-badge hidden">0</span></a>
             <button id="help-btn" class="btn secondary">帮助</button>
             <button id="settings-btn" class="btn secondary">设置</button>
             <button id="music-btn" class="btn secondary">🎵</button>
@@ -639,6 +656,13 @@
                                      ⚠️ 保存载荷现在是 **10 个字段**：这个开关必须跟着
                                      collectProfileEditorPayload() 一起发，缺一个整次 400。 -->
                                 <label><input type="checkbox" id="profile-show-rank" checked><span>段位公开</span></label>
+                                <!-- 第 6 个开关（好友批）：**不是展示开关**，是社交权限 ——
+                                     关掉之后陌生人不能再向我发好友申请（已收到的申请照样能接受）。
+                                     文案与服务端 profile_spec 的
+                                     `_FLAG_LABELS['friend_requests_open']`（「允许他人加我好友」）一致。
+                                     ⚠️ 保存载荷现在是 **11 个字段**：这个开关必须跟着
+                                     collectProfileEditorPayload() 一起发，缺一个整次 400。 -->
+                                <label><input type="checkbox" id="profile-friend-requests" checked><span>允许他人加我为好友</span></label>
                             </div>
                         </div>
                     </section>
@@ -985,6 +1009,36 @@
             <div class="discard-pile-container">
                 <div id="discard-pile-cards"></div>
             </div>
+        </div>
+    </div>
+
+    <!-- 好友面板（好友批）。
+         ⚠️ 层级写法照既有弹窗：`.modal-overlay`（position:fixed，z-index 10000）+ `.modal-content`。
+         本弹窗的祖先链里没有任何 transform/filter/backdrop-filter ——
+         `.game-container` 那一层不许加（加了 fixed 浮层会改以它为基准定位，见 CLAUDE.md 第 11 节第 7 条）。
+         三个分区容器（#friends-list / #friends-requests / #friends-outgoing）与 #friends-empty
+         都是**常驻骨架**：数据来了只换它们的内容，绝不清空整块再重建 —— 拉取失败时要保留上一帧
+         （项目硬教训第 3 条：`updateHandUI` 清空后没填回来 → 空白手牌）。 -->
+    <div id="friends-modal" class="modal-overlay hidden">
+        <div class="modal-content friends-modal">
+            <span class="modal-close" id="friends-close">×</span>
+            <h2>好友</h2>
+            <div id="friends-body">
+                <section class="friends-section">
+                    <h4 class="friends-section-title">好友列表</h4>
+                    <div id="friends-list" class="friends-list"></div>
+                </section>
+                <section class="friends-section">
+                    <h4 class="friends-section-title">待确认</h4>
+                    <div id="friends-requests" class="friends-list"></div>
+                </section>
+                <section class="friends-section">
+                    <h4 class="friends-section-title">我发出的</h4>
+                    <div id="friends-outgoing" class="friends-list"></div>
+                </section>
+                <p id="friends-empty" class="friends-empty hidden">还没有好友。在个人信息里点「加好友」，或去排行榜找个人吧。</p>
+            </div>
+            <p id="friends-msg" class="friends-msg" role="status"></p>
         </div>
     </div>
 </div>

@@ -5078,7 +5078,7 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, rgba(255, 2
     .pf-avatar[data-frame], .pf-frame .pf-frame-ring, .pf-cover[data-bg], .pf-bg[data-bg] { animation: none !important; }
 }
 
-/* ===========================================================================
+/* ====================================================================
    32. 大厅系统（2026-09-18）
    ---------------------------------------------------------------------------
    契约见 docs/LOBBY_2026_09_18.md §3。三条硬约束（沿用本项目的既有规矩）：
@@ -5469,4 +5469,270 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, rgba(255, 2
         min-height: 200px;
         max-height: 300px;
     }
+}
+=======
+
+/* ============================================================================
+   33. 好友面板 / 邀战提示 / 加好友按钮（好友批，2026-09-19）
+   —— 全部是**新增类**，既有选择器一行没动。四条自我约束（都是本项目踩过的坑）：
+     ① **不动任何既有元素的盒模型尺寸**（CLAUDE.md 第 11 节第 6 条）：
+        唯一的尺寸类是 `.friends-modal`（本弹窗自己的 max-width）与 `.friends-badge`
+        （本入口自己的小圆点）—— 都不是既有元素。
+     ② **不给含 position:fixed 后代的元素加 transform/filter/backdrop-filter**：
+        本节的浮层是 `#friend-invite-toast`（自己就是 fixed，没有 fixed 后代），
+        它挂在 body 上、不在 .game-container / .screen 里面（第 11 节第 7 条）。
+     ③ 颜色**零写死**：一律走 --primary / --primary-rgb / --accent / --danger / --success /
+        --warning / --muted / --border* 这些既有变量，深色主题自动跟着变。
+     ④ 窄屏（390x844）不许横向溢出：行用 flex-wrap 落行，长用户名配 overflow-wrap:anywhere，
+        按钮不许把行顶宽（min-width:0 + flex-shrink:0 各就各位）。
+   ============================================================================ */
+
+/* --- 32.1 首页导航入口 + 红点 --- */
+/* 入口本身是既有的 `.nav a`，这里只补"右边有个角标时不挤掉 padding"。 */
+.nav #friends-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+/* 数字角标：只有 counts.incoming > 0 时才由 game.js 摘掉 .hidden。
+   ⚠️ 它是**行内**小圆点，不参与 .nav a 的 padding 计算（改的是自己的尺寸，不是既有元素的）。 */
+.friends-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: var(--danger);
+    color: #fff;
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    background-image: none;          /* 第 3 节通用 button 规则带渐变，这里保险清掉 */
+    box-shadow: 0 0 8px rgba(229, 57, 53, 0.55);
+}
+.friends-badge.hidden { display: none; }
+
+/* --- 32.2 好友面板（复用 .modal-overlay / .modal-content 那套外壳） --- */
+.friends-modal { max-width: 520px; }
+.friends-section { margin-bottom: 14px; }
+.friends-section-title {
+    margin: 0 0 8px;
+    font-size: 0.86rem;
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: 0.04em;
+}
+.friends-list { display: flex; flex-direction: column; gap: 8px; }
+
+/* 一行好友 / 一条申请。行内允许落行：窄屏上按钮换到第二排，绝不撑出横向滚动条。 */
+.friend-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface-muted);
+}
+.friend-row .friend-avatar {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 1px solid var(--border-strong);
+    flex-shrink: 0;
+    background: var(--surface-strong);
+}
+.friend-row .friend-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1 1 130px;
+    min-width: 0;                    /* 不写它，长用户名会把整行顶宽（336px 窄屏实测病灶） */
+}
+.friend-row .friend-name {
+    font-weight: 600;
+    color: var(--text);
+    overflow-wrap: anywhere;
+}
+.friend-row .friend-meta {
+    font-size: 0.78rem;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+}
+/* 状态点：在线绿 / 对局中黄 / 离线灰。颜色写变量，深色主题跟着走。 */
+.friend-row .friend-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.76rem;
+    color: var(--muted);
+    flex-shrink: 0;
+}
+.friend-row .friend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    box-shadow: 0 0 6px rgba(148, 163, 184, 0.5);
+}
+.friend-row.friend-online .friend-dot   { background: var(--success); box-shadow: 0 0 8px rgba(14, 159, 110, 0.6); }
+.friend-row.friend-ingame .friend-dot   { background: var(--warning); box-shadow: 0 0 8px rgba(245, 158, 11, 0.6); }
+.friend-row.friend-offline .friend-dot  { background: var(--muted);   box-shadow: none; }
+.friend-row.friend-online .friend-state { color: var(--success); }
+.friend-row.friend-ingame .friend-state { color: var(--warning); }
+
+.friend-row .friend-ops { display: flex; flex-wrap: wrap; gap: 6px; flex-shrink: 0; }
+/* 行内小按钮：当"色块"用，必须显式 background-image:none ——
+   第 3 节的通用 button 规则带 var(--primary-gradient)（第 23 节 .match-history-btn 同款教训）。 */
+.friend-row .friend-op {
+    padding: 0.28rem 0.7rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    line-height: 1.3;
+    cursor: pointer;
+    background-image: none;
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    color: var(--text-subtle);
+    transition: color 0.18s ease, border-color 0.18s ease, background-color 0.18s ease;
+}
+.friend-row .friend-op:hover:not(:disabled) {
+    color: var(--text);
+    border-color: rgba(var(--primary-rgb), 0.6);
+}
+.friend-row .friend-op:disabled { opacity: 0.45; cursor: not-allowed; }
+.friend-row .friend-op.friend-op-invite { color: var(--primary); border-color: rgba(var(--primary-rgb), 0.55); }
+.friend-row .friend-op.friend-op-danger { color: var(--danger); border-color: rgba(229, 57, 53, 0.45); }
+.friend-row .friend-op.friend-op-danger:hover:not(:disabled) {
+    color: var(--danger);
+    border-color: var(--danger);
+    background: rgba(229, 57, 53, 0.1);
+}
+
+/* 空状态 + 错误位：都只占一行，不抢布局。 */
+.friends-empty { margin: 6px 0; color: var(--muted); font-size: 0.86rem; overflow-wrap: anywhere; }
+.friends-empty.hidden { display: none; }
+.friends-msg { min-height: 1.1em; margin: 6px 0 0; font-size: 0.82rem; color: var(--muted); overflow-wrap: anywhere; }
+.friends-msg.is-error { color: var(--danger); }
+
+/* 查看面里的「加好友 / 邀战」按钮（长在 .pf-actions 里，与点赞/送花同一排） */
+.pf-actions .fri-add-btn,
+.pf-actions .fri-invite-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0.34rem 0.7rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    line-height: 1.2;
+    background-image: none;
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    color: var(--text-subtle);
+    cursor: pointer;
+}
+.pf-actions .fri-add-btn:hover:not(:disabled),
+.pf-actions .fri-invite-btn:hover:not(:disabled) {
+    color: var(--text);
+    border-color: rgba(var(--primary-rgb), 0.6);
+}
+.pf-actions .fri-add-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.pf-actions .fri-add-btn.fri-rel-friends { color: var(--primary); border-color: rgba(var(--primary-rgb), 0.7); background: rgba(var(--primary-rgb), 0.14); }
+
+/* 结算界面那一行的「加好友」按钮（结算屏里没有别的 .modal-* 上下文，用中性配色） */
+.recent-opponent-add {
+    padding: 0.3rem 0.75rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    line-height: 1.3;
+    cursor: pointer;
+    background-image: none;
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    color: var(--text-subtle);
+    transition: color 0.18s ease, border-color 0.18s ease;
+}
+.recent-opponent-add:hover:not(:disabled) { color: var(--text); border-color: rgba(var(--primary-rgb), 0.6); }
+.recent-opponent-add:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* --- 32.3 收到邀战的提示条 ---
+   ⚠️ 自己就是 position:fixed，且**没有任何 fixed 后代**，所以这里的 transform 只作用在
+      自己身上（translateY 入场），不会改变任何浮层的定位基准。
+   pointer-events:none 给容器、auto 给按钮：条子本身不挡后面的页面。 */
+.friend-invite-toast {
+    position: fixed;
+    left: 50%;
+    right: auto;
+    bottom: 24px;
+    transform: translateX(-50%) translateY(0);
+    z-index: 10050;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    max-width: min(92vw, 460px);
+    padding: 10px 14px;
+    border-radius: 14px;
+    border: 1px solid rgba(var(--primary-rgb), 0.45);
+    background: var(--surface-strong);
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.35);
+    pointer-events: none;
+    animation: friendInviteIn 0.24s ease-out;
+}
+.friend-invite-toast.hidden { display: none; }
+.friend-invite-toast .fit-icon { font-size: 1.1rem; line-height: 1; }
+.friend-invite-toast .fit-text {
+    flex: 1 1 160px;
+    min-width: 0;
+    font-size: 0.86rem;
+    color: var(--text);
+    overflow-wrap: anywhere;
+}
+.friend-invite-toast .fit-enter {
+    pointer-events: auto;
+    flex-shrink: 0;
+    padding: 0.34rem 0.85rem;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    background-image: none;
+    background: var(--primary);
+    border: 1px solid var(--primary);
+    color: #fff;
+}
+.friend-invite-toast .fit-enter:hover { filter: brightness(1.08); }
+@keyframes friendInviteIn {
+    from { opacity: 0; transform: translateX(-50%) translateY(12px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* 窄屏（390x844 等）：提示条贴底整宽，按钮独占一行，绝不横向溢出。
+   ⚠️ 窄屏时左边的 `left: 50% + translateX(-50%)` 要**一起**换掉（left:8px + transform:none），
+      只改一个会把条子推出屏幕右边 —— 这是这类"居中固定浮层"最常见的一处漏改。
+      keyframes 用另一套（friendInviteInFlat）而不是在媒体查询里重定义：
+      重定义同名 keyframes 在这里不生效（后面的规则不会覆盖已经被引用的名字）。 */
+@media (max-width: 420px) {
+    .friend-invite-toast {
+        left: 8px;
+        right: 8px;
+        transform: none;
+        max-width: none;
+        animation: friendInviteInFlat 0.24s ease-out;
+    }
+    .friend-row .friend-ops { flex: 1 1 100%; }
+}
+@keyframes friendInviteInFlat {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .friend-invite-toast { animation: none; }
 }

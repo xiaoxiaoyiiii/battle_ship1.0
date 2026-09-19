@@ -1071,6 +1071,10 @@ window.gameState = {
     // 出牌门禁要读它判断「绝处逢生」，所以必须有初值 —— 此前只在 room_sync
     // 里被赋值，未重连过的玩家这里是 undefined，读取方得各自容错。
     activeEffects: [],
+    // 绝处逢生的两个标记，服务端 room_sync 显式下发（别再靠卡名猜，理由见
+    // isLastStandActive 的注释）。lastStandWin 只用于提示文案，不参与门禁。
+    lastStandLock: false,
+    lastStandWin: false,
     // 生效中效果角标的数据（服务端按收件人视角分别下发 self / opponent）。
     // 浮层靠这两份数据按卡名回查说明，所以角标重绘后也能正确展开。
     activeEffectsSelf: [],
@@ -1304,6 +1308,9 @@ function applyRoomSync(data) {
         }
     }
     if (Array.isArray(data.active_effects)) gameState.activeEffects = data.active_effects;
+    // 绝处逢生的两个标记（服务端显式下发，两个生命周期不同，别合并成一条）
+    if (typeof data.last_stand_lock === 'boolean') gameState.lastStandLock = data.last_stand_lock;
+    if (typeof data.last_stand_win === 'boolean') gameState.lastStandWin = data.last_stand_win;
     // 重连快照里带的效果角标：此前没带，重连后要等下一次 active_effects 广播才恢复，
     // 玩家会以为效果没了。这里直接渲染回来。
     if (data.effect_badges) {
@@ -3057,7 +3064,15 @@ function bindEventListeners() {
             // 别人 + 关掉「段位公开」时接口给的是 **null**（不是空 dict）→ 整块不渲染；
             // 绝不许退化成「二级水手Ⅰ 0分」这种假数据（那比不显示更糟）。
             rank: (s && s.rank_info && typeof s.rank_info === 'object') ? s.rank_info : null,
-            self: opts.self === true
+            self: opts.self === true,
+            // ---- 好友批：查看面「加好友 / 邀战」按钮的关系态 ----
+            // ⚠️ 关系**不是**从 /user_stats 或 /api/profile 来的 —— 这两个接口的响应里
+            //    压根没有 relation 字段，而本批**没有改后端的授权**。
+            //    所以由调用方（showUserProfile / fetchProfile）单独拉一次 GET /api/friends，
+            //    用 username 在本地比对算出来，再通过 opts.friendRelation 传进来
+            //    （算法见 resolveFriendRelation）。这里只负责"渲染"，一个判断都不做。
+            //    没传时按 'none' 渲染，按钮照样存在（契约 id 必须落地）。
+            friendRelation: FRIEND_RELATIONS.indexOf(opts.friendRelation) >= 0 ? opts.friendRelation : 'none'
         };
     }
 
@@ -3080,11 +3095,16 @@ function bindEventListeners() {
     // 互动条（查看面自己的名片才有；本函数只在 withIds 时被调用）。
     // ⚠️ 「自己看自己」由服务端裁决（契约 §3.3：不能给自己点赞 → 400），
     // 这里 disabled + title 只是不让玩家白点一次 —— 第 1 批硬规矩第 4 条。
+    //
+    // 好友批追加：`#add-friend-btn`（加好友 / 已申请 / 接受申请 / 好友）也长在这一排。
+    // 「邀战」按钮**不给 id** —— 它跟 `#add-friend-btn` 在同一个文档里，
+    // 再要一个 id 只会多一处撞 id 的机会，用 `.fri-invite-btn` 走事件委托。
     function profileActionButtonsHtml(m) {
         const self = m.self === true;
         const selfTitle = '不能给自己点赞';
         const selfTitleFlower = '不能给自己送花';
-        return '<button type="button" class="pf-like' + (m.likeMine ? ' on' : '') + '"'
+        return friendActionButtonsHtml(m)
+            + '<button type="button" class="pf-like' + (m.likeMine ? ' on' : '') + '"'
             + ' id="profile-like"' + (self ? ' disabled' : '')
             + ' title="' + escapeHtml(self ? selfTitle : (m.likeMine ? '取消点赞' : '点个赞')) + '">'
             + '<span class="pf-like-icon" aria-hidden="true">👍</span><span class="pf-like-label">点赞</span>'
@@ -3342,7 +3362,13 @@ function bindEventListeners() {
             badges: Array.isArray(options.badges) ? options.badges : null,
             // 第 3 批：看的是不是自己（决定留言输入区收不收、互动条灰不灰）。
             // 只影响这两块；接口层的权限（不能给自己留言/点赞）仍然由服务端裁决。
-            self: options.self === true
+            self: options.self === true,
+            // 好友批：查看面「加好友 / 邀战」按钮的关系态（'none' | 'pending_out' |
+            // 'pending_in' | 'friends'）。由调用方拉 /api/friends 算好后传进来 ——
+            // 详见 profileCardModel 里那段说明。
+            // ⚠️ 必须**原样透传**（包括 undefined）：fetchProfile 重渲染那一趟就是靠
+            //    把它带着关系传下来，才能把「邀战」画出来并结束重渲染循环。
+            friendRelation: options.friendRelation
         });
     }
     window.renderUserStatsHTML = renderUserStatsHTML;
@@ -3814,6 +3840,14 @@ function bindEventListeners() {
     // 统一的个人信息取数：username 为空 = 查当前登录用户（带分页），
     // 否则查指定账号（排行榜 / 对局内对手）。四个入口共用，字段不会各写一份。
     // opts.ids：是否在渲染结果里输出 `#profile-view-*` / `#profile-view-badges` 这套 id。
+    // opts.friendRelation（2026-09-19 补）：这次渲染要按哪个关系态画「加好友 / 邀战」。
+    //
+    // ⚠️⚠️ 这个参数的**存在本身**就是修一个循环的根：查看面重渲染（那一趟专门为了把
+    //    「邀战」画出来）走的是 `showUserProfile`，而它最终落回这里；本行以前**写死**
+    //    'none' —— 于是"重渲染出来的卡"永远不带关系、永远没有「邀战」按钮，调用方看到
+    //    "没有邀战按钮"又再重渲染一次 → **无限重渲染**（实测：8 秒 830 次，
+    //    页面永远停在「加载中…」、零 JS 异常）。调用方现在把已经算出来的关系传进来，
+    //    重渲染一趟就把「邀战」画出来，循环自然收敛。详见 showUserProfile 里那段。
     //
     // ⚠️ 2026-09-17 实测纠正：这套 id **原先在两个容器里都会输出** —— 本函数写死了
     // `ids: true`，而它有两个调用点：查看面（`showUserProfile`）与首页老战绩容器
@@ -3824,6 +3858,10 @@ function bindEventListeners() {
     // 现在按调用方显式声明：**只有查看面出 id**。
     function fetchProfile(username, limit, opts) {
         const withIds = !!(opts && opts.ids);
+        // 这次渲染按哪个关系态画按钮：由调用方给（见上面 opts.friendRelation 那段）。
+        // 没给 = 'none'（首次打开时的默认，与加好友之前完全一样）。
+        const relForRender = (opts && FRIEND_RELATIONS.indexOf(opts.friendRelation) >= 0)
+            ? opts.friendRelation : 'none';
         const url = username
             ? ('/user_stats?limit=' + limit + '&username=' + encodeURIComponent(username))
             : ('/user_stats?limit=' + limit);
@@ -3834,30 +3872,56 @@ function bindEventListeners() {
         const badgesReady = preSelf
             ? ensureSelfBadges().then(() => profileSelfAchievements)
             : Promise.resolve(null);
-        return badgesReady.then(selfBadges => fetch(url).then(resp => {
-            if (!resp.ok) throw new Error('未登录或获取失败');
-            return resp.json();
-        }).then(data => {
-            if (!data.stats) {
-                return { html: '<p>未找到战绩数据</p>', stats: null, history: [] };
-            }
-            const history = data.history || [];
-            // 不带 username = 查自己；带 username 时按缓存的账号名比对
-            const isSelf = (username === undefined || username === null || username === '')
-                ? true : profileIsSelf(data.stats);
-            const html = renderUserStatsHTML(data.stats, history, {
-                ids: withIds,
-                canEdit: isSelf,
-                // 对方关了"公开对局历史"时接口给的是空数组，要靠开关区分
-                // 「真没有历史」和「没公开」
-                historyPrivate: !isSelf && Number(data.stats.show_history) === 0,
-                hasMore: history.length >= limit && limit < STATS_MAX_ROWS,
-                // 只有看自己时才给完整目录；看别人时上面的 Promise 直接给 null
-                badges: isSelf ? selfBadges : null,
-                self: isSelf
-            });
-            return { html, stats: data.stats, history, isSelf: isSelf };
-        }));
+        // 好友批：查看面那个「加好友 / 邀战」按钮要按**关系**变文案，而 /user_stats
+        // 与 /api/profile 的响应里都没有 relation（本批没改后端）→ 单独拉一次
+        // GET /api/friends，用 username 在本地比对（算法见 resolveFriendRelation）。
+        // 拉失败（游客 401 / 接口还没上线）**不影响**名片渲染：resolveFriendRelation
+        // 内部把失败兜成 'none'，按钮显示成「加好友」，点下去服务端再裁决。
+        //
+        // ⚠️⚠️ 这次取数**绝不能挡在名片渲染前面**（这是本批最容易犯错的一处）。
+        //    第一版把它串进 Promise.all 等它，结果名片整体慢了一个 RTT ——
+        //    profile_leaderboard_check 里「点开头像 → 立刻读名片」那几条正好卡在这个
+        //    窗口上（#opponent-stats-content 还是「加载中…」），G3/G3d/G4/G6 时红时绿。
+        //    现在的做法：**先按调用方给的关系渲染名片**（首次打开就是 'none'，和加好友
+        //    之前完全一样快），拿到关系之后再就地改那一个按钮（applyProfileFriendRelation；
+        //    只有"不是好友 → 好友"这种按钮数量变了的跃迁才重渲染一次 —— 那一趟会把
+        //    已经算好的关系带下来，见本函数开头 opts.friendRelation 那段）。
+        const statsPromise = fetch(url);
+        return badgesReady.then(selfBadges =>
+            statsPromise.then(resp => {
+                if (!resp.ok) throw new Error('未登录或获取失败');
+                return resp.json();
+            }).then(data => {
+                if (!data.stats) {
+                    return { html: '<p>未找到战绩数据</p>', stats: null, history: [] };
+                }
+                const history = data.history || [];
+                // 不带 username = 查自己；带 username 时按缓存的账号名比对
+                const isSelf = (username === undefined || username === null || username === '')
+                    ? true : profileIsSelf(data.stats);
+                const html = renderUserStatsHTML(data.stats, history, {
+                    ids: withIds,
+                    canEdit: isSelf,
+                    // 对方关了"公开对局历史"时接口给的是空数组，要靠开关区分
+                    // 「真没有历史」和「没公开」
+                    historyPrivate: !isSelf && Number(data.stats.show_history) === 0,
+                    hasMore: history.length >= limit && limit < STATS_MAX_ROWS,
+                    // 只有看自己时才给完整目录；看别人时上面的 Promise 直接给 null
+                    badges: isSelf ? selfBadges : null,
+                    self: isSelf,
+                    // ⚠️ 这里用的是**调用方传来的关系**（首次打开是 'none'，重渲染那趟
+                    //    带的是缓存里已经算好的关系）。以前写死 'none' = 重渲染永远
+                    //    画不出「邀战」→ 无限重渲染，见本函数开头那段。
+                    friendRelation: relForRender
+                });
+                return { html, stats: data.stats, history, isSelf: isSelf };
+            })
+        ).catch(err => {
+            // statsPromise 不再挂在同一条链上，漏出去会变成"谁都没接"的 rejection
+            // （控制台一条红字 + 卡片空白）；这里一并收口。
+            statsPromise.catch(() => {});
+            throw err;
+        });
     }
 
     // 打开某个账号的个人信息查看面（排行榜点名字/头像、局内两个头像、查看对手战绩都走它）
@@ -3870,23 +3934,95 @@ function bindEventListeners() {
         opponentStatsContent.innerHTML = '<p>加载中…</p>';
         currentProfileUsername = username || '';
         window.__viewedProfileName = currentProfileUsername;
-        fetchProfile(username, STATS_PAGE_SIZE, { ids: true }).then(r => {
-            opponentStatsContent.innerHTML = r.html;
-            currentProfileStats = r.stats;
-            // 第 3 批：互动条与留言板的当前目标 + 初始状态。
-            // ⚠️ 全程**不重渲染整卡**：点赞就地改 DOM，留言只重画 #guestbook-list。
-            // 重渲染会冲掉输入到一半的留言草稿与弹窗滚动位置（票面明确禁止）。
-            profileLikeTarget = String((r.stats && r.stats.username) || username || '');
-            profileCardIsSelf = r.isSelf === true;
-            profileLikePending.like = false;
-            profileLikePending.flower = false;
-            profileLikeState.likeCount = r.stats ? profileLikeCount(r.stats, 'like') : 0;
-            profileLikeState.flowerCount = r.stats ? profileLikeCount(r.stats, 'flower') : 0;
-            profileLikeState.likeMine = r.stats ? profileLikeMine(r.stats, 'like') : false;
-            profileLikeState.flowerMine = r.stats ? profileLikeMine(r.stats, 'flower') : false;
-            bindHistoryButtons(opponentStatsContent, r.history, r.stats && r.stats.id);
-            bindProfileCardButtons(opponentStatsContent);
-            prepareGuestbook(profileLikeTarget, r.stats, profileCardIsSelf);
+        // 好友批：记下"正在看谁" —— 点 #add-friend-btn / .fri-invite-btn 时要发给他。
+        // 看自己时置空（自己那张卡上压根不渲染这两个按钮，置空是多一层保险）。
+        const willBeSelf = (username === undefined || username === null || username === '')
+            || profileIsSelf(null, username);
+        currentFriendTarget = willBeSelf ? '' : currentProfileUsername;
+        currentFriendRelation = 'none';
+        // 这一帧要按哪个关系态画按钮。**在这个函数里只算一次**，下面 opts 与渲染完成后的
+        // 分支都用它 —— 少一处"两份实现"（本项目第 10 节第 1 条）。
+        // 首次打开时 currentFriendRelation 刚被上面重置成 'none'（语义与加好友之前一致）；
+        // 重渲染那趟它是缓存里算好的真实关系（见下面那段 ⚠️⚠️）。
+        const friendRelationForCard = (FRIEND_RELATIONS.indexOf(currentFriendRelation) >= 0)
+            ? currentFriendRelation : 'none';
+        fetchProfile(username, STATS_PAGE_SIZE, {
+            ids: true,
+            // ⚠️⚠️ 重渲染那趟**必须**把已经知道的关系带上（2026-09-19 修）。
+            //    以前这里只有 { ids: true }，而 fetchProfile 内部把 friendRelation 写死成
+            //    'none' → 重渲染出来的卡永远没有「邀战」按钮 → 调用方看到"没有邀战按钮"
+            //    又再重渲染（reRenderProfileCard → showUserProfile → 本节）→
+            //    **无限重渲染**：实测 8 秒 830 次 showUserProfile、网络请求刷屏，
+            //    而页面上**零 JS 异常**，只剩 `#opponent-stats-content` 被反复重设成
+            //    「加载中…」（T2l 现场就是这个形状）。
+            //    带上 currentFriendRelation（首次打开时它刚被重置成 'none'，语义不变；
+            //    重渲染那趟它是缓存里算好的真实关系）循环就收敛了。
+            friendRelation: friendRelationForCard
+        }).then(r => {
+            // ⚠️ 这一段是**同步渲染**：从写 innerHTML 到把关系补到按钮上，中间不能被
+            //    第二趟重渲染插进来（见 reRenderProfileCard 里的重入保护）。所以用一个
+            //    try/finally 把"正在渲染"这个标识保证复位 —— 中途任何一处抛异常都不会
+            //    把它永久卡在 true（那会让「邀战」再也补不出来）。
+            profileCardRendering = true;
+            try {
+                opponentStatsContent.innerHTML = r.html;
+                currentProfileStats = r.stats;
+                // ⚠️ 重置成**这一帧渲染用的那个关系**，不是无条件 'none'（2026-09-19 修）。
+                //    重渲染那趟带着 `friendRelation='friends'` 进来（就是上面 opts 里传的
+                //    那个值），卡上的按钮就已经是「好友」了；这里再把它按 'none' 记一遍，
+                //    等于让下面"现值优先"那条判断拿不到真值，又绕回重渲染。
+                //    注意变量的作用域：`relForRender` 是 fetchProfile 内部的局部量，
+                //    这里看不见（第一版就写成了它 → ReferenceError 被 .catch 收口，
+                //    页面显示"获取个人信息失败：relForRender is not defined"）。
+                //    所以这里用的是本函数自己的 friendRelationForCard（上面算的那一个）。
+                currentFriendRelation = friendRelationForCard;
+                // 第 3 批：互动条与留言板的当前目标 + 初始状态。
+                // ⚠️ 全程**不重渲染整卡**：点赞就地改 DOM，留言只重画 #guestbook-list。
+                // 重渲染会冲掉输入到一半的留言草稿与弹窗滚动位置（票面明确禁止）。
+                profileLikeTarget = String((r.stats && r.stats.username) || username || '');
+                profileCardIsSelf = r.isSelf === true;
+                profileLikePending.like = false;
+                profileLikePending.flower = false;
+                profileLikeState.likeCount = r.stats ? profileLikeCount(r.stats, 'like') : 0;
+                profileLikeState.flowerCount = r.stats ? profileLikeCount(r.stats, 'flower') : 0;
+                profileLikeState.likeMine = r.stats ? profileLikeMine(r.stats, 'like') : false;
+                profileLikeState.flowerMine = r.stats ? profileLikeMine(r.stats, 'flower') : false;
+                bindHistoryButtons(opponentStatsContent, r.history, r.stats && r.stats.id);
+                bindProfileCardButtons(opponentStatsContent);
+                prepareGuestbook(profileLikeTarget, r.stats, profileCardIsSelf);
+                // 好友批：名片已经画好了，**现在**才把与这个人的关系补到按钮上。
+                // 顺序不能反：先算关系再画卡会让名片多等一个 RTT（见 fetchProfile 里那段）。
+                // 已经算过的人（同一次会话里第二次打开他的名片）直接用缓存，不再打接口 ——
+                // 靠的就是这份缓存，而不是一个全局哨兵（见 friendRelationCache 的注释）。
+                if (!profileCardIsSelf && currentFriendTarget) {
+                    const target = currentFriendTarget;
+                    // ⚠️ 卡片上那个按钮**可能已经带着关系**（重渲染那条路现在会把缓存里的
+                    //    关系直接画进 data-relation）→ 直接用现值，**不要**再走一遍
+                    //    "算关系 → 发现没有邀战按钮 → 再重渲染"。
+                    //    这条曾经是无限重渲染的另一半成因：重渲染那时画出来的卡**不带**关系，
+                    //    于是每一趟都重走一遍（实测 8 秒 830 次，页面永远停在「加载中…」）。
+                    const btnNow = document.getElementById('add-friend-btn');
+                    const relOnBtn = (btnNow && btnNow.dataset) ? String(btnNow.dataset.relation || '') : '';
+                    const cached = friendRelationCache.get(target);
+                    if (FRIEND_RELATIONS.indexOf(relOnBtn) >= 0 && relOnBtn !== 'none') {
+                        currentFriendRelation = relOnBtn;
+                    } else if (cached !== undefined) {
+                        applyProfileFriendRelation(cached);
+                    } else {
+                        resolveFriendRelation(target, false).then(rel => {
+                            friendRelationCache.set(target, rel);
+                            if (window.__viewedProfileName !== target) return;
+                            applyProfileFriendRelation(rel);
+                        }).catch(e => {
+                            // 兜底：这段是"锦上添花"，绝不能让它的异常变成一条没人接的
+                            // Uncaught (in promise)（那种错在页面上同样零提示）
+                            console.warn('好友关系按钮更新失败（不影响名片）:', e && e.message);
+                        });
+                    }
+                }
+            } finally {
+                profileCardRendering = false;
+            }
         }).catch(err => {
             opponentStatsContent.innerHTML =
                 '<p style="color:var(--danger);">获取个人信息失败：' + escapeHtml(err.message) + '</p>';
@@ -4068,6 +4204,11 @@ function bindEventListeners() {
         // 段位批：段位开关（同样并入同一个接口，载荷 9 → **10** 字段）。
         // 缺省 1（公开）—— 与表定义 `show_rank INTEGER DEFAULT 1` 一致。
         setProfileToggle('profile-show-rank', profileToggleValue(s.show_rank, 1));
+        // 好友批：是否允许他人加我好友（决策④的"设置里可关"）。
+        // ⚠️ 它**不是展示开关**（管的是社交权限，服务端也只下发给本人），
+        //    但故意走同一条保存通道（`POST /api/profile/card`，载荷 10 → **11** 字段）。
+        //    缺省 1 = 开放申请 —— 与表定义 `friend_requests_open INTEGER DEFAULT 1` 一致。
+        setProfileToggle('profile-friend-requests', profileToggleValue(s.friend_requests_open, 1));
         return s;
     }
     window.renderProfileEditor = renderProfileEditor;
@@ -4095,10 +4236,11 @@ function bindEventListeners() {
         else box.appendChild(label);
     }
 
-    // 编辑态当前选了什么 —— **必须把服务端要求的字段全发**（现在是 10 个）：
+    // 编辑态当前选了什么 —— **必须把服务端要求的字段全发**（现在是 11 个）：
     // 服务端的校验缺字段直接 400 点名，不是"只写改动过的字段"那种局部更新接口。
-    // ⚠️ 段位批把 9 加到 **10**（多了 `show_rank`）——只加界面不加这里的话，
-    //    开关点得动、保存直接 400，而且报错文案是「缺少字段 show_rank」。
+    // ⚠️ 段位批把 9 加到 10（多了 `show_rank`）；好友批加到 **11**（多了
+    //    `friend_requests_open`）—— 只加界面不加这里的话，开关点得动、保存直接 400，
+    //    而且报错文案是「缺少字段 friend_requests_open」。
     function collectProfileEditorPayload() {
         const el = (id) => document.getElementById(id);
         const selTitle = document.querySelector('#profile-title-list .pf-opt[data-title].selected');
@@ -4123,7 +4265,10 @@ function bindEventListeners() {
             // 缺失时按 1（公开）—— 与表定义 `show_guestbook INTEGER DEFAULT 1` 一致
             show_guestbook: checked('profile-show-guestbook', 1),
             // 第 5 个开关（段位批）。缺省 1 = 公开，与 `show_rank INTEGER DEFAULT 1` 一致。
-            show_rank: checked('profile-show-rank', 1)
+            show_rank: checked('profile-show-rank', 1),
+            // 第 6 个开关（好友批）：**社交权限**，不是展示开关。缺省 1 = 开放申请，
+            // 与 `friend_requests_open INTEGER DEFAULT 1` 一致。
+            friend_requests_open: checked('profile-friend-requests', 1)
         };
     }
 
@@ -5226,6 +5371,10 @@ function setupSocketListeners() {
         document.getElementById('reinforcement-status')?.classList.add('hidden');
         document.getElementById('holy-heart-status')?.classList.add('hidden');
         renderActiveEffects({ self: [], opponent: [] });   // 结算界面不该再挂着「生效中」的角标
+        // 绝处逢生的两个门禁标记也要一起清：它们只用于"出牌门禁/提示"，对局结束
+        // 就没有意义了，留着会让下一局的出牌门禁带着上一局的结论。
+        gameState.lastStandLock = false;
+        gameState.lastStandWin = false;
         hidePriorityWaitingBanner();                        // 对局结束：等待横幅一并撤掉
         hideShenjiWaitingBanner();
         // 对局结束也必须收掉桃园的全屏等待浮层：对方在选择中掉线被判负时，
@@ -5251,6 +5400,15 @@ function setupSocketListeners() {
         } else {
             gameResult.textContent = '很遗憾，你输了。';
         }
+        // 好友批：结算界面把对手那一行的「加好友」按钮补上。
+        // ⚠️ 触发它的是 socket 事件 `recent_opponent`（服务端结算时**双方各收一条**），
+        //    那条事件的到达顺序不保证 —— 可能在 game_over **之前**也可能在之后
+        //    （本项目的经验：`_finalize_match` 系列事件常排在 game_over 之前，
+        //    但 `rank_changed` 那种走 background task 的排在之后）。
+        //    所以两处都兜一次，名字取"这局那个对手"：
+        //    优先用 recent_opponent 给的名字（服务端权威），没有就用对局期间记下的对手名。
+        renderRecentOpponentAdd(recentOpponentState.name || gameState.opponentName || '',
+            recentOpponentState.relation);
     });
 
     socket.on('achievements_unlocked', (data) => {
@@ -5288,6 +5446,47 @@ function setupSocketListeners() {
             showRankGainPanel(data);
         } catch (e) {
             console.warn('段位动画失败（不影响结算）:', e && e.message);
+        }
+    });
+
+    // ==================== 好友批：四个服务端 → 客户端的 socket 事件 ====================
+    // 事件名与 payload 是**冻结契约**，一个字母都不能改（后端在并行实现）：
+    //   friend_request  {from_user_id, from_username, from_avatar}
+    //   friend_accepted {user_id, username, avatar}
+    //   friend_invite   {room_id, from_user_id, from_username}
+    //   recent_opponent {user_id, username, avatar, relation}
+    // ⚠️ 每个 handler 都整块 try/catch：这四条都是"顺带提示"类事件，
+    //    任何一条抛异常都不该把当前这局对局搅黄（同 xp_gained / rank_changed 的处理）。
+
+    socket.on('friend_request', (data) => {
+        try {
+            handleFriendRequestEvent(data);
+        } catch (e) {
+            console.warn('好友申请提示失败（不影响对局）:', e && e.message);
+        }
+    });
+
+    socket.on('friend_accepted', (data) => {
+        try {
+            handleFriendAcceptedEvent(data);
+        } catch (e) {
+            console.warn('好友通过提示失败（不影响对局）:', e && e.message);
+        }
+    });
+
+    socket.on('friend_invite', (data) => {
+        try {
+            handleFriendInviteEvent(data);
+        } catch (e) {
+            console.warn('处理好友邀战失败（不影响对局）:', e && e.message);
+        }
+    });
+
+    socket.on('recent_opponent', (data) => {
+        try {
+            handleRecentOpponentEvent(data);
+        } catch (e) {
+            console.warn('处理最近对手失败（不影响结算）:', e && e.message);
         }
     });
 
@@ -7608,17 +7807,46 @@ function isFirstPlayer() {
 
 // 绝处逢生是否正在生效：生效回合内自己的其余魔法卡全部无效
 // （服务端 can_play_magic_card 第一条就拦这个，前端要给出同样的理由）。
-// 服务端有两种下发口径，都要认：
-//   · active_effects 事件    → 中文标签数组，如 ['绝处逢生', '百亿补贴']
-//   · room_sync（重连快照）  → game_effects 的键名数组，如 ['last_stand_cells']
+//
+// ⚠️ 绝处逢生在服务端是【两个】标记，生命周期不同：
+//   · last_stand     → 锁卡，只持续发动回合
+//   · last_stand_win → 击杀即胜，活到对局结束
+// 两个标记的角标显示名都含"绝处逢生"，**所以绝不能靠卡名匹配**：
+// 拿名字判断的话，"击杀即胜"会一直亮着，前端就以为魔法卡还被锁着 ——
+// 玩家点卡被本地拒掉、弹"绝处逢生生效中"，而服务端其实放行了。
+// 这里一律认标记名（服务端 room_sync 下发的布尔字段 / 角标对象的 key）。
+//
+// 认三种下发口径（老客户端 / 老快照升级瞬间也要能用）：
+//   · room_sync（重连快照）        → last_stand_lock 布尔字段
+//   · room_sync 的 effect_badges   → 角标对象的 key
+//   · active_effects 事件          → 中文标签，退化为"绝处逢生·封锁魔法卡"
 // 只读游戏状态、不改它，纯判定。
+function _effectMarkerSet() {
+    const out = new Set();
+    const push = (v) => {
+        if (v === null || v === undefined) return;
+        if (typeof v === 'string') { if (v) out.add(v); return; }
+        if (typeof v === 'object') {
+            if (v.key) out.add(String(v.key));
+            if (v.name) out.add(String(v.name));
+        }
+    };
+    (Array.isArray(gameState.activeEffects) ? gameState.activeEffects : []).forEach(push);
+    (Array.isArray(gameState.activeEffectsSelf) ? gameState.activeEffectsSelf : []).forEach(push);
+    return out;
+}
+
 function isLastStandActive() {
-    const effects = gameState.activeEffects;
-    if (!Array.isArray(effects)) return false;
-    return effects.some((name) => {
-        const s = String(name);
-        return s === '绝处逢生' || s === 'last_stand' || s.indexOf('last_stand') === 0;
-    });
+    if (gameState.lastStandLock === true) return true;
+    const markers = _effectMarkerSet();
+    // 标记名精确匹配。老口径 'last_stand' 认；新的 'last_stand_win' **不认**。
+    if (markers.has('last_stand') || markers.has('绝处逢生·封锁魔法卡')) return true;
+    // 兜底：只有在"新口径标记一个都没出现"时才按旧卡名判断，
+    // 免得升级瞬间（还没收到 room_sync 的新字段）把门禁整个放开。
+    if (!markers.has('last_stand_win') && !markers.has('绝处逢生·击杀即胜')) {
+        return markers.has('绝处逢生');
+    }
+    return false;
 }
 
 // 修改canPlayCard函数
@@ -9835,13 +10063,24 @@ function renderActiveEffects(payload) {
     hideEffectPopover();
 }
 
-// 兼容旧的纯字符串数组（老快照 / 老客户端），避免升级瞬间渲染不出来
+// 兼容旧的纯字符串数组（老快照 / 老客户端），避免升级瞬间渲染不出来。
+// ⚠️ name / key / label 三个字段各有各的用处，不能互相顶替：
+//   · name  = 卡名（浮层靠它回查卡面原文）—— 绝处逢生的两条角标**卡名相同**
+//   · key   = 标记名（last_stand / last_stand_win）—— 出牌门禁靠它区分
+//   · label = 显示名（卡名 + 可选后缀，如「绝处逢生·击杀即胜」）—— 只用于展示
+// 拿显示名去开门禁是最容易犯的错：两个显示名都含"绝处逢生"，
+// 于是"击杀即胜"那条会一直被当成"锁卡"，把玩家的牌白拦下来。
 function normalizeEffectList(list) {
     if (!Array.isArray(list)) return [];
     return list.map((e) => {
-        if (typeof e === 'string') return { name: e, description: '', expires: '' };
+        if (typeof e === 'string') {
+            return { name: e, key: e, label: e, description: '', expires: '' };
+        }
+        const name = String((e && e.name) || '');
         return {
-            name: String((e && e.name) || ''),
+            name,
+            key: String((e && e.key) || ''),
+            label: String((e && e.label) || name),
             description: String((e && e.description) || ''),
             expires: String((e && e.expires) || ''),
         };
@@ -9849,10 +10088,13 @@ function normalizeEffectList(list) {
 }
 
 function effectBadgeHTML(effect, side) {
+    // 显示用 label（可带后缀），浮层回查仍用 name（卡名）
+    const safeLabel = escapeHtml(effect.label || effect.name);
     const safeName = escapeHtml(effect.name);
     return `<button type="button" class="effect-icon" data-side="${side}"`
         + ` data-effect-name="${safeName}"`
-        + ` aria-label="查看效果：${safeName}">${safeName}</button>`;
+        + ` data-effect-key="${escapeHtml(effect.key || '')}"`
+        + ` aria-label="查看效果：${safeLabel}">${safeLabel}</button>`;
 }
 
 // ---------------------------------------------------------------- 效果浮层
@@ -9893,7 +10135,8 @@ function showEffectPopover(anchor, effect) {
         ${effect.expires ? `<div class="effect-popover-expiry">⏳ ${escapeHtml(effect.expires)}</div>` : ''}
     `;
     el.classList.remove('hidden');
-    el.dataset.for = effect.name;
+    // 浮层身份用**标记名**（卡名不唯一：绝处逢生有两条角标，卡名相同）
+    el.dataset.for = effect.key || effect.name;
 
     // 贴着角标定位，并保证不超出视口
     const r = anchor.getBoundingClientRect();
@@ -9907,12 +10150,28 @@ function showEffectPopover(anchor, effect) {
 }
 
 // 从角标反查它对应的效果数据（重绘后依然有效，不依赖闭包里的对象）
+//
+// ⚠️ 必须同时按**标记名 key** 匹配，不能只按卡名 name。
+// 绝处逢生挂着两条角标（last_stand / last_stand_win），两条的 name 都是
+// 「绝处逢生」（这是有意的：浮层靠 name 回查卡面原文），只按 name 查会
+// 永远命中列表里的第一条 —— 于是「击杀即胜」那枚角标弹出来的浮层写着
+// 「本回合结束时失效」，与它"活到对局结束"的真实生命周期自相矛盾。
+// 两条角标的 description 恰好相同，所以正文看不出问题，只有失效时机露馅。
 function effectOfBadge(btn) {
     const side = btn.dataset.side === 'opponent' ? 'opponent' : 'self';
     const list = side === 'opponent'
         ? (gameState.activeEffectsOpponent || [])
         : (gameState.activeEffectsSelf || []);
-    return list.find((e) => e.name === btn.dataset.effectName) || null;
+    const key = btn.dataset.effectKey || '';
+    const name = btn.dataset.effectName || '';
+    if (key) {
+        // 先按标记名精确匹配（同一条卡挂多个效果时这是唯一可靠的键）
+        const byKey = list.find((e) => e.key === key);
+        if (byKey) return byKey;
+    }
+    // 兜底：旧形状没有 key（normalizeEffectList 会把 key 填成卡名），
+    // 或者服务端还没下发 key —— 这时按卡名查，保持升级瞬间可用。
+    return list.find((e) => e.name === name) || null;
 }
 
 // 事件委托挂一次即可（角标会被反复重绘，逐个绑定会漏）
@@ -9940,7 +10199,10 @@ function bindEffectIndicators() {
         const btn = ev.target.closest && ev.target.closest('.effect-icon');
         if (!btn) { hideEffectPopover(); return; }
         const el = ensureEffectPopover();
-        const sameOpen = !el.classList.contains('hidden') && el.dataset.for === btn.dataset.effectName;
+        // 同一个角标再点一下 = 收起。这里也用标记名比对（见 effectOfBadge 的注释：
+        // 绝处逢生两条角标卡名相同，拿卡名比会把两条当成同一个，点第二条反而不开）
+        const mine = btn.dataset.effectKey || btn.dataset.effectName;
+        const sameOpen = !el.classList.contains('hidden') && el.dataset.for === mine;
         if (sameOpen) {
             hideEffectPopover();
         } else {
@@ -9971,6 +10233,10 @@ function init() {
     bindDeclinePriorityToggle();
     // 局内快捷语入口（第 4 批）：入口 / 面板 / 收起 三件事都绑在这里
     initQuickChatUI();
+    // 好友功能（好友批）：入口按钮 / 面板 / 邀战提示条 / 四个 socket 事件。
+    // ⚠️ 只绑事件、**不拉数据** —— /api/friends 必须等玩家点开面板才请求
+    //    （首页无谓地打一次接口，游客还会白吃一个 401）。
+    initFriendsUI();
     // 「我是谁」+ 可编辑项池子：登录态才有（游客 401），只用于判断名片上要不要
     // 显示「编辑资料」，绝不用它做权限判断 —— 保存时服务端还会再判一次。
     loadSelfIdentity();
@@ -9991,33 +10257,15 @@ function init() {
         showLobby();
     }
 
-    // 检查 URL 是否包含 room 参数，如果有则在连接后自动加入
+    // 检查 URL 是否包含 room 参数，如果有则在连接后自动加入。
+    // ⚠️ 入房只有一份实现（joinRoomById，模块作用域）—— 好友邀战的「进入房间」也走它，
+    //    两处各写一套的话 `?room=` 与好友邀战迟早会漂移（CLAUDE.md 第 10 节第 1 条）。
     const urlParams = new URLSearchParams(window.location.search);
     const autoRoom = urlParams.get('room');
     if (autoRoom) {
-        // Ensure socket exists and listeners are set up
-        ensureSocket();
-        // 在 socket 连接后尝试加入房间
-        if (gameState.socket.connected) {
-            gameState.socket.emit('join_room', { room_id: autoRoom, player_name: gameState.playerName }, (resp) => {
-                if (resp && resp.status === 'success') {
-                    gameState.roomId = autoRoom;
-                    switchScreen(shipPlacementScreen);
-                }
-            });
-        } else {
-            // 等待连接建立后加入
-            const onceConnect = () => {
-                gameState.socket.emit('join_room', { room_id: autoRoom, player_name: gameState.playerName }, (resp) => {
-                    if (resp && resp.status === 'success') {
-                        gameState.roomId = autoRoom;
-                        switchScreen(shipPlacementScreen);
-                    }
-                    gameState.socket.off('connect', onceConnect);
-                });
-            };
-            gameState.socket.on('connect', onceConnect);
-        }
+        // quiet：邀请链接失效（房间不存在 / 已满）时**不弹**提示 ——
+        // 这里只有 room_id，没有"是谁邀的你"，弹一句光秃秃的失败更让人困惑。
+        joinRoomById(autoRoom, { quiet: true });
     }
 
     // 创建魔法手牌区域
@@ -10025,6 +10273,76 @@ function init() {
     // 初始化卡牌提示框
     initCardTooltip();
 }
+
+// ==================== 按房间号入房（唯一的入房实现） ====================
+//
+// 两条入口共用它，**不许再写第二套**：
+//   ① 页加载时 URL 上的 `?room=XXXX`（邀请链接）—— init() 末尾那段；
+//   ② 收到好友邀战（事件 `friend_invite`）后点「进入房间」—— 好友面板那边。
+//
+// ⚠️ 刻意放在模块作用域：它是"要复用的助手"，一旦写在某个函数体里，
+//    另一个入口就会在运行时抛 ReferenceError，而调用点往往是 `.then()` / socket 回调，
+//    异常会被**吞掉**、页面上零提示（CLAUDE.md 第 10 节第 6 条，本项目一天踩过两次）。
+//
+// 返回值：一个 Promise（true = 已进房）。调用方按需 `.then()`，不 await 也不影响既有行为。
+function joinRoomById(roomId, opts) {
+    const options = opts || {};
+    if (!roomId) return Promise.resolve(false);
+    if (typeof ensureSocket === 'function') ensureSocket();
+    const socket = gameState.socket;
+    if (!socket) return Promise.resolve(false);
+
+    // ⚠️ 名字必须在这里现取，**不能**直接用 `gameState.playerName`：
+    //    - `playerNameInput` 在某些布局下压根不存在（下面那行 `if (playerNameInput)` 就是证据），
+    //      那时它是 null；
+    //    - 页加载早期 `gameState.playerName` 还可能是空串。
+    //    直接发出去的话服务端会按"匿名玩家"入座，而**症状是"入房失败、页面上什么都没发生"**
+    //    （实测踩过：`?room=` 自动入房返回 false，地址栏没同步、也没进放置界面，且不报错）。
+    //    取值顺序与服务端 fallback 一致：当前状态 → 登录用户名 → 输入框 → 兜底字面量。
+    const playerName = (gameState.playerName && String(gameState.playerName).trim())
+        || window.__USERNAME
+        || (playerNameInput && playerNameInput.value)
+        || '玩家';
+
+    const attempt = () => new Promise((resolve) => {
+        socket.emit('join_room', { room_id: roomId, player_name: playerName }, (resp) => {
+            if (resp && resp.status === 'success') {
+                gameState.roomId = roomId;
+                // 房号也写进地址栏：页内刷新 / 掉线重连用的还是既有那条 `?room=`
+                // 自动入房逻辑，这里只是把状态同步过去（history.replaceState 不触发导航，
+                // 不会把当前这局打断）。失败时静默忽略（file:// 等场景没有 history API）。
+                try {
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('room', roomId);
+                    window.history.replaceState(null, '', url.pathname + url.search);
+                } catch (e) { /* 无所谓，入房已经成功 */ }
+                if (typeof switchScreen === 'function' && shipPlacementScreen) {
+                    switchScreen(shipPlacementScreen);
+                }
+                resolve(true);
+            } else {
+                if (options.quiet !== true) {
+                    // 服务端会带中文原因（房间不存在 / 房间已满）
+                    showAlert((resp && resp.message) || '加入房间失败');
+                }
+                resolve(false);
+            }
+        });
+    });
+
+    if (socket.connected) return attempt();
+    // 还没连上：等一次 connect 再发（照抄原来 `onceConnect` 的写法，用 off 摘钩子）
+    return new Promise((resolve) => {
+        const onceConnect = () => {
+            socket.off('connect', onceConnect);
+            attempt().then(resolve);
+        };
+        socket.on('connect', onceConnect);
+        // 兜底：连不上也别把 Promise 永远挂着（8 秒后放行，调用方自行判断）
+        setTimeout(() => resolve(false), 8000);
+    });
+}
+window.joinRoomById = joinRoomById;
 
 // 更新连锁UI显示
 function updateChainUI() {
@@ -10045,8 +10363,7 @@ function updateChainUI() {
 
 // 添加显示可连锁卡牌的函数
 // 更新阶段UI
-function updatePhaseUI() {
-    const phaseElement = document.getElementById('current-phase');
+function updatePhaseUI() {    const phaseElement = document.getElementById('current-phase');
     const enterBattleBtn = document.getElementById('enter-battle-phase');
     const enterEndBtn = document.getElementById('enter-end-phase');
     const endTurnBtn = document.getElementById('end-turn-btn');
@@ -10533,3 +10850,778 @@ function showRenwangChoice() {
         clearRenwangPick();
     });
 }
+
+
+/* ============================================================================
+ * 好友功能（好友批，2026-09-19）—— 面板 / 入口红点 / 查看面加好友 / 邀战提示 / 结算加好友
+ *
+ * 契约（后端在并行实现，字段名与事件名一个都不能改）：
+ *   GET  /api/friends            → {friends:[{user_id,username,avatar,level,rank_label,online,in_game}],
+ *                                   incoming:[{user_id,username,avatar,created_at}],
+ *                                   outgoing:[{user_id,username,avatar,created_at}],
+ *                                   limits:{max_friends,requests_per_hour}, counts:{friends,incoming}}
+ *   POST /api/friends/request  {username} → {status:'sent'|'already_friends'|'already_pending'|'blocked'|'self'|'error'}
+ *   POST /api/friends/respond  {username, accept:bool} → {status:'accepted'|'declined'|'error'}
+ *   POST /api/friends/remove   {username} → {status:'ok'|'error'}
+ *   POST /api/friends/block    {username} → {status:'ok'|'error'}
+ *   POST /api/friends/invite   {username} → {status:'ok',room_id} 或 {status:'error',error:'中文原因'}
+ *   未登录一律 401；申请过频 429；好友满 400。
+ *   ⚠️ 服务端给的是 `{status:'error', error:'中文原因'}` —— 前端**原样显示那个 error**，
+ *      绝不自己编一套文案（自己编的那套迟早跟后端的真实原因对不上）。
+ *
+ * 三条本项目硬规矩在本节的具体落法：
+ *   ① **模块级函数不许引用函数作用域里的东西**（第 10 节第 6 条）：
+ *      本节的每一个函数、每一个 let 都在模块作用域，互相引用不会抛 ReferenceError。
+ *      唯一从函数作用域里带出来的东西是 socket 事件回调的 `data` —— 那是**参数**，不是闭包变量。
+ *   ② **"先清空再填充"必须先校验数据、失败时保留上一帧**（第 10 节第 3 条）：
+ *      三个分区容器只在读到**合法**响应之后才重写；请求失败只更新 #friends-msg 那一行错误位，
+ *      容器里留上一帧的内容（`updateHandUI` 清空后没填回来 → 空白手牌，就是这条的出处）。
+ *   ③ **含 position:fixed 后代的元素不许加 transform/filter/backdrop-filter**（第 11 节第 7 条）：
+ *      面板走既有的 .modal-overlay 那套；邀战提示条自己就是 fixed、挂在 body 上，
+ *      它的祖先链（body → #friend-invite-toast）里一个 transform/filter 都没有。
+ * ============================================================================ */
+
+// 关系态取值。'self' 只用于内部（自己看自己 → 按钮不渲染）。
+// ⚠️ 服务端还会下发 `blocked_by_me` / `blocked_me`（与 server.py 的同名常量对应）——
+//    本表是"这个取值合不合法"的**白名单**，少一个就会被判非法并**降级成 `none`**：
+//    症状是"被拉黑的人照样看到一个**可点**的「加好友」"（端到端实测钉出来的 PB3：
+//    点了服务端只会回一句中文原因，白让用户点一次）。
+const FRIEND_RELATIONS = ['none', 'pending_out', 'pending_in', 'friends', 'self',
+    'blocked_by_me', 'blocked_me'];
+// 邀战提示条自动消失时间（与局内轻提示同一个量级）
+const FRIEND_INVITE_TOAST_MS = 12000;
+// 面板当前这一帧的数据 + 三个容器的"上一帧"（保留上一帧就靠它）
+let friendsState = null;
+// 入口红点的当前值（配 counts.incoming；服务端事件先到也不会被面板的一次拉取冲乱）
+let friendPendingCount = 0;
+let friendPendingSynced = false;      // 是否已经用一次真实的 /api/friends 校准过
+// 当前查看面里那个人（点 #add-friend-btn 时要发给他）
+let currentFriendTarget = '';
+let currentFriendRelation = 'none';
+// 每个人这次会话里**已经算出来的关系**（username → 'none'|'pending_out'|'pending_in'|'friends'）。
+// ⚠️ 为什么必须按人缓存、而不是用一个全局布尔哨兵：
+//    从「不是好友」变成「好友」要在按钮旁**多一个「邀战」**，而那张卡永远先按 'none' 画，
+//    所以只能重渲染一次。第一版用一个全局布尔，而 `showUserProfile` 一进去就把它复位 ——
+//    回到关系判断时又当成"没重渲染过" → **无限重渲染**（页面永远停在「加载中…」，且不报错）。
+//    第二版改成 Set（只记"重渲染过"），结果第二次打开同一个人的名片时**直接跳过关系计算**，
+//    按钮永远停在「加好友」。所以缓存的是**关系本身**：第二次进来不再打接口、
+//    直接把缓存的关系写上去（要重渲染的那一次也已经做过了，不会再递归）。
+//    任何一次写操作（加/接受/删除）之后都应当把这个人的缓存清掉（见 forgetFriendRelation）。
+const friendRelationCache = new Map();
+// 正在同步渲染查看面那张卡（重入保护）。见 reRenderProfileCard。
+let profileCardRendering = false;
+// 当前挂着的邀战（点「进入房间」时用）。房间号是**服务端给的**，前端不拼。
+let activeInviteRoom = '';
+// 邀战提示条的自动收起定时器（模块级：show/hide 两个函数都要用它）
+let friendInviteTimer = null;
+// 结算界面那一行的最近对手（`recent_opponent` 事件落下来的）
+let recentOpponentState = { name: '', relation: '', userId: null };
+
+// ---------- 通用小助手 ----------
+
+// 后端中文原因：契约是 `{status:'error', error:'...'}`；个别接口可能用 `message`。
+// 两个都没有时返回''（调用方自己去兜一句通用文案）。
+function apiReason(body, fallback) {
+    if (body && typeof body === 'object') {
+        if (typeof body.error === 'string' && body.error) return body.error;
+        if (typeof body.message === 'string' && body.message) return body.message;
+    }
+    return fallback || '';
+}
+
+// 统一的写接口调用。**永不 reject** —— 返回值统一是
+//   {ok:true, data} | {ok:false, code:401|429|400|0, reason:'中文原因'}
+// 这样调用点不用各自写 try/catch，也不会出现"异常被 .then() 吞掉、页面上零提示"那种情况。
+function friendApiPost(path, payload) {
+    return fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify(payload || {})
+    }).then(resp => resp.text().then(text => {
+        let body = null;
+        try { body = text ? JSON.parse(text) : null; } catch (e) { body = null; }
+        // 未登录：契约是 401；真机上加一个"其实是登录 HTML"的形状兜一下
+        if (resp.status === 401 ||
+            (resp.status === 200 && /<html|<!doctype/i.test(text) && /登录/.test(text))) {
+            return { ok: false, code: 401, reason: '请先登录' };
+        }
+        if (!resp.ok) {
+            // 429 过频 / 400 好友满 —— 原因一律用服务端给的那个中文串
+            return { ok: false, code: resp.status, reason: apiReason(body, '操作失败（' + resp.status + '）') };
+        }
+        if (!body || typeof body !== 'object') {
+            return { ok: false, code: 0, reason: '服务端返回了无法解析的内容' };
+        }
+        return { ok: true, data: body };
+    })).catch(() => ({ ok: false, code: 0, reason: '网络错误，请稍后重试' }));
+}
+
+// 面板底部那一行提示位（成功/失败都写这里；失败用红色）
+function setFriendsMsg(text, isError) {
+    const el = document.getElementById('friends-msg');
+    if (!el) return;
+    el.textContent = text || '';
+    el.classList.toggle('is-error', isError === true);
+}
+
+// ---------- 关系计算（本批的核心妥协点，务必看清） ----------
+//
+// ⚠️ 为什么不在 /user_stats 或 /api/profile 的响应里取 relation？
+//    因为那两个接口的响应里**根本没有这个字段**，而本批只有前端授权
+//    （server.py / api.py / db.py 由另外两个智能体在并行改，前端一个字都不许碰）。
+//    所以这里退一步：打开查看面时**单独拉一次 GET /api/friends**
+//    （它里面本来就有我的全部好友 + 我发出的 + 我收到的），
+//    再按 username 在本地比对，算出 none / pending_out / pending_in / friends。
+//    拿到之后经 opts.friendRelation 传进名片渲染（见 profileCardModel 那段注释）。
+// ⚠️ 拉取失败（游客 401 / 接口还没上线）**兜成 'none'**：名片照常渲染，
+//    按钮显示「加好友」，真正点下去时由服务端裁决 —— 绝不让"拿不到关系"变成"名片打不开"。
+// ⚠️ 用 username 比而不是 user_id：查看面的入口（排行榜、游客对局、对局内头像）
+//    手里只有 username，没有对方的 user_id。
+function resolveFriendRelation(username, isSelfHint) {
+    if (isSelfHint === true) return Promise.resolve('self');
+    const name = String(username || '');
+    if (!name) return Promise.resolve('self');
+    // ⚠️ 游客（页面没有 window.__USERNAME）**不打这个接口**：一定 401，
+    //    而 401 的结论跟"没登录所以没有关系"是同一件事。省掉这一次往返不是为了省流量，
+    //    是为了**不把既有链路拖慢** —— 查看面现在多了这一次取数，
+    //    而"点开头像立刻读名片"那几个回归断言对这几毫秒很敏感（实测踩过）。
+    if (!window.__USERNAME) return Promise.resolve('none');
+    return fetchFriends().then(res => {
+        if (!res.ok || !res.data) return 'none';
+        return computeRelationByName(res.data, name);
+    }).catch(() => 'none');
+}
+
+// 纯函数：从一次 /api/friends 的响应里，按 username 算出关系。
+// 单独拎出来是为了能在回归工具里直接对着同一份数据断言（不必再打一次接口）。
+function computeRelationByName(data, username) {
+    const name = String(username || '');
+    if (!name || !data) return 'none';
+    const hit = (list) => (Array.isArray(list) ? list : []).some((u) =>
+        u && String(u.username || '').toLowerCase() === name.toLowerCase());
+    if (hit(data.friends)) return 'friends';
+    if (hit(data.incoming)) return 'pending_in';
+    if (hit(data.outgoing)) return 'pending_out';
+    return 'none';
+}
+
+// ---------- 入口红点 ----------
+// 数字**只认服务端**：优先用 counts.incoming；没有 counts 时退回 incoming.length。
+// 为 0 一律隐藏（不显示一个"0"的红点）。
+function renderFriendsBadge() {
+    const badge = document.getElementById('friends-badge');
+    if (!badge) return;
+    const n = Number(friendPendingCount) || 0;
+    if (n > 0) {
+        badge.textContent = String(n);
+        badge.classList.remove('hidden');
+    } else {
+        badge.textContent = '0';
+        badge.classList.add('hidden');
+    }
+}
+
+// 用一次真实响应对齐红点。
+// ⚠️ `friendPendingSynced` 的用途：`friend_request` 事件可能**先于**面板的第一次拉取到达，
+//    那时候数字已经 +1 了，若这次拉取的响应里还没把新申请算进去（服务端写入与读的时序），
+//    直接覆盖会把数字冲回去。所以只在"还没被事件改过"或"这次响应非零"时才覆盖。
+function syncFriendsBadge(data) {
+    if (!data || typeof data !== 'object') return;
+    const counts = data.counts;
+    const raw = (counts && counts.incoming !== undefined)
+        ? counts.incoming
+        : (Array.isArray(data.incoming) ? data.incoming.length : null);
+    if (raw === null || raw === undefined) return;
+    const n = Math.max(0, Number(raw) || 0);
+    if (!friendPendingSynced || n > 0) {
+        friendPendingCount = n;
+        friendPendingSynced = true;
+    }
+    renderFriendsBadge();
+}
+
+// ---------- 行渲染 ----------
+
+// 好友行：头像 + 用户名 + 等级 + 段位 label + 状态点 + 邀战 / 删除。
+// ⚠️ 排序**不在前端做** —— 服务端已经把「在线在前、对局中次之」排好了，照序渲染即可
+//    （CLAUDE.md 第 10 节第 1 条：同一个业务判断有两份实现就一定会漂移）。
+function friendRowHtml(f) {
+    const online = f.online === true;
+    const inGame = f.in_game === true;
+    const cls = inGame ? 'friend-ingame' : (online ? 'friend-online' : 'friend-offline');
+    const stateText = inGame ? '对局中' : (online ? '在线' : '离线');
+    // 离线时「邀战」禁用，并把**原因写在按钮上**（不是只灰掉不给理由）
+    const inviteTitle = online ? '邀请他打一局' : '对方不在线，暂时不能邀战';
+    return '<div class="friend-row ' + cls + '" data-username="' + escapeHtml(f.username) + '">'
+        + '<img class="friend-avatar" alt="头像" src="' + escapeHtml(String(f.avatar || '/static/avatars/default.png')) + '"'
+        + ' onerror="this.onerror=null;this.src=\'/static/avatars/default.png\'">'
+        + '<div class="friend-main">'
+        + '<span class="friend-name">' + escapeHtml(String(f.username || '未知玩家')) + '</span>'
+        + '<span class="friend-meta">' + escapeHtml(friendsMetaText(f)) + '</span>'
+        + '</div>'
+        + '<span class="friend-state"><i class="friend-dot"></i>' + stateText + '</span>'
+        + '<div class="friend-ops">'
+        + '<button type="button" class="friend-op friend-op-invite" data-friend-action="invite"'
+        + (online ? '' : ' disabled') + ' title="' + escapeHtml(inviteTitle) + '">邀战</button>'
+        + '<button type="button" class="friend-op friend-op-danger" data-friend-action="remove"'
+        + ' title="解除好友关系（会问一次）">删除</button>'
+        + '</div></div>';
+}
+
+// 等级 / 段位 / 加入时间：服务端给了才显示，没给就不显示那一段
+// （绝不用「Lv.0」「暂无段位」这种假数据顶上去 —— 那比不显示更糟）。
+function friendsMetaText(f) {
+    const parts = [];
+    if (f.level !== undefined && f.level !== null && f.level !== '') parts.push('Lv.' + f.level);
+    if (f.rank_label) parts.push(String(f.rank_label));
+    if (f.created_at) {
+        const t = new Date(Number(f.created_at) * 1000);
+        if (!isNaN(t.getTime())) parts.push('申请于 ' + t.toLocaleDateString());
+    }
+    return parts.length ? parts.join(' · ') : '—';
+}
+
+function friendRequestRowHtml(u, kind) {
+    const ops = kind === 'incoming'
+        ? '<button type="button" class="friend-op" data-friend-action="accept" title="同意这条好友申请">接受</button>'
+            + '<button type="button" class="friend-op friend-op-danger" data-friend-action="decline" title="拒绝这条好友申请">拒绝</button>'
+        : '<button type="button" class="friend-op" data-friend-action="cancel" title="撤回我发出的这条申请">撤回</button>';
+    return '<div class="friend-row" data-username="' + escapeHtml(u.username) + '">'
+        + '<img class="friend-avatar" alt="头像" src="' + escapeHtml(String(u.avatar || '/static/avatars/default.png')) + '"'
+        + ' onerror="this.onerror=null;this.src=\'/static/avatars/default.png\'">'
+        + '<div class="friend-main">'
+        + '<span class="friend-name">' + escapeHtml(String(u.username || '未知玩家')) + '</span>'
+        + '<span class="friend-meta">' + escapeHtml(friendsMetaText(u)) + '</span>'
+        + '</div>'
+        + '<div class="friend-ops">' + ops + '</div>'
+        + '</div>';
+}
+
+// ---------- 面板渲染 ----------
+//
+// ⚠️ 三个容器 + 空状态是**分开写**的，绝不用一次 innerHTML 把 #friends-modal 整块重建 ——
+//    重建会把「上一帧」也一起扔掉，接口一抖面板就空白（项目硬教训第 3 条）。
+function renderFriendsPanel(data) {
+    const list = document.getElementById('friends-list');
+    const reqs = document.getElementById('friends-requests');
+    const outs = document.getElementById('friends-outgoing');
+    const empty = document.getElementById('friends-empty');
+    if (!list || !reqs || !outs) return;      // 骨架没了就什么都不动（别把数据丢弃成半截）
+    const friends = Array.isArray(data.friends) ? data.friends : [];
+    const incoming = Array.isArray(data.incoming) ? data.incoming : [];
+    const outgoing = Array.isArray(data.outgoing) ? data.outgoing : [];
+
+    list.innerHTML = friends.map(friendRowHtml).join('');
+    reqs.innerHTML = incoming.map((u) => friendRequestRowHtml(u, 'incoming')).join('');
+    outs.innerHTML = outgoing.map((u) => friendRequestRowHtml(u, 'outgoing')).join('');
+
+    if (empty) {
+        if (!friends.length && !incoming.length && !outgoing.length) empty.classList.remove('hidden');
+        else empty.classList.add('hidden');
+    }
+}
+
+function openFriendsModal() {
+    const modal = document.getElementById('friends-modal');
+    if (!modal) return;
+    if (typeof closeOverlaysExcept === 'function') closeOverlaysExcept('friends-modal');
+    modal.classList.remove('hidden');
+    refreshFriendsPanel();
+}
+
+function closeFriendsModal() {
+    const modal = document.getElementById('friends-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+// 取一次好友数据。**永不 reject**：区分"响应到了但不合法"与"请求失败"，
+// 两种都不 throw（throw 出去只会被调用点的 .then() 吞掉）。
+function fetchFriends() {
+    return fetch('/api/friends', { headers: { 'Accept': 'application/json' } })
+        .then(resp => {
+            if (resp.status === 401) return { ok: false, guest: true, data: null };
+            if (!resp.ok) return { ok: false, guest: false, data: null };
+            return resp.json().then(
+                body => ({ ok: true, data: body }),
+                () => ({ ok: false, guest: false, data: null }));
+        })
+        .catch(() => ({ ok: false, guest: false, data: null }));
+}
+
+// 拉一次并渲染。三个分区都空时显示 #friends-empty。
+function refreshFriendsPanel() {
+    return fetchFriends().then(res => {
+        if (!res.ok || !res.data) {
+            // ⚠️ 失败**保留上一帧**：只写错误位，一个容器都不动。
+            setFriendsMsg(res.guest ? '请先登录' : '好友列表加载失败，请稍后重试', true);
+            return false;
+        }
+        // 数据合法性：三个分区至少有一个是数组才算一份能用的响应，
+        // 否则宁可继续显示上一帧（后端在改，半截响应不该把面板清空）。
+        const d = res.data;
+        const usable = Array.isArray(d.friends) || Array.isArray(d.incoming) || Array.isArray(d.outgoing);
+        if (!usable) {
+            setFriendsMsg('好友列表数据格式不对，已保留上一次的内容', true);
+            return false;
+        }
+        friendsState = d;
+        syncFriendsBadge(d);
+        renderFriendsPanel(d);
+        setFriendsMsg('', false);
+        // 面板开着的时候顺手校准查看面里那个按钮的关系态（不用重新拉接口）
+        const modalOpen = document.getElementById('friends-modal');
+        if (modalOpen && !modalOpen.classList.contains('hidden') && currentFriendTarget) {
+            applyProfileFriendRelation(computeRelationByName(d, currentFriendTarget));
+        }
+        return true;
+    });
+}
+
+// ---------- 查看面「加好友 / 邀战」 ----------
+
+// 关系 → 按钮文案。'self' → null（按钮压根不渲染）。
+function friendRelationLabel(relation) {
+    if (relation === 'friends') return '好友';
+    if (relation === 'pending_out') return '已申请';
+    if (relation === 'pending_in') return '接受申请';
+    if (relation === 'self') return null;
+    return '加好友';
+}
+
+// 查看面那一排的「加好友 / 邀战」按钮。只在 withIds（= 查看面）时被调用。
+// ⚠️ `id="add-friend-btn"` 必须写成**字面量**：tools/dom_contract_check.mjs 靠源码里的
+//    `id="…"` 字面量判断这个契约 id 是由 JS 运行期渲染的，拼出来的它认不出来（会误报悬空 id）。
+function friendActionButtonsHtml(m) {
+    if (m.self === true) return '';        // 自己看自己 → 按钮不显示
+    const label = friendRelationLabel(m.friendRelation);
+    if (label === null) return '';
+    let html = '<button type="button" class="fri-add-btn fri-rel-' + escapeHtml(m.friendRelation) + '"'
+        + ' id="add-friend-btn" data-relation="' + escapeHtml(m.friendRelation) + '"'
+        + ' data-username="' + escapeHtml(m.name) + '"'
+        + (m.friendRelation === 'pending_out' || m.friendRelation === 'friends' ? ' disabled' : '')
+        + '>' + escapeHtml(label) + '</button>';
+    if (m.friendRelation === 'friends') {
+        // 已是好友 → 旁边多一个「邀战」。⚠️ 这个按钮**刻意不给 id**：
+        //    它跟 #add-friend-btn 在同一个文档里，再要一个 id 只多一处撞 id 的机会，
+        //    用类走事件委托就够了。
+        html += '<button type="button" class="fri-invite-btn" data-username="' + escapeHtml(m.name) + '"'
+            + ' title="邀请他打一局">邀战</button>';
+    }
+    return html;
+}
+
+// 就地把按钮改成新的关系态（**不重渲染整张名片** —— 重渲染会冲掉留言草稿与滚动位置，
+// 这是第 3 批那条"不许整卡重渲染"的硬要求，这里沿用）。
+// 只在需要"多一个 / 少一个按钮"的跃迁上才退回重渲染整张卡。
+function applyProfileFriendRelation(relation) {
+    if (FRIEND_RELATIONS.indexOf(relation) < 0) relation = 'none';
+    currentFriendRelation = relation;
+    const btn = document.getElementById('add-friend-btn');
+    if (!btn) return;
+    const label = friendRelationLabel(relation);
+    if (label === null) {   // 变成自己了（不该发生）：把按钮摘掉
+        if (btn.remove) btn.remove();
+        return;
+    }
+    const hasInvite = !!document.querySelector('.fri-invite-btn');
+    if (relation === 'friends' && !hasInvite) {
+        // 关系是「好友」但卡上还没有「邀战」——只有这一种跃迁需要重渲染（按钮要多一个）。
+        // ⚠️ 重渲染走 `reRenderProfileCard`，而它最终会回到 `showUserProfile` ——
+        //    所以**必须让那一趟带上"关系=friends"**（fetchProfile 的 opts.friendRelation
+        //    现在就是这么接的）：不然重渲染出来的卡还是没有「邀战」按钮，
+        //    这里就会一趟一趟重渲染下去（实测 8 秒 830 次，页面永远停在「加载中…」）。
+        //    另外 reRenderProfileCard 自带重入保护：同一次同步渲染里不会发起第二次。
+        // 万一还是没画出来（例如卡片被别人换掉了），就地补一个，**绝不递归**。
+        const target = btn.dataset.username || currentFriendTarget || '';
+        reRenderProfileCard();
+        if (!document.querySelector('.fri-invite-btn')) addInviteButtonInPlace(target);
+        // ⚠️⚠️ 补完按钮**不能直接 return**（2026-09-19 修）：以前这里 `return` 掉了，
+        //    于是"已经是好友、卡上也有邀战按钮"的那一趟**走不到下面的文案更新** ——
+        //    现场是「邀战」在、左边那个按钮却还写着「加好友」且可点（T2l 判的就是这一条）。
+        //    重渲染那趟已经把按钮画成「好友」，用现值判断，别再白重渲染一次。
+        const after = document.getElementById('add-friend-btn');
+        const relAfter = (after && after.dataset) ? String(after.dataset.relation || '') : '';
+        if (relAfter === relation) return;
+    } else if (relation !== 'friends' && hasInvite) {
+        // 从好友变回非好友（比如刚把对方删了）：把「邀战」收掉（就地删，不重渲染）
+        const inv = document.querySelector('.fri-invite-btn');
+        if (inv && inv.remove) inv.remove();
+    }
+    // 走到这里时先确认这张卡还是"那个人"的，别把过期的关系写到新卡上
+    if (btn.dataset.username && currentFriendTarget
+        && btn.dataset.username !== currentFriendTarget) return;
+    btn.textContent = label;
+    btn.dataset.relation = relation;
+    btn.className = 'fri-add-btn fri-rel-' + relation;
+    btn.disabled = (relation === 'friends' || relation === 'pending_out');
+}
+
+// 重新渲染查看面那张卡（只在关系跃迁、按钮数量变化时才用）。
+//
+// ⚠️ 两个坑都在这一小段里，都是本项目第 10 节第 6 条的同一个形状：
+//   ① **必须走 `window.showUserProfile`**，不能直接写 `showUserProfile(...)` ——
+//      那个函数声明在 `document.addEventListener('DOMContentLoaded', …)` 的回调里
+//      （块作用域），模块作用域看不见它，直接写就是 ReferenceError。
+//   ② **名字要现从 DOM 取**，不能读 `currentProfileUsername` ——
+//      那个变量声明在另一个 IIFE 里面（`const` 是块作用域），这里同样看不见。
+//      这两处都会抛 ReferenceError，而调用点在 `.then()` 里 → 异常被吞掉、
+//      页面上零提示，症状只是"「邀战」按钮永远不出现"（实测就是这样红的）。
+//      DOM 是这两个作用域唯一的公共面：`#add-friend-btn[data-username]` 就是当前那个人，
+//      `window.__viewedProfileName` 是 showUserProfile 每次都会写的第二份凭据。
+function reRenderProfileCard() {
+    // ⚠️ 重入保护（2026-09-19 加）：`window.showUserProfile` 会**同步**把容器设成
+    //    「加载中…」，而它的 `.then` 回调是微任务 —— 也就是说外面那次渲染还没落地时，
+    //    这一趟重渲染就会把容器清空、绕过「加好友」按钮。实测过的最坏形状是无限重渲染：
+    //    每次重渲染都把卡冲掉 → 调用方永远看不到「邀战」→ 再重渲染。
+    //    根因（fetchProfile 里 friendRelation 写死 'none'）已经单独修掉了，这里只留一道
+    //    保险：同一次同步渲染里绝不发起第二次重渲染 —— 返回 false 让调用方走
+    //    「就地补一个按钮」那条兜底，页面最差也只是少一次自动刷新，不会卡死在「加载中…」。
+    if (profileCardRendering) return false;
+    const btn = document.getElementById('add-friend-btn');
+    const name = (btn && btn.dataset && btn.dataset.username)
+        || window.__viewedProfileName || '';
+    if (!name) return false;
+    if (typeof window.showUserProfile === 'function') window.showUserProfile(name);
+    return true;
+}
+
+// 就地补一个「邀战」按钮（**不重渲染整卡**）。
+// 它是 applyProfileFriendRelation 的最后一道兜底：重渲染那条路万一没走通，
+// 这里直接把按钮插进同一排，避免"关系是好友、却没有邀战入口"的半截状态。
+function addInviteButtonInPlace(username) {
+    if (!username || document.querySelector('.fri-invite-btn')) return;
+    const add = document.getElementById('add-friend-btn');
+    const host = (add && add.parentNode) || (document.querySelector('#profile-view .pf-actions'));
+    if (!host || !document.createElement) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'fri-invite-btn';
+    btn.dataset.username = username;
+    btn.title = '邀请他打一局';
+    btn.textContent = '邀战';
+    if (add && add.nextSibling) host.insertBefore(btn, add.nextSibling);
+    else host.appendChild(btn);
+}
+
+// 点「加好友」/「接受申请」/「邀战」
+function handleAddFriendClick(btn) {
+    const username = String((btn && btn.dataset && btn.dataset.username) || currentFriendTarget || '');
+    if (!username) return;
+    const relation = String((btn && btn.dataset && btn.dataset.relation) || currentFriendRelation || 'none');
+    if (btn.disabled) return;
+
+    const done = (msg, isError) => {
+        if (isError) { showAlert(msg); return; }
+        showMessage(msg, { type: 'success' });
+    };
+
+    if (relation === 'pending_in') {
+        friendApiPost('/api/friends/respond', { username: username, accept: true }).then(res => {
+            if (res.ok && res.data.status === 'accepted') {
+                applyProfileFriendRelation('friends');
+                syncFriendsAfterMutation(username);
+                done('已接受 ' + username + ' 的好友申请');
+            } else {
+                // ⚠️ 服务端给的中文原因**原样显示**，不自编文案
+                done(res.ok ? apiReason(res.data, '接受申请失败') : res.reason, true);
+            }
+        });
+        return;
+    }
+
+    // relation === 'none'（pending_out / friends 的按钮是 disabled，走不到这里）
+    friendApiPost('/api/friends/request', { username: username }).then(res => {
+        if (res.ok) {
+            const st = res.data.status;
+            if (st === 'sent' || st === 'already_pending') {
+                applyProfileFriendRelation('pending_out');
+                syncFriendsAfterMutation(username);
+                done(st === 'sent' ? ('已向 ' + username + ' 发出好友申请') : '已经申请过了，等对方确认');
+            } else if (st === 'already_friends') {
+                applyProfileFriendRelation('friends');
+                syncFriendsAfterMutation(username);
+                done('你们已经是好友了');
+            } else {
+                // blocked / self / error —— 原因一律用服务端那句中文
+                done(apiReason(res.data, '发送好友申请失败'), true);
+            }
+        } else {
+            done(res.reason, true);
+        }
+    });
+}
+
+// 点「邀战」（查看面 / 好友面板里都走它）
+function sendFriendInvite(username, btn) {
+    const name = String(username || '');
+    if (!name) return;
+    if (btn) btn.disabled = true;
+    friendApiPost('/api/friends/invite', { username: name }).then(res => {
+        if (btn) btn.disabled = false;
+        if (res.ok && res.data.status === 'ok' && res.data.room_id) {
+            showMessage('已邀请 ' + name + ' 打一局', { type: 'success' });
+            // 邀请已发出，提示位顺手说一句房间号，方便口头确认
+            setFriendsMsg('已邀请 ' + name + '（房间 ' + res.data.room_id + '）', false);
+        } else {
+            // 契约里 `error` 字段就是服务端给的中文原因（例如「对方不在线」）——原样显示
+            showAlert(res.ok ? apiReason(res.data, '邀请失败') : res.reason);
+        }
+    });
+}
+
+// 任何一次成功的写操作之后，**重新拉一次**接口（数字与列表都以服务端为准，
+// 绝不在前端自己加减数组 —— 那是"两份实现"的老病根）。
+// ⚠️ 同时**把这个人的关系缓存丢掉**：不快照的话，刚把他加成好友、再点开他的名片，
+//    按钮会按缓存里的旧关系显示（"点了没反应"那一类，且不报错）。
+function syncFriendsAfterMutation(username) {
+    if (username) friendRelationCache.delete(String(username));
+    return refreshFriendsPanel();
+}
+// 关系缓存的显式失效入口（供需要的地方调用）
+function forgetFriendRelation(username) {
+    if (username) friendRelationCache.delete(String(username));
+}
+
+// ---------- 面板里的操作（事件委托） ----------
+// 三个列表每渲染一次就换一批节点，逐个绑定必然失效 → 全部委托在 #friends-modal 上。
+function bindFriendsModal() {
+    const modal = document.getElementById('friends-modal');
+    if (!modal) return;
+    modal.addEventListener('click', (e) => { e.stopPropagation(); });
+
+    const closeBtn = document.getElementById('friends-close');
+    if (closeBtn) closeBtn.addEventListener('click', (e) => { e.preventDefault(); closeFriendsModal(); });
+
+    // 点遮罩空白处关闭（与既有弹窗一致的手感）
+    modal.addEventListener('click', (e) => { if (e.target === modal) closeFriendsModal(); });
+
+    modal.addEventListener('click', (e) => {
+        const el = (e.target && e.target.closest) ? e.target.closest('[data-friend-action]') : null;
+        if (!el) return;
+        e.preventDefault();
+        const row = el.closest('.friend-row');
+        const username = String((row && row.dataset && row.dataset.username) || el.dataset.username || '');
+        if (!username || el.disabled) return;
+        const action = el.dataset.friendAction;
+
+        if (action === 'accept') {
+            friendApiPost('/api/friends/respond', { username: username, accept: true }).then(res => {
+                if (res.ok && res.data.status === 'accepted') { setFriendsMsg('已接受 ' + username + ' 的好友申请', false); syncFriendsAfterMutation(username); }
+                else setFriendsMsg(res.ok ? apiReason(res.data, '接受申请失败') : res.reason, true);
+            });
+        } else if (action === 'decline') {
+            friendApiPost('/api/friends/respond', { username: username, accept: false }).then(res => {
+                if (res.ok && (res.data.status === 'declined' || res.data.status === 'ok')) { setFriendsMsg('已拒绝 ' + username + ' 的申请', false); syncFriendsAfterMutation(username); }
+                else setFriendsMsg(res.ok ? apiReason(res.data, '拒绝失败') : res.reason, true);
+            });
+        } else if (action === 'cancel') {
+            // 撤销我发出的申请 —— 契约里没有单独的 withdraw，走 remove（后端把"没有好友关系"
+            // 的删除当成撤回申请处理）。⚠️ 这里是**契约之外的一处推测**，回执一律以服务端为准。
+            friendApiPost('/api/friends/remove', { username: username }).then(res => {
+                if (res.ok && (res.data.status === 'ok' || res.data.status === 'removed')) { setFriendsMsg('已撤回对 ' + username + ' 的申请', false); syncFriendsAfterMutation(username); }
+                else setFriendsMsg(res.ok ? apiReason(res.data, '撤回失败') : res.reason, true);
+            });
+        } else if (action === 'remove') {
+            // 删除好友：二次确认（票面要求）。用原生 confirm —— 项目里所有二次确认都是它，
+            // 不新造一套确认弹窗（新造的那套还得自己处理 Esc / 焦点）。
+            if (!window.confirm('确定解除与「' + username + '」的好友关系吗？')) return;
+            friendApiPost('/api/friends/remove', { username: username }).then(res => {
+                if (res.ok && (res.data.status === 'ok' || res.data.status === 'removed')) { setFriendsMsg('已解除与 ' + username + ' 的好友关系', false); syncFriendsAfterMutation(username); }
+                else setFriendsMsg(res.ok ? apiReason(res.data, '删除失败') : res.reason, true);
+            });
+        } else if (action === 'invite') {
+            sendFriendInvite(username, el);
+        }
+    });
+}
+
+// 查看面里那两个按钮（委托在 #opponent-stats-content 上；那张卡会被反复重渲染）—— 
+// 走与 bindProfileCardButtons 同一条委托（那边已经绑过一次容器，这里是第二类目标）。
+function bindProfileFriendButtons() {
+    const box = document.getElementById('opponent-stats-content');
+    if (!box || box.dataset.friendButtonsBound === '1') return;
+    box.dataset.friendButtonsBound = '1';
+    box.addEventListener('click', (e) => {
+        const add = (e.target && e.target.closest) ? e.target.closest('#add-friend-btn') : null;
+        if (add) { e.preventDefault(); handleAddFriendClick(add); return; }
+        const invite = (e.target && e.target.closest) ? e.target.closest('.fri-invite-btn') : null;
+        if (invite) {
+            e.preventDefault();
+            sendFriendInvite(invite.dataset.username || currentFriendTarget, invite);
+        }
+    });
+}
+
+// ---------- 邀战提示条 ----------
+
+function showFriendInviteToast(username, roomId) {
+    const box = document.getElementById('friend-invite-toast');
+    const text = document.getElementById('friend-invite-text');
+    if (!box) return;
+    if (text) text.textContent = username + ' 邀你打一局（房间 ' + roomId + '）';
+    box.classList.remove('hidden');
+    // 按钮不是"只弹一次"：条子自动收起来后，activeInviteRoom 仍然留着，
+    // 手动点过「进入房间」才会清掉（避免"手一抖没点着，条子就永远没了"）。
+    if (friendInviteTimer) clearTimeout(friendInviteTimer);
+    friendInviteTimer = setTimeout(hideFriendInviteToast, FRIEND_INVITE_TOAST_MS);
+}
+
+function hideFriendInviteToast() {
+    const box = document.getElementById('friend-invite-toast');
+    if (box) box.classList.add('hidden');
+    if (friendInviteTimer) { clearTimeout(friendInviteTimer); friendInviteTimer = null; }
+}
+
+function bindFriendInviteToast() {
+    const enter = document.getElementById('friend-invite-enter');
+    if (!enter) return;
+    enter.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (!activeInviteRoom) { hideFriendInviteToast(); return; }
+        const room = activeInviteRoom;
+        activeInviteRoom = '';            // 点过就消费掉（失败也不会重复入房）
+        enter.disabled = true;
+        // ⚠️ 入房走**既有那份实现**（joinRoomById，模块作用域，页加载时的 `?room=` 也用它），
+        //    绝不在这里另写一套 emit join_room + switchScreen。
+        joinRoomById(room).then(ok => {
+            enter.disabled = false;
+            if (ok) hideFriendInviteToast();
+            else showAlert('加入房间失败（房间可能已满或已关闭）');
+        });
+    });
+}
+
+// ---------- 结算界面：最近对手那一行的「加好友」 ----------
+
+// 找结算屏里"对手那一行"的落点：优先 .game-over-buttons（结算屏里唯一的按钮行），
+// 找不到就退回 #game-result 之后。⚠️ 落点用**兜底链**而不是写死一个 id ——
+// 结算屏的 DOM 由别的批次在改，硬绑一个容器会"加了但看不见"（点了没反应那类症状）。
+function recentOpponentHost() {
+    return document.querySelector('#game-over-screen .game-over-buttons')
+        || document.getElementById('game-result');
+}
+
+// `relation='friends'` 时不显示按钮（或显示一个不可点的「已是好友」）；
+// `pending_out` / `pending_in` 都当「已申请」处理（票面）。
+function renderRecentOpponentAdd(username, relation) {
+    const name = String(username || '');
+    if (!name) return;                       // 没有对手名（人机局 / 数据没到）→ 什么都不做
+    const host = recentOpponentHost();
+    if (!host) return;
+
+    const old = document.getElementById('recent-opponent-add');
+    if (old) old.remove();
+
+    const rel = FRIEND_RELATIONS.indexOf(relation) >= 0 ? relation : 'none';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = 'recent-opponent-add';           // 契约 id（字面量，dom_contract_check 认它）
+    btn.className = 'recent-opponent-add';
+    btn.dataset.username = name;
+    btn.dataset.relation = rel;
+
+    if (rel === 'friends') {
+        btn.textContent = '已是好友';
+        btn.disabled = true;
+    } else if (rel === 'pending_out' || rel === 'pending_in') {
+        btn.textContent = '已申请';
+        btn.disabled = true;
+    } else if (rel === 'blocked_by_me' || rel === 'blocked_me') {
+        // 拉黑关系**绝不能落进下面的 else** —— 那会渲染成一个可点的「加好友」，
+        // 点下去服务端只会回一句「暂时无法向该玩家发送好友申请」。
+        // ⚠️ 文案两个方向共用一句：服务端有意不告诉客户端"是谁拉黑了谁"。
+        btn.textContent = '不能加好友';
+        btn.disabled = true;
+    } else {
+        btn.textContent = '加好友';
+        btn.disabled = false;
+    }
+    // 对手那条关系用 title 说清楚是谁（结算屏上往往只有一句"你很遗憾"）
+    btn.title = '向 ' + name + ' 发送好友申请';
+    btn.addEventListener('click', () => {
+        if (btn.disabled) return;
+        friendApiPost('/api/friends/request', { username: name }).then(res => {
+            if (res.ok && (res.data.status === 'sent' || res.data.status === 'already_pending')) {
+                btn.textContent = '已申请';
+                btn.disabled = true;
+                showMessage(res.data.status === 'sent' ? ('已向 ' + name + ' 发出好友申请') : '已经申请过了，等对方确认');
+            } else if (res.ok && res.data.status === 'already_friends') {
+                btn.textContent = '已是好友';
+                btn.disabled = true;
+                showMessage('你们已经是好友了');
+            } else {
+                showAlert(res.ok ? apiReason(res.data, '发送好友申请失败') : res.reason);
+            }
+        });
+    });
+
+    // 插在按钮行的**最前面**（"再来一局 / 返回主菜单"是既有按钮，插后面会顶掉它们的位置）
+    if (host.classList && host.classList.contains('game-over-buttons')) host.insertBefore(btn, host.firstChild);
+    else host.appendChild(btn);
+}
+
+// `recent_opponent` 事件：结算时双方各收一条。名字与关系都记下来，
+// 之后无论 game_over 先到还是后到，结算屏里都能把按钮补上。
+function handleRecentOpponentEvent(data) {
+    const name = String((data && data.username) || '');
+    if (!name) return;
+    const rel = FRIEND_RELATIONS.indexOf(data && data.relation) >= 0 ? data.relation : 'none';
+    recentOpponentState = { name: name, relation: rel, userId: (data && data.user_id) || null };
+    // 如果结算屏此刻已经切上来了（game_over 先到），当场就补
+    if (gameOverScreen && gameOverScreen.classList.contains('active')) {
+        renderRecentOpponentAdd(name, rel);
+    }
+}
+
+// ---------- 四个 socket 事件的业务处理（注册在 init 的 socket 段落里） ----------
+
+// 收到好友申请：红点 +1，并弹一条**轻提示**（复用既有 showMessage，不新造 toast）。
+function handleFriendRequestEvent(data) {
+    const name = String((data && data.from_username) || '玩家');
+    friendPendingCount = Math.max(0, Number(friendPendingCount) || 0) + 1;
+    friendPendingSynced = true;      // 事件已经改过数字，别让一次旧响应把它冲回去
+    renderFriendsBadge();
+    showMessage(name + ' 想加你为好友，打开「好友」看看', { type: 'info', duration: 5000 });
+    // 面板开着的话顺手刷新（重新拉一次接口，不以这次事件的数据渲染 —— 事件 payload
+    // 只有 from_* 三个字段，缺 avatar/created_at，拿它渲染会漏字段）
+    const modal = document.getElementById('friends-modal');
+    if (modal && !modal.classList.contains('hidden')) refreshFriendsPanel();
+}
+
+// 申请被通过：提示一句，并把面板/红点对齐服务端
+function handleFriendAcceptedEvent(data) {
+    const name = String((data && data.username) || '对方');
+    showMessage(name + ' 已成为你的好友；现在可以邀他打一局', { type: 'success', duration: 5000 });
+    const modal = document.getElementById('friends-modal');
+    if (modal && !modal.classList.contains('hidden')) refreshFriendsPanel();
+}
+
+// 收到邀战：显示提示条，点「进入房间」走既有入房逻辑
+function handleFriendInviteEvent(data) {
+    const room = String((data && data.room_id) || '');
+    const name = String((data && data.from_username) || '好友');
+    if (!room) return;
+    activeInviteRoom = room;
+    showFriendInviteToast(name, room);
+}
+
+// ---------- 入口与初始化 ----------
+
+function initFriendsUI() {
+    const btn = document.getElementById('friends-btn');
+    if (btn) {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            // ⚠️ 点开才拉 GET /api/friends —— 页加载时**不拉**（票面要求）：
+            //    少一次无谓请求，游客也不会白吃一个 401。
+            openFriendsModal();
+        });
+    }
+    bindFriendsModal();
+    bindProfileFriendButtons();
+    bindFriendInviteToast();
+    // 红点初始状态：0 → 隐藏（只在收到 friend_request 事件后才亮）
+    renderFriendsBadge();
+}
+window.initFriendsUI = initFriendsUI;
+window.showFriendsModal = openFriendsModal;

@@ -240,6 +240,11 @@ def test_persistent_flags_survive_turn_switch():
     # 只持续本回合的不能进白名单
     for name in ('battle_spirit', 'wuxian', 'double_attacks', 'last_stand'):
         assert name not in keep, f'{name} 只持续本回合，不该保留'
+    # ⚠️ 例外：绝处逢生是【两个】标记。last_stand（锁卡）只持续本回合，
+    # 但 last_stand_win（击杀即胜）必须跨回合、活到对局结束 ——
+    # 此前两者合成一个，于是击杀即胜跟着锁卡一起过期，只在发动当回合有效。
+    assert 'last_stand_win' in keep, '绝处逢生的击杀即胜必须跨小回合保留'
+    assert 'last_stand_win' in server.FLAGS_KEEP_ACROSS_ROUND, '也要跨大回合'
 
 
 def test_prune_effect_flags_keeps_whitelist(room):

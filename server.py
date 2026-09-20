@@ -487,6 +487,11 @@ class GameRoom:
         #    消费点见 `_consume_ship_pick`，回归用例见 `tests/test_ship_pick_priority.py`。
         self.pending_ship_picks: list[dict[str, Any]] = []
         self.ship_pick_seq = 0        # 单调递增序号：同优先级先到先得，且顺序确定可测
+        # 命运骰子摇到 3 时的「双方各弃一张」待办（按 CLAUDE.md 第 11 条三件齐）。
+        # 结构：{player_id: True/False}，True=已弃/无需弃，False=等待玩家选择。
+        # 消费点：handle_dice_discard_choose / _start_dice_discard / _check_dice_discard_complete。
+        # 不放 magic_temp_data：它有 8 处被整体覆写 = {}，等待期间打出别的卡就抹掉。
+        self.pending_dice_discard: dict[str, bool] = {}
         # 掉线/重连（2026-09-07 新增）
         self.disconnected = {}        # player_id -> {'deadline': float, 'token': int}（宽限期内）
         self.disconnect_seq = 0       # 掉线计时器代际令牌
@@ -7039,8 +7044,23 @@ def _shenji_wait_reason(room, player_id: str):
 
 
 def _action_wait_reason(room, player_id: str):
-    """写操作统一门禁：神机妙算宣言窗口 > 阶段转换优先权。"""
-    return _shenji_wait_reason(room, player_id) or _priority_wait_reason(room, player_id)
+    """写操作统一门禁：神机妙算宣言窗口 > 命运骰子弃牌待办 > 阶段转换优先权。"""
+    return (_shenji_wait_reason(room, player_id)
+            or _dice_discard_wait_reason(room, player_id)
+            or _priority_wait_reason(room, player_id))
+
+
+def _dice_discard_wait_reason(room, player_id: str):
+    """命运骰子摇到3：该玩家还有未完成的弃牌待办时，冻结其余写操作。
+
+    为什么必须有：弃牌待办挂在房间级字段上，玩家在此期间打出别的牌 / 开炮
+    会让连锁或攻击结算与待办交错，手牌变化也会让"弃第几张"的下标失效。
+    与神机妙算宣言窗口同口径：把待办"卡住"直到玩家完成选择。
+    """
+    pending = getattr(room, 'pending_dice_discard', None)
+    if isinstance(pending, dict) and pending.get(player_id) is False:
+        return '命运骰子生效中，请先选择一张手牌弃置'
+    return None
 
 
 def _snapshot_shenji_baseline(room, caster_id: str):
@@ -8559,7 +8579,7 @@ def _my_pending_sacrifice_ships(room, player_id, player):
             for sh in _alive_ships(player)]
 
 
-def _request_ship_pick(room, chooser_id, reason, message):
+def _request_ship_pick(room, chooser_id, reason, message, allow_duplicate=False):
     """让指定玩家在自己的棋盘上点选一艘【活着的】战舰（恶魔契约 / 神之宣告 / 克苏鲁之眼 共用）。
 
     AI 不参与交互：直接返回替它选中的那艘；人类玩家则**入队**并交付优先级最高的那一项。
@@ -8567,6 +8587,8 @@ def _request_ship_pick(room, chooser_id, reason, message):
     拿一艘早就沉了的船抵账，等于零代价。
 
     ⚠️ 2026-09-20 改为**队列**（旧实现是单槽覆写，第二个请求会把第一个挤掉）。
+    ⚠️ `allow_duplicate`：默认同玩家+同 reason 去重（同一张卡不会连开两个一样的请求）；
+       命运骰子摇到6需要对方连点两艘，传 True 跳过去重。
     """
     chooser = room.players.get(chooser_id) if chooser_id else None
     if not chooser:
@@ -8584,11 +8606,13 @@ def _request_ship_pick(room, chooser_id, reason, message):
         room.pending_ship_picks = picks = []
     # 同一玩家、同一 reason **不重复入队**（同一张卡不会连开两个一样的请求；
     # 真出现也只需要一次点击，重复项会让玩家被要求连点两下）
-    for p in picks:
-        if isinstance(p, dict) and p.get('player') == chooser_id \
-                and p.get('reason') == reason:
-            _dispatch_ship_pick(room, chooser_id)
-            return None
+    # 例外：allow_duplicate=True 时跳过（命运骰子摇到6要让对方连点两艘）
+    if not allow_duplicate:
+        for p in picks:
+            if isinstance(p, dict) and p.get('player') == chooser_id \
+                    and p.get('reason') == reason:
+                _dispatch_ship_pick(room, chooser_id)
+                return None
 
     room.ship_pick_seq = int(getattr(room, 'ship_pick_seq', 0) or 0) + 1
     picks.append({
@@ -8629,7 +8653,7 @@ def _do_demon_contract_sacrifice(room, player_id, ship, reason='demon_contract')
     player.remaining_ships = max(0, player.remaining_ships - 1)
 
     positions = [{'x': p.x, 'y': p.y} for p in ship.positions]
-    reason_text = '神之宣告' if reason == 'divine_decree' else '恶魔契约'
+    reason_text = {'divine_decree': '神之宣告', 'dice_sacrifice': '命运骰子'}.get(reason, '恶魔契约')
     add_game_log(room,
                  f'第{room.round}回合 · {_log_name(room, player_id)} 因{reason_text}牺牲一艘战舰',
                  'magic',
@@ -8646,12 +8670,193 @@ def _do_demon_contract_sacrifice(room, player_id, ship, reason='demon_contract')
     _emit_ships_updated(room)
 
 
+# ============ 判定魔法卡：命运骰子 ============
+# 各点数对应的播报文案（前端动画结束后的"会发生什么效果"也用这份）
+DICE_EFFECT_TEXT = {
+    1: '复活对方的一艘战舰',
+    2: '对方抽一张牌',
+    3: '双方各弃一张手牌',
+    4: '自己抽两张牌',
+    5: '复活自己的至多两艘战舰',
+    6: '对手牺牲两艘战舰',
+}
+
+
+def _apply_dice_of_fate(room, caster_id, result):
+    """命运骰子：摇 1-6，按点数结算不同效果。
+
+    1 复活对方一艘 / 2 对方抽一张 / 3 双方各弃一张 /
+    4 自己抽两张 / 5 复活自己至多两艘 / 6 对方牺牲两艘。
+
+    3 与 6 需要"玩家点选"，登记房间级待办：
+      · 弃牌（3）：room.pending_dice_discard = {pid: False}
+        + emit 'dice_discard_request' 给每位需弃牌的玩家；
+        玩家通过 'dice_discard_choose' 事件回传选择。
+      · 牺牲两艘（6）：复用 _request_ship_pick，reason='dice_sacrifice'，
+        入队两次；人类走 sacrifice_request 流程，AI 由 _request_ship_pick 自动选。
+    """
+    opponent_id = next(p for p in room.players if p != caster_id)
+    caster = room.players[caster_id]
+    opponent = room.players[opponent_id]
+
+    roll = random.randint(1, 6)
+    effect_text = DICE_EFFECT_TEXT.get(roll, '')
+
+    # 广播骰子动画 + 结果给双方（动画在前，结果文本一并下发，前端动画结束再显示文本）
+    emit('dice_rolled', {
+        'roll': roll,
+        'caster': caster_id,
+        'effect_text': effect_text,
+    }, room=room.id)
+
+    add_game_log(room,
+                 f'第{room.round}回合 · {_log_name(room, caster_id)} 使用【命运骰子】摇出 {roll} 点：{effect_text}',
+                 'magic', {'caster': caster_id, 'roll': roll, 'card': '命运骰子'})
+
+    if roll == 1:
+        # 复活对方一艘（原地复活，无副作用）。对方没有沉船则不复活。
+        revived = 0
+        if opponent.sunken_ships:
+            revived = _revive_sunken_ships(room, opponent, 1, reveal_to=caster_id)
+        result.message = '摇出1点：' + effect_text + (
+            '，对方一艘战舰复活' if revived else '，对方没有沉船，未复活')
+    elif roll == 2:
+        drawn = room.draw_card(opponent_id)
+        result.message = '摇出2点：' + effect_text + (
+            '，对方抽了一张牌' if drawn else '，但对方未能抽牌（牌堆空或被禁止抽卡）')
+    elif roll == 3:
+        # 双方各弃一张：无牌者跳过；AI 自动弃第一张；人类登记待办
+        _start_dice_discard(room, caster_id, opponent_id)
+        result.message = '摇出3点：' + effect_text + '，等待双方选择弃牌'
+    elif roll == 4:
+        drawn = 0
+        for _ in range(2):
+            if room.draw_card(caster_id) is not None:
+                drawn += 1
+        result.message = f'摇出4点：{effect_text}（实际抽到{drawn}张）'
+    elif roll == 5:
+        count = min(2, len(caster.sunken_ships))
+        revived = _revive_sunken_ships(room, caster, count, reveal_to=opponent_id) if count > 0 else 0
+        result.message = '摇出5点：' + effect_text + (
+            f'，自己复活了{revived}艘战舰' if revived else '，自己没有沉船，未复活')
+    elif roll == 6:
+        # 对方牺牲两艘：复用 ship_pick 队列，reason='dice_sacrifice'。
+        # 人类入队两次（allow_duplicate=True 跳过同 reason 去重，否则第二次被吞）；
+        # AI 由 _request_ship_pick 自动选并立即执行。
+        alive = _alive_ships(opponent)
+        need = min(2, len(alive))
+        sacrificed = 0
+        for _ in range(need):
+            picked = _request_ship_pick(room, opponent_id, 'dice_sacrifice',
+                                        '命运骰子：请点选一艘战舰牺牲',
+                                        allow_duplicate=True)
+            if picked is not None:
+                _do_demon_contract_sacrifice(room, opponent_id, picked, 'dice_sacrifice')
+                sacrificed += 1
+        if need == 0:
+            result.message = '摇出6点：' + effect_text + '，但对方没有可牺牲的战舰'
+        elif sacrificed == need:
+            result.message = f'摇出6点：{effect_text}（对方已牺牲{sacrificed}艘）'
+        else:
+            result.message = '摇出6点：' + effect_text + '，等待对方点选牺牲的战舰'
+
+
+def _start_dice_discard(room, caster_id, opponent_id):
+    """命运骰子摇到3：让双方各弃一张手牌。
+
+    · 无手牌的玩家直接跳过；
+    · AI 自动弃第一张；
+    · 人类登记 room.pending_dice_discard[pid] = False 并 emit 'dice_discard_request'。
+    """
+    room.pending_dice_discard = {}
+    ai_id = _ai_player_id(room) if getattr(room, 'is_ai_room', False) else None
+
+    for pid in (caster_id, opponent_id):
+        player = room.players[pid]
+        if not player.magic_hand:
+            # 无牌可弃：直接标记完成，不弹窗
+            room.pending_dice_discard[pid] = True
+            continue
+        if pid == ai_id:
+            # AI 自动弃第一张（与教皇旨意弃卡同一口径：随机选没意义，取首张）
+            discarded = player.magic_hand.pop(0)
+            room.magic_discard.append(discarded)
+            emit('hand_updated', {'hand': player.magic_hand}, to=player.sid)
+            add_game_log(room,
+                         f'第{room.round}回合 · {_log_name(room, pid)} 因命运骰子弃置「{discarded.name}」',
+                         'magic', {'player': pid, 'card': discarded.name, 'reason': 'dice_discard'})
+            room.pending_dice_discard[pid] = True
+        else:
+            room.pending_dice_discard[pid] = False
+            emit('dice_discard_request', {
+                'message': '命运骰子：请选择一张手牌弃置',
+                'reason': 'dice_discard',
+            }, to=player.sid)
+
+    # 双方都无需弃（都没手牌 / 都是 AI）→ 立即收尾，别留下空待办挂着
+    _check_dice_discard_complete(room)
+
+
+def _check_dice_discard_complete(room):
+    """双方都完成弃牌后清掉待办并广播结束。"""
+    pending = getattr(room, 'pending_dice_discard', None)
+    if not isinstance(pending, dict) or not pending:
+        return
+    if all(pending.values()):
+        room.pending_dice_discard = {}
+        emit('dice_discard_complete', {}, room=room.id)
+
+
+@socketio.on('dice_discard_choose')
+@_require_live_room
+def handle_dice_discard_choose(data):
+    """命运骰子摇到3：玩家选定要弃的手牌。"""
+    room_id = data.get('room_id')
+    player_id = data.get('player_id')
+    card_index = data.get('card_index')
+
+    room = room_manager.get_room(room_id)
+    if not room or player_id not in room.players or not _identity_ok(room, player_id):
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+
+    pending = getattr(room, 'pending_dice_discard', None)
+    if not isinstance(pending, dict) or pending.get(player_id) is not False:
+        return {'status': 'error', 'message': '当前没有等待你弃牌的命运骰子效果'}
+
+    player = room.players[player_id]
+    if not player.magic_hand:
+        # 没牌可弃：直接完成
+        room.pending_dice_discard[player_id] = True
+        _check_dice_discard_complete(room)
+        return {'status': 'success', 'message': '没有手牌可弃，已跳过'}
+
+    try:
+        idx = int(card_index)
+    except (TypeError, ValueError):
+        return {'status': 'error', 'message': '无效的卡牌位置'}
+    if not (0 <= idx < len(player.magic_hand)):
+        return {'status': 'error', 'message': '无效的卡牌位置'}
+
+    discarded = player.magic_hand.pop(idx)
+    room.magic_discard.append(discarded)
+    emit('hand_updated', {'hand': player.magic_hand}, to=player.sid)
+    add_game_log(room,
+                 f'第{room.round}回合 · {_log_name(room, player_id)} 因命运骰子弃置「{discarded.name}」',
+                 'magic', {'player': player_id, 'card': discarded.name, 'reason': 'dice_discard'})
+
+    room.pending_dice_discard[player_id] = True
+    _check_dice_discard_complete(room)
+    return {'status': 'success', 'message': f'已弃置「{discarded.name}」'}
+
+
 def _finish_game(room, winner_id, loser_id, reason):
     """统一结算：设置胜利者、记战绩、广播 game_over。"""
     room.state = 'game_over'
     room.winner = winner_id
     # 终局：待选队列整批作废（对局已经结束，再挂着只会挡住后续逻辑）
     _clear_ship_picks(room)
+    # 命运骰子的弃牌待办同样作废（同 _clear_ship_picks 的理由）
+    room.pending_dice_discard = {}
     add_game_log(room, f"第{room.round}回合 · {_log_name(room, winner_id)} 获胜，游戏结束",
                  'result', {'winner': winner_id, 'loser': loser_id, 'reason': reason})
     # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
@@ -10452,6 +10657,16 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             except Exception:
                 x = 0
             _apply_shenji_prediction(room, caster_id, x, result)
+
+    # ==== 判定魔法卡 ====
+    # 与「普通」「场地」并列的第三类。先摇骰子（动画+结果广播给双方），
+    # 再按点数结算不同效果。命运骰子是第一张判定卡；为后续扩展留 type 分支。
+    elif card.type == '判定':
+        if card.name == '命运骰子':
+            _apply_dice_of_fate(room, caster_id, result)
+        else:
+            result.success = False
+            result.message = f'未实现的判定魔法卡：{card.name}'
 
     # ==== 场地魔法卡 ====
     elif card.type == '场地':

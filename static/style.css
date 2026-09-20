@@ -6103,3 +6103,175 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, rgba(255, 2
     /* 保持灰态，避免"看起来能点"的误导 */
     opacity: .45;
 }
+
+
+/* ============================================================
+   命运骰子：摇骰子动画 + 弃牌选择浮层（判定魔法卡）
+   只用 fixed 定位 + transform/opacity/动画，不动盒模型尺寸。
+   ============================================================ */
+.dice-roll-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .78);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100000;
+    opacity: 0;
+    transition: opacity .25s ease;
+    pointer-events: none;
+}
+.dice-roll-overlay::after {
+    /* 透明度过渡：append 后下一帧再拉到 1，做出淡入 */
+    content: '';
+}
+.dice-roll-overlay:not(.dice-roll-fade-out) {
+    opacity: 1;
+}
+.dice-roll-fade-out {
+    opacity: 0;
+    transition: opacity .5s ease;
+}
+
+.dice-roll-card {
+    text-align: center;
+    color: #fff;
+    padding: 24px 32px;
+    border-radius: 14px;
+    background: linear-gradient(160deg, rgba(46, 58, 95, .92), rgba(20, 26, 44, .92));
+    box-shadow: 0 12px 40px rgba(0, 0, 0, .5), 0 0 24px rgba(120, 160, 255, .25);
+    border: 1px solid rgba(120, 160, 255, .3);
+}
+.dice-roll-title {
+    font-size: 18px;
+    margin-bottom: 14px;
+    color: #cfd8f0;
+    letter-spacing: 1px;
+}
+
+/* 骰子：用单面切换模拟翻滚（不依赖 3D transform，兼容性好）。
+   data-show 属性决定当前显示哪一面，JS 摇骰阶段快速切换它。 */
+.dice-3d {
+    width: 88px;
+    height: 88px;
+    margin: 0 auto 16px;
+    position: relative;
+    border-radius: 16px;
+    background: linear-gradient(145deg, #f5f7ff, #d6dcef);
+    box-shadow: inset 0 -6px 12px rgba(80, 100, 140, .35),
+                inset 0 4px 8px rgba(255, 255, 255, .8),
+                0 8px 20px rgba(0, 0, 0, .4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 44px;
+    font-weight: 800;
+    color: #2a3458;
+    text-shadow: 0 2px 0 rgba(255, 255, 255, .5);
+    transform: rotate(-6deg) scale(1);
+    animation: dice-shake .6s ease-in-out infinite alternate;
+}
+.dice-3d-face { display: none; }
+.dice-3d[data-show="1"] .dice-3d-face[data-face="1"] { display: block; }
+.dice-3d[data-show="2"] .dice-3d-face[data-face="2"] { display: block; }
+.dice-3d[data-show="3"] .dice-3d-face[data-face="3"] { display: block; }
+.dice-3d[data-show="4"] .dice-3d-face[data-face="4"] { display: block; }
+.dice-3d[data-show="5"] .dice-3d-face[data-face="5"] { display: block; }
+.dice-3d[data-show="6"] .dice-3d-face[data-face="6"] { display: block; }
+
+@keyframes dice-shake {
+    0%   { transform: rotate(-8deg) scale(.98); }
+    100% { transform: rotate(8deg) scale(1.02); }
+}
+
+.dice-roll-result {
+    font-size: 32px;
+    font-weight: 800;
+    color: #ffd56a;
+    margin: 4px 0 6px;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity .3s ease, transform .3s ease;
+    text-shadow: 0 0 12px rgba(255, 200, 80, .6);
+}
+.dice-roll-result-show {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.dice-roll-effect {
+    font-size: 15px;
+    color: #a8b8e0;
+    min-height: 22px;
+    opacity: 0;
+    transition: opacity .3s ease;
+}
+.dice-roll-effect-show {
+    opacity: 1;
+}
+
+/* 弃牌选择浮层 */
+.dice-discard-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .78);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100001;
+    animation: dice-fade-in .25s ease;
+}
+@keyframes dice-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+.dice-discard-card {
+    background: linear-gradient(160deg, rgba(46, 58, 95, .96), rgba(20, 26, 44, .96));
+    border: 1px solid rgba(120, 160, 255, .3);
+    border-radius: 14px;
+    padding: 20px 24px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, .5);
+    color: #fff;
+    max-width: 90vw;
+}
+.dice-discard-title {
+    font-size: 16px;
+    margin-bottom: 14px;
+    color: #ffd56a;
+    text-align: center;
+    letter-spacing: .5px;
+}
+.dice-discard-hand {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: 80vw;
+}
+.dice-discard-card-item {
+    width: 110px;
+    padding: 10px 8px;
+    border-radius: 10px;
+    background: linear-gradient(160deg, #3a4670, #252d4a);
+    border: 1px solid rgba(120, 160, 255, .35);
+    color: #fff;
+    cursor: pointer;
+    text-align: center;
+    transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+}
+.dice-discard-card-item:hover {
+    transform: translateY(-4px);
+    border-color: #ffd56a;
+    box-shadow: 0 8px 18px rgba(255, 200, 80, .3);
+}
+.dice-discard-card-item .card-name {
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 4px;
+    line-height: 1.25;
+}
+.dice-discard-card-item .card-speed,
+.dice-discard-card-item .card-type {
+    font-size: 11px;
+    color: #a8b8e0;
+}

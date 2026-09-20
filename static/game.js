@@ -5748,6 +5748,11 @@ function setupSocketListeners() {
                         // 明智埋葬选择UI
                         showBuryChoice(result);
                     }
+                } else if (result.temp_data_id === 'wangyang_choice') {
+                    // 只有当施法者是当前玩家时，才显示亡羊补牢选择UI
+                    if (result.caster === gameState.playerId) {
+                        showWangYangChoice(result);
+                    }
                 } else if (result.temp_data_id === 'shenji_declare') {
                     // 神机妙算宣言：仅施法者需要输入
                     if (result.caster === gameState.playerId) {
@@ -6518,6 +6523,104 @@ function setupSocketListeners() {
         });
     }
 
+    // 亡羊补牢：从弃牌区最新 n 张里挑 1 张加入手牌
+    // 候选牌的顺序由服务端给出（最新那张在末尾），UI 顺序就是候选数组的顺序。
+    function showWangYangChoice(result) {
+        const overlay = document.createElement('div');
+        overlay.className = 'taoyuan-choice-overlay';
+        overlay.style.zIndex = '10000';
+        overlay.innerHTML = `
+            <div class="taoyuan-choice-container">
+                <div class="taoyuan-choice-header">
+                    <h3>亡羊补牢 - 从弃牌区选 1 张</h3>
+                    <p id="taoyuan-choice-message">${result.message || ''}</p>
+                    <div id="taoyuan-selection-result" style="margin-top: 8px; padding: 8px; background-color: rgba(25, 118, 210, 0.1); border-radius: 4px;"></div>
+                </div>
+                <div class="taoyuan-cards-container"></div>
+                <div style="text-align:center;margin-top:10px;">
+                    <button id="wangyang-cancel-btn" class="secondary">取消（弃牌区还原）</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+
+        const cardsContainer = overlay.querySelector('.taoyuan-cards-container');
+        const selectionResultDiv = overlay.querySelector('#taoyuan-selection-result');
+        let cards = [];
+
+        const renderWangYangCards = (response) => {
+            if (!response || response.status !== 'success' || !response.data) return;
+            const list = response.data.cards;
+            if (!Array.isArray(list) || !list.length) return;
+            cards = list;
+
+            cards.forEach((card, index) => {
+                const cardElement = document.createElement('div');
+                cardElement.className = 'taoyuan-card-item';
+                cardElement.dataset.index = index;
+                cardElement.innerHTML = `
+                    <div class="taoyuan-card-name">${card.name}</div>
+                    <div class="taoyuan-card-type">${card.type}·速阶${card.speed}</div>
+                    <div class="taoyuan-card-desc">${card.description}</div>
+                `;
+                cardsContainer.appendChild(cardElement);
+
+                cardElement.addEventListener('click', () => {
+                    cardsContainer.querySelectorAll('.taoyuan-card-item').forEach(item => {
+                        item.classList.remove('selected');
+                    });
+                    cardElement.classList.add('selected');
+                    selectionResultDiv.innerHTML = `
+                        <strong>已选择：</strong>
+                        <span style="color: #1976d2; font-weight: bold;">${card.name}</span>
+                        <br>该卡将加入你的手牌，其余回归弃牌堆
+                    `;
+                    setTimeout(() => {
+                        confirmWangYangChoice(index);
+                        try { document.body.removeChild(overlay); } catch (e) {}
+                    }, 600);
+                });
+            });
+        };
+
+        if (result.cards && Array.isArray(result.cards) && result.cards.length) {
+            renderWangYangCards({ status: 'success', data: { cards: result.cards } });
+        } else {
+            gameState.socket.emit('get_magic_temp_data', {
+                room_id: gameState.roomId,
+                player_id: gameState.playerId
+            }, renderWangYangCards);
+        }
+
+        const cancelBtn = overlay.querySelector('#wangyang-cancel-btn');
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => {
+                if (gameState.socket) {
+                    gameState.socket.emit('cancel_magic_selection', {
+                        room_id: gameState.roomId, player_id: gameState.playerId,
+                    });
+                }
+                try { document.body.removeChild(overlay); } catch (e) {}
+            });
+        }
+    }
+
+    function confirmWangYangChoice(chosenIndex) {
+        gameState.socket.emit('confirm_magic_target', {
+            room_id: gameState.roomId,
+            player_id: gameState.playerId,
+            temp_data_id: 'wangyang_choice',
+            target_data: { chosen_index: chosenIndex }
+        }, (response) => {
+            if (response.status === 'success') {
+                showMessage(response.message);
+                updateHandUI();
+            } else {
+                showMessage(`选择失败：${response.message}`, { type: 'error' });
+            }
+        });
+    }
+
     // 说明：服务端从来没有 lobby_update / lobby_joined / lobby_left / match_found
     // 这些事件（历史遗留空壳，已删除）。大厅按钮状态改由上面真实的
     // match_queued / match_canceled 处理器同步。
@@ -6754,6 +6857,11 @@ function setupSocketListeners() {
     socket.on('taoyuan_complete', (data) => {
         // 移除等待提示（取消时服务端也会发这个事件，见 handle_cancel_magic_selection）
         dismissTaoyuanWaitingOverlay();
+        showMessage(data.message);
+    });
+
+    // 亡羊补牢结算完成提示（仅施法者选完/取消后通知对手）
+    socket.on('wangyang_complete', (data) => {
         showMessage(data.message);
     });
 

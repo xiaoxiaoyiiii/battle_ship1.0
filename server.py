@@ -3391,7 +3391,7 @@ def _apply_bury_choice(room, player_id, target_data):
 _SELECTION_TARGET_KEYS = {
     'caster_choice', 'opponent_choice', 'card_index', 'ship_indices',
     'effect_choice', 'prediction', 'index', 'target_area', 'target_line',
-    'source', 'source_index',
+    'source', 'source_index', 'chosen_index',
 }
 
 
@@ -3421,7 +3421,7 @@ def handle_magic_target(data):
     # 此前这里是第二套独立实现，与在用的那份语义已经漂移：桃园结义剩余牌
     # 进「弃牌堆」（在用版是放回牌堆）、不采用对方自选的 opponent_choice、
     # 也不广播 hand_updated / taoyuan_complete。两份实现并存 = 修一处漏一处。
-    if temp_data_id in ('taoyuan_choice', 'bury_choice', 'shield_choice'):
+    if temp_data_id in ('taoyuan_choice', 'bury_choice', 'shield_choice', 'wangyang_choice'):
         return confirm_magic_target({
             'room_id': room_id,
             'player_id': player_id,
@@ -5707,6 +5707,12 @@ def handle_use_magic_card(data):
     if hit_reason:
         return {'status': 'error', 'message': hit_reason}
 
+    # 亡羊补牢：发动条件「弃牌区有卡牌」也必须扣牌前判，否则扣进去的亡羊补牢自己
+    # 会让条件被动满足，玩家会以为「明明弃牌区空着却发动成功了」。
+    wangyang_reason = _wangyang_requirement_reason(room, player_id, card)
+    if wangyang_reason:
+        return {'status': 'error', 'message': wangyang_reason}
+
     # 找到并移除玩家手牌中的卡牌
     for i, c in enumerate(player.magic_hand):
         if c.name == card.name and c.speed == card.speed:
@@ -5797,6 +5803,22 @@ def _last_attack_requirement_reason(room, player_id, card):
         if not last.get('hit'):
             return f'{card.name}需要在自己上一发攻击命中对方后才能使用'
 
+    return None
+
+
+def _wangyang_requirement_reason(room, player_id, card):
+    """亡羊补牢的发动条件；不满足时返回原因，满足则返回 None。
+
+    卡面：「当弃牌区有卡牌时可以发动」。
+    此处按字面判断 magic_discard 非空 —— 出牌扣牌流程尚未执行，
+    所以判的是「打出亡羊补牢之前」弃牌区是否已有牌。
+    这样判定与用户裁定「候选不含刚打出的亡羊补牢自己」一致：
+    打出去之后即便它进了弃牌堆，自己也不算候选。
+    """
+    if card.name != '亡羊补牢':
+        return None
+    if not room.magic_discard:
+        return '弃牌区没有卡牌，亡羊补牢无法发动'
     return None
 
 
@@ -8007,6 +8029,51 @@ def confirm_magic_target(data):
             return {'status': 'error', 'message': '当前没有待处理的明智埋葬选择'}
         return _apply_bury_choice(room, player_id, target_data)
 
+    elif temp_data_id == 'wangyang_choice':
+        # 亡羊补牢：把选中的卡牌加入施法者手牌，其余候选按原顺序回归弃牌堆末尾，
+        # 再把暂存的「亡羊补牢自己」放回弃牌堆末尾。
+        temp = room.magic_temp_data or {}
+        if temp.get('type') != 'wangyang_choice' or temp.get('caster') != player_id:
+            return {'status': 'error', 'message': '当前没有待处理的亡羊补牢选择'}
+        cards = temp.get('cards') or []
+        if not isinstance(cards, list) or not cards:
+            return {'status': 'error', 'message': '没有可挑选的卡牌'}
+        try:
+            chosen_index = int(target_data.get('chosen_index', -1))
+        except (TypeError, ValueError):
+            chosen_index = -1
+        if not (0 <= chosen_index < len(cards)):
+            return {'status': 'error', 'message': '无效的卡牌选择'}
+        chosen = cards[chosen_index]
+        # 选中那张进施法者手牌
+        room.players[player_id].magic_hand.append(chosen)
+        # 其余候选按原顺序回归弃牌堆末尾
+        for i, c in enumerate(cards):
+            if i != chosen_index:
+                room.magic_discard.append(c)
+        # 暂存的亡羊补牢自己回归弃牌堆末尾
+        own_card = temp.get('own_card')
+        if own_card is not None:
+            room.magic_discard.append(own_card)
+        # 清空临时数据
+        room.magic_temp_data = {}
+        # 推送手牌变化给施法者；同步状态由 resolve_chain 收尾统一兜底
+        emit('hand_updated', {'hand': room.players[player_id].magic_hand},
+             to=room.players[player_id].sid)
+        # 通知对手
+        opponent_id = _opponent_of(room, player_id)
+        if opponent_id and opponent_id in room.players:
+            emit('wangyang_complete', {
+                'message': f'对方亡羊补牢选择了「{chosen.name}」',
+                'chosen': chosen.name,
+            }, to=room.players[opponent_id].sid)
+        add_game_log(room,
+                     f'第{room.round}回合 · {_log_name(room, player_id)} 的【亡羊补牢】'
+                     f'从弃牌区取回「{chosen.name}」加入手牌',
+                     'magic', {'caster': player_id, 'card': '亡羊补牢',
+                                'chosen': chosen.name})
+        return {'status': 'success', 'message': f'已将「{chosen.name}」加入手牌'}
+
     elif temp_data_id == 'shield_choice':
         # 仁王之盾：至多 3 艘己方战舰进入护盾状态（同样补上真实链路）
         caster = room.players[player_id]
@@ -8069,7 +8136,17 @@ def handle_cancel_magic_selection(data):
         return {'status': 'error', 'message': '当前不是你的选择'}
 
     cards = temp.get('cards')
-    if isinstance(cards, list):
+    # 亡羊补牢的候选牌来自弃牌堆，取消时应当回归弃牌堆（而不是 magic_deck）。
+    # 暂存的「亡羊补牢自己」也要一起放回弃牌堆末尾。
+    if cancelled_kind == 'wangyang_choice':
+        if isinstance(cards, list):
+            for c in cards:
+                if isinstance(c, MagicCard):
+                    room.magic_discard.append(c)
+        own_card = temp.get('own_card')
+        if isinstance(own_card, MagicCard):
+            room.magic_discard.append(own_card)
+    elif isinstance(cards, list):
         # 只放回真正的卡牌实例（明智埋葬的候选是纯数据，混进牌堆会污染牌堆）
         room.magic_deck.extend(c for c in cards if isinstance(c, MagicCard))
     room.magic_temp_data = {}
@@ -8091,6 +8168,15 @@ def handle_cancel_magic_selection(data):
                  {'cancelled': True,
                   'message': f'对方取消了{label}（已放回牌堆），本回合继续'},
                  to=room.players[opponent_id].sid)
+
+    # 亡羊补牢取消：通知对手结算完成
+    if cancelled_kind == 'wangyang_choice':
+        opponent_id = _opponent_of(room, player_id)
+        if opponent_id and opponent_id in room.players:
+            emit('wangyang_complete', {
+                'cancelled': True,
+                'message': '对方取消了亡羊补牢（弃牌区已还原）',
+            }, to=room.players[opponent_id].sid)
 
     emit('message', {'text': '已取消本次选择'}, to=room.players[player_id].sid)
     return {'status': 'success', 'message': '已取消本次选择'}
@@ -9258,6 +9344,39 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             result.message = '只抽到1张牌（牌堆不足），本回合双方无法获得魔法卡'
         else:
             result.message = '牌堆已空，没有抽到牌；本回合双方仍无法获得魔法卡'
+
+    elif card.name == '亡羊补牢':
+        # 从弃牌区最新 n 张里挑 1 张进手牌，其余回归弃牌堆。
+        # n = 双方剩余船数的最大值（用户裁定）。
+        # ⚠️ 候选不含刚打出的亡羊补牢自己：出牌扣牌流程已经把它 append 到
+        # magic_discard 末尾，所以先把它 pop 出来暂存，结算后再放回。
+        n = max(caster.remaining_ships, opponent.remaining_ships)
+        # 暂存刚打出的亡羊补牢自己（位于 magic_discard 末尾）
+        own_card = room.magic_discard.pop() if room.magic_discard else None
+        # 防御性兜底：理论上 handle_use_magic_card 已经拦过发动条件，
+        # 但连锁结算时弃牌堆可能被同批次的别的卡清空，这里再判一次。
+        if not room.magic_discard or n <= 0:
+            result.success = False
+            result.message = '弃牌区没有可挑选的卡牌'
+            if own_card is not None:
+                room.magic_discard.append(own_card)
+            return result
+        # 从末尾取 min(n, len) 张作为候选（末尾是最新）
+        take = min(n, len(room.magic_discard))
+        candidates = room.magic_discard[-take:]
+        del room.magic_discard[-take:]
+        room.magic_temp_data = {
+            'type': 'wangyang_choice',
+            'caster': caster_id,
+            'cards': candidates,         # MagicCard 实例列表（结算时引用同一对象）
+            'own_card': own_card,        # 暂存的亡羊补牢自己，结算后回归弃牌堆
+        }
+        result['cards'] = [
+            {'name': c.name, 'speed': c.speed, 'type': c.type, 'description': c.description}
+            for c in candidates
+        ]
+        result.message = f'请从弃牌区最新{len(candidates)}张牌中选1张加入手牌'
+        result.temp_data_id = 'wangyang_choice'
 
     elif card.name == '极限增援':
         # 两个大回合后，船少的一方获胜，已修复

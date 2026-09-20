@@ -6865,6 +6865,29 @@ function setupSocketListeners() {
         showMessage(data.message);
     });
 
+    // 守株待兔：陷阱标记已打上（施法者自己 + 对方都能看到，所以 room 广播）
+    socket.on('trap_set', (data) => {
+        const isMine = data && data.player === gameState.playerId;
+        const msg = isMine
+            ? '已为一艘战舰设置陷阱（本回合该船被击沉时对方需牺牲两艘）'
+            : '对方为一艘战舰设置了陷阱';
+        showMessage(msg, { type: isMine ? 'success' : 'warning' });
+    });
+
+    // 守株待兔：陷阱被踩中
+    socket.on('trap_triggered', (data) => {
+        showMessage((data && data.message) || '陷阱触发', { type: 'warning' });
+    });
+
+    // 守株待兔：陷阱过期（新大回合开始）
+    socket.on('trap_expired', (data) => {
+        if (data && data.player === gameState.playerId) {
+            showMessage('你的陷阱已过期', { type: 'info' });
+        } else if (data && data.player) {
+            showMessage('对方的陷阱已过期', { type: 'info' });
+        }
+    });
+
     // 服务器返回的被揭示的位置（仅对触发方发送）
     socket.on('revealed_positions', (data) => {
         if (!data || !Array.isArray(data.positions)) return;
@@ -9675,6 +9698,9 @@ const SACRIFICE_LABELS = {
     divine_decree: '神之宣告',
     kraken_eye: '克苏鲁之眼',
     shield_choice: '仁王之盾',
+    trap_setup: '守株待兔',
+    trap_sacrifice: '守株待兔',
+    dice_sacrifice: '命运骰子',
 };
 
 // ★ 选船优先级（2026-09-20）：**前端只镜像服务端那一份**（server.py 的
@@ -9684,6 +9710,7 @@ const SACRIFICE_LABELS = {
 const SHIP_PICK_PRIORITIES = {
     demon_contract: 100,
     divine_decree: 80,
+    trap_setup: 75,
     kraken_eye: 60,
     shield_choice: 40,
 };
@@ -9693,6 +9720,7 @@ const SHIP_PICK_CARD_NAMES = {
     '克苏鲁之眼': 'kraken_eye',
     '神之宣告': 'divine_decree',
     '仁王之盾': 'shield_choice',
+    '守株待兔': 'trap_setup',
 };
 
 // 当前是否有**更高优先级**的选船待办挡着这张卡；返回提示文案（空串 = 可用）。

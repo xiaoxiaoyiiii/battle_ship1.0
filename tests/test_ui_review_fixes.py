@@ -109,9 +109,46 @@ def test_default_avatar_is_visible_placeholder():
 
 
 # 9. 右下角是局内聊天浮窗的默认位置，预览框不能挪过去（会重叠）
+# ⚠️ 本用例原先是「源码正则锁死 @media (min-width: 1440px) 块里的 top/right 数值」——
+#    那锁的是行文不是意图，且那个 1440 断点本身就是缺陷（与 adaptive_layout.js 的
+#    WIDE_MIN_W=1200 判据相反，1200–1439px 预览回落文档流把棋盘顶出首屏）。
+#    现在改为断言**真实意图**：宽屏浮窗状态下预览锚在右上角（贴右边、贴顶），
+#    并且绝不带 bottom —— 否则就会与右下角的聊天浮窗重叠。
 def test_magic_preview_panel_keeps_top_right_anchor():
     chat = CSS.split('.in-game-chat-container {')[1].split('}')[0]
     assert 'right: 24px' in chat and 'bottom: 24px' in chat
-    panel = CSS.split('@media (min-width: 1440px)')[1].split('}')[0]
-    assert 'top: 80px' in panel
-    assert 'bottom: 24px' not in panel
+    # 找出所有把预览变成浮窗的宽屏媒体块（现在应是 min-width: 1200px，与 JS 判据一致）
+    wide_blocks = []
+    # 找出所有把预览变成浮窗的宽屏媒体块（现在应是 min-width: 1200px，与 JS 判据一致）。
+    # ⚠️ 必须按括号配平提取整块：用 split('}') 会在块内出现嵌套规则时提前截断，
+    # 把相邻块的属性也带进来（实测导致误判 bottom）。
+    def _media_block(css_text, at_rule):
+        i = css_text.find(at_rule)
+        if i < 0:
+            return ''
+        j = css_text.index('{', i)
+        depth = 0
+        for k in range(j, len(css_text)):
+            if css_text[k] == '{':
+                depth += 1
+            elif css_text[k] == '}':
+                depth -= 1
+                if depth == 0:
+                    return css_text[j:k + 1]
+        return css_text[j:]
+    wide_blocks = [_media_block(CSS, c) for c in ('@media (min-width: 1200px)',
+                                                  '@media (min-width: 1440px)')]
+    wide_blocks = [b for b in wide_blocks if b]
+    joined = '\n'.join(wide_blocks)
+    assert 'position: fixed' in joined, '宽屏下预览框不再固定（会回落文档流把棋盘顶出首屏）'
+    # 只检查 .magic-preview-container 自己的声明块 —— 宽屏块里还有别的规则
+    # （例如手牌条贴底用 bottom:0），在整块里搜 bottom 会误判。
+    assert '.magic-preview-container' in joined, '宽屏块里没有预览面板的规则'
+    panel_block = joined.split('.magic-preview-container')[1].split('}')[0]
+    # ⚠️ 先剥注释再查：注释里就写着「右下角是聊天浮窗 right:24px/bottom:24px」。
+    panel_code = re.sub(r'/\*.*?\*/', '', panel_block, flags=re.S)
+    assert re.search(r'(?<![-\w])top\s*:', panel_code), '预览浮窗必须锚在顶部'
+    assert re.search(r'(?<![-\w])right\s*:', panel_code), '预览浮窗必须锚在右侧'
+    # ⚠️ 用词边界匹配 `bottom:`，不能直接搜子串 —— `margin-bottom: 0` 里就含 "bottom:"。
+    assert not re.search(r'(?<![-\w])bottom\s*:', panel_code), \
+        '预览浮窗被挪到了右下角，会与聊天浮窗重叠'

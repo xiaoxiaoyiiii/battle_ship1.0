@@ -209,7 +209,10 @@
                 setDockOpen(dock.dataset.open !== 'true');
             });
         }
-        // 默认展开一次卡牌页，让新玩家知道面板槽在哪
+        // 默认展开一次卡牌页，让新玩家知道面板槽在哪。
+        // ⚠️ 这里只做「视觉初值」——能不能点到手牌不靠它：bindDock() 只在页面初始化时调用
+        // 一次，那时 body 上还没有 layout-tight（apply() 在那之后才跑），
+        // 所以「横屏默认展开」必须写在 layoutCompact() 里。
         var first = $$('.dock-tab', dock)[0];
         if (first) first.classList.add('active');
     }
@@ -344,11 +347,29 @@
     }
 
     // tight：视口本身就矮（横屏手机）——布局翻成"棋盘左列 + HUD/面板右列"
-    // dense：视口不矮但舞台塞不进最小棋盘——把常驻手牌收进面板槽，高度让给棋盘
+    // dense：视口不矮但舞台塞不进最小棋盘——压缩 HUD 与手牌高度。
+    // ⚠️ 这两档以前把手牌**搬进面板槽**（applyPlacement 第二参 true），而面板槽默认收起
+    // （.dock-body 是 display:none）→ 实测 320x568 与 664x336 的 clickableCards = 0：
+    // 手牌在 DOM 里、玩家一张都点不到（旧判据 handInDock 只看祖先节点，照样 PASS）。
+    // 现在改为「手牌常驻流内」，只有玩家主动展开面板槽时才收进卡牌页（那是他自己的选择）。
     function layoutCompact(tight, dense) {
         body.classList.toggle('layout-tight', tight);
         body.classList.toggle('layout-dense', !tight && dense);
-        applyPlacement(true, tight || dense);
+        // 手牌归属：不再把手牌搬进面板槽。
+        // 以前 dense/tight 会把 #magic-system 搬进卡牌页省高度，但面板槽默认收起
+        // （.dock-body display:none）→ 320x568 / 664x336 实测 clickableCards = 0；
+        // 而把槽默认展开后，clampDockHeight 为了保住棋盘只给槽 149px，手牌又被挤出槽外。
+        // 两难说明「把手牌藏进槽」在 320x568 上不成立 → 手牌常驻流内（CSS 压卡片高度腾空间）。
+        // 例外：横屏（tight）336px 高确实放不下常驻手牌条（实测棋盘单格从 48px 掉到 18.5px），
+        // 那里维持「手牌收进卡牌页」，并在此处**默认展开卡牌页**保证可点。
+        applyPlacement(true, false);
+        if (tight) {
+            var dockEl = document.getElementById('aux-dock');
+            if (dockEl && dockEl.dataset.open !== 'true') {
+                dockEl.dataset.tab = 'card';
+                setDockOpen(true);
+            }
+        }
         syncStageHeight();
         updateBoardMode();
         applyActiveBoard();

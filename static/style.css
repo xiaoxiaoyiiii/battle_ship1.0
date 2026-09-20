@@ -644,7 +644,12 @@ input:focus, select:focus {
     cursor: grab;
     transition: box-shadow 0.2s ease;
 }
-@media (min-width: 1440px) {
+/* ⚠️ 这个断点必须与 static/adaptive_layout.js 的 WIDE_MIN_W/WIDE_MIN_H（1200/700）**一致**。
+   两处曾经不一致（CSS 1440 / JS 1200）：1200–1439px 被 JS 当宽屏、CSS 却不给浮窗，
+   于是预览回落文档流占满整行，把两块棋盘与手牌整体下推 ~300px
+   —— 1366x768 实测棋盘底 1158 > 视口 768（完全不可见、需滚 390px）。
+   现在两边同为 1200px；高度门槛交给 JS 的 layout-* 类，见文件末尾的配套规则。 */
+@media (min-width: 1200px) {
     .magic-preview-container {
         position: fixed;
         /* 注意：右下角是局内聊天浮窗（.in-game-chat-container，right:24px/bottom:24px）的默认位置，
@@ -2923,7 +2928,36 @@ body.layout-compact.layout-ingame .magic-card .card-speed,
 body.layout-compact.layout-ingame .magic-card .card-type { font-size: 0.62rem; }
 body.layout-compact.layout-ingame #chain-display:empty { display: none; }
 
-/* ---------- 22.4 面板槽：卡牌详情 / 日志 / 聊天 三选一，永不叠压 ---------- */
+/* 手牌被搬进面板槽的「卡牌」页时（矮屏 / 横屏，或用户手动展开面板槽）：
+   槽体在 320x568 只有 52px 高、664x336 也只有 52px，而卡片是 64x92
+   → 卡片中心整条落在可视带之外，实测 elementFromPoint 返回 null、
+   clickableCards = 0（手牌在屏上、却一张都点不到；旧判据 handInDock 照样 PASS）。
+   修法：卡牌页里的手牌改成**横向滚动 + 卡片降高**，保证至少一行完整可见可点。 */
+/* 手牌被搬进面板槽的「卡牌」页时（矮屏 320x568 / 横屏 664x336 / 用户手动展开面板槽）：
+   槽体在 320x568 展开后只有约 149px（标题 + 预览 + 弃牌按钮），而卡片高 92px，
+   实测手牌被推到 y=602 而 .dock-body 只到 563 → 卡片中心落在槽外，
+   elementFromPoint 返回 null、clickableCards = 0（手牌在屏上却一张都点不到）。
+   修法：让卡牌页本身成为可滚容器，并把内容按「手牌优先」排序。 */
+/* 手牌被搬进面板槽的「卡牌」页时（横屏 664x336，或用户手动展开面板槽）：
+   槽体展开后只剩 ~50–250px（标题 + 预览 + 弃牌按钮先占），卡片若保持 92px 会把
+   内容顶出 .dock-body → 卡片中心落在槽外、elementFromPoint 返回 null、一张都点不到
+   （旧判据 handInDock 只看祖先节点，这种情况照样 PASS）。
+   修法：卡片降高 + 手牌横滑。
+   ⚠️ 不要给 .dock-panel 加 flex/overflow —— 那会让 .log-container 的
+   `position:static !important` 与预览的层叠关系错位（实测出现「预览∩日志」叠压）。 */
+body.layout-compact.layout-ingame .dock-panel[data-dock-panel="card"] #magic-system { min-height: 0; }
+body.layout-compact.layout-ingame .dock-panel[data-dock-panel="card"] #magic-system { min-height: 0; }
+body.layout-compact.layout-ingame .dock-panel[data-dock-panel="card"] .magic-hand {
+    overflow-x: auto; overflow-y: hidden; flex-wrap: nowrap;
+    padding-bottom: 2px;
+}
+body.layout-compact.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card {
+    flex: 0 0 auto;
+    height: 64px;
+    width: 56px;
+    padding: 3px;
+}
+body.layout-compact.layout-ingame .dock-panel[data-dock-panel="card"] .magic-hand-container > h3 { display: none; }
 body.layout-compact.layout-ingame .game-content > .aux-dock {
     display: flex;
     flex-direction: column;
@@ -3036,13 +3070,74 @@ body.layout-tight.layout-ingame .game-content > .game-info { grid-column: 2; gri
 body.layout-tight.layout-ingame .game-content > .board-tabs { grid-column: 2; grid-row: 2; }
 body.layout-tight.layout-ingame .game-content > .boards-container { grid-column: 1; grid-row: 1 / span 3; }
 body.layout-tight.layout-ingame .game-content > .aux-dock { grid-column: 2; grid-row: 3; }
+/* 横屏手牌：336px 高的视口放不下「棋盘 + 常驻手牌条」（实测常驻后棋盘单格从 48px
+   掉到 18.5px、并被压住 6~7 格）。所以横屏维持原设计：手牌收进面板槽的卡牌页。
+   ⚠️ 但必须让「卡牌页默认可达」：以前 #magic-system 是 display:none 且槽默认收起
+   → clickableCards = 0（手牌等于不存在）。现在由 adaptive_layout.js 在 tight 档
+   默认展开卡牌页（见 bindDock 里的注释），这里只负责把槽内卡片压到能完整显示。 */
 body.layout-tight.layout-ingame .game-content > #magic-system { display: none; }
-body.layout-tight.layout-ingame .game-content > .game-info { font-size: 0.72rem; gap: 2px 4px; }
-/* 右侧窄列里玩家 chip 改成纵向堆叠，否则两段文字会互相挤压、溢出列外 */
-body.layout-tight.layout-ingame .players-info { flex-direction: column; align-items: stretch; gap: 2px; }
-body.layout-tight.layout-ingame .player-flex-row { width: 100%; }
 /* 面板槽收起时不要撑满整行，否则变成一大块空白面板 */
 body.layout-tight.layout-ingame .aux-dock { align-self: start; }
+
+/* ---------- 22.6b 窄屏高不足（layout-dense，如 320x568）：把 HUD 与手牌压到最小 ----------
+   320x568 的纵向预算（视口 568）：
+       HUD 130 + 棋盘切换条 40 + 棋盘 + 手牌 + 面板槽 48
+   棋盘要拿到单格 40px（6 格 + 间距 + 内边距 ≈ 280px），手牌就不能超过 ~70px。
+   实测未优化时棋盘只剩 24px 格宽（可用性崩溃），这里逐项压：
+   ① HUD 折成两行紧凑 chip；② 手牌条只留一行卡（54x62）且不显示标题。 */
+body.layout-dense.layout-ingame .game-content > .game-info {
+    font-size: 0.66rem;
+    gap: 2px 4px;
+    max-height: 92px;
+    overflow: hidden;
+}
+body.layout-dense.layout-ingame .players-info { gap: 2px; }
+body.layout-dense.layout-ingame .player-info p { font-size: 0.62rem; }
+body.layout-dense.layout-ingame .field-magic-area { padding: 2px 6px; font-size: 0.62rem; }
+body.layout-dense.layout-ingame #turn-indicator { padding: 4px 6px; animation: none; }
+body.layout-dense.layout-ingame #turn-indicator .phase-btn { margin: 1px 2px; }
+body.layout-dense.layout-ingame .turn-indicator-inner h2 { font-size: 0.82rem; }
+body.layout-dense.layout-ingame .surrender-btn { padding: 4px 10px; font-size: 0.72rem; }
+/* 手牌：单行、卡片更矮，标题不显示 */
+body.layout-dense.layout-ingame #magic-system { margin: 0; }
+body.layout-dense.layout-ingame .magic-hand-container { margin: 0; padding: 2px 0 0; }
+body.layout-dense.layout-ingame .magic-hand-container > h3 { display: none; }
+body.layout-dense.layout-ingame .magic-card { width: 46px; height: 62px; padding: 2px; }
+body.layout-dense.layout-ingame .magic-card .card-name { font-size: 0.6rem; margin-bottom: 1px; }
+body.layout-dense.layout-ingame .magic-card .card-speed,
+body.layout-dense.layout-ingame .magic-card .card-type { font-size: 0.56rem; }
+
+/* 横屏（664x336）：336px 高的视口里，卡牌页要先保证**手牌可点**。
+   槽内 .dock-body 实测只有 52px（预览面板先占了位置），而卡片高 64px
+   → 手牌被推到 y=406（视口 336）之外，elementFromPoint 返回 null。
+   修法：① 卡牌页把手牌排在预览之前；② 横屏时压缩预览，让手牌整行落在槽内。 */
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] {
+    display: flex;
+    flex-direction: column;
+}
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] #magic-system { order: -1; }
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card { height: 56px; width: 50px; padding: 2px; }
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card .card-name { font-size: 0.58rem; margin-bottom: 1px; }
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card .card-speed,
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card .card-type { font-size: 0.54rem; }
+
+/* 横屏卡牌页的最终裁决：那个 52px 高的 .dock-body 里不可能同时放下预览与手牌，
+   而手牌是**唯一必须可点**的东西。所以横屏直接把预览与弃牌按钮移出卡牌页的占用：
+   预览的正文在 HUD 里已有精简版（field-magic 行），这里只保留手牌一行。 */
+body.layout-tight.layout-ingame #aux-dock-body .dock-panel[data-dock-panel="card"] > #magic-card-preview,
+body.layout-tight.layout-ingame #aux-dock-body .dock-panel[data-dock-panel="card"] > .discard-pile-btn-row {
+    display: none;
+}
+body.layout-tight.layout-ingame #aux-dock-body .dock-panel[data-dock-panel="card"] > #magic-system {
+    display: block;
+    order: -1;
+}
+/* 预览在横屏的卡牌页里退居次要：只留卡名与描述首行 */
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .card-stats,
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .card-description h4 { display: none; }
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .card-name { font-size: 0.78rem; margin-bottom: 2px; }
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .preview-header { display: none; }
+body.layout-dense.layout-ingame .magic-hand { gap: 4px; overflow-x: auto; flex-wrap: nowrap; }
 body.layout-tight.layout-ingame .player-flex-row,
 body.layout-tight.layout-ingame .phase-btn,
 body.layout-tight.layout-ingame .surrender-btn,
@@ -4459,12 +4554,20 @@ html.theme-dark .achievement-unlock .au-item { background: rgba(255, 255, 255, 0
     font-size: 0.82rem;
 }
 .my-level-strip .mls-lv { font-weight: 700; white-space: nowrap; }
-.my-level-strip .mls-bar { flex: 1 1 auto; }
+/* ⚠️ 必须给 flex 基准宽：`.mls-bar` 是 `flex:1 1 auto`，而同级有两个 `white-space:nowrap`
+   的兄弟（等级数字与「0 / 35」文本）。它们的 flex-basis 是 auto 且不可收缩，于是可用宽度被
+   吃光，轨道被压到 **0px** —— 实测 `#my-level-strip .mls-bar` = 0×10，进度条永远看不见，
+   「等级」这个功能在视觉上等于不存在（而页面不报错、接口正常、布局检查也全绿）。
+   同一坑同形状：`.pf-xp .pf-xp-bar` 也是 0 宽（名片里的经验条）。 */
+.my-level-strip .mls-bar { flex: 1 1 4rem; min-width: 3rem; }
 .my-level-strip .mls-text { white-space: nowrap; color: var(--muted, #8a94a2); }
 
 /* ── 名片里的经验条 ── */
+.pf-xp .pf-xp-bar { flex: 1 1 4rem; min-width: 3rem; height: 8px; }
+
+/* ── 名片里的经验条 ── */
 .pf-xp { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-.pf-xp .pf-xp-bar { flex: 1 1 auto; height: 8px; }
+.pf-xp .pf-xp-text { font-size: 0.72rem; color: var(--muted, #8a94a2); white-space: nowrap; }
 .pf-xp .pf-xp-text { font-size: 0.72rem; color: var(--muted, #8a94a2); white-space: nowrap; }
 
 /* ── 结算：本局经验 + 滚动升级动画 ── */
@@ -6030,9 +6133,15 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, rgba(255, 2
     min-width: 0;
 }
 .mode-ai .mode-btn { flex: 1 1 auto; min-width: 0; }
+/* ⚠️ 原生外观下（appearance:auto）Windows Chromium **忽略 padding-right**：
+   实测「`padding-right:40px` → 文字位置完全不变」，而原生下拉箭头又占掉右侧一块，
+   于是内容盒只剩 46.9px，而最长选项「电脑：普通」实测需 72px
+   → 文字被箭头压住、且溢出自己的 padding 区（deficit −25.1px，5 个视口全为负）。
+   修法：去掉原生外观、自绘箭头（SVG data-URI）、右内边距留给箭头，
+   并把 flex 基准宽提到 118px 以上（13.44px 字号下「电脑：普通」+ padding + border ≈ 99.6px）。 */
 .mode-ai select {
-    flex: 0 1 118px;
-    min-width: 0;
+    flex: 0 1 auto;
+    min-width: 7.5rem;
     margin-right: 0;
     border-radius: 10px;
     font-size: 0.9rem;
@@ -6040,6 +6149,17 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, rgba(255, 2
     color: var(--primary);
     border: 1px solid var(--primary);
     box-shadow: none;
+    appearance: none;
+    -webkit-appearance: none;
+    padding-right: 1.9rem;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath fill='%231565c0' d='M1 1.5 6 6.5 11 1.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.6rem center;
+    background-size: 0.7rem 0.5rem;
+}
+/* 深色主题下箭头要给浅色，否则在深底上看不见 */
+html.theme-dark .mode-ai select {
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath fill='%238ab4f8' d='M1 1.5 6 6.5 11 1.5'/%3E%3C/svg%3E");
 }
 /* ⚠️ `.secondary` 只定义给了 `button.secondary / .btn.secondary / .btn-secondary`
    （第 3 节），挂在 `<select>` 上**完全无效** —— 它此前吃的是通用 `input, select`
@@ -6071,7 +6191,7 @@ select.secondary option { background: var(--surface-strong); color: var(--text);
 
 /* --- 35.5 首页：状态行（等级条 + 在线人数并排） --- */
 /* 原先两块各占一行、孤立在页面底部（等级条 margin:10px auto 0，
-   在线人数 margin-top:1.4rem）→ 底部留白两行。这里并成一行居中。 */
+   在线人数容器 margin-top:10px），这里并排成一行、由 gap 接管间距。 */
 .start-status {
     display: flex;
     flex-wrap: wrap;
@@ -6091,7 +6211,10 @@ select.secondary option { background: var(--surface-strong); color: var(--text);
 @media (max-width: 430px) {
     .start-modes { grid-template-columns: minmax(0, 1fr); }
     .start-more { grid-template-columns: minmax(0, 1fr); }
-    .mode-ai select { flex: 0 1 104px; font-size: 0.84rem; }
+    /* ⚠️ 窄屏也要保证内容盒放得下「电脑：普通」：13.44px 字号下需 67.2px 文字宽
+       + 左右 padding(12.8×2) + border(2) ≈ 94.6px。旧值 104px 只算盒子不算内边距
+       → 实测 deficit −13px（文字被裁）。这里改成 min-width 兜底 + 让 flex 可收缩但不下穿。 */
+    .mode-ai select { flex: 0 0 auto; min-width: 7rem; font-size: 0.84rem; padding-left: 0.6rem; padding-right: 1.7rem; }
     .start-modes .mode-btn { padding: 0.8rem 0.8rem; font-size: 0.98rem; }
     .start-modes .mode-btn.primary { font-size: 1.04rem; }
 }
@@ -6109,4 +6232,179 @@ select.secondary option { background: var(--surface-strong); color: var(--text);
     .nav-group + .nav-group { border-left: none; padding-left: 0; }
     .nav a,
     .nav .btn.secondary { min-height: 30px; }
+}
+
+/* ============================================================================
+   36. 宽屏对局屏：一屏预算（2026-09-20 布局批）
+   ----------------------------------------------------------------------------
+   起因（实测）：1200–1439px 被 adaptive_layout.js 当「宽屏」（WIDE_MIN_W=1200），
+   而 CSS 只在 min-width:1440px 才把 #magic-card-preview 设成浮窗 —— 两边判据相反，
+   预览回落文档流占满 900px 整行，把棋盘/手牌整体下推约 300px：
+       · 1366x768 棋盘底 1158 > 视口 768（完全不可见，需滚 390px）
+       · 1280x800 棋盘底 1157 > 视口 800
+       · 1600x1000 手牌区 y=928..1143（视口 1000）→ 卡牌中心在屏外，点不到
+   另有 1440x900 时预览（top:80/right:20）盖住 #surrender-btn 与 #phase-timing-toggle。
+
+   做法：宽屏对局屏改成**一屏网格**（与紧凑模式同一思路，但保留浮窗范式）：
+       HUD 在第 1 行、棋盘舞台在第 2 行（自适应收缩）、手牌贴底在第 3 行；
+   三个浮窗（预览/日志/聊天）仍然是 fixed，但位置避开 HUD 右列。
+
+   ⚠️ 硬约束（ui_layout_check 逐视口锁死，不要动）：
+      · 棋盘 >= 280px、单格 >= 42px（宽屏）、两块棋盘同尺寸、.cell === 36；
+      · 棋盘零遮挡、完全落在视口内、阶段按钮在卡片内居中（容差 3px）；
+      · 与回合标题垂直对齐（<=3px）；
+      · 含 position:fixed 后代的容器**不许**加 transform/filter/backdrop-filter。
+   ========================================================================== */
+@media (min-width: 1200px) {
+    /* 一屏：对局屏本身不滚动（改造前 docH=1210 > vh=1000，要滚 143~686px） */
+    body.layout-ingame:not(.layout-compact) {
+        height: 100vh;
+        height: 100dvh;
+        overflow: hidden;
+    }
+    /* ⚠️ 必须是 100dvh 而不是 100%：.game-container 的父级 #game-screen 是 display:block
+       且无高度，height:100% 会解析成 auto → 容器随内容长高，网格拿不到上限，
+       手牌被顶出视口。而 body{overflow:hidden} 时 docH 仍等于 vh，
+       所以「看 docH 有没有超」发现不了这个坑。 */
+    body.layout-ingame:not(.layout-compact) .game-container {
+        position: relative;         /* #magic-system 绝对贴底的参照 */
+        height: 100vh;
+        height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        box-sizing: border-box;
+        overflow: hidden;
+    }
+    body.layout-ingame:not(.layout-compact) .game-main-container {
+        flex: 1 1 auto;
+        min-height: 0;
+        flex-wrap: nowrap;
+        align-items: stretch;
+        margin-top: 0.5rem;
+        /* 给底部常驻手牌条让出高度，避免棋盘/按钮被压在它下面 */
+        padding-bottom: 146px;
+        box-sizing: border-box;
+    }
+    body.layout-ingame:not(.layout-compact) .game-content {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        max-width: 900px;
+        min-height: 0;
+        height: 100%;
+        box-sizing: border-box;
+        margin: 0 auto;
+    }
+    body.layout-ingame:not(.layout-compact) .game-content > .game-info { grid-row: 1; margin-bottom: 0.4rem; }
+    body.layout-ingame:not(.layout-compact) .game-content > .boards-container {
+        grid-row: 2;
+        align-items: center;
+        margin-top: 0.4rem;
+        min-height: 0;
+        overflow: hidden;
+    }
+    body.layout-ingame:not(.layout-compact) .game-content > .discard-pile-btn-row { display: none; }
+
+    /* 手牌：贴容器底部常驻一屏内。
+       ⚠️ #magic-system 是 #game-screen 的**直接子节点**（game.js 里 createMagicCardUI
+       用 gameScreen.appendChild 挂上去），不在 .game-content 之内 —— 所以选择器不能写
+       `.game-content > #magic-system`（那样一条都不命中，position 会留在 static，
+       手牌被顶到 y=920 之类的位置，卡片中心在视口外、一张都点不到）。
+       也不用 grid-row：它不在那个网格里。用绝对定位贴底，位置只由视口决定。 */
+    body.layout-ingame:not(.layout-compact) #magic-system {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 2;
+        margin: 0;
+        padding: 4px 10px 6px;
+        max-height: 138px;
+        overflow: hidden;
+        background: var(--glass);
+        -webkit-backdrop-filter: blur(10px);
+        backdrop-filter: blur(10px);
+        border-top: 1px solid var(--panel-border);
+        border-radius: 0 0 clamp(10px, 1.8vw, 16px) clamp(10px, 1.8vw, 16px);
+        box-sizing: border-box;
+    }
+    body.layout-ingame:not(.layout-compact) #magic-system.hand-empty { display: none; }
+    body.layout-ingame:not(.layout-compact) .magic-hand-container { margin: 0; padding: 4px 0 0; }
+    body.layout-ingame:not(.layout-compact) .magic-hand-container > h3 {
+        font-size: 0.8rem;
+        margin-bottom: 4px;
+    }
+    /* 手牌卡：118px 高（原 150px 太高，低视口放不下整条）。仍远大于 40px 触摸下限 */
+    body.layout-ingame:not(.layout-compact) .magic-card { width: 86px; height: 118px; }
+    body.layout-ingame:not(.layout-compact) .magic-hand {
+        overflow-x: auto; overflow-y: hidden;
+        flex-wrap: nowrap; justify-content: flex-start;
+    }
+
+    /* 棋盘：让出纵向空间后仍保住 >= 280px 与单格 >= 42px */
+    body.layout-ingame:not(.layout-compact) .board-wrapper { padding: 0.6rem 0.9rem 0.8rem; }
+    body.layout-ingame:not(.layout-compact) .board { max-width: min(340px, calc(100vh - 560px)); }
+
+    /* HUD 瘦身：.game-info 曾高 389px（占 1000px 视口的 39%），是手牌被挤出容器的主因。
+       玩法相关的三块（阶段卡片/剩余战舰/场地魔法）全部保留，只压间距与字号。 */
+    body.layout-ingame:not(.layout-compact) .game-content > .game-info {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 4px 12px;
+        margin-bottom: 0.4rem;
+    }
+    body.layout-ingame:not(.layout-compact) .game-info > * { margin: 0; }
+    body.layout-ingame:not(.layout-compact) .game-info .players-info {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 0;
+    }
+    body.layout-ingame:not(.layout-compact) .game-info .player-info p { margin: 0; }
+    body.layout-ingame:not(.layout-compact) .game-info .field-magic-area { margin: 0; padding: 4px 10px; }
+    body.layout-ingame:not(.layout-compact) #turn-indicator {
+        padding: 8px 12px;
+        /* 常驻呼吸光在静止页面上是无谓的主线程开销（见 docs/UI_DESIGN_AUDIT §7.3） */
+        animation: none;
+    }
+    body.layout-ingame:not(.layout-compact) #turn-indicator .phase-btn { margin: 2px 4px; }
+    body.layout-ingame:not(.layout-compact) .turn-indicator-inner { margin-bottom: 4px; }
+    body.layout-ingame:not(.layout-compact) .boards-container { margin-top: 0.4rem; }
+
+    /* 三个浮窗避让：预览/聊天贴右边缘（HUD 内容在 .game-content 之内，max-width 900） */
+    body.layout-ingame:not(.layout-compact) #magic-card-preview {
+        top: 72px;
+        right: 12px;
+        width: 288px;
+    }
+    body.layout-ingame:not(.layout-compact) #in-game-chat-container { right: 12px; }
+    /* 阶段时点开关与预览框同处右侧，抬到预览之上，保证点得到 */
+    body.layout-ingame:not(.layout-compact) #phase-timing-toggle.phase-timing-toggle { z-index: 1001; }
+}
+
+/* 1200–1439px：日志浮窗是 position:fixed（left:20 / width:280 → x 20..300），
+   而 .game-content 居中时左边缘 = (vw-900)/2，1280 下只有 190 —— 阶段卡片左侧被日志
+   盖住，实测阶段按钮中心的 elementFromPoint 返回 .log-entry（点了没反应）。
+   修法：把内容区整体推到日志右侧，并让它靠右对齐。
+   ⚠️ 用 padding 而不是 margin：.game-main-container 是 justify-content:center 的
+   flex 容器，margin 会被居中抵消。 */
+@media (min-width: 1200px) and (max-width: 1439px) {
+    /* 日志浮窗是 position:fixed（x 20..300），浮在内容之上：1280 时 .game-content
+       居中后左边缘只有 190 → 阶段卡片左侧被日志压住（实测阶段按钮中心命中 .log-entry）。
+       把内容区推到日志右侧。⚠️ 用 padding + margin-left:auto 双保险：
+       flex 容器的 justify-content 在「内容比可用宽度大」时不生效（实测仍是 190）。 */
+    body.layout-ingame:not(.layout-compact) .game-main-container {
+        justify-content: flex-end;
+        padding-left: 308px;
+        padding-right: 8px;
+        box-sizing: border-box;
+    }
+    body.layout-ingame:not(.layout-compact) .game-content {
+        margin-left: auto;
+        margin-right: 0;
+    }
+    body.layout-ingame:not(.layout-compact) .log-container {
+        width: 260px;
+        max-width: 260px;
+    }
 }

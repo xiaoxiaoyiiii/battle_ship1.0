@@ -9711,6 +9711,7 @@ const SHIP_PICK_PRIORITIES = {
     demon_contract: 100,
     divine_decree: 80,
     trap_setup: 75,
+    dice_sacrifice: 70,
     kraken_eye: 60,
     shield_choice: 40,
 };
@@ -9721,6 +9722,7 @@ const SHIP_PICK_CARD_NAMES = {
     '神之宣告': 'divine_decree',
     '仁王之盾': 'shield_choice',
     '守株待兔': 'trap_setup',
+    '命运骰子': 'dice_sacrifice',
 };
 
 // 当前是否有**更高优先级**的选船待办挡着这张卡；返回提示文案（空串 = 可用）。

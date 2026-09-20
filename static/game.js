@@ -6762,7 +6762,10 @@ function setupSocketListeners() {
     socket.on('placement_done', (data) => {
         const p = document.getElementById('placement-prompt');
         if (p) p.remove();
-        showMessage((data && data.kind === 'revive') ? '复活部署完成' : '增援部署完成');
+        const doneMsg = (data && data.kind === 'lanyu') ? '滥竽充数·补充部署完成（大回合结束时收回）'
+            : (data && data.kind === 'revive') ? '复活部署完成'
+            : '增援部署完成';
+        showMessage(doneMsg);
         if (typeof initGameBoards === 'function') initGameBoards();
     });
     // 自己棋盘上的战舰变化（复活/增援后同步显示）
@@ -6896,6 +6899,17 @@ function setupSocketListeners() {
             ? `已为${cnt}艘战舰添加护盾`
             : `对方为${cnt}艘战舰添加了护盾`;
         showMessage(msg, { type: isMine ? 'success' : 'warning' });
+    });
+
+    // 滥竽充数：大回合结束时强制收回临时船（不显示沉没）
+    socket.on('lanyu_recalled', (data) => {
+        const isMine = data && data.player === gameState.playerId;
+        const cnt = (data && data.count) || 0;
+        const msg = isMine
+            ? `滥竽充数：${cnt}艘临时战舰已收回`
+            : `对方的滥竽充数临时战舰已收回${cnt}艘`;
+        showMessage(msg, { type: 'info' });
+        if (typeof initGameBoards === 'function') initGameBoards();
     });
 
     // 服务器返回的被揭示的位置（仅对触发方发送）
@@ -9855,6 +9869,8 @@ function showPlacementPrompt(data) {
     const isLastStand = data.kind === 'last_stand';
     // 神机妙算预言成功：把"原本会减少的船"重新部署（原位置 或 对方未打过的格子）
     const isShenji = data.kind === 'shenji_redeploy';
+    // 滥竽充数：补充满船数，大回合结束时强制收回
+    const isLanyu = data.kind === 'lanyu';
     const total = data.total || 1;
     const placed = data.placed || 0;
     const remaining = (data.remaining != null) ? data.remaining : 1;
@@ -9864,15 +9880,18 @@ function showPlacementPrompt(data) {
 
     const title = isLastStand ? '绝处逢生·放置唯一一艘战舰'
         : (isShenji ? '神机妙算·预言成功，重新部署战舰'
-            : (isRevive ? '复活战舰·选择部署位置' : '增援战舰·选择部署位置'));
+            : (isLanyu ? '滥竽充数·选择补充战舰位置'
+                : (isRevive ? '复活战舰·选择部署位置' : '增援战舰·选择部署位置')));
     const step = total > 1 ? `（第 ${placed + 1}/${total} 艘）` : '';
     const hint = isLastStand
         ? `牺牲了全部战舰后，只能在${step}原本有自己战舰的格子（亮色）上放置唯一一艘。`
         : (isShenji
             ? `预言成功，这些战舰不会沉没。${step}可以把它们放回原位置（亮色格子），或者放到对方没有打过的空格。点一个亮色格子选中，再点「确认」。`
-            : (isRevive
-                ? `这张卡会把阵亡的战舰重新部署到你的棋盘上。${step}点一个亮色格子选中，再点「确认」。灰色格子不能用（对方打过 / 已占用 / 被神威扣掉）。`
-                : `这张卡会给你补充一艘新战舰。${step}点一个亮色格子选中，再点「确认」。灰色格子不能用（对方打过 / 已占用 / 被神威扣掉）。`));
+            : (isLanyu
+                ? `滥竽充数会补充战舰到满船数。${step}点一个亮色格子选中，再点「确认」。这些战舰在大回合结束时会被强制收回（不会显示沉没）。灰色格子不能用（对方打过 / 已占用 / 被神威扣掉）。`
+                : (isRevive
+                    ? `这张卡会把阵亡的战舰重新部署到你的棋盘上。${step}点一个亮色格子选中，再点「确认」。灰色格子不能用（对方打过 / 已占用 / 被神威扣掉）。`
+                    : `这张卡会给你补充一艘新战舰。${step}点一个亮色格子选中，再点「确认」。灰色格子不能用（对方打过 / 已占用 / 被神威扣掉）。`)));
 
     const prompt = document.createElement('div');
     prompt.id = 'placement-prompt';

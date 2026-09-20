@@ -4946,6 +4946,11 @@ def end_turn(data):
             # 神威！：除外的战舰到期回归原位，并恢复被扣掉的区域
             _restore_due_shenwei(room, room.round)
 
+            # 滥竽充数：大回合结束时强制收回临时船（不显示沉没）。
+            # 若收回导致某方船数归零则直接判负，跳过下面的猜拳重置。
+            if _recall_lanyu_ships(room, room_id):
+                return {'status': 'success', 'game_over': True}
+
             # 解冻到期的战舰（冻结跨本大回合+下一大回合，第三大回合开始时解除）
             for p_id in room.players:
                 thawed = False
@@ -5799,6 +5804,11 @@ def handle_use_magic_card(data):
     if woxin_reason:
         return {'status': 'error', 'message': woxin_reason}
 
+    # 滥竽充数：发动条件「船数未满 + 有空格」扣牌前判，否则扣了牌才发现放不下。
+    lanyu_reason = _lanyu_requirement_reason(room, player_id, card)
+    if lanyu_reason:
+        return {'status': 'error', 'message': lanyu_reason}
+
     # 找到并移除玩家手牌中的卡牌
     for i, c in enumerate(player.magic_hand):
         if c.name == card.name and c.speed == card.speed:
@@ -5923,6 +5933,26 @@ def _woxin_requirement_reason(room, player_id, card):
     theirs = room.players[opponent_id].remaining_ships
     if mine >= theirs:
         return f'自己的船数({mine})不小于对方({theirs})，卧薪尝胆无法发动'
+    return None
+
+
+def _lanyu_requirement_reason(room, player_id, card):
+    """滥竽充数的发动条件；不满足时返回原因，满足则返回 None。
+
+    卡面：「补充满自己的船数」—— remaining_ships < max_ships 才有补充空间。
+    极端情况下（剩余可放置格子 < 需要补充的船数）按「尽可能多」补充，不算失败；
+    所以条件只判 remaining_ships < max_ships 且至少有一个可放置格子。
+    """
+    if card.name != '滥竽充数':
+        return None
+    player = room.players[player_id]
+    max_ships = int(getattr(player, 'max_ships', 6) or 6)
+    if player.remaining_ships >= max_ships:
+        return f'自己的船数已满({player.remaining_ships}/{max_ships})，滥竽充数无法发动'
+    # 至少要有一个可放置的格子（全被己方占用/对方打过/神威扣掉 → 无法补充）
+    blocked = _placement_blocked_cells(room, player_id)
+    if len(blocked) >= 36:
+        return '棋盘已无可放置的格子，滥竽充数无法发动'
     return None
 
 
@@ -7822,6 +7852,16 @@ def handle_confirm_reinforcement(data):
         caster.remaining_ships += 1
         _clear_attacks_on_cells(room, new_ship.positions, player_id)
         msg = f'绝处逢生：唯一一艘战舰已部署到 ({x},{y})'
+    elif pending['kind'] == 'lanyu':
+        # 滥竽充数：补充的船登记为临时船，大回合结束时强制收回（不显示沉没）。
+        # 与增援一致走新建 PlayerShip 路径；区别仅在于登记到 game_effects。
+        new_ship = PlayerShip(positions=[Position(x=x, y=y)], hits=[])
+        caster.ships.append(new_ship)
+        caster.remaining_ships += 1
+        _clear_attacks_on_cells(room, new_ship.positions, player_id)
+        lanyu = room.game_effects.setdefault('lanyu_temp_ships', {})
+        lanyu.setdefault(player_id, []).append(new_ship)
+        msg = f'补充战舰已部署到 ({x},{y})（大回合结束时收回）'
     else:
         new_ship = PlayerShip(positions=[Position(x=x, y=y)], hits=[])
         caster.ships.append(new_ship)
@@ -8418,6 +8458,71 @@ def _restore_due_shenwei(room, current_round):
         _emit_ships_updated(room)
     for hole in _clear_due_shenwei_holes(room, current_round):
         emit('shenwei_hole_restored', {'player': hole['player']}, room=room.id)
+
+
+def _recall_lanyu_ships(room, room_id) -> bool:
+    """滥竽充数：大回合结束时强制收回临时船，不显示沉没。
+
+    卡面：「这些在当前大回合被补充的船将会在大回合结束时强制收回，不会显示沉没。」
+    收回 = 从 ships 移除 + 减 remaining_ships，但【不】登记到 sunken_ships、
+    【不】发击沉事件 —— 玩家看到的是船直接从棋盘上消失，不是被打沉。
+
+    只收回【还活着】的临时船；已在回合内被击沉的临时船按沉船口径原样保留
+    （已计入 sunken_ships、remaining_ships 已减），不动它。
+
+    返回 True 表示收回导致某方船数归零、对局已结束（end_turn 应当立即返回）。
+    """
+    lanyu = room.game_effects.pop('lanyu_temp_ships', None)
+    if not lanyu:
+        return False
+    changed = {}
+    for player_id, ship_list in lanyu.items():
+        if player_id not in room.players:
+            continue
+        player = room.players[player_id]
+        removed = 0
+        for ship in ship_list:
+            if ship not in player.ships:
+                continue  # 已被移除（轰炸/硫磺火焰/重摆棋盘）
+            # 只收回【还活着】的临时船；沉船留着（已计入击沉统计）
+            if not _is_ship_alive(player, ship):
+                continue
+            player.ships.remove(ship)
+            player.remaining_ships -= 1
+            removed += 1
+        if removed > 0:
+            changed[player_id] = removed
+            _emit_player_ships(room, player_id)
+    if not changed:
+        return False
+    _emit_ships_updated(room)
+    for pid, cnt in changed.items():
+        emit('lanyu_recalled', {
+            'player': pid,
+            'count': cnt,
+        }, room=room_id)
+        add_game_log(room,
+                     f'第{room.round}回合 · {_log_name(room, pid)} 的【滥竽充数】'
+                     f'临时战舰已收回({cnt}艘)',
+                     'magic', {'player': pid, 'card': '滥竽充数', 'count': cnt})
+    # 收回导致船数归零 → 判负（与攻击/魔法卡路径同口径）
+    for pid in changed:
+        player = room.players[pid]
+        if player.remaining_ships <= 0 and len(player.ships) > 0 \
+                and room.state != 'game_over':
+            opponent_id = _opponent_of(room, pid)
+            if opponent_id and opponent_id in room.players:
+                _finish_game_win(room, room_id, opponent_id, pid,
+                                 f'第{room.round}回合 · {_log_name(room, pid)} 的'
+                                 f'临时战舰已全部收回，无战舰可用')
+                emit('game_state', {
+                    'state': 'game_over',
+                    'winner': opponent_id,
+                    'reason': '滥竽充数临时战舰已收回，无战舰可用',
+                    **_rank_payload(room),
+                }, room=room_id)
+                return True
+    return False
 
 
 def _clear_board_effects(room, player_ids, why: str) -> None:
@@ -9229,6 +9334,10 @@ def _emit_placement_request(room, player_id):
         payload['blocked'] = [b for b in payload['blocked']
                               if (b['x'], b['y']) not in allow]
         payload['message'] = '预言成功：请选择这艘战舰重新部署的位置（原位置或对方未打过的格子）'
+    elif p['kind'] == 'lanyu':
+        # 滥竽充数：默认占位口径即可（未被对方打过的空格）。
+        # 提示玩家这些船大回合结束时会被收回，避免以为永久保留。
+        payload['message'] = '滥竽充数：请选择补充战舰的部署位置（未被攻击过的空格，大回合结束时收回）'
     emit('placement_request', payload, to=room.players[player_id].sid)
 
 
@@ -11064,6 +11173,40 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         _start_placement(room, caster_id, 'reinforce', 1)
         result.temp_data_id = 'reinforcement_choice'
         result.message = '请选择增援战舰的部署位置（未被攻击过的空格）'
+
+    elif card.name == '滥竽充数':
+        # 滥竽充数（速阶3 普通）：补充满自己的船数，自己选择放置位置。
+        # 卡面：「这张牌仅可在当前大回合内生效。补充满自己的船数并自己选择放置
+        #   被补充的船。这些在当前大回合被补充的船将会在大回合结束时强制收回，
+        #   不会显示沉没。在极限情况下（即剩余的格子数比需要补充的船数少的时
+        #   候）就尽可能多的补充就可以。」
+        # 发动条件已在 handle_use_magic_card 扣牌前拦过，这里再判一次作纯防御。
+        reason = _lanyu_requirement_reason(room, caster_id, card)
+        if reason:
+            result.success = False
+            result.message = reason
+            return result
+        max_ships = int(getattr(caster, 'max_ships', 6) or 6)
+        needed = max_ships - caster.remaining_ships
+        # 极端情况：可放置格子 < needed，按可放置格子数补充（"尽可能多"）
+        blocked = _placement_blocked_cells(room, caster_id)
+        available = 36 - len(blocked)
+        count = min(needed, available)
+        if count <= 0:
+            result.success = False
+            result.message = '没有可放置的格子，滥竽充数无法生效'
+            return result
+        # 登记本大回合的临时船列表（end_turn 大回合切换时强制收回）。
+        # 用 dict 按 player_id 分桶：同一玩家可能多次发动（被击沉后再补）。
+        lanyu = room.game_effects.setdefault('lanyu_temp_ships', {})
+        lanyu.setdefault(caster_id, [])
+        _start_placement(room, caster_id, 'lanyu', count)
+        result.temp_data_id = 'lanyu_placement'
+        result.message = f'请选择{count}艘补充战舰的部署位置（大回合结束时强制收回）'
+        add_game_log(room,
+                     f'第{room.round}回合 · {_log_name(room, caster_id)} 的【滥竽充数】'
+                     f'补充{count}艘战舰（大回合结束时收回）',
+                     'magic', {'caster': caster_id, 'card': '滥竽充数', 'count': count})
 
     else:
         result.success = False

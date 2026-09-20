@@ -150,6 +150,54 @@ function wideProbe() {
   };
 }
 
+// ---------- 探针 A2：宽屏多档（断点死区 + HUD 命中 + 手牌可点） ----------
+// 只在 1600x1000 上测宽屏是 M1 盲区：1200–1439px 那段 CSS 与 adaptive_layout.js 判据相反，
+// 预览回落文档流 → 棋盘被顶出首屏、投降按钮被预览盖住。这里逐档实测。
+function wideViewportProbe() {
+  var vh = window.innerHeight, vw = window.innerWidth, de = document.documentElement;
+  function R(e) { if (!e) return null; var b = e.getBoundingClientRect(); return { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height), bottom: Math.round(b.bottom), right: Math.round(b.right) }; }
+  function shown(e) { if (!e) return false; var cs = getComputedStyle(e); if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false; var b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0; }
+  // HUD 控件中心必须命中的是它自己 —— 被浮窗盖住 = 点了没反应。
+  var HUD = [['阶段按钮', 'enter-battle-phase'], ['结束阶段', 'enter-end-phase'], ['交回合', 'end-turn-btn'],
+             ['投降', 'surrender-btn'], ['阶段时点', 'phase-timing-toggle'], ['日志折叠', 'toggle-log'],
+             ['教皇弃卡', 'papal-discard-btn'], ['弃牌堆', 'view-discard-pile'], ['快捷语', 'quick-chat-btn'],
+             ['对手战绩', 'show-opponent-stats'], ['手牌区', 'magic-system']];
+  var blocked = [];
+  HUD.forEach(function (pair) {
+    var el = document.getElementById(pair[1]);
+    if (!el || !shown(el)) return;
+    var b = el.getBoundingClientRect();
+    var top = document.elementFromPoint((b.left + b.right) / 2, (b.top + b.bottom) / 2);
+    if (!top) { blocked.push(pair[0] + '=null'); return; }
+    if (top === el || el.contains(top) || top.contains(el)) return;
+    blocked.push(pair[0] + '<-' + ((top.id || top.className || top.tagName) + ''));
+  });
+  // 棋盘与手牌必须在首屏内（不需要滚动）。
+  var board = document.getElementById('game-player-board');
+  var bb = board ? board.getBoundingClientRect() : null;
+  var boardInView = !!bb && bb.bottom <= vh + 1 && bb.top >= -1;
+  var hand = document.getElementById('magic-hand');
+  var handCards = hand ? hand.querySelectorAll('.magic-card').length : 0;
+  var handClickable = 0;
+  if (hand) {
+    [].slice.call(hand.querySelectorAll('.magic-card')).forEach(function (c) {
+      var cb = c.getBoundingClientRect();
+      if (cb.width <= 0 || cb.height <= 0) return;
+      var cx = (cb.left + cb.right) / 2, cy = (cb.top + cb.bottom) / 2;
+      if (cx < 0 || cy < 0 || cx > vw || cy > vh) return;
+      var t = document.elementFromPoint(cx, cy);
+      if (t && (t === c || c.contains(t) || t.contains(c))) handClickable++;
+    });
+  }
+  return {
+    vw: vw, vh: vh, docH: de.scrollHeight,
+    boardRect: R(board), boardInView: boardInView, boardBottom: bb ? Math.round(bb.bottom) : null,
+    handCards: handCards, handClickable: handClickable, handRect: R(document.getElementById('magic-system')),
+    blockedHud: blocked,
+    previewPos: (function () { var p = document.getElementById('magic-card-preview'); return p ? getComputedStyle(p).position : null; })()
+  };
+}
+
 // ---------- 探针 B：紧凑视口（移动端自适应不变量） ----------
 function compactProbe(MIN_TAP) {
   var vw = window.innerWidth, vh = window.innerHeight;
@@ -233,6 +281,40 @@ function compactProbe(MIN_TAP) {
   var elById = function (id) { return document.getElementById(id); };
   var hand = elById('magic-hand');
   var handRect = R(document.getElementById('magic-system'));
+  // 手牌「真的能点」的计数：逐张卡取中心点做 elementFromPoint 命中测试。
+  // ⚠️ 之前的判据是 `handVisible || handInDock` —— handInDock 只问「祖先里有没有 #aux-dock」，
+  // 既不看可见也不看可点，于是「手牌被搬进面板槽、槽体只有 52px 高、卡片全在可视带之外」
+  // 这种情况照样 PASS（320x568 与 664x336 实测 clickableCards = 0）。
+  var handClickable = 0;
+  if (hand) {
+    [].slice.call(hand.querySelectorAll('.magic-card')).forEach(function (c) {
+      var cb = c.getBoundingClientRect();
+      if (cb.width <= 0 || cb.height <= 0) return;
+      var cx = (cb.left + cb.right) / 2, cy = (cb.top + cb.bottom) / 2;
+      if (cx < 0 || cy < 0 || cx > vw || cy > vh) return;      // 中心在视口外 → 点不到
+      var top = document.elementFromPoint(cx, cy);
+      if (top && (top === c || c.contains(top) || top.contains(c))) handClickable++;
+    });
+  }
+  // 导航与弹窗里的可点元素：以前只扫 #game-screen 内 5 类，导航 10/10 只有 30–32px 从没被查。
+  var navSmall = [];
+  [].slice.call(document.querySelectorAll('.nav a, .nav button, .nav .btn')).forEach(function (e) {
+    if (!shown(e)) return;
+    var b = e.getBoundingClientRect();
+    var label = e.id || (typeof e.className === 'string' ? e.className.split(' ')[0] : e.tagName);
+    if (Math.min(b.width, b.height) < MIN_TAP - 1) navSmall.push(label + ':' + Math.round(b.width) + 'x' + Math.round(b.height));
+  });
+  // 进度类元素的实际宽度：等级条 / 经验条 / 段位条。
+  // ⚠️ 这条是 M4：`#my-level-strip .mls-bar` 是 `flex:1 1 auto` 且无 min-width，在内容宽为 0 的
+  // flex 行里被收缩到 0px → 进度条永远不可见，「等级」功能在视觉上等于不存在，而工具判 PASS。
+  var zeroBars = [];
+  [['等级条', '#my-level-strip .mls-bar'], ['名片经验条', '.pf-xp .pf-xp-bar, .pf-xp-bar'],
+   ['经验条', '#xp-bar'], ['段位条', '#rank-bar']].forEach(function (pair) {
+    var el = document.querySelector(pair[1]);
+    if (!el || !shown(el)) return;
+    var b = el.getBoundingClientRect();
+    if (b.width < 1) zeroBars.push(pair[0] + '=' + Math.round(b.width) + 'px');
+  });
   return {
     vw: vw, vh: vh, dpr: window.devicePixelRatio,
     layout: (elById('game-screen') || { dataset: {} }).dataset.layout || null,
@@ -246,8 +328,11 @@ function compactProbe(MIN_TAP) {
     smallTargets: small,
     pillClash: pillClash,
     handCards: hand ? hand.querySelectorAll('.magic-card').length : 0,
+    handClickable: handClickable,
+    handClickable: handClickable,
+    navSmallTargets: navSmall,
+    zeroWidthBars: zeroBars,
     handRect: handRect,
-    handVisible: handRect ? (handRect.bottom <= vh + 1 && handRect.y >= -1 && handRect.h > 0) : false,
     handInDock: !!(document.getElementById('magic-system') && document.getElementById('magic-system').closest && document.getElementById('magic-system').closest('#aux-dock')),
     dockOpen: (elById('aux-dock') || { dataset: {} }).dataset.open || null,
     dockRect: R(elById('aux-dock')),
@@ -265,6 +350,32 @@ const COMPACT_VIEWPORTS = [
   ['landscape-664x336', 664, 336, 2],
   ['tablet-768x1024', 768, 1024, 2]
 ];
+
+// 宽屏视口组。⚠️ 以前只测 1600x1000 一档 —— 于是 1200–1439px 整段断点死区从来没被覆盖：
+// CSS 只在 min-width:1440px 才把魔法预览设成浮窗，而 adaptive_layout.js 从 1200 起就认「宽屏」
+// → 两边判据相反，预览回落文档流把棋盘顶出首屏（1366x768 实测棋盘 0% 可见、需滚 390px）。
+// 1280x800 / 1366x768 是最常见的两个笔记本分辨率，必须进组。
+const WIDE_VIEWPORTS = [
+  ['1600x1000', 1600, 1000],
+  ['1440x900', 1440, 900],
+  ['1366x768', 1366, 768],
+  ['1280x800', 1280, 800]
+];
+
+// 一次性账号：登录态才能看到首页等级条（`#my-level-strip` 对游客整块隐藏），
+// 而等级条轨道 0 宽正是 M4 要抓的缺陷 —— 不登录就永远测不到它。
+// 走 POST /register（成功后服务端自动登录），失败再试 /login。
+async function loginForChecks() {
+  const name = 'uicheck' + Math.floor(Math.random() * 1e9);
+  await ev(`fetch('/register', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:'username=' + encodeURIComponent(${JSON.stringify(name)}) + '&password=pass123456&confirm_password=pass123456',
+    redirect:'manual'}).then(function(){return 1;}).catch(function(){return 0;})`);
+  await send('Page.navigate', { url: APP });
+  await sleep(2000);
+  const ok = await ev('!!window.__USERNAME');
+  console.log('登录态检查账号: ' + name + ' -> ' + (ok ? '已登录' : '仍是游客（等级条相关断言会跳过）'));
+  return ok;
+}
 
 async function setViewport(w, h, dsf, mobile) {
   await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: dsf, mobile: !!mobile });
@@ -330,6 +441,59 @@ try {
   await send('Runtime.enable');
   await setViewport(1600, 1000, 1, false);
   await send('Page.navigate', { url: APP });
+  // ---------- 探针 -1：首页（登录态）—— 等级条与难度下拉 ----------
+  // 这两项以前完全没有覆盖：等级条轨道 0 宽（M4）与难度下拉文字被原生箭头挤掉（P0-5），
+  // 都是「工具绿、体验坏」的典型。
+  const loggedIn = await loginForChecks();
+  if (ONLY !== 'compact' && loggedIn) {
+    currentPass = 'home';
+    for (const [wlabel, ww, wh] of [['1600x1000', 1600, 1000], ['390x844', 390, 844]]) {
+      await setViewport(ww, wh, wh > 900 ? 1 : 3, false);
+      await sleep(600);
+      const home = await ev('(function(){' +
+        ' var R = function(e){ if(!e) return null; var b=e.getBoundingClientRect(); return {w:Math.round(b.width),h:Math.round(b.height)}; };' +
+        ' var strip = document.getElementById("my-level-strip");' +
+        ' var bar = document.querySelector("#my-level-strip .mls-bar");' +
+        ' var fill = document.getElementById("mls-fill");' +
+        ' var sel = document.getElementById("ai-difficulty");' +
+        ' var selStat = null;' +
+        ' if (sel) {' +
+        '   var cs = getComputedStyle(sel); var b = sel.getBoundingClientRect();' +
+        '   var padL = parseFloat(cs.paddingLeft)||0, padR = parseFloat(cs.paddingRight)||0;' +
+        '   var bw = (parseFloat(cs.borderLeftWidth)||0) + (parseFloat(cs.borderRightWidth)||0);' +
+        '   var contentW = b.width - padL - padR - bw;' +
+        '   var c = document.createElement("canvas").getContext("2d");' +
+        '   c.font = cs.fontStyle + " " + cs.fontWeight + " " + cs.fontSize + "/" + cs.lineHeight + " " + cs.fontFamily;' +
+        '   var maxText = 0;' +
+        '   for (var i=0;i<sel.options.length;i++) maxText = Math.max(maxText, c.measureText(sel.options[i].textContent).width);' +
+        '   selStat = { boxW: Math.round(b.width*100)/100, contentW: Math.round(contentW*100)/100, maxTextW: Math.round(maxText*100)/100, deficit: Math.round((contentW-maxText)*100)/100 };' +
+        ' }' +
+        ' return { stripVisible: !!strip && getComputedStyle(strip).display !== "none" && strip.getBoundingClientRect().width > 0,' +
+        '   stripText: strip ? strip.innerText.replace(/\\s+/g," ") : null,' +
+        '   barW: bar ? Math.round(bar.getBoundingClientRect().width*100)/100 : null,' +
+        '   barFlex: bar ? getComputedStyle(bar).flex : null,' +
+        '   fillW: fill ? Math.round(fill.getBoundingClientRect().width*100)/100 : null,' +
+        '   fillStyleW: fill ? fill.style.width : null,' +
+        '   select: selStat }; })()');
+      console.log('--- 首页 ' + wlabel + ' 等级条可见=' + home.stripVisible + ' 轨道宽=' + home.barW +
+                  ' fill=' + home.fillW + ' | 难度下拉 deficit=' + (home.select ? home.select.deficit : 'n/a'));
+      if (home.stripVisible) {
+        check(home.barW !== null && home.barW > 0,
+          wlabel + ' 等级条轨道实际宽度 > 0（进度条看得见）',
+          { barW: home.barW, barFlex: home.barFlex, fillW: home.fillW, text: home.stripText });
+      }
+      // 难度下拉：内容盒必须放得下最长选项文字。以前断言只看盒子宽 → 假绿。
+      check(!!home.select && home.select.deficit >= 0,
+        wlabel + ' 难度下拉内容盒放得下最长选项文字',
+        home.select);
+      if (SHOTS) { const s = await send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(SHOTS + '/home-' + wlabel + '.png', Buffer.from(s.data, 'base64')); }
+    }
+  }
+
+  currentPass = 'wide';
+  await setViewport(1600, 1000, 1, false);
+  await send('Page.navigate', { url: APP });
+  await sleep(1500);
   const logEmptyAtStart = await enterGame();
 
   // ---------- 探针 0：棋盘状态可视化（冻结的己方战舰必须画得出来） ----------
@@ -379,6 +543,26 @@ try {
   if (ONLY !== 'compact') {
     currentPass = 'wide';
     await setViewport(1600, 1000, 1, false);
+    // 宽屏多档：1200–1439px 的断点死区以前完全没覆盖（M1）。
+    for (const [wlabel, ww, wh] of WIDE_VIEWPORTS) {
+      currentPass = 'wide:' + wlabel;
+      await setViewport(ww, wh, 1, false);
+      await ev('window.scrollTo(0,0)');
+      await sleep(500);
+      const wv = await ev('(' + wideViewportProbe.toString() + ')()');
+      console.log('--- ' + wlabel + ' 预览pos=' + wv.previewPos + ' 棋盘底=' + wv.boardBottom + '/vh=' + wv.vh +
+                  ' 手牌=' + wv.handCards + '张(可点' + wv.handClickable + ')');
+      check(wv.boardInView, wlabel + ' 棋盘完整落在首屏内（不需滚动）',
+        { bottom: wv.boardBottom, vh: wv.vh, rect: wv.boardRect });
+      check(wv.blockedHud.length === 0, wlabel + ' HUD 控件未被浮窗盖住（点得到）', wv.blockedHud);
+      check(wv.handCards > 0 && wv.handClickable > 0, wlabel + ' 手牌可见且可点（可点计数 > 0）',
+        { cards: wv.handCards, clickable: wv.handClickable, rect: wv.handRect });
+      if (SHOTS) { const s = await send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(SHOTS + '/' + wlabel + '.png', Buffer.from(s.data, 'base64')); }
+    }
+
+    currentPass = 'wide';
+    await setViewport(1600, 1000, 1, false);
+    await sleep(500);
     const m = await ev('(' + wideProbe.toString() + ')()');
     console.log('阶段: ' + m.phase + ' | 你的船: ' + m.ships + ' | 剩余攻击次数: ' + m.attacks + NL);
     check(m.statusBarDisplay === 'none' && m.statusBarHidden === true, '无激活效果时状态条不渲染', { display: m.statusBarDisplay, hidden: m.statusBarHidden });
@@ -396,6 +580,7 @@ try {
     if (SHOT) { const s = await send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(SHOT, Buffer.from(s.data, 'base64')); console.log('截图已保存: ' + SHOT); }
   }
 
+
   if (ONLY !== 'wide') {
     currentPass = 'compact';
     for (const [label, w, h, dsf] of COMPACT_VIEWPORTS) {
@@ -412,7 +597,9 @@ try {
       console.log('     面板: ' + m.panels.map((p) => p.name + '(' + p.r.x + ',' + p.r.y + ' ' + p.r.w + 'x' + p.r.h + ')').join(' '));
       if (m.smallTargets.length) console.log('     小于 ' + MIN_TAP + 'px 的可点元素(' + m.smallTargets.length + '): ' + m.smallTargets.slice(0, 8).join(', '));
       if (m.overlaps.length) console.log('     叠压: ' + m.overlaps.join(' | '));
-      console.log('     手牌 ' + m.handCards + ' 张 区域=' + JSON.stringify(m.handRect) + ' 全在视口内=' + m.handVisible);
+      console.log('     手牌 ' + m.handCards + ' 张（可点 ' + m.handClickable + '）区域=' + JSON.stringify(m.handRect));
+      console.log('     进度条宽度检查: ' + (m.zeroWidthBars.join(', ') || 'ok'));
+      if (m.navSmallTargets.length) console.log('     导航小于 ' + tap + 'px(' + m.navSmallTargets.length + '): ' + m.navSmallTargets.slice(0, 8).join(', '));
       console.log('     固定层: ' + (m.fixedOverlays.join(', ') || '无'));
       if (m.pillClash) console.log('     阶段时点开关压住了: ' + m.pillClash);
 
@@ -431,9 +618,18 @@ try {
       check(notInView.length === 0, label + ' 棋盘完整落在视口内（不需滚动）', notInView);
       check(m.overlaps.length === 0, label + ' 面板之间零叠压', m.overlaps);
       check(m.smallTargets.length === 0, label + ' 可点元素均不小于 ' + tap + 'px', m.smallTargets.slice(0, 10));
-      check(m.handCards > 0 && (m.handVisible || m.handInDock),
-        label + ' 手牌够得着（常驻在舞台下方，或收在面板槽的卡牌页里）',
-        { cards: m.handCards, rect: m.handRect, inDock: m.handInDock });
+      // 手牌判据 = 「真的能点」，不再接受「挂在面板槽里」作为通过条件。
+      check(m.handCards > 0 && m.handClickable > 0,
+        label + ' 手牌可见且可点（可点计数 > 0）',
+        { cards: m.handCards, clickable: m.handClickable, rect: m.handRect });
+      // 导航 / 弹窗里的可点元素同样要达触摸下限。
+      check(m.navSmallTargets.length === 0,
+        label + ' 导航可点元素不小于 ' + tap + 'px',
+        m.navSmallTargets.slice(0, 10));
+      // 进度类元素宽度为 0 = 进度条永远看不见（等级条踩过这个坑）。
+      check(m.zeroWidthBars.length === 0,
+        label + ' 进度条类元素实际宽度 > 0',
+        m.zeroWidthBars);
       if (SHOTS) { const s = await send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(SHOTS + '/' + label + '.png', Buffer.from(s.data, 'base64')); }
 
       // 展开面板槽后再测一遍：用户主动看日志/聊天时，棋盘仍必须完整可见且零遮挡

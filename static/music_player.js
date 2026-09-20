@@ -277,6 +277,12 @@ class BackgroundMusicPlayer {
 
     // 设置音量 (0-1)
     setVolume(volume) {
+        // ⚠️ 必须用 Number.isFinite 守卫，而不是靠 Math.max/min 钳制：
+        // `Math.max(0, Math.min(1, NaN))` 的结果仍然是 **NaN**，赋给 `audio.volume` 会抛 TypeError。
+        // 实测：localStorage 里 `bgm_volume='abc'` → 每次页面加载都抛
+        // `Uncaught TypeError ... at setVolume`，音乐初始化中断
+        // （后续 bgm_muted / bgm_loop_mode 的恢复也一并被跳过）。
+        if (!Number.isFinite(volume)) return;
         this.volume = Math.max(0, Math.min(1, volume));
         if (this.audio) {
             this.audio.volume = this.volume;
@@ -356,10 +362,17 @@ function initBackgroundMusic() {
     window.bgMusicPlayer.init();
     window.bgMusicPlayer.setPlaylist(backgroundMusicList);
     
-    // 从本地存储恢复音量设置
+    // 从本地存储恢复音量设置。
+    // ⚠️ 这里也要守卫：`parseFloat('abc')` = NaN，即使 setVolume 内部已经拒绝 NaN，
+    // 也应该把脏值挡在调用点 —— 顺带把非数字的存量清理掉，避免每次加载都带着脏值。
     const savedVolume = localStorage.getItem('bgm_volume');
     if (savedVolume !== null) {
-        window.bgMusicPlayer.setVolume(parseFloat(savedVolume));
+        const parsedVolume = parseFloat(savedVolume);
+        if (Number.isFinite(parsedVolume)) {
+            window.bgMusicPlayer.setVolume(parsedVolume);
+        } else {
+            try { localStorage.removeItem('bgm_volume'); } catch (e) { /* 忽略隐私模式报错 */ }
+        }
     }
     
     // 从本地存储恢复静音状态

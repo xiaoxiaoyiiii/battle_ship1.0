@@ -5,7 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>战舰游戏</title>
     <link rel="stylesheet" href="/static/style.css?v={{ asset_v('style.css') }}">
-    <script src="/static/socket.io.js?v={{ asset_v('socket.io.js') }}"></script>
+    <!-- ⚠️ defer 不能去掉：这是 191KB 的同步脚本，在 <head> 里会阻塞 FCP。
+         实测阻断实验：只挡 style.css → FCP 2,472ms；只挡 socket.io.js → 2,944ms；
+         两者都挡 → 308ms。即首屏被这两次串行下载门控吃掉约 3.7s。
+         安全性：`io` 只在 game.js 的 ensureSocket() 里被用到（玩家首次点击时才调用），
+         而 game.js 在 body 尾部、defer 脚本按文档顺序在 DOMContentLoaded 前执行。 -->
+    <script defer src="/static/socket.io.js?v={{ asset_v('socket.io.js') }}"></script>
 </head>
 <body>
     <!-- 动态壁纸层（Wallpaper Engine / 本地视频 / 本地图片）

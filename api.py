@@ -1,10 +1,12 @@
 # 允许上传的头像文件类型
 import json
+# 允许上传的头像文件类型
+import gzip
+import json
 import os
 import re
 import secrets
 import time
-
 from flask import (Flask, session, jsonify, request, render_template, redirect,
                    url_for, flash, send_file, current_app)
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -71,7 +73,74 @@ app.config['MAX_CONTENT_LENGTH'] = MAX_AVATAR_SIZE
 # Cookie 安全属性：禁止 JS 读取 + 限制跨站携带
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
+
+# ---------------------------------------------------------------------------
+# 响应压缩（gzip）。2026-09-20 传输批。
+# 实测（4G/4xCPU 模拟）：首屏 1,130,572 B 明文、服务端零压缩，FCP 3,976ms / LCP 4,392ms；
+# 开启后 312,152 B（−72.9%）、FCP 1,196ms。三个文件占 91%：game.js 615K / style.css 236K /
+# socket.io.js 191K。
+#
+# 为什么自己写而不用 Flask-Compress：项目不加新依赖（requirements.txt 里没有，也不引入）。
+# 用标准库 gzip 实现，规则与 Flask-Compress 对齐：
+#   ① 只在客户端声明接受 gzip 时压；② 只压文本类 Content-Type；
+#   ③ 小于 500B 不压（头开销大于收益）；④ 已带 Content-Encoding 的不重复压；
+#   ⑤ **跳过 /socket.io/** —— 那是长轮询/流式响应，压缩会破坏实时通信。
+# ---------------------------------------------------------------------------
+GZIP_MIN_SIZE = 500
+GZIP_TYPES = ('text/', 'application/json', 'application/javascript',
+              'application/x-javascript', 'application/xml', 'image/svg+xml')
+
+
+@app.after_request
+def _gzip_response(response):
+    try:
+        # ⚠️ Flask 静态文件走 send_file → `direct_passthrough=True`，此时 get_data() 会抛
+        # RuntimeError；若直接 return，压缩会**静默失效**（表现是「改了代码但字节数没变」）。
+        # 所以先把它转成普通响应再压。
+        if response.direct_passthrough:
+            response.direct_passthrough = False
+        if request.path.startswith('/socket.io'):
+            return response                      # 实时通道绝不能被压缩/缓冲
+        if 'gzip' not in (request.headers.get('Accept-Encoding') or '').lower():
+            return response
+        if response.headers.get('Content-Encoding'):
+            return response
+        ctype = (response.content_type or '').lower()
+        if not ctype.startswith(GZIP_TYPES):
+            return response
+        data = response.get_data()
+        if len(data) < GZIP_MIN_SIZE:
+            return response
+        compressed = gzip.compress(data, compresslevel=6)
+        if len(compressed) >= len(data):
+            return response                      # 压不动就别压
+        response.set_data(compressed)
+        response.headers['Content-Encoding'] = 'gzip'
+        response.headers['Content-Length'] = str(len(compressed))
+        response.headers.add('Vary', 'Accept-Encoding')
+        return response
+    except Exception:
+        # 压缩失败绝不能影响响应本身：宁可发明文
+        return response
+
+
+# 静态资源缓存：本项目的静态 URL 都带 `?v=<mtime>` 戳（见 _inject_asset_version），
+# 文件一变 URL 就变，所以带戳的请求可以长缓存。⚠️ 判据是**必须带 v 参数**——
+# 没带戳的（例如手工敲 /static/style.css）绝不能长缓存，否则用户更新不到。
+@app.after_request
+def _cache_headers(response):
+    try:
+        if not request.path.startswith('/static/'):
+            return response
+        if 'v' in request.args:
+            response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+        else:
+            response.headers['Cache-Control'] = 'no-cache'
+    except Exception:
+        pass
+    return response
 # 简易限流：同一 IP 在窗口期内对登录/注册/改密的尝试次数上限
 _LOGIN_WINDOW = 60          # 窗口（秒）
 _LOGIN_MAX_ATTEMPTS = 10    # 窗口内最大尝试次数

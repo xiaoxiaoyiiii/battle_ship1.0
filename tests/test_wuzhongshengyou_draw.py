@@ -196,12 +196,12 @@ def test_residual_no_draw_blocks_all(room):
 def test_deck_size_is_finite(room):
     """牌堆是一副有限的全局共享牌，双方共用 —— 抽不满是物理限制。
 
-    卡池 44 条（43 条原有 + 1 条命运骰子判定卡）；
+    卡池 45 条（43 条原有 + 1 条命运骰子判定卡 + 1 条亡羊补牢普通卡）；
     **实际进牌堆的张数 = 卡池减去 `server.HIDDEN_CARD_NAMES`**
     （暂时隐藏的卡不进牌堆，见 tests/test_hidden_cards.py）。
     """
     deck = server.magic_cards
-    assert len(deck) == 44, f'卡池应 44 条，实际 {len(deck)}'
+    assert len(deck) == 45, f'卡池应 45 条，实际 {len(deck)}'
     names = [c.name for c in deck]
     dups = {n for n in names if names.count(n) > 1}
     assert dups == {'失灵！'}, f'只有「失灵！」是多份，实际重复：{dups}'

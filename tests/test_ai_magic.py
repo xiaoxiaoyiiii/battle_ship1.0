@@ -92,7 +92,9 @@ def test_ai_safe_card_leaves_no_pending_state(room, name):
 
     assert played is True, f'{name} 应当能被 AI 打出'
     assert not room.magic_temp_data.get('pending_placement'), f'{name} 留下待放置状态'
-    assert not room.magic_temp_data.get('pending_sacrifice'), f'{name} 留下待牺牲状态'
+    # ⚠️ 待选战舰自 2026-09-20 起在**房间级优先队列**（不再写 magic_temp_data），
+    #    所以要查队列 —— 查旧键会永远为真，等于没断言。
+    assert not server._top_ship_pick(room, AI), f'{name} 留下待牺牲状态'
     assert not room.magic_temp_data.get('pending_shenji'), f'{name} 留下待宣言状态'
     assert room.chain == [] and room.chain_waiting is False, f'{name} 留下了未结算的连锁'
     assert room.current_attacker == AI, f'{name} 不得把回合交出去'

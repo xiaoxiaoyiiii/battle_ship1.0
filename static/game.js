@@ -510,8 +510,55 @@ function showSettingsPane(pane) {
 // ⚠️ 本函数必须是**顶层**函数：查看面/编辑面那套渲染在嵌套作用域里，设置面在顶层，
 //    只有顶层定义才能让两边都调到（否则点设置会 ReferenceError）。
 // 新增浮层时无需改本函数：只要带 `.modal-overlay` 就自动参与互斥。
+// 反作弊管理后台入口（2026-09-20）：管理员看个人信息卡时，加一个「查后台」按钮。
+//
+// ⚠️ 必须是**顶层**函数（与 `closeOverlaysExcept` 同一理由）：`showUserProfile` 在
+//    嵌套作用域里，而它引用的东西不能是那个作用域的局部变量（否则 ReferenceError
+//    被 `.then()` 吞掉、页面零提示 —— 本项目的第 6 条硬教训）。
+//
+// ⚠️ 普通玩家**一个请求都不发**：`admin.js` 只有在 `/api/admin/me` 说 is_admin 时
+//    才把 `window.battleshipAdmin.isAdmin()` 变成 true。这里先问它，
+//    false 就直接返回 —— 普通玩家路径零开销，也不会因为 403 在控制台刷红。
+function scheduleAdminEntry(username) {
+    if (typeof window === 'undefined') return;
+    const adm = window.battleshipAdmin;
+    if (!adm || typeof adm.isAdmin !== 'function' || !adm.isAdmin()) return;
+    if (!username) return;                      // 看自己时不挂（自己那张卡另有入口）
+
+    // 按钮插进信息卡。卡是异步渲染的，所以用轮询等它出现（最多约 3 秒）。
+    let tries = 0;
+    const timer = setInterval(() => {
+        tries += 1;
+        const content = document.getElementById('opponent-stats-content');
+        if (!content) { if (tries > 30) clearInterval(timer); return; }
+        // 只在"正在看的那个人"没变时才挂，避免快速切换时挂错人
+        if (window.__viewedProfileName !== username) { clearInterval(timer); return; }
+        if (content.querySelector('.admin-open-player-btn')) { clearInterval(timer); return; }
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn secondary admin-open-player-btn';
+        btn.textContent = '查后台';
+        btn.onclick = () => {
+            // 服务端按 uid 查；先按用户名换 uid。
+            // ⚠️ 用 `/user_stats`（既有的公开战绩接口），**不要**写 `/api/profile`
+            //    —— 后者是"当前登录者自己的名片"，不接受 username 参数（实测 404/401）。
+            fetch('/user_stats?username=' + encodeURIComponent(username),
+                  { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+                .then((r) => r.json())
+                .then((j) => {
+                    const uid = j && j.stats && j.stats.id;
+                    if (uid) { adm.openPlayer(uid); }
+                    else { alert('拿不到该玩家的 ID'); }
+                })
+                .catch(() => alert('查询失败（网络）'));
+        };
+        content.insertBefore(btn, content.firstChild);
+        clearInterval(timer);
+    }, 100);
+}
+
 function closeOverlaysExcept(keepId) {
-    // 📌 清单不再手抄：直接扫 DOM 里所有 `.modal-overlay`。
     //    这里曾经是硬编码 6 个 id，而 index.html 已有 9 个 `.modal-overlay` ——
     //    漏掉的 #login-modal / #register-modal / #discard-pile-modal 不参与互斥，
     //    会被后开的面板压住（见本文件上方那条注释描述的坑）。
@@ -1066,6 +1113,11 @@ window.gameState = {
     // 正等待自己点选一艘船牺牲（恶魔契约等）。棋盘每次重绘后靠它把高亮补回来，
     // 否则伤害结算的重绘会把选区冲掉、让人以为「点了没反应」。
     pendingSacrifice: null,
+    // ★ 棋盘选区的**归属**（2026-09-20 优先级仲裁批）。
+    // `selectingOnBoard` 只说"有人在选"，不说"是谁在选"；两张效果同时想抢棋盘时，
+    // 后来的那个会因为 `selectingOnBoard` 为真而静默失败（玩家报的"点了没反应"）。
+    // 记下归属后就能给出明确提示：{kind:'sacrifice', reason, label}。
+    boardSelection: null,
     // 正等待自己点选至多 3 艘船加护盾（仁王之盾）：{max, picked, cells}。
     // 同样靠它让 paintRenwangCells() 在棋盘重绘后补回高亮 + 保住已选。
     renwangPick: null,
@@ -3948,6 +4000,11 @@ function bindEventListeners() {
         opponentStatsContent.innerHTML = '<p>加载中…</p>';
         currentProfileUsername = username || '';
         window.__viewedProfileName = currentProfileUsername;
+        // 反作弊管理后台（2026-09-20）：管理员在个人信息卡上加一个「查后台」按钮。
+        // ⚠️ 普通玩家这里 `battleshipAdmin` 存在但 `isAdmin()` 恒为 false →
+        //    一个按钮都不加，也不发任何请求（普通玩家路径零开销）。
+        //    真正的门禁仍在服务端；这里只是别让管理员为了查人再去翻列表。
+        scheduleAdminEntry(username);
         // 好友批：记下"正在看谁" —— 点 #add-friend-btn / .fri-invite-btn 时要发给他。
         // 看自己时置空（自己那张卡上压根不渲染这两个按钮，置空是多一层保险）。
         const willBeSelf = (username === undefined || username === null || username === '')
@@ -6089,6 +6146,15 @@ function setupSocketListeners() {
         gameState.remainingShips = 0;
         gameState.opponentRemainingShips = 0;
         gameState.maxShips = data.new_max_ships;
+        // ⚠️ 防线：服务端若漏给 `new_max_ships`（或给了 null），这里必须有个数。
+        //    `gameState.maxShips` 为 null/0 时，`handleCellClick` 的
+        //    `if (gameState.placedShips >= gameState.maxShips) return;` **恒成立**
+        //    → 点格子完全没反应，且 ships 一直为空 → 确认时报「布船数据无效」。
+        //    （作者实测就是这两个症状。服务端那边也已补成显式 6，这里是第二道防线。）
+        if (!Number.isFinite(Number(gameState.maxShips)) || Number(gameState.maxShips) <= 0) {
+            console.warn('[placement] new_max_ships 缺失或非法，回退为 6：', data.new_max_ships);
+            gameState.maxShips = 6;
+        }
         gameState.placedShips = 0;
 
         // 隐藏所有其他屏幕（唯一来源，见 hideAllScreens）
@@ -8555,7 +8621,21 @@ function needsTargetSelection(cardName) {
 // 通用区域点选器：在真实棋盘上点选 size×size 区域（触摸/鼠标均可用）。
 // 点一下定位并高亮，再点「确认」提交；桌面端保留悬停预览。
 function createBoardAreaPicker(boardEl, size, onConfirm, onCancel, opts) {
-    if (!boardEl || gameState.selectingOnBoard) return null;
+    if (!boardEl) return null;
+    // ★ 2026-09-20 修：占用中**不再静默返回 null**。
+    //
+    // 旧写法 `if (!boardEl || gameState.selectingOnBoard) return null;` —— 被占用时
+    // 悄悄放弃，调用方 `picker ? picker.cleanup : null` 什么也不做，
+    // 于是弹窗已经显示、棋盘却点不动，玩家看到的就是「点了没反应、卡住选不了」。
+    //
+    // 现在：明确告诉玩家**是谁**占着棋盘（通常是恶魔契约那类强制点选），
+    // 并给出「先完成它」的指引 —— 与后端的优先级闸门是同一套语义。
+    if (gameState.selectingOnBoard) {
+        const cur = gameState.boardSelection;
+        const who = (cur && cur.label) ? cur.label : '另一个需要点选的效果';
+        showAlert(`请先完成「${who}」的点选，再使用这张卡`);
+        return null;
+    }
     gameState.selectingOnBoard = true;
     const options = opts || {};
 
@@ -9116,6 +9196,14 @@ function applyCardEffect(card, casterId) {
             break;
 
         case '绝处逢生':
+            // ★ 2026-09-20 同批修：绝处逢生也只重摆**施法者自己**的棋盘
+            // （服务端只清 caster 的船）。这里以前不看 casterId 就 `initBoard`,
+            // 会把**对手本地那份棋盘状态**一起抹掉 —— 对手的船明明还在，
+            // 界面上却被清空了。与上面回光返照是同一个形状的缺陷。
+            if (casterId && casterId !== gameState.playerId) {
+                showMessage('对方发动了绝处逢生，击杀其任何一艘战舰可直接获胜');
+                break;
+            }
             showMessage('绝处逢生效果生效，击杀任何船直接获胜');
             // 重新初始化棋盘
             initBoard(playerBoard, true);
@@ -9135,14 +9223,20 @@ function applyCardEffect(card, casterId) {
             break;
 
         case '回光返照':
-            showMessage('回光返照效果生效，请重新摆放战舰');
-            // 重新初始化棋盘
-            initBoard(playerBoard, true);
-            gameState.ships = [];
-            gameState.placedShips = 0;
-            shipsPlaced.textContent = '0';
-            confirmShipsBtn.classList.remove('hidden');
-            switchScreen(shipPlacementScreen);
+            // ★ 2026-09-20 修：界面不再由这里驱动 —— 改走服务端的 `reset_gameboard`
+            //（按 sid 单发给施法者，见 server.py 回光返照分支）。
+            //
+            // 为什么必须改掉：本函数是**广播**处理器（双方都会跑），
+            // 在这里 `switchScreen(shipPlacementScreen)` 会把**对手**也拽进布船界面
+            // （作者实测：「对手也需要重新布船」）。
+            // 而且"谁该重摆"这件事一旦这里也判一遍，就等于**两份实现** ——
+            // 本项目的老病根（第 10 节第 1 条）。服务端 `room.state='placing_ships'`
+            // + 单发 `reset_gameboard` 已经是唯一真相。
+            //
+            // 这里只负责给双方各一句提示。
+            showMessage(casterId === gameState.playerId
+                ? '回光返照生效，请重新摆放战舰'
+                : '对方发动了回光返照，正在重新摆放战舰');
             break;
 
         case '加百列之光':
@@ -9311,10 +9405,52 @@ function updateFieldMagicUI(playerId, card) {
 // 高亮会被瞬间冲掉，表现就是「弹窗还在，但怎么点都没反应」。
 // 现在：委托监听挂在容器上（重建格子也不失效），高亮由 paintSacrificeCells()
 // 根据 gameState.pendingSacrifice 每次重绘后重刷。
+// 待选效果的中文名（只用于**给玩家看的提示**；判据一律用 reason 本身）。
+// 与 `needsTargetSelection` 的卡名表互补：这里是"服务端推过来的 reason → 名字"。
+const SACRIFICE_LABELS = {
+    demon_contract: '恶魔契约',
+    divine_decree: '神之宣告',
+    kraken_eye: '克苏鲁之眼',
+    shield_choice: '仁王之盾',
+};
+
+// ★ 选船优先级（2026-09-20）：**前端只镜像服务端那一份**（server.py 的
+// `SHIP_PICK_PRIORITY`），用途仅限"把被挡的卡置灰并给出提示"。
+// ⚠️ 真正的放行/拒绝由服务端裁决（`_ship_pick_blocked_reason`）——
+//    这里只是让玩家不必先点一下才知道不行。**不要**在这里实现第二套判据逻辑。
+const SHIP_PICK_PRIORITIES = {
+    demon_contract: 100,
+    divine_decree: 80,
+    kraken_eye: 60,
+    shield_choice: 40,
+};
+
+// "打这张卡会触发选船"的卡名 → 它对应的 reason
+const SHIP_PICK_CARD_NAMES = {
+    '克苏鲁之眼': 'kraken_eye',
+    '神之宣告': 'divine_decree',
+    '仁王之盾': 'shield_choice',
+};
+
+// 当前是否有**更高优先级**的选船待办挡着这张卡；返回提示文案（空串 = 可用）。
+function shipPickBlockedFor(cardName) {
+    const want = SHIP_PICK_CARD_NAMES[cardName];
+    if (!want) return '';
+    const cur = gameState.boardSelection;
+    if (!cur || cur.kind !== 'sacrifice') return '';
+    const curP = SHIP_PICK_PRIORITIES[cur.reason] || 0;
+    const wantP = SHIP_PICK_PRIORITIES[want] || 0;
+    if (curP <= wantP) return '';
+    const label = cur.label || SACRIFICE_LABELS[cur.reason] || '战舰点选';
+    return `请先完成「${label}」的选船，再使用这张卡`;
+}
+
 function clearSacrificeSelection() {
     gameState.pendingSacrifice = null;
     gameState.selectingOnBoard = false;
     gameState.selectionCleanup = null;
+    // ★ 2026-09-20：棋盘选区的**归属**一并释放（供 createBoardAreaPicker 仲裁与提示）
+    gameState.boardSelection = null;
     document.querySelectorAll('.cell.pick-ship, .cell.pick-disabled')
         .forEach(c => c.classList.remove('pick-ship', 'pick-disabled'));
     document.querySelectorAll('.magic-target-prompt').forEach(el => el.remove());
@@ -9365,6 +9501,15 @@ function showSacrificePrompt(data) {
         ships: (data && Array.isArray(data.ships)) ? data.ships : []
     };
     gameState.selectingOnBoard = true;
+    // ★ 2026-09-20：登记**棋盘选区的归属**。
+    // 恶魔契约 / 神之宣告 / 克苏鲁之眼 这类"强制点选"优先级最高，
+    // 卡牌自己的目标选择（`createBoardAreaPicker` 等）遇到它必须让路并给出提示，
+    // 而不是静默失败（那正是玩家报的"点了没反应"）。
+    gameState.boardSelection = {
+        kind: 'sacrifice',
+        reason: gameState.pendingSacrifice.reason,
+        label: SACRIFICE_LABELS[gameState.pendingSacrifice.reason] || '战舰点选',
+    };
 
     // 事件委托：只绑一次，且绑在容器上 —— 格子被重建也不影响
     const onClick = (e) => {
@@ -9865,6 +10010,14 @@ function updateHandUI() {
             cardElement.classList.add('selected');
         }
 
+        // ★ 2026-09-20：被更高优先级选船效果挡住的卡 —— 置灰 + 悬停说明。
+        // 只是"提前告知"，真正的拒绝在服务端（那里才是唯一判据）。
+        const pickBlocked = shipPickBlockedFor(card.name);
+        if (pickBlocked) {
+            cardElement.classList.add('pick-blocked');
+            cardElement.title = pickBlocked;
+        }
+
         cardElement.innerHTML = `
             <div class="card-name">${escapeHtml(card.name)}</div>
             <div class="card-speed">速阶：${escapeHtml(card.speed)}</div>
@@ -9873,6 +10026,13 @@ function updateHandUI() {
 
         // 添加点击事件，实现点击选择/使用功能
         cardElement.addEventListener('click', () => {
+            // ★ 被更高优先级选船效果挡住时，直接给出原因并中止
+            //   （不中止的话玩家会走完一整套目标选择再被服务端拒绝）
+            const blockedNow = shipPickBlockedFor(card.name);
+            if (blockedNow) {
+                showAlert(blockedNow);
+                return;
+            }
             // 如果是已选中状态，尝试使用卡牌
             if (gameState.selectedCardIndex === index
                     && gameState.selectedCardKey === cardSelectionKey(card)) {

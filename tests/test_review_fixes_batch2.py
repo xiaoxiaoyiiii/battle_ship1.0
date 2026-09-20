@@ -339,7 +339,9 @@ def test_room_sync_carries_state_flags_and_pending_picks(room):
     """重连快照要带上状态标记与"待自己点选"的信息"""
     room.players[P1].magic_blocked = True
     room.players[P1].effect_flags.no_draw = True
-    room.magic_temp_data = {'pending_sacrifice': {'player': P1, 'reason': 'divine_decree'}}
+    # ⚠️ 2026-09-20：待选改走**优先队列**（旧实现是 `magic_temp_data` 单槽，
+    #    会被第二个请求覆盖、也会被 `magic_temp_data = {}` 抹掉）。
+    server._request_ship_pick(room, P1, 'divine_decree', 'm')
 
     snap = server._build_room_sync(room, P1)
     assert snap['magic_blocked'] is True

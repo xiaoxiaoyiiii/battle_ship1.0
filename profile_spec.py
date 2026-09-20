@@ -291,6 +291,38 @@ def unlocked_card_bgs(stats):
     return _unlocked(_CARD_BG_RULES, stats)
 
 
+def effective_equipped(stats, title_id='', frame_id='', card_bg_id=''):
+    """把**存储的**外观按**当前解锁状态**过滤：失效的回落默认值。
+
+    为什么必须有这个函数（2026-09-20 反作弊回收批）：
+    外观解锁判定原先**只在保存路径**（`validate_payload` → `_pick_owned`）跑，
+    **读路径直接原样下发存储值**（`api.build_own_profile` / `public_stats`）。
+    于是同一条规则"一处校验、一处不校验"，后果：
+
+      · 段位掉下去之后，已经戴上的高段位外观**照样显示**（写路径会拒绝它，
+        读路径却放行）—— 玩家"不编辑名片就永远保留，一编辑就丢"，自相矛盾；
+      · 靠刷分拿到高段位、事后被回滚分数的人，**奖励收不回来**：
+        存储里那串 id 还在，前端照着渲染。
+
+    判定口径与写路径**完全相同**（都用 `unlocked_*`），所以这里不是新政策，
+    而是让已经存在的规则在读路径也生效 —— 正是本项目第 10 节第 1 条
+    「同一个业务判断有两份实现就一定会漂移」的反面：这次是**只写了一份**。
+
+    返回 `(title_id, frame_id, card_bg_id)`（失效项已换成默认值）。
+    """
+    # 称号：默认是空串（= 不展示），不是池子里的某一项
+    tid = title_id if isinstance(title_id, str) else ''
+    if tid and tid not in unlocked_titles(stats):
+        tid = ''
+    fid = frame_id if isinstance(frame_id, str) else ''
+    if fid not in unlocked_frames(stats):
+        fid = DEFAULT_FRAME_ID
+    bid = card_bg_id if isinstance(card_bg_id, str) else ''
+    if bid not in unlocked_card_bgs(stats):
+        bid = DEFAULT_CARD_BG_ID
+    return tid, fid, bid
+
+
 # ---------------------------------------------------------------------------
 # 特权（user_perks 表里的字符串）
 # ---------------------------------------------------------------------------

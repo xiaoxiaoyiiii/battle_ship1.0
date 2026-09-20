@@ -150,11 +150,17 @@ def test_open_chain_window_is_skipped(room):
 
 
 def test_pending_choices_are_skipped(room):
-    for key in ('pending_placement', 'pending_sacrifice', 'pending_shenji'):
+    for key in ('pending_placement', 'pending_shenji'):
         room.magic_temp_data = {key: {'caster': P1}}
         _arm(room, time.time() - 999)
         assert server._auto_act_on_timeouts() == [], f'{key} 等待点选时不该催'
+    # ⚠️ 2026-09-20：待选战舰搬到了**房间级优先队列**（不在 magic_temp_data），
+    #    所以单独验一遍 —— 漏了它，"等玩家点船"期间会被超时逻辑抢跑。
     room.magic_temp_data = {}
+    server._request_ship_pick(room, P1, 'demon_contract', 'm')
+    _arm(room, time.time() - 999)
+    assert server._auto_act_on_timeouts() == [], '等待点选战舰时不该催'
+    server._clear_ship_picks(room)
 
 
 def test_disconnected_opponent_is_skipped(room):

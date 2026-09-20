@@ -1032,6 +1032,37 @@
         </div>
     </div>
 
+    <!-- 反作弊管理后台（2026-09-20）。
+         ⚠️ 入口只在 `/api/admin/me` 返回 is_admin 时才插进页面 —— **前端隐藏不是安全措施**，
+            真正的门禁在服务端（`api._admin_required()`，非管理员一律 403）。
+            这里隐藏只是"别让普通玩家看到一个点不动的按钮"。
+         层级写法照既有弹窗：`.modal-overlay` + `.modal-content`，
+         祖先链里不许有 transform/filter/backdrop-filter（CLAUDE.md 第 11 节第 7 条）。 -->
+    <div id="admin-modal" class="modal-overlay hidden">
+        <div class="modal-content admin-modal-content">
+            <span class="modal-close" id="admin-modal-close">×</span>
+            <h2>反作弊管理</h2>
+            <div class="admin-tabs">
+                <button type="button" class="admin-tab active" id="admin-tab-list">嫌疑度总览</button>
+                <button type="button" class="admin-tab" id="admin-tab-detail">玩家详情</button>
+            </div>
+
+            <!-- 视图一：全服嫌疑度列表 -->
+            <div id="admin-view-list">
+                <div class="admin-toolbar">
+                    <input type="text" id="admin-search" placeholder="搜索用户名…" autocomplete="off">
+                    <button type="button" class="btn secondary" id="admin-refresh">刷新</button>
+                </div>
+                <div id="admin-list" class="admin-list"><p>加载中…</p></div>
+            </div>
+
+            <!-- 视图二：单个玩家详情（点头像进来 / 从列表点进来） -->
+            <div id="admin-view-detail" class="hidden">
+                <div id="admin-detail"><p>从左侧列表点一个玩家，或在游戏里点头像。</p></div>
+            </div>
+        </div>
+    </div>
+
     <!-- 好友面板（好友批）+ 好友私聊（私聊批，2026-09-19）。
          ⚠️ 层级写法照既有弹窗：`.modal-overlay`（position:fixed，z-index 10000）+ `.modal-content`。
          本弹窗的祖先链里没有任何 transform/filter/backdrop-filter ——
@@ -1103,6 +1134,9 @@
 <script src="/static/wallpaper.js?v={{ asset_v('wallpaper.js') }}"></script>
 <!-- 开发者调试面板（F8）：只在服务端 debug_status 明确允许时才显示，其余环境按 F8 无反应 -->
 <script src="/static/debug_panel.js?v={{ asset_v('debug_panel.js') }}"></script>
+
+<!-- 反作弊管理后台：先问 /api/admin/me，非管理员**静默不加载 UI**（门禁在服务端） -->
+<script src="/static/admin.js?v={{ asset_v('admin.js') }}"></script>
 
 <!-- flash 消息自动消失 -->
 <script>

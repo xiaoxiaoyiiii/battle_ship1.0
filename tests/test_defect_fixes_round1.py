@@ -317,7 +317,9 @@ def test_temp_data_not_leaked_to_opponent(room):
 
 
 def test_temp_data_respects_pending_owner(room):
-    room.magic_temp_data = {'pending_sacrifice': {'player': P2, 'count': 1}}
+    # ⚠️ 待选战舰自 2026-09-20 起在**房间级优先队列**里（`server._request_ship_pick`），
+    #    不再写 `magic_temp_data['pending_sacrifice']` —— 写旧键这条用例就失去意义了。
+    server._request_ship_pick(room, P2, 'demon_contract', 'm')
     assert server.get_magic_temp_data({'room_id': room.id, 'player_id': P2})['status'] == 'success'
     assert server.get_magic_temp_data({'room_id': room.id, 'player_id': P1})['status'] == 'error'
 

@@ -118,7 +118,7 @@ def test_confirm_sacrifice_rejects_dead_ship(room):
     """拿已沉船的格子去确认必须被拒（这是「零代价」漏洞的入口）。"""
     p = room.players[P2]
     kill(p, 0)
-    room.magic_temp_data['pending_sacrifice'] = {'player': P2, 'reason': 'demon_contract'}
+    server._request_ship_pick(room, P2, 'demon_contract', 'm')
 
     res = server.handle_confirm_sacrifice({
         'room_id': room.id, 'player_id': P2, 'position': {'x': 0, 'y': 0}})
@@ -131,7 +131,7 @@ def test_confirm_sacrifice_still_accepts_alive_ship(room):
     """别误伤 —— 活船照常可以选。"""
     p = room.players[P2]
     kill(p, 0)
-    room.magic_temp_data['pending_sacrifice'] = {'player': P2, 'reason': 'demon_contract'}
+    server._request_ship_pick(room, P2, 'demon_contract', 'm')
 
     res = server.handle_confirm_sacrifice({
         'room_id': room.id, 'player_id': P2, 'position': {'x': 1, 'y': 5}})
@@ -281,7 +281,9 @@ def test_kill_pushes_player_ships_with_alive_flag(room, events):
 def test_room_sync_marks_alive_and_filters_pick_candidates(room):
     p = room.players[P1]
     kill(p, 0)
-    room.magic_temp_data['pending_sacrifice'] = {'player': P1, 'reason': 'demon_contract'}
+    # ⚠️ 2026-09-20：待选改走**优先队列**（`server._request_ship_pick`），
+    #    不再直接写 `magic_temp_data['pending_sacrifice']`（那是旧的单槽）。
+    server._request_ship_pick(room, P1, 'demon_contract', 'm')
 
     sync = server._build_room_sync(room, P1)
     assert [sh['alive'] for sh in sync['ships']].count(False) == 1

@@ -442,7 +442,7 @@ def test_demon_contract_binding_on_attack(room):
     assert room.players[P2].remaining_ships == 0
     # 不再立刻随机牺牲，而是等 P1 自己点选
     assert len(room.players[P1].ships) == 2, '不应在未选择前就随机牺牲'
-    assert room.magic_temp_data['pending_sacrifice']['player'] == P1
+    assert server._top_ship_pick(room, P1)['player'] == P1
 
 
 def test_demon_contract_sacrifice_requires_own_ship(room):
@@ -706,7 +706,7 @@ def test_shenzhi_option1_kill_opponent_ship(room):
     assert room.players[P1].remaining_ships == 1
 
     # 卡面：让对方选择自己的一艘船使其死亡 → 应挂起等待对方点选
-    pending = room.magic_temp_data.get('pending_sacrifice')
+    pending = server._top_ship_pick(room, P2)
     assert pending and pending['player'] == P2 and pending['reason'] == 'divine_decree'
     assert room.players[P2].remaining_ships == 2
 
@@ -742,8 +742,13 @@ def test_shenzhi_option2_skip_opponent_turn(room):
     room.magic_temp_data = {'effect_choice': 2}
     res = apply(room, P1, '神之宣告')
     assert res.success is True, res.message
-    # 修正后存玩家ID（与 end_turn 的比较语义一致）
-    assert room.skip_opponent_turn == P2
+    # ★ 2026-09-20 改用 `skip_opponent_stages`（语义修正，见下）。
+    # 卡面：「跳过**这一个大回合内**对方的所有阶段」—— 不含翻页。
+    # 旧实现与 Freezing！ 共用 `skip_opponent_turn`，而它跳完会**直接进新大回合**
+    # （重新猜拳 + 重新发牌），等于白送一次状态重置。两张卡的作用域不同，故分开。
+    # 语义由 `tests/test_divine_declaration_skip.py` 完整钉住（含 Freezing 反向守卫）。
+    assert room.skip_opponent_stages == P2
+    assert not room.skip_opponent_turn, '不该动 Freezing！ 的标记（那会把大回合翻页）'
 
 
 def _sacrifice_events(events):
@@ -792,7 +797,7 @@ def test_shenzhi_option1_broadcasts_opponent_ship_too(room, events):
     })
     assert res.success is True
     # 人类对手要自己点选，此时已挂起等待
-    pending = room.magic_temp_data.get('pending_sacrifice')
+    pending = server._top_ship_pick(room, P2)
     assert pending and pending['player'] == P2
 
     ok = server.handle_confirm_sacrifice({'room_id': room.id, 'player_id': P2,
@@ -1203,7 +1208,7 @@ def test_kesulu_mutual_reveal(room):
     assert {(0, 0)} <= {(p.x, p.y) for p in room.players[P2].revealed_positions}
 
     # 对方仍需自己点选一艘暴露
-    pending = room.magic_temp_data.get('pending_sacrifice')
+    pending = server._top_ship_pick(room, P2)
     assert pending and pending['player'] == P2 and pending['reason'] == 'kraken_eye'
     ok = server.handle_confirm_sacrifice({'room_id': room.id, 'player_id': P2,
                                           'position': {'x': 5, 'y': 5}})
@@ -1426,6 +1431,11 @@ def test_huiguang_reset_board_and_lose_on_damage(room):
     room.players[P1].needs_reset = False
     room.current_attacker = P2
     room.current_phase = 'battle'
+    # ★ 2026-09-20：回光返照现在会让施法者进入 `placing_ships`，并把
+    # `attacks_remaining` 清零（摆放期间本就没有攻击，与败者食尘同一口径）。
+    # 对手若此时正在自己的战斗阶段，其攻击额度是**他自己的**，不该被这次重摆影响。
+    # 夹具原先靠"房间初始的 6 次"顺带成立，这里显式给出，让用例表达的东西不变。
+    room.attacks_remaining = room.players[P2].remaining_ships or 6
     attack(room, P2, 2, 2)
     assert room.state == 'game_over'
     assert room.winner == P2

@@ -386,6 +386,64 @@ class Database:
                   )
                   ''')
 
+            # ---- 反作弊：可疑对局记录（2026-09-19）----
+            # **只加新表、不动老表列**（本项目没有 ALTER 迁移机制，见上面第 1 批的注释）。
+            # 这张表是**审计与取证**用的：谁被判定、依据什么规则、什么时间。
+            # 判据本身在 `anticheat.py`（纯函数），这里只存结论 —— 处罚动作不在这里做。
+            self.cursor.execute('''
+                  CREATE TABLE IF NOT EXISTS anticheat_flags
+                  (
+                      match_id   TEXT PRIMARY KEY,
+                      rule       TEXT,
+                      severity   TEXT,
+                      detail     TEXT,
+                      created_at INTEGER
+                  )
+                  ''')
+
+            # ---- 反作弊：每局的嫌疑度打分（2026-09-20 累计批）----
+            # 与 `anticheat_flags` 的区别（**两张表职责不同，别混**）：
+            #   · `anticheat_flags` —— 只有**可疑局**才有记录（≥ record 档）
+            #   · 本表             —— **每一局都记**（含正常局，score=0）
+            #
+            # 为什么每局都要记：累计嫌疑度要按"这个人打过的所有局"算，
+            # 而 `matches` 表会因回滚被删（`tools/anticheat_rollback.py`）。
+            # 把**分数**单独存一份，回滚删对局时就不会把嫌疑度记录一起抹掉 ——
+            # 否则"删掉证据 = 洗白嫌疑度"，那反作弊就白做了。
+            self.cursor.execute('''
+                  CREATE TABLE IF NOT EXISTS match_suspicion
+                  (
+                      match_id   TEXT PRIMARY KEY,
+                      user_id    TEXT,
+                      score      INTEGER NOT NULL DEFAULT 0,
+                      level      TEXT,
+                      created_at INTEGER
+                  )
+                  ''')
+            self.cursor.execute(
+                'CREATE INDEX IF NOT EXISTS idx_match_suspicion_uid '
+                'ON match_suspicion(user_id, created_at DESC)')
+
+            # ---- 反作弊：管理员手动干预（解封/加封）----
+            # ⚠️ **只有这张表的结论优先于算法**（见 `suspicion.effective_level`）。
+            # 保留每次干预的历史（不覆盖）—— "谁在什么时候把谁解封了、为什么"
+            # 必须可审计，否则管理员权限就是不可追溯的。
+            self.cursor.execute('''
+                  CREATE TABLE IF NOT EXISTS anticheat_overrides
+                  (
+                      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                      user_id     TEXT,
+                      level       INTEGER,
+                      cleared     INTEGER DEFAULT 0,
+                      reason      TEXT,
+                      actor       TEXT,
+                      created_at  INTEGER
+                  )
+                  ''')
+            self.cursor.execute(
+                'CREATE INDEX IF NOT EXISTS idx_anticheat_overrides_uid '
+                'ON anticheat_overrides(user_id, id DESC)')
+
             # ---- 加列迁移（第 3 批 D 票）----
             # `user_profile` 是第 1 批建的表，生产库已有该表（于是上面的
             # CREATE TABLE IF NOT EXISTS 对它完全无效），而本项目没有 ALTER 迁移机制。
@@ -1491,6 +1549,198 @@ class Database:
             except Exception:
                 pass
             return False
+
+    # ------------------------------------------------------------------
+    # 反作弊（anticheat_flags）—— 只记录判定结论，供审计与取证
+    # 与其它 DAO 同一风格：写失败返回 False、读失败返回空，绝不抛。
+    # ------------------------------------------------------------------
+    def record_anticheat_flag(self, match_id: str, rule: str, severity: str, detail: str) -> bool:
+        """落一条可疑对局记录。
+
+        **幂等**：`match_id` 是主键，同一局重复判定只更新不新增
+        （`INSERT OR REPLACE`）—— 一局可能因为重连 / 重放被判定多次。
+        """
+        if not match_id:
+            return False
+        try:
+            with self._lock:
+                self.cursor.execute(
+                    'INSERT OR REPLACE INTO anticheat_flags '
+                    '(match_id, rule, severity, detail, created_at) VALUES (?,?,?,?,?)',
+                    (str(match_id), str(rule or '')[:400], str(severity or '')[:32],
+                     str(detail or '')[:2000], int(time.time())))
+                self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"记录反作弊标记失败: match_id={match_id}, 错误: {e}")
+            try:
+                if self.conn:
+                    self.conn.rollback()
+            except Exception:
+                pass
+            return False
+
+    def get_anticheat_flags(self, limit: int = 200):
+        """最近的可疑对局（新的在前）。读失败返回空列表。"""
+        try:
+            n = max(1, min(int(limit), 2000))
+        except (TypeError, ValueError):
+            n = 200
+        try:
+            with self._lock:
+                cur = self.cursor.execute(
+                    'SELECT match_id, rule, severity, detail, created_at '
+                    'FROM anticheat_flags ORDER BY created_at DESC LIMIT ?', (n,))
+                return [dict(r) for r in cur.fetchall()]
+        except Exception as e:
+            logger.error(f"读取反作弊标记失败: {e}")
+            return []
+
+    # ------------------------------------------------------------------
+    # 反作弊：累计嫌疑度（match_suspicion / anticheat_overrides）
+    # 与其它 DAO 同一风格：写失败返回 False、读失败返回空，绝不抛。
+    # ------------------------------------------------------------------
+    def record_match_suspicion(self, match_id: str, user_id: str, score: int,
+                               level: str = '') -> bool:
+        """记录**一局对某人的**嫌疑度打分（幂等：match_id + user_id 唯一）。
+
+        ⚠️ 每局都记（含 score=0 的正常局）—— 累计口径要能覆盖"全部对局"。
+        """
+        if not match_id or not user_id:
+            return False
+        key = f'{match_id}:{user_id}'
+        try:
+            with self._lock:
+                self.cursor.execute(
+                    'INSERT OR REPLACE INTO match_suspicion '
+                    '(match_id, user_id, score, level, created_at) VALUES (?,?,?,?,?)',
+                    (key, str(user_id), int(score or 0), str(level or '')[:16],
+                     int(time.time())))
+                self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"记录对局嫌疑度失败: {match_id}/{user_id}, 错误: {e}")
+            try:
+                if self.conn:
+                    self.conn.rollback()
+            except Exception:
+                pass
+            return False
+
+    def get_match_suspicion(self, user_id: str, limit: int = 500):
+        """某人的对局嫌疑度记录（新的在前）。
+
+        返回 `[{'match_id','score','level','created_at'}, ...]` ——
+        **调用方自己按 `created_at` 折算 `age_days`**（时间是相对的，
+        必须在"这一刻"算，不能存进库）。
+        """
+        if not user_id:
+            return []
+        try:
+            n = max(1, min(int(limit), 5000))
+        except (TypeError, ValueError):
+            n = 500
+        try:
+            with self._lock:
+                cur = self.cursor.execute(
+                    'SELECT match_id, score, level, created_at FROM match_suspicion '
+                    'WHERE user_id = ? ORDER BY created_at DESC LIMIT ?', (user_id, n))
+                return [dict(r) for r in cur.fetchall()]
+        except Exception as e:
+            logger.error(f"读取对局嫌疑度失败: {user_id}, 错误: {e}")
+            return []
+
+    def set_anticheat_override(self, user_id: str, level=None, cleared: bool = False,
+                               reason: str = '', actor: str = '') -> bool:
+        """管理员手动干预（**追加**一条，不覆盖历史）。
+
+        · `cleared=True`      → 解封
+        · `level=<0..3>`      → 直接指定等级
+        两者都给时以 `cleared` 为准（解封更明确）。
+        """
+        if not user_id:
+            return False
+        try:
+            with self._lock:
+                self.cursor.execute(
+                    'INSERT INTO anticheat_overrides '
+                    '(user_id, level, cleared, reason, actor, created_at) '
+                    'VALUES (?,?,?,?,?,?)',
+                    (str(user_id),
+                     None if cleared else (int(level) if level is not None else None),
+                     1 if cleared else 0,
+                     str(reason or '')[:500], str(actor or '')[:64], int(time.time())))
+                self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"写入反作弊干预失败: {user_id}, 错误: {e}")
+            try:
+                if self.conn:
+                    self.conn.rollback()
+            except Exception:
+                pass
+            return False
+
+    def get_anticheat_override(self, user_id: str):
+        """该用户**最新一条**干预记录（没有则 None）。"""
+        if not user_id:
+            return None
+        try:
+            with self._lock:
+                cur = self.cursor.execute(
+                    'SELECT user_id, level, cleared, reason, actor, created_at '
+                    'FROM anticheat_overrides WHERE user_id = ? ORDER BY id DESC LIMIT 1',
+                    (user_id,))
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"读取反作弊干预失败: {user_id}, 错误: {e}")
+            return None
+
+    def get_anticheat_override_history(self, user_id: str, limit: int = 50):
+        """该用户的干预历史（新的在前）—— 审计用。"""
+        if not user_id:
+            return []
+        try:
+            n = max(1, min(int(limit), 500))
+        except (TypeError, ValueError):
+            n = 50
+        try:
+            with self._lock:
+                cur = self.cursor.execute(
+                    'SELECT user_id, level, cleared, reason, actor, created_at '
+                    'FROM anticheat_overrides WHERE user_id = ? ORDER BY id DESC LIMIT ?',
+                    (user_id, n))
+                return [dict(r) for r in cur.fetchall()]
+        except Exception as e:
+            logger.error(f"读取反作弊干预历史失败: {user_id}, 错误: {e}")
+            return []
+
+    def get_all_suspicion_totals(self, limit: int = 2000):
+        """全服嫌疑度汇总（一条 SQL 算完，供管理后台列表用）。
+
+        返回 `[{'user_id','username','total','matches'}, ...]`（total 降序）。
+
+        ⚠️ 这里返回的是**未衰减的原始分合计** —— 衰减要按"当前时间"算，
+        只能在 Python 侧做（SQL 里算时间衰减既难读又难测）。
+        调用方拿到明细后用 `suspicion.accumulate()` 折算。
+        """
+        try:
+            n = max(1, min(int(limit), 10000))
+        except (TypeError, ValueError):
+            n = 2000
+        try:
+            with self._lock:
+                cur = self.cursor.execute(
+                    'SELECT ms.user_id AS user_id, u.username AS username, '
+                    '       SUM(ms.score) AS total, COUNT(*) AS matches '
+                    'FROM match_suspicion ms '
+                    'LEFT JOIN users u ON u.id = ms.user_id '
+                    'GROUP BY ms.user_id ORDER BY total DESC LIMIT ?', (n,))
+                return [dict(r) for r in cur.fetchall()]
+        except Exception as e:
+            logger.error(f"读取全服嫌疑度汇总失败: {e}")
+            return []
 
     # ------------------------------------------------------------------
     # 等级 / 经验（user_xp）
@@ -3371,6 +3621,48 @@ def get_user_counters(uid: str):
 def bump_user_counters(uid: str, **deltas):
     """累加每局计数（只在 server._finalize_match 里调）"""
     return db.bump_user_counters(uid, **deltas)
+
+
+# ---- 反作弊（2026-09-19）----
+def record_anticheat_flag(match_id: str, rule: str, severity: str, detail: str):
+    """落一条可疑对局记录（幂等：同一 match_id 只留一条）"""
+    return db.record_anticheat_flag(match_id, rule, severity, detail)
+
+
+def get_anticheat_flags(limit: int = 200):
+    """读可疑对局（运维/审计用）"""
+    return db.get_anticheat_flags(limit)
+
+
+def record_match_suspicion(match_id: str, user_id: str, score: int, level: str = ''):
+    """记录一局的嫌疑度打分（每局都记，含正常局）"""
+    return db.record_match_suspicion(match_id, user_id, score, level)
+
+
+def get_match_suspicion(user_id: str, limit: int = 500):
+    """某人的对局嫌疑度明细"""
+    return db.get_match_suspicion(user_id, limit)
+
+
+def set_anticheat_override(user_id: str, level=None, cleared: bool = False,
+                           reason: str = '', actor: str = ''):
+    """管理员手动干预（追加一条，可审计）"""
+    return db.set_anticheat_override(user_id, level, cleared, reason, actor)
+
+
+def get_anticheat_override(user_id: str):
+    """该用户最新的干预记录"""
+    return db.get_anticheat_override(user_id)
+
+
+def get_anticheat_override_history(user_id: str, limit: int = 50):
+    """该用户的干预历史"""
+    return db.get_anticheat_override_history(user_id, limit)
+
+
+def get_all_suspicion_totals(limit: int = 2000):
+    """全服嫌疑度汇总（管理后台列表用）"""
+    return db.get_all_suspicion_totals(limit)
 
 
 def get_user_achievements(uid: str):

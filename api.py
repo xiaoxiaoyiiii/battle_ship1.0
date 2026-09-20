@@ -12,12 +12,14 @@ from werkzeug.utils import secure_filename
 
 import db
 import achievements
+import anticheat
 import dm
 import leveling
 import profile_spec
 import changelog
 import quick_chat
 import ranks
+import suspicion
 import wallpaper
 
 ALLOWED_AVATAR_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
@@ -657,15 +659,19 @@ def build_own_profile(uid):
     rank = db.get_user_rank(uid)
     stats = _profile_unlock_stats(uid, user)
     extra = db.get_user_profile_extra(uid)
+    # ★ 2026-09-20：存储的外观要按**当前**解锁状态过滤（掉段/被回滚分数的会回落默认）。
+    #    以前这里原样下发存储值，而写路径却会拒绝失效项 —— 一条规则两处不一致。
+    _tid, _fid, _bid = profile_spec.effective_equipped(
+        stats, extra.get('title_id'), extra.get('frame_id'), extra.get('card_bg_id'))
     profile.update({
         'rank': rank,
         'name_style': _name_style(uid),
         'level_info': level_view_for(uid),
-        'title_id': extra.get('title_id') or '',
+        'title_id': _tid,
         'tags': extra.get('tags') or [],
         'status_text': extra.get('status_text') or '',
-        'frame_id': extra.get('frame_id') or profile_spec.DEFAULT_FRAME_ID,
-        'card_bg_id': extra.get('card_bg_id') or profile_spec.DEFAULT_CARD_BG_ID,
+        'frame_id': _fid,
+        'card_bg_id': _bid,
         'show_stats': int(extra.get('show_stats') or 0),
         'show_fav_cards': int(extra.get('show_fav_cards') or 0),
         'show_history': int(extra.get('show_history') or 0),
@@ -834,7 +840,13 @@ def user_stats_view():
 
     # 名片个性字段（称号 / 标签 / 状态 / 边框 / 底色 / 最爱用的卡）
     extra = db.get_user_profile_extra(stats['id'])
-    title_id = extra.get('title_id') or ''
+    # ★ 2026-09-20：别人视角同样要按**当前**解锁状态过滤（与 `build_own_profile` 同一份判据）。
+    #    漏了这里 = "别人能看到你无权拥有的外观"，比自视角显示更糟（那是公开可见的）。
+    _stats_for_unlock = _profile_unlock_stats(stats['id'], stats)
+    _tid, _fid, _bid = profile_spec.effective_equipped(
+        _stats_for_unlock, extra.get('title_id'),
+        extra.get('frame_id'), extra.get('card_bg_id'))
+    title_id = _tid
     public_stats['title_id'] = title_id
     public_stats['title_name'] = profile_spec.title_name(title_id)
     public_stats['tags'] = extra.get('tags') or []
@@ -846,8 +858,8 @@ def user_stats_view():
     #    直接让服务端把名字给出来，前端就不必再去够那个作用域。
     public_stats['tag_names'] = [profile_spec.tag_name(t) for t in (extra.get('tags') or [])]
     public_stats['status_text'] = extra.get('status_text') or ''
-    public_stats['frame_id'] = extra.get('frame_id') or profile_spec.DEFAULT_FRAME_ID
-    public_stats['card_bg_id'] = extra.get('card_bg_id') or profile_spec.DEFAULT_CARD_BG_ID
+    public_stats['frame_id'] = _fid
+    public_stats['card_bg_id'] = _bid
     public_stats['fav_cards'] = _fav_cards(stats['id'], 3)
     # 三个展示开关**一起下发**（计划 §2.5，2026-09-17 裁决补上后两个）。
     # 语义统一：0 = 该区块对所有人隐藏（包括自己），1 = 可见，由前端按标志位决定画不画。
@@ -2039,6 +2051,277 @@ def api_friend_messages_read():
 
     marked = db.mark_friend_messages_read(uid, target['id'])
     return jsonify({'status': 'ok', 'read': _int_or_zero(marked)})
+
+
+# ===========================================================================
+# 反作弊管理后台（2026-09-20）
+#
+# 定位：**只给你（站长）用**的运营面板。可以看全服嫌疑度、逐个玩家查战绩与违规记录、
+#       手动解封/加封。
+#
+# ⚠️ 三重安全约束（缺一条都是事故）：
+#   ① **管理员白名单**：复用既有的 `DEBUG_ADMIN_USER_IDS`（由 server.py 注入），
+#      **不新造一套管理员概念** —— 两套管理员概念必然漂移（本项目老病根）。
+#   ② **写操作必须带 actor**：每次干预都记"谁做的"，可审计。
+#   ③ **绝不泄露给普通玩家**：所有接口都先过 `_admin_required()`，
+#      非管理员一律 403，且**不区分"不存在"与"无权限"**（不泄露账号是否存在）。
+# ===========================================================================
+def _admin_backend(name):
+    """取 server.py 注入的后端能力（按名字现取，与好友那套同一机制）。
+
+    ⚠️ `api.py` **不能 import server**（`python server.py` 时模块名是 `__main__`，
+    import 会再执行一遍成另一个模块对象 —— 见 CLAUDE.md 第 19 条）。
+    """
+    return _friend_backend(name)
+
+
+def _admin_allowed_uids() -> set:
+    """管理员白名单（server 注入；取不到就当空 = 谁都不是管理员）。"""
+    try:
+        fn = _admin_backend('_admin_user_ids_for_api')
+        if callable(fn):
+            return set(fn() or ())
+    except Exception:
+        pass
+    return set()
+
+
+def _admin_required():
+    """返回 `(uid, None)` 或 `(None, 响应)`。**唯一的管理员门禁入口**。"""
+    uid = session.get('user_id')
+    if not uid:
+        return None, (jsonify({'success': False, 'error': '未登录'}), 401)
+    allowed = _admin_allowed_uids()
+    if not allowed or str(uid) not in {str(x) for x in allowed}:
+        # ⚠️ 白名单为空 = **谁都不是管理员**（默认安全）。
+        #    不能写成"空就放行" —— 那等于线上没有管理员配置时门户大开。
+        return None, (jsonify({'success': False, 'error': '无权访问'}), 403)
+    return uid, None
+
+
+def _suspicion_matches_for_api(uid: str) -> list:
+    """取某人的对局嫌疑度明细并折算 age_days（与 server 侧同口径）。
+
+    ⚠️ 时间必须**在调用时**算，不能存库（见 server._suspicion_matches_for 的注释）。
+    """
+    try:
+        rows = db.get_match_suspicion(uid)
+    except Exception:
+        return []
+    now = time.time()
+    out = []
+    for r in rows or ():
+        try:
+            age = max(0.0, (now - float(r.get('created_at') or now)) / 86400.0)
+        except (TypeError, ValueError):
+            age = 0.0
+        out.append({'score': r.get('score'), 'age_days': age})
+    return out
+
+
+def _admin_player_report(uid: str) -> dict:
+    """组装一个玩家的完整反作弊报告（嫌疑度 + 封禁 + 战绩 + 违规记录）。"""
+    user = db.get_user(uid=uid) or {}
+    username = user.get('username') or '(已删除)'
+    matches = _suspicion_matches_for_api(uid)
+    override = db.get_anticheat_override(uid)
+    report = suspicion.build_report(uid, matches, override=override, username=username)
+
+    # 违规记录：可疑对局明细（只有 ≥record 档才有）
+    flags = []
+    try:
+        for f in db.get_anticheat_flags(500):
+            if f.get('match_id'):
+                flags.append({
+                    'match_id': f.get('match_id'),
+                    'rule': f.get('rule'),
+                    'severity': f.get('severity'),
+                    'detail': f.get('detail'),
+                    'created_at': f.get('created_at'),
+                })
+    except Exception:
+        pass
+
+    # 干预历史（谁在什么时候解过封）
+    try:
+        history = db.get_anticheat_override_history(uid, 50)
+    except Exception:
+        history = []
+
+    # 战绩（复用既有口径：wins/losses + 排位）
+    wins = int(user.get('wins') or 0)
+    losses = int(user.get('losses') or 0)
+    rank_row = {}
+    try:
+        rank_row = db.get_user_rank_row(uid) or {}
+    except Exception:
+        rank_row = {}
+
+    report['stats'] = {
+        'wins': wins,
+        'losses': losses,
+        'win_rate': round(wins / (wins + losses), 3) if (wins + losses) else 0.0,
+        'rank_points': int(rank_row.get('points') or 0),
+        'ranked_wins': int(rank_row.get('ranked_wins') or 0),
+        'ranked_losses': int(rank_row.get('ranked_losses') or 0),
+    }
+    # 只看**属于这个人**的违规局（`anticheat_flags` 是按对局存的，没有 user_id）
+    report['flagged_matches'] = [f for f in flags
+                                 if f.get('match_id') in
+                                 {m.get('match_id') for m in _match_ids_for(uid)}][:100]
+    report['override_history'] = [
+        {'level': h.get('level'), 'cleared': bool(h.get('cleared')),
+         'reason': h.get('reason'), 'actor': h.get('actor'),
+         'created_at': h.get('created_at')}
+        for h in (history or [])
+    ]
+    return report
+
+
+def _match_ids_for(uid: str) -> list:
+    """该用户参与过的对局 id（用于把违规记录过滤到本人）。"""
+    try:
+        rows = db.get_match_suspicion(uid, 2000)
+    except Exception:
+        return []
+    out = []
+    for r in rows or ():
+        mid = str(r.get('match_id') or '')
+        # `match_suspicion.match_id` 存的是 `'{match_id}:{user_id}'`（表主键去重口径）
+        out.append({'match_id': mid.split(':', 1)[0] if ':' in mid else mid})
+    return out
+
+
+@app.route('/api/admin/suspicion', methods=['GET'])
+def admin_suspicion_list():
+    """全服嫌疑度列表（按累计嫌疑度降序）。
+
+    查询参数：`?limit=200`（1~2000）
+    响应：`{'success':True,'players':[...],'levels':{...}}`
+    """
+    _, err = _admin_required()
+    if err:
+        return err
+
+    try:
+        limit = int(request.args.get('limit') or 200)
+    except (TypeError, ValueError):
+        limit = 200
+    limit = max(1, min(limit, 2000))
+
+    totals = db.get_all_suspicion_totals(limit)
+    players = []
+    for row in totals or ():
+        uid = row.get('user_id')
+        if not uid:
+            continue
+        try:
+            matches = _suspicion_matches_for_api(uid)
+            override = db.get_anticheat_override(uid)
+            rep = suspicion.build_report(uid, matches, override=override,
+                                         username=row.get('username'))
+            players.append(rep)
+        except Exception:
+            continue
+
+    # 只看有嫌疑的（0 分的不必占据列表），但保留全量计数供参考
+    players.sort(key=lambda p: p.get('suspicion') or 0, reverse=True)
+    return jsonify({
+        'success': True,
+        'players': players,
+        'total': len(totals or ()),
+        'levels': {str(k): v for k, v in suspicion.LEVEL_NAMES.items()},
+        'thresholds': {str(lv): th for th, lv in suspicion.LEVEL_THRESHOLDS},
+    })
+
+
+@app.route('/api/admin/player/<uid>', methods=['GET'])
+def admin_player_detail(uid):
+    """单个玩家的完整报告：嫌疑度 / 封禁等级 / 战绩 / 违规记录 / 干预历史。
+
+    ★ 这就是"点头像快速查询"要调的那个接口。
+    """
+    _, err = _admin_required()
+    if err:
+        return err
+    if not uid:
+        return jsonify({'success': False, 'error': '缺少用户 ID'}), 400
+    try:
+        return jsonify({'success': True, 'player': _admin_player_report(uid)})
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'读取失败: {e}'}), 500
+
+
+@app.route('/api/admin/player/<uid>/override', methods=['POST'])
+def admin_player_override(uid):
+    """管理员手动干预：解封 / 指定等级。
+
+    body：`{'cleared': true, 'reason': '误判'}` 或 `{'level': 2, 'reason': '确认刷分'}`
+    ⚠️ 每次干预**追加**一条记录（不覆盖历史），`actor` 由服务端填当前管理员 uid。
+    """
+    actor, err = _admin_required()
+    if err:
+        return err
+    if not uid:
+        return jsonify({'success': False, 'error': '缺少用户 ID'}), 400
+
+    payload = request.get_json(silent=True)
+    if payload is None:
+        payload = request.form.to_dict() if request.form else None
+    if not isinstance(payload, dict):
+        return jsonify({'success': False, 'error': '请求体必须是 JSON 对象'}), 400
+
+    cleared = bool(payload.get('cleared'))
+    level = payload.get('level')
+    reason = str(payload.get('reason') or '').strip()[:500]
+
+    if not cleared:
+        if level is None:
+            return jsonify({'success': False, 'error': '必须给 cleared 或 level'}), 400
+        try:
+            level = int(level)
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'level 必须是整数'}), 400
+        if not (0 <= level <= suspicion.LEVEL_NO_ROOM):
+            return jsonify({'success': False,
+                            'error': f'level 必须在 0~{suspicion.LEVEL_NO_ROOM} 之间'}), 400
+
+    ok = db.set_anticheat_override(uid, level=level, cleared=cleared,
+                                   reason=reason, actor=str(actor))
+    if not ok:
+        return jsonify({'success': False, 'error': '写入失败'}), 500
+
+    # 返回干预后的最新状态，前端不必再拉一次
+    try:
+        after = _admin_player_report(uid)
+    except Exception:
+        after = None
+    return jsonify({'success': True, 'player': after})
+
+
+@app.route('/api/admin/player/<uid>/history', methods=['GET'])
+def admin_player_history(uid):
+    """某玩家的干预历史（审计用）。"""
+    _, err = _admin_required()
+    if err:
+        return err
+    try:
+        rows = db.get_anticheat_override_history(uid, 100)
+    except Exception:
+        rows = []
+    return jsonify({'success': True, 'history': [
+        {'level': h.get('level'), 'cleared': bool(h.get('cleared')),
+         'reason': h.get('reason'), 'actor': h.get('actor'),
+         'created_at': h.get('created_at')} for h in (rows or [])]})
+
+
+@app.route('/api/admin/me', methods=['GET'])
+def admin_me():
+    """当前登录者是不是管理员（前端据此显示/隐藏入口）。"""
+    uid = session.get('user_id')
+    allowed = _admin_allowed_uids()
+    is_admin = bool(uid) and str(uid) in {str(x) for x in allowed}
+    return jsonify({'success': True, 'is_admin': is_admin})
 
 
 

@@ -32,7 +32,7 @@ python -m pytest tests/ -q    # 基线见下
 - ⚠️ 本机临时目录 ACL 坏过，pytest 若在 setup 报 `PermissionError: Temp\pytest-of-Administrator`，
   先 `New-Item -ItemType Directory -Force .tmp\pytemp`，再
   `$env:TMP="$PWD\.tmp\pytemp"; $env:TEMP=$env:TMP; python -m pytest tests/ -q -p no:cacheprovider`。
-- **实测基线（2026-09-18）**：`~1360 passed`；跑完约 12 秒。
+- **实测基线（2026-09-19）**：`~1530 passed`；跑完约 30 秒。
 
 ### 无头浏览器工具（`tools/*.mjs`，比 pytest 更接近真实）
 改前端后跑对应那个，**别每次全跑**（单个工具几分钟）：
@@ -41,7 +41,10 @@ python -m pytest tests/ -q    # 基线见下
 壁纸 → `wallpaper_check.mjs` ｜ 徽章 → `achievements_check.mjs` ｜ 等级 → `level_check.mjs` ｜
 音效/BGM → `sfx_check.mjs` / `bgm_check.mjs` ｜ 连锁卡预览 → `chain_preview_check.mjs` ｜ 仁王之盾 → `renwang_board_check.mjs` ｜
 大厅 → `lobby_check.mjs`（**双浏览器** —— 大厅的价值就是"别人那边立刻能看到"，单浏览器测不出来）｜
+绝处逢生锁卡/击杀即胜 → `last_stand_win_check.mjs`（前端喂事件）＋ `last_stand_win_e2e.mjs`（**真 socket 打完一局**，需 `ENABLE_TEST_EVENTS=1`）｜
 更新公告 → `changelog_check.mjs`（入口 / 自动弹一次 / 文案逐字来自接口 / 浮层互斥）
+- ⚠️ **真 socket E2E 的 ack 帧是 `43<ackId><JSON>`，没有长度位**；handler 抛异常时**连 ack 都不回**，
+  症状都是"客户端超时"（像服务端卡死）→ 先看服务端日志的 traceback，别先怀疑网络。
 - **`dom_contract_check.mjs`**：不用浏览器、不用服务端、几秒钟 —— 查「代码引用了但页面里不存在的 id」，
   这类引用的表现是 `getElementById` 拿到 `null` 被 `if (el)` 兜掉、**不报错、只是点了没反应**。
 - ⚠️ 工具要的服务端必须带 `CORS_ORIGINS=http://127.0.0.1:<端口>`，否则 socket.io **静默连不上**（页面无报错）。
@@ -166,6 +169,8 @@ phase:                        preparation → battle → end
 ## 10. 踩过的坑（值得记的结论，细节在各 docs）
 
 1. **同一个业务判断有两份实现就一定会漂移**：放置合法性、攻击次数、段位曲线都栽过。
+   同一形状再犯一次：`effect_flags` 的回合清理有常量 + `end_turn` 内联两份白名单，注释还指着常量 →
+   新标记两边都没登记，换回合时**无声消失**（绝处逢生的"击杀即胜"只活一个回合）。
    → 规则只留一份（`ranks.py`/`leveling.py`/`achievements.py` 就是为此存在），前端只渲染。
 2. **"会兜底"的取数函数不能当判据**：拿 `_match_started_at`（无打点时退回 `created_at`，**恒非 0**）当
    "开没开打"的门禁 = 没门禁 → 赛前投降能刷分。同形状还坑过壁纸批（兜底挑到 `preview.jpg` 冒充动态壁纸）。
@@ -202,6 +207,39 @@ phase:                        preparation → battle → end
     模块名正常 → **本地坏、线上好**。跨模块能力一律由 server.py 在 import 期**注入模块对象**、
     调用时按名字现取（注入**函数对象**会把测试里所有 monkeypatch 静默架空）。
     ⚠️ 这类 bug **pytest 永远测不到**（pytest 里 server 就叫 `server`、是同一份），守卫只能是**源码级**断言。
+20. **判据的输入必须来自同一套 id 空间**：反作弊第一版拿 `matches.winner_id`（**user_id**）去对齐
+    日志 `detail.attacker`（**socket sid**）——永远不相等 → 在已知 166 局作弊上**召回率 0%**，
+    而 26 条单测**全绿**。→ **单测全绿 ≠ 规则有效，必须在真实标注数据上量召回率**。
+21. **"未知"不能退化成"满足条件"**：回合数取不到默认 0，而判据写 `rounds <= 1` →
+    老格式日志全被误判。未知一律用 `-1`，判据写 `0 <= rounds <= 1`。
+22. **刷分会随清理而迁移**：清完 3 个团伙，对方当天**新建 3 个小号**继续刷。
+    → **清历史只是补救，实时闸门才是治本**（反作弊判据必须接进 `_finalize_match`）。
+23. **"看着在拦，其实把正常功能一起关掉了"最危险，而且不报错**：匹配规避一作用于
+    回环地址，所有本机/内网配对都被降权 → `room.ranked=False` → **排位分静默全部不结算**
+    （页面照常开局、接口照常返回）。→ 规避类规则先问"**误伤面**有多大"，
+    回环/私有地址必须归一成"不判定"。守卫见 `test_match_guard.py`。
+24. **不能把函数插进"装饰器 + 它的函数"之间**：加的三个辅助函数写在
+    `@socketio.on('find_match')` 与 `handle_find_match` 中间 → 装饰器注册成了错的处理器，
+    37 个用例全红。新增辅助函数一律放装饰器**之前**。
+25. **`register_friend_backend(**names)` 的键是"校验清单"，不是改名映射**：
+    查找用的是**调用方传的名字**去 getattr。写成别名（`admin_user_ids='真实函数名'`）
+    → 拿到 None → **管理员自己也进不去**，且不报错。键必须等于真实函数名。
+26. **环境变量只在 systemd 里**：命令行手跑脚本时 `DEBUG_ADMIN_USER_IDS` 是 None →
+    `is_admin` 恒 false → **线上正常、手测假红**。验收脚本要带 env 再跑。
+27. **封禁等级一律由嫌疑度推算，绝不单独存**（同 `user_xp` 只存 xp）：
+    存两份迟早"分数降了封禁还在"。唯一例外是管理员手动覆盖，那必须持久化+可审计。
+28. **反作弊统计不能只从 `matches` 推**：回滚工具会**删对局**，
+    删证据就等于洗白嫌疑度 → 分数必须单独落表（`match_suspicion`）。
+29. **单槽 = 隐藏的数据丢失**：`pending_sacrifice` 是一个 dict，被第二个请求覆写时
+    **不报错**，只在先那个玩家点船时以「当前没有待牺牲的战舰」暴露。
+    → 同一时刻可能有多方请求的状态，一律用**按 owner 分组的队列**
+    （详见 `docs/SHIP_PICK_PRIORITY_2026_09_20.md`）。
+30. **`magic_temp_data` 不是可靠的家**：它有 8 处被整体覆写 `= {}`。
+    跨"玩家交互等待期"的状态必须放**房间级字段**，否则等待期间打出别的卡就把它抹掉。
+31. **`selectingOnBoard` 这种裸布尔是"无主的状态"**：只说"有人在选"、不说"是谁"，
+    两个模式抢同一块棋盘时后者只能静默失败 → 要记**归属**（kind + label）才能给出提示。
+32. **静默 `return null` 是最贵的写法**：`picker ? picker.cleanup : null` 把"启动失败"
+    抹成"什么都没发生"，玩家侧就是「点了没反应」。**失败必须带原因**。
 
 ---
 
@@ -239,12 +277,14 @@ phase:                        preparation → battle → end
 `docs/BATCH_2026_09_17.md`（11 条对局缺陷）｜ `docs/DEFECT_FIXES_2026_09_13.md`（全量缺陷审计）｜
 `docs/PRIORITY_PROMPT_2026_09_13.md`（阶段转换优先权）｜ `docs/HAND_DESYNC_2026_09_14.md`（手牌消失）｜
 `docs/REINFORCEMENT_TIE_2026_09_14.md`（增援平局卡死）｜ `docs/SHIELD_AND_LASTSTAND_2026_09_14.md`（破盾格/绝处逢生）｜
+`docs/LAST_STAND_WIN_2026_09_19.md`（绝处逢生击杀即胜的跨回合生命周期 + 真 socket E2E 的踩坑）｜
 `docs/WALLPAPER_ENGINE.md`（动态壁纸）｜ `docs/STATS_AND_AI_RANKING_FIXES.md`（战绩弹窗/人机统计）｜
 `docs/MOBILE_ADAPTIVE_LAYOUT.md`（移动端布局）｜ `docs/UI_REVIEW_FIXES.md`（UI 审查）｜
 `docs/LOBBY_2026_09_18.md`（大厅系统：契约 + 4 个实测问题）｜
 `docs/FRIENDS_2026_09_18.md`（好友功能：产品判断 / 接线陷阱 / 契约）｜
 `docs/UI_REBUILD_PROPOSAL.md`（UI 完全重构建议：现状体检 + 7 期路线）｜
-`docs/UPDATES_2026_09_19.md`（更新公告：文案规矩 + 每批加一条）｜ `README.md`（用户向说明）
+`docs/UPDATES_2026_09_19.md`（更新公告：文案规矩 + 每批加一条）｜
+`docs/SHIP_PICK_PRIORITY_2026_09_20.md`（选船优先级仲裁：单槽覆写根因 + 队列 + 教训）｜ `README.md`（用户向说明）
 
 > ⚠️ **部署前确认环境变量**：代码新增 `os.environ.get('XXX')` 时，服务器 systemd 必须同步配置 ——
 > 漏配会导致"服务能起来但带着错误默认值运行"（曾因漏配 `CORS_ORIGINS` 让线上所有操作卡十几秒）。

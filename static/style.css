@@ -5978,3 +5978,128 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, rgba(255, 2
     margin: 2px 0;
     overflow-wrap: anywhere;      /* 窄屏：长句也横向溢不出去 */
 }
+
+
+/* =====================================================================
+   反作弊管理后台（2026-09-20）—— 第 33 节
+   ⚠️ 只动颜色/间距/排版，**不动盒模型尺寸**（CLAUDE.md 第 11 节第 6 条：
+      改完必须跑 `node tools/ui_layout_check.mjs` 验证棋盘与浮窗没被影响）。
+   ===================================================================== */
+.admin-modal-content {
+    width: min(920px, 92vw);
+    max-height: 86vh;
+    overflow-y: auto;
+}
+
+.admin-tabs {
+    display: flex;
+    gap: 8px;
+    margin: 10px 0 14px;
+    border-bottom: 1px solid var(--panel-border);
+}
+
+.admin-tab {
+    background: none;
+    border: none;
+    padding: 8px 14px;
+    cursor: pointer;
+    color: var(--text-dim, #9aa4b2);
+    font-size: 14px;
+    border-bottom: 2px solid transparent;
+}
+
+.admin-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+.admin-toolbar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.admin-toolbar input {
+    flex: 1;
+    min-width: 0;
+}
+
+.admin-list { max-height: 46vh; overflow-y: auto; }
+
+.admin-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.admin-table th, .admin-table td {
+    text-align: left;
+    padding: 7px 8px;
+    border-bottom: 1px solid var(--panel-border);
+}
+.admin-table th { color: var(--accent); font-weight: 600; }
+
+.admin-badge {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 9px;
+    font-size: 12px;
+    line-height: 1.6;
+    white-space: nowrap;
+}
+.admin-badge.lvl-green  { background: rgba(70, 190, 120, .18); color: #56d38b; }
+.admin-badge.lvl-yellow { background: rgba(230, 190, 60, .18); color: #e6be3c; }
+.admin-badge.lvl-orange { background: rgba(240, 140, 50, .18); color: #f08c32; }
+.admin-badge.lvl-red    { background: rgba(235, 80, 80, .18);  color: #eb5050; }
+.admin-badge.lvl-blue   { background: rgba(90, 150, 240, .18); color: #5a96f0; }
+
+.admin-head { margin-bottom: 12px; }
+.admin-name { font-size: 18px; font-weight: 600; }
+.admin-sub { font-size: 13px; color: var(--text-dim, #9aa4b2); margin-top: 4px; }
+
+.admin-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    font-size: 14px;
+    margin-bottom: 6px;
+}
+
+.admin-blocked { display: flex; gap: 6px; flex-wrap: wrap; }
+.admin-ok { color: #56d38b; font-size: 13px; }
+.admin-empty { color: var(--text-dim, #9aa4b2); font-size: 13px; }
+
+.admin-actions { margin-bottom: 6px; }
+.admin-actions input { width: 100%; margin-bottom: 8px; }
+.admin-btnrow { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.admin-flags { max-height: 26vh; overflow-y: auto; }
+.admin-flag {
+    padding: 7px 9px;
+    margin-bottom: 6px;
+    border-left: 3px solid var(--accent);
+    background: rgba(255, 255, 255, .03);
+    border-radius: 4px;
+}
+.admin-flag-rule { font-size: 13px; font-weight: 600; }
+.admin-flag-detail { font-size: 12px; color: var(--text-dim, #9aa4b2); margin-top: 3px; overflow-wrap: anywhere; }
+
+.admin-history { font-size: 12px; }
+.admin-hist-row {
+    display: grid;
+    grid-template-columns: 130px 90px 1fr 110px;
+    gap: 6px;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--panel-border);
+    overflow-wrap: anywhere;
+}
+
+
+/* 被更高优先级选船效果挡住的手牌（2026-09-20 优先级仲裁批）。
+   只是提前告知，真正的拒绝在服务端。视觉上"灰掉但仍可辨认"，
+   不隐藏 —— 玩家要能看见自己有什么牌。 */
+.magic-card.pick-blocked {
+    opacity: .45;
+    filter: grayscale(.7);
+    cursor: not-allowed;
+}
+
+.magic-card.pick-blocked:hover {
+    /* 保持灰态，避免"看起来能点"的误导 */
+    opacity: .45;
+}

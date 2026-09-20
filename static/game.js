@@ -6595,8 +6595,8 @@ function setupSocketListeners() {
         }
 
         if (typeof initGameBoards === 'function') initGameBoards();
-        // 卡片名按来源显示：恶魔契约 / 神之宣告 都走这条公开事件
-        const reasonText = data.reason === 'divine_decree' ? '神之宣告' : '恶魔契约';
+        // 卡片名按来源显示：恶魔契约 / 神之宣告 / 命运骰子 都走这条公开事件
+        const reasonText = ({divine_decree: '神之宣告', dice_sacrifice: '命运骰子'})[data.reason] || '恶魔契约';
         showMessage(mine ? `${reasonText}：你牺牲了一艘战舰` : `${reasonText}：对方牺牲了一艘战舰`,
                     { type: 'warning' });
     });
@@ -6622,6 +6622,21 @@ function setupSocketListeners() {
     socket.on('frozen_area', (data) => {
         gameState.frozenArea = (data && !data.cleared) ? data : null;
         if (typeof initGameBoards === 'function') initGameBoards();
+    });
+
+    // 命运骰子：摇骰子动画 + 结果播报（双方都能看到）
+    socket.on('dice_rolled', (data) => {
+        showDiceRollAnimation(data && data.roll, data && data.effect_text, data && data.caster);
+    });
+
+    // 命运骰子摇到3：要求我弃一张手牌
+    socket.on('dice_discard_request', (data) => {
+        showDiceDiscardPrompt(data && data.message);
+    });
+
+    // 双方都弃完：关掉选牌浮层（如果还开着）
+    socket.on('dice_discard_complete', () => {
+        hideDiceDiscardPrompt();
     });
 
     // 服务端统一推送的局内日志
@@ -9276,6 +9291,12 @@ function applyCardEffect(card, casterId) {
             updateFieldMagicUI(casterId || gameState.playerId, card);
             break;
 
+        // 判定魔法卡：命运骰子的动画与效果播报由 dice_rolled 事件统一驱动
+        // （双方都收到，能同步看到同一个骰子结果）。
+        case '命运骰子':
+            // 不在这里显示，避免与 dice_rolled 事件重复
+            break;
+
         // 已实现的魔法卡
         case '失灵！':
             showMessage('失灵！效果生效，对方魔法被无效化');
@@ -9305,6 +9326,140 @@ function showMagicAnimation(card) {
             setTimeout(() => document.body.removeChild(animation), 1000);
         }, 1000);
     }, 100);
+}
+
+// ============ 命运骰子：摇骰子动画 + 弃牌选择 ============
+// 摇骰子动画：全屏覆盖层，一个翻滚的骰子，最终定格在 roll 点。
+// 双方都会收到 dice_rolled 事件，所以双方都能看到同一个动画 + 结果。
+function showDiceRollAnimation(roll, effectText, casterId) {
+    // 同时只有一个骰子动画，新的来了先把旧的清掉
+    const old = document.getElementById('dice-roll-overlay');
+    if (old) old.parentNode.removeChild(old);
+
+    const overlay = document.createElement('div');
+    overlay.id = 'dice-roll-overlay';
+    overlay.className = 'dice-roll-overlay';
+
+    const isMine = !casterId || casterId === gameState.playerId;
+    const titleText = isMine ? '你摇出了' : '对方摇出了';
+
+    overlay.innerHTML =
+        '<div class="dice-roll-card">' +
+            '<div class="dice-roll-title">' + escapeHtml(titleText) + '</div>' +
+            '<div class="dice-3d">' +
+                '<div class="dice-3d-face" data-face="1">1</div>' +
+                '<div class="dice-3d-face" data-face="2">2</div>' +
+                '<div class="dice-3d-face" data-face="3">3</div>' +
+                '<div class="dice-3d-face" data-face="4">4</div>' +
+                '<div class="dice-3d-face" data-face="5">5</div>' +
+                '<div class="dice-3d-face" data-face="6">6</div>' +
+            '</div>' +
+            '<div class="dice-roll-result"></div>' +
+            '<div class="dice-roll-effect"></div>' +
+        '</div>';
+    document.body.appendChild(overlay);
+
+    const resultEl = overlay.querySelector('.dice-roll-result');
+    const effectEl = overlay.querySelector('.dice-roll-effect');
+    const diceEl = overlay.querySelector('.dice-3d');
+
+    // 摇骰阶段：快速翻滚 1.2 秒，期间随机闪现数字
+    const rollDuration = 1200;
+    const startTime = Date.now();
+    const rollTimer = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        if (elapsed >= rollDuration) {
+            clearInterval(rollTimer);
+            return;
+        }
+        const n = 1 + Math.floor(Math.random() * 6);
+        if (diceEl) diceEl.setAttribute('data-show', String(n));
+    }, 80);
+
+    // 定格到最终结果
+    setTimeout(() => {
+        clearInterval(rollTimer);
+        if (diceEl) diceEl.setAttribute('data-show', String(roll));
+        if (resultEl) {
+            resultEl.textContent = String(roll) + ' 点';
+            resultEl.classList.add('dice-roll-result-show');
+        }
+    }, rollDuration + 50);
+
+    // 显示效果文案 + 播报
+    setTimeout(() => {
+        if (effectEl && effectText) {
+            effectEl.textContent = '效果：' + effectText;
+            effectEl.classList.add('dice-roll-effect-show');
+        }
+        showMessage(`命运骰子摇出 ${roll} 点：${effectText || ''}`, { type: 'warning', duration: 4500 });
+    }, rollDuration + 700);
+
+    // 整体淡出
+    setTimeout(() => {
+        overlay.classList.add('dice-roll-fade-out');
+        setTimeout(() => {
+            if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        }, 500);
+    }, rollDuration + 2800);
+}
+
+// 弃牌选择浮层：列出当前手牌，点一张弃掉
+let _diceDiscardOverlay = null;
+function showDiceDiscardPrompt(message) {
+    hideDiceDiscardPrompt();
+    const hand = gameState.hand || [];
+    if (!hand.length) {
+        // 没牌可弃：直接通知服务端跳过
+        if (gameState.socket) {
+            gameState.socket.emit('dice_discard_choose', {
+                room_id: gameState.roomId,
+                player_id: gameState.playerId,
+                card_index: 0
+            });
+        }
+        return;
+    }
+
+    const overlay = document.createElement('div');
+    overlay.id = 'dice-discard-overlay';
+    overlay.className = 'dice-discard-overlay';
+    overlay.innerHTML =
+        '<div class="dice-discard-card">' +
+            '<div class="dice-discard-title">' + escapeHtml(message || '命运骰子：请选择一张手牌弃置') + '</div>' +
+            '<div class="dice-discard-hand"></div>' +
+        '</div>';
+    document.body.appendChild(overlay);
+
+    const handEl = overlay.querySelector('.dice-discard-hand');
+    hand.forEach((card, idx) => {
+        const el = document.createElement('div');
+        el.className = 'dice-discard-card-item';
+        el.innerHTML =
+            '<div class="card-name">' + escapeHtml(card.name) + '</div>' +
+            '<div class="card-speed">速阶 ' + escapeHtml(String(card.speed)) + '</div>' +
+            '<div class="card-type">' + escapeHtml(card.type || '') + '魔法</div>';
+        el.addEventListener('click', () => {
+            if (!gameState.socket) return;
+            gameState.socket.emit('dice_discard_choose', {
+                room_id: gameState.roomId,
+                player_id: gameState.playerId,
+                card_index: idx
+            });
+            // 乐观关闭：服务端确认后会推 dice_discard_complete / hand_updated
+            hideDiceDiscardPrompt();
+        });
+        handEl.appendChild(el);
+    });
+
+    _diceDiscardOverlay = overlay;
+}
+
+function hideDiceDiscardPrompt() {
+    if (_diceDiscardOverlay && _diceDiscardOverlay.parentNode) {
+        _diceDiscardOverlay.parentNode.removeChild(_diceDiscardOverlay);
+    }
+    _diceDiscardOverlay = null;
 }
 
 // 溅射动画：以最近攻击点为中心，对周围格子展示涟漪（支持形状与半径）

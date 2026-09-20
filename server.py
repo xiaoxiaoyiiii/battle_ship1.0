@@ -5794,6 +5794,11 @@ def handle_use_magic_card(data):
     if wangyang_reason:
         return {'status': 'error', 'message': wangyang_reason}
 
+    # 卧薪尝胆：发动条件「自己船数 < 对方船数」同样扣牌前判，避免无效发动消耗手牌。
+    woxin_reason = _woxin_requirement_reason(room, player_id, card)
+    if woxin_reason:
+        return {'status': 'error', 'message': woxin_reason}
+
     # 找到并移除玩家手牌中的卡牌
     for i, c in enumerate(player.magic_hand):
         if c.name == card.name and c.speed == card.speed:
@@ -5900,6 +5905,24 @@ def _wangyang_requirement_reason(room, player_id, card):
         return None
     if not room.magic_discard:
         return '弃牌区没有卡牌，亡羊补牢无法发动'
+    return None
+
+
+def _woxin_requirement_reason(room, player_id, card):
+    """卧薪尝胆的发动条件；不满足时返回原因，满足则返回 None。
+
+    卡面：「当自己的船数小于对方的场合可以发动」。
+    用 remaining_ships 比较（"船数"指当前剩余战舰数，与卡面字面一致）。
+    """
+    if card.name != '卧薪尝胆':
+        return None
+    opponent_id = _opponent_of(room, player_id)
+    if not opponent_id or opponent_id not in room.players:
+        return None
+    mine = room.players[player_id].remaining_ships
+    theirs = room.players[opponent_id].remaining_ships
+    if mine >= theirs:
+        return f'自己的船数({mine})不小于对方({theirs})，卧薪尝胆无法发动'
     return None
 
 
@@ -10900,6 +10923,37 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         else:
             # 人类：等待玩家点选
             result['message'] = '请选择要设置陷阱的战舰'
+
+    elif card.name == '卧薪尝胆':
+        # 卧薪尝胆（速阶1 普通）：为所有活船添加护盾（同仁王之盾的 shield=True）。
+        # 发动条件「自己船数 < 对方船数」已在 handle_use_magic_card 扣牌前拦过，
+        # 这里再判一次作纯防御（连锁结算时船数可能变化）。
+        opponent_id = _opponent_of(room, caster_id)
+        if opponent_id and opponent_id in room.players:
+            if caster.remaining_ships >= room.players[opponent_id].remaining_ships:
+                result.success = False
+                result.message = '自己的船数不小于对方，卧薪尝胆无法发动'
+                return result
+        alive = _alive_ships(caster)
+        if not alive:
+            result.success = False
+            result.message = '没有战舰可添加护盾'
+            return result
+        applied = 0
+        for ship in alive:
+            ship.shield = True
+            applied += 1
+        _emit_player_ships(room, caster_id)
+        emit('shields_added', {
+            'player': caster_id,
+            'count': applied,
+            'positions': [{'x': p.x, 'y': p.y} for s in alive for p in s.positions],
+        }, room=room.id)
+        add_game_log(room,
+                     f'第{room.round}回合 · {_log_name(room, caster_id)} 的【卧薪尝胆】'
+                     f'为{applied}艘战舰添加护盾',
+                     'magic', {'caster': caster_id, 'card': '卧薪尝胆', 'count': applied})
+        result['message'] = f'已为{applied}艘战舰添加护盾'
 
     elif card.name == '神机妙算':
         # 宣言x：若结束阶段自己船数减少恰好x，那些船不减少。

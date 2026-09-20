@@ -8418,6 +8418,9 @@ SHIP_PICK_PRIORITY = {
     'demon_contract': 100,
     # 卡牌自身结算的组成部分：不出结果这张牌等于没打完
     'divine_decree': 80,
+    # 命运骰子摇到 6：让对方牺牲两艘。同样是**卡牌自身结算**的一部分，
+    # 略低于神之宣告（它是一次性随机效果，施法者自己的结算流程更短）
+    'dice_sacrifice': 70,
     # 纯信息披露，延后无任何副作用
     'kraken_eye': 60,
     # 仁王之盾（至多 3 艘加盾）：自己的战术选择，最可延后
@@ -8430,6 +8433,7 @@ _SHIP_PICK_CARDS = {
     '克苏鲁之眼': 'kraken_eye',
     '神之宣告': 'divine_decree',
     '仁王之盾': 'shield_choice',
+    '命运骰子': 'dice_sacrifice',
 }
 
 
@@ -8574,6 +8578,7 @@ _SHIP_PICK_LABELS = {
     'divine_decree': '神之宣告',
     'kraken_eye': '克苏鲁之眼',
     'shield_choice': '仁王之盾',
+    'dice_sacrifice': '命运骰子',
 }
 
 

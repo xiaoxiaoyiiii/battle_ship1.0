@@ -41,58 +41,75 @@
         <button type="button" id="friend-invite-enter" class="fit-enter">进入房间</button>
     </div>
 <div class="game-container">
+    <!-- 顶部导航（2026-09-19 首页拥挤批：按语义分成三组）
+         分组只是**视觉分隔**（.nav-group + border-left），每个分组内部仍然是原先那些元素，
+         id / class / .hide-in-game 一个没改 —— 局内隐藏靠 switchScreen() 里的
+         `querySelectorAll('.hide-in-game')`，改结构时漏掉该类就是"局内还能看见登录/注册"。
+         ⚠️ 三个分组都必须保留 flex-wrap: wrap（CSS 侧），否则 336px 视口下横向溢出。 -->
     <div class="nav" id="game-nav">
         <div class="nav-brand">⚓ 战舰游戏</div>
         <div class="nav-menu">
-            {% if username %}
-                <span class="nav-user">已登录：{{ username }}</span>
-                <a href="/logout">退出</a>
+            <div class="nav-group nav-main">
                 <a href="/leaderboard" class="hide-in-game">排行榜</a>
-                <a href="/lobby" id="nav-lobby" class="hide-in-game">游戏大厅</a>
+            {% if username %}
+                <a href="/lobby" id="nav-lobby" class="hide-in-game">大厅</a>
                 <a href="#" id="show-user-stats" class="hide-in-game">个人战绩</a>
                 <a href="#" id="show-profile" class="hide-in-game">个人信息</a>
-                <a href="#" id="toggle-theme" class="hide-in-game">深色模式</a>
             {% else %}
-                <a href="/login" class="hide-in-game">登录</a>
-                <a href="/register" class="hide-in-game">注册</a>
-                <a href="/leaderboard" class="hide-in-game">排行榜</a>
-                <a href="/lobby" id="nav-lobby-guest" class="hide-in-game">游戏大厅</a>
-                <a href="#" id="toggle-theme" class="hide-in-game">深色模式</a>
+                <a href="/lobby" id="nav-lobby-guest" class="hide-in-game">大厅</a>
             {% endif %}
             <!-- 好友入口（好友批）。与「排行榜」同一条导航排。
                  ⚠️ 写在 if 块**外面**、全页只此一份：两半各写一个会在渲染结果里
                  #friends-btn / #friends-badge 各出现两次（撞 id → getElementById 拿错那个）。
                  游客也能点（照常弹面板），三个写接口未登录一律 401 → 前端提示「请先登录」。 -->
-            <a href="#" id="friends-btn" class="hide-in-game">好友<span
-                    id="friends-badge" class="friends-badge hidden">0</span></a>
-            <button id="help-btn" class="btn secondary">帮助</button>
-            <button id="settings-btn" class="btn secondary">设置</button>
-            <button id="music-btn" class="btn secondary">🎵</button>
-            <button id="wallpaper-btn" class="btn secondary" title="动态壁纸（Wallpaper Engine）">🎬</button>
+                <a href="#" id="friends-btn" class="hide-in-game">好友<span
+                        id="friends-badge" class="friends-badge hidden">0</span></a>
+                <a href="#" id="toggle-theme" class="hide-in-game">深色模式</a>
+            </div>
+            <div class="nav-group nav-account">
+            {% if username %}
+                <span class="nav-user">已登录：{{ username }}</span>
+                <a href="/logout">退出</a>
+            {% else %}
+                <a href="/login" class="hide-in-game">登录</a>
+                <a href="/register" class="hide-in-game">注册</a>
+            {% endif %}
+            </div>
+            <div class="nav-group nav-tools">
+                <button id="help-btn" class="btn secondary">帮助</button>
+                <button id="settings-btn" class="btn secondary">设置</button>
+                <button id="music-btn" class="btn secondary">🎵</button>
+                <button id="wallpaper-btn" class="btn secondary" title="动态壁纸（Wallpaper Engine）">🎬</button>
+            </div>
         </div>
     </div>
 
     <!-- 开始界面 -->
     <div id="start-screen" class="screen active">
-        <h1>⚓ 战舰游戏</h1>
+        <!-- 首页主标题：与导航品牌字面重复，2026-09-19 起改成引导语（h1 仍是视觉锚点）。
+             没有任何测试/工具断言这行文案。 -->
+        <h1>选择你的战场</h1>
         <div class="input-group">
             <input type="text" id="player-name" placeholder="输入你的名字">
         </div>
-        <div class="button-group">
-            <button id="find-match">匹配游戏</button>
+        <!-- 模式区（2026-09-19 首页拥挤批）：主行动排在最前、并排成网格。
+             ⚠️ 每个按钮的 id 一个没改 —— 9 个无头工具按 id 点击这里。
+             #ai-difficulty 与 #ai-match 同一行，修掉"难度下拉把模式列表打断"。 -->
+        <div class="start-modes">
+            <button id="find-match" class="mode-btn primary">匹配游戏</button>
             <!-- 排位对战（段位批）。与休闲匹配是**同一个匹配队列**，只是入队时带 mode=ranked：
                  只能同 mode 配对，且排位必须登录（游客点它服务端会 emit error）。
                  点下去隐藏 #find-match、显示 #ranked-status + #cancel-ranked；
                  出错要能恢复按钮（否则按一次就卡在「正在寻找」）。 -->
-            <button id="ranked-match">排位对战</button>
-            <button id="ai-match" class="secondary">人机对战</button>
-            <select id="ai-difficulty" class="secondary" title="人机难度：简单=电脑不出魔法卡；普通/困难=会打出手上的魔法卡">
-                <option value="easy">电脑：简单</option>
-                <option value="normal" selected>电脑：普通</option>
-                <option value="hard">电脑：困难</option>
-            </select>
-            <button id="custom-room" class="secondary">自定义房间游戏</button>
-            <button id="lobby-btn" class="secondary">游戏大厅</button>
+            <button id="ranked-match" class="mode-btn">排位对战</button>
+            <div class="mode-ai">
+                <button id="ai-match" class="mode-btn secondary">人机对战</button>
+                <select id="ai-difficulty" class="secondary" title="人机难度：简单=电脑不出魔法卡；普通/困难=会打出手上的魔法卡">
+                    <option value="easy">电脑：简单</option>
+                    <option value="normal" selected>电脑：普通</option>
+                    <option value="hard">电脑：困难</option>
+                </select>
+            </div>
         </div>
         <div id="match-status" class="hidden">
             <p>正在寻找匹配...</p>
@@ -101,24 +118,32 @@
 
         <!-- 排位排队状态（段位批）。与上面的休闲匹配**互斥**：
              进入排位排队时会先把休闲那套收干净，反之亦然（两者是同一个队列，
-             服务端 `has_player_in_match_queue` 会拒掉第二个）。 -->
+             服务端 `has_player_in_player_queue` 会拒掉第二个）。 -->
         <div id="ranked-status" class="hidden">
             <p>正在寻找排位对手…</p>
             <button id="cancel-ranked">取消排位</button>
         </div>
 
-        <!-- 我的等级 / 经验条（2026-09-17 追加）。
-             数据来自 /api/profile 的 level_info（等级与"本级进度"都由服务端算），
-             登录后才有；未登录整块隐藏（游客没等级）。 -->
-        <div id="my-level-strip" class="my-level-strip hidden">
-            <span class="mls-lv">Lv.<b id="mls-level">1</b></span>
-            <div class="mls-bar"><div class="mls-fill" id="mls-fill"></div></div>
-            <span class="mls-text" id="mls-text">0 / 0</span>
+        <!-- 次级入口区：与模式区同宽、并排两列，视觉上明确低于主行动 -->
+        <div class="start-more">
+            <button id="custom-room" class="secondary">自定义房间游戏</button>
+            <button id="lobby-btn" class="secondary">游戏大厅</button>
         </div>
 
-        <!-- 在线人数显示 -->
-        <div id="online-count-container">
-            当前在线人数：<span id="online-count">0</span>
+        <!-- 状态行：等级条 + 在线人数并排一行（原先各占一行、孤立在底部） -->
+        <div class="start-status">
+            <!-- 我的等级 / 经验条（2026-09-17 追加）。
+                 数据来自 /api/profile 的 level_info（等级与"本级进度"都由服务端算），
+                 登录后才有；未登录整块隐藏（游客没等级）。 -->
+            <div id="my-level-strip" class="my-level-strip hidden">
+                <span class="mls-lv">Lv.<b id="mls-level">1</b></span>
+                <div class="mls-bar"><div class="mls-fill" id="mls-fill"></div></div>
+                <span class="mls-text" id="mls-text">0 / 0</span>
+            </div>
+            <!-- 在线人数显示 -->
+            <div id="online-count-container">
+                当前在线人数：<span id="online-count">0</span>
+            </div>
         </div>
     </div>
 

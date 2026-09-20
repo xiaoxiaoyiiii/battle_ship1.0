@@ -5922,3 +5922,191 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, rgba(255, 2
     .dm-list { max-height: 46vh; }
     .dm-row { max-width: 88%; }
 }
+
+/* ============================================================================
+   35. 首页与顶部导航：分组化 + 层级化（2026-09-19 首页拥挤批）
+
+   问题（截图实测，CSS 宽约 1030px 命中 .game-container 的 max-width:1000px）：
+     ① `.nav-menu` 一行 11~12 个等权目标、无分组，文本链接与描边按钮交替出现；
+     ② `#start-screen .button-group` 把 7 个语义不同的控件同宽竖排，
+        难度下拉单独占一行、把"模式列表"打断；主次不分。
+
+   四条自我约束（沿用第 33 节的体例，都是本项目踩过的坑）：
+     ① **不动对局屏任何盒模型尺寸**（CLAUDE.md 第 11 节第 6 条）：本节只作用于
+        `.nav` 与 `#start-screen` 内部，且**不写裸 `button` / `input` 选择器**，
+        以免溢出到对局界面（棋盘 >=280 / .cell === 36 / 触摸目标 40px 都由
+        tools/ui_layout_check.mjs 逐视口锁死）。
+     ② **不给含 position:fixed 后代的元素加 transform/filter/backdrop-filter**
+        （第 11 节第 7 条）：本节的作用对象是 .nav / #start-screen 的叶子节点。
+     ③ **颜色零写死**：一律走既有令牌（--primary / --primary-rgb / --primary-50 /
+        --panel-border / --glass / --muted），深色主题与 6 个主题预设自动跟着变。
+     ④ **336 / 390px 不许横向溢出**（tools/profile_card_check.mjs 在窄屏断言
+        `scrollWidth <= innerWidth + 1`）：三个 .nav-group 与两个网格全部 flex-wrap。
+   ============================================================================ */
+
+/* --- 35.1 导航分组：三组之间用竖线分隔 --- */
+/* 分组只承担"视觉分隔"，元素本身仍是原先的 `.nav a` / `.nav .btn.secondary`。
+   ⚠️ 用 `border-left` 而不是 `::before`：第 25 节给所有 `button` 加了
+   `overflow: hidden`（流光扫过用），伪元素会被整块裁掉。 */
+.nav-menu {
+    margin-left: auto;
+    gap: 12px;
+    row-gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+.nav-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.nav-group + .nav-group {
+    border-left: 1px solid var(--panel-border);
+    padding-left: 12px;
+}
+/* 导航项统一高度与圆角：文本链接（.nav a）与描边按钮（.nav .btn.secondary）
+   此前一个有 border 一个没有，基线不齐；这里只统一"高度/圆角/行高"，不改颜色。 */
+.nav a,
+.nav .btn.secondary {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+    border-radius: 999px;
+    line-height: 1;
+}
+/* 长用户名不许把导航顶宽（窄屏实测踩过） */
+.nav-user {
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* 工具组：四个按钮等高，图标按钮不给它撑成方形 */
+.nav-tools .btn.secondary {
+    padding: 0.4rem 0.85rem;
+    font-size: 0.92rem;
+}
+
+/* --- 35.2 首页：主标题与输入 --- */
+/* 标题与导航品牌字面重复（都写「⚓ 战舰游戏」），已改为引导语；
+   这里只收紧下间距，字号仍由第 5 节的 h1 规则给。 */
+#start-screen h1 { margin-bottom: 0.5rem; }
+/* ⚠️ 全局 `input, select { margin-right: 0.5rem }` 是给"同一行里跟在输入框后面的
+   按钮"留的间距；首页这一个输入框是**独占一行居中**的，那条右外边距会让它
+   整体左偏 4px（肉眼可见）。只在本屏作用域内撤掉。 */
+#start-screen .input-group input,
+#start-screen .input-group select { margin-right: 0; }
+#start-screen .input-group { margin-bottom: 1.2rem; }
+
+/* --- 35.3 首页：模式区（主行动，自适应网格） --- */
+/* 640px = 两列 320px 减去视觉间隙；窄屏时 auto-fit 自动落到单列，无需额外断点。 */
+.start-modes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    width: min(100%, 640px);
+    margin: 0 auto 14px;
+    align-items: stretch;
+}
+/* 模式按钮：统一盒模型，让"并排"真的看起来是并排 */
+.start-modes .mode-btn {
+    width: 100%;
+    padding: 0.9rem 1rem;
+    font-size: 1.02rem;
+    font-weight: 700;
+    border-radius: 10px;
+}
+/* 「匹配游戏」是首页唯一的主行动：放大一档，与排位/人机形成明确主次 */
+.start-modes .mode-btn.primary {
+    font-size: 1.12rem;
+    letter-spacing: 1px;
+}
+/* 人机 = 按钮 + 难度下拉**同一行**（原先下拉单独占一行，把模式列表打断） */
+.mode-ai {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+    min-width: 0;
+}
+.mode-ai .mode-btn { flex: 1 1 auto; min-width: 0; }
+.mode-ai select {
+    flex: 0 1 118px;
+    min-width: 0;
+    margin-right: 0;
+    border-radius: 10px;
+    font-size: 0.9rem;
+    background: transparent;
+    color: var(--primary);
+    border: 1px solid var(--primary);
+    box-shadow: none;
+}
+/* ⚠️ `.secondary` 只定义给了 `button.secondary / .btn.secondary / .btn-secondary`
+   （第 3 节），挂在 `<select>` 上**完全无效** —— 它此前吃的是通用 `input, select`
+   规则（白底方框），于是与旁边的描边按钮不同形态。这里给 select 补上同款描边。 */
+select.secondary {
+    background: transparent;
+    color: var(--primary);
+    border: 1px solid var(--primary);
+    box-shadow: none;
+}
+select.secondary:hover { background: var(--primary-50); }
+select.secondary option { background: var(--surface-strong); color: var(--text); }
+
+/* --- 35.4 首页：次级入口区（自定义房 / 大厅） --- */
+.start-more {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    width: min(100%, 640px);
+    margin: 0 auto 14px;
+}
+.start-more button {
+    width: 100%;
+    padding: 0.6rem 1rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    border-radius: 10px;
+}
+
+/* --- 35.5 首页：状态行（等级条 + 在线人数并排） --- */
+/* 原先两块各占一行、孤立在页面底部（等级条 margin:10px auto 0，
+   在线人数 margin-top:1.4rem）→ 底部留白两行。这里并成一行居中。 */
+.start-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 4px;
+}
+/* 两条原本的外边距在这里由 .start-status 的 gap 接管 */
+.start-status .my-level-strip { margin: 0; }
+.start-status #online-count-container { margin-top: 0; }
+
+/* --- 35.6 首页窄屏：模式区落单列、状态行允许换行 --- */
+/* ⚠️ `minmax(180px, 1fr)` 在 336px 视口下 auto-fit 本就会收敛到一列；
+   这里把最小列宽降到 0，避免"内容宽于容器"的横向溢出
+   （profile_card_check 在 336/390px 断言 scrollWidth <= innerWidth + 1）。 */
+@media (max-width: 430px) {
+    .start-modes { grid-template-columns: minmax(0, 1fr); }
+    .start-more { grid-template-columns: minmax(0, 1fr); }
+    .mode-ai select { flex: 0 1 104px; font-size: 0.84rem; }
+    .start-modes .mode-btn { padding: 0.8rem 0.8rem; font-size: 0.98rem; }
+    .start-modes .mode-btn.primary { font-size: 1.04rem; }
+}
+
+/* --- 35.7 窄屏导航：分组退化为流式（不许比改动前更高） --- */
+/* 实测（2026-09-19）：分组加进来后，320px 视口下导航从 160px 长到 240px
+   （三个分组各自独占一行）。小屏上"分组"本身没有价值 —— 宽度不够时
+   一行本来就放不下几项，多出来的分组边界只会白占三行。
+   所以 ≤560px 让 `.nav-group` 变成 `display: contents`：分组盒子不生成，
+   子项直接回到 `.nav-menu` 这一层参与换行，与改动前的排布完全一致；
+   分隔竖线随分组盒子一起消失（`border-left` 画在分组上）。 */
+@media (max-width: 560px) {
+    .nav-menu { gap: 6px; row-gap: 6px; }
+    .nav-group { display: contents; }
+    .nav-group + .nav-group { border-left: none; padding-left: 0; }
+    .nav a,
+    .nav .btn.secondary { min-height: 30px; }
+}

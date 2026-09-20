@@ -9,7 +9,7 @@
 
 ## 0. 速览
 
-Flask + Flask-SocketIO 的实时双人海战棋，46 条魔法卡 / 场地魔法 / 连锁系统；含账号、战绩排行、段位与排位、等级经验、名片外观、大厅、人机、自定义房、断线重连。
+Flask + Flask-SocketIO 的实时双人海战棋，48 条魔法卡 / 场地魔法 / 连锁系统；含账号、战绩排行、段位与排位、等级经验、名片外观、大厅、人机、自定义房、断线重连。
 
 - 线上 http://8.133.180.159:5000/ ｜ 仓库 `xiaoxiaoyiiii/battle_ship1.0` ｜ 生产跑 eventlet
 - 核心文件：`server.py`（事件 + 对局）｜ `api.py`（HTTP）｜ `db.py`（SQLite/WAL）｜
@@ -32,7 +32,7 @@ python -m pytest tests/ -q    # 基线见下
 - ⚠️ 本机临时目录 ACL 坏过，pytest 若在 setup 报 `PermissionError: Temp\pytest-of-Administrator`，
   先 `New-Item -ItemType Directory -Force .tmp\pytemp`，再
   `$env:TMP="$PWD\.tmp\pytemp"; $env:TEMP=$env:TMP; python -m pytest tests/ -q -p no:cacheprovider`。
-- **实测基线（2026-09-20）**：`1867 passed`；跑完约 30 秒。
+- **实测基线（2026-09-20）**：`1905 passed`；跑完约 40 秒。
 
 ### 无头浏览器工具（`tools/*.mjs`，比 pytest 更接近真实）
 改前端后跑对应那个，**别每次全跑**（单个工具几分钟）：
@@ -136,8 +136,8 @@ phase:                        preparation → battle → end
 
 ## 7. 魔法卡
 
-- **46 条 / 44 唯一卡名**（`失灵！` ×3 是**故意的**，`draw_card` 去重对它特例放行）；速阶 1=16 / 2=15 / 3=15；
-  类型：普通 41 + 场地 4（恶魔契约 / 禁忌果实 / 伊甸园 / 教皇旨意）+ 判定 1（命运骰子）。
+- **48 条 / 46 唯一卡名**（`失灵！` ×3 是**故意的**，`draw_card` 去重对它特例放行）；速阶 1=17 / 2=15 / 3=16；
+  类型：普通 43 + 场地 4（恶魔契约 / 禁忌果实 / 伊甸园 / 教皇旨意）+ 判定 1（命运骰子）。
 - 核心分发 `apply_magic_effect(room, caster_id, card, target_data)`（约 1240 行，42 处 `card.name ==`）。
 - ⚠️ **改卡要同步 4 处**：`static/magic_card.json`、`static/magic_cards.js`、`apply_magic_effect` 分支、测试。
   前两者须逐字符一致（一致性测试不校验 `description`，需人工留意）。

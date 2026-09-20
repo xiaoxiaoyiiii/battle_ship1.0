@@ -131,9 +131,9 @@ def test_wangyang_card_enters_deck():
 
 
 def test_deck_size_grew():
-    """新加一张普通卡，牌池规模从 44 → 46。"""
+    """新加一张普通卡，牌池规模从 44 → 47。"""
     deck = server.build_magic_deck() if hasattr(server, 'build_magic_deck') else server.magic_cards
-    assert len(deck) == 46, f'卡池应 46 条，实际 {len(deck)}'
+    assert len(deck) == 47, f'卡池应 47 条，实际 {len(deck)}'
 
 
 # ---------------------------------------------------------------------------

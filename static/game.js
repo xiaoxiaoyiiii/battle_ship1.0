@@ -6888,6 +6888,16 @@ function setupSocketListeners() {
         }
     });
 
+    // 卧薪尝胆：为所有活船加护盾（双方都可见，所以 room 广播）
+    socket.on('shields_added', (data) => {
+        const isMine = data && data.player === gameState.playerId;
+        const cnt = (data && data.count) || 0;
+        const msg = isMine
+            ? `已为${cnt}艘战舰添加护盾`
+            : `对方为${cnt}艘战舰添加了护盾`;
+        showMessage(msg, { type: isMine ? 'success' : 'warning' });
+    });
+
     // 服务器返回的被揭示的位置（仅对触发方发送）
     socket.on('revealed_positions', (data) => {
         if (!data || !Array.isArray(data.positions)) return;

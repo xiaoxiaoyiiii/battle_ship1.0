@@ -223,9 +223,11 @@ class PlayerShip:
     positions: list[Position]
     hits: list[Position]
     shield: bool = False  # 是否有护盾
+    trap: bool = False  # 守株待兔：是否带陷阱标记（本大回合内被击沉时让对方牺牲两艘）
 
     def __init__(self, positions: list[Position], hits: list[Position],**kwargs):
         self.invincible = False
+        self.trap = False
         # 确保positions是Position对象列表
         self.positions = []
         for pos in positions:
@@ -1769,6 +1771,7 @@ def test_clear_all_effects(data):
         for ship in player.ships:
             ship.invincible = False
             ship.shield = False
+            ship.trap = False
         # 清空沉船记录
         if hasattr(player, 'sunken_ships'):
             player.sunken_ships = []
@@ -4337,10 +4340,57 @@ def _on_ship_destroyed(room, owner_id: str, ship, hits_added=None, source='magic
             'reason': '有战舰被击沉，无暇圣心效果中断'
         }, room=room.id)
 
+    # 守株待兔：被击沉的船带陷阱标记 → 让对方牺牲 min(2, 对方活船数) 艘。
+    # 卡面"如果这艘船死亡"按字面解释为任意死亡方式都触发；为防 caster
+    # 自己主动牺牲陷阱船造成递归（牺牲→触发trap→对方牺牲→可能再触发），
+    # 触发后**立刻清掉 trap 标记**，同一艘船只能触发一次。
+    if getattr(ship, 'trap', False):
+        ship.trap = False
+        _trigger_ship_trap(room, owner_id, ship)
+
     # 把己方棋盘重新推给本人：不然前端手里那份还是摆船时自己拼的，
     # 既不知道哪艘已经沉了（没有 alive 标记），也不知道船被移除，
     # 「选一艘自己的船」类的卡就会把沉船也画成可点。
     _emit_player_ships(room, owner_id)
+
+
+def _trigger_ship_trap(room, owner_id, sunk_ship):
+    """守株待兔陷阱被踩中：让【对方】牺牲 min(2, 对方活船数) 艘战舰。
+
+    与命运骰子摇到6共用牺牲链路：reason='trap_sacrifice'，allow_duplicate=True
+    跳过同 reason 去重，让对方连点两艘；AI 路径由 _request_ship_pick 自动选。
+    对方没有活船则跳过。
+    """
+    opponent_id = _opponent_of(room, owner_id)
+    if not opponent_id or opponent_id not in room.players:
+        return
+    opponent = room.players[opponent_id]
+    alive = _alive_ships(opponent)
+    need = min(2, len(alive))
+    if need <= 0:
+        emit('trap_triggered', {
+            'owner': owner_id, 'sunk_positions': [{'x': p.x, 'y': p.y} for p in sunk_ship.positions],
+            'sacrificed': 0, 'message': '陷阱触发，但对方没有可牺牲的战舰',
+        }, room=room.id)
+        return
+
+    emit('trap_triggered', {
+        'owner': owner_id, 'sunk_positions': [{'x': p.x, 'y': p.y} for p in sunk_ship.positions],
+        'sacrificed': need, 'message': f'陷阱触发！对方需牺牲{need}艘战舰',
+    }, room=room.id)
+    add_game_log(room,
+                 f'第{room.round}回合 · {_log_name(room, owner_id)} 的【守株待兔】陷阱被踩中，'
+                 f'对方需牺牲{need}艘战舰',
+                 'magic', {'owner': owner_id, 'card': '守株待兔', 'sacrifice': need})
+
+    for _ in range(need):
+        picked = _request_ship_pick(room, opponent_id, 'trap_sacrifice',
+                                    '守株待兔：请点选一艘战舰牺牲',
+                                    allow_duplicate=True)
+        if picked is not None:
+            # AI 自动选好：立即执行
+            _do_demon_contract_sacrifice(room, opponent_id, picked, 'trap_sacrifice')
+
 
 
 def _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id, ship, target_x, target_y):
@@ -4906,6 +4956,19 @@ def end_turn(data):
                 if thawed:
                     # 解冻同样要让玩家看到（否则棋盘上一直挂着雪花）
                     _emit_player_ships(room, p_id)
+
+            # 守株待兔只在本大回合生效：进入新大回合时清掉所有船上的陷阱标记。
+            # （卡面"这张牌只会在当前大回合生效"；旧标记残留到下一回合会让玩家
+            #   以为陷阱还在，但触发条件已过。）
+            for p_id in room.players:
+                cleared = False
+                for s in room.players[p_id].ships:
+                    if getattr(s, 'trap', False):
+                        s.trap = False
+                        cleared = True
+                if cleared:
+                    _emit_player_ships(room, p_id)
+                    emit('trap_expired', {'player': p_id}, room=room_id)
 
             # 冻结区域记录与解冻同步清理：条件与上面 `s.frozen < room.round` 一致，
             # 否则棋盘上会一直挂着那片斜纹、玩家以为还在冻结
@@ -7807,6 +7870,21 @@ def handle_confirm_sacrifice(data):
             emit('revealed_positions', {'positions': positions}, to=room.players[other_id].sid)
         return {'status': 'success', 'message': '已暴露一艘战舰的位置'}
 
+    if reason == 'trap_setup':
+        # 守株待兔：把选中的船打上陷阱标记（不摧毁）
+        # 陷阱只在本大回合生效；跨回合清理由 end_turn 内"进入新大回合"分支兜底。
+        _consume_ship_pick(room, player_id, 'trap_setup')
+        ship.trap = True
+        add_game_log(room,
+                     f'第{room.round}回合 · {_log_name(room, player_id)} 的【守株待兔】'
+                     f'为一艘战舰设置陷阱',
+                     'magic', {'caster': player_id, 'card': '守株待兔'})
+        emit('trap_set', {
+            'player': player_id,
+            'positions': [{'x': p.x, 'y': p.y} for p in ship.positions],
+        }, room=room.id)
+        return {'status': 'success', 'message': '已为一艘战舰设置陷阱（本回合该船被击沉时对方需牺牲两艘）'}
+
     _do_demon_contract_sacrifice(room, player_id, ship, reason)
     return {'status': 'success', 'message': '已选择一艘战舰'}
 
@@ -8504,6 +8582,8 @@ SHIP_PICK_PRIORITY = {
     'demon_contract': 100,
     # 卡牌自身结算的组成部分：不出结果这张牌等于没打完
     'divine_decree': 80,
+    # 守株待兔：打出去就要选船设陷阱，不出结果牌等于没打完
+    'trap_setup': 75,
     # 命运骰子摇到 6：让对方牺牲两艘。同样是**卡牌自身结算**的一部分，
     # 略低于神之宣告（它是一次性随机效果，施法者自己的结算流程更短）
     'dice_sacrifice': 70,
@@ -8520,6 +8600,7 @@ _SHIP_PICK_CARDS = {
     '神之宣告': 'divine_decree',
     '仁王之盾': 'shield_choice',
     '命运骰子': 'dice_sacrifice',
+    '守株待兔': 'trap_setup',
 }
 
 
@@ -8664,6 +8745,8 @@ _SHIP_PICK_LABELS = {
     'divine_decree': '神之宣告',
     'kraken_eye': '克苏鲁之眼',
     'shield_choice': '仁王之盾',
+    'trap_setup': '守株待兔',
+    'trap_sacrifice': '守株待兔',
     'dice_sacrifice': '命运骰子',
 }
 
@@ -8762,7 +8845,8 @@ def _do_demon_contract_sacrifice(room, player_id, ship, reason='demon_contract')
     player.remaining_ships = max(0, player.remaining_ships - 1)
 
     positions = [{'x': p.x, 'y': p.y} for p in ship.positions]
-    reason_text = {'divine_decree': '神之宣告', 'dice_sacrifice': '命运骰子'}.get(reason, '恶魔契约')
+    reason_text = {'divine_decree': '神之宣告', 'dice_sacrifice': '命运骰子',
+                   'trap_sacrifice': '守株待兔'}.get(reason, '恶魔契约')
     add_game_log(room,
                  f'第{room.round}回合 · {_log_name(room, player_id)} 因{reason_text}牺牲一艘战舰',
                  'magic',
@@ -9537,6 +9621,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                 ship.frozen = False
                 ship.invincible = False
                 ship.shield = False
+                ship.trap = False
 
         # 冻结区域记录也一并清掉（重开棋盘后区域标记不该残留）
         if isinstance(room.game_effects, dict):
@@ -10785,6 +10870,36 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             ship.invincible = True
 
         result['message'] = '牺牲一艘战舰，其他战舰进入无敌状态'
+
+    elif card.name == '守株待兔':
+        # 守株待兔（速阶1 普通）：选自己一艘船打上陷阱标记，
+        # 本大回合内这艘船被击沉时让对方牺牲 min(2, 对方活船数) 艘。
+        # 卡面只在本大回合生效 → 跨回合清理由 end_turn 内"进入新大回合"分支兜底。
+        if caster.remaining_ships == 0:
+            result['success'] = False
+            result['message'] = '没有战舰可设置陷阱'
+            return result
+
+        # 用 _request_ship_pick 让施法者点选一艘自己的活船；
+        # AI 路径会直接随机返回一艘，立刻打上陷阱；人类路径入队，由
+        # handle_confirm_sacrifice 的 'trap_setup' 分支确认后打上陷阱。
+        picked = _request_ship_pick(room, caster_id, 'trap_setup',
+                                    '守株待兔：请点选一艘自己的战舰设置陷阱')
+        if picked is not None:
+            # AI 自动选好：直接打标记
+            picked.trap = True
+            add_game_log(room,
+                         f'第{room.round}回合 · {_log_name(room, caster_id)} 的【守株待兔】'
+                         f'为一艘战舰设置陷阱',
+                         'magic', {'caster': caster_id, 'card': '守株待兔'})
+            emit('trap_set', {
+                'player': caster_id,
+                'positions': [{'x': p.x, 'y': p.y} for p in picked.positions],
+            }, room=room.id)
+            result['message'] = '已为一艘战舰设置陷阱（本回合该船被击沉时对方需牺牲两艘）'
+        else:
+            # 人类：等待玩家点选
+            result['message'] = '请选择要设置陷阱的战舰'
 
     elif card.name == '神机妙算':
         # 宣言x：若结束阶段自己船数减少恰好x，那些船不减少。

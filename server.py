@@ -2658,8 +2658,10 @@ def handle_find_match(data):
     #   ① **同 mode 才配**（ranked 只配 ranked）；② 同一账号不配（多标签页）；
     #   ③ 同 IP / 近来交手过的对手**软规避** —— 有更好的选择时躲开；
     #   ④ 同 IP 且该 IP 两个账号都有作弊标记 → **硬拦**。
-    #   ★ 兜底：只剩"软规避"的对象可配时**仍然配**（否则深夜两人永远开不了局），
-    #     但这一局**不结算排位分**（`assessed=False` → `room.ranked` 为 False）。
+    #   ★ 兜底：只剩"软规避"的对象可配时**仍然配**（否则深夜两人永远开不了局）。
+    #     兜底**只影响"这一对偏好上不是最优"，不影响给不给分** ——
+    #     该不该结算排位分由 `anticheat` 判据按**对局内容**决定。
+    #     （曾经按 `assessed` 直接关掉排位结算，导致正常对局静默不加分，见下面那段注释。）
     #
     # ⚠️ 扫描每次至少配掉两人 / 或直接 break，所以不会死循环。
     matched = []
@@ -2667,7 +2669,9 @@ def handle_find_match(data):
         while len(room_manager.match_queue) >= 2:
             entries = list(room_manager.match_queue)
             cands = [_mk_candidate(e) for e in entries]
-            i, j, assessed = match_guard.pick_pair(cands)
+            # `assessed` 只表示"这一对是不是规避规则下的最优选择"，供排序/观测用，
+            # **不参与结算决策**（下方 room.ranked 注释有详细说明）。
+            i, j, _assessed = match_guard.pick_pair(cands)
             if i is None:
                 # 没有可配的对（全是同账号重复记录 / 剩下的都在等另一种 mode 的人 /
                 # 只剩硬拦的组合）：队列原样保留，等新玩家入队，绝不能原地重试。
@@ -2680,9 +2684,23 @@ def handle_find_match(data):
             # 匹配成功建房时打排位标记（自定义房/人机房恒 False，见 create_room /
             # create_ai_room）。两个人 mode 相同（上面刚判过），取 p1 的即可。
             #
-            # ★ 兜底配出来的对（assessed=False）**不给排位标记** → 这一局不结算
-            #   段位分。能给玩家开一局娱乐，但不给刷分收益。
-            room.ranked = (p1.get('mode') == MATCH_MODE_RANKED) and bool(assessed)
+            # ★★ 2026-09-20 修正：**配对的"规避偏好"绝不影响排位结算**。
+            #
+            # 曾经写成 `... and bool(assessed)` —— 把"软规避没躲开"（`assessed=False`）
+            # 直接变成 `room.ranked = False`，即**这一局不给排位分**。
+            # 后果（玩家实测报的）：小社区里"最近打过的人"恰恰是最常见的匹配对象，
+            # 于是大量**完全正常**的排位对局静默不结算 ——
+            #   赢的不加分、输的不扣分，双方都以为"排位坏了"。
+            #
+            # 为什么这个设计错了：
+            #   · `assessed` 表达的是"这一对是不是规避规则下的最优选择"，属**配对偏好**；
+            #   · 该不该给分取决于**对局内容**（是不是一边倒的刷分局），
+            #     那由 `anticheat` 判据负责（`_anticheat_assess` → `blocked`）。
+            #   拿配对偏好去决定给不给分，是把两件事混成一件，误伤面极大。
+            #
+            # 软规避（同 IP / 近来对手）现在**只是排序偏好**：能躲开就躲开，
+            # 躲不开照常打、照常给分。真正的刷分由反作弊闸门拦（它看回合数/击沉/是否还手）。
+            room.ranked = (p1.get('mode') == MATCH_MODE_RANKED)
             room.players[p1['sid']] = Player(**{
                 'name': p1['name'],
                 'ships': [],

@@ -240,6 +240,12 @@ phase:                        preparation → battle → end
     两个模式抢同一块棋盘时后者只能静默失败 → 要记**归属**（kind + label）才能给出提示。
 32. **静默 `return null` 是最贵的写法**：`picker ? picker.cleanup : null` 把"启动失败"
     抹成"什么都没发生"，玩家侧就是「点了没反应」。**失败必须带原因**。
+33. **别把"偏好"当"判据"**：`match_guard` 的 `assessed`（这一对配得好不好）曾被拿去决定
+    `room.ranked`（这一局给不给排位分）→ 小社区里最常见的「和刚打过的人再打一局」
+    **全部静默不结算**（赢的不加分、输的不扣分，玩家以为排位坏了）。
+    → **"给不给分"只看对局内容**（`anticheat` 判据）；配对偏好只影响排序。
+    ⚠️ 这类 bug **纯函数测不出来**（`match_guard` 单测全绿），
+    必须走**真实 `find_match`** 才钉得住（见 `test_ranked_match.py` 的两条 rematch 守卫）。
 
 ---
 

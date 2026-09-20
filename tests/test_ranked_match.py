@@ -779,3 +779,86 @@ def test_admiral_demoted_when_condition_no_longer_met(env, monkeypatch):
     assert pa['admiral_promoted'] is False
     assert pa['after']['is_admiral'] is False
     assert pa['before']['is_admiral'] is True
+
+
+# ===========================================================================
+# ★★ 回归守卫：**配对偏好绝不能影响排位结算**（2026-09-20 玩家实测报的）
+#
+# 事故形状：`handle_find_match` 曾写
+#     room.ranked = (mode == ranked) and bool(assessed)
+# 把"软规避没躲开"（`assessed=False`）直接变成**这一局不给排位分**。
+# 而小社区里「和刚打过的人再打一局」恰恰是最常见的匹配 →
+# 大量正常排位对局静默不结算：赢的不加分、输的不扣分。
+#
+# ⚠️ 这个 bug **纯函数测不出来**（match_guard 单测全绿），
+#    必须走**真实 `find_match`** 才能钉住。本文件就是那条守卫。
+# ===========================================================================
+def test_rematch_pairing_still_settles_ranked(sockets):
+    """★ 和「最近刚打过的人」再次匹配上时，`room.ranked` 仍必须是 True。
+
+    这正是玩家报的场景：两人反复匹配（小号社区里很常见），
+    结果排位分不加也不扣。
+    """
+    ua, ub = _mk_user(), _mk_user()
+    try:
+        db.set_rank_points(ua, 100)
+        db.set_rank_points(ub, 100)
+        # 先让他们"刚打过一局" → 互为 recent_foes（触发软规避扣分）
+        db.record_match(ua, ub, None, count_stats=False)
+        assert ub in server._recent_foes(ua), '前置条件：应互为最近对手'
+
+        ca, cb = sockets(ua), sockets(ub)
+        before = set(server.room_manager.get_all_rooms())
+        ca.emit('find_match', {'player_name': '甲', 'mode': 'ranked'})
+        cb.emit('find_match', {'player_name': '乙', 'mode': 'ranked'})
+        new = [r for r in server.room_manager.get_all_rooms().values() if r.id not in before]
+        assert len(new) == 1, f'两人应当被配成一局，实际新建 {len(new)} 个房'
+
+        room = new[0]
+        assert room.ranked is True, (
+            '★ 和最近打过的人再匹配，排位**仍然要结算** —— '
+            '配对偏好（assessed）不是结算判据；给不给分由 anticheat 按对局内容决定'
+        )
+    finally:
+        for client in (locals().get('ca'), locals().get('cb')):
+            try:
+                client and client.disconnect()
+            except Exception:
+                pass
+
+
+def test_rematch_pairing_actually_awards_points(sockets):
+    """★ 更进一步：这种"重复匹配"的一局**真的把分加上去了**。
+
+    上面那条只验标记；这条走完整结算，验分数确实变了。
+    """
+    ua, ub = _mk_user(), _mk_user()
+    ca = cb = None
+    try:
+        db.set_rank_points(ua, 100)
+        db.set_rank_points(ub, 100)
+        db.record_match(ua, ub, None, count_stats=False)   # 互为最近对手
+
+        ca, cb = sockets(ua), sockets(ub)
+        before = set(server.room_manager.get_all_rooms())
+        ca.emit('find_match', {'player_name': '甲', 'mode': 'ranked'})
+        cb.emit('find_match', {'player_name': '乙', 'mode': 'ranked'})
+        new = [r for r in server.room_manager.get_all_rooms().values() if r.id not in before]
+        assert len(new) == 1
+        room = new[0]
+
+        # 让这一局"真开打"（否则赛前投降不给分是既有正确行为）
+        room.match_started_at = time.time()
+        room.state = 'attacking'
+        room.round = 6
+
+        server._finalize_match(room, _pid_of(room, ua), _pid_of(room, ub))
+
+        assert db.get_user_rank_row(ua)['points'] > 100, '赢的一方必须加分'
+        assert db.get_user_rank_row(ub)['points'] < 100, '输的一方必须扣分'
+    finally:
+        for client in (ca, cb):
+            try:
+                client and client.disconnect()
+            except Exception:
+                pass

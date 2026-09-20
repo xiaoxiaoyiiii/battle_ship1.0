@@ -124,17 +124,21 @@ def test_public_172_is_usable():
 # B. ★ 绝不卡死
 # ===========================================================================
 def test_same_public_ip_pair_still_matches_when_alone():
-    """公网同 IP 的两个人单独排队 → 仍然配上，但标记非干净（不结算排位）。"""
+    """公网同 IP 的两个人单独排队 → 仍然配上。
+
+    ⚠️ `clean=False` 只表示"偏好上不是最优"，**不代表不给分**
+    （见 `test_fallback_still_earns_ranked` 那条回归守卫）。
+    """
     a = C('s1', uid='u1', ip='203.0.113.9')
     b = C('s2', uid='u2', ip='203.0.113.9')
     q = [a, b]
     i, j, clean = mg.pick_pair(q)
     assert i is not None and j is not None, '同 IP 两人必须仍能配上（绝不卡死）'
-    assert clean is False, '公网同 IP 的兜底对必须标记为"非干净"'
+    assert clean is False, '同 IP 在偏好上算"非最优"'
 
 
 def test_recent_opponents_still_match_when_alone():
-    """★ 只有刚打过的两人排队 → 仍然配上，但标记非干净。"""
+    """★ 只有刚打过的两人排队 → 仍然配上（偏好上非最优）。"""
     a = C('s1', uid='u1', ip='1.1.1.1', recent_foes=('u2',))
     b = C('s2', uid='u2', ip='2.2.2.2', recent_foes=('u1',))
     q = [a, b]
@@ -143,10 +147,24 @@ def test_recent_opponents_still_match_when_alone():
     assert clean is False
 
 
-def test_fallback_pair_does_not_settle_ranked():
-    """★ 兜底配出来的对**不结算排位分** —— 能开局，但刷不到分。"""
-    assert mg.should_settle_ranked(True) is True
-    assert mg.should_settle_ranked(False) is False
+def test_fallback_still_earns_ranked():
+    """★★ 回归守卫：**兜底配出来的对，排位分照常结算**。
+
+    本项目栽过（2026-09-20，玩家实测报"排位分都不加/不扣了"）：
+    `server.py` 曾用 `and bool(assessed)` 把"兜底配对"直接变成 `room.ranked=False`，
+    于是小社区里最常见的「和刚打过的人再打一局」**全部静默不结算**。
+
+    根因：把**配对偏好**（`assessed`）当成了**结算判据**。
+    "给不给分"取决于**对局内容**，由 `anticheat` 判据负责 —— 那条路与本模块无关。
+
+    ⚠️ 这条断言必须走**真实配对代码**（`server.handle_find_match`），
+       只测 `match_guard` 纯函数是拦不住这个 bug 的
+       （bug 在"拿 assessed 去关排位"那一步上）。见
+       `tests/test_ranked_match.py::test_rematch_pairing_still_settles_ranked`。
+    """
+    # `should_settle_ranked` 这个函数已被删除：它编码的正是那个错误政策。
+    assert not hasattr(mg, 'should_settle_ranked'), \
+        '不该再有"按配对偏好决定是否结算排位"的接口 —— 那是把两件事混成一件'
 
 
 def test_empty_and_single_queue():

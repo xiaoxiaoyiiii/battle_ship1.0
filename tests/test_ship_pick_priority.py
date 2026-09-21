@@ -291,3 +291,218 @@ def test_dead_ship_still_rejected(room):
     r = server.handle_confirm_sacrifice({
         'room_id': room.id, 'player_id': P1, 'position': {'x': 0, 'y': 0}})
     assert r['status'] == 'error', '沉船不能用来抵账'
+
+
+# ===========================================================================
+# ★ G. 仁王之盾场景：handle_confirm_sacrifice 不该把护盾选择走成牺牲
+# ===========================================================================
+# 作者 2026-09-21 报的恶性 bug：
+#   「当任意需要选船的效果发动的时候 比如仁王之盾 克苏鲁之眼等等
+#     在自己棋盘上选船的时候 居然会判定为恶魔契约的牺牲！
+#     但是场上根本没有恶魔契约在生效！尤其是使用仁王之盾
+#     第一次的点击直接让自己的船牺牲了 第二次点击弹出了当前没有待牺牲的船」
+#
+# 根因（逐行核实过）────────────────────────────────────────────────
+# `handle_confirm_sacrifice` 只对 `kraken_eye` / `trap_setup` 两个 reason
+# 显式分支处理，其它一律 fall-through 到 `_do_demon_contract_sacrifice`：
+#
+#     if reason == 'kraken_eye':  ...  return
+#     if reason == 'trap_setup':  ...  return
+#     _do_demon_contract_sacrifice(room, player_id, ship, reason)  ← 这里
+#
+# 而 `_do_demon_contract_sacrifice` **会移除船 + 标沉 + 扣 remaining_ships**，
+# 与 reason 是不是"恶魔契约"完全无关 —— 它只是把 reason 当日志文案用。
+#
+# 仁王之盾登记的是 `shield_choice`（silent entry，走 confirm_magic_target 的
+# 多选）。但如果前端某个分支误把点船 emit 成了 `confirm_sacrifice`（例如上一轮
+# 恶魔契约的 onClick 没清干净、与 bindRenwangBoardClick 同时活着），就会走到
+# `_do_demon_contract_sacrifice`，把"要保护的船"当场沉掉。
+# 第一次点击：消费 shield_choice → 船牺牲；第二次：队列空 → "当前没有待牺牲的战舰"。
+#
+# 修复方向：handle_confirm_sacrifice 对**不该走牺牲路径**的 reason
+# （目前只有 `shield_choice`）一律拒绝并保留队列条目，让玩家走正确的提交入口
+# （confirm_magic_target 的 ship_indices）。同时同步修场地魔法被替换时
+# 残留的 demon_contract 队列条目（见 test_demon_contract_pending_cleared_when_field_replaced）。
+# ===========================================================================
+def test_renwang_shield_choice_not_sacrificed_via_confirm_sacrifice(room):
+    """★ 仁王之盾（shield_choice）即使误走 confirm_sacrifice 也不该牺牲船。
+
+    场上没有恶魔契约生效（game_effects['demon_contract'] 已 pop 掉）。
+    玩家打出仁王之盾 → shield_choice 入队（silent）。
+    现在前端某种原因 emit 了 confirm_sacrifice（用户实测报的那一下）：
+      · 服务端必须**拒绝**，给出明确指引「请用确认按钮提交仁王之盾的选择」；
+      · 队列里的 shield_choice 条目**必须保留**（否则玩家再点确认就报"无待选"）；
+      · 船**绝不能被牺牲**（remaining_ships 不变、ships 不变）。
+    """
+    # 模拟"场上根本没有恶魔契约在生效"
+    room.game_effects.pop('demon_contract', None)
+
+    # 玩家打出仁王之盾 → 登记一条 silent 的 shield_choice
+    server._register_simple_ship_pick(room, P1, 'shield_choice',
+                                      '仁王之盾：请选择要保护的战舰（至多 3 艘）')
+
+    before_ships = len(room.players[P1].ships)
+    before_remaining = room.players[P1].remaining_ships
+    top_before = server._top_ship_pick(room, P1)
+    assert top_before is not None and top_before['reason'] == 'shield_choice'
+
+    # ★ 前端误 emit 了 confirm_sacrifice（这正是用户报的那一下）
+    r = server.handle_confirm_sacrifice({
+        'room_id': room.id, 'player_id': P1, 'position': {'x': 0, 'y': 0}})
+
+    # 1) 必须拒绝
+    assert r['status'] == 'error', (
+        f'仁王之盾的护盾选择不该走 confirm_sacrifice 牺牲路径，实际: {r}')
+    assert '仁王之盾' in (r.get('message') or '') or '护盾' in (r.get('message') or ''), (
+        f'错误文案应指引玩家走确认按钮，实际: {r.get("message")!r}')
+
+    # 2) 队列条目必须仍在（玩家还能继续选船 + 点确认提交）
+    top_after = server._top_ship_pick(room, P1)
+    assert top_after is not None and top_after['reason'] == 'shield_choice', \
+        'shield_choice 条目不该被这次错误调用消费掉'
+
+    # 3) 船绝不能被牺牲
+    assert len(room.players[P1].ships) == before_ships, \
+        '船不该被牺牲（ships 不变）'
+    assert room.players[P1].remaining_ships == before_remaining, \
+        '船不该被牺牲（remaining_ships 不变）'
+
+
+def test_renwang_shield_choice_still_works_via_confirm_magic_target(room):
+    """★ 反向守卫：修复后，仁王之盾的正确入口（confirm_magic_target）仍要能用。
+
+    防止把 handle_confirm_sacrifice 改"严"以后顺手把正确的提交路径也堵死。
+    """
+    room.game_effects.pop('demon_contract', None)
+    server._register_simple_ship_pick(room, P1, 'shield_choice',
+                                      '仁王之盾：请选择要保护的战舰（至多 3 艘）')
+
+    # 玩家通过 confirm_magic_target 提交选中的 ship_indices（这是仁王之盾的正确入口）
+    ship_idx = 0  # P1 的第一艘船，位于 (0, 0)
+    r = server.confirm_magic_target({
+        'room_id': room.id, 'player_id': P1,
+        'temp_data_id': 'shield_choice',
+        'target_data': {'ship_indices': [ship_idx]},
+    })
+
+    assert r['status'] == 'success', f'仁王之盾正确入口应能用，实际: {r}'
+    assert room.players[P1].ships[ship_idx].shield is True, '船应该有护盾了'
+    # 队列条目应被正确消费
+    assert server._top_ship_pick(room, P1) is None, 'shield_choice 应已消费'
+
+
+# ===========================================================================
+# ★ H. 场地魔法被替换时，残留的 demon_contract 队列条目必须清掉
+# ===========================================================================
+def test_demon_contract_pending_cleared_when_field_replaced(room):
+    """★ 恶魔契约场地被替换后，残留的 demon_contract 队列条目必须清掉。
+
+    复现场景：
+      1. 恶魔契约作为场地魔法生效（room.field_magic = 恶魔契约），
+         期间 P2 击沉 P1 一艘船 → 触发 P2 牺牲一艘船的待选
+         （demon_contract 入队，priority=100）；
+      2. 之后某玩家打出新场地魔法（如「伊甸园」）顶替了恶魔契约：
+         `_clear_field_magic_effects` 会 pop 掉 `game_effects['demon_contract']`，
+         但**不清 pending_ship_picks** → demon_contract 条目残留；
+      3. P2 现在打出仁王之盾 → shield_choice 入队（priority=40）；
+      4. 任意 confirm_sacrifice 都会取 priority 最高的 demon_contract 那一项
+         → P2 的船被错误牺牲（这正是用户报的"场上根本没有恶魔契约在生效
+         但船还是被牺牲了"的那条根因）。
+
+    修复：`_clear_field_magic_effects` 在 pop `demon_contract` 时一并撤掉
+    `pending_ship_picks` 里所有 reason='demon_contract' 的条目。
+    """
+    from server import MagicCard
+    # 0) 先把恶魔契约作为场地魔法摆上（这样 _place_field_magic 替换时才会
+    #    触发 _clear_field_magic_effects —— 旧实现只在 old != None 时才调）
+    server._place_field_magic(room, P1, MagicCard('恶魔契约'))
+    assert 'demon_contract' in room.game_effects
+
+    # 1) 恶魔契约生效，P2 击沉 P1 一艘船 → P2 收到 demon_contract 待选
+    sunken = room.players[P1].ships[0]
+    server._mark_ship_sunken(room.players[P1], sunken)
+    room.players[P1].remaining_ships -= 1
+    server._request_demon_contract_sacrifice(room, P1)   # → 让 P2 牺牲一艘
+    top = server._top_ship_pick(room, P2)
+    assert top is not None and top['reason'] == 'demon_contract'
+
+    # 2) 顶替恶魔契约场地 → 残留条目应被一并清掉
+    server._place_field_magic(room, P1, MagicCard('伊甸园'))
+
+    # game_effects['demon_contract'] 已 pop
+    assert 'demon_contract' not in room.game_effects, \
+        '场地被顶替后 game_effects[\'demon_contract\'] 应该被清掉'
+
+    # ★ pending_ship_picks 里的 demon_contract 条目也必须清掉
+    leftover = [p for p in room.pending_ship_picks
+                if isinstance(p, dict) and p.get('reason') == 'demon_contract']
+    assert leftover == [], (
+        f'场地被顶替后 pending_ship_picks 不该残留 demon_contract 条目，实际: {leftover}')
+
+
+# ===========================================================================
+# ★ I. 端到端复现：用户报的"仁王之盾 + 第二次点击弹当前没有待牺牲的船"
+# ===========================================================================
+def test_e2e_renwang_after_demon_contract_resolved_then_replaced(room):
+    """★ 完整复现用户报的 bug，验证修复后整条链都不再误牺牲船。
+
+    用户场景：
+      1. 克苏鲁之眼先发动并完成（这一步会把 onClick 残留在前端棋盘上 ——
+         旧实现的 bug 根因：onClick 内部只 clearSacrificeSelection 不解绑自己）
+      2. 玩家打出仁王之盾 → shield_choice 入队（silent, priority 40）
+      3. 玩家点自己船格（前端残留的 onClick 又被触发 → emit confirm_sacrifice）
+      4. 旧实现：服务端走 _do_demon_contract_sacrifice → 船被错误牺牲
+      5. 玩家再点一次 → 队列空 → "当前没有待牺牲的战舰"
+
+    修复后：
+      · 服务端：reason=shield_choice 不在 _SACRIFICE_REASONS 白名单 → 拒绝并保留条目
+      · 前端：onClick 调 selectionCleanup 把自己 removeEventListener 掉，第二次点击不再 emit
+      · 队列条目保留 → 玩家还能继续走 confirm_magic_target 完成仁王之盾
+    """
+    # 1) 克苏鲁之眼发动 + 完成（模拟用户报的"先用了别的选船卡"那一步）
+    res = server.apply_magic_effect(room, P1, card('克苏鲁之眼'), {'x': 0, 'y': 0})
+    assert res.success is not False, f'克苏鲁之眼应能打出: {res.message}'
+    # P2 完成克苏鲁之眼的选船
+    r_eye = server.handle_confirm_sacrifice({
+        'room_id': room.id, 'player_id': P2, 'position': {'x': 0, 'y': 5}})
+    assert r_eye['status'] == 'success', f'克苏鲁之眼选船应成功: {r_eye}'
+    # 队列应为空
+    assert server._top_ship_pick(room, P1) is None
+    assert server._top_ship_pick(room, P2) is None
+
+    # 2) 玩家打出仁王之盾 → shield_choice 入队
+    server._register_simple_ship_pick(room, P1, 'shield_choice',
+                                      '仁王之盾：请选择要保护的战舰（至多 3 艘）')
+    before_ships = len(room.players[P1].ships)
+    before_remaining = room.players[P1].remaining_ships
+
+    # 3) ★ 玩家点船格 → 前端残留的 onClick 误 emit confirm_sacrifice
+    r1 = server.handle_confirm_sacrifice({
+        'room_id': room.id, 'player_id': P1, 'position': {'x': 0, 'y': 0}})
+
+    # 修复后：拒绝、不牺牲、保留条目
+    assert r1['status'] == 'error', (
+        f'仁王之盾的护盾选择不该走牺牲路径，实际: {r1}')
+    assert len(room.players[P1].ships) == before_ships, '船不该被牺牲'
+    assert room.players[P1].remaining_ships == before_remaining, 'remaining_ships 不变'
+    top = server._top_ship_pick(room, P1)
+    assert top is not None and top['reason'] == 'shield_choice', '条目应保留'
+
+    # 4) ★ 第二次点（用户报的"第二次弹当前没有待牺牲的船"那一下）
+    #    修复后队列里仍有 shield_choice → 继续拒绝（而不是"没有待选"）
+    r2 = server.handle_confirm_sacrifice({
+        'room_id': room.id, 'player_id': P1, 'position': {'x': 1, 'y': 1}})
+    assert r2['status'] == 'error', f'第二次点击也不该牺牲船: {r2}'
+    assert len(room.players[P1].ships) == before_ships, '船不该被牺牲'
+    top = server._top_ship_pick(room, P1)
+    assert top is not None and top['reason'] == 'shield_choice', '条目应仍在'
+
+    # 5) 玩家走正确入口完成仁王之盾
+    r_ok = server.confirm_magic_target({
+        'room_id': room.id, 'player_id': P1,
+        'temp_data_id': 'shield_choice',
+        'target_data': {'ship_indices': [0]},
+    })
+    assert r_ok['status'] == 'success', f'正确入口应能用: {r_ok}'
+    assert room.players[P1].ships[0].shield is True, '船应该有护盾'
+    assert server._top_ship_pick(room, P1) is None, 'shield_choice 应已消费'

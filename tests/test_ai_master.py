@@ -355,6 +355,79 @@ def test_ai_consume_own_ship_picks_clears_queue(master_room):
     assert not server._my_ship_picks(room, ai_id), '选船待办没被消费'
 
 
+def test_ai_consume_own_choice_handles_taoyuan(master_room):
+    """桃园结义的挑牌待办必须由 AI 自己回答（否则回合永久卡死）。
+
+    这类卡打出后会把 `magic_temp_data` 设成 `type='taoyuan_choice'` 并等
+    **施法者自己**回一个 `caster_choice`，然后**对方**还要回一个 `opponent_choice`。
+    AI 房间的对方也是电脑 —— 两个都必须由这里代答，只答一个同样会停在
+    「等待对方选择」。
+    """
+    ai_id = _fill_boards(master_room)
+    room = master_room
+    served = [server.MagicCard('轰炸'), server.MagicCard('疗愈'),
+              server.MagicCard('看破！')]
+    room.magic_temp_data = {'type': 'taoyuan_choice', 'caster': ai_id,
+                            'opponent': server._opponent_of(room, ai_id),
+                            'cards': list(served), 'player_deck_backup': []}
+
+    assert server._ai_consume_own_choice(room, ai_id) is True
+
+    assert not (room.magic_temp_data or {}).get('type'), '挑牌待办没被消费'
+    # 最能翻盘的「轰炸」必须留给自己（价值表最高）
+    assert any(c.name == '轰炸' for c in room.players[ai_id].magic_hand), \
+        'AI 没有把最值的那张挑给自己'
+
+
+def test_ai_consume_own_choice_handles_wangyang(master_room):
+    """亡羊补牢：从弃牌堆候选里挑价值最高的一张。"""
+    ai_id = _fill_boards(master_room)
+    room = master_room
+    room.magic_temp_data = {
+        'type': 'wangyang_choice', 'caster': ai_id,
+        'cards': [server.MagicCard('看破！'), server.MagicCard('硫磺火焰')],
+        'own_card': None,
+    }
+    assert server._ai_consume_own_choice(room, ai_id) is True
+    assert not (room.magic_temp_data or {}).get('type')
+    assert any(c.name == '硫磺火焰' for c in room.players[ai_id].magic_hand), \
+        'AI 没有挑价值最高的那张'
+
+
+def test_ai_consume_own_choice_ignores_other_players_pending(master_room):
+    """别的玩家的待办不许被 AI 抢答。"""
+    ai_id = _fill_boards(master_room)
+    room = master_room
+    other = server._opponent_of(room, ai_id)
+    room.magic_temp_data = {'type': 'taoyuan_choice', 'caster': other,
+                            'cards': [server.MagicCard('轰炸')]}
+    server._ai_consume_own_choice(room, ai_id)
+    assert room.magic_temp_data.get('type') == 'taoyuan_choice', \
+        'AI 把别人的挑牌待办吃掉了'
+
+
+def test_ai_consume_own_choice_never_raises(master_room):
+    """消费点也不许静默吞异常：各种残缺 `magic_temp_data` 都要安全。
+
+    这段代码与 `_master_card_readiness` 同型（都在回合循环里、都带兜底），
+    一样属于"吞掉就是永久卡死"的位置。
+    """
+    ai_id = _fill_boards(master_room)
+    room = master_room
+    for bad in ({'type': 'taoyuan_choice', 'caster': ai_id, 'cards': []},
+                {'type': 'wangyang_choice', 'caster': ai_id},
+                {'type': 'bury_choice', 'caster': ai_id, 'candidates': []},
+                {'type': 'lingqi_choice', 'caster': ai_id},
+                {'type': 'lingqi_choice', 'caster': ai_id, 'max_ships': 'x'},
+                {'type': None, 'caster': ai_id},
+                {}):
+        room.magic_temp_data = dict(bad)
+        try:
+            server._ai_consume_own_choice(room, ai_id)
+        except Exception as exc:                        # pragma: no cover
+            pytest.fail(f'magic_temp_data={bad!r} 时消费点抛异常：{exc!r}')
+
+
 # ---------------------------------------------------------------------------
 # ⑤ 区域卡边长：3×3 / 2×2 不许混
 # ---------------------------------------------------------------------------

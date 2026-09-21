@@ -6659,6 +6659,36 @@ function setupSocketListeners() {
         showSacrificePrompt(data);
     });
 
+    // ⚠️ 2026-09-21：服务端撤回某个等待点船的效果（通常是该效果整体作废，
+    //    例如恶魔契约场地被顶替）。前端必须撤回 sacrifice 弹窗，否则
+    //    `selectingOnBoard` 一直挂着，后续 createBoardAreaPicker 等点选器
+    //    会被"请先完成恶魔契约的点选"提示反复挡住。
+    socket.on('sacrifice_cancelled', (data) => {
+        const reason = (data && data.reason) || '';
+        // 当前弹窗的 reason 跟被撤回的 reason 不一致就不动它（可能是别的效果在等）
+        const cur = gameState.pendingSacrifice;
+        if (cur && reason && cur.reason !== reason) return;
+        // ★ 必须先调 selectionCleanup（它会 removeEventListener 把 onClick 真正解绑），
+        //    再调 clearSacrificeSelection。直接 clearSacrificeSelection 只把
+        //    selectionCleanup 置空而不调用它 → showSacrificePrompt 绑的那个 onClick
+        //    监听器会一直挂在 gamePlayerBoard 上，下次仁王之盾 / 别的选区弹窗
+        //    开起来时它就跟新 handler 同时活着，点船格会双触发：
+        //    一边走 bindRenwangBoardClick 切 picked，一边走 onClick emit confirm_sacrifice
+        //    → 服务端走 _do_demon_contract_sacrifice → 船被错误牺牲
+        //    （作者报的"第一次点击直接让自己的船牺牲了"）。
+        if (typeof gameState.selectionCleanup === 'function') {
+            try { gameState.selectionCleanup(); } catch (_) { }
+        }
+        clearSacrificeSelection();
+        // 给玩家一句解释，避免"弹窗突然消失"看起来像 bug
+        const label = SACRIFICE_LABELS[reason] || '一个等待点选的效果';
+        showMessage(`「${label}」已不再生效，点选已撤回`, { type: 'info' });
+        // 队列里可能还有别的低优先级待选 —— 让服务端继续 dispatch 下一项
+        // （这里不主动重新打开下一条 prompt：服务端 _clear_ship_picks_by_reason
+        //    没有自动 _dispatch_ship_pick，因为顶替场地的常见场景里那个待选
+        //    本来就是不该再存在的。如果有别的待选，下个相关动作会自己触发）
+    });
+
     // 某艘船因效果被牺牲 —— 公开事件，双方都能看到这艘船沉没
     socket.on('ship_sacrificed', (data) => {
         const positions = (data && data.positions) || [];
@@ -9837,9 +9867,21 @@ function showSacrificePrompt(data) {
 
         const x = parseInt(el.dataset.x, 10);
         const y = parseInt(el.dataset.y, 10);
-        // 先清掉选区再发请求：否则服务端的 ships_updated 重绘棋盘时，
-        // 玩家已经点过的格子还亮着，看起来像没点。
-        clearSacrificeSelection();
+        // ★ 2026-09-21：必须先调 selectionCleanup 把 onClick 自己 removeEventListener 掉，
+        //    再 emit。旧写法只调 clearSacrificeSelection —— 它只把 selectionCleanup 置空
+        //    而不解绑 listener → 这一次点完之后 onClick 还挂在 gamePlayerBoard 上。
+        //    之后玩家打出仁王之盾（paintRenwangCells 给船格加 pick-ship 类），
+        //    再点船格时 onClick 又会被触发，emit 出第二次 confirm_sacrifice：
+        //      · 第一次：服务端无白名单 → 走 _do_demon_contract_sacrifice → 船被牺牲
+        //      · 第二次：队列空 → "当前没有待牺牲的战舰"
+        //    这正是作者报的"第一次的点击直接让自己的船牺牲了 / 第二次弹当前没有待牺牲的船"。
+        //    现在先解绑，即便 server 返回 error 让玩家重试，下一次合法点击也会由
+        //    showSacrificePrompt 重新绑定（paintSacrificeCells 据服务端候选重画 pick-ship）。
+        if (typeof gameState.selectionCleanup === 'function') {
+            try { gameState.selectionCleanup(); } catch (_) { }
+        } else {
+            clearSacrificeSelection();
+        }
         gameState.socket.emit('confirm_sacrifice', {
             room_id: gameState.roomId,
             player_id: gameState.playerId,

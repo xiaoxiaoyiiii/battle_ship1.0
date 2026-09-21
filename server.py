@@ -1587,7 +1587,13 @@ def _clear_field_magic_effects(room, prev_field_name=None):
     had_papal = bool(room.game_effects.get('papal_edict'))
     # 未显式传入时（加百列拆场地的路径：先调这里、后清 field_magic）就地读取
     prev_field = prev_field_name if prev_field_name is not None else field_magic_name(room)
-    room.game_effects.pop('demon_contract', None)
+    # ⚠️ 2026-09-21：场地作废时，挂在 pending_ship_picks 里的对应 reason 待选
+    #    也要一并撤掉。旧实现只 pop game_effects，不撤队列条目 →
+    #    恶魔契约被顶替后 demon_contract 条目残留，priority=100 永远压在
+    #    shield_choice (40) 等低优先级卡前面，玩家点船格时会被错误地走成牺牲
+    #    （作者报的"场上根本没有恶魔契约在生效，但点船格还是被当成牺牲"）。
+    if room.game_effects.pop('demon_contract', None) is not None:
+        _clear_ship_picks_by_reason(room, 'demon_contract')
     room.game_effects.pop('papal_edict', None)
 
     # 攻击次数是按【当前场地规则】算出来的，场地一没，那个数就不再有效：
@@ -7900,6 +7906,13 @@ def handle_confirm_sacrifice(data):
     先那个玩家点船就会报「当前没有待牺牲的战舰」（作者实测报的 bug）。
     现在取该玩家**队列里优先级最高**的那一项 —— "这一下属于哪个效果"由优先级决定，
     不再由"谁最后写槽"决定。
+
+    ⚠️ 2026-09-21：对**不该走牺牲路径**的 reason（如 `shield_choice` 仁王之盾）
+    必须显式拒绝并保留队列条目，让玩家走正确的提交入口
+    （`confirm_magic_target` 的 `ship_indices`）。
+    旧实现对所有非 `kraken_eye` / 非 `trap_setup` 的 reason 一律 fall-through 到
+    `_do_demon_contract_sacrifice`，于是仁王之盾的护盾选择被错误地走成"船牺牲"，
+    正是作者报的"第一次点击直接让自己的船牺牲了 / 第二次弹当前没有待牺牲的船"。
     """
     room_id = data.get('room_id')
     player_id = data.get('player_id')
@@ -7947,6 +7960,18 @@ def handle_confirm_sacrifice(data):
             'positions': [{'x': p.x, 'y': p.y} for p in ship.positions],
         }, room=room.id)
         return {'status': 'success', 'message': '已为一艘战舰设置陷阱（本回合该船被击沉时对方需牺牲两艘）'}
+
+    # ⚠️ 2026-09-21：只有**确实要牺牲船**的 reason 才能走到 _do_demon_contract_sacrifice。
+    # 仁王之盾（shield_choice）是"至多 3 艘加盾"的多选，走 confirm_magic_target 的
+    # ship_indices 提交，**绝不能**走到这里 —— 旧实现 fall-through 把它当牺牲处理，
+    # 正是作者报的"第一次点击直接让自己的船牺牲了"的根因。
+    if reason not in _SACRIFICE_REASONS:
+        label = _SHIP_PICK_LABELS.get(str(reason), '该效果')
+        return {
+            'status': 'error',
+            'message': f'当前待处理的是「{label}」的选船，请用面板上的确认按钮提交，'
+                       f'不要直接点船格（这条路径只用于牺牲类效果）',
+        }
 
     _do_demon_contract_sacrifice(room, player_id, ship, reason)
     return {'status': 'success', 'message': '已选择一艘战舰'}
@@ -8732,6 +8757,20 @@ _SHIP_PICK_CARDS = {
 }
 
 
+# ⚠️ 2026-09-21：`handle_confirm_sacrifice` 走到这里 = 玩家点船格触发牺牲。
+# 只有 reason **确实要牺牲船**的才允许走到 `_do_demon_contract_sacrifice`。
+# 不在这个白名单里的 reason（如 `shield_choice` 仁王之盾）必须显式拒绝并保留队列条目，
+# 让玩家走正确的提交入口（仁王之盾走 `confirm_magic_target` 的 `ship_indices`）。
+# 旧实现没有白名单 → 仁王之盾的护盾选择被 fall-through 走成"船牺牲"，
+# 正是作者报的"第一次点击直接让自己的船牺牲了 / 第二次弹当前没有待牺牲的船"。
+_SACRIFICE_REASONS = frozenset({
+    'demon_contract',     # 恶魔契约：场地效果
+    'divine_decree',      # 神之宣告：自身结算
+    'dice_sacrifice',     # 命运骰子 6 点：对方牺牲两艘
+    'trap_sacrifice',     # 守株待兔：踩陷阱者额外牺牲
+})
+
+
 def _ship_pick_priority(reason) -> int:
     """取某类选船效果的优先级；未登记的一律 0（排最后，不报错）。"""
     try:
@@ -8847,6 +8886,46 @@ def _clear_ship_picks(room, player_id=None) -> None:
     else:
         room.pending_ship_picks = [
             p for p in picks if not (isinstance(p, dict) and p.get('player') == player_id)]
+
+
+def _clear_ship_picks_by_reason(room, reason) -> list:
+    """撤掉所有 reason 匹配的待选条目；返回被撤掉的条目列表（含 player 字段）。
+
+    用于"某个效果整体作废"的场景：例如恶魔契约场地被顶替后，挂在队列里的
+    demon_contract 待选必须一起撤掉 —— 否则玩家会接到一个永远等不到的牺牲请求，
+    而它的优先级又最高（100），会把后面所有低优先级选船卡（如仁王之盾 40）堵死，
+    表现就是作者报的"场上根本没有恶魔契约在生效，但点船格还是被当成牺牲"。
+
+    撤掉后会向受影响的玩家 emit `sacrifice_cancelled`，让前端撤回 sacrifice 弹窗：
+    否则前端那个 `selectingOnBoard = true` 会一直挂着，把后续 createBoardAreaPicker
+    等点选器全部挡在外面（"请先完成恶魔契约的点选"那条提示会反复弹）。
+    """
+    if not reason:
+        return []
+    picks = getattr(room, 'pending_ship_picks', None)
+    if not isinstance(picks, list):
+        return []
+    removed = [p for p in picks
+               if isinstance(p, dict) and p.get('reason') == reason]
+    if not removed:
+        return []
+    room.pending_ship_picks = [
+        p for p in picks if not (isinstance(p, dict) and p.get('reason') == reason)]
+    # 通知受影响的玩家：那个等待你点船的效果已经没了，撤回弹窗
+    # （同一个玩家可能有多项被撤，去重后只发一次）
+    affected_sids = set()
+    for p in removed:
+        pid = p.get('player')
+        if pid and pid in room.players:
+            sid = room.players[pid].sid
+            if sid:
+                affected_sids.add(sid)
+    for sid in affected_sids:
+        try:
+            emit('sacrifice_cancelled', {'reason': reason}, to=sid)
+        except Exception:
+            pass
+    return removed
 
 
 def _ship_pick_blocked_reason(room, player_id, card_name) -> str:

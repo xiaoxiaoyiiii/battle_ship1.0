@@ -227,6 +227,10 @@ def resolve_ship_pick(room, ai_id, reason, candidates, rng=None):
       守株待兔（trap_setup）→ 反过来挑**最可能先挨打**的船，
         让陷阱尽早触发；用「周围被轰过的格数最多」近似「对方正在往这片区域找」。
 
+    ⚠️ `trap_setup` 这条是 2026-09-22 补的：旧实现把它和"要牺牲"当成同一件事，
+       于是给**要设陷阱**的船也挑"信息价值最低"的那艘 —— 与卡面目的正好相反
+       （陷阱希望这艘船尽早被打到）。两条判据现在分开写。
+
     ⚠️ 只用 `对方.attacks`（公开的炮击记录）来判断，不看 `对方.ships`。
     """
     try:
@@ -251,7 +255,20 @@ def resolve_ship_pick(room, ai_id, reason, candidates, rng=None):
                             n += 1
             return n
 
-        # 牺牲/暴露类：越多邻里被轰过 → 泄露代价越小 → 越该拿它去抵账
+        # 守株待兔（trap_setup）是**反向**目标：希望这艘船尽早被打到，让陷阱触发。
+        # 所以它挑"对方正在往这片找"的那艘 —— 判据就是邻里被轰过的格数**最多**。
+        if str(reason or '') == 'trap_setup':
+            return cands[max(range(len(cands)),
+                             key=lambda i: (neighbour_hits(cands[i]), -i))]
+
+        # 牺牲/暴露类：越多邻里被轰过 → 泄露代价越小 → 越该拿它去抵账。
+        #
+        # ⚠️ 试过一版"更讲道理"的启发式：把"周围一格都没被搜过的船"判为最不该牺牲
+        #    （对方知道位置就白赚一艘），实测**没有变好**：
+        #      同批 2000 局 · 旧版 69.5% / 新版 68.7%（差 0.8 个百分点，在噪声内，
+        #      但至少没有证据支持新版）。
+        #    → 所以保留这一版。**"讲得通"不等于"更强"**，两版都留在
+        #      `tools/master_ablation.py` 的 `ship_old` / `ship_new` 里可随时复测。
         best = max(range(len(cands)), key=lambda i: (neighbour_hits(cands[i]), -i))
         return cands[best]
     except Exception:

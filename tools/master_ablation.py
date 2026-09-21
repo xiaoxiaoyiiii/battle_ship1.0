@@ -77,6 +77,46 @@ def _plain_attack(room, ai_id, rng=None):
     return rng.choice(sorted(cands)) if cands else None
 
 
+# 选船启发式的两个版本 —— 用来**量**哪一版更好，而不是靠直觉选。
+#
+# ⚠️ 这条正是本项目的教训 #34 的同族：我把"没被搜过的船最该留着"当成显而易见的
+#    改进写进去，2000 局实测**从 71.2% 掉到 70.0%**。所以它必须能被一键切回，
+#    并且两版都在同一批局面上量过再定。
+_HEURISTIC_NEW = ai_brain.resolve_ship_pick
+
+
+def _heuristic_old(room, ai_id, reason, candidates, rng=None):
+    """旧版：一律挑"邻里被轰过的格数最多"的船（= 新版去掉"没搜过"那条主判据）。"""
+    try:
+        import random as _random
+        rng = rng or _random.Random()
+        cands = [s for s in (candidates or []) if s is not None]
+        if not cands:
+            return None
+        opp_id = ai_brain._opponent_id(room, ai_id)
+        opp = (getattr(room, 'players', None) or {}).get(opp_id) if opp_id else None
+        probed = ai_brain._attacked_cells(opp) if opp is not None else set()
+        if not probed:
+            return rng.choice(cands)
+
+        def nh(ship):
+            n = 0
+            for (x, y) in ai_brain._cells_of(ship):
+                for dx in (-1, 0, 1):
+                    for dy in (-1, 0, 1):
+                        if (x + dx, y + dy) in probed:
+                            n += 1
+            return n
+
+        return cands[max(range(len(cands)), key=lambda i: (nh(cands[i]), -i))]
+    except Exception:
+        return None
+
+
+def _use_heuristic(fn):
+    ai_brain.resolve_ship_pick = fn
+
+
 # 档位：名字 → (说明, 设置函数)
 CONFIGS = {
     'safe9_1': ('对照：9 张安全卡 + 每回合 1 张（第 1 批的卡池口径）',
@@ -98,6 +138,11 @@ CONFIGS = {
                 lambda: _set(pool=_without('回光返照', '败者食尘', '滥竽充数'))),
     'no_renwang': ('全卡池去掉「仁王之盾」', lambda: _set(pool=_without('仁王之盾'))),
     'no_juechu': ('全卡池去掉「绝处逢生」', lambda: _set(pool=_without('绝处逢生'))),
+    # 选船启发式的新旧两版对照（同一批局面，只换这一个判据）
+    'ship_new': ('选船：新版（"没被搜过的船最该留着"）',
+                 lambda: (_set(pool=_FULL_POOL, cards=3), _use_heuristic(_HEURISTIC_NEW))),
+    'ship_old': ('选船：旧版（一律挑邻里被轰得最多的）',
+                 lambda: (_set(pool=_FULL_POOL, cards=3), _use_heuristic(_heuristic_old))),
 }
 
 

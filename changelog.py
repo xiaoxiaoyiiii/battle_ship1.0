@@ -30,7 +30,7 @@ from typing import Any
 # 时间取自各批次的真实提交时间（见 `git log`），不是随手编的。
 CHANGELOG: list[dict[str, Any]] = [
     {
-        'date': '2026-09-22 01:30',
+        'date': '2026-09-22 02:20',
         'items': [
             '改了：「大师」难度又学会了几种新打法，出牌更会挑时机',
         ],

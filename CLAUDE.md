@@ -32,7 +32,7 @@ python -m pytest tests/ -q    # 基线见下
 - ⚠️ 本机临时目录 ACL 坏过，pytest 若在 setup 报 `PermissionError: Temp\pytest-of-Administrator`，
   先 `New-Item -ItemType Directory -Force .tmp\pytemp`，再
   `$env:TMP="$PWD\.tmp\pytemp"; $env:TEMP=$env:TMP; python -m pytest tests/ -q -p no:cacheprovider`。
-- **实测基线（2026-09-20）**：`1905 passed`；跑完约 40 秒。
+- **实测基线（2026-09-21）**：`1909 passed`；跑完约 60 秒。
 
 ### 无头浏览器工具（`tools/*.mjs`，比 pytest 更接近真实）
 改前端后跑对应那个，**别每次全跑**（单个工具几分钟）：
@@ -242,6 +242,9 @@ phase:                        preparation → battle → end
     两个模式抢同一块棋盘时后者只能静默失败 → 要记**归属**（kind + label）才能给出提示。
 32. **静默 `return null` 是最贵的写法**：`picker ? picker.cleanup : null` 把"启动失败"
     抹成"什么都没发生"，玩家侧就是「点了没反应」。**失败必须带原因**。
+    同族（2026-09-21）：`clearSacrificeSelection` 把 `selectionCleanup` **置空却不调用**它 →
+    onClick 常驻棋盘，之后仁王之盾选区点船格**双触发**、服务端把「加盾」走成「牺牲」白掉一艘船。
+    **清理函数必须自己 `removeEventListener`，不能只把引用置空**。
 33. **别把"偏好"当"判据"**：`match_guard` 的 `assessed`（这一对配得好不好）曾被拿去决定
     `room.ranked`（这一局给不给排位分）→ 小社区里最常见的「和刚打过的人再打一局」
     **全部静默不结算**（赢的不加分、输的不扣分，玩家以为排位坏了）。

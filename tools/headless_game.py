@@ -307,18 +307,30 @@ class ExistingAIPolicy(Policy):
                  'hits': []} for ship in player.ships]
 
     def choose_attack(self, room, pid):
-        # 与 `_ai_turn_loop` 的第 2 个 for 循环逐字同口径。
-        attacked = {(a.x, a.y) for a in room.players[pid].attacks}
-        candidates = [c for c in CELLS if c not in attacked]
-        if not candidates:
-            return None
-        return random.choice(candidates)
+        """这一炮打哪格 —— **委托 server 的唯一实现**，不再自己抄一遍。
+
+        ⚠️ 这里原本自己写了一份 `random.choice(candidates)`。后果是：模拟器量的是
+           **复刻品**而不是真的 AI —— 改了 `_ai_turn_loop` 的选点逻辑，
+           胜率数字纹丝不动（实测前后 464/536 完全一致），度量工具形同虚设。
+           度量工具假绿比产品假红更危险（CLAUDE.md 教训 #15 的反面）。
+        """
+        return server._ai_choose_attack(room, pid)
 
     def choose_card(self, room, pid):
-        # easy 不出牌，其余难度每回合最多一张 —— 与 `_ai_maybe_play_magic` 一致。
+        """该打哪张手牌 —— 同样**委托 server 的唯一实现**。
+
+        `server._ai_choose_card` 一次给出「下标 + 目标」，这里把目标缓存下来，
+        由 `choose_card_targets` 交回（框架是分两步问的）。
+        """
         if getattr(room, 'ai_difficulty', 'normal') == 'easy':
             return None
-        return server._ai_choose_magic_card(room, pid)
+        idx, targets = server._ai_choose_card(room, pid)
+        self._pending_targets = targets or {}
+        return idx
+
+    def choose_card_targets(self, room, pid, card):
+        """`choose_card` 已经算好的目标，原样交回（不再自己算第二遍）。"""
+        return getattr(self, '_pending_targets', None) or {}
 
     def choose_chain_response(self, room, pid, window):
         """照抄 `_ai_chain_respond` 的判据；无牌 / 康不动 → 明确放弃。"""
@@ -340,7 +352,7 @@ POLICY_FACTORIES = {
     'easy': lambda: ExistingAIPolicy('easy'),
     'normal': lambda: ExistingAIPolicy('normal'),
     'hard': lambda: ExistingAIPolicy('hard'),
-    'master': None,   # 见 docs/MASTER_AI_2026_09_21.md §7 —— 待实现
+    'master': lambda: ExistingAIPolicy('master'),
 }
 
 

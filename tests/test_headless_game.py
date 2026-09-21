@@ -308,13 +308,18 @@ def test_unknown_policy_name_lists_alternatives():
     assert 'hard' in str(exc.value) and 'nope' in str(exc.value)
 
 
-def test_master_policy_is_declared_but_not_implemented():
-    """master 还没实现 —— 必须明确报错，不许静默回落到别的策略（会给出假胜率）。"""
+def test_master_policy_is_registered_not_silently_falling_back():
+    """大师必须**真的登记**，不许静默回落到别的策略（那会给出一个假的胜率）。
+
+    这条的前身是「master 还没实现 —— 必须明确报错」。大师落地后契约反转：
+    从「必须报错」变成「必须能造出来，且难度真的传下去了」。
+    两版守的是同一件事：**别让度量悄悄测了别的东西**。
+    """
     assert 'master' in hg.POLICY_FACTORIES
-    assert hg.POLICY_FACTORIES['master'] is None
-    with pytest.raises(ValueError) as exc:
-        hg.make_policy('master')
-    assert '尚未实现' in str(exc.value)
+    assert hg.POLICY_FACTORIES['master'] is not None, '会静默回落到别的策略'
+    p = hg.make_policy('master')
+    assert getattr(p, 'difficulty', None) == 'master'
+    assert 'master' in server.AI_DIFFICULTIES
 
 
 def test_random_policy_only_plays_legal_cards():
@@ -333,6 +338,40 @@ def test_cli_runs_and_reports(monkeypatch, capsys):
 
 
 def test_cli_rejects_unknown_policy(capsys):
+    """未知策略名要在开跑前就报错并退出码 2，而不是跑一半才炸。
+
+    ⚠️ 这里原本拿 `master` 当「未实现」的例子 —— 大师落地后它就合法了，
+       所以换成一个真正不存在的名字。测试要跟着现实走，不能反过来。
+    """
     with pytest.raises(SystemExit) as exc:
-        hg.main(['--games', '1', '--p1', 'master'])
+        hg.main(['--games', '1', '--p1', 'no_such_policy'])
     assert exc.value.code == 2
+
+
+def test_master_policy_is_available():
+    """大师已经是可选策略（`POLICY_FACTORIES` 里不再是 None）。
+
+    原先这条断言的是「声明了但未实现」，用来防止**静默回落**到别的策略
+    从而报出一个假的胜率。现在大师真的实现了，契约反过来：
+    它必须**能造出来**，而且难度真的写进了 `room.ai_difficulty`
+    （否则量出来的还是别的档位）。
+    """
+    p = hg.make_policy('master')
+    assert p is not None, 'master 未登记 —— 会静默回落到别的策略'
+    assert getattr(p, 'difficulty', None) == 'master'
+    assert 'master' in server.AI_DIFFICULTIES
+
+
+def test_master_vs_hard_runs_without_stalling():
+    """★ 大师对困难跑一小批，**一局都不许卡死**。
+
+    卡死是这个功能最贵的失败模式（AI 回合永远交不出去、真人干等）。
+    1000 局级的度量在 CI 里太慢，这里取一个能跑得快、又足够撞出
+    「打出去的卡留下待办」这类问题的局数。
+    """
+    results = hg.run_many(lambda: hg.make_policy('master'),
+                          lambda: hg.make_policy('hard'), games=60, seed=11)
+    stalled = [r for r in results if r.stalled]
+    assert not stalled, '大师有 %d 局卡死，例如 seed=%s 原因=%s' % (
+        len(stalled), stalled[0].seed if stalled else None,
+        stalled[0].stall_reason if stalled else None)

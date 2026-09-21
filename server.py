@@ -22,6 +22,7 @@ from flask import render_template, request, session, jsonify, has_request_contex
 from flask_socketio import SocketIO, join_room, leave_room, emit as semit
 
 import db  # local database helpers for users and matches
+import ai_brain  # 大师难度的决策层（纯函数，不许反向 import 本模块）
 import achievements  # 徽章判据（纯函数，唯一一份 evaluate()）
 import anticheat  # 反作弊判据（纯函数；只判定不处罚，动作在本文件里做）
 import dm  # 私聊的形状与规则（纯数据/纯函数：推送 payload 的字段清单只此一份）
@@ -5274,7 +5275,17 @@ def _maybe_run_ai_turn(room):
     socketio.start_background_task(_ai_turn_loop, room.id)
 
 
-AI_DIFFICULTIES = ('easy', 'normal', 'hard')
+AI_DIFFICULTIES = ('easy', 'normal', 'hard', 'master')
+
+
+def _is_master(room) -> bool:
+    """这一局是不是「大师」难度。
+
+    大师的决策走 `ai_brain`（纯函数模块）；easy/normal/hard 的代码路径
+    **一字不改**（作者要求零回归）。所有大师分支都必须写成
+    `if _is_master(room):` 一行，默认路径原样保留。
+    """
+    return getattr(room, 'ai_difficulty', 'normal') == 'master'
 
 # AI 可以安全打出的卡：无目标、无后续选择、也不需要「本回合刚命中/刚击沉」之类前置条件。
 # 其余卡一律不打，原因有二：
@@ -5310,14 +5321,45 @@ def _ai_choose_magic_card(room, ai_id: str):
     return candidates[0][1]
 
 
+def _ai_choose_attack(room, ai_id):
+    """AI 这一炮打哪格；没有可打的格返回 None。
+
+    ⚠️ **只有这一份实现**：`_ai_turn_loop` 与无头模拟器 (`tools/headless_game.py`)
+       都读它。模拟器此前自己抄了一份 `random.choice(candidates)`，于是它量的是
+       **复刻品**而不是真的 AI —— 改了 AI 胜率却纹丝不动，等于没测。
+    """
+    candidates = _attackable_cells(room, ai_id)
+    if not candidates:
+        return None
+    if _is_master(room):
+        # 大师：先打自己已探明的敌船位置（必中）。
+        # ⚠️ 这条只在**有情报**时有意义；情报要靠克苏鲁之眼/探测雷达产生，
+        #    所以"读情报"和"打情报卡"必须一起做，否则等于没改。
+        got = ai_brain.choose_attack(room, ai_id)
+        if got:
+            return got
+    return random.choice(candidates)
+
+
+def _ai_choose_card(room, ai_id):
+    """AI 该打哪张手牌、以及它的目标；不打则 `(None, {})`。
+
+    同样**只有这一份实现**：对局层（`_ai_maybe_play_magic`）与无头模拟器共用，
+    否则模拟器测的是复刻品。
+    """
+    if getattr(room, 'ai_difficulty', 'normal') == 'easy':
+        return None, {}
+    if not _is_master(room):
+        return _ai_choose_magic_card(room, ai_id), {}
+    return _ai_master_pick(room, ai_id)
+
+
 def _ai_maybe_play_magic(room, ai_id: str) -> bool:
     """AI 在自己回合打出一张安全的魔法卡；返回是否真的打出。
 
     每回合最多一张，避免把整手牌一次性倒光。简单难度（easy）不出牌。
     """
-    if getattr(room, 'ai_difficulty', 'normal') == 'easy':
-        return False
-    idx = _ai_choose_magic_card(room, ai_id)
+    idx, targets = _ai_choose_card(room, ai_id)
     if idx is None:
         return False
     card = room.players[ai_id].magic_hand[idx]
@@ -5326,9 +5368,70 @@ def _ai_maybe_play_magic(room, ai_id: str) -> bool:
         'player_id': ai_id,
         'card': {'name': card.name, 'speed': card.speed, 'type': card.type,
                  'description': getattr(card, 'description', '')},
-        'targets': {},
+        'targets': targets or {},
     })
     return bool(resp and resp.get('status') == 'success')
+
+
+# 大师能被允许打出的卡。
+#
+# ⚠️ **暂时只有原有 9 张安全卡** —— 这是量出来的结论，不是保守。
+#
+#    2026-09-21 实测（1000 局大师 vs 困难）：
+#      · 只开这 9 张 + 读情报开炮 + 聪明选船  → 胜率 46.4%，卡死 0，被拒动作 52
+#      · 再放开 ②③（立刻结算卡 + 需要目标的卡）→ 胜率 **41.3%（更差）**，
+#        卡死 17、被拒动作 **22393**
+#
+#    原因：每回合只有一次出牌机会，而 AI 挑中的常常是一张打不出去的卡
+#    （目标形状不对 / 前置不满足），**白白烧掉当回合的出牌机会**，
+#    比不出牌还糟；同时残留的待办让部分对局卡死。
+#
+#    → 结论：**先解决「挑出来的一定打得出去」，再谈开放卡池**。
+#      下一步要做的是：出牌前逐张试算（能不能给出目标 / 前置是否成立），
+#      把打不出去的从候选里剔掉，而不是等 `handle_use_magic_card` 拒了才退牌。
+#      详见 docs/MASTER_AI_2026_09_21.md 的实施进度小节。
+_MASTER_SIMPLE_CARDS = (
+    '余音绕梁', '火力全开', '无中生有', '极限增援', '无暇圣心',
+    '看破！', '五险一金', '八方来财', '百亿补贴',
+)
+
+# 需要目标的卡（区域/行列/连续格）：决策层已能给目标，但**当前默认关闭**。
+# 打开它会同时引入上面那 17/1000 的卡死，得先做完「试算再挑」才能安全启用。
+_MASTER_TARGET_CARDS_ENABLED = False
+
+
+def _is_master_target_card(name) -> bool:
+    return str(name or '') in (ai_brain.AREA_CARDS | ai_brain.LINE_CARDS
+                               | ai_brain.CELLS_CARDS)
+
+
+def _ai_master_pick(room, ai_id):
+    """大师难度选牌：返回 `(手牌下标, targets)`；不打则 `(None, {})`。
+
+    与 normal/hard 的关键差别：那两档是「从安全卡里挑速阶最低的一张」，
+    **完全不看盘面**；这里用 `ai_brain.choose_card`（基础价值 × 局势乘子）。
+    """
+    player = room.players.get(ai_id)
+    if not player or not player.magic_hand:
+        return None, {}
+    playable, targets_by_idx = [], {}
+    for i, c in enumerate(player.magic_hand):
+        name = getattr(c, 'name', None)
+        target_card = _MASTER_TARGET_CARDS_ENABLED and _is_master_target_card(name)
+        if name not in _MASTER_SIMPLE_CARDS and not target_card:
+            continue
+        if not can_play_magic_card(room, ai_id, c):
+            continue
+        if target_card:
+            t = ai_brain.resolve_target(room, ai_id, c)
+            if not t:
+                continue          # 给不出目标就别打 —— 打了只会被判失败并退牌
+            targets_by_idx[i] = t
+        playable.append(i)
+    idx = ai_brain.choose_card(room, ai_id, playable)
+    if idx is None:
+        return None, {}
+    return idx, targets_by_idx.get(idx, {})
 
 
 def _ai_turn_loop(room_id: str):
@@ -5361,11 +5464,10 @@ def _ai_turn_loop(room_id: str):
                 return
             if room.attacks_remaining <= 0:
                 break
-            # 还能打哪些格：统一读 _attackable_cells（别在这里再写一遍）
-            candidates = _attackable_cells(room, ai_id)
-            if not candidates:
+            shot = _ai_choose_attack(room, ai_id)
+            if shot is None:
                 break
-            x, y = random.choice(candidates)
+            x, y = shot
             handle_attack({'room_id': room_id, 'player_id': ai_id, 'x': x, 'y': y})
             time.sleep(0.3)
         room = room_manager.get_room(room_id)
@@ -9034,6 +9136,13 @@ def _request_ship_pick(room, chooser_id, reason, message, allow_duplicate=False)
         return None
 
     if getattr(room, 'is_ai_room', False) and chooser_id == _ai_player_id(room):
+        # 大师难度：交给决策层按目的挑（要被牺牲/被窥探时挑信息价值最低的那艘），
+        # 而不是随机送一条船。决策层拿不出结果就退回原来的随机，绝不返回 None
+        # —— 返回 None 会让这个待选没人消费，回合就卡死了。
+        if _is_master(room):
+            picked = ai_brain.resolve_ship_pick(room, chooser_id, reason, alive)
+            if picked is not None:
+                return picked
         return random.choice(alive)
 
     picks = getattr(room, 'pending_ship_picks', None)

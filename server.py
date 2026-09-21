@@ -5461,25 +5461,16 @@ _MASTER_ENABLED_CARDS = frozenset({
     # ⑨ 只在**准备阶段**可打：`_ai_master_turn` 已为它单独开了一次出牌机会
     '余音绕梁',      # 接下来两个攻击阶段造成伤害即强制击杀
     '明智埋葬',      # 埋葬对方手里最能翻盘的一张，然后自己摸一张
+    # ⑩ 第 4 条通道：多选船（`ship_indices`）——通道已接，但这张牌**实测被否**
+    #    （见下面的排除说明），所以不在这里。
 })
 
 # 刻意**留在池外**的卡与理由（放开前必须先补对应能力）：
 #
-#   回光返照 / 败者食尘 / 神机妙算
-#       → 放置类里最麻烦的三张：前两张会把 `room.state` 打回 `placing_ships`
-#         （要整盘重摆 + 重进战斗阶段），神机妙算还额外要一次「宣言一个数字」
-#         的交互与差值快照。放置入口已经有了，但这两条的"回合结构被打断"
-#         这一段还没有测试钉住，本批不开。
-#   滥竽充数 / 绝处逢生
-#       → 同上（滥竽充数放置的船在大回合末会被收回，绝处逢生要先把全部船牺牲掉
-#         再放一艘 —— 都是"打出去就把自己推到悬崖边"的卡，要先有专门的回归用例）。
-#   桃园结义 / 明智埋葬 / 灵气复苏 / 仁王之盾
-#       → 走 `temp_data_id` 挑牌/数值/多选船（`handle_confirm_magic_target`）。
-#         与放置不是同一条通道，AI 侧还没有对应的消费点。
-#   疗愈 / 神之宣告
-#       → 「选至多两艘复活」/「选两艘牺牲 + 选一个后续效果」都是**交互选择**。
-#         而且 神之宣告 对自己是净亏（死 2 艘换对方 1 艘或一次跳回合），
-#         卡面价值表给 80 分是"对手打出来很强"，不是"自己打出来很强"。
+#   神之宣告
+#       → 结算时是「选 2 艘自己的船牺牲 + 选一个后续效果」两道交互，
+#         而且对自己是**净亏**（死 2 艘换对方 1 艘或一次跳回合）——
+#         卡面价值表给 80 分说的是"对手打出来很强"，不是"自己打出来很强"。
 #   恶魔契约
 #       → 卡面是**双方绑定**：对方死一艘我也要死一艘。我方"少死船"的目标下
 #         打出它只会加大损失；而且它会给**对方**开选船交互。明确不打。
@@ -5498,6 +5489,21 @@ _MASTER_ENABLED_CARDS = frozenset({
 #       → 摇到 3 点会给**双方**开 `pending_dice_discard` 弃牌待办，而 AI 那边的
 #         待办没有消费点（`_action_wait_reason` 会冻结其余写操作）。前置是
 #         "AI 自己消费弃牌待办"，做完再开。
+#   绝处逢生
+#       → **实测被否掉**，而且是最反直觉的一条：闸门已经写成"只在对方剩 1 艘时
+#         才打"（那看起来是"打中即胜"的直接取胜手段），实测**仍然 −3.4 个百分点**。
+#         原因：它把胜利条件从"多打几炮、每炮 1/6"换成"**只有一炮**，
+#         而且必须打中对方那唯一一格"。对方剩 1 艘时，我本来有 5~6 次攻击机会，
+#         命中率是随次数累积的；牺牲掉全部战舰之后只剩 1 次攻击，
+#         等于**把已经很高的胜率换成 1/36 的抽奖** —— 而且自己只剩 1 艘，
+#         对方下一次反手就结束。所以"击杀即胜"这个诱人条件在数学上不划算。
+#         → 通道（last_stand 的放置 + 全牺牲）已经实现并留着，
+#           将来若有别的卡复用同一形态可以直接用；但**这张卡进池是负收益**。
+#   仁王之盾
+#       → 通道（`ship_indices` 多选）已接，但**实测 −0.6 个百分点**（在 95% CI 边缘）。
+#         它给 3 艘船各加"一次性挡伤"，而本 AI 每回合本来就在拼命出牌，
+#         多花一张牌换 3 次免伤不如换成一张进攻牌。先不放进池，
+#         等它能和其它防御牌（疗愈/卧薪尝胆）形成组合时再量。
 #   钢筋铁骨
 #       → 在 `HIDDEN_CARD_NAMES` 里，**谁都摸不到**，给它做决策毫无意义。
 
@@ -5658,6 +5664,19 @@ def _master_card_readiness(room, ai_id, card):
             # 埋葬对象 = 牌堆 + 对方手牌。**能看对方手牌是卡面明示的规则**，
             # 不属于作弊（§4.5）。选谁由 `_ai_consume_own_choice` 决定。
             return {} if ((room.magic_deck or []) or (opp.magic_hand or [])) else None
+
+        if name == '绝处逢生':
+            # 卡面：牺牲**全部**战舰，然后在原本有船的格子里放唯一 1 艘，
+            # 并给一个「接下来击沉对方即胜」的跨回合标志。
+            # ⚠️ 这是一张**自杀式**卡：牺牲完全部船之后，只要对方还有 2 艘以上，
+            #    自己的攻击次数就只有 1，等于把胜负交给一发运气。
+            #    唯一**确定**划算的场合是**对方只剩 1 艘**：打中即胜（`last_stand_win`）。
+            #    所以闸门写死这个条件 —— 这是判据，不是"价值表调参"。
+            return {} if opp_alive <= 1 else None
+
+        if name == '仁王之盾':
+            # 至少要有 1 艘活船才能加盾（结算时会跳过沉船）。
+            return {} if caster_alive > 0 else None
 
         if name == '盗亦有道':
             # 两个来源，对着 apply_magic_effect 的分支写：
@@ -5881,15 +5900,26 @@ def _ai_consume_own_placement(room, ai_id) -> bool:
 
         # 候选格 = 全盘枚举后逐格过 `_placement_error`（就是玩家点格子时服务端
         # 用的那个校验，所以"AI 挑的格"与"玩家能点的格"必然同一套口径）。
-        ignore_sunken = kind == 'shenji_redeploy'
-        legal = []
-        for (x, y) in ((cx, cy) for cx in range(6) for cy in range(6)):
-            if allow and (x, y) not in allow:
-                continue
-            if _placement_error(room, ai_id, x, y, allow_cells=allow,
-                                ignore_sunken=ignore_sunken):
-                continue
-            legal.append((x, y))
+        #
+        # ⚠️ `last_stand` 是个例外：绝处逢生已经把**全部**战舰都牺牲掉了
+        #    （每艘都 `ships.remove()` 并记进 `sunken_ships`），于是
+        #    `_placement_error` 的"未被己方船占用"会把**六个候选格全判成非法**
+        #    （沉船仍留在 `ships` 里）→ 一个能放的位置都没有 → 流程只能取消，
+        #    卡就白打了。服务端对这条路径的合法性是**按 `allowed` 单独校验**的
+        #    （见 `handle_confirm_reinforcement` 的 last_stand 分支），
+        #    所以这里也照它的口径来：只认白名单，不再过默认规则。
+        if kind == 'last_stand':
+            legal = sorted(allow)
+        else:
+            ignore_sunken = kind == 'shenji_redeploy'
+            legal = []
+            for (x, y) in ((cx, cy) for cx in range(6) for cy in range(6)):
+                if allow and (x, y) not in allow:
+                    continue
+                if _placement_error(room, ai_id, x, y, allow_cells=allow,
+                                    ignore_sunken=ignore_sunken):
+                    continue
+                legal.append((x, y))
 
         if not legal:
             # 没有合法落点：显式取消放置流程（`handle_cancel_placement` 会收尾并
@@ -6003,6 +6033,38 @@ def _ai_consume_own_choice(room, ai_id) -> bool:
         if not (resp and resp.get('status') == 'success'):
             room.magic_temp_data = {}
             add_game_log(room, f'大师 AI 的明智埋葬选择失败（{resp}），已清理待办', 'system')
+        return True
+
+    if kind == 'shield_choice':
+        # 仁王之盾：至多 3 艘**活船**加护盾。这是**多选**通道（`ship_indices`），
+        # 与 `pending_ship_picks`（点一艘）和放置流程都不是同一条路。
+        # ⚠️ 下标是 `caster.ships` 里的位置，且沉船会被服务端跳过 ——
+        #    所以这里必须自己先把沉船剔掉，否则"选 3 艘但只有 1 艘加上盾"。
+        caster = room.players.get(ai_id)
+        alive_idx = [i for i, sh in enumerate(getattr(caster, 'ships', None) or [])
+                     if _is_ship_alive(caster, sh)] if caster else []
+        if not alive_idx:
+            room.magic_temp_data = {}
+            _consume_ship_pick(room, ai_id, 'shield_choice')
+            return True
+        # 护盾本身对所有船等价（一次性挡伤），所以选哪几艘**不改变收益**；
+        # 仍然走一次 `resolve_ship_pick` 保持"选船只有一份实现"，
+        # 由它挑出第一艘，其余按活船顺序补齐到上限（至多 3 艘）。
+        first = ai_brain.resolve_ship_pick(room, ai_id, 'shield_choice',
+                                           [caster.ships[i] for i in alive_idx])
+        indices = [i for i in alive_idx if caster.ships[i] is first] or [alive_idx[0]]
+        for i in alive_idx:
+            if len(indices) >= 3:
+                break
+            if i not in indices:
+                indices.append(i)
+        resp = confirm_magic_target({
+            'room_id': room.id, 'player_id': ai_id, 'temp_data_id': kind,
+            'target_data': {'ship_indices': indices[:3]}})
+        if not (resp and resp.get('status') == 'success'):
+            room.magic_temp_data = {}
+            _consume_ship_pick(room, ai_id, 'shield_choice')
+            add_game_log(room, f'大师 AI 的仁王之盾选择失败（{resp}），已清理待办', 'system')
         return True
 
     if kind == 'lingqi_choice':

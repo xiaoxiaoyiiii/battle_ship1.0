@@ -96,6 +96,8 @@ CONFIGS = {
     'no_woxin': ('全卡池去掉「卧薪尝胆」', lambda: _set(pool=_without('卧薪尝胆'))),
     'no_repl': ('全卡池去掉重摆三张（回光返照/败者食尘/滥竽充数）',
                 lambda: _set(pool=_without('回光返照', '败者食尘', '滥竽充数'))),
+    'no_renwang': ('全卡池去掉「仁王之盾」', lambda: _set(pool=_without('仁王之盾'))),
+    'no_juechu': ('全卡池去掉「绝处逢生」', lambda: _set(pool=_without('绝处逢生'))),
 }
 
 

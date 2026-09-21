@@ -441,6 +441,71 @@ def test_ai_consume_own_choice_never_raises(master_room):
             pytest.fail(f'pending_shenji={bad!r} 时宣言消费抛异常：{exc!r}')
 
 
+def test_ai_consume_own_choice_handles_shield_multi_select(master_room):
+    """仁王之盾走的是**多选**通道（`ship_indices` 下标），与"点一艘"完全不同。
+
+    ⚠️ 下标是 `caster.ships` 里的位置，**沉船会被服务端跳过** ——
+       所以消费点必须自己先把沉船剔掉，否则"选了 3 艘、只有 1 艘加上盾"，
+       而玩家/AI 都看不出少加了（不报错）。
+    """
+    ai_id = _fill_boards(master_room)
+    room = master_room
+    caster = room.players[ai_id]
+    # 让第 0、2 艘沉掉
+    for i in (0, 2):
+        caster.ships[i].hits = list(caster.ships[i].positions)
+    room.magic_temp_data = {'type': 'shield_choice', 'caster': ai_id,
+                            'ships': caster.ships}
+    assert server._ai_consume_own_choice(room, ai_id) is True
+    assert not (room.magic_temp_data or {}).get('type'), '多选待办没被消费'
+    # 加盾的必须都是活船，且至多 3 艘
+    shielded = [sh for sh in caster.ships if getattr(sh, 'shield', False)]
+    assert 1 <= len(shielded) <= 3, f'加盾数量不对：{len(shielded)}'
+    for sh in shielded:
+        assert server._is_ship_alive(caster, sh), '给沉船加了盾（等于白选）'
+
+
+def test_ai_consume_own_choice_shield_with_no_alive_ship_is_cleared(master_room):
+    """一艘活船都没有时必须把待办清掉，不能留在房间里冻住后续操作。"""
+    ai_id = _fill_boards(master_room)
+    room = master_room
+    caster = room.players[ai_id]
+    for sh in caster.ships:
+        sh.hits = list(sh.positions)
+    room.magic_temp_data = {'type': 'shield_choice', 'caster': ai_id,
+                            'ships': caster.ships}
+    server._ai_consume_own_choice(room, ai_id)
+    assert not (room.magic_temp_data or {}).get('type')
+    assert not server._my_ship_picks(room, ai_id), '优先队列里的登记没被清掉'
+
+
+def test_ai_consume_own_placement_last_stand_uses_the_whitelist(master_room):
+    """绝处逢生：候选格**只认 `last_stand_cells` 白名单**，不过默认规则。
+
+    ⚠️ 这条是必须的：绝处逢生把全部战舰都牺牲进 `sunken_ships`，而沉船**仍留在
+       `caster.ships` 里** → 默认的"未被己方船占用"会把六个候选格**全判成非法**
+       → 一个都放不下 → 流程只能取消，卡白打（而且是"打了没反应"那种）。
+       服务端对这条路径本来就是按白名单单独校验的（`handle_confirm_reinforcement`），
+       所以消费点的口径也必须跟它一致。
+    """
+    ai_id = _fill_boards(master_room)
+    room = master_room
+    caster = room.players[ai_id]
+    cells = [(int(p.x), int(p.y)) for sh in caster.ships for p in sh.positions]
+    # 模拟绝处逢生：全部船进沉船堆（但仍在 ships 列表里 → 占位）
+    caster.sunken_ships = list(caster.ships)
+    caster.remaining_ships = 0
+    room.game_effects['last_stand_cells'] = [list(c) for c in cells]
+    server._start_placement(room, ai_id, 'last_stand', 1)
+
+    server._ai_consume_own_placement(room, ai_id)
+
+    assert not (room.magic_temp_data or {}).get('pending_placement'), \
+        '绝处逢生的放置待办没被消费 —— 这一局会永远停在 AI 手上'
+    assert room.players[ai_id].remaining_ships == 1, \
+        f'应该只放下 1 艘，实际 {room.players[ai_id].remaining_ships}'
+
+
 def test_ai_consume_own_choice_buries_opponent_card(master_room):
     """明智埋葬：**优先埋对方手里最值的那张**，而不是自己牌堆里的。
 

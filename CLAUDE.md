@@ -3,7 +3,7 @@
 > 面向 AI 代理的索引。**先读这里，别一次读完 `server.py`（8500+ 行）/ `static/game.js`（9000+ 行）/ `static/style.css`（4800+ 行）—— 一律先 grep 定位再分段读。**
 > ⚠️ 行号每次提交都会漂移，**本文件里任何行号都只当线索，以 grep 结果为准**。
 > ⚠️ **本文件每次对话都会整份注入**，新增内容请控制在几十字级别 —— 长记录写进 `docs/`。
-> 最后更新：2026-09-22（大师 AI 第 3 批：重摆自救 + 准备阶段窗口，70.2%）。
+> 最后更新：2026-09-22（大师 AI 第 4 批：四条交互通道齐备，71.2%；34 张卡逐张量过）。
 
 ---
 
@@ -32,7 +32,7 @@ python -m pytest tests/ -q    # 基线见下
 - ⚠️ 本机临时目录 ACL 坏过，pytest 若在 setup 报 `PermissionError: Temp\pytest-of-Administrator`，
   先 `New-Item -ItemType Directory -Force .tmp\pytemp`，再
   `$env:TMP="$PWD\.tmp\pytemp"; $env:TEMP=$env:TMP; python -m pytest tests/ -q -p no:cacheprovider`。
-- **实测基线（2026-09-21）**：`2027 passed`；跑完约 28 秒。
+- **实测基线（2026-09-22）**：`2030 passed`；跑完约 29 秒。
   含无头对局驱动 `tools/headless_game.py`（约 250 局/秒）、大师 AI 决策层 `ai_brain.py`
   与大师接线层 `tests/test_ai_master.py` 的用例。
 

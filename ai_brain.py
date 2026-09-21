@@ -721,6 +721,24 @@ def resolve_choice(room, ai_id, kind, options, rng=None):
             want = mine if mine >= theirs else max(1, theirs - 1)
             return min(nums, key=lambda n: (abs(n - want), n))
 
+        # 神机妙算：宣言「我这一大回合会减少几艘船」。预言命中 → 那些船不减少。
+        # 已知信息：我这几艘船、对方**还剩几次攻击**（攻击次数是公开的）。
+        # 直觉上应当宣言"最可能被打掉的艘数"；但没有对方船位信息时，
+        # 期望命中的艘数并不由我决定，所以这里取一个**保守但非零**的值：
+        #   · 对方还有多少攻击次数 → 最多可能被打掉这么多；
+        #   · 但不能超过我自己的船数。
+        # ⚠️ 这是一个**启发式**，不是最优解。它被 `tools/master_ablation.py`
+        #    的实测数字检验：改坏它胜率会掉，改好会涨。
+        if kind == 'shenji_predict':
+            nums = [int(o) for o in opts if str(o).lstrip('-').isdigit()]
+            if not nums:
+                return opts[0]
+            me = (getattr(room, 'players', None) or {}).get(ai_id)
+            mine = int(getattr(me, 'remaining_ships', 0) or 0)
+            incoming = int(getattr(room, 'attacks_remaining', 0) or 0)
+            want = min(mine, max(0, incoming))
+            return min(nums, key=lambda n: (abs(n - want), n))
+
         # 其余都是「挑一张牌」：取价值最高
         def val(o):
             return card_value(getattr(o, 'name', o))

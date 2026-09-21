@@ -53,6 +53,15 @@ def _set(pool=None, cards=None, attack=None):
         ai_brain.choose_attack = attack
 
 
+def _without(*names):
+    """全池**去掉**这几张 —— 用来单独量某张卡是加分还是扣分。
+
+    ⚠️ 这是定位"哪一张把胜率拉下来"最快的手段：一次一张，
+       而不是把整批一起打开再看总账（总账看不出是谁的锅）。
+    """
+    return _FULL_POOL - set(names)
+
+
 def _plain_attack(room, ai_id, rng=None):
     """对照组用的"朴素开炮"：只在**没打过**的格子里均匀挑（不看情报）。
 
@@ -80,6 +89,13 @@ CONFIGS = {
                lambda: _set(pool=_FULL_POOL, cards=3, attack=_ORIGINAL_CHOOSE_ATTACK)),
     'full_3_noinfo': ('全卡池 + 3 张，但开炮**不读情报**（单独量"读情报"）',
                       lambda: _set(pool=_FULL_POOL, cards=3, attack=_plain_attack)),
+    # 逐张排查：全池各去掉一张，用来定位"哪张卡把胜率拉下来"
+    'no_yuyin': ('全卡池去掉「余音绕梁」', lambda: _set(pool=_without('余音绕梁'))),
+    'no_mingzhi': ('全卡池去掉「明智埋葬」', lambda: _set(pool=_without('明智埋葬'))),
+    'no_shenji': ('全卡池去掉「神机妙算」', lambda: _set(pool=_without('神机妙算'))),
+    'no_woxin': ('全卡池去掉「卧薪尝胆」', lambda: _set(pool=_without('卧薪尝胆'))),
+    'no_repl': ('全卡池去掉重摆三张（回光返照/败者食尘/滥竽充数）',
+                lambda: _set(pool=_without('回光返照', '败者食尘', '滥竽充数'))),
 }
 
 

@@ -417,6 +417,8 @@ def test_ai_consume_own_choice_never_raises(master_room):
     for bad in ({'type': 'taoyuan_choice', 'caster': ai_id, 'cards': []},
                 {'type': 'wangyang_choice', 'caster': ai_id},
                 {'type': 'bury_choice', 'caster': ai_id, 'candidates': []},
+                {'type': 'bury_choice', 'caster': ai_id,
+                 'candidates': [{'source': 'deck', 'index': 0, 'name': '轰炸'}]},
                 {'type': 'lingqi_choice', 'caster': ai_id},
                 {'type': 'lingqi_choice', 'caster': ai_id, 'max_ships': 'x'},
                 {'type': None, 'caster': ai_id},
@@ -426,6 +428,96 @@ def test_ai_consume_own_choice_never_raises(master_room):
             server._ai_consume_own_choice(room, ai_id)
         except Exception as exc:                        # pragma: no cover
             pytest.fail(f'magic_temp_data={bad!r} 时消费点抛异常：{exc!r}')
+    # 神机妙算宣言同样不许在残缺状态下抛
+    for bad in ({'pending_shenji': {'caster': ai_id}},           # 没有 token
+                {'pending_shenji': {'caster': ai_id, 'token': None}},
+                {'pending_shenji': {}},                          # 无 caster
+                {'pending_shenji': {'caster': 'someone-else'}},
+                {}):
+        room.magic_temp_data = dict(bad)
+        try:
+            server._ai_consume_own_shenji(room, ai_id)
+        except Exception as exc:                        # pragma: no cover
+            pytest.fail(f'pending_shenji={bad!r} 时宣言消费抛异常：{exc!r}')
+
+
+def test_ai_consume_own_choice_buries_opponent_card(master_room):
+    """明智埋葬：**优先埋对方手里最值的那张**，而不是自己牌堆里的。
+
+    埋牌会同时给自己摸一张，所以"埋对方的"是纯赚；埋自己牌堆的好牌等于
+    把好牌扔掉再换一张。这条口径错了不会报错，只是白亏一张牌。
+    """
+    ai_id = _fill_boards(master_room)
+    room = master_room
+    room.players[ai_id].magic_hand = []
+    room.magic_temp_data = {
+        'type': 'bury_choice', 'caster': ai_id,
+        'candidates': [
+            {'source': 'deck', 'index': 0, 'name': '硫磺火焰'},        # 自己牌堆、价值高
+            {'source': 'opponent_hand', 'index': 0, 'name': '轰炸'},   # 对方手牌、价值最高
+        ],
+    }
+    assert server._ai_consume_own_choice(room, ai_id) is True
+    assert not (room.magic_temp_data or {}).get('type')
+    # 对方的「轰炸」必须被埋掉（从对局层看就是那张牌不再在对方手里）
+    assert not any(c.name == '轰炸'
+                   for c in room.players[server._opponent_of(room, ai_id)].magic_hand), \
+        '没有埋掉对方手里最能翻盘的那张'
+
+
+# ---------------------------------------------------------------------------
+# ⑦ 放置阶段自救：棋盘被卡牌整批换掉后必须能自己爬回来
+# ---------------------------------------------------------------------------
+
+def test_ai_place_board_fills_and_finishes(master_room):
+    """`_ai_place_board` 必须既摆上船、又触发收尾（回到 attacking）。
+
+    ⚠️ 只调 `_ai_place_ships` 是不够的：那会留下 `state=='placing_ships'`，
+       而 `enter_end_phase` / `end_turn` 全被拒 → 回合永远交不出去。
+       「回光返照」当年就是靠这条把 AI 硬死锁的（§1.1 缺陷 2）。
+    """
+    ai_id = _fill_boards(master_room)
+    room = master_room
+    room.players[ai_id].ships = []
+    room.players[ai_id].remaining_ships = 0
+    room.state = 'placing_ships'
+    room.huiguang_awaiting_placement = True
+    room.players[ai_id].max_ships = 6
+
+    assert server._ai_place_board(room, ai_id) is True
+    assert len(room.players[ai_id].ships) == 6, '没有摆满'
+    assert room.state != 'placing_ships', \
+        '摆了船却没触发收尾 —— 回合会永远停在 AI 手上'
+    # 回光返照的收尾：留在自己回合、准备阶段，且攻击次数被锁 0
+    assert room.current_attacker == ai_id
+    assert room.current_phase == 'preparation'
+    assert room.attacks_remaining == 0
+
+
+def test_ai_place_board_is_idempotent(master_room):
+    """已经摆好的棋盘不该被重复摆（否则每次进循环都会重摆一次）。"""
+    ai_id = _fill_boards(master_room)
+    room = master_room
+    before = list(room.players[ai_id].ships)
+    assert server._ai_place_board(room, ai_id) is False
+    assert room.players[ai_id].ships == before, '已经摆好的棋盘被重摆了'
+
+
+def test_master_card_readiness_covers_every_enabled_card(master_room):
+    """池里**每一张**卡都要有明确表态：要么能打，要么有明确理由判不能打。
+
+    这条守的是"新加一张卡却忘了给它写闸门"——症状是那张卡永远不出、或者
+    打出去必被拒（本批实测：`看破！` 漏闸门 → 1000 局 165 次被拒）。
+    """
+    ai_id = _fill_boards(master_room)
+    room = master_room
+    room.players[ai_id].magic_hand = [_mk_card(n) for n in server._MASTER_ENABLED_CARDS]
+    checked = 0
+    for name in sorted(server._MASTER_ENABLED_CARDS):
+        got = server._master_card_readiness(room, ai_id, _mk_card(name))
+        assert got is None or isinstance(got, dict), (name, got)
+        checked += 1
+    assert checked == len(server._MASTER_ENABLED_CARDS) > 20
 
 
 # ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@
 > 面向 AI 代理的索引。**先读这里，别一次读完 `server.py`（8500+ 行）/ `static/game.js`（9000+ 行）/ `static/style.css`（4800+ 行）—— 一律先 grep 定位再分段读。**
 > ⚠️ 行号每次提交都会漂移，**本文件里任何行号都只当线索，以 grep 结果为准**。
 > ⚠️ **本文件每次对话都会整份注入**，新增内容请控制在几十字级别 —— 长记录写进 `docs/`。
-> 最后更新：2026-09-20（新卡批 + 选船优先级镜像）。
+> 最后更新：2026-09-21（大师 AI 第 2 批：试算再挑 + 全卡池 + 交错出牌）。
 
 ---
 
@@ -32,8 +32,9 @@ python -m pytest tests/ -q    # 基线见下
 - ⚠️ 本机临时目录 ACL 坏过，pytest 若在 setup 报 `PermissionError: Temp\pytest-of-Administrator`，
   先 `New-Item -ItemType Directory -Force .tmp\pytemp`，再
   `$env:TMP="$PWD\.tmp\pytemp"; $env:TEMP=$env:TMP; python -m pytest tests/ -q -p no:cacheprovider`。
-- **实测基线（2026-09-21）**：`1973 passed`；跑完约 27 秒。
-  含无头对局驱动 `tools/headless_game.py`（约 400 局/秒）与大师 AI 决策层 `ai_brain.py` 的用例。
+- **实测基线（2026-09-21）**：`2019 passed`；跑完约 28 秒。
+  含无头对局驱动 `tools/headless_game.py`（约 250 局/秒）、大师 AI 决策层 `ai_brain.py`
+  与大师接线层 `tests/test_ai_master.py` 的用例。
 
 ### 无头浏览器工具（`tools/*.mjs`，比 pytest 更接近真实）
 改前端后跑对应那个，**别每次全跑**（单个工具几分钟）：
@@ -160,10 +161,14 @@ phase:                        preparation → battle → end
 
 - 掉线宽限 30 秒；`_build_room_sync` 是重连快照（33 字段，含 chain / 放置流程 / `opponent_attacks` / `ranked`）。
   ⚠️ **`disconnect` handler 内不能同步 emit**（会卡死 hub），代码里有注释。
-- 人机：AI id = `'ai-'+room_id`，`room.is_ai_room=True`，三档 `ai_difficulty` ∈ easy（只炮击）/ normal（每回合一张安全卡）/
-  hard（还会用「失灵！」响应连锁）。⚠️ AI 出牌白名单不是随便扩的：桃园结义 / 明智埋葬 / 神机妙算 / 仁王之盾 /
-  灵气复苏 / 增援 / 死者苏生 / 绝处逢生 都会等施法者自己点选，AI 打出去会把回合卡死 ——
-  要加卡先过 `tests/test_ai_magic.py::test_ai_safe_card_leaves_no_pending_state`。
+- 人机：AI id = `'ai-'+room_id`，`room.is_ai_room=True`，四档 `ai_difficulty` ∈ easy（只炮击）/ normal（每回合一张安全卡）/
+  hard（还会用「失灵！」响应连锁）/ **master**（决策层 `ai_brain.py`：试算再挑 + 交错出牌 + 每回合 3 张 + 读情报开炮）。
+  ⚠️ **难度要按座位判**（`_is_master(room, pid)` / `_ai_difficulty_of`）—— 自对弈度量里两个座位都是 AI，
+  只看房间级的 `ai_difficulty` 会让对手也套用大师的卡池（详见教训 #35）。
+  ⚠️ AI 出牌白名单不是随便扩的：会等施法者自己点选/放置的卡（桃园结义 / 明智埋葬 / 神机妙算 / 仁王之盾 /
+  灵气复苏 / 滥竽充数 / 回光返照 / 败者食尘 / 绝处逢生）打出去会把回合卡死 ——
+  master 的卡池 `_MASTER_ENABLED_CARDS` 每张都写了"能开/不能开的理由"，
+  要加卡先过 `tests/test_ai_master.py` 与 `tests/test_ai_magic.py::test_ai_safe_card_leaves_no_pending_state`。
 
 ---
 
@@ -252,6 +257,17 @@ phase:                        preparation → battle → end
     → **"给不给分"只看对局内容**（`anticheat` 判据）；配对偏好只影响排序。
     ⚠️ 这类 bug **纯函数测不出来**（`match_guard` 单测全绿），
     必须走**真实 `find_match`** 才钉得住（见 `test_ranked_match.py` 的两条 rematch 守卫）。
+34. **"兜底 except"+"零报错"会一起制造假象**：AI 出牌闸门里有 `except Exception: return None`
+    （本意是"试算崩了别烧掉回合"）。有人把一张卡表从 set 改成 dict，`dict | set` 抛 TypeError
+    被它吞掉 → **AI 一张牌都不出**，而"被拒动作 0、卡死 0"看起来完全健康（详见
+    `docs/MASTER_AI_2026_09_21.md` §12.1）。
+    → 判断"AI 到底有没有在工作"不能只看有没有报错，**必须直接数它做了什么**
+    （`tools/master_diag.py`）；兜底 except 必须配"绝不静默"的守卫用例。
+35. **自对弈度量的"房间级单档位"会把两边变成同一档**：`master vs hard` 两个座位都是 AI，
+    而房间只有一个 `ai_difficulty` → 对手也套用大师的卡池与开炮逻辑，量出来是"大师 vs 大师"，
+    胜率必然贴 50%（修前 50.0%，修后 43.7%）。
+    → **被测对象是"某个座位"而不是"某个房间"时，判据就必须能按座位取**；
+    看到漂亮数字先问一句"这会不会是什么东西的复制品"。
 
 ---
 
@@ -296,7 +312,8 @@ phase:                        preparation → battle → end
 `docs/FRIENDS_2026_09_18.md`（好友功能：产品判断 / 接线陷阱 / 契约）｜
 `docs/UI_REBUILD_PROPOSAL.md`（UI 完全重构建议：现状体检 + 7 期路线）｜
 `docs/UPDATES_2026_09_19.md`（更新公告：文案规矩 + 每批加一条）｜
-`docs/SHIP_PICK_PRIORITY_2026_09_20.md`（选船优先级仲裁：单槽覆写根因 + 队列 + 教训）｜ `README.md`（用户向说明）
+`docs/SHIP_PICK_PRIORITY_2026_09_20.md`（选船优先级仲裁：单槽覆写根因 + 队列 + 教训）｜
+`docs/MASTER_AI_2026_09_21.md`（**大师 AI**：决策层规格 + 卡池开放口径 + 度量事故 + 逐档消融数据）｜ `README.md`（用户向说明）
 
 > ⚠️ **部署前确认环境变量**：代码新增 `os.environ.get('XXX')` 时，服务器 systemd 必须同步配置 ——
 > 漏配会导致"服务能起来但带着错误默认值运行"（曾因漏配 `CORS_ORIGINS` 让线上所有操作卡十几秒）。

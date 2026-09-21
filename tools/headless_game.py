@@ -164,6 +164,17 @@ class Policy:
     """
 
     name = 'base'
+    # 本回合已出牌数：驱动器每回合调 `begin_turn` 置 0，用 `note_card_played` 累加。
+    # 放在基类，任何策略（含 RandomPolicy）都自动具备，不用各自再记一份。
+    cards_played = 0
+
+    def begin_turn(self, room, pid):
+        """每回合开始：清掉本回合的出牌计数（驱动器调用）。"""
+        self.cards_played = 0
+
+    def note_card_played(self):
+        """驱动器确认「这次出牌机会真的用掉了」后累加。"""
+        self.cards_played += 1
 
     def place_ships(self, room, pid):
         raise NotImplementedError
@@ -176,6 +187,15 @@ class Policy:
 
     def choose_card(self, room, pid):
         return None
+
+    def cards_per_turn(self, room, pid):
+        """本回合允许出几张牌。默认 1 —— 与 easy/normal/hard 的线上行为一致。
+
+        ⚠️ 大师在线上是**每回合多张**（`ai_brain.CARDS_PER_TURN`），
+           `ExistingAIPolicy` 会覆盖本方法。这里给默认值，是为了让驱动器
+           对任何策略都能算预算，而不是把"1 张"写死在循环里。
+        """
+        return 1
 
     def choose_card_targets(self, room, pid, card):
         return {}
@@ -299,6 +319,11 @@ class ExistingAIPolicy(Policy):
             raise ValueError(f'未知难度 {difficulty!r}，可选 {server.AI_DIFFICULTIES}')
         self.difficulty = difficulty
         self.name = difficulty
+        # 本回合已出牌数。由驱动器在每回合开始时置 0（`begin_turn`），出牌后累加。
+        # ⚠️ 必须是**策略自己的**字段：驱动器不替策略记这个数，否则"策略有两个
+        #    调用方"（真回合循环 + 驱动器）就会有两份计数，长成第二份真相。
+        self.cards_played = 0
+        self._pending_targets = {}
 
     def place_ships(self, room, pid):
         server._ai_place_ships(room, pid)
@@ -321,12 +346,48 @@ class ExistingAIPolicy(Policy):
 
         `server._ai_choose_card` 一次给出「下标 + 目标」，这里把目标缓存下来，
         由 `choose_card_targets` 交回（框架是分两步问的）。
+
+        ⚠️ `cards_played` 必须传：大师每回合有**出牌预算**（`ai_brain.CARDS_PER_TURN`），
+           不传的话驱动器会让它无限出牌 —— 量出来的就不是线上那个 AI 了
+           （正是本文件头上那条"度量工具不能复刻被测对象"的同族错误：
+             接口在，但参数没接对，同样是假绿）。
         """
         if getattr(room, 'ai_difficulty', 'normal') == 'easy':
             return None
-        idx, targets = server._ai_choose_card(room, pid)
+        idx, targets = server._ai_choose_card(room, pid, self.cards_played)
         self._pending_targets = targets or {}
         return idx
+
+    def begin_turn(self, room, pid):
+        """每回合开始：清掉本回合的出牌计数与缓存的出牌目标。"""
+        super().begin_turn(room, pid)
+        self._pending_targets = {}
+
+    def note_card_played(self):
+        """驱动器确认「这次出牌机会真的用掉了」后累加。"""
+        self.cards_played += 1
+
+    def cards_per_turn(self, room, pid):
+        """本回合允许出几张牌。easy/normal/hard 沿用「一回合一张」。"""
+        if server._ai_difficulty_of(room, pid) != 'master':
+            return 1
+        return int(getattr(server.ai_brain, 'CARDS_PER_TURN', 1) or 1)
+
+    def choose_placement(self, room, pid, pending):
+        """放置落点：大师走 `ai_brain.resolve_placement`，其余沿用基类随机。
+
+        ⚠️ 必须与线上**同一份决策**：线上是 `server._ai_consume_own_placement`
+        （它调 `ai_brain.resolve_placement`）。这里若留在基类的 `random.choice`，
+        量出来的就是"随机落点的大师"，与线上不是同一个 AI ——
+        又回到本文件头上那条「度量工具不能复刻/替换被测对象」。
+        """
+        if server._ai_difficulty_of(room, pid) != 'master':
+            return super().choose_placement(room, pid, pending)
+        legal = _legal_placement_cells(room, pid, pending)
+        if not legal:
+            return None
+        cell = server.ai_brain.resolve_placement(room, pid, pending.get('kind'), legal)
+        return cell if cell is not None else None
 
     def choose_card_targets(self, room, pid, card):
         """`choose_card` 已经算好的目标，原样交回（不再自己算第二遍）。"""
@@ -343,6 +404,37 @@ class ExistingAIPolicy(Policy):
                                         'type': card.type}, 'targets': []}
 
 
+def _legal_placement_cells(room, pid, pending):
+    """放置流程的合法候选格，**复用 server 的 `_placement_error`**（唯一判据）。
+
+    口径与 `server._ai_consume_own_placement` 完全一致：
+      · `last_stand` / `shenji_redeploy` 有"只能放这些格"的白名单；
+      · `shenji_redeploy` 额外豁免"原位置"（那些格必然被对方打过）；
+      · 其余按默认规则（未被打过、不在神威洞里、未被己方船占用）。
+    不复刻规则 —— 复刻出来的候选集一旦与服务端漂移，
+    驱动器就会量到"AI 挑了一个服务端不认的格子"，而这看起来像 AI 的错。
+    """
+    kind = pending.get('kind')
+    allow = set()
+    if kind == 'last_stand':
+        allow = {(int(a[0]), int(a[1]))
+                 for a in (room.game_effects.get('last_stand_cells') or [])}
+    elif kind == 'shenji_redeploy':
+        allow = {(int(a[0]), int(a[1]))
+                 for a in (room.game_effects.get('shenji_redeploy_cells') or [])}
+    ignore_sunken = kind == 'shenji_redeploy'
+    out = []
+    for x, y in CELLS:
+        if allow and (x, y) not in allow:
+            continue
+        if server._placement_error(room, pid, x, y, allow_cells=allow,
+                                  ignore_sunken=ignore_sunken):
+            continue
+        out.append((x, y))
+    return out
+
+
+# ===========================================================================
 # 策略名 → 工厂。CLI 与 `make_policy()` 共用这一份。
 # `master` 是设计文档里第 4 档难度，**尚未实现** —— 故意登记成"未实现"，
 # 让 `python tools/headless_game.py --p1 master` 报一句能看懂的错，
@@ -482,7 +574,7 @@ class HeadlessGame:
         self._actions = 0
         self._stuck = 0
         self._last_state = None
-        self._card_played_this_turn = False
+        self.cards_played_this_turn = 0
         self._last_attack_error = ''
 
     # ── 生命周期 ────────────────────────────────────────────────────────
@@ -538,11 +630,16 @@ class HeadlessGame:
         # （normal 只能康、easy 不参与），所以必须与 p1 的策略对齐 —— 否则量出来的
         # 是"normal 也会康连锁 / hard 不康"，不是那一档的真实强度。
         #
-        # ⚠️ 已知边界：反过来，p2 若是 ExistingAIPolicy，它自己的难度**无法**由房间
-        # 字段表达（房间只有这一个档位字段），所以 p2 连锁响应的实际门槛取自 p1。
-        # 对"master vs hard"这类度量（p1=被测方、p2=基准）没有影响。
+        # ⚠️ 两个座位都是 AI 时（master vs hard 这类自对弈度量）**必须逐座位设**：
+        #    房间级的单一档位会让 p2 也套用 p1 的档位 —— 于是 hard 那一侧也用大师的
+        #    卡池与开炮逻辑，量出来的是"大师 vs 大师"，胜率必然贴着 50%。
+        #    实测：修之前 master vs hard 是 50.0%，两个座位的行为其实一模一样。
         p1_difficulty = getattr(self._make(self.p1_factory), 'difficulty', None)
+        p2_difficulty = getattr(self._make(self.p2_factory), 'difficulty', None)
         room.ai_difficulty = self.ai_difficulty or p1_difficulty or 'hard'
+        if p1_difficulty and p2_difficulty:
+            room.ai_difficulty_by_player = {self.ai_id: p1_difficulty,
+                                            self.human_id: p2_difficulty}
 
         self.p1 = self.ai_id
         self.p2 = self.human_id
@@ -802,13 +899,12 @@ class HeadlessGame:
         return False
 
     def _play_card(self, pid) -> bool:
-        """本回合的第一张（也是唯一一张）卡。返回「这次出牌机会是否已消耗」。
+        """出一张卡。返回 True = **这次出牌机会真的用掉了**（策略给出了牌）。
 
-        ⚠️ 返回值的契约是驱动器**不死循环**的关键：调用方拿它置
-        `_card_played_this_turn`。只要有一次"策略没给出可打的牌"没有把机会消耗掉，
-        战斗循环就会每一圈都重新问一遍 `choose_card`，而策略每次都回 None
-        （比如 AI 手上只剩白名单外的卡）→ 200 圈原地打转、整局卡死。
-        实测踩过：`hard` 手上只有 Freezing！/滥竽充数 时正是这个形状。
+        ⚠️ 返回值是驱动器**不死循环**的关键：只有"策略没给出可打的牌"才返回 False，
+        调用方据此继续往下走（去开炮），不会每一圈都重新问一遍 `choose_card`。
+        实测踩过：`hard` 手上只有 Freezing！/滥竽充数 时正是这个形状 ——
+        策略恒回 None，若把它当成"出过牌了"就会 200 圈原地打转、整局卡死。
 
         目标形状与 `handle_use_magic_card` 的载荷完全按前端那一份来：
         `card` 必须带 name+speed+type+description（否则 `MagicCard(**data['card'])`
@@ -819,17 +915,17 @@ class HeadlessGame:
             idx = self.policies[pid].choose_card(room, pid)
         except Exception as exc:                      # 策略自己炸了：记下来但别中断
             self._violation(f'choose_card 抛异常：{pid} {exc!r}')
-            return True
+            return False
         if idx is None:
-            return True
+            return False
         hand = room.players[pid].magic_hand
         if not isinstance(idx, int) or not 0 <= idx < len(hand):
             self._violation(f'choose_card 返回非法下标 {idx!r}（手牌 {len(hand)} 张）')
-            return True
+            return False
         card = hand[idx]
         targets = self.policies[pid].choose_card_targets(room, pid, card)
         if targets is None:
-            return True
+            return False
         resp = server.handle_use_magic_card({
             'room_id': room.id, 'player_id': pid,
             'card': {'name': card.name, 'speed': card.speed, 'type': card.type,
@@ -856,7 +952,8 @@ class HeadlessGame:
         room = self.room
         attacker = room.current_attacker
         policy = self.policies[attacker]
-        self._card_played_this_turn = False
+        if hasattr(policy, 'begin_turn'):
+            policy.begin_turn(room, attacker)
         end_requested = False
 
         for _ in range(200):
@@ -900,11 +997,16 @@ class HeadlessGame:
                             f'36 格全部打过，仍有 {room.attacks_remaining} 次攻击次数')
                         self._violation(self._last_attack_error)
                     end_requested = True
-                elif not self._card_played_this_turn:
-                    self._card_played_this_turn = self._play_card(attacker)
-                    if room.state == 'game_over' or room.current_attacker != attacker:
-                        return room.state == 'game_over'
-                    continue
+                elif policy.cards_played < policy.cards_per_turn(room, attacker):
+                    # ★ 每打一炮之后**先问一句"有没有该打的牌"**再继续开炮。
+                    #   顺序不能反：「溅射 / 雷达子弹 / 越战越勇 / 饮血」依赖
+                    #   "上一发刚命中/刚击沉"，先开下一炮就把窗口永远错过了
+                    #   （与 server._ai_master_turn 的第 1/2 步严格对应）。
+                    if self._play_card(attacker):
+                        policy.note_card_played()
+                        if room.state == 'game_over' or room.current_attacker != attacker:
+                            return room.state == 'game_over'
+                        continue
                 elif end_requested:
                     # 上一圈已经请求过结束阶段却被拒（比如卡牌刚把次数加回来）。
                     # 让策略再打一发，别在这里"请求→被拒→请求"地空转。

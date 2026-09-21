@@ -703,6 +703,10 @@ class RoomManager:
         # 人机局不给段位分（打电脑不能刷段位，与"人机不计 users.wins / 不发徽章"同一口径）。
         room.ranked = False
         room.ai_difficulty = difficulty if difficulty in AI_DIFFICULTIES else 'normal'
+        # 逐座位难度覆盖（默认空 = 全房间同档，即线上人机房的语义）。
+        # 只有**自对弈度量**（tools/headless_game.py 的两个 AI 座位）才会填它：
+        # 房间级的单一档位表达不了"p1 大师 / p2 困难"，不区分就会量成大师 vs 大师。
+        room.ai_difficulty_by_player = {}
         with self._lock:
             self.rooms[room_id] = room
         ai_id = 'ai-' + room_id
@@ -5278,14 +5282,33 @@ def _maybe_run_ai_turn(room):
 AI_DIFFICULTIES = ('easy', 'normal', 'hard', 'master')
 
 
-def _is_master(room) -> bool:
-    """这一局是不是「大师」难度。
+def _is_master(room, player_id=None) -> bool:
+    """**这个座位**是不是「大师」难度。
 
     大师的决策走 `ai_brain`（纯函数模块）；easy/normal/hard 的代码路径
     **一字不改**（作者要求零回归）。所有大师分支都必须写成
-    `if _is_master(room):` 一行，默认路径原样保留。
+    `if _is_master(room, pid):` 一行，默认路径原样保留。
+
+    ⚠️ 必须能**按座位**判，不能只看房间：线上人机房只有 AI 一个电脑座位，
+    两者等价；但**自对弈度量**（`tools/headless_game.py` 的 master vs hard）
+    两个座位都是 AI，房间级的单一档位会让对手也套用大师的卡池与开炮逻辑 ——
+    于是量出来的是"大师 vs 大师"，而不是"大师 vs 困难"，胜率自然贴着 50%。
+
+    实现：房间级 `ai_difficulty` 仍是**默认值**（线上唯一真相），
+    自对弈时由驱动器用 `room.ai_difficulty_by_player` 逐座位覆盖。
     """
+    by_player = getattr(room, 'ai_difficulty_by_player', None)
+    if player_id and isinstance(by_player, dict) and player_id in by_player:
+        return by_player[player_id] == 'master'
     return getattr(room, 'ai_difficulty', 'normal') == 'master'
+
+
+def _ai_difficulty_of(room, player_id) -> str:
+    """这个座位实际生效的难度（与 `_is_master` 同一份判据，供驱动器/日志读）。"""
+    by_player = getattr(room, 'ai_difficulty_by_player', None)
+    if player_id and isinstance(by_player, dict) and player_id in by_player:
+        return str(by_player[player_id] or 'normal')
+    return str(getattr(room, 'ai_difficulty', 'normal') or 'normal')
 
 # AI 可以安全打出的卡：无目标、无后续选择、也不需要「本回合刚命中/刚击沉」之类前置条件。
 # 其余卡一律不打，原因有二：
@@ -5331,7 +5354,7 @@ def _ai_choose_attack(room, ai_id):
     candidates = _attackable_cells(room, ai_id)
     if not candidates:
         return None
-    if _is_master(room):
+    if _is_master(room, ai_id):
         # 大师：先打自己已探明的敌船位置（必中）。
         # ⚠️ 这条只在**有情报**时有意义；情报要靠克苏鲁之眼/探测雷达产生，
         #    所以"读情报"和"打情报卡"必须一起做，否则等于没改。
@@ -5341,17 +5364,19 @@ def _ai_choose_attack(room, ai_id):
     return random.choice(candidates)
 
 
-def _ai_choose_card(room, ai_id):
+def _ai_choose_card(room, ai_id, cards_played=0):
     """AI 该打哪张手牌、以及它的目标；不打则 `(None, {})`。
 
-    同样**只有这一份实现**：对局层（`_ai_maybe_play_magic`）与无头模拟器共用，
-    否则模拟器测的是复刻品。
+    同样**只有这一份实现**：对局层（`_ai_maybe_play_magic`）、大师回合循环
+    （`_ai_master_turn`）与无头模拟器共用，否则模拟器测的是复刻品。
+
+    `cards_played` = 本回合已经出过几张（只有大师看它，用于每回合出牌预算）。
     """
-    if getattr(room, 'ai_difficulty', 'normal') == 'easy':
+    if _ai_difficulty_of(room, ai_id) == 'easy':
         return None, {}
-    if not _is_master(room):
+    if not _is_master(room, ai_id):
         return _ai_choose_magic_card(room, ai_id), {}
-    return _ai_master_pick(room, ai_id)
+    return _ai_master_pick(room, ai_id, cards_played)
 
 
 def _ai_maybe_play_magic(room, ai_id: str) -> bool:
@@ -5373,31 +5398,20 @@ def _ai_maybe_play_magic(room, ai_id: str) -> bool:
     return bool(resp and resp.get('status') == 'success')
 
 
-# 大师能被允许打出的卡。
+# 大师能被允许打出的卡 —— 白名单见下面的 `_MASTER_ENABLED_CARDS`。
 #
-# ⚠️ **暂时只有原有 9 张安全卡** —— 这是量出来的结论，不是保守。
-#
+# ⚠️ 历史（别重犯）：第一版**只开原有 9 张安全卡**，理由是量出来的 ——
 #    2026-09-21 实测（1000 局大师 vs 困难）：
 #      · 只开这 9 张 + 读情报开炮 + 聪明选船  → 胜率 46.4%，卡死 0，被拒动作 52
 #      · 再放开 ②③（立刻结算卡 + 需要目标的卡）→ 胜率 **41.3%（更差）**，
 #        卡死 17、被拒动作 **22393**
-#
-#    原因：每回合只有一次出牌机会，而 AI 挑中的常常是一张打不出去的卡
-#    （目标形状不对 / 前置不满足），**白白烧掉当回合的出牌机会**，
-#    比不出牌还糟；同时残留的待办让部分对局卡死。
-#
-#    → 结论：**先解决「挑出来的一定打得出去」，再谈开放卡池**。
-#      下一步要做的是：出牌前逐张试算（能不能给出目标 / 前置是否成立），
-#      把打不出去的从候选里剔掉，而不是等 `handle_use_magic_card` 拒了才退牌。
-#      详见 docs/MASTER_AI_2026_09_21.md 的实施进度小节。
-_MASTER_SIMPLE_CARDS = (
-    '余音绕梁', '火力全开', '无中生有', '极限增援', '无暇圣心',
-    '看破！', '五险一金', '八方来财', '百亿补贴',
-)
-
-# 需要目标的卡（区域/行列/连续格）：决策层已能给目标，但**当前默认关闭**。
-# 打开它会同时引入上面那 17/1000 的卡死，得先做完「试算再挑」才能安全启用。
-_MASTER_TARGET_CARDS_ENABLED = False
+#    原因不是"卡不好用"，而是**每回合只有一次出牌机会，而 AI 挑中的常常是
+#    一张打不出去的卡**（目标形状不对 / 前置不满足）→ 白白烧掉当回合的机会，
+#    比不出牌还糟；残留的待办还让部分对局卡死。
+#    ⇒ 所以卡池的**前置**是两件事，两件都已完成：
+#       ① 出牌前逐张试算（`_master_card_readiness`）把打不出去的剔掉；
+#       ② 出牌与开炮交错（`_ai_master_turn`），否则条件卡永远用不对时机。
+#    详见 docs/MASTER_AI_2026_09_21.md 的实施进度小节。
 
 
 def _is_master_target_card(name) -> bool:
@@ -5405,33 +5419,575 @@ def _is_master_target_card(name) -> bool:
                                | ai_brain.CELLS_CARDS)
 
 
-def _ai_master_pick(room, ai_id):
+# 大师 AI 可以进候选池的卡。**必须以「能真的结算」为前提**，不是"想开就开"：
+#   · 出牌前一律先过 `_master_card_readiness` 试算（拿不出目标/前置不成立 → 剔掉）；
+#   · 每张卡开放前先有「打出后无残留」测试（tests/test_ai_master.py）。
+#
+# ⚠️ 「能结算」不等于「值得打」：下面每一张都是**逐条读过卡面与实现**才放进来的，
+#    排除项同样写明理由 —— 否则下一批会有人凭"价值表分数高"把它们又加回来。
+_MASTER_ENABLED_CARDS = frozenset({
+    # ① 无前置、立即结算
+    '五险一金', '看破！', '极限增援', '火力全开', '无中生有',
+    '八方来财', '百亿补贴', '无暇圣心',
+    # ② 需要目标形状，决策层已能给（形状与 confirmMagicTarget 一致）
+    '神威！',        # 3×3，打对方棋盘：区域内恰好 1 艘 → 直接击沉
+    '冻结',          # 3×3，冻住对方船 → 削掉对方下回合的攻击次数
+    '探测雷达',      # **2×2** 侦察：显形探到的船，且未被船占的格记为"已排除"
+    '轰炸',          # 整行/整列
+    '硫磺火焰',      # 连续 6 格，强制击杀（无视无敌/盾牌）
+    # ③ 前置简单到能精确判掉
+    '克苏鲁之眼',    # 双方各暴露一艘 → 单格船暴露即等于被击沉
+    '守株待兔',      # 给自己一艘船挂陷阱，死亡则对方牺牲两艘
+    '盗亦有道',      # 偷对方刚打出的上一张
+    '加百列之光',    # 康掉本回合被无效化过的牌
+    '平等条约',      # 只在"魔法卡造成的船数变化"当回合有效
+    '溅射', '雷达子弹', '越战越勇', '饮血',   # 由 ai_brain 的条件因子判时机
+    # ④ 会开 `pending_placement`、但 AI 已有**放置入口**（`_ai_consume_own_placement`）
+    '死者苏生',      # 复活一艘 → 亏一艘再赚回来，船差来回 2
+    '增援',          # 补一艘（不受 6 艘上限，只受棋盘格数限制）
+    # ⑤ 结算时**不需要任何交互**：`疗愈` 直接原地复活至多两艘，没有待办
+    '疗愈',          # 一次追回 2 艘船差 —— 6 艘船的对局里这是最大的单卡收益
+})
+
+# 刻意**留在池外**的卡与理由（放开前必须先补对应能力）：
+#
+#   回光返照 / 败者食尘 / 神机妙算
+#       → 放置类里最麻烦的三张：前两张会把 `room.state` 打回 `placing_ships`
+#         （要整盘重摆 + 重进战斗阶段），神机妙算还额外要一次「宣言一个数字」
+#         的交互与差值快照。放置入口已经有了，但这两条的"回合结构被打断"
+#         这一段还没有测试钉住，本批不开。
+#   滥竽充数 / 绝处逢生
+#       → 同上（滥竽充数放置的船在大回合末会被收回，绝处逢生要先把全部船牺牲掉
+#         再放一艘 —— 都是"打出去就把自己推到悬崖边"的卡，要先有专门的回归用例）。
+#   桃园结义 / 明智埋葬 / 灵气复苏 / 仁王之盾
+#       → 走 `temp_data_id` 挑牌/数值/多选船（`handle_confirm_magic_target`）。
+#         与放置不是同一条通道，AI 侧还没有对应的消费点。
+#   疗愈 / 神之宣告
+#       → 「选至多两艘复活」/「选两艘牺牲 + 选一个后续效果」都是**交互选择**。
+#         而且 神之宣告 对自己是净亏（死 2 艘换对方 1 艘或一次跳回合），
+#         卡面价值表给 80 分是"对手打出来很强"，不是"自己打出来很强"。
+#   恶魔契约
+#       → 卡面是**双方绑定**：对方死一艘我也要死一艘。我方"少死船"的目标下
+#         打出它只会加大损失；而且它会给**对方**开选船交互。明确不打。
+#   教皇旨意
+#       → 卡面把双方攻击次数清零，改「弃一张魔法卡换两次攻击」。AI 没有弃卡
+#         换攻击的代码（§9 的 T7 档），打出去等于**把自己的回合清零**，
+#         同时把五险一金也废掉。必须先补 §9 T7 的逻辑。
+#   命运骰子
+#       → 摇到 3 点会给**双方**开 `pending_dice_discard` 弃牌待办，而 AI 那边的
+#         待办没有消费点（`_action_wait_reason` 会冻结其余写操作）。前置是
+#         "AI 自己消费弃牌待办"，做完再开。
+#   余音绕梁
+#       → 只在**准备阶段**可打，而 `_ai_master_turn` 一进来就进战斗阶段。
+#         要开它得在准备阶段单独给一次出牌机会（§5 第 225 行），本批未做。
+#   钢筋铁骨
+#       → 在 `HIDDEN_CARD_NAMES` 里，**谁都摸不到**，给它做决策毫无意义。
+
+
+# ── 大师 AI 的「试算再挑」闸门（2026-09-21 第 2 批） ───────────────────────
+#
+# 为什么需要它（这是实测出来的，不是保守）：
+#
+#   `can_play_magic_card` 与 `handle_use_magic_card` 只判「阶段 / 速阶 / 少数专属
+#   条件」，而**一大批卡的条件要到 `apply_magic_effect` 结算时才发现不满足**。
+#   实测放开卡池后：1000 局里 **22393 次被拒动作**、胜率从 48.5% 掉到 41.3%、
+#   还有 17 局卡死。原因不是"卡不好用"，而是**每回合只有一次出牌机会，而 AI
+#   挑中的常常是打不出去的那张** —— 白白烧掉当回合的机会，比不出牌还糟。
+#
+#   ⇒ 出牌前必须逐张试算：拿不出目标 / 前置不成立 → **直接剔出候选**，
+#     而不是等 `handle_use_magic_card` 拒了才退牌。
+#
+# ⚠️ 判据**只读公开信息**（自己的船/手牌/已探明位置、对方的剩余船数、
+#    弃牌堆与牌堆**张数**、场上已发生的公开事件）。**绝不读 `opponent.ships`** ——
+#    这是 ai_brain 模块头上那条硬约束，本函数同样适用。
+#    守卫见 tests/test_ai_master.py 的不作弊用例。
+#
+# ⚠️ 这里**不复刻** `apply_magic_effect` 的条件。已经存在的扣牌前闸门
+#    （`_last_attack_requirement_reason` / `_wangyang_requirement_reason` /
+#    `_woxin_requirement_reason` / `_lanyu_requirement_reason`）一律**直接调用**，
+#    保证判据只有一份实现（CLAUDE.md 教训 #1）。
+
+
+def _master_card_readiness(room, ai_id, card):
+    """这张牌**现在打出去能不能真的结算**？返回 `targets` dict；打不了返回 `None`。
+
+    这是「试算再挑」的唯一入口：`None` = 从候选里剔掉。
+    形状与 `confirmMagicTarget` 接受的一致（`target_area` / `target_line` /
+    `target_cells`），可直接交给 `handle_use_magic_card`。
+
+    ⚠️ 返回 `None` 与返回 `{}` 语义不同：`{}` = 不需要目标，可以打。
+       所以判"能不能打"一律用 `is None`，**不要用真假值**。
+
+    ⚠️ 只对 `_MASTER_ENABLED_CARDS` 里的卡调用 —— 能不能进池由那张白名单决定，
+       本函数只管"进了池的卡此刻条不条件成立"。两件事分开，才不会出现
+       两份互相漂移的名单（CLAUDE.md 教训 #1）。
+    """
+    try:
+        name = str(getattr(card, 'name', '') or '')
+        caster = room.players.get(ai_id)
+        if caster is None:
+            return None
+        opp_id = _opponent_of(room, ai_id)
+        opp = room.players.get(opp_id) if opp_id else None
+        if opp is None:
+            return None
+
+        # ── 1. 扣牌前闸门：**直接调既有实现**，判据只留一份 ────────────
+        # 顺序与 `handle_use_magic_card` 保持一致，便于对照排查。
+        #
+        # 看破！：被封锁的玩家本大回合**所有魔法卡**都不能用。
+        # ⚠️ 实测漏掉这一条时，大师整套手牌都会被打出又被拒（1000 局 165 次），
+        #    每次都白跑一遍 handler、还往对局日志里刷一条"出牌被拒"。
+        if getattr(caster, 'magic_blocked', None):
+            return None
+        for gate in (_last_attack_requirement_reason,
+                     _wangyang_requirement_reason,
+                     _woxin_requirement_reason,
+                     _lanyu_requirement_reason):
+            if gate(room, ai_id, card):
+                return None
+
+        # ── 2. 需要目标形状的卡（区域 3×3/2×2 / 整行整列 / 连续 6 格） ──
+        if _is_master_target_card(name):
+            return ai_brain.resolve_target(room, ai_id, card)
+
+        # ── 3. 逐卡前置（只列**进池**的那些；每条的判据都对着
+        #      apply_magic_effect 里那条 success=False 写） ─────────────
+        caster_alive = len(_alive_ships(caster))
+        opp_alive = len(_alive_ships(opp))
+
+        if name == '五险一金':
+            # 卡面：本回合「未造成伤害」才给 +3 次攻击。已经打中过就是废牌。
+            return {} if int(getattr(caster, 'damage_dealt_this_turn', 0) or 0) == 0 else None
+
+        if name == '克苏鲁之眼':
+            # 双方都必须有船（自己要有船去暴露，对方要有船能被探明）。
+            # 单格船 ⇒ 对方船位一暴露，下一炮就是必中，情报直接换一艘。
+            return {} if (caster_alive > 0 and opp_alive > 0) else None
+
+        if name == '守株待兔':
+            # 结算时要"选自己一艘船挂陷阱"，没船可选就是失败。
+            return {} if caster_alive > 0 else None
+
+        if name in ('死者苏生', '增援', '疗愈'):
+            # 死者苏生 / 疗愈：必须先有已阵亡的战舰，否则报「没有可复活的战舰」。
+            # 增援：由 `_lanyu_requirement_reason` / 卡面自带上限，这里只确认
+            # **有合法落点**（否则打出后放置流程会空转 → 取消 → 白烧一张）。
+            if name in ('死者苏生', '疗愈') and not caster.sunken_ships:
+                return None
+            if name == '疗愈':
+                return {}          # 原地复活，不走放置流程、不留待办
+            return {} if _ai_has_placement_spot(room, ai_id) else None
+
+        if name == '盗亦有道':
+            # 两个来源，对着 apply_magic_effect 的分支写：
+            #   ① 连锁内：偷**栈上紧邻下方那一项**（出牌时它在 `room.chain[-1]`；
+            #      结算时当前项已出栈，所以那时 `chain[-1]` 还是同一张）
+            #   ② 非连锁：回退到 `magic_history` 里**对方最近一张**没被偷过的
+            # 两个都空 → 结算必然报「对方没有使用过魔法卡」。
+            if room.chain and room.chain[-1].player_id != ai_id:
+                return {}
+            for entry in reversed(getattr(room, 'magic_history', None) or []):
+                if entry.get('caster') != ai_id and not entry.get('negated_skip'):
+                    return {} if not entry.get('stolen') else None
+            return None
+
+        if name == '加百列之光':
+            # 三条生效路径（对着 apply_magic_effect 的 negated_count 写）：
+            #   ① 连锁栈非空 → 康掉正下方那一项
+            #   ② 场上无场地 + 历史里有对方的牌 → 康掉对方最近那张
+            #   ③ 场上有场地 → 直接拆掉（自己贴的也能拆）
+            # 三条都不成立时 negated_count == 0，结算必然失败。
+            if room.chain:
+                return {}
+            if room.field_magic is not None:
+                return {}
+            hist = getattr(room, 'magic_history', None) or []
+            if hist and hist[-1].get('caster') != ai_id:
+                return {}
+            return None
+
+        if name == '平等条约':
+            # 只在"**魔法卡**造成的船数变化"当回合有效；炮击造成的减船康不动。
+            snap = (getattr(room, 'game_effects', None) or {}).get('last_ship_change')
+            if not snap or snap.get('source') == 'attack':
+                return None
+            return {} if snap.get('round', room.round) == room.round else None
+
+        # ── 4. 其余（含全部无前置的卡）直接放行 ───────────────────────
+        return {}
+    except Exception:
+        # 试算本身出错 = 这张牌**不确定能不能打** → 当作打不了剔掉。
+        # 宁可少出一张，也不能因为试算崩了就把回合烧掉。
+        return None
+
+
+def _ai_master_pick(room, ai_id, cards_played=0):
     """大师难度选牌：返回 `(手牌下标, targets)`；不打则 `(None, {})`。
 
     与 normal/hard 的关键差别：那两档是「从安全卡里挑速阶最低的一张」，
-    **完全不看盘面**；这里用 `ai_brain.choose_card`（基础价值 × 局势乘子）。
+    **完全不看盘面**；这里用 `ai_brain.choose_card`（基础价值 × 局势乘子），
+    而且**先用 `_master_card_readiness` 逐张试算**，把打不出去的剔掉。
+
+    `cards_played`：本回合**已经出过几张**（含被打回手的）。
+    到达 `ai_brain.CARDS_PER_TURN` 预算即停止出牌，避免一次倒光手牌。
     """
     player = room.players.get(ai_id)
     if not player or not player.magic_hand:
         return None, {}
+    if int(cards_played or 0) >= int(getattr(ai_brain, 'CARDS_PER_TURN', 1) or 1):
+        return None, {}
+
     playable, targets_by_idx = [], {}
     for i, c in enumerate(player.magic_hand):
-        name = getattr(c, 'name', None)
-        target_card = _MASTER_TARGET_CARDS_ENABLED and _is_master_target_card(name)
-        if name not in _MASTER_SIMPLE_CARDS and not target_card:
+        if getattr(c, 'name', None) not in _MASTER_ENABLED_CARDS:
             continue
         if not can_play_magic_card(room, ai_id, c):
             continue
-        if target_card:
-            t = ai_brain.resolve_target(room, ai_id, c)
-            if not t:
-                continue          # 给不出目标就别打 —— 打了只会被判失败并退牌
+        # ★ 试算：拿不出目标 / 前置不成立 → 剔出候选，**不消耗出牌机会**。
+        t = _master_card_readiness(room, ai_id, c)
+        if t is None:
+            continue
+        if _is_master_target_card(getattr(c, 'name', None)):
             targets_by_idx[i] = t
         playable.append(i)
+
     idx = ai_brain.choose_card(room, ai_id, playable)
     if idx is None:
         return None, {}
-    return idx, targets_by_idx.get(idx, {})
+    return idx, (targets_by_idx.get(idx) or {})
+
+
+# ── 大师回合循环（§5 的「决策循环」，普通/困难继续走上面那套原脚本） ────────
+#
+# 与普通/困难的结构差异只有两点，但两点都关键：
+#
+#   ① **出牌与开炮交错**。原脚本是「先出一张卡 → 然后一路轰完」，
+#      于是「溅射 / 雷达子弹 / 越战越勇 / 饮血」这些**依赖刚命中/刚击沉**的卡
+#      永远是废牌：等想到它们时，下一步已经在打下一炮了。
+#      ⚠️ 顺序不能反 —— 每打一炮之后都要**先问一句"有没有该打的牌"**再继续打。
+#
+#   ② **每回合多张 + 预算上限**（第 3 步回到第 1 步）。原脚本一回合只出一张，
+#      大师放到 `ai_brain.CARDS_PER_TURN` 张；到顶就停，避免一次倒光手牌。
+
+# 大师回合的轮次上限（每轮 = 一次攻击或一次出牌）。远大于单回合合法动作数
+# （6 攻击 + 3 出牌 + 阶段转换 ≈ 12），所以正常永远碰不到；它只是墙钟兜底，
+# 防止某个 handler 被反复拒绝时把后台任务挂死（§5.1 的 L1）。
+_MASTER_TURN_STEPS = 60
+# 每次动作后的「连锁收敛 + 待办消费」等待轮次（每轮 0.3s）。
+_MASTER_SETTLE_STEPS = 40
+
+
+def _master_settle(room_id, ai_id):
+    """等连锁收敛，并把**属于 AI 的待办**消费掉。
+
+    返回 `(room, ok)`：`ok=False` = 回合已经不该继续（对局结束/换人/房间没了）。
+
+    ⚠️ 待办必须由 brain 消费掉，**绝不能留着**：`_ai_turn_loop` 一旦交回合，
+    那个待办就再没有消费点（AI 房间的看门狗还会主动跳过），整局就停在那里。
+    消费不掉时显式清理并记日志 —— 宁可少一个效果，也不能留下没人管的待办。
+    """
+    for _ in range(_MASTER_SETTLE_STEPS):
+        room = room_manager.get_room(room_id)
+        if not room or room.state == 'game_over' or room.current_attacker != ai_id:
+            return room, False
+        # 帮大厅玩家代答「选一艘自己的船」——AI 房间走的是同步代选，正常不会入队；
+        # 真入了队说明状态异常，这里兜底消费，免得 `_action_wait_reason` 把写操作全冻住。
+        if _my_ship_picks(room, ai_id):
+            if not _ai_consume_own_ship_picks(room, ai_id):
+                return room, False
+            continue
+        if not (room.chain or room.chain_waiting):
+            return room, True
+        time.sleep(0.3)
+    # 连锁/窗口迟迟不收敛：显式记一笔，让运营能在日志里看到（不静默）
+    room = room_manager.get_room(room_id)
+    if room is not None:
+        add_game_log(room, '大师 AI 等待连锁收敛超时，跳过等待继续回合', 'system')
+    return room, True
+
+
+def _ai_has_placement_spot(room, ai_id) -> bool:
+    """AI 现在有没有**至少一个合法放置格**。
+
+    放置类卡打出前必须确认这一点：没有落点时，`_ai_consume_own_placement`
+    只能取消流程 —— 卡已经进弃牌堆了，等于白烧一张（正是「试算再挑」要消灭的
+    失败模式）。判据复用 `_placement_error`，与玩家点格子用的是同一份规则。
+    """
+    for x in range(6):
+        for y in range(6):
+            if _placement_error(room, ai_id, x, y) is None:
+                return True
+    return False
+
+
+def _ai_consume_own_placement(room, ai_id) -> bool:
+    """把挂在 AI 名下的**放置流程**（`pending_placement`）逐艘消费掉。
+
+    返回 True = 已经没有待办了。
+
+    这是 §5.1.5 第 1 条「AI 摆放入口」：没有它，`回光返照 / 败者食尘 / 增援 /
+    死者苏生 / 滥竽充数 / 绝处逢生 / 神机妙算` 全都会卡死 ——
+    打出后 `pending_placement` 挂在**施法者自己**头上（=AI），而 AI 没有放置入口，
+    `enter_end_phase` / `end_turn` 又会被 `_action_wait_reason` 拦住，
+    回合永远交不出去、真人零提示（§1.1 缺陷 2 的原形）。
+
+    候选格**完全按各卡的规则算**（复用 `_placement_error` 这一份实现，
+    不复刻合法性判断），brain 只负责在给定候选里挑。
+    """
+    for _ in range(12):
+        room = room_manager.get_room(room.id)
+        if not room or room.state == 'game_over':
+            return True
+        temp = room.magic_temp_data if isinstance(room.magic_temp_data, dict) else {}
+        pending = temp.get('pending_placement')
+        if not pending or pending.get('caster') != ai_id:
+            return True
+
+        kind = pending.get('kind')
+        allow = set()
+        if kind == 'last_stand':
+            allow = {(int(a[0]), int(a[1]))
+                     for a in (room.game_effects.get('last_stand_cells') or [])}
+        elif kind == 'shenji_redeploy':
+            allow = {(int(a[0]), int(a[1]))
+                     for a in (room.game_effects.get('shenji_redeploy_cells') or [])}
+
+        # 候选格 = 全盘枚举后逐格过 `_placement_error`（就是玩家点格子时服务端
+        # 用的那个校验，所以"AI 挑的格"与"玩家能点的格"必然同一套口径）。
+        ignore_sunken = kind == 'shenji_redeploy'
+        legal = []
+        for (x, y) in ((cx, cy) for cx in range(6) for cy in range(6)):
+            if allow and (x, y) not in allow:
+                continue
+            if _placement_error(room, ai_id, x, y, allow_cells=allow,
+                                ignore_sunken=ignore_sunken):
+                continue
+            legal.append((x, y))
+
+        if not legal:
+            # 没有合法落点：显式取消放置流程（`handle_cancel_placement` 会收尾并
+            # 清掉待办），绝不把一个没人能消费的待办留在房间里。
+            handle_cancel_placement({'room_id': room.id, 'player_id': ai_id})
+            add_game_log(room, '大师 AI 的放置流程没有合法落点，已取消', 'system')
+            continue
+
+        cell = ai_brain.resolve_placement(room, ai_id, kind, legal)
+        if cell is None:
+            handle_cancel_placement({'room_id': room.id, 'player_id': ai_id})
+            add_game_log(room, '大师 AI 的放置流程无法决策，已取消', 'system')
+            continue
+
+        resp = handle_confirm_reinforcement({
+            'room_id': room.id, 'player_id': ai_id,
+            'position': {'x': int(cell[0]), 'y': int(cell[1])}})
+        if not (resp and resp.get('status') == 'success'):
+            # 被拒说明候选格算错了，再试也是同一批 → 直接取消，别空转
+            handle_cancel_placement({'room_id': room.id, 'player_id': ai_id})
+            add_game_log(room, f'大师 AI 放置被拒（{resp}），已取消放置流程', 'system')
+            continue
+    return True
+
+
+def _ai_consume_own_ship_picks(room, ai_id) -> bool:
+    """把挂在 AI 名下的选船待办逐个消费掉（brain 挑船）。
+
+    返回 False = 消费不掉（没有可选的活船等），调用方据此停下。
+    """
+    for _ in range(8):
+        room = room_manager.get_room(room.id)
+        if not room or room.state == 'game_over':
+            return False
+        entry = _top_ship_pick(room, ai_id)
+        if not entry:
+            return True
+        caster = room.players.get(ai_id)
+        alive = _alive_ships(caster) if caster else []
+        if not alive:
+            # 没有可选对象：显式清掉，别留一个永远没人能消费的待办
+            _clear_ship_picks(room, ai_id)
+            add_game_log(room, '大师 AI 的选船待办无可选战舰，已清理', 'system')
+            return True
+        picked = ai_brain.resolve_ship_pick(room, ai_id, entry.get('reason'), alive)
+        if picked is None:
+            _clear_ship_picks(room, ai_id)
+            add_game_log(room, '大师 AI 的选船待办无法决策，已清理', 'system')
+            return True
+        room.pending_ship_picks = [
+            p for p in (room.pending_ship_picks or []) if p is not entry]
+        _consume_ship_pick_effect(room, ai_id, entry, picked)
+    return False
+
+
+def _consume_ship_pick_effect(room, ai_id, entry, picked) -> None:
+    """把「AI 代选的那艘船」真正结算掉（牺牲 / 加盾 / 触发陷阱）。
+
+    走的是与 `handle_confirm_sacrifice` 同一组内部原语，**不复刻**它们：
+    `_SACRIFICE_REASONS` 里的 reason 走牺牲，其余（如 shield_choice）只做记录。
+    """
+    reason = str(entry.get('reason') or '')
+    if reason in _SACRIFICE_REASONS:
+        _do_demon_contract_sacrifice(room, ai_id, picked, reason)
+    elif reason == 'kraken_eye':
+        # 克苏鲁之眼：被窥探的一方暴露位置给施法者（AI 房间由 `_request_ship_pick`
+        # 同步代选，正常不会走到这里；兜底时把位置补上，别让效果半途而废）。
+        for pos in (getattr(picked, 'positions', None) or []):
+            c = _cell_of(pos)
+            if c is not None:
+                room.players[ai_id].revealed_positions.append(pos)
+    _emit_active_effects(room)
+
+
+def _master_play_one(room_id, ai_id, played) -> bool:
+    """尝试出一张牌。返回 True = **打出并成功结算**（调用方把预算 +1）。
+
+    ⚠️ 用 `handle_use_magic_card` 的返回值判成败；失败（被拒）也算"这次机会用掉了"，
+    但**不计入预算** —— 被拒说明这张卡当时打不出去，`_master_card_readiness`
+    漏判了，不该因此白扣一次出牌额度（正是要消灭的失败模式）。
+    """
+    room = room_manager.get_room(room_id)
+    if not room or room.state == 'game_over':
+        return False
+    if played >= int(getattr(ai_brain, 'CARDS_PER_TURN', 1) or 1):
+        return False
+    idx, targets = _ai_choose_card(room, ai_id, played)
+    if idx is None:
+        return False
+    hand = room.players[ai_id].magic_hand
+    if not isinstance(idx, int) or not (0 <= idx < len(hand)):
+        return False
+    card = hand[idx]
+    resp = handle_use_magic_card({
+        'room_id': room_id, 'player_id': ai_id,
+        'card': {'name': card.name, 'speed': card.speed, 'type': card.type,
+                 'description': getattr(card, 'description', '')},
+        'targets': targets or {},
+    })
+    if resp and resp.get('status') == 'success':
+        return True
+    # 试算漏判：记一笔（含拒绝原因），便于离线统计哪张卡的闸门还缺
+    room = room_manager.get_room(room_id)
+    if room is not None:
+        add_game_log(room, f'大师 AI 出牌被拒（{card.name}）：'
+                           f'{(resp or {}).get("message", "")}', 'magic')
+    return False
+
+
+def _ai_master_turn(room_id: str, room, ai_id: str):
+    """大师难度的完整回合：决策循环（§5）+ 收尾重试。
+
+    完全交给本函数的理由是「回合结构不同」——普通/困难那条固定脚本一行不改。
+    """
+    played = 0
+
+    # ① 进入战斗阶段（与普通/困难一致）。出牌机会不在这里给：
+    #    余音绕梁等"仅准备阶段"的卡仍未进池（见 `_MASTER_ENABLED_CARDS`），
+    #    真放开时在这里加一次 `_master_play_one` 即可。
+    resp = enter_battle_phase({'room_id': room_id, 'player_id': ai_id})
+    if not (resp and resp.get('status') == 'success'):
+        room2 = room_manager.get_room(room_id)
+        if room2 is not None and room2.state == 'game_over':
+            return
+    room, ok = _master_settle(room_id, ai_id)
+    if not ok:
+        return
+
+    for _ in range(_MASTER_TURN_STEPS):
+        room = room_manager.get_room(room_id)
+        if not room or room.state == 'game_over' or room.current_attacker != ai_id:
+            return
+        # 回光返照/败者食尘之类的卡会把 state 打回 placing_ships。
+        # 大师目前不开放那些卡，但真发生也**必须能自己爬出来**，否则整个回合停摆。
+        if room.state == 'placing_ships':
+            _ai_place_ships(room, ai_id)
+            enter_battle_phase({'room_id': room_id, 'player_id': ai_id})
+            room, ok = _master_settle(room_id, ai_id)
+            if not ok:
+                return
+            continue
+        if room.state != 'attacking':
+            room, ok = _master_settle(room_id, ai_id)
+            if not ok:
+                return
+            continue
+        if room.chain or room.chain_waiting:
+            room, ok = _master_settle(room_id, ai_id)
+            if not ok:
+                return
+            continue
+
+        # 本圈是否真的推进了。⚠️ 必须显式判：任何一环被服务端拒掉都要**兜底退出**，
+        # 否则就是"请求 → 被拒 → 请求"的空转，而空转正是最容易被误判成卡死的形状。
+        progressed = False
+
+        # ★ 步骤 1：出牌（含"上一炮刚命中/刚击沉"触发的条件卡）。
+        #   必须排在攻击之前 —— 反过来的话「溅射 / 越战越勇」的窗口永远被自己错过。
+        if played < int(getattr(ai_brain, 'CARDS_PER_TURN', 1) or 1):
+            if _master_play_one(room_id, ai_id, played):
+                played += 1
+                progressed = True
+                # 打出去的卡可能开了放置流程（增援/死者苏生/…）：**当场消费掉**。
+                # 留到回合末尾再处理更危险 —— 中间任何一步都可能被
+                # `_action_wait_reason` 拦住，看起来就像"AI 卡死了"。
+                _ai_consume_own_placement(room_manager.get_room(room_id), ai_id)
+            # 无论成没成，都刷新一次快照：`_master_play_one` 可能已经改了状态
+            # （被拒退牌 / 效果改手牌），不能拿旧对象判攻击次数。
+            room = room_manager.get_room(room_id)
+            if not room or room.state == 'game_over' or room.current_attacker != ai_id:
+                return
+            if progressed:
+                room, ok = _master_settle(room_id, ai_id)
+                if not ok:
+                    return
+                time.sleep(0.3)
+                continue
+
+        # ★ 步骤 2：开炮。
+        if room.attacks_remaining > 0:
+            shot = _ai_choose_attack(room, ai_id)
+            if shot is not None:
+                x, y = shot
+                handle_attack({'room_id': room_id, 'player_id': ai_id, 'x': x, 'y': y})
+                time.sleep(0.3)
+                room, ok = _master_settle(room_id, ai_id)
+                if not ok:
+                    return
+                continue
+            # 次数还有却一个可打的格都没有（36 格全打过）——
+            # 这正是 §1.1 那条生产死锁的形状，直接去结束阶段，别原地打转。
+        # 步骤 3：预算用尽 / 次数用尽 / 无牌可打 / 无格可打 → 收尾
+        break
+
+    # ② 结束阶段（沿用现有重试逻辑）
+    for _ in range(20):
+        room = room_manager.get_room(room_id)
+        if not room or room.state == 'game_over' or room.current_attacker != ai_id:
+            return
+        if room.state != 'attacking':
+            _ai_place_ships(room, ai_id)
+            enter_battle_phase({'room_id': room_id, 'player_id': ai_id})
+            room, ok = _master_settle(room_id, ai_id)
+            if not ok:
+                return
+            continue
+        if room.chain or room.chain_waiting:
+            time.sleep(0.5)
+            continue
+        resp = handle_enter_end_phase({'room_id': room_id, 'player_id': ai_id})
+        if resp and resp.get('status') == 'success':
+            break
+        time.sleep(0.5)
+
+    # ③ 交回合（沿用现有重试逻辑）
+    time.sleep(0.5)
+    for _ in range(20):
+        room = room_manager.get_room(room_id)
+        if not room or room.state == 'game_over' or room.current_attacker != ai_id:
+            return
+        resp = end_turn({'room_id': room_id, 'player_id': ai_id})
+        if resp and resp.get('status') == 'success':
+            return
+        time.sleep(0.5)
 
 
 def _ai_turn_loop(room_id: str):
@@ -5444,6 +6000,8 @@ def _ai_turn_loop(room_id: str):
         ai_id = _ai_player_id(room)
         if not ai_id or room.current_attacker != ai_id:
             return
+        if _is_master(room, ai_id):
+            return _ai_master_turn(room_id, room, ai_id)
         enter_battle_phase({'room_id': room_id, 'player_id': ai_id})
 
         # 先出一张安全卡（normal / hard 难度）。出牌可能打开连锁响应窗口，
@@ -9139,7 +9697,7 @@ def _request_ship_pick(room, chooser_id, reason, message, allow_duplicate=False)
         # 大师难度：交给决策层按目的挑（要被牺牲/被窥探时挑信息价值最低的那艘），
         # 而不是随机送一条船。决策层拿不出结果就退回原来的随机，绝不返回 None
         # —— 返回 None 会让这个待选没人消费，回合就卡死了。
-        if _is_master(room):
+        if _is_master(room, chooser_id):
             picked = ai_brain.resolve_ship_pick(room, chooser_id, reason, alive)
             if picked is not None:
                 return picked

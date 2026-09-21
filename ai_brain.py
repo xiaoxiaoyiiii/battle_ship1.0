@@ -111,6 +111,68 @@ def _all_cells():
 
 
 # ===========================================================================
+# 敌船位置模型（只用公开信息 —— 谁也不许读 `opponent.ships`）
+# ===========================================================================
+#
+# ⚠️ 这里**不猜船形**：本项目是单格船（6 艘各占 1 格），所以「哪些格一定是空的」
+#    就是全部可推的东西，剩下的只能靠探明与均匀挑 —— 没有船形推理的余地。
+#
+#    · 打过的格（命中/未命中）→ 绝不可能还有船（单格船，打中就沉）
+#    · 自己探明的格（克苏鲁之眼 / 探测雷达）→ **一定有船**
+#    · 其余 → 未知
+#
+# 这三档就是「一炮下去命中概率」的全部依据。当前实现只用到前两档，
+# 第三档留给将来（例如对方船数 > 0 时未知格的后验概率）。
+
+
+def enemy_cell_model(room, ai_id):
+    """返回 `(known, safe, unknown)` 三个格子集合 `{(x, y)}`。
+
+    · `known`   —— 一定有敌船（自己探明的，且还没打过）
+    · `safe`    —— 一定没有敌船（自己打过的格：单格船，打了就没了）
+    · `unknown` —— 还没探过、也没打过的格
+
+    纯读公开信息：`me.revealed_positions`（我探明的）与 `me.attacks`（我轰过的）。
+    签名里没有 `ai_id` 之外的输入，绝不遍历 `opponent.ships`。
+    """
+    me = (getattr(room, 'players', None) or {}).get(ai_id)
+    empty = (set(), set(), set())
+    if me is None:
+        return empty
+    attacked = _attacked_cells(me)
+    known = _known_enemy_cells(me, exclude=attacked)
+    unknown = {c for c in _all_cells() if c not in attacked}
+    return known, attacked, unknown
+
+
+def attack_priority(room, ai_id, cell):
+    """单独给一格打分：越大越该打。返回 float，认不出返回 -1。
+
+    `known`(必中) 远高于 `unknown`(可能命中)，两者都远高于 `safe`(必不中)。
+    这一条让「按情报开炮」与「别打已知空的格」同时成立 —— 现状是 36 格
+    均匀随机，等于**反复往已经证明是空的格子里开炮**。
+    """
+    try:
+        known, safe, _unknown = enemy_cell_model(room, ai_id)
+    except Exception:
+        return -1.0
+    c = _cell_of(cell) or (cell if isinstance(cell, tuple) else None)
+    if c is None:
+        return -1.0
+    if c in known:
+        return 3.0
+    if c in safe:
+        return 0.0
+    return 1.0
+
+
+def threatenable_cells(room, ai_id):
+    """还**可能**藏着敌船的格（未知 + 已探明）。空集 = 对面全被打完了。"""
+    known, _safe, unknown = enemy_cell_model(room, ai_id)
+    return known | unknown
+
+
+# ===========================================================================
 # 开炮
 # ===========================================================================
 
@@ -122,7 +184,12 @@ def choose_attack(room, ai_id, rng=None):
 
     规则：
       ① 自己已探明的敌船位置里还有没打过的 → 打它（**必中**）
-      ② 否则在未轰过的格子里均匀挑
+      ② 否则在「还没打过」的格子里均匀挑
+      ③ 全打完了 → None
+
+    ⚠️ 规则 ② 的分母用 `unknown`（= 未打过 − 已探明为空）而不是整整 36 格：
+       单格船**打中即沉**，所以"打过而没中"的格子是**证明为空**的。
+       现状的均匀随机会把炮弹反复送进这些格子 —— 那是纯浪费，不是运气问题。
 
     ⚠️ 船是**单格船**（6 艘各占 1 格），所以没有「船形推理」的余地，
        情报就是全部优势。想再强只能靠更准的探明手段，不是靠更聪明的猜。
@@ -132,14 +199,12 @@ def choose_attack(room, ai_id, rng=None):
         me = (getattr(room, 'players', None) or {}).get(ai_id)
         if me is None:
             return None
-        attacked = _attacked_cells(me)
-        candidates = [c for c in _all_cells() if c not in attacked]
-        if not candidates:
-            return None
-        known = sorted(_known_enemy_cells(me, exclude=attacked))
+        known, _safe, unknown = enemy_cell_model(room, ai_id)
         if known:
-            return rng.choice(known)          # 已探明 → 必中，优先打掉
-        return rng.choice(candidates)
+            return rng.choice(sorted(known))     # 已探明 → 必中，优先打掉
+        if unknown:
+            return rng.choice(sorted(unknown))
+        return None
     except Exception:
         return None
 
@@ -434,6 +499,25 @@ def _situational(room, ai_id, name):
     if name in ('无中生有', '八方来财', '亡羊补牢') and hand <= 2:
         k *= 1.5
 
+    # ⑥ 克苏鲁之眼：**双方各暴露一艘**。单格船下"被暴露 = 必被击沉"，
+    #    所以它不是纯收益，而是**信息交换**：换到对方一艘、赔上自己一艘。
+    #    只有在自己手里的情报比对方少时才划算（对方已经知道我几艘船了，
+    #    再暴露一艘的边际代价小；而我因此多知道它一艘）。
+    #    ⚠️ 实测：不做这个判别时它会成为大师出得最多的一张（占比 31%），
+    #       等于每局白送对方几次必中。
+    if name == '克苏鲁之眼':
+        mine_known = len(set(_known_enemy_cells(me)))
+        theirs_known = 0
+        if opp is not None:
+            theirs_known = len(set(_known_enemy_cells(opp)))
+        if theirs_known <= mine_known:
+            k *= 0.35          # 我的情报不少于对方 → 这次交换不划算
+        else:
+            k *= 1.4
+        missed = len(_attacked_cells(me))
+        if missed >= 20:       # 残局：已知格够多，情报卡价值下降
+            k *= 0.6
+
     return k
 
 
@@ -474,9 +558,23 @@ def choose_card(room, ai_id, playable, rng=None):
 
 # 各卡需要哪种目标形状。现状这些卡对 AI 一律**打不出去**（缺 target_data
 # 就被判 success=False 退回），所以这张表就是「T2 档能不能开」的开关。
-AREA_CARDS = {'神威！', '冻结', '探测雷达'}    # 3×3 区域
+#
+# ⚠️ 这三张是**集合**（成员判断/并集用），边长另外放在 `AREA_SIZE`。
+#    第一版把边长直接写进 AREA_CARDS（dict）→ server 里 `AREA_CARDS | LINE_CARDS`
+#    变成 `dict | set` → TypeError → 被 readiness 的兜底 except 吞掉 →
+#    **大师一张牌都不出，而"被拒动作 0、卡死 0"看起来一切正常**。
+#    "两张含义不同的表共用一个名字"就是这么长出来的：集合就是集合，
+#    尺寸就是尺寸，分开写。
+AREA_CARDS = {'神威！', '冻结', '探测雷达'}
 LINE_CARDS = {'轰炸'}                          # 整行/整列
 CELLS_CARDS = {'硫磺火焰'}                     # 连续 6 格
+
+# 区域卡的边长 —— **按各卡自己的实现**，不是一律 3×3。实测：
+#   · 神威！/ 冻结 → 3×3（`area['x1']..area['x2']` 是闭区间）
+#   · 探测雷达     → **2×2**（卡面与 `apply_magic_effect` 注释都写 2*2）
+# 写错边长的后果不是报错，而是**选区比卡面大一圈**：多圈的格子白送信息（甚至白送伤害）。
+AREA_SIZE = {'神威！': 3, '冻结': 3, '探测雷达': 2}
+DEFAULT_AREA_SIZE = 3
 
 
 def _my_ship_cells(room, ai_id):
@@ -489,27 +587,30 @@ def _my_ship_cells(room, ai_id):
 
 
 def _score_cells(room, ai_id, cells, self_harm=False):
-    """一组格子对 AI 的价值。
+    """一组格子对 AI 的价值。逐格按 `attack_priority` 累加，再叠加自己的船。
 
-    · 已知敌船      +100   （打中就是实打实的一艘）
-    · 未轰过的格    +1     （信息价值：探一格少一格未知）
-    · 自己的船      -100   （对会伤到自己的卡，比如神威打己方棋盘）
+    逐格口径（与 `choose_attack` **同一套模型**，避免"开炮很聪明、选区域却很蠢"）：
+      · 已探明敌船     +3     打中就是实打实一艘（神威！还额外触发"区域内恰好1艘→直接击沉"）
+      · 未知格         +1     还可能藏着船（信息 + 命中期望）
+      · 打过而没中的格  0     单格船打中即沉 → 这格**证明是空的**，再打纯属浪费
+      · 自己的船       -20/格 对会打到自己人的卡（神威！打己方棋盘）是实打实的代价
     """
     me = (getattr(room, 'players', None) or {}).get(ai_id)
-    known = _known_enemy_cells(me) if me is not None else set()
-    attacked = _attacked_cells(me) if me is not None else set()
+    if me is None:
+        return -1.0
+    known, safe, _unknown = enemy_cell_model(room, ai_id)
     mine = _my_ship_cells(room, ai_id)
-    s = 0
+    s = 0.0
     for c in cells:
         c = _cell_of(c) if not isinstance(c, tuple) else c
         if c is None:
             continue
         if c in known:
-            s += 100
-        if c not in attacked:
-            s += 1
+            s += 3.0
+        elif c not in safe:
+            s += 1.0
         if c in mine:
-            s += -100 if self_harm else -1
+            s += -20.0 if self_harm else -1.0
     return s
 
 
@@ -517,6 +618,12 @@ def _area_cells(x, y, size=3):
     """以 (x,y) 为左上角的 size×size 区域（越界自动裁掉）。"""
     return [(a, b) for a in range(x, x + size) for b in range(y, y + size)
             if 0 <= a < BOARD_SIZE and 0 <= b < BOARD_SIZE]
+
+
+def _window_positions(size):
+    """所有 size×size 窗口的左上角（正方形，所以起点上限是 `BOARD_SIZE - size`）。"""
+    n = BOARD_SIZE - size
+    return [(x, y) for x in range(n + 1) for y in range(n + 1)]
 
 
 def resolve_target(room, ai_id, card, rng=None):
@@ -527,20 +634,26 @@ def resolve_target(room, ai_id, card, rng=None):
     """
     try:
         name = str(getattr(card, 'name', card) or '')
-        self_harm = name == '神威！'      # 神威打己方棋盘时区域里的自己船是代价
+        # 神威！ 的目标是【别人棋盘】——`apply_magic_effect` 里 `board` 缺省就是
+        # 'opponent'，所以这里按对方棋盘算，区域里的**自己船**才是代价。
+        self_harm = name == '神威！'
 
         if name in AREA_CARDS:
+            size = int(AREA_SIZE.get(name, DEFAULT_AREA_SIZE))
             best, best_s = None, None
-            for x in range(BOARD_SIZE - 2):
-                for y in range(BOARD_SIZE - 2):
-                    cells = _area_cells(x, y, 3)
-                    s = _score_cells(room, ai_id, cells, self_harm=self_harm)
-                    if best_s is None or s > best_s:
-                        best, best_s = (x, y), s
+            for x, y in _window_positions(size):
+                cells = _area_cells(x, y, size)
+                s = _score_cells(room, ai_id, cells, self_harm=self_harm)
+                if best_s is None or s > best_s:
+                    best, best_s = (x, y), s
             if best is None:
                 return None
             x, y = best
-            return {'target_area': {'x1': x, 'y1': y, 'x2': x + 2, 'y2': y + 2}}
+            # ⚠️ `board` 必须显式带上：apply_magic_effect 读 `target_data.get('board')`，
+            #    缺省是 'opponent'；显式给出才能让"打哪块棋盘"这件事在日志里看得出来。
+            return {'target_area': {'x1': x, 'y1': y, 'x2': x + size - 1,
+                                    'y2': y + size - 1},
+                    'board': 'self' if self_harm else 'opponent'}
 
         if name in LINE_CARDS:
             best, best_s = None, None

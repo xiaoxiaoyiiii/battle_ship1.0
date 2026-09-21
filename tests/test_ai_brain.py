@@ -453,23 +453,61 @@ def test_cards_per_turn_budget_is_declared():
 # resolve_target
 # ---------------------------------------------------------------------------
 
-def test_resolve_target_area_is_in_bounds_and_three_by_three():
+def test_resolve_target_area_matches_each_card_declared_size():
+    """区域边长必须**按各卡自己的实现**，不是一律 3×3。
+
+    ⚠️ 这条用例守的是一个真实的坑：`探测雷达` 的卡面与 `apply_magic_effect`
+       都写 **2×2**，而第一版 `AREA_CARDS` 把三张卡一律当 3×3 处理 ——
+       选区比卡面大一圈，多圈的格子会被白送（多显形 / 多扣船），
+       而且**不报错**。所以断言写成"对着 `AREA_CARDS` 里声明的边长逐张验"。
+    """
     room = _mk_room(_mk_player(), _mk_player())
-    for name in ai_brain.AREA_CARDS:
+    assert ai_brain.AREA_CARDS == {'神威！', '冻结', '探测雷达'}
+    assert ai_brain.AREA_SIZE.get('探测雷达') == 2, '探测雷达卡面是 2*2'
+    # ⚠️ AREA_CARDS 必须是**集合**：server 里要用它跟 LINE_CARDS/CELLS_CARDS 求并集。
+    #    第一版把边长写进了 AREA_CARDS（dict）→ `dict | set` 抛 TypeError →
+    #    被 readiness 的兜底 except 吞掉 → 大师一张牌都不出，而"被拒 0、卡死 0"
+    #    看起来完全正常。这条断言就是那次事故的守卫。
+    assert isinstance(ai_brain.AREA_CARDS, set)
+    assert isinstance(ai_brain.LINE_CARDS, set)
+    assert isinstance(ai_brain.CELLS_CARDS, set)
+    _ = ai_brain.AREA_CARDS | ai_brain.LINE_CARDS | ai_brain.CELLS_CARDS
+    for name, size in ai_brain.AREA_SIZE.items():
+        assert name in ai_brain.AREA_CARDS, f'{name} 有尺寸但不在区域卡集合里'
+        assert size >= 2, name
+    for name, size in ai_brain.AREA_SIZE.items():
         got = ai_brain.resolve_target(room, AI, _mk_card(name))
         a = got['target_area']
-        assert a['x2'] - a['x1'] == 2 and a['y2'] - a['y1'] == 2, name
+        assert a['x2'] - a['x1'] == size - 1, f'{name} 宽度应为 {size}'
+        assert a['y2'] - a['y1'] == size - 1, f'{name} 高度应为 {size}'
         assert 0 <= a['x1'] and a['x2'] < 6 and 0 <= a['y1'] and a['y2'] < 6, name
 
 
 def test_resolve_target_area_prefers_a_known_enemy_ship():
-    """区域里圈到已知敌船 = 那一圈最值钱（+100 一票压过信息价值）。"""
+    """区域里圈到已知敌船 = 那一圈最值钱（+3 一票压过信息价值）。"""
     me = _mk_player(revealed=[(4, 4)])
     room = _mk_room(me, _mk_player())
     got = ai_brain.resolve_target(room, AI, _mk_card('神威！'))
     a = got['target_area']
     inside = (a['x1'] <= 4 <= a['x2']) and (a['y1'] <= 4 <= a['y2'])
     assert inside, '已知敌船 (4,4) 没被圈进去: %s' % a
+
+
+def test_resolve_target_shuns_cells_that_are_proven_empty():
+    """「打过而没中」的格证明是空的（单格船打中即沉），区域评分必须是 0 分。
+
+    这条守住"选区不往已知空区域丢"——否则区域卡会跟随机开炮一样浪费。
+    """
+    me = _mk_player(revealed=[(5, 5)])
+    # 把 (0,0)-(1,1) 这一片全打空（含探测雷达/溅射留下的扫描痕迹）
+    for x in range(2):
+        for y in range(2):
+            me.attacks.append(Position(x=x, y=y, hit=False, is_splash=True))
+    room = _mk_room(me, _mk_player())
+    got = ai_brain.resolve_target(room, AI, _mk_card('神威！'))
+    a = got['target_area']
+    # 已知敌船 (5,5) 必须被优先圈中，而不是去圈那片打空的
+    assert a['x1'] <= 5 <= a['x2'] and a['y1'] <= 5 <= a['y2'], a
 
 
 def test_resolve_target_line_is_a_valid_row_or_col():

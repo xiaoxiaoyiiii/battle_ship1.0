@@ -249,6 +249,118 @@ def test_damage_stats_is_empty_safe():
 
 
 # ---------------------------------------------------------------------------
+# 4b. ★ 逐炮判定的纯函数：命中 / 击沉 / 被盾挡
+# ---------------------------------------------------------------------------
+# `_shot_verdict` / `_sunk_at` / `_shielded_by` 是「击沉与命中指标」的判据层。
+# 集成测试（`test_damage_stats_*`）只能间接地通过"跑一局"碰它们，而盾/无敌这类
+# 低概率状态在随机对局里不一定出现 —— 直接构造局面钉住三个函数的返回值，
+# 才能保证"命中率把盾挡下的那一炮算成 miss、击沉只看 hits 填满"这些口径不漂。
+
+def _mk_two_player_room():
+    room_id = server.room_manager.create_ai_room('human-0', 'P2', None, 'hard')
+    room = server.room_manager.get_room(room_id)
+    opp = 'human-0'
+    room.players[opp] = server.Player(
+        name='P2', ships=[], attacks=[], remaining_ships=0, user_id=None, sid=opp)
+    return room_id, room
+
+
+def test_shot_verdict_distinguishes_ship_from_empty_cell():
+    """`_shot_verdict`：有船格 = 'hit'，空格 = ''。"""
+    room_id, room = _mk_two_player_room()
+    try:
+        ai_id = server._ai_player_id(room)
+        opp = server._opponent_of(room, ai_id)
+        # 对手棋盘：(2,3) 有一艘单格船
+        room.players[opp].ships = [
+            server.PlayerShip(positions=[server.Position(x=2, y=3)], hits=[])]
+        assert hg._shot_verdict(room, ai_id, 2, 3) == 'hit'
+        assert hg._shot_verdict(room, ai_id, 0, 0) == ''
+    finally:
+        server.room_manager.delete_room(room_id)
+
+
+def test_sunk_at_only_true_when_hits_fill_the_ship():
+    """`_sunk_at`：hits 数 >= 船格数 才算沉；无敌中不记 hits → 自然 False。"""
+    room_id, room = _mk_two_player_room()
+    try:
+        ai_id = server._ai_player_id(room)
+        opp = server._opponent_of(room, ai_id)
+        ship = server.PlayerShip(
+            positions=[server.Position(x=1, y=1)], hits=[])
+        room.players[opp].ships = [ship]
+        # 没被打过 → 没沉
+        assert hg._sunk_at(room, ai_id, 1, 1) is False
+        # 单格船被打了一下 → 沉了
+        ship.hits = [server.Position(x=1, y=1)]
+        assert hg._sunk_at(room, ai_id, 1, 1) is True
+        # 打错格 → 那格上没船 → False
+        assert hg._sunk_at(room, ai_id, 5, 5) is False
+    finally:
+        server.room_manager.delete_room(room_id)
+
+
+def test_shielded_by_detects_shield_and_invincible():
+    """`_shielded_by`：盾或无敌都算"被挡下"，两者都没有才算真命中。
+
+    ★ 这是 hit_rate 口径的关键：被盾挡下的那一炮进 `shielded_shots`，
+       **不**进 `hit_shots`。若这里判错，命中率会把"盾挡住"也算成命中，
+       或把"真命中"算成被挡 —— 整个侵略性指标就废了。
+    """
+    room_id, room = _mk_two_player_room()
+    try:
+        ai_id = server._ai_player_id(room)
+        opp = server._opponent_of(room, ai_id)
+        ship = server.PlayerShip(
+            positions=[server.Position(x=3, y=3)], hits=[])
+        room.players[opp].ships = [ship]
+
+        # 裸船：既没盾也没无敌
+        assert hg._shielded_by(room, ai_id, 3, 3) is False
+        # 仁王之盾 / 卧薪尝胆给的盾
+        ship.shield = True
+        assert hg._shielded_by(room, ai_id, 3, 3) is True
+        ship.shield = False
+        # 无敌（八卦阵等）
+        ship.invincible = True
+        assert hg._shielded_by(room, ai_id, 3, 3) is True
+        # 空格上没船 → False（不能因为判不到船就当成被挡）
+        assert hg._shielded_by(room, ai_id, 0, 0) is False
+    finally:
+        server.room_manager.delete_room(room_id)
+
+
+def test_note_shot_buckets_are_mutually_exclusive():
+    """`_note_shot` 的四个桶互斥，且 rejected 不进 hit/miss/shielded。
+
+    直接调 `_note_shot` 比跑一局更能钉住"被门禁挡下的那一炮不计入命中"这条
+    口径 —— 否则一次回归会让 hit_rate 把被拒的炮也算进分母。
+    """
+    result = hg.GameResult(seed=0)
+    pid = 'p1'
+    runner = hg.HeadlessGame(lambda: None, lambda: None, seed=0)
+    try:
+        runner.result = result
+        runner._note_shot(pid, hit=True)            # 真命中
+        runner._note_shot(pid, shielded=True)        # 被盾挡
+        runner._note_shot(pid, miss=True)            # 未命中
+        runner._note_shot(pid, rejected=True)        # 被门禁拒
+        runner._note_shot(pid, hit=True, sunk=True)  # 命中且击沉
+        assert result.attacks_fired[pid] == 5
+        assert result.hit_shots[pid] == 2            # 真命中两炮
+        assert result.shielded_shots[pid] == 1
+        assert result.miss_shots[pid] == 1
+        assert result.rejected_shots[pid] == 1
+        assert result.kills[pid] == 1                # 击沉只算那次 sunk=True
+        # 命中率 = 真命中 / 开炮（被拒、被盾都不算命中）
+        fired = result.attacks_fired[pid]
+        hits = result.hit_shots[pid]
+        assert hits / fired == 2 / 5
+    finally:
+        runner.result = None
+
+
+# ---------------------------------------------------------------------------
 # 4c. ★ 度量工具本身必须可复现（"对照组"最容易悄悄长出熵随机源）
 # ---------------------------------------------------------------------------
 #

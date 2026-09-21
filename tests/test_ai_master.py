@@ -807,6 +807,27 @@ def test_master_unsettled_catches_shenji_and_dice(master_room):
     assert server._master_unsettled(master_room, ai_id) == []
 
 
+def test_master_unsettled_catches_priority_continue(master_room):
+    """被「优先响应」拦下的阶段转换也必须是"没结算完"。
+
+    ★ 这是 `_master_unsettled` 七条通道里**唯一**此前没被单测钉住的一条。
+    形状：大师调 `enter_battle_phase`，对方有「优先响应」类卡牌把阶段转换拦下，
+    `room.priority_continue` 被置上 `{'actor', 'action'}`，等对方响应完再由
+    `_priority_continue` 补放。若这条通道漏判，大师会在"阶段还没真正切过来"时
+    就开始出牌/开炮 —— 与本提交要消灭的「上一个效果还没结算完下一张已经打出」
+    是同一种病，只是发生在阶段转换上。
+    """
+    ai_id = _fill_boards(master_room)
+    # 形状照 `_maybe_priority_intercept` 的赋值写（actor/action 两个键）。
+    master_room.priority_continue = {'actor': ai_id, 'action': 'enter_battle_phase'}
+    reasons = server._master_unsettled(master_room, ai_id)
+    assert reasons and any('阶段转换' in r for r in reasons), reasons
+
+    # 对方响应完、`_priority_continue` 把它清成 None 后，必须放行。
+    master_room.priority_continue = None
+    assert server._master_unsettled(master_room, ai_id) == []
+
+
 def test_master_unsettled_ignores_only_the_opponents_ship_picks(master_room):
     """★ 一处**有意**的收窄：真人名下的选船待办不算"没结算完"。
 

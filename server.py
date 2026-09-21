@@ -5414,9 +5414,60 @@ def _ai_maybe_play_magic(room, ai_id: str) -> bool:
 #    详见 docs/MASTER_AI_2026_09_21.md 的实施进度小节。
 
 
+# ⚠️ 「结算时要读 `target_data` 里**自己选的那一格**」的卡 —— 目前只有克苏鲁之眼。
+#
+# 为什么不能只靠 `_is_master_target_card`：那个判据管的是「区域 / 整行整列 /
+# 连续 6 格」三种**形状**，形状由 `ai_brain.resolve_target` 算得出来。
+# 而克苏鲁之眼要的是「施法者自己那一艘船」的坐标 —— 决策层算不出"我该献出
+# 哪一艘"（那既不是区域也不是行列），于是 `_master_card_readiness` 只能回 `{}`，
+# 可 `apply_magic_effect` 里 `_pick_cell_from_target({})` 是 `None` →
+# 卡一打出去就被 `_refund_card_to_hand` 退回，真人那边看到的是
+#
+#     克苏鲁之眼未发动：请选择一艘自己的战舰，卡牌已退回手牌
+#
+# （作者 2026-09-22 实测报的「选区一闪就没了 / 说我没选」就是这个形态：
+#  卡**根本没进到"该对手选"那一步**，它在施法者自己那一半就死了）。
+# 实测见 `tools/repro_ai_kraken_eye.py`，守卫见
+# `tests/test_ai_redeploy_and_kraken_eye.py::test_own_cell_cards_are_guarded_by_the_master_pool`。
+#
+# 加卡进池时：若某张卡在 `apply_magic_effect` 里用 `_pick_cell_from_target`
+# 取"自己的格子"，**必须**登记到这里并同时补决策层能力，否则就是上面那条形状。
+_MASTER_OWN_CELL_CARDS = frozenset({'克苏鲁之眼'})
+
+# AI 能算出目标形状的那些卡（区域 / 整行整列 / 连续 6 格）—— 与
+# `_is_master_target_card` 同一份来源，只是在这里取成一个常量，
+# 供"哪些卡需要 target_data"类守卫直接比对（`_is_master_target_card` 是函数，
+# 守卫里拿不到集合本身）。
+_MASTER_TARGET_CARDS = frozenset(ai_brain.AREA_CARDS | ai_brain.LINE_CARDS
+                                | ai_brain.CELLS_CARDS)
+
+
 def _is_master_target_card(name) -> bool:
-    return str(name or '') in (ai_brain.AREA_CARDS | ai_brain.LINE_CARDS
-                               | ai_brain.CELLS_CARDS)
+    return str(name or '') in _MASTER_TARGET_CARDS
+
+
+# 「房间级重摆」的卡 —— 这三张会把 `room.state` 推到 `placing_ships`，
+# 并各自留下一个 `handle_place_ships` 的收尾标记。
+#
+# `_master_card_readiness` 靠这张表挡住"重摆窗口内再打一张"：
+# 两张重摆卡的标记会**同时挂上**，而 `handle_place_ships` 的收尾是一条
+# `if huiguang… elif lingqi…` 的**互斥链** —— 只有一支会被消费，另一支永远留着，
+# `lingqi_saved_state` 再也回不去（实测见 `tools/probe_ai_redeploy.py`）。
+#
+# ⚠️ 只收「会置 `room.state='placing_ships'`」的那三张。走
+#    `pending_placement`（增援 / 死者苏生 / 滥竽充数 / 绝处逢生）与
+#    `shenji_redeploy`（神机妙算）的那几张**不改 room.state**，各有自己的
+#    收尾，不在本表里 —— 把它们一起挡掉会白砍卡池（CLAUDE.md 教训 #9：
+#    改共用判据前先按 kind 逐个表态）。
+#    （实测确认：`绝处逢生` 只调 `_start_placement`，**不**改 room.state，
+#      所以它属于这一类，不属于本表。）
+# ⚠️ 这是**判据表**，不是"想开就开"的清单：往池子里加卡时若它会置
+#    `room.state='placing_ships'`，必须同时登记到这里。
+_MASTER_REDEPLOY_CARDS = frozenset({
+    '回光返照',      # 清自己棋盘重摆 → room.state = 'placing_ships'
+    '灵气复苏',      # 双方重摆到指定船数 → room.state = 'placing_ships'
+    '败者食尘',      # 双方重摆 + 攻击归零 → room.state = 'placing_ships'
+})
 
 
 # 大师 AI 可以进候选池的卡。**必须以「能真的结算」为前提**，不是"想开就开"：
@@ -5436,7 +5487,6 @@ _MASTER_ENABLED_CARDS = frozenset({
     '轰炸',          # 整行/整列
     '硫磺火焰',      # 连续 6 格，强制击杀（无视无敌/盾牌）
     # ③ 前置简单到能精确判掉
-    '克苏鲁之眼',    # 双方各暴露一艘 → 单格船暴露即等于被击沉
     '守株待兔',      # 给自己一艘船挂陷阱，死亡则对方牺牲两艘
     '盗亦有道',      # 偷对方刚打出的上一张
     '加百列之光',    # 康掉本回合被无效化过的牌
@@ -5467,6 +5517,19 @@ _MASTER_ENABLED_CARDS = frozenset({
 
 # 刻意**留在池外**的卡与理由（放开前必须先补对应能力）：
 #
+#   克苏鲁之眼（★ 2026-09-22 移出池子）
+#       → 结算时先要施法者给出**自己那一艘船的坐标**（`_pick_cell_from_target`），
+#         而决策层算不出"我该献出哪一艘" —— `_master_card_readiness` 只能回 `{}`，
+#         卡一打出去就被 `_refund_card_to_hand` 退回。作者实测报的症状是
+#         「通过之后都不给我选自己船暴露的机会，就直接说我没选」：
+#         卡**在施法者自己那一半就死了**，根本走不到"该对手选船"那一步。
+#         即使补上坐标能力，它的收益也要等**对手**选完船才到账（真人那一路
+#         `_request_ship_pick` 只入队、同步返回 None），而回合那时已经交出去了
+#         → 大师纯亏一张牌。要开它必须先做两件事：
+#           ① 给 `_master_card_readiness` 一个"自己那一格"的来源；
+#           ② 把效果的「等待前 / 回答后」两段拆开（现在只有前一段）。
+#         守卫：`tests/test_ai_redeploy_and_kraken_eye.py::test_kraken_eye_is_never_picked_by_master`
+#         复现：`tools/repro_ai_kraken_eye.py`
 #   神之宣告
 #       → 结算时是「选 2 艘自己的船牺牲 + 选一个后续效果」两道交互，
 #         而且对自己是**净亏**（死 2 艘换对方 1 艘或一次跳回合）——
@@ -5564,6 +5627,25 @@ def _master_card_readiness(room, ai_id, card):
         #    每次都白跑一遍 handler、还往对局日志里刷一条"出牌被拒"。
         if getattr(caster, 'magic_blocked', None):
             return None
+
+        # ── 1.5 ★ 房间已经停在「等重新摆放」时，一张重摆卡都不许再打 ──────
+        #
+        # 为什么要有这一条（2026-09-22 修，作者实测报的）：
+        #   `回光返照` 会把 `room.state` 置成 `placing_ships` 并等**施法者自己**
+        #   摆完。AI 当施法者时那个窗口本来是异步的（自救逻辑在
+        #   `_ai_master_turn` 的后台循环里），窗口里房间状态是"谁都没法正常行动"。
+        #   此时若再打一张重摆卡（回光返照 / 灵气复苏 / 败者食尘），
+        #   两套重摆标记就会叠在同一个房间上：
+        #     实测（tools/probe_ai_redeploy.py，AI 手牌 ['灵气复苏','回光返照']）
+        #     两张出完之后 `huiguang_awaiting_placement` 与
+        #     `lingqi_resurgence_applied` **同时挂上**，而 `handle_place_ships`
+        #     的收尾是 `if huiguang… elif lingqi…` 的**互斥链** ——
+        #     只有一支会被消费，另一支永远留着，`lingqi_saved_state` 再也回不去。
+        #   卡池里这三张都会要求重新摆放，所以在"重摆窗口内"
+        #   一律判成打不了：**宁可少出一张，也不能让房间带着两个未消费的重摆标记**。
+        if room.state == 'placing_ships' and name in _MASTER_REDEPLOY_CARDS:
+            return None
+
         for gate in (_last_attack_requirement_reason,
                      _wangyang_requirement_reason,
                      _woxin_requirement_reason,
@@ -5585,9 +5667,20 @@ def _master_card_readiness(room, ai_id, card):
             return {} if int(getattr(caster, 'damage_dealt_this_turn', 0) or 0) == 0 else None
 
         if name == '克苏鲁之眼':
-            # 双方都必须有船（自己要有船去暴露，对方要有船能被探明）。
-            # 单格船 ⇒ 对方船位一暴露，下一炮就是必中，情报直接换一艘。
-            return {} if (caster_alive > 0 and opp_alive > 0) else None
+            # ★ 2026-09-22：**这张牌留在池外，永远判成打不了**（返回 None）。
+            #
+            # 它要施法者先给出「自己那一艘船的坐标」才能结算，而决策层给不出来
+            # （见 `_MASTER_OWN_CELL_CARDS` 的说明）。返回 `{}` 会让大师**每回合
+            # 白打一次**：卡进弃牌堆又被 `_refund_card_to_hand` 退回来，真人那边
+            # 看到的是「克苏鲁之眼未发动：请选择一艘自己的战舰」。
+            #
+            # 这不是"保守"，是判据：只要给不出自己那一格，这张卡在施法者自己
+            # 那一半就已经死了（作者实测报的那条）。同时 —— 即使补上坐标能力，
+            # 这张卡的收益也要等**对手**在自己的回合里选完船才会到账
+            # （对手是真人时 `_request_ship_pick` 只是入队，同步拿不到船），
+            # 而回合一交出去，大师已经决策完这一轮了 → 纯亏一张牌。
+            # 所以正确的结论是留在池外，而不是"想办法让它打得出去"。
+            return None
 
         if name == '守株待兔':
             # 结算时要"选自己一艘船挂陷阱"，没船可选就是失败。
@@ -5775,6 +5868,64 @@ def _ai_master_pick(room, ai_id, cards_played=0):
 _MASTER_TURN_STEPS = 60
 # 每次动作后的「连锁收敛 + 待办消费」等待轮次（每轮 0.3s）。
 _MASTER_SETTLE_STEPS = 40
+
+# ★ 2026-09-22：**大师每打出一张牌 / 每开一炮之前，先停这么一下**（秒）。
+#
+# 为什么要有它（作者实测报的「大师AI出牌太快了实在是，快到看不清」）：
+#   大师一回合最多出 `ai_brain.CARDS_PER_TURN`（=3）张牌，而每一张都是
+#   **在同一段后台循环里瞬间跑完**的：卡牌生效、棋盘刷新、手牌更新几乎同时到。
+#   原来只有出牌/开炮**之后**的 `time.sleep(0.3)`（那是给连锁窗口收敛用的），
+#   下一张牌接着就落了 —— 三张牌加上几炮挤在一秒出头里，真人只看到棋盘闪一下。
+#
+# 取值理由（0.8 秒）：
+#   · 人眼要看清「哪张牌被打出、什么效果生效」，需要一个**焦点转移**的间隔；
+#     0.3~0.4 秒与 UI 的动画时长同量级，仍然像"同时发生"，看不清。
+#   · 反面约束是"别把对局拖到难忍"：大师单回合的动作上限约 = 3 张牌 + 6 炮
+#     （见 `_MASTER_TURN_STEPS` 与 `attacks_remaining`），最坏 9 个动作
+#     → 额外约 7.2 秒。而真人自己一个回合本来就要点好几下、看若干次动画，
+#     7 秒量级不会让对局明显变慢；再往上（≥1.5 秒）就会变成"干等 AI"。
+#   · 因此取 0.8：**明显看得清，但不至于等到不耐烦**。
+# 只作用于大师分支（`_ai_master_turn`），easy/normal/hard 一行不改。
+_MASTER_ACTION_PACING = 0.8
+
+
+def _is_ai_seat(player_id) -> bool:
+    """这个座位 id 是不是电脑座位（`'ai-'+room_id`）。
+
+    与 `_ai_player_id(room)` 的区别：那个是"房间里**那一个** AI 位"，
+    这个是"**给进来的这个 id** 是不是 AI"。两者在不同场景用：
+      · 房间视角（"AI 该出牌了"）用 `_ai_player_id`；
+      · 玩家视角（"这一份 emit 是发给谁"）必须用本函数 ——
+        人机房里只有一个 AI，但施法者/对手是**两个不同的座位**，
+        拿 `_ai_player_id` 判"对手是不是 AI"会在别处读错。
+    """
+    return str(player_id or '').startswith('ai-')
+
+
+def _ai_seat_places_board_now(room, pid) -> bool:
+    """**同一个服务端调用里**替 AI 座位 `pid` 把棋盘摆完并走完摆放收尾。
+
+    为什么必须就地完成（而不是留给 `_ai_turn_loop` 那两段"自己爬起来"）：
+
+      `回光返照` 这类「只清施法者自己棋盘」的卡会把 `room.state` 置成
+      `placing_ships`，再 `emit('reset_gameboard', …, to=caster.sid)` —— 而 AI 的
+      `sid` 是 `'ai-'+room_id`，**从来没有 socket 连接**，那一份事件石沉大海。
+      于是房间停在 `placing_ships`，等待摆放的人是**施法者自己（AI）**，AI 却
+      只能等后台循环下一圈才去摆。这中间有一段窗口，房间里没有一个玩家处在
+      正常状态 —— 对手（真人）什么事件都收不到，却已经不在对局里了。
+
+      AI 没有 UI 要等，所以它应当**立刻**摆好：本函数在同一栈帧里把船放上去、
+      让 `room.state` 马上回到正常。对手因此**永远不该看到 `placing_ships`**，
+      也就不需要给他塞一份他不需要的 `reset_gameboard`。
+
+    ⚠️ 这里**不自己写收尾逻辑**，一律走 `_ai_place_board` → `handle_place_ships`
+       （收尾只在那一处，别的地方复刻就是第二份真相，CLAUDE.md 教训 #1）。
+    """
+    if not _is_ai_seat(pid):
+        return False
+    if room.players.get(pid) is None:
+        return False
+    return _ai_place_board(room, pid)
 
 
 def _ai_place_board(room, pid) -> bool:
@@ -6235,6 +6386,10 @@ def _ai_master_turn(room_id: str, room, ai_id: str):
             break
         if played >= int(getattr(ai_brain, 'CARDS_PER_TURN', 1) or 1):
             break
+        # ★ 节奏：让真人看清"对方打出了什么"再落牌（详见 _MASTER_ACTION_PACING）。
+        #   排在这里（**动作之前**）而不是之后：真人先看到自己棋盘/手牌的原样，
+        #   再看到这一张牌生效 —— 间隔落在"焦点转移"上才看得清。
+        time.sleep(_MASTER_ACTION_PACING)
         if not _master_play_one(room_id, ai_id, played):
             break
         played += 1
@@ -6244,6 +6399,9 @@ def _ai_master_turn(room_id: str, room, ai_id: str):
             return
 
     # ① 进入战斗阶段（与普通/困难一致）
+    # ★ 节奏：阶段转换也停一下，让上一张牌的结果先落定、真人看清楚
+    #   （详见 _MASTER_ACTION_PACING）。
+    time.sleep(_MASTER_ACTION_PACING)
     resp = enter_battle_phase({'room_id': room_id, 'player_id': ai_id})
     if not (resp and resp.get('status') == 'success'):
         room2 = room_manager.get_room(room_id)
@@ -6295,6 +6453,8 @@ def _ai_master_turn(room_id: str, room, ai_id: str):
         # ★ 步骤 1：出牌（含"上一炮刚命中/刚击沉"触发的条件卡）。
         #   必须排在攻击之前 —— 反过来的话「溅射 / 越战越勇」的窗口永远被自己错过。
         if played < int(getattr(ai_brain, 'CARDS_PER_TURN', 1) or 1):
+            # ★ 节奏：出牌前停一下（详见 _MASTER_ACTION_PACING）。
+            time.sleep(_MASTER_ACTION_PACING)
             if _master_play_one(room_id, ai_id, played):
                 played += 1
                 progressed = True
@@ -6320,6 +6480,10 @@ def _ai_master_turn(room_id: str, room, ai_id: str):
             shot = _ai_choose_attack(room, ai_id)
             if shot is not None:
                 x, y = shot
+                # ★ 节奏：开炮前停一下（详见 _MASTER_ACTION_PACING）——
+                #   真人要能看清"这一炮打在哪、打中还是打空"，连着打完
+                #   六炮只会看到棋盘一次性变样。
+                time.sleep(_MASTER_ACTION_PACING)
                 handle_attack({'room_id': room_id, 'player_id': ai_id, 'x': x, 'y': y})
                 time.sleep(0.3)
                 room, ok = _master_settle(room_id, ai_id)
@@ -10976,6 +11140,15 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                 'message': '败者食尘生效，双方棋盘已重置为6艘，请重新摆放（手牌保留）'
             }, to=player.sid)
 
+        # ★ 2026-09-22：与回光返照同一形状 —— **AI 当施法者时它自己那一半必须
+        #   当场摆完**（详见 `_ai_seat_places_board_now` 与回光返照分支的说明）。
+        #   败者食尘是"双方一起重摆"，真人那份 `reset_gameboard` 已经发出去了
+        #   （他确实要重新摆，这是卡面要求），但房间不该停在"AI 还没摆"的中间态：
+        #   那个中间态里 AI 的自救排在后一个大回合的预算检查后面（异步），
+        #   实测会出现"AI 一直 0 艘船、却已经在开炮"的窗口
+        #   （`tools/probe_ai_redeploy.py` 的手牌 ['败者食尘'] 一栏）。
+        _ai_seat_places_board_now(room, caster_id)
+
         result['message'] = '败者食尘生效：双方棋盘重置为6艘并重新摆放，手牌保留；本大回合双方攻击次数为0'
         # 立即返回：已清空双方战舰并重置为布船阶段，
         # 不能落入末尾"对手剩余船数<=0 则游戏结束"的兜底判断（会误判 game_over）
@@ -11592,7 +11765,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         room.players[opponent_id].revealed_positions.extend(caster_positions)
         emit('revealed_positions', {'positions': caster_positions}, to=room.players[opponent_id].sid)
 
-        # 卡面：然后【对方也选择一艘船】暴露位置（AI 由服务端代选）
+        # 卡面：然后【对方也选择一艘船】暴露位置（AI 由服务端代选 —— 见
+        # `_request_ship_pick`：chooser 是 AI 才同步返回一艘船，是真人则**只入队**）。
         picked = _request_ship_pick(
             room, opponent_id, 'kraken_eye',
             '克苏鲁之眼生效：请点选一艘自己的战舰暴露位置')
@@ -11602,7 +11776,15 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             emit('revealed_positions', {'positions': picked.positions}, to=room.players[caster_id].sid)
         emit('revealed_positions', {'positions': caster_positions}, to=room.players[opponent_id].sid)
 
-        result['message'] = '双方各暴露一艘战舰位置'
+        # ⚠️ 2026-09-22：**不能说假话**。
+        # 对手是真人时上面那句 `_request_ship_pick` 只是**入队**（对方还没选），
+        # 这里却曾经无条件宣布「双方各暴露一艘战舰位置」—— 卡面承诺的事只完成了
+        # 一半，而对外宣称全做完了（CLAUDE.md 的落地口径：等真人回答的效果，
+        # 不许在回答之前宣称完成）。文案按"对手到底选了没"分岔。
+        if picked is not None:
+            result['message'] = '双方各暴露一艘战舰位置'
+        else:
+            result['message'] = '已暴露自己一艘战舰的位置，等待对方选择要暴露的战舰'
 
     elif card.name == 'Freezing！':
         # 发动条件（三条缺一不可）：
@@ -12096,7 +12278,28 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             'new_max_ships': caster.max_ships,
             'message': '回光返照生效，请重新摆放战舰',
         }, to=caster.sid)
-        
+
+        # ★ 2026-09-22 修：**AI 当施法者时，摆放必须在同一个调用里就地做完。**
+        #
+        # 上面那份 `reset_gameboard` 是 `to=caster.sid` 单发的，而 AI 的 sid 是
+        # `'ai-'+room_id` —— **没有这条 socket 连接**，事件石沉大海；可
+        # `room.state` 已经变成 `placing_ships` 了。于是房间停在"等待摆放"，
+        # 等的人却是施法者自己（AI）。AI 的自救在 `_ai_master_turn` 的后台循环里
+        # （`if room.state == 'placing_ships': _ai_place_board(...)`），那是
+        # **异步**的、要等下一圈才跑 —— 中间这段窗口里真人既不在对局里、也没收到
+        # 任何事件，表现就是作者实测的「棋盘上一艘船都没有、界面卡没了」。
+        #
+        # AI 没有 UI 要等，所以它就地摆完：`_ai_place_board` 走的是
+        # `handle_place_ships`，也就是**玩家点"确认布船"时同一个入口**，
+        # 收尾（`huiguang_awaiting_placement` 分支 → 回到自己的准备阶段、
+        # 攻击次数为 0）一份不差。对手因此永远不会看到 `placing_ships`。
+        #
+        # ⚠️ 必须排在上面那个 emit **之后**：语义仍是"重摆 + 重摆完成"两条事件，
+        #    只是不再有中间那段谁都不正常的窗口。
+        # ⚠️ `_ai_seat_places_board_now` 内部对真人座位直接返回 False（真人要自己摆），
+        #    这里绝不会替真人做选择。
+        _ai_seat_places_board_now(room, caster_id)
+
         # 设置效果：如果对方在这一大回合内对自己的船造成伤害，自己直接判负
         room.game_effects['last_chance'] = {
             'caster': caster_id,

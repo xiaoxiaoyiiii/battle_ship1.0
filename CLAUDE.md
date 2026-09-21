@@ -32,7 +32,7 @@ python -m pytest tests/ -q    # 基线见下
 - ⚠️ 本机临时目录 ACL 坏过，pytest 若在 setup 报 `PermissionError: Temp\pytest-of-Administrator`，
   先 `New-Item -ItemType Directory -Force .tmp\pytemp`，再
   `$env:TMP="$PWD\.tmp\pytemp"; $env:TEMP=$env:TMP; python -m pytest tests/ -q -p no:cacheprovider`。
-- **实测基线（2026-09-22）**：`2033 passed`；跑完约 29 秒。
+- **实测基线（2026-09-22）**：`2050 passed`；跑完约 27 秒。
   含无头对局驱动 `tools/headless_game.py`（约 250 局/秒）、大师 AI 决策层 `ai_brain.py`
   与大师接线层 `tests/test_ai_master.py` 的用例。
 
@@ -284,6 +284,18 @@ phase:                        preparation → battle → end
     更极端的是：**在 9 张卡的池子里，整套价值表一分钱都不值**（48.2% → 48.2%）。
     → 加卡 / 调权重前先问一句"**是能选的东西变多了，还是选得更聪明了**"；
     后者往往是小的，前者往往是大的。
+38. **AI 座位上的交互必须"就地同步"完成，不能留给后台任务**（2026-09-22，作者实报两条）：
+    ① `回光返照` 把 `room.state` 置成**房间级** `placing_ships`，但 `reset_gameboard` 只
+    `to=caster.sid` —— 施法者是 AI 时那个 sid **从无连接、事件石沉大海**，真人被拖进布船屏
+    却收不到 `new_max_ships` ⇒ `maxShips` 为 undefined ⇒ **点格子没反应、棋盘看着一艘空**
+    （正是本文件那条注释自己预警过的坑）。修法：AI 座位**在同一栈帧内就地摆完**
+    （`_ai_seat_places_board_now`），`state` 立刻回 `attacking`，真人**永远看不到**布船屏。
+    ② `克苏鲁之眼` 的 `picked = _request_ship_pick(...)` 把**真人的"已入队"当成了"没选"**
+    （该函数对真人只入队并返回 `None`），于是卡在**施法者自己那一半**就死了、还对外宣称
+    「双方各暴露一艘战舰位置」。→ **要等真人回答的卡，在回答之前一律不许返回成功、
+    更不许宣称完成**；AI 自己拿不出交互参数（如给不出自己那一格）就**别打这张卡**。
+    ⚠️ 守卫要写成**源码级扫描**（扫出所有调 `_pick_cell_from_target` 的卡、逐张要求交代），
+    否则只能抓住**已经犯过**的那两张。
 
 ---
 

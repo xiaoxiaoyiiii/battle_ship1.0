@@ -46,6 +46,29 @@ import random
 BOARD_SIZE = 6
 
 
+def _rng(rng=None):
+    """取这次决策要用随机数发生器。
+
+    ⚠️ **必须是调用方传进来的，否则退化到模块级 `random` —— 绝不许返回
+       `random.Random()`。** 这一条是本项目一个真实缺陷的修复（2026-09-22）：
+
+        `random.Random()` 不给种子时是用**系统熵**播种的，所以
+        `rng = rng or random.Random()` 等于"每次调用都换一个不可复现的随机源"。
+        后果有两层：
+          · 生产：AI 的开炮/放置/选船其实是**熵随机**的 —— 本模块头上
+            "rng 注入而非用全局 random，为了可复现"那句注释是假的；
+          · 度量：无头驱动器的 `random.seed(seed)` 管不到它，
+            **同一 seed 跑同一局会得到不同的结果**（实测：同一进程内跑 6 次
+            seed=1，回合数在 3~11 之间跳、胜负都会翻）。
+        我据此做过的每一张卡的消融对照，里面都掺了这个噪声。
+
+    退化到**模块级 `random`**（而不是新建实例）才是对的：驱动器与
+    `handle_attack` 都把 `random.seed()` 打在同一份全局状态上，
+    所以整局从猜拳到开炮都走同一条可复现的序列。
+    """
+    return rng if rng is not None else random
+
+
 # ===========================================================================
 # 只读小工具（都只碰「公开信息」）
 # ===========================================================================
@@ -195,7 +218,7 @@ def choose_attack(room, ai_id, rng=None):
        情报就是全部优势。想再强只能靠更准的探明手段，不是靠更聪明的猜。
     """
     try:
-        rng = rng or random.Random()
+        rng = _rng(rng)
         me = (getattr(room, 'players', None) or {}).get(ai_id)
         if me is None:
             return None
@@ -234,7 +257,7 @@ def resolve_ship_pick(room, ai_id, reason, candidates, rng=None):
     ⚠️ 只用 `对方.attacks`（公开的炮击记录）来判断，不看 `对方.ships`。
     """
     try:
-        rng = rng or random.Random()
+        rng = _rng(rng)
         cands = [s for s in (candidates or []) if s is not None]
         if not cands:
             return None
@@ -289,7 +312,7 @@ def resolve_placement(room, ai_id, kind, candidates, rng=None):
        调用方算出的 `candidates` 已经是合法集，本函数**不做二次过滤**。
     """
     try:
-        rng = rng or random.Random()
+        rng = _rng(rng)
         cands = [c for c in (candidates or []) if c is not None]
         if not cands:
             return None
@@ -373,7 +396,7 @@ def choose_taunt(room, ai_id, event, rng=None):
         lines = TAUNT_LINES.get(str(event or ''))
         if not lines:
             return None
-        rng = rng or random.Random()
+        rng = _rng(rng)
         return rng.choice(list(lines))
     except Exception:
         return None

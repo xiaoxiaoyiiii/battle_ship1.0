@@ -136,6 +136,19 @@ CONFIGS = {
     'no_woxin': ('全卡池去掉「卧薪尝胆」', lambda: _set(pool=_without('卧薪尝胆'))),
     'no_repl': ('全卡池去掉重摆三张（回光返照/败者食尘/滥竽充数）',
                 lambda: _set(pool=_without('回光返照', '败者食尘', '滥竽充数'))),
+    # 把已排除的三张**加回去**量一次（卡池已不含它们，所以这里是"全池 + 这张"）
+    'add_yidian': ('全卡池**加回**「伊甸园」（实测否掉的卡）',
+                   lambda: _set(pool=_FULL_POOL | {'伊甸园'})),
+    'add_juechu': ('全卡池**加回**「绝处逢生」（实测否掉的卡）',
+                   lambda: _set(pool=_FULL_POOL | {'绝处逢生'})),
+    'add_renwang': ('全卡池**加回**「仁王之盾」（实测否掉的卡）',
+                    lambda: _set(pool=_FULL_POOL | {'仁王之盾'})),
+    # ★ 这一组是**分量最重**的一条：卡池大（34 张）到底带来了什么？
+    #   `pick_speed` 用的是同一套"试算闸门 + 交错出牌"，只是把选哪张换成按速阶取最低
+    #   —— 于是它与 `pick_value` 的差就是「按局势选牌」的净贡献。
+    'pool9_value': ('只开 9 张安全卡 + 价值表选牌（= 第 1 批口径 + 本批的选牌器）',
+                    lambda: (_set(pool=_SAFE9, cards=3),
+                             _use_choose_card(_ORIGINAL_CHOOSE_CARD))),
     'no_renwang': ('全卡池去掉「仁王之盾」', lambda: _set(pool=_without('仁王之盾'))),
     'no_juechu': ('全卡池去掉「绝处逢生」', lambda: _set(pool=_without('绝处逢生'))),
     # 选船启发式的新旧两版对照（同一批局面，只换这一个判据）
@@ -144,6 +157,55 @@ CONFIGS = {
     'ship_old': ('选船：旧版（一律挑邻里被轰得最多的）',
                  lambda: (_set(pool=_FULL_POOL, cards=3), _use_heuristic(_heuristic_old))),
 }
+
+# ── 出牌预算扫描 ───────────────────────────────────────────────────────────
+# `ai_brain.CARDS_PER_TURN` **从来没被量过** —— 它是我手写的 3。
+# 而"出牌预算"是当前最大的强度来源（第 2 批实测 +2.0），所以它到底该是几，
+# 只能扫出来。生成成独立档位（而不是手写 5 条），扫描范围写在参数里。
+# ── 决策器对照 ────────────────────────────────────────────────────────────
+# `CARD_BASE_VALUE` 是**手调的 47 个数字**，从来没量过它到底有没有用。
+# 如果它并不比"按速阶挑"或"随便挑"强，那说明"按局势选牌"这条主线是空的，
+# 而真正的强度全在别处 —— 这必须知道。
+_ORIGINAL_CHOOSE_CARD = ai_brain.choose_card
+
+
+def _pick_by_speed(room, ai_id, playable, rng=None):
+    """对照：不看价值，只挑速阶最低的那张（normal/hard 的老口径）。"""
+    me = (getattr(room, 'players', None) or {}).get(ai_id)
+    hand = list(getattr(me, 'magic_hand', None) or []) if me else []
+    cands = [i for i in (playable or []) if 0 <= i < len(hand)]
+    if not cands:
+        return None
+    return min(cands, key=lambda i: (int(getattr(hand[i], 'speed', 9) or 9), i))
+
+
+def _pick_random(room, ai_id, playable, rng=None):
+    """对照：完全不挑，从可打的牌里随机拿一张。"""
+    import random as _random
+    cands = list(playable or [])
+    if not cands:
+        return None
+    return (_random.Random(str(ai_id) + str(len(cands))).choice(cands))
+
+
+def _use_choose_card(fn):
+    ai_brain.choose_card = fn
+
+
+for _n in (1, 2, 3, 4, 5, 8):
+    CONFIGS[f'cards{_n}'] = (
+        f'出牌预算 = 每回合 {_n} 张',
+        (lambda n: (lambda: _set(pool=_FULL_POOL, cards=n)))(_n))
+
+CONFIGS['pick_value'] = ('选牌：手调价值表（线上默认）',
+                         lambda: (_set(pool=_FULL_POOL, cards=3),
+                                  _use_choose_card(_ORIGINAL_CHOOSE_CARD)))
+CONFIGS['pick_speed'] = ('选牌：只按速阶（不看价值表）',
+                         lambda: (_set(pool=_FULL_POOL, cards=3),
+                                  _use_choose_card(_pick_by_speed)))
+CONFIGS['pick_random'] = ('选牌：可打的里随机拿一张',
+                          lambda: (_set(pool=_FULL_POOL, cards=3),
+                                   _use_choose_card(_pick_random)))
 
 
 def main(argv=None):

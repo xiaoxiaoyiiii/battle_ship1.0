@@ -586,6 +586,102 @@ def test_master_card_readiness_covers_every_enabled_card(master_room):
 
 
 # ---------------------------------------------------------------------------
+# ★ 可复现性：决策层绝不许引入"不可复现的随机源"
+# ---------------------------------------------------------------------------
+
+def test_ai_brain_never_creates_an_unseeded_rng():
+    """`ai_brain` 里不许出现 `random.Random()` —— 那是**用系统熵播种**的。
+
+    ⚠️ 这是一个真实缺陷（2026-09-22 修）。原写法是
+       `rng = rng or random.Random()`，本意是"没传就随便用一个"，
+       实际后果有两层：
+
+         · **生产**：AI 的开炮 / 放置 / 选船其实是熵随机的 ——
+           模块头上"注入 rng 是为了可复现"那句注释是假的；
+         · **度量**：无头驱动器的 `random.seed(seed)` 管不到它，
+           **同一 seed 跑同一局会得到不同结果**。实测（同一进程内跑 6 次 seed=1）：
+           回合数在 3~11 之间跳、胜负都会翻。
+           我据此做过的每一张卡的能力对照，里面都掺了这个噪声。
+
+       正确写法是退化到**模块级 `random`**（`ai_brain._rng`）：驱动器与
+       `handle_attack` 都把 `random.seed()` 打在同一份全局状态上，
+       整局从猜拳到开炮才走同一条可复现的序列。
+
+    这条必须是**源码级**断言：只要有人再写一次 `random.Random()`，
+    由它驱动的那些决策就会静默变成不可复现，而**任何行为测试都测不出来**
+    （单测只跑一次，看不出"跑两次不一样"）。
+    """
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        'ai_brain.py')
+    src = open(path, encoding='utf-8').read()
+    tree = ast.parse(src)
+    bad = []
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == 'Random'
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == 'random'
+                and not node.args):
+            bad.append(node.lineno)
+    assert not bad, (
+        f'ai_brain.py 第 {bad} 行用了无参 `random.Random()`（系统熵播种）—— '
+        f'请改用 `_rng(rng)`，否则决策不可复现')
+
+
+def test_ai_brain_rng_helper_falls_back_to_global_random():
+    """`_rng(None)` 必须退化到**模块级 `random`**（可被 seed 控制），不是新实例。"""
+    import random as _random
+    _random.seed(12345)
+    got_a = [ai_brain._rng(None).random() for _ in range(3)]
+    _random.seed(12345)
+    got_b = [ai_brain._rng(None).random() for _ in range(3)]
+    assert got_a == got_b, '_rng(None) 不受 random.seed 控制 → 决策不可复现'
+    # 传进来的 rng 必须原样使用（不能忽略调用方的注入）
+    mine = _random.Random(7)
+    assert ai_brain._rng(mine) is mine
+
+
+def test_headless_game_is_deterministic_for_a_fixed_seed():
+    """★ 度量工具的复现性守卫：同一 seed 连跑两次必须**逐字段相同**。
+
+    这是无头模拟器的**根本契约**（`docs/MASTER_AI_2026_09_21.md` §7.2
+    「固定种子可复现」），但它此前**没有任何用例守着** ——
+    于是 `ai_brain` 里的熵随机源活了很久没被发现，
+    期间所有"改动前 / 改动后"的对照都在噪声里读数字。
+
+    ⚠️ 断言的是**不止胜率**：胜负相同但回合数/动作数不同，同样说明
+       中间某一步的随机序列已经分叉了（这正是当时的症状：
+       同一 seed 的胜者一样、回合数却在 3~11 之间跳）。
+
+    ⚠️ 比较前要把**座位 id 归一化**：房间 id 是 `uuid4()` 生成的，
+       AI 座位 id = `'ai-' + room_id`，所以两次跑出来的 id 必然不同 ——
+       那是房间标识、不是决策，混进来只会让这条用例永远红。
+       归一化之后比的是**动作序列本身**（谁做了什么、按什么顺序）。
+    """
+    import io
+    import contextlib
+
+    hg = pytest.importorskip('tools.headless_game')
+
+    def run_once():
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            r = hg.play_game(lambda: hg.make_policy('master'),
+                             lambda: hg.make_policy('hard'), seed=1)
+        # 座位 id → 固定别名（p1 = AI 座位、p2 = 对手座位）
+        alias = {r.p1: 'P1', r.p2: 'P2'}
+        acts = tuple((kind, alias.get(pid, pid), detail)
+                     for kind, pid, detail in r.actions)
+        return (alias.get(r.winner, r.winner), r.rounds, r.stalled, acts)
+
+    first, second = run_once(), run_once()
+    assert first == second, (
+        '同一 seed 两次跑出不同结果 → 决策层引入了不可复现的随机源。'
+        f'\n  第一次: winner={first[0]} rounds={first[1]} actions={len(first[3])}'
+        f'\n  第二次: winner={second[0]} rounds={second[1]} actions={len(second[3])}')
+
+
+# ---------------------------------------------------------------------------
 # ⑤ 区域卡边长：3×3 / 2×2 不许混
 # ---------------------------------------------------------------------------
 

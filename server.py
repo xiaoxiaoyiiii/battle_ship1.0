@@ -2102,10 +2102,10 @@ def test_auto_attack(data):
         if room.attacks_remaining <= 0:
             break
 
-        # 选择一个未攻击过的随机位置        
-        all_positions = [(x, y) for x in range(6) for y in range(6)]
-        attacked_positions = [(a.x, a.y) for a in room.players[player_id].attacks]
-        available_positions = [pos for pos in all_positions if pos not in attacked_positions]
+        # 选择一个未攻击过的随机位置
+        # ⚠️ 统一读 `_attackable_cells`：这里原本是「还能打哪些格」的**第 4 份**
+        #    重复实现，而且拿 list 做 `in` 查询是 O(n²)。见该函数的说明。
+        available_positions = _attackable_cells(room, player_id)
 
         if not available_positions:
             break
@@ -4771,6 +4771,37 @@ def enter_battle_phase(data, _priority_confirmed=False):
     return {'status': 'error', 'message': '无法进入战斗阶段'}
 
 
+# ===========================================================================
+# 「还能打哪些格子」——**只有这一份实现**
+#
+# ⚠️ 2026-09-21 实测的卡死（无头模拟器抓到的真实生产 bug）：
+#    一个玩家可能**还有剩余攻击次数、但 36 格已经全部打过**。此时：
+#      · handle_attack            → 拒绝每个目标（「你已经攻击过这个位置了」）
+#      · handle_enter_end_phase   → 因为「还有剩余攻击次数」拒绝交阶段
+#    ⇒ **没有任何合法动作能结束这个回合**，双方永久烂在这里。
+#
+#    不是罕见边界：每回合攻击次数 = 存活船数，36 格 ÷ 6 ≈ **6-7 个回合**
+#    就能把整个棋盘打完，真人一样会中招。
+#    更糟的是**超时看门狗的保底动作走的是同一条死路**（它也去调
+#    `handle_enter_end_phase`），所以 90 秒兜底也救不回来。
+#
+#    → 门禁必须问「**还有没有能打的格子**」，不能只看计数。
+#    → 而且这个判断在代码里原本有**三份**（结束阶段门禁 / AI 炮击循环 /
+#      超时看门狗），口径各写各的。现在统一读这里（CLAUDE.md 教训 #1）。
+# ===========================================================================
+
+def _attackable_cells(room, player_id):
+    """该玩家**还能打**的格子列表；不能打则返回 `[]`。
+
+    判据：36 格减去他自己已经轰过的格（与 `handle_attack` 的拒因同一口径）。
+    """
+    player = (getattr(room, 'players', None) or {}).get(player_id)
+    if player is None:
+        return []
+    attacked = {(a.x, a.y) for a in (getattr(player, 'attacks', None) or [])}
+    return [(x, y) for x in range(6) for y in range(6) if (x, y) not in attacked]
+
+
 # 添加结束战斗阶段，进入结束阶段
 @socketio.on('enter_end_phase')
 @_require_live_room
@@ -4790,8 +4821,11 @@ def handle_enter_end_phase(data, _priority_confirmed=False):
 
     # 检查是否是当前攻击者的战斗阶段
     if room.current_attacker == player_id and room.current_phase == 'battle':
-        # 检查是否还有剩余攻击次数
-        if room.attacks_remaining > 0:
+        # 检查是否还有剩余攻击次数。
+        # ⚠️ 必须同时问「还有没有能打的格子」—— 只看计数会让
+        #    「次数还有、但 36 格已全打过」的玩家**无法结束回合**
+        #    （任何合法动作都被拒，超时看门狗也走同一条死路）。见 _attackable_cells。
+        if room.attacks_remaining > 0 and _attackable_cells(room, player_id):
             return {'status': 'error', 'message': '你还有剩余攻击次数，无法进入结束阶段'}
 
         # ⚠️ 速阶3抢时点的仲裁：同 enter_battle_phase —— 推进前先问对方。
@@ -5327,8 +5361,8 @@ def _ai_turn_loop(room_id: str):
                 return
             if room.attacks_remaining <= 0:
                 break
-            attacked = {(a.x, a.y) for a in room.players[ai_id].attacks}
-            candidates = [(x, y) for x in range(6) for y in range(6) if (x, y) not in attacked]
+            # 还能打哪些格：统一读 _attackable_cells（别在这里再写一遍）
+            candidates = _attackable_cells(room, ai_id)
             if not candidates:
                 break
             x, y = random.choice(candidates)
@@ -7120,9 +7154,11 @@ def _auto_act_on_timeouts(now: float = None):
                 enter_battle_phase({'room_id': room.id, 'player_id': pid})
                 note = '思考超时：已自动进入战斗阶段'
             elif room.current_phase == 'battle':
-                attacked = {(a.x, a.y) for a in room.players[pid].attacks}
-                candidates = [(x, y) for x in range(6) for y in range(6)
-                              if (x, y) not in attacked]
+                # 还能打哪些格：统一读 _attackable_cells。
+                # ⚠️ 「次数还有、但 36 格已全打过」时，下面的 handle_enter_end_phase
+                #    现在能成功了（门禁已改成同时问有没有能打的格），所以这条兜底
+                #    不会再空转。
+                candidates = _attackable_cells(room, pid)
                 if not candidates or room.attacks_remaining <= 0:
                     handle_enter_end_phase({'room_id': room.id, 'player_id': pid})
                     note = '思考超时：已自动进入结束阶段'

@@ -32,7 +32,8 @@ python -m pytest tests/ -q    # 基线见下
 - ⚠️ 本机临时目录 ACL 坏过，pytest 若在 setup 报 `PermissionError: Temp\pytest-of-Administrator`，
   先 `New-Item -ItemType Directory -Force .tmp\pytemp`，再
   `$env:TMP="$PWD\.tmp\pytemp"; $env:TEMP=$env:TMP; python -m pytest tests/ -q -p no:cacheprovider`。
-- **实测基线（2026-09-21）**：`1909 passed`；跑完约 60 秒。
+- **实测基线（2026-09-21）**：`1973 passed`；跑完约 27 秒。
+  含无头对局驱动 `tools/headless_game.py`（约 400 局/秒）与大师 AI 决策层 `ai_brain.py` 的用例。
 
 ### 无头浏览器工具（`tools/*.mjs`，比 pytest 更接近真实）
 改前端后跑对应那个，**别每次全跑**（单个工具几分钟）：

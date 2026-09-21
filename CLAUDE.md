@@ -3,7 +3,7 @@
 > 面向 AI 代理的索引。**先读这里，别一次读完 `server.py`（8500+ 行）/ `static/game.js`（9000+ 行）/ `static/style.css`（4800+ 行）—— 一律先 grep 定位再分段读。**
 > ⚠️ 行号每次提交都会漂移，**本文件里任何行号都只当线索，以 grep 结果为准**。
 > ⚠️ **本文件每次对话都会整份注入**，新增内容请控制在几十字级别 —— 长记录写进 `docs/`。
-> 最后更新：2026-09-22（大师 AI 第 5 批：修掉决策层熵随机，重测后 67.8%）。
+> 最后更新：2026-09-22（大师 AI 第 6 批：开炮提速 + 出牌等真结算；侵略性四方向全否）。
 
 ---
 
@@ -32,9 +32,9 @@ python -m pytest tests/ -q    # 基线见下
 - ⚠️ 本机临时目录 ACL 坏过，pytest 若在 setup 报 `PermissionError: Temp\pytest-of-Administrator`，
   先 `New-Item -ItemType Directory -Force .tmp\pytemp`，再
   `$env:TMP="$PWD\.tmp\pytemp"; $env:TEMP=$env:TMP; python -m pytest tests/ -q -p no:cacheprovider`。
-- **实测基线（2026-09-22）**：`2050 passed`；跑完约 27 秒。
-  含无头对局驱动 `tools/headless_game.py`（约 250 局/秒）、大师 AI 决策层 `ai_brain.py`
-  与大师接线层 `tests/test_ai_master.py` 的用例。
+- **实测基线（2026-09-22）**：`2066 passed`；跑完约 28 秒。
+  含无头对局驱动 `tools/headless_game.py`（约 250 局/秒，自带"击沉/被击沉/命中率/
+  无伤获胜"四个量）、大师 AI 决策层 `ai_brain.py` 与大师接线层 `tests/test_ai_master.py` 的用例。
 
 ### 无头浏览器工具（`tools/*.mjs`，比 pytest 更接近真实）
 改前端后跑对应那个，**别每次全跑**（单个工具几分钟）：
@@ -284,6 +284,10 @@ phase:                        preparation → battle → end
     更极端的是：**在 9 张卡的池子里，整套价值表一分钱都不值**（48.2% → 48.2%）。
     → 加卡 / 调权重前先问一句"**是能选的东西变多了，还是选得更聪明了**"；
     后者往往是小的，前者往往是大的。
+    ★ 续（第 6 批实测，更极端）：**94.3% 的出牌时刻可打候选只有 0~1 张**
+    （0 张占 71.4% / 1 张占 22.9% / ≥2 张只占 5.7%），于是
+    "按局势挑牌"与"随机挑牌"胜率**都是 64.0%**、出牌预算 2→8 张数字**逐位相同**。
+    → 决策空间为 1 时，**任何**决策函数都值 0。调权重前先量"有几个候选"。
 38. **AI 座位上的交互必须"就地同步"完成，不能留给后台任务**（2026-09-22，作者实报两条）：
     ① `回光返照` 把 `room.state` 置成**房间级** `placing_ships`，但 `reset_gameboard` 只
     `to=caster.sid` —— 施法者是 AI 时那个 sid **从无连接、事件石沉大海**，真人被拖进布船屏

@@ -5869,7 +5869,7 @@ _MASTER_TURN_STEPS = 60
 # 每次动作后的「连锁收敛 + 待办消费」等待轮次（每轮 0.3s）。
 _MASTER_SETTLE_STEPS = 40
 
-# ★ 2026-09-22：**大师每打出一张牌 / 每开一炮之前，先停这么一下**（秒）。
+# ★ 2026-09-22：**大师每打出一张牌之前，先停这么一下**（秒）。
 #
 # 为什么要有它（作者实测报的「大师AI出牌太快了实在是，快到看不清」）：
 #   大师一回合最多出 `ai_brain.CARDS_PER_TURN`（=3）张牌，而每一张都是
@@ -5877,16 +5877,20 @@ _MASTER_SETTLE_STEPS = 40
 #   原来只有出牌/开炮**之后**的 `time.sleep(0.3)`（那是给连锁窗口收敛用的），
 #   下一张牌接着就落了 —— 三张牌加上几炮挤在一秒出头里，真人只看到棋盘闪一下。
 #
-# 取值理由（0.8 秒）：
+# 取值理由（0.5 秒）：
 #   · 人眼要看清「哪张牌被打出、什么效果生效」，需要一个**焦点转移**的间隔；
 #     0.3~0.4 秒与 UI 的动画时长同量级，仍然像"同时发生"，看不清。
-#   · 反面约束是"别把对局拖到难忍"：大师单回合的动作上限约 = 3 张牌 + 6 炮
-#     （见 `_MASTER_TURN_STEPS` 与 `attacks_remaining`），最坏 9 个动作
-#     → 额外约 7.2 秒。而真人自己一个回合本来就要点好几下、看若干次动画，
-#     7 秒量级不会让对局明显变慢；再往上（≥1.5 秒）就会变成"干等 AI"。
-#   · 因此取 0.8：**明显看得清，但不至于等到不耐烦**。
-# 只作用于大师分支（`_ai_master_turn`），easy/normal/hard 一行不改。
-_MASTER_ACTION_PACING = 0.8
+#   · 反面约束是"别把对局拖到难忍"：大师单回合最多出 3 张牌
+#     → 额外约 1.5 秒，不会让对局明显变慢。
+#
+# ⚠️ **这一条现在叫 `_MASTER_CARD_PACING`，只管"出牌"**（2026-09-22 第二次修）。
+#    原先只有一个 `_MASTER_ACTION_PACING = 0.8`，被**四处**共用：出牌 ×2、
+#    阶段转换 ×1、开炮 ×1。作者实测后的第二条反馈是：
+#      · 开炮要**快**（「攻击的时候可以快一点」）—— 于是他开炮不再停；
+#      · 出牌**可以停**，但前提是"上一张真的结算完了"（见 `_master_settle`）。
+#    把"看得清"和"结算完"两件事混在一个常量里，就会出现
+#    「为了让出牌看得清，把六炮也一起拖慢 6×0.8 秒」这种副作用 —— 现在拆开。
+_MASTER_CARD_PACING = 0.5
 
 
 def _is_ai_seat(player_id) -> bool:
@@ -5974,32 +5978,104 @@ def _ai_consume_own_pending(room_id, ai_id) -> None:
     _ai_consume_own_shenji(room, ai_id)
 
 
+def _master_unsettled(room, ai_id):
+    """**还没结算完**的东西，返回一串可读的原因；全空 = 真的结算完了。
+
+    ★ 这是「上一张牌的效果到底结算完没有」的**唯一判据**（2026-09-22 加）。
+
+    为什么要显式收口成一个判据函数，而不是在循环里散着写 `if`：
+      · 作者第二条反馈是「怕出牌的时候太快了，上一个效果还没结算完下一张牌
+        已经打出来了」—— 这个问题只有**一处**能回答，散着写就会漏通道；
+      · 判据必须覆盖「连锁窗口」**和**「待处理交互」，两者缺一不可：
+        `handle_attack` / `handle_use_magic_card` 只拦 `chain_waiting`（见
+        server.py 里那两处门禁），而 `pending_placement` 这类待办**只**通过
+        `_action_wait_reason` 拦 —— 只看连锁就会漏掉"打完一张放置卡、还没放船
+        就接着打下一张"。
+      · 与 `_action_wait_reason` 同源但**更宽**：那个只回答"**这个座位**现在
+        能不能写操作"，本函数回答"**房间里**还有没有任何东西没落地"。
+        大师必须等到后者为空，因为下一张牌可能又开一次连锁窗口。
+
+    各通道的出处（改任何一条都要同时看这里）：
+      · `room.chain` / `room.chain_waiting` —— 连锁栈与响应窗口（`resolve_chain` 收尾）
+      · `pending_placement`   —— 等玩家放船（`handle_confirm_reinforcement` / `cancel_placement`）
+      · `pending_shenji`      —— 等玩家宣言（`handle_confirm_shenji_declare`）
+      · `pending_dice_discard`—— 等玩家弃牌（`handle_dice_discard_choose`）
+      · `pending_ship_picks`  —— 等玩家点自己的船（`confirm_magic_target` / 同步代选）
+      · `priority_continue`   —— 被拦下的阶段转换，等对方响应完再补上
+
+    ⚠️ 一处**有意**收窄：`pending_ship_picks` 只算**属于大师自己**的那些。
+       真人名下的选船待办**故意不算** —— 那是在等真人点棋盘，而 `can_play_magic_card`
+       与 `_action_wait_reason` 都不把选船待办当门禁（只有"更高优先级的选船挡住
+       新的选船卡"那一条，见 `_ship_pick_blocked_reason`）。把它算进来的后果是
+       "真人在犹豫点哪艘船时，大师原地空等 12 秒"，看起来就是 AI 卡死。
+       要等真人回答的卡在池里本来就没有（克苏鲁之眼已移出，见 §9 的说明）。
+    """
+    reasons = []
+    if room.chain:
+        reasons.append(f'连锁栈还有 {len(room.chain)} 项')
+    if room.chain_waiting:
+        reasons.append(f'连锁响应窗口还开着（轮到 {room.chain_window}）')
+    temp = room.magic_temp_data if isinstance(room.magic_temp_data, dict) else {}
+    placement = temp.get('pending_placement')
+    if placement:
+        reasons.append(f"放置流程未完成（{placement.get('kind')}"
+                       f"@{placement.get('caster')}）")
+    shenji = temp.get('pending_shenji')
+    if shenji:
+        reasons.append(f"神机妙算宣言未完成（{shenji.get('caster')}）")
+    dice = getattr(room, 'pending_dice_discard', None)
+    if isinstance(dice, dict):
+        waiting = [pid for pid, done in dice.items() if done is False]
+        if waiting:
+            reasons.append(f'命运骰子弃牌待办未完成（{",".join(map(str, waiting))}）')
+    picks = getattr(room, 'pending_ship_picks', None)
+    if isinstance(picks, list):
+        mine = [p for p in picks
+                if isinstance(p, dict) and p.get('player') == ai_id]
+        if mine:
+            reasons.append('大师自己的选船待办未完成（'
+                           + ','.join(str(p.get('reason')) for p in mine) + '）')
+    if getattr(room, 'priority_continue', None):
+        reasons.append('被拦下的阶段转换还没补上')
+    return reasons
+
+
 def _master_settle(room_id, ai_id):
-    """等连锁收敛，并把**属于 AI 的待办**消费掉。
+    """等**真的结算完**，并把**属于 AI 的待办**消费掉。
 
     返回 `(room, ok)`：`ok=False` = 回合已经不该继续（对局结束/换人/房间没了）。
 
     ⚠️ 待办必须由 brain 消费掉，**绝不能留着**：`_ai_turn_loop` 一旦交回合，
     那个待办就再没有消费点（AI 房间的看门狗还会主动跳过），整局就停在那里。
     消费不掉时显式清理并记日志 —— 宁可少一个效果，也不能留下没人管的待办。
+
+    ★ 判据用 `_master_unsettled`：**连锁窗口与待处理交互一起看**（2026-09-22）。
+      此前这里只判 `room.chain or room.chain_waiting`，于是"打完一张会开放置
+      流程的牌"这类情况下，只要连锁刚好是空的就会往下走 —— 而那张牌的放置
+      还没落地。现在**每一圈都先替 AI 把待办消费掉再判**，所以正常的待办一定
+      能收敛；走成超时的只可能是"消费不掉"的异常局面（那时会显式记日志）。
     """
     for _ in range(_MASTER_SETTLE_STEPS):
         room = room_manager.get_room(room_id)
         if not room or room.state == 'game_over' or room.current_attacker != ai_id:
             return room, False
-        # 帮大厅玩家代答「选一艘自己的船」——AI 房间走的是同步代选，正常不会入队；
-        # 真入了队说明状态异常，这里兜底消费，免得 `_action_wait_reason` 把写操作全冻住。
-        if _my_ship_picks(room, ai_id):
-            if not _ai_consume_own_ship_picks(room, ai_id):
-                return room, False
-            continue
-        if not (room.chain or room.chain_waiting):
+        # 1) 先把**属于 AI 自己的**待办消费掉（放置 / 挑牌 / 神机妙算宣言）。
+        #    ⚠️ 这一步必须排在判据之前：AI 名下的待办是**它自己**该回答的，
+        #    留着不消费会永远收敛不了（`_ai_turn_loop` 一交回合就再没有消费点）。
+        _ai_consume_own_pending(room_id, ai_id)
+        room = room_manager.get_room(room_id)
+        if not room or room.state == 'game_over' or room.current_attacker != ai_id:
+            return room, False
+        # 2) 再判"房间里还有没有东西没落地"（连锁窗口 + 四条待办通道）。
+        unsettled = _master_unsettled(room, ai_id)
+        if not unsettled:
             return room, True
         time.sleep(0.3)
-    # 连锁/窗口迟迟不收敛：显式记一笔，让运营能在日志里看到（不静默）
+    # 迟迟不收敛：显式记一笔（带上**具体哪条通道**），让运营能在日志里看到 —— 不静默
     room = room_manager.get_room(room_id)
     if room is not None:
-        add_game_log(room, '大师 AI 等待连锁收敛超时，跳过等待继续回合', 'system')
+        still = '、'.join(_master_unsettled(room, ai_id)) or '未知'
+        add_game_log(room, f'大师 AI 等待结算收敛超时（{still}），跳过等待继续回合', 'system')
     return room, True
 
 
@@ -6386,22 +6462,26 @@ def _ai_master_turn(room_id: str, room, ai_id: str):
             break
         if played >= int(getattr(ai_brain, 'CARDS_PER_TURN', 1) or 1):
             break
-        # ★ 节奏：让真人看清"对方打出了什么"再落牌（详见 _MASTER_ACTION_PACING）。
+        # ★ 节奏：让真人看清"对方打出了什么"再落牌（详见 `_MASTER_CARD_PACING`）。
         #   排在这里（**动作之前**）而不是之后：真人先看到自己棋盘/手牌的原样，
         #   再看到这一张牌生效 —— 间隔落在"焦点转移"上才看得清。
-        time.sleep(_MASTER_ACTION_PACING)
+        #
+        #   ⚠️ 这个停顿**只在"真的结算完"之上才有意义**：循环每圈的
+        #      `_master_settle` 已经保证上一张牌的连锁窗口与待办都落地了
+        #      （判据见 `_master_unsettled`）。先保证正确，再谈停顿。
+        time.sleep(_MASTER_CARD_PACING)
         if not _master_play_one(room_id, ai_id, played):
             break
         played += 1
-        _ai_consume_own_pending(room_id, ai_id)
         room, ok = _master_settle(room_id, ai_id)
         if not ok:
             return
 
     # ① 进入战斗阶段（与普通/困难一致）
-    # ★ 节奏：阶段转换也停一下，让上一张牌的结果先落定、真人看清楚
-    #   （详见 _MASTER_ACTION_PACING）。
-    time.sleep(_MASTER_ACTION_PACING)
+    # ⚠️ 这里**不再**停顿：2026-09-22 作者的第二条反馈是「攻击的时候可以快一点」。
+    #    阶段转换本身没有"看不清什么"的问题 —— 真要看的是紧接着那一炮的落点，
+    #    而开炮也不再停顿（见下面步骤 2）。原来这一处与出牌共用 0.8 秒，
+    #    等于每一炮都被无关地拖了 0.8 秒。
     resp = enter_battle_phase({'room_id': room_id, 'player_id': ai_id})
     if not (resp and resp.get('status') == 'success'):
         room2 = room_manager.get_room(room_id)
@@ -6453,8 +6533,8 @@ def _ai_master_turn(room_id: str, room, ai_id: str):
         # ★ 步骤 1：出牌（含"上一炮刚命中/刚击沉"触发的条件卡）。
         #   必须排在攻击之前 —— 反过来的话「溅射 / 越战越勇」的窗口永远被自己错过。
         if played < int(getattr(ai_brain, 'CARDS_PER_TURN', 1) or 1):
-            # ★ 节奏：出牌前停一下（详见 _MASTER_ACTION_PACING）。
-            time.sleep(_MASTER_ACTION_PACING)
+            # ★ 节奏：出牌前停一下（详见 `_MASTER_CARD_PACING`）。
+            time.sleep(_MASTER_CARD_PACING)
             if _master_play_one(room_id, ai_id, played):
                 played += 1
                 progressed = True
@@ -6462,6 +6542,8 @@ def _ai_master_turn(room_id: str, room, ai_id: str):
                 # （桃园结义/亡羊补牢/明智埋葬/灵气复苏）或神机妙算宣言：
                 # **当场消费掉**。留到回合末尾再处理更危险 —— 中间任何一步都可能被
                 # `_action_wait_reason` 拦住，看起来就像"AI 卡死了"。
+                # （`_master_settle` 里也会消费一次，两处都留是**幂等**的：
+                #   这一步保证"紧接着的进度判断"看到的是已消费后的状态。）
                 _ai_consume_own_pending(room_id, ai_id)
             # 无论成没成，都刷新一次快照：`_master_play_one` 可能已经改了状态
             # （被拒退牌 / 效果改手牌），不能拿旧对象判攻击次数。
@@ -6472,7 +6554,6 @@ def _ai_master_turn(room_id: str, room, ai_id: str):
                 room, ok = _master_settle(room_id, ai_id)
                 if not ok:
                     return
-                time.sleep(0.3)
                 continue
 
         # ★ 步骤 2：开炮。
@@ -6480,10 +6561,11 @@ def _ai_master_turn(room_id: str, room, ai_id: str):
             shot = _ai_choose_attack(room, ai_id)
             if shot is not None:
                 x, y = shot
-                # ★ 节奏：开炮前停一下（详见 _MASTER_ACTION_PACING）——
-                #   真人要能看清"这一炮打在哪、打中还是打空"，连着打完
-                #   六炮只会看到棋盘一次性变样。
-                time.sleep(_MASTER_ACTION_PACING)
+                # ⚠️ 开炮**不再停顿**（2026-09-22 作者反馈：「攻击的时候可以快一点」）。
+                #    原来这里有 `time.sleep(_MASTER_ACTION_PACING)`（0.8 秒），
+                #    六炮就是 4.8 秒纯等待 —— 而攻击的"上一发结算完没有"由下面
+                #    这个 `_master_settle` 保证（`handle_attack` 自己也会拒绝
+                #    连锁未收敛时的攻击，见它的门禁），不需要靠停顿来兜。
                 handle_attack({'room_id': room_id, 'player_id': ai_id, 'x': x, 'y': y})
                 time.sleep(0.3)
                 room, ok = _master_settle(room_id, ai_id)

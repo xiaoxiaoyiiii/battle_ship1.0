@@ -437,23 +437,28 @@ def test_ai_caster_trap_pending_placement_cards_are_honest():
 
 
 # ===========================================================================
-# C. ★ 节奏：大师出牌不许"快到看不清"
+# C. ★ 节奏：大师**出牌**不许"快到看不清"，**开炮**要快
 # ===========================================================================
-def test_master_turn_paces_every_card_and_shot():
-    """★ 大师每出一张牌 / 每开一炮之前，都要有**可见的间隔**。
+#
+# ⚠️ 本条在本批被**改写过一次**，原因值得记下来：
+#   第一次的契约是「出牌 / 开炮 / 阶段转换三处都必须有节奏停顿」—— 那是照着
+#   `_MASTER_ACTION_PACING = 0.8` 一个常量被四处共用的实现写的。
+#   作者实测第二条反馈是「攻击的时候可以快一点」，于是那个共用常量被拆成
+#   `_MASTER_CARD_PACING`（只管出牌）。**行为契约变了，用例就必须跟着变** ——
+#   把旧契约留在测试里，等于用测试把"每一炮都白等 0.8 秒"钉成永久行为。
+def test_master_paces_card_plays_only():
+    """★ 大师**每出一张牌**之前都要有可见间隔；开炮与阶段转换**不要**。
 
-    作者实测报的「大师AI出牌太快了实在是，快到看不清」：大师一回合最多
-    连打 `ai_brain.CARDS_PER_TURN`（=3）张牌，而每张都在同一段后台循环里
-    瞬间跑完 —— 原来只有动作**之后**的 `time.sleep(0.3)`（那是给连锁窗口
-    收敛用的），三张牌加上几炮挤在一秒出头里。
+    作者两条实测反馈合起来才是完整契约：
+      · 「出牌太快了，怕上一个效果还没结算完下一张就出来了」→ 出牌要有间隔
+        （"结算完"由 `_master_settle` 保证，间隔只是让人看得清）；
+      · 「攻击的时候可以快一点」→ 开炮与阶段转换不该有节奏停顿。
 
-    这条按**源码级**钉住（与 CLAUDE.md 教训 #19 同形：这类"必须存在"的东西
-    跑不出行为断言，只能扫源码）：`_ai_master_turn` 里
-    `_master_play_one` / `handle_attack` / `enter_battle_phase` 之前
-    都必须有一次 `time.sleep(_MASTER_ACTION_PACING)`。
+    这条按**源码级**钉住（这类"必须存在/必须不存在"的东西跑不出行为断言，
+    只能扫源码，与 CLAUDE.md 教训 #19 同形）。
 
     ⚠️ 不钉"睡多久"的具体秒数（那是权衡后的取值，见常量注释），
-       只钉"每个可见动作之前都有一次"——少一处就是某一类动作又变成瞬间完成。
+       只钉"哪些动作之前有、哪些没有"。
     """
     import ast
     import inspect
@@ -470,56 +475,56 @@ def test_master_turn_paces_every_card_and_shot():
         if not (isinstance(call.func, ast.Attribute) and call.func.attr == 'sleep'):
             continue
         arg = call.args[0] if call.args else None
-        if isinstance(arg, ast.Name) and arg.id == '_MASTER_ACTION_PACING':
+        if isinstance(arg, ast.Name) and arg.id == '_MASTER_CARD_PACING':
             paced.append(node.lineno)
-    assert len(paced) >= 3, (
-        f'`_ai_master_turn` 里只找到 {len(paced)} 处 `_MASTER_ACTION_PACING` 停顿；'
-        f'出牌 / 开炮 / 阶段转换三处都必须有（少了哪一处，那类动作就又变成瞬间完成）')
+    assert paced, '`_ai_master_turn` 里一次 `_MASTER_CARD_PACING` 停顿都没有 —— ' \
+                  '出牌又会在一瞬间做完（作者实报的"看不清"）'
 
-    # 三处停顿必须分别排在"出牌 / 开炮 / 进战斗阶段"之前。
-    # 判据：**往前**找最近的一个 `time.sleep(_MASTER_ACTION_PACING)`，
-    # 中间不许夹着另一条被钉的动作（夹了说明那条动作没被节奏覆盖到）。
-    watched = ('_master_play_one', 'handle_attack', 'enter_battle_phase')
     lines = src.split('\n')
     paced_idx = [n - 1 for n in paced]
-    for target, label in (('_master_play_one', '出牌'),
-                          ('handle_attack', '开炮'),
-                          ('enter_battle_phase', '进战斗阶段')):
-        calls = [i for i, l in enumerate(lines)
-                 if target in l and 'def ' not in l]
-        assert calls, f'{label}（{target}）的调用点消失了 —— 守卫要跟着改'
-        for i in calls:
-            prior = [j for j in paced_idx if j < i]
-            assert prior, (
-                f'{label}（{target}，源码第 {i + 1} 行）之前**一次节奏停顿都没有** ——'
-                f' 大师又会在一瞬间把它做完')
-            k = max(prior)
-            # 中间夹着的"别的被钉动作"= 又一次出牌/开炮/阶段转换却没被节奏覆盖
-            between = [l for l in lines[k + 1:i]
-                       if 'time.sleep' in l
-                       or any(t in l for t in watched if t != target)]
-            assert not between, (
-                f'{label}（{target}，源码第 {i + 1} 行）与它前面那次节奏停顿'
-                f'（第 {k + 1} 行）之间还夹着别的动作 {between} ——'
-                f' 那一条没被节奏覆盖到')
+
+    # 每个"被钉的动作"往前找**紧邻的那一段**（中间没有别的被钉动作），
+    # 看它的节奏停顿是不是冲着自己来的。
+    watched = ('_master_play_one', 'handle_attack', 'enter_battle_phase')
+    calls = {}
+    for i, line in enumerate(lines):
+        for target in watched:
+            if target in line and 'def ' not in line:
+                calls.setdefault(target, []).append(i)
+
+    for target in watched:
+        assert calls.get(target), f'{target} 的调用点消失了 —— 守卫要跟着改'
+
+    def _owner(call_line):
+        """这次节奏停顿是哪一条动作的（= 它之后第一条被钉动作）。"""
+        for nxt in sorted(n for group in calls.values() for n in group):
+            if nxt >= call_line:
+                return next(t for t, ns in calls.items() if nxt in ns)
+        return None
+
+    owners = {_owner(n) for n in paced_idx}
+    assert '_master_play_one' in owners, '出牌之前没有节奏停顿 —— 真人看不清这张牌'
+    assert 'handle_attack' not in owners, (
+        '开炮前又加回了节奏停顿 —— 作者明确要求「攻击的时候可以快一点」')
+    assert 'enter_battle_phase' not in owners, (
+        '进战斗阶段前又加回了节奏停顿 —— 它只会让每一炮都白等一次')
 
 
-def test_action_pacing_is_within_a_sane_range():
-    """★ 节奏取值要落在"看得清但不等得难受"的区间里（不是随手写个数）。
+def test_card_pacing_is_within_a_sane_range():
+    """★ 出牌节奏取值要落在"看得清但不等得难受"的区间里（不是随手写个数）。
 
-    下限 0.5s：低于它就和 UI 动画同量级，仍然像"同时发生"（作者报的"看不清"）。
-    上限 1.5s：大师单回合最多约 9 个动作（3 张牌 + 最多 6 炮），
-              再往上一个回合就要干等十几秒，对局会难忍。
+    下限 0.4s：低于它就和 UI 动画同量级，仍然像"同时发生"（作者报的"看不清"）。
+    上限 1.5s：大师单回合最多出 3 张牌，再往上一个回合就要干等近 5 秒。
     """
-    assert 0.5 <= server._MASTER_ACTION_PACING <= 1.5, (
-        f'_MASTER_ACTION_PACING={server._MASTER_ACTION_PACING} 超出合理区间 '
-        f'[0.5, 1.5] —— 取值理由见该常量的注释')
+    assert 0.4 <= server._MASTER_CARD_PACING <= 1.5, (
+        f'_MASTER_CARD_PACING={server._MASTER_CARD_PACING} 超出合理区间 '
+        f'[0.4, 1.5] —— 取值理由见该常量的注释')
 
 
 def test_pacing_only_applies_to_master_branch():
     """反向守卫：节奏**只**作用于大师分支，easy/normal/hard 一字不改。
 
-    实现方式：`_MASTER_ACTION_PACING` 只在 `_ai_master_turn` 里被引用；
+    实现方式：`_MASTER_CARD_PACING` 只在 `_ai_master_turn` 里被引用；
     `_ai_turn_loop` 里那条普通/困难脚本不许出现它
     （作者明确要求这三档零回归）。
     """
@@ -527,8 +532,8 @@ def test_pacing_only_applies_to_master_branch():
 
     master_src = inspect.getsource(server._ai_master_turn)
     loop_src = inspect.getsource(server._ai_turn_loop)
-    assert '_MASTER_ACTION_PACING' in master_src
-    assert '_MASTER_ACTION_PACING' not in loop_src, \
+    assert '_MASTER_CARD_PACING' in master_src
+    assert '_MASTER_CARD_PACING' not in loop_src, \
         '节奏不许影响 easy/normal/hard 那条固定脚本（零回归要求）'
 
 

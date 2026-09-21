@@ -66,9 +66,16 @@ def _plain_attack(room, ai_id, rng=None):
     """对照组用的"朴素开炮"：只在**没打过**的格子里均匀挑（不看情报）。
 
     这是 `choose_attack` 的第一版行为 —— 用来单独量"读情报"值多少分。
+
+    ⚠️ 本函数原先写的是 `rng = rng or _random.Random()` —— **无参 `random.Random()`
+       用系统熵播种**，于是"同一 seed 两次跑"永远得到不同的局面，`full_3_noinfo`
+       这一档的数字此前是**噪声**（2026-09-22 实测：同一 seed 连跑两次胜率
+       72.0% vs 70.7%，动作哈希也不同）。
+       这正是 CLAUDE.md 教训 #36 的形状，只是它长在**度量工具**里而不是产品里。
+       → 必须退化到 `ai_brain._rng`（与 `random.seed()` 同源）。
+       守卫：`tools/probe_rng_reproducibility.py`。
     """
-    import random as _random
-    rng = rng or _random.Random()
+    rng = ai_brain._rng(rng)
     me = (getattr(room, 'players', None) or {}).get(ai_id)
     if me is None:
         return None

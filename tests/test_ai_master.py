@@ -734,3 +734,391 @@ def test_non_master_difficulties_still_use_the_old_card_pool(difficulty):
             assert targets == {}, '非大师档不该带目标'
     finally:
         server.room_manager.delete_room(room_id)
+
+
+# ---------------------------------------------------------------------------
+# ⑦ 「上一张牌结算完了吗」——作者实报的"出牌太快"到底是不是结算竞态
+# ---------------------------------------------------------------------------
+#
+# 背景（2026-09-22，作者实测第二条反馈）：
+#   「我是怕出牌的时候太快了，上一个效果还没结算完下一张牌已经打出来了」
+#
+# 这句话有两个版本的答案，而且**观感问题**与**真缺陷**的改法完全不同：
+#   · 观感 → 加停顿（`_MASTER_CARD_PACING`）；
+#   · 真缺陷 → 补等待判据（`_master_settle` 的收敛条件）。
+# 所以这里把"结算完"的判据**钉成用例**，而不是靠读代码相信它。
+#
+# 判据是 `server._master_unsettled(room, ai_id)`：返回空列表 = 真的结算完了。
+# 它必须同时覆盖**连锁窗口**与**四条待办通道**（放置 / 宣言 / 弃牌 / 选船）——
+# 只看连锁会漏掉"打完一张放置卡、船还没放就接着打下一张"（`handle_attack` /
+# `handle_use_magic_card` 恰恰**不**拦 `pending_placement`）。
+
+def test_master_unsettled_is_empty_on_a_quiet_room(master_room):
+    """干净局面必须判成"已结算完" —— 否则大师会永远等下去（卡死）。"""
+    ai_id = _fill_boards(master_room)
+    assert server._master_unsettled(master_room, ai_id) == []
+
+
+def test_master_unsettled_catches_chain_and_window(master_room):
+    """连锁栈 / 响应窗口没收敛 → 必须判成"没结算完"，且原因里说得出来。"""
+    ai_id = _fill_boards(master_room)
+
+    master_room.chain = [server.ChainItem(ai_id, _mk_card('火力全开'), {}, 0.0)]
+    reasons = server._master_unsettled(master_room, ai_id)
+    assert reasons and any('连锁栈' in r for r in reasons), reasons
+
+    master_room.chain = []
+    master_room.chain_waiting = True
+    master_room.chain_window = server._opponent_of(master_room, ai_id)
+    reasons = server._master_unsettled(master_room, ai_id)
+    assert reasons and any('响应窗口' in r for r in reasons), reasons
+
+
+def test_master_unsettled_catches_pending_placement(master_room):
+    """★ 这条正是"打完一张放置卡、船还没放就接着打下一张"的形状。
+
+    `handle_use_magic_card` 只拦 `chain_waiting`，**不拦** `pending_placement`
+    （那个只由 `_action_wait_reason` 拦）。所以只判连锁的实现会在这里放行 ——
+    即"上一个效果还没结算完，下一张牌已经打出来了"。
+    """
+    ai_id = _fill_boards(master_room)
+    # 形状照 `_start_placement` 写（kind/remaining/total/placed 一个都不能少：
+    # `handle_confirm_reinforcement` 会读 `remaining`，少一个就 KeyError）。
+    master_room.magic_temp_data['pending_placement'] = {
+        'caster': ai_id, 'kind': 'reinforce',
+        'remaining': 1, 'total': 1, 'placed': 0}
+    reasons = server._master_unsettled(master_room, ai_id)
+    assert reasons and any('放置流程' in r for r in reasons), reasons
+
+
+def test_master_unsettled_catches_shenji_and_dice(master_room):
+    """神机妙算宣言窗口与命运骰子弃牌待办也必须是"没结算完"。"""
+    ai_id = _fill_boards(master_room)
+    master_room.magic_temp_data['pending_shenji'] = {'caster': ai_id, 'token': 1}
+    reasons = server._master_unsettled(master_room, ai_id)
+    assert reasons and any('神机妙算' in r for r in reasons), reasons
+
+    master_room.magic_temp_data.pop('pending_shenji')
+    master_room.pending_dice_discard = {ai_id: False}
+    reasons = server._master_unsettled(master_room, ai_id)
+    assert reasons and any('命运骰子' in r for r in reasons), reasons
+    # 待办做完了就不该再拦（否则会永远等）
+    master_room.pending_dice_discard = {ai_id: True}
+    assert server._master_unsettled(master_room, ai_id) == []
+
+
+def test_master_unsettled_ignores_only_the_opponents_ship_picks(master_room):
+    """★ 一处**有意**的收窄：真人名下的选船待办不算"没结算完"。
+
+    算进来的后果是"真人在犹豫点哪艘船时，大师原地空等一整轮"（看起来像卡死）。
+    `can_play_magic_card` 与 `_action_wait_reason` 都不把选船待办当门禁，
+    只有"更高优先级的选船挡住新的选船卡"那一条（`_ship_pick_blocked_reason`）。
+    """
+    ai_id = _fill_boards(master_room)
+    opp = server._opponent_of(master_room, ai_id)
+    master_room.pending_ship_picks = [
+        {'player': opp, 'reason': 'demon_contract', 'priority': 1, 'seq': 1}]
+    assert server._master_unsettled(master_room, ai_id) == [], '真人的选船不许拦住大师'
+
+    master_room.pending_ship_picks = [
+        {'player': ai_id, 'reason': 'demon_contract', 'priority': 1, 'seq': 1}]
+    reasons = server._master_unsettled(master_room, ai_id)
+    assert reasons and any('选船' in r for r in reasons), reasons
+
+
+def test_master_settle_consumes_own_pending_before_returning(master_room):
+    """`_master_settle` 必须**先替 AI 消费待办再判**，否则永远收敛不了。
+
+    AI 名下的 `pending_placement` 是它**自己**该回答的；不消费就会一直是
+    "没结算完"，于是 `_master_settle` 白等满整轮才超时跳过。
+    """
+    ai_id = _fill_boards(master_room)
+    # 给 AI 一艘沉船 + 一个待放置的复活流程：`_ai_consume_own_placement`
+    # 会在合法格里挑一个放上去并清掉待办。
+    player = master_room.players[ai_id]
+    player.sunken_ships = [PlayerShip(positions=[Position(x=5, y=5)], hits=[Position(x=5, y=5)])]
+    master_room.magic_temp_data['pending_placement'] = {
+        'caster': ai_id, 'kind': 'revive',
+        'remaining': 1, 'total': 1, 'placed': 0}
+    assert server._master_unsettled(master_room, ai_id), '前提不成立：待办没被看见'
+
+    room, ok = server._master_settle(master_room.id, ai_id)
+    assert ok is True
+    assert server._master_unsettled(room, ai_id) == [], (
+        '_master_settle 返回时房间里仍挂着未结算项：'
+        + str(server._master_unsettled(room, ai_id)))
+
+
+def test_master_turn_never_plays_a_card_before_the_previous_one_settled():
+    """★ 本节的**核心**回归：跑真实的 `_ai_master_turn`，逐张牌检查"前一张结算完了"。
+
+    用真实的 `_ai_master_turn`（不是复刻）在一局人机房里跑大师的一个回合，
+    在**每一次** `handle_use_magic_card` / `handle_attack` 之前抓一次房间状态：
+    只要有任何一次是在"还有未结算项"时动的，就说明"上一个效果还没结算完，
+    下一张牌已经打出来了"真的发生了。
+
+    ⚠️ 这个回合本来就是**多张牌**的（大师每回合最多 `CARDS_PER_TURN` 张），
+       所以它确实会覆盖"连打第 2、3 张"的路径 —— 手牌按"最可能被打出"的顺序排。
+    """
+    import threading
+    import time as _time
+    import tools.headless_game as hg
+
+    room_id, room = _mk_full_room()
+    try:
+        # 棋盘要错开：`_fill_boards` 给双方摆了**同一批格子**，狙击会直接命中；
+        # 这里让双方各占一行，避免"AI 与真人共用格子"这种不可能的局面。
+        ai_id = _fill_boards(room)
+        opp = server._opponent_of(room, ai_id)
+        for pid, row in ((ai_id, 0), (opp, 1)):
+            p = room.players[pid]
+            p.ships = [PlayerShip(positions=[Position(x=x, y=row)], hits=[])
+                       for x in range(6)]
+            p.remaining_ships = 6
+        server._recalc_attacker_attacks(room)
+        # 手牌：这几张都在池里、门槛低、容易真的打出去（顺序也会影响先打哪张）
+        room.players[ai_id].magic_hand = [_mk_card(n) for n in
+                                          ('火力全开', '看破！', '无中生有',
+                                           '极限增援', '百亿补贴')]
+
+        violations = []
+        plays = []
+        orig_use = server.handle_use_magic_card
+        orig_atk = server.handle_attack
+
+        def use_spy(data):
+            if data.get('player_id') == ai_id:
+                unsettled = server._master_unsettled(
+                    server.room_manager.get_room(room_id) or room, ai_id)
+                if unsettled:
+                    violations.append(('出牌前', data.get('card'), list(unsettled)))
+                plays.append(('card', (data.get('card') or {}).get('name')))
+            return orig_use(data)
+
+        def atk_spy(data):
+            if data.get('player_id') == ai_id:
+                unsettled = server._master_unsettled(
+                    server.room_manager.get_room(room_id) or room, ai_id)
+                if unsettled:
+                    violations.append(('开炮前', (data.get('x'), data.get('y')),
+                                       list(unsettled)))
+                plays.append(('shot', f"{data.get('x')},{data.get('y')}"))
+            return orig_atk(data)
+
+        # ⚠️ 只替换 `time.sleep` 为"立刻返回"：节奏停顿与连锁轮询等待加起来
+        #    会让这条用例跑十几秒，而本用例验的是**结算顺序**，不是墙钟。
+        #    决策与结算逻辑一行不改（连 `_MASTER_SETTLE_STEPS` 都不动）。
+        real_sleep = server.time.sleep
+        server.time.sleep = lambda *_a, **_k: None
+        server.handle_use_magic_card = use_spy
+        server.handle_attack = atk_spy
+        driver = hg.HeadlessGame(lambda: hg.make_policy('master'),
+                                 None, seed=1)
+        try:
+            driver.room = room
+            driver.p1, driver.p2 = ai_id, opp
+            driver.policies = {}
+
+            def run_master():
+                server._ai_master_turn(room_id, room, ai_id)
+
+            thread = threading.Thread(target=run_master, daemon=True)
+            thread.start()
+            deadline = _time.monotonic() + 30
+            while thread.is_alive() and _time.monotonic() < deadline:
+                # 替真人一侧把连锁与待办搬完（无头环境没有真人也没有定时器）
+                live = server.room_manager.get_room(room_id)
+                if live is None:
+                    break
+                if live.chain or live.chain_waiting:
+                    driver._pump_chain()
+                else:
+                    driver._pump_pending()
+                _time.sleep(0.001)
+            thread.join(5)
+            assert not thread.is_alive(), '真实的大师回合循环在 30 秒内没返回（卡死了）'
+        finally:
+            server.time.sleep = real_sleep
+            server.handle_use_magic_card = orig_use
+            server.handle_attack = orig_atk
+
+        assert not violations, (
+            '发现"上一个效果还没结算完就动下一个"：\n  '
+            + '\n  '.join(repr(v) for v in violations[:5]))
+        cards = [name for kind, name in plays if kind == 'card']
+        shots = [d for kind, d in plays if kind == 'shot']
+        assert len(cards) >= 1, f'大师一张牌都没打出去（出牌路径没被覆盖）: {plays}'
+        assert shots, f'大师一炮都没开（开炮路径没被覆盖）: {plays}'
+        # ★ 回合结束时也不许留下未结算项（否则下一个回合会在脏状态上开始）
+        final_room = server.room_manager.get_room(room_id) or room
+        assert server._master_unsettled(final_room, ai_id) == [], (
+            '大师回合结束时房间里还挂着未结算项：'
+            + str(server._master_unsettled(final_room, ai_id)))
+    finally:
+        server.room_manager.delete_room(room_id)
+
+
+def test_placement_card_is_consumed_before_the_next_card_is_played():
+    """★ 单独钉住"打完一张**会开放置流程**的卡"这条路（用户担心的那个形状）。
+
+    大师手上挂着 `pending_placement` 时，下一张牌**必须**先等它落地。
+    `handle_use_magic_card` **不拦** `pending_placement`（只拦 chain_waiting），
+    所以这条路只有 `_master_settle` 拦得住 —— 正是最容易被漏掉的一条。
+
+    做法：把「死者苏生」（会开 `pending_placement`）和另一张牌都放进手里，
+    用真实的 `_ai_master_turn` 跑一个回合，逐张牌检查"前一张的放置是否已完成"。
+    """
+    import threading
+    import time as _time
+    import tools.headless_game as hg
+
+    room_id, room = _mk_full_room()
+    try:
+        ai_id = _fill_boards(room)
+        opp = server._opponent_of(room, ai_id)
+        for pid, row in ((ai_id, 0), (opp, 1)):
+            p = room.players[pid]
+            p.ships = [PlayerShip(positions=[Position(x=x, y=row)], hits=[])
+                       for x in range(6)]
+            p.remaining_ships = 6
+        # 死者苏生需要"有已阵亡的战舰"，否则试算闸门直接判打不了
+        room.players[ai_id].sunken_ships = [
+            PlayerShip(positions=[Position(x=5, y=5)], hits=[Position(x=5, y=5)])]
+        # 手牌：第一张是**会开 `pending_placement`** 的死者苏生。
+        room.players[ai_id].magic_hand = [_mk_card('死者苏生'), _mk_card('看破！'),
+                                          _mk_card('火力全开')]
+        server._recalc_attacker_attacks(room)
+
+        # ★ 必须把第一张牌**钉死**成"会放置的那张"。
+        #   实测：直接放手牌里，`choose_card` 会挑「火力全开」（它的局势乘子更高），
+        #   于是这个用例会"静默地什么都没测到"（假绿）—— 正是本文件头号教训的形状。
+        #   这里只把**第一次**选牌换成死者苏生，之后交还原实现。
+        orig_choose = server._ai_choose_card
+        forced = []
+
+        def choose_spy(room_arg, ai_arg, cards_played=0):
+            if not forced:
+                forced.append('死者苏生')
+                return 0, {}
+            return orig_choose(room_arg, ai_arg, cards_played)
+
+        server._ai_choose_card = choose_spy
+
+        violations = []
+        consumed = []          # 真的被消费过的放置流程（kind）
+        played_cards = []      # 真的打出去的牌名（按顺序）
+
+        # ★ 不要用"轮询去看 `pending_placement`"来证明"开出过放置流程"：
+        #   AI 名下的放置流程可能被**本测试线程**的 `_pump_pending` 消费掉，
+        #   轮询会漏掉它（实测就是这样 —— 用例报"没测到目标路径"，其实是测到了）。
+        #   改成直接盯**消费点**：它被调用过，就说明放置流程真的开出来过。
+        orig_consume = server._ai_consume_own_placement
+
+        def consume_spy(room_arg, ai_arg):
+            temp = getattr(room_arg, 'magic_temp_data', None) or {}
+            pending = temp.get('pending_placement')
+            if pending and pending.get('caster') == ai_arg:
+                consumed.append(pending.get('kind'))
+            return orig_consume(room_arg, ai_arg)
+
+        orig_use = server.handle_use_magic_card
+        orig_atk = server.handle_attack
+
+        def use_spy(data):
+            if data.get('player_id') == ai_id:
+                played_cards.append((data.get('card') or {}).get('name'))
+                _snapshot(f"出牌前({(data.get('card') or {}).get('name')})")
+            return orig_use(data)
+
+        def atk_spy(data):
+            if data.get('player_id') == ai_id:
+                _snapshot('开炮前')
+            return orig_atk(data)
+
+        def _snapshot(where):
+            live = server.room_manager.get_room(room_id) or room
+            unsettled = server._master_unsettled(live, ai_id)
+            if unsettled:
+                violations.append((where, list(unsettled)))
+
+        real_sleep = server.time.sleep
+        server.time.sleep = lambda *_a, **_k: None
+        server.handle_use_magic_card = use_spy
+        server.handle_attack = atk_spy
+        server._ai_consume_own_placement = consume_spy
+        driver = hg.HeadlessGame(lambda: hg.make_policy('master'), None, seed=1)
+        try:
+            driver.room = room
+            driver.p1, driver.p2 = ai_id, opp
+            driver.policies = {}
+
+            def run_master():
+                server._ai_master_turn(room_id, room, ai_id)
+
+            thread = threading.Thread(target=run_master, daemon=True)
+            thread.start()
+            deadline = _time.monotonic() + 30
+            while thread.is_alive() and _time.monotonic() < deadline:
+                live = server.room_manager.get_room(room_id)
+                if live is None:
+                    break
+                if live.chain or live.chain_waiting:
+                    driver._pump_chain()
+                else:
+                    driver._pump_pending()
+                _time.sleep(0.001)
+            thread.join(5)
+            assert not thread.is_alive(), '大师回合循环在 30 秒内没返回（卡死）'
+        finally:
+            server.time.sleep = real_sleep
+            server.handle_use_magic_card = orig_use
+            server.handle_attack = orig_atk
+            server._ai_choose_card = orig_choose
+            server._ai_consume_own_placement = orig_consume
+
+        assert '死者苏生' in played_cards, (
+            f'死者苏生没被真的打出去（夹具没生效）: {played_cards}')
+        assert consumed, (
+            '死者苏生打出去之后从来没有放置流程被消费 —— 用例没测到目标路径')
+        assert not violations, (
+            '打完放置卡之后没等它落地就动了下一个：\n  '
+            + '\n  '.join(repr(v) for v in violations[:5]))
+    finally:
+        server.room_manager.delete_room(room_id)
+
+
+def test_pacing_is_split_so_shooting_is_not_slowed_down():
+    """★ 源级守卫：**开炮不再有节奏停顿**，出牌仍有。
+
+    作者实测第二条：「攻击的时候可以快一点」。原先只有一个 0.8 秒常量被
+    出牌 ×2 / 阶段转换 / 开炮**四处共用**，于是"为了让出牌看得清"的代价
+    落到每一炮头上（六炮 = 4.8 秒纯等待）。
+
+    这条只能写成源码级断言：行为差异是**墙钟**，而墙钟在单测里既慢又不稳。
+    """
+    import re
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        'server.py')
+    src = open(path, encoding='utf-8').read()
+    start = src.index('def _ai_master_turn(')
+    end = src.index('def _ai_turn_loop(')
+    body = src[start:end]
+    # ⚠️ 必须**先剥掉注释**：旧写法的说明性注释里就写着
+    #    "原来这里有 `time.sleep(_MASTER_ACTION_PACING)`（0.8 秒）"，
+    #    对全文直接断言会出现"注释把用例判红"的假红。
+    code = '\n'.join(re.sub(r'#.*$', '', line) for line in body.splitlines())
+
+    assert '_MASTER_CARD_PACING' in code, '出牌节奏常量不见了'
+    assert 'time.sleep(_MASTER_CARD_PACING)' in code, '出牌前的停顿被删掉了'
+    assert '_MASTER_ACTION_PACING' not in code, (
+        '那段"出牌/开炮共用一个节奏常量"的旧写法又回来了 —— '
+        '它会让每一炮也被拖慢，与「攻击的时候可以快一点」相反')
+
+    # 开炮那一段里不许有任何节奏停顿。
+    # ⚠️ 用**代码锚点**定位（`#` 注释已经被剥掉了，注释里的"步骤 2：开炮"找不到）：
+    #    从真正调 `handle_attack` 那一行起，到进入收尾循环（`handle_enter_end_phase`）止。
+    shot_start = code.index("handle_attack({'room_id': room_id, 'player_id': ai_id")
+    shot_block = code[shot_start:code.index('handle_enter_end_phase', shot_start)]
+    assert '_MASTER_CARD_PACING' not in shot_block, (
+        '开炮路径上又出现了节奏停顿（作者要求攻击可以快一点）:\n' + shot_block)
+

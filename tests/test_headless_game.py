@@ -141,6 +141,188 @@ def test_wilson_interval_is_sane():
 
 
 # ---------------------------------------------------------------------------
+# 4b. ★「打疼了没有」—— 作者实报的「我甚至可以无伤赢他」在胜率里看不见
+# ---------------------------------------------------------------------------
+#
+# 背景（2026-09-22）：验收指标此前**只有胜率**。而 68.8% 同时兼容两种对局：
+#   · 每一局都互有攻防、双方各沉 5 艘的险胜；
+#   · 对手从头到尾没打中过我，我只是靠卡牌效果赢。
+# 作者报的是后者，但它在这套指标里**一个数字都对不上**。所以先把量做出来：
+#   击沉对方 / 被击沉 / 炮击击沉事件 / 命中率 / 无伤获胜。
+# 这里钉的是"这几个量真的在数、数得对、且不引入新的随机源"。
+
+def test_damage_stats_reports_both_sides_and_hit_rate():
+    """`damage_stats` 必须同时给出双方的数字，且命中率在合理区间。"""
+    results = hg.run_many(_hard, _hard, games=10, seed=5150, max_rounds=60)
+    dmg = hg.damage_stats(results)
+
+    for key in ('sunk_by_p1', 'sunk_by_p2', 'kills_by_p1', 'kills_by_p2',
+                'p1_hit_rate', 'p2_hit_rate', 'shots_per_game',
+                'p1_flawless_rate', 'p2_flawless_rate'):
+        assert key in dmg, f'damage_stats 少了 {key}'
+    # 每局总会有船被打沉（6 艘单格船、双方各打十几炮），否则说明判据读错了字段
+    assert dmg['sunk_by_p1'] + dmg['sunk_by_p2'] > 0, dmg
+    # 命中率必须落在"可能"的区间：36 格里 6 艘单格船，均匀撒约 1/6
+    assert 0.05 < dmg['p1_hit_rate'] < 1.0, dmg
+    assert 0.05 < dmg['p2_hit_rate'] < 1.0, dmg
+    assert dmg['shots_per_game'] > 0, dmg
+
+
+def test_both_damage_views_are_counted_independently():
+    """终局船数差与炮击击沉事件是**两个不同的量**，都必须真的在数。
+
+    ★ 为什么不能只留一个（我第一版就是只留了终局差，结论直接是错的）：
+      · 终局差 = `max_ships − remaining_ships`，会被「死者苏生 / 增援 /
+        滥竽充数 / 疗愈」**倒扣**，也会被"船数上限被改"扭曲；
+      · 炮击击沉事件 = 那一炮真的把一艘船的 `hits` 填满了。
+      实测 master vs hard 1000 局：炮击击沉 **4.69/局**，终局差只有 **2.59/局** ——
+      差的 2.1 艘全是卡牌把船捞了回来。只看终局差会得出"大师打不疼人"的
+      **错误结论**（它的输出其实比 hard 更高）。
+
+    ⚠️ 两者**没有**固定的大小关系：`滥竽充数` 这类卡能把船数补到超过起始 6 艘，
+       于是终局差可以**大于**炮击击沉事件数（hard vs hard 实测 4.7 > 4.2）。
+       所以这里只断言"两个量都在数、都不是常量 0"，不写大小关系。
+    """
+    results = hg.run_many(_hard, _hard, games=10, seed=616, max_rounds=60)
+    dmg = hg.damage_stats(results)
+    assert dmg['kills_by_p1'] > 0 and dmg['kills_by_p2'] > 0, dmg
+    assert dmg['sunk_by_p1'] >= 0 and dmg['sunk_by_p2'] >= 0, dmg
+    # 炮击击沉事件数不可能超过总开炮次数
+    assert dmg['kills_by_p1'] <= dmg['shots_per_game'] + 1e-9, dmg
+
+
+def test_flawless_win_rate_is_a_ratio_of_that_seats_wins():
+    """「无伤获胜」的分母必须是**该座位赢的局数**（不是总局数）。"""
+    results = hg.run_many(_hard, _hard, games=10, seed=717, max_rounds=60)
+    stats = hg.summarize(results)
+    dmg = hg.damage_stats(results)
+    if stats['p1_wins']:
+        assert abs(dmg['p1_flawless_rate']
+                   - dmg['p1_flawless_wins'] / stats['p1_wins']) < 1e-9
+    else:
+        assert dmg['p1_flawless_rate'] == 0.0
+    if stats['p2_wins']:
+        assert abs(dmg['p2_flawless_rate']
+                   - dmg['p2_flawless_wins'] / stats['p2_wins']) < 1e-9
+
+
+def test_new_metrics_do_not_add_a_random_source():
+    """★ 新增统计**不许**引入随机源：同一 seed 两次跑必须逐字段相同。
+
+    这是本项目刚吃过的亏（CLAUDE.md 教训 #36：`random.Random()` 的熵源让
+    所有对照数字变成噪声）。新加的击沉/命中统计要么读终局状态、要么读
+    已有动作记录，一条都不许调随机。
+
+    ⚠️ 快照必须**按座位别名归一化**再比：房间 id 是 `uuid4()` 生成的，
+       AI 座位 id = `'ai-' + room_id`，两次跑必然不同 ——
+       那证明的是"uuid 每次都变"，不是"决策分叉了"（`action_hash()` 早就
+       为此做了归一，这里必须跟着做，否则这条用例永远红）。
+    """
+    def run_once():
+        results = hg.run_many(_hard, _hard, games=5, seed=31337, max_rounds=60)
+        snapshot = []
+        for r in results:
+            alias = {r.p1: 'p1', r.p2: 'p2'}
+
+            def norm(bucket):
+                return tuple(sorted((alias.get(k, k), v) for k, v in bucket.items()))
+
+            snapshot.append((r.seed, r.action_hash(),
+                             norm(r.sunk), norm(r.kills),
+                             norm(r.attacks_fired), norm(r.hit_shots),
+                             norm(r.miss_shots), norm(r.rejected_shots)))
+        return tuple(snapshot), hg.damage_stats(results)
+
+    first, second = run_once(), run_once()
+    assert first[0] == second[0], (
+        '新增的击沉/命中统计让同一 seed 跑出了不同数字 → 引入了新的随机源。'
+        f'\n  第一次: {first[0][:1]}'
+        f'\n  第二次: {second[0][:1]}')
+    # `damage_stats` 里的比率也不许有浮点抖动
+    assert first[1] == second[1], (first[1], second[1])
+
+
+def test_damage_stats_is_empty_safe():
+    """空批次不许抛异常（CLI/工具可能跑 0 局）。"""
+    assert hg.damage_stats([])['sunk_by_p1'] == 0.0
+    assert hg.damage_stats([])['p1_hit_rate'] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# 4c. ★ 度量工具本身必须可复现（"对照组"最容易悄悄长出熵随机源）
+# ---------------------------------------------------------------------------
+#
+# 事故（2026-09-22 实测，不是推演）：
+#   `tools/master_ablation.py` 的 `_plain_attack`（"不看情报、均匀撒"的对照档）
+#   写的是 `rng = rng or random.Random()`。无参 `random.Random()` 用**系统熵**播种，
+#   于是"同一 seed 连跑两次"胜率 **72.0% vs 70.7%**，动作哈希也不同。
+#   此前记下的"读情报值多少分"就是这个噪声。
+#   同形状的还有 `tools/master_aggression_ablation.py` 里那份抄过去的实现
+#   （已修）。守住它的成本很低，而它坏掉**不会有任何症状**。
+
+def test_ablation_tools_never_seed_an_rng_from_system_entropy():
+    """★ 源码级守卫：对照实验工具里不许有**无参** `random.Random()`。
+
+    无参 `random.Random()` = 系统熵播种 = 同一 seed 跑不出同一局面，
+    整个对照实验的数字都是噪声（CLAUDE.md 教训 #36）。
+    这类问题**行为上测不出来**（跑一次永远"成功"），只能扫源码。
+    """
+    import ast
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    tools = [root / 'tools' / name for name in
+             ('master_ablation.py', 'master_aggression_ablation.py',
+              'master_aggression_diag.py', 'master_diag.py',
+              'master_choice_diag.py', 'master_intel_diag.py',
+              'master_end_reason_diag.py')]
+    offenders = []
+    for path in tools:
+        if not path.exists():
+            continue
+        tree = ast.parse(path.read_text(encoding='utf-8'))
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == 'Random'
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == 'random'
+                    and not node.args):
+                offenders.append(f'{path.name}:{node.lineno}')
+    assert not offenders, (
+        f'这些地方用了无参 `random.Random()`（系统熵播种）→ 对照数字不可复现：\n  '
+        + '\n  '.join(offenders)
+        + '\n改用 `ai_brain._rng(rng)`（与 random.seed() 同源）')
+
+
+def test_plain_attack_control_is_reproducible():
+    """★ 对照组 `_plain_attack` 必须真的受 `random.seed()` 控制（不是新实例）。"""
+    import random
+    import tools.master_aggression_ablation as agg
+    import tools.master_ablation as ab
+
+    room_id = server.room_manager.create_ai_room('human-0', 'P2', None, 'master')
+    try:
+        room = server.room_manager.get_room(room_id)
+        room.players['human-0'] = server.Player(
+            name='P2', ships=[], attacks=[], remaining_ships=0,
+            user_id=None, sid='human-0')
+        ai_id = server._ai_player_id(room)
+
+        def sample(fn):
+            random.seed(2468)
+            return [fn(room, ai_id) for _ in range(20)]
+
+        for label, fn in (('master_ablation._plain_attack', ab._plain_attack),
+                          ('master_aggression_ablation._plain_attack', agg._plain_attack)):
+            first, second = sample(fn), sample(fn)
+            assert first == second, (
+                f'{label} 不受 random.seed() 控制 → 同一 seed 两次选出不同格子，'
+                f'整档对照数字是噪声。\n  第一次 {first[:5]}\n  第二次 {second[:5]}')
+    finally:
+        server.room_manager.delete_room(room_id)
+
+
+# ---------------------------------------------------------------------------
 # 5. 硬上限：撞上限要记 stalled，既不挂也不抛
 # ---------------------------------------------------------------------------
 def test_action_cap_reports_stalled_instead_of_hanging():

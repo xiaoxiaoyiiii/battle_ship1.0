@@ -63,6 +63,7 @@
 import argparse
 import contextlib
 import hashlib
+import io
 import json
 import math
 import os
@@ -103,7 +104,8 @@ class GameResult:
 
     __slots__ = ('seed', 'winner', 'loser', 'rounds', 'stalled', 'stall_reason',
                  'actions', 'violations', 'duration', 'p1', 'p2', 'room_id',
-                 'final_state')
+                 'final_state', 'sunk', 'kills', 'attacks_fired', 'hit_shots',
+                 'miss_shots', 'shielded_shots', 'rejected_shots')
 
     def __init__(self, seed=None, p1=None, p2=None, room_id=None):
         self.seed = seed
@@ -118,6 +120,25 @@ class GameResult:
         self.actions = []
         self.violations = []
         self.duration = 0.0
+        # ── 「打疼了没有」这四个量（2026-09-22 加）─────────────────────────
+        #
+        # 为什么必须单独有它们：此前的度量只有胜率。而作者实报的
+        # 「我甚至可以无伤赢他」在胜率里**完全看不见** —— 68.8% 既可以是
+        # "互有攻防的险胜"，也可以是"对手从头到尾没打中过我"。没有这两个数，
+        # 改完无法判断侵略性是涨了还是跌了（只能读噪声）。
+        #
+        # `sunk[座位]`  = 该座位**击沉了对方几艘**（= 对方的 max_ships − remaining_ships）
+        # `hit_shots`   = 该座位的炮击里真的打中船的（含被盾/无敌吸收的）
+        #
+        # ⚠️ 全部是**终局快照 + 既有动作记录**推出来的，不新增任何随机源，
+        #    也不改对局行为 —— 同种子两次跑的文字输出必须逐字节一致。
+        self.sunk = {}
+        self.kills = {}
+        self.attacks_fired = {}
+        self.hit_shots = {}
+        self.miss_shots = {}
+        self.shielded_shots = {}
+        self.rejected_shots = {}
         # 收尾时的可观察房间状态（就是"卡在哪"的证据）。房间对象本身在
         # `__exit__` 里就被删掉了，所以必须在这里留一份**纯数据**快照。
         self.final_state = {}
@@ -404,6 +425,67 @@ class ExistingAIPolicy(Policy):
                                         'type': card.type}, 'targets': []}
 
 
+def _shot_verdict(room, pid, x, y):
+    """这一炮打出去之后的判定：`'hit'` / `'shielded'` / `''`（未命中）。
+
+    ⚠️ 判据**只读防守方的 `ships`**，而这是"棋盘本身"的公开信息（前端也拿得到
+       被轰过的格子）。这里读它不是为了替 AI 决策 —— 决策层在 `ai_brain.py`，
+       它的作弊守卫由 `tests/test_ai_brain.py` 钉着。本函数只服务于**度量**。
+
+    为什么不能用别的方式拿这个数（都试过或权衡过）：
+      · `handle_attack` 的返回值只有 `{'status':'success'}`（命中与否在
+        `AttackResult` 里，只走 `emit`）；
+      · 盾挡下的那一炮**不记进 `attacker.attacks`**（server.py 有意为之），
+        所以 `attacks` 列表里的 `hit` 会漏掉它；
+      · 攻守都是 AI 时，`room.last_attack` 会被下一炮/别的路径覆写。
+
+    因此：打完后看"这一格是不是某艘船的格"。命中且该船**没多出命中数**（也没有
+    强制击杀）就是被盾/无敌吸收 —— 两种都算"这一炮打中了"，但分开计数。
+    """
+    defender_id = next((o for o in room.players if o != pid), None)
+    defender = room.players.get(defender_id) if defender_id else None
+    if defender is None:
+        return ''
+    for ship in (getattr(defender, 'ships', None) or []):
+        if {'x': x, 'y': y} in (ship.positions or []):
+            return 'hit'
+    return ''
+
+
+def _sunk_at(room, pid, x, y):
+    """这一炮打的那一格上，船是不是**沉了**（`len(hits) >= len(positions)`）。
+
+    与 server 的存活判据同一份口径（CLAUDE.md 第 4 节：存活 = `len(hits) <
+    len(positions)`）。无敌中的船**不记 hits**，所以这里自然返回 False。
+    """
+    defender_id = next((o for o in room.players if o != pid), None)
+    defender = room.players.get(defender_id) if defender_id else None
+    if defender is None:
+        return False
+    for ship in (getattr(defender, 'ships', None) or []):
+        if {'x': x, 'y': y} not in (ship.positions or []):
+            continue
+        return len(ship.hits or []) >= len(ship.positions or [])
+    return False
+
+
+def _shielded_by(room, pid, x, y):
+    """这一格上是否停着一艘「挨了这一炮却毫发无伤」的船（盾 / 无敌）。
+
+    与 `_shot_verdict` 配对使用：`hit` 之后再看这一眼，就能把"打中了但没造成
+    伤害"（盾/无敌）从"打中了且造成伤害"里分出来 —— 两者对"侵略性"的含义不同。
+    """
+    defender_id = next((o for o in room.players if o != pid), None)
+    defender = room.players.get(defender_id) if defender_id else None
+    if defender is None:
+        return False
+    for ship in (getattr(defender, 'ships', None) or []):
+        if {'x': x, 'y': y} not in (ship.positions or []):
+            continue
+        return bool(getattr(ship, 'shield', False) or getattr(ship, 'invincible', False))
+    return False
+
+
 def _legal_placement_cells(room, pid, pending):
     """放置流程的合法候选格，**复用 server 的 `_placement_error`**（唯一判据）。
 
@@ -660,6 +742,33 @@ class HeadlessGame:
     def _record(self, kind, pid, detail=''):
         self._actions += 1
         self.result.actions.append((kind, pid, detail))
+
+    def _note_shot(self, pid, hit=False, miss=False, shielded=False, rejected=False,
+                   sunk=False):
+        """记一炮的结果。只被**炮击动作**调用，所以计数恒等于开炮次数。
+
+        四个桶互斥；`attacks_fired` 是总和。被拒的那一炮也算"试图开炮"
+        （`rejected_shots`），与真的打出去分开记 —— 否则"有多少炮其实被
+        门禁挡了"就看不见了。
+
+        `sunk=True` 额外记一次 `kills`（这一炮**击沉**了一艘）。**必须分开记**：
+        终局船数差（`sunk`）会被「死者苏生 / 增援 / 滥竽充数 / 疗愈」倒扣 ——
+        实测大师 1000 局里 `_apply_ship_sunk_effects` 的事件数是 **4.69 次/局**，
+        而终局船数差只有 **2.59 艘/局**，差的 2.1 艘全是这类卡把船捞回来的。
+        拿终局差当"侵略性"会把"输出被对手回血抵消"读成"没输出"。
+        """
+        result = self.result
+        result.attacks_fired[pid] = result.attacks_fired.get(pid, 0) + 1
+        if sunk:
+            result.kills[pid] = result.kills.get(pid, 0) + 1
+        if rejected:
+            result.rejected_shots[pid] = result.rejected_shots.get(pid, 0) + 1
+        elif shielded:
+            result.shielded_shots[pid] = result.shielded_shots.get(pid, 0) + 1
+        elif hit:
+            result.hit_shots[pid] = result.hit_shots.get(pid, 0) + 1
+        elif miss:
+            result.miss_shots[pid] = result.miss_shots.get(pid, 0) + 1
 
     def _violation(self, message):
         self.result.violations.append(message)
@@ -1022,6 +1131,18 @@ class HeadlessGame:
                         resp = server.handle_attack({'room_id': room.id,
                                                      'player_id': attacker, 'x': x, 'y': y})
                         self._record('attack', attacker, f'{x},{y}')
+                        verdict = _shot_verdict(room, attacker, x, y) if resp.get('status') == 'success' else ''
+                        absorbed = verdict == 'hit' and _shielded_by(room, attacker, x, y)
+                        # 这一炮有没有**击沉**（不是"打中"）：命中格上的那艘船
+                        # `len(hits) >= len(positions)` 就是沉了（与 server 同一判据）。
+                        sank = verdict == 'hit' and _sunk_at(room, attacker, x, y)
+                        self._note_shot(
+                            attacker,
+                            hit=verdict == 'hit' and not absorbed,
+                            shielded=absorbed,
+                            miss=verdict != 'hit',
+                            sunk=sank,
+                            rejected=resp.get('status') != 'success')
                         if resp.get('status') != 'success':
                             self._last_attack_error = str(resp.get('message'))
                             self._violation(f'攻击被拒：{attacker} ({x},{y}) -> {resp}')
@@ -1113,6 +1234,16 @@ class HeadlessGame:
         if result.winner:
             result.loser = self.p2 if result.winner == self.p1 else self.p1
         result.duration = time.perf_counter() - started
+        # 「打疼了没有」的终局快照：双方各被击沉几艘。
+        # 读 `remaining_ships`（终局船数）与 `max_ships`（本局起始船数）——
+        # 两者都是房间里已有的字段，不新增任何状态。卡死局同样记，
+        # 这样"改了之后卡死变多"不会让这个指标悄悄少算。
+        room = self.room
+        if room is not None:
+            for pid, player in room.players.items():
+                cap = int(getattr(player, 'max_ships', None) or 6)
+                alive = int(getattr(player, 'remaining_ships', 0) or 0)
+                result.sunk[pid] = max(0, cap - alive)
         # 房间对象马上要在 `__exit__` 里被删掉，卡死证据必须在这里先留一份纯数据。
         result.final_state = self.observable_state()
         # 结算（写库/徽章/段位）。默认关掉：它要读库（`_streak_context` 读连胜），
@@ -1139,19 +1270,76 @@ def play_game(p1, p2, seed=None, **kwargs) -> GameResult:
         return game.run()
 
 
-def run_many(p1, p2, games=1, seed=1, progress=None, **kwargs):
+def run_many(p1, p2, games=1, seed=1, progress=None, quiet=False, **kwargs):
     """连续跑 `games` 局，返回结果列表。
 
     每局的种子是 `seed + i`（可复现：换台机器、换顺序都得到同一批局面）。
     `progress` 给了就每局回调一次（CLI 用来打进度点）。
+
+    `quiet=True`：把对局过程里 `apply_magic_effect` 等处的 `print` 吞掉。
+    那些 print 是**每打一张牌一行**，1000 局会有十万行 —— 工具调用方
+    （`tools/master_ablation.py` 已经自己包了 redirect）必须能关掉它，
+    否则真实终端里前面的输出全被冲走（本函数原先没有这个开关）。
     """
     results = []
-    for i in range(int(games)):
-        result = play_game(p1, p2, seed=int(seed) + i, **kwargs)
-        results.append(result)
-        if progress is not None:
-            progress(i, result)
+    with contextlib.redirect_stdout(io.StringIO()) if quiet else contextlib.nullcontext():
+        for i in range(int(games)):
+            result = play_game(p1, p2, seed=int(seed) + i, **kwargs)
+            results.append(result)
+            if progress is not None:
+                progress(i, result)
     return results
+
+
+def _mean(values):
+    values = list(values)
+    return (sum(values) / len(values)) if values else 0.0
+
+
+def damage_stats(results) -> dict:
+    """「打疼了没有」的汇总：双方各击沉几艘、各打了几炮、命中率多少。
+
+    为什么单开一个函数而不是塞进 `summarize()`：`summarize()` 的返回字典已经被
+    `tools/master_ablation.py` 等工具按名字取用，往里塞字段会让所有调用点都要
+    重新表态；而这两个量是**同一批结果上的第二个视角**，分开算最省事。
+
+    ⚠️ p1 = 房间里的 AI 座位、p2 = 真人座位（见 `HeadlessGame._build` 的座位约定）。
+       先手由猜拳决定，所以 `sunk_by_p1` 不是"先手打沉几艘"。
+    """
+    played = len(results)
+    fired = sum(sum(r.attacks_fired.values()) for r in results)
+    hits = sum(sum(r.hit_shots.values()) for r in results)
+    p1_wins = [r for r in results if r.winner and r.winner == r.p1]
+    p2_wins = [r for r in results if r.winner and r.winner == r.p2]
+    return {
+        # 平均每局：p1 打沉了 p2 几艘 / p2 打沉了 p1 几艘 —— 胜率看不见的那两个数
+        # ⚠️ 这是**终局船数差**，会被「死者苏生 / 增援 / 滥竽充数 / 疗愈」倒扣。
+        'sunk_by_p1': _mean(r.sunk.get(r.p1, 0) for r in results),
+        'sunk_by_p2': _mean(r.sunk.get(r.p2, 0) for r in results),
+        # 炮击击沉**事件**数（不看对手回不回血）—— 衡量"输出"本身
+        'kills_by_p1': _mean(r.kills.get(r.p1, 0) for r in results),
+        'kills_by_p2': _mean(r.kills.get(r.p2, 0) for r in results),
+        # 「无伤」：赢的那一方一艘都没沉 —— 作者实报的那句就是它
+        'p1_flawless_wins': sum(1 for r in p1_wins if r.sunk.get(r.p1, 0) == 0),
+        'p2_flawless_wins': sum(1 for r in p2_wins if r.sunk.get(r.p2, 0) == 0),
+        'p1_flawless_rate': (sum(1 for r in p1_wins if r.sunk.get(r.p1, 0) == 0) / len(p1_wins))
+                            if p1_wins else 0.0,
+        'p2_flawless_rate': (sum(1 for r in p2_wins if r.sunk.get(r.p2, 0) == 0) / len(p2_wins))
+                            if p2_wins else 0.0,
+        'p1_hit_rate': _hit_rate(results, 'p1'),
+        'p2_hit_rate': _hit_rate(results, 'p2'),
+        'shots_per_game': (fired / played) if played else 0.0,
+        'hit_rate': (hits / fired) if fired else 0.0,
+        'shielded_total': sum(sum(r.shielded_shots.values()) for r in results),
+        'rejected_total': sum(sum(r.rejected_shots.values()) for r in results),
+    }
+
+
+def _hit_rate(results, seat):
+    """某个座位的命中率（命中 ÷ 开炮）。`seat` 取 `'p1'` / `'p2'`。"""
+    fired = sum(r.attacks_fired.get(getattr(r, seat), 0) for r in results)
+    hits = sum(r.hit_shots.get(getattr(r, seat), 0) for r in results)
+    return (hits / fired) if fired else 0.0
 
 
 def summarize(results) -> dict:
@@ -1213,6 +1401,8 @@ def _build_parser():
     parser.add_argument('--dump-state', type=int, default=0,
                         help='打印前 N 局卡死局的可观察状态（默认 0）')
     parser.add_argument('--list-policies', action='store_true', help='列出可用策略名后退出')
+    parser.add_argument('--quiet', action='store_true',
+                        help='吞掉对局过程里的 print（每打一张牌一行，批量跑会刷屏）')
     return parser
 
 
@@ -1246,16 +1436,27 @@ def main(argv=None):
     started = time.perf_counter()
     results = run_many(p1_factory, p2_factory, games=args.games, seed=seed0,
                        max_rounds=args.max_rounds, max_actions=args.max_actions,
-                       player_names=tuple(args.player_names),
+                       player_names=tuple(args.player_names), quiet=args.quiet,
                        ai_difficulty=(args.p1 if args.p1 in server.AI_DIFFICULTIES else None))
     elapsed = time.perf_counter() - started
     stats = summarize(results)
+    dmg = damage_stats(results)
     lo, hi = stats['p1_win_rate_ci']
 
     print(f'策略：p1={args.p1}  p2={args.p2}  种子={seed0}')
     print(f'局数            : {stats["games"]}')
     print(f'p1 胜 / p2 胜 / 平局 : {stats["p1_wins"]} / {stats["p2_wins"]} / {stats["draws"]}')
     print(f'p1 胜率         : {stats["p1_win_rate"]:.4f}  (95% CI {lo:.4f} ~ {hi:.4f})')
+    # ★ 「打疼了没有」——胜率看不见的那一半。作者实报的「我甚至可以无伤赢他」
+    #   在这里才有数字：`sunk_by_p1` = p1 打沉对方几艘，`sunk_by_p2` = p2 打沉 p1 几艘。
+    print(f'平均击沉对方(p1) : {dmg["sunk_by_p1"]:.3f} 艘/局'
+          f'   平均被击沉(p1) : {dmg["sunk_by_p2"]:.3f} 艘/局')
+    print(f'炮击击沉事件 p1/p2: {dmg["kills_by_p1"]:.3f} / {dmg["kills_by_p2"]:.3f} 次/局'
+          f'   （与上面的差 = 对手用卡把船捞回来的量）')
+    print(f'无伤获胜 p1 / p2 : {dmg["p1_flawless_wins"]} 局 ({dmg["p1_flawless_rate"]:.1%})'
+          f' / {dmg["p2_flawless_wins"]} 局 ({dmg["p2_flawless_rate"]:.1%})')
+    print(f'命中率 p1 / p2   : {dmg["p1_hit_rate"]:.4f} / {dmg["p2_hit_rate"]:.4f}'
+          f'   （每局开炮 {dmg["shots_per_game"]:.2f} 次，被拒 {dmg["rejected_total"]}）')
     print(f'平均大回合数     : {stats["avg_rounds"]:.2f}')
     print(f'卡死局数 (stalled): {stats["stalled"]}')
     print(f'被拒动作总数     : {stats["violations"]}')

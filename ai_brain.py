@@ -295,3 +295,324 @@ def choose_taunt(room, ai_id, event, rng=None):
         return rng.choice(list(lines))
     except Exception:
         return None
+
+
+# ===========================================================================
+# 牌价值表
+# ===========================================================================
+# 这是**调参的主入口**：离线自对弈搜索就是在这张表（外加下面几个乘子）上搜
+# （见 docs/MASTER_AI_2026_09_21.md §7.4）。数值按「这张牌大概能换回多少优势」定，
+# 分档口径：
+#     进攻性（直接减少对方船数）   80-95
+#     资源/手牌（换牌、抽牌）      55-75
+#     防守/续航（回血、加盾）      50-70
+#     条件性（需前置才生效）       基础值 +10，条件不成立时归零（见 _situational）
+#     重摆类（回光返照/败者食尘）   30-45，局面越差越加分
+#
+# ⚠️ 这张表必须覆盖**每一张能摸到的卡**（`钢筋铁骨` 除外，它在
+#    `HIDDEN_CARD_NAMES` 里，双方都摸不到）。漏一张的后果是那张牌
+#    价值恒为 0 → AI 永远不打它 → 逐卡测试会红。守卫见 tests/test_ai_brain.py。
+
+CARD_BASE_VALUE = {
+    # —— 进攻性
+    '轰炸': 92,            # 整行/整列，能一次灭多艘
+    '火力全开': 88,
+    '神威！': 85,
+    'Freezing！': 85,      # 直接跳掉对方的整个回合
+    '死者苏生': 85,        # 沉船回来等于直接追回船差
+    '余音绕梁': 82,
+    '滥竽充数': 82,        # 补满船数（大回合末收回）
+    '神之宣告': 80,
+    '五险一金': 80,
+    '硫磺火焰': 80,
+    '冻结': 78,
+    '无暇圣心': 78,
+    '增援': 78,
+    '命运骰子': 76,        # 期望为正但方差大
+    '极限增援': 75,
+    '绝处逢生': 75,
+    '探测雷达': 74,        # 情报卡：先探明再打，价值靠后续兑现
+    '明智埋葬': 74,        # 能看到对方手牌，埋掉最能翻盘的那张
+    '看破！': 72,
+    '疗愈': 72,
+    '守株待兔': 72,
+    '无中生有': 70,
+    '卧薪尝胆': 70,
+    '教皇旨意': 70,        # 需要配「弃卡换攻击」才划算（见 T7）
+    '桃园结义': 70,
+    '溅射': 70,
+    '百亿补贴': 68,
+    '八方来财': 68,
+    '饮血': 68,
+    '神机妙算': 68,
+    '仁王之盾': 66,
+    '越战越勇': 66,
+    '盗亦有道': 66,
+    '失灵！': 65,          # 主要走连锁，不主动打
+    '亡羊补牢': 65,
+    '禁忌果实': 64,
+    '雷达子弹': 62,
+    '恶魔契约': 62,
+    '伊甸园': 60,
+    '加百列之光': 60,
+    '灵气复苏': 60,
+    '平等条约': 58,
+    '克苏鲁之眼': 55,      # 代价是暴露自己一艘船
+    '回光返照': 45,        # 重摆：局面越差越值
+    '败者食尘': 40,
+}
+
+# 出牌阈值：低于它就不打（宁可留手，也不白烧一张）。
+PLAY_THRESHOLD = 50
+# 每回合出牌预算（现状是 1 张；大师放到 3 张，但不到处倒手牌）。
+CARDS_PER_TURN = 3
+
+# 「必须刚命中/刚击沉才有意义」的卡 —— 条件不成立时价值归零。
+# 现状是这几张随机打出去只会被退牌，等于废牌（CLAUDE.md 里记着）。
+NEEDS_LAST_HIT = {'溅射', '雷达子弹'}
+NEEDS_LAST_SUNK = {'越战越勇', '饮血'}
+
+
+def card_value(name):
+    """某张牌的基础价值；没登记的返回 0（调用方据此不打它）。"""
+    try:
+        return int(CARD_BASE_VALUE.get(str(name or ''), 0))
+    except Exception:
+        return 0
+
+
+def _last_attack(room):
+    """上一次炮击的结果快照（公开信息）。拿不到就返回空 dict。"""
+    la = getattr(room, 'last_attack', None)
+    return la if isinstance(la, dict) else {}
+
+
+def _situational(room, ai_id, name):
+    """局势乘子。返回一个 float 系数（1.0 = 不修正，0.0 = 这张牌现在别打）。
+
+    只读公开信息：自己的船、对方的剩余船数（界面上就显示）、上一次炮击结果、
+    双方手牌**张数**（不是内容）。
+    """
+    me = (getattr(room, 'players', None) or {}).get(ai_id)
+    if me is None:
+        return 0.0
+    opp_id = _opponent_id(room, ai_id)
+    opp = (getattr(room, 'players', None) or {}).get(opp_id) if opp_id else None
+
+    my_ships = int(getattr(me, 'remaining_ships', 0) or 0)
+    opp_ships = int(getattr(opp, 'remaining_ships', 0) or 0) if opp else 0
+    behind = opp_ships - my_ships          # >0 = 我落后
+
+    k = 1.0
+
+    # ① 条件卡：前置不成立就是废牌，价值直接归零
+    la = _last_attack(room)
+    if name in NEEDS_LAST_HIT and not la.get('hit'):
+        return 0.0
+    if name in NEEDS_LAST_SUNK and not la.get('ship_sunk'):
+        return 0.0
+
+    # ② 卧薪尝胆：卡面要求「自己船数 < 对方」
+    if name == '卧薪尝胆' and behind <= 0:
+        return 0.0
+
+    # ③ 重摆类：只有局面很差时才值得把盘面推倒重来
+    if name in ('回光返照', '败者食尘'):
+        if behind >= 2:
+            k *= 1.8
+        elif behind <= 0:
+            k *= 0.5
+
+    # ④ 落后时进攻卡加码、领先时防守卡加码
+    if name in ('轰炸', '神威！', '神之宣告', '硫磺火焰'):
+        k *= 1.0 + min(0.4, 0.15 * max(0, behind))
+    if name in ('疗愈', '仁王之盾', '卧薪尝胆', '无暇圣心'):
+        k *= 1.0 + min(0.4, 0.15 * max(0, -behind))
+
+    # ⑤ 手牌少时抽牌类更值钱
+    hand = len(getattr(me, 'magic_hand', None) or [])
+    if name in ('无中生有', '八方来财', '亡羊补牢') and hand <= 2:
+        k *= 1.5
+
+    return k
+
+
+def choose_card(room, ai_id, playable, rng=None):
+    """从**可打的手牌下标**里挑一张，返回下标；都不值得打则 None。
+
+    `playable` 由调用方算好（= `can_play_magic_card` 通过的那些下标）——
+    本模块不许 import server，所以「能不能打」由调用方判定，这里只判「值不值得打」。
+
+    ⚠️ 这是「分析局势选牌」的核心，现状是「从 9 张安全卡里挑速阶最低的那张」，
+       完全不看局势。这里改成：基础价值 × 局势乘子，取最高分且**严格高于阈值**。
+       宁可不出手，也不白烧一张（白烧会被 `_refund_card_to_hand` 退回来，
+       等于白白浪费一次出牌时机）。
+    """
+    try:
+        me = (getattr(room, 'players', None) or {}).get(ai_id)
+        if me is None:
+            return None
+        hand = list(getattr(me, 'magic_hand', None) or [])
+        best_i, best_v = None, 0.0
+        for i in (playable or []):
+            if not isinstance(i, int) or i < 0 or i >= len(hand):
+                continue
+            name = getattr(hand[i], 'name', None)
+            v = card_value(name) * _situational(room, ai_id, name)
+            if v > best_v:
+                best_i, best_v = i, v
+        if best_i is None or best_v < PLAY_THRESHOLD:
+            return None
+        return best_i
+    except Exception:
+        return None
+
+
+# ===========================================================================
+# 目标选择（区域 / 行列 / 连续格）
+# ===========================================================================
+
+# 各卡需要哪种目标形状。现状这些卡对 AI 一律**打不出去**（缺 target_data
+# 就被判 success=False 退回），所以这张表就是「T2 档能不能开」的开关。
+AREA_CARDS = {'神威！', '冻结', '探测雷达'}    # 3×3 区域
+LINE_CARDS = {'轰炸'}                          # 整行/整列
+CELLS_CARDS = {'硫磺火焰'}                     # 连续 6 格
+
+
+def _my_ship_cells(room, ai_id):
+    """自己所有船占的格（自己的船对自己是可见的，不算作弊）。"""
+    me = (getattr(room, 'players', None) or {}).get(ai_id)
+    out = set()
+    for sh in (getattr(me, 'ships', None) or []):
+        out |= _cells_of(sh)
+    return out
+
+
+def _score_cells(room, ai_id, cells, self_harm=False):
+    """一组格子对 AI 的价值。
+
+    · 已知敌船      +100   （打中就是实打实的一艘）
+    · 未轰过的格    +1     （信息价值：探一格少一格未知）
+    · 自己的船      -100   （对会伤到自己的卡，比如神威打己方棋盘）
+    """
+    me = (getattr(room, 'players', None) or {}).get(ai_id)
+    known = _known_enemy_cells(me) if me is not None else set()
+    attacked = _attacked_cells(me) if me is not None else set()
+    mine = _my_ship_cells(room, ai_id)
+    s = 0
+    for c in cells:
+        c = _cell_of(c) if not isinstance(c, tuple) else c
+        if c is None:
+            continue
+        if c in known:
+            s += 100
+        if c not in attacked:
+            s += 1
+        if c in mine:
+            s += -100 if self_harm else -1
+    return s
+
+
+def _area_cells(x, y, size=3):
+    """以 (x,y) 为左上角的 size×size 区域（越界自动裁掉）。"""
+    return [(a, b) for a in range(x, x + size) for b in range(y, y + size)
+            if 0 <= a < BOARD_SIZE and 0 <= b < BOARD_SIZE]
+
+
+def resolve_target(room, ai_id, card, rng=None):
+    """替 AI 选目标，返回可直接交给 `handle_use_magic_card` 的 `targets` dict。
+
+    认不出的卡返回 `None` —— 调用方据此**不要打这张牌**
+    （继续打只会被判失败并退牌，白费一次出牌时机）。
+    """
+    try:
+        name = str(getattr(card, 'name', card) or '')
+        self_harm = name == '神威！'      # 神威打己方棋盘时区域里的自己船是代价
+
+        if name in AREA_CARDS:
+            best, best_s = None, None
+            for x in range(BOARD_SIZE - 2):
+                for y in range(BOARD_SIZE - 2):
+                    cells = _area_cells(x, y, 3)
+                    s = _score_cells(room, ai_id, cells, self_harm=self_harm)
+                    if best_s is None or s > best_s:
+                        best, best_s = (x, y), s
+            if best is None:
+                return None
+            x, y = best
+            return {'target_area': {'x1': x, 'y1': y, 'x2': x + 2, 'y2': y + 2}}
+
+        if name in LINE_CARDS:
+            best, best_s = None, None
+            for i in range(BOARD_SIZE):
+                for kind, cells in (('row', [(x, i) for x in range(BOARD_SIZE)]),
+                                    ('col', [(i, y) for y in range(BOARD_SIZE)])):
+                    s = _score_cells(room, ai_id, cells)
+                    if best_s is None or s > best_s:
+                        best, best_s = (kind, i), s
+            if best is None:
+                return None
+            kind, i = best
+            return {'target_line': {'type': kind, 'index': i}}
+
+        if name in CELLS_CARDS:
+            n = 6                              # 硫磺火焰：自由连选 6 格
+            best, best_s = None, None
+            for y in range(BOARD_SIZE):        # 横向滑动窗口
+                for x in range(0, BOARD_SIZE - n + 1):
+                    cells = [(x + k, y) for k in range(n)]
+                    s = _score_cells(room, ai_id, cells)
+                    if best_s is None or s > best_s:
+                        best, best_s = cells, s
+            for x in range(BOARD_SIZE):        # 纵向
+                for y in range(0, BOARD_SIZE - n + 1):
+                    cells = [(x, y + k) for k in range(n)]
+                    s = _score_cells(room, ai_id, cells)
+                    if best_s is None or s > best_s:
+                        best, best_s = cells, s
+            if best is None:
+                return None
+            return {'target_cells': [{'x': a, 'y': b} for a, b in best]}
+
+        return None
+    except Exception:
+        return None
+
+
+# ===========================================================================
+# 挑牌（弃牌堆 / 牌堆 / 对方手牌 / 数值）
+# ===========================================================================
+
+def resolve_choice(room, ai_id, kind, options, rng=None):
+    """替 AI 在各种「挑一张」的等待里做选择。
+
+    `options` 由调用方按卡面规则算好（候选卡对象列表，或数值列表）。
+    一律挑**价值最高**的那个；价值相同的按下标最小（保证可复现）。
+    """
+    try:
+        opts = list(options or [])
+        if not opts:
+            return None
+
+        # 灵气复苏：选一个船数。自己船多就保持自己船数；落后则取「对方船数 − 1」，
+        # 但必须落在候选集里（卡面限制 x 不得大于双方最大船数）。
+        if kind == 'lingqi_choice':
+            nums = [int(o) for o in opts if str(o).lstrip('-').isdigit()]
+            if not nums:
+                return opts[0]
+            me = (getattr(room, 'players', None) or {}).get(ai_id)
+            mine = int(getattr(me, 'remaining_ships', 0) or 0)
+            opp_id = _opponent_id(room, ai_id)
+            opp = (getattr(room, 'players', None) or {}).get(opp_id) if opp_id else None
+            theirs = int(getattr(opp, 'remaining_ships', 0) or 0) if opp else 0
+            want = mine if mine >= theirs else max(1, theirs - 1)
+            return min(nums, key=lambda n: (abs(n - want), n))
+
+        # 其余都是「挑一张牌」：取价值最高
+        def val(o):
+            return card_value(getattr(o, 'name', o))
+
+        best = max(range(len(opts)), key=lambda i: (val(opts[i]), -i))
+        return opts[best]
+    except Exception:
+        return None

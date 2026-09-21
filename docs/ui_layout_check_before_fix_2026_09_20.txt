@@ -1,0 +1,197 @@
+登录态检查账号: uicheck408313678 -> 已登录
+--- 首页 1600x1000 等级条可见=true 轨道宽=0 fill=0 | 难度下拉 deficit=-25.12
+FAIL  [home] 1600x1000 等级条轨道实际宽度 > 0（进度条看得见）  ->  {"barW":0,"barFlex":"1 1 auto","fillW":0,"text":"Lv.1 0 / 35"}
+FAIL  [home] 1600x1000 难度下拉内容盒放得下最长选项文字  ->  {"boxW":74.48,"contentW":46.88,"maxTextW":72,"deficit":-25.12}
+--- 首页 390x844 等级条可见=true 轨道宽=0 fill=0 | 难度下拉 deficit=-12.99
+FAIL  [home] 390x844 等级条轨道实际宽度 > 0（进度条看得见）  ->  {"barW":0,"barFlex":"1 1 auto","fillW":0,"text":"Lv.1 0 / 35"}
+FAIL  [home] 390x844 难度下拉内容盒放得下最长选项文字  ->  {"boxW":81.81,"contentW":54.21,"maxTextW":67.2,"deficit":-12.99}
+PASS  [wide] 冻结的己方战舰加上 frozen 类  ->  {"frozenClass":true,"frozenIsShip":true,"plainIsShip":true,"plainFrozen":false,"marker":"\"❄\""}
+PASS  [wide] 冻结格上画出雪花标记  ->  "\"❄\""
+PASS  [wide] 未冻结的战舰不会被误标成冻结  ->  {"frozenClass":true,"frozenIsShip":true,"plainIsShip":true,"plainFrozen":false,"marker":"\"❄\""}
+PASS  [wide] 收到 revealed_positions 后立刻高亮对应格子  ->  2
+PASS  [wide] 4 秒后显形仍然保留（旧实现会在这里消失）  ->  2
+PASS  [wide] 重绘棋盘后显形不丢失  ->  2
+--- 1600x1000 预览pos=fixed 棋盘底=847/vh=1000 手牌=1张(可点0)
+PASS  [wide:1600x1000] 1600x1000 棋盘完整落在首屏内（不需滚动）  ->  {"bottom":847,"vh":1000,"rect":{"x":459,"y":548,"w":300,"h":300,"bottom":847,"right":759}}
+FAIL  [wide:1600x1000] 1600x1000 HUD 控件未被浮窗盖住（点得到）  ->  ["手牌区=null"]
+FAIL  [wide:1600x1000] 1600x1000 手牌可见且可点（可点计数 > 0）  ->  {"cards":1,"clickable":0,"rect":{"x":328,"y":928,"w":934,"h":215,"bottom":1143,"right":1262}}
+--- 1440x900 预览pos=fixed 棋盘底=847/vh=900 手牌=1张(可点0)
+PASS  [wide:1440x900] 1440x900 棋盘完整落在首屏内（不需滚动）  ->  {"bottom":847,"vh":900,"rect":{"x":379,"y":548,"w":300,"h":300,"bottom":847,"right":679}}
+FAIL  [wide:1440x900] 1440x900 HUD 控件未被浮窗盖住（点得到）  ->  ["投降<-magic-card-preview","阶段时点<-preview-instructions","手牌区=null"]
+FAIL  [wide:1440x900] 1440x900 手牌可见且可点（可点计数 > 0）  ->  {"cards":1,"clickable":0,"rect":{"x":248,"y":928,"w":934,"h":215,"bottom":1143,"right":1182}}
+--- 1366x768 预览pos=relative 棋盘底=1158/vh=768 手牌=1张(可点0)
+FAIL  [wide:1366x768] 1366x768 棋盘完整落在首屏内（不需滚动）  ->  {"bottom":1158,"vh":768,"rect":{"x":349,"y":858,"w":300,"h":300,"bottom":1158,"right":648}}
+FAIL  [wide:1366x768] 1366x768 HUD 控件未被浮窗盖住（点得到）  ->  ["日志折叠<-H3","弃牌堆=null","手牌区=null"]
+FAIL  [wide:1366x768] 1366x768 手牌可见且可点（可点计数 > 0）  ->  {"cards":1,"clickable":0,"rect":{"x":211,"y":1239,"w":934,"h":215,"bottom":1454,"right":1145}}
+--- 1280x800 预览pos=relative 棋盘底=1157/vh=800 手牌=1张(可点0)
+FAIL  [wide:1280x800] 1280x800 棋盘完整落在首屏内（不需滚动）  ->  {"bottom":1157,"vh":800,"rect":{"x":306,"y":857,"w":300,"h":300,"bottom":1157,"right":605}}
+FAIL  [wide:1280x800] 1280x800 HUD 控件未被浮窗盖住（点得到）  ->  ["日志折叠<-H3","弃牌堆=null","手牌区=null"]
+FAIL  [wide:1280x800] 1280x800 手牌可见且可点（可点计数 > 0）  ->  {"cards":1,"clickable":0,"rect":{"x":167,"y":1238,"w":937,"h":215,"bottom":1453,"right":1103}}
+阶段: 准备阶段 | 你的船: 6 | 剩余攻击次数: 6
+
+PASS  [wide] 无激活效果时状态条不渲染  ->  {"display":"none","hidden":true}
+PASS  [wide] 两块棋盘同尺寸且不过小  ->  {"left":{"x":459,"y":548,"w":300,"h":300},"right":{"x":831,"y":548,"w":300,"h":300}}
+PASS  [wide] 两块棋盘格子数一致（6x6）  ->  [36,36]
+PASS  [wide] 阶段按钮在卡片内水平居中  ->  [{"id":"enter-battle-phase","offset":0}]
+PASS  [wide] 「阶段时点」局内开关不压任何东西（宽屏放在阶段卡片右上角）  ->  "ok"
+PASS  [wide] 投降按钮与回合标题垂直对齐  ->  {"title":92,"surrender":92}
+PASS  [wide] 右上角预览框与右下角聊天窗不重叠  ->  {"overlap":"30x0","preview":{"x":1270,"y":80,"w":300,"h":309},"chat":{"x":1000,"y":663,"w":300,"h":213}}
+PASS  [wide] 开局日志显示空状态提示（而非一片空白）  ->  {"logEmptyAtStart":true}
+PASS  [wide] 日志框始终有内容，且占位与真实日志不共存  ->  {"empty":true,"entries":0,"textLen":22}
+--- 320x568  layout=compact boards=tabs scrollH=569 vh=568 hOverflow=0
+     棋盘 game-player-board: 格宽=43.7px 可视格=36/36 被遮挡=0 整体在视口内=true
+     棋盘 opponent-board: 未显示
+     面板: 面板槽(7,516 306x48) 棋盘区(7,183 306x325) 头像角标(10,58 24x22) 对手角标(141,58 44x22)
+     手牌 1 张（可点 0）区域={"x":0,"y":0,"w":0,"h":0,"bottom":0,"right":0}
+     进度条宽度检查: ok
+     固定层: particle-canvas, phase-timing-toggle, quick-chat-btn
+PASS  [compact] 320x568 无水平溢出  ->  0
+PASS  [compact] 320x568 「阶段时点」局内开关不压任何东西（按钮/棋盘/手牌/角标）  ->  "ok"
+PASS  [compact] 320x568 对局页不产生纵向滚动（一屏）  ->  {"scrollHeight":569,"vh":568}
+PASS  [compact] 320x568 至少一块棋盘可见  ->  ["game-player-board"]
+PASS  [compact] 320x568 棋盘格子零遮挡  ->  [{"id":"game-player-board","occluded":0}]
+PASS  [compact] 320x568 格子尺寸达触摸下限 40px  ->  43.7
+PASS  [compact] 320x568 棋盘完整落在视口内（不需滚动）  ->  []
+PASS  [compact] 320x568 面板之间零叠压  ->  []
+PASS  [compact] 320x568 可点元素均不小于 40px  ->  []
+FAIL  [compact] 320x568 手牌可见且可点（可点计数 > 0）  ->  {"cards":1,"clickable":0,"rect":{"x":0,"y":0,"w":0,"h":0,"bottom":0,"right":0}}
+PASS  [compact] 320x568 导航可点元素不小于 40px  ->  []
+PASS  [compact] 320x568 进度条类元素实际宽度 > 0  ->  []
+PASS  [compact] 320x568 展开面板槽后棋盘仍零遮挡  ->  [{"id":"game-player-board","occluded":0}]
+PASS  [compact] 320x568 展开面板槽后棋盘仍完整可见  ->  []
+PASS  [compact] 320x568 展开面板槽后无叠压  ->  []
+PASS  [compact] 320x568 展开面板槽后仍不产生纵向滚动  ->  {"scrollHeight":569,"vh":568}
+--- 336x664  layout=compact boards=tabs scrollH=665 vh=664 hOverflow=0
+     棋盘 game-player-board: 格宽=45.5px 可视格=36/36 被遮挡=0 整体在视口内=true
+     棋盘 opponent-board: 未显示
+     面板: 手牌(7,504 322x104) 面板槽(7,612 322x48) 棋盘区(7,183 322x317) 头像角标(10,58 24x22) 对手角标(141,58 44x22)
+     手牌 1 张（可点 1）区域={"x":7,"y":504,"w":322,"h":104,"bottom":608,"right":329}
+     进度条宽度检查: ok
+     固定层: particle-canvas, phase-timing-toggle, quick-chat-btn
+PASS  [compact] 336x664 无水平溢出  ->  0
+PASS  [compact] 336x664 「阶段时点」局内开关不压任何东西（按钮/棋盘/手牌/角标）  ->  "ok"
+PASS  [compact] 336x664 对局页不产生纵向滚动（一屏）  ->  {"scrollHeight":665,"vh":664}
+PASS  [compact] 336x664 至少一块棋盘可见  ->  ["game-player-board"]
+PASS  [compact] 336x664 棋盘格子零遮挡  ->  [{"id":"game-player-board","occluded":0}]
+PASS  [compact] 336x664 格子尺寸达触摸下限 40px  ->  45.5
+PASS  [compact] 336x664 棋盘完整落在视口内（不需滚动）  ->  []
+PASS  [compact] 336x664 面板之间零叠压  ->  []
+PASS  [compact] 336x664 可点元素均不小于 40px  ->  []
+PASS  [compact] 336x664 手牌可见且可点（可点计数 > 0）  ->  {"cards":1,"clickable":1,"rect":{"x":7,"y":504,"w":322,"h":104,"bottom":608,"right":329}}
+PASS  [compact] 336x664 导航可点元素不小于 40px  ->  []
+PASS  [compact] 336x664 进度条类元素实际宽度 > 0  ->  []
+PASS  [compact] 336x664 展开面板槽后棋盘仍零遮挡  ->  [{"id":"game-player-board","occluded":0}]
+PASS  [compact] 336x664 展开面板槽后棋盘仍完整可见  ->  []
+PASS  [compact] 336x664 展开面板槽后无叠压  ->  []
+PASS  [compact] 336x664 展开面板槽后仍不产生纵向滚动  ->  {"scrollHeight":665,"vh":664}
+--- 390x844  layout=compact boards=tabs scrollH=845 vh=844 hOverflow=0
+     棋盘 game-player-board: 格宽=55.3px 可视格=36/36 被遮挡=0 整体在视口内=true
+     棋盘 opponent-board: 未显示
+     面板: 手牌(7,684 376x104) 面板槽(7,792 376x48) 棋盘区(7,183 376x497) 头像角标(10,58 24x22) 对手角标(141,58 44x22)
+     手牌 1 张（可点 1）区域={"x":7,"y":684,"w":376,"h":104,"bottom":788,"right":383}
+     进度条宽度检查: ok
+     固定层: particle-canvas, phase-timing-toggle, quick-chat-btn
+PASS  [compact] 390x844 无水平溢出  ->  0
+PASS  [compact] 390x844 「阶段时点」局内开关不压任何东西（按钮/棋盘/手牌/角标）  ->  "ok"
+PASS  [compact] 390x844 对局页不产生纵向滚动（一屏）  ->  {"scrollHeight":845,"vh":844}
+PASS  [compact] 390x844 至少一块棋盘可见  ->  ["game-player-board"]
+PASS  [compact] 390x844 棋盘格子零遮挡  ->  [{"id":"game-player-board","occluded":0}]
+PASS  [compact] 390x844 格子尺寸达触摸下限 40px  ->  55.3
+PASS  [compact] 390x844 棋盘完整落在视口内（不需滚动）  ->  []
+PASS  [compact] 390x844 面板之间零叠压  ->  []
+PASS  [compact] 390x844 可点元素均不小于 40px  ->  []
+PASS  [compact] 390x844 手牌可见且可点（可点计数 > 0）  ->  {"cards":1,"clickable":1,"rect":{"x":7,"y":684,"w":376,"h":104,"bottom":788,"right":383}}
+PASS  [compact] 390x844 导航可点元素不小于 40px  ->  []
+PASS  [compact] 390x844 进度条类元素实际宽度 > 0  ->  []
+PASS  [compact] 390x844 展开面板槽后棋盘仍零遮挡  ->  [{"id":"game-player-board","occluded":0}]
+PASS  [compact] 390x844 展开面板槽后棋盘仍完整可见  ->  []
+PASS  [compact] 390x844 展开面板槽后无叠压  ->  []
+PASS  [compact] 390x844 展开面板槽后仍不产生纵向滚动  ->  {"scrollHeight":845,"vh":844}
+--- 430x932  layout=compact boards=stack scrollH=933 vh=932 hOverflow=0
+     棋盘 game-player-board: 格宽=47.7px 可视格=36/36 被遮挡=0 整体在视口内=true
+     棋盘 opponent-board: 格宽=47.7px 可视格=36/36 被遮挡=0 整体在视口内=true
+     面板: 手牌(7,772 416x104) 面板槽(7,880 416x48) 棋盘区(7,100 416x668) 头像角标(113,15 24x22) 对手角标(244,15 44x22)
+     手牌 1 张（可点 1）区域={"x":7,"y":772,"w":416,"h":104,"bottom":876,"right":423}
+     进度条宽度检查: ok
+     固定层: particle-canvas, phase-timing-toggle, quick-chat-btn
+PASS  [compact] 430x932 无水平溢出  ->  0
+PASS  [compact] 430x932 「阶段时点」局内开关不压任何东西（按钮/棋盘/手牌/角标）  ->  "ok"
+PASS  [compact] 430x932 对局页不产生纵向滚动（一屏）  ->  {"scrollHeight":933,"vh":932}
+PASS  [compact] 430x932 至少一块棋盘可见  ->  ["game-player-board","opponent-board"]
+PASS  [compact] 430x932 棋盘格子零遮挡  ->  [{"id":"game-player-board","occluded":0},{"id":"opponent-board","occluded":0}]
+PASS  [compact] 430x932 格子尺寸达触摸下限 40px  ->  47.7
+PASS  [compact] 430x932 棋盘完整落在视口内（不需滚动）  ->  []
+PASS  [compact] 430x932 面板之间零叠压  ->  []
+PASS  [compact] 430x932 可点元素均不小于 40px  ->  []
+PASS  [compact] 430x932 手牌可见且可点（可点计数 > 0）  ->  {"cards":1,"clickable":1,"rect":{"x":7,"y":772,"w":416,"h":104,"bottom":876,"right":423}}
+PASS  [compact] 430x932 导航可点元素不小于 40px  ->  []
+PASS  [compact] 430x932 进度条类元素实际宽度 > 0  ->  []
+PASS  [compact] 430x932 展开面板槽后棋盘仍零遮挡  ->  [{"id":"game-player-board","occluded":0},{"id":"opponent-board","occluded":0}]
+PASS  [compact] 430x932 展开面板槽后棋盘仍完整可见  ->  []
+PASS  [compact] 430x932 展开面板槽后无叠压  ->  []
+PASS  [compact] 430x932 展开面板槽后仍不产生纵向滚动  ->  {"scrollHeight":933,"vh":932}
+--- landscape-664x336  layout=compact boards=tabs scrollH=337 vh=336 hOverflow=0
+     棋盘 game-player-board: 格宽=46px 可视格=36/36 被遮挡=0 整体在视口内=true
+     棋盘 opponent-board: 未显示
+     面板: 面板槽(449,199 210x44) 棋盘区(5,3 440x331) 头像角标(452,49 24x22) 对手角标(452,82 44x36)
+     手牌 1 张（可点 0）区域={"x":0,"y":0,"w":0,"h":0,"bottom":0,"right":0}
+     进度条宽度检查: ok
+     固定层: particle-canvas, phase-timing-toggle, quick-chat-btn
+PASS  [compact] landscape-664x336 无水平溢出  ->  0
+PASS  [compact] landscape-664x336 「阶段时点」局内开关不压任何东西（按钮/棋盘/手牌/角标）  ->  "ok"
+PASS  [compact] landscape-664x336 对局页不产生纵向滚动（一屏）  ->  {"scrollHeight":337,"vh":336}
+PASS  [compact] landscape-664x336 至少一块棋盘可见  ->  ["game-player-board"]
+PASS  [compact] landscape-664x336 棋盘格子零遮挡  ->  [{"id":"game-player-board","occluded":0}]
+PASS  [compact] landscape-664x336 格子尺寸达触摸下限 36px  ->  46
+PASS  [compact] landscape-664x336 棋盘完整落在视口内（不需滚动）  ->  []
+PASS  [compact] landscape-664x336 面板之间零叠压  ->  []
+PASS  [compact] landscape-664x336 可点元素均不小于 36px  ->  []
+FAIL  [compact] landscape-664x336 手牌可见且可点（可点计数 > 0）  ->  {"cards":1,"clickable":0,"rect":{"x":0,"y":0,"w":0,"h":0,"bottom":0,"right":0}}
+PASS  [compact] landscape-664x336 导航可点元素不小于 36px  ->  []
+PASS  [compact] landscape-664x336 进度条类元素实际宽度 > 0  ->  []
+PASS  [compact] landscape-664x336 展开面板槽后棋盘仍零遮挡  ->  [{"id":"game-player-board","occluded":0}]
+PASS  [compact] landscape-664x336 展开面板槽后棋盘仍完整可见  ->  []
+PASS  [compact] landscape-664x336 展开面板槽后无叠压  ->  []
+PASS  [compact] landscape-664x336 展开面板槽后仍不产生纵向滚动  ->  {"scrollHeight":337,"vh":336}
+--- tablet-768x1024  layout=compact boards=side scrollH=1025 vh=1024 hOverflow=0
+     棋盘 game-player-board: 格宽=52.6px 可视格=36/36 被遮挡=0 整体在视口内=true
+     棋盘 opponent-board: 格宽=52.6px 可视格=36/36 被遮挡=0 整体在视口内=true
+     面板: 手牌(7,864 754x104) 面板槽(7,972 754x48) 棋盘区(7,55 754x805) 头像角标(113,15 24x22) 对手角标(244,15 44x22)
+     手牌 1 张（可点 1）区域={"x":7,"y":864,"w":754,"h":104,"bottom":968,"right":761}
+     进度条宽度检查: ok
+     固定层: particle-canvas, phase-timing-toggle, quick-chat-btn
+PASS  [compact] tablet-768x1024 无水平溢出  ->  0
+PASS  [compact] tablet-768x1024 「阶段时点」局内开关不压任何东西（按钮/棋盘/手牌/角标）  ->  "ok"
+PASS  [compact] tablet-768x1024 对局页不产生纵向滚动（一屏）  ->  {"scrollHeight":1025,"vh":1024}
+PASS  [compact] tablet-768x1024 至少一块棋盘可见  ->  ["game-player-board","opponent-board"]
+PASS  [compact] tablet-768x1024 棋盘格子零遮挡  ->  [{"id":"game-player-board","occluded":0},{"id":"opponent-board","occluded":0}]
+PASS  [compact] tablet-768x1024 格子尺寸达触摸下限 40px  ->  52.6
+PASS  [compact] tablet-768x1024 棋盘完整落在视口内（不需滚动）  ->  []
+PASS  [compact] tablet-768x1024 面板之间零叠压  ->  []
+PASS  [compact] tablet-768x1024 可点元素均不小于 40px  ->  []
+PASS  [compact] tablet-768x1024 手牌可见且可点（可点计数 > 0）  ->  {"cards":1,"clickable":1,"rect":{"x":7,"y":864,"w":754,"h":104,"bottom":968,"right":761}}
+PASS  [compact] tablet-768x1024 导航可点元素不小于 40px  ->  []
+PASS  [compact] tablet-768x1024 进度条类元素实际宽度 > 0  ->  []
+PASS  [compact] tablet-768x1024 展开面板槽后棋盘仍零遮挡  ->  [{"id":"game-player-board","occluded":0},{"id":"opponent-board","occluded":0}]
+PASS  [compact] tablet-768x1024 展开面板槽后棋盘仍完整可见  ->  []
+PASS  [compact] tablet-768x1024 展开面板槽后无叠压  ->  []
+PASS  [compact] tablet-768x1024 展开面板槽后仍不产生纵向滚动  ->  {"scrollHeight":1025,"vh":1024}
+PASS  [both] 页面无 JS 异常/报错  ->  []
+
+结果: 16 项不通过
+  - [home] 1600x1000 等级条轨道实际宽度 > 0（进度条看得见）
+  - [home] 1600x1000 难度下拉内容盒放得下最长选项文字
+  - [home] 390x844 等级条轨道实际宽度 > 0（进度条看得见）
+  - [home] 390x844 难度下拉内容盒放得下最长选项文字
+  - [wide:1600x1000] 1600x1000 HUD 控件未被浮窗盖住（点得到）
+  - [wide:1600x1000] 1600x1000 手牌可见且可点（可点计数 > 0）
+  - [wide:1440x900] 1440x900 HUD 控件未被浮窗盖住（点得到）
+  - [wide:1440x900] 1440x900 手牌可见且可点（可点计数 > 0）
+  - [wide:1366x768] 1366x768 棋盘完整落在首屏内（不需滚动）
+  - [wide:1366x768] 1366x768 HUD 控件未被浮窗盖住（点得到）
+  - [wide:1366x768] 1366x768 手牌可见且可点（可点计数 > 0）
+  - [wide:1280x800] 1280x800 棋盘完整落在首屏内（不需滚动）
+  - [wide:1280x800] 1280x800 HUD 控件未被浮窗盖住（点得到）
+  - [wide:1280x800] 1280x800 手牌可见且可点（可点计数 > 0）
+  - [compact] 320x568 手牌可见且可点（可点计数 > 0）
+  - [compact] landscape-664x336 手牌可见且可点（可点计数 > 0）

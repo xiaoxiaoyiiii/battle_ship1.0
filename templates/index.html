@@ -159,22 +159,33 @@
             <button id="custom-create-room">创建房间</button>
             <button id="custom-join-room" class="secondary">加入房间</button>
         </div>
-        <div id="custom-room-id-input" class="input-group hidden">
-            <input type="text" id="custom-room-code" placeholder="输入房间ID">
+        <div id="custom-room-id-input" class="input-group room-code-row hidden">
+            <input type="text" id="custom-room-code" class="room-code-input" placeholder="输入房间ID"
+                   maxlength="8" inputmode="latin" autocapitalize="off" autocomplete="off"
+                   spellcheck="false" aria-label="房间ID（6 位小写十六进制）">
             <button id="custom-confirm-join">确认加入</button>
         </div>
         <div id="custom-room-info" class="hidden">
             <p>房间ID：<span id="custom-current-room-id"></span></p>
-            <p id="invite-link-row">
+            <p id="invite-link-row" class="invite-link-row">
                 <button id="copy-invite-link" class="secondary" type="button">🔗 复制邀请链接</button>
-                <span id="invite-link-msg" class="invite-link-msg"></span>
+                <!-- 复制失败的降级文案原先说「请手动复制上面的链接」，但页面上**从来没有链接**
+                     （实测 hasUrl=false / anchorCount=0）。这里放一个只读输入框当兜底副本，
+                     由 game.js 在 copyInviteLink() 里填值并选中（本批只加元素，不接线）。 -->
+                <input type="text" id="invite-link-text" class="invite-link-text" readonly
+                       aria-label="邀请链接（可手动复制）" placeholder="邀请链接会显示在这里">
+                <span id="invite-link-msg" class="invite-link-msg" role="status" aria-live="polite"></span>
             </p>
             <p>等待其他玩家加入...</p>
             <!-- 解散房间（大厅批补）：等待房既不会自动回收（TTL 1 小时），
                  玩家此前也没有任何主动出口 —— 建错了只能干等一小时。 -->
-            <p id="custom-close-room-row">
-                <button id="custom-close-room" class="secondary" type="button">解散房间</button>
-                <span id="custom-close-room-msg" class="invite-link-msg"></span>
+            <p id="custom-close-room-row" class="custom-close-room-row">
+                <!-- 不可逆：点击即发 close_room，房间立刻消失、房内所有人被踢。
+                     用危险按钮样式（style.css:288 的 `button.danger`）与「返回主菜单」
+                     的描边次级按钮分开；确认弹窗由 game.js 在 closeCustomRoom() 里补。 -->
+                <button id="custom-close-room" class="danger" type="button"
+                        aria-label="解散房间（不可撤销，房间会立刻关闭）">解散房间</button>
+                <span id="custom-close-room-msg" class="invite-link-msg" role="status" aria-live="polite"></span>
             </p>
         </div>
         <div class="button-group">
@@ -224,7 +235,7 @@
             <!-- 对手的称号 / 标签 / 等级（2026-09-17 追加）。
                  数据取自公开的 /user_stats（与名片同一份来源），在 5 秒倒计时里异步填进来；
                  拿不到就保持空白，不影响开局。 -->
-            <div id="opponent-chips" class="match-chips"></div>
+            <div id="opponent-chips" class="match-chips opponent-chips"></div>
             <!-- 自己的段位（段位批）。数据来自 /api/profile 的 rank_info，**页面加载时取一次**就缓存住
                  （不在这 5 秒里现拉）；游客 / 没登录时整块隐藏。 -->
             <div id="match-self-rank" class="match-chips match-self-rank hidden"></div>
@@ -232,33 +243,49 @@
             <div id="countdown-bar" class="countdown-bar">
                 <div class="countdown-fill"></div>
             </div>
+            <!-- 跳过入口：这块屏此前**一个可点元素都没有**（实测 buttons:0 / links:0），
+                 320×568 下 `#countdown-bar` 甚至被 chip 块挤出首屏（bottom=727）。
+                 `hidden` 初值由 game.js 在收到双方就绪后摘掉（本批只加元素，不接线）。 -->
+            <button id="start-now" class="secondary start-now" type="button" hidden
+                    aria-label="立即开始对局（不必等满 5 秒）">立即开始</button>
         </div>
     </div>
 
     <!-- 战舰放置界面 -->
     <div id="ship-placement-screen" class="screen">
         <h2>放置你的战舰</h2>
-        <p>点击格子放置战舰 (共6艘)</p>
+        <p class="muted-hint placement-help">点击格子放置战舰 (共6艘)</p>
+        <!-- 常驻说明（S2）：船是 1×1，「共6艘」实为「占 6 格」；且页面此前从不提
+             「再点一次取消」，玩家把格子点满后只会以为放错了没救。 -->
+        <p class="muted-hint placement-help placement-help-remove" id="placement-hint">6×6 棋盘各放 1 格，共 6 格 · 再点一次可取消</p>
         <div class="board-container">
             <div id="player-board" class="board"></div>
         </div>
         <p id="ships-placed">已放置：<span id="placed-count">0</span>/<span id="total-ships">6</span></p>
         <div class="placement-actions">
-            <button id="random-ships">随机摆放</button>
-            <button id="confirm-ships" class="hidden">确认放置</button>
+            <!-- 主次（S1）：实测两个按钮像素级等重、style.css 里没有 `#confirm-ships` 规则。
+                 `.primary` 走第 3 节的通用实心按钮（渐变+阴影），`.secondary` 走描边
+                 （style.css:277 `button.secondary`）—— 两个类都是既有类，无需新 CSS。 -->
+            <button id="random-ships" class="secondary" type="button">随机摆放</button>
+            <button id="confirm-ships" class="primary hidden" type="button"
+                    aria-label="确认放置：提交已摆好的 6 格并进入猜拳">确认放置</button>
         </div>
     </div>
 
     <!-- 猜拳界面 -->
     <div id="rps-screen" class="screen">
         <h2>第<span id="rps-round">1</span>回合 - 猜拳决定攻击顺序</h2>
-        <p>选择一种手势:</p>
+        <p>选择一种手势：</p>
         <div class="rps-choices">
-            <button class="rps-choice" data-choice="rock">石头</button>
-            <button class="rps-choice" data-choice="scissors">剪刀</button>
-            <button class="rps-choice" data-choice="paper">布</button>
+            <button class="rps-choice" type="button" data-choice="rock" aria-pressed="false">石头</button>
+            <button class="rps-choice" type="button" data-choice="scissors" aria-pressed="false">剪刀</button>
+            <button class="rps-choice" type="button" data-choice="paper" aria-pressed="false">布</button>
         </div>
-        <div id="rps-result" class="hidden"></div>
+        <!-- 出拳后零反馈（S6）：game.js:4531 只 emit，点击前后快照完全相同。
+             这里预置一个**默认 hidden** 的等待态元素，由 game.js 在选中后摘掉 .hidden、
+             服务端 `rps_result` 回来时收回（本批只加元素，不接线）。 -->
+        <p id="rps-waiting" class="muted-hint rps-waiting hidden" role="status" aria-live="polite">已出拳，等待对手…</p>
+        <div id="rps-result" class="hidden" role="status" aria-live="polite"></div>
     </div>
 
     <!-- 游戏主界面 -->
@@ -575,7 +602,11 @@
 
     <!-- 游戏结束界面 -->
     <div id="game-over-screen" class="screen">
-        <h2 id="game-result"></h2>
+        <!-- 胜负这一行此前与三块附属面板完全同权（四种结果文案 computed 全等、
+             style.css 里 `#game-result` 零命中）。挂一个稳定类，好让 CSS 按
+             `.game-result.win` / `.lose` / `.draw` 分级；变体类由 game.js 在写
+             textContent 时同步设置（本批只加类，不接线）。 -->
+        <h2 id="game-result" class="game-result" aria-live="polite"></h2>
         <!-- 本局刚解锁的徽章（结算提示）。
              服务端在结算时把 `achievements_unlocked` **只发给本人**（房间广播那句
              「XX 解锁了新徽章：YY」是给双方看的），这里渲染成"本局刚解锁 ⚓首胜"。
@@ -629,8 +660,14 @@
             <div id="rank-admiral-note" class="rank-admiral-note hidden"></div>
         </div>
         <div class="game-over-buttons">
-            <button id="play-again">再来一局</button>
-            <button id="return-to-menu">返回主菜单</button>
+            <!-- 320×568 与横屏 664×336 下这两个按钮会被前面的面板推出首屏
+                 （实测 t=825/b=891 与 b=737）。包一层容器给 CSS 做吸底条用；
+                 外层 `.game-over-buttons` 必须保留原名 —— game.js:11587 与
+                 tools/recent_opponent_check.mjs 的 BG14 断言都按它找落点。 -->
+            <div class="game-over-actions">
+                <button id="play-again">再来一局</button>
+                <button id="return-to-menu">返回主菜单</button>
+            </div>
         </div>
     </div>
 

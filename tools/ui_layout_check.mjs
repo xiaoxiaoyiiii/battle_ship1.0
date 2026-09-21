@@ -365,11 +365,14 @@ const WIDE_VIEWPORTS = [
 // 一次性账号：登录态才能看到首页等级条（`#my-level-strip` 对游客整块隐藏），
 // 而等级条轨道 0 宽正是 M4 要抓的缺陷 —— 不登录就永远测不到它。
 // 走 POST /register（成功后服务端自动登录），失败再试 /login。
+// 走 POST /register（成功后服务端自动写入 session cookie）。字段名只有 username/password，
+// 且**必须** `credentials:'same-origin'`，否则 cookie 不会落到浏览器（表现为「注册成功但仍游客」）。
 async function loginForChecks() {
   const name = 'uicheck' + Math.floor(Math.random() * 1e9);
-  await ev(`fetch('/register', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:'username=' + encodeURIComponent(${JSON.stringify(name)}) + '&password=pass123456&confirm_password=pass123456',
-    redirect:'manual'}).then(function(){return 1;}).catch(function(){return 0;})`);
+  await ev(`fetch('/register', {method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:'username=' + encodeURIComponent(${JSON.stringify(name)}) + '&password=pass123456',
+    redirect:'follow'}).then(function(r){ return r.status; }).catch(function(){ return 0; })`);
   await send('Page.navigate', { url: APP });
   await sleep(2000);
   const ok = await ev('!!window.__USERNAME');
@@ -439,6 +442,10 @@ try {
 
   await send('Page.enable');
   await send('Runtime.enable');
+  // ⚠️ 必须禁用缓存：本项目静态资源带 asset_v 戳，但开发中直接改 style.css 时
+  // 戳不变 → 持久 profile 会命中旧 CSS，表现为「改了没效果」的假红假绿。
+  await send('Network.enable');
+  await send('Network.setCacheDisabled', { cacheDisabled: true });
   await setViewport(1600, 1000, 1, false);
   await send('Page.navigate', { url: APP });
   // ---------- 探针 -1：首页（登录态）—— 等级条与难度下拉 ----------
@@ -463,9 +470,11 @@ try {
         '   var bw = (parseFloat(cs.borderLeftWidth)||0) + (parseFloat(cs.borderRightWidth)||0);' +
         '   var contentW = b.width - padL - padR - bw;' +
         '   var c = document.createElement("canvas").getContext("2d");' +
-        '   c.font = cs.fontStyle + " " + cs.fontWeight + " " + cs.fontSize + "/" + cs.lineHeight + " " + cs.fontFamily;' +
         '   var maxText = 0;' +
-        '   for (var i=0;i<sel.options.length;i++) maxText = Math.max(maxText, c.measureText(sel.options[i].textContent).width);' +
+        '   if (c) {' +
+        '     c.font = cs.fontStyle + " " + cs.fontWeight + " " + cs.fontSize + "/" + cs.lineHeight + " " + cs.fontFamily;' +
+        '     for (var i=0;i<sel.options.length;i++) maxText = Math.max(maxText, c.measureText(sel.options[i].textContent).width);' +
+        '   }' +
         '   selStat = { boxW: Math.round(b.width*100)/100, contentW: Math.round(contentW*100)/100, maxTextW: Math.round(maxText*100)/100, deficit: Math.round((contentW-maxText)*100)/100 };' +
         ' }' +
         ' return { stripVisible: !!strip && getComputedStyle(strip).display !== "none" && strip.getBoundingClientRect().width > 0,' +

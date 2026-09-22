@@ -7924,6 +7924,13 @@ function applySpectateSnapshot(payload) {
     // 聊天是**这一场观战**的会话：换一局就重来（上一局的聊天不该串到这一局）。
     sp.chat = [];
     sp.me = sp.me || null;
+    // ★★ 第 6 批：棋盘方向**只认 `sp.attacks` 一处**。快照的 payload 里服务端也给了
+    //   一份 `board_attacks`（它的转置），但那份**只当是同一份数据的另一个朝向** ——
+    //    这里就地重算，保证"画棋盘"永远只看 `spectateRebuildBoardAttacks()` 的结果，
+    //    与 `attack_result` / `spectate_board` 两条实时路径**同一个判据来源**。
+    //    （否则快照一进来就带着服务端的方向、实时帧带着前端的方向，两套朝向并存，
+    //      将来任一处漂移都只会表现成"棋盘对调"，且不报错 —— 教训 #1 / #7。）
+    spectateRebuildBoardAttacks();
     renderSpectateScreen();
 }
 
@@ -8004,10 +8011,19 @@ function applySpectateBoardFrame(data) {
             const cell = spectateCellOf(raw);
             if (cell && cell.x >= 0 && cell.y >= 0) cells.push(cell);
         });
-        // 服务端给的**就是**"落在该棋盘上的格"（与快照里的 `board_attacks` 同口径），
-        // 所以直接存进 `sp.attacks[label]`，下面的重建不再翻方向 —— 与快照
-        // （`applySpectateSnapshot` 也是把 `sides[label].attacks` 存进 `sp.attacks[label]`）
-        // 保持同一条约定，免得两处方向相反。
+        // ★★ 方向：服务端帧里的 `sides[label].attacks` 与**快照里那一个字段是同一个
+        //   口径** —— 都是**该座位自己打出去**的格（服务端两个构造共用
+        //   `_spectate_side_payload`，谁也不许再翻一次）。所以这里和
+        //   `applySpectateSnapshot` 做**同一件事**：原样存进 `sp.attacks[label]`，
+        //   方向交给下面那句 `spectateRebuildBoardAttacks()` 的**唯一一处**转置去翻。
+        //
+        //   ⚠️ 曾经在这里"为了省一次转置"把服务端的棋盘方向帧直接当棋盘用 ——
+        //      结果前端又转了一次，等于翻两次 ⇒ **两块棋盘恰好对调**
+        //      （实测：p1 打 {(0,0),(1,1)}、p2 打 {(4,4),(5,5)} 时，
+        //      观战屏第 1 块棋盘画的是 (0,0)(1,1)，服务端该画 (4,4)(5,5)），
+        //      而且不抛异常、不报错，之后每一炮都继续错。
+        //      守卫：`tools/dom_spectate_frame_check.mjs`（真跑 game.js 比逐格）
+        //      ＋ `tests/test_spectate_batch6.py`。
         sp.attacks[label] = cells;
         applied = true;
     });

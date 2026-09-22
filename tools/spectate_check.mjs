@@ -40,6 +40,24 @@
  *  12. 退出观战；
  *  13. 页面无 JS 异常/报错。
  *
+ * ## ★★ 第 6 批在本工具里改了两处判据（都是"把盖住问题的那一步拆掉"）
+ *
+ *  ① **棋盘方向**：原来这里是"格数不超出服务端 + 1 格容差"
+ *     （上一批在"观战 DOM 两块棋盘偶尔与服务端对调、根因未明"之后加的容差）。
+ *     第 6 批查清了根因（服务端帧发的是**棋盘方向**，前端只转置一次 ⇒ 翻两次 ⇒
+ *     对调），**容差已删除**，改成**逐格严格相等（0 容差）**：
+ *     两块棋盘各自的格集必须与服务端权威数据逐格相同，并且**不许对调**；
+ *     另加一条"读 DOM 前后两次服务端真相逐格相同"来证明这次比对是同一时刻的
+ *     （读数漂移会明确报红，而不是被容差吃掉）。
+ *     ⚠️ 只数格数的判据对"对调"天生免疫（对调后两边格数常常一样）——
+ *        这就是容差没抓住它的原因。
+ *  ② **房间落到猜拳**：上一版收尾**无条件**替施法者补发一次 `place_ships`，
+ *     于是对已经摆好船的座位重复调用 `handle_place_ships` ⇒ 房间落到
+ *     `rock_paper_scissors`，再由 `settleRoomToAttacking` 推回去 ——
+ *     看起来像"回光返照的副作用"。第 6 批改成**先读服务端状态、需要摆才摆**，
+ *     并断言"摆完本来就在 attacking"。判定为**既有行为**（`59ae6ab` 上逐行相同），
+ *     详见 `tests/test_spectate_batch6_huiguang_state.py`。
+ *
  * 用法：
  *   node tools/spectate_check.mjs --url http://127.0.0.1:5099/ [--shot out.png] [--debug]
  *
@@ -557,7 +575,7 @@ const PLAYER_CHAT_PROBE = '(function(){'
 const SPECTATE_CELLS_PROBE = '(function(){'
   + ' function probe(id){'
   + '   var el = document.getElementById(id);'
-  + '   var out = { cells: 0, marks: 0, cross: 0, dot: 0, chen: 0, texts: [] };'
+  + '   var out = { cells: 0, marks: 0, cross: 0, dot: 0, chen: 0, texts: [], markKeys: [] };'
   + '   if (!el) return out;'
   + '   var all = el.querySelectorAll(".cell");'
   + '   out.cells = all.length;'
@@ -567,16 +585,26 @@ const SPECTATE_CELLS_PROBE = '(function(){'
   + '     if (t === "\\u2715") out.cross++;'
   + '     if (t === "\\u25cb") out.dot++;'
   + '     if (t === "\\u6c89") out.chen++;'
-  + '     if (all[i].classList.contains("hit") || all[i].classList.contains("miss")) out.marks++;'
+  + '     if (all[i].classList.contains("hit") || all[i].classList.contains("miss")) {'
+  + '       out.marks++;'
+  // ★ 第 6 批：**逐格**记录（x,y + hit/sunk）。只数"有几格"是抓不住"两块棋盘对调"的
+  //   —— 对调之后两块的格数常常一样（上一批就是在这一点上加了"1 格容差"）。
+  + '       out.markKeys.push(String(all[i].dataset.x) + "," + String(all[i].dataset.y)'
+  + '         + "," + (all[i].classList.contains("sunk") ? "S"'
+  + '                  : (all[i].classList.contains("hit") ? "H" : "M")));'
+  + '     }'
   + '   }'
+  + '   out.markKeys.sort();'
   + '   return out; }'
   + ' return { b1: probe("spectate-board-1"), b2: probe("spectate-board-2") }; })()';
 
 // 玩家的对局屏上「我打出去的格」（= 对手棋盘）画的是什么字。
 // 这是第 5 批"字形要统一"那条断言的**对照腿**。
+// ★ 第 6 批：连**格身份**一起读（`markKeys`）—— 只比"有几格"是无法区分
+//   "两块棋盘对调"的（对调后格数常常一样）。
 const PLAYER_GLYPH_PROBE = '(function(){'
   + ' var ob = document.getElementById("opponent-board");'
-  + ' var out = { cells: 0, marks: 0, cross: 0, dot: 0, chen: 0 };'
+  + ' var out = { cells: 0, marks: 0, cross: 0, dot: 0, chen: 0, markKeys: [] };'
   + ' if (!ob) return out;'
   + ' var all = ob.querySelectorAll(".cell");'
   + ' out.cells = all.length;'
@@ -585,9 +613,67 @@ const PLAYER_GLYPH_PROBE = '(function(){'
   + '   if (t === "\\u2715") out.cross++;'
   + '   if (t === "\\u25cb") out.dot++;'
   + '   if (t === "\\u6c89") out.chen++;'
-  + '   if (all[i].classList.contains("hit") || all[i].classList.contains("miss")) out.marks++;'
+  + '   if (all[i].classList.contains("hit") || all[i].classList.contains("miss")) {'
+  + '     out.marks++;'
+  + '     out.markKeys.push(String(all[i].dataset.x) + "," + String(all[i].dataset.y)'
+  + '       + "," + (all[i].classList.contains("sunk") ? "S"'
+  + '                : (all[i].classList.contains("hit") ? "H" : "M")));'
+  + '   }'
   + ' }'
+  + ' out.markKeys.sort();'
   + ' return out; })()';
+
+// ★ 诊断用（第 6 批）：观众侧**内部状态**的原始读数 —— 用来判断"屏幕上多出来的
+// 那一格"到底是"客户端状态里就有"还是"渲染环节画出来的"。
+const SPECTATE_STATE_PROBE = '(function(){'
+  + ' var sp = (window.gameState || {}).spectate || {};'
+  + ' var snap = sp.snapshot || {};'
+  + ' function keys(list){ return (list || []).map(function(c){'
+  + '   return String(c.x) + "," + String(c.y) + (c.ship_sunk ? "S" : (c.hit ? "H" : "M")); })'
+  + '   .sort(); }'
+  + ' return {'
+  + '   attacks: { p1: keys(sp.attacks && sp.attacks.p1), p2: keys(sp.attacks && sp.attacks.p2) },'
+  + '   board: { p1: keys(snap.board_attacks && snap.board_attacks.p1),'
+  + '            p2: keys(snap.board_attacks && snap.board_attacks.p2) },'
+  + '   frameCount: (window.__SPEC_BOARD_FRAMES || []).length,'
+  + '   frames: window.__SPEC_BOARD_FRAMES || [],'
+  + '   order: window.__SPEC_ORDER || [] };'
+  + '})()';
+
+// 一次性装好"棋盘帧 + 开炮结果"的**有序**记录器（只装一次；装在观众那条连接上）。
+// ★ 为什么必须有序：要回答"屏幕上多出来那一格是谁写进去的"，
+//   就必须知道"帧"与"attack_result"的先后 —— 只记事件名（`TAP`）分不出顺序。
+const TAP_BOARD_FRAMES = '(function(){'
+  + ' if (window.__SPEC_BOARD_FRAMES_TAP) return true;'
+  + ' window.__SPEC_BOARD_FRAMES = [];'
+  + ' window.__SPEC_ORDER = [];'
+  + ' var s = window.gameState && window.gameState.socket;'
+  + ' if (!s || !s.onevent) return false;'
+  + ' var orig = s.onevent.bind(s);'
+  + ' function keys(list){ return (list || []).map(function(c){'
+  + '   return String(c.x) + "," + String(c.y) + (c.ship_sunk ? "S" : (c.hit ? "H" : "M")); })'
+  + '   .sort(); }'
+  + ' s.onevent = function(packet){'
+  + '   try { var name = packet && packet.data && packet.data[0];'
+  + '     var d = packet.data ? packet.data[1] : null;'
+  + '     if (name === "spectate_board") {'
+  + '       window.__SPEC_BOARD_FRAMES.push({ seq: window.__SPEC_BOARD_FRAMES.length,'
+  + '         p1: keys(((d.sides || {}).p1 || {}).attacks),'
+  + '         p2: keys(((d.sides || {}).p2 || {}).attacks) });'
+  + '       window.__SPEC_ORDER.push("frame p1=" + JSON.stringify(keys(((d.sides || {}).p1 || {}).attacks)));'
+  + '     } else if (name === "attack_result") {'
+  + '       window.__SPEC_ORDER.push("attack_result " + String(d && d.x) + "," + String(d && d.y)'
+  + '         + (d && d.ship_sunk ? "S" : (d && d.hit ? "H" : "M"))'
+  + '         + " attacker=" + String(d && d.attacker).slice(0, 12));'
+  + '     } else if (name === "spectate_sync" || name === "spectate_you") {'
+  + '       window.__SPEC_ORDER.push(name);'
+  + '     } else if (name === "reset_gameboard") {'
+  + '       window.__SPEC_ORDER.push("reset_gameboard");'
+  + '     }'
+  + '   } catch (e) {}'
+  + '   return orig(packet); };'
+  + ' window.__SPEC_BOARD_FRAMES_TAP = true;'
+  + ' return true; })()';
 
 // 观战屏顶栏的「当前场地魔法」文案
 const FIELD_MAGIC_PROBE = '(function(){'  + ' var el = document.getElementById("spectate-field-magic");'
@@ -651,7 +737,14 @@ const chainEmpty = async (br, roomId, tries) => {
   return false;
 };
 
-/** 把房间从"猜拳"推回"攻击"（回光返照布完船后房间可能落到 `rock_paper_scissors`）。
+/** 把房间从"猜拳"推回"攻击"（**只在真的落到猜拳时**才用）。
+ *
+ *  ⚠️ 第 6 批：这个函数**不再是某个缺陷的遮羞布**。它现在只服务于一种情况：
+ *     脚本自己在收尾时对**已经摆好船的座位**又发了一次 `place_ships`，
+ *     那次多余的调用会让 `handle_place_ships` 掉进通用分支 → 房间回到猜拳。
+ *     第 6 批已经把那句多余的调用**改成按房间状态决定**（见收尾那一段），
+ *     所以正常情况下这里根本不该被触发；它留着是为了"真出现猜拳时不至于
+ *     把后面的小节一起染红"，并且调用处会**如实断言**"到底有没有用到它"。
  *  两个玩家都出固定的拳 —— 与开局那一段同一套值，出完必然分出胜负。 */
 const settleRoomToAttacking = async (roomId, aPid, bPid, tries) => {
   for (let i = 0; i < (tries || 8); i++) {
@@ -670,6 +763,12 @@ const settleRoomToAttacking = async (roomId, aPid, bPid, tries) => {
   return false;
 };
 
+/** 只读：服务端此刻的房间状态（判据一律取服务端，不取前端渲染出来的东西）。 */
+const READ_ROOM_STATE = (roomId) => 'new Promise(function(res){'
+  + ' gameState.socket.emit("test_get_game_state", { room_id: ' + jsStr(roomId) + ' },'
+  + ' function(x){ var g = x && x.game_state;'
+  + ' res(g ? { state: g.state, players: Object.keys(g.players || {}) } : x); }); })';
+
 /** 读服务端**每个座位打出去的格数** —— 第 5 批那条"棋盘该不该清"的**权威判据**。
  *
  *  ⚠️ 为什么不用脚本里的假设：本工具在这一步栽过一次。脚本原来假设
@@ -684,7 +783,13 @@ const READ_ATTACKS = (roomId) => 'new Promise(function(res){'
   + ' function(x){ var g = x && x.game_state; if (!g) { res(x); return; }'
   + '   var out = [];'
   + '   Object.keys(g.players || {}).forEach(function(k){'
-  + '     out.push({ pid: k, n: ((g.players[k] || {}).attacks || []).length }); });'
+  + '     var at = (g.players[k] || {}).attacks || [];'
+  + '     var cells = [];'
+  + '     for (var i = 0; i < at.length; i++) {'
+  + '       cells.push(String(at[i].x) + "," + String(at[i].y) + ","'
+  + '         + (at[i].ship_sunk ? "S" : (at[i].hit ? "H" : "M"))); }'
+  + '     cells.sort();'
+  + '     out.push({ pid: k, n: cells.length, cells: cells }); });'
   + '   res({ state: g.state, seats: out }); }); })';
 
 // ---------------------------------------------------------------------------
@@ -878,6 +983,10 @@ try {
   //   只读 `gameState.spectate` 的话，"没收到"和"收到了但没处理"分不开。
   const cTap = await C.ev(TAP);
   check(!!cTap && cTap.tapped === true, '（前提）丙（观众）装了原始收件记录器', cTap);
+  // ★ 第 6 批：再装一个**棋盘帧**记录器（只记 `spectate_board` 的逐格内容）。
+  //   它是"服务端到底发了什么格子"的独立证据（比"看 screenshots"硬）。
+  const boardTap = await C.ev(TAP_BOARD_FRAMES);
+  check(boardTap === true, '（前提）丙装了棋盘帧记录器（逐帧记下服务端发的格子）', boardTap);
   let probe = await C.ev(SPECTATE_PROBE);
   if (argv.includes('--debug')) {
     const raw = await C.ev('(function(){ var s = gameState.spectate.snapshot || null;'
@@ -1401,6 +1510,19 @@ try {
 
   // 服务端真相：每个座位**打出去**的格数 → 换算成"每块棋盘上该有几格"
   const truth = await atkTab.ev(READ_ATTACKS(roomId));
+  // ★★ 第 6 批：**探针自检** —— 没有这一条，下面所有"与服务端逐格比对"都是空转绿。
+  //    实情：`test_get_game_state` 原先**根本没有** `players[].attacks` 这个字段，
+  //    于是 `(g.players[k]||{}).attacks || []` 恒为 `[]` ⇒ "服务端说有 0 格" ⇒
+  //    "不超出 0+容差" 永远成立。那个探针从加进来那天起就没读到过任何一格。
+  check(!!truth && Array.isArray(truth.seats)
+    && truth.seats.length >= 2
+    && truth.seats.every((s) => Array.isArray(s.cells)),
+    '★★（探针自检）服务端真相里**真的有** `cells` 数组（不是读了个不存在的字段）',
+    truth && truth.seats);
+  check(!!truth && truth.seats.some((s) => (s.cells || []).length > 0),
+    '★★（探针自检）此刻服务端**至少有一个座位打过格**，读到的是非空数组'
+    + '（全空 ⇒ 后面所有逐格断言都无从谈起）',
+    truth && truth.seats);
   const atkCells = truth && truth.seats ? (truth.seats.find((s) => s.pid === atkPid) || {}).n : -1;
   const defCells = truth && truth.seats ? (truth.seats.find((s) => s.pid === defPid) || {}).n : -1;
   check(atkCells >= 0 && defCells >= 0, '（前提）读到服务端每个座位的攻击历史', truth);
@@ -1426,61 +1548,140 @@ try {
       total: frameDump.total });
 
   const boardAfter = await C.ev(SPECTATE_CELLS_PROBE);
+  if (argv.includes('--debug')) {
+    // 诊断：观众侧**内部状态**（只看 DOM 的话，"客户端状态里就有"与"渲染画出来的"分不开）
+    console.log('DEBUG 观众侧内部状态 = ' + JSON.stringify(await C.ev(SPECTATE_STATE_PROBE)));
+  }
   const truthAfter = await atkTab.ev(READ_ATTACKS(roomId));
   const atkAfter = (truthAfter.seats.find((s) => s.pid === atkPid) || {}).n;
   const defAfter = (truthAfter.seats.find((s) => s.pid === defPid) || {}).n;
   const wantAfter1 = atkIsP1 ? defAfter : atkAfter;     // 第 1 块 = 落在 p1 棋盘上的格
   const wantAfter2 = atkIsP1 ? atkAfter : defAfter;
-  // ★ 观战屏上的格数**不许超出"服务端 ∪ 重置前"**（多出来 = 重摆后的秘密位置漏出来了）
-  //
-  // ⚠️ **已知未收敛的一处**（如实记录，不粉饰）：本用例在 6 次真实浏览器运行里，
-  //    有若干次读到"观战 DOM 上的两块棋盘恰好与服务端**对调**"
-  //    （`before: b1=0/b2=1` → `after: b1=1/b2=0`，而服务端此刻是 p1=0/p2=0）。
-  //    已核实的事实：① 服务端那份帧是对的（pytest 逐格钉住，另有一次直接打印
-  //    服务端实际发出去的帧，内容与 pytest 完全一致）；② 帧**确实到过浏览器**
-  //    （页面侧原始收件记录里有它）。所以这不是"服务端没发"，而是浏览器侧
-  //    那条同步链上还有一处没查清的次序问题 —— 本轮**没有**定位到根因，
-  //    已写进报告，不在这里放宽成"永远绿"。
-  //    容差取 1 格：把"对调一格"这种已知形态放过去，同时仍然能抓住
-  //    "重摆后的新位置成片冒出来"（那才是真泄漏）。
-  const tolerance = 1;
-  check(boardAfter.b1.marks <= Math.max(wantAfter1, boardBefore.b1.marks) + tolerance
-    && boardAfter.b2.marks <= Math.max(wantAfter2, boardBefore.b2.marks) + tolerance,
+  check(boardAfter.b1.marks <= Math.max(wantAfter1, boardBefore.b1.marks)
+    && boardAfter.b2.marks <= Math.max(wantAfter2, boardBefore.b2.marks),
     '★ 观战屏上的格数没有成片超出服务端（重摆后的秘密位置没有出现在观战屏上）',
     { spectator: { b1: boardAfter.b1.marks, b2: boardAfter.b2.marks },
       server: { p1: wantAfter1, p2: wantAfter2 },
-      before: { b1: boardBefore.b1.marks, b2: boardBefore.b2.marks },
-      容差: tolerance });
+      before: { b1: boardBefore.b1.marks, b2: boardBefore.b2.marks } });
   check(boardAfter.b1.chen === 0 && boardAfter.b2.chen === 0,
     '★★ 重置之后观战屏上依然没有「沉」字', boardAfter);
 
-  // 对照腿：**另一位玩家**的对局屏与服务端同口径（他没被这次重摆影响）
+  // ★★ 第 6 批（死角 A）：**逐格严格相等，0 容差**
+  // =========================================================================
+  // 上一批在这里加了"1 格容差"，理由是"观战 DOM 上的两块棋盘偶尔与服务端对调，
+  // 根因没查到"。第 6 批查清了：根因是**服务端帧发的是棋盘方向**，而前端只有
+  // 一处转置（`spectateRebuildBoardAttacks`），于是帧翻两次 ⇒ 两块棋盘**每一格**
+  // 都跑到对面那块棋盘上。实测（`tools/dom_spectate_frame_check.mjs`）：
+  // p1 打 {(0,0),(1,1)}、p2 打 {(4,4),(5,5)} 时，观战屏第 1 块画的是 (0,0)(1,1)，
+  // 而服务端该画 (4,4)(5,5)。
+  //
+  // 容差为什么拦不住它：对调之后**两块棋盘的格数往往一样**，而这里断言的是"格数
+  // 不超出" —— 一个只数格数的判据对"对调"天生免疫。要抓它只能比**格的身份**。
+  //
+  // 判据（全部严格相等）：
+  //   · 第 1 块棋盘的格集 == 服务端"落在 p1 那块棋盘上的格"；
+  //   · 第 2 块棋盘的格集 == 服务端"落在 p2 那块棋盘上的格"；
+  //   · 两块棋盘**不互为对方的格集**（点名"对调"）。
+  //
+  // ⚠️ 读数漂移（时序）怎么排除的：读者先取一份服务端真相、再读 DOM、
+  //    最后再取一份真相，两次真相**必须逐格相同**（否则说明这中间又有动作，
+  //    读数不可比 —— 那会明确报红，而不是被容差吃掉）。
+  const frozen = (await atkTab.ev(READ_ATTACKS(roomId)));
+  check(!!truthAfter && !!frozen && JSON.stringify(truthAfter.seats) === JSON.stringify(frozen.seats),
+    '★★（读数冻结）读 DOM 前后两次服务端真相逐格相同 —— 这次比对是同一时刻的',
+    { before: truthAfter && truthAfter.seats, after: frozen && frozen.seats });
+  const cellsOf = (truth, pid) => ((truth.seats.find((s) => s.pid === pid) || {}).cells || []);
+  const setOf = (list) => JSON.stringify((list || []).slice().sort());
+  const wantBoard1 = setOf(atkIsP1 ? cellsOf(frozen, defPid) : cellsOf(frozen, atkPid));
+  const wantBoard2 = setOf(atkIsP1 ? cellsOf(frozen, atkPid) : cellsOf(frozen, defPid));
+  const gotBoard1 = setOf(boardAfter.b1.markKeys);
+  const gotBoard2 = setOf(boardAfter.b2.markKeys);
+  check(gotBoard1 === wantBoard1,
+    '★★ 观战第 1 块棋盘与服务端「落在 p1 那块棋盘上的格」**逐格严格相等**',
+    { spectator: JSON.parse(gotBoard1), server: JSON.parse(wantBoard1) });
+  check(gotBoard2 === wantBoard2,
+    '★★ 观战第 2 块棋盘与服务端「落在 p2 那块棋盘上的格」**逐格严格相等**',
+    { spectator: JSON.parse(gotBoard2), server: JSON.parse(wantBoard2) });
+  // ★ 点名判据：第 1 块画的**不许**是"第 2 块该画的那批格"（对调）。
+  //   ⚠️ 两块本该画的格相同时（对称局面）这条自动无意义 —— 所以前置还要求
+  //      两边格集**不相同**，否则这一条会空转绿。
+  check(wantBoard1 !== wantBoard2,
+    '★（前置）两块棋盘本该画的格**不相同** —— 否则"对调"根本测不出来',
+    { 第1块该画: JSON.parse(wantBoard1), 第2块该画: JSON.parse(wantBoard2) });
+  check(wantBoard1 === wantBoard2 || gotBoard1 !== wantBoard2,
+    '★★ 两块棋盘没有对调（第 1 块画的**不是**第 2 块该画的那批格）',
+    { 第1块画的: JSON.parse(gotBoard1), 第1块该画: JSON.parse(wantBoard1),
+      第2块该画: JSON.parse(wantBoard2) });
+  // ★ 自我校准（教训 #34：判据必须证明自己能红）——把两份期望**对调**再走一遍
+  //   同一个判据，它必须变成"不通过"。若这里通不过，说明上面那条是空转绿。
+  const swapWouldFail = gotBoard1 !== wantBoard2;
+  check(swapWouldFail,
+    '★（自我校准）把两份期望对调后那条判据确实会红 —— 它不是空转绿',
+    { 对调后第1块该画: JSON.parse(wantBoard2), 实际第1块: JSON.parse(gotBoard1),
+      对调后的判据结果: (gotBoard1 === wantBoard2 ? '通过(假绿!)' : '不通过(正确)') });
+
+  // 对照腿：**另一位玩家**的对局屏与他自己的棋盘同口径。
+  // ⚠️ 第 6 批：判据的输入修了两处 ——
+  //   ① 原来拿 `atkPid`（**攻击方**）的格数去比**防守方**屏幕上的标记：
+  //      这两个数从来不是一回事；以前之所以"看着对"，是因为那个探针恒返回 0、
+  //      而当时攻击方的格数恰好也是 0（三方一起空转绿）。
+  //   ② 只比格数比不出"对调"。现在比**格身份**（玩家屏的 `.cell.hit/.miss` 的 data-x/y）。
+  //   ⚠️ `PLAYER_GLYPH_PROBE` 读的是 `#opponent-board` = "我打出去的格" ⇒
+  //      应当等于**防守方自己**（defPid）的 `attacks`。
   const victimGlyph = await defTab.ev(PLAYER_GLYPH_PROBE);
   const truthNow = await atkTab.ev(READ_ATTACKS(roomId));
-  const atkNow = (truthNow.seats.find((s) => s.pid === atkPid) || {}).n;
-  check(!!victimGlyph && victimGlyph.marks === atkNow,
-    '（对照腿）另一位玩家的对局屏上「我打出去的格」与服务端一致（观战与实战同口径）',
-    { playerScreen: victimGlyph, server: atkNow });
+  const defNowCells = ((truthNow.seats.find((s) => s.pid === defPid) || {}).cells || []);
+  check(!!victimGlyph && victimGlyph.marks === defNowCells.length,
+    '（对照腿）防守方的对局屏上「我打出去的格」与服务端**他自己**的格数一致',
+    { playerScreen: victimGlyph && victimGlyph.marks, server: defNowCells.length,
+      服务端那一份: defNowCells });
+  const victimKeys = (victimGlyph && Array.isArray(victimGlyph.markKeys))
+    ? victimGlyph.markKeys.slice().sort() : null;
+  check(!!victimKeys && JSON.stringify(victimKeys) === JSON.stringify(defNowCells.slice().sort()),
+    '（对照腿）而且**逐格**相同 —— 观战与实战同口径（不是只数格数）',
+    { playerScreen: victimKeys, server: defNowCells.slice().sort() });
 
   // ★★ 独立的**收件证据**：这一段里观众那条连接确实收到过 `spectate_board`
   //    （上面那条已经断言过；这里不重复取件，避免同一个队列被掏空两次）。
 
   // --- 收尾：把重摆流程走完，房间不能停在"等待摆放" --------------------
-  // ⚠️ 必须真的把船摆回去：回光返照会把 `room.state` 置成 `placing_ships` 并等
-  //    施法者重新布船，而**后面的小节（观战席聊天/开关）都在同一局里** ——
-  //    房间停在"等待摆放"会让它们跑在一个半残的局面里。
-  const hgShips = JSON.stringify(Array.from({ length: 6 }, (_, i) => ({
-    positions: [{ x: i, y: 0 }], hits: [],
-  })));
-  const placedBack = await atkTab.ev('new Promise(function(res){ gameState.socket.emit("place_ships",'
-    + ' { room_id: ' + jsStr(roomId) + ', player_id: ' + jsStr(atkPid) + ', ships: ' + hgShips
-    + ' }, function(r){ res(r); }); })');
-  check(!!placedBack && placedBack.status === 'success',
-    '（收尾）施法者把 6 艘船摆回去（房间回到可打的状态）', placedBack);
-  await sleep(600);
-  // ⚠️ 回光返照布完船之后房间**可能落到 `rock_paper_scissors`**（`handle_place_ships`
-  //    的 `huiguang_awaiting_placement` 分支理论上会留在 attacking，实测有一次没留住）
-  //    —— 后面的小节（观战席聊天 / 开关）都在同一局里跑，必须把它推回 attacking。
+  // ★★ 第 6 批（死角 B）：这里**不再无条件替施法者补一次 `place_ships`**。
+  //
+  // 上一版无论房间是什么状态都补发一次 `place_ships`，于是对**已经摆好船**的座位
+  // 重复调用 `handle_place_ships` —— 那会让它掉进通用分支（`huiguang_awaiting_placement`
+  // 已经被 AI 就地摆放时清掉了）⇒ 房间落到 `rock_paper_scissors`，再由
+  // `settleRoomToAttacking` 推回 attacking。也就是说：
+  // **"房间落到猜拳"是脚本自己多打的那一次调用造成的**，不是被测对象的行为。
+  //
+  // 服务端层复现（`tools/repro_huiguang_room_state.py`，逐帧打印 state/phase）：
+  // 当前代码与第 4 批 `59ae6ab` **输出逐行相同** —— 对已摆好的座位再发一次
+  // `place_ships`，两边都落到 `rock_paper_scissors`。
+  // 所以这既不是第 5 批引入的回归，也不是玩家能走到的路径
+  // （`reset_gameboard` 是 `to=caster.sid` 单发，施法者是 AI 时真人根本收不到、
+  //   也就不会被拽进布船界面；真人施法时他那一份收得到，且必须真的摆完）。
+  // ⇒ 判据改成"**先看服务端状态，需要摆才摆**"，并把状态如实打印出来。
+  const stateBeforePlace = await atkTab.ev(READ_ROOM_STATE(roomId));
+  check(!!stateBeforePlace && typeof stateBeforePlace.state === 'string',
+    '（收尾）能从服务端读到房间状态', stateBeforePlace);
+  if (stateBeforePlace && stateBeforePlace.state === 'placing_ships') {
+    const hgShips = JSON.stringify(Array.from({ length: 6 }, (_, i) => ({
+      positions: [{ x: i, y: 0 }], hits: [],
+    })));
+    const placedBack = await atkTab.ev('new Promise(function(res){ gameState.socket.emit("place_ships",'
+      + ' { room_id: ' + jsStr(roomId) + ', player_id: ' + jsStr(atkPid) + ', ships: ' + hgShips
+      + ' }, function(r){ res(r); }); })');
+    check(!!placedBack && placedBack.status === 'success',
+      '（收尾）房间确实在 placing_ships ⇒ 施法者把 6 艘船摆回去', placedBack);
+    await sleep(600);
+  } else {
+    check(true, '（收尾）房间**不在** placing_ships ⇒ 不补发 place_ships'
+      + '（真实玩家在没有布船界面时不会发这一条）', stateBeforePlace);
+  }
+  const stateAfterPlace = await atkTab.ev(READ_ROOM_STATE(roomId));
+  check(!!stateAfterPlace && stateAfterPlace.state === 'attacking',
+    '★★（收尾）重摆流程走完之后房间**本来就在 attacking** —— 不需要任何工具侧补救',
+    { 摆之前: stateBeforePlace && stateBeforePlace.state,
+      摆之后: stateAfterPlace && stateAfterPlace.state });
   const roomBackOk = await settleRoomToAttacking(roomId, aPid, bPid, 8);
   check(roomBackOk === true,
     '（收尾）房间确实回到了 attacking（不是停在 placing_ships / 猜拳）', roomBackOk);

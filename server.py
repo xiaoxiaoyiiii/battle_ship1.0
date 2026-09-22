@@ -2285,6 +2285,16 @@ def test_get_game_state(data):
         game_state['players'][player_id] = {
             'remaining_ships': player.remaining_ships,
             'magic_hand_count': len(player.magic_hand),
+            # ★ 第 6 批：**这个座位打出去的每一格**（x/y/hit/ship_sunk）。
+            #   为什么必须给：`tools/spectate_check.mjs` 拿它当"服务端权威真相"去逐格
+            #   比对观战屏上的两块棋盘，而在此之前它读的是**不存在的字段** ⇒
+            #   每次都拿默认值 `[]` ⇒ "服务端说有 0 格" ⇒ 那条判据（连同它旁边的
+            #   "1 格容差"）**永远成立**，等于没有断言（上一批那条容差就是这么活下来的）。
+            #   ⚠️ 加字段时**不能**把上面的默认值留在调用方 —— `[]` 与"真的没有"分不开；
+            #   本批在工具侧另加了一条"探针自检"（服务端真有格时读数必须非空）。
+            'attacks': [{'x': a.x, 'y': a.y, 'hit': bool(a.hit),
+                         'ship_sunk': bool(a.ship_sunk)}
+                        for a in (getattr(player, 'attacks', None) or [])],
             # 手牌卡名：E2E 要能判断"客户端收到的手牌"和"服务端真实手牌"是不是同一份。
             # 只比数量会漏掉"张数对但内容错"和"发错人"这两类问题。
             'magic_hand': [getattr(c, 'name', None) for c in player.magic_hand],
@@ -8307,10 +8317,28 @@ def _spectate_side_payload(seat_id: str, player) -> dict:
 def _spectate_board_frame(room) -> dict:
     """观众版「两块棋盘现在该画什么」—— 快照与实时流**共用**的一份构造。
 
-    与 `_build_spectate_snapshot` 里的 `sides` **同源**（都走 `_spectate_side_payload`），
-    只是方向相反：`sides[label].attacks` = **label 自己**打出去的格，而这里的
-    `attacks` = **落在 label 这块棋盘上**的格（= 对手打出去的格）——
-    与快照里的 `board_attacks[label]` 是同一个口径，前端拿它直接画，不必自己翻方向。
+    ★★ 方向口径（**唯一一份**，改之前先读完这一段）★★
+    `sides[label].attacks` = **label 这个座位自己打出去**的格 —— 与
+    `_build_spectate_snapshot` 里 `sides[label].attacks` **逐字段同一个口径**
+    （两边都直接取 `_spectate_side_payload` 的原始输出，**谁也不许再翻一次**）。
+
+    为什么必须同口径（第 6 批实测的真 bug，作者实报的"两块棋盘对调"）：
+    前端只有一份"座位方向 → 棋盘方向"的转置 ——
+    `spectateRebuildBoardAttacks()`（`board_attacks[p1] = attacks[p2]`）。
+    两条路径都把服务端的 `sides[label].attacks` 存进 `sp.attacks[label]`，
+    再由那**同一个**转置翻方向。所以：
+
+      · 快照路径 `applySpectateSnapshot` 存的是座位方向 ⇒ 转置一次 ⇒ 正确；
+      · 若这里发**棋盘方向**，前端照样转置 ⇒ 等于翻两次 ⇒
+        `board_attacks[p1] = 棋盘方向(p2) = p1 自己打的格` ⇒ **两块棋盘恰好对调**，
+        而且不抛异常、不报错（CLAUDE.md 教训 #7：恒等式断言拦不住"方向写反"）。
+        实测：p1 打 {(0,0),(1,1)}、p2 打 {(4,4),(5,5)} 时，观战屏第 1 块棋盘画的是
+        (0,0)(1,1)（服务端该画 (4,4)(5,5)）；而且帧之后**每一炮都继续错**，
+        因为 `sp.attacks` 已经被整体覆盖成反的那一份。
+
+    ⚠️ 发座位方向**不会**多给任何信息：同一份数据在快照里本来就是这个方向，
+       而"落在哪块棋盘上"只是它的转置（`board_attacks`，服务端也算得出来）。
+       前端画的时候翻一次，两侧永远一致。
     """
     frame = {
         'room_id': room.id,
@@ -8318,11 +8346,9 @@ def _spectate_board_frame(room) -> dict:
         'sides': {},
     }
     for index, pid in enumerate(spectate.seat_order(room)[:2]):
-        other = room.players.get(_opponent_of(room, pid))
-        side = _spectate_side_payload(pid, room.players.get(pid))
-        # 方向翻过来：这块棋盘上要画的是**对方**打出去的格
-        side['attacks'] = _spectate_player_cells(other)
-        frame['sides']['p%d' % (index + 1)] = side
+        # ⚠️ **不许**在这里把方向翻成"落在该棋盘上的格"（见 docstring）。
+        frame['sides']['p%d' % (index + 1)] = _spectate_side_payload(
+            pid, room.players.get(pid))
     return frame
 
 
@@ -8745,6 +8771,19 @@ def resolve_chain(room):
     if cont:
         room.priority_continue = None
         _priority_continue(room, cont['actor'], cont['action'])
+
+    # ★ 第 6 批：这里**故意不**再收口一次。
+    #
+    # 这一段原本（第 5 批）的注释写着"真正的发送在 `emit()` 收尾"——
+    # 而 `emit()` 里**从来没有**那句（它只拿得到 room_id 字符串、拿不到 room 对象，
+    # 写在那里本来就是死代码）。第 6 批把收口挪到**每个操作自己的收尾**上：
+    #   · `_revive_sunken_ships`（疗愈）—— 自己的末尾；
+    #   · `confirm_magic_target`（灵气复苏）—— 自己的末尾；
+    #   · `apply_magic_effect` 的回光返照 / 败者食尘分支 —— 各自的末尾。
+    # 这里若再补一句，对已经自己收过口的卡是**空操作**（脏标记已清），
+    # 对没自己收口的卡又救不了 —— 留着只会让人以为"收尾在这儿"。
+    # 契约由 `tests/test_spectate_batch6.py::test_huiguang_through_the_real_chain_has_no_divergence`
+    # 守着（它证明"标记之后又变过"时最后一条帧必须是真值）。
 
     return results
 
@@ -13355,6 +13394,14 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             'active': True,
             'round': room.round,
         }
+
+        # ★ 第 6 批：这一分支发出去的全是 `to=<sid>` 单发（`reset_gameboard` 给施法者、
+        #   AI 施法时那份甚至没人收），`emit` 的收尾不跑 ⇒ 必须在这里自己收口。
+        #   上面 `_mark_spectate_board_dirty` 已经**立刻**发过一帧（那一刻棋盘真的变了、
+        #   观众必须知道），但它是"清格之后、`state` 还没推到 placing_ships"的中间态；
+        #   这一句用**结算完之后**的真值覆盖掉它 —— 判据口径与其它三张卡一致：
+        #   交给 `_flush_spectate_board_if_dirty` 统一收口，不在这里重写发布逻辑。
+        _flush_spectate_board_if_dirty(room)
 
         result['message'] = '已清空棋盘，请重新摆放战舰，本回合战斗阶段跳过。若对方在本大回合内对您的船造成伤害，您将直接判负'
 

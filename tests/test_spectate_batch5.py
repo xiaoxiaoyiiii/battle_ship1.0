@@ -299,8 +299,16 @@ def test_frame_shape_is_pinned_both_ways(room):
 def test_frame_side_payload_is_shared_with_the_snapshot(room):
     """★ 快照里的座位与帧里的座位必须是**同一份实现**（教训 #1：不许两份）。
 
-    做法：帧的 `attacks` 是快照 `sides[对方].attacks` 的**转置**，
-    其余字段逐字相同 —— 断言到字段级别（这是"单一实现"的可执行版本）。
+    做法：逐字段比对快照 `sides[label]` 与帧 `sides[label]` ——
+    **连 `attacks` 也同向**（都是"该座位自己打出去的格"）。断言到字段级别
+    （这是"单一实现"的可执行版本）。
+
+    ⚠️ 第 6 批改的是这条的方向：第 5 批这里写的是
+    `frame.sides[label].attacks == snap.board_attacks[label]`（帧发**棋盘方向**），
+    而前端只有**一处**转置（`spectateRebuildBoardAttacks`），于是帧把方向翻一次、
+    前端又翻一次 → **两块棋盘恰好对调**（作者实报的那个死角）。
+    现在两个构造都直接取 `_spectate_side_payload` 的原始输出，方向**必然**相同，
+    下面这条断言就是钉住它的。
     """
     room.players[SID_A].attacks.append(Position(x=2, y=5, hit=True, ship_sunk=False))
     room.players[SID_B].attacks.append(Position(x=4, y=0, hit=False, ship_sunk=False))
@@ -308,12 +316,17 @@ def test_frame_side_payload_is_shared_with_the_snapshot(room):
     frame = server._spectate_board_frame(room)
 
     for label, other in (('p1', 'p2'), ('p2', 'p1')):
-        for key in ('seat_id', 'name', 'remaining_ships', 'hand_count'):
+        for key in ('seat_id', 'name', 'remaining_ships', 'hand_count', 'attacks'):
             assert frame['sides'][label][key] == snap['sides'][label][key], \
                 '帧与快照的 %s.%s 不一致（说明长出了第二份实现）' % (label, key)
-        # 方向相反是**设计**：快照给的是"该座位打出去的格"，帧给的是"落在该棋盘上的格"
-        assert frame['sides'][label]['attacks'] == snap['board_attacks'][label]
-        assert frame['sides'][label]['attacks'] == snap['sides'][other]['attacks']
+        # 方向：帧的 `attacks` = **该座位自己打的格**，与快照同向。
+        # 它**恰好等于**快照里"对手棋盘上的格"是数据上的巧合（互为转置），
+        # 但**口径**是座位方向 —— 前端那唯一一处转置负责翻成棋盘方向。
+        assert frame['sides'][label]['attacks'] == snap['sides'][label]['attacks']
+        # 反向：这一格**不许**出现在"对手"那一侧（否则就是方向写反了）
+        if snap['sides'][label]['attacks']:
+            assert frame['sides'][label]['attacks'] != snap['sides'][other]['attacks'], \
+                '帧的 %s 拿到了对手的格（方向写反 = 两块棋盘对调）' % label
 
 
 def _all_keys(node, out=None):
@@ -496,7 +509,9 @@ def test_heal_revive_clears_the_sunk_mark_in_the_frame(room, frames):
     """
     _seed_hit(room)
     before = server._spectate_board_frame(room)
-    assert before['sides']['p2']['attacks'] == [
+    # ⚠️ 方向（第 6 批改）：帧里 `sides[label].attacks` = **label 自己打出去**的格，
+    #    与快照同向。所以"落在乙棋盘上那一格"写在 **`sides.p1`**（甲打出去的）。
+    assert before['sides']['p1']['attacks'] == [
         {'x': 3, 'y': 5, 'hit': True, 'ship_sunk': True}], '前置：那一格先是"击沉"'
 
     frames.frames.clear()
@@ -506,8 +521,8 @@ def test_heal_revive_clears_the_sunk_mark_in_the_frame(room, frames):
 
     assert frames.frames, '疗愈之后一条 spectate_board 都没发 —— 观战棋盘会永远停在"沉"'
     after = frames.last
-    assert after['sides']['p2']['attacks'] == [], \
-        '疗愈复活后，观战帧里那一格仍然存在（%s）' % after['sides']['p2']['attacks']
+    assert after['sides']['p1']['attacks'] == [], \
+        '疗愈复活后，观战帧里那一格仍然存在（%s）' % after['sides']['p1']['attacks']
     assert after['sides']['p2']['remaining_ships'] == 6, \
         '复活让剩余船数 +1（5→6），帧里的船数必须是复活后的真值（%s）' \
         % after['sides']['p2']['remaining_ships']
@@ -538,7 +553,7 @@ def test_heal_frame_reaches_a_real_spectator_and_not_the_players(room, socket_fo
         got = _drain(client)
         assert 'spectate_board' in got, '%s 没收到棋盘帧（收到的：%s）' % (who, sorted(got))
         frame = got['spectate_board'][-1]
-        assert frame['sides']['p2']['attacks'] == [], '棋盘那一格没有跟着复活清掉'
+        assert frame['sides']['p1']['attacks'] == [], '棋盘那一格没有跟着复活清掉'
         assert set(frame['sides']) == {'p1', 'p2'}
         assert {frame['sides']['p1']['seat_id'], frame['sides']['p2']['seat_id']} \
             == {SID_A, SID_B}, '帧里的座位对不上这两名玩家'
@@ -577,7 +592,7 @@ def test_heal_frame_is_one_frame_per_operation_not_a_storm(room, frames):
     # 一条来自 `_clear_attacks_on_cells` 的"有变化"分支（3 次清格只触发 3 次标记，
     # 但每次都会发）—— 这里只要求"**不超过**清格次数 + 1"，重点是不爆炸、且最后一条是对的。
     assert len(frames.frames) <= 4, '一条卡打出了 %d 条棋盘帧' % len(frames.frames)
-    assert frames.last['sides']['p2']['attacks'] == []
+    assert frames.last['sides']['p1']['attacks'] == []
     assert frames.last['sides']['p2']['remaining_ships'] == 6
 
 
@@ -600,7 +615,7 @@ def test_heal_boundary_heals_the_cell_and_nothing_else(room, frames):
 
     frames.frames.clear()
     server._revive_sunken_ships(room, room.players[SID_B], 2, reveal_to=SID_A)
-    cells = [(c['x'], c['y'], c['hit'], c['ship_sunk']) for c in frames.last['sides']['p2']['attacks']]
+    cells = [(c['x'], c['y'], c['hit'], c['ship_sunk']) for c in frames.last['sides']['p1']['attacks']]
     assert cells == [(0, 5, False, False), (1, 5, True, False)], \
         '只该少掉复活那一格，实际 %s' % cells
 
@@ -672,14 +687,16 @@ def test_huiguang_reset_clears_only_the_casters_board_in_the_frame(room, frames)
     assert res.success is not False, res.message
 
     assert frames.frames, '回光返照之后一条 spectate_board 都没发'
-    # ⚠️ 方向：`sides.p1.attacks` = 落在**甲那块棋盘**上的格 = **乙**打出去的格。
-    #    回光返照清的是"对方（乙）打在施法者（甲）棋盘上的记录"⇒ p1 这块清空；
-    #    甲自己打在乙棋盘上的那些格**与本次重摆无关** ⇒ p2 这块一格不动。
-    assert frames.last['sides']['p1']['attacks'] == [], \
-        '施法者那块棋盘该被清空（实际 %s）' % frames.last['sides']['p1']['attacks']
-    assert frames.last['sides']['p2']['attacks'] == [
+    # ⚠️ 方向（第 6 批改）：帧里 `sides[label].attacks` = **label 自己打出去**的格。
+    #    回光返照清的是"对方（乙）打在甲那块棋盘上的记录" ⇒ 乙的 `attacks` 清空
+    #    ⇒ 帧里 **`sides.p2`** 清空；甲自己打在乙棋盘上的那些格与本次重摆无关
+    #    ⇒ 帧里 **`sides.p1`** 一格都不许动。
+    assert frames.last['sides']['p2']['attacks'] == [], \
+        '被清掉的那一位（乙）在帧里必须清空（实际 %s）' % frames.last['sides']['p2']['attacks']
+    assert frames.last['sides']['p1']['attacks'] == [
         {'x': 1, 'y': 5, 'hit': True, 'ship_sunk': False}], \
-        '对手那块棋盘没被重摆，一格都不该动（实际 %s）' % frames.last['sides']['p2']['attacks']
+        '施法者自己打出去的格与本次重摆无关，一格都不该动（实际 %s）' \
+        % frames.last['sides']['p1']['attacks']
 
 
 def test_every_attacks_clear_site_publishes_the_frame():

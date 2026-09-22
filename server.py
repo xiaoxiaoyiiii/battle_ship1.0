@@ -6009,6 +6009,21 @@ def _master_unsettled(room, ai_id):
        新的选船卡"那一条，见 `_ship_pick_blocked_reason`）。把它算进来的后果是
        "真人在犹豫点哪艘船时，大师原地空等 12 秒"，看起来就是 AI 卡死。
        要等真人回答的卡在池里本来就没有（克苏鲁之眼已移出，见 §9 的说明）。
+
+    ⚠️ 2026-09-22 第二处**同形状**收窄：`pending_placement` 与 `pending_shenji`
+       现在同样**只认施法者是大师自己**的那条（两条都由 `caster` 定位归属）。
+       此前它们被算成房间级的"没落地"，于是**真人施法**的放置流程会把 AI 的
+       回合拦住空等 —— 作者实报的服务端日志就是这个形状：
+         `大师 AI 等待结算收敛超时（放置流程未完成（lanyu@4418b87d-…）），跳过等待继续回合`
+       中的 caster 是**真人账号**，AI 白等满 `_MASTER_SETTLE_STEPS × 0.3s`（12 秒）。
+       为什么会发生：真人的那个放置流程是**他自己**的待办（`_ai_consume_own_placement`
+       就按 `caster == ai_id` 过滤，所以永远不会替他消费），它本该由真人点格子完成、
+       或由他交回合时自己承担；大师回合没有义务也没有能力替它收敛。
+       反过来说，**被拦下的阶段转换（`priority_continue`）与连锁窗口仍然是房间级**：
+       那两条是"AI 自己那一手动完没有"的真门禁，不能一起收窄。
+       `_action_wait_reason` 里的 `_shenji_wait_reason` **有意保持不动** ——
+       它冻结的是"非施法者能不能写操作"，那是正确的（对方正在宣言时不该抢动作）；
+       本函数回答的是另一个问题："大师这一手可以往下走了吗"。
     """
     reasons = []
     if room.chain:
@@ -6017,11 +6032,11 @@ def _master_unsettled(room, ai_id):
         reasons.append(f'连锁响应窗口还开着（轮到 {room.chain_window}）')
     temp = room.magic_temp_data if isinstance(room.magic_temp_data, dict) else {}
     placement = temp.get('pending_placement')
-    if placement:
+    if placement and placement.get('caster') == ai_id:
         reasons.append(f"放置流程未完成（{placement.get('kind')}"
                        f"@{placement.get('caster')}）")
     shenji = temp.get('pending_shenji')
-    if shenji:
+    if shenji and shenji.get('caster') == ai_id:
         reasons.append(f"神机妙算宣言未完成（{shenji.get('caster')}）")
     dice = getattr(room, 'pending_dice_discard', None)
     if isinstance(dice, dict):

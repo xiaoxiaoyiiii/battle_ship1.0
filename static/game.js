@@ -9904,7 +9904,13 @@ function showSacrificePrompt(data) {
     paintSacrificeCells();
 }
 
-// 增援 / 复活：统一放置弹窗（灰格不可选、可确认、可放弃）
+// 增援 / 复活 / 滥竽充数 / 神机妙算：统一放置弹窗（灰格不可选、可确认、可放弃）
+//
+// ⚠️ `placementGeneration`：**当前放置面板的代际号**。每 `showPlacementPrompt` 一次 +1。
+//    用途见 `placement-confirm` 的 ack 回调 —— 上一次落子的 ack 不许删掉**更新的**
+//    面板（服务端会"先重发 placement_request、后回 ack"，见那里的注释）。
+let placementGeneration = 0;
+
 function showPlacementPrompt(data) {
     data = data || {};
     const isRevive = data.kind === 'revive';
@@ -9919,6 +9925,8 @@ function showPlacementPrompt(data) {
 
     const existing = document.getElementById('placement-prompt');
     if (existing) existing.remove();
+    // 新的一代：从此这一代之前发出的确认，其 ack 无权再收面板
+    placementGeneration += 1;
 
     const title = isLastStand ? '绝处逢生·放置唯一一艘战舰'
         : (isShenji ? '神机妙算·预言成功，重新部署战舰'
@@ -9988,6 +9996,8 @@ function showPlacementPrompt(data) {
 
     document.getElementById('placement-confirm').addEventListener('click', () => {
         if (!selected) return;
+        // ⚠️ 记下"这次确认属于哪一代面板"。落到下面的 ack 里再比对 —— 见 success 分支。
+        const myGen = placementGeneration;
         gameState.socket.emit('confirm_reinforcement_position', {
             room_id: gameState.roomId, player_id: gameState.playerId, position: selected
         }, (resp) => {
@@ -9996,7 +10006,25 @@ function showPlacementPrompt(data) {
                 showAlert(resp.message || '放置失败，请重新选择');
                 return;
             }
-            // 成功：若还有剩余，服务端会再发 placement_request 刷新本面板
+            // 成功：若还有剩余，服务端会再发 placement_request 刷新本面板。
+            //
+            // ⚠️⚠️ **绝不能无条件 remove()**（2026-09-22 作者实报「滥竽充数只补了一艘
+            //    就当摆完了 / 没补满目标船数」的根因，只摆一次也是这个形状）：
+            //    服务端 `handle_confirm_reinforcement` 每落一子后按顺序做两件事 ——
+            //      ① `_emit_placement_request(...)`：`remaining > 0` 时**重发** placement_request
+            //      ② `return {...}`：这个返回值被编成**本次 emit 的 ack**
+            //    两者走同一条连接、**事件包先入队、ack 后入队** → 客户端必定
+            //    **先收到下一艘的 placement_request（新面板刚建好）**，
+            //    **后收到上一艘的 ack**。旧写法在这里把那个新面板删掉了，
+            //    于是第 2 艘开始再也没有窗口，服务端的 `pending_placement`
+            //    永远等不到确认（作者的服务端日志正是
+            //    「大师 AI 等待结算收敛超时（放置流程未完成（lanyu@…））」）。
+            //
+            //    判据用"代际"而不是"面板在不在"：每开一次面板 `placementGeneration + 1`，
+            //    所以"代际已经变了" = 服务端又推了新面板 = **还没摆完**，这一代无权收面板。
+            //    反过来（ack 先到、新请求后到）时代际没变，把面板收掉也对 ——
+            //    紧接着的新请求会再开一个。两种先后都正确。
+            if (placementGeneration !== myGen) return;   // 已有更新的面板接手，别动它
             const p = document.getElementById('placement-prompt');
             if (p) p.remove();
         });

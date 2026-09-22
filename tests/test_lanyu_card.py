@@ -280,6 +280,92 @@ def test_confirm_multiple_lanyu_placements(room, events):
     assert len(lanyu[P1]) == 4
 
 
+def test_placement_flow_reemits_request_until_satisfied(room, events):
+    """★ 钉住「落子 N 次必须能落满 N 艘；remaining 归零前不得结束放置流程」。
+
+    这是 2026-09-22 作者实报「滥竽充数只补了一艘就当摆完了 / 没达到目标船数」
+    的**服务端那一半**契约 —— 根因在前端（上一次落子的 ack 把服务端刚重发的
+    新面板删掉了，见 `static/game.js` 的 `placementGeneration`），
+    但正因为服务端**本来是对的**，这条契约才必须有用例守着：
+    谁把 `_emit_placement_request` 的时机改早/改晚，或者提前调 `_finish_placement`，
+    就会把 bug 变成"服务端也只让摆一艘"，前端再对也白搭。
+    """
+    room.players[P1].remaining_ships = 3
+    apply_lanyu(room, P1)          # 需要补 3 艘
+    pending = room.magic_temp_data['pending_placement']
+    assert pending['remaining'] == 3 and pending['total'] == 3
+
+    reqs = find_emit(events, 'placement_request')
+    assert len(reqs) == 1, '启动放置流程时要发一次 placement_request'
+    assert reqs[-1][1]['remaining'] == 3
+
+    for step in range(1, 4):
+        events.clear()
+        resp = server.handle_confirm_reinforcement({
+            'room_id': room.id, 'player_id': P1,
+            'position': {'x': step - 1, 'y': 1},
+        })
+        assert resp['status'] == 'success'
+
+        pending = room.magic_temp_data.get('pending_placement')
+        if step < 3:
+            # ★ 还没摆满：流程必须【还开着】，并且必须重发一次 placement_request
+            assert pending is not None, (
+                f'第 {step} 艘落完就结束了放置流程 —— 还差 {3 - step} 艘没摆')
+            assert pending['remaining'] == 3 - step
+            assert pending['placed'] == step
+            again = find_emit(events, 'placement_request')
+            assert len(again) == 1, (
+                f'落完第 {step} 艘后没有重发 placement_request —— 前端拿不到第 {step + 1} 艘的窗口')
+            assert again[0][1]['remaining'] == 3 - step
+            assert find_emit(events, 'placement_done') == [], (
+                '还有船没摆完就不许发 placement_done（前端会据此收面板）')
+        else:
+            # ★ 摆满了：这时才该收尾
+            assert pending is None
+            assert find_emit(events, 'placement_done'), '摆满后要收尾'
+            assert find_emit(events, 'placement_request') == [], (
+                'remaining 已归零，不该再请求位置')
+
+    # 落子次数 == 补满的艘数
+    assert room.players[P1].remaining_ships == 6
+    assert len(room.game_effects['lanyu_temp_ships'][P1]) == 3
+
+
+def test_extreme_case_flow_ends_exactly_at_available_count(room, events):
+    """极限情况（可放置格子 < 需要补充数）也必须是"落一次少一艘、恰好落满 count 次"。
+
+    卡面：「在极限情况下（即剩余的格子数比需要补充的船数少的时候）就尽可能多的补充」——
+    所以 `count` 可以小于 `needed`，但**流程长度必须正好等于 count**，
+    既不能提前结束，也不能多要一次。
+    """
+    # 满编 11 艘、现在 6 艘 → 需要补 5 艘；但棋盘上只留得出 3 个空格
+    room.players[P1].max_ships = 11
+    room.players[P1].ships = [PlayerShip(positions=[Position(x, 0)], hits=[]) for x in range(6)]
+    room.players[P1].remaining_ships = 6
+    # 用 P2 的攻击占掉除 (1,1)/(2,1)/(3,1) 之外的 33 格
+    free = [(1, 1), (2, 1), (3, 1)]
+    room.players[P2].attacks = [Position(x, y) for x in range(6) for y in range(6)
+                                if (x, y) not in free]
+
+    res = apply_lanyu(room, P1)
+    assert res.success, res.message
+    pending = room.magic_temp_data['pending_placement']
+    assert pending['total'] == 3, f'应尽可能多补到 3 艘，实际 {pending["total"]}'
+
+    placed = 0
+    for (x, y) in free:
+        assert room.magic_temp_data.get('pending_placement') is not None, (
+            f'第 {placed + 1} 艘之前流程就被结束了')
+        resp = server.handle_confirm_reinforcement({
+            'room_id': room.id, 'player_id': P1, 'position': {'x': x, 'y': y}})
+        assert resp['status'] == 'success', resp
+        placed += 1
+    assert placed == 3
+    assert room.magic_temp_data.get('pending_placement') is None, '补满后流程要收尾'
+    assert len(room.game_effects['lanyu_temp_ships'][P1]) == 3
+
+
 # ---------------------------------------------------------------------------
 # 大回合结束：强制收回
 # ---------------------------------------------------------------------------

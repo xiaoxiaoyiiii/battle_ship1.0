@@ -826,6 +826,52 @@ def test_master_unsettled_ignores_only_the_opponents_ship_picks(master_room):
     assert reasons and any('选船' in r for r in reasons), reasons
 
 
+def test_master_unsettled_ignores_the_opponents_placement_and_shenji(master_room):
+    """★ 第二处**有意**的收窄：真人名下的放置流程 / 宣言窗口不算"大师得等的东西"。
+
+    作者实报的服务端日志就是这个形状：
+      `大师 AI 等待结算收敛超时（放置流程未完成（lanyu@4418b87d-…）），跳过等待继续回合`
+    —— caster 是**真人账号**。真人的放置流程由他自己点格子完成（或他自己承担），
+    `_ai_consume_own_placement` 只按 `caster == ai_id` 消费，永远不会替他收敛，
+    所以算进来就是"大师白等满 `_MASTER_SETTLE_STEPS × 0.3s`"。
+
+    反过来说：**大师自己名下**的这两条必须照旧算（本节 ⑦ 的另两条用例守着）。
+    """
+    ai_id = _fill_boards(master_room)
+    opp = server._opponent_of(master_room, ai_id)
+    assert opp and opp != ai_id
+
+    # 真人施法的放置流程挂着 → 大师不该因此被判"没结算完"
+    master_room.magic_temp_data['pending_placement'] = {
+        'caster': opp, 'kind': 'lanyu', 'remaining': 2, 'total': 3, 'placed': 1}
+    pending_now = dict(master_room.magic_temp_data['pending_placement'])
+    assert server._master_unsettled(master_room, ai_id) == [], (
+        '真人名下的放置流程不许拦住大师：'
+        + str(server._master_unsettled(master_room, ai_id)))
+
+    # 真人正在宣言神机妙算 → 同样不该让大师空等
+    master_room.magic_temp_data.pop('pending_placement')
+    master_room.magic_temp_data['pending_shenji'] = {'caster': opp, 'token': 1}
+    assert server._master_unsettled(master_room, ai_id) == [], (
+        '真人名下的宣言窗口不许拦住大师：'
+        + str(server._master_unsettled(master_room, ai_id)))
+
+    # ★ 端到端：`_master_settle` 必须**当圈就收敛**，不是白等满整轮再超时跳过
+    master_room.magic_temp_data['pending_placement'] = pending_now
+    master_room.magic_temp_data.pop('pending_shenji')
+    room, ok = server._master_settle(master_room.id, ai_id)
+    assert ok is True
+    # 真人的放置流程**原样留着**：大师既不该等它，也不该替他消费掉
+    assert room.magic_temp_data.get('pending_placement') == pending_now, (
+        '大师回合不许动真人名下的放置流程')
+
+    # 反证：同样一条挂在**大师自己**名下时必须照旧拦住
+    master_room.magic_temp_data['pending_placement'] = {
+        'caster': ai_id, 'kind': 'reinforce', 'remaining': 1, 'total': 1, 'placed': 0}
+    reasons = server._master_unsettled(master_room, ai_id)
+    assert reasons and any('放置流程' in r for r in reasons), reasons
+
+
 def test_master_settle_consumes_own_pending_before_returning(master_room):
     """`_master_settle` 必须**先替 AI 消费待办再判**，否则永远收敛不了。
 

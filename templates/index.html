@@ -663,6 +663,19 @@
                 <div id="spectate-board-2" class="board spectate-board"></div>
             </div>
             <div class="spectate-side">
+                <h3>观战席 <span class="spectate-roster-count" id="spectate-roster-count"></span></h3>
+                <div id="spectate-roster" class="spectate-roster"></div>
+                <h3>观战席聊天</h3>
+                <!-- ⚠️ 观战席上只有观众看得见这块（服务端那条广播**只发进
+                     `spectate:<room_id>`**，对局双方根本不在那个房间里）。
+                     消息一律用 textContent 渲染，绝不 innerHTML（见 game.js 的
+                     appendSpectateChat / appendSpectateChatNotice 里的告示）。 -->
+                <div id="spectate-chat" class="spectate-chat"></div>
+                <div class="spectate-chat-input-row">
+                    <input type="text" id="spectate-chat-input" class="spectate-chat-input"
+                           maxlength="100" autocomplete="off" placeholder="和观众聊聊…">
+                    <button type="button" id="spectate-chat-send" class="btn secondary">发送</button>
+                </div>
                 <h3>当前连锁</h3>
                 <div id="spectate-chain" class="spectate-chain"></div>
                 <h3>对局日志</h3>

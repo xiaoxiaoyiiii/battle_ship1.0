@@ -277,11 +277,88 @@ def _spectate_broadcast_count(room) -> None:
     emit('spectate_count_changed', {'count': _spectate_count(room)}, room=room.id)
 
 
-def _spectate_count_task(room_id: str) -> None:
-    """后台补一次观战人数广播（`disconnect` 里不能同步 emit，见 CLAUDE.md §9）。"""
+def _spectate_count_task(room_id: str, left_name=None) -> None:
+    """后台补一次观战人数/名单广播（`disconnect` 里不能同步 emit，见 CLAUDE.md §9）。
+
+    `left_name` 不为空时顺带播一条"某某走了" —— 第 4 批的名单要**实时**，
+    断线离席同样得让其他观众看到（否则名单里会挂着一个已经不在的人）。
+    """
     room = room_manager.get_room(room_id)
-    if room is not None:
-        _spectate_broadcast_count(room)
+    if room is None:
+        return
+    _spectate_broadcast_count(room)
+    if left_name:
+        _spectate_announce(room, 'spectate_left', left_name)
+        _spectate_broadcast_roster(room)
+
+
+# ---------------------------------------------------------------------------
+# 实时观战（第 4 批）· 观战席名单 / 观战席聊天
+# ---------------------------------------------------------------------------
+# ★★ 这一整套的隔离**靠通道，不靠过滤** ★★
+#
+# 观战席名单与观战席聊天都只发进 `spectate:<room_id>` 这一个 room 名；
+# 对局双方只在 `room.id` 那个 room 里。**两个 room 没有任何交集** ——
+# 玩家收不到不是因为"我们发完以后判断了一下谁是玩家"（那种写法迟早漏一个分支），
+# 而是因为他**根本不在那个收件人集合里**（socket.io 的 room 只是收件人集合）。
+#
+# 所以下面这几个函数**只允许**出现 `room=spectate.spectate_room_id(...)`：
+# 一旦有人顺手把其中一条改成 `room=room.id`（"顺便让玩家也看到"），
+# 玩家当场就看到观战席聊天了 —— 而这件事**没有任何运行时症状**。
+# 守卫：`tests/test_spectate_batch4.py::test_roster_and_chat_go_only_to_the_spectate_channel`
+# （源码级扫这几个函数体里的 `emit(..., room=…)`，只许用观战通道名）。
+
+def _spectate_roster(room) -> dict:
+    """观战席名单的 payload（**只给观战通道**）。
+
+    只给**显示名**与入席时间：
+      · **不给 `user_id`** —— 那是账号标识，观众彼此不需要它；
+      · **不给 socket sid** —— 连接标识，任何情况下都不外发（与第 2/3 批同口径）；
+      · **不给座位 key** —— 观众没有座位（第 3 批已定：大厅列表连座位 key 都不给）；
+      · **不给 `joined_at` 以外的排序依据** —— 顺序 = `room.spectators` 的插入顺序
+        = 入席顺序，观众看到的"1、2、3…"就是它。
+    """
+    rows = []
+    for info in (room.spectators or {}).values():
+        rows.append({
+            'name': (info or {}).get('name'),
+            'joined_at': (info or {}).get('joined_at'),
+        })
+    return {
+        'spectators': rows,
+        'count': _spectate_count(room),
+        'limit': spectate.SPECTATOR_LIMIT,
+    }
+
+
+def _spectate_broadcast_roster(room) -> None:
+    """把观战席名单推给**观战通道**（对局双方收不到 —— 见上面那段）。"""
+    socketio.emit('spectate_roster', _spectate_roster(room),
+                  room=spectate.spectate_room_id(room.id))
+
+
+def _spectate_announce(room, event: str, name: str) -> None:
+    """有观众进出观战席 → 通知**其他观众**（"谁来了 / 谁走了"）。
+
+    也**只发给观战通道**（同上）。payload 里只有**显示名**。
+    """
+    socketio.emit(event, {'name': name}, room=spectate.spectate_room_id(room.id))
+
+
+def _spectate_chat_fail(message: str):
+    """观战席聊天的失败：**必须带原因**（教训 #32：静默 return = 点了没反应）。
+
+    与 `_spectate_fail` / `_quick_chat_fail` 同写法：`error` 事件 + ack 返回值两条路。
+    """
+    try:
+        sid = request.sid
+    except RuntimeError:
+        sid = None
+    if sid:
+        emit('error', {'message': message}, to=sid)
+    else:
+        emit('error', {'message': message})
+    return {'status': 'error', 'message': message}
 
 
 def _spectate_room_of_sid(sid):
@@ -295,15 +372,18 @@ def _spectate_room_of_sid(sid):
 
 
 def _spectate_sid_left(sid):
-    """观众离开（主动退出 / 断线）：从观战席摘掉他，返回房间号（没有则 None）。
+    """观众离开（主动退出 / 断线）：从观战席摘掉他。
+
+    返回 `(房间号, 显示名)`；不在任何观战席上时返回 `(None, None)`。
+    第 4 批起要带上名字 —— 名单必须**实时**，别的观众得看到"某某走了"。
 
     ⚠️ 只动观战席，**绝不碰 `room.players`** —— 观众从来就不在里面。
     """
     room = _spectate_room_of_sid(sid)
     if room is None:
-        return None
-    room.spectators.pop(sid, None)
-    return room.id
+        return None, None
+    info = (getattr(room, 'spectators', None) or {}).pop(sid, None)
+    return room.id, ((info or {}).get('name'))
 
 
 # ---------------------------------------------------------------------------
@@ -841,6 +921,18 @@ class GameRoom:
         #    / `handle_disconnect` / `_drop_room` / `_build_spectate_snapshot`；
         #    ③ 回归用例见 `tests/test_spectate_batch2.py`。
         self.spectators: dict[str, dict[str, Any]] = {}
+
+        # ── 观战席聊天（实时观战第 4 批）───────────────────────────────
+        # **观众**的发言频率状态。与 `quick_chat_recent` 一样住房间级
+        # （模块级全局会让 A 房间的连点吃光 B 房间另一个人的额度）。
+        # key 一律是**观众的 sid**（观众不在 `room.players` 里，没有 player_id）。
+        #   spectate_chat_recent: sid -> [发送时间戳…]（升序，只留窗口内的）
+        #   spectate_chat_last:   sid -> {'id': 上一条正文, 'ts': 时间戳}
+        # 判据**不在这里** —— 复用 `quick_chat.check_rate`（教训 #1：
+        # 同一个业务判断不许有第二份实现）。这里只是它的状态存放处。
+        # 消费点：`handle_spectate_chat_send`（读写都只在那里）。
+        self.spectate_chat_recent: dict[str, list[float]] = {}
+        self.spectate_chat_last: dict[str, dict[str, Any]] = {}
 
     def init_player_magic(self, player_id: str, magic_cards):
         """初始化玩家魔法卡相关状态"""
@@ -2734,9 +2826,10 @@ def handle_disconnect():
     #    分支里随手 return 会静默吞掉这段收尾（本文件同形状栽过三次，教训 #11）。
     # ⚠️ 这里**不调用 `leave_room`**：连接已经断了，socket.io 会自己把它从
     #    所有房间（含 `spectate:<id>`）摘掉；替一条已死的连接退房没有意义。
-    _left_spectate_room = _spectate_sid_left(sid)
+    _left_spectate_room, _left_spectate_name = _spectate_sid_left(sid)
     if _left_spectate_room:
-        socketio.start_background_task(_spectate_count_task, _left_spectate_room)
+        socketio.start_background_task(_spectate_count_task, _left_spectate_room,
+                                       _left_spectate_name)
 
     # 掉线宽限：若该连接正坐在某未结束房间的座位上，启动 30s 重连窗口。
     # 注意：不能在 disconnect 处理器内同步 emit（eventlet 下会卡住 hub），
@@ -2846,9 +2939,20 @@ def handle_spectate_join(data):
             'joined_at': int(time.time()),
         }
         join_room(spectate.spectate_room_id(room_id), sid)
+        # 人数：广播给对局双方（只有人数）+ 观战通道。
         _spectate_broadcast_count(room)
+        # ★ 第 4 批：名单与"谁来了"**只发观战通道** —— 对局双方收不到
+        #   （隔离靠通道：玩家不在 `spectate:<id>` 里，不是靠发完再筛）。
+        #   ⚠️ 顺序要紧：`join_room` 必须在**前面**，否则这位新观众自己
+        #      收不到自己的第一条名单（他会一直看到一份少了人的名单）。
+        _spectate_announce(room, 'spectate_joined', room.spectators[sid]['name'])
+        _spectate_broadcast_roster(room)
 
     # ⑥ 一次性快照只发给**这一位**观众（中途加入立刻拿到当前局面 —— 不变量 #3）
+    # ⚠️ 放在 `already_seated` 分支**外面**：同一连接重进（刷新后重新入席）时
+    #    `pendingSync` 已经没了，靠的正是这条快照；名单里"哪一行是我"也同理 ——
+    #    写成"只在首次入席时发"会让重进的人一直看不到自己的标记与名单。
+    emit('spectate_you', {'name': room.spectators[sid]['name']}, to=sid)
     emit('spectate_sync', _build_spectate_snapshot(room), to=sid)
     return {
         'status': 'success',
@@ -2873,11 +2977,105 @@ def handle_spectate_leave(data=None):
         return _spectate_fail('你不在任何观战席上')
 
     room_id = room.id
+    # 先取出显示名 —— 第 4 批要播一条"某某走了"（名单必须实时）。
+    left_name = (room.spectators.get(sid) or {}).get('name')
     room.spectators.pop(sid, None)
+    # 人数：广播给对局双方（只有人数）+ 观战通道。
+    _spectate_broadcast_count(room)
+    # ★ 第 4 批：名单与"谁走了"**只发观战通道**（对局双方收不到）。
+    # ⚠️ 必须在下面那行 `leave_room` **之前** —— 退房之后再广播，离开的人
+    #    就自己收不到"席位变了"，他的名单会停在上一帧（直到重进）。
+    _spectate_announce(room, 'spectate_left', left_name)
+    _spectate_broadcast_roster(room)
     # 只退观战通道，**绝不 leave_room(room_id)** —— 观众从来就没在对局房间里。
     leave_room(spectate.spectate_room_id(room_id), sid)
-    _spectate_broadcast_count(room)
     return {'status': 'success', 'room_id': room_id, 'count': _spectate_count(room)}
+
+
+@socketio.on('spectate_chat_send')
+def handle_spectate_chat_send(data):
+    """观战席聊天：`{'room_id': …, 'message': …}` → 广播 `spectate_chat`。
+
+    ## ★★ 对局双方**不可见** —— 靠通道，不靠过滤 ★★
+
+    这条消息**只**发进 `spectate:<room_id>`。对局双方在那个 room 的收件人集合里
+    **根本不存在**（他们只在 `room.id` 里），所以隔离是**结构性**的：
+    这里没有、也**不该有**"发完再逐个判断谁是玩家"的代码 —— 那种写法每加一条
+    发送路径就要重判一次，漏一个分支就是当场破功，且**运行时毫无症状**。
+
+    ## ⚠️⚠️ 绝对不许走 `add_game_log`
+
+    `add_game_log`（本文件约 459 行）是**房间级广播**：
+    `emit('game_log', …, room=room.id)` —— 观众聊天一旦经过它，**玩家立刻就看到**，
+    本需求当场作废。而且 `game_logs` 是**同一份数据**，它同时进
+    `spectate_sync` 快照与玩家侧的重连快照 / 事件流 → 连"只写不广播"都不行。
+    所以观战聊天是**另一条通道的一条独立事件**，不进对局日志、不进 `game_logs`。
+    守卫：`tests/test_spectate_batch4.py` 用 **AST 扫本函数体**，出现
+    `add_game_log` / `game_logs` / `room=room.id` 任一即判红（并附"故意改坏 → 变红"）。
+
+    ## 复用既有的长度与限流（不另写一套，教训 #1）
+
+    * 长度：`MAX_CHAT_MSG_LEN`（与 `handle_chat_message` 同一个常量）；
+    * 频率：`quick_chat.check_rate` —— 10 秒窗口、最多 3 条、同一句不许重复。
+      状态住房间级 `room.spectate_chat_recent` / `spectate_chat_last`（按观众 sid 分组），
+      判据**只有 `quick_chat.check_rate` 一份实现**。
+      被拒的那条**不记账**（与 `handle_quick_chat` 同口径：拒绝本身不该占满窗口）。
+
+    ## 每一条拒绝都带原因（教训 #32：静默 return = "点了没反应"）
+    """
+    data = data if isinstance(data, dict) else {}
+    room_id = data.get('room_id')
+
+    # 连接信息：没有它就无从谈起"这条连接在哪张观战席上" —— 缺了直接拒（fails closed）。
+    try:
+        sid = request.sid
+    except RuntimeError:
+        sid = None
+    if not sid:
+        return _spectate_chat_fail('发言失败：缺少连接信息')
+
+    # ① 只限登录用户（与观战只限登录用户同口径；观战席上的人必然已登录，
+    #    但这条 handler 是独立入口，不能靠"他一定在席上"来省掉这道检查）。
+    try:
+        uid = session.get('user_id')
+    except RuntimeError:
+        uid = None
+    if not uid:
+        return _spectate_chat_fail('观战席发言需要先登录')
+
+    # ② 必须在**这张**观战席上。这是本 handler 唯一的鉴权：
+    #    不在席上的人不许往这个通道里说话（否则任何登录连接都能往任意一局刷屏）。
+    room = _spectate_room_of_sid(sid)
+    if room is None:
+        return _spectate_chat_fail('你不在观战席上')
+    if room_id and str(room_id) != str(room.id):
+        # 人在 A 局的观战席上却声称自己在看 B 局 —— 明确拒绝，不许静默按 A 发。
+        return _spectate_chat_fail('你不在这一局的观战席上')
+
+    # ③ 正文：空 / 全空白 → **明确拒绝**（不静默 return）
+    message = data.get('message')
+    message = (message or '').strip() if isinstance(message, str) else ''
+    if not message:
+        return _spectate_chat_fail('说点什么再发送吧')
+    message = message[:MAX_CHAT_MSG_LEN]
+
+    # ④ 频率：窗口内最多 3 条 + 同一句窗口内不重复（规则在 quick_chat.check_rate）。
+    #    ⚠️ 判据不在这里 —— 这里只负责喂状态、记账。
+    now = time.time()
+    recent = [t for t in room.spectate_chat_recent.get(sid, [])
+              if now - t < quick_chat.WINDOW_SECONDS]
+    ok, reason = quick_chat.check_rate(recent, now, room.spectate_chat_last.get(sid), message)
+    room.spectate_chat_recent[sid] = recent    # 顺手淘汰过期时间戳，避免无限增长
+    if not ok:
+        return _spectate_chat_fail(reason)
+    recent.append(now)
+    room.spectate_chat_last[sid] = {'id': message, 'ts': now}
+
+    name = (room.spectators.get(sid) or {}).get('name') or str(uid)
+    payload = {'name': name, 'message': message, 'ts': int(now)}
+    # ★ 只发观战通道。**不许**改成 `room=room.id`（那就是玩家可见了）。
+    socketio.emit('spectate_chat', payload, room=spectate.spectate_room_id(room.id))
+    return {'status': 'success', 'message': payload}
 
 
 @socketio.on('chat_message')
@@ -2896,14 +3094,23 @@ def handle_chat_message(data):
     if room and not any(p.sid == request.sid for p in room.players.values()):
         return
     if room:
-        for pid in room.players:
-            is_me = (room.players[pid].name == username)
-            emit('chat_message', {
-                'username': username,
-                'message': msg,
-                'isMe': is_me
-            }, to=room.players[pid].sid)
         # 标记自己和对手
+        # ★★ 第 4 批修的真缺陷（实测发现）：这一段原本是**两发 `to=<sid>` 单发**，
+        #    而 `emit` 的观战第三条腿**只对广播类**（`room=<对局房间号>`）生效 ——
+        #    于是第 1 批就登记在 `SPECTATE_EVENTS['chat_message']` 里的
+        #    "玩家之间的聊天观众可见"**一个字节都到不了观战通道**：
+        #    观众看不到玩家说话，而代码、pytest、日志**全都不报错**
+        #    （正是教训 #34 那种"零症状"的坏法）。
+        #    修法 = 让这一条**同时**满足两件事，而不是加第三条发送路径：
+        #      · 广播进对局 room → 双方都收到**一份**（而不是原来的人各一份），
+        #        第三条腿顺手净化复制给观战通道；
+        #      · `isMe` 是"**相对某一位收件人**"的字段，一旦广播就必然对一方是错的
+        #        （两位玩家会同时看到 `isMe: true`）→ **从 payload 里删掉**，
+        #        改由**前端**按自己的名字判定（它本来就存着 `gameState.playerName`）。
+        #    ⚠️ 千万别"保留单发再补一条广播"：那会让每位玩家**收到两遍**
+        #       （聊天区出现重复行），而观众的 `chat_message` 里若带着 `isMe`
+        #       则永远是 undefined → 全部被渲染成"对方"。
+        emit('chat_message', {'username': username, 'message': msg}, room=room.id)
     else:
         # fallback: 仅回发给自己
         emit('chat_message', {'username': username, 'message': msg, 'isMe': True}, room=request.sid)

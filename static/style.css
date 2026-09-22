@@ -5630,6 +5630,82 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, rgba(255, 2
     border-bottom: 1px dashed rgba(128, 128, 128, 0.18);
 }
 
+/* ---------- 观战席名单 + 观战席聊天（实时观战第 4 批） ----------
+   ⚠️ 只动颜色/间距，**不动棋盘相关的盒模型尺寸**（ui_layout_check 逐视口钉着
+      棋盘 300×300 / 单格 42px / 浮窗零叠压）。新增的这两个块都在
+      `.spectate-side` 里（观战屏自己的侧栏），不参与对局屏的尺寸。 */
+.spectate-roster-count {
+    color: var(--muted);
+    font-weight: normal;
+}
+
+.spectate-roster {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    font-size: 0.76rem;
+    color: var(--text-subtle);
+    max-height: 84px;
+    overflow-y: auto;
+    line-height: 1.4;
+}
+
+.spectate-roster-item {
+    padding: 1px 6px;
+    border-radius: 8px;
+    border: 1px solid var(--panel-border);
+    background: rgba(128, 128, 128, 0.08);
+    word-break: break-word;
+}
+
+/* 自己那一行加一道边 —— 一眼看出"哪个是我"（服务端只发显示名，
+   前端按 `spectate_you` 那份自己的名字比）。 */
+.spectate-roster-item.spectate-roster-me {
+    border-color: var(--accent, #4a9eff);
+    color: var(--text, inherit);
+}
+
+.spectate-roster-empty {
+    color: var(--muted);
+}
+
+.spectate-chat {
+    font-size: 0.78rem;
+    line-height: 1.45;
+    color: var(--text-subtle);
+    max-height: 160px;
+    overflow-y: auto;
+    word-break: break-word;
+}
+
+.spectate-chat-item {
+    padding: 2px 0;
+}
+
+/* 系统提示（进出观战席 / 席位变化）——与真人发言区分开，
+   观众不该把"某某来了"误读成有人在说话。 */
+.spectate-chat-notice {
+    padding: 2px 0;
+    color: var(--muted);
+    font-style: italic;
+}
+
+.spectate-chat-chat-error {
+    padding: 2px 0;
+    color: var(--danger, #e5484d);
+}
+
+.spectate-chat-input-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.spectate-chat-input {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
 .settings-spectate-row {
     display: inline-flex;
     align-items: center;

@@ -381,6 +381,22 @@ SPECTATE_EVENTS = {
     'spectate_sync': None,           # 中途加入的**一次性快照**（只发给该观众）
     'spectate_count_changed': None,  # 观战人数变化（**只含人数，不含名单**）
     'spectate_ended': None,          # 对局房间被回收 → 观战结束
+    # —— 观战席名单与观战席聊天（第 4 批）——
+    # ★★ 本批最要紧的一条：**这五个只在观战通道里发**，对局双方**一个字节都收不到**。
+    #    保证它的不是"发完再挑人过滤"（那种写法迟早漏），而是**通道本身**：
+    #    观众只 `join_room('spectate:<id>')`、**从不进对局 room**，而玩家只在对局 room 里。
+    #    两个 room 没有任何交集 ⇒ 隔离是结构性的，不是判断出来的。
+    #    守卫：tests/test_spectate_batch4.py 用**真 socket** 两侧同时收件断言
+    #    （观众收得到、两个玩家都收不到），并对 `spectate_chat_send` 做**源码级**扫描
+    #    禁止它碰 `add_game_log`（那是**房间级广播**，一走玩家当场就看到）。
+    'spectate_roster': None,         # 观战席名单 {spectators:[{name,joined_at}],count,limit}
+    'spectate_joined': None,         # 有观众入席 {name}（只有**显示名**，无 uid/sid）
+    'spectate_left': None,           # 有观众离席 {name}
+    'spectate_chat': None,           # 观战席聊天 {name,message,ts}（**对局双方不可见**）
+    # 观众自己那份"我叫什么"：用来把名单里**自己**那一行标出来。
+    # 只单发给本人（`to=sid`），且**只含显示名** —— 座位识别仍只靠 `sides[].seat_id`
+    # 与 `seat_labels`，这里不引入任何新的连接标识。
+    'spectate_you': None,
 }
 
 

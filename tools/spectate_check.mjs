@@ -1,31 +1,47 @@
 #!/usr/bin/env node
 /**
- * 实时观战**第 3 批**端到端检查（无头 Edge + CDP，**三浏览器**）
+ * 实时观战**第 3 + 4 批**端到端检查（无头 Edge + CDP，**四浏览器**）
  *
- * 三个真浏览器 = 甲（对局玩家）/ 乙（对局玩家）/ 丙（观众）。
+ * 四个真浏览器 = 甲（对局玩家）/ 乙（对局玩家）/ 丙（观众一）/ 丁（观众二）。
  * 依据：docs/LOBBY_2026_09_18.md §1.3（`matches` 契约）、
- *       docs/SPECTATE_BATCH3_2026_09_22.md。
+ *       docs/SPECTATE_BATCH3_2026_09_22.md、第 4 批（观战席名单 + 观战席聊天）。
  *
- * 为什么必须**第三个真浏览器**：前两批测得再全，也测不到"另一个人坐在另一条
+ * 为什么必须**真浏览器**：前几批测得再全，也测不到"另一个人坐在另一条
  * 连接上看到的东西"。而观战屏最要紧的一条不变量恰恰是**观众侧看不到什么**——
  * 自己给自己发事件是测不出来的（CLAUDE.md 通用教训：工具全绿、线上全坏）。
  *
- * 覆盖 10 组：
- *   1. 前置：三个**登录账号**（观战只限登录用户）真的连上 socket；
+ * ## 第 4 批为什么又加了**第四个**浏览器
+ *
+ * 本批两条铁律都是"**谁收不到**"：
+ *   ① 观战席**名单**只给观众，对局双方只该收到"人数"；
+ *   ② 观战席**聊天**只给观众（对局双方不可见），而玩家之间的聊天**观众要看得到**。
+ * 只用一个观众是证明不了"玩家收不到"的 —— 而且**单向断言会空转绿**：
+ * 发送路径整个坏掉时，"玩家没收到"照样通过。所以：
+ *   · 丙 + 丁 = **两条真观众连接**（对照腿：观众之间确实互相收得到）；
+ *   · 丁 同时在甲/乙的页面上装一个**原始收件记录器**（见 `TAP`），
+ *     把这两个玩家连接真的收到了哪些事件名记下来 —— 这比"看代码"硬。
+ *
+ * 覆盖 14 组：
+ *   1. 前置：四个**登录账号**真的连上 socket；
  *   2. 甲建房、乙加入 → 双方摆船 + 猜拳 → 真的进入 attacking；
  *   3. ★ 丙在大厅的「进行中的对局」里看到这一局（名字/回合/观战人数）；
  *   4. ★ 丙点「观战」→ 进入**独立的**观战屏（不是对局屏），URL/屏名都对得上；
- *   5. ★★ **观战屏上没有任何一格「船」**（未被打过的船位一个都不出现）——
- *      同时对局屏那边同样为 0（对照腿：证明"0"不是因为棋盘压根没画）；
+ *   5. ★★ **观战屏上没有任何一格「船」**（未被打过的船位一个都不出现）；
  *   6. ★ 甲打一炮 → **丙那边不刷新页面**就出现那一格（hit/miss 与 hit 标记一致）；
  *   7. 这一炮在丙的**另一块**棋盘上（甲打出去的格只能出现在乙那块棋盘上）；
- *   8. 观战人数：丙进席后甲收到 `spectate_count_changed`；丙退出后回到 0；
- *   9. ★ 甲在**设置面里真的点开关**关掉观战 → 这一局从丙的列表里消失（不刷新）；
+ *   8. ★★ **第 4 批**：丁进席 → 丙**不刷新**就多出一个名字；人数变成 2/20；
+ *      丁说话 → 丙实时收到；甲发言 → 丙也看得到玩家之间的聊天；
+ *      **甲/乙两侧的原始收件记录里都没有观战席聊天与名单**（两条腿都断言）；
+ *   9. ★★ **第 4 批**：甲打出一张魔法卡 → 丙**不刷新**就在连锁区看到那张卡；
+ *      乙连锁响应「失灵！」→ 丙实时看到第二张（且标着"已被康"）；
+ *  10. 观战人数：丙进席后甲收到 `spectate_count_changed`；
+ *  11. ★ 甲在**设置面里真的点开关**关掉观战 → 这一局从丙的列表里消失（不刷新）；
  *      再打开 → 又出现；
- *  10. 页面无 JS 异常/报错。
+ *  12. 退出观战；
+ *  13. 页面无 JS 异常/报错。
  *
  * 用法：
- *   node tools/spectate_check.mjs --url http://127.0.0.1:5099/ [--shot out.png]
+ *   node tools/spectate_check.mjs --url http://127.0.0.1:5099/ [--shot out.png] [--debug]
  *
  * ⚠️ 需要一个**已经起好的**服务端，且必须带：
  *      BATTLESHIP_DB_PATH=.tmp/spectate_check.db   （隔离数据库）
@@ -36,10 +52,17 @@
  * ⚠️ 踩过的坑（别重踩）：
  *   · 无头 Edge 自带 `edge://sync-confirmation-dialog` 页且**稳定排第一**，
  *     只按 `type === 'page'` 取会取到它 → 全项假红。`pickPage` 里先按 http(s) 过滤。
- *   · 三个实例各有自己的 `--user-data-dir` 与调试端口：共用 profile 时后两个会
- *     **静默起不来**，工具会连上第一个实例，"三个人"其实是同一个人。
+ *   · **每个实例都要有自己的 `--user-data-dir` 与调试端口**：共用 profile 时后几个会
+ *     **静默起不来**，工具会连上第一个实例，"四个人"其实是同一个人。
  *   · 收尾必须按 profile 路径清理（`proc.kill()` 杀不掉孙进程）——否则残留的连接
  *     会以"数据对不上"的形式出现在**下一次**运行里（大厅批踩过）。
+ *   · 本工具**跨次运行不稳定**（作者实测 3 次成功 2 次，有一次以
+ *     `Inspected target navigated or closed` 提前收场）→ 跑失败先重试一次再下结论，
+ *     报告里如实写"跑了几次、成功几次"。
+ *   · 玩家侧的"收件记录器"必须**在页面自己建连之前**装好？**不需要** ——
+ *     `gameState.socket` 在重载后就存在（`ensureSocket` 在 DOMContentLoaded 里调），
+ *     我们只是包一层它的 `onevent`，之后的事件全都能记到。
+ *     ⚠️ 但包装必须在**任何断言之前**做（`TAP` 就是干这个的）。
  */
 import { spawn, execSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -359,38 +382,179 @@ const READ_SETTING_API = '(async function(){'
   + ' return await r.json(); })()';
 
 // ---------------------------------------------------------------------------
+// 第 4 批：观战席名单 / 观战席聊天 / "玩家到底收到了什么"
+// ---------------------------------------------------------------------------
+
+// ★★ **原始收件记录器**（本批最硬的那条证据）。
+//
+// 为什么要它：本批两条铁律都是"**谁收不到**"，而"没收到"单独看是**空转绿** ——
+// 发送路径整个坏掉时它照样通过。所以既要有对照腿（另一个观众真的收到了），
+// 也要有一个**独立于 game.js 的证据**证明"这条连接当时活着、而且在收事件"。
+//
+// 做法：包一层 `gameState.socket.onevent`（socket.io v2 客户端解析完一帧后调它，
+// 参数就是 `data = ['事件名', payload]`），把每个事件名记进 `window.__SPEC_EVENTS`。
+// 这是**页面自己**的进站口，比读 `game.js` 的处理函数更接近"真的收到了吗"。
+// ⚠️ 只包一次（`__SPEC_TAPPED` 标记）；每次调用会重置记录数组。
+const TAP = '(function(){'
+  + ' var s = (window.gameState || {}).socket;'
+  + ' if (!s || typeof s.onevent !== "function") return { tapped: false, reason: "no socket" };'
+  + ' window.__SPEC_EVENTS = [];'
+  + ' if (!window.__SPEC_TAPPED) {'
+  + '   var orig = s.onevent;'
+  + '   s.onevent = function (packet) {'
+  + '     try { var d = packet && packet.data;'
+  + '       if (d && d.length) window.__SPEC_EVENTS.push(String(d[0])); } catch (e) {}'
+  + '     return orig.apply(this, arguments); };'
+  + '   window.__SPEC_TAPPED = true;'
+  + ' }'
+  + ' return { tapped: true }; })()';
+
+// 取记录器里的快照：`{events: {事件名: 次数}, total: n}`
+const TAP_DUMP = '(function(){'
+  + ' var out = {}, total = 0;'
+  + ' (window.__SPEC_EVENTS || []).forEach(function (n) {'
+  + '   out[n] = (out[n] || 0) + 1; total++; });'
+  + ' return { events: out, total: total }; })()';
+
+// ★ 对照腿：确认这个页面**确实在收事件**（否则"某事件 0 次"可能只是没连上）。
+const TAP_ALIVE = '(function(){ return (window.__SPEC_EVENTS || []).length; })()';
+
+// 观战屏的名单 / 聊天体检（第 4 批新增的两块）
+const SPECTATE_SOCIAL_PROBE = '(function(){'
+  + ' var sp = ((window.gameState || {}).spectate) || {};'
+  + ' function txt(id){ var el = document.getElementById(id);'
+  + '   return el ? el.textContent.trim() : null; }'
+  + ' var items = [];'
+  + ' document.querySelectorAll("#spectate-roster .spectate-roster-item").forEach(function(el){'
+  + '   items.push({ name: el.textContent.trim(), me: el.classList.contains("spectate-roster-me") }); });'
+  + ' var chat = [];'
+  + ' document.querySelectorAll("#spectate-chat > div").forEach(function(el){'
+  + '   chat.push({ text: el.textContent.trim(),'
+  + '     notice: el.classList.contains("spectate-chat-notice"),'
+  + '     fromPlayer: el.classList.contains("spectate-chat-from-player"),'
+  + '     error: el.classList.contains("spectate-chat-chat-error") }); });'
+  + ' return {'
+  + '   rosterNames: items.map(function(i){ return i.name; }),'
+  + '   meRows: items.filter(function(i){ return i.me; }).map(function(i){ return i.name; }),'
+  + '   rosterCount: txt("spectate-roster-count"),'
+  + '   topCount: txt("spectate-count"), topLimit: txt("spectate-limit"),'
+  + '   chat: chat,'
+  + '   me: sp.me || null,'
+  + '   rosterState: (sp.roster || []).length,'
+  + '   chatInputExists: !!document.getElementById("spectate-chat-input"),'
+  + '   sendBtnExists: !!document.getElementById("spectate-chat-send"),'
+  + ' }; })()';
+
+// 观战屏上"当前连锁"这一块的文本（第 4 批用它证"打出的牌实时可见"）
+const SPECTATE_CHAIN_PROBE = '(function(){'
+  + ' var el = document.getElementById("spectate-chain");'
+  + ' var items = [];'
+  + ' document.querySelectorAll("#spectate-chain .spectate-chain-item").forEach(function(r){'
+  + '   items.push({ text: r.textContent.trim(),'
+  + '     negated: r.classList.contains("spectate-chain-negated") }); });'
+  + ' return { raw: el ? el.textContent.trim() : null, items: items }; })()';
+
+const SPECTATE_LOG_PROBE = '(function(){'
+  + ' var out = [];'
+  + ' document.querySelectorAll("#spectate-logs .spectate-log-item").forEach(function(r){'
+  + '   out.push(r.textContent.trim()); });'
+  + ' return out; })()';
+
+// 在观战屏的输入框里打字并按「发送」按钮（**真的点按钮**，顺带验绑没绑上）
+const SEND_SPECTATE_CHAT = (text) => '(function(){'
+  + ' var box = document.getElementById("spectate-chat-input");'
+  + ' var btn = document.getElementById("spectate-chat-send");'
+  + ' if (!box || !btn) return { sent: false, reason: "no input/button" };'
+  + ' box.value = ' + jsStr(text) + ';'
+  + ' btn.click();'
+  + ' return { sent: true }; })()';
+
+// 玩家侧发言（对局屏里的聊天框：`#in-game-chat-input` + `#in-game-chat-send`）
+const SEND_PLAYER_CHAT = (text, roomId) => '(function(){'
+  + ' var box = document.getElementById("in-game-chat-input");'
+  + ' if (!box) return { sent: false, reason: "no #in-game-chat-input" };'
+  + ' box.value = ' + jsStr(text) + ';'
+  + ' if (window.gameState) window.gameState.roomId = ' + jsStr(roomId) + ';'
+  + ' var btn = document.getElementById("in-game-chat-send");'
+  + ' if (btn) { btn.click(); return { sent: true, via: "button" }; }'
+  + ' return { sent: false, reason: "no #in-game-chat-send" }; })()';
+
+// 玩家对局屏上"对方说的话"有没有出现（对照腿：证明玩家的聊天路径没被我改坏）
+const PLAYER_CHAT_PROBE = '(function(){'
+  + ' var out = [];'
+  + ' document.querySelectorAll("#in-game-chat-messages .in-game-chat-message").forEach(function(el){'
+  + '   out.push({ text: el.textContent.trim(),'
+  + '     mine: el.classList.contains("me") }); });'
+  + ' return out; })()';
+
+// 甲往自己手牌里塞一张指定卡（**测试事件**，需要 ENABLE_TEST_EVENTS=1）。
+const ADD_CARD = (roomId, pid, name) => 'new Promise(function(res){'
+  + ' gameState.socket.emit("test_add_specific_magic_card", { room_id: ' + jsStr(roomId)
+  + ', player_id: ' + jsStr(pid) + ', card_name: ' + jsStr(name) + ' },'
+  + ' function(r){ res(r); }); })';
+
+// 打出一张魔法卡（真事件 `use_magic_card`）。本脚本选的卡**不需要任何目标**，
+// 所以不带 targets。
+const PLAY_CARD = (roomId, pid, name, speed) => 'new Promise(function(res){'
+  + ' gameState.socket.emit("use_magic_card", { room_id: ' + jsStr(roomId)
+  + ', player_id: ' + jsStr(pid) + ', card: { name: ' + jsStr(name)
+  + ', speed: ' + speed + ' }, targets: [] }, function(r){ res(r); }); })';
+
+// 连锁响应（真事件 `chain_response`）——同样不需要目标。
+const CHAIN_RESPOND = (roomId, pid, name, speed) => 'new Promise(function(res){'
+  + ' gameState.socket.emit("chain_response", { room_id: ' + jsStr(roomId)
+  + ', player_id: ' + jsStr(pid) + ', chain: true, card: { name: ' + jsStr(name)
+  + ', speed: ' + speed + ' }, targets: [] }, function(r){ res(r); }); })';
+
+// 读服务端真相：当前连锁栈里有哪几张卡（**玩家侧**接口，用来把期望值钉死）
+//
+// ⚠️ `test_get_game_state` 把 `ChainItem` 序列化成 `{'player_id','card','targets',…}`，
+//    而 `card` 是 `MagicCard` **实例** —— 它进了 JSON 之后字段名是 `name`/`speed`，
+//    但**键名/嵌套形状随实现而变**，拿它当断言就会变成"断言序列化细节"。
+//    所以这里**只取条数**（与观众侧条数对齐），卡名由**观众那一侧**（连锁区的文本）
+//    来断言 —— 那正是本批要证的东西。
+const READ_CHAIN = (roomId) => 'new Promise(function(res){'
+  + ' gameState.socket.emit("test_get_game_state", { room_id: ' + jsStr(roomId) + ' },'
+  + ' function(x){ var g = x && x.game_state;'
+  + '   res(g ? { chain_len: (g.chain || []).length, state: g.state,'
+  + '     seats: (g.chain || []).map(function(c){ return c && c.player_id ? "p" : "?"; }) }'
+  + '     : x); }); })';
+
+// ---------------------------------------------------------------------------
 // 主流程
 // ---------------------------------------------------------------------------
 /** 每一步都打一行进度：这个工具最贵的失败是"只印了一条就中断"—— 
  *  从输出里看不出卡在哪一步（实测踩过两次，两次的根因完全不同）。 */
 function step(text) { console.log('---- ' + text); }
 
-let A = null, B = null, C = null;
+let A = null, B = null, C = null, D = null;
 const stamp = Date.now().toString(36);
 const USER_A = 'specA' + stamp;
 const USER_B = 'specB' + stamp;
 const USER_C = 'specC' + stamp;
+const USER_D = 'specD' + stamp;
 const PASS = 'spec-pass-1234';
 
 try {
-  step('启动三个无头浏览器');
+  step('启动四个无头浏览器（甲/乙 玩家 · 丙/丁 观众）');
   A = await launch('spectate_check_a_profile', 9370);
   B = await launch('spectate_check_b_profile', 9371);
   C = await launch('spectate_check_c_profile', 9372);
-  for (const br of [A, B, C]) {
+  D = await launch('spectate_check_d_profile', 9373);
+  for (const br of [A, B, C, D]) {
     await br.send('Page.enable');
     await br.send('Runtime.enable');
     await br.send('Emulation.setDeviceMetricsOverride', { width: 1600, height: 1000, deviceScaleFactor: 1, mobile: false });
     br.navigate('Page.navigate', { url: APP }, 1500);
   }
-  for (const br of [A, B, C]) {
+  for (const br of [A, B, C, D]) {
     const ready = await br.awaitReady(30000);
     check(ready === true, '（前提）' + br.tag + ' 页面加载完成', ready);
   }
 
-  // --- 1. 前置：三个登录账号 -----------------------------------------------
-  step('注册并登录三个账号');
-  for (const [br, user] of [[A, USER_A], [B, USER_B], [C, USER_C]]) {
+  // --- 1. 前置：四个登录账号 -----------------------------------------------
+  step('注册并登录四个账号');
+  for (const [br, user] of [[A, USER_A], [B, USER_B], [C, USER_C], [D, USER_D]]) {
     // ⚠️ 重试是必须的：无头 Edge 里 `/register` 偶发地一条请求就永远不回来
     //    （服务端日志显示注册其实**成功了**，是客户端这次 fetch 没了下文）。
     //    只试一次的话会拿到一个"注册失败"的假红，后面所有断言跟着一起崩。
@@ -405,11 +569,11 @@ try {
     check(!!out && out.setting && out.setting.success === true,
       '（前提）' + br.tag + ' 注册并登录成功（观战只限登录用户）', out);
   }
-  step('重载三个页面并等 socket');
-  for (const br of [A, B, C]) {
+  step('重载四个页面并等 socket');
+  for (const br of [A, B, C, D]) {
     br.navigate('Page.reload', {}, 1500);
   }
-  for (const br of [A, B, C]) {
+  for (const br of [A, B, C, D]) {
     const ready = await br.awaitReady(30000);
     check(ready === true, '（前提）' + br.tag + ' 重载后页面就绪', ready);
     let ok = false;
@@ -419,10 +583,18 @@ try {
     }
     check(ok === true, '（前提）' + br.tag + ' 的 socket 已连接', ok);
   }
-  for (const [br, user] of [[A, USER_A], [B, USER_B], [C, USER_C]]) {
+  for (const [br, user] of [[A, USER_A], [B, USER_B], [C, USER_C], [D, USER_D]]) {
     const api = await br.ev(READ_SETTING_API);
     check(!!api && api.success === true && api.allow_spectate === true,
       '（前提）' + br.tag + '（' + user + '）默认允许被观战', api);
+  }
+
+  // ★★ 在**两个玩家**的页面上装原始收件记录器。
+  //    这是本批"玩家收不到观战席聊天/名单"那条断言的**独立证据**：
+  //    它记的是这条连接真的收到了哪些事件（不是"我们看代码觉得它收不到"）。
+  for (const br of [A, B]) {
+    const t = await br.ev(TAP, 15000);
+    check(!!t && t.tapped === true, '（前提）' + br.tag + '（玩家）装了原始收件记录器', t);
   }
 
   // --- 2. 甲乙真的打起来 ----------------------------------------------------
@@ -655,6 +827,256 @@ try {
   check(after.logs > probe.logs, '日志也实时多了一条（炮击记录）',
     { before: probe.logs, after: after.logs });
 
+  // =========================================================================
+  // ★★ 第 4 批 A：观战席名单 + 观战席聊天（**两侧都要断言**）
+  // =========================================================================
+  // 这一段刻意排在"设置面开关"之前 —— 开关那一段会把玩家从观战列表里摘掉，
+  // 而本段要的是"三个人都在正常状态"。
+  step('第 4 批：丁进席 → 丙实时看到名单；观战席聊天与玩家聊天的可见范围');
+  await D.ev(ENTER_LOBBY);
+  await D.waitFor(async () => await D.ev('gameState.lobbySubscribed === true && !!gameState.lobbyKey'),
+    15000, '丁订阅大厅');
+  await D.waitFor(async () => {
+    const rows = await D.ev(MATCH_ROWS);
+    return Array.isArray(rows) && rows.some((r) => r.roomId === roomId);
+  }, 25000, '丁的「进行中的对局」里出现这一局');
+  // ⚠️ 必须**点真按钮**（走 `joinSpectate`），不能只 emit `spectate_join` ——
+  //    后者只把服务端席位坐下来，页面侧的 `gameState.spectate.active` 永远是 false，
+  //    于是 `spectateActive()` 门禁把观众侧全部事件挡在门外（实测踩过一次：
+  //    症状是"服务端 ack 成功、页面毫无反应"，看起来像服务端没发）。
+  const dClicked = await D.ev('(function(){'
+    + ' var rows = document.querySelectorAll("#lobby-matches-list .lobby-match");'
+    + ' for (var i = 0; i < rows.length; i++) {'
+    + '   var b = rows[i].querySelector(".lobby-match-spectate");'
+    + '   if (b && b.dataset.room === ' + jsStr(roomId) + ') { b.click(); return true; }'
+    + ' } return false; })()');
+  check(dClicked === true, '丁点到了那一局的「观战」按钮', dClicked);
+  await D.waitFor(async () => await D.ev('!!(gameState.spectate && gameState.spectate.active)'),
+    20000, '丁进席');
+
+  // ★ 丙**不刷新页面**，名单里就该多出丁的名字
+  let social = null;
+  try {
+    await C.waitFor(async () => {
+      const p = await C.ev(SPECTATE_SOCIAL_PROBE);
+      return p.rosterNames.indexOf(USER_D) >= 0;
+    }, 15000, '丙的名单里出现丁');
+    social = await C.ev(SPECTATE_SOCIAL_PROBE);
+    check(true, '★★ 丁进席后，丙**不刷新页面**就在名单里看到了丁的名字', social.rosterNames);
+  } catch (e) {
+    social = await C.ev(SPECTATE_SOCIAL_PROBE);
+    check(false, '★★ 丁进席后，丙的观战席名单里应当实时出现丁的名字', social);
+  }
+  check(!!social && social.rosterNames.indexOf(USER_C) >= 0
+    && social.rosterNames.indexOf(USER_D) >= 0,
+    '★ 名单里同时有两位观众（顺序 = 入席顺序）', social && social.rosterNames);
+  check(!!social && social.rosterCount === '(2/20)' && social.topCount === '2'
+    && social.topLimit === '20',
+    '★ 名单区与顶栏的人数都是 2/20（上限来自服务端）', social);
+  check(!!social && social.me === USER_C && social.meRows.length === 1
+    && social.meRows[0] === USER_C,
+    '★ 名单里"哪一行是我"标在自己那一行上（显示名来自服务端的 spectate_you）',
+    social && { me: social.me, meRows: social.meRows });
+  check(!!social && social.chatInputExists === true && social.sendBtnExists === true,
+    '★ 观战屏上有聊天输入框与发送按钮（id 与 index.html 对得上）', social);
+
+  // --- 观战席聊天：丁说话 → 丙收到 ---
+  const CHAT_D = '丁在观战席说的话';
+  const sentD = await D.ev(SEND_SPECTATE_CHAT(CHAT_D));
+  check(!!sentD && sentD.sent === true, '丁点了观战屏上的「发送」（真按钮）', sentD);
+  let chatSeen = false;
+  try {
+    await C.waitFor(async () => {
+      const p = await C.ev(SPECTATE_SOCIAL_PROBE);
+      return p.chat.some((m) => m.text.indexOf(CHAT_D) >= 0 && !m.notice);
+    }, 15000, '丙收到丁的观战席发言');
+    chatSeen = true;
+  } catch (e) { /* 下面统一报 */ }
+  check(chatSeen === true, '★★ 丁的观战席发言实时出现在丙的聊天区（不刷新页面）');
+
+  // --- 玩家之间的聊天：观众**看得到**（第 1 批就登记好的承诺）---
+  const CHAT_A = '甲在对局里说的话';
+  const sentA = await A.ev(SEND_PLAYER_CHAT(CHAT_A, roomId));
+  check(!!sentA && sentA.sent === true, '甲在对局屏的聊天框里发了言（真按钮）', sentA);
+  let playerChatSeen = false;
+  try {
+    await C.waitFor(async () => {
+      const p = await C.ev(SPECTATE_SOCIAL_PROBE);
+      return p.chat.some((m) => m.text.indexOf(CHAT_A) >= 0 && m.fromPlayer === true);
+    }, 15000, '丙看到玩家之间的聊天');
+    playerChatSeen = true;
+  } catch (e) { /* 下面统一报 */ }
+  check(playerChatSeen === true,
+    '★★ 玩家在对局里说的话**观众看得到**（这是第 4 批修掉的真缺陷：原本 to=sid 单发，观众一个字节都收不到）');
+
+  // --- 对照腿：乙自己也收得到甲的发言（证明玩家那条路径没被改坏）---
+  let bSawChat = false;
+  try {
+    await B.waitFor(async () => {
+      const rowsB = await B.ev(PLAYER_CHAT_PROBE);
+      return rowsB.some((m) => m.text.indexOf(CHAT_A) >= 0);
+    }, 10000, '乙收到甲的聊天');
+    bSawChat = true;
+  } catch (e) { /* 下面统一报 */ }
+  check(bSawChat === true, '（对照腿）乙（另一个玩家）也收到了甲的聊天 —— 玩家路径没被改坏');
+  const bChatRows = await B.ev(PLAYER_CHAT_PROBE);
+  check(bChatRows.filter((m) => m.text.indexOf(CHAT_A) >= 0).length === 1,
+    '（对照腿）乙**只收到一条**（双发会在聊天区出现重复行）',
+    bChatRows.filter((m) => m.text.indexOf(CHAT_A) >= 0));
+  check(bChatRows.every((m) => m.mine === false || m.text.indexOf(CHAT_A) < 0),
+    '★ 乙那边甲的话不是"我说的"（isMe 由前端按名字判，没被服务端广播写坏）', bChatRows);
+
+  // --- ★★ 主断言：**两个玩家都收不到观战席聊天**（用原始收件记录器，独立证据）---
+  for (const br of [A, B]) {
+    const dump = await br.ev(TAP_DUMP);
+    const who = br === A ? '甲' : '乙';
+    check(!!dump && dump.total > 0,
+      '（对照腿）' + who + ' 的收件记录器**真的在记东西**（total=' + (dump && dump.total) + '）',
+      dump && { total: dump.total, sample: Object.keys(dump.events).slice(0, 8) });
+    check(!!dump && !dump.events['spectate_chat'],
+      '★★ ' + who + '（对局玩家）**一次都没收到** spectate_chat',
+      dump && dump.events);
+    check(!!dump && !dump.events['spectate_roster'],
+      '★★ ' + who + '（对局玩家）**一次都没收到** spectate_roster（名单）',
+      dump && dump.events);
+    check(!!dump && !dump.events['spectate_joined'] && !dump.events['spectate_left'],
+      '★★ ' + who + '（对局玩家）也没收到观众进出的播报',
+      dump && dump.events);
+    check(!!dump && !!dump.events['spectate_count_changed'],
+      '★ ' + who + '（对局玩家）**只**收到人数变化（这是他该看到的）',
+      dump && dump.events);
+  }
+
+  // =========================================================================
+  // ★★ 第 4 批 B：两条动作流 —— **打出的牌** 与 **连锁响应** 实时可见
+  // =========================================================================
+  // 为什么专门补这一节：第 3 批的 E2E 只覆盖了「开炮」，而作者最看重的
+  // 「所有动作都看得到」里，"打出的牌 / 连锁响应"正是最典型的动作。
+  // 第 3 批只读了代码（`magic_chain_updated` 在 `SPECTATE_EVENTS` 表里），没有实测。
+  step('第 4 批：打出魔法卡 → 观众实时看到；连锁响应 → 观众实时看到');
+
+  // 用**测试事件**把手牌钉死，避免"开局抽到什么牌"这种随机性让断言飘。
+  // ⚠️ 这是调试事件（需要 ENABLE_TEST_EVENTS=1），只在工具里用。
+  const addA = await atkTab.ev(ADD_CARD(roomId, atkPid, '无中生有'));
+  check(!!addA && addA.status === 'success', '（前提）给攻击方塞了一张「无中生有」', addA);
+  const defTab = atkTab === A ? B : A;
+  const defPid = atkTab === A ? bPid : aPid;
+  const addB = await defTab.ev(ADD_CARD(roomId, defPid, '失灵！'));
+  check(!!addB && addB.status === 'success', '（前提）给防守方塞了一张「失灵！」', addB);
+
+  const chainBefore = await C.ev(SPECTATE_CHAIN_PROBE);
+  const logsBefore = await C.ev(SPECTATE_LOG_PROBE);
+
+  const played = await atkTab.ev(PLAY_CARD(roomId, atkPid, '无中生有', 1));
+  check(!!played && played.status === 'success', '攻击方打出了一张魔法卡「无中生有」', played);
+
+  // ★ 丙**不刷新页面**，连锁区就该出现这张卡
+  let chainAfterPlay = null;
+  try {
+    await C.waitFor(async () => {
+      const p = await C.ev(SPECTATE_CHAIN_PROBE);
+      return Array.isArray(p.items) && p.items.some((i) => i.text.indexOf('无中生有') >= 0);
+    }, 15000, '丙的连锁区出现这张卡');
+    chainAfterPlay = await C.ev(SPECTATE_CHAIN_PROBE);
+    check(true, '★★ 打出一张魔法卡后，丙**不刷新页面**就在连锁区看到了它',
+      chainAfterPlay.items);
+  } catch (e) {
+    chainAfterPlay = await C.ev(SPECTATE_CHAIN_PROBE);
+    check(false, '★★ 打出的魔法卡应当实时出现在观众的连锁区', chainAfterPlay);
+  }
+  check(!!chainAfterPlay && chainAfterPlay.items.some((i) => i.text.indexOf(USER_A) >= 0
+    || i.text.indexOf(USER_B) >= 0),
+    '★ 连锁项上写着**是谁**打出的（座位标签映射到玩家名，不是原始 sid）',
+    chainAfterPlay && chainAfterPlay.items);
+  const afterPlayLogs = await C.ev(SPECTATE_LOG_PROBE);
+  // ⚠️ 这里**不**断言"出牌那一刻日志就多一条"：`add_game_log` 只在**连锁结算**
+  //    （`log_magic`）时才写，出牌本身不写日志。写死它 = 自己造一条假红
+  //    （实测踩过一次）。出牌的可观测证据在**上面那条连锁区断言**里。
+  check(afterPlayLogs.length === logsBefore.length,
+    '（记录）出牌那一刻日志条数不变（日志是在连锁**结算**时才写的）',
+    { before: logsBefore.length, after: afterPlayLogs.length });
+
+  // --- 连锁响应：另一个玩家的响应也要实时可见 ---
+  const serverChain = await atkTab.ev(READ_CHAIN(roomId));
+  check(!!serverChain && serverChain.chain_len === 1,
+    '（前提）服务端连锁栈里确实有 1 张（观众看到的不是幻觉）', serverChain);
+
+  const responded = await defTab.ev(CHAIN_RESPOND(roomId, defPid, '失灵！', 3));
+  check(!!responded && responded.status === 'success', '防守方连锁响应「失灵！」', responded);
+
+  let chainAfterResp = null;
+  try {
+    await C.waitFor(async () => {
+      const p = await C.ev(SPECTATE_CHAIN_PROBE);
+      return Array.isArray(p.items) && p.items.length >= 2
+        && p.items.some((i) => i.text.indexOf('失灵') >= 0);
+    }, 15000, '丙的连锁区出现第二张');
+    chainAfterResp = await C.ev(SPECTATE_CHAIN_PROBE);
+    check(true, '★★ 连锁响应后，丙**不刷新页面**就在连锁区看到了第二张（失灵！）',
+      chainAfterResp.items);
+  } catch (e) {
+    chainAfterResp = await C.ev(SPECTATE_CHAIN_PROBE);
+    check(false, '★★ 连锁响应应当实时出现在观众的连锁区', chainAfterResp);
+  }
+  const chainServer2 = await atkTab.ev(READ_CHAIN(roomId));
+  check(!!chainAfterResp && !!chainServer2
+    && chainAfterResp.items.length === chainServer2.chain_len,
+    '★ 观众看到的连锁条数 == 服务端连锁栈的条数（不是本地瞎编的）',
+    { spectator: chainAfterResp && chainAfterResp.items.length,
+      server: chainServer2 && chainServer2.chain_len });
+
+  // ⚠️ 这里**不**断言"已康"（negated）—— 那是**结算之后**才置的标记
+  //    （`resolve_chain` 里把栈顶标成 negated_by）。连锁窗口有 10 秒超时，
+  //    窗口内读到的本来就是"还没结算"的那一帧，写死断言 = 自造假红。
+  //    本段要证的是"连锁响应这个**动作**观众实时看得到"，这一点上面已经钉住。
+  const chainSeats = (chainAfterResp && chainAfterResp.items) || [];
+  check(chainSeats.length === 2
+    && chainSeats.map((i) => i.text).join(' | ').indexOf('失灵') >= 0
+    && chainSeats.map((i) => i.text).join(' | ').indexOf('无中生有') >= 0,
+    '★ 观众看到的正是那两张卡（无中生有 + 失灵！），且各带一位玩家的名字',
+    chainSeats.map((i) => i.text));
+  const twoPlayers = new Set(chainSeats.map((i) => {
+    const m = i.text.match(/^第\d+张 · ([^：]+)：/);
+    return m ? m[1] : '';
+  }));
+  check(twoPlayers.size === 2 && ![...twoPlayers].some((n) => !n),
+    '★ 两张连锁分别挂在**两个不同的玩家**名下（座位标签映射正确，不是原始 sid）',
+    [...twoPlayers]);
+
+  // 收尾：把甲的手牌/场上效果清干净，别让这一段影响后面的开关断言
+  // （无中生有会让本回合双方都摸不到牌，与后面的步骤没有关系，但清一下更干净）。
+  await atkTab.ev('new Promise(function(res){ gameState.socket.emit("test_clear_all_effects",'
+    + ' { room_id: ' + jsStr(roomId) + ' }, function(r){ res(r); }); })');
+
+  // --- 丁退出 → 丙的名单里也要实时少一个人 -------------------------------
+  await D.ev('(function(){ var b = document.getElementById("spectate-leave");'
+    + ' if (b) b.click(); return 1; })()');
+  let rosterAfterLeave = null;
+  try {
+    await C.waitFor(async () => {
+      const p = await C.ev(SPECTATE_SOCIAL_PROBE);
+      return p.rosterNames.indexOf(USER_D) < 0;
+    }, 15000, '丙的名单里丁消失');
+    rosterAfterLeave = await C.ev(SPECTATE_SOCIAL_PROBE);
+    check(true, '★ 丁退出后，丙的名单**实时**少了丁（名单不是静态的）',
+      rosterAfterLeave.rosterNames);
+  } catch (e) {
+    rosterAfterLeave = await C.ev(SPECTATE_SOCIAL_PROBE);
+    check(false, '★ 观众退出后名单应当实时更新', rosterAfterLeave);
+  }
+  check(!!rosterAfterLeave && rosterAfterLeave.rosterNames.length === 1
+    && rosterAfterLeave.rosterNames[0] === USER_C,
+    '★ 退出后名单只剩丙，人数回到 1/20', rosterAfterLeave);
+
+  // --- 玩家侧：断线/退出**不**该给玩家带来任何名单信息（再确认一次）---
+  for (const br of [A, B]) {
+    const dump = await br.ev(TAP_DUMP);
+    const who = br === A ? '甲' : '乙';
+    check(!!dump && !dump.events['spectate_roster'] && !dump.events['spectate_left'],
+      '★★ ' + who + ' 在整段名单变化期间**始终没有**收到名单/进出播报',
+      dump && dump.events);
+  }
+
   // --- 7. 观战人数在**大厅列表**里的显示（先记下"观众在席"时的那一份）--------
   // ⚠️ 为什么不去挂 `spectate_count_changed` 监听：那条事件在丙进席那一刻就已经
   //    发过了（`_spectate_broadcast_count`），后挂的监听永远等不到；而在页面里
@@ -671,7 +1093,7 @@ try {
   check(!!rowWithSpectator && /观战\s*1\//.test(rowWithSpectator.meta),
     '★ 有人在看时，大厅列表上这一局显示「观战 1/20」', rowWithSpectator && rowWithSpectator.meta);
 
-  // --- 8. ★ 设置面里真的关掉观战 → 列表里消失 ------------------------------
+  // --- 9. ★ 设置面里真的关掉观战 → 列表里消失 ------------------------------
   const modalOpen = await atkTab.ev(OPEN_SETTINGS);
   check(modalOpen === true, '★ 设置面能打开', modalOpen);
   const paneShown = await atkTab.ev(SHOW_ACCT_PANE);
@@ -715,7 +1137,7 @@ try {
   check(!rowsGone.some((r) => r.roomId === roomId),
     '★★ 玩家关掉观战设置后，这一局从**别人的**列表里消失（丙没刷新页面）', rowsGone);
 
-  // --- 9. 再打开 → 又出现 ---------------------------------------------------
+  // --- 10. 再打开 → 又出现 --------------------------------------------------
   const toggledOn = await atkTab.ev(SET_SETTINGS_SPECTATE(true));
   check(!!toggledOn && toggledOn.toggled === true, '再把开关设成"允许"', toggledOn);
   let apiOn = null;
@@ -732,7 +1154,7 @@ try {
   }, 25000, '该局回到列表');
   check(true, '★★ 重新打开后这一局又回到列表里');
 
-  // --- 10. 退出观战 --------------------------------------------------------
+  // --- 11. 退出观战 --------------------------------------------------------
   await C.ev('document.getElementById("spectate-leave").click()');
   await C.waitFor(async () => await C.ev('gameState.spectate.active === false'), 15000, '丙退出观战');
   const leftProbe = await C.ev('(function(){ return { lobby: document.getElementById("lobby-screen")'
@@ -773,7 +1195,7 @@ try {
     fs.writeFileSync(SHOT, Buffer.from(s.data, 'base64'));
     console.log('截图已保存: ' + SHOT);
   }
-  check(jsProblems.length === 0, '三个页面均无 JS 异常/报错', jsProblems);
+  check(jsProblems.length === 0, '四个页面均无 JS 异常/报错', jsProblems);
 } catch (err) {
   problems.push(err.message);
   console.error('检查中断: ' + err.message);

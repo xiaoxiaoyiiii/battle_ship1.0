@@ -85,6 +85,13 @@ KNOWN_EVENTS = frozenset({
     'lobby_state', 'lobby_hello', 'lobby_chat', 'lobby_chat_history',
     # —— 观战通道自己的一套（第 2 批：快照 / 人数 / 结束）——
     'spectate_sync', 'spectate_count_changed', 'spectate_ended',
+    # —— 观战通道自己的一套（第 4 批：名单 / 进出 / 聊天 / "我是谁"）——
+    # 前四个走后门：`spectate_roster` / `spectate_joined` / `spectate_left` /
+    # `spectate_chat` 都由 `_spectate_broadcast_*` / handler 里的 **`socketio.emit`**
+    # 直接发进 `spectate:<room_id>`（不经 `emit` 的第三条腿，也就不会被"只转发
+    # 对局房间号"的门禁挡掉）。只有 `spectate_you` 走 `emit(..., to=sid)` 单发。
+    'spectate_roster', 'spectate_joined', 'spectate_left', 'spectate_chat',
+    'spectate_you',
     # —— 错误提示 ——
     'error',
 })

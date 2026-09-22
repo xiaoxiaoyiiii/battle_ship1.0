@@ -970,10 +970,22 @@ if (chatSendBtn && chatInput) {
 }
 
 // 显示消息
+// ⚠️ 第 4 批：`isMe` 不再由服务端下发。
+//    原来服务端是**逐人单发**并各自填 `isMe`，而那条路径观众一个字节都收不到
+//    （观战第三条腿只认广播类）—— 于是"玩家之间的聊天观众可见"这条登记好的
+//    承诺一直是空的。现在服务端改成**房间级广播一份**，`isMe` 这种"相对某一位
+//    收件人"的字段一旦广播必然对一方是错的（两位玩家会同时看到 true），
+//    所以由**前端**按自己的名字判定 —— 名字的唯一来源是 `gameState.playerName`
+//    （登录后由 `window.__USERNAME` 预填，建房/进房时也会写）。
 function appendChatMessage(username, message, isMe) {
     if (!chatMessages) return;
+    // 服务端仍可能（在别处）带 `isMe`；只有它**明确**给了布尔值才用它，
+    // 否则按名字判 —— 这样两条路径都不会把"对方的话"显示成"我说的"。
+    const mine = (typeof isMe === 'boolean')
+        ? isMe
+        : (String(username || '') === String(gameState.playerName || ''));
     const div = document.createElement('div');
-    div.className = 'in-game-chat-message ' + (isMe ? 'me' : 'opponent');
+    div.className = 'in-game-chat-message ' + (mine ? 'me' : 'opponent');
     div.innerHTML = `<span>${escapeHtml(username)}：</span>${escapeHtml(message)}`;
     chatMessages.appendChild(div);
     chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -1068,6 +1080,15 @@ const spectateLimitEl = document.getElementById('spectate-limit');
 const spectateLeaveBtn = document.getElementById('spectate-leave');
 const spectateChainEl = document.getElementById('spectate-chain');
 const spectateLogsEl = document.getElementById('spectate-logs');
+// ── 观战席名单 + 观战席聊天（第 4 批）─────────────────────────────────
+// ⚠️ 这四个 id 必须与 templates/index.html 里的一字不差 —— 写错了
+//    `getElementById` 只拿到 null，然后被 `if (el)` 兜掉：**不报错、只是没反应**
+//    （`tools/dom_contract_check.mjs` 就是查这个的，改完必须跑它）。
+const spectateRosterEl = document.getElementById('spectate-roster');
+const spectateRosterCountEl = document.getElementById('spectate-roster-count');
+const spectateChatEl = document.getElementById('spectate-chat');
+const spectateChatInput = document.getElementById('spectate-chat-input');
+const spectateChatSendBtn = document.getElementById('spectate-chat-send');
 const spectateBoards = [
     { board: document.getElementById('spectate-board-1'),
       title: document.getElementById('spectate-board-title-1'),
@@ -1135,6 +1156,13 @@ window.gameState = {
         count: 0,
         limit: 0,
         ended: false,
+        // ── 观战席名单 / 观战席聊天（第 4 批）──────────────────────────
+        // ⚠️ 这三份数据**只存在于观战屏**：服务端把它们**只发给
+        //    `spectate:<room_id>`** 这一个通道，对局双方根本不在那个收件人集合里
+        //    （玩家侧只有 `count`，见 renderSpectateCounts 里那句注释）。
+        me: null,               // 我自己在观战席上的显示名（来自 spectate_you）
+        roster: [],             // [{name, joined_at}] —— 顺序 = 入席顺序
+        chat: [],               // [{kind:'msg'|'notice', name, text}] 已渲染进 DOM
     },
     deck: [],               // 牌堆
     hand: [],               // 手牌
@@ -4714,6 +4742,17 @@ if (copyInviteLinkBtn) copyInviteLinkBtn.addEventListener('click', copyInviteLin
     }
     // 观战屏的「退出观战」
     if (spectateLeaveBtn) spectateLeaveBtn.addEventListener('click', () => leaveSpectateScreen(false));
+    // 观战席聊天（第 4 批）：按钮 + 回车。两条入口都走同一个函数
+    // （**在观战屏上**回车才发送 —— 这条输入框只长在观战屏里，但绑的是全局
+    //  keydown，所以必须判一次屏，否则对局屏里打字按回车会误发一条观战发言）。
+    if (spectateChatSendBtn) spectateChatSendBtn.addEventListener('click', sendSpectateChat);
+    if (spectateChatInput) {
+        spectateChatInput.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            sendSpectateChat();
+        });
+    }
     // 观战开关：**改动即保存**（与设置面里别的控件不同 —— 这里只有一列，
     // 没有"点保存才生效"的必要，而且它是隐私开关，晚一步生效就会被围观）。
     if (allowSpectateCheckbox) {
@@ -5580,6 +5619,44 @@ function setupSocketListeners() {
         if (!spectateActive()) return;
         gameState.spectate.count = spectateInt(data && data.count, gameState.spectate.count);
         renderSpectateCounts();
+    });
+    // ★ 第 4 批：观战席名单（**只有观众收得到**这条事件）。
+    //   服务端把它只发进 `spectate:<room_id>` —— 对局双方不在那个收件人集合里，
+    //   所以"玩家收不到名单"是结构性的，前端这里不需要、也不该做任何过滤。
+    socket.on('spectate_roster', (data) => {
+        if (!spectateActive()) return;
+        applySpectateRoster(data);
+    });
+    // 观众自己叫什么（单发给本人，只含显示名）—— 名单里据此标出"我"。
+    socket.on('spectate_you', (data) => {
+        if (!spectateActive()) return;
+        gameState.spectate.me = (data && data.name) ? String(data.name) : null;
+        renderSpectateRoster();
+    });
+    // "谁来了 / 谁走了" —— 作为系统提示出现在聊天区（**不是**一条真人发言）。
+    socket.on('spectate_joined', (data) => {
+        if (!spectateActive()) return;
+        spectateChatNotice(spectateDisplayName(data && data.name) + ' 来到了观战席');
+    });
+    socket.on('spectate_left', (data) => {
+        if (!spectateActive()) return;
+        spectateChatNotice(spectateDisplayName(data && data.name) + ' 离开了观战席');
+    });
+    // ★★ 观战席聊天：**对局双方永远收不到这条**（同上，只发观战通道）。
+    socket.on('spectate_chat', (data) => {
+        if (!spectateActive()) return;
+        appendSpectateChat(data);
+    });
+    // 玩家之间的聊天（第 1 批就登记在 `SPECTATE_EVENTS` 里）。
+    // ⚠️ 第 4 批修的**真缺陷**：服务端那条 `chat_message` 原本是 `to=<sid>` 单发，
+    //    而观战第三条腿只对广播类生效 → 观众一个字节都收不到。现在服务端改成
+    //    房间级广播，于是这里收到了。它与「观战席聊天」是两个方向、两种颜色：
+    //    这条是**在对局里说话的人**，观众只能看、不能回。
+    //    ⚠️ 必须带门禁：**观战屏激活时**才记进观战聊天区，否则观众会把这句
+    //       同时塞进对局屏的聊天框（两块屏的状态是分开的，见本段开头那条铁律）。
+    socket.on('chat_message', (data) => {
+        if (!spectateActive()) return;
+        appendSpectatePlayerChat(data);
     });
     socket.on('spectate_ended', (data) => {
         if (!spectateActive()) return;
@@ -7557,8 +7634,155 @@ function renderSpectateLogs() {
 
 function renderSpectateCounts() {
     const sp = gameState.spectate;
+    // ⚠️ 这里**只有人数**。名单（`roster`）另有一块 DOM，而它只由
+    //    `spectate_roster` 填充 —— 服务端把那条事件只发进观战通道，
+    //    对局屏那边永远看不到名字（玩家侧只收 `spectate_count_changed`）。
     if (spectateCountEl) spectateCountEl.textContent = String(spectateInt(sp.count, 0));
     if (spectateLimitEl) spectateLimitEl.textContent = String(spectateInt(sp.limit, 0));
+    if (spectateRosterCountEl) {
+        spectateRosterCountEl.textContent = '(' + String(spectateInt(sp.count, 0))
+            + '/' + String(spectateInt(sp.limit, 0)) + ')';
+    }
+}
+
+// ── 观战席名单（第 4 批）────────────────────────────────────────────────
+// ⚠️ 名单里**只有显示名**（服务端就不发 uid / sid）；这里也绝不拿 socket id 当
+//    标识（观众没有座位，也不该看到任何连接标识）。
+function spectateDisplayName(name) {
+    const text = (name === undefined || name === null) ? '' : String(name).trim();
+    return text || '某位观众';
+}
+
+// 用一份名单**整体替换**（服务端每次都给全量，不做增量合并 —— 少一次"两份状态
+// 漂移"的机会）。⚠️ 先校验数据再清空：`Array.isArray` 不成立时保留上一帧
+// （硬规矩：先清空再填充的渲染必须先校验数据，否则会留下半块空白）。
+function applySpectateRoster(data) {
+    const sp = gameState.spectate;
+    if (!data || typeof data !== 'object') return;
+    const rows = Array.isArray(data.spectators) ? data.spectators : null;
+    if (rows === null) return;
+    sp.roster = rows.map((row) => ({
+        name: spectateDisplayName(row && row.name),
+        joined_at: spectateInt(row && row.joined_at, 0),
+    }));
+    // 名单是权威的人数来源（比 `spectate_count_changed` 更不容易错帧）。
+    sp.count = spectateInt(data.count, sp.roster.length);
+    sp.limit = spectateInt(data.limit, sp.limit);
+    renderSpectateRoster();
+    renderSpectateCounts();
+}
+
+function renderSpectateRoster() {
+    if (!spectateRosterEl) return;
+    const sp = gameState.spectate;
+    const rows = Array.isArray(sp.roster) ? sp.roster : [];
+    if (!rows.length) {
+        spectateRosterEl.textContent = '还没有人来看';
+        return;
+    }
+    spectateRosterEl.innerHTML = '';
+    rows.forEach((row) => {
+        const div = document.createElement('div');
+        div.className = 'spectate-roster-item';
+        if (sp.me && row.name === sp.me) div.classList.add('spectate-roster-me');
+        // ⚠️ 一律 textContent：名字是**用户输入**（注册名），塞 innerHTML
+        //    就是自己给自己开一个 XSS（与项目对公告的同一条纪律）。
+        div.textContent = row.name;
+        spectateRosterEl.appendChild(div);
+    });
+}
+
+// ── 观战席聊天（第 4 批）───────────────────────────────────────────────
+// ⚠️⚠️ 整块聊天区**只用 textContent**。服务端下发的 `message` 是玩家/观众的
+//      自由输入，`name` 是注册名 —— 任何一处塞进 `innerHTML` 就是一个持久化
+//      XSS（观战屏上还挂着两块棋盘）。项目对公告有同样的纪律，聊天更要守。
+const SPECTATE_CHAT_LIMIT = 200;      // 内存里最多留这么多条（与日志同一个套路）
+
+function renderSpectateChat() {
+    if (!spectateChatEl) return;
+    const sp = gameState.spectate;
+    const rows = Array.isArray(sp.chat) ? sp.chat : [];
+    if (!rows.length) {
+        spectateChatEl.textContent = '还没有人说话';
+        return;
+    }
+    spectateChatEl.innerHTML = '';
+    rows.forEach((row) => {
+        const div = document.createElement('div');
+        if (row.kind === 'notice') {
+            div.className = 'spectate-chat-notice';
+            div.textContent = String(row.text || '');
+        } else if (row.kind === 'error') {
+            div.className = 'spectate-chat-chat-error';
+            div.textContent = String(row.text || '');
+        } else {
+            // 「玩家在对局里说的话」与「观众在观战席说的话」用不同类名区分 ——
+            // 观众才不会以为对局里的玩家能听见自己。
+            div.className = 'spectate-chat-item'
+                + (row.kind === 'player' ? ' spectate-chat-from-player' : '');
+            div.textContent = String(row.name || '') + '：' + String(row.text || '');
+        }
+        spectateChatEl.appendChild(div);
+    });
+    spectateChatEl.scrollTop = spectateChatEl.scrollHeight;
+}
+
+function spectateChatPush(row) {
+    const sp = gameState.spectate;
+    if (!Array.isArray(sp.chat)) sp.chat = [];
+    sp.chat.push(row);
+    if (sp.chat.length > SPECTATE_CHAT_LIMIT) sp.chat = sp.chat.slice(-SPECTATE_CHAT_LIMIT);
+    renderSpectateChat();
+}
+
+// 观战通道上的 `spectate_chat`（**只有观众之间**看得到）。
+function appendSpectateChat(data) {
+    if (!data || typeof data !== 'object') return;
+    const text = String(data.message || '');
+    if (!text) return;
+    spectateChatPush({ kind: 'msg', name: spectateDisplayName(data.name), text: text });
+}
+
+// 玩家在对局里说的 `chat_message`（观众**看得到、回不了** —— 那条通道是单向的）。
+function appendSpectatePlayerChat(data) {
+    if (!data || typeof data !== 'object') return;
+    const text = String(data.message || '');
+    if (!text) return;
+    spectateChatPush({
+        kind: 'player',
+        name: spectateDisplayName(data.username),
+        text: text,
+    });
+}
+
+function spectateChatNotice(text) {
+    spectateChatPush({ kind: 'notice', text: text });
+}
+
+// 发送观战席发言。失败**必须让人看到原因**（教训 #32）：服务端 ack 里带着文案，
+// 这里既弹提示、也在聊天区留一行，绝不静默。
+function sendSpectateChat() {
+    if (!spectateChatInput) return;
+    const sp = gameState.spectate;
+    const text = String(spectateChatInput.value || '').trim();
+    if (!text) {
+        spectateChatNotice('说点什么再发送吧');
+        return;
+    }
+    if (!sp.active) {
+        spectateChatNotice('你不在观战席上，发送失败');
+        return;
+    }
+    const socket = ensureSocket();
+    socket.emit('spectate_chat_send', { room_id: sp.roomId, message: text }, (response) => {
+        if (!response || response.status !== 'success') {
+            const why = (response && response.message) || '发送失败，请稍后再试';
+            spectateChatPush({ kind: 'error', text: why });
+            showAlert(why);
+            return;
+        }
+        spectateChatInput.value = '';
+    });
 }
 
 // 「谁在行动 / 谁先手」的文案。判断只用 `current_attacker` 与 seat_labels，
@@ -7592,6 +7816,8 @@ function renderSpectateScreen() {
     renderSpectateChain();
     renderSpectateLogs();
     renderSpectateCounts();
+    renderSpectateRoster();
+    renderSpectateChat();
     renderSpectateStatusLine();
 }
 
@@ -7657,6 +7883,21 @@ function applySpectateSnapshot(payload) {
     });
     if (sp.logs.length > SPECTATE_LOG_LIMIT) sp.logs = sp.logs.slice(-SPECTATE_LOG_LIMIT);
     sp.ended = String(payload.state || '') === 'game_over';
+    // ★ 第 4 批：快照里也带一份观战席名单（`spectators`）—— 中途进来的人**立刻**
+    //   就有名单，不必等下一个 `spectate_roster`（那条只在有人进出时才来）。
+    //   ⚠️ 这份名单是**发给观众自己**的（只在 `spectate_sync` 里）；
+    //      对局双方收到的是 `spectate_count_changed`，**只有人数、没有任何名字**。
+    if (Array.isArray(payload.spectators)) {
+        sp.roster = payload.spectators.map((row) => ({
+            name: spectateDisplayName(row && row.name),
+            joined_at: spectateInt(row && row.joined_at, 0),
+        }));
+    } else {
+        sp.roster = [];
+    }
+    // 聊天是**这一场观战**的会话：换一局就重来（上一局的聊天不该串到这一局）。
+    sp.chat = [];
+    sp.me = sp.me || null;
     renderSpectateScreen();
 }
 
@@ -7820,6 +8061,13 @@ function leaveSpectateScreen(fromServer) {
     sp.logs = [];
     sp.ended = false;
     sp.winnerLabel = '';
+    // 观战席名单 / 聊天 / "我是谁"（第 4 批）：**全部清掉** —— 这是**某一场观战**
+    // 的会话状态，留着的话下一局观战屏会先显示上一局的人名与聊天记录
+    // （与下面清棋盘是同一个理由：看着像"串台"）。
+    sp.roster = [];
+    sp.chat = [];
+    sp.me = null;
+    if (spectateChatInput) spectateChatInput.value = '';
     if (!fromServer && wasActive && roomId) {
         // 幂等：不在席上服务端会回一句原因，这里不需要处理返回值。
         onSocketReady((socket) => { socket.emit('spectate_leave', { room_id: roomId }, () => {}); });
@@ -7841,6 +8089,10 @@ function leaveSpectateScreen(fromServer) {
     if (spectateFieldMagicEl) spectateFieldMagicEl.textContent = '无';
     if (spectateChainEl) spectateChainEl.textContent = '';
     if (spectateLogsEl) spectateLogsEl.textContent = '';
+    // 名单/聊天也清干净（含 DOM）：下一位观众进来前这块屏不该留着上一场的人。
+    if (spectateRosterEl) spectateRosterEl.textContent = '';
+    if (spectateChatEl) spectateChatEl.textContent = '';
+    if (spectateRosterCountEl) spectateRosterCountEl.textContent = '';
     if (spectateStatusEl) {
         spectateStatusEl.classList.remove('spectate-ended');
         spectateStatusEl.textContent = '正在连接对局…';

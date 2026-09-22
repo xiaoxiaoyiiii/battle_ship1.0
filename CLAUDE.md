@@ -15,7 +15,8 @@ Flask + Flask-SocketIO 的实时双人海战棋，48 条魔法卡 / 场地魔法
 - 核心文件：`server.py`（事件 + 对局）｜ `api.py`（HTTP）｜ `db.py`（SQLite/WAL）｜
   `static/game.js` + `templates/index.html` + `static/style.css`（前端单页）
 - 纯规则模块（都**只有一份实现**，前端不许重算）：`ranks.py` 段位 ｜ `leveling.py` 等级经验 ｜
-  `achievements.py` 徽章 ｜ `profile_spec.py` 名片外观与解锁 ｜ `wallpaper.py` 壁纸
+  `achievements.py` 徽章 ｜ `profile_spec.py` 名片外观与解锁 ｜ `wallpaper.py` 壁纸 ｜
+  `spectate.py` 观战（事件白/黑名单 + 净化函数；观众进不来，见 `docs/SPECTATE_2026_09_22.md`）
 
 ---
 
@@ -32,7 +33,7 @@ python -m pytest tests/ -q    # 基线见下
 - ⚠️ 本机临时目录 ACL 坏过，pytest 若在 setup 报 `PermissionError: Temp\pytest-of-Administrator`，
   先 `New-Item -ItemType Directory -Force .tmp\pytemp`，再
   `$env:TMP="$PWD\.tmp\pytemp"; $env:TEMP=$env:TMP; python -m pytest tests/ -q -p no:cacheprovider`。
-- **实测基线（2026-09-22）**：`2066 passed`；跑完约 28 秒。
+- **实测基线（2026-09-22）**：`2086 passed`；跑完约 30 秒。
   含无头对局驱动 `tools/headless_game.py`（约 250 局/秒，自带"击沉/被击沉/命中率/
   无伤获胜"四个量）、大师 AI 决策层 `ai_brain.py` 与大师接线层 `tests/test_ai_master.py` 的用例。
 
@@ -345,7 +346,8 @@ phase:                        preparation → battle → end
 `docs/UI_REBUILD_PROPOSAL.md`（UI 完全重构建议：现状体检 + 7 期路线）｜
 `docs/UPDATES_2026_09_19.md`（更新公告：文案规矩 + 每批加一条）｜
 `docs/SHIP_PICK_PRIORITY_2026_09_20.md`（选船优先级仲裁：单槽覆写根因 + 队列 + 教训）｜
-`docs/MASTER_AI_2026_09_21.md`（**大师 AI**：决策层规格 + 卡池开放口径 + 度量事故 + 逐档消融数据）｜ `README.md`（用户向说明）
+`docs/MASTER_AI_2026_09_21.md`（**大师 AI**：决策层规格 + 卡池开放口径 + 度量事故 + 逐档消融数据）｜
+`docs/SPECTATE_2026_09_22.md`（实时观战第 1 批：三处明文坐标事件 + emit 第三条腿 + 两条穷举守卫）｜ `README.md`（用户向说明）
 
 > ⚠️ **部署前确认环境变量**：代码新增 `os.environ.get('XXX')` 时，服务器 systemd 必须同步配置 ——
 > 漏配会导致"服务能起来但带着错误默认值运行"（曾因漏配 `CORS_ORIGINS` 让线上所有操作卡十几秒）。

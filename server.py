@@ -29,6 +29,7 @@ import dm  # 私聊的形状与规则（纯数据/纯函数：推送 payload 的
 import leveling  # 等级曲线 / 每局经验 / 升级动画分段（唯一一份规则）
 import match_guard  # 匹配规避规则（纯函数：同 IP / 近来对手，唯一一份）
 import suspicion  # 累计嫌疑度 + 阶梯封禁（纯函数，唯一一份规则）
+import spectate  # 实时观战的纯规则：事件白/黑名单 + 净化函数（纯函数，不碰 socket）
 import profile_spec  # 特权常量（level_101 等）
 import quick_chat  # 局内快捷语表 + 频率规则（纯数据/纯函数，前端从接口取同一份）
 import ranks  # 段位规则 / 每局加减分 / 大舰长晋升（唯一一份，结算与接口共用）
@@ -131,13 +132,66 @@ def record_card_use(card, count=1, user_id=None):
         pass
 
 
+def _live_room_id(room):
+    """`emit(..., room=...)` 里传的到底是不是一个**活着的对局房间号**。
+
+    ⚠️ 这不是洁癖，是观战通道的门禁。全文件有 5 处把 `room=player.sid` 用错
+       （`572` / `1697` / `1822` / `3771` / `4072`），其中 `hand_updated` 发的是
+       **完整手牌**。若只看"room 不是 None 就转发观战"，就会在 `spectate:<sid>`
+       这个幻影通道里躺一份手牌 —— 本批禁止动那 5 个调用点（不在范围内），
+       所以门禁必须写在这里。顺带它也让 `room=LOBBY_ROOM`（`1184`）这类非对局
+       通道被正确排除。
+
+    房间不在 `room_manager.rooms` 里 → 不是对局房间 → 不发观战。
+
+    ⚠️ 这里**不写 `try/except`**：`room_manager` 是 799 行的模块级单例，
+       `emit` 只可能在它之后被调用，所以"取不到它"这种情形不存在；
+       真不存在了就该带着 traceback 炸出来（教训 #34：兜底 except 会制造假象）。
+    """
+    if not room or not isinstance(room, str):
+        return None
+    if room_manager.get_room(room) is None:
+        return None
+    return room
+
+
+def _emit_to_spectators(event, payload, src_room_id):
+    """把**净化过**的一份事件推给观战通道（`spectate:<room_id>`）。
+
+    三条铁律：
+    1. **默认拒绝** —— 事件不在 `spectate.SPECTATE_EVENTS` 里就不发（`sanitize_event` 返回 None）；
+    2. **绝不发进对局 room** —— 观众在对局 room 里会收到全部 93 处广播（含整船坐标），
+       观战通道必须是**另一个** room 名；
+    3. **绝不静默吞异常** —— 这里不写 `except Exception`（教训 #34：兜底 except + 零报错
+       会一起制造假象）。真要坏就让它带着 traceback 冒出来。
+    """
+    if spectate.is_spectate_room(src_room_id):
+        return None                       # 观战通道自己发的事件不许再拐回来
+    clean = spectate.sanitize_event(event, payload, room=src_room_id)
+    if clean is None:
+        return None
+    return socketio.emit(event, clean, room=spectate.spectate_room_id(src_room_id))
+
+
 def emit(event, data, to=None, room: str | None = None):
     json_data = json.dumps(data, default=lambda o: o.__dict__)
+    payload = json.loads(json_data)
     try:
-        return semit(event, json.loads(json_data), to=to, room=room)
+        result = semit(event, payload, to=to, room=room)
     except RuntimeError:
         # 无请求上下文（如后台任务/定时器）时直接走 SocketIO 服务端发送
-        return socketio.emit(event, json.loads(json_data), to=to, room=room)
+        result = socketio.emit(event, payload, to=to, room=room)
+    # 第三条腿：观战通道。
+    # ⚠️ 两个出口（semit 与 socketio.emit 兜底）之后都要走 —— 只改一条的话
+    #    后台任务/定时器发出的对局广播（超时交回合、连锁超时、掉线判负…）
+    #    就会在观战端整段消失，观众看到的是"卡住了"。
+    # 也**只对广播类**生效：`to=<sid>` 的单发是私人消息，不是"对局动作"。
+    # ⚠️ 再叠一道"房间是真对局房间"的门禁（见 `_live_room_id`），
+    #    否则那 5 处 `room=player.sid` 会把观战 payload 发到幻影通道。
+    room_id = _live_room_id(room) if (to is None and room) else None
+    if room_id is not None:
+        _emit_to_spectators(event, payload, room_id)
+    return result
 
 
 class GameLog:

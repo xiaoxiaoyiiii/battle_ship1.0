@@ -239,8 +239,11 @@ def test_lobby_ticker_is_idempotent(monkeypatch):
 # ===========================================================================
 def test_lobby_state_shape_when_empty():
     state = server.build_lobby_state()
-    assert set(state) == {'ts', 'online_count', 'lobby_count', 'queue', 'players', 'rooms'}
-    assert state['players'] == [] and state['rooms'] == []
+    # `matches` = 观战入口（实时观战第 3 批）。**与 `rooms` 分开**是硬要求：
+    # rooms 的语义是"点进去入座"，matches 是"点进去观战"，混一起玩家会点错。
+    assert set(state) == {'ts', 'online_count', 'lobby_count', 'queue', 'players',
+                          'rooms', 'matches'}
+    assert state['players'] == [] and state['rooms'] == [] and state['matches'] == []
     assert state['queue'] == {'casual': 0, 'ranked': 0}
 
 

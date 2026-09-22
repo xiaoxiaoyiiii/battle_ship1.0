@@ -484,6 +484,15 @@
                 </div>
             </section>
 
+            <!-- ★ 进行中的对局（实时观战第 3 批的入口）。
+                 ⚠️ 与上面的「房间列表」**必须是两块**：房间列表的语义是"点进去入座"，
+                 这里是"点进去观战"。混在一起玩家会点到一间坐不进去的房。
+                 数据来自 lobby_state 的 `matches` 字段（契约见 docs/LOBBY_2026_09_18.md §1.3）。 -->
+            <section class="lobby-panel">
+                <h3>进行中的对局</h3>
+                <ul id="lobby-matches-list" class="lobby-list"></ul>
+            </section>
+
             <section class="lobby-panel">
                 <h3>大厅公屏</h3>
                 <div id="lobby-chat-messages" class="lobby-chat-messages"></div>
@@ -608,6 +617,57 @@
         <div class="game-over-buttons">
             <button id="play-again">再来一局</button>
             <button id="return-to-menu">返回主菜单</button>
+        </div>
+    </div>
+
+    <!-- ★ 观战屏（实时观战第 3 批）。
+         ⚠️ 这是一块**独立屏、自带一套渲染**，绝不复用 #game-screen：
+         服务端给 `game_state` 的 attacking 分支**不设 playerId**，而
+         updateAttackDisplay / shield_absorbed 全靠 `result.attacker === gameState.playerId`
+         决定画在哪块棋盘 —— 观众复用对局屏的话 playerId 是 undefined，
+         每一炮都会被判成"对方的"，两块棋盘全反。
+         ⚠️ 显隐只能用 `active` 类（不许用 hidden，见 game.js 里那条警告）。
+         ⚠️ 这里的两块棋盘**只由 board_attacks / sides.*.attacks 重建**
+         （已轰过的格 + hit/ship_sunk），**没有任何船位数据** —— 快照里也没有。 -->
+    <div id="spectate-screen" class="screen">
+        <h2 class="spectate-title">观战中 · 第<b id="spectate-round">1</b>回合</h2>
+        <p class="spectate-subtitle" id="spectate-status">正在连接对局…</p>
+
+        <div class="spectate-topbar">
+            <span class="spectate-stat">阶段 <b id="spectate-phase">—</b></span>
+            <span class="spectate-stat">当前行动 <b id="spectate-turn">—</b></span>
+            <span class="spectate-stat">剩余攻击次数 <b id="spectate-attacks">0</b></span>
+            <span class="spectate-stat">场地魔法 <b id="spectate-field-magic">无</b></span>
+            <span class="spectate-stat">观战 <b id="spectate-count">0</b>/<b id="spectate-limit">20</b></span>
+            <button id="spectate-leave" class="btn secondary" type="button">退出观战</button>
+        </div>
+
+        <div class="spectate-players">
+            <div class="spectate-player" id="spectate-player-1">
+                <span class="spectate-player-name" id="spectate-name-1">—</span>
+                <span class="spectate-player-meta">剩余战舰 <b id="spectate-ships-1">0</b> · 手牌 <b id="spectate-hand-1">0</b> 张</span>
+            </div>
+            <div class="spectate-player" id="spectate-player-2">
+                <span class="spectate-player-name" id="spectate-name-2">—</span>
+                <span class="spectate-player-meta">剩余战舰 <b id="spectate-ships-2">0</b> · 手牌 <b id="spectate-hand-2">0</b> 张</span>
+            </div>
+        </div>
+
+        <div class="spectate-body">
+            <div class="spectate-board-wrapper">
+                <h3 id="spectate-board-title-1">— 的棋盘</h3>
+                <div id="spectate-board-1" class="board spectate-board"></div>
+            </div>
+            <div class="spectate-board-wrapper">
+                <h3 id="spectate-board-title-2">— 的棋盘</h3>
+                <div id="spectate-board-2" class="board spectate-board"></div>
+            </div>
+            <div class="spectate-side">
+                <h3>当前连锁</h3>
+                <div id="spectate-chain" class="spectate-chain"></div>
+                <h3>对局日志</h3>
+                <div id="spectate-logs" class="spectate-logs"></div>
+            </div>
         </div>
     </div>
 
@@ -877,6 +937,17 @@
                         <p class="muted-hint">
                             对局历史是否公开、名片上显示哪些内容，都在「个人信息 → 编辑资料」里改；
                             这里刻意不再放一份控件（同一个设置两份控件必然漂移）。
+                        </p>
+                        <!-- 观战开关（实时观战第 3 批）。状态**只来自服务端**
+                             （进设置面时拉 GET /api/spectate/setting），前端不许自己给默认值，
+                             否则"服务端关着、前端显示开着"会让人以为设置没生效。
+                             保存失败必须有提示（不许静默）。 -->
+                        <label class="profile-label-half settings-spectate-row">
+                            <input type="checkbox" id="settings-allow-spectate" checked>
+                            <span>允许他人观战我的对局</span>
+                        </label>
+                        <p class="muted-hint" id="settings-spectate-msg" role="status">
+                            打开后，别人可以在大厅里看到并围观你的对局（只看到双方已轰过的格子，看不到你的船在哪）。
                         </p>
                         <button type="button" id="settings-goto-profile" class="btn secondary">前往个人信息编辑</button>
                     </section>

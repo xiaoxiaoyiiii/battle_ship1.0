@@ -361,7 +361,9 @@ try {
     + '   panels: panels.length,'
     + '   overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth }; })()');
   check(layout.cols === 3, '宽屏下大厅是三列', layout);
-  check(layout.panels === 3, '三块面板都在 DOM 里', layout);
+  // 观战第 3 批加了第 4 块面板「进行中的对局」（**在看板里，不在看板数里**：
+  // 它复用同一个 .lobby-panel 类，所以列数仍是 3、面板数变成 4）。
+  check(layout.panels === 4, '四块面板都在 DOM 里（含「进行中的对局」）', layout);
   check(layout.overflow <= 2, '大厅页没有水平溢出', layout);
 
   if (SHOT) {

@@ -306,6 +306,117 @@ def _spectate_sid_left(sid):
     return room.id
 
 
+# ---------------------------------------------------------------------------
+# 实时观战（第 3 批）· 大厅的「进行中的对局」列表
+# ---------------------------------------------------------------------------
+# ⚠️ 这份列表是**每 4 秒**随 `lobby_state` 广播现算的（`_broadcast_lobby_state`），
+#    所以这里**绝不允许逐房 / 逐人查库** —— 那正是本轮任务点名警告的坑
+#    （CLAUDE.md §1 与 `docs/LOBBY_2026_09_18.md` 都记着"逐人查库 = 每秒几十次查询"）。
+#    两条护栏：
+#      ① 只读**本帧真正要展示**的那几个 uid（join 成功的局数本来就少）；
+#      ② 读到的结果过一层 TTL 缓存（同 `LOBBY_PROFILE_TTL` 的套路）。
+#    缓存为空（第一次广播）时最多多出 2×局数 次 SELECT，之后就只剩内存命中。
+LOBBY_SPECTATE_FLAG_TTL = 5.0
+# uid -> (读到的时刻, True / False / None)，见 `_lobby_spectate_flag_map`
+_LOBBY_SPECTATE_FLAG_CACHE: dict[str, tuple[float, object]] = {}
+
+# 大厅「进行中的对局」只认这三个 state：`waiting`（还没坐满）与 `game_over`（已经打完）
+# 都不算。写成常量而不是内联元组，是为了让过滤口径只有一份。
+LIVE_MATCH_STATES = ('placing_ships', 'rock_paper_scissors', 'attacking')
+
+
+def _lobby_spectate_flag_map(uids) -> dict:
+    """批量读「允许他人观战我的对局」（`uid -> True / False / None`）。
+
+    `None` 的分量见 `_spectate_seat_allow`：**未知一律不许**（教训 #21）。
+    这里只做"批量 + 缓存"，判据仍然只由 `spectate.can_spectate` 一个人说了算
+    （教训 #1：同一判断不许有第二份实现）。
+    """
+    now = time.time()
+    out = {}
+    missing = []
+    for uid in {u for u in uids if u}:
+        cached = _LOBBY_SPECTATE_FLAG_CACHE.get(uid)
+        if cached is not None and now - cached[0] < LOBBY_SPECTATE_FLAG_TTL:
+            out[uid] = cached[1]
+        else:
+            missing.append(uid)
+    for uid in missing:
+        try:
+            flag = db.get_allow_spectate(uid)
+        except Exception:
+            # 读库抖动 → 未知 → 该局这一帧不上榜（宁可少列一局，也不误导玩家）
+            flag = None
+        _LOBBY_SPECTATE_FLAG_CACHE[uid] = (now, flag)
+        out[uid] = flag
+    return out
+
+
+def _lobby_seat_spectate_flag(player, flags: dict):
+    """这个座位"允不允许被观战"（True / False / **None = 不知道**）。
+
+    与 `_spectate_seat_allow` **同口径**（无账号 / 不是真账号 → None），
+    区别只有一处：这里不查 `db.get_user`，而是靠"uid 有没有出现在 `flags` 里"
+    判断账号真伪 —— 批量路径下每个 uid 只允许一次 SELECT。
+    """
+    uid = getattr(player, 'user_id', None)
+    if not uid:
+        return None
+    return flags.get(uid)
+
+
+def _lobby_live_matches() -> list[dict]:
+    """大厅里「进行中的对局」列表（实时观战第 3 批的入口）。
+
+    ## 列哪些（作者裁定的产品规则，别改）
+
+    * **匹配对局（排位 + 普通）+ 自定义房对局** —— 也就是"双方都坐满了"的局；
+    * **不含人机房**（人机房一个人就是全部观众，列出来没意义）；
+    * **只列"双方都允许被观战"的局** —— 否则玩家点进去只会被拒，
+      列出来就是误导（教训 #32 的同族：不要让人走到一个必然失败的按钮上）。
+
+    过滤判据只有两条，且都只有一份实现：`LIVE_MATCH_STATES` 与
+    `spectate.can_spectate`。**没有任何"猜"的成分** —— 读不到设置就是不许。
+
+    ## 为什么不是把它并进 `rooms`
+
+    `rooms` 的语义是"点进去**入座**"（`_lobby_visible_rooms` 只收 `waiting`、
+    且房内恰好 1 人）。把进行中的局混进去，玩家会点到一间坐不进去的房。
+    所以本批**新增一个独立字段** `matches`，前端也分两块渲染。
+    """
+    seats = []
+    for room in room_manager.get_all_rooms().values():
+        if getattr(room, 'state', None) not in LIVE_MATCH_STATES:
+            continue
+        if getattr(room, 'is_ai_room', False):
+            continue
+        entries = list(room.players.items())
+        if len(entries) != 2:
+            continue                     # 没坐满 / 异常房 → 不是"进行中的对局"
+        seats.append((room, entries))
+
+    flags = _lobby_spectate_flag_map(
+        getattr(p, 'user_id', None) for _r, ents in seats for _k, p in ents)
+
+    rows = []
+    for room, entries in seats:
+        if not spectate.can_spectate(_lobby_seat_spectate_flag(entries[0][1], flags),
+                                     _lobby_seat_spectate_flag(entries[1][1], flags)):
+            continue
+        rows.append({
+            'room_id': room.id,
+            'names': [str(getattr(p, 'name', '') or '') for _k, p in entries],
+            'round': int(getattr(room, 'round', 0) or 0),
+            'spectators': _spectate_count(room),
+            'spectator_limit': spectate.SPECTATOR_LIMIT,
+            'ranked': bool(getattr(room, 'ranked', False)),
+        })
+    # 观战人数多的排前面（正在被围观的多半是打得好的一局），其次按房间号稳定排序 ——
+    # 不排序的话 `room_manager.rooms` 的字典序会让列表每帧都可能换位置。
+    rows.sort(key=lambda r: (-r['spectators'], r['room_id']))
+    return rows
+
+
 def _spectate_end_room(room, reason: str) -> None:
     """房间被回收：通知还在席上的观众，并把观战席清空（教训 #11 的收尾位）。
 
@@ -1373,6 +1484,10 @@ def build_lobby_state() -> dict:
         'queue': {'casual': casual_n, 'ranked': ranked_n},
         'players': players,
         'rooms': _lobby_visible_rooms(),
+        # ★ 进行中的对局（观战入口）。**与 `rooms` 分开**是硬要求：
+        #   `rooms` = "点进去入座"，`matches` = "点进去观战"，混在一起玩家会点错。
+        #   契约见 docs/LOBBY_2026_09_18.md §1.3。
+        'matches': _lobby_live_matches(),
     }
 
 

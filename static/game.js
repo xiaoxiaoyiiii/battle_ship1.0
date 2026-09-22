@@ -498,6 +498,10 @@ function showSettingsPane(pane) {
     document.querySelectorAll('#settings-modal .settings-nav-item[data-pane]').forEach(item => {
         item.classList.toggle('active', item.dataset.pane === name);
     });
+    // 切到「账号与隐私」时现拉一次观战开关的真实值。
+    // ⚠️ 必须**现拉**：开关状态只认服务端（前端默认值会让"服务端已关"显示成"开着"）。
+    //    函数声明会提升，这里调它不存在时序问题。
+    if (name === 'acct' && typeof loadSpectateSetting === 'function') loadSpectateSetting();
     return name;
 }
 
@@ -1045,6 +1049,45 @@ const lobbyChatMessages = document.getElementById('lobby-chat-messages');
 const lobbyChatInput = document.getElementById('lobby-chat-input');
 const lobbyChatSendBtn = document.getElementById('lobby-chat-send');
 
+// 观战屏元素（实时观战第 3 批）。契约见 docs/LOBBY_2026_09_18.md §1.3 与
+// docs/SPECTATE_BATCH3_2026_09_22.md。
+// ⚠️ 这些 id 必须真的存在于 templates/index.html —— 引用了但页面里没有的 id
+//    表现是 getElementById 拿到 null、被 if (el) 兜掉，**不报错、只是点了没反应**
+//    （tools/dom_contract_check.mjs 就是查这个的）。
+// ⚠️ `spectateScreen` 必须登记进 allScreens() 的显式清单（那里加了注释），
+//    否则 switchScreen 切走时它不会被摘掉 active、两块屏会同时可见。
+const spectateScreen = document.getElementById('spectate-screen');
+const spectateRoundEl = document.getElementById('spectate-round');
+const spectateStatusEl = document.getElementById('spectate-status');
+const spectatePhaseEl = document.getElementById('spectate-phase');
+const spectateTurnEl = document.getElementById('spectate-turn');
+const spectateAttacksEl = document.getElementById('spectate-attacks');
+const spectateFieldMagicEl = document.getElementById('spectate-field-magic');
+const spectateCountEl = document.getElementById('spectate-count');
+const spectateLimitEl = document.getElementById('spectate-limit');
+const spectateLeaveBtn = document.getElementById('spectate-leave');
+const spectateChainEl = document.getElementById('spectate-chain');
+const spectateLogsEl = document.getElementById('spectate-logs');
+const spectateBoards = [
+    { board: document.getElementById('spectate-board-1'),
+      title: document.getElementById('spectate-board-title-1'),
+      name: document.getElementById('spectate-name-1'),
+      ships: document.getElementById('spectate-ships-1'),
+      hand: document.getElementById('spectate-hand-1'),
+      box: document.getElementById('spectate-player-1') },
+    { board: document.getElementById('spectate-board-2'),
+      title: document.getElementById('spectate-board-title-2'),
+      name: document.getElementById('spectate-name-2'),
+      ships: document.getElementById('spectate-ships-2'),
+      hand: document.getElementById('spectate-hand-2'),
+      box: document.getElementById('spectate-player-2') },
+];
+// 大厅「进行中的对局」列表（观战入口）
+const lobbyMatchesList = document.getElementById('lobby-matches-list');
+// 设置面里的观战开关（状态**只来自服务端**，见 loadSpectateSetting / saveSpectateSetting）
+const allowSpectateCheckbox = document.getElementById('settings-allow-spectate');
+const spectateSettingMsg = document.getElementById('settings-spectate-msg');
+
 
 // 登录/注册模态弹窗及控件
 const loginModal = document.getElementById('login-modal');
@@ -1078,6 +1121,21 @@ window.gameState = {
     lobbyState: null,
     lobbyKey: null,
     lobbySubscribed: false,
+    // ── 实时观战（第 3 批）：观众侧的全部状态──────────────────────────
+    // ⚠️ 这些字段**只属于观战屏**，绝不许被对局屏读到，反之亦然。
+    //    观众没有 playerId（服务端给 game_state 的 attacking 分支不设它），
+    //    所以观战屏的渲染一律靠 seatLabels 把座位对齐到 p1/p2，**不靠 playerId**。
+    spectate: {
+        active: false,          // 我是否正在观战（决定事件要不要处理、返回键去哪儿）
+        roomId: null,           // 正在观战哪一局
+        snapshot: null,         // 最后一次 spectate_sync（全场局状态的唯一来源）
+        seatLabels: {},         // 原始座位 key -> 'p1'/'p2'（服务端 seat_labels 原样存）
+        attacks: { p1: [], p2: [] },   // 各座位**打出去**的格（x/y/hit/ship_sunk）
+        logs: [],               // 净化后的对局日志（增量追加，只留最近若干条）
+        count: 0,
+        limit: 0,
+        ended: false,
+    },
     deck: [],               // 牌堆
     hand: [],               // 手牌
     discardPile: [],        // 弃牌堆
@@ -4646,6 +4704,23 @@ if (copyInviteLinkBtn) copyInviteLinkBtn.addEventListener('click', copyInviteLin
             joinLobbyRoom(btn.dataset.room);
         });
     }
+    // 「进行中的对局」列表的观战按钮。与上面同理用**事件委托**（列表每 4 秒重建）。
+    if (lobbyMatchesList) {
+        lobbyMatchesList.addEventListener('click', (e) => {
+            const btn = e.target && e.target.closest ? e.target.closest('.lobby-match-spectate') : null;
+            if (!btn) return;
+            joinSpectate(btn.dataset.room);
+        });
+    }
+    // 观战屏的「退出观战」
+    if (spectateLeaveBtn) spectateLeaveBtn.addEventListener('click', () => leaveSpectateScreen(false));
+    // 观战开关：**改动即保存**（与设置面里别的控件不同 —— 这里只有一列，
+    // 没有"点保存才生效"的必要，而且它是隐私开关，晚一步生效就会被围观）。
+    if (allowSpectateCheckbox) {
+        allowSpectateCheckbox.addEventListener('change', () => {
+            saveSpectateSetting(allowSpectateCheckbox.checked === true);
+        });
+    }
     if (backFromLobbyBtn) backFromLobbyBtn.addEventListener('click', () => {
         history.pushState({}, '', '/');
         switchScreen(startScreen);
@@ -5475,6 +5550,78 @@ function setupSocketListeners() {
         //    优先用 recent_opponent 给的名字（服务端权威），没有就用对局期间记下的对手名。
         renderRecentOpponentAdd(recentOpponentState.name || gameState.opponentName || '',
             recentOpponentState.relation);
+    });
+
+    // =======================================================================
+    // ★ 实时观战（第 3 批）：观众侧的实时流
+    // -----------------------------------------------------------------------
+    // 这里的监听器**都带 `spectateActive()` 门禁**，因为 socket 是同一个：
+    // 对局屏与观战屏共用一条连接，但**两块屏的状态是分开的**。
+    // 不加门禁就会出两种事：
+    //   ① 观众收到对局事件时，对局屏的处理函数拿 undefined 的 playerId 去比
+    //      （正是本批要避开的"两块棋盘全反"）；
+    //   ② 打过一局的人再去看别人，上一局的状态会串到观战屏上。
+    // 事件名是**服务端已净化的白名单**（spectate.SPECTATE_EVENTS），
+    // 所以观众收到的那一份里没有坐标字段、座位一律是 p1/p2。
+    // =======================================================================
+    const spectateActive = () => !!(gameState.spectate && gameState.spectate.active);
+
+    socket.on('spectate_sync', (data) => {
+        const sp = gameState.spectate;
+        if (!sp.active) {
+            // ack 还没回来，但快照先到了 —— 存起来，joinSpectate 会用它切屏。
+            // （丢掉它就会出现"ack 成功、屏幕空白"这种最难查的假成功。）
+            sp.pendingSync = data;
+            return;
+        }
+        applySpectateSnapshot(data);
+    });
+    socket.on('spectate_count_changed', (data) => {
+        if (!spectateActive()) return;
+        gameState.spectate.count = spectateInt(data && data.count, gameState.spectate.count);
+        renderSpectateCounts();
+    });
+    socket.on('spectate_ended', (data) => {
+        if (!spectateActive()) return;
+        spectateOnEnded(data);
+    });
+    socket.on('attack_result', (result) => {
+        if (!spectateActive()) return;
+        spectateOnAttackResult(result);
+    });
+    socket.on('magic_chain_updated', (data) => {
+        if (!spectateActive()) return;
+        spectateOnChainUpdated(data);
+    });
+    socket.on('chain_resolved', (data) => {
+        if (!spectateActive()) return;
+        // 连锁结算完 → 栈空了。服务端这条 payload 里带的是**结算结果**（卡名/成功与否），
+        // 不是新的栈，所以这里只把栈清空（画面上的"当前连锁"归零）。
+        spectateOnChainUpdated({ chain: [], chain_len: 0 });
+        if (data && data.message) showMessage(String(data.message));
+    });
+    socket.on('game_log', (entry) => {
+        if (!spectateActive()) return;
+        appendSpectateLog(entry);
+    });
+    socket.on('turn_change', (data) => {
+        if (!spectateActive()) return;
+        spectateOnTurnChange(data);
+    });
+    socket.on('phase_updated', (data) => {
+        if (!spectateActive()) return;
+        spectateOnPhaseUpdated(data);
+    });
+    socket.on('field_magic_updated', (data) => {
+        if (!spectateActive()) return;
+        const snap = gameState.spectate.snapshot;
+        if (!snap) return;
+        snap.field_magic = (data && (data.name || data.field_magic)) || '';
+        renderSpectateHeader();
+    });
+    socket.on('game_over', (data) => {
+        if (!spectateActive()) return;
+        spectateOnGameOver(data);
     });
 
     socket.on('achievements_unlocked', (data) => {
@@ -6976,6 +7123,10 @@ function setupSocketListeners() {
 function allScreens() {
     return [startScreen, customRoomScreen, matchSuccessScreen, shipPlacementScreen, rpsScreen,
             gameScreen, gameOverScreen, leaderboardScreen, lobbyScreen,
+            // ★ 观战屏（实时观战第 3 批）必须显式登记：它虽然是 .screen，
+            //   下面那条兜底也会捞到它，但"显式清单"才是给人看的契约 ——
+            //   兜底捞到的东西一旦有人给 .screen 加个新语义就会静默失效。
+            spectateScreen,
             // 兜底：页面里任何带 .screen 的元素（防漏登记）
             ...Array.from(document.querySelectorAll('.screen'))];
 }
@@ -7132,6 +7283,9 @@ function renderLobbyState(state) {
     if (lobbyQueueRanked) lobbyQueueRanked.textContent = String(queue.ranked || 0);
     renderLobbyPlayers(Array.isArray(state.players) ? state.players : []);
     renderLobbyRooms(Array.isArray(state.rooms) ? state.rooms : []);
+    // 进行中的对局（观战入口）。⚠️ 与 `rooms` 是两块独立的列表，
+    // 服务端也刻意分成两个字段（混在一起玩家会点到"坐不进去的房"）。
+    renderLobbyMatches(Array.isArray(state.matches) ? state.matches : []);
 }
 
 // 在线玩家列表。自己的那一行靠 lobby_hello.key 比对（lobby_state 是广播，
@@ -7194,6 +7348,596 @@ function renderLobbyRooms(rooms) {
             + escapeHtml(String(r.room_id || '')) + '">加入</button>';
         lobbyRoomsList.appendChild(li);
     });
+}
+
+// ===========================================================================
+// ★ 实时观战（第 3 批）：观战屏 + 实时流
+// ---------------------------------------------------------------------------
+// 为什么是**独立一块屏**、而不是复用 #game-screen：
+//   服务端给 `game_state` 的 `attacking` 分支**不设 playerId**，而
+//   `updateAttackDisplay` / 破盾标记全靠 `result.attacker === gameState.playerId`
+//   决定把这一炮画在哪块棋盘上。观众复用对局屏 ⇒ playerId 是 undefined ⇒
+//   每一炮都被判成"对方的"、两块棋盘全反。
+//   所以本块自带一套渲染，**一个对局屏的函数都不调**。
+//
+// 三条硬规矩（写死在这里，改之前先读）：
+//   1. **观众永远不会拿到船位** —— 快照里只有 `sides.*.attacks`（该座位**打出去**
+//      的格）与 `board_attacks`（落在该棋盘上、即对方打出去的格）。
+//      两块棋盘**只能靠这些"已轰过的格"重建**；本块里没有任何一处读
+//      ships / positions / hits，也**不许自己推算"某格有船"**
+//      （`ship_sunk` 是唯一能说明"这里沉了一艘"的字段）。
+//   2. **座位对齐只靠 `seat_labels`**（服务端下发的 原始 key → 'p1'/'p2'）。
+//      实时流里的事件带的是原始座位 key，前端**不许自己把 key 猜成 p1/p2**
+//      （匹配房的 key 是 socket sid，顺序没有任何可猜的成分）。
+//   3. **观战屏的显隐只用 `active`**（不许用 hidden：`.hidden{display:none!important}`
+//      压过 `.screen.active`，而且全仓没有任何地方会把它摘掉）。
+// ===========================================================================
+
+// 日志只留最近这么多条（对局可能打很久，DOM 无限长会拖慢观战屏）。
+// 快照本身也会带一份完整的历史，所以"看不全"只可能发生在观战很久之后。
+const SPECTATE_LOG_LIMIT = 200;
+
+// 阶段名。⚠️ 与 `updatePhaseUI()` 里那份内联表**内容相同但是两份实现** ——
+// 这里刻意不共用：那份表在对局屏的渲染路径上（改它要连带跑布局检查），
+// 而观战屏必须能在对局屏那套代码一概不参与的情况下独立工作。
+// 两张表要一起改的口径由 tools/spectate_check.mjs 钉住（同一个 'battle' 必须都对）。
+const SPECTATE_PHASE_LABELS = {
+    preparation: '准备阶段',
+    battle: '战斗阶段',
+    end: '结束阶段',
+};
+
+// 座位标签只在**标签本身**缺失时退化；退化成 unknown 而不是回显原始 key ——
+// 与 `spectate.seat_label` 的方向一致（宁可显示 unknown，也绝不外发连接标识）。
+function spectateSeatLabel(seatId) {
+    const map = (gameState.spectate && gameState.spectate.seatLabels) || {};
+    const label = map[seatId];
+    return (label === 'p1' || label === 'p2') ? label : 'unknown';
+}
+
+function spectateSeatIndex(label) {
+    return label === 'p2' ? 1 : (label === 'p1' ? 0 : -1);
+}
+
+function spectateNameOf(label) {
+    const sides = (gameState.spectate.snapshot && gameState.spectate.snapshot.sides) || {};
+    const side = sides[label];
+    return (side && side.name) ? String(side.name) : '玩家';
+}
+
+function spectateInt(value, fallback) {
+    const n = Number(value);
+    return isFinite(n) ? Math.trunc(n) : fallback;
+}
+
+// 一格棋盘标记（**只有已轰过的格**会产生它）。
+function spectateCellOf(cell) {
+    if (!cell || typeof cell !== 'object') return null;
+    return {
+        x: spectateInt(cell.x, -1),
+        y: spectateInt(cell.y, -1),
+        hit: !!cell.hit,
+        ship_sunk: !!cell.ship_sunk,
+    };
+}
+
+// 往某个座位的"打出去的格"里合并一格（同一格重复投递时以**最后一条**
+// 为准：破盾那一炮不记进服务端 attacks，所以不会被这里重复加上）。
+function spectateAddAttack(label, cell) {
+    const idx = spectateSeatIndex(label);
+    if (idx < 0 || !cell) return;
+    const list = gameState.spectate.attacks[label];
+    if (!Array.isArray(list)) return;
+    for (let i = 0; i < list.length; i++) {
+        if (list[i].x === cell.x && list[i].y === cell.y) {
+            list[i] = cell;
+            return;
+        }
+    }
+    list.push(cell);
+}
+
+// 重画两块棋盘。★ 整个观战屏唯一一处画格子的地方。
+//
+// 数据源 = `board_attacks[label]`：落在 **label 那块棋盘上**的格，
+// 也就是**对方**打出去的格。**一格都没挨过炮的格子只会是空白**——
+// 这不是"我们没画"，而是"我们根本没有那种数据"（快照里没有，事件里也没有）。
+function renderSpectateBoards() {
+    const snap = gameState.spectate.snapshot;
+    if (!snap) return;
+    const data = (snap.board_attacks && typeof snap.board_attacks === 'object')
+        ? snap.board_attacks : {};
+    spectateBoards.forEach((slot, index) => {
+        // ⚠️ 只能拼字符串。写 `'p%d' % (index + 1)`（Python 那套）在 JS 里**不报错**：
+        //    `%` 是取余，`(index+1) % undefined` = NaN，于是 label 恒为 `NaN`、
+        //    `data['NaN']` 永远是 undefined → 棋盘一格不画、名字退化成默认值，
+        //    而控制台干干净净。本批实测踩过一次（两块棋盘全空，全部静默）。
+        const label = 'p' + (index + 1);
+        if (!slot.board) return;
+        // ⚠️ 先取数、再清空：清空之后任何一步抛异常都会留下半块空棋盘
+        //    （CLAUDE.md 硬规矩：先清空再填充的渲染必须先校验数据）。
+        const cells = Array.isArray(data[label]) ? data[label] : [];
+        const byKey = {};
+        cells.forEach((raw) => {
+            const cell = spectateCellOf(raw);
+            if (cell && cell.x >= 0 && cell.y >= 0) byKey[cell.x + ',' + cell.y] = cell;
+        });
+        slot.board.innerHTML = '';
+        for (let y = 0; y < 6; y++) {
+            for (let x = 0; x < 6; x++) {
+                const el = document.createElement('div');
+                el.className = 'cell';
+                el.dataset.x = String(x);
+                el.dataset.y = String(y);
+                const mark = byKey[x + ',' + y];
+                if (mark) {
+                    // 只有"挨过炮"的三种状态：未中 / 命中 / 击沉该格。
+                    // `ship_sunk` 是服务端告诉我们的"这格沉了一艘" ——
+                    // 前端不据此推断旁边还有没有船（那正是我们要避免的推算）。
+                    if (mark.ship_sunk) {
+                        el.classList.add('hit', 'sunk');
+                        el.textContent = '沉';
+                        el.title = '这一格击沉了战舰';
+                    } else if (mark.hit) {
+                        el.classList.add('hit');
+                        el.textContent = '✕';
+                        el.title = '已轰过：命中';
+                    } else {
+                        el.classList.add('miss');
+                        el.textContent = '○';
+                        el.title = '已轰过：未命中';
+                    }
+                }
+                slot.board.appendChild(el);
+            }
+        }
+    });
+}
+
+function renderSpectatePlayers() {
+    const snap = gameState.spectate.snapshot;
+    if (!snap) return;
+    const sides = snap.sides || {};
+    spectateBoards.forEach((slot, index) => {
+        // ⚠️ 同 `renderSpectateBoards`：JS 里不许用 Python 的 `'p%d' % (...)`。
+        //    写成那样 label 恒为 NaN，名字/船数/手牌会**静默**退化成默认值。
+        const label = 'p' + (index + 1);
+        const side = sides[label] || {};
+        const name = side.name ? String(side.name) : '玩家';
+        if (slot.name) slot.name.textContent = name;
+        if (slot.title) slot.title.textContent = name + ' 的棋盘';
+        if (slot.ships) slot.ships.textContent = String(spectateInt(side.remaining_ships, 0));
+        if (slot.hand) slot.hand.textContent = String(spectateInt(side.hand_count, 0));
+    });
+}
+
+function renderSpectateChain() {
+    if (!spectateChainEl) return;
+    const snap = gameState.spectate.snapshot;
+    // 快照里的 chain 与实时流的 magic_chain_updated 是**同一个净化函数**出来的，
+    // 形状一致：{chain: [{seat, card_name/…, negated}], chain_len, targets_dropped}。
+    const payload = (snap && snap.chain) || {};
+    const chain = Array.isArray(payload.chain) ? payload.chain : [];
+    if (!chain.length) {
+        spectateChainEl.textContent = '当前没有连锁';
+        return;
+    }
+    spectateChainEl.innerHTML = '';
+    // 连锁是**后进先出**：栈顶（最后一项）先结算，所以倒序显示。
+    chain.slice().reverse().forEach((item, i) => {
+        const row = document.createElement('div');
+        row.className = 'spectate-chain-item';
+        const seat = item && item.seat ? String(item.seat) : 'unknown';
+        const who = (seat === 'p1' || seat === 'p2') ? spectateNameOf(seat) : '未知座位';
+        const cardName = item && (item.card_name || (item.card && item.card.name)) || '（未知卡牌）';
+        const negated = !!(item && item.negated);
+        row.textContent = '第' + (i + 1) + '张 · ' + who + '：' + cardName + (negated ? '（已被康）' : '');
+        if (negated) row.classList.add('spectate-chain-negated');
+        spectateChainEl.appendChild(row);
+    });
+}
+
+// 日志区：**先在内存里截断，再一次性铺 DOM**（避免"清空后填充"留下半帧）。
+function renderSpectateLogs() {
+    if (!spectateLogsEl) return;
+    const logs = gameState.spectate.logs || [];
+    if (!logs.length) {
+        spectateLogsEl.textContent = '暂无日志';
+        return;
+    }
+    spectateLogsEl.innerHTML = '';
+    logs.forEach((entry) => {
+        const div = document.createElement('div');
+        div.className = 'spectate-log-item' + (entry.type ? ' spectate-log-' + entry.type : '');
+        div.textContent = String(entry.text || '');
+        spectateLogsEl.appendChild(div);
+    });
+    spectateLogsEl.scrollTop = spectateLogsEl.scrollHeight;
+}
+
+function renderSpectateCounts() {
+    const sp = gameState.spectate;
+    if (spectateCountEl) spectateCountEl.textContent = String(spectateInt(sp.count, 0));
+    if (spectateLimitEl) spectateLimitEl.textContent = String(spectateInt(sp.limit, 0));
+}
+
+// 「谁在行动 / 谁先手」的文案。判断只用 `current_attacker` 与 seat_labels，
+// 绝不碰 gameState.playerId（观众没有它）。
+function spectateTurnText() {
+    const snap = gameState.spectate.snapshot;
+    if (!snap) return '—';
+    const label = spectateSeatLabel(snap.current_attacker);
+    if (label === 'unknown') return '—';
+    return spectateNameOf(label) + (spectateSeatIndex(label) === 0 ? '（先手）' : '（后手）');
+}
+
+function renderSpectateHeader() {
+    const snap = gameState.spectate.snapshot;
+    if (!snap) return;
+    if (spectateRoundEl) spectateRoundEl.textContent = String(spectateInt(snap.round, 0));
+    if (spectateAttacksEl) spectateAttacksEl.textContent = String(spectateInt(snap.attacks_remaining, 0));
+    if (spectateFieldMagicEl) spectateFieldMagicEl.textContent = snap.field_magic ? String(snap.field_magic) : '无';
+    if (spectatePhaseEl) {
+        const phase = String(snap.current_phase || '');
+        spectatePhaseEl.textContent = SPECTATE_PHASE_LABELS[phase] || phase || '—';
+    }
+    if (spectateTurnEl) spectateTurnEl.textContent = spectateTurnText();
+}
+
+// 整屏重画（进席时 / 结束时用）。增量更新只调它下面那几个 render*。
+function renderSpectateScreen() {
+    renderSpectateHeader();
+    renderSpectatePlayers();
+    renderSpectateBoards();
+    renderSpectateChain();
+    renderSpectateLogs();
+    renderSpectateCounts();
+    renderSpectateStatusLine();
+}
+
+function renderSpectateStatusLine() {
+    if (!spectateStatusEl) return;
+    const sp = gameState.spectate;
+    if (sp.ended) {
+        const winnerLabel = gameState.spectate.winnerLabel;
+        spectateStatusEl.textContent = winnerLabel
+            ? ('对局已结束 · ' + winnerLabel + ' 获胜，可以退出观战了')
+            : '对局已结束，可以退出观战了';
+        spectateStatusEl.classList.add('spectate-ended');
+        return;
+    }
+    spectateStatusEl.classList.remove('spectate-ended');
+    const snap = sp.snapshot || {};
+    const labels = [];
+    if (snap.ranked) labels.push('排位局');
+    const state = String(snap.state || '');
+    if (state === 'placing_ships') labels.push('双方正在布置战舰');
+    else if (state === 'rock_paper_scissors') labels.push('猜拳定先手');
+    labels.push('画面随每一步动作实时更新');
+    spectateStatusEl.textContent = labels.join(' · ');
+}
+
+// ★ 进入观战屏。**只有 ack 回来 success 之后才切屏** ——
+//   先把人推到一块空白屏上再告诉他"进不去"，是最糟的失败呈现。
+function enterSpectate(roomId, payload) {
+    const sp = gameState.spectate;
+    sp.active = true;
+    sp.roomId = roomId || null;
+    sp.ended = false;
+    sp.winnerLabel = '';
+    applySpectateSnapshot(payload);
+    switchScreen(spectateScreen);
+}
+
+// 用一份快照**整体替换**观众侧状态（进席与重进都走这里）。
+function applySpectateSnapshot(payload) {
+    if (!payload || typeof payload !== 'object') return;
+    const sp = gameState.spectate;
+    sp.snapshot = payload;
+    sp.seatLabels = (payload.seat_labels && typeof payload.seat_labels === 'object')
+        ? Object.assign({}, payload.seat_labels) : {};
+    sp.count = spectateInt(payload.spectator_count, 0);
+    sp.limit = spectateInt(payload.spectator_limit, 0);
+    // 各座位**打出去**的格：只取 x/y/hit/ship_sunk 这四个字段，
+    // 别的一律不带进来（快照里本来也只有这四个）。
+    const sides = payload.sides || {};
+    sp.attacks = { p1: [], p2: [] };
+    ['p1', 'p2'].forEach((label) => {
+        const rows = (sides[label] && Array.isArray(sides[label].attacks)) ? sides[label].attacks : [];
+        rows.forEach((raw) => {
+            const cell = spectateCellOf(raw);
+            if (cell && cell.x >= 0 && cell.y >= 0) sp.attacks[label].push(cell);
+        });
+    });
+    sp.logs = [];
+    (Array.isArray(payload.game_logs) ? payload.game_logs : []).forEach((entry) => {
+        if (entry && typeof entry === 'object' && entry.text) {
+            sp.logs.push({ ts: spectateInt(entry.ts, 0), type: String(entry.type || ''), text: String(entry.text) });
+        }
+    });
+    if (sp.logs.length > SPECTATE_LOG_LIMIT) sp.logs = sp.logs.slice(-SPECTATE_LOG_LIMIT);
+    sp.ended = String(payload.state || '') === 'game_over';
+    renderSpectateScreen();
+}
+
+function appendSpectateLog(entry) {
+    if (!entry || typeof entry !== 'object' || !entry.text) return;
+    const sp = gameState.spectate;
+    sp.logs.push({ ts: spectateInt(entry.ts, 0), type: String(entry.type || ''), text: String(entry.text) });
+    if (sp.logs.length > SPECTATE_LOG_LIMIT) sp.logs = sp.logs.slice(-SPECTATE_LOG_LIMIT);
+    renderSpectateLogs();
+}
+
+// ---- 实时流：每条动作只更新它真正影响的那一块 ----------------------------
+
+function spectateOnAttackResult(result) {
+    if (!result || typeof result !== 'object') return;
+    const label = spectateSeatLabel(result.attacker);
+    if (label === 'unknown') return;
+    if (!result.shield_blocked) {
+        // 破盾那一炮服务端**不记进 attacks**（船毫发无伤、同一回合还能再打），
+        // 所以观众的棋盘上也不该留下痕迹 —— 与对局屏同口径。
+        spectateAddAttack(label, {
+            x: spectateInt(result.x, -1),
+            y: spectateInt(result.y, -1),
+            hit: !!result.hit,
+            ship_sunk: !!result.ship_sunk,
+        });
+    }
+    const snap = gameState.spectate.snapshot;
+    if (snap && snap.sides) {
+        // 剩余战舰数：attacker 是**打的人**，defender 是挨打的那个（另一侧）。
+        const other = label === 'p1' ? 'p2' : 'p1';
+        if (snap.sides[label]) {
+            snap.sides[label].remaining_ships = spectateInt(result.attacker_remaining_ships,
+                snap.sides[label].remaining_ships);
+        }
+        if (snap.sides[other]) {
+            snap.sides[other].remaining_ships = spectateInt(result.defender_remaining_ships,
+                snap.sides[other].remaining_ships);
+        }
+    }
+    if (snap) snap.attacks_remaining = spectateInt(result.remaining_attacks, snap.attacks_remaining);
+    // 棋盘从 `attacks` 反推（**不是**两份数据）：board_attacks[label] = 对方打出去的格。
+    syncSpectateBoardAttacks();
+    renderSpectateBoards();
+    renderSpectatePlayers();
+    if (spectateAttacksEl) spectateAttacksEl.textContent = String(spectateInt(snap && snap.attacks_remaining, 0));
+}
+
+// 把 `attacks`（按座位）转置成 `board_attacks`（按棋盘）—— 与快照里那两者
+// 的关系**完全一致**（服务端也是这么算的，见 `_build_spectate_snapshot`）。
+// 转置而不是各改一份，是为了让"棋盘上会显示什么"只有一个数据源。
+function syncSpectateBoardAttacks() {
+    const snap = gameState.spectate.snapshot;
+    if (!snap) return;
+    const attacks = gameState.spectate.attacks;
+    snap.board_attacks = {
+        p1: (attacks.p2 || []).map((c) => Object.assign({}, c)),
+        p2: (attacks.p1 || []).map((c) => Object.assign({}, c)),
+    };
+}
+
+function spectateOnChainUpdated(payload) {
+    const snap = gameState.spectate.snapshot;
+    if (!snap || !payload) return;
+    snap.chain = payload;
+    renderSpectateChain();
+}
+
+function spectateOnTurnChange(payload) {
+    const snap = gameState.spectate.snapshot;
+    if (!snap || !payload) return;
+    snap.current_attacker = payload.current_attacker;
+    snap.attacks_remaining = spectateInt(payload.attacks_remaining, snap.attacks_remaining);
+    if (payload.phase) snap.current_phase = payload.phase;
+    renderSpectateHeader();
+}
+
+function spectateOnPhaseUpdated(payload) {
+    const snap = gameState.spectate.snapshot;
+    if (!snap || !payload || typeof payload !== 'object') return;
+    if (payload.current_phase) snap.current_phase = payload.current_phase;
+    else if (payload.phase) snap.current_phase = payload.phase;
+    if (payload.current_attacker !== undefined) snap.current_attacker = payload.current_attacker;
+    if (payload.attacks_remaining !== undefined) {
+        snap.attacks_remaining = spectateInt(payload.attacks_remaining, snap.attacks_remaining);
+    }
+    if (payload.round !== undefined) snap.round = spectateInt(payload.round, snap.round);
+    if (payload.field_magic !== undefined) snap.field_magic = payload.field_magic;
+    renderSpectateHeader();
+}
+
+function spectateOnGameOver(payload) {
+    const sp = gameState.spectate;
+    if (!sp.active) return;
+    sp.ended = true;
+    // `game_over` 的 payload 只有 winner（一个座位 key）—— 换成名字再显示，
+    // 观众看不懂一串连接标识。取不到就按"已结束"呈现（绝不编一个赢家）。
+    if (payload && payload.winner !== undefined) {
+        const label = spectateSeatLabel(payload.winner);
+        sp.winnerLabel = (label === 'unknown') ? '' : spectateNameOf(label);
+    }
+    renderSpectateStatusLine();
+}
+
+function spectateOnEnded(payload) {
+    const sp = gameState.spectate;
+    sp.ended = true;
+    renderSpectateStatusLine();
+    // 房间已被回收（换一局 / 被清理）—— 观众留在空屏上没有任何意义，
+    // 明确告诉他并把他送回大厅（大厅的列表本来就是"进行中的对局"）。
+    const reason = (payload && payload.reason) ? String(payload.reason) : '';
+    showMessage(reason ? ('观战已结束：' + reason) : '观战已结束');
+    leaveSpectateScreen(true);
+}
+
+// ---- 进出观战 -------------------------------------------------------------
+
+// 从大厅点「观战」。失败时**必须**把服务端给的理由显示出来
+// （`spectate_join` 的 ack 与 `error` 事件都带原因）。
+function joinSpectate(roomId) {
+    if (!roomId) { showAlert('这一局已经不能观战了'); return; }
+    // ⚠️ 先置 `active`：服务端把快照（spectate_sync）与 ack **谁先到不确定**
+    //    （正常是事件先到）。若不先置位，先到的那份快照会被当成"我不在观战"丢掉，
+    //    于是进屏之后是一片空白 —— 而 ack 明明返回成功（最难查的那种假成功）。
+    //    失败路径（ack 不是 success）会把它清回去。
+    const sp = gameState.spectate;
+    sp.active = true;
+    sp.pendingSync = null;
+    onSocketReady((socket) => {
+        socket.emit('spectate_join', { room_id: roomId }, (response) => {
+            if (!response || response.status !== 'success') {
+                sp.active = false;
+                sp.pendingSync = null;
+                showAlert((response && response.message) || '进入观战失败');
+                return;
+            }
+            // 切屏用 callbacks 缓存的那份快照；若事件还没到，就等 spectate_sync 到了再渲染
+            // （enterSpectate 对 payload 为空是安全的：它只切屏、快照由事件补上）。
+            sp.roomId = response.room_id || roomId;
+            sp.count = spectateInt(response.count, 0);
+            sp.limit = spectateInt(response.limit, 0);
+            const payload = sp.pendingSync || sp.snapshot;
+            sp.pendingSync = null;
+            enterSpectate(sp.roomId, payload);
+            if (!payload) renderSpectateCounts();
+        });
+    });
+}
+
+// 退出观战屏。
+// `fromServer` = 服务端已经把这一局收掉了（别再 emit 一次 spectate_leave）。
+function leaveSpectateScreen(fromServer) {
+    const sp = gameState.spectate;
+    const wasActive = sp.active;
+    const roomId = sp.roomId;
+    sp.active = false;
+    sp.roomId = null;
+    sp.snapshot = null;
+    sp.seatLabels = {};
+    sp.attacks = { p1: [], p2: [] };
+    sp.logs = [];
+    sp.ended = false;
+    sp.winnerLabel = '';
+    if (!fromServer && wasActive && roomId) {
+        // 幂等：不在席上服务端会回一句原因，这里不需要处理返回值。
+        onSocketReady((socket) => { socket.emit('spectate_leave', { room_id: roomId }, () => {}); });
+    }
+    // ★ 把观战屏**清干净**：棋盘是 36 个 DOM 格子，留着的话下一次进别人那局时
+    //   会在快照到达之前先把上一局的格子显示出来（看着像"串台"）。
+    //   ⚠️ 只是清内容、**不碰 class**（屏的显隐只走 active，见本块开头那条铁律）。
+    spectateBoards.forEach((slot) => {
+        if (slot.board) slot.board.innerHTML = '';
+        if (slot.name) slot.name.textContent = '—';
+        if (slot.title) slot.title.textContent = '— 的棋盘';
+        if (slot.ships) slot.ships.textContent = '0';
+        if (slot.hand) slot.hand.textContent = '0';
+    });
+    if (spectateRoundEl) spectateRoundEl.textContent = '1';
+    if (spectatePhaseEl) spectatePhaseEl.textContent = '—';
+    if (spectateTurnEl) spectateTurnEl.textContent = '—';
+    if (spectateAttacksEl) spectateAttacksEl.textContent = '0';
+    if (spectateFieldMagicEl) spectateFieldMagicEl.textContent = '无';
+    if (spectateChainEl) spectateChainEl.textContent = '';
+    if (spectateLogsEl) spectateLogsEl.textContent = '';
+    if (spectateStatusEl) {
+        spectateStatusEl.classList.remove('spectate-ended');
+        spectateStatusEl.textContent = '正在连接对局…';
+    }
+    showLobby();
+}
+
+// ---- 大厅列表里的「观战」按钮 --------------------------------------------
+
+// 渲染大厅的「进行中的对局」。服务端已经过滤好（只列双方都允许观战的局），
+// 这里**只渲染**、不重新判断 —— 两份判断必然漂移（教训 #1）。
+function renderLobbyMatches(matches) {
+    if (!lobbyMatchesList) return;
+    lobbyMatchesList.innerHTML = '';
+    const rows = Array.isArray(matches) ? matches : [];
+    if (!rows.length) {
+        lobbyMatchesList.innerHTML = '<li class="lobby-empty">当前没有正在进行的对局</li>';
+        return;
+    }
+    rows.forEach((m) => {
+        const names = Array.isArray(m.names) ? m.names : [];
+        const li = document.createElement('li');
+        li.className = 'lobby-match';
+        const ranked = m.ranked ? '<span class="lobby-match-ranked">排位</span>' : '';
+        li.innerHTML = '<span class="lobby-match-main">'
+            + '<span class="lobby-match-name">'
+            + escapeHtml(String(names[0] || '玩家')) + ' vs ' + escapeHtml(String(names[1] || '玩家'))
+            + '</span>'
+            + ranked
+            + '<span class="lobby-match-meta">第 ' + String(m.round || 0) + ' 回合 · '
+            + '观战 ' + String(m.spectators || 0) + '/' + String(m.spectator_limit || 0)
+            + '</span>'
+            + '</span>'
+            + '<button type="button" class="btn secondary lobby-match-spectate" data-room="'
+            + escapeHtml(String(m.room_id || '')) + '">观战</button>';
+        lobbyMatchesList.appendChild(li);
+    });
+}
+
+// ---- 设置面里的观战开关（状态只来自服务端）--------------------------------
+
+function setSpectateSettingMsg(text, isError) {
+    if (!spectateSettingMsg) return;
+    spectateSettingMsg.textContent = text;
+    spectateSettingMsg.classList.toggle('settings-error', !!isError);
+}
+
+// 拉一次服务端的真实开关值。**不做任何前端默认值兜底** ——
+// "服务端关着、前端显示开着"正是本批要避免的那种假象（教训 #21 同族）。
+function loadSpectateSetting() {
+    if (!allowSpectateCheckbox) return;
+    fetch('/api/spectate/setting', { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+        .then((resp) => resp.json())
+        .then((data) => {
+            if (!data || data.success !== true) {
+                // 未登录：这个开关本来就没有意义，禁用并说明（不许静默留个假开的开关）
+                allowSpectateCheckbox.disabled = true;
+                setSpectateSettingMsg('登录后才能设置观战权限。', false);
+                return;
+            }
+            allowSpectateCheckbox.disabled = false;
+            allowSpectateCheckbox.checked = data.allow_spectate === true;
+            setSpectateSettingMsg(data.allow_spectate === true
+                ? '打开中：别人可以在大厅里围观你的对局。'
+                : '关闭中：你的对局不会出现在大厅的观战列表里。', false);
+        })
+        .catch(() => {
+            allowSpectateCheckbox.disabled = true;
+            setSpectateSettingMsg('读取观战设置失败（网络），暂时不能修改。', true);
+        });
+}
+
+function saveSpectateSetting(on) {
+    if (!allowSpectateCheckbox) return;
+    fetch('/api/spectate/setting', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ allow_spectate: on === true }),
+    }).then((resp) => resp.json().then((data) => ({ ok: resp.ok, data: data })))
+        .then((out) => {
+            const data = out.data || {};
+            if (!out.ok || data.success !== true) {
+                // 保存失败必须回滚 UI 并说明 —— 否则玩家以为改好了（静默失败）
+                allowSpectateCheckbox.checked = !(on === true);
+                setSpectateSettingMsg(data.error || '保存失败，请稍后再试。', true);
+                return;
+            }
+            allowSpectateCheckbox.checked = data.allow_spectate === true;
+            setSpectateSettingMsg(data.allow_spectate === true
+                ? '已保存：别人可以围观你的对局。'
+                : '已保存：你的对局不会被别人围观。', false);
+        })
+        .catch(() => {
+            allowSpectateCheckbox.checked = !(on === true);
+            setSpectateSettingMsg('保存失败（网络），请稍后再试。', true);
+        });
 }
 
 // 大厅建房：走服务端的 lobby_create_room（内部复用 create_room，不另写一份建房逻辑）

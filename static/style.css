@@ -5415,6 +5415,232 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, rgba(255, 2
     font-size: 0.8rem;
 }
 
+/* ---------- 30.4b 进行中的对局（观战入口，实时观战第 3 批） ----------
+   与 .lobby-room 同形体（两行 flex + 右侧按钮），只多一个「排位」角标与观战人数。
+   ⚠️ 视觉改动只允许动颜色/阴影/渐变，**不许动盒模型尺寸** ——
+   大厅页有一条「宽屏三列」的布局断言（tools/lobby_check.mjs 数 fr 轨道）。 */
+.lobby-match {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 10px;
+    border: 1px solid rgba(var(--primary-rgb), 0.22);
+    background: rgba(var(--primary-rgb), 0.05);
+}
+
+.lobby-match + .lobby-match {
+    margin-top: 6px;
+}
+
+.lobby-match-main {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.lobby-match-name {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.lobby-match-ranked {
+    flex: 0 0 auto;
+    font-size: 0.66rem;
+    padding: 1px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--secondary);
+    color: var(--secondary);
+    white-space: nowrap;
+}
+
+.lobby-match-meta {
+    font-size: 0.7rem;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.lobby-match-spectate {
+    flex: 0 0 auto;
+    padding: 3px 12px;
+    font-size: 0.78rem;
+}
+
+/* ---------- 30.7 观战屏（实时观战第 3 批） ----------
+   ⚠️ 这一屏**不复用对局屏**（理由见 game.js 里那块注释），所以样式也从零写。
+   两块棋盘用 `.board`（6×6 网格，尺寸由 ui_layout_check 钉住的既有类）——
+   这里只加一点视觉修饰，**不改 .board / .cell 的任何盒模型尺寸**。 */
+.spectate-title {
+    margin-bottom: 4px;
+}
+
+.spectate-subtitle {
+    margin: 0 0 12px;
+    font-size: 0.82rem;
+    color: var(--text-subtle);
+}
+
+.spectate-subtitle.spectate-ended {
+    color: var(--danger, #e5484d);
+    font-weight: 600;
+}
+
+.spectate-topbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+    font-size: 0.8rem;
+    color: var(--text-subtle);
+}
+
+.spectate-stat b {
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+
+#spectate-leave {
+    margin-left: auto;
+    padding: 3px 12px;
+    font-size: 0.78rem;
+}
+
+.spectate-players {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.spectate-player {
+    flex: 1 1 200px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+}
+
+.spectate-player-name {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.spectate-player-meta {
+    font-size: 0.75rem;
+    color: var(--text-subtle);
+}
+
+.spectate-body {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.spectate-board-wrapper {
+    flex: 1 1 280px;
+    min-width: 0;
+    padding: 8px 10px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+    text-align: center;
+}
+
+.spectate-board-wrapper h3 {
+    margin: 0 0 6px;
+    font-size: 0.85rem;
+    color: var(--text-subtle);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 观战棋盘**不可点**（观众没有任何操作），所以别给手型光标误导。 */
+.spectate-board .cell {
+    cursor: default;
+}
+
+.spectate-side {
+    flex: 1 1 220px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+}
+
+.spectate-side h3 {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--text-subtle);
+}
+
+.spectate-chain {
+    font-size: 0.76rem;
+    color: var(--text-subtle);
+    max-height: 96px;
+    overflow-y: auto;
+}
+
+.spectate-chain-item {
+    padding: 2px 0;
+}
+
+.spectate-chain-negated {
+    color: var(--muted);
+    text-decoration: line-through;
+}
+
+.spectate-logs {
+    font-size: 0.76rem;
+    line-height: 1.45;
+    color: var(--text-subtle);
+    max-height: 260px;
+    overflow-y: auto;
+}
+
+.spectate-log-item {
+    padding: 2px 0;
+    border-bottom: 1px dashed rgba(128, 128, 128, 0.18);
+}
+
+.settings-spectate-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+}
+
+#settings-spectate-msg.settings-error {
+    color: var(--danger, #e5484d);
+}
+
 /* ---------- 30.5 公屏 ---------- */
 .lobby-chat-messages {
     flex: 1 1 auto;

@@ -4,6 +4,24 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>战舰游戏</title>
+    <!-- 明暗轴引导脚本 —— ⚠️ 必须留在 <head>、必须**同步**执行、必须排在 style.css 之前。
+         为什么不能等 defer 的 game.js / body 尾部的脚本 / DOMContentLoaded：
+         首屏是深是浅只取决于 <html> 上有没有 `theme-dark`，CSS 一到位就按当时的类布局并绘制；
+         等到 DOMContentLoaded 才补类，深色偏好的用户会先被画一帧浅底（白闪），再翻黑。
+         这里只做「最少必要」的一件事：定 `.theme-dark`。
+         完整的三态规则（显式 dark/light 优先 → 否则跟随系统 → 监听系统变化 + 按钮文案）
+         在 game.js 的 resolveTheme() / applyTheme() / initThemeToggle() 里，
+         两边读的是同一个 localStorage 键 `theme`，语义必须一致。 -->
+    <script>
+        (function () {
+            var saved = null;
+            try { saved = localStorage.getItem('theme'); } catch (e) { saved = null; }
+            var dark = saved === 'dark'
+                || (saved !== 'light' && !!window.matchMedia
+                    && window.matchMedia('(prefers-color-scheme: dark)').matches);
+            document.documentElement.classList.toggle('theme-dark', dark);
+        })();
+    </script>
     <link rel="stylesheet" href="/static/style.css?v={{ asset_v('style.css') }}">
     <!-- ⚠️ defer 不能去掉：这是 191KB 的同步脚本，在 <head> 里会阻塞 FCP。
          实测阻断实验：只挡 style.css → FCP 2,472ms；只挡 socket.io.js → 2,944ms；
@@ -69,7 +87,11 @@
                  游客也能点（照常弹面板），三个写接口未登录一律 401 → 前端提示「请先登录」。 -->
                 <a href="#" id="friends-btn" class="hide-in-game">好友<span
                         id="friends-badge" class="friends-badge hidden">0</span></a>
-                <a href="#" id="toggle-theme" class="hide-in-game">深色模式</a>
+                <!-- 明暗切换出口。文案由 game.js 的 syncThemeToggleLabel() 决定：
+                     跟随系统 → 「跟随系统」｜显式浅色 → 「深色模式」｜显式深色 → 「浅色模式」。
+                     这里的初值只是「没有任何显式选择」时的默认态，game.js 在 body 尾部同步执行时
+                     会立刻按实际状态改写（不等 DOMContentLoaded，见 <head> 里那段引导脚本的注释）。 -->
+                <a href="#" id="toggle-theme" class="hide-in-game">跟随系统</a>
             </div>
             <div class="nav-group nav-account">
             {% if username %}
@@ -823,12 +845,27 @@
                     <section class="settings-pane" data-pane="look">
                         <h4 class="settings-block-title">主题预设</h4>
                         <div id="theme-preset-grid" class="theme-grid">
-                            <button type="button" class="theme-card selected" data-preset="deep"><span class="theme-strip"></span><b>深海</b><small>默认 · 冷蓝</small></button>
-                            <button type="button" class="theme-card" data-preset="lava"><span class="theme-strip"></span><b>熔岩</b><small>高对比暖色</small></button>
-                            <button type="button" class="theme-card" data-preset="cyber"><span class="theme-strip"></span><b>赛博</b><small>紫青霓虹</small></button>
-                            <button type="button" class="theme-card" data-preset="dusk"><span class="theme-strip"></span><b>暮光</b><small>柔和粉紫</small></button>
-                            <button type="button" class="theme-card" data-preset="aurora"><span class="theme-strip"></span><b>极光</b><small>青绿清爽</small></button>
-                            <button type="button" class="theme-card" data-preset="classic"><span class="theme-strip"></span><b>经典</b><small>原来的配色</small></button>
+                            <!-- 两个分组容器（data-group 由 fluent_style_check.mjs 断言）。
+                                 ⚠️ 卡片仍然是 .theme-card[data-preset]，点击委托挂在 #theme-preset-grid 上、
+                                 用 e.target.closest('.theme-card[data-preset]') 命中 —— 嵌套容器不影响 closest。
+                                 「默认」这个属性只属于 fluent（默认预设），别再给 deep 加 selected。 -->
+                            <div class="theme-group" data-group="fluent">
+                                <p class="theme-group-title">Fluent（默认）</p>
+                                <div class="theme-group-cards">
+                                    <button type="button" class="theme-card" data-preset="fluent"><span class="theme-strip"></span><b>Fluent</b><small>Windows 11 · 微软风格</small></button>
+                                </div>
+                            </div>
+                            <div class="theme-group" data-group="legacy">
+                                <p class="theme-group-title">旧风格</p>
+                                <div class="theme-group-cards">
+                                    <button type="button" class="theme-card" data-preset="deep"><span class="theme-strip"></span><b>深海</b><small>默认 · 冷蓝</small></button>
+                                    <button type="button" class="theme-card" data-preset="lava"><span class="theme-strip"></span><b>熔岩</b><small>高对比暖色</small></button>
+                                    <button type="button" class="theme-card" data-preset="cyber"><span class="theme-strip"></span><b>赛博</b><small>紫青霓虹</small></button>
+                                    <button type="button" class="theme-card" data-preset="dusk"><span class="theme-strip"></span><b>暮光</b><small>柔和粉紫</small></button>
+                                    <button type="button" class="theme-card" data-preset="aurora"><span class="theme-strip"></span><b>极光</b><small>青绿清爽</small></button>
+                                    <button type="button" class="theme-card" data-preset="classic"><span class="theme-strip"></span><b>经典</b><small>原来的配色</small></button>
+                                </div>
+                            </div>
                         </div>
                         <h4 class="settings-block-title">主色微调</h4>
                         <label class="profile-label">
@@ -1210,38 +1247,6 @@
 
     // 添加调试信息
     console.log('在线人数更新脚本已加载');
-
-    // 主题切换功能
-    document.addEventListener('DOMContentLoaded', function() {
-        const themeToggle = document.getElementById('toggle-theme');
-        const html = document.documentElement;
-        
-        // 检查本地存储中的主题偏好
-        const savedTheme = localStorage.getItem('theme');
-        
-        // 应用保存的主题或默认主题
-        if (savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-            html.classList.add('theme-dark');
-            themeToggle.textContent = '浅色模式';
-        } else {
-            html.classList.remove('theme-dark');
-            themeToggle.textContent = '深色模式';
-        }
-        
-        // 主题切换事件监听
-        themeToggle.addEventListener('click', function(e) {
-            e.preventDefault();
-            if (html.classList.contains('theme-dark')) {
-                html.classList.remove('theme-dark');
-                themeToggle.textContent = '深色模式';
-                localStorage.setItem('theme', 'light');
-            } else {
-                html.classList.add('theme-dark');
-                themeToggle.textContent = '浅色模式';
-                localStorage.setItem('theme', 'dark');
-            }
-        });
-    });
 </script>
 </body>
 </html>

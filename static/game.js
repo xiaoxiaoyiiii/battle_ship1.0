@@ -103,25 +103,16 @@ document.addEventListener('DOMContentLoaded', function () {
     if (!avatarCorner) {
         avatarCorner = document.createElement('div');
         avatarCorner.id = 'avatar-corner';
-        avatarCorner.style.position = 'fixed';
-        avatarCorner.style.top = '16px';
-        avatarCorner.style.left = '16px';
-        avatarCorner.style.zIndex = '1000';
-        avatarCorner.style.background = 'var(--glass)';
-        avatarCorner.style.borderRadius = '24px';
-        avatarCorner.style.boxShadow = '0 2px 8px rgba(0,0,0,0.08)';
-        avatarCorner.style.padding = '4px 12px 4px 4px';
-        avatarCorner.style.display = 'flex';
-        avatarCorner.style.alignItems = 'center';
+        // ⚠️ 样式一律走 CSS 类（.corner-chip / .corner-chip-mine），**不再写内联样式**：
+        //    内联样式特异性最高，逼得紧凑布局那边只能用 !important 去压（第 22.6 节），
+        //    而"用 !important 打的内联"是这套 CSS 里最难维护的一类对抗。
+        //    外观（位置/底色/圆角/阴影/padding）现在集中在 style.css 的 `.corner-chip`。
+        avatarCorner.className = 'corner-chip corner-chip-mine';
         // 头像
         avatarCorner.appendChild(myAvatarInGame);
-        // 用户名
         let myNameSpan = document.createElement('span');
         myNameSpan.id = 'my-username-corner';
-        myNameSpan.style.marginLeft = '8px';
-        myNameSpan.style.fontWeight = 'bold';
-        myNameSpan.style.fontSize = '1.05em';
-        myNameSpan.style.color = 'var(--text)';
+        myNameSpan.className = 'corner-name';
         avatarCorner.appendChild(myNameSpan);
         document.body.appendChild(avatarCorner);
     } else {
@@ -129,10 +120,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!document.getElementById('my-username-corner')) {
             let myNameSpan = document.createElement('span');
             myNameSpan.id = 'my-username-corner';
-            myNameSpan.style.marginLeft = '8px';
-            myNameSpan.style.fontWeight = 'bold';
-            myNameSpan.style.fontSize = '1.05em';
-            myNameSpan.style.color = 'var(--text)';
+            myNameSpan.className = 'corner-name';
             avatarCorner.appendChild(myNameSpan);
         }
     }
@@ -142,23 +130,11 @@ document.addEventListener('DOMContentLoaded', function () {
     if (!opponentAvatarCorner) {
         opponentAvatarCorner = document.createElement('div');
         opponentAvatarCorner.id = 'opponent-avatar-corner';
-        opponentAvatarCorner.style.position = 'fixed';
-        opponentAvatarCorner.style.top = '16px';
-        opponentAvatarCorner.style.right = '16px';
-        opponentAvatarCorner.style.zIndex = '1000';
-        opponentAvatarCorner.style.background = 'var(--glass)';
-        opponentAvatarCorner.style.borderRadius = '24px';
-        opponentAvatarCorner.style.boxShadow = '0 2px 8px rgba(0,0,0,0.08)';
-        opponentAvatarCorner.style.padding = '4px 4px 4px 12px';
-        opponentAvatarCorner.style.display = 'flex';
-        opponentAvatarCorner.style.alignItems = 'center';
+        opponentAvatarCorner.className = 'corner-chip corner-chip-opponent';
         // 用户名
         let oppNameSpan = document.createElement('span');
         oppNameSpan.id = 'opponent-username-corner';
-        oppNameSpan.style.marginRight = '8px';
-        oppNameSpan.style.fontWeight = 'bold';
-        oppNameSpan.style.fontSize = '1.05em';
-        oppNameSpan.style.color = 'var(--text)';
+        oppNameSpan.className = 'corner-name';
         opponentAvatarCorner.appendChild(oppNameSpan);
         // 头像
         opponentAvatarCorner.appendChild(opponentAvatarInGame);
@@ -167,10 +143,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!document.getElementById('opponent-username-corner')) {
             let oppNameSpan = document.createElement('span');
             oppNameSpan.id = 'opponent-username-corner';
-            oppNameSpan.style.marginRight = '8px';
-            oppNameSpan.style.fontWeight = 'bold';
-            oppNameSpan.style.fontSize = '1.05em';
-            oppNameSpan.style.color = 'var(--text)';
+            oppNameSpan.className = 'corner-name';
             opponentAvatarCorner.insertBefore(oppNameSpan, opponentAvatarInGame);
         }
         opponentAvatarCorner.appendChild(opponentAvatarInGame);
@@ -583,7 +556,7 @@ function shadeHex(hex, amount) {
 // applyPrimaryColor() 往 documentElement 写的是**内联**变量，它优先级高于任何
 // CSS 规则，所以切回预设时必须逐个 removeProperty，只清 localStorage 是不够的。
 // ---------------------------------------------------------------------------
-const THEME_PRESETS = ['deep', 'lava', 'cyber', 'dusk', 'aurora', 'classic'];
+const THEME_PRESETS = ['fluent', 'classic', 'deep', 'lava', 'cyber', 'dusk', 'aurora'];
 // 这些是 applyPrimaryColor() 会写进 documentElement.style 的变量名
 const PRIMARY_INLINE_VARS = ['--primary', '--primary-600', '--primary-rgb',
     '--primary-gradient', '--primary-50', '--shadow-glow'];
@@ -617,7 +590,7 @@ function currentPrimaryHex() {
 
 // 把「当前主题」同步到设置页那排预设卡上（.selected 由 CSS 画勾）
 function syncThemePresetUI(preset) {
-    const current = preset || localStorage.getItem('battleship_theme_preset') || 'deep';
+    const current = preset || localStorage.getItem('battleship_theme_preset') || 'fluent';
     document.querySelectorAll('#theme-preset-grid .theme-card[data-preset]').forEach(card => {
         card.classList.toggle('selected', card.dataset.preset === current);
     });
@@ -626,7 +599,7 @@ function syncThemePresetUI(preset) {
 }
 
 function applyThemePreset(name) {
-    const preset = THEME_PRESETS.indexOf(name) >= 0 ? name : 'deep';
+    const preset = THEME_PRESETS.indexOf(name) >= 0 ? name : 'fluent';
     document.documentElement.dataset.themePreset = preset;
     localStorage.setItem('battleship_theme_preset', preset);
     // 具名预设 = 不再使用自定义主色：清掉存量 + 清掉内联变量（后者会压过 CSS 预设）
@@ -655,7 +628,7 @@ function restoreThemeFromStorage() {
     if (preset && THEME_PRESETS.indexOf(preset) >= 0) return applyThemePreset(preset);
     const color = localStorage.getItem('battleship_primary_color');
     if (color) return applyCustomPrimaryColor(color);
-    return applyThemePreset(preset || 'deep');
+    return applyThemePreset(preset || 'fluent');
 }
 
 if (document.readyState === 'loading') {
@@ -663,6 +636,101 @@ if (document.readyState === 'loading') {
 } else {
     restoreThemeFromStorage();
 }
+// ---------------------------------------------------------------------------
+// 明暗轴（2026-09-19 Fluent 批）：跟随系统 + 用户选择优先
+//
+// 与上面那节是**两根独立的轴**，可以任意组合：
+//   明暗轴 → html.theme-dark          ← localStorage['theme']
+//   预设轴 → html[data-theme-preset]  ← localStorage['battleship_theme_preset']
+//
+// ⚠️ 这里（game.js）是三态规则的**唯一实现**；`templates/index.html` <head> 里那段同步内联
+// 脚本是它的「首帧最小镜像」，只定 theme-dark 用来防闪白。两边读同一个键、同一套优先级 ——
+// 改这里的判据必须同步改那边。
+// ---------------------------------------------------------------------------
+const THEME_MODE_KEY = 'theme';
+const DARK_MEDIA_QUERY = '(prefers-color-scheme: dark)';
+
+// 用户显式选择：'dark' / 'light'；没选过、或存的是脏值 → null（= 跟随系统）
+function readStoredThemeChoice() {
+    try {
+        const saved = localStorage.getItem(THEME_MODE_KEY);
+        return saved === 'dark' || saved === 'light' ? saved : null;
+    } catch (e) {
+        return null;      // 隐私模式下 localStorage 会抛，退化为跟随系统
+    }
+}
+
+function systemPrefersDark() {
+    return !!(window.matchMedia && window.matchMedia(DARK_MEDIA_QUERY).matches);
+}
+
+// 三态归一成一态：① 显式选择优先 ② 否则跟随系统
+function resolveTheme() {
+    return readStoredThemeChoice() || (systemPrefersDark() ? 'dark' : 'light');
+}
+
+// 把生效的一态落到 html，并顺手摆正按钮文案
+function applyTheme(mode) {
+    const resolved = (mode === 'dark' || mode === 'light') ? mode : resolveTheme();
+    document.documentElement.classList.toggle('theme-dark', resolved === 'dark');
+    syncThemeToggleLabel();
+    return resolved;
+}
+
+// 按钮文案要能看出「当前是什么状态」：
+//   跟随系统 → 「跟随系统」｜显式浅色 → 「深色模式」（点它切深色）｜显式深色 → 「浅色模式」
+function syncThemeToggleLabel() {
+    const el = document.getElementById('toggle-theme');
+    // ⚠️ 必须空判：以前这里无守卫地写 textContent，导航里一旦没有这个 <a>
+    // 就是 `Cannot read properties of null`，整个首屏脚本崩掉（docs/HOME_NAV_2026_09_19.md §6）。
+    if (!el) return;
+    const choice = readStoredThemeChoice();
+    el.textContent = choice === 'dark' ? '浅色模式' : (choice === 'light' ? '深色模式' : '跟随系统');
+    el.title = choice
+        ? ('当前：显式' + (choice === 'dark' ? '深色' : '浅色'))
+        : ('当前：跟随系统（' + (systemPrefersDark() ? '深色' : '浅色') + '）');
+}
+
+// 点一次 = 在浅/深之间**显式**切换（写 localStorage，此后不再跟随系统）
+function toggleThemeMode() {
+    const mode = resolveTheme() === 'dark' ? 'light' : 'dark';
+    try {
+        localStorage.setItem(THEME_MODE_KEY, mode);
+    } catch (e) {
+        // 存不下也要本次生效，只是刷新后回到跟随系统
+    }
+    return applyTheme(mode);
+}
+
+// 幂等：绑一次点击 + 挂一次系统变化监听，之后每次调用只重新同步文案/类
+function initThemeToggle() {
+    if (!initThemeToggle.done) {
+        initThemeToggle.done = true;
+        const el = document.getElementById('toggle-theme');
+        if (el) {
+            el.addEventListener('click', (e) => {
+                e.preventDefault();
+                toggleThemeMode();
+            });
+        }
+        // ⚠️ 只在「跟随状态」下跟系统走：用户显式选过就不理会系统变化。
+        if (window.matchMedia) {
+            const mq = window.matchMedia(DARK_MEDIA_QUERY);
+            const onChange = () => {
+                if (!readStoredThemeChoice()) applyTheme(resolveTheme());
+            };
+            if (mq.addEventListener) mq.addEventListener('change', onChange);
+            else if (mq.addListener) mq.addListener(onChange);   // Safari < 14
+            initThemeToggle.media = mq;
+        }
+    }
+    return applyTheme();
+}
+
+// 同步执行：game.js 在 body 尾部，DOM 已经在了 —— 按钮文案跟着 html.theme-dark 一起落地，
+// 不会出现「先写死深色模式、再被 DOMContentLoaded 改成别的」那一跳。
+initThemeToggle();
+
 
 // 音乐控制相关元素
 const musicBtn = document.getElementById('music-btn');

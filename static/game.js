@@ -5662,6 +5662,13 @@ function setupSocketListeners() {
         if (!spectateActive()) return;
         spectateOnEnded(data);
     });
+    // ★ 第 5 批：观战棋盘帧（棋盘真的变了的时候服务端推的权威数据）。
+    //   覆盖两种以前**完全没有更新路径**的情况：疗愈原地复活、棋盘整块重置
+    //   （回光返照 / 灵气复苏 / 败者食尘）。见 `applySpectateBoardFrame`。
+    socket.on('spectate_board', (data) => {
+        if (!spectateActive()) return;
+        applySpectateBoardFrame(data);
+    });
     socket.on('attack_result', (result) => {
         if (!spectateActive()) return;
         spectateOnAttackResult(result);
@@ -5693,7 +5700,17 @@ function setupSocketListeners() {
         if (!spectateActive()) return;
         const snap = gameState.spectate.snapshot;
         if (!snap) return;
-        snap.field_magic = (data && (data.name || data.field_magic)) || '';
+        // ★ 第 5 批修的**真缺陷**：服务端这条 payload 的形状是
+        //   `{'player_id': …, 'card': <MagicCard 实例序列化后的 {name,speed,type,…}> | None}`
+        //   —— 卡名在 **`data.card.name`** 上。这里原先读的是 `data.name` /
+        //   `data.field_magic`（两个都不存在）⇒ 恒为 `undefined` ⇒ `snap.field_magic`
+        //   被**清成空串** ⇒ 观战屏永远显示「无」，而对局双方看到的是正确卡名
+        //   （玩家侧 `updateFieldMagicUI(data.player_id, data.card)` 读的就是 card.name）。
+        //   `card` 为 `None` 表示场地被拆除 / 顶替 → 如实清空。
+        const card = data && data.card;
+        const name = (card && card.name) ? String(card.name)
+            : ((data && data.field_magic) ? String(data.field_magic) : '');
+        snap.field_magic = name;
         renderSpectateHeader();
     });
     socket.on('game_over', (data) => {
@@ -7552,17 +7569,26 @@ function renderSpectateBoards() {
                     // `ship_sunk` 是服务端告诉我们的"这格沉了一艘" ——
                     // 前端不据此推断旁边还有没有船（那正是我们要避免的推算）。
                     if (mark.ship_sunk) {
+                        // ★ 第 5 批：字形与实战**统一**成 ✕。
+                        //   对局屏上这两处击沉格画的都是 `attack.hit ? '✕' : '○'`
+                        //   （`.cell.sunk` 只在**自己的船**上叠一个灰化，文字仍是 ✕），
+                        //   而观战屏原本写「沉」→ 同一个局面在两种屏上长得不一样
+                        //   （作者实报）。这里改成同样的 ✕，"沉"这层含义交给
+                        //   `title` / `aria-label`（色盲与读屏用户才拿得到的那条信息）。
                         el.classList.add('hit', 'sunk');
-                        el.textContent = '沉';
+                        el.textContent = '✕';
                         el.title = '这一格击沉了战舰';
+                        el.setAttribute('aria-label', '已轰过：命中并击沉了战舰');
                     } else if (mark.hit) {
                         el.classList.add('hit');
                         el.textContent = '✕';
                         el.title = '已轰过：命中';
+                        el.setAttribute('aria-label', '已轰过：命中');
                     } else {
                         el.classList.add('miss');
                         el.textContent = '○';
                         el.title = '已轰过：未命中';
+                        el.setAttribute('aria-label', '已轰过：未命中');
                     }
                 }
                 slot.board.appendChild(el);
@@ -7940,16 +7966,90 @@ function spectateOnAttackResult(result) {
     }
     if (snap) snap.attacks_remaining = spectateInt(result.remaining_attacks, snap.attacks_remaining);
     // 棋盘从 `attacks` 反推（**不是**两份数据）：board_attacks[label] = 对方打出去的格。
-    syncSpectateBoardAttacks();
+    spectateRebuildBoardAttacks();
     renderSpectateBoards();
     renderSpectatePlayers();
     if (spectateAttacksEl) spectateAttacksEl.textContent = String(spectateInt(snap && snap.attacks_remaining, 0));
 }
 
-// 把 `attacks`（按座位）转置成 `board_attacks`（按棋盘）—— 与快照里那两者
-// 的关系**完全一致**（服务端也是这么算的，见 `_build_spectate_snapshot`）。
+// ★★ 观战棋盘帧（第 5 批）────────────────────────────────────────────────
+// 服务端在**棋盘真的变了**的时候推一份权威数据过来（`spectate_board`）：
+//
+//   ① 疗愈原地复活 → 服务端把那一格从"对方打过哪里"里清掉了（船回到原格、
+//      又能再挨炮）；不进这一条的话观战屏上那一格会永远停在"沉"；
+//   ② 回光返照 / 灵气复苏 / 败者食尘 → 双方棋盘整块换新，
+//      观战屏必须跟着清空（重摆后的**新位置仍然保密**：新位置的船没挨过炮，
+//      在服务端的 `attacks` 里根本不存在）。
+//
+// ⚠️ 这里**只做"照着服务端给的数据重画"**，不做任何"这套卡应该怎么改棋盘"的
+//    推算 —— 那种按卡分支的写法必然与对局屏分叉（CLAUDE.md 教训 #1）。
+// ⚠️ 形状先校验再落盘：`attacks` 不是数组时**保留上一帧**，绝不清空
+//    （"先清空再填充"的渲染必须先校验数据）。
+function applySpectateBoardFrame(data) {
+    const sp = gameState.spectate;
+    if (!data || typeof data !== 'object') return;
+    const sides = data.sides;
+    if (!sides || typeof sides !== 'object') return;
+    const snap = sp.snapshot;
+    if (!snap) return;
+    let applied = false;
+    ['p1', 'p2'].forEach((label) => {
+        const side = sides[label];
+        if (!side || typeof side !== 'object') return;
+        const rows = side.attacks;
+        // 这一条是"保留上一帧"的闸门：形状不对时**这一块整个不动**。
+        if (!Array.isArray(rows)) return;
+        const cells = [];
+        rows.forEach((raw) => {
+            const cell = spectateCellOf(raw);
+            if (cell && cell.x >= 0 && cell.y >= 0) cells.push(cell);
+        });
+        // 服务端给的**就是**"落在该棋盘上的格"（与快照里的 `board_attacks` 同口径），
+        // 所以直接存进 `sp.attacks[label]`，下面的重建不再翻方向 —— 与快照
+        // （`applySpectateSnapshot` 也是把 `sides[label].attacks` 存进 `sp.attacks[label]`）
+        // 保持同一条约定，免得两处方向相反。
+        sp.attacks[label] = cells;
+        applied = true;
+    });
+    if (!applied) return;
+    // 名字 / 船数 / 手牌张数：帧里带了就**当场**对齐（疗愈复活会让剩余船数 +1，
+    // 而 `attack_result` 只带"这一炮之后"的数字 —— 复活不是开炮，没有那条事件）。
+    // 帧里没带的字段保持原值（宁可显示旧的，也不显示 0）。
+    if (snap.sides) {
+        ['p1', 'p2'].forEach((label) => {
+            const side = sides[label];
+            if (!side || !snap.sides[label]) return;
+            const n = Number(side.remaining_ships);
+            if (isFinite(n)) snap.sides[label].remaining_ships = Math.trunc(n);
+            const h = Number(side.hand_count);
+            if (isFinite(h)) snap.sides[label].hand_count = Math.trunc(h);
+            if (side.name !== undefined && side.name !== null) {
+                snap.sides[label].name = String(side.name);
+            }
+        });
+    }
+    spectateRebuildBoardAttacks();
+    renderSpectateBoards();
+    renderSpectatePlayers();
+    if (window.__SPEC_APPLY_LOG) {
+        // 诊断用的"应用记录"：只记**棋盘上画了几格**（b1m/b2m）与应用时刻。
+        // 判据取它而不是 DOM 快照，是因为同一局里双方还在继续动作、
+        // DOM 会被后续合法帧继续改写（E2E 在这一点上踩过两次假红）。
+        window.__SPEC_APPLY_LOG.push({
+            t: Date.now() % 1000000,
+            b1m: (spectateBoards[0].board
+                ? spectateBoards[0].board.querySelectorAll('.cell.hit, .cell.miss').length : -1),
+            b2m: (spectateBoards[1].board
+                ? spectateBoards[1].board.querySelectorAll('.cell.hit, .cell.miss').length : -1),
+        });
+    }
+}
+
+// 把 `attacks`（按座位：**该座位打出去的格**）转置成 `board_attacks`（按棋盘：
+// **落在该棋盘上的格**）—— 与快照里那两者的关系**完全一致**
+// （服务端也是这么算的，见 `_build_spectate_snapshot` / `_spectate_board_frame`）。
 // 转置而不是各改一份，是为了让"棋盘上会显示什么"只有一个数据源。
-function syncSpectateBoardAttacks() {
+function spectateRebuildBoardAttacks() {
     const snap = gameState.spectate.snapshot;
     if (!snap) return;
     const attacks = gameState.spectate.attacks;

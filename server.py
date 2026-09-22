@@ -850,6 +850,14 @@ class GameRoom:
         self.skip_opponent_stages = None
         # 回光返照：施法者正在重摆棋盘（布船完成后的收尾走"重开新大回合 + 重新猜拳"）
         self.huiguang_awaiting_placement = False
+        # ★ 2026-09-22（第 5 批）：观战棋盘"脏了"的标记（按 CLAUDE.md 第 11 条三件齐）。
+        #   `True` = 本次操作改过棋盘上的格（清格 / 整块重摆），要在收尾时补发一次
+        #   `spectate_board` 帧。**标记而不立刻发**的理由见 `_mark_spectate_board_dirty`：
+        #   清格发生在结算中段，同一张卡后面还会改局面（复活要加船数）——
+        #   立刻发就是一条半成品帧（实测帧里船数是 5、真值 6）。
+        #   消费点：`_flush_spectate_board_if_dirty`（由 `emit()` 收尾调用）。
+        #   回归用例：tests/test_spectate_batch5.py（疗愈 / 灵气复苏 / 败者食尘 / 回光返照）。
+        self.spectate_board_dirty = False
         # ★ 2026-09-20 新增：**待点选的战舰队列**（选船类效果的优先级仲裁）。
         #
         # 每项：`{'player': pid, 'reason': str, 'message': str, 'priority': int, 'seq': int}`
@@ -8245,6 +8253,141 @@ def _emit_board_attacks(room):
         }, to=player.sid)
 
 
+# ===========================================================================
+# 实时观战（第 5 批）· 棋盘帧：观众那块棋盘从**同一份权威数据**重新解算
+# ---------------------------------------------------------------------------
+# ★★ 为什么必须有这一块（作者 2026-09-22 实报的两个缺陷）★★
+#
+# 第 3/4 批的观战棋盘是**从 `attacks` 反推**的（`board_attacks[label]` = 落在该
+# 棋盘上的格）。那份数据只在**进席那一刻**来自快照，之后完全没有更新路径 ——
+# `board_attacks_updated`（`_emit_board_attacks` 发的）与 `reset_gameboard` 都在
+# `spectate.NOT_FOR_SPECTATORS` 里，观众一条都收不到。于是：
+#
+#   · **疗愈原地复活** → 服务端把那一格从对手的攻击历史里清掉了（`_clear_attacks_on_cells`），
+#     对手那块棋盘上它变回空白、船画了回来；观众那块棋盘却永远停在"沉"；
+#   · **回光返照 / 灵气复苏 / 败者食尘** → 双方 `attacks` 被清空、棋盘整块换新，
+#     观众那块棋盘**一格都不清**（重摆后新位置本来是保密的，旧格子却还挂着）。
+#
+# ⚠️ 修法**不是**给每张卡再写一份"棋盘更新"（那是 CLAUDE.md 教训 #1 的第二份实现，
+#    下一次加卡必然漂移）。这里只做一件事：**把服务端的权威数据推给观众**，
+#    形状与快照里给观众的那两块**逐字段同一份**（都走 `_spectate_player_cells`）
+#    ⇒ 观众看到的 <= 对局双方看到的（双方本来就能看到对方每一炮打在哪、中没中）。
+#
+# ⚠️ 帧里**只可能出现已经轰过的格**：数据源是 `Player.attacks`（动作记录），
+#    没挨过炮的船位在这个列表里根本不存在。**换位置重新部署**（增援 / 死者苏生 /
+#    滥竽充数 / 神机妙算）的新位置不在里面 ⇒ 仍然保密。
+#    守卫：`tests/test_spectate_batch5.py` 用一个"船位已知、只轰过一格"的房间
+#    断言帧里一个未挨过炮的船位都不出现。
+# ===========================================================================
+
+def _spectate_side_payload(seat_id: str, player) -> dict:
+    """**一个座位**对观众公开的那一份（快照与棋盘帧**共用**这唯一一份实现）。
+
+    字段全是公开信息：
+      · `seat_id`         —— 原始座位 key（实时流里的事件用的就是它，观众靠它对齐两边）；
+      · `name`            —— 昵称；
+      · `remaining_ships` —— 剩余船数（双方都看得到）；
+      · `hand_count`      —— **只看张数、不看内容**（作者裁定）；
+      · `attacks`         —— 这个座位**打出去**的格（已轰过的格，逐格结果双方都看得见）。
+
+    ★ 第 5 批把这段从 `_build_spectate_snapshot` 里**提出来**：棋盘帧要发**同一份**
+      形状，否则"快照里的座位"与"实时流里的座位"会长成两份实现（教训 #1 的老病根）。
+    """
+    return {
+        'seat_id': seat_id,
+        'name': getattr(player, 'name', None),
+        'remaining_ships': getattr(player, 'remaining_ships', 0),
+        # ★ 手牌**只看张数，不看内容**（作者裁定）。
+        #   `magic_hand` 这个键名本身也在禁字段表里 —— 谁都别想顺手塞进来。
+        'hand_count': len(getattr(player, 'magic_hand', None) or []),
+        'attacks': _spectate_player_cells(player),
+    }
+
+
+def _spectate_board_frame(room) -> dict:
+    """观众版「两块棋盘现在该画什么」—— 快照与实时流**共用**的一份构造。
+
+    与 `_build_spectate_snapshot` 里的 `sides` **同源**（都走 `_spectate_side_payload`），
+    只是方向相反：`sides[label].attacks` = **label 自己**打出去的格，而这里的
+    `attacks` = **落在 label 这块棋盘上**的格（= 对手打出去的格）——
+    与快照里的 `board_attacks[label]` 是同一个口径，前端拿它直接画，不必自己翻方向。
+    """
+    frame = {
+        'room_id': room.id,
+        'seat_labels': spectate.seat_label_map(room),
+        'sides': {},
+    }
+    for index, pid in enumerate(spectate.seat_order(room)[:2]):
+        other = room.players.get(_opponent_of(room, pid))
+        side = _spectate_side_payload(pid, room.players.get(pid))
+        # 方向翻过来：这块棋盘上要画的是**对方**打出去的格
+        side['attacks'] = _spectate_player_cells(other)
+        frame['sides']['p%d' % (index + 1)] = side
+    return frame
+
+
+def _publish_spectate_board(room) -> None:
+    """**立刻**把棋盘帧推给观战通道（`spectate:<room_id>`）。
+
+    ⚠️ 绝大多数调用点要的是 `_mark_spectate_board_dirty(room)`（延后到本次
+       操作全部结算完再发），见那个函数的说明。这里保留"立刻发"是给
+       **必须抢先**的场景用的（目前没有：棋盘重置也走延后）。
+
+    ⚠️ 三个"必须"：
+      · **只发观战通道** —— `socketio.emit(..., room=spectate.spectate_room_id(...))`，
+        绝不发对局 room（那会让玩家多收一条毫无意义的大 payload）；
+      · **任何玩家都不是这条事件的收件人** —— 结构性隔离，与第 4 批的名单/聊天同规矩；
+      · **过 `spectate.sanitize_event`** —— 帧的形状由 `canonical_frame_json` 的
+        三级白名单**过滤**（不是断言），所以以后有人往帧里塞 `ships`/`positions`
+        也到不了观众手里；`spectate.CANONICALIZE` + `_validate()` 保证
+        "登记了白名单过滤"与"真的在用"是同一件事。
+    """
+    if spectate.is_spectate_room(getattr(room, 'id', None)):
+        return                       # 观战通道自己不许再往观战通道发（防自我循环）
+    clean = spectate.sanitize_event('spectate_board', _spectate_board_frame(room),
+                                    room=room)
+    if clean is None:
+        return                       # 表里没登记 = 不发（默认拒绝，与其它事件同规矩）
+    socketio.emit('spectate_board', clean,
+                  room=spectate.spectate_room_id(room.id))
+
+
+def _mark_spectate_board_dirty(room) -> None:
+    """"这块棋盘变了" —— **立刻**把棋盘帧推给观战通道，并记下这次操作已经推过。
+
+    ★★ 为什么要有这个函数（而不是到处直接调 `_publish_spectate_board`）★★
+    它是一句**语义声明**："我改了棋盘上能看见的东西，观众必须知道"。
+    调用点写在"改棋盘"的那一行旁边，读代码的人一眼能看出这条因果；
+    而**什么时候真的发**（立刻 / 收尾补一条更完整的）由这里统一决定。
+    源码级守卫 `tests/test_spectate_batch5.py::test_every_attacks_clear_site_publishes_the_frame`
+    会扫出所有清 `attacks` 的位置，要求它们都留下这个声明。
+
+    ⚠️ 立刻发的那一份读的是**当前**的 `Player.attacks`，所以它总是"格"的真相；
+    但同一张卡后面可能还会改**别的**字段（`_revive_sunken_ships` 在清格之后才
+    `remaining_ships += 1`）。那种情况下由调用方在收尾再补一次
+    `_flush_spectate_board_if_dirty`，用更完整的局面覆盖掉前一条 ——
+    观众侧是"同一份数据整体替换"，所以先后两条不会拼出错误画面。
+    """
+    if room is None:
+        return
+    _publish_spectate_board(room)
+    try:
+        room.spectate_board_dirty = True
+    except AttributeError:           # 假房间（测试替身）没有这个字段
+        pass
+
+
+def _flush_spectate_board_if_dirty(room) -> None:
+    """这次操作推过帧就**再推一条更完整的**（幂等；没推过就什么都不做）。
+
+    用在"清格之后还会继续改局面"的分支收尾（复活加船数 / 重摆换 `max_ships`）。
+    """
+    if room is None or not getattr(room, 'spectate_board_dirty', False):
+        return
+    room.spectate_board_dirty = False
+    _publish_spectate_board(room)
+
+
 def _clear_attacks_on_cells(room, positions, board_owner_id):
     """把指定格子从【对手打到这块棋盘上】的攻击历史里移除，并把结果重新下发给两端。
 
@@ -8279,6 +8422,13 @@ def _clear_attacks_on_cells(room, positions, board_owner_id):
     ]
     if len(room.players[opponent_id].attacks) != before:
         _emit_board_attacks(room)
+        # ★ 第 5 批：观众那块棋盘必须跟着变。这里正是"疗愈原地复活"
+        #   （`_revive_sunken_ships`）与"换位置重新部署"（增援/死者苏生/
+        #   滥竽充数/神机妙算）清格子的唯一入口 —— 不同步的话，观战屏上
+        #   那一格会永远停在"沉"（作者实报的缺陷 ①）。
+        #   ⚠️ 帧里只有"格"，没有船数：调用方（`_revive_sunken_ships`）在后面
+        #      还会加船数，所以它收尾时会补一条更完整的（`_flush_...`）。
+        _mark_spectate_board_dirty(room)
 
 
 def _reveal_cells_to(room, player_id, positions, kind=None):
@@ -8353,6 +8503,10 @@ def _revive_sunken_ships(room, player, count, reveal_to=None):
     # 全场持卡者都摸 —— 包括对手持有八方来财时，我复活自己的船他也摸。
     if revived_any:
         _notify_treasure_hunter(room, revived_any)
+    # ★ 第 5 批：这次操作推过棋盘帧就再推一条**更完整**的（幂等）。
+    #   上面的清格已经推过一条，这里覆盖成"结算完之后"的真值
+    #   （复活会加船数、重摆会换 `max_ships`）。
+    _flush_spectate_board_if_dirty(room)
     return revived_any
 
 
@@ -9450,6 +9604,10 @@ def _spectate_player_cells(player) -> list:
        用"船位已知、只轰过一格"的房间把这一点钉死。
     """
     cells = []
+    if player is None:
+        # 座位缺人（房间刚建 / 对手还没进来）：如实返回"一格都没有"，
+        # 不抛异常也不编数据 —— 帧的消费方只该看到空棋盘。
+        return cells
     for a in (getattr(player, 'attacks', None) or []):
         cells.append({
             'x': getattr(a, 'x', None),
@@ -9495,20 +9653,11 @@ def _build_spectate_snapshot(room) -> dict:
 
     sides = {}
     for index, pid in enumerate(seat_ids[:2]):
-        player = room.players.get(pid)
         label = 'p%d' % (index + 1)
-        sides[label] = {
-            # 原始座位 key 一并给：实时流（attack_result / turn_change 等）里
-            # 用的就是它，观众要靠它把两边对上；前端**不许**自己把 key 猜成 p1/p2，
-            # 座位标签一律取 `seat_labels` / `spectate.seat_label`。
-            'seat_id': pid,
-            'name': getattr(player, 'name', None),
-            'remaining_ships': getattr(player, 'remaining_ships', 0),
-            # ★ 手牌**只看张数，不看内容**（作者裁定）。
-            #   `magic_hand` 这个键名本身也在禁字段表里 —— 谁都别想顺手塞进来。
-            'hand_count': len(getattr(player, 'magic_hand', None) or []),
-            'attacks': _spectate_player_cells(player),
-        }
+        # ★ 第 5 批：一个座位的公开信息**只有一份实现**（`_spectate_side_payload`）——
+        #   棋盘帧（`_publish_spectate_board`）发的是同一个函数的结果。
+        #   否则"快照里的座位"与"实时流里的座位"会长成两份、迟早漂移（教训 #1）。
+        sides[label] = _spectate_side_payload(pid, room.players.get(pid))
 
     # 两块棋盘各自的"被轰过的格" = 对方打出去的格。
     # 与上面的 `attacks` 是**同一份数据的转置**（前端画棋盘时不必自己翻方向）：
@@ -10295,6 +10444,11 @@ def confirm_magic_target(data):
             player.revealed_positions = []
             # 设置新的船数限制
             player.max_ships = target_ships
+        # ★ 第 5 批：双方棋盘整块换新 —— 观众那块棋盘也必须清空（作者实报的缺陷 ④）。
+        #   位置写在这里、而不是给"灵气复苏"单独写一份棋盘更新：这一句是所有
+        #   "清空 attacks" 的位置共用的同一条出口（见 tests/test_spectate_batch5.py
+        #   里那条源码级穷举守卫）。真正的发送在 `emit()` 收尾。
+        _mark_spectate_board_dirty(room)
 
         # 清除临时数据
         room.magic_temp_data = {}
@@ -10331,6 +10485,9 @@ def confirm_magic_target(data):
             'message': '对方灵气复苏结算完成'
         }, to=room.players[opponent_id].sid)
 
+        # ★ 第 5 批：本分支发出去的全是 `to=<sid>` 单发，`emit` 的收尾不跑
+        #   （收尾只挂在广播类上）⇒ 必须在这里自己收口，否则观众那块棋盘不清。
+        _flush_spectate_board_if_dirty(room)
         return {'status': 'success', 'message': '灵气复苏船数选择完成'}
 
     elif temp_data_id == 'bury_choice':
@@ -11973,6 +12130,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                 ship.invincible = False
                 ship.shield = False
                 ship.trap = False
+        # ★ 第 5 批：双方棋盘整块换新 → 观众那块棋盘跟着清空（与灵气复苏同一句）。
+        _mark_spectate_board_dirty(room)
 
         # 冻结区域记录也一并清掉（重开棋盘后区域标记不该残留）
         if isinstance(room.game_effects, dict):
@@ -12035,6 +12194,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         _ai_seat_places_board_now(room, caster_id)
 
         result['message'] = '败者食尘生效：双方棋盘重置为6艘并重新摆放，手牌保留；本大回合双方攻击次数为0'
+        # ★ 第 5 批：本分支发出去的全是 `to=<sid>` 单发，`emit` 的收尾不跑 ⇒ 自己收口。
+        _flush_spectate_board_if_dirty(room)
         # 立即返回：已清空双方战舰并重置为布船阶段，
         # 不能落入末尾"对手剩余船数<=0 则游戏结束"的兜底判断（会误判 game_over）
         return result
@@ -13127,6 +13288,9 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         # 清空对方视角（显形记录 + 攻击历史一起清，否则前端本地缓存还画着 ✕）
         room.players[opponent_id].revealed_positions = []
         _emit_board_attacks(room)
+        # ★ 第 5 批：施法者那块棋盘整块换新 → 观众那块也得清空（作者实报的缺陷 ④）。
+        #   重摆之后的**新位置仍然保密**：新位置的船没挨过炮，不在 `attacks` 里。
+        _mark_spectate_board_dirty(room)
 
         # 跳过自己的战斗阶段
         room.current_phase = 'end'

@@ -290,6 +290,169 @@ def _pub_magic_chain(data, room=None):
 
 
 # ---------------------------------------------------------------------------
+# 观战棋盘帧（第 5 批）：board + sides 的**规范化白名单**
+# ---------------------------------------------------------------------------
+# ★★ 为什么需要这一块（第 5 批的根因）★★
+#
+# 第 3/4 批的观战棋盘是**从 `attacks` 反推**的：`board_attacks[label]` = 落在该棋盘上
+# 的格。第 5 批实测：`attacks` 这段历史**在船被复活 / 棋盘被重置时会变**，而
+# `board_attacks_updated` 与 `reset_gameboard` 都在 `NOT_FOR_SPECTATORS` 里 ——
+# 于是观众那份数据**从进席起就冻结了**。症状（作者实报）：
+#   · 疗愈原地复活之后，观战棋盘上那一格仍然画着"沉"；
+#   · 回光返照 / 灵气复苏 / 败者食尘重置棋盘之后，观战棋盘一格都不清。
+#
+# 修法**不是**给每张卡再写一份"棋盘更新"（那就是 CLAUDE.md 教训 #1 的第二份实现，
+# 迟早漂移），而是：**棋盘只从服务端的权威数据重新解算**，并把这份权威数据
+# 在棋盘变动的时刻推给观众 —— 同一个 `spectate_board` 事件，同一个形状。
+#
+# ⚠️ 这份帧里**只允许出现"已经轰过的格"**（`Player.attacks` 的逐格结果），
+#    它和对局双方看到的东西**逐字节同一份**（`board_attacks_updated` 是它的镜像）。
+#    帧里没有任何"没挨过炮的船位" —— 玩家自己也得先开炮才知道那种信息。
+#
+# 两张白名单就是"漏加一个键导致透视"的机器守卫：`canonical_frame_json` 会
+# **删掉**白名单外的任何键（不是断言、是过滤），所以即便以后有人往帧里塞
+# `ships` / `positions`，也到不了观众手里；而 `tests/test_spectate_batch5.py`
+# 同时扫服务端源码，要求 `_spectate_player_cells` 产出的键集合**正好等于**
+# `SPECTATE_FRAME_CELL_KEYS`（多一个 = 会被静默丢掉，少一个 = 前端画不出来）。
+SPECTATE_FRAME_KEYS = frozenset({'room_id', 'sides', 'seat_labels'})
+# 座位级白名单：**必须与 `_spectate_side_payload` 产出的键集合逐字相同** ——
+# 少一个键 = 观众屏上那项退化成默认值（名字变"玩家"、船数变 0），且**不报错**；
+# 多一个 = 会被静默丢掉。`tests/test_spectate_batch5.py` 扫服务端源码把两张表钉在一起。
+SPECTATE_FRAME_SIDE_KEYS = frozenset({
+    'seat_id', 'name', 'remaining_ships', 'hand_count', 'attacks',
+})
+# 格级白名单：**必须与 `server._spectate_player_cells` 产出的键集合逐字相同**。
+SPECTATE_FRAME_CELL_KEYS = frozenset({'x', 'y', 'hit', 'ship_sunk'})
+SPECTATE_FRAME_LABELS = frozenset({'p1', 'p2'})
+
+
+class SpectateFrameError(ValueError):
+    """帧的形状不合法 —— **绝不静默修好**（教训 #34：兜底 + 零报错会一起制造假象）。"""
+
+
+def _canonical_frame_cells(raw_list) -> list:
+    """格级白名单：只保留 `SPECTATE_FRAME_CELL_KEYS` 里的四个字段。
+
+    ⚠️ 坐标**必须是整数**才收：`isinstance(True, int)` 在 Python 里为真，
+       所以先排 bool —— 一个 `{'x': True}` 混进来会让前端算出 `1,true` 这种怪格。
+    """
+    cells = []
+    for raw in (raw_list or []):
+        if not isinstance(raw, dict):
+            continue
+        x, y = raw.get('x'), raw.get('y')
+        if isinstance(x, bool) or isinstance(y, bool):
+            continue
+        if not isinstance(x, int) or not isinstance(y, int):
+            continue          # 坐标不是整数 = 形状不对，丢掉这一格
+        cells.append({key: (bool(raw.get(key)) if key in ('hit', 'ship_sunk') else raw[key])
+                      for key in ('x', 'y', 'hit', 'ship_sunk')})
+    assert all(set(cell) == set(SPECTATE_FRAME_CELL_KEYS) for cell in cells), \
+        '格级白名单写错了（这是实现 bug，不是调用方的问题）'
+    return cells
+
+
+def _canonical_frame_sides(sides) -> dict:
+    """座位级白名单：只保留 `SPECTATE_FRAME_SIDE_KEYS` 里的字段。"""
+    clean_sides = {}
+    for label, side in (sides or {}).items():
+        if label not in SPECTATE_FRAME_LABELS or not isinstance(side, dict):
+            continue              # 认不出来的座位名一律丢掉（宁可少给，绝不乱给）
+        clean = {}
+        if 'seat_id' in side and side['seat_id'] is not None:
+            clean['seat_id'] = str(side['seat_id'])
+        if 'name' in side and side['name'] is not None:
+            clean['name'] = str(side['name'])
+        for key in ('remaining_ships', 'hand_count'):
+            if key in side:
+                value = side[key]
+                if isinstance(value, bool) or not isinstance(value, int):
+                    continue      # 不是整数 = 形状不对，宁可不给（前端退化成 0，不显示怪东西）
+                clean[key] = value
+        clean['attacks'] = _canonical_frame_cells(side.get('attacks'))
+        clean_sides[label] = clean
+    assert all(set(side) <= set(SPECTATE_FRAME_SIDE_KEYS) for side in clean_sides.values()), \
+        '座位级白名单写错了（这是实现 bug，不是调用方的问题）'
+    return clean_sides
+
+
+def _canonical_frame_impl(frame: dict) -> dict:
+    """把一份帧规范化成"只会发给观众"的形状（白名单过滤，纯函数）。
+
+    **不抛异常、只过滤** —— 因为它是发给观众前的最后一道门：
+    形状不对时宁可发一份"少几个键"的帧，也不能不发（不发 = 观众屏上棋盘冻结，
+    正是本批要修的毛病）。**多余键一律删掉**，缺的键由调用方负责补齐。
+    """
+    if not isinstance(frame, dict):
+        return {}
+    out = {}
+    if frame.get('room_id') is not None:
+        out['room_id'] = str(frame['room_id'])
+    labels = frame.get('seat_labels')
+    if isinstance(labels, dict):
+        out['seat_labels'] = {str(k): str(v) for k, v in labels.items()}
+    sides = frame.get('sides')
+    if isinstance(sides, dict):
+        out['sides'] = _canonical_frame_sides(sides)
+    return out
+
+
+def canonical_frame(frame: dict) -> dict:
+    """`spectate_board` 的规范化（**白名单过滤后的新 dict**，绝不返回入参本身）。
+
+    无论传进来什么，返回的键一定 ⊆（`SPECTATE_FRAME_KEYS` /
+    `SPECTATE_FRAME_SIDE_KEYS` / `SPECTATE_FRAME_CELL_KEYS`）这三级白名单。
+    """
+    clean = _canonical_frame_impl(frame)
+    assert set(clean) <= set(SPECTATE_FRAME_KEYS), \
+        'canonical_frame 自己漏了白名单（这是实现 bug，不是调用方的问题）'
+    return clean
+
+
+def canonical_frame_json(frame: dict, room=None) -> dict:
+    """`canonical_frame` 的**往返版**（过一遍 JSON 序列化）。
+
+    `server.emit` 的净化收到的是已经 `json.dumps` 过的普通数据；直接调净化函数的人
+    可能传的是带 tuple 的 dict。这一层保证两条路径拿到**逐字节相同**的结果
+    （也是 `spectate_board` 注册进 `SPECTATE_EVENTS` 的那个净化函数）。
+
+    `room` 参数只为满足净化函数统一签名（`fn(data, room=None)`）—— 本帧的座位标签
+    由**调用方**（`server._publish_spectate_board`，那里有房间对象）填好，
+    净化这一步刻意**不再读房间**：读房间就多一处"帧与快照可能不一致"的机会。
+    """
+    import json as _json
+    return canonical_frame(_json.loads(_json.dumps(frame, default=lambda o: o.__dict__)))
+
+
+def _validate_frame_keys():
+    """导入期自检：帧的白名单**不许**与禁字段表打架。
+
+    ⚠️ 这条校验存在的理由（**必须**在 `_validate()` **之后**跑）：
+    两张表一旦有人各改一边，`canonical_frame` 会把一个"其实不该给"的键
+    **过滤掉**（看起来更安全），但它的字段名会进 `SPECTATE_FRAME_KEYS`
+    从而**从禁字段表里消失** —— 那就等于悄悄放宽了守卫，而且毫无运行时症状。
+    所以它要在 `FORBIDDEN_PAYLOAD_KEYS` 定义之后、与 `_validate()` 一起跑。
+    """
+    for name, keys in (('SPECTATE_FRAME_KEYS', SPECTATE_FRAME_KEYS),
+                       ('SPECTATE_FRAME_SIDE_KEYS', SPECTATE_FRAME_SIDE_KEYS),
+                       ('SPECTATE_FRAME_CELL_KEYS', SPECTATE_FRAME_CELL_KEYS)):
+        bad = set(keys) & set(FORBIDDEN_PAYLOAD_KEYS)
+        if bad:
+            raise ValueError(
+                '%s 里出现了禁字段 %s —— 帧的白名单与"不许泄漏"清单打架'
+                % (name, sorted(bad)))
+    # 帧里只可能出现这两块棋盘的格（`p1` / `p2`），别的座位名一律丢掉
+    if SPECTATE_FRAME_LABELS != frozenset({'p1', 'p2'}):
+        raise ValueError('帧只认 p1/p2 两个座位标签')
+
+
+# 这些事件的 payload 形状**不受其它单条的约束**，而是靠 `canonical_frame`
+# 那张**三级白名单**（顶层 / 座位 / 格）过滤 —— `_validate()` 会断言它们确实登记在
+# `SPECTATE_EVENTS` 里。以后加的事件如果 payload 形状不受控，就登记到这里。
+CANONICALIZE = frozenset({'spectate_board'})
+
+
+# ---------------------------------------------------------------------------
 # 允许给观众的事件表
 # ---------------------------------------------------------------------------
 # 值 = 净化函数；None = 原样转发（该事件的 payload 天然不含局面秘密）。
@@ -397,6 +560,19 @@ SPECTATE_EVENTS = {
     # 只单发给本人（`to=sid`），且**只含显示名** —— 座位识别仍只靠 `sides[].seat_id`
     # 与 `seat_labels`，这里不引入任何新的连接标识。
     'spectate_you': None,
+    # —— ★ 观战棋盘帧（第 5 批）——
+    # 为什么必须有它：观战棋盘原来是**从 `attacks` 历史反推**的，而那段历史在
+    # 「疗愈原地复活 / 棋盘重置（回光返照·灵气复苏·败者食尘）」时会变，
+    # 观众侧却收不到任何一条能触发重新解算的事件（`board_attacks_updated` 与
+    # `reset_gameboard` 都在 `NOT_FOR_SPECTATORS` 里）→ 观战棋盘**从进席起就冻结**。
+    #
+    # 这份帧的字段**与快照里给观众的那两块完全同源**（`_spectate_player_cells`），
+    # 也就是"这一格挨过炮没有、中没中、沉没沉" —— 对局双方看到的逐格结果
+    # 与它逐字节相同（`board_attacks_updated` 就是它的镜像）⇒ 不是新信息。
+    # ⚠️ 帧里**绝不会**有"没挨过炮的船位"：那些格子在 `Player.attacks` 里不存在。
+    # 形状由 `canonical_frame_json` 按三级白名单**过滤**（不是断言），
+    # 守卫在 `tests/test_spectate_batch5.py`。
+    'spectate_board': canonical_frame_json,
 }
 
 
@@ -537,6 +713,17 @@ def _validate():
     unscrubbed = set(FORBIDDEN_PAYLOAD_KEYS) - set(COORDINATE_KEYS)
     if unscrubbed:
         raise ValueError('COORDINATE_KEYS 漏了：%s' % sorted(unscrubbed))
+    # 第 5 批：被 `canonical_frame` 过滤的那几个事件必须真的登记在允许表里 ——
+    # 否则"我在过滤 / 其实没人用"就是一句空话（教训 #34：兜底 + 零报错制造假象）。
+    for event in CANONICALIZE:
+        if event not in SPECTATE_EVENTS:
+            raise ValueError('%r 走 canonical_frame，却不在 SPECTATE_EVENTS 里' % event)
+        if SPECTATE_EVENTS[event] is None:
+            raise ValueError(
+                '%r 登记成"原样转发"，但它的 payload 形状不受控 —— '
+                '必须走 canonical_frame_json' % event)
+    # 帧的三级白名单（要读到上面那张 `FORBIDDEN_PAYLOAD_KEYS`，所以只能在这里跑）
+    _validate_frame_keys()
 
 
 _validate()

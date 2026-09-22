@@ -92,6 +92,13 @@ KNOWN_EVENTS = frozenset({
     # 对局房间号"的门禁挡掉）。只有 `spectate_you` 走 `emit(..., to=sid)` 单发。
     'spectate_roster', 'spectate_joined', 'spectate_left', 'spectate_chat',
     'spectate_you',
+    # —— 观战通道自己的一套（第 5 批：棋盘帧）——
+    # 同样走 `socketio.emit` 直接发进 `spectate:<room_id>`（不经 `emit` 的第三条腿），
+    # 所以它**不会**出现在上面的 AST 扫描结果里；登记在这里是因为
+    # `test_event_registries_are_complete_and_disjoint` 要求
+    # `SPECTATE_EVENTS ∪ NOT_FOR_SPECTATORS ⊆ KNOWN_EVENTS`。
+    # payload 形状由 `spectate.canonical_frame_json` 的三级白名单过滤。
+    'spectate_board',
     # —— 错误提示 ——
     'error',
 })
@@ -442,6 +449,28 @@ def _payloads(room):
         },
         # —— 场地魔法：贴了什么卡对双方都是公开的 ——
         'field_magic_updated': {'player_id': 'p1', 'card': {'name': '伊甸园', 'type': '场地'}},
+        # —— ★ 观战棋盘帧（第 5 批）：真实形状 = `server._spectate_board_frame` ——
+        # 只有"已轰过的格"（`hit` / `ship_sunk` 也是双方逐格看得见的结果），
+        # 座位字段与快照里那几块**同源**（`_spectate_side_payload`）。
+        #
+        # ⚠️ 这一条**故意不放"未挨过炮的船位"**，与 `MUST_NOT_LEAK_COORDS` 那 5 个
+        #    不同：那 5 个的**原始** payload 里本来就带着船位，所以需要
+        #    `test_raw_payloads_would_have_leaked` 做反向校准；而本帧的原始数据
+        #    就直接取自 `Player.attacks`（动作记录），**结构上不可能**有没轰过的格。
+        #    对这件事的守卫不在采样里，而在
+        #    `tests/test_spectate_batch5.py::test_frame_never_carries_an_unhit_ship_cell`
+        #    （用"船位已知、只轰过一格"的真房间去建帧）。
+        'spectate_board': {
+            'room_id': 'spectate-guard',
+            'seat_labels': {'p1': 'p1', 'p2': 'p2'},
+            'sides': {
+                'p1': {'seat_id': 'p1', 'name': '甲', 'remaining_ships': 6,
+                       'hand_count': 2,
+                       'attacks': [{'x': hx, 'y': hy, 'hit': True, 'ship_sunk': False}]},
+                'p2': {'seat_id': 'p2', 'name': '乙', 'remaining_ships': 5,
+                       'hand_count': 1, 'attacks': []},
+            },
+        },
         # —— 其余事件的真实形状（都不含坐标；下面仍逐个断言）——
         'attacks_updated': {'current_attacker': 'p1', 'attacks_remaining': 4},
         'turn_change': {'current_attacker': 'p2', 'attacks_remaining': 5, 'phase': 'preparation'},

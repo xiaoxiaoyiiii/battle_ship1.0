@@ -18,6 +18,7 @@
 （棋盘零遮挡 / 零纵向滚动 / 面板零叠压 / 触摸目标 / 手牌够得着）。
 """
 import os
+import re
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -57,12 +58,48 @@ def test_compact_layout_scoped_to_game_screen():
 
 
 # 3. 搬进面板槽之后，原来的浮窗必须交出 position:fixed（否则仍会盖住棋盘）
+#
+# ⚠️ 判据在 Fluent 批改写过（原为 `'position: static !important;' in CSS`）。
+#    原来必须是 !important，因为面板槽里的浮窗要压掉**两样东西**：
+#      a) `.log-container` 等基础规则里的 `position: fixed`；
+#      b) game.js 给三个浮窗写的**内联** left/top（拖拽会写内联样式）。
+#    Fluent 批把 (b) 消掉了 —— 拖拽写内联的逻辑现在只作用于宽屏浮窗，
+#    紧凑布局下三个面板已改为纯类控制（见 style.css 第 22.4 节注释），
+#    于是这里可以用普通规则（特异性本就更高），不再需要 !important。
+#    这条断言要防的回归没变：**搬进面板槽后仍在 floating**（fixed/absolute + 非 auto 的定位值）。
+#    所以新判据直接读那三个选择器块，逐块检查 position 与其偏移量，而不是匹配某个字面量。
+def _rule_block(selector):
+    """取 CSS 里某个选择器所在块的正文（第一个匹配）。找不到返回 None。"""
+    m = re.search(re.escape(selector) + r'\s*\{([^}]*)\}', CSS)
+    return m.group(0) if m else None
+
+
 def test_docked_panels_lose_position_fixed():
+    # 三个浮窗确实被面板槽接管（选择器必须还在）
     assert '.dock-panel .log-container' in CSS
     assert '.dock-panel #in-game-chat-container' in CSS
     assert '.dock-panel #magic-card-preview' in CSS
-    # 用 fixed 的 !important 覆盖内联 left/top（拖拽功能会写内联样式）
-    assert 'position: static !important;' in CSS
+
+    for selector in ('body.layout-compact.layout-ingame .dock-panel .log-container',
+                     'body.layout-compact.layout-ingame .dock-panel #in-game-chat-container',
+                     'body.layout-compact.layout-ingame .dock-panel #magic-card-preview'):
+        block = _rule_block(selector)
+        assert block, '缺少「搬进面板槽」的规则块：%s' % selector
+        # 必须交出浮动：position 归位成 static
+        assert re.search(r'position:\s*static\s*;', block), \
+            '%s 没有交出 position:fixed（仍会盖住棋盘）' % selector
+        assert not re.search(r'position:\s*(fixed|absolute)\s*;', block), \
+            '%s 仍是浮动定位' % selector
+        # 四个偏移量必须归位 —— 但**只对原本用 fixed 定位、带偏移量的浮窗要求**：
+        # .log-container（fixed + top/left）与 #in-game-chat-container（fixed + right/bottom）
+        # 都写了偏移量，必须显式 auto 归位，否则 left/top 仍会把面板拽出槽。
+        # #magic-card-preview 原本就是 position:relative 且没有偏移量声明，
+        # 对它要求 `top: auto` 是无意义的（原 CSS 里就没有），故排除。
+        if selector.endswith('#magic-card-preview'):
+            continue
+        for prop in ('top', 'left', 'right', 'bottom'):
+            assert re.search(prop + r':\s*auto\s*;', block), \
+                '%s 的 %s 未归位成 auto（会被拽出面板槽）' % (selector, prop)
 
 
 # 4. 棋盘尺寸由舞台反推，且只锁宽度——同时锁高度会在舞台变矮时压成扁格子

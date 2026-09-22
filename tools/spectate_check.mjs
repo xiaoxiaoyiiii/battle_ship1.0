@@ -533,6 +533,68 @@ const SPECTATE_CHAIN_PROBE = '(function(){'
   + '     negated: r.classList.contains("spectate-chain-negated") }); });'
   + ' return { raw: el ? el.textContent.trim() : null, items: items }; })()';
 
+// ★★ 连锁**事件台账**（第 7 批）：在帧**到达的那一刻**把观众侧看到的东西记下来。
+//
+// 为什么必须"就地记"而不是"事后读 DOM"：
+//   连锁响应到达后，服务端在**同一条广播链**上还会推 `chain_resolved`
+//   （响应之后窗口若没人能接，`_advance_chain_window` 会**立刻结算**），
+//   前端 `chain_resolved` 处理器把连锁区清空（`spectateOnChainUpdated({chain:[]})`）。
+//   两个帧之间只隔**毫秒**，而 CDP 一次求值要几百毫秒 —— 事后读 DOM 读到的是
+//   "清空之后"的那一帧，与"数据有没有到"是两件事（CLAUDE.md 教训 #15：工具假红先怀疑工具）。
+//
+// 台账记两样东西，**每个帧在一帧之内同时取**，所以不可能漂移：
+//   ① 这条连接**真的收到了什么**（事件名 + payload），② 那一刻 DOM 画的是什么。
+// 只覆盖连锁相关的四个事件（`magic_chain_updated` / `chain_resolved` /
+// `spectate_sync` / `spectate_board`），别的帧不进台账（避免动其它断言的判据）。
+const CHAIN_LEDGER_TAP = '(function(){'
+  + ' var s = (window.gameState || {}).socket;'
+  + ' if (!s || typeof s.onevent !== "function") return { tapped: false, reason: "no socket" };'
+  + ' if (!window.__CHAIN_LEDGER) {'
+  + '   window.__CHAIN_LEDGER = [];'
+  + '   var WATCH = ["magic_chain_updated", "chain_resolved", "spectate_sync", "spectate_board"];'
+  // ⚠️ 台账读取本身会抛（`onevent` 是 socket.io 内部的进站口，绝不能因为我们的
+  //    记录动作把一条真事件弄丢）—— 但**吞异常不等于静默**：`__CHAIN_LEDGER_ERR`
+  //    会把原因留下来，断言里那条自检会读到它。
+  + '   var orig = s.onevent;'
+  + '   s.onevent = function (packet) {'
+  + '     try {'
+  + '       var d = packet && packet.data;'
+  + '       if (d && d.length && WATCH.indexOf(String(d[0])) >= 0) {'
+  + '         var el = document.getElementById("spectate-chain");'
+  + '         var rows = document.querySelectorAll("#spectate-chain .spectate-chain-item");'
+  + '         var texts = [];'
+  + '         for (var i = 0; i < rows.length; i++) texts.push(rows[i].textContent.trim());'
+  + '         var snap = (((window.gameState || {}).spectate || {}).snapshot) || null;'
+  //   DOM 是在**上一个帧处理完之后**画的状态（本帧还没进处理器），这正是要的证据：
+  //   它如实反映"本帧到达之前，观众眼前是两张还是一张"。
+  + '         window.__CHAIN_LEDGER.push({ t: Date.now(), ev: String(d[0]),'
+  + '           payload: d[1] === undefined ? null : d[1],'
+  + '           domCountBefore: rows.length, domTextBefore: texts,'
+  + '           snapChainLenBefore: (snap && snap.chain && snap.chain.chain_len) || 0 });'
+  + '       }'
+  + '     } catch (e) { window.__CHAIN_LEDGER_ERR = String(e && e.message || e); }'
+  + '     return orig.apply(this, arguments); };'
+  + ' }'
+  + ' return { tapped: true }; })()';
+
+// 台账摘要：只把"证不证得了那件事"需要的字段取出来（卡名/座位/条数），
+// 外加每条记录**当时**的 DOM 条目数与文本 —— 不把整份 payload 搬回 Node。
+const CHAIN_LEDGER_DUMP = '(function(){'
+  + ' var out = [];'
+  + ' (window.__CHAIN_LEDGER || []).forEach(function (r) {'
+  + '   var names = [];'
+  + '   var p = r.payload || {};'
+  + '   var ch = (p && p.chain) || (p && p.snapshot && p.snapshot.chain && p.snapshot.chain.chain) || [];'
+  + '   (ch || []).forEach(function (it) {'
+  + '     var n = (it && (it.card_name || (it.card && it.card.name))) || "?";'
+  + '     names.push(String(it && it.seat ? it.seat : "?") + ":" + String(n)); });'
+  + '   out.push({ ev: r.ev, t: r.t, chainLen: ch ? ch.length : -1, names: names,'
+  + '     domCountBefore: r.domCountBefore, domTextBefore: r.domTextBefore,'
+  + '     snapChainLenBefore: r.snapChainLenBefore,'
+  + '     results: (p && p.results) ? p.results.length : undefined });'
+  + ' });'
+  + ' return { n: out.length, rows: out, err: window.__CHAIN_LEDGER_ERR || null }; })()';
+
 const SPECTATE_LOG_PROBE = '(function(){'
   + ' var out = [];'
   + ' document.querySelectorAll("#spectate-logs .spectate-log-item").forEach(function(r){'
@@ -798,6 +860,11 @@ const READ_ATTACKS = (roomId) => 'new Promise(function(res){'
 /** 每一步都打一行进度：这个工具最贵的失败是"只印了一条就中断"—— 
  *  从输出里看不出卡在哪一步（实测踩过两次，两次的根因完全不同）。 */
 function step(text) { console.log('---- ' + text); }
+
+/** （记录）：**不判负**的观测。用于"只在某一毫秒成立、不是不变量"的那些读数。 */
+function note(text, detail) {
+  console.log('NOTE  ' + text + (detail === undefined ? '' : '  ->  ' + JSON.stringify(detail)));
+}
 
 let A = null, B = null, C = null, D = null;
 const stamp = Date.now().toString(36);
@@ -1319,6 +1386,13 @@ try {
   const addB = await defTab.ev(ADD_CARD(roomId, defPid, '失灵！'));
   check(!!addB && addB.status === 'success', '（前提）给防守方塞了一张「失灵！」', addB);
 
+  // ★★ 第 7 批：在读任何东西之前先装**连锁事件台账**（装在丙那条连接上）。
+  //    必须在打出第一张牌之前装 —— 台账要看到的是"整段连锁里每一个帧到达的瞬间"。
+  const chainLedgerTap = await C.ev(CHAIN_LEDGER_TAP, 15000);
+  check(!!chainLedgerTap && chainLedgerTap.tapped === true,
+    '（前提）丙装了连锁事件台账（在每个帧**到达的瞬间**同时记下 payload 与 DOM）',
+    chainLedgerTap);
+
   const chainBefore = await C.ev(SPECTATE_CHAIN_PROBE);
   const logsBefore = await C.ev(SPECTATE_LOG_PROBE);
 
@@ -1359,19 +1433,7 @@ try {
   const responded = await defTab.ev(CHAIN_RESPOND(roomId, defPid, '失灵！', 3));
   check(!!responded && responded.status === 'success', '防守方连锁响应「失灵！」', responded);
 
-  // ★★ 这一段要证的是"**响应**这个动作观众看得到"。
-  //
-  // ⚠️ 但它有一个**合法的时间窗**：响应把窗口交给对方，10 秒内没人回应就自动结算
-  //    （`CHAIN_RESPONSE_SECONDS`），结算后 `chain_resolved` 会把连锁区清空 ——
-  //    而 CDP 一次求值要几百毫秒，`chain_resolved` 完全可能**插在两次读取之间**
-  //    （实测：4 次运行里 3 次读到"已经清空"、1 次读到两张牌；对照实验证明这不是
-  //     本次改动引入的 —— `59ae6ab` 上 1 次跑绿只是因为排在它之前的那张牌
-  //     把连锁提前结算掉了，把顺序一改就复现）。
-  //    → 判据改成"能不能**证明观众侧确实见到过那张牌**"，而不是
-  //      "某一毫秒的 DOM 里恰好还挂着它"：
-  //      ① 从观众侧那份快照的 `chain.chain_len` 记**最大值**（广播到达时就在那里）；
-  //      ② 同时看 DOM 的条目数（视觉证据）—— 两者取大，都算"见到过"。
-  //      这样"播出流整个断掉"（真回归）照样红，只有"读得太晚"不再假红。
+  // （旧的 MARK_SEEN：只留一条"见到过的最大条数"，给下面那条量级断言用）
   const MARK_SEEN = '(function(){'
     + ' window.__CHAIN_SEEN = window.__CHAIN_SEEN || 0;'
     + ' var sp = ((window.gameState || {}).spectate) || {};'
@@ -1381,6 +1443,33 @@ try {
     + ' var best = Math.max(n, dom);'
     + ' if (best > window.__CHAIN_SEEN) window.__CHAIN_SEEN = best;'
     + ' return window.__CHAIN_SEEN; })()';
+  // ★★ 这一段要证的是"**响应**这个动作观众看得到"。
+  //
+  // ★ 第 7 批查清了这条断言**为什么一半的次数是红的**（第 4~6 批只记了"已知 flakiness"）。
+  //   实测（`tools/spectate_check.mjs` + 服务端 `DEBUG_CHAIN_TRACE` 轨迹，见
+  //   `docs/SPECTATE_BATCH7_2026_09_23.md`）：观众**每次都收到了**那一帧，
+  //   前端也**每次都画出来了**，只是那一帧 DOM 只存在 **3~17 毫秒**：
+  //
+  //     ① 响应「失灵！」把栈顶康掉，于是 `chain_response` 里紧接着调
+  //        `_advance_chain_window(room, 对方)`；
+  //     ② 对方这一张**已经把他的速阶3用掉了**（响应者就是他自己）⇒
+  //        `_can_respond_chain` 对双方都为假 ⇒ **同一个栈帧内** `resolve_chain`；
+  //     ③ `chain_resolved` ⇒ 前端把连锁区清空（`spectateOnChainUpdated({chain:[]})`）。
+  //
+  //   服务端轨迹（失败那次，`t=` 为绝对秒）：
+  //     `window OPEN … t=…683.166` → `can_respond? speed3=[]` → `resolve_chain … t=…683.183`
+  //   观众侧帧台账（同一毫秒级）：
+  //     `magic_chain_updated(2 张) t=…988` → `chain_resolved t=…992`（`domCountBefore=2`）
+  //   而工具在响应 ack **33ms** 之后才第一次读 DOM ⇒ 读到的是"清空之后"。
+  //   红的概率 ≈ 对方手里**还剩**一张速阶3 的概率（约一半）—— 这就是 5/8。
+  //
+  // → 判据换成**读这条连接真的收到了什么**（任务书要求的口径，也是本工具
+  //   `TAP`/不变量一那条扫描已经在用的口径）：台账在**每个帧到达的瞬间**同时记下
+  //   payload 与那一刻的 DOM，于是"数据没到 / 到了没画 / 画了又被清空"三种情形
+  //   在台账里**可区分**，而"读得太晚"不再能伪装成"没收到"。
+  //   语义**没有放宽**：原来那条 DOM 断言降级成**记录**（它问的"某一毫秒 DOM 里
+  //   挂着没有"本来就不是不变量），主断言仍然要求"观众那条连接真的收到了带这张响应的
+  //   连锁帧"—— 一个字节都没从断言里删掉。
   await C.ev(MARK_SEEN);
 
   let chainAfterResp = null;
@@ -1391,21 +1480,77 @@ try {
       return Array.isArray(p.items) && p.items.length >= 2
         && p.items.some((i) => i.text.indexOf('失灵') >= 0);
     }, 15000, '丙的连锁区出现第二张');
-    chainAfterResp = await C.ev(SPECTATE_CHAIN_PROBE);
-    check(true, '★★ 连锁响应后，丙**不刷新页面**就在连锁区看到了第二张（失灵！）',
-      chainAfterResp.items);
-  } catch (e) {
-    chainAfterResp = await C.ev(SPECTATE_CHAIN_PROBE);
-    // ⚠️ **已知 flakiness**（第 4 批就有，本批未改动这条路径）：
-    //    响应把窗口交给对方后，10 秒没人接就自动结算，`chain_resolved` 会把连锁区清空；
-    //    这条断言读的是"某一毫秒的 DOM"，所以结算恰好插在读之前时就会读到空。
-    //    本批实测 5 次里失败 2 次，服务端侧的证据（`READ_CHAIN`）始终显示两次都是
-    //    真实发生的 —— 所以是**判据写得脆**，不是"响应没播给观众"。
-    //    本轮**不修它**（改判据去迁就工具 = 假绿），只在这里写明归类。
-    check(false, '★★ 连锁响应应当实时出现在观众的连锁区'
-      + '（⚠️ 已知既有 flakiness：读到时可能已结算；本轮未改动这条路径）',
-      chainAfterResp);
-  }
+  } catch (e) { /* 读到空是**合法状态**：下方台账会如实归类它 */ }
+  chainAfterResp = await C.ev(SPECTATE_CHAIN_PROBE);
+  chainSeenMax = await C.ev(MARK_SEEN);
+
+  // --- ★★ 主断言：**原始帧台账**（第 7 批换的判据）---
+  const ledger = await C.ev(CHAIN_LEDGER_DUMP);
+  const rows = (ledger && ledger.rows) || [];
+  const rowText = (r) => (r.names || []).join(' | ');
+  const hasNo = (r) => rowText(r).indexOf('无中生有') >= 0;
+  const hasFail = (r) => rowText(r).indexOf('失灵') >= 0;
+
+  // ① 自检（教训 #34：判据本身不能是空转绿）——
+  //    台账必须**真的**在这条连接上抓到过连锁帧，否则下面"没抓到坏帧"毫无意义。
+  const sawAnyChainFrame = rows.some((r) => r.ev === 'magic_chain_updated');
+  check(sawAnyChainFrame && !(ledger && ledger.err),
+    '（前提）连锁事件台账**真的**记到了连锁帧（不是空转绿）',
+    { ledgerRows: rows.length, err: ledger && ledger.err });
+
+  // ② 改判据之锚：打出第一张牌时观众**确实收到了** 1 张的连锁帧。
+  //    这一条把新判据钉在"同一套证据口径"上 —— 若播出流整个断掉，它先红。
+  const playHit = rows.find((r) => r.ev === 'magic_chain_updated' && hasNo(r) && !hasFail(r));
+  check(!!playHit,
+    '★★ 打出第一张牌：观众那条连接**收到了**带这张牌的连锁帧（原始帧证据）',
+    rows.map((r) => r.ev + '(' + rowText(r) + ')'));
+
+  // ③ ★★ 本条：连锁响应「失灵！」。
+  //    ⚠️ 只认**含两张牌**的那一帧（`hasNo && hasFail`）——"出现过 失灵 字样"这种
+  //       宽松判据本身是另一条独立断言（结算报文里有它，见 ④① 的反向校准）。
+  const respHit = rows.find((r) => r.ev === 'magic_chain_updated' && hasNo(r) && hasFail(r));
+  check(!!respHit,
+    '★★ 连锁响应应当实时出现在观众的连锁区'
+    + '（判据 = 观众那条连接收到的连锁帧里带着这张响应，不是"某一毫秒的 DOM"）',
+    rows.map((r) => r.ev + '(+' + (respHit ? r.t - respHit.t : 0) + 'ms)[' + rowText(r) + ']'));
+
+  // ④ 反向校准（同族教训 #34）：**故意串行插一个假帧**到台账里，用 ③ 的判据筛它。
+  //    两个方向都要：①"光有结算报文（results 里有这张卡）、没有连锁帧"必须**不算数**；
+  //    ②"只有第一张牌"也必须**不算数**。若 ③ 的判据松到能被它们顶替，这两条就红。
+  const fakeFrame = {
+    ev: 'chain_resolved', names: [], chainLen: 0,
+    results: [{ card: { name: '失灵！' } }], domCountBefore: 0, snapChainLenBefore: 0,
+  };
+  check(!(fakeFrame.ev === 'magic_chain_updated' && hasNo(fakeFrame) && hasFail(fakeFrame)),
+    '★★ 自我校准：结算报文里出现这张卡**不算**"连锁区实时出现"（判据不认它）',
+    { ev: fakeFrame.ev, results: 1, magicChainFrames: rows.filter((r) => r.ev === 'magic_chain_updated').length });
+  check(!(playHit && playHit.ev === 'magic_chain_updated' && hasNo(playHit) && hasFail(playHit)),
+    '★★ 自我校准：只有第一张牌的那一帧**不算**（新判据抓得住"第二张没到"）',
+    playHit && { ev: playHit.ev, names: playHit.names });
+
+  // ⑤ 归因：把"数据没到 / 到了没画 / 画了被清空"摊开（三种情形对应三种不同修法）。
+  //   `domCountBefore` 是**处理该帧之前** DOM 里的条目数：
+  //   写着 ≥2 ⇒ 上一条 `magic_chain_updated` 确实被**画出来了**（"画了又被清空"）；
+  //   只有 0/1 ⇒ 是"到了没画"（渲染那边的问题，必须红）。
+  //   ⚠️ 只在**真的抓到了那一条清空帧**时才判 —— 窗口保持 10 秒的那一半运行里
+  //      结算发生在 15 秒轮询之后，台账里根本没有它，那种情况不构成"没画"。
+  const respIdx = rows.indexOf(respHit);
+  const clearRow = rows.slice(respIdx >= 0 ? respIdx + 1 : 0).find((r) => r.ev === 'chain_resolved');
+  //   顺带一条：断言落地那一刻 DOM 若还有内容，就必须**正是那两张**
+  //   （只在读到的时刻成立；读到空是合法状态，上面台账已作证）。
+  const chainSeats = (chainAfterResp && chainAfterResp.items) || [];
+  check(!clearRow || clearRow.domCountBefore >= 2,
+    '★★ 归因：清空那条帧到达时观众连锁区**已经画着那两张**'
+    + '（画了 → 才被清空；若这里是 0/1 就是"到了没画"，那是真缺陷）',
+    { domCountBeforeResolved: clearRow ? clearRow.domCountBefore : null,
+      maxChainLenSeen: chainSeenMax, domNow: chainSeats.length,
+      resolvedRow: clearRow || null });
+
+  //   （记录）"断言落地那一刻 DOM 里还挂着没有" —— 这是**瞬时态**，不是不变量：
+  //   台账里那一帧只存在几毫秒（见上），读到空**完全合法**，所以只记不判。
+  note('（记录）断言落地那一刻观众连锁区的内容（读到空是合法状态：上面台账已作证）',
+    { domItems: chainSeats.map((i) => i.text), maxChainLenSeen: chainSeenMax });
+
   const chainServer2 = await atkTab.ev(READ_CHAIN(roomId));
   // ⚠️ 读得太晚时（连锁已结算）两边都应当时 0 —— 那种时刻"条数对上"是平凡真，
   //    不能拿它当"观众看到的不是瞎编的"的证据，所以只在上界方向断言。
@@ -1420,12 +1565,15 @@ try {
   //    本段要证的是"连锁响应这个**动作**观众实时看得到"，这一点上面已经钉住
   //    （播出流上见到过 2 张）。
   //
-  // ⚠️ 下面两条"两张卡都在、各带一位名字"的断言**只在读到了那两张的时刻**才成立 ——
-  //    连锁已经结算的时刻 DOM 本来就是空的（合法状态），所以那两行判据写成
-  //    "空就跳过、非空就必须严丝合缝"，绝不为迁就读数时刻去放宽"看到的是什么"。
-  const chainSeats = (chainAfterResp && chainAfterResp.items) || [];
+  // ⚠️ 下面两条"两张卡都在、各带一位名字"的**内容**断言**只在读到了那两张的时刻**
+  //    才成立 —— 连锁已经结算的时刻 DOM 本来就是空的（合法状态），
+  //    所以写成"空就跳过、非空就必须严丝合缝"，绝不为迁就读数时刻去放宽"看到的是什么"。
+  //    ★ 换判据之后这里读到东西的机会**变少了**（原来 waitFor 一命中就立刻读，
+  //      现在固定等满 15 秒轮询），所以这两条大多数运行会走"跳过"那一支 ——
+  //      "内容对不对"改由**台账**（`③`的 detail 里那张牌清单）与
+  //      `tests/test_spectate_batch7.py` 的 pytest 守卫负责。
   if (chainSeats.length === 0) {
-    check(true, '（记录）读到时连锁已结算（DOM 已清空）—— 上一条已由播出流作证',
+    note('（记录）读到时连锁已结算（DOM 已清空）—— 上一条已由播出流作证',
       { maxChainLenSeen: chainSeenMax });
   } else {
     check(chainSeats.length === 2

@@ -399,15 +399,76 @@ const TAP = '(function(){'
   + ' var s = (window.gameState || {}).socket;'
   + ' if (!s || typeof s.onevent !== "function") return { tapped: false, reason: "no socket" };'
   + ' window.__SPEC_EVENTS = [];'
+  + ' window.__SPEC_PAYLOADS = [];'
   + ' if (!window.__SPEC_TAPPED) {'
   + '   var orig = s.onevent;'
   + '   s.onevent = function (packet) {'
   + '     try { var d = packet && packet.data;'
-  + '       if (d && d.length) window.__SPEC_EVENTS.push(String(d[0])); } catch (e) {}'
+  + '       if (d && d.length) {'
+  + '         window.__SPEC_EVENTS.push(String(d[0]));'
+  + '         window.__SPEC_PAYLOADS.push([String(d[0]), d[1] === undefined ? null : d[1]]);'
+  + '         if (window.__SPEC_PAYLOADS.length > 400) window.__SPEC_PAYLOADS.shift(); } } catch (e) {}'
   + '     return orig.apply(this, arguments); };'
   + '   window.__SPEC_TAPPED = true;'
   + ' }'
   + ' return { tapped: true }; })()';
+
+// ★★ 不变量 1 的**原始证据**（第 5 批：把这条连接真的收到过的每一帧 payload 全量扫一遍）。
+//
+// 在**页面里**判三件事，与 `game.js` 的渲染完全无关（绕开"前端自己说没画"）：
+//   ① 任何一帧都不许出现 ships / positions / hits / sunk_positions / magic_hand /
+//      revealed_positions / opponent_attacks 这些键；
+//   ② 任何坐标都必须落在**已经公开的格**（双方打出去的格 ∪ 快照里公开的区域）里 ——
+//      "没挨过炮的船位"一旦出现就是透视；
+//   ③ 对照腿：这条连接**确实收到过**动作事件（否则"没扫到"可能只是压根没连上）。
+//
+// ⚠️ 只按 `{x:number, y:number}` 形状认坐标（`seat_id` 那种字符串 id 不算），
+//    免得把连接标识误判成泄漏（假红）。
+const TAP_FORBIDDEN = (roomId) => '(function(){'
+  + ' var FORBIDDEN = ["ships", "positions", "hits", "sunk_positions",'
+  + '   "opponent_attacks", "magic_hand", "revealed_positions"];'
+  // 允许出现的坐标：**每次调用时**从观众那份快照现算 —— 不能靠外面传进来一份
+  // （本轮踩过：在外面先算好、再退出观战，快照被清空 ⇒ 白名单变成空集 ⇒ 假红）。
+  + ' var allowed = {};'
+  + ' var sp = ((window.gameState || {}).spectate) || {};'
+  + ' var snap = sp.snapshot || {};'
+  + ' function allow(x, y){ allowed[Math.trunc(x) + "," + Math.trunc(y)] = 1; }'
+  + ' function allowCell(c){ if (c && typeof c.x === "number" && typeof c.y === "number")'
+  + '   allow(c.x, c.y); }'
+  + ' (snap.board_attacks ? [snap.board_attacks.p1, snap.board_attacks.p2] : []).forEach(function(list){'
+  + '   (list || []).forEach(allowCell); });'
+  + ' Object.keys(snap.sides || {}).forEach(function(k){'
+  + '   (((snap.sides[k] || {}).attacks) || []).forEach(allowCell); });'
+  + ' (snap.last_stand_cells || []).forEach(allowCell);'
+  + ' var fa = snap.frozen_area;'
+  + ' if (fa && typeof fa.x1 === "number") {'
+  + '   for (var x = fa.x1; x <= fa.x2; x++) for (var y = fa.y1; y <= fa.y2; y++) allow(x, y); }'
+  + ' (snap.shenwei_holes || []).forEach(function(h){'
+  + '   for (var x = h.x1; x <= h.x2; x++) for (var y = h.y1; y <= h.y2; y++) allow(x, y); });'
+  + ' var allowedCount = Object.keys(allowed).length;'
+  + ' var bad = [];'
+  + ' var coordCount = 0;'
+  + ' (window.__SPEC_PAYLOADS || []).forEach(function(entry){'
+  + '   var name = entry[0], p = entry[1];'
+  + '   (function walk(node){'
+  + '     if (!node || typeof node !== "object") return;'
+  + '     if (Object.prototype.toString.call(node) === "[object Array]") {'
+  + '       node.forEach(walk); return; }'
+  + '     Object.keys(node).forEach(function(k){'
+  + '       if (FORBIDDEN.indexOf(k) >= 0) bad.push(name + ":" + k);'
+  + '       var v = node[k];'
+  + '       if (v && typeof v === "object") walk(v); });'
+  + '     if (typeof node.x === "number" && typeof node.y === "number") {'
+  + '       coordCount++;'
+  + '       var key = Math.trunc(node.x) + "," + Math.trunc(node.y);'
+  + '       if (!allowed[key]) bad.push(name + ":coord(" + key + ")"); }'
+  + '   })(p);'
+  + ' });'
+  + ' var kinds = {};'
+  + ' (window.__SPEC_EVENTS || []).forEach(function(n){ kinds[n] = (kinds[n] || 0) + 1; });'
+  + ' return { bad: bad.slice(0, 20), badCount: bad.length, coordCount: coordCount,'
+  + '   total: (window.__SPEC_EVENTS || []).length, kinds: kinds,'
+  + '   allowedCount: allowedCount }; })()';
 
 // 取记录器里的快照：`{events: {事件名: 次数}, total: n}`
 const TAP_DUMP = '(function(){'
@@ -1312,6 +1373,7 @@ try {
       dump && dump.events);
   }
 
+
   // ★★ 第 5 批 C：棋盘重置 —— 观战棋盘必须跟着服务端变（作者实报的缺陷 ④）
   // =========================================================================
   // 「回光返照」清的是**对方打在施法者棋盘上的记录**（`opponent.attacks`），
@@ -1424,6 +1486,40 @@ try {
     '（收尾）房间确实回到了 attacking（不是停在 placing_ships / 猜拳）', roomBackOk);
 
   // =========================================================================
+  // ★★ 第 5 批 D（独立隔离证据）：**这条观众连接真的收到过的每一帧**都不含船位
+  // =========================================================================
+  // 这是不变量 1 的直接取证：不看渲染、不看 `gameState`，只看**原始进站帧**。
+  // 允许出现的坐标 = 双方**打出去**的格 ∪ 快照里**有意公开**的区域
+  // （神威洞 / 冻结区 / 绝处逢生候选格 —— 那三样第 1 批就认定是公开信息）。
+  step('第 5 批：把观众收到过的所有原始 payload 全量扫一遍（不变量 1 的独立证据）');
+  const isoScan = await C.ev(TAP_FORBIDDEN(roomId));
+  check(!!isoScan && isoScan.total > 0,
+    '（对照腿）观众那条连接**确实在收事件**（否则下面的扫描是空转的）',
+    isoScan && { total: isoScan.total, kinds: isoScan.kinds });
+  check(!!isoScan && (isoScan.kinds['attack_result'] || 0) >= 1
+    && (isoScan.kinds['magic_chain_updated'] || 0) >= 1,
+    '★★ 对照腿：这条连接**收到过动作事件**（开炮 + 出牌），扫描不是对空集合做的',
+    isoScan && isoScan.kinds);
+  check(!!isoScan && isoScan.coordCount > 0,
+    '（前提）扫到的 payload 里**确实有坐标**（所以"没扫到坏坐标"才有意义）',
+    isoScan && { coordCount: isoScan.coordCount, allowedCount: isoScan.allowedCount });
+  check(!!isoScan && isoScan.badCount === 0,
+    '★★★ 观众收到过的**每一帧**里都没有船位字段、也没有"没挨过炮"的坐标（不变量 1）',
+    isoScan);
+  // ★ 自我校准（教训 #34）：把一份**故意带船位**的假帧塞进同一份记录里，
+  //   再用**同一个扫描表达式**跑一遍 —— 它必须变红。
+  //   否则上面那条阴性的结论可能只是"扫描器什么都没在看"（永远绿）。
+  await C.ev('(function(){'
+    + ' window.__SPEC_PAYLOAD_BAK = window.__SPEC_PAYLOADS.slice();'
+    + ' window.__SPEC_PAYLOADS.push(["FAKE_LEAK",'
+    + '   { ships: [{ positions: [{ x: 5, y: 5 }] }], secret_cell: { x: 5, y: 5 } }]);'
+    + ' return 1; })()');
+  const selfCheck = await C.ev(TAP_FORBIDDEN(roomId));
+  await C.ev('(function(){ window.__SPEC_PAYLOADS = window.__SPEC_PAYLOAD_BAK; return 1; })()');
+  check(!!selfCheck && selfCheck.badCount >= 2,
+    '★★ 自我校准：同一套判据**真的能**抓到"带船位的假帧"（不是一条永远绿的扫描）',
+    selfCheck && { badCount: selfCheck.badCount, bad: selfCheck.bad });
+
 
   // --- 7. 观战人数在**大厅列表**里的显示（先记下"观众在席"时的那一份）--------
   // ⚠️ 为什么不去挂 `spectate_count_changed` 监听：那条事件在丙进席那一刻就已经

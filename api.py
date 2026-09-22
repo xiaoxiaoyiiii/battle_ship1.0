@@ -742,6 +742,67 @@ def save_profile_card():
     return jsonify({'success': True, 'profile': build_own_profile(uid)})
 
 
+# ---------------------------------------------------------------------------
+# 实时观战（第 2 批）：允许他人观战我的对局 —— 全局设置，**默认开**
+# ---------------------------------------------------------------------------
+# 存哪：`user_profile.allow_spectate`（老表加列，`db._migrate_schema` 判存在再 ALTER），
+#       默认 1 = 允许。读/写都只看这一列。
+#
+# ⚠️ **刻意不并进 `POST /api/profile/card`**：那条是"整行语义、缺的键用默认值补齐"，
+#    而本批不动前端 —— 名片保存请求里不会带这个字段，并进去等于"玩家每存一次名片，
+#    观战开关就被静默改回允许"。所以这里给一对**只动这一列**的专用接口。
+#    守卫：tests/test_spectate_batch2.py::test_saving_profile_card_does_not_reset_spectate_switch
+@app.route('/api/spectate/setting', methods=['GET'])
+def get_spectate_setting():
+    """读「允许他人观战我的对局」。
+
+    未登录 401 —— 这个开关是**账号级私有设置**，游客没有它
+    （游客的对局也进不了观战：`server._spectate_seat_allow` 对无账号座位返回 None）。
+    """
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    value = db.get_allow_spectate(uid)
+    if value is None:
+        # 读不到 → 如实说"不知道"，**绝不许**谎报成"允许"（教训 #21）
+        return jsonify({'success': False, 'error': '暂时无法读取设置，请稍后重试'}), 503
+    return jsonify({'success': True, 'allow_spectate': bool(value)})
+
+
+@app.route('/api/spectate/setting', methods=['POST'])
+def save_spectate_setting():
+    """写「允许他人观战我的对局」。请求体：`{'allow_spectate': true|false}`。
+
+    ⚠️ 字段缺失/类型不对一律 **400 带原因**（教训 #32：不许静默当默认值处理 ——
+       那会让"我明明关掉了"和"请求没生效"分不出来）。
+    """
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not db.get_user(uid=uid):
+        return jsonify({'success': False, 'error': '账号不存在'}), 401
+
+    payload = request.get_json(silent=True)
+    if payload is None:
+        payload = request.form.to_dict() if request.form else None
+    if not isinstance(payload, dict) or 'allow_spectate' not in payload:
+        return jsonify({'success': False, 'error': '请求体必须带 allow_spectate'}), 400
+
+    raw = payload.get('allow_spectate')
+    if isinstance(raw, bool):
+        on = raw
+    elif isinstance(raw, (int, str)) and str(raw) in ('0', '1'):
+        on = str(raw) == '1'
+    elif isinstance(raw, str) and raw.strip().lower() in ('true', 'false', 'on', 'off'):
+        on = raw.strip().lower() in ('true', 'on')
+    else:
+        return jsonify({'success': False, 'error': 'allow_spectate 必须是布尔值'}), 400
+
+    if not db.set_allow_spectate(uid, on):
+        return jsonify({'success': False, 'error': '保存失败，请稍后重试'}), 500
+    return jsonify({'success': True, 'allow_spectate': on})
+
+
 # 修改签名
 @app.route('/api/profile/signature', methods=['POST'])
 def update_signature():

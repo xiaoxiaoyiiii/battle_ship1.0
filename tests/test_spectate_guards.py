@@ -46,9 +46,10 @@ SERVER_PY = REPO_ROOT / 'server.py'
 # 这张表与 `spectate.py` 的两张表合起来才是完整分类：
 #   KNOWN_EVENTS ⊆ (SPECTATE_EVENTS ∪ NOT_FOR_SPECTATORS)
 #
-# 数字来自 2026-09-22 的实际扫描：`server.py` 共 190 处 emit/semit 调用点、
-# 75 个静态字面量事件名、3 个由 `_MULTITURN_EFFECTS` 表驱动的事件名、
-# 1 个三元表达式事件名（两个分支都在下面）、1 处 `socketio.emit` 直调（大厅，不走 emit）。
+# 数字来自 2026-09-22 第 2 批后的实际扫描：`server.py` 共 196 处 emit/semit 调用点、
+# 78 个静态字面量事件名、7 处名字是算出来的（其中 6 处由下面两张登记表逐个表态，
+# `_MULTITURN_EFFECTS` 那处走变量、在第 4 步被逐个断言）、
+# 另有若干 `socketio.emit` 直调（大厅/观战通道，不走 `emit`）。
 KNOWN_EVENTS = frozenset({
     # —— 对局动作与状态 ——
     'attack_result', 'attacks_updated', 'turn_change', 'turn_skipped', 'phase_updated',
@@ -82,6 +83,8 @@ KNOWN_EVENTS = frozenset({
     # —— 匹配 / 大厅 ——
     'match_queued', 'match_canceled',
     'lobby_state', 'lobby_hello', 'lobby_chat', 'lobby_chat_history',
+    # —— 观战通道自己的一套（第 2 批：快照 / 人数 / 结束）——
+    'spectate_sync', 'spectate_count_changed', 'spectate_ended',
     # —— 错误提示 ——
     'error',
 })
@@ -616,7 +619,10 @@ def test_guard_b_actually_catches_a_dropped_action_field():
     server.room_manager.rooms[room.id] = room
     try:
         original = spectate.SPECTATE_EVENTS['shields_added']
-        spectate.SPECTATE_EVENTS['shields_added'] = lambda _data: None
+        # ⚠️ 签名里必须有 `room=None`：第 2 批起净化函数的统一契约是
+        #    `fn(data, room=None)`（座位标签要用房间的座位顺序算）。
+        #    这里只是替身，替身的签名跟着契约走 —— 断言本身一个字没改。
+        spectate.SPECTATE_EVENTS['shields_added'] = lambda _data, room=None: None
         try:
             dropped = spectate.sanitize_event('shields_added', _sample_for('shields_added', room))
             assert dropped is None, '把净化换成"整条丢掉"之后应当拿不到 payload'

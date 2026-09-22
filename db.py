@@ -44,6 +44,28 @@ _SHOW_RANK_COLUMN_DDL = 'INTEGER DEFAULT 1'
 _FRIEND_REQ_COLUMN = 'friend_requests_open'
 _FRIEND_REQ_COLUMN_DDL = 'INTEGER DEFAULT 1'
 
+# 「允许他人观战我的对局」开关（实时观战第 2 批）。
+#
+# 与 `friend_requests_open` 完全同一条通道（`user_profile` 表 + `_migrate_schema`
+# 加列 + 专用读写函数）——**故意不另立一套**：这套机制已经跑熟三批（含"老表加列
+# 只能判存在再加"那条教训），为一个布尔值再开一张表只会多一份要同步的真相。
+#
+# **默认 1 = 允许**（作者裁定：默认 on；老行由 `DEFAULT 1` 自动填上，无需回填）。
+#
+# ⚠️ **刻意不进 `_PROFILE_DEFAULTS` / `save_user_profile_extra`**：
+#    那条路是"整行语义、缺的键用默认值补齐"，而本批**不动前端** ——
+#    名片保存请求里不会带这个字段，一旦并进去，玩家每存一次名片
+#    （改名/换称号/换边框）开关就被**静默改回「允许」**。
+#    "关了又被打开"这类故障没有报错、只在隐私上失守，正是本项目最怕的形状。
+#    守卫：`tests/test_spectate_batch2.py::test_saving_profile_card_does_not_reset_spectate_switch`
+_ALLOW_SPECTATE_COLUMN = 'allow_spectate'
+_ALLOW_SPECTATE_COLUMN_DDL = 'INTEGER DEFAULT 1'
+
+# 没有记录（新账号 / 从没动过开关）时的取值：1 = 允许。
+# ⚠️ 只有这一份：DDL 的 `DEFAULT 1` 与"查不到行"的分支都指向它，
+#    改默认值只改这里（两份默认值必然漂移 —— 教训 #1）。
+ALLOW_SPECTATE_DEFAULT = 1
+
 
 def _add_column_if_missing(cursor, table: str, column: str, ddl: str) -> bool:
     """幂等加列：PRAGMA table_info 判存在 → ALTER TABLE ADD COLUMN。
@@ -556,6 +578,9 @@ class Database:
         self._add_column_if_missing('user_profile', _GUESTBOOK_COLUMN, _GUESTBOOK_COLUMN_DDL)
         self._add_column_if_missing('user_profile', _SHOW_RANK_COLUMN, _SHOW_RANK_COLUMN_DDL)
         self._add_column_if_missing('user_profile', _FRIEND_REQ_COLUMN, _FRIEND_REQ_COLUMN_DDL)
+        # 实时观战第 2 批：`user_profile` 是老表，只能判存在再 ALTER（同上）。
+        self._add_column_if_missing('user_profile', _ALLOW_SPECTATE_COLUMN,
+                                    _ALLOW_SPECTATE_COLUMN_DDL)
 
     def _add_column_if_missing(self, table: str, column: str, ddl: str) -> bool:
         """`ALTER TABLE ADD COLUMN` 的幂等包装（见模块级 `_add_column_if_missing`）。"""
@@ -1271,6 +1296,75 @@ class Database:
             return False
         except Exception as e:
             logger.error(f"保存段位开关时发生未知错误: uid={uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+
+    def get_allow_spectate(self, uid: str):
+        """读「允许他人观战我的对局」开关。
+
+        返回值有三种，调用方**必须**分清（`spectate.can_spectate` 就是按这个语义写的）：
+
+        * `True`  —— 允许（含"从没动过开关"的新账号，默认 on）；
+        * `False` —— 明确关掉了；
+        * `None`  —— **不知道**（uid 为空 / 不是真账号 / 读库失败）。
+
+        ⚠️ 未知**绝不退化成"允许"**（教训 #21：隐私开关方向一律朝安全那一侧兜）。
+           `can_spectate(None, ...) is False`，所以"不知道"= 谁都看不了 ——
+           宁可偶发地少一个观众（读库抖动），也不要一次性地把别人的对局敞出去。
+        """
+        if not uid:
+            return None
+        try:
+            cursor = self.conn.cursor()
+            row = cursor.execute(
+                'SELECT %s AS flag FROM user_profile WHERE user_id = ?'
+                % _ALLOW_SPECTATE_COLUMN, (uid,)).fetchone()
+            cursor.close()
+        except sqlite3.Error as e:
+            logger.error(f"读取观战开关失败: uid={uid}, 错误: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"读取观战开关时发生未知错误: uid={uid}, 错误: {e}")
+            return None
+        if not row:
+            # 没有名片行 = 从没动过开关 → 用默认值（不写库，与 get_user_profile_extra 同规矩）
+            return bool(ALLOW_SPECTATE_DEFAULT)
+        flag = row['flag']
+        if flag is None:
+            # 老行被 ALTER 补列后理论上会拿到 DEFAULT 1；真为 NULL 时按默认值算。
+            return bool(ALLOW_SPECTATE_DEFAULT)
+        return bool(int(flag))
+
+    def set_allow_spectate(self, uid: str, on) -> bool:
+        """写「允许他人观战我的对局」开关（**只动这一列**）。
+
+        ⚠️ 与 `set_show_rank` / `set_show_guestbook` 同样的定位：只改这一列，
+           **不碰名片其它字段**（整行写入的 `save_user_profile_extra` 里没有它，
+           所以两边不会互相覆盖）。
+        """
+        if not uid:
+            logger.warning("尝试保存观战开关但未提供用户ID")
+            return False
+        flag = 1 if on in (1, True, '1', 'true', 'True', 'on') else 0
+        try:
+            with self._lock:
+                self.cursor.execute(
+                    'INSERT INTO user_profile (user_id, %s, updated_at) '
+                    'VALUES (?, ?, ?) '
+                    'ON CONFLICT(user_id) DO UPDATE SET '
+                    '%s = excluded.%s, updated_at = excluded.updated_at'
+                    % (_ALLOW_SPECTATE_COLUMN, _ALLOW_SPECTATE_COLUMN, _ALLOW_SPECTATE_COLUMN),
+                    (uid, flag, int(time.time())))
+                self.conn.commit()
+            return True
+        except sqlite3.Error as e:
+            logger.error(f"保存观战开关失败: uid={uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+        except Exception as e:
+            logger.error(f"保存观战开关时发生未知错误: uid={uid}, 错误: {e}")
             if self.conn:
                 self.conn.rollback()
             return False
@@ -3583,6 +3677,17 @@ def get_rank_position_map(uids):
 def set_show_rank(uid: str, on):
     """写「段位是否公开」（单独一列，不走名片整行写入）"""
     return db.set_show_rank(uid, on)
+
+
+# ---- 实时观战第 2 批：允许他人观战我的对局 ----
+def get_allow_spectate(uid: str):
+    """读观战开关：True / False / **None（不知道 → 不许被观战）**"""
+    return db.get_allow_spectate(uid)
+
+
+def set_allow_spectate(uid: str, on):
+    """写观战开关（单独一列，不走名片整行写入）"""
+    return db.set_allow_spectate(uid, on)
 
 
 # ---- 特权（外观全解锁 / 彩虹名字）----

@@ -164,10 +164,17 @@ def _emit_to_spectators(event, payload, src_room_id):
        观战通道必须是**另一个** room 名；
     3. **绝不静默吞异常** —— 这里不写 `except Exception`（教训 #34：兜底 except + 零报错
        会一起制造假象）。真要坏就让它带着 traceback 冒出来。
+
+    传进净化函数的是**房间对象**（不是房间号）—— 净化要用房间级信息
+    （座位标签 `p1`/`p2` 就靠 `room.players` 的座位顺序算）。调用方 `emit`
+    已经用 `_live_room_id` 确认过这间房存在，所以这里取不到房意味着房间
+    刚被回收；那种情况下 `sanitize_event` 会按"没有 room"退化（座位标签 →
+    `unknown`），不会炸。
     """
     if spectate.is_spectate_room(src_room_id):
         return None                       # 观战通道自己发的事件不许再拐回来
-    clean = spectate.sanitize_event(event, payload, room=src_room_id)
+    clean = spectate.sanitize_event(event, payload,
+                                    room=room_manager.get_room(src_room_id))
     if clean is None:
         return None
     return socketio.emit(event, clean, room=spectate.spectate_room_id(src_room_id))
@@ -192,6 +199,128 @@ def emit(event, data, to=None, room: str | None = None):
     if room_id is not None:
         _emit_to_spectators(event, payload, room_id)
     return result
+
+
+# ===========================================================================
+# 实时观战（第 2 批）· 观战席：能不能看 / 谁在看 / 人数
+# ---------------------------------------------------------------------------
+# 第 1 批只做了地基（事件分类表 + `emit` 的第三条腿 + 独立的观战通道名），
+# 观众还进不来。本批把观众放进来，于是新增了三个攻击面，各自下面都写着守则：
+#   · 观众**只能**进 `spectate:<room_id>`，**绝不进对局 room**（那是 93 处广播）；
+#   · 观众**绝不写进 `room.players`**（写了就等于废掉全部写操作鉴权）；
+#   · 「允许被观战」的开关**在进入的那一刻读一次**，之后永不复查（不踢人）。
+# ===========================================================================
+
+def _spectate_seat_allow(player):
+    """某个座位"允不允许被别人观战"：True / False / **None（不知道）**。
+
+    * `Player.user_id` 为空 → 这个座位没有账号（匹配房游客）→ None；
+    * `user_id` 在 `users` 表里查不到 → 自定义房游客的 key 就是 sid，也查不到 → None；
+    * 其余走 `db.get_allow_spectate()`（**默认 on**；读库失败 → None）。
+
+    ⚠️ 游客 / 读不到一律 None，而 `spectate.can_spectate(None, ...) is False` ——
+       第 1 批已经定死这个口径（"缺一边 = 不允许"，教训 #21），
+       这里只负责**如实**把"不知道"报上去，不许自己补成 True。
+    """
+    uid = getattr(player, 'user_id', None)
+    if not uid:
+        return None
+    if not db.get_user(uid=uid):
+        return None
+    return db.get_allow_spectate(uid)
+
+
+def _spectate_allowed(room) -> bool:
+    """这一局现在允不允许被观战（**双方都允许**才算）。
+
+    读取时机 = **观众点进来的那一刻**，只读一次。之后玩家怎么改设置都不复查 ——
+    作者裁定："打到一半怎么可能能关，这不是在设置里的吗"，即**不存在中途切换场景**、
+    **永不踢人**。所以这里没有、也不该有"定期复查 / 把已进来的观众踢掉"的代码。
+    """
+    seats = list(room.players.values())
+    if len(seats) != 2:
+        return False                      # 没坐满 / 异常房 → 未知 → 不允许
+    return spectate.can_spectate(_spectate_seat_allow(seats[0]),
+                                 _spectate_seat_allow(seats[1]))
+
+
+def _spectate_fail(message: str):
+    """拒绝观战：**必须带原因**（教训 #32：静默 return = 玩家侧"点了没反应"）。
+
+    原因同时走两条路：`error` 事件（前端弹提示）与 ack 返回值（调用方可断言）——
+    单测直调 handler（无请求上下文）时退化为房间外广播，与 `_quick_chat_fail` 同写法。
+    """
+    try:
+        sid = request.sid
+    except RuntimeError:
+        sid = None
+    if sid:
+        emit('error', {'message': message}, to=sid)
+    else:
+        emit('error', {'message': message})
+    return {'status': 'error', 'message': message}
+
+
+def _spectate_count(room) -> int:
+    """席上观众人数（房间级字段，见 `GameRoom.__init__` 的 `spectators`）。"""
+    return len(getattr(room, 'spectators', None) or {})
+
+
+def _spectate_broadcast_count(room) -> None:
+    """观战人数变化：广播给**对局双方**（只有人数、绝无名单），观战通道也有一份。
+
+    一次 `emit(room=room.id)` 同时满足两件事：
+      · 对局房间里的双方收到 —— 他们只该知道"有几个人在看"，不看名单；
+      · `emit` 的第三条腿把它复制进 `spectate:<room_id>`（观众自己也知道有几个人）。
+    ⚠️ payload **只有 count** —— 观众名单只出现在发给观众自己的快照里。
+    """
+    emit('spectate_count_changed', {'count': _spectate_count(room)}, room=room.id)
+
+
+def _spectate_count_task(room_id: str) -> None:
+    """后台补一次观战人数广播（`disconnect` 里不能同步 emit，见 CLAUDE.md §9）。"""
+    room = room_manager.get_room(room_id)
+    if room is not None:
+        _spectate_broadcast_count(room)
+
+
+def _spectate_room_of_sid(sid):
+    """这个连接正在观战哪间房（不在任何观战席上 → None）。"""
+    if not sid:
+        return None
+    for room in room_manager.get_all_rooms().values():
+        if sid in (getattr(room, 'spectators', None) or {}):
+            return room
+    return None
+
+
+def _spectate_sid_left(sid):
+    """观众离开（主动退出 / 断线）：从观战席摘掉他，返回房间号（没有则 None）。
+
+    ⚠️ 只动观战席，**绝不碰 `room.players`** —— 观众从来就不在里面。
+    """
+    room = _spectate_room_of_sid(sid)
+    if room is None:
+        return None
+    room.spectators.pop(sid, None)
+    return room.id
+
+
+def _spectate_end_room(room, reason: str) -> None:
+    """房间被回收：通知还在席上的观众，并把观战席清空（教训 #11 的收尾位）。
+
+    ⚠️ 这里**不调用 `leave_room`**：flask_socketio 的 `leave_room` 只对"当前请求的
+       那个连接"成立（本文件所有调用点都是 `join_room(x, request.sid)`），
+       在回收路径（后台任务 / 别人的请求）里替**别人**退房并不成立。
+       清空 `room.spectators` 之后这个通道再也不会收到任何东西，
+       观众侧收到 `spectate_ended` 就知道该退出了。
+    """
+    if not _spectate_count(room):
+        return
+    room_id = room.id
+    room.spectators.clear()
+    emit('spectate_ended', {'room_id': room_id, 'reason': reason},
+         room=spectate.spectate_room_id(room_id))
 
 
 class GameLog:
@@ -584,6 +713,23 @@ class GameRoom:
         #     ② 有明确消费点 ③ 有回归测试）。
         self.quick_chat_recent: dict[str, list[float]] = {}
         self.quick_chat_last: dict[str, dict[str, Any]] = {}
+
+        # ── 观战席（实时观战第 2 批）───────────────────────────────────
+        # `sid -> {'name','user_id','joined_at'}`。
+        # ★★ **观众绝不写进 `room.players`** ★★ ——
+        #    这是本批最重要的既成安全属性：所有写操作 handler 的鉴权都是
+        #    "`player_id in room.players` + `_identity_ok`"，观众不在 players 里，
+        #    于是那 90 多处写 handler 天然、无一例外地拒绝它。
+        #    把观众塞进 players（哪怕只是"为了让他收到广播"）＝ 一次性废掉全部鉴权。
+        #    守卫：tests/test_spectate_batch2.py 的
+        #    `test_spectator_is_never_written_into_room_players`
+        #    （并附"故意塞进去 → 断言变红"的元测试）。
+        #
+        # ⚠️ 按 CLAUDE.md 第 11 条「新增房间级状态三件齐」：
+        #    ① 这里初始化；② 消费点 = `handle_spectate_join` / `handle_spectate_leave`
+        #    / `handle_disconnect` / `_drop_room` / `_build_spectate_snapshot`；
+        #    ③ 回归用例见 `tests/test_spectate_batch2.py`。
+        self.spectators: dict[str, dict[str, Any]] = {}
 
     def init_player_magic(self, player_id: str, magic_cards):
         """初始化玩家魔法卡相关状态"""
@@ -1408,6 +1554,9 @@ def _drop_room(room_id: str, why: str) -> bool:
     room = room_manager.get_room(room_id)
     if room is not None:
         _release_presence_game(room)
+        # 观战席（第 2 批）：房间要没了，席上的人得知道 —— 否则他们停在一个
+        # 再也不会更新的通道上，表现就是"卡住了"（本批最怕的静默失败形状）。
+        _spectate_end_room(room, why)
     ok = room_manager.delete_room(room_id)
     print(f'[room] 删除房间 {room_id}（{why}）')
     return ok
@@ -2465,6 +2614,15 @@ def handle_disconnect():
     # （eventlet 下会卡住 hub），所以放进后台任务（见 _lobby_broadcast_soon）。
     _lobby_broadcast_soon()
 
+    # 观战席（实时观战第 2 批）：人断了就从席上摘掉，人数变化放后台任务广播。
+    # ⚠️ 必须放在下面那个"命中座位就 return"的循环**之前** ——
+    #    分支里随手 return 会静默吞掉这段收尾（本文件同形状栽过三次，教训 #11）。
+    # ⚠️ 这里**不调用 `leave_room`**：连接已经断了，socket.io 会自己把它从
+    #    所有房间（含 `spectate:<id>`）摘掉；替一条已死的连接退房没有意义。
+    _left_spectate_room = _spectate_sid_left(sid)
+    if _left_spectate_room:
+        socketio.start_background_task(_spectate_count_task, _left_spectate_room)
+
     # 掉线宽限：若该连接正坐在某未结束房间的座位上，启动 30s 重连窗口。
     # 注意：不能在 disconnect 处理器内同步 emit（eventlet 下会卡住 hub），
     # 因此把通知+计时整体放入后台任务（先让 disconnect 收尾完成）。
@@ -2480,6 +2638,131 @@ def handle_disconnect():
                     pass
                 socketio.start_background_task(_start_disconnect_grace, room_id, player_id=pid)
                 return
+
+
+# ---------------------------------------------------------------------------
+# 实时观战（第 2 批）· 观众进出
+# ---------------------------------------------------------------------------
+@socketio.on('spectate_join')
+def handle_spectate_join(data):
+    """观众进入观战：`{'room_id': …}`。
+
+    ## 每一条拒绝都带原因（教训 #32：静默 return = "点了没反应"）
+
+    | 情形 | 结果 |
+    | --- | --- |
+    | 未登录 | 拒绝（**观战只限登录用户**，作者裁定） |
+    | 房间不存在 | 拒绝 |
+    | 对局已结束 | 拒绝 |
+    | 还没坐满人（`waiting`） | 拒绝（文案说"还没开始"，不指向观战开关） |
+    | 人机房 | 拒绝（产品规则：列表里就没有人机房） |
+    | 他本人就是这局的玩家 | 拒绝（玩家不该观战自己那局） |
+    | 席满（20） | 拒绝，文案里带数字 |
+    | 双方没有都开着观战开关 | 拒绝（**进入的那一刻读一次**） |
+
+    ## 两条铁律
+
+    1. **只进 `spectate:<room_id>`**：`join_room(spectate.spectate_room_id(room_id), sid)`。
+       写成 `join_room(room_id, sid)` 就等于把观众塞进对局房间，
+       于是他收到**全部 93 处房间级广播**（含整船坐标与手牌）= 一次性透视。
+       守卫：`test_spectator_cannot_receive_position_broadcasts`（用真 socket 收件断言）。
+    2. **绝不写进 `room.players`**：只写房间级的 `room.spectators`。
+       这一条是"全部写操作 handler 天然拒绝观众"的基础，别破坏。
+    """
+    data = data if isinstance(data, dict) else {}
+    room_id = data.get('room_id')
+
+    # 连接信息：没有它就无从谈起"这条连接在看哪一局" —— 缺了直接拒（fails closed）。
+    try:
+        sid = request.sid
+    except RuntimeError:
+        sid = None
+    if not sid:
+        return _spectate_fail('观战请求异常：缺少连接信息')
+
+    # ① 只限登录用户
+    try:
+        uid = session.get('user_id')
+        username = session.get('username') or ''
+    except RuntimeError:
+        uid = None
+        username = ''
+    if not uid:
+        return _spectate_fail('观战需要先登录')
+
+    # ② 房间必须真实存在且还在打
+    if not room_id:
+        return _spectate_fail('缺少房间号')
+    room = room_manager.get_room(room_id)
+    if room is None:
+        return _spectate_fail('房间不存在')
+    if getattr(room, 'state', None) == 'game_over':
+        return _spectate_fail('对局已结束，无法观战')
+    if getattr(room, 'state', None) == 'waiting':
+        # 还没坐满人 = 还没开打。文案要说**真正的原因**：
+        # 若落到下面 `_spectate_allowed` 的"没开放观战"上，玩家会去找那个开关
+        # （教训 #32：失败的文案必须能让人找到出路，不能指向错误的东西）。
+        return _spectate_fail('对局还没开始，无法观战')
+    if getattr(room, 'is_ai_room', False):
+        return _spectate_fail('人机房不支持观战')
+
+    # ③ 对局中的玩家不许观战自己那局。
+    #    三种命中方式都要判：座位 key 就是这条连接 / 座位登记的连接是这条连接 /
+    #    座位上的账号是我（同一账号开第二个标签页也不许看自己的牌）。
+    for pid, player in room.players.items():
+        if pid == sid or getattr(player, 'sid', None) == sid:
+            return _spectate_fail('你是这一局的玩家，不能观战自己的对局')
+        if getattr(player, 'user_id', None) == uid:
+            return _spectate_fail('你是这一局的玩家，不能观战自己的对局')
+
+    already_seated = sid in room.spectators
+    if not already_seated:
+        # ④ 上限 20（作者裁定）；满员**必须**给出带数字的明确文案
+        if _spectate_count(room) >= spectate.SPECTATOR_LIMIT:
+            return _spectate_fail('观战席已满（上限 %d 人）' % spectate.SPECTATOR_LIMIT)
+        # ⑤ 观战开关：**进入的那一刻读一次**（双方都要允许）。之后再改设置不复查。
+        if not _spectate_allowed(room):
+            return _spectate_fail('这一局的玩家没有开放观战')
+
+        # ★ 入席：只写房间级的 spectators（**不是 players**），只进观战通道。
+        room.spectators[sid] = {
+            'name': username or str(uid),
+            'user_id': uid,
+            'joined_at': int(time.time()),
+        }
+        join_room(spectate.spectate_room_id(room_id), sid)
+        _spectate_broadcast_count(room)
+
+    # ⑥ 一次性快照只发给**这一位**观众（中途加入立刻拿到当前局面 —— 不变量 #3）
+    emit('spectate_sync', _build_spectate_snapshot(room), to=sid)
+    return {
+        'status': 'success',
+        'room_id': room_id,
+        'count': _spectate_count(room),
+        'limit': spectate.SPECTATOR_LIMIT,
+    }
+
+
+@socketio.on('spectate_leave')
+def handle_spectate_leave(data=None):
+    """观众主动退出观战（幂等：不在席上就明确回一句原因）。"""
+    try:
+        sid = request.sid
+    except RuntimeError:
+        sid = None
+    if not sid:
+        return _spectate_fail('退出观战失败：缺少连接信息')
+
+    room = _spectate_room_of_sid(sid)
+    if room is None:
+        return _spectate_fail('你不在任何观战席上')
+
+    room_id = room.id
+    room.spectators.pop(sid, None)
+    # 只退观战通道，**绝不 leave_room(room_id)** —— 观众从来就没在对局房间里。
+    leave_room(spectate.spectate_room_id(room_id), sid)
+    _spectate_broadcast_count(room)
+    return {'status': 'success', 'room_id': room_id, 'count': _spectate_count(room)}
 
 
 @socketio.on('chat_message')
@@ -8829,6 +9112,135 @@ def _build_room_sync(room, player_id: str) -> dict:
         'pending_sacrifice_ships': _my_pending_sacrifice_ships(room, player_id, p),
         # 猜拳阶段：重连后需要知道该出拳
         'rps_choices': dict(room.rps_choices) if room.state == 'rock_paper_scissors' else {},
+    }
+
+
+# ---------------------------------------------------------------------------
+# 观战快照（第 2 批）：观众中途加入时**一次性**拿到当前局面
+# ---------------------------------------------------------------------------
+
+def _spectate_player_cells(player) -> list:
+    """这个座位**打出去**的格子（落在对方棋盘上）：只有 x/y/hit/ship_sunk。
+
+    ⚠️ 数据源是 `Player.attacks`（**动作记录**，不是 `PlayerShip.positions`），
+       所以这份列表里**只可能出现已经轰过的格子** —— 没挨过炮的船位不可能混进来
+       （核心不变量 #1）。守卫 `test_spectate_snapshot_has_no_unhit_ship_cells`
+       用"船位已知、只轰过一格"的房间把这一点钉死。
+    """
+    cells = []
+    for a in (getattr(player, 'attacks', None) or []):
+        cells.append({
+            'x': getattr(a, 'x', None),
+            'y': getattr(a, 'y', None),
+            'hit': bool(getattr(a, 'hit', False)),
+            'ship_sunk': bool(getattr(a, 'ship_sunk', False)),
+        })
+    return cells
+
+
+def _spectate_chain_payload(room) -> dict:
+    """当前连锁栈的**观众版**（走 `spectate.sanitize_event`，不另写一份净化）。
+
+    先按 `emit` 完全相同的序列化口径把 `room.chain` 变成普通数据
+    （`json.dumps(..., default=lambda o: o.__dict__)`），再交给**同一个**
+    `magic_chain_updated` 净化函数 —— 这样"实时流里的连锁"与"快照里的连锁"
+    形状必然一致，且座位标签、剥 `targets` 的逻辑只有一份（教训 #1）。
+    """
+    raw = json.loads(json.dumps(list(getattr(room, 'chain', None) or []),
+                                default=lambda o: o.__dict__))
+    return spectate.sanitize_event('magic_chain_updated', {'chain': raw}, room=room)
+
+
+def _build_spectate_snapshot(room) -> dict:
+    """观众中途加入时的一次性快照（**白名单另建**，`spectate_sync` 的 payload）。
+
+    ★★ 为什么**不许**复用 `_build_room_sync`、也**不许**"拿它删字段" ★★
+    `_build_room_sync` 有 41 个顶层键，其中 `ships[].positions`、`hand`、
+    `opponent_attacks`、`effect_flags`、`pending_sacrifice*`、`magic_temp_data`
+    派生的放置流程全是**私有状态**。它今天安全**只因为**它是 `to=request.sid`
+    单发 + 先过座位身份校验 —— 一旦"放宽它 / 复用它给观众"，重连快照本身就变成了
+    透视接口。逐个删字段同样不行：41 个键删 20 个，漏一个就是漏洞，而且**不会报错**
+    （教训 #9：改共用函数先 grep 全部调用点 —— 这里干脆不共用）。
+    所以本函数**只写"给观众什么"**，没写的一律不存在。
+
+    ⚠️ 字段的机器守卫在 `tests/test_spectate_batch2.py`：
+    ① 递归扫快照**任意层级**的键，命中 `spectate.SNAPSHOT_FORBIDDEN_KEYS` 即判红；
+    ② 反向断言"该给的一个都没少"（防"为了安全把该给的也砍了"）；
+    ③ 用一个船位已知的房间断言**未挨过炮的船坐标一个都不出现**。
+    """
+    seat_ids = spectate.seat_order(room)
+    labels = spectate.seat_label_map(room)
+
+    sides = {}
+    for index, pid in enumerate(seat_ids[:2]):
+        player = room.players.get(pid)
+        label = 'p%d' % (index + 1)
+        sides[label] = {
+            # 原始座位 key 一并给：实时流（attack_result / turn_change 等）里
+            # 用的就是它，观众要靠它把两边对上；前端**不许**自己把 key 猜成 p1/p2，
+            # 座位标签一律取 `seat_labels` / `spectate.seat_label`。
+            'seat_id': pid,
+            'name': getattr(player, 'name', None),
+            'remaining_ships': getattr(player, 'remaining_ships', 0),
+            # ★ 手牌**只看张数，不看内容**（作者裁定）。
+            #   `magic_hand` 这个键名本身也在禁字段表里 —— 谁都别想顺手塞进来。
+            'hand_count': len(getattr(player, 'magic_hand', None) or []),
+            'attacks': _spectate_player_cells(player),
+        }
+
+    # 两块棋盘各自的"被轰过的格" = 对方打出去的格。
+    # 与上面的 `attacks` 是**同一份数据的转置**（前端画棋盘时不必自己翻方向）：
+    # 守卫 `test_board_attacks_is_the_transpose_of_attacks` 断言两者恒等，
+    # 所以这不是"两份实现"，而是"一份数据两个朝向"。
+    board_attacks = {}
+    for label in list(sides):
+        other = 'p2' if label == 'p1' else 'p1'
+        board_attacks[label] = [dict(cell) for cell in sides.get(other, {}).get('attacks', [])]
+
+    effects = room.game_effects if isinstance(room.game_effects, dict) else {}
+    logs = []
+    for entry in (getattr(room, 'game_logs', None) or []):
+        # 走**同一个** game_log 净化函数：日志 detail 里带过整艘船的坐标（见 spectate.py）。
+        cleaned = spectate.sanitize_event('game_log', entry, room=room)
+        if cleaned is not None:
+            logs.append(cleaned)
+
+    return {
+        'room_id': room.id,
+        'state': room.state,
+        'current_phase': getattr(room, 'current_phase', None),
+        'current_attacker': room.current_attacker,
+        'attacks_remaining': room.attacks_remaining,
+        'round': room.round,
+        'attack_order': list(getattr(room, 'attack_order', None) or []),
+        'ranked': bool(getattr(room, 'ranked', False)),
+        'mode': _room_match_mode(room),
+        'winner': getattr(room, 'winner', None),
+        'game_over_reason': getattr(room, 'game_over_reason', None),
+        'field_magic': field_magic_name(room) or '',
+        'sides': sides,
+        'seat_labels': labels,
+        'board_attacks': board_attacks,
+        'game_logs': logs,
+        'chain': _spectate_chain_payload(room),
+        # —— 场上公开效果（作者已确认给观众：这些坐标本来就是**有意公开给双方**的）——
+        # 神威洞与冻结区都是"卡面公开宣布的区域"，绝处逢生的候选格更必须是公开的
+        # （对方要据此知道那艘新船可能在哪，而且这些格子得能打）。
+        'shenwei_holes': [dict(h) for h in (effects.get('shenwei_holes') or [])],
+        'frozen_area': dict(effects.get('frozen_area') or {}) or None,
+        'last_stand_cells': [{'x': cx, 'y': cy}
+                             for (cx, cy) in (effects.get('last_stand_cells') or [])],
+        'last_stand_owner': effects.get('last_stand_owner'),
+        # —— 观战席：人数 + 上限给所有人，**名单只给观众自己**（见下）——
+        'spectator_count': _spectate_count(room),
+        'spectator_limit': spectate.SPECTATOR_LIMIT,
+        # ★ 名单（作者裁定：观众彼此看得到名字；对局双方只看到人数）。
+        #   它**只**出现在这份发给观众自己的快照里 —— 绝不进 `spectate_count_changed`
+        #   （那条是广播给对局双方的）。守卫断言人数事件里没有任何名字。
+        'spectators': [
+            {'name': info.get('name'), 'joined_at': info.get('joined_at')}
+            for info in (room.spectators or {}).values()
+        ],
     }
 
 

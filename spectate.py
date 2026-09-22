@@ -51,25 +51,124 @@ def is_spectate_room(room_id) -> bool:
     return isinstance(room_id, str) and room_id.startswith(SPECTATE_ROOM_PREFIX)
 
 
+# 观战席上限（作者裁定：**上限 20 人**）。数字只有这一份：
+# `server.handle_spectate_join` 的满员判定与 `_build_spectate_snapshot` 的
+# `spectator_limit` 都读它，前端也从快照里拿 —— 前端不许再写一遍 20。
+SPECTATOR_LIMIT = 20
+
+
+# ---------------------------------------------------------------------------
+# 座位标签（`p1` / `p2`）—— **全项目唯一实现**
+# ---------------------------------------------------------------------------
+# 为什么需要它：`room.players` 的 key 有两套约定（CLAUDE.md §6）——
+# 自定义房是 `user_id`（游客是 sid），**匹配房一律是入座时的 socket sid**。
+# 于是直接把 key 塞进给观众的 payload，观众看到的是一串浏览器连接 id：
+# 既看不懂（认不出是哪个座位），又是**不该外发的连接标识**。
+#
+# 座位标签只在这里算一次：`_pub_magic_chain`（净化）与
+# `server._build_spectate_snapshot`（快照）都调它 —— 两处各写一份必然漂移
+# （教训 #1）。前端只渲染，不许自己把 sid 映射成 p1/p2。
+SEAT_UNKNOWN = 'unknown'
+
+
+def seat_order(room) -> list:
+    """房间的座位顺序：`['<p1 的 key>', '<p2 的 key>']`（取不到返回空表）。
+
+    `room` 允许传**房间对象**（正常路径）或**房间号字符串**（老调用点与守卫
+    用例传的是 `.id`）—— 后者无法解析座位，于是标签一律退化成 `unknown`。
+    退化方向是安全的：**宁可显示 unknown，也绝不回显原始 sid**。
+
+    顺序 = `room.players` 的插入顺序 = 入座顺序（匹配房是配对时的 p1/p2）。
+    """
+    players = getattr(room, 'players', None)
+    if isinstance(players, dict):
+        return [str(pid) for pid in players]
+    return []
+
+
+def seat_label(room, player_id) -> str:
+    """把一个座位的 key 换成 `p1` / `p2`；认不出来返回 `'unknown'`。
+
+    ⚠️ 永远不返回原始 `player_id` —— 调用方拿到的要么是座位标签、要么是
+       `unknown`，所以"漏回显 sid"这件事在函数层面就不可能发生。
+    """
+    if player_id is None or player_id == '':
+        return SEAT_UNKNOWN
+    order = seat_order(room)
+    pid = str(player_id)
+    if pid in order:
+        return 'p%d' % (order.index(pid) + 1)
+    return SEAT_UNKNOWN
+
+
+def seat_label_map(room) -> dict:
+    """`{座位 key: 'p1'/'p2'}`。给需要一次映射多处的调用方用。"""
+    return {pid: 'p%d' % (i + 1) for i, pid in enumerate(seat_order(room))}
+
+
 # ---------------------------------------------------------------------------
 # 净化辅助（全部是纯函数）
 # ---------------------------------------------------------------------------
+# 这些 key 的值**一律是坐标数组** —— 出现在发给观众的任何 payload 的任何层级
+# 都是泄漏，必须整条剥掉（不是"清空"，是删掉键本身）。
+#
+# ⚠️ 2026-09-22 第 2 批补进来的三个（`ship_positions` / `affected_positions` /
+#    `revealed_positions`）是**实测发现**的：它们不在第 1 批那两个名字里，
+#    而 `game_log` 的 detail 里真的带着坐标（见 `_pub_game_log`）。
+COORDINATE_KEYS = (
+    'positions', 'sunk_positions', 'ship_positions',
+    'affected_positions', 'revealed_positions',
+    'ships', 'hits',
+)
+
+
+def _strip_coord_keys(node):
+    """**递归**剥掉坐标类 key，返回 (净化后的副本, 删掉的坐标条数)。
+
+    递归是必须的：`game_log` 的 payload 是 `{ts,type,text,detail}`，
+    坐标藏在 `detail` 里（`add_game_log(..., {'positions': [...]})`）——
+    只扫顶层的话那两个调用点会整条漏过去。
+
+    只删"键名就是坐标字段"的那些；`{'target': {'x':1,'y':2}}` 这类**已经公开的
+    被轰格**必须保留（观众要看到"打哪儿了"）。
+    """
+    dropped = 0
+    if isinstance(node, dict):
+        out = {}
+        for key, value in node.items():
+            if key in COORDINATE_KEYS:
+                if isinstance(value, (list, tuple)):
+                    dropped += len(value)
+                continue
+            cleaned, sub = _strip_coord_keys(value)
+            out[key] = cleaned
+            dropped += sub
+        return out, dropped
+    if isinstance(node, list):
+        out = []
+        for value in node:
+            cleaned, sub = _strip_coord_keys(value)
+            out.append(cleaned)
+            dropped += sub
+        return out, dropped
+    if isinstance(node, tuple):
+        out = []
+        for value in node:
+            cleaned, sub = _strip_coord_keys(value)
+            out.append(cleaned)
+            dropped += sub
+        return out, dropped
+    return node, 0
+
 
 def _scrub_positions(data: dict) -> tuple[dict, int]:
     """删掉 payload 里的坐标字段，返回 (净化后的副本, 删掉了几个坐标)。
 
-    当前项目里坐标字段只有这两个名字（`positions` / `sunk_positions`）。
-    `ships` / `hits` 是"坐标数组"的同族字段，一并删掉 —— 宁可多删也不放行。
+    第 1 批只有这一层；第 2 批把它换成 `_strip_coord_keys` 的薄封装
+    （**同一件事只留一份实现** —— 教训 #1）。对外语义不变，
+    只是现在连嵌套层级里的坐标也一起剥掉。
     """
-    out = {}
-    dropped = 0
-    for key, value in data.items():
-        if key in ('positions', 'sunk_positions', 'ships', 'hits'):
-            if isinstance(value, (list, tuple)):
-                dropped += len(value)
-            continue
-        out[key] = value
-    return out, dropped
+    return _strip_coord_keys(data)
 
 
 def _as_int(value, default=0):
@@ -80,7 +179,7 @@ def _as_int(value, default=0):
         return default
 
 
-def _pub_shields_added(data):
+def _pub_shields_added(data, room=None):
     """卧薪尝胆：给全部存活船加盾 —— **动作**是"谁加了几艘"，**不是**"船在哪"。"""
     if not isinstance(data, dict):
         return None
@@ -89,7 +188,7 @@ def _pub_shields_added(data):
     return out
 
 
-def _pub_trap_set(data):
+def _pub_trap_set(data, room=None):
     """守株待兔：有人给自己一艘船打了陷阱 —— 保留"谁设了陷阱"，删掉是哪艘（坐标）。"""
     if not isinstance(data, dict):
         return None
@@ -97,7 +196,7 @@ def _pub_trap_set(data):
     return out
 
 
-def _pub_shield_absorbed(data):
+def _pub_shield_absorbed(data, room=None):
     """仁王之盾挡下一炮 —— 保留"谁的盾破了"，**绝不保留**挨打那艘船的坐标。
 
     ⚠️ 这一条非常要紧：它广播的是**遭受攻击的那艘船的全部坐标**。
@@ -110,7 +209,7 @@ def _pub_shield_absorbed(data):
     return out
 
 
-def _pub_trap_triggered(data):
+def _pub_trap_triggered(data, room=None):
     """守株待兔触发：对方要牺牲两艘。保留归属与牺牲数量，删掉被击沉那艘船的坐标。"""
     if not isinstance(data, dict):
         return None
@@ -119,7 +218,7 @@ def _pub_trap_triggered(data):
     return out
 
 
-def _pub_ship_sacrificed(data):
+def _pub_ship_sacrificed(data, room=None):
     """某艘船被牺牲（恶魔契约 / 绝处逢生）—— 动作可见，船在哪不可见。"""
     if not isinstance(data, dict):
         return None
@@ -128,7 +227,30 @@ def _pub_ship_sacrificed(data):
     return out
 
 
-def _pub_magic_chain(data):
+def _pub_summary_line(data, room=None):
+    """"谁做了什么"的明文日志：**文字与归属都留着，坐标一律剥掉**。
+
+    ★ 第 2 批实测发现的**真泄漏**（第 1 批漏掉的）：
+
+    `server.add_game_log(room, text, 'magic', {'player':…, 'positions': […]})` ——
+    `_sacrifice_ship` 那条日志把**被牺牲那艘船的全部格子**放进了 detail
+    （`server.py` 约 10490）。而被牺牲的船往往**一格都没挨过炮**
+    （恶魔契约 / 神之宣告 / 命运骰子），于是原样转发 = 把一艘完好战舰的位置
+    直接送给观众 —— 正是核心不变量 #1 说"永远不许"的那件事。
+    另一处（硫磺火焰，约 11836）带 `affected_positions`：那些格子虽然
+    已由 `attack_result` 逐格公开，但按"坐标字段一个都不外发"的口径一并剥掉。
+
+    第 1 批把 `game_log` 登记成"原样转发"的时候没抓到它 —— 因为守卫用例给的
+    样例 detail 里只有已公开的被轰格。**样例没有坐标 ≠ 事件没有坐标**，
+    这正是教训 #34 说的"零报错制造假象"，所以现在按事件名统一剥。
+    """
+    if not isinstance(data, dict):
+        return None
+    out, _ = _strip_coord_keys(data)
+    return out
+
+
+def _pub_magic_chain(data, room=None):
     """连锁栈：保留"谁打出了什么卡、有没有被康"，**剥掉 `targets`**。
 
     两个理由：
@@ -136,10 +258,17 @@ def _pub_magic_chain(data):
        形状不受控 —— 既可能是船序号也可能是格子坐标，服务端**不做清洗**就塞进 broadcast。
        原样转发等于把一个形状未知的袋子里可能装着的坐标送给观众。
     2. `ChainItem` 被 `emit` 的 `default=lambda o: o.__dict__` 全量序列化，
-       所以 `player_id`（**匹配房里是 socket sid**）也在 payload 里。
-       本批按"不改对局逻辑"的约束只做标注说明，不做替换 —— 见下面 `seat` 字段。
+       所以 `player_id`（**匹配房里是 socket sid**）原本也在 payload 里。
 
-    保留的是观众真正需要的那部分：卡名、入链顺序、有没有被无效化（以及被哪张康的）。
+    ## `player_id` → 座位标签（第 2 批，作者已批准）
+
+    原样下发 `player_id` 有两个毛病：观众看到一串看不懂的 sid；而且那是
+    **连接标识**，不该外发。现在**删掉原始 `player_id`，只留 `seat`**
+    （`p1`/`p2`，由 `seat_label` 算，全项目唯一一份实现）。
+
+    ⚠️ 别改回"保留 player_id 再加个别名"—— 那等于 sid 照样发出去。
+       `tests/test_spectate_batch2.py` 有一条守卫断言净化结果里
+       **不出现原始 sid / user_id 字符串**。
     """
     if not isinstance(data, dict):
         return None
@@ -150,15 +279,12 @@ def _pub_magic_chain(data):
     dropped = 0
     for item in chain:
         if isinstance(item, dict):
-            entry = {k: v for k, v in item.items() if k != 'targets'}
+            entry = {k: v for k, v in item.items() if k not in ('targets', 'player_id')}
             if isinstance(item.get('targets'), (list, tuple)):
                 dropped += len(item['targets'])
         else:
             entry = {}
-        # ⚠️ `player_id` 在匹配房里是**座位登记的 socket sid**。本批不改对局逻辑，
-        #    因此仍随 payload 下发；观众拿它只能当"这是同一个座位的第 N 次出牌"用。
-        #    要不要换成座位标签（'p1'/'p2'）留给后续批次与作者定夺。
-        entry['seat'] = entry.get('player_id') if entry.get('player_id') else 'unknown'
+        entry['seat'] = seat_label(room, item.get('player_id') if isinstance(item, dict) else None)
         out.append(entry)
     return {'chain': out, 'chain_len': len(out), 'targets_dropped': dropped}
 
@@ -193,7 +319,9 @@ SPECTATE_EVENTS = {
     'magic_chain_updated': _pub_magic_chain,  # ★ 剥掉客户端提交的 targets
     'chain_resolved': None,
     # —— 打法记录（明文，观众最直接的信息来源）——
-    'game_log': None,
+    # ★ `game_log` 的 **detail 里带过整艘船的坐标**（牺牲战舰那条）→ 必须净化。
+    #   文字本身（`text`）是公开的，剥的只是 detail 里的坐标字段。
+    'game_log': _pub_summary_line,
     'game_message': None,
     # 通用提示（`emit('message', ...)`，18 处）：payload 是 `{'message': str, 'type': str}`，
     # 全是给人看的文案，不含任何局面数据。它有时 `room=room.id`、有时 `to=<sid>`；
@@ -246,6 +374,13 @@ SPECTATE_EVENTS = {
     'achievements_unlocked': None,
     'xp_gained': None,
     'rank_changed': None,
+    # —— 观战通道自己的一套（第 2 批）——
+    # 这三个是**服务端直接发往 `spectate:<room_id>` 通道**的事件，不经 `emit` 的
+    # 第三条腿（第三条腿只认"对局房间号"，观战通道名会被 `_live_room_id` 挡掉，
+    # 于是不会自我循环）。它们天然只对观众有意义：
+    'spectate_sync': None,           # 中途加入的**一次性快照**（只发给该观众）
+    'spectate_count_changed': None,  # 观战人数变化（**只含人数，不含名单**）
+    'spectate_ended': None,          # 对局房间被回收 → 观战结束
 }
 
 
@@ -320,10 +455,37 @@ MUST_KEEP_ACTION_FIELDS = {
     'trap_set': ('player',),
     'trap_triggered': ('owner', 'sacrificed'),
     'ship_sacrificed': ('player',),
+    # 日志那条：剥掉坐标之后**文字与归属必须还在** ——
+    # 否则观众会从"看得到对局日志"退化成"日志一片空白"。
+    'game_log': ('ts', 'type', 'text', 'detail'),
 }
 
 # 这些 key 出现在发给观众的 payload 里 = 已经是泄漏，测试直接判失败。
 FORBIDDEN_PAYLOAD_KEYS = ('ships', 'positions', 'hits', 'sunk_positions')
+
+# ---------------------------------------------------------------------------
+# 观战快照（`server._build_spectate_snapshot`）的**禁字段表**
+# ---------------------------------------------------------------------------
+# 快照是**白名单另建**的（绝不复用 `_build_room_sync` 再删字段 —— 它有 41 个
+# 顶层键，逐个删必然漏一个）。这张表是那件事的机器守卫：快照里**任何层级**
+# 出现这些 key 就是泄漏，`tests/test_spectate_batch2.py` 递归扫它。
+#
+# 每一条都对应一个"若出现就等于透视"的东西：
+#   ships / positions / hits / sunk_positions —— 船在哪（核心不变量 #1）；
+#   hand / magic_hand                           —— 手牌**内容**（只能给张数）；
+#   revealed_positions                          —— 探测卡揭示的坐标，是**付费情报**；
+#   effect_flags / active_effects               —— 按座位下发的私有角标；
+#   pending_placement / pending_sacrifice / pending_sacrifice_ships
+#                                               —— 等待玩家交互的私有状态；
+#   opponent_attacks                            —— 重连快照的私有键名（我方棋盘受击记录）；
+#   sunk_ships / max_ships                      —— 对局私有计数。
+SNAPSHOT_FORBIDDEN_KEYS = (
+    'ships', 'positions', 'hits', 'sunk_positions',
+    'hand', 'magic_hand', 'revealed_positions',
+    'effect_flags', 'active_effects',
+    'pending_placement', 'pending_sacrifice', 'pending_sacrifice_ships',
+    'opponent_attacks', 'sunk_ships', 'max_ships',
+)
 
 
 # ---------------------------------------------------------------------------
@@ -349,6 +511,16 @@ def _validate():
     for event in MUST_KEEP_ACTION_FIELDS:
         if event not in SPECTATE_EVENTS:
             raise ValueError('%r 被要求"保留动作字段"，却不在 SPECTATE_EVENTS 里' % event)
+    # 快照的禁字段表与事件 payload 的禁字段表**不许互相矛盾**：
+    # 后者是前者的子集（快照把 payload 那一套也一并禁掉）。
+    stray = set(FORBIDDEN_PAYLOAD_KEYS) - set(SNAPSHOT_FORBIDDEN_KEYS)
+    if stray:
+        raise ValueError('快照禁字段表漏了事件 payload 的禁字段：%s' % sorted(stray))
+    # 剥字段用的名字表必须覆盖"禁字段表"里所有坐标类字段 ——
+    # 否则 `_strip_coord_keys` 会放过一个测试判红、而净化放行的键（两张表打架）。
+    unscrubbed = set(FORBIDDEN_PAYLOAD_KEYS) - set(COORDINATE_KEYS)
+    if unscrubbed:
+        raise ValueError('COORDINATE_KEYS 漏了：%s' % sorted(unscrubbed))
 
 
 _validate()
@@ -366,15 +538,18 @@ def sanitize_event(event, data, room=None):
     * 表里的值是 `None` → 原样返回；
     * 表里给了净化函数 → 返回它的结果（返回 `None` 同样表示"这次不发"）。
 
-    `room` 可选：目前没有净化函数需要它，留着是为了后续批次（例如按房间状态
-    确认某个坐标确实已经公开）不必再改 `emit` 的调用形状。
+    `room`：**房间对象**（正常路径，`_emit_to_spectators` 传的就是它）或
+    房间号字符串（老调用点 / 守卫用例按 `.id` 传）。净化函数的签名统一是
+    `fn(data, room=None)`，需要的自己从 `room` 取座位等房间级信息；
+    取不到 room 时必须**退化成安全的一侧**（例如座位标签退化成 `unknown`，
+    绝不回显原始 sid）。
     """
     if not is_spectatable(event):
         return None
     fn = SPECTATE_EVENTS[event]
     if fn is None:
         return data
-    return fn(data)
+    return fn(data, room)
 
 
 # ---------------------------------------------------------------------------

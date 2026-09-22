@@ -3,7 +3,7 @@
 > 面向 AI 代理的索引。**先读这里，别一次读完 `server.py`（8500+ 行）/ `static/game.js`（9000+ 行）/ `static/style.css`（4800+ 行）—— 一律先 grep 定位再分段读。**
 > ⚠️ 行号每次提交都会漂移，**本文件里任何行号都只当线索，以 grep 结果为准**。
 > ⚠️ **本文件每次对话都会整份注入**，新增内容请控制在几十字级别 —— 长记录写进 `docs/`。
-> 最后更新：2026-09-22（大师 AI 第 6 批：开炮提速 + 出牌等真结算；侵略性四方向全否）。
+> 最后更新：2026-09-22（实时观战第 2 批：快照 / 观众进出 / 观战席 / 观战开关）。
 
 ---
 
@@ -16,7 +16,7 @@ Flask + Flask-SocketIO 的实时双人海战棋，48 条魔法卡 / 场地魔法
   `static/game.js` + `templates/index.html` + `static/style.css`（前端单页）
 - 纯规则模块（都**只有一份实现**，前端不许重算）：`ranks.py` 段位 ｜ `leveling.py` 等级经验 ｜
   `achievements.py` 徽章 ｜ `profile_spec.py` 名片外观与解锁 ｜ `wallpaper.py` 壁纸 ｜
-  `spectate.py` 观战（事件白/黑名单 + 净化函数；观众进不来，见 `docs/SPECTATE_2026_09_22.md`）
+  `spectate.py` 观战（事件白/黑名单 + 净化函数 + 座位标签 + 快照禁字段表；观众**能进来了**，见 `docs/SPECTATE_BATCH2_2026_09_22.md`）
 
 ---
 
@@ -33,7 +33,7 @@ python -m pytest tests/ -q    # 基线见下
 - ⚠️ 本机临时目录 ACL 坏过，pytest 若在 setup 报 `PermissionError: Temp\pytest-of-Administrator`，
   先 `New-Item -ItemType Directory -Force .tmp\pytemp`，再
   `$env:TMP="$PWD\.tmp\pytemp"; $env:TEMP=$env:TMP; python -m pytest tests/ -q -p no:cacheprovider`。
-- **实测基线（2026-09-22）**：`2086 passed`；跑完约 30 秒。
+- **实测基线（2026-09-22）**：`2122 passed`；跑完约 31 秒。
   含无头对局驱动 `tools/headless_game.py`（约 250 局/秒，自带"击沉/被击沉/命中率/
   无伤获胜"四个量）、大师 AI 决策层 `ai_brain.py` 与大师接线层 `tests/test_ai_master.py` 的用例。
 
@@ -112,6 +112,8 @@ phase:                        preparation → battle → end
 - 对战：`attack` `enter_battle_phase` `enter_end_phase` `end_turn` `papal_attack` `surrender` `chat_message` `request_revealed_positions` `confirm_reinforcement_position` `cancel_placement`
 - 魔法/连锁：`use_magic_card` `select_magic_target` `confirm_magic_target` `get_magic_temp_data` `get_discard_pile` `chain_response` `remove_field_magic` `confirm_shenji_declare`
 - 重连：`get_reconnect_token` `rejoin_room` ｜ 另有 `request_hand_sync`（手牌自愈）
+- 观战：`spectate_join` `spectate_leave`（**只限登录用户**）｜ 服务端→客户端 `spectate_sync` `spectate_count_changed` `spectate_ended`
+  ⚠️ 观众**只进 `spectate:<room_id>`、绝不进对局 room**，且**绝不写进 `room.players`**（见 §12 观战第 2 批）
 - 大厅：`lobby_subscribe` `lobby_unsubscribe` `lobby_refresh` `lobby_create_room` `lobby_chat_send` `close_room`
   （契约见 `docs/LOBBY_2026_09_18.md`；`lobby_state` 是**广播**，没法逐人改 is_me → 前端拿 `lobby_hello.key` 自己比）
 - 服务端→客户端：`game_state` `attack_result` `ships_updated` `hand_updated` `game_over` `rps_result` `match_queued` `match_canceled` `magic_chain_updated` `chain_resolved` `field_magic_updated` `game_message` `message` `error` `achievements_unlocked` `xp_gained` `rank_changed`
@@ -347,7 +349,8 @@ phase:                        preparation → battle → end
 `docs/UPDATES_2026_09_19.md`（更新公告：文案规矩 + 每批加一条）｜
 `docs/SHIP_PICK_PRIORITY_2026_09_20.md`（选船优先级仲裁：单槽覆写根因 + 队列 + 教训）｜
 `docs/MASTER_AI_2026_09_21.md`（**大师 AI**：决策层规格 + 卡池开放口径 + 度量事故 + 逐档消融数据）｜
-`docs/SPECTATE_2026_09_22.md`（实时观战第 1 批：三处明文坐标事件 + emit 第三条腿 + 两条穷举守卫）｜ `README.md`（用户向说明）
+`docs/SPECTATE_2026_09_22.md`（实时观战第 1 批：三处明文坐标事件 + emit 第三条腿 + 两条穷举守卫）｜
+`docs/SPECTATE_BATCH2_2026_09_22.md`（观战第 2 批：白名单快照 + 观众进出 + 观战开关 + `game_log` 真泄漏）｜ `README.md`（用户向说明）
 
 > ⚠️ **部署前确认环境变量**：代码新增 `os.environ.get('XXX')` 时，服务器 systemd 必须同步配置 ——
 > 漏配会导致"服务能起来但带着错误默认值运行"（曾因漏配 `CORS_ORIGINS` 让线上所有操作卡十几秒）。

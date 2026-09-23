@@ -3012,25 +3012,18 @@ function replayModeLabel(matchData, myId) {
 // 帧解算（纯函数，**一处实现**）
 // ---------------------------------------------------------------------------
 // 契约 §7：
-//   · 第 k 帧的棋盘标记 = `steps[0..k]` 里的 attack 步，叠上 `board_resets` 中 `step ≤ k` 的重置；
-//   · 船位 / 手牌 = 两条时间线里最后一个 `step ≤ k` 的条目。
-// ⚠️ 两条时间线是**增量**：某条只带变化的那一侧 ⇒ 必须**沿用上一帧另一侧的值**
+//   · 第 k 帧的棋盘标记 = `attacks` 时间线里 `step ≤ k` 的格，**减去** `board_resets`
+//     中 `step ≤ k` 的重置（重置把那一块棋盘上已有的标记全擦掉）；
+//   · 船位 / 手牌 / 效果 = 三条时间线里 `step ≤ k` 的条目（见各自的语义）。
+// ⚠️ 时间线的语义**不是同一种**，别混：
+//     `ships` / `hands` / `effects` = **替换**（某一侧出现时整份盖掉）；
+//     `attacks`                     = **累加**（每条只带这一步新增的格）。
+// ⚠️ 稀疏 + 增量：某条只带变化的那一侧 ⇒ 必须**沿用上一帧另一侧的值**
 //    （所以这里是"按 step 升序把所有 `step ≤ k` 的条目叠上去"，不是"取最后一条"）。
 // ⚠️ `board_resets[].side` = **哪一块棋盘被重置**（不是发起方），所以重置只清那一侧的攻击标记。
-// ⚠️ attack 步的 `detail.attacker` 是**原始座位 key**（匹配房里就是入座 sid），
-//    **不是 user_id**，别拿它当身份用；认不出来时才退回按行动者显示名对齐座位
-//    （`actor` 就是显示名，取自 `room.players[pid].name`）。两者都认不出来就**不画这一炮**
-//    （宁缺勿错：画错一侧比少画一炮更难查）。
-function replayAttackerSeat(detail, actor) {
-    var raw = detail ? detail.attacker : null;
-    if (raw === 'p1' || raw === 'p2') return raw;
-    if (!actor || !replayState.payload) return null;
-    var names = replayState.payload;
-    if (String(names.p1_name || '') === String(actor)) return 'p1';
-    if (String(names.p2_name || '') === String(actor)) return 'p2';
-    return null;
-}
-
+// ⚠️ 标记**不再**从 attack 步反推（那是"同一件事两份数据源"，正是本批修掉的缺陷）：
+//    只有普通炮击会写 attack 步，卡牌类伤害（轰炸/硫磺火焰/溅射/雷达子弹/探测雷达）
+//    一条都不写。数据源统一成 `Player.attacks` 那份权威动作记录（与观战棋盘帧同一份）。
 function replayComputeFrame(payload, k) {
     var frame = {
         ships: { p1: [], p2: [] },
@@ -3066,21 +3059,26 @@ function replayComputeFrame(payload, k) {
         }
     }
 
-    // ③ 攻击标记：`steps[0..k]` 里的 attack 步画到**被打的那一侧**的棋盘上。
+    // ③ 攻击标记：数据源 = `payload.attacks`（**稀疏 + 增量**时间线，后端从
+    //    `Player.attacks` 那份**权威动作记录**里取的 —— 与观战棋盘帧同一份数据源）。
     //
-    // ⚠️⚠️ 这里是本批修掉的那个"方向写反"型 bug（教训 #7）——原来的写法是：
-    //     `after = false; for (m...) if (resetAt[side][m] <= i) { after = true; break; }`
-    //     然后 `if (!after) continue;`
-    //   即"**必须存在**一个 ≤ i 的重置才画这一炮"。而绝大多数局的 `board_resets`
-    //   是**空的**（本批实测：人机局、匹配局都观测到 `[]`）⇒ `after` 恒为 false
-    //   ⇒ **每一炮都被 continue 掉** ⇒ 回放里一个"已轰过的格"都看不到（作者实报）。
-    //   它当时全绿，是因为既有断言只要求"拖拽 seek 与连点下一步**自洽**"（系统性丢标记
-    //   也自洽）和"船格 6/6 与后端相等"（船 ≠ 攻击标记）—— **没有任何一条断言要求
-    //   攻击标记真的出现过**。守卫见 `tools/dom_replay_frame_check.mjs` 的第 1 组。
+    // ⚠️⚠️ 这里**不许**再从 attack 步反推标记（本批之前就是那么写的，而且出过两次事故）：
+    //    · 第 1 次：`var after = false; for (m…) if (resetAt[side][m] <= i) { after = true; break; }`
+    //      然后 `if (!after) continue;` —— 即"**必须存在**一个 ≤ i 的重置才画这一炮"。
+    //      而绝大多数局的 `board_resets` 是空的 ⇒ `after` 恒为 false ⇒ 每一炮都被丢掉
+    //      ⇒ 回放里一个"已轰过的格"都看不到（作者实报，教训 #7 的"方向写反"型）。
+    //      它当时全绿，因为既有断言只要求"拖拽 seek 与连点下一步自洽"（系统性丢标记也自洽）
+    //      和"船格 6/6 与后端相等"（船 ≠ 攻击标记）——**没有任何一条断言要求标记真的出现过**。
+    //    · 第 2 次（本批）：**只有普通炮击**会写 `type='attack'` 的游戏日志，而
+    //      `轰炸` / `硫磺火焰` / `溅射` / `雷达子弹` / `探测雷达` 逐格写 `Player.attacks`
+    //      **一条 attack 步都不写** ⇒ 那五张卡打出的格子在回放里**一个标记都没有**
+    //      （作者实报："那一整行看着是没挨过炮的海面"）。
+    //      所以标记的**唯一数据源**是这份时间线；日志步只能当"这一步发生了什么"的文案。
     //
-    //   正确语义：一炮（step i，打 board B）在帧 k 要看得见，当且仅当它发生在
-    //   **B 的最后一次重置之后**（重置把那块棋盘上已有的标记全擦掉了）。
-    //   等价写法就是取最大值 `lastReset`，没有重置则为 -1。
+    // ⚠️ 语义（与改动前逐格相同，别改）：
+    //    一炮（时间线里 step = i 的那一格，落在 board B）在帧 k 要看得见，当且仅当
+    //    **i ≤ k** 且它发生在 **B 的最后一次重置之后**（重置把那块棋盘上已有的标记全擦掉了）。
+    //    等价写法就是取最大值 `lastReset`，没有重置则为 -1。
     var lastReset = { p1: -1, p2: -1 };
     for (var s = 0; s < 2; s++) {
         var rside = replaySeatOf(s);
@@ -3089,23 +3087,45 @@ function replayComputeFrame(payload, k) {
             if (list[n] > lastReset[rside]) lastReset[rside] = list[n];
         }
     }
-    for (var i = 0; i <= target; i++) {
-        var step = steps[i];
-        if (!step || step.kind !== 'attack') continue;
-        var detail = step.detail || {};
-        var pt = detail.target;
-        if (!pt || typeof pt !== 'object') continue;
-        var x = replayInt(pt.x, -1);
-        var y = replayInt(pt.y, -1);
-        if (x < 0 || y < 0 || x > 5 || y > 5) continue;
-        var attacker = replayAttackerSeat(detail, step.actor);
-        if (attacker !== 'p1' && attacker !== 'p2') continue;
-        var boardSide = attacker === 'p1' ? 'p2' : 'p1';
-        if (i <= lastReset[boardSide]) continue;      // 重置把它擦掉了
-        frame.marks[boardSide][x + ',' + y] = {
-            hit: detail.hit === true,
-            sunk: detail.ship_sunk === true
-        };
+    // ③-1 先把 `step ≤ k` 的格**累加**到两块棋盘上（增量：每条只带这一步新增/改写的格）。
+    //      ⚠️ 与 `ships` / `hands` 的"替换"语义**不同**：这里是**累加**，
+    //         所以走自己那一段，不复用 `replayFoldTimeline`（那是替换）。
+    var rowsAtk = Array.isArray(payload.attacks) ? payload.attacks : [];
+    var hits = { p1: [], p2: [] };
+    for (var t = 0; t < rowsAtk.length; t++) {
+        var arow = rowsAtk[t] || {};
+        var astep = replayInt(arow.step, -1);
+        if (astep < 0) continue;
+        if (astep > target) break;          // 时间线升序，后面都不用看了
+        for (var q = 0; q < 2; q++) {
+            var aboard = replaySeatOf(q);
+            var cells = arow[aboard];
+            if (!Array.isArray(cells)) continue;
+            for (var c = 0; c < cells.length; c++) {
+                hits[aboard].push({ step: astep, cell: cells[c] || {} });
+            }
+        }
+    }
+    // ③-2 再按"最后一次重置"过滤（重置之前的炮一律不画），同一格取**最后**一条。
+    //      ⚠️ "同一格取最后一条"不是随手写的：真对局里约 3/10 局会出现"某一格先被炮击
+    //         打沉、又被【轰炸】/【硫磺火焰】补一条落空"（服务端卡里那句过滤只按"这次
+    //         真的摘掉了哪些船"，已经沉过的船不在候选表里）。实战前端逐条覆盖同一个键
+    //         ⇒ 玩家**看到的是后写的那条**；`replay._attacks_snapshot` 也按同一口径取值。
+    for (var b = 0; b < 2; b++) {
+        var boardSide = replaySeatOf(b);
+        var mine = hits[boardSide];
+        for (var j = 0; j < mine.length; j++) {
+            var hit = mine[j];
+            var pt = hit.cell || {};
+            var x = replayInt(pt.x, -1);
+            var y = replayInt(pt.y, -1);
+            if (x < 0 || y < 0 || x > 5 || y > 5) continue;
+            if (hit.step <= lastReset[boardSide]) continue;      // 重置把它擦掉了
+            frame.marks[boardSide][x + ',' + y] = {
+                hit: pt.hit === true,
+                sunk: pt.sunk === true
+            };
+        }
     }
     return frame;
 }

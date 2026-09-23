@@ -95,11 +95,13 @@ REMOVAL_SITES = [
     # ---- ③ 同时产出攻击步：回放靠 attack 标记画红叉，**不需要**登记 ----
     dict(fn='apply_magic_effect', container='opponent', ops=['remove'], card='轰炸',
          kind='attack', need=None,
-         why='轰炸逐格写 `caster.attacks`（`hit=True, ship_sunk=True`）并 emit `attack_result`；'
-             '有的点**不在 attack 表**里 ⇒ 回放可能仍缺一格 —— **本批不修**（见文档的未验证清单）'),
+         why='轰炸逐格写 `caster.attacks`（`hit=True, ship_sunk=True`）并 emit `attack_result`。'
+             '⚠️ 这两处**不写** `type="attack"` 的游戏日志 ⇒ 改前回放**画不出**这些格'
+             '（第 7 处，作者实报）—— 本批已修：回放的标记收敛到 `attacks` 时间线'
+             '（数据源 = `Player.attacks`），见 `docs/REPLAY_2026_09_23.md` §H'),
     dict(fn='apply_magic_effect', container='opponent', ops=['remove'], card='硫磺火焰',
          kind='attack', need=None,
-         why='同上：逐格 `caster.attacks` + `attack_result`（`ignore_sunken` 那条分支另算）'),
+         why='同上：逐格 `caster.attacks` + `attack_result`（不写 attack 日志；本批修好）'),
     # ---- ④ 有意消失：临时船收回 / 神威暂时除外 ⇒ 一格沉没标记都不许有 ----
     dict(fn='_recall_lanyu_ships', container='player', ops=['remove'], card=None,
          kind='vanish', need=None,

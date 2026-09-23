@@ -722,30 +722,38 @@ try {
   //   "拖拽 seek 与连点下一步自洽"（**系统性丢标记也自洽**）与"船格 6/6 与后端相等"
   //   （**船 ≠ 攻击标记**）—— 于是"一个已轰过的格都没画出来"能一路全绿。
   //   ⚠️ 这条在修复前**必须红**（标记恒为空）。
-  function expectedMarks(replayPayload) {
-    const steps = replayPayload.steps || [];
+  //
+  // ★★ 2026-09-24（第 7 处修复批）：**数据源换了**。
+  //    改前：标记由 `payload.steps` 里 `kind==='attack'` 的那些步推出来；
+  //    改后：标记由 `payload.attacks` 这条**稀疏 + 增量**时间线推出来
+  //          （数据源 = `Player.attacks`，与观战棋盘帧同一份权威记录）。
+  //    为什么必须换：`轰炸` / `硫磺火焰` / `溅射` / `雷达子弹` / `探测雷达` **一条 attack 步
+  //    都不写**，只写 `Player.attacks` ⇒ 按 attack 步推就会漏掉那些格（作者实报的缺陷）。
+  //
+  //    ⚠️ 行的键 = **打出这一炮的座位**（后端 `_record_snapshot` 取 `_side_label`），
+  //       而 `renderReplayBoards` 让 `#replay-board-N` 画 `frame.marks[座位 N]`
+  //       ⇒ 本函数与 `frame.marks` **同一套键**，逐键比对即可（不再自己翻一次方向 ——
+  //       第一版这里翻了方向，于是"工具自己红、产品是对的"，见 `.tmp/dbg_axis.mjs`）。
+  function expectedMarks(replayPayload, k) {
+    const rows = replayPayload.attacks || [];
     const resets = replayPayload.board_resets || [];
     const lastReset = { p1: -1, p2: -1 };
     resets.forEach((r) => {
       const s = (r && r.side === 'p1') ? 'p1' : (r && r.side === 'p2' ? 'p2' : null);
-      if (s && Number(r.step) > lastReset[s]) lastReset[s] = Number(r.step);
+      if (s && Number(r.step) <= k && Number(r.step) > lastReset[s]) lastReset[s] = Number(r.step);
     });
-    const names = { p1: replayPayload.p1_name || '', p2: replayPayload.p2_name || '' };
-    const out = { p1: new Set(), p2: new Set() };
-    steps.forEach((step, i) => {
-      if (!step || step.kind !== 'attack') return;
-      const d = step.detail || {};
-      const t = d.target || {};
-      if (typeof t.x !== 'number' || typeof t.y !== 'number') return;
-      let att = (d.attacker === 'p1' || d.attacker === 'p2') ? d.attacker : null;
-      if (!att && step.actor) {
-        if (names.p1 === String(step.actor)) att = 'p1';
-        else if (names.p2 === String(step.actor)) att = 'p2';
-      }
-      if (!att) return;
-      const board = att === 'p1' ? 'p2' : 'p1';
-      if (i <= lastReset[board]) return;
-      out[board].add(t.x + ',' + t.y + (d.ship_sunk ? ':sunk' : (d.hit ? ':hit' : ':miss')));
+    const out = {};                       // (side) -> { 'x,y': 'sunk'|'hit'|'miss' }
+    ['p1', 'p2'].forEach((s) => { out[s] = {}; });
+    rows.forEach((row) => {
+      const step = Number(row && row.step);
+      if (!(step >= 0) || step > k) return;
+      ['p1', 'p2'].forEach((side) => {
+        (row[side] || []).forEach((c) => {
+          if (!c || typeof c.x !== 'number' || typeof c.y !== 'number') return;
+          if (step <= lastReset[side]) return;         // 重置把它擦掉了
+          out[side][c.x + ',' + c.y] = c.sunk ? 'sunk' : (c.hit ? 'hit' : 'miss');
+        });
+      });
     });
     return out;
   }
@@ -776,17 +784,19 @@ try {
   //             `sunk` / `alive === false` 的格），不能从画面反推。
   const frameMarks = await ev('(function(){' +
     'var m = replayState.frame.marks, out = {p1:{}, p2:{}};' +
-    '["p1","p2"].forEach(function(s){ for (var k2 in m[s]) out[s][k2] = true; });' +
+    '["p1","p2"].forEach(function(s){ for (var k2 in m[s]) {' +
+    '  var c = m[s][k2]; out[s][k2] = c.sunk ? "sunk" : (c.hit ? "hit" : "miss"); } });' +
     'return out;})()');
   const frameMarkList = (side) => Object.keys(frameMarks[side] || {}).sort();
+  const lastFrameK = (replay.steps || []).length - 1;
+  const want = expectedMarks(replay, lastFrameK);
+  const wantKeys1 = Object.keys(want.p1).sort();
+  const wantKeys2 = Object.keys(want.p2).sort();
   const sunkCellsOf = (side) => {
     const rows = (replay.ships || []).filter((r) => Array.isArray(r[side]));
     const last = rows.length ? rows[rows.length - 1][side] : [];
     return last.filter((c) => c.sunk || c.alive === false).map((c) => c.x + ',' + c.y).sort();
   };
-  const want = expectedMarks(replay);
-  const wantKeys1 = Array.from(want.p1).map((s) => s.split(':')[0]).sort();
-  const wantKeys2 = Array.from(want.p2).map((s) => s.split(':')[0]).sort();
   const domCells1 = (frameLast.board1 || []).filter((c) => /(^|\s)(hit|miss)(\s|$)/.test(c.split(':')[1] || ''))
     .map((c) => c.split(':')[0]).sort();
   const wantDomKeys1 = Array.from(new Set(wantKeys1.concat(sunkCellsOf('p1')))).sort();
@@ -794,14 +804,26 @@ try {
     .map((c) => c.split(':')[0]).sort();
   console.log('帧里的标记表 frame.marks: p1=' + JSON.stringify(frameMarkList('p1'))
     + ' / p2=' + JSON.stringify(frameMarkList('p2')));
-  console.log('后端推出的标记键: p1=' + JSON.stringify(wantKeys1) + ' / p2=' + JSON.stringify(wantKeys2));
+  console.log('后端 attacks 时间线推出的标记键: p1=' + JSON.stringify(wantKeys1)
+    + ' / p2=' + JSON.stringify(wantKeys2));
   console.log('画面 hit/miss 格: b1=' + JSON.stringify(domCells1)
     + ' / 期望(标记∪沉船格)= ' + JSON.stringify(wantDomKeys1));
   check(JSON.stringify(frameMarkList('p1')) === JSON.stringify(wantKeys1)
     && JSON.stringify(frameMarkList('p2')) === JSON.stringify(wantKeys2),
-    '★★ 帧里的标记表 == 由后端 JSON 按 `board_resets` 规则推出来的集合（缺陷 ② 的正面判据）',
+    '★★ 帧里的标记表 == 由后端 `attacks` 时间线按 `board_resets` 规则推出来的集合'
+    + '（缺陷 ② + 第 7 处的正面判据）',
     { frame: { p1: frameMarkList('p1'), p2: frameMarkList('p2') },
       server: { p1: wantKeys1, p2: wantKeys2 } });
+  // 逐格连"中没中"也要相等（只比键集的话"全画成落空"也能过）
+  const wantPairs = (side) => Object.keys(want[side]).sort()
+    .map((k2) => k2 + ':' + want[side][k2]);
+  const framePairs = (side) => Object.keys(frameMarks[side] || {}).sort()
+    .map((k2) => k2 + ':' + frameMarks[side][k2]);
+  check(JSON.stringify(framePairs('p1')) === JSON.stringify(wantPairs('p1')),
+    '★★ 第 1 块棋盘的标记**逐格连中没中**都相等（不只比数量）',
+    { frame: framePairs('p1'), server: wantPairs('p1') });
+  check(JSON.stringify(framePairs('p2')) === JSON.stringify(wantPairs('p2')),
+    '★★ 第 2 块棋盘的标记**逐格连中没中**都相等', { frame: framePairs('p2'), server: wantPairs('p2') });
   check(wantKeys1.length + wantKeys2.length > 0,
     '（前置）由后端 JSON 推出的攻击标记集合非空（这一局真的开过炮）',
     { total: wantKeys1.length + wantKeys2.length, steps: replay.steps.length });
@@ -811,7 +833,9 @@ try {
   check(JSON.stringify(domSunk1) === JSON.stringify(sunkCellsOf('p1')),
     '★ 画面上的沉船格 == 后端 `ships` 时间线里沉掉的格',
     { ui: domSunk1, server: sunkCellsOf('p1') });
-  // 反向腿：两块棋盘都不许出现"对方棋盘才有"的标记（方向/归属）
+  // 反向腿：两块棋盘都不许出现"对面才有"的标记（方向 / 归属）
+  // ⚠️ 键就是棋盘（`marks['p2']` 画在 `#replay-board-2`），所以"第 2 块棋盘上的标记"
+  //    只可能来自 `want.p2`（= 落在该棋盘上的那些炮）。
   const domCells2 = (frameLast.board2 || [])
     .filter((c) => /(^|\s)(hit|miss)(\s|$)/.test(c.split(':')[1] || ''))
     .map((c) => c.split(':')[0]).sort();

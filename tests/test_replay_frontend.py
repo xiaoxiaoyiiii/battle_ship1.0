@@ -321,16 +321,26 @@ def test_attack_marks_are_not_gated_on_having_a_reset():
     原写法 `var after = false; … if (!after) continue;` 在 `board_resets` 为空的局里
     （**绝大多数局**）把每一炮都丢掉 ⇒ 一个"已轰过的格"都看不到，而且**不报错**。
     正确语义是"取该侧**最后一次**重置"（没有则 -1），只丢"最后重置之前"的那些炮。
+
+    ★ 本批（第 7 处）**再加一条**：标记的数据源必须是 `payload.attacks` 那条时间线，
+    不许再从 attack 步反推 —— 只有普通炮击写 attack 步，`轰炸`/`硫磺火焰`/`溅射`/
+    `雷达子弹`/`探测雷达` 打出的格在回放里会整片消失（作者实报）。逐格的端到端判据在
+    `tools/dom_replay_frame_check.mjs` 的 I 组，这里钉的是"实现方式"。
     """
     body = _strip_comments(_func_body(_read(GAME_JS), 'function replayComputeFrame('))
     assert 'var after = false;' not in body, \
         '又出现了 `after` 那个把无重置局全丢掉的判据（缺陷 ② 的原写法）'
     assert 'lastReset' in body, '必须用"该侧最后一次重置"（lastReset）作为判据'
-    assert "if (i <= lastReset[boardSide]) continue;" in body, \
-        '判据必须是 `i <= lastReset[boardSide]`（重置之前才丢；用 ≤ 不是 <）'
+    assert 'if (hit.step <= lastReset[boardSide]) continue;' in body, \
+        '判据必须是 `hit.step <= lastReset[boardSide]`（重置之前才丢；用 ≤ 不是 <）'
     # "取最大"必须是显式比较（写成 min/首次命中都会让方向反过来）
     assert 'if (list[n] > lastReset[rside]) lastReset[rside] = list[n];' in body, \
         'lastReset 必须取**最大值**（该侧最后一次重置），不是第一次'
+    # ★ 标记的数据源（第 7 处）：一份时间线，不许再从 attack 步反推
+    assert 'payload.attacks' in body, \
+        '标记的数据源必须是 `payload.attacks`（卡牌类伤害不写 attack 步）'
+    assert 'kind !== \'attack\'' not in body and 'step.kind' not in body, \
+        '`replayComputeFrame` 里又出现了"从 attack 步反推标记"的写法（第 7 处的原写法）'
 
 
 def test_replay_board_renders_the_public_effect_cells():

@@ -40,14 +40,25 @@
  *   H. **沉没判据只有一份说法**（2026-09-24 收口批）：同一格不许有"活船"与"显式沉没登记"
  *      两份说法并存（口径：**显式事实优先**，由 `replay._ship_cells` 保证最多一条）；
  *      前端 `replayCellOf` **不许**长出第二份仲裁实现（源码级判据 + 一条自检反向腿）。
+ *   I. **卡牌类伤害的格子在回放里必须画得出来**（2026-09-24 第 7 处修复批）：
+ *      `轰炸` / `硫磺火焰` / `溅射` / `雷达子弹` / `探测雷达` 逐格写 `Player.attacks`
+ *      并逐格 `emit('attack_result')`，但**一条 `type='attack'` 的游戏日志都不写** ——
+ *      改动前回放的标记是**从 attack 步反推**的 ⇒ 那一整行/列的格子在回放里
+ *      **一个标记都没有**（作者实报："看着是没挨过炮的海面"）。
+ *      本批把标记收敛到 `payload.attacks` 这条**稀疏 + 增量**时间线（数据源 =
+ *      `Player.attacks`，与观战棋盘帧**同一份权威记录**）。
+ *      这一组喂的是**后端真产出的形状**（`tests/test_replay_bomb_marks.py` 逐字段断言了
+ *      后端那一侧）：那一行/列 6 格逐格断言字形（✕ / ○），并与真值表逐格一致。
  *
- * ## 本工具**不覆盖**的一件事（2026-09-24 实测，别以为它绿了就没事）
+ * ## I 组覆盖了哪一件、以及它**不**覆盖哪一件
  *
- * `轰炸` / `硫磺火焰` 打出的格子**在回放里一个攻击标记都没有** ——
- * 这两张卡只写 `caster.attacks` + 逐格 emit `attack_result`，**不写 `type='attack'` 的
- * 游戏日志**，而回放的标记只从 attack 步重建（见 §G9）。所以本工具所有夹具
- * 都只能"喂 attack 步"，它**证明不了**卡牌类伤害在回放里画得出来。
- * 想覆盖它得先修（两条候选改法见 §G9），**别在没修之前加一条恒真的假断言**。
+ * I 组是"**改前必红**"的那一组：它喂 `轰炸` / `硫磺火焰` 那种"**没有 attack 步、
+ * 只有 attacks 时间线**"的 payload（形状由 `tests/test_replay_bomb_marks.py` 从
+ * 真卡实现里取出来）。改动前 `replayComputeFrame` 从 attack 步反推标记 ⇒ 这些格
+ * 一格都画不出来 ⇒ I 组全红；改后逐格有字形。
+ *
+ * ⚠️ 它**仍然**证明不了"线上那一局真的产出了这样的 payload" —— 那由 pytest
+ *    （真调 `apply_magic_effect`）与 `tools/replay_check.mjs`（真浏览器 E2E）分工覆盖。
  *
  * ## 索引口径（**重要**）
  *
@@ -267,7 +278,39 @@ const markedSet = (rows) => JSON.stringify(rows
   .filter((c) => c.hit || c.miss)
   .map((c) => c.x + ',' + c.y + ',' + (c.sunk ? 'S' : (c.hit ? 'H' : 'M'))).sort());
 
-/** 形状与服务端 `replay.py` 的 `build()` 输出一致的最小 payload 构造器。 */
+/** 形状与服务端 `replay.py` 的 `build()` 输出一致的最小 payload 构造器。
+ *
+ *  ★ `attacks` 时间线（本批新增的标记数据源）**默认按 `steps` 里的 attack 步推出来** ——
+ *  这不是"前端替后端算一份"，而是因为后端**普通炮击**那一炮确实会产出这两样东西
+ *  （`handle_attack` 既 append `caster.attacks` 又写一条 `type='attack'` 的日志）。
+ *  于是既有那些"只有 attack 步"的夹具（A~H 组）在改后仍然表达同一份真实对局数据，
+ *  不必逐条重写。要测"**没有 attack 步、只有 attacks 时间线**"的那一类卡（轰炸 /
+ *  硫磺火焰 / 溅射 / 雷达子弹 / 探测雷达）就显式传 `attacks` —— 见 I 组。
+ *
+ *  ⚠️ 推导口径与后端逐个对应：`hit` / `sunk` **为假时整个键不出现**
+ *     （`replay._record_snapshot` 就是这么写的，别在这里多写 `hit:false`，
+ *      否则夹具比真实 payload 胖、还测不出"缺省即未命中"这条口径）。
+ */
+function attacksFromSteps(steps) {
+  const rows = [];
+  for (const s of (steps || [])) {
+    if (!s || s.kind !== 'attack') continue;
+    const d = s.detail || {};
+    const t = d.target || {};
+    const attacker = d.attacker;
+    if (attacker !== 'p1' && attacker !== 'p2') continue;
+    const board = attacker === 'p1' ? 'p2' : 'p1';
+    const cell = { x: t.x, y: t.y };
+    if (d.hit === true) cell.hit = true;
+    if (d.ship_sunk === true) cell.sunk = true;
+    let row = rows.find((r) => r.step === s.i);
+    if (!row) { row = { step: s.i }; rows.push(row); }
+    if (!Array.isArray(row[board])) row[board] = [];
+    row[board].push(cell);
+  }
+  return rows;
+}
+
 function mkPayload(opts) {
   const o = opts || {};
   return {
@@ -279,6 +322,7 @@ function mkPayload(opts) {
     steps: o.steps || [],
     ships: o.ships || [],
     hands: o.hands || [],
+    attacks: o.attacks || attacksFromSteps(o.steps || []),
     effects: o.effects || [],
     board_resets: o.board_resets || [],
     nodes: [],
@@ -975,6 +1019,224 @@ console.log('--- H. 沉没判据单一来源：前端不许自己仲裁两份说
     '★★ 反向腿：同一格两份说法时，前端按**第一条**渲染（它没有仲裁能力 ⇒ '
     + '口径必须由 `replay._ship_cells` 保证"最多一条"）',
     dup && { text: dup.text, cls: dup.cls });
+}
+
+
+// ===========================================================================
+// I. 卡牌类伤害的格子必须在回放里画得出来（2026-09-24 第 7 处修复批）
+// ===========================================================================
+// ## 缺陷（作者实报："那一整行看着是没挨过炮的海面"）
+//
+// `轰炸` / `硫磺火焰`（以及第 8 处那三张：【溅射】【雷达子弹】【探测雷达】）
+// **逐格**写 `caster.attacks` + 逐格 `emit('attack_result')`，实战前端就靠它画叉；
+// 但它们**一条 `type='attack'` 的游戏日志都不写**。而改动前回放的标记是
+// **从 attack 步反推**的（`step.kind === 'attack'`）⇒ 这一整行/列的格子在回放里
+// **一个标记都没有**（那 6 格画成"没挨过炮的海面"）。
+//
+// ## 本批的口径（★ 判据就是这一条）
+//
+// 回放的棋盘标记收敛到 `payload.attacks` 这条**稀疏 + 增量**时间线，数据源是
+// `Player.attacks` —— 与**观战**棋盘帧（`_spectate_player_cells`）**同一份权威记录**。
+// 于是"轰过的格"在全项目只有一份真值表（教训 #1）。
+//
+// ⚠️ 下面这些 payload 的形状是**后端真产出的样子**：`tests/test_replay_bomb_marks.py`
+//    真调 `apply_magic_effect` 把 `replay.build(room)['attacks']` 取出来逐字段断言了
+//    后端那一侧；这里断言前端那一侧（真 `replayComputeFrame` + 真 `renderReplayBoard`）。
+console.log('--- I. 卡牌类伤害的格子（轰炸 / 硫磺火焰）：必须逐格画得出来 ---');
+{
+  // —— 情形 1：【轰炸】第 1 行（p2 的船都在 y=1；6 格全挨过炮）——
+  // `caster.attacks` 真值表（后端实测的输出顺序）：
+  //   ['0,1(沉)','2,1(沉)','4,1(沉)','1,1','3,1','5,1']
+  // ⇒ 命中的 3 格是"击沉"（那 3 艘都是单格船），另外 3 格是落空。
+  const bombSteps = [
+    atk(0, 'p1', 3, 3, false, false),                   // 前面随便一炮（另一块棋盘）
+    { i: 1, kind: 'magic', actor: '甲', text: '第3回合 · 甲 使用了【轰炸】',
+      detail: { caster: 'p1', card: '轰炸' } },
+  ];
+  const bombPayload = mkPayload({
+    steps: bombSteps,
+    // ⚠️ **不**给 p1 的 attack 步：轰炸那一行 6 格只有 attacks 时间线这一份数据源
+    attacks: [
+      { step: 1, p2: [{ x: 0, y: 1, hit: true, sunk: true },
+                      { x: 2, y: 1, hit: true, sunk: true },
+                      { x: 4, y: 1, hit: true, sunk: true },
+                      { x: 1, y: 1 }, { x: 3, y: 1 }, { x: 5, y: 1 }] },
+    ],
+    ships: [
+      { step: 0,
+        p1: [{ x: 3, y: 3, alive: true }],
+        // p2 的三艘单格船都在 y=1；被炸沉的按沉没记（与 `ships` 时间线一致）
+        p2: [{ x: 0, y: 1, alive: true }, { x: 2, y: 1, alive: true },
+             { x: 4, y: 1, alive: true }] },
+      { step: 1, p2: [{ x: 0, y: 1, alive: false, sunk: true },
+                      { x: 2, y: 1, alive: false, sunk: true },
+                      { x: 4, y: 1, alive: false, sunk: true }] },
+    ],
+  });
+
+  const b1 = frameAt(bombPayload, 1);
+  // ★★ 第 1 条（本批验收核心）：那一行 **6 格一格不少**，且逐格字形/状态与真值表一致。
+  check(markedSet(b1.boards[1]) === JSON.stringify(
+    ['0,1,S', '1,1,M', '2,1,S', '3,1,M', '4,1,S', '5,1,M'].sort()),
+    '★★ 改前必红：轰炸那一行 6 格**全部**有标记（3 个击沉 ✕ + 3 个落空 ○）',
+    { dom: markedSet(b1.boards[1]),
+      want: ['0,1,S', '1,1,M', '2,1,S', '3,1,M', '4,1,S', '5,1,M'] });
+  check(markedSet(b1.boards[0]) === JSON.stringify([]),
+    '★ 轰炸只打在对手那块棋盘上：自己那块棋盘一格标记都不许有',
+    { dom: markedSet(b1.boards[0]) });
+  // 逐格字形（不是只数格子数 —— 上一批的教训）
+  const sunkCell = cellAt(b1.boards[1], 0, 1);
+  const missCell = cellAt(b1.boards[1], 1, 1);
+  const waterCell = cellAt(b1.boards[1], 5, 5);
+  check(!!sunkCell && sunkCell.text === '✕' && sunkCell.sunk && sunkCell.hit,
+    '★★ DOM：被炸沉的那一格画成 ✕（`ship sunk hit`）',
+    sunkCell && { text: sunkCell.text, cls: sunkCell.cls });
+  check(!!missCell && missCell.text === '○' && missCell.miss && !missCell.sunk,
+    '★★ DOM：没命中但挨过炮的那一格画成 ○（这正是改前完全看不到的格子）',
+    missCell && { text: missCell.text, cls: missCell.cls });
+  check(!!waterCell && waterCell.text === '' && !waterCell.hit && !waterCell.miss,
+    '★ DOM：同一块棋盘上没挨过炮的格仍然是空海（标记不许糊成一片）',
+    waterCell && { text: waterCell.text, cls: waterCell.cls });
+  // 反向腿①（**步进语义**）：第 k 帧只看得到 `step ≤ k` 的格。
+  const b0 = frameAt(bombPayload, 0);
+  check(markedSet(b0.boards[1]) === JSON.stringify([]),
+    '★★ 反向腿：第 0 帧（轰炸那一步之前）那 6 格**一格都不许出现** —— '
+    + '判据不是"永远画着"，必须跟着 step 走',
+    { dom: markedSet(b0.boards[1]) });
+  check(markedSet(b0.boards[0]) === JSON.stringify([]),
+    '★ 第 0 帧对手那块棋盘还没有任何标记（那一炮在 step 0，落在 p2 那块）',
+    { dom: markedSet(b0.boards[0]) });
+}
+
+{
+  // —— 情形 2：【硫磺火焰】第 1 列（p2 的船都在 x=1）——
+  // `caster.attacks`（后端实测）：['1,0(沉)','1,2(沉)','1,4(沉)','1,1','1,3','1,5']
+  const sulfurPayload = mkPayload({
+    steps: [
+      { i: 0, kind: 'magic', actor: '甲', text: '第3回合 · 甲 使用了【硫磺火焰】',
+        detail: { caster: 'p1', card: '硫磺火焰' } },
+    ],
+    attacks: [
+      { step: 0, p2: [{ x: 1, y: 0, hit: true, sunk: true },
+                      { x: 1, y: 2, hit: true, sunk: true },
+                      { x: 1, y: 4, hit: true, sunk: true },
+                      { x: 1, y: 1 }, { x: 1, y: 3 }, { x: 1, y: 5 }] },
+    ],
+    ships: [
+      { step: 0, p1: [{ x: 0, y: 0, alive: true }],
+        p2: [{ x: 1, y: 0, alive: false, sunk: true },
+             { x: 1, y: 2, alive: false, sunk: true },
+             { x: 1, y: 4, alive: false, sunk: true }] },
+    ],
+  });
+  const s0 = frameAt(sulfurPayload, 0);
+  check(markedSet(s0.boards[1]) === JSON.stringify(
+    ['1,0,S', '1,1,M', '1,2,S', '1,3,M', '1,4,S', '1,5,M'].sort()),
+    '★★ 改前必红：硫磺火焰那一列 6 格**全部**有标记（同上，一格不少）',
+    { dom: markedSet(s0.boards[1]),
+      want: ['1,0,S', '1,1,M', '1,2,S', '1,3,M', '1,4,S', '1,5,M'] });
+  check(markedSet(s0.boards[0]) === JSON.stringify([]),
+    '★ 硫磺火焰只打对手那块棋盘', { dom: markedSet(s0.boards[0]) });
+}
+
+{
+  // —— 情形 3：**重置语义**（`board_resets` 仍要能擦掉标记）——
+  // 轰炸一行（step 1）→ 对手那块棋盘被重置（step 2，灵气复苏/败者食尘/回光返照）
+  // → 之后再轰另一行（step 3）。**只有 step 3 那一行该看得见**。
+  // 情形 3 的 ships 时间线**故意**留空：这一组只判"标记"，船位由 `ships` 时间线那边
+  // （C/F/G 组）判；两者混在一起会让"这一格是 ✕ 还是 ○"取决于船在不在，
+  // 判据就说不清是哪一条在起作用了。
+  const resetPayload = mkPayload({
+    steps: [
+      { i: 0, kind: 'magic', actor: '甲', text: '第3回合 · 甲 使用了【轰炸】',
+        detail: { caster: 'p1', card: '轰炸' } },
+      { i: 1, kind: 'magic', actor: '甲', text: '甲 使用了【灵气复苏】',
+        detail: { caster: 'p1', card: '灵气复苏' } },
+      { i: 2, kind: 'magic', actor: '甲', text: '第5回合 · 甲 使用了【轰炸】',
+        detail: { caster: 'p1', card: '轰炸' } },
+    ],
+    attacks: [
+      { step: 0, p2: [{ x: 0, y: 1 }, { x: 1, y: 1 }] },
+      { step: 2, p2: [{ x: 0, y: 4 }, { x: 1, y: 4 }] },
+    ],
+    ships: [],
+    board_resets: [{ step: 1, side: 'p2' }],
+  });
+  const beforeReset = frameAt(resetPayload, 0);
+  check(markedSet(beforeReset.boards[1]) === JSON.stringify(['0,1,M', '1,1,M'].sort()),
+    '★ 重置**之前**：第 1 行的两格看得见',
+    { dom: markedSet(beforeReset.boards[1]) });
+  const afterReset = frameAt(resetPayload, 2);
+  check(markedSet(afterReset.boards[1]) === JSON.stringify(['0,4,M', '1,4,M'].sort()),
+    '★★ 重置**之后**：重置前的两格必须消失、重置后的两格必须还在（两向都判）',
+    { dom: markedSet(afterReset.boards[1]),
+      不该出现: ['0,1', '1,1'] });
+}
+
+{
+  // —— 情形 5：同一格被写两次（先沉后落空）—— **后写的赢** ——
+  // 真对局里约 3/10 局会出现一处：普通炮击把某格打沉之后，【轰炸】会给同一格补一条
+  // `hit=False`（服务端卡里那句过滤只按"这次真的摘掉了哪些船"）。实战前端逐条覆盖
+  // 同一个键 ⇒ 玩家看到的是后写的那条；回放必须画成**落空 ○**而不是命中 ✕。
+  const dupPayload = mkPayload({
+    steps: [
+      atk(0, 'p1', 2, 1, true, true),                    // 先打沉 (2,1)
+      { i: 1, kind: 'magic', actor: '甲', text: '第3回合 · 甲 使用了【轰炸】',
+        detail: { caster: 'p1', card: '轰炸' } },
+    ],
+    // 时间线：step 0 说"沉"，step 1 对**同一格**改口说"落空"
+    attacks: [
+      { step: 0, p2: [{ x: 2, y: 1, hit: true, sunk: true }] },
+      { step: 1, p2: [{ x: 2, y: 1 }, { x: 3, y: 1 }] },
+    ],
+    ships: [
+      { step: 0, p2: [{ x: 2, y: 1, alive: true }] },
+      { step: 1, p2: [{ x: 2, y: 1, alive: false, sunk: true }] },
+    ],
+  });
+  const d = frameAt(dupPayload, 1);
+  const dupCell = cellAt(d.boards[1], 2, 1);
+  // ⚠️ 判据读**帧里的标记表**：DOM 的类名在这一格上会被"沉没"那条分支覆盖
+  //    （那一格同时是沉没的船 ⇒ 必定画 ✕），所以 DOM 分不出"标记说的是中还是没中"。
+  check(JSON.stringify(d.marks.p2['2,1']) === JSON.stringify({ hit: false, sunk: false }),
+    '★★ 同一格被写两次时**后写的赢**（实战前端逐条覆盖同一个键 ⇒ 回放必须一致）',
+    { marks2_1: d.marks.p2['2,1'] });
+  check(!!dupCell && dupCell.sunk === true && dupCell.text === '✕',
+    '★ 同一格的**沉没**仍按 `ships` 时间线画（两个数据源各管一件事，不许互相盖）',
+    dupCell && { text: dupCell.text, cls: dupCell.cls });
+  // 同样这一步里另一格是**新增**的（(3,1)）—— 证明"后写的赢"没有把新增的格一起吞掉
+  check(JSON.stringify(d.marks.p2['3,1']) === JSON.stringify({ hit: false, sunk: false }),
+    '★ 同一步里新增的那一格照旧出现（改写只影响被改写的那一格）',
+    { marks3_1: d.marks.p2['3,1'] });
+}
+
+
+{
+  // —— 情形 4（★ 自检反向腿）：把 `attacks` 时间线拿掉（= 改动前那条路径的输入）——
+  // 同一份 steps / ships，**没有** `attacks` ⇒ 前端一格标记都画不出来。
+  // 这条证明上面那几条断言**不是恒绿的**：万一有人把"从 attack 步反推"再写回来，
+  // 或者把 `payload.attacks` 的读取删掉，这一条会红。
+  const noTimeline = JSON.parse(JSON.stringify(mkPayload({
+    steps: [{ i: 0, kind: 'magic', actor: '甲', text: '第3回合 · 甲 使用了【轰炸】',
+              detail: { caster: 'p1', card: '轰炸' } }],
+    ships: [{ step: 0, p2: [{ x: 0, y: 1, alive: false, sunk: true }] }],
+    attacks: [],          // ★ 显式空：这条腿要的正是"没有标记数据源"
+  })));
+  const n0 = frameAt(noTimeline, 0);
+  // ⚠️ 判据读的是**帧里的标记表**（`frame.marks`），不是 DOM 的 `hit` 类：
+  //    DOM 的 `.cell.sunk` 分支**自己就会加 `hit` 类**（沉没格与命中格同一种视觉，
+  //    见 `renderReplayBoard`），所以"沉没 ✕ 也算 hit"—— 拿它当"标记来源"的判据会假绿。
+  check(JSON.stringify(n0.marks.p2) === JSON.stringify({}),
+    '★★ 判据自检：**没有** `attacks` 时间线时帧里一格标记都没有（证明上面那些断言靠的'
+    + '正是这条时间线，不是"永远画着"的假绿）',
+    { marksP2: n0.marks.p2 });
+  // 同一帧里那一格仍然是**沉没的船**（`ships` 时间线兜的）——
+  // 这正是改动前玩家看到的残缺棋盘：只有一个红叉，其余 5 格是"没挨过炮的海面"。
+  const wreck = cellAt(n0.boards[1], 0, 1);
+  check(!!wreck && wreck.text === '✕' && wreck.sunk === true,
+    '★ 判据自检：那一格仍是沉没 ✕（来自 `ships` 时间线，不是标记）—— '
+    + '改动前"只有恰好被打沉的那一格看得见"就是这么来的',
+    wreck && { text: wreck.text, cls: wreck.cls });
 }
 
 

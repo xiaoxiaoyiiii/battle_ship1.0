@@ -28,6 +28,9 @@
   ⚠️ `src` = 这一格来自哪份数据源（`'ships'` 活船列表 / `'lost'` 显式沉没登记）。
   **同一格最多一条**，`lost` 优先 —— 判据与理由见 `_ship_cells` 的说明；
 * `hands[i] = {step, p1: ['卡名', ...], p2: [...]}`      —— **只在手牌真变时**记一条；
+* `attacks[i] = {step, p1: [{x, y, hit, sunk}], p2: [...]}` —— **只在"某座位多打了格"时**记一条，
+  **只带这一步新增的格**（与上面两条同一种"稀疏 + 增量"）；
+  ★ 它才是回放棋盘标记的**唯一数据源**（前端按 `side` 累加），见 `_attack_cells` 的说明；
 * `effects[i] = {step, p1: {...}, p2: {...}}`            —— **只在效果真变时**记一条，
   **只带变了的座位**（与上面两条同一种"稀疏 + 增量"）；字段名**照抄**
   `_build_spectate_snapshot` 的公开效果段：`shield` / `shenwei_holes` / `frozen_area` /
@@ -134,11 +137,13 @@ def _state(room):
         'steps': [],
         'ships': [],        # 船位时间线（稀疏）
         'hands': [],        # 手牌时间线（稀疏）
+        'attacks': [],      # 攻击标记时间线（稀疏 + 增量，见 _attack_cells）
         'effects': [],      # 场上公开效果时间线（稀疏 + 增量，见 _effects_state）
         'board_resets': [],  # [{step, side}]
         'nodes': [],        # [{step, kind, label}]
         'lost': {},         # 原始 pid → [(x, y), ...]：**主动牺牲**掉、但必须留在时间线里的格
         'last': None,       # 上一次快照（用来判"真的变了吗"）
+        'last_attacks': None,  # 上一次"每个座位打过的格快照"（同上，攻击时间线的基线）
         'truncated': None,  # None = 没截断；否则是原因字符串
     }
     try:
@@ -272,6 +277,88 @@ def _ship_cells(room, pid, player):
     return out
 
 
+def _attack_cells(player):
+    """该座位**打出去**的格（`caster.attacks` 的忠实转写）：`[{'x','y','hit'?,'sunk'?}, ...]`。
+
+    ★★ 为什么回放的棋盘标记必须走这一条，而**不是**从 `type='attack'` 的日志步反推 ★★
+
+    "这一格被轰过"在本项目里有**两份**（教训 #1 的老形状）：
+
+      ① `Player.attacks` —— **权威动作记录**。实战前端画"我已轰过的格"、
+         `_emit_board_attacks` 重发、以及**观战**那条棋盘帧（`_spectate_player_cells`，
+         `_emit_spectate_board_frame`）全都读它；
+      ② `game_logs` 里 `type='attack'` 的那条日志 —— 只有**普通炮击**会写
+         （`handle_attack`）。
+
+    这两份**不相等**：`轰炸` / `硫磺火焰` / `溅射` / `雷达子弹` / `探测雷达` 逐格写 ①
+    并逐格 `emit('attack_result')`，**一条 ② 都不写**。
+    于是"回放只认 ②"的写法会让这五张卡打出的格子在回放棋盘上**一个标记都没有**
+    （作者实报："那一整行看着是没挨过炮的海面"）。
+
+    修法**不是**给每一格补一条 `add_game_log(type='attack')` —— 那会让**游戏内日志面板**
+    凭空多出 6 条一行一行的行（改一个既有玩家可见功能来绕开问题）。
+    这里改成：像 `ships` / `hands` / `effects` 那样记一条**稀疏 + 增量**的
+    `attacks` 时间线，数据源就是 ①，与观战那份**同一份权威动作记录**（教训 #1）。
+
+    ⚠️ **只记"新增"**（`_record_snapshot` 拿上一次快照比对）：时间线是"这一步多了哪些格"。
+        "某格不再算打过"（疗愈复活 / 换位 / 神机妙算共用的 `_clear_attacks_on_cells`，
+        `attacks` 被整段过滤）一律**不在这里记账**，而是由那同一个失效点上的
+        `note_board_reset`（`board_resets` 时间线）擦掉 —— 一条时间线只做一件事，
+        两份账混在一起下一次加卡必然漂移（`tests/test_attack_records.py` 有穷举守卫）。
+
+    ⚠️ 出界坐标一律**丢掉**（前端 `replayComputeFrame` 也丢，`x/y` 必须是 0..5 的整数）：
+       `探测雷达` 的 `target_area` 由前端自由传入，服务端那一支没有范围校验，
+       照原样写进时间线就会让前端收到画不出来的键（白占体积、且"未定义行为"）。
+
+    ⚠️ 这份数据**只对回放看客**存在。它**绝不**经过 `emit()` —— 见模块开头那条铁律。
+    """
+    cells = []
+    for a in (getattr(player, 'attacks', None) or []):
+        try:
+            x, y = int(a.x), int(a.y)
+        except Exception:       # noqa: BLE001 —— 认不出来的一律丢掉，绝不炸
+            continue
+        if not (0 <= x <= 5 and 0 <= y <= 5):
+            continue
+        cell = {'x': x, 'y': y}
+        if bool(getattr(a, 'hit', False)):
+            cell['hit'] = True
+        if bool(getattr(a, 'ship_sunk', False)):
+            cell['sunk'] = True
+        cells.append(cell)
+    return cells
+
+
+def _attacks_snapshot(room):
+    """`{pid: ((x, y, hit, sunk), ...)}` —— 攻击时间线的比对基线（不复制活对象）。
+
+    ★ **同一格被写两次时以"列表里最后那条"为准**（本批实测：真对局里约 3/10 局会出现
+      一格两条、且结果相反 —— 普通炮击打沉以后再来一发【轰炸】/【硫磺火焰】盖住同一格，
+      卡里那句 `if (pos) not in removed_positions` 只按"这次真的摘掉了哪些船"过滤，
+      船**已经沉过**时它不在候选表里 ⇒ 那一格会被补一条 `hit=False` 的落空）。
+
+    判据是"**玩家在实战里看到的是哪一条**"：`_emit_board_attacks` 推的就是这份列表的
+    **原序**（前端 `board_attacks_updated` 也是逐条覆盖同一个键）⇒ 后写的盖掉先写的。
+    所以时间线必须同样取**后写的那条**，否则回放会画出实战里根本不存在的 ✕
+    （同一件事两份说法，正是本批在修的形状）。
+    """
+    out = {}
+    for pid in _pids(room):
+        player = room.players.get(pid)
+        if player is None:
+            continue
+        latest = {}
+        order = []
+        for cell in _attack_cells(player):
+            key = (cell['x'], cell['y'])
+            if key not in latest:
+                order.append(key)
+            # 列表顺序 = 玩家看到的覆盖顺序（后写的赢）
+            latest[key] = (cell['x'], cell['y'], bool(cell.get('hit')), bool(cell.get('sunk')))
+        out[pid] = tuple(latest[key] for key in order)
+    return out
+
+
 def _hand_names(player):
     """该座位当前手牌的**卡名**列表（顺序即手牌顺序）。"""
     names = []
@@ -385,11 +472,11 @@ def _record_at_current_step(room) -> None:
     if step < 0:
         return
     _record_snapshot(room, st, step)
-    _merge_same_step_ships_rows(st, step)
+    _merge_same_step_rows(st, step)
 
 
-def _merge_same_step_ships_rows(st, step) -> None:
-    """把船位时间线里**同一个 `step` 的多行合成一行**（保留最后一份状态）。
+def _merge_same_step_rows(st, step) -> None:
+    """把**稀疏时间线**里**同一个 `step` 的多行合成一行**（保留最后一份状态）。
 
     ⚠️ 为什么需要它：`_record_snapshot` 是"同一帧可以记很多次"的（`_append` 每追加一步
        就记一次），而"船真的变了"这件事可能在**同一步里发生第二次**（复活类收尾、
@@ -397,8 +484,17 @@ def _merge_same_step_ships_rows(st, step) -> None:
        "后者盖前者"看着对，但任何按 `step` 去重的消费者都会算错，白占体积。
 
     判据只看"最后两行是不是同一步"，所以对"本来就没有重复"的时间线是**空操作**。
+
+    ⚠️ **两条时间线都要合并**（`ships` 与 `attacks`）：它们是**同一帧**的两份增量说法，
+       谁漏了谁就会在时间线里留下 `[{step:k,…},{step:k,…}]`。合并口径对两者相同
+       （逐座位替换：后一行的座位整份盖掉前一行的同名座位）。
     """
-    rows = st.get('ships')
+    for key in ('ships', 'attacks'):
+        _merge_same_step_one(st.get(key), step)
+
+
+def _merge_same_step_one(rows, step) -> None:
+    """把一条时间线的最后两行（同为 `step`）合成一行。"""
     if not isinstance(rows, list) or len(rows) < 2:
         return
     last, prev = rows[-1], rows[-2]
@@ -413,14 +509,14 @@ def _merge_same_step_ships_rows(st, step) -> None:
 
 
 def refresh_ships(room) -> None:
-    """按**当前**局面刷新一次船位时间线（当前这一步）。**幂等**。
+    """按**当前**局面刷新一次稀疏时间线（船位 + 攻击标记），当前这一步。**幂等**。
 
     给"船位在**没有日志**的流程里变了"的那几处用（`handle_confirm_reinforcement`：
     复活 / 神机妙算重新部署 / 绝处逢生的唯一一艘；`apply_magic_effect` 的 `神威！`：
     致死格要登记成沉没、神威洞也要进效果时间线 —— 这一整段同样不写"船位变了"的日志）。
     纯状态没变时它什么都不记（`_record_snapshot` 自己比对），所以可以随手调用。
 
-    ⚠️ 它**只记船位**（不记步骤、不 emit）—— 时间线是稀疏的，没变就不写。
+    ⚠️ 它**只记时间线**（不记步骤、不 emit）—— 时间线是稀疏的，没变就不写。
 
     ⚠️ **当前这一步已经有行时，这里是"改写那一行"而不是"再追加一行"**（见
        `_record_at_current_step`）—— 否则时间线里会出现**两条 step 相同的行**：
@@ -663,6 +759,41 @@ def _record_snapshot(room, st, step):
     if len(hands_row) > 1:
         st['hands'].append(hands_row)
 
+    # 攻击标记时间线：**同一种"真变了才记 + 只带变了的座位"**（稀疏 + 增量）。
+    # ⚠️ 逐格比较**同一个坐标**的值（不是整份列表）：坐标是键，`hit`/`sunk` 是值。
+    #    这样"同一格被后写的那条盖掉"（先沉后落空，`_attacks_snapshot` 的 ★）会**记一条新的**
+    #    —— 前端按列表顺序赋值 ⇒ 后一条盖掉前一条，与实战前端看到的完全一致。
+    #    绝不许写成"整份列表再记一次"（那是全量快照，体积会涨一大截）。
+    # ⚠️ "变少了"（疗愈复活 / 换位清格）**这里不记**：那件事由同一个失效点上的
+    #    `board_resets` 擦除，见 `_attack_cells` 的说明与 `tests/test_replay_bomb_marks.py`。
+    attacks_now = _attacks_snapshot(room)
+    attacks_before = st.get('last_attacks') or {}
+    attacks_row = {'step': step}
+    for pid, cells in attacks_now.items():
+        side = _side_label(room, pid)
+        if not side:
+            continue
+        known = {}
+        for cell in (attacks_before.get(pid) or ()):
+            known[(cell[0], cell[1])] = (cell[2], cell[3])
+        new_cells = []
+        for cell in cells:
+            key = (cell[0], cell[1])
+            value = (cell[2], cell[3])
+            if known.get(key) == value:
+                continue                    # 这一格没变（既不新增、也没被后写的那条盖掉）
+            known[key] = value
+            item = {'x': cell[0], 'y': cell[1]}
+            if cell[2]:
+                item['hit'] = True
+            if cell[3]:
+                item['sunk'] = True
+            new_cells.append(item)
+        if new_cells:
+            attacks_row[side] = new_cells
+    if len(attacks_row) > 1:
+        st['attacks'].append(attacks_row)
+
     # 效果时间线：**同一种"真变了才记 + 只带变了的座位"**（稀疏 + 增量）。
     # ⚠️ 这条是**逐字段替换**语义（不是合并）：某一侧出现时，它带着 `_EFFECT_FIELDS`
     #    的全部字段，前端把 `step ≤ k` 的条目叠上去即可 —— 与 `ships`/`hands` 一致。
@@ -694,6 +825,7 @@ def _record_snapshot(room, st, step):
 
     st['last'] = snap
     st['last_effects'] = effects_now
+    st['last_attacks'] = attacks_now
 
 
 # ---------------------------------------------------------------------------
@@ -910,6 +1042,7 @@ def build(room):
         'steps': steps,
         'ships': list(st.get('ships') or []),
         'hands': list(st.get('hands') or []),
+        'attacks': list(st.get('attacks') or []),
         'effects': list(st.get('effects') or []),
         'board_resets': list(st.get('board_resets') or []),
         'nodes': list(st.get('nodes') or []),
@@ -942,6 +1075,7 @@ def _shrink(payload):
         payload['steps'] = payload['steps'][:keep]
         payload['ships'] = _trim_timeline(payload.get('ships') or [], keep)
         payload['hands'] = _trim_timeline(payload.get('hands') or [], keep)
+        payload['attacks'] = _trim_timeline(payload.get('attacks') or [], keep)
         payload['effects'] = _trim_timeline(payload.get('effects') or [], keep)
         payload['board_resets'] = [r for r in (payload.get('board_resets') or [])
                                    if int(r.get('step', 0)) <= keep]
@@ -950,7 +1084,7 @@ def _shrink(payload):
 
     # ② 时间线只留最后一条（前端仍能画出终局那一帧）
     if _too_big(payload):
-        for key in ('ships', 'hands', 'effects'):
+        for key in ('ships', 'hands', 'attacks', 'effects'):
             rows = payload.get(key) or []
             payload[key] = rows[-1:] if rows else []
 
@@ -963,6 +1097,7 @@ def _shrink(payload):
         payload['steps'] = []
         payload['ships'] = []
         payload['hands'] = []
+        payload['attacks'] = []
         payload['effects'] = []
         payload['board_resets'] = []
         payload['nodes'] = []

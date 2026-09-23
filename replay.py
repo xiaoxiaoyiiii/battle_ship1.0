@@ -26,6 +26,10 @@
 * `steps[i] = {i, kind, actor, text, detail}` —— 按行动顺序；
 * `ships[i] = {step, p1: [{x, y, alive, sunk}], p2: [...]}` —— **只在船位真变时**记一条；
 * `hands[i] = {step, p1: ['卡名', ...], p2: [...]}`      —— **只在手牌真变时**记一条；
+* `effects[i] = {step, p1: {...}, p2: {...}}`            —— **只在效果真变时**记一条，
+  **只带变了的座位**（与上面两条同一种"稀疏 + 增量"）；字段名**照抄**
+  `_build_spectate_snapshot` 的公开效果段：`shield` / `shenwei_holes` / `frozen_area` /
+  `last_stand_cells` / `last_stand_owner`（教训 #1：同一件事不许有两套字段名）；
 * `board_resets[i] = {step, side}`                        —— `side` 是 `'p1'` / `'p2'`；
 * `nodes[i] = {step, kind, label}`                        —— 进度条关键节点，**服务端算一次**。
 
@@ -128,6 +132,7 @@ def _state(room):
         'steps': [],
         'ships': [],        # 船位时间线（稀疏）
         'hands': [],        # 手牌时间线（稀疏）
+        'effects': [],      # 场上公开效果时间线（稀疏 + 增量，见 _effects_state）
         'board_resets': [],  # [{step, side}]
         'nodes': [],        # [{step, kind, label}]
         'last': None,       # 上一次快照（用来判"真的变了吗"）
@@ -238,6 +243,129 @@ def _snapshot(room):
     return snap
 
 
+# ---------------------------------------------------------------------------
+# 场上公开效果（作者实报：回放里看不到仁王之盾的护盾格、神威挖的洞、冻结区…）
+# ---------------------------------------------------------------------------
+# ⚠️ 口径**照抄** `_build_spectate_snapshot` 里的那一份（教训 #1：同一件事只有一份字段名）。
+#    那边已经裁定过"这些坐标本来就是有意公开给双方的"：
+#      · `shenwei_holes`    —— 卡面公开宣布"N 回合后这些格子有船"；
+#      · `frozen_area`      —— 范围对双方公开（`owner` = 落在谁那块棋盘上）；
+#      · `last_stand_cells` —— 服务端有意公开（对方要据此知道新船可能在哪，而且得能打）；
+#      · `last_stand_owner` —— 上面那批候选格的归属棋盘。
+#    回放比观战更宽（回放本来就全透视），但这几项**不是**因为"回放能多给"才加的，
+#    而是因为它们本来就是公开信息 —— 别在这里顺手加未公开的东西。
+#
+# ⚠️ 护盾（仁王之盾 / 卧薪尝胆）**不在 `game_effects` 里**，它记在
+#    `PlayerShip.shield` 上（实测：`_apply_magic_effect` 里逐艘 `ship.shield = True`，
+#    见 server.py 的'仁王之盾'分支与'卧薪尝胆'分支）。所以这里从船对象取。
+#    并发出去的 `shield` 是**坐标对**（`[[x, y], ...]`，与 `last_stand_cells` 同形状），
+#    而**不是**每格一条 `{'x','y'}`：按"船"记的话，船沉了 / 被换掉时增量会算不清楚。
+_EFFECT_FIELDS = ('shield', 'shenwei_holes', 'frozen_area',
+                  'last_stand_cells', 'last_stand_owner')
+
+
+def _xy_pairs(values):
+    """把 `[(x, y), ...]` / `[[x, y], ...]` / `{'x','y'}` 一律收敛成 `[[x, y], ...]`。"""
+    out = []
+    for item in (values or []):
+        try:
+            if isinstance(item, dict):
+                out.append([int(item['x']), int(item['y'])])
+            else:
+                out.append([int(item[0]), int(item[1])])
+        except Exception:       # noqa: BLE001 —— 认不出来的一律丢掉，绝不炸
+            continue
+    return out
+
+
+def _shield_cells(player):
+    """该座位**当前有护盾**的船格坐标（有序，便于逐字比较）。"""
+    out = []
+    for ship in (getattr(player, 'ships', None) or []):
+        try:
+            if not getattr(ship, 'shield', False):
+                continue
+            for pos in (getattr(ship, 'positions', None) or []):
+                out.append([int(pos.x), int(pos.y)])
+        except Exception:       # noqa: BLE001
+            continue
+    out.sort()
+    return out
+
+
+def _effects_of(room, pid):
+    """某一个座位上**当前**的公开效果（`_EFFECT_FIELDS` 五个字段，一个不少）。
+
+    ⚠️ **归属一律转成座位代号**（`'p1'` / `'p2'`），绝不下发原始 pid / user_id。
+       `game_effects` 里这两个字段存的是原始 pid（匹配房里就是入座 sid），
+       照原样放进回放 JSON 等于把"谁是谁"送出去（契约 §6：响应里不许有 user_id）。
+       —— 这是本批**实测抓到的**：`test_effects_never_leak_a_raw_pid` 第一版就是红的。
+    """
+    player = (getattr(room, 'players', None) or {}).get(pid)
+    effects = getattr(room, 'game_effects', None)
+    effects = effects if isinstance(effects, dict) else {}
+    player_id = getattr(player, 'sid', None) or pid
+    holes = []
+    for hole in (effects.get('shenwei_holes') or []):
+        try:
+            if hole.get('player') != player_id:
+                continue
+            holes.append({'x1': int(hole['x1']), 'y1': int(hole['y1']),
+                          'x2': int(hole['x2']), 'y2': int(hole['y2'])})
+        except Exception:       # noqa: BLE001
+            continue
+    frozen = effects.get('frozen_area')
+    frozen_out = None
+    if isinstance(frozen, dict) and frozen.get('owner') == player_id:
+        # 字段与 `_build_spectate_snapshot` 的那一份**逐个对应**
+        # （那边是 `{x1, y1, x2, y2, owner, frozen}`），不顺手多带 `caster` / `until_round`。
+        frozen_out = {'x1': int(frozen['x1']), 'y1': int(frozen['y1']),
+                      'x2': int(frozen['x2']), 'y2': int(frozen['y2']),
+                      'owner': _side_label(room, player_id),
+                      'frozen': frozen.get('frozen')}
+    owner = effects.get('last_stand_owner')
+    out = _empty_effects()
+    out['shield'] = _shield_cells(player) if player is not None else []
+    out['shenwei_holes'] = holes
+    out['frozen_area'] = frozen_out
+    # 绝处逢生的候选格只记在**施法者**那一侧（另一侧是空表）
+    if owner == player_id:
+        out['last_stand_cells'] = _xy_pairs(effects.get('last_stand_cells'))
+        out['last_stand_owner'] = _side_label(room, player_id)
+    return out
+
+
+def _empty_effects():
+    """一份"什么效果都没有"的效果（**五个字段一个不少**）。
+
+    单独拆出来是为了让"基线"与"真的没有"**逐字段可比** —— 手写一个 `{}` 会
+    与 `_effects_of` 的返回值不相等，于是开局永远被判成"变化了"。
+    """
+    return {'shield': [], 'shenwei_holes': [], 'frozen_area': None,
+            'last_stand_cells': [], 'last_stand_owner': None}
+
+
+def _has_any_effect(value) -> bool:
+    """这一份效果里**真的**有没有东西。
+
+    ⚠️ 别写成 `bool(value)`：`_effects_of` 返回的是一个**键一个不少**的 dict
+       （五个字段都在，只是值为空表 / None），而**非空 dict 恒为真**
+       ⇒ 那个判据恒成立、等于没有判据 —— 于是每局都会在 step 0 记一条
+       "五个字段全空"的行（本批实测抓到，本项目的教训 #34 同族：
+       看着在判断，其实永远为真，而且不报错）。
+    """
+    if not isinstance(value, dict):
+        return False
+    return bool(value.get('shield') or value.get('shenwei_holes')
+                or value.get('frozen_area') or value.get('last_stand_cells')
+                or value.get('last_stand_owner'))
+
+
+def _effects_state(room):
+    """当前**双方**的公开效果 `{pid: {...}}`（比对增量用）。"""
+    return {pid: _effects_of(room, pid) for pid in _pids(room)}
+
+
 def _record_snapshot(room, st, step):
     """快照与上一次**逐字段比对**，真变了才各追加一条时间线（稀疏 + **增量**）。
 
@@ -248,9 +376,14 @@ def _record_snapshot(room, st, step):
     按 `step` 升序合并（契约 §7 的"船位 = 时间线里最后一个 `step ≤ k` 的条目"
     按此实现）。实测（seed=17、5 回合、82 步的真对局）两条时间线合计常驻 19 KB，
     其中只有开局那条同时带 p1/p2，其余每条只带一侧。
+
+    ★ `effects` 用**完全同一种**稀疏 + 增量口径（作者实报：回放里看不到效果格）。
+    它比另两条更"安静"：绝大多数步两个座位都没变化，所以一条都不记。
     """
     snap = _snapshot(room)
     last = st.get('last')
+    last_effects = st.get('last_effects')
+    effects_now = _effects_state(room)
 
     def _row(kind_key):
         return {'step': step,
@@ -271,7 +404,38 @@ def _record_snapshot(room, st, step):
         st['ships'].append(ships_row)
     if len(hands_row) > 1:
         st['hands'].append(hands_row)
+
+    # 效果时间线：**同一种"真变了才记 + 只带变了的座位"**（稀疏 + 增量）。
+    # ⚠️ 这条是**逐字段替换**语义（不是合并）：某一侧出现时，它带着 `_EFFECT_FIELDS`
+    #    的全部字段，前端把 `step ≤ k` 的条目叠上去即可 —— 与 `ships`/`hands` 一致。
+    #
+    # ⚠️ 两条**都不能省**（各有各的坑，本批都实测踩过）：
+    #   ① "**变成空**"必须记 —— 盾被打掉之后前端要靠这条空表把盾**撤掉**，
+    #      漏了就永远画着一个不存在的盾（`_has_any_effect(now)` 为假也不许跳过）；
+    #   ② "**从头到尾都空**"不许记 —— 绝大多数局一个效果都没有，
+    #      "每局一条空行"纯属白占体积，而且它会让前端多画一次空效果。
+    #      判据必须同时看**上一次**：只有"以前也没有、现在也没有"才算什么都没发生。
+    # ⚠️ 这里不能省 `last_effects` 的赋值：它是"下次跟谁比"的基线，
+    #    漏了会让下一条把同一份状态**再记一次**。
+    effects_row = {'step': step}
+    changed = []
+    for pid, value in effects_now.items():
+        side = _side_label(room, pid)
+        if not side:
+            continue
+        # ⚠️ 基线（还没有上一次快照）按**全空**算：开局"一个效果都没有"不是变化，
+        #    记进去只会白占一条（与上面第 ② 条同一个道理）。
+        before = (last_effects or {}).get(pid) or _empty_effects()
+        if before != value:
+            effects_row[side] = value
+            changed.append((before, value))
+    if len(effects_row) > 1 and any(
+            _has_any_effect(before) or _has_any_effect(now)
+            for (before, now) in changed):
+        st['effects'].append(effects_row)
+
     st['last'] = snap
+    st['last_effects'] = effects_now
 
 
 # ---------------------------------------------------------------------------
@@ -479,10 +643,16 @@ def build(room):
         'version': REPLAY_VERSION,
         'p1_name': names.get('p1', ''),
         'p2_name': names.get('p2', ''),
+        # ★ 「谁是哪一块棋盘」的**权威口径**，落库时与 blob 一起存进
+        #   `match_replays.replay_seats`（读接口按它算 `you_are`）。
+        #   ⚠️ 它是 `原始 pid → 'p1'/'p2'`，**绝不下发**（契约 §6：响应里不许有 user_id）；
+        #      读接口只把请求者的 uid 在服务端换成代号，返回的是代号。
+        'seats': _seats_payload(room),
         'started_at': started_at,
         'steps': steps,
         'ships': list(st.get('ships') or []),
         'hands': list(st.get('hands') or []),
+        'effects': list(st.get('effects') or []),
         'board_resets': list(st.get('board_resets') or []),
         'nodes': list(st.get('nodes') or []),
         'truncated': st.get('truncated'),
@@ -514,6 +684,7 @@ def _shrink(payload):
         payload['steps'] = payload['steps'][:keep]
         payload['ships'] = _trim_timeline(payload.get('ships') or [], keep)
         payload['hands'] = _trim_timeline(payload.get('hands') or [], keep)
+        payload['effects'] = _trim_timeline(payload.get('effects') or [], keep)
         payload['board_resets'] = [r for r in (payload.get('board_resets') or [])
                                    if int(r.get('step', 0)) <= keep]
         payload['nodes'] = [n for n in (payload.get('nodes') or [])
@@ -521,7 +692,7 @@ def _shrink(payload):
 
     # ② 时间线只留最后一条（前端仍能画出终局那一帧）
     if _too_big(payload):
-        for key in ('ships', 'hands'):
+        for key in ('ships', 'hands', 'effects'):
             rows = payload.get(key) or []
             payload[key] = rows[-1:] if rows else []
 
@@ -534,6 +705,7 @@ def _shrink(payload):
         payload['steps'] = []
         payload['ships'] = []
         payload['hands'] = []
+        payload['effects'] = []
         payload['board_resets'] = []
         payload['nodes'] = []
 
@@ -601,19 +773,57 @@ def replay_participants(winner_user_id, loser_user_id):
     return {'winner': winner_user_id or None, 'loser': loser_user_id or None}
 
 
+def _seats_payload(room):
+    """`{原始 pid: 'p1'|'p2'}`（只有**真账号**进得来；取不到的座位不出现）。
+
+    这是"谁是哪一块棋盘"的**唯一权威口径**：`p1_name` / `p2_name` 同上，都来自
+    `room.players` 的插入顺序（= 入座顺序）。落库时跟着 blob 一起存，
+    读接口按它算 `you_are` —— **不能**用"胜者就是 p1"去推（那只是巧合，见 `you_are`）。
+    """
+    seats = {}
+    for pid in _pids(room):
+        player = (getattr(room, 'players', None) or {}).get(pid)
+        uid = getattr(player, 'user_id', None)
+        side = _side_label(room, pid)
+        if uid and side:
+            seats[str(uid)] = side
+    return seats
+
+
 def you_are(payload, match_row, viewer_uid):
     """请求者在这条回放里是哪一位：`'p1'` / `'p2'` / `None`（旁观者）。
 
     ⚠️ **返回的只有代号，绝不下发任何 user_id**（契约 §6）。
-       代号口径与 `p1_name` / `p2_name` 完全一致：都来自录制时 `room.players` 的
-       插入顺序（= `spectate.seat_order`）。`winner_user_id == viewer_uid` ⇒ `p1`。
-       —— 录制时的先手 `p1` 不一定是胜者，但对"你是哪一位"这个用途，
-       `p1`/`p2` 只是两块棋盘的标签，不与胜负绑定（前端只拿它分左右）。
+
+    ★ 判据是 `payload['seats']`（落库时按 `room.players` 的**插入顺序**记下的
+      `uid → p1/p2`），也就是 `p1_name` / `p2_name` 的**同一份口径**。
+      作者实报的缺陷：原来写成"胜者 ⇒ p1、败者 ⇒ p2"，而插入顺序与胜负**毫无关系** ——
+      于是败者被当成 p1、赢的那位被当成 p2，界面上 `（你）` 挂到了**对面**那一侧，
+      而 `p1_name` 是"AI"、`(你)` 就标在 AI 上（截图实证）。
+      这是一个**方向写反**型的 bug（教训 #7）：单测全绿是因为夹具里恰好让
+      `winner == p1`（对称局面测不出方向）。
+
+    * 老 blob（没有 `seats`：本批之前落的）退回旧口径 —— 它**可能**是错的，
+      但"少一个自我标识"比"标到对面"危害小，而且这些老回放会随 30 局窗口自然过期。
     """
     if not viewer_uid or not isinstance(match_row, dict):
         return None
-    if match_row.get('winner_user_id') == viewer_uid:
+    viewer_uid = str(viewer_uid)
+    seats = (payload or {}).get('seats')
+    if isinstance(seats, dict):
+        side = seats.get(viewer_uid)
+        if side in ('p1', 'p2'):
+            return side
+        # `seats` 里没有他 **且** 他也不是这一局的参与者 ⇒ 旁观者，返回 None 是对的。
+        if viewer_uid not in (str(match_row.get('winner_user_id') or ''),
+                              str(match_row.get('loser_user_id') or '')):
+            return None
+        # 落到这里 = 本局参与者、但录制时没拿到他的 uid（游客坐席 / AI 坐席）。
+        # 他确实有一块棋盘，只是说不出是哪一块 —— 退回胜负口径（可能错，但比不标好）。
+    # —— 老回放（没有 `seats` 字段）与上面这条兜底路径共用同一判据 ——
+    if match_row.get('winner_user_id') and str(match_row['winner_user_id']) == viewer_uid:
         return 'p1'
-    if match_row.get('loser_user_id') == viewer_uid:
+    if match_row.get('loser_user_id') and str(match_row['loser_user_id']) == viewer_uid:
         return 'p2'
     return None
+

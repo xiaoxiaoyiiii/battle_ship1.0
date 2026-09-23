@@ -289,3 +289,84 @@ def test_replay_progress_nodes_come_from_the_server_only():
     assert '.nodes' in body, '进度条节点必须来自服务端 payload.nodes'
     assert "ship_sunk" not in body and "detail.hit" not in body, \
         '节点不许由前端从 attack 步自己推导（两套判据必然漂移）'
+
+
+# ===========================================================================
+# 守卫 8~11（缺陷修复批）：字形 / 攻击标记 / 效果格 / 座位对齐
+# ===========================================================================
+# 这四条是作者实报缺陷的**源码级**钉子。逐格的端到端判定在
+# `tools/dom_replay_frame_check.mjs`（真跑 game.js），这里钉的是"实现方式"：
+# 保证下次有人改写这段时不会把判据又写反（教训 #7：恒等式断言拦不住方向写反）。
+def test_ship_cell_is_not_drawn_as_a_hit_glyph():
+    """★★ 缺陷 ①：**只有挨过炮才是 ✕**；没挨过炮的船格必须是船。
+
+    原来的写法是 `(cell.hasShip || cell.hit) ? '✕' : …` —— 任何有船的格子都成了
+    叉（那是"命中"的字形），玩家看着像"这一格已经打过、别再点了"。
+    """
+    body = _strip_comments(_func_body(_read(GAME_JS), 'function renderReplayBoard('))
+    assert "(item.cell.hasShip || item.cell.hit) ? '✕'" not in body, \
+        '船格又被写成了 ✕（缺陷 ① 的原写法）'
+    assert "item.cell.sunk || item.cell.hit) el.textContent = '✕'" in body, \
+        '击沉/命中必须画 ✕'
+    assert "item.cell.hasShip) el.textContent = '⛴'" in body, \
+        '没挨过炮的船格必须画船（⛴）'
+    assert "item.cell.miss) el.textContent = '○'" in body, '落空格必须画 ○'
+    # 三个字形互不相同（不许有两个状态共用一个字形）
+    assert len({"'✕'", "'⛴'", "'○'"}) == 3
+
+
+def test_attack_marks_are_not_gated_on_having_a_reset():
+    """★★★ 缺陷 ②：攻击标记**不许**被"必须存在一个 ≤ i 的重置"挡住。
+
+    原写法 `var after = false; … if (!after) continue;` 在 `board_resets` 为空的局里
+    （**绝大多数局**）把每一炮都丢掉 ⇒ 一个"已轰过的格"都看不到，而且**不报错**。
+    正确语义是"取该侧**最后一次**重置"（没有则 -1），只丢"最后重置之前"的那些炮。
+    """
+    body = _strip_comments(_func_body(_read(GAME_JS), 'function replayComputeFrame('))
+    assert 'var after = false;' not in body, \
+        '又出现了 `after` 那个把无重置局全丢掉的判据（缺陷 ② 的原写法）'
+    assert 'lastReset' in body, '必须用"该侧最后一次重置"（lastReset）作为判据'
+    assert "if (i <= lastReset[boardSide]) continue;" in body, \
+        '判据必须是 `i <= lastReset[boardSide]`（重置之前才丢；用 ≤ 不是 <）'
+    # "取最大"必须是显式比较（写成 min/首次命中都会让方向反过来）
+    assert 'if (list[n] > lastReset[rside]) lastReset[rside] = list[n];' in body, \
+        'lastReset 必须取**最大值**（该侧最后一次重置），不是第一次'
+
+
+def test_replay_board_renders_the_public_effect_cells():
+    """★★ 缺陷 ③：护盾格 / 神威洞 / 冻结区 / 绝处逢生候选格都要画出来。
+
+    类名复用实战场那几个（一份样式两处用），绝不另起一套（教训 #1）。
+    """
+    src = _read(GAME_JS)
+    body = _strip_comments(_func_body(src, 'function renderReplayBoard('))
+    for cls in ('shielded', 'shenwei-hole', 'frozen-area', 'last-stand-candidate'):
+        assert "' " + cls + "'" in body or '" ' + cls + '"' in body, \
+            '回放棋盘没画 %s（缺陷 ③）' % cls
+    eff = _strip_comments(_func_body(src, 'function replayEffectOf('))
+    for field in ('shield', 'shenwei_holes', 'frozen_area', 'last_stand_cells'):
+        assert field in eff, '效果格判据没读 %s' % field
+    # 效果时间线必须**叠进帧**（否则效果永远画不出来）
+    frame = _strip_comments(_func_body(src, 'function replayComputeFrame('))
+    assert 'replayFoldTimeline(payload.effects' in frame, \
+        'effects 时间线没有叠进帧（缺陷 ③ 的"随时间线变化"会整条失效）'
+    assert "'effect'" in frame or 'effect: { p1: null, p2: null }' in frame, \
+        '帧结构里必须有效果槽位'
+
+
+def test_replay_slot_index_and_seat_side_stay_aligned():
+    """★★ 缺陷 ④ 的前端一侧：**槽位下标**与**座位代号**只能有一处映射。
+
+    棋盘 / 名字 / 手牌 / 标题全部经 `replaySeatOf(i)` 取座位，索引数组（`names`）
+    一律**按座位**取（`names[side]`），不许写成 `names[i]` —— 那就是"下标口径 vs
+    座位口径"交叉（第 6 批"棋盘方向对调"同族）。
+    """
+    body = _strip_comments(_func_body(_read(GAME_JS), 'function renderReplayPlayers('))
+    assert 'var side = replaySeatOf(i);' in body, '槽位 → 座位必须过 replaySeatOf'
+    assert 'names[side]' in body, '显示名必须**按座位**取（names[side]）'
+    assert 'names[i]' not in body, \
+        'names[i]（下标口径）与 side（座位口径）交叉 ⇒ 名字与（你）会张冠李戴'
+    assert 'replayState.youAre === side' in body, '（你）必须按座位代号判'
+    # 映射只有一处实现
+    src = _read(GAME_JS)
+    assert src.count('function replaySeatOf(') == 1, 'replaySeatOf 必须只有一份实现'

@@ -5898,6 +5898,29 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, rgba(255, 2
     background: var(--cell-water);
 }
 
+/* 回放棋盘上的**效果格**（作者实报：看不到仁王之盾的护盾格 / 神威挖的洞 / 冻结区）。
+   ⚠️ 类名复用实战场那几个（`.shenwei-hole` / `.frozen-area` / `.last-stand-candidate`
+      / `.ship.shielded`）—— 一份样式两处用，不另起一套。
+   ⚠️ 但实战场那三个是**靠 `::after` 画自己的字形**的（✕ / ? / 无），而回放棋盘
+      还要用 `textContent` 画 `⛴` 船与 `✕` 命中。两者会叠在同一格上
+      （例如"有船的洞"会同时出 ⛴ 和 ::after 的 ✕）⇒ 回放里把那一层字形**关掉**，
+      效果只用底色 + 描边表达，字形一律由 `game.js` 的 `textContent` 决定。
+      这个覆盖**只作用于 `.replay-board` 之内**，实战/观战棋盘一格都不受影响。 */
+.replay-board .cell.shenwei-hole::after,
+.replay-board .cell.frozen-area::after,
+.replay-board .cell.last-stand-candidate::after,
+.replay-board .cell.shield-broken::after,
+.replay-board .cell.ship.shielded::before {
+    content: none;
+}
+/* 神威洞在回放里要**看得出是"被挖掉"**，但底下的船/命中标记仍要读得出来 ——
+   实战场那份有 `cursor: not-allowed`（那是给"打不了"用的），回放里没有
+   "能不能打"这回事，这里只把光标改回默认；底色与不透明度**原样保留**
+   （同一份视觉语言，两处一致）。 */
+.replay-board .cell.shenwei-hole {
+    cursor: default;
+}
+
 /* 自己那一侧加一道淡边（服务端下发 `you_are` 时才有）。 */
 .replay-board.replay-board-mine {
     border-color: var(--accent, #4a9eff);

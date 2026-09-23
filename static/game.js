@@ -2979,6 +2979,9 @@ function replayIsActive() {
 
 // 座位 key。⚠️ 只能拼字符串：JS 里写 `'p%d' % (i+1)`（Python 那套）**不报错** ——
 // `%` 是取余，label 恒为 NaN、棋盘一格不画，而控制台干干净净（本项目真栽过）。
+// ⚠️ 这是"**槽位 i → 座位代号**"的**唯一实现**：棋盘、名字、手牌、候选格全走它。
+//    本批缺陷 ④（`（你）`标到对面）的根因在**服务端**的 `you_are`（它按胜负算代号），
+//    不在这个映射上 —— 见 `tools/dom_replay_frame_check.mjs` 的 E 组。
 function replaySeatOf(index) {
     return index === 1 ? 'p2' : 'p1';
 }
@@ -3033,7 +3036,8 @@ function replayComputeFrame(payload, k) {
         ships: { p1: [], p2: [] },
         hand: { p1: [], p2: [] },
         marks: { p1: {}, p2: {} },
-        resetAt: { p1: [], p2: [] }
+        resetAt: { p1: [], p2: [] },
+        effect: { p1: null, p2: null }
     };
     if (!payload || !Array.isArray(payload.steps)) return frame;
 
@@ -3048,6 +3052,8 @@ function replayComputeFrame(payload, k) {
     //       别每块棋盘各扫一次。
     replayFoldTimeline(payload.ships, target, frame.ships);
     replayFoldTimeline(payload.hands, target, frame.hand);
+    // 效果时间线同一种"稀疏 + 增量"，叠进 frame.effect[side]（见 replayEffectOf）。
+    replayFoldTimeline(payload.effects, target, frame.effect);
 
     // ② 棋盘重置：按侧收集 `step ≤ k` 的重置点（后面的攻击要判"是不是在重置之后"）。
     var resets = Array.isArray(payload.board_resets) ? payload.board_resets : [];
@@ -3061,6 +3067,28 @@ function replayComputeFrame(payload, k) {
     }
 
     // ③ 攻击标记：`steps[0..k]` 里的 attack 步画到**被打的那一侧**的棋盘上。
+    //
+    // ⚠️⚠️ 这里是本批修掉的那个"方向写反"型 bug（教训 #7）——原来的写法是：
+    //     `after = false; for (m...) if (resetAt[side][m] <= i) { after = true; break; }`
+    //     然后 `if (!after) continue;`
+    //   即"**必须存在**一个 ≤ i 的重置才画这一炮"。而绝大多数局的 `board_resets`
+    //   是**空的**（本批实测：人机局、匹配局都观测到 `[]`）⇒ `after` 恒为 false
+    //   ⇒ **每一炮都被 continue 掉** ⇒ 回放里一个"已轰过的格"都看不到（作者实报）。
+    //   它当时全绿，是因为既有断言只要求"拖拽 seek 与连点下一步**自洽**"（系统性丢标记
+    //   也自洽）和"船格 6/6 与后端相等"（船 ≠ 攻击标记）—— **没有任何一条断言要求
+    //   攻击标记真的出现过**。守卫见 `tools/dom_replay_frame_check.mjs` 的第 1 组。
+    //
+    //   正确语义：一炮（step i，打 board B）在帧 k 要看得见，当且仅当它发生在
+    //   **B 的最后一次重置之后**（重置把那块棋盘上已有的标记全擦掉了）。
+    //   等价写法就是取最大值 `lastReset`，没有重置则为 -1。
+    var lastReset = { p1: -1, p2: -1 };
+    for (var s = 0; s < 2; s++) {
+        var rside = replaySeatOf(s);
+        var list = frame.resetAt[rside];
+        for (var n = 0; n < list.length; n++) {
+            if (list[n] > lastReset[rside]) lastReset[rside] = list[n];
+        }
+    }
     for (var i = 0; i <= target; i++) {
         var step = steps[i];
         if (!step || step.kind !== 'attack') continue;
@@ -3073,13 +3101,7 @@ function replayComputeFrame(payload, k) {
         var attacker = replayAttackerSeat(detail, step.actor);
         if (attacker !== 'p1' && attacker !== 'p2') continue;
         var boardSide = attacker === 'p1' ? 'p2' : 'p1';
-        // 这一炮发生在**这一次重置之后**才有意义（重置把棋盘擦干净了）
-        var after = false;
-        var marks = frame.resetAt[boardSide];
-        for (var m = 0; m < marks.length; m++) {
-            if (marks[m] <= i) { after = true; break; }
-        }
-        if (!after) continue;
+        if (i <= lastReset[boardSide]) continue;      // 重置把它擦掉了
         frame.marks[boardSide][x + ',' + y] = {
             hit: detail.hit === true,
             sunk: detail.ship_sunk === true
@@ -3088,20 +3110,72 @@ function replayComputeFrame(payload, k) {
     return frame;
 }
 
-// 两条稀疏时间线共用的叠加逻辑（**一处实现**）。
+// 两条稀疏时间线 + 效果时间线共用的叠加逻辑（**一处实现**）。
+// ⚠️ 效果行与 `ships` / `hands` 同一种**替换**语义（不是深合并）：某一侧出现时它带着
+//    该座位效果的全部字段，所以"叠上去"就是"换成这一份"。
 function replayFoldTimeline(rows, target, into) {
     if (!Array.isArray(rows)) return;
     for (var i = 0; i < rows.length; i++) {
         var row = rows[i] || {};
         if (replayInt(row.step, -1) > target) break;   // 时间线升序，后面都不用看了
         if (Array.isArray(row.p1)) into.p1 = row.p1;
+        else if (row.p1 && typeof row.p1 === 'object') into.p1 = row.p1;
         if (Array.isArray(row.p2)) into.p2 = row.p2;
+        else if (row.p2 && typeof row.p2 === 'object') into.p2 = row.p2;
     }
 }
 
 // 某一侧棋盘上"某一格"的样子。⚠️ 新写一份（**不复用观战那套**）：
 // 观战的渲染故意只会画"已轰过的格"，它的安全前提是"手上根本没有船位数据"；
 // 回放要画船，两者绝不能共用渲染。
+//
+// ★ 字形口径（作者实报："船存在的格子显示错误会出现一个叉叉"）：
+//     `✕` = **挨过炮**（命中）才有的字形；没挨过炮的船格必须是**船**。
+//     原来写成 `(hasShip || hit) ? '✕' : …` ⇒ **任何有船的格子都是叉**
+//     （那是"命中"的字形），看着就像"这一格已经被打过、别再点了"。
+//     本屏用的三个字形各有各的含义、互不重复：
+//       · `⛴` 船（有船、没挨过炮）  · `✕` 命中（挨过炮）  · `○` 落空。
+//     ⚠️ 船格在**其它屏**上本来就不是靠字符表达的（`.cell.ship` 是不透明金属底
+//        + 立体阴影，没有字形），所以这里必须新选一个符号；`⛴` 在本项目里
+//        没有被别处占用（`❄` / `⛨` / `?` / `✕` / `○` 都已各有含义）。
+function replayEffectOf(frame, side, x, y) {
+    var eff = (frame && frame.effect) ? frame.effect[side] : null;
+    if (!eff || typeof eff !== 'object') return null;
+    var key = x + ',' + y;
+    var i, cell;
+    var shield = Array.isArray(eff.shield) ? eff.shield : [];
+    for (i = 0; i < shield.length; i++) {
+        cell = shield[i];
+        if (Array.isArray(cell) && replayInt(cell[0], -1) === x && replayInt(cell[1], -1) === y) {
+            return { kind: 'shield', label: '护盾：这一格有战舰护盾，能挡下下一炮' };
+        }
+    }
+    var holes = Array.isArray(eff.shenwei_holes) ? eff.shenwei_holes : [];
+    for (i = 0; i < holes.length; i++) {
+        var h = holes[i] || {};
+        if (x >= replayInt(h.x1, -1) && x <= replayInt(h.x2, -1)
+            && y >= replayInt(h.y1, -1) && y <= replayInt(h.y2, -1)) {
+            return { kind: 'hole', label: '神威：这一格被扣掉，暂时打不到' };
+        }
+    }
+    var frozen = eff.frozen_area;
+    if (frozen && typeof frozen === 'object'
+        && x >= replayInt(frozen.x1, -1) && x <= replayInt(frozen.x2, -1)
+        && y >= replayInt(frozen.y1, -1) && y <= replayInt(frozen.y2, -1)) {
+        return { kind: 'frozen', label: '冻结区：这一格的战舰本回合不能开火' };
+    }
+    var stand = Array.isArray(eff.last_stand_cells) ? eff.last_stand_cells : [];
+    for (i = 0; i < stand.length; i++) {
+        var s = stand[i];
+        var sx = Array.isArray(s) ? replayInt(s[0], -1) : replayInt(s && s.x, -1);
+        var sy = Array.isArray(s) ? replayInt(s[1], -1) : replayInt(s && s.y, -1);
+        if (sx === x && sy === y) {
+            return { kind: 'laststand', label: '绝处逢生：新战舰可能出现在这一格' };
+        }
+    }
+    return null;
+}
+
 function replayCellOf(frame, side, x, y) {
     var ships = (frame && frame.ships && Array.isArray(frame.ships[side])) ? frame.ships[side] : [];
     var marks = (frame && frame.marks && frame.marks[side]) ? frame.marks[side] : {};
@@ -3112,19 +3186,25 @@ function replayCellOf(frame, side, x, y) {
     }
     var mark = marks[x + ',' + y] || null;
     var sunk = !!(shipCell && shipCell.sunk && shipCell.alive !== true);
+    var effect = replayEffectOf(frame, side, x, y);
     var cell = {
         hasShip: !!shipCell,
         sunk: sunk,
         hit: !!(mark && mark.hit),
-        miss: !!(mark && !mark.hit)
+        miss: !!(mark && !mark.hit),
+        effect: effect ? effect.kind : null
     };
     // 无障碍文本 / title —— 色盲与读屏用户拿到的就是这一条（与实战棋盘同口径）。
-    if (cell.sunk) cell.label = '击沉：这一格的战舰已被打沉';
-    else if (shipCell && cell.hit) cell.label = '命中：这一格有战舰';
-    else if (shipCell) cell.label = '战舰：这一格有船，还没被打到';
-    else if (cell.hit) cell.label = '命中：这一格已经空了';
-    else if (cell.miss) cell.label = '落空：这一格打空了';
-    else cell.label = '海面：没有船，也没被打过';
+    // ⚠️ 效果格**先**说效果再说船/命中：一格可能同时是"有船的护盾格"，
+    //    但玩家点开回放最想知道的是"这里为什么长得不一样"。
+    var base;
+    if (cell.sunk) base = '击沉：这一格的战舰已被打沉';
+    else if (shipCell && cell.hit) base = '命中：这一格有战舰';
+    else if (shipCell) base = '战舰：这一格有船，还没被打到';
+    else if (cell.hit) base = '命中：这一格已经空了';
+    else if (cell.miss) base = '落空：这一格打空了';
+    else base = '海面：没有船，也没被打过';
+    cell.label = effect ? (effect.label + '（' + base + '）') : base;
     return cell;
 }
 
@@ -3218,12 +3298,27 @@ function renderReplayBoard(board, frame, side) {
         else if (item.cell.hit) cls += ' hit';
         else if (item.cell.miss) cls += ' miss';
         else cls += ' replay-water';
+        // 场上公开效果（仁王之盾的护盾格 / 神威挖的洞 / 冻结区 / 绝处逢生的候选格）。
+        // ⚠️ 复用**实战场已经在用**的那几个类名（一份样式，两处用它）：
+        //    `shielded`（带出 .cell.ship.shielded 的 🛡）/ `shenwei-hole` /
+        //    `frozen-area` / `last-stand-candidate`。别在这里另起一套类名（教训 #1）。
+        // ⚠️ 但它们放在**并列的分支**里：一格可能同时是"有船的护盾格"，
+        //    所以不能写成上面那种 if/else 链。
+        if (item.cell.effect === 'shield') cls += ' shielded';
+        else if (item.cell.effect === 'hole') cls += ' shenwei-hole';
+        else if (item.cell.effect === 'frozen') cls += ' frozen-area';
+        else if (item.cell.effect === 'laststand') cls += ' last-stand-candidate';
         el.className = cls;
         el.dataset.x = String(item.x);
         el.dataset.y = String(item.y);
         el.title = item.cell.label;
         el.setAttribute('aria-label', item.cell.label);
-        el.textContent = (item.cell.hasShip || item.cell.hit) ? '✕' : (item.cell.miss ? '○' : '');
+        // ★ 字形（缺陷 ①）：**只有挨过炮才是 ✕**。
+        //   击沉格也是 ✕（打沉的那一炮本身是命中），没挨过炮的船格是 ⛴。
+        if (item.cell.sunk || item.cell.hit) el.textContent = '✕';
+        else if (item.cell.hasShip) el.textContent = '⛴';
+        else if (item.cell.miss) el.textContent = '○';
+        else el.textContent = '';
         board.appendChild(el);
     }
 }
@@ -3232,10 +3327,16 @@ function renderReplayPlayers() {
     var payload = replayState.payload;
     if (!payload) return;
     var frame = replayState.frame;
-    var names = [payload.p1_name || '先手', payload.p2_name || '后手'];
+    // ⚠️ **槽位口径与座位口径必须一一对齐**（本批的缺陷 ④ 就出在这条对齐上，只不过
+    //    错的那一头在服务端的 `you_are`，见 `replay.you_are` 的说明）：
+    //      · `names` / `replayNameEls` / `replayBoardEls` … 都是**槽位**下标（0 = 左边）；
+    //      · `replaySeatOf(i)` 把槽位 i 映射到座位代号（0→p1、1→p2），**一处实现**；
+    //      · `payload.p1_name` 与 `frame.*['p1']` 都是**座位**口径。
+    //    所以"槽位 i 的显示名"必须等于"座位 `replaySeatOf(i)` 的名字"，两处不许各配一次。
+    var names = { p1: payload.p1_name || '先手', p2: payload.p2_name || '后手' };
     for (var i = 0; i < 2; i++) {
         var side = replaySeatOf(i);
-        var name = String(names[i]);
+        var name = String(names[side]);
         var mine = replayState.youAre === side;
         if (replayNameEls[i]) replayNameEls[i].textContent = name + (mine ? '（你）' : '');
         if (replayShipsEls[i]) replayShipsEls[i].textContent = String(replayAliveShips(frame, side));

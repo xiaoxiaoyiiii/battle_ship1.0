@@ -845,21 +845,34 @@ def _replay_show_history(uid):
 
 
 def _replay_read_allowed(match_id, viewer_uid):
-    """这条回放该不该给 `viewer_uid` 看。返回 `(ok, row, you_are, reason)`。
+    """这条回放该不该给 `viewer_uid` 看。返回 `(ok, payload, row, you_are, reason)`。
 
     `ok=False` 时 `reason` 是给玩家看的一句话（**失败必须带原因**，教训 #32）。
+
+    ⚠️ **权限**只看 `match_replays` 的两列（参与者 / `show_history`），
+       与 `you_are` **分开**：后者是"你是哪块棋盘"的展示口径，读的是 blob 里的
+       `seats`（按入座顺序记的 `uid → p1/p2`）。两者混用会让"胜者就是 p1"这种
+       巧合偷偷变成权限判据（作者实报的 `（你）` 标到对面就是从这个混淆长出来的）。
     """
     row = db.get_match_replay(match_id)
     if not row:
-        return False, None, None, '这局没有可回放的行动'
-    mine = replay_module.you_are(None, row, viewer_uid)
+        return False, None, None, None, '这局没有可回放的行动'
+    # 体积/版本/解析都还没校验，这里只需要 `seats`：读一次 blob，失败就当没有
+    # （**不删**这条 —— 校验与报错是 `get_match_replay` 接口的职责，这里只做鉴权）。
+    payload = None
+    try:
+        payload = json.loads(row.get('replay') or '{}')
+        payload = payload if isinstance(payload, dict) else None
+    except Exception:                   # noqa: BLE001
+        payload = None
+    mine = replay_module.you_are(payload, row, viewer_uid)
     if mine:
-        return True, row, mine, ''
+        return True, payload, row, mine, ''
     # 非参与者：只要任一真实参与者公开了战绩，就跟着能看（契约 §5）
     for uid in _replay_participant_ids(row):
         if _replay_show_history(uid):
-            return True, row, None, ''
-    return False, row, None, '你没有权限查看这一局的回放'
+            return True, payload, row, None, ''
+    return False, payload, row, None, '你没有权限查看这一局的回放'
 
 
 @app.route('/api/replay/setting', methods=['GET'])
@@ -923,7 +936,10 @@ def get_match_replay(match_id):
     if not uid:
         return jsonify({'success': False, 'error': '未登录'}), 401          # 假设 A1
 
-    allowed, row, you_are, reason = _replay_read_allowed(match_id, uid)
+    allowed, _payload_for_seats, row, you_are, reason = _replay_read_allowed(match_id, uid)
+    # ⚠️ 鉴权段解析出来的那份**只用来看 `seats`**，到这里一律丢掉、下面重新解析：
+    #    它是**超限校验之前**读的，不许拿它当"体积合法"的证据（契约 §1 的 512 KB 硬上限）。
+    del _payload_for_seats
     if row is None:
         return jsonify({'success': False, 'error': reason}), 404
     if not allowed:

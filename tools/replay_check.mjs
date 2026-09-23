@@ -193,14 +193,19 @@ function pagePlaceAndState() {
   });
 }
 
-// 猜拳：让 AI 随便出的那手被我们赢下来（直接问服务端它在等什么太绕，三手都发一遍不合法），
-// 所以这里只发一手 'rock'：赢了就先手，输了就让 AI 先走（下面的循环两种都处理）。
-function pageRps() {
+// 猜拳：出一手指定的拳。**平局要重出**，而"重出同一手"永远还是平局，
+// 所以这里把三手循环着出（调用方按下标传），既躲平局也不引入"猜 AI 出什么"的假设。
+function pageRpsWith(choice) {
   var gs = window.gameState;
   return new Promise(function (resolve) {
-    gs.socket.emit('rps_choice', { room_id: gs.roomId, player_id: gs.playerId, choice: 'rock' },
+    gs.socket.emit('rps_choice',
+      { room_id: gs.roomId, player_id: gs.playerId, choice: choice },
       function (r) { resolve(r); });
   });
+}
+
+function pageRps() {
+  return pageRpsWith('rock');
 }
 
 function pageState() {
@@ -273,6 +278,14 @@ try {
   browser = spawn(BROWSER, [
     '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
     '--disable-extensions', '--mute-audio', '--remote-debugging-port=' + PORT,
+    // ★ 必须**从进程级关掉 HTTP 磁盘缓存**：本工具用持久 profile
+    //   （`.tmp/replay_check_profile`），而源码在每次跑之前可能刚被改过。
+    //   ⚠️ 只发 CDP 的 `Network.setCacheDisabled` **不够** —— 实测：
+    //      `index.html` 里的 `?v=<asset_v('game.js')>` 在同一次会话里是**同一秒**
+    //      取到的 mtime，改坏前后 URL 完全相同，于是 Chrome 直接命中磁盘缓存，
+    //      浏览器跑的是**改坏之前**那一份 ⇒ 红证假绿（本批实测踩到两次，
+    //      差点把"守卫抓不住 bug"当成结论）。这两个开关是那一次的修法。
+    '--disable-http-cache', '--disk-cache-size=1', '--media-cache-size=1',
     '--user-data-dir=' + PROFILE_DIR, '--window-size=1600,1000', '--force-device-scale-factor=1',
     'about:blank',
   ], { stdio: 'ignore' });
@@ -308,46 +321,92 @@ try {
   await send('Page.enable');
   await send('Runtime.enable');
   await send('Network.enable');
+  // ★ 关掉浏览器缓存（进程级那两个开关之外再加一道，双保险）。
+  await send('Network.setCacheDisabled', { cacheDisabled: true });
+  // 再显式清一次缓存：持久 profile 里可能留着上几轮的条目。
+  try { await send('Network.clearBrowserCache', {}); } catch (e) { /* 老的 Chrome 没有 */ }
   await send('Network.setCookie', { name: 'session', value: cookie.split('=').slice(1).join('='), url: new URL(APP).origin + '/' });
   await send('Emulation.setDeviceMetricsOverride', { width: 1600, height: 1000, deviceScaleFactor: 1, mobile: false });
   await send('Page.navigate', { url: APP });
   await waitFor(() => ev('document.readyState === "complete"'), 20000, '页面加载');
   await waitFor(() => ev('typeof window.gameState === "object" && !!window.gameState'), 20000, 'gameState 就绪');
   await ev('window.__REPLAY_USER = ' + JSON.stringify(USERNAME));
+  // ★ 打印"浏览器**真正执行**的是哪一份 game.js"。看着像废话，实际是本批最值钱的一条：
+  //   做"改坏源码 → 判据必须红"的红证时，Chrome 的持久 profile 会让它悄悄跑**旧**文件，
+  //   表现就是"改坏了却照样绿"，很容易被误判成"这条判据抓不住 bug"（实测踩到两次）。
+  //   留着它，下一个人一眼就能看出这一轮跑的是哪一份。
+  {
+    const which = await ev('(function(){' +
+      'var f=String(replayComputeFrame);' +
+      'var r=performance.getEntriesByType("resource").filter(function(e){return e.name.indexOf("game.js")>=0;})[0]||{};' +
+      'return {hasAfter:f.indexOf("var after = false;")>=0, hasLastReset:f.indexOf("lastReset[boardSide]")>=0,' +
+      ' src:r.name||null, bytes:r.transferSize, dur:Math.round(r.duration||0)};})()');
+    console.log('浏览器执行的那一份 game.js: ' + JSON.stringify(which));
+  }
+
   const who = await ev('(function(){return document.body.innerText.indexOf(' + JSON.stringify(USERNAME) + ') >= 0;})()');
   console.log('浏览器侧登录态: ' + (who ? '已认出 ' + USERNAME : '（页面里没找到用户名，仍按 cookie 会话继续）'));
 
   // ---------- ① 真打完一局（人机局） ----------
-  const room = await ev('(' + pageStartAiRoom.toString() + ')()');
-  if (room.error) throw new Error(room.error);
-  console.log('人机房: room_id=' + room.room_id + ' player_id=' + room.player_id);
+  // ★★★ 猜拳必须先手 —— 这是本工具**最主要的脆性来源**，不是"偶发"。
+  //   实测（同一份源码连跑 3 次）：后手那两轮都停在
+  //   `[poll 8..14] attacker=me attacks=6→1、oppShips 停在 1` ⇒ 150 秒没打完。
+  //   根因是规则本身：**攻击次数 = 存活船数 − 冻结船数**。先手方每回合白打 6 发，
+  //   后手方每回合先挨打（沉一艘 ⇒ 次数上限永久 −1），于是"6 艘追不满"。
+  //   这是真实的对局劣势，不是工具写错。
+  //   ⇒ 猜拳是随机的 ⇒ **AI 拿到先手就放弃这一局、重开一间房再来**（上限 5 次）。
+  //     拿不到先手就直接抛错（绝不假装跑完）。
+  let room = null;
+  let st = null;
+  const rpsChoices = ['rock', 'paper', 'scissors'];
+  for (let attempt = 1; attempt <= 5 && !room; attempt++) {
+    const opened = await ev('(' + pageStartAiRoom.toString() + ')()');
+    if (opened.error) throw new Error(opened.error);
+    const placed = await ev('(' + pagePlaceAndState.toString() + ')()');
+    if (placed.error) throw new Error(placed.error);
+    if (!placed.game_state) throw new Error('摆完船后读不到 game_state');
+    check(placed.game_state.state === 'rock_paper_scissors'
+      || placed.game_state.state === 'attacking',
+      '摆完船后进入猜拳（或直接开打）', placed.game_state.state);
 
-  let st = await ev('(' + pagePlaceAndState.toString() + ')()');
-  if (st.error) throw new Error(st.error);
-  check(st.game_state && (st.game_state.state === 'rock_paper_scissors' || st.game_state.state === 'attacking'),
-    '摆完船后进入猜拳（或直接开打）', st.game_state && st.game_state.state);
-
-  // 猜拳会**平局**（1/3 概率）：平局时服务端清空选择、双方要重新出拳。
-  // 所以这里必须**循环出拳直到进入 attacking**（第一版只发一手，撞上平局就卡死）。
-  let rpsTries = 0;
-  st = null;
-  {
+    // 猜拳会**平局**（1/3 概率）：平局时服务端清空选择、双方要重新出拳。
+    // 所以这里必须**循环出拳直到进入 attacking**（第一版只发一手，撞上平局就卡死）。
+    let rpsTries = 0;
+    let cur = null;
     const t0r = Date.now();
-    while (Date.now() - t0r < 45000) {
+    while (Date.now() - t0r < 60000) {
       const rawst = await ev('(' + pageState.toString() + ')()');
       const gs0 = rawst && rawst.game_state;
-      if (gs0 && gs0.state === 'attacking') { st = gs0; break; }
-      if (gs0 && gs0.state === 'game_over') { st = gs0; break; }
+      if (gs0 && (gs0.state === 'attacking' || gs0.state === 'game_over')) { cur = gs0; break; }
       if (gs0 && gs0.state === 'rock_paper_scissors') {
-        await ev('(' + pageRps.toString() + ')()');
+        await ev('(' + pageRpsWith.toString() + ')(' +
+          JSON.stringify(rpsChoices[rpsTries % 3]) + ')');
         rpsTries++;
       }
-      await sleep(600);
+      await sleep(500);
     }
+    if (!cur || cur.state !== 'attacking') {
+      console.log('   第 ' + attempt + ' 次：猜拳后一直没进入 attacking ⇒ 重开');
+      continue;
+    }
+    if (cur.current_attacker !== opened.player_id) {
+      console.log('   第 ' + attempt + ' 次：AI 拿到先手（出拳 ' + rpsTries
+        + ' 次）⇒ 放弃这一局、重开一间房');
+      // 关掉这间房，别在服务器上留一堆打不完的人机房
+      await ev('(function(){try{window.gameState.socket.emit("surrender",' +
+        '{room_id:window.gameState.roomId,player_id:window.gameState.playerId},function(){});}catch(e){}})()');
+      await sleep(600);
+      continue;
+    }
+    console.log('   第 ' + attempt + ' 次：我方先手（出拳 ' + rpsTries + ' 次）');
+    room = { room_id: opened.room_id, player_id: opened.player_id };
+    st = cur;
   }
-  check(!!st && st.state === 'attacking', '猜拳结束、进入攻击阶段（出了 ' + rpsTries + ' 手）',
-    st && st.state);
-  if (!st || st.state !== 'attacking') throw new Error('猜拳后一直没进入 attacking');
+  if (!room) throw new Error('连续 5 次都没拿到先手（猜拳是随机的，应属极小概率）');
+  console.log('人机房: room_id=' + room.room_id + ' player_id=' + room.player_id);
+  check(!!st && st.state === 'attacking' && st.current_attacker === room.player_id,
+    '★ 这一局是**我方先手**（攻击次数 = 存活船数 − 冻结数 ⇒ 后手追不上 6 艘）',
+    { attacker: st && st.current_attacker, me: room.player_id });
 
   // 目标：把对方的 6 艘单格船全打沉（打完就是 `game_over` + `_finalize_match`）。
   // ⚠️ 一轮只走一个阶段：`enter_battle_phase` → 打光次数 → `enter_end_phase` → `end_turn`。
@@ -414,6 +473,19 @@ try {
         });
       });
       if (!pick) {
+        // "搜海"的顺序也要挑：6 艘都是单格船，按**棋盘奇偶**扫能保证每一艘都被覆盖到
+        // （同奇偶的格子互不相邻，一艘船一定落在两个奇偶类之一里）。
+        // ⚠️ 不挑顺序、按行扫的话会把次数浪费在空海上 —— 实测两次跑出
+        //    "30 炮 / 5~6 次交回合 / 150 秒还没赢"（AI 硬打掉我方船 ⇒ 次数掉到 3）。
+        //    本工具的每一步都以"真打完一局"为前提，赢不了就等于整条 E2E 无效。
+        for (let par = 0; par < 2 && !pick; par++) {
+          for (let y = 0; y < 6 && !pick; y++) for (let x = 0; x < 6 && !pick; x++) {
+            if (((x + y) % 2) !== par) continue;
+            if (!tried[x + ',' + y]) pick = { x: x, y: y };
+          }
+        }
+      }
+      if (!pick) {
         for (let y = 0; y < 6 && !pick; y++) for (let x = 0; x < 6 && !pick; x++) {
           if (!tried[x + ',' + y]) pick = { x: x, y: y };
         }
@@ -458,9 +530,43 @@ try {
       logs: latest && (latest.logs || []).length });
   if (!latest) throw new Error('这一局没有回放，后面无法继续');
   check(latest.mode === 'ai', '★ 这一局的 mode 是 ai（任务 B 的数据源）', latest.mode);
-  const matchId = latest.id || latest.match_id;
+  let matchId = latest.id || latest.match_id;
   console.log('本局 match id: ' + matchId + '（行字段: ' + Object.keys(latest).join(',') + '）');
   if (!matchId) throw new Error('战绩行里没有 match id，无法继续');
+
+  // ⚠️⚠️ 战绩里**最新的一行不一定是我们真打完的那一局**：
+  //   本工具为了拿到先手会**放弃若干间人机房**（见上面那一段），那些局**也会被结算落库**
+  //   并各留一条回放 —— 其中"AI 先手一炮把 6 艘全打沉"那种局只有 3 步、**一个攻击标记都没有**，
+  //   挑到它会让"攻击标记必须出现过"这条**假红**（实测：第 3 次连跑就是这么红的）。
+  //   所以按"回放里真的带 attack 步"来挑，挑不到就明确报错（绝不静默退回随便一局）。
+  let replayPayload = null;
+  for (const row of history) {
+    if (row.has_replay !== true) continue;
+    const mid = row.id || row.match_id;
+    if (!mid) continue;
+    const got = await ev('fetch("/api/replay/" + encodeURIComponent(' + JSON.stringify(String(mid)) + '),' +
+      '{credentials:"same-origin"}).then(function(r){return r.json().then(function(j){return {status:r.status,body:j};});})');
+    const pay = got && got.body && got.body.replay;
+    const attacks = pay ? (pay.steps || []).filter((s) => s && s.kind === 'attack').length : 0;
+    console.log('  候选回放 ' + String(mid).slice(0, 8) + '…: status=' + (got && got.status)
+      + ' steps=' + (pay ? (pay.steps || []).length : '-') + ' attack步=' + attacks);
+    if (got && got.status === 200 && attacks > 0) {
+      matchId = mid;
+      replayPayload = pay;
+      break;
+    }
+  }
+  check(!!replayPayload,
+    '★★ 战绩里能找到**这一局真打完的**那份回放（带 attack 步，不是被放弃的那几局）',
+    { 试过的行数: history.length });
+  if (!replayPayload) {
+    // ⚠️ 这一步**不是**为了掩盖问题，而是这条判据的**前置条件**：
+    //   偶尔会出现"3 炮就赢了"的局（某张卡直接结束对局）⇒ 回放里 `attack` 步为 0
+    //   ⇒ "攻击标记必须出现过"这条根本没有可断言的对象（实测第 1 次就是这样）。
+    //   所以这里**明确失败并说明原因**，让调用方知道"这一次的局不适合做这条判据"。
+    throw new Error('这一局是"没打几炮就结束"的局（回放里 attack 步为 0）'
+      + '—— 请重跑一次工具（它会重新打一局）');
+  }
 
   // ---------- ③ 从战绩列表点开 → 详情页有「对局回放」按钮 ----------
   await ev('(function(){var m=document.getElementById("user-stats-modal");m.classList.remove("hidden");' +
@@ -504,6 +610,8 @@ try {
   check(detail.detailTag === '人机', '★ 详情页也标出「人机」（任务 B 的第二个入口）', detail.detailTag);
 
   // 后端 JSON（与画面比对的唯一真源）
+  // 后端 JSON（与画面比对的唯一真源）。⚠️ 上面挑行时已经取过一次，这里**再取一次**是为了
+  // 沿用原来那条"接口返回 200"的断言（口径不变），而不是复用挑行时的中间结果。
   const api = await ev('fetch("/api/replay/" + encodeURIComponent(' + JSON.stringify(String(matchId)) + '),' +
     '{credentials:"same-origin"}).then(function(r){return r.json().then(function(j){return {status:r.status,body:j};});})');
   check(api.status === 200 && api.body && api.body.success === true, 'GET /api/replay/<id> 返回 200',
@@ -600,6 +708,152 @@ try {
     '★ 两块棋盘画出的船格数与后端 JSON 一致',
     { drawn: [drawn1, drawn2], server: [lastShips.p1.length, lastShips.p2.length] });
   check(drawn1 + drawn2 === 12, '★ 双方船位都在（各 6 格，全透视）', { p1: drawn1, p2: drawn2 });
+
+  // ---------- ④b ★★ 攻击标记必须真的出现过（缺陷 ② 的正面判据） ----------
+  // 为什么这条必须在这里（而不是只在 dom_replay_frame_check.mjs）：
+  //   真对局的 payload 才是"线上那一份"。加这条之前，本工具的断言全是
+  //   "拖拽 seek 与连点下一步自洽"（**系统性丢标记也自洽**）与"船格 6/6 与后端相等"
+  //   （**船 ≠ 攻击标记**）—— 于是"一个已轰过的格都没画出来"能一路全绿。
+  //   ⚠️ 这条在修复前**必须红**（标记恒为空）。
+  function expectedMarks(replayPayload) {
+    const steps = replayPayload.steps || [];
+    const resets = replayPayload.board_resets || [];
+    const lastReset = { p1: -1, p2: -1 };
+    resets.forEach((r) => {
+      const s = (r && r.side === 'p1') ? 'p1' : (r && r.side === 'p2' ? 'p2' : null);
+      if (s && Number(r.step) > lastReset[s]) lastReset[s] = Number(r.step);
+    });
+    const names = { p1: replayPayload.p1_name || '', p2: replayPayload.p2_name || '' };
+    const out = { p1: new Set(), p2: new Set() };
+    steps.forEach((step, i) => {
+      if (!step || step.kind !== 'attack') return;
+      const d = step.detail || {};
+      const t = d.target || {};
+      if (typeof t.x !== 'number' || typeof t.y !== 'number') return;
+      let att = (d.attacker === 'p1' || d.attacker === 'p2') ? d.attacker : null;
+      if (!att && step.actor) {
+        if (names.p1 === String(step.actor)) att = 'p1';
+        else if (names.p2 === String(step.actor)) att = 'p2';
+      }
+      if (!att) return;
+      const board = att === 'p1' ? 'p2' : 'p1';
+      if (i <= lastReset[board]) return;
+      out[board].add(t.x + ',' + t.y + (d.ship_sunk ? ':sunk' : (d.hit ? ':hit' : ':miss')));
+    });
+    return out;
+  }
+  /** 画面上一块棋盘里"带攻击标记"的格（`hit` / `miss`）—— 只认 class，不认字形。 */
+  function markedCells(cells) {
+    return (cells || []).filter((c) => {
+      const cls = c.split(':')[1] || '';
+      return /(^|\s)(hit|miss)(\s|$)/.test(cls);
+    }).map((c) => {
+      const [xy, cls] = c.split(':');
+      const kind = /(^|\s)sunk(\s|$)/.test(cls) ? 'sunk'
+        : (/(^|\s)hit(\s|$)/.test(cls) ? 'hit' : 'miss');
+      return xy + ':' + kind;
+    }).sort();
+  }
+  // ⚠️⚠️ 这条判据的设计陷阱（本批实测踩到，写下来给下一个人）：
+  //      `replayCellOf` 的 `sunk` 那一支**自己就会给格子加 `hit` 类**
+  //      （`sunk = shipCell.sunk && alive !== true` ⇒ 画成 `ship sunk hit`）。
+  //      而真对局里最后 6 格**全是被我们打沉的敌舰** ⇒ "画面上有 6 个 hit 格"这件事
+  //      在**修好与没修好时都成立** —— 第一版工具就是这么假绿的：
+  //      把缺陷 ② 的原写法改回去，判据照样 PASS（实测）。
+  //      于是这里改成两条**互相独立**的判据：
+  //        ① 帧里的标记表 `frame.marks`（**这才是缺陷 ② 控制的东西**）必须与
+  //           "按 `board_resets` 规则从后端 JSON 推出来的集合"逐格相等；
+  //        ② 画面上的 `hit`/`miss` 类集合必须与 `frame.marks` **∪ 沉船格** 相等
+  //           （证明渲染没有自己发明标记，也没有吞掉帧里的标记）。
+  //          ⚠️ 沉船格必须由**后端 JSON 独立推**（`ships` 时间线最后一条里
+  //             `sunk` / `alive === false` 的格），不能从画面反推。
+  const frameMarks = await ev('(function(){' +
+    'var m = replayState.frame.marks, out = {p1:{}, p2:{}};' +
+    '["p1","p2"].forEach(function(s){ for (var k2 in m[s]) out[s][k2] = true; });' +
+    'return out;})()');
+  const frameMarkList = (side) => Object.keys(frameMarks[side] || {}).sort();
+  const sunkCellsOf = (side) => {
+    const rows = (replay.ships || []).filter((r) => Array.isArray(r[side]));
+    const last = rows.length ? rows[rows.length - 1][side] : [];
+    return last.filter((c) => c.sunk || c.alive === false).map((c) => c.x + ',' + c.y).sort();
+  };
+  const want = expectedMarks(replay);
+  const wantKeys1 = Array.from(want.p1).map((s) => s.split(':')[0]).sort();
+  const wantKeys2 = Array.from(want.p2).map((s) => s.split(':')[0]).sort();
+  const domCells1 = (frameLast.board1 || []).filter((c) => /(^|\s)(hit|miss)(\s|$)/.test(c.split(':')[1] || ''))
+    .map((c) => c.split(':')[0]).sort();
+  const wantDomKeys1 = Array.from(new Set(wantKeys1.concat(sunkCellsOf('p1')))).sort();
+  const domSunk1 = (frameLast.board1 || []).filter((c) => /(^|\s)sunk(\s|$)/.test(c.split(':')[1] || ''))
+    .map((c) => c.split(':')[0]).sort();
+  console.log('帧里的标记表 frame.marks: p1=' + JSON.stringify(frameMarkList('p1'))
+    + ' / p2=' + JSON.stringify(frameMarkList('p2')));
+  console.log('后端推出的标记键: p1=' + JSON.stringify(wantKeys1) + ' / p2=' + JSON.stringify(wantKeys2));
+  console.log('画面 hit/miss 格: b1=' + JSON.stringify(domCells1)
+    + ' / 期望(标记∪沉船格)= ' + JSON.stringify(wantDomKeys1));
+  check(JSON.stringify(frameMarkList('p1')) === JSON.stringify(wantKeys1)
+    && JSON.stringify(frameMarkList('p2')) === JSON.stringify(wantKeys2),
+    '★★ 帧里的标记表 == 由后端 JSON 按 `board_resets` 规则推出来的集合（缺陷 ② 的正面判据）',
+    { frame: { p1: frameMarkList('p1'), p2: frameMarkList('p2') },
+      server: { p1: wantKeys1, p2: wantKeys2 } });
+  check(wantKeys1.length + wantKeys2.length > 0,
+    '（前置）由后端 JSON 推出的攻击标记集合非空（这一局真的开过炮）',
+    { total: wantKeys1.length + wantKeys2.length, steps: replay.steps.length });
+  check(JSON.stringify(domCells1) === JSON.stringify(wantDomKeys1),
+    '★★ 画面上的 hit/miss 格 == 帧里的标记 ∪ 后端推出来的沉船格（一格不多、一格不少）',
+    { ui: domCells1, server: wantDomKeys1 });
+  check(JSON.stringify(domSunk1) === JSON.stringify(sunkCellsOf('p1')),
+    '★ 画面上的沉船格 == 后端 `ships` 时间线里沉掉的格',
+    { ui: domSunk1, server: sunkCellsOf('p1') });
+  // 反向腿：两块棋盘都不许出现"对方棋盘才有"的标记（方向/归属）
+  const domCells2 = (frameLast.board2 || [])
+    .filter((c) => /(^|\s)(hit|miss)(\s|$)/.test(c.split(':')[1] || ''))
+    .map((c) => c.split(':')[0]).sort();
+  check(domCells2.every((k) => wantKeys2.indexOf(k) >= 0
+    || sunkCellsOf('p2').indexOf(k) >= 0),
+    '★ 第 2 块棋盘上的标记全部属于 p2 那一侧（没画到对面）',
+    { b2: domCells2, 该侧: wantKeys2, 沉船: sunkCellsOf('p2') });
+  // 逐格保真：不能"数量对但打错格子"——上面那条已经覆盖，这里再钉一次"两块棋盘不许相同"
+  // （两块对调时集合会互换；只有当两边格集相同时才测不出来，所以先要求它们不同）
+  if (wantKeys1.length && wantKeys2.length) {
+    check(JSON.stringify(wantKeys1) !== JSON.stringify(wantKeys2),
+      '（前置）两块棋盘的期望标记不同（相同的话"对调"测不出来）',
+      { b1: wantKeys1, b2: wantKeys2 });
+  }
+
+  // ---------- ④c ★★ 槽位 / 座位对齐（缺陷 ④ 的端到端腿） ----------
+  // 服务端给的 `you_are` 必须与 `p1_name`/`p2_name` 的**座位口径**一致：
+  // 第 1 块棋盘的名字 == p1_name、第 2 块 == p2_name，而 `（你）` 落在 you_are 那一侧。
+  const seats = await ev('(function(){' +
+    'var t1=(document.getElementById("replay-board-title-1")||{}).textContent||"";' +
+    'var t2=(document.getElementById("replay-board-title-2")||{}).textContent||"";' +
+    'return {t1:t1, t2:t2,' +
+    ' mine1:document.getElementById("replay-board-1").classList.contains("replay-board-mine"),' +
+    ' mine2:document.getElementById("replay-board-2").classList.contains("replay-board-mine"),' +
+    ' n1:(document.getElementById("replay-name-1")||{}).textContent||"",' +
+    ' n2:(document.getElementById("replay-name-2")||{}).textContent||""};})()');
+  console.log('座位对齐: ' + JSON.stringify(seats)
+    + ' / you_are=' + JSON.stringify(api.body.you_are)
+    + ' / p1_name=' + JSON.stringify(replay.p1_name)
+    + ' p2_name=' + JSON.stringify(replay.p2_name));
+  check(seats.t1.indexOf(String(replay.p1_name)) === 0,
+    '★★ 第 1 块棋盘的标题用的是 p1_name（槽位 0 ↔ 座位 p1）', { t1: seats.t1, p1: replay.p1_name });
+  check(seats.t2.indexOf(String(replay.p2_name)) === 0,
+    '★★ 第 2 块棋盘的标题用的是 p2_name（槽位 1 ↔ 座位 p2）', { t2: seats.t2, p2: replay.p2_name });
+  // 本工具是 AI 局的**人类座位**，而人类在 seats 里是哪一位由后端决定 ——
+  // 所以这里断言的是"两者一致"，不是"一定在左边/右边"（后者才是老 bug 的形状）。
+  const wantMine1 = api.body.you_are === 'p1';
+  const wantMine2 = api.body.you_are === 'p2';
+  check(seats.mine1 === wantMine1 && seats.mine2 === wantMine2,
+    '★★ `replay-board-mine` 落在 you_are 指向的那一侧（不是永远标左边）',
+    { you_are: api.body.you_are, mine1: seats.mine1, mine2: seats.mine2 });
+  check((seats.n1.indexOf('（你）') >= 0) === wantMine1
+    && (seats.n2.indexOf('（你）') >= 0) === wantMine2,
+    '★★ `（你）` 与 `replay-board-mine` 落在**同一侧**、且名字与座位对齐',
+    { n1: seats.n1, n2: seats.n2, you_are: api.body.you_are });
+  check(seats.n1.indexOf(String(replay.p1_name)) === 0
+    && seats.n2.indexOf(String(replay.p2_name)) === 0,
+    '★★ 第 i 槽位的显示名 == 座位 p_i 的名字（名字与（你）不许张冠李戴）',
+    { n1: seats.n1, n2: seats.n2 });
 
   // ---------- ⑤ 上一步 / 下一步 ----------
   await ev('(function(){ replayStepTo(0, {}); })()');

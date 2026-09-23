@@ -892,9 +892,11 @@ class GameRoom:
         self.game_logs: list[dict[str, Any]] = []
         # ★ 2026-09-23（回放批）新增房间级状态三件齐（CLAUDE.md 第 10.11 条）：
         #   ① 这里初始化 ② 消费点 = `replay.note` / `replay.note_action` /
-        #   `replay.note_board_reset`（喂）与 `replay.finalize` + `replay.reset`（收）
-        #   ③ 回归 = tests/test_replay_recorder.py
-        # 形状见 replay._state（steps / 两条时间线 / board_resets / nodes / 截断标记）。
+        #   `replay.note_board_reset` / `replay.note_ship_lost` /
+        #   `replay.note_ship_returned` / `replay.note_board_replaced`（喂）
+        #   与 `replay.finalize` + `replay.reset`（收）
+        #   ③ 回归 = tests/test_replay_recorder.py / tests/test_replay_ship_loss.py
+        # 形状见 replay._state（steps / 三条时间线 / board_resets / nodes / 截断标记）。
         # ⚠️ 每局常驻 ≤30 KB，`_finalize_match` 落库后**立刻置空**（契约 §1：服务器只有
         #    777 MB 可用内存在用 swap，回放绝不进内存缓存）。
         self.replay: dict[str, Any] | None = None
@@ -8824,6 +8826,14 @@ def _revive_sunken_ships(room, player, count, reveal_to=None):
             pos.hit = False
         # 复活不该带回上一轮的冻结标记（见 _thaw_ship 说明）
         _thaw_ship(revived)
+        # ★ 回放批：船**已经回到棋盘上**（活船格由 `player.ships` 那边负责）
+        #   ⇒ 撤销它原来的"主动牺牲"登记，旧格的红叉必须跟着消失。
+        #   ⚠️ 放在这里（不是清 hits 之前）是因为这个函数**自己就负责记这一步的快照**
+        #      （`note_ship_returned` 末尾会按当前步记一次）：必须在船的状态**完全落定**
+        #      之后调用，否则记下来的还是"船不在 ships 里"的中间态。
+        replay.note_ship_returned(
+            room, next((pid for pid, pl in room.players.items() if pl is player), None),
+            revived)
         # 这块棋盘属于 player：只清【对手】打在这里的记录
         _owner_id = next((pid for pid, pl in room.players.items() if pl is player), None)
         _clear_attacks_on_cells(room, revived.positions, _owner_id)
@@ -10576,6 +10586,10 @@ def handle_confirm_reinforcement(data):
             _finish_placement(room, player_id, 'shenji_redeploy')
             return {'status': 'error', 'message': '没有可重新部署的战舰'}
         caster.sunken_ships.remove(revived)
+        # ★ 回放批：这艘船**回到棋盘上**，它原来那几格的红叉要跟着消失 ——
+        #   登记好待撤销的旧格（`note_ship_returned` 会把"撤销 + 按当前步记一次快照"
+        #   一起做掉，见文件末尾的调用点）。
+        replay.note_ship_returned(room, player_id, revived)
         # 与复活类一致：清空命中并移到新位置，否则复活后打不沉（幽灵船）
         revived.positions = [Position(x=x, y=y)]
         revived.hits = []
@@ -10596,6 +10610,9 @@ def handle_confirm_reinforcement(data):
         # sunken_ships 里就判定它已沉，留一条就会让"复活"在棋盘上不生效
         while revived in caster.sunken_ships:
             caster.sunken_ships.remove(revived)
+        # ★ 回放批：同上（船回到棋盘 ⇒ 旧格的红叉必须消失）。见上面 `shenji_redeploy`
+        #   分支里的说明：撤销在改 `positions` **之前**，记快照在函数收尾统一做。
+        replay.note_ship_returned(room, player_id, revived)
         # 关键修复：清空命中并移到新位置，否则复活后打不沉（幽灵船）
         revived.positions = [Position(x=x, y=y)]
         revived.hits = []
@@ -10649,6 +10666,13 @@ def handle_confirm_reinforcement(data):
         _emit_placement_request(room, player_id)
     else:
         _finish_placement(room, player_id, pending['kind'])
+
+    # ★ 回放批：放置流程**全程没有任何一步日志**（`_finish_placement` 也不写），
+    #   而 `revive` / `shenji_redeploy` 这两支会让一艘船**换位置或回到棋盘上** ——
+    #   撤销"主动牺牲格"这件事必须在这一步的帧里看得见，不能等下一次别处的日志
+    #   （实测：不补这一句，回放里那格的红叉会一直挂着，直到下一次日志才消失）。
+    #   ⚠️ 放在最后：必须在船的位置/船数/待办**全部落定**之后记，才是这一帧的真实局面。
+    replay.refresh_ships(room)
     return {'status': 'success', 'message': msg}
 
 
@@ -10938,6 +10962,9 @@ def confirm_magic_target(data):
         # ★ 回放批：双方棋盘整块换新 → 回放的棋盘标记时间线记一笔（**双方**，
         #   所以这里不传 board_owner_id）。同一个失效点、第二个消费方。
         replay.note_board_reset(room)
+        # ★ 回放批：旧棋盘上的"主动牺牲格"也随之作废（船跟着 `ships = []` 一起没了，
+        #   留着就是幻影沉船）。与 `note_board_reset` 分开记（见它的说明）。
+        replay.note_board_replaced(room)
 
         # 清除临时数据
         room.magic_temp_data = {}
@@ -11840,6 +11867,15 @@ def _do_demon_contract_sacrifice(room, player_id, ship, reason='demon_contract')
     positions = [{'x': p.x, 'y': p.y} for p in ship.positions]
     reason_text = {'divine_decree': '神之宣告', 'dice_sacrifice': '命运骰子',
                    'trap_sacrifice': '守株待兔'}.get(reason, '恶魔契约')
+
+    # ★ 2026-09-23（回放批）：这艘船是**双方看得见地沉了**（下面那句 `ship_sacrificed`
+    #   广播就是这个意思），所以回放的船位时间线也必须把它记成**沉没格**。
+    #   ⚠️ 必须在 `add_game_log` **之前**：喂数据的是它末尾那次 `replay.note`，
+    #      登记晚一步这一帧就只记到"船没了"，回放里那格照样凭空消失（作者实报）。
+    #   ⚠️ 数据来源就是上面这行 `positions`，**绝不去 diff 快照猜**（那会把
+    #      滥竽充数收回的临时船一起判成沉没 —— 卡面明写"不会显示沉没"）。
+    replay.note_ship_lost(room, player_id, positions)
+
     add_game_log(room,
                  f'第{room.round}回合 · {_log_name(room, player_id)} 因{reason_text}牺牲一艘战舰',
                  'magic',
@@ -12623,6 +12659,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         _mark_spectate_board_dirty(room)
         # ★ 回放批：同上（败者食尘也是双方重摆）—— 同一个失效点、第二个消费方。
         replay.note_board_reset(room)
+        replay.note_board_replaced(room)
 
         # 冻结区域记录也一并清掉（重开棋盘后区域标记不该残留）
         if isinstance(room.game_effects, dict):
@@ -13612,6 +13649,10 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             _on_ship_destroyed(room, caster_id, sacrificed[-1], source='sacrifice')
             # 逐艘公开广播，让双方棋盘都画出"这艘船没了"，而不是无声消失
             for sh in sacrificed:
+                # ★ 回放批：自牺牲同样是**双方看得见的沉没** ⇒ 回放的船位时间线
+                #   必须留下这几格（否则回放里它们凭空消失）。与上面那句广播同一份数据。
+                replay.note_ship_lost(room, caster_id,
+                                      [{'x': p.x, 'y': p.y} for p in sh.positions])
                 emit('ship_sacrificed', {
                     'player': caster_id,
                     'positions': [{'x': p.x, 'y': p.y} for p in sh.positions],
@@ -13786,6 +13827,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         # ★ 回放批：回光返照**只清施法者那一块** → 棋盘标记只记他这一侧
         #   （传 caster_id，不要顺手把对手也标上）。
         replay.note_board_reset(room, caster_id)
+        # ★ 回放批：施法者旧棋盘上的"主动牺牲格"也一起作废（他的船全没了）。
+        replay.note_board_replaced(room, caster_id)
 
         # 跳过自己的战斗阶段
         room.current_phase = 'end'
@@ -13917,6 +13960,10 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             result['message'] = '没有可牺牲的战舰'
             return result
         popped = alive_ships[-1]
+        # ★ 回放批：这也是"主动牺牲"（双方看得见沉没）⇒ 回放的船位时间线必须留下
+        #   这一格。与 `_do_demon_contract_sacrifice` 同一个口径，数据源就是这艘船自己。
+        replay.note_ship_lost(room, caster_id,
+                              [{'x': p.x, 'y': p.y} for p in popped.positions])
         caster.ships.remove(popped)
         if popped not in caster.sunken_ships:
             _mark_ship_sunken(caster, popped)

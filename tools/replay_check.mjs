@@ -539,6 +539,13 @@ try {
   //   并各留一条回放 —— 其中"AI 先手一炮把 6 艘全打沉"那种局只有 3 步、**一个攻击标记都没有**，
   //   挑到它会让"攻击标记必须出现过"这条**假红**（实测：第 3 次连跑就是这么红的）。
   //   所以按"回放里真的带 attack 步"来挑，挑不到就明确报错（绝不静默退回随便一局）。
+  //
+  // ⚠️ 判据是 `attacks >= SHOTS_NEEDED`（**不是** `> 0`）：被放弃的那种小局里"只有一两炮"，
+  //   它过得了 `> 0`，却会让下面几条**固定步数**的断言假红（实测本批第 2 次连跑：
+  //   挑到一局 4 步 / 1 炮的回放 ⇒「连点 6 次下一步后 k=6」读到 [1,2,2,2,2,2]、节点数也不等）。
+  //   那是**工具挑错了局**，不是产品缺陷 —— 本工具打的是"6 炮收工"的局，就该按这个口径挑。
+  //   （放弃掉的局不会超过 6 步：AI 先手一回合 6 炮全中就是 game over。）
+  const SHOTS_NEEDED = 6;
   let replayPayload = null;
   for (const row of history) {
     if (row.has_replay !== true) continue;
@@ -550,14 +557,14 @@ try {
     const attacks = pay ? (pay.steps || []).filter((s) => s && s.kind === 'attack').length : 0;
     console.log('  候选回放 ' + String(mid).slice(0, 8) + '…: status=' + (got && got.status)
       + ' steps=' + (pay ? (pay.steps || []).length : '-') + ' attack步=' + attacks);
-    if (got && got.status === 200 && attacks > 0) {
+    if (got && got.status === 200 && attacks >= SHOTS_NEEDED) {
       matchId = mid;
       replayPayload = pay;
       break;
     }
   }
   check(!!replayPayload,
-    '★★ 战绩里能找到**这一局真打完的**那份回放（带 attack 步，不是被放弃的那几局）',
+    '★★ 战绩里能找到**这一局真打完的**那份回放（≥' + SHOTS_NEEDED + ' 个 attack 步，不是被放弃的那几局）',
     { 试过的行数: history.length });
   if (!replayPayload) {
     // ⚠️ 这一步**不是**为了掩盖问题，而是这条判据的**前置条件**：
@@ -854,6 +861,55 @@ try {
     && seats.n2.indexOf(String(replay.p2_name)) === 0,
     '★★ 第 i 槽位的显示名 == 座位 p_i 的名字（名字与（你）不许张冠李戴）',
     { n1: seats.n1, n2: seats.n2 });
+
+  // ---------- ④d ★★ 牺牲的船格必须画成沉没（作者实报第三条的端到端腿） ----------
+  // 作者原话：「主动牺牲的船会在回放的棋盘中直接消失掉 而不是变成红色叉叉」。
+  // 根因在**后端**：`_do_demon_contract_sacrifice` 把船从 `player.ships` 摘掉，
+  // 而船位时间线原来只遍历 `player.ships` ⇒ 那一格在快照里**没了**（凭空消失）。
+  //
+  // ⚠️ 这条腿能不能真的断言，取决于**这一局里有没有发生过"主动牺牲"**：
+  //    本工具打的是人机局，手牌是随机抽的，凑不出牺牲就**没有可断言的对象**。
+  //    所以这里**如实分流**：
+  //      · 有牺牲步 ⇒ 逐格断言那一格在时间线里且是 `sunk`（真断言，改前必红）；
+  //      · 没有牺牲步 ⇒ 打印"本局无牺牲，这条腿未覆盖"并**明确跳过**
+  //        （绝不写一条恒真的假断言来充数）。那条判据由
+  //        `tests/test_replay_ship_loss.py`（真调 `_do_demon_contract_sacrifice`）
+  //        与 `tools/dom_replay_frame_check.mjs` 的 F 组（逐格断字形）钉住。
+  {
+    const sacSteps = (replay.steps || []).filter((s) => s && s.kind === 'magic'
+      && s.detail && typeof s.detail.reason === 'string'
+      && ['demon_contract', 'divine_decree', 'dice_sacrifice', 'trap_sacrifice']
+        .indexOf(s.detail.reason) >= 0);
+    if (!sacSteps.length) {
+      console.log('牺牲腿: 本局**没有**发生主动牺牲（手牌随机）⇒ 这条端到端腿本轮未覆盖，'
+        + '由 tests/test_replay_ship_loss.py + dom_replay_frame_check.mjs 的 F 组覆盖');
+    } else {
+      const folded = { p1: [], p2: [] };
+      (replay.ships || []).forEach((row) => {
+        if (Array.isArray(row.p1)) folded.p1 = row.p1;
+        if (Array.isArray(row.p2)) folded.p2 = row.p2;
+      });
+      let bad = [];
+      sacSteps.forEach((s) => {
+        const side = (s.detail.player === 'p1' || s.detail.player === 'p2')
+          ? s.detail.player : null;
+        const seat = side || (seats.t1.indexOf(String(s.actor)) === 0 ? 'p1'
+          : (seats.t2.indexOf(String(s.actor)) === 0 ? 'p2' : null));
+        const cells = Array.isArray(s.detail.positions) ? s.detail.positions : [];
+        cells.forEach((p) => {
+          const hit = (folded[seat] || []).filter((c) => c.x === p.x && c.y === p.y);
+          if (!hit.length || !(hit[hit.length - 1].sunk || hit[hit.length - 1].alive === false)) {
+            bad.push(seat + ':' + p.x + ',' + p.y + '=' + JSON.stringify(hit));
+          }
+        });
+      });
+      console.log('牺牲腿: 本局有 ' + sacSteps.length + ' 步牺牲；'
+        + '时间线里对应格: ' + JSON.stringify(sacSteps.map((s) => s.detail.positions)));
+      check(bad.length === 0,
+        '★★ 每一步"主动牺牲"的船格都留在船位时间线里、且是**沉没**（改前它整格消失）',
+        { 不合格: bad, 步数: sacSteps.length });
+    }
+  }
 
   // ---------- ⑤ 上一步 / 下一步 ----------
   await ev('(function(){ replayStepTo(0, {}); })()');

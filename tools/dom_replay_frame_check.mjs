@@ -17,7 +17,7 @@
  *      下一步自洽"（系统性丢标记也自洽）+ "船格 6/6 与后端相等"（船 ≠ 攻击标记），
  *      **没有任何一条断言要求攻击标记真的出现过**。本工具的第 1 组就是补这个缺口。
  *
- * ## 五组判据
+ * ## 六组判据
  *
  *   A. **攻击标记必须真的出现过**（缺陷 ② 的正面判据，0 容差）：
  *      无重置的对局里，第 k 帧某块棋盘的标记集合 == "step ≤ k 且打向该棋盘的攻击步
@@ -30,6 +30,11 @@
  *      增量时间线里后来的行不许抹掉另一侧。
  *   E. **槽位 / 座位对齐 + `（你）`**（缺陷 ④）：槽位 i 的显示名必须等于
  *      座位 `replaySeatOf(i)` 的名字，`（你）` 与 `replay-board-mine` 跟着 `you_are` 走。
+ *   F. **主动牺牲的船格 = 红叉**（作者实报第三条：牺牲的船"直接消失"）：
+ *      牺牲之后那一格必须**还在**时间线里、画成 `ship sunk hit` + `✕`；
+ *      同一侧没被牺牲的船照旧是 `⛴`。**四条反向腿**同时钉住"别的成因不许变成沉没"：
+ *      滥竽充数收回（那一格必须**空掉**）、换位、复活（红叉必须消失、船重新画出来）。
+ *      ⚠️ 这一组必须**逐格断言字形** —— 上一批的教训是"格子数量相等"抓不住问题。
  *
  * ## 索引口径（**重要**）
  *
@@ -606,6 +611,142 @@ console.log('--- E. 槽位 / 座位对齐 + `（你）`（缺陷 ④）---');
   check(asNone.names.every((n) => n.indexOf('（你）') < 0)
     && asNone.mine1 === false && asNone.mine2 === false,
     '★★ 反向腿：you_are 为空（旁观者）时两边都不带（你）', asNone.names);
+}
+
+// ===========================================================================
+// F. 主动牺牲的船格 = 红色叉叉（作者实报第三条：牺牲的船"直接消失"）
+// ===========================================================================
+// 判据的核心（本批的验收核心）：牺牲之后那一格**还在时间线里**、
+// 画成 `ship sunk hit` + `✕`；而**另外三种**"某格不再有船"（滥竽充数收回 /
+// 换位 / 除外）**一格都不许**长成沉没 —— 改错了就是制造幻影沉船。
+//
+// ⚠️ 判据必须**逐格断言字形**（上一批的经验："格子数量相等"这类判据抓不住问题）。
+console.log('--- F. 主动牺牲的船格 = 红色叉叉（改前会凭空消失）---');
+{
+  // 后端 `_do_demon_contract_sacrifice` 现在会让时间线长成这个样子：
+  //   step 1（牺牲那一步）p1 侧出现 `{x:2,y:2,alive:false,sunk:true}`，
+  //   而没被牺牲的那艘船 **(3,3)** 仍在。
+  // 改前：这一格**根本不在**时间线里（`player.ships.remove` 之后就没了）。
+  const sacPayload = mkPayload({
+    steps: [
+      atk(0, 'p2', 0, 0, true, false),
+      { i: 1, kind: 'magic', actor: '甲', text: '第3回合 · 甲 因恶魔契约牺牲一艘战舰',
+        detail: { player: 'p1', reason: 'demon_contract', positions: [{ x: 2, y: 2 }] } },
+    ],
+    // 稀疏 + 增量：step 0 记两侧，step 1 **只带 p1**（牺牲那一侧）
+    ships: [
+      { step: 0, p1: [{ x: 2, y: 2, alive: true }, { x: 3, y: 3, alive: true }],
+        p2: [{ x: 0, y: 0, alive: true }] },
+      { step: 1, p1: [{ x: 3, y: 3, alive: true },
+                      { x: 2, y: 2, alive: false, sunk: true }] },
+    ],
+  });
+
+  const f1 = frameAt(sacPayload, 1);
+  const wreck = cellAt(f1.boards[0], 2, 2);
+  check(!!wreck, '★★ 牺牲的那一格**必须还在棋盘上**（改前它整格消失）',
+    wreck && { text: wreck.text, cls: wreck.cls });
+  check(!!wreck && wreck.text === '✕',
+    '★★ 牺牲格画成 ✕（红叉，不是消失、也不是"船"）', wreck && wreck.text);
+  check(!!wreck && wreck.sunk === true,
+    '★★ 牺牲格的类名带 `sunk`（前端 `replayCellOf` 判沉的唯一出口）',
+    wreck && wreck.cls);
+  check(!!wreck && wreck.ship && wreck.hit,
+    '★ 牺牲格同时是 `ship` + `hit`（与"打沉的格"同一种视觉）', wreck && wreck.cls);
+  check(!!wreck && wreck.title.indexOf('击沉') >= 0,
+    '★ 牺牲格的 title 写明"击沉"（读屏/悬停拿到的是同一条）', wreck && wreck.title);
+  // 没被牺牲的那艘船不受影响
+  const survivor = cellAt(f1.boards[0], 3, 3);
+  check(!!survivor && survivor.text === '⛴' && !survivor.sunk,
+    '★ 同一侧**没被牺牲**的船照旧画成 ⛴（不许被一起标成沉没）',
+    survivor && { text: survivor.text, cls: survivor.cls });
+  // 另一侧一格都不许受影响
+  const otherSide = cellAt(f1.boards[1], 0, 0);
+  check(!!otherSide && otherSide.text === '⛴' && !otherSide.sunk,
+    '★ 牺牲只影响自己那一侧：对手棋盘上的船照旧', otherSide && { text: otherSide.text, cls: otherSide.cls });
+
+  // 反向腿①：牺牲**之前**那一帧（k=0）它必须是活着的船（否则就是"一开始就是沉船"的假绿）
+  const f0 = frameAt(sacPayload, 0);
+  const before = cellAt(f0.boards[0], 2, 2);
+  check(!!before && before.text === '⛴' && !before.sunk,
+    '★★ 反向腿：牺牲**之前**那一帧它是活着的 ⛴（不是"从头到尾都是沉船"的假绿）',
+    before && { text: before.text, cls: before.cls });
+}
+{
+  // 反向腿②（★ 最重要的一条）：**滥竽充数**的临时船被收回 —— 那一格必须**消失**，
+  // 一格都不许变成沉没（卡面与 `_recall_lanyu_ships` 的注释明写"不会显示沉没"）。
+  // ⚠️ 后端那边那几格**根本不会进时间线**（收回路径不调 `note_ship_lost`），
+  //    所以这条同时也是"朴素修法（凡是曾有船就永远留成沉没）会红"的那一条。
+  const lanyuPayload = mkPayload({
+    steps: [
+      atk(0, 'p2', 5, 5, false, false),
+      { i: 1, kind: 'magic', actor: '甲',
+        text: '第3回合 · 甲 的【滥竽充数】临时战舰已收回(1艘)',
+        detail: { player: 'p1', card: '滥竽充数', count: 1 } },
+    ],
+    ships: [
+      { step: 0, p1: [{ x: 1, y: 1, alive: true }] },      // 临时船登场
+      { step: 1, p1: [] },                                  // 被收回 ⇒ 这一侧**空了**
+    ],
+  });
+  const l0 = frameAt(lanyuPayload, 0);
+  const temp = cellAt(l0.boards[0], 1, 1);
+  check(!!temp && temp.text === '⛴' && !temp.sunk,
+    '★ 反向腿②：临时船在回合内是活着的 ⛴', temp && { text: temp.text, cls: temp.cls });
+  const l1 = frameAt(lanyuPayload, 1);
+  const gone = cellAt(l1.boards[0], 1, 1);
+  check(!!gone && gone.text === '' && !gone.sunk && !gone.ship,
+    '★★ 反向腿②：临时船被收回后那一格必须**空掉**（卡面：不会显示沉没）',
+    gone && { text: gone.text, cls: gone.cls });
+  check(!!gone && gone.text !== '✕',
+    '★★ 反向腿②：收回**绝不是**牺牲 —— 不许画成红叉（改错 = 幻影沉船）',
+    gone && gone.text);
+}
+{
+  // 反向腿③（换位）：时间线的后一条把那一侧**整体替换**成新位置 ⇒ 旧格不留假红叉。
+  const movePayload = mkPayload({
+    steps: [
+      atk(0, 'p2', 5, 5, false, false),
+      { i: 1, kind: 'place_ships', actor: '甲', text: '复活战舰已部署到 (4,4)', detail: {} },
+    ],
+    ships: [
+      { step: 0, p1: [{ x: 2, y: 2, alive: true }] },
+      { step: 1, p1: [{ x: 4, y: 4, alive: true }] },       // 换位：旧格不再出现
+    ],
+  });
+  const m1 = frameAt(movePayload, 1);
+  const oldCell = cellAt(m1.boards[0], 2, 2);
+  const newCell = cellAt(m1.boards[0], 4, 4);
+  check(!!oldCell && oldCell.text === '' && !oldCell.sunk,
+    '★★ 反向腿③：换位之后旧格是**空海**（不许留下假红叉）',
+    oldCell && { text: oldCell.text, cls: oldCell.cls });
+  check(!!newCell && newCell.text === '⛴',
+    '★★ 反向腿③：换位之后新格重新画成 ⛴', newCell && { text: newCell.text, cls: newCell.cls });
+}
+{
+  // 反向腿④（复活）：牺牲 → 复活。红叉必须**消失**、船重新画出来。
+  const revivePayload = mkPayload({
+    steps: [
+      { i: 0, kind: 'magic', actor: '甲', text: '甲 因恶魔契约牺牲一艘战舰', detail: {} },
+      { i: 1, kind: 'place_ships', actor: '甲', text: '复活战舰已部署到 (4,4)', detail: {} },
+    ],
+    ships: [
+      { step: 0, p1: [{ x: 2, y: 2, alive: false, sunk: true }] },
+      { step: 1, p1: [{ x: 4, y: 4, alive: true }] },
+    ],
+  });
+  const r0 = frameAt(revivePayload, 0);
+  const wreck0 = cellAt(r0.boards[0], 2, 2);
+  check(!!wreck0 && wreck0.text === '✕' && wreck0.sunk,
+    '★ 反向腿④：复活之前那一格是红叉', wreck0 && { text: wreck0.text, cls: wreck0.cls });
+  const r1 = frameAt(revivePayload, 1);
+  const wreck1 = cellAt(r1.boards[0], 2, 2);
+  const back = cellAt(r1.boards[0], 4, 4);
+  check(!!wreck1 && wreck1.text === '' && !wreck1.sunk,
+    '★★ 反向腿④：复活之后旧格的红叉**必须消失**',
+    wreck1 && { text: wreck1.text, cls: wreck1.cls });
+  check(!!back && back.text === '⛴' && !back.sunk,
+    '★★ 反向腿④：复活之后的船重新画出来（⛴）', back && { text: back.text, cls: back.cls });
 }
 
 // ---------------------------------------------------------------------------

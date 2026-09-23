@@ -135,6 +135,7 @@ def _state(room):
         'effects': [],      # 场上公开效果时间线（稀疏 + 增量，见 _effects_state）
         'board_resets': [],  # [{step, side}]
         'nodes': [],        # [{step, kind, label}]
+        'lost': {},         # 原始 pid → [(x, y), ...]：**主动牺牲**掉、但必须留在时间线里的格
         'last': None,       # 上一次快照（用来判"真的变了吗"）
         'truncated': None,  # None = 没截断；否则是原因字符串
     }
@@ -200,11 +201,24 @@ def _is_alive(ship) -> bool:
         return True
 
 
-def _ship_cells(player):
+def _ship_cells(room, pid, player):
     """该座位**摆放中/已摆放**的全部船格：`[{'x','y','alive','sunk'}]`。
 
     * `alive` = 这一格所属的船**还没沉**（`len(hits) < len(positions)`）；
     * `sunk`  = 船已沉（前端画「沉」，与实战棋盘同口径）。
+
+    ★ **主动牺牲掉的船要留在时间线里**（作者实报："主动牺牲的船会在回放的棋盘中
+      直接消失掉 而不是变成红色叉叉"）。`_do_demon_contract_sacrifice` 会
+      `player.ships.remove(ship)`，而那些格子在游戏里**双方都看得到沉没位置**
+      （那条日志/广播的原文：「公开广播：自己与对手都能看到这艘船被划掉」），
+      所以它们必须照 `alive: False` + `sunk: True` 记着 —— 否则回放里凭空消失。
+
+    ⚠️ **"记成沉没"只有一个入口**：`note_ship_lost`（由**主动牺牲**的实现点调用）。
+       这里**绝不**去"diff 前后快照猜哪几格消失了" —— 那是从表象反推，会把
+       滥竽充数收回的临时船（卡面明写"不会显示沉没"）、神威除外的船、换位的船
+       一起误判成沉没（幻想出来的沉船比少画一个叉更难查）。
+       同一件事的另外三种成因各有各的撤销口：`note_ship_returned`（船回来了）与
+       `note_board_replaced`（棋盘整块换新）。
 
     ⚠️ 这份数据**只对回放看客**存在（自己/别人战绩里点开的那一屏）。
        它**绝不**经过 `emit()` —— 见模块开头那条铁律。
@@ -220,6 +234,8 @@ def _ship_cells(player):
                 out.append(cell)
         except Exception:   # noqa: BLE001 —— 假的船对象：跳过这一艘，不炸
             continue
+    for (x, y) in _lost_cells(room, pid):
+        out.append({'x': x, 'y': y, 'alive': False, 'sunk': True})
     return out
 
 
@@ -239,8 +255,179 @@ def _snapshot(room):
         player = room.players.get(pid)
         if player is None:
             continue
-        snap[pid] = {'ships': _ship_cells(player), 'hand': _hand_names(player)}
+        snap[pid] = {'ships': _ship_cells(room, pid, player),
+                     'hand': _hand_names(player)}
     return snap
+
+
+# ---------------------------------------------------------------------------
+# 主动牺牲掉的船格（作者实报：牺牲的船在回放棋盘上"直接消失"而不是变成红叉）
+# ---------------------------------------------------------------------------
+# 三个入口，缺一不可：
+#   ① `note_ship_lost`      —— **只在主动牺牲的实现点**调用（`_do_demon_contract_sacrifice`
+#      与 `绝处逢生` / `钢筋铁骨` 的自牺牲）。数据来源就是那里手上的 `positions`，
+#      **不是**"diff 前后快照猜出来的"（从表象反推会把滥竽充数一起误判成沉没）；
+#   ② `note_ship_returned`  —— 船回到棋盘（疗愈 / 死者苏生 / 神机妙算重新部署）：
+#      旧格的红叉必须跟着消失；
+#   ③ `note_board_replaced` —— 棋盘整块换新（灵气复苏 / 败者食尘 / 回光返照）：
+#      旧棋盘上的沉船格一起作废。
+#
+# 存的是**坐标串**而不是船对象：这些坐标只活在"当前这一次录制"里，
+# 而且 `player.ships` 那边已经有一份权威的活船格，这里只补"已经不在 ships 里、
+# 但玩家看得见沉没"的那几格 —— 不复制活数据、不持有活对象引用。
+def _lost_cells(room, pid):
+    """该座位当前**登记为牺牲**的格 `[(x, y), ...]`（没有就空表，绝不抛）。"""
+    st = getattr(room, _ROOM_ATTR, None)
+    if not isinstance(st, dict):
+        return []
+    table = st.get('lost')
+    if not isinstance(table, dict):
+        return []
+    return list(table.get(pid) or [])
+
+
+def _xy_ints(positions):
+    """`[{'x','y'}]` / `[(x, y)]` / `[[x, y]]` 一律收敛成 `[(x, y), ...]`（去重保序）。
+
+    认不出来的一律丢掉（照 `_xy_pairs` 的口径：**绝不炸**）。
+    """
+    out = []
+    seen = set()
+    for item in (positions or []):
+        try:
+            if isinstance(item, dict):
+                xy = (int(item['x']), int(item['y']))
+            else:
+                xy = (int(item[0]), int(item[1]))
+        except Exception:       # noqa: BLE001
+            continue
+        if xy in seen:
+            continue
+        seen.add(xy)
+        out.append(xy)
+    return out
+
+
+def _forget_lost_cells(room, pid, positions):
+    """把这几格从"牺牲"登记里撤掉（船回来了 / 棋盘换新了）。"""
+    st = getattr(room, _ROOM_ATTR, None)
+    if not isinstance(st, dict):
+        return
+    table = st.get('lost')
+    if not isinstance(table, dict):
+        return
+    gone = set(_xy_ints(positions))
+    if not gone or pid not in table:
+        return
+    left = [xy for xy in (table.get(pid) or []) if xy not in gone]
+    if left:
+        table[pid] = left
+    else:
+        table.pop(pid, None)
+
+
+def _record_at_current_step(room) -> None:
+    """立刻按**当前这一步**（`len(steps) - 1`）记一次快照。
+
+    为什么需要它（本批实测栽过一次）：`_append` 只在**下一步**追加时比对快照，
+    所以"撤销牺牲登记"如果只改状态、不推动记录器，**这一帧永远不变** ——
+    实测 `handle_confirm_reinforcement` 的 `revive` 分支里注册撤销之后，
+    时间线里那一格照样是 `{'alive': False, 'sunk': True}`（回放里红叉不消失），
+    因为紧接的 `_finish_placement` 没有日志、下一处日志还在别的函数里。
+
+    ⚠️ 记的是 `len(steps) - 1` = **刚刚发生的那一步**（语义与 `_append` 一致：
+       时间线的 `step = k` 表示"第 k 步做完之后的局面"）。
+       `len(steps) == 0` 表示这一步都还没被记下来（比如重放/直调内部函数），
+       那时不记 —— 下一步追加时会按"变化了"补上，不会丢。
+    """
+    st = _state(room)
+    step = len(st.get('steps') or []) - 1
+    if step < 0:
+        return
+    _record_snapshot(room, st, step)
+
+
+def refresh_ships(room) -> None:
+    """按**当前**局面刷新一次船位时间线（当前这一步）。**幂等**。
+
+    给"船位在**没有日志**的流程里变了"的那两处用（`handle_confirm_reinforcement`：
+    复活 / 神机妙算重新部署 / 绝处逢生的唯一一艘，这一整段都不写游戏日志）。
+    纯状态没变时它什么都不记（`_record_snapshot` 自己比对），所以可以随手调用。
+
+    ⚠️ 它**只记船位**（不记步骤、不 emit）—— 时间线是稀疏的，没变就不写。
+    """
+    if room is None:
+        return
+    _record_at_current_step(room)
+
+
+def note_ship_lost(room, player_id, positions) -> None:
+    """喂一口**主动牺牲**（`demon_contract` / `divine_decree` / `dice_sacrifice` /
+    `trap_sacrifice` 四种 reason 唯一汇到的那个实现点）。
+
+    `positions` 就用调用方手上的那一份（`[{'x','y'}, ...]`）——**别去 diff 快照**：
+    同一格"不再有船"至少有四种成因（牺牲 / 滥竽充数收回 / 换位重摆 / 除外），
+    只有"主动牺牲"在游戏里是**双方看得见的沉没**，其余三种该消失就得消失。
+
+    ⚠️ 必须在**那一步的日志之前**调用：喂数据的是 `add_game_log` 末尾的
+       `replay.note`，登记晚一步这一帧就记不到沉没格了。
+    ⚠️ 本函数**不记步骤、不 emit** —— 只改记录器自家状态。
+    """
+    if room is None or not player_id:
+        return
+    cells = _xy_ints(positions)
+    if not cells:
+        return
+    st = _state(room)
+    table = st.get('lost')
+    if not isinstance(table, dict):
+        table = st['lost'] = {}
+    now = list(table.get(player_id) or [])
+    known = set(now)
+    for xy in cells:
+        if xy not in known:
+            known.add(xy)
+            now.append(xy)
+    table[player_id] = now
+
+
+def note_ship_returned(room, player_id, ship) -> None:
+    """喂一口**船回到棋盘上**（疗愈 / 死者苏生 / 神机妙算重新部署）。
+
+    ⚠️ **必须在改这艘船的 `positions` 之前调用**（调用方先 `forget` 再搬）——
+       否则撤销的是新位置，旧格的红叉会永远留在回放里。
+
+    ⚠️ 本函数**只改登记**，不记快照：登记与"这一帧真的记下来"是两件事，
+       而且**必须在船的状态完全落定之后**才记（否则记下来的是中间态）。
+       调用方负责在收尾处调 `refresh_ships(room)` —— 实测
+       `handle_confirm_reinforcement` 的 `revive` / `shenji_redeploy` 两支
+       **全程没有任何日志**（`_finish_placement` 也不写），不补那一次刷新，
+       这一帧永远不变、红叉不会消失。
+    """
+    if room is None or not player_id or ship is None:
+        return
+    _forget_lost_cells(room, player_id, [{'x': p.x, 'y': p.y}
+                                         for p in (getattr(ship, 'positions', None) or [])])
+
+
+def note_board_replaced(room, board_owner_id=None) -> None:
+    """喂一口**棋盘整块换新**（灵气复苏 / 败者食尘 / 回光返照重摆）。
+
+    旧棋盘上的船全没了 ⇒ 留在旧棋盘上的牺牲格也一起作废（不许变成幻影沉船）。
+    ⚠️ 与 `note_board_reset` **故意分开**：那一个只擦掉攻击标记（观战也在用同一个失效点），
+       而"旧棋盘上的沉船格作废"是回放独有的账，混在一起会让"重置"这个动作
+       顺手多出一个语义（下一次有人复用 `note_board_reset` 时就会不期而然地清掉沉船）。
+    """
+    if room is None:
+        return
+    st = _state(room)
+    table = st.get('lost')
+    if not isinstance(table, dict):
+        table = {}
+        st['lost'] = table
+    for pid in ([board_owner_id] if board_owner_id else _pids(room)):
+        table.pop(pid, None)
+    _record_at_current_step(room)
 
 
 # ---------------------------------------------------------------------------

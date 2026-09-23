@@ -461,11 +461,25 @@ def build(room):
             row['sides'] = sides
         steps.append(row)
 
+    # 「这局什么时候开打的」**只有一个判据**：`server._match_started_at(room)`
+    # —— 优先 `room.match_started_at`（猜拳结束、真正进入 attacking 时打点），
+    # 没有打点才退回 `room.created_at`。**这里不许自己读 `created_at`**：那会让同一个概念
+    # 长出第二份判据（教训 #1），而且自定义房可能建好后放很久才开局，
+    # 直接读 `created_at` 会把"对局时间"标早十几分钟。
+    # 纯单测没注入 server 时（`_srv()` 返回 None）退回 `created_at`：只影响这一个**展示**字段，
+    # 它不参与任何门禁 —— 教训 #2 禁的是"拿会兜底的取数函数当判据"，不是禁展示用兜底。
+    started_at = 0
+    _started_fn = _srv('_match_started_at')
+    if _started_fn is not None:
+        started_at = int(_started_fn(room) or 0)
+    if not started_at:
+        started_at = int(getattr(room, 'created_at', 0) or 0)
+
     payload = {
         'version': REPLAY_VERSION,
         'p1_name': names.get('p1', ''),
         'p2_name': names.get('p2', ''),
-        'started_at': int(getattr(room, 'created_at', 0) or 0),
+        'started_at': started_at,
         'steps': steps,
         'ships': list(st.get('ships') or []),
         'hands': list(st.get('hands') or []),

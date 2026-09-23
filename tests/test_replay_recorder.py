@@ -644,3 +644,59 @@ def test_no_game_log_line_is_added_by_the_six_note_action_points(with_real_human
                 seg = ast.get_source_segment(src, n) or ''
         assert seg is not None, name
         assert 'add_game_log(' not in seg, '%s 往游戏内日志加行了' % name
+
+
+# ===========================================================================
+# `started_at`：只认既有的那一份"开打时刻"判据（教训 #1）
+# ===========================================================================
+def test_started_at_uses_the_single_match_start_judgement(room):
+    """★★ 「这局什么时候开打的」**不许自己读 `created_at`**。
+
+    契约 §3 原本没定义这个字段，实现先取了 `room.created_at`（= **建房**时刻）。
+    自定义房可能建好后放很久才开局 ⇒ 那会把"对局时间"标早十几分钟。
+    正确来源是既有的唯一判据 `server._match_started_at`（优先 `room.match_started_at`
+    —— 猜拳结束、真正进入 attacking 时才打点；没有打点才退回 `created_at`）。
+    自己再读一次 `created_at` 就是教训 #1 的第二份判据。
+    """
+    room.created_at = 1_700_000_000          # 建房
+    room.match_started_at = 1_700_000_900    # 15 分钟后才真开打
+    assert replay.build(room)['started_at'] == 1_700_000_900
+
+
+def test_started_at_falls_back_only_when_there_is_no_start_mark(room):
+    """兜底腿：**没有** `match_started_at` 时才退回 `created_at`。
+
+    这条兜底只影响一个**展示**字段，不参与任何门禁 —— 教训 #2 禁的是
+    "拿会兜底的取数函数当判据"，不是禁展示用兜底。
+    """
+    room.created_at = 1_700_000_000
+    if hasattr(room, 'match_started_at'):
+        del room.match_started_at
+    assert replay.build(room)['started_at'] == 1_700_000_000
+
+
+def test_replay_does_not_reinvent_the_match_start_judgement():
+    """★ 源码级：`replay.py` 必须**复用** `server._match_started_at`，不许自己判一次。
+
+    把它改回直接读 `room.created_at`（或自己 `getattr(room, 'match_started_at', ...)`）
+    这条就红 —— 那正是"同一件事两份判据必然漂移"（教训 #1）。
+    """
+    src = io.open(REPO_ROOT / 'replay.py', encoding='utf-8').read()
+    assert "_srv('_match_started_at')" in src, (
+        'replay.py 没有复用 server._match_started_at —— '
+        '"开打时刻"长出了第二份判据')
+
+
+def test_replay_module_is_bound_to_the_server():
+    """★★ `server.py` 必须真的把模块对象注进 `replay`（**漏接线的守卫**）。
+
+    这条是**补上来的**：本批实现时 `server.py` 只 `import replay`、**没有** `replay.bind(...)`，
+    而 `replay._srv()` 取不到东西时返回 None ⇒ 回放 `started_at` **静默**退回
+    `room.created_at`（建房时刻），自定义房会把"对局时间"标早十几分钟，**没有任何报错**。
+    删掉 `server.py` 里那句 `replay.bind(...)` 这条就红。
+    """
+    assert replay._SERVER is not None, (
+        'replay 没有拿到 server 模块对象 —— 检查 server.py 里的 replay.bind(...) '
+        '（少了它不会有任何报错，只会让依赖 server 的判据静默走兜底）')
+    assert replay._srv('_match_started_at') is server._match_started_at, (
+        'replay 拿到的不是正在跑的那一份 server —— 别把模块名写错（教训 #19）')

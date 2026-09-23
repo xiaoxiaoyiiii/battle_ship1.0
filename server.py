@@ -14261,6 +14261,27 @@ except Exception as _e:                                          # noqa: BLE001
     print(f'[friends] 注入后端模块失败（好友实时提示将不可用）: {_e}')
 
 
+# ---------------------------------------------------------------------------
+# 把本模块对象交给对局回放的纯模块（`replay.py`）。
+#
+# 与上面 api 那一处同一个理由、同一套写法（教训 #19）：`replay.py` **运行期不许 import
+# 本模块** —— 本模块以 `python server.py` 启动时名字是 `__main__`，`import server` 会把
+# 整个文件再执行一遍成另一个模块对象（本地坏、线上好）。
+# 注入的是 `sys.modules[__name__]`（无论叫 `__main__` 还是 `server`，都一定是正在跑的那一份），
+# 且注入**模块对象**、调用点按名字现取 —— 注入函数对象会把测试里的 monkeypatch 静默架空。
+#
+# ⚠️ 少了这一句**不会报错**：`replay._srv()` 返回 None，回放 `started_at` 会静默退回
+#    `room.created_at`（建房时刻）—— 自定义房会把"对局时间"标早十几分钟。
+#    这就是"静默兜底掩盖漏接线"的形状（教训 #32/#34），所以有一条用例专门钉住它已接上
+#    （`tests/test_replay_recorder.py::test_replay_module_is_bound_to_the_server`）。
+# ---------------------------------------------------------------------------
+try:
+    replay.bind(sys.modules[__name__])
+except Exception as _e:                                          # noqa: BLE001
+    # 同 api 那一处：回放能力降级，但绝不能让整个服务起不来。
+    print(f'[replay] 注入后端模块失败（回放的"开打时刻"将退回建房时刻）: {_e}')
+
+
 if __name__ == '__main__':
     # 初始化数据库
     db.init_db()

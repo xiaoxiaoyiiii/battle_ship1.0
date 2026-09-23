@@ -24,7 +24,9 @@
 不存每步全量快照（那会让体积涨 5~10 倍）。
 
 * `steps[i] = {i, kind, actor, text, detail}` —— 按行动顺序；
-* `ships[i] = {step, p1: [{x, y, alive, sunk}], p2: [...]}` —— **只在船位真变时**记一条；
+* `ships[i] = {step, p1: [{x, y, alive, sunk, src}], p2: [...]}` —— **只在船位真变时**记一条；
+  ⚠️ `src` = 这一格来自哪份数据源（`'ships'` 活船列表 / `'lost'` 显式沉没登记）。
+  **同一格最多一条**，`lost` 优先 —— 判据与理由见 `_ship_cells` 的说明；
 * `hands[i] = {step, p1: ['卡名', ...], p2: [...]}`      —— **只在手牌真变时**记一条；
 * `effects[i] = {step, p1: {...}, p2: {...}}`            —— **只在效果真变时**记一条，
   **只带变了的座位**（与上面两条同一种"稀疏 + 增量"）；字段名**照抄**
@@ -202,10 +204,11 @@ def _is_alive(ship) -> bool:
 
 
 def _ship_cells(room, pid, player):
-    """该座位**摆放中/已摆放**的全部船格：`[{'x','y','alive','sunk'}]`。
+    """该座位**摆放中/已摆放**的全部船格：`[{'x','y','alive','sunk','src'}]`。
 
     * `alive` = 这一格所属的船**还没沉**（`len(hits) < len(positions)`）；
-    * `sunk`  = 船已沉（前端画「沉」，与实战棋盘同口径）。
+    * `sunk`  = 船已沉（前端画「沉」，与实战棋盘同口径）；
+    * `src`   = 这一格是**哪一份数据源**说的（见下面那条优先级）。
 
     ★ **主动牺牲掉的船要留在时间线里**（作者实报："主动牺牲的船会在回放的棋盘中
       直接消失掉 而不是变成红色叉叉"）。`_do_demon_contract_sacrifice` 会
@@ -222,20 +225,50 @@ def _ship_cells(room, pid, player):
 
     ⚠️ 这份数据**只对回放看客**存在（自己/别人战绩里点开的那一屏）。
        它**绝不**经过 `emit()` —— 见模块开头那条铁律。
+
+    ------------------------------------------------------------------
+    ★★ 「这一格沉了没」有**两份数据源**时的口径（本批定的，不许静默改）：
+
+    **`lost` 表（显式事实）优先于活船列表（推断）。**
+
+    理由：活船列表推出"沉没"用的是一条**否定式推断** ——
+    「这艘船**不在** `player.ships` 里 ⇒ 它沉了」；而 `lost` 表是**实现点当场登记
+    的事实**（"这艘船因恶魔契约被献祭了"）。二者冲突时，事实压过推断。
+    反过来（活船列表优先）等于让"看不见"盖住"看得见"：同一格同时被两份表提到时
+    画成**活船** —— 可 `lost` 那一份是**人看得见的沉没**，画成活船就是
+    在一格已经公开划掉的格子上重新画一艘船（幻影活船）。
+
+    ⚠️ 这条优先级**排除了"两份表打架"这个状态本身**：本函数保证
+       **同一格最多只出一条**（`lost` 里的格一律不出活船行）。
+       所以它不依赖"前端取第一条还是最后一条" —— 前端 `replayCellOf` 的
+       `for...break`（取第一条）与"以最后一条为准"的写法在这里**结果相同**。
+       这不是巧合，是判据：谁把这里的过滤去掉，`src` 字段就会暴露那格里
+       两条说法并存（守卫 `tests/test_replay_lost_priority.py` 当场红）。
     """
+    # ① 显式事实那份先取齐（它在合并里**优先**）
+    lost = _lost_cells(room, pid)
+    lost_set = set(lost)
+
+    # ② 活船列表那份：与 `lost` 撞车的格**整条丢掉**（不是"留一条活船"）
     out = []
     for ship in (getattr(player, 'ships', None) or []):
         try:
             alive = _is_alive(ship)
             for pos in (getattr(ship, 'positions', None) or []):
-                cell = {'x': int(pos.x), 'y': int(pos.y), 'alive': alive}
+                x, y = int(pos.x), int(pos.y)
+                if (x, y) in lost_set:
+                    continue      # 见上面那条优先级：`lost` 说了算（一格只出一条）
+                cell = {'x': x, 'y': y, 'alive': alive, 'src': 'ships'}
                 if not alive:
                     cell['sunk'] = True
                 out.append(cell)
         except Exception:   # noqa: BLE001 —— 假的船对象：跳过这一艘，不炸
             continue
-    for (x, y) in _lost_cells(room, pid):
-        out.append({'x': x, 'y': y, 'alive': False, 'sunk': True})
+
+    # ③ 显式事实那份按坐标升序接在后面（`lost` 内部本就保持登记顺序，
+    #    这里排一次是为了"同一批坐标换个登记顺序"不改变输出 —— 只影响字节）。
+    for (x, y) in sorted(lost):
+        out.append({'x': x, 'y': y, 'alive': False, 'sunk': True, 'src': 'lost'})
     return out
 
 

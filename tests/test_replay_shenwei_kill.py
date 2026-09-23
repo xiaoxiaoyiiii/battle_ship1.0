@@ -183,8 +183,12 @@ def test_shenwei_kill_marks_the_cell_as_sunk(room):
         % (x, y, cells))
     assert cell.get('sunk') is True, '致死格必须是沉没：%s' % cell
     assert cell.get('alive') is False, '致死格的 alive 必须是 False（前端判据）：%s' % cell
-    assert set(cell.keys()) == {'x', 'y', 'alive', 'sunk'}, \
-        '船格字段就这四个（前端判据只读 alive / sunk）：%s' % cell
+    # ⚠️ `src` 是 2026-09-24 收口批加的探针字段（这一格来自活船列表还是显式沉没登记），
+    #    见 `replay._ship_cells` 的 ★★ 段与 `tests/test_replay_lost_priority.py`。
+    assert set(cell.keys()) == {'x', 'y', 'alive', 'sunk', 'src'}, \
+        '船格字段就这五个（前端判据只读 alive / sunk；src 是给守卫看的）：%s' % cell
+    assert cell.get('src') == 'lost', \
+        '致死格必须来自**显式沉没登记**（它已经被 `del ships[i]` 摘掉了）：%s' % cell
 
     # 区域外的船照旧活着（不许被一起标成沉没）
     other = _cell_at(cells, OUT_AREA[0], OUT_AREA[1])

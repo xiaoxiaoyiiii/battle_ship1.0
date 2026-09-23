@@ -13536,15 +13536,25 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
 
         # 完全回滚: 把ship重新加回列表，从sunken_ships中移除（防重复：击沉时船仍留在ships中）
         if 'ship' in last_change and last_change['ship'] is not None:
-            if last_change['ship'] not in affected_player.ships:
-                affected_player.ships.append(last_change['ship'])
+            revived_ship = last_change['ship']
+            if revived_ship not in affected_player.ships:
+                affected_player.ships.append(revived_ship)
             # 从sunken_ships中移除
-            if last_change['ship'] in affected_player.sunken_ships:
-                affected_player.sunken_ships.remove(last_change['ship'])
+            if revived_ship in affected_player.sunken_ships:
+                affected_player.sunken_ships.remove(revived_ship)
             # 撤销本次击沉：移除击中格，避免回滚后成为打不死的幽灵船
             for h in last_change.get('hits_added', []):
-                if h in last_change['ship'].hits:
-                    last_change['ship'].hits.remove(h)
+                if h in revived_ship.hits:
+                    revived_ship.hits.remove(h)
+            # ★ 回放批（2026-09-24）：这艘船**回到棋盘上**了 ⇒ 它原来的"沉没登记"要跟着撤销，
+            #   否则那一格永远留着一个红叉（幻影沉船）—— 而那艘船此刻正在棋盘上活着。
+            #   ⚠️ 回滚碰得到这么一艘**登记过沉没**的船：`last_ship_change` 是**单槽**，
+            #      而"牺牲"不写这个槽，所以"A 船被魔法击沉 → B 船被牺牲 → 平等条约"
+            #      这条链上，快照里存的可能是**已经被牺牲掉的那艘**（`ship` 引用还在），
+            #      回滚会把它重新 append 回 `ships` —— 实测（本批）就是那条路径漏了撤销。
+            #   ⚠️ 与 `revive` / `shenji_redeploy` 两支同口径：撤销归撤销，**快照在收尾记**
+            #      （下面那句 `refresh_ships`），否则记下来的是中间态。
+            replay.note_ship_returned(room, affected_player_id, revived_ship)
 
         # 回滚连带撤销百亿补贴为这次击沉发放的 +3
         if last_change.get('subsidy_granted'):
@@ -13553,6 +13563,13 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
 
         # 广播更新
         _emit_ships_updated(room)
+
+        # ★ 回放批：回滚也是"船位在没有日志的流程里变了"（这个分支不写游戏日志），
+        #   与 `confirm_magic_target` 的收尾同一个理由与同一个口径：
+        #   `note_ship_returned` 只撤销登记、不推动记录器，快照必须在这里（状态全部
+        #   落定之后）补一次，否则那一帧永远停在"船不在棋盘上"的中间态。
+        #   `refresh_ships` 幂等：没有变化时它什么都不记。
+        replay.refresh_ships(room)
 
         result['message'] = '成功无效化船数改变效果'
 

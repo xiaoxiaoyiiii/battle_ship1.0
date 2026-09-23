@@ -187,16 +187,23 @@ def test_ship_timeline_never_exposes_hit_cells_as_alive_by_accident(with_real_hu
 
     （回放是**全透视**设计，所以船位本身要下发；但字段语义不许自相矛盾，
     否则前端会把一艘沉船画成活的。）
+
+    ⚠️ `src` 是 2026-09-24 收口批加的**探针字段**（这一格来自活船列表还是显式沉没
+    登记），见 `replay._ship_cells` 的 ★★ 段：它同时是"同一格不许有两份说法"的证据。
     """
     _play(seed=16)
     for row in capture.payload['ships']:
         for side in ('p1', 'p2'):
             for cell in row.get(side, []):
-                assert set(cell) <= {'x', 'y', 'alive', 'sunk'}, sorted(cell)
+                assert set(cell) <= {'x', 'y', 'alive', 'sunk', 'src'}, sorted(cell)
+                assert cell.get('src') in ('ships', 'lost'), sorted(cell)
                 assert isinstance(cell['alive'], bool)
                 assert 0 <= cell['x'] <= 5 and 0 <= cell['y'] <= 5
                 if 'sunk' in cell:
                     assert cell['alive'] is False, '沉船的格子不该标成活着'
+                # 显式沉没登记出来的格子必然是沉没（`lost` 那一份的语义就是"这船沉了"）
+                if cell.get('src') == 'lost':
+                    assert cell.get('sunk') is True and cell['alive'] is False, cell
 
 
 def test_recorder_memory_and_blob_are_within_budget(with_real_human, capture, capsys):

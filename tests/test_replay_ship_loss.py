@@ -187,8 +187,12 @@ def test_sacrificed_cell_is_marked_sunk_not_just_alive_false(room):
     server._do_demon_contract_sacrifice(room, SID_A, victim, 'demon_contract')
     cell = _cell_at(_cells_of(room, P1), x, y)
     assert cell is not None, '牺牲格不在时间线里'
-    assert set(cell.keys()) == {'x', 'y', 'alive', 'sunk'}, \
-        '船格字段就这四个（前端判据只读 alive / sunk）：%s' % cell
+    # ⚠️ `src` 是 2026-09-24 收口批加的探针字段（这一格来自活船列表还是显式沉没登记），
+    #    见 `replay._ship_cells` 的 ★★ 段与 `tests/test_replay_lost_priority.py`。
+    assert set(cell.keys()) == {'x', 'y', 'alive', 'sunk', 'src'}, \
+        '船格字段就这五个（前端判据只读 alive / sunk；src 是给守卫看的）：%s' % cell
+    assert cell.get('src') == 'lost', \
+        '牺牲格必须来自**显式沉没登记**（不是从"船不在 ships 里"推出来的）：%s' % cell
 
 
 # ===========================================================================

@@ -17,7 +17,7 @@
  *      下一步自洽"（系统性丢标记也自洽）+ "船格 6/6 与后端相等"（船 ≠ 攻击标记），
  *      **没有任何一条断言要求攻击标记真的出现过**。本工具的第 1 组就是补这个缺口。
  *
- * ## 六组判据
+ * ## 八组判据
  *
  *   A. **攻击标记必须真的出现过**（缺陷 ② 的正面判据，0 容差）：
  *      无重置的对局里，第 k 帧某块棋盘的标记集合 == "step ≤ k 且打向该棋盘的攻击步
@@ -35,6 +35,19 @@
  *      同一侧没被牺牲的船照旧是 `⛴`。**四条反向腿**同时钉住"别的成因不许变成沉没"：
  *      滥竽充数收回（那一格必须**空掉**）、换位、复活（红叉必须消失、船重新画出来）。
  *      ⚠️ 这一组必须**逐格断言字形** —— 上一批的教训是"格子数量相等"抓不住问题。
+ *   G. **`神威！`的两支**：致死那一格 = 红叉 + "不会再回来"的无障碍文案（且**不**再叠洞的
+ *      斜纹）；"暂时除外"那一支 = 洞里没有船、一格沉没标记都不许有。
+ *   H. **沉没判据只有一份说法**（2026-09-24 收口批）：同一格不许有"活船"与"显式沉没登记"
+ *      两份说法并存（口径：**显式事实优先**，由 `replay._ship_cells` 保证最多一条）；
+ *      前端 `replayCellOf` **不许**长出第二份仲裁实现（源码级判据 + 一条自检反向腿）。
+ *
+ * ## 本工具**不覆盖**的一件事（2026-09-24 实测，别以为它绿了就没事）
+ *
+ * `轰炸` / `硫磺火焰` 打出的格子**在回放里一个攻击标记都没有** ——
+ * 这两张卡只写 `caster.attacks` + 逐格 emit `attack_result`，**不写 `type='attack'` 的
+ * 游戏日志**，而回放的标记只从 attack 步重建（见 §G9）。所以本工具所有夹具
+ * 都只能"喂 attack 步"，它**证明不了**卡牌类伤害在回放里画得出来。
+ * 想覆盖它得先修（两条候选改法见 §G9），**别在没修之前加一条恒真的假断言**。
  *
  * ## 索引口径（**重要**）
  *
@@ -880,6 +893,88 @@ console.log('--- G. `神威！`：致死格 = 红叉（带"扣掉"文案）+ 除
   check(!(naiveCell && naiveCell.text === '' && naiveCell.sunk === false),
     '★★ 判据自检：把除外格当成沉没（朴素修法）时，上面那条判据**真的会红**（不是恒绿）',
     naiveCell && { text: naiveCell.text, cls: naiveCell.cls });
+}
+
+
+// ===========================================================================
+// H. 「这一格沉了没」只有**一份说法**（2026-09-24 收口批）
+// ===========================================================================
+// 背景：沉没判据有**两份数据源** —— 活船列表（"这艘船不在 ships 里 ⇒ 沉了"，**推断**）
+// 与 `lost` 显式登记表（"这艘船因恶魔契约被献祭了"，**事实**）。上一批把后者做出来时，
+// **同一格同时出现在两处取哪一条没有任何用例守着**。
+//
+// 本批定的口径：**`lost`（事实）优先**，并且**排除掉"两份说法并存"这个状态本身** ——
+// `replay._ship_cells` 保证同一格最多只出一条。于是前端**不需要**自己去仲裁，
+// 它那条"取第一条命中"的 `for…break` 与"取最后一条"结果相同。
+//
+// 这一组钉住的就是**前端那一侧不许长出第二份仲裁实现**（教训 #1）：谁在
+// `replayCellOf` 里按 `src` / `alive` 之类去"挑一条"，就等于把服务端的口径复制一份，
+// 两处迟早漂移。**判据是源码级的**（这类"沉默的第二实现"只有源码能钉住）。
+console.log('--- H. 沉没判据单一来源：前端不许自己仲裁两份说法 ---');
+{
+  // ① `replayCellOf` 里那段"找这一格的船格"必须仍然只是"第一条命中"，
+  //    而且**不许**读 `src` / 按 alive 之类做取舍。
+  const fnStart = SRC.indexOf('function replayCellOf(');
+  check(fnStart >= 0, '★ 找得到 `replayCellOf`（判据的前置）', fnStart);
+  const fnEnd = SRC.indexOf('\nfunction replayAliveShips(', fnStart);
+  check(fnEnd > fnStart, '★ 找得到 `replayCellOf` 的结尾（判据的前置）', fnEnd);
+  const body = (fnStart >= 0 && fnEnd > fnStart) ? SRC.slice(fnStart, fnEnd) : '';
+  const pickLoop = body.match(/for \(var i = 0; i < ships\.length; i\+\+\) \{[\s\S]*?\n    \}/);
+  check(!!pickLoop, '★★ `replayCellOf` 里仍然只有"扫一遍、第一条命中就 break"这一段',
+    pickLoop ? pickLoop[0].replace(/\s+/g, ' ').slice(0, 90) : null);
+  check(!!pickLoop && /\)\s*\{\s*shipCell = c;\s*break;\s*\}/.test(pickLoop[0]),
+    '★★ 那一段必须是"取**第一条**命中"（改成筛一份候选集就是第二份仲裁实现）',
+    pickLoop ? pickLoop[0].replace(/\s+/g, ' ') : null);
+  check(body.indexOf('.src') < 0 && body.indexOf('src:') < 0 && body.indexOf('src ') < 0,
+    '★★ `replayCellOf` **不许**读格子上的 `src`（它只配给守卫看，不配进渲染判据）',
+    { hasSrc: body.indexOf('src') });
+
+  // ② 整个 game.js 里不许有第二处"两份说法取哪一条"的痕迹：
+  //    `replayCellOf` 之外不许再有人按 `src` 挑格子。
+  //    ⚠️ **注释不算**（`//` / `*` 开头的行是契约说明，不是代码）—— 本批实测：
+  //       第一版没排除注释，把 `replayCellOf` 上方那段讲解 `src` 的注释判成了"代码"，
+  //       一条假红。所以判据取"去掉注释后的那一行里还有没有 `src`"。
+  const deComment = (line) => {
+    const t = line.trim();
+    if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) return '';
+    const i = line.indexOf('//');
+    return i >= 0 ? line.slice(0, i) : line;
+  };
+  const srcHits = [];
+  const re = /\bsrc\b/g;
+  let m;
+  while ((m = re.exec(SRC)) !== null) {
+    const start = SRC.lastIndexOf('\n', m.index) + 1;
+    const end = SRC.indexOf('\n', m.index) < 0 ? SRC.length : SRC.indexOf('\n', m.index);
+    const code = deComment(SRC.slice(start, end));
+    if (code.indexOf('src') < 0) continue;          // 只在注释里出现 ⇒ 不算
+    if (code.indexOf('replay') >= 0 || code.indexOf("'lost'") >= 0
+        || code.indexOf('"lost"') >= 0) {
+      srcHits.push(code.trim().slice(0, 90));
+    }
+  }
+  check(srcHits.length === 0,
+    '★★ game.js 里没有任何"按 `src` / `lost` 挑格子"的代码（前端只渲染服务端的结论）',
+    srcHits);
+
+  // ③ 反向腿：这份 payload 里同一格给了**两条**说法（后端保证不会出现），
+  //    前端按"第一条"渲染 ⇒ 这一条证明"前端确实没有仲裁能力"，
+  //    也就证明"口径必须由服务端保证"这件事**不是空话**。
+  //    ⚠️ 故意把 `lost` 那条放在**后面**：前端取第一条 ⇒ 画成活船。
+  const twoTalk = mkPayload({
+    steps: [{ i: 0, kind: 'magic', actor: '甲', text: '甲 因恶魔契约牺牲一艘战舰',
+              detail: {} }],
+    ships: [
+      { step: 0, p1: [{ x: 2, y: 2, alive: true, src: 'ships' },
+                      { x: 2, y: 2, alive: false, sunk: true, src: 'lost' }] },
+    ],
+  });
+  const t0 = frameAt(twoTalk, 0);
+  const dup = cellAt(t0.boards[0], 2, 2);
+  check(!!dup && dup.sunk === false && dup.text === '⛴',
+    '★★ 反向腿：同一格两份说法时，前端按**第一条**渲染（它没有仲裁能力 ⇒ '
+    + '口径必须由 `replay._ship_cells` 保证"最多一条"）',
+    dup && { text: dup.text, cls: dup.cls });
 }
 
 

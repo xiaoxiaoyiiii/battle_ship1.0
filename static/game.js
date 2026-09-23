@@ -3179,6 +3179,13 @@ function replayEffectOf(frame, side, x, y) {
 function replayCellOf(frame, side, x, y) {
     var ships = (frame && frame.ships && Array.isArray(frame.ships[side])) ? frame.ships[side] : [];
     var marks = (frame && frame.marks && frame.marks[side]) ? frame.marks[side] : {};
+    // ⚠️ 这里取的是**第一条**命中的船格。它与"以最后一条为准"**必须等价** ——
+    //    判据在服务端：`replay._ship_cells` 保证**同一格最多只出一条**
+    //    （`lost` 显式沉没登记优先于活船列表的推断，撞车时活船那条整条丢掉，
+    //     见 `replay.py` 里那段 ★★ 说明）。所以本函数**不许**自己去仲裁
+    //    "两份说法取哪一条"：那会让同一件事长出第二份实现（教训 #1），
+    //    而且两处迟早漂移成"回放与后端说法不一致"。
+    //    格子上的 `src` 字段就是给这条契约留的探针（守卫：tests/test_replay_lost_priority.py）。
     var shipCell = null;
     for (var i = 0; i < ships.length; i++) {
         var c = ships[i];

@@ -34,6 +34,7 @@ import profile_spec  # 特权常量（level_101 等）
 import quick_chat  # 局内快捷语表 + 频率规则（纯数据/纯函数，前端从接口取同一份）
 import ranks  # 段位规则 / 每局加减分 / 大舰长晋升（唯一一份，结算与接口共用）
 import presence  # 在线 / 对局中状态（纯内存零依赖：api.py 也要读它，见 presence.py 头部说明）
+import replay  # 对局回放的纯模块：记录器 + 终局打包（**绝不 emit**，见 replay.py 头部）
 from api import app
 from file import read_json
 
@@ -570,6 +571,12 @@ def add_game_log(room, text: str, event_type: str = 'info', payload: dict | None
         emit('game_log', entry.to_dict(), room=room.id)
     except Exception:
         pass
+    # ★ 对局回放批：**这一行就是 38 个行动记录点的唯一喂数据入口**（契约 §3 第 1 条）。
+    #   `replay.note` 是纯函数：它只往 `room.replay` 里追加一步、顺手比对一次稀疏快照，
+    #   **不 emit 任何东西**（回放数据里有双方船位，进对局房间就是灾难级泄露 ——
+    #   源码级守卫见 tests/test_replay_guards.py）。
+    #   ⚠️ 放在**最后**：上面那条 `emit('game_log', ...)` 的行为一个字都不许改。
+    replay.note(room, entry.to_dict())
 
 
 def log_magic(room, caster_id, card, extra=''):
@@ -847,6 +854,17 @@ class GameRoom:
         # ⚠️ 必须在这里初始化（第 2 批的硬规矩：新增房间级状态要
         #   ① __init__ 初始化 ② 明确消费点 ③ 回归测试）—— 漏了就会在别处 AttributeError。
         self.ranked = False
+        # ★ 战绩模式批：这间房是不是**匹配**出来的（`handle_find_match` 配对成功时置 True）。
+        #   按 CLAUDE.md 第 10.11 条「新增房间级状态三件齐」：
+        #     ① 这里初始化 ② 消费点 = `_match_history_mode`（战绩落库时的 `matches.mode`）
+        #     ③ 回归 = tests/test_match_mode.py（含源码级穷举守卫 + 三条非匹配路径的反例）
+        #   ⚠️ 存在的理由：`matches` 表原先只有 id / winner / loser / timestamp，
+        #     "这一局是排位 / 匹配 / 人机 / 自定义房"**根本没存**，界面只能靠 id 猜人机
+        #     （`isAiOpponent`）—— 那是猜测不是记录。有了它才谈得上如实标出模式。
+        #   ⚠️ 它是"**事实**"而不是"从 `room.players` 的 key 形状反推"：key 有两套约定
+        #     （自定义房 = user_id / 匹配房 = 入座 sid），历史上漂移过一次，
+        #     形状判据一旦漂移就是"匹配局静默标成自定义局"，零报错。
+        self.matchmade = False
         # 魔法卡相关状态
         self.field_magic = None  # 场地区域（存卡牌实例，空=None）
         self.magic_history = []  # 魔法卡使用历史
@@ -872,6 +890,14 @@ class GameRoom:
         self.chain_display_deadline = None
         self.last_attack = None  # 记录最后一次攻击的信息
         self.game_logs: list[dict[str, Any]] = []
+        # ★ 2026-09-23（回放批）新增房间级状态三件齐（CLAUDE.md 第 10.11 条）：
+        #   ① 这里初始化 ② 消费点 = `replay.note` / `replay.note_action` /
+        #   `replay.note_board_reset`（喂）与 `replay.finalize` + `replay.reset`（收）
+        #   ③ 回归 = tests/test_replay_recorder.py
+        # 形状见 replay._state（steps / 两条时间线 / board_resets / nodes / 截断标记）。
+        # ⚠️ 每局常驻 ≤30 KB，`_finalize_match` 落库后**立刻置空**（契约 §1：服务器只有
+        #    777 MB 可用内存在用 swap，回放绝不进内存缓存）。
+        self.replay: dict[str, Any] | None = None
         self.rps_processed = False  # 记录猜拳结果是否已经处理过
         self.skip_opponent_turn = None  # Freezing!：跳过对方本回合 → **直接进新大回合**
         self.skip_next_turn = None  # 用于跳过下一个玩家回合
@@ -1099,6 +1125,53 @@ def _normalize_match_mode(value) -> str:
 def _room_match_mode(room) -> str:
     """房间当前的模式（`ranked` 是唯一真相源，mode 由它推出来，不另存一份）。"""
     return MATCH_MODE_RANKED if bool(getattr(room, 'ranked', False)) else MATCH_MODE_CASUAL
+
+
+# ---------------------------------------------------------------------------
+# 战绩模式（2026-09-23 战绩模式批）：`matches.mode` 的四选一取值
+# ---------------------------------------------------------------------------
+# 为什么不是复用 `MATCH_MODES`：那对常量是**对局内 / 队列**的语义（排位 vs 休闲，
+# 由 `room.ranked` 一个轴决定），而战绩要回答的是"这一局是在哪儿打的"，
+# 那是**两个轴**：① 排位 vs 非排位（复用 `_room_match_mode`）② 人机 / 自定义房 / 匹配。
+# 于是这里多两个取值，但**"排位"这件事仍然只有 `_room_match_mode` 一份判据**。
+MATCH_MODE_AI = 'ai'            # 人机房（`room.is_ai_room`）
+MATCH_MODE_CUSTOM = 'custom'    # 自定义房 / 好友邀战（都不是匹配出来的）
+#: 落进 `matches.mode` 的全部合法取值。**唯一一份**：`_match_history_mode` 产出它，
+#: 测试与（将来的）前端都从这里取，不许在别处手抄一份字符串表。
+MATCH_HISTORY_MODES = (MATCH_MODE_RANKED, MATCH_MODE_CASUAL,
+                       MATCH_MODE_AI, MATCH_MODE_CUSTOM)
+
+
+def _match_history_mode(room):
+    """这一局落进战绩时该记什么模式：`'ranked'` / `'casual'` / `'ai'` / `'custom'`。
+
+    优先级（先判"在哪儿打"的类型轴，再判排位的轴）：
+
+    1. `room.is_ai_room`            → `'ai'`（人机房恒 `ranked=False`，所以先判它）；
+    2. `_room_match_mode(room)` 是 ranked → `'ranked'`；
+    3. **不是**匹配出来的房（`room.matchmade` 为假）→ `'custom'`（自定义房 / 好友邀战）；
+    4. 其余 → `'casual'`（匹配出来的休闲局）。
+
+    ★★ 为什么不自己再判一次"排位"（教训 #1：同一判断两份实现必然漂移）★★
+      第 2 步**直接调 `_room_match_mode`** —— 对局内 `game_state` 的 `mode` 字段与
+      战绩里的 `'ranked'` 由同一份判据产出，两者永远不会互相矛盾。
+      守卫：`tests/test_match_mode.py::test_history_mode_never_contradicts_game_state_mode`。
+
+    ★ 为什么用 `matchmade` 而不是从 `room.players` 的 key 形状反推：
+      见 `GameRoom.__init__` 里那个字段的注释（形状判据会漂移，而且零报错）。
+
+    取不到房间（None）⇒ 返回 None：**"不知道"不许退化成"匹配"**（教训 #21），
+    落库时那一行 `mode` 就留 NULL。
+    """
+    if room is None:
+        return None
+    if getattr(room, 'is_ai_room', False):
+        return MATCH_MODE_AI
+    if _room_match_mode(room) == MATCH_MODE_RANKED:
+        return MATCH_MODE_RANKED
+    if not getattr(room, 'matchmade', False):
+        return MATCH_MODE_CUSTOM
+    return MATCH_MODE_CASUAL
 
 
 def _rank_payload(room) -> dict:
@@ -3435,6 +3508,15 @@ def handle_find_match(data):
             # 软规避（同 IP / 近来对手）现在**只是排序偏好**：能躲开就躲开，
             # 躲不开照常打、照常给分。真正的刷分由反作弊闸门拦（它看回合数/击沉/是否还手）。
             room.ranked = (p1.get('mode') == MATCH_MODE_RANKED)
+            # ★ 战绩模式批：**"这间房是匹配出来的"是被记录的事实**，不靠 `room.players`
+            #   的 key 形状反推（那个形状历史上漂移过一次，见 CLAUDE.md §6；一旦漂移，
+            #   症状是"匹配局被静默标成自定义局"，**零报错**）。
+            #   ⚠️ 这是**唯一**置 True 的地方：全项目所有配对（休闲 / 排位 / 大厅那条
+            #      `find_match`）都汇到本函数的这个循环里消费 `match_queue`；
+            #      源码级穷举守卫见 tests/test_match_mode.py。
+            #   `create_room` / `create_ai_room` / `create_custom_room_for_invite`
+            #   三条路一律保持 False（它们的用例也在同一个文件里）。
+            room.matchmade = True
             room.players[p1['sid']] = Player(**{
                 'name': p1['name'],
                 'ships': [],
@@ -3741,6 +3823,12 @@ def handle_place_ships(data):
                 'round': room.round,
                 **_rank_payload(room),
             }, room=room_id)
+            # ★ 回放批：布船收尾（回光返照那条路）。**不往游戏内日志加行** ——
+            #   游戏内日志是既有玩家可见功能，本批不改它的显示。
+            replay.note_action(room, 'place_ships',
+                               f'{_log_name(room, player_id)} 布好了 {len(ships)} 艘战舰',
+                               {'player': player_id, 'ships': len(ships)},
+                               _log_name(room, player_id))
             return {'status': 'success'}
 
         # 灵气复苏：这是中途重新摆放，不重新猜拳。
@@ -3783,6 +3871,12 @@ def handle_place_ships(data):
                 'round': room.round,
                 **_rank_payload(room),
             }, room=room_id)
+            # ★ 回放批：布船收尾（灵气复苏那条路）。**不往游戏内日志加行** ——
+            #   游戏内日志是既有玩家可见功能，本批不改它的显示。
+            replay.note_action(room, 'place_ships',
+                               f'{_log_name(room, player_id)} 布好了 {len(ships)} 艘战舰',
+                               {'player': player_id, 'ships': len(ships)},
+                               _log_name(room, player_id))
             # 若当前攻击者是 AI，继续驱动其回合
             _maybe_run_ai_turn(room)
             return {'status': 'success'}
@@ -3794,6 +3888,13 @@ def handle_place_ships(data):
 
         emit('game_state', {'state': 'rock_paper_scissors', **_rank_payload(room)}, room=room_id)
 
+    # ★ 回放批：布船收尾（**唯一实现点**：三条路都从这里返回）。
+    #   ⚠️ 只记回放步骤，**绝不往游戏内日志加行** —— 游戏内日志是既有玩家可见功能，
+    #      本批不改它的显示。
+    replay.note_action(room, 'place_ships',
+                       f'{_log_name(room, player_id)} 布好了 {len(ships)} 艘战舰',
+                       {'player': player_id, 'ships': len(ships)},
+                       _log_name(room, player_id))
     return {'status': 'success'}
 
 
@@ -3884,6 +3985,15 @@ def handle_rps_choice(data):
             **_rank_payload(room),
         }, room=room_id)
 
+    # ★ 回放批：猜拳定先手（**唯一实现点**：这个函数只有一条成功返回路径）。
+    #   ⚠️ **不往游戏内日志加行**：游戏内日志是既有玩家可见功能，本批不改它的显示。
+    #   ⚠️ 平局那条早退路径（`len(result.order) < 2`）**在函数中间就 return 了**，
+    #      走不到这里 —— 所以"平局也算一步猜拳"不会污染回放。
+    if room.state == 'attacking':
+        replay.note_action(room, 'rps_choice',
+                           f'{_log_name(room, winner)} 猜拳取胜，先手',
+                           {'first': winner, 'round': room.round},
+                           _log_name(room, winner))
     return {'status': 'success'}
 
 
@@ -4490,6 +4600,28 @@ def _grant_match_achievements(room, candidates):
     return newly
 
 
+def _replay_allowed_for_match(winner_user_id, loser_user_id) -> bool:
+    """这一局该不该留回放（契约 §5 的开关语义：**任一方关掉 ⇒ 这一局就不留**）。
+
+    * 两个座位都不是真账号（游客 sid 局）⇒ False（谁都读不到，白占地方）；
+    * 只有一边是真账号（人机局）⇒ **只看那一侧的开关**（AI 没有设置）；
+    * 两边都是真账号 ⇒ 两边都允许才算允许。
+
+    ⚠️ `db.get_allow_replay` 的失败方向是 **False = 不记录**（fail-closed）并且打日志
+       —— 与观战相反（观战 fail-open）。这里的错误方向是"泄露隐私"（回放里双方船位），
+       一次读库抖动宁可少一局回放，也不要多一局不该留的。
+    ⚠️ 这是**唯一**一处判定开关的地方（对局结算的收口里调用一次），
+       别在别处再判一次（两份判据必然漂移 —— 教训 #1）。
+    """
+    seats = [u for u in (winner_user_id, loser_user_id) if u]
+    if not seats:
+        return False
+    for uid in seats:
+        if not db.get_allow_replay(uid):
+            return False
+    return True
+
+
 def _finalize_match(room, winner_id, loser_id, streak_ctx=None):
     """对局结算的**唯一收口**：写战绩 → 累加每局统计 → 评估并授予徽章 → 播报。
 
@@ -4536,11 +4668,29 @@ def _finalize_match(room, winner_id, loser_id, streak_ctx=None):
 
     # ① 写战绩（历史 + 胜负 / 连胜）
     if winner_user_id or loser_user_id:
+        # ★ 回放批（§4/§5）：开关判定**在收口处一次**，然后与对局行同一个事务落库。
+        #   没有这一步就没有回放 —— 它同时也是"任一方关掉 ⇒ 这一局不留回放"的落点。
+        replay_blob = None
+        try:
+            if _replay_allowed_for_match(winner_user_id, loser_user_id):
+                replay_blob = replay.finalize(room)
+        except Exception as e:              # noqa: BLE001 —— 回放绝不许把结算搞崩
+            print(f'[replay] 打包回放失败（这局不留回放）: {e}')
+            replay_blob = None
         try:
             db.record_match(winner_user_id or winner_id, loser_user_id or loser_id,
-                            getattr(room, 'game_logs', None), count_stats=count_stats)
+                            getattr(room, 'game_logs', None), count_stats=count_stats,
+                            replay=replay_blob,
+                            replay_participants=replay.replay_participants(
+                                winner_user_id, loser_user_id),
+                            mode=_match_history_mode(room))
         except Exception:
             pass
+        finally:
+            # ★ 内存纪律（契约 §1）：落库之后**立刻置空** —— 服务器只有 777 MB 可用
+            #   内存在用 swap，回放绝不许留在房间里。放在 finally 里：落库失败也清，
+            #   否则一份几十 KB 的录制会挂在这一局房间对象上直到房间回收。
+            replay.reset(room)
 
     if not count_stats:
         # 人机对局到此为止：只留下可回看的历史，不累计统计、不发徽章。
@@ -5491,6 +5641,12 @@ def enter_battle_phase(data, _priority_confirmed=False):
             'current_phase': room.current_phase,
             'current_attacker': room.current_attacker
         }, room=room_id)
+        # ★ 回放批：进入战斗阶段（**唯一实现点**）。**不往游戏内日志加行**。
+        replay.note_action(room, 'enter_battle',
+                           f'{_log_name(room, player_id)} 进入战斗阶段',
+                           {'player': player_id, 'attacks_remaining': room.attacks_remaining,
+                            'round': room.round},
+                           _log_name(room, player_id))
         return {'status': 'success'}
 
     return {'status': 'error', 'message': '无法进入战斗阶段'}
@@ -5575,6 +5731,11 @@ def handle_enter_end_phase(data, _priority_confirmed=False):
             'current_attacker': room.current_attacker
         }, room=room_id)
 
+        # ★ 回放批：进入结束阶段（**唯一实现点**）。**不往游戏内日志加行**。
+        replay.note_action(room, 'enter_end',
+                           f'{_log_name(room, player_id)} 进入结束阶段',
+                           {'player': player_id, 'round': room.round},
+                           _log_name(room, player_id))
         return {'status': 'success', 'message': '已进入结束阶段'}
 
     # 兜底：不满足条件时必须回一个 dict。
@@ -5634,6 +5795,29 @@ def end_turn(data):
 
     # 检查是否是当前攻击者的结束阶段
     if room.current_attacker == player_id and room.current_phase == 'end':
+        # ★ 回放批：`end_turn` 是本批 6 个"没有游戏内日志的行动"之一，而它有 3 条
+        #   成功返回路径（新大回合 / 普通换人 / 滥竽充数判负）。用 try/finally 记**一次**，
+        #   而不是在 3 个 return 前各写一遍（三份实现必然漂移 —— 教训 #1）。
+        #   ⚠️ finally 不改返回值的**分支选择**（每个分支仍返回原来那个 dict）。
+        try:
+            return _end_turn_locked(room, room_id, player_id)
+        finally:
+            replay.note_action(room, 'end_turn',
+                               f'{_log_name(room, player_id)} 结束了回合',
+                               {'player': player_id,
+                                'current_attacker': room.current_attacker,
+                                'round': room.round},
+                               _log_name(room, player_id))
+
+    return {'status': 'error', 'message': '无法结束当前回合'}
+
+
+def _end_turn_locked(room, room_id, player_id):
+    """`end_turn` 的收尾主体（成功后一定会换人 / 换大回合）。
+
+    ⚠️ 拆出来**只为**让回放记录点能写在唯一的 finally 里；语义与拆分前逐字一致。
+    """
+    if True:                # 保持原有的缩进层级（减少这次拆分的 diff 噪音）
         current_index = room.attack_order.index(room.current_attacker)
         next_index = (current_index + 1) % len(room.attack_order)
 
@@ -8572,6 +8756,13 @@ def _clear_attacks_on_cells(room, positions, board_owner_id):
         #   ⚠️ 帧里只有"格"，没有船数：调用方（`_revive_sunken_ships`）在后面
         #      还会加船数，所以它收尾时会补一条更完整的（`_flush_...`）。
         _mark_spectate_board_dirty(room)
+        # ★ 回放批：**一处地方、两个消费方** —— 观战那块棋盘要跟着变（上面那行），
+        #   回放的棋盘标记也要跟着清（`board_resets` 时间线）。
+        #   为什么不能只靠 attack 步反推：重摆之后棋盘"变干净了"，攻击历史里
+        #   没有这件事（第 5 批那个 bug 的回放版，契约 §9）。
+        #   这一处是**四张"清格子"的卡共用的唯一入口**（疗愈复活 / 增援 / 死者苏生 /
+        #   滥竽充数 / 神机妙算），所以四张卡在回放里也都对。
+        replay.note_board_reset(room, board_owner_id)
 
 
 def _reveal_cells_to(room, player_id, positions, kind=None):
@@ -10744,6 +10935,9 @@ def confirm_magic_target(data):
         #   "清空 attacks" 的位置共用的同一条出口（见 tests/test_spectate_batch5.py
         #   里那条源码级穷举守卫）。真正的发送在 `emit()` 收尾。
         _mark_spectate_board_dirty(room)
+        # ★ 回放批：双方棋盘整块换新 → 回放的棋盘标记时间线记一笔（**双方**，
+        #   所以这里不传 board_owner_id）。同一个失效点、第二个消费方。
+        replay.note_board_reset(room)
 
         # 清除临时数据
         room.magic_temp_data = {}
@@ -12427,6 +12621,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                 ship.trap = False
         # ★ 第 5 批：双方棋盘整块换新 → 观众那块棋盘跟着清空（与灵气复苏同一句）。
         _mark_spectate_board_dirty(room)
+        # ★ 回放批：同上（败者食尘也是双方重摆）—— 同一个失效点、第二个消费方。
+        replay.note_board_reset(room)
 
         # 冻结区域记录也一并清掉（重开棋盘后区域标记不该残留）
         if isinstance(room.game_effects, dict):
@@ -13587,6 +13783,9 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         # ★ 第 5 批：施法者那块棋盘整块换新 → 观众那块也得清空（作者实报的缺陷 ④）。
         #   重摆之后的**新位置仍然保密**：新位置的船没挨过炮，不在 `attacks` 里。
         _mark_spectate_board_dirty(room)
+        # ★ 回放批：回光返照**只清施法者那一块** → 棋盘标记只记他这一侧
+        #   （传 caster_id，不要顺手把对手也标上）。
+        replay.note_board_reset(room, caster_id)
 
         # 跳过自己的战斗阶段
         room.current_phase = 'end'
@@ -13984,6 +14183,14 @@ def handle_surrender(data):
     opponent_id = next(p for p in room.players if p != player_id)
     room.winner = opponent_id
 
+    # ★ 回放批：投降（**唯一实现点**）。**不往游戏内日志加行** —— 玩家可见的结算播报
+    #   仍由 `_finish_game` / `_finish_game_win` 出，本批不改它的显示。
+    #   ⚠️ 必须放在 `_finalize_match` **之前**：收口里会 `replay.finalize` + `reset`
+    #      （落库后立刻置空），放在后面就等于这一步永远录不进去。
+    replay.note_action(room, 'surrender',
+                       f'{_log_name(room, player_id)} 投降了',
+                       {'player': player_id, 'winner': opponent_id},
+                       _log_name(room, player_id))
     # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
     _finalize_match(room, opponent_id, player_id)
     # 向房间发送游戏结束事件

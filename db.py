@@ -66,6 +66,32 @@ _ALLOW_SPECTATE_COLUMN_DDL = 'INTEGER DEFAULT 1'
 #    改默认值只改这里（两份默认值必然漂移 —— 教训 #1）。
 ALLOW_SPECTATE_DEFAULT = 1
 
+# 「允许保留我的对局回放」开关（对局回放批）。与 `allow_spectate` **完全同一条通道**
+# （`user_profile` 表 + `_migrate_schema` 加列 + 专用读写函数），默认 **1 = 允许**。
+#
+# ⚠️ 与观战**失败方向相反**：观战读库失败按"允许"兜（少个功能），
+#    回放读库失败按**不记录**兜（fail-closed）—— 这里的错误方向是"泄露隐私"
+#    （回放里有双方船位），见 `get_allow_replay`。
+# ⚠️ 同样**刻意不进 `_PROFILE_DEFAULTS` / `save_user_profile_extra`**：
+#    那条路是"整行语义、缺的键用默认值补齐"，并进去 = 玩家每存一次名片
+#    就把这个隐私开关静默改回「允许」。
+_ALLOW_REPLAY_COLUMN = 'allow_replay'
+_ALLOW_REPLAY_COLUMN_DDL = 'INTEGER DEFAULT 1'
+
+# 没有记录（新账号 / 从没动过开关）时的取值：1 = 允许。
+# ⚠️ 只有这一份：DDL 的 `DEFAULT 1` 与"查不到行"的分支都指向它。
+ALLOW_REPLAY_DEFAULT = 1
+
+# 每人保留的最近对局数（回放批 §4）。**只有这一份**：
+# `_sweep_match_replays` 的窗口判定读它，测试也从这里读（不许在别处再写一个 30）。
+REPLAY_KEEP_PER_USER = 30
+
+# 战绩模式批：`matches` 加一列 `mode`（`'ranked'` / `'casual'` / `'ai'` / `'custom'`）。
+# ⚠️ 取值表**只有一份**：server 侧 `MATCH_HISTORY_MODES`（判据在 `_match_history_mode`）；
+#    本层只负责原样存取，**绝不在这一层兜底**（NULL = 老数据 = "不知道"，教训 #21）。
+# ⚠️ 没有 DEFAULT：老行的这一列就该是 NULL。
+_MATCH_MODE_COLUMN = 'mode'
+
 
 def _add_column_if_missing(cursor, table: str, column: str, ddl: str) -> bool:
     """幂等加列：PRAGMA table_info 判存在 → ALTER TABLE ADD COLUMN。
@@ -168,13 +194,18 @@ class Database:
                   ''')
             
             # 创建比赛表
+            # ⚠️ `mode`（战绩模式批）既写在这里，又走下面的 `_add_column_if_missing`
+            #    —— 两条都要有：全新的库靠这一句，**生产库那 342 行所在的老表**
+            #    靠 ALTER（`CREATE TABLE IF NOT EXISTS` 对已存在的表是空操作）。
+            #    TEXT 且**没有 DEFAULT**：老行就是 NULL = "不知道这一局是什么模式"。
             self.cursor.execute('''
                   CREATE TABLE IF NOT EXISTS matches
                   (
                       id        TEXT PRIMARY KEY,
                       winner_id TEXT,
                       loser_id  TEXT,
-                      timestamp INTEGER
+                      timestamp INTEGER,
+                      mode      TEXT
                   )
                   ''')
             
@@ -208,6 +239,37 @@ class Database:
                       logs     TEXT
                   )
                   ''')
+
+            # ---- 对局回放（2026-09-23 回放批 §2）----
+            # **独立表**，绝不把回放塞进 `match_logs.logs`：那一列会随 `show_history`
+            # 公开给所有人，而且 `/user_stats` 每次都全量下发它 —— 回放里有双方船位。
+            #
+            # `winner_user_id` / `loser_user_id` 是**自带**的参与者两列：实测
+            # `matches.winner_id` 里混着 uuid / `ai-*` / 游客 sid，长度上无法可靠区分，
+            # 从它反推"参与者是谁"是不可靠的。自带两列才谈得上"按人保留 30 局"与
+            # "参与者鉴权"。无账号的座位（游客 / 人机）写 NULL。
+            #
+            # 这是**新表**，`CREATE TABLE IF NOT EXISTS` 对它有效（不需要 ALTER）；
+            # `match_id` 由 `record_match` 内部生成，插入与 `matches` 行**同一个事务**，
+            # 于是"有回放必有对局行"是原子的。
+            self.cursor.execute('''
+                  CREATE TABLE IF NOT EXISTS match_replays
+                  (
+                      match_id        TEXT PRIMARY KEY,
+                      winner_user_id  TEXT,
+                      loser_user_id   TEXT,
+                      created_at      INTEGER NOT NULL,
+                      bytes           INTEGER NOT NULL,
+                      version         INTEGER NOT NULL,
+                      replay          TEXT NOT NULL
+                  )
+                  ''')
+            self.cursor.execute(
+                'CREATE INDEX IF NOT EXISTS idx_replay_winner '
+                'ON match_replays (winner_user_id, created_at DESC)')
+            self.cursor.execute(
+                'CREATE INDEX IF NOT EXISTS idx_replay_loser '
+                'ON match_replays (loser_user_id, created_at DESC)')
 
             # 卡牌使用统计（图鉴里显示"用得多不多"，也是后续平衡调整的依据）
             self.cursor.execute('''
@@ -581,6 +643,14 @@ class Database:
         # 实时观战第 2 批：`user_profile` 是老表，只能判存在再 ALTER（同上）。
         self._add_column_if_missing('user_profile', _ALLOW_SPECTATE_COLUMN,
                                     _ALLOW_SPECTATE_COLUMN_DDL)
+        # 对局回放批：同一条通道（老表加列只能判存在再加 —— 教训 #14）。
+        # 幂等：重复 `init_db()` 只是一次 PRAGMA。
+        self._add_column_if_missing('user_profile', _ALLOW_REPLAY_COLUMN,
+                                    _ALLOW_REPLAY_COLUMN_DDL)
+        # 战绩模式批：`matches` 也是老表（生产库 342 行），同样只能判存在再加。
+        # ⚠️ 默认值留 **NULL**（不是 'casual'）：老数据是"不知道这一局是什么模式"，
+        #    兜底成 'casual' 会让界面上把 342 局老对局全标成"匹配"（教训 #21）。
+        self._add_column_if_missing('matches', _MATCH_MODE_COLUMN, 'TEXT')
 
     def _add_column_if_missing(self, table: str, column: str, ddl: str) -> bool:
         """`ALTER TABLE ADD COLUMN` 的幂等包装（见模块级 `_add_column_if_missing`）。"""
@@ -940,11 +1010,30 @@ class Database:
                 self.conn.rollback()
             return None
     
-    def record_match(self, winner_id: str, loser_id: str, logs=None, count_stats=True):
+    def record_match(self, winner_id: str, loser_id: str, logs=None, count_stats=True,
+                     replay=None, replay_participants=None, mode=None):
         """写入一条对局记录。
 
         count_stats=False 时只写历史（matches / match_logs），不更新任何用户的
         胜场、负场与连胜 —— 人机对局走这条路：打得再多也刷不了排行榜。
+
+        `mode`（战绩模式批）：这一局是 `'ranked'` / `'casual'` / `'ai'` / `'custom'`
+        四选一（判据 = `server._match_history_mode`，只有一份）。**可空**：
+        老数据（本批上线前那 342 行）留 NULL —— 那是"不知道"，不许兜底成 `'casual'`
+        （教训 #21：未知不能退化成满足条件）。列走 `_add_column_if_missing`（教训 #14）。
+
+        `replay`（对局回放批 §4）：一条回放的 JSON 文本或 dict。**与 `matches` 行写在
+        同一个事务里**，`match_id` 就是本函数内部生成的那一个 —— 只有这样才能原子绑定，
+        也才保证"有回放必有对局行"。传 None = 这局不留回放（0 步 / 开关关 / 双方都不是真人）。
+
+        `replay_participants`：`{'winner': user_id|None, 'loser': user_id|None}`，
+        即**真实账号**的两列（游客 / 人机座位为 None）。判定"按人保留 30 局"与
+        "参与者鉴权"都靠它，绝不从 `matches.winner_id` 反推（契约 §2）。
+
+        ⚠️ 回放写不进去**绝不影响**战绩本身：上面那一整段（写 matches + 统计）已经
+           是既有行为，回放是**追加**的；失败只记日志（下面的 try/except）。
+           但**两者在同一个事务里提交** —— 回放插入失败会让整笔回滚，
+           这是有意的：宁可这局没记上，也不许留下"有回放但没对局行"的孤儿。
         """
         if not winner_id or not loser_id:
             logger.warning(f"尝试记录比赛但获胜者或失败者ID为空: winner_id={winner_id}, loser_id={loser_id}")
@@ -955,8 +1044,12 @@ class Database:
             # 记录比赛结果（依赖连接隐式事务 + 末尾 commit 保证原子性，避免显式 BEGIN 冲突）
             mid = str(uuid.uuid4())
             t = int(time.time())
-            self.cursor.execute('INSERT INTO matches (id, winner_id, loser_id, timestamp) VALUES (?,?,?,?)',
-                      (mid, winner_id, loser_id, t))
+            # `mode`：战绩模式批新增的一列（老库由 `_add_column_if_missing` 补上）。
+            # 传 None 就是 NULL（老行 / 判据取不到房间），**绝不在这一层兜底成 'casual'**。
+            self.cursor.execute(
+                'INSERT INTO matches (id, winner_id, loser_id, timestamp, mode) '
+                'VALUES (?,?,?,?,?)',
+                (mid, winner_id, loser_id, t, (mode or None)))
 
             # 记录局内日志（可选）
             if logs is not None:
@@ -970,6 +1063,9 @@ class Database:
                     logger.error(f"保存比赛日志时发生数据库错误: match_id={mid}, 错误: {e}")
                 except Exception as e:
                     logger.error(f"记录比赛日志时发生未知错误: match_id={mid}, 错误: {e}")
+
+            # 记录对局回放（独立表 match_replays；永远是 `mid`，与上面那行同一个事务）
+            replay_saved = self._insert_match_replay(mid, t, replay, replay_participants)
 
             # 增加胜负统计与连胜逻辑（count_stats=False 的人机对局跳过这一段）
             if count_stats:
@@ -1011,7 +1107,237 @@ class Database:
             return False
         finally:
             self._lock.release()
-    
+
+    # -----------------------------------------------------------------------
+    # 对局回放（2026-09-23 回放批 §2/§4）
+    # -----------------------------------------------------------------------
+    # 口径说明（这三条是全批的判据，只有这一份实现）：
+    #   · 「真实用户」= `users` 表里查得到这一行。游客 sid 与 `ai-<room>` 都查不到
+    #     ⇒ 无账号座位（契约 §2：`winner_user_id` 为 NULL）。
+    #   · 「某人的窗口」= 他最近 30 局里**最老那一局的时间戳**（不足 30 局 ⇒ 无窗口终点
+    #     ⇒ 什么都不淘汰）。第 31 局进来后，窗口终点自动前移，最老那局就出局。
+    #   · **共享的一条回放不许被先超窗的一方删掉**：只要还有任何一位真实参与者
+    #     仍把它算在窗口内，就留着（契约 §4）。
+    def _real_user_ids(self, uids):
+        """这批 uid 里哪些是**真账号**（`users` 表里查得到）。返回 set。"""
+        wanted = [u for u in (uids or []) if u]
+        if not wanted:
+            return set()
+        found = set()
+        try:
+            cursor = self.conn.cursor()
+            for uid in set(wanted):
+                if cursor.execute('SELECT 1 FROM users WHERE id = ?', (uid,)).fetchone():
+                    found.add(uid)
+            cursor.close()
+        except sqlite3.Error as e:
+            logger.error(f"判断真实用户失败（按无账号处理）: {wanted} -> {e}")
+            return set()
+        return found
+
+    def _replay_cutoff(self, uid):
+        """某人的窗口终点：他最近 `REPLAY_KEEP_PER_USER` 局里**最老那一局**的时间戳。
+
+        返回 None = 不足 30 局（不淘汰任何东西）。读库失败同样返回 None ——
+        方向是"少删一点"，绝不"多删"（删掉的是别人的回放，不可逆）。
+        """
+        if not uid:
+            return None
+        try:
+            cursor = self.conn.cursor()
+            row = cursor.execute(
+                'SELECT timestamp FROM matches '
+                'WHERE winner_id = ? OR loser_id = ? '
+                'ORDER BY timestamp DESC LIMIT 1 OFFSET ?',
+                (uid, uid, REPLAY_KEEP_PER_USER - 1)).fetchone()
+            cursor.close()
+        except sqlite3.Error as e:
+            logger.error(f"读取回放保留窗口失败（本次不淘汰）: uid={uid} -> {e}")
+            return None
+        if not row:
+            return None
+        try:
+            return int(row['timestamp'])
+        except (TypeError, ValueError):
+            return None
+
+    def _orphan_replay_ids(self):
+        """`matches` 行已经不在的回放（管理端回滚工具删对局留下的孤儿，教训 #28）。"""
+        try:
+            cursor = self.conn.cursor()
+            rows = cursor.execute(
+                'SELECT mr.match_id AS match_id FROM match_replays mr '
+                'LEFT JOIN matches m ON m.id = mr.match_id '
+                'WHERE m.id IS NULL').fetchall()
+            cursor.close()
+        except sqlite3.Error as e:
+            logger.error(f"扫描孤儿回放失败: {e}")
+            return []
+        return [r['match_id'] for r in rows]
+
+    def sweep_match_replays(self, reset_orphans=True):
+        """**唯一实现**的回放清扫：保留 30 局 + 孤儿清扫（契约 §4）。
+
+        返回 `{'orphans': n, 'expired': n, 'kept_shared': n}`（供测试与日志用）。
+
+        * `reset_orphans=True` —— 先删掉"对局行已经不在"的孤儿回放。
+          它不在保留策略里，而是与"保留 30 局"分开的一步：`record_match` 每次插入后
+          顺手跑一次，于是孤儿最多活到**下一局结束**（本批不引入后台定时任务）。
+        * 逐条判定，**不扫全表**：只枚举"某位真实参与者早于自己窗口终点"的那些局
+          （契约 §4："每插入只枚举被淘汰的 1~2 条"）。
+        * ⚠️ **共享回放**：对手也是真实用户、而那一局**仍在对手窗口内** ⇒ 留着。
+        """
+        result = {'orphans': 0, 'expired': 0, 'kept_shared': 0}
+        doomed = set()
+        # 孤儿**不在**保留策略里（教训 #28：管理端回滚工具会删对局，
+        # 那些对局行没了、回放还在）。它总是要删，与"窗口"无关。
+        orphans = set(self._orphan_replay_ids())
+        result['orphans'] = len(orphans)
+        doomed.update(orphans)
+
+        try:
+            cursor = self.conn.cursor()
+            rows = cursor.execute(
+                'SELECT mr.match_id AS match_id, mr.winner_user_id AS w, '
+                '       mr.loser_user_id AS l, m.timestamp AS ts '
+                'FROM match_replays mr JOIN matches m ON m.id = mr.match_id').fetchall()
+        except sqlite3.Error as e:
+            logger.error(f"读取回放清单失败（本次不淘汰）: {e}")
+            return result
+
+        # 每位真实参与者的窗口终点只算一次（同一个人可能出现在好几行里）
+        cutoffs = {}
+        for row in rows:
+            match_id = row['match_id']
+            if match_id in doomed:
+                continue
+            participants = [u for u in (row['w'], row['l']) if u]
+            if not participants:
+                continue            # 双方都不是真账号：谁都读不到，不占额度（契约 §4）
+            try:
+                ts = int(row['ts'])
+            except (TypeError, ValueError):
+                continue
+            expired_for = []
+            for uid in participants:
+                if uid not in cutoffs:
+                    cutoffs[uid] = self._replay_cutoff(uid)
+                cutoff = cutoffs[uid]
+                if cutoff is not None and ts < cutoff:
+                    expired_for.append(uid)
+            if not expired_for:
+                continue
+            # 还有任何一位真实参与者把它算在窗口内 ⇒ 共享的一条回放留着
+            if len(expired_for) < len(participants):
+                result['kept_shared'] += 1
+                continue
+            doomed.add(match_id)
+
+        if doomed:
+            try:
+                for match_id in doomed:
+                    self.cursor.execute('DELETE FROM match_replays WHERE match_id = ?',
+                                        (match_id,))
+                self.conn.commit()
+                result['expired'] = len(doomed) - len(orphans)
+                logger.info(f"回放清扫：孤儿 {result['orphans']} 条、超窗 {result['expired']} 条、"
+                            f"共享保留 {result['kept_shared']} 条")
+            except sqlite3.Error as e:
+                logger.error(f"删除回放失败（本次不淘汰）: {e}")
+                if self.conn:
+                    self.conn.rollback()
+                return {'orphans': 0, 'expired': 0, 'kept_shared': result['kept_shared']}
+        return result
+
+    def _insert_match_replay(self, match_id, ts, replay, participants) -> bool:
+        """把一条回放插进 `match_replays`（**同一个事务**，见 `record_match`）。
+
+        * `replay` 允许传 dict（本层自己 `json.dumps`）或已经是 JSON 文本的 str；
+        * `participants` = `{'winner': uid|None, 'loser': uid|None}`；
+        * 双方都没有真实账号 ⇒ **不插**（游客 sid 局谁都读不到，白占地方，契约 §4）；
+        * `bytes` 列存**实际 blob 字节数**，读接口按它做 512 KB 上限校验（不必先加载 body）。
+        """
+        if replay is None:
+            return False
+        weights = participants if isinstance(participants, dict) else {}
+        winner_uid = (weights.get('winner') or None)
+        loser_uid = (weights.get('loser') or None)
+        if not winner_uid and not loser_uid:
+            return False
+        try:
+            blob = replay if isinstance(replay, str) else json.dumps(
+                replay, ensure_ascii=False, separators=(',', ':'))
+            data = blob.encode('utf-8')
+            version = 0
+            try:
+                version = int((json.loads(blob) or {}).get('version') or 0)
+            except Exception:               # noqa: BLE001 —— 版本取不到就写 0，读端会拒收
+                version = 0
+            self.cursor.execute(
+                'INSERT OR REPLACE INTO match_replays '
+                '(match_id, winner_user_id, loser_user_id, created_at, bytes, version, replay) '
+                'VALUES (?,?,?,?,?,?,?)',
+                (match_id, winner_uid, loser_uid, ts, len(data), version, blob))
+            logger.debug(f"已记录对局回放: match_id={match_id}, bytes={len(data)}")
+        except Exception as e:              # noqa: BLE001
+            logger.error(f"记录对局回放失败: match_id={match_id}, 错误: {e}")
+            return False
+        # 清扫：保留 30 局 + 孤儿（唯一实现，见 sweep_match_replays）。
+        # ⚠️ 放在**同一个事务里**（提交前）—— 它自己会 commit，所以这里先落这一行。
+        self.conn.commit()
+        try:
+            self.sweep_match_replays()
+        except Exception as e:              # noqa: BLE001 —— 清扫失败绝不弄崩结算
+            logger.error(f"回放清扫异常（已忽略）: {e}")
+        return True
+
+    def get_match_replay(self, match_id: str):
+        """读**一条**回放的元信息 + 原始 blob（`None` = 没有这一条）。
+
+        ⚠️ **只读一条**、且**不许缓存**：回放绝不进内存缓存（不放模块级 dict、
+           不挂 `lru_cache`）—— 服务器只有 777 MB 可用内存在用 swap（契约 §1）。
+           上限校验（512 KB）由调用方按 `bytes` 做，或读完之后按 `len(blob)` 做。
+        """
+        if not match_id:
+            return None
+        try:
+            cursor = self.conn.cursor()
+            row = cursor.execute(
+                'SELECT match_id, winner_user_id, loser_user_id, created_at, '
+                '       bytes, version, replay '
+                'FROM match_replays WHERE match_id = ?', (match_id,)).fetchone()
+            cursor.close()
+        except sqlite3.Error as e:
+            logger.error(f"读取对局回放失败: match_id={match_id}, 错误: {e}")
+            return None
+        if not row:
+            return None
+        return {
+            'match_id': row['match_id'],
+            'winner_user_id': row['winner_user_id'],
+            'loser_user_id': row['loser_user_id'],
+            'created_at': row['created_at'],
+            'bytes': row['bytes'],
+            'version': row['version'],
+            'replay': row['replay'],
+        }
+
+    def delete_match_replay(self, match_id: str) -> bool:
+        """删掉一条坏回放（解析失败时读接口顺手清掉，契约 §6：不静默留垃圾）。"""
+        if not match_id:
+            return False
+        try:
+            with self._lock:
+                self.cursor.execute('DELETE FROM match_replays WHERE match_id = ?', (match_id,))
+                self.conn.commit()
+            logger.warning(f"已删除坏掉的对局回放: match_id={match_id}")
+            return True
+        except sqlite3.Error as e:
+            logger.error(f"删除坏回放失败: match_id={match_id}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+
     def get_match_history(self, uid: str, limit=20):
         if not uid:
             logger.warning("尝试获取比赛历史但未提供用户ID")
@@ -1023,18 +1349,25 @@ class Database:
             
             # 使用独立的游标避免递归使用游标错误
             cursor = self.conn.cursor()
+            # ⚠️ 回放批：这里**只取一个布尔**（`has_replay`），绝不取 blob ——
+            #    `/user_stats` 每次全量下发 history，把 blob 并进来等于每次拉几十 MB。
+            # ⚠️ 也**不动 `match_history` 那个 VIEW**：它还有别的读取方，
+            #    改视图风险大且没必要（契约 §6）。
             cursor.execute('''
                 SELECT m.id,
                        m.winner_id,
                        m.loser_id,
                        m.timestamp,
+                       m.mode,
                        w.username AS winner_name,
                        l.username AS loser_name,
-                       ml.logs
+                       ml.logs,
+                       CASE WHEN mr.match_id IS NULL THEN 0 ELSE 1 END AS has_replay
                 FROM matches m
                 LEFT JOIN users w ON m.winner_id = w.id
                 LEFT JOIN users l ON m.loser_id = l.id
                 LEFT JOIN match_logs ml ON ml.match_id = m.id
+                LEFT JOIN match_replays mr ON mr.match_id = m.id
                 WHERE m.winner_id = ? OR m.loser_id = ?
                 ORDER BY m.timestamp DESC
                 LIMIT ?
@@ -1062,7 +1395,14 @@ class Database:
                     'timestamp': r['timestamp'],
                     'winner_name': r['winner_name'],
                     'loser_name': r['loser_name'],
-                    'logs': logs
+                    'logs': logs,
+                    # 战绩模式批：**原样给**，NULL 就是 None（老数据 = "不知道"）。
+                    # ⚠️ 绝不在这里兜底成 'casual' —— 那是把"不知道"伪装成"匹配"，
+                    #    正是教训 #21 说的形状。
+                    'mode': r['mode'],
+                    # 回放批：只有"这局有没有回放"这一个布尔（前端拿它决定
+                    # 「对局回放」按钮置灰还是可点）。**blob 一个字节都不在这里**。
+                    'has_replay': bool(r['has_replay']),
                 })
                 
             logger.debug(f"获取用户比赛历史: uid={uid}, 结果数量={len(history)}, limit={safe_limit}")
@@ -1365,6 +1705,71 @@ class Database:
             return False
         except Exception as e:
             logger.error(f"保存观战开关时发生未知错误: uid={uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+
+    def get_allow_replay(self, uid: str):
+        """读「允许保留我的对局回放」开关（对局回放批 §5）。
+
+        返回值有三种（与 `get_allow_spectate` 同形状）：
+
+        * `True`  —— 允许（含"从没动过开关"的新账号，默认 on）；
+        * `False` —— 明确关掉了，**或读库失败**；
+        * `None`  —— uid 为空 / 不是真账号（**不记录**这一局）。
+
+        ⚠️ **失败方向与观战相反**：观战读库失败按"允许"兜（默认值是 1，少个功能而已），
+           这里读库失败一律按 **False = 不记录**（fail-closed）—— 回放里有双方船位，
+           这一次的错误方向是"泄露隐私"而不是"少个功能"（契约 §5）。
+        ⚠️ **而且必须打日志报警**：吞掉就等于没有守卫（教训 #34）。
+        """
+        if not uid:
+            return None
+        try:
+            cursor = self.conn.cursor()
+            row = cursor.execute(
+                'SELECT %s AS flag FROM user_profile WHERE user_id = ?'
+                % _ALLOW_REPLAY_COLUMN, (uid,)).fetchone()
+            cursor.close()
+        except sqlite3.Error as e:
+            logger.error(f"读取回放开关失败 → **按不记录处理**（fail-closed）: uid={uid}, 错误: {e}")
+            return False
+        except Exception as e:      # noqa: BLE001
+            logger.error(f"读取回放开关时发生未知错误 → **按不记录处理**（fail-closed）: "
+                         f"uid={uid}, 错误: {e}")
+            return False
+        if not row:
+            # 没有名片行 = 从没动过开关 → 用默认值（不写库，与 get_allow_spectate 同规矩）
+            return bool(ALLOW_REPLAY_DEFAULT)
+        flag = row['flag']
+        if flag is None:
+            return bool(ALLOW_REPLAY_DEFAULT)
+        return bool(int(flag))
+
+    def set_allow_replay(self, uid: str, on) -> bool:
+        """写「允许保留我的对局回放」开关（**只动这一列**，与 `set_allow_spectate` 同一条路）。"""
+        if not uid:
+            logger.warning("尝试保存回放开关但未提供用户ID")
+            return False
+        flag = 1 if on in (1, True, '1', 'true', 'True', 'on') else 0
+        try:
+            with self._lock:
+                self.cursor.execute(
+                    'INSERT INTO user_profile (user_id, %s, updated_at) '
+                    'VALUES (?, ?, ?) '
+                    'ON CONFLICT(user_id) DO UPDATE SET '
+                    '%s = excluded.%s, updated_at = excluded.updated_at'
+                    % (_ALLOW_REPLAY_COLUMN, _ALLOW_REPLAY_COLUMN, _ALLOW_REPLAY_COLUMN),
+                    (uid, flag, int(time.time())))
+                self.conn.commit()
+            return True
+        except sqlite3.Error as e:
+            logger.error(f"保存回放开关失败: uid={uid}, 错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+        except Exception as e:
+            logger.error(f"保存回放开关时发生未知错误: uid={uid}, 错误: {e}")
             if self.conn:
                 self.conn.rollback()
             return False
@@ -3548,9 +3953,18 @@ def create_user(username: str, password_hash: str):
     return db.create_user(username, password_hash)
 
 
-def record_match(winner_id: str, loser_id: str, logs=None, count_stats=True):
-    """记录比赛（count_stats=False 时只写历史、不计入胜场/连胜）"""
-    return db.record_match(winner_id, loser_id, logs, count_stats)
+def record_match(winner_id: str, loser_id: str, logs=None, count_stats=True,
+                 replay=None, replay_participants=None, mode=None):
+    """记录比赛（count_stats=False 时只写历史、不计入胜场/连胜）
+
+    `replay` / `replay_participants`（对局回放批）：回放与对局行**同一个事务**写入，
+    `match_id` 由 `record_match` 内部生成（契约 §4）。
+    `mode`（战绩模式批）：`'ranked'` / `'casual'` / `'ai'` / `'custom'`，可空
+    （老数据留 NULL，**不兜底**）。
+    """
+    return db.record_match(winner_id, loser_id, logs, count_stats,
+                           replay=replay, replay_participants=replay_participants,
+                           mode=mode)
 
 
 def record_card_use(card_name: str, count: int = 1):
@@ -3688,6 +4102,35 @@ def get_allow_spectate(uid: str):
 def set_allow_spectate(uid: str, on):
     """写观战开关（单独一列，不走名片整行写入）"""
     return db.set_allow_spectate(uid, on)
+
+
+# ---- 对局回放批：允许保留我的对局回放 ----
+def get_allow_replay(uid: str):
+    """读回放开关：True / False / **None（不是真账号）**。
+
+    ⚠️ 读库失败**不是** None 而是 **False**（fail-closed，不记录这一局）并打日志。
+    """
+    return db.get_allow_replay(uid)
+
+
+def set_allow_replay(uid: str, on):
+    """写回放开关（单独一列，不走名片整行写入）"""
+    return db.set_allow_replay(uid, on)
+
+
+def get_match_replay(match_id: str):
+    """读**一条**回放的元信息 + 原始 blob（None = 没有；**不缓存、只读一条**）"""
+    return db.get_match_replay(match_id)
+
+
+def delete_match_replay(match_id: str) -> bool:
+    """删掉一条坏回放（解析失败时读接口顺手清掉）"""
+    return db.delete_match_replay(match_id)
+
+
+def sweep_match_replays(reset_orphans=True):
+    """回放清扫（保留 30 局 + 孤儿）—— **唯一实现**，测试与运维入口"""
+    return db.sweep_match_replays(reset_orphans=reset_orphans)
 
 
 # ---- 特权（外观全解锁 / 彩虹名字）----

@@ -803,6 +803,169 @@ def save_spectate_setting():
     return jsonify({'success': True, 'allow_spectate': on})
 
 
+# ---------------------------------------------------------------------------
+# 对局回放（2026-09-23 回放批 §5/§6）
+# ---------------------------------------------------------------------------
+# 三条铁律（契约 §5「绝不做」，三条都写成源码级守卫，见 tests/test_replay_guards.py）：
+#   · 本段代码**不发任何 socket 事件**（`emit(` / `socketio` 一个字都不许出现）——
+#     回放数据里有双方船位，一旦 emit 进对局房间就是灾难级泄露；
+#   · 回放相关的键**永不进 `SPECTATE_EVENTS`**；
+#   · `_build_spectate_snapshot` **永不读回放表**。
+#
+# 读权限（契约 §5）：能看你战绩的人都能看 ——
+#   · 请求者是该局参与者（`winner_user_id` / `loser_user_id` == 自己），**或**
+#   · 该局某个真实参与者 `show_history = 1`（实测默认 0 = 不公开 ⇒ 默认只有双方能看到）。
+# **假设 A1**：回放接口**要求登录**（游客 401）。观战已是"只限登录用户"，
+#   回放比观战敏感得多（它泄露船位），不给匿名抓取留口子。
+import replay as replay_module      # 纯模块：记录器 + 打包（不 import server，见其 docstring）
+
+
+def _replay_participant_ids(row):
+    """一条回放行里的两个真实参与者 uid（可能为空）。"""
+    return [u for u in (row.get('winner_user_id'), row.get('loser_user_id')) if u]
+
+
+def _replay_show_history(uid):
+    """该账号有没有公开战绩历史（`user_profile.show_history`，实测默认 0 = 不公开）。
+
+    读不到（uid 空 / 库异常）一律按 **0 = 不公开** —— 这个判据是**放行**用的，
+    失败方向必须朝"拒"（隐私开关方向一律朝安全那一侧兜，教训 #21）。
+    """
+    if not uid:
+        return 0
+    try:
+        extra = db.get_user_profile_extra(uid) or {}
+    except Exception as e:              # noqa: BLE001
+        print(f'[replay] 读取 show_history 失败（按不公开处理）: uid={uid} -> {e}')
+        return 0
+    try:
+        return int(extra.get('show_history') or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _replay_read_allowed(match_id, viewer_uid):
+    """这条回放该不该给 `viewer_uid` 看。返回 `(ok, row, you_are, reason)`。
+
+    `ok=False` 时 `reason` 是给玩家看的一句话（**失败必须带原因**，教训 #32）。
+    """
+    row = db.get_match_replay(match_id)
+    if not row:
+        return False, None, None, '这局没有可回放的行动'
+    mine = replay_module.you_are(None, row, viewer_uid)
+    if mine:
+        return True, row, mine, ''
+    # 非参与者：只要任一真实参与者公开了战绩，就跟着能看（契约 §5）
+    for uid in _replay_participant_ids(row):
+        if _replay_show_history(uid):
+            return True, row, None, ''
+    return False, row, None, '你没有权限查看这一局的回放'
+
+
+@app.route('/api/replay/setting', methods=['GET'])
+def get_replay_setting():
+    """读「允许保留我的对局回放」。状态**只来自服务端**（契约 §5）。"""
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    value = db.get_allow_replay(uid)
+    if value is None:
+        # 读不到 → 如实说"不知道"，**绝不许**谎报成"允许"（教训 #21）
+        return jsonify({'success': False, 'error': '暂时无法读取设置，请稍后重试'}), 503
+    return jsonify({'success': True, 'allow_replay': bool(value)})
+
+
+@app.route('/api/replay/setting', methods=['POST'])
+def save_replay_setting():
+    """写「允许保留我的对局回放」。请求体：`{'allow_replay': true|false}`。
+
+    ⚠️ 字段缺失/类型不对一律 **400 带原因**（教训 #32：不许静默当默认值处理）。
+    ⚠️ 与观战开关**同语义**：任一方关掉 ⇒ **这一局就不留回放**（契约 §5）——
+       判定在 `server._replay_allowed_for_match`，本接口只负责存这一个布尔。
+    """
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not db.get_user(uid=uid):
+        return jsonify({'success': False, 'error': '账号不存在'}), 401
+
+    payload = request.get_json(silent=True)
+    if payload is None:
+        payload = request.form.to_dict() if request.form else None
+    if not isinstance(payload, dict) or 'allow_replay' not in payload:
+        return jsonify({'success': False, 'error': '请求体必须带 allow_replay'}), 400
+
+    raw = payload.get('allow_replay')
+    if isinstance(raw, bool):
+        on = raw
+    elif isinstance(raw, (int, str)) and str(raw) in ('0', '1'):
+        on = str(raw) == '1'
+    elif isinstance(raw, str) and raw.strip().lower() in ('true', 'false', 'on', 'off'):
+        on = raw.strip().lower() in ('true', 'on')
+    else:
+        return jsonify({'success': False, 'error': 'allow_replay 必须是布尔值'}), 400
+
+    if not db.set_allow_replay(uid, on):
+        return jsonify({'success': False, 'error': '保存失败，请稍后重试'}), 500
+    return jsonify({'success': True, 'allow_replay': on})
+
+
+@app.route('/api/replay/<match_id>', methods=['GET'])
+def get_match_replay(match_id):
+    """读一条回放：`{success, replay, you_are}`（`you_are` ∈ `p1`/`p2`/None）。
+
+    ⚠️ **绝不下发任何 user_id**（契约 §6）：`you_are` 由服务端算好，
+       它就是"你是两块棋盘里的哪一块"。
+    ⚠️ 读的时候**只读一条**、**有 512 KB 硬上限**、**解析失败明确报错 + 打日志 +
+       顺手删掉这条坏回放**（契约 §1/§6：绝不静默返回空）。
+    """
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'success': False, 'error': '未登录'}), 401          # 假设 A1
+
+    allowed, row, you_are, reason = _replay_read_allowed(match_id, uid)
+    if row is None:
+        return jsonify({'success': False, 'error': reason}), 404
+    if not allowed:
+        return jsonify({'success': False, 'error': reason}), 403
+
+    # ① 体积上限：**先看 `bytes` 列**（不必把 blob 读进内存再判）
+    try:
+        size = int(row.get('bytes') or 0)
+    except (TypeError, ValueError):
+        size = 0
+    if size > replay_module.MAX_REPLAY_BYTES:
+        print(f'[replay] 回放 blob 超限，已拒收: match_id={match_id}, bytes={size}')
+        return jsonify({'success': False,
+                        'error': '这条回放数据异常（体积超限），已拒绝加载'}), 500
+
+    blob = row.get('replay') or ''
+    if len(blob.encode('utf-8')) > replay_module.MAX_REPLAY_BYTES:
+        print(f'[replay] 回放 blob 超限（实际字节），已拒收: match_id={match_id}')
+        return jsonify({'success': False,
+                        'error': '这条回放数据异常（体积超限），已拒绝加载'}), 500
+
+    # ② 解析：失败**明确报错 + 打日志 + 删掉这条坏回放**（教训 #32：不许静默）
+    try:
+        payload = json.loads(blob)
+    except Exception as e:              # noqa: BLE001
+        print(f'[replay] 回放解析失败，已删除这条坏回放: match_id={match_id} -> {e}')
+        db.delete_match_replay(match_id)
+        return jsonify({'success': False, 'error': '这条回放已损坏，无法回放'}), 500
+    if not isinstance(payload, dict):
+        print(f'[replay] 回放不是 JSON 对象，已删除: match_id={match_id}')
+        db.delete_match_replay(match_id)
+        return jsonify({'success': False, 'error': '这条回放已损坏，无法回放'}), 500
+
+    # ③ 版本：对不上 ⇒ 明确报错（**不删**：将来可能有人读得懂旧版本）
+    if int(payload.get('version') or 0) != replay_module.REPLAY_VERSION:
+        print(f'[replay] 回放版本不认识: match_id={match_id}, '
+              f'version={payload.get("version")!r}')
+        return jsonify({'success': False, 'error': '这条回放的格式版本不支持'}), 409
+
+    return jsonify({'success': True, 'replay': payload, 'you_are': you_are})
+
+
 # 修改签名
 @app.route('/api/profile/signature', methods=['POST'])
 def update_signature():

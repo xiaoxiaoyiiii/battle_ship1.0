@@ -135,14 +135,20 @@ def record_card_use(card, count=1, user_id=None):
 def _live_room_id(room):
     """`emit(..., room=...)` 里传的到底是不是一个**活着的对局房间号**。
 
-    ⚠️ 这不是洁癖，是观战通道的门禁。全文件有 5 处把 `room=player.sid` 用错
-       （`572` / `1697` / `1822` / `3771` / `4072`），其中 `hand_updated` 发的是
-       **完整手牌**。若只看"room 不是 None 就转发观战"，就会在 `spectate:<sid>`
-       这个幻影通道里躺一份手牌 —— 本批禁止动那 5 个调用点（不在范围内），
-       所以门禁必须写在这里。顺带它也让 `room=LOBBY_ROOM`（`1184`）这类非对局
-       通道被正确排除。
+    ⚠️ 这不是洁癖，是观战通道的门禁。全文件曾有 9 处把 `room=<玩家 sid>` 用错
+       （3 处 `hand_updated` / `join_room` 两条失败提示 / `chat_message` 的 fallback /
+       `achievements_unlocked` / `xp_gained` / `rank_changed`），其中 `hand_updated`
+       发的是**完整手牌**。在 `emit` 眼里它们是**房间广播**，于是这层门禁把它们
+       **悄悄**挡在观战腿之外 —— 症状被盖住了，写法本身还是错的。
+       2026-09-23 那 9 处已全部改成 `to=`（单发），并有**源码级穷举守卫**
+       `tests/test_emit_room_targets.py` 禁止 `room=` 再传 sid。
+       ⚠️ **这层门禁不许再当"单发的实现方式"**：发给某一个人一律写 `to=`。
 
-    房间不在 `room_manager.rooms` 里 → 不是对局房间 → 不发观战。
+    当前会走到这里、且**不是**对局房间号的只有观战通道名这一类
+      （`emit('spectate_ended', ..., room=spectate.spectate_room_id(...))`）：
+      它不该被再复制回观战通道，返回 None 就是"不发观战副本"。
+
+    房间不在 `room_manager.rooms` 里 → 不是对局房间 → 不发观战副本，**并留下告警**。
 
     ⚠️ 这里**不写 `try/except`**：`room_manager` 是 799 行的模块级单例，
        `emit` 只可能在它之后被调用，所以"取不到它"这种情形不存在；
@@ -150,7 +156,14 @@ def _live_room_id(room):
     """
     if not room or not isinstance(room, str):
         return None
+    if spectate.is_spectate_room(room):
+        return None                      # 观战通道名：正常路径，不告警
     if room_manager.get_room(room) is None:
+        # ★ **绝不静默**：走到这里 = caller 拿一个"不是活着的对局房间"的值当房间号。
+        #   挡掉观战腿是对的（那确实不是对局房间），但必须留下痕迹 —— 静默跳过
+        #   正是上面那 9 处错用当初能一直活着的原因（教训 #32/#34）。
+        print(f'[emit] room={room!r} 不是活着的对局房间 → 不发观战副本；'
+              f'若本意是"只发给某一个人"，请改用 to=')
         return None
     return room
 
@@ -181,6 +194,15 @@ def _emit_to_spectators(event, payload, src_room_id):
 
 
 def emit(event, data, to=None, room: str | None = None):
+    """统一发事件出口。
+
+    `to=` = 只发给**一条连接**（私人消息，不复制观战副本）；
+    `room=` = 发给一个 **socket.io 房间**（对局房间号才走观战第三条腿）。
+
+    ⚠️ **别把玩家的 sid 写进 `room=`**：那是"发给某一个人"，要写 `to=`。
+       （全文件曾有 9 处这么写，2026-09-23 已修；源码级穷举守卫见
+       `tests/test_emit_room_targets.py`。）
+    """
     json_data = json.dumps(data, default=lambda o: o.__dict__)
     payload = json.loads(json_data)
     try:
@@ -193,8 +215,9 @@ def emit(event, data, to=None, room: str | None = None):
     #    后台任务/定时器发出的对局广播（超时交回合、连锁超时、掉线判负…）
     #    就会在观战端整段消失，观众看到的是"卡住了"。
     # 也**只对广播类**生效：`to=<sid>` 的单发是私人消息，不是"对局动作"。
-    # ⚠️ 再叠一道"房间是真对局房间"的门禁（见 `_live_room_id`），
-    #    否则那 5 处 `room=player.sid` 会把观战 payload 发到幻影通道。
+    # ⚠️ 再叠一道"房间是真对局房间"的门禁（见 `_live_room_id`）—— 它**不是**
+    #    "单发的实现方式"：单发一律写 `to=`，`room=` 里不许出现玩家的 sid
+    #    （源码级穷举守卫见 `tests/test_emit_room_targets.py`）。
     room_id = _live_room_id(room) if (to is None and room) else None
     if room_id is not None:
         _emit_to_spectators(event, payload, room_id)
@@ -989,10 +1012,11 @@ class GameRoom:
         # 将卡牌加入手牌
         self.players[player_id].magic_hand.append(card)
         # 通知客户端手牌更新
+        # ⚠️ `to=` 单发（**不是** `room=`）：手牌只给本人，`room=` 会被当成房间广播。
         player = self.players[player_id]
         emit('hand_updated', {
             'hand': player.magic_hand
-        }, room=player.sid)
+        }, to=player.sid)
 
         return card  # 返回抽到的卡牌
 
@@ -2121,10 +2145,11 @@ def test_add_all_magic_cards(data):
     room.players[player_id].magic_hand = magic_cards.copy()
 
     # 通知客户端手牌更新
+    # ⚠️ `to=` 单发（**不是** `room=`）：手牌只给本人，`room=` 会被当成房间广播。
     player = room.players[player_id]
     emit('hand_updated', {
         'hand': player.magic_hand
-    }, room=player.sid)
+    }, to=player.sid)
 
     return {'status': 'success', 'message': f'已添加 {len(magic_cards)} 张魔法卡到手牌'}
 
@@ -2246,10 +2271,11 @@ def test_add_specific_magic_card(data):
     room.players[player_id].magic_hand.append(card)
 
     # 通知客户端手牌更新
+    # ⚠️ `to=` 单发（**不是** `room=`）：手牌只给本人，`room=` 会被当成房间广播。
     player = room.players[player_id]
     emit('hand_updated', {
         'hand': player.magic_hand
-    }, room=player.sid)
+    }, to=player.sid)
 
     return {'status': 'success', 'message': f'已添加魔法卡 {card_name} 到手牌'}
 
@@ -2666,7 +2692,7 @@ def handle_join_room(data):
 
     room = room_manager.get_room(room_id)
     if not room:
-        emit('error', {'message': '房间不存在'}, room=request.sid)
+        emit('error', {'message': '房间不存在'}, to=request.sid)
         return {'status': 'error', 'message': '房间不存在'}
 
     # 进新房之前先把自己**独自占着**的其它等待房清掉（见 `_drop_my_other_waiting_rooms`）：
@@ -2692,7 +2718,7 @@ def handle_join_room(data):
         return {'status': 'success', 'player_id': player_id, 'seat': 'reused'}
 
     if len(room.players) >= 2:
-        emit('error', {'message': '房间已满'}, room=request.sid)
+        emit('error', {'message': '房间已满'}, to=request.sid)
         return {'status': 'error', 'message': '房间已满'}
 
     # 添加玩家到房间（key 为 user_id 或 sid）
@@ -3141,8 +3167,9 @@ def handle_chat_message(data):
         #       则永远是 undefined → 全部被渲染成"对方"。
         emit('chat_message', {'username': username, 'message': msg}, room=room.id)
     else:
-        # fallback: 仅回发给自己
-        emit('chat_message', {'username': username, 'message': msg, 'isMe': True}, room=request.sid)
+        # fallback: 仅回发给自己（`to=` 单发；`room=<sid>` 会被当成房间广播）
+        emit('chat_message', {'username': username, 'message': msg, 'isMe': True},
+             to=request.sid)
 
 
 # ---------------------------------------------------------------------------
@@ -4456,7 +4483,7 @@ def _grant_match_achievements(room, candidates):
             items = [d for d in (achievements.details(bid) for bid in granted) if d]
             sid = getattr(player, 'sid', None)
             if sid and items:
-                emit('achievements_unlocked', {'items': items, 'count': len(items)}, room=sid)
+                emit('achievements_unlocked', {'items': items, 'count': len(items)}, to=sid)
         except Exception:
             # 播报失败不影响已经写进库的解锁
             pass
@@ -4630,7 +4657,7 @@ def _grant_match_xp(room, rows):
                 'before': leveling.level_view(before, cap),
                 'after': leveling.level_view(after, cap),
                 'segments': leveling.segments(before, after, cap),
-            }, room=sid)
+            }, to=sid)
         except Exception:
             # 发经验失败不许把结算搞崩（与徽章同一条规矩）
             continue
@@ -4752,12 +4779,17 @@ def _ranked_settlement_allowed(room, count_stats: bool) -> bool:
 
 
 def _emit_rank_events_now(events):
-    """把 `[(sid, payload), ...]` 逐个发给本人（只发本人那一份，对手不需要）。"""
+    """把 `[(sid, payload), ...]` 逐个发给本人（只发本人那一份，对手不需要）。
+
+    ⚠️ `to=` 单发（**不是** `room=<sid>`）：`room=` 在 `emit` 眼里是"房间广播"，
+    会被当成广播类去复制观战副本（虽然 `_live_room_id` 会把它挡掉，但那层门禁
+    不该被拿来实现"单发"，见 `_live_room_id` 的说明）。
+    """
     for sid, payload in (events or ()):
         if not sid:
             continue
         try:
-            emit('rank_changed', payload, room=sid)
+            emit('rank_changed', payload, to=sid)
         except Exception:
             # 发事件失败不许把已经落库的加减分搞崩（与徽章 / 经验同一条规矩）
             continue

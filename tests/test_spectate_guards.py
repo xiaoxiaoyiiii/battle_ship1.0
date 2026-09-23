@@ -773,8 +773,10 @@ def test_emit_never_forwards_private_events_to_spectators(emitters):
 def test_emit_does_not_open_a_phantom_spectate_channel_for_a_sid(emitters):
     """`room=<某个 sid>` 不是对局房间 → 不许建 `spectate:<sid>` 幻影通道。
 
-    全文件有 5 处把 `room=player.sid` 用错（其中 `hand_updated` 发的是完整手牌）。
-    本批不许动那些调用点，所以门禁写在 `_live_room_id` 里 —— 这条用例钉住它。
+    这条钉的是 `_live_room_id` 那层门禁本身。它当年是因为**9 处 `room=<玩家 sid>`**
+    的错用而写下的（那 9 处已经全部改成 `to=`，见 `tests/test_emit_room_targets.py`），
+    但门禁本身**保留**：观战腿只认"活着的对局房间号"这句话要有结构性的落点，
+    而且它现在不再静默（会把这种参数打出来）。
     """
     server.emit('hand_updated', {'hand': [{'name': '卧薪尝胆'}]}, room='some-browser-sid')
     assert _spectate_targets(_all_calls(emitters)) == [], \

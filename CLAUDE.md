@@ -3,7 +3,7 @@
 > 面向 AI 代理的索引。**先读这里，别一次读完 `server.py`（8500+ 行）/ `static/game.js`（9000+ 行）/ `static/style.css`（4800+ 行）—— 一律先 grep 定位再分段读。**
 > ⚠️ 行号每次提交都会漂移，**本文件里任何行号都只当线索，以 grep 结果为准**。
 > ⚠️ **本文件每次对话都会整份注入**，新增内容请控制在几十字级别 —— 长记录写进 `docs/`。
-> 最后更新：2026-09-23（连锁结算前留 1.2 秒展示停留；唯一开关 `CHAIN_DISPLAY_DELAY_SECONDS`）。
+> 最后更新：2026-09-23（`emit` 的 `room=<sid>` 9 处改成 `to=`；`_live_room_id` 不再静默）。
 
 ---
 
@@ -33,7 +33,7 @@ python -m pytest tests/ -q    # 基线见下
 - ⚠️ 本机临时目录 ACL 坏过，pytest 若在 setup 报 `PermissionError: Temp\pytest-of-Administrator`，
   先 `New-Item -ItemType Directory -Force .tmp\pytemp`，再
   `$env:TMP="$PWD\.tmp\pytemp"; $env:TEMP=$env:TMP; python -m pytest tests/ -q -p no:cacheprovider`。
-- **实测基线（2026-09-23）**：`2232 passed`；跑完约 31 秒。
+- **实测基线（2026-09-23）**：`2266 passed`；跑完约 35 秒。
   含无头对局驱动 `tools/headless_game.py`（约 250 局/秒，自带"击沉/被击沉/命中率/
   无伤获胜"四个量）、大师 AI 决策层 `ai_brain.py` 与大师接线层 `tests/test_ai_master.py` 的用例。
 
@@ -361,7 +361,8 @@ phase:                        preparation → battle → end
 `docs/SPECTATE_2026_09_22.md`（实时观战第 1 批：三处明文坐标事件 + emit 第三条腿 + 两条穷举守卫）｜
 `docs/SPECTATE_BATCH2_2026_09_22.md`（观战第 2 批：白名单快照 + 观众进出 + 观战开关 + `game_log` 真泄漏）｜
 `docs/SPECTATE_BATCH6_2026_09_23.md`（观战第 6 批：**棋盘方向对调的真根因 + E2E 读错字段的假断言** + 回光返照落到猜拳的判定）｜
-`docs/SPECTATE_BATCH7_2026_09_23.md`（观战第 7 批：**红了 5/8 的连锁断言判为「工具脆」** + 判据改成就地记帧 + 4 条 pytest 守卫）｜ `README.md`（用户向说明）
+`docs/SPECTATE_BATCH7_2026_09_23.md`（观战第 7 批：**红了 5/8 的连锁断言判为「工具脆」** + 判据改成就地记帧 + 4 条 pytest 守卫）｜
+`docs/EMIT_ROOM_TARGETS_2026_09_23.md`（**把 sid 当房间号的 9 处 `room=` 改成 `to=`** + 源码级穷举守卫 + `_live_room_id` 为何保留但不再静默）｜ `README.md`（用户向说明）
 
 > ⚠️ **部署前确认环境变量**：代码新增 `os.environ.get('XXX')` 时，服务器 systemd 必须同步配置 ——
 > 漏配会导致"服务能起来但带着错误默认值运行"（曾因漏配 `CORS_ORIGINS` 让线上所有操作卡十几秒）。

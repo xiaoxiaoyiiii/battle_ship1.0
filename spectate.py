@@ -461,11 +461,12 @@ CANONICALIZE = frozenset({'spectate_board'})
 #    往这里加事件之前先问一句"它的 payload 里有没有坐标 / 完整手牌 / 对方看不见的东西"。
 #
 # ⚠️ **在表里 ≠ 真的会发**：`emit` 的第三条腿只对**广播类**（`room=<对局房间号>`）
-#    生效。表里有几个事件实际是 `to=<sid>` 或 `room=<sid>` 发的（`chat_message`、
+#    生效。表里有几个事件实际是 `to=<sid>` 发的（`chat_message`、
 #    `opponent_disconnected`、`opponent_reconnected`、`achievements_unlocked`、
 #    `xp_gained`、`rank_changed`），它们**一个字节都到不了观战通道**：
-#      · `to=<sid>`          → 单发不复制（私人消息，不是对局动作）；
-#      · `room=<sid>`（误用）→ 被 `_live_room_id` 的门禁挡掉（sid 不是对局房间）。
+#      · `to=<sid>` → 单发不复制（私人消息，不是对局动作）；
+#      · `room=<sid>`（曾经的误用，2026-09-23 已全改成 `to=`）→ 会被 `_live_room_id`
+#        的门禁挡掉（sid 不是对局房间），但那层门禁**不是**用来实现单发的。
 #    留在表里是**穷举分类**的要求（每一处 emit 都必须表态），不是"观众能看到"的承诺。
 SPECTATE_EVENTS = {
     # —— 核心动作：开炮与它的结果 ——
@@ -539,7 +540,7 @@ SPECTATE_EVENTS = {
     'rank_changed': None,
     # —— 观战通道自己的一套（第 2 批）——
     # 这三个是**服务端直接发往 `spectate:<room_id>` 通道**的事件，不经 `emit` 的
-    # 第三条腿（第三条腿只认"对局房间号"，观战通道名会被 `_live_room_id` 挡掉，
+    # 第三条腿（第三条腿只认"对局房间号"；观战通道名会被 `_live_room_id` 挡掉，
     # 于是不会自我循环）。它们天然只对观众有意义：
     'spectate_sync': None,           # 中途加入的**一次性快照**（只发给该观众）
     'spectate_count_changed': None,  # 观战人数变化（**只含人数，不含名单**）

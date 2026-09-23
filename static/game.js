@@ -3204,6 +3204,15 @@ function replayCellOf(frame, side, x, y) {
     else if (cell.hit) base = '命中：这一格已经空了';
     else if (cell.miss) base = '落空：这一格打空了';
     else base = '海面：没有船，也没被打过';
+    // ★ 神威！致死：这一格**同时**是"战舰被就地打沉"与"这片区域被从棋盘上扣掉"
+    //   （`server.apply_magic_effect` 的 `神威！` 致死分支：区域内恰好 1 艘 ⇒
+    //   登记成沉没格 + 整片 3×3 进 `shenwei_holes`）。
+    //   作者拍板的口径：**格子按沉没画**（红叉），"这格被挖掉、暂时打不到"这条
+    //   信息**放进 title/无障碍文案**里 —— 不要在同一格上再叠一个洞的视觉标记
+    //   （两个标记叠在同一格上，玩家既读不出"沉了"也读不出"挖了"）。
+    if (cell.sunk && effect && effect.kind === 'hole') {
+        base += '（神威把这一格从棋盘上扣掉了，这一格的战舰不会再回来）';
+    }
     cell.label = effect ? (effect.label + '（' + base + '）') : base;
     return cell;
 }
@@ -3304,10 +3313,19 @@ function renderReplayBoard(board, frame, side) {
         //    `frozen-area` / `last-stand-candidate`。别在这里另起一套类名（教训 #1）。
         // ⚠️ 但它们放在**并列的分支**里：一格可能同时是"有船的护盾格"，
         //    所以不能写成上面那种 if/else 链。
-        if (item.cell.effect === 'shield') cls += ' shielded';
-        else if (item.cell.effect === 'hole') cls += ' shenwei-hole';
-        else if (item.cell.effect === 'frozen') cls += ' frozen-area';
-        else if (item.cell.effect === 'laststand') cls += ' last-stand-candidate';
+        // ★ 例外（2026-09-24）：**沉没格不叠效果类**。`神威！`致死那一格有两重身份
+        //   （战舰沉了 + 整片区域被扣掉），而 `.cell.shenwei-hole` 的
+        //   `background: repeating-linear-gradient(...) !important` 会**盖掉**红色沉没底
+        //   （`.cell.hit` 那份只是普通 background）⇒ 画出来是一片斜纹、不是红叉。
+        //   作者口径：格子按沉没画，"被挖掉"这条信息放 title/无障碍文案（见 `replayCellOf`）。
+        //   ⚠️ 这条判据只在**沉没**时短路，护盾 / 冻结 / 绝处逢生候选格照旧叠加
+        //      （那几种与"挨过炮"不冲突：`.cell.hit` 的底不会被它们的描边盖掉）。
+        if (!item.cell.sunk) {
+            if (item.cell.effect === 'shield') cls += ' shielded';
+            else if (item.cell.effect === 'hole') cls += ' shenwei-hole';
+            else if (item.cell.effect === 'frozen') cls += ' frozen-area';
+            else if (item.cell.effect === 'laststand') cls += ' last-stand-candidate';
+        }
         el.className = cls;
         el.dataset.x = String(item.x);
         el.dataset.y = String(item.y);

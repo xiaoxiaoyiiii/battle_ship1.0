@@ -251,10 +251,13 @@ def test_lanyu_recall_code_path_is_not_a_sacrifice(room):
             cur = parent.get(cur)
         hits.append(cur.name if cur is not None else '<module>')
     assert sorted(hits) == ['_do_demon_contract_sacrifice',
-                            'apply_magic_effect', 'apply_magic_effect'], (
-        '「记成沉没」只允许出现在**主动牺牲**的实现点（唯一实现点 1 处 + '
-        '`apply_magic_effect` 里 绝处逢生 / 钢筋铁骨 两处），'
-        '别的地方（临时船收回 / 神威除外 / 换位重摆）一律不许：%s' % sorted(hits))
+                            'apply_magic_effect', 'apply_magic_effect',
+                            'apply_magic_effect'], (
+        '「记成沉没」只允许出现在**主动牺牲 / 自牺牲**的实现点（唯一实现点 1 处 + '
+        '`apply_magic_effect` 里 绝处逢生 / 钢筋铁骨 / `神威！`致死 三处），'
+        '别的地方（临时船收回 / 神威**除外** / 换位重摆）一律不许：%s' % sorted(hits))
+    assert hits.count('apply_magic_effect') == 3, \
+        '`apply_magic_effect` 里应当**恰好三处**（绝处逢生 / 钢筋铁骨 / 神威致死）：%s' % hits
 
 
 # ===========================================================================

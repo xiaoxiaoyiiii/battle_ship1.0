@@ -12954,6 +12954,20 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
 
         # 卡面：仅当作用于对方棋盘且区域内恰好 1 艘船时，直接死亡
         if board != 'self' and len(excluded_ships) == 1:
+            # ★ 2026-09-24（回放批）：这一支是**致死**，不是"暂时除外"——
+            #   上面那句 `del target_player.ships[i]` 会让这一格**从船位时间线里消失**
+            #   （`replay._ship_cells` 只遍历 `player.ships`），而且它**不产生 attack 步**、
+            #   也没有任何"沉没"记录 ⇒ 回放里那格凭空消失（症状与主动牺牲一模一样）。
+            #   这里把它登记成沉没格，用**手上的这艘船**当数据源（绝不去 diff 快照猜）。
+            #   ⚠️ 与"暂时除外"那一支的差别是**有意的**：除外的船是棋盘上挖出来的洞、
+            #      下个大回合原样归还（`_restore_due_shenwei`），所以那一支**不登记**；
+            #      这一支在游戏里双方看到的是"被打沉"（下面 `_apply_ship_loss_linkage`
+            #      与 `_mark_ship_sunken` 就是沉没口径），回放必须跟着画成沉没。
+            #   ⚠️ 登记只改记录器状态、不推动它；本分支末尾那次 `refresh_ships` 才把
+            #      "船的位置 / 船数 / 待办全部落定之后"的局面记进时间线。
+            replay.note_ship_lost(room, target_id,
+                                  [{'x': p.x, 'y': p.y}
+                                   for p in excluded_ships[0].positions])
             _mark_ship_sunken(target_player, excluded_ships[0])
             _apply_ship_loss_linkage(room, caster_id, opponent_id, count=1)
             result['message'] = '目标区域内1艘战舰被击沉'
@@ -12977,6 +12991,24 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         elif caster.remaining_ships <= 0 and room.state != 'game_over':
             _finish_game(room, opponent_id, caster_id, '神威！清空己方棋盘')
             result['message'] += '，己方战舰全灭，判负'
+
+        # ★ 2026-09-24（回放批）：**船位/船数全部落定之后**再显式刷新一次回放的船位时间线。
+        #
+        # ⚠️ 先说清楚它**不是**这条修复能不能生效的前提（本批实测过）：真对局走
+        #    `use_magic_card` → `resolve_chain`，那里在 `apply_magic_effect` **之后**
+        #    调 `log_magic` ⇒ 追加下一步时比对快照，这一帧**顺带就被记下来了**
+        #    （打枪前 vs 打枪后：那一格由"活船"变成"沉没格"，行只多一条）。
+        #    所以刻意在这里留一枪，是给**不经过日志的顺序**兜底（`apply_magic_effect`
+        #    被直调时 —— 上一批踩过的正是这个形状："收尾不写任何日志 ⇒ 那一帧永远不变"）：
+        #      · 致死那一支的沉没格是**登记**出来的（上面 `note_ship_lost`），
+        #        而登记只改记录器状态、不推动它；
+        #      · 神威洞也是这一步才进 `game_effects` 的。
+        #    `refresh_ships` 幂等（`_record_snapshot` 自己比对，没变就不写），
+        #    所以这里随手调是安全的；**实测过它两处都不可省**：
+        #    去掉它 + 只喂第一步日志 ⇒ 时间线里那一格又变成"凭空消失"。
+        # ⚠️ 排在 `_finish_game` **之后**：终局会在同一步里再追加一条日志、再比对一次快照，
+        #    早刷新记下来的是"终局日志还没写"的中间态。
+        replay.refresh_ships(room)
 
     elif card.name == '冻结':
         # 冻结3*3区域内的船，使其无法攻击

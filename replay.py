@@ -339,22 +339,60 @@ def _record_at_current_step(room) -> None:
        时间线的 `step = k` 表示"第 k 步做完之后的局面"）。
        `len(steps) == 0` 表示这一步都还没被记下来（比如重放/直调内部函数），
        那时不记 —— 下一步追加时会按"变化了"补上，不会丢。
+
+    ★ **同一步只留一行**：`_append` 在追加第 k 步时已经记过一行（那一刻的中间态），
+      这里再记一次属于"同一步的第二次快照" —— 处理成**改写那一行**（而不是再追加
+      一条 `step` 相同的行）。两条 `step=k` 的行在增量语义下是**同一帧的两份说法**，
+      前端逐条叠加上去虽然"看着对"（后者盖前者），但任何按 step 去重的消费者都会算错。
+      实测（本批）：不给这一层，"神威！"致死那一帧会让时间线里出现
+      `[{step:0,…},{step:0,…}]` 这样两条同 step 的行。
     """
     st = _state(room)
     step = len(st.get('steps') or []) - 1
     if step < 0:
         return
     _record_snapshot(room, st, step)
+    _merge_same_step_ships_rows(st, step)
+
+
+def _merge_same_step_ships_rows(st, step) -> None:
+    """把船位时间线里**同一个 `step` 的多行合成一行**（保留最后一份状态）。
+
+    ⚠️ 为什么需要它：`_record_snapshot` 是"同一帧可以记很多次"的（`_append` 每追加一步
+       就记一次），而"船真的变了"这件事可能在**同一步里发生第二次**（复活类收尾、
+       `神威！` 致死 + 洞）。增量语义下这是**同一帧的两份说法**，前端逐条叠加虽然
+       "后者盖前者"看着对，但任何按 `step` 去重的消费者都会算错，白占体积。
+
+    判据只看"最后两行是不是同一步"，所以对"本来就没有重复"的时间线是**空操作**。
+    """
+    rows = st.get('ships')
+    if not isinstance(rows, list) or len(rows) < 2:
+        return
+    last, prev = rows[-1], rows[-2]
+    if not (isinstance(last, dict) and isinstance(prev, dict)):
+        return
+    if int(last.get('step', -1)) != step or int(prev.get('step', -1)) != step:
+        return
+    merged = dict(prev)
+    merged.update(last)          # 后记的那一份 = 更新后的状态（逐座位替换）
+    rows[-1] = merged
+    rows.pop(-2)
 
 
 def refresh_ships(room) -> None:
     """按**当前**局面刷新一次船位时间线（当前这一步）。**幂等**。
 
-    给"船位在**没有日志**的流程里变了"的那两处用（`handle_confirm_reinforcement`：
-    复活 / 神机妙算重新部署 / 绝处逢生的唯一一艘，这一整段都不写游戏日志）。
+    给"船位在**没有日志**的流程里变了"的那几处用（`handle_confirm_reinforcement`：
+    复活 / 神机妙算重新部署 / 绝处逢生的唯一一艘；`apply_magic_effect` 的 `神威！`：
+    致死格要登记成沉没、神威洞也要进效果时间线 —— 这一整段同样不写"船位变了"的日志）。
     纯状态没变时它什么都不记（`_record_snapshot` 自己比对），所以可以随手调用。
 
     ⚠️ 它**只记船位**（不记步骤、不 emit）—— 时间线是稀疏的，没变就不写。
+
+    ⚠️ **当前这一步已经有行时，这里是"改写那一行"而不是"再追加一行"**（见
+       `_record_at_current_step`）—— 否则时间线里会出现**两条 step 相同的行**：
+       前端 `replayFoldTimeline` 逐条叠加时后者会盖掉前者，看着也对，但它同时意味着
+       "两条 step=k 的行不相等"（同一帧两份快照），任何按 step 去重的实现都会出错。
     """
     if room is None:
         return

@@ -749,6 +749,140 @@ console.log('--- F. 主动牺牲的船格 = 红色叉叉（改前会凭空消失
     '★★ 反向腿④：复活之后的船重新画出来（⛴）', back && { text: back.text, cls: back.cls });
 }
 
+// ===========================================================================
+// G. `神威！`的两支：致死那一格 = 红叉；"暂时除外"那一支 = 洞、不是沉没
+// ===========================================================================
+// 作者拍板的口径（2026-09-24 批）：
+//   · **致死**（作用于对方棋盘、区域内恰好 1 艘 ⇒ 船被就地打沉）：那一格画成**红叉**，
+//     "这格被挖掉 / 暂时打不到"这条信息**放进 title / 无障碍文案**里，
+//     **不**在同一格上再叠一个洞的视觉标记（斜纹底会盖掉红色沉没底）；
+//   · **暂时除外**（区域内 2 艘以上 ⇒ 下个大回合原样归还）：那一格**消失**、
+//     一格都不许长成沉没；而整片 3×3 的**区域高亮照旧**（作者要的是"格子按沉没画"，
+//     不是要拆掉区域效果）。
+//
+// ⚠️ 这两份 payload 的形状是**后端 `replay.build()` 真产出的样子**（同批的
+//    `tests/test_replay_shenwei_replay.py` 逐字段断言了后端那一侧；这里断言前端那一侧）。
+console.log('--- G. `神威！`：致死格 = 红叉（带"扣掉"文案）+ 除外格 = 消失（洞照旧）---');
+{
+  const SHENWEI_AREA = { x1: 0, y1: 0, x2: 2, y2: 2 };
+  const withHole = (base) => Object.assign({}, NO_EFFECT, { shenwei_holes: [SHENWEI_AREA] });
+
+  // —— 致死：p2 的 (1,1) 是区域内唯一一艘，(5,5) 在区域外活着 ——
+  const killPayload = mkPayload({
+    steps: [
+      atk(0, 'p1', 3, 3, false, false),
+      { i: 1, kind: 'magic', actor: '甲', text: '甲 使用了【神威！】，目标区域内1艘战舰被击沉',
+        detail: { caster: 'p1', card: '神威！' } },
+    ],
+    ships: [
+      { step: 0, p1: [{ x: 4, y: 4, alive: true }],
+        p2: [{ x: 1, y: 1, alive: true }, { x: 5, y: 5, alive: true }] },
+      // 稀疏 + 增量：step 1 **只带 p2**（吃牌那一侧）
+      { step: 1, p2: [{ x: 5, y: 5, alive: true },
+                      { x: 1, y: 1, alive: false, sunk: true }] },
+    ],
+    effects: [
+      { step: 0, p1: NO_EFFECT },
+      { step: 1, p2: withHole() },
+    ],
+  });
+
+  const g0 = frameAt(killPayload, 0);
+  const pre = cellAt(g0.boards[1], 1, 1);
+  check(!!pre && pre.text === '⛴' && !pre.sunk,
+    '★★ 反向腿：神威**打之前**那一帧 (1,1) 是活着的 ⛴（不是"从头到尾都是沉船"的假绿）',
+    pre && { text: pre.text, cls: pre.cls });
+
+  const g1 = frameAt(killPayload, 1);
+  const dead = cellAt(g1.boards[1], 1, 1);
+  check(!!dead && dead.text === '✕',
+    '★★ 神威致死那一格画成 ✕（改前：整格凭空消失 —— 它被 `del ships[i]` 摘掉了）',
+    dead && { text: dead.text, cls: dead.cls });
+  check(!!dead && dead.sunk === true,
+    '★★ 致死格带 `sunk` 类（`replayCellOf` 判沉的唯一出口）', dead && dead.cls);
+  check(!!dead && dead.ship && dead.hit,
+    '★ 致死格同时是 `ship` + `hit`（与"打沉的格"同一种视觉）', dead && dead.cls);
+  check(!!dead && dead.hole === false,
+    '★★ 致死格**不**再叠洞的斜纹（`.cell.shenwei-hole` 的 !important 底色会盖掉红叉）',
+    dead && { cls: dead.cls, hole: dead.hole });
+  check(!!dead && dead.aria.indexOf('扣掉了，这一格的战舰不会再回来') >= 0,
+    '★★ "这格被挖掉 / 暂时打不到"这条信息在**无障碍文案**里（作者口径：不放视觉标记）；'
+    + '文案必须点名"不会再回来"，否则它与"区里其它洞"是同一句、判据分不开',
+    dead && { aria: dead.aria, title: dead.title });
+  check(!!dead && dead.title.indexOf('击沉') >= 0,
+    '★ 致死格的 title 里仍然写明"击沉"（读屏/悬停拿到的是同一条）', dead && dead.title);
+
+  // 区域高亮照旧：同一片 3×3 里**其它格**仍然是洞
+  const otherHole = cellAt(g1.boards[1], 0, 0);
+  check(!!otherHole && otherHole.hole === true,
+    '★★ 同一片区域的**其它格**照旧画成洞（作者要的是格子按沉没画，不是拆掉区域效果）',
+    otherHole && { text: otherHole.text, cls: otherHole.cls });
+  // ★ 反向腿：那片区域里"没沉船"的洞**不许**带"战舰不会再回来"那句（它是致死格独有的）
+  check(!!otherHole && otherHole.aria.indexOf('这一格的战舰不会再回来') < 0,
+    '★★ 反向腿：区里**其它洞**不许带致死格那句文案（否则判据分不开、等于没判据）',
+    otherHole && otherHole.aria);
+  // 区域外的活船不受影响
+  const survivor = cellAt(g1.boards[1], 5, 5);
+  check(!!survivor && survivor.text === '⛴' && !survivor.sunk,
+    '★ 区域外没被碰到的船照旧画成 ⛴（不许被一起标成沉没）',
+    survivor && { text: survivor.text, cls: survivor.cls });
+  // 另一侧一格都不许受影响
+  const caster = cellAt(g1.boards[0], 4, 4);
+  check(!!caster && caster.text === '⛴' && !caster.sunk,
+    '★ 神威只影响被选中的那块棋盘：施法者那一侧照旧',
+    caster && { text: caster.text, cls: caster.cls });
+}
+{
+  // —— 暂时除外：区域内 2 艘被摘掉（下一大回合原样归还）⇒ 那一格必须消失 ——
+  const excludePayload = mkPayload({
+    steps: [
+      atk(0, 'p1', 3, 3, false, false),
+      { i: 1, kind: 'magic', actor: '甲',
+        text: '甲 使用了【神威！】，目标区域内2艘战舰被暂时除外',
+        detail: { caster: 'p1', card: '神威！' } },
+    ],
+    ships: [
+      { step: 0, p1: [{ x: 4, y: 4, alive: true }],
+        p2: [{ x: 0, y: 0, alive: true }, { x: 2, y: 2, alive: true },
+             { x: 5, y: 5, alive: true }] },
+      { step: 1, p2: [{ x: 5, y: 5, alive: true }] },     // 除外的两艘**不在**时间线里
+    ],
+    effects: [
+      { step: 0, p1: NO_EFFECT },
+      { step: 1, p2: Object.assign({}, NO_EFFECT, {
+        shenwei_holes: [{ x1: 0, y1: 0, x2: 2, y2: 2 }] }) },
+    ],
+  });
+
+  const e1 = frameAt(excludePayload, 1);
+  const goneA = cellAt(e1.boards[1], 0, 0);
+  const goneB = cellAt(e1.boards[1], 2, 2);
+  check(!!goneA && goneA.text === '' && goneA.sunk === false && goneA.ship === false,
+    '★★ 反向腿：暂时除外的船**必须消失**（卡面：下个大回合原样归还 ⇒ 不是沉没）',
+    goneA && { text: goneA.text, cls: goneA.cls });
+  check(!!goneB && goneB.text === '' && goneB.sunk === false && goneB.ship === false,
+    '★★ 反向腿：第二艘同样不许长出沉没标记（改错 = 幻影沉船）',
+    goneB && { text: goneB.text, cls: goneB.cls });
+  check(!!goneA && goneA.hole === true && !!goneB && goneB.hole === true,
+    '★★ 但整片 3×3 的**区域高亮照旧**（洞还在，只是格子里的船没了）',
+    { a: goneA && goneA.cls, b: goneB && goneB.cls });
+  const outside = cellAt(e1.boards[1], 5, 5);
+  check(!!outside && outside.text === '⛴' && outside.sunk === false,
+    '★ 区域外的船照旧活着（除外只影响区域内）',
+    outside && { text: outside.text, cls: outside.cls });
+  // 反向腿：换成"朴素修法"的前端等价物（把这两格也塞成 sunk）就必须红
+  const naive = JSON.parse(JSON.stringify(excludePayload));
+  naive.ships[1].p2 = [{ x: 5, y: 5, alive: true },
+                       { x: 0, y: 0, alive: false, sunk: true },
+                       { x: 2, y: 2, alive: false, sunk: true }];
+  const n1 = frameAt(naive, 1);
+  const naiveCell = cellAt(n1.boards[1], 0, 0);
+  check(!(naiveCell && naiveCell.text === '' && naiveCell.sunk === false),
+    '★★ 判据自检：把除外格当成沉没（朴素修法）时，上面那条判据**真的会红**（不是恒绿）',
+    naiveCell && { text: naiveCell.text, cls: naiveCell.cls });
+}
+
+
 // ---------------------------------------------------------------------------
 // 可选：把**这一份 payload 的某一帧**渲染成一张静态 HTML（人工看一眼 / 截图留证）。
 // `node tools/dom_replay_frame_check.mjs --dump out.html 3` —— 不传就一个文件都不写。

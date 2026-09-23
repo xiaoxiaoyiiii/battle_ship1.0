@@ -586,6 +586,187 @@ def test_master_card_readiness_covers_every_enabled_card(master_room):
 
 
 # ---------------------------------------------------------------------------
+# ⑤ 池外卡的**逐张表态**：每一张都必须能在池外被点到名
+#
+# 为什么要有这一类用例：`_MASTER_ENABLED_CARDS` 旁边的注释里写了 11 张
+# "为什么不开"的理由，但那是**注释** —— 没有用例守着，下一批有人凭
+# "价值表分数高"把它加回去时不会有任何东西变红。这批实测把其中三张
+# （平等条约 / 克苏鲁之眼 / 其余 9 张）逐张量过，结论全部记在
+# `docs/MASTER_AI_2026_09_21.md` §12.6。下面几条守的就是"别凭感觉改回去"。
+# ---------------------------------------------------------------------------
+
+def test_pingdeng_tiaoyue_stays_out_of_the_master_pool(master_room):
+    """★ 平等条约**不许**回到大师卡池 —— 它是实测出来的负收益卡。
+
+    2026-09-23：5000 局 × 3 个独立种子（同一批局面，只改池子）：
+
+        线上池（含它）   69.4% [68.1,70.6]  70.9% [69.6,72.2]  68.9% [67.6,70.2]
+        去掉它           70.9% [69.6,72.2]  72.1% [70.9,73.3]  70.4% [69.1,71.6]
+
+    三个半样本**全部 +1.4~1.5 且区间不重叠**。原因是它的生效条件是
+    「**魔法卡**造成的船数变化」，而困难 AI 每局总共只出 1.16 张牌、
+    且那 9 张安全卡里一张都不会改船数 —— 打出去实际无事发生，
+    只是把一次出牌机会花掉了（出牌机会很稀缺：71% 的决策一张可打的牌都没有）。
+
+    ⚠️ 这条断言的是**卡池**，不是"卡牌本身"：`apply_magic_effect` 的
+       平等条约分支、快照台账、`_master_card_readiness` 的闸门**全部原样保留**，
+       真人对局里这张牌照常能用。要把它加回大师卡池，必须先在
+       "对手真的会改船数"的场合重新量一次并更新这里。
+    """
+    assert '平等条约' not in server._MASTER_ENABLED_CARDS, (
+        '平等条约被加回大师卡池了 —— 它是实测 -1.5 个百分点的负收益卡，'
+        '见 server.py 里 _MASTER_ENABLED_CARDS 旁边的实测表')
+    # 通道必须还在（别把"AI 不打"误删成"这张卡没了"）：闸门仍要认这张卡。
+    # 用**源码级**断言而不是调 `_master_card_readiness`：后者要房间里有
+    # `game_effects['last_ship_change']` 快照才判得成，在本夹具里恒返回 None
+    # —— 拿它断言会变成"断言恒真"，正是本项目最忌讳的假绿。
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            'server.py'), encoding='utf-8').read()
+    assert "if name == '平等条约':" in src, (
+        '平等条约的试算闸门被删了 —— 那是它"此刻能不能打"的判据，'
+        '不该跟着卡池一起删（真人对局里这张卡照常能用）')
+    assert "elif card.name == '平等条约':" in src, (
+        '平等条约的结算分支被删了 —— 卡池开关不该动卡牌实现')
+
+
+def test_the_other_out_of_pool_cards_are_all_still_out():
+    """其余 10 张池外卡逐张表态（实测无收益 / 有明确功能缺口），别凭感觉开回来。
+
+    2026-09-23 逐张加回量过（`tools/gap_analysis.py --section outpool`，
+    3000 局同一批局面）：克苏鲁之眼 +0.0、仁王之盾 +0.0、命运骰子 +0.3、
+    绝处逢生 −1.3、神之宣告 −1.6、禁忌果实 −2.0、伊甸园 −2.0、
+    恶魔契约 −2.7、教皇旨意 **−11.6 且 467/3000 局卡死**。
+    克苏鲁之眼的 +0.0 还用独立实验复算过（`tools/experiment_kraken_eye.py`，
+    补上"自己那一格"之后 5000 局 × 3 种子仍是无差别）。
+
+    ⚠️ 这张表是"**别开回去**"的依据，不是"该开哪些"的清单 ——
+       每一张旁边都写了具体缺口（会等施法者本人点选 / 会把回合卡死 /
+       对自己净亏），要开必须先把那个缺口补上再量。
+    """
+    should_stay_out = {
+        '克苏鲁之眼',    # 要等对手回答，收益到账时回合已交出 —— 实测无差别
+        '神之宣告',      # 对自己净亏（死 2 艘换对方 1 艘）
+        '恶魔契约',      # 双方绑定，只会加大自己的损失；还给对方开交互
+        '教皇旨意',      # AI 没有"弃卡换攻击"，打出去 = 把自己回合清零（实测卡死 467 局）
+        '禁忌果实',      # 封掉双方魔法 = 自废武功
+        '伊甸园',        # 实测否掉
+        '命运骰子',      # 摇到 3 点开 pending_dice_discard，AI 侧没有消费点
+        '绝处逢生',      # 实测否掉
+        '仁王之盾',      # 实测无差别
+        '失灵！',        # 只在连锁里响应，不做主动出牌
+        'Freezing！',    # 只在结束阶段 + 本方先手 + 本回合未造成伤害时才成立
+    }
+    leaked = sorted(should_stay_out & set(server._MASTER_ENABLED_CARDS))
+    assert not leaked, (
+        f'这些卡被加回大师卡池了：{leaked}。它们每一张要么实测负收益、'
+        f'要么有明确的功能缺口（见 server.py _MASTER_ENABLED_CARDS 旁边的说明）')
+
+
+def test_jixian_zengyuan_is_only_played_when_behind(master_room):
+    """★ `极限增援` 只在**自己船少**时才许打 —— 这个判据值 3~4 个百分点。
+
+    卡面结算（`server.py` 的 `reinforcement_check` 分支）：两个大回合后
+    **船数少的一方直接获胜**。所以这张牌的符号由"我此刻是不是船少的那一方"决定：
+
+      · 我落后 → 基本等于一张必赢牌；
+      · 我持平 → 结算时平局、卡被作废，白烧一次出牌机会；
+      · 我领先 → **等于给对手发一张必赢牌**。
+
+    实测（5000 局 × 4 个独立种子，同一批局面）：
+
+        无闸门   70.10% / 71.18% / 69.22% / 69.18%
+        去掉它   74.38% / 74.56% / 73.26% / 73.86%
+        加闸门   74.08% / 75.14% / 72.88% / 73.28%
+
+    ⇒ 加闸门与"整张去掉"**逐位相同**（说明它现在从不被选中），
+      而**无闸门的旧实现是净亏 3~4 个点**。
+
+    ⚠️ 这条断言的是**闸门**，不是"卡牌本身"：`apply_magic_effect` 的
+       极限增援分支、`reinforcement_check` 的结算与平局处理**全部原样保留**，
+       真人对局里这张牌照常能用（而且真人在领先时当然也可以赌一把）。
+    """
+    ai_id = _fill_boards(master_room)
+    room = master_room
+    opp_id = server._opponent_of(room, ai_id)
+    card = _mk_card('极限增援')
+
+    def sink(pid, n):
+        """让 `pid` 真的沉 `n` 艘船（走唯一入口 `_apply_ship_sunk_effects`）。
+
+        ⚠️ 必须走这个入口、而且只沉一次：`_apply_ship_sunk_effects` 会**把船
+           移出 `ships`**，所以"先沉再修好"是修不回来的（`_alive_ships` 读的是
+           列表里剩几个）。第一次写这条用例时就在那里踩了一脚 ——
+           "看着船少、其实没少"的假状态正是本项目最忌讳的假绿。
+        """
+        for ship in list(room.players[pid].ships)[:n]:
+            x, y = ship.positions[0].x, ship.positions[0].y
+            ship.hits = list(ship.positions)
+            server._apply_ship_sunk_effects(
+                room, room.id,
+                opp_id if pid == ai_id else ai_id, pid, ship, x, y)
+
+    # 双方各 6 艘 → 持平 → 不许打
+    assert len(server._alive_ships(room.players[ai_id])) == 6
+    assert len(server._alive_ships(room.players[opp_id])) == 6
+    assert server._master_card_readiness(room, ai_id, card) is None, (
+        '船数持平时不许打极限增援（结算时平局、卡作废，白烧一次出牌机会）')
+
+    # 我落后 3 艘 → 允许打（这才是它的正收益场合）
+    sink(ai_id, 3)
+    assert len(server._alive_ships(room.players[ai_id])) == 3
+    assert server._master_card_readiness(room, ai_id, card) == {}, (
+        '自己船少时应当允许打 —— 两个大回合后船少的一方直接获胜')
+
+    # 轮到对手落后 4 艘（= 我领先）→ 不许打（打了等于给对手发必赢牌）
+    sink(opp_id, 4)
+    assert len(server._alive_ships(room.players[opp_id])) == 2
+    assert server._master_card_readiness(room, ai_id, card) is None, (
+        '自己船多时绝不许打极限增援 —— 那等于把"船少者胜"送给对手')
+
+
+def test_play_threshold_stays_at_the_measured_value():
+    """`PLAY_THRESHOLD` 的最优值**依赖卡池** —— 改动必须重跑那张表，别单独拧它。
+
+    2026-09-23 实测（每次 5000 局 × 多个独立种子，`tools/experiment_threshold.py`）：
+
+        **含「平等条约」的旧池**（3 个种子）：
+            50   69.4% [68.1,70.6]  70.9% [69.6,72.2]  68.9% [67.6,70.2]
+            65   70.1% [68.8,71.4]  71.2% [69.9,72.4]  69.2% [67.9,70.5]  ⇒ +0.5
+
+        **移出「平等条约」之后的最终池**（**4** 个种子）：
+            50   74.9% [73.7,76.1]  75.9% [74.7,77.0]  74.0% [72.7,75.2]  74.3% [73.1,75.5]
+            58   74.9% ...          75.9% ...          74.0% ...          74.3% ...
+            65   74.1% [72.8,75.3]  75.1% [73.9,76.3]  72.9% [71.6,74.1]  73.3% [72.0,74.5]  ⇒ **−0.8~−1.1**
+            72   69.4% [68.1,70.6]  70.3% [69.0,71.5]  67.9% [66.6,69.2]  69.3% [68.0,70.5]
+
+    ⇒ 65 在旧池上更好，只是因为它剔掉的正是 58~65 分那一档低收益牌，
+      **而那一档里 58 分的就是「平等条约」**；把那张卡移出池子之后，
+      65 就变成纯粹地在砍好牌。
+
+    这条用例守的不是"50 是永恒最优"，而是**"别单独拧这个旋钮"**：
+    要改它必须带**当时的卡池**重跑多半样本，并把新表写回注释里。
+    """
+    assert int(ai_brain.PLAY_THRESHOLD) == 50, (
+        f'PLAY_THRESHOLD 现在是 {ai_brain.PLAY_THRESHOLD}，本批在**最终卡池**上量到的最优是 50。'
+        ' 改它必须用当时的卡池重跑 tools/experiment_threshold.py 的多半样本表'
+        '（最优值会随卡池变 —— 见 ai_brain.PLAY_THRESHOLD 旁边的两张表）')
+
+
+def test_the_out_of_pool_measurement_tool_still_runs():
+    """度量工具本身也要守：池外逐张加回的表格不许因为卡池变化而崩。
+
+    症状是"工具报 0 个档位"或者静默跳过一张卡 —— 那看起来像"这张卡无差别"，
+    其实是根本没量（度量工具假绿比产品假红更危险）。
+    """
+    import tools.gap_analysis as gap
+    base = frozenset(server._MASTER_ENABLED_CARDS)
+    assert gap._OUT_POOL_CARDS, '池外卡清单空了 —— 度量工具会量出"没有可量的卡"'
+    for name in gap._OUT_POOL_CARDS:
+        assert name in {c.name for c in server.magic_cards}, f'{name} 不是真实卡名'
+        assert name not in base, f'{name} 已经在池里了，不该再列在"池外对照"里'
+
+
+# ---------------------------------------------------------------------------
 # ★ 可复现性：决策层绝不许引入"不可复现的随机源"
 # ---------------------------------------------------------------------------
 

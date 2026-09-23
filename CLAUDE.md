@@ -3,7 +3,7 @@
 > 面向 AI 代理的索引。**先读这里，别一次读完 `server.py`（8500+ 行）/ `static/game.js`（9000+ 行）/ `static/style.css`（4800+ 行）—— 一律先 grep 定位再分段读。**
 > ⚠️ 行号每次提交都会漂移，**本文件里任何行号都只当线索，以 grep 结果为准**。
 > ⚠️ **本文件每次对话都会整份注入**，新增内容请控制在几十字级别 —— 长记录写进 `docs/`。
-> 最后更新：2026-09-23（实时观战第 7 批：红了 5/8 的连锁断言判为「工具脆」—— 判据改成就地记帧）。
+> 最后更新：2026-09-23（连锁结算前留 1.2 秒展示停留；唯一开关 `CHAIN_DISPLAY_DELAY_SECONDS`）。
 
 ---
 
@@ -154,7 +154,11 @@ phase:                        preparation → battle → end
 ## 8. 连锁引擎（已实现，不是设计稿）
 
 栈 = `room.chain: list[ChainItem]`（每项带 `negated`），LIFO 结算，响应窗口 10 秒；
-关键函数 `_can_respond_chain` / `_advance_chain_window` / `resolve_chain` / `_schedule_chain_timeout` / `chain_response`。
+关键函数 `_can_respond_chain` / `_advance_chain_window` / `_finish_chain` / `resolve_chain` / `_schedule_chain_timeout` / `chain_response`。
+⚠️ 双方都接不了时 `_finish_chain` 先让连锁区**停 `CHAIN_DISPLAY_DELAY_SECONDS`（1.2 秒）再结算**
+（原来同帧结算、只隔 3~17ms ⇒ 一闪而过）；**唯一开关就是那个常量**，置 0 = 改动前行为，
+`tools/headless_game.py` 与 `tests/conftest.py` 都靠它置 0（不放慢 250 局/秒）。
+走满 10 秒窗口那条路径**不停**（`_schedule_chain_timeout` 传 `display_delay=False`）。
 ⚠️ 两处**有意**偏离 `docs/CHAIN_ENGINE_SPEC.md`：① negated 项仍执行"贴了再拆"（避免凭空消失）；
 ② `平等条约` 不走 `negate_target`，改读 `game_effects['last_ship_change']` 快照回滚。**别照那份文档改回去**（它 §4 列的僵尸代码已清空）。
 

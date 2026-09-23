@@ -32,9 +32,13 @@
   · `server.socketio.start_background_task` → 空操作（连锁超时 / 优先权超时 /
     掉线宽限 / 房间回收 这些定时器在无头环境里没有意义，且都会 sleep）
   · `server.emit` → 只往列表里记事件（不做 JSON 序列化、不碰 socket）
+  · `server.CHAIN_DISPLAY_DELAY_SECONDS` → **0**（连锁结算前的展示停留；
+    它靠 `start_background_task` 落地，而那个刚被换成空操作 —— 不置 0 连锁就永远
+    结算不掉，见 `_server_patches` 里的注释）
   · `db.record_card_use` 等三个统计写入 → 空操作（见 `_server_patches` 的
     `isolate_db`：一次 sqlite commit 占实测墙钟的 58%）
-全程**不修改 server.py**，也不改它的模块级常量。还原用 try/finally，
+全程**不修改 server.py**，也不改它的模块级常量（上面那个延迟常量是**运行期**替换、
+`finally` 里无条件还原，与其它补丁同一套写法）。还原用 try/finally，
 在别的测试（尤其是 monkeypatch fixture）里调用本模块也不会泄漏补丁。
 
 【连锁窗口 / 待办窗口谁来推】
@@ -569,6 +573,15 @@ def _server_patches(capture=None, isolate_db=True):
         'record_card_use': server.record_card_use,
         'db_record_card_use': server.db.record_card_use,
         'db_record_user_card_use': server.db.record_user_card_use,
+        # ★ 连锁结算前的展示停留（`server.CHAIN_DISPLAY_DELAY_SECONDS`）。
+        #   无头环境必须把它置 0，理由是**两条**、缺一都不行：
+        #     ① 它是给人看的，无头环境没有"人" —— 白等 1.2 秒；
+        #     ② 上面刚把 `start_background_task` 打成空操作，而延迟结算正是靠那个
+        #        后台任务做的 ⇒ 延迟开着就会**永远不结算**（`_pump_chain` 会判卡死）。
+        #   置 0 时 `_finish_chain` 走的就是改动前那一行 `resolve_chain(room)`，
+        #   所以 250 局/秒与"固定种子逐动作可复现"两条契约都不受影响
+        #   （由 `tools/probe_rng_reproducibility.py` 与本文件跑出来的哈希守着）。
+        'chain_display_delay': server.CHAIN_DISPLAY_DELAY_SECONDS,
     }
 
     def record_emit(event, data, to=None, room=None):
@@ -583,6 +596,7 @@ def _server_patches(capture=None, isolate_db=True):
     server._maybe_run_ai_turn = no_op
     server.socketio.start_background_task = no_op
     server.socketio.emit = no_op
+    server.CHAIN_DISPLAY_DELAY_SECONDS = 0.0
     if isolate_db:
         server.record_card_use = no_op
         server.db.record_card_use = no_op
@@ -598,6 +612,7 @@ def _server_patches(capture=None, isolate_db=True):
         server.record_card_use = original['record_card_use']
         server.db.record_card_use = original['db_record_card_use']
         server.db.record_user_card_use = original['db_record_user_card_use']
+        server.CHAIN_DISPLAY_DELAY_SECONDS = original['chain_display_delay']
 
 
 def _state_hash(room) -> str:

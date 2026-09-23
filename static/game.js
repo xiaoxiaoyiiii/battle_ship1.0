@@ -502,6 +502,8 @@ function showSettingsPane(pane) {
     // ⚠️ 必须**现拉**：开关状态只认服务端（前端默认值会让"服务端已关"显示成"开着"）。
     //    函数声明会提升，这里调它不存在时序问题。
     if (name === 'acct' && typeof loadSpectateSetting === 'function') loadSpectateSetting();
+    // 回放开关同理：状态只认服务端（loadReplaySetting 在顶层，声明会提升）。
+    if (name === 'acct' && typeof loadReplaySetting === 'function') loadReplaySetting();
     return name;
 }
 
@@ -1089,6 +1091,46 @@ const spectateRosterCountEl = document.getElementById('spectate-roster-count');
 const spectateChatEl = document.getElementById('spectate-chat');
 const spectateChatInput = document.getElementById('spectate-chat-input');
 const spectateChatSendBtn = document.getElementById('spectate-chat-send');
+
+// ==================== 对局回放屏（2026-09-23 回放批 §7）====================
+// ⚠️ **与观战屏彻底隔离**（本批最重要的安全边界）：
+//    · 这是**独立一整屏**，不改造 #spectate-screen；
+//    · 棋盘渲染**新写一份**（下面的 renderReplayBoard / replayCellOf），
+//      只共用 CSS 类（`.cell` / `.hit` / `.miss` / `.sunk`）与 magic_cards.js 的卡名映射；
+//    · `renderSpectateBoards` / `applySpectateSnapshot` 一个字都不许改、也不许引用这里的
+//      数据或 DOM（源码级守卫：回放屏渲染函数体里不许出现 `spectate`，反过来同样不许）。
+//    · 回放屏**完全不碰 socket**：不 join 房间、不发任何事件、不订阅观战通道。
+//      数据只来自 `GET /api/replay/<match_id>`。
+const replayScreen = document.getElementById('replay-screen');
+const replayPlayersTitleEl = document.getElementById('replay-players-title');
+const replayStatusEl = document.getElementById('replay-status');
+const replaySourceEl = document.getElementById('replay-source');
+const replayStepIndexEl = document.getElementById('replay-step-index');
+const replayStepTotalEl = document.getElementById('replay-step-total');
+const replayStepKindEl = document.getElementById('replay-step-kind');
+const replayStepActorEl = document.getElementById('replay-step-actor');
+const replayTruncatedEl = document.getElementById('replay-truncated');
+const replaySpeedGroup = document.getElementById('replay-speed-group');
+const replayNameEls = [document.getElementById('replay-name-1'), document.getElementById('replay-name-2')];
+const replayShipsEls = [document.getElementById('replay-ships-1'), document.getElementById('replay-ships-2')];
+const replayBoardTitleEls = [document.getElementById('replay-board-title-1'), document.getElementById('replay-board-title-2')];
+const replayBoardEls = [document.getElementById('replay-board-1'), document.getElementById('replay-board-2')];
+const replayHandTitleEls = [document.getElementById('replay-hand-title-1'), document.getElementById('replay-hand-title-2')];
+const replayHandEls = [document.getElementById('replay-hand-1'), document.getElementById('replay-hand-2')];
+const replayCurrentEl = document.getElementById('replay-current');
+const replayLogsEl = document.getElementById('replay-logs');
+const replayPrevBtn = document.getElementById('replay-prev');
+const replayPlayBtn = document.getElementById('replay-play');
+const replayNextBtn = document.getElementById('replay-next');
+const replayTrackEl = document.getElementById('replay-track');
+const replayTrackFillEl = document.getElementById('replay-track-fill');
+const replayTrackNodesEl = document.getElementById('replay-track-nodes');
+const replayTrackThumbEl = document.getElementById('replay-track-thumb');
+const replayNodeTipEl = document.getElementById('replay-node-tip');
+const replayLeaveBtn = document.getElementById('replay-leave');
+const allowReplayCheckbox = document.getElementById('settings-allow-replay');
+const replaySettingMsg = document.getElementById('settings-replay-msg');
+
 const spectateBoards = [
     { board: document.getElementById('spectate-board-1'),
       title: document.getElementById('spectate-board-title-1'),
@@ -2878,6 +2920,897 @@ function renderCardCompendium() {
     if (counter) counter.textContent = '共 ' + list.length + ' / ' + all.length + ' 张';
 }
 
+// 回放批 §7 的「与观战彻底隔离」声明（**放在界面段之外**，见下面那条说明）。
+//
+// 本批最重要的安全边界：观战屏与回放屏**不许互相污染**。四条硬决定：
+//   ① 独立一整屏 `#replay-screen`，**不改造** `#spectate-screen`；
+//   ② 棋盘渲染**新写一份**（`renderReplayBoard` / `replayCellOf`），自己的 DOM id
+//      `#replay-board-1/2`，只共用 CSS 类（`.cell`/`.hit`/`.miss`/`.sunk`）
+//      与 magic_cards.js 的卡名映射；
+//   ③ 回放段（`REPLAY 界面段` 与它到文件末尾之间的代码）里**不出现**另一套观战
+//      渲染/快照的任何一个名字，也绝不读 `gameState` 里那份观战快照；
+//   ④ 回放**完全不碰 socket**：不 join 房间、不发任何事件、不订阅观战通道 ——
+//      回放段里没有一处 `emit(`，退出时只把回放期间那条连接 `disconnect()` 掉。
+//      数据**只**来自 `GET /api/replay/<match_id>`。
+//
+// ⚠️ 头三条是**源码级**可断言的（去掉注释后扫关键词即可，见报告里的守卫）——
+//    所以它们被写在函数体之外的注释里：函数体里连注释都不留这些词，
+//    守卫就不会被自己的说明文字误伤。
+
+// ===========================================================================
+// REPLAY 界面段开始（对局回放屏，2026-09-23 回放批 §7）
+// ===========================================================================
+//
+// 需求：在战绩里点开某一局详情 → 「对局回放」→ **全透视**回放（双方船位 + 双方手牌）。
+// 以「每个人的每一次行动」为一步，可暂停 / 上一步 / 下一步 / 倍速；进度条标出关键节点，
+// 鼠标移到节点能预览那一步发生了什么。**没有思考时间**，固定速度播放。
+//
+// ⚠️ 本段整体是**顶层作用域**的（不在 bindEventListeners 里）：入口在名片那套
+//    嵌套作用域里，只有顶层定义才两边都调得到（CLAUDE.md 教训 #6：
+//    顶层函数不许引用函数作用域里的东西 —— 那会 ReferenceError 被
+//    `.then()` 吞掉、页面零提示）。
+//
+// ⚠️ 本段所有 DOM id 必须真的存在于 templates/index.html —— 引用了但页面里没有的 id
+//    表现是 getElementById 拿到 null、被 `if (el)` 兜掉，**不报错、只是点了没反应**
+//    （tools/dom_contract_check.mjs 就是查这个的）。
+
+// 每一步的**固定**播放时长（毫秒）。契约 §7：没有思考时间，固定速度。
+var REPLAY_STEP_MS = 900;
+var REPLAY_SPEEDS = [1, 2, 4];
+
+var replayState = {
+    payload: null,      // 后端 JSON（steps / ships / hands / board_resets / nodes …）
+    youAre: null,       // 'p1' | 'p2' | null（服务端算好的"你是哪一块棋盘"）
+    k: 0,               // 当前帧（= steps 下标）
+    playing: false,
+    speed: 1,
+    timer: null,        // setTimeout 链的句柄（暂停立刻清掉）
+    scrubbing: false,
+    frame: null,        // 当前帧解算结果（replayComputeFrame）
+    nodeEls: [],        // 进度条节点元素（帧变化时只改 class，不重建）
+    keyBound: false,
+    entryMatches: {},   // match_id → 战绩行（点回放时暂存，用来展示模式标签）
+    socket: null        // 只读引用：退出时断开这条连接。**绝不 emit**
+};
+
+function replayIsActive() {
+    return !!(replayScreen && replayScreen.classList.contains('active'));
+}
+
+// 座位 key。⚠️ 只能拼字符串：JS 里写 `'p%d' % (i+1)`（Python 那套）**不报错** ——
+// `%` 是取余，label 恒为 NaN、棋盘一格不画，而控制台干干净净（本项目真栽过）。
+function replaySeatOf(index) {
+    return index === 1 ? 'p2' : 'p1';
+}
+
+function replayInt(value, fallback) {
+    var n = parseInt(value, 10);
+    return isNaN(n) ? fallback : n;
+}
+
+// 卡名映射只共用 static/magic_cards.js（项目里唯一的卡面数据源）。
+function replayCardOf(name) {
+    var list = window.magicCards;
+    if (!Array.isArray(list) || !name) return null;
+    for (var i = 0; i < list.length; i++) {
+        if (list[i] && list[i].name === name) return list[i];
+    }
+    return null;
+}
+
+function replayModeLabel(matchData, myId) {
+    // ⚠️ 复用名片那套的**唯一口径**（`matchModeTagHTML`），本段不另写一份判据（教训 #1）。
+    //    它在 bindEventListeners 的嵌套作用域里，但那是**函数声明会被提升**的同一个
+    //    脚本作用域链 —— 运行时从顶层调它拿得到（本函数只在点按钮时执行）。
+    return (typeof matchModeTagHTML === 'function') ? matchModeTagHTML(matchData, myId) : '';
+}
+
+// ---------------------------------------------------------------------------
+// 帧解算（纯函数，**一处实现**）
+// ---------------------------------------------------------------------------
+// 契约 §7：
+//   · 第 k 帧的棋盘标记 = `steps[0..k]` 里的 attack 步，叠上 `board_resets` 中 `step ≤ k` 的重置；
+//   · 船位 / 手牌 = 两条时间线里最后一个 `step ≤ k` 的条目。
+// ⚠️ 两条时间线是**增量**：某条只带变化的那一侧 ⇒ 必须**沿用上一帧另一侧的值**
+//    （所以这里是"按 step 升序把所有 `step ≤ k` 的条目叠上去"，不是"取最后一条"）。
+// ⚠️ `board_resets[].side` = **哪一块棋盘被重置**（不是发起方），所以重置只清那一侧的攻击标记。
+// ⚠️ attack 步的 `detail.attacker` 是**原始座位 key**（匹配房里就是入座 sid），
+//    **不是 user_id**，别拿它当身份用；认不出来时才退回按行动者显示名对齐座位
+//    （`actor` 就是显示名，取自 `room.players[pid].name`）。两者都认不出来就**不画这一炮**
+//    （宁缺勿错：画错一侧比少画一炮更难查）。
+function replayAttackerSeat(detail, actor) {
+    var raw = detail ? detail.attacker : null;
+    if (raw === 'p1' || raw === 'p2') return raw;
+    if (!actor || !replayState.payload) return null;
+    var names = replayState.payload;
+    if (String(names.p1_name || '') === String(actor)) return 'p1';
+    if (String(names.p2_name || '') === String(actor)) return 'p2';
+    return null;
+}
+
+function replayComputeFrame(payload, k) {
+    var frame = {
+        ships: { p1: [], p2: [] },
+        hand: { p1: [], p2: [] },
+        marks: { p1: {}, p2: {} },
+        resetAt: { p1: [], p2: [] }
+    };
+    if (!payload || !Array.isArray(payload.steps)) return frame;
+
+    var steps = payload.steps;
+    var target = replayInt(k, 0);
+    if (target < 0) target = 0;
+    if (target > steps.length - 1) target = steps.length - 1;
+    if (target < 0) return frame;
+
+    // ① 两条时间线：按 step 升序**叠加**（增量），只保留 step ≤ k 的条目。
+    //    ⚠️ 时间线已按 step 升序（后端按追加顺序写），这里直接顺序扫一遍 —— 一遍拿两侧，
+    //       别每块棋盘各扫一次。
+    replayFoldTimeline(payload.ships, target, frame.ships);
+    replayFoldTimeline(payload.hands, target, frame.hand);
+
+    // ② 棋盘重置：按侧收集 `step ≤ k` 的重置点（后面的攻击要判"是不是在重置之后"）。
+    var resets = Array.isArray(payload.board_resets) ? payload.board_resets : [];
+    for (var r = 0; r < resets.length; r++) {
+        var reset = resets[r] || {};
+        var resetSide = reset.side;
+        var resetStep = replayInt(reset.step, -1);
+        if ((resetSide === 'p1' || resetSide === 'p2') && resetStep >= 0 && resetStep <= target) {
+            frame.resetAt[resetSide].push(resetStep);
+        }
+    }
+
+    // ③ 攻击标记：`steps[0..k]` 里的 attack 步画到**被打的那一侧**的棋盘上。
+    for (var i = 0; i <= target; i++) {
+        var step = steps[i];
+        if (!step || step.kind !== 'attack') continue;
+        var detail = step.detail || {};
+        var pt = detail.target;
+        if (!pt || typeof pt !== 'object') continue;
+        var x = replayInt(pt.x, -1);
+        var y = replayInt(pt.y, -1);
+        if (x < 0 || y < 0 || x > 5 || y > 5) continue;
+        var attacker = replayAttackerSeat(detail, step.actor);
+        if (attacker !== 'p1' && attacker !== 'p2') continue;
+        var boardSide = attacker === 'p1' ? 'p2' : 'p1';
+        // 这一炮发生在**这一次重置之后**才有意义（重置把棋盘擦干净了）
+        var after = false;
+        var marks = frame.resetAt[boardSide];
+        for (var m = 0; m < marks.length; m++) {
+            if (marks[m] <= i) { after = true; break; }
+        }
+        if (!after) continue;
+        frame.marks[boardSide][x + ',' + y] = {
+            hit: detail.hit === true,
+            sunk: detail.ship_sunk === true
+        };
+    }
+    return frame;
+}
+
+// 两条稀疏时间线共用的叠加逻辑（**一处实现**）。
+function replayFoldTimeline(rows, target, into) {
+    if (!Array.isArray(rows)) return;
+    for (var i = 0; i < rows.length; i++) {
+        var row = rows[i] || {};
+        if (replayInt(row.step, -1) > target) break;   // 时间线升序，后面都不用看了
+        if (Array.isArray(row.p1)) into.p1 = row.p1;
+        if (Array.isArray(row.p2)) into.p2 = row.p2;
+    }
+}
+
+// 某一侧棋盘上"某一格"的样子。⚠️ 新写一份（**不复用观战那套**）：
+// 观战的渲染故意只会画"已轰过的格"，它的安全前提是"手上根本没有船位数据"；
+// 回放要画船，两者绝不能共用渲染。
+function replayCellOf(frame, side, x, y) {
+    var ships = (frame && frame.ships && Array.isArray(frame.ships[side])) ? frame.ships[side] : [];
+    var marks = (frame && frame.marks && frame.marks[side]) ? frame.marks[side] : {};
+    var shipCell = null;
+    for (var i = 0; i < ships.length; i++) {
+        var c = ships[i];
+        if (c && replayInt(c.x, -1) === x && replayInt(c.y, -1) === y) { shipCell = c; break; }
+    }
+    var mark = marks[x + ',' + y] || null;
+    var sunk = !!(shipCell && shipCell.sunk && shipCell.alive !== true);
+    var cell = {
+        hasShip: !!shipCell,
+        sunk: sunk,
+        hit: !!(mark && mark.hit),
+        miss: !!(mark && !mark.hit)
+    };
+    // 无障碍文本 / title —— 色盲与读屏用户拿到的就是这一条（与实战棋盘同口径）。
+    if (cell.sunk) cell.label = '击沉：这一格的战舰已被打沉';
+    else if (shipCell && cell.hit) cell.label = '命中：这一格有战舰';
+    else if (shipCell) cell.label = '战舰：这一格有船，还没被打到';
+    else if (cell.hit) cell.label = '命中：这一格已经空了';
+    else if (cell.miss) cell.label = '落空：这一格打空了';
+    else cell.label = '海面：没有船，也没被打过';
+    return cell;
+}
+
+// 还有几艘船活着（按**格所属的船**算，不是数格子）。
+function replayAliveShips(frame, side) {
+    var ships = (frame && frame.ships && Array.isArray(frame.ships[side])) ? frame.ships[side] : [];
+    var seen = {};
+    var alive = 0;
+    for (var i = 0; i < ships.length; i++) {
+        var c = ships[i] || {};
+        var key = replayInt(c.x, -1) + ',' + replayInt(c.y, -1);
+        if (seen[key]) continue;
+        seen[key] = true;
+        if (c.alive === true || c.sunk !== true) alive++;
+    }
+    return alive;
+}
+
+// ---------------------------------------------------------------------------
+// 关键节点（**只用服务端给的 `nodes`**，前端不许另算一套 —— 两套判据必然漂移）
+// ---------------------------------------------------------------------------
+function replayNodePercent(index, total) {
+    if (total <= 1) return 50;                       // 只有一个点：摆正中，别贴左边
+    return (index / (total - 1)) * 100;
+}
+
+// 某个节点的 tooltip：说出"那一步做了什么"（契约 §7）。
+function replayNodeTipText(node) {
+    if (!node) return '';
+    var payload = replayState.payload;
+    var step = (payload && Array.isArray(payload.steps))
+        ? payload.steps[replayInt(node.step, -1)] : null;
+    var label = String(node.label || '');
+    var parts = ['第 ' + (replayInt(node.step, 0) + 1) + ' 步'];
+    // 行动者：只在**标签里还没有这个名字**时补上。
+    // ⚠️ 服务端的阶段类节点标签本身就带名字（`note_action` 的 label 是
+    //    `_log_name(...)` 拼的），无脑补一下会得到
+    //    「第 3 步 · 甲 · 甲 进入战斗阶段」（本批实测就是这么读出来的）。
+    var actor = (step && step.actor) ? String(step.actor) : '';
+    if (actor && label.indexOf(actor) < 0) parts.push(actor);
+    parts.push(label);
+    var text = parts.join(' · ');
+    if (step && step.text && String(step.text) !== label && String(step.text).indexOf(label) < 0) {
+        text += '\n' + String(step.text);
+    }
+    return text;
+}
+
+function replayStepKindText(kind) {
+    var map = {
+        attack: '炮击', magic: '魔法卡', quick_chat: '快捷消息', game_over: '对局结束',
+        system: '系统', place_ships: '摆放战舰', rps_choice: '猜拳', enter_battle: '进攻阶段',
+        enter_end: '结束阶段', end_turn: '结束回合', surrender: '投降', result: '对局结束'
+    };
+    var k = String(kind || '');
+    return map[k] || (k || '—');
+}
+
+// ---------------------------------------------------------------------------
+// 渲染
+// ---------------------------------------------------------------------------
+function renderReplayBoards() {
+    var frame = replayState.frame;
+    if (!frame) return;
+    for (var index = 0; index < replayBoardEls.length; index++) {
+        var board = replayBoardEls[index];
+        if (!board) continue;
+        var side = replaySeatOf(index);
+        renderReplayBoard(board, frame, side);
+    }
+}
+
+// 画一块**全透视**棋盘。⚠️ 这是本批新写的那一份渲染（见文件顶部那条隔离说明）。
+function renderReplayBoard(board, frame, side) {
+    // ⚠️ 先算完整帧、再清空 DOM：先清后填的渲染一旦中途抛异常就会留下半块空棋盘
+    //    （CLAUDE.md 硬规矩："先清空再填充"的渲染必须先校验数据）。
+    var cells = [];
+    for (var y = 0; y < 6; y++) {
+        for (var x = 0; x < 6; x++) {
+            cells.push({ x: x, y: y, cell: replayCellOf(frame, side, x, y) });
+        }
+    }
+    board.innerHTML = '';
+    for (var i = 0; i < cells.length; i++) {
+        var item = cells[i];
+        var el = document.createElement('div');
+        var cls = 'cell';
+        if (item.cell.sunk) cls += ' ship sunk hit';
+        else if (item.cell.hasShip && item.cell.hit) cls += ' ship hit';
+        else if (item.cell.hasShip) cls += ' ship';
+        else if (item.cell.hit) cls += ' hit';
+        else if (item.cell.miss) cls += ' miss';
+        else cls += ' replay-water';
+        el.className = cls;
+        el.dataset.x = String(item.x);
+        el.dataset.y = String(item.y);
+        el.title = item.cell.label;
+        el.setAttribute('aria-label', item.cell.label);
+        el.textContent = (item.cell.hasShip || item.cell.hit) ? '✕' : (item.cell.miss ? '○' : '');
+        board.appendChild(el);
+    }
+}
+
+function renderReplayPlayers() {
+    var payload = replayState.payload;
+    if (!payload) return;
+    var frame = replayState.frame;
+    var names = [payload.p1_name || '先手', payload.p2_name || '后手'];
+    for (var i = 0; i < 2; i++) {
+        var side = replaySeatOf(i);
+        var name = String(names[i]);
+        var mine = replayState.youAre === side;
+        if (replayNameEls[i]) replayNameEls[i].textContent = name + (mine ? '（你）' : '');
+        if (replayShipsEls[i]) replayShipsEls[i].textContent = String(replayAliveShips(frame, side));
+        if (replayBoardTitleEls[i]) replayBoardTitleEls[i].textContent = name + ' 的棋盘';
+        if (replayHandTitleEls[i]) replayHandTitleEls[i].textContent = name + ' 的手牌';
+        if (replayBoardEls[i]) replayBoardEls[i].classList.toggle('replay-board-mine', mine);
+    }
+}
+
+// 双方手牌：**只读展示卡名**（用 magic_cards.js 的映射取显示名/图标），
+// 不可点击、不触发任何操作（契约 §7）。
+function renderReplayHands() {
+    var frame = replayState.frame;
+    if (!frame) return;
+    for (var i = 0; i < replayHandEls.length; i++) {
+        var el = replayHandEls[i];
+        if (!el) continue;
+        var side = replaySeatOf(i);
+        var hand = Array.isArray(frame.hand[side]) ? frame.hand[side] : [];
+        el.innerHTML = '';
+        if (!hand.length) {
+            var empty = document.createElement('span');
+            empty.className = 'replay-hand-empty';
+            empty.textContent = '（没有手牌）';
+            el.appendChild(empty);
+            continue;
+        }
+        for (var j = 0; j < hand.length; j++) {
+            var cardName = String(hand[j]);
+            var card = replayCardOf(cardName);
+            var chip = document.createElement('span');
+            chip.className = 'replay-hand-card';
+            chip.textContent = card ? (card.icon ? card.icon + ' ' + card.name : card.name) : cardName;
+            if (card && card.type) chip.title = card.type + '·速阶' + card.speed;
+            // 明确标成只读：没有 tabindex、没有监听、不是 button。
+            chip.setAttribute('aria-readonly', 'true');
+            el.appendChild(chip);
+        }
+    }
+}
+
+function renderReplayCurrentStep() {
+    if (!replayCurrentEl) return;
+    var payload = replayState.payload;
+    var step = (payload && Array.isArray(payload.steps)) ? payload.steps[replayState.k] : null;
+    if (!step) { replayCurrentEl.textContent = '—'; return; }
+    var kind = replayStepKindText(step.kind);
+    var who = step.actor ? String(step.actor) : '（无人）';
+    replayCurrentEl.textContent = '第 ' + (replayState.k + 1) + ' 步 · ' + kind + ' · '
+        + who + '：' + String(step.text || '');
+}
+
+function renderReplayLogs() {
+    if (!replayLogsEl) return;
+    var payload = replayState.payload;
+    var steps = (payload && Array.isArray(payload.steps)) ? payload.steps : [];
+    // ⚠️ 先在内存里拼好、再一次性铺 DOM（避免"清空后填充"留下半帧）。
+    var items = [];
+    var upto = Math.min(replayState.k, steps.length - 1);
+    for (var i = 0; i <= upto; i++) {
+        var step = steps[i] || {};
+        items.push({
+            i: i,
+            current: i === replayState.k,
+            text: '第' + (i + 1) + '步 · ' + (step.actor ? step.actor + '：' : '') + String(step.text || '')
+        });
+    }
+    replayLogsEl.innerHTML = '';
+    if (!items.length) {
+        replayLogsEl.textContent = '暂无行动记录';
+        return;
+    }
+    for (var j = 0; j < items.length; j++) {
+        var row = document.createElement('div');
+        row.className = 'replay-log-item' + (items[j].current ? ' replay-log-current' : '');
+        row.textContent = items[j].text;
+        replayLogsEl.appendChild(row);
+    }
+    replayLogsEl.scrollTop = replayLogsEl.scrollHeight;
+}
+
+function updateReplayChrome() {
+    var payload = replayState.payload;
+    var steps = (payload && Array.isArray(payload.steps)) ? payload.steps : [];
+    var total = steps.length;
+    var step = steps[replayState.k] || null;
+    if (replayStepIndexEl) replayStepIndexEl.textContent = String(total ? replayState.k + 1 : 0);
+    if (replayStepTotalEl) replayStepTotalEl.textContent = String(total);
+    if (replayStepKindEl) replayStepKindEl.textContent = step ? replayStepKindText(step.kind) : '—';
+    if (replayStepActorEl) replayStepActorEl.textContent = (step && step.actor) ? String(step.actor) : '—';
+    if (replaySourceEl) replaySourceEl.textContent = '战绩';
+    if (replayTruncatedEl) {
+        var truncated = payload && payload.truncated ? String(payload.truncated) : '';
+        replayTruncatedEl.textContent = truncated;
+        replayTruncatedEl.classList.toggle('hidden', !truncated);
+    }
+    if (replayPlayersTitleEl) {
+        replayPlayersTitleEl.textContent = payload
+            ? String(payload.p1_name || '先手') + ' vs ' + String(payload.p2_name || '后手') : '—';
+    }
+    // 两端要禁用按钮（别让 k 越界）。
+    if (replayPrevBtn) replayPrevBtn.disabled = replayState.k <= 0;
+    if (replayNextBtn) replayNextBtn.disabled = total === 0 || replayState.k >= total - 1;
+    if (replayPlayBtn) {
+        replayPlayBtn.textContent = replayState.playing ? '暂停' : '播放';
+        replayPlayBtn.disabled = total === 0;
+    }
+    updateReplayTrack();
+}
+
+function updateReplayTrack() {
+    var payload = replayState.payload;
+    var steps = (payload && Array.isArray(payload.steps)) ? payload.steps : [];
+    var total = steps.length;
+    var index = total ? replayState.k : 0;
+    var percent = total > 1 ? (index / (total - 1)) * 100 : 0;
+    if (replayTrackFillEl) replayTrackFillEl.style.width = percent + '%';
+    if (replayTrackThumbEl) replayTrackThumbEl.style.left = percent + '%';
+    if (replayTrackEl) {
+        replayTrackEl.setAttribute('aria-valuemin', '0');
+        replayTrackEl.setAttribute('aria-valuemax', String(Math.max(0, total - 1)));
+        replayTrackEl.setAttribute('aria-valuenow', String(index));
+        replayTrackEl.setAttribute('aria-valuetext',
+            total ? ('第 ' + (index + 1) + ' 步 / 共 ' + total + ' 步') : '没有可回放的行动');
+    }
+    // 节点只重建一次；每帧只改"到没到"这一个 class（重建 2000 个节点会卡）。
+    for (var i = 0; i < replayState.nodeEls.length; i++) {
+        var item = replayState.nodeEls[i];
+        if (!item || !item.el) continue;
+        item.el.classList.toggle('passed', item.node.step <= replayState.k);
+    }
+}
+
+function buildReplayTrackNodes() {
+    if (!replayTrackNodesEl) return;
+    var payload = replayState.payload;
+    var nodes = (payload && Array.isArray(payload.nodes)) ? payload.nodes : [];
+    replayTrackNodesEl.innerHTML = '';
+    replayState.nodeEls = [];
+    for (var i = 0; i < nodes.length; i++) {
+        var node = nodes[i] || {};
+        var el = document.createElement('span');
+        el.className = 'replay-track-node kind-' + String(node.kind || 'phase');
+        el.style.left = replayNodePercent(i, nodes.length) + '%';
+        el.dataset.step = String(replayInt(node.step, 0));
+        el.dataset.nodeIndex = String(i);
+        el.title = replayNodeTipText(node);
+        el.setAttribute('aria-label', replayNodeTipText(node));
+        replayTrackNodesEl.appendChild(el);
+        replayState.nodeEls.push({ el: el, node: node });
+    }
+}
+
+function updateReplayNodeTip(node, clientX, clientY) {
+    if (!replayNodeTipEl) return;
+    if (!node) {
+        replayNodeTipEl.classList.add('hidden');
+        replayNodeTipEl.textContent = '';
+        return;
+    }
+    replayNodeTipEl.textContent = replayNodeTipText(node);
+    replayNodeTipEl.classList.remove('hidden');
+    var rect = replayNodeTipEl.getBoundingClientRect();
+    var left = Math.min(Math.max(4, clientX + 10), Math.max(4, window.innerWidth - rect.width - 8));
+    var top = clientY - rect.height - 10;
+    if (top < 4) top = clientY + 18;
+    replayNodeTipEl.style.left = Math.round(left) + 'px';
+    replayNodeTipEl.style.top = Math.round(top) + 'px';
+}
+
+function hideReplayNodeTip() {
+    if (!replayNodeTipEl) return;
+    replayNodeTipEl.classList.add('hidden');
+    replayNodeTipEl.textContent = '';
+}
+
+// 整体重画某一帧（契约 §7：上一步/下一步 = 改 k 后整体重画，≤2000 步直接重算）。
+function renderReplayFrame() {
+    if (!replayState.payload) return;
+    replayState.frame = replayComputeFrame(replayState.payload, replayState.k);
+    renderReplayBoards();
+    renderReplayPlayers();
+    renderReplayHands();
+    renderReplayCurrentStep();
+    renderReplayLogs();
+    updateReplayChrome();
+}
+
+// ---------------------------------------------------------------------------
+// 播放控制
+// ---------------------------------------------------------------------------
+function replayStepTo(k, opts) {
+    var payload = replayState.payload;
+    var steps = (payload && Array.isArray(payload.steps)) ? payload.steps : [];
+    var max = Math.max(0, steps.length - 1);
+    var next = replayInt(k, 0);
+    if (next < 0) next = 0;
+    if (next > max) next = max;          // 别让 k 越界
+    replayState.k = next;
+    renderReplayFrame();
+    if (opts && opts.stopAtEnd && steps.length && next >= max) replayPause();
+}
+
+function replayStopTimer() {
+    if (replayState.timer !== null) {
+        clearTimeout(replayState.timer);
+        replayState.timer = null;
+    }
+}
+
+// ⚠️ 用 **setTimeout 链**驱动（不用 setInterval：它会累积漂移，暂停时也容易残留）。
+function replayScheduleNext() {
+    replayStopTimer();
+    if (!replayState.playing) return;
+    var delay = Math.max(1, Math.round(REPLAY_STEP_MS / replayState.speed));
+    replayState.timer = setTimeout(function () {
+        replayState.timer = null;
+        if (!replayState.playing) return;
+        var steps = (replayState.payload && Array.isArray(replayState.payload.steps))
+            ? replayState.payload.steps : [];
+        if (!steps.length || replayState.k >= steps.length - 1) {
+            replayPause();               // 播完自动停（不循环，免得看不出"看完了"）
+            return;
+        }
+        replayStepTo(replayState.k + 1, {});
+        replayScheduleNext();
+    }, delay);
+}
+
+function replayPlay() {
+    var steps = (replayState.payload && Array.isArray(replayState.payload.steps))
+        ? replayState.payload.steps : [];
+    if (!steps.length) return;
+    // 已经在末尾时按播放 = 从头再放一遍（否则点了没反应 —— 教训 #32）。
+    if (replayState.k >= steps.length - 1) replayStepTo(0, {});
+    replayState.playing = true;
+    updateReplayChrome();
+    replayScheduleNext();
+}
+
+function replayPause() {
+    replayState.playing = false;
+    replayStopTimer();                   // 暂停**立刻**清掉定时器
+    updateReplayChrome();
+}
+
+function replayTogglePlay() {
+    if (replayState.playing) replayPause();
+    else replayPlay();
+}
+
+function replaySetSpeed(speed) {
+    var found = false;
+    for (var i = 0; i < REPLAY_SPEEDS.length; i++) if (REPLAY_SPEEDS[i] === speed) found = true;
+    if (!found) return;
+    replayState.speed = speed;
+    if (replaySpeedGroup) {
+        var btns = replaySpeedGroup.querySelectorAll('[data-replay-speed]');
+        for (var j = 0; j < btns.length; j++) {
+            btns[j].classList.toggle('active', replayInt(btns[j].dataset.replaySpeed, 0) === speed);
+        }
+    }
+    if (replayState.playing) replayScheduleNext();   // 立刻按新节奏续上
+}
+
+// 拖拽/点击进度条 → 任意 seek（**拖拽时自动暂停**）。
+function replaySeekFromPointer(clientX) {
+    if (!replayTrackEl) return;
+    var payload = replayState.payload;
+    var steps = (payload && Array.isArray(payload.steps)) ? payload.steps : [];
+    if (!steps.length) return;
+    var rect = replayTrackEl.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    var ratio = (clientX - rect.left) / rect.width;
+    if (ratio < 0) ratio = 0;
+    if (ratio > 1) ratio = 1;
+    replayStepTo(Math.round(ratio * (steps.length - 1)), {});
+}
+
+// ---------------------------------------------------------------------------
+// 进 / 出 / 清理
+// ---------------------------------------------------------------------------
+function resetReplayState() {
+    replayStopTimer();
+    replayState.payload = null;
+    replayState.youAre = null;
+    replayState.k = 0;
+    replayState.playing = false;
+    replayState.speed = 1;
+    replayState.scrubbing = false;
+    replayState.frame = null;
+    replayState.nodeEls = [];
+    hideReplayNodeTip();
+    if (replayTrackNodesEl) replayTrackNodesEl.innerHTML = '';
+    if (replayTrackFillEl) replayTrackFillEl.style.width = '0%';
+    if (replayTrackThumbEl) replayTrackThumbEl.style.left = '0%';
+    if (replayLogsEl) replayLogsEl.textContent = '';
+    if (replaySpeedGroup) {
+        var btns = replaySpeedGroup.querySelectorAll('[data-replay-speed]');
+        for (var i = 0; i < btns.length; i++) {
+            btns[i].classList.toggle('active', replayInt(btns[i].dataset.replaySpeed, 0) === 1);
+        }
+    }
+}
+
+function replaySetStatus(text, isError) {
+    if (!replayStatusEl) return;
+    replayStatusEl.textContent = text;
+    replayStatusEl.classList.toggle('replay-error', !!isError);
+}
+
+// 离开回放屏。⚠️ 必须进 switchScreen / 返回逻辑，别让玩家进去出不来。
+function leaveReplayScreen() {
+    resetReplayState();
+    // ⚠️ 断开的是回放期间新开的那条 socket 连接（进回放前如果本来就有连接，
+    //    原样留着）—— **绝不 emit 任何事件**。
+    if (replayState.socket) {
+        try { replayState.socket.disconnect(); } catch (e) { /* 忽略：断开失败不影响看回放 */ }
+        replayState.socket = null;
+    }
+    switchScreen(startScreen);
+}
+
+// 打开回放屏：**只拉一次数据**，之后所有帧都从这份 JSON 本地解算。
+function replayHandleLoadFailure(status) {
+    // 每一种失败都要有**人话**提示，绝不静默什么都不发生（教训 #32）。
+    // 401/403/404/409/500/503 逐条区分：404（这局没有回放）与 500（数据坏了）必须分开。
+    var messages = {
+        401: '请先登录后再查看对局回放。',
+        403: '你没有权限查看这一局的回放。',
+        404: '这局没有可回放的行动。',
+        409: '这条回放的格式版本不支持，无法播放。',
+        500: '这条回放已损坏或体积异常，无法播放。',
+        503: '服务暂时无法读取回放，请稍后重试。'
+    };
+    replaySetStatus(messages[status] || '加载回放失败，请稍后重试。', true);
+}
+
+function openReplayForMatch(matchId, matchData, playerId) {
+    if (!replayScreen) { showAlert('回放界面不存在，请刷新页面后重试。'); return; }
+    if (!matchId) { showAlert('这一局没有可用的对局编号。'); return; }
+
+    // ⚠️ 关掉**所有**浮层，不只是战绩详情：回放是整屏，`#user-stats-modal` 与
+    //    `#match-detail-modal` 都还在文档里挂着（回放屏在它们**后面**），
+    //    不清掉就会出现"进了回放屏却还看着战绩弹窗"。
+    //    本批实测截图就是这么发现的（截图里是战绩弹窗，不是回放屏）。
+    //    `closeOverlaysExcept` 是按类名取全量 `.modal-overlay`，不用手抄 id 清单
+    //    （手抄必漏 —— tests/test_screen_overlay_registry.py 就是为这个形状写的）。
+    if (typeof closeOverlaysExcept === 'function') closeOverlaysExcept(null);
+
+    replayState.entryMatches[String(matchId)] = { matchData: matchData, playerId: playerId };
+
+    switchScreen(replayScreen);        // 进门第一件事：切屏（`hideAllScreens` 会摘掉别的 active）
+    replaySetStatus('正在加载回放…', false);
+    if (replayPlayersTitleEl) replayPlayersTitleEl.textContent = '加载中…';
+    // 回放期间不要把这条连接悬着：可能弹连接提示挡视线。
+    // ⚠️ 这条**不是**回放通道，也不发任何事件 —— 回放只走 HTTP。
+    // 回放期间不要把这条连接悬着：可能弹连接提示挡视线。
+    // ⚠️ 这条**不是**回放通道，也不发任何事件 —— 回放只走 HTTP。
+    replayState.socket = (typeof socket !== 'undefined' && socket) ? socket : null;
+    if (replayState.socket && replayState.socket.connected === false) replayState.socket = null;
+
+    bindReplayKeys();
+
+    fetch('/api/replay/' + encodeURIComponent(String(matchId)), {
+        credentials: 'same-origin',
+        headers: { 'Accept': 'application/json' }
+    }).then(function (resp) {
+        return resp.json().then(function (data) { return { ok: resp.ok, status: resp.status, data: data }; },
+            function () { return { ok: false, status: resp.status, data: null }; });
+    }).then(function (out) {
+        var data = out.data || {};
+        if (!out.ok || data.success !== true || !data.replay) {
+            replayHandleLoadFailure(out.status);
+            return;
+        }
+        replayState.payload = data.replay;
+        replayState.youAre = (data.you_are === 'p1' || data.you_are === 'p2') ? data.you_are : null;
+        replayState.k = 0;
+        replayState.speed = 1;
+        var trunc = data.replay.truncated ? String(data.replay.truncated) : '';
+        replaySetStatus(trunc ? ('回放已加载（' + trunc + '）') : '回放已加载，可以拖动进度条或点下一步。', !!trunc);
+        buildReplayTrackNodes();
+        renderReplayFrame();
+    }).catch(function () {
+        replaySetStatus('加载回放失败（网络问题），请稍后重试。', true);
+    });
+}
+
+function bindReplayKeys() {
+    if (replayState.keyBound) return;
+    replayState.keyBound = true;
+    document.addEventListener('keydown', function (e) {
+        if (!replayIsActive()) return;
+        var tag = (e.target && e.target.tagName) ? String(e.target.tagName).toLowerCase() : '';
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+        if (e.key === 'ArrowRight') { e.preventDefault(); replayStepTo(replayState.k + 1, {}); }
+        else if (e.key === 'ArrowLeft') { e.preventDefault(); replayStepTo(replayState.k - 1, {}); }
+        else if (e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); replayTogglePlay(); }
+        else if (e.key === 'Escape') { e.preventDefault(); leaveReplayScreen(); }
+    });
+}
+
+// 控件绑定：**各绑一次**（回放屏的 DOM 不会被整段重建，所以不需要委托）。
+function bindReplayControls() {
+    if (replayPrevBtn) {
+        replayPrevBtn.addEventListener('click', function () {
+            replayPause();
+            replayStepTo(replayState.k - 1, {});
+        });
+    }
+    if (replayNextBtn) {
+        replayNextBtn.addEventListener('click', function () {
+            replayPause();
+            replayStepTo(replayState.k + 1, {});
+        });
+    }
+    if (replayPlayBtn) replayPlayBtn.addEventListener('click', replayTogglePlay);
+    if (replayLeaveBtn) replayLeaveBtn.addEventListener('click', leaveReplayScreen);
+
+    if (replaySpeedGroup) {
+        // 委托一次（按钮组不会被重建；委托也免得以后加了档位就漏绑）
+        replaySpeedGroup.addEventListener('click', function (e) {
+            var btn = (e.target && e.target.closest) ? e.target.closest('[data-replay-speed]') : null;
+            if (!btn) return;
+            replaySetSpeed(replayInt(btn.dataset.replaySpeed, 1));
+        });
+    }
+
+    if (replayTrackEl) {
+        // 点节点 = 跳那一步（**在 track 自己的委托里先判节点**，再当 seek 处理）
+        replayTrackEl.addEventListener('click', function (e) {
+            var node = (e.target && e.target.closest) ? e.target.closest('.replay-track-node') : null;
+            if (node) {
+                replayPause();
+                replayStepTo(replayInt(node.dataset.step, 0), {});
+                return;
+            }
+            replaySeekFromPointer(e.clientX);
+        });
+        // 悬停节点出 tooltip（那是"这一步做了什么"的预览）
+        replayTrackEl.addEventListener('mouseover', function (e) {
+            var node = (e.target && e.target.closest) ? e.target.closest('.replay-track-node') : null;
+            if (!node) { hideReplayNodeTip(); return; }
+            var idx = replayInt(node.dataset.nodeIndex, -1);
+            var nodes = (replayState.payload && Array.isArray(replayState.payload.nodes))
+                ? replayState.payload.nodes : [];
+            updateReplayNodeTip(nodes[idx], e.clientX, e.clientY);
+        });
+        replayTrackEl.addEventListener('mousemove', function (e) {
+            var node = (e.target && e.target.closest) ? e.target.closest('.replay-track-node') : null;
+            if (!node) { hideReplayNodeTip(); return; }
+            var idx = replayInt(node.dataset.nodeIndex, -1);
+            var nodes = (replayState.payload && Array.isArray(replayState.payload.nodes))
+                ? replayState.payload.nodes : [];
+            updateReplayNodeTip(nodes[idx], e.clientX, e.clientY);
+        });
+        replayTrackEl.addEventListener('mouseleave', hideReplayNodeTip);
+        // 拖拽 track 任意 seek —— 拖拽时自动暂停
+        replayTrackEl.addEventListener('pointerdown', function (e) {
+            replayPause();
+            replayState.scrubbing = true;
+            try { replayTrackEl.setPointerCapture(e.pointerId); } catch (err) { /* 老浏览器没有就算了 */ }
+            replaySeekFromPointer(e.clientX);
+        });
+        replayTrackEl.addEventListener('pointermove', function (e) {
+            if (!replayState.scrubbing) return;
+            replaySeekFromPointer(e.clientX);
+        });
+        var endScrub = function (e) {
+            if (!replayState.scrubbing) return;
+            replayState.scrubbing = false;
+            try { replayTrackEl.releasePointerCapture(e.pointerId); } catch (err) { /* 同上 */ }
+        };
+        replayTrackEl.addEventListener('pointerup', endScrub);
+        replayTrackEl.addEventListener('pointercancel', endScrub);
+        // 键盘：进度条可聚焦，左右箭头一步步走
+        replayTrackEl.addEventListener('keydown', function (e) {
+            if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                e.preventDefault();
+                e.stopPropagation();
+                replayPause();
+                replayStepTo(replayState.k + (e.key === 'ArrowRight' ? 1 : -1), {});
+            }
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 设置面里的「允许保留我的对局回放」（契约 §5）
+// ---------------------------------------------------------------------------
+function setReplaySettingMsg(text, isError) {
+    if (!replaySettingMsg) return;
+    replaySettingMsg.textContent = text;
+    replaySettingMsg.classList.toggle('settings-error', !!isError);
+}
+
+// 拉服务端的真实开关值。**不做任何前端默认值兜底** ——
+// "服务端关着、前端显示开着"正是要避免的那种假象（教训 #21 同族）。
+function loadReplaySetting() {
+    if (!allowReplayCheckbox) return;
+    fetch('/api/replay/setting', { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+        .then(function (resp) { return resp.json(); })
+        .then(function (data) {
+            if (!data || data.success !== true) {
+                allowReplayCheckbox.disabled = true;
+                setReplaySettingMsg('登录后才能设置回放权限。', false);
+                return;
+            }
+            allowReplayCheckbox.disabled = false;
+            allowReplayCheckbox.checked = data.allow_replay === true;
+            setReplaySettingMsg(data.allow_replay === true
+                ? '打开中：你打完的对局会留下可回看的记录。'
+                : '关闭中：你打完的对局不会留下回放。', false);
+        })
+        .catch(function () {
+            allowReplayCheckbox.disabled = true;
+            setReplaySettingMsg('读取回放设置失败（网络），暂时不能修改。', true);
+        });
+}
+
+function saveReplaySetting(on) {
+    if (!allowReplayCheckbox) return;
+    fetch('/api/replay/setting', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ allow_replay: on === true })
+    }).then(function (resp) {
+        return resp.json().then(function (data) { return { ok: resp.ok, data: data }; });
+    }).then(function (out) {
+        var data = out.data || {};
+        if (!out.ok || data.success !== true) {
+            // 保存失败必须回滚 UI 并说明 —— 否则玩家以为改好了（静默失败）
+            allowReplayCheckbox.checked = !(on === true);
+            setReplaySettingMsg(data.error || '保存失败，请稍后再试。', true);
+            return;
+        }
+        allowReplayCheckbox.checked = data.allow_replay === true;
+        setReplaySettingMsg(data.allow_replay === true
+            ? '已保存：你打完的对局会留下回放。'
+            : '已保存：你打完的对局不会留下回放。', false);
+    }).catch(function () {
+        allowReplayCheckbox.checked = !(on === true);
+        setReplaySettingMsg('保存失败（网络），请稍后再试。', true);
+    });
+}
+
+// 对局详情页里的「对局回放」入口与设置开关，**各绑一次**。
+// ⚠️ 详情内容是每次点开时整段重建的（innerHTML 换掉），所以监听必须
+//    **委托**在不被重建的容器 `#match-detail-modal` 上 —— 绑在 `#match-detail-content`
+//    上会被换掉，逐行绑按钮更是必漏（大厅/排行榜都踩过这个坑）。
+function bindReplayEntryPoints() {
+    if (typeof matchDetailModal !== 'undefined' && matchDetailModal
+        && matchDetailModal.dataset.replayEntryBound !== '1') {
+        matchDetailModal.dataset.replayEntryBound = '1';
+        matchDetailModal.addEventListener('click', function (e) {
+            var btn = (e.target && e.target.closest) ? e.target.closest('.match-replay-btn') : null;
+            if (!btn) return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (btn.disabled === true) return;      // 置灰的按钮点了什么也不做（原因写在旁边）
+            var matchId = btn.dataset.matchId || '';
+            var entry = replayState.entryMatches[matchId] || {};
+            openReplayForMatch(matchId, entry.matchData || null, entry.playerId || null);
+        });
+    }
+    if (allowReplayCheckbox && allowReplayCheckbox.dataset.replaySettingBound !== '1') {
+        allowReplayCheckbox.dataset.replaySettingBound = '1';
+        allowReplayCheckbox.addEventListener('change', function () {
+            saveReplaySetting(allowReplayCheckbox.checked === true);
+        });
+    }
+}
+
 // 绑定事件监听器
 function bindEventListeners() {
 
@@ -2973,6 +3906,39 @@ function bindEventListeners() {
         const isWin = matchData.winner_id === myId;
         const name = isWin ? matchData.loser_name : matchData.winner_name;
         return name || opponentRawId(matchData, myId) || '未知';
+    }
+
+    // ==================== 对局模式标签：**唯一口径**（2026-09-23 回放批）====================
+    //
+    // 作者原话：「现在的战绩界面中是看不出来这局游戏是排位赛还是匹配还是打人机的」。
+    // 数据来源是后端新加的 `mode` 列（`'ranked' | 'casual' | 'ai' | 'custom' | null`）。
+    //
+    // ⚠️ **`mode` 为 `null` = "老数据，不知道"**（实测生产库 342 局全是 NULL）。
+    //    **绝不许兜底成"匹配"**（教训 #21：未知不能退化成满足条件）—— 老局**不显示**
+    //    排位/匹配标签，也不许显示成自定义房。
+    // ⚠️ **人机标签要先读 `mode`，`mode` 为 NULL 时才退回 `isAiOpponent`
+    //    （按对手 id 是不是 `ai-*` 猜）。两者都判不出来才不显示。**
+    //    `isAiOpponent` **不许删**：它是老局唯一能看出人机的途径，删了就是人机标签在
+    //    历史局上集体消失，而且**不报错**。
+    // ⚠️ 口径**只写在这里一处**，战绩列表（buildHistoryList）与对局详情页
+    //    （renderMatchDetailHTML）都调它 —— 写两遍必漂移（教训 #1）。
+    function matchModeLabel(matchData, myId) {
+        const mode = matchData && matchData.mode ? String(matchData.mode) : '';
+        if (mode === 'ranked') return { key: 'ranked', text: '排位', cls: 'hist-tag hist-tag-ranked' };
+        if (mode === 'casual') return { key: 'casual', text: '匹配', cls: 'hist-tag hist-tag-casual' };
+        if (mode === 'ai') return { key: 'ai', text: '人机', cls: 'hist-tag hist-tag-ai' };
+        if (mode === 'custom') return { key: 'custom', text: '自定义房', cls: 'hist-tag hist-tag-custom' };
+        // mode 是 NULL/未知 —— 老局。人机只能靠对手 id 猜（这是老局唯一的途径）。
+        if (isAiOpponent(matchData, myId)) return { key: 'ai', text: '人机', cls: 'hist-tag hist-tag-ai' };
+        return { key: 'unknown', text: '', cls: 'hist-tag' };
+    }
+
+    // 给 "<span> 用的模式标签。不知道模式时返回**空串**（不占位、不显示任何标签）。
+    function matchModeTagHTML(matchData, myId) {
+        const info = matchModeLabel(matchData, myId);
+        if (!info.text) return '';
+        return '<span class="' + info.cls + ' hist-tag-mode hist-tag-' + info.key + '">'
+            + escapeHtml(info.text) + '</span>';
     }
 
     // ==================== 个人信息名片（2026-09-17 第 1 批） ====================
@@ -3485,11 +4451,14 @@ function bindEventListeners() {
         history.forEach((h, index) => {
             const isWin = h.winner_id === s.id;
             const timeText = h.timestamp ? new Date(h.timestamp * 1000).toLocaleString() : '';
-            const aiTag = isAiOpponent(h, s.id) ? '<span class="hist-tag">人机</span>' : '';
+            // 模式标签（排位/匹配/人机/自定义房）。**口径只在 matchModeTagHTML 一处**：
+            // 老局 `mode` 为 NULL 时不显示排位/匹配标签，人机退回按对手 id 猜。
+            // ⚠️ 这里原来只有 `isAiOpponent(h, s.id) ? '人机' : ''` —— 别写回那种两份判据。
+            const modeTag = matchModeTagHTML(h, s.id);
             html += '<button type="button" class="match-history-btn ' + (isWin ? 'win' : 'lose') + '"'
                 + ' data-match-index="' + index + '" title="点击查看本局详情">'
                 + '<span class="hist-time">' + escapeHtml(timeText) + '</span>'
-                + '<span class="hist-opp">vs ' + escapeHtml(opponentDisplayName(h, s.id)) + aiTag + '</span>'
+                + '<span class="hist-opp">vs ' + escapeHtml(opponentDisplayName(h, s.id)) + modeTag + '</span>'
                 + '<span class="hist-result">' + (isWin ? '胜' : '负') + '</span>'
                 + '</button>';
         });
@@ -3527,8 +4496,12 @@ function bindEventListeners() {
     window.buildProfileCard = buildProfileCard;
     window.profileCardModel = profileCardModel;
 
-    // 单次 20 条，最多 100 条（与服务端 db.get_match_history 的上限一致）
-    const STATS_PAGE_SIZE = 20;
+    // 单次 30 条，最多 100 条（与服务端 db.get_match_history 的上限一致）
+    // ★ 2026-09-23 回放批：20 → **30**。后端按"每人最近 30 局"保留回放（契约 §1/§4），
+    //   列表只请求 20 就有 10 局够不着 = 白存。代价是 /user_stats 单次响应
+    //   ~132 KB → ~200 KB（30 行 × 6.6 KB 的完整 logs），**这是已知且接受的取舍**。
+    //   ⚠️ 只动这一个数字：`logs` 的条数/体积一个字都不许跟着调大。
+    const STATS_PAGE_SIZE = 30;
     const STATS_MAX_ROWS = 100;
     // 留言单条长度上限（与契约 §3.3 的 100 字一致；服务端才是最终裁决，
     // 这里只做"当场拦住"，不让玩家白等一次往返）。
@@ -4597,11 +5570,24 @@ function bindEventListeners() {
         const resultText = isWin ? '胜' : '负';
         const resultColor = isWin ? 'var(--success)' : 'var(--danger)';
         const timeText = matchData.timestamp ? new Date(matchData.timestamp * 1000).toLocaleString() : '';
-        const aiTag = isAiOpponent(matchData, playerId) ? ' <span class="hist-tag hist-tag-dark">人机</span>' : '';
+        // 模式标签：与战绩列表用**同一个口径**（matchModeTagHTML → matchModeLabel）。
+        // ⚠️ 原来这里是 `isAiOpponent(...) ? ' 人机' : ''` —— 那份判据漏掉了排位/匹配/自定义房，
+        //    而且与列表那份是两套实现（教训 #1）。现在两处都调同一份。
+        const modeTag = matchModeTagHTML(matchData, playerId);
         // 之前这里写的是 winner_name || loser_name：赢的局 winner_name 就是自己，
         // 「对手」栏会显示成自己；现在按胜负取真正的一方。
         const opponentName = opponentDisplayName(matchData, playerId);
         const logs = matchData.logs || [];
+        const matchId = matchData.id || matchData.match_id || '';
+        // 「对局回放」按钮（回放批 §7）。⚠️ `has_replay` 为假时**置灰并写明原因** ——
+        // 生产库实测真有 0 步的对局（契约 §9），点了没反应的静默失败正是本批要避免的。
+        const canReplay = matchData.has_replay === true && !!matchId;
+        const replayBtn = '<button type="button" class="btn match-replay-btn"'
+            + ' data-match-id="' + escapeHtml(String(matchId)) + '"'
+            + (canReplay ? '' : ' disabled aria-disabled="true"')
+            + '>对局回放</button>';
+        const replayHint = canReplay ? ''
+            : '<div class="muted-hint">这局没有可回放的行动</div>';
         const logsHtml = logs.length
             ? logs.map(l => {
                 const ts = l.ts ? new Date(l.ts * 1000).toLocaleTimeString() : '';
@@ -4617,13 +5603,14 @@ function bindEventListeners() {
             + '<div class="match-detail-info-grid">'
             + '<div class="match-detail-info-box">'
             + '<div class="match-detail-label">对手</div>'
-            + '<div class="match-detail-value">' + escapeHtml(opponentName) + aiTag + '</div>'
+            + '<div class="match-detail-value">' + escapeHtml(opponentName) + modeTag + '</div>'
             + '</div>'
             + '<div class="match-detail-info-box">'
             + '<div class="match-detail-label">结果</div>'
             + '<div class="match-detail-result" style="color:' + resultColor + ';">' + resultText + '</div>'
             + '</div>'
             + '</div>'
+            + '<div class="match-detail-actions">' + replayBtn + replayHint + '</div>'
             + '<div class="match-detail-info-box">'
             + '<div class="match-detail-label">局内日志</div>'
             + '<div class="match-detail-logs">' + logsHtml + '</div>'
@@ -4631,6 +5618,12 @@ function bindEventListeners() {
             + '</div>';
     }
     window.renderMatchDetailHTML = renderMatchDetailHTML;
+    // 给无头检查工具用：**战绩行点击是 bindHistoryButtons 绑的**，
+    // 工具直接把 HTML 塞进容器（绕开了正常渲染链路）之后必须自己调它，
+    // 否则点了没反应、而且**不报错**（`tools/replay_check.mjs` 第一版就栽在这里）。
+    window.__bindHistoryForCheck = function (history, myId) {
+        bindHistoryButtons(userStatsContent, history || [], myId || '');
+    };
 
     // 显示对局详情
     function showMatchDetail(matchData, playerId) {
@@ -4742,6 +5735,10 @@ if (copyInviteLinkBtn) copyInviteLinkBtn.addEventListener('click', copyInviteLin
     }
     // 观战屏的「退出观战」
     if (spectateLeaveBtn) spectateLeaveBtn.addEventListener('click', () => leaveSpectateScreen(false));
+    // 回放屏的控件 + 两个入口（对局详情里的「对局回放」按钮、设置面的回放开关）。
+    // ⚠️ 这两行**只调回放自己的函数**，与观战那套互不相干（本批的核心安全边界）。
+    bindReplayControls();
+    bindReplayEntryPoints();
     // 观战席聊天（第 4 批）：按钮 + 回车。两条入口都走同一个函数
     // （**在观战屏上**回车才发送 —— 这条输入框只长在观战屏里，但绑的是全局
     //  keydown，所以必须判一次屏，否则对局屏里打字按回车会误发一条观战发言）。
@@ -7221,6 +8218,8 @@ function allScreens() {
             //   下面那条兜底也会捞到它，但"显式清单"才是给人看的契约 ——
             //   兜底捞到的东西一旦有人给 .screen 加个新语义就会静默失效。
             spectateScreen,
+            // ★ 回放屏（回放批 §7）同样显式登记 —— 同一条理由。
+            replayScreen,
             // 兜底：页面里任何带 .screen 的元素（防漏登记）
             ...Array.from(document.querySelectorAll('.screen'))];
 }

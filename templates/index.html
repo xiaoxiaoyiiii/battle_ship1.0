@@ -684,6 +684,84 @@
         </div>
     </div>
 
+    <!-- ★ 对局回放屏（2026-09-23 回放批 §7）。**独立一整屏，绝不改造 #spectate-screen**：
+          观战屏的棋盘渲染**故意**只画「已轰过的格」，它的安全前提是"手上根本没有船位数据"；
+          一旦让它学会画船，某次改动就可能把船位漏给观众。所以这里新屏、新 id
+          （`#replay-board-1/2`）、新渲染函数，只共用 CSS 类（`.cell/.hit/.miss/.sunk`）
+          与 magic_cards.js 的卡名映射。
+          ⚠️ 回放屏**不碰 socket**：不 join 房间、不发事件、不订阅观战通道，
+             数据只来自 GET /api/replay/<match_id>。
+          ⚠️ 也不放观战席与聊天输入框 —— 回放没有「观众」这个概念。
+          ⚠️ 显隐只能用 `active` 类（不许用 hidden，见 game.js 里那条警告）。 -->
+    <div id="replay-screen" class="screen">
+        <h2 class="replay-title">对局回放 · <b id="replay-players-title">—</b></h2>
+        <p class="replay-subtitle" id="replay-status">正在加载回放…</p>
+
+        <div class="replay-topbar">
+            <span class="replay-stat">来源 <b id="replay-source">—</b></span>
+            <span class="replay-stat">第 <b id="replay-step-index">0</b>/<b id="replay-step-total">0</b> 步</span>
+            <span class="replay-stat">当前 <b id="replay-step-kind">—</b></span>
+            <span class="replay-stat">行动方 <b id="replay-step-actor">—</b></span>
+            <span class="replay-warning hidden" id="replay-truncated"></span>
+            <span class="replay-speed" id="replay-speed-group" role="group" aria-label="播放倍速">
+                <button type="button" class="replay-speed-btn active" data-replay-speed="1">1×</button>
+                <button type="button" class="replay-speed-btn" data-replay-speed="2">2×</button>
+                <button type="button" class="replay-speed-btn" data-replay-speed="4">4×</button>
+            </span>
+        </div>
+
+        <div class="replay-players">
+            <div class="replay-player">
+                <span class="replay-player-name" id="replay-name-1">—</span>
+                <span class="replay-player-meta">剩余战舰 <b id="replay-ships-1">0</b></span>
+            </div>
+            <div class="replay-player">
+                <span class="replay-player-name" id="replay-name-2">—</span>
+                <span class="replay-player-meta">剩余战舰 <b id="replay-ships-2">0</b></span>
+            </div>
+        </div>
+
+        <div class="replay-body">
+            <div class="replay-board-wrapper">
+                <h3 id="replay-board-title-1">— 的棋盘</h3>
+                <div id="replay-board-1" class="board replay-board" role="img"
+                     aria-label="第一位玩家的棋盘"></div>
+            </div>
+            <div class="replay-board-wrapper">
+                <h3 id="replay-board-title-2">— 的棋盘</h3>
+                <div id="replay-board-2" class="board replay-board" role="img"
+                     aria-label="第二位玩家的棋盘"></div>
+            </div>
+            <div class="replay-side">
+                <h3 id="replay-hand-title-1">— 的手牌</h3>
+                <div class="replay-hand" id="replay-hand-1"></div>
+                <h3 id="replay-hand-title-2">— 的手牌</h3>
+                <div class="replay-hand" id="replay-hand-2"></div>
+                <h3>这一步</h3>
+                <div class="replay-current" id="replay-current">—</div>
+                <h3>对局记录</h3>
+                <div class="replay-logs" id="replay-logs"></div>
+            </div>
+        </div>
+
+        <div class="replay-controls">
+            <button id="replay-prev" class="btn secondary" type="button">上一步</button>
+            <button id="replay-play" class="btn" type="button">播放</button>
+            <button id="replay-next" class="btn secondary" type="button">下一步</button>
+            <div id="replay-track" class="replay-track" role="slider" tabindex="0"
+                 aria-label="回放进度" aria-valuemin="0" aria-valuenow="0" aria-valuemax="0">
+                <div class="replay-track-fill" id="replay-track-fill"></div>
+                <div class="replay-track-nodes" id="replay-track-nodes"></div>
+                <div class="replay-track-thumb" id="replay-track-thumb"></div>
+            </div>
+        </div>
+        <div class="replay-node-tip hidden" id="replay-node-tip" role="tooltip"></div>
+
+        <div class="replay-actions">
+            <button id="replay-leave" class="btn secondary" type="button">退出回放</button>
+        </div>
+    </div>
+
     <!-- 个人信息模态弹窗（2026-09-17 名片改版）——⚠️ 这里是【编辑面】。
          查看面是下面的 #opponent-stats-modal：game.js 把分层名片渲染进 #opponent-stats-content，
          四个入口共用（排行榜名字/头像、局内自己头像、局内对手头像、#show-opponent-stats）。
@@ -961,6 +1039,17 @@
                         </label>
                         <p class="muted-hint" id="settings-spectate-msg" role="status">
                             打开后，别人可以在大厅里看到并围观你的对局（只看到双方已轰过的格子，看不到你的船在哪）。
+                        </p>
+                        <!-- 回放开关（回放批 §5）。与观战开关同一套写法：状态**只来自服务端**
+                             （进设置面时拉 GET /api/replay/setting），前端不许自己给默认值。
+                             保存失败必须提示（不许静默）。
+                             语义：**任一方关掉，这一局就不留回放**。 -->
+                        <label class="profile-label-half settings-spectate-row">
+                            <input type="checkbox" id="settings-allow-replay" checked>
+                            <span>允许保留我的对局回放</span>
+                        </label>
+                        <p class="muted-hint" id="settings-replay-msg" role="status">
+                            打开后，你打完的对局会在战绩里留下可回看的记录（你和对手能看到，别的玩家按你的战绩公开设置决定）。
                         </p>
                         <button type="button" id="settings-goto-profile" class="btn secondary">前往个人信息编辑</button>
                     </section>

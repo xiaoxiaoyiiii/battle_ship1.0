@@ -3,7 +3,7 @@
 > 面向 AI 代理的索引。**先读这里，别一次读完 `server.py`（8500+ 行）/ `static/game.js`（9000+ 行）/ `static/style.css`（4800+ 行）—— 一律先 grep 定位再分段读。**
 > ⚠️ 行号每次提交都会漂移，**本文件里任何行号都只当线索，以 grep 结果为准**。
 > ⚠️ **本文件每次对话都会整份注入**，新增内容请控制在几十字级别 —— 长记录写进 `docs/`。
-> 最后更新：2026-09-23（`emit` 的 `room=<sid>` 9 处改成 `to=`；`_live_room_id` 不再静默）。
+> 最后更新：2026-09-23（对局回放上线：新屏 `#replay-screen`、战绩模式标签、列表请求提到 30）。
 
 ---
 
@@ -16,7 +16,8 @@ Flask + Flask-SocketIO 的实时双人海战棋，48 条魔法卡 / 场地魔法
   `static/game.js` + `templates/index.html` + `static/style.css`（前端单页）
 - 纯规则模块（都**只有一份实现**，前端不许重算）：`ranks.py` 段位 ｜ `leveling.py` 等级经验 ｜
   `achievements.py` 徽章 ｜ `profile_spec.py` 名片外观与解锁 ｜ `wallpaper.py` 壁纸 ｜
-  `spectate.py` 观战（事件白/黑名单 + 净化函数 + 座位标签 + 快照禁字段表；观众**能进来了**，见 `docs/SPECTATE_BATCH2_2026_09_22.md`）
+  `spectate.py` 观战（事件白/黑名单 + 净化函数 + 座位标签 + 快照禁字段表；观众**能进来了**，见 `docs/SPECTATE_BATCH2_2026_09_22.md`）｜
+  `replay.py` 对局回放（步骤 + 稀疏增量船位/手牌时间线 + 棋盘重置 + 服务端算好的关键节点；**绝不 emit**，见 `docs/REPLAY_2026_09_23.md`）
 
 ---
 
@@ -33,7 +34,7 @@ python -m pytest tests/ -q    # 基线见下
 - ⚠️ 本机临时目录 ACL 坏过，pytest 若在 setup 报 `PermissionError: Temp\pytest-of-Administrator`，
   先 `New-Item -ItemType Directory -Force .tmp\pytemp`，再
   `$env:TMP="$PWD\.tmp\pytemp"; $env:TEMP=$env:TMP; python -m pytest tests/ -q -p no:cacheprovider`。
-- **实测基线（2026-09-23）**：`2266 passed`；跑完约 35 秒。
+- **实测基线（2026-09-23 回放批）**：`2395 passed`；跑完约 62 秒。
   含无头对局驱动 `tools/headless_game.py`（约 250 局/秒，自带"击沉/被击沉/命中率/
   无伤获胜"四个量）、大师 AI 决策层 `ai_brain.py` 与大师接线层 `tests/test_ai_master.py` 的用例。
 
@@ -45,7 +46,9 @@ python -m pytest tests/ -q    # 基线见下
 音效/BGM → `sfx_check.mjs` / `bgm_check.mjs` ｜ 连锁卡预览 → `chain_preview_check.mjs` ｜ 仁王之盾 → `renwang_board_check.mjs` ｜
 大厅 → `lobby_check.mjs`（**双浏览器** —— 大厅的价值就是"别人那边立刻能看到"，单浏览器测不出来）｜
 绝处逢生锁卡/击杀即胜 → `last_stand_win_check.mjs`（前端喂事件）＋ `last_stand_win_e2e.mjs`（**真 socket 打完一局**，需 `ENABLE_TEST_EVENTS=1`）｜
-更新公告 → `changelog_check.mjs`（入口 / 自动弹一次 / 文案逐字来自接口 / 浮层互斥）
+更新公告 → `changelog_check.mjs`（入口 / 自动弹一次 / 文案逐字来自接口 / 浮层互斥）｜
+对局回放 → `replay_check.mjs`（**真打完一局**再逐帧比对；需 `ENABLE_TEST_EVENTS=1`）｜
+观战不变量 → `spectate_check.mjs`（四浏览器；每帧无船位 + 自我校准腿）
 - ⚠️ **真 socket E2E 的 ack 帧是 `43<ackId><JSON>`，没有长度位**；handler 抛异常时**连 ack 都不回**，
   症状都是"客户端超时"（像服务端卡死）→ 先看服务端日志的 traceback，别先怀疑网络。
 - **`dom_contract_check.mjs`**：不用浏览器、不用服务端、几秒钟 —— 查「代码引用了但页面里不存在的 id」，
@@ -121,6 +124,9 @@ phase:                        preparation → battle → end
   `@_test_event`，未设 `ENABLE_TEST_EVENTS=1` 时一律拒绝。**它们没有 `_identity_ok`** —— 一旦为调试打开就是完全敞开的。
 - ⚠️ `test_win_game` **只设 state/winner 再 emit，不调 `_finalize_match`** —— 用它验"打完一局给分"会
   "成功但毫无反应"。真结算走**炮击击沉 / 投降 / 掉线判胜**。
+- 回放（HTTP，**不是 socket**）：`GET /api/replay/<match_id>`（200/401/403/404/409/500）｜
+  `GET|POST /api/replay/setting`（`{allow_replay}`）。`/user_stats` 每行多 `has_replay`(bool) 与
+  `mode`(`ranked`/`casual`/`ai`/`custom`/`null`)；⚠️ `mode` 为 `null` = 老局不知道，**不许兜底成匹配**
 
 ---
 
@@ -364,7 +370,8 @@ phase:                        preparation → battle → end
 `docs/SPECTATE_BATCH2_2026_09_22.md`（观战第 2 批：白名单快照 + 观众进出 + 观战开关 + `game_log` 真泄漏）｜
 `docs/SPECTATE_BATCH6_2026_09_23.md`（观战第 6 批：**棋盘方向对调的真根因 + E2E 读错字段的假断言** + 回光返照落到猜拳的判定）｜
 `docs/SPECTATE_BATCH7_2026_09_23.md`（观战第 7 批：**红了 5/8 的连锁断言判为「工具脆」** + 判据改成就地记帧 + 4 条 pytest 守卫）｜
-`docs/EMIT_ROOM_TARGETS_2026_09_23.md`（**把 sid 当房间号的 9 处 `room=` 改成 `to=`** + 源码级穷举守卫 + `_live_room_id` 为何保留但不再静默）｜ `README.md`（用户向说明）
+`docs/EMIT_ROOM_TARGETS_2026_09_23.md`（**把 sid 当房间号的 9 处 `room=` 改成 `to=`** + 源码级穷举守卫 + `_live_room_id` 为何保留但不再静默）｜
+`docs/REPLAY_2026_09_23.md`（**对局回放**：契约 + 前端回放屏 §7 + 后端已完成；实施记录见文末）｜ `README.md`（用户向说明）
 
 > ⚠️ **部署前确认环境变量**：代码新增 `os.environ.get('XXX')` 时，服务器 systemd 必须同步配置 ——
 > 漏配会导致"服务能起来但带着错误默认值运行"（曾因漏配 `CORS_ORIGINS` 让线上所有操作卡十几秒）。

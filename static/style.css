@@ -3174,6 +3174,29 @@ body.layout-tight.layout-ingame .board-tab { line-height: 1; }
     border: 1px solid rgba(255, 255, 255, 0.4);
 }
 .hist-tag-dark { background: var(--surface-muted); border-color: var(--panel-border); color: var(--muted); }
+
+/* 对局模式标签（2026-09-23 回放批）。排位 / 匹配 / 人机 / 自定义房。
+   ⚠️ `mode` 为 NULL 的老局**不显示任何标签**（教训 #21：未知不许退化成"匹配"），
+      所以这里没有 `.hist-tag-unknown` 这一档 —— 不显示就是正确答案。 */
+.hist-tag-mode { white-space: nowrap; }
+.hist-tag-ranked { background: rgba(160, 110, 240, 0.3); border-color: rgba(160, 110, 240, 0.6); }
+.hist-tag-casual { background: rgba(74, 158, 255, 0.28); border-color: rgba(74, 158, 255, 0.6); }
+.hist-tag-ai { background: rgba(128, 128, 128, 0.3); border-color: rgba(128, 128, 128, 0.6); }
+.hist-tag-custom { background: rgba(47, 158, 109, 0.28); border-color: rgba(47, 158, 109, 0.6); }
+
+/* 对局详情页的操作行（回放批）：里面是「对局回放」按钮 + 置灰时的那句原因。 */
+.match-detail-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.match-replay-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
 .history-more {
     width: 100%;
     margin-top: 4px;
@@ -5715,6 +5738,341 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, rgba(255, 2
 
 #settings-spectate-msg.settings-error {
     color: var(--danger, #e5484d);
+}
+
+/* ==========================================================================
+   对局回放屏（2026-09-23 回放批 §7）
+   ==========================================================================
+   ⚠️ 这一整段都是**回放专用**的类名（前缀 `.replay-`），一个都不给观战屏用：
+      观战屏的棋盘渲染故意只会画「已轰过的格」，它的安全前提是"手上根本没有船位
+      数据"；回放屏要画船，两者**绝不能共用渲染**，所以连类名也分开
+      （只共用 `.cell` / `.hit` / `.miss` / `.sunk` 这几个格子状态类）。
+   ⚠️ 尺寸上**一个字都不动** `.board` / `.cell` 的盒模型：`ui_layout_check.mjs`
+      逐视口钉着棋盘 300×300 与单格 42px（它只用类名选，不认屏幕 id）。
+      `.replay-board` 只是 `.board` 的修饰类，这里**不写** width / padding / gap。
+   ⚠️ 不给本段任何元素加 `transform` / `filter` —— 回放屏里有 `position: fixed`
+      的浮层（顶栏/设置面）可能盖在它上面，加了会让浮窗改以它为准定位
+      （CLAUDE.md §11.7）。 */
+
+#replay-screen.active {
+    /* 回放屏固定一屏：棋盘 + 侧栏 + 控制条，超出的部分交给各自的内滚动区，
+       不让整页滚动（与观战屏同一条口径）。 */
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.replay-title {
+    margin-bottom: 4px;
+}
+
+.replay-subtitle {
+    margin: 0 0 12px;
+    font-size: 0.82rem;
+    color: var(--text-subtle);
+}
+
+.replay-subtitle.replay-error {
+    color: var(--danger, #e5484d);
+    font-weight: 600;
+}
+
+.replay-topbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+    font-size: 0.8rem;
+    color: var(--text-subtle);
+    position: relative;
+    z-index: 1;
+}
+
+.replay-stat b {
+    color: var(--text, inherit);
+}
+
+/* 截断/损坏提示：**必须显眼**（契约 §3：截断绝不静默）。 */
+.replay-warning {
+    padding: 2px 8px;
+    border-radius: 8px;
+    border: 1px solid var(--danger, #e5484d);
+    color: var(--danger, #e5484d);
+    font-weight: 600;
+}
+
+.replay-speed {
+    display: inline-flex;
+    gap: 4px;
+    margin-left: auto;
+}
+
+.replay-speed-btn {
+    padding: 2px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--panel-border);
+    background: rgba(128, 128, 128, 0.08);
+    color: var(--text-subtle);
+    font-size: 0.78rem;
+    cursor: pointer;
+}
+
+.replay-speed-btn.active {
+    border-color: var(--accent, #4a9eff);
+    color: var(--text, inherit);
+    font-weight: 600;
+}
+
+.replay-players {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.replay-player {
+    flex: 1 1 200px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+}
+
+.replay-player-name {
+    font-size: 0.92rem;
+    font-weight: 600;
+}
+
+.replay-player-meta {
+    font-size: 0.76rem;
+    color: var(--text-subtle);
+}
+
+.replay-body {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-start;
+    margin-bottom: 10px;
+}
+
+.replay-board-wrapper {
+    flex: 1 1 280px;
+    min-width: 0;
+    padding: 8px 10px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+    text-align: center;
+}
+
+.replay-board-wrapper h3 {
+    margin: 0 0 6px;
+    font-size: 0.85rem;
+    color: var(--text-subtle);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 回放棋盘**不可点**（看客没有任何操作），别给手型光标误导；
+   也去掉 hover 的位移 —— 它会让格子看起来能点。 */
+.replay-board .cell {
+    cursor: default;
+}
+
+.replay-board .cell:hover {
+    transform: none;
+}
+
+/* 还没被炸到、也没有船的格子：回放里它是**空海**，别画成攻击格。 */
+.cell.replay-water {
+    background: var(--cell-water);
+}
+
+/* 自己那一侧加一道淡边（服务端下发 `you_are` 时才有）。 */
+.replay-board.replay-board-mine {
+    border-color: var(--accent, #4a9eff);
+}
+
+.replay-side {
+    flex: 1 1 220px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+}
+
+.replay-side h3 {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--text-subtle);
+}
+
+.replay-hand {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    font-size: 0.76rem;
+    color: var(--text-subtle);
+    max-height: 88px;
+    overflow-y: auto;
+}
+
+.replay-hand-card {
+    padding: 1px 6px;
+    border-radius: 8px;
+    border: 1px solid var(--panel-border);
+    background: rgba(128, 128, 128, 0.08);
+    word-break: break-word;
+    /* 只读展示：不可点、不触发任何操作（契约 §7）。 */
+    cursor: default;
+    user-select: none;
+}
+
+.replay-hand-empty {
+    color: var(--muted);
+}
+
+.replay-current {
+    font-size: 0.78rem;
+    line-height: 1.45;
+    color: var(--text, inherit);
+    padding: 4px 6px;
+    border-radius: 8px;
+    background: rgba(128, 128, 128, 0.08);
+    word-break: break-word;
+}
+
+.replay-logs {
+    font-size: 0.76rem;
+    line-height: 1.45;
+    color: var(--text-subtle);
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.replay-log-item {
+    padding: 2px 0;
+    border-bottom: 1px dashed rgba(128, 128, 128, 0.18);
+}
+
+.replay-log-item.replay-log-current {
+    color: var(--text, inherit);
+    font-weight: 600;
+}
+
+.replay-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+
+.replay-track {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 120px;
+    height: 26px;
+    border-radius: 8px;
+    background: rgba(128, 128, 128, 0.14);
+    cursor: pointer;
+    touch-action: none;
+}
+
+.replay-track:focus-visible {
+    outline: 2px solid var(--accent, #4a9eff);
+    outline-offset: 2px;
+}
+
+.replay-track-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 0;
+    border-radius: 8px;
+    background: rgba(var(--primary-rgb), 0.28);
+    pointer-events: none;
+}
+
+.replay-track-nodes {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    pointer-events: none;
+}
+
+/* 关键节点标记。⚠️ 位置由 JS 按 `i/(n-1)` 算好写成 inline `left`，
+   这里**不写** left/transform，免得两处各算一次（那必然漂移）。 */
+.replay-track-node {
+    position: absolute;
+    top: 4px;
+    width: 9px;
+    height: 18px;
+    margin-left: -4.5px;
+    border-radius: 3px;
+    border: 1px solid rgba(0, 0, 0, 0.35);
+    background: var(--text-subtle);
+    pointer-events: auto;
+    cursor: pointer;
+}
+
+.replay-track-node.kind-magic { background: #8a6bd8; }
+.replay-track-node.kind-sunk { background: #e5484d; }
+.replay-track-node.kind-hit { background: #e0a021; }
+.replay-track-node.kind-reset { background: #2f9e6d; }
+.replay-track-node.kind-phase { background: #4a9eff; }
+.replay-track-node.kind-game_over { background: #111; }
+.replay-track-node.kind-truncated { background: #808080; }
+
+.replay-track-thumb {
+    position: absolute;
+    top: -2px;
+    width: 4px;
+    height: calc(100% + 4px);
+    margin-left: -2px;
+    border-radius: 2px;
+    background: var(--accent, #4a9eff);
+    pointer-events: none;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+/* 节点 tooltip：fixed + 用鼠标坐标定位（不挂在 track 里面，免得被 overflow 裁掉）。
+   ⚠️ 这里**只**用 `left/top`，不加 `transform` —— 有 transform 时 fixed 的
+      定位基准会变成它自己的包含块，坐标就错位了。 */
+.replay-node-tip {
+    position: fixed;
+    z-index: 60;
+    max-width: 260px;
+    padding: 4px 8px;
+    border-radius: 8px;
+    border: 1px solid var(--panel-border);
+    background: rgba(20, 20, 24, 0.94);
+    color: #f2f2f2;
+    font-size: 0.76rem;
+    line-height: 1.4;
+    pointer-events: none;
+    word-break: break-word;
+}
+
+.replay-actions {
+    display: flex;
+    gap: 10px;
 }
 
 /* ---------- 30.5 公屏 ---------- */

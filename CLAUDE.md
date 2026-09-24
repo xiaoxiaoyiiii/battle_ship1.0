@@ -3,13 +3,13 @@
 > 面向 AI 代理的索引。**先读这里，别一次读完 `server.py`（8500+ 行）/ `static/game.js`（9000+ 行）/ `static/style.css`（4800+ 行）—— 一律先 grep 定位再分段读。**
 > ⚠️ 行号每次提交都会漂移，**本文件里任何行号都只当线索，以 grep 结果为准**。
 > ⚠️ **本文件每次对话都会整份注入**，新增内容请控制在几十字级别 —— 长记录写进 `docs/`。
-> 最后更新：2026-09-24（平等条约改连锁无效化：删掉船数变化快照，判据收成一张表）。
+> 最后更新：2026-09-25（新增判定卡「无忧梦呓」：延迟拼点，卡数 48→49；含中文的 .ps1 必须带 BOM）。
 
 ---
 
 ## 0. 速览
 
-Flask + Flask-SocketIO 的实时双人海战棋，48 条魔法卡 / 场地魔法 / 连锁系统；含账号、战绩排行、段位与排位、等级经验、名片外观、大厅、人机、自定义房、断线重连。
+Flask + Flask-SocketIO 的实时双人海战棋，49 条魔法卡 / 场地魔法 / 连锁系统；含账号、战绩排行、段位与排位、等级经验、名片外观、大厅、人机、自定义房、断线重连。
 
 - 线上 http://8.133.180.159:5000/ ｜ 仓库 `xiaoxiaoyiiii/battle_ship1.0` ｜ 生产跑 eventlet
 - 核心文件：`server.py`（事件 + 对局）｜ `api.py`（HTTP）｜ `db.py`（SQLite/WAL）｜
@@ -147,8 +147,8 @@ phase:                        preparation → battle → end
 
 ## 7. 魔法卡
 
-- **48 条 / 46 唯一卡名**（`失灵！` ×3 是**故意的**，`draw_card` 去重对它特例放行）；速阶 1=17 / 2=15 / 3=16；
-  类型：普通 43 + 场地 4（恶魔契约 / 禁忌果实 / 伊甸园 / 教皇旨意）+ 判定 1（命运骰子）。
+- **49 条 / 47 唯一卡名**（`失灵！` ×3 是**故意的**，`draw_card` 去重对它特例放行；速阶与类型分布以 `magic_card.json` 为准）；
+  类型：普通 + 场地 4（恶魔契约 / 禁忌果实 / 伊甸园 / 教皇旨意）+ 判定 2（命运骰子 / 无忧梦呓）。
 - 核心分发 `apply_magic_effect(room, caster_id, card, target_data)`（约 1240 行，42 处 `card.name ==`）。
 - ⚠️ **改卡要同步 4 处**：`static/magic_card.json`、`static/magic_cards.js`、`apply_magic_effect` 分支、测试。
   前两者须逐字符一致（一致性测试不校验 `description`，需人工留意）。
@@ -334,6 +334,8 @@ phase:                        preparation → battle → end
    改完立刻 `node --check` + 跑对应无头工具。
 5. **⚠️ 别用 PowerShell 的 `Get-Content -Raw | Set-Content` 改 UTF-8 源码**：本机按 GBK 读写会把中文注释写成
    非法 UTF-8（`node --check` 报错、read 工具读不了）。用编辑工具，或 python 显式 `encoding='utf-8'`。
+   ★ 同族另一半（2026-09-25 实测）：**含中文的 `.ps1` 必须存成「UTF-8 带 BOM」**，否则 PS 5.1 按 GBK 解码
+   脚本本身、执行中途崩掉、**只吐一句 stderr**（症状是"参数全对却跑不通"）。
 6. **改 `style.css` 之后必跑 `node tools/ui_layout_check.mjs --url …`**：它逐视口钉棋盘 300×300 / 单格 42px /
    浮窗零叠压 / 对局页一屏不滚动。视觉改动只允许动颜色/阴影/渐变/transform/opacity/动画，**不许动盒模型尺寸**。
 7. **含 `position:fixed` 后代的元素不能加 `transform`/`filter`/`backdrop-filter`**

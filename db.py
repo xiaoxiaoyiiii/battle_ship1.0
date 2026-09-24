@@ -1092,6 +1092,11 @@ class Database:
             # 提交事务
             self.conn.commit()
             logger.info(f"成功记录比赛: match_id={mid}, winner_id={winner_id}, loser_id={loser_id}")
+            # 回放清扫：移出事务边界，避免破坏原子性；失败不影响本次记录结果。
+            try:
+                self.sweep_match_replays()
+            except Exception as e:              # noqa: BLE001
+                logger.error(f"回放清扫异常（已忽略）: {e}")
             return True
         except sqlite3.Error as e:
             logger.error(f"记录比赛时发生数据库错误: winner_id={winner_id}, loser_id={loser_id}, 错误: {e}")
@@ -1283,12 +1288,8 @@ class Database:
             logger.error(f"记录对局回放失败: match_id={match_id}, 错误: {e}")
             return False
         # 清扫：保留 30 局 + 孤儿（唯一实现，见 sweep_match_replays）。
-        # ⚠️ 放在**同一个事务里**（提交前）—— 它自己会 commit，所以这里先落这一行。
-        self.conn.commit()
-        try:
-            self.sweep_match_replays()
-        except Exception as e:              # noqa: BLE001 —— 清扫失败绝不弄崩结算
-            logger.error(f"回放清扫异常（已忽略）: {e}")
+        # ⚠️ 由调用方 `record_match` 在最终 commit 之后统一调度，
+        #    避免本函数内嵌 commit 破坏外层事务的原子性。
         return True
 
     def get_match_replay(self, match_id: str):

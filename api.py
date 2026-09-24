@@ -1448,7 +1448,7 @@ def _wallpaper_remote_blocked() -> bool:
         return False
     addr = (request.remote_addr or '').strip().lower()
     if not addr:
-        return False
+        return True
     return not (addr in ('localhost', '::1') or addr.startswith('127.') or addr.startswith('::ffff:127.'))
 
 

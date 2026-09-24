@@ -938,6 +938,23 @@ class GameRoom:
         # 消费点：handle_dice_discard_choose / _start_dice_discard / _check_dice_discard_complete。
         # 不放 magic_temp_data：它有 8 处被整体覆写 = {}，等待期间打出别的卡就抹掉。
         self.pending_dice_discard: dict[str, bool] = {}
+        # ★ 2026-09-24：`无忧梦呓`（判定卡）**打出并通过之后**挂着的延迟拼点。
+        # 结构：`{caster_id: 份数}` —— 打出后**对方的回合开始时**结算并清除。
+        # 消费点：`_settle_wuyou_dream`（两个回合开始处各调一次）。
+        # 回归用例：`tests/test_wuyou_dream_card.py`。
+        # ⚠️ 用 dict **计数**而不是单槽：单槽会被第二张同名牌静默覆盖
+        #    （CLAUDE.md 教训 #29「单槽 = 隐藏的数据丢失」）。
+        # 不放 magic_temp_data：它有 8 处被整体覆写成 {}（教训 #30）。
+        self.pending_wuyou_dreams: dict[str, int] = {}
+        # 弃牌待办的**来源卡名**（`{player_id: 卡名}`），与 `pending_dice_discard`
+        # **同生共死**：谁开的待办，日志与弹窗就写谁的名字。
+        # 为什么另存一张表、而不是把 `pending_dice_discard` 的值改成字典：
+        # 那个字段的 True/False 被 5 处下游按**布尔直读**
+        # （`_check_dice_discard_complete` 的 all() / `_dice_discard_wait_reason` /
+        #   `_master_unsettled` / `tools/headless_game.py` / `handle_dice_discard_choose`
+        #   的 `is not False`），改类型会一次性打穿它们。
+        # 两张表的**键集合必须同步** —— 由用例钉住（教训 #1：删不掉的镜像要用测试钉）。
+        self.pending_dice_discard_label: dict[str, str] = {}
         # 掉线/重连（2026-09-07 新增）
         self.disconnected = {}        # player_id -> {'deadline': float, 'token': int}（宽限期内）
         self.disconnect_seq = 0       # 掉线计时器代际令牌
@@ -3955,6 +3972,13 @@ def handle_rps_choice(data):
             room.attacks_remaining = max(0, room.players[winner].remaining_ships - frozen_ship_count(room.players[winner]))
             _recalc_attacker_attacks(room)
 
+        # ★ 无忧梦呓：新大回合的第一个回合也是「某个人的回合开始」，同样要结算。
+        #   ⚠️ 少了这一处，**后手方**打出的那张卡永远不触发 —— 后手方交回合走的是
+        #      `_end_turn_locked` 里 `next_index == 0` 的新大回合分支（那一支直接
+        #      return 去猜拳），压根到不了那条换人分支。两处都放在
+        #      `_recalc_attacker_attacks` 之后，口径一致。
+        _settle_wuyou_dream(room)
+
         # 猜拳后抽卡逻辑：先手1张，后手2张
         # 先手抽1张
         winner_card = room.draw_card(winner)
@@ -6106,6 +6130,11 @@ def _end_turn_locked(room, room_id, player_id):
             room.players[room.current_attacker].damage_dealt_this_turn = 0
             # 统一走 _recalc：伊甸园/教皇旨意下按场地规则计算
             _recalc_attacker_attacks(room)
+            # ★ 无忧梦呓：**对方的回合开始时**结算拼点。
+            #   ⚠️ 必须排在 `_recalc_attacker_attacks` **之后**（作者裁定）——
+            #      它按船数把 attacks_remaining 重算一遍，排前面的话
+            #      「这回合攻击次数恒定为 0」会被当场覆盖掉。
+            _settle_wuyou_dream(room)
 
             # 重置所有临时效果标志 —— 保留名单以 FLAGS_KEEP_ACROSS_TURN 为唯一声明。
             #
@@ -6476,6 +6505,22 @@ _MASTER_ENABLED_CARDS = frozenset({
 #       → 摇到 3 点会给**双方**开 `pending_dice_discard` 弃牌待办，而 AI 那边的
 #         待办没有消费点（`_action_wait_reason` 会冻结其余写操作）。前置是
 #         "AI 自己消费弃牌待办"，做完再开。
+#   无忧梦呓（★ 2026-09-24 新卡，**逐条对照后决定不进池**）
+#       → 它和 `命运骰子` 是**同一个形状**，而且更晚：打出时不摇骰子，只登记一份
+#         延迟拼点，真正结算在**对方的回合开始时**。三个后果逐条说清：
+#         ① 弃牌分支（15/36）落在**对方**头上：对方是真人时，`_start_dice_discard`
+#            会给他开 `pending_dice_discard` + `dice_discard_request` 弹窗，
+#            而这发生在**他的**回合里 —— 与 命运骰子摇到 3 是同一条链路、同一个
+#            缺口（AI 名下的待办没有消费点），没有任何新增能力去补它。
+#         ② 收益**延迟到账**：出手那一刻拿不到任何优势，要等对方回合开始。
+#            这与 `克苏鲁之眼` 被否掉的理由同族（"收益要等对手回答/到账时
+#            回合已经交出去了"），实测那张是 +0.0。
+#         ③ **平局 6/36 完全空过**、15/36 只是弃一张牌 —— 期望值靠
+#            "锁死对方一整个回合的攻击"这一支撑，而那一支要赌 15/36。
+#         卡面强度不差，但"能不能落地"这一关它和 命运骰子 一样过不了。
+#         要开它必须**先**补上"AI 侧弃牌待办的消费点"，再按 `tools/gap_analysis.py`
+#         同一套口径量一次（命运骰子当时量出来是 +0.3，即无差别）。
+#         守卫：`tests/test_ai_master.py::test_the_other_out_of_pool_cards_are_all_still_out`
 #   绝处逢生
 #       → **实测被否掉**，而且是最反直觉的一条：闸门已经写成"只在对方剩 1 艘时
 #         才打"（那看起来是"打中即胜"的直接取胜手段），实测**仍然 −3.4 个百分点**。
@@ -6992,6 +7037,16 @@ def _master_unsettled(room, ai_id):
         waiting = [pid for pid, done in dice.items() if done is False]
         if waiting:
             reasons.append(f'命运骰子弃牌待办未完成（{",".join(map(str, waiting))}）')
+    # ★ 无忧梦呓：**已经打出、还没到对方回合**的那份延迟拼点。
+    #   与上面那条同源：一条挂着的"还没落地"状态，房间里就不算干净 ——
+    #   不登记的话，卡没结算完会被这里判成"已收敛"（漏登记的后果是静默的）。
+    #   ⚠️ 它**只可能在对方回合开始时被清掉**，所以正常情况下不会出现在
+    #      大师自己的回合里（对局中另一方打出的那张，在大师回合开始时就结算完了）；
+    #      一旦出现，这条会与 `_master_settle` 的 12 秒超时日志一起把原因写清楚。
+    wuyou = getattr(room, 'pending_wuyou_dreams', None)
+    if isinstance(wuyou, dict) and wuyou:
+        reasons.append('无忧梦呓的拼点还没结算（'
+                       + ','.join(f'{pid}×{n}' for pid, n in wuyou.items()) + '）')
     picks = getattr(room, 'pending_ship_picks', None)
     if isinstance(picks, list):
         mine = [p for p in picks
@@ -10548,27 +10603,38 @@ def handle_confirm_shenji_declare(data):
 
 
 def _attacks_forced_zero(room) -> bool:
-    """本大回合的攻击次数是否被规则强制为 0。
+    """本回合的攻击次数是否被规则强制为 0。
 
-    两个来源，**作用域不同，别混**：
+    三个来源，**作用域不同，别混**：
 
     ① `zero_attacks_round`（**房间级**）—— 败者食尘。
        卡面：「败者食尘生效的大回合内**双方**的攻击次数都为 0」。
        全房生效，与谁在行动无关。
 
-    ② `zero_attacks_for`（**玩家级**）—— 回光返照。
+    ② `zero_attacks_for`（**玩家级 / 大回合级**）—— 回光返照。
        卡面：「跳过**自己的**战斗阶段」—— 只有施法者打不出去，对手照常。
        ⚠️ 这一条是作者实测报出来的：我第一版借用了①的机制，
           结果**对手的攻击次数也被归零**了。两张卡的作用域根本不同。
 
-    这两个都是【大回合级】的硬规则，优先级高于任何"按船数重算 / 按增量加减"。
+    ③ `zero_attacks_turn`（**玩家级 / 回合级**，`{player_id: round}`）—— 无忧梦呓。
+       ★ 2026-09-24 新增。卡面：「对方的点数小于自己 → 对方**这回合**的攻击次数
+         恒定为 0」。与②的关键差别是**只锁那一个回合**，不是整个大回合：
+         它在**对方回合开始时**才写入，而写入的 `round` 就是对方那个回合所在的大回合，
+         所以回合结束（或大回合翻页）后这条立刻失效。
+       ⚠️ **必须与②分开一个 key**：两者都是"某个玩家这一轮打不出去"，
+          共用 `zero_attacks_for` 会让先写的那一条被静默覆盖
+          （回光返照先打、无忧梦呓随后结算 —— 前者当场失效，
+           症状是"我明明跳过了战斗阶段却还是能打"）。
+          与 `pending_dice_discard` 那次覆写事故同形状（作者已预警）。
+
+    这三个都是硬规则，优先级高于任何"按船数重算 / 按增量加减"。
     写 `attacks_remaining` 的地方（`_recalc_attacker_attacks` /
     `_sync_attacks_after_ship_change` / `_apply_last_stand_attacks` /
     `_grant_extra_attacks`）都必须先过它，否则那个 0 会在进入战斗阶段时
     被按船数还原回来 —— 玩家实测：准备阶段确实是 0，一进战斗阶段又变成 6 次。
 
     ⚠️ ② 必须在 `room.current_attacker` 是施法者时才拦：他一旦交回合出去，
-       这个 0 就不该再管别人（否则又变成房间级了）。
+       这个 0 就不该再管别人（否则又变成房间级了）。③ 同理。
     """
     effects = getattr(room, 'game_effects', None)
     if not isinstance(effects, dict):
@@ -10591,6 +10657,18 @@ def _attacks_forced_zero(room) -> bool:
         if isinstance(entry, dict):
             if int(entry.get('round') or -1) == rnd \
                     and entry.get('player') == room.current_attacker:
+                return True
+    except (TypeError, ValueError):
+        pass
+
+    # ③ 玩家级 / 回合级（无忧梦呓）：`{player_id: round}`。
+    #    写成 dict 而不是单槽：同一张卡理论上可能同时锁住不同玩家
+    #    （`盗亦有道` / `亡羊补牢` 都能让同名牌换手再打一次），
+    #    单槽会让前一条静默丢失 —— 与上面②分开 key 是同一个理由。
+    try:
+        turn_entry = effects.get('zero_attacks_turn')
+        if isinstance(turn_entry, dict):
+            if int(turn_entry.get(room.current_attacker) or -1) == rnd:
                 return True
     except (TypeError, ValueError):
         pass
@@ -12222,21 +12300,54 @@ def _apply_dice_of_fate(room, caster_id, result):
             result.message = '摇出6点：' + effect_text + '，等待对方点选牺牲的战舰'
 
 
-def _start_dice_discard(room, caster_id, opponent_id):
+def _start_dice_discard(room, caster_id, opponent_id, only_player=None,
+                        card_name='命运骰子'):
     """命运骰子摇到3：让双方各弃一张手牌。
 
     · 无手牌的玩家直接跳过；
     · AI 自动弃第一张；
     · 人类登记 room.pending_dice_discard[pid] = False 并 emit 'dice_discard_request'。
+
+    ★ 2026-09-24 两条参数（都是为 `无忧梦呓` 加的，**不改既有语义**）：
+
+    * `only_player` —— 只让**这一位**弃牌。`无忧梦呓` 的「对方必须弃置一张手牌」
+      只针对对方一个人，走的是同一条链路（作者裁定：复用，不另起一套）。
+      传 `None` = 原有行为（双方各弃一张），命运骰子的调用点未受影响。
+    * `card_name` —— 弹窗文案与日志里的来源卡名。默认仍是 `命运骰子`
+      → 既有文案逐字不变。
+
+    ⚠️ **不再无条件 `room.pending_dice_discard = {}`**（这是一处真 bug 的修复）：
+       那个字段是**房间级单槽**，旧写法会把进行中的待办静默抹掉。
+       真会发生：命运骰子摇到 3 时**没轮到的那一方**可以带着未完成的待办
+       把回合交出去（`_dice_discard_wait_reason` 只冻他自己），
+       随后 `无忧梦呓` 在对方回合开始时再开一次 —— 两条待办叠在同一时刻，
+       旧写法会让先那条无声消失（正是作者对 `_start_dice_discard` 的预警）。
+       现在改成**并入**：只写自己要写的那几个键，别人的原样留着。
     """
-    room.pending_dice_discard = {}
+    pending = getattr(room, 'pending_dice_discard', None)
+    if not isinstance(pending, dict):
+        pending = {}
+        room.pending_dice_discard = pending
+    labels = getattr(room, 'pending_dice_discard_label', None)
+    if not isinstance(labels, dict):
+        labels = {}
+        room.pending_dice_discard_label = labels
+
+    targets = (only_player,) if only_player else (caster_id, opponent_id)
     ai_id = _ai_player_id(room) if getattr(room, 'is_ai_room', False) else None
 
-    for pid in (caster_id, opponent_id):
+    for pid in targets:
         player = room.players[pid]
+        # 这位玩家已经有一张没弃完：不重复开窗、也不改写那条待办的来源名
+        # （他眼前开着的弹窗写着第一次那张卡，改写会让"点了之后日志说的是另一张卡"）。
+        # 代价是两次弃牌义务合并成"弃一张"——既有链路的已知收窄，
+        # 单槽布尔存不下计数，要修得改 `pending_dice_discard` 的值类型（会打穿 5 处下游）。
+        if pending.get(pid) is False:
+            continue
         if not player.magic_hand:
             # 无牌可弃：直接标记完成，不弹窗
-            room.pending_dice_discard[pid] = True
+            pending[pid] = True
+            labels[pid] = card_name
             continue
         if pid == ai_id:
             # AI 自动弃第一张（与教皇旨意弃卡同一口径：随机选没意义，取首张）
@@ -12244,14 +12355,18 @@ def _start_dice_discard(room, caster_id, opponent_id):
             room.magic_discard.append(discarded)
             emit('hand_updated', {'hand': player.magic_hand}, to=player.sid)
             add_game_log(room,
-                         f'第{room.round}回合 · {_log_name(room, pid)} 因命运骰子弃置「{discarded.name}」',
-                         'magic', {'player': pid, 'card': discarded.name, 'reason': 'dice_discard'})
-            room.pending_dice_discard[pid] = True
+                         f'第{room.round}回合 · {_log_name(room, pid)} 因{card_name}弃置「{discarded.name}」',
+                         'magic', {'player': pid, 'card': discarded.name,
+                                   'reason': 'dice_discard', 'source': card_name})
+            pending[pid] = True
+            labels[pid] = card_name
         else:
-            room.pending_dice_discard[pid] = False
+            pending[pid] = False
+            labels[pid] = card_name
             emit('dice_discard_request', {
-                'message': '命运骰子：请选择一张手牌弃置',
+                'message': f'{card_name}：请选择一张手牌弃置',
                 'reason': 'dice_discard',
+                'card': card_name,
             }, to=player.sid)
 
     # 双方都无需弃（都没手牌 / 都是 AI）→ 立即收尾，别留下空待办挂着
@@ -12265,13 +12380,20 @@ def _check_dice_discard_complete(room):
         return
     if all(pending.values()):
         room.pending_dice_discard = {}
+        # 待办没了，来源名跟着清 —— 两张表同期"非空"（键集合同步由用例钉住）
+        room.pending_dice_discard_label = {}
         emit('dice_discard_complete', {}, room=room.id)
 
 
 @socketio.on('dice_discard_choose')
 @_require_live_room
 def handle_dice_discard_choose(data):
-    """命运骰子摇到3：玩家选定要弃的手牌。"""
+    """命运骰子摇到3 / 无忧梦呓拼点判负：玩家选定要弃的手牌。
+
+    ⚠️ 两条来源共用这一个入口（作者裁定：复用既有链路）。日志与 payload 里的
+       来源卡名从 `pending_dice_discard_label` 取 —— 与待办**同一时刻**写入，
+       所以不会出现"弹窗写着 A、日志写着 B"。
+    """
     room_id = data.get('room_id')
     player_id = data.get('player_id')
     card_index = data.get('card_index')
@@ -12282,7 +12404,12 @@ def handle_dice_discard_choose(data):
 
     pending = getattr(room, 'pending_dice_discard', None)
     if not isinstance(pending, dict) or pending.get(player_id) is not False:
-        return {'status': 'error', 'message': '当前没有等待你弃牌的命运骰子效果'}
+        return {'status': 'error', 'message': '当前没有等待你弃牌的魔法效果'}
+
+    labels = getattr(room, 'pending_dice_discard_label', None)
+    source = '命运骰子'
+    if isinstance(labels, dict):
+        source = labels.get(player_id) or source
 
     player = room.players[player_id]
     if not player.magic_hand:
@@ -12302,12 +12429,135 @@ def handle_dice_discard_choose(data):
     room.magic_discard.append(discarded)
     emit('hand_updated', {'hand': player.magic_hand}, to=player.sid)
     add_game_log(room,
-                 f'第{room.round}回合 · {_log_name(room, player_id)} 因命运骰子弃置「{discarded.name}」',
-                 'magic', {'player': player_id, 'card': discarded.name, 'reason': 'dice_discard'})
+                 f'第{room.round}回合 · {_log_name(room, player_id)} 因{source}弃置「{discarded.name}」',
+                 'magic', {'player': player_id, 'card': discarded.name,
+                           'reason': 'dice_discard', 'source': source})
 
     room.pending_dice_discard[player_id] = True
     _check_dice_discard_complete(room)
     return {'status': 'success', 'message': f'已弃置「{discarded.name}」'}
+
+
+# ============ 判定魔法卡：无忧梦呓 ============
+# 卡面（`static/magic_card.json` / `magic_cards.js`，**逐字符一致**）：
+#   这张牌通过后，在**对方的下一个回合开始时**双方进行一次摇骰子拼点判定。
+#     · 对方的点数 < 自己的点数 → 对方**这个回合**的攻击次数恒定为 0；
+#     · 对方的点数 > 自己的点数 → 对方必须弃置一张手牌（没有手牌则跳过）；
+#     · 平局                     → 什么都不发生（**不重摇**，骰子动画与日志照常记）。
+#   这个效果只会触发一次。
+#
+# 「通过之后」是**结构性**的，不是判出来的：被连锁无效化的项在
+# `resolve_chain` 里直接 `continue`，根本不会进 `apply_magic_effect`
+# → 登记动作只可能发生在真的结算成功的那一次。
+#
+# 为什么是两张表、两个时刻，而不是打出时就摇骰子：
+#   卡面写的是「**对方的回合开始时**判定」—— 打出与结算之间隔着至少半个大回合，
+#   期间双方的手牌、船数、场地都可能变，效果必须落在**触发那一刻**的局面上。
+
+def _register_wuyou_dream(room, caster_id, result):
+    """无忧梦呓：登记一份延迟拼点（**不摇骰子**，摇点在 `_settle_wuyou_dream`）。"""
+    opponent_id = _opponent_of(room, caster_id)
+    pending = room.pending_wuyou_dreams
+    if not isinstance(pending, dict):
+        pending = {}
+        room.pending_wuyou_dreams = pending
+    pending[caster_id] = int(pending.get(caster_id) or 0) + 1
+    result.message = ('无忧梦呓生效，'
+                      f'{_log_name(room, opponent_id)} 的下一个回合开始时拼点判定')
+
+
+def _settle_wuyou_dream(room):
+    """**某个玩家的回合开始时**调用：结算所有"对方正好是他"的延迟拼点。
+
+    调用点有**两个**，两处都必须排在 `_recalc_attacker_attacks` 之后 ——
+    那个函数按当前船数把 `attacks_remaining` 重算一遍，排在它前面的话
+    「这回合攻击次数恒定为 0」会被当场覆盖掉（作者已裁定的位置关系）：
+
+      · `_end_turn_locked` 的**非新大回合换人分支** —— 先手方交回合、
+        后手方接手的那个时刻（作者指定的锚点）；
+      · `handle_rps_choice` 猜拳定完先手之后 —— **后手方**打出这张卡时，
+        他的对方的下一个回合是从这里开始的，那一支走的是
+        `next_index == 0` 的新大回合分支，压根到不了上面那条换人分支。
+        ⚠️ 少了这个调用点，卡由**后手方**打出时**永远不会触发**
+        （而且不会有任何报错，只是"打了没反应"）。
+
+    只触发一次：命中即从表里 pop 掉，不留任何持续状态。
+    """
+    pending = getattr(room, 'pending_wuyou_dreams', None)
+    if not isinstance(pending, dict) or not pending:
+        return
+    current = room.current_attacker
+    if not current or current not in room.players:
+        return
+    # 「对方正好是当前行动者」的那些才结算；打出者自己在行动时保持挂着。
+    hits = [cid for cid in list(pending)
+            if cid in room.players and _opponent_of(room, cid) == current]
+    for caster_id in hits:
+        times = int(pending.pop(caster_id) or 0)
+        for _ in range(times):
+            _apply_wuyou_dream(room, caster_id, current)
+
+
+def _apply_wuyou_dream(room, caster_id, opponent_id):
+    """一次拼点结算：双方各摇一颗骰子，按点数比较落地效果。
+
+    ⚠️ 平局**不重摇**（作者裁定）：记骰子动画与日志，但一条效果都不落。
+    """
+    caster_roll = random.randint(1, 6)
+    opponent_roll = random.randint(1, 6)
+
+    if opponent_roll < caster_roll:
+        outcome = 'opponent_zero_attacks'
+        effect_text = '打出者点数更高：对方本回合的攻击次数恒定为 0'
+    elif opponent_roll > caster_roll:
+        outcome = 'opponent_discard'
+        effect_text = '打出者点数更低：对方必须弃置一张手牌'
+    else:
+        outcome = 'tie'
+        effect_text = '平局：什么都没发生'
+
+    # 骰子动画对**双方**广播（与命运骰子同一个事件、同一套前端动画）。
+    # `roll` 恒为**打出者**的点数（与 `caster` 字段一致的口径），
+    # 对方的点数走 `opponent_roll` —— 前端按 `gameState.playerId` 决定谁是谁。
+    emit('dice_rolled', {
+        'roll': caster_roll,
+        'opponent_roll': opponent_roll,
+        'caster': caster_id,
+        'effect_text': effect_text,
+        'card': '无忧梦呓',
+    }, room=room.id)
+
+    add_game_log(room,
+                 f'第{room.round}回合 · 【无忧梦呓】拼点：'
+                 f'{_log_name(room, caster_id)} {caster_roll} 点 vs '
+                 f'{_log_name(room, opponent_id)} {opponent_roll} 点 —— {effect_text}',
+                 'magic', {'card': '无忧梦呓', 'caster': caster_id,
+                           'opponent': opponent_id,
+                           'caster_roll': caster_roll, 'opponent_roll': opponent_roll,
+                           'outcome': outcome})
+
+    if outcome == 'opponent_zero_attacks':
+        # 先按"重算后的值"钉 0，再挂上 ③ 号来源兜住后续任何一次重算
+        # （进战斗阶段、船数变化、教皇旨意/伊甸园换场地都会重算）。
+        room.attacks_remaining = 0
+        effects = getattr(room, 'game_effects', None)
+        if not isinstance(effects, dict):
+            effects = {}
+            room.game_effects = effects
+        entry = effects.get('zero_attacks_turn')
+        if not isinstance(entry, dict):
+            entry = {}
+        entry[opponent_id] = room.round
+        effects['zero_attacks_turn'] = entry
+        emit('attacks_updated', {
+            'current_attacker': room.current_attacker,
+            'attacks_remaining': room.attacks_remaining,
+        }, room=room.id)
+    elif outcome == 'opponent_discard':
+        # 复用命运骰子的弃牌链路（作者裁定），只判对方一个人、卡名换成这张。
+        _start_dice_discard(room, caster_id, opponent_id,
+                            only_player=opponent_id, card_name='无忧梦呓')
+    # 平局：什么都不做（不重摇、不留状态）
 
 
 def _finish_game(room, winner_id, loser_id, reason):
@@ -12318,6 +12568,10 @@ def _finish_game(room, winner_id, loser_id, reason):
     _clear_ship_picks(room)
     # 命运骰子的弃牌待办同样作废（同 _clear_ship_picks 的理由）
     room.pending_dice_discard = {}
+    room.pending_dice_discard_label = {}
+    # 无忧梦呓挂着的延迟拼点同样作废：对局已经结束，再挂着只会让
+    # `_master_unsettled` 把房间判成"没结算完"（它是个房间级事实，不是历史记录）
+    room.pending_wuyou_dreams = {}
     add_game_log(room, f"第{room.round}回合 · {_log_name(room, winner_id)} 获胜，游戏结束",
                  'result', {'winner': winner_id, 'loser': loser_id, 'reason': reason})
     # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
@@ -14309,6 +14563,10 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
     elif card.type == '判定':
         if card.name == '命运骰子':
             _apply_dice_of_fate(room, caster_id, result)
+        elif card.name == '无忧梦呓':
+            # 与命运骰子不同：**打出时不摇骰子**，只登记；
+            # 摇点在对方回合开始时的 `_settle_wuyou_dream`（卡面写的就是那时判定）。
+            _register_wuyou_dream(room, caster_id, result)
         else:
             result.success = False
             result.message = f'未实现的判定魔法卡：{card.name}'

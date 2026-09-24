@@ -414,7 +414,7 @@ def test_cards_do_not_add_a_game_log_row():
     assert tally.get('apply_magic_effect') == 5, (
         '`apply_magic_effect` 里的 add_game_log 调用点必须是 5（本批一个字都不加）：%s'
         % tally.get('apply_magic_effect'))
-    assert sum(tally.values()) == 37, 'add_game_log 调用点总数必须仍是 37：%s' % sum(tally.values())
+    assert sum(tally.values()) == 38, 'add_game_log 调用点总数必须仍是 38：%s' % sum(tally.values())
 
 
 # ===========================================================================

@@ -8176,11 +8176,15 @@ function setupSocketListeners() {
     });
 
     // 命运骰子：摇骰子动画 + 结果播报（双方都能看到）
+    // 无忧梦呓（判定拼点）**复用同一个事件**：payload 多带 `opponent_roll`（对方的点数）
+    // 与 `card`（卡名），前端据此把两颗骰子一起报出来 —— 不新增事件、不新增 CSS 类。
     socket.on('dice_rolled', (data) => {
-        showDiceRollAnimation(data && data.roll, data && data.effect_text, data && data.caster);
+        showDiceRollAnimation(data && data.roll, data && data.effect_text,
+                              data && data.caster, data && data.opponent_roll,
+                              data && data.card);
     });
 
-    // 命运骰子摇到3：要求我弃一张手牌
+    // 命运骰子摇到3 / 无忧梦呓拼点判负：要求我弃一张手牌
     socket.on('dice_discard_request', (data) => {
         showDiceDiscardPrompt(data && data.message);
     });
@@ -11773,6 +11777,12 @@ function applyCardEffect(card, casterId) {
             // 不在这里显示，避免与 dice_rolled 事件重复
             break;
 
+        // 判定魔法卡：无忧梦呓打出时**不摇骰子**（只登记延迟拼点），
+        // 所以这里也不该弹任何东西 —— 动画与播报发生在**对方回合开始时**的
+        // dice_rolled 事件里。抢在这里报"效果生效"会与那一刻的真实结果打架。
+        case '无忧梦呓':
+            break;
+
         // 已实现的魔法卡
         case '失灵！':
             showMessage('失灵！效果生效，对方魔法被无效化');
@@ -11804,20 +11814,37 @@ function showMagicAnimation(card) {
     }, 100);
 }
 
-// ============ 命运骰子：摇骰子动画 + 弃牌选择 ============
+// ============ 命运骰子 / 无忧梦呓：摇骰子动画 + 弃牌选择 ============
 // 摇骰子动画：全屏覆盖层，一个翻滚的骰子，最终定格在 roll 点。
 // 双方都会收到 dice_rolled 事件，所以双方都能看到同一个动画 + 结果。
-function showDiceRollAnimation(roll, effectText, casterId) {
+//
+// `opponentRoll` / `cardName` 是 2026-09-24 为**无忧梦呓的拼点**加的可选参数：
+// 带 `opponentRoll` 时是「双方各一颗骰子拼点」，骰子本体定格在**你自己**那一点，
+// 结果行把两颗都报出来（`你 5 点 · 对方 3 点`）。
+// ⚠️ 故意**不新增第二个骰子元素**：那要动 style.css 的盒模型（本项目明令不许），
+//    而信息量用一行结果文本就够。不带 `opponentRoll` 时行为逐字不变（命运骰子）。
+function showDiceRollAnimation(roll, effectText, casterId, opponentRoll, cardName) {
     // 同时只有一个骰子动画，新的来了先把旧的清掉
     const old = document.getElementById('dice-roll-overlay');
     if (old) old.parentNode.removeChild(old);
 
+    const isMine = !casterId || casterId === gameState.playerId;
+    const cardLabel = cardName || '命运骰子';
+    const hasPair = (typeof opponentRoll === 'number');
+    // 观众没有"自己"这一侧：那种情况下左右两栏改成「打出者 / 对手」，
+    // 骰子定格在**打出者**的点数（payload 的 `roll` 恒是打出者的点数）。
+    const iAmPlayer = !!gameState.playerId;
+    const dieRoll = hasPair ? (iAmPlayer ? (isMine ? roll : opponentRoll) : roll) : roll;
+    const leftLabel = iAmPlayer ? '你' : '打出者';
+    const rightLabel = iAmPlayer ? '对方' : '对手';
+    const leftRoll = iAmPlayer ? (isMine ? roll : opponentRoll) : roll;
+    const rightRoll = iAmPlayer ? (isMine ? opponentRoll : roll) : opponentRoll;
+    const titleText = hasPair ? (cardLabel + ' · 拼点')
+                              : (isMine ? '你摇出了' : '对方摇出了');
+
     const overlay = document.createElement('div');
     overlay.id = 'dice-roll-overlay';
     overlay.className = 'dice-roll-overlay';
-
-    const isMine = !casterId || casterId === gameState.playerId;
-    const titleText = isMine ? '你摇出了' : '对方摇出了';
 
     overlay.innerHTML =
         '<div class="dice-roll-card">' +
@@ -11855,9 +11882,11 @@ function showDiceRollAnimation(roll, effectText, casterId) {
     // 定格到最终结果
     setTimeout(() => {
         clearInterval(rollTimer);
-        if (diceEl) diceEl.setAttribute('data-show', String(roll));
+        if (diceEl) diceEl.setAttribute('data-show', String(dieRoll));
         if (resultEl) {
-            resultEl.textContent = String(roll) + ' 点';
+            resultEl.textContent = hasPair
+                ? (leftLabel + ' ' + leftRoll + ' 点 · ' + rightLabel + ' ' + rightRoll + ' 点')
+                : String(roll) + ' 点';
             resultEl.classList.add('dice-roll-result-show');
         }
     }, rollDuration + 50);
@@ -11868,7 +11897,11 @@ function showDiceRollAnimation(roll, effectText, casterId) {
             effectEl.textContent = '效果：' + effectText;
             effectEl.classList.add('dice-roll-effect-show');
         }
-        showMessage(`命运骰子摇出 ${roll} 点：${effectText || ''}`, { type: 'warning', duration: 4500 });
+        showMessage(hasPair
+            ? (cardLabel + '拼点：' + leftLabel + ' ' + leftRoll + ' 点 · '
+               + rightLabel + ' ' + rightRoll + ' 点 —— ' + (effectText || ''))
+            : (cardLabel + '摇出 ' + roll + ' 点：' + (effectText || '')),
+            { type: 'warning', duration: 4500 });
     }, rollDuration + 700);
 
     // 整体淡出

@@ -93,6 +93,7 @@ EXPECTED_ADD_GAME_LOG_SITES = {
     '_ai_master_turn': 1,
     '_apply_bury_choice': 1,
     '_apply_dice_of_fate': 1,
+    '_apply_wuyou_dream': 1,
     '_check_last_chance': 1,
     '_do_demon_contract_sacrifice': 1,
     '_finish_game': 1,
@@ -136,7 +137,7 @@ def test_every_add_game_log_call_site_is_registered():
         % (sorted(set(tally) - set(EXPECTED_ADD_GAME_LOG_SITES)),
            sorted(set(EXPECTED_ADD_GAME_LOG_SITES) - set(tally)),
            dict(sorted(tally.items()))))
-    assert sum(tally.values()) == 37, '调用点总数 ≠ 37（含定义行时 grep 应为 38）'
+    assert sum(tally.values()) == 38, '调用点总数 ≠ 38（含定义行时 grep 应为 39）'
 
 
 def test_add_game_log_is_the_only_feed_for_logged_actions():

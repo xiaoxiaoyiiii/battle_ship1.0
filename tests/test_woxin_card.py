@@ -109,9 +109,9 @@ def test_woxin_card_enters_deck():
 
 
 def test_deck_size_grew():
-    """新加一张普通卡，牌池规模 46 → 48。"""
+    """新加一张普通卡，牌池规模 46 → 49。"""
     deck = server.magic_cards
-    assert len(deck) == 48, f'卡池应 48 条，实际 {len(deck)}'
+    assert len(deck) == 49, f'卡池应 49 条，实际 {len(deck)}'
 
 
 # ---------------------------------------------------------------------------

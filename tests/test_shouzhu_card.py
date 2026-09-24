@@ -97,9 +97,7 @@ def confirm_sacrifice(room, player, x, y):
 
 def kill_ship_via_apply_sunk(room, attacker_id, defender_id, ship):
     """模拟「击沉」走 _apply_ship_sunk_effects 的副作用链路。"""
-    # 选个 ship 上任意一格当命中点
-    x, y = ship.positions[0].x, ship.positions[0].y
-    server._apply_ship_sunk_effects(room, room.id, attacker_id, defender_id, ship, x, y)
+    server._apply_ship_sunk_effects(room, room.id, attacker_id, defender_id, ship)
 
 
 # ---------------------------------------------------------------------------
@@ -307,7 +305,7 @@ def test_trap_triggered_via_magic_path(room, monkeypatch):
     target.trap = True
 
     # 直接调用 _on_ship_destroyed（区域魔法共用入口，source='magic'）
-    server._on_ship_destroyed(room, P1, target, source='magic')
+    server._on_ship_destroyed(room, P1, target)
 
     assert room.players[P2].remaining_ships == 4  # 牺牲 2 艘
 
@@ -326,7 +324,7 @@ def test_trap_cleared_after_trigger(room, monkeypatch):
     assert target.trap is False
     # 第二次再调 _on_ship_destroyed（理论上不会发生，但验证不会再次触发）
     before = room.players[P2].remaining_ships
-    server._on_ship_destroyed(room, P1, target, source='magic')
+    server._on_ship_destroyed(room, P1, target)
     assert room.players[P2].remaining_ships == before  # 没再牺牲
 
 

@@ -351,39 +351,24 @@ def test_leaderboard_respects_limit(monkeypatch):
 
 # ---------------------------------------------------------------------------
 # 10. 区域魔法造成的船数变化也能被平等条约无效化（并与普通攻击共用副作用）
+#
+# ★ 2026-09-24 改版更正：平等条约改成**连锁无效化**（目标 = 栈中正下方那一项），
+#   原来那套"船数变化快照"整条删除。本节三条对着快照写的用例随之删除：
+#     · test_area_kills_record_treaty_snapshot   —— 测的是"区域魔法必须写快照"，
+#       快照已不存在；它真正想守的"区域魔法击沉能被平等条约无效化"改由
+#       `tests/test_pingdeng_tiaoyue_chain.py::test_liuhuang_kills_alive_ship`
+#       （真连锁：硫磺火焰被康掉、一艘都不沉）覆盖。
+#     · test_treaty_rolls_back_area_kill         —— 测的是"回滚把船放回棋盘"，
+#       回滚机制整个不存在；同上由那条连锁用例覆盖。
+#     · test_ordinary_attack_still_records_treaty_snapshot —— 测的是"普通攻击
+#       也要写快照"；普通攻击与区域魔法**共用 `_on_ship_destroyed`** 这件事，
+#       现由 `tests/test_pingdeng_tiaoyue_chain.py` 的三条副作用用例
+#       （百亿补贴 / 无瑕圣心 / 守株待兔）与本节的 `test_area_kill_interrupts_holy_heart`
+#       共同覆盖。
+#   下面这一条**与快照无关**（无瑕圣心中断），原样保留。
 # ---------------------------------------------------------------------------
 def _apply(room, pid, name, targets=None):
     return server.apply_magic_effect(room, pid, card(name), targets or {})
-
-
-def test_area_kills_record_treaty_snapshot(room):
-    """硫磺火焰/轰炸此前各自内联结算、不写 last_ship_change，
-    导致平等条约报「没有可无效化的船数改变效果」。"""
-    victim = ship((2, 0))
-    room.players[P2].ships = [victim]
-    room.players[P2].remaining_ships = 1
-    cells = [{'x': i, 'y': 0} for i in range(6)]
-
-    _apply(room, P1, '硫磺火焰', {'target_cells': cells})
-
-    change = room.game_effects.get('last_ship_change')
-    assert change, '区域魔法击沉也必须写平等条约快照'
-    assert change['player'] == P2 and change['ship'] is victim
-    assert change['round'] == room.round
-
-
-def test_treaty_rolls_back_area_kill(room):
-    victim = ship((2, 0))
-    room.players[P2].ships = [victim]
-    room.players[P2].remaining_ships = 1
-    _apply(room, P1, '硫磺火焰', {'target_cells': [{'x': i, 'y': 0} for i in range(6)]})
-    assert room.players[P2].remaining_ships == 0
-
-    _apply(room, P2, '平等条约')
-
-    assert room.players[P2].remaining_ships == 1, '平等条约应能回滚区域魔法造成的船数变化'
-    assert victim in room.players[P2].ships, '被击沉的船要回到棋盘'
-    assert victim not in room.players[P2].sunken_ships
 
 
 def test_area_kill_interrupts_holy_heart(room, events):
@@ -398,8 +383,13 @@ def test_area_kill_interrupts_holy_heart(room, events):
     assert any(e[0] == 'holy_heart_interrupted' for e in events)
 
 
-def test_ordinary_attack_still_records_treaty_snapshot(room):
-    """普通攻击路径改为复用同一个 helper 后，行为必须保持不变。"""
+def test_ordinary_attack_path_reuses_the_shared_sunk_effects(room, events):
+    """普通攻击与区域魔法**共用** `_on_ship_destroyed`：炮击击沉同样会中断无瑕圣心。
+
+    改前这四种路径（炮击 / 溅射 / 轰炸 / 硫磺火焰）各写一份副作用，区域魔法那三份
+    都漏了无瑕圣心中断。这条用例改成守"共用"这件事本身（旧版守的是快照，已随快照删除）。
+    """
+    room.game_effects['holy_heart'] = {'caster': P1, 'rounds_left': 2, 'no_damage': True}
     victim = ship((3, 3))
     room.players[P2].ships = [victim]
     room.players[P2].remaining_ships = 1
@@ -408,9 +398,9 @@ def test_ordinary_attack_still_records_treaty_snapshot(room):
 
     server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 3, 'y': 3})
 
-    change = room.game_effects.get('last_ship_change')
-    assert change and change['ship'] is victim and change['player'] == P2
-    assert change['hits_added'], '普通攻击要记录命中的格，回滚时撤销该命中'
+    assert room.players[P2].remaining_ships == 0, '前提：这一炮真的打沉了'
+    assert 'holy_heart' not in room.game_effects, '炮击路径也必须中断无瑕圣心'
+    assert any(e[0] == 'holy_heart_interrupted' for e in events)
 
 # ---------------------------------------------------------------------------
 # 11. 冻结状态必须能传到玩家自己的棋盘上

@@ -31,7 +31,7 @@
 * `Player.__init__` 里的 `self.ships = ships` —— **构造器**，不是移除；
 * `test_set_player_ships` / `test_reset_game` / `test_set_opponent_ships` ——
   **调试事件**在换棋盘（`ENABLE_TEST_EVENTS=1` 才有），不是对局里的移除；
-* 纯 `append`（复活 / 增援 / 神威归还 / 平等条约回滚…）—— **只增不减**，不产生"消失"；
+* 纯 `append`（复活 / 增援 / 神威归还…）—— **只增不减**，不产生"消失"；
 * `handle_place_ships` / `_ai_place_ships` 的 `player.ships = []` —— **布船阶段**重建
   （对局还没开始 / 由 `note_board_replaced` 那一批覆盖的重摆路径）；
 * 下标赋值 `x.ships[i] = ...` —— 全项目**一处都没有**（判据留着，出现了就红）。
@@ -139,8 +139,6 @@ REMOVAL_SITES = [
          kind='append', need=None, why='增援 / 死者苏生 / 神机妙算重新部署（5 处 append）'),
     dict(fn='_restore_due_shenwei', container='owner', ops=['append'], card=None,
          kind='append', need=None, why='神威！到期归还：把除外的船放回原位'),
-    dict(fn='apply_magic_effect', container='affected_player', ops=['append'], card='平等条约',
-         kind='append', need=None, why='平等条约回滚：把舰船放回去'),
 ]
 
 

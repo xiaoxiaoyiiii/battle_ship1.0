@@ -165,8 +165,10 @@ phase:                        preparation → battle → end
 （原来同帧结算、只隔 3~17ms ⇒ 一闪而过）；**唯一开关就是那个常量**，置 0 = 改动前行为，
 `tools/headless_game.py` 与 `tests/conftest.py` 都靠它置 0（不放慢 250 局/秒）。
 走满 10 秒窗口那条路径**不停**（`_schedule_chain_timeout` 传 `display_delay=False`）。
-⚠️ 两处**有意**偏离 `docs/CHAIN_ENGINE_SPEC.md`：① negated 项仍执行"贴了再拆"（避免凭空消失）；
-② `平等条约` 不走 `negate_target`，改读 `game_effects['last_ship_change']` 快照回滚。**别照那份文档改回去**（它 §4 列的僵尸代码已清空）。
+⚠️ 一处**有意**偏离 `docs/CHAIN_ENGINE_SPEC.md`：negated 项仍执行"贴了再拆"（避免凭空消失）。
+（★ 2026-09-24 起原来的第 2 处偏离**已撤销**：`平等条约` 改回**连锁无效化** —— 目标 = 栈中正下方
+那一项，与失灵共用 `_chain_negation_target`；判据只有一份，见 `EQUAL_TREATY_SHIP_CHANGE_RULES`。
+`docs/CHAIN_ENGINE_SPEC.md` §0 已同步。守卫 `tests/test_pingdeng_tiaoyue_chain.py`。）
 
 ---
 

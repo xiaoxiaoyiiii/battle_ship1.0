@@ -204,17 +204,22 @@ def test_last_stand_triggers_sink_side_effects_once(room, events):
     assert 'holy_heart' not in room.game_effects
 
 
-def test_last_stand_records_ship_change_snapshot(room):
-    """写入平等条约台账，source 标记为 sacrifice（自牺牲，不算被击沉）。"""
+def test_last_stand_self_sacrifice_is_a_negatable_ship_change(room):
+    """绝处逢生的自牺牲是"会造成船数变化的魔法卡效果"，平等条约可以连锁康掉它。
+
+    ★ 2026-09-24 改版：旧版这条守的是"自牺牲要写平等条约的船数变化快照"（含
+      source='sacrifice'），那份快照已整条删除。改版后"能不能被康"的判据是
+      `EQUAL_TREATY_SHIP_CHANGE_RULES['绝处逢生']`（有活船就真的会改船数），
+      所以这里改守**判词本身**；完整的"真连锁里整张牌被跳过"由
+      `tests/test_pingdeng_tiaoyue_chain.py::test_juechu_fengsheng_self_sacrifice_is_negatable`
+      覆盖。
+    """
     room.players[P1].ships = [ship((0, 0)), ship((1, 1)), ship((2, 2))]
     room.players[P1].remaining_ships = 3
 
-    apply(room, P1, '绝处逢生')
-
-    snap = room.game_effects.get('last_ship_change')
-    assert snap is not None, '必须写 last_ship_change 快照'
-    assert snap['player'] == P1
-    assert snap['source'] == 'sacrifice'
+    item = ChainItem(P1, card('绝处逢生'), {}, 0.0)
+    assert server._equal_treaty_verdict(room, item)[0] is True, (
+        '作者裁决：绝处逢生的自牺牲保持现状、可以被无效化')
 
 
 def test_last_stand_does_not_double_count_sunken_ships(room):

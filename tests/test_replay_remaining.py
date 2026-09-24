@@ -134,7 +134,7 @@ def test_remaining_timeline_follows_a_real_sink():
     try:
         replay.note(room, {'type': 'system', 'text': '开局', 'detail': {}})
         victim = room.players[P2].ships[0]
-        server._apply_ship_sunk_effects(room, room.id, P1, P2, victim, 1, 1)
+        server._apply_ship_sunk_effects(room, room.id, P1, P2, victim)
         replay.note(room, {'type': 'attack', 'text': '炮击',
                            'detail': {'attacker': P1, 'target': {'x': 1, 'y': 1}}})
         folded = _fold_remaining(room)

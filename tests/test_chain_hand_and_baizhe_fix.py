@@ -187,7 +187,7 @@ def test_baizhe_clears_field_magic_and_effects(room):
     """「其余全部重置」：场地魔法、生效效果、弃牌堆都回到开局状态。"""
     room.field_magic = card('伊甸园')
     room.field_magic_owner = P1
-    room.game_effects = {'last_ship_change': {'round': 1}}
+    room.game_effects = {'demon_contract': True}
     room.magic_discard = [card('轰炸')]
     room.players[P1].effect_flags.vampire = True
     room.players[P2].magic_blocked = True

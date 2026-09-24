@@ -489,62 +489,44 @@ def test_bafang_draw_on_ship_change(room):
 # 平等条约
 # ---------------------------------------------------------------------------
 def test_pingdeng_cannot_negate_attack_kill(room):
-    """炮击造成的击沉【无法】被无效化 —— 卡面只针对魔法卡。"""
-    room.players[P2].ships = [ship((0, 0))]
-    room.players[P2].remaining_ships = 1
+    """炮击造成的击沉【无法】被无效化 —— 卡面只针对魔法卡。
+
+    ★ 2026-09-24 改版（作者裁决）：平等条约改成**连锁无效化**，目标 = 栈中正下方
+      那一项。炮击**不是连锁项**（`handle_attack` 从不进 `room.chain`），所以
+      「康不了炮击」在这里表现为：船被打沉之后再打平等条约 ⇒ 没有正下方那一项 ⇒ 失败。
+      （旧实现是读"船数变化快照"再回滚，那张快照已整条删除。）
+    """
+    room.players[P2].ships = [ship((0, 0)), ship((5, 5))]
+    room.players[P2].remaining_ships = 2
     attack(room, P1, 0, 0)
-    assert room.players[P2].remaining_ships == 0
-    assert room.game_effects['last_ship_change']['source'] == 'attack'
+    assert room.players[P2].remaining_ships == 1, '前提：炮击真的沉了一艘'
 
     res = apply(room, P1, '平等条约')
     assert res.success is False
-    assert '炮击' in res.message
-    # 船没回来（击沉时船仍留在 ships 里，所以看 remaining_ships 与沉船堆），
-    # 快照也不能被吃掉
-    assert room.players[P2].remaining_ships == 0
+    assert res.message, '失败必须有文案，不能静默'
+    # 船没回来（击沉时船仍留在 ships 里，所以看 remaining_ships 与沉船堆）
+    assert room.players[P2].remaining_ships == 1
     assert room.players[P2].ships[0] in room.players[P2].sunken_ships
-    assert 'last_ship_change' in room.game_effects
 
 
-def test_pingdeng_negates_magic_ship_change(room):
-    """魔法卡造成的船数改变仍然可以被无效化（保留的那一半效果）。"""
-    victim = ship((0, 0))
-    room.players[P2].ships = []
-    room.players[P2].remaining_ships = 0
-    room.game_effects['last_ship_change'] = {
-        'round': room.round, 'player': P2, 'count': 1,
-        'ship': victim, 'hits_added': [], 'source': 'magic',
-    }
+def test_pingdeng_negates_the_chain_item_right_below_it(room):
+    """连锁无效化：目标 = 正下方那一项，且**只有它真的会改船数时**才成功。"""
+    room.players[P1].ships = [ship((0, 0)), ship((3, 3))]
+    room.players[P1].remaining_ships = 2
+    room.chain = [ChainItem(P2, card('轰炸'),
+                            {'target_line': {'type': 'row', 'index': 0}}, 0)]
 
     res = apply(room, P1, '平等条约')
-    assert res.success is True, res
-    assert room.players[P2].remaining_ships == 1
-    assert victim in room.players[P2].ships
-    assert 'last_ship_change' not in room.game_effects
 
-
-def test_pingdeng_rejected_attack_keeps_snapshot_usable(room):
-    """攻击被拒后快照必须留着，否则随后的魔法船数变化会莫名无效化不了。"""
-    room.players[P2].ships = [ship((0, 0))]
-    room.players[P2].remaining_ships = 1
-    attack(room, P1, 0, 0)
-
-    first = apply(room, P1, '平等条约')
-    assert first.success is False
-    assert 'last_ship_change' in room.game_effects, '被拒时不能消费快照'
-
-    # 换成魔法来源（模拟随后的区域魔法击沉）后应能无效化
-    room.game_effects['last_ship_change']['source'] = 'magic'
-    room.players[P2].remaining_ships = 0
-    second = apply(room, P1, '平等条约')
-    assert second.success is True
-    assert room.players[P2].remaining_ships == 1
-    assert 'last_ship_change' not in room.game_effects
+    assert res.success is True, res.message
+    assert getattr(res, 'negate_target', False) is True, '应标记无效化连锁项'
 
 
 def test_pingdeng_fails_without_change(room):
+    """没有连锁项（没有"正下方那一项"）⇒ 失败，并给出人话。"""
     res = apply(room, P1, '平等条约')
     assert res.success is False
+    assert '连锁' in res.message, res.message
 
 
 # ---------------------------------------------------------------------------

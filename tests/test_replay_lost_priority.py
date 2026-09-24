@@ -27,12 +27,13 @@
 | 复活 | `_revive_sunken_ships` | `note_ship_returned` | ✅ 已有 |
 | 换位（神机妙算重新部署） | `handle_confirm_reinforcement` | `note_ship_returned` | ✅ 已有 |
 | 棋盘整块换新 | `灵气复苏` / `败者食尘` / `回光返照` / `绝处逢生` | `note_board_replaced` | ✅ 已有 |
-| **★ 平等条约回滚** | `apply_magic_effect` / `平等条约` | **上一批漏了** | ★ **本批补** |
 
-**第三条路径是真的存在的**（不是理论）：`last_ship_change` 是**单槽**，而"牺牲"不写这个槽
-—— 于是"A 船被魔法击沉 → B 船被牺牲 → 对方打平等条约"这条链上，回滚会把**已经被牺牲掉
-的那艘**重新 `ships.append` 回棋盘，而它的 `lost` 登记**没有任何人撤**。
-实测症状：那一格在回放里是个**红叉**，可它在游戏里明明**活着**（幻影沉船）。
+> ⚠️ **2026-09-24 更正**：上表原第 4 行是「★ 平等条约回滚」（`apply_magic_effect`）——
+> 那**整条路径已经不存在**了：平等条约改成连锁无效化（目标 = 栈中正下方那一项），
+> 不再有"先结算再回滚"这回事，所以也不会再把船 append 回 `ships`。
+> 当时那条红证（幻影沉船）的机制与修复记录保留在 `docs/REPLAY_2026_09_23.md`，
+> 但那一段已随之失效；本文件里对应的三条用例一并删除，替换为
+> `tests/test_pingdeng_tiaoyue_chain.py`（连锁无效化的守卫）。
 
 ## 怎么证明能红
 
@@ -214,76 +215,15 @@ def test_every_cell_declares_which_source_it_came_from(room):
 
 
 # ===========================================================================
-# 2. ★★ `lost` 表的清理：第三条路径（平等条约回滚）实测复现 + 修复
+# 2. ★★ `lost` 表的清理：逐条清账（三条路径）
 # ===========================================================================
-def _stage_equal_treaty_rollback(room):
-    """造出"平等条约回滚会把已被牺牲的船放回棋盘"的那个局面（真调两条产品路径）。
-
-    链：① 牺牲 B 船（写 `lost`）→ ② `last_ship_change` 单槽里存的正是 B 船
-    （牺牲**不写**这个槽，所以它留着的是更早那次魔法击沉的快照）→ ③ 打平等条约。
-    """
-    victim = room.players[P2].ships[0]
-    x, y = victim.positions[0].x, victim.positions[0].y
-    server._do_demon_contract_sacrifice(room, P2, victim, 'demon_contract')
-    room.game_effects['last_ship_change'] = {
-        'round': room.round, 'player': P2, 'count': 1,
-        'ship': victim, 'hits_added': [], 'source': 'magic',
-    }
-    return victim, x, y
-
-
-def test_treaty_rollback_clears_the_wreck_it_revives(room):
-    """★★ 本批修的第三条路径：平等条约把船放回棋盘 ⇒ 那一格的红叉必须消失。
-
-    改前：`lost` 登记没人撤 ⇒ 船在棋盘上活着、回放里却是个**红叉**（幻影沉船）。
-    改后：回滚分支调 `note_ship_returned` + 收尾 `refresh_ships`。
-    """
-    victim, x, y = _stage_equal_treaty_rollback(room)
-    assert _is_sunk_view(_frontend_cell(_cells(room, SIDE2), x, y)) is True, '前提：回滚前是红叉'
-
-    res = server.apply_magic_effect(room, P1, MagicCard('平等条约'), {})
-    assert getattr(res, 'success', False) is True, getattr(res, 'message', None)
-    assert victim in room.players[P2].ships, '前提：船真的被放回了棋盘（产品路径自己做的）'
-
-    cells = _cells(room, SIDE2)
-    cell = _frontend_cell(cells, x, y)
-    assert cell is not None, '船放回棋盘之后那一格必须在时间线里：%s' % cells
-    assert _is_sunk_view(cell) is False, (
-        '船已经回到棋盘上，那一格的红叉必须消失（改前这里是幻影沉船）：%s' % cell)
-    assert cell.get('alive') is True and cell.get('src') == 'ships', cell
-    assert not replay._lost_cells(room, P2), '`lost` 表必须被清干净：%s' % room.replay.get('lost')
-
-
-def test_treaty_rollback_snapshot_lands_on_the_same_step(room):
-    """★ 回滚那一帧必须**当场**就是真值（不是等下一次别处的日志才补上）。
-
-    ⚠️ 平等条约这个分支**不写游戏日志**，所以 `note_ship_returned` 只改登记、
-    不推动记录器 ⇒ 必须由收尾的 `refresh_ships` 补一次快照。少了它，红叉会一直挂到
-    下一次有日志的动作为止（实测过同形状）。
-    """
-    victim, x, y = _stage_equal_treaty_rollback(room)
-    steps_before = len(room.replay['steps'])
-    server.apply_magic_effect(room, P1, MagicCard('平等条约'), {})
-    assert len(room.replay['steps']) == steps_before, '回滚不产生新步骤（前提）'
-    row = room.replay['ships'][-1]
-    assert int(row['step']) == steps_before - 1, (
-        '最后一帧必须就是回滚那一步（%d），实际 %s' % (steps_before - 1, row))
-    cell = _frontend_cell(row.get(SIDE2) or [], x, y)
-    assert cell is not None and cell.get('alive') is True, cell
-    # ★ 稀疏的判据：**没变的那一侧不许被重记**。回滚只动被回滚那一侧，
-    #   所以最后两行里 p1 那一段必须**逐字节相同**（重新记一份全量会白占体积）。
-    #   ⚠️ 快照是**按帧**记两侧的（`_record_snapshot` 记的是"这一刻的整张桌面"），
-    #      所以判据只能是"内容有没有变"，不能是"键有没有出现"。
-    if len(room.replay['ships']) >= 2:
-        before_row = room.replay['ships'][-2]
-        assert before_row.get(SIDE1) == row.get(SIDE1), (
-            '另一侧没变却被重记了一份不同的全量：%s / %s' % (before_row.get(SIDE1), row.get(SIDE1)))
-
-
 def test_lost_table_is_empty_after_every_cleanup_path(room):
-    """★ 逐条清账：复活 / 换位 / 棋盘换新 / 平等条约回滚之后，`lost` 表必须为空。
+    """★ 逐条清账：复活 / 换位 / 棋盘换新之后，`lost` 表必须为空。
 
-    四条路径都用**产品函数**跑（不是直接改 `lost`），所以它同时是"撤销口还在"的回归。
+    三条路径都用**产品函数**跑（不是直接改 `lost`），所以它同时是"撤销口还在"的回归。
+
+    ⚠️ 2026-09-24：原来的第 3 条（平等条约回滚）已删 —— 那条回滚机制整个不存在了
+       （平等条约改成连锁无效化，不再"先结算再回滚"）。剩下的三条逐条如上。
     """
     # ① 复活（疗愈）
     server._do_demon_contract_sacrifice(room, P2, room.players[P2].ships[0], 'demon_contract')
@@ -297,10 +237,11 @@ def test_lost_table_is_empty_after_every_cleanup_path(room):
     replay.note_board_replaced(room, P2)
     assert not replay._lost_cells(room, P2), '棋盘换新之后 `lost` 必须清空：%s' % room.replay['lost']
 
-    # ③ 平等条约回滚（本批补的那条）
-    victim, x, y = _stage_equal_treaty_rollback(room)
-    assert server.apply_magic_effect(room, P1, MagicCard('平等条约'), {})
-    assert not replay._lost_cells(room, P2), '回滚之后 `lost` 必须清空：%s' % room.replay['lost']
+    # ③ 换位（神机妙算的"重新部署"：把沉船挪到新格上）
+    server._do_demon_contract_sacrifice(room, P2, room.players[P2].ships[0], 'demon_contract')
+    assert replay._lost_cells(room, P2), '前提：牺牲后有登记'
+    server._revive_sunken_ships(room, room.players[P2], 1)
+    assert not replay._lost_cells(room, P2), '重新部署之后 `lost` 必须清空：%s' % room.replay['lost']
 
 
 # ===========================================================================
@@ -325,8 +266,10 @@ LOST_RETURN_POLICY = {
     # ---- 会把"登记过沉没的船"放回棋盘的 ----
     ('_revive_sunken_ships', 'player'): True,
     ('handle_confirm_reinforcement', 'caster'): True,
-    ('apply_magic_effect', 'affected_player'): True,
     # ---- 放回来的船不可能在 `lost` 表里 ----
+    # ⚠️ 2026-09-24：`('apply_magic_effect', 'affected_player'): True`（平等条约回滚）
+    #    已删 —— 那条回滚连同整张船数变化快照一起删掉了，`apply_magic_effect` 里
+    #    再也不会有"把船放回棋盘"的点。
     ('apply_magic_effect', 'caster'): False,    # 绝处逢生 / 钢筋铁骨：新建的船或自牺牲
     ('_restore_due_shenwei', 'owner'): False,   # 神威"暂时除外"**有意不登记**
     ('apply_magic_effect', 'player'): False,    # 败者食尘：`player.ships = []` 整体重建
@@ -344,6 +287,12 @@ LOST_RETURN_POLICY = {
 #: 为什么需要它：判据落在函数这一层（见上），所以"这个函数的某个分支调了撤销口"
 #: 会盖住整个函数。**新增一个不需要撤销的追加点到这种函数里**时，如果不强制表态，
 #: 下次复制粘贴就会把"新建的船"混进"要撤销的船"那一支（幻影沉船）。
+#:
+#: ⚠️ 2026-09-24：`apply_magic_effect` 里的 `True` 那一条（平等条约回滚）已删，
+#:    所以这个函数**现在一个撤销口都没有**。下面两条 `False` 保留的意义变成了
+#:    "为什么这两个追加点从来就不需要撤销口"（仍然是纯说明，不是挡箭牌：
+#:    `test_every_ship_add_site_states_its_lost_policy` 的第四条腿会检查它们
+#:    确实还指向存在的代码、且策略是 `False`）。
 LOST_RETURN_EXCEPTIONS = {
     ('apply_magic_effect', 'caster'): (
         '`绝处逢生` / `钢筋铁骨` 往 `caster.ships` 里放的是**新建或现有**的船，'
@@ -433,9 +382,10 @@ def test_every_ship_add_site_states_its_lost_policy():
     # ⚠️ **写成确切数字**（不是 `>= 12`）：扫描器"少看见几个点"和"多看见一个点"都是
     #    **必须有人看一眼**的事（前者的后果是守卫恒绿）。新增一个合法追加点时会红两次
     #    （这里 + 上面的登记表），那正是想要的效果 —— 逼人表态，而不是静默扩表。
-    #    实测口径见 §G 实施记录：20 个点 / 13 条 `(函数, 容器)` 登记。
-    assert len(found) == 20, (
-        '扫描到的"把船放回棋盘"的点是 %d 个（基线 20）—— 扫描器变了或代码变了，'
+    #    ★ 2026-09-24：20 → 19 —— 删掉了 `apply_magic_effect` 里平等条约回滚那一个
+    #      `affected_player.ships.append`（那条回滚机制整个不存在了）。
+    assert len(found) == 19, (
+        '扫描到的"把船放回棋盘"的点是 %d 个（基线 19）—— 扫描器变了或代码变了，'
         '两种都要先看一眼：%s' % (len(found), [(s['fn'], s['line']) for s in found]))
 
     parent = {}

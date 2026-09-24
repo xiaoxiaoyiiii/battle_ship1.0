@@ -5185,36 +5185,26 @@ def _mark_ship_sunken(player, ship):
     return True
 
 
-def _on_ship_destroyed(room, owner_id: str, ship, hits_added=None, source='magic'):
+def _on_ship_destroyed(room, owner_id: str, ship):
     """一艘船被摧毁后的通用副作用（普通攻击与区域魔法共用同一份实现）。
 
     普通攻击路径原先在 _apply_ship_sunk_effects 里内联；溅射 / 轰炸 / 硫磺火焰
-    各自又写了一份，且都漏掉了两件事：
+    各自又写了一份，且都漏掉了一件事：
 
-      ① 平等条约快照（game_effects['last_ship_change']）—— 这些卡造成的船数
-         变化因此**无法被平等条约无效化**（卡面允许无效化"船数改变效果"）；
-      ② 无暇圣心**中断** —— 它们只把 no_damage 置 False，效果本身既没被中断
-         也没有广播，等于"有船沉了但无暇圣心还在"。
+      **无瑕圣心中断** —— 它们只把 no_damage 置 False，效果本身既没被中断
+      也没有广播，等于"有船沉了但无暇圣心还在"。
 
-    source 记录这艘船是「怎么死的」，平等条约据此判断能不能无效化：
-      - 'attack' 普通炮击 / 教皇旨意弃卡攻击
-      - 'magic'  魔法卡造成的击沉（溅射 / 轰炸 / 硫磺火焰）
-    卡面只允许无效化【魔法卡】造成的船数改变，攻击造成的不在此列。
+    ★ 2026-09-24：原来的 `hits_added` / `source` 两个参数是**只为平等条约那张
+      船数变化快照服务的**（记录"沉了哪艘、加了哪些命中格、怎么死的"供回滚），
+      那张快照已整条删除 ⇒ 两个参数一起删掉。留着就是"只写不读"的僵尸参数，
+      下一个人会照着它把快照找回来（`docs/CHAIN_ENGINE_SPEC.md` §4 的同款教训）。
+      平等条约现在看的是连锁栈正下方那一项，判据见
+      `EQUAL_TREATY_SHIP_CHANGE_RULES`。
     """
     owner = room.players[owner_id]
-    room.game_effects['last_ship_change'] = {
-        'round': room.round,  # 卡面"立即发动"：只允许无效化本大回合的船数改变
-        'player': owner_id,
-        'count': 1,
-        'ship': ship,  # 保存 ship 引用，供平等条约完全回滚
-        'hits_added': list(hits_added or []),
-        'source': source,
-    }
 
     # 百亿补贴: 自己的船被击败时，自己的攻击次数 +3
-    if _grant_subsidy_bonus(room, owner_id):
-        if room.game_effects.get('last_ship_change', {}).get('player') == owner_id:
-            room.game_effects['last_ship_change']['subsidy_granted'] = True
+    _grant_subsidy_bonus(room, owner_id)
 
     # 无暇圣心：只要有战舰被击沉就中断
     if 'holy_heart' in room.game_effects:
@@ -5276,20 +5266,21 @@ def _trigger_ship_trap(room, owner_id, sunk_ship):
 
 
 
-def _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id, ship, target_x, target_y):
+def _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id, ship):
     """击沉一艘战舰后的共同副作用（普通攻击 / 区域魔法 共用）。
 
-    包含：船数扣减、沉船记录、平等条约快照、百亿补贴、恶魔契约、
-    八方来财、无暇圣心中断。
+    包含：船数扣减、沉船记录、百亿补贴、恶魔契约、八方来财、无暇圣心中断。
+
+    ★ 2026-09-24：末尾的 `target_x, target_y` 两个参数一起删掉了 —— 它们**只**用来
+      给平等条约那张船数变化快照记"这一炮打在哪一格"（供回滚撤销命中格），
+      快照已整条删除 ⇒ 参数没有人读。留着就是"只写不读"的僵尸参数。
     """
     defender = room.players[defender_id]
     defender.remaining_ships -= 1
     _mark_ship_sunken(defender, ship)   # 去重，见该函数说明
 
-    # 平等条约快照 + 百亿补贴 + 无暇圣心中断（与区域魔法共用）
-    # source='attack'：炮击造成的船数减少，平等条约无效化不了（卡面只针对魔法卡）
-    _on_ship_destroyed(room, defender_id, ship, [Position(x=target_x, y=target_y)],
-                       source='attack')
+    # 百亿补贴 + 无瑕圣心中断（与区域魔法共用）
+    _on_ship_destroyed(room, defender_id, ship)
 
     # 恶魔契约: 绑定船数增减 - 任意一方船被击杀，另一方也要牺牲一艘
     # 牺牲由该方玩家自己在棋盘上点选（AI 自动），不再随机。
@@ -5423,7 +5414,7 @@ def handle_attack(data):
             defender_ships[i].hits = defender_ships[i].hits + [Position(x=target_x, y=target_y)]
             ship_sunk = True
             _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id,
-                                     defender_ships[i], target_x, target_y)
+                                     defender_ships[i])
         elif ship.invincible:
             # 无敌状态，只显形不造成伤害
             ship_sunk = False
@@ -5447,7 +5438,7 @@ def handle_attack(data):
             if len(defender_ships[i].hits) == len(defender_ships[i].positions):
                 ship_sunk = True
                 _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id,
-                                         defender_ships[i], target_x, target_y)
+                                         defender_ships[i])
             else:
                 ship_sunk = False
 
@@ -6428,8 +6419,9 @@ _MASTER_ENABLED_CARDS = frozenset({
 #         问题在于**对手（困难 AI）几乎不出会改船数的魔法卡**：它每回合只从
 #         9 张安全卡里挑，实测每局总共才出 1.16 张，而"船数改变"这一类
 #         （增援/死者苏生/滥竽充数/疗愈/神威！/轰炸…）它一张都没有。
-#         ⇒ 闸门（`_master_card_readiness` 的 `last_ship_change` 快照）虽然
-#           合理地判它"此刻能打"，但打出去实际无事发生，只是白占一次出牌机会。
+#         ⇒ 闸门虽然合理地判它"此刻能打"，但打出去实际无事发生，只是白占一次出牌机会。
+#           （★ 2026-09-24 该闸门已改成"看连锁栈正下方那一项会不会改船数"——
+#             见 `_master_card_readiness`；旧写法读的船数变化快照已整条删除。）
 #       → 实测（`tools/experiment_threshold.py` 与池消融，5000 局 × 3 个独立种子）：
 #
 #           线上池（含它）   69.4% [68.1,70.6]  70.9% [69.6,72.2]  68.9% [67.6,70.2]
@@ -6438,9 +6430,9 @@ _MASTER_ENABLED_CARDS = frozenset({
 #         三个独立半样本**全部 +1.4~1.5 且区间不重叠** ⇒ 这是真效果。
 #         （它同时还在 `CARD_BASE_VALUE` 里有 58 分 —— 比 `余音绕梁` 这类
 #           真正的进攻卡更"便宜就出"，所以它会被优先选中。）
-#       → 通道没删：`apply_magic_effect` 的平等条约分支、快照台账、
-#         以及 `_master_card_readiness` 里那条闸门**原样留着**（真人对局照常），
-#         只是大师不再主动打它。要开回去必须先在**对手会改船数**的场合重量一次。
+#       → 通道没删：`apply_magic_effect` 的平等条约分支、以及 `_master_card_readiness`
+#         里那条闸门**原样留着**（真人对局照常），只是大师不再主动打它。
+#         要开回去必须先在**对手会改船数**的场合重量一次。
 #   克苏鲁之眼（★ 2026-09-22 移出池子）
 #       → 结算时先要施法者给出**自己那一艘船的坐标**（`_pick_cell_from_target`），
 #         而决策层算不出"我该献出哪一艘" —— `_master_card_readiness` 只能回 `{}`，
@@ -6752,11 +6744,16 @@ def _master_card_readiness(room, ai_id, card):
             return None
 
         if name == '平等条约':
-            # 只在"**魔法卡**造成的船数变化"当回合有效；炮击造成的减船康不动。
-            snap = (getattr(room, 'game_effects', None) or {}).get('last_ship_change')
-            if not snap or snap.get('source') == 'attack':
+            # ★ 2026-09-24：平等条约改成**连锁专用**（目标 = 栈中正下方那一项），
+            #   所以闸门只认一件事：**这一刻它上方那一项真的会改船数**。
+            #   原闸门读的是船数变化快照（已整条删除，见结算分支的说明）。
+            #   ⚠️ 大师 AI 自己出牌时链上只有它自己 ⇒ 恒返回 None；这张卡
+            #      早已因负收益移出 `_MASTER_ENABLED_CARDS`（见那张表旁的实测），
+            #      真人对局里靠 `chain_response` 打出来，不走这里。
+            if not room.chain:
                 return None
-            return {} if snap.get('round', room.round) == room.round else None
+            ok, _why = _equal_treaty_verdict(room, room.chain[-1])
+            return {} if ok else None
 
         # ── 4. 其余（含全部无前置的卡）直接放行 ───────────────────────
         return {}
@@ -8883,6 +8880,248 @@ def _ai_can_negate_chain_top(room, ai_id: str) -> bool:
     if getattr(top, 'player_id', None) == ai_id:
         return False
     return getattr(getattr(top, 'card', None), 'name', None) not in ('看破！', '加百列之光')
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 连锁无效化：「正下方那一项」的目标解析 + 免疫关系（**只此一份**）
+# ═══════════════════════════════════════════════════════════════════════════
+def _chain_negation_target(room, self_name):
+    """「康正下方那一项」类的目标解析与免疫关系 —— `失灵！` / `平等条约` 共用。
+
+    调用契约：**当前项已经出栈**（`resolve_chain` 先 `pop()` 再 `apply_magic_effect`），
+    所以 `room.chain[-1]` 就是"正下方那一项"＝下一个待结算项。
+
+    返回 `(target_item, reason)`：拿到目标时 `reason is None`；免疫 / 没有目标时
+    `target_item is None`、`reason` 是给玩家看的文案。
+
+    ⚠️ 为什么必须共用一份：作者裁决「平等条约与失灵！**完全同一套**目标解析与免疫
+       关系」。各写一份的话，将来给其中一张加免疫（例如"某卡免疫"）必然漏掉另一张，
+       而症状是"康得动/康不动"这种玩家一眼看得出、代码里却看不出的偏差（教训 #1）。
+    """
+    if not room.chain:
+        return None, f'{self_name}只能在连锁中发动：现在没有可无效化的「正下方那一项」'
+    target = room.chain[-1]
+    tname = getattr(getattr(target, 'card', None), 'name', None)
+    if tname == '看破！':
+        return None, f'看破！优先于{self_name}，无法无效化'
+    if tname == '加百列之光':
+        return None, f'加百列之光免疫{self_name}'
+    return target, None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 平等条约：目标「会不会**真的**改变船数」——判据只此一份（作者裁决 2026-09-24）
+# ═══════════════════════════════════════════════════════════════════════════
+# 卡面：「在双方场上有船数改变的场合可以立即发动，使那个使船数改变的**魔法卡**
+#   无效化；炮击造成的船数减少无法被无效化。」
+#
+# ★ 判据必须是"**这一炮 / 这张牌打下去真的会变**"，不是"这张卡名义上属于某一类"。
+#   作者原话：「对于轰炸和硫磺火焰这种的，也是必须有船处于待死亡状态了再发动
+#   平等条约才能做到无效化」⇒ 打在空行/空列上 ⇒ 失败。
+#
+# 判据函数签名 `(room, target_item) -> bool`：True = 这一项真的会改变某方船数。
+def _treaty_kill_hits_alive_ship(room, target_item, cells):
+    """`cells` 里只要有**还活着的**船 ⇒ 这一发真的会沉船（轰炸 / 硫磺火焰共用）。
+
+    两处口径都照产品实现走：目标方 = **施法者的对手**（这两张卡打的都是对方棋盘），
+    存活判据用项目唯一那份 `_alive_ships`（`_is_ship_alive`）。
+    """
+    victim_id = _opponent_of(room, target_item.player_id)
+    victim = room.players.get(victim_id) if victim_id else None
+    if victim is None:
+        return False
+    wanted = {_cell_xy(c) for c in cells}
+    wanted.discard(None)
+    if not wanted:
+        return False
+    return any((p.x, p.y) in wanted
+               for sh in _alive_ships(victim) for p in sh.positions)
+
+
+def _treaty_bomb_line_kills(room, target_item):
+    """轰炸：选定的**行/列里真的有还活着的船**才会沉（空行/空列 ⇒ 失败）。"""
+    targets = target_item.targets if isinstance(target_item.targets, dict) else {}
+    line = targets.get('target_line')
+    if not isinstance(line, dict):
+        return False
+    try:
+        index = int(line.get('index'))
+    except (TypeError, ValueError):
+        return False
+    if not 0 <= index < 6:
+        return False
+    if line.get('type') == 'row':
+        cells = [{'x': x, 'y': index} for x in range(6)]
+    elif line.get('type') == 'col':
+        cells = [{'x': index, 'y': y} for y in range(6)]
+    else:
+        return False
+    return _treaty_kill_hits_alive_ship(room, target_item, cells)
+
+
+def _treaty_sulfur_kills(room, target_item):
+    """硫磺火焰：选定的 6 个格子里真的有还活着的船才会沉。"""
+    targets = target_item.targets if isinstance(target_item.targets, dict) else {}
+    cells = targets.get('target_cells')
+    if not isinstance(cells, list) or len(cells) != 6:
+        return False
+    return _treaty_kill_hits_alive_ship(room, target_item, cells)
+
+
+def _treaty_splash_kills(room, target_item):
+    """溅射：它打的是**自己上一发命中格**的上下左右四格 ⇒ 判据必须读同一份数据。
+
+    ⚠️ 溅射的目标**不在** `ChainItem.targets` 里（它读 `room.last_attack`）——
+       拿 targets 去判会判成"永远不打人"，等于把它整张卡漏掉。
+    ⚠️ 卡面「这次伤害不受状态'无敌'影响」但**受护盾影响**：带盾的船这一发沉不了
+       （盾被打破、船毫发无伤）⇒ 必须把带盾的排除，否则"看着会沉、其实不沉"。
+    """
+    last = getattr(room, 'last_attack', None) or {}
+    if last.get('attacker') != target_item.player_id or not last.get('hit'):
+        return False
+    try:
+        x, y = int(last['x']), int(last['y'])
+    except (KeyError, TypeError, ValueError):
+        return False
+    neighbors = {(x, y - 1), (x, y + 1), (x - 1, y), (x + 1, y)}
+    neighbors = {(a, b) for (a, b) in neighbors if 0 <= a < 6 and 0 <= b < 6}
+    victim_id = _opponent_of(room, target_item.player_id)
+    victim = room.players.get(victim_id) if victim_id else None
+    if victim is None:
+        return False
+    for sh in _alive_ships(victim):
+        if getattr(sh, 'shield', False):
+            continue
+        hits = {(h.x, h.y) for h in sh.hits}
+        if any((p.x, p.y) in neighbors and (p.x, p.y) not in hits for p in sh.positions):
+            return True
+    return False
+
+
+def _treaty_revive_has_wreck(room, target_item):
+    """疗愈 / 死者苏生：**场上没有可复活的沉船**就复活不了 ⇒ 失败。
+
+    与这两张卡自己的发动判据同一份口径（`caster.sunken_ships` 为空时它们必然
+    `success = False`），所以这里读的就是同一个字段，不是另写一套。
+    """
+    player = room.players.get(target_item.player_id)
+    return bool(player is not None and getattr(player, 'sunken_ships', None))
+
+
+def _treaty_reinforce_has_cell(room, target_item):
+    """增援：棋盘上**真的还有可放置的格子**才会 +1。
+
+    与放置流程共用同一份占位口径（`_placement_blocked_cells`，36 格）。
+    全被占满（己方船 + 对方打过的格 + 神威扣洞）⇒ 放不下 ⇒ 船数不会变。
+    """
+    if target_item.player_id not in room.players:
+        return False
+    return len(_placement_blocked_cells(room, target_item.player_id)) < 36
+
+
+def _treaty_lanyu_refills(room, target_item):
+    """滥竽充数：真的补得满才有船数变化 —— 直接复用**它自己的出牌闸门**。
+
+    `_lanyu_requirement_reason` 就是它的真实条件（remaining_ships < max_ships
+    且至少一个可放置格子）；返回 None 表示"这张牌打下去会真的补船"。
+    """
+    if target_item.player_id not in room.players:
+        return False
+    return _lanyu_requirement_reason(room, target_item.player_id, target_item.card) is None
+
+
+def _treaty_shenji_can_restore(room, target_item):
+    """神机妙算：**只能判到必要条件**（还有活船可沉）。
+
+    ⚠️⚠️ 这张卡做不到"准确预判会不会改船数"，原因在时序上：
+
+      卡面：「宣言一个数目 x，如果对方的结束阶段结束之后自己的船数减少了 x，
+             那么那些原本会减少的船不会减少并重新部署。」
+      · `x` 是**神机妙算自己结算时**才开的宣言窗口里由玩家填的
+        （`magic_temp_data['pending_shenji']` → `handle_confirm_shenji_declare`）；
+      · 平等条约在连锁里**排在它上面 ⇒ 先结算**，此刻 `x` 还没有、基线快照
+        （`prediction_initial_<pid>`）也还没拍；
+      · 就算有 x，"这一大回合会不会正好沉 x 艘"也要等对方的结束阶段才知道。
+
+      ⇒ 充分条件在这一刻**不存在**。这里只给出必要条件：**还有活船**才可能再减船
+        （一艘活船都没有 ⇒ 船数不可能再变 ⇒ 失败）。已单列在报告里请作者裁决。
+    """
+    player = room.players.get(target_item.player_id)
+    return bool(player is not None and _alive_ships(player))
+
+
+def _treaty_last_stand_self_sacrifice(room, target_item):
+    """绝处逢生：牺牲自己**全部**战舰 ⇒ 只要有活船就真的会改船数。
+
+    作者裁决：「绝处逢生的自牺牲**保持现状**（可以被无效化）—— 作者裁过，别改。」
+    ⚠️ 与"牺牲类"（恶魔契约 / 神之宣告 / 命运骰子 / 守株待兔）**不是一回事**：
+       那几张是**让别人**牺牲，作者早先已裁过「不算可被无效化的船数变化」⇒ 康不动。
+    ⚠️ 新机制下"无效化"= **整张牌被跳过** ⇒ 一艘都不会牺牲
+       （旧快照实现回的是 1 艘，那条差异已单列在报告里）。
+    """
+    player = room.players.get(target_item.player_id)
+    return bool(player is not None and _alive_ships(player))
+
+
+#: 卡名 → `(判据函数, 人话说明)`。**这是"平等条约康不康得动"的唯一一份实现。**
+#: 顺序 = 卡面分类；新增一行 = 作者裁决，必须先问（守卫会同时红两条腿）。
+EQUAL_TREATY_SHIP_CHANGE_RULES = {
+    # ── 击沉类：判据是「这一发真的会沉船」（不是"它属于击沉类"）──
+    '轰炸':     (_treaty_bomb_line_kills,
+                 '目标行/列里必须有还活着的船；打在空行/空列上不沉船'),
+    '硫磺火焰': (_treaty_sulfur_kills,
+                 '选定的 6 个格子里必须有还活着的船'),
+    '溅射':     (_treaty_splash_kills,
+                 '上一发命中格的上下左右四格里必须有会沉掉的船（带盾的不算）'),
+    # ── 复活类：判据是「真的会复活」──
+    '疗愈':     (_treaty_revive_has_wreck,
+                 '场上没有可复活的沉船时不会复活'),
+    '死者苏生': (_treaty_revive_has_wreck,
+                 '同上（与疗愈共用同一个判据函数）'),
+    # ── 增加类：判据是「真的会让某方船数 +1」──
+    '增援':     (_treaty_reinforce_has_cell,
+                 '棋盘上还有可放置的空格才会真的 +1'),
+    '滥竽充数': (_treaty_lanyu_refills,
+                 '与它自己的出牌闸门同一份判据（船数未满 + 有空格）'),
+    '神机妙算': (_treaty_shenji_can_restore,
+                 '★ 只判到必要条件（还有活船可沉）：改船数与否要等它自己结算后才宣言 x'),
+    # ── 自我牺牲（作者裁决：保持现状、可以被无效化）──
+    '绝处逢生': (_treaty_last_stand_self_sacrifice,
+                 '牺牲自己全部战舰 ⇒ 只要有活船就真的会改船数'),
+}
+
+#: **不在上表里**、且必须逐条写清"为什么不康"的卡名 → 理由。
+#: 判据不是"这张卡不改船数"，而是"它改船数的方式不属于平等条约管的那一类"。
+#: 有一张自动化的守卫要求这张表逐条等于 `tests/test_pingdeng_tiaoyue_chain.py`
+#: 里的 `NOT_NEGOTIABLE` —— 防止下一批有人凭"价值表分数高"顺手加进可康列表。
+EQUAL_TREATY_NOT_NEGOTIABLE = {
+    '恶魔契约': '作者已裁：它造成的「牺牲」不算可被无效化的船数变化',
+    '神之宣告': '同上（牺牲两艘自己的船，再让对方牺牲一艘）',
+    '命运骰子': '同上（摇到 6 点让对方牺牲）',
+    '守株待兔': '同上（陷阱触发后让对方牺牲）',
+}
+# 另外还有两类**根本没有链上目标**，因此永远康不到（写在这里供下一个人对照）：
+#   · 普通炮击（`handle_attack`）与教皇旨意弃卡攻击（`_do_attack`）——它们是【攻击】，
+#     不是连锁项，压根不会出现在 `room.chain` 里；船被炮击打沉之后再打平等条约，
+#     只会得到「没有可无效化的『正下方那一项』」（卡面本来就写"炮击无法被无效化"）。
+
+
+def _equal_treaty_verdict(room, target_item):
+    """平等条约对**这一项**的判词：`(会不会真的改船数, 人话说明)`。
+
+    这是判据的**唯一**消费口 —— 结算分支只读这里的结果，不许自己再写 `if`。
+    """
+    name = getattr(getattr(target_item, 'card', None), 'name', None)
+    row = EQUAL_TREATY_SHIP_CHANGE_RULES.get(name)
+    if row is None:
+        return False, f'{name}不会造成可被无效化的船数变化'
+    fn, why = row
+    try:
+        ok = bool(fn(room, target_item))
+    except Exception as exc:                       # noqa: BLE001 - 兜底不许静默
+        # 判据自己炸了 = 这张牌**不确定能不能康** ⇒ 当作康不动，并把原因留痕。
+        return False, f'{name}的船数变化判据无法判定（{exc!r}）'
+    return ok, why
 
 
 def _can_respond_chain(room, player_id):
@@ -12778,8 +13017,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                             # 保存被击沉的船到sunken_ships
                             _mark_ship_sunken(opponent, ship)
 
-                            # 平等条约快照 + 百亿补贴 + 无暇圣心中断（与普通攻击共用）
-                            _on_ship_destroyed(room, opponent_id, ship, [Position(**pos)])
+                            # 百亿补贴 + 无暇圣心中断（与普通攻击共用）
+                            _on_ship_destroyed(room, opponent_id, ship)
 
                             # 八方来财
                             _notify_treasure_hunter(room, 1)   # 魔法卡造成的变化：全场持卡者都摸
@@ -13093,7 +13332,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                 # 记录本回合伤害（五险一金/Freezing!）
                 caster.damage_dealt_this_turn += 1
 
-                # 平等条约快照 + 百亿补贴 + 无暇圣心中断（与普通攻击共用）
+                # 百亿补贴 + 无暇圣心中断（与普通攻击共用）
                 _on_ship_destroyed(room, opponent_id, ship)
 
                 # 恶魔契约：一次结算里多艘沉没时只请求一次
@@ -13187,7 +13426,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                 # 八方来财: 战舰数目变化时抽一张牌
                 _notify_treasure_hunter(room, 1)   # 魔法卡造成的变化：全场持卡者都摸
 
-                # 平等条约快照 + 百亿补贴 + 无暇圣心中断（与普通攻击共用）
+                # 百亿补贴 + 无暇圣心中断（与普通攻击共用）
                 _on_ship_destroyed(room, opponent_id, ship)
 
                 # 恶魔契约：一次结算里多艘沉没时只请求一次
@@ -13504,74 +13743,42 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         result['message'] = '战舰数目变化时抽一张牌'
 
     elif card.name == '平等条约':
-        # 船数改变时无效化导致改变的【魔法卡】（攻击造成的不在此列）
-        if 'last_ship_change' not in room.game_effects:
+        # ★ 2026-09-24 作者裁决：改成**连锁无效化**（`docs/CHAIN_ENGINE_SPEC.md` §1.2
+        #   原本的设计），**删掉**原来的"船数变化快照回滚"。原因：那份快照的过期判据
+        #   绑在 `room.round`（大回合）上，而 `room.round` 只在 `next_index == 0` 时
+        #   递增 ⇒ **对两个座位不等价**（受害方是先手时必被拒，作者实报
+        #   「船数改变发生在上一个大回合，无法再无效化」）。
+        #
+        # 新规则（三条，逐条都只在一个地方实现）：
+        #   ① 目标 = **栈中正下方那一项**，与「失灵！」共用 `_chain_negation_target`
+        #      （所以看破！/ 加百列之光的免疫、以及"不在连锁里就失败"都自动同口径）；
+        #   ② **只有目标真的会造成船数变化时才成功** —— 判据只此一份
+        #      （`EQUAL_TREATY_SHIP_CHANGE_RULES` + `_equal_treaty_verdict`）；
+        #   ③ 成功 = `negate_target` ⇒ `resolve_chain` 把正下方那一项标 `negated`、
+        #      结算时**整项跳过**（不再"先结算再回滚"，所以也不再需要任何台账）。
+        target_item, why = _chain_negation_target(room, '平等条约')
+        if target_item is None:
             result['success'] = False
-            result['message'] = '没有可无效化的船数改变效果'
+            result['message'] = why
             return result
 
-        # 卡面"立即发动"：超过本大回合的快照不允许回滚
-        # （原先无过期点，第 9 回合还能回滚第 1 回合的击沉）
-        if room.game_effects['last_ship_change'].get('round', room.round) != room.round:
-            room.game_effects.pop('last_ship_change', None)
+        # 看破！压制期间自己这一侧的魔法卡一律无效（与失灵！同口径；失灵！那两条
+        # 闸门在出牌/响应层就拦掉了，而平等条约在**同一条连锁**里可能被上方刚结算的
+        # 看破！压制住 —— 那一帧只有这里看得到）。
+        if getattr(caster, 'magic_blocked', False):
             result['success'] = False
-            result['message'] = '船数改变发生在上一个大回合，无法再无效化'
+            result['message'] = '你已被看破！压制，本回合魔法卡无效，平等条约无法发动'
             return result
 
-        # 卡面只允许无效化【魔法卡】造成的船数改变；普通炮击/教皇旨意造成的击沉
-        # 无法被无效化。这里必须保留快照（不能 pop）—— 否则接着摸到一张魔法卡
-        # 造成船数变化时，玩家会因为快照被提前消费而莫名其妙地无效化不了。
-        if room.game_effects['last_ship_change'].get('source') == 'attack':
+        would_change, reason = _equal_treaty_verdict(room, target_item)
+        if not would_change:
             result['success'] = False
-            result['message'] = '平等条约只能无效化魔法卡造成的船数减少，无法无效化炮击造成的击沉'
+            # 作者原话的文案打头，后面跟这一张卡的**真实理由**（不许只说"没有效果"）。
+            result['message'] = f'没有可无效化的船数改变效果（{reason}）'
             return result
 
-        # 无效化最后一次船数改变
-        last_change = room.game_effects.pop('last_ship_change')
-        # 恢复船数和被移除的ship
-        affected_player_id = last_change['player']
-        affected_player = room.players[affected_player_id]
-        count = last_change['count']
-        affected_player.remaining_ships += count
-
-        # 完全回滚: 把ship重新加回列表，从sunken_ships中移除（防重复：击沉时船仍留在ships中）
-        if 'ship' in last_change and last_change['ship'] is not None:
-            revived_ship = last_change['ship']
-            if revived_ship not in affected_player.ships:
-                affected_player.ships.append(revived_ship)
-            # 从sunken_ships中移除
-            if revived_ship in affected_player.sunken_ships:
-                affected_player.sunken_ships.remove(revived_ship)
-            # 撤销本次击沉：移除击中格，避免回滚后成为打不死的幽灵船
-            for h in last_change.get('hits_added', []):
-                if h in revived_ship.hits:
-                    revived_ship.hits.remove(h)
-            # ★ 回放批（2026-09-24）：这艘船**回到棋盘上**了 ⇒ 它原来的"沉没登记"要跟着撤销，
-            #   否则那一格永远留着一个红叉（幻影沉船）—— 而那艘船此刻正在棋盘上活着。
-            #   ⚠️ 回滚碰得到这么一艘**登记过沉没**的船：`last_ship_change` 是**单槽**，
-            #      而"牺牲"不写这个槽，所以"A 船被魔法击沉 → B 船被牺牲 → 平等条约"
-            #      这条链上，快照里存的可能是**已经被牺牲掉的那艘**（`ship` 引用还在），
-            #      回滚会把它重新 append 回 `ships` —— 实测（本批）就是那条路径漏了撤销。
-            #   ⚠️ 与 `revive` / `shenji_redeploy` 两支同口径：撤销归撤销，**快照在收尾记**
-            #      （下面那句 `refresh_ships`），否则记下来的是中间态。
-            replay.note_ship_returned(room, affected_player_id, revived_ship)
-
-        # 回滚连带撤销百亿补贴为这次击沉发放的 +3
-        if last_change.get('subsidy_granted'):
-            flags = affected_player.effect_flags
-            flags.subsidy_bonus = max(0, int(getattr(flags, 'subsidy_bonus', 0) or 0) - 3)
-
-        # 广播更新
-        _emit_ships_updated(room)
-
-        # ★ 回放批：回滚也是"船位在没有日志的流程里变了"（这个分支不写游戏日志），
-        #   与 `confirm_magic_target` 的收尾同一个理由与同一个口径：
-        #   `note_ship_returned` 只撤销登记、不推动记录器，快照必须在这里（状态全部
-        #   落定之后）补一次，否则那一帧永远停在"船不在棋盘上"的中间态。
-        #   `refresh_ships` 幂等：没有变化时它什么都不记。
-        replay.refresh_ships(room)
-
-        result['message'] = '成功无效化船数改变效果'
+        result.negate_target = True
+        result['message'] = f'将无效化{target_item.card.name}'
 
     elif card.name == '百亿补贴':
         # 船被击败时攻击次数加3
@@ -13667,10 +13874,10 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         # 牺牲 = 走完整击沉流程，不再"凭空消失"：
         #   ① 从 caster.ships 移入 caster.sunken_ships（供复活类回收）
         #   ② 置满命中，让"这艘船已经没了"在双方棋盘与 _is_ship_alive 上口径一致
-        #   ③ 触发击沉通用副作用（平等条约快照 / 无瑕圣心中断 / 百亿补贴 / 八方来财 / 恶魔契约）
+        #   ③ 触发击沉通用副作用（无瑕圣心中断 / 百亿补贴 / 八方来财 / 恶魔契约）
         #
         # ⚠️ 通用副作用只结算【一次】，不能逐艘调 _on_ship_destroyed ——
-        # 那会把 last_ship_change 快照反复覆盖、并触发 N 次无瑕圣心中断与 N 次恶魔契约。
+        # 那会触发 N 次无瑕圣心中断与 N 次恶魔契约。
         for sh in sacrificed:
             sh.hits = list(sh.positions)  # 满命中 = 已沉
             if sh in caster.ships:
@@ -13685,9 +13892,6 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         _clear_board_effects(room, [caster_id], '绝处逢生')
 
         if sacrificed:
-            # source='sacrifice'：这是自己牺牲、不是被对方打沉的。平等条约只允许
-            # 无效化【魔法卡造成】的船数变化，绝处逢生的自牺牲不在此列。
-            #
             # ⚠️ 顺序要紧：**先**走击沉结算，**再**清跨回合效果。
             #    `_on_ship_destroyed` 会用 `holy_heart_interrupted`（"因船被沉而中断"）
             #    这个**更具体**的原因清掉无暇圣心；若我们先清，那条路径就什么都找不到，
@@ -13695,7 +13899,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             #    而且 `tests/test_last_stand_and_steal_fix.py` 钉的就是前者。
             #    所以下面那句 `_clear_multiturn_effects` 必须排在击沉结算**之后**
             #    （它负责兜住"没被击沉路径清掉"的那些，比如玩家没牺牲任何船的情况）。
-            _on_ship_destroyed(room, caster_id, sacrificed[-1], source='sacrifice')
+            _on_ship_destroyed(room, caster_id, sacrificed[-1])
             # 逐艘公开广播，让双方棋盘都画出"这艘船没了"，而不是无声消失
             for sh in sacrificed:
                 # ★ 回放批：自牺牲同样是**双方看得见的沉没** ⇒ 回放的船位时间线
@@ -14138,15 +14342,14 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         # ⚠️ 与「加百列之光」同口径：不判归属 —— 自连锁时要能康掉自己前面
         # 打出的牌（作者裁定：同一连锁里后手能推翻前手）。
         if room.chain:
-            target = room.chain[-1]
-            tname = getattr(target.card, 'name', None)
-            if tname == '看破！':
+            # 目标解析 + 免疫关系与「平等条约」共用同一份实现（`_chain_negation_target`）。
+            # ⚠️ 走这条支时 `room.chain` 必非空 ⇒ 该函数只会返回目标、不会返回免疫理由；
+            #    下面那个 `if target is None` 是防御性的（将来若给它加新的免疫规则，
+            #    失灵！与平等条约会一起生效，不会只改一张）。
+            target, why = _chain_negation_target(room, '失灵！')
+            if target is None:
                 result.success = False
-                result.message = '看破！优先于失灵！，无法无效化'
-                return result
-            if tname == '加百列之光':
-                result.success = False
-                result.message = '加百列之光免疫失灵！'
+                result.message = why
                 return result
             result.negate_target = True
             result.message = f'将无效化{target.card.name}'

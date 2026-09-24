@@ -17,11 +17,18 @@
 | §3 计划新增 `engine/chain.py` / `resolution.py` / `negation.py` | **未按此拆分**：实现仍在 `server.py` 内（`_can_respond_chain` / `_advance_chain_window` / `resolve_chain` / `_schedule_chain_timeout`），仓库里没有 `engine/` 目录 |
 | §3 计划新增 `chain_window` / `chain_passes` | **已实现**；超时的代际令牌存在 **`room.chain_timer`**（**没有** `chain_token` 字段，token 只是 `_schedule_chain_timeout(room_id, token)` 的参数） |
 
-**与实现的 2 处有意偏差**（不是 bug，别照着文档改回去）：
+**与实现的 1 处有意偏差**（不是 bug，别照着文档改回去）：
 
 1. 被无效化的**场地魔法**仍执行"贴了再拆"（避免卡片凭空消失），与 §1.3 的字面描述不同。
-2. 「平等条约」**不走** `negate_target` 连锁标记，而是读 `game_effects['last_ship_change']`
-   的快照回滚船数变化。
+
+> ★ 2026-09-24 **第 2 处偏差已撤销**：原第 2 条写的是「平等条约不走 `negate_target`，
+> 而是读 `game_effects` 里的一张船数变化快照做回滚 —— 别照文档改回去」。
+> 作者后来裁定那套快照**有过期判据绑在 `room.round` 上、对两个座位不等价**的结构性问题
+> （受害方是先手时必被拒），于是**删掉整套快照**，把本文档 §1.2 原本的设计
+> （**连锁无效化，目标 = 栈中正下方那一项**）实现回来 —— 现在第 2 处不再有偏差：
+> 平等条约走的就是 `negate_target`，与「失灵！」共用 `_chain_negation_target` 的目标解析与
+> 免疫关系；判据（"目标真的会造成船数变化吗"）只有一份，见 `server.py` 的
+> `EQUAL_TREATY_SHIP_CHANGE_RULES`。守卫：`tests/test_pingdeng_tiaoyue_chain.py`。
 
 回归测试：`tests/test_guardrails.py`（连锁纯函数 + 超时代际令牌）与
 `tests/test_all_magic_cards.py`（42 张卡逐条结算）。

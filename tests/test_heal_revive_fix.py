@@ -153,8 +153,8 @@ def test_mark_ship_sunken_dedupes(room):
 def test_sunk_effects_does_not_duplicate(room):
     """走真实击沉路径两次，沉船堆里也只有一条记录。"""
     ship = room.players[P1].ships[0]
-    server._apply_ship_sunk_effects(room, room.id, P2, P1, ship, 0, 0)
-    server._apply_ship_sunk_effects(room, room.id, P2, P1, ship, 0, 0)
+    server._apply_ship_sunk_effects(room, room.id, P2, P1, ship)
+    server._apply_ship_sunk_effects(room, room.id, P2, P1, ship)
     assert room.players[P1].sunken_ships.count(ship) == 1, '不该出现重复条目'
 
 
@@ -164,13 +164,13 @@ def test_no_duplicate_after_sink_revive_sink(room):
     ship = p.ships[0]
     room.magic_deck = [card('冻结')]
 
-    server._apply_ship_sunk_effects(room, room.id, P2, P1, ship, 0, 0)
+    server._apply_ship_sunk_effects(room, room.id, P2, P1, ship)
     assert p.sunken_ships.count(ship) == 1
 
     server.apply_magic_effect(room, P1, card('疗愈'), {})
     assert server._is_ship_alive(p, ship) is True
 
-    server._apply_ship_sunk_effects(room, room.id, P2, P1, ship, 0, 0)
+    server._apply_ship_sunk_effects(room, room.id, P2, P1, ship)
     assert p.sunken_ships.count(ship) == 1, '再沉也不该重复'
     assert server._is_ship_alive(p, ship) is False
 

@@ -118,8 +118,6 @@ def test_master_card_readiness_never_raises_for_any_playable_card(master_room):
     probe('有历史')
     room.field_magic = _mk_card('伊甸园')
     probe('场上有场地')
-    room.game_effects['last_ship_change'] = {'source': 'magic', 'round': room.round}
-    probe('有船数变化快照')
 
     assert seen == set(server._MASTER_ENABLED_CARDS), '有卡没被试算到'
 
@@ -616,10 +614,10 @@ def test_pingdeng_tiaoyue_stays_out_of_the_master_pool(master_room):
     assert '平等条约' not in server._MASTER_ENABLED_CARDS, (
         '平等条约被加回大师卡池了 —— 它是实测 -1.5 个百分点的负收益卡，'
         '见 server.py 里 _MASTER_ENABLED_CARDS 旁边的实测表')
-    # 通道必须还在（别把"AI 不打"误删成"这张卡没了"）：闸门仍要认这张卡。
-    # 用**源码级**断言而不是调 `_master_card_readiness`：后者要房间里有
-    # `game_effects['last_ship_change']` 快照才判得成，在本夹具里恒返回 None
-    # —— 拿它断言会变成"断言恒真"，正是本项目最忌讳的假绿。
+    # 通道必须还在（别把"AI 不打"误删成"这张卡没了"）：分支与闸门都仍要认这张卡。
+    # 用**源码级**断言而不是调 `_master_card_readiness`：后者要链上有"正下方那一项"
+    # 才判得成，在本夹具里恒返回 None —— 拿它断言会变成"断言恒真"，
+    # 正是本项目最忌讳的假绿。
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             'server.py'), encoding='utf-8').read()
     assert "if name == '平等条约':" in src, (
@@ -699,11 +697,10 @@ def test_jixian_zengyuan_is_only_played_when_behind(master_room):
            "看着船少、其实没少"的假状态正是本项目最忌讳的假绿。
         """
         for ship in list(room.players[pid].ships)[:n]:
-            x, y = ship.positions[0].x, ship.positions[0].y
             ship.hits = list(ship.positions)
             server._apply_ship_sunk_effects(
                 room, room.id,
-                opp_id if pid == ai_id else ai_id, pid, ship, x, y)
+                opp_id if pid == ai_id else ai_id, pid, ship)
 
     # 双方各 6 艘 → 持平 → 不许打
     assert len(server._alive_ships(room.players[ai_id])) == 6

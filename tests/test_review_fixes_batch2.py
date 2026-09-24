@@ -102,45 +102,16 @@ def test_subsidy_bonus_applies_on_holders_turn(room):
 
 
 # ---------------------------------------------------------------------------
-# 平等条约：快照过期 + 回滚补贴
+# 平等条约：炮击击沉康不动（快照机制已删，见 tests/test_pingdeng_tiaoyue_chain.py）
 # ---------------------------------------------------------------------------
-def test_treaty_snapshot_expires_after_round(room):
-    room.game_effects['last_ship_change'] = {
-        'player': P2, 'count': 1, 'ship': room.players[P2].ships[0],
-        'hits_added': [Position(0, 5)], 'round': 1,
-    }
-    room.round = 2
-    res = server.apply_magic_effect(room, P2, card('平等条约'), {})
-    assert res.success is False
-    assert 'last_ship_change' not in room.game_effects
+def test_treaty_cannot_negate_attack_kill_and_keeps_subsidy(room):
+    """炮击造成的击沉：平等条约无效化不了（补贴也不该被撤销）。
 
-
-def test_treaty_rollback_also_removes_subsidy_bonus(room):
-    """魔法卡造成的击沉被无效化时，百亿补贴发的 +3 也要一并撤销。
-
-    改版后炮击造成的击沉不再可被无效化（卡面只针对魔法卡），
-    所以这里用魔法来源的快照来覆盖「回滚连带撤销补贴」这条逻辑。
+    ★ 2026-09-24 改版：原来的"船数变化快照"整条删除 —— 平等条约改成**连锁无效化**
+      （目标 = 栈中正下方那一项）。本用例保留它真正要守的两件事：
+      ① 炮击击沉不可被康、船不会回来；② 百亿补贴已经发出去的 +3 不会被撤销。
+      旧版那条"回滚连带撤销补贴"的用例随快照一起删除 —— 现在**根本没有回滚**。
     """
-    server.apply_magic_effect(room, P2, card('百亿补贴'), {})
-    victim = ship((0, 0))
-    room.players[P2].ships = [victim]
-    room.players[P2].remaining_ships = 1
-    room.round = 1
-
-    # 走统一副作用入口，来源标为魔法（溅射/轰炸/硫磺火焰走的就是这条）
-    server._on_ship_destroyed(room, P2, victim, source='magic')
-    room.players[P2].remaining_ships = 0
-    assert room.players[P2].effect_flags.subsidy_bonus == 3
-    assert room.game_effects['last_ship_change'].get('subsidy_granted') is True
-
-    res = server.apply_magic_effect(room, P2, card('平等条约'), {})
-    assert res.success is True
-    assert room.players[P2].remaining_ships == 1, '船数应被回滚'
-    assert room.players[P2].effect_flags.subsidy_bonus == 0, '补贴也应一并撤销'
-
-
-def test_treaty_cannot_rollback_attack_kill_any_more(room):
-    """炮击造成的击沉：改版后平等条约无效化不了（补贴也不该被撤销）。"""
     server.apply_magic_effect(room, P2, card('百亿补贴'), {})
     room.players[P2].ships = [ship((0, 0))]
     room.players[P2].remaining_ships = 1
@@ -152,6 +123,7 @@ def test_treaty_cannot_rollback_attack_kill_any_more(room):
 
     res = server.apply_magic_effect(room, P2, card('平等条约'), {})
     assert res.success is False
+    assert res.message, '失败必须有文案'
     assert room.players[P2].remaining_ships == 0, '炮击击沉不该被回滚'
     assert room.players[P2].effect_flags.subsidy_bonus == 3, '补贴也不该被撤销'
 

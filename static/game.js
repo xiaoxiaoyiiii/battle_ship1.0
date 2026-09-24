@@ -3030,7 +3030,10 @@ function replayComputeFrame(payload, k) {
         hand: { p1: [], p2: [] },
         marks: { p1: {}, p2: {} },
         resetAt: { p1: [], p2: [] },
-        effect: { p1: null, p2: null }
+        effect: { p1: null, p2: null },
+        // ★ 剩余战舰数的**权威值**（`Player.remaining_ships`，服务端 `remaining` 时间线）。
+        //   `null` = 这一份回放没有那条时间线（老 blob）⇒ `replayAliveShips` 退回数船格。
+        alive: { p1: null, p2: null }
     };
     if (!payload || !Array.isArray(payload.steps)) return frame;
 
@@ -3047,6 +3050,17 @@ function replayComputeFrame(payload, k) {
     replayFoldTimeline(payload.hands, target, frame.hand);
     // 效果时间线同一种"稀疏 + 增量"，叠进 frame.effect[side]（见 replayEffectOf）。
     replayFoldTimeline(payload.effects, target, frame.effect);
+    // ★ 剩余战舰数（**权威计数**，与观战/实战同一份）：值不是数组而是数字，
+    //   所以不能走 `replayFoldTimeline`（它按数组/对象处理），自己扫一遍。
+    //   ⚠️ 老 blob 没有 `remaining` ⇒ 两个座位都留 `null` ⇒ 前端退回数船格
+    //      （见 `replayAliveShips`），显示与改动前一致，不是"归零"。
+    var rowsLeft = Array.isArray(payload.remaining) ? payload.remaining : [];
+    for (var m = 0; m < rowsLeft.length; m++) {
+        var rrow = rowsLeft[m] || {};
+        if (replayInt(rrow.step, -1) > target) break;   // 时间线升序，后面都不用看了
+        if (typeof rrow.p1 === 'number') frame.alive.p1 = rrow.p1;
+        if (typeof rrow.p2 === 'number') frame.alive.p2 = rrow.p2;
+    }
 
     // ② 棋盘重置：按侧收集 `step ≤ k` 的重置点（后面的攻击要判"是不是在重置之后"）。
     var resets = Array.isArray(payload.board_resets) ? payload.board_resets : [];
@@ -3244,8 +3258,28 @@ function replayCellOf(frame, side, x, y) {
     return cell;
 }
 
-// 还有几艘船活着（按**格所属的船**算，不是数格子）。
+// 还有几艘船活着。★★ 数据源 = **权威计数** `Player.remaining_ships`
+// （服务端 `remaining` 时间线，与观战 / 实战 / 重连快照读的是同一个字段）。
+//
+// ⚠️⚠️ 这里**不许**改成"数船格"（本批之前就是那么写的，而且真的画错过）：
+//     船格上的 `alive` 用的是 `len(hits) < len(positions)` 这条判据，而
+//     `Player.remaining_ships` 是**另一份**记账 —— 两者实测会不等（`神威！` 致死支
+//     把船从 `ships` 里摘掉却不登记沉没、也不加回计数；`ships`/`sunken_ships` 在几条
+//     魔法路径上也会错开）。实测（seed 4242 的真对局）：`remaining_ships=1` 而船格
+//     里有 3 个 `alive` ⇒ 回放屏写 3、实战/观战屏写 1，同一件事两个数。
+//     ⇒ 回放的职责是**与其它屏说同一句话**，权威计数归 `remaining_ships`；
+//        船格只表达"船在哪、沉没没沉"。**两者对不上时错在游戏侧的记账**，
+//        由 pytest 的 `test_replay_remaining_matches_the_game_counter` 那一族盯着，
+//        回放**不许**在这里再长出一份自己的计数推导（教训 #1）。
+//
+// ⚠️ 老 blob（本批之前落的）没有 `remaining` ⇒ `frame.alive` 是 `null` ⇒ 退回数船格
+//     （与改动前一致）。判据必须写 `== null` 而不是 `!n`：**0 艘是合法值**
+//     （全灭），写成假值判断会让"全灭"退回数船格、又变回两套口径。
 function replayAliveShips(frame, side) {
+    var counted = (frame && frame.alive) ? frame.alive[side] : null;
+    if (counted !== null && counted !== undefined && isFinite(counted)) {
+        return Math.trunc(counted);
+    }
     var ships = (frame && frame.ships && Array.isArray(frame.ships[side])) ? frame.ships[side] : [];
     var seen = {};
     var alive = 0;

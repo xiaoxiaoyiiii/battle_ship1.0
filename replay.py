@@ -35,6 +35,10 @@
   **只带变了的座位**（与上面两条同一种"稀疏 + 增量"）；字段名**照抄**
   `_build_spectate_snapshot` 的公开效果段：`shield` / `shenwei_holes` / `frozen_area` /
   `last_stand_cells` / `last_stand_owner`（教训 #1：同一件事不许有两套字段名）；
+* `remaining[i] = {step, p1: 3, p2: 6}`                   —— **只在剩余战舰数真变时**记一条，
+  **只带变了的座位**；值就是 `Player.remaining_ships`（**权威计数**，与观战/实战同一份）。
+  ⚠️ 回放屏那个「剩余战舰 N」**必须读这一条**，不许拿船格数自己数 —— 两者实测会不等
+  （见 `_remaining_snapshot` 的 ★★ 段），数船格等于让回放长出第二份计数口径；
 * `board_resets[i] = {step, side}`                        —— `side` 是 `'p1'` / `'p2'`；
 * `nodes[i] = {step, kind, label}`                        —— 进度条关键节点，**服务端算一次**。
 
@@ -139,11 +143,13 @@ def _state(room):
         'hands': [],        # 手牌时间线（稀疏）
         'attacks': [],      # 攻击标记时间线（稀疏 + 增量，见 _attack_cells）
         'effects': [],      # 场上公开效果时间线（稀疏 + 增量，见 _effects_state）
+        'remaining': [],    # 剩余战舰数时间线（稀疏 + 增量，见 _remaining_snapshot）
         'board_resets': [],  # [{step, side}]
         'nodes': [],        # [{step, kind, label}]
         'lost': {},         # 原始 pid → [(x, y), ...]：**主动牺牲**掉、但必须留在时间线里的格
         'last': None,       # 上一次快照（用来判"真的变了吗"）
         'last_attacks': None,  # 上一次"每个座位打过的格快照"（同上，攻击时间线的基线）
+        'last_remaining': None,  # 上一次"每个座位的剩余战舰数"（同上）
         'truncated': None,  # None = 没截断；否则是原因字符串
     }
     try:
@@ -356,6 +362,47 @@ def _attacks_snapshot(room):
             # 列表顺序 = 玩家看到的覆盖顺序（后写的赢）
             latest[key] = (cell['x'], cell['y'], bool(cell.get('hit')), bool(cell.get('sunk')))
         out[pid] = tuple(latest[key] for key in order)
+    return out
+
+
+def _remaining_snapshot(room):
+    """`{pid: 剩余战舰数}` —— 直接读**游戏自己的** `Player.remaining_ships`。
+
+    ★★ 为什么"回放界面上那个剩余战舰数"**必须**读这里，而不是从船格数出来 ★★
+
+    "这个座位还剩几艘船"在本项目里有**两份**：
+
+      ① `Player.remaining_ships` —— **权威计数**。实战界面（`attack_result` 的
+         `attacker_remaining_ships`）、观战（`_spectate_side_payload`）、重连快照
+         （`_emit_ships_updated`）读的都是它；
+      ② 按船格数出来的 —— `_ship_cells` 里 `alive` 为真的格数。它用的是
+         `len(hits) < len(positions)` 这条**存活判据**。
+
+    这两份**不相等**，而且实测（2026-09-24 审计批，seed 4242 的真对局）：
+    `神威！` 有一支会把船 `del target_player.ships[i]` 之后**不登记**沉没
+    （`board != 'self' and len(excluded_ships) == 1` 的致死支**不 append 进**
+    `excluded_ships`，所以那艘船**永不归还**、`remaining_ships` 也**不再加回来**），
+    于是那一局里 AI 的 `remaining_ships=1` 而船位时间线上还有 **3** 个 `alive` 的格
+    ⇒ 回放屏写"剩余战舰 3"，而同一块棋盘在实战/观战里写的是 **1**。
+    （同族：`player.ships` / `sunken_ships` 在若干条魔法路径上也会互相错开。）
+
+    ⚠️ 所以这里**不判断**哪一份"对" —— 回放的职责是**与其它屏说同一句话**（教训 #1）：
+    权威计数是 `remaining_ships`，回放就记它。船格照旧只表达"船在哪、沉没没沉"。
+    两者对不上时**由游戏侧自己的记账缺陷负责**，回放不替它二次推导（那正是"同一个
+    业务判断有两份实现"，也正是本项目已经栽过 7 次的那个形状）。
+
+    ⚠️ 名字**不叫** `remaining_ships`：那是 `_EFFECT_FIELDS` / 观战快照里的旧名字，
+       回放这一条是**新时间线**，用短名字省字节（一局几十条）。
+    """
+    out = {}
+    for pid in _pids(room):
+        player = room.players.get(pid)
+        if player is None:
+            continue
+        try:
+            out[pid] = int(getattr(player, 'remaining_ships', 0) or 0)
+        except Exception:       # noqa: BLE001 —— 认不出来的一律当 0，绝不炸
+            out[pid] = 0
     return out
 
 
@@ -759,11 +806,29 @@ def _record_snapshot(room, st, step):
     if len(hands_row) > 1:
         st['hands'].append(hands_row)
 
+    # 剩余战舰数（★ 审计批新增）：**权威计数** `Player.remaining_ships` 的稀疏时间线。
+    # ⚠️ 它与 `ships` 行**故意分开**：船格的行还兼着"船在哪"的语义，而这一条只管
+    #    "这个座位还剩几艘船"——两者本来就可能对不上（见 `_remaining_snapshot` 的 ★★）。
+    #    合成一行的话，"哪一侧变了"会跟着船格的变化走，反而漏记"只有计数变、船格没变"。
+    remaining_now = _remaining_snapshot(room)
+    remaining_before = st.get('last_remaining') or {}
+    remaining_row = {'step': step}
+    for pid, value in remaining_now.items():
+        side = _side_label(room, pid)
+        if not side:
+            continue
+        if remaining_before.get(pid) != value:
+            remaining_row[side] = value
+    if len(remaining_row) > 1:
+        st['remaining'].append(remaining_row)
+
     # 攻击标记时间线：**同一种"真变了才记 + 只带变了的座位"**（稀疏 + 增量）。
     # ⚠️ 逐格比较**同一个坐标**的值（不是整份列表）：坐标是键，`hit`/`sunk` 是值。
     #    这样"同一格被后写的那条盖掉"（先沉后落空，`_attacks_snapshot` 的 ★）会**记一条新的**
     #    —— 前端按列表顺序赋值 ⇒ 后一条盖掉前一条，与实战前端看到的完全一致。
     #    绝不许写成"整份列表再记一次"（那是全量快照，体积会涨一大截）。
+    # ⚠️ 基线取的是 `_attacks_snapshot` 那份**已按坐标去重、按列表原序取值**的结果：
+    #    它记的是"这一格**最后一次**的说法"，所以同一列表里的重复项不会各写一条。
     # ⚠️ "变少了"（疗愈复活 / 换位清格）**这里不记**：那件事由同一个失效点上的
     #    `board_resets` 擦除，见 `_attack_cells` 的说明与 `tests/test_replay_bomb_marks.py`。
     attacks_now = _attacks_snapshot(room)
@@ -773,9 +838,8 @@ def _record_snapshot(room, st, step):
         side = _side_label(room, pid)
         if not side:
             continue
-        known = {}
-        for cell in (attacks_before.get(pid) or ()):
-            known[(cell[0], cell[1])] = (cell[2], cell[3])
+        known = {(cell[0], cell[1]): (cell[2], cell[3])
+                 for cell in (attacks_before.get(pid) or ())}
         new_cells = []
         for cell in cells:
             key = (cell[0], cell[1])
@@ -826,6 +890,7 @@ def _record_snapshot(room, st, step):
     st['last'] = snap
     st['last_effects'] = effects_now
     st['last_attacks'] = attacks_now
+    st['last_remaining'] = remaining_now
 
 
 # ---------------------------------------------------------------------------
@@ -1044,6 +1109,7 @@ def build(room):
         'hands': list(st.get('hands') or []),
         'attacks': list(st.get('attacks') or []),
         'effects': list(st.get('effects') or []),
+        'remaining': list(st.get('remaining') or []),
         'board_resets': list(st.get('board_resets') or []),
         'nodes': list(st.get('nodes') or []),
         'truncated': st.get('truncated'),
@@ -1077,6 +1143,7 @@ def _shrink(payload):
         payload['hands'] = _trim_timeline(payload.get('hands') or [], keep)
         payload['attacks'] = _trim_timeline(payload.get('attacks') or [], keep)
         payload['effects'] = _trim_timeline(payload.get('effects') or [], keep)
+        payload['remaining'] = _trim_timeline(payload.get('remaining') or [], keep)
         payload['board_resets'] = [r for r in (payload.get('board_resets') or [])
                                    if int(r.get('step', 0)) <= keep]
         payload['nodes'] = [n for n in (payload.get('nodes') or [])
@@ -1084,7 +1151,7 @@ def _shrink(payload):
 
     # ② 时间线只留最后一条（前端仍能画出终局那一帧）
     if _too_big(payload):
-        for key in ('ships', 'hands', 'attacks', 'effects'):
+        for key in ('ships', 'hands', 'attacks', 'effects', 'remaining'):
             rows = payload.get(key) or []
             payload[key] = rows[-1:] if rows else []
 
@@ -1099,6 +1166,7 @@ def _shrink(payload):
         payload['hands'] = []
         payload['attacks'] = []
         payload['effects'] = []
+        payload['remaining'] = []
         payload['board_resets'] = []
         payload['nodes'] = []
 

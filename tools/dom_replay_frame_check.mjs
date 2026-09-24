@@ -49,6 +49,13 @@
  *      `Player.attacks`，与观战棋盘帧**同一份权威记录**）。
  *      这一组喂的是**后端真产出的形状**（`tests/test_replay_bomb_marks.py` 逐字段断言了
  *      后端那一侧）：那一行/列 6 格逐格断言字形（✕ / ○），并与真值表逐格一致。
+ *   J. **「剩余战舰 N」必须读权威计数**（2026-09-24 审计批）：
+ *      这一项原来是从**船位时间线数格子**出来的，而实战/观战/重连快照读的都是
+ *      `Player.remaining_ships` —— **同一件事两份实现**（教训 #1）。两者实测会不等
+ *      （真对局 seed 4242：`remaining_ships=1` 而船格里有 3 个 `alive`）。
+ *      本批新增 `payload.remaining`（稀疏 + 增量，值就是 `remaining_ships`），
+ *      前端 `replayAliveShips` 读它。J 组喂一份"两者故意不等"的 payload 逐项断言；
+ *      K 组是**老 blob 的兜底腿**（没有 `remaining` ⇒ 退回数船格，不是显示 0）。
  *
  * ## I 组覆盖了哪一件、以及它**不**覆盖哪一件
  *
@@ -324,6 +331,7 @@ function mkPayload(opts) {
     hands: o.hands || [],
     attacks: o.attacks || attacksFromSteps(o.steps || []),
     effects: o.effects || [],
+    remaining: o.remaining || [],
     board_resets: o.board_resets || [],
     nodes: [],
     truncated: null,
@@ -1239,6 +1247,93 @@ console.log('--- I. 卡牌类伤害的格子（轰炸 / 硫磺火焰）：必须
     wreck && { text: wreck.text, cls: wreck.cls });
 }
 
+
+// ---------------------------------------------------------------------------
+// J / K. 「剩余战舰 N」= **权威计数**（`payload.remaining`）—— 与观战/实战同一个数
+// ---------------------------------------------------------------------------
+// 这一项是审计批（2026-09-24）修的：改前是**数船格**出来的，而实战 / 观战 / 重连快照
+// 读的都是 `Player.remaining_ships`。真对局实测两者会不等（seed 4242：`remaining=1`、
+// 船格 3 个 `alive`）⇒ 同一个座位，回放屏写 3、其它屏写 1。
+//
+// ⚠️ 夹具**故意让两者不等**：船格有 2 格 `alive`，而权威计数说 p1=3 / p2=0。
+//    判据必须能区分"读的哪一份"—— 只断言"N 画出来了"会两边都绿（恒等式型假绿）。
+/** 把某一帧渲染出来，并读回「双方名字 / 剩余战舰数」这两个 DOM 文本。 */
+function playersAt(payload, k) {
+  return vm.runInContext(`(function () {
+    replayState.payload = ${JSON.stringify(payload)};
+    replayState.youAre = null;
+    replayState.frame = replayComputeFrame(replayState.payload, ${k});
+    renderReplayPlayers();
+    return {
+      n1: replayNameEls[0] ? replayNameEls[0].textContent : null,
+      n2: replayNameEls[1] ? replayNameEls[1].textContent : null,
+      s1: replayShipsEls[0] ? replayShipsEls[0].textContent : null,
+      s2: replayShipsEls[1] ? replayShipsEls[1].textContent : null,
+      alive: replayState.frame.alive,
+      counted: { p1: replayAliveShips(replayState.frame, 'p1'),
+                 p2: replayAliveShips(replayState.frame, 'p2') }
+    };
+  })()`, ctx, { filename: 'players.js' });
+}
+
+console.log('--- J. 剩余战舰数 = 权威计数（payload.remaining），不是数船格 ---');
+{
+  // 船格：p1 两格活着、p2 一格活着 —— 数出来是 2 / 1
+  // 权威计数：p1 = 3（游戏侧记账与船格不等，正是真对局里出现过的形状）、p2 = 0（全灭）
+  const remPayload = mkPayload({
+    steps: [
+      atk(0, 'p1', 0, 0, true, false),
+      atk(1, 'p2', 5, 5, false, false),
+    ],
+    ships: [{ step: 0,
+              p1: [{ x: 1, y: 1, alive: true }, { x: 2, y: 2, alive: true }],
+              p2: [{ x: 3, y: 3, alive: true }] }],
+    // ⚠️ 与 `ships` 行**故意不一致**：这一组要证明前端读的是这一条
+    remaining: [{ step: 0, p1: 4, p2: 3 },
+                { step: 1, p2: 0 }],
+  });
+  const early = playersAt(remPayload, 0);
+  check(early.alive && early.alive.p1 === 4 && early.alive.p2 === 3,
+    '★ 帧里叠上了 `payload.remaining`（权威计数 p1=4 / p2=3）',
+    early.alive);
+  check(early.s1 === '4' && early.s2 === '3',
+    '★★ 画面上的「剩余战舰 N」= 权威计数（不是船格数出来的 2 / 1）',
+    { p1: early.s1, p2: early.s2, counted: early.counted });
+  const late = playersAt(remPayload, 1);
+  check(late.s2 === '0' && late.alive.p2 === 0,
+    '★★ 权威计数为 **0**（全灭）时照旧显示 0 —— 判据不许把 0 当"没有值"退回数船格',
+    { p2: late.s2, alive: late.alive });
+  check(late.s1 === '4',
+    '★ 只带变了的座位：p2 变成 0 不影响 p1 沿用上一条（4）',
+    { p1: late.s1, alive: late.alive });
+}
+
+console.log('--- K. 老 blob 的兜底腿：没有 `payload.remaining` ⇒ 退回数船格（不是显示 0）---');
+{
+  const oldBlob = mkPayload({
+    steps: [atk(0, 'p1', 0, 0, true, false)],
+    ships: [{ step: 0,
+              p1: [{ x: 1, y: 1, alive: true }, { x: 2, y: 2, alive: false, sunk: true }],
+              p2: [] }],
+    remaining: [],          // ★ 本批之前落库的回放就是这个形状
+  });
+  delete oldBlob.remaining;  // 连键都没有（老 blob 的真实形状）
+  const old = playersAt(oldBlob, 0);
+  check(old.s1 === '1' && old.s2 === '0',
+    '★★ 老 blob（没有 `remaining` 键）⇒ 退回数船格（p1=1 / p2=0），不是"0 / 0"',
+    { p1: old.s1, p2: old.s2, alive: old.alive });
+  check(old.alive && old.alive.p1 === null && old.alive.p2 === null,
+    '★ 兜底路径的证据：`frame.alive` 两个座位都是 null（走的是退回分支）',
+    old.alive);
+  // 自检反向腿：把 `remaining` 加回去，同一个 payload 的数字必须**跟着变**
+  const newBlob = JSON.parse(JSON.stringify(oldBlob));
+  newBlob.remaining = [{ step: 0, p1: 5, p2: 2 }];
+  const fixed = playersAt(newBlob, 0);
+  check(fixed.s1 === '5' && fixed.s2 === '2',
+    '★★ 判据自检：同一份 `ships` 只要补上 `remaining`，数字就从 1/0 变成 5/2 —— '
+    + '证明 J 组那些断言靠的正是这条时间线，不是"永远画着同一个数"的假绿',
+    { p1: fixed.s1, p2: fixed.s2 });
+}
 
 // ---------------------------------------------------------------------------
 // 可选：把**这一份 payload 的某一帧**渲染成一张静态 HTML（人工看一眼 / 截图留证）。

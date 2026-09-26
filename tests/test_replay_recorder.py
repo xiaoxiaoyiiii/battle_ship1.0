@@ -534,8 +534,16 @@ def test_blob_cap_truncates_and_marks(monkeypatch):
 
 
 def test_normal_game_is_never_marked_as_truncated(with_real_human, capture):
-    """★ 反向腿：正常局**不许**被打上截断标记（否则那个标记就失去意义）。"""
-    _play(seed=19)
+    """★ 反向腿：正常局**不许**被打上截断标记（否则那个标记就失去意义）。
+
+    ⚠️ 2026-09-25 seed 19 → 18：新卡「兵粮寸断」进牌池改变了牌序，seed=19 现在会落进
+       「无暇圣心」那条**不结算**的终局路径 —— `server.py` 里那处只设
+       `state`/`winner`、**不调 `_finalize_match`**（对比 `_check_last_chance` 是调的），
+       于是 `replay.finalize` 拿不到步数 ⇒ `capture.payload` 为 None。
+       那是**与本卡无关的既有缺陷**（40 个 seed 里 19/20/24 会命中），已单独上报；
+       本用例要的只是"一局正常结算的对局"，故重锚到一个走正常路径的 seed。
+    """
+    _play(seed=18)
     assert capture.payload['truncated'] is None
     assert 'truncated_steps' not in capture.payload
 
@@ -623,8 +631,12 @@ def test_quick_chat_is_kept_as_a_step(room):
 
 
 def test_no_game_log_line_is_added_by_the_six_note_action_points(with_real_human, capture):
-    """★★ 那 6 处**不许往游戏内日志加行**：真打一整局，比对日志行数与步骤数。"""
-    _play(seed=20)
+    """★★ 那 6 处**不许往游戏内日志加行**：真打一整局，比对日志行数与步骤数。
+
+    ⚠️ 2026-09-25 seed 20 → 21：同前一条 —— seed=20 现在落进「无暇圣心」那条不结算的
+       终局路径（既有缺陷，与本卡无关），本用例同样只需要"一局正常结算的对局"。
+    """
+    _play(seed=21)
     payload = capture.payload
     logged = {s['text'] for s in payload['steps']}
     action_texts = {s['text'] for s in payload['steps']

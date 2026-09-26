@@ -946,6 +946,18 @@ class GameRoom:
         #    （CLAUDE.md 教训 #29「单槽 = 隐藏的数据丢失」）。
         # 不放 magic_temp_data：它有 8 处被整体覆写成 {}（教训 #30）。
         self.pending_wuyou_dreams: dict[str, int] = {}
+        # ★ 2026-09-25：`兵粮寸断`（判定卡）的两份房间级状态。
+        #   · `pending_bingliang = {caster_id: 份数}`：打出后挂着、**对方的准备阶段开始时**
+        #     摇一次骰子并 pop 掉（判定只发生一次）；
+        #   · `bingliang_skip_draw = {player_id: 剩余跳过次数}`：判定通过后给目标挂 2 次，
+        #     在**目标接下来两个准备阶段**的摸牌处各消耗一次，用完即清。
+        # 消费点：`_settle_bingliang`（两个回合开始处各调一次）
+        #         + `_bingliang_consume_skip`（新大回合发放摸牌处）。
+        # 回归用例：`tests/test_bingliang_card.py`。
+        # ⚠️ 两份都用 dict **计数**而不是单槽（教训 #29「单槽 = 隐藏的数据丢失」）；
+        #    不放 `magic_temp_data`：它有 8 处被整体覆写成 {}（教训 #30）。
+        self.pending_bingliang: dict[str, int] = {}
+        self.bingliang_skip_draw: dict[str, int] = {}
         # 弃牌待办的**来源卡名**（`{player_id: 卡名}`），与 `pending_dice_discard`
         # **同生共死**：谁开的待办，日志与弹窗就写谁的名字。
         # 为什么另存一张表、而不是把 `pending_dice_discard` 的值改成字典：
@@ -3980,11 +3992,29 @@ def handle_rps_choice(data):
         _settle_wuyou_dream(room)
 
         # 猜拳后抽卡逻辑：先手1张，后手2张
+        # ★ 兵粮寸断：**只有"准备阶段的发放"走 `_bingliang_consume_skip`**，
+        #   `draw_card` 本身不拦 —— 其他抽牌来源（无中生有 / 八方来财 /
+        #   命运骰子 / 明智埋葬 / 桃园结义）一个都不受影响。
+        #   跳过的粒度是"该玩家这一整个准备阶段的发放"（后手那 2 张算一个动作）。
         # 先手抽1张
-        winner_card = room.draw_card(winner)
+        if _bingliang_consume_skip(room, winner):
+            winner_card = None
+        else:
+            winner_card = room.draw_card(winner)
         # 后手抽2张
-        loser_card1 = room.draw_card(loser)
-        loser_card2 = room.draw_card(loser)
+        if _bingliang_consume_skip(room, loser):
+            loser_card1 = None
+            loser_card2 = None
+        else:
+            loser_card1 = room.draw_card(loser)
+            loser_card2 = room.draw_card(loser)
+
+        # ★ 兵粮寸断：**对方的准备阶段开始时**判定。
+        #   ⚠️ 排在发放摸牌**之后**（与 `_settle_wuyou_dream` 的位置刻意不同）：
+        #      这样"触发的那一个准备阶段"照常摸牌，被跳过的总是**接下来**的两个，
+        #      先手方与后手方口径一致（先手在发放前就是 current_attacker，
+        #      后手要到回合中段接手时才是 —— 两边都在自己的准备阶段判定）。
+        _settle_bingliang(room)
 
         room.state = 'attacking'
         # 对局**真正开始**的时刻（猜拳结束、进入 attacking）。
@@ -6135,6 +6165,10 @@ def _end_turn_locked(room, room_id, player_id):
             #      它按船数把 attacks_remaining 重算一遍，排前面的话
             #      「这回合攻击次数恒定为 0」会被当场覆盖掉。
             _settle_wuyou_dream(room)
+            # ★ 兵粮寸断：**对方的准备阶段开始时**判定（与无忧梦呓同一批时点）。
+            #   回合中段接手这一支没有摸牌动作，所以这里只会**摇骰子/挂额度**，
+            #   跳过额度由下一次新大回合发放时消耗。
+            _settle_bingliang(room)
 
             # 重置所有临时效果标志 —— 保留名单以 FLAGS_KEEP_ACROSS_TURN 为唯一声明。
             #
@@ -7047,6 +7081,14 @@ def _master_unsettled(room, ai_id):
     if isinstance(wuyou, dict) and wuyou:
         reasons.append('无忧梦呓的拼点还没结算（'
                        + ','.join(f'{pid}×{n}' for pid, n in wuyou.items()) + '）')
+    # ★ 兵粮寸断：**已经打出、还没到对方准备阶段**的那份延迟判定。
+    #   只有 `pending_bingliang`（待判定）才算"没结算完"；
+    #   `bingliang_skip_draw`（已判定通过、还剩几次跳过）是**已经落地的持续状态**，
+    #   正常情况下要跨两个准备阶段，绝不能因为它把房间判成"没收敛"。
+    bingliang = getattr(room, 'pending_bingliang', None)
+    if isinstance(bingliang, dict) and bingliang:
+        reasons.append('兵粮寸断的判定还没结算（'
+                       + ','.join(f'{pid}×{n}' for pid, n in bingliang.items()) + '）')
     picks = getattr(room, 'pending_ship_picks', None)
     if isinstance(picks, list):
         mine = [p for p in picks
@@ -12560,6 +12602,125 @@ def _apply_wuyou_dream(room, caster_id, opponent_id):
     # 平局：什么都不做（不重摇、不留状态）
 
 
+# ============ 判定魔法卡：兵粮寸断 ============
+# 卡面（`static/magic_card.json` / `static/magic_cards.js`，**逐字符一致**）：
+#   这张牌只进行一次判定。**对方的准备阶段开始时**摇一次骰子：
+#     · 点数 < 3  → 判定失败，卡牌结束，不产生任何效果；
+#     · 点数 ≥ 3  → 对方**接下来的两个准备阶段**各跳过一次摸牌，
+#                   两个准备阶段处理完后清除状态。
+#   只跳过准备阶段的摸牌，不影响其他抽牌来源、其他玩家或其他效果。
+#
+# 与 `无忧梦呓` 的三点区别（**别照抄成一样**）：
+#   ① 只有**一颗**骰子（单方判定），不是双方拼点 ⇒ `dice_rolled` **不带** `opponent_roll`；
+#   ② 触发后**要留下持续状态**（两次跳过额度），而无忧梦呓是"命中即清、不留状态"；
+#   ③ 判定**只发生一次**：摇完就 pop，后续两个准备阶段只消耗额度、**不再摇骰子**
+#      （卡面明写"不要在后续两个准备阶段重复摇骰子"）。
+#
+# ⚠️ 判定时点排在**新大回合发放摸牌之后**（`handle_rps_choice`）：
+#    这样"触发那一个准备阶段"自己照常摸牌，被跳过的总是**接下来**的两个 ——
+#    先手方（发放前就是 current_attacker）与后手方（回合中段接手时才成为
+#    current_attacker）两条路径口径一致，不会出现"谁先手谁多亏一次"。
+
+BINGLIANG_FAIL_BELOW = 3       # 判定阈值：< 3 失败，≥ 3 成功（卡面写死，不做成可配项）
+BINGLIANG_SKIP_PHASES = 2      # 成功后跳过几个准备阶段的摸牌
+
+
+def _register_bingliang(room, caster_id, result):
+    """兵粮寸断：登记一份延迟判定（**打出时不摇骰子**）。"""
+    opponent_id = _opponent_of(room, caster_id)
+    pending = room.pending_bingliang
+    if not isinstance(pending, dict):
+        pending = {}
+        room.pending_bingliang = pending
+    pending[caster_id] = int(pending.get(caster_id) or 0) + 1
+    result.message = ('兵粮寸断生效，'
+                      f'{_log_name(room, opponent_id)} 的准备阶段开始时判定')
+
+
+def _settle_bingliang(room):
+    """**某个玩家的准备阶段开始时**调用：结算所有"对方正好是他"的延迟判定。
+
+    调用点与 `_settle_wuyou_dream` 同款两处（新大回合发放**之后** / 回合中段接手处）。
+    本卡**只判定一次**：命中即 pop；之后只剩 `bingliang_skip_draw` 的额度
+    在后续准备阶段的摸牌处被消耗 —— 所以后续阶段这里什么都不做。
+    """
+    current = room.current_attacker
+    if not current or current not in room.players:
+        return
+    pending = getattr(room, 'pending_bingliang', None)
+    if not isinstance(pending, dict) or not pending:
+        return
+    # 「对方正好是当前行动者」的那些才结算；打出者自己在行动时保持挂着。
+    hits = [cid for cid in list(pending)
+            if cid in room.players and _opponent_of(room, cid) == current]
+    for caster_id in hits:
+        times = int(pending.pop(caster_id) or 0)
+        for _ in range(times):
+            _roll_bingliang(room, caster_id, current)
+
+
+def _roll_bingliang(room, caster_id, target_id):
+    """一次判定：**只摇一颗骰子**；≥3 则给目标挂上两次跳过额度。"""
+    roll = random.randint(1, 6)
+    if roll < BINGLIANG_FAIL_BELOW:
+        outcome = 'fail'
+        effect_text = '判定失败：不产生任何效果'
+    else:
+        outcome = 'skip_draw'
+        effect_text = '判定成功：对方接下来的两个准备阶段各跳过一次摸牌'
+
+    # 单方判定 ⇒ **不带** `opponent_roll`（前端按有无该字段决定画不画拼点那一侧）
+    emit('dice_rolled', {
+        'roll': roll,
+        'caster': caster_id,
+        'effect_text': effect_text,
+        'card': '兵粮寸断',
+    }, room=room.id)
+
+    add_game_log(room,
+                 f'第{room.round}回合 · 【兵粮寸断】判定：'
+                 f'{_log_name(room, caster_id)} 打出，'
+                 f'{_log_name(room, target_id)} {roll} 点 —— {effect_text}',
+                 'magic', {'card': '兵粮寸断', 'caster': caster_id,
+                           'target': target_id, 'roll': roll, 'outcome': outcome})
+
+    if outcome == 'skip_draw':
+        skips = getattr(room, 'bingliang_skip_draw', None)
+        if not isinstance(skips, dict):
+            skips = {}
+            room.bingliang_skip_draw = skips
+        # 累加而不是覆盖：同一目标被连续断两次粮时两份额度都要算数
+        skips[target_id] = int(skips.get(target_id) or 0) + BINGLIANG_SKIP_PHASES
+
+
+def _bingliang_consume_skip(room, player_id):
+    """该玩家**这一次准备阶段的摸牌动作**是否被跳过（是则消耗一次额度）。
+
+    ⚠️ 只由"准备阶段发放摸牌"的调用点使用 —— `draw_card` 本身**不做拦截**，
+       所以无中生有 / 八方来财 / 命运骰子 / 明智埋葬 / 桃园结义等其他抽牌来源
+       一律不受影响（卡面：「只跳过准备阶段的摸牌」）。
+    ✅ 跳过的粒度是"该玩家这一整个准备阶段的发放"（先手 1 张 / 后手 2 张作为一个动作），
+       不是"其中一张"。
+    """
+    skips = getattr(room, 'bingliang_skip_draw', None)
+    if not isinstance(skips, dict):
+        return False
+    left = int(skips.get(player_id) or 0)
+    if left <= 0:
+        return False
+    if left - 1 > 0:
+        skips[player_id] = left - 1
+    else:
+        skips.pop(player_id, None)
+    add_game_log(room,
+                 f'第{room.round}回合 · 【兵粮寸断】'
+                 f'{_log_name(room, player_id)} 的准备阶段摸牌被跳过'
+                 f'（剩余 {max(0, left - 1)} 次）',
+                 'magic', {'card': '兵粮寸断', 'player': player_id,
+                           'remaining': max(0, left - 1)})
+    return True
+
+
 def _finish_game(room, winner_id, loser_id, reason):
     """统一结算：设置胜利者、记战绩、广播 game_over。"""
     room.state = 'game_over'
@@ -12572,6 +12733,11 @@ def _finish_game(room, winner_id, loser_id, reason):
     # 无忧梦呓挂着的延迟拼点同样作废：对局已经结束，再挂着只会让
     # `_master_unsettled` 把房间判成"没结算完"（它是个房间级事实，不是历史记录）
     room.pending_wuyou_dreams = {}
+    # 兵粮寸断挂着的延迟判定 + 未用完的跳过额度同理作废：对局已经结束，
+    # 留着只会让 `_master_unsettled` 把房间判成"没结算完"，
+    # 也会把跳过额度带进同一房间的下一局。
+    room.pending_bingliang = {}
+    room.bingliang_skip_draw = {}
     add_game_log(room, f"第{room.round}回合 · {_log_name(room, winner_id)} 获胜，游戏结束",
                  'result', {'winner': winner_id, 'loser': loser_id, 'reason': reason})
     # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
@@ -14567,6 +14733,10 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             # 与命运骰子不同：**打出时不摇骰子**，只登记；
             # 摇点在对方回合开始时的 `_settle_wuyou_dream`（卡面写的就是那时判定）。
             _register_wuyou_dream(room, caster_id, result)
+        elif card.name == '兵粮寸断':
+            # 同款"打出时不摇骰子"：摇点在对方**准备阶段开始时**的 `_settle_bingliang`；
+            # 但那一次判定之后要留下两次跳过额度（见 `_bingliang_consume_skip`）。
+            _register_bingliang(room, caster_id, result)
         else:
             result.success = False
             result.message = f'未实现的判定魔法卡：{card.name}'

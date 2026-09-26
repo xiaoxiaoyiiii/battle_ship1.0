@@ -94,6 +94,11 @@ EXPECTED_ADD_GAME_LOG_SITES = {
     '_apply_bury_choice': 1,
     '_apply_dice_of_fate': 1,
     '_apply_wuyou_dream': 1,
+    # ★ 2026-09-25：兵粮寸断（判定卡）—— 与 `_apply_wuyou_dream` 同形状的两个记录点：
+    #   判定摇骰子（_roll_bingliang）与"这个准备阶段的摸牌被跳过"（_bingliang_consume_skip）。
+    #   两者都是**玩家可见**的行动，必须进回放；故在此点名登记。
+    '_bingliang_consume_skip': 1,
+    '_roll_bingliang': 1,
     '_check_last_chance': 1,
     '_do_demon_contract_sacrifice': 1,
     '_finish_game': 1,
@@ -137,7 +142,7 @@ def test_every_add_game_log_call_site_is_registered():
         % (sorted(set(tally) - set(EXPECTED_ADD_GAME_LOG_SITES)),
            sorted(set(EXPECTED_ADD_GAME_LOG_SITES) - set(tally)),
            dict(sorted(tally.items()))))
-    assert sum(tally.values()) == 38, '调用点总数 ≠ 38（含定义行时 grep 应为 39）'
+    assert sum(tally.values()) == 40, '调用点总数 ≠ 40（含定义行时 grep 应为 41）'
 
 
 def test_add_game_log_is_the_only_feed_for_logged_actions():

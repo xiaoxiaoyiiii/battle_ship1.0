@@ -25,6 +25,7 @@
 本文件钉住的核心契约只有一句：
 **大师 AI 打出的卡，不许把房间留在"等对手做一件他不知道要做的事"的状态里。**
 """
+import inspect
 import re
 
 import pytest
@@ -181,6 +182,31 @@ def test_ai_caster_huiguang_consumes_the_awaiting_flag(master_room, events):
         '回光返照的"本大回合攻击次数为 0"仍要挂在施法者身上（卡面第二句）'
     assert room.game_effects.get('last_chance', {}).get('caster') == ai_id, \
         'last_chance 仍要挂在施法者身上'
+
+
+def test_ai_caster_baizhe_never_randomizes_human_board():
+    """双方重摆卡不能由大师循环替真人自动随机摆船。
+
+    真人收到 reset_gameboard 后必须停在可操作的布船界面；只有 AI 那一侧
+    可以由服务端即时补摆。旧代码把 `_ai_place_board` 也调用到 opponent，
+    造成真人的棋盘被静默随机填满，前端随后又被状态帧覆盖，表现为界面一闪而过。
+    """
+    room, ai_id = _build_room(['败者食尘'])
+    try:
+        resp = _play(room, ai_id, '败者食尘')
+        assert resp.get('status') == 'success', resp
+        room = _refresh(room)
+        assert room.state == 'placing_ships'
+        assert room.players[ai_id].ships, 'AI 一侧应已自动完成摆船'
+        assert room.players[HUMAN].ships == [], '真人一侧必须等待本人摆船，不能被随机填充'
+    finally:
+        server.room_manager.delete_room(room.id)
+
+
+def test_master_redeploy_loop_has_no_human_autoplace_path():
+    """灵气复苏和败者食尘共用的 AI 循环不得再调用 opponent 的摆船入口。"""
+    source = inspect.getsource(server._ai_master_turn)
+    assert '_ai_place_board(room, other)' not in source
 
 
 @pytest.mark.parametrize('card_name', sorted(server._MASTER_REDEPLOY_CARDS))

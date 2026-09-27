@@ -1168,6 +1168,7 @@ const registerModalClose = document.getElementById('register-modal-close');
 window.gameState = {
     socket: null,
     playerId: null,
+    playerSeat: null,       // 服务端公开的 p1/p2 座位，用于把连锁目标映射到正确棋盘
     roomId: null,
     playerName: '玩家',
     opponentName: '对手',
@@ -1441,6 +1442,9 @@ function requestReconnectToken(roomId, playerId) {
 function applyRoomSync(data) {
     gameState.roomId = data.room_id;
     gameState.playerId = data.player_id;
+    if (data.player_seat === 'p1' || data.player_seat === 'p2') {
+        gameState.playerSeat = data.player_seat;
+    }
     gameState.inRoom = true;
     gameState.currentPhase = data.current_phase;
     gameState.currentAttacker = data.current_attacker;
@@ -6477,6 +6481,9 @@ function setupSocketListeners() {
         if (data.player_id) {
             gameState.playerId = data.player_id;
             console.log('设置playerId为:', gameState.playerId);
+        }
+        if (data.player_seat === 'p1' || data.player_seat === 'p2') {
+            gameState.playerSeat = data.player_seat;
         }
 
         // 掉线重连准备：记录对局上下文并按需领取重连 token
@@ -13355,8 +13362,21 @@ function renderChainPreview() {
     chain.forEach((item, index) => {
         const node = item && item.preview;
         if (!node || !Array.isArray(node.cells) || !node.cells.length) return;
-        const board = node.board === 'self' ? gamePlayerBoard
-            : (node.board === 'opponent' ? opponentBoard : null);
+        // 服务端的 board 语义相对于施法者：self=施法者棋盘，opponent=施法者对手棋盘。
+        // 当前玩家可能正是受害者；此时 opponent 目标应画在自己的棋盘上，不能
+        // 直接把字符串当成当前视角的“对方棋盘”。
+        let board = null;
+        if (node.board === 'self' || node.board === 'opponent') {
+            const casterSeat = node.seat === 'p1' || node.seat === 'p2' ? node.seat : null;
+            const targetSeat = node.board === 'self' ? casterSeat
+                : (casterSeat === 'p1' ? 'p2' : casterSeat === 'p2' ? 'p1' : null);
+            if (targetSeat && gameState.playerSeat) {
+                board = targetSeat === gameState.playerSeat ? gamePlayerBoard : opponentBoard;
+            } else {
+                // 观战/旧快照没有当前玩家座位时，沿用原来的相对映射。
+                board = node.board === 'self' ? gamePlayerBoard : opponentBoard;
+            }
+        }
         if (!board) return;                      // 归属不明 = 不画（不猜）
         const slot = Math.min(marks, CHAIN_PREVIEW_MAX_MARKS - 1) + 1;
         const rgb = CHAIN_PREVIEW_COLORS[slot - 1];

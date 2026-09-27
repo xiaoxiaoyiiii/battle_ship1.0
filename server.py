@@ -2911,6 +2911,7 @@ def handle_join_room(data):
             emit('game_state', {
                 **game_state_data,
                 'player_id': player_id,
+                'player_seat': spectate.seat_label(room, player_id),
                 'player_name': player.name,
                 'opponent_name': room.players[opponent_id].name
             }, to=player.sid)
@@ -3631,6 +3632,7 @@ def handle_find_match(data):
                 'state': 'placing_ships',
                 'room_id': room_id,
                 'player_id': me['sid'],
+                'player_seat': spectate.seat_label(room, me['sid']),
                 'player_name': me['name'],
                 'opponent_name': opp['name'],
                 **rank_fields
@@ -7609,10 +7611,6 @@ def _ai_master_turn(room_id: str, room, ai_id: str):
         # **自己爬起来**。AI 没有别的摆放入口，不自救就是「回合永远交不出去」。
         if room.state == 'placing_ships':
             _ai_place_board(room, ai_id)
-            # 双双重摆时对方也得摆 —— 两边都不摆，`all_placed` 永远不成立
-            other = _opponent_of(room, ai_id)
-            if other and room.state == 'placing_ships':
-                _ai_place_board(room, other)
             room = room_manager.get_room(room_id)
             if not room or room.state == 'game_over':
                 return
@@ -7695,9 +7693,6 @@ def _ai_master_turn(room_id: str, room, ai_id: str):
         if room.state != 'attacking':
             if room.state == 'placing_ships':
                 _ai_place_board(room, ai_id)
-                other = _opponent_of(room, ai_id)
-                if other and room.state == 'placing_ships':
-                    _ai_place_board(room, other)
             room, ok = _master_settle(room_id, ai_id)
             if not ok:
                 return
@@ -10392,6 +10387,7 @@ def _build_room_sync(room, player_id: str) -> dict:
         'round': room.round,
         'attack_order': room.attack_order,
         'player_id': player_id,
+        'player_seat': spectate.seat_label(room, player_id),
         'player_name': p.name,
         'opponent_name': opp.name if opp else None,
         'is_ai_room': getattr(room, 'is_ai_room', False),

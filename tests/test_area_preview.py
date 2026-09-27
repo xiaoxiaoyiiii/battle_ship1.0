@@ -678,6 +678,8 @@ def test_frontend_preview_layer_is_independent_and_non_blocking():
     # ① 两块棋盘各画各的
     assert 'node.board === \'self\' ? gamePlayerBoard' in body
     assert 'opponentBoard' in body
+    assert 'gameState.playerSeat' in body and 'targetSeat' in body, \
+        '预览必须按目标座位映射到当前玩家的棋盘，不能把 opponent 当成固定的对方棋盘'
     assert "board.querySelector(`.cell[data-x=" in body, \
         '预览没有按"对应棋盘的格子"映射坐标'
     # ② 多区域并存 + 重叠可辨

@@ -2639,6 +2639,55 @@ def test_lose_game(data):
     return {'status': 'success', 'message': '游戏失败已设置'}
 
 
+@socketio.on('test_get_multi_area_chain')
+@_test_event
+def test_get_multi_area_chain(data):
+    """★ 调试事件（`ENABLE_TEST_EVENTS=1` 才可用）：造一份"两项区域并存"的**公开** payload。
+
+    为什么需要它（2026-09-27 区域预览批）："同一连锁里多个待结算区域同时存在"
+    在真实对局里要求**双方配合**（一方打区域卡、另一方响应另一张），
+    而脚本连打两张牌是**碰运气** —— 真人手里只要有一张速阶3，服务端就会把响应窗口
+    轮回到他自己头上（自连锁是允许的），第二张牌会被正常拒掉。
+
+    所以这里用**和真实路径完全相同的构造**造出那个局面：
+    `ChainItem` + `_sanitize_magic_targets` 归一化 + `_spectate_chain_payload` 净化。
+    **不是**手拼字段、也不产生任何效果（不调 `apply_magic_effect`）——
+    它造的只是"两个已确认的选区"，用于给前端渲染层喂一份真形状的 payload。
+
+    ⚠️ 它**不改房间的连锁栈**（造完即还原）：调试事件不该把一局真对局的连锁搅乱。
+    """
+    room_id = data['room_id']
+    player_id = data['player_id']
+    room = room_manager.get_room(room_id)
+    if not room or player_id not in room.players:
+        return {'status': 'error', 'message': '无效的房间或玩家'}
+
+    caster_id = player_id
+    opponent_id = next(p for p in room.players if p != player_id)
+    cases = (
+        (caster_id, '轰炸', {'target_line': {'type': 'row', 'index': 4}}),
+        (caster_id, '克苏鲁之眼',
+         {'target_area': {'x1': 2, 'y1': 2, 'x2': 2, 'y2': 2}}),
+    )
+    items = []
+    for pid, name, targets in cases:
+        card = next((c for c in magic_cards if c.name == name), None)
+        if card is None:
+            return {'status': 'error', 'message': f'卡表里没有 {name}'}
+        norm, err = _sanitize_magic_targets(dict(targets), name)
+        if err:
+            return {'status': 'error', 'message': err}
+        items.append(ChainItem(pid, card, norm, 0.0))
+
+    saved = room.chain
+    try:
+        room.chain = items
+        payload = _spectate_chain_payload(room)
+    finally:
+        room.chain = saved
+    return {'status': 'success', 'chain': payload, 'opponent_id': opponent_id}
+
+
 @socketio.on('test_get_magic_cards_list')
 @_test_event
 def test_get_magic_cards_list(data):

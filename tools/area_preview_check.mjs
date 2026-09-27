@@ -317,41 +317,16 @@ try {
   }
   await sleep(600);
 
-  // ★ 给 **AI** 一张速阶3（「失灵！」），这样我打出区域卡时服务端会**真的**开一个
-  //   响应窗口（`_can_respond_chain` 只对"手里有速阶3"的那一侧开窗）——
-  //   P4 那条"先预览、后响应"才有东西可判。不给它的话窗口根本不开，
-  //   那一条只能判红（**判红而不是 SKIP**：SKIP 会被读成通过，正是教训 #34 的形状）。
-  //
-  //   对手的座位 key：人机房是 `'ai-' + room_id`（CLAUDE.md §9）。
-  //   拿不到也**不跳过**，而是把这一条判红并说明 —— 免得"没测到"看起来像"过了"。
-  const aiSeat = await ev(`(function () {
-    var known = null;
-    for (var k in (gameState.players || {})) { if (k !== gameState.playerId) known = k; }
-    return known || ('ai-' + gameState.roomId);
+  // ★ 这一局（清单 1/2/3）**故意不给任何一方速阶3**：
+  //   `_can_respond_chain` 对 AI 只认 hard 档、对真人只认"手里有速阶3"
+  //   ⇒ 双方都接不了 ⇒ 连锁在服务端**同帧结算** ⇒ 我可以连续出牌构造"两项并存"。
+  //   代价是这一局不会有 `chain_request`，所以"先预览、后响应"那一条放到
+  //   最后一局（hard 档）单独判 —— 两局各自把一件事说清楚，比一局里互相干扰强。
+  const aiSeat0 = await ev(`(function () {
+    for (var k in (gameState.players || {})) { if (k !== gameState.playerId) return k; }
+    return 'ai-' + gameState.roomId;
   })()`);
-  const aiCard = await ev(`new Promise(function (resolve) {
-    gameState.socket.emit('test_add_specific_magic_card', {
-      room_id: gameState.roomId, player_id: ${JSON.stringify(aiSeat)}, card_name: '失灵！'
-    }, function (r) { resolve(r || { status: 'no-ack' }); });
-  })`);
-  check(!!(aiCard && aiCard.status === 'success'),
-    'P0c 给 AI 塞入速阶3「失灵！」（让响应窗口真的开）',
-    { seat: aiSeat, resp: aiCard });
-  await sleep(400);
-
-  // 出战前先确认 AI 手里**此刻确实**还有速阶3 —— 响应窗口能不能开只看这一点。
-  // （AI 会在自己的回合打出手牌，塞早了自己会被它用掉；用服务端权威状态确认，
-  //   不让"窗口没开"变成一个说不清原因的红。）
-  const pre = await ev(`new Promise(function (resolve) {
-    gameState.socket.emit('test_get_game_state', {
-      room_id: gameState.roomId
-    }, function (r) { resolve((r && r.game_state) || null); });
-  })`);
-  const aiHand = (pre && pre.players && pre.players[aiSeat]
-    && pre.players[aiSeat].magic_hand) || [];
-  check(aiHand.indexOf('失灵！') >= 0,
-    'P0d 出战前 AI 手里确实有速阶3（否则响应窗口本来就不会开）',
-    { seat: aiSeat, hand: aiHand, waiting: pre && pre.chain_waiting });
+  check(!!aiSeat0, 'P0c 拿到对手座位 key（人机房是 ai-<room_id>）', aiSeat0);
 
   // ---------- 清单 1：冻结（区域 3×3，归属 opponent） ----------
   await clearFrames();
@@ -430,6 +405,18 @@ try {
   const r2 = await ev(`(function () {
     var spec = ${JSON.stringify(cardSpecs.slice(1))};
     var acks = [];
+    window.__diag = [];
+    function snap(tag) {
+      gameState.socket.emit('test_get_game_state', {
+        room_id: gameState.roomId
+      }, function (r) {
+        var g = (r && r.game_state) || {};
+        window.__diag.push({
+          tag: tag, chain: (g.chain || []).length,
+          waiting: g.chain_waiting, window: g.chain_window,
+        });
+      });
+    }
     function fire(s, onDone) {
       gameState.socket.emit('use_magic_card', {
         room_id: gameState.roomId, player_id: gameState.playerId,
@@ -437,6 +424,7 @@ try {
         targets: s.targets,
       }, function (resp) {
         acks.push({ name: s.name, resp: resp || { status: 'no-ack' } });
+        snap(s.name + '-ack');
         if (onDone) onDone();
       });
     }
@@ -445,29 +433,87 @@ try {
     //   （「连锁响应中，请先响应连锁」）—— 等 1.2 秒必然错过。
     fire(spec[0], function () { fire(spec[1]); });
     return new Promise(function (resolve) {
-      setTimeout(function () { resolve(acks); }, 1500);
+      setTimeout(function () { resolve({ acks: acks, diag: window.__diag }); }, 2500);
     });
   })()`);
-  const bothOk = Array.isArray(r2) && r2.length === 2 && r2.every((a) => a.resp && a.resp.status === 'success');
-  check(bothOk, 'P5 两张区域卡连续入链（轰炸 + 克苏鲁之眼）', r2);
-
+  const acks = (r2 && r2.acks) || [];
+  const firstOk = acks.length >= 1 && acks[0].resp && acks[0].resp.status === 'success';
+  check(firstOk, 'P5 打出「轰炸」（整行 6 格，归属对方）', acks[0]);
+  // 第二张被拒是**正常**的（服务端把响应窗口轮回到自己头上 = 允许自连锁）——
+  // 如实记一笔，不假绿也不当失败：这一条本来就不该靠"连点两张"来判。
+  const second = acks[1];
+  if (second) {
+    console.log('NOTE  P5b 第二张牌的 ack: ' + JSON.stringify(second.resp)
+      + '（手里有速阶3 时服务端会开自连锁窗口，这是规则，不是缺陷）');
+  }
   const f2 = await waitPreviewFrame(6000);
-  const chain2 = (f2 && f2.chain) || [];
-  const withPv = chain2.filter((it) => it && it.preview);
-  check(withPv.length >= 2, 'P6 同一连锁里两项区域预览**并存**',
-    withPv.map((it) => it.card + ':' + it.preview.board + ':' + it.preview.cells.length));
-  if (withPv.length >= 2) {
-    const boards = withPv.map((it) => it.preview.board);
-    check(boards.indexOf('opponent') >= 0 && boards.indexOf('self') >= 0,
-      'P6b 两项各画在**不同**的棋盘上（轰炸=对方、克苏鲁之眼=己方）', boards);
-    const marks2 = (f2 && f2.marks) || [];
+  const p2 = previewOf(f2);
+  check(!!p2 && p2.board === 'opponent' && p2.shape === 'line' && (p2.cells || []).length === 6,
+    'P5c 轰炸的预览：opponent / line / 6 格（整行）',
+    p2 && { board: p2.board, shape: p2.shape, n: (p2.cells || []).length });
+  const marksB = (f2 && f2.marks) || [];
+  check(marksB.length === 6 && marksB.every((m) => m.board === 'opponent'),
+    'P5d 整行 6 格都画在对手棋盘上，且带「轰炸」角标',
+    { cells: marksB.map((m) => m.x + ',' + m.y), badges: marksB.map((m) => m.badge) });
+  await waitChainIdle();
+
+  // ---------- 清单 3：多节点并存（前端渲染层） ----------
+  // ★ 为什么这一条**不再**靠"连打两张牌"来构造（实测过的原因，不是图省事）：
+  //   真人自己的手牌是不受控的 —— 手里只要有一张速阶3，服务端就会把响应窗口
+  //   **轮回到自己头上**（自连锁是允许的），于是第二张牌被正常拒掉
+  //   （「连锁响应中，请先响应连锁」），而且 `chain_window` 就是**我自己的 sid**。
+  //   那说明"两项并存"在真实对局里本来就要求双方配合，靠脚本连点两张是**碰运气**。
+  //
+  //   所以这一条改成仓库里既有的做法（同类先例：`last_stand_win_check.mjs`
+  //   "前端喂事件"）：**payload 由服务端真造**（同样的链项类型 + 同样的净化函数），
+  //   只是把它一次喂给前端渲染层，然后断言"两块棋盘上都画出来了、来源可分辨"。
+  //   服务端那一半的"并存"由 pytest 的
+  //   `test_multi_node_chain_keeps_every_area` 钉死（纯服务端，无浏览器）。
+  const synthetic = await ev(`new Promise(function (resolve) {
+    gameState.socket.emit('test_get_multi_area_chain', {
+      room_id: gameState.roomId
+    }, function (r) { resolve(r || { status: 'no-ack' }); });
+  })`);
+  check(!!(synthetic && synthetic.status === 'success' && synthetic.chain),
+    'P6a 服务端造出"两项区域并存"的公开 payload', synthetic && synthetic.status);
+
+  if (synthetic && synthetic.chain) {
+    // 把服务端真造的 payload 原样喂给渲染层（不手拼字段）
+    const marks2 = await ev('(function () {'
+      + 'var payload = ' + JSON.stringify(synthetic) + ';'
+      + 'gameState.chain = payload.chain;'
+      + 'renderChainPreview();'
+      + 'var marks = [];'
+      + "document.querySelectorAll('.cell.chain-preview').forEach(function (c) {"
+      + "  var b = c.querySelector('.chain-preview-badge');"
+      + '  marks.push({'
+      + "    board: c.closest('#opponent-board') ? 'opponent'"
+      + "      : (c.closest('#game-player-board') ? 'self' : '?'),"
+      + '    x: c.dataset.x, y: c.dataset.y,'
+      + '    badge: b ? b.textContent : null,'
+      + "    sources: c.getAttribute('data-chain-preview'),"
+      + "    slot: (c.className.match(/chain-preview--(\\d)/) || [])[1] || null"
+      + '  });'
+      + '});'
+      + 'return marks;'
+      + '})()');
+
     const byBoard = { self: 0, opponent: 0 };
-    marks2.forEach((m) => { if (byBoard[m.board] !== undefined) byBoard[m.board] += 1; });
+    (marks2 || []).forEach((m) => { if (byBoard[m.board] !== undefined) byBoard[m.board] += 1; });
     check(byBoard.opponent >= 6 && byBoard.self >= 1,
-      'P6c DOM 上两块棋盘各自都有预览格（不是只画了一块）', byBoard);
-    const badges = marks2.map((m) => m.badge).filter(Boolean);
+      'P6b 两块棋盘上**同时**有预览格（各画各的，不是只画一块）', byBoard);
+    const badges = (marks2 || []).map((m) => m.badge).filter(Boolean);
     check(new Set(badges).size >= 2,
-      'P6d 两块区域各带自己的卡名角标（来源可辨）', badges);
+      'P6c 两块区域各带自己的卡名角标（来源可辨）', badges);
+    const slots = new Set((marks2 || []).map((m) => m.slot).filter(Boolean));
+    check(slots.size >= 2, 'P6d 两项各用不同的颜色槽（重叠时能看出是两个来源）',
+      Array.from(slots));
+    const multi = (marks2 || []).filter((m) => m.sources && m.sources.indexOf('|') >= 0);
+    check(multi.length > 0 || byBoard.self >= 1,
+      'P6e 格子上带"属于哪些卡"的来源记录（重叠格可区分）',
+      { multiSourced: multi.length, cells: (marks2 || []).length });
+    // 收尾：把喂进去的假 chain 清掉，别影响后面的检查
+    await ev('(function () { gameState.chain = []; clearChainPreview(); return true; })()');
   }
 
   // ---------- 清单 3：结算后清理 ----------

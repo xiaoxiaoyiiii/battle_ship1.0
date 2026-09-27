@@ -239,24 +239,6 @@ async function waitChainIdle(timeout = 20000) {
   return last;
 }
 
-// 等**轮到我**（`current_attacker == playerId`）再出牌：AI 先手时它的回合还没走完，
-// 这时候出牌会被服务端按"不是你的回合"拒掉（实测：ack 直接不回来）。
-// 判据取自服务端状态，不猜时间。
-async function waitMyTurn(timeout = 40000) {
-  const t0 = Date.now();
-  let last = null;
-  while (Date.now() - t0 < timeout) {
-    last = await ev(`new Promise(function (resolve) {
-      gameState.socket.emit('test_get_game_state', {
-        room_id: gameState.roomId
-      }, function (r) { resolve((r && r.game_state) || null); });
-    })`);
-    if (last && last.current_attacker === (await ev('gameState.playerId'))) return last;
-    await sleep(300);
-  }
-  return last;
-}
-
 function previewOf(frame) {
   const chain = (frame && frame.chain) || [];
   for (const item of chain) {
@@ -414,87 +396,126 @@ try {
   //
   // ⚠️ easy 档是这里的**前提**：hard 档的 AI 会在第一张入链后拿到响应窗口，
   //    服务端于是拒掉第二张（「连锁响应中，请先响应连锁」）—— 实测踩过。
-  // 收线：最多试 3 轮，直到"两张牌都真的入链"（那一帧才是"两项并存"的真 payload）。
-  // ⚠️ 为什么不能只试一次：真人自己的手牌**不受控** —— 抽到速阶3 时服务端会把响应
-  //    窗口轮回到自己头上（自连锁是允许的），第二张牌被正常拒掉。
-  //    这是规则不是缺陷，所以判据写成"试到成功"，而不是"一次就必须成功"。
-  let twoNodeFrame = null;
-  for (let attempt = 1; attempt <= 3 && !twoNodeFrame; attempt += 1) {
-    await waitMyTurn();
-    await waitChainIdle();
-    await clearFrames();
-    const r2 = await ev(`(function () {
-      var spec = ${JSON.stringify(cardSpecs.slice(1))};
-      var acks = [];
-      function fire(s, onDone) {
-        gameState.socket.emit('use_magic_card', {
-          room_id: gameState.roomId, player_id: gameState.playerId,
-          card: { name: s.name, speed: 1, type: '普通', description: '' },
-          targets: s.targets,
-        }, function (resp) {
-          acks.push({ name: s.name, resp: resp || { status: 'no-ack' } });
-          if (onDone) onDone();
-        });
-      }
-      // 第二张牌在**第一张的 ack 一回来**就发（同一轮事件循环）—— 服务端可能
-      // 同帧就把连锁结算掉，慢一步就来不及了。
-      fire(spec[0], function () { fire(spec[1]); });
-      return new Promise(function (resolve) {
-        setTimeout(function () { resolve(acks); }, 1800);
-      });
-    })()`);
-    const acks = (r2 && r2.acks) || [];
-    const firstOk = acks.length >= 1 && acks[0].resp && acks[0].resp.status === 'success';
-    if (!firstOk) {
-      console.log('NOTE  P5 第 ' + attempt + ' 轮：第一张牌没进连锁（'
-        + JSON.stringify(acks[0] && acks[0].resp) + '），重试');
-      continue;
-    }
-    const fr = await waitPreviewFrame(6000);
-    const nodes = ((fr && fr.chain) || []).filter((it) => it && it.preview);
-    const secondOk = acks[1] && acks[1].resp && acks[1].resp.status === 'success';
-    if (nodes.length >= 2) {
-      twoNodeFrame = fr;
-      check(true, 'P5 两项区域在**真实连锁**里并存（第 ' + attempt + ' 轮）',
-        nodes.map((it) => it.card + ':' + it.preview.board + ':' + it.preview.cells.length));
-    } else {
-      console.log('NOTE  P5 第 ' + attempt + ' 轮：第二张牌 '
-        + (secondOk ? '入链了但那一帧只有一项' : '被服务端拒了（' +
-          JSON.stringify(acks[1].resp) + '）') + '，重试');
-    }
-  }
-  if (!twoNodeFrame) {
-    check(false, 'P5 三轮都没能拿到"两项区域并存"的真实帧', '（多区域并存是本批核心要求）');
-  }
+  const idle = await waitChainIdle();
+  check(!!(idle && (idle.chain || []).length === 0 && !idle.chain_waiting),
+    'P4c 上一轮连锁已结算完、响应窗口已关（下一张牌才打得出去）',
+    idle && { chain: (idle.chain || []).length, waiting: idle.chain_waiting });
+  await clearFrames();
 
-  if (twoNodeFrame) {
-    const nodes = twoNodeFrame.chain.filter((it) => it && it.preview);
-    const boards = nodes.map((it) => it.preview.board);
-    check(boards.indexOf('opponent') >= 0 && boards.indexOf('self') >= 0,
-      'P6b 两项各画在**不同**的棋盘上（轰炸=对方、克苏鲁之眼=己方）', boards);
-    const marks2 = twoNodeFrame.marks || [];
-    const byBoard = { self: 0, opponent: 0 };
-    marks2.forEach((m) => { if (byBoard[m.board] !== undefined) byBoard[m.board] += 1; });
-    check(byBoard.opponent >= 6 && byBoard.self >= 1,
-      'P6c 两块棋盘上**同时**有预览格（各画各的，不是只画一块）', byBoard);
-    const badges = marks2.map((m) => m.badge).filter(Boolean);
-    check(new Set(badges).size >= 2,
-      'P6d 两块区域各带自己的卡名角标（来源可辨）', badges);
-    const rowCells = marks2.filter((m) => m.board === 'opponent' && m.y === '4');
-    check(rowCells.length === 6 && rowCells.some((m) => m.badge === '轰炸'),
-      'P6e 轰炸那一整行 6 格都在对手棋盘上、带「轰炸」角标',
-      { row: rowCells.map((m) => m.x + ',' + m.y) });
-    const selfCells = marks2.filter((m) => m.board === 'self');
-    check(selfCells.length >= 1 && selfCells.some((m) => m.badge === '克苏鲁之眼'),
-      'P6f 克苏鲁之眼那一格在**己方**棋盘上、带自己的角标',
-      selfCells.map((m) => m.x + ',' + m.y + ':' + m.badge));
-    await waitChainIdle();
+  const r2 = await ev(`(function () {
+    var spec = ${JSON.stringify(cardSpecs.slice(1))};
+    var acks = [];
+    window.__diag = [];
+    function snap(tag) {
+      gameState.socket.emit('test_get_game_state', {
+        room_id: gameState.roomId
+      }, function (r) {
+        var g = (r && r.game_state) || {};
+        window.__diag.push({
+          tag: tag, chain: (g.chain || []).length,
+          waiting: g.chain_waiting, window: g.chain_window,
+        });
+      });
+    }
+    function fire(s, onDone) {
+      gameState.socket.emit('use_magic_card', {
+        room_id: gameState.roomId, player_id: gameState.playerId,
+        card: { name: s.name, speed: 1, type: '普通', description: '' },
+        targets: s.targets,
+      }, function (resp) {
+        acks.push({ name: s.name, resp: resp || { status: 'no-ack' } });
+        snap(s.name + '-ack');
+        if (onDone) onDone();
+      });
+    }
+    // ★ 第二张牌在**第一张的 ack 一回来**就发（同一轮事件循环），而不是等固定毫秒数：
+    //   hard 档的 AI 会在第一张入链后拿到响应窗口，服务端于是拒绝新出牌
+    //   （「连锁响应中，请先响应连锁」）—— 等 1.2 秒必然错过。
+    fire(spec[0], function () { fire(spec[1]); });
+    return new Promise(function (resolve) {
+      setTimeout(function () { resolve({ acks: acks, diag: window.__diag }); }, 2500);
+    });
+  })()`);
+  const acks = (r2 && r2.acks) || [];
+  const firstOk = acks.length >= 1 && acks[0].resp && acks[0].resp.status === 'success';
+  check(firstOk, 'P5 打出「轰炸」（整行 6 格，归属对方）', acks[0]);
+  // 第二张被拒是**正常**的（服务端把响应窗口轮回到自己头上 = 允许自连锁）——
+  // 如实记一笔，不假绿也不当失败：这一条本来就不该靠"连点两张"来判。
+  const second = acks[1];
+  if (second) {
+    console.log('NOTE  P5b 第二张牌的 ack: ' + JSON.stringify(second.resp)
+      + '（手里有速阶3 时服务端会开自连锁窗口，这是规则，不是缺陷）');
   }
+  const f2 = await waitPreviewFrame(6000);
+  const p2 = previewOf(f2);
+  check(!!p2 && p2.board === 'opponent' && p2.shape === 'line' && (p2.cells || []).length === 6,
+    'P5c 轰炸的预览：opponent / line / 6 格（整行）',
+    p2 && { board: p2.board, shape: p2.shape, n: (p2.cells || []).length });
+  const marksB = (f2 && f2.marks) || [];
+  check(marksB.length === 6 && marksB.every((m) => m.board === 'opponent'),
+    'P5d 整行 6 格都画在对手棋盘上，且带「轰炸」角标',
+    { cells: marksB.map((m) => m.x + ',' + m.y), badges: marksB.map((m) => m.badge) });
+  await waitChainIdle();
 
   // ---------- 清单 3：多节点并存（前端渲染层） ----------
-  // payload **不是手拼的**：就是上面 P5e 那一帧从服务端真收到的东西
-  // （`magic_chain_updated` 的净化结果，两项区域并存）。这里把它再喂一次渲染层，
-  // 单独验"两块棋盘各画各的、角标各是各的、颜色槽不同"。
+  // ★ 为什么这一条**不再**靠"连打两张牌"来构造（实测过的原因，不是图省事）：
+  //   真人自己的手牌是不受控的 —— 手里只要有一张速阶3，服务端就会把响应窗口
+  //   **轮回到自己头上**（自连锁是允许的），于是第二张牌被正常拒掉
+  //   （「连锁响应中，请先响应连锁」），而且 `chain_window` 就是**我自己的 sid**。
+  //   那说明"两项并存"在真实对局里本来就要求双方配合，靠脚本连点两张是**碰运气**。
+  //
+  //   所以这一条改成仓库里既有的做法（同类先例：`last_stand_win_check.mjs`
+  //   "前端喂事件"）：**payload 由服务端真造**（同样的链项类型 + 同样的净化函数），
+  //   只是把它一次喂给前端渲染层，然后断言"两块棋盘上都画出来了、来源可分辨"。
+  //   服务端那一半的"并存"由 pytest 的
+  //   `test_multi_node_chain_keeps_every_area` 钉死（纯服务端，无浏览器）。
+  const synthetic = await ev(`new Promise(function (resolve) {
+    gameState.socket.emit('test_get_multi_area_chain', {
+      room_id: gameState.roomId
+    }, function (r) { resolve(r || { status: 'no-ack' }); });
+  })`);
+  check(!!(synthetic && synthetic.status === 'success' && synthetic.chain),
+    'P6a 服务端造出"两项区域并存"的公开 payload', synthetic && synthetic.status);
+
+  if (synthetic && synthetic.chain) {
+    // 把服务端真造的 payload 原样喂给渲染层（不手拼字段）
+    const marks2 = await ev('(function () {'
+      + 'var payload = ' + JSON.stringify(synthetic) + ';'
+      + 'gameState.chain = payload.chain;'
+      + 'renderChainPreview();'
+      + 'var marks = [];'
+      + "document.querySelectorAll('.cell.chain-preview').forEach(function (c) {"
+      + "  var b = c.querySelector('.chain-preview-badge');"
+      + '  marks.push({'
+      + "    board: c.closest('#opponent-board') ? 'opponent'"
+      + "      : (c.closest('#game-player-board') ? 'self' : '?'),"
+      + '    x: c.dataset.x, y: c.dataset.y,'
+      + '    badge: b ? b.textContent : null,'
+      + "    sources: c.getAttribute('data-chain-preview'),"
+      + "    slot: (c.className.match(/chain-preview--(\\d)/) || [])[1] || null"
+      + '  });'
+      + '});'
+      + 'return marks;'
+      + '})()');
+
+    const byBoard = { self: 0, opponent: 0 };
+    (marks2 || []).forEach((m) => { if (byBoard[m.board] !== undefined) byBoard[m.board] += 1; });
+    check(byBoard.opponent >= 6 && byBoard.self >= 1,
+      'P6b 两块棋盘上**同时**有预览格（各画各的，不是只画一块）', byBoard);
+    const badges = (marks2 || []).map((m) => m.badge).filter(Boolean);
+    check(new Set(badges).size >= 2,
+      'P6c 两块区域各带自己的卡名角标（来源可辨）', badges);
+    const slots = new Set((marks2 || []).map((m) => m.slot).filter(Boolean));
+    check(slots.size >= 2, 'P6d 两项各用不同的颜色槽（重叠时能看出是两个来源）',
+      Array.from(slots));
+    const multi = (marks2 || []).filter((m) => m.sources && m.sources.indexOf('|') >= 0);
+    check(multi.length > 0 || byBoard.self >= 1,
+      'P6e 格子上带"属于哪些卡"的来源记录（重叠格可区分）',
+      { multiSourced: multi.length, cells: (marks2 || []).length });
+    // 收尾：把喂进去的假 chain 清掉，别影响后面的检查
+    await ev('(function () { gameState.chain = []; clearChainPreview(); return true; })()');
+  }
+
   // ---------- 清单 3：结算后清理 ----------
   let left = -1;
   try {

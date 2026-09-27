@@ -7882,11 +7882,28 @@ def handle_papal_attack(data):
     return res
 
 
-def _sanitize_magic_targets(targets):
+def _sanitize_magic_targets(targets, card_name=None):
     """校验并归一化魔法卡目标坐标；返回 (targets, error_message)。
 
     仅处理 dict 形态的目标数据（前端 target_area/target_line/target_cells 等），
     数组/None 交由各卡牌分支自行处理。
+
+    ## `board`（棋盘归属）—— 2026-09-27 区域预览批
+
+    归属表在 `spectate.AREA_TARGET_BOARDS`（**全项目唯一一份**，前端那张
+    `needsTargetSelection` 是只读镜像，由 `tests/test_area_preview.py` 钉住）：
+
+    * `'self'` / `'opponent'` —— 固定归属，**由服务端按卡名写进 targets**
+      （客户端若也传了 `board`，必须与之一致，否则报错；不一致说明两边对这张卡
+      的理解已经漂移，静默采用任何一侧都会把预览画到错的棋盘上）；
+    * `'choice'`（神威！）—— 客户端**必须**显式提交 `board`，
+      缺失或不是 `self`/`opponent` 一律**拒绝**。
+
+    ⚠️ 这里**绝不兜底**：缺归属就报错，不默认成 `'opponent'`。
+       旧实现 `apply_magic_effect` 的 `target_data.get('board', 'opponent')`
+       就是"漏传即静默按对方处理"（CLAUDE.md 教训 #2），而预览要拿这个值决定
+       画在哪块棋盘上 —— 兜底会直接把区域画反。
+    ⚠️ `card_name=None`（未登记的卡）时**完全不碰** `board`，保持既有行为。
     """
     if not isinstance(targets, dict):
         return targets, None
@@ -7929,6 +7946,23 @@ def _sanitize_magic_targets(targets):
                 if not (0 <= cx <= 5 and 0 <= cy <= 5):
                     return targets, '目标格子坐标超出棋盘范围'
                 c['x'], c['y'] = cx, cy
+
+    declared = spectate.AREA_TARGET_BOARDS.get(card_name)
+    if declared is not None:
+        supplied = targets.get('board')
+        if supplied is not None and supplied not in spectate.BOARD_SIDES:
+            return targets, '棋盘归属参数非法（只能是 self / opponent）'
+        if declared == 'choice':
+            if supplied is None:
+                # 神威！：归属由玩家当场二选一 —— 缺失就是缺失，不许猜。
+                return targets, '这张卡必须指定作用棋盘（己方或对方）'
+            targets['board'] = supplied
+        else:
+            if supplied is not None and supplied != declared:
+                return targets, ('棋盘归属与这张卡不符（%s 只能作用在%s）'
+                                 % (card_name, '己方' if declared == 'self' else '对方'))
+            # ★ 服务端写回权威归属：预览只认这里写下的值，不认客户端提交的。
+            targets['board'] = declared
 
     return targets, None
 
@@ -8103,7 +8137,9 @@ def handle_use_magic_card(data):
     if not room or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
-    targets, target_err = _sanitize_magic_targets(targets)
+    # ★ 卡名一起传进去：区域卡的**棋盘归属**由卡名决定（服务端那张表是权威，
+    #   客户端的 board 只是神威！的二选一输入），见 `_sanitize_magic_targets`。
+    targets, target_err = _sanitize_magic_targets(targets, card.name)
     if target_err:
         return {'status': 'error', 'message': target_err}
     frz = _frozen_reason(room, player_id)
@@ -8224,10 +8260,18 @@ def handle_use_magic_card(data):
     chain_item = ChainItem(player_id, card, targets, time.time())
     room.chain.append(chain_item)
 
-    # 广播连锁更新
-    emit('magic_chain_updated', {
-        'chain': room.chain
-    }, room=room_id)
+    # 广播连锁更新。
+    # ★ 2026-09-27 区域预览批：**改发净化后的那一份**，与观战第三条腿、重连快照
+    #   走的是同一个函数（`spectate.sanitize_event('magic_chain_updated', …)`）。
+    #   三个理由：
+    #   ① 区域卡的**已确认选区**必须让双方看见（作者要求），而链项里带着的
+    #      `targets` 是客户端原始提交物、形状不受控 —— 直接转发等于把未净化数据
+    #      同时发给观众（`emit` 会自动复制一份到观战通道）；
+    #   ② 白名单净化后只剩 `{card, seat, negated, preview}`，不可能带出
+    #      `ships/positions/hits` 这类私密键（`PREVIEW_KEYS` 由守卫钉住）；
+    #   ③ 一份实现、三处复用，不会再长出"实时流的连胜字段比快照多"那种漂移（教训 #1）。
+    #   ⚠️ 别改回 `{'chain': room.chain}` 原样转发：那会绕过净化。
+    emit('magic_chain_updated', _spectate_chain_payload(room), room=room_id)
 
     # 连锁响应窗口：先给对方；对方放弃后窗口回到最后压栈者（支持自连锁）
     room.chain_passes = 0
@@ -10323,18 +10367,16 @@ def _build_room_sync(room, player_id: str) -> dict:
         ],
         'opponent_remaining_ships': opp.remaining_ships if opp else 0,
         'shenwei_holes': list(room.game_effects.get('shenwei_holes') or []),
-        # 连锁窗口：重连后能看到当前连锁栈与响应窗口，避免缺上下文无法操作
-        'chain': [
-            {
-                'card': ({
-                    'name': it.card.name, 'speed': it.card.speed,
-                    'type': it.card.type, 'description': it.card.description,
-                } if getattr(it, 'card', None) else None),
-                'caster': getattr(it, 'player_id', None),
-                'negated': getattr(it, 'negated', False),
-            }
-            for it in getattr(room, 'chain', [])
-        ],
+        # 连锁窗口：重连后能看到当前连锁栈与响应窗口，避免缺上下文无法操作。
+        #
+        # ★ 2026-09-27 区域预览批：**直接复用那份公开净化结果**，不再自己拼一份。
+        #   旧实现手拼 `{'card','caster','negated'}`，于是"重连快照里的连锁"与
+        #   "实时流里的连锁"是两份不同的形状（一个 `caster`、一个 `card` 是对象
+        #   一个 `card` 是字符串），且重连后**区域预览会整块丢失** —— 玩家重连回来
+        #   只看到连锁里有张卡，却不知道它要打在哪几格。
+        #   `_spectate_chain_payload` 就是实时流那一条用的同一个函数 ⇒ 同一构造函数、
+        #   同一字段集合（本文件里不再有第二个连锁 payload 构造点）。
+        'chain': _spectate_chain_payload(room),
         'chain_waiting': getattr(room, 'chain_waiting', False),
         'chain_window': getattr(room, 'chain_window', None),
         # 阶段转换询问：重连正好落在等待窗口里时，发起方要能把
@@ -10451,12 +10493,23 @@ def _spectate_player_cells(player) -> list:
 
 
 def _spectate_chain_payload(room) -> dict:
-    """当前连锁栈的**观众版**（走 `spectate.sanitize_event`，不另写一份净化）。
+    """当前连锁栈的**公开版**（走 `spectate.sanitize_event`，不另写一份净化）。
 
     先按 `emit` 完全相同的序列化口径把 `room.chain` 变成普通数据
     （`json.dumps(..., default=lambda o: o.__dict__)`），再交给**同一个**
-    `magic_chain_updated` 净化函数 —— 这样"实时流里的连锁"与"快照里的连锁"
-    形状必然一致，且座位标签、剥 `targets` 的逻辑只有一份（教训 #1）。
+    `magic_chain_updated` 净化函数 —— 这样"实时流里的连锁"、"重连快照里的连锁"
+    与"观战快照里的连锁"形状必然一致，且座位标签、区域预览的派生逻辑只有一份
+    （教训 #1）。
+
+    ★ 2026-09-27 区域预览批：**三个消费方全部换成了它** ——
+      `handle_use_magic_card` / `chain_response` 的实时广播（对局双方 + `emit`
+      自动复制的观战副本）、`_build_room_sync` 的重连快照、`_build_spectate_snapshot`。
+      此前对局双方收到的是**原样转发**的 `{'chain': room.chain}`（带客户端提交的
+      `targets`），只有观众走净化 —— 于是"双方看不到对方选了哪块区域"。
+      现在改为一处净化的公开结构，预览只是它的一个字段。
+
+    ⚠️ 函数名里的 `spectate` 是历史（它最早只服务于观战）；**语义是"公开"**。
+       改名会牵动 `tests/test_spectate_*` 的既有引用，收益不抵风险，故保留。
     """
     raw = json.loads(json.dumps(list(getattr(room, 'chain', None) or []),
                                 default=lambda o: o.__dict__))
@@ -10774,7 +10827,10 @@ def chain_response(data):
     if not room or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
-    targets, target_err = _sanitize_magic_targets(targets)
+    # 卡名从客户端提交的 card dict 里取（只用于查归属表；真正的卡实例
+    # 稍后会从服务端手牌里取，见下面 hand_card 那段）。
+    targets, target_err = _sanitize_magic_targets(
+        targets, (card or {}).get('name') if isinstance(card, dict) else None)
     if target_err:
         return {'status': 'error', 'message': target_err}
 
@@ -10839,7 +10895,8 @@ def chain_response(data):
         emit('hand_updated', {'hand': player.magic_hand}, to=player.sid)
 
         room.chain.append(ChainItem(player_id, card, targets, time.time()))
-        emit('magic_chain_updated', {'chain': room.chain}, room=room_id)
+        # 与 `handle_use_magic_card` 同一份净化（区域预览必须让双方看到选区）。
+        emit('magic_chain_updated', _spectate_chain_payload(room), room=room_id)
 
         # 打出新牌：放弃计数清零，窗口交给对方（对方放弃后回到自己，支持自连锁）
         room.chain_passes = 0

@@ -6734,6 +6734,8 @@ function setupSocketListeners() {
         gameState.lastStandWin = false;
         hidePriorityWaitingBanner();                        // 对局结束：等待横幅一并撤掉
         hideShenjiWaitingBanner();
+        // 对局结束：连锁区域预览一并清掉（结算屏上不该还画着"某某卡要打这几格"）
+        if (typeof clearChainPreview === 'function') clearChainPreview();
         // 对局结束也必须收掉桃园的全屏等待浮层：对方在选择中掉线被判负时，
         // 等着的这一方否则会被那层浮层一直挡住（同 handle_cancel_magic_selection 那个病灶）
         dismissTaoyuanWaitingOverlay();
@@ -7103,14 +7105,18 @@ function setupSocketListeners() {
 
     // 添加魔法卡连锁相关事件监听
     socket.on('magic_chain_updated', (data) => {
-        gameState.chain = data.chain;
-        updateChainUI();
+        // 服务端下发的是**净化过的**链路：{chain:[{card,seat,negated,preview}], chain_len}
+        // （`card` 是卡名字符串、`preview` 是公开区域预览）。
+        gameState.chain = (data && Array.isArray(data.chain)) ? data.chain : [];
+        updateChainUI();       // 内部先刷新预览层（多区域并存、各标卡名）
     });
 
     socket.on('chain_resolved', function (data) {
         console.log('连锁结算完成', data.results);
         // 服务端结算后只发 chain_resolved，不再发 magic_chain_updated，
         // 这里必须自己清空连锁栈 —— 否则「当前连锁 (N)」会一直挂着旧内容。
+        // ★ 区域预览同理：不清就会在结算后继续把「这张卡要打这几格」画在棋盘上
+        //   （效果已经落地了，那块高亮就是假的）。`updateChainUI` 内部会清预览层。
         gameState.chain = [];
         if (typeof updateChainUI === 'function') updateChainUI();
         // 应用连锁结算结果
@@ -11099,18 +11105,42 @@ function showMagicTargetSelection(card, index) {
     showAlert('尚未实现该卡的目标选择方式');
 }
 
+// ===========================================================================
+// 区域卡目标选择的**声明式真源**（前端侧）
+// ---------------------------------------------------------------------------
+// ★ 2026-09-27 区域预览批：原来这张表写在 `needsTargetSelection` 的**函数体内**
+//   （`const map = {...}`），于是"服务端要镜像它"就只能靠正则去啃函数体
+//   （脆弱且容易假绿），而且"卡名 → 作用棋盘"这个判据在前端没有任何可被
+//   引用的名字。现在提到模块级：
+//
+//   · `MAGIC_TARGET_DESCRIPTORS` —— 卡名 → 选择器描述（形状 + 棋盘归属）；
+//   · `server.spectate.AREA_TARGET_BOARDS` —— 卡名 → 棋盘归属的**服务端权威表**
+//     （`self` / `opponent` / `choice`）。**两张表必须逐卡一致**，
+//     由 `tests/test_area_preview.py::test_frontend_mirror_matches_server` 钉死
+//     （先例 `tests/test_ship_pick_mirror.py`）。
+//
+// ⚠️ 同步要求（CLAUDE.md 教训 #1：同一判断两份实现必然漂移）：
+//   新增一张"要玩家点选区域/行列/连续格/单格"的卡时，**两边都要登记**，
+//   漏一边那条同步用例就会红。这里只有"选什么形状/打在哪块棋盘"，
+//   真正的放行/拒绝一律由服务端裁决（`_sanitize_magic_targets` 校验 board）。
+//
+//   形状（type）：area（方阵，size×size）/ line（整行整列）/ continuous（连续 length 格）
+//                / single（单格）/ shenwei（先选棋盘再点 3×3）/ own_ships（多选自己的船）
+//   归属（board）：'self' = 作用在自己棋盘；'opponent' = 对方棋盘；
+//                 **缺省 = 玩家当场二选一**（只有「神威！」如此，服务端记作 'choice'）
+const MAGIC_TARGET_DESCRIPTORS = {
+    '冻结': { type: 'area', size: 3, board: 'opponent' },          // 3x3区域
+    '探测雷达': { type: 'area', size: 2, board: 'opponent' },      // 2x2区域
+    '轰炸': { type: 'line', board: 'opponent' },                  // 行或列
+    '硫磺火焰': { type: 'continuous', length: 6, board: 'opponent' }, // 6个连续格子
+    '克苏鲁之眼': { type: 'single', board: 'self' },             // 选择自己的船暴露
+    '神之宣告': { type: 'own_ships', count: 2 },                  // 选择两艘自己的船牺牲
+    '神威！': { type: 'shenwei' }                                 // 己方/对方 3x3 扣区
+};
+
 // 添加魔法卡目标选择判断函数（返回目标选择描述）
 function needsTargetSelection(cardName) {
-    const map = {
-        '冻结': { type: 'area', size: 3, board: 'opponent' },          // 3x3区域
-        '探测雷达': { type: 'area', size: 2, board: 'opponent' },      // 2x2区域
-        '轰炸': { type: 'line', board: 'opponent' },                  // 行或列
-        '硫磺火焰': { type: 'continuous', length: 6, board: 'opponent' }, // 6个连续格子
-        '克苏鲁之眼': { type: 'single', board: 'self' },             // 选择自己的船暴露
-        '神之宣告': { type: 'own_ships', count: 2 },                  // 选择两艘自己的船牺牲
-        '神威！': { type: 'shenwei' }                                 // 己方/对方 3x3 扣区
-    };
-    return map[cardName] || null;
+    return MAGIC_TARGET_DESCRIPTORS[cardName] || null;
 }
 
 // 通用区域点选器：在真实棋盘上点选 size×size 区域（触摸/鼠标均可用）。
@@ -13274,8 +13304,106 @@ function joinRoomById(roomId, opts) {
 }
 window.joinRoomById = joinRoomById;
 
+// ===========================================================================
+// 连锁区域预览层（2026-09-27）
+// ---------------------------------------------------------------------------
+// 作者要求：连锁结算期间，双方都要能看到**每个已确认的连锁节点将作用在哪几格、
+// 画在哪块棋盘上、是哪张卡**；多张卡的区域可以同时存在且能分辨来源。
+//
+// ★ 数据从哪来：服务端 `magic_chain_updated` 的公开净化结果
+//   （`spectate.sanitize_preview_item` 白名单重建），形状是
+//   `{chain: [{card, seat, negated, preview: {id, card, seat, board, shape, cells}}],
+//     chain_len, targets_dropped}`。
+//   **预览只从服务端已确认的选区派生** —— 选区没确认（还在点棋盘）时链项根本
+//   不存在，所以"未确认就广播鼠标移动"这件事在协议层面不可能发生。
+//
+// ★ 为什么是"在真实棋盘格上叠标记"而不是"再画一层网格"：
+//   作者明确要求"坐标按对应棋盘正确映射"、"不遮挡响应交互"。
+//   格子是棋盘的子元素、`pointer-events: none`，所以：
+//     · 映射天然正确（`.cell[data-x][data-y]` 就是那一格，两块棋盘各自查各自的）；
+//     · 不会挡住任何点击（响应按钮、棋盘点击都照常）。
+//
+// ★ 多区域 / 重叠可分：每个**链项**各有自己的类与卡名角标
+//   （`.chain-preview--1` / `--2` …，配 `--chan-preview-rgb` 颜色变量），
+//   重叠的格子会同时挂多个类，角标字体大小随区域序号变化以便区分来源。
+const CHAIN_PREVIEW_COLORS = [
+    [56, 189, 248],   // 1 天蓝
+    [244, 114, 182],  // 2 粉
+    [250, 204, 21],   // 3 黄
+    [167, 139, 250],  // 4 紫
+];
+const CHAIN_PREVIEW_MAX_MARKS = 4;   // 与颜色表长度一致
+
+function clearChainPreview() {
+    document.querySelectorAll('.cell.chain-preview').forEach(cell => {
+        cell.classList.remove('chain-preview');
+        for (let i = 1; i <= CHAIN_PREVIEW_MAX_MARKS; i++) cell.classList.remove('chain-preview--' + i);
+        for (let i = 1; i <= CHAIN_PREVIEW_MAX_MARKS; i++) cell.style.removeProperty('--chan-preview-rgb-' + i);
+        cell.removeAttribute('data-chain-preview');
+        cell.removeAttribute('title');
+    });
+    document.querySelectorAll('.chain-preview-badge').forEach(el => el.remove());
+}
+
+// 连锁预览的公开净化结果的**消费点**（唯一一处）。
+// 服务端已经做过白名单净化，这里只做"渲染前的最低限度校验"——
+// 越界/非整数坐标一律不画（教训 #3：先校验数据，别把脏数据铺到 DOM 上）。
+function renderChainPreview() {
+    clearChainPreview();
+    const chain = Array.isArray(gameState.chain) ? gameState.chain : [];
+    let marks = 0;
+    chain.forEach((item, index) => {
+        const node = item && item.preview;
+        if (!node || !Array.isArray(node.cells) || !node.cells.length) return;
+        const board = node.board === 'self' ? gamePlayerBoard
+            : (node.board === 'opponent' ? opponentBoard : null);
+        if (!board) return;                      // 归属不明 = 不画（不猜）
+        const slot = Math.min(marks, CHAIN_PREVIEW_MAX_MARKS - 1) + 1;
+        const rgb = CHAIN_PREVIEW_COLORS[slot - 1];
+        let badgeCell = null;      // 区域里"最靠左上"的那一格（角标贴它）
+        let badgeKey = null;
+        node.cells.forEach(cell => {
+            const x = parseInt(cell && cell.x, 10);
+            const y = parseInt(cell && cell.y, 10);
+            if (!Number.isInteger(x) || !Number.isInteger(y)) return;
+            if (x < 0 || x > 5 || y < 0 || y > 5) return;
+            const el = board.querySelector(`.cell[data-x="${x}"][data-y="${y}"]`);
+            if (!el) return;
+            el.classList.add('chain-preview', 'chain-preview--' + slot);
+            // ⚠️ 用 setProperty 而不是拼字符串赋值：`--x` 这类自定义属性
+            //    不能靠 style 对象属性直接赋值，而且拼字符串最容易在模板里被改坏。
+            el.style.setProperty('--chan-preview-rgb-' + slot, rgb.join(','));
+            // 归属标在格子上，供 E2E / 悬停说明读取（多区域重叠时可区分来源）
+            const prev = el.getAttribute('data-chain-preview');
+            el.setAttribute('data-chain-preview', prev ? prev + '|' + node.card : String(node.card));
+            // 角标位置：先按 y 再按 x 取最小（不依赖服务端下发的格子顺序）
+            const key = y * 10 + x;
+            if (badgeKey === null || key < badgeKey) {
+                badgeKey = key;
+                badgeCell = el;
+            }
+        });
+        if (badgeCell) {
+            const badge = document.createElement('span');
+            badge.className = 'chain-preview-badge chain-preview-badge--' + slot;
+            // 文字一律用 textContent（卡名来自服务端，绝不当 HTML 注入）
+            badge.textContent = String(node.card || item.card || '');
+            badge.title = `连锁 ${index + 1}：${node.card || ''}`
+                + `（${node.board === 'self' ? '我方' : '对方'}棋盘`
+                + `${node.shape === 'line' ? '，整行/整列' : ''}）`;
+            badgeCell.appendChild(badge);
+        }
+        marks += 1;
+    });
+}
+
 // 更新连锁UI显示
 function updateChainUI() {
+    // ★ 预览层先更新，且**不依赖** `#chain-display` 是否存在：
+    //   那个元素在当前 index.html 里并不存在（列表渲染会提前 return），
+    //   只要把预览写在它后面，预览就会跟着一起"不存在"——且**不报错**。
+    if (typeof renderChainPreview === 'function') renderChainPreview();
+
     const chainElement = document.getElementById('chain-display');
     if (!chainElement) return;
 
@@ -13283,9 +13411,18 @@ function updateChainUI() {
     gameState.chain.forEach((item, index) => {
         const chainItem = document.createElement('div');
         chainItem.className = 'chain-item';
+        // 服务端下发的链项是**净化过的**：`card` 是卡名字符串，`seat` 是 p1/p2。
+        // （旧形状 `item.card.name` 在这里会取到 undefined，连锁列表直接空掉。）
+        const cardName = (typeof item.card === 'string') ? item.card
+            : ((item.card && item.card.name) || '（未知卡牌）');
+        const seat = item.seat || '';
+        const who = seat
+            ? (seat === gameState.seatLabel ? '你' : '对手')
+            : (((item.playerId || item.player_id || item.caster) === gameState.playerId) ? '你' : '对手');
+        const negated = item.negated ? '（已被康）' : '';
         chainItem.innerHTML = `
-            <div>连锁 ${index + 1}：${item.card.name}</div>
-            <div>玩家：${(item.playerId || item.player_id || item.caster) === gameState.playerId ? '你' : '对手'}</div>
+            <div>连锁 ${index + 1}：${cardName}${negated}</div>
+            <div>玩家：${who}</div>
         `;
         chainElement.appendChild(chainItem);
     });

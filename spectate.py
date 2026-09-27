@@ -250,15 +250,278 @@ def _pub_summary_line(data, room=None):
     return out
 
 
-def _pub_magic_chain(data, room=None):
-    """连锁栈：保留"谁打出了什么卡、有没有被康"，**剥掉 `targets`**。
+# ---------------------------------------------------------------------------
+# 区域卡的**棋盘归属**表（全项目唯一一份；前端那张表是只读镜像）
+# ---------------------------------------------------------------------------
+# ★★ 这张表为什么必须存在（2026-09-27 区域预览批）★★
+#
+# 「这张卡打在谁家的棋盘上」原本只存在于**前端** `static/game.js` 的
+# `needsTargetSelection` 里（冻结/探测雷达/轰炸/硫磺火焰写死 `board:'opponent'`），
+# 服务端只是"反正作用对象就那一个"硬编码；而**神威！** 的归属是玩家当场二选一，
+# 服务端读的是**客户端提交、且完全不校验**的 `board`（默认值 `'opponent'` ——
+# 漏传即静默按对方处理，正是 CLAUDE.md 教训 #2 的形状）。
+#
+# 而"预览画在哪块棋盘上"必须是一个**服务端可信**的判据，不能依赖未校验的客户端值。
+# 所以归属在这里声明一次：
+#   · `'self'`     —— 固定作用在**施法者自己**的棋盘（克苏鲁之眼）；
+#   · `'opponent'` —— 固定作用在**对方**棋盘（冻结 / 探测雷达 / 轰炸 / 硫磺火焰）；
+#   · `'choice'`   —— 玩家当场二选一（神威！），客户端**必须**显式提交 `board`，
+#                     缺失或非 `self`/`opponent` 一律**拒绝**（绝不兜底成对方）。
+#
+# ⚠️ 与前端镜像的同步由源码级用例钉死（`tests/test_area_preview.py` 的
+#    `test_frontend_mirror_matches_server`，先例 `test_ship_pick_mirror.py`）。
+# ⚠️ 卡名**只在这里写一次**：server.py 的 `_sanitize_magic_targets` 与
+#    本模块的 `preview_node` 都读它 —— 两处各写一张表必然漂移（教训 #1）。
+AREA_TARGET_BOARDS = {
+    '神威！': 'choice',
+    '冻结': 'opponent',
+    '探测雷达': 'opponent',
+    '轰炸': 'opponent',
+    '硫磺火焰': 'opponent',
+    '克苏鲁之眼': 'self',
+}
 
-    两个理由：
+# 归属的合法取值（`'choice'` **只出现在这张表里**，绝不会出现在下发给客户端的
+# 预览里 —— 预览里的 `board` 一定是 `self`/`opponent` 二选一）。
+BOARD_SIDES = ('self', 'opponent')
+AREA_TARGET_BOARD_VALUES = BOARD_SIDES + ('choice',)
+
+# 目标形状（预览的 `shape` 字段）——与 `_preview_cells` 的派发一一对应。
+PREVIEW_SHAPES = ('area', 'line', 'cells', 'single')
+
+# 公开预览**只允许**出现这些键（白名单，不是黑名单）。
+# ⚠️ 与 `FORBIDDEN_PAYLOAD_KEYS` / `SNAPSHOT_FORBIDDEN_KEYS` 无交集 —— 由
+#    `_validate()` 与 `tests/test_area_preview.py` 双向钉住（教训 #10）。
+PREVIEW_KEYS = ('id', 'card', 'seat', 'negated', 'preview')
+PREVIEW_FIELDS = ('board', 'shape', 'cells')
+
+
+def _preview_cells(targets):
+    """把**已确认**的目标归一化成"(形状, [(x,y), …])"；认不出形状返回 `None`。
+
+    吃两种输入：
+    * **原始目标**（`target_area` / `target_line` / `target_cells` / `selected_cells`）
+      —— 从 `room.chain` 序列化出来的那一份；
+    * **已经归一化过的预览体**（`{shape, cells:[{x,y}]}`）—— `sanitize_preview_item`
+      的产物再喂回来时走这一支，于是净化**幂等**（观众那一路要过两次，见下面那条说明）。
+
+    只认这几种形状，且一律归一到 0..5 的整数坐标 —— 认不出就返回 `None`
+    （调用方据此**不下发预览**），绝不猜、绝不兜底（教训 #2）。
+
+    ⚠️ 单格通道（克苏鲁之眼）前端把 `{x, y}` 包成 1×1 的 `target_area` 提交，
+       所以这里只按 `target_area` 处理，不额外认裸 `{x,y}`：多一种形状就多一个
+       与前端不一致的机会，而"认不出就不画"是安全的一侧。
+    """
+    if not isinstance(targets, dict):
+        return None
+    cells = []
+
+    # ① 已经归一化过的预览体（幂等回灌）
+    shape = targets.get('shape')
+    if shape is not None:
+        if shape not in PREVIEW_SHAPES:
+            return None
+        raw_cells = targets.get('cells')
+        if not isinstance(raw_cells, (list, tuple)) or not raw_cells:
+            return None
+        for cell in raw_cells:
+            if not isinstance(cell, dict):
+                return None
+            try:
+                cells.append((int(cell['x']), int(cell['y'])))
+            except (KeyError, TypeError, ValueError):
+                return None
+        return shape, cells
+
+    area = targets.get('target_area')
+    if isinstance(area, dict):
+        try:
+            x1, y1 = int(area['x1']), int(area['y1'])
+            x2, y2 = int(area['x2']), int(area['y2'])
+        except (KeyError, TypeError, ValueError):
+            return None
+        for y in range(min(y1, y2), max(y1, y2) + 1):
+            for x in range(min(x1, x2), max(x1, x2) + 1):
+                cells.append((x, y))
+        return ('area', cells) if cells else None
+
+    line = targets.get('target_line')
+    if isinstance(line, dict):
+        try:
+            index = int(line['index'])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if line.get('type') == 'row':
+            return ('line', [(x, index) for x in range(6)])
+        if line.get('type') == 'col':
+            return ('line', [(index, y) for y in range(6)])
+        return None
+
+    for key in ('target_cells', 'selected_cells'):
+        raw = targets.get(key)
+        if not isinstance(raw, (list, tuple)) or not raw:
+            continue
+        parsed = []
+        for cell in raw:
+            if not isinstance(cell, dict):
+                return None
+            try:
+                parsed.append((int(cell['x']), int(cell['y'])))
+            except (KeyError, TypeError, ValueError):
+                return None
+        return ('cells', parsed)
+
+    return None
+
+
+def _preview_id(shape, cells):
+    """节点内稳定、可读的标识（多区域并存时前端要能区分"这格是谁画的"）。"""
+    try:
+        if shape == 'area':
+            xs = [c[0] for c in cells]
+            ys = [c[1] for c in cells]
+            return 'area:%d,%d-%d,%d' % (min(xs), min(ys), max(xs), max(ys))
+        if shape == 'line':
+            first = cells[0]
+            kind = 'row' if len({c[1] for c in cells}) == 1 else 'col'
+            return 'line:%s:%d' % (kind, first[1] if kind == 'row' else first[0])
+        if shape == 'cells' and len(cells) == 1:
+            return 'single:%d,%d' % cells[0]
+        return 'cells:%d' % len(cells)
+    except (IndexError, TypeError, ValueError):
+        return 'unknown'
+
+
+def preview_node(targets, card_name, room=None, board=None):
+    """一个连锁节点的**公开区域预览**；没有区域可言时返回 `None`。
+
+    只从这里读三件东西：卡名、棋盘归属、格子集合。**绝不试算效果** ——
+    它不调 `apply_magic_effect`、不读 `room.players[...].ships`/`hits`，
+    也不看 `magic_temp_data` 里那些"还没确认"的选区（唯一数据源是已入栈的
+    `ChainItem.targets`）。唯一用到 `room` 的地方是座位标签（`seat_label`）。
+
+    `board`：**已经过校验**的归属（服务端在归一化目标时写进 targets）。
+    这里再退一步按卡名镜像表取值，是为了让"漏校验"这件事**只表现为一个字段的缺失**，
+    而不是把未校验的客户端值当判据 —— 但两者都不许猜成 `'opponent'`。
+
+    ⚠️ `targets` 里那个 `board` 的**来源**：`server._sanitize_magic_targets` 在
+       归一化时按 `AREA_TARGET_BOARDS` 校验/补写。预览**只**认服务端写下的值。
+    """
+    parsed = _preview_cells(targets)
+    if parsed is None:
+        return None
+    shape, cells = parsed
+    if any(not (0 <= x <= 5 and 0 <= y <= 5) for x, y in cells):
+        # 越界坐标一律不画（归一化那边已经拦过，这里是"净化函数不信任上游"的第二道）
+        return None
+
+    declared = AREA_TARGET_BOARDS.get(card_name)
+    if declared is None:
+        # 卡名没登记：**不猜**（猜成 opponent 正是教训 #2 的形状）。
+        return None
+    side = board if board in BOARD_SIDES else None
+    if side is None and declared in BOARD_SIDES:
+        side = declared
+    if side not in BOARD_SIDES:
+        # `'choice'` 而调用方没给出合法归属 ⇒ 没有可信归属 ⇒ 不画。
+        return None
+
+    return {
+        'id': _preview_id(shape, cells),
+        'card': card_name,
+        'seat': seat_label(room, None),        # 调用方（_pub_magic_chain）会覆盖成真实座位
+        'board': side,
+        'shape': shape,
+        'cells': [{'x': x, 'y': y} for x, y in cells],
+    }
+
+
+def sanitize_preview_item(item, room=None):
+    """把一个**已序列化**的连锁项净化成公开预览结构（链项级白名单）。
+
+    返回 `{'card', 'seat', 'negated', 'preview'}`；
+    `preview` 为 `None` = 这个节点没有可画的区域（无目标 / 别的形状 / 卡名未登记）。
+
+    ★ 与实时流**同一个函数**：`server._spectate_chain_payload`（重连快照与对局广播）
+      与 `server.emit` 的观战第三条腿都只经过它一次，不存在第二份实现（教训 #1）。
+
+    ★★ **必须幂等**（2026-09-27 实测踩到）★★
+      对局广播现在发的是 `_spectate_chain_payload(room)` 的**产物**
+      （已经是本函数的输出），而 `emit()` 会把它再复制一份给观战通道时
+      **再过一次本函数**。所以：
+
+      · 第一遍已经把 `player_id` 换成了 `seat` —— 第二遍若按 `player_id=None`
+        重算就会退回 `'unknown'`。实测症状是**观众看到的座位标签全是 unknown**
+        （对局双方却是对的，因为那一份不再净化）⇒ 缺失时**沿用已有的 `seat`**；
+      · 第一遍已经把原始 `targets` 换成 `preview` —— 第二遍若只看 `targets`
+        就会得到 `preview: None`，**观众看到的预览整块消失**（比座位标签更严重，
+        因为那是本批的全部意义）。⇒ `preview` 合法时**直接沿用**（`_preview_cells`
+        认归一化过的形状，于是也能重新派生一遍，两条路结果一致）。
+
+      （守卫：`test_spectate_batch7.py::test_chain_response_reaches_spectators`
+        与本文件 `test_preview_is_idempotent` / `test_spectator_gets_the_same_sanitized_shape`）
+    """
+    if not isinstance(item, dict):
+        return None
+    card = item.get('card')
+    card_name = None
+    if isinstance(card, dict):
+        card_name = card.get('name')
+    elif isinstance(card, str):
+        # `emit()` 会先把活对象序列化，而**有的调用方**本来就用字符串当卡名
+        # （例如 emit 手拼的链项、或 emit 已经净化过一次的 payload）。
+        # 两种形态都认，否则会静默把卡名丢成 None（守卫用例就是这么抓到的）。
+        card_name = card
+    if card_name is None:
+        card_name = item.get('card_name')
+    # 座位：优先按 player_id 现算（权威）；没有 player_id 时沿用上一遍算好的 seat。
+    if item.get('player_id') is None and isinstance(item.get('seat'), str) and item['seat']:
+        seat = item['seat']
+    else:
+        seat = seat_label(room, item.get('player_id'))
+
+    # ① 已经净化过的项：沿用它的 preview（幂等），但**重新校验**一遍白名单 ——
+    #    净化函数绝不信任上游，哪怕上游是它自己。
+    node = None
+    existing = item.get('preview')
+    if isinstance(existing, dict):
+        candidate = {
+            'shape': existing.get('shape'),
+            'cells': existing.get('cells'),
+            'board': existing.get('board'),
+        }
+        if existing.get('card') is None and card_name is not None:
+            candidate['card'] = card_name
+        node = preview_node(candidate, card_name or existing.get('card'),
+                            room=room, board=existing.get('board'))
+    # ② 原始目标（第一次净化）：从已确认的 targets 派生
+    if node is None:
+        targets = item.get('targets')
+        board = targets.get('board') if isinstance(targets, dict) else None
+        node = preview_node(targets, card_name, room=room, board=board)
+    if node is not None:
+        node['seat'] = seat
+    return {
+        'card': card_name,
+        'seat': seat,
+        'negated': bool(item.get('negated')),
+        'preview': node,
+    }
+
+
+def _pub_magic_chain(data, room=None):
+    """连锁栈：保留"谁打出了什么卡、有没有被康"，**剥掉原始 `targets`**，
+    并把**已确认**的选区净化成公开预览。
+
+    三个理由：
     1. `ChainItem.targets` 是**客户端提交上来的原始目标**（`data.get('targets', [])`），
        形状不受控 —— 既可能是船序号也可能是格子坐标，服务端**不做清洗**就塞进 broadcast。
        原样转发等于把一个形状未知的袋子里可能装着的坐标送给观众。
     2. `ChainItem` 被 `emit` 的 `default=lambda o: o.__dict__` 全量序列化，
        所以 `player_id`（**匹配房里是 socket sid**）原本也在 payload 里。
+    3. 但"整份剥掉"又走到了另一个极端：双方连锁期间**看不到对方选了哪块区域**
+       （作者反馈：只给个卡名等于让人猜效果）。所以现在按 `PREVIEW_KEYS`
+       **白名单重建**一项，而不是"删字段"（删字段必然漏一个，且不报错）。
 
     ## `player_id` → 座位标签（第 2 批，作者已批准）
 
@@ -269,6 +532,13 @@ def _pub_magic_chain(data, room=None):
     ⚠️ 别改回"保留 player_id 再加个别名"—— 那等于 sid 照样发出去。
        `tests/test_spectate_batch2.py` 有一条守卫断言净化结果里
        **不出现原始 sid / user_id 字符串**。
+
+    ## 输出形状（2026-09-27 起）
+
+    `{'chain': [{'card','seat','negated','preview'}], 'chain_len', 'targets_dropped'}`
+    ——链项里**不再**出现 `card` 的完整对象（那会连带 speed/type/description，
+    而白名单只允许卡名）、`timestamp`、`negated_by` 与原始 `targets`。
+    `targets_dropped` 的语义（"剥掉了几个原始目标"）+1 不变。
     """
     if not isinstance(data, dict):
         return None
@@ -278,13 +548,22 @@ def _pub_magic_chain(data, room=None):
     out = []
     dropped = 0
     for item in chain:
-        if isinstance(item, dict):
-            entry = {k: v for k, v in item.items() if k not in ('targets', 'player_id')}
-            if isinstance(item.get('targets'), (list, tuple)):
-                dropped += len(item['targets'])
-        else:
-            entry = {}
-        entry['seat'] = seat_label(room, item.get('player_id') if isinstance(item, dict) else None)
+        # ★ 整项走白名单净化（保留 seat / negated，卡名合成，坐标只从已确认目标派生）。
+        #   兜底那一支也必须**沿用已有的 seat**，不能凭空造一个 unknown 出来 ——
+        #   进入这个分支说明 item 不是 dict（理论上 emit 之后不会发生），
+        #   真发生了也宁可给出与上一遍一致的结果。
+        entry = sanitize_preview_item(item, room=room)
+        if entry is None:
+            fallback_seat = item.get('seat') if isinstance(item, dict) else None
+            entry = {
+                'card': None,
+                'seat': fallback_seat if isinstance(fallback_seat, str) and fallback_seat
+                        else seat_label(room, None),
+                'negated': False,
+                'preview': None,
+            }
+        if isinstance(item, dict) and isinstance(item.get('targets'), (list, tuple)):
+            dropped += len(item['targets'])
         out.append(entry)
     return {'chain': out, 'chain_len': len(out), 'targets_dropped': dropped}
 
@@ -651,6 +930,9 @@ MUST_KEEP_ACTION_FIELDS = {
     # 日志那条：剥掉坐标之后**文字与归属必须还在** ——
     # 否则观众会从"看得到对局日志"退化成"日志一片空白"。
     'game_log': ('ts', 'type', 'text', 'detail'),
+    # 连锁那条：白名单重建之后，"谁打的、哪张牌、有没有被康"必须还在 ——
+    # 否则观众会从"看得到连锁"退化成"连锁一片空白"。
+    'magic_chain_updated': ('chain', 'chain_len'),
 }
 
 # 这些 key 出现在发给观众的 payload 里 = 已经是泄漏，测试直接判失败。
@@ -723,6 +1005,22 @@ def _validate():
             raise ValueError(
                 '%r 登记成"原样转发"，但它的 payload 形状不受控 —— '
                 '必须走 canonical_frame_json' % event)
+    # ★ 2026-09-27 区域预览批：两张表 + 一张白名单必须自洽。
+    for card_name, board in AREA_TARGET_BOARDS.items():
+        if not isinstance(card_name, str) or not card_name.strip():
+            raise ValueError('AREA_TARGET_BOARDS 的键必须是卡名')
+        if board not in AREA_TARGET_BOARD_VALUES:
+            raise ValueError(
+                'AREA_TARGET_BOARDS[%r]=%r 不是合法归属（只能是 %s）'
+                % (card_name, board, list(AREA_TARGET_BOARD_VALUES)))
+    # 公开预览的字段表与两张"禁字段表"**绝不许有交集**（教训 #10）——
+    # 有交集就意味着"我一边允许它、一边判定它是泄漏"。
+    for forbidden in (FORBIDDEN_PAYLOAD_KEYS, SNAPSHOT_FORBIDDEN_KEYS):
+        overlap = set(PREVIEW_KEYS) & set(forbidden)
+        if overlap:
+            raise ValueError('预览白名单与禁字段表有交集：%s' % sorted(overlap))
+    if not {'card', 'seat', 'preview'} <= set(PREVIEW_KEYS):
+        raise ValueError('PREVIEW_KEYS 漏了必需字段：%s' % sorted(PREVIEW_KEYS))
     # 帧的三级白名单（要读到上面那张 `FORBIDDEN_PAYLOAD_KEYS`，所以只能在这里跑）
     _validate_frame_keys()
 

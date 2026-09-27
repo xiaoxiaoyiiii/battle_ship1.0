@@ -340,7 +340,12 @@ def test_snapshot_hand_count_only_never_content(room):
 
 
 def test_snapshot_chain_is_sanitized_with_seat_labels(room):
-    """★ 连锁：座位标签 `p1`/`p2`，**原始 sid 一个字节都不留**；`targets` 剥掉。"""
+    """★ 连锁：座位标签 `p1`/`p2`，**原始 sid 一个字节都不留**；`targets` 剥掉。
+
+    ⚠️ 2026-09-27 区域预览批起，链项**不再**带 `card` 的完整对象
+    （白名单只允许卡名，见 `spectate.PREVIEW_KEYS`）：`item['card']` 是
+    **卡名字符串**。区域预览是 `item['preview']`。
+    """
     room.chain = [server.ChainItem(SID_A, {'name': '卧薪尝胆', 'speed': 1},
                                    [{'x': 0, 'y': 0}], 1.0)]
     snapshot = server._build_spectate_snapshot(room)
@@ -348,7 +353,7 @@ def test_snapshot_chain_is_sanitized_with_seat_labels(room):
     assert chain['chain_len'] == 1
     item = chain['chain'][0]
     assert item['seat'] == 'p1'
-    assert item['card']['name'] == '卧薪尝胆'
+    assert item['card'] == '卧薪尝胆'
     assert 'targets' not in item and 'player_id' not in item
     text = json.dumps(chain, ensure_ascii=False)
     assert SID_A not in text and SID_B not in text, '连锁里还留着原始 sid'

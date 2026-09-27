@@ -975,6 +975,84 @@ html.theme-dark .cell.frozen-area {
         rgba(147, 197, 253, 0.20) 0 6px, rgba(147, 197, 253, 0.04) 6px 12px) !important;
 }
 
+/* ===== 连锁区域预览（2026-09-27）=====
+   连锁结算期间，双方都要看到「每个已确认的连锁节点会打在哪几格、画在哪块棋盘上、
+   是哪张卡」。前端在**真实棋盘格**上叠标记（`renderChainPreview`），于是：
+
+   · 坐标映射天然正确 —— 格子本身就是 `.cell[data-x][data-y]`，两块棋盘各查各的；
+   · **不遮挡任何交互** —— 只动 `box-shadow` / `background-image` / `outline`
+     这些不参与布局的属性，并且 `pointer-events: none`（角标也一样），
+     所以连锁响应按钮、棋盘点击、选区高亮全部照旧可用；
+   · 多张卡同时存在时各有颜色（`--chan-preview-rgb-1..4`）与卡名角标，
+     **重叠的格子会同时挂多个类**，两种颜色交替的斜纹 + 多个角标 ⇒ 来源可辨。
+
+   ⚠️ 与既有标记的分工（别混用类名，否则"是选区还是预览"分不出来）：
+     · `.selection-highlight` / `.magic-selection-overlay` —— 自己**正在点选**（可交互）；
+     · `.frozen-area` —— 冻结已经**落地**；
+     · `.chain-preview` —— 连锁里**已确认、尚未结算**（本批新增）。
+
+   ⚠️ 绝不动盒模型尺寸（CLAUDE.md §11.6）：只用 border-color / box-shadow /
+      background-image / outline，不设 width / height / padding / margin。 */
+.cell.chain-preview {
+    pointer-events: none;
+}
+.cell.chain-preview--1 {
+    background-image: repeating-linear-gradient(45deg,
+        rgba(var(--chan-preview-rgb-1, 56, 189, 248), 0.34) 0 5px,
+        rgba(var(--chan-preview-rgb-1, 56, 189, 248), 0.07) 5px 10px) !important;
+    box-shadow: inset 0 0 0 2px rgba(var(--chan-preview-rgb-1, 56, 189, 248), 0.9);
+}
+.cell.chain-preview--2 {
+    background-image: repeating-linear-gradient(-45deg,
+        rgba(var(--chan-preview-rgb-2, 244, 114, 182), 0.34) 0 5px,
+        rgba(var(--chan-preview-rgb-2, 244, 114, 182), 0.07) 5px 10px) !important;
+    box-shadow: inset 0 0 0 2px rgba(var(--chan-preview-rgb-2, 244, 114, 182), 0.9);
+}
+.cell.chain-preview--3 {
+    background-image: repeating-linear-gradient(45deg,
+        rgba(var(--chan-preview-rgb-3, 250, 204, 21), 0.34) 0 5px,
+        rgba(var(--chan-preview-rgb-3, 250, 204, 21), 0.07) 5px 10px) !important;
+    box-shadow: inset 0 0 0 2px rgba(var(--chan-preview-rgb-3, 250, 204, 21), 0.9);
+}
+.cell.chain-preview--4 {
+    background-image: repeating-linear-gradient(-45deg,
+        rgba(var(--chan-preview-rgb-4, 167, 139, 250), 0.34) 0 5px,
+        rgba(var(--chan-preview-rgb-4, 167, 139, 250), 0.07) 5px 10px) !important;
+    box-shadow: inset 0 0 0 2px rgba(var(--chan-preview-rgb-4, 167, 139, 250), 0.9);
+}
+/* 重叠时：后一张卡的边框叠上去（两张区域的边界同时可见） */
+.cell.chain-preview--2.chain-preview--1 { box-shadow:
+    inset 0 0 0 2px rgba(var(--chan-preview-rgb-1), 0.9),
+    inset 0 0 0 4px rgba(var(--chan-preview-rgb-2), 0.9); }
+
+/* 卡名角标：贴在区域左上那一格，绝不吃点击 */
+.chain-preview-badge {
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    right: 1px;
+    z-index: 6;
+    pointer-events: none;
+    font-size: 9px;
+    line-height: 1.1;
+    font-weight: 700;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #0b1220;
+    background: rgba(var(--chan-preview-rgb-1, 56, 189, 248), 0.92);
+    border-radius: 3px;
+    padding: 0 2px;
+}
+.chain-preview-badge--2 { background: rgba(var(--chan-preview-rgb-2, 244, 114, 182), 0.92); }
+.chain-preview-badge--3 { background: rgba(var(--chan-preview-rgb-3, 250, 204, 21), 0.92); }
+.chain-preview-badge--4 { background: rgba(var(--chan-preview-rgb-4, 167, 139, 250), 0.92); }
+/* 第 2 张及以后的角标缩一号 —— 同一格里两个角标叠着时仍能看出是两个来源 */
+.chain-preview-badge--2 { font-size: 8px; top: 11px; }
+.chain-preview-badge--3 { font-size: 8px; top: 21px; }
+.chain-preview-badge--4 { font-size: 8px; top: 31px; }
+
 /* 「疗愈」原地复活的格子（显形给对手）：要与通用显形 .revealed（暖黄内发光）明确区分。
    用**翠绿斜纹 + 绿框**，并在悬停说明里写明是疗愈复活（cell.title）。 */
 .cell.revealed-heal {

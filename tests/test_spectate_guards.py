@@ -607,7 +607,7 @@ def test_spectator_payloads_keep_the_action():
         chain = spectate.sanitize_event('magic_chain_updated',
                                         _sample_for('magic_chain_updated', room))
         assert chain['chain_len'] == 2
-        assert [c['card']['name'] for c in chain['chain']] == ['卧薪尝胆', '失灵！']
+        assert [c['card'] for c in chain['chain']] == ['卧薪尝胆', '失灵！']
         assert all('targets' not in c for c in chain['chain'])
         assert chain['targets_dropped'] == 2
     finally:

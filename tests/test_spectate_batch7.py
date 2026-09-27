@@ -229,7 +229,7 @@ def test_chain_response_reaches_spectators(room, socket_for):
         '观众**没有收到**连锁响应这一帧（`magic_chain_updated` 一个都没有）'
         '—— 这是真缺口（不变量二的连锁响应那一条）：%r' % got)
 
-    names = [it.get('card_name') or (it.get('card') or {}).get('name')
+    names = [it.get('card_name') or it.get('card')
              for it in (frames[-1].get('chain') or [])]
     assert names == ['无中生有', '失灵！'], (
         '观众收到的连锁帧里不是那两张牌（动作没传全）：%r' % (frames[-1],))
@@ -256,9 +256,17 @@ def test_chain_frame_keeps_action_and_drops_player_id(room, socket_for):
     #    （它是"剥掉了几个目标"的计数，是本批要保留的东西）。要判的是
     #    `ChainItem.targets` 那个**字段**有没有被带出来 —— 逐项看键名。
     for item in frames[-1]['chain']:
-        assert set(item) == {'card', 'timestamp', 'negated', 'negated_by', 'seat'}, (
+        # ⚠️ 2026-09-27 区域预览批：链项改成**白名单重建**
+        #    （`spectate.sanitize_preview_item`），集合也随之变化 ——
+        #    `card` 从"完整卡对象"变成**卡名字符串**，新增 `preview`（公开区域预览），
+        #    而 `timestamp` / `negated_by` 不再下发。这里逐项钉死，防它再长回
+        #    "把客户端原始 `targets` 带出去"的形状。
+        assert set(item) == {'card', 'seat', 'negated', 'preview'}, (
             '连锁项里出现了多余的键（`targets` 就是客户端提交的原始目标，形状不受控）：%r'
             % (sorted(item),))
+        if item['preview'] is not None:
+            assert set(item['preview']) <= {'id', 'card', 'seat', 'board', 'shape', 'cells'}, (
+                '预览里出现了白名单外的键：%r' % sorted(item['preview']))
 
 
 # ===========================================================================

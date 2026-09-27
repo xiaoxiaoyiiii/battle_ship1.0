@@ -28,7 +28,7 @@
 | `test_cards_that_do_not_use_the_chain_target_channel_are_excluded` | 选船类（神之宣告 / 仁王之盾）**明确不纳入**及理由 |
 | `test_normalization_rejects_missing_or_invalid_board` | 非法 / 缺失 `board` **被拒**且给出明确报错 |
 | `test_normalization_writes_the_authoritative_board` | 固定归属由**服务端写回**，客户端的值改变不了它 |
-| `test_preview_cells_for_every_region_card` | 全部 6 张区域卡的实际选区 → 格子集合与 `board` |
+| `test_preview_cells_for_every_region_card` | 全部公开区域卡的实际选区 → 格子集合与 `board` |
 | `test_shenwei_choice_maps_to_both_boards` | 神威！选己方 / 对方各画在哪块棋盘 |
 | `test_multi_node_chain_keeps_every_area` | 同一连锁里多个待结算区域**并存**、各带自己的归属与卡名 |
 | `test_cleanup_on_resolve_and_on_negation` | 结算 / 被康 → 预览随之消失 |
@@ -95,14 +95,14 @@ _JS_TYPE_TO_SHAPE = {
     'area': 'area',
     'line': 'line',
     'continuous': 'cells',
-    'single': 'area',      # 单格前端包成 1×1 的 target_area
+    'single': None,        # 克苏鲁之眼选择隐藏船位，结算前不得公开
     'shenwei': 'area',
     'own_ships': None,     # 选船类：不是区域，不画（也不登记归属）
 }
 
 # 前端有选择器、但**明确不纳入**区域预览的卡（理由见
 # `test_cards_that_do_not_use_the_chain_target_channel_are_excluded`）。
-_NOT_PREVIEWED_BY_DESIGN = ('神之宣告',)
+_NOT_PREVIEWED_BY_DESIGN = ('神之宣告', '克苏鲁之眼')
 
 
 def _read(path):
@@ -329,7 +329,7 @@ def test_all_region_cards_are_covered():
 
 
 def test_cards_that_do_not_use_the_chain_target_channel_are_excluded():
-    """★ 两张**选船类**卡的处理与理由（作者要求：不纳入要说清为什么）。
+    """★ 私密目标卡不公开预览，理由必须明确。
 
     实测（源码扫描，不是推测）：
 
@@ -340,6 +340,8 @@ def test_cards_that_do_not_use_the_chain_target_channel_are_excluded():
       船位只有在挨过炮或自己揭示之后才是公开的。把它登记进归属表，
       预览就会把这两艘船的坐标直接画到对方棋盘上 = **白送两个船位**。
       所以：走同一通道，但**按设计不登记** ⇒ 预览为 `None`（不画）。
+    * `克苏鲁之眼` —— 虽然走区域目标通道，但选择的是自己隐藏的船位；
+      结算前公开会直接泄漏位置，因此不登记归属、不画预览。
     * `仁王之盾` —— 走的是 `select_magic_target` + `confirm_magic_target`
       的 `ship_indices` 临时通道（`temp_data_id == 'shield_choice'`），
       **根本不经过 `room.chain`**，预览层唯一的数据源拿不到它。同理不登记。
@@ -349,6 +351,7 @@ def test_cards_that_do_not_use_the_chain_target_channel_are_excluded():
     assert '神之宣告' in branches and 'selected_cells' in branches['神之宣告'], branches.get('神之宣告')
     assert '神之宣告' not in spectate.AREA_TARGET_BOARDS, (
         '神之宣告不许登记归属 —— 那两艘船的坐标是私密的，画出来就是白送船位')
+    assert '克苏鲁之眼' not in spectate.AREA_TARGET_BOARDS
     assert '仁王之盾' not in spectate.AREA_TARGET_BOARDS
     # 仁王之盾确实走的是另一条通道（源码级：它在 confirm_magic_target 的
     # shield_choice 分支里读 ship_indices，不在 room.chain 上）
@@ -369,6 +372,16 @@ def test_cards_that_do_not_use_the_chain_target_channel_are_excluded():
     finally:
         server.room_manager.rooms.pop(r.id, None)
 
+    r = _make_and_register()
+    try:
+        payload, err = _arm(r, '克苏鲁之眼',
+                            {'target_area': {'x1': 2, 'y1': 2, 'x2': 2, 'y2': 2}})
+        assert err is None
+        assert payload['chain'][0]['preview'] is None, \
+            '克苏鲁之眼的隐藏船位不能在连锁结算前公开'
+    finally:
+        server.room_manager.rooms.pop(r.id, None)
+
 
 def test_region_preview_shapes_are_the_documented_ones():
     """每张区域卡：前端**选择器形状**与服务端**预览形状**都要与表一致。
@@ -383,7 +396,6 @@ def test_region_preview_shapes_are_the_documented_ones():
         '探测雷达': ('area', 'area'),
         '轰炸': ('line', 'line'),
         '硫磺火焰': ('continuous', 'cells'),
-        '克苏鲁之眼': ('single', 'area'),
         '神威！': ('shenwei', 'area'),
     }
     for name, (js_type, shape) in expect.items():
@@ -414,7 +426,7 @@ def test_fixed_board_card_rejects_a_contradicting_client_board():
     静默采用任意一侧都会让"预览画在哪块棋盘"这个判据失去唯一来源（教训 #1/#2）。
     """
     for card_name, board in (('冻结', 'self'), ('探测雷达', 'self'), ('轰炸', 'self'),
-                             ('硫磺火焰', 'self'), ('克苏鲁之眼', 'opponent')):
+                             ('硫磺火焰', 'self')):
         targets = {'target_area': {'x1': 0, 'y1': 0, 'x2': 1, 'y2': 1}, 'board': board}
         _, err = server._sanitize_magic_targets(dict(targets), card_name)
         assert err, '%s 提交 board=%r 竟然被放行（静默采用一侧 = 预览可能画反）' % (
@@ -465,9 +477,6 @@ def test_normalization_writes_the_authoritative_board():
     out, err = server._sanitize_magic_targets(
         {'target_area': {'x1': 3, 'y1': 3, 'x2': 5, 'y2': 5}}, '冻结')
     assert err is None and out['board'] == 'opponent'
-    out, err = server._sanitize_magic_targets(
-        {'target_area': {'x1': 0, 'y1': 0, 'x2': 0, 'y2': 0}}, '克苏鲁之眼')
-    assert err is None and out['board'] == 'self'
 
 
 def test_unregistered_card_is_left_untouched():
@@ -493,8 +502,6 @@ _CASES = [
      'opponent', 'line', 6, [(3, 0), (3, 5)]),
     ('硫磺火焰', {'target_cells': [{'x': i, 'y': 5} for i in range(6)]},
      'opponent', 'cells', 6, [(0, 5), (5, 5)]),
-    ('克苏鲁之眼', {'target_area': {'x1': 2, 'y1': 1, 'x2': 2, 'y2': 1}},
-     'self', 'area', 1, [(2, 1)]),
 ]
 
 
@@ -567,33 +574,28 @@ def test_multi_node_chain_keeps_every_area(room):
     """★ 同一连锁里多个待结算区域**同时存在**、各带自己的卡名与归属。"""
     card_a = MagicCard(name='冻结', speed=1, type='普通', description='')
     card_b = MagicCard(name='轰炸', speed=3, type='普通', description='')
-    card_c = MagicCard(name='克苏鲁之眼', speed=1, type='普通', description='')
 
     t1, e1 = server._sanitize_magic_targets(
         {'target_area': {'x1': 0, 'y1': 0, 'x2': 1, 'y2': 1}}, '冻结')
     t2, e2 = server._sanitize_magic_targets(
         {'target_line': {'type': 'col', 'index': 5}}, '轰炸')
-    t3, e3 = server._sanitize_magic_targets(
-        {'target_area': {'x1': 4, 'y1': 4, 'x2': 4, 'y2': 4}}, '克苏鲁之眼')
-    assert not (e1 or e2 or e3)
+    assert not (e1 or e2)
 
     room.chain = [ChainItem(SID_A, card_a, t1, 0.0),
-                  ChainItem(SID_B, card_b, t2, 0.0),
-                  ChainItem(SID_A, card_c, t3, 0.0)]
+                  ChainItem(SID_B, card_b, t2, 0.0)]
 
     payload = server._spectate_chain_payload(room)
-    assert payload['chain_len'] == 3
+    assert payload['chain_len'] == 2
     got = [(n['card'], n['seat'], n['preview']['board'], n['preview']['shape'])
            for n in payload['chain']]
     assert got == [
         ('冻结', 'p1', 'opponent', 'area'),
         ('轰炸', 'p2', 'opponent', 'line'),
-        ('克苏鲁之眼', 'p1', 'self', 'area'),
     ], got
-    # 三块区域必须互不相同（否则"并存"看不出来）
+    # 两块区域必须互不相同（否则"并存"看不出来）
     ids = [n['preview']['id'] for n in payload['chain']]
-    assert len(set(ids)) == 3, '三个节点的区域标识必须互不相同：%r' % (ids,)
-    # 重叠情形：轰炸那一列与克苏鲁那一格不重叠，但冻结与轰炸可在同一格上——
+    assert len(set(ids)) == 2, '两个节点的区域标识必须互不相同：%r' % (ids,)
+    # 重叠情形：冻结与轰炸可在同一格上——
     # 这里显式构造一次重叠并断言"两边都画得出来"（前端按节点各画一层）。
     assert ('opponent', 'area') in [(n['preview']['board'], n['preview']['shape'])
                                     for n in payload['chain']]

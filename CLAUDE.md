@@ -40,9 +40,14 @@ python -m pytest tests/ -q    # 基线见下
 段位/排位 → `ranked_check.mjs` ｜ 段位帮助页 → `rank_help_check.mjs` ｜ 手牌 → `hand_play_check.mjs` ｜
 壁纸 → `wallpaper_check.mjs` ｜ 徽章 → `achievements_check.mjs` ｜ 等级 → `level_check.mjs` ｜
 音效/BGM → `sfx_check.mjs` / `bgm_check.mjs` ｜ 连锁卡预览 → `chain_preview_check.mjs` ｜ 仁王之盾 → `renwang_board_check.mjs` ｜
-大厅 → `lobby_check.mjs`（**双浏览器** —— 大厅的价值就是"别人那边立刻能看到"，单浏览器测不出来）
+大厅 → `lobby_check.mjs`（**双浏览器** —— 大厅的价值就是"别人那边立刻看到"，单浏览器测不出来）｜
+卡组件/用牌/移动端（2026-09-24 落地批）→ `card_text_fit_check.mjs`（卡内文字盒）· `target_flow_check.mjs`（分流）·
+`chain_stack_check.mjs`（连锁叠牌）· `mobile_bigcard_check.mjs`（手机大卡面）· `card_art_wiring_check.mjs`（卡面接线）·
+`codex_realcard_check.mjs`（图鉴真卡）· `wide_geometry_probe.mjs`（宽屏逐格遮挡诊断）· `board_mode_probe.mjs`（移动档 side/stack/tabs）
 - **`dom_contract_check.mjs`**：不用浏览器、不用服务端、几秒钟 —— 查「代码引用了但页面里不存在的 id」，
   这类引用的表现是 `getElementById` 拿到 `null` 被 `if (el)` 兜掉、**不报错、只是点了没反应**。
+- ⚠️ `ui_layout_check.mjs` **会真打一局 AI 对局**：AI 打出的卡会让效果角标出现 → 少数断言随对局状态漂移
+  （实测同一条 3 次里红 1 次）。要判断"是不是我改坏了"，**连跑 2–3 次**看是否复现，再动代码。
 - ⚠️ 工具要的服务端必须带 `CORS_ORIGINS=http://127.0.0.1:<端口>`，否则 socket.io **静默连不上**（页面无报错）。
 - ⚠️ 本地验证端口**避开 5060/5061**（Fetch 规范的被阻止端口，Node `fetch`/Chrome 拒发而 curl 正常 → 看着像服务器卡死）。
 - ⚠️ 无头浏览器用持久 profile，开头按 profile 路径预清理残留进程，profile 放项目内 `.tmp/`。

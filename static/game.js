@@ -2796,13 +2796,35 @@ function renderCardCompendium() {
 
     helpMagicCards.innerHTML = list.map(card => {
         const uses = cardUsage[card.name] || 0;
+        const speed = parseInt(card.speed, 10);
+        const gems = isNaN(speed) ? '' : Array.from({ length: Math.min(speed, 3) })
+            .map(() => '<i class="gem"></i>').join('');
+        // Phase 6 图鉴：条目从"一行文字"升成**真卡**（复用 Phase 2 的卡面分区），
+        // 于是 Phase 7 的出图在这里也自动生效 —— 与手牌/连锁/大卡面同一处接线。
+        // ⚠️ 外层仍是 .magic-card-help 且四个 data-* 属性一个不少：
+        //    tools/card_compendium_check.mjs 按 .magic-card-help + data-card-name/-speed/-type/-uses
+        //    取数，改掉就等于把它的判据一起改掉（这一期不重定断言）。
         return `
-        <div class="magic-card-help" data-card-name="${card.name}" data-card-speed="${card.speed}" data-card-type="${card.type}" data-card-uses="${uses}">
-            <b>${card.name}</b> <span class="compendium-meta">${card.type}·速阶${card.speed}</span>
-            ${uses > 0 ? '<span class="compendium-uses">使用 ' + uses + ' 次</span>' : ''}
-            <div class="compendium-desc">${card.description}</div>
+        <div class="magic-card-help" data-card-name="${escapeHtml(card.name)}" data-card-speed="${card.speed}" data-card-type="${card.type}" data-card-uses="${uses}">
+            <div class="magic-card codex-card">
+                <div class="card-art" aria-hidden="true"></div>
+                <div class="card-nameplate">
+                    <div class="card-name">${escapeHtml(card.name)}</div>
+                    <div class="card-speed-gems">${gems}</div>
+                </div>
+                <div class="card-desc">${escapeHtml(card.description || '')}</div>
+                <div class="card-typebar">
+                    <span class="card-speed">${escapeHtml(card.type)}·速阶${escapeHtml(card.speed)}</span>
+                    ${uses > 0 ? `<span class="compendium-uses">使用 ${uses} 次</span>` : ''}
+                </div>
+            </div>
         </div>`;
     }).join('') || '<p class="muted-hint">没有符合条件的卡牌</p>';
+
+    // 出图后给图鉴里的每张卡接上底图（Phase 7）
+    helpMagicCards.querySelectorAll('.magic-card-help').forEach(el => {
+        applyCardArt(el, el.getAttribute('data-card-name'));
+    });
 
     const counter = document.getElementById('compendium-count');
     if (counter) counter.textContent = '共 ' + list.length + ' / ' + all.length + ' 张';
@@ -8105,23 +8127,29 @@ function showMagicTargetSelection(card, index) {
             const picker = createBoardAreaPicker(opponentBoard, 3, (areaObj) => {
                 confirmMagicTarget(Object.assign({ board: 'opponent' }, areaObj));
                 cleanupPrompt();
-            }, cleanupPrompt);
+            }, cleanupPrompt, {
+                cardName: card.name,
+                pendingText: '在对方棋盘上选 3×3 区域…',
+            });
             gameState.selectionCleanup = picker ? picker.cleanup : null;
         });
         return;
     }
 
-    // LINE selection (row or column) e.g., 轰炸 — 支持拖拽与方向切换
+    // LINE selection (row or column) e.g., 轰炸 — 方向切换 + 点选定位 + **显式确认**
+    // ⚠️ Phase 4：旧实现在 mouseup 上直接 confirmIndex()（拖到哪就打到哪，松手即生效）。
+    //    按 Balatro 的「先选后确认」，拖拽/点击只**定位**，必须再点「确认使用 轰炸！」才提交。
     if (descriptor.type === 'line') {
         // ⚠️ 样式统一在 style.css 的「范围选择的选中态」一节里定义。
         // 这里原本会注入一段 <style id="magic-selection-styles">，而下面的
         // 「连选」分支用的是【同一个 id】—— 谁先打开谁生效，后打开的那种模式
         // 样式永远不生效（实测：先开轰炸再开硫磺火焰，绿色变成了橙红色）。
         targetPrompt.innerHTML = `
-            <h3>拖拽或点击选择一整行/列（拖拽时松开确认）</h3>
-            <p id="line-picker-info" class="selection-info pending">把鼠标移到棋盘上，或拖拽到目标行/列</p>
+            <h3>选择一整行/列</h3>
+            <p id="line-picker-info" class="selection-info pending">点击或拖拽到目标行/列（虚线是可选落点）</p>
             <div class="magic-selection-controls">
                 <button id="toggle-line-dir">方向：行</button>
+                <button id="confirm-line-target" disabled>在棋盘上选整行/整列…</button>
                 <button id="cancel-target">取消</button>
             </div>
         `;
@@ -8132,32 +8160,79 @@ function showMagicTargetSelection(card, index) {
         gameState.selectingOnBoard = true;
 
         let mode = 'row'; // 'row' or 'col'
+        let picked = null;      // 已定位的行/列号（还没确认）
+        let invalidMsg = '';
         const toggleBtn = document.getElementById('toggle-line-dir');
         toggleBtn.addEventListener('click', () => {
             mode = mode === 'row' ? 'col' : 'row';
             toggleBtn.textContent = `方向：${mode === 'row' ? '行' : '列'}`;
-            const info = document.getElementById('line-picker-info');
-            if (info) {
-                info.className = 'selection-info pending';
-                info.textContent = `当前方向：${mode === 'row' ? '整行' : '整列'}`;
-            }
+            picked = null;
+            clearHighlights();
+            showAnchors();
+            syncBar();
         });
 
         const cells = Array.from(boardEl.querySelectorAll('.cell'));
         let isMouseDown = false;
         let lastIndex = null;
 
-        function clearHighlights() {
-            cells.forEach(c => c.classList.remove('magic-selection-overlay', 'col', 'sel-mode-line'));
+        // 合法落点虚框锚点：整行 = 每行的任意格；整列 = 每列的任意格
+        function showAnchors() {
+            cells.forEach(c => c.classList.add('sel-anchor'));
+        }
+        function clearAnchors() {
+            cells.forEach(c => c.classList.remove('sel-anchor'));
         }
 
-        function highlightIndex(idx) {
+        function syncBar() {
+            const btn = document.getElementById('confirm-line-target');
+            const info = document.getElementById('line-picker-info');
+            if (btn) {
+                if (invalidMsg) { btn.disabled = true; btn.textContent = invalidMsg; }
+                else if (picked === null) {
+                    btn.disabled = true;
+                    btn.textContent = `在棋盘上选整${mode === 'row' ? '行' : '列'}…`;
+                } else {
+                    btn.disabled = false;
+                    btn.textContent = `确认使用 ${card.name}！`;
+                }
+            }
+            if (info && picked === null && !invalidMsg) {
+                info.className = 'selection-info pending';
+                info.textContent = `当前方向：整${mode === 'row' ? '行' : '列'} — 点棋盘定位`;
+            }
+        }
+
+        function clearHighlights() {
+            cells.forEach(c => c.classList.remove('magic-selection-overlay', 'col', 'sel-mode-line', 'sel-invalid'));
+        }
+
+        // 悬停预览：只改视觉与提示文字，**不写 picked**（不然鼠标划过一路就把落点定了）。
+        function previewIndex(idx) {
             clearHighlights();
             if (mode === 'row') {
                 boardEl.querySelectorAll(`.cell[data-y="${idx}"]`).forEach(c => c.classList.add('magic-selection-overlay', 'sel-mode-line'));
             } else {
                 boardEl.querySelectorAll(`.cell[data-x="${idx}"]`).forEach(c => c.classList.add('magic-selection-overlay', 'col', 'sel-mode-line'));
             }
+            const info = document.getElementById('line-picker-info');
+            if (info) {
+                info.className = 'selection-info pending';
+                info.innerHTML = '<span class="sel-dot"></span>' +
+                    (mode === 'row' ? `预览：第 ${idx + 1} 行 — 点一下定位` : `预览：第 ${idx + 1} 列 — 点一下定位`);
+            }
+        }
+
+        function highlightIndex(idx) {
+            clearHighlights();
+            clearAnchors();
+            invalidMsg = '';
+            if (mode === 'row') {
+                boardEl.querySelectorAll(`.cell[data-y="${idx}"]`).forEach(c => c.classList.add('magic-selection-overlay', 'sel-mode-line'));
+            } else {
+                boardEl.querySelectorAll(`.cell[data-x="${idx}"]`).forEach(c => c.classList.add('magic-selection-overlay', 'col', 'sel-mode-line'));
+            }
+            picked = idx;   // 只定位，不提交 —— 提交由确认按钮负责（Phase 4）
             // 说清楚落在哪一行/列 —— 旧实现只有一片几乎看不见的淡色，玩家无法确认落点。
             const info = document.getElementById('line-picker-info');
             if (info) {
@@ -8179,17 +8254,14 @@ function showMagicTargetSelection(card, index) {
             const mx = parseInt(cell.dataset.x, 10);
             const my = parseInt(cell.dataset.y, 10);
 
+            // 拖拽/点击只**定位**（Phase 4：松手不再自动开火），提交一律走确认按钮
             const onMouseDown = (e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 isMouseDown = true;
                 lastIndex = mode === 'row' ? my : mx;
                 highlightIndex(lastIndex);
-                // attach a global mouseup to capture end of drag
-                const onUp = (ev) => {
-                    if (isMouseDown) {
-                        confirmIndex(lastIndex);
-                    }
+                const onUp = () => {
                     isMouseDown = false;
                     window.removeEventListener('mouseup', onUp);
                 };
@@ -8262,14 +8334,32 @@ function showMagicTargetSelection(card, index) {
                         cell.removeEventListener('click', onClick, true);
                     });
                 }
-                cell.classList.remove('magic-selection-overlay', 'col', 'sel-mode-line');
+                cell.classList.remove('magic-selection-overlay', 'col', 'sel-mode-line', 'sel-anchor', 'sel-invalid');
             });
             if (document.body.contains(targetPrompt)) document.body.removeChild(targetPrompt);
+            document.removeEventListener('click', onDocClick, true);
             gameState.selectingOnBoard = false;
             gameState.selectionCleanup = null;
         }
 
+        // 点空白 = 取消（不消耗卡）
+        const onDocClick = (e) => {
+            if (targetPrompt.contains(e.target)) return;
+            if (e.target.closest && e.target.closest('.cell')) return;
+            if (e.target.closest && e.target.closest('#magic-hand')) return;
+            cleanupAll();
+            cleanupPrompt();
+        };
+        setTimeout(() => document.addEventListener('click', onDocClick, true), 0);
+
         document.getElementById('cancel-target').addEventListener('click', cleanupAll);
+        document.getElementById('confirm-line-target').addEventListener('click', () => {
+            if (picked === null) { showAlert(`请先在棋盘上点选一整${mode === 'row' ? '行' : '列'}`); return; }
+            confirmIndex(picked);
+        });
+        clearAnchors();
+        showAnchors();
+        syncBar();
         gameState.selectionCleanup = cleanupAll;
         return;
     }
@@ -8336,7 +8426,7 @@ function showMagicTargetSelection(card, index) {
         }
 
         function refreshHighlights() {
-            cells.forEach(c => c.classList.remove('magic-selection-overlay', 'vert', 'sel-mode-cont'));
+            cells.forEach(c => c.classList.remove('magic-selection-overlay', 'vert', 'sel-mode-cont', 'sel-anchor', 'sel-invalid'));
             cells.forEach(c => {
                 const cx = parseInt(c.dataset.x, 10);
                 const cy = parseInt(c.dataset.y, 10);
@@ -8353,8 +8443,28 @@ function showMagicTargetSelection(card, index) {
                     info.textContent = `已选 ${selected.size} / ${L} 格（还需 ${L - selected.size} 格）`;
                 }
             }
+            // 确认按钮文案随状态变：未满 = 置灰报还差几格；选满 = 「确认使用 <卡名>！」
             const okBtn = document.getElementById('confirm-continuous');
-            if (okBtn) okBtn.disabled = selected.size !== L;
+            if (okBtn) {
+                okBtn.disabled = selected.size !== L;
+                okBtn.textContent = (selected.size === L) ? `确认使用 ${card.name}！` : `还需 ${L - selected.size} 格…`;
+            }
+        }
+
+        // 非法（不相邻 / 超量）不进提交路径：相关格子画红框 + 确认按钮置灰。
+        // 旧实现只弹一个 alert，棋盘上什么标记都没有，玩家看不出「哪一格不合法」。
+        function flashInvalid(cellLike, msg) {
+            const cell = cellLike;
+            if (cell && cell.classList) {
+                cell.classList.add('sel-invalid');
+                setTimeout(() => cell.classList.remove('sel-invalid'), 900);
+            }
+            const okBtn = document.getElementById('confirm-continuous');
+            if (okBtn) {
+                okBtn.disabled = true;
+                okBtn.textContent = msg;
+                setTimeout(refreshHighlights, 900);
+            }
         }
 
         cells.forEach(cell => {
@@ -8405,13 +8515,26 @@ function showMagicTargetSelection(card, index) {
                         cell.removeEventListener('click', onClick, true);
                     });
                 }
-                cell.classList.remove('magic-selection-overlay', 'vert', 'sel-mode-cont');
+                cell.classList.remove('magic-selection-overlay', 'vert', 'sel-mode-cont', 'sel-anchor', 'sel-invalid');
                 cell.style.cursor = '';
             });
             if (document.body.contains(targetPrompt)) document.body.removeChild(targetPrompt);
+            document.removeEventListener('click', onDocClick, true);
             gameState.selectingOnBoard = false;
             gameState.selectionCleanup = null;
         }
+
+        // 点空白 = 取消（不消耗卡）
+        const onDocClick = (e) => {
+            if (targetPrompt.contains(e.target)) return;
+            if (e.target.closest && e.target.closest('.cell')) return;
+            if (e.target.closest && e.target.closest('#magic-hand')) return;
+            cleanupAll();
+            cleanupPrompt();
+        };
+        setTimeout(() => document.addEventListener('click', onDocClick, true), 0);
+        // 合法落点虚框锚点：连选模式下每格都能当起点
+        cells.forEach(c => { if (!selected.has(key(parseInt(c.dataset.x, 10), parseInt(c.dataset.y, 10)))) c.classList.add('sel-anchor'); });
 
         document.getElementById('cancel-target').addEventListener('click', cleanupAll);
         document.getElementById('confirm-continuous').addEventListener('click', () => {
@@ -8614,32 +8737,101 @@ function needsTargetSelection(cardName) {
 }
 
 // 通用区域点选器：在真实棋盘上点选 size×size 区域（触摸/鼠标均可用）。
-// 点一下定位并高亮，再点「确认」提交；桌面端保留悬停预览。
+// Phase 4 的目标选择态（按卡是否需要目标分流后的那一支）：
+//   · 打开时先把**合法落点**画成虚框锚点（还没选，玩家知道能点哪）
+//   · 点一下定位 → 该区域换成实框（已选）
+//   · 确认按钮文案随状态变：未选 = 置灰「在棋盘上选区域…」/ 已选 = 「确认使用 <卡名>！」
+//   · **点空白 = 取消**（不消耗卡）
+//   · 越界/非法 → 红框 + 确认置灰（不提交）
 function createBoardAreaPicker(boardEl, size, onConfirm, onCancel, opts) {
     if (!boardEl || gameState.selectingOnBoard) return null;
     gameState.selectingOnBoard = true;
     const options = opts || {};
+    const cardName = options.cardName || '';
 
     const listeners = [];
     let highlighted = [];
     let current = null;
+    let invalidMsg = '';
 
     const clampStart = (mx, my) => ({
         sx: Math.max(0, Math.min(mx, 6 - size)),
         sy: Math.max(0, Math.min(my, 6 - size))
     });
 
+    const cellAt = (x, y) => boardEl.querySelector(`.cell[data-x="${x}"][data-y="${y}"]`);
+
     function clearHighlights() {
-        highlighted.forEach(c => c.classList.remove('selection-highlight', 'sel-mode-area'));
+        highlighted.forEach(c => c.classList.remove('selection-highlight', 'sel-mode-area', 'sel-invalid'));
         highlighted = [];
+    }
+
+    // 合法落点虚框锚点：区域左上角能落的所有位置（clamp 之后每个格子都能当锚点，
+    // 所以直接按「棋盘能容纳该区域的列/行数」画）。选中后清掉，避免和实框打架。
+    function showAnchors() {
+        for (let y = 0; y <= 6 - size; y++) {
+            for (let x = 0; x <= 6 - size; x++) {
+                const cell = cellAt(x, y);
+                if (cell) { cell.classList.add('sel-anchor'); listeners.push({ anchor: cell }); }
+            }
+        }
+    }
+    function clearAnchors() {
+        boardEl.querySelectorAll('.cell.sel-anchor').forEach(c => c.classList.remove('sel-anchor'));
+    }
+
+    function setInvalid(msg) {
+        invalidMsg = msg || '';
+        const block = [];
+        if (current) {
+            for (let y = current.y1; y <= current.y2; y++) {
+                for (let x = current.x1; x <= current.x2; x++) {
+                    const cell = cellAt(x, y);
+                    if (cell) block.push(cell);
+                }
+            }
+        }
+        if (invalidMsg) {
+            highlighted.forEach(c => c.classList.remove('selection-highlight', 'sel-mode-area'));
+            block.forEach(c => c.classList.add('sel-invalid'));
+            highlighted = block;
+        }
+        syncBar();
+    }
+
+    function syncBar() {
+        const btn = document.getElementById('area-confirm');
+        const info = document.getElementById('area-picker-info');
+        if (btn) {
+            if (invalidMsg) {
+                btn.disabled = true;
+                btn.textContent = invalidMsg;
+            } else if (!current) {
+                btn.disabled = true;
+                btn.textContent = options.pendingText || '在棋盘上选区域…';
+            } else {
+                btn.disabled = false;
+                btn.textContent = cardName ? `确认使用 ${cardName}！` : '确认使用！';
+            }
+        }
+        if (info) {
+            if (!current) {
+                info.className = 'selection-info pending';
+                info.textContent = '点击棋盘上的格子来选择区域';
+            } else if (invalidMsg) {
+                info.className = 'selection-info pending';
+                info.innerHTML = `<span class="sel-dot"></span>${escapeHtml(invalidMsg)}`;
+            }
+        }
     }
 
     function highlight(sx, sy) {
         clearHighlights();
+        invalidMsg = '';
         for (let y = sy; y < sy + size; y++) {
             for (let x = sx; x < sx + size; x++) {
                 if (x < 0 || x > 5 || y < 0 || y > 5) continue;
-                const cell = boardEl.querySelector(`.cell[data-x="${x}"][data-y="${y}"]`);
+                const cell = cellAt(x, y);
                 if (cell) {
                     cell.classList.add('selection-highlight', 'sel-mode-area');
                     highlighted.push(cell);
@@ -9557,6 +9749,35 @@ function showPlacementPrompt(data) {
 
 // 更新手牌UI
 // 更新卡牌预览信息
+// 大卡面（Phase 5.3）：手机档手牌 64×92，中文效果读不了。
+//   在抽屉里给一张 200×280 的真卡（200/280 = 0.714，与实体 TCG 同比例），
+//   复用 Phase 2 的卡面分区（插画/名牌/说明/类型条），所以 Phase 7 出图后一处接、两处换。
+function renderPreviewCardFace(card) {
+    const face = document.getElementById('preview-card-face');
+    if (!face) return;
+    if (!card) { face.replaceChildren(); face.dataset.empty = 'true'; return; }
+    face.dataset.empty = 'false';
+    const speed = parseInt(card.speed, 10);
+    const gems = isNaN(speed) ? '' : Array.from({ length: Math.min(speed, 3) })
+        .map(() => '<i class="gem"></i>').join('');
+    const el = document.createElement('div');
+    el.className = 'magic-card preview-face-card';
+    el.innerHTML = `
+        <div class="card-art" aria-hidden="true"></div>
+        <div class="card-nameplate">
+            <div class="card-name">${escapeHtml(card.name || '')}</div>
+            <div class="card-speed-gems">${gems}</div>
+        </div>
+        <div class="card-desc">${escapeHtml(card.description || '')}</div>
+        <div class="card-typebar">
+            <span class="card-speed">速阶 ${escapeHtml(card.speed)}</span>
+            <span class="card-type">${escapeHtml(card.type)}魔法</span>
+        </div>
+    `;
+    applyCardArt(el, card.name);
+    face.replaceChildren(el);
+}
+
 function updateCardPreview(card, index) {
     const cardName = document.querySelector('#magic-card-preview .card-name');
     const previewSpeed = document.getElementById('preview-speed');
@@ -9889,6 +10110,58 @@ function requestHandSync(reason) {
     });
 }
 
+// 卡面底图（Phase 7）：卡名 → static/cards/<slug>.webp，映射由
+// tools/gen_card_art_prompts.py 从卡表生成（window.CARD_ART_MAP）。
+// 出图前映射里的文件都不存在 —— 这里**照写不误**：CSS 把真图作为最上层的
+// background-image 层，文件 404 时浏览器只跳过那一层，下面的渐变占位照旧显示。
+// 好处是不必探测文件是否存在（省一轮请求），也不会出现破图图标。
+// ⚠️ 走 CSS 变量而不是内联 background：内联的 background 会**整条替换**掉占位渐变。
+function applyCardArt(el, cardName) {
+    if (!el || !cardName) return;
+    const map = (typeof window !== 'undefined' && window.CARD_ART_MAP) || null;
+    const rel = map ? map[cardName] : null;
+    if (!rel) return;
+    const art = el.querySelector('.card-art') || el;
+    art.style.setProperty('--card-art-image', `url("/static/${rel}")`);
+}
+
+// 扇形手牌（Phase 2）：照 Balatro 的公开公式把一排卡摆成扇形。
+//   · 总张角上限 ±5.73°（≈0.1 弧度），每张步进 0.2/n 弧度；
+//   · 间距按手牌上限算、不按当前张数算 —— 抽牌/出牌时手牌不整体重排；
+//   · 只在宽屏启用：紧凑/矮屏档 CSS 已把 transform 压掉（小卡抬起会跳出可视带）。
+// 旋转量写进 CSS 变量 --fan-rot / --fan-drop，真正的 transform 在 CSS 里合成
+// （fan 旋转 ⊗ 预览缩放），这样 hover/selected 的预览位移不会被内联样式盖掉。
+const HAND_FAN_MAX_RAD = 0.1;         // 总张角上限（弧度）≈ ±5.73°
+const HAND_LIMIT_FOR_SPACING = 8;     // 手牌上限：间距按它算，不按当前张数
+function applyHandFan(handElement, count) {
+    if (!handElement) return;
+    const compact = document.body.classList.contains('layout-compact')
+        || document.body.classList.contains('layout-dense')
+        || document.body.classList.contains('layout-tight');
+    handElement.classList.toggle('fan', !compact && count > 1);
+    const cards = handElement.children;
+    const n = cards.length;
+    for (let i = 0; i < n; i++) {
+        const el = cards[i];
+        if (compact || n <= 1) {
+            el.style.removeProperty('--fan-rot');
+            el.style.removeProperty('--fan-drop');
+            el.style.marginLeft = '';
+            continue;
+        }
+        // 居中为 0，向两边对称展开；step = 0.2/n（弧度），整体再限到 ±MAX
+        const step = Math.min(0.2 / Math.max(n, 1), HAND_FAN_MAX_RAD * 2 / Math.max(n - 1, 1));
+        const angle = (i - (n - 1) / 2) * step;
+        // 弧顶比两侧略高：两侧下沉一个随角度增大而增大的量
+        const drop = Math.abs(angle) / HAND_FAN_MAX_RAD * 6;  // 最多下沉 6px
+        el.style.setProperty('--fan-rot', `${angle}rad`);
+        el.style.setProperty('--fan-drop', `${drop}px`);
+        // 重叠量按手牌上限算：张数越多负间距越大，但只对 2 张起生效
+        const overlap = n > 3 ? -Math.min(46, (n - 3) * 9) : 6;
+        el.style.marginLeft = (i === 0) ? '' : `${overlap}px`;
+    }
+}
+
 function updateHandUI() {
     const handElement = document.getElementById('magic-hand');
     if (!handElement) return;
@@ -9926,11 +10199,26 @@ function updateHandUI() {
             cardElement.classList.add('selected');
         }
 
+        // 真卡结构（照 MTG §201-213 分区）：满幅插画底 → 名牌 + 速阶宝石 → 说明框 → 类型条。
+        // ⚠️ 分工不变：美术只负责底图（.card-art 的渐变占位，Phase 7 换真图），
+        //    卡名/速阶/类型/描述仍由 DOM 叠（.card-name/.card-speed/.card-type/.card-desc），
+        //    这样「美术不生成文字与卡框」的约定与检查工具的选择器都不变。
+        const speed = parseInt(card.speed, 10);
+        const speedGems = isNaN(speed) ? '' : Array.from({ length: Math.min(speed, 3) })
+            .map(() => '<i class="gem"></i>').join('');
         cardElement.innerHTML = `
-            <div class="card-name">${escapeHtml(card.name)}</div>
-            <div class="card-speed">速阶：${escapeHtml(card.speed)}</div>
-            <div class="card-type">${escapeHtml(card.type)}魔法</div>
+            <div class="card-art" aria-hidden="true"></div>
+            <div class="card-nameplate">
+                <div class="card-name">${escapeHtml(card.name)}</div>
+                <div class="card-speed-gems" title="速阶 ${escapeHtml(card.speed)}">${speedGems}</div>
+            </div>
+            <div class="card-desc">${escapeHtml(card.description || '')}</div>
+            <div class="card-typebar">
+                <span class="card-speed">速阶 ${escapeHtml(card.speed)}</span>
+                <span class="card-type">${escapeHtml(card.type)}魔法</span>
+            </div>
         `;
+        applyCardArt(cardElement, card.name);
 
         // 添加点击事件，实现点击选择/使用功能
         cardElement.addEventListener('click', () => {
@@ -10455,21 +10743,73 @@ function joinRoomById(roomId, opts) {
 }
 window.joinRoomById = joinRoomById;
 
+// 连锁叠牌（Phase 3，照示意稿 C）：把连锁渲染成**真的叠起来的一摞卡**，
+// 而不是几行文字 —— 文字版看不出「谁响应了谁」，卡片有插画、名字、速阶、
+// 以及"是你还是对手"，叠起来的顺序本身就是结算顺序（LIFO，栈顶最后结算）。
+//
+// ⚠️ 复用 Phase 2 的真卡组件类（.magic-card / .card-art / .card-nameplate /
+//    .card-typebar），所以美术层（Phase 7 的出图）一处接上、两处都换。
+//    区别只有尺寸与"不响应交互"：连锁里的卡是只读展示，不挂点击。
+const CHAIN_CARD_SPEED_LABEL = { 1: '速阶 1', 2: '速阶 2', 3: '速阶 3' };
+function buildChainCardEl(item, index, total) {
+    const card = (item && item.card) || {};
+    const who = (item && (item.playerId || item.player_id || item.caster)) === gameState.playerId ? '你' : '对手';
+    const el = document.createElement('div');
+    el.className = 'magic-card chain-stack-card';
+    el.dataset.chainIndex = String(index);
+    // 叠牌观感：每张相对前一张往右上错开一点，形成"一摞"；越靠后（越晚加入）越在上面。
+    el.style.setProperty('--stack-i', String(index));
+    el.style.setProperty('--stack-n', String(total));
+    el.classList.add(who === '你' ? 'chain-mine' : 'chain-theirs');
+    const speed = parseInt(card.speed, 10);
+    const gems = isNaN(speed) ? '' : Array.from({ length: Math.min(speed, 3) })
+        .map(() => '<i class="gem"></i>').join('');
+    el.innerHTML = `
+        <div class="card-art" aria-hidden="true"></div>
+        <div class="card-nameplate">
+            <div class="card-name">${escapeHtml(card.name || '?')}</div>
+            <div class="card-speed-gems">${gems}</div>
+        </div>
+        <div class="card-typebar">
+            <span class="card-speed">${escapeHtml(CHAIN_CARD_SPEED_LABEL[speed] || '')}</span>
+            <span class="card-type">${escapeHtml(card.type || '')}魔法</span>
+        </div>
+        <div class="chain-card-who">${who}</div>
+    `;
+    applyCardArt(el, card.name);
+    return el;
+}
+
 // 更新连锁UI显示
 function updateChainUI() {
     const chainElement = document.getElementById('chain-display');
     if (!chainElement) return;
+    const items = Array.isArray(gameState.chain) ? gameState.chain : [];
 
-    chainElement.innerHTML = `<h3>当前连锁 (${gameState.chain.length})</h3>`;
-    gameState.chain.forEach((item, index) => {
-        const chainItem = document.createElement('div');
-        chainItem.className = 'chain-item';
-        chainItem.innerHTML = `
-            <div>连锁 ${index + 1}：${item.card.name}</div>
-            <div>玩家：${(item.playerId || item.player_id || item.caster) === gameState.playerId ? '你' : '对手'}</div>
-        `;
-        chainElement.appendChild(chainItem);
-    });
+    // ⚠️ 「先清空再填充」必须先校验数据、失败时保留上一帧（CLAUDE.md §10.3 的教训）。
+    //     这里 items 是数组，渲染是纯 DOM 拼装，任何一张坏卡都不会抛 —— 用 Fragment 兜底。
+    const frag = document.createDocumentFragment();
+    const head = document.createElement('h3');
+    head.textContent = `当前连锁 (${items.length})`;
+    frag.appendChild(head);
+
+    const stack = document.createElement('div');
+    stack.className = 'chain-stack';
+    // 结算顺序是 LIFO：栈顶（最后响应的）先结算 —— 视觉上把最后加入的放最上面
+    items.forEach((item, i) => stack.appendChild(buildChainCardEl(item, i, items.length)));
+    frag.appendChild(stack);
+    chainElement.replaceChildren(frag);
+
+    // 10 秒响应窗里的卡列表也换成同一套真卡（原来这里是空的、只有纯文字标题）。
+    // ⚠️ 复用 .chain-stack 这一个容器类（而不是给 #chain-cards-list 另写一条 CSS）——
+    //    AC6 的 dupSel 预算已顶格，多一条同选择器规则就会超。
+    const listEl = document.getElementById('chain-cards-list');
+    if (listEl) {
+        listEl.classList.add('chain-stack');
+        const lfrag = document.createDocumentFragment();
+        items.forEach((item, i) => lfrag.appendChild(buildChainCardEl(item, i, items.length)));
+        listEl.replaceChildren(lfrag);
+    }
 }
 
 // 添加显示可连锁卡牌的函数

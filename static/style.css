@@ -1688,7 +1688,8 @@ html.theme-dark .board {
        且顺序在后 —— 两条都能赢，!important 是历史遗留的多余对抗。 */
     background: var(--ship-metal);
     border-color: var(--ship-outline);
-    box-shadow: inset 0 2px 3px var(--fluent-light-35), inset 0 -2px 3px var(--fluent-scrim-30);
+    /* Fluent：平面 + 描边，去掉原来的金属斜面（inset 高光/暗边） */
+    box-shadow: none;
 }
 .compendium-controls {
     display: flex;
@@ -1715,8 +1716,44 @@ html.theme-dark .board {
 }
 .compendium-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-    gap: 8px;
+    grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+    gap: 12px;
+}
+/* 图鉴条目 = 真卡（Phase 6）。⚠️ 选择器带 #help-magic-cards 这个 id：
+   图鉴是弹窗、理论上可能开在对局屏上，而各档的
+   `body.layout-compact.layout-ingame .magic-card`(0,3,1) 会压过纯类名写法。
+   用 id 一次把话说死（只有图鉴这一个网格会命中），也不必去改那些档的规则。 */
+#help-magic-cards .magic-card-help { min-width: 0; }
+#help-magic-cards .magic-card-help .magic-card {
+    width: 100%;
+    max-width: 168px;
+    height: 235px;              /* 168 / 235 ≈ 0.715 → 与实体 TCG 同比例 */
+    margin: 0 auto;
+    cursor: default;
+}
+#help-magic-cards .magic-card-help .magic-card:hover { transform: none; }
+#help-magic-cards .magic-card-help .card-nameplate { padding: 5px 8px; }
+#help-magic-cards .magic-card-help .card-name { font-size: 0.95rem; }
+#help-magic-cards .magic-card-help .card-speed-gems .gem { width: 9px; height: 9px; }
+/* 图鉴里说明要**尽量读全**（这是它的用途），所以行数放到 9 行 */
+#help-magic-cards .magic-card-help .card-desc {
+    font-size: 0.72rem;
+    line-height: 1.4;
+    margin: 5px 8px 0;
+    padding: 5px 6px;
+    /* max-height 与 line-clamp 必须同为 9 行（基础规则是 3 行 + 10px） */
+    max-height: calc(9em * 1.4 + 12px);
+    -webkit-line-clamp: 9;
+}
+#help-magic-cards .magic-card-help .card-typebar { padding: 3px 8px; }
+#help-magic-cards .magic-card-help .card-speed { font-size: 0.66rem; }
+/* 使用次数角标（原来在标题行，现在落在类型条右侧） */
+#help-magic-cards .compendium-uses {
+    font-size: 0.62rem;
+    padding: 1px 5px;
+    border-radius: var(--fluent-radius-full);
+    background: var(--alpha-primary-12);
+    color: var(--primary);
 }
 .compendium-meta {
     color: var(--muted);
@@ -2163,37 +2200,285 @@ body.layout-tight.layout-ingame .quick-chat-toast {
     margin: 10px 0;
     padding: 10px;
     border: 1px solid var(--panel-border);
-    border-radius: 10px;
+    border-radius: var(--fluent-radius-lg);
     background: var(--glass);
 }
 .magic-hand { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; justify-content: center; }
+
+/* ============================================================================
+   真卡组件（Phase 2，照 MTG §201-213 分区 + Balatro 扇形 + 两级预览）
+   ────────────────────────────────────────────────────────────────────────────
+   ⚠️ 盒模型红线：.magic-card 的 width/height/padding 在各断点保持原值（100×150 /
+      86×118 / 64×92 / 56×64 / 46×62），这里只重排**内部**（插画/名牌/说明/类型条）
+      与 **transform**（扇形角度、两级预览位移）—— 两者都不动盒模型尺寸。
+   分工：美术只出 .card-art 底图（Phase 7 换真图），文字仍由 DOM 叠
+      （.card-name / .card-speed / .card-type / .card-desc），与提示词约定一致。
+   ========================================================================== */
 .magic-card {
     width: 100px;
     height: 150px;
     border: 2px solid var(--border-strong);
-    background: linear-gradient(165deg, var(--surface-strong), var(--surface-muted));
-    border-radius: 8px;
+    background: var(--surface-strong);
+    border-radius: var(--fluent-radius-lg);
     cursor: pointer;
-    padding: 6px;
+    padding: 0;                       /* 内部各区分区自管间距，外框不再统一 padding */
+    overflow: hidden;                 /* 真卡：插画满幅，四角随卡框裁圆 */
+    display: flex;
+    flex-direction: column;
+    position: relative;
     transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
 }
-.magic-card:hover {
-    transform: translateY(-6px) scale(1.03);
-    border-color: var(--primary);
-    box-shadow: 0 8px 20px var(--alpha-primary-30);
+/* 满幅插画底。Phase 7 起**真图压在占位之上**：
+   第 1 层 = --card-art-image（出图后由 JS 写成 url(...)；没出图时是 none）；
+   下面两层 = 渐变占位。这样文件不存在时浏览器不画那一层、占位照旧显示 ——
+   不需要 JS 去探测文件是否存在（那会多一轮请求），也不会出现"破图"图标。 */
+.magic-card .card-art {
+    position: absolute; inset: 0; z-index: 0;
+    background-image:
+        var(--card-art-image, none),
+        radial-gradient(80px 60px at 50% 34%, var(--alpha-primary-35), transparent 72%),
+        linear-gradient(150deg, var(--surface-strong), var(--surface-muted) 75%);
+    background-size: cover, auto, auto;
+    background-position: center, center, center;
+    background-repeat: no-repeat, no-repeat, no-repeat;
+    pointer-events: none;
 }
-.magic-card.selected {
-    border: 2px solid var(--warning);
-    box-shadow: 0 0 10px var(--deco-amber-a5-3);
-    transform: scale(1.05);
+/* 名牌：**不用 flex** —— 卡名要独占整行才有稳定的两行折行高度；
+   速阶宝石绝对定位在右上角，不参与卡名的宽度竞争（实测：flex 行里长卡名
+   被宝石挤到只剩一行高，scrollHeight−clientHeight = 29px，名字被裁）。 */
+.magic-card .card-nameplate {
+    position: relative; z-index: 1;
+    padding: 4px 6px;
+    background: var(--fluent-scrim-30);
+    border-bottom: 1px solid var(--border);
 }
 .magic-card .card-name {
-    font-size: 0.85rem;
-    font-weight: bold;
-    margin-bottom: 5px;
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 4px;
+    font-size: 0.8rem; font-weight: bold; line-height: 1.15;
+    padding-right: 26px;                 /* 给右上角速阶宝石让位（3×7px + 间隙 = 25px） */
+    /* ⚠️ overflow-wrap: anywhere 必须有：拉丁卡名（Freezing！）是无空格长 token，
+       默认折行规则不会在词内断开 → 会横向溢出（实测 scrollWidth − clientWidth = 20px，
+       被卡片的 overflow:hidden 从右边切掉）。汉字名没问题，但卡表里就有拉丁名。 */
+    overflow-wrap: anywhere;
+    overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
 }
+.magic-card .card-speed-gems {
+    position: absolute; top: 5px; right: 6px;
+    display: flex; gap: 2px;
+}
+.magic-card .card-speed-gems .gem {
+    width: 7px; height: 7px; border-radius: 2px; display: block;
+    background: linear-gradient(180deg, var(--fluent-gold), var(--fluent-gold-deep));
+    border: 1px solid var(--fluent-gold-soft);
+}
+/* 独立说明框。⚠️ 卡面尺寸（86×118）物理上放不下完整中文描述 ——
+   按 MTG Arena 的做法做**行截断 + 省略号**；完整文本由二级预览的右侧说明窗
+   （#magic-card-preview）与移动端大卡面抽屉承载。
+   ⚠️ 高度必须是**整行高的整数倍**：靠 flex 撑高时盒底会落在行中间，浏览器就把最后一行
+      **拦腰切断**（实测宽屏盒高 35px、行高 13.392px → 余 8.2px，肉眼能看到半行字）。
+     所以：flex: 0 0 auto（不参与拉伸）+ max-height = N×行高 + 内边距/描边（box-sizing:border-box）
+     + -webkit-line-clamp: N。三者必须一致，改一个要同时改另外两个。 */
+.magic-card .card-desc {
+    position: relative; z-index: 1;
+    flex: 0 0 auto;
+    margin: 4px 6px 0; padding: 4px 5px;
+    font-size: 0.62rem; line-height: 1.35; text-align: left; color: var(--text);
+    background: var(--fluent-scrim-15);
+    border: 1px solid var(--border); border-radius: var(--fluent-radius-control);
+    max-height: calc(3em * 1.35 + 10px);   /* 3 行 + padding 8 + border 2 */
+    overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+}
+/* 类型条：贴卡底，速阶 + 类型两行信息压成一条 */
+.magic-card .card-typebar {
+    position: relative; z-index: 1;
+    display: flex; align-items: center; justify-content: space-between; gap: 4px;
+    /* margin-top:auto：说明框不再参与拉伸（见上），所以由类型条自己贴到卡底。
+       行高 1.2 + 上下 2px：三区总高要 ≤ 卡高（整行截断后说明框变高，这里必须省出来）。 */
+    margin-top: auto; padding: 2px 6px; line-height: 1.2;
+    background: var(--fluent-scrim-30); border-top: 1px solid var(--border);
+}
+/* ⚠️ min-width:0 + 省略号：装不下时干净收尾，而不是被卡片的 overflow:hidden 切掉半个字。
+   合并进下面两条**既有**规则 —— 另起一条同选择器的新块会顶破 AC6 的 dupSel 预算。 */
+.magic-card .card-speed {
+    font-size: 0.62rem; color: var(--muted); margin: 0;
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.magic-card .card-type {
+    font-size: 0.62rem; color: var(--primary); margin: 0;
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ---------- 连锁叠牌（Phase 3，示意稿 C）----------
+   把连锁渲染成「真的叠起来的一摞卡」而不是几行文字：卡片有插画/卡名/速阶，
+   左上角标出是**谁**出的（我方金、对手红），叠起来的顺序就是结算顺序（LIFO）。
+   ⚠️ 特异度写到 (0,4,1)：要压过各档的
+      `body.layout-ingame:not(.layout-compact) .magic-card`(0,3,1) /
+      `body.layout-compact.layout-ingame .magic-card`(0,3,1)
+      —— 否则连锁卡会跟着手牌档位变成 86×118 / 64×92，在这一小条里撑破布局。 */
+body.layout-ingame .chain-stack .magic-card.chain-stack-card {
+    flex: 0 0 auto;
+    width: 56px;
+    height: 78px;
+    cursor: default;
+    transform: none;                 /* 叠牌错位由下面的 margin/translate 表达 */
+}
+/* 叠牌容器：连锁展示区与 10 秒响应窗的卡列表**共用**这一类
+   （响应窗的 #chain-cards-list 由 JS 加上同一个类，避免再起一个只管它的选择器
+   —— AC6 的 dupSel 预算顶格）。行方向 + 居中 + 可横向滚动：竖排会把响应窗撑过高。 */
+.chain-stack {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: center;
+    overflow-x: auto;
+    padding: 2px 0 4px;
+    min-height: 0;
+}
+/* 常驻的 #chain-display 在手牌条里（条高 138px、手牌卡 118px）—— 78px 的卡放进去
+   会把内容顶出条外被 overflow 裁掉（实测第一版：卡落在 y≈961，条只到 899）。
+   改成**贴条右侧的小叠牌**：40×56，绝对定位，不占手牌那一行的高度。 */
+body.layout-ingame .chain-display {
+    position: absolute;
+    /* ⚠️ 让开右下角的**聊天浮窗**（fixed，右边贴边 300px、底 24px、高 210px）：
+       两者同处右下角时，连锁叠牌会被聊天窗盖住 —— 实测出图里只露出半张卡，
+       而"看不见谁响应了谁"正是这一期要修的问题本身。
+       320 = 聊天窗宽 300 + 12px 间隙。预览浮窗在上方（top:72），不冲突。 */
+    right: 320px;
+    bottom: 6px;
+    z-index: 3;
+    max-width: 60%;
+    pointer-events: none;
+}
+body.layout-ingame .chain-display h3 {
+    margin: 0 0 2px;
+    font-size: 0.66rem;
+    text-align: right;
+}
+body.layout-ingame .chain-display .chain-stack { justify-content: flex-end; padding: 0; overflow: visible; }
+body.layout-ingame .chain-display .magic-card.chain-stack-card { width: 40px; height: 56px; }
+body.layout-ingame .chain-display .magic-card.chain-stack-card .chain-card-who { font-size: 0.44rem; }
+body.layout-ingame .chain-display .magic-card.chain-stack-card .card-nameplate { padding: 1px 2px; }
+body.layout-ingame .chain-display .magic-card.chain-stack-card .card-name { font-size: 0.5rem; }
+body.layout-ingame .chain-display .magic-card.chain-stack-card .card-typebar { padding: 1px 2px; }
+body.layout-ingame .chain-display .magic-card.chain-stack-card .card-speed,
+body.layout-ingame .chain-display .magic-card.chain-stack-card .card-type { font-size: 0.42rem; }
+/* 叠牌：负外边距让后一张压住前一张；每张再往右上错开一点点（--stack-i 由 JS 写） */
+body.layout-ingame .chain-stack .magic-card.chain-stack-card + .magic-card.chain-stack-card {
+    margin-left: -22px;
+    transform: translate(calc(var(--stack-i) * 4px), calc(var(--stack-i) * -3px));
+}
+body.layout-ingame .chain-stack .magic-card.chain-stack-card:hover,
+body.layout-ingame .chain-stack .magic-card.chain-stack-card.selected { transform: none; }
+body.layout-ingame .magic-card.chain-stack-card .card-desc { display: none; }
+body.layout-ingame .magic-card.chain-stack-card .card-nameplate { padding: 2px 4px; }
+body.layout-ingame .magic-card.chain-stack-card .card-name {
+    font-size: 0.64rem; padding-right: 0; -webkit-line-clamp: 1;
+}
+body.layout-ingame .magic-card.chain-stack-card .card-speed-gems { display: none; }
+body.layout-ingame .magic-card.chain-stack-card .card-typebar { margin-top: auto; padding: 1px 4px; }
+body.layout-ingame .magic-card.chain-stack-card .card-speed,
+body.layout-ingame .magic-card.chain-stack-card .card-type { font-size: 0.52rem; }
+/* 是谁出的：一条角标（我方金 / 对手红） */
+.chain-card-who {
+    position: absolute; left: 3px; top: 3px; z-index: 2;
+    font-size: 0.5rem; line-height: 1.4; padding: 0 4px;
+    border-radius: var(--fluent-radius-full);
+    background: var(--fluent-scrim-55); color: var(--fluent-light-95);
+}
+body.layout-ingame .magic-card.chain-theirs .chain-card-who {
+    background: var(--alpha-danger-55); color: var(--fluent-light-95);
+}
+body.layout-ingame .magic-card.chain-mine .chain-card-who {
+    background: var(--fluent-gold-deep); color: var(--fluent-scrim-55);
+}
+/* 10 秒响应窗里的卡列表用同一套真卡（容器类 .chain-stack 由 JS 一并加上，
+   见 updateChainUI —— 不再为 #chain-cards-list 单独起选择器，省 dupSel 预算） */
+
+/* 大卡面（Phase 5.3）：手机档手牌只有 64×92，中文效果文字读不了 —— 选中后在抽屉里
+   给一张 200×280 的真卡（200/280 = 0.714，与实体 TCG 同比例，MTG 资产 744×1040 交叉验证）。
+   宽屏不显示：那里手牌 118px + 右侧说明窗已经够读，且宽屏的预览框只有 288px 宽、
+   再塞 200×280 会把「预览与聊天不重叠」那条断言顶破。 */
+.preview-card-face { display: none; }
+/* ⚠️ 三个选择器写在**同一条规则**里（不要拆成两条 —— 拆开就成了「同选择器重复定义」，
+   AC6 的 dupSel 预算顶格）。横向窄的档（横屏 664×336 的槽只有 ~186px）由 max-width 兜底。 */
+body.layout-compact.layout-ingame .preview-card-face,
+body.layout-dense.layout-ingame .preview-card-face,
+body.layout-tight.layout-ingame .preview-card-face {
+    display: block;
+    width: 200px;
+    max-width: 100%;
+    margin: 0 auto 8px;
+}
+/* 卡面本体：只钉尺寸与等比，内部各区的字号在这一档放大到可读。
+   ⚠️ 必须带上 `.dock-panel[data-dock-panel="card"]` 这一段上下文：紧凑档那条
+      `… .dock-panel[data-dock-panel="card"] .magic-card { width:56px; height:64px }`
+      的特异度是 (0,5,1)，只写 `… .magic-card.preview-face-card`(0,4,1) 会被它压住 ——
+      实测大卡面被缩成 56×64、比例 0.875、说明溢出 941px（正是要修的那个「读不了」）。 */
+body.layout-compact.layout-ingame .magic-card.preview-face-card,
+body.layout-compact.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card.preview-face-card,
+body.layout-dense.layout-ingame .magic-card.preview-face-card,
+body.layout-tight.layout-ingame .magic-card.preview-face-card {
+    width: 200px;
+    height: 280px;
+    cursor: default;
+}
+body.layout-compact.layout-ingame .magic-card.preview-face-card:hover,
+body.layout-dense.layout-ingame .magic-card.preview-face-card:hover,
+body.layout-tight.layout-ingame .magic-card.preview-face-card:hover { transform: none; }
+body.layout-compact.layout-ingame .magic-card.preview-face-card .card-nameplate { padding: 6px 9px; }
+body.layout-compact.layout-ingame .magic-card.preview-face-card .card-name {
+    font-size: 1.05rem; line-height: 1.2; padding-right: 34px; -webkit-line-clamp: 2;
+}
+body.layout-compact.layout-ingame .magic-card.preview-face-card .card-speed-gems .gem {
+    width: 10px; height: 10px;
+}
+body.layout-compact.layout-ingame .magic-card.preview-face-card .card-desc {
+    display: -webkit-box;          /* 这一档是唯一要读说明的地方 → 恢复显示 */
+    font-size: 0.78rem; line-height: 1.45;
+    margin: 6px 9px 0; padding: 6px 7px;
+    /* ⚠️ 必须同时放开 max-height 与 line-clamp（基础规则是「3 行 + 10px」，
+       只改 clamp 不改 max-height 的话，8 行的声明会被 3 行的上限压住） */
+    max-height: calc(8em * 1.45 + 14px);   /* 8 行 + padding 12 + border 2 */
+    -webkit-line-clamp: 8;
+}
+body.layout-compact.layout-ingame .magic-card.preview-face-card .card-typebar { padding: 4px 9px; }
+body.layout-compact.layout-ingame .magic-card.preview-face-card .card-speed,
+body.layout-compact.layout-ingame .magic-card.preview-face-card .card-type { font-size: 0.72rem; }
+
+/* 两级预览（Balatro 的悬停 = 纯缩放；O 规范的二级 = 抬起 + 金描边 + 右侧说明窗）。
+   ⚠️ 位移不写 translateY：宽屏手牌条贴底且 overflow:hidden（max-height 138px），
+      任何向上位移都会被裁掉（这是本项目 §10.1 手牌贴底的既有约束）。
+      所以一级 = scale(1.06)，二级 = scale(1.09) + 金描边 + 右侧说明窗（#magic-card-preview），
+      z-index 抬到扇形邻居之上。触屏没有 hover → 移动端由 Phase 5.3 的抽屉承载二级。 */
+.magic-card:hover {
+    transform: scale(1.06);
+    z-index: 5;
+    border-color: var(--primary);
+    box-shadow: var(--fluent-elev-4), 0 0 0 1px var(--alpha-primary-35);
+}
+.magic-card.selected {
+    transform: scale(1.09);
+    z-index: 6;
+    border-color: var(--warning);
+    box-shadow: 0 0 0 2px var(--deco-amber-a35-1), var(--fluent-elev-4);
+}
+
+/* 扇形手牌（Balatro 公式：绕底部一个远心点旋转，两边略下沉）。
+   旋转量由 JS 写进 --fan-rot/--fan-drop，这里与预览缩放**合成**同一个 transform ——
+   基础态 = 扇形旋转；hover/selected 在旋转之上再叠缩放/位移。这样内联的扇形变量
+   不会盖掉预览态（若 JS 直接写 el.style.transform，hover 就再也抬不起来）。 */
+.magic-hand.fan { align-items: flex-end; flex-wrap: nowrap; }
+.magic-hand.fan .magic-card {
+    transform-origin: 50% 130%;
+    transform: rotate(var(--fan-rot, 0rad)) translateY(var(--fan-drop, 0px));
+}
+.magic-hand.fan .magic-card:hover {
+    transform: rotate(var(--fan-rot, 0rad)) translateY(var(--fan-drop, 0px)) scale(1.06);
+}
+.magic-hand.fan .magic-card.selected {
+    transform: rotate(var(--fan-rot, 0rad)) translateY(var(--fan-drop, 0px)) scale(1.09);
+}
+
+/* 旧的三处文字规则已被上面的分区取代，保留 .card-speed/.card-type 的非卡内用例（弹窗等） */
 .card-speed { font-size: 0.8em; color: var(--muted); }
 .magic-card .card-description {
     font-size: 0.7em;
@@ -2383,6 +2668,25 @@ body.layout-tight.layout-ingame .quick-chat-toast {
 .cell.sel-mode-area { --sel-rgb: 255, 196, 0; }   /* 区域点选：金 */
 .cell.sel-mode-line { --sel-rgb: 255, 92, 0; }    /* 整行 / 整列：橙红 */
 .cell.sel-mode-cont { --sel-rgb: 22, 190, 90; }   /* 自由连选：绿 */
+
+/* ---------- 目标选择的三个状态（Phase 4） ----------
+   ① sel-anchor  虚框锚点：选择器刚打开时，把所有**合法落点**标出来（此时还没选）
+   ② selection-highlight 实框：已选中的区域/行列/格子
+   ③ sel-invalid 红框：当前选择非法（越界/不相邻/超量）——**不提交**，确认按钮同时置灰
+   这三条与上面按卡分色的 --sel-rgb 叠加：锚点用中性色（还没决定），
+   选中用各卡自己的色，非法一律红（语义色不该跟着卡变）。 */
+.cell.sel-anchor {
+    outline: 2px dashed var(--alpha-primary-45);
+    outline-offset: -4px;
+    cursor: crosshair;
+    z-index: 3;
+}
+.cell.sel-invalid {
+    background: var(--alpha-danger-30);
+    outline: 2px solid var(--danger);
+    outline-offset: -3px;
+    z-index: 5;
+}
 
 .cell.selection-highlight,
 .cell.magic-selection-overlay {
@@ -3639,7 +3943,9 @@ body.layout-compact.layout-ingame .game-content {
     width: 100%;
     max-width: none;
     height: var(--stage-vh, 100dvh);
-    padding: 4px 6px calc(4px + env(safe-area-inset-bottom, 0px));
+    /* viewport-fit=cover 之后，刘海/圆角才会给出非零的 safe-area；顶栏要避开顶部刘海，
+       底部沿用既有 inset-bottom —— 两者必须成对（Phase 5.1）。 */
+    padding: calc(4px + env(safe-area-inset-top, 0px)) 6px calc(4px + env(safe-area-inset-bottom, 0px));
     box-sizing: border-box;
 }
 body.layout-compact.layout-ingame .game-content > .game-info { grid-row: 1; }
@@ -3805,10 +4111,19 @@ body.layout-compact.layout-ingame .magic-hand {
     overflow-x: auto; overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
 }
-body.layout-compact.layout-ingame .magic-card { flex: 0 0 auto; width: 64px; height: 92px; padding: 4px; }
-body.layout-compact.layout-ingame .magic-card .card-name { font-size: 0.7rem; margin-bottom: 2px; padding-bottom: 2px; }
-body.layout-compact.layout-ingame .magic-card .card-speed,
-body.layout-compact.layout-ingame .magic-card .card-type { font-size: 0.62rem; }
+body.layout-compact.layout-ingame .magic-card { flex: 0 0 auto; width: 64px; height: 92px; }
+/* 紧凑档真卡：说明框太小读不了 → 只留 名牌 + 类型条，插画仍在底层（Phase 5.3 点开抽屉给大卡面） */
+body.layout-compact.layout-ingame .magic-card .card-nameplate { padding: 2px 3px; }
+body.layout-compact.layout-ingame .magic-card .card-name { font-size: 0.66rem; }
+body.layout-compact.layout-ingame .magic-card .card-speed-gems .gem { width: 6px; height: 6px; }
+body.layout-compact.layout-ingame .magic-card .card-desc { display: none; }
+body.layout-compact.layout-ingame .magic-card .card-typebar { margin-top: auto; padding: 2px 3px; }
+body.layout-compact.layout-ingame .magic-card .card-type { font-size: 0.56rem; }
+/* 紧凑档两段文字装不下（实测溢出 6–8px）→ 只留类型；速阶由名牌上的宝石表达 */
+body.layout-compact.layout-ingame .magic-card .card-speed { display: none; }
+/* 紧凑档无 hover：一级预览的抬起位移会让小卡跳出可视带，压成「点一下直接选中」 */
+body.layout-compact.layout-ingame .magic-card:hover { transform: none; box-shadow: var(--fluent-elev-4); }
+body.layout-compact.layout-ingame .magic-card.selected { transform: none; }
 body.layout-compact.layout-ingame #chain-display:empty { display: none; }
 
 /* 手牌被搬进面板槽的「卡牌」页时（矮屏 / 横屏，或用户手动展开面板槽）：
@@ -3990,10 +4305,19 @@ body.layout-dense.layout-ingame .surrender-btn { padding: 4px 10px; font-size: 0
 body.layout-dense.layout-ingame #magic-system { margin: 0; }
 body.layout-dense.layout-ingame .magic-hand-container { margin: 0; padding: 2px 0 0; }
 body.layout-dense.layout-ingame .magic-hand-container > h3 { display: none; }
-body.layout-dense.layout-ingame .magic-card { width: 46px; height: 62px; padding: 2px; }
-body.layout-dense.layout-ingame .magic-card .card-name { font-size: 0.6rem; margin-bottom: 1px; }
-body.layout-dense.layout-ingame .magic-card .card-speed,
-body.layout-dense.layout-ingame .magic-card .card-type { font-size: 0.56rem; }
+body.layout-dense.layout-ingame .magic-card { width: 46px; height: 62px; }
+body.layout-dense.layout-ingame .magic-card .card-nameplate { padding: 1px 2px; }
+body.layout-dense.layout-ingame .magic-card .card-name {
+    font-size: 0.5rem; line-height: 1.1; padding-right: 0;
+    -webkit-line-clamp: 2;
+}
+body.layout-dense.layout-ingame .magic-card .card-speed-gems { display: none; }
+body.layout-dense.layout-ingame .magic-card .card-desc { display: none; }
+body.layout-dense.layout-ingame .magic-card .card-typebar { margin-top: auto; padding: 1px 2px; }
+body.layout-dense.layout-ingame .magic-card .card-type { font-size: 0.44rem; line-height: 1.1; }
+body.layout-dense.layout-ingame .magic-card .card-speed { display: none; }
+body.layout-dense.layout-ingame .magic-card:hover,
+body.layout-dense.layout-ingame .magic-card.selected { transform: none; }
 
 /* 横屏（664x336）：336px 高的视口里，卡牌页要先保证**手牌可点**。
    槽内 .dock-body 实测只有 52px（预览面板先占了位置），而卡片高 64px
@@ -4004,10 +4328,18 @@ body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] {
     flex-direction: column;
 }
 body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] #magic-system { order: -1; }
-body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card { height: 56px; width: 50px; padding: 2px; }
-body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card .card-name { font-size: 0.58rem; margin-bottom: 1px; }
-body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card .card-speed,
-body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card .card-type { font-size: 0.54rem; }
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card { height: 56px; width: 50px; }
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card .card-nameplate { padding: 1px 2px; }
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card .card-name {
+    font-size: 0.5rem; line-height: 1.1; padding-right: 0;
+}
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card .card-speed-gems { display: none; }
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card .card-desc { display: none; }
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card .card-typebar { margin-top: auto; padding: 1px 2px; }
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card .card-type { font-size: 0.44rem; line-height: 1.1; }
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card .card-speed { display: none; }
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card:hover,
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card.selected { transform: none; }
 
 /* 横屏卡牌页的最终裁决：那个 52px 高的 .dock-body 里不可能同时放下预览与手牌，
    而手牌是**唯一必须可点**的东西。所以横屏直接把预览与弃牌按钮移出卡牌页的占用：

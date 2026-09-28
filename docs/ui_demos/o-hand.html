@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>新方案 O · 手牌与预览行为（规范稿）</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+  window.__demoViews = ['game', 'fan', 'flows'];
+  window.__demoErrors = [];
+  window.addEventListener('error', function (e) { window.__demoErrors.push(String(e.message)); });
+  window.setDemoView = function (v) {
+    document.querySelectorAll('.screen').forEach(function (s) { s.classList.toggle('on', s.dataset.view === v); });
+    document.querySelectorAll('#demo-switcher button').forEach(function (b) { b.classList.toggle('on', b.dataset.view === v); });
+    document.body.dataset.view = v;
+  };
+</script>
+<style>
+/* ============================================================================
+   新方案 O ·「手牌与预览行为」—— 一版专讲手牌，不换皮
+   ────────────────────────────────────────────────────────────────────────────
+   要回答的三件事（都来自反馈）：
+     ① **手牌按数量自适应排布**：3 / 5 / 8 张时重叠与角度不同，永远居中、不溢出。
+     ② **两级预览**：鼠标移上去＝一级（从牌堆里出来一点点）；点一下＝二级
+        （出来更多 + 右侧滑出介绍窗）。两级位移量写成规范值，可直接抄进 CSS。
+     ③ **用牌流程到底要不要"确认使用"按钮**：把两种流程并排画出来，各自写清代价，
+        并给出建议（按"这张卡是否需要选目标"分流）。
+   参考的行为范式：Hearthstone（手牌扇形与抬起）、MTG Arena（悬停放大 + 点击详情）、
+   Legends of Runeterra（点选后目标高亮、离开即取消）、Marvel Snap（拖动出牌）。
+   静态示意稿，非可运行版本。
+   ========================================================================== */
+:root {
+  --bg:#0b0d18; --panel:#151a30; --panel2:#1b2140; --line:#2a3358; --line2:#3b4675;
+  --tx:#e7ecff; --tx2:#a2adcf; --tx3:#6c789e;
+  --gold:#c9a24c; --gold2:#e6c778; --vio:#7c5cf0; --cy:#4ec8e0; --rd:#ff5c6c; --gn:#4ade80; --am:#f2a33c;
+  --sans:"Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+* { box-sizing:border-box; }
+html, body { margin:0; height:100%; }
+body { background:var(--bg); color:var(--tx); font-family:var(--sans); font-size:13px; overflow:hidden; }
+body::before { content:""; position:fixed; inset:0; pointer-events:none;
+  background:radial-gradient(700px 420px at 50% -8%, rgba(124,92,240,.3), transparent 70%),
+             radial-gradient(600px 400px at 12% 105%, rgba(78,200,224,.12), transparent 70%),
+             repeating-conic-gradient(from 200deg at 50% -10%, rgba(255,255,255,.024) 0deg 3deg, transparent 3deg 11deg); }
+.screen { display:none; height:100%; flex-direction:column; position:relative; }
+.screen.on { display:flex; }
+.lab { font:600 10px/1 var(--sans); letter-spacing:.2em; color:var(--tx3); }
+.mono { font-family:var(--mono); }
+.panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; }
+.topbar { flex:0 0 auto; display:flex; align-items:center; gap:16px; padding:12px 22px; }
+.brand { display:flex; align-items:center; gap:10px; }
+.brand b { font-size:15px; letter-spacing:.12em; }
+.brand em { font-style:normal; font-size:10.5px; color:var(--tx3); letter-spacing:.2em; }
+.nav { display:flex; gap:4px; }
+.nav a { color:var(--tx2); text-decoration:none; font-size:12.5px; padding:6px 11px; border-radius:7px; }
+.mock-tag { font-size:10px; letter-spacing:.14em; color:var(--gold2); border:1px dashed rgba(201,162,76,.55); border-radius:4px; padding:5px 8px; }
+.spacer { margin-left:auto; }
+
+/* ---------- 实体卡（三个视图共用） ---------- */
+.tcard { position:relative; width:132px; height:178px; flex:0 0 auto; border-radius:11px; overflow:hidden;
+  background:linear-gradient(175deg,#232b52,#12172e); border:1px solid var(--line2);
+  box-shadow:0 12px 24px rgba(0,0,0,.48); display:flex; flex-direction:column; transition:transform .14s ease, box-shadow .14s ease; }
+.tcard .art { height:58px; display:grid; place-items:center; font-size:21px;
+  background:radial-gradient(60px 44px at 50% 40%, rgba(124,92,240,.5), transparent 72%), linear-gradient(150deg,#2c3563,#171d3a); }
+.tcard .nm { text-align:center; font-size:14.5px; font-weight:600; padding:6px 6px; border-top:1px solid var(--line); border-bottom:1px solid var(--line); background:rgba(11,13,24,.42); }
+.tcard .sp { display:flex; gap:4px; justify-content:center; padding:6px 0 3px; }
+.tcard .sp i { width:9px; height:9px; border-radius:2px; background:#2a3358; border:1px solid var(--line2); }
+.tcard .sp i.f { background:linear-gradient(180deg,#b9a4ff,var(--vio)); border-color:#b9a4ff; }
+.tcard .sp i.f2 { background:linear-gradient(180deg,#8fd8ee,var(--cy)); border-color:#8fd8ee; }
+.tcard .sp i.f3 { background:linear-gradient(180deg,var(--gold2),var(--gold)); border-color:var(--gold2); }
+.tcard .ty { text-align:center; font-size:10px; color:var(--tx3); letter-spacing:.1em; }
+.tcard .ds { padding:7px 9px; font-size:10px; line-height:1.5; color:var(--tx2); margin-top:auto; border-top:1px solid rgba(59,70,117,.5); }
+
+/* 两级预览的规范位移（可直接抄） */
+.tcard.hover { transform:translateY(-30px) scale(1.05) !important; z-index:5;
+  box-shadow:0 20px 40px rgba(0,0,0,.55), 0 0 0 1px rgba(230,199,120,.55); }
+.tcard.picked { transform:translateY(-56px) scale(1.09) !important; z-index:6; border-color:var(--gold2);
+  box-shadow:0 26px 50px rgba(0,0,0,.6), 0 0 0 2px rgba(230,199,120,.7), 0 0 30px rgba(201,162,76,.28); }
+
+/* 扇形：按数量自适应（3 / 5 / 8 三档写死在 CSS 里，与牌数一一对应） */
+.fan { position:relative; display:flex; align-items:flex-end; justify-content:center; }
+.fan .tcard { transform-origin:50% 130%; }
+.fan.n3 .tcard + .tcard { margin-left:6px; }
+.fan.n3 .tcard:nth-child(1) { transform:rotate(-5deg) translateY(6px); }
+.fan.n3 .tcard:nth-child(2) { transform:rotate(0deg); }
+.fan.n3 .tcard:nth-child(3) { transform:rotate(5deg) translateY(6px); }
+.fan.n5 .tcard + .tcard { margin-left:-18px; }
+.fan.n5 .tcard:nth-child(1) { transform:rotate(-7deg) translateY(10px); }
+.fan.n5 .tcard:nth-child(2) { transform:rotate(-3.5deg) translateY(3px); }
+.fan.n5 .tcard:nth-child(3) { transform:rotate(0deg); }
+.fan.n5 .tcard:nth-child(4) { transform:rotate(3.5deg) translateY(3px); }
+.fan.n5 .tcard:nth-child(5) { transform:rotate(7deg) translateY(10px); }
+.fan.n8 .tcard + .tcard { margin-left:-46px; }
+.fan.n8 .tcard:nth-child(1) { transform:rotate(-12deg) translateY(16px); }
+.fan.n8 .tcard:nth-child(2) { transform:rotate(-8.5deg) translateY(9px); }
+.fan.n8 .tcard:nth-child(3) { transform:rotate(-5.6deg) translateY(4px); }
+.fan.n8 .tcard:nth-child(4) { transform:rotate(-2.8deg) translateY(1px); }
+.fan.n8 .tcard:nth-child(5) { transform:rotate(0deg); }
+.fan.n8 .tcard:nth-child(6) { transform:rotate(2.8deg) translateY(1px); }
+.fan.n8 .tcard:nth-child(7) { transform:rotate(5.6deg) translateY(4px); }
+.fan.n8 .tcard:nth-child(8) { transform:rotate(8.5deg) translateY(9px); }
+
+/* ---------- 视图 1：对局实景 ---------- */
+.gtop { flex:0 0 auto; display:flex; align-items:center; gap:16px; margin:10px 22px 0; padding:10px 15px; }
+.gtop .round { font-family:var(--mono); font-size:18px; }
+.gtop .round em { font-style:normal; font-family:var(--sans); font-size:10px; letter-spacing:.16em; color:var(--tx3); display:block; margin-bottom:4px; }
+.gtop .seg { padding-left:16px; border-left:1px solid var(--line); font-size:13px; }
+.gtop .seg .lab { margin-bottom:4px; }
+.gtop .seg b { color:var(--cy); font-family:var(--mono); }
+.gtop .acts { margin-left:auto; display:flex; gap:9px; }
+.btn-pri { font-family:var(--sans); font-size:14px; font-weight:600; padding:12px 20px; border:0; border-radius:12px;
+  background:linear-gradient(120deg,#6b4ce0,#3f2a9c); color:#fff; box-shadow:0 10px 22px rgba(107,76,224,.32); cursor:pointer; }
+.btn-danger { font-family:var(--sans); font-size:12.5px; padding:11px 15px; border-radius:12px; background:transparent; color:#ff9aa5; border:1px solid #5c242a; cursor:pointer; }
+.gmain { flex:1; min-height:0; display:grid; grid-template-columns:1fr 320px; gap:20px; padding:12px 22px 12px; }
+.centercol { min-height:0; display:flex; flex-direction:column; }
+.boards { flex:1; min-height:0; display:flex; gap:22px; justify-content:center; align-items:flex-start; }
+.bwrap { flex:1 1 0; min-width:0; max-width:420px; display:flex; flex-direction:column; gap:8px; }
+.bhead { display:flex; align-items:baseline; gap:8px; }
+.bhead .n { font-size:13px; font-weight:600; }
+.bhead .tag { font-size:10px; padding:2px 7px; border-radius:6px; }
+.tag.fire { color:var(--gold2); background:rgba(201,162,76,.14); }
+.tag.hurt { color:var(--cy); background:rgba(78,200,224,.13); }
+.bhead .s { margin-left:auto; font-family:var(--mono); font-size:10.5px; color:var(--tx3); }
+.board { display:grid; grid-template-columns:repeat(6,1fr); gap:4px; width:100%;
+  max-width:min(420px, calc(100vh - 430px)); margin:0 auto; padding:8px; border-radius:16px;
+  background:radial-gradient(120% 120% at 50% 0%, #1d2a55, #101733 70%); border:1px solid var(--line2); }
+.cell { aspect-ratio:1/1; border-radius:7px; background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.06); display:grid; place-items:center; }
+.cell.ship { background:rgba(79,168,255,.2); border-color:rgba(120,190,255,.5); }
+.cell.ship::after { content:""; width:46%; height:46%; background:#9ad0ff; clip-path:polygon(50% 0,100% 100%,0 100%); }
+.cell.hit { background:rgba(255,92,108,.22); border-color:rgba(255,92,108,.6); }
+.cell.hit::after { content:""; width:52%; height:52%; background:var(--rd); clip-path:polygon(50% 0,61% 39%,100% 50%,61% 61%,50% 100%,39% 61%,0 50%,39% 39%); }
+.cell.miss::after { content:""; width:26%; height:26%; border-radius:50%; border:1.5px solid rgba(78,200,224,.65); }
+.cell.tgt { box-shadow:inset 0 0 0 2px var(--vio); background:rgba(124,92,240,.18); }
+.handzone { flex:0 0 auto; position:relative; height:206px; margin-top:8px; }
+.handzone .fan { position:absolute; left:0; right:0; bottom:6px; height:190px; align-items:flex-end; padding-bottom:16px; }
+/* 说明不能绝对定位压在牌上、也不能放在手牌上方（牌抬起时会盖住它，两个高度档都试过）
+   —— 改成顶栏里的静态 chip */
+.annotrow { display:flex; gap:10px; align-items:center; font-size:11px; color:var(--gold2); }
+.annotrow span { display:flex; align-items:center; gap:6px; white-space:nowrap; padding:5px 10px;
+  border:1px solid rgba(201,162,76,.4); border-radius:999px; background:rgba(201,162,76,.08); }
+.annotrow .me { color:var(--tx3); border:0; background:transparent; padding:0; }
+.cbadge { position:absolute; top:-13px; left:8px; z-index:9; width:19px; height:19px; border-radius:50%;
+  display:grid; place-items:center; font-family:var(--mono); font-size:11px; color:#2a1f04;
+  background:linear-gradient(180deg,var(--gold2),var(--gold)); box-shadow:0 3px 8px rgba(0,0,0,.5); }
+.handact { position:absolute; right:0; bottom:18px; width:190px; display:flex; flex-direction:column; gap:8px; }
+.handact .use { height:50px; border:0; border-radius:14px; font-family:var(--sans); font-size:15px; font-weight:700;
+  background:linear-gradient(120deg,#e6c778,#c9a24c); color:#3a2a05; cursor:pointer; }
+.handact .cancel { height:38px; border-radius:12px; background:transparent; border:1px solid var(--line2); color:var(--tx2); font-family:var(--sans); font-size:12.5px; cursor:pointer; }
+.handact .need { font-size:10.5px; color:var(--am); text-align:center; }
+.gside { min-height:0; display:flex; flex-direction:column; gap:12px; }
+.gside .prev .hd { display:flex; align-items:center; gap:8px; padding:12px 14px; border-bottom:1px solid var(--line); }
+.gside .prev .hd b { font-size:14.5px; }
+.gside .prev .bd { padding:13px 14px; }
+.gside .prev .meta { display:flex; gap:12px; font-size:11.5px; color:var(--tx2); margin-bottom:10px; }
+.gside .prev .meta b { font-family:var(--mono); color:var(--tx); }
+.gside .prev p { margin:0; font-size:12px; line-height:1.8; color:var(--tx2); }
+.data .r { display:flex; justify-content:space-between; font-size:12px; padding:7px 0; color:var(--tx2); border-bottom:1px dashed rgba(59,70,117,.5); }
+.data .r:last-child { border-bottom:0; }
+.data .r b { font-family:var(--mono); color:var(--tx); }
+
+/* ---------- 视图 2 / 3：说明页 ---------- */
+.page { flex:1; min-height:0; overflow-y:auto; padding:10px 24px 28px; }
+.page::-webkit-scrollbar { width:8px; } .page::-webkit-scrollbar-thumb { background:var(--line2); border-radius:4px; }
+.h1 { font-size:20px; margin:0 0 6px; }
+.lede { font-size:12.5px; color:var(--tx2); line-height:1.9; max-width:78em; margin:0 0 18px; }
+.section { margin-bottom:26px; }
+.section > .lab { display:block; margin-bottom:12px; font-size:11px; }
+.cards-row { display:flex; gap:26px; align-items:flex-end; flex-wrap:wrap; }
+.demo { display:flex; flex-direction:column; gap:10px; }
+.demo .cap { font-size:11.5px; color:var(--tx3); line-height:1.7; }
+.demo .cap b { color:var(--tx2); }
+.fanbox { display:flex; align-items:flex-end; justify-content:center; height:210px; padding:0 22px; border-radius:14px;
+  background:linear-gradient(180deg,rgba(21,26,48,.35),rgba(11,13,24,.6)); border:1px solid var(--line); }
+table { border-collapse:collapse; width:100%; font-size:12.5px; }
+th, td { text-align:left; padding:9px 11px; border-bottom:1px solid var(--line); vertical-align:top; }
+th { font-size:11px; letter-spacing:.1em; color:var(--tx3); font-weight:600; }
+td b { color:var(--tx); }
+.pro { color:var(--gn); } .con { color:var(--rd); }
+.flowgrid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+.flow { border-radius:14px; border:1px solid var(--line); background:var(--panel); padding:16px; }
+.flow.rec { border-color:rgba(230,199,120,.5); background:linear-gradient(180deg,rgba(201,162,76,.10),var(--panel)); }
+.flow h4 { margin:0 0 10px; font-size:15px; display:flex; align-items:center; gap:8px; }
+.flow .tag2 { font-size:10px; padding:2px 7px; border-radius:6px; background:rgba(230,199,120,.16); color:var(--gold2); }
+.steps2 { margin:0; padding:0; list-style:none; }
+.steps2 li { display:flex; gap:9px; font-size:12px; color:var(--tx2); padding:6px 0; line-height:1.7; }
+.steps2 .n { flex:0 0 18px; height:18px; border-radius:6px; background:var(--panel2); border:1px solid var(--line2); display:grid; place-items:center; font-family:var(--mono); font-size:10.5px; color:var(--tx3); }
+.steps2 li.hot .n { background:rgba(230,199,120,.2); border-color:var(--gold2); color:var(--gold2); }
+.pl { margin-top:12px; padding-top:11px; border-top:1px dashed var(--line); font-size:11.5px; line-height:1.9; }
+.pl div { color:var(--tx2); } .pl i { font-style:normal; color:var(--tx3); }
+
+#demo-switcher { position:fixed; z-index:99; left:50%; transform:translateX(-50%); bottom:12px; display:flex; gap:6px; padding:6px;
+  background:rgba(11,13,24,.95); border:1px solid var(--line2); border-radius:11px; }
+#demo-switcher button { font-family:var(--sans); font-size:12.5px; color:var(--tx2); background:transparent; border:1px solid transparent; border-radius:7px; padding:7px 14px; cursor:pointer; }
+#demo-switcher button.on { color:#fff; background:linear-gradient(120deg,#6b4ce0,#3f2a9c); border-color:#8f79f5; }
+.footnote { margin-top:26px; font-size:11px; line-height:1.8; color:var(--tx3);
+  border-top:1px solid var(--line); padding-top:14px; }
+.footnote b { color:var(--tx2); }
+@media (max-width:1360px) { .gmain { grid-template-columns:1fr 292px; gap:16px; } .tcard { width:120px; height:166px; } }
+</style>
+</head>
+<body>
+
+<!-- ======================= 视图 1：对局实景（两级预览同时在场） ======================= -->
+<div class="screen on" data-view="game">
+  <div class="topbar">
+    <div class="brand">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#c9a24c" stroke-width="1.6"><path d="M12 2l2.6 6.4L21 11l-6.4 2.6L12 20l-2.6-6.4L3 11l6.4-2.6z"/></svg>
+      <div><b>对局中</b><br><em>人机 · 普通 · 第 1 回合</em></div>
+    </div>
+    <div class="annotrow">
+      <span><b>① 一级预览</b>悬停 · 上移 30px · scale 1.05 · 移开回位</span>
+      <span><b>② 二级预览</b>点击 · 上移 56px · scale 1.09 · 右侧出介绍</span>
+      <span class="me">两级预览同时在场，便于对比位移量</span>
+    </div>
+    <div class="spacer"></div>
+    <span class="mock-tag">示意稿 O · 手牌行为</span>
+  </div>
+
+  <div class="panel gtop">
+    <div class="round"><em>ROUND</em>第 1 回合</div>
+    <div class="seg"><div class="lab">当前阶段</div><b>准备阶段</b></div>
+    <div class="seg"><div class="lab">剩余攻击</div><b>4</b> 次</div>
+    <div class="acts"><button class="btn-danger">投降</button><button class="btn-pri">进入战斗阶段</button></div>
+  </div>
+
+  <div class="gmain">
+    <div class="centercol">
+      <div class="boards">
+        <div class="bwrap">
+          <div class="bhead"><span class="n">你的海域</span><span class="tag hurt">受击区</span><span class="s">剩余 4 艘 · 冻结 0</span></div>
+          <div class="board" id="b-mine"></div>
+        </div>
+        <div class="bwrap">
+          <div class="bhead"><span class="n">对手海域</span><span class="tag fire">开火区</span><span class="s">已探明 5/36</span></div>
+          <div class="board" id="b-enemy"></div>
+        </div>
+      </div>
+
+      <div class="handzone">
+        <div class="fan n5">
+          <div class="tcard"><div class="art">🌿</div><div class="nm">桃园结义</div><div class="sp"><i class="f3"></i><i></i><i></i></div><div class="ty">普通</div><div class="ds">从牌堆抽 n 张，双方各挑一张</div></div>
+          <div class="tcard hover"><span class="cbadge">①</span><div class="art">💥</div><div class="nm">轰炸</div><div class="sp"><i class="f2"></i><i class="f2"></i><i></i></div><div class="ty">普通</div><div class="ds">选定一行/列轰炸，船全部死亡</div></div>
+          <div class="tcard"><div class="art">⚓</div><div class="nm">增援</div><div class="sp"><i class="f"></i><i class="f"></i><i class="f"></i></div><div class="ty">普通</div><div class="ds">召唤一艘战舰部署在没被打过的格子</div></div>
+          <div class="tcard"><div class="art">⛔</div><div class="nm">失灵！</div><div class="sp"><i class="f"></i><i class="f"></i><i class="f"></i></div><div class="ty">普通</div><div class="ds">无效化对方使用的上一张魔法卡</div></div>
+          <div class="tcard picked"><span class="cbadge">②</span><div class="art">🌀</div><div class="nm">神威！</div><div class="sp"><i class="f2"></i><i class="f2"></i><i></i></div><div class="ty">普通</div><div class="ds">选定 3×3 区域把战舰暂时除外</div></div>
+        </div>
+        <div class="handact">
+          <span class="need">神威！需要选定 3×3 区域</span>
+          <button class="use">在棋盘上选区域…</button>
+          <button class="cancel">取消选择</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="gside">
+      <div class="panel prev">
+        <div class="hd"><b>神威！</b><span class="mono" style="font-size:11px;color:var(--tx3)">速阶 Ⅱ · 普通</span></div>
+        <div class="bd">
+          <div class="meta"><span>类型 <b>普通</b></span><span>目标 <b>3×3 区域</b></span></div>
+          <p>选定 3×3 区域，把区域内所有战舰暂时除外 —— 被除外的船不参与存活判定。</p>
+        </div>
+      </div>
+      <div class="panel data" style="padding:14px">
+        <h4 class="lab" style="margin:0 0 8px">对 局 数 据</h4>
+        <div class="r"><span>牌堆 / 弃牌堆</span><b>21 / 18</b></div>
+        <div class="r"><span>场地魔法</span><b>无</b></div>
+        <div class="r"><span>剩余攻击</span><b>4 次</b></div>
+      </div>
+      <div class="panel" style="flex:1;min-height:0;padding:14px;overflow:hidden">
+        <h4 class="lab" style="margin:0 0 8px">战 报</h4>
+        <div style="font-size:11.5px;line-height:2;color:var(--tx2)">
+          <div><span class="mono" style="color:var(--tx3)">R1</span> 连锁：对手 失灵！← 你 神威！</div>
+          <div><span class="mono" style="color:var(--tx3)">R1</span> 你 炮击 (3,4) <span style="color:var(--rd)">命中·击沉</span></div>
+          <div><span class="mono" style="color:var(--tx3)">R1</span> 对手 炮击 (5,5) <span style="color:var(--rd)">命中</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= 视图 2：手牌按数量自适应 ======================= -->
+<div class="screen" data-view="fan">
+  <div class="topbar">
+    <div class="brand"><b>手牌自适应排布</b><em>FAN LAYOUT BY COUNT</em></div>
+    <span class="mock-tag">示意稿 O</span>
+  </div>
+  <div class="page">
+    <p class="lede">牌永远居中；<b>张数变了，重叠与角度跟着变</b>，不换布局、不滚动、不溢出。
+      三档的位移量都写死在 CSS 里（<span class="mono">.fan.n3 / .n5 / .n8</span>），可用牌数直接映射到档位。</p>
+
+    <div class="section">
+      <span class="lab">3 张 · 宽松，几乎不重叠（重叠 0px · 角度 ±5°）</span>
+      <div class="fanbox"><div class="fan n3">
+        <div class="tcard"><div class="art">⚓</div><div class="nm">增援</div><div class="sp"><i class="f"></i><i class="f"></i><i class="f"></i></div><div class="ty">普通</div></div>
+        <div class="tcard"><div class="art">🌀</div><div class="nm">神威！</div><div class="sp"><i class="f2"></i><i class="f2"></i><i></i></div><div class="ty">普通</div></div>
+        <div class="tcard"><div class="art">⛔</div><div class="nm">失灵！</div><div class="sp"><i class="f"></i><i class="f"></i><i class="f"></i></div><div class="ty">普通</div></div>
+      </div></div>
+    </div>
+
+    <div class="section">
+      <span class="lab">5 张 · 标准扇形（重叠 −18px · 角度 ±7°）—— 对局里最常见的一档</span>
+      <div class="fanbox"><div class="fan n5">
+        <div class="tcard"><div class="art">🌿</div><div class="nm">桃园结义</div><div class="sp"><i class="f3"></i><i></i><i></i></div><div class="ty">普通</div></div>
+        <div class="tcard"><div class="art">💥</div><div class="nm">轰炸</div><div class="sp"><i class="f2"></i><i class="f2"></i><i></i></div><div class="ty">普通</div></div>
+        <div class="tcard"><div class="art">🌀</div><div class="nm">神威！</div><div class="sp"><i class="f2"></i><i class="f2"></i><i></i></div><div class="ty">普通</div></div>
+        <div class="tcard"><div class="art">⚓</div><div class="nm">增援</div><div class="sp"><i class="f"></i><i class="f"></i><i class="f"></i></div><div class="ty">普通</div></div>
+        <div class="tcard"><div class="art">⛔</div><div class="nm">失灵！</div><div class="sp"><i class="f"></i><i class="f"></i><i class="f"></i></div><div class="ty">普通</div></div>
+      </div></div>
+    </div>
+
+    <div class="section">
+      <span class="lab">8 张 · 紧压，只露牌名（重叠 −46px · 角度 ±12°）—— 但悬停抬起后仍然能读全</span>
+      <div class="fanbox"><div class="fan n8">
+        <div class="tcard"><div class="art">🌿</div><div class="nm">桃园结义</div><div class="ty">Ⅰ</div></div>
+        <div class="tcard"><div class="art">💰</div><div class="nm">百亿补贴</div><div class="ty">Ⅰ</div></div>
+        <div class="tcard"><div class="art">👁</div><div class="nm">看破！</div><div class="ty">Ⅱ</div></div>
+        <div class="tcard"><div class="art">💥</div><div class="nm">轰炸</div><div class="ty">Ⅱ</div></div>
+        <div class="tcard hover"><div class="art">🌀</div><div class="nm">神威！</div><div class="ty">Ⅱ</div></div>
+        <div class="tcard"><div class="art">📍</div><div class="nm">探测雷达</div><div class="ty">Ⅱ</div></div>
+        <div class="tcard"><div class="art">⚓</div><div class="nm">增援</div><div class="ty">Ⅲ</div></div>
+        <div class="tcard"><div class="art">⛔</div><div class="nm">失灵！</div><div class="ty">Ⅲ</div></div>
+      </div></div>
+      <div class="demo" style="margin-top:12px">
+        <div class="cap">牌少时牌面朝前、牌多时压成扇面；<b>无论几档，被悬停/选中的那张都完整抬起</b>，所以永远读得到全名与速阶。</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <span class="lab">三种状态的位移规范（可直接抄）</span>
+      <table>
+        <thead><tr><th>状态</th><th>触发</th><th>变换</th><th>同时发生什么</th></tr></thead>
+        <tbody>
+          <tr><td><b>常态</b></td><td>—</td><td>扇形角度与下移（见上）</td><td>只有牌名与速阶可见</td></tr>
+          <tr><td><b>一级预览</b></td><td>鼠标移入</td><td><span class="mono">translateY(-30px) scale(1.05)</span></td><td>从牌堆里出来一点点，边框亮起；<b>不改任何状态</b>，移开就回位</td></tr>
+          <tr><td><b>二级预览</b></td><td>单击</td><td><span class="mono">translateY(-56px) scale(1.09)</span></td><td>出来更多 + 金色描边 + <b>右侧滑出介绍窗</b>；同时把该卡的目标提示打到棋盘上（如 3×3 高亮）</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="footnote">
+      <b>本版只讲手牌行为</b>（皮与 C 一致）：按张数自适应扇形 · 一级/二级预览的位移写成规范值 ·
+      用牌流程给两选一对照与建议。<br>
+      参考：Hearthstone（手牌扇形与抬起）· MTG Arena（悬停放大 + 点击详情）·
+      Legends of Runeterra（点选后目标高亮、离开即取消）· Marvel Snap（拖动出牌）。
+    </div>
+  </div>
+</div>
+
+<!-- ======================= 视图 3：用牌流程对照 ======================= -->
+<div class="screen" data-view="flows">
+  <div class="topbar">
+    <div class="brand"><b>用牌流程 · 两选一</b><em>HOW A CARD GETS USED</em></div>
+    <span class="mock-tag">示意稿 O</span>
+  </div>
+  <div class="page">
+    <p class="lede">你问的「确认使用按钮到底好不好用」——把它拆成两条流程画出来，代价写清楚。
+      结论先说：<b>不该一刀切，按"这张卡要不要选目标"分流</b>，下面第三条是建议方案。</p>
+
+    <div class="flowgrid">
+      <div class="flow">
+        <h4>A · 再点一次即用 <span class="tag2"></span></h4>
+        <ul class="steps2">
+          <li class="hot"><span class="n">1</span>点卡牌 → 二级预览（抬起 + 右侧介绍）</li>
+          <li class="hot"><span class="n">2</span>再点同一张牌 → <b>直接打出</b></li>
+        </ul>
+        <div class="pl">
+          <div class="pro">＋ 步骤最少，手指不用离开牌。</div>
+          <div class="con">－ 需要选目标的卡（神威！/ 轰炸 / 增援 / 桃园结义）没法"再点即用"，得另开一条路径。</div>
+          <div class="con">－ <i>误触即生效、且不可撤销</i>：一张 速阶Ⅲ 的牌打空了，一回合就没了。</div>
+        </div>
+      </div>
+
+      <div class="flow">
+        <h4>B · 选中后按「使用」按钮</h4>
+        <ul class="steps2">
+          <li class="hot"><span class="n">1</span>点卡牌 → 二级预览</li>
+          <li><span class="n">2</span>（需要目标的卡）在棋盘上点目标</li>
+          <li class="hot"><span class="n">3</span>按「使用 / 确认」→ 打出</li>
+        </ul>
+        <div class="pl">
+          <div class="pro">＋ 明确、可撤销（点空白或"取消"即回退），所有卡流程一致。</div>
+          <div class="pro">＋ 需要选目标的卡本来就要多一步，按钮只是把这一步"说出来"。</div>
+          <div class="con">－ 不需要目标的卡也得多按一次；按钮若在远端角落，目光要来回跑。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section" style="margin-top:22px">
+      <span class="lab">建议方案 · 按卡的类型分流（推荐）</span>
+      <div class="flow rec" style="max-width:none">
+        <h4>C · 无需目标的卡：再点即用；需要目标的卡：选完目标后确认 <span class="tag2">推荐</span></h4>
+        <table style="margin-top:6px">
+          <thead><tr><th>卡</th><th>需要目标？</th><th>流程</th><th>为什么</th></tr></thead>
+          <tbody>
+            <tr><td><b>失灵！</b>（无效上一张）</td><td>否</td><td>点两次即用</td><td>意图唯一，没有歧义，也就没有确认的必要</td></tr>
+            <tr><td><b>看破！</b>（大回合内全无效）</td><td>否</td><td>点两次即用</td><td>同上；这类卡是"连锁里的应急牌"，越快越好</td></tr>
+            <tr><td><b>神威！</b>（3×3 除外）</td><td>是</td><td>点选 → 棋盘点区域 → 确认</td><td>点错 3×3 的代价太大；确认按钮同时充当"目标已选好"的反馈</td></tr>
+            <tr><td><b>轰炸</b>（整行/列）</td><td>是</td><td>点选 → 棋盘点行/列（整行高亮）→ 确认</td><td>整行是 6 格，误触代价大</td></tr>
+            <tr><td><b>增援 / 死者苏生</b>（选格放置）</td><td>是</td><td>点选 → 棋盘点格子 → 确认</td><td>放置类，确认前可以改格子</td></tr>
+          </tbody>
+        </table>
+        <div class="pl">
+          <div class="pro">＋ 快牌更快（应急牌两步到底），慢牌更稳（选目标后确认）。</div>
+          <div class="pro">＋ 按钮的<b>文案随状态变</b>：未选目标时显示「在棋盘上选区域…」且置灰，选好后变成「确认使用 神威！」——按钮本身就在告诉玩家下一步。</div>
+          <div>－ 代价：两条流程并存，需要一次简短的首次引导（或在那张卡上加个"点击选目标"的角标）。</div>
+        </div>
+      </div>
+    </div>
+    <div class="footnote">
+      <b>本版只讲手牌行为</b>（皮与 C 一致）：按张数自适应扇形 · 一级/二级预览的位移写成规范值 ·
+      用牌流程给两选一对照与建议。<br>
+      参考：Hearthstone（手牌扇形与抬起）· MTG Arena（悬停放大 + 点击详情）·
+      Legends of Runeterra（点选后目标高亮、离开即取消）· Marvel Snap（拖动出牌）。
+    </div>
+  </div>
+</div>
+
+<div id="demo-switcher">
+  <button class="on" data-view="game" onclick="window.setDemoView('game')">对局实景</button>
+  <button data-view="fan" onclick="window.setDemoView('fan')">手牌自适应</button>
+  <button data-view="flows" onclick="window.setDemoView('flows')">用牌流程</button>
+</div>
+
+
+<script>
+(function () {
+  var ENEMY = ['o.....','....X.','..X...','...o..','.....o','.o....'];
+  var MINE  = ['S..X..','....o.','.S..S.','o.....','..X.o.','.....S'];
+  var tgt = {}; [1, 2].forEach(function (r) { [1, 2, 3].forEach(function (c) { tgt[r * 6 + c] = 1; }); });
+  function fill(id, rows, tgtMode) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    rows.join('').split('').forEach(function (ch, i) {
+      var d = document.createElement('div');
+      d.className = 'cell' + (ch === 'S' ? ' ship' : ch === 'X' ? ' hit' : ch === 'o' ? ' miss' : '')
+        + (tgtMode && tgt[i] ? ' tgt' : '');
+      el.appendChild(d);
+    });
+  }
+  fill('b-mine', MINE);
+  fill('b-enemy', ENEMY, true);
+})();
+</script>
+</body>
+</html>

@@ -290,8 +290,16 @@ const shipClass = await ev(`(function(){
 })()`);
 check(/ship/.test(String(shipClass)), '（前提）该格确实带 ship 类', shipClass);
 const shipIdle = await ev(`${CELL_STYLE}(${JSON.stringify(shipCellSel)})`);
-check(!!shipIdle && shipIdle.bgImage && shipIdle.bgImage !== 'none',
-  '（前提）船的底色是不透明渐变（金属色）', shipIdle && shipIdle.bgImage);
+// ⚠️ 这条 前提 于 2026-09-24 重定（旧口径：船底必须是**渐变** bgImage !== 'none'）。
+//    旧口径不再适用：Fluent 重构（style.css 令牌区 --ship-metal）把船从"金属斜面渐变"
+//    改成了**平面 + 描边**（浅色 #4c525a / 深色 #8d939b），注释里写明了理由
+//    （渐变在深色底下显脏）。所以这里要验的不再是"是不是渐变"，而是
+//    "船底有一层不透明的、与空格明显不同的底色" —— 那才是选中态必须盖掉的东西。
+//    门禁本身（★ 选中后能盖掉船底）不变，见下面几条断言。
+check(!!shipIdle && ((shipIdle.bgImage && shipIdle.bgImage !== 'none')
+    || (shipIdle.bg && shipIdle.bg !== 'rgba(0, 0, 0, 0)' && shipIdle.bg !== 'transparent')),
+  '（前提）船的底色是不透明底色（实色或渐变，能被选中态盖掉）',
+  shipIdle && { bg: shipIdle.bg, bgImage: shipIdle.bgImage });
 
 // 神威！ → 选己方棋盘 → 点选覆盖 (2,2) 的 3×3
 await ev(`(function(){ showMagicTargetSelection({name:'神威！', speed:3, type:'普通'}, 0); return true; })()`);

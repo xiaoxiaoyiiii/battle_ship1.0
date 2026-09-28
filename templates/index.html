@@ -331,6 +331,10 @@
                         <button id="cancel-magic" class="cancel-btn">取消</button>
                     </div>
                     <div class="preview-content">
+                        <!-- 大卡面（Phase 5.3）：手机档手牌只有 64×92，中文效果文字读不了 ——
+                             选中后在这里给一张 200×280 的真卡面（200/280 = 0.714，与实体卡同比例）。
+                             宽屏不显示（那里有 118px 的卡 + 足够的说明区）。id 由 game.js 填充。 -->
+                        <div id="preview-card-face" class="preview-card-face" aria-hidden="true"></div>
                         <div class="card-name">未选择魔法卡</div>
                         <div class="card-stats">
                             <div class="stat-item">速阶：<span id="preview-speed">-</span></div>
@@ -1178,6 +1182,10 @@
 <script src="/static/sfx.js?v={{ asset_v('sfx.js') }}"></script>
 <!-- 段位图标（纯 SVG，无素材）：必须在 game.js 之前——game.js 直接取 window.rankIconHtml -->
 <script src="/static/rank_icons.js?v={{ asset_v('rank_icons.js') }}"></script>
+<!-- 卡面图映射（Phase 7）：由 tools/gen_card_art_prompts.py 从卡表生成。
+     ⚠️ 必须在 game.js 之前：卡组件渲染时要读 window.CARD_ART_MAP 决定底图，
+        放在后面会让首屏渲染出来的那批卡没有底图（换手牌时才补上）。 -->
+<script src="/static/card_art_map.js?v={{ asset_v('card_art_map.js') }}"></script>
 <script src="/static/game.js?v={{ asset_v('game.js') }}"></script>
 <!-- 移动端自适应布局：按可用空间在「桌面浮窗」与「一屏网格」之间切换（见 style.css 第 22 节） -->
 <script src="/static/adaptive_layout.js?v={{ asset_v('adaptive_layout.js') }}"></script>

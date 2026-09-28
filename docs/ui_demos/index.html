@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>UI 方案示意稿 · 21 版（2026-09-23）</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+  // 让截图工具也能给这张汇总页出图（工具约定见 tools/ui_demo_shots.mjs）
+  window.__demoViews = ['gallery'];
+  window.__demoErrors = [];
+  window.addEventListener('error', function (e) { window.__demoErrors.push(String(e.message)); });
+  window.setDemoView = function () {};
+</script>
+<style>
+  :root {
+    --ink:#12151f; --ink2:#5a6172; --ink3:#8b91a0; --line:#e3e6ee; --bg:#f6f7fb; --card:#fff;
+    --a:#00b7c3; --b:#a9853f; --c:#7c5cf0; --d:#4b5cf5; --ok:#137a45; --warn:#a35b00; --bad:#b3261e;
+    --sans:"Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;
+    --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans); font-size:14px; line-height:1.75; }
+  .wrap { max-width:1180px; margin:0 auto; padding:34px 22px 70px; }
+  h1 { font-size:26px; margin:0 0 8px; letter-spacing:.02em; }
+  .sub { color:var(--ink2); font-size:13.5px; margin:0 0 6px; }
+  .meta { color:var(--ink3); font-size:12px; font-family:var(--mono); }
+  .notice { background:#fff8e6; border:1px solid #f0dfae; border-left:4px solid #e0a72c; border-radius:8px; padding:13px 16px; margin:20px 0 26px; font-size:13px; color:#6b4c07; }
+  h2 { font-size:17px; margin:34px 0 14px; padding-bottom:9px; border-bottom:1px solid var(--line); }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+  .opt { background:var(--card); border:1px solid var(--line); border-radius:14px; overflow:hidden; display:flex; flex-direction:column; box-shadow:0 6px 20px rgba(18,21,31,.05); }
+  .opt .hd { padding:15px 17px 10px; border-bottom:1px solid var(--line); }
+  .opt .hd .tag { display:inline-block; font-family:var(--mono); font-size:11px; font-weight:600; letter-spacing:.1em; padding:3px 8px; border-radius:5px; color:#fff; }
+  .opt.a .tag { background:var(--a); } .opt.b .tag { background:var(--b); } .opt.c .tag { background:var(--c); } .opt.d .tag { background:var(--d); }
+  .opt.e .tag { background:#12876b; } .opt.f .tag { background:#33363d; } .opt.g .tag { background:#c01f86; } .opt.h .tag { background:#7a6a12; }
+  .opt.i .tag { background:#1a6d86; } .opt.j .tag { background:#3b5bdb; } .opt.k .tag { background:#4c4f57; } .opt.l .tag { background:#b5761a; }
+  .opt.m .tag { background:#6b4ce0; } .opt.p .tag { background:#1f7a5c; } .opt.o .tag { background:#9c6b12; } .opt.r .tag { background:#c9a24c; color:#2a1f04; } .opt.s .tag { background:#2b8fd0; } .opt.t .tag { background:#c9761a; } .opt.u .tag { background:#1a8f7a; } .opt.v .tag { background:#8a5cf0; } .opt.w .tag { background:#3f7a2e; } .opt.q .tag { background:#5c626f; font-size:9px; letter-spacing:.06em; }
+  .opt .bd .warnline { color:#a35b00; }
+  .opt h3 { margin:9px 0 4px; font-size:16.5px; }
+  .opt .one { color:var(--ink2); font-size:12.5px; }
+  .shots { display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--line); }
+  .shots figure { margin:0; background:#e9edf4; }
+  /* 截图是 1440×900 = 16:10，缩略图也用 16:10 → cover 等于零裁切（第一版用固定高度，两边被裁掉了） */
+  .shots img { display:block; width:100%; aspect-ratio:16/10; object-fit:cover; background:#e9edf4; }
+  /* 手机竖图（390×844）用 contain：整屏都能看见，不裁 */
+  .shots.portrait img { aspect-ratio:auto; height:300px; object-fit:contain; padding:6px 0; }
+  .shots figcaption { font-size:11px; color:var(--ink3); padding:6px 9px; background:#fff; font-family:var(--mono); }
+  .opt .bd { padding:13px 17px 16px; font-size:12.5px; color:var(--ink2); flex:1; }
+  .opt .bd ul { margin:0; padding-left:17px; }
+  .opt .bd li { margin-bottom:5px; }
+  .opt .bd b { color:var(--ink); }
+  .opt .ft { padding:11px 17px; border-top:1px solid var(--line); display:flex; gap:9px; align-items:center; background:#fbfcfe; }
+  .opt .ft a { font-size:12.5px; text-decoration:none; border-radius:7px; padding:7px 12px; border:1px solid var(--line); color:var(--ink2); background:#fff; }
+  .opt .ft a.p { background:var(--ink); border-color:var(--ink); color:#fff; font-weight:600; }
+  .opt .ft .cost { margin-left:auto; font-size:11.5px; font-family:var(--mono); }
+  .cost.low { color:var(--ok); } .cost.mid { color:var(--warn); } .cost.high { color:var(--bad); }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th:last-child, td:last-child { width:96px; white-space:nowrap; }
+  th { background:#f0f2f7; font-size:11.5px; letter-spacing:.06em; color:var(--ink2); font-weight:600; }
+  tr:last-child td { border-bottom:0; }
+  td.y { color:var(--ok); } td.n { color:var(--bad); } td.p { color:var(--warn); }
+  code { font-family:var(--mono); font-size:12px; background:#f0f2f7; border-radius:4px; padding:1px 5px; }
+  .cur { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+  .cur figure { margin:0; background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  /* 现状这三张里有竖屏截图：统一 contain，别把手机那屏裁成一条 */
+  .cur img { display:block; width:100%; height:210px; object-fit:contain; background:#e9edf4; }
+  .cur figcaption { font-size:11px; color:var(--ink3); padding:7px 10px; font-family:var(--mono); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>UI 方案示意稿 · 21 版</h1>
+  <p class="sub">给「战舰棋」做了 <b>16 版</b>静态示意稿，分七批。前两批"重画现有界面"，第三批是<b>产品级重设计</b>，第四批<b>按反馈精修</b>（第四批就是当前候选：以 C 为底、双盘放大、实体手牌两级预览）。</p>
+  <p class="meta">2026-09-23 · 第一批 A–D（暗色专业 / 暖色实体 / 深色游戏化 / 浅色移动）· 第二批 E–H（主题深蓝 / 极简排版 / 霓虹 / 像素）· 第三批 I–L（统一战场 / 工作台 / 组件化 / 航线）· 第四批 M–P（按反馈精修）· 第五批 R（自查返工）· 第六批 S（移动端调优）· 第七批 T/U（C 的目标选择态与主次反转）· 第八批 V/W（C 的结算屏与卡牌图鉴）<br>示意稿位置 <code>docs/ui_demos/</code> · 截图 <code>docs/ui_demos/shots/</code> · 渲染工具 <code>tools/ui_demo_shots.mjs</code></p>
+
+  <div class="notice">
+    <b>这些是静态示意稿，不是可运行版本。</b>前两批每版只画<b>首页</b>与<b>对局屏</b>两块（其余 8 个屏：大厅、排行榜、名片、好友、排位、设置、结算、布阵 沿用同一套语言，选完方向再一起做）。
+    所有文案、卡名、段位名、数据都取自真实实现（<code>magic_card.json</code> / <code>ranks.py</code> / 现有 DOM 的 id 与 label），所以观感即真实密度。
+    几何都是量过的：每条竖向预算按 390×844 / 1280×720 / 1440×900 实测收紧，无遮挡、无溢出（见文末「怎么复跑」）。
+  </div>
+
+  <h2>第一批 · A–D</h2>
+  <div class="grid">
+
+    <div class="opt a">
+      <div class="hd">
+        <span class="tag">A</span>
+        <h3>战术指挥台</h3>
+        <div class="one">暗色作战终端：信息密集、发丝线、等宽数字。改动主要在<b>信息架构</b>而非配色。</div>
+      </div>
+      <div class="shots">
+        <figure><img src="shots/a-tactical-home-1440x900.png" alt="A 首页"><figcaption>A · 首页 1440×900</figcaption></figure>
+        <figure><img src="shots/a-tactical-game-1440x900.png" alt="A 对局屏"><figcaption>A · 对局屏 1440×900</figcaption></figure>
+      </div>
+      <div class="bd">
+        <ul>
+          <li>首页从「一列大按钮」变成 <b>模式面板 + 指挥官状态栏 + 最近对局</b>，把段位/战绩/队列都摊开。</li>
+          <li>对局屏改成固定三栏（<b>日志轨 / 战场 / 手牌轨</b>），浮窗不再压在棋盘上。</li>
+          <li><b>顺带修掉已知缺陷</b>：宽屏两块棋盘可以<b>并排</b>，不再堆叠 —— 这正是 <code>docs/FLUENT_UI_2026_09_21.md §10.3</code> 记的「≤800px 高时第二块棋盘被手牌压住 12–18 格」。</li>
+          <li>连锁从浮层变成战场上方的一条<b>常驻条</b>（现状只有 10 秒弹窗，错过就看不见）。</li>
+        </ul>
+      </div>
+      <div class="ft">
+        <a class="p" href="a-tactical.html">打开示意稿 →</a>
+        <a href="shots/a-tactical-game-1440x900.png">截图</a>
+        <span class="cost mid">落地成本 中高</span>
+      </div>
+    </div>
+
+    <div class="opt b">
+      <div class="hd">
+        <span class="tag">B</span>
+        <h3>桌面棋室</h3>
+        <div class="one">暖纸 + 黄铜 + 墨线，棋盘是画面主角，手牌是真的<b>实体卡</b>，日志是航海笔记本。</div>
+      </div>
+      <div class="shots">
+        <figure><img src="shots/b-tabletop-home-1440x900.png" alt="B 首页"><figcaption>B · 首页 1440×900</figcaption></figure>
+        <figure><img src="shots/b-tabletop-game-1440x900.png" alt="B 对局屏"><figcaption>B · 对局屏 1440×900</figcaption></figure>
+      </div>
+      <div class="bd">
+        <ul>
+          <li>首页像一盒桌游的盒盖：衬线大标题 + 玩法提要 + 五张模式牌，落在桌面中央。</li>
+          <li>对局屏棋盘放大到 <b>400px</b>（现状 300–340），命中/打空用<b>墨印</b>而不是发光。</li>
+          <li>手牌改成底部<b>扇形实体卡</b>（抬起、选中盖红章），弃牌堆是可见的牌堆。</li>
+          <li>「一局怎么打」「最近弃牌」这类信息第一次出现在界面上。</li>
+        </ul>
+      </div>
+      <div class="ft">
+        <a class="p" href="b-tabletop.html">打开示意稿 →</a>
+        <a href="shots/b-tabletop-game-1440x900.png">截图</a>
+        <span class="cost mid">落地成本 中</span>
+      </div>
+    </div>
+
+    <div class="opt c">
+      <div class="hd">
+        <span class="tag">C</span>
+        <h3>卡牌竞技场</h3>
+        <div class="one">魔法卡当主角：132×186 的大卡、连锁做成真的叠起来的牌堆。信息优先级刻意不对称。</div>
+      </div>
+      <div class="shots">
+        <figure><img src="shots/c-arena-home-1440x900.png" alt="C 首页"><figcaption>C · 首页 1440×900</figcaption></figure>
+        <figure><img src="shots/c-arena-game-1440x900.png" alt="C 对局屏"><figcaption>C · 对局屏 1440×900</figcaption></figure>
+      </div>
+      <div class="bd">
+        <ul>
+          <li>首页 = 倾斜的指挥官名片 + 三个大入口 + 热门卡墙 + 段位阶梯，卖点（43 张卡）第一眼就亮出来。</li>
+          <li>对局屏<b>对手海域占中场</b>（你的攻击目标是它），自己的舰队缩成左下角小图 —— 这是最大的取舍。</li>
+          <li>连锁 = 中场右侧<b>叠成一摞的实体卡</b> + 倒计时，一眼看清谁响应了谁。</li>
+          <li>手牌是画面上最大的元素，卡面自带速阶宝石与效果文，不再依赖右侧浮窗读描述。</li>
+        </ul>
+      </div>
+      <div class="ft">
+        <a class="p" href="c-arena.html">打开示意稿 →</a>
+        <a href="shots/c-arena-game-1440x900.png">截图</a>
+        <span class="cost high">落地成本 高</span>
+      </div>
+    </div>
+
+    <div class="opt d">
+      <div class="hd">
+        <span class="tag">D</span>
+        <h3>口袋舰队（移动端优先）</h3>
+        <div class="one">手机 App 范式：底部标签栏 + 底部抽屉 + 横向滑动手牌，单格 48px。</div>
+      </div>
+      <div class="shots portrait">
+        <figure><img src="shots/d-mobile-home-390x844.png" alt="D 首页"><figcaption>D · 首页 390×844</figcaption></figure>
+        <figure><img src="shots/d-mobile-game-390x844.png" alt="D 对局屏"><figcaption>D · 对局屏 390×844</figcaption></figure>
+      </div>
+      <div class="bd">
+        <ul>
+          <li>桌面打开是手机外框，窗口窄于 <code>520px</code> 自动铺满 —— 就是真机样子。</li>
+          <li>对局屏<b>一次只看一块棋盘</b>，顶部段控件切换：正是现有紧凑档 <code>#board-tabs</code> 的机制，不用新造轮子。</li>
+          <li>底部抽屉对应现有 <code>#aux-dock</code>（卡牌/日志/聊天 三选一），只露出一截提示可上拉。</li>
+          <li>竖向预算是硬约束：390×844 里 8 块内容 + 间距共 <b>837px</b> 塞进 844px，全部实测过的。</li>
+          <li>触摸目标全部 ≥48px，正好在本项目「格子 ≥40px」的判据之上。</li>
+        </ul>
+      </div>
+      <div class="ft">
+        <a class="p" href="d-mobile.html">打开示意稿 →</a>
+        <a href="shots/d-mobile-game-390x844.png">截图</a>
+        <span class="cost low">落地成本 低</span>
+      </div>
+    </div>
+
+  </div>
+
+  <h2>第二批 · E–H</h2>
+  <div class="grid">
+
+    <div class="opt e">
+      <div class="hd">
+        <span class="tag">E</span>
+        <h3>声呐舰桥</h3>
+        <div class="one">深海蓝 + 磷光绿，圆形仪表与声呐同心圆 —— 主题上最贴「战舰棋」的一版。</div>
+      </div>
+      <div class="shots">
+        <figure><img src="shots/e-sonar-home-1440x900.png" alt="E 首页"><figcaption>E · 首页 1440×900</figcaption></figure>
+        <figure><img src="shots/e-sonar-game-1440x900.png" alt="E 对局屏"><figcaption>E · 对局屏 1440×900</figcaption></figure>
+      </div>
+      <div class="bd">
+        <ul>
+          <li>首页把「在线 / 队列 / 延迟」做成三个<b>环形仪表</b>，一眼报数。</li>
+          <li>对局屏把对手棋盘做成<b>声呐显示区</b>：背后同心圆环 + 十字基线 + 扫描扇面。</li>
+          <li><b>刻意不做圆形棋盘</b>：真圆形会把 6×6 的四个角裁掉、格子在圆外点不到；这里用「方形棋盘 + 圆环背景」，每格完整可点。</li>
+          <li>自己的舰队缩成左栏小图（同 C 的信息取舍）。</li>
+        </ul>
+      </div>
+      <div class="ft">
+        <a class="p" href="e-sonar.html">打开示意稿 →</a>
+        <a href="shots/e-sonar-game-1440x900.png">截图</a>
+        <span class="cost mid">落地成本 中高</span>
+      </div>
+    </div>
+
+    <div class="opt f">
+      <div class="hd">
+        <span class="tag">F</span>
+        <h3>极简纸白</h3>
+        <div class="one">编辑式排版：近单色、无阴影无圆角，只用发丝线与字重组织层级。</div>
+      </div>
+      <div class="shots">
+        <figure><img src="shots/f-minimal-home-1440x900.png" alt="F 首页"><figcaption>F · 首页 1440×900</figcaption></figure>
+        <figure><img src="shots/f-minimal-game-1440x900.png" alt="F 对局屏"><figcaption>F · 对局屏 1440×900</figcaption></figure>
+      </div>
+      <div class="bd">
+        <ul>
+          <li>棋盘是一张<b>只用 1px 线画出来的表</b>：舰=实心黑块、命中=红块带 ×、打空=空心圆。</li>
+          <li>魔法卡是一张<b>表</b>（卡名 / 速阶罗马数字 / 效果），选中行左侧一道黑杠并展开全文 —— 不画卡面。</li>
+          <li>首页 = 大字号细体标题 + 编号列表 + 右侧数据表；等级条是 10 段刻度而不是色块。</li>
+          <li>全局只有两个语义色（命中红、主行动黑），其余全靠留白 —— 信息密度最高、视觉噪音最低。</li>
+        </ul>
+      </div>
+      <div class="ft">
+        <a class="p" href="f-minimal.html">打开示意稿 →</a>
+        <a href="shots/f-minimal-game-1440x900.png">截图</a>
+        <span class="cost low">落地成本 低中</span>
+      </div>
+    </div>
+
+    <div class="opt g">
+      <div class="hd">
+        <span class="tag">G</span>
+        <h3>霓虹赛博</h3>
+        <div class="one">近黑底 + 霓虹发光 + 扫描线 + 切角面板 + 故障字。把音量拧到最大的一版。</div>
+      </div>
+      <div class="shots">
+        <figure><img src="shots/g-neon-home-1440x900.png" alt="G 首页"><figcaption>G · 首页 1440×900</figcaption></figure>
+        <figure><img src="shots/g-neon-game-1440x900.png" alt="G 对局屏"><figcaption>G · 对局屏 1440×900</figcaption></figure>
+      </div>
+      <div class="bd">
+        <ul>
+          <li>标题是「故障字」（青/洋红错位），面板用 <code>clip-path</code> 切掉两个角。</li>
+          <li>棋盘格是发光霓虹框：舰=青色三角、命中=洋红 ✕、<b>神威！待选区=荧光黄</b>。</li>
+          <li>手牌是底部一排切角霓虹卡，选中的卡上浮并泛洋红光。</li>
+          <li>连锁做成会呼吸的洋红警示条 —— 全屏最「吵」的元素就是当前该你决策的地方。</li>
+        </ul>
+      </div>
+      <div class="ft">
+        <a class="p" href="g-neon.html">打开示意稿 →</a>
+        <a href="shots/g-neon-game-1440x900.png">截图</a>
+        <span class="cost mid">落地成本 中</span>
+      </div>
+    </div>
+
+    <div class="opt h">
+      <div class="hd">
+        <span class="tag">H</span>
+        <h3>像素复古（8-bit 街机）</h3>
+        <div class="one">硬边框斜面、等宽大写、扫描线、▶ 光标、分数面板、JRPG 对话框。</div>
+      </div>
+      <div class="shots">
+        <figure><img src="shots/h-pixel-home-1440x900.png" alt="H 首页"><figcaption>H · 首页 1440×900</figcaption></figure>
+        <figure><img src="shots/h-pixel-game-1440x900.png" alt="H 对局屏"><figcaption>H · 对局屏 1440×900</figcaption></figure>
+      </div>
+      <div class="bd">
+        <ul>
+          <li>首页是<b>街机标题画面</b>：像素标题、<span class="mono">▶</span> 光标选单、HIGH SCORE / EXP / SYSTEM / RECENT 四块面板。</li>
+          <li>对局屏底部是<b>对话框</b>（三行战报 + HIT/MISS/RATE 分数 + 闪烁 ▼），日志从浮窗变成常驻。</li>
+          <li>手牌是「道具卡」：明暗斜面对边框 + 大写速阶罗马数字。</li>
+          <li><b>诚实取舍</b>：中文没有可用的像素字体（本项目不许引外部资源），像素感只能靠边框与结构做出来，中文仍是系统字。</li>
+        </ul>
+      </div>
+      <div class="ft">
+        <a class="p" href="h-pixel.html">打开示意稿 →</a>
+        <a href="shots/h-pixel-game-1440x900.png">截图</a>
+        <span class="cost mid">落地成本 中</span>
+      </div>
+    </div>
+
+  </div>
+
+  <h2>第三批 · I–L（产品级重设计：不受现有布局约束）</h2>
+  <p class="sub">这一批不再"重画现有界面"，而是重新设计**信息架构**，并且每一版都用<b>同一个响应式页面</b>在
+    <span class="mono">1440×900</span> 与 <span class="mono">390×844</span> 各出一套图 ——
+    手机上怎么收、桌面上怎么展，是同一个文件、同一套组件，<b>不是桌面版加手机版两张皮</b>。
+    每版都标了参考的成熟产品手法。</p>
+  <div class="grid">
+
+    <div class="opt i">
+      <div class="hd">
+        <span class="tag">I</span>
+        <h3>同一片海</h3>
+        <div class="one">把两块互不相干的棋盘合成<b>一片 6×12 的海图</b>，中间一条「前线」。窄屏竖着折叠、宽屏横着展开。</div>
+      </div>
+      <div class="shots">
+        <figure><img src="shots/i-one-sea-home-1440x900.png" alt="I 首页桌面"><figcaption>I · 首页 1440×900</figcaption></figure>
+        <figure><img src="shots/i-one-sea-game-390x844.png" alt="I 对局手机"><figcaption>I · 对局 390×844（同一个文件）</figcaption></figure>
+      </div>
+      <div class="bd">
+        <ul>
+          <li><b>核心改动</b>：现在"你的棋盘 / 对手的棋盘"是两个互不相干的对象；这一版把它们当作同一片海的两片海域，你的攻击与对手的攻击都发生在一张图上。</li>
+          <li><b>两端打通</b>：窄屏两片海域<b>上下长卷</b>（前线是横线），宽屏<b>左右双页</b>（前线变书脊）—— 同一个对象两种折法。</li>
+          <li>状态栏放在中轴上（窄屏顶栏放不下就把回合/阶段挪到前线那条），首页的"我的舰队"小图与对局里的海图是同一个东西。</li>
+        </ul>
+      </div>
+      <div class="ft">
+        <a class="p" href="i-one-sea.html">打开示意稿 →</a>
+        <a href="shots/i-one-sea-game-390x844.png">手机图</a>
+        <a href="shots/i-one-sea-game-1440x900.png">桌面图</a>
+        <span class="cost high">代价 高</span>
+      </div>
+    </div>
+
+    <div class="opt j">
+      <div class="hd">
+        <span class="tag">J</span>
+        <h3>工作台</h3>
+        <div class="one">左轨道 + 画布 + 右检查器；<b>选中即详情</b>。手机把检查器收成上拉面板、轨道收成底部标签栏。</div>
+      </div>
+      <div class="shots">
+        <figure><img src="shots/j-workbench-game-1440x900.png" alt="J 对局桌面"><figcaption>J · 对局 1440×900</figcaption></figure>
+        <figure><img src="shots/j-workbench-home-390x844.png" alt="J 首页手机"><figcaption>J · 首页 390×844（同一个文件）</figcaption></figure>
+      </div>
+      <div class="bd">
+        <ul>
+          <li>魔法卡不再是"一排卡面"，而是检查器里的一张<b>列表</b>：点一行，上面就展开它的全文与"确认使用"。</li>
+          <li>战报是画布里的一条<b>时间线</b>，不是浮窗；棋盘是画布上的一块面板，规格与状态写在面板头上。</li>
+          <li>同一套三区在手机上变成"画布 + 上拉面板 + 底部标签"，桌面变成"三栏并排"—— 这是这一批里两端差异最自然的一版。</li>
+        </ul>
+      </div>
+      <div class="ft">
+        <a class="p" href="j-workbench.html">打开示意稿 →</a>
+        <a href="shots/j-workbench-game-390x844.png">手机图</a>
+        <a href="shots/j-workbench-game-1440x900.png">桌面图</a>
+        <span class="cost high">代价 高</span>
+      </div>
+    </div>
+
+    <div class="opt k">
+      <div class="hd">
+        <span class="tag">K</span>
+        <h3>组件主页 · 焦点对局</h3>
+        <div class="one">主页是一屏<b>可扫读的组件</b>；对局是<b>焦点模式</b>：90% 是棋盘，其余全收进一个「更多」。</div>
+      </div>
+      <div class="shots">
+        <figure><img src="shots/k-widgets-home-1440x900.png" alt="K 主页桌面"><figcaption>K · 主页 1440×900（4 列组件）</figcaption></figure>
+        <figure><img src="shots/k-widgets-home-390x844.png" alt="K 主页手机"><figcaption>K · 主页 390×844（2 列，同一组组件）</figcaption></figure>
+      </div>
+      <div class="bd">
+        <ul>
+          <li>组件：快速开战 / 段位环 / 赛季进度 / 每日任务 / 卡牌图鉴 / 最近对局 / 在线好友 / 本周最佳 / 成就 / 排行快照 —— 同一组组件按列数自适应。</li>
+          <li>对局顶栏只剩回合与阶段，手牌是底部浮动 dock，日志与统计收进「更多」（桌面右侧抽屉 / 手机上拉面板）。</li>
+          <li>棋盘被放大到 <b>430px</b>（现状 300–340），页面装饰几乎为零 —— 这是"内容优先、壳最轻"的路子。</li>
+        </ul>
+      </div>
+      <div class="ft">
+        <a class="p" href="k-widgets.html">打开示意稿 →</a>
+        <a href="shots/k-widgets-home-390x844.png">手机图</a>
+        <a href="shots/k-widgets-game-1440x900.png">桌面对局图</a>
+        <span class="cost mid">代价 中高</span>
+      </div>
+    </div>
+
+    <div class="opt l">
+      <div class="hd">
+        <span class="tag">L</span>
+        <h3>航线 · 赛季通行证</h3>
+        <div class="one">把段位从"一个数字"变成<b>一条可走的航线</b>，进度本身就是导航；对局是竖屏街机台。</div>
+      </div>
+      <div class="shots">
+        <figure><img src="shots/l-route-home-390x844.png" alt="L 主页手机"><figcaption>L · 主页 390×844（航线 + 通行证）</figcaption></figure>
+        <figure><img src="shots/l-route-game-1440x900.png" alt="L 对局桌面"><figcaption>L · 对局 1440×900（竖屏舞台 + 侧栏）</figcaption></figure>
+      </div>
+      <div class="bd">
+        <ul>
+          <li>航线节点 = 段位节点，每个节点写清"到这里解锁什么"，你的船停在当前节点上；玩一局 = 往前推一程。</li>
+          <li>模式选择从"5 个并排按钮"收成<b>一个主按钮 + 一行段控件</b>（出海 → 休闲/排位/人机）。</li>
+          <li>赛季通行证<b>双轨</b>（免费 / 高级）；对局屏在桌面也保持竖屏，两侧填战报与手牌。</li>
+          <li class="warnline">⚠️ 这一版含<b>新功能</b>（航线可视化 + 赛季通行证涉及商业化），不只是 UI —— 选它要先做产品决策。</li>
+        </ul>
+      </div>
+      <div class="ft">
+        <a class="p" href="l-route.html">打开示意稿 →</a>
+        <a href="shots/l-route-home-390x844.png">手机图</a>
+        <a href="shots/l-route-game-1440x900.png">桌面图</a>
+        <span class="cost high">代价 最高</span>
+      </div>
+    </div>
+
+  </div>
+
+  <h2>第四批 · M–P（按反馈精修，不是新风格）</h2>
+  <p class="sub">这一批不新增风格，只把已确认的方向按反馈修到位。反馈里的取舍已经落进文件：<b>以 C 为底</b>、
+  <b>主页保留 C 的观感并综合 I 的主行动</b>、<b>手牌做成真实卡牌</b>、<b>自己的棋盘放大</b>、
+  <b>去掉通行证等商业化内容</b>；并淘汰<b>复古风</b>（H 像素 + B 的暖纸黄铜）与<b>手机端优先</b>（D）。</p>
+  <div class="grid">
+
+    <div class="opt m">
+      <div class="hd">
+        <span class="tag">M</span>
+        <h3>竞技场精修 · 双盘等大</h3>
+        <div class="one">C 的气质 + I 的主行动 + <b>两块棋盘一样大</b> + 实体手牌两级预览。</div>
+      </div>
+      <div class="shots">
+        <figure><img src="shots/m-arena-pro-home-1440x900.png" alt="M 首页"><figcaption>M · 首页（C 的骨架 + 一个「出海」主按钮）</figcaption></figure>
+        <figure><img src="shots/m-arena-pro-game-1440x900.png" alt="M 对局"><figcaption>M · 对局（双盘 400 等大 + 扇形手牌）</figcaption></figure>
+      </div>
+      <div class="bd">
+        <ul>
+          <li>主页：倾斜指挥官名片 + 热门卡墙 + 段位阶梯（C 保留），模式选择收成<b>一个「出海」按钮 + 一行段控件</b>（I 的做法）。</li>
+          <li>局内两块棋盘<b>等大且都到 400px</b> —— 直说修掉"C 里自己棋盘只有 200px"的问题。</li>
+          <li>手牌是实体卡，按数量自适应扇形；<b>悬停抬起一级、点击抬起更多并在右侧出介绍</b>（二级）。</li>
+        </ul>
+      </div>
+      <div class="ft">
+        <a class="p" href="m-arena-pro.html">打开示意稿 →</a>
+        <a href="shots/m-arena-pro-game-1440x900.png">对局图</a>
+        <span class="cost mid">改动 中</span>
+      </div>
+    </div>
+
+    <div class="opt p">
+      <div class="hd">
+        <span class="tag">P</span>
+        <h3>竞技场最小改动</h3>
+        <div class="one">主页与配色<b>完全沿用 C</b>，只动局内两处 —— "就改一改能用"的那条路。</div>
+      </div>
+      <div class="shots">
+        <figure><img src="shots/p-arena-min-home-1440x900.png" alt="P 首页"><figcaption>P · 首页（与 C 一致，本版不动）</figcaption></figure>
+        <figure><img src="shots/p-arena-min-game-1440x900.png" alt="P 对局"><figcaption>P · 对局（你的海域 352 真棋盘 + 对手海域仍是中场焦点）</figcaption></figure>
+      </div>
+      <div class="bd">
+        <ul>
+          <li>改动只有两条：<b>①</b> 你的海域从 200px 缩略图 → <b>352px 真棋盘</b>；<b>②</b> 底部手牌换成实体卡 + 一级/二级预览。</li>
+          <li>C 的其余部分（对手海域居中、连锁列、暗紫金、主页）<b>一个都没动</b> —— 回归风险最低。</li>
+          <li>两块棋盘仍是不对称的（对手 460 / 你 352），因为你开火的地方是对方海域。</li>
+        </ul>
+      </div>
+      <div class="ft">
+        <a class="p" href="p-arena-min.html">打开示意稿 →</a>
+        <a href="shots/p-arena-min-game-1440x900.png">对局图</a>
+        <span class="cost low">改动 低</span>
+      </div>
+    </div>
+
+    <div class="opt o">
+      <div class="hd">
+        <span class="tag">O</span>
+        <h3>手牌与预览行为（规范稿）</h3>
+        <div class="one">不换皮，专讲手牌：<b>按张数自适应</b> + <b>两级预览的位移规范</b> + <b>用牌流程对照</b>。</div>
+      </div>
+      <div class="shots">
+        <figure><img src="shots/o-hand-fan-1440x900.png" alt="O 手牌自适应"><figcaption>O · 3 / 5 / 8 张的自适应扇形</figcaption></figure>
+        <figure><img src="shots/o-hand-flows-1440x900.png" alt="O 用牌流程"><figcaption>O · 用牌流程两选一 + 建议方案</figcaption></figure>
+      </div>
+      <div class="bd">
+        <ul>
+          <li><b>自适应</b>：牌永远居中；3 张几乎不重叠、5 张标准扇形（−18px / ±7°）、8 张紧压（−46px / ±12°）但抬起后仍能读全。</li>
+          <li><b>两级预览</b>写成了规范值：一级 <code>translateY(-30px) scale(1.05)</code>（不改状态，移开回位）；二级 <code>translateY(-56px) scale(1.09)</code>＋金色描边＋右侧介绍窗。</li>
+          <li><b>用牌流程</b>把「再点即用」与「按钮确认」并排画出来，并给出建议：<b>按"这张卡要不要选目标"分流</b> —— 无需目标的卡点两次即用，需要目标的卡选完目标再确认；按钮文案随状态变（未选目标时置灰显示「在棋盘上选区域…」）。</li>
+        </ul>
+      </div>
+      <div class="ft">
+        <a class="p" href="o-hand.html">打开示意稿 →</a>
+        <a href="shots/o-hand-fan-1440x900.png">手牌图</a>
+        <a href="shots/o-hand-flows-1440x900.png">流程图</a>
+        <span class="cost low">改动 低</span>
+      </div>
+    </div>
+
+    <div class="opt q">
+      <div class="hd">
+        <span class="tag">已淘汰</span>
+        <h3>按反馈本轮淘汰的方向</h3>
+        <div class="one">不是删掉文件，是标出"不再作为候选"。</div>
+      </div>
+      <div class="bd" style="padding-top:16px">
+        <ul>
+          <li><b>H 像素复古</b> 与 <b>B 桌面棋室</b>的复古观感 → 淘汰（但 B 的「真实手牌」思路保留，已并入 M/P/O）。</li>
+          <li><b>D 口袋舰队</b>（手机端优先）→ 淘汰。</li>
+          <li><b>L 航线</b>：通行证 / 赛季进度 / 航线节点 → 全部去掉（商业化内容与"进度即导航"都不需要）。</li>
+          <li><b>K</b> 的「赛季进度」组件同理去掉；其余组件化思路不受影响。</li>
+        </ul>
+      </div>
+      <div class="ft"><span class="cost low" style="margin-left:0">保留文件做参照，不参与选择</span></div>
+    </div>
+
+  </div>
+
+  <h2>第五批 · R（自查返工）</h2>
+  <p class="sub">交付第四批后自查发现一处硬伤：那三版的"卡"是 <b>62px 横条插图 + emoji 占位</b>，
+  本质是深色小方块，不是真实卡牌 —— 你连着强调"真实手牌"还提到要配卡面，这一处不达标。
+  R 版把卡按真实 TCG 结构重做，并把我在 M 里退化掉的「连锁叠牌」恢复。</p>
+  <div class="grid">
+    <div class="opt r">
+      <div class="hd">
+        <span class="tag">R</span>
+        <h3>真实卡牌版</h3>
+        <div class="one">卡尺寸 150×210（比例同真实 TCG 63×88mm）· 满幅插画占 53% · 名牌 + 速阶宝石 + 独立说明框 · 双层卡框 + 实体厚度 · 三态同屏对比</div>
+      </div>
+      <div class="shots">
+        <figure><img src="shots/r-real-cards-home-1440x900.png" alt="R 首页"><figcaption>R · 首页（本周热门卡用真卡展示）</figcaption></figure>
+        <figure><img src="shots/r-real-cards-game-1440x900.png" alt="R 对局"><figcaption>R · 对局（三态同屏 + 连锁叠牌 + 真卡手牌）</figcaption></figure>
+      </div>
+      <div class="bd">
+        <ul>
+          <li><b>卡面结构</b>：满幅插画（104px / 53%）→ 名牌 + 速阶宝石 → 独立说明框 → 类型条；卡框是双层（外层暗金描边 + 内层亮线 + 顶部高光 + 底部厚度影子）。</li>
+          <li><b>插画不再用 emoji</b>：每张牌一个手写内联 SVG 意象（雷达同心圆 / 火焰弧 / 断链叉 / 桃形簇 / 契约五芒）。生产环境这一块就是 <code>docs/magic_card_art_prompts.md</code> 生成的那张竖版插画。</li>
+          <li><b>连锁恢复成叠牌</b>：右栏是三张真卡叠起来（每张只露 34px 切片，只有最上面那张全露），并标出自下而上的响应顺序 —— 连锁本来就是"一叠卡"，M 里退化成提示条是倒退。</li>
+          <li><b>三态同屏</b>：常态 / 一级预览（−30px · 1.05）/ 二级预览（−56px · 1.09 + 右侧出介绍）在同一排里直接对比，不再另开说明页。</li>
+          <li><b>仍待定</b>：这些数值（扇形角度、重叠、抬起量）目前是我按"手感"定的，正在做市面卡牌游戏的调研，回来后用实测/公开数据替换。</li>
+        </ul>
+      </div>
+      <div class="ft">
+        <a class="p" href="r-real-cards.html">打开示意稿 →</a>
+        <a href="shots/r-real-cards-game-1440x900.png">对局图</a>
+        <span class="cost mid">改动 中</span>
+      </div>
+    </div>
+  </div>
+
+  <h2>第六批 · S（移动端调优）</h2>
+  <p class="sub">按一手来源（Apple HIG / W3C / androidx 的 Material 3 令牌 / Balatro 反编译源码）调优手机布局。
+  三条查实的问题：<b>①</b> <code>index.html:5</code> 缺 <code>viewport-fit=cover</code> 而 <code>style.css:3665/3978</code> 用了
+  <code>env(safe-area-inset-bottom)</code> → iOS 上留白恒为 0；<b>②</b> <code>style.css:3831</code> 紧凑档手牌 64×92，中文效果文字读不了；
+  <b>③</b> <code>adaptive_layout.js:135</code> 在 390×844 上判为"两块 364px 棋盘上下堆"，而实测可用高只有 763px（844−47−34）。</p>
+  <div class="grid">
+    <div class="opt s">
+      <div class="hd">
+        <span class="tag">S</span>
+        <h3>移动端调优 · 一屏一块 · 真卡抽屉</h3>
+        <div class="one">手机改走 tabs（一次一块棋盘，格宽反而更大）· 小卡只负责"认出是哪张"、抽屉里给 200×280 可读大卡面 · 操作条进拇指区 · 按实测安全区算预算</div>
+      </div>
+      <div class="shots portrait">
+        <figure><img src="shots/s-mobile-game-390x844.png" alt="S 对局 390"><figcaption>S · 对局 390×844（格宽 55px）</figcaption></figure>
+        <figure><img src="shots/s-mobile-spec-390x844.png" alt="S 规范"><figcaption>S · 预算与依据（含一手来源）</figcaption></figure>
+      </div>
+      <div class="bd">
+        <ul>
+          <li><b>格宽</b>：390×844 下 55px、320×568 下 41px、横屏 664×336 下 41px —— 三档都高于项目 <code>MIN_CELL=40</code>，390 那档也高于 HIG 44pt。</li>
+          <li><b>竖向预算</b>按实测可用高 763px 算：状态栏 47 + 顶栏 87 + 回合条 42 + 棋盘 366 + 手牌 150 + 操作 48 + 安全区 34 = 774（含留白），战报改走抽屉。</li>
+          <li><b>抽屉令牌</b>用 Material 3 实现值：遮罩 32% 黑、顶部圆角 28dp、把手 32×4dp；操作条 48px（Material 推荐 48dp）、间距 12px（Apple 建议）。</li>
+          <li><b>两条被独立印证的决定</b>：手机一屏一块（两块 632 + 手牌 110 + 顶栏 44 + 操作 48 = 834 &gt; 763）；需要选<b>区域</b>目标的卡要有确认步（Hearthstone 无确认但选的是单点，Balatro 对"先选再确认"才有先例）。</li>
+          <li><b>仍为推测</b>：各游戏客户端手牌像素尺寸、拇指区百分比、320 宽机型安全区为 0、"点开放大"对 CJK 小字的实际收益。</li>
+        </ul>
+      </div>
+      <div class="ft">
+        <a class="p" href="s-mobile.html">打开示意稿 →</a>
+        <a href="shots/s-mobile-game-390x844.png">390 图</a>
+        <a href="shots/s-mobile-spec-390x844.png">依据页</a>
+        <span class="cost low">改动 低</span>
+      </div>
+    </div>
+  </div>
+
+  <h2>第七批 · T/U（C 上的新状态与新主次）</h2>
+  <div class="grid">
+    <div class="opt t">
+      <div class="hd"><span class="tag">T</span><h3>目标选择态</h3>
+        <div class="one">点开 神威！之后到底发生什么：<b>落点高亮 → 已选待确认 → 越界无效</b> 三个状态。</div></div>
+      <div class="shots">
+        <figure><img src="shots/t-targeting-pick-1440x900.png" alt="T 选目标"><figcaption>T · 选目标（合法锚点 + 当前 3×3）</figcaption></figure>
+        <figure><img src="shots/t-targeting-invalid-1440x900.png" alt="T 非法"><figcaption>T · 越界无效（不提交、不消耗卡）</figcaption></figure>
+      </div>
+      <div class="bd"><ul>
+        <li>依据一手调研：Hearthstone 的"松手即生效"是为<b>单点</b>目标设计的；神威！是 <b>3×3 区域</b>、轰炸是整行整列，
+          误触代价大得多，而两家都<b>不能撤销</b> → 按 Balatro 的先例<b>先选、再确认</b>。</li>
+        <li>确认按钮 48px；越界时置灰成「请重新选合法区域」；点空白 = 取消（不消耗卡）。</li>
+        <li>覆盖层按真实格子矩形解析定位 —— 越界那种目标格不存在的框能自然画到棋盘外（我的第一版正是在这里崩了，说明非法态是必须处理的分支）。</li>
+      </ul></div>
+      <div class="ft"><a class="p" href="t-targeting.html">打开示意稿 →</a><a href="shots/t-targeting-pick-1440x900.png">截图</a><span class="cost low">改动 低</span></div>
+    </div>
+    <div class="opt u">
+      <div class="hd"><span class="tag">U</span><h3>我为主（主次反转）</h3>
+        <div class="one">你的海域当主角（最大 560px、格宽约 80px），对手海域缩成右栏 240px 雷达盘。</div></div>
+      <div class="shots">
+        <figure><img src="shots/u-mine-hero-game-1440x900.png" alt="U 对局"><figcaption>U · 对局（你的海域 504px）</figcaption></figure>
+        <figure><img src="shots/u-mine-hero-game-1280x720.png" alt="U 对局 1280"><figcaption>U · 对局 1280×720</figcaption></figure>
+      </div>
+      <div class="bd"><ul>
+        <li>直接回答"自己的棋盘太小"：C 把它压成 200px 小图，这里给到 504px。</li>
+        <li><b>代价写在页面上</b>：你开火打的是对方海域，开火时视线要往右上角跑。</li>
+        <li>连锁叠牌、真卡手牌、两级预览都不变；720 档右栏改成可滚而不是静默裁掉。</li>
+      </ul></div>
+      <div class="ft"><a class="p" href="u-mine-hero.html">打开示意稿 →</a><a href="shots/u-mine-hero-game-1440x900.png">截图</a><span class="cost mid">改动 中</span></div>
+    </div>
+  </div>
+
+  <h2>第八批 · V/W（C 的另外两个屏）</h2>
+  <p class="sub">此前 19 版全都只画了「首页 + 对局屏」。这两版补上 C 线上从没画过的<b>结算屏</b>与<b>卡牌图鉴</b>。</p>
+  <div class="grid">
+    <div class="opt v">
+      <div class="hd"><span class="tag">V</span><h3>结算屏</h3>
+        <div class="one">胜负裁决 + 段位变化 + 经验条 + 本局数据 + 成就解锁 + 再接一局。胜利与失败两态都画了。</div></div>
+      <div class="shots">
+        <figure><img src="shots/v-result-win-1440x900.png" alt="V 胜利"><figcaption>V · 胜利（+32 分、连锁大师解锁）</figcaption></figure>
+        <figure><img src="shots/v-result-lose-1440x900.png" alt="V 失败"><figcaption>V · 失败（−24 分、掉段提示）</figcaption></figure>
+      </div>
+      <div class="bd"><ul>
+        <li>胜负用头部横幅区分（赢是金、负是红），右边统一给出<b>段位前→后 + 变化值</b>。</li>
+        <li>掉段那态特别处理：段位名从「大副 Ⅱ」变「三副」，进度条回落 —— 这是最容易做崩的一态。</li>
+        <li>四个动作：查看战报 / 复制对局 / 返回首页 / 再来一局。</li>
+      </ul></div>
+      <div class="ft"><a class="p" href="v-result.html">打开示意稿 →</a><a href="shots/v-result-win-1440x900.png">胜利图</a><span class="cost low">改动 低</span></div>
+    </div>
+    <div class="opt w">
+      <div class="hd"><span class="tag">W</span><h3>卡牌图鉴</h3>
+        <div class="one">真卡网格 + 速阶/类型筛选 + 已见/未发现三态 + 右栏卡面详情。41 张卡面的落点。</div></div>
+      <div class="shots">
+        <figure><img src="shots/w-collection-collection-1440x900.png" alt="W 图鉴"><figcaption>W · 图鉴（已见 28/43）</figcaption></figure>
+        <figure><img src="shots/w-collection-collection-1280x720.png" alt="W 图鉴 1280"><figcaption>W · 图鉴 1280×720</figcaption></figure>
+      </div>
+      <div class="bd"><ul>
+        <li><b>三态</b>：已见（正常色）/ 未发现（灰化 + 问号 + "本期尚未遇到"）/ 选中（金色描边 + 右栏详情）。</li>
+        <li>右栏详情给出"你用过 7 次 / 对手用过 3 次 / 首次见到 9 月 12 日"—— 图鉴不只是收藏，也是个人数据。</li>
+        <li>这一格就是 <code>docs/magic_card_art_prompts.md</code> 的 41 张竖版插画的落点，现在放的是占位意象。</li>
+      </ul></div>
+      <div class="ft"><a class="p" href="w-collection.html">打开示意稿 →</a><a href="shots/w-collection-collection-1440x900.png">截图</a><span class="cost low">改动 低</span></div>
+    </div>
+  </div>
+
+  <h2>与现状对照</h2>
+
+
+
+  <div class="cur">
+    <figure><img src="../images/fluent/1440x900.png" alt="现状首页"><figcaption>现状 · 首页 1440×900（Fluent 2）</figcaption></figure>
+    <figure><img src="../images/fluent/390x844.png" alt="现状首页窄屏"><figcaption>现状 · 首页 390×844</figcaption></figure>
+    <figure><img src="../images/fluent/1600x1000.png" alt="现状宽屏"><figcaption>现状 · 首页 1600×1000</figcaption></figure>
+  </div>
+
+  <h2>落地代价对照</h2>
+  <p class="sub">判断依据是本项目自己的门禁，不是主观印象：<code>ui_layout_check.mjs</code>（128 项，含「两块棋盘同尺寸且 ≥280px」「紧凑档零纵向滚动」「触摸 ≥40px」「浮窗零叠压」）、
+    <code>dom_contract_check.mjs</code>（悬空 id）、<code>fluent_style_check.mjs</code>（<code>.game-container</code> 等不许有 transform/filter/backdrop-filter）、
+    以及断言源码字符串的 pytest。</p>
+  <table>
+    <thead><tr><th>方向</th><th>要重定哪条不变量</th><th>要动的代码</th><th>能修掉的现存缺陷</th><th>总代价</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>A 战术指挥台</b></td>
+        <td class="p">宽屏 1200–1439 那段「为浮窗留白」的 padding 规则要重写；「两块棋盘同尺寸且 ≥280px」这条<b>不用改</b>，改成并排后自动满足</td>
+        <td>对局屏外壳 CSS（三栏）+ 首页重排；<b>id 全保留</b></td>
+        <td class="y">§10.3 第二块棋盘被手牌压住；连锁提示不可回溯；日志被折成浮窗</td>
+        <td class="p">中高</td>
+      </tr>
+      <tr>
+        <td><b>B 桌面棋室</b></td>
+        <td class="p">棋盘上限从 340px 放宽到 400px；手牌扇形只用 transform，不碰盒模型</td>
+        <td>视觉层为主（<code>style.css</code> + 字体/材质）</td>
+        <td class="y">卡牌太小读不了描述；棋盘不是主角；缺玩法说明</td>
+        <td class="p">中</td>
+      </tr>
+      <tr>
+        <td><b>C 卡牌竞技场</b></td>
+        <td class="n">多出一个 36 格的迷你棋盘 →「两块棋盘」类断言要按「主棋盘 2 块 + 迷你 1 块」重写</td>
+        <td>新增迷你棋盘渲染器（现 <code>game.js</code> 只往两个 id 各画 36 格）；手牌尺寸翻倍</td>
+        <td class="y">卡牌描述不可读；连锁过程不可见；43 张卡存在感几乎为零</td>
+        <td class="n">高</td>
+      </tr>
+      <tr>
+        <td><b>D 口袋舰队</b></td>
+        <td class="y">无冲突 —— 它本来就照紧凑档的不变量设计（零滚动 / 一次一块棋盘 / 抽屉三选一）</td>
+        <td>移动档 CSS + 把抽屉接到现有 <code>#aux-dock</code>；宽屏沿用现状</td>
+        <td class="y">窄屏导航散乱、浮窗互相遮盖、触摸目标偏小</td>
+        <td class="y">低</td>
+      </tr>
+      <tr>
+        <td><b>E 声呐舰桥</b></td>
+        <td class="p">同 C：多一个只读的迷你舰队盘；声呐圆环/扫描扇是纯装饰，不参与布局</td>
+        <td>迷你盘渲染 + 外壳 CSS；环形仪表用 <code>conic-gradient</code>，不需要新依赖</td>
+        <td class="y">同 C（卡牌描述不可读）；主题贴切度全批最高</td>
+        <td class="p">中高</td>
+      </tr>
+      <tr>
+        <td><b>F 极简纸白</b></td>
+        <td class="y">几乎无冲突：两块棋盘、紧凑档零滚动都保持不变</td>
+        <td><code>style.css</code> 排版层 + 手牌改成表格（要动 <code>game.js</code> 的手牌渲染）</td>
+        <td class="y">信息噪音最低；卡牌描述改成「选中行展开」，不再依赖浮窗</td>
+        <td class="y">低中</td>
+      </tr>
+      <tr>
+        <td><b>G 霓虹赛博</b></td>
+        <td class="p">同 A（宽屏留白规则重写）；发光用 <code>box-shadow</code>/<code>text-shadow</code>、切角用 <code>clip-path</code>，都不动盒模型</td>
+        <td>外壳 CSS + 手牌换皮（手牌本来就在底部一排）</td>
+        <td class="y">连锁存在感最强；命中/打空的视觉区别最明显</td>
+        <td class="p">中</td>
+      </tr>
+      <tr>
+        <td><b>H 像素复古</b></td>
+        <td class="p">同 A；另外日志要从可折叠浮窗改成常驻对话框（结构小改）</td>
+        <td>外壳 CSS + 日志容器改常驻</td>
+        <td class="y">日志常驻不再折叠；手法/状态一眼可读；键位提示天然合适</td>
+        <td class="p">中</td>
+      </tr>
+      <tr>
+        <td><b>I 同一片海</b></td>
+        <td class="n">两块棋盘变成一片 6×12：宽屏"留白规则"要重写，「两块棋盘」类断言按"主棋盘（前沿）+ 本方海域"重述；日志/手牌浮窗全部重新落位</td>
+        <td>两个 grid 合成一个容器 + 折叠逻辑；首页舰队小图复用同一渲染</td>
+        <td class="y">§10.3 棋盘被压住（并排后消失）；"我打哪 / 他打哪"一眼分清；攻击范围可跨域表达</td>
+        <td class="n">高</td>
+      </tr>
+      <tr>
+        <td><b>J 工作台</b></td>
+        <td class="n">新增"当前选中对象"这一层状态（检查器随它变）；手牌从卡面行改成列表；战报从浮窗改成常驻时间线</td>
+        <td>三区骨架 + 选中态管理；8 个屏都按"列表 + 详情"重排</td>
+        <td class="y">卡牌描述不再依赖浮窗；日志常驻；8 个屏的交互一致（选中即详情）</td>
+        <td class="n">高</td>
+      </tr>
+      <tr>
+        <td><b>K 组件主页 · 焦点对局</b></td>
+        <td class="p">对局屏要弃用现有浮窗体系（日志/预览/聊天都进"更多"）；棋盘放大到 430px 要重定宽屏断言</td>
+        <td>主页组件网格（纯展示，易）+ 对局"更多"抽屉</td>
+        <td class="y">棋盘最大、装饰最少；主页一屏看完段位/任务/赛季/好友</td>
+        <td class="p">中高</td>
+      </tr>
+      <tr>
+        <td><b>L 航线 · 赛季通行证</b></td>
+        <td class="n">含<b>新功能</b>：航线可视化 + 赛季通行证（双轨、奖励发放、赛季结算）—— 需要新的服务端数据与规则</td>
+        <td>主页重做（航线 + 通行证）+ 对局竖屏舞台 + 段位路径的接口</td>
+        <td class="y">"进步"成为界面主干；模式入口收成一个主按钮；对局竖屏在两端一致</td>
+        <td class="n">最高</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>怎么复跑</h2>
+  <p class="sub">示意稿是独立静态 HTML，不依赖 Flask / socket.io / 任何外部资源 —— 直接双击打开即可，也可以重新出图：</p>
+  <table>
+    <tbody>
+      <tr><td><code>node tools/ui_demo_shots.mjs</code></td><td>全部 demo × 全部视口 × 首页/对局 出图到 <code>docs/ui_demos/shots/</code></td></tr>
+      <tr><td><code>node tools/ui_demo_shots.mjs --only a-tactical</code></td><td>只出某一个</td></tr>
+      <tr><td><code>node tools/ui_demo_shots.mjs --probe ".board,.hand-rail"</code></td><td>顺便打印这些选择器的矩形（排版溢出靠量，不靠猜）</td></tr>
+    </tbody>
+  </table>
+  <p class="sub" style="margin-top:14px">出图后<b>必须看图</b> —— 本项目在 <code>docs/FLUENT_UI_2026_09_21.md §8</code> 记过一次「截图归档了但没人看，毛玻璃把整页糊掉」。这批 16 张图都是逐张看过、并按量出来的矩形改过的。</p>
+</div>
+</body>
+</html>

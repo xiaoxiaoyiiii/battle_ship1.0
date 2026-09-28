@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<!-- 这一行就是本条建议的核心：没有 viewport-fit=cover，env(safe-area-inset-*) 恒为 0 -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>移动端调优 · 一屏一块 · 真卡抽屉</title>
+<script>
+  window.__demoViews = ['game', 'sheet', 'spec'];
+  window.__demoErrors = [];
+  window.addEventListener('error', function (e) { window.__demoErrors.push(String(e.message)); });
+  window.setDemoView = function (v) {
+    document.querySelectorAll('.screen').forEach(function (s) { s.classList.toggle('on', s.dataset.view === v); });
+    document.querySelectorAll('#demo-switcher button').forEach(function (b) { b.classList.toggle('on', b.dataset.view === v); });
+    document.body.dataset.view = v;
+  };
+  window.setBoardTab = function (id, btn) {
+    document.querySelectorAll('.board-tab').forEach(function (b) { b.classList.toggle('on', b.dataset.tab === id); });
+    document.querySelectorAll('.boardpane').forEach(function (p) { p.classList.toggle('on', p.dataset.tab === id); });
+  };
+</script>
+<style>
+/* ============================================================================
+   移动端调优（同一套 R 设计的手机布局）—— 390×844 为主，另测 320×568 与横屏 664×336
+   ────────────────────────────────────────────────────────────────────────────
+   三条实证问题都在这里处理（都能定位到项目源码）：
+     ① index.html:5 缺 viewport-fit=cover，而 style.css:3665/3978 用了 env(safe-area-inset-bottom)
+        → iOS 上那句留白恒为 0。本稿显式打开 cover 并给出上/下两边要处理什么。
+     ② style.css:3831 紧凑档手牌卡只有 64×92，中文效果文字读不了
+        → 手牌做成"小卡 + 点开底部抽屉里的大卡面"，抽屉里用的就是 R 版那张真卡。
+     ③ adaptive_layout.js:135 在 390×844 上判为 stack（两块 364px 棋盘上下堆），
+        而 tabs（一次一块）只在 H<560 用 → 手机改判 tabs：一块棋盘能到 342px（格宽 47px，
+        高于本项目的 40px 下限、也高于 HIG 44pt），省下的 370px 给手牌与抽屉。
+   竖向预算（844 高，见第三屏）：状态/顶栏 44 + 回合条 46 + 棋盘 342 + 图例 18 + 手牌 120
+   + 操作条 56 + 安全区 12 = 638，余 206 留给抽屉露出的一截。
+   静态示意稿，非可运行版本。
+   ========================================================================== */
+:root {
+  --bg:#0b0d18; --panel:#151a30; --panel2:#1b2140; --line:#2a3358; --line2:#3b4675;
+  --tx:#e7ecff; --tx2:#a2adcf; --tx3:#6c789e;
+  --gold:#c9a24c; --gold2:#e6c778; --vio:#7c5cf0; --cy:#4ec8e0; --rd:#ff5c6c; --gn:#4ade80; --am:#f2a33c;
+  /* ⚠️ 示意稿里写实测值：iPhone 14（390×844）实测 顶部 47 / 底部 34，
+     无头浏览器里 env() 恒为 0、算出来的预算是假的。
+     真机实现应写 env() 并配 viewport-fit=cover（见下方说明）。 */
+  --safe-t:47px;   /* 刘海/状态栏：iPhone 14 实测 47，iPhone 14 Pro 59 */
+  --safe-b:34px;   /* home indicator：iPhone 14 实测 34 */
+  --sans:"Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+  /* 触摸下限：本项目的 MIN_TAP=40；Apple HIG 44pt、Material 48dp —— 手机档按 44 走 */
+  --tap:48px;      /* Material 3 推荐 48dp；Apple HIG 44pt、W3C 移动 9mm —— 取更高者 */
+}
+* { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html, body { margin:0; height:100%; }
+body { background:var(--bg); color:var(--tx); font-family:var(--sans); font-size:13px; overflow:hidden; }
+body::before { content:""; position:fixed; inset:0; pointer-events:none;
+  background:radial-gradient(520px 320px at 50% -6%, rgba(124,92,240,.30), transparent 70%),
+             radial-gradient(420px 300px at 10% 106%, rgba(78,200,224,.12), transparent 70%); }
+.screen { display:none; height:100%; flex-direction:column; position:relative; }
+.screen.on { display:flex; }
+.lab { font:600 10px/1 var(--sans); letter-spacing:.18em; color:var(--tx3); }
+/* 状态栏：iPhone 14 实测 47px —— 示意稿把它画出来，免得看着像"凭空留白" */
+.statusbar { flex:0 0 auto; height:var(--safe-t); display:flex; align-items:flex-end; justify-content:space-between;
+  padding:0 16px 2px; font-size:11px; color:var(--tx2); }
+.statusbar .ic { letter-spacing:1px; font-size:10px; }
+.mono { font-family:var(--mono); }
+.panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; }
+
+/* ---------- 真卡（与 R 版同一套组件，尺寸按手机档缩小） ---------- */
+.cc { position:relative; border-radius:8px; padding:4px;
+  background:linear-gradient(180deg,#424a7a 0%,#252c52 40%,#171c36 100%);
+  box-shadow:0 1px 0 rgba(255,255,255,.16) inset, 0 -2px 0 rgba(0,0,0,.5) inset, 0 8px 18px rgba(0,0,0,.55); }
+.cc .in { height:100%; border-radius:4px; overflow:hidden; display:flex; flex-direction:column;
+  border:1px solid rgba(230,199,120,.38); background:#0e1226; }
+.cc .art { position:relative; overflow:hidden; flex:0 0 auto; }
+.cc .art svg { display:block; width:100%; height:100%; }
+.cc .art::after { content:""; position:absolute; inset:0;
+  background:linear-gradient(180deg, rgba(255,255,255,.10), transparent 34%, rgba(0,0,0,.42)); }
+.cc .name { display:flex; align-items:center; gap:6px; padding:4px 6px 4px 5px;
+  background:linear-gradient(180deg,#2b3563,#1b2244); border-top:1px solid rgba(230,199,120,.32); border-bottom:1px solid rgba(230,199,120,.26); }
+.cc .gem { flex:0 0 auto; display:grid; place-items:center; font-family:var(--mono); font-weight:700; color:#2a1f04;
+  background:linear-gradient(180deg,#f4dc9a,#c9a24c); clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%); }
+.cc .gem.g2 { background:linear-gradient(180deg,#bfe9ff,#4ec8e0); color:#04222c; }
+.cc .gem.g3 { background:linear-gradient(180deg,#d7c8ff,#7c5cf0); color:#fff; }
+.cc .name b { font-weight:600; letter-spacing:.02em; }
+.cc .text { flex:1; min-height:0; color:#c3cbe8;
+  background:repeating-linear-gradient(180deg, rgba(255,255,255,.022) 0 1px, transparent 1px 4px), linear-gradient(180deg,#161c36,#111529); }
+.cc .bottom { display:flex; align-items:center; justify-content:space-between; color:var(--tx3);
+  border-top:1px solid rgba(255,255,255,.07); background:#0d1122; }
+/* 手牌小卡：只到"认得出来"的尺寸，细节留给抽屉里的大卡 */
+.cc.mini { width:92px; height:130px; }
+.cc.mini .art { height:66px; }
+.cc.mini .name b { font-size:11px; }
+.cc.mini .gem { width:16px; height:16px; font-size:9px; }
+.cc.mini .text { display:none; }
+.cc.mini .bottom { font-size:8.5px; padding:2px 15px; }
+/* 抽屉里的大卡：手机上的"可读尺寸" —— 200×280，字号 13.5 / 11 */
+.cc.big { width:200px; height:280px; padding:5px; border-radius:10px; }
+.cc.big .art { height:138px; }
+.cc.big .name { padding:6px 8px; gap:8px; }
+.cc.big .name b { font-size:15px; }
+.cc.big .gem { width:22px; height:22px; font-size:11px; }
+.cc.big .text { padding:8px 9px; font-size:12.5px; line-height:1.6; }
+.cc.big .bottom { font-size:10px; padding:5px 9px; }
+.cc.sel .in { border-color:var(--gold2); box-shadow:0 0 0 2px rgba(230,199,120,.55), 0 0 22px rgba(201,162,76,.25); }
+
+/* ---------- 顶栏 / 回合条（都在拇指区之外，只放"看"的东西） ---------- */
+.vh { flex:0 0 auto; display:flex; align-items:center; gap:8px;
+  padding:calc(var(--safe-t) + 4px) 12px 6px; height:calc(40px + var(--safe-t)); }
+.vh .me { display:flex; align-items:center; gap:8px; min-width:0; }
+.vh .por { width:28px; height:28px; border-radius:9px; display:grid; place-items:center; font-size:11px; flex:0 0 auto;
+  background:linear-gradient(140deg,#7a3a44,#3a1c22); }
+.vh .n { font-size:12.5px; white-space:nowrap; }
+.vh .s { font-size:10px; color:var(--tx3); white-space:nowrap; }
+.vh .x { margin-left:auto; display:flex; gap:6px; }
+.ib { width:var(--tap); height:var(--tap); display:grid; place-items:center; border-radius:12px;
+  background:var(--panel); border:1px solid var(--line); color:var(--tx2); }
+.turnbar { flex:0 0 auto; display:flex; align-items:center; gap:6px; margin:0 12px; padding:6px 8px; }
+.chip { font-size:11px; padding:6px 10px; border-radius:999px; background:var(--panel2); border:1px solid var(--line); color:var(--tx2); white-space:nowrap; }
+.chip.hot { border-color:rgba(230,199,120,.5); color:var(--gold2); }
+.chip b { font-family:var(--mono); color:var(--tx); }
+
+/* ---------- 棋盘：一次一块 + 分段切换（项目里已有的 #board-tabs 机制） ---------- */
+.boardzone { flex:1; min-height:0; display:flex; flex-direction:column; padding:8px 12px 0; }
+.board-tabs { display:grid; grid-template-columns:1fr 1fr; gap:4px; padding:3px; background:#0d1226;
+  border:1px solid var(--line); border-radius:12px; flex:0 0 auto; }
+.board-tab { min-height:36px; display:grid; place-items:center; border-radius:9px; font-size:12.5px; color:var(--tx2); }
+.board-tab.on { background:var(--panel2); color:var(--tx); font-weight:600; }
+.boardpane { display:none; flex:1; min-height:0; flex-direction:column; align-items:center; justify-content:center; }
+.boardpane.on { display:flex; }
+/* 一块棋盘能到 342px：格宽 = (342 - 5*4 - 16)/6 ≈ 47px —— 高于项目 40px 下限，也高于 HIG 44pt */
+.board { display:grid; grid-template-columns:repeat(6,1fr); gap:4px; width:100%;
+  max-width:min(100%, calc(100vh - 440px)); padding:8px; border-radius:16px;
+  background:radial-gradient(120% 120% at 50% 0%, #1d2a55, #101733 70%); border:1px solid var(--line2); }
+.cell { aspect-ratio:1/1; border-radius:8px; background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.06); display:grid; place-items:center; }
+.cell.ship { background:rgba(79,168,255,.2); border-color:rgba(120,190,255,.5); }
+.cell.ship::after { content:""; width:46%; height:46%; background:#9ad0ff; clip-path:polygon(50% 0,100% 100%,0 100%); }
+.cell.hit { background:rgba(255,92,108,.22); border-color:rgba(255,92,108,.6); }
+.cell.hit::after { content:""; width:52%; height:52%; background:var(--rd); clip-path:polygon(50% 0,61% 39%,100% 50%,61% 61%,50% 100%,39% 61%,0 50%,39% 39%); }
+.cell.miss::after { content:""; width:26%; height:26%; border-radius:50%; border:1.5px solid rgba(78,200,224,.65); }
+.cell.tgt { box-shadow:inset 0 0 0 2px var(--vio); background:rgba(124,92,240,.18); }
+.blegend { display:flex; gap:10px; justify-content:center; font-size:10px; color:var(--tx3); padding-top:7px; }
+/* 棋盘下方原来空着 200px：放"最近战报"（手机上也该看得到战报），与棋盘一起在棋盘区里居中 */
+/* 战报不做常驻：iPhone 14 可用高只有 763px（844−47−34），
+   棋盘 + 手牌 + 操作已经占满；完整战报放抽屉里（渐进披露）。 */
+.logstrip { display:none; }
+.logstrip .mono { color:var(--tx3); margin-right:6px; }
+.logstrip .hit { color:var(--rd); } .logstrip .warn { color:var(--am); }
+
+/* ---------- 手牌 + 操作条：都在拇指区（屏高下半部） ---------- */
+.bottom { flex:0 0 auto; padding:0 12px calc(10px + var(--safe-b)); }
+.handrow { display:flex; align-items:flex-end; justify-content:center; padding:8px 0 12px; }
+.handrow .cc + .cc { margin-left:-22px; }
+.handrow .cc:nth-child(1) { transform:rotate(-6deg) translateY(3px); }
+.handrow .cc:nth-child(2) { transform:rotate(-2deg) translateY(2px); }
+.handrow .cc:nth-child(3) { transform:rotate(2deg) translateY(2px); }
+.handrow .cc:nth-child(4) { transform:rotate(6deg) translateY(3px); }
+.handrow .cc:nth-child(5) { transform:rotate(9deg) translateY(6px); }
+.handrow .cc.sel { transform:rotate(2deg) translateY(-14px) scale(1.07); z-index:5; }
+.actions { display:flex; gap:12px; }
+.actions button { font-family:var(--sans); font-weight:600; border:0; border-radius:14px; min-height:var(--tap); }
+.actions .ghost2 { flex:0 0 84px; background:transparent; border:1px solid #5c242a; color:#ff9aa5; font-size:12.5px; }
+.actions .pri { flex:1; background:linear-gradient(120deg,#6b4ce0,#3f2a9c); color:#fff; font-size:15px; }
+.hint { font-size:10.5px; color:var(--tx3); text-align:center; padding-top:7px; }
+.hint b { color:var(--tx2); }
+
+/* ---------- 卡牌抽屉（底部上拉；这里画的是"全展开"态） ---------- */
+.scrim { position:absolute; inset:0; background:rgba(0,0,0,.32); opacity:0; pointer-events:none; transition:opacity .18s ease; }
+.scrim.on { opacity:1; }
+.sheet { position:absolute; left:0; right:0; bottom:0; z-index:20; background:#121732;
+  border-top:1px solid var(--line2); border-radius:28px 28px 0 0; box-shadow:0 -14px 40px rgba(0,0,0,.6);
+  padding:8px 14px calc(12px + var(--safe-b)); }
+.sheet .grab { width:32px; height:4px; border-radius:999px; background:var(--line2); margin:0 auto 10px; }   /* M3 把手 32×4dp */
+.sheet .top { display:flex; gap:14px; align-items:flex-start; }
+.sheet .info { flex:1; min-width:0; }
+.sheet .info h3 { margin:0 0 6px; font-size:16px; display:flex; align-items:center; gap:8px; }
+.sheet .info .meta { font-size:11.5px; color:var(--tx3); margin-bottom:10px; }
+.sheet .info p { margin:0 0 12px; font-size:12px; line-height:1.75; color:var(--tx2); }
+.sheet .acts { display:flex; gap:12px; }
+.sheet .acts button { font-family:var(--sans); font-weight:600; min-height:var(--tap); border-radius:13px; }
+.sheet .acts .u { flex:1.6; border:0; background:linear-gradient(120deg,#e6c778,#c9a24c); color:#3a2a05; font-size:15px; }
+.sheet .acts .c { flex:1; background:transparent; border:1px solid var(--line2); color:var(--tx2); font-size:13px; }
+.sheet .steps { margin-top:12px; padding-top:11px; border-top:1px dashed var(--line); font-size:11px; color:var(--tx3); line-height:1.8; }
+.sheet.peek { padding:6px 14px var(--safe-b); }
+.sheet.peek .top, .sheet.peek .steps, .sheet.peek .peektxt { display:none; }
+.sheet.peek .grab { margin-bottom:0; }   /* 露头只留把手（M3 docked peek 56dp 也主要是把手） */
+
+/* ---------- 第三屏：规范页 ---------- */
+.page { flex:1; min-height:0; overflow-y:auto; padding:10px 14px calc(16px + var(--safe-b)); }
+.page h2 { font-size:16px; margin:0 0 6px; }
+.page .lede { font-size:12px; color:var(--tx2); line-height:1.85; margin:0 0 14px; }
+.page h4 { font-size:10.5px; letter-spacing:.18em; color:var(--tx3); margin:18px 0 8px; }
+table { border-collapse:collapse; width:100%; font-size:11.5px; }
+th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+th { color:var(--tx3); font-weight:600; font-size:10.5px; }
+td b { color:var(--tx); }
+.num { font-family:var(--mono); }
+.fix { border-left:2px solid var(--am); padding-left:10px; margin-bottom:14px; }
+.fix .t { font-size:12.5px; color:var(--tx); margin-bottom:4px; }
+.fix .e { font-size:11px; color:var(--tx3); line-height:1.7; font-family:var(--mono); }
+.fix .a { font-size:11.5px; color:var(--tx2); line-height:1.75; margin-top:5px; }
+.ok { color:var(--gn); } .bad { color:var(--rd); } .warn { color:var(--am); }
+
+.colmain { display:flex; flex-direction:column; min-height:0; flex:1; }
+
+/* ── 矮屏（320×568 一类）：竖向预算只够"棋盘 + 手牌 + 操作"，其余让位 ──
+   实测：568 高时 6×6 棋盘最少要 276px（格宽 40 = 项目 MIN_CELL），
+   所以把回合条压扁、图例与抽屉露头都收掉，棋盘上限按 −292 兜底。 */
+@media (max-width:360px) {
+  /* 320×568 一类机型无刘海/home indicator：实测这类机型 insets 为 0（调研里标为"未验证但合理"）,
+     否则 47px 状态栏 + 34px 底栏会把 6×6 棋盘挤到 40px 格宽以下 */
+  :root { --safe-t:0px; --safe-b:0px; }
+  .statusbar { display:none; }
+}
+
+@media (max-height:700px) {
+  .turnbar { padding:5px 8px; margin:0 10px; }
+  .turnbar .chip { font-size:10px; padding:4px 8px; }
+  .boardpane .blegend { display:none; }
+  .logstrip { margin-top:6px; padding:5px 8px; font-size:10px; }
+  .logstrip div:nth-child(n+2) { display:none; }
+  .sheet.peek { display:none; }
+  .boardzone { padding:6px 10px 0; }
+  .board { max-width:min(342px, calc(100vh - 292px)); padding:6px; gap:3px; }
+  .logstrip { display:none; }
+  .handrow { padding:4px 0 6px; }
+  .cc.mini { width:70px; height:99px; } .cc.mini .art { height:50px; }
+  .handrow .cc + .cc { margin-left:-20px; }
+  .hint { display:none; }
+}
+
+/* ── 横屏（664×336）：不能再用"竖着堆" —— 改左右并排：左边棋盘、右边手牌与操作。
+   此时竖向只剩 336：把回合条、分段切换、图例全部收进顶栏，棋盘按 −52 兜底到 284（格宽 41）。 */
+@media (orientation:landscape) and (max-height:520px) {
+  /* iPhone 14 横屏实测：顶部 0、底部 21、左右各 47（可用宽 664−94 = 570） */
+  :root { --safe-t:0px; --safe-b:21px; }
+  .statusbar { display:none; }
+  .screen.on[data-view="game"] { flex-direction:row; padding-left:env(safe-area-inset-left, 0px); padding-right:env(safe-area-inset-right, 0px); }
+  .screen.on[data-view="game"] .colmain { flex:1 1 auto; }
+  .turnbar, .board-tabs, .blegend, .sheet.peek, .hint, .logstrip { display:none; }
+  .vh { height:calc(38px + var(--safe-t)); padding-top:calc(var(--safe-t) + 4px); }
+  .boardzone { padding:4px 8px 0; }
+  .board { max-width:min(284px, calc(100vh - 65px)); padding:5px; gap:3px; border-radius:12px; }
+  .cell { border-radius:6px; }
+  .screen.on[data-view="game"] .bottom { flex:0 0 200px; /* 横屏左右各 47px 安全区：可用宽 664−94=570 */ display:flex; flex-direction:column; justify-content:flex-end;
+    padding:0 8px calc(6px + var(--safe-b)); border-left:1px solid var(--line); }
+  .handrow { flex-wrap:wrap; justify-content:center; padding:0 0 6px; }
+  .cc.mini { width:56px; height:79px; padding:3px; } .cc.mini .art { height:38px; }
+  .cc.mini .name { padding:3px 4px; gap:3px; } .cc.mini .name b { font-size:9.5px; }
+  .cc.mini .gem { width:13px; height:13px; font-size:7.5px; }
+  .cc.mini .bottom { display:none; }
+  .handrow { gap:3px; }
+  .handrow .cc:nth-child(n) { transform:none; }
+  .handrow .cc + .cc { margin-left:0; }
+  .actions { flex-direction:column; }
+  .actions .ghost2 { flex:0 0 auto; }
+}
+
+#demo-switcher { position:fixed; z-index:99; left:50%; transform:translateX(-50%); bottom:calc(8px + env(safe-area-inset-bottom, 0px));
+  display:flex; gap:4px; padding:4px; background:rgba(11,13,24,.95); border:1px solid var(--line2); border-radius:11px; }
+#demo-switcher button { font-family:var(--sans); font-size:11.5px; color:var(--tx2); background:transparent; border:0; border-radius:8px; padding:7px 11px; }
+#demo-switcher button.on { background:var(--vio); color:#fff; font-weight:600; }
+</style>
+</head>
+<body>
+
+<!-- ======================= 对局（一屏一块 + 拇指区操作） ======================= -->
+<div class="screen on" data-view="game">
+  <div class="colmain">
+  <div class="statusbar"><span>9:41</span><span class="ic">▮▮▮ ⌁ ▰</span></div>
+  <div class="vh">
+    <div class="me">
+      <span class="por">电</span>
+      <div><div class="n">电脑 · 普通</div><div class="s">剩余 4 艘 · 手牌 3 张</div></div>
+    </div>
+    <div class="x">
+      <span class="ib"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h10"/></svg></span>
+    </div>
+  </div>
+
+  <div class="panel turnbar">
+    <span class="chip">第 <b>1</b> 回合</span>
+    <span class="chip">准备阶段</span>
+    <span class="chip">攻击 <b>×4</b></span>
+    <span class="chip hot">连锁 <b>7s</b></span>
+  </div>
+
+  <div class="boardzone">
+    <div class="board-tabs">
+      <div class="board-tab on" data-tab="opp" onclick="window.setBoardTab('opp',this)">对手海域 · 开火</div>
+      <div class="board-tab" data-tab="mine" onclick="window.setBoardTab('mine',this)">我的海域</div>
+    </div>
+
+    <div class="boardpane on" data-tab="opp">
+      <div class="board" id="b-opp"></div>
+      <div class="blegend">
+        <span><i style="display:inline-block;width:9px;height:9px;border-radius:3px;background:rgba(255,92,108,.6);vertical-align:-1px"></i> 你打中</span>
+        <span><i style="display:inline-block;width:9px;height:9px;border-radius:50%;border:1.5px solid rgba(78,200,224,.65);vertical-align:-1px"></i> 你打空</span>
+        <span><i style="display:inline-block;width:9px;height:9px;border-radius:3px;box-shadow:inset 0 0 0 2px #7c5cf0;vertical-align:-1px"></i> 神威！3×3</span>
+      </div>
+      <div class="logstrip">
+        <div><span class="mono">R1</span> 你 炮击 (3,4) <b class="hit">命中 · 击沉</b></div>
+        <div><span class="mono">R1</span> 对手 炮击 (5,5) <b class="hit">命中</b> · 你 使用 神威！</div>
+        <div><span class="mono">R1</span> 对手 响应 失灵！<b class="warn">（结算中 7s）</b></div>
+      </div>
+    </div>
+    <div class="boardpane" data-tab="mine">
+      <div class="board" id="b-mine"></div>
+      <div class="blegend">
+        <span><i style="display:inline-block;width:9px;height:9px;border-radius:3px;background:rgba(79,168,255,.6);vertical-align:-1px"></i> 你的舰</span>
+        <span><i style="display:inline-block;width:9px;height:9px;border-radius:3px;background:rgba(255,92,108,.6);vertical-align:-1px"></i> 被命中</span>
+        <span><i style="display:inline-block;width:9px;height:9px;border-radius:50%;border:1.5px solid rgba(78,200,224,.65);vertical-align:-1px"></i> 对方打空</span>
+      </div>
+      <div class="logstrip">
+        <div><span class="mono">R1</span> 对手 炮击 (1,1) 打空 · (5,5) <b class="hit">命中</b></div>
+        <div><span class="mono">R1</span> 你的舰队：剩余 4 艘 · 冻结 0</div>
+        <div><span class="mono">R1</span> 可增援：3 格空位</div>
+      </div>
+    </div>
+  </div>
+
+  </div>
+  <div class="bottom">
+    <div class="handrow">
+      <div class="cc mini"><div class="in">
+        <div class="art"><svg viewBox="0 0 78 56" preserveAspectRatio="none"><rect width="78" height="56" fill="#152a1e"/><g fill="#7ee0a4" opacity=".5"><circle cx="27" cy="24" r="10"/><circle cx="40" cy="28" r="10"/><circle cx="33" cy="39" r="10"/></g></svg></div>
+        <div class="name"><span class="gem">Ⅰ</span><b>桃园结义</b></div>
+        <div class="bottom"><span class="ty">普通</span></div>
+      </div></div>
+      <div class="cc mini"><div class="in">
+        <div class="art"><svg viewBox="0 0 78 56" preserveAspectRatio="none"><rect width="78" height="56" fill="#2a1526"/><g stroke="#ff8fb0" stroke-width="3" fill="none"><path d="M0 46 L39 11 L78 46"/></g></svg></div>
+        <div class="name"><span class="gem g3">Ⅲ</span><b>硫磺火焰</b></div>
+        <div class="bottom"><span class="ty">普通</span></div>
+      </div></div>
+      <div class="cc mini sel" onclick="window.setDemoView('sheet')"><div class="in">
+        <div class="art"><svg viewBox="0 0 78 56" preserveAspectRatio="none"><rect width="78" height="56" fill="#14344a"/><g stroke="#7ce6ff" fill="none" opacity=".85"><circle cx="39" cy="28" r="7"/><circle cx="39" cy="28" r="14"/><circle cx="39" cy="28" r="21"/></g><circle cx="39" cy="28" r="3" fill="#c9f6ff"/></svg></div>
+        <div class="name"><span class="gem g2">Ⅱ</span><b>神威！</b></div>
+        <div class="bottom"><span class="ty">普通</span></div>
+      </div></div>
+      <div class="cc mini"><div class="in">
+        <div class="art"><svg viewBox="0 0 78 56" preserveAspectRatio="none"><rect width="78" height="56" fill="#12283d"/><g fill="none" stroke="#8fd0ff" stroke-width="3"><path d="M39 15 v23 M39 21 a4 4 0 010 8 M28 38 h22"/></g></svg></div>
+        <div class="name"><span class="gem g3">Ⅲ</span><b>增援</b></div>
+        <div class="bottom"><span class="ty">普通</span></div>
+      </div></div>
+      <div class="cc mini"><div class="in">
+        <div class="art"><svg viewBox="0 0 78 56" preserveAspectRatio="none"><rect width="78" height="56" fill="#1b1a38"/><g stroke="#ff5c6c" stroke-width="3"><path d="M20 20 L58 38"/><path d="M58 20 L20 38"/></g></svg></div>
+        <div class="name"><span class="gem g3">Ⅲ</span><b>失灵！</b></div>
+        <div class="bottom"><span class="ty">普通</span></div>
+      </div></div>
+    </div>
+    <div class="actions">
+      <button class="ghost2">投降</button>
+      <button class="pri">进入战斗阶段</button>
+    </div>
+    <div class="hint">点手牌 → 底部抽屉里出<b>大卡面</b>（可读尺寸）· 一屏一块棋盘用上方分段切换</div>
+  </div>
+
+  <div class="sheet peek">
+    <div class="grab"></div>
+    <div class="peektxt">点任意一张牌，这里展开可读的大卡面与「使用」</div>
+  </div>
+</div>
+
+<!-- ======================= 卡牌抽屉（全展开） ======================= -->
+<div class="screen" data-view="sheet">
+  <div class="vh">
+    <div class="me"><span class="por">电</span><div><div class="n">电脑 · 普通</div><div class="s">剩余 4 艘</div></div></div>
+  </div>
+  <div class="boardzone" style="opacity:.45">
+    <div class="board-tabs"><div class="board-tab on">对手海域 · 开火</div><div class="board-tab">我的海域</div></div>
+    <div class="boardpane on"><div class="board" id="b-opp2"></div></div>
+  </div>
+  <div class="bottom">
+    <div class="handrow">
+      <div class="cc mini"><div class="in"><div class="art"><svg viewBox="0 0 78 56" preserveAspectRatio="none"><rect width="78" height="56" fill="#152a1e"/><g fill="#7ee0a4" opacity=".5"><circle cx="27" cy="24" r="10"/><circle cx="40" cy="28" r="10"/></g></svg></div><div class="name"><span class="gem">Ⅰ</span><b>桃园结义</b></div><div class="bottom"><span class="ty">普通</span></div></div></div>
+      <div class="cc mini"><div class="in"><div class="art"><svg viewBox="0 0 78 56" preserveAspectRatio="none"><rect width="78" height="56" fill="#2a1526"/><g stroke="#ff8fb0" stroke-width="3" fill="none"><path d="M0 46 L39 11 L78 46"/></g></svg></div><div class="name"><span class="gem g3">Ⅲ</span><b>硫磺火焰</b></div><div class="bottom"><span class="ty">普通</span></div></div></div>
+      <div class="cc mini sel"><div class="in"><div class="art"><svg viewBox="0 0 78 56" preserveAspectRatio="none"><rect width="78" height="56" fill="#14344a"/><g stroke="#7ce6ff" fill="none" opacity=".85"><circle cx="39" cy="28" r="7"/><circle cx="39" cy="28" r="14"/></g></svg></div><div class="name"><span class="gem g2">Ⅱ</span><b>神威！</b></div><div class="bottom"><span class="ty">普通</span></div></div></div>
+      <div class="cc mini"><div class="in"><div class="art"><svg viewBox="0 0 78 56" preserveAspectRatio="none"><rect width="78" height="56" fill="#12283d"/><path d="M39 15 v23 M28 38 h22" stroke="#8fd0ff" stroke-width="3"/></svg></div><div class="name"><span class="gem g3">Ⅲ</span><b>增援</b></div><div class="bottom"><span class="ty">普通</span></div></div></div>
+    </div>
+    <div class="actions"><button class="ghost2">投降</button><button class="pri">在棋盘上选区域…</button></div>
+  </div>
+
+  <div class="scrim on"></div>
+  <div class="sheet">
+    <div class="grab"></div>
+    <div class="top">
+      <div class="cc big sel"><div class="in">
+        <div class="art"><svg viewBox="0 0 200 138" preserveAspectRatio="none"><rect width="200" height="138" fill="#14344a"/>
+          <g stroke="#7ce6ff" fill="none" opacity=".85"><circle cx="100" cy="69" r="17"/><circle cx="100" cy="69" r="34"/><circle cx="100" cy="69" r="51"/></g>
+          <circle cx="100" cy="69" r="6" fill="#c9f6ff"/></svg></div>
+        <div class="name"><span class="gem g2">Ⅱ</span><b>神威！</b></div>
+        <div class="text">选定 3×3 区域，把区域内所有战舰暂时除外 —— 被除外的船不参与存活判定。</div>
+        <div class="bottom"><span class="ty">普通</span><span class="mono">速阶 Ⅱ</span></div>
+      </div></div>
+      <div class="info">
+        <h3>神威！<span class="mono" style="font-size:11px;color:var(--tx3)">速阶 Ⅱ</span></h3>
+        <div class="meta">普通 · 目标 3×3 区域 · 手牌 ×1</div>
+        <p>选定 3×3 区域，把区域内所有战舰暂时除外 —— 被除外的船不参与存活判定。</p>
+        <div class="acts">
+          <button class="u">在棋盘上选区域…</button>
+          <button class="c">取消</button>
+        </div>
+        <div class="steps">
+          手机上的用牌流程：<b>①</b> 点小卡 → 抽屉出大卡面（这一步就要能读清效果文字）<br>
+          <b>②</b> 需要选目标的卡：抽屉收起、棋盘上直接点 3×3 → <b>③</b> 按「确认使用」<br>
+          无需选目标的卡（失灵！/看破！）：抽屉里点两次即用，不出现第 ③ 步。
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= 规范页：竖向预算 + 三条实证问题 ======================= -->
+<div class="screen" data-view="spec">
+  <div class="page">
+    <h2>移动端调优：预算与依据</h2>
+    <p class="lede">同一套设计，只换手机上的排布。三条问题都是从项目源码里查实的，不是观感判断。</p>
+
+    <h4>竖 向 预 算（390×844）</h4>
+    <table>
+      <thead><tr><th>区块</th><th>高</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td>状态栏 + 对手条</td><td class="num">44<s>+顶部安全区</s></td><td>只放"看"的信息</td></tr>
+        <tr><td>回合条</td><td class="num">46</td><td>回合 / 阶段 / 攻击次数 / 连锁</td></tr>
+        <tr><td>棋盘分段切换</td><td class="num">44</td><td>项目已有的 <span class="mono">#board-tabs</span></td></tr>
+        <tr><td><b>棋盘（一块）</b></td><td class="num">342</td><td><b>格宽 47px</b> —— 高于项目 <span class="mono">MIN_CELL=40</span>，也高于 HIG 44pt</td></tr>
+        <tr><td>图例</td><td class="num">18</td><td>一行</td></tr>
+        <tr><td>手牌（小卡扇面）</td><td class="num">120</td><td>78×110 的卡，重叠 −22px</td></tr>
+        <tr><td>操作条</td><td class="num">56</td><td><b>在拇指区</b>（屏高下 1/3）</td></tr>
+        <tr><td>底部安全区</td><td class="num">12+inset</td><td>需 <span class="mono">viewport-fit=cover</span> 才拿得到真值</td></tr>
+        <tr><td><b>小计</b></td><td class="num"><b>638 + insets</b></td><td>余 <b>206px</b> 给抽屉常驻的那一截与呼吸</td></tr>
+      </tbody>
+    </table>
+
+    <h4>三 条 查 实 的 问 题</h4>
+
+    <div class="fix">
+      <div class="t">① 安全区留白写了但恒为 0 <span class="bad">（iOS）</span></div>
+      <div class="e">templates/index.html:5 ← 缺 viewport-fit=cover<br>static/style.css:3665, 3978 ← env(safe-area-inset-bottom, 0px)</div>
+      <div class="a">没有 <span class="mono">viewport-fit=cover</span> 时 <span class="mono">env()</span> 返回 0 —— 两处底部留白在带 home indicator 的 iPhone 上**永远不生效**。<br>
+      改法：meta 加 <span class="mono">viewport-fit=cover</span>，并同时补 <b>顶部</b> 的 <span class="mono">env(safe-area-inset-top)</span>（否则顶栏会钻到刘海/状态栏下面）——本稿顶栏就是这么写的。</div>
+    </div>
+
+    <div class="fix">
+      <div class="t">② 手机上牌读不了 <span class="warn">（信息不可读）</span></div>
+      <div class="e">static/style.css:3831 ← .magic-card { width:64px; height:92px }</div>
+      <div class="a">64×92 的卡里塞卡名与效果文字，中文实际字号会落到 7–9px。点击目标够大（≥44px），问题在<b>可读性</b>。<br>
+      改法：手牌小卡只承担"认得出是哪张"（卡名 + 速阶），点开底部抽屉给 <b>200×280 的大卡面</b>（正文 11.5px / 行高 1.6）——本稿第二屏。</div>
+    </div>
+
+    <div class="fix">
+      <div class="t">③ 手机在"堆两块棋盘"这一档 <span class="warn">（竖向预算被棋盘吃光）</span></div>
+      <div class="e">static/adaptive_layout.js:135-136<br>W≥560 → side ；H≥560 → stack ；否则 tabs</div>
+      <div class="a">390×844 上 W=390&lt;560、H=844≥560 → 判为 <b>stack</b>：两块 364px 棋盘上下堆 = 728px，再加 HUD 与手牌必然超预算，只能靠 layout-tight/dense 往下压。<br>
+      改法：手机档（宽度 &lt; 560）直接走 <b>tabs</b>——一次一块、格宽 47px（比堆两块时的格还大），省下约 370px 给手牌与抽屉。<span class="mono">#board-tabs</span> 与 <span class="mono">applyActiveBoard()</span> 都是现成的。</div>
+    </div>
+
+    <h4>与 现 有 门 禁 的 关 系</h4>
+    <table>
+      <thead><tr><th>断言（tools/ui_layout_check.mjs）</th><th>本稿是否满足</th></tr></thead>
+      <tbody>
+        <tr><td>对局页不产生纵向滚动（一屏）</td><td class="ok">满足（638 &lt; 844）</td></tr>
+        <tr><td>棋盘格子零遮挡</td><td class="ok">满足（手牌在棋盘下方，不压格）</td></tr>
+        <tr><td>触摸目标 ≥40px</td><td class="ok">本稿按 <b>44px</b> 走（高于项目下限）</td></tr>
+        <tr><td>紧凑档视口 320×568 / 336×664 / 390×844 / 横屏 664×336</td><td class="warn">已按这三档渲染核对</td></tr>
+      </tbody>
+    </table>
+
+    <h4>调 研 结 论（一 手 来 源）</h4>
+    <table>
+      <thead><tr><th>项</th><th>取值</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>iPhone 14 竖屏安全区</td><td class="num">顶 47 / 底 34 → 可用高 763</td><td>useyourloaf 实测表</td></tr>
+        <tr><td>iPhone 14 横屏安全区</td><td class="num">顶 0 / 底 21 / 左右各 47</td><td>同上（可用宽 570）</td></tr>
+        <tr><td>触摸目标</td><td class="num">HIG 44pt · Material 48dp · W3C 9mm</td><td>Apple HIG / androidx 令牌 / W3C</td></tr>
+        <tr><td>WCAG 目标尺寸</td><td class="num">AA 24px · AAA 44px</td><td>W3C WCAG 2.2 SC 2.5.8 / 2.5.5</td></tr>
+        <tr><td>底部抽屉</td><td class="num">遮罩 32% 黑 · 顶部圆角 28dp · 把手 32×4dp · 常驻 peek 56dp</td><td>androidx Material3 令牌实现</td></tr>
+        <tr><td>iOS 抽屉 detent</td><td class="num">medium = 全高的一半（本机约 422px）</td><td>Apple HIG Sheets</td></tr>
+        <tr><td>单手持握</td><td class="num">49% 单手 · 其中右拇指 67% · 75% 操作用拇指</td><td>Hoober 2013（1333 人观察）</td></tr>
+        <tr><td>正文与对比</td><td class="num">最小 11pt(Apple) / 12sp(Material) · 行高 ≥1.5 · 对比 4.5:1</td><td>HIG Typography / WCAG 1.4.12</td></tr>
+        <tr><td>卡牌比例</td><td class="num">实体 TCG 63×88mm = 0.716（本稿 150×210 = 0.714）</td><td>MTG 资产 744×1040 = 0.7154 交叉验证</td></tr>
+        <tr><td>手牌扇形（Balatro 源码公式）</td><td class="num">角度 0.2·(k−n/2−0.5)/n rad → 上限 ±5.7°；间距按<b>上限</b>而非当前张数算</td><td>balatro-source-code / cardarea.lua</td></tr>
+        <tr><td>悬停 / 选中</td><td class="num">悬停 scale +5%；选中是<b>抬起</b>约视口高 5%（不是放大）</td><td>同上 card.lua / globals.lua</td></tr>
+      </tbody>
+    </table>
+
+    <h4>两 条 被 独 立 印 证 的 决 定</h4>
+    <p class="lede" style="margin:0">
+      <b>① 手机一屏一块棋盘</b> —— 按实测可用高 763px 反算：两块 6×6（632）+ 手牌（110）+ 顶栏（44）+ 操作（48）= 834 &gt; 763，
+      放不下；一块（316）时余 245px 给战报/卡牌详情。<br>
+      <b>② 需要选目标的卡要有确认步</b> —— Hearthstone 是"松手即生效、无确认"，但它选的是单点目标；
+      本作 神威！是 <b>3×3 区域</b>、轰炸是<b>整行整列</b>，误触代价大得多，而两款游戏<b>提交后都没有撤销</b>。
+      Balatro 的做法（先选、再按 Play/Use 确认）才是这一类目标的更安全先例。<br>
+      另：不需要选目标的卡（失灵！/看破！）沿用"点两次即用"。
+    </p>
+
+    <h4>仍 为 推 测 的 部 分</h4>
+    <p class="lede" style="margin:0">调研里查不到、因此标注为推测：各游戏客户端的手牌像素尺寸（官方 wiki 与截图站均不可达，App Store 图是宣传画不是 UI）、
+    绿/黄/红拇指区的百分比（Hoober 原文只说图表是近似的）、320 宽机型安全区为 0（合理但未验证）、
+    以及"点开放大"对 CJK 小字的实际收益。</p>
+  </div>
+</div>
+
+<div id="demo-switcher">
+  <button class="on" data-view="game" onclick="window.setDemoView('game')">对局</button>
+  <button data-view="sheet" onclick="window.setDemoView('sheet')">卡牌抽屉</button>
+  <button data-view="spec" onclick="window.setDemoView('spec')">预算与依据</button>
+</div>
+
+<script>
+(function () {
+  var ENEMY = ['o.....','....X.','..X...','...o..','.....o','.o....'];
+  var MINE  = ['S..X..','....o.','.S..S.','o.....','..X.o.','.....S'];
+  var tgt = {}; [1, 2].forEach(function (r) { [1, 2, 3].forEach(function (c) { tgt[r * 6 + c] = 1; }); });
+  function fill(id, rows, tgtMode) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    rows.join('').split('').forEach(function (ch, i) {
+      var d = document.createElement('div');
+      d.className = 'cell' + (ch === 'S' ? ' ship' : ch === 'X' ? ' hit' : ch === 'o' ? ' miss' : '')
+        + (tgtMode && tgt[i] ? ' tgt' : '');
+      el.appendChild(d);
+    });
+  }
+  fill('b-opp', ENEMY, true);
+  fill('b-mine', MINE);
+  fill('b-opp2', ENEMY, true);
+})();
+</script>
+</body>
+</html>

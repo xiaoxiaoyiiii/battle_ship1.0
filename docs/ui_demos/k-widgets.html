@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>新方案 K · 组件主页 · 焦点对局</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+  window.__demoViews = ['home', 'game'];
+  window.__demoErrors = [];
+  window.addEventListener('error', function (e) { window.__demoErrors.push(String(e.message)); });
+  window.setDemoView = function (v) {
+    document.querySelectorAll('.screen').forEach(function (s) { s.classList.toggle('on', s.dataset.view === v); });
+    document.querySelectorAll('#demo-switcher button').forEach(function (b) { b.classList.toggle('on', b.dataset.view === v); });
+  };
+  // 焦点模式下"更多"面板：桌面是右侧抽屉，手机是上拉面板
+  window.toggleMore = function (btn) {
+    var m = document.getElementById('more-panel');
+    var open = m.classList.toggle('open');
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+</script>
+<style>
+/* ============================================================================
+   新方案 K ·「组件主页 · 焦点对局」
+   ────────────────────────────────────────────────────────────────────────────
+   核心想法：主页不做"入口列表"，做**一屏组件**；对局不做"全功能面板"，
+   做**焦点模式**（90% 是棋盘，其余全收进一个"更多"）。
+     · 主页 = 可自排的组件网格：快速开战 / 段位环 / 赛季进度 / 每日任务 /
+       最近对局 / 在线好友 / 卡牌图鉴 / 排行榜快照。每个组件自己负责排版。
+     · 对局 = 顶栏只留回合与阶段，一个大圆角"更多"打开其余一切；
+       手牌是底部浮动 dock，主按钮是唯一的高饱和元素。
+   移动端与桌面端怎么打通：
+     组件网格用同一组组件、只改列数（手机 2 列 / 桌面 4 列）；
+     对局屏同一个棋盘放大到两种比例，"更多"在桌面是右侧抽屉、在手机是上拉面板。
+   ────────────────────────────────────────────────────────────────────────────
+   参考的成熟产品手法：
+     · iOS 小组件 / Apple Fitness —— 主页由"可扫读的组件"组成，一屏看完
+     · Spotify / Apple Music 的"正在播放" —— 焦点模式：内容满屏、控件最小
+     · Xbox Dashboard —— 大色块卡片 + 单一主行动
+     · Whoop / Oura —— 环形进度做核心指标
+   静态示意稿，非可运行版本。
+   ========================================================================== */
+:root {
+  --bg:#0b0c10; --w:#16181f; --w2:#1d2029;
+  --line:#242833; --line2:#333a48;
+  --tx:#eef0f5; --tx2:#9ba3b3; --tx3:#69707f;
+  --hot:#ff5f7e; --ac:#4f7cff; --ok:#3ccf8e; --warn:#f0b429; --vio:#9a6cff;
+  --sans:"Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+  --h-tabs:56px;
+}
+* { box-sizing:border-box; }
+html, body { margin:0; height:100%; }
+body { background:var(--bg); color:var(--tx); font-family:var(--sans); font-size:13px; overflow:hidden; }
+.screen { display:none; height:100%; flex-direction:column; }
+.screen.on { display:flex; }
+.lab { font:600 10px/1 var(--sans); letter-spacing:.16em; color:var(--tx3); }
+.mono { font-family:var(--mono); }
+.scroll { overflow-y:auto; } .scroll::-webkit-scrollbar { width:7px; }
+.scroll::-webkit-scrollbar-thumb { background:var(--line2); border-radius:4px; }
+.scroll::-webkit-scrollbar-track { background:transparent; }
+
+/* ---------- 顶栏（两端都很薄；桌面把导航平铺进来） ---------- */
+.top { flex:0 0 auto; height:52px; display:flex; align-items:center; gap:14px; padding:0 16px; }
+.top .me { display:flex; align-items:center; gap:10px; min-width:0; }
+.ava { width:36px; height:36px; border-radius:12px; display:grid; place-items:center; font-size:14px; flex:0 0 auto;
+  background:linear-gradient(140deg,#3a5bd9,#22307a); }
+.top .me .n { font-size:14px; font-weight:600; white-space:nowrap; }
+.top .me .s { font-size:11px; color:var(--tx3); margin-top:2px; white-space:nowrap; }
+.dnav { display:none; }
+.top .right { margin-left:auto; display:flex; align-items:center; gap:8px; }
+.chip { font-size:11.5px; padding:6px 11px; border-radius:999px; background:var(--w); border:1px solid var(--line); color:var(--tx2); white-space:nowrap; }
+.chip b { font-family:var(--mono); color:var(--tx); }
+.iconbtn { width:36px; height:36px; border-radius:12px; display:grid; place-items:center; background:var(--w); border:1px solid var(--line); color:var(--tx2); }
+
+/* ---------- 主页：组件网格 ---------- */
+.wrap { flex:1; min-height:0; display:flex; flex-direction:column; }
+.grid { flex:1; min-height:0; overflow-y:auto; padding:4px 16px 16px;
+  display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:12px; align-content:start; }
+.widget { background:var(--w); border:1px solid var(--line); border-radius:18px; padding:15px; min-width:0; }
+.widget.wide { grid-column:span 2; }
+.widget h3 { margin:0 0 12px; font-size:11px; letter-spacing:.16em; color:var(--tx3); font-weight:600; }
+.big { font-family:var(--mono); font-size:23px; }
+.delta { font-size:11.5px; }
+.up { color:var(--ok); } .down { color:var(--hot); }
+
+/* 快速开战组件（主行动） */
+.play { background:linear-gradient(140deg,#2b3a86,#171c33); border-color:#3a4a9e; }
+.play .t { font-size:20px; font-weight:600; }
+.play .d { font-size:11.5px; color:#c3cbe8; margin-top:6px; }
+.play .row { display:flex; gap:7px; margin-top:14px; }
+.play .row button { flex:1; height:44px; border-radius:13px; border:1px solid rgba(255,255,255,.16); background:rgba(255,255,255,.07); color:#e8ecff; font-family:var(--sans); font-size:12.5px; }
+.play .row button.primary { background:#fff; color:#1b2350; border-color:#fff; font-weight:700; font-size:14px; }
+
+/* 环形进度（段位） */
+.ringw { display:flex; flex-direction:column; align-items:center; gap:10px; }
+.ring { width:104px; height:104px; border-radius:50%; display:grid; place-items:center;
+  background:conic-gradient(var(--warn) 0 74%, #262b38 74% 100%); position:relative; }
+.ring::after { content:""; position:absolute; inset:11px; border-radius:50%; background:var(--w); }
+.ring .in { position:relative; text-align:center; }
+.ring .in b { display:block; font-size:19px; }
+.ring .in span { font-size:10px; color:var(--tx3); }
+
+/* 赛季进度：一条双轨（免费/高级） */
+.season .lv { display:flex; align-items:center; gap:8px; font-size:11.5px; color:var(--tx2); margin-bottom:9px; }
+.season .lv b { font-family:var(--mono); color:var(--tx); }
+.track { display:flex; gap:3px; }
+.track i { flex:1; height:26px; border-radius:6px; background:var(--w2); border:1px solid var(--line); }
+.track i.on { background:linear-gradient(180deg,#7a5cff,#4b34b8); border-color:#8b73ff; }
+.track i.paid { background:#2a2338; border-color:#4a3d63; }
+.track i.paid.on { background:linear-gradient(180deg,#f0b429,#a87a10); border-color:#f5c95c; }
+.trackrow { font-size:10px; color:var(--tx3); display:flex; justify-content:space-between; margin-top:7px; }
+
+.tasks .t { display:flex; align-items:center; gap:9px; padding:8px 0; font-size:12px; color:var(--tx2); }
+.tasks .t .bx { width:15px; height:15px; border-radius:5px; border:1px solid var(--line2); flex:0 0 auto; }
+.tasks .t.done .bx { background:var(--ok); border-color:var(--ok); }
+.tasks .t.done { color:var(--tx3); }
+.tasks .t .v { margin-left:auto; font-family:var(--mono); font-size:11px; color:var(--tx3); }
+.two { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+
+.minilist div { display:flex; align-items:center; gap:9px; padding:8px 0; font-size:12px; border-bottom:1px solid var(--line); }
+.minilist div:last-child { border-bottom:0; }
+.minilist .s2 { width:6px; height:6px; border-radius:50%; background:var(--ok); flex:0 0 auto; }
+.minilist .s2.off { background:var(--tx3); }
+.minilist .v { margin-left:auto; font-family:var(--mono); font-size:11.5px; color:var(--tx3); }
+
+/* ---------- 底部标签栏（窄屏） ---------- */
+.tabs { flex:0 0 auto; height:var(--h-tabs); display:grid; grid-template-columns:repeat(5,1fr);
+  border-top:1px solid var(--line); background:#0e1015; }
+.tabs a { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; color:var(--tx3); text-decoration:none; font-size:10px; }
+.tabs a.on { color:var(--ac); }
+.tabs svg { width:21px; height:21px; }
+
+/* ---------- 焦点对局：0 装饰，只剩棋盘 ---------- */
+.focus { flex:1; min-height:0; position:relative; display:flex; flex-direction:column; }
+.f-top { flex:0 0 auto; display:flex; align-items:center; gap:10px; padding:6px 16px 10px; }
+.f-top .who { display:flex; align-items:center; gap:9px; min-width:0; }
+.f-top .por { width:34px; height:34px; border-radius:11px; display:grid; place-items:center; font-size:13px;
+  background:linear-gradient(140deg,#7a3a44,#3a1c22); flex:0 0 auto; }
+.f-top .n { font-size:13px; white-space:nowrap; } .f-top .s { font-size:10.5px; color:var(--tx3); white-space:nowrap; }
+.f-top .mid { margin-left:auto; display:flex; align-items:center; gap:8px; }
+.stagebtn { width:38px; height:38px; border-radius:12px; display:grid; place-items:center; background:var(--w); border:1px solid var(--line); color:var(--tx2); }
+.f-board { flex:1; min-height:0; display:flex; align-items:center; justify-content:center; padding:0 14px; }
+.boardbox { width:100%; max-width:min(430px, calc(100vh - 330px)); }
+.board { display:grid; grid-template-columns:repeat(6,1fr); gap:4px; }
+.cell { aspect-ratio:1/1; border-radius:9px; background:#141821; border:1px solid #212736; display:grid; place-items:center; }
+.cell.ship { background:#1d3a63; border-color:#3d6ba8; }
+.cell.ship::after { content:""; width:46%; height:46%; background:#7fb2e8; clip-path:polygon(50% 0,100% 100%,0 100%); }
+.cell.hit { background:#4e2027; border-color:#a0525c; }
+.cell.hit::after { content:"✕"; font-family:var(--mono); font-weight:700; color:#ffc9ce; font-size:13px; }
+.cell.miss::after { content:""; width:18%; height:18%; border-radius:50%; background:#5d6878; }
+.cell.tgt { box-shadow:inset 0 0 0 2px var(--warn); background:rgba(240,180,41,.15); }
+.f-dock { flex:0 0 auto; padding:10px 14px 12px; }
+.hand { display:flex; gap:8px; overflow-x:auto; padding-bottom:10px; }
+.hand::-webkit-scrollbar { display:none; }
+.mc { flex:0 0 auto; width:82px; height:88px; border-radius:14px; background:var(--w); border:1px solid var(--line);
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; }
+.mc .sp { font-family:var(--mono); font-size:14px; color:var(--warn); }
+.mc .n { font-size:11.5px; } .mc .d { font-size:9px; color:var(--tx3); }
+.mc.sel { border-color:var(--ac); box-shadow:0 0 0 3px rgba(79,124,255,.18); }
+.mc.sel .n { color:#b9c8ff; }
+.f-act { display:flex; align-items:center; gap:10px; }
+.f-act .hint { flex:1; min-width:0; font-size:11.5px; color:var(--tx3); line-height:1.5; }
+.f-act .go { flex:0 0 auto; height:52px; padding:0 24px; border:0; border-radius:16px; font-family:var(--sans);
+  font-size:15px; font-weight:700; background:var(--ac); color:#fff; }
+
+/* "更多"面板：窄屏是上拉面板，桌面是右侧抽屉 */
+.more { position:absolute; z-index:40; left:0; right:0; bottom:0; max-height:60%; background:var(--w2);
+  border-top:1px solid var(--line2); border-radius:20px 20px 0 0; transform:translateY(101%); transition:transform .18s ease;
+  display:flex; flex-direction:column; }
+.more.open { transform:translateY(0); }
+.more .hd { display:flex; align-items:center; gap:10px; padding:12px 16px 8px; }
+.more .hd u { width:42px; height:4px; border-radius:999px; background:var(--line2); }
+.more .hd b { font-size:13px; }
+.more .hd .x { margin-left:auto; color:var(--tx3); }
+.more .bd { flex:1; min-height:0; overflow-y:auto; padding:4px 16px 16px; }
+.more .kv { display:flex; justify-content:space-between; font-size:12px; padding:8px 0; color:var(--tx2); border-bottom:1px solid var(--line); }
+.more .kv b { font-family:var(--mono); color:var(--tx); }
+.more .tl { display:flex; gap:10px; padding:9px 0; border-bottom:1px dashed var(--line); font-size:12px; color:var(--tx2); }
+.more .tl .t { font-family:var(--mono); font-size:10.5px; color:var(--tx3); padding-top:2px; }
+.more .tl b { color:var(--tx); } .more .tl .hit { color:var(--hot); }
+
+#demo-switcher { position:fixed; z-index:99; right:12px; top:6px; display:flex; gap:3px; padding:3px;
+  background:rgba(11,12,16,.95); border:1px solid var(--line2); border-radius:11px; }
+#demo-switcher button { font-family:var(--sans); font-size:11.5px; color:var(--tx2); background:transparent; border:0; border-radius:8px; padding:6px 10px; cursor:pointer; }
+#demo-switcher button.on { background:var(--ac); color:#fff; font-weight:600; }
+#refs { position:fixed; left:12px; bottom:8px; z-index:99; max-width:min(430px,92vw); font-size:10.5px; line-height:1.7; color:var(--tx3);
+  background:rgba(11,12,16,.92); border:1px solid var(--line); border-radius:10px; padding:8px 11px; }
+#refs b { color:var(--tx2); }
+
+/* ============================================================================
+   宽屏：组件 4 列；"更多"变成右侧抽屉
+   ════════════════════════════════════════════════════════════════════════════ */
+@media (min-width:900px) {
+  .dnav { display:flex; gap:2px; margin-left:10px; }
+  .dnav a { color:var(--tx2); text-decoration:none; font-size:12.5px; padding:8px 12px; border-radius:10px; white-space:nowrap; }
+  .dnav a:hover { background:var(--w); color:var(--tx); }
+  .dnav a.on { background:var(--w2); color:var(--tx); font-weight:600; }
+  .tabs { display:none; }
+  .grid { grid-template-columns:repeat(4, minmax(0,1fr)); padding:4px 26px 22px; gap:16px; }
+  .widget.wide { grid-column:span 2; }
+  .wrap { padding-top:6px; }
+  .boardbox { max-width:min(430px, calc(100vh - 300px)); }
+  .f-board { gap:26px; }
+  .f-dock { padding:12px 26px 18px; }
+  .f-dock .inner { max-width:820px; margin:0 auto; }
+  /* 右侧抽屉 */
+  .more { left:auto; right:0; top:0; bottom:0; width:344px; max-height:none; border-radius:0; border-left:1px solid var(--line2);
+    border-top:0; transform:translateX(101%); }
+  .more.open { transform:translateX(0); }
+  .more .hd u { display:none; }
+  #refs { display:none; }
+}
+@media (min-width:900px) { #refs { display:block; } }
+@media (max-width:899px) { .top { padding-right:96px; } }
+</style>
+</head>
+<body>
+
+<!-- ======================= 主页（组件网格） ======================= -->
+<div class="screen on" data-view="home">
+  <div class="top">
+    <div class="me">
+      <span class="ava">舰</span>
+      <div><div class="n">舰长阿7</div><div class="s">Lv.12 · 大副 Ⅱ · 1240 分</div></div>
+    </div>
+    <nav class="dnav">
+      <a class="on" href="#">主页</a><a href="#">大厅</a><a href="#">排行榜</a><a href="#">好友</a><a href="#">段位</a>
+    </nav>
+    <div class="right">
+      <span class="chip">在线 <b>12</b></span>
+      <span class="iconbtn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 9a6 6 0 10-12 0c0 6-2 7-2 7h16s-2-1-2-7"/><path d="M10.5 20a2 2 0 003 0"/></svg></span>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="grid">
+      <div class="widget wide play">
+        <div class="t">开始一局</div>
+        <div class="d">猜拳定先手 · 击沉对方全部战舰者胜</div>
+        <div class="row">
+          <button onclick="window.setDemoView('game')" class="primary">快速匹配</button>
+          <button>排位对战</button>
+          <button>人机 · 普通</button>
+        </div>
+      </div>
+
+      <div class="widget ringw">
+        <h3 style="align-self:flex-start">段位</h3>
+        <div class="ring"><div class="in"><b>大副 Ⅱ</b><span>1240 / 1400</span></div></div>
+        <div style="font-size:11.5px;color:var(--tx3)">距 轮机长 还差 160 分</div>
+      </div>
+
+      <div class="widget season">
+        <h3>赛季进度 · 第 1 赛季</h3>
+        <div class="lv">等级 <b>12</b> · 本赛季已赢 <b>18</b> 场</div>
+        <div class="track">
+          <i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i>
+        </div>
+        <div class="trackrow"><span>免费轨</span><span>高级轨 已解锁</span></div>
+        <div class="track" style="margin-top:5px">
+          <i class="paid on"></i><i class="paid on"></i><i class="paid"></i><i class="paid"></i><i class="paid"></i><i class="paid"></i><i class="paid"></i><i class="paid"></i>
+        </div>
+      </div>
+
+      <div class="widget">
+        <h3>今日任务</h3>
+        <div class="tasks">
+          <div class="t done"><span class="bx"></span>完成一场对局<span class="v">1/1</span></div>
+          <div class="t"><span class="bx"></span>使用 3 张魔法卡<span class="v">2/3</span></div>
+          <div class="t"><span class="bx"></span>赢下 2 场排位<span class="v">0/2</span></div>
+        </div>
+      </div>
+
+      <div class="widget">
+        <h3>卡牌图鉴</h3>
+        <div class="big">43</div>
+        <div style="font-size:11.5px;color:var(--tx3);margin-top:6px">张魔法卡 · 本期已见 28 张</div>
+        <div style="height:7px;border-radius:999px;background:#222736;overflow:hidden;margin-top:11px">
+          <i style="display:block;height:100%;width:65%;background:linear-gradient(90deg,#7a5cff,#b18cff)"></i>
+        </div>
+      </div>
+
+      <div class="widget wide">
+        <h3>最近对局</h3>
+        <div class="minilist">
+          <div><span class="s2"></span>皮皮虾 · 排位<span class="v">胜 +32 · 2 分钟前</span></div>
+          <div><span class="s2"></span>游客8823 · 休闲<span class="v">胜 — · 18 分钟前</span></div>
+          <div><span class="s2 off"></span>老船长 · 排位<span class="v">负 −24 · 1 小时前</span></div>
+        </div>
+      </div>
+
+      <div class="widget">
+        <h3>在线好友</h3>
+        <div class="minilist">
+          <div><span class="s2"></span>阿岚<span class="v">在线</span></div>
+          <div><span class="s2"></span>新兵007<span class="v">大厅中</span></div>
+          <div><span class="s2 off"></span>老船长<span class="v">离线</span></div>
+        </div>
+      </div>
+
+      <div class="widget">
+        <h3>本周最佳</h3>
+        <div class="big" style="color:var(--ok)">4 连胜</div>
+        <div style="font-size:11.5px;color:var(--tx3);margin-top:6px">本周 11 场 · 命中率 41%</div>
+      </div>
+
+      <div class="widget">
+        <h3>最近解锁</h3>
+        <div class="minilist">
+          <div><span class="s2"></span>五连胜<span class="v">已解锁</span></div>
+          <div><span class="s2"></span>首胜<span class="v">已解锁</span></div>
+          <div><span class="s2 off"></span>连锁大师<span class="v">2 / 3</span></div>
+        </div>
+      </div>
+
+      <div class="widget">
+        <h3>排行榜快照</h3>
+        <div class="minilist">
+          <div><span class="v" style="margin:0 8px 0 0">1</span>船长·海怪<span class="v">1930</span></div>
+          <div><span class="v" style="margin:0 8px 0 0">2</span>风暴<span class="v">1880</span></div>
+          <div style="color:var(--ac)"><span class="v" style="margin:0 8px 0 0;color:var(--ac)">7</span>你<span class="v" style="color:var(--ac)">1240</span></div>
+        </div>
+      </div>
+    </div>
+
+    <nav class="tabs">
+      <a class="on" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 20V9l8-5 8 5v11"/><path d="M9 20v-6h6v6"/></svg>主页</a>
+      <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>大厅</a>
+      <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>排行</a>
+      <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3l7 4v5c0 4-3 7-7 9-4-2-7-5-7-9V7z"/></svg>段位</a>
+      <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="3.4"/><path d="M5 20c0-3.6 3.1-6.5 7-6.5s7 2.9 7 6.5"/></svg>我的</a>
+    </nav>
+  </div>
+</div>
+
+<!-- ======================= 焦点对局 ======================= -->
+<div class="screen" data-view="game">
+  <div class="top">
+    <div class="me">
+      <span class="ava" style="background:linear-gradient(140deg,#7a3a44,#3a1c22)">电</span>
+      <div><div class="n">电脑 · 普通</div><div class="s">剩余 4 艘 · 手牌 3 张</div></div>
+    </div>
+    <nav class="dnav">
+      <a class="on" href="#">对局</a>
+      <a href="#" onclick="window.setDemoView('home');return false">退出</a>
+    </nav>
+    <div class="right">
+      <span class="chip">第 <b>1</b> 回合</span>
+      <span class="chip">准备阶段</span>
+      <span class="chip">攻击 <b>×4</b></span>
+    </div>
+  </div>
+
+  <div class="focus">
+    <div class="f-top">
+      <span class="chip" style="border-color:rgba(240,180,41,.5);color:var(--warn)">连锁中 · 7s</span>
+      <div class="mid">
+        <span class="stagebtn" onclick="window.toggleMore(this)" aria-expanded="false" title="更多">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+        </span>
+        <span class="stagebtn" style="color:#ff9aa5;border-color:#4a2229">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 5l14 14M19 5L5 19"/></svg>
+        </span>
+      </div>
+    </div>
+
+    <div class="f-board">
+      <div class="boardbox">
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:9px">
+          <span style="font-size:13px;font-weight:600">对手海图</span>
+          <span class="mono" style="margin-left:auto;font-size:11px;color:var(--tx3)">已探明 5 / 36 · 命中 2</span>
+        </div>
+        <div class="board" id="b-enemy"></div>
+      </div>
+    </div>
+
+    <div class="f-dock">
+      <div class="inner">
+        <div class="hand">
+          <div class="mc"><span class="sp">Ⅰ</span><span class="n">桃园结义</span><span class="d">双方各挑一张</span></div>
+          <div class="mc"><span class="sp">Ⅱ</span><span class="n">轰炸</span><span class="d">整行/列</span></div>
+          <div class="mc sel"><span class="sp">Ⅱ</span><span class="n">神威！</span><span class="d">3×3 除外</span></div>
+          <div class="mc"><span class="sp">Ⅲ</span><span class="n">增援</span><span class="d">补一艘船</span></div>
+          <div class="mc"><span class="sp">Ⅲ</span><span class="n">失灵！</span><span class="d">无效上一张</span></div>
+        </div>
+        <div class="f-act">
+          <div class="hint"><b style="color:var(--tx2)">神威！</b> 已选中 · 在对手海图上点选 3×3 区域</div>
+          <button class="go">确认使用</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- "更多"：桌面是右侧抽屉、手机是上拉面板。日志 / 统计 / 我的海图 都在这里 -->
+    <aside class="more" id="more-panel">
+      <div class="hd">
+        <u></u><b>更多</b><span class="x" onclick="window.toggleMore(this.parentNode.parentNode)" style="cursor:pointer">收起 ▾</span>
+      </div>
+      <div class="bd">
+        <h3 class="lab" style="margin:6px 0 10px">本回合</h3>
+        <div class="kv"><span>当前阶段</span><b>准备阶段</b></div>
+        <div class="kv"><span>剩余攻击</span><b>4 次</b></div>
+        <div class="kv"><span>存活</span><b>4 : 4</b></div>
+        <div class="kv"><span>场地魔法</span><b>无</b></div>
+        <div class="kv"><span>极限增援</span><b style="color:var(--warn)">剩 2 回合</b></div>
+
+        <h3 class="lab" style="margin:18px 0 8px">我的海图</h3>
+        <div class="board" id="b-mine" style="max-width:230px"></div>
+
+        <h3 class="lab" style="margin:18px 0 8px">战报</h3>
+        <div class="tl"><span class="t">R1 · 12s</span><span>链式响应：<b>对手 失灵！</b> ← 你 神威！</span></div>
+        <div class="tl"><span class="t">R1 · 8s</span><span>你 使用 <b>神威！</b>，选定 3×3</span></div>
+        <div class="tl"><span class="t">R1 · 5s</span><span>对手 炮击 (5,5) <span class="hit">命中</span></span></div>
+        <div class="tl"><span class="t">R1 · 3s</span><span>你 炮击 (3,4) <span class="hit">命中 · 击沉</span></span></div>
+
+        <div style="margin-top:18px">
+          <button class="go" style="width:100%;height:48px;border:0;border-radius:14px;background:var(--ac);color:#fff;font-family:var(--sans);font-size:14.5px;font-weight:700">进入战斗阶段</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <nav class="tabs">
+    <a class="on" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 18c3 0 3-2 6-2s3 2 6 2 3-2 6-2"/><path d="M12 4l6 5-6 5-6-5z"/></svg>对局</a>
+    <a href="#" onclick="window.toggleMore(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="6" width="16" height="12" rx="2"/><path d="M4 10h16"/></svg>战报</a>
+    <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M5 4h14v16H5z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg>手牌</a>
+    <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>对手</a>
+    <a href="#" onclick="window.setDemoView('home');return false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M15 18l-6-6 6-6"/></svg>退出</a>
+  </nav>
+</div>
+
+<div id="demo-switcher">
+  <button class="on" data-view="home" onclick="window.setDemoView('home')">主页</button>
+  <button data-view="game" onclick="window.setDemoView('game')">对局</button>
+</div>
+
+<div id="refs">
+  <b>参考：</b>iOS 小组件 / Apple Fitness（主页由可扫读的组件组成）·
+  Spotify「正在播放」（焦点模式：内容满屏、控件最小）· Xbox Dashboard（大色块 + 单一主行动）·
+  Whoop / Oura（环形进度承载核心指标）
+</div>
+
+<script>
+(function () {
+  var ENEMY = ['o.....','....X.','..X...','...o..','.....o','.o....'];
+  var MINE  = ['S..X..','....o.','.S..S.','o.....','..X.o.','.....S'];
+  var tgt = {}; [1, 2].forEach(function (r) { [1, 2, 3].forEach(function (c) { tgt[r * 6 + c] = 1; }); });
+  function fill(id, rows, tgtMode) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    rows.join('').split('').forEach(function (ch, i) {
+      var d = document.createElement('div');
+      d.className = 'cell' + (ch === 'S' ? ' ship' : ch === 'X' ? ' hit' : ch === 'o' ? ' miss' : '')
+        + (tgtMode && tgt[i] ? ' tgt' : '');
+      el.appendChild(d);
+    });
+  }
+  fill('b-enemy', ENEMY, true);
+  fill('b-mine', MINE);
+})();
+</script>
+</body>
+</html>

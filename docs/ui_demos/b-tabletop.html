@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>示意稿 B · 桌面棋室</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+  window.__demoViews = ['home', 'game'];
+  window.__demoErrors = [];
+  window.addEventListener('error', function (e) { window.__demoErrors.push(String(e.message)); });
+  window.setDemoView = function (v) {
+    document.querySelectorAll('.screen').forEach(function (s) { s.classList.toggle('on', s.dataset.view === v); });
+    document.querySelectorAll('#demo-switcher button').forEach(function (b) { b.classList.toggle('on', b.dataset.view === v); });
+  };
+</script>
+<style>
+/* ============================================================================
+   示意稿 B ·「桌面棋室」
+   方向：把对局当成"一张摊开的桌子"。暖纸/黄铜/墨线，衬线标题，实体卡牌，
+   手牌是真的**卡片**（可扇形叠放、抬起），日志是航海笔记本。
+   与现状的差别：现状是"网页 + 浮窗"，这里是"桌面 + 物件"；
+   棋盘成为画面主角（现状棋盘只有 300px 还被浮窗压）。
+   静态示意稿，非可运行版本。
+   ========================================================================== */
+:root {
+  --paper:#f3ead9; --paper2:#eae0cb; --card:#fbf6ea;
+  --ink:#2b2520; --ink2:#5d5142; --ink3:#8b7c67;
+  --brass:#a9853f; --brass2:#c9a75c; --seal:#8f2f2a; --navy:#1d4257; --sea:#2f6f7e;
+  --line:#d8c9ab; --line2:#bfae8c;
+  --serif:"Source Han Serif SC","Noto Serif SC","Songti SC",SimSun,Georgia,serif;
+  --sans:"Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;
+}
+* { box-sizing:border-box; }
+html, body { margin:0; height:100%; }
+body {
+  color:var(--ink); font-family:var(--sans); font-size:13.5px; overflow:hidden;
+  background-color:#e6dcc6;
+  background-image:
+    radial-gradient(900px 500px at 20% 0%, rgba(255,255,255,.55), transparent 70%),
+    repeating-linear-gradient(0deg, rgba(120,100,70,.045) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(90deg, rgba(120,100,70,.045) 0 1px, transparent 1px 3px),
+    linear-gradient(160deg, #efe5d1, #e2d7bf);
+}
+.screen { display:none; height:100%; }
+.screen.on { display:block; }
+.serif { font-family:var(--serif); }
+/* 木/铜牌：所有"标题条"共用 */
+.plate {
+  background:linear-gradient(180deg,#b48f45,#9a7734); color:#fff8e6;
+  border:1px solid #7d5f28; border-radius:2px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.35), 0 2px 5px rgba(90,70,30,.28);
+  padding:7px 14px; letter-spacing:.12em; font-size:12px;
+}
+.hair { height:1px; background:var(--line); }
+
+/* ---------- 首页 ---------- */
+/* 盒盖按内容高度收口、在"桌面"上居中 —— 不让它撑满视口（撑满会留出大片空白） */
+.home-wrap { height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:22px 24px; overflow:hidden; }
+.cover {
+  width:100%; max-width:1120px; flex:0 1 auto; max-height:100%; display:flex; flex-direction:column;
+  background:linear-gradient(180deg, rgba(255,252,244,.86), rgba(246,238,222,.92));
+  border:2px solid var(--brass); border-radius:6px; padding:20px 26px 22px;
+  box-shadow:0 18px 50px rgba(90,72,42,.22), inset 0 0 0 1px rgba(255,255,255,.6);
+  position:relative;
+}
+/* 盒盖四角的小铜钉 */
+.cover i.orn { position:absolute; width:9px; height:9px; background:radial-gradient(circle at 35% 35%, var(--brass2), #8a6b2e); border-radius:50%; }
+.cover i.orn:nth-child(1){top:8px;left:8px} .cover i.orn:nth-child(2){top:8px;right:8px}
+.cover i.orn:nth-child(3){bottom:8px;left:8px} .cover i.orn:nth-child(4){bottom:8px;right:8px}
+.topnav { display:flex; align-items:center; gap:18px; padding-bottom:14px; border-bottom:1px solid var(--line); }
+.crest { display:flex; align-items:center; gap:10px; }
+.crest b { font-family:var(--serif); font-size:15px; letter-spacing:.22em; }
+.crest em { font-style:normal; font-size:10.5px; color:var(--ink3); letter-spacing:.16em; }
+.topnav nav { display:flex; gap:4px; margin-left:10px; }
+.topnav nav a { color:var(--ink2); text-decoration:none; font-size:12.5px; padding:6px 10px; border-bottom:2px solid transparent; }
+.topnav nav a:hover, .topnav nav a.on { color:var(--ink); border-bottom-color:var(--brass); }
+.topnav .right { margin-left:auto; display:flex; align-items:center; gap:10px; }
+.plate-sm { background:linear-gradient(180deg,#b6934b,#9a7c39); color:#fff8e6; border:1px solid #7d5f28; border-radius:2px; padding:5px 10px; font-size:11.5px; letter-spacing:.08em; }
+.plate-sm b { font-family:var(--serif); }
+.mock-tag { font-size:10.5px; letter-spacing:.14em; color:var(--seal); border:1px dashed #c58f8a; padding:4px 8px; border-radius:2px; }
+
+.title-block { text-align:center; padding:22px 0 6px; }
+.title-block h1 { font-family:var(--serif); font-size:44px; margin:0; letter-spacing:.3em; text-indent:.3em; }
+.title-block .rule { display:flex; align-items:center; justify-content:center; gap:12px; margin:12px 0 8px; color:var(--ink3); }
+.title-block .rule span { width:110px; height:1px; background:linear-gradient(90deg,transparent,var(--line2),transparent); }
+.title-block p { margin:0; color:var(--ink2); font-size:12.5px; letter-spacing:.1em; }
+
+.name-row { display:flex; align-items:center; justify-content:center; gap:12px; margin:18px 0 4px; }
+.name-row label { color:var(--ink3); font-size:12px; letter-spacing:.14em; }
+.name-field { display:flex; align-items:center; gap:8px; border-bottom:1px solid var(--line2); padding:5px 4px; min-width:250px; }
+.name-field input { border:0; background:transparent; outline:none; font-family:var(--serif); font-size:16px; color:var(--ink); width:100%; letter-spacing:.06em; }
+.name-field svg { color:var(--ink3); flex:0 0 auto; }
+
+.modes { display:grid; grid-template-columns:repeat(5, 1fr); gap:12px; margin:20px 0 0; }
+.mode {
+  position:relative; text-align:center; padding:18px 12px 16px; background:var(--card);
+  border:1px solid var(--line); border-radius:4px; cursor:pointer;
+  box-shadow:0 2px 0 rgba(180,160,125,.5), 0 6px 14px rgba(120,100,70,.10);
+}
+.mode:hover { border-color:var(--brass); transform:translateY(-2px); box-shadow:0 3px 0 rgba(180,160,125,.6), 0 12px 20px rgba(120,100,70,.16); }
+.mode svg { color:var(--navy); }
+.mode .t { font-family:var(--serif); font-size:16px; margin:11px 0 6px; letter-spacing:.1em; }
+.mode .d { font-size:11px; color:var(--ink3); line-height:1.6; min-height:34px; }
+/* 推荐卡用外描边而不是 2px 边框 —— 否则它比同排的卡高 2px，底边对不齐 */
+.mode.main { box-shadow:0 0 0 2px var(--brass), 0 6px 14px rgba(120,100,70,.14); background:linear-gradient(180deg,#fffdf6,#f7efdd); }
+.mode .seal { position:absolute; top:-9px; right:-9px; width:34px; height:34px; border:1.5px solid var(--seal); color:var(--seal); border-radius:3px; font-family:var(--serif); font-size:10px; line-height:1.1; display:grid; place-items:center; background:#fff9ee; transform:rotate(9deg); letter-spacing:.05em; }
+.steps { display:flex; gap:8px; justify-content:center; margin-top:12px; }
+.steps button { font-family:var(--sans); font-size:11.5px; padding:6px 12px; border:1px solid var(--line2); background:#fdf8ee; color:var(--ink2); border-radius:3px; cursor:pointer; }
+.steps button.on { background:var(--navy); color:#eaf4f8; border-color:var(--navy); }
+
+.bottom-plates { display:flex; align-items:center; gap:14px; margin-top:22px; padding-top:18px; border-top:1px solid var(--line); }
+.howto { display:flex; align-items:center; gap:18px; flex-wrap:wrap; margin-top:18px; padding:12px 16px;
+  background:rgba(255,252,244,.7); border:1px solid var(--line); border-radius:3px; }
+.howto .h { font-family:var(--serif); font-size:12.5px; letter-spacing:.18em; color:var(--ink2); padding-right:14px; border-right:1px solid var(--line); }
+.howto .s { font-size:11.5px; color:var(--ink2); }
+.howto .s b { font-family:var(--serif); color:var(--brass); margin-right:3px; }
+.exp { flex:1; }
+.exp .row { display:flex; justify-content:space-between; font-size:11.5px; color:var(--ink2); margin-bottom:6px; }
+.exp .track { height:9px; background:#e3d8bf; border:1px solid var(--line2); border-radius:1px; overflow:hidden; }
+.exp .track i { display:block; height:100%; width:62%; background:repeating-linear-gradient(90deg,var(--brass) 0 8px,#c2a054 8px 10px); }
+.stat-plate { text-align:center; min-width:104px; }
+.stat-plate b { display:block; font-family:var(--serif); font-size:19px; margin-top:3px; }
+
+/* ---------- 对局屏 ---------- */
+.game-wrap { height:100%; display:flex; flex-direction:column; padding:14px 18px 20px; }
+.game-top { display:flex; align-items:center; gap:14px; flex:0 0 auto; }
+.game-top .who { display:flex; align-items:center; gap:10px; font-size:12.5px; }
+.avat { width:32px; height:32px; border-radius:50%; border:1px solid var(--line2); background:radial-gradient(circle at 35% 30%, #fff, #e0d4b8); display:grid; place-items:center; font-family:var(--serif); color:var(--navy); }
+.game-top .mid { margin:0 auto; display:flex; align-items:center; gap:10px; }
+.round-plate { display:flex; align-items:center; gap:14px; }
+/* grid-template-rows 必须钉成 minmax(0,1fr)：否则这一行会按内容长高（右栏面板一高，
+   整行就跟着涨，装不下的面板反而溢出到视口外）。钉子下去 max-height:100% 才有意义。 */
+.game-body { flex:1; min-height:0; display:grid; grid-template-columns:236px 1fr 268px; grid-template-rows:minmax(0, 1fr); gap:18px; margin-top:12px; }
+.notepad {
+  background:linear-gradient(180deg,#fffaef,#f6eeda);
+  border:1px solid var(--line2); border-radius:3px; box-shadow:0 6px 18px rgba(120,100,70,.14);
+  display:flex; flex-direction:column; min-height:0; overflow:hidden;
+}
+.notepad .head { padding:10px 14px 8px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:8px; }
+.notepad .head h3 { font-family:var(--serif); font-size:14px; margin:0; letter-spacing:.16em; }
+.notepad .head span { margin-left:auto; font-size:10.5px; color:var(--ink3); }
+/* 横格线必须落在文字**下面**：所以背景画在 .lines 上、且不加纵向内边距，
+   否则每条线都会比文字基线高/低 6px（第一版就是这样，看着像印歪了）。 */
+.notepad .lines {
+  flex:1; min-height:0; overflow:hidden; padding:0 14px;
+  background-image:repeating-linear-gradient(180deg, transparent 0 25px, #ded0b3 25px 26px);
+  font-family:var(--serif); font-size:12px; line-height:26px; color:var(--ink2);
+}
+.notepad .lines div { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.notepad .lines b { color:var(--ink); font-weight:600; }
+.notepad .lines .hit { color:var(--seal); }
+.notepad .lines .mag { color:var(--navy); }
+.notepad .foot { padding:9px 14px; border-top:1px solid var(--line); display:flex; align-items:center; gap:8px; font-size:11.5px; color:var(--ink2); }
+
+.center { min-height:0; display:flex; flex-direction:column; }
+.chain-note { align-self:center; display:flex; align-items:center; gap:10px; padding:8px 16px; margin-bottom:10px;
+  background:#fff6e2; border:1px solid var(--brass); border-left:4px solid var(--seal); border-radius:2px;
+  box-shadow:0 4px 12px rgba(120,100,70,.16); font-size:12px; }
+.chain-note .t { font-family:var(--serif); letter-spacing:.12em; color:var(--seal); }
+.chain-note .sc { padding:3px 9px; border:1px solid var(--line2); background:#fffdf6; border-radius:2px; }
+.chain-note .ar { color:var(--ink3); }
+.chain-note .tm { font-family:var(--serif); font-size:15px; color:var(--seal); }
+.boards { flex:1; min-height:0; display:flex; gap:18px; justify-content:center; align-items:flex-start; }
+.chart-wrap { flex:1 1 0; min-width:0; display:flex; flex-direction:column; gap:8px; }
+.chart-head { display:flex; align-items:baseline; gap:8px; }
+.chart-head .n { font-family:var(--serif); font-size:14px; letter-spacing:.12em; }
+.chart-head .s { margin-left:auto; font-size:11px; color:var(--ink3); }
+/* 高度上限 = 视口 − 中栏的固定开销：顶栏47 + 内边距34 + 连锁条54 + 弃牌条55 + 图表头/图例48
+   + 底部手牌区143。720 高实测中栏只给棋盘留 395px，所以取 −380 留余量；
+   不加这条图例会压到弃牌条上（量过：wrap 417 vs 可用 395）。 */
+.chart {
+  position:relative; width:100%; max-width:min(400px, calc(100vh - 380px)); margin:0 auto; padding:9px;
+  background:linear-gradient(180deg,#fdf8ec,#f4ebd7); border:1px solid var(--line2); border-radius:3px;
+  box-shadow:0 6px 18px rgba(120,100,70,.14), inset 0 0 0 1px rgba(255,255,255,.7);
+  display:grid; grid-template-columns:repeat(6,1fr); gap:0;
+}
+/* 墨线网格（衬线棋盘的"印刷感"） */
+.chart .c { aspect-ratio:1/1; border-right:1px solid #cbbb9c; border-bottom:1px solid #cbbb9c; display:grid; place-items:center; position:relative; }
+.chart .c:nth-child(6n) { border-right:0; }
+.chart .c:nth-child(n+31) { border-bottom:0; }
+.chart .c.ship::after { content:""; width:46%; height:46%; background:var(--navy); clip-path:polygon(50% 0,100% 100%,0 100%); opacity:.9; }
+.chart .c.hit::before, .chart .c.hit::after { content:""; position:absolute; width:60%; height:2px; background:var(--seal); }
+.chart .c.hit::before { transform:rotate(45deg); } .chart .c.hit::after { transform:rotate(-45deg); }
+.chart .c.miss::after { content:""; width:34%; height:34%; border:1.5px solid #9aa7a4; border-radius:50%; }
+.chart .c.sel { background:rgba(47,111,126,.13); box-shadow:inset 0 0 0 2px var(--sea); }
+.chart .rose { position:absolute; right:6px; bottom:6px; opacity:.30; pointer-events:none; }
+.chart-legend { display:flex; gap:12px; font-size:11px; color:var(--ink3); justify-content:center; }
+.chart-legend i { display:inline-block; width:9px; height:9px; margin-right:5px; vertical-align:-1px; }
+
+/* 手牌：底部整条扇形牌桌 */
+.hand-strip { flex:0 0 auto; padding-top:12px; margin-top:12px; border-top:1px solid var(--line); display:flex; align-items:flex-end; justify-content:center; }
+.hand { display:flex; align-items:flex-end; }
+.mcard {
+  width:126px; height:126px; flex:0 0 auto; background:linear-gradient(170deg,#fffdf7,#f6ecd8);
+  border:1px solid #d3c2a2; border-radius:4px; padding:9px 10px; position:relative;
+  box-shadow:0 4px 10px rgba(110,90,60,.20), inset 0 0 0 1px rgba(255,255,255,.7);
+  transition:transform .12s ease; display:flex; flex-direction:column;
+}
+.hand .mcard + .mcard { margin-left:-16px; }
+.hand .mcard:nth-child(1) { transform:rotate(-6deg) translateY(6px); }
+.hand .mcard:nth-child(2) { transform:rotate(-3deg) translateY(2px); }
+.hand .mcard:nth-child(3) { transform:rotate(0deg); }
+.hand .mcard:nth-child(4) { transform:rotate(3deg) translateY(2px); }
+.hand .mcard:nth-child(5) { transform:rotate(6deg) translateY(6px); }
+.mcard:hover { transform:translateY(-22px) rotate(0deg) !important; box-shadow:0 14px 26px rgba(110,90,60,.30); }
+.mcard.picked { transform:translateY(-22px) rotate(0deg) !important; border:2px solid var(--seal); box-shadow:0 14px 26px rgba(143,47,42,.28); }
+.mcard .sp { display:flex; align-items:center; gap:5px; font-family:var(--serif); font-size:11px; color:var(--ink3); }
+.mcard .sp i { width:9px; height:9px; border:1px solid var(--line2); background:#fff; }
+.mcard .sp i.f { background:var(--brass); border-color:#8a6b2e; }
+.mcard .nm { font-family:var(--serif); font-size:16px; letter-spacing:.08em; margin:8px 0 4px; }
+.mcard .ty { font-size:10.5px; color:var(--ink3); }
+.mcard .fx { margin-top:auto; font-size:10.5px; color:var(--ink2); line-height:1.5; border-top:1px dashed var(--line); padding-top:6px; }
+
+/* 右栏：待用卡详情 + 牌堆 */
+/* 右栏两块面板都按内容收口（flex:0 0 auto + max-height），不强行撑满整列 ——
+   否则 900 高时牌堆面板会为了"填满"把最后一张弃牌卡卡在边上。 */
+.side { min-height:0; display:flex; flex-direction:column; gap:14px; }
+.detail { flex:0 0 auto; background:var(--card); border:1px solid var(--line); border-radius:3px; padding:14px; box-shadow:0 5px 16px rgba(120,100,70,.12); }
+.detail h3 { font-family:var(--serif); font-size:11px; letter-spacing:.2em; color:var(--ink3); margin:0 0 10px; }
+.detail .nm { font-family:var(--serif); font-size:22px; letter-spacing:.1em; }
+.detail .meta { display:flex; gap:16px; margin:9px 0 10px; font-size:11.5px; color:var(--ink2); }
+.detail .meta b { font-family:var(--serif); }
+.detail p { margin:0 0 12px; font-size:12px; line-height:1.75; color:var(--ink2); }
+.detail .go { display:flex; gap:8px; }
+.btn-brass { flex:1; text-align:center; font-family:var(--serif); font-size:13px; letter-spacing:.12em; padding:9px 0; color:#fff8e6; background:linear-gradient(180deg,#b48f45,#997631); border:1px solid #7d5f28; border-radius:3px; cursor:pointer; }
+.btn-paper { flex:1; text-align:center; font-size:12.5px; padding:9px 0; color:var(--ink2); background:#fdf8ee; border:1px solid var(--line2); border-radius:3px; cursor:pointer; }
+.piles { flex:0 0 auto; max-height:100%; min-height:0; overflow-y:auto; background:var(--card); border:1px solid var(--line); border-radius:3px; padding:14px; box-shadow:0 5px 16px rgba(120,100,70,.12); display:flex; flex-direction:column; }
+/* 牌堆面板在 720 高装不下"场地 + 最近弃牌"，允许滚动而不是把最后一张卡切一半 */
+.piles::-webkit-scrollbar { width:7px; }
+.piles::-webkit-scrollbar-thumb { background:#cbb894; border-radius:4px; }
+.piles::-webkit-scrollbar-track { background:transparent; }
+.pile-row { display:flex; gap:12px; align-items:flex-end; }
+.pile { text-align:center; }
+.pile .stack { width:52px; height:70px; position:relative; }
+.pile .stack i { position:absolute; inset:0; background:repeating-linear-gradient(45deg,#1d4257 0 5px,#25536b 5px 10px); border:1px solid #143243; border-radius:3px; box-shadow:0 3px 7px rgba(60,50,30,.25); }
+.pile .stack i:nth-child(2) { transform:translate(-3px,-3px); }
+.pile .stack i:nth-child(3) { transform:translate(-6px,-6px); }
+.pile .lb { font-size:11px; color:var(--ink2); margin-top:8px; }
+.pile .lb b { font-family:var(--serif); font-size:14px; display:block; }
+/* 场地信息与最近弃牌都紧跟牌堆下面、顺序排列；面板装不下时由 .piles 滚动 */
+.fields { border-top:1px solid var(--line); padding-top:12px; }
+.fields .r { display:flex; justify-content:space-between; font-size:12px; padding:5px 0; color:var(--ink2); }
+.fields .r b { font-family:var(--serif); color:var(--ink); }
+/* 最近弃牌：横条放在棋盘下方的空档里（右栏装不下时才需要横过来，见文档里的取舍说明） */
+.dump-strip { display:flex; align-items:center; gap:9px; margin-top:12px; padding-top:12px; border-top:1px solid var(--line); }
+.dump-strip .h { font-family:var(--serif); font-size:11.5px; letter-spacing:.18em; color:var(--ink3); flex:0 0 auto; }
+.dump-strip .dc { display:flex; align-items:center; gap:7px; font-family:var(--serif); font-size:12.5px; padding:5px 11px; background:#fffdf6; border:1px solid var(--line); border-radius:2px; }
+.dump-strip .dc span { font-family:var(--sans); font-size:10px; color:var(--ink3); }
+.dump-strip .dc.first { border-color:var(--brass); box-shadow:0 2px 0 rgba(169,133,63,.35); }
+
+/* 页内视图切换 */
+#demo-switcher { position:fixed; z-index:99; left:50%; transform:translateX(-50%); bottom:16px; display:flex; gap:6px; padding:6px; background:rgba(43,37,32,.92); border-radius:4px; box-shadow:0 8px 26px rgba(0,0,0,.35); }
+#demo-switcher button { font-size:12.5px; color:#e8ddc8; background:transparent; border:1px solid transparent; border-radius:3px; padding:6px 13px; cursor:pointer; font-family:var(--sans); }
+#demo-switcher button.on { background:var(--brass); color:#fff8e6; border-color:#7d5f28; }
+@media (max-width:1360px) {
+  .game-body { grid-template-columns:214px 1fr 246px; gap:14px; }
+  .modes { gap:10px; }
+  .mcard { width:118px; height:120px; }
+  .title-block h1 { font-size:38px; }
+}
+@media (max-height:840px) {
+  .mcard { height:110px; }
+  .mcard .fx { display:none; }
+  .detail p { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  .title-block { padding:12px 0 2px; }
+  .title-block h1 { font-size:36px; }
+  .mode { padding:14px 10px 12px; }
+  .mode .d { min-height:30px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ======================= 首页 ======================= -->
+<div class="screen on" data-view="home">
+  <div class="home-wrap">
+    <div class="cover">
+      <i class="orn"></i><i class="orn"></i><i class="orn"></i><i class="orn"></i>
+      <div class="topnav">
+        <div class="crest">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1d4257" stroke-width="1.5"><path d="M12 3v18M5 12l7-9 7 9"/><circle cx="12" cy="12" r="9" stroke="#a9853f"/></svg>
+          <div><b>战舰棋</b><br><em>BATTLESHIP &amp; SPELLS</em></div>
+        </div>
+        <nav><a class="on" href="#">对战</a><a href="#">排行榜</a><a href="#">大厅</a><a href="#">好友</a><a href="#">跟随系统</a></nav>
+        <div class="right">
+          <span class="plate-sm">在线 <b>12</b> 人</span>
+          <button class="btn-paper" style="flex:0 0 auto;padding:6px 12px">设置</button>
+          <button class="btn-paper" style="flex:0 0 auto;padding:6px 12px">帮助</button>
+          <span class="mock-tag">示意稿</span>
+        </div>
+      </div>
+
+      <div class="title-block">
+        <h1>战舰棋</h1>
+        <div class="rule"><span></span>六 艘 孤 舰 · 四 十 三 张 魔 法 卡<span></span></div>
+        <p>摆放你的舰队，猜拳定先手，击沉对手全部战舰者胜</p>
+      </div>
+
+      <div class="name-row">
+        <label>指挥官姓名</label>
+        <div class="name-field">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 20h16M12 3l7 4v5c0 4-3 7-7 9-4-2-7-5-7-9V7z"/></svg>
+          <input value="舰长阿7" aria-label="你的名字">
+        </div>
+      </div>
+
+      <div class="modes">
+        <div class="mode main">
+          <div class="seal">推<br>荐</div>
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+          <div class="t">匹配游戏</div>
+          <div class="d">随机匹配一位在线玩家<br>休闲不计分</div>
+        </div>
+        <div class="mode">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3l7 4v5c0 4-3 7-7 9-4-2-7-5-7-9V7z"/><path d="M9.5 11.5l2 2 3.5-3.5"/></svg>
+          <div class="t">排位对战</div>
+          <div class="d">大副 Ⅱ · 1240 分<br>结算会改变段位</div>
+        </div>
+        <div class="mode">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="6" y="6" width="12" height="12" rx="1"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>
+          <div class="t">人机对战</div>
+          <div class="d">练习规则与连锁</div>
+          <div class="steps">
+            <button>简单</button><button class="on">普通</button><button>困难</button>
+          </div>
+        </div>
+        <div class="mode">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 20V9l8-5 8 5v11"/><path d="M9 20v-6h6v6"/></svg>
+          <div class="t">自定义房间</div>
+          <div class="d">6 位房号或邀请链接<br>与朋友开局</div>
+        </div>
+        <div class="mode">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M16 5.5a3 3 0 010 5.8M18 20c0-2.2-.9-4-2.3-5.2"/></svg>
+          <div class="t">游戏大厅</div>
+          <div class="d">房间列表与公屏<br>看看谁在线</div>
+        </div>
+      </div>
+
+      <!-- 玩法提要：首页原来这块是空的（.bottom-plates 被 margin-top:auto 顶到底部），
+           填一行"一局怎么打"，比留白有用 -->
+      <div class="howto">
+        <span class="h">一局怎么打</span>
+        <span class="s"><b>①</b> 6×6 海图各摆 6 格舰队</span>
+        <span class="s"><b>②</b> 猜拳定先手，先手抽 1 张、后手 2 张</span>
+        <span class="s"><b>③</b> 每回合攻击次数 = 存活船数</span>
+        <span class="s"><b>④</b> 43 张魔法卡可在连锁里互相响应</span>
+      </div>
+
+      <div class="bottom-plates">
+        <div class="exp">
+          <div class="row"><span>Lv.12 一名水手长</span><span>620 / 1000 经验</span></div>
+          <div class="track"><i></i></div>
+        </div>
+        <div class="stat-plate plate-sm">近 11 场<b>8 胜 3 负</b></div>
+        <div class="stat-plate plate-sm">最长连胜<b>6 场</b></div>
+        <div class="stat-plate plate-sm">在线玩家<b>12 人</b></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= 对局屏 ======================= -->
+<div class="screen" data-view="game">
+  <div class="game-wrap">
+    <div class="game-top">
+      <div class="who"><span class="avat">阿</span> 你 · 剩余 <b>4</b> 艘</div>
+      <div class="mid round-plate">
+        <span class="plate">第 1 回合</span>
+        <span class="plate">准备阶段</span>
+        <span class="plate">轮到 你 · 攻击 ×4</span>
+      </div>
+      <div class="who">对手 · 剩余 <b>4</b> 艘 <span class="avat" style="background:radial-gradient(circle at 35% 30%,#fff,#e6d3c8)">电</span></div>
+      <button class="btn-paper" style="flex:0 0 auto;padding:7px 12px">进入战斗阶段</button>
+      <button class="btn-paper" style="flex:0 0 auto;padding:7px 12px;color:#8f2f2a;border-color:#c99">投降</button>
+    </div>
+
+    <div class="game-body">
+      <div class="notepad">
+        <div class="head"><h3>航海日志</h3><span>第 1 回合</span></div>
+        <div class="lines">
+          <div>双方各部署 <b>6</b> 艘战舰</div>
+          <div>猜拳：你 <b>获胜</b>，你先手</div>
+          <div>你 抽到 <b>2</b> 张魔法卡</div>
+          <div>对手 抽到 <b>2</b> 张魔法卡</div>
+          <div>你 炮击 <b>(3,4)</b> <span class="hit">命中</span></div>
+          <div>对手 炮击 <b>(1,1)</b>，未命中</div>
+          <div>对手 炮击 <b>(5,5)</b> <span class="hit">命中</span></div>
+          <div>你 使用 <span class="mag">神威！</span></div>
+          <div>对手 响应 <span class="mag">失灵！</span></div>
+        </div>
+        <div class="foot"><span>阶段时点</span><span class="plate-sm">询问中</span></div>
+      </div>
+
+      <div class="center">
+        <div class="chain-note">
+          <span class="t">连锁 · 结算中</span>
+          <span class="sc">你 神威！ 速阶 Ⅱ</span><span class="ar">←</span><span class="sc">对手 失灵！ 速阶 Ⅲ</span>
+          <span class="tm">7 秒</span>
+        </div>
+
+        <div class="boards">
+          <div class="chart-wrap">
+            <div class="chart-head"><span class="n">你的海图</span><span class="s">剩余 4 艘 · 冻结 0</span></div>
+            <div class="chart" id="chart-mine">
+              <svg class="rose" width="42" height="42" viewBox="0 0 40 40" fill="none" stroke="#5d5142" stroke-width="1">
+                <circle cx="20" cy="20" r="18"/><path d="M20 3l4 17-4 17-4-17z"/><path d="M3 20l17-4 17 4-17 4z"/>
+              </svg>
+            </div>
+            <div class="chart-legend"><span><i style="background:#1d4257;clip-path:polygon(50% 0,100% 100%,0 100%)"></i>你的舰</span><span><i style="background:#8f2f2a;height:2px"></i>被命中</span><span><i style="border:1.5px solid #9aa7a4;border-radius:50%"></i>对方打空</span></div>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-head"><span class="n">对手海图</span><span class="s">剩余 4 艘 · 已探明 5 格</span></div>
+            <div class="chart" id="chart-opp">
+              <svg class="rose" width="42" height="42" viewBox="0 0 40 40" fill="none" stroke="#5d5142" stroke-width="1">
+                <circle cx="20" cy="20" r="18"/><path d="M20 3l4 17-4 17-4-17z"/><path d="M3 20l17-4 17 4-17 4z"/>
+              </svg>
+            </div>
+            <div class="chart-legend"><span><i style="background:#8f2f2a;height:2px"></i>你打中</span><span><i style="border:1.5px solid #9aa7a4;border-radius:50%"></i>你打空</span><span><i style="border:1px solid #cbbb9c"></i>未探明</span></div>
+          </div>
+        </div>
+
+        <div class="dump-strip">
+          <span class="h">最近弃牌</span>
+          <span class="dc first">神之宣告<span>你</span></span>
+          <span class="dc">硫磺火焰<span>对手</span></span>
+          <span class="dc">灵气复苏<span>你</span></span>
+          <span class="dc">看破！<span>对手</span></span>
+          <span class="dc">越战越勇<span>你</span></span>
+        </div>
+      </div>
+
+      <div class="side">
+        <div class="detail">
+          <h3>待使用魔法卡</h3>
+          <div class="nm">神威！</div>
+          <div class="meta"><span>速阶 <b>Ⅱ</b></span><span>类型 <b>普通</b></span><span>目标 <b>3×3</b></span></div>
+          <p>选定 3×3 区域，把区域内所有战舰暂时除外 —— 被除外的船不参与存活判定。</p>
+          <div class="go"><button class="btn-brass">确认使用</button><button class="btn-paper">取消</button></div>
+        </div>
+        <div class="piles">
+          <h3 style="font-family:var(--serif);font-size:11px;letter-spacing:.2em;color:var(--ink3);margin:0 0 12px">牌 堆</h3>
+          <div class="pile-row">
+            <div class="pile"><div class="stack"><i></i><i></i><i></i></div><div class="lb">牌堆<b>21</b></div></div>
+            <div class="pile"><div class="stack"><i style="background:repeating-linear-gradient(45deg,#8a6b2e 0 5px,#a9853f 5px 10px);border-color:#6d5220"></i></div><div class="lb">弃牌堆<b>18</b></div></div>
+          </div>
+          <div class="fields">
+            <div class="r"><span>场地魔法</span><b>无</b></div>
+            <div class="r"><span>极限增援结算</span><b>剩 2 回合</b></div>
+            <div class="r"><span>无暇圣心</span><b>未生效</b></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 手牌：桌子下沿摊开的实体卡 -->
+    <div class="hand-strip">
+      <div class="hand">
+        <div class="mcard">
+          <div class="sp">速阶 <i class="f"></i><i></i><i></i></div>
+          <div class="nm">桃园结义</div><div class="ty">普通</div>
+          <div class="fx">从牌堆抽 n 张，双方各挑一张</div>
+        </div>
+        <div class="mcard">
+          <div class="sp">速阶 <i class="f"></i><i class="f"></i><i></i></div>
+          <div class="nm">轰炸</div><div class="ty">普通</div>
+          <div class="fx">选定一行/列轰炸，船全部死亡</div>
+        </div>
+        <div class="mcard picked">
+          <div class="sp">速阶 <i class="f"></i><i class="f"></i><i></i></div>
+          <div class="nm">神威！</div><div class="ty">普通</div>
+          <div class="fx">选定 3×3 区域把战舰暂时除外</div>
+        </div>
+        <div class="mcard">
+          <div class="sp">速阶 <i class="f"></i><i class="f"></i><i class="f"></i></div>
+          <div class="nm">增援</div><div class="ty">普通</div>
+          <div class="fx">召唤一艘战舰部署在没被打过的格子</div>
+        </div>
+        <div class="mcard">
+          <div class="sp">速阶 <i class="f"></i><i class="f"></i><i class="f"></i></div>
+          <div class="nm">失灵！</div><div class="ty">普通</div>
+          <div class="fx">无效化对方使用的上一张魔法卡</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="demo-switcher">
+  <button class="on" data-view="home" onclick="window.setDemoView('home')">首页</button>
+  <button data-view="game" onclick="window.setDemoView('game')">对局屏</button>
+</div>
+
+<script>
+(function () {
+  var MINE = ['S..X..','....o.','.S..S.','o.....','..X.o.','.....S'];
+  var OPP  = ['o.....','....X.','..X...','...o..','.....o','.o....'];
+  function draw(id, rows, extra) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    rows.join('').split('').forEach(function (ch, i) {
+      var d = document.createElement('div');
+      d.className = 'c' + (ch === 'S' ? ' ship' : ch === 'X' ? ' hit' : ch === 'o' ? ' miss' : '');
+      // 给对手海图叠一个"待选 3×3 区域"的示意格
+      if (extra && extra.indexOf(i) >= 0) d.className += ' sel';
+      el.appendChild(d);
+    });
+  }
+  // 神威！的 3×3 候选区画在**对手**海图上（你打的是对手的区域），第 2–3 行、第 2–4 列
+  var sel = [];
+  [1, 2].forEach(function (r) { [1, 2, 3].forEach(function (c) { sel.push(r * 6 + c); }); });
+  draw('chart-mine', MINE);
+  draw('chart-opp', OPP, sel);
+})();
+</script>
+</body>
+</html>

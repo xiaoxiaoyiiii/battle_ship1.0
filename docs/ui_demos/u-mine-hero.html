@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>新方案 U · 我为主（你的海域当主角）</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+  window.__demoViews = ['home', 'game'];
+  window.__demoErrors = [];
+  window.addEventListener('error', function (e) { window.__demoErrors.push(String(e.message)); });
+  window.setDemoView = function (v) {
+    document.querySelectorAll('.screen').forEach(function (s) { s.classList.toggle('on', s.dataset.view === v); });
+    document.querySelectorAll('#demo-switcher button').forEach(function (b) { b.classList.toggle('on', b.dataset.view === v); });
+    document.body.dataset.view = v;
+  };
+  /* 手牌演示：三张牌分别停在 常态 / 一级预览 / 二级预览 */
+  window.showState = function (which) {
+    var h = document.getElementById('hand');
+    h.classList.toggle('demo', true);
+    h.dataset.demo = which;
+  };
+</script>
+<style>
+/* ============================================================================
+   新方案 R ·「真实卡牌版」—— 把卡做成真卡，把连锁做回叠牌
+   ────────────────────────────────────────────────────────────────────────────
+   这一版只解决一件事：**卡**。上一批 M/P/O 的卡是"62px 横条 + emoji"，
+   本质是深色小方块，不是真实卡牌 —— 这是自查里最硬的一处不达标。改动：
+     ① 卡尺寸 150×210（比例 0.714，等于真实 TCG 的 63×88mm）；
+     ② 卡面结构照真实卡牌：**满幅插画（占 53%）+ 名牌 + 速阶宝石 + 独立说明框 + 类型条**；
+     ③ 插画用**手写内联 SVG** 画各自的意象（不再用 emoji）——
+        生产环境这块就是 docs/magic_card_art_prompts.md 生成的那张竖版插画；
+     ④ 卡框是双层的（外层暗金描边 + 内层亮线 + 顶部高光 + 底部厚度影子），扇形有实体手感；
+     ⑤ **连锁做回 C 的叠牌**：连锁就是"一叠卡"，M 里把它退化成提示条是倒退，这里恢复；
+     ⑥ 三种状态（常态/一级/二级）直接在对局屏里并排展示，不再另开说明页。
+   参考：Hearthstone（手牌扇形与抬起）· MTG Arena（悬停放大 + 点击详情）·
+   Legends of Runeterra（点选后目标高亮）· 皇室战争（卡面：满幅插画 + 名称条 + 说明框）。
+   静态示意稿，非可运行版本。
+   ========================================================================== */
+:root {
+  --bg:#0b0d18; --panel:#151a30; --panel2:#1b2140; --line:#2a3358; --line2:#3b4675;
+  --tx:#e7ecff; --tx2:#a2adcf; --tx3:#6c789e; --frame:#8a7440; --frame2:#e6c778;
+  --gold:#c9a24c; --gold2:#e6c778; --vio:#7c5cf0; --cy:#4ec8e0; --rd:#ff5c6c; --gn:#4ade80; --am:#f2a33c;
+  --sans:"Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+* { box-sizing:border-box; }
+html, body { margin:0; height:100%; }
+body { background:var(--bg); color:var(--tx); font-family:var(--sans); font-size:13px; overflow:hidden; }
+body::before { content:""; position:fixed; inset:0; pointer-events:none;
+  background:radial-gradient(760px 440px at 50% -6%, rgba(124,92,240,.30), transparent 70%),
+             radial-gradient(620px 420px at 10% 106%, rgba(78,200,224,.12), transparent 70%),
+             repeating-conic-gradient(from 200deg at 50% -10%, rgba(255,255,255,.022) 0deg 3deg, transparent 3deg 11deg); }
+.screen { display:none; height:100%; flex-direction:column; position:relative; }
+.screen.on { display:flex; }
+.lab { font:600 10px/1 var(--sans); letter-spacing:.2em; color:var(--tx3); }
+.mono { font-family:var(--mono); }
+.panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; }
+.topbar { flex:0 0 auto; display:flex; align-items:center; gap:16px; padding:12px 22px; }
+.brand { display:flex; align-items:center; gap:10px; }
+.brand b { font-size:15px; letter-spacing:.12em; }
+.brand em { font-style:normal; font-size:10.5px; color:var(--tx3); letter-spacing:.2em; }
+.nav { display:flex; gap:4px; }
+.nav a { color:var(--tx2); text-decoration:none; font-size:12.5px; padding:6px 11px; border-radius:7px; }
+.nav a.on { color:var(--tx); background:var(--panel2); }
+.spacer { margin-left:auto; }
+.ghost { background:transparent; color:var(--tx2); border:1px solid var(--line2); border-radius:7px; padding:7px 13px; font-size:12.5px; cursor:pointer; font-family:var(--sans); }
+.mock-tag { font-size:10px; letter-spacing:.14em; color:var(--gold2); border:1px dashed rgba(201,162,76,.55); border-radius:4px; padding:5px 8px; }
+.pill { display:inline-flex; align-items:center; gap:7px; font-size:11.5px; color:var(--tx2); background:var(--panel); border:1px solid var(--line); border-radius:999px; padding:6px 12px; }
+.pill b { color:var(--tx); }
+
+/* ============================================================================
+   真实卡牌组件（150×210 · 比例同 63×88mm）
+   ========================================================================== */
+.cc {
+  position:relative; width:150px; height:210px; flex:0 0 auto; border-radius:9px; padding:5px;
+  background:linear-gradient(180deg,#424a7a 0%,#252c52 40%,#171c36 100%);
+  box-shadow:0 1px 0 rgba(255,255,255,.16) inset, 0 -2px 0 rgba(0,0,0,.5) inset,
+             0 12px 24px rgba(0,0,0,.55), 0 2px 0 rgba(0,0,0,.6);
+  transition:transform .15s ease, box-shadow .15s ease;
+}
+/* 内层：亮线描边 + 独立底色 → 双层卡框 */
+.cc .in { height:100%; border-radius:5px; overflow:hidden; display:flex; flex-direction:column;
+  border:1px solid rgba(230,199,120,.38); background:#0e1226; }
+/* 满幅插画（53%） */
+.cc .art { position:relative; height:104px; flex:0 0 auto; overflow:hidden; }
+.cc .art svg { display:block; width:100%; height:100%; }
+.cc .art::after { content:""; position:absolute; inset:0;
+  background:linear-gradient(180deg, rgba(255,255,255,.10), transparent 34%, rgba(0,0,0,.42)); }
+/* 名牌：速阶宝石 + 卡名 */
+.cc .name { display:flex; align-items:center; gap:7px; padding:5px 8px 5px 6px;
+  background:linear-gradient(180deg,#2b3563,#1b2244); border-top:1px solid rgba(230,199,120,.32); border-bottom:1px solid rgba(230,199,120,.26); }
+.cc .gem { position:relative; width:22px; height:22px; flex:0 0 auto; display:grid; place-items:center;
+  font-family:var(--mono); font-size:11px; font-weight:700; color:#2a1f04;
+  background:linear-gradient(180deg,#f4dc9a,#c9a24c); clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);
+  filter:drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
+.cc .gem.g2 { background:linear-gradient(180deg,#bfe9ff,#4ec8e0); color:#04222c; }
+.cc .gem.g3 { background:linear-gradient(180deg,#d7c8ff,#7c5cf0); color:#fff; }
+.cc .name b { font-size:13.5px; font-weight:600; letter-spacing:.02em; }
+/* 说明框：独立底色 + 描边，与卡框分开 */
+.cc .text { flex:1; min-height:0; padding:6px 8px; font-size:10.5px; line-height:1.5; color:#c3cbe8;
+  background:repeating-linear-gradient(180deg, rgba(255,255,255,.022) 0 1px, transparent 1px 4px), linear-gradient(180deg,#161c36,#111529); }
+.cc .bottom { display:flex; align-items:center; justify-content:space-between; padding:4px 8px;
+  font-size:9.5px; color:var(--tx3); border-top:1px solid rgba(255,255,255,.07); background:#0d1122; }
+.cc .bottom .ty { letter-spacing:.12em; }
+.cc .bottom .dup { font-family:var(--mono); color:var(--gold2); }
+/* 场地魔法：金字招牌 */
+.cc.terrain .in { border-color:rgba(230,199,120,.72); }
+.cc.terrain .name { background:linear-gradient(180deg,#5a4620,#372a10); }
+
+/* 两级预览：位移量沿用上一版规范（一级 −30 / 二级 −56） */
+.cc.hover { transform:translateY(-30px) scale(1.05); z-index:5;
+  box-shadow:0 1px 0 rgba(255,255,255,.2) inset, 0 22px 40px rgba(0,0,0,.6), 0 0 0 1px rgba(230,199,120,.6); }
+.cc.picked { transform:translateY(-56px) scale(1.09); z-index:6;
+  box-shadow:0 1px 0 rgba(255,255,255,.24) inset, 0 30px 54px rgba(0,0,0,.66), 0 0 0 2px rgba(230,199,120,.85), 0 0 34px rgba(201,162,76,.3); }
+.cc .statebadge { position:absolute; top:-11px; left:50%; transform:translateX(-50%); z-index:9;
+  font-family:var(--mono); font-size:10px; padding:2px 8px; border-radius:999px; white-space:nowrap;
+  background:linear-gradient(180deg,var(--gold2),var(--gold)); color:#2a1f04; box-shadow:0 3px 8px rgba(0,0,0,.5); }
+
+/* ============================================================================
+   首页（与 M 相同的综合：C 的骨架 + I 的主行动）
+   ========================================================================== */
+.home { flex:1; min-height:0; display:grid; grid-template-columns:280px 1fr 316px; gap:20px; padding:4px 22px 20px; }
+.hero-card { align-self:stretch; border-radius:14px; overflow:hidden; background:linear-gradient(170deg,#232a4d,#12162c 70%);
+  border:1px solid var(--line2); box-shadow:0 18px 40px rgba(0,0,0,.5); transform:rotate(-2deg); }
+.hero-card .art { height:120px; display:grid; place-items:center;
+  background:radial-gradient(90px 70px at 70% 20%, rgba(201,162,76,.5), transparent 70%),
+             repeating-linear-gradient(115deg, rgba(255,255,255,.05) 0 2px, transparent 2px 9px),
+             linear-gradient(150deg,#2b3566,#161b38); }
+.hero-card .art .ring { width:66px; height:66px; border-radius:50%; border:2px solid var(--gold); display:grid; place-items:center; font-size:23px; color:var(--gold2); background:rgba(11,13,24,.55); }
+.hero-card .body { padding:13px 15px 15px; }
+.hero-card .nm { font-size:17px; font-weight:600; display:flex; align-items:center; gap:8px; }
+.hero-card .nm i { font-style:normal; font-size:10.5px; color:var(--gold2); border:1px solid rgba(201,162,76,.5); border-radius:4px; padding:2px 6px; }
+.kv { display:flex; justify-content:space-between; font-size:11.5px; color:var(--tx2); padding:7px 0; border-bottom:1px dashed rgba(59,70,117,.6); }
+.kv:last-child { border-bottom:0; }
+.kv b { font-family:var(--mono); color:var(--tx); }
+.track { height:8px; border-radius:999px; background:#0d1122; border:1px solid var(--line); overflow:hidden; margin-top:10px; }
+.track i { display:block; height:100%; width:74%; background:linear-gradient(90deg,#6b4d12,var(--gold)); }
+.mid { display:flex; flex-direction:column; gap:14px; min-height:0; }
+.sail { position:relative; overflow:hidden; border-radius:20px; padding:20px;
+  background:linear-gradient(135deg,#5a6bff,#3a2ec9 72%); box-shadow:0 16px 34px rgba(58,46,201,.34); }
+.sail::after { content:""; position:absolute; right:-40px; top:-60px; width:190px; height:190px; border-radius:50%; background:rgba(255,255,255,.13); }
+.sail h2 { margin:0; font-size:22px; position:relative; }
+.sail .d { font-size:12px; color:rgba(255,255,255,.82); margin-top:6px; position:relative; }
+.modes { display:flex; gap:6px; margin:14px 0 12px; position:relative; }
+.modes span { font-size:12px; padding:7px 14px; border-radius:999px; border:1px solid rgba(255,255,255,.24); color:#e9ecff; }
+.modes span.on { background:#fff; color:#3a2ec9; border-color:#fff; font-weight:600; }
+.sail button { width:230px; height:48px; border:0; border-radius:14px; background:#fff; color:#3a2ec9; font-family:var(--sans); font-size:16px; font-weight:700; position:relative; }
+.gobtns { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.gobtn { display:flex; align-items:center; gap:13px; padding:15px 17px; border-radius:14px; background:var(--panel); border:1px solid var(--line2); cursor:pointer; }
+.gobtn .ic { width:40px; height:40px; border-radius:11px; display:grid; place-items:center; background:var(--panel2); border:1px solid var(--line); color:var(--gold2); flex:0 0 auto; }
+.gobtn .t { font-size:14.5px; font-weight:600; }
+.gobtn .d { font-size:11px; color:var(--tx3); margin-top:4px; }
+/* 首页也用手牌真卡做"本周热门"——直接把卡组件亮出来（150×210 缩到 124×174） */
+.hotrow { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; }
+.hotrow .cc { width:100%; height:174px; padding:4px; }
+.hotrow .cc .art { height:92px; }
+.hotrow .cc .name b { font-size:12px; }
+.hotrow .cc .text { font-size:9.5px; padding:5px 6px; }
+.hotrow .cc .bottom { font-size:8.5px; padding:3px 6px; }
+.side { display:flex; flex-direction:column; gap:14px; min-height:0; }
+.side .cp { padding:15px; }
+.side h4 { margin:0 0 12px; font-size:11px; letter-spacing:.2em; color:var(--tx3); font-weight:600; }
+.ladder .li { display:flex; align-items:center; gap:9px; padding:7px 0; font-size:12px; color:var(--tx3); border-bottom:1px dashed rgba(59,70,117,.5); }
+.ladder .li:last-child { border-bottom:0; }
+.ladder .li i { width:7px; height:7px; border-radius:50%; background:var(--line2); flex:0 0 auto; }
+.ladder .li.done { color:var(--tx2); } .ladder .li.done i { background:var(--gn); }
+.ladder .li.now { color:var(--gold2); font-weight:600; } .ladder .li.now i { background:var(--gold2); box-shadow:0 0 8px var(--gold2); }
+.ladder .li .n { margin-left:auto; font-family:var(--mono); font-size:11px; }
+.mrow { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px dashed rgba(59,70,117,.5); font-size:12px; }
+.mrow:last-child { border-bottom:0; }
+.badge { font:600 11px/1.5 var(--sans); text-align:center; border-radius:4px; padding:0 6px; }
+.badge.w { color:var(--gn); background:rgba(74,222,128,.12); }
+.badge.l { color:var(--rd); background:rgba(255,92,108,.12); }
+.mrow .dl { margin-left:auto; font-family:var(--mono); }
+
+/* ============================================================================
+   对局屏
+   ========================================================================== */
+.gtop { flex:0 0 auto; display:flex; align-items:center; gap:16px; margin:10px 22px 0; padding:10px 15px; }
+.gtop .round { font-family:var(--mono); font-size:18px; }
+.gtop .round em { font-style:normal; font-family:var(--sans); font-size:10px; letter-spacing:.16em; color:var(--tx3); display:block; margin-bottom:4px; }
+.gtop .seg { padding-left:16px; border-left:1px solid var(--line); }
+.gtop .seg .v { font-size:13px; margin-top:4px; }
+.gtop .seg .v b { color:var(--cy); font-family:var(--mono); }
+.gtop .acts { margin-left:auto; display:flex; gap:9px; }
+.btn-pri { font-family:var(--sans); font-size:14px; font-weight:600; padding:12px 20px; border:0; border-radius:12px;
+  background:linear-gradient(120deg,#6b4ce0,#3f2a9c); color:#fff; box-shadow:0 10px 22px rgba(107,76,224,.32); cursor:pointer; }
+.btn-danger { font-family:var(--sans); font-size:12.5px; padding:11px 15px; border-radius:12px; background:transparent; color:#ff9aa5; border:1px solid #5c242a; cursor:pointer; }
+.gmain { flex:1; min-height:0; display:grid; grid-template-columns:1fr 316px; gap:20px; padding:12px 22px 12px; }
+/* 你的海域当主角：棋盘上限由"宽度"与"视口高"共同决定，比 C/R 的 420 大得多 */
+.bwrap.minehero { max-width:none; align-items:center; }
+.bwrap.minehero .board { max-width:min(560px, calc(100vh - 396px)); }
+.bwrap.minehero .cell { background:rgba(79,168,255,.05); border-color:rgba(120,190,255,.14); }
+/* 对手海域缩成"雷达盘"：240px（格宽 38px），只用于选目标与看探明情况 */
+.board.radar { max-width:240px; margin:0 auto; padding:6px; gap:3px; border-radius:12px; }
+.board.radar .cell { border-radius:5px; }
+.board.radar .cell.tgt { box-shadow:inset 0 0 0 2px var(--vio); background:rgba(124,92,240,.18); }
+.centercol { min-height:0; display:flex; flex-direction:column; }
+.boards { flex:1; min-height:0; display:flex; gap:22px; justify-content:center; align-items:flex-start; }
+.bwrap { flex:1 1 0; min-width:0; max-width:420px; display:flex; flex-direction:column; gap:8px; }
+.bhead { display:flex; align-items:baseline; gap:8px; }
+.bhead .n { font-size:13px; font-weight:600; }
+.bhead .tag { font-size:10px; padding:2px 7px; border-radius:6px; }
+.tag.fire { color:var(--gold2); background:rgba(201,162,76,.14); }
+.tag.hurt { color:var(--cy); background:rgba(78,200,224,.13); }
+.bhead .s { margin-left:auto; font-family:var(--mono); font-size:10.5px; color:var(--tx3); }
+.board { display:grid; grid-template-columns:repeat(6,1fr); gap:4px; width:100%;
+  max-width:min(420px, calc(100vh - 448px)); margin:0 auto; padding:8px; border-radius:16px;
+  background:radial-gradient(120% 120% at 50% 0%, #1d2a55, #101733 70%); border:1px solid var(--line2); }
+.cell { aspect-ratio:1/1; border-radius:7px; background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.06); display:grid; place-items:center; }
+.cell.ship { background:rgba(79,168,255,.2); border-color:rgba(120,190,255,.5); }
+.cell.ship::after { content:""; width:46%; height:46%; background:#9ad0ff; clip-path:polygon(50% 0,100% 100%,0 100%); }
+.cell.hit { background:rgba(255,92,108,.22); border-color:rgba(255,92,108,.6); }
+.cell.hit::after { content:""; width:52%; height:52%; background:var(--rd); clip-path:polygon(50% 0,61% 39%,100% 50%,61% 61%,50% 100%,39% 61%,0 50%,39% 39%); }
+.cell.miss::after { content:""; width:26%; height:26%; border-radius:50%; border:1.5px solid rgba(78,200,224,.65); }
+.cell.tgt { box-shadow:inset 0 0 0 2px var(--vio); background:rgba(124,92,240,.18); }
+.blegend { display:flex; gap:12px; justify-content:center; font-size:10.5px; color:var(--tx3); }
+.blegend i { display:inline-block; width:9px; height:9px; border-radius:3px; margin-right:5px; vertical-align:middle; }
+
+/* 手牌：真卡 + 扇形 + 三态（三态在这块里并排演示） */
+.handzone { flex:0 0 auto; position:relative; height:250px; margin-top:6px; }
+.hand { position:absolute; left:0; right:0; bottom:34px; height:210px; display:flex; align-items:flex-end; justify-content:center; padding:0 212px 14px 0; }
+.hand .cc + .cc { margin-left:-20px; }
+.hand .cc:nth-child(1) { transform:rotate(-7deg) translateY(10px); }
+.hand .cc:nth-child(2) { transform:rotate(-3.5deg) translateY(3px); }
+.hand .cc:nth-child(3) { transform:rotate(0deg); }
+.hand .cc:nth-child(4) { transform:rotate(3.5deg) translateY(3px); }
+.hand .cc:nth-child(5) { transform:rotate(7deg) translateY(10px); }
+/* 演示三态时不做扇形旋转，方便对比 */
+.hand.demo .cc { transform:none !important; margin-left:14px; }
+.hand.demo .cc.hover { transform:translateY(-30px) scale(1.05) !important; }
+.hand.demo .cc.picked { transform:translateY(-56px) scale(1.09) !important; }
+.statebar { position:absolute; left:0; right:0; bottom:0; display:flex; gap:26px; justify-content:center; font-size:10.5px; color:var(--tx3); }
+.statebar span { display:flex; gap:6px; align-items:center; }
+.statebar b { color:var(--gold2); font-family:var(--mono); font-size:10px; }
+.statebar .me { color:var(--tx2); }
+.handact { position:absolute; right:0; bottom:70px; width:190px; display:flex; flex-direction:column; gap:8px; }
+.handact .use { height:52px; border:0; border-radius:14px; font-family:var(--sans); font-size:15px; font-weight:700;
+  background:linear-gradient(120deg,#e6c778,#c9a24c); color:#3a2a05; box-shadow:0 12px 26px rgba(201,162,76,.3); cursor:pointer; }
+.handact .cancel { height:38px; border-radius:12px; background:transparent; border:1px solid var(--line2); color:var(--tx2); font-family:var(--sans); font-size:12.5px; cursor:pointer; }
+.handact .need { font-size:10.5px; color:var(--am); text-align:center; }
+
+/* 右栏：连锁叠牌 + 待用卡 + 数据/战报 */
+.gside { min-height:0; display:flex; flex-direction:column; gap:12px; overflow-y:auto; }
+.gside::-webkit-scrollbar { width:7px; } .gside::-webkit-scrollbar-thumb { background:var(--line2); border-radius:4px; }
+.chainbox { padding:14px; }
+.chainbox .hd { display:flex; align-items:baseline; gap:8px; margin-bottom:12px; }
+.chainbox .hd b { font-size:12.5px; color:var(--gold2); }
+.chainbox .hd .tm { margin-left:auto; font-family:var(--mono); font-size:15px; color:var(--gold2); }
+/* 叠牌：真的叠起来 —— 后出的牌压在前一张上，每张只露上半部 */
+.stack { position:relative; height:152px; overflow:hidden; }
+.stack .cc { position:absolute; left:50%; width:112px; height:157px; padding:4px; transform-origin:50% 0; }
+.stack .cc .art { height:82px; } .stack .cc .name b { font-size:11.5px; }
+.stack .cc .text { display:none; }
+.stack .cc:nth-child(1) { transform:translateX(-50%) translateY(0) rotate(-2.5deg); }
+.stack .cc:nth-child(2) { transform:translateX(-50%) translateY(34px) rotate(1.8deg); z-index:2; }
+.stack .cc:nth-child(3) { transform:translateX(-50%) translateY(68px) rotate(-1deg); z-index:3; }
+.stack .who { position:absolute; right:-2px; top:2px; font-size:9.5px; color:var(--tx3); }
+.chainbox .note { margin-top:10px; font-size:11px; color:var(--tx3); line-height:1.7; }
+.preview .hd { display:flex; align-items:center; gap:8px; padding:12px 14px; border-bottom:1px solid var(--line); }
+.preview .hd b { font-size:14px; }
+.preview .bd { padding:13px 14px; }
+.preview .meta { display:flex; gap:12px; font-size:11.5px; color:var(--tx2); margin-bottom:10px; }
+.preview .meta b { font-family:var(--mono); color:var(--tx); }
+.preview p { margin:0; font-size:12px; line-height:1.8; color:var(--tx2); }
+.data .r { display:flex; justify-content:space-between; font-size:12px; padding:7px 0; color:var(--tx2); border-bottom:1px dashed rgba(59,70,117,.5); }
+.data .r:last-child { border-bottom:0; }
+.data .r b { font-family:var(--mono); color:var(--tx); }
+
+#demo-switcher { position:fixed; z-index:99; left:50%; transform:translateX(-50%); bottom:12px; display:flex; gap:6px; padding:6px;
+  background:rgba(11,13,24,.95); border:1px solid var(--line2); border-radius:11px; }
+#demo-switcher button { font-family:var(--sans); font-size:12.5px; color:var(--tx2); background:transparent; border:1px solid transparent; border-radius:7px; padding:7px 14px; cursor:pointer; }
+#demo-switcher button.on { color:#fff; background:linear-gradient(120deg,#6b4ce0,#3f2a9c); border-color:#8f79f5; }
+#statetoggle { position:fixed; z-index:99; right:14px; bottom:12px; display:flex; gap:4px; padding:5px; background:rgba(11,13,24,.95); border:1px solid var(--line2); border-radius:11px; }
+#statetoggle button { font-family:var(--sans); font-size:11.5px; color:var(--tx2); background:transparent; border:0; border-radius:7px; padding:6px 10px; cursor:pointer; }
+#statetoggle button.on { background:rgba(201,162,76,.2); color:var(--gold2); }
+#refs { position:fixed; left:14px; bottom:12px; z-index:99; max-width:min(430px,90vw); font-size:10.5px; line-height:1.7; color:var(--tx3);
+  background:rgba(11,13,24,.92); border:1px solid var(--line); border-radius:10px; padding:8px 11px; }
+#refs b { color:var(--tx2); }
+body[data-view="game"] #refs { display:none; }
+@media (max-width:1360px) {
+  .home { grid-template-columns:250px 1fr 288px; gap:16px; }
+  .gmain { grid-template-columns:1fr 300px; gap:16px; }
+  .cc { width:130px; height:184px; } .cc .art { height:96px; }
+  .hotrow .cc { width:100%; height:166px; } .hotrow .cc .art { height:84px; }
+  .stack .cc { width:104px; height:146px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ======================= 首页 ======================= -->
+<div class="screen on" data-view="home">
+  <div class="topbar">
+    <div class="brand">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#c9a24c" stroke-width="1.6"><path d="M12 2l2.6 6.4L21 11l-6.4 2.6L12 20l-2.6-6.4L3 11l6.4-2.6z"/></svg>
+      <div><b>战舰棋</b><br><em>BATTLESHIP ARENA</em></div>
+    </div>
+    <nav class="nav"><a class="on" href="#">对战</a><a href="#">排行榜</a><a href="#">大厅</a><a href="#">好友</a></nav>
+    <div class="spacer"></div>
+    <span class="pill">在线 <b>12</b></span>
+    <button class="ghost">设置</button>
+    <span class="mock-tag">示意稿 U · 我为主</span>
+  </div>
+
+  <div class="home">
+    <div style="display:flex;flex-direction:column;min-height:0">
+    <div class="hero-card">
+      <div class="art"><div class="ring">舰</div></div>
+      <div class="body">
+        <div class="nm">舰长阿7 <i>大副 Ⅱ</i></div>
+        <div style="font-size:11px;color:var(--tx3);margin-top:6px">1240 分 · 距 轮机长 还差 160 分</div>
+        <div class="track"><i></i></div>
+        <div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--tx3);margin-top:6px"><span>Lv.12</span><span>620 / 1000</span></div>
+        <div style="margin-top:12px">
+          <div class="kv"><span>近 11 场</span><b>8 胜 3 负</b></div>
+          <div class="kv"><span>最长连胜</span><b>6 场</b></div>
+          <div class="kv"><span>累计击沉</span><b>173 艘</b></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel cp" style="margin-top:16px;flex:1;min-height:0;display:flex;flex-direction:column">
+      <h4 class="lab" style="margin:0 0 10px">在 线 好 友</h4>
+      <div class="mrow"><i style="width:7px;height:7px;border-radius:50%;background:var(--gn)"></i>阿岚<span class="dl">在线</span></div>
+      <div class="mrow"><i style="width:7px;height:7px;border-radius:50%;background:var(--gn)"></i>新兵007<span class="dl">大厅中</span></div>
+      <div class="mrow"><i style="width:7px;height:7px;border-radius:50%;background:var(--line2)"></i>老船长<span class="dl">离线</span></div>
+      <div style="margin-top:auto;font-size:11.5px;color:var(--tx3)">大厅里还有 9 人在线 · <a href="#" style="color:var(--gold2);text-decoration:none">查看大厅 →</a></div>
+    </div>
+    </div>
+
+    <div class="mid">
+      <div class="sail">
+        <h2>出海</h2>
+        <div class="d">3 分钟一局 · 猜拳定先手 · 击沉对方全部战舰者胜</div>
+        <div class="modes"><span class="on">休闲</span><span>排位</span><span>人机 · 普通</span></div>
+        <button onclick="window.setDemoView('game')">开始匹配</button>
+      </div>
+
+      <div class="gobtns">
+        <div class="gobtn">
+          <span class="ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3l7 4v5c0 4-3 7-7 9-4-2-7-5-7-9V7z"/><path d="M9.5 11.5l2 2 3.5-3.5"/></svg></span>
+          <div><div class="t">排位对战</div><div class="d">大副 Ⅱ · 1240 分 · 结算会改变段位</div></div>
+        </div>
+        <div class="gobtn">
+          <span class="ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="6" y="6" width="12" height="12" rx="1"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg></span>
+          <div><div class="t">人机对战</div><div class="d">练习规则与连锁 · 难度 普通</div></div>
+        </div>
+        <div class="gobtn">
+          <span class="ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 20V9l8-5 8 5v11"/><path d="M9 20v-6h6v6"/></svg></span>
+          <div><div class="t">自定义房间</div><div class="d">6 位房号 / 邀请链接</div></div>
+        </div>
+        <div class="gobtn">
+          <span class="ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M16 5.5a3 3 0 010 5.8"/></svg></span>
+          <div><div class="t">游戏大厅</div><div class="d">房间列表 · 公屏</div></div>
+        </div>
+      </div>
+
+      <!-- 首页直接把真卡亮出来当"本周热门" -->
+      <div class="panel" style="padding:15px;flex:1;min-height:0;display:flex;flex-direction:column">
+        <h4 class="lab" style="margin:0 0 12px">本周热门卡</h4>
+        <div class="hotrow">
+          <div class="cc"><div class="in">
+            <div class="art"><svg viewBox="0 0 120 92" preserveAspectRatio="none"><defs><linearGradient id="ha1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5b1f2a"/><stop offset="1" stop-color="#1b0d16"/></linearGradient></defs><rect width="120" height="92" fill="url(#ha1)"/><path d="M0 74 L60 22 L120 74 Z" fill="#ff7a3c" opacity=".5"/><path d="M0 84 L60 42 L120 84 Z" fill="#ffd166" opacity=".42"/><circle cx="60" cy="30" r="12" fill="#fff2b0" opacity=".5"/></svg></div>
+            <div class="name"><span class="gem g3">Ⅱ</span><b>硫磺火焰</b></div>
+            <div class="text">6 格强制击杀</div>
+            <div class="bottom"><span class="ty">普通</span><span class="dup">×1</span></div>
+          </div></div>
+          <div class="cc"><div class="in">
+            <div class="art"><svg viewBox="0 0 120 92" preserveAspectRatio="none"><defs><linearGradient id="ha2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#14344a"/><stop offset="1" stop-color="#0b1a2a"/></linearGradient></defs><rect width="120" height="92" fill="url(#ha2)"/><g stroke="#7ce6ff" fill="none" opacity=".8"><circle cx="60" cy="46" r="10"/><circle cx="60" cy="46" r="20"/><circle cx="60" cy="46" r="30"/></g><circle cx="60" cy="46" r="4" fill="#c9f6ff"/></svg></div>
+            <div class="name"><span class="gem g2">Ⅱ</span><b>神威！</b></div>
+            <div class="text">3×3 区域除外</div>
+            <div class="bottom"><span class="ty">普通</span><span class="dup">×1</span></div>
+          </div></div>
+          <div class="cc"><div class="in">
+            <div class="art"><svg viewBox="0 0 120 92" preserveAspectRatio="none"><rect width="120" height="92" fill="#171a33"/><g stroke="#b9a4ff" stroke-width="3" fill="none" opacity=".85"><path d="M34 30 L60 56 L86 30"/></g><path d="M60 24 L60 70" stroke="#ff5c6c" stroke-width="4"/><path d="M30 34 L90 66" stroke="#ff5c6c" stroke-width="4"/><path d="M90 34 L30 66" stroke="#ff5c6c" stroke-width="4"/></g></svg></div>
+            <div class="name"><span class="gem g3">Ⅲ</span><b>失灵！</b></div>
+            <div class="text">无效化上一张</div>
+            <div class="bottom"><span class="ty">普通</span><span class="dup">×1</span></div>
+          </div></div>
+          <div class="cc"><div class="in">
+            <div class="art"><svg viewBox="0 0 120 92" preserveAspectRatio="none"><rect width="120" height="92" fill="#152a1e"/><g fill="#7ee0a4" opacity=".55"><circle cx="42" cy="40" r="15"/><circle cx="62" cy="46" r="15"/><circle cx="52" cy="62" r="15"/></g><path d="M52 30 l6 -14 l6 14z" fill="#d7f5c0"/></svg></div>
+            <div class="name"><span class="gem">Ⅰ</span><b>桃园结义</b></div>
+            <div class="text">双方各挑一张</div>
+            <div class="bottom"><span class="ty">普通</span><span class="dup">×1</span></div>
+          </div></div>
+          <div class="cc terrain"><div class="in">
+            <div class="art"><svg viewBox="0 0 120 92" preserveAspectRatio="none"><rect width="120" height="92" fill="#2a1d0c"/><path d="M60 18 L92 40 L80 78 L40 78 L28 40 Z" fill="none" stroke="#f0c46a" stroke-width="2.5"/><circle cx="60" cy="50" r="12" fill="#f0c46a" opacity=".5"/><path d="M60 18 L60 78 M28 40 L92 40" stroke="#f0c46a" stroke-width="1" opacity=".5"/></svg></div>
+            <div class="name"><span class="gem">场地</span><b>恶魔契约</b></div>
+            <div class="text">船数增减绑定</div>
+            <div class="bottom"><span class="ty">场地魔法</span><span class="dup">×1</span></div>
+          </div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="side">
+      <div class="panel cp">
+        <h4>段 位 阶 梯</h4>
+        <div class="ladder">
+          <div class="li done"><i></i>大副 Ⅰ<span class="n">1400+</span></div>
+          <div class="li now"><i></i>大副 Ⅱ<span class="n">1240</span></div>
+          <div class="li"><i></i>三副<span class="n">900</span></div>
+          <div class="li"><i></i>水手长<span class="n">600</span></div>
+        </div>
+      </div>
+      <div class="panel cp">
+        <h4>最 近 对 局</h4>
+        <div class="mrow"><span class="badge w">胜</span>皮皮虾<span class="dl" style="color:var(--gn)">+32</span></div>
+        <div class="mrow"><span class="badge w">胜</span>游客8823<span class="dl">—</span></div>
+        <div class="mrow"><span class="badge l">负</span>老船长<span class="dl" style="color:var(--rd)">−24</span></div>
+        <div class="mrow"><span class="badge w">胜</span>电脑困难<span class="dl">—</span></div>
+      </div>
+      <div class="panel cp" style="flex:1;min-height:0">
+        <h4>卡 牌 图 鉴</h4>
+        <div style="font-size:12px;color:var(--tx2);line-height:2">
+          共 <b class="mono" style="color:var(--tx)">43</b> 张 · 本期已见 <b class="mono" style="color:var(--tx)">28</b> 张<br>
+          场地魔法 4 · 普通 39<br>
+          速阶 Ⅰ/Ⅱ/Ⅲ 各 13 / 15 / 15
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= 对局屏 ======================= -->
+<div class="screen" data-view="game">
+  <div class="topbar" style="padding-bottom:6px">
+    <div class="brand">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#c9a24c" stroke-width="1.6"><path d="M12 2l2.6 6.4L21 11l-6.4 2.6L12 20l-2.6-6.4L3 11l6.4-2.6z"/></svg>
+      <div><b>对局中</b><br><em>人机 · 普通</em></div>
+    </div>
+    <nav class="nav"><a href="#" onclick="window.setDemoView('home');return false">← 返回首页</a></nav>
+    <div class="spacer"></div>
+    <button class="ghost">快捷语</button>
+    <span class="mock-tag">示意稿 U · 我为主</span>
+  </div>
+
+  <div class="panel gtop">
+    <div class="round"><em>ROUND</em>第 1 回合</div>
+    <div class="seg"><div class="lab">当前阶段</div><div class="v"><b>准备阶段</b></div></div>
+    <div class="seg"><div class="lab">当前回合</div><div class="v">你</div></div>
+    <div class="seg"><div class="lab">剩余攻击</div><div class="v"><b>4</b> 次</div></div>
+    <div class="acts">
+      <button class="btn-danger">投降</button>
+      <button class="btn-pri">进入战斗阶段</button>
+    </div>
+  </div>
+
+  <div class="gmain">
+    <div class="centercol">
+      <div class="boards">
+        <div class="bwrap minehero">
+          <div class="bhead"><span class="n">你的海域</span><span class="tag hurt">受击区</span><span class="s">剩余 4 艘 · 冻结 0 · 可增援 3 格</span></div>
+          <div class="blegend">
+            <span><i style="background:rgba(79,168,255,.6)"></i>你的舰</span>
+            <span><i style="background:rgba(255,92,108,.6)"></i>被命中</span>
+            <span><i style="border-radius:50%;border:1.5px solid rgba(78,200,224,.65)"></i>对方打空</span>
+          </div>
+          <div class="board" id="b-mine"></div>
+        </div>
+      </div>
+
+      <!-- 手牌：三态就在这一排里（常态 / 一级 / 二级） -->
+      <div class="handzone">
+        <div class="hand demo" id="hand" data-demo="mid">
+          <div class="cc"><div class="in">
+            <div class="art"><svg viewBox="0 0 150 112" preserveAspectRatio="none"><rect width="150" height="112" fill="#152a1e"/><g fill="#7ee0a4" opacity=".5"><circle cx="52" cy="48" r="19"/><circle cx="76" cy="56" r="19"/><circle cx="64" cy="76" r="19"/></g></svg></div>
+            <div class="name"><span class="gem">Ⅰ</span><b>桃园结义</b></div>
+            <div class="text">从牌堆抽 n 张，双方各挑一张</div>
+            <div class="bottom"><span class="ty">普通</span><span class="dup">×1</span></div>
+          </div><span class="statebadge">常态</span></div>
+
+          <div class="cc hover"><div class="in">
+            <div class="art"><svg viewBox="0 0 150 112" preserveAspectRatio="none"><rect width="150" height="112" fill="#2a1526"/><g stroke="#ff8fb0" stroke-width="3" opacity=".8"><path d="M0 92 L75 22 L150 92"/></g><path d="M0 108 L75 52 L150 108" fill="#ffc7d8" opacity=".35"/></svg></div>
+            <div class="name"><span class="gem g3">Ⅲ</span><b>硫磺火焰</b></div>
+            <div class="text">选定一行/列轰炸，船全部死亡</div>
+            <div class="bottom"><span class="ty">普通</span><span class="dup">×1</span></div>
+          </div><span class="statebadge">一级预览</span></div>
+
+          <div class="cc picked"><div class="in">
+            <div class="art"><svg viewBox="0 0 150 112" preserveAspectRatio="none"><rect width="150" height="112" fill="#14344a"/><g stroke="#7ce6ff" fill="none" opacity=".8"><circle cx="75" cy="56" r="13"/><circle cx="75" cy="56" r="26"/><circle cx="75" cy="56" r="39"/></g><circle cx="75" cy="56" r="5" fill="#c9f6ff"/></svg></div>
+            <div class="name"><span class="gem g2">Ⅱ</span><b>神威！</b></div>
+            <div class="text">选定 3×3 区域把战舰暂时除外</div>
+            <div class="bottom"><span class="ty">普通</span><span class="dup">待用</span></div>
+          </div><span class="statebadge">二级预览</span></div>
+
+          <div class="cc"><div class="in">
+            <div class="art"><svg viewBox="0 0 150 112" preserveAspectRatio="none"><rect width="150" height="112" fill="#12283d"/><g fill="none" stroke="#8fd0ff" stroke-width="3"><path d="M75 30 v46 M75 42 a6 6 0 010 12 M55 76 h40 M60 52 h30"/></g><circle cx="75" cy="30" r="6" fill="#cfe8ff"/></svg></div>
+            <div class="name"><span class="gem g3">Ⅲ</span><b>增援</b></div>
+            <div class="text">召唤一艘战舰部署在没被打过的格子</div>
+            <div class="bottom"><span class="ty">普通</span><span class="dup">×1</span></div>
+          </div></div>
+
+          <div class="cc"><div class="in">
+            <div class="art"><svg viewBox="0 0 150 112" preserveAspectRatio="none"><rect width="150" height="112" fill="#1b1a38"/><g stroke="#b9a4ff" stroke-width="3" fill="none"><path d="M40 36 L75 70 L110 36"/></g><g stroke="#ff5c6c" stroke-width="4"><path d="M36 40 L114 76"/><path d="M114 40 L36 76"/></g></svg></div>
+            <div class="name"><span class="gem g3">Ⅲ</span><b>失灵！</b></div>
+            <div class="text">无效化对方使用的上一张魔法卡</div>
+            <div class="bottom"><span class="ty">普通</span><span class="dup">×1</span></div>
+          </div></div>
+        </div>
+
+        <div class="statebar">
+          <span><b>常态</b> 只有牌名与速阶可见</span>
+          <span><b>一级预览</b> 悬停 · 上移 30px · scale 1.05 · 移开回位</span>
+          <span><b>二级预览</b> 点击 · 上移 56px · scale 1.09 · 右侧出介绍</span>
+          <span class="me">三种状态在同一排里直接对比</span>
+        </div>
+
+        <div class="handact">
+          <span class="need">神威！需要选定 3×3 区域</span>
+          <button class="use">在棋盘上选区域…</button>
+          <button class="cancel">取消选择</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右栏：连锁叠牌（恢复 C 的做法）+ 待用卡 + 数据 -->
+    <div class="gside">
+      <div class="panel" style="padding:12px">
+        <div class="bhead" style="margin-bottom:8px"><span class="n">对手海域</span><span class="tag fire">开火区</span><span class="s">已探明 5/36</span></div>
+        <div class="board radar" id="b-enemy"></div>
+        <div class="blegend" style="margin-top:7px">
+          <span><i style="background:rgba(255,92,108,.6)"></i>你打中</span>
+          <span><i style="border-radius:50%;border:1.5px solid rgba(78,200,224,.65)"></i>你打空</span>
+        </div>
+      </div>
+
+      <div class="panel chainbox">
+        <div class="hd"><b>连锁结算中</b><span class="mono" style="font-size:10.5px;color:var(--tx3)">后手响应</span><span class="tm">7s</span></div>
+        <div class="stack">
+                    <div class="cc"><div class="in">
+            <div class="art"><svg viewBox="0 0 112 82" preserveAspectRatio="none"><rect width="112" height="82" fill="#14344a"/><g stroke="#7ce6ff" fill="none" opacity=".85"><circle cx="56" cy="41" r="11"/><circle cx="56" cy="41" r="22"/></g></svg></div>
+            <div class="name"><span class="gem g2">Ⅱ</span><b>神威！</b></div>
+          </div></div>
+                    <div class="cc"><div class="in">
+            <div class="art"><svg viewBox="0 0 112 82" preserveAspectRatio="none"><rect width="112" height="82" fill="#1b1a38"/><g stroke="#ff5c6c" stroke-width="4"><path d="M26 28 L86 56"/><path d="M86 28 L26 56"/></g></svg></div>
+            <div class="name"><span class="gem g3">Ⅲ</span><b>失灵！</b></div>
+          </div></div>
+          <div class="cc"><div class="in">
+            <div class="art"><svg viewBox="0 0 112 82" preserveAspectRatio="none"><rect width="112" height="82" fill="#2a1d0c"/><path d="M56 16 L84 34 L74 68 L38 68 L28 34 Z" fill="none" stroke="#f0c46a" stroke-width="2"/></svg></div>
+            <div class="name"><span class="gem">Ⅲ</span><b>神之宣告</b></div>
+          </div></div>
+        </div>
+        <div class="note">自下而上：<b style="color:var(--tx2)">你 神威！</b> → <b style="color:var(--tx2)">对手 失灵！</b> → <b style="color:var(--tx2)">你 神之宣告</b><br>
+          连锁就是<b style="color:var(--tx2)">一叠卡</b>：后出的压在前一张上，只有最上面那张完全露出；结算从最上面往下走。</div>
+      </div>
+
+      <div class="panel preview">
+        <div class="hd"><b>神威！</b><span class="mono" style="font-size:11px;color:var(--tx3)">速阶 Ⅱ · 普通</span></div>
+        <div class="bd">
+          <div class="meta"><span>类型 <b>普通</b></span><span>目标 <b>3×3 区域</b></span></div>
+          <p>选定 3×3 区域，把区域内所有战舰暂时除外 —— 被除外的船不参与存活判定。</p>
+        </div>
+      </div>
+
+      <div class="panel data" style="padding:14px">
+        <h4 class="lab" style="margin:0 0 8px">对 局 数 据</h4>
+        <div class="r"><span>牌堆 / 弃牌堆</span><b>21 / 18</b></div>
+        <div class="r"><span>场地魔法</span><b>无</b></div>
+        <div class="r"><span>极限增援</span><b style="color:var(--am)">剩 2 回合</b></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="demo-switcher">
+  <button class="on" data-view="home" onclick="window.setDemoView('home')">首页</button>
+  <button data-view="game" onclick="window.setDemoView('game')">对局</button>
+</div>
+<div id="statetoggle">
+  <button onclick="window.showState('mid');this.parentNode.querySelectorAll('button').forEach(function(b){b.classList.remove('on')});this.classList.add('on')" class="on">三态演示</button>
+  <button onclick="document.getElementById('hand').classList.remove('demo');document.getElementById('hand').classList.add('fan');this.parentNode.querySelectorAll('button').forEach(function(b){b.classList.remove('on')});this.classList.add('on')">扇形常态</button>
+</div>
+<div id="refs" style="display:block">
+  <b>本版换的是主次：</b>你的海域当主角（最大 560px，格宽 80px），对手海域缩成右栏 240px 的雷达盘。<br>
+  <b>代价说清楚：</b>你开火打的是对方海域，开火时视线要往右上角跑；换来的是自己的舰队布局一眼看清
+  （C 原本把它压成 200px 小图）。连锁叠牌与真卡手牌都不变。<br>
+  <b>原始说明：</b>卡尺寸 150×210（比例同真实 TCG 63×88mm）· 满幅插画占 53% ·
+  名牌 + 速阶宝石 + 独立说明框 + 类型条 · 双层卡框 + 实体厚度影子 · 插画是手写 SVG（生产环境换成
+  <b>docs/magic_card_art_prompts.md</b> 生成的那张竖版插画）。<br>
+  另外把 C 的<b>连锁叠牌</b>恢复了（上一版退化成提示条是倒退）—— 连锁本来就是"一叠卡"。
+</div>
+
+<script>
+(function () {
+  var ENEMY = ['o.....','....X.','..X...','...o..','.....o','.o....'];
+  var MINE  = ['S..X..','....o.','.S..S.','o.....','..X.o.','.....S'];
+  var tgt = {}; [1, 2].forEach(function (r) { [1, 2, 3].forEach(function (c) { tgt[r * 6 + c] = 1; }); });
+  function fill(id, rows, tgtMode) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    rows.join('').split('').forEach(function (ch, i) {
+      var d = document.createElement('div');
+      d.className = 'cell' + (ch === 'S' ? ' ship' : ch === 'X' ? ' hit' : ch === 'o' ? ' miss' : '')
+        + (tgtMode && tgt[i] ? ' tgt' : '');
+      el.appendChild(d);
+    });
+  }
+  fill('b-mine', MINE);
+  fill('b-enemy', ENEMY, true);
+})();
+</script>
+</body>
+</html>

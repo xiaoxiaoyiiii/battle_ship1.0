@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>示意稿 A · 战术指挥台</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+  // 截图工具靠这三样驱动：视图清单 / 切视图 / 异常收集。见 tools/ui_demo_shots.mjs
+  window.__demoViews = ['home', 'game'];
+  window.__demoErrors = [];
+  window.addEventListener('error', function (e) { window.__demoErrors.push(String(e.message)); });
+  window.setDemoView = function (v) {
+    document.querySelectorAll('.screen').forEach(function (s) { s.classList.toggle('on', s.dataset.view === v); });
+    document.querySelectorAll('#demo-switcher button').forEach(function (b) { b.classList.toggle('on', b.dataset.view === v); });
+  };
+</script>
+<style>
+/* ============================================================================
+   示意稿 A ·「战术指挥台」
+   方向：把界面当成一块作战终端。暗色、发丝线、等宽数字、状态灯、信息密集。
+   与现状最大的差别是**信息架构**，不是配色：
+     · 首页从"一列大按钮"变成"模式面板 + 指挥官状态面板 + 系统状态条"；
+     · 对局屏从"浮窗压在棋盘上"变成固定三栏（日志轨 / 战场 / 手牌轨），
+       于是两块棋盘可以**并排**放 —— 现状宽屏是堆叠的，≤800px 高时第二块会被手牌压住
+       （docs/FLUENT_UI_2026_09_21.md §10.3 记录了这个未修缺陷）。
+   这不是可运行版本，只是静态示意稿。
+   ========================================================================== */
+:root {
+  --bg:#070b11; --bg2:#0a1017; --panel:#0e1620; --panel2:#131e29;
+  --line:#1d2b3a; --line2:#2b3f54;
+  --tx:#dbe6f2; --tx2:#8ea6bd; --tx3:#5d7590;
+  --cy:#3cc7f5; --cy-d:#1b6d8c; --am:#f0a92e; --gn:#3ddc84; --rd:#f2564d; --pu:#a06bf5;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,"Courier New",monospace;
+  --sans:"Microsoft YaHei UI","PingFang SC","Hiragino Sans GB",system-ui,sans-serif;
+}
+* { box-sizing:border-box; }
+html, body { margin:0; height:100%; }
+body {
+  background:
+    radial-gradient(1200px 600px at 70% -10%, #10202e 0%, transparent 60%),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg2) 100%);
+  color:var(--tx); font-family:var(--sans); font-size:13px; overflow:hidden;
+}
+/* 背景网格：极淡，给"终端"一点空间感 */
+body::before {
+  content:""; position:fixed; inset:0; pointer-events:none; opacity:.5;
+  background-image:linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size:48px 48px; mask-image:radial-gradient(1200px 700px at 50% 0%, #000 0%, transparent 85%);
+}
+.screen { display:none; height:100%; flex-direction:column; }
+.screen.on { display:flex; }
+.mono { font-family:var(--mono); }
+.lab { font:600 10px/1 var(--sans); letter-spacing:.18em; color:var(--tx3); }
+.panel { position:relative; background:var(--panel); border:1px solid var(--line); border-radius:2px; }
+.panel::before, .panel::after { content:""; position:absolute; width:7px; height:7px; border:1px solid var(--cy-d); }
+.panel::before { top:-1px; left:-1px; border-right:0; border-bottom:0; }
+.panel::after { bottom:-1px; right:-1px; border-left:0; border-top:0; }
+.btn {
+  font-family:var(--sans); font-size:13px; color:var(--tx); background:var(--panel2);
+  border:1px solid var(--line2); border-radius:2px; padding:8px 14px; cursor:pointer;
+}
+.btn:hover { border-color:var(--cy-d); color:#fff; }
+.btn.primary { background:linear-gradient(180deg,#1b7fa6,#12607f); border-color:#3cc7f5; color:#eaf9ff; font-weight:600; }
+.btn.ghost { background:transparent; border-color:var(--line); color:var(--tx2); }
+.btn.danger { border-color:#5a2420; color:#ff8b83; background:#1a0f0e; }
+.led { width:6px; height:6px; border-radius:50%; background:var(--gn); box-shadow:0 0 6px var(--gn); display:inline-block; }
+
+/* ---------- 顶栏 ---------- */
+.topbar { display:flex; align-items:center; gap:20px; height:52px; padding:0 20px; border-bottom:1px solid var(--line); background:rgba(9,14,20,.85); flex:0 0 auto; }
+.brand { display:flex; align-items:center; gap:10px; font:600 13px/1 var(--mono); letter-spacing:.1em; }
+.brand svg { color:var(--cy); }
+.brand b { font-weight:600; }
+.brand em { font-style:normal; color:var(--tx3); font-size:11px; }
+.nav { display:flex; gap:4px; margin-left:8px; }
+.nav a { color:var(--tx2); text-decoration:none; padding:7px 11px; border-radius:2px; font-size:12.5px; }
+.nav a:hover { background:var(--panel2); color:var(--tx); }
+.nav a.on { color:var(--cy); background:rgba(60,199,245,.08); }
+.topright { margin-left:auto; display:flex; align-items:center; gap:10px; }
+.mock-tag { font:600 10px/1 var(--sans); letter-spacing:.14em; color:var(--am); border:1px solid #4a3618; background:#1d1608; padding:5px 8px; border-radius:2px; }
+
+/* ---------- 首页 ---------- */
+.home-grid { flex:1; display:grid; grid-template-columns:1fr 384px; gap:16px; padding:16px 20px; min-height:0; }
+.stack { display:flex; flex-direction:column; gap:16px; min-height:0; }
+.cmd-strip { display:flex; align-items:center; gap:14px; padding:14px 16px; }
+.cmd-id { display:flex; align-items:center; gap:12px; }
+.avatar { width:38px; height:38px; border-radius:2px; background:linear-gradient(140deg,#1d4c63,#0e2430); border:1px solid var(--line2); display:grid; place-items:center; font:600 14px/1 var(--mono); color:var(--cy); }
+.field { display:flex; align-items:center; gap:8px; background:#0a131c; border:1px solid var(--line2); border-radius:2px; padding:0 10px; height:34px; }
+.field span { color:var(--cy); font-family:var(--mono); font-size:12px; }
+.field input { background:transparent; border:0; outline:none; color:var(--tx); font-family:var(--sans); font-size:12.5px; width:170px; }
+.field input::placeholder { color:var(--tx3); }
+.lvl { display:flex; align-items:center; gap:10px; margin-left:auto; }
+.lvl .bar { width:132px; height:6px; background:#0a131c; border:1px solid var(--line2); border-radius:1px; overflow:hidden; }
+.lvl .bar i { display:block; height:100%; width:62%; background:linear-gradient(90deg,var(--cy-d),var(--cy)); }
+.lvl .exp { font-family:var(--mono); font-size:11px; color:var(--tx3); }
+
+.tiles { display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:14px; }
+.tile { display:grid; grid-template-columns:22px 1fr auto; align-items:center; gap:12px; padding:13px 14px; background:var(--panel2); border:1px solid var(--line); border-radius:2px; cursor:pointer; }
+.tile:hover { border-color:var(--line2); background:#17242f; }
+.tile svg { color:var(--tx2); }
+.tile .t { font-size:13.5px; font-weight:600; }
+.tile .d { font-size:11.5px; color:var(--tx3); margin-top:3px; }
+.tile .k { font:600 10px/1 var(--mono); color:var(--tx3); border:1px solid var(--line2); padding:4px 6px; border-radius:2px; }
+.tile.wide { grid-column:span 2; }
+.tile.hot { border-color:var(--cy-d); background:linear-gradient(90deg, rgba(60,199,245,.10), rgba(60,199,245,.02)); box-shadow:inset 3px 0 0 var(--cy); }
+.tile.hot svg, .tile.hot .t { color:#eaf9ff; }
+.tile.gold { border-color:#4a3618; background:linear-gradient(90deg, rgba(240,169,46,.10), transparent); box-shadow:inset 3px 0 0 var(--am); }
+.tile.gold svg { color:var(--am); }
+.seg { display:flex; gap:0; border:1px solid var(--line2); border-radius:2px; overflow:hidden; }
+.seg button { font-family:var(--sans); font-size:11.5px; padding:6px 9px; background:#0a131c; color:var(--tx3); border:0; border-right:1px solid var(--line); cursor:pointer; }
+.seg button:last-child { border-right:0; }
+.seg button.on { background:rgba(60,199,245,.14); color:var(--cy); }
+/* 最近对局：首页空出来的下半屏用真实的战绩信息填，而不是留白 */
+.mrow { display:grid; grid-template-columns:30px 1fr auto auto; gap:10px; align-items:center; padding:10px 0; border-bottom:1px dashed #17242f; font-size:12px; }
+.mrow:last-child { border-bottom:0; }
+.badge { font:600 11px/1.4 var(--sans); text-align:center; border-radius:2px; }
+.badge.w { color:var(--gn); background:rgba(61,220,132,.10); border:1px solid #1e4632; }
+.badge.l { color:var(--rd); background:rgba(242,86,77,.10); border:1px solid #4a201d; }
+.mrow .md { color:var(--tx3); font-size:11px; }
+.mrow .who { color:var(--tx); }
+.mrow .dl { font-family:var(--mono); font-weight:600; }
+.mrow .dl.up { color:var(--gn); } .mrow .dl.down { color:var(--rd); } .mrow .dl.flat { color:var(--tx3); }
+
+.rail { display:flex; flex-direction:column; gap:16px; min-height:0; }
+.card { padding:14px 15px; }
+.card h4 { margin:0 0 12px; font-size:11px; font-weight:600; letter-spacing:.18em; color:var(--tx3); }
+.rank-row { display:flex; align-items:baseline; gap:8px; }
+.rank-row b { font:600 22px/1 var(--sans); letter-spacing:.04em; }
+.rank-row i { font-style:normal; font-family:var(--mono); font-size:12px; color:var(--am); }
+.kv { display:flex; justify-content:space-between; padding:7px 0; border-bottom:1px dashed #17242f; font-size:12px; }
+.kv:last-child { border-bottom:0; }
+.kv span { color:var(--tx3); }
+.kv b { font-family:var(--mono); font-weight:600; }
+.rec { display:flex; gap:3px; height:22px; align-items:stretch; margin:12px 0 6px; }
+.rec i { flex:1; border-radius:1px; background:#1a3a2a; }
+.rec i.l { background:#3a1a1a; }
+.rec i.l { box-shadow:inset 0 0 0 1px #5a2420; }
+.statusbar { flex:0 0 auto; display:flex; gap:20px; align-items:center; height:28px; padding:0 20px; border-top:1px solid var(--line); background:#080d13; font-family:var(--mono); font-size:10.5px; color:var(--tx3); letter-spacing:.06em; }
+.statusbar b { color:var(--tx2); font-weight:400; }
+
+/* ---------- 对局屏 ---------- */
+.game-grid { flex:1; display:grid; grid-template-columns:244px 1fr 296px; gap:20px; padding:16px 20px; min-height:0; }
+.hud { flex:0 0 auto; display:flex; align-items:center; gap:22px; padding:11px 16px; margin-bottom:14px; }
+.hud .round { font:600 20px/1 var(--mono); color:#fff; }
+.hud .round em { font-style:normal; font-size:11px; color:var(--tx3); letter-spacing:.14em; display:block; margin-bottom:5px; font-family:var(--sans); }
+.hseg { border-left:1px solid var(--line); padding-left:22px; }
+.hseg .v { font-size:14px; margin-top:5px; }
+.hseg .v b { color:var(--cy); font-family:var(--mono); }
+.hseg .v.minor { color:var(--tx2); }
+.hud .acts { margin-left:auto; display:flex; gap:9px; align-items:center; }
+.chips { display:flex; gap:8px; margin-left:14px; }
+.chip { font-size:11px; padding:4px 8px; border:1px solid var(--line2); border-radius:2px; color:var(--tx2); background:#0a131c; }
+.chip.warn { border-color:#4a3618; color:var(--am); background:#1a1408; }
+
+.log-rail { display:flex; flex-direction:column; min-height:0; }
+.log-head { display:flex; align-items:center; justify-content:space-between; padding:10px 13px; border-bottom:1px solid var(--line); }
+.log-body { flex:1; overflow:hidden; padding:10px 13px; font-family:var(--mono); font-size:11px; line-height:1.75; color:var(--tx2); }
+.log-body div { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.log-body u { text-decoration:none; color:var(--tx3); }
+.log-body b { font-weight:400; color:var(--tx); }
+.log-body .hit { color:var(--gn); }
+.log-body .miss { color:var(--tx3); }
+.log-body .mag { color:var(--pu); }
+.log-body .warn { color:var(--am); }
+
+.center { display:flex; flex-direction:column; min-height:0; }
+.boards { flex:1; display:flex; gap:20px; justify-content:center; align-items:flex-start; min-height:0; }
+.board-wrap { flex:1 1 0; min-width:0; display:flex; flex-direction:column; gap:9px; }
+.board-head { display:flex; align-items:baseline; gap:9px; }
+.board-head .n { font-size:12.5px; font-weight:600; }
+.board-head .s { font-family:var(--mono); font-size:11px; color:var(--tx3); margin-left:auto; }
+.board-head .s b { color:var(--cy); font-weight:600; }
+/* 棋盘宽度跟随可用宽度，同时用视口高兜住：中栏纵向预算 = 100vh −(顶栏52+状态条28+格栅内边距32
+   +HUD 90+连锁条106+情报条61+棋盘标题25+图例23+间距9)。720 高时实测可用 303px，
+   所以这里取 −424 留 7px 余量 —— 不加这条，1280×720 下图例会压到情报条上（量过：wrap 396 vs 351）。 */
+.board { display:grid; grid-template-columns:repeat(6, 1fr); gap:2px; padding:6px; background:#060a0f; border:1px solid var(--line); border-radius:2px; width:100%; max-width:min(376px, calc(100vh - 424px)); margin:0 auto; }
+.cell { aspect-ratio:1/1; position:relative; background:#101c26; border:1px solid #1b2b38; border-radius:1px; display:grid; place-items:center; }
+.cell.hit { background:#3a1414; border-color:#5e2222; }
+.cell.hit::after { content:""; width:56%; height:2px; background:var(--rd); transform:rotate(45deg); box-shadow:0 0 7px var(--rd); position:absolute; }
+.cell.hit::before { content:""; width:56%; height:2px; background:var(--rd); transform:rotate(-45deg); position:absolute; }
+.cell.miss::after { content:""; width:8px; height:8px; border:1px solid #3d566c; border-radius:50%; }
+.cell.ship { background:#243b4d; border-color:#3f6480; }
+.cell.ship::after { content:""; width:44%; height:44%; background:#6f9fbf; clip-path:polygon(50% 0,100% 100%,0 100%); opacity:.75; }
+.cell.unknown { background:repeating-linear-gradient(45deg,#0d1720 0 4px,#0a1219 4px 8px); border-color:#16232e; }
+.legend { display:flex; gap:12px; font-size:10.5px; color:var(--tx3); }
+.legend i { display:inline-block; width:8px; height:8px; border-radius:1px; margin-right:5px; vertical-align:middle; }
+.legend .l1 { background:#243b4d; border:1px solid #3f6480; }
+.legend .l2 { background:#3a1414; border:1px solid #5e2222; }
+.legend .l3 { border:1px solid #3d566c; border-radius:50%; }
+.legend .l4 { background:repeating-linear-gradient(45deg,#0d1720 0 3px,#0a1219 3px 6px); border:1px solid #16232e; }
+.chain { display:flex; align-items:center; gap:12px; margin:0 auto; padding:9px 14px; border:1px solid #4a3618; background:linear-gradient(90deg,#1d1608,#12100a); border-radius:2px; width:100%; max-width:640px; }
+.chain .t { font-size:12px; color:var(--am); font-weight:600; letter-spacing:.1em; }
+.chain .stack { display:flex; align-items:center; gap:7px; font-size:12px; }
+.chain .sc { padding:3px 8px; border:1px solid var(--line2); background:#0a131c; border-radius:2px; }
+.chain .arrow { color:var(--am); font-family:var(--mono); }
+.chain .tm { margin-left:auto; font-family:var(--mono); font-size:15px; color:var(--am); }
+
+/* 战场情报条：棋盘下方原来空着的那块，放真正有用的状态（探测进度 / 最近弃牌） */
+.intel { display:flex; align-items:center; gap:18px; margin-top:14px; padding:10px 14px; }
+.intel .dchips { display:flex; gap:7px; flex-wrap:wrap; }
+.intel .dc { font-size:11.5px; padding:4px 9px; border:1px solid var(--line2); border-radius:2px; color:var(--tx2); background:#0a131c; }
+.intel .dc:first-child { border-color:#3a2d5c; color:#c4b0f5; }
+.intel .meter { margin-left:auto; display:flex; align-items:center; gap:10px; }
+.intel .meter .bar { width:120px; height:6px; background:#0a131c; border:1px solid var(--line2); border-radius:1px; overflow:hidden; }
+.intel .meter .bar i { display:block; height:100%; width:14%; background:linear-gradient(90deg,var(--cy-d),var(--cy)); }
+.log-foot { flex:0 0 auto; display:flex; align-items:center; gap:9px; padding:9px 13px; border-top:1px solid var(--line); }
+
+.hand-rail { display:flex; flex-direction:column; gap:14px; min-height:0; }
+.preview .row { display:flex; justify-content:space-between; font-size:12px; padding:4px 0; }
+.preview .row span { color:var(--tx3); }
+.preview .row b { font-family:var(--mono); font-weight:600; }
+.preview .name { font-size:15px; font-weight:600; margin-bottom:8px; display:flex; align-items:center; gap:8px; }
+.preview p { margin:9px 0 12px; font-size:12px; line-height:1.7; color:var(--tx2); }
+.preview .go { display:flex; gap:8px; }
+.preview .go .btn { flex:1; text-align:center; }
+/* 手牌区给足自己的高度预算：张数多了就滚（真机上也是滚的），绝不静默裁掉最后一张 */
+.hand { flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:7px; }
+.hand::-webkit-scrollbar { width:6px; }
+.hand::-webkit-scrollbar-thumb { background:#26384a; border-radius:3px; }
+.hand::-webkit-scrollbar-track { background:transparent; }
+.btn.tiny { font-size:11px; padding:4px 8px; color:var(--tx3); }
+.btn.tiny b { font-family:var(--mono); color:var(--tx2); font-weight:600; }
+.hcard { display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center; padding:9px 11px; background:var(--panel2); border:1px solid var(--line); border-radius:2px; cursor:pointer; }
+.hcard:hover { border-color:var(--cy-d); }
+.hcard.sel { border-color:var(--cy); background:linear-gradient(90deg,rgba(60,199,245,.13),transparent); }
+.hcard .nm { font-size:13px; font-weight:600; }
+.hcard .ty { font-size:10.5px; color:var(--tx3); margin-top:2px; }
+.pips { display:flex; gap:2px; }
+.pips i { width:5px; height:11px; border:1px solid var(--line2); border-radius:1px; }
+.pips i.f { background:var(--cy); border-color:var(--cy); }
+.pips.f1 i.f { background:#7fdc9d; border-color:#7fdc9d; }
+.pips.f2 i.f { background:var(--cy); border-color:var(--cy); }
+.pips.f3 i.f { background:var(--pu); border-color:var(--pu); }
+.hcard .n { font-family:var(--mono); font-size:11px; color:var(--tx3); }
+
+/* 页内视图切换条（截图时会隐藏） */
+#demo-switcher { position:fixed; z-index:99; left:50%; transform:translateX(-50%); bottom:18px; display:flex; gap:6px; padding:6px; background:rgba(8,13,19,.94); border:1px solid var(--line2); border-radius:3px; box-shadow:0 8px 30px rgba(0,0,0,.6); }
+#demo-switcher button { font-family:var(--sans); font-size:12px; color:var(--tx2); background:transparent; border:1px solid transparent; border-radius:2px; padding:6px 13px; cursor:pointer; }
+#demo-switcher button.on { color:#eaf9ff; background:rgba(60,199,245,.16); border-color:var(--cy-d); }
+@media (max-width:1360px) {
+  .game-grid { grid-template-columns:220px 1fr 272px; gap:16px; }
+  .home-grid { grid-template-columns:1fr 336px; }
+}
+/* 矮屏（720/768 高）压缩右轨：手牌去掉副标题、预览描述收成两行 ——
+   否则 5 张手牌会把面板顶到状态条底下（1280×720 实测过）。 */
+@media (max-height:840px) {
+  .hcard { padding:7px 11px; }
+  .hcard .ty { display:none; }
+  .preview p { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; margin:6px 0 9px; }
+  .preview .row { padding:3px 0; }
+  .mrow { padding:8px 0; }
+}
+</style>
+</head>
+<body>
+
+<!-- ======================= 首页 ======================= -->
+<div class="screen on" id="v-home" data-view="home">
+  <div class="topbar">
+    <div class="brand">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/></svg>
+      <b>BATTLESHIP</b><em>战舰棋</em>
+    </div>
+    <nav class="nav">
+      <a class="on" href="#">对战</a><a href="#">排行榜</a><a href="#">大厅</a><a href="#">好友</a><a href="#">跟随系统</a>
+    </nav>
+    <div class="topright">
+      <span class="chip"><span class="led"></span>&nbsp; 在线 <b class="mono">12</b></span>
+      <button class="btn ghost">设置</button>
+      <button class="btn ghost">帮助</button>
+      <span class="mock-tag">示意稿 MOCKUP</span>
+    </div>
+  </div>
+
+  <div class="home-grid">
+    <div class="stack">
+      <!-- 指挥官条：把"名字 + 等级 + 段位"合成一条身份带 -->
+      <div class="panel cmd-strip">
+        <div class="cmd-id">
+          <div class="avatar">舰</div>
+          <div>
+            <div class="lab" style="margin-bottom:5px">指挥官</div>
+            <div class="field"><span>&gt;</span><input id="player-name" value="舰长阿7" aria-label="你的名字"></div>
+          </div>
+        </div>
+        <div class="lvl">
+          <span class="lab">等级</span>
+          <b class="mono" style="font-size:15px">Lv.12</b>
+          <div class="bar"><i></i></div>
+          <span class="exp">620 / 1000</span>
+        </div>
+      </div>
+
+      <!-- 模式区：主行动占据视觉重心，但把"要做什么"写在按钮上 -->
+      <div class="panel">
+        <div style="padding:14px 14px 0"><span class="lab">作战模式</span></div>
+        <div class="tiles">
+          <div class="tile hot wide">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+            <div><div class="t">匹配游戏</div><div class="d">随机匹配一位在线玩家 · 休闲段不计分</div></div>
+            <span class="k">ENTER</span>
+          </div>
+          <div class="tile gold wide">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3l7 4v5c0 4-3 7-7 9-4-2-7-5-7-9V7z"/><path d="M9.5 11.5l2 2 3.5-3.5"/></svg>
+            <div><div class="t">排位对战</div><div class="d">大副 Ⅱ · 1240 分 · 结算会改变段位</div></div>
+            <span class="k">RANKED</span>
+          </div>
+          <div class="tile">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="6" y="6" width="12" height="12" rx="1"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>
+            <div><div class="t">人机对战</div><div class="d">练习规则与连锁</div></div>
+            <div class="seg"><button>简单</button><button class="on">普通</button><button>困难</button></div>
+          </div>
+          <div class="tile">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 20V9l8-5 8 5v11"/><path d="M9 20v-6h6v6"/></svg>
+            <div><div class="t">自定义房间</div><div class="d">6 位房号 / 邀请链接</div></div>
+            <span class="k">ROOM</span>
+          </div>
+          <div class="tile wide">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M16 5.5a3 3 0 010 5.8M18 20c0-2.2-.9-4-2.3-5.2"/></svg>
+            <div><div class="t">游戏大厅</div><div class="d">房间列表 · 公屏聊天</div></div>
+            <span class="k">LOBBY</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 最近对局：把下半屏填上真实信息（数据来自战绩接口） -->
+      <div class="panel card" style="flex:1;min-height:0;overflow:hidden">
+        <h4 style="display:flex;justify-content:space-between;align-items:baseline">最近对局
+          <a href="#" style="color:var(--tx3);text-decoration:none;font:400 11px var(--sans);letter-spacing:0">完整战绩 →</a></h4>
+        <div class="mrow"><span class="badge w">胜</span><span><span class="who">皮皮虾</span> <span class="md">· 排位 · 大副 Ⅰ</span></span><span class="md">2 分钟前</span><span class="dl up">+32</span></div>
+        <div class="mrow"><span class="badge w">胜</span><span><span class="who">游客8823</span> <span class="md">· 休闲匹配</span></span><span class="md">18 分钟前</span><span class="dl flat">—</span></div>
+        <div class="mrow"><span class="badge l">负</span><span><span class="who">老船长</span> <span class="md">· 排位 · 轮机长 Ⅲ</span></span><span class="md">1 小时前</span><span class="dl down">−24</span></div>
+        <div class="mrow"><span class="badge w">胜</span><span><span class="who">电脑 · 困难</span> <span class="md">· 人机对战</span></span><span class="md">今天 14:02</span><span class="dl flat">—</span></div>
+        <div class="mrow"><span class="badge w">胜</span><span><span class="who">阿岚</span> <span class="md">· 休闲匹配</span></span><span class="md">昨天 21:40</span><span class="dl flat">—</span></div>
+        <div class="mrow"><span class="badge l">负</span><span><span class="who">皮皮虾</span> <span class="md">· 排位 · 大副 Ⅰ</span></span><span class="md">昨天 20:12</span><span class="dl down">−18</span></div>
+        <div class="mrow"><span class="badge w">胜</span><span><span class="who">电脑 · 普通</span> <span class="md">· 人机对战</span></span><span class="md">昨天 19:55</span><span class="dl flat">—</span></div>
+        <div class="mrow"><span class="badge w">胜</span><span><span class="who">新兵007</span> <span class="md">· 休闲匹配</span></span><span class="md">2 天前</span><span class="dl flat">—</span></div>
+      </div>
+    </div>
+
+    <!-- 状态轨：把"我是谁 / 我多强 / 服务器怎么样"收在一列 -->
+    <div class="rail">
+      <div class="panel card">
+        <h4>段位</h4>
+        <div class="rank-row"><b>大副</b><i>Ⅱ</i><span class="mono" style="margin-left:auto;color:var(--tx2);font-size:12px">1240 / 1400</span></div>
+        <div class="lvl" style="margin:11px 0 0"><div class="bar" style="width:100%"><i style="width:74%;background:linear-gradient(90deg,#6b4d12,var(--am))"></i></div></div>
+        <div class="kv" style="margin-top:12px"><span>晋升到 轮机长</span><b>还差 160 分</b></div>
+      </div>
+
+      <div class="panel card">
+        <h4>近期战绩</h4>
+        <div class="rank-row"><b class="mono" style="font-size:19px">8</b><span style="color:var(--gn)">胜</span><b class="mono" style="font-size:19px;color:var(--tx2)">3</b><span style="color:var(--rd)">负</span><span class="mono" style="margin-left:auto;color:var(--tx3);font-size:11px">73%</span></div>
+        <div class="rec"><i></i><i></i><i class="l"></i><i></i><i></i><i></i><i></i><i class="l"></i><i></i><i class="l"></i><i></i></div>
+        <div class="kv" style="border-top:1px dashed #17242f;border-bottom:0;padding-top:10px"><span>最高连胜</span><b>6 场</b></div>
+      </div>
+
+      <div class="panel card">
+        <h4>系统状态</h4>
+        <div class="kv"><span>在线玩家</span><b>12</b></div>
+        <div class="kv"><span>休闲队列</span><b>3</b></div>
+        <div class="kv"><span>排位队列</span><b>1</b></div>
+        <div class="kv"><span>大厅房间</span><b>2</b></div>
+        <div class="kv"><span>服务器延迟</span><b style="color:var(--gn)">32 ms</b></div>
+      </div>
+
+      <div class="panel card">
+        <h4>数据总览</h4>
+        <div class="kv"><span>总对局</span><b>42</b></div>
+        <div class="kv"><span>胜率</span><b style="color:var(--gn)">68%</b></div>
+        <div class="kv"><span>最长连胜</span><b>6</b></div>
+        <div class="kv"><span>累计击沉</span><b>173</b></div>
+        <div class="kv"><span>最常用卡</span><b style="font-family:var(--sans)">神威！</b></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="statusbar">
+    <span><span class="led"></span> <b>SESSION ONLINE</b></span>
+    <span>UID <b>u_7f3a12</b></span>
+    <span>版本 <b>v1.0</b></span>
+    <span style="margin-left:auto">43 张魔法卡装载完毕 · 连锁引擎就绪</span>
+  </div>
+</div>
+
+<!-- ======================= 对局屏 ======================= -->
+<div class="screen" id="v-game" data-view="game">
+  <div class="topbar">
+    <div class="brand">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/></svg>
+      <b>对局中</b><em>人机对战 · 普通</em>
+    </div>
+    <nav class="nav"><a href="#" onclick="window.setDemoView('home');return false">← 返回首页</a></nav>
+    <div class="topright">
+      <span class="chip">对手 <b>电脑 · 普通</b></span>
+      <button class="btn ghost">快捷语</button>
+      <span class="mock-tag">示意稿 MOCKUP</span>
+    </div>
+  </div>
+
+  <div style="padding:16px 20px 0">
+    <!-- HUD：把回合/阶段/攻击次数/当前行动方合成一条，不再散布在卡片里 -->
+    <div class="panel hud">
+      <div class="round"><em>ROUND</em>第 1 回合</div>
+      <div class="hseg"><div class="lab">当前阶段</div><div class="v"><b>准备阶段</b></div></div>
+      <div class="hseg"><div class="lab">当前回合</div><div class="v">你</div></div>
+      <div class="hseg"><div class="lab">剩余攻击次数</div><div class="v"><b>4</b> <span class="mono" style="color:var(--tx3);font-size:11px">存活 4 · 冻结 0</span></div></div>
+      <div class="chips">
+        <span class="chip">场地魔法：无</span>
+        <span class="chip warn">极限增援 · 剩 2 回合</span>
+      </div>
+      <div class="acts">
+        <button class="btn primary">进入战斗阶段</button>
+        <button class="btn danger">投降</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="game-grid">
+    <!-- 左轨：日志常驻（不再折叠成浮窗） -->
+    <div class="panel log-rail">
+      <div class="log-head">
+        <span class="lab">战斗日志</span>
+        <span class="mono" style="font-size:10px;color:var(--tx3)">自动滚动</span>
+      </div>
+      <div class="log-body">
+        <div><u>R1</u> 双方各部署 <b>6</b> 艘战舰</div>
+        <div><u>R1</u> 猜拳：你 <b>获胜</b> → 你先手</div>
+        <div><u>R1</u> 你 抽到 <b>2</b> 张魔法卡</div>
+        <div><u>R1</u> 对手 抽到 <b>2</b> 张魔法卡</div>
+        <div><u>R1</u> 你 炮击 <b>(3,4)</b> <span class="hit">命中</span></div>
+        <div><u>R1</u> 对手 炮击 <b>(1,1)</b> <span class="miss">未命中</span></div>
+        <div><u>R1</u> 对手 炮击 <b>(5,5)</b> <span class="hit">命中</span></div>
+        <div><u>R1</u> 你 使用了 <span class="mag">神威！</span></div>
+        <div><u>R1</u> 对手 <span class="warn">响应连锁</span>：<span class="mag">失灵！</span></div>
+        <div><u>R1</u> 结算中… 待你响应</div>
+      </div>
+      <div class="log-foot">
+        <span class="lab">阶段时点</span>
+        <span class="chip">询问中</span>
+        <span class="chip" style="margin-left:auto">点击切换</span>
+      </div>
+    </div>
+
+    <!-- 中栏：连锁条 + 两块棋盘并排 -->
+    <div class="center">
+      <div class="chain" style="margin-bottom:12px">
+        <span class="t">连锁进行中</span>
+        <div class="stack">
+          <span class="sc">你 · 神威！ 速阶2</span>
+          <span class="arrow">←</span>
+          <span class="sc">对手 · 失灵！ 速阶3</span>
+        </div>
+        <span class="tm">7s</span>
+      </div>
+
+      <div class="boards">
+        <div class="board-wrap">
+          <div class="board-head"><span class="n">你的棋盘</span><span class="s">剩余 <b>4</b> 艘 · 冻结 0</span></div>
+          <div class="board" id="board-mine"></div>
+          <div class="legend">
+            <span><i class="l1"></i>你的舰</span><span><i class="l2"></i>被命中</span><span><i class="l3"></i>对方打空</span>
+          </div>
+        </div>
+        <div class="board-wrap">
+          <div class="board-head"><span class="n">对手的棋盘</span><span class="s">剩余 <b>4</b> 艘 · 已探测 5 格</span></div>
+          <div class="board" id="board-opp"></div>
+          <div class="legend">
+            <span><i class="l2"></i>你打中</span><span><i class="l3"></i>你打空</span><span><i class="l4"></i>未探测</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 情报条：原来棋盘下面空着的那 200px -->
+      <div class="panel intel">
+        <span class="lab">最近弃牌</span>
+        <div class="dchips">
+          <span class="dc">神之宣告</span><span class="dc">硫磺火焰</span><span class="dc">灵气复苏</span><span class="dc">看破！</span><span class="dc">越战越勇</span>
+        </div>
+        <div class="meter">
+          <span class="lab">探测进度</span>
+          <b class="mono" style="font-size:12px">5 / 36</b>
+          <div class="bar"><i></i></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右轨：待使用卡 + 手牌 + 弃牌堆 -->
+    <div class="hand-rail">
+      <div class="panel card preview">
+        <h4>待使用魔法卡</h4>
+        <div class="name">神威！</div>
+        <div class="row"><span>速阶</span><b>2</b></div>
+        <div class="row"><span>类型</span><b>普通</b></div>
+        <div class="row"><span>目标</span><b>3 × 3 区域</b></div>
+        <p>选定 3×3 区域，把区域内所有战舰暂时除外 —— 被除外的船不参与存活判定。</p>
+        <div class="go"><button class="btn primary">确认使用</button><button class="btn ghost">取消</button></div>
+      </div>
+
+      <div class="panel card" style="flex:1;min-height:0;display:flex;flex-direction:column">
+        <h4 style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <span>我的手牌 <span class="mono" style="color:var(--tx3);font-weight:400">5 张</span></span>
+          <span style="display:flex;gap:6px">
+            <button class="btn tiny">弃牌堆 <b>18</b></button>
+            <button class="btn tiny">牌堆 <b>21</b></button>
+          </span>
+        </h4>
+        <div class="hand">
+          <div class="hcard sel"><span class="pips f2"><i class="f"></i><i class="f"></i><i></i></span><div><div class="nm">神威！</div><div class="ty">普通 · 3×3 除外</div></div><span class="n">使用中</span></div>
+          <div class="hcard"><span class="pips f3"><i class="f"></i><i class="f"></i><i class="f"></i></span><div><div class="nm">失灵！</div><div class="ty">普通 · 无效上一张</div></div><span class="n">×1</span></div>
+          <div class="hcard"><span class="pips f3"><i class="f"></i><i class="f"></i><i class="f"></i></span><div><div class="nm">增援</div><div class="ty">普通 · 补一艘船</div></div><span class="n">×1</span></div>
+          <div class="hcard"><span class="pips f2"><i class="f"></i><i class="f"></i><i></i></span><div><div class="nm">轰炸</div><div class="ty">普通 · 整行/列</div></div><span class="n">×1</span></div>
+          <div class="hcard"><span class="pips f1"><i class="f"></i><i></i><i></i></span><div><div class="nm">桃园结义</div><div class="ty">普通 · 双方各挑一张</div></div><span class="n">×1</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="statusbar">
+    <span><span class="led"></span> <b>CONNECTED</b></span>
+    <span>牌堆 <b>21</b></span><span>弃牌堆 <b>18</b></span>
+    <span style="margin-left:auto">点卡牌一次进入待使用 · 再点一次尝试使用</span>
+  </div>
+</div>
+
+<div id="demo-switcher">
+  <button data-view="home" class="on" onclick="window.setDemoView('home')">首页</button>
+  <button data-view="game" onclick="window.setDemoView('game')">对局屏</button>
+</div>
+
+<script>
+/* 固定的棋盘布局（不用随机：截图要可复现） */
+(function () {
+  var MINE = ['S..X..','....o.','.S..S.','o.....','..X.o.','.....S'];
+  var OPP  = ['o.....','....X.','..X...','...o..','.....o','.o....'];
+  function draw(id, rows) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    rows.join('').split('').forEach(function (ch) {
+      var d = document.createElement('div');
+      d.className = 'cell' + (ch === 'S' ? ' ship' : ch === 'X' ? ' hit' : ch === 'o' ? ' miss' : ' unknown');
+      el.appendChild(d);
+    });
+  }
+  draw('board-mine', MINE);
+  draw('board-opp', OPP);
+})();
+</script>
+</body>
+</html>

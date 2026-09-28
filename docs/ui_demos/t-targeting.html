@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>新方案 T · 目标选择态（基于 C）</title>
+<script>
+  window.__demoViews = ['pick', 'confirm', 'invalid'];
+  window.__demoErrors = [];
+  window.addEventListener('error', function (e) { window.__demoErrors.push(String(e.message)); });
+  window.setDemoView = function (v) {
+    document.querySelectorAll('.screen').forEach(function (s) { s.classList.toggle('on', s.dataset.view === v); });
+    document.querySelectorAll('#demo-switcher button').forEach(function (b) { b.classList.toggle('on', b.dataset.view === v); });
+  };
+</script>
+<style>
+:root {
+  --bg:#0b0d18; --panel:#151a30; --panel2:#1b2140; --line:#2a3358; --line2:#3b4675;
+  --tx:#e7ecff; --tx2:#a2adcf; --tx3:#6c789e; --frame:#8a7440; --frame2:#e6c778;
+  --gold:#c9a24c; --gold2:#e6c778; --vio:#7c5cf0; --cy:#4ec8e0; --rd:#ff5c6c; --gn:#4ade80; --am:#f2a33c;
+  --sans:"Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+/* ============================================================================
+   真实卡牌组件（150×210 · 比例同 63×88mm）
+   ========================================================================== */
+.cc {
+  position:relative; width:150px; height:210px; flex:0 0 auto; border-radius:9px; padding:5px;
+  background:linear-gradient(180deg,#424a7a 0%,#252c52 40%,#171c36 100%);
+  box-shadow:0 1px 0 rgba(255,255,255,.16) inset, 0 -2px 0 rgba(0,0,0,.5) inset,
+             0 12px 24px rgba(0,0,0,.55), 0 2px 0 rgba(0,0,0,.6);
+  transition:transform .15s ease, box-shadow .15s ease;
+}
+/* 内层：亮线描边 + 独立底色 → 双层卡框 */
+.cc .in { height:100%; border-radius:5px; overflow:hidden; display:flex; flex-direction:column;
+  border:1px solid rgba(230,199,120,.38); background:#0e1226; }
+/* 满幅插画（53%） */
+.cc .art { position:relative; height:104px; flex:0 0 auto; overflow:hidden; }
+.cc .art svg { display:block; width:100%; height:100%; }
+.cc .art::after { content:""; position:absolute; inset:0;
+  background:linear-gradient(180deg, rgba(255,255,255,.10), transparent 34%, rgba(0,0,0,.42)); }
+/* 名牌：速阶宝石 + 卡名 */
+.cc .name { display:flex; align-items:center; gap:7px; padding:5px 8px 5px 6px;
+  background:linear-gradient(180deg,#2b3563,#1b2244); border-top:1px solid rgba(230,199,120,.32); border-bottom:1px solid rgba(230,199,120,.26); }
+.cc .gem { position:relative; width:22px; height:22px; flex:0 0 auto; display:grid; place-items:center;
+  font-family:var(--mono); font-size:11px; font-weight:700; color:#2a1f04;
+  background:linear-gradient(180deg,#f4dc9a,#c9a24c); clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);
+  filter:drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
+.cc .gem.g2 { background:linear-gradient(180deg,#bfe9ff,#4ec8e0); color:#04222c; }
+.cc .gem.g3 { background:linear-gradient(180deg,#d7c8ff,#7c5cf0); color:#fff; }
+.cc .name b { font-size:13.5px; font-weight:600; letter-spacing:.02em; }
+/* 说明框：独立底色 + 描边，与卡框分开 */
+.cc .text { flex:1; min-height:0; padding:6px 8px; font-size:10.5px; line-height:1.5; color:#c3cbe8;
+  background:repeating-linear-gradient(180deg, rgba(255,255,255,.022) 0 1px, transparent 1px 4px), linear-gradient(180deg,#161c36,#111529); }
+.cc .bottom { display:flex; align-items:center; justify-content:space-between; padding:4px 8px;
+  font-size:9.5px; color:var(--tx3); border-top:1px solid rgba(255,255,255,.07); background:#0d1122; }
+.cc .bottom .ty { letter-spacing:.12em; }
+.cc .bottom .dup { font-family:var(--mono); color:var(--gold2); }
+/* 场地魔法：金字招牌 */
+.cc.terrain .in { border-color:rgba(230,199,120,.72); }
+.cc.terrain .name { background:linear-gradient(180deg,#5a4620,#372a10); }
+
+/* 两级预览：位移量沿用上一版规范（一级 −30 / 二级 −56） */
+.cc.hover { transform:translateY(-30px) scale(1.05); z-index:5;
+  box-shadow:0 1px 0 rgba(255,255,255,.2) inset, 0 22px 40px rgba(0,0,0,.6), 0 0 0 1px rgba(230,199,120,.6); }
+.cc.picked { transform:translateY(-56px) scale(1.09); z-index:6;
+  box-shadow:0 1px 0 rgba(255,255,255,.24) inset, 0 30px 54px rgba(0,0,0,.66), 0 0 0 2px rgba(230,199,120,.85), 0 0 34px rgba(201,162,76,.3); }
+.cc .statebadge { position:absolute; top:-11px; left:50%; transform:translateX(-50%); z-index:9;
+  font-family:var(--mono); font-size:10px; padding:2px 8px; border-radius:999px; white-space:nowrap;
+  background:linear-gradient(180deg,var(--gold2),var(--gold)); color:#2a1f04; box-shadow:0 3px 8px rgba(0,0,0,.5); }
+
+.board { display:grid; grid-template-columns:repeat(6,1fr); gap:4px; width:100%;
+  max-width:min(420px, calc(100vh - 448px)); margin:0 auto; padding:8px; border-radius:16px;
+  background:radial-gradient(120% 120% at 50% 0%, #1d2a55, #101733 70%); border:1px solid var(--line2); }
+.cell { aspect-ratio:1/1; border-radius:7px; background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.06); display:grid; place-items:center; }
+.cell.ship { background:rgba(79,168,255,.2); border-color:rgba(120,190,255,.5); }
+.cell.ship::after { content:""; width:46%; height:46%; background:#9ad0ff; clip-path:polygon(50% 0,100% 100%,0 100%); }
+.cell.hit { background:rgba(255,92,108,.22); border-color:rgba(255,92,108,.6); }
+.cell.hit::after { content:""; width:52%; height:52%; background:var(--rd); clip-path:polygon(50% 0,61% 39%,100% 50%,61% 61%,50% 100%,39% 61%,0 50%,39% 39%); }
+.cell.miss::after { content:""; width:26%; height:26%; border-radius:50%; border:1.5px solid rgba(78,200,224,.65); }
+.cell.tgt { box-shadow:inset 0 0 0 2px var(--vio); background:rgba(124,92,240,.18); }
+.blegend { display:flex; gap:12px; justify-content:center; font-size:10.5px; color:var(--tx3); }
+
+* { box-sizing:border-box; }
+html, body { margin:0; height:100%; }
+body { background:var(--bg); color:var(--tx); font-family:var(--sans); font-size:13px; overflow:hidden; }
+body::before { content:""; position:fixed; inset:0; pointer-events:none;
+  background:radial-gradient(700px 420px at 50% -8%, rgba(124,92,240,.30), transparent 70%),
+             radial-gradient(600px 400px at 12% 105%, rgba(78,200,224,.12), transparent 70%); }
+.screen { display:none; height:100%; flex-direction:column; position:relative; }
+.screen.on { display:flex; }
+.lab { font:600 10px/1 var(--sans); letter-spacing:.2em; color:var(--tx3); }
+.mono { font-family:var(--mono); }
+.panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; }
+.topbar { flex:0 0 auto; display:flex; align-items:center; gap:14px; padding:11px 22px; }
+.brand { display:flex; align-items:center; gap:10px; }
+.brand b { font-size:15px; letter-spacing:.12em; }
+.brand em { font-style:normal; font-size:10.5px; color:var(--tx3); letter-spacing:.2em; }
+.nav a { color:var(--tx2); text-decoration:none; font-size:12.5px; padding:6px 11px; }
+.spacer { margin-left:auto; }
+.ghost { background:transparent; color:var(--tx2); border:1px solid var(--line2); border-radius:7px; padding:7px 13px; font-size:12.5px; }
+.mock-tag { font-size:10px; letter-spacing:.14em; color:var(--gold2); border:1px dashed rgba(201,162,76,.55); border-radius:4px; padding:5px 8px; }
+.gtop { flex:0 0 auto; display:flex; align-items:center; gap:16px; margin:10px 22px 0; padding:10px 15px; }
+.gtop .round { font-family:var(--mono); font-size:18px; }
+.gtop .round em { font-style:normal; font-family:var(--sans); font-size:10px; letter-spacing:.16em; color:var(--tx3); display:block; margin-bottom:4px; }
+.gtop .seg { padding-left:16px; border-left:1px solid var(--line); }
+.gtop .seg .v { font-size:13px; margin-top:4px; }
+.gtop .seg .v b { color:var(--cy); font-family:var(--mono); }
+.gtop .acts { margin-left:auto; display:flex; gap:9px; }
+.btn-pri { font-size:14px; font-weight:600; padding:12px 20px; border-radius:12px; background:linear-gradient(120deg,#6b4ce0,#3f2a9c); color:#fff; }
+.btn-danger { font-size:12.5px; padding:11px 15px; border-radius:12px; background:transparent; color:#ff9aa5; border:1px solid #5c242a; }
+.gmain { flex:1; min-height:0; display:grid; grid-template-columns:1fr 322px; gap:20px; padding:12px 22px; }
+.centercol { min-height:0; display:flex; flex-direction:column; }
+.boards { flex:1; min-height:0; display:flex; gap:20px; justify-content:center; align-items:flex-start; }
+.bwrap { flex:1 1 0; min-width:0; max-width:430px; display:flex; flex-direction:column; gap:8px; }
+.bhead { display:flex; align-items:baseline; gap:8px; }
+.bhead .n { font-size:13px; font-weight:600; }
+.bhead .tag { font-size:10px; padding:2px 7px; border-radius:6px; }
+.tag.fire { color:var(--gold2); background:rgba(201,162,76,.14); }
+.tag.hurt { color:var(--cy); background:rgba(78,200,224,.13); }
+.bhead .s { margin-left:auto; font-family:var(--mono); font-size:10.5px; color:var(--tx3); }
+.gside { min-height:0; display:flex; flex-direction:column; gap:12px; overflow:hidden; }
+.rulecard, .steps3 { padding:13px 14px; }
+.rulecard .r { display:flex; justify-content:space-between; font-size:12px; padding:7px 0; color:var(--tx2); border-bottom:1px dashed rgba(59,70,117,.5); }
+.rulecard .r:last-child { border-bottom:0; }
+.rulecard .r b { color:var(--tx); font-family:var(--mono); }
+.steps3 { font-size:11.5px; line-height:1.85; color:var(--tx3); }
+.steps3 b { color:var(--gold2); } .steps3 em { font-style:normal; color:var(--tx2); }
+.handzone { flex:0 0 auto; position:relative; height:238px; margin-top:8px; }
+.hand { position:absolute; left:0; right:0; bottom:36px; height:206px; display:flex; align-items:flex-end; justify-content:center; padding:0 208px 12px 0; }
+.hand .cc + .cc { margin-left:-20px; }
+.hand .cc:nth-child(1) { transform:rotate(-6deg) translateY(8px); }
+.hand .cc:nth-child(2) { transform:rotate(-3deg) translateY(3px); }
+.hand .cc:nth-child(3) { transform:rotate(0deg) translateY(-26px) scale(1.05); z-index:5; }
+.hand .cc:nth-child(4) { transform:rotate(3deg) translateY(3px); }
+.hand .cc:nth-child(5) { transform:rotate(6deg) translateY(8px); }
+.act2 { position:absolute; right:0; bottom:38px; width:190px; display:flex; flex-direction:column; gap:9px; }
+.act2 .u { min-height:48px; display:grid; place-items:center; border-radius:13px; font-weight:700; font-size:14.5px;
+  background:linear-gradient(120deg,#e6c778,#c9a24c); color:#3a2a05; }
+.act2 .u.off { background:var(--panel2); color:var(--tx3); border:1px solid var(--line); box-shadow:none; }
+.act2 .c { min-height:44px; display:grid; place-items:center; border-radius:13px; border:1px solid var(--line2); color:var(--tx2); font-size:13px; }
+/* 目标覆盖层：按真实格子位置定位（JS 算），不猜像素 */
+.board { position:relative; }
+.board .anchor { position:absolute; border:1.5px dashed rgba(124,92,240,.6); border-radius:9px; pointer-events:none; }
+.board .area { position:absolute; border:2.5px solid var(--gold2); border-radius:12px; pointer-events:none;
+  box-shadow:0 0 0 3px rgba(201,162,76,.16), 0 0 26px rgba(201,162,76,.22); background:rgba(201,162,76,.10); }
+.board .area .cap { position:absolute; top:-11px; left:8px; font-size:10px; padding:1px 7px; border-radius:999px; white-space:nowrap;
+  background:linear-gradient(180deg,var(--gold2),var(--gold)); color:#2a1f04; }
+.board .area.bad { border-color:var(--rd); box-shadow:0 0 0 3px rgba(255,92,108,.14); background:rgba(255,92,108,.10); }
+.board .area.bad .cap { background:linear-gradient(180deg,#ffb0b6,#e5545a); color:#2a0508; }
+#demo-switcher { position:fixed; z-index:99; left:50%; transform:translateX(-50%); bottom:12px; display:flex; gap:6px; padding:6px;
+  background:rgba(11,13,24,.95); border:1px solid var(--line2); border-radius:11px; }
+#demo-switcher button { font-size:12.5px; color:var(--tx2); background:transparent; border:1px solid transparent; border-radius:7px; padding:7px 14px; }
+#demo-switcher button.on { color:#fff; background:linear-gradient(120deg,#6b4ce0,#3f2a9c); border-color:#8f79f5; }
+@media (max-width:1360px) {
+  .gmain { grid-template-columns:1fr 288px; gap:16px; }
+  .cc { width:130px; height:190px; } .cc .art { height:100px; }
+}
+</style>
+</head>
+<body>
+
+<div class="screen on" data-view="pick">
+  <div class="topbar">
+    <div class="brand">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#c9a24c" stroke-width="1.6"><path d="M12 2l2.6 6.4L21 11l-6.4 2.6L12 20l-2.6-6.4L3 11l6.4-2.6z"/></svg>
+      <div><b>对局中</b><br><em>人机 · 普通</em></div>
+    </div>
+    <nav class="nav"><a href="#">← 返回首页</a></nav>
+    <div class="spacer"></div>
+    <span class="ghost">快捷语</span>
+    <span class="mock-tag">示意稿 T · 目标选择</span>
+  </div>
+
+  <div class="panel gtop">
+    <div class="round"><em>ROUND</em>第 1 回合</div>
+    <div class="seg"><div class="lab">当前阶段</div><div class="v"><b>准备阶段</b></div></div>
+    <div class="seg"><div class="lab">剩余攻击</div><div class="v"><b>4</b> 次</div></div>
+    <div class="acts"><span class="btn-danger">投降</span><span class="btn-pri">进入战斗阶段</span></div>
+  </div>
+
+  <div class="gmain">
+    <div class="centercol">
+      <div class="boards">
+        <div class="bwrap">
+          <div class="bhead"><span class="n">你的海域</span><span class="tag hurt">受击区</span><span class="s">剩余 4 艘 · 冻结 0</span></div>
+          <div class="board" id="m-pick"></div>
+        </div>
+        <div class="bwrap">
+          <div class="bhead"><span class="n">对手海域</span><span class="tag fire">开火区</span><span class="s">已探明 5/36 · 选 3×3 区域</span></div>
+          <div class="board" id="e-pick"></div>
+        </div>
+      </div>
+
+      <div class="handzone">
+        <div class="hand">
+          <div class="cc"><div class="in"><div class="art"><svg viewBox="0 0 150 104" preserveAspectRatio="none"><rect width="150" height="104" fill="#152a1e"/><g fill="#7ee0a4" opacity=".5"><circle cx="52" cy="45" r="18"/><circle cx="76" cy="52" r="18"/></g></svg></div>
+            <div class="name"><span class="gem">I</span><b>桃园结义</b></div><div class="text">从牌堆抽 n 张，双方各挑一张</div><div class="bottom"><span class="ty">普通</span><span class="dup">x1</span></div></div></div>
+          <div class="cc"><div class="in"><div class="art"><svg viewBox="0 0 150 104" preserveAspectRatio="none"><rect width="150" height="104" fill="#2a1526"/><path d="M0 86 L75 20 L150 86" fill="none" stroke="#ff8fb0" stroke-width="3"/></svg></div>
+            <div class="name"><span class="gem g3">III</span><b>硫磺火焰</b></div><div class="text">连续 6 格强制击杀</div><div class="bottom"><span class="ty">普通</span><span class="dup">x1</span></div></div></div>
+          <div class="cc picked"><div class="in"><div class="art"><svg viewBox="0 0 150 104" preserveAspectRatio="none"><rect width="150" height="104" fill="#14344a"/><g stroke="#7ce6ff" fill="none" opacity=".85"><circle cx="75" cy="52" r="12"/><circle cx="75" cy="52" r="24"/><circle cx="75" cy="52" r="36"/></g><circle cx="75" cy="52" r="4" fill="#c9f6ff"/></svg></div>
+            <div class="name"><span class="gem g2">II</span><b>神威！</b></div><div class="text">选定 3x3 区域把战舰暂时除外</div><div class="bottom"><span class="ty">普通</span><span class="dup">待用</span></div></div></div>
+          <div class="cc"><div class="in"><div class="art"><svg viewBox="0 0 150 104" preserveAspectRatio="none"><rect width="150" height="104" fill="#12283d"/><path d="M75 20 v52 M75 34 a7 7 0 010 14 M52 72 h46" fill="none" stroke="#8fd0ff" stroke-width="3"/></svg></div>
+            <div class="name"><span class="gem g3">III</span><b>增援</b></div><div class="text">召唤一艘战舰部署在没被打过的格子</div><div class="bottom"><span class="ty">普通</span><span class="dup">x1</span></div></div></div>
+          <div class="cc"><div class="in"><div class="art"><svg viewBox="0 0 150 104" preserveAspectRatio="none"><rect width="150" height="104" fill="#1b1a38"/><g stroke="#ff5c6c" stroke-width="4"><path d="M40 34 L110 70"/><path d="M110 34 L40 70"/></g></svg></div>
+            <div class="name"><span class="gem g3">III</span><b>失灵！</b></div><div class="text">无效化对方使用的上一张魔法卡</div><div class="bottom"><span class="ty">普通</span><span class="dup">x1</span></div></div></div>
+</div>
+        <div class="act2">
+          <span class="lab" style="text-align:center">落点高亮中</span>
+          <span class="u">确认使用 神威！</span>
+          <span class="c">取消选择</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="gside">
+      <div class="panel rulecard">
+        <h4 class="lab" style="margin:0 0 8px">这 一 步 的 规 则</h4>
+        <div class="r"><span>合法落点</span><b>4 处</b></div>
+        <div class="r"><span>已选区域</span><b>r2c2 起 3×3</b></div>
+        <div class="r"><span>将除外</span><b>3 格（含 1 艘已探明）</b></div>
+      </div>
+      <div class="panel steps3">
+        <b>为什么要有"确认"这一步</b><br>
+        神威！选的是 <em>3×3 区域</em>、轰炸选的是 <em>整行整列</em> —— 都是大范围。
+        Hearthstone 的"松手即生效"是为<em>单点目标</em>设计的；本作按 Balatro 的先例
+        <em>先选、再确认</em>，因为两家都<em>不能撤销</em>。<br><br>
+        <b>点空白 = 取消</b>（不消耗卡）· <b>非法区域不提交</b>（第三屏）<br>
+        不需要选目标的卡（失灵！/看破！）没有这一步，点两次即用。
+      </div>
+      <div class="panel" style="flex:1;min-height:0;padding:14px">
+        <h4 class="lab" style="margin:0 0 8px">对 局 数 据</h4>
+        <div class="r" style="display:flex;justify-content:space-between;font-size:12px;padding:7px 0;color:var(--tx2)"><span>牌堆 / 弃牌堆</span><b class="mono">21 / 18</b></div>
+        <div class="r" style="display:flex;justify-content:space-between;font-size:12px;padding:7px 0;color:var(--tx2)"><span>场地魔法</span><b class="mono">无</b></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="screen" data-view="confirm">
+  <div class="topbar">
+    <div class="brand">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#c9a24c" stroke-width="1.6"><path d="M12 2l2.6 6.4L21 11l-6.4 2.6L12 20l-2.6-6.4L3 11l6.4-2.6z"/></svg>
+      <div><b>对局中</b><br><em>人机 · 普通</em></div>
+    </div>
+    <nav class="nav"><a href="#">← 返回首页</a></nav>
+    <div class="spacer"></div>
+    <span class="ghost">快捷语</span>
+    <span class="mock-tag">示意稿 T · 目标选择</span>
+  </div>
+
+  <div class="panel gtop">
+    <div class="round"><em>ROUND</em>第 1 回合</div>
+    <div class="seg"><div class="lab">当前阶段</div><div class="v"><b>准备阶段</b></div></div>
+    <div class="seg"><div class="lab">剩余攻击</div><div class="v"><b>4</b> 次</div></div>
+    <div class="acts"><span class="btn-danger">投降</span><span class="btn-pri">进入战斗阶段</span></div>
+  </div>
+
+  <div class="gmain">
+    <div class="centercol">
+      <div class="boards">
+        <div class="bwrap">
+          <div class="bhead"><span class="n">你的海域</span><span class="tag hurt">受击区</span><span class="s">剩余 4 艘 · 冻结 0</span></div>
+          <div class="board" id="m-confirm"></div>
+        </div>
+        <div class="bwrap">
+          <div class="bhead"><span class="n">对手海域</span><span class="tag fire">开火区</span><span class="s">已选区域 · 待确认</span></div>
+          <div class="board" id="e-confirm"></div>
+        </div>
+      </div>
+
+      <div class="handzone">
+        <div class="hand">
+          <div class="cc"><div class="in"><div class="art"><svg viewBox="0 0 150 104" preserveAspectRatio="none"><rect width="150" height="104" fill="#152a1e"/><g fill="#7ee0a4" opacity=".5"><circle cx="52" cy="45" r="18"/><circle cx="76" cy="52" r="18"/></g></svg></div>
+            <div class="name"><span class="gem">I</span><b>桃园结义</b></div><div class="text">从牌堆抽 n 张，双方各挑一张</div><div class="bottom"><span class="ty">普通</span><span class="dup">x1</span></div></div></div>
+          <div class="cc"><div class="in"><div class="art"><svg viewBox="0 0 150 104" preserveAspectRatio="none"><rect width="150" height="104" fill="#2a1526"/><path d="M0 86 L75 20 L150 86" fill="none" stroke="#ff8fb0" stroke-width="3"/></svg></div>
+            <div class="name"><span class="gem g3">III</span><b>硫磺火焰</b></div><div class="text">连续 6 格强制击杀</div><div class="bottom"><span class="ty">普通</span><span class="dup">x1</span></div></div></div>
+          <div class="cc picked"><div class="in"><div class="art"><svg viewBox="0 0 150 104" preserveAspectRatio="none"><rect width="150" height="104" fill="#14344a"/><g stroke="#7ce6ff" fill="none" opacity=".85"><circle cx="75" cy="52" r="12"/><circle cx="75" cy="52" r="24"/><circle cx="75" cy="52" r="36"/></g><circle cx="75" cy="52" r="4" fill="#c9f6ff"/></svg></div>
+            <div class="name"><span class="gem g2">II</span><b>神威！</b></div><div class="text">选定 3x3 区域把战舰暂时除外</div><div class="bottom"><span class="ty">普通</span><span class="dup">待用</span></div></div></div>
+          <div class="cc"><div class="in"><div class="art"><svg viewBox="0 0 150 104" preserveAspectRatio="none"><rect width="150" height="104" fill="#12283d"/><path d="M75 20 v52 M75 34 a7 7 0 010 14 M52 72 h46" fill="none" stroke="#8fd0ff" stroke-width="3"/></svg></div>
+            <div class="name"><span class="gem g3">III</span><b>增援</b></div><div class="text">召唤一艘战舰部署在没被打过的格子</div><div class="bottom"><span class="ty">普通</span><span class="dup">x1</span></div></div></div>
+          <div class="cc"><div class="in"><div class="art"><svg viewBox="0 0 150 104" preserveAspectRatio="none"><rect width="150" height="104" fill="#1b1a38"/><g stroke="#ff5c6c" stroke-width="4"><path d="M40 34 L110 70"/><path d="M110 34 L40 70"/></g></svg></div>
+            <div class="name"><span class="gem g3">III</span><b>失灵！</b></div><div class="text">无效化对方使用的上一张魔法卡</div><div class="bottom"><span class="ty">普通</span><span class="dup">x1</span></div></div></div>
+</div>
+        <div class="act2">
+          <span class="lab" style="text-align:center">已选 · 待确认</span>
+          <span class="u">确认使用 神威！</span>
+          <span class="c">取消选择</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="gside">
+      <div class="panel rulecard">
+        <h4 class="lab" style="margin:0 0 8px">这 一 步 的 规 则</h4>
+        <div class="r"><span>合法落点</span><b>4 处</b></div>
+        <div class="r"><span>已选区域</span><b>r2c2 起 3×3</b></div>
+        <div class="r"><span>将除外</span><b>3 格 · 含 1 艘已探明</b></div>
+      </div>
+      <div class="panel steps3">
+        <b>为什么要有"确认"这一步</b><br>
+        神威！选的是 <em>3×3 区域</em>、轰炸选的是 <em>整行整列</em> —— 都是大范围。
+        Hearthstone 的"松手即生效"是为<em>单点目标</em>设计的；本作按 Balatro 的先例
+        <em>先选、再确认</em>，因为两家都<em>不能撤销</em>。<br><br>
+        <b>点空白 = 取消</b>（不消耗卡）· <b>非法区域不提交</b>（第三屏）<br>
+        不需要选目标的卡（失灵！/看破！）没有这一步，点两次即用。
+      </div>
+      <div class="panel" style="flex:1;min-height:0;padding:14px">
+        <h4 class="lab" style="margin:0 0 8px">对 局 数 据</h4>
+        <div class="r" style="display:flex;justify-content:space-between;font-size:12px;padding:7px 0;color:var(--tx2)"><span>牌堆 / 弃牌堆</span><b class="mono">21 / 18</b></div>
+        <div class="r" style="display:flex;justify-content:space-between;font-size:12px;padding:7px 0;color:var(--tx2)"><span>场地魔法</span><b class="mono">无</b></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="screen" data-view="invalid">
+  <div class="topbar">
+    <div class="brand">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#c9a24c" stroke-width="1.6"><path d="M12 2l2.6 6.4L21 11l-6.4 2.6L12 20l-2.6-6.4L3 11l6.4-2.6z"/></svg>
+      <div><b>对局中</b><br><em>人机 · 普通</em></div>
+    </div>
+    <nav class="nav"><a href="#">← 返回首页</a></nav>
+    <div class="spacer"></div>
+    <span class="ghost">快捷语</span>
+    <span class="mock-tag">示意稿 T · 目标选择</span>
+  </div>
+
+  <div class="panel gtop">
+    <div class="round"><em>ROUND</em>第 1 回合</div>
+    <div class="seg"><div class="lab">当前阶段</div><div class="v"><b>准备阶段</b></div></div>
+    <div class="seg"><div class="lab">剩余攻击</div><div class="v"><b>4</b> 次</div></div>
+    <div class="acts"><span class="btn-danger">投降</span><span class="btn-pri">进入战斗阶段</span></div>
+  </div>
+
+  <div class="gmain">
+    <div class="centercol">
+      <div class="boards">
+        <div class="bwrap">
+          <div class="bhead"><span class="n">你的海域</span><span class="tag hurt">受击区</span><span class="s">剩余 4 艘 · 冻结 0</span></div>
+          <div class="board" id="m-invalid"></div>
+        </div>
+        <div class="bwrap">
+          <div class="bhead"><span class="n">对手海域</span><span class="tag fire">开火区</span><span class="s">该区域越界 · 无效</span></div>
+          <div class="board" id="e-invalid"></div>
+        </div>
+      </div>
+
+      <div class="handzone">
+        <div class="hand">
+          <div class="cc"><div class="in"><div class="art"><svg viewBox="0 0 150 104" preserveAspectRatio="none"><rect width="150" height="104" fill="#152a1e"/><g fill="#7ee0a4" opacity=".5"><circle cx="52" cy="45" r="18"/><circle cx="76" cy="52" r="18"/></g></svg></div>
+            <div class="name"><span class="gem">I</span><b>桃园结义</b></div><div class="text">从牌堆抽 n 张，双方各挑一张</div><div class="bottom"><span class="ty">普通</span><span class="dup">x1</span></div></div></div>
+          <div class="cc"><div class="in"><div class="art"><svg viewBox="0 0 150 104" preserveAspectRatio="none"><rect width="150" height="104" fill="#2a1526"/><path d="M0 86 L75 20 L150 86" fill="none" stroke="#ff8fb0" stroke-width="3"/></svg></div>
+            <div class="name"><span class="gem g3">III</span><b>硫磺火焰</b></div><div class="text">连续 6 格强制击杀</div><div class="bottom"><span class="ty">普通</span><span class="dup">x1</span></div></div></div>
+          <div class="cc picked"><div class="in"><div class="art"><svg viewBox="0 0 150 104" preserveAspectRatio="none"><rect width="150" height="104" fill="#14344a"/><g stroke="#7ce6ff" fill="none" opacity=".85"><circle cx="75" cy="52" r="12"/><circle cx="75" cy="52" r="24"/><circle cx="75" cy="52" r="36"/></g><circle cx="75" cy="52" r="4" fill="#c9f6ff"/></svg></div>
+            <div class="name"><span class="gem g2">II</span><b>神威！</b></div><div class="text">选定 3x3 区域把战舰暂时除外</div><div class="bottom"><span class="ty">普通</span><span class="dup">待用</span></div></div></div>
+          <div class="cc"><div class="in"><div class="art"><svg viewBox="0 0 150 104" preserveAspectRatio="none"><rect width="150" height="104" fill="#12283d"/><path d="M75 20 v52 M75 34 a7 7 0 010 14 M52 72 h46" fill="none" stroke="#8fd0ff" stroke-width="3"/></svg></div>
+            <div class="name"><span class="gem g3">III</span><b>增援</b></div><div class="text">召唤一艘战舰部署在没被打过的格子</div><div class="bottom"><span class="ty">普通</span><span class="dup">x1</span></div></div></div>
+          <div class="cc"><div class="in"><div class="art"><svg viewBox="0 0 150 104" preserveAspectRatio="none"><rect width="150" height="104" fill="#1b1a38"/><g stroke="#ff5c6c" stroke-width="4"><path d="M40 34 L110 70"/><path d="M110 34 L40 70"/></g></svg></div>
+            <div class="name"><span class="gem g3">III</span><b>失灵！</b></div><div class="text">无效化对方使用的上一张魔法卡</div><div class="bottom"><span class="ty">普通</span><span class="dup">x1</span></div></div></div>
+</div>
+        <div class="act2">
+          <span class="lab" style="text-align:center">无效区域（越界）</span>
+          <span class="u off">请重新选合法区域</span>
+          <span class="c">取消选择</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="gside">
+      <div class="panel rulecard">
+        <h4 class="lab" style="margin:0 0 8px">这 一 步 的 规 则</h4>
+        <div class="r"><span>合法落点</span><b>4 处</b></div>
+        <div class="r"><span>已选区域</span><b>r5c4 起 3×3（越界）</b></div>
+        <div class="r"><span>将除外</span><b>—（不可用）</b></div>
+      </div>
+      <div class="panel steps3">
+        <b>为什么要有"确认"这一步</b><br>
+        神威！选的是 <em>3×3 区域</em>、轰炸选的是 <em>整行整列</em> —— 都是大范围。
+        Hearthstone 的"松手即生效"是为<em>单点目标</em>设计的；本作按 Balatro 的先例
+        <em>先选、再确认</em>，因为两家都<em>不能撤销</em>。<br><br>
+        <b>点空白 = 取消</b>（不消耗卡）· <b>非法区域不提交</b>（第三屏）<br>
+        不需要选目标的卡（失灵！/看破！）没有这一步，点两次即用。
+      </div>
+      <div class="panel" style="flex:1;min-height:0;padding:14px">
+        <h4 class="lab" style="margin:0 0 8px">对 局 数 据</h4>
+        <div class="r" style="display:flex;justify-content:space-between;font-size:12px;padding:7px 0;color:var(--tx2)"><span>牌堆 / 弃牌堆</span><b class="mono">21 / 18</b></div>
+        <div class="r" style="display:flex;justify-content:space-between;font-size:12px;padding:7px 0;color:var(--tx2)"><span>场地魔法</span><b class="mono">无</b></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="demo-switcher">
+  <button class="on" data-view="pick" onclick="window.setDemoView('pick')">① 选目标</button>
+  <button data-view="confirm" onclick="window.setDemoView('confirm')">② 待确认</button>
+  <button data-view="invalid" onclick="window.setDemoView('invalid')">③ 非法区域</button>
+</div>
+<script>
+(function () {
+  var ENEMY = ['o.....','....X.','..X...','...o..','.....o','.o....'];
+  var MINE  = ['S..X..','....o.','.S..S.','o.....','..X.o.','.....S'];
+  function fill(id, rows) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    rows.join('').split('').forEach(function (ch) {
+      var d = document.createElement('div');
+      d.className = 'cell' + (ch === 'S' ? ' ship' : ch === 'X' ? ' hit' : ch === 'o' ? ' miss' : '');
+      el.appendChild(d);
+    });
+  }
+  // 覆盖层按真实格子矩形定位（不猜像素）：锚点格左上 → 末格右下
+  // 覆盖层用"解析式"定位：格宽由棋盘实际宽度算出。
+  // 越界区域的目标格不存在（cells[36] 是 undefined），必须能算出棋盘外的框 —— 这正是第三屏要展示的情况。
+  function box(boardId, c0, r0, span, cls, label) {
+    var b = document.getElementById(boardId);
+    if (!b) return;
+    var cells = b.querySelectorAll('.cell');
+    var cs = getComputedStyle(b);
+    var pad = parseFloat(cs.paddingLeft) || 8;
+    var gap = parseFloat(cs.gap) || 4;
+    var cw = (b.clientWidth - pad * 2 - gap * 5) / 6;
+    var a = cells[r0 * 6 + c0].getBoundingClientRect();
+    var br = b.getBoundingClientRect();
+    var w = span * cw + (span - 1) * gap;
+    var d = document.createElement('div');
+    d.className = cls;
+    d.style.left = (a.left - br.left - 3) + 'px';
+    d.style.top = (a.top - br.top - 3) + 'px';
+    d.style.width = (w + 6) + 'px';
+    d.style.height = (w + 6) + 'px';
+    if (label) d.innerHTML = '<span class="cap">' + label + '</span>';
+    b.appendChild(d);
+  }
+  ['pick', 'confirm', 'invalid'].forEach(function (v) { fill('m-' + v, MINE); fill('e-' + v, ENEMY); });
+  // ① 选目标：三个合法起点（虚框）+ 当前 3×3（实框）
+  box('e-pick', 1, 1, 1, 'anchor'); box('e-pick', 1, 3, 1, 'anchor'); box('e-pick', 3, 2, 1, 'anchor');
+  box('e-pick', 1, 1, 3, 'area', '将除外 3×3 · 含 1 艘');
+  // ② 待确认：已选区域
+  box('e-confirm', 1, 1, 3, 'area', '已选 · 待确认');
+  // ③ 非法：越界的 3×3（右下角出界）
+  box('e-invalid', 4, 4, 3, 'area bad', '越界 · 无效区域');
+})();
+</script>
+</body>
+</html>

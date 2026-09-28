@@ -2143,6 +2143,84 @@ html.theme-dark .cell.frozen-area {
         var(--deco-frozenarea-fill-dark) 0 6px, var(--deco-frozenarea-faint-dark) 6px 12px) !important;
 }
 
+/* ===== 连锁区域预览（2026-09-27）=====
+   连锁结算期间，双方都要看到「每个已确认的连锁节点会打在哪几格、画在哪块棋盘上、
+   是哪张卡」。前端在**真实棋盘格**上叠标记（`renderChainPreview`），于是：
+
+   · 坐标映射天然正确 —— 格子本身就是 `.cell[data-x][data-y]`，两块棋盘各查各的；
+   · **不遮挡任何交互** —— 只动 `box-shadow` / `background-image` / `outline`
+     这些不参与布局的属性，并且 `pointer-events: none`（角标也一样），
+     所以连锁响应按钮、棋盘点击、选区高亮全部照旧可用；
+   · 多张卡同时存在时各有颜色（`--chan-preview-rgb-1..4`）与卡名角标，
+     **重叠的格子会同时挂多个类**，两种颜色交替的斜纹 + 多个角标 ⇒ 来源可辨。
+
+   ⚠️ 与既有标记的分工（别混用类名，否则"是选区还是预览"分不出来）：
+     · `.selection-highlight` / `.magic-selection-overlay` —— 自己**正在点选**（可交互）；
+     · `.frozen-area` —— 冻结已经**落地**；
+     · `.chain-preview` —— 连锁里**已确认、尚未结算**（本批新增）。
+
+   ⚠️ 绝不动盒模型尺寸（CLAUDE.md §11.6）：只用 border-color / box-shadow /
+      background-image / outline，不设 width / height / padding / margin。 */
+.cell.chain-preview {
+    pointer-events: none;
+}
+.cell.chain-preview--1 {
+    background-image: repeating-linear-gradient(45deg,
+        rgba(var(--chan-preview-rgb-1, 56, 189, 248), 0.34) 0 5px,
+        rgba(var(--chan-preview-rgb-1, 56, 189, 248), 0.07) 5px 10px) !important;
+    box-shadow: inset 0 0 0 2px rgba(var(--chan-preview-rgb-1, 56, 189, 248), 0.9);
+}
+.cell.chain-preview--2 {
+    background-image: repeating-linear-gradient(-45deg,
+        rgba(var(--chan-preview-rgb-2, 244, 114, 182), 0.34) 0 5px,
+        rgba(var(--chan-preview-rgb-2, 244, 114, 182), 0.07) 5px 10px) !important;
+    box-shadow: inset 0 0 0 2px rgba(var(--chan-preview-rgb-2, 244, 114, 182), 0.9);
+}
+.cell.chain-preview--3 {
+    background-image: repeating-linear-gradient(45deg,
+        rgba(var(--chan-preview-rgb-3, 250, 204, 21), 0.34) 0 5px,
+        rgba(var(--chan-preview-rgb-3, 250, 204, 21), 0.07) 5px 10px) !important;
+    box-shadow: inset 0 0 0 2px rgba(var(--chan-preview-rgb-3, 250, 204, 21), 0.9);
+}
+.cell.chain-preview--4 {
+    background-image: repeating-linear-gradient(-45deg,
+        rgba(var(--chan-preview-rgb-4, 167, 139, 250), 0.34) 0 5px,
+        rgba(var(--chan-preview-rgb-4, 167, 139, 250), 0.07) 5px 10px) !important;
+    box-shadow: inset 0 0 0 2px rgba(var(--chan-preview-rgb-4, 167, 139, 250), 0.9);
+}
+/* 重叠时：后一张卡的边框叠上去（两张区域的边界同时可见） */
+.cell.chain-preview--2.chain-preview--1 { box-shadow:
+    inset 0 0 0 2px rgba(var(--chan-preview-rgb-1), 0.9),
+    inset 0 0 0 4px rgba(var(--chan-preview-rgb-2), 0.9); }
+
+/* 卡名角标：贴在区域左上那一格，绝不吃点击 */
+.chain-preview-badge {
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    right: 1px;
+    z-index: 6;
+    pointer-events: none;
+    font-size: 9px;
+    line-height: 1.1;
+    font-weight: 700;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #0b1220;
+    background: rgba(var(--chan-preview-rgb-1, 56, 189, 248), 0.92);
+    border-radius: 3px;
+    padding: 0 2px;
+}
+.chain-preview-badge--2 { background: rgba(var(--chan-preview-rgb-2, 244, 114, 182), 0.92); }
+.chain-preview-badge--3 { background: rgba(var(--chan-preview-rgb-3, 250, 204, 21), 0.92); }
+.chain-preview-badge--4 { background: rgba(var(--chan-preview-rgb-4, 167, 139, 250), 0.92); }
+/* 第 2 张及以后的角标缩一号 —— 同一格里两个角标叠着时仍能看出是两个来源 */
+.chain-preview-badge--2 { font-size: 8px; top: 11px; }
+.chain-preview-badge--3 { font-size: 8px; top: 21px; }
+.chain-preview-badge--4 { font-size: 8px; top: 31px; }
+
 /* 「疗愈」原地复活的格子（显形给对手）：要与通用显形 .revealed（暖黄内发光）明确区分。
    用**翠绿斜纹 + 绿框**，并在悬停说明里写明是疗愈复活（cell.title）。 */
 .cell.revealed-heal {
@@ -4740,6 +4818,29 @@ body.layout-tight.layout-ingame #show-opponent-stats,
     border: 1px solid rgba(255, 255, 255, 0.4);
 }
 .hist-tag-dark { background: var(--surface-muted); border-color: var(--panel-border); color: var(--muted); }
+
+/* 对局模式标签（2026-09-23 回放批）。排位 / 匹配 / 人机 / 自定义房。
+   ⚠️ `mode` 为 NULL 的老局**不显示任何标签**（教训 #21：未知不许退化成"匹配"），
+      所以这里没有 `.hist-tag-unknown` 这一档 —— 不显示就是正确答案。 */
+.hist-tag-mode { white-space: nowrap; }
+.hist-tag-ranked { background: rgba(160, 110, 240, 0.3); border-color: rgba(160, 110, 240, 0.6); }
+.hist-tag-casual { background: rgba(74, 158, 255, 0.28); border-color: rgba(74, 158, 255, 0.6); }
+.hist-tag-ai { background: rgba(128, 128, 128, 0.3); border-color: rgba(128, 128, 128, 0.6); }
+.hist-tag-custom { background: rgba(47, 158, 109, 0.28); border-color: rgba(47, 158, 109, 0.6); }
+
+/* 对局详情页的操作行（回放批）：里面是「对局回放」按钮 + 置灰时的那句原因。 */
+.match-detail-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.match-replay-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
 .history-more {
     width: 100%;
     margin-top: 4px;
@@ -6831,6 +6932,667 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, var(--deco-
     padding: 0.35rem 0.9rem;
     font-size: 0.8rem;
 }
+
+/* ---------- 30.4b 进行中的对局（观战入口，实时观战第 3 批） ----------
+   与 .lobby-room 同形体（两行 flex + 右侧按钮），只多一个「排位」角标与观战人数。
+   ⚠️ 视觉改动只允许动颜色/阴影/渐变，**不许动盒模型尺寸** ——
+   大厅页有一条「宽屏三列」的布局断言（tools/lobby_check.mjs 数 fr 轨道）。 */
+.lobby-match {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 10px;
+    border: 1px solid rgba(var(--primary-rgb), 0.22);
+    background: rgba(var(--primary-rgb), 0.05);
+}
+
+.lobby-match + .lobby-match {
+    margin-top: 6px;
+}
+
+.lobby-match-main {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.lobby-match-name {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.lobby-match-ranked {
+    flex: 0 0 auto;
+    font-size: 0.66rem;
+    padding: 1px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--secondary);
+    color: var(--secondary);
+    white-space: nowrap;
+}
+
+.lobby-match-meta {
+    font-size: 0.7rem;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.lobby-match-spectate {
+    flex: 0 0 auto;
+    padding: 3px 12px;
+    font-size: 0.78rem;
+}
+
+/* ---------- 30.7 观战屏（实时观战第 3 批） ----------
+   ⚠️ 这一屏**不复用对局屏**（理由见 game.js 里那块注释），所以样式也从零写。
+   两块棋盘用 `.board`（6×6 网格，尺寸由 ui_layout_check 钉住的既有类）——
+   这里只加一点视觉修饰，**不改 .board / .cell 的任何盒模型尺寸**。 */
+.spectate-title {
+    margin-bottom: 4px;
+}
+
+.spectate-subtitle {
+    margin: 0 0 12px;
+    font-size: 0.82rem;
+    color: var(--text-subtle);
+}
+
+.spectate-subtitle.spectate-ended {
+    color: var(--danger, #e5484d);
+    font-weight: 600;
+}
+
+.spectate-topbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+    font-size: 0.8rem;
+    color: var(--text-subtle);
+}
+
+.spectate-stat b {
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+
+#spectate-leave {
+    margin-left: auto;
+    padding: 3px 12px;
+    font-size: 0.78rem;
+}
+
+.spectate-players {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.spectate-player {
+    flex: 1 1 200px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+}
+
+.spectate-player-name {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.spectate-player-meta {
+    font-size: 0.75rem;
+    color: var(--text-subtle);
+}
+
+.spectate-body {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.spectate-board-wrapper {
+    flex: 1 1 280px;
+    min-width: 0;
+    padding: 8px 10px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+    text-align: center;
+}
+
+.spectate-board-wrapper h3 {
+    margin: 0 0 6px;
+    font-size: 0.85rem;
+    color: var(--text-subtle);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 观战棋盘**不可点**（观众没有任何操作），所以别给手型光标误导。 */
+.spectate-board .cell {
+    cursor: default;
+}
+
+.spectate-side {
+    flex: 1 1 220px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+}
+
+.spectate-side h3 {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--text-subtle);
+}
+
+.spectate-chain {
+    font-size: 0.76rem;
+    color: var(--text-subtle);
+    max-height: 96px;
+    overflow-y: auto;
+}
+
+.spectate-chain-item {
+    padding: 2px 0;
+}
+
+.spectate-chain-negated {
+    color: var(--muted);
+    text-decoration: line-through;
+}
+
+.spectate-logs {
+    font-size: 0.76rem;
+    line-height: 1.45;
+    color: var(--text-subtle);
+    max-height: 260px;
+    overflow-y: auto;
+}
+
+.spectate-log-item {
+    padding: 2px 0;
+    border-bottom: 1px dashed rgba(128, 128, 128, 0.18);
+}
+
+/* ---------- 观战席名单 + 观战席聊天（实时观战第 4 批） ----------
+   ⚠️ 只动颜色/间距，**不动棋盘相关的盒模型尺寸**（ui_layout_check 逐视口钉着
+      棋盘 300×300 / 单格 42px / 浮窗零叠压）。新增的这两个块都在
+      `.spectate-side` 里（观战屏自己的侧栏），不参与对局屏的尺寸。 */
+.spectate-roster-count {
+    color: var(--muted);
+    font-weight: normal;
+}
+
+.spectate-roster {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    font-size: 0.76rem;
+    color: var(--text-subtle);
+    max-height: 84px;
+    overflow-y: auto;
+    line-height: 1.4;
+}
+
+.spectate-roster-item {
+    padding: 1px 6px;
+    border-radius: 8px;
+    border: 1px solid var(--panel-border);
+    background: rgba(128, 128, 128, 0.08);
+    word-break: break-word;
+}
+
+/* 自己那一行加一道边 —— 一眼看出"哪个是我"（服务端只发显示名，
+   前端按 `spectate_you` 那份自己的名字比）。 */
+.spectate-roster-item.spectate-roster-me {
+    border-color: var(--accent, #4a9eff);
+    color: var(--text, inherit);
+}
+
+.spectate-roster-empty {
+    color: var(--muted);
+}
+
+.spectate-chat {
+    font-size: 0.78rem;
+    line-height: 1.45;
+    color: var(--text-subtle);
+    max-height: 160px;
+    overflow-y: auto;
+    word-break: break-word;
+}
+
+.spectate-chat-item {
+    padding: 2px 0;
+}
+
+/* 系统提示（进出观战席 / 席位变化）——与真人发言区分开，
+   观众不该把"某某来了"误读成有人在说话。 */
+.spectate-chat-notice {
+    padding: 2px 0;
+    color: var(--muted);
+    font-style: italic;
+}
+
+.spectate-chat-chat-error {
+    padding: 2px 0;
+    color: var(--danger, #e5484d);
+}
+
+.spectate-chat-input-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.spectate-chat-input {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.settings-spectate-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+}
+
+#settings-spectate-msg.settings-error {
+    color: var(--danger, #e5484d);
+}
+
+/* ==========================================================================
+   对局回放屏（2026-09-23 回放批 §7）
+   ==========================================================================
+   ⚠️ 这一整段都是**回放专用**的类名（前缀 `.replay-`），一个都不给观战屏用：
+      观战屏的棋盘渲染故意只会画「已轰过的格」，它的安全前提是"手上根本没有船位
+      数据"；回放屏要画船，两者**绝不能共用渲染**，所以连类名也分开
+      （只共用 `.cell` / `.hit` / `.miss` / `.sunk` 这几个格子状态类）。
+   ⚠️ 尺寸上**一个字都不动** `.board` / `.cell` 的盒模型：`ui_layout_check.mjs`
+      逐视口钉着棋盘 300×300 与单格 42px（它只用类名选，不认屏幕 id）。
+      `.replay-board` 只是 `.board` 的修饰类，这里**不写** width / padding / gap。
+   ⚠️ 不给本段任何元素加 `transform` / `filter` —— 回放屏里有 `position: fixed`
+      的浮层（顶栏/设置面）可能盖在它上面，加了会让浮窗改以它为准定位
+      （CLAUDE.md §11.7）。 */
+
+#replay-screen.active {
+    /* 回放屏固定一屏：棋盘 + 侧栏 + 控制条，超出的部分交给各自的内滚动区，
+       不让整页滚动（与观战屏同一条口径）。 */
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.replay-title {
+    margin-bottom: 4px;
+}
+
+.replay-subtitle {
+    margin: 0 0 12px;
+    font-size: 0.82rem;
+    color: var(--text-subtle);
+}
+
+.replay-subtitle.replay-error {
+    color: var(--danger, #e5484d);
+    font-weight: 600;
+}
+
+.replay-topbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+    font-size: 0.8rem;
+    color: var(--text-subtle);
+    position: relative;
+    z-index: 1;
+}
+
+.replay-stat b {
+    color: var(--text, inherit);
+}
+
+/* 截断/损坏提示：**必须显眼**（契约 §3：截断绝不静默）。 */
+.replay-warning {
+    padding: 2px 8px;
+    border-radius: 8px;
+    border: 1px solid var(--danger, #e5484d);
+    color: var(--danger, #e5484d);
+    font-weight: 600;
+}
+
+.replay-speed {
+    display: inline-flex;
+    gap: 4px;
+    margin-left: auto;
+}
+
+.replay-speed-btn {
+    padding: 2px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--panel-border);
+    background: rgba(128, 128, 128, 0.08);
+    color: var(--text-subtle);
+    font-size: 0.78rem;
+    cursor: pointer;
+}
+
+.replay-speed-btn.active {
+    border-color: var(--accent, #4a9eff);
+    color: var(--text, inherit);
+    font-weight: 600;
+}
+
+.replay-players {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.replay-player {
+    flex: 1 1 200px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+}
+
+.replay-player-name {
+    font-size: 0.92rem;
+    font-weight: 600;
+}
+
+.replay-player-meta {
+    font-size: 0.76rem;
+    color: var(--text-subtle);
+}
+
+.replay-body {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-start;
+    margin-bottom: 10px;
+}
+
+.replay-board-wrapper {
+    flex: 1 1 280px;
+    min-width: 0;
+    padding: 8px 10px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+    text-align: center;
+}
+
+.replay-board-wrapper h3 {
+    margin: 0 0 6px;
+    font-size: 0.85rem;
+    color: var(--text-subtle);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 回放棋盘**不可点**（看客没有任何操作），别给手型光标误导；
+   也去掉 hover 的位移 —— 它会让格子看起来能点。 */
+.replay-board .cell {
+    cursor: default;
+}
+
+.replay-board .cell:hover {
+    transform: none;
+}
+
+/* 还没被炸到、也没有船的格子：回放里它是**空海**，别画成攻击格。 */
+.cell.replay-water {
+    background: var(--cell-water);
+}
+
+/* 回放棋盘上的**效果格**（作者实报：看不到仁王之盾的护盾格 / 神威挖的洞 / 冻结区）。
+   ⚠️ 类名复用实战场那几个（`.shenwei-hole` / `.frozen-area` / `.last-stand-candidate`
+      / `.ship.shielded`）—— 一份样式两处用，不另起一套。
+   ⚠️ 但实战场那三个是**靠 `::after` 画自己的字形**的（✕ / ? / 无），而回放棋盘
+      还要用 `textContent` 画 `⛴` 船与 `✕` 命中。两者会叠在同一格上
+      （例如"有船的洞"会同时出 ⛴ 和 ::after 的 ✕）⇒ 回放里把那一层字形**关掉**，
+      效果只用底色 + 描边表达，字形一律由 `game.js` 的 `textContent` 决定。
+      这个覆盖**只作用于 `.replay-board` 之内**，实战/观战棋盘一格都不受影响。 */
+.replay-board .cell.shenwei-hole::after,
+.replay-board .cell.frozen-area::after,
+.replay-board .cell.last-stand-candidate::after,
+.replay-board .cell.shield-broken::after,
+.replay-board .cell.ship.shielded::before {
+    content: none;
+}
+/* 神威洞在回放里要**看得出是"被挖掉"**，但底下的船/命中标记仍要读得出来 ——
+   实战场那份有 `cursor: not-allowed`（那是给"打不了"用的），回放里没有
+   "能不能打"这回事，这里只把光标改回默认；底色与不透明度**原样保留**
+   （同一份视觉语言，两处一致）。 */
+.replay-board .cell.shenwei-hole {
+    cursor: default;
+}
+
+/* 自己那一侧加一道淡边（服务端下发 `you_are` 时才有）。 */
+.replay-board.replay-board-mine {
+    border-color: var(--accent, #4a9eff);
+}
+
+.replay-side {
+    flex: 1 1 220px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+}
+
+.replay-side h3 {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--text-subtle);
+}
+
+.replay-hand {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    font-size: 0.76rem;
+    color: var(--text-subtle);
+    max-height: 88px;
+    overflow-y: auto;
+}
+
+.replay-hand-card {
+    padding: 1px 6px;
+    border-radius: 8px;
+    border: 1px solid var(--panel-border);
+    background: rgba(128, 128, 128, 0.08);
+    word-break: break-word;
+    /* 只读展示：不可点、不触发任何操作（契约 §7）。 */
+    cursor: default;
+    user-select: none;
+}
+
+.replay-hand-empty {
+    color: var(--muted);
+}
+
+.replay-current {
+    font-size: 0.78rem;
+    line-height: 1.45;
+    color: var(--text, inherit);
+    padding: 4px 6px;
+    border-radius: 8px;
+    background: rgba(128, 128, 128, 0.08);
+    word-break: break-word;
+}
+
+.replay-logs {
+    font-size: 0.76rem;
+    line-height: 1.45;
+    color: var(--text-subtle);
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.replay-log-item {
+    padding: 2px 0;
+    border-bottom: 1px dashed rgba(128, 128, 128, 0.18);
+}
+
+.replay-log-item.replay-log-current {
+    color: var(--text, inherit);
+    font-weight: 600;
+}
+
+.replay-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+
+.replay-track {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 120px;
+    height: 26px;
+    border-radius: 8px;
+    background: rgba(128, 128, 128, 0.14);
+    cursor: pointer;
+    touch-action: none;
+}
+
+.replay-track:focus-visible {
+    outline: 2px solid var(--accent, #4a9eff);
+    outline-offset: 2px;
+}
+
+.replay-track-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 0;
+    border-radius: 8px;
+    background: rgba(var(--primary-rgb), 0.28);
+    pointer-events: none;
+}
+
+.replay-track-nodes {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    pointer-events: none;
+}
+
+/* 关键节点标记。⚠️ 位置由 JS 按 `i/(n-1)` 算好写成 inline `left`，
+   这里**不写** left/transform，免得两处各算一次（那必然漂移）。 */
+.replay-track-node {
+    position: absolute;
+    top: 4px;
+    width: 9px;
+    height: 18px;
+    margin-left: -4.5px;
+    border-radius: 3px;
+    border: 1px solid rgba(0, 0, 0, 0.35);
+    background: var(--text-subtle);
+    pointer-events: auto;
+    cursor: pointer;
+}
+
+.replay-track-node.kind-magic { background: #8a6bd8; }
+.replay-track-node.kind-sunk { background: #e5484d; }
+.replay-track-node.kind-hit { background: #e0a021; }
+.replay-track-node.kind-reset { background: #2f9e6d; }
+.replay-track-node.kind-phase { background: #4a9eff; }
+.replay-track-node.kind-game_over { background: #111; }
+.replay-track-node.kind-truncated { background: #808080; }
+
+.replay-track-thumb {
+    position: absolute;
+    top: -2px;
+    width: 4px;
+    height: calc(100% + 4px);
+    margin-left: -2px;
+    border-radius: 2px;
+    background: var(--accent, #4a9eff);
+    pointer-events: none;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+/* 节点 tooltip：fixed + 用鼠标坐标定位（不挂在 track 里面，免得被 overflow 裁掉）。
+   ⚠️ 这里**只**用 `left/top`，不加 `transform` —— 有 transform 时 fixed 的
+      定位基准会变成它自己的包含块，坐标就错位了。 */
+.replay-node-tip {
+    position: fixed;
+    z-index: 60;
+    max-width: 260px;
+    padding: 4px 8px;
+    border-radius: 8px;
+    border: 1px solid var(--panel-border);
+    background: rgba(20, 20, 24, 0.94);
+    color: #f2f2f2;
+    font-size: 0.76rem;
+    line-height: 1.4;
+    pointer-events: none;
+    word-break: break-word;
+}
+
+.replay-actions {
+    display: flex;
+    gap: 10px;
+}
+
 /* ---------- 30.5 公屏 ---------- */
 .lobby-chat-messages {
     flex: 1 1 auto;
@@ -6879,7 +7641,7 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, var(--deco-
         max-height: 300px;
     }
 }
-=======
+
 /* ============================================================================
    33. 好友面板 / 邀战提示 / 加好友按钮（好友批，2026-09-19）
    —— 全部是**新增类**，既有选择器一行没动。四条自我约束（都是本项目踩过的坑）：
@@ -9249,4 +10011,357 @@ html[data-theme-preset="arena"] body:not(.layout-compact) #view-discard-pile {
         --arena-pad-l: max(0px, calc(308px - (100vw - 1440px) / 2));
         --arena-pad-r: max(0px, calc(320px - (100vw - 1440px) / 2));
     }
+}
+
+/* ============================================================================
+   38. 更新公告（公告批，2026-09-19）
+   ---------------------------------------------------------------------------
+   契约见 docs/UPDATES_2026_09_19.md。本节**全是新增类**（`.changelog-*`），
+   既有选择器一行没动 —— 面板本身复用既有的 `.modal-overlay` / `.modal-content` /
+   `.modal-scroll-content` / `.modal-close`，所以这里只补内容排版。
+
+   三条自我约束（沿用第 33/34 节那一份，都是本项目踩过的坑）：
+     ① **不给任何既有元素加尺寸**（CLAUDE.md 第 11 节第 6 条）：唯一的尺寸类是
+        `.changelog-dot`（本入口自己的小圆点，不是既有元素）。
+     ② 颜色**零写死**：走 --muted / --accent / --danger / --panel-border 这些既有变量，
+        深色主题与主题预设自动跟着变。
+     ③ 时间是服务端给的原文，这里只负责层级与留白，**不做任何格式化**。
+   ============================================================================ */
+
+/* 入口上的"有新公告"小红点（与 .friends-badge 同一套配色思路，但不显示数字） */
+.changelog-dot {
+    display: inline-block;
+    margin-left: 5px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--danger);
+    vertical-align: super;
+}
+
+#changelog-modal .changelog-hint {
+    margin: 0 0 12px;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.changelog-entry + .changelog-entry {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--panel-border);
+}
+
+.changelog-date {
+    margin: 0 0 6px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.changelog-items {
+    margin: 0;
+    padding-left: 18px;
+    line-height: 1.75;
+}
+
+.changelog-items li {
+    margin: 2px 0;
+    overflow-wrap: anywhere;      /* 窄屏：长句也横向溢不出去 */
+}
+
+
+/* =====================================================================
+   反作弊管理后台（2026-09-20）—— 第 33 节
+   ⚠️ 只动颜色/间距/排版，**不动盒模型尺寸**（CLAUDE.md 第 11 节第 6 条：
+      改完必须跑 `node tools/ui_layout_check.mjs` 验证棋盘与浮窗没被影响）。
+   ===================================================================== */
+.admin-modal-content {
+    width: min(920px, 92vw);
+    max-height: 86vh;
+    overflow-y: auto;
+}
+
+.admin-tabs {
+    display: flex;
+    gap: 8px;
+    margin: 10px 0 14px;
+    border-bottom: 1px solid var(--panel-border);
+}
+
+.admin-tab {
+    background: none;
+    border: none;
+    padding: 8px 14px;
+    cursor: pointer;
+    color: var(--text-dim, #9aa4b2);
+    font-size: 14px;
+    border-bottom: 2px solid transparent;
+}
+
+.admin-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+.admin-toolbar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.admin-toolbar input {
+    flex: 1;
+    min-width: 0;
+}
+
+.admin-list { max-height: 46vh; overflow-y: auto; }
+
+.admin-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.admin-table th, .admin-table td {
+    text-align: left;
+    padding: 7px 8px;
+    border-bottom: 1px solid var(--panel-border);
+}
+.admin-table th { color: var(--accent); font-weight: 600; }
+
+.admin-badge {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 9px;
+    font-size: 12px;
+    line-height: 1.6;
+    white-space: nowrap;
+}
+.admin-badge.lvl-green  { background: rgba(70, 190, 120, .18); color: #56d38b; }
+.admin-badge.lvl-yellow { background: rgba(230, 190, 60, .18); color: #e6be3c; }
+.admin-badge.lvl-orange { background: rgba(240, 140, 50, .18); color: #f08c32; }
+.admin-badge.lvl-red    { background: rgba(235, 80, 80, .18);  color: #eb5050; }
+.admin-badge.lvl-blue   { background: rgba(90, 150, 240, .18); color: #5a96f0; }
+
+.admin-head { margin-bottom: 12px; }
+.admin-name { font-size: 18px; font-weight: 600; }
+.admin-sub { font-size: 13px; color: var(--text-dim, #9aa4b2); margin-top: 4px; }
+
+.admin-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    font-size: 14px;
+    margin-bottom: 6px;
+}
+
+.admin-blocked { display: flex; gap: 6px; flex-wrap: wrap; }
+.admin-ok { color: #56d38b; font-size: 13px; }
+.admin-empty { color: var(--text-dim, #9aa4b2); font-size: 13px; }
+
+.admin-actions { margin-bottom: 6px; }
+.admin-actions input { width: 100%; margin-bottom: 8px; }
+.admin-btnrow { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.admin-flags { max-height: 26vh; overflow-y: auto; }
+.admin-flag {
+    padding: 7px 9px;
+    margin-bottom: 6px;
+    border-left: 3px solid var(--accent);
+    background: rgba(255, 255, 255, .03);
+    border-radius: 4px;
+}
+.admin-flag-rule { font-size: 13px; font-weight: 600; }
+.admin-flag-detail { font-size: 12px; color: var(--text-dim, #9aa4b2); margin-top: 3px; overflow-wrap: anywhere; }
+
+.admin-history { font-size: 12px; }
+.admin-hist-row {
+    display: grid;
+    grid-template-columns: 130px 90px 1fr 110px;
+    gap: 6px;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--panel-border);
+    overflow-wrap: anywhere;
+}
+
+
+/* 被更高优先级选船效果挡住的手牌（2026-09-20 优先级仲裁批）。
+   只是提前告知，真正的拒绝在服务端。视觉上"灰掉但仍可辨认"，
+   不隐藏 —— 玩家要能看见自己有什么牌。 */
+.magic-card.pick-blocked {
+    opacity: .45;
+    filter: grayscale(.7);
+    cursor: not-allowed;
+}
+
+.magic-card.pick-blocked:hover {
+    /* 保持灰态，避免"看起来能点"的误导 */
+    opacity: .45;
+}
+
+
+/* ============================================================
+   命运骰子：摇骰子动画 + 弃牌选择浮层（判定魔法卡）
+   只用 fixed 定位 + transform/opacity/动画，不动盒模型尺寸。
+   ============================================================ */
+.dice-roll-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .78);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100000;
+    opacity: 0;
+    transition: opacity .25s ease;
+    pointer-events: none;
+}
+.dice-roll-overlay::after {
+    /* 透明度过渡：append 后下一帧再拉到 1，做出淡入 */
+    content: '';
+}
+.dice-roll-overlay:not(.dice-roll-fade-out) {
+    opacity: 1;
+}
+.dice-roll-fade-out {
+    opacity: 0;
+    transition: opacity .5s ease;
+}
+
+.dice-roll-card {
+    text-align: center;
+    color: #fff;
+    padding: 24px 32px;
+    border-radius: 14px;
+    background: linear-gradient(160deg, rgba(46, 58, 95, .92), rgba(20, 26, 44, .92));
+    box-shadow: 0 12px 40px rgba(0, 0, 0, .5), 0 0 24px rgba(120, 160, 255, .25);
+    border: 1px solid rgba(120, 160, 255, .3);
+}
+.dice-roll-title {
+    font-size: 18px;
+    margin-bottom: 14px;
+    color: #cfd8f0;
+    letter-spacing: 1px;
+}
+
+/* 骰子：用单面切换模拟翻滚（不依赖 3D transform，兼容性好）。
+   data-show 属性决定当前显示哪一面，JS 摇骰阶段快速切换它。 */
+.dice-3d {
+    width: 88px;
+    height: 88px;
+    margin: 0 auto 16px;
+    position: relative;
+    border-radius: 16px;
+    background: linear-gradient(145deg, #f5f7ff, #d6dcef);
+    box-shadow: inset 0 -6px 12px rgba(80, 100, 140, .35),
+                inset 0 4px 8px rgba(255, 255, 255, .8),
+                0 8px 20px rgba(0, 0, 0, .4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 44px;
+    font-weight: 800;
+    color: #2a3458;
+    text-shadow: 0 2px 0 rgba(255, 255, 255, .5);
+    transform: rotate(-6deg) scale(1);
+    animation: dice-shake .6s ease-in-out infinite alternate;
+}
+.dice-3d-face { display: none; }
+.dice-3d[data-show="1"] .dice-3d-face[data-face="1"] { display: block; }
+.dice-3d[data-show="2"] .dice-3d-face[data-face="2"] { display: block; }
+.dice-3d[data-show="3"] .dice-3d-face[data-face="3"] { display: block; }
+.dice-3d[data-show="4"] .dice-3d-face[data-face="4"] { display: block; }
+.dice-3d[data-show="5"] .dice-3d-face[data-face="5"] { display: block; }
+.dice-3d[data-show="6"] .dice-3d-face[data-face="6"] { display: block; }
+
+@keyframes dice-shake {
+    0%   { transform: rotate(-8deg) scale(.98); }
+    100% { transform: rotate(8deg) scale(1.02); }
+}
+
+.dice-roll-result {
+    font-size: 32px;
+    font-weight: 800;
+    color: #ffd56a;
+    margin: 4px 0 6px;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity .3s ease, transform .3s ease;
+    text-shadow: 0 0 12px rgba(255, 200, 80, .6);
+}
+.dice-roll-result-show {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.dice-roll-effect {
+    font-size: 15px;
+    color: #a8b8e0;
+    min-height: 22px;
+    opacity: 0;
+    transition: opacity .3s ease;
+}
+.dice-roll-effect-show {
+    opacity: 1;
+}
+
+/* 弃牌选择浮层 */
+.dice-discard-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .78);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100001;
+    animation: dice-fade-in .25s ease;
+}
+@keyframes dice-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+.dice-discard-card {
+    background: linear-gradient(160deg, rgba(46, 58, 95, .96), rgba(20, 26, 44, .96));
+    border: 1px solid rgba(120, 160, 255, .3);
+    border-radius: 14px;
+    padding: 20px 24px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, .5);
+    color: #fff;
+    max-width: 90vw;
+}
+.dice-discard-title {
+    font-size: 16px;
+    margin-bottom: 14px;
+    color: #ffd56a;
+    text-align: center;
+    letter-spacing: .5px;
+}
+.dice-discard-hand {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: 80vw;
+}
+.dice-discard-card-item {
+    width: 110px;
+    padding: 10px 8px;
+    border-radius: 10px;
+    background: linear-gradient(160deg, #3a4670, #252d4a);
+    border: 1px solid rgba(120, 160, 255, .35);
+    color: #fff;
+    cursor: pointer;
+    text-align: center;
+    transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+}
+.dice-discard-card-item:hover {
+    transform: translateY(-4px);
+    border-color: #ffd56a;
+    box-shadow: 0 8px 18px rgba(255, 200, 80, .3);
+}
+.dice-discard-card-item .card-name {
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 4px;
+    line-height: 1.25;
+}
+.dice-discard-card-item .card-speed,
+.dice-discard-card-item .card-type {
+    font-size: 11px;
+    color: #a8b8e0;
 }

@@ -109,6 +109,12 @@
                      数字由 game.js 的首页面板与内联的在线人数脚本一起刷新
                      （两处都只写文本，不新增接口）。 -->
                 <span class="nav-pill" title="当前在线人数">在线 <b id="online-count-nav">0</b></span>
+            <!-- 更新公告（公告批，2026-09-19）。与「帮助」同一条导航排。
+                 ⚠️ 红点默认 hidden：只在"接口说有新公告"时才显示（见 maybeAnnounceChangelog）。
+                    默认亮着会变成"永远消不掉的红点"，比不加还烦人。 -->
+            <button id="changelog-btn" class="btn secondary hide-in-game"
+                    title="看看这次改了什么">更新公告<span id="changelog-dot"
+                    class="changelog-dot hidden">·</span></button>
                 <button id="help-btn" class="btn secondary">帮助</button>
                 <button id="settings-btn" class="btn secondary">设置</button>
                 <button id="music-btn" class="btn secondary">🎵</button>
@@ -190,10 +196,11 @@
                     <span class="mbtn-ic" aria-hidden="true">🎯</span>
                     <span class="mbtn-txt"><span class="tt">人机对战</span><span class="td">练习规则与连锁</span></span>
                 </button>
-                <select id="ai-difficulty" class="secondary" title="人机难度：简单=电脑不出魔法卡；普通/困难=会打出手上的魔法卡">
+                <select id="ai-difficulty" class="secondary" title="人机难度：简单=电脑不出魔法卡；普通/困难=会打出手上的魔法卡；大师=会读局势、按情报开炮、几乎会用所有卡牌">
                     <option value="easy">电脑：简单</option>
                     <option value="normal" selected>电脑：普通</option>
                     <option value="hard">电脑：困难</option>
+                <option value="master">电脑：大师</option>
                 </select>
             </div>
         </div>
@@ -726,6 +733,15 @@
                 </div>
             </section>
 
+            <!-- ★ 进行中的对局（实时观战第 3 批的入口）。
+                 ⚠️ 与上面的「房间列表」**必须是两块**：房间列表的语义是"点进去入座"，
+                 这里是"点进去观战"。混在一起玩家会点到一间坐不进去的房。
+                 数据来自 lobby_state 的 `matches` 字段（契约见 docs/LOBBY_2026_09_18.md §1.3）。 -->
+            <section class="lobby-panel">
+                <h3>进行中的对局</h3>
+                <ul id="lobby-matches-list" class="lobby-list"></ul>
+            </section>
+
             <section class="lobby-panel">
                 <h3>大厅公屏</h3>
                 <div id="lobby-chat-messages" class="lobby-chat-messages"></div>
@@ -894,6 +910,148 @@
             </div>
         </div>
         </div><!-- /.over-wrap -->
+    </div>
+
+    <!-- ★ 观战屏（实时观战第 3 批）。
+         ⚠️ 这是一块**独立屏、自带一套渲染**，绝不复用 #game-screen：
+         服务端给 `game_state` 的 attacking 分支**不设 playerId**，而
+         updateAttackDisplay / shield_absorbed 全靠 `result.attacker === gameState.playerId`
+         决定画在哪块棋盘 —— 观众复用对局屏的话 playerId 是 undefined，
+         每一炮都会被判成"对方的"，两块棋盘全反。
+         ⚠️ 显隐只能用 `active` 类（不许用 hidden，见 game.js 里那条警告）。
+         ⚠️ 这里的两块棋盘**只由 board_attacks / sides.*.attacks 重建**
+         （已轰过的格 + hit/ship_sunk），**没有任何船位数据** —— 快照里也没有。 -->
+    <div id="spectate-screen" class="screen">
+        <h2 class="spectate-title">观战中 · 第<b id="spectate-round">1</b>回合</h2>
+        <p class="spectate-subtitle" id="spectate-status">正在连接对局…</p>
+
+        <div class="spectate-topbar">
+            <span class="spectate-stat">阶段 <b id="spectate-phase">—</b></span>
+            <span class="spectate-stat">当前行动 <b id="spectate-turn">—</b></span>
+            <span class="spectate-stat">剩余攻击次数 <b id="spectate-attacks">0</b></span>
+            <span class="spectate-stat">场地魔法 <b id="spectate-field-magic">无</b></span>
+            <span class="spectate-stat">观战 <b id="spectate-count">0</b>/<b id="spectate-limit">20</b></span>
+            <button id="spectate-leave" class="btn secondary" type="button">退出观战</button>
+        </div>
+
+        <div class="spectate-players">
+            <div class="spectate-player" id="spectate-player-1">
+                <span class="spectate-player-name" id="spectate-name-1">—</span>
+                <span class="spectate-player-meta">剩余战舰 <b id="spectate-ships-1">0</b> · 手牌 <b id="spectate-hand-1">0</b> 张</span>
+            </div>
+            <div class="spectate-player" id="spectate-player-2">
+                <span class="spectate-player-name" id="spectate-name-2">—</span>
+                <span class="spectate-player-meta">剩余战舰 <b id="spectate-ships-2">0</b> · 手牌 <b id="spectate-hand-2">0</b> 张</span>
+            </div>
+        </div>
+
+        <div class="spectate-body">
+            <div class="spectate-board-wrapper">
+                <h3 id="spectate-board-title-1">— 的棋盘</h3>
+                <div id="spectate-board-1" class="board spectate-board"></div>
+            </div>
+            <div class="spectate-board-wrapper">
+                <h3 id="spectate-board-title-2">— 的棋盘</h3>
+                <div id="spectate-board-2" class="board spectate-board"></div>
+            </div>
+            <div class="spectate-side">
+                <h3>观战席 <span class="spectate-roster-count" id="spectate-roster-count"></span></h3>
+                <div id="spectate-roster" class="spectate-roster"></div>
+                <h3>观战席聊天</h3>
+                <!-- ⚠️ 观战席上只有观众看得见这块（服务端那条广播**只发进
+                     `spectate:<room_id>`**，对局双方根本不在那个房间里）。
+                     消息一律用 textContent 渲染，绝不 innerHTML（见 game.js 的
+                     appendSpectateChat / appendSpectateChatNotice 里的告示）。 -->
+                <div id="spectate-chat" class="spectate-chat"></div>
+                <div class="spectate-chat-input-row">
+                    <input type="text" id="spectate-chat-input" class="spectate-chat-input"
+                           maxlength="100" autocomplete="off" placeholder="和观众聊聊…">
+                    <button type="button" id="spectate-chat-send" class="btn secondary">发送</button>
+                </div>
+                <h3>当前连锁</h3>
+                <div id="spectate-chain" class="spectate-chain"></div>
+                <h3>对局日志</h3>
+                <div id="spectate-logs" class="spectate-logs"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ★ 对局回放屏（2026-09-23 回放批 §7）。**独立一整屏，绝不改造 #spectate-screen**：
+          观战屏的棋盘渲染**故意**只画「已轰过的格」，它的安全前提是"手上根本没有船位数据"；
+          一旦让它学会画船，某次改动就可能把船位漏给观众。所以这里新屏、新 id
+          （`#replay-board-1/2`）、新渲染函数，只共用 CSS 类（`.cell/.hit/.miss/.sunk`）
+          与 magic_cards.js 的卡名映射。
+          ⚠️ 回放屏**不碰 socket**：不 join 房间、不发事件、不订阅观战通道，
+             数据只来自 GET /api/replay/<match_id>。
+          ⚠️ 也不放观战席与聊天输入框 —— 回放没有「观众」这个概念。
+          ⚠️ 显隐只能用 `active` 类（不许用 hidden，见 game.js 里那条警告）。 -->
+    <div id="replay-screen" class="screen">
+        <h2 class="replay-title">对局回放 · <b id="replay-players-title">—</b></h2>
+        <p class="replay-subtitle" id="replay-status">正在加载回放…</p>
+
+        <div class="replay-topbar">
+            <span class="replay-stat">来源 <b id="replay-source">—</b></span>
+            <span class="replay-stat">第 <b id="replay-step-index">0</b>/<b id="replay-step-total">0</b> 步</span>
+            <span class="replay-stat">当前 <b id="replay-step-kind">—</b></span>
+            <span class="replay-stat">行动方 <b id="replay-step-actor">—</b></span>
+            <span class="replay-warning hidden" id="replay-truncated"></span>
+            <span class="replay-speed" id="replay-speed-group" role="group" aria-label="播放倍速">
+                <button type="button" class="replay-speed-btn active" data-replay-speed="1">1×</button>
+                <button type="button" class="replay-speed-btn" data-replay-speed="2">2×</button>
+                <button type="button" class="replay-speed-btn" data-replay-speed="4">4×</button>
+            </span>
+        </div>
+
+        <div class="replay-players">
+            <div class="replay-player">
+                <span class="replay-player-name" id="replay-name-1">—</span>
+                <span class="replay-player-meta">剩余战舰 <b id="replay-ships-1">0</b></span>
+            </div>
+            <div class="replay-player">
+                <span class="replay-player-name" id="replay-name-2">—</span>
+                <span class="replay-player-meta">剩余战舰 <b id="replay-ships-2">0</b></span>
+            </div>
+        </div>
+
+        <div class="replay-body">
+            <div class="replay-board-wrapper">
+                <h3 id="replay-board-title-1">— 的棋盘</h3>
+                <div id="replay-board-1" class="board replay-board" role="img"
+                     aria-label="第一位玩家的棋盘"></div>
+            </div>
+            <div class="replay-board-wrapper">
+                <h3 id="replay-board-title-2">— 的棋盘</h3>
+                <div id="replay-board-2" class="board replay-board" role="img"
+                     aria-label="第二位玩家的棋盘"></div>
+            </div>
+            <div class="replay-side">
+                <h3 id="replay-hand-title-1">— 的手牌</h3>
+                <div class="replay-hand" id="replay-hand-1"></div>
+                <h3 id="replay-hand-title-2">— 的手牌</h3>
+                <div class="replay-hand" id="replay-hand-2"></div>
+                <h3>这一步</h3>
+                <div class="replay-current" id="replay-current">—</div>
+                <h3>对局记录</h3>
+                <div class="replay-logs" id="replay-logs"></div>
+            </div>
+        </div>
+
+        <div class="replay-controls">
+            <button id="replay-prev" class="btn secondary" type="button">上一步</button>
+            <button id="replay-play" class="btn" type="button">播放</button>
+            <button id="replay-next" class="btn secondary" type="button">下一步</button>
+            <div id="replay-track" class="replay-track" role="slider" tabindex="0"
+                 aria-label="回放进度" aria-valuemin="0" aria-valuenow="0" aria-valuemax="0">
+                <div class="replay-track-fill" id="replay-track-fill"></div>
+                <div class="replay-track-nodes" id="replay-track-nodes"></div>
+                <div class="replay-track-thumb" id="replay-track-thumb"></div>
+            </div>
+        </div>
+        <div class="replay-node-tip hidden" id="replay-node-tip" role="tooltip"></div>
+
+        <div class="replay-actions">
+            <button id="replay-leave" class="btn secondary" type="button">退出回放</button>
+        </div>
     </div>
 
     <!-- 个人信息模态弹窗（2026-09-17 名片改版）——⚠️ 这里是【编辑面】。
@@ -1179,6 +1337,28 @@
                             对局历史是否公开、名片上显示哪些内容，都在「个人信息 → 编辑资料」里改；
                             这里刻意不再放一份控件（同一个设置两份控件必然漂移）。
                         </p>
+                        <!-- 观战开关（实时观战第 3 批）。状态**只来自服务端**
+                             （进设置面时拉 GET /api/spectate/setting），前端不许自己给默认值，
+                             否则"服务端关着、前端显示开着"会让人以为设置没生效。
+                             保存失败必须有提示（不许静默）。 -->
+                        <label class="profile-label-half settings-spectate-row">
+                            <input type="checkbox" id="settings-allow-spectate" checked>
+                            <span>允许他人观战我的对局</span>
+                        </label>
+                        <p class="muted-hint" id="settings-spectate-msg" role="status">
+                            打开后，别人可以在大厅里看到并围观你的对局（只看到双方已轰过的格子，看不到你的船在哪）。
+                        </p>
+                        <!-- 回放开关（回放批 §5）。与观战开关同一套写法：状态**只来自服务端**
+                             （进设置面时拉 GET /api/replay/setting），前端不许自己给默认值。
+                             保存失败必须提示（不许静默）。
+                             语义：**任一方关掉，这一局就不留回放**。 -->
+                        <label class="profile-label-half settings-spectate-row">
+                            <input type="checkbox" id="settings-allow-replay" checked>
+                            <span>允许保留我的对局回放</span>
+                        </label>
+                        <p class="muted-hint" id="settings-replay-msg" role="status">
+                            打开后，你打完的对局会在战绩里留下可回看的记录（你和对手能看到，别的玩家按你的战绩公开设置决定）。
+                        </p>
                         <button type="button" id="settings-goto-profile" class="btn secondary">前往个人信息编辑</button>
                     </section>
                 </div>
@@ -1188,6 +1368,20 @@
     </div>
 
     <!-- 帮助模态弹窗 -->
+    <!-- 更新公告（公告批，2026-09-19）。骨架照 #help-modal：.modal-overlay + .modal-content +
+         滚动容器（.modal-scroll-content）。
+         ⚠️ **必须**是 .modal-overlay：浮层互斥是「按类名取全量元素」实现的（见 closeOverlaysExcept），
+            手抄 id 清单一定会漏 —— 另一个会话刚为这个形状补过回归测试
+            （tests/test_screen_overlay_registry.py）。 -->
+    <div id="changelog-modal" class="modal-overlay hidden">
+        <div class="modal-content wide-modal">
+            <span class="modal-close" id="changelog-close">×</span>
+            <h2>更新公告</h2>
+            <p class="changelog-hint">每次更新都会在这里写清改了什么。</p>
+            <div id="changelog-list" class="modal-scroll-content"></div>
+        </div>
+    </div>
+
     <div id="help-modal" class="modal-overlay hidden">
         <div class="modal-content wide-modal">
             <span class="modal-close" id="help-modal-close">×</span>
@@ -1320,6 +1514,37 @@
         </div>
     </div>
 
+    <!-- 反作弊管理后台（2026-09-20）。
+         ⚠️ 入口只在 `/api/admin/me` 返回 is_admin 时才插进页面 —— **前端隐藏不是安全措施**，
+            真正的门禁在服务端（`api._admin_required()`，非管理员一律 403）。
+            这里隐藏只是"别让普通玩家看到一个点不动的按钮"。
+         层级写法照既有弹窗：`.modal-overlay` + `.modal-content`，
+         祖先链里不许有 transform/filter/backdrop-filter（CLAUDE.md 第 11 节第 7 条）。 -->
+    <div id="admin-modal" class="modal-overlay hidden">
+        <div class="modal-content admin-modal-content">
+            <span class="modal-close" id="admin-modal-close">×</span>
+            <h2>反作弊管理</h2>
+            <div class="admin-tabs">
+                <button type="button" class="admin-tab active" id="admin-tab-list">嫌疑度总览</button>
+                <button type="button" class="admin-tab" id="admin-tab-detail">玩家详情</button>
+            </div>
+
+            <!-- 视图一：全服嫌疑度列表 -->
+            <div id="admin-view-list">
+                <div class="admin-toolbar">
+                    <input type="text" id="admin-search" placeholder="搜索用户名…" autocomplete="off">
+                    <button type="button" class="btn secondary" id="admin-refresh">刷新</button>
+                </div>
+                <div id="admin-list" class="admin-list"><p>加载中…</p></div>
+            </div>
+
+            <!-- 视图二：单个玩家详情（点头像进来 / 从列表点进来） -->
+            <div id="admin-view-detail" class="hidden">
+                <div id="admin-detail"><p>从左侧列表点一个玩家，或在游戏里点头像。</p></div>
+            </div>
+        </div>
+    </div>
+
     <!-- 好友面板（好友批）+ 好友私聊（私聊批，2026-09-19）。
          ⚠️ 层级写法照既有弹窗：`.modal-overlay`（position:fixed，z-index 10000）+ `.modal-content`。
          本弹窗的祖先链里没有任何 transform/filter/backdrop-filter ——
@@ -1395,6 +1620,9 @@
 <script src="/static/wallpaper.js?v={{ asset_v('wallpaper.js') }}"></script>
 <!-- 开发者调试面板（F8）：只在服务端 debug_status 明确允许时才显示，其余环境按 F8 无反应 -->
 <script src="/static/debug_panel.js?v={{ asset_v('debug_panel.js') }}"></script>
+
+<!-- 反作弊管理后台：先问 /api/admin/me，非管理员**静默不加载 UI**（门禁在服务端） -->
+<script src="/static/admin.js?v={{ asset_v('admin.js') }}"></script>
 
 <!-- flash 消息自动消失 -->
 <script>

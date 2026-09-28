@@ -288,7 +288,7 @@ def test_holder_attack_sinking_opponent_does_not_draw(room):
     setup(room)
     room.current_attacker = P1
     server._apply_ship_sunk_effects(
-        room, room.id, P1, P2, room.players[P2].ships[5], 5, 5)
+        room, room.id, P1, P2, room.players[P2].ships[5])
 
     assert room.players[P1].magic_hand == [], (
         f'"己方击败对方的船不算"，实际摸了：{[c.name for c in room.players[P1].magic_hand]}')
@@ -299,7 +299,7 @@ def test_opponent_attack_sinking_holder_does_draw(room):
     setup(room)
     room.current_attacker = P2
     server._apply_ship_sunk_effects(
-        room, room.id, P2, P1, room.players[P1].ships[5], 5, 0)
+        room, room.id, P2, P1, room.players[P1].ships[5])
 
     assert len(room.players[P1].magic_hand) == 1, (
         '是对方击败了我方，属于主动变化')

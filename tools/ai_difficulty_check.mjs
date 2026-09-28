@@ -3,7 +3,8 @@
  * 人机对战难度选择回归检查（无头 Edge + CDP）
  *
  * 覆盖 2026-09-13 新增能力：AI 会打出手上的魔法卡（此前一张都不出）。
- * 难度分档：easy = 电脑不出牌（新手保底）；normal / hard = 电脑会出牌。
+ * 难度分档：easy = 电脑不出牌（新手保底）；normal / hard = 电脑会出牌；
+ *           master = 大师（读局势、按情报开炮、几乎会用所有卡牌）。
  * 本脚本验证「所选难度确实随 create_ai_room 发给了服务端」，以及下拉框本身可用。
  *
  * 用法：
@@ -115,7 +116,7 @@ try {
     ' visible: !!(s.offsetWidth || s.offsetHeight) }; })()');
   check(!!opts, '首页存在人机难度下拉框', opts);
   if (!opts) throw new Error('缺少 #ai-difficulty');
-  check(opts.options.join(',') === 'easy,normal,hard', '三档难度齐备', opts.options);
+  check(opts.options.join(',') === 'easy,normal,hard,master', '四档难度齐备', opts.options);
   check(opts.value === 'normal', '默认难度为普通（电脑会出牌）', opts.value);
   check(opts.visible === true, '下拉框可见（不是 hidden）', opts.visible);
 
@@ -127,7 +128,7 @@ try {
     ' return "stubbed"; })()');
   check(stubbed === 'stubbed', '成功拦截 emit（用于断言真实 payload）', stubbed);
 
-  for (const level of ['easy', 'normal', 'hard']) {
+  for (const level of ['easy', 'normal', 'hard', 'master']) {
     await ev('(function(){ var s = document.getElementById("ai-difficulty"); s.value = "' + level + '";' +
       ' document.getElementById("ai-match").click(); return true; })()');
     await sleep(400);

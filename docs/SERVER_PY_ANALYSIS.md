@@ -177,7 +177,7 @@ room.players[p_id].effect_flags.__dict__ = {k: v for k, v in
 | `winner` | `""` | |
 | **`field_magic`** | `None` | 存**卡牌实例**（非名字） |
 | **`magic_history`** | `[]` | `{card, caster, timestamp}`，仅 2741 写入 |
-| `game_effects` | `{}` | 键：`holy_heart`/`reinforcement_check`/`demon_contract`/`papal_edict`/`last_chance`/`last_ship_change`/`shenwei_holes`/`excluded_ships`/`prediction_initial_<pid>` |
+| `game_effects` | `{}` | 键：`holy_heart`/`reinforcement_check`/`demon_contract`/`papal_edict`/`last_chance`/`shenwei_holes`/`excluded_ships`/`prediction_initial_<pid>`（★ 2026-09-24 删掉了原列的"船数变化快照"那个键：平等条约改成连锁无效化） |
 | `current_phase` | `'preparation'` | preparation / battle / end |
 | `magic_temp_data` | `{}` | 临时交互态 |
 | **`magic_discard`** | `[]` | **全局**弃牌堆（双方共用一个） |
@@ -337,7 +337,7 @@ if 'holy_heart' in room.game_effects and not ship.invincible:
 
 #### A. 强制击杀分支（`forced_kill > 0`，1742–1852）
 - **无视无敌与盾牌**，直接 `ship_sunk = True`、`remaining_ships -= 1`
-- 记录 `sunken_ships`、`last_ship_change`（含 `ship` 引用 + `hits_added`，供平等条约回滚）
+- 记录 `sunken_ships`（★ 2026-09-24 起**不再**记录平等条约的船数变化快照：平等条约改成连锁无效化，快照已整条删除）
 - **恶魔契约**（1767–1780）：击沉方为 defender → **attacker 随机牺牲一艘**；按 `defender_id` 单播"恶魔契约生效，对方牺牲一艘战舰"（**文案与接收者对不上，见可疑点**）
 - **无暇圣心中断**（1783–1789）：`del room.game_effects['holy_heart']` + `emit('holy_heart_interrupted')`
 - **饮血**（1792–1794）：`draw_card(attacker_id)` + 单播
@@ -355,7 +355,7 @@ if 'holy_heart' in room.game_effects and not ship.invincible:
 3. `else`：
    - 记录 `hits`
    - **回光返照**（1867–1868）`_check_last_chance` → `return`
-   - `len(hits) == len(positions)` → `ship_sunk = True`、`remaining_ships -= 1`、`sunken_ships`、`last_ship_change`
+   - `len(hits) == len(positions)` → `ship_sunk = True`、`remaining_ships -= 1`、`sunken_ships`
      - **百亿补贴**（1889–1891）
      - **恶魔契约**（1894–1906）
      - **八方来财**（1909–1911）
@@ -657,15 +657,21 @@ room.field_magic = None
 ```
 **可疑点**：`if room.field_magic` **无归属判断** —— 会把**自己**的场地卡也拆掉并计入 `negated_count`。
 
-#### `平等条约`（4368–4401）
-**不受连锁框架约束**：不走 `negate_target`，而是直接读 `room.game_effects['last_ship_change']`（由攻击/神威等路径写入）并**回滚**：
-- `pop('last_ship_change')`
-- `affected_player.remaining_ships += count`
-- `ship` 加回 `ships`、从 `sunken_ships` 移除
-- **移除 `hits_added`**（4390–4393，注释："避免回滚后成为打不死的幽灵船"）
-- 广播 `ships_updated`（**用 `list(room.players.keys())[0]/[1]`，与 R2/`_do_attack` 同样的索引错位问题**）
+#### `平等条约`
+> ⚠️ **本段记录的是 2026-09-24 之前的实现，已作废**（当时走"船数变化快照 + 回滚"）。
+> 现状：平等条约**走连锁框架** —— 目标 = 栈中正下方那一项（与「失灵！」共用
+> `_chain_negation_target` 的目标解析与免疫关系），**只有目标真的会造成船数变化时**
+> 才成功，成功即 `negate_target = True`，由 `resolve_chain` 把那一项标 `negated` 并
+> 整项跳过。那套快照与其过期判据已**整条删除**（它对两个座位不等价：受害方是先手时
+> 必被拒）。判据表在 `server.py` 的 `EQUAL_TREATY_SHIP_CHANGE_RULES`（只有一份实现）；
+> 守卫 `tests/test_pingdeng_tiaoyue_chain.py`。
 
-与 SPEC §1.2 的"目标同为栈中正下方项"**不符**——实现是"读 `last_ship_change` 快照回滚"，而非连锁标记。
+（历史记录）**不受连锁框架约束**：不走 `negate_target`，而是直接读 `room.game_effects`
+里的一张船数变化快照（由攻击/神威等路径写入）并**回滚**：pop 快照 → 船数加回 →
+`ship` 加回 `ships`、从 `sunken_ships` 移除 → **移除 `hits_added` 里那几格**
+（注释："避免回滚后成为打不死的幽灵船"）→ 广播 `ships_updated`。
+
+与 SPEC §1.2 的"目标同为栈中正下方项"**不符** —— 那正是 2026-09-24 改回 SPEC 设计的原因。
 
 ### 6.6 是否已按 `docs/CHAIN_ENGINE_SPEC.md` 实现？
 

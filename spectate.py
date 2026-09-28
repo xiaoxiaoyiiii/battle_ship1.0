@@ -1,0 +1,1066 @@
+# -*- coding: utf-8 -*-
+"""实时观战的**纯规则**（第 1 批：地基 + 安全，观众暂时还进不来）。
+
+与 `ranks.py` / `anticheat.py` / `quick_chat.py` 同路数：**纯函数、无 I/O、无 socket、
+不 import server**（CLAUDE.md 教训 #19：运行期 import server 会再执行一遍整个
+server.py，那份 socketio 发不出事件，且本地坏线上好、pytest 永远测不到）。
+
+## 这个模块存在的唯一理由
+
+观战最大的风险不是"功能没做出来"，而是**漏一个事件 = 透视漏洞**：
+对局双方收到的房间级广播里，有些 payload 带**整船坐标**（设计上对双方就是公开的），
+一旦原样转给观众，观众就能直接读出双方船位。
+
+以前这靠"人肉记住别转发"来保证 —— 那种约定在加第 94 个事件时必然失效。
+所以这里把它变成**机器穷举**：
+
+* `SPECTATE_EVENTS`  —— 允许给观众的事件 → 净化函数（`None` = 原样转发）；
+* `NOT_FOR_SPECTATORS` —— 明确不给观众的事件 → **理由字符串**（空理由直接报错）；
+* `tests/test_spectate_guards.py` 扫 `server.py` 里全部 `emit(...)` 调用点，
+  断言**每一个事件名都必须在这两张表里表态**（新人加事件时漏表态 = 测试变红）。
+
+## 净化函数吃什么
+
+净化函数收到的是**已经过 `json.dumps(..., default=lambda o: o.__dict__)` 的普通数据**
+（dict / list / str / int / bool / None）—— `emit()` 是唯一入口，它先序列化再净化。
+好处是净化函数永远不需要认识 `Player` / `PlayerShip` / `ChainItem` 这些活对象，
+也不会有"改坏了活对象"的风险（净化只发生在即将发给观众的那一份上）。
+
+## 两条不许碰的红线
+
+1. **任何发给观众的 payload 里不许出现 `ships` / `positions` / `hits` 字段**，
+   也不许出现**未被轰过的**船坐标（`MUST_NOT_LEAK_COORDS` 里的 5 个事件是被测试逐格钉住的）；
+2. **不许为了安全把动作也砍掉**：观众必须看得到"谁打了哪一格 / 谁打出了什么卡"。
+   净化只删坐标这类**局面信息**，保留"谁做了什么、结果如何"这类**动作信息**。
+"""
+from __future__ import annotations
+
+# 观战通道的 socket.io room 名前缀。
+# ⚠️ 观众**绝不能**进对局的 room（那是 `room.id`）—— 那等于把 93 处房间级广播
+#    原样灌给观众（含整船坐标）。观战通道是**独立**的一个 room 名。
+SPECTATE_ROOM_PREFIX = 'spectate:'
+
+
+def spectate_room_id(room_id: str) -> str:
+    """对局房间号 → 观战通道的 room 名。"""
+    return SPECTATE_ROOM_PREFIX + str(room_id)
+
+
+def is_spectate_room(room_id) -> bool:
+    """这个 room 名是不是观战通道（防止观战通道的广播又拐回观战通道）。"""
+    return isinstance(room_id, str) and room_id.startswith(SPECTATE_ROOM_PREFIX)
+
+
+# 观战席上限（作者裁定：**上限 20 人**）。数字只有这一份：
+# `server.handle_spectate_join` 的满员判定与 `_build_spectate_snapshot` 的
+# `spectator_limit` 都读它，前端也从快照里拿 —— 前端不许再写一遍 20。
+SPECTATOR_LIMIT = 20
+
+
+# ---------------------------------------------------------------------------
+# 座位标签（`p1` / `p2`）—— **全项目唯一实现**
+# ---------------------------------------------------------------------------
+# 为什么需要它：`room.players` 的 key 有两套约定（CLAUDE.md §6）——
+# 自定义房是 `user_id`（游客是 sid），**匹配房一律是入座时的 socket sid**。
+# 于是直接把 key 塞进给观众的 payload，观众看到的是一串浏览器连接 id：
+# 既看不懂（认不出是哪个座位），又是**不该外发的连接标识**。
+#
+# 座位标签只在这里算一次：`_pub_magic_chain`（净化）与
+# `server._build_spectate_snapshot`（快照）都调它 —— 两处各写一份必然漂移
+# （教训 #1）。前端只渲染，不许自己把 sid 映射成 p1/p2。
+SEAT_UNKNOWN = 'unknown'
+
+
+def seat_order(room) -> list:
+    """房间的座位顺序：`['<p1 的 key>', '<p2 的 key>']`（取不到返回空表）。
+
+    `room` 允许传**房间对象**（正常路径）或**房间号字符串**（老调用点与守卫
+    用例传的是 `.id`）—— 后者无法解析座位，于是标签一律退化成 `unknown`。
+    退化方向是安全的：**宁可显示 unknown，也绝不回显原始 sid**。
+
+    顺序 = `room.players` 的插入顺序 = 入座顺序（匹配房是配对时的 p1/p2）。
+    """
+    players = getattr(room, 'players', None)
+    if isinstance(players, dict):
+        return [str(pid) for pid in players]
+    return []
+
+
+def seat_label(room, player_id) -> str:
+    """把一个座位的 key 换成 `p1` / `p2`；认不出来返回 `'unknown'`。
+
+    ⚠️ 永远不返回原始 `player_id` —— 调用方拿到的要么是座位标签、要么是
+       `unknown`，所以"漏回显 sid"这件事在函数层面就不可能发生。
+    """
+    if player_id is None or player_id == '':
+        return SEAT_UNKNOWN
+    order = seat_order(room)
+    pid = str(player_id)
+    if pid in order:
+        return 'p%d' % (order.index(pid) + 1)
+    return SEAT_UNKNOWN
+
+
+def seat_label_map(room) -> dict:
+    """`{座位 key: 'p1'/'p2'}`。给需要一次映射多处的调用方用。"""
+    return {pid: 'p%d' % (i + 1) for i, pid in enumerate(seat_order(room))}
+
+
+# ---------------------------------------------------------------------------
+# 净化辅助（全部是纯函数）
+# ---------------------------------------------------------------------------
+# 这些 key 的值**一律是坐标数组** —— 出现在发给观众的任何 payload 的任何层级
+# 都是泄漏，必须整条剥掉（不是"清空"，是删掉键本身）。
+#
+# ⚠️ 2026-09-22 第 2 批补进来的三个（`ship_positions` / `affected_positions` /
+#    `revealed_positions`）是**实测发现**的：它们不在第 1 批那两个名字里，
+#    而 `game_log` 的 detail 里真的带着坐标（见 `_pub_game_log`）。
+COORDINATE_KEYS = (
+    'positions', 'sunk_positions', 'ship_positions',
+    'affected_positions', 'revealed_positions',
+    'ships', 'hits',
+)
+
+
+def _strip_coord_keys(node):
+    """**递归**剥掉坐标类 key，返回 (净化后的副本, 删掉的坐标条数)。
+
+    递归是必须的：`game_log` 的 payload 是 `{ts,type,text,detail}`，
+    坐标藏在 `detail` 里（`add_game_log(..., {'positions': [...]})`）——
+    只扫顶层的话那两个调用点会整条漏过去。
+
+    只删"键名就是坐标字段"的那些；`{'target': {'x':1,'y':2}}` 这类**已经公开的
+    被轰格**必须保留（观众要看到"打哪儿了"）。
+    """
+    dropped = 0
+    if isinstance(node, dict):
+        out = {}
+        for key, value in node.items():
+            if key in COORDINATE_KEYS:
+                if isinstance(value, (list, tuple)):
+                    dropped += len(value)
+                continue
+            cleaned, sub = _strip_coord_keys(value)
+            out[key] = cleaned
+            dropped += sub
+        return out, dropped
+    if isinstance(node, list):
+        out = []
+        for value in node:
+            cleaned, sub = _strip_coord_keys(value)
+            out.append(cleaned)
+            dropped += sub
+        return out, dropped
+    if isinstance(node, tuple):
+        out = []
+        for value in node:
+            cleaned, sub = _strip_coord_keys(value)
+            out.append(cleaned)
+            dropped += sub
+        return out, dropped
+    return node, 0
+
+
+def _scrub_positions(data: dict) -> tuple[dict, int]:
+    """删掉 payload 里的坐标字段，返回 (净化后的副本, 删掉了几个坐标)。
+
+    第 1 批只有这一层；第 2 批把它换成 `_strip_coord_keys` 的薄封装
+    （**同一件事只留一份实现** —— 教训 #1）。对外语义不变，
+    只是现在连嵌套层级里的坐标也一起剥掉。
+    """
+    return _strip_coord_keys(data)
+
+
+def _as_int(value, default=0):
+    """把可能是 str/None 的计数字段收敛成 int（绝不抛）。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _pub_shields_added(data, room=None):
+    """卧薪尝胆：给全部存活船加盾 —— **动作**是"谁加了几艘"，**不是**"船在哪"。"""
+    if not isinstance(data, dict):
+        return None
+    out, _ = _scrub_positions(data)
+    out['count'] = _as_int(out.get('count'))
+    return out
+
+
+def _pub_trap_set(data, room=None):
+    """守株待兔：有人给自己一艘船打了陷阱 —— 保留"谁设了陷阱"，删掉是哪艘（坐标）。"""
+    if not isinstance(data, dict):
+        return None
+    out, _ = _scrub_positions(data)
+    return out
+
+
+def _pub_shield_absorbed(data, room=None):
+    """仁王之盾挡下一炮 —— 保留"谁的盾破了"，**绝不保留**挨打那艘船的坐标。
+
+    ⚠️ 这一条非常要紧：它广播的是**遭受攻击的那艘船的全部坐标**。
+       挨打的那一格（攻击方打出的 x/y）在 `attack_result` 里是公开的，
+       但整艘船的其它格子**没有**随之公开 —— 原样转发就是白送一艘船的完整位置。
+    """
+    if not isinstance(data, dict):
+        return None
+    out, _ = _scrub_positions(data)
+    return out
+
+
+def _pub_trap_triggered(data, room=None):
+    """守株待兔触发：对方要牺牲两艘。保留归属与牺牲数量，删掉被击沉那艘船的坐标。"""
+    if not isinstance(data, dict):
+        return None
+    out, _ = _scrub_positions(data)
+    out['sacrificed'] = _as_int(out.get('sacrificed'))
+    return out
+
+
+def _pub_ship_sacrificed(data, room=None):
+    """某艘船被牺牲（恶魔契约 / 绝处逢生）—— 动作可见，船在哪不可见。"""
+    if not isinstance(data, dict):
+        return None
+    out, dropped = _scrub_positions(data)
+    out['sacrificed_cells'] = dropped        # 让观众知道"这艘船有几格"，但不知道是哪几格
+    return out
+
+
+def _pub_summary_line(data, room=None):
+    """"谁做了什么"的明文日志：**文字与归属都留着，坐标一律剥掉**。
+
+    ★ 第 2 批实测发现的**真泄漏**（第 1 批漏掉的）：
+
+    `server.add_game_log(room, text, 'magic', {'player':…, 'positions': […]})` ——
+    `_sacrifice_ship` 那条日志把**被牺牲那艘船的全部格子**放进了 detail
+    （`server.py` 约 10490）。而被牺牲的船往往**一格都没挨过炮**
+    （恶魔契约 / 神之宣告 / 命运骰子），于是原样转发 = 把一艘完好战舰的位置
+    直接送给观众 —— 正是核心不变量 #1 说"永远不许"的那件事。
+    另一处（硫磺火焰，约 11836）带 `affected_positions`：那些格子虽然
+    已由 `attack_result` 逐格公开，但按"坐标字段一个都不外发"的口径一并剥掉。
+
+    第 1 批把 `game_log` 登记成"原样转发"的时候没抓到它 —— 因为守卫用例给的
+    样例 detail 里只有已公开的被轰格。**样例没有坐标 ≠ 事件没有坐标**，
+    这正是教训 #34 说的"零报错制造假象"，所以现在按事件名统一剥。
+    """
+    if not isinstance(data, dict):
+        return None
+    out, _ = _strip_coord_keys(data)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 区域卡的**棋盘归属**表（全项目唯一一份；前端那张表是只读镜像）
+# ---------------------------------------------------------------------------
+# ★★ 这张表为什么必须存在（2026-09-27 区域预览批）★★
+#
+# 「这张卡打在谁家的棋盘上」原本只存在于**前端** `static/game.js` 的
+# `needsTargetSelection` 里（冻结/探测雷达/轰炸/硫磺火焰写死 `board:'opponent'`），
+# 服务端只是"反正作用对象就那一个"硬编码；而**神威！** 的归属是玩家当场二选一，
+# 服务端读的是**客户端提交、且完全不校验**的 `board`（默认值 `'opponent'` ——
+# 漏传即静默按对方处理，正是 CLAUDE.md 教训 #2 的形状）。
+#
+# 而"预览画在哪块棋盘上"必须是一个**服务端可信**的判据，不能依赖未校验的客户端值。
+# 所以归属在这里声明一次：
+#   · `'self'`     —— 固定作用在施法者自己棋盘、且目标本身公开的卡；
+#   · `'opponent'` —— 固定作用在**对方**棋盘（冻结 / 探测雷达 / 轰炸 / 硫磺火焰）；
+#   · `'choice'`   —— 玩家当场二选一（神威！），客户端**必须**显式提交 `board`，
+#                     缺失或非 `self`/`opponent` 一律**拒绝**（绝不兜底成对方）。
+#
+# ⚠️ 与前端镜像的同步由源码级用例钉死（`tests/test_area_preview.py` 的
+#    `test_frontend_mirror_matches_server`，先例 `test_ship_pick_mirror.py`）。
+# ⚠️ 卡名**只在这里写一次**：server.py 的 `_sanitize_magic_targets` 与
+#    本模块的 `preview_node` 都读它 —— 两处各写一张表必然漂移（教训 #1）。
+AREA_TARGET_BOARDS = {
+    '神威！': 'choice',
+    '冻结': 'opponent',
+    '探测雷达': 'opponent',
+    '轰炸': 'opponent',
+    '硫磺火焰': 'opponent',
+}
+
+# 归属的合法取值（`'choice'` **只出现在这张表里**，绝不会出现在下发给客户端的
+# 预览里 —— 预览里的 `board` 一定是 `self`/`opponent` 二选一）。
+BOARD_SIDES = ('self', 'opponent')
+AREA_TARGET_BOARD_VALUES = BOARD_SIDES + ('choice',)
+
+# 目标形状（预览的 `shape` 字段）——与 `_preview_cells` 的派发一一对应。
+PREVIEW_SHAPES = ('area', 'line', 'cells', 'single')
+
+# 公开预览**只允许**出现这些键（白名单，不是黑名单）。
+# ⚠️ 与 `FORBIDDEN_PAYLOAD_KEYS` / `SNAPSHOT_FORBIDDEN_KEYS` 无交集 —— 由
+#    `_validate()` 与 `tests/test_area_preview.py` 双向钉住（教训 #10）。
+PREVIEW_KEYS = ('id', 'card', 'seat', 'negated', 'preview')
+PREVIEW_FIELDS = ('board', 'shape', 'cells')
+
+
+def _preview_cells(targets):
+    """把**已确认**的目标归一化成"(形状, [(x,y), …])"；认不出形状返回 `None`。
+
+    吃两种输入：
+    * **原始目标**（`target_area` / `target_line` / `target_cells` / `selected_cells`）
+      —— 从 `room.chain` 序列化出来的那一份；
+    * **已经归一化过的预览体**（`{shape, cells:[{x,y}]}`）—— `sanitize_preview_item`
+      的产物再喂回来时走这一支，于是净化**幂等**（观众那一路要过两次，见下面那条说明）。
+
+    只认这几种形状，且一律归一到 0..5 的整数坐标 —— 认不出就返回 `None`
+    （调用方据此**不下发预览**），绝不猜、绝不兜底（教训 #2）。
+
+    ⚠️ 单格通道（如克苏鲁之眼）即使能归一化为 1×1，也不代表目标可公开；
+       私密船位卡不登记在 `AREA_TARGET_BOARDS`，因此这里会安全地返回 None。
+    """
+    if not isinstance(targets, dict):
+        return None
+    cells = []
+
+    # ① 已经归一化过的预览体（幂等回灌）
+    shape = targets.get('shape')
+    if shape is not None:
+        if shape not in PREVIEW_SHAPES:
+            return None
+        raw_cells = targets.get('cells')
+        if not isinstance(raw_cells, (list, tuple)) or not raw_cells:
+            return None
+        for cell in raw_cells:
+            if not isinstance(cell, dict):
+                return None
+            try:
+                cells.append((int(cell['x']), int(cell['y'])))
+            except (KeyError, TypeError, ValueError):
+                return None
+        return shape, cells
+
+    area = targets.get('target_area')
+    if isinstance(area, dict):
+        try:
+            x1, y1 = int(area['x1']), int(area['y1'])
+            x2, y2 = int(area['x2']), int(area['y2'])
+        except (KeyError, TypeError, ValueError):
+            return None
+        for y in range(min(y1, y2), max(y1, y2) + 1):
+            for x in range(min(x1, x2), max(x1, x2) + 1):
+                cells.append((x, y))
+        return ('area', cells) if cells else None
+
+    line = targets.get('target_line')
+    if isinstance(line, dict):
+        try:
+            index = int(line['index'])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if line.get('type') == 'row':
+            return ('line', [(x, index) for x in range(6)])
+        if line.get('type') == 'col':
+            return ('line', [(index, y) for y in range(6)])
+        return None
+
+    for key in ('target_cells', 'selected_cells'):
+        raw = targets.get(key)
+        if not isinstance(raw, (list, tuple)) or not raw:
+            continue
+        parsed = []
+        for cell in raw:
+            if not isinstance(cell, dict):
+                return None
+            try:
+                parsed.append((int(cell['x']), int(cell['y'])))
+            except (KeyError, TypeError, ValueError):
+                return None
+        return ('cells', parsed)
+
+    return None
+
+
+def _preview_id(shape, cells):
+    """节点内稳定、可读的标识（多区域并存时前端要能区分"这格是谁画的"）。"""
+    try:
+        if shape == 'area':
+            xs = [c[0] for c in cells]
+            ys = [c[1] for c in cells]
+            return 'area:%d,%d-%d,%d' % (min(xs), min(ys), max(xs), max(ys))
+        if shape == 'line':
+            first = cells[0]
+            kind = 'row' if len({c[1] for c in cells}) == 1 else 'col'
+            return 'line:%s:%d' % (kind, first[1] if kind == 'row' else first[0])
+        if shape == 'cells' and len(cells) == 1:
+            return 'single:%d,%d' % cells[0]
+        return 'cells:%d' % len(cells)
+    except (IndexError, TypeError, ValueError):
+        return 'unknown'
+
+
+def preview_node(targets, card_name, room=None, board=None):
+    """一个连锁节点的**公开区域预览**；没有区域可言时返回 `None`。
+
+    只从这里读三件东西：卡名、棋盘归属、格子集合。**绝不试算效果** ——
+    它不调 `apply_magic_effect`、不读 `room.players[...].ships`/`hits`，
+    也不看 `magic_temp_data` 里那些"还没确认"的选区（唯一数据源是已入栈的
+    `ChainItem.targets`）。唯一用到 `room` 的地方是座位标签（`seat_label`）。
+
+    `board`：**已经过校验**的归属（服务端在归一化目标时写进 targets）。
+    这里再退一步按卡名镜像表取值，是为了让"漏校验"这件事**只表现为一个字段的缺失**，
+    而不是把未校验的客户端值当判据 —— 但两者都不许猜成 `'opponent'`。
+
+    ⚠️ `targets` 里那个 `board` 的**来源**：`server._sanitize_magic_targets` 在
+       归一化时按 `AREA_TARGET_BOARDS` 校验/补写。预览**只**认服务端写下的值。
+    """
+    parsed = _preview_cells(targets)
+    if parsed is None:
+        return None
+    shape, cells = parsed
+    if any(not (0 <= x <= 5 and 0 <= y <= 5) for x, y in cells):
+        # 越界坐标一律不画（归一化那边已经拦过，这里是"净化函数不信任上游"的第二道）
+        return None
+
+    declared = AREA_TARGET_BOARDS.get(card_name)
+    if declared is None:
+        # 卡名没登记：**不猜**（猜成 opponent 正是教训 #2 的形状）。
+        return None
+    side = board if board in BOARD_SIDES else None
+    if side is None and declared in BOARD_SIDES:
+        side = declared
+    if side not in BOARD_SIDES:
+        # `'choice'` 而调用方没给出合法归属 ⇒ 没有可信归属 ⇒ 不画。
+        return None
+
+    return {
+        'id': _preview_id(shape, cells),
+        'card': card_name,
+        'seat': seat_label(room, None),        # 调用方（_pub_magic_chain）会覆盖成真实座位
+        'board': side,
+        'shape': shape,
+        'cells': [{'x': x, 'y': y} for x, y in cells],
+    }
+
+
+def sanitize_preview_item(item, room=None):
+    """把一个**已序列化**的连锁项净化成公开预览结构（链项级白名单）。
+
+    返回 `{'card', 'seat', 'negated', 'preview'}`；
+    `preview` 为 `None` = 这个节点没有可画的区域（无目标 / 别的形状 / 卡名未登记）。
+
+    ★ 与实时流**同一个函数**：`server._spectate_chain_payload`（重连快照与对局广播）
+      与 `server.emit` 的观战第三条腿都只经过它一次，不存在第二份实现（教训 #1）。
+
+    ★★ **必须幂等**（2026-09-27 实测踩到）★★
+      对局广播现在发的是 `_spectate_chain_payload(room)` 的**产物**
+      （已经是本函数的输出），而 `emit()` 会把它再复制一份给观战通道时
+      **再过一次本函数**。所以：
+
+      · 第一遍已经把 `player_id` 换成了 `seat` —— 第二遍若按 `player_id=None`
+        重算就会退回 `'unknown'`。实测症状是**观众看到的座位标签全是 unknown**
+        （对局双方却是对的，因为那一份不再净化）⇒ 缺失时**沿用已有的 `seat`**；
+      · 第一遍已经把原始 `targets` 换成 `preview` —— 第二遍若只看 `targets`
+        就会得到 `preview: None`，**观众看到的预览整块消失**（比座位标签更严重，
+        因为那是本批的全部意义）。⇒ `preview` 合法时**直接沿用**（`_preview_cells`
+        认归一化过的形状，于是也能重新派生一遍，两条路结果一致）。
+
+      （守卫：`test_spectate_batch7.py::test_chain_response_reaches_spectators`
+        与本文件 `test_preview_is_idempotent` / `test_spectator_gets_the_same_sanitized_shape`）
+    """
+    if not isinstance(item, dict):
+        return None
+    card = item.get('card')
+    card_name = None
+    if isinstance(card, dict):
+        card_name = card.get('name')
+    elif isinstance(card, str):
+        # `emit()` 会先把活对象序列化，而**有的调用方**本来就用字符串当卡名
+        # （例如 emit 手拼的链项、或 emit 已经净化过一次的 payload）。
+        # 两种形态都认，否则会静默把卡名丢成 None（守卫用例就是这么抓到的）。
+        card_name = card
+    if card_name is None:
+        card_name = item.get('card_name')
+    # 座位：优先按 player_id 现算（权威）；没有 player_id 时沿用上一遍算好的 seat。
+    if item.get('player_id') is None and isinstance(item.get('seat'), str) and item['seat']:
+        seat = item['seat']
+    else:
+        seat = seat_label(room, item.get('player_id'))
+
+    # ① 已经净化过的项：沿用它的 preview（幂等），但**重新校验**一遍白名单 ——
+    #    净化函数绝不信任上游，哪怕上游是它自己。
+    node = None
+    existing = item.get('preview')
+    if isinstance(existing, dict):
+        candidate = {
+            'shape': existing.get('shape'),
+            'cells': existing.get('cells'),
+            'board': existing.get('board'),
+        }
+        if existing.get('card') is None and card_name is not None:
+            candidate['card'] = card_name
+        node = preview_node(candidate, card_name or existing.get('card'),
+                            room=room, board=existing.get('board'))
+    # ② 原始目标（第一次净化）：从已确认的 targets 派生
+    if node is None:
+        targets = item.get('targets')
+        board = targets.get('board') if isinstance(targets, dict) else None
+        node = preview_node(targets, card_name, room=room, board=board)
+    if node is not None:
+        node['seat'] = seat
+    return {
+        'card': card_name,
+        'seat': seat,
+        'negated': bool(item.get('negated')),
+        'preview': node,
+    }
+
+
+def _pub_magic_chain(data, room=None):
+    """连锁栈：保留"谁打出了什么卡、有没有被康"，**剥掉原始 `targets`**，
+    并把**已确认**的选区净化成公开预览。
+
+    三个理由：
+    1. `ChainItem.targets` 是**客户端提交上来的原始目标**（`data.get('targets', [])`），
+       形状不受控 —— 既可能是船序号也可能是格子坐标，服务端**不做清洗**就塞进 broadcast。
+       原样转发等于把一个形状未知的袋子里可能装着的坐标送给观众。
+    2. `ChainItem` 被 `emit` 的 `default=lambda o: o.__dict__` 全量序列化，
+       所以 `player_id`（**匹配房里是 socket sid**）原本也在 payload 里。
+    3. 但"整份剥掉"又走到了另一个极端：双方连锁期间**看不到对方选了哪块区域**
+       （作者反馈：只给个卡名等于让人猜效果）。所以现在按 `PREVIEW_KEYS`
+       **白名单重建**一项，而不是"删字段"（删字段必然漏一个，且不报错）。
+
+    ## `player_id` → 座位标签（第 2 批，作者已批准）
+
+    原样下发 `player_id` 有两个毛病：观众看到一串看不懂的 sid；而且那是
+    **连接标识**，不该外发。现在**删掉原始 `player_id`，只留 `seat`**
+    （`p1`/`p2`，由 `seat_label` 算，全项目唯一一份实现）。
+
+    ⚠️ 别改回"保留 player_id 再加个别名"—— 那等于 sid 照样发出去。
+       `tests/test_spectate_batch2.py` 有一条守卫断言净化结果里
+       **不出现原始 sid / user_id 字符串**。
+
+    ## 输出形状（2026-09-27 起）
+
+    `{'chain': [{'card','seat','negated','preview'}], 'chain_len', 'targets_dropped'}`
+    ——链项里**不再**出现 `card` 的完整对象（那会连带 speed/type/description，
+    而白名单只允许卡名）、`timestamp`、`negated_by` 与原始 `targets`。
+    `targets_dropped` 的语义（"剥掉了几个原始目标"）+1 不变。
+    """
+    if not isinstance(data, dict):
+        return None
+    chain = data.get('chain')
+    if not isinstance(chain, (list, tuple)):
+        return {'chain': [], 'chain_len': 0}
+    out = []
+    dropped = 0
+    for item in chain:
+        # ★ 整项走白名单净化（保留 seat / negated，卡名合成，坐标只从已确认目标派生）。
+        #   兜底那一支也必须**沿用已有的 seat**，不能凭空造一个 unknown 出来 ——
+        #   进入这个分支说明 item 不是 dict（理论上 emit 之后不会发生），
+        #   真发生了也宁可给出与上一遍一致的结果。
+        entry = sanitize_preview_item(item, room=room)
+        if entry is None:
+            fallback_seat = item.get('seat') if isinstance(item, dict) else None
+            entry = {
+                'card': None,
+                'seat': fallback_seat if isinstance(fallback_seat, str) and fallback_seat
+                        else seat_label(room, None),
+                'negated': False,
+                'preview': None,
+            }
+        if isinstance(item, dict) and isinstance(item.get('targets'), (list, tuple)):
+            dropped += len(item['targets'])
+        out.append(entry)
+    return {'chain': out, 'chain_len': len(out), 'targets_dropped': dropped}
+
+
+# ---------------------------------------------------------------------------
+# 观战棋盘帧（第 5 批）：board + sides 的**规范化白名单**
+# ---------------------------------------------------------------------------
+# ★★ 为什么需要这一块（第 5 批的根因）★★
+#
+# 第 3/4 批的观战棋盘是**从 `attacks` 反推**的：`board_attacks[label]` = 落在该棋盘上
+# 的格。第 5 批实测：`attacks` 这段历史**在船被复活 / 棋盘被重置时会变**，而
+# `board_attacks_updated` 与 `reset_gameboard` 都在 `NOT_FOR_SPECTATORS` 里 ——
+# 于是观众那份数据**从进席起就冻结了**。症状（作者实报）：
+#   · 疗愈原地复活之后，观战棋盘上那一格仍然画着"沉"；
+#   · 回光返照 / 灵气复苏 / 败者食尘重置棋盘之后，观战棋盘一格都不清。
+#
+# 修法**不是**给每张卡再写一份"棋盘更新"（那就是 CLAUDE.md 教训 #1 的第二份实现，
+# 迟早漂移），而是：**棋盘只从服务端的权威数据重新解算**，并把这份权威数据
+# 在棋盘变动的时刻推给观众 —— 同一个 `spectate_board` 事件，同一个形状。
+#
+# ⚠️ 这份帧里**只允许出现"已经轰过的格"**（`Player.attacks` 的逐格结果），
+#    它和对局双方看到的东西**逐字节同一份**（`board_attacks_updated` 是它的镜像）。
+#    帧里没有任何"没挨过炮的船位" —— 玩家自己也得先开炮才知道那种信息。
+#
+# 两张白名单就是"漏加一个键导致透视"的机器守卫：`canonical_frame_json` 会
+# **删掉**白名单外的任何键（不是断言、是过滤），所以即便以后有人往帧里塞
+# `ships` / `positions`，也到不了观众手里；而 `tests/test_spectate_batch5.py`
+# 同时扫服务端源码，要求 `_spectate_player_cells` 产出的键集合**正好等于**
+# `SPECTATE_FRAME_CELL_KEYS`（多一个 = 会被静默丢掉，少一个 = 前端画不出来）。
+SPECTATE_FRAME_KEYS = frozenset({'room_id', 'sides', 'seat_labels'})
+# 座位级白名单：**必须与 `_spectate_side_payload` 产出的键集合逐字相同** ——
+# 少一个键 = 观众屏上那项退化成默认值（名字变"玩家"、船数变 0），且**不报错**；
+# 多一个 = 会被静默丢掉。`tests/test_spectate_batch5.py` 扫服务端源码把两张表钉在一起。
+SPECTATE_FRAME_SIDE_KEYS = frozenset({
+    'seat_id', 'name', 'remaining_ships', 'hand_count', 'attacks',
+})
+# 格级白名单：**必须与 `server._spectate_player_cells` 产出的键集合逐字相同**。
+SPECTATE_FRAME_CELL_KEYS = frozenset({'x', 'y', 'hit', 'ship_sunk'})
+SPECTATE_FRAME_LABELS = frozenset({'p1', 'p2'})
+
+
+class SpectateFrameError(ValueError):
+    """帧的形状不合法 —— **绝不静默修好**（教训 #34：兜底 + 零报错会一起制造假象）。"""
+
+
+def _canonical_frame_cells(raw_list) -> list:
+    """格级白名单：只保留 `SPECTATE_FRAME_CELL_KEYS` 里的四个字段。
+
+    ⚠️ 坐标**必须是整数**才收：`isinstance(True, int)` 在 Python 里为真，
+       所以先排 bool —— 一个 `{'x': True}` 混进来会让前端算出 `1,true` 这种怪格。
+    """
+    cells = []
+    for raw in (raw_list or []):
+        if not isinstance(raw, dict):
+            continue
+        x, y = raw.get('x'), raw.get('y')
+        if isinstance(x, bool) or isinstance(y, bool):
+            continue
+        if not isinstance(x, int) or not isinstance(y, int):
+            continue          # 坐标不是整数 = 形状不对，丢掉这一格
+        cells.append({key: (bool(raw.get(key)) if key in ('hit', 'ship_sunk') else raw[key])
+                      for key in ('x', 'y', 'hit', 'ship_sunk')})
+    assert all(set(cell) == set(SPECTATE_FRAME_CELL_KEYS) for cell in cells), \
+        '格级白名单写错了（这是实现 bug，不是调用方的问题）'
+    return cells
+
+
+def _canonical_frame_sides(sides) -> dict:
+    """座位级白名单：只保留 `SPECTATE_FRAME_SIDE_KEYS` 里的字段。"""
+    clean_sides = {}
+    for label, side in (sides or {}).items():
+        if label not in SPECTATE_FRAME_LABELS or not isinstance(side, dict):
+            continue              # 认不出来的座位名一律丢掉（宁可少给，绝不乱给）
+        clean = {}
+        if 'seat_id' in side and side['seat_id'] is not None:
+            clean['seat_id'] = str(side['seat_id'])
+        if 'name' in side and side['name'] is not None:
+            clean['name'] = str(side['name'])
+        for key in ('remaining_ships', 'hand_count'):
+            if key in side:
+                value = side[key]
+                if isinstance(value, bool) or not isinstance(value, int):
+                    continue      # 不是整数 = 形状不对，宁可不给（前端退化成 0，不显示怪东西）
+                clean[key] = value
+        clean['attacks'] = _canonical_frame_cells(side.get('attacks'))
+        clean_sides[label] = clean
+    assert all(set(side) <= set(SPECTATE_FRAME_SIDE_KEYS) for side in clean_sides.values()), \
+        '座位级白名单写错了（这是实现 bug，不是调用方的问题）'
+    return clean_sides
+
+
+def _canonical_frame_impl(frame: dict) -> dict:
+    """把一份帧规范化成"只会发给观众"的形状（白名单过滤，纯函数）。
+
+    **不抛异常、只过滤** —— 因为它是发给观众前的最后一道门：
+    形状不对时宁可发一份"少几个键"的帧，也不能不发（不发 = 观众屏上棋盘冻结，
+    正是本批要修的毛病）。**多余键一律删掉**，缺的键由调用方负责补齐。
+    """
+    if not isinstance(frame, dict):
+        return {}
+    out = {}
+    if frame.get('room_id') is not None:
+        out['room_id'] = str(frame['room_id'])
+    labels = frame.get('seat_labels')
+    if isinstance(labels, dict):
+        out['seat_labels'] = {str(k): str(v) for k, v in labels.items()}
+    sides = frame.get('sides')
+    if isinstance(sides, dict):
+        out['sides'] = _canonical_frame_sides(sides)
+    return out
+
+
+def canonical_frame(frame: dict) -> dict:
+    """`spectate_board` 的规范化（**白名单过滤后的新 dict**，绝不返回入参本身）。
+
+    无论传进来什么，返回的键一定 ⊆（`SPECTATE_FRAME_KEYS` /
+    `SPECTATE_FRAME_SIDE_KEYS` / `SPECTATE_FRAME_CELL_KEYS`）这三级白名单。
+    """
+    clean = _canonical_frame_impl(frame)
+    assert set(clean) <= set(SPECTATE_FRAME_KEYS), \
+        'canonical_frame 自己漏了白名单（这是实现 bug，不是调用方的问题）'
+    return clean
+
+
+def canonical_frame_json(frame: dict, room=None) -> dict:
+    """`canonical_frame` 的**往返版**（过一遍 JSON 序列化）。
+
+    `server.emit` 的净化收到的是已经 `json.dumps` 过的普通数据；直接调净化函数的人
+    可能传的是带 tuple 的 dict。这一层保证两条路径拿到**逐字节相同**的结果
+    （也是 `spectate_board` 注册进 `SPECTATE_EVENTS` 的那个净化函数）。
+
+    `room` 参数只为满足净化函数统一签名（`fn(data, room=None)`）—— 本帧的座位标签
+    由**调用方**（`server._publish_spectate_board`，那里有房间对象）填好，
+    净化这一步刻意**不再读房间**：读房间就多一处"帧与快照可能不一致"的机会。
+    """
+    import json as _json
+    return canonical_frame(_json.loads(_json.dumps(frame, default=lambda o: o.__dict__)))
+
+
+def _validate_frame_keys():
+    """导入期自检：帧的白名单**不许**与禁字段表打架。
+
+    ⚠️ 这条校验存在的理由（**必须**在 `_validate()` **之后**跑）：
+    两张表一旦有人各改一边，`canonical_frame` 会把一个"其实不该给"的键
+    **过滤掉**（看起来更安全），但它的字段名会进 `SPECTATE_FRAME_KEYS`
+    从而**从禁字段表里消失** —— 那就等于悄悄放宽了守卫，而且毫无运行时症状。
+    所以它要在 `FORBIDDEN_PAYLOAD_KEYS` 定义之后、与 `_validate()` 一起跑。
+    """
+    for name, keys in (('SPECTATE_FRAME_KEYS', SPECTATE_FRAME_KEYS),
+                       ('SPECTATE_FRAME_SIDE_KEYS', SPECTATE_FRAME_SIDE_KEYS),
+                       ('SPECTATE_FRAME_CELL_KEYS', SPECTATE_FRAME_CELL_KEYS)):
+        bad = set(keys) & set(FORBIDDEN_PAYLOAD_KEYS)
+        if bad:
+            raise ValueError(
+                '%s 里出现了禁字段 %s —— 帧的白名单与"不许泄漏"清单打架'
+                % (name, sorted(bad)))
+    # 帧里只可能出现这两块棋盘的格（`p1` / `p2`），别的座位名一律丢掉
+    if SPECTATE_FRAME_LABELS != frozenset({'p1', 'p2'}):
+        raise ValueError('帧只认 p1/p2 两个座位标签')
+
+
+# 这些事件的 payload 形状**不受其它单条的约束**，而是靠 `canonical_frame`
+# 那张**三级白名单**（顶层 / 座位 / 格）过滤 —— `_validate()` 会断言它们确实登记在
+# `SPECTATE_EVENTS` 里。以后加的事件如果 payload 形状不受控，就登记到这里。
+CANONICALIZE = frozenset({'spectate_board'})
+
+
+# ---------------------------------------------------------------------------
+# 允许给观众的事件表
+# ---------------------------------------------------------------------------
+# 值 = 净化函数；None = 原样转发（该事件的 payload 天然不含局面秘密）。
+#
+# ⚠️ **默认拒绝**：不在这张表里的事件一律不发观众（见 `sanitize_event`）。
+#    往这里加事件之前先问一句"它的 payload 里有没有坐标 / 完整手牌 / 对方看不见的东西"。
+#
+# ⚠️ **在表里 ≠ 真的会发**：`emit` 的第三条腿只对**广播类**（`room=<对局房间号>`）
+#    生效。表里有几个事件实际是 `to=<sid>` 发的（`chat_message`、
+#    `opponent_disconnected`、`opponent_reconnected`、`achievements_unlocked`、
+#    `xp_gained`、`rank_changed`），它们**一个字节都到不了观战通道**：
+#      · `to=<sid>` → 单发不复制（私人消息，不是对局动作）；
+#      · `room=<sid>`（曾经的误用，2026-09-23 已全改成 `to=`）→ 会被 `_live_room_id`
+#        的门禁挡掉（sid 不是对局房间），但那层门禁**不是**用来实现单发的。
+#    留在表里是**穷举分类**的要求（每一处 emit 都必须表态），不是"观众能看到"的承诺。
+SPECTATE_EVENTS = {
+    # —— 核心动作：开炮与它的结果 ——
+    # payload = attacker/x/y/hit/ship_sunk/remaining_attacks/双方剩余船数/shield_blocked。
+    # 被攻击的那一格**本来就公开**（双方都看着那一炮打下去），必须给 ——
+    # 少了它观众只能看到"有人在打"，看不到"打哪儿、中没中"。
+    'attack_result': None,
+    # —— 回合计时/阶段 ——
+    'turn_change': None,
+    'turn_skipped': None,
+    'phase_updated': None,
+    'attacks_updated': None,
+    # —— 连锁 ——
+    'magic_chain_updated': _pub_magic_chain,  # ★ 剥掉客户端提交的 targets
+    'chain_resolved': None,
+    # —— 打法记录（明文，观众最直接的信息来源）——
+    # ★ `game_log` 的 **detail 里带过整艘船的坐标**（牺牲战舰那条）→ 必须净化。
+    #   文字本身（`text`）是公开的，剥的只是 detail 里的坐标字段。
+    'game_log': _pub_summary_line,
+    'game_message': None,
+    # 通用提示（`emit('message', ...)`，18 处）：payload 是 `{'message': str, 'type': str}`，
+    # 全是给人看的文案，不含任何局面数据。它有时 `room=room.id`、有时 `to=<sid>`；
+    # 单发那一半本来就到不了观战通道（单发不复制），广播那一半正是观众该看的。
+    'message': None,
+    # —— 猜拳结果：先手是谁对双方公开，观众当然也该看到 ——
+    'rps_result': None,
+    # —— 玩家之间的聊天（观众可见）——
+    'chat_message': None,
+    # —— 棋盘上的公开标记 ——
+    # 神威洞：卡面就是"公开宣布 N 回合后这些格子有船"，双方都看得见 → 给。
+    'shenwei_hole': None,
+    'shenwei_hole_restored': None,
+    # 冻结区：同上，范围是对双方公开的。
+    'frozen_area': None,
+    # 绝处逢生的"候选格"：服务端**有意公开**给双方（对方要据此知道唯一那艘新船可能在哪，
+    # 而且这些格子必须能打）—— 所以它属于"公开信息"，不是泄漏。
+    'last_stand_cells': None,
+    'lanyu_recalled': None,
+    # —— 场地魔法：贴了什么卡对双方都是公开的 ——
+    'field_magic_updated': None,
+    # —— 跨回合效果角标 ——
+    'reinforcement_activated': None,
+    'reinforcement_turn_updated': None,
+    'holy_heart_activated': None,
+    'holy_heart_interrupted': None,
+    'holy_heart_turn_updated': None,
+    'holy_heart_cleared': None,
+    'reinforcement_cleared': None,
+    'demon_contract_cleared': None,
+    # —— 判定魔法 ——
+    'dice_rolled': None,
+    'dice_discard_complete': None,
+    # —— 陷阱 ——
+    'trap_expired': None,
+    'trap_set': _pub_trap_set,               # ★ 含坐标 → 净化
+    'trap_triggered': _pub_trap_triggered,   # ★ 含坐标 → 净化
+    # —— 护盾 ——
+    'shields_added': _pub_shields_added,     # ★ 含全部存活船坐标 → 净化（最严重的一处）
+    'shield_absorbed': _pub_shield_absorbed,  # ★ 含挨打那艘船坐标 → 净化
+    # —— 牺牲 ——
+    'ship_sacrificed': _pub_ship_sacrificed,  # ★ 含坐标 → 净化
+    # —— 对局终止 ——
+    'game_over': None,
+    'game_canceled': None,
+    'opponent_disconnected': None,
+    'opponent_reconnected': None,
+    # 结算播报（给观众看"谁赢了、加了什么"）—— 只含"谁的账号"这类**账号级**公开信息，
+    # 不含任何对局秘密或船只坐标。
+    'achievements_unlocked': None,
+    'xp_gained': None,
+    'rank_changed': None,
+    # —— 观战通道自己的一套（第 2 批）——
+    # 这三个是**服务端直接发往 `spectate:<room_id>` 通道**的事件，不经 `emit` 的
+    # 第三条腿（第三条腿只认"对局房间号"；观战通道名会被 `_live_room_id` 挡掉，
+    # 于是不会自我循环）。它们天然只对观众有意义：
+    'spectate_sync': None,           # 中途加入的**一次性快照**（只发给该观众）
+    'spectate_count_changed': None,  # 观战人数变化（**只含人数，不含名单**）
+    'spectate_ended': None,          # 对局房间被回收 → 观战结束
+    # —— 观战席名单与观战席聊天（第 4 批）——
+    # ★★ 本批最要紧的一条：**这五个只在观战通道里发**，对局双方**一个字节都收不到**。
+    #    保证它的不是"发完再挑人过滤"（那种写法迟早漏），而是**通道本身**：
+    #    观众只 `join_room('spectate:<id>')`、**从不进对局 room**，而玩家只在对局 room 里。
+    #    两个 room 没有任何交集 ⇒ 隔离是结构性的，不是判断出来的。
+    #    守卫：tests/test_spectate_batch4.py 用**真 socket** 两侧同时收件断言
+    #    （观众收得到、两个玩家都收不到），并对 `spectate_chat_send` 做**源码级**扫描
+    #    禁止它碰 `add_game_log`（那是**房间级广播**，一走玩家当场就看到）。
+    'spectate_roster': None,         # 观战席名单 {spectators:[{name,joined_at}],count,limit}
+    'spectate_joined': None,         # 有观众入席 {name}（只有**显示名**，无 uid/sid）
+    'spectate_left': None,           # 有观众离席 {name}
+    'spectate_chat': None,           # 观战席聊天 {name,message,ts}（**对局双方不可见**）
+    # 观众自己那份"我叫什么"：用来把名单里**自己**那一行标出来。
+    # 只单发给本人（`to=sid`），且**只含显示名** —— 座位识别仍只靠 `sides[].seat_id`
+    # 与 `seat_labels`，这里不引入任何新的连接标识。
+    'spectate_you': None,
+    # —— ★ 观战棋盘帧（第 5 批）——
+    # 为什么必须有它：观战棋盘原来是**从 `attacks` 历史反推**的，而那段历史在
+    # 「疗愈原地复活 / 棋盘重置（回光返照·灵气复苏·败者食尘）」时会变，
+    # 观众侧却收不到任何一条能触发重新解算的事件（`board_attacks_updated` 与
+    # `reset_gameboard` 都在 `NOT_FOR_SPECTATORS` 里）→ 观战棋盘**从进席起就冻结**。
+    #
+    # 这份帧的字段**与快照里给观众的那两块完全同源**（`_spectate_player_cells`），
+    # 也就是"这一格挨过炮没有、中没中、沉没沉" —— 对局双方看到的逐格结果
+    # 与它逐字节相同（`board_attacks_updated` 就是它的镜像）⇒ 不是新信息。
+    # ⚠️ 帧里**绝不会**有"没挨过炮的船位"：那些格子在 `Player.attacks` 里不存在。
+    # 形状由 `canonical_frame_json` 按三级白名单**过滤**（不是断言），
+    # 守卫在 `tests/test_spectate_batch5.py`。
+    'spectate_board': canonical_frame_json,
+}
+
+
+# ---------------------------------------------------------------------------
+# 明确不给观众的事件表
+# ---------------------------------------------------------------------------
+# 值 = **理由字符串**。空理由 = 没想清楚 → 直接报错（见 `_validate`）。
+NOT_FOR_SPECTATORS = {
+    # —— 整份局面快照：带 ships[].positions（有的还带 hand）——
+    'game_state': '整份局面快照，含 ships[].positions 与对方攻击记录 —— 给了就是透视',
+    'room_sync': '重连快照，41 个顶层键含 ships[].positions + hand（最毒的一处）',
+    # —— 手牌：只看得到张数，看不到内容 ——
+    'hand_updated': '手牌**内容**。观众只能看张数，不能看牌面',
+    'active_effects': '按座位下发的效果角标，payload 是本方 effect_flags 全量',
+    # —— 船只本体 ——
+    'ships_updated': '本方船只的完整状态（含 positions / hits）',
+    'player_ships_updated': '本方船只的完整状态（含 positions / hits）',
+    'board_attacks_updated': '本方棋盘上的攻击记录（含 hit/ship_sunk 逐格结果）',
+    'revealed_positions': '探测类卡揭示的坐标 —— 那是**付费情报**，不是公开信息',
+    # —— 等待玩家交互的私有请求（只有当事玩家能回答）——
+    'sacrifice_request': '牺牲选船请求：只有当事玩家能回答，观众看到也无法操作',
+    'sacrifice_cancelled': '牺牲选船请求的取消（同上）',
+    'placement_request': '布船/选格请求：只有当事玩家能回答',
+    'placement_done': '布船完成回执（发给当事玩家）',
+    'reset_gameboard': '重摆棋盘指令（发给当事玩家，会改他的界面状态）',
+    'dice_discard_request': '命运骰子弃牌请求：只有当事玩家能回答',
+    'chain_request': '连锁响应请求：只有当事玩家能回答，且会暴露他手上有什么',
+    'priority_request': '优先权请求：私有的询问窗口',
+    'priority_waiting': '优先权等待态：按座位下发',
+    'priority_waiting_end': '优先权等待态解除：按座位下发',
+    'priority_setting_updated': '优先权个人设置（账号级偏好，与对局无关）',
+    # —— 其它按座位下发的私有事件 ——
+    'taoyuan_complete': '桃园结义的选牌回执（发给当事玩家）',
+    'taoyuan_choice': '与 taoyuan_complete 同源的选牌回执（`_safe_emit_to_player` 的三元分支）',
+    'lingqi_complete': '灵气复苏的选牌回执（发给当事玩家）',
+    'wangyang_complete': '滥竽充数的选牌回执（发给当事玩家）',
+    'lingqi_waiting': '灵气复苏的等待态（发给对方）',
+    'taoyuan_waiting': '桃园结义的等待态（发给对方）',
+    'shenji_waiting': '神机妙算宣言窗口（发给对方）',
+    'shenji_waiting_end': '神机妙算宣言窗口结束（发给对方）',
+    # —— 匹配 / 大厅 / 连接（与某一局对局无关，观众不该收到）——
+    'match_queued': '匹配队列回执（发给入队者本人）',
+    'match_canceled': '取消匹配回执（发给本人）',
+    'quick_chat': '局内快捷语（产品需求只要求观众看得到"玩家之间的聊天"）',
+    'lobby_state': '大厅状态（发给在大厅的人；观战者已经不在大厅了）',
+    'lobby_hello': '大厅 hello（同上）',
+    'lobby_chat': '大厅聊天（不是对局内聊天）',
+    'lobby_chat_history': '大厅聊天历史（同上）',
+    'resume_game': '断线续玩回执（发给本人）',
+    'reconnect_token': '重连令牌 —— **绝对不能**给第三方',
+    'reconnect_warning': '重连警告（发给本人）',
+    # —— 错误提示：发给谁只对谁有意义 ——
+    'error': '错误提示：只对发起操作的那个连接有意义',
+}
+
+
+# 这些事件的原 payload 里**必然**带船坐标 —— 净化后必须一个都不剩。
+# `tests/test_spectate_guards.py` 逐格钉住它们（这是本批最要紧的断言）。
+MUST_NOT_LEAK_COORDS = (
+    'shields_added',
+    'shield_absorbed',
+    'trap_set',
+    'trap_triggered',
+    'ship_sacrificed',
+)
+
+# 净化后**必须仍然带**这些字段（动作信息）—— 防的是"为了安全把该给的也砍了"。
+MUST_KEEP_ACTION_FIELDS = {
+    'attack_result': ('attacker', 'x', 'y', 'hit'),
+    'shields_added': ('player', 'count'),
+    'shield_absorbed': ('player',),
+    'trap_set': ('player',),
+    'trap_triggered': ('owner', 'sacrificed'),
+    'ship_sacrificed': ('player',),
+    # 日志那条：剥掉坐标之后**文字与归属必须还在** ——
+    # 否则观众会从"看得到对局日志"退化成"日志一片空白"。
+    'game_log': ('ts', 'type', 'text', 'detail'),
+    # 连锁那条：白名单重建之后，"谁打的、哪张牌、有没有被康"必须还在 ——
+    # 否则观众会从"看得到连锁"退化成"连锁一片空白"。
+    'magic_chain_updated': ('chain', 'chain_len'),
+}
+
+# 这些 key 出现在发给观众的 payload 里 = 已经是泄漏，测试直接判失败。
+FORBIDDEN_PAYLOAD_KEYS = ('ships', 'positions', 'hits', 'sunk_positions')
+
+# ---------------------------------------------------------------------------
+# 观战快照（`server._build_spectate_snapshot`）的**禁字段表**
+# ---------------------------------------------------------------------------
+# 快照是**白名单另建**的（绝不复用 `_build_room_sync` 再删字段 —— 它有 41 个
+# 顶层键，逐个删必然漏一个）。这张表是那件事的机器守卫：快照里**任何层级**
+# 出现这些 key 就是泄漏，`tests/test_spectate_batch2.py` 递归扫它。
+#
+# 每一条都对应一个"若出现就等于透视"的东西：
+#   ships / positions / hits / sunk_positions —— 船在哪（核心不变量 #1）；
+#   hand / magic_hand                           —— 手牌**内容**（只能给张数）；
+#   revealed_positions                          —— 探测卡揭示的坐标，是**付费情报**；
+#   effect_flags / active_effects               —— 按座位下发的私有角标；
+#   pending_placement / pending_sacrifice / pending_sacrifice_ships
+#                                               —— 等待玩家交互的私有状态；
+#   opponent_attacks                            —— 重连快照的私有键名（我方棋盘受击记录）；
+#   sunk_ships / max_ships                      —— 对局私有计数。
+SNAPSHOT_FORBIDDEN_KEYS = (
+    'ships', 'positions', 'hits', 'sunk_positions',
+    'hand', 'magic_hand', 'revealed_positions',
+    'effect_flags', 'active_effects',
+    'pending_placement', 'pending_sacrifice', 'pending_sacrifice_ships',
+    'opponent_attacks', 'sunk_ships', 'max_ships',
+)
+
+
+# ---------------------------------------------------------------------------
+# 校验 + 净化入口
+# ---------------------------------------------------------------------------
+
+def _validate():
+    """模块导入期自检：两张表必须自洽。
+
+    * 白名单与黑名单**绝不许有交集**（CLAUDE.md 教训 #10）；
+    * `NOT_FOR_SPECTATORS` 的每个理由必须是**非空字符串**（写不出理由 = 没想清楚）；
+    * `MUST_NOT_LEAK_COORDS` / `MUST_KEEP_ACTION_FIELDS` 里的事件必须是**允许给观众**的。
+    """
+    both = set(SPECTATE_EVENTS) & set(NOT_FOR_SPECTATORS)
+    if both:
+        raise ValueError('事件分类表自相矛盾（既给又不给）：%s' % sorted(both))
+    for event, reason in NOT_FOR_SPECTATORS.items():
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError('NOT_FOR_SPECTATORS 里的 %r 必须写明理由' % event)
+    for event in MUST_NOT_LEAK_COORDS:
+        if event not in SPECTATE_EVENTS:
+            raise ValueError('%r 被要求"不许泄漏坐标"，却不在 SPECTATE_EVENTS 里' % event)
+    for event in MUST_KEEP_ACTION_FIELDS:
+        if event not in SPECTATE_EVENTS:
+            raise ValueError('%r 被要求"保留动作字段"，却不在 SPECTATE_EVENTS 里' % event)
+    # 快照的禁字段表与事件 payload 的禁字段表**不许互相矛盾**：
+    # 后者是前者的子集（快照把 payload 那一套也一并禁掉）。
+    stray = set(FORBIDDEN_PAYLOAD_KEYS) - set(SNAPSHOT_FORBIDDEN_KEYS)
+    if stray:
+        raise ValueError('快照禁字段表漏了事件 payload 的禁字段：%s' % sorted(stray))
+    # 剥字段用的名字表必须覆盖"禁字段表"里所有坐标类字段 ——
+    # 否则 `_strip_coord_keys` 会放过一个测试判红、而净化放行的键（两张表打架）。
+    unscrubbed = set(FORBIDDEN_PAYLOAD_KEYS) - set(COORDINATE_KEYS)
+    if unscrubbed:
+        raise ValueError('COORDINATE_KEYS 漏了：%s' % sorted(unscrubbed))
+    # 第 5 批：被 `canonical_frame` 过滤的那几个事件必须真的登记在允许表里 ——
+    # 否则"我在过滤 / 其实没人用"就是一句空话（教训 #34：兜底 + 零报错制造假象）。
+    for event in CANONICALIZE:
+        if event not in SPECTATE_EVENTS:
+            raise ValueError('%r 走 canonical_frame，却不在 SPECTATE_EVENTS 里' % event)
+        if SPECTATE_EVENTS[event] is None:
+            raise ValueError(
+                '%r 登记成"原样转发"，但它的 payload 形状不受控 —— '
+                '必须走 canonical_frame_json' % event)
+    # ★ 2026-09-27 区域预览批：两张表 + 一张白名单必须自洽。
+    for card_name, board in AREA_TARGET_BOARDS.items():
+        if not isinstance(card_name, str) or not card_name.strip():
+            raise ValueError('AREA_TARGET_BOARDS 的键必须是卡名')
+        if board not in AREA_TARGET_BOARD_VALUES:
+            raise ValueError(
+                'AREA_TARGET_BOARDS[%r]=%r 不是合法归属（只能是 %s）'
+                % (card_name, board, list(AREA_TARGET_BOARD_VALUES)))
+    # 公开预览的字段表与两张"禁字段表"**绝不许有交集**（教训 #10）——
+    # 有交集就意味着"我一边允许它、一边判定它是泄漏"。
+    for forbidden in (FORBIDDEN_PAYLOAD_KEYS, SNAPSHOT_FORBIDDEN_KEYS):
+        overlap = set(PREVIEW_KEYS) & set(forbidden)
+        if overlap:
+            raise ValueError('预览白名单与禁字段表有交集：%s' % sorted(overlap))
+    if not {'card', 'seat', 'preview'} <= set(PREVIEW_KEYS):
+        raise ValueError('PREVIEW_KEYS 漏了必需字段：%s' % sorted(PREVIEW_KEYS))
+    # 帧的三级白名单（要读到上面那张 `FORBIDDEN_PAYLOAD_KEYS`，所以只能在这里跑）
+    _validate_frame_keys()
+
+
+_validate()
+
+
+def is_spectatable(event) -> bool:
+    """这个事件名允不允许发给观众。不在表里 = 不允许（默认拒绝）。"""
+    return isinstance(event, str) and event in SPECTATE_EVENTS
+
+
+def sanitize_event(event, data, room=None):
+    """把一个事件净化成"可以发给观众"的版本。
+
+    * 事件不在 `SPECTATE_EVENTS` → 返回 `None`（**默认拒绝**，调用方据此不发）；
+    * 表里的值是 `None` → 原样返回；
+    * 表里给了净化函数 → 返回它的结果（返回 `None` 同样表示"这次不发"）。
+
+    `room`：**房间对象**（正常路径，`_emit_to_spectators` 传的就是它）或
+    房间号字符串（老调用点 / 守卫用例按 `.id` 传）。净化函数的签名统一是
+    `fn(data, room=None)`，需要的自己从 `room` 取座位等房间级信息；
+    取不到 room 时必须**退化成安全的一侧**（例如座位标签退化成 `unknown`，
+    绝不回显原始 sid）。
+    """
+    if not is_spectatable(event):
+        return None
+    fn = SPECTATE_EVENTS[event]
+    if fn is None:
+        return data
+    return fn(data, room)
+
+
+# ---------------------------------------------------------------------------
+# 允许观战的判据
+# ---------------------------------------------------------------------------
+
+def can_spectate(allow_a, allow_b) -> bool:
+    """这一局能不能被别人观战。
+
+    **双方都允许**才算允许（作者裁定：观战开关是玩家的全局设置，只由自己的设置决定）。
+    缺一边（`None` / 游客没有设置 / 读不到）= 不允许 —— **未知一律退化成"不允许"**，
+    不能退化成"满足条件"（CLAUDE.md 教训 #21：隐私开关的方向必须朝安全那一侧兜）。
+    """
+    return bool(allow_a) and bool(allow_b)

@@ -14,11 +14,14 @@ from werkzeug.utils import secure_filename
 
 import db
 import achievements
+import anticheat
 import dm
 import leveling
 import profile_spec
+import changelog
 import quick_chat
 import ranks
+import suspicion
 import wallpaper
 
 ALLOWED_AVATAR_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
@@ -732,16 +735,20 @@ def build_own_profile(uid):
         counters = db.get_user_counters(uid) or {}
     except Exception:
         counters = {}
+    # ★ 2026-09-20：存储的外观要按**当前**解锁状态过滤（掉段/被回滚分数的会回落默认）。
+    #    以前这里原样下发存储值，而写路径却会拒绝失效项 —— 一条规则两处不一致。
+    _tid, _fid, _bid = profile_spec.effective_equipped(
+        stats, extra.get('title_id'), extra.get('frame_id'), extra.get('card_bg_id'))
     profile.update({
         'rank': rank,
         'counters': counters,
         'name_style': _name_style(uid),
         'level_info': level_view_for(uid),
-        'title_id': extra.get('title_id') or '',
+        'title_id': _tid,
         'tags': extra.get('tags') or [],
         'status_text': extra.get('status_text') or '',
-        'frame_id': extra.get('frame_id') or profile_spec.DEFAULT_FRAME_ID,
-        'card_bg_id': extra.get('card_bg_id') or profile_spec.DEFAULT_CARD_BG_ID,
+        'frame_id': _fid,
+        'card_bg_id': _bid,
         'show_stats': int(extra.get('show_stats') or 0),
         'show_fav_cards': int(extra.get('show_fav_cards') or 0),
         'show_history': int(extra.get('show_history') or 0),
@@ -810,6 +817,246 @@ def save_profile_card():
     if not db.save_user_profile_extra(uid, fields):
         return jsonify({'success': False, 'error': '保存失败，请稍后重试'}), 500
     return jsonify({'success': True, 'profile': build_own_profile(uid)})
+
+
+# ---------------------------------------------------------------------------
+# 实时观战（第 2 批）：允许他人观战我的对局 —— 全局设置，**默认开**
+# ---------------------------------------------------------------------------
+# 存哪：`user_profile.allow_spectate`（老表加列，`db._migrate_schema` 判存在再 ALTER），
+#       默认 1 = 允许。读/写都只看这一列。
+#
+# ⚠️ **刻意不并进 `POST /api/profile/card`**：那条是"整行语义、缺的键用默认值补齐"，
+#    而本批不动前端 —— 名片保存请求里不会带这个字段，并进去等于"玩家每存一次名片，
+#    观战开关就被静默改回允许"。所以这里给一对**只动这一列**的专用接口。
+#    守卫：tests/test_spectate_batch2.py::test_saving_profile_card_does_not_reset_spectate_switch
+@app.route('/api/spectate/setting', methods=['GET'])
+def get_spectate_setting():
+    """读「允许他人观战我的对局」。
+
+    未登录 401 —— 这个开关是**账号级私有设置**，游客没有它
+    （游客的对局也进不了观战：`server._spectate_seat_allow` 对无账号座位返回 None）。
+    """
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    value = db.get_allow_spectate(uid)
+    if value is None:
+        # 读不到 → 如实说"不知道"，**绝不许**谎报成"允许"（教训 #21）
+        return jsonify({'success': False, 'error': '暂时无法读取设置，请稍后重试'}), 503
+    return jsonify({'success': True, 'allow_spectate': bool(value)})
+
+
+@app.route('/api/spectate/setting', methods=['POST'])
+def save_spectate_setting():
+    """写「允许他人观战我的对局」。请求体：`{'allow_spectate': true|false}`。
+
+    ⚠️ 字段缺失/类型不对一律 **400 带原因**（教训 #32：不许静默当默认值处理 ——
+       那会让"我明明关掉了"和"请求没生效"分不出来）。
+    """
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not db.get_user(uid=uid):
+        return jsonify({'success': False, 'error': '账号不存在'}), 401
+
+    payload = request.get_json(silent=True)
+    if payload is None:
+        payload = request.form.to_dict() if request.form else None
+    if not isinstance(payload, dict) or 'allow_spectate' not in payload:
+        return jsonify({'success': False, 'error': '请求体必须带 allow_spectate'}), 400
+
+    raw = payload.get('allow_spectate')
+    if isinstance(raw, bool):
+        on = raw
+    elif isinstance(raw, (int, str)) and str(raw) in ('0', '1'):
+        on = str(raw) == '1'
+    elif isinstance(raw, str) and raw.strip().lower() in ('true', 'false', 'on', 'off'):
+        on = raw.strip().lower() in ('true', 'on')
+    else:
+        return jsonify({'success': False, 'error': 'allow_spectate 必须是布尔值'}), 400
+
+    if not db.set_allow_spectate(uid, on):
+        return jsonify({'success': False, 'error': '保存失败，请稍后重试'}), 500
+    return jsonify({'success': True, 'allow_spectate': on})
+
+
+# ---------------------------------------------------------------------------
+# 对局回放（2026-09-23 回放批 §5/§6）
+# ---------------------------------------------------------------------------
+# 三条铁律（契约 §5「绝不做」，三条都写成源码级守卫，见 tests/test_replay_guards.py）：
+#   · 本段代码**不发任何 socket 事件**（`emit(` / `socketio` 一个字都不许出现）——
+#     回放数据里有双方船位，一旦 emit 进对局房间就是灾难级泄露；
+#   · 回放相关的键**永不进 `SPECTATE_EVENTS`**；
+#   · `_build_spectate_snapshot` **永不读回放表**。
+#
+# 读权限（契约 §5）：能看你战绩的人都能看 ——
+#   · 请求者是该局参与者（`winner_user_id` / `loser_user_id` == 自己），**或**
+#   · 该局某个真实参与者 `show_history = 1`（实测默认 0 = 不公开 ⇒ 默认只有双方能看到）。
+# **假设 A1**：回放接口**要求登录**（游客 401）。观战已是"只限登录用户"，
+#   回放比观战敏感得多（它泄露船位），不给匿名抓取留口子。
+import replay as replay_module      # 纯模块：记录器 + 打包（不 import server，见其 docstring）
+
+
+def _replay_participant_ids(row):
+    """一条回放行里的两个真实参与者 uid（可能为空）。"""
+    return [u for u in (row.get('winner_user_id'), row.get('loser_user_id')) if u]
+
+
+def _replay_show_history(uid):
+    """该账号有没有公开战绩历史（`user_profile.show_history`，实测默认 0 = 不公开）。
+
+    读不到（uid 空 / 库异常）一律按 **0 = 不公开** —— 这个判据是**放行**用的，
+    失败方向必须朝"拒"（隐私开关方向一律朝安全那一侧兜，教训 #21）。
+    """
+    if not uid:
+        return 0
+    try:
+        extra = db.get_user_profile_extra(uid) or {}
+    except Exception as e:              # noqa: BLE001
+        print(f'[replay] 读取 show_history 失败（按不公开处理）: uid={uid} -> {e}')
+        return 0
+    try:
+        return int(extra.get('show_history') or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _replay_read_allowed(match_id, viewer_uid):
+    """这条回放该不该给 `viewer_uid` 看。返回 `(ok, payload, row, you_are, reason)`。
+
+    `ok=False` 时 `reason` 是给玩家看的一句话（**失败必须带原因**，教训 #32）。
+
+    ⚠️ **权限**只看 `match_replays` 的两列（参与者 / `show_history`），
+       与 `you_are` **分开**：后者是"你是哪块棋盘"的展示口径，读的是 blob 里的
+       `seats`（按入座顺序记的 `uid → p1/p2`）。两者混用会让"胜者就是 p1"这种
+       巧合偷偷变成权限判据（作者实报的 `（你）` 标到对面就是从这个混淆长出来的）。
+    """
+    row = db.get_match_replay(match_id)
+    if not row:
+        return False, None, None, None, '这局没有可回放的行动'
+    # 体积/版本/解析都还没校验，这里只需要 `seats`：读一次 blob，失败就当没有
+    # （**不删**这条 —— 校验与报错是 `get_match_replay` 接口的职责，这里只做鉴权）。
+    payload = None
+    try:
+        payload = json.loads(row.get('replay') or '{}')
+        payload = payload if isinstance(payload, dict) else None
+    except Exception:                   # noqa: BLE001
+        payload = None
+    mine = replay_module.you_are(payload, row, viewer_uid)
+    if mine:
+        return True, payload, row, mine, ''
+    # 非参与者：只要任一真实参与者公开了战绩，就跟着能看（契约 §5）
+    for uid in _replay_participant_ids(row):
+        if _replay_show_history(uid):
+            return True, payload, row, None, ''
+    return False, payload, row, None, '你没有权限查看这一局的回放'
+
+
+@app.route('/api/replay/setting', methods=['GET'])
+def get_replay_setting():
+    """读「允许保留我的对局回放」。状态**只来自服务端**（契约 §5）。"""
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    value = db.get_allow_replay(uid)
+    if value is None:
+        # 读不到 → 如实说"不知道"，**绝不许**谎报成"允许"（教训 #21）
+        return jsonify({'success': False, 'error': '暂时无法读取设置，请稍后重试'}), 503
+    return jsonify({'success': True, 'allow_replay': bool(value)})
+
+
+@app.route('/api/replay/setting', methods=['POST'])
+def save_replay_setting():
+    """写「允许保留我的对局回放」。请求体：`{'allow_replay': true|false}`。
+
+    ⚠️ 字段缺失/类型不对一律 **400 带原因**（教训 #32：不许静默当默认值处理）。
+    ⚠️ 与观战开关**同语义**：任一方关掉 ⇒ **这一局就不留回放**（契约 §5）——
+       判定在 `server._replay_allowed_for_match`，本接口只负责存这一个布尔。
+    """
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'success': False, 'error': '未登录'}), 401
+    if not db.get_user(uid=uid):
+        return jsonify({'success': False, 'error': '账号不存在'}), 401
+
+    payload = request.get_json(silent=True)
+    if payload is None:
+        payload = request.form.to_dict() if request.form else None
+    if not isinstance(payload, dict) or 'allow_replay' not in payload:
+        return jsonify({'success': False, 'error': '请求体必须带 allow_replay'}), 400
+
+    raw = payload.get('allow_replay')
+    if isinstance(raw, bool):
+        on = raw
+    elif isinstance(raw, (int, str)) and str(raw) in ('0', '1'):
+        on = str(raw) == '1'
+    elif isinstance(raw, str) and raw.strip().lower() in ('true', 'false', 'on', 'off'):
+        on = raw.strip().lower() in ('true', 'on')
+    else:
+        return jsonify({'success': False, 'error': 'allow_replay 必须是布尔值'}), 400
+
+    if not db.set_allow_replay(uid, on):
+        return jsonify({'success': False, 'error': '保存失败，请稍后重试'}), 500
+    return jsonify({'success': True, 'allow_replay': on})
+
+
+@app.route('/api/replay/<match_id>', methods=['GET'])
+def get_match_replay(match_id):
+    """读一条回放：`{success, replay, you_are}`（`you_are` ∈ `p1`/`p2`/None）。
+
+    ⚠️ **绝不下发任何 user_id**（契约 §6）：`you_are` 由服务端算好，
+       它就是"你是两块棋盘里的哪一块"。
+    ⚠️ 读的时候**只读一条**、**有 512 KB 硬上限**、**解析失败明确报错 + 打日志 +
+       顺手删掉这条坏回放**（契约 §1/§6：绝不静默返回空）。
+    """
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'success': False, 'error': '未登录'}), 401          # 假设 A1
+
+    allowed, _payload_for_seats, row, you_are, reason = _replay_read_allowed(match_id, uid)
+    # ⚠️ 鉴权段解析出来的那份**只用来看 `seats`**，到这里一律丢掉、下面重新解析：
+    #    它是**超限校验之前**读的，不许拿它当"体积合法"的证据（契约 §1 的 512 KB 硬上限）。
+    del _payload_for_seats
+    if row is None:
+        return jsonify({'success': False, 'error': reason}), 404
+    if not allowed:
+        return jsonify({'success': False, 'error': reason}), 403
+
+    # ① 体积上限：**先看 `bytes` 列**（不必把 blob 读进内存再判）
+    try:
+        size = int(row.get('bytes') or 0)
+    except (TypeError, ValueError):
+        size = 0
+    if size > replay_module.MAX_REPLAY_BYTES:
+        print(f'[replay] 回放 blob 超限，已拒收: match_id={match_id}, bytes={size}')
+        return jsonify({'success': False,
+                        'error': '这条回放数据异常（体积超限），已拒绝加载'}), 500
+
+    blob = row.get('replay') or ''
+    if len(blob.encode('utf-8')) > replay_module.MAX_REPLAY_BYTES:
+        print(f'[replay] 回放 blob 超限（实际字节），已拒收: match_id={match_id}')
+        return jsonify({'success': False,
+                        'error': '这条回放数据异常（体积超限），已拒绝加载'}), 500
+
+    # ② 解析：失败**明确报错 + 打日志 + 删掉这条坏回放**（教训 #32：不许静默）
+    try:
+        payload = json.loads(blob)
+    except Exception as e:              # noqa: BLE001
+        print(f'[replay] 回放解析失败，已删除这条坏回放: match_id={match_id} -> {e}')
+        db.delete_match_replay(match_id)
+        return jsonify({'success': False, 'error': '这条回放已损坏，无法回放'}), 500
+    if not isinstance(payload, dict):
+        print(f'[replay] 回放不是 JSON 对象，已删除: match_id={match_id}')
+        db.delete_match_replay(match_id)
+        return jsonify({'success': False, 'error': '这条回放已损坏，无法回放'}), 500
+
+    # ③ 版本：对不上 ⇒ 明确报错（**不删**：将来可能有人读得懂旧版本）
+    if int(payload.get('version') or 0) != replay_module.REPLAY_VERSION:
+        print(f'[replay] 回放版本不认识: match_id={match_id}, '
+              f'version={payload.get("version")!r}')
+        return jsonify({'success': False, 'error': '这条回放的格式版本不支持'}), 409
+
+    return jsonify({'success': True, 'replay': payload, 'you_are': you_are})
 
 
 # 修改签名
@@ -910,7 +1157,13 @@ def user_stats_view():
 
     # 名片个性字段（称号 / 标签 / 状态 / 边框 / 底色 / 最爱用的卡）
     extra = db.get_user_profile_extra(stats['id'])
-    title_id = extra.get('title_id') or ''
+    # ★ 2026-09-20：别人视角同样要按**当前**解锁状态过滤（与 `build_own_profile` 同一份判据）。
+    #    漏了这里 = "别人能看到你无权拥有的外观"，比自视角显示更糟（那是公开可见的）。
+    _stats_for_unlock = _profile_unlock_stats(stats['id'], stats)
+    _tid, _fid, _bid = profile_spec.effective_equipped(
+        _stats_for_unlock, extra.get('title_id'),
+        extra.get('frame_id'), extra.get('card_bg_id'))
+    title_id = _tid
     public_stats['title_id'] = title_id
     public_stats['title_name'] = profile_spec.title_name(title_id)
     public_stats['tags'] = extra.get('tags') or []
@@ -922,8 +1175,8 @@ def user_stats_view():
     #    直接让服务端把名字给出来，前端就不必再去够那个作用域。
     public_stats['tag_names'] = [profile_spec.tag_name(t) for t in (extra.get('tags') or [])]
     public_stats['status_text'] = extra.get('status_text') or ''
-    public_stats['frame_id'] = extra.get('frame_id') or profile_spec.DEFAULT_FRAME_ID
-    public_stats['card_bg_id'] = extra.get('card_bg_id') or profile_spec.DEFAULT_CARD_BG_ID
+    public_stats['frame_id'] = _fid
+    public_stats['card_bg_id'] = _bid
     public_stats['fav_cards'] = _fav_cards(stats['id'], 3)
     # 三个展示开关**一起下发**（计划 §2.5，2026-09-17 裁决补上后两个）。
     # 语义统一：0 = 该区块对所有人隐藏（包括自己），1 = 可见，由前端按标志位决定画不画。
@@ -1235,6 +1488,21 @@ def api_quick_chat():
         'groups': list(quick_chat.GROUPS),
         'items': quick_chat.catalog(),
     })
+
+
+@app.route('/api/changelog', methods=['GET'])
+def api_changelog():
+    """更新公告（公开只读，**不要求登录**）。
+
+    为什么公开：登录页上的人也该看得到"这次改了什么"，而这里全是静态文案、
+    没有任何用户数据（与 `/api/quick_chat`、`/api/leaderboard` 同类）。
+
+    ⚠️ 文案的唯一来源是 `changelog.py` —— 前端只渲染，**不许在 `game.js` 里再抄一份**
+    （本仓库栽过"同一份内容两份实现必然漂移"）。
+    `latest` 是给前端判断"有没有新公告"用的（与 `localStorage` 里存的时间比对）。
+    """
+    limit = request.args.get('limit', default=10, type=int)
+    return jsonify({'status': 'ok', **changelog.view(limit)})
 
 
 # ---------------------------------------------------------------------------
@@ -2100,6 +2368,277 @@ def api_friend_messages_read():
 
     marked = db.mark_friend_messages_read(uid, target['id'])
     return jsonify({'status': 'ok', 'read': _int_or_zero(marked)})
+
+
+# ===========================================================================
+# 反作弊管理后台（2026-09-20）
+#
+# 定位：**只给你（站长）用**的运营面板。可以看全服嫌疑度、逐个玩家查战绩与违规记录、
+#       手动解封/加封。
+#
+# ⚠️ 三重安全约束（缺一条都是事故）：
+#   ① **管理员白名单**：复用既有的 `DEBUG_ADMIN_USER_IDS`（由 server.py 注入），
+#      **不新造一套管理员概念** —— 两套管理员概念必然漂移（本项目老病根）。
+#   ② **写操作必须带 actor**：每次干预都记"谁做的"，可审计。
+#   ③ **绝不泄露给普通玩家**：所有接口都先过 `_admin_required()`，
+#      非管理员一律 403，且**不区分"不存在"与"无权限"**（不泄露账号是否存在）。
+# ===========================================================================
+def _admin_backend(name):
+    """取 server.py 注入的后端能力（按名字现取，与好友那套同一机制）。
+
+    ⚠️ `api.py` **不能 import server**（`python server.py` 时模块名是 `__main__`，
+    import 会再执行一遍成另一个模块对象 —— 见 CLAUDE.md 第 19 条）。
+    """
+    return _friend_backend(name)
+
+
+def _admin_allowed_uids() -> set:
+    """管理员白名单（server 注入；取不到就当空 = 谁都不是管理员）。"""
+    try:
+        fn = _admin_backend('_admin_user_ids_for_api')
+        if callable(fn):
+            return set(fn() or ())
+    except Exception:
+        pass
+    return set()
+
+
+def _admin_required():
+    """返回 `(uid, None)` 或 `(None, 响应)`。**唯一的管理员门禁入口**。"""
+    uid = session.get('user_id')
+    if not uid:
+        return None, (jsonify({'success': False, 'error': '未登录'}), 401)
+    allowed = _admin_allowed_uids()
+    if not allowed or str(uid) not in {str(x) for x in allowed}:
+        # ⚠️ 白名单为空 = **谁都不是管理员**（默认安全）。
+        #    不能写成"空就放行" —— 那等于线上没有管理员配置时门户大开。
+        return None, (jsonify({'success': False, 'error': '无权访问'}), 403)
+    return uid, None
+
+
+def _suspicion_matches_for_api(uid: str) -> list:
+    """取某人的对局嫌疑度明细并折算 age_days（与 server 侧同口径）。
+
+    ⚠️ 时间必须**在调用时**算，不能存库（见 server._suspicion_matches_for 的注释）。
+    """
+    try:
+        rows = db.get_match_suspicion(uid)
+    except Exception:
+        return []
+    now = time.time()
+    out = []
+    for r in rows or ():
+        try:
+            age = max(0.0, (now - float(r.get('created_at') or now)) / 86400.0)
+        except (TypeError, ValueError):
+            age = 0.0
+        out.append({'score': r.get('score'), 'age_days': age})
+    return out
+
+
+def _admin_player_report(uid: str) -> dict:
+    """组装一个玩家的完整反作弊报告（嫌疑度 + 封禁 + 战绩 + 违规记录）。"""
+    user = db.get_user(uid=uid) or {}
+    username = user.get('username') or '(已删除)'
+    matches = _suspicion_matches_for_api(uid)
+    override = db.get_anticheat_override(uid)
+    report = suspicion.build_report(uid, matches, override=override, username=username)
+
+    # 违规记录：可疑对局明细（只有 ≥record 档才有）
+    flags = []
+    try:
+        for f in db.get_anticheat_flags(500):
+            if f.get('match_id'):
+                flags.append({
+                    'match_id': f.get('match_id'),
+                    'rule': f.get('rule'),
+                    'severity': f.get('severity'),
+                    'detail': f.get('detail'),
+                    'created_at': f.get('created_at'),
+                })
+    except Exception:
+        pass
+
+    # 干预历史（谁在什么时候解过封）
+    try:
+        history = db.get_anticheat_override_history(uid, 50)
+    except Exception:
+        history = []
+
+    # 战绩（复用既有口径：wins/losses + 排位）
+    wins = int(user.get('wins') or 0)
+    losses = int(user.get('losses') or 0)
+    rank_row = {}
+    try:
+        rank_row = db.get_user_rank_row(uid) or {}
+    except Exception:
+        rank_row = {}
+
+    report['stats'] = {
+        'wins': wins,
+        'losses': losses,
+        'win_rate': round(wins / (wins + losses), 3) if (wins + losses) else 0.0,
+        'rank_points': int(rank_row.get('points') or 0),
+        'ranked_wins': int(rank_row.get('ranked_wins') or 0),
+        'ranked_losses': int(rank_row.get('ranked_losses') or 0),
+    }
+    # 只看**属于这个人**的违规局（`anticheat_flags` 是按对局存的，没有 user_id）
+    report['flagged_matches'] = [f for f in flags
+                                 if f.get('match_id') in
+                                 {m.get('match_id') for m in _match_ids_for(uid)}][:100]
+    report['override_history'] = [
+        {'level': h.get('level'), 'cleared': bool(h.get('cleared')),
+         'reason': h.get('reason'), 'actor': h.get('actor'),
+         'created_at': h.get('created_at')}
+        for h in (history or [])
+    ]
+    return report
+
+
+def _match_ids_for(uid: str) -> list:
+    """该用户参与过的对局 id（用于把违规记录过滤到本人）。"""
+    try:
+        rows = db.get_match_suspicion(uid, 2000)
+    except Exception:
+        return []
+    out = []
+    for r in rows or ():
+        mid = str(r.get('match_id') or '')
+        # `match_suspicion.match_id` 存的是 `'{match_id}:{user_id}'`（表主键去重口径）
+        out.append({'match_id': mid.split(':', 1)[0] if ':' in mid else mid})
+    return out
+
+
+@app.route('/api/admin/suspicion', methods=['GET'])
+def admin_suspicion_list():
+    """全服嫌疑度列表（按累计嫌疑度降序）。
+
+    查询参数：`?limit=200`（1~2000）
+    响应：`{'success':True,'players':[...],'levels':{...}}`
+    """
+    _, err = _admin_required()
+    if err:
+        return err
+
+    try:
+        limit = int(request.args.get('limit') or 200)
+    except (TypeError, ValueError):
+        limit = 200
+    limit = max(1, min(limit, 2000))
+
+    totals = db.get_all_suspicion_totals(limit)
+    players = []
+    for row in totals or ():
+        uid = row.get('user_id')
+        if not uid:
+            continue
+        try:
+            matches = _suspicion_matches_for_api(uid)
+            override = db.get_anticheat_override(uid)
+            rep = suspicion.build_report(uid, matches, override=override,
+                                         username=row.get('username'))
+            players.append(rep)
+        except Exception:
+            continue
+
+    # 只看有嫌疑的（0 分的不必占据列表），但保留全量计数供参考
+    players.sort(key=lambda p: p.get('suspicion') or 0, reverse=True)
+    return jsonify({
+        'success': True,
+        'players': players,
+        'total': len(totals or ()),
+        'levels': {str(k): v for k, v in suspicion.LEVEL_NAMES.items()},
+        'thresholds': {str(lv): th for th, lv in suspicion.LEVEL_THRESHOLDS},
+    })
+
+
+@app.route('/api/admin/player/<uid>', methods=['GET'])
+def admin_player_detail(uid):
+    """单个玩家的完整报告：嫌疑度 / 封禁等级 / 战绩 / 违规记录 / 干预历史。
+
+    ★ 这就是"点头像快速查询"要调的那个接口。
+    """
+    _, err = _admin_required()
+    if err:
+        return err
+    if not uid:
+        return jsonify({'success': False, 'error': '缺少用户 ID'}), 400
+    try:
+        return jsonify({'success': True, 'player': _admin_player_report(uid)})
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'读取失败: {e}'}), 500
+
+
+@app.route('/api/admin/player/<uid>/override', methods=['POST'])
+def admin_player_override(uid):
+    """管理员手动干预：解封 / 指定等级。
+
+    body：`{'cleared': true, 'reason': '误判'}` 或 `{'level': 2, 'reason': '确认刷分'}`
+    ⚠️ 每次干预**追加**一条记录（不覆盖历史），`actor` 由服务端填当前管理员 uid。
+    """
+    actor, err = _admin_required()
+    if err:
+        return err
+    if not uid:
+        return jsonify({'success': False, 'error': '缺少用户 ID'}), 400
+
+    payload = request.get_json(silent=True)
+    if payload is None:
+        payload = request.form.to_dict() if request.form else None
+    if not isinstance(payload, dict):
+        return jsonify({'success': False, 'error': '请求体必须是 JSON 对象'}), 400
+
+    cleared = bool(payload.get('cleared'))
+    level = payload.get('level')
+    reason = str(payload.get('reason') or '').strip()[:500]
+
+    if not cleared:
+        if level is None:
+            return jsonify({'success': False, 'error': '必须给 cleared 或 level'}), 400
+        try:
+            level = int(level)
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'level 必须是整数'}), 400
+        if not (0 <= level <= suspicion.LEVEL_NO_ROOM):
+            return jsonify({'success': False,
+                            'error': f'level 必须在 0~{suspicion.LEVEL_NO_ROOM} 之间'}), 400
+
+    ok = db.set_anticheat_override(uid, level=level, cleared=cleared,
+                                   reason=reason, actor=str(actor))
+    if not ok:
+        return jsonify({'success': False, 'error': '写入失败'}), 500
+
+    # 返回干预后的最新状态，前端不必再拉一次
+    try:
+        after = _admin_player_report(uid)
+    except Exception:
+        after = None
+    return jsonify({'success': True, 'player': after})
+
+
+@app.route('/api/admin/player/<uid>/history', methods=['GET'])
+def admin_player_history(uid):
+    """某玩家的干预历史（审计用）。"""
+    _, err = _admin_required()
+    if err:
+        return err
+    try:
+        rows = db.get_anticheat_override_history(uid, 100)
+    except Exception:
+        rows = []
+    return jsonify({'success': True, 'history': [
+        {'level': h.get('level'), 'cleared': bool(h.get('cleared')),
+         'reason': h.get('reason'), 'actor': h.get('actor'),
+         'created_at': h.get('created_at')} for h in (rows or [])]})
+
+
+@app.route('/api/admin/me', methods=['GET'])
+def admin_me():
+    """当前登录者是不是管理员（前端据此显示/隐藏入口）。"""
+    uid = session.get('user_id')
+    allowed = _admin_allowed_uids()
+    is_admin = bool(uid) and str(uid) in {str(x) for x in allowed}
+    return jsonify({'success': True, 'is_admin': is_admin})
 
 
 

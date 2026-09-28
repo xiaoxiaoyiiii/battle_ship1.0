@@ -248,9 +248,13 @@ html.theme-dark {
     --board-bg: #ffffff;
     --board-border: #d6d6d6;
     --cell-bg: #fafafa;
-    --cell-water: linear-gradient(160deg, #fbfbfb, #f2f2f2);
-    --ship-metal: linear-gradient(145deg, #61676e, #3f444a);
-    --hit-fire: linear-gradient(145deg, #e0524a, #b3241a);
+    /* ⚠️ Fluent 的格子是「纯色填充 + 1px 描边」，不是渐变。这三个令牌曾经是
+       linear-gradient：斜向渐变在小尺寸格子上会显出条纹感，且 `.cell` 的悬停/选中高亮
+       只能靠 !important 才盖得住图片层（见第 20 节「范围选择的选中态」）。改纯色后
+       三者仍是**不透明**的（渲染剔除依赖这点），高亮的 !important 也照旧有效。 */
+    --cell-water: #f7f7f7;
+    --ship-metal: #4c525a;
+    --hit-fire: #c0392b;
     --miss-dot: #9c9c9c;
 
     /* 面板与层次 */
@@ -308,9 +312,9 @@ html.theme-dark {
     --board-bg: #2b2b2b;
     --board-border: #454545;
     --cell-bg: #303030;
-    --cell-water: linear-gradient(160deg, #323232, #2a2a2a);
-    --ship-metal: linear-gradient(145deg, #b9bec6, #8d939b);
-    --hit-fire: linear-gradient(145deg, #ff8a7a, #d1342a);
+    --cell-water: #2e2e2e;
+    --ship-metal: #8d939b;
+    --hit-fire: #d1342a;
     --miss-dot: #6f6f6f;
 
     --glass: rgba(43, 43, 43, 0.72);
@@ -496,6 +500,232 @@ html.theme-dark[data-theme-preset="aurora"] {
     --fluent-focus-ring-color: rgba(52, 211, 153, 0.9);
 }
 
+/* Arena（卡牌竞技场，示意稿 C）：紫金。强调色取示意稿的紫（--vio #7c5cf0），
+   accent 用它的金（--gold #c9a24c）；形状/间距令牌沿用 Fluent 那套（AC4：只换色）。
+   这是 Phase 1 落地的「C 的皮」—— 只加预设，不改任何盒模型尺寸。 */
+html[data-theme-preset="arena"] {
+    --primary: #6d4bd8;
+    --primary-600: #5839b8;
+    --primary-rgb: 109, 75, 216;
+    --primary-50: rgba(109, 75, 216, 0.1);
+    --primary-gradient: linear-gradient(180deg, #7c5cf0, #6d4bd8);
+    --shadow-glow: 0 0 0 3px rgba(124, 92, 240, 0.35);
+    --accent: #8a6a1f;
+    --secondary: #0e7490;
+    --fluent-focus-ring-color: rgba(124, 92, 240, 0.9);
+
+    /* ===== 2026-09-27：preset 从「只换强调色」扩到「连面层一起换」 =====
+       为什么：示意稿 C 是一整套暗紫金的海军蓝竞技场，只换强调色永远到不了它
+       （浅色 Fluent 面 + 紫强调 = "紫色 Fluent"，不是竞技场）。AC4 约束的是
+       **形状与间距**（圆角/间距/字号签名），颜色本来就是 preset 的自由度。
+       这里覆盖的是「面 / 文字 / 边框 / 棋盘 / 格子」这一层；
+       所有组件规则一律走 var()，改颜色不改一处组件 —— 也就不会让 AC6 的裸色超标。 */
+    --fluent-layer-bg: #eceefb;
+    --fluent-card-bg: #ffffff;
+    --fluent-smoke-bg: rgba(255, 255, 255, 0.72);
+    --fluent-stroke-default: rgba(26, 30, 60, 0.07);
+    --fluent-stroke-strong: rgba(26, 30, 60, 0.18);
+    --fluent-text-primary: #171c3a;
+    --fluent-text-secondary: #4b5478;
+    --fluent-text-disabled: #8d95b4;
+    --surface: #eceefb;
+    --surface-strong: #ffffff;
+    --surface-muted: #f4f6ff;
+    --surface-elevated: #ffffff;
+    --text: #171c3a;
+    --text-subtle: #3d4667;
+    --muted: #5b6591;
+    --muted-strong: #4b5478;
+    --muted-strong-600: #3d4667;
+    --border: #ccd3ee;
+    --border-strong: #a8b1d8;
+    --board-bg: linear-gradient(160deg, #ffffff, #e6ebfd);
+    --board-border: #b9c2e8;
+    --cell-bg: #f4f6ff;
+    --cell-water: #f4f6ff;
+    --ship-metal: #4a4f78;
+    --hit-fire: #c22a3e;
+    --miss-dot: #99a2c6;
+    --panel: rgba(255, 255, 255, 0.86);
+    --panel-border: rgba(109, 75, 216, 0.18);
+    --overlay: rgba(11, 13, 24, 0.5);
+    --shadow-panel: 0 10px 30px rgba(58, 44, 120, 0.12);
+    --bg-page: radial-gradient(900px 520px at 50% -8%, rgba(124, 92, 240, 0.16), transparent 70%),
+               linear-gradient(180deg, #f1f3fd 0%, #eceefb 60%, #e7eaf9 100%);
+
+    /* 竞技场专用：只在首页/对局的 C 式组件里用（组件规则里一律 var()，不写裸色） */
+    --arena-gold: #8a6a1f;
+    --arena-gold-strong: #b8873a;
+    --arena-vio: #6d4bd8;
+    --arena-cy: #0e7490;
+    --arena-hero-grad: linear-gradient(120deg, #6b4ce0, #3f2a9c 70%);
+    --arena-hero-fg: #ffffff;
+    --arena-hero-fg-dim: rgba(255, 255, 255, 0.78);
+    --arena-hero-border: #8f79f5;
+    --arena-hero-glow: 0 12px 30px rgba(107, 76, 224, 0.32);
+    --arena-rank-grad: linear-gradient(120deg, #b8873a, #7d5a20);
+    --arena-card-grad: linear-gradient(175deg, #ffffff, #eef1fd);
+    --arena-card-line: #c7cdec;
+    --arena-chip-bg: rgba(109, 75, 216, 0.1);
+    --arena-line-dash: rgba(109, 75, 216, 0.22);
+    --arena-track: #e3e7f8;
+    --arena-ring-bg: rgba(255, 255, 255, 0.55);
+    /* C 的装饰件（图标块 / 角标 / 宝石 / 卡片插画）的颜色，全部收在令牌区 ——
+       组件规则里不写裸色，AC6 的 hex/rgba 预算就不受影响。 */
+    --arena-hero-veil: radial-gradient(320px 92px at 14% 0%, rgba(255, 255, 255, 0.22), transparent 70%);
+    --arena-hero-ic-bg: rgba(11, 13, 24, 0.35);
+    --arena-hero-ic-line: rgba(255, 255, 255, 0.16);
+    --arena-hero-chip-line: rgba(255, 255, 255, 0.3);
+    --arena-rank-veil: radial-gradient(240px 80px at 12% 0%, rgba(255, 255, 255, 0.2), transparent 70%);
+    --arena-card-art: repeating-linear-gradient(115deg, rgba(255, 255, 255, 0.05) 0 2px, transparent 2px 9px),
+                      linear-gradient(150deg, #e9edfd, #dfe5fa);
+    --arena-art: radial-gradient(90px 70px at 70% 20%, rgba(109, 75, 216, 0.35), transparent 70%),
+                 repeating-linear-gradient(115deg, rgba(23, 28, 58, 0.05) 0 2px, transparent 2px 9px),
+                 linear-gradient(150deg, #e6eafa, #d9dff5);
+    --arena-pip-off: #cfd6ee;
+    --arena-pip-1: linear-gradient(180deg, #e6c778, #c9a24c);
+    --arena-pip-2: linear-gradient(180deg, #8fd8ee, #4ec8e0);
+    --arena-pip-3: linear-gradient(180deg, #b9a4ff, #7c5cf0);
+    --arena-ach-bg: linear-gradient(140deg, #ece7ff, #ded9f7);
+    /* 对局棋盘（C 的海）：内发光 / 外投影 / 命中辉光 —— 只作装饰，不参与布局 */
+    --arena-head-win: rgba(201, 162, 76, 0.16);
+    --arena-head-win-glow: rgba(201, 162, 76, 0.35);
+    --arena-head-lose: rgba(255, 92, 108, 0.12);
+    --arena-head-lose-line: rgba(255, 92, 108, 0.35);
+    --arena-head-lose-fg: #b3273c;
+    --arena-sea-glow: rgba(14, 116, 144, 0.1);
+    --arena-sea-shadow: 0 18px 40px rgba(58, 44, 120, 0.28);
+    --arena-hit-glow: rgba(194, 42, 62, 0.75);
+    /* 对手条 / 回合胶囊（示意稿 C 的 .opp-bar 与 .turn-chip）。
+       ⚠️ 条底必须是**不透明**的：--panel 是 rgba(21,26,48,.86)，而页面顶部正是
+          紫光柱最亮的地方，86% 的暗紫压在亮紫上会浮成一片灰紫（出图实测过）。
+          demo 的 --panel 就是实色 #151a30。 */
+    --arena-bar-bg: #ffffff;
+    --arena-turn-chip-bg: linear-gradient(120deg, rgba(14, 116, 144, 0.1), rgba(109, 75, 216, 0.1));
+    --arena-turn-chip-chat: linear-gradient(120deg, rgba(14, 116, 144, 0.1), rgba(109, 75, 216, 0.14));
+    --arena-turn-chip-line: rgba(14, 116, 144, 0.35);
+    --arena-turn-chip-vio-line: rgba(109, 75, 216, 0.4);
+    /* 对局屏三区（第 37 节）的几何 —— 与示意稿 C 的 .arena-mid / .arena-bottom 同量级。
+       ⚠️ 左右两条内边距是**让开三个 fixed 浮窗**用的（不是抄 demo 的数字）：
+          日志 x 20..300、右上卡牌预览 right:20 宽 300、右下聊天 right:24 宽 300。
+          demo 那一屏没有这三个浮窗，所以我们的内容区天然比它窄 —— 见第 37 节开头。
+          ≥1440 那档在 §37.10 里按 (100vw−1440)/2 递减（容器居中后两侧留白变宽，
+          浮窗不再压到内容区），把多出来的宽度还给海域与手牌。 */
+    --arena-fleet-w: 200px;
+    --arena-ops-w: 200px;
+    --arena-gap: 16px;
+    --arena-row-gap: 12px;
+    --arena-pad-l: 308px;
+    --arena-pad-r: 320px;
+}
+html.theme-dark[data-theme-preset="arena"] {
+    --primary: #9d84f5;
+    --primary-600: #8a6ef0;
+    --primary-rgb: 157, 132, 245;
+    --primary-50: rgba(124, 92, 240, 0.16);
+    --primary-gradient: linear-gradient(180deg, #ab90f7, #9d84f5);
+    --shadow-glow: 0 0 0 3px rgba(124, 92, 240, 0.4);
+    --accent: #e6c778;
+    --secondary: #4ec8e0;
+    --fluent-focus-ring-color: rgba(157, 132, 245, 0.9);
+
+    /* 暗色态 = 示意稿 C 的**原色**（--bg #0b0d18 / --panel #151a30 / --line #2a3358 /
+       --tx #e7ecff / --gold #c9a24c / --vio #7c5cf0 / --cy #4ec8e0 / --rd #ff5c6c）。
+       ⚠️ 文字色比 C 的 --tx3(#6c789e) 提了一档（--muted 用 #8b96bb）：C 的 --tx3 在
+          #0b0d18 上只有 ~4.1:1，达不到本项目 4.5:1 的正文门槛；--tx3 只留给纯装饰标签。 */
+    --fluent-layer-bg: #0b0d18;
+    --fluent-card-bg: #151a30;
+    --fluent-smoke-bg: rgba(11, 13, 24, 0.72);
+    --fluent-stroke-default: rgba(255, 255, 255, 0.06);
+    --fluent-stroke-strong: rgba(255, 255, 255, 0.16);
+    --fluent-text-primary: #e7ecff;
+    --fluent-text-secondary: #a2adcf;
+    --fluent-text-disabled: #6c789e;
+    --surface: #0b0d18;
+    --surface-strong: #151a30;
+    --surface-muted: #10142a;
+    --surface-elevated: #1b2140;
+    --text: #e7ecff;
+    --text-subtle: #a2adcf;
+    --muted: #8b96bb;
+    --muted-strong: #a2adcf;
+    --muted-strong-600: #bcc6e6;
+    --border: #2a3358;
+    --border-strong: #3b4675;
+    /* 棋盘 = C 的「海」：径向深蓝 + 青色内发光；格子是画在深蓝上的浅色小方（纯色，不用渐变） */
+    /* ⚠️ 格子必须比棋盘**明显亮一档**：第一版照 C 的字面值写（格子 #161c38 落在
+       radial(#1d2a55 → #101733) 上）→ 实测在 1600×1000 的截图里 36 格几乎看不见网格，
+       整块棋盘像一块空面板（C 的格子是画在更亮的 #17203f 上的 rgba(255,255,255,.045)，
+       相对关系是"格比底亮"。这里按同一相对关系取绝对值）。 */
+    --board-bg: radial-gradient(120% 120% at 50% 0%, #1d2a55, #101733 70%);
+    --board-border: #3b4675;
+    --cell-bg: #1f2850;
+    --cell-water: #1f2850;
+    --ship-metal: #8b96c4;
+    --hit-fire: #c22a3e;
+    --miss-dot: #4ec8e0;
+    --panel: rgba(21, 26, 48, 0.86);
+    --panel-border: rgba(124, 92, 240, 0.22);
+    --overlay: rgba(2, 4, 12, 0.72);
+    --shadow-panel: 0 14px 34px rgba(0, 0, 0, 0.5);
+    /* demo 的 body::before = 紫光柱 + 斜向条纹 + 青色副光。我们的背景只有
+       `background-image: var(--bg-page)` 这一层，所以把三段并进同一个令牌。
+       ⚠️ 条纹用 repeating-conic-gradient(from 200deg at 50% -10%)，与 demo 一致 ——
+          它从顶部中心散开，是这张首页"竞技场"观感的一半。 */
+    --bg-page: radial-gradient(700px 420px at 50% -8%, rgba(124, 92, 240, 0.35), transparent 70%),
+               radial-gradient(600px 400px at 12% 105%, rgba(78, 200, 224, 0.16), transparent 70%),
+               repeating-conic-gradient(from 200deg at 50% -10%,
+                   rgba(255, 255, 255, 0.028) 0deg 3deg, transparent 3deg 11deg),
+               linear-gradient(180deg, #0d1020 0%, #0b0d18 55%, #090b14 100%);
+
+    --arena-gold: #c9a24c;
+    --arena-gold-strong: #e6c778;
+    --arena-vio: #7c5cf0;
+    --arena-cy: #4ec8e0;
+    --arena-hero-grad: linear-gradient(120deg, #7a5af0, #4029a4 70%);
+    --arena-hero-fg: #ffffff;
+    --arena-hero-fg-dim: rgba(255, 255, 255, 0.8);
+    --arena-hero-border: #8f79f5;
+    --arena-hero-glow: 0 14px 34px rgba(107, 76, 224, 0.4);
+    --arena-rank-grad: linear-gradient(120deg, #b8873a, #7d5a20);
+    --arena-card-grad: linear-gradient(175deg, #232b52, #12172e);
+    --arena-card-line: #2a3358;
+    --arena-chip-bg: rgba(124, 92, 240, 0.16);
+    --arena-line-dash: rgba(124, 92, 240, 0.35);
+    --arena-track: #0d1122;
+    --arena-ring-bg: rgba(11, 13, 24, 0.55);
+    --arena-hero-veil: radial-gradient(320px 92px at 14% 0%, rgba(255, 255, 255, 0.22), transparent 70%);
+    --arena-hero-ic-bg: rgba(11, 13, 24, 0.35);
+    --arena-hero-ic-line: rgba(255, 255, 255, 0.16);
+    --arena-hero-chip-line: rgba(255, 255, 255, 0.3);
+    --arena-rank-veil: radial-gradient(240px 80px at 12% 0%, rgba(255, 255, 255, 0.2), transparent 70%);
+    --arena-card-art: repeating-linear-gradient(115deg, rgba(255, 255, 255, 0.05) 0 2px, transparent 2px 9px),
+                      linear-gradient(150deg, #2c3563, #171d3a);
+    --arena-art: radial-gradient(90px 70px at 70% 20%, rgba(201, 162, 76, 0.5), transparent 70%),
+                 repeating-linear-gradient(115deg, rgba(255, 255, 255, 0.05) 0 2px, transparent 2px 9px),
+                 linear-gradient(150deg, #2b3566, #161b38);
+    --arena-pip-off: #2a3358;
+    --arena-pip-1: linear-gradient(180deg, #e6c778, #c9a24c);
+    --arena-pip-2: linear-gradient(180deg, #8fd8ee, #4ec8e0);
+    --arena-pip-3: linear-gradient(180deg, #b9a4ff, #7c5cf0);
+    --arena-ach-bg: linear-gradient(140deg, #3a2f6e, #221a45);
+    --arena-head-win: rgba(201, 162, 76, 0.14);
+    --arena-head-win-glow: rgba(201, 162, 76, 0.4);
+    --arena-head-lose: rgba(255, 92, 108, 0.10);
+    --arena-head-lose-line: rgba(255, 92, 108, 0.35);
+    --arena-head-lose-fg: #ff8f9a;
+    --arena-sea-glow: rgba(78, 200, 224, 0.1);
+    --arena-sea-shadow: 0 20px 46px rgba(0, 0, 0, 0.5);
+    --arena-hit-glow: rgba(255, 92, 108, 0.55);
+    /* 对手条 / 回合胶囊：暗色态取示意稿 C 的原值（--panel #151a30、.turn-chip 那两条渐变）。
+       条底不透明是刻意的 —— 见明色态那组令牌上的注释。 */
+    --arena-bar-bg: #151a30;
+    --arena-turn-chip-bg: linear-gradient(120deg, rgba(78, 200, 224, 0.2), rgba(124, 92, 240, 0.2));
+    --arena-turn-chip-chat: linear-gradient(120deg, rgba(78, 200, 224, 0.18), rgba(124, 92, 240, 0.24));
+    --arena-turn-chip-line: rgba(78, 200, 224, 0.45);
+    --arena-turn-chip-vio-line: rgba(124, 92, 240, 0.5);
+}
+
 /* ---------- 4.1 设置页预设卡的缩略色 ----------
    每张预设卡要显示**它自己**的强调色。⚠️ 不能借用 `--primary` —— 那是**当前**
    预设的值：7 张卡会跟着当前主题一起变色（2026-09-22 实测：切到熔岩后 7 张卡
@@ -510,6 +740,7 @@ html.theme-dark[data-theme-preset="aurora"] {
     --swatch-cyber: #0e7490;     --swatch-cyber-alt: #6d28d9;
     --swatch-dusk: #be185d;      --swatch-dusk-alt: #9d1449;
     --swatch-aurora: #0f766e;    --swatch-aurora-alt: #4d7c0f;
+    --swatch-arena: #7c5cf0;     --swatch-arena-alt: #c9a24c;
 }
 html.theme-dark {
     --swatch-fluent: #60cdff;    --swatch-fluent-alt: #4cc2ff;
@@ -519,6 +750,7 @@ html.theme-dark {
     --swatch-cyber: #22d3ee;     --swatch-cyber-alt: #a855f7;
     --swatch-dusk: #f472b6;      --swatch-dusk-alt: #ec4899;
     --swatch-aurora: #34d399;    --swatch-aurora-alt: #a3e635;
+    --swatch-arena: #9d84f5;     --swatch-arena-alt: #e6c778;
 }
 
 /* ---------- 5. 叠加阶梯 / 自有强调色 / 语义分量（全预设共用） ----------
@@ -1020,12 +1252,14 @@ h3 { font-size: clamp(1rem, 2.6vw, 1.3rem); }
     to { transform: translateY(0); opacity: 1; }
 }
 @keyframes pulse {
-    0%, 100% { box-shadow: 0 4px 15px var(--alpha-danger-30); }
-    50% { box-shadow: 0 4px 25px var(--alpha-danger-60); }
+    /* Fluent：紧急倒计时用"环"脉冲表达，不用模糊发光 */
+    0%, 100% { box-shadow: 0 0 0 0 transparent; }
+    50%      { box-shadow: 0 0 0 3px var(--alpha-danger-60); }
 }
 @keyframes breathGlow {
-    0%, 100% { box-shadow: 0 0 8px var(--alpha-primary-35); }
-    50% { box-shadow: 0 0 22px var(--alpha-primary-65); }
+    /* Fluent：呼吸只改描边颜色，不做外发光（发光面板是旧语言） */
+    0%, 100% { border-color: var(--panel-border); }
+    50%      { border-color: var(--alpha-primary-65); }
 }
 @keyframes hitFlash {
     0% { transform: scale(1.35); filter: brightness(1.8); }
@@ -1136,7 +1370,6 @@ input, select, textarea {
 }
 input:hover, select:hover, textarea:hover { border-color: var(--muted); }
 input:focus, select:focus, textarea:focus {
-    outline: none;
     border-color: var(--primary);
     border-bottom-color: var(--primary);
     box-shadow: none;
@@ -1357,8 +1590,13 @@ input:focus, select:focus, textarea:focus {
     justify-content: space-between;
     align-items: center;
     padding: 0.5rem 0.7rem;
-    background: var(--primary-gradient);
-    color: var(--fluent-on-solid);
+    /* Fluent：表头是"平面 + 1px 分隔线"，不再画强调色实心条（旧语言）。
+       ⚠️ 分隔线用 inset 阴影而不是 border-bottom：表头高度是 auto，加 1px 边框会让
+       浮窗各长 1px —— 在 compact 横屏（664×336）那种极矮视口下会把棋盘顶出重叠，
+       ui_layout_check 的"棋盘格子零遮挡"会红（实测过）。 */
+    background: transparent;
+    box-shadow: inset 0 -1px 0 var(--fluent-stroke-default);
+    color: var(--text-subtle);
     flex-shrink: 0;
 }
 .log-header h3 { margin: 0; font-size: 1rem; text-align: left; }
@@ -1392,7 +1630,7 @@ input:focus, select:focus, textarea:focus {
 .log-entry {
     margin-bottom: 0.5rem;
     padding: 0.35rem 0.5rem;
-    border-radius: 6px;
+    border-radius: var(--fluent-radius-control);
     background: var(--surface-strong);
     border: 1px solid var(--panel-border);
     box-shadow: 0 1px 3px var(--fluent-scrim-08);
@@ -1474,8 +1712,8 @@ input:focus, select:focus, textarea:focus {
     padding: 18px 20px 20px;
     background: var(--surface-strong);
     border: 1px solid var(--panel-border);
-    border-radius: 14px;
-    box-shadow: 0 12px 36px var(--fluent-scrim-45);
+    border-radius: var(--fluent-radius-lg);
+    box-shadow: var(--fluent-elev-16);
 }
 .card-detail-close {
     position: absolute;
@@ -1548,7 +1786,7 @@ input:focus, select:focus, textarea:focus {
     background: var(--muted-strong);
     color: var(--fluent-on-solid);
     border: none;
-    border-radius: 6px;
+    border-radius: var(--fluent-radius-control);
     cursor: pointer;
     font-size: 0.8rem;
     box-shadow: none;
@@ -1603,8 +1841,11 @@ input:focus, select:focus, textarea:focus {
     user-select: none;
     cursor: move;
     padding: 8px 10px;
-    background: var(--primary-gradient);
-    color: var(--fluent-on-solid);
+    /* 同 .log-header：Fluent 表头 = 平面 + 1px 分隔线（用 inset 阴影，不加边框，
+       否则 auto 高度会各长 1px，compact 横屏会顶坏棋盘布局） */
+    background: transparent;
+    box-shadow: inset 0 -1px 0 var(--fluent-stroke-default);
+    color: var(--text-subtle);
     font-weight: 600;
 }
 .in-game-chat-messages {
@@ -1669,8 +1910,8 @@ html.theme-dark .board {
     transition: background 0.15s ease, transform 0.12s ease, box-shadow 0.2s ease;
 }
 .cell:hover {
+    /* Fluent：悬停只换描边，不做位移（位移会让整排格子跟着抖） */
     box-shadow: 0 0 0 2px var(--alpha-primary-45);
-    transform: translateY(-1px);
 }
 .cell .splash-effect {
     position: absolute;
@@ -1930,7 +2171,7 @@ html.theme-dark .cell.revealed-heal {
 .player-info {
     background: var(--glass);
     border: 1px solid var(--panel-border);
-    border-radius: 10px;
+    border-radius: var(--fluent-radius-lg);
     padding: 8px 14px;
 }
 .player-info p { margin: 0; text-align: left; }
@@ -1938,7 +2179,7 @@ html.theme-dark .cell.revealed-heal {
     background: var(--surface-muted);
     border: 1px solid var(--panel-border);
     padding: 1rem;
-    border-radius: 10px;
+    border-radius: var(--fluent-radius-lg);
     text-align: center;
     animation: breathGlow 2.6s ease-in-out infinite;
     /* 局内开关（#phase-timing-toggle）绝对定位的参照。
@@ -1967,7 +2208,11 @@ html.theme-dark .cell.revealed-heal {
     min-height: 40px;
     margin: 0;
     padding: 4px 6px;
-    border-radius: 9px;
+    /* Fluent：局内浮标是 chip，统一走胶囊令牌（项目里 .field-magic/.corner-chip 同款）。
+       ⚠️ 别改成 4/8px 那档：664×336 极矮横屏下这个浮标会压到棋盘格角，
+       圆角越大、被排除的角区越多，格心才仍然可点 —— ui_layout_check 的
+       "棋盘格子零遮挡"正是靠 elementFromPoint 命中格心判定的。 */
+    border-radius: var(--fluent-radius-full);
     border: 1px solid var(--alpha-primary-45);
     background: var(--alpha-primary-10);
     color: var(--text);
@@ -2031,7 +2276,8 @@ body.layout-compact.layout-ingame #phase-timing-toggle.phase-timing-toggle .ptt-
     min-height: 40px;
     margin: 0;
     padding: 4px 8px;
-    border-radius: 9px;
+    /* 同「阶段时点」浮标：chip 走胶囊令牌（也是 664×336 下格心可点的前提） */
+    border-radius: var(--fluent-radius-full);
     border: 1px solid var(--alpha-primary-45);
     background: var(--alpha-primary-10);
     color: var(--text);
@@ -2173,24 +2419,24 @@ body.layout-tight.layout-ingame .quick-chat-toast {
     padding: 10px;
     background: var(--glass);
     border: 1px solid var(--panel-border);
-    border-radius: 10px;
+    border-radius: var(--fluent-radius-lg);
     text-align: center;
 }
-.field-magic { padding: 8px 15px; border-radius: 20px; font-weight: bold; display: inline-block; }
+.field-magic { padding: 8px 15px; border-radius: var(--fluent-radius-full); font-weight: bold; display: inline-block; }
 .field-magic.active {
+    /* Fluent：语义色走令牌 + 平面着色，不再用硬编码的黄色 + 外发光 */
     background: var(--deco-yellow-a18);
-    border: 1px solid #FFEB3B;
-    box-shadow: 0 0 10px var(--deco-yellow-a5);
+    border: 1px solid var(--warning);
+    box-shadow: none;
 }
 .field-magic-card {
     display: inline-block;
     color: var(--accent);
     font-weight: bold;
     margin-left: 5px;
-    text-shadow: 0 0 3px var(--deco-amber-a5-1);
     padding: 3px 8px;
     background: var(--surface-strong);
-    border-radius: 12px;
+    border-radius: var(--fluent-radius-control);
     box-shadow: 0 2px 4px var(--fluent-scrim-08);
 }
 .no-magic { color: var(--muted); font-style: italic; }
@@ -2606,10 +2852,11 @@ body.layout-compact.layout-ingame .magic-card.preview-face-card .card-type { fon
     gap: 6px;
 }
 .magic-animation .magic-card-name {
-    background: var(--primary-gradient);
+    /* Fluent：瞬时提示条走实色 + 药丸圆角，不用渐变 */
+    background: var(--primary);
     color: var(--fluent-on-solid);
     padding: 8px 14px;
-    border-radius: 20px;
+    border-radius: var(--fluent-radius-full);
     font-size: 0.95em;
     box-shadow: 0 6px 18px var(--fluent-scrim-35);
     opacity: 0;
@@ -2818,13 +3065,13 @@ body:has(.area-picker-bar) .magic-target-prompt { bottom: 92px; }
     gap: 10px;
     padding: 10px 14px;
     background: var(--surface-strong);
-    border-radius: 10px;
-    box-shadow: 0 6px 20px var(--fluent-scrim-45);
+    border-radius: var(--fluent-radius-lg);
+    box-shadow: var(--fluent-elev-16);
     z-index: 10000;
 }
 .area-picker-bar button {
     padding: 8px 18px;
-    border-radius: 6px;
+    border-radius: var(--fluent-radius-control);
     border: none;
     cursor: pointer;
     font-size: 0.95em;
@@ -2904,16 +3151,16 @@ body.cool-effects-enabled .cell.cool-flash {
     width: 100%;
     height: 10px;
     background-color: var(--surface-muted);
-    border-radius: 5px;
+    border-radius: var(--fluent-radius-full);
     margin-top: 1rem;
     overflow: hidden;
 }
 .countdown-fill {
     width: 100%;
     height: 100%;
-    background: repeating-linear-gradient(90deg, var(--success), var(--success) 20px, var(--success) 20px, var(--success) 40px);
-    border-radius: 5px;
-    animation: waveFlow 1.2s linear infinite;
+    /* Fluent：进度条是实色填充（原来是滚动的斜条纹 + waveFlow 动画） */
+    background: var(--success);
+    border-radius: var(--fluent-radius-full);
 }
 
 /* 投降按钮 */
@@ -3169,14 +3416,12 @@ html.theme-dark .chain-request-panel { border-color: var(--alpha-primary-50); }
     max-height: 86vh;
     overflow-y: auto;
     padding: 22px 24px 18px;
-    border-radius: 18px;
+    border-radius: var(--fluent-radius-lg);
     background: var(--glass);
-    -webkit-backdrop-filter: blur(14px);
-    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(var(--fluent-acrylic-blur));
+    backdrop-filter: blur(var(--fluent-acrylic-blur));
     border: 1px solid var(--alpha-accent-55);
-    box-shadow:
-        0 18px 48px var(--deco-priority-panel),
-        0 0 0 1px var(--fluent-light-35) inset;
+    box-shadow: var(--fluent-elev-16);
     text-align: center;
     animation: priorityRise 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -3188,12 +3433,12 @@ html.theme-dark .chain-request-panel { border-color: var(--alpha-primary-50); }
 .priority-badge {
     display: inline-block;
     padding: 2px 10px;
-    border-radius: 999px;
+    border-radius: var(--fluent-radius-full);
     font-size: 0.72rem;
     letter-spacing: 0.16em;
     color: var(--fluent-gold-shade);
-    background: linear-gradient(135deg, var(--fluent-gold-soft), var(--accent));
-    box-shadow: 0 2px 8px var(--alpha-accent-45);
+    background: var(--fluent-gold-soft);
+    box-shadow: none;
 }
 .priority-head h3 {
     margin: 10px 0 0;
@@ -3251,19 +3496,19 @@ html.theme-dark .chain-request-panel { border-color: var(--alpha-primary-50); }
     gap: 2px;
     min-width: 96px;
     padding: 9px 13px;
-    border-radius: 11px;
+    border-radius: var(--fluent-radius-lg);
     cursor: pointer;
     border: 1px solid var(--alpha-primary-35);
-    background: linear-gradient(160deg, rgba(255, 255, 255, 0.95), var(--deco-slate-a9));
+    background: var(--surface-strong);
     box-shadow: 0 2px 6px var(--deco-priority-card-edge);
-    transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+    transition: box-shadow 0.12s ease, border-color 0.12s ease;
     font: inherit;
     color: inherit;
 }
 .priority-card:hover {
-    transform: translateY(-2px);
+    /* Fluent：悬停只换描边 + 抬高一级阴影 */
     border-color: var(--accent);
-    box-shadow: 0 6px 16px var(--alpha-accent-35);
+    box-shadow: var(--fluent-elev-4);
 }
 .priority-card:active { transform: translateY(0); }
 .priority-card-name { font-weight: 700; font-size: 0.92rem; }
@@ -3276,7 +3521,7 @@ html.theme-dark .chain-request-panel { border-color: var(--alpha-primary-50); }
     gap: 8px;
     padding: 9px 12px;
     margin-bottom: 14px;
-    border-radius: 11px;
+    border-radius: var(--fluent-radius-lg);
     cursor: pointer;
     font-size: 0.84rem;
     text-align: left;
@@ -3304,20 +3549,20 @@ html.theme-dark .chain-request-panel { border-color: var(--alpha-primary-50); }
 .priority-cancel-btn {
     min-width: 132px;
     padding: 9px 22px;
-    border-radius: 10px;
+    border-radius: var(--fluent-radius-control);
     cursor: pointer;
     font: inherit;
     font-weight: 600;
-    color: var(--fluent-on-solid);
-    border: none;
-    background: linear-gradient(135deg, #6b7c93, #4a5a70);
-    box-shadow: 0 4px 12px var(--deco-priority-btn);
-    transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
+    /* Fluent 次按钮：浅底 + 1px 描边（原来是灰蓝渐变 + 投影） */
+    color: var(--text);
+    border: 1px solid var(--fluent-stroke-strong);
+    background: var(--fluent-card-bg);
+    box-shadow: none;
+    transition: background-color 0.12s ease, border-color 0.12s ease;
 }
 .priority-cancel-btn:hover {
-    transform: translateY(-1px);
-    filter: brightness(1.08);
-    box-shadow: 0 7px 18px var(--deco-priority-btn-hover);
+    border-color: var(--primary);
+    background: var(--alpha-primary-06);
 }
 .priority-cancel-btn:active { transform: translateY(0); }
 
@@ -3328,7 +3573,7 @@ html.theme-dark .priority-panel {
 }
 html.theme-dark .priority-ring::before { background: var(--deco-priority-panel-dark); }
 html.theme-dark .priority-card {
-    background: linear-gradient(160deg, var(--deco-priority-card-dark), var(--deco-priority-soft-dark));
+    /* 底色交给基础规则的 --surface-strong（平面），深色态只覆盖描边 */
     border-color: var(--alpha-accent-30);
 }
 html.theme-dark .priority-toggle { background: var(--alpha-accent-08); }
@@ -3415,14 +3660,15 @@ html.theme-dark .priority-hint { color: var(--deco-priority-hint-dark); }
 }
 .taoyuan-choice-container {
     background: var(--surface-strong);
-    border: 3px solid var(--primary);
-    border-radius: 15px;
+    /* Fluent：1px 描边 + 高度阴影，不再是 3px 强调色画框 */
+    border: 1px solid var(--fluent-stroke-default);
+    border-radius: var(--fluent-radius-lg);
     padding: 25px;
     max-width: 900px;
     max-height: 90vh;
     overflow-y: auto;
     width: 95%;
-    box-shadow: 0 10px 40px var(--fluent-scrim-30);
+    box-shadow: var(--fluent-elev-16);
     animation: slideUp 0.4s ease-out;
     position: relative;
 }
@@ -3454,9 +3700,9 @@ html.theme-dark .priority-hint { color: var(--deco-priority-hint-dark); }
     margin-bottom: 25px;
 }
 .taoyuan-card-item {
-    background: linear-gradient(135deg, var(--surface-strong) 0%, var(--surface-muted) 100%);
+    background: var(--surface-strong);
     border: 2px solid var(--border-strong);
-    border-radius: 12px;
+    border-radius: var(--fluent-radius-lg);
     padding: 15px;
     cursor: pointer;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -3471,8 +3717,9 @@ html.theme-dark .priority-hint { color: var(--deco-priority-hint-dark); }
     border-color: var(--primary);
 }
 .taoyuan-card-item.selected {
-    background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
-    box-shadow: 0 8px 25px var(--alpha-primary-40);
+    /* Fluent：选中 = 实心强调色 + 一级阴影 */
+    background: var(--primary);
+    box-shadow: var(--fluent-elev-4);
 }
 .taoyuan-card-item.selected::before {
     content: '✓';
@@ -3504,7 +3751,7 @@ html.theme-dark .priority-hint { color: var(--deco-priority-hint-dark); }
     text-align: center;
     margin-top: 25px;
     padding-top: 20px;
-    border-top: 2px solid var(--primary);
+    border-top: 2px solid var(--fluent-stroke-default);
     display: flex;
     justify-content: center;
     gap: 15px;
@@ -3518,7 +3765,7 @@ html.theme-dark .priority-hint { color: var(--deco-priority-hint-dark); }
     min-width: 120px;
 }
 .taoyuan-choice-footer .btn-danger {
-    background: linear-gradient(135deg, var(--danger), var(--danger-600));
+    background: var(--danger);
 }
 
 /* ---------- 18. 弃牌堆 ---------- */
@@ -3566,10 +3813,11 @@ html.theme-dark .priority-hint { color: var(--deco-priority-hint-dark); }
     background: var(--alpha-danger-95);
     color: var(--fluent-on-solid);
     padding: 15px;
-    border-radius: 10px;
+    border-radius: var(--fluent-radius-lg);
     margin-bottom: 15px;
     text-align: center;
-    box-shadow: 0 4px 15px var(--alpha-danger-30);
+    /* 发光交给 pulse（已改成环脉冲），静止态不留模糊阴影 */
+    box-shadow: none;
     animation: pulse 2s infinite;
 }
 .reinforcement-countdown h3 { margin: 0 0 10px 0; font-size: 1.2em; font-weight: bold; }
@@ -3578,10 +3826,10 @@ html.theme-dark .priority-hint { color: var(--deco-priority-hint-dark); }
     background: var(--deco-holy-strong);
     color: var(--fluent-on-solid);
     padding: 15px;
-    border-radius: 10px;
+    border-radius: var(--fluent-radius-lg);
     margin-bottom: 15px;
     text-align: center;
-    box-shadow: 0 4px 15px var(--deco-holy-fill);
+    box-shadow: none;
     animation: pulse 2s infinite;
 }
 .holy-heart-countdown h3 { margin: 0 0 10px 0; font-size: 1.2em; font-weight: bold; }
@@ -3591,7 +3839,7 @@ html.theme-dark .priority-hint { color: var(--deco-priority-hint-dark); }
 .effect-status-bar {
     background: var(--glass);
     border: 1px solid var(--panel-border);
-    border-radius: 10px;
+    border-radius: var(--fluent-radius-lg);
     padding: 10px;
     margin-bottom: 10px;
     display: flex;
@@ -3607,16 +3855,28 @@ html.theme-dark .priority-hint { color: var(--deco-priority-hint-dark); }
     font-size: 0.9em;
     padding: 5px 10px;
     background: var(--surface-muted);
-    border-radius: 6px;
+    border-radius: var(--fluent-radius-control);
     border-left: 3px solid var(--primary);
 }
 .status-label { font-weight: bold; color: var(--primary); }
 .status-value { color: var(--text-subtle); }
 
 /* ---------- 20. 游戏结束与战绩 ---------- */
-.game-over-buttons { display: flex; gap: 20px; justify-content: center; margin-top: 30px; }
+/* 操作行。⚠️「加好友」（#recent-opponent-add）是 JS 插到**这一层**的兄弟节点，
+   不是 .game-over-actions 的子节点 —— 窄屏（390）下它会跟按钮行抢宽度，把
+   「再来一局/返回主菜单」挤成一列、连「加好友」自己都被折成两行（实测）。
+   允许换行后：加好友单独一行，按钮行拿满宽度。 */
+.game-over-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    row-gap: 12px;
+    justify-content: center;
+    margin-top: 30px;
+}
 #return-to-menu {
-    background: linear-gradient(135deg, var(--secondary), var(--secondary-dark));
+    /* Fluent：实心 + 平面（原来是 secondary→secondary-dark 渐变） */
+    background: var(--secondary);
     color: var(--fluent-on-solid);
     padding: 12px 24px;
     font-size: 16px;
@@ -3860,8 +4120,8 @@ html.theme-dark .priority-hint { color: var(--deco-priority-hint-dark); }
     background: var(--surface-strong);
     color: var(--text);
     border: 1px solid var(--deco-amber-a6-2);
-    border-radius: 10px;
-    box-shadow: 0 10px 28px var(--fluent-scrim-55);
+    border-radius: var(--fluent-radius-lg);
+    box-shadow: var(--fluent-elev-8);
     font-size: 13px;
     line-height: 1.55;
     pointer-events: none;   /* 纯展示：不挡鼠标，避免 hover 抖动 */
@@ -4102,7 +4362,7 @@ body.layout-compact.layout-ingame .board {
 body.layout-compact.layout-ingame #magic-system { margin: 0; min-height: 0; }
 body.layout-compact.layout-ingame #magic-system.hand-empty { display: none; }
 body.layout-compact.layout-ingame #magic-system .magic-hand-container {
-    margin: 0; padding: 4px 6px; border-radius: 10px;
+    margin: 0; padding: 4px 6px; border-radius: var(--fluent-radius-lg);
 }
 body.layout-compact.layout-ingame #magic-system .magic-hand-container > h3 { display: none; }
 body.layout-compact.layout-ingame .magic-hand {
@@ -4153,7 +4413,6 @@ body.layout-compact.layout-ingame .dock-panel[data-dock-panel="card"] .magic-car
     flex: 0 0 auto;
     height: 64px;
     width: 56px;
-    padding: 3px;
 }
 body.layout-compact.layout-ingame .dock-panel[data-dock-panel="card"] .magic-hand-container > h3 { display: none; }
 body.layout-compact.layout-ingame .game-content > .aux-dock {
@@ -4267,7 +4526,8 @@ body.layout-tight.layout-ingame .game-content {
     grid-template-columns: minmax(0, 1fr) minmax(150px, 210px);
     grid-template-rows: auto auto minmax(0, 1fr);
     gap: 2px 4px;
-    padding: 2px 4px calc(2px + env(safe-area-inset-bottom, 0px));
+    /* 同 .layout-compact：viewport-fit=cover 后顶部也要避开刘海（与 inset-bottom 成对） */
+    padding: calc(2px + env(safe-area-inset-top, 0px)) 4px calc(2px + env(safe-area-inset-bottom, 0px));
 }
 body.layout-tight.layout-ingame .game-content > .game-info { grid-column: 2; grid-row: 1; }
 body.layout-tight.layout-ingame .game-content > .board-tabs { grid-column: 2; grid-row: 2; }
@@ -5450,6 +5710,7 @@ html:not(.theme-dark) .pf-actions .pf-flower.on { box-shadow: none; }
 .theme-card[data-preset="cyber"]   .theme-strip { background: linear-gradient(135deg, var(--swatch-cyber-alt), var(--swatch-cyber)); }
 .theme-card[data-preset="dusk"]    .theme-strip { background: linear-gradient(135deg, var(--swatch-dusk-alt), var(--swatch-dusk)); }
 .theme-card[data-preset="aurora"]  .theme-strip { background: linear-gradient(135deg, var(--swatch-aurora-alt), var(--swatch-aurora)); }
+.theme-card[data-preset="arena"]   .theme-strip { background: linear-gradient(135deg, var(--swatch-arena-alt), var(--swatch-arena)); }
 .theme-card b { display: block; font-size: 0.84rem; }
 .theme-card small { display: block; font-size: 0.72rem; color: var(--muted); }
 .theme-card.selected {
@@ -5832,11 +6093,17 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, var(--deco-
 .match-self-rank { margin-top: 0; }
 
 /* ---------- 29.4 开始界面：排位入口 ---------- */
-/* 只动颜色/描边（尺寸跟 #find-match 一致，都由通用 button 规则给）。 */
+/* 只动颜色/描边（尺寸跟 #find-match 一致，都由通用 button 规则给）。
+   2026-09-27（首页 C 化）：换成示意稿 C 的金色档 —— 金渐变 + 白雾 + 白字。
+   ⚠️ 白字在 #b8873a 上只有 3.2:1，所以这里叠了一层**暗色文字阴影**压暗字底边缘；
+      本项目的对比度门槛是针对正文的，#ranked-match 的正文由 .td 承担（0.86 白 + 阴影）。
+      如果哪天要把这行字再加亮，得先量一次对比度（别再踩"看着亮、其实不达标"）。 */
 #ranked-match {
-    background-image: linear-gradient(135deg, var(--fluent-gold), var(--fluent-gold-deep));
-    border-color: var(--deco-amber-a85);
-    color: #241c05;
+    background-color: var(--arena-gold-strong);
+    background-image: var(--arena-rank-grad), var(--arena-rank-veil);
+    border-color: var(--arena-gold-strong);
+    color: #ffffff;
+    text-shadow: 0 1px 2px rgba(61, 40, 4, 0.55);
     font-weight: 800;
 }
 #ranked-match:hover { background-image: linear-gradient(135deg, var(--fluent-gold-soft), var(--fluent-gold-deep)); }
@@ -7119,8 +7386,8 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, var(--deco-
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 12px;
-    width: min(100%, 640px);
-    margin: 0 auto 14px;
+    width: min(100%, 680px);
+    margin: 0 auto;
     align-items: stretch;
 }
 /* 模式按钮：统一盒模型，让"并排"真的看起来是并排 */
@@ -7130,6 +7397,7 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, var(--deco-
     padding: var(--fluent-space-3) var(--fluent-space-4);
     font-size: var(--fluent-text-body-lg);
     border-radius: var(--fluent-radius-control);
+    text-align: left;
 }
 /* 「匹配游戏」是首页唯一的主行动：放大一档，与排位/人机形成明确主次。
    ⚠️ 文字色必须显式给 --on-primary：Fluent 的实心强调色按钮上，
@@ -7199,8 +7467,8 @@ select.secondary option { background: var(--surface-strong); color: var(--text);
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 12px;
-    width: min(100%, 640px);
-    margin: 0 auto 14px;
+    width: min(100%, 680px);
+    margin: 0 auto;
 }
 .start-more button {
     width: 100%;
@@ -7208,29 +7476,39 @@ select.secondary option { background: var(--surface-strong); color: var(--text);
     font-size: 0.95rem;
     font-weight: 600;
     border-radius: 10px;
+    /* 2026-09-27：这里的 text-align:left 与 35.9 的入口卡一致（C 的 gobtn 是左对齐的
+       "图标 + 标题 + 说明"，居中会让两行文字看起来像排版坏了）。 */
+    text-align: left;
 }
-/* --- 35.5 首页：状态行（等级条 + 在线人数并排） --- */
-/* 原先两块各占一行、孤立在页面底部（等级条 margin:10px auto 0，
-   在线人数容器 margin-top:10px），这里并排成一行、由 gap 接管间距。 */
-.start-status {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    margin-top: 4px;
+/* --- 35.5 首页：状态行（等级条 + 在线人数并排） ---
+   2026-09-27：这条状态行**已并入指挥官名片**（等级条进卡、在线人数进右栏「在线情况」），
+   `.start-status` 容器从 DOM 里删掉了 —— 这里的两条规则**不能再留着**：
+   `.start-status .my-level-strip` 那类选择器一旦失去对应节点就是纯死规则，
+   而它当年存在的原因是"等级条轨道被压成 0 宽"（见 .my-level-strip 那段注释）。
+   等级条在名片里的等价规则写在文件末尾 35.9 的 `.cmdr-card .my-level-strip`。
+   另外把原 35.6 那条被注释吞掉的 `@media (max-width: 560px)` 恢复成真规则 ——
+   实测证据：390px 视口下 `.nav-group` 的计算 display 是 flex（不是流式 contents）。 */
+@media (max-width: 560px) {
+    .nav-menu { gap: 6px; row-gap: 6px; }
+    .nav-group { display: contents; }
+    .nav-group + .nav-group { border-left: none; padding-left: 0; }
+    .nav a,
+    .nav .btn.secondary { min-height: 30px; }
 }
-/* 两条原本的外边距在这里由 .start-status 的 gap 接管 */
-.start-status .my-level-strip { margin: 0; }
-.start-status #online-count-container { margin-top: 0; }
-/* --- 35.6 首页窄屏：模式区落单列、状态行允许换行 --- */
-/* ⚠️ `minmax(180px, 1fr)` 在 336px 视口下 auto-fit 本就会收敛到一列；
-   这里把最小列宽降到 0，避免"内容宽于容器"的横向溢出
-    .start-modes { grid-template-columns: minmax(0, 1fr); }
-    .start-more { grid-template-columns: minmax(0, 1fr); }
-    /* ⚠️ 窄屏也要保证内容盒放得下「电脑：普通」：13.44px 字号下需 67.2px 文字宽
-       + 左右 padding(12.8×2) + border(2) ≈ 94.6px。旧值 104px 只算盒子不算内边距
-       → 实测 deficit −13px（文字被裁）。这里改成 min-width 兜底 + 让 flex 可收缩但不下穿。 */
+/* --- 35.6 首页窄屏：模式区落单列、难度下拉换行 --- */
+/* ⚠️ 这里原本有两条 `.start-modes, .start-more { grid-template-columns: minmax(0, 1fr) }`，
+   本意是"窄屏落单列 + 兜住内容宽于容器"。它们从未生效：上一条注释少写收尾 `*/`，
+   两条规则连同它们自己都变成了注释文本（CSS 注释不能嵌套）；而补回来又会与
+   6782 / 6862 的 `.start-modes` / `.start-more` 构成同上下文重复定义
+   （AC6 的 dupSel 会 +1，撞上 ≤25 的阈值）。
+   2026-09-22 浏览器实测后删除：本断点（≤420px）下容器内容宽最大 367px，
+   而两列 180px + 12px 间隙需要 372px —— auto-fit 必然落到单列，这两条无事可做。 */
+/* ⚠️ 窄屏也要保证内容盒放得下「电脑：普通」：13.44px 字号下需 67.2px 文字宽
+   + 左右 padding(12.8×2) + border(2) ≈ 94.6px。旧值 104px 只算盒子不算内边距
+   → 实测 deficit −13px（文字被裁）。这里改成 min-width 兜底 + 让 flex 可收缩但不下穿。
+   ⚠️ 这三条**已经在上面那条 `@media (max-width: 420px)` 体内**（第 7056 行开），
+      不要再包一层同名媒体查询 —— 2026-09-27 实测后果：外层那个 `{` 永远等不到收尾，
+      lint 报「第 7056 行规则缺收尾 `}`，它之后的规则会全部被丢弃」。 */
     .mode-ai select { flex: 0 0 auto; min-width: 7rem; font-size: 0.84rem; padding-left: 0.6rem; padding-right: 1.7rem; }
     .start-modes .mode-btn { padding: 0.8rem 0.8rem; font-size: 0.98rem; }
     .start-modes .mode-btn.primary { font-size: 1.04rem; }
@@ -7288,6 +7566,15 @@ select.secondary option { background: var(--surface-strong); color: var(--text);
         box-sizing: border-box;
         overflow: hidden;
     }
+    /* ⚠️ 必须扣掉 body 的 padding（24px 16px，见文件开头 body 规则），否则
+       `height: 100dvh` 的容器底边落在视口下 24px 处，再被 body{overflow:hidden} 裁掉 ——
+       1280×720 实测：贴底的手牌 605..743 下沿 23px 既看不见也滚不到，
+       还会往上压住对手棋盘的下半截（改成并排后不再压，但手牌仍被裁）。
+       这一档对局屏本来就是全屏玩法，去掉页面内边距最干净；
+       水平方向仍由 max-width + margin auto 居中（x 仍是 140），观感不变。
+       ⚠️ 只对桌面档生效：compact/tight/dense 靠 --stage-vh（由内容 top 反推）计算，
+       动 body 内边距会牵动那一套已验证过的数值。 */
+    body.layout-ingame:not(.layout-compact) { padding: 0; }
     body.layout-ingame:not(.layout-compact) .game-main-container {
         flex: 1 1 auto;
         min-height: 0;
@@ -7337,7 +7624,7 @@ select.secondary option { background: var(--surface-strong); color: var(--text);
         -webkit-backdrop-filter: blur(10px);
         backdrop-filter: blur(10px);
         border-top: 1px solid var(--panel-border);
-        border-radius: 0 0 clamp(10px, 1.8vw, 16px) clamp(10px, 1.8vw, 16px);
+        border-radius: 0 0 var(--fluent-radius-lg) var(--fluent-radius-lg);
         box-sizing: border-box;
     }
     body.layout-ingame:not(.layout-compact) #magic-system.hand-empty { display: none; }
@@ -7353,7 +7640,12 @@ select.secondary option { background: var(--surface-strong); color: var(--text);
         flex-wrap: nowrap; justify-content: flex-start;
     }
 
-    /* 棋盘：让出纵向空间后仍保住 >= 280px 与单格 >= 42px */
+    /* 棋盘：让出纵向空间后仍保住 >= 280px 与单格 >= 42px。
+       ⚠️ 已知未解：高度 <= 800px 的桌面档，堆叠的第二块棋盘会被贴底手牌压住
+       （1366x768 实测 36 格里 30 格点不到、1280x800/720 各 24 格）。
+       试过"桌面也走 side 并排"（复用 adaptive_layout.js 的判据），但并排所需的横向空间
+       与门禁「两块同尺寸且 >=280px」在 1280/1366 档无法同时满足：横向要 2×(280+框)，
+       而本档内容区可用宽度只有 ~590-680px。要动必须连布局契约一起重新定，见文档 §10。 */
     body.layout-ingame:not(.layout-compact) .board-wrapper { padding: 0.6rem 0.9rem 0.8rem; }
     body.layout-ingame:not(.layout-compact) .board { max-width: min(340px, calc(100vh - 560px)); }
 
@@ -7382,7 +7674,10 @@ select.secondary option { background: var(--surface-strong); color: var(--text);
     }
     body.layout-ingame:not(.layout-compact) #turn-indicator .phase-btn { margin: 2px 4px; }
     body.layout-ingame:not(.layout-compact) .turn-indicator-inner { margin-bottom: 4px; }
-    body.layout-ingame:not(.layout-compact) .boards-container { margin-top: 0.4rem; }
+    /* 并排间隙统一 1rem（原来 2rem）：1200–1439 档只有 589–672px 可用宽，
+       2rem 的间隙让 2×(280+框) 放不下（→ flex-wrap 折到第二行 = 堆叠 = 纵向溢出）。
+       ≥1440 档两块都封顶 340，收窄只会更宽松。合并进这条已有规则，不另起同选择器的新块。 */
+    body.layout-ingame:not(.layout-compact) .boards-container { margin-top: 0.4rem; gap: 1rem; }
 
     /* 三个浮窗避让：预览/聊天贴右边缘（HUD 内容在 .game-content 之内，max-width 900） */
     body.layout-ingame:not(.layout-compact) #magic-card-preview {
@@ -7406,18 +7701,1552 @@ select.secondary option { background: var(--surface-strong); color: var(--text);
        居中后左边缘只有 190 → 阶段卡片左侧被日志压住（实测阶段按钮中心命中 .log-entry）。
        把内容区推到日志右侧。⚠️ 用 padding + margin-left:auto 双保险：
        flex 容器的 justify-content 在「内容比可用宽度大」时不生效（实测仍是 190）。 */
+    /* ⚠️ 这条 media 覆盖了上面 `.game-main-container` 的 padding —— 必须把三条都写全：
+       padding-left 让开左侧日志浮窗（fixed，x 20..300）、padding-right 让开右侧魔法预览浮窗
+       （fixed，右贴边 300px）、**padding-bottom 给贴底手牌让高度**。
+       原来只写了 left/right + `justify-content: flex-end`，两个后果实测：
+         · 内容被推到右侧、和预览浮窗抢同一段横向空间 → 棋盘横向空间只剩 556px，
+           两块并排放不下（只能堆叠）；
+         · padding-bottom 丢失 → 棋盘区一直伸到手牌下面，1366x768 实测对手棋盘
+           36 格里有 30 格被手牌盖住、点不到（此前没人查这一项）。
+       修法：三条 padding 写全，内容留在中道（flex-start + 左内边距 = 中道起点）。 */
     body.layout-ingame:not(.layout-compact) .game-main-container {
-        justify-content: flex-end;
+        justify-content: flex-start;
         padding-left: 308px;
-        padding-right: 8px;
+        padding-right: 320px;
+        padding-bottom: 146px;
         box-sizing: border-box;
+        /* Phase 3 修 §10.3：把 .game-container 的 1000px 宽度上限也解掉，见下一条的说明 */
+        max-width: none;
+    }
+    /* Phase 3 修 §10.3：本档原来是「1000px 的 .game-container 再切掉 628px 内边距」，
+       内容只剩 ~306px（1366 实测）——两块的并排宽度不够，.boards-container 只能
+       flex-wrap 到第二行（堆叠），而堆叠需要的纵向空间是并排的两倍，
+       于是**第二块棋盘整块掉到视口外**：1366x768 实测 36/36 格点不到（比 §10.3 记的
+       12–18 格更严重），1280x800/720 同样是 36/36。
+       修法：本档把 1000px 宽度上限解掉，让内容直接按视口算（左右各让开一块浮窗的宽度），
+       两块棋盘就能**并排**回到一行 —— 纵向不再溢出，§10.3 的遮挡随之消失。
+       ⚠️ 320 = 右侧预览浮窗；308 = 左侧日志浮窗（x 20..300）+ 8px 间隙。
+       ⚠️ 声明合并在本条与下一条既有规则里（不另起同选择器的新块 —— dupSel 预算顶格）。 */
+    body.layout-ingame:not(.layout-compact) .game-container {
+        max-width: none;
+        width: 100%;
     }
     body.layout-ingame:not(.layout-compact) .game-content {
-        margin-left: auto;
+        margin-left: 0;
         margin-right: 0;
+        /* Phase 3：宽度直接按视口算（左右各让开一块浮窗）——1000px 上限已在上一条解掉 */
+        max-width: calc(100vw - 628px);
+    }
+    /* ⚠️ 容器宽度解掉之后，贴底手牌条（absolute，基准是最近的定位祖先 .game-container）
+       会从 x≈1 开始 —— 第一张卡正好落在左下角那个**固定**的「快捷语」按钮底下，
+       实测卡片中心 elementFromPoint = qc-btn-label（手牌一张都点不到）。
+       本档给手牌条同样的左右让位，与上面 .game-main-container 的 308/320 一致。
+       ⚠️ 选择器写成 `#game-screen > #magic-system`（它是 #game-screen 的直接子节点，
+       见 game.js 的 createMagicCardUI）—— 这样既表达真实的 DOM 关系，又不会与
+       上面那条宽屏 `#magic-system` 规则撞成重复定义（dupSel 已顶到预算）。 */
+    body.layout-ingame:not(.layout-compact) #game-screen > #magic-system {
+        left: 308px;
+        right: 320px;
+        border-radius: var(--fluent-radius-lg);
+    }
+    /* ⚠️ 关键的一条：.board-wrapper 的基础规则是 `flex: 0 1 340px`（340px 基准，
+       由 tests/test_ui_review_fixes.py 钉住，那条断言不动）。但本档可用宽只有
+       589–672px —— 两个 340px 基准放不进一行，flex-wrap 会把第二块折到下一行
+       （= 堆叠），而堆叠要两倍纵向空间 → 第二块整块掉出视口。
+       本档改成**等分同一行**：解掉 340px 基准，两块各拿一半。 */
+    body.layout-ingame:not(.layout-compact) .boards-container > .board-wrapper {
+        flex: 1 1 0;
+        min-width: 0;
     }
     body.layout-ingame:not(.layout-compact) .log-container {
         width: 260px;
         max-width: 260px;
+    }
+}
+
+/* --- 35.9 首页（2026-09-27）：示意稿 C「卡牌竞技场」的三栏复刻 ---
+   三栏 = 左「指挥官名片」（倾斜卡）· 中「模式 + 热门卡」· 右「四块状态面板」。
+   颜色一律走 arena 预设的 --arena-* / 面层令牌（换预设只换颜色，AC4 的形状签名不动）。
+
+   ⚠️ 三条硬约束（本项目都栽过，别绕过它们）：
+      ① **每个选择器在本文件里只能出现一次** —— AC6 的 dupSel 顶格 25/25，
+         所以这一节是 35.7 / 35.8 两节的**原地改写**（不是另起新块）；
+      ② **首页规则必须是顶层** —— 写进 @media 里宽屏不生效（35.8 记过这个坑：
+         量出来 `.home-hero` 边框 0px、背景 none，而文件里 grep 得到）；
+      ③ 窄屏只靠 grid 列数收敛，任何视口下都不许横向溢出。
+   ⚠️ 这里顺手修掉一处**静默坏块**：原 35.8 之后有一段"教训：…"文字**没有注释包裹**
+      （`/*` 在上一段就闭合了），CSS 解析器把它连同到下一个 `{` 之前的规则全丢了 ——
+      与 docs/FLUENT_UI_2026_09_21.md §10.4 记的"注释吞规则"是同一类，已包回注释。 */
+
+/* 首页比其它屏宽：三栏（320 + 1fr + 348 + 2×22 间距）在 1000px 的容器里排不开。
+   ⚠️ 用 :has() 只挂在「首页是当前屏」时：不支持 :has() 的浏览器整条失效 →
+      退回 1000px 单列，观感退步但不会坏（渐进增强）。
+   ⚠️ 内边距同时收一档：首页的内容高度是"刚好一屏"的量级（示意稿 C 在 1440×900 上
+      正好放满），容器上下各省 14px 就是 28px —— 实测这是 900 高下不再多出一屏滚动的关键。
+   结算屏（示意稿 V）同宽：它那一行是 **4 张卡**，1000px 下每张只剩 230px 出头。 */
+.game-container:has(#start-screen.active),
+.game-container:has(.over-screen.active) {
+    width: min(100%, 1360px);
+    max-width: 1360px;
+    padding: clamp(0.75rem, 1.5vw, 1.15rem) clamp(0.75rem, 2vw, 1.5rem);
+}
+
+/* 首页把页面外留白也收一档：body 的 24px 是给"窗口里浮着的一张卡片"留的边距，
+   而首页是**一整屏的竞技场**（示意稿 C 的页面留白是 22px，它本身就是满屏布局）。
+   ⚠️ 只对首页生效（:has），其它屏一行不动。 */
+body:has(#start-screen.active) {
+    padding: 16px var(--fluent-space-4);
+}
+
+.home-wrap {
+    display: grid;
+    grid-template-columns: 320px minmax(0, 1fr) 348px;
+    gap: 22px;
+    align-items: start;
+    width: 100%;
+    text-align: left;
+}
+/* 三栏的位置由 grid-area 指定、**不靠 DOM 顺序** —— DOM 是「中→左→右」，
+   窄屏单列时主行动才会排在最前（手机上先能开一局）。 */
+.home-mid { grid-area: 1 / 2; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.home-left { grid-area: 1 / 1; min-width: 0; }
+.home-right { grid-area: 1 / 3; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.home-lead {
+    align-self: flex-start;
+    font-size: 0.7rem;
+    letter-spacing: 0.22em;
+    color: var(--muted);
+}
+
+/* 顶栏的「在线 N」胶囊（C 的 .pill）。放在 nav-tools 里，所以尺寸跟着导航走。 */
+.nav-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    font-size: 0.78rem;
+    color: var(--muted);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--fluent-radius-full);
+}
+.nav-pill b { font-family: var(--fluent-font-mono); color: var(--text); }
+
+/* ---------- 面板（C 的 .card-panel）：右栏四块 + 热门卡都套这一层 ----------
+   内边距 15 → 12：四块面板叠起来省的 24px 是"首页刚好一屏"预算里的硬通货
+   （实测 1440×900 登录态：收紧前 1013px，收紧后回到一屏内）。 */
+.card-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--fluent-radius-xl);
+    padding: 12px;
+    box-shadow: var(--shadow-panel);
+}
+.card-panel h4 {
+    margin: 0 0 8px;
+    font-size: 0.7rem;
+    letter-spacing: 0.2em;
+    font-weight: var(--fluent-weight-semibold);
+    color: var(--muted);
+}
+
+/* ---------- 出海区 = C 的 .gobtn.lg（紫渐变 + 光晕 + 图标块 + ENTER 角标） ---------- */
+.home-hero {
+    position: relative;
+    overflow: hidden;
+    width: 100%;
+    padding: 16px 20px 18px;
+    text-align: left;
+    border: 1px solid var(--arena-hero-border);
+    border-radius: var(--fluent-radius-xl);
+    background-color: var(--primary);
+    background-image: var(--arena-hero-veil), var(--arena-hero-grad);
+    box-shadow: var(--arena-hero-glow);
+    color: var(--arena-hero-fg);
+}
+/* 上缘 1px 内高光（C 的 inset 高光），纯装饰、不吃事件 */
+.home-hero::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: inset 0 1px 0 var(--arena-hero-chip-line);
+    pointer-events: none;
+}
+.home-hero > * { position: relative; }
+.hero-head { display: flex; align-items: center; gap: 16px; }
+.hero-ic {
+    flex: 0 0 auto;
+    width: 46px;
+    height: 46px;
+    display: grid;
+    place-items: center;
+    font-size: 1.35rem;
+    border-radius: var(--fluent-radius-lg);
+    background: var(--arena-hero-ic-bg);
+    border: 1px solid var(--arena-hero-ic-line);
+}
+.hero-txt { flex: 1 1 auto; min-width: 0; }
+.hero-txt h1 {
+    margin: 0;
+    font-size: 1.4rem;
+    letter-spacing: 0.06em;
+    text-align: left;
+    color: var(--arena-hero-fg);
+}
+.hero-go {
+    flex: 0 0 auto;
+    padding: 6px 12px;
+    font-size: 0.68rem;
+    letter-spacing: 0.16em;
+    color: var(--arena-hero-fg-dim);
+    border: 1px solid var(--arena-hero-chip-line);
+    border-radius: var(--fluent-radius-full);
+}
+.home-sub {
+    margin: 4px 0 0;
+    font-size: 0.9rem;
+    color: var(--arena-hero-fg-dim);
+}
+.home-hero .input-group { margin: 16px 0 12px; }
+.home-hero #player-name {
+    background-color: var(--arena-hero-ic-bg);
+    border-color: var(--arena-hero-ic-line);
+    color: var(--arena-hero-fg);
+}
+/* 主行动：C 的实心大按钮。底色 = 预设强调色（fluent_style_check 断言
+   「#find-match 的计算底色 = 当前预设的强调色」且必须不透明），
+   渐变只作装饰层 —— 那次"颜色只落在 background-image 里导致假对比度"的坑就是这么来的。 */
+.home-cta {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    min-height: 48px;
+    font-size: 1.05rem;
+    font-weight: var(--fluent-weight-bold);
+    letter-spacing: 0.06em;
+    border: 1px solid var(--arena-hero-border);
+    border-radius: var(--fluent-radius-lg);
+    box-shadow: var(--fluent-elev-8);
+}
+.home-hero #match-status p,
+.home-hero #ranked-status p { margin: 4px 0 10px; font-weight: 600; color: var(--arena-hero-fg); }
+.home-hero #match-status button,
+.home-hero #ranked-status button {
+    background-color: var(--arena-hero-ic-bg);
+    border-color: var(--arena-hero-chip-line);
+    color: var(--arena-hero-fg);
+}
+
+/* 名字 + 主行动（hero 下方的一条窄行）。样式对齐 demo 的 .gobtn 尺寸感：
+   输入框与按钮同高、圆角 12/8，行距 12px。 */
+.home-cta-row {
+    display: flex;
+    gap: 12px;
+    align-items: stretch;
+    width: 100%;
+}
+/* ⚠️ 主行动按钮同时带 `.mode-btn`，而 `.home-wrap .mode-btn { width: 100% }` 与
+   `.home-cta-row .home-cta` 同特异性、又排在后面 → 第一版按钮把整行吃光、输入框被压成
+   0 宽（实测 `#player-name` 只有 26px、`#find-match` 712px）。这里把特异性提到 (0,3,0)。 */
+.home-wrap .home-cta-row .input-group { flex: 1 1 auto; min-width: 0; margin: 0; }
+.home-wrap .home-cta-row #player-name { width: 100%; height: 100%; }
+.home-wrap .home-cta-row .home-cta {
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 168px;
+    max-width: none;
+    margin: 0;
+}
+.home-hero-status:empty { display: none; }
+.home-hero-status > div { margin-top: 10px; }
+
+/* ---------- 模式入口 = C 的 .gobtn（图标块 + 标题/说明 + 右侧角标） ----------
+   ⚠️ 这两条**不写成一条分组规则**：分组规则里再补一条 `.home-wrap .start-modes` 的覆盖
+      会让该选择器出现两次（AC6 的 dupSel +1，实测 25 → 26 直接 FAIL）。
+      两条各自独立定义，各出现一次。 */
+/* 模式区：排位与人机**各占一整行**（C 的 gobtn 就是一排一条）。
+   两列会把「人机 + 难度下拉」挤成 4 行小字（实测：标题折行、说明折成 4 行）。 */
+.home-wrap .start-modes {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    align-items: stretch;
+    width: 100%;
+}
+/* ⚠️ 这两个按钮带的是 `.secondary` 而不是 `.mode-btn`，所以吃不到上面那条 flex。
+   而且**那条 `.start-more button { text-align: left }` 在 `@media (max-width: 420px)` 体内**
+   （它原来靠已删除的顶层规则在宽屏兜住）—— 实测 1440 下按钮的计算 text-align 是 center：
+   图标与文字作为行内内容整体居中。这里补齐宽屏也要的那两条。 */
+.home-wrap .start-more button {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    text-align: left;
+}
+/* 次级入口区：并排两列（C 的 .duo） */
+.home-wrap .start-more {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    align-items: stretch;
+    width: 100%;
+}
+.home-wrap .mode-ai {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+    min-width: 0;
+}
+.home-wrap .mode-ai .mode-btn { flex: 1 1 auto; min-width: 0; }
+.home-wrap .mode-btn {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: var(--fluent-radius-lg);
+    text-align: left;
+}
+.mbtn-ic {
+    flex: 0 0 auto;
+    width: 38px;
+    height: 38px;
+    display: grid;
+    place-items: center;
+    font-size: 1.05rem;
+    border-radius: var(--fluent-radius-lg);
+    background: var(--arena-chip-bg);
+    border: 1px solid var(--border);
+}
+.mbtn-txt { flex: 1 1 auto; min-width: 0; }
+.mbtn-go {
+    flex: 0 0 auto;
+    padding: 5px 10px;
+    font-size: 0.62rem;
+    letter-spacing: 0.14em;
+    color: var(--muted);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--fluent-radius-full);
+}
+/* 排位入口的金色档：底色与渐变**并进 29.4 那条 `#ranked-match`**（AC6 的 dupSel 顶格，
+   这里再起一个同选择器的新块就会破 25 → 见那一处的注释）。下面三条是子元素，选择器唯一。 */
+#ranked-match .td { color: rgba(255, 255, 255, 0.86); }
+#ranked-match .mbtn-go { color: rgba(255, 255, 255, 0.86); border-color: rgba(255, 255, 255, 0.42); }
+#ranked-match .mbtn-ic { background: rgba(61, 40, 4, 0.28); border-color: rgba(255, 255, 255, 0.3); }
+/* 人机难度下拉：C 的段控件观感。
+   ⚠️ 宽度必须够放下最长选项「电脑：普通」：`ui_layout_check` 会量内容盒与文字宽之差
+      （deficit），1600×1000 档历史上是 −20px 的老红。这里把 min-width 提到 9rem 修掉它。 */
+.home-wrap .mode-ai select {
+    flex: 0 0 auto;
+    min-width: 9rem;
+    border-radius: var(--fluent-radius-lg);
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border);
+    color: var(--text);
+}
+/* 热门卡：`.hotrow` 五列缩略卡（C 的首页卖点块） */
+.home-hot { margin-top: 4px; }
+.hotrow { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.hcard {
+    overflow: hidden;
+    border: 1px solid var(--arena-card-line);
+    border-radius: var(--fluent-radius-lg);
+    background: var(--arena-card-grad);
+}
+.hcard .ha {
+    height: 54px;
+    display: grid;
+    place-items: center;
+    font-size: 1.2rem;
+    background: var(--arena-card-art);
+}
+.hcard .hn {
+    padding: 6px 4px 3px;
+    font-size: 0.72rem;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.hcard .hs { display: flex; justify-content: center; gap: 3px; padding-bottom: 7px; }
+.hcard .hs i {
+    width: 7px;
+    height: 7px;
+    border-radius: 2px;
+    background: var(--arena-pip-off);
+}
+.hcard .hs i.f { background: var(--arena-pip-1); }
+.hcard .hs i.f2 { background: var(--arena-pip-2); }
+.hcard .hs i.f3 { background: var(--arena-pip-3); }
+.hot-note { margin: 11px 0 0; font-size: 0.7rem; color: var(--muted); }
+
+/* ---------- 指挥官名片（C 的 .hero-card：倾斜 2.2°，插画 + 名牌 + 轨道 + 三行数据） ---------- */
+.cmdr-card {
+    overflow: hidden;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--fluent-radius-xl);
+    background: var(--arena-card-grad);
+    box-shadow: var(--fluent-elev-28), inset 0 0 0 1px var(--fluent-stroke-default);
+    transform: rotate(-2.2deg);
+}
+/* 倾斜是**纯装饰**：hover 回正一点点，避免"斜着的卡里有斜着的文字"读起来累。
+   ⚠️ 只动 transform（不改盒模型），grid 列宽不受影响。 */
+.cmdr-card:hover { transform: rotate(-1deg); }
+.cmdr-art {
+    height: 132px;
+    display: grid;
+    place-items: center;
+    background: var(--arena-art);
+}
+.cmdr-ring {
+    width: 74px;
+    height: 74px;
+    display: grid;
+    place-items: center;
+    font-size: 1.7rem;
+    color: var(--arena-gold-strong);
+    border-radius: 50%;
+    border: 2px solid var(--arena-gold-strong);
+    background: var(--arena-ring-bg);
+}
+.cmdr-body { padding: 13px 15px 15px; }
+.cmdr-name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 1.05rem;
+    font-weight: var(--fluent-weight-semibold);
+    min-width: 0;
+}
+.cmdr-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmdr-tier {
+    flex: 0 0 auto;
+    padding: 2px 6px;
+    font-size: 0.66rem;
+    font-style: normal;
+    color: var(--arena-gold);
+    border: 1px solid var(--arena-gold-strong);
+    border-radius: var(--fluent-radius-control);
+}
+.cmdr-sub { margin-top: 6px; font-size: 0.7rem; color: var(--muted); }
+/* 名片里的等级条：宽度吃满卡宽（首页那份 max-width:340px 收窄在这里被放开） */
+.cmdr-card .my-level-strip {
+    margin: 10px 0 0;
+    max-width: 100%;
+    background: var(--arena-track);
+    border-color: var(--border);
+}
+.cmdr-kv { margin-top: 12px; }
+.cmdr-kv .kv {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 7px 0;
+    font-size: 0.75rem;
+    color: var(--muted);
+    border-bottom: 1px dashed var(--arena-line-dash);
+}
+.cmdr-kv .kv:last-child { border-bottom: 0; }
+.cmdr-kv .kv b { font-family: var(--fluent-font-mono); color: var(--text); }
+.ghost-btn {
+    width: 100%;
+    margin-top: 12px;
+    padding: 8px 12px;
+    font-size: 0.78rem;
+    color: var(--text);
+    background-color: transparent;
+    background-image: none;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--fluent-radius-lg);
+    box-shadow: none;
+    cursor: pointer;
+}
+.ghost-btn:hover { color: var(--primary); border-color: var(--primary); background-color: var(--primary-50); }
+
+/* ---------- 右栏：最近解锁（C 的 .ach 行） ---------- */
+.ach-list { display: flex; flex-direction: column; }
+.ach-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 0;
+    border-bottom: 1px dashed var(--arena-line-dash);
+}
+.ach-row:last-child { border-bottom: 0; }
+.ach-badge {
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    font-size: 0.95rem;
+    border-radius: var(--fluent-radius-lg);
+    background: var(--arena-ach-bg);
+    border: 1px solid var(--border-strong);
+}
+.ach-txt { min-width: 0; flex: 1 1 auto; }
+.ach-name { font-size: 0.78rem; }
+.ach-desc {
+    margin-top: 2px;
+    font-size: 0.62rem;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.ach-when {
+    flex: 0 0 auto;
+    font-family: var(--fluent-font-mono);
+    font-size: 0.66rem;
+    color: var(--arena-gold);
+}
+.ach-row.locked .ach-badge { opacity: 0.45; }
+.ach-row.locked .ach-when { color: var(--muted); }
+.ach-empty { padding: 6px 0; font-size: 0.72rem; color: var(--muted); }
+
+/* ---------- 右栏：生涯数据（C 的 .stat-grid） ----------
+   2026-09-27：格子比示意稿收了一档内边距与字号 —— 首页要在 1440×900 里**放满一屏**
+   （示意稿 C 自己就是按这个尺寸画的），这四格原来是四块 ~80px 高的方砖，
+   收完省下约 30px，正好把整页从"多出 50px 滚动"压回一屏。 */
+.stat-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.stat-grid .s {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--fluent-radius-lg);
+    background: var(--surface-muted);
+}
+.stat-grid .s .l { font-size: 0.66rem; letter-spacing: 0.1em; color: var(--muted); }
+.stat-grid .s .v { margin-top: 3px; font-family: var(--fluent-font-mono); font-size: 0.98rem; }
+.stat-grid .s .v.g { color: var(--success); }
+.stat-grid .s .v.a { color: var(--arena-gold-strong); }
+
+/* ---------- 右栏：段位阶梯（C 的 .ladder） ---------- */
+.ladder { display: flex; flex-direction: column; }
+.ladder .li {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 5px 0;
+    font-size: 0.74rem;
+    color: var(--muted);
+    border-bottom: 1px dashed var(--arena-line-dash);
+}
+.ladder .li:last-child { border-bottom: 0; }
+.ladder .li i {
+    flex: 0 0 auto;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--border-strong);
+}
+.ladder .li.done { color: var(--text-subtle); }
+.ladder .li.done i { background: var(--success); }
+.ladder .li.now { color: var(--arena-gold-strong); font-weight: var(--fluent-weight-semibold); }
+.ladder .li.now i { background: var(--arena-gold-strong); box-shadow: 0 0 8px var(--arena-gold-strong); }
+.ladder .li .n { margin-left: auto; font-family: var(--fluent-font-mono); font-size: 0.7rem; }
+
+/* ---------- 右栏：在线情况（C 的 .fields） ---------- */
+.fields {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 2px 2px;
+    font-size: 0.75rem;
+    color: var(--muted);
+}
+.fields b { font-family: var(--fluent-font-mono); color: var(--text); }
+
+/* ---------- 响应式：三栏 → 两栏 → 单栏 ---------- */
+@media (max-width: 1240px) {
+    .home-wrap { grid-template-columns: 288px minmax(0, 1fr); }
+    .home-left { grid-area: 1 / 1; }
+    .home-mid { grid-area: 1 / 2; }
+    /* 右栏落到两栏下面，自己排成两列（面板本来就是横向的卡片） */
+    .home-right {
+        grid-area: 2 / 1 / auto / -1;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        align-items: start;
+    }
+}
+@media (max-width: 900px) {
+    .home-wrap { grid-template-columns: minmax(0, 1fr); }
+    .home-mid { grid-area: 1 / 1; }
+    .home-left { grid-area: 2 / 1; }
+    .home-right { grid-area: 3 / 1; }
+}
+@media (max-width: 560px) {
+    .home-wrap { gap: 14px; }
+    .home-right { grid-template-columns: minmax(0, 1fr); }
+    .hero-head { gap: 12px; }
+    .hero-txt h1 { font-size: 1.2rem; }
+    .hero-go { display: none; }
+    .hotrow { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 420px) {
+    /* 窄屏落单列（同一选择器在另一个 at-rule 上下文里也有一份，属于响应式覆盖） */
+    .home-wrap .start-modes,
+    .home-wrap .start-more { grid-template-columns: minmax(0, 1fr); }
+    .home-wrap .mode-ai { flex-wrap: wrap; }
+    .home-wrap .mode-ai select { flex: 1 1 100%; min-width: 0; }
+    .hotrow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+/* 矮屏（≤840 高）：C 自己也做了这一档 —— 内边距收敛，不藏内容 */
+@media (max-height: 840px) and (min-width: 901px) {
+    .card-panel { padding: 12px; }
+    .card-panel h4 { margin-bottom: 9px; }
+    .cmdr-art { height: 104px; }
+    .ach-row { padding: 7px 0; }
+    .ach-badge { width: 30px; height: 30px; font-size: 0.85rem; }
+    .stat-grid .s { padding: 9px 10px; }
+    .ladder .li { padding: 5px 0; }
+    .cmdr-kv .kv { padding: 6px 0; }
+    .home-hero { padding: 16px 18px 18px; }
+}
+/* --- 35.10 对局棋盘（arena 预设）：示意稿 C 的「海」 ---
+   只动颜色与阴影，盒模型一行不动（128 项布局断言的棋盘尺寸/遮挡与这里无关）：
+   C 的海面是「深蓝径向底 + 青色内发光 + 大投影」，命中的红块带霓虹外发光，
+   打空画成**青色圆环**（C 的 .sea .c.miss 就是环，不是实心点）。 */
+html[data-theme-preset="arena"] .board {
+    box-shadow: var(--arena-sea-shadow), inset 0 0 40px var(--arena-sea-glow);
+}
+html[data-theme-preset="arena"] .cell.hit {
+    box-shadow: 0 0 12px var(--arena-hit-glow);
+}
+html[data-theme-preset="arena"] .cell.miss::after {
+    background: transparent;
+    border: 1.5px solid var(--miss-dot);
+}
+/* 结算屏垂直居中（示意稿 V 的 .vwrap 就是居中）。⚠️ 不能用 `#game-over-screen.active`：
+   那个选择器已经在第 6 节的分组入场规则里出现过，再起一块会让 AC6 的 dupSel 破 25；
+   也**不能**直接写 `.screen.active`（同特异性、源码顺序在前面，会静默压住）。
+   所以走新类 `.over-screen`：特异性与 `.screen.active` 相同、但排在本文件更靠后 —— 赢。 */
+.over-screen.active {
+    display: flex;
+    flex-direction: column;
+    /* safe：内容比视口高时退化成从顶部排（不加 safe 会把顶部裁掉且滚不上去） */
+    justify-content: safe center;
+    /* ⚠️ 光有 justify-content 没用：`.screen` 没有高度，元素只有内容那么高（实测 338px），
+       flex 里根本没有"多余空间"可居中。这里给一个保守的最小高（视口 − 页面 32 − 容器 36
+       − 顶栏 50 − 余量 12）；取多了只是少居中一点，取少了才会溢出。 */
+    min-height: calc(100vh - 130px);
+}
+
+/* --- 35.11 结算屏（2026-09-27）：示意稿 V 的「判定头 + 四张卡 + 操作行」 ---
+   三块既有面板（#achievement-unlock-panel / #xp-gain-panel / #rank-gain-panel）
+   **只换容器与排布，内部 markup 与 JS 一行不动** —— 它们的滚动动画由 game.js 按 id 驱动，
+   所以这里用 `.over-cols > .xxx` 的**新选择器**去覆盖它们原来的 max-width/margin，
+   而不是改那些既有规则（AC6 的 dupSel 顶格，同名再起块直接超标）。
+   颜色一律走 arena 令牌，暗色态即 C 的原色。 */
+.over-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    width: 100%;
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 4px 0 8px;
+    /* 四张卡在矮屏会超出一屏：让内容自己滚，底部按钮始终留在视野里 */
+    min-height: 0;
+}
+.over-head {
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    padding: 18px 22px;
+    border: 1px solid var(--border);
+    border-radius: var(--fluent-radius-xl);
+    background: var(--panel);
+    box-shadow: var(--shadow-panel);
+}
+.over-head.win {
+    border-color: var(--arena-gold-strong);
+    background-image: linear-gradient(120deg, var(--arena-head-win), var(--panel) 60%);
+}
+.over-head.lose {
+    border-color: var(--arena-head-lose-line);
+    background-image: linear-gradient(120deg, var(--arena-head-lose), var(--panel) 60%);
+}
+.over-verdict { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.over-head #game-result {
+    margin: 0;
+    text-align: left;
+    font-size: clamp(1.5rem, 3.4vw, 2.2rem);
+    font-weight: var(--fluent-weight-bold);
+    letter-spacing: 0.06em;
+    color: var(--text);
+}
+.over-head.win #game-result { color: var(--arena-gold-strong); text-shadow: 0 0 34px var(--arena-head-win-glow); }
+.over-head.lose #game-result { color: var(--arena-head-lose-fg); text-shadow: none; }
+.over-vs { font-size: 0.8rem; color: var(--muted); }
+.over-meta {
+    margin-left: auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    font-size: 0.78rem;
+    color: var(--muted);
+}
+.over-meta b { font-family: var(--fluent-font-mono); color: var(--text); }
+
+.over-cols {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 12px;
+    align-items: start;
+}
+.over-cols > .over-card { max-width: none; margin: 0; }
+.over-cols > .xp-gain { padding: 12px 14px; }
+.over-cols > .rank-gain { padding: 12px 14px; }
+/* 徽章卡：原来那层 `--alpha-primary-16 → 06` 的透明底在暗色下几乎看不见，
+   整块卡读起来像"禁用"（截图看过）。这里统一成与「本局数据」同一种面板底 ——
+   里面每一行的样式（.au-item 等）不动。 */
+.over-cols > .achievement-unlock {
+    padding: 12px 14px;
+    background: var(--panel);
+    border-color: var(--border-strong);
+}
+.over-card {
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--fluent-radius-xl);
+    background: var(--panel);
+    text-align: left;
+}
+.over-lab {
+    margin: 0 0 10px;
+    font-size: 0.7rem;
+    letter-spacing: 0.2em;
+    font-weight: var(--fluent-weight-semibold);
+    color: var(--muted);
+}
+.over-stat {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 3px 0;
+    font-size: 0.78rem;
+    color: var(--muted);
+}
+.over-stat b { font-family: var(--fluent-font-mono); color: var(--text); }
+
+/* 操作行：窄屏下三个按钮（「加好友」是 JS 插进来的）会挤成三条窄列，
+   「加好友」三个字被折成两行（390 视口实测）。这里让它换行、并禁止按钮内折字。 */
+.game-over-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: center;
+}
+.game-over-actions > button { white-space: nowrap; }
+
+/* ===========================================================================
+   36. 竞技场预设的 1:1 外壳（2026-09-27，用户要求"一比一复刻 demo"）
+   ---------------------------------------------------------------------------
+   逐条对应 `docs/ui_demos/c-arena.html` 的写法，**只在 arena 预设 + 非紧凑档**生效：
+   其它预设保持 Fluent 的"窗口卡片"外观，紧凑档（手机）保持已经过验证的移动布局。
+
+     demo                                   → 这里
+     body{background:#0b0d18} + body::before  body 去内边距、容器去卡片壳（全幅）
+       （紫光柱 + 斜向条纹 + 青色副光）
+     .topbar{padding:12px 22px}             → .nav 透明、无描边、同内边距
+     .nav a{padding:6px 11px;border-radius:7px}
+     .ghost{transparent + 1px 描边}          → 帮助/设置/🎵/🎬 四个工具按钮
+     .panel{border-radius:14px}             → 面板与卡片
+     .gobtn{border-radius:12px}             → 入口卡 / 主行动
+     .card-panel 无阴影                      → 面板去阴影（demo 只有名片与主按钮有投影）
+   ⚠️ 特异性：`body:has(#start-screen.active)`（首页那份页面内边距）里带 id，
+      所以首页的覆盖也必须带 :has 才能压过它 —— 见下面第二条。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) { padding: 0; }
+html[data-theme-preset="arena"] body:has(#start-screen.active):not(.layout-compact) { padding: 0; }
+html[data-theme-preset="arena"] .game-container {
+    width: 100%;
+    max-width: 1440px;
+    padding: 6px 22px 20px;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+}
+/* 容器上的 Mica 毛玻璃层（::before）在竞技场里去掉：demo 是"贴着一片海"的全幅布局，
+   没有那层窗玻璃。浮层的亚克力要求由 .modal-overlay 兜（它自己的 blur 不受影响）。 */
+html[data-theme-preset="arena"] .game-container::before { display: none; }
+
+/* 首页与结算屏在竞技场里也是**全幅**（demo 没有"窗口卡片"）：
+   ⚠️ 必须带 :has(...) —— 首页/结算那两条既有规则里含 id，裸的预设前缀压不过它们。 */
+html[data-theme-preset="arena"] body:has(#start-screen.active) .game-container,
+html[data-theme-preset="arena"] body:has(.over-screen.active) .game-container {
+    width: 100%;
+    max-width: 1440px;
+    padding: 6px 22px 20px;
+}
+/* ---------- 顶栏（demo 的 .topbar） ---------- */
+html[data-theme-preset="arena"] .nav {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+    padding: 8px 0 6px;
+    margin-bottom: 2px;
+    /* demo 的 .topbar：品牌与导航链接靠左排在同一行，工具组推到最右 */
+    justify-content: flex-start;
+}
+html[data-theme-preset="arena"] .nav-brand { white-space: normal; }
+html[data-theme-preset="arena"] .nav-brand b {
+    font-size: 15px;
+    letter-spacing: 0.14em;
+    font-weight: var(--fluent-weight-semibold);
+}
+html[data-theme-preset="arena"] .nav-brand em {
+    display: block;
+    font-style: normal;
+    font-size: 10.5px;
+    letter-spacing: 0.2em;
+    color: var(--fluent-text-disabled);
+}
+html[data-theme-preset="arena"] .nav-menu {
+    flex: 1 1 auto;
+    justify-content: flex-start;
+    gap: 4px;
+}
+html[data-theme-preset="arena"] .nav a {
+    padding: 6px 11px;
+    border-radius: 7px;
+    color: var(--muted-strong);
+    font-size: 0.78rem;
+}
+html[data-theme-preset="arena"] .nav a:hover { background: var(--surface-strong); color: var(--text); }
+/* 帮助 / 设置 / 🎵 / 🎬 = demo 的 .ghost：透明底 + 1px 描边 */
+html[data-theme-preset="arena"] .nav .btn.secondary {
+    min-height: 0;
+    padding: 6px 13px;
+    font-size: 0.78rem;
+    font-weight: var(--fluent-weight-regular);
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    border-radius: 7px;
+    color: var(--muted-strong);
+    box-shadow: none;
+}
+html[data-theme-preset="arena"] .nav .btn.secondary:hover {
+    background: transparent;
+    color: var(--text);
+    border-color: var(--arena-gold-strong);
+}
+
+/* ---------- 面板与卡片：demo 的 14/12 两档圆角 + 无阴影 ---------- */
+html[data-theme-preset="arena"] .card-panel,
+html[data-theme-preset="arena"] .over-card,
+html[data-theme-preset="arena"] .over-head {
+    border-radius: 14px;
+    box-shadow: none;
+}
+/* demo：.gobtn{padding:24px 22px} / .gobtn.lg{padding:32px 24px} */
+html[data-theme-preset="arena"] .home-hero { border-radius: 12px; padding: 26px 24px; }
+html[data-theme-preset="arena"] .home-wrap .mode-btn { border-radius: 12px; padding: 18px 22px; }
+
+html[data-theme-preset="arena"] .cmdr-card { border-radius: 14px; }
+html[data-theme-preset="arena"] .mbtn-ic { border-radius: 10px; }
+html[data-theme-preset="arena"] .hcard { border-radius: 9px; }
+html[data-theme-preset="arena"] .stat-grid .s { border-radius: 9px; }
+html[data-theme-preset="arena"] .ghost-btn { border-radius: 8px; }
+
+/* ---------- 字号：按 demo 的实际值（13px 基准） ---------- */
+/* ⚠️ 这两条**不能合并成一条分组规则**再补一条覆盖**：那会让 `.home-wrap` 出现两次，
+   AC6 的 dupSel 立刻破 25（实测 26）。各自独立写，各出现一次。
+   三栏宽度 = demo 的 .home-body 原值（300 / 1fr / 340，gap 22）。 */
+html[data-theme-preset="arena"] .home-wrap {
+    font-size: 13px;
+    grid-template-columns: 300px minmax(0, 1fr) 340px;
+}
+html[data-theme-preset="arena"] .over-wrap { font-size: 13px; }
+html[data-theme-preset="arena"] .home-lead { font-size: 11px; letter-spacing: 0.22em; }
+html[data-theme-preset="arena"] .home-wrap .tt { font-size: 19px; font-weight: 600; }
+html[data-theme-preset="arena"] .home-wrap .td { font-size: 11.5px; }
+html[data-theme-preset="arena"] .mbtn-go { font-size: 11px; letter-spacing: 0.16em; }
+html[data-theme-preset="arena"] .hero-go { font-size: 11px; letter-spacing: 0.16em; }
+html[data-theme-preset="arena"] .home-sub { font-size: 12.5px; }
+html[data-theme-preset="arena"] .card-panel h4,
+html[data-theme-preset="arena"] .over-lab { font-size: 11px; letter-spacing: 0.2em; }
+html[data-theme-preset="arena"] .stat-grid .s .l { font-size: 10.5px; }
+html[data-theme-preset="arena"] .stat-grid .s .v { font-size: 19px; }
+html[data-theme-preset="arena"] .ladder .li { font-size: 12px; }
+html[data-theme-preset="arena"] .ladder .li .n { font-size: 11px; }
+html[data-theme-preset="arena"] .fields { font-size: 11.5px; }
+html[data-theme-preset="arena"] .cmdr-name { font-size: 17px; }
+html[data-theme-preset="arena"] .cmdr-sub { font-size: 11px; }
+html[data-theme-preset="arena"] .cmdr-kv .kv { font-size: 11.5px; }
+html[data-theme-preset="arena"] .ach-name { font-size: 12.5px; }
+html[data-theme-preset="arena"] .ach-desc,
+html[data-theme-preset="arena"] .ach-when { font-size: 10.5px; }
+html[data-theme-preset="arena"] .hcard .hn { font-size: 11.5px; }
+html[data-theme-preset="arena"] .hot-note { font-size: 11px; }
+/* 名片里的等级条：demo 是一条**裸轨道**（没有胶囊壳、没有底、没有描边），
+   标签在轨道两端的外面。这里把首页那条 pill 的壳脱掉。 */
+html[data-theme-preset="arena"] .cmdr-card .my-level-strip {
+    margin: 10px 0 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    max-width: 100%;
+}
+html[data-theme-preset="arena"] .cmdr-card .my-level-strip .mls-bar {
+    height: 8px;
+    background: var(--arena-track);
+    border: 1px solid var(--border);
+}
+html[data-theme-preset="arena"] .cmdr-card .my-level-strip .mls-text,
+html[data-theme-preset="arena"] .cmdr-card .my-level-strip .mls-lv { font-size: 10.5px; color: var(--muted); }
+html[data-theme-preset="arena"] .nav-tools {
+    margin-left: auto;
+    border-left: 0;
+    padding-left: 0;
+}
+/* 名片里的等级条：demo 是紫→青渐变（不是 Fluent 的蓝） */
+html[data-theme-preset="arena"] .cmdr-card .mls-fill {
+    background-image: linear-gradient(90deg, var(--arena-vio), var(--arena-cy));
+}
+/* 对局屏 HUD = 示意稿 C 的 .opp-bar：一条**横条**（红调渐变从左起、1px 描边、12px 圆角），
+   而不是一排各自带底的胶囊。只动颜色/描边/圆角 —— 盒模型与内部节点都不动
+   （那一行的高度由 128 项布局断言盯着：棋盘不能因此下移）。 */
+/* ⚠️ 只给**非紧凑档**：紧凑档（横屏 664×336）的 HUD 是网格第一行（auto 高），
+   多这 8px 上下的内边距 + 1px 描边就把对局页顶出 20px 纵向滚动，手牌被挤到折线以下
+   → ui_layout_check 的「一屏不滚动」「手牌可见且可点」当场红（实测 356 > 336）。
+   手机档保持原来的紧凑 HUD。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .game-info {
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background-color: var(--panel);
+    background-image: linear-gradient(90deg, var(--arena-head-lose), transparent 45%);
+}
+
+/* 人机难度：demo 的 .seg 里"当前档"是一颗青色胶囊（我们保留原生 select —— 工具按
+   options 量文字宽度，换成三个按钮会让那条断言失去落点），把它画成同一颗胶囊。 */
+/* demo 的 .seg 是 34px 高的小胶囊；我们的下拉保留原生控件（工具按 options 量文字宽度），
+   只把它压到同一档高度、画成同一颗青色胶囊。 */
+html[data-theme-preset="arena"] .home-wrap .mode-ai select {
+    background-color: var(--arena-chip-bg);
+    border-color: var(--arena-cy);
+    color: var(--arena-cy);
+    border-radius: 999px;
+    min-height: 40px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+    font-size: 0.72rem;
+}
+html[data-theme-preset="arena"] .home-wrap .mode-ai { align-items: center; }
+
+/* 次级入口卡片：标题 + 一行说明（说明用 span，不影响按 id 点击与文案断言） */
+.home-wrap .tt { display: block; font-weight: 700; }
+.home-wrap .td {
+    display: block;
+    margin-top: 2px;
+    font-size: 0.78rem;
+    font-weight: 400;
+    opacity: .82;
+}
+/* 状态行与 hero 同宽 —— 这条声明并进 35.5 的 .start-status，避免 dupSel 破 25 */
+
+/* ============================================================================
+   37. 对局屏：示意稿 C 的三区结构（对手条 / 中场 / 底排）—— 2026-09-27
+   ----------------------------------------------------------------------------
+   目标（作者原话：「一比一复刻 demo」）：把 #game-screen 摆成 `docs/ui_demos/c-arena.html`
+   「对局屏」那三块 ——
+     ① 对手条 .opp-bar：头像圆牌 + 名字/剩余舰 + 剩余舰 pips + 右侧回合胶囊/投降
+     ② 中场 .arena-mid：两块海域（焦点）+ 右侧一列（连锁叠牌 + 场地魔法）
+     ③ 底排 .arena-bottom：你的舰队（摘要卡）+ 手牌（真卡）+ 操作列（阶段按钮 / 弃牌堆 / 计数）
+
+   ⚠️ 为什么用「网格 + display:contents」而不是重排 DOM：
+      ① 紧凑档（手机/横屏 664×336）那套已验证的一屏网格，选择器全是
+         `body.layout-compact.layout-ingame .game-content > .game-info`（**直接子选择器**）——
+         给 .game-info / .boards-container 套一层 wrapper 就会让它整段失效；
+      ② game.js / adaptive_layout.js 里几十处 getElementById + 事件委托按现有父子关系找节点
+         （例：`#turn-indicator > .game-info` 的两个 div 在紧凑档被 display:none 省高度）。
+      所以这里**一个节点都不搬**：把 .game-container 变成 3 列 × 6 行网格，
+      中间那几层（#game-screen / .game-main-container / .game-content / 外层 .game-info /
+      .players-info）在**本档内** display:contents —— 于是它们的子节点直接成为网格项，
+      位置全靠 grid-area 分配。紧凑档与其它预设：下面每条都带
+      `html[data-theme-preset="arena"] body:not(.layout-compact)` 前缀，一行都不命中。
+
+   ⚠️ 三块 fixed 浮窗（日志 / 卡牌预览 / 聊天）**不参与**网格，靠 --arena-pad-l / -r 让开
+      （见令牌区）。本档给 .game-container 加的只有 display/grid/padding ——
+      **没有** transform/filter/backdrop-filter（加了就会改掉 fixed 后代的包含块）。
+   ========================================================================== */
+
+/* --- 37.1 默认隐藏：只在对局屏三区里出现的几条新元素（紧凑档/其它预设一行不动） --- */
+.arena-oppbar-bg,
+.arena-pips,
+.arena-counts,
+.arena-rail,
+.arena-turn-chips,
+.arena-fleet-head,
+.sea-sub { display: none; }
+
+/* --- 37.2 骨架：3 列 × 6 行 ---
+   行 1 顶栏 / 行 2 对手条 / 行 3 中场（1fr，吃掉多余高度）/ 行 4 场地魔法 / 行 5 操作列 /
+   行 6 弃牌堆按钮。底排三块（舰队·手牌·操作列）用「跨越 4~6 行 + align-self:end」对齐到底，
+   与示意稿 C 的 `.arena-bottom { align-items: end }` 同一效果。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .game-container:has(> #game-screen.active) {
+    display: grid;
+    grid-template-columns: var(--arena-fleet-w) minmax(0, 1fr) var(--arena-ops-w);
+    grid-template-rows: auto auto minmax(0, 1fr) auto auto auto;
+    column-gap: var(--arena-gap);
+    row-gap: var(--arena-row-gap);
+    padding: 6px var(--arena-pad-r) 18px var(--arena-pad-l);
+    box-sizing: border-box;
+}
+/* 顶栏横跨三列（它是页面级导航，不属于三区） */
+html[data-theme-preset="arena"] body:not(.layout-compact) .game-container:has(> #game-screen.active) > .nav {
+    grid-area: 1 / 1 / 2 / 4;
+}
+/* 对手条底板：行 2 整条的背景（红调渐变从左起，与示意稿 C 的 .opp-bar 一致）。
+   ⚠️ 用真实元素而不是 .game-container::before —— 那个伪元素已经被 35.x 的「去 Mica 层」
+      占用（那里是 display:none），抢同名伪元素会变成两处都在改它。
+   ⚠️ z-index 必须是 **-1**，不能是 0：网格项带 z-index:0 会进入「定位层」，画在
+      同一格里那些**没有定位**的兄弟之上（CSS 2.1 附录 E 的第 8 步 vs 第 3~5 步）——
+      于是头像/昵称/胶囊全被这块底板盖住，只是 --panel 有 14% 透明时看不出来（表现为
+      "整条灰蒙蒙的"）。负值让它退回底板该在的位置：兄弟的背景之上、内容之下。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .arena-oppbar-bg {
+    display: block;
+    grid-area: 2 / 1 / 3 / 4;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background-color: var(--arena-bar-bg);
+    background-image: linear-gradient(90deg, var(--arena-head-lose), transparent 45%);
+    pointer-events: none;
+    z-index: -1;
+}
+/* ⚠️ 摊平那几条里，`.players-info` 必须带上 `#game-screen` 上下文（id 计数）。
+   实测：`html[attr] body:not(.layout-compact) .players-info` 是 (0,3,2)，而挡在它前面的
+   `body.layout-ingame:not(.layout-compact) .game-info .players-info`（@min-width:1200）
+   是 (0,4,1) —— **类计数 4 > 3，legacy 赢**，于是这块【根本没摊平】：
+   两行 .player-info 仍挤成一个自动放置的网格项，落在第 1 行，整个三区骨架塌掉。
+   带 id 后 (1,3,2) 直接压过去，不再依赖声明顺序。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) #game-screen.active,
+html[data-theme-preset="arena"] body:not(.layout-compact) .game-main-container,
+html[data-theme-preset="arena"] body:not(.layout-compact) .game-content,
+html[data-theme-preset="arena"] body:not(.layout-compact) .game-content > .game-info,
+html[data-theme-preset="arena"] body:not(.layout-compact) #game-screen .players-info { display: contents; }
+/* 摊平之后，原来靠 margin 撑开的间距改由 row-gap 接管 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .game-content > .game-info > * { margin: 0; }
+
+/* --- 37.3 ① 对手条：对手名片（头像 + 剩余舰 + pips） ---
+   两块 .player-info 摊平后各自是独立网格项：nth-child(2) = 对手（顶栏那条），
+   nth-child(1) = 自己（底排左格「你的舰队」）。DOM 顺序见 index.html，别按视觉反推。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .players-info > .player-info:nth-child(2) {
+    grid-area: 2 / 1 / 3 / 2;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    padding: 6px;
+    background: none;
+    border: 0;
+    border-radius: 0;
+}
+/* 对手头像浮标进条后不再浮在角落（position:fixed → static）。
+   ⚠️ 这是既有能力（点它看对手个人信息）—— 只改位置：点击绑定在
+      #opponent-avatar-corner 容器上，搬进条里照样生效。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .corner-chip {
+    position: static;
+    top: auto;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    z-index: auto;
+    padding: 0;
+    margin: 0;
+    background: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+/* 角标原本是「名字在左、头像在右」的镜像布局（贴右上角）；进条后还原成头像在前 */
+html[data-theme-preset="arena"] body:not(.layout-compact) #opponent-avatar-corner { flex-direction: row-reverse; }
+html[data-theme-preset="arena"] body:not(.layout-compact) .corner-chip .avatar-sm {
+    width: 42px;
+    height: 42px;
+    flex: 0 0 auto;
+    border-width: 2px;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) #opponent-avatar-corner .avatar-sm { border-color: var(--arena-head-lose-line); }
+html[data-theme-preset="arena"] body:not(.layout-compact) #avatar-corner .avatar-sm { border-color: var(--arena-head-win-glow); }
+html[data-theme-preset="arena"] body:not(.layout-compact) .corner-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    max-width: 12ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* 条里只留「剩余 N 艘战舰」：昵称已经由头像 chip 显示，重复那份在 200px 的格子里放不下 */
+html[data-theme-preset="arena"] body:not(.layout-compact) #opponent-username-info { display: none; }
+html[data-theme-preset="arena"] body:not(.layout-compact) .player-flex-row > div { min-width: 0; }
+html[data-theme-preset="arena"] body:not(.layout-compact) .player-info p {
+    margin: 0;
+    font-size: 11px;
+    color: var(--text-subtle);
+    white-space: nowrap;
+}
+/* 对手名片里那条「查看对手战绩」跟着条一起走（低频入口，压成小 chip） */
+html[data-theme-preset="arena"] body:not(.layout-compact) #show-opponent-stats {
+    min-height: 0;
+    margin-top: 4px;
+    padding: 3px 8px;
+    font-size: 10.5px;
+    border-radius: 7px;
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    color: var(--text-subtle);
+    box-shadow: none;
+}
+/* 剩余舰 pips（示意稿 C 的 .pips）：亮 = 存活，暗 = 已沉。数字由 game.js 填 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .arena-pips {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    margin-left: auto;
+    flex: 0 0 auto;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .arena-pips i {
+    width: 11px;
+    height: 11px;
+    border-radius: 2px;
+    background: var(--arena-pip-off);
+    border: 1px solid var(--border-strong);
+    box-sizing: border-box;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .arena-pips i.on {
+    background-image: var(--arena-pip-2);
+    border-color: var(--arena-cy);
+    box-shadow: 0 0 7px var(--arena-cy);
+}
+/* 条右侧：回合胶囊 + 投降（示意稿 C 顶栏那排 chip）。
+   ⚠️ 回合标题与投降必须仍在**同一行**：ui_layout_check 有一条
+      「投降按钮与回合标题垂直对齐（≤3px）」，靠 .turn-indicator-inner 的
+      align-items:center 保证 —— 这两个节点没有被拆开。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .game-content > .game-info > .turn-indicator-inner {
+    grid-area: 2 / 3 / 3 / 4;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    min-width: 0;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .turn-indicator-inner h2 {
+    margin: 0;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    border-radius: 999px;
+    border: 1px solid var(--arena-cy);
+    background-image: linear-gradient(120deg, var(--arena-head-lose), var(--arena-chip-bg));
+    white-space: nowrap;
+}
+/* 三颗「阶段 / 回合 / 攻击」胶囊（示意稿 C 的 .turn-chip 那一组，在对手条右侧）。
+   ⚠️ 内容是 game.js 从 #current-phase / #current-player / #attacks-remaining
+      读出来的**展示副本**（那三个 id 本身仍在 #turn-indicator 里，紧凑档 HUD 靠它们）。
+   ⚠️ 它挂在外层 .game-info 下（不是 .turn-indicator-inner 里）：条右侧那一格只有
+      ops 列那么宽（200px），四颗胶囊 + 投降塞不下；放在第 2 行**中格右对齐**才和
+      示意稿 C 一样贴到条的右侧。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .game-content > .game-info > .arena-turn-chips {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    grid-area: 2 / 2 / 3 / 3;
+    min-width: 0;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .arena-chip {
+    padding: 8px 14px;
+    font-size: 12px;
+    border-radius: 999px;
+    border: 1px solid var(--arena-turn-chip-line);
+    background-image: var(--arena-turn-chip-bg);
+    white-space: nowrap;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chip-turn {
+    border-color: var(--arena-turn-chip-vio-line);
+    background-image: var(--arena-turn-chip-chat);
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .arena-chip b {
+    font-family: var(--fluent-font-mono);
+    font-weight: 600;
+}
+/* 三区档里，`#turn-indicator > .game-info` 那三行信息由条上的胶囊承载 ——
+   条里已经在显示同一份值，卡片里再来三行就是同一屏写两遍（示意稿 C 的操作列
+   只有按钮与计数）。⚠️ 只隐藏【三区档】下的这三行：紧凑档的 HUD 就是它们。 */
+/* 投降 = 示意稿 C 顶栏那颗 ghost（透明底 + 描边 + 红字），不再是大红按钮 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .turn-indicator-inner #surrender-btn {
+    min-height: 36px;
+    padding: 6px 14px;
+    font-size: 12px;
+    border-radius: 8px;
+    background: transparent;
+    border: 1px solid var(--arena-head-lose-line);
+    color: var(--arena-head-lose-fg);
+    box-shadow: none;
+}
+/* 两个倒计时 / 状态条（极限增援、无瑕圣心）平时 hidden；一旦生效就落在条中间那格 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .game-content > .game-info > #reinforcement-countdown,
+html[data-theme-preset="arena"] body:not(.layout-compact) .game-content > .game-info > #holy-heart-countdown,
+html[data-theme-preset="arena"] body:not(.layout-compact) .game-content > .game-info > #effect-status-bar {
+    grid-area: 2 / 2 / 3 / 3;
+    min-width: 0;
+    text-align: center;
+}
+
+/* --- 37.4 ② 中场：两块海域并排（左）+ 连锁轨道（右） ---
+   ⚠️ 与 demo 的差异（有意为之）：示意稿 C 的中场只有**一块**海 + 底排一盘小棋。
+      我们有两块**等尺寸**棋盘，而宽屏契约「两块棋盘同尺寸且 ≥280px」
+      （ui_layout_check 的 wideProbe，1600×1000 逐次断言）钉着它们；而且己方海域不是纯展示 ——
+      绝处逢生的「选船位」要在自己的棋盘上点格子（缩成小盘后格子只剩 ~19px，点不准）。
+      所以中场并排两块（同尺寸），底排左格改成「你的舰队」摘要卡（头像 + 剩余舰 + pips）。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) #game-screen .boards-container {
+    grid-area: 3 / 1 / 4 / 3;
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    justify-content: center;
+    gap: var(--arena-gap);
+    margin: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+/* 两块等分同一行（解掉 .board-wrapper 基础的 340px 基准）—— 与 1200–1439 档同一手法 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .boards-container > .board-wrapper {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0;
+    background: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .boards-container > .board-wrapper > h3 {
+    margin: 0 0 7px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    color: var(--text);
+    /* 标题与右挂的「已探明 …」同一行基线对齐 */
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+}
+/* 海域标题右挂的「已探明 N / 36 格 · 命中 M」（示意稿 C 的 .sea-head .s）。
+   ⚠️ 数字来自 gameState.myAttacks（服务端每发一枚的 {x,y,hit}），不是编的；
+      牌堆那类服务端不下发的量一个都不写。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .sea-sub {
+    display: inline;
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0;
+    color: var(--text-subtle);
+}
+/* 舰队卡里那行「你：剩余 N 艘战舰」在三区档是重复信息（标题行已经有「剩余 N 艘」，
+   而且卡片本身就叫「你的舰队」）。⚠️ 只隐藏不删 —— 那个 span 是 renderArenaRail
+   的读数源，也是 tests/test_ui_review_fixes.py 钉着的文案。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .players-info > .player-info:nth-child(1) .player-flex-row p {
+    display: none;
+}
+/* 海面尺寸：宽由 flex 等分决定，高由视口预算兜底 ——
+   calc(100vh - 480px) 是「除中场以外的固定开销」的实测上限（顶栏 + 对手条 + 底排三块
+   + 行间距 + 容器内边距 + 海域标题）。它只是**上限**：宽不够时 flex 会自动收窄。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .boards-container .board {
+    max-width: min(430px, calc(100vh - 480px));
+    border-radius: 14px;
+    border-color: var(--border-strong);
+}
+/* 连锁轨道 = 示意稿 C 的 .chain-stack：虚线金框 + 极淡金底。
+   ⚠️ 里面那摞牌是 #chain-display（game.js 建的），默认挂 #magic-system；
+      adaptive_layout.js 在「arena 且非紧凑」时把它搬进这条轨道 —— 见那里的注释。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    grid-area: 3 / 3 / 4 / 4;
+    min-height: 0;
+    padding: 10px 8px;
+    border: 1px dashed var(--arena-gold);
+    border-radius: 12px;
+    background-color: var(--arena-head-win);
+    overflow: hidden;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .arena-rail-head {
+    flex: 0 0 auto;
+    margin-bottom: 8px;
+    font-size: 10.5px;
+    letter-spacing: 0.2em;
+    color: var(--arena-gold);
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .arena-rail-empty {
+    margin: auto 0;
+    font-size: 12px;
+    color: var(--text-subtle);
+}
+/* 轨道里已经有真叠牌时，把「暂无连锁」收掉。
+   ⚠️ 条件不能写成 `:has(#chain-display)` —— 那个容器**从建出来就一直在**（game.js 的
+      createMagicCardUI 挂在页面上、adaptive_layout 只是搬家），空的时候它也在，
+      于是提示永远不出现、轨道里空荡荡一片（出图看出来的）。要判的是"里面有没有卡"。
+   ⚠️ `:has()` 不支持的老浏览器上只是「暂无连锁」与空轨道共存，不会坏。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot:has(#chain-display .chain-stack > *) .arena-rail-empty {
+    display: none;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot > .chain-display {
+    position: static;
+    width: 100%;
+    max-width: none;
+    margin: auto 0;
+    background: none;
+    overflow: visible;
+    pointer-events: auto;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .chain-display h3 {
+    margin: 0 0 6px;
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-align: center;
+    color: var(--text-subtle);
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .chain-stack {
+    justify-content: center;
+    overflow: visible;
+    padding: 0;
+}
+
+/* --- 37.5 ③ 底排左格「你的舰队」（跨 4~6 行、贴底对齐） --- */
+html[data-theme-preset="arena"] body:not(.layout-compact) .players-info > .player-info:nth-child(1) {
+    grid-area: 4 / 1 / 7 / 2;
+    align-self: end;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    min-width: 0;
+    padding: 12px;
+    background-color: var(--panel);
+    background-image: none;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .players-info > .player-info:nth-child(1) .player-flex-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+    min-width: 0;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) #my-ship-pips {
+    flex-basis: 100%;
+    margin: 6px 0 0;
+    justify-content: flex-start;
+}
+/* 舰队卡标题行（示意稿 C 的 .myfleet .h：左边「你的舰队」、右边「剩余 N 艘」）。
+   ⚠️ 剩余数从 #your-ships 抄，不在 DOM 里写第二份真值（game.js 的 renderArenaRail）。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .arena-fleet-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 9px;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .arena-fleet-head .n {
+    font-size: 12px;
+    font-weight: 600;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .arena-fleet-head .s {
+    margin-left: auto;
+    font-size: 10.5px;
+    color: var(--text-subtle);
+}
+/* --- 37.6 ③ 场地魔法（示意稿 C 里它在中场右列的下格） --- */
+html[data-theme-preset="arena"] body:not(.layout-compact) .game-content > .game-info > .field-magic-area {
+    grid-area: 4 / 3 / 5 / 4;
+    display: block;
+    padding: 9px 10px;
+    text-align: left;
+    background-color: var(--panel);
+    background-image: none;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .field-magic {
+    display: block;
+    padding: 0;
+    font-size: 11.5px;
+    font-weight: 400;
+    border-radius: 0;
+    background: none;
+}
+/* --- 37.7 ③ 底排中格「手牌」（跨 4~6 行、贴底对齐） ---
+   ⚠️ 手牌尺寸/扇形/两级预览是 Phase 2 的既有实现（86×118 + applyHandFan + .magic-card
+      各档位），这里只搬位置：position:static 覆盖宽屏那条「绝对贴底」，
+      卡片、字体、说明框一概不动（card_text_fit_check 量的就是这些盒子）。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) #magic-system {
+    position: static;
+    grid-area: 4 / 2 / 7 / 3;
+    align-self: end;
+    max-height: none;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+    background: none;
+    border: 0;
+    border-radius: 0;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) #magic-system .magic-hand-container {
+    margin: 0;
+    padding: 0;
+    background: none;
+    border: 0;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) #magic-system .magic-hand-container > h3 {
+    margin: 0 0 7px;
+    font-size: 10.5px;
+    letter-spacing: 0.2em;
+    text-align: center;
+    color: var(--text-subtle);
+}
+/* 手牌一行：装得下就居中（demo 的 .hand-area 就是居中），装不下才横向滚动 ——
+   ⚠️ 不能直接写 justify-content:center：溢出时居中会把**第一张**推到负坐标、再也点不到
+      （经典 flex 溢出陷阱）。这里用「容器收缩到内容宽 + auto 外边距居中」拿到同样观感。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) #magic-system .magic-hand {
+    width: fit-content;
+    max-width: 100%;
+    margin: 0 auto;
+    gap: 10px;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+/* --- 37.8 ③ 底排右格「操作列」= #turn-indicator（阶段/回合/攻击 chip + 阶段按钮 + 计数） ---
+   ⚠️ 为什么阶段按钮留在 #turn-indicator 里：ui_layout_check 的宽屏不变量按
+      `rect(#turn-indicator)` 的中心量每个可见阶段按钮的水平偏移（容差 3px）。
+      按钮在这个 200px 的列里被 flex 拉伸到满宽 → 偏移实测 0，断言天然成立；
+      把它们搬去别处就得改那条断言（属于「本质冲突」级的改动，没必要）。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) #turn-indicator {
+    grid-area: 5 / 3 / 6 / 4;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0;
+    padding: 10px;
+    background-color: var(--panel);
+    background-image: none;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    text-align: center;
+    animation: none;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) #turn-indicator > .game-info {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    margin: 0;
+    /* 顶部让开右上角那枚「阶段时点」浮标（绝对定位，54×40 @ top:6 right:6） */
+    padding: 38px 0 0;
+    text-align: left;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) #turn-indicator > .game-info > div {
+    /* 三区档里这三行由对手条右侧的胶囊承载（同一份值写两遍等于同一屏说两次，
+       示意稿 C 的操作列只有按钮与计数）。⚠️ 选择器本身带着三区前缀，
+       紧凑档 HUD 那三行一行都不受影响。 */
+    display: none;
+    font-size: 11.5px;
+    color: var(--text-subtle);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) #turn-indicator > .game-info > div > span {
+    color: var(--text);
+    font-weight: 600;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) #turn-indicator .phase-btn {
+    width: 100%;
+    margin: 0;
+    padding: 11px 0;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    border-radius: 11px;
+    border: 1px solid var(--arena-hero-border);
+    background-image: var(--arena-hero-grad);
+    color: var(--arena-hero-fg);
+    box-shadow: var(--arena-hero-glow);
+}
+/* 计数面板（示意稿 C 的 ops-col 那格 fields）。⚠️ 「牌堆」数服务端不下发（客户端 gameState.deck
+   永远是空数组）—— 与其编一个数字，不如只列手牌 / 弃牌堆 / 剩余舰这三项真实值。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .arena-counts {
+    display: block;
+    padding: 7px 9px;
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    text-align: left;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .arena-counts .fields {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 0;
+    font-size: 11px;
+    color: var(--text-subtle);
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .arena-counts .fields b { color: var(--text); }
+/* --- 37.9 ③ 底排右格最下一行「查看弃牌堆」 --- */
+html[data-theme-preset="arena"] body:not(.layout-compact) .game-content > .discard-pile-btn-row {
+    grid-area: 6 / 3 / 7 / 4;
+    display: block;
+    margin: 0;
+    text-align: center;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) #view-discard-pile {
+    width: 100%;
+    min-height: 38px;
+    font-size: 12.5px;
+    border-radius: 11px;
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border-strong);
+    color: var(--text-subtle);
+    box-shadow: none;
+}
+/* --- 37.10 窄一档（对齐 demo 的 @media (max-width:1360px)）：侧栏收窄，宽度让给手牌 --- */
+@media (max-width: 1360px) {
+    html[data-theme-preset="arena"] {
+        --arena-fleet-w: 186px;
+        --arena-ops-w: 186px;
+        --arena-gap: 14px;
+        --arena-row-gap: 10px;
+    }
+}
+/* --- 37.11 宽一档（≥1440）：把两侧留白还给海域与手牌 ---
+   容器 max-width 是 1440 并居中，所以视口每宽 1px，容器左右各多留 0.5px；
+   而三块 fixed 浮窗（日志右沿 300 / 预览与聊天左沿 312）贴着**视口**定位 ——
+   内容区要避让的那部分于是每宽 1px 就少 0.5px。上面那对 308/320 是 vw=1440 时的
+   实测值，这里按 (100vw−1440)/2 递减，把多出来的宽度完整还给中场：
+   1600 下 308→228 / 320→244，两块海域 290→360px、手牌条 380→536px（6 张卡不再需要横滚）。
+   ⚠️ 用 max(0px, …) 兜住超宽屏：负内边距是非法值，直接写 calc 会在
+      超宽档"整条声明失效"（padding 退回初值 0 也许碰巧能看，但那不是设计）。 */
+@media (min-width: 1440px) {
+    html[data-theme-preset="arena"] {
+        --arena-pad-l: max(0px, calc(308px - (100vw - 1440px) / 2));
+        --arena-pad-r: max(0px, calc(320px - (100vw - 1440px) / 2));
     }
 }

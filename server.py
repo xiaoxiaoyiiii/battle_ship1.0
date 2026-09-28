@@ -189,6 +189,35 @@ def api_online_count():
     """获取当前在线人数"""
     return jsonify({'online_count': lobby_manager.online_count()})
 
+
+@app.route('/api/home_stats')
+def api_home_stats():
+    """首页「在线情况」面板的只读聚合：在线人数 / 两个队列 / 可见房间数。
+
+    为什么要单开一个口，而不是让首页去收 socket 的 `lobby_state`：
+    `lobby_state` 只有**大厅订阅者**收得到，而 `lobby_subscribe` 会把这个人记进
+    `lobby_manager.members()`（大厅的"谁在大厅"、在线列表都会因此变）——
+    首页为了显示三个数字去订阅，等于让每个停在首页的人都被算作"在大厅"。
+    这里只做**读**：来源与 `lobby_state` 是同一批（`lobby_manager.presence` /
+    `room_manager.match_queue` / `_lobby_visible_rooms()`），不写任何状态。
+
+    ⚠️ 口径与大厅横幅一致：队列是**同一个队列按 mode 分计**（休闲 + 排位 = 队列总长）。
+    ⚠️ 失败时返回 200 + 空值（首页那三格退成"—"），不抛 500 —— 首页不该因为
+       一个装饰性面板而白屏（本项目"取数失败 → 整块消失"的观感事故记过一笔）。
+    """
+    try:
+        queue = list(room_manager.match_queue)
+        ranked_n = sum(1 for e in queue if e.get('mode') == MATCH_MODE_RANKED)
+        return jsonify({
+            'online_count': lobby_manager.online_count(),
+            'queue': {'casual': len(queue) - ranked_n, 'ranked': ranked_n},
+            'lobby_rooms': len(_lobby_visible_rooms()),
+        })
+    except Exception as exc:
+        app.logger.warning('home_stats 计算失败: %s', exc)
+        return jsonify({'online_count': None, 'queue': None, 'lobby_rooms': None})
+
+
 class Position:
     x: int
     y: int

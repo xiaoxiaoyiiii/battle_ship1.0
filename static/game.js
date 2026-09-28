@@ -230,12 +230,18 @@ document.addEventListener('DOMContentLoaded', function () {
         const gameStarted = window.gameState && window.gameState.roomId;
         
         // 隐藏或显示元素
-        const visibility = gameStarted ? 'block' : 'none';
-        
+        // ⚠️ 显示时写空串（= 撤掉内联），不写 'block'：内联样式优先级最高，
+        //    写死 block 会盖掉 .corner-chip 的 `display:flex`（第 6 节），于是
+        //      · 紧凑档那条「角标进 chip 后钉成一行水平 + 对手头像在前」
+        //        （`flex-direction: row-reverse`）静默失效；
+        //      · 对局屏三区（第 37 节）里对手条的头像与名字竖着叠。
+        //    隐藏仍然写 'none'（内联是这里唯一能表达"未开局"的手段）。
+        const visibility = gameStarted ? '' : 'none';
+
         if (avatarCorner) {
             avatarCorner.style.display = visibility;
         }
-        
+
         if (opponentAvatarCorner) {
             opponentAvatarCorner.style.display = visibility;
         }
@@ -556,7 +562,9 @@ function shadeHex(hex, amount) {
 // applyPrimaryColor() 往 documentElement 写的是**内联**变量，它优先级高于任何
 // CSS 规则，所以切回预设时必须逐个 removeProperty，只清 localStorage 是不够的。
 // ---------------------------------------------------------------------------
-const THEME_PRESETS = ['fluent', 'classic', 'deep', 'lava', 'cyber', 'dusk', 'aurora'];
+/* 默认预设 = arena（2026-09-25，Phase 6 首页批）：C 方案的紫金是既定方向，
+   Fluent 保留为可选预设而不是默认（见 IMPLEMENTATION_PLAN_2026_09_23.md M1）。 */
+const THEME_PRESETS = ['arena', 'fluent', 'classic', 'deep', 'lava', 'cyber', 'dusk', 'aurora'];
 // 这些是 applyPrimaryColor() 会写进 documentElement.style 的变量名
 const PRIMARY_INLINE_VARS = ['--primary', '--primary-600', '--primary-rgb',
     '--primary-gradient', '--primary-50', '--shadow-glow'];
@@ -590,7 +598,7 @@ function currentPrimaryHex() {
 
 // 把「当前主题」同步到设置页那排预设卡上（.selected 由 CSS 画勾）
 function syncThemePresetUI(preset) {
-    const current = preset || localStorage.getItem('battleship_theme_preset') || 'fluent';
+    const current = preset || localStorage.getItem('battleship_theme_preset') || 'arena';
     document.querySelectorAll('#theme-preset-grid .theme-card[data-preset]').forEach(card => {
         card.classList.toggle('selected', card.dataset.preset === current);
     });
@@ -599,7 +607,7 @@ function syncThemePresetUI(preset) {
 }
 
 function applyThemePreset(name) {
-    const preset = THEME_PRESETS.indexOf(name) >= 0 ? name : 'fluent';
+    const preset = THEME_PRESETS.indexOf(name) >= 0 ? name : 'arena';
     document.documentElement.dataset.themePreset = preset;
     localStorage.setItem('battleship_theme_preset', preset);
     // 具名预设 = 不再使用自定义主色：清掉存量 + 清掉内联变量（后者会压过 CSS 预设）
@@ -607,6 +615,11 @@ function applyThemePreset(name) {
     clearInlinePrimaryColor();
     syncThemePresetUI(preset);
     if (primaryColorPicker) primaryColorPicker.value = currentPrimaryHex();
+    // 对局屏三区（第 37 节）只在 arena 预设生效：切预设时让自适应布局重跑一次，
+    // 把「连锁叠牌该挂在手牌条还是中场轨道」这类搬家用新的预设判据重算一遍。
+    if (window.AdaptiveLayout && typeof window.AdaptiveLayout.schedule === 'function') {
+        window.AdaptiveLayout.schedule();
+    }
     return preset;
 }
 
@@ -628,7 +641,7 @@ function restoreThemeFromStorage() {
     if (preset && THEME_PRESETS.indexOf(preset) >= 0) return applyThemePreset(preset);
     const color = localStorage.getItem('battleship_primary_color');
     if (color) return applyCustomPrimaryColor(color);
-    return applyThemePreset(preset || 'fluent');
+    return applyThemePreset(preset || 'arena');
 }
 
 if (document.readyState === 'loading') {
@@ -637,7 +650,7 @@ if (document.readyState === 'loading') {
     restoreThemeFromStorage();
 }
 // ---------------------------------------------------------------------------
-// 明暗轴（2026-09-19 Fluent 批）：跟随系统 + 用户选择优先
+// 明暗轴（2026-09-19 Fluent 批；2026-09-27 默认值改为深色）：用户显式选择优先，否则深色
 //
 // 与上面那节是**两根独立的轴**，可以任意组合：
 //   明暗轴 → html.theme-dark          ← localStorage['theme']
@@ -650,13 +663,13 @@ if (document.readyState === 'loading') {
 const THEME_MODE_KEY = 'theme';
 const DARK_MEDIA_QUERY = '(prefers-color-scheme: dark)';
 
-// 用户显式选择：'dark' / 'light'；没选过、或存的是脏值 → null（= 跟随系统）
+// 用户显式选择：'dark' / 'light'；没选过、或存的是脏值 → null（= 用默认：深色）
 function readStoredThemeChoice() {
     try {
         const saved = localStorage.getItem(THEME_MODE_KEY);
         return saved === 'dark' || saved === 'light' ? saved : null;
     } catch (e) {
-        return null;      // 隐私模式下 localStorage 会抛，退化为跟随系统
+        return null;      // 隐私模式下 localStorage 会抛，退化为默认（深色）
     }
 }
 
@@ -664,9 +677,12 @@ function systemPrefersDark() {
     return !!(window.matchMedia && window.matchMedia(DARK_MEDIA_QUERY).matches);
 }
 
-// 三态归一成一态：① 显式选择优先 ② 否则跟随系统
+// 三态归一成一态：① 显式选择优先 ② 否则**深色**（2026-09-27，1:1 复刻 demo）
+// ⚠️ 这里以前是"跟随系统"。示意稿 C/V 都是暗色设计，没显式选过时必须落到暗色，
+//    否则第一次打开是浅色 —— 那不叫复刻（用户显式选 light 依旧被尊重）。
+//    与 `templates/index.html` <head> 里那段首帧镜像**同一套语义**，改一处必须改另一处。
 function resolveTheme() {
-    return readStoredThemeChoice() || (systemPrefersDark() ? 'dark' : 'light');
+    return readStoredThemeChoice() || 'dark';
 }
 
 // 把生效的一态落到 html，并顺手摆正按钮文案
@@ -678,17 +694,18 @@ function applyTheme(mode) {
 }
 
 // 按钮文案要能看出「当前是什么状态」：
-//   跟随系统 → 「跟随系统」｜显式浅色 → 「深色模式」（点它切深色）｜显式深色 → 「浅色模式」
+//   默认（没选过）→「浅色模式」（点它切浅）｜显式浅色 →「深色模式」｜显式深色 →「浅色模式」
 function syncThemeToggleLabel() {
     const el = document.getElementById('toggle-theme');
     // ⚠️ 必须空判：以前这里无守卫地写 textContent，导航里一旦没有这个 <a>
     // 就是 `Cannot read properties of null`，整个首屏脚本崩掉（docs/HOME_NAV_2026_09_19.md §6）。
     if (!el) return;
     const choice = readStoredThemeChoice();
-    el.textContent = choice === 'dark' ? '浅色模式' : (choice === 'light' ? '深色模式' : '跟随系统');
+    // 没显式选过 = 当前是深色（默认），所以按钮写「浅色模式」，点它切浅。
+    el.textContent = resolveTheme() === 'dark' ? '浅色模式' : '深色模式';
     el.title = choice
         ? ('当前：显式' + (choice === 'dark' ? '深色' : '浅色'))
-        : ('当前：跟随系统（' + (systemPrefersDark() ? '深色' : '浅色') + '）');
+        : '当前：默认深色（示意稿 C/V 是暗色设计）';
 }
 
 // 点一次 = 在浅/深之间**显式**切换（写 localStorage，此后不再跟随系统）
@@ -1330,6 +1347,7 @@ function applyRoomSync(data) {
     gameState.roomId = data.room_id;
     gameState.playerId = data.player_id;
     gameState.inRoom = true;
+    markMatchStart();     // 重连/回放进场：「用时」的起点，已有就打点不动（MarkMatchStart 内判空）
     gameState.currentPhase = data.current_phase;
     gameState.currentAttacker = data.current_attacker;
     gameState.round = data.round;
@@ -2034,6 +2052,289 @@ function loadMyRankInfo() {
     return myRankInfoPromise;
 }
 
+// ==================== 首页面板（2026-09-27 首页 C 化） ====================
+//
+// 首页三栏里，除了模式入口，其余全是**只读展示位**：
+//   左栏 = 指挥官名片（名字 / 段位 / 等级 / 战绩）
+//   中栏 = 全服热门卡（5 张）
+//   右栏 = 最近解锁 / 生涯数据 / 段位阶梯 / 在线情况
+//
+// 数据源**全部是既有接口**，本轮只新增了一个只读聚合 `/api/home_stats`（见 server.py）：
+//   `/api/profile`        → profile.username / rank_info / level_info / wins / losses / *_streak
+//   `/api/achievements`   → 12 枚徽章（unlocked / unlocked_at / requirement / group）
+//   `/api/rank_constants` → tiers + start_points_of_tier（阶梯的顺序与阈值）
+//   `/api/card_usage`     → 全服累计使用次数（热门卡排序；新库可能全 0）
+//   `/api/home_stats`     → 在线 / 休闲队列 / 排位队列 / 大厅房间
+//
+// ⚠️ 四条规矩（每一条都对应本项目踩过的形状）：
+//   ① **先给骨架、再填数据**：每个块在取数前就已经是占位（"—"），失败也保持占位 ——
+//      首页布局绝不随接口成败变化（"取数失败 → 整块消失"的观感事故）。
+//   ② **各块独立 catch**：一个接口挂了不许拖累别的块。
+//   ③ **首页不许 `lobby_subscribe`**：队列/房间数走只读的 `/api/home_stats` ——
+//      订阅会把停在首页的人算进"在大厅"（详细理由写在 server.py 那个路由的注释里）。
+//   ④ **前端不重算段位/等级**：`label` / `points` / `to_next` / `level_info` 一律照抄
+//      服务端（曲线只有那一边一份实现）。这里只做"取哪个字段、怎么排版"。
+const HOME_ACH_ROWS = 4;          // 「最近解锁」显示几行
+const HOME_HOT_ROWS = 5;          // 「热门卡」显示几张
+const HOME_LADDER_ROWS = 4;       // 「段位阶梯」开几档（当前档居中；示意稿 C 是 4 行）
+
+let homeRankConstants = null;     // 段位表（/api/rank_constants 的原样返回）
+let homeStaticLoaded = false;     // 段位表 + 卡表只拉一次（它们几乎不变）
+
+/** 首页用的小工具：安全写文本（元素不存在就直接跳过 —— 游客态少几个节点也不许报错）。 */
+function homeText(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = value;
+}
+
+/** 首页用的取数：任何失败都退成 null（调用方一律按"没有数据"处理，不抛不报错）。 */
+function homeFetchJSON(url) {
+    return fetch(url, { headers: { 'Accept': 'application/json' } })
+        .then(r => (r.ok ? r.json() : null))
+        .catch(() => null);
+}
+
+/** 左栏指挥官名片。游客（没有 profile.username）= "登录后记录…"态，不是空卡。 */
+function renderHomeCommander(profile) {
+    const card = document.getElementById('home-commander');
+    const btn = document.getElementById('cmdr-card-btn');
+    if (!card) return;
+    const p = profile || {};
+    if (!p.username) {
+        homeText('cmdr-name', '游客');
+        homeText('cmdr-sub', '登录后记录段位 · 等级 · 战绩');
+        card.setAttribute('data-guest', '1');
+        if (btn) btn.classList.add('hidden');
+        return;
+    }
+    card.removeAttribute('data-guest');
+    homeText('cmdr-name', p.username);
+
+    const rank = p.rank_info || null;
+    const tierEl = document.getElementById('cmdr-tier');
+    if (tierEl) {
+        // 段位文案由服务端给（tier_name + subs 的 sub）—— 前端不自己拼罗马数字
+        const text = rank && rank.tier_name ? (rank.tier_name + (rank.sub || '')) : '';
+        if (text) { tierEl.textContent = text; tierEl.classList.remove('hidden'); }
+        else tierEl.classList.add('hidden');
+    }
+    const sub = [];
+    if (rank && isFinite(Number(rank.points))) {
+        sub.push(Number(rank.points) + ' 分');
+        if (rank.to_next != null && isFinite(Number(rank.to_next))) {
+            sub.push('距下一小段 ' + Number(rank.to_next) + ' 分');
+        } else {
+            sub.push(rank.is_admiral ? '大舰长' : '已到顶段');
+        }
+    }
+    if (p.level_info && p.level_info.level) sub.push('Lv.' + p.level_info.level);
+    homeText('cmdr-sub', sub.length ? sub.join(' · ') : '登录后记录段位 · 等级 · 战绩');
+
+    const w = Number(p.wins || 0), l = Number(p.losses || 0);
+    homeText('cmdr-record', w + ' 胜 ' + l + ' 负');
+    homeText('cmdr-streak', Number(p.longest_streak || 0) + ' 场');
+    // 累计击沉：来自 /api/profile 的 counters.sunk_total（库里一直在记，本轮才随名片下发）。
+    // 拿不到就"—" —— 不拿胜率去凑这一行（示意稿 C 的第三行就是累计击沉）。
+    const counters = p.counters || null;
+    homeText('cmdr-winrate',
+        (counters && isFinite(Number(counters.sunk_total))) ? (Number(counters.sunk_total) + ' 艘') : '—');
+    if (btn) btn.classList.remove('hidden');
+}
+
+/** 右栏「生涯数据」：只用 profile 里现成的四个数，不做任何推算。
+    游客态**不许显示 0** —— 0 胜 0 负对游客是"假数据"（他根本没打过），一律"—"。 */
+function renderHomeStats(profile) {
+    const p = profile || {};
+    if (!p.username) {
+        ['home-stat-winrate', 'home-stat-matches', 'home-stat-streak', 'home-stat-best']
+            .forEach(id => homeText(id, '—'));
+        return;
+    }
+    const w = Number(p.wins || 0), l = Number(p.losses || 0);
+    homeText('home-stat-winrate', (w + l) > 0 ? Math.round(w * 100 / (w + l)) + '%' : '—');
+    homeText('home-stat-matches', String(w + l));
+    homeText('home-stat-streak', String(Number(p.current_streak || 0)));
+    homeText('home-stat-best', String(Number(p.longest_streak || 0)));
+}
+
+/** 右栏「最近解锁」：已解锁按时间倒序，不够 4 行时用"离得最近的未解锁"补齐。 */
+function renderHomeAchievements(data) {
+    const box = document.getElementById('home-ach-list');
+    if (!box) return;
+    const list = (data && data.achievements) || [];
+    // 游客（/api/achievements 401）不是"故障"，别写成"暂不可用" —— 那是给接口挂了用的文案
+    if (!list.length) {
+        box.innerHTML = '<div class="ach-empty">'
+            + (window.__USERNAME ? '徽章暂不可用' : '登录后显示徽章') + '</div>';
+        return;
+    }
+    const unlocked = list.filter(a => a.unlocked)
+        .sort((a, b) => Number(b.unlocked_at || 0) - Number(a.unlocked_at || 0));
+    const rows = unlocked.slice(0, HOME_ACH_ROWS);
+    for (const a of list) {           // 补齐：未解锁的按服务端给的顺序取（= 由易到难）
+        if (rows.length >= HOME_ACH_ROWS) break;
+        if (!a.unlocked) rows.push(a);
+    }
+    box.innerHTML = rows.map(a => {
+        // demo 的写法：**未解锁也画这个徽章自己的图标**（灰一档），不用锁头 ——
+        // 锁头会把四行变成四个一样的图标，看的人认不出是哪几枚。
+        const glyph = PROFILE_BADGE_GLYPH[a.group] || '🏅';
+        const tip = escapeHtml(a.requirement || a.desc || '');
+        return '<div class="ach-row' + (a.unlocked ? '' : ' locked') + '">'
+            + '<span class="ach-badge" aria-hidden="true">' + glyph + '</span>'
+            + '<div class="ach-txt">'
+            + '<div class="ach-name">' + escapeHtml(a.name) + '</div>'
+            + '<div class="ach-desc" title="' + tip + '">' + tip + '</div>'
+            + '</div>'
+            + '<span class="ach-when">' + (a.unlocked ? '已解锁' : '未解锁') + '</span>'
+            + '</div>';
+    }).join('');
+}
+
+/** 右栏「段位阶梯」：以当前档居中开窗（高段在上、已过的在下标绿点）。 */
+function renderHomeLadder(constants, rankInfo) {
+    const box = document.getElementById('home-ladder');
+    if (!box) return;
+    const tiers = (constants && constants.tiers) || [];
+    if (!tiers.length) { box.innerHTML = '<div class="li">段位表暂不可用</div>'; return; }
+    const start = (constants && constants.start_points_of_tier) || {};
+    const curIdx = (rankInfo && isFinite(Number(rankInfo.tier_index))) ? Number(rankInfo.tier_index) : -1;
+    const center = curIdx >= 0 ? curIdx : 0;
+    let to = Math.min(tiers.length, center + Math.ceil(HOME_LADDER_ROWS / 2));
+    let from = Math.max(0, to - HOME_LADDER_ROWS);
+    to = Math.min(tiers.length, from + HOME_LADDER_ROWS);
+    const rows = [];
+    for (let i = to - 1; i >= from; i--) {              // 高段在上
+        const t = tiers[i];
+        const isNow = i === curIdx;
+        const cls = isNow ? ' now' : (curIdx >= 0 && i < curIdx ? ' done' : '');
+        let pts = '';
+        if (isNow && rankInfo && isFinite(Number(rankInfo.points))) pts = String(Number(rankInfo.points));
+        else if (start[t.id] != null) pts = Number(start[t.id]) + '+';
+        rows.push('<div class="li' + cls + '"><i></i>' + escapeHtml(t.name || t.id)
+            + '<span class="n">' + (pts || '—') + '</span></div>');
+    }
+    box.innerHTML = rows.join('');
+}
+
+/** 右栏「在线情况」：只读聚合接口。取不到就保持"—"（不消失）。 */
+function renderHomeOnline(data) {
+    const d = data || {};
+    const q = d.queue || null;
+    homeText('home-queue-casual', (q && isFinite(Number(q.casual))) ? Number(q.casual) + ' 人' : '—');
+    homeText('home-queue-ranked', (q && isFinite(Number(q.ranked))) ? Number(q.ranked) + ' 人' : '—');
+    homeText('home-lobby-rooms', isFinite(Number(d.lobby_rooms)) ? Number(d.lobby_rooms) + ' 间' : '—');
+    // 在线人数那一格平时由页面尾部的内联脚本每 10 秒刷（它带数字滚动动画）；
+    // 这里只是让首次进入**立刻**有值，不等那 10 秒的第一次定时。
+    // 顶栏那颗胶囊也一起写（同一份数字，不加第二个接口）。
+    if (isFinite(Number(d.online_count))) {
+        homeText('online-count', String(Number(d.online_count)));
+        homeText('online-count-nav', String(Number(d.online_count)));
+    }
+}
+
+// 热门卡缩略图上的小徽记：示意稿 C 用的就是这种"符号当卡面占位"的写法，
+// 真卡面（static/cards/<slug>.webp）出图后由底图层接管（applyCardArt → CSS 变量）。
+const HOME_CARD_GLYPH = {
+    '神威！': '🌀', '失灵！': '⛔', '轰炸': '💥', '硫磺火焰': '🔥', '增援': '⚓',
+    '桃园结义': '🌿', '恶魔契约': '🎲', '看破！': '👁', '冻结！': '❄', '八方来财': '🧧',
+    '探测雷达': '📡', '仁王之盾': '🛡', '死者苏生': '⚰', '绝处逢生': '🕯', '平等条约': '⚖',
+};
+
+/** 中栏「全服热门卡」：按 /api/card_usage 排序；一次都没人用过时按速阶各取一张。 */
+function renderHomeHotCards(usage) {
+    const box = document.getElementById('home-hot-cards');
+    const note = document.getElementById('home-hot-note');
+    if (!box) return;
+    const cards = Array.isArray(window.magicCards) ? window.magicCards : [];
+    // 卡表 43 条 / 41 个唯一卡名（`失灵！`×3 是故意的）→ 榜单按**卡名**去重
+    const unique = [];
+    const seen = new Set();
+    for (const c of cards) { if (c && c.name && !seen.has(c.name)) { seen.add(c.name); unique.push(c); } }
+    if (!unique.length) { box.innerHTML = '<div class="ach-empty">卡表暂不可用</div>'; return; }
+    if (note) {
+        const field = unique.filter(c => c.type === '场地').length;
+        note.textContent = unique.length + ' 张魔法卡 · 场地 ' + field + ' 张 · 普通 ' + (unique.length - field) + ' 张';
+    }
+    const uses = (usage && usage.usage) || {};
+    const anyUse = unique.some(c => Number(uses[c.name] || 0) > 0);
+    let picks;
+    if (anyUse) {
+        picks = unique.slice().sort((a, b) => {
+            const d = Number(uses[b.name] || 0) - Number(uses[a.name] || 0);
+            return d !== 0 ? d : String(a.name).localeCompare(String(b.name));
+        }).slice(0, HOME_HOT_ROWS);
+    } else {
+        // 新库（或全服都没人用过卡）：按速阶 1/2/3 轮着取，页面不至于空着
+        const bySpeed = { 1: [], 2: [], 3: [] };
+        unique.forEach(c => { const s = Number(c.speed); if (bySpeed[s]) bySpeed[s].push(c); });
+        picks = [];
+        for (let i = 0; picks.length < HOME_HOT_ROWS && i < 3; i++) {
+            [1, 2, 3].forEach(s => { if (bySpeed[s][i] && picks.length < HOME_HOT_ROWS) picks.push(bySpeed[s][i]); });
+        }
+    }
+    box.innerHTML = picks.map(c => {
+        const speed = Math.min(3, Math.max(0, Number(c.speed) || 0));
+        const pips = [1, 2, 3].map(n => '<i class="' + (n <= speed ? 'f f' + speed : '') + '"></i>').join('');
+        const glyph = HOME_CARD_GLYPH[c.name] || (c.type === '场地' ? '🌐' : '✦');
+        const used = Number(uses[c.name] || 0);
+        return '<div class="hcard" title="' + escapeHtml(c.name + (used ? ' · 全服使用 ' + used + ' 次' : '')) + '">'
+            + '<div class="ha card-art" aria-hidden="true">' + glyph + '</div>'
+            + '<div class="hn">' + escapeHtml(c.name) + '</div>'
+            + '<div class="hs">' + pips + '</div>'
+            + '</div>';
+    }).join('');
+    // 底图位（真图存在时自动显示，不存在时保持渐变占位 —— 与手牌同一套 applyCardArt 机制）
+    box.querySelectorAll('.hcard').forEach((el, i) => {
+        if (picks[i]) applyCardArt(el, picks[i].name);
+    });
+}
+
+/** 拉静态件（段位表 / 卡表 + 热门榜）。失败会重置标志位，下次回首页再试。 */
+function loadHomeStatic() {
+    if (homeStaticLoaded) return;
+    homeStaticLoaded = true;
+    homeFetchJSON('/api/rank_constants').then(d => {
+        if (!d || !Array.isArray(d.tiers) || !d.tiers.length) { homeStaticLoaded = false; return; }
+        homeRankConstants = d;
+        renderHomeLadder(homeRankConstants, myRankInfo);
+    });
+    homeFetchJSON('/api/card_usage').then(d => {
+        if (d === null) { homeStaticLoaded = false; return; }   // 失败：下次重来
+        renderHomeHotCards(d);
+    });
+}
+
+/** 首页面板总入口：页面加载时调一次，每次回到首页再调一次（数字类的会刷新）。 */
+function refreshHomePanels() {
+    loadHomeStatic();
+    homeFetchJSON('/api/profile').then(d => {
+        const p = d && d.profile;
+        renderHomeCommander(p);
+        renderHomeStats(p);
+        if (p && p.level_info) refreshMyLevelStrip(p.level_info);
+        if (p && p.rank_info) {
+            if (typeof p.rank_info === 'object') myRankInfo = p.rank_info;   // 与段位胶囊共用缓存
+            if (homeRankConstants) renderHomeLadder(homeRankConstants, p.rank_info);
+        }
+    });
+    homeFetchJSON('/api/achievements').then(renderHomeAchievements);
+    homeFetchJSON('/api/home_stats').then(renderHomeOnline);
+}
+
+/** 名片上的「查看我的名片」：与导航「个人信息」同一条路（window.showUserProfile）。 */
+function bindHomeCommanderCard() {
+    const btn = document.getElementById('cmdr-card-btn');
+    if (!btn || btn.dataset.bound === '1') return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', () => {
+        if (typeof window.showUserProfile !== 'function') return;
+        const myName = window.__USERNAME || '';
+        if (!myName) { showMessage('未登录，无法查看个人信息', { type: 'warning' }); return; }
+        window.showUserProfile(myName);
+    });
+}
+
 /**
  * 结算面板 `#rank-gain-panel`：段位积分的滚动动画。
  *
@@ -2334,6 +2635,95 @@ function renderAchievementUnlockPanel() {
     panel.innerHTML = '<h3 class="au-title">本局刚解锁 <span class="au-count">' + items.length + '</span> 枚徽章</h3>'
         + '<ul class="au-list">' + cards + '</ul>';
     panel.classList.remove('hidden');
+}
+
+// ==================== 结算屏「判定头 + 本局数据」（2026-09-27 示意稿 V） ====================
+//
+// 示意稿 V 把结算从「三块竖排面板」改成「判定头 + 四张卡 + 操作行」。这里只负责
+// **判定头**与**本局数据**两处展示 —— 经验 / 段位 / 徽章三块面板仍由它们各自的
+// `showXpPanel` / `showRankGainPanel` / `renderAchievementUnlockPanel` 驱动，一行不动。
+//
+// ⚠️ 两条 game_over 路径都必须调它：socket 事件（`socket.on('game_over')`）与
+//    `room_sync` / `game_state` 回放里的 `case 'game_over'` —— 本项目吃过
+//    "同一个界面有两份渲染、只改了一份"的亏（CLAUDE.md 第 10 节第 8 条）。
+// ⚠️ `#game-result` 的大字与 `#over-sub` 的说明**只在这里写一次**：两处各写一遍，
+//    文案必然漂移（改之前那四种结果文案就是两份，其中一份还少了掉线分支）。
+// ⚠️ 本局数据只用前端手上已有的真值，不新开接口、不替服务端算：
+//      回合     ← `gameState.round`（服务端随 game_state / room_sync 下发）
+//      命中/开火 ← `gameState.myAttacks`（每发结果来自服务端 attack_result）
+//      剩余战舰 ← HUD 上那两个数字（服务端 ships_updated 的权威值）
+//    示意稿里那张卡还有「用了 N 张魔法卡」—— 前端没有权威来源
+//    （`room.magic_history` 不下发），宁可少摆一行，也不编一个数字。
+function renderGameOverHead(data) {
+    const d = data || {};
+    const won = d.winner != null && d.winner === gameState.playerId;
+    const draw = d.winner == null;
+    const head = document.getElementById('over-head');
+    const resultEl = document.getElementById('game-result');
+    if (resultEl) resultEl.textContent = draw ? '平 局' : (won ? '胜 利' : '失 败');
+    if (head) {
+        head.classList.toggle('win', won && !draw);
+        head.classList.toggle('lose', !won && !draw);
+    }
+    // 一句话说明：先说这局怎么结束的，再说结果。
+    // ⚠️ 措辞按**视角**分：`reason` 只说明"这一局是怎么结束的"，不含"谁干的" ——
+    //    败方照抄胜方那套话就会出现「对方投降 · 你的舰队被击沉」这种自相矛盾的句子
+    //    （实测：自己在人机局投降，结算却写着"对方投降"）。
+    const reasonText = {
+        surrender: won ? '对方投降' : '我方投降',
+        opponent_disconnected: won ? '对手掉线超时' : '我方掉线超时',
+        timeout: '操作超时',
+    }[d.reason] || '';
+    const parts = [];
+    if (reasonText) parts.push(reasonText);
+    parts.push(draw ? '双方未分胜负' : (won ? '击沉对方全部战舰' : '你的舰队被击沉'));
+    const round = currentRoundNumber();
+    if (round > 0) parts.push(round + ' 回合');
+    homeText('over-sub', parts.join(' · '));
+    homeText('over-opponent', gameState.opponentName || '对手');
+    // 「我的段位」用页面加载时缓存的那份 rank_info（label 是服务端拼好的完整文案）。
+    // 对手的段位不在前端手上（那是 5 秒倒计时里现拉的 /user_stats），与其为一个装饰位
+    // 再打一次接口，不如标成"我的段位" —— 数字是真的、标签也对得上。
+    const rankLabel = (myRankInfo && (myRankInfo.label || myRankInfo.tier_name)) || '—';
+    homeText('over-opp-rank', rankLabel);
+    homeText('over-duration', formatMatchDuration());
+    renderGameOverStats();
+}
+
+/** 用时（分:秒）。起点是「进入布船界面」那一刻，没有起点就显示 —。 */
+function formatMatchDuration() {
+    const started = Number(gameState.matchStartedAt || 0);
+    if (!started) return '—';
+    const sec = Math.max(0, Math.round((Date.now() - started) / 1000));
+    return Math.floor(sec / 60) + ' 分 ' + String(sec % 60).padStart(2, '0') + ' 秒';
+}
+
+/** 本局数据卡：三个数都来自前端已有的权威值（见上面那段注释）。 */
+/** 当前回合数：优先 `gameState.round`，没下发时退回 HUD 上那个数字（`#game-round`，
+    它同样来自服务端的 game_state / room_sync）。两处都不是前端算的。 */
+function currentRoundNumber() {
+    const n = Number(gameState.round || 0);
+    if (n > 0) return n;
+    const hud = document.getElementById('game-round');
+    return (hud && Number(hud.textContent)) || 0;
+}
+
+function renderGameOverStats() {
+    homeText('over-stat-round', String(currentRoundNumber() || '—'));
+    const attacks = Array.isArray(gameState.myAttacks) ? gameState.myAttacks : [];
+    const hits = attacks.filter(a => a && a.hit).length;
+    homeText('over-stat-fire', attacks.length ? (hits + ' / ' + attacks.length) : '—');
+    // 剩余战舰直接读 HUD —— 那两个数字是服务端 ships_updated / attack_result 下发的权威值
+    const mine = document.getElementById('your-ships');
+    const foe = document.getElementById('opponent-ships');
+    homeText('over-stat-ships', (mine && foe)
+        ? (mine.textContent + ' / ' + foe.textContent)
+        : '—');
+}
+
+/** 记下这一局的起点（用时用）。布船界面出现 = 这一局对我开始了；重连进场兜底补一次。 */
+function markMatchStart() {
+    if (!gameState.matchStartedAt) gameState.matchStartedAt = Date.now();
 }
 
 function addGameLog(logText, logType) {
@@ -5289,6 +5679,10 @@ function setupSocketListeners() {
                         // 直接进入放置战舰界面
                         matchSuccessScreen.classList.remove('active');
                         shipPlacementScreen.classList.add('active');
+                        // ⚠️ 这里是**直接加 active**、没走 switchScreen（屏走 active，
+                        //    只有面板类容器用 hidden）——所以「用时」的起点必须在这里也打一次，
+                        //    否则正常开局（匹配成功 → 5 秒倒计时）这条路径永远量不到用时。
+                        markMatchStart();
                         initBoard(playerBoard, true);
                         // 确保界面正确切换。屏走 active，只有面板类容器用 hidden。
                         startScreen.classList.remove('active');
@@ -5328,18 +5722,8 @@ function setupSocketListeners() {
                 // 显示导航栏
                 if (gameNav) gameNav.style.display = 'block';
                 gameOverScreen.classList.add('active');
-                // 根据胜利原因显示不同的提示
-                if (data.winner === gameState.playerId) {
-                    if (data.reason === 'surrender') {
-                        gameResult.textContent = '对方已投降，你获胜了！';
-                    } else if (data.reason === 'opponent_disconnected') {
-                        gameResult.textContent = '对手掉线超时，你获胜了！';
-                    } else {
-                        gameResult.textContent = '恭喜你获胜了！';
-                    }
-                } else {
-                    gameResult.textContent = '很遗憾，你输了。';
-                }
+                // 结算展示（判定头 + 本局数据）只有一份实现 —— 与 socket 事件那条路径共用
+                renderGameOverHead(data);
                 clearActiveGame();
                 break;
             default:
@@ -5482,16 +5866,8 @@ function setupSocketListeners() {
         // 它比 game_over 先到（_finalize_match 在 emit game_over 之前），所以这里做一次
         // 兜底刷新 —— 无论事件先后，结算界面上都会出现「本局刚解锁 …」。
         renderAchievementUnlockPanel();
-        // 根据胜利原因显示不同的提示
-        if (data.winner === gameState.playerId) {
-            if (data.reason === 'surrender') {
-                gameResult.textContent = '对方已投降，你获胜了！';
-            } else {
-                gameResult.textContent = '恭喜你获胜了！';
-            }
-        } else {
-            gameResult.textContent = '很遗憾，你输了。';
-        }
+        // 根据胜利原因显示不同的提示（判定头 + 本局数据，与 room_sync 那条路径共用一份实现）
+        renderGameOverHead(data);
         // 好友批：结算界面把对手那一行的「加好友」按钮补上。
         // ⚠️ 触发它的是 socket 事件 `recent_opponent`（服务端结算时**双方各收一条**），
         //    那条事件的到达顺序不保证 —— 可能在 game_over **之前**也可能在之后
@@ -5746,6 +6122,7 @@ function setupSocketListeners() {
             }
             // 将使用过的卡牌加入弃牌堆
             gameState.discardPile.push(result.card);
+            renderArenaRail();   // 三区操作列的「弃牌堆」计数（第 37 节）
 
             // 魔法卡日志由服务端 game_log 事件统一推送，避免前后端重复
 
@@ -6179,6 +6556,7 @@ function setupSocketListeners() {
 
         // 直接进入放置战舰界面
         shipPlacementScreen.classList.add('active');
+        markMatchStart();          // 同上：这处也是直接加 active，不经 switchScreen
         initBoard(playerBoard, true);
 
         // 确保界面正确切换（同上：屏不加 hidden）
@@ -6818,6 +7196,19 @@ function switchScreen(screen) {
 
     // 进入对局界面时兜底显示日志空状态（避免出现一个空白日志框）
     if (screen && screen.id === 'game-screen') ensureGameLogEmptyState();
+
+    // 结算屏的「用时」需要一个起点：布船界面出现 = 这一局对我开始了。
+    // 重连/直接进对局屏（跳过布船）时在上面那条兜底补一次。
+    if (screen && (screen.id === 'ship-placement-screen' || screen.id === 'game-screen')) {
+        markMatchStart();
+    }
+
+    // 回到首页时刷新右栏那几个"会变的数字"（在线 / 队列 / 房间 / 战绩 / 最近解锁）。
+    // 段位表与卡表是静态件，loadHomeStatic() 自己只拉一次。
+    // ⚠️ 刷新**只在回到首页时**发生：打完一局就会回来一次，正好把新的胜负/徽章刷上。
+    if (screen && screen.id === 'start-screen' && typeof refreshHomePanels === 'function') {
+        refreshHomePanels();
+    }
 
     // 隐藏或显示在局内不应显示的导航项（登录/注册/排行榜）
     const hideEls = document.querySelectorAll('.hide-in-game');
@@ -7880,6 +8271,7 @@ function resetGame() {
         playerId: null,
         roomId: null,
         playerName: playerNameInput.value || '玩家',
+        matchStartedAt: null,   // 结算屏「用时」的起点（由 switchScreen 进布船界面时打点）
         ships: [],
         placedShips: 0,
         isMyTurn: false,
@@ -8087,7 +8479,9 @@ function showMagicTargetSelection(card, index) {
             cleanupPrompt();
         }, cleanupPrompt, {
             title: `在对手棋盘上选择 ${size}×${size} 区域`,
-            hint: '点一下棋盘定位，可以随时改点；确认后生效',
+            hint: '点一下棋盘定位，可以随时改点；虚线是可选落点',
+            cardName: card.name,
+            pendingText: `在棋盘上选 ${size}×${size} 区域…`,
         });
         gameState.selectionCleanup = picker ? picker.cleanup : null;
         return;
@@ -8116,7 +8510,10 @@ function showMagicTargetSelection(card, index) {
             const picker = createBoardAreaPicker(gamePlayerBoard, 3, (areaObj) => {
                 confirmMagicTarget(Object.assign({ board: 'self' }, areaObj));
                 cleanupPrompt();
-            }, cleanupPrompt);
+            }, cleanupPrompt, {
+                cardName: card.name,
+                pendingText: '在己方棋盘上选 3×3 区域…',
+            });
             gameState.selectionCleanup = picker ? picker.cleanup : null;
         });
         document.getElementById('shenwei-pick-opp').addEventListener('click', () => {
@@ -8242,9 +8639,11 @@ function showMagicTargetSelection(card, index) {
                         ? `已选中：第 ${idx + 1} 行（整行 6 格）`
                         : `已选中：第 ${idx + 1} 列（整列 6 格）`);
             }
+            syncBar();
         }
 
         function confirmIndex(idx) {
+            if (idx === null || idx === undefined) return;
             if (mode === 'row') confirmMagicTarget({ target_line: { type: 'row', index: idx } });
             else confirmMagicTarget({ target_line: { type: 'col', index: idx } });
             cleanupAll();
@@ -8272,44 +8671,21 @@ function showMagicTargetSelection(card, index) {
                 if (isMouseDown) {
                     lastIndex = mode === 'row' ? my : mx;
                     highlightIndex(lastIndex);
-                } else {
-                    // hover preview
-                    const idx = mode === 'row' ? my : mx;
-                    highlightIndex(idx);
+                } else if (picked === null) {
+                    previewIndex(mode === 'row' ? my : mx);   // 悬停预览（不定位）
                 }
             };
 
             const onLeave = () => {
-                if (!isMouseDown) clearHighlights();
+                if (isMouseDown) return;
+                if (picked === null) clearHighlights();
+                else highlightIndex(picked);   // 回到已定位的那一行/列
             };
 
-            // click fallback: open small confirm box
             const onClick = (e) => {
                 e.stopPropagation();
                 e.preventDefault();
-                const idx = mode === 'row' ? my : mx;
-                const confirmBox = document.createElement('div');
-                confirmBox.className = 'inline-confirm';
-                confirmBox.style.position = 'absolute';
-                confirmBox.style.left = (e.pageX + 8) + 'px';
-                confirmBox.style.top = (e.pageY + 8) + 'px';
-                confirmBox.innerHTML = `
-                    <div>确认轰炸</div>
-                    <button id="confirm-line">确认 (${mode === 'row' ? '轰炸整行' : '轰炸整列'})</button>
-                    <button id="cancel-line">取消</button>
-                `;
-                document.body.appendChild(confirmBox);
-                document.getElementById('confirm-line').addEventListener('click', () => {
-                    confirmIndex(idx);
-                    cleanupConfirm();
-                });
-                document.getElementById('cancel-line').addEventListener('click', () => {
-                    cleanupConfirm();
-                });
-
-                function cleanupConfirm() {
-                    if (document.body.contains(confirmBox)) document.body.removeChild(confirmBox);
-                }
+                highlightIndex(mode === 'row' ? my : mx);
             };
 
             cell.addEventListener('mousedown', onMouseDown, true);
@@ -8374,7 +8750,7 @@ function showMagicTargetSelection(card, index) {
             <h3>自由选择连续 ${L} 个格子（点击选中/取消，每个新增格需与已选格相邻）</h3>
             <p id="cont-picker-info" class="selection-info pending">已选 0 / ${L} 格</p>
             <div style="text-align:center;margin-top:8px;">
-                <button id="confirm-continuous" disabled>确认</button>
+                <button id="confirm-continuous" disabled>还需 ${L} 格…</button>
                 <button id="cancel-target">取消</button>
             </div>
         `;
@@ -8480,6 +8856,7 @@ function showMagicTargetSelection(card, index) {
                     const temp = new Set(selected);
                     temp.delete(k);
                     if (temp.size > 0 && !isConnected(temp)) {
+                        flashInvalid(cell, '不连续');
                         showAlert('移除该格会导致不连续，请选择其他格子');
                         return;
                     }
@@ -8489,10 +8866,12 @@ function showMagicTargetSelection(card, index) {
                 }
 
                 if (selected.size >= L) {
+                    flashInvalid(cell, `最多 ${L} 格`);
                     showAlert(`最多只能选择 ${L} 个格子`);
                     return;
                 }
                 if (!isAdjacentToSelected(mx, my)) {
+                    flashInvalid(cell, '需相邻');
                     showAlert('新增格子需与已选格子相邻');
                     return;
                 }
@@ -8839,8 +9218,6 @@ function createBoardAreaPicker(boardEl, size, onConfirm, onCancel, opts) {
             }
         }
         current = { x1: sx, y1: sy, x2: sx + size - 1, y2: sy + size - 1 };
-        const btn = document.getElementById('area-confirm');
-        if (btn) btn.disabled = false;
         // 明确写出「选中的是哪一块」：旧实现只有棋盘上一片淡色，玩家看不出落点。
         const info = document.getElementById('area-picker-info');
         if (info) {
@@ -8848,7 +9225,11 @@ function createBoardAreaPicker(boardEl, size, onConfirm, onCancel, opts) {
             info.innerHTML = '<span class="sel-dot"></span>' +
                 `${size}×${size} 已选中：第 ${sx + 1}–${sx + size} 列，第 ${sy + 1}–${sy + size} 行`;
         }
+        syncBar();
     }
+    // 供未来按卡规则标记非法（例：某卡要求区域内必须有目标）。当前三张区域卡无此规则，
+    // 但非法态的红框 + 确认置灰必须先存在，否则「越界/非法不提交」这条就是空话。
+    const api = { setInvalid: (msg) => setInvalid(msg), cleanup: null };
 
     // 浮动确认条（可选带标题/说明：区域类卡牌的「点哪里」提示就放在这里，
     // 免得再挂一个没有样式的裸 div 跟它重叠）
@@ -8863,9 +9244,11 @@ function createBoardAreaPicker(boardEl, size, onConfirm, onCancel, opts) {
     bar.style.flexWrap = 'wrap';
     bar.innerHTML = titleHTML + hintHTML
         + `<span id="area-picker-info" class="selection-info pending">点击棋盘上的格子来选择区域</span>`
-        + `<button id="area-confirm" disabled>确认</button><button id="area-cancel">取消</button>`;
+        + `<button id="area-confirm" disabled>${escapeHtml(options.pendingText || '在棋盘上选区域…')}</button>`
+        + `<button id="area-cancel">取消</button>`;
     document.body.appendChild(bar);
     bar.querySelector('#area-confirm').addEventListener('click', () => {
+        if (invalidMsg) { showAlert(invalidMsg); return; }
         if (!current) { showAlert('请先点选一个区域'); return; }
         const area = current;
         cleanup();
@@ -8875,6 +9258,15 @@ function createBoardAreaPicker(boardEl, size, onConfirm, onCancel, opts) {
         cleanup();
         if (typeof onCancel === 'function') onCancel();
     });
+    // 点空白 = 取消（不消耗卡）：点在棋盘外、也不是确认条上的按钮 → 当作放弃本次选择。
+    // ⚠️ 用 capture 阶段，且排除确认条自身（否则点确认条会先被这条判成"空白"）。
+    const onDocClick = (e) => {
+        if (bar.contains(e.target)) return;
+        if (e.target.closest && e.target.closest('.cell')) return;   // 点格子由格子自己处理
+        if (e.target.closest && (e.target.closest('.magic-target-prompt') || e.target.closest('#magic-hand'))) return;
+        cleanup();
+        if (typeof onCancel === 'function') onCancel();
+    };
 
     boardEl.querySelectorAll('.cell').forEach(cell => {
         const mx = parseInt(cell.dataset.x, 10);
@@ -8894,18 +9286,28 @@ function createBoardAreaPicker(boardEl, size, onConfirm, onCancel, opts) {
     });
 
     function cleanup() {
-        listeners.forEach(({ cell, onEnter, onLeave, onPick }) => {
+        listeners.forEach((it) => {
+            if (it.anchor) return;
+            const { cell, onEnter, onLeave, onPick } = it;
             cell.removeEventListener('mouseenter', onEnter);
             cell.removeEventListener('mouseleave', onLeave);
             cell.removeEventListener('click', onPick, true);
         });
         clearHighlights();
+        clearAnchors();
+        document.removeEventListener('click', onDocClick, true);
         if (bar.parentNode) bar.parentNode.removeChild(bar);
         gameState.selectingOnBoard = false;
         current = null;
     }
 
-    return { cleanup };
+    showAnchors();
+    syncBar();
+    // 锚点与空白取消都要等当前这次点击循环结束再挂（否则打开选择器的那一下点击
+    // 会立刻把自己关掉）
+    setTimeout(() => document.addEventListener('click', onDocClick, true), 0);
+    api.cleanup = cleanup;
+    return api;
 }
 
 // 创建区域选择面板 - 用于区域选择类魔法卡
@@ -9038,6 +9440,7 @@ function sendMagicCard(index, targets) {
             }
             // 添加到弃牌堆
             gameState.discardPile.push(card);
+            renderArenaRail();   // 三区操作列的「弃牌堆」计数（第 37 节）
             // 手牌少了一张，旧下标会落到别的牌上 —— 先清选中态再刷新
             gameState.selectedCardIndex = -1;
             gameState.selectedCardKey = null;
@@ -9785,6 +10188,8 @@ function updateCardPreview(card, index) {
     const previewDescription = document.getElementById('preview-description');
     const cancelBtn = document.getElementById('cancel-magic');
 
+    renderPreviewCardFace(card);
+
     if (card) {
         cardName.textContent = card.name;
         previewSpeed.textContent = card.speed;
@@ -10241,6 +10646,7 @@ function updateHandUI() {
     });
 
     handElement.replaceChildren(frag);
+    applyHandFan(handElement, rendered);
 
     if (rendered !== gameState.hand.length) {
         // 渲染出来的张数和状态里的不一致 —— 状态被污染了，要一份权威数据纠正
@@ -10253,6 +10659,8 @@ function updateHandUI() {
     } else {
         updateCardPreview(null);
     }
+    // 手牌数变了 → 三区操作列那格「手牌」计数要跟着走（第 37 节）
+    renderArenaRail();
 }
 
 // 弃牌堆查看功能
@@ -10314,6 +10722,12 @@ function displayDiscardPile(discardPile) {
 
     // 清空容器
     cardsContainer.innerHTML = '';
+
+    // 服务端刚给了权威的弃牌堆列表 → 顺手同步三区那格计数（第 37 节）
+    if (Array.isArray(discardPile)) {
+        const countEl = document.getElementById('arena-count-discard');
+        if (countEl) countEl.textContent = String(discardPile.length);
+    }
 
     // 如果弃牌堆为空
     if (!discardPile || discardPile.length === 0) {
@@ -10390,6 +10804,88 @@ function initEffectStatusBarSync() {
         items.forEach((el) => observer.observe(el, { attributes: true, attributeFilter: ['class'] }));
     }
     sync();
+}
+
+// ==================== 对局屏三区（示意稿 C）的 HUD 数字 ====================
+//
+// 第 37 节那套三区布局里有两处「demo 有、我们得现算」的数字：
+//   · 剩余舰 pips（对手条 / 你的舰队卡）：6 个小方块，亮的 = 存活；
+//   · 计数面板：手牌 / 弃牌堆 / 剩余舰。
+//
+// ⚠️ 唯一写入点就是下面这两个函数 —— 剩余战舰那三个数字（#your-ships /
+//    #opponent-ships）在本文件里有 **8 处** 分散赋值（ships_updated / attack_result /
+//    game_state …），逐个加调用必然漏掉一处（本项目 §10.3 的教训）。所以这里用
+//    MutationObserver 盯那两个 span 的文本，谁改都一样会重画 pips。
+// ⚠️ 牌堆数**没有**渲染：服务端从不下发牌堆长度（客户端 gameState.deck 恒为空数组），
+//    编一个数字比不显示更糟。
+function renderArenaPips(pipsEl, aliveText) {
+    if (!pipsEl) return;
+    const max = Number((typeof gameState !== 'undefined' && gameState.maxShips) || 0) || 6;
+    const alive = Math.max(0, Math.min(max, parseInt(aliveText, 10) || 0));
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < max; i++) {
+        const pip = document.createElement('i');
+        if (i < alive) pip.className = 'on';
+        frag.appendChild(pip);
+    }
+    pipsEl.replaceChildren(frag);
+    pipsEl.title = '剩余 ' + alive + ' 艘战舰';
+}
+
+function renderArenaRail() {
+    const mine = document.getElementById('your-ships');
+    const foe = document.getElementById('opponent-ships');
+    renderArenaPips(document.getElementById('my-ship-pips'), mine && mine.textContent);
+    renderArenaPips(document.getElementById('opponent-ship-pips'), foe && foe.textContent);
+    const set = (id, text) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const next = String(text);
+        // ⚠️ 只在**值真的变了**才写：计数面板（#arena-counts）就在 #turn-indicator 子树里，
+        //    无条件写会触发下面挂在源节点上的观察者 → 自触发回环（实测：页面被
+        //    renderArenaRail 打死，Page.captureScreenshot / Runtime.evaluate 全部超时）。
+        if (el.textContent !== next) el.textContent = next;
+    };
+    const read = (id) => { const el = document.getElementById(id); return el ? (el.textContent || '').trim() : ''; };
+    const mineText = ((mine && mine.textContent) || '0').trim() || '0';
+    set('arena-count-ships', mineText);
+    set('arena-count-hand', (Array.isArray(gameState.hand) ? gameState.hand.length : 0));
+    set('arena-count-discard', (Array.isArray(gameState.discardPile) ? gameState.discardPile.length : 0));
+    // 三区档的两处**展示副本**（对手条右侧三颗胶囊 + 舰队卡标题的「剩余 N 艘」）：
+    // 值全部现场从上面这些既有节点读出来，这里不存第二份真值。
+    set('arena-fleet-sub', '剩余 ' + mineText + ' 艘');
+    set('arena-chip-phase', read('current-phase'));
+    set('arena-chip-turn', read('current-player'));
+    set('arena-chip-attacks', '×' + (read('attacks-remaining') || '0'));
+    // 海域标题右挂的「已探明 N / 36 格 · 命中 M」（示意稿 C 的 .sea-head .s）。
+    // 数据是 gameState.myAttacks（服务端 attack_result 逐发下发的 {x,y,hit}），
+    // 不猜任何没下发的量（牌堆数就是因此没写）。
+    const shots = Array.isArray(gameState.myAttacks) ? gameState.myAttacks : [];
+    const hits = shots.filter(a => a && a.hit).length;
+    set('arena-sea-sub', '已探明 ' + shots.length + ' / 36 格 · 命中 ' + hits);
+}
+
+function initArenaRail() {
+    const mine = document.getElementById('your-ships');
+    const foe = document.getElementById('opponent-ships');
+    if (mine && mine.dataset.arenaRailBound !== '1') {
+        mine.dataset.arenaRailBound = '1';
+        new MutationObserver(renderArenaRail).observe(mine, { childList: true, characterData: true, subtree: true });
+    }
+    if (foe && foe.dataset.arenaRailBound !== '1') {
+        foe.dataset.arenaRailBound = '1';
+        new MutationObserver(renderArenaRail).observe(foe, { childList: true, characterData: true, subtree: true });
+    }
+    // 阶段 / 回合 / 攻击次数：观察**源节点本身**（三区档下那三行被 CSS 隐藏、文本照旧更新）。
+    // ⚠️ 绝不能挂到 #turn-indicator 上观察子树：#arena-counts 就在那棵子树里，而
+    //    renderArenaRail 会写它 —— 观察范围只要覆盖到自己的写入目标就是自触发死循环。
+    for (const id of ['current-phase', 'current-player', 'attacks-remaining']) {
+        const src = document.getElementById(id);
+        if (!src || src.dataset.arenaRailBound === '1') continue;
+        src.dataset.arenaRailBound = '1';
+        new MutationObserver(renderArenaRail).observe(src, { childList: true, characterData: true, subtree: true });
+    }
+    renderArenaRail();
 }
 
 // 当前生效效果角标：按服务端广播的列表【整体重画】。
@@ -10610,6 +11106,8 @@ function init() {
     bindEventListeners();
     // 状态显示栏容器显隐（避免出现空横条）
     initEffectStatusBarSync();
+    // 对局屏三区的 HUD 数字（剩余舰 pips + 计数面板；第 37 节）
+    initArenaRail();
     // 效果角标的事件委托（桌面 hover / 手机点击）。角标会被反复重绘，
     // 所以用委托挂一次，绝不能逐个绑定。
     bindEffectIndicators();
@@ -10621,6 +11119,11 @@ function init() {
     // ⚠️ 只绑事件、**不拉数据** —— /api/friends 必须等玩家点开面板才请求
     //    （首页无谓地打一次接口，游客还会白吃一个 401）。
     initFriendsUI();
+    // 首页面板（2026-09-27 首页 C 化）：指挥官名片 / 热门卡 / 四块状态面板。
+    // ⚠️ 只绑事件 + 拉只读接口，**不订阅任何 socket**：停在首页的人不许被算进"在大厅"
+    //    （队列/房间数走 /api/home_stats，理由见 server.py 那个路由的注释）。
+    bindHomeCommanderCard();
+    refreshHomePanels();
     // 「我是谁」+ 可编辑项池子：登录态才有（游客 401），只用于判断名片上要不要
     // 显示「编辑资料」，绝不用它做权限判断 —— 保存时服务端还会再判一次。
     loadSelfIdentity();

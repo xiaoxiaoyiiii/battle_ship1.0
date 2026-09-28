@@ -9,8 +9,8 @@
  *
  * 四个断言组（`--only` 可单跑）：
  *   set      令牌 / 字体 / 圆角档位 / 材质（半透明+模糊）与定位安全 / 强调色与对比度 / 首页标题不再是渐变文字
- *   presets  7 个预设存在且分成两组 / 默认预设 = fluent / 7 个预设同规范（形状与间距必须一致）/
- *            强调色两两不同 / 7 预设 × 明暗两态的正文对比度
+ *   presets  8 个预设存在且分成两组 / 默认预设 = fluent / 8 个预设同规范（形状与间距必须一致）/
+ *            强调色两两不同 / 8 预设 × 明暗两态的正文对比度
  *   dark     跟随系统（dark/light）+ 用户显式选择优先 + 主题引导脚本在 <head>（无闪烁）
  *   shots    6 个视口截图
  *
@@ -44,8 +44,14 @@ const SHOTS_DIR = path.isAbsolute(SHOTS_ARG) ? SHOTS_ARG : path.join(ROOT, SHOTS
 const ACCENT = '#0078d4';                        // Fluent 2 的默认强调色
 const ACCENT_RGB = 'rgb(0, 120, 212)';
 const ACCENT_OBJ = { r: 0, g: 120, b: 212, a: 1 };
-const RADIUS_ALLOWED = ['4px', '8px'];           // Fluent 的两档：控件 4 / 卡片 8
-const PRESETS = ['fluent', 'deep', 'lava', 'cyber', 'dusk', 'aurora', 'classic'];
+/* Fluent 的两档：控件 4 / 卡片 8。
+   2026-09-27（1:1 复刻示意稿 C/V 批）追加 12px：**arena 预设自带一套形状** ——
+   示意稿里的入口卡/主行动就是 12px 圆角、面板 14px，压成 8px 就不叫复刻了。
+   其它 7 个预设仍然只用 4/8（下面的"同规范签名"断言把这层区分也钉住了）。 */
+const RADIUS_ALLOWED = ['4px', '8px', '12px'];
+// arena 的专属形状档（其余预设必须完全一致，见下面那条断言）
+const ARENA_PRESET = 'arena';
+const PRESETS = ['fluent', 'deep', 'lava', 'cyber', 'dusk', 'aurora', 'classic', 'arena'];
 const LEGACY_PRESETS = ['deep', 'lava', 'cyber', 'dusk', 'aurora', 'classic'];
 const SPACE_TOKENS = ['--fluent-space-2', '--fluent-space-3', '--fluent-space-4'];
 const CONTRAST_MIN = 4.5;
@@ -508,8 +514,35 @@ async function groupSet() {
   check(tok.tokens.length >= 12, '存在 ≥12 个 --fluent-* 令牌且值非空',
     { count: tok.tokens.length, fromComputed: tok.fromComputed, fromRules: tok.fromRules, emptyValues: tok.empty });
   const pa = parseColor(tok.primaryResolved) || parseColor(tok.primaryRaw);
-  check(sameColor(pa, ACCENT_OBJ), '--primary 解析为 Fluent 强调色 ' + ACCENT + '（' + ACCENT_RGB + '）',
-    { raw: tok.primaryRaw, resolved: tok.primaryResolved });
+  /* 断言重定（2026-09-25，Phase 6 首页批）：原来这里写死 Fluent 的 #0078d4，
+     但默认预设已改为 arena（见 IMPLEMENTATION_PLAN_2026_09_23.md 的 M1）——
+     写死颜色等于"默认必须是 Fluent"，与本组的本意（强调色出自令牌层、且主行动用它）不符。
+     现在改为：读**当前默认预设在 CSS 里声明的 --primary**，与页面计算值核对；
+     声明的值取不到时退化为"属于已声明预设的强调色集合"（仍然拦得住裸值）。 */
+  const presetAccent = JSON.parse(await ev(`(function(){
+    var root = document.documentElement;
+    var preset = root.getAttribute('data-theme-preset') || '';
+    var dark = root.classList.contains('theme-dark');
+    var want = '', all = [];
+    for (var i = 0; i < document.styleSheets.length; i++) {
+      var rules; try { rules = document.styleSheets[i].cssRules; } catch (e) { continue; }
+      for (var j = 0; j < rules.length; j++) {
+        var r = rules[j], sel = r.selectorText || '';
+        if (sel.indexOf('data-theme-preset="') < 0) continue;
+        var v = (r.style && r.style.getPropertyValue('--primary')) || '';
+        if (!v) continue;
+        v = v.trim(); all.push(v);
+        if (sel.indexOf('data-theme-preset="' + preset + '"') >= 0 && (sel.indexOf('theme-dark') >= 0) === dark) want = v;
+      }
+    }
+    return JSON.stringify({ preset: preset, dark: dark, want: want, all: all,
+      got: getComputedStyle(root).getPropertyValue('--primary').trim() });
+  })()`));
+  const accentOk = presetAccent.want
+    ? sameColor(pa, parseColor(presetAccent.want))
+    : presetAccent.all.some((v) => sameColor(pa, parseColor(v)));
+  check(accentOk, '--primary 出自当前预设 ' + presetAccent.preset + ' 声明的强调色（' + presetAccent.want + '）',
+    { raw: tok.primaryRaw, resolved: tok.primaryResolved, declared: presetAccent.want });
 
   // ---------- 打开设置弹窗（.modal-content / .theme-card 得真的在页面上才量得到） ----------
   const modalOpen = await openSettingsModal();
@@ -591,8 +624,9 @@ async function groupSet() {
   // ---------- 5. 强调色 ----------
   const fm = byLabel(raw, '主行动按钮');
   const fmBg = parseColor(fm.backgroundColor);
-  check(sameColor(fmBg, ACCENT_OBJ), '#find-match 的计算底色属于 Fluent 强调色系',
-    { backgroundColor: fm.backgroundColor, expected: ACCENT_RGB });
+  check(presetAccent.want ? sameColor(fmBg, parseColor(presetAccent.want)) : sameColor(fmBg, ACCENT_OBJ),
+    '#find-match 的计算底色 = 当前预设的强调色',
+    { backgroundColor: fm.backgroundColor, expected: presetAccent.want || ACCENT_RGB });
   const fmFg = parseColor(fm.color);
   // ⚠️ 底色必须是不透明的「实心按钮色」才谈得上对比度：旧实现给按钮的是
   // `background: var(--primary-gradient)`（颜色落在 background-image 里），
@@ -643,14 +677,27 @@ async function groupPresets() {
   currentPass = 'presets';
   await setViewport(1600, 1000, 1, false);
 
-  // ---------- 8. 默认预设 = fluent ----------
+  // ---------- 8. 默认预设：必须是「已声明的一个预设」，不是某个写死的名字 ----------
+  /* 断言重定（2026-09-27，首页 C 化批）：原来写死 `=== 'fluent'`。
+     本意是"清空 localStorage 后落到一个**已声明**的默认预设"，不是"默认必须是 fluent" ——
+     而 M1 已经把默认改成 arena（见 docs/IMPLEMENTATION_PLAN_2026_09_23.md §6 与
+     docs/PHASE6_HOME_2026_09_25.md §1），这条从 Phase 6 起就一直是红的
+     （presets 组不是每次改前端都会复跑，所以一直没人撞上）。
+     现在断言那个**不变量**：默认落在 PRESETS 名单里、html 上有 data-theme-preset、
+     且该预设的强调色真的解析得出来（漏了 fallback / 落到未知名字 / 预设块选择器写错都会红）。 */
   await clearStorage();
   await reload('light');
   const thDef = await ev('(' + themeProbe.toString() + ')()');
-  check(thDef.datasetThemePreset === 'fluent', '清空 localStorage 后默认预设 = fluent',
+  const defName = String(thDef.datasetThemePreset || '');
+  console.log('   默认预设（清空 localStorage 后）= ' + JSON.stringify(defName));
+  check(PRESETS.includes(defName), '清空 localStorage 后默认预设是已声明的预设之一（' + PRESETS.join('/') + '）',
     { datasetThemePreset: thDef.datasetThemePreset, htmlClass: thDef.htmlClass, localStoragePreset: thDef.localStoragePreset });
+  const defPrimary = String(await ev(
+    "(function(){ return getComputedStyle(document.documentElement).getPropertyValue('--primary').trim(); })()"));
+  check(!!defPrimary, '默认预设下 --primary 有解析值（预设块命中 html）',
+    { preset: defName, primary: defPrimary });
 
-  // ---------- 7. 7 个预设 + 两分组 ----------
+  // ---------- 7. 8 个预设 + 两分组 ----------
   const st = await ev('(' + presetStructureProbe.toString() + ')()');
   if (!st.grid) {
     check(false, '#theme-preset-grid 存在', { grid: false });
@@ -660,10 +707,10 @@ async function groupPresets() {
     st.children.forEach((c, i) => console.log('     子[' + i + '] ' + c.tag + '.' + c.cls +
       ' isCard=' + c.isCard + ' 卡=' + JSON.stringify(c.presets)));
     const missing = PRESETS.filter((p) => !st.gridPresets.includes(p));
-    check(missing.length === 0, '预设区含 7 个 data-preset（fluent/deep/lava/cyber/dusk/aurora/classic）',
+    check(missing.length === 0, '预设区含 8 个 data-preset（fluent/deep/lava/cyber/dusk/aurora/classic/arena）',
       { found: st.gridPresets, missing });
     // 分组结构：不猜标签名/类名，只要求「直接子节点里有两个装卡的容器」这一个可判定的形状。
-    // 当前 DOM 若是平的（7 张卡直接挂在 #theme-preset-grid 下），这里就是 FAIL —— 正是要抓的。
+    // 当前 DOM 若是平的（8 张卡直接挂在 #theme-preset-grid 下），这里就是 FAIL —— 正是要抓的。
     check(st.groupCount >= 2, '预设区存在两个分组容器（默认组 + 旧风格组）',
       { groupCount: st.groupCount, groups: st.groups, ungroupedCards: st.ungroupedCards, childShape: st.childShape });
     if (st.groupCount >= 2) {
@@ -672,12 +719,12 @@ async function groupPresets() {
       const defaultGroupClean = fluentIdx >= 0 && flat[fluentIdx].filter((p) => LEGACY_PRESETS.includes(p)).length === 0;
       const legacyGroupOk = fluentIdx >= 0
         && flat.some((g, i) => i !== fluentIdx && LEGACY_PRESETS.every((p) => g.includes(p)));
-      check(defaultGroupClean, '默认组只含 fluent，不含旧 6 个', { groups: st.groups, fluentGroupIndex: fluentIdx });
+      check(defaultGroupClean, '默认组只含新式预设（fluent/arena），不含旧 6 个', { groups: st.groups, fluentGroupIndex: fluentIdx });
       check(legacyGroupOk, '另一组含其余 6 个旧预设', { groups: st.groups });
     }
   }
 
-  // ---------- 9/10. 7 个预设同规范 + 强调色两两不同 ----------
+  // ---------- 9/10. 8 个预设同规范 + 强调色两两不同 ----------
   const opened = await openSettingsModal();
   console.log('   设置弹窗已打开: ' + opened);
   const rows = [];
@@ -696,16 +743,26 @@ async function groupPresets() {
       ' radius=' + [sig.list[1].radius, sig.list[2].radius, sig.list[3].radius].join('/') +
       ' space=' + SPACE_TOKENS.map((t) => sig.vars[t]).join('/'));
   }
-  const sigSet = new Set(rows.map((r) => r.sig));
-  console.log('   规范签名（字体 | 三处圆角 | 三个间距令牌）不同取值数 = ' + sigSet.size);
-  check(sigSet.size === 1, '7 个预设的字体/圆角/间距完全一致（只有颜色允许不同）',
-    { distinctSignatures: sigSet.size, signatures: [...sigSet], font: rows.map((r) => r.font),
-      radius: rows.map((r) => r.radius), space: rows.map((r) => r.space) });
+  /* 断言重定（2026-09-27，1:1 复刻 demo 批）：原来要求"8 个预设的字体/圆角/间距完全一致"。
+     那是在 arena 只是"另一套配色"时定的；现在 arena 是**一整套设计**（示意稿 C/V 原样：
+     入口/主行动 12px、面板 14px），形状必然与 Fluent 那 7 个不同。
+     新的不变量：**除 arena 外的 7 个预设仍然完全一致**，且 arena 自己内部自洽
+     （字体与间距令牌与其它预设相同，只有圆角档不同）。 */
+  const legacySigs = new Set(rows.filter((r) => r.preset !== ARENA_PRESET).map((r) => r.sig));
+  const arenaRows = rows.filter((r) => r.preset === ARENA_PRESET);
+  const arenaKey = (r) => [r.font, r.radius.join('/'), SPACE_TOKENS.map((t) => r.space[t]).join('/')].join(' | ');
+  const arenaSig = new Set(arenaRows.map(arenaKey));
+  console.log('   规范签名不同取值数：除 arena 外 = ' + legacySigs.size + '，arena 自身 = ' + arenaSig.size);
+  console.log('   arena 的形状签名 = ' + [...arenaSig].join(' , '));
+  check(legacySigs.size === 1, '除 arena 外的 7 个预设字体/圆角/间距完全一致（只有颜色允许不同）',
+    { distinctSignatures: legacySigs.size, signatures: [...legacySigs], radius: rows.map((r) => r.radius) });
+  check(arenaSig.size === 1, 'arena 预设自身形状自洽（字体 + 圆角 + 间距只有一个取值）',
+    { arenaSignatures: [...arenaSig], arenaRadius: arenaRows.map((r) => r.radius) });
   const distinctPrimaries = new Set(Object.values(primaries).map((v) => String(v).trim()));
-  check(distinctPrimaries.size === PRESETS.length, '7 个预设的 --primary 两两不同',
+  check(distinctPrimaries.size === PRESETS.length, '8 个预设的 --primary 两两不同',
     { distinct: distinctPrimaries.size, map: primaries });
 
-  // ---------- 11. 7 预设 × 明暗两态的正文对比度 ----------
+  // ---------- 11. 8 预设 × 明暗两态的正文对比度 ----------
   // 明暗态走「清掉 theme 键 + 系统偏好 + reload」（真实路径）；
   // 预设在同一态内点卡片切换即可（CSS 靠 html[data-theme-preset] 生效，不用重新加载）。
   for (const mode of ['light', 'dark']) {
@@ -738,54 +795,55 @@ async function groupDark() {
   currentPass = 'dark';
   await setViewport(1600, 1000, 1, false);
 
-  // ---------- 12. 系统深色 ----------
-  await clearStorage();
-  await reload('dark');
-  let th = await ev('(' + themeProbe.toString() + ')()');
-  const darkHit = darkMarker(th);
-  const bgDark = pickPageBg(th);
-  check(!!darkHit, '系统偏好 dark → html 上有深色标记',
-    { hit: darkHit, htmlClass: th.htmlClass, dataThemeAttr: th.dataThemeAttr,
-      prefersDark: th.prefersDark, localStorageTheme: th.localStorageTheme });
-  check(!!bgDark && relLum(bgDark.color) < 0.35, '系统偏好 dark → 页面底色是深色（相对亮度 < 0.35）',
-    { source: bgDark ? bgDark.source : null, luminance: bgDark ? r2(relLum(bgDark.color)) : null, layerBg: th.layerBg });
-
-  // ---------- 13. 系统浅色 ----------
+  /* 断言重定（2026-09-27，1:1 复刻 demo 批）。
+     原来这一组断言的是「跟随系统」：`清空 localStorage + 系统浅色 → 必须没有深色标记`。
+     用户要求一比一复刻示意稿 C/V —— 它们都是**暗色设计**，所以默认（没显式选过）
+     改成深色，系统的明暗偏好不再决定首屏。这一组现在断言新契约的三件事：
+       ① 没有显式选择时**默认深色**（系统浅色/深色都一样）；
+       ② 用户显式选浅色 → 浅色，且**跨重载、跨系统偏好**都保持（显式选择优先）；
+       ③ 首帧不闪：定 `theme-dark` 的引导脚本仍在 <head> 里、且排在样式表之前。 */
   await clearStorage();
   await reload('light');
-  th = await ev('(' + themeProbe.toString() + ')()');
-  const bgLight = pickPageBg(th);
-  check(!darkMarker(th), '系统偏好 light → html 上没有深色标记', { htmlClass: th.htmlClass, prefersDark: th.prefersDark });
-  check(!!bgLight && relLum(bgLight.color) > 0.65, '系统偏好 light → 页面底色是浅色（相对亮度 > 0.65）',
-    { source: bgLight ? bgLight.source : null, luminance: bgLight ? r2(relLum(bgLight.color)) : null, layerBg: th.layerBg });
+  let th = await ev('(' + themeProbe.toString() + ')()');
+  check(!!darkMarker(th), '清空 localStorage + 系统浅色 → 默认深色（示意稿 C/V 是暗色设计）',
+    { htmlClass: th.htmlClass, prefersDark: th.prefersDark, localStorageTheme: th.localStorageTheme });
+  let bg = pickPageBg(th);
+  check(!!bg && relLum(bg.color) < 0.35, '默认深色下页面底色确实是深色（相对亮度 < 0.35）',
+    { source: bg ? bg.source : null, luminance: bg ? r2(relLum(bg.color)) : null, layerBg: th.layerBg });
 
-  // ---------- 14. 用户显式选择优先 ----------
-  // 走「点击 #toggle-theme」（真实用户路径），只有点不动时才退到 localStorage 捷径并打印出来。
+  await clearStorage();
+  await reload('dark');
+  th = await ev('(' + themeProbe.toString() + ')()');
+  check(!!darkMarker(th), '系统偏好 dark → 仍是深色（与默认一致，不冲突）',
+    { htmlClass: th.htmlClass, prefersDark: th.prefersDark });
+
+  // ---------- 用户显式选择优先：点 #toggle-theme（真实用户路径） ----------
+  await clearStorage();
+  await reload('light');                    // 默认深色
   await ev('(function(){ var a=document.getElementById("toggle-theme"); if(a) a.click(); return 1; })()');
   await sleep(300);
   const afterClick = await ev('(' + themeProbe.toString() + ')()');
-  const clickedDark = !!darkMarker(afterClick);
-  const pathUsed = clickedDark ? 'click #toggle-theme' : 'localStorage.setItem("theme","dark")';
+  const pathUsed = afterClick.localStorageTheme ? 'click #toggle-theme' : 'localStorage.setItem';
   console.log('   点击 #toggle-theme 后: ' + JSON.stringify({ marker: darkMarker(afterClick),
     htmlClass: afterClick.htmlClass, localStorageTheme: afterClick.localStorageTheme }));
-  if (!clickedDark) {
-    await ev('(function(){ try { localStorage.setItem("theme","dark"); } catch(e){} return 1; })()');
-    console.log('   ⚠️ 点击未生效，本次改用 localStorage.setItem("theme","dark") 记录用户显式选择');
-  }
-  await setMedia('light');                       // 系统偏好切回浅色
-  await send('Page.navigate', { url: APP });     // ⚠️ 这里**不清** localStorage
+  check(!darkMarker(afterClick) && String(afterClick.localStorageTheme) === 'light',
+    '默认深色下点一次明暗切换 → 变成显式浅色',
+    { path: pathUsed, htmlClass: afterClick.htmlClass, localStorageTheme: afterClick.localStorageTheme });
+
+  await setMedia('dark');                   // 系统偏好切到深色
+  await send('Page.navigate', { url: APP }); // ⚠️ 这里**不清** localStorage
   await waitFor(async () => await ev('document.readyState === "complete"'), 25000, '页面加载');
   await sleep(800);
   const th2 = await ev('(' + themeProbe.toString() + ')()');
   const bg2 = pickPageBg(th2);
-  check(!!darkMarker(th2), '用户显式选深色后，系统偏好为 light 时仍是深色（用户选择优先）',
+  check(!darkMarker(th2), '显式选浅色后，系统偏好为 dark 时仍是浅色（用户选择优先）',
     { path: pathUsed, htmlClass: th2.htmlClass, prefersDark: th2.prefersDark, localStorageTheme: th2.localStorageTheme });
-  check(!!bg2 && relLum(bg2.color) < 0.35, '用户显式选深色后底色仍是深色',
+  check(!!bg2 && relLum(bg2.color) > 0.65, '显式浅色下底色确实是浅色（相对亮度 > 0.65）',
     { source: bg2 ? bg2.source : null, luminance: bg2 ? r2(relLum(bg2.color)) : null });
 
-  // ---------- 15. 无闪烁：引导脚本必须在 <head> 里 ----------
+  // ---------- 15. 无闪烁：引导脚本必须在 <head> 里、且排在样式表之前 ----------
   const heads = th2.headChildren.filter((h) => h.kind === 'script'
-    && /theme-dark|prefers-color-scheme|data-theme|themePreset/.test(h.text || ''));
+    && /theme-dark|prefers-color-scheme|data-theme|themePreset|localStorage\.getItem\(\s*['"]theme/.test(h.text || ''));
   const sheetIdx = th2.headChildren.findIndex((h) => h.kind === 'stylesheet');
   console.log('   head 子节点: ' + th2.headChildren.map((h) => h.idx + ':' + h.tag + '(' + h.kind + ')').join(' '));
   console.log('   body 里含主题引导逻辑的内联脚本数: ' + th2.bodyBootstrapScripts);
@@ -795,6 +853,8 @@ async function groupDark() {
     { headBootstrapScripts: heads.map((h) => ({ idx: h.idx, src: h.src, snippet: h.text.slice(0, 80) })),
       headChildren: th2.headChildren.map((h) => h.idx + ':' + h.tag + '(' + h.kind + ')'),
       bodyBootstrapScripts: th2.bodyBootstrapScripts, firstStylesheetIdx: sheetIdx });
+  check(heads.some((h) => h.idx < sheetIdx), '引导脚本排在 style.css 之前（首帧就是对的底色）',
+    { headIdxs: heads.map((h) => h.idx), firstStylesheetIdx: sheetIdx });
 }
 
 // ---------------------------------------------------------------------------
@@ -803,7 +863,7 @@ async function groupDark() {
 async function groupShots() {
   currentPass = 'shots';
   fs.mkdirSync(SHOTS_DIR, { recursive: true });
-  await clearStorage();     // 截图统一用「默认预设 + 浅色」，免得受前面几组留下的选择影响
+  await clearStorage();     // 截图统一用「默认预设 + 默认明暗」（2026-09-27 起默认是深色）
   await sleep(50);
   const shots = [];
   for (const [label, w, h, dsf, mobile] of SHOT_VIEWPORTS) {

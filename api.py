@@ -725,8 +725,16 @@ def build_own_profile(uid):
     rank = db.get_user_rank(uid)
     stats = _profile_unlock_stats(uid, user)
     extra = db.get_user_profile_extra(uid)
+    # 每局累计计数（2026-09-27 首页 C 化）：示意稿 C 的名片第三行是「累计击沉 N 艘」，
+    # 这个数一直在库里的 `user_counters.sunk_total`，只是没随名片下发过。
+    # ⚠️ 只读、无副作用；拿不到就给全 0 默认值（`db.get_user_counters` 自己保证）。
+    try:
+        counters = db.get_user_counters(uid) or {}
+    except Exception:
+        counters = {}
     profile.update({
         'rank': rank,
+        'counters': counters,
         'name_style': _name_style(uid),
         'level_info': level_view_for(uid),
         'title_id': extra.get('title_id') or '',

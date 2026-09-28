@@ -56,6 +56,9 @@
         pinOnce('oppCorner', '#opponent-avatar-corner');
         pinOnce('discard', '.discard-pile-btn-row');
         pinOnce('oppStats', '#show-opponent-stats');
+        // 连锁叠牌（#chain-display，game.js 的 createMagicCardUI 建的）：arena 三区档要把它
+        // 从手牌条搬进中场右列那条轨道（示意稿 C 的 .chain-stack），其余档位留在手牌条里。
+        pinOnce('chainDisplay', '#chain-display');
     }
 
     function restoreNode(entry) {
@@ -75,6 +78,21 @@
     }
 
     /* ---------- 面板搬家 ---------- */
+    // 对局屏三区（示意稿 C，style.css 第 37 节）只在 arena 预设 + 非紧凑档生效。
+    // 判据与 CSS 完全一致：`html[data-theme-preset="arena"] body:not(.layout-compact)`。
+    function arenaThreeZone(compact) {
+        return !compact && document.documentElement.dataset.themePreset === 'arena';
+    }
+
+    // 两个角落头像 chip（#avatar-corner / #opponent-avatar-corner）进【局内名片行】：
+    // 紧凑档早就这么干（HUD 的 chip 行）；arena 三区档同理 —— 对手条最左边那颗 42px
+    // 圆牌就是它，底排「你的舰队」卡里的头像也是它。其它档位仍是屏幕角落的浮标。
+    function chipsIntoPlayerRows() {
+        var rows = $$('.players-info .player-flex-row');
+        if (rows[0]) moveTo(origin.corner && origin.corner.node, rows[0], rows[0].firstChild);
+        if (rows[1]) moveTo(origin.oppCorner && origin.oppCorner.node, rows[1], rows[1].firstChild);
+    }
+
     function applyPlacement(compact, tight) {
         var dock = document.getElementById('aux-dock');
         if (!dock) return;
@@ -98,9 +116,20 @@
             moveTo(origin.oppStats && origin.oppStats.node, logPanel);
             moveTo(origin.chat && origin.chat.node, chatPanel);
             // 角落头像并入 HUD 的玩家 chip，不再浮在内容上
-            var rows = $$('.players-info .player-flex-row');
-            if (rows[0]) moveTo(origin.corner && origin.corner.node, rows[0], rows[0].firstChild);
-            if (rows[1]) moveTo(origin.oppCorner && origin.oppCorner.node, rows[1], rows[1].firstChild);
+            chipsIntoPlayerRows();
+            // 连锁叠牌回到手牌条：紧凑档的条在流内、尺寸由 --board-size 反推，
+            // 轨道（#arena-chain-slot）在紧凑档是 display:none，留在里面就看不见了。
+            restoreNode(origin.chainDisplay);
+        } else if (arenaThreeZone(false)) {
+            // arena 三区：叠牌进中场右列轨道，两个头像 chip 进对手条 / 舰队卡
+            moveTo(origin.chainDisplay && origin.chainDisplay.node, document.getElementById('arena-chain-slot'));
+            chipsIntoPlayerRows();
+            restoreNode(origin.preview);
+            restoreNode(origin.chat);
+            restoreNode(origin.log);
+            restoreNode(origin.magicSystem);
+            restoreNode(origin.discard);
+            restoreNode(origin.oppStats);
         } else {
             restoreNode(origin.preview);
             restoreNode(origin.chat);
@@ -110,6 +139,7 @@
             restoreNode(origin.oppCorner);
             restoreNode(origin.discard);
             restoreNode(origin.oppStats);
+            restoreNode(origin.chainDisplay);
         }
     }
 
@@ -400,6 +430,12 @@
             gameScreen.removeAttribute('data-boards');
             var stage = $('.boards-container');
             if (stage) stage.removeAttribute('data-mode');
+            /* 桌面档保持 CSS 的"堆叠 + 按 100vh 反推"（见 style.css 第 40 节）。
+               试过让桌面也走 updateBoardMode() 并排两块：宽屏"两块同尺寸且 >=280"与
+               并排所需的横向空间在 1280/1366 档互相打架（右侧预览浮窗吃掉一截），
+               改 tabs 又受纵向预算（~267px）限制 —— 要动就得连门禁契约一起改。
+               ⚠️ 已知未解：高度 <=800px 的桌面档，堆叠的第二块棋盘会被贴底手牌压住
+               （1366x768 实测 30/36 格点不到，见 docs/FLUENT_UI_2026_09_21.md §10）。 */
         }
     }
 

@@ -244,7 +244,15 @@ phase:                        preparation → battle → end
 `docs/WALLPAPER_ENGINE.md`（动态壁纸）｜ `docs/STATS_AND_AI_RANKING_FIXES.md`（战绩弹窗/人机统计）｜
 `docs/MOBILE_ADAPTIVE_LAYOUT.md`（移动端布局）｜ `docs/UI_REVIEW_FIXES.md`（UI 审查）｜
 `docs/LOBBY_2026_09_18.md`（大厅系统：契约 + 4 个实测问题）｜ `docs/FRIENDS_2026_09_18.md`（好友功能）｜
-`docs/HOME_NAV_2026_09_19.md`（首页/导航分组化 + 实测高度对照）｜ `docs/UI_REBUILD_PROPOSAL.md`（UI 完全重构建议：现状体检 + 7 期路线）｜ `README.md`（用户向说明）
+`docs/HOME_NAV_2026_09_19.md`（首页/导航分组化 + 实测高度对照）｜ `docs/UI_REBUILD_PROPOSAL.md`（UI 完全重构建议：现状体检 + 7 期路线）｜
+`docs/UI_DEMO_OPTIONS_2026_09_23.md`（21 版示意稿总览）｜
+`docs/IMPLEMENTATION_PLAN_2026_09_23.md`（**落地分期方案**：以 C 为底、Phase 0–7、每期门禁与断言重定范围）｜
+`docs/VUE_MIGRATION_OPTIONS_2026_09_23.md`（**Vue 重写三案对比**：A 原生原语 / A′ Vue 无构建链 / C 带构建整站重写）｜ `README.md`（用户向说明）
+`docs/LANDING_STATUS_2026_09_24.md`（**该方案的交付状态对照表**：哪期做到哪、证据、剩余项）｜
+`docs/PHASE0_BASELINE_2026_09_24.md`（基线数字 + 会被各期改到的断言清单）｜
+`docs/PHASE3_5_LANDING_2026_09_24.md`（§10.3 棋盘遮挡根因与修法 / 移动端实测结论）｜
+`docs/CARD_TEXT_FIT_2026_09_24.md`（卡内文字盒度量 + 一处断言重定及理由）｜
+`docs/C_ARENA_HOME_2026_09_27.md`（**首页 C 三栏 + 竞技场面层令牌**：数据来源、有意差异、`/api/home_stats`、断言重定）
 
 > ⚠️ **部署前确认环境变量**：代码新增 `os.environ.get('XXX')` 时，服务器 systemd 必须同步配置 ——
 > 漏配会导致"服务能起来但带着错误默认值运行"（曾因漏配 `CORS_ORIGINS` 让线上所有操作卡十几秒）。

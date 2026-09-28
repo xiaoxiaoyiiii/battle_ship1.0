@@ -523,6 +523,52 @@ def test_online_count_endpoint_matches_presence(sockets):
     assert payload['online_count'] >= 2
 
 
+def test_home_stats_endpoint_matches_lobby_sources(sockets):
+    """`/api/home_stats`（2026-09-27 首页 C 化新增）必须与大厅同一批数据源同口径。
+
+    首页右栏的「在线情况」面板读它：在线人数 / 两个队列 / 可见房间数。
+    ⚠️ 关键断言不是"接口通"，而是**与 `build_lobby_state()` 逐项同值** ——
+       两份口径漂移的话，首页与大厅会显示不一样的队列人数（本项目最怕的
+       "同一个业务判断有两份实现"，见 CLAUDE.md 通用教训一）。
+    ⚠️ 另外断言这个接口**不写状态**：它不许把调用者记进大厅成员表 ——
+       否则停在首页的人会被大厅当成"在大厅"（这正是它不直接用 lobby_state 的理由）。
+    """
+    a = sockets()
+    b = sockets()
+    with server.app.test_client() as http:
+        payload = http.get('/api/home_stats').get_json()
+
+    assert set(payload) == {'online_count', 'queue', 'lobby_rooms'}, payload
+    assert payload['online_count'] == server.lobby_manager.online_count()
+    assert payload['online_count'] >= 2
+
+    # 队列口径：休闲 + 排位 = 同一个队列的总长（与大厅横幅一致）
+    queue = list(server.room_manager.match_queue)
+    ranked_n = sum(1 for e in queue if e.get('mode') == server.MATCH_MODE_RANKED)
+    assert payload['queue']['ranked'] == ranked_n
+    assert payload['queue']['casual'] == len(queue) - ranked_n
+
+    state = server.build_lobby_state()
+    assert payload['queue'] == state['queue'], '首页与大厅必须同一口径'
+    assert payload['lobby_rooms'] == len(state['rooms'])
+
+    # 只读：这一趟调用没有让任何连接变成"大厅成员"（members() 返回 list，判空即可）
+    assert not server.lobby_manager.members(), 'home_stats 不许订阅大厅'
+
+
+def test_home_stats_queue_counts_split_by_mode(sockets):
+    """排队中的两种模式各算各的（休闲 2 + 排位 1 的经典形状）。"""
+    a = sockets()
+    server.room_manager.match_queue = [
+        {'sid': 'q1', 'name': '甲', 'user_id': None, 'mode': 'casual'},
+        {'sid': 'q2', 'name': '乙', 'user_id': None, 'mode': 'casual'},
+        {'sid': 'q3', 'name': '丙', 'user_id': None, 'mode': server.MATCH_MODE_RANKED},
+    ]
+    with server.app.test_client() as http:
+        payload = http.get('/api/home_stats').get_json()
+    assert payload['queue'] == {'casual': 2, 'ranked': 1}, payload
+
+
 def test_lobby_create_room_appears_in_other_member_list(sockets):
     a = sockets()
     b = sockets()

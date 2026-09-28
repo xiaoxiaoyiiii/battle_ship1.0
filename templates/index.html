@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>战舰游戏</title>
     <!-- 明暗轴引导脚本 —— ⚠️ 必须留在 <head>、必须**同步**执行、必须排在 style.css 之前。
          为什么不能等 defer 的 game.js / body 尾部的脚本 / DOMContentLoaded：
@@ -16,9 +16,11 @@
         (function () {
             var saved = null;
             try { saved = localStorage.getItem('theme'); } catch (e) { saved = null; }
-            var dark = saved === 'dark'
-                || (saved !== 'light' && !!window.matchMedia
-                    && window.matchMedia('(prefers-color-scheme: dark)').matches);
+            // ⚠️ 2026-09-27（1:1 复刻 demo）：**没显式选过时默认深色** ——
+            //    示意稿 C/V 都是暗色设计，默认落到浅色就不叫复刻了。
+            //    用户显式选过 light 仍然尊重（下面 saved === 'light' 那条）。
+            //    同步改 game.js 的 resolveTheme()：两边是同一个语义的两份实现。
+            var dark = saved !== 'light';
             document.documentElement.classList.toggle('theme-dark', dark);
         })();
     </script>
@@ -70,7 +72,7 @@
          `querySelectorAll('.hide-in-game')`，改结构时漏掉该类就是"局内还能看见登录/注册"。
          ⚠️ 三个分组都必须保留 flex-wrap: wrap（CSS 侧），否则 336px 视口下横向溢出。 -->
     <div class="nav" id="game-nav">
-        <div class="nav-brand">⚓ 战舰游戏</div>
+        <div class="nav-brand"><b>⚓ 战舰棋 · 竞技场</b><em>BATTLESHIP ARENA</em></div>
         <div class="nav-menu">
             <div class="nav-group nav-main">
                 <a href="/leaderboard" class="hide-in-game">排行榜</a>
@@ -103,6 +105,10 @@
             {% endif %}
             </div>
             <div class="nav-group nav-tools">
+                <!-- 在线胶囊（2026-09-27 首页 C 化）：示意稿 C 的顶栏右侧就是这颗「在线 N」。
+                     数字由 game.js 的首页面板与内联的在线人数脚本一起刷新
+                     （两处都只写文本，不新增接口）。 -->
+                <span class="nav-pill" title="当前在线人数">在线 <b id="online-count-nav">0</b></span>
                 <button id="help-btn" class="btn secondary">帮助</button>
                 <button id="settings-btn" class="btn secondary">设置</button>
                 <button id="music-btn" class="btn secondary">🎵</button>
@@ -113,24 +119,77 @@
 
     <!-- 开始界面 -->
     <div id="start-screen" class="screen active">
-        <!-- 首页主标题：与导航品牌字面重复，2026-09-19 起改成引导语（h1 仍是视觉锚点）。
-             没有任何测试/工具断言这行文案。 -->
-        <h1>选择你的战场</h1>
-        <div class="input-group">
-            <input type="text" id="player-name" placeholder="输入你的名字">
+        <!-- 首页 = 示意稿 C（卡牌竞技场）的三栏复刻（2026-09-27）。
+             三栏：左「指挥官名片」（倾斜卡）· 中「模式 + 热门卡」· 右「四块状态面板」。
+             ⚠️ DOM 顺序 = 中 → 左 → 右：窄屏收成单列时**主行动必须排在最前**，
+                三栏的左右关系由 CSS 的 grid-column 指定（不依赖 DOM 顺序）——
+                桌面观感与 C 一致，手机上先能开一局、再看自己的名片与状态。
+             ⚠️ 原有 id 一个都没动（9 个无头工具按 id 点击首页）：
+                #player-name #find-match #match-status #cancel-match #ranked-status #cancel-ranked
+                #ranked-match #ai-match #ai-difficulty #custom-room #lobby-btn
+                #my-level-strip #mls-level #mls-fill #mls-text #online-count-container #online-count。
+                等级条从「底部状态行」搬进了指挥官名片（C 的名片里本来就有一条轨道）；
+                `ui_layout_check` 只查「可见时轨道宽 > 0」，搬位置不影响它。 -->
+        <div class="home-wrap">
+        <div class="home-mid">
+        <span class="home-lead">选 择 一 种 打 法</span>
+        <!-- 出海区（Phase 6 首页批）：首页**唯一的主行动**单独成块。
+             2026-09-25 之前主行动与排位/人机/自定义/大厅同处一个网格，
+             五个入口视觉等重 —— 现在 #find-match 独占一块带材质的区域，
+             其余入口降成下方两列的次级卡片。
+             ⚠️ 所有 id 一个都没改（9 个无头工具按 id 点击这里）；
+                #match-status / #ranked-status 与主行动同块，排队时就地替换文案。 -->
+        <section class="home-hero">
+            <!-- C 的 .gobtn.lg 结构：图标块 + 标题/说明 + 右侧 ENTER 角标。
+                 主标题与导航品牌字面重复，2026-09-19 起改成引导语（h1 仍是视觉锚点）。
+                 没有任何测试/工具断言这行文案。 -->
+            <div class="hero-head">
+                <span class="hero-ic" aria-hidden="true">⚔</span>
+                <div class="hero-txt">
+                    <h1>选择你的战场</h1>
+                    <p class="home-sub">3 分钟一局 · 猜拳定先手 · 击沉对方全部战舰者胜</p>
+                </div>
+                <span class="hero-go" aria-hidden="true">ENTER</span>
+            </div>
+        </section>
+        <!-- 名字 + 主行动：示意稿 C 的 hero 是**一行**入口（图标 + 标题 + 说明 + ENTER），
+             没有输入框、也没有第二个按钮。我们的流程需要"游客先起个名字"，所以
+             这两件搬到了 hero 正下方的一条窄行里 —— hero 本体的观感与 demo 一致。 -->
+        <div class="home-cta-row">
+            <div class="input-group">
+                <input type="text" id="player-name" placeholder="输入你的名字">
+            </div>
+            <button id="find-match" class="mode-btn primary home-cta">开始匹配</button>
         </div>
-        <!-- 模式区（2026-09-19 首页拥挤批）：主行动排在最前、并排成网格。
-             ⚠️ 每个按钮的 id 一个没改 —— 9 个无头工具按 id 点击这里。
-             #ai-difficulty 与 #ai-match 同一行，修掉"难度下拉把模式列表打断"。 -->
+        <section class="home-hero-status">
+            <div id="match-status" class="hidden">
+                <p>正在寻找匹配...</p>
+                <button id="cancel-match">取消匹配</button>
+            </div>
+
+            <!-- 排位排队状态（段位批）。与上面的休闲匹配**互斥**：
+                 进入排位排队时会先把休闲那套收干净，反之亦然（两者是同一个队列，
+                 服务端 `has_player_in_player_queue` 会拒掉第二个）。 -->
+            <div id="ranked-status" class="hidden">
+                <p>正在寻找排位对手…</p>
+                <button id="cancel-ranked">取消排位</button>
+            </div>
+        </section>
+
+        <!-- 其他玩法：两列次级入口。排位与休闲是**同一个匹配队列**（只是带 mode=ranked：
+             只能同 mode 配对，且排位必须登录 —— 游客点它服务端会 emit error）。
+             #ai-difficulty 与 #ai-match 保持同一行，修掉"难度下拉把模式列表打断"。 -->
         <div class="start-modes">
-            <button id="find-match" class="mode-btn primary">匹配游戏</button>
-            <!-- 排位对战（段位批）。与休闲匹配是**同一个匹配队列**，只是入队时带 mode=ranked：
-                 只能同 mode 配对，且排位必须登录（游客点它服务端会 emit error）。
-                 点下去隐藏 #find-match、显示 #ranked-status + #cancel-ranked；
-                 出错要能恢复按钮（否则按一次就卡在「正在寻找」）。 -->
-            <button id="ranked-match" class="mode-btn">排位对战</button>
+            <button id="ranked-match" class="mode-btn">
+                <span class="mbtn-ic" aria-hidden="true">🛡</span>
+                <span class="mbtn-txt"><span class="tt">排位对战</span><span class="td">结算会改变段位 · 需登录</span></span>
+                <span class="mbtn-go" aria-hidden="true">RANKED</span>
+            </button>
             <div class="mode-ai">
-                <button id="ai-match" class="mode-btn secondary">人机对战</button>
+                <button id="ai-match" class="mode-btn secondary">
+                    <span class="mbtn-ic" aria-hidden="true">🎯</span>
+                    <span class="mbtn-txt"><span class="tt">人机对战</span><span class="td">练习规则与连锁</span></span>
+                </button>
                 <select id="ai-difficulty" class="secondary" title="人机难度：简单=电脑不出魔法卡；普通/困难=会打出手上的魔法卡">
                     <option value="easy">电脑：简单</option>
                     <option value="normal" selected>电脑：普通</option>
@@ -138,39 +197,93 @@
                 </select>
             </div>
         </div>
-        <div id="match-status" class="hidden">
-            <p>正在寻找匹配...</p>
-            <button id="cancel-match">取消匹配</button>
-        </div>
-
-        <!-- 排位排队状态（段位批）。与上面的休闲匹配**互斥**：
-             进入排位排队时会先把休闲那套收干净，反之亦然（两者是同一个队列，
-             服务端 `has_player_in_player_queue` 会拒掉第二个）。 -->
-        <div id="ranked-status" class="hidden">
-            <p>正在寻找排位对手…</p>
-            <button id="cancel-ranked">取消排位</button>
-        </div>
 
         <!-- 次级入口区：与模式区同宽、并排两列，视觉上明确低于主行动 -->
         <div class="start-more">
-            <button id="custom-room" class="secondary">自定义房间游戏</button>
-            <button id="lobby-btn" class="secondary">游戏大厅</button>
+            <button id="custom-room" class="secondary">
+                <span class="mbtn-txt"><span class="tt">自定义房间</span><span class="td">6 位房号 / 邀请链接</span></span>
+            </button>
+            <button id="lobby-btn" class="secondary">
+                <span class="mbtn-txt"><span class="tt">游戏大厅</span><span class="td">房间列表 · 公屏</span></span>
+            </button>
         </div>
 
-        <!-- 状态行：等级条 + 在线人数并排一行（原先各占一行、孤立在底部） -->
-        <div class="start-status">
-            <!-- 我的等级 / 经验条（2026-09-17 追加）。
-                 数据来自 /api/profile 的 level_info（等级与"本级进度"都由服务端算），
-                 登录后才有；未登录整块隐藏（游客没等级）。 -->
-            <div id="my-level-strip" class="my-level-strip hidden">
-                <span class="mls-lv">Lv.<b id="mls-level">1</b></span>
-                <div class="mls-bar"><div class="mls-fill" id="mls-fill"></div></div>
-                <span class="mls-text" id="mls-text">0 / 0</span>
+        <!-- 热门卡面板（C 的 .hotrow 复刻）：把「这游戏有 43 张魔法卡」在首页就亮出来。
+             数据来自 /api/card_usage（全服累计使用次数，无登录要求）→ 取前 5 张；
+             卡名/速阶取自 static/magic_card.json 的同一份卡表，底图走 card_art_map.js。
+             全为空（新库、一次都没人用过）时退成「按速阶 1/2/3 各取一张」的静态推荐，
+             不让这块变成空白。 -->
+        <section class="card-panel home-hot">
+            <h4>全 服 热 门 卡</h4>
+            <div class="hotrow" id="home-hot-cards"></div>
+            <p class="hot-note" id="home-hot-note">43 张魔法卡 · 场地 4 张 · 普通 39 张</p>
+        </section>
+        </div><!-- /.home-mid -->
+
+        <!-- 左栏：指挥官名片（C 的倾斜名片复刻）。
+             数据全部来自 /api/profile —— 没有一处是编的：
+             名字 / 段位（rank_info.label）/ 段位分与距下一段（points / to_next）/
+             等级与经验（level_info）/ 战绩（wins-losses）/ 最长连胜（longest_streak）。
+             未登录（游客）时整张卡退成"登录后记录…"态：等级条本来对游客就是隐藏的。 -->
+        <aside class="home-left">
+            <div class="cmdr-card" id="home-commander">
+                <div class="cmdr-art"><span class="cmdr-ring" id="cmdr-emblem">舰</span></div>
+                <div class="cmdr-body">
+                    <div class="cmdr-name"><span id="cmdr-name">游客</span><i class="cmdr-tier hidden" id="cmdr-tier">—</i></div>
+                    <div class="cmdr-sub" id="cmdr-sub">登录后记录段位 · 等级 · 战绩</div>
+                    <!-- 我的等级 / 经验条（2026-09-17 追加，2026-09-27 搬进名片）。
+                         数据来自 /api/profile 的 level_info（等级与"本级进度"都由服务端算），
+                         登录后才有；未登录整块隐藏（游客没等级）。 -->
+                    <div id="my-level-strip" class="my-level-strip hidden">
+                        <span class="mls-lv">Lv.<b id="mls-level">1</b></span>
+                        <div class="mls-bar"><div class="mls-fill" id="mls-fill"></div></div>
+                        <span class="mls-text" id="mls-text">0 / 0</span>
+                    </div>
+                    <!-- 三行数据 = 示意稿 C 的 .hero-card 那三行（战绩 / 最长连胜 / 累计击沉），
+                         全部来自 /api/profile，没有一行是编的；拿不到就是「—」。 -->
+                    <div class="cmdr-kv">
+                        <div class="kv"><span>战绩</span><b id="cmdr-record">—</b></div>
+                        <div class="kv"><span>最长连胜</span><b id="cmdr-streak">—</b></div>
+                        <div class="kv"><span>累计击沉</span><b id="cmdr-winrate">—</b></div>
+                    </div>
+                    <button type="button" id="cmdr-card-btn" class="ghost-btn hidden">编辑名片外观</button>
+                </div>
             </div>
-            <!-- 在线人数显示 -->
-            <div id="online-count-container">
-                当前在线人数：<span id="online-count">0</span>
-            </div>
+        </aside>
+
+        <!-- 右栏：四块状态面板（C 的 side-col 复刻）。
+             数据源各自独立：成就 /api/achievements · 战绩来自 /api/profile ·
+             段位阶梯 /api/rank_constants · 在线情况 /api/home_stats（本轮新增的只读聚合口）。
+             ⚠️ 每一块都必须在**取不到数据**时退成"—"或骨架，而不是消失 —— 首页的布局
+                不随接口成败而变（本项目踩过"取数失败 → 整块消失"的观感事故）。 -->
+        <aside class="home-right">
+            <section class="card-panel">
+                <h4>最 近 解 锁</h4>
+                <div class="ach-list" id="home-ach-list"><div class="ach-empty">加载中…</div></div>
+            </section>
+            <section class="card-panel">
+                <h4>生 涯 数 据</h4>
+                <div class="stat-grid" id="home-stat-grid">
+                    <div class="s"><div class="l">胜率</div><div class="v" id="home-stat-winrate">—</div></div>
+                    <div class="s"><div class="l">总对局</div><div class="v" id="home-stat-matches">—</div></div>
+                    <div class="s"><div class="l">当前连胜</div><div class="v" id="home-stat-streak">—</div></div>
+                    <div class="s"><div class="l">最长连胜</div><div class="v" id="home-stat-best">—</div></div>
+                </div>
+            </section>
+            <section class="card-panel">
+                <h4>段 位 阶 梯</h4>
+                <div class="ladder" id="home-ladder"><div class="li">—</div></div>
+            </section>
+            <section class="card-panel">
+                <h4>在 线 情 况</h4>
+                <!-- 在线人数：这段 DOM 由页面尾部的内联脚本每 10 秒刷一次（只认 #online-count），
+                     容器 id 保留是为了那条既有链路的稳定性。 -->
+                <div class="fields"><span>在线玩家</span><b id="online-count-container"><span id="online-count">0</span> 人</b></div>
+                <div class="fields"><span>休闲队列</span><b id="home-queue-casual">—</b></div>
+                <div class="fields"><span>排位队列</span><b id="home-queue-ranked">—</b></div>
+                <div class="fields"><span>大厅房间</span><b id="home-lobby-rooms">—</b></div>
+            </section>
+        </aside>
         </div>
     </div>
 
@@ -361,6 +474,10 @@
                     </div>
                 </div>
                 <div class="game-info">
+                    <!-- 对手条的背景底板（仅对局屏三区布局可见）：它是**空 div**，
+                         只负责画示意稿 C 那条 .opp-bar（红调渐变 + 1px 描边 + 12 圆角）。
+                         HUD 自己的节点一个没动 —— 条里的内容仍是下面这些既有元素。 -->
+                    <div class="arena-oppbar-bg" aria-hidden="true"></div>
                     <!-- 极限增援倒计回合显示 -->
                     <div id="reinforcement-countdown" class="reinforcement-countdown hidden">
                         <h3>极限增援结算倒计时</h3>
@@ -376,6 +493,21 @@
                     <div class="turn-indicator-inner">
                         <h2>第<span id="game-round">1</span>回合</h2>
                         <button id="surrender-btn" class="surrender-btn danger">投降</button>
+                    </div>
+                    <!--
+                        三区档的「阶段 / 回合 / 攻击」三颗胶囊（示意稿 C 的 .rt 那一组，
+                        贴在对手条右侧）。注意它在 .turn-indicator-inner **之外** ——
+                        条右侧那一格只有 ops 列那么宽（200px），四颗胶囊 + 投降塞不下。
+                        ⚠️ 为什么是**同步副本**而不是把 #current-phase 那几个 span 搬上来：
+                           紧凑档的 HUD 就是 `#turn-indicator > .game-info` 里那三行，
+                           搬走等于把手机屏的信息搬没了。内容由 game.js 从**同一批**
+                           #current-phase / #current-player / #attacks-remaining 读出来
+                           （唯一数据源没变，不是第二份真值），三区档下那三行由 CSS 隐藏。
+                        默认 display:none，只在对局屏三区可见。 -->
+                    <div class="arena-turn-chips" id="arena-turn-chips" aria-hidden="true">
+                        <span class="arena-chip" id="arena-chip-phase">准备阶段</span>
+                        <span class="arena-chip" id="arena-chip-turn">你</span>
+                        <span class="arena-chip">攻击 <b id="arena-chip-attacks">×0</b></span>
                     </div>
                     <!-- 状态显示栏 - 显示延迟结算效果 -->
                     <div id="effect-status-bar" class="effect-status-bar hidden">
@@ -396,6 +528,13 @@
                     </div>
                     <div class="players-info">
                         <div class="player-info">
+                            <!-- 三区档的「你的舰队」标题行（示意稿 C 的 .myfleet .h）。
+                                 ⚠️ 默认 display:none：其余布局下这个 .player-info 是局内名片行，
+                                    多一行标题会把紧凑档那 40px 高的 chip 行撑高。 -->
+                            <div class="arena-fleet-head" aria-hidden="true">
+                                <span class="n">你的舰队</span>
+                                <span class="s" id="arena-fleet-sub">剩余 6 艘</span>
+                            </div>
                             <div class="player-flex-row">
                                 <img id="my-avatar-in-game" src="/static/avatars/default.png" alt="我的头像"
                                      class="avatar-sm">
@@ -403,6 +542,10 @@
                                     <p>你：剩余 <span id="your-ships">6</span> 艘战舰</p>
                                     <div id="my-username-info" class="username-info"></div>
                                 </div>
+                                <!-- 剩余舰 pips（示意稿 C 的 .pips）：6 个小方块，亮的 = 存活。
+                                     内容由 game.js 的 renderArenaRail() 填（唯一写入点）；
+                                     默认 display:none，只在对局屏三区布局里显示。 -->
+                                <div class="arena-pips" id="my-ship-pips" aria-hidden="true"></div>
                             </div>
                         </div>
                         <div class="player-info">
@@ -414,6 +557,7 @@
                                     <div id="opponent-username-info" class="username-info"></div>
                                     <button id="show-opponent-stats" class="btn" style="display:none;">查看对手战绩</button>
                                 </div>
+                                <div class="arena-pips" id="opponent-ship-pips" aria-hidden="true"></div>
                             </div>
                         </div>
                     </div>
@@ -448,6 +592,15 @@
                             <!-- 教皇旨意：弃一张魔法卡换 2 次攻击（生效时由 JS 显示） -->
                             <button id="papal-discard-btn" class="phase-btn" style="display:none;" type="button">弃卡换攻击 +2</button>
                         </div>
+                        <!-- 牌堆 / 弃牌堆 / 手牌计数（示意稿 C 的 .ops-col 里那格 fields 面板）。
+                             ⚠️ 数字由 game.js 的 renderArenaRail() 填；这里只放静态骨架。
+                             只在对局屏三区布局（arena 预设 · 非紧凑档）里可见 ——
+                             紧凑档那套一屏网格一行不动（默认 display:none）。 -->
+                        <div class="arena-counts" id="arena-counts" aria-hidden="true">
+                            <div class="fields"><span>手牌</span><b id="arena-count-hand">0</b></div>
+                            <div class="fields"><span>弃牌堆</span><b id="arena-count-discard">0</b></div>
+                            <div class="fields"><span>剩余舰</span><b id="arena-count-ships">0</b></div>
+                        </div>
                     </div>
                 </div>
 
@@ -471,18 +624,31 @@
                 <div id="quick-chat-toast" class="quick-chat-toast" role="status" aria-live="polite"></div>
                 <!-- 棋盘切换条（仅在单屏放不下两块棋盘时由自适应布局显示） -->
                 <div class="board-tabs" id="board-tabs" role="tablist" aria-label="棋盘切换">
-                    <button type="button" class="board-tab active" data-board-tab="me" role="tab">我的棋盘</button>
-                    <button type="button" class="board-tab" data-board-tab="opp" role="tab">对手棋盘</button>
+                    <button type="button" class="board-tab active" data-board-tab="me" role="tab">你的海域</button>
+                    <button type="button" class="board-tab" data-board-tab="opp" role="tab">对手海域</button>
                 </div>
                 <div class="boards-container">
+                    <!-- 标题用示意稿 C 的叫法（那块海的两种视角）：对手海域是你开火的地方，
+                         你的海域是对手开火的地方。没有任何测试/工具断言这两行文案。 -->
                     <div class="board-wrapper">
-                        <h3>你的棋盘</h3>
+                        <h3>你的海域</h3>
                         <div id="game-player-board" class="board"></div>
                     </div>
                     <div class="board-wrapper">
-                        <h3>对手的棋盘</h3>
+                        <h3>对手海域<span class="sea-sub" id="arena-sea-sub" aria-hidden="true">已探明 0 / 36 格 · 命中 0</span></h3>
                         <div id="opponent-board" class="board"></div>
                     </div>
+                </div>
+                <!--
+                    连锁叠牌轨道（示意稿 C 的 .chain-stack 那一列）。
+                    ⚠️ 它是【空容器】：真正那摞牌是 #chain-display（由 game.js 的
+                    createMagicCardUI 建出来、默认挂在 #magic-system 里，见 adaptive_layout.js
+                    里那条「arena 非紧凑档才把它搬进这条轨道」的判断）。
+                    默认 display:none —— 紧凑档与其它预设一行不动。
+                -->
+                <div class="arena-rail" id="arena-chain-slot">
+                    <div class="arena-rail-head">连 锁 结 算</div>
+                    <div class="arena-rail-empty">暂无连锁</div>
                 </div>
 
                 <!-- 连锁提示区域 -->
@@ -626,23 +792,41 @@
         </div>
     </div>
 
-    <!-- 游戏结束界面 -->
-    <div id="game-over-screen" class="screen">
-        <!-- 胜负这一行此前与三块附属面板完全同权（四种结果文案 computed 全等、
-             style.css 里 `#game-result` 零命中）。挂一个稳定类，好让 CSS 按
-             `.game-result.win` / `.lose` / `.draw` 分级；变体类由 game.js 在写
-             textContent 时同步设置（本批只加类，不接线）。 -->
-        <h2 id="game-result" class="game-result" aria-live="polite"></h2>
+    <!-- 游戏结束界面（2026-09-27 按示意稿 V 收口：判定头 + 四张卡 + 操作行）
+         ⚠️ 所有 id 一个都没动：#game-result / #achievement-unlock-panel / #xp-gain-panel
+            （及其 8 个内层 id）/ #rank-gain-panel（及其 12 个内层 id）/ #play-again /
+            #return-to-menu / .game-over-buttons / .game-over-actions
+            —— `level_check`、`ranked_check`、`recent_opponent_check`（它把「加好友」按钮
+            插在 #game-result 之后）都按这些 id 找落点。
+         新增的只有展示层：判定头上的说明/对手/段位/用时，以及「本局数据」卡。 -->
+    <div id="game-over-screen" class="screen over-screen">
+        <div class="over-wrap">
+        <!-- 判定头：胜负大字 + 一句话说明 + 右侧元信息。
+             `#game-result` 这一行此前与三块附属面板完全同权（四种结果文案 computed 全等、
+             style.css 里 `#game-result` 零命中）。现在它是判定头里的**唯一大字**，
+             `.over-head.win / .lose` 由 game.js 与文案同步设置（同一个函数里写，不会漂移）。 -->
+        <section class="over-head" id="over-head">
+            <div class="over-verdict">
+                <h2 id="game-result" class="game-result" aria-live="polite"></h2>
+                <span class="over-vs" id="over-sub"></span>
+            </div>
+            <div class="over-meta">
+                <span>对手 <b id="over-opponent">—</b></span>
+                <span>段位 <b id="over-opp-rank">—</b></span>
+                <span>用时 <b id="over-duration">—</b></span>
+            </div>
+        </section>
+        <div class="over-cols">
         <!-- 本局刚解锁的徽章（结算提示）。
              服务端在结算时把 `achievements_unlocked` **只发给本人**（房间广播那句
              「XX 解锁了新徽章：YY」是给双方看的），这里渲染成"本局刚解锁 ⚓首胜"。
              没有新解锁时整块隐藏 —— 由 game.js 的 renderAchievementUnlockPanel() 决定。 -->
-        <div id="achievement-unlock-panel" class="achievement-unlock hidden"></div>
+        <div id="achievement-unlock-panel" class="achievement-unlock over-card hidden"></div>
         <!-- 本局经验 / 等级（2026-09-17 追加）。
              服务端结算时把 `xp_gained` 单发给本人：里面带**动画分段**
              （每段：本级从哪填到哪、够不够升级），前端只按段播滚动条；
              升级的那一段会播"条子清空重来"，然后继续加。 -->
-        <div id="xp-gain-panel" class="xp-gain hidden">
+        <div id="xp-gain-panel" class="xp-gain over-card hidden">
             <div class="xp-gain-head">
                 <span class="xp-gain-delta">本局获得 <b id="xp-delta">+0</b> 经验</span>
                 <span class="xp-gain-level">Lv.<b id="xp-level-now">1</b></span>
@@ -658,7 +842,7 @@
              数字滚动 + 进度条增长，涨满一个小段位就「清空重来」继续涨。
              ⚠️ 只有收到 socket 事件 `rank_changed` 时才会出现 —— 休闲局永远收不到，
              所以这一块在休闲对局里**永远不显示**（不是靠 mode 判断，是靠事件本身）。 -->
-        <div id="rank-gain-panel" class="rank-gain hidden">
+        <div id="rank-gain-panel" class="rank-gain over-card hidden">
             <div class="rank-gain-head">
                 <span class="rank-gain-delta"><span id="rank-delta-prefix">本局段位分 </span><b id="rank-delta">+0</b></span>
                 <span class="rank-gain-role" id="rank-role"></span>
@@ -685,6 +869,20 @@
             <div id="rank-clamp-note" class="rank-clamp-note hidden"></div>
             <div id="rank-admiral-note" class="rank-admiral-note hidden"></div>
         </div>
+        <!-- 本局数据（示意稿 V 的第三张卡）。
+             ⚠️ 三行全部是**前端手上已有的真值**，不新开接口、不做推算：
+                回合     ← gameState.round（服务端随 game_state / room_sync 下发）
+                命中/开火 ← gameState.myAttacks（每发攻击结果由服务端 attack_result 给）
+                剩余战舰 ← HUD 上那两个数字（服务端 ships_updated 的权威值，结算时还挂在 DOM 上）
+             「用了 N 张魔法卡」示意稿里有，但前端没有权威来源（room.magic_history 不下发），
+             与其编一个数字，不如不摆这一行。 -->
+        <section class="over-card over-stats" id="over-stats">
+            <h4 class="over-lab">本 局 数 据</h4>
+            <div class="over-stat"><span>回合</span><b id="over-stat-round">—</b></div>
+            <div class="over-stat"><span>命中 / 开火</span><b id="over-stat-fire">—</b></div>
+            <div class="over-stat"><span>剩余战舰</span><b id="over-stat-ships">—</b></div>
+        </section>
+        </div><!-- /.over-cols -->
         <div class="game-over-buttons">
             <!-- 320×568 与横屏 664×336 下这两个按钮会被前面的面板推出首屏
                  （实测 t=825/b=891 与 b=737）。包一层容器给 CSS 做吸底条用；
@@ -695,6 +893,7 @@
                 <button id="return-to-menu">返回主菜单</button>
             </div>
         </div>
+        </div><!-- /.over-wrap -->
     </div>
 
     <!-- 个人信息模态弹窗（2026-09-17 名片改版）——⚠️ 这里是【编辑面】。
@@ -857,6 +1056,7 @@
                                 <p class="theme-group-title">Fluent（默认）</p>
                                 <div class="theme-group-cards">
                                     <button type="button" class="theme-card" data-preset="fluent"><span class="theme-strip"></span><b>Fluent</b><small>Windows 11 · 微软风格</small></button>
+                                    <button type="button" class="theme-card" data-preset="arena"><span class="theme-strip"></span><b>竞技场</b><small>卡牌竞技场 · 紫金</small></button>
                                 </div>
                             </div>
                             <div class="theme-group" data-group="legacy">

@@ -91,58 +91,15 @@ html.theme-dark {
                linear-gradient(180deg, #0a1428 0%, #0e1f3c 55%, #102544 100%);
 }
 
-/* 主题预设（2026-09-17 名片改版）—— `html[data-theme-preset="…"]` 由设置页写入
-   （game.js 的 applyThemePreset()）。deep / classic **故意不在这里覆盖**：
-   深海 = html.theme-dark 那套，经典 = :root 那套，两个"预设"就是现状本身。
+/* 主题预设（`html[data-theme-preset="…"]` 由设置页写，见 game.js 的 applyThemePreset()）。
+   ⚠️ 7 个预设的**唯一定义处**是下面第 4 节「Fluent 2 设计语言」里的两组：浅色一组
+   + `html.theme-dark[data-theme-preset="…"]` 一组。顺序即优先级，说明也在那一节。
 
-   ⚠️ 这两组必须排在上面 html.theme-dark 之后 —— 与它特异性相同（html + 一个属性选择器），
-   只能靠源码顺序决定谁生效；写到前面去会被深色主题整块盖掉，表现为"选了预设没反应"。
-
-   覆盖的变量比设计稿点名的六个多两个（--primary-50 / --shadow-glow）：这两个同样是
-   "由主色派生"的，而 game.js 的自定义主色路径（applyPrimaryColor）**也会写它们**，
-   切回预设时靠 removeProperty 撤销 —— 只覆盖六个的话，浅色主题下会出现
-   "主色变了、.secondary:hover 的底色还是浅蓝"这种半截效果。
-   --secondary-dark 只被第 2198 节「游戏结束」那一处渐变用到，与名片无关，留在原主题值。 */
-html[data-theme-preset="lava"] {
-    --primary: #f97316;
-    --primary-600: #c2410c;
-    --primary-rgb: 249, 115, 22;
-    --primary-50: rgba(249, 115, 22, 0.14);
-    --primary-gradient: linear-gradient(135deg, #c2410c, #f97316);
-    --shadow-glow: 0 0 18px rgba(249, 115, 22, 0.45);
-    --accent: #fbbf24;
-    --secondary: #ef4444;
-}
-html[data-theme-preset="cyber"] {
-    --primary: #22d3ee;
-    --primary-600: #7c3aed;
-    --primary-rgb: 34, 211, 238;
-    --primary-50: rgba(34, 211, 238, 0.14);
-    --primary-gradient: linear-gradient(135deg, #7c3aed, #22d3ee);
-    --shadow-glow: 0 0 18px rgba(34, 211, 238, 0.45);
-    --accent: #f472b6;
-    --secondary: #a855f7;
-}
-html[data-theme-preset="dusk"] {
-    --primary: #f472b6;
-    --primary-600: #be185d;
-    --primary-rgb: 244, 114, 182;
-    --primary-50: rgba(244, 114, 182, 0.14);
-    --primary-gradient: linear-gradient(135deg, #be185d, #f472b6);
-    --shadow-glow: 0 0 18px rgba(244, 114, 182, 0.45);
-    --accent: #fcd34d;
-    --secondary: #818cf8;
-}
-html[data-theme-preset="aurora"] {
-    --primary: #34d399;
-    --primary-600: #0f766e;
-    --primary-rgb: 52, 211, 153;
-    --primary-50: rgba(52, 211, 153, 0.14);
-    --primary-gradient: linear-gradient(135deg, #0f766e, #34d399);
-    --shadow-glow: 0 0 18px rgba(52, 211, 153, 0.45);
-    --accent: #a3e635;
-    --secondary: #38bdf8;
-}
+   这里原本还有一份 2026-09-17 的旧定义（lava / cyber / dusk / aurora 的浅色值，
+   以及"deep / classic 故意不覆盖"的方案）。它和下面第 4 节的选择器**特异性相同**
+   而源码顺序在前，被整块盖掉、从未生效 —— 2026-09-22 浏览器实测确认
+   （浅色 + 熔岩读到的是 #c2410c，不是这里的 #f97316）后删除，免得以后
+   "改了这里却没反应"。 */
 
 /* ============================================================
    战舰游戏 · Fluent 2 设计语言（Windows 11 / 微软）
@@ -537,6 +494,31 @@ html.theme-dark[data-theme-preset="aurora"] {
     --accent: #a3e635;
     --secondary: #38bdf8;
     --fluent-focus-ring-color: rgba(52, 211, 153, 0.9);
+}
+
+/* ---------- 4.1 设置页预设卡的缩略色 ----------
+   每张预设卡要显示**它自己**的强调色。⚠️ 不能借用 `--primary` —— 那是**当前**
+   预设的值：7 张卡会跟着当前主题一起变色（2026-09-22 实测：切到熔岩后 7 张卡
+   全变橙、深海/熔岩/暮光/经典在 Fluent 下全是同一个蓝），选择器等于没有颜色预览。
+   这里给每个预设两档固定色 + 明暗各一套，取自上面对应预设的强调色
+   （-alt 是渐变的另一端：cyber 走它的紫、aurora 走它的绿，保持卡片文案的观感）。 */
+:root {
+    --swatch-fluent: #0078d4;    --swatch-fluent-alt: #005a9e;
+    --swatch-classic: #1565c0;   --swatch-classic-alt: #0d47a1;
+    --swatch-deep: #0d5aa7;      --swatch-deep-alt: #094a8a;
+    --swatch-lava: #c2410c;      --swatch-lava-alt: #9a3409;
+    --swatch-cyber: #0e7490;     --swatch-cyber-alt: #6d28d9;
+    --swatch-dusk: #be185d;      --swatch-dusk-alt: #9d1449;
+    --swatch-aurora: #0f766e;    --swatch-aurora-alt: #4d7c0f;
+}
+html.theme-dark {
+    --swatch-fluent: #60cdff;    --swatch-fluent-alt: #4cc2ff;
+    --swatch-classic: #64b5f6;   --swatch-classic-alt: #42a5f5;
+    --swatch-deep: #4aa3f0;      --swatch-deep-alt: #2f8fdd;
+    --swatch-lava: #fb923c;      --swatch-lava-alt: #f97316;
+    --swatch-cyber: #22d3ee;     --swatch-cyber-alt: #a855f7;
+    --swatch-dusk: #f472b6;      --swatch-dusk-alt: #ec4899;
+    --swatch-aurora: #34d399;    --swatch-aurora-alt: #a3e635;
 }
 
 /* ---------- 5. 叠加阶梯 / 自有强调色 / 语义分量（全预设共用） ----------
@@ -1005,11 +987,20 @@ h3 { font-size: clamp(1rem, 2.6vw, 1.3rem); }
  * 只盖住中间一列、右侧棋盘浮窗贴不到视口边缘，即"不能正常地利用整个屏幕"。
  * 毛玻璃改由没有 fixed 后代的 ::before 承担，视觉不变。
  * ⚠️ 这条约束在 Fluent 化之后**依然成立**：Mica 的模糊只能放在 ::before 上。
+ *
+ * ⚠️⚠️ 但**必须**同时给这个伪元素 `z-index: -1`：本容器自己就是个 stacking context
+ * （position: relative + z-index: 1），而它的兄弟 .screen 及里面的标题/按钮/正文都是
+ * **静态**定位 —— 静态内容按绘制顺序排在"定位且 z-index:auto"的伪元素**前面**。
+ * 少了这一行，这层模糊就盖在正文**上面**，把整页内容糊成一团色斑：首页、布阵说明、
+ * 猜拳的石头/剪刀/布全都会看不见。而 .cell、.modal-content 这类本来就是
+ * position:relative 的元素反而清晰，光看棋盘会以为没问题（2026-09-22 实测踩到过：
+ * Fluent 那次提交把 `z-index: -1` 删了，同时把模糊从 14px 提到 60px）。
  */
 .game-container::before {
     content: '';
     position: absolute;
     inset: 0;
+    z-index: -1;                 /* ⚠️ 见上：少了它，模糊层会盖住同级的静态内容 */
     border-radius: inherit;
     -webkit-backdrop-filter: blur(var(--fluent-mica-blur));
     backdrop-filter: blur(var(--fluent-mica-blur));
@@ -1124,7 +1115,11 @@ button:disabled, .btn:disabled {
     opacity: 1;   /* Fluent 用色值表达禁用，不靠整体透明度 */
 }
 
-/* 输入类控件：白/浅底 + 1px 描边，聚焦时**底边加粗成强调色**（Fluent 的标志性做法） */
+/* 输入类控件：浅底 + 1px 描边（底边 2px 是 Fluent 的标志性做法），
+   聚焦时四条边一起转成强调色，焦点环由上面那条 :focus-visible 画。
+   ⚠️ 这里**不要**写 `outline: none`：它与 `input:focus-visible` 特异性相同、
+   又排在后面，会把这个文件自己声明的 Fluent 焦点环整个压掉 ——
+   键盘用户就只剩"边框变色"这一个极弱的提示（2026-09-22 实测确认过）。 */
 input, select, textarea {
     padding: var(--fluent-space-2) var(--fluent-space-3);
     min-height: 32px;
@@ -1222,7 +1217,10 @@ input:focus, select:focus, textarea:focus {
     margin-bottom: var(--fluent-space-2);
     /* 合并自原第 7136 行的重复定义 */
 }
-.start-modes { /* 首页模式区（网格）在后文第 35 节定义，这里只兜底间距 */ }
+/* 首页模式区（.start-modes / .start-more）的网格在后文第 35.3 / 35.4 节定义。
+   这里原本留了一条**空规则** `.start-modes { …只兜底间距 }` 当指路牌 —— 声明体是空的，
+   既没有兜底任何东西，又让 `.start-modes` 在同文件里出现两次（AC6 的 dupSel 白扣一格），
+   2026-09-22 改成注释。 */
 #start-screen .button-group {
     flex-direction: column;
     align-items: center;
@@ -2764,7 +2762,7 @@ body.cool-effects-enabled .cell.cool-flash {
     color: var(--text);
 }
 .modal-input:focus {
-    outline: none;
+    /* 同 1143 行那条：不写 `outline: none`，否则会压掉 `input:focus-visible` 的焦点环 */
     border-color: var(--primary);
     border-bottom-color: var(--primary);
     box-shadow: none;
@@ -3525,23 +3523,23 @@ html.theme-dark .priority-hint { color: var(--deco-priority-hint-dark); }
 }
 .effect-indicators .effect-icon {
     padding: 2px 8px;
-    border-radius: 10px;
+    border-radius: var(--fluent-radius-control);
     font-size: 12px;
     line-height: 1.6;
     background: var(--deco-amber-a18);
     border: 1px solid var(--deco-amber-a55-1);
     color: inherit;
     font-family: inherit;
-    /* 可点开：必须给出"能交互"的暗示（旧实现是 cursor:default + 原生 title，
-/* 角落里空间有限：窄屏上把角标压小一点，别盖住棋盘 */
+    /* 可点开：必须给出"能交互"的暗示（旧实现是 cursor:default + 原生 title） */
+    /* 角落里空间有限：窄屏上把角标压小一点，别盖住棋盘 —— ⚠️ 这两条注释原本是
+       一条没写收尾 `*/` 的注释 + 一条正常注释，粘成了一个（CSS 注释不能嵌套）。 */
     cursor: help;
-    transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
+    transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 .effect-indicators .effect-icon:hover,
 .effect-indicators .effect-icon:focus-visible {
     background: var(--deco-amber-a34);
     box-shadow: 0 0 0 2px var(--deco-amber-a35-1);
-    transform: translateY(-1px);
     outline: none;
 }
 
@@ -5108,13 +5106,18 @@ html:not(.theme-dark) .pf-actions .pf-flower.on { box-shadow: none; }
     height: 30px;
     margin-bottom: var(--fluent-space-2);
     border-radius: var(--fluent-radius-control);
+    /* 兜底：自定义主色（data-preset="custom"）没有缩略色令牌，就跟着当前主色走 */
     background: linear-gradient(135deg, var(--primary-600), var(--primary));
 }
-.theme-card[data-preset="lava"] .theme-strip    { background: linear-gradient(135deg, var(--primary-600), var(--primary)); }
-.theme-card[data-preset="cyber"] .theme-strip   { background: linear-gradient(135deg, var(--secondary), var(--primary)); }
-.theme-card[data-preset="dusk"] .theme-strip    { background: linear-gradient(135deg, var(--primary), var(--primary)); }
-.theme-card[data-preset="aurora"] .theme-strip  { background: linear-gradient(135deg, var(--primary), var(--success)); }
-.theme-card[data-preset="classic"] .theme-strip { background: linear-gradient(135deg, var(--primary), var(--primary-600)); }
+/* ⚠️ 每张卡必须用**它自己**的 --swatch-*（令牌区 4.1）。写成 var(--primary)
+   会让 7 张卡一起跟着当前主题变色，等于没有颜色预览 —— 2026-09-22 实测的旧写法。 */
+.theme-card[data-preset="fluent"]  .theme-strip { background: linear-gradient(135deg, var(--swatch-fluent-alt), var(--swatch-fluent)); }
+.theme-card[data-preset="classic"] .theme-strip { background: linear-gradient(135deg, var(--swatch-classic-alt), var(--swatch-classic)); }
+.theme-card[data-preset="deep"]    .theme-strip { background: linear-gradient(135deg, var(--swatch-deep-alt), var(--swatch-deep)); }
+.theme-card[data-preset="lava"]    .theme-strip { background: linear-gradient(135deg, var(--swatch-lava-alt), var(--swatch-lava)); }
+.theme-card[data-preset="cyber"]   .theme-strip { background: linear-gradient(135deg, var(--swatch-cyber-alt), var(--swatch-cyber)); }
+.theme-card[data-preset="dusk"]    .theme-strip { background: linear-gradient(135deg, var(--swatch-dusk-alt), var(--swatch-dusk)); }
+.theme-card[data-preset="aurora"]  .theme-strip { background: linear-gradient(135deg, var(--swatch-aurora-alt), var(--swatch-aurora)); }
 .theme-card b { display: block; font-size: 0.84rem; }
 .theme-card small { display: block; font-size: 0.72rem; color: var(--muted); }
 .theme-card.selected {
@@ -6846,7 +6849,13 @@ html.theme-dark .mode-ai select {
    （第 3 节），挂在 `<select>` 上**完全无效** —— 它此前吃的是通用 `input, select`
    规则（白底方框），于是与旁边的描边按钮不同形态。这里给 select 补上同款描边。 */
 select.secondary {
-    background: transparent;
+    /* ⚠️ 只能写 background-color，不能写 `background` 简写：简写会把上面
+       `.mode-ai select` 自绘箭头用的 background-image / -position / -size 一起重置，
+       而本规则与它**特异性相同又排在后面**。2026-09-22 浏览器实测后果：
+       浅色态箭头整个消失（看着不像下拉框）；深色态因为 `html.theme-dark .mode-ai select`
+       只补回了 background-image，箭头以默认尺寸(auto/0% 0%/repeat)铺满整个框 ——
+       两个大三角压住「电脑：普通」的文字。 */
+    background-color: transparent;
     color: var(--primary);
     border: 1px solid var(--primary);
     box-shadow: none;

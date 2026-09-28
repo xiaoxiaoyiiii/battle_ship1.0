@@ -189,9 +189,28 @@ function wideViewportProbe() {
       if (t && (t === c || c.contains(t) || t.contains(c))) handClickable++;
     });
   }
+  // 棋盘逐格命中测试。⚠️ 宽屏组以前只查「棋盘在首屏内」，于是「贴右边缘的魔法预览浮窗
+  // 压住并排棋盘的外侧几列」这种遮挡查不出来（紧凑组有「棋盘格子零遮挡」，宽屏组漏了）。
+  function boardOcc(id) {
+    var b = document.getElementById(id);
+    if (!b || !shown(b)) return { id: id, present: false };
+    var cells = [].slice.call(b.querySelectorAll('.cell'));
+    var occ = 0, worst = null;
+    cells.forEach(function (c) {
+      var cb = c.getBoundingClientRect();
+      var cx = (cb.left + cb.right) / 2, cy = (cb.top + cb.bottom) / 2;
+      if (cx < 0 || cy < 0 || cx > vw || cy > vh) return;
+      var t = document.elementFromPoint(cx, cy);
+      if (!(t === c || (t && c.contains(t)) || (t && t.contains(c)))) {
+        occ++; if (!worst) worst = (t && (t.id || t.className || t.tagName)) || null;
+      }
+    });
+    return { id: id, present: true, occluded: occ, cells: cells.length, worst: worst };
+  }
   return {
     vw: vw, vh: vh, docH: de.scrollHeight,
     boardRect: R(board), boardInView: boardInView, boardBottom: bb ? Math.round(bb.bottom) : null,
+    boardOcc: [boardOcc('game-player-board'), boardOcc('opponent-board')],
     handCards: handCards, handClickable: handClickable, handRect: R(document.getElementById('magic-system')),
     blockedHud: blocked,
     previewPos: (function () { var p = document.getElementById('magic-card-preview'); return p ? getComputedStyle(p).position : null; })()
@@ -359,7 +378,12 @@ const WIDE_VIEWPORTS = [
   ['1600x1000', 1600, 1000],
   ['1440x900', 1440, 900],
   ['1366x768', 1366, 768],
-  ['1280x800', 1280, 800]
+  ['1280x800', 1280, 800],
+  // ⚠️ 16:9 的 1280x720 也是常见笔记本档，此前不在组里 —— 而它正是漏掉的那一档：
+  // 720 高时纵向预算比 768 还紧 48px，两块棋盘**堆叠**必然被贴底手牌压住下半截
+  // （实测对手 36 格全部点不到）。现在桌面档走 adaptive_layout.js 的 side 模式并排，
+  // 补进组防止再退回堆叠。
+  ['1280x720', 1280, 720]
 ];
 
 // 一次性账号：登录态才能看到首页等级条（`#my-level-strip` 对游客整块隐藏），
@@ -566,6 +590,20 @@ try {
       check(wv.blockedHud.length === 0, wlabel + ' HUD 控件未被浮窗盖住（点得到）', wv.blockedHud);
       check(wv.handCards > 0 && wv.handClickable > 0, wlabel + ' 手牌可见且可点（可点计数 > 0）',
         { cards: wv.handCards, clickable: wv.handClickable, rect: wv.handRect });
+      // ⚠️ 手牌是"贴底常驻"的：下沿一旦超出视口，卡片下半截（速阶/类型行）就永远看不见、
+      //    也滚不到（对局屏 body 是 overflow:hidden）。2026-09-22 实测 1280x720 漏的就是这条：
+      //    旧的「可点计数 > 0」只要求卡片中心落在视口内，下沿被裁 23px 照样 PASS。
+      check(!!wv.handRect && wv.handRect.bottom <= wv.vh + 1 && wv.handRect.y >= -1,
+        wlabel + ' 整条手牌都在视口内（上下沿都不越界）',
+        { rect: wv.handRect, vh: wv.vh });
+      // ⚠️ 棋盘逐格遮挡：**当前是诊断输出，不是判据**。
+      //    2026-09-22 用它量出：1366x768 对手棋盘 36 格里 30 格被贴底手牌盖住
+      //    （1280x800/720 各 24 格）—— 高度 <=800px 的桌面档，堆叠的第二块棋盘
+      //    伸到手牌下面。修法要动「两块同尺寸且 >=280px」这条宽屏契约（并排放不下、
+      //    tabs 单块又只有 ~267px），见 docs/FLUENT_UI_2026_09_21.md §10。
+      //    修完之后把这一行改成 check(occBad.length === 0, ...) 即可。
+      const occBad = (wv.boardOcc || []).filter((b) => b.present && b.occluded > 0);
+      console.log('     棋盘逐格遮挡（诊断）: ' + (occBad.length ? JSON.stringify(occBad) : '无'));
       if (SHOTS) { const s = await send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(SHOTS + '/' + wlabel + '.png', Buffer.from(s.data, 'base64')); }
     }
 

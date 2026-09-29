@@ -1,0 +1,683 @@
+/* ============================================================================
+   C+ 周边屏幕（2026-09-29）
+   ---------------------------------------------------------------------------
+   为什么**新开一个文件**而不是追加进 style.css：
+     ① tools/fluent_css_metrics.mjs 的 AC6 预算只统计 static/style.css，而那里
+        hex 只剩 10、重复选择器只剩 1 的余量（2026-09-29 实测 100/89/31/31 对
+        阈值 110/180/40/32）。这十屏的原型词汇有大量裸色，写进去当场顶爆。
+     ② 十屏是"一套视觉"，单独成文件 = 整体可回退（拆掉 index.html 里那一行
+        <link> 就退回原样，不需要逐条删规则）。
+   代价：本文件不进 AC6 统计，所以纪律靠人守 —— 能用令牌就用令牌；
+   只有"令牌里确实没有"的颜色（原型的紫调胶囊底、金色光晕、海面内发光）才写裸值。
+
+   作用域 = **两道门，缺一不可**：
+     html[data-arena-screens="v2"]     —— 开发期总开关（值改成别的一律失效）
+     html[data-arena-screen-list~="X"] —— 逐屏启用清单（空格分隔）
+   两个属性都由 templates/index.html 按 api.py 的 ARENA_SCREEN_LIST 渲染，
+   所以"回退某一屏"是改 Python 里一个字符串，不需要动 CSS。
+   ⚠️ 不向玩家暴露这个开关（实施方案 §5）。
+
+   ⚠️ **故意不把主题预设放进作用域**（实施方案 §5 的行文是"用 arena 预设和目标屏根类
+      限定作用域"）。理由有两条，都是实测：
+        ① 现有主题契约里 `data-theme-preset="custom"` = "玩家动过主色微调"。把它排除在外，
+           等于"改一下强调色，十个屏整层结构退回 Fluent"——那是把**布局轴**绑在**颜色轴**上。
+           首页的 C 三栏（`.home-wrap`）就没绑预设，只绑结构；本层与它保持一致。
+        ② 实施方案 §5 自己写着"布局选择与颜色预设分开，避免破坏现有主题契约"。
+      于是：**结构**由开发开关 + 屏清单管，**颜色**仍全部来自预设给的令牌
+      （--arena-* 拿不到时按 --ax-* 别名兜底到当前预设的通用令牌）。
+
+   ⚠️ 只动外观与排列。id、文案、以及被 tools/*_check.mjs 断言的盒模型结构值
+      （棋盘 300×300 / 单格 42px / `.lobby-columns` 恒 3 条 fr 轨道 / `.magic-card`
+      比例 0.715）一律不改。
+   ⚠️ 不许碰的目标（fluent_style_check 的圆角档位 + arena 形状签名）：
+      #find-match / #player-name / #custom-create-room / .modal-content / .nav /
+      .theme-card 的 border-radius。改其中一个要同时改另一个（签名必须唯一）。
+   ⚠️ .game-container / .game-content / .game-main-container / .screen.active
+      不许出现 transform / filter / backdrop-filter（会让弹窗改以它为包含块）。
+
+   词汇出处（都从 docs/ui_demos/arena-suite.css + arena-next.css 数出来，不是新设计）：
+     面板   12px 圆角 + 1px 描边 + 无阴影（示意稿 C 的 .card-panel）
+     海面   14px 圆角 + 内发光（C 的 .sea）
+     小件   9px；胶囊 999px
+     小标题 10–11px + 字距 .18em + 600
+     主行动 --arena-hero-grad + --arena-hero-glow；次行动描边；三级透明底
+     数字   等宽 --fluent-font-mono
+     分隔   1px dashed var(--ax-dash)
+   ============================================================================ */
+
+/* ---------- 0. 令牌 ----------
+   这一层只做一件事：把"预设给的色板"翻译成一组稳定的 --ax-* 名字。
+   `var(--arena-x, 兜底)` 的写法是刻意的 —— arena 预设下拿到示意稿 C 的原色；
+   其余预设（含 custom）下 --arena-* 未定义，就落到当前预设的通用令牌上。
+   于是**同一份结构在任何预设下都成立**，也不会出现"var(--未定义)"导致整条声明失效。 */
+html[data-arena-screens="v2"] {
+    --ax-kicker: var(--arena-vio, var(--accent));
+    --ax-vio: var(--arena-vio, var(--primary));
+    --ax-cy: var(--arena-cy, var(--secondary));
+    --ax-gold: var(--arena-gold, var(--accent));
+    --ax-gold-strong: var(--arena-gold-strong, var(--accent));
+    --ax-grad: var(--arena-hero-grad, var(--primary-gradient));
+    --ax-grad-line: var(--arena-hero-border, var(--border-strong));
+    --ax-grad-fg: var(--arena-hero-fg, var(--on-accent));
+    --ax-glow: var(--arena-hero-glow, var(--shadow-glow));
+    --ax-chip: var(--arena-chip-bg, var(--primary-50));
+    --ax-dash: var(--arena-line-dash, var(--fluent-stroke-default));
+    --ax-sea-glow: var(--arena-sea-glow, var(--primary-50));
+    --ax-radius: var(--fluent-radius-xl);
+    --ax-radius-sm: 9px;
+    --ax-radius-sea: 14px;
+    --ax-hair: var(--fluent-stroke-default);
+    --ax-halo-win: radial-gradient(560px 300px at 50% 0%, rgba(201, 162, 76, 0.14), transparent 70%);
+    --ax-halo-vio: radial-gradient(560px 300px at 50% 0%, rgba(124, 92, 240, 0.16), transparent 70%);
+    --ax-halo-row: linear-gradient(90deg, rgba(124, 92, 240, 0.07), rgba(124, 92, 240, 0.01));
+    --ax-glow-vio: 0 0 0 3px rgba(124, 92, 240, 0.22);
+}
+
+/* 屏头的 kicker 要过 4.5:1 正文门槛：暗色态 #6d4bd8 在 #0b0d18 上只有 4.29:1，
+   所以暗色态改用 --primary（arena 下 = #9d84f5 = 6.5:1）。 */
+html.theme-dark[data-arena-screens="v2"] {
+    --ax-kicker: var(--primary);
+}
+
+/* ---------- 1. 公共：屏头 ----------
+   原型是 eyebrow + 30px 标题 + 副题 + 右下角页码。页码属于"选稿用"的导航
+   （实施方案 §2 明确不进正式游戏），这里只做前两件。
+   eyebrow 用 ::before 生成而不是加元素：**纯装饰**，不需要进无障碍树，
+   而且这样 index.html 一个节点都不用加（回退时自动消失）。 */
+html[data-arena-screens="v2"] #lobby-screen > h2,
+html[data-arena-screens="v2"] #leaderboard-screen > h2,
+html[data-arena-screens="v2"] #spectate-screen > .spectate-title,
+html[data-arena-screens="v2"] #replay-screen > .replay-title,
+html[data-arena-screens="v2"] #custom-room-screen > h1,
+html[data-arena-screens="v2"] #game-over-screen .over-verdict > h2,
+html[data-arena-screens="v2"] #help-modal .modal-content > h2,
+html[data-arena-screens="v2"] #settings-modal .modal-content > h2,
+html[data-arena-screens="v2"] #profile-modal .modal-content > h2 {
+    text-align: left;
+    font-size: 24px;
+    line-height: 1.25;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    margin: 0 0 6px;
+}
+
+html[data-arena-screens="v2"] #lobby-screen > h2::before,
+html[data-arena-screens="v2"] #leaderboard-screen > h2::before,
+html[data-arena-screens="v2"] #spectate-screen > .spectate-title::before,
+html[data-arena-screens="v2"] #replay-screen > .replay-title::before,
+html[data-arena-screens="v2"] #custom-room-screen > h1::before,
+html[data-arena-screens="v2"] #help-modal .modal-content > h2::before,
+html[data-arena-screens="v2"] #settings-modal .modal-content > h2::before {
+    display: block;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.19em;
+    line-height: 1.6;
+    color: var(--ax-kicker);
+    margin-bottom: 4px;
+}
+
+/* 副题：原型是 12px 的 --muted，且左对齐（正式版原来是居中） */
+html[data-arena-screens="v2"] .lobby-subtitle,
+html[data-arena-screens="v2"] .spectate-subtitle,
+html[data-arena-screens="v2"] .replay-subtitle {
+    text-align: left;
+    font-size: 12px;
+    line-height: 1.7;
+    margin: 0 0 16px;
+}
+
+html[data-arena-screens="v2"] #lobby-screen > h2::before { content: "LOBBY"; }
+html[data-arena-screens="v2"] #leaderboard-screen > h2::before { content: "RANKING"; }
+html[data-arena-screens="v2"] #spectate-screen > .spectate-title::before { content: "SPECTATE"; }
+html[data-arena-screens="v2"] #replay-screen > .replay-title::before { content: "REPLAY"; }
+html[data-arena-screens="v2"] #custom-room-screen > h1::before { content: "FRIEND ROOM"; }
+html[data-arena-screens="v2"] #help-modal .modal-content > h2::before { content: "HELP · CARD CODEX"; }
+html[data-arena-screens="v2"] #settings-modal .modal-content > h2::before { content: "PREFERENCES"; }
+
+/* ---------- 2. 公共：面板 ----------
+   只有 arena 里带 ax-panel 的容器变 C+ 面板；其余既有组件不动。 */
+html[data-arena-screens="v2"] .ax-panel {
+    background-color: var(--surface-strong);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius);
+    box-shadow: none;
+    padding: 20px 22px;
+    min-width: 0;
+}
+
+/* 面板小标题：原型 .section-title h2(14px) + 右侧 .18em 微标签 */
+html[data-arena-screens="v2"] .ax-panel > h3,
+html[data-arena-screens="v2"] .ax-panel-title {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 0 0 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--ax-hair);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-align: left;
+}
+
+html[data-arena-screens="v2"] .ax-kicker {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    color: var(--muted);
+    text-transform: uppercase;
+}
+
+/* ---------- 3. 公共：筛选栏 / 搜索 / 选择器 / 分段控件 ---------- */
+html[data-arena-screens="v2"] .ax-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+html[data-arena-screens="v2"] .ax-bar input[type="search"],
+html[data-arena-screens="v2"] .ax-bar input[type="text"],
+html[data-arena-screens="v2"] .ax-bar select {
+    min-width: 0;
+    max-width: 100%;
+    padding: 9px 12px;
+    font-size: 12px;
+    font-family: inherit;
+    color: var(--text);
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius-sm);
+    box-shadow: none;
+}
+
+html[data-arena-screens="v2"] .ax-bar input[type="search"] {
+    flex: 1 1 200px;
+}
+
+html[data-arena-screens="v2"] .ax-bar input::placeholder {
+    color: var(--muted);
+}
+
+html[data-arena-screens="v2"] .ax-bar :is(input, select):focus-visible {
+    outline: 2px solid var(--fluent-focus-ring-color);
+    outline-offset: 2px;
+}
+
+/* 分段控件（原型的 .segments）：胶囊容器 + 选中格填紫调 */
+html[data-arena-screens="v2"] .ax-seg {
+    display: flex;
+    gap: 3px;
+    padding: 4px;
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius-sm);
+    max-width: 100%;
+    min-width: 0;
+}
+
+html[data-arena-screens="v2"] .ax-seg > * {
+    padding: 7px 12px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--muted);
+    background: none;
+    border: 0;
+    border-radius: 6px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+html[data-arena-screens="v2"] .ax-seg > .active,
+html[data-arena-screens="v2"] .ax-seg > [aria-selected="true"] {
+    background-color: var(--ax-chip);
+    color: var(--text);
+    box-shadow: inset 0 0 0 1px var(--panel-border);
+}
+
+/* ---------- 4. 公共：胶囊 / 数字 ---------- */
+html[data-arena-screens="v2"] .ax-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--muted);
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--fluent-radius-full);
+    white-space: nowrap;
+}
+
+html[data-arena-screens="v2"] .ax-chip > b,
+html[data-arena-screens="v2"] .ax-num {
+    font-family: var(--fluent-font-mono);
+    font-weight: 600;
+    color: var(--text);
+}
+
+html[data-arena-screens="v2"] .ax-chip.ax-gold {
+    color: var(--ax-gold-strong);
+    border-color: var(--panel-border);
+    background-color: var(--ax-chip);
+}
+
+html[data-arena-screens="v2"] .ax-chip.ax-cyan { color: var(--ax-cy); }
+
+/* ---------- 5. 公共：按钮（主行动紫渐变 / 次行动描边 / 三级透明） ---------- */
+html[data-arena-screens="v2"] .ax-go,
+html[data-arena-screens="v2"] .ax-ghost {
+    /* ⚠️ 12px 是**签名值**：arena 的形状签名里 `#custom-create-room` 就在这个档位上，
+       见文件头"不许碰的目标"。这里给新按钮用同一档，签名保持唯一。 */
+    padding: 10px 18px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    border-radius: var(--ax-radius);
+    white-space: nowrap;
+    background-image: none;
+}
+
+html[data-arena-screens="v2"] .ax-go {
+    color: var(--ax-grad-fg);
+    background-image: var(--ax-grad);
+    border: 1px solid var(--ax-grad-line);
+    box-shadow: var(--ax-glow);
+}
+
+html[data-arena-screens="v2"] .ax-ghost {
+    color: var(--text-subtle);
+    background-color: transparent;
+    border: 1px solid var(--border-strong);
+    box-shadow: none;
+}
+
+html[data-arena-screens="v2"] .ax-go:disabled {
+    opacity: 0.45;
+    box-shadow: none;
+}
+
+/* ---------- 6. 公共：列表行（虚线分隔，原型 .friend / .history-row / .setting-row） --- */
+html[data-arena-screens="v2"] .ax-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 13px 0;
+    border-bottom: 1px dashed var(--ax-dash);
+    min-width: 0;
+}
+
+html[data-arena-screens="v2"] .ax-row:last-child {
+    border-bottom: 0;
+}
+
+html[data-arena-screens="v2"] .ax-row > .ax-row-main {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+html[data-arena-screens="v2"] .ax-row .ax-row-sub {
+    display: block;
+    margin-top: 4px;
+    font-size: 10px;
+    color: var(--muted);
+}
+
+/* 自己那一行：淡紫底 + 左侧紫条（原型的 .self-row） */
+html[data-arena-screens="v2"] .ax-me {
+    background-image: var(--ax-halo-row);
+    box-shadow: inset 2px 0 0 0 var(--ax-vio);
+}
+
+/* ---------- 7. 公共：空态 / 加载态 ----------
+   原型**没有**加载态（十屏全是同步渲染的静态样本）—— 这里按它的空态节奏补一个，
+   用同一套内边距，切换时布局不跳。 */
+html[data-arena-screens="v2"] .ax-empty {
+    grid-column: 1 / -1;
+    padding: 46px 20px;
+    min-height: 150px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.9;
+    border: 1px dashed var(--ax-dash);
+    border-radius: var(--ax-radius);
+}
+
+/* 加载态：三条骨架条 + 一个呼吸动画；prefers-reduced-motion 下退化为静止 */
+html[data-arena-screens="v2"] .ax-loading {
+    grid-column: 1 / -1;
+    padding: 40px 20px;
+    min-height: 150px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    justify-content: center;
+}
+
+html[data-arena-screens="v2"] .ax-loading i {
+    display: block;
+    height: 12px;
+    border-radius: 6px;
+    background-color: var(--surface-muted);
+    border: 1px solid var(--ax-hair);
+    animation: axPulse 1.4s ease-in-out infinite;
+}
+
+html[data-arena-screens="v2"] .ax-loading i:nth-child(2) { width: 72%; animation-delay: 0.15s; }
+html[data-arena-screens="v2"] .ax-loading i:nth-child(3) { width: 48%; animation-delay: 0.3s; }
+
+@keyframes axPulse {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 0.85; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html[data-arena-screens="v2"] .ax-loading i { animation: none; opacity: 0.6; }
+}
+
+/* ---------- 8. 公共：两栏骨架 + 详情栏 ----------
+   原型 .s-columns = minmax(0,1fr) 300px；详情栏 sticky 在滚动容器里不生效
+   （最近的滚动祖先才有用），所以这里只用 grid 列，不做 sticky —— 观感差别很小，
+   但省掉"sticky 在 overflow:auto 的祖先里看起来被裁"的一类事故。 */
+html[data-arena-screens="v2"] .ax-cols {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 288px;
+    gap: 22px;
+    align-items: start;
+    min-width: 0;
+}
+
+html[data-arena-screens="v2"] .ax-side {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-width: 0;
+}
+
+/* ---------- 9. 图鉴（collection） ----------
+   原型：搜索 + 分段筛选条 → 4 列卡网格 → 右侧详情栏（大卡 + 完整效果）。
+   正式版必须继续用**真卡组件**（codex_realcard_check 守 0.715 比例 / 三区 / 底图），
+   所以"卡面"这一层完全不动，只重排网格与筛选，并把详情栏补上。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] #help-modal .modal-content {
+    width: min(96vw, 1320px);
+    max-width: 1320px;
+    max-height: 92vh;
+    padding: 22px 26px 26px;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] #help-content {
+    max-height: calc(92vh - 118px);
+    padding-right: 4px;
+}
+
+/* 弹窗自己的标题已经在 §1 里改成左对齐 + eyebrow；这里只把下分隔线做成虚线 */
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] #help-modal .modal-content > h2 {
+    padding-bottom: 12px;
+    border-bottom: 1px dashed var(--ax-dash);
+    margin-bottom: 16px;
+}
+
+/* 帮助弹窗里的分区标题（玩法简介 / 魔法卡图鉴 / 段位与排位）：
+   全局的 `h1,h2,h3,p { text-align:center }` 会把它们居中，C+ 一律左对齐 +
+   10px 字距的小标题 + 虚线分隔。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] #help-content > h3 {
+    text-align: left;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    margin: 22px 0 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px dashed var(--ax-dash);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] #help-content > ul {
+    text-align: left;
+    margin: 0 0 6px;
+    padding-left: 20px;
+    font-size: 12px;
+    line-height: 1.95;
+    color: var(--text-subtle);
+}
+
+/* 筛选条贴顶：图鉴有 48 张卡，滚到任何位置都得能改筛选 */
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .compendium-controls {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    padding: 12px 0;
+    margin: 0 0 4px;
+    background-color: var(--surface-strong);
+    border-bottom: 1px dashed var(--ax-dash);
+}
+
+/* 搜索框按原型收窄（它那边是 ~195px，右侧留给筛选与计数），否则它会吃掉整行 */
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .compendium-controls input[type="search"] {
+    flex: 0 1 300px;
+    min-width: 0;
+    max-width: 100%;
+    padding: 9px 12px;
+    font-size: 12px;
+    font-family: inherit;
+    color: var(--text);
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius-sm);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .compendium-controls select {
+    min-width: 0;
+    max-width: 100%;
+    padding: 9px 12px;
+    font-size: 12px;
+    font-family: inherit;
+    color: var(--text);
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius-sm);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] #compendium-count {
+    margin-left: auto;
+    padding: 5px 12px;
+    font-size: 11px;
+    color: var(--text-subtle);
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--fluent-radius-full);
+    white-space: nowrap;
+}
+
+/* 两栏：卡网格 + 详情栏 */
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-codex {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 24px;
+    align-items: start;
+    min-width: 0;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .compendium-grid {
+    grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+    gap: 16px;
+}
+
+/* 详情栏：大卡 + 完整效果 —— 手机整块换成弹窗（见 §10） */
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-codex-detail {
+    padding: 18px;
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius);
+    min-width: 0;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-codex-detail .ax-detail-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    color: var(--muted);
+    margin-bottom: 14px;
+}
+
+/* 详情栏里的正文一律左对齐（全局的 `p` 是居中的） */
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-codex-detail p {
+    text-align: left;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-codex-detail .ax-detail-card {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 16px;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-codex-detail .magic-card {
+    cursor: default;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-codex-detail .ax-detail-name {
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1.35;
+    margin: 0 0 10px;
+    text-align: left;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-codex-detail .ax-detail-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-codex-detail .ax-detail-h {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    color: var(--muted);
+    margin: 0 0 8px;
+    text-align: left;
+}
+
+/* 完整效果文案：不截断、行高放宽 —— 这就是"手机能阅读完整效果"的落点 */
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-codex-detail .ax-detail-text {
+    margin: 0;
+    font-size: 12px;
+    line-height: 2;
+    color: var(--text-subtle);
+    text-align: left;
+    overflow-wrap: anywhere;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-detail-foot {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--ax-dash);
+    font-size: 10px;
+    line-height: 1.8;
+    color: var(--muted);
+    text-align: left;
+}
+
+/* 选中的卡：紫描边（原型 .codex-card[aria-pressed=true]） */
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] #help-magic-cards .magic-card-help.ax-picked .magic-card {
+    border-color: var(--ax-grad-line);
+    box-shadow: var(--ax-glow-vio);
+}
+
+/* 整格可点：把 .magic-card-help 变成按钮语义的容器（真实行为见 game.js 的
+   codexSelectCard —— 桌面开右栏、窄屏换详情页，判据是"详情栏此刻可见否"）。
+   ⚠️ padding 必须是 0：卡片是 `width:100%; max-width:168px`、**高度写死 235px**，
+      给外层加 4px 内边距会让内容盒小于列宽，卡片跟着缩到 163×235 →
+      比例掉到 0.693，codex_realcard_check 的 0.715 判据当场红（实测踩过一次）。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] #help-magic-cards .magic-card-help {
+    border-radius: var(--ax-radius-sm);
+    padding: 0;
+    cursor: pointer;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] #help-magic-cards .magic-card-help:focus-visible {
+    outline: 2px solid var(--fluent-focus-ring-color);
+    outline-offset: 2px;
+}
+
+/* 「返回图鉴」只在窄屏的详情页里出现（桌面右栏一直看得见，不需要返回） */
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-detail-back {
+    display: none;
+    margin-bottom: 14px;
+    padding: 8px 14px;
+    font-size: 11px;
+}
+
+/* 详情卡按图鉴同一档尺寸（168×235 ≈ 0.715，与实体 TCG 同比例），
+   说明行数跟着放大到与网格里的卡一致 —— 两处卡面应该一模一样。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-detail-card .magic-card {
+    width: 168px;
+    height: 235px;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-detail-card .magic-card .card-name {
+    font-size: 0.95rem;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-detail-card .magic-card .card-desc {
+    font-size: 0.72rem;
+    line-height: 1.4;
+    margin: 5px 8px 0;
+    padding: 5px 6px;
+    max-height: calc(9em * 1.4 + 12px);
+    -webkit-line-clamp: 9;
+}
+
+/* ---------- 9.1 图鉴的窄屏：右栏折成"详情页"（同一弹窗内换页，不叠浮层） --- */
+@media (max-width: 900px) {
+    html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-codex {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-codex-detail {
+        display: none;
+    }
+
+    /* 详情页：网格与筛选条让位，只留详情 */
+    html[data-arena-screens="v2"][data-arena-screen-list~="collection"] #help-content.ax-show-detail .ax-codex-main,
+    html[data-arena-screens="v2"][data-arena-screen-list~="collection"] #help-content.ax-show-detail .compendium-controls {
+        display: none;
+    }
+
+    html[data-arena-screens="v2"][data-arena-screen-list~="collection"] #help-content.ax-show-detail .ax-codex-detail {
+        display: block;
+    }
+
+    html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-detail-back {
+        display: inline-flex;
+        align-items: center;
+    }
+
+    html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .compendium-grid {
+        grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+        gap: 12px;
+    }
+
+    /* ⚠️ 148 < 168 会让卡片被列宽压窄，而 height 是写死的 235px
+       （#help-magic-cards .magic-card-help .magic-card）→ 比例掉到 0.63。
+       卡片是 `width:100%; max-width:168px`：列宽小于 168 时宽度跟着列宽走。
+       所以窄屏下把高度也按同一比例放下来，比例仍是 0.715。 */
+    html[data-arena-screens="v2"][data-arena-screen-list~="collection"] #help-magic-cards .magic-card-help .magic-card {
+        max-width: 100%;
+        height: auto;
+        aspect-ratio: 168 / 235;
+    }
+}
+

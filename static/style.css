@@ -9746,7 +9746,10 @@ html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot {
     border: 1px dashed var(--arena-gold);
     border-radius: 12px;
     background-color: var(--arena-head-win);
-    overflow: hidden;
+    /* 连锁长过轨道时**滚动**而不是裁掉：常驻叠牌存在的意义就是"看清谁响应了谁"
+       （第 16 节的教训 —— 被裁掉半张等于看不见），所以这里不放 hidden。 */
+    overflow-x: hidden;
+    overflow-y: auto;
 }
 html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .arena-rail-head {
     flex: 0 0 auto;
@@ -9785,10 +9788,34 @@ html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .cha
     color: var(--text-subtle);
 }
 html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .chain-stack {
+    /* 竖着叠（示意稿 C 的 .chain-stack 就是竖排）：轨道是 200×高的一列，
+       第 16 节那套"行排 + 横向滚动"是为手牌条里那条窄缝写的。 */
+    flex-direction: column;
+    align-items: center;
     justify-content: center;
     overflow: visible;
     padding: 0;
 }
+/* 叠牌卡在轨道里要放大到看得清：手牌条那套 40×56 是"贴条右角的袖珍叠牌"
+   （见第 16 节的注释），搬进 200px 宽的轨道后卡名都读不出来。
+   示意稿 C 那摞 mini 是 126px 宽、带卡名与速阶；这里按真卡比例给 120×168
+   （120/168 = 0.714，与实体卡同比例，card_text_fit_check 量的也是这个比例）。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .magic-card.chain-stack-card {
+    width: 100px;
+    height: 140px;
+}
+/* 竖排的叠压：压 14px（照示意稿 C 的注释 —— 压 46px 时下面那张的卡名会被完全盖住），
+   并把第 16 节那套"往右上错开"的位移收掉（那是行排的错位方式，竖排会歪出去）。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .magic-card.chain-stack-card + .magic-card.chain-stack-card {
+    margin-left: 0;
+    margin-top: -14px;
+    transform: none;
+}
+/* 卡变大后，第 16 节为 40px 卡写的小字号跟着放大（"谁出的"角标 / 卡名 / 类型条） */
+html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .chain-stack-card .chain-card-who { font-size: 0.54rem; }
+html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .chain-stack-card .card-name { font-size: 0.7rem; }
+html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .chain-stack-card .card-speed,
+html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .chain-stack-card .card-type { font-size: 0.56rem; }
 
 /* --- 37.5 ③ 底排左格「你的舰队」（跨 4~6 行、贴底对齐） --- */
 html[data-theme-preset="arena"] body:not(.layout-compact) .players-info > .player-info:nth-child(1) {
@@ -10364,4 +10391,383 @@ html[data-theme-preset="arena"] body:not(.layout-compact) #view-discard-pile {
 .dice-discard-card-item .card-type {
     font-size: 11px;
     color: #a8b8e0;
+}
+
+/* ============================================================================
+   39. 其余 5 屏的 arena 语言（2026-09-28）
+   ---------------------------------------------------------------------------
+   示意稿 C 只画了首页与对局屏，这 5 屏（布阵 / 猜拳 / 大厅 / 排行榜 / 名片设置）
+   **没有对照稿** —— 本节按 C 的**词汇**收口，不新造语言：
+     面板   = --panel 底 + 1px --border + 14px 圆角 + 无阴影（C 的面板没有投影）
+     小标题 = 11px / 字距 .2em / --text-subtle / 600（C 的 .card-panel h4）
+     胶囊   = radius 999 + 1px 描边 + 12px 文字
+     主行动 = 紫渐变（--arena-hero-grad + --arena-hero-glow）；次行动 = 描边；第三级 = 透明底
+     数字   = 等宽 --fluent-font-mono
+     分隔   = 1px dashed var(--arena-line-dash)
+   ⚠️ 全部带 `html[data-theme-preset="arena"]` 前缀 —— 其余 7 个预设沿用 Fluent 外观。
+      前缀还顺带把特异度抬到 (0,3,x)/(1,1,x)，压得住各屏自己的 Fluent 规则（第 22/32 节）。
+   ⚠️ 只动外观：id、文案、盒模型的结构值（width/min-height/grid 轨道）一个不改 ——
+      这些屏各自有 tools/*_check.mjs 在跑（lobby_check / profile_leaderboard_check /
+      ranked_check / ui_layout_check…）。
+   ========================================================================== */
+
+/* --- 39.0 屏头与提示（四屏共用） --- */
+html[data-theme-preset="arena"] #ship-placement-screen > h2,
+html[data-theme-preset="arena"] #rps-screen > h2,
+html[data-theme-preset="arena"] #lobby-screen > h2,
+html[data-theme-preset="arena"] #leaderboard-screen > h2 {
+    margin: 18px 0 6px;
+    font-size: 19px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--text);
+}
+html[data-theme-preset="arena"] .lobby-subtitle,
+html[data-theme-preset="arena"] #ship-placement-screen > .muted-hint,
+html[data-theme-preset="arena"] #rps-screen > p,
+html[data-theme-preset="arena"] #rps-waiting {
+    font-size: 12px;
+    color: var(--text-subtle);
+}
+
+/* --- 39.1 布阵：棋盘裸着坐在页面上（C 的海就是裸的），计数做成胶囊 --- */
+html[data-theme-preset="arena"] #ships-placed {
+    display: inline-block;
+    margin: 16px 0 18px;
+    padding: 7px 16px;
+    font-size: 12px;
+    color: var(--text-subtle);
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+}
+html[data-theme-preset="arena"] #ships-placed span {
+    font-family: var(--fluent-font-mono);
+    color: var(--text);
+}
+html[data-theme-preset="arena"] .placement-actions button {
+    padding: 11px 22px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    border-radius: 12px;
+    background-image: none;
+    box-shadow: none;
+}
+html[data-theme-preset="arena"] #confirm-ships {
+    border: 1px solid var(--arena-hero-border);
+    background-image: var(--arena-hero-grad);
+    color: var(--arena-hero-fg);
+    box-shadow: var(--arena-hero-glow);
+}
+html[data-theme-preset="arena"] #random-ships {
+    background-color: transparent;
+    border: 1px solid var(--border-strong);
+    color: var(--text-subtle);
+}
+
+/* --- 39.2 猜拳：三张选择卡（图标在上、手势名在下）+ 出拳反馈 --- */
+html[data-theme-preset="arena"] .rps-choices { gap: 14px; margin: 18px 0 6px; }
+html[data-theme-preset="arena"] .rps-choice {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    min-width: 128px;
+    padding: 18px 24px;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: var(--text);
+    background-color: var(--panel);
+    background-image: none;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: none;
+}
+html[data-theme-preset="arena"] .rps-choice .rps-ic { font-size: 26px; line-height: 1; }
+html[data-theme-preset="arena"] .rps-choice:hover {
+    background-color: var(--primary-50);
+    background-image: none;
+    border-color: var(--arena-hero-border);
+    color: var(--text);
+}
+html[data-theme-preset="arena"] .rps-choice.picked {
+    background-image: var(--arena-hero-grad);
+    border-color: var(--arena-hero-border);
+    color: var(--arena-hero-fg);
+    box-shadow: var(--arena-hero-glow);
+}
+html[data-theme-preset="arena"] #rps-result {
+    display: inline-block;
+    max-width: 620px;
+    margin: 16px 0 0;
+    padding: 12px 18px;
+    font-size: 12.5px;
+    line-height: 1.6;
+    text-align: left;
+    color: var(--text);
+    background-color: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+}
+
+/* --- 39.3 大厅：面板 / 标签 / 胶囊 / 列表行 / 底部动作 --- */
+html[data-theme-preset="arena"] #lobby-screen .lobby-panel {
+    padding: 15px;
+    border-radius: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    box-shadow: none;
+}
+html[data-theme-preset="arena"] #lobby-screen .lobby-panel h3 {
+    margin: 0 0 12px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    /* 左对齐：示意稿 C 的面板标签（.card-panel h4）都是左对齐的，
+       这一屏继承的是 `#lobby-screen` 的居中。 */
+    text-align: left;
+    color: var(--text-subtle);
+}
+html[data-theme-preset="arena"] #lobby-screen .lobby-stat {
+    padding: 6px 14px;
+    font-size: 12px;
+    border-radius: 999px;
+    color: var(--text-subtle);
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border);
+}
+html[data-theme-preset="arena"] #lobby-screen .lobby-stat b {
+    font-family: var(--fluent-font-mono);
+    font-size: 13px;
+    color: var(--text);
+}
+html[data-theme-preset="arena"] #lobby-screen #lobby-refresh {
+    padding: 6px 14px;
+    font-size: 12px;
+    border-radius: 999px;
+    background-color: transparent;
+    border: 1px solid var(--border-strong);
+    color: var(--text-subtle);
+    box-shadow: none;
+}
+/* 列表行：色块底换成虚线分隔（C 的列表口径），"我"那一行留一点紫 */
+html[data-theme-preset="arena"] #lobby-screen .lobby-room {
+    padding: 8px 2px;
+    border: 0;
+    border-radius: 0;
+    border-bottom: 1px dashed var(--arena-line-dash);
+    background: transparent;
+}
+html[data-theme-preset="arena"] #lobby-screen .lobby-room + .lobby-room { margin-top: 0; }
+html[data-theme-preset="arena"] #lobby-screen .lobby-player {
+    padding: 7px 8px;
+    border: 0;
+    border-radius: 10px;
+    border-bottom: 1px dashed var(--arena-line-dash);
+}
+html[data-theme-preset="arena"] #lobby-screen .lobby-player.lobby-me {
+    background-color: var(--primary-50);
+    border-bottom-color: transparent;
+}
+html[data-theme-preset="arena"] #lobby-screen .lobby-room-name { font-size: 12.5px; }
+html[data-theme-preset="arena"] #lobby-screen .lobby-room-host,
+html[data-theme-preset="arena"] #lobby-screen .lobby-room-seats { font-size: 10.5px; color: var(--text-subtle); }
+html[data-theme-preset="arena"] #lobby-screen .lobby-room-seats { font-family: var(--fluent-font-mono); }
+html[data-theme-preset="arena"] #lobby-screen .lobby-room-join {
+    padding: 4px 12px;
+    font-size: 11.5px;
+    border-radius: 999px;
+    background-color: transparent;
+    border: 1px solid var(--border-strong);
+    color: var(--text-subtle);
+    box-shadow: none;
+}
+html[data-theme-preset="arena"] #lobby-screen .lobby-empty { font-size: 12px; color: var(--text-subtle); }
+/* 底部动作：主行动紫渐变、其余描边（快速匹配 = 这一屏的主行动） */
+html[data-theme-preset="arena"] #join-lobby-match {
+    padding: 11px 24px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    border-radius: 12px;
+    border: 1px solid var(--arena-hero-border);
+    background-image: var(--arena-hero-grad);
+    color: var(--arena-hero-fg);
+    box-shadow: var(--arena-hero-glow);
+}
+html[data-theme-preset="arena"] #lobby-ranked-match,
+html[data-theme-preset="arena"] #leave-lobby-match,
+html[data-theme-preset="arena"] #back-to-main-from-lobby,
+html[data-theme-preset="arena"] #lobby-create-room,
+html[data-theme-preset="arena"] #lobby-chat-send {
+    padding: 10px 20px;
+    font-size: 12.5px;
+    border-radius: 11px;
+    background-color: transparent;
+    background-image: none;
+    border: 1px solid var(--border-strong);
+    color: var(--text-subtle);
+    box-shadow: none;
+}
+html[data-theme-preset="arena"] #lobby-screen #lobby-room-name,
+html[data-theme-preset="arena"] #lobby-screen #lobby-chat-input {
+    font-size: 12.5px;
+    border-radius: 10px;
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border);
+    color: var(--text);
+}
+
+/* --- 39.4 排行榜：页签胶囊 + 表头 11px/.2em + 虚线行（去掉那条实心紫表头） --- */
+html[data-theme-preset="arena"] .leaderboard-tabs { gap: 8px; margin: 14px 0 12px; }
+html[data-theme-preset="arena"] .leaderboard-tabs .lb-tab {
+    padding: 8px 16px;
+    font-size: 12px;
+    border-radius: 999px;
+    background-color: var(--surface-muted);
+    background-image: none;
+    border: 1px solid var(--border);
+    color: var(--text-subtle);
+    box-shadow: none;
+}
+html[data-theme-preset="arena"] .leaderboard-tabs .lb-tab.active {
+    border-color: var(--arena-hero-border);
+    background-image: var(--arena-turn-chip-bg);
+    color: var(--text);
+}
+html[data-theme-preset="arena"] #leaderboard-container {
+    padding: 15px;
+    border-radius: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    box-shadow: none;
+}
+html[data-theme-preset="arena"] #leaderboard-table { margin-top: 0; }
+html[data-theme-preset="arena"] #leaderboard-table thead th {
+    padding: 0 10px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    color: var(--text-subtle);
+    background: none;
+    border-bottom: 1px solid var(--border);
+}
+html[data-theme-preset="arena"] #leaderboard-table th,
+html[data-theme-preset="arena"] #leaderboard-table td { padding: 9px 10px; }
+html[data-theme-preset="arena"] #leaderboard-table tbody tr {
+    background: none;
+    border-bottom: 1px dashed var(--arena-line-dash);
+}
+html[data-theme-preset="arena"] #leaderboard-table tbody tr:nth-child(odd) { background: none; }
+html[data-theme-preset="arena"] #leaderboard-table tbody tr:hover { background: var(--primary-50); }
+html[data-theme-preset="arena"] #leaderboard-table td { font-size: 12.5px; color: var(--text); }
+html[data-theme-preset="arena"] #leaderboard-table td:nth-child(n + 3) {
+    font-family: var(--fluent-font-mono);
+    color: var(--text-subtle);
+}
+html[data-theme-preset="arena"] #ranked-table thead th {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    color: var(--text-subtle);
+    background: none;
+    border-bottom: 1px solid var(--border);
+}
+html[data-theme-preset="arena"] #ranked-table tbody tr { border-bottom: 1px dashed var(--arena-line-dash); }
+html[data-theme-preset="arena"] #leaderboard-error { font-size: 12.5px; }
+
+/* --- 39.5 名片 / 设置（三个弹窗）：壳 14 圆角、标题左对齐、激活项紫调、主行动紫渐变 --- */
+html[data-theme-preset="arena"] .profile-modal-card,
+html[data-theme-preset="arena"] .settings-modal-card,
+html[data-theme-preset="arena"] #opponent-stats-modal .modal-content {
+    border-radius: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    box-shadow: none;
+}
+html[data-theme-preset="arena"] .pf-modal-title {
+    margin: 0 0 14px;
+    padding-bottom: 12px;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+/* 左导航：未选 = subtle，选中 = 紫调胶囊（示意稿 C 的 .seg button.on 同一手法） */
+html[data-theme-preset="arena"] .pf-editor-nav-item,
+html[data-theme-preset="arena"] .settings-nav-item {
+    border: 1px solid transparent;
+    border-radius: 10px;
+    color: var(--text-subtle);
+}
+html[data-theme-preset="arena"] .pf-editor-nav-item.active,
+html[data-theme-preset="arena"] .settings-nav-item.active {
+    background-color: var(--primary-50);
+    border-color: var(--arena-hero-border);
+    color: var(--text);
+}
+/* 分区小标题 / 字段标签 = 11px + 字距 .2em（C 的面板标签口径） */
+html[data-theme-preset="arena"] .settings-block-title,
+html[data-theme-preset="arena"] .pf-field-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    color: var(--text-subtle);
+}
+/* 主题预设卡：12 圆角 + 淡底；选中 = 紫描边 + 辉光（不再是"描边变强调色"那一档） */
+html[data-theme-preset="arena"] .theme-card {
+    border-radius: 12px;
+    background: var(--surface-muted);
+    border: 1px solid var(--border);
+    box-shadow: none;
+}
+html[data-theme-preset="arena"] .theme-card.selected {
+    border-color: var(--arena-hero-border);
+    box-shadow: var(--arena-hero-glow);
+}
+/* 保存类主行动：紫渐变（与对局屏的阶段按钮、首页的开始匹配同一档） */
+html[data-theme-preset="arena"] #profile-card-save,
+html[data-theme-preset="arena"] #settings-save-btn,
+html[data-theme-preset="arena"] #profile-modal button[type="submit"] {
+    padding: 11px 22px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    border-radius: 12px;
+    border: 1px solid var(--arena-hero-border);
+    background-image: var(--arena-hero-grad);
+    color: var(--arena-hero-fg);
+    box-shadow: var(--arena-hero-glow);
+}
+/* 名片查看面：顶部横幅走 C 的英雄渐变（斜向条纹层已由 .pf-cover::after 提供） */
+html[data-theme-preset="arena"] .pf-cover { background-image: var(--arena-hero-grad); }
+/* 查看面三块统计卡：面板底 + 12 圆角，数字等宽（全局已是 mono，这里统一底与圆角） */
+html[data-theme-preset="arena"] .pf-stats .stat {
+    border-radius: 12px;
+    background: var(--surface-muted);
+    border: 1px solid var(--border);
+}
+/* 主题预设的两个分组标题（Fluent（默认）/ 旧风格）：按 C 的分组口径降一档 ——
+   面板标签那一档已经给 .settings-block-title 了，这里再轻一档（12px / subtle / 不加粗）。 */
+html[data-theme-preset="arena"] .theme-group-title {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-align: left;
+    color: var(--text-subtle);
+}
+/* 名片查看面的标题（#opponent-stats-title）与编辑/设置面同一个口径：
+   左对齐 16px + 下分隔线（那一屏原来是全局 `.modal-content h2` 的居中大标题）。
+   ⚠️ 选择器带 id，压得住 `.modal-content h2`（0,1,2）且不与上面那三条重复。 */
+html[data-theme-preset="arena"] #opponent-stats-title {
+    margin: 0 0 14px;
+    padding-bottom: 12px;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
 }

@@ -41,6 +41,16 @@ AVATAR_UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'static', 'avatar
 # 是两次手抄"，改一处必然漂移（本项目在段位曲线上栽过同形状的坑）。
 MAX_FRIENDS = 50                  # 好友数上限（accepted 计数）
 FRIEND_REQUESTS_PER_HOUR = 10     # 每小时可发出的好友申请数（只数 pending）
+
+# C+ 周边屏幕的开发期启用开关（docs/C_PLUS_SCREENS_IMPLEMENTATION_2026_09_29.md §5）。
+# 这两个值渲染成 <html data-arena-screens="…" data-arena-screen-list="…">，
+# 而 static/arena_screens.css 的**每一条规则**都以它们为前缀 —— 于是：
+#   整批回退 = MODE 改成 'off'（或删掉 index.html 里那一行 <link>）；
+#   单屏回退 = 从 LIST 里删掉那个 token。
+# 都只改这里一个字符串，CSS 一行都不用动；也不向玩家展示这个开关。
+ARENA_SCREENS_MODE = 'v2'
+ARENA_SCREEN_LIST = ('lobby room placement collection leaderboard profile '
+                     'result spectate replay settings')
 os.makedirs(AVATAR_UPLOAD_FOLDER, exist_ok=True)
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'),
             template_folder=os.path.join(os.path.dirname(__file__), 'templates'))
@@ -66,7 +76,7 @@ def _inject_asset_version():
         except OSError:
             return '0'
 
-    return {'asset_v': asset_v}
+    return {'asset_v': asset_v, 'arena_screens': {'mode': ARENA_SCREENS_MODE, 'list': ARENA_SCREEN_LIST}}
 
 # SECRET_KEY 从环境变量注入；未配置时使用一次性随机值（重启后 session 失效，
 # 属可接受的降级，避免源码中硬编码的密钥被用于伪造登录态）。

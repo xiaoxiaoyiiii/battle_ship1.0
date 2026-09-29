@@ -1,5 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<!-- data-arena-screens / data-arena-screen-list = C+ 周边屏幕的开发期启用开关，
+     由 api.py 的 ARENA_SCREENS_MODE / ARENA_SCREEN_LIST 渲染（不向玩家暴露）。
+     static/arena_screens.css 的每条规则都以这两个属性为前缀：
+       删掉下面那行 <link> = 整批回退；LIST 里少一个 token = 单屏回退。 -->
+<html lang="zh-CN" data-arena-screens="{{ arena_screens.mode }}" data-arena-screen-list="{{ arena_screens.list }}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
@@ -22,9 +26,29 @@
             //    同步改 game.js 的 resolveTheme()：两边是同一个语义的两份实现。
             var dark = saved !== 'light';
             document.documentElement.classList.toggle('theme-dark', dark);
+
+            // C+ 设置屏的两个**可读性选项**（2026-09-29）。与 theme 同理必须同步执行：
+            //   data-motion / data-contrast 都只影响 CSS 的匹配，晚一拍就会先画一帧
+            //   "有动效 / 低对比"，再跳变 —— 对需要的用户来说这一帧就是全部。
+            // ⚠️ 语义与保存范围见 game.js 的 readMotionPref() / readContrastPref()：
+            //    没显式选过时**按系统偏好**定初值（动效），高对比默认关。
+            var root = document.documentElement;
+            var motion = null, contrast = null;
+            try {
+                motion = localStorage.getItem('battleship_motion');
+                contrast = localStorage.getItem('battleship_contrast');
+            } catch (e) { motion = null; contrast = null; }
+            var sysReduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+            root.setAttribute('data-motion', (motion === 'reduce' || motion === 'full') ? motion : (sysReduce ? 'reduce' : 'full'));
+            root.setAttribute('data-contrast', contrast === 'high' ? 'high' : 'normal');
         })();
     </script>
     <link rel="stylesheet" href="/static/style.css?v={{ asset_v('style.css') }}">
+    <!-- C+ 周边屏幕（十屏）。**必须排在 style.css 之后**：它整层是在覆盖公共样式，
+         顺序反了会被 style.css 里同特异度的规则压掉（本项目的静默坏样式三类别之一）。
+         作用域 = html[data-theme-preset="arena"] + data-arena-screens + 逐屏清单，
+         所以另外 7 个主题预设下这一整层等于不存在。 -->
+    <link rel="stylesheet" href="/static/arena_screens.css?v={{ asset_v('arena_screens.css') }}">
     <!-- ⚠️ defer 不能去掉：这是 191KB 的同步脚本，在 <head> 里会阻塞 FCP。
          实测阻断实验：只挡 style.css → FCP 2,472ms；只挡 socket.io.js → 2,944ms；
          两者都挡 → 308ms。即首屏被这两次串行下载门控吃掉约 3.7s。
@@ -419,13 +443,16 @@
         <h2>第<span id="rps-round">1</span>回合 - 猜拳决定攻击顺序</h2>
         <p>选择一种手势：</p>
         <div class="rps-choices">
-            <button class="rps-choice" type="button" data-choice="rock" aria-pressed="false">石头</button>
-            <button class="rps-choice" type="button" data-choice="scissors" aria-pressed="false">剪刀</button>
-            <button class="rps-choice" type="button" data-choice="paper" aria-pressed="false">布</button>
+            <!-- 图标走 markup 而不是 CSS content（与首页 `.mbtn-ic` 同一手法）：
+                 `aria-hidden` 让读屏只念手势名，不念表情符号。 -->
+            <button class="rps-choice" type="button" data-choice="rock" aria-pressed="false"><span class="rps-ic" aria-hidden="true">✊</span>石头</button>
+            <button class="rps-choice" type="button" data-choice="scissors" aria-pressed="false"><span class="rps-ic" aria-hidden="true">✌</span>剪刀</button>
+            <button class="rps-choice" type="button" data-choice="paper" aria-pressed="false"><span class="rps-ic" aria-hidden="true">✋</span>布</button>
         </div>
-        <!-- 出拳后零反馈（S6）：game.js:4531 只 emit，点击前后快照完全相同。
-             这里预置一个**默认 hidden** 的等待态元素，由 game.js 在选中后摘掉 .hidden、
-             服务端 `rps_result` 回来时收回（本批只加元素，不接线）。 -->
+        <!-- 出拳反馈（S6 + 2026-09-28 arena 收口接线）：
+             原来点完什么都不变（只在 console 里 log），这里预置的等待态元素一直是死代码。
+             现在 handleRPSChoice 会：① 给点中的那张卡加 `.picked`；② 摘掉本元素的 .hidden；
+             `rps_result` 回来时由 showRPSResult 收回（并清掉 `.picked`）。 -->
         <p id="rps-waiting" class="muted-hint rps-waiting hidden" role="status" aria-live="polite">已出拳，等待对手…</p>
         <div id="rps-result" class="hidden" role="status" aria-live="polite"></div>
     </div>
@@ -1412,7 +1439,20 @@
                     </select>
                     <span id="compendium-count" class="muted-hint"></span>
                 </div>
-                <div id="help-magic-cards" class="compendium-grid"></div>
+                <!-- C+ 图鉴（2026-09-29）：卡网格 + 右侧详情栏。
+                     ⚠️ #help-magic-cards 的 id / class 一个字没改（它是冻结契约：
+                     card_compendium_check 与 codex_realcard_check 都按它取数）。
+                     详情栏的内容由 game.js 的 codexDetailHtml() 渲染。
+                     窄屏不另开浮层：详情在**同一个弹窗里换页**（点卡 → 详情，
+                     点「返回图鉴」→ 列表）。理由是浮层互斥是按类名取全量元素实现的
+                     （见本文件里帮助按钮那段注释），在帮助弹窗之上再叠一层会让
+                     closeOverlaysExcept 把帮助本身关掉 —— 点开一张卡反而把图鉴弄没了。 -->
+                <div class="ax-codex">
+                    <div class="ax-codex-main">
+                        <div id="help-magic-cards" class="compendium-grid"></div>
+                    </div>
+                    <aside id="codex-detail" class="ax-codex-detail" aria-live="polite"></aside>
+                </div>
 
                 <!-- 段位介绍（段位帮助批）：**整块由 game.js 渲染进下面这六个容器**。
                      ⚠️ 这里的 id 是冻结契约，一个字母都不能改（`tools/rank_help_check.mjs` 按它们断言）：

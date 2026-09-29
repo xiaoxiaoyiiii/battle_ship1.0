@@ -3323,14 +3323,15 @@ function initGameLogCardRefs() {
 // 卡牌图鉴：去重后的全部卡面 + 按速阶/类型筛选 + 关键词搜索 + 使用次数排序
 // （卡面数据源是 window.magicCards，使用次数来自只读接口 /api/card_usage，拉一次就缓存）
 let cardUsage = {};
-let cardUsageLoaded = false;
+let cardUsageLoaded = false;      // 「已经发起过拉取」——用于去重，不代表数据已到
+let cardUsageReady = false;       // 「数据真的到了」——图鉴的「统计中…」看这个
 
 function loadCardUsage() {
     if (cardUsageLoaded) return Promise.resolve(cardUsage);
     cardUsageLoaded = true;
     return fetch('/api/card_usage')
         .then(r => (r && r.ok) ? r.json() : {})
-        .then(d => { cardUsage = (d && d.usage) || {}; return cardUsage; })
+        .then(d => { cardUsage = (d && d.usage) || {}; cardUsageReady = true; return cardUsage; })
         .catch(() => ({}));   // 拉不到就不显示次数，不影响图鉴本身
 }
 
@@ -3381,7 +3382,8 @@ function renderCardCompendium() {
         //    tools/card_compendium_check.mjs 按 .magic-card-help + data-card-name/-speed/-type/-uses
         //    取数，改掉就等于把它的判据一起改掉（这一期不重定断言）。
         return `
-        <div class="magic-card-help" data-card-name="${escapeHtml(card.name)}" data-card-speed="${card.speed}" data-card-type="${card.type}" data-card-uses="${uses}">
+        <div class="magic-card-help" data-card-name="${escapeHtml(card.name)}" data-card-speed="${card.speed}" data-card-type="${card.type}" data-card-uses="${uses}"
+             role="button" tabindex="0" aria-pressed="false" aria-label="查看「${escapeHtml(card.name)}」的完整规则">
             <div class="magic-card codex-card">
                 <div class="card-art" aria-hidden="true"></div>
                 <div class="card-nameplate">
@@ -3395,7 +3397,7 @@ function renderCardCompendium() {
                 </div>
             </div>
         </div>`;
-    }).join('') || '<p class="muted-hint">没有符合条件的卡牌</p>';
+    }).join('') || '<p class="ax-empty muted-hint">没有符合条件的卡牌<br>试试别的关键词，或把速阶/类型改回「全部」。</p>';
 
     // 出图后给图鉴里的每张卡接上底图（Phase 7）
     helpMagicCards.querySelectorAll('.magic-card-help').forEach(el => {
@@ -3403,7 +3405,108 @@ function renderCardCompendium() {
     });
 
     const counter = document.getElementById('compendium-count');
-    if (counter) counter.textContent = '共 ' + list.length + ' / ' + all.length + ' 张';
+    if (counter) {
+        counter.textContent = '共 ' + list.length + ' / ' + all.length + ' 张'
+            // 使用次数是**真的异步**（/api/card_usage 还没回来）—— 把它标出来，
+            // 而不是让玩家以为"所有卡都一次没用过"
+            + (cardUsageReady ? '' : ' · 统计中…');
+    }
+
+    // 详情栏空着就先放占位（每次打开帮助都会走到这里）
+    const detailHost = document.getElementById('codex-detail');
+    if (detailHost && !String(detailHost.innerHTML).trim()) codexRenderDetail(null);
+
+    // 重绘（筛选/搜索）后恢复选中态：整格是重画的，类名不会自己回来
+    if (codexPickedName) codexMarkPicked(codexPickedName);
+}
+
+// ---- C+ 图鉴详情（2026-09-29）----------------------------------------------
+// 桌面：右侧 #codex-detail 常驻一栏，点卡即换；窄屏：同一栏变成"详情页"，
+// 网格与筛选条让位（.ax-show-detail 挂在 #help-content 上，见 arena_screens.css）。
+// ⚠️ 判据是"详情栏此刻可见否"（offsetParent），**不写死断点** —— 断点放在 JS 里
+//    就一定会和 CSS 的媒体查询漂移，而这里两边读的是同一个事实。
+let codexPickedName = '';
+
+function codexCardByName(name) {
+    const want = String(name || '');
+    return compendiumCards().find(c => String(c.name) === want) || null;
+}
+
+// 一张卡的详情片段。**只有这一份实现** —— 桌面右栏与窄屏详情页渲染的是同一段 HTML，
+// 卡面也复用同一个 .magic-card 组件（名称/类型/速阶因此与手牌、连锁天然一致）。
+function codexDetailHtml(card) {
+    const uses = cardUsage[card.name] || 0;
+    const speed = parseInt(card.speed, 10);
+    const gems = isNaN(speed) ? '' : Array.from({ length: Math.min(speed, 3) })
+        .map(() => '<i class="gem"></i>').join('');
+    return `
+        <div class="ax-detail-label"><span>规则原文</span><span>CARD</span></div>
+        <button type="button" class="ax-ghost ax-detail-back" id="codex-detail-back">← 返回图鉴</button>
+        <div class="ax-detail-card">
+            <div class="magic-card codex-card">
+                <div class="card-art" aria-hidden="true"></div>
+                <div class="card-nameplate">
+                    <div class="card-name">${escapeHtml(card.name)}</div>
+                    <div class="card-speed-gems">${gems}</div>
+                </div>
+                <div class="card-desc">${escapeHtml(card.description || '')}</div>
+                <div class="card-typebar">
+                    <span class="card-speed">${escapeHtml(card.type)}·速阶${escapeHtml(card.speed)}</span>
+                </div>
+            </div>
+        </div>
+        <h4 class="ax-detail-name">${escapeHtml(card.name)}</h4>
+        <div class="ax-detail-tags">
+            <span class="ax-chip">${escapeHtml(card.type)}魔法</span>
+            <span class="ax-chip ax-gold">速阶 <b>${escapeHtml(card.speed)}</b></span>
+            ${uses > 0 ? `<span class="ax-chip ax-cyan">已用 <b>${uses}</b> 次</span>` : ''}
+        </div>
+        <h5 class="ax-detail-h">效果说明</h5>
+        <p class="ax-detail-text">${escapeHtml(card.description || '（这张卡没有文字说明）')}</p>
+        <div class="ax-detail-foot">手牌 / 连锁 / 图鉴读的是同一份卡表与同一个卡面组件，
+            所以这张卡的名称、类型、速阶三处必然一致。</div>`;
+}
+
+function codexDetailPlaceholder() {
+    return '<div class="ax-detail-label"><span>规则原文</span><span>CARD</span></div>'
+        + '<p class="muted-hint">点左边任意一张卡，这里显示它的完整效果与卡面。</p>';
+}
+
+// 选中态：只标一格（原型用的也是单选样式）
+function codexMarkPicked(name) {
+    if (!helpMagicCards) return;
+    helpMagicCards.querySelectorAll('.magic-card-help').forEach(el => {
+        const on = el.getAttribute('data-card-name') === name;
+        el.classList.toggle('ax-picked', on);
+        el.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+}
+
+function codexRenderDetail(card) {
+    const host = document.getElementById('codex-detail');
+    if (!host) return;
+    host.innerHTML = card ? codexDetailHtml(card) : codexDetailPlaceholder();
+    if (card) applyCardArt(host, card.name);
+    const back = document.getElementById('codex-detail-back');
+    if (back) back.addEventListener('click', codexShowList);
+}
+
+// 窄屏的"退回到列表"；桌面档只是把 .ax-show-detail 去掉，一栏布局本来就没变
+function codexShowList() {
+    if (helpContent) helpContent.classList.remove('ax-show-detail');
+}
+
+function codexSelectCard(name) {
+    const card = codexCardByName(name);
+    if (!card) return;
+    codexPickedName = card.name;
+    codexMarkPicked(codexPickedName);
+    codexRenderDetail(card);
+    const host = document.getElementById('codex-detail');
+    // 详情栏此刻不可见 ⇒ 是窄屏档（CSS 把右栏折到了网格下面并收起）→ 换成详情页
+    if (helpContent && host && host.offsetParent === null) {
+        helpContent.classList.add('ax-show-detail');
+    }
 }
 
 // 回放批 §7 的「与观战彻底隔离」声明（**放在界面段之外**，见下面那条说明）。
@@ -4491,6 +4594,9 @@ function bindEventListeners() {
         //    不需要往任何清单里加 id。
         if (typeof closeOverlaysExcept === 'function') closeOverlaysExcept('help-modal');
         if (helpModal) helpModal.classList.remove('hidden');
+        // C+ 图鉴：每次打开都回到"列表"视图（窄屏点开详情后关掉弹窗，
+        // 下次进来应该还是列表，而不是停在上一张卡的详情页）
+        codexShowList();
         renderCardCompendium();
         // 先按已有数据画出来，统计到了再重绘一次（拉不到也不会卡住图鉴）
         loadCardUsage().then(() => renderCardCompendium());
@@ -4506,6 +4612,22 @@ function bindEventListeners() {
         el.addEventListener('input', renderCardCompendium);
         el.addEventListener('change', renderCardCompendium);
     });
+    // C+ 图鉴：点一张卡 → 详情（桌面是右栏、窄屏是详情页，见 codexSelectCard）。
+    // ⚠️ 委托**只绑一次**：网格每次筛选都整体重绘，逐格绑就是每筛一次多一套监听。
+    if (helpMagicCards && !helpMagicCards.dataset.codexBound) {
+        helpMagicCards.dataset.codexBound = '1';
+        helpMagicCards.addEventListener('click', (e) => {
+            const item = e.target && e.target.closest ? e.target.closest('.magic-card-help') : null;
+            if (item) codexSelectCard(item.getAttribute('data-card-name'));
+        });
+        helpMagicCards.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            const item = e.target && e.target.closest ? e.target.closest('.magic-card-help') : null;
+            if (!item) return;
+            e.preventDefault();
+            codexSelectCard(item.getAttribute('data-card-name'));
+        });
+    }
     if (helpModalClose) helpModalClose.addEventListener('click', () => helpModal.classList.add('hidden'));
     if (helpModal) helpModal.addEventListener('click', (e) => {
         if (e.target === helpModal) helpModal.classList.add('hidden');
@@ -7165,6 +7287,7 @@ function setupSocketListeners() {
     socket.on('rps_result', (result) => {
         console.log('RPS result:', result);
         rpsResult.classList.remove('hidden');
+        setRPSWaiting(false);
         if (result.status === 'tie') {
             rpsResult.textContent = result.message;
         } else {
@@ -8919,6 +9042,11 @@ function switchScreen(screen) {
         markMatchStart();
     }
 
+    // 进猜拳屏时先把上一次的出拳反馈收干净（平局会再进来一次，不能带着"已出拳"的状态）。
+    if (screen && screen.id === 'rps-screen' && typeof setRPSWaiting === 'function') {
+        setRPSWaiting(false);
+    }
+
     // 回到首页时刷新右栏那几个"会变的数字"（在线 / 队列 / 房间 / 战绩 / 最近解锁）。
     // 段位表与卡表是静态件，loadHomeStatic() 自己只拉一次。
     // ⚠️ 刷新**只在回到首页时**发生：打完一局就会回来一次，正好把新的胜负/徽章刷上。
@@ -10488,6 +10616,24 @@ function confirmShipPlacement() {
     });
 }
 
+/**
+ * 猜拳屏的「出拳反馈」（arena 收口，2026-09-28）。
+ *
+ * 此前点完手势页面上什么都不变（只在 console 里 log 一行），玩家不知道自己有没有点中，
+ * 而 markup 里那个 `#rps-waiting`（"已出拳，等待对手…"）一直是**死代码**。
+ * 这里把它接起来：点中 → 那张卡加 `.picked` + 显示等待态；`rps_result` 回来 → 由
+ * `setRPSWaiting(false)` 收回（平局要再点一次，所以是"收回"而不是"锁死"）。
+ */
+function setRPSWaiting(on, choice) {
+    const waiting = document.getElementById('rps-waiting');
+    if (waiting) waiting.classList.toggle('hidden', !on);
+    rpsChoices.forEach((el) => {
+        const picked = !!on && (!choice || el.dataset.choice === choice);
+        el.classList.toggle('picked', picked);
+        el.setAttribute('aria-pressed', picked ? 'true' : 'false');
+    });
+}
+
 // 处理猜拳选择
 function handleRPSChoice(choice) {
     gameState.socket.emit('rps_choice', {
@@ -10499,6 +10645,9 @@ function handleRPSChoice(choice) {
             console.log('RPS choice sent:', choice);
         }
     });
+    // 先给反馈再等服务端：这一屏没有别的加载态，等 ack 再亮会让人以为没点上
+    // （`test_*` 调试事件与正常路径都会走这里，两者都不受影响）。
+    setRPSWaiting(true, choice);
 }
 
 // 处理攻击

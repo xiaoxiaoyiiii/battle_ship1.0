@@ -130,7 +130,18 @@ try {
   await waitFor(async () => await ev('document.readyState === "complete"'), 20000, '页面加载');
 
   const expect = await ev(EXPECTED);
-  check(expect && expect.unique === 41 && expect.raw === 43, '卡池数据：43 条目 / 41 唯一（失灵！×3 为设计）', expect);
+  // ⚠️ 2026-09-29 重定（C+ 周边屏幕批）：原来写死 `unique === 41 && raw === 43`。
+  //    那是当时的真实卡数，而 a1fbc4e「新增兵粮寸断判定魔法卡」之后卡表变成
+  //    50 条目 / 48 唯一 —— 死数字当场红，且**红的是工具不是功能**
+  //    （同一条判据已在 tools/codex_realcard_check.mjs 里改过，见那里的注释）。
+  //    它要守的是"图鉴把卡表里的牌一张不少地渲染出来"，所以改成从 static/magic_card.json
+  //    现算条目/唯一数，而不是再换一个死数字（下次加卡还会红）。
+  const CARD_TABLE = JSON.parse(fs.readFileSync(new URL('../static/magic_card.json', import.meta.url), 'utf-8'));
+  const CARD_LIST = Array.isArray(CARD_TABLE) ? CARD_TABLE : (CARD_TABLE.cards || []);
+  const RAW_EXPECTED = CARD_LIST.filter((c) => c && c.name).length;
+  const UNIQ_EXPECTED = new Set(CARD_LIST.map((c) => c && c.name).filter(Boolean)).size;
+  check(expect && expect.unique === UNIQ_EXPECTED && expect.raw === RAW_EXPECTED,
+    '卡池数据：' + RAW_EXPECTED + ' 条目 / ' + UNIQ_EXPECTED + ' 唯一（失灵！×3 为设计）', expect);
 
   // 装一个受控的使用次数响应：必须在**第一次打开图鉴之前**装好，
   // 因为 game.js 里 /api/card_usage 只拉一次就缓存，晚了就再也替换不掉。

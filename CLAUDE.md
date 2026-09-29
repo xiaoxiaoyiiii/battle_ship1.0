@@ -388,7 +388,9 @@ phase:                        preparation → battle → end
 `docs/EMIT_ROOM_TARGETS_2026_09_23.md`（**把 sid 当房间号的 9 处 `room=` 改成 `to=`** + 源码级穷举守卫 + `_live_room_id` 为何保留但不再静默）｜
 `docs/REPLAY_2026_09_23.md`（**对局回放**：契约 + 前端回放屏 §7 + 后端已完成；实施记录见文末）｜
 `docs/EQUAL_TREATY_CHAIN_2026_09_24.md`（**平等条约改连锁无效化**：座位不等价的根因 + 判据表 + 删掉整套快照）｜ `README.md`（用户向说明）｜
-`docs/C_ARENA_HOME_2026_09_27.md`（**首页 C 三栏 + 竞技场面层令牌**：数据来源、有意差异、`/api/home_stats`、断言重定）
+`docs/C_ARENA_HOME_2026_09_27.md`（**首页 C 三栏 + 竞技场面层令牌**：数据来源、有意差异、`/api/home_stats`、断言重定）｜
+`docs/C_ARENA_THREE_ZONE_2026_09_28.md`（**对局屏三区**：对手条/中场/底排的做法与数据来源、四类「写上了没生效」的坑（特异度 / 内联样式 / 网格项 z-index / :has 判据）、合并 origin/main 的冲突口径与三处判据重定、AC6 阈值重定的三版本对照）｜
+`docs/C_ARENA_SCREENS_2026_09_28.md`（**其余 5 屏的 arena 语言**：面板/标签/胶囊/主次按钮的取值与出处、逐屏改了什么的对照表、猜拳出拳反馈的接线、以及两处「看着像问题其实不是」）
 
 > ⚠️ **部署前确认环境变量**：代码新增 `os.environ.get('XXX')` 时，服务器 systemd 必须同步配置 ——
 > 漏配会导致"服务能起来但带着错误默认值运行"（曾因漏配 `CORS_ORIGINS` 让线上所有操作卡十几秒）。

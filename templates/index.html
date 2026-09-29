@@ -424,17 +424,31 @@
         <!-- 常驻说明（S2）：船是 1×1，「共6艘」实为「占 6 格」；且页面此前从不提
              「再点一次取消」，玩家把格子点满后只会以为放错了没救。 -->
         <p class="muted-hint placement-help placement-help-remove" id="placement-hint">6×6 棋盘各放 1 格，共 6 格 · 再点一次可取消</p>
-        <div class="board-container">
-            <div id="player-board" class="board"></div>
-        </div>
-        <p id="ships-placed">已放置：<span id="placed-count">0</span>/<span id="total-ships">6</span></p>
-        <div class="placement-actions">
-            <!-- 主次（S1）：实测两个按钮像素级等重、style.css 里没有 `#confirm-ships` 规则。
-                 `.primary` 走第 3 节的通用实心按钮（渐变+阴影），`.secondary` 走描边
-                 （style.css:277 `button.secondary`）—— 两个类都是既有类，无需新 CSS。 -->
-            <button id="random-ships" class="secondary" type="button">随机摆放</button>
-            <button id="confirm-ships" class="primary hidden" type="button"
-                    aria-label="确认放置：提交已摆好的 6 格并进入猜拳">确认放置</button>
+        <!-- C+ 部署屏（2026-09-29）：桌面 = 左棋盘 + 右信息栏（计数 / 操作），
+             720 高也把「确认放置」留在首屏内。手机上这一栏折到棋盘下面。
+             ⚠️ 只包了一层 div：`#ships-placed`（外层 <p> 里是 #placed-count）与
+             `.placement-actions`（含 #random-ships / #confirm-ships）的 id、类名、
+             文案全部原样 —— ui_layout_check / recent_opponent_check /
+             friend_invite_battle_check 都按这些 id 点与断言。
+             ⚠️ 不能给外层加 display:flex/transform：`.board` 的尺寸由 JS 按可用空间算，
+                而本屏不参与棋盘 300×300 那条断言（那条只看对局屏的两块）。 -->
+        <div class="ax-deploy">
+            <div class="ax-deploy-board">
+                <div class="board-container">
+                    <div id="player-board" class="board"></div>
+                </div>
+            </div>
+            <div class="ax-deploy-side">
+                <p id="ships-placed">已放置：<span id="placed-count">0</span>/<span id="total-ships">6</span></p>
+                <div class="placement-actions">
+                    <!-- 主次（S1）：实测两个按钮像素级等重、style.css 里没有 `#confirm-ships` 规则。
+                         `.primary` 走第 3 节的通用实心按钮（渐变+阴影），`.secondary` 走描边
+                         （style.css:277 `button.secondary`）—— 两个类都是既有类，无需新 CSS。 -->
+                    <button id="random-ships" class="secondary" type="button">随机摆放</button>
+                    <button id="confirm-ships" class="primary hidden" type="button"
+                            aria-label="确认放置：提交已摆好的 6 格并进入猜拳">确认放置</button>
+                </div>
+            </div>
         </div>
     </div>
 

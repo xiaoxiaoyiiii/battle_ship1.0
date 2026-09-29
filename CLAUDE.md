@@ -3,7 +3,7 @@
 > 面向 AI 代理的索引。**先读这里，别一次读完 `server.py`（8500+ 行）/ `static/game.js`（9000+ 行）/ `static/style.css`（4800+ 行）—— 一律先 grep 定位再分段读。**
 > ⚠️ 行号每次提交都会漂移，**本文件里任何行号都只当线索，以 grep 结果为准**。
 > ⚠️ **本文件每次对话都会整份注入**，新增内容请控制在几十字级别 —— 长记录写进 `docs/`。
-> 最后更新：2026-09-25（新增判定卡「兵粮寸断」：延迟判定 + 两次跳过准备阶段摸牌，卡数 49→50；含中文的 .ps1 必须带 BOM）。
+> 最后更新：2026-09-29（C+ 十屏落地：大厅/房间/布船/图鉴/排行/档案/结算/观战/回放/设置换到 C+ 视觉，样式在新文件 `static/arena_screens.css`，按 `api.py` 的 `ARENA_SCREEN_LIST` 逐屏门控）。
 
 ---
 
@@ -13,7 +13,9 @@ Flask + Flask-SocketIO 的实时双人海战棋，50 条魔法卡 / 场地魔法
 
 - 线上 http://8.133.180.159:5000/ ｜ 仓库 `xiaoxiaoyiiii/battle_ship1.0` ｜ 生产跑 eventlet
 - 核心文件：`server.py`（事件 + 对局）｜ `api.py`（HTTP）｜ `db.py`（SQLite/WAL）｜
-  `static/game.js` + `templates/index.html` + `static/style.css`（前端单页）
+  `static/game.js` + `templates/index.html` + `static/style.css`（前端单页）+
+  `static/arena_screens.css`（**C+ 周边十屏**；按 `<html>` 上的 `data-arena-screens` 与逐屏清单门控，
+  回退 = 改 `api.py` 的 `ARENA_SCREEN_LIST` 一个字符串；不进 AC6 预算）
 - 纯规则模块（都**只有一份实现**，前端不许重算）：`ranks.py` 段位 ｜ `leveling.py` 等级经验 ｜
   `achievements.py` 徽章 ｜ `profile_spec.py` 名片外观与解锁 ｜ `wallpaper.py` 壁纸 ｜
   `spectate.py` 观战（事件白/黑名单 + 净化函数 + 座位标签 + 快照禁字段表；观众**能进来了**，见 `docs/SPECTATE_BATCH2_2026_09_22.md`）｜
@@ -51,7 +53,10 @@ python -m pytest tests/ -q    # 基线见下
 绝处逢生锁卡/击杀即胜 → `last_stand_win_check.mjs`（前端喂事件）＋ `last_stand_win_e2e.mjs`（**真 socket 打完一局**，需 `ENABLE_TEST_EVENTS=1`）｜
 更新公告 → `changelog_check.mjs`（入口 / 自动弹一次 / 文案逐字来自接口 / 浮层互斥）｜
 对局回放 → `replay_check.mjs`（**真打完一局**再逐帧比对；需 `ENABLE_TEST_EVENTS=1`）｜
-观战不变量 → `spectate_check.mjs`（四浏览器；每帧无船位 + 自我校准腿）
+观战不变量 → `spectate_check.mjs`（四浏览器；每帧无船位 + 自我校准腿）｜
+C+ 十屏公共外观契约 → `cplus_screens_check.mjs`（十屏 × 三视口：能进 / 无横向溢出 / 门控命中 / 标记物样式）｜
+C+ 跨屏一条连续路径 → `cplus_path_check.mjs`（双浏览器：首页→大厅→部署→对局→结算→回放→返回首页，全走真实按钮）｜
+好友邀战 E2E 的 python 陪练 → `invite_occupy_probe.py`（被 `friend_invite_battle_check.mjs` 拉起；**别放回 .tmp/**）
 - ⚠️ **真 socket E2E 的 ack 帧是 `43<ackId><JSON>`，没有长度位**；handler 抛异常时**连 ack 都不回**，
   症状都是"客户端超时"（像服务端卡死）→ 先看服务端日志的 traceback，别先怀疑网络。
 - **`dom_contract_check.mjs`**：不用浏览器、不用服务端、几秒钟 —— 查「代码引用了但页面里不存在的 id」，
@@ -388,9 +393,9 @@ phase:                        preparation → battle → end
 `docs/EMIT_ROOM_TARGETS_2026_09_23.md`（**把 sid 当房间号的 9 处 `room=` 改成 `to=`** + 源码级穷举守卫 + `_live_room_id` 为何保留但不再静默）｜
 `docs/REPLAY_2026_09_23.md`（**对局回放**：契约 + 前端回放屏 §7 + 后端已完成；实施记录见文末）｜
 `docs/EQUAL_TREATY_CHAIN_2026_09_24.md`（**平等条约改连锁无效化**：座位不等价的根因 + 判据表 + 删掉整套快照）｜ `README.md`（用户向说明）｜
-`docs/C_ARENA_HOME_2026_09_27.md`（**首页 C 三栏 + 竞技场面层令牌**：数据来源、有意差异、`/api/home_stats`、断言重定）｜
-`docs/C_ARENA_THREE_ZONE_2026_09_28.md`（**对局屏三区**：对手条/中场/底排的做法与数据来源、四类「写上了没生效」的坑（特异度 / 内联样式 / 网格项 z-index / :has 判据）、合并 origin/main 的冲突口径与三处判据重定、AC6 阈值重定的三版本对照）｜
-`docs/C_ARENA_SCREENS_2026_09_28.md`（**其余 5 屏的 arena 语言**：面板/标签/胶囊/主次按钮的取值与出处、逐屏改了什么的对照表、猜拳出拳反馈的接线、以及两处「看着像问题其实不是」）
+`docs/C_ARENA_HOME_2026_09_27.md` + `…_THREE_ZONE_…` + `…_SCREENS_…`（首页三栏 / 对局屏三区 / 其余 5 屏的 arena 语言）｜
+`docs/C_PLUS_BASELINE_2026_09_29.md`（**C+ 十屏基线**：回归基线、差异清单、逐屏 DOM/事件/数据来源/进入与销毁映射表）｜
+`docs/C_PLUS_SCREENS_REPORT_2026_09_29.md`（**C+ 十屏交付**：逐屏与原型不同的理由、门控为何不绑主题预设、还差什么）
 
 > ⚠️ **部署前确认环境变量**：代码新增 `os.environ.get('XXX')` 时，服务器 systemd 必须同步配置 ——
 > 漏配会导致"服务能起来但带着错误默认值运行"（曾因漏配 `CORS_ORIGINS` 让线上所有操作卡十几秒）。

@@ -445,7 +445,11 @@ async function showWaitingPanel(br, roomId) {
 }
 
 // ---------- python 侧探针（回答"房里到底几个人"） ----------
-const PY_HELPER = path.join(TMP, 'invite_occupy_probe.py');
+// ⚠️ 2026-09-29：原来指向 `.tmp/invite_occupy_probe.py` —— 那个文件**从未入库**
+//    （`git log --all -- '*invite_occupy_probe*'` 为空），干净检出上必然不存在 →
+//    python 立刻退出、探针永远不回话，这支工具连着 5 条断言全红（`python 探针命令超时 #1`）。
+//    现在它是一等文件 `tools/invite_occupy_probe.py`（受版本控制），这里指向它。
+const PY_HELPER = path.join(ROOT, 'tools', 'invite_occupy_probe.py');
 const CMD_FILE = path.join(TMP, 'invite_probe_cmd.json');
 const CMD_FILE_2 = path.join(TMP, 'invite_probe_cmd_2.json');
 const CMD_FILE_2B = path.join(TMP, 'invite_probe_cmd_2b.json');

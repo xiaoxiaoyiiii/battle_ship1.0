@@ -2220,3 +2220,62 @@ html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] #spectate-chat
     box-shadow: none;
 }
 
+/* ---------- 19. 屏头 eyebrow 的两处补齐 ----------
+   §1 那一组列出了十屏里的七处，这里补上剩下的两处；结算屏**刻意不给**：
+   它那一行主视觉就是「胜利 / 失败 / 平局」本身（30px），再加一个 "RESULT"
+   的 kicker 是同一句话说两遍。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #ship-placement-screen > h2::before,
+html[data-arena-screens="v2"][data-arena-screen-list~="profile"] #profile-modal .modal-content > h2::before {
+    display: block;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.19em;
+    line-height: 1.6;
+    color: var(--ax-kicker);
+    margin-bottom: 4px;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #ship-placement-screen > h2::before {
+    content: "DEPLOYMENT";
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="profile"] #profile-modal .modal-content > h2::before {
+    content: "PROFILE";
+}
+
+/* ============================================================================
+   20. 焦点与触摸区（P5 的校准项）
+   新增的可点元素里，有三个不是原生 button（图鉴条目是 div[role=button]、
+   开关是 appearance:none 的复选框、领奖台卡是 button），它们的默认焦点环
+   在深色底上不明显 —— 一律补一条 2px 的 `--fluent-focus-ring-color` 外环。
+   触摸区：开关本体只有 38×22，但它**整行**都是 <label for> 的点击面
+   （`.ax-switch-row` 高约 50px），所以实际可点面积满足触摸下限，不需要把轨道做大。
+   ========================================================================== */
+html[data-arena-screens="v2"] .ax-podium-card:focus-visible,
+html[data-arena-screens="v2"] .ax-detail-back:focus-visible,
+html[data-arena-screens="v2"] .ax-preview:focus-visible,
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-switch-row input[type="checkbox"][role="switch"]:focus-visible {
+    outline: 2px solid var(--fluent-focus-ring-color);
+    outline-offset: 3px;
+}
+
+/* ---------- 21. 设置面里那一批控件按钮：降到"次行动"档 ----------
+   音频（播放/上一首/下一首）与壁纸（扫描/导入/应用）那几颗走的是基础按钮规则
+   `button, .btn, .modal-btn { background-color: var(--primary) }` —— 于是设置面里
+   一度出现 8 颗**实心紫**，把"主行动 = 紫渐变"这条层级冲掉了（实测：C+ 的主视觉
+   应该只有底部那颗「保存」）。这里把它们统一成描边档；`.settings-pane` 之外不碰，
+   所以 `#settings-save-btn` 仍然是全屏唯一的实心主行动。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .settings-pane .btn,
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .settings-pane #music-toggle-play,
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .settings-pane #music-next,
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .settings-pane #music-previous,
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .settings-pane #wp-scan,
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .settings-pane #wp-toggle-play,
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .settings-pane #wp-clear {
+    color: var(--text-subtle);
+    background-color: transparent;
+    background-image: none;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--ax-radius-sm);
+    box-shadow: none;
+}

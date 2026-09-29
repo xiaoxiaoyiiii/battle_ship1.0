@@ -10771,3 +10771,46 @@ html[data-theme-preset="arena"] #opponent-stats-title {
     text-align: left;
     border-bottom: 1px solid var(--border);
 }
+
+/* ============================================================================
+   40. 可读性选项（C+ 设置屏，2026-09-29）
+   ---------------------------------------------------------------------------
+   设置页新增的两个开关，都是**真的作用于全站**的，不是预览：
+     html[data-motion="reduce"]    关掉所有过渡与动画
+     html[data-contrast="high"]    把「弱对比」那几档令牌收敛到同主题里最强的那一档
+   定义在 style.css 而不是 arena_screens.css：这两个是**无障碍选项**，与主题预设、
+   与 C+ 那一层都无关 —— 选 fluent 预设、或把 data-arena-screens 关掉，它们照样生效。
+   写进 arena 门控里就是"看着有、其实只在一种配色下有效"的假功能。
+
+   ⚠️ 高对比**一个裸色都不写**（AC6 的 hex 只剩 10 的余量）：它只把 --muted /
+      --border 这类令牌**重指到同主题里已经存在的更强令牌**上，所以明暗两态自动各得其所，
+      也不需要一条 `html.theme-dark[data-contrast="high"]` 变体。
+   ⚠️ 选择器写成 `html[data-contrast="high"][data-theme-preset]` 是为了压过
+      `html.theme-dark[data-theme-preset="arena"]`（两者同为 (0,2,1)，靠源码顺序 ——
+      本节在全文件最后，所以赢）。少了 `[data-theme-preset]` 那一截，深色态下
+      --border 会被预设块整块盖掉、开关看着"没反应"。
+   ========================================================================== */
+html[data-motion="reduce"] *,
+html[data-motion="reduce"] *::before,
+html[data-motion="reduce"] *::after {
+    /* 用 animation/transition 简写而不是改 duration：后者会让 0.01ms 的动画仍然
+       走一遍 start/end 帧，某些浏览器上还是有可见的闪动。 */
+    animation: none !important;
+    transition: none !important;
+}
+
+html[data-contrast="high"],
+html[data-contrast="high"][data-theme-preset] {
+    --muted: var(--text-subtle);
+    --muted-strong: var(--text);
+    --muted-strong-600: var(--text);
+    --fluent-text-secondary: var(--text);
+    --fluent-text-disabled: var(--text-subtle);
+    --border: var(--border-strong);
+    --fluent-stroke-default: var(--fluent-stroke-strong);
+    /* 面板与毛玻璃一律不透明：半透明底上的文字对比度取决于身后的东西，
+       而身后是什么不由这一层决定 —— 高对比下只能把它去掉。 */
+    --panel: var(--surface-strong);
+    --glass: var(--surface-strong);
+    --fluent-smoke-bg: var(--surface-strong);
+}

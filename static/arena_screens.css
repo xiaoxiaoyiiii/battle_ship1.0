@@ -681,3 +681,564 @@ html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-detail-c
     }
 }
 
+/* ============================================================================
+   10. 排行（leaderboard）
+   原型：前三名领奖台（第一名在中间、更高）+ 榜单 + 自己那一行高亮 + 行尾「档案 ↗」。
+   数据全部来自两个既有接口；**不做指标切换**（两个接口都不支持排序参数，
+   /api/leaderboard 还只有 100 行上限 —— 在前端重排会得到"这一页里的第一名"，
+   而页面写的是全服榜。这条差异在 docs 里单独说明）。
+   ========================================================================== */
+/* 页签 → C+ 分段控件（结构不动，只换皮） */
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #leaderboard-tabs {
+    gap: 3px;
+    padding: 4px;
+    margin: 0 0 18px;
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius-sm);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #leaderboard-tabs .lb-tab {
+    padding: 8px 16px;
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: 6px;
+    background-image: none;
+    box-shadow: none;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #leaderboard-tabs .lb-tab.active {
+    background-color: var(--ax-chip);
+    color: var(--text);
+    box-shadow: inset 0 0 0 1px var(--panel-border);
+}
+
+/* 领奖台 */
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] .ax-podium {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    align-items: end;
+    /* 与两张榜单一同宽（它们原本就 max-width:720px 居中）—— 三件东西同一列宽才像"一块榜单" */
+    max-width: 1040px;
+    margin: 0 auto 22px;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] .ax-podium-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 22px 14px 18px;
+    text-align: center;
+    min-width: 0;
+    background-color: var(--surface-strong);
+    background-image: var(--ax-halo-vio);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] .ax-podium-card.place-1 {
+    padding-top: 30px;
+    border-color: var(--ax-grad-line);
+    background-image: var(--ax-halo-win);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] .ax-podium-avatar {
+    width: 56px;
+    height: 56px;
+    border-radius: 14px;
+    object-fit: cover;
+    border: 1px solid var(--border-strong);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] .ax-podium-card.place-1 .ax-podium-avatar {
+    width: 68px;
+    height: 68px;
+    border-color: var(--ax-gold-strong);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] .ax-podium-num {
+    position: absolute;
+    left: 12px;
+    top: 8px;
+    font-family: var(--fluent-font-mono);
+    font-size: 15px;
+    color: var(--muted);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] .ax-podium-card.place-1 .ax-podium-num {
+    color: var(--ax-gold-strong);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] .ax-podium-name {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+    text-align: center;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] .ax-podium-score {
+    display: block;
+    font-family: var(--fluent-font-mono);
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--ax-gold-strong);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] .ax-podium-score small {
+    display: block;
+    font-family: inherit;
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--muted);
+    margin-top: 2px;
+}
+
+/* 榜单：进面板 + 表头改 10px 字距标签 + 行虚线分隔 + 数字等宽 */
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #leaderboard-container,
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #leaderboard-ranked-container {
+    max-width: 1040px;
+    /* 400px 只够 7 行半，10 行以内的人看不到自己那一行 —— 提到视口的六成 */
+    max-height: 60vh;
+    padding: 6px 20px 10px;
+    background-color: var(--surface-strong);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #leaderboard-table thead th,
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #ranked-table thead th {
+    padding: 14px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    color: var(--muted);
+    background-color: transparent;
+    background-image: none;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #leaderboard-table tbody td,
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #ranked-table tbody td {
+    padding: 13px 8px;
+    font-size: 12px;
+    background-color: transparent;
+    background-image: none;
+    box-shadow: none;
+    border-bottom: 1px dashed var(--ax-dash);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #leaderboard-table tbody tr:last-child > td,
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #ranked-table tbody tr:last-child > td {
+    border-bottom: 0;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #leaderboard-table tbody tr > td:first-child,
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #ranked-table tbody tr > .ranked-pos,
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #ranked-table tbody tr > .ranked-points,
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #ranked-table tbody tr > .ranked-record {
+    font-family: var(--fluent-font-mono);
+    color: var(--text-subtle);
+}
+
+/* 自己那一行：淡紫底 + 左侧紫条 */
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #leaderboard-table tbody tr.ax-me > td,
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #ranked-table tbody tr.ax-me > td {
+    background-image: var(--ax-halo-row);
+    border-bottom-color: transparent;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #leaderboard-table tbody tr.ax-me > td:first-child,
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #ranked-table tbody tr.ax-me > td:first-child {
+    box-shadow: inset 2px 0 0 0 var(--ax-vio);
+    color: var(--text);
+}
+
+/* 行尾「档案 ↗」：整行可点，这只是把"点了会看到什么"写出来 */
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] .leaderboard-user .ax-open {
+    margin-left: 8px;
+    font-size: 10px;
+    color: var(--muted);
+    opacity: 0;
+    transition: opacity var(--fluent-dur-fast) var(--fluent-ease-standard);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] .leaderboard-user:hover .ax-open,
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] .leaderboard-user:focus-visible .ax-open {
+    opacity: 1;
+}
+
+/* 空态：表格里的空态要撑满整行 */
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #leaderboard-table .ax-empty,
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #ranked-table .ax-empty {
+    grid-column: auto;
+    border: 0;
+}
+
+/* ============================================================================
+   11. 指挥官档案（profile）
+   查看面 = #opponent-stats-modal（5 个入口共用同一份渲染），编辑面 = #profile-modal。
+   原型：左栏舰长卡（封面 + 罗盘环 + 佩戴徽章 + 经验条）+ 右侧 4 个无框指标 +
+   徽章陈列 + 最近航迹。这里**只换皮**：`buildProfileCard()` 的 DOM 一个节点不动
+   （profile_card_check / profile_leaderboard_check 按那些 id 与 class 断言）。
+   ========================================================================== */
+html[data-arena-screens="v2"][data-arena-screen-list~="profile"] #opponent-stats-modal .modal-content > h2 {
+    text-align: left;
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    margin: 0 0 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px dashed var(--ax-dash);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="profile"] #opponent-stats-modal .modal-content > h2::before {
+    content: "COMMANDER";
+    display: block;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.19em;
+    line-height: 1.6;
+    color: var(--ax-kicker);
+    margin-bottom: 4px;
+}
+
+/* 封面：原型的「罗盘环」= 两层同心圆描边，压在斜纹层之上（::after 是原有的斜纹，
+   所以这层走 ::before）。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="profile"] .pf-cover::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 118px;
+    height: 118px;
+    margin: -59px 0 0 -59px;
+    border: 1px solid var(--ax-grad-line);
+    border-radius: 50%;
+    box-shadow: 0 0 0 13px var(--ax-chip), 0 0 0 30px var(--ax-chip);
+    pointer-events: none;
+}
+
+/* 指标：原型的 .result-stats = **无框**（borderless），比"三个小卡片"更轻 */
+html[data-arena-screens="v2"][data-arena-screen-list~="profile"] .pf-stats {
+    gap: 14px;
+    padding: 18px 18px 0;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="profile"] .pf-stats .stat {
+    padding: 0;
+    background: none;
+    border: 0;
+    border-radius: 0;
+    text-align: left;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="profile"] .pf-stats .stat b {
+    font-family: var(--fluent-font-mono);
+    font-size: 1.6rem;
+    text-shadow: none;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="profile"] .pf-stats .stat span {
+    display: block;
+    margin-top: 6px;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+}
+
+/* 区块标题：11px / 字距 .18em（与其它九屏同一个口径） */
+html[data-arena-screens="v2"][data-arena-screen-list~="profile"] .pf-card .pf-block-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    color: var(--muted);
+    padding-bottom: 8px;
+    border-bottom: 1px dashed var(--ax-dash);
+}
+
+/* 徽章墙：原型是"可点的三格"，这里保留可点（佩戴）但换成面板瓷砖 */
+html[data-arena-screens="v2"][data-arena-screen-list~="profile"] .badge-grid {
+    gap: 12px;
+}
+
+/* 对局历史：虚线分隔 + 等宽时间 */
+html[data-arena-screens="v2"][data-arena-screen-list~="profile"] .history-list .match-history-btn,
+html[data-arena-screens="v2"][data-arena-screen-list~="profile"] .history-list .match-history-row {
+    border-bottom: 1px dashed var(--ax-dash);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="profile"] .pf-card .pf-meta {
+    font-family: var(--fluent-font-mono);
+    font-size: 11px;
+}
+
+/* 编辑面：左导航选中 = 紫调胶囊；分区小标题 = 11px/.18em；底部保存 = 主行动 */
+html[data-arena-screens="v2"][data-arena-screen-list~="profile"] #profile-modal .modal-content > h2 {
+    text-align: left;
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0 0 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px dashed var(--ax-dash);
+}
+
+/* ⚠️ 未选中的那一项必须显式写 `background-color: transparent`。
+   实测缺陷（本轮看图发现）：`.pf-editor-nav-item` 只被并进了那个"盒模型 + 文字色"的
+   分组规则，**漏了背景**；而项目的基础规则是 `button, .btn, .modal-btn
+   { background-color: var(--primary) }` —— 于是编辑面四颗导航在 arena 下全是
+   **不透明的实心紫**（看着像四个都选中），而"选中"那一项反而是淡紫（--primary-50）。
+   `.settings-nav-item` 有自己的一条规则、里面写了 `background: transparent`，所以设置面没这个毛病。
+   这里按 §39 的口径补齐："未选 = subtle，选中 = 紫调胶囊"。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="profile"] #profile-edit .pf-editor-nav-item {
+    background-color: transparent;
+    color: var(--text-subtle);
+    border-color: transparent;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="profile"] #profile-edit .pf-editor-nav-item.active {
+    background-color: var(--ax-chip);
+    border-color: var(--ax-grad-line);
+    color: var(--text);
+    box-shadow: inset 3px 0 0 var(--ax-vio);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="profile"] #profile-edit .pf-field-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    color: var(--muted);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="profile"] #profile-card-save {
+    color: var(--ax-grad-fg);
+    background-image: var(--ax-grad);
+    border: 1px solid var(--ax-grad-line);
+    border-radius: var(--ax-radius);
+    box-shadow: var(--ax-glow);
+}
+
+/* ============================================================================
+   12. 偏好设置（settings）
+   原型：左侧分组纵向面板 + 右侧「即时视觉预览」+ 开关行 / 滑杆行。
+   正式版沿用既有的「左导航 + 4 分区」（实施方案 §2 要求保留原入口与持久化机制），
+   只换皮；预览面板放进「外观与主题」分区顶部（见 index.html 的说明）。
+   ========================================================================== */
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .settings-modal-card {
+    width: min(94vw, 1040px);
+    max-width: 1040px;
+    /* ⚠️ 本项目的弹窗**故意不封高度**（`.modal-overlay .modal-content { max-height:none }`），
+       靠遮罩整页滚。加了「即时预览 + 可读性」两节之后设置面全长约 1400px，
+       在 900 高的视口里标题和保存键都要滚一屏才看得见 —— 所以这里单独给一个上限，
+       让**分区**自己滚（左导航与保存键留在原地）。 */
+    max-height: calc(100dvh - 64px);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .settings-panes {
+    max-height: calc(100dvh - 300px);
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] #settings-modal .modal-content > h2 {
+    text-align: left;
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0 0 18px;
+    padding-bottom: 12px;
+    border-bottom: 1px dashed var(--ax-dash);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .settings-block-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    color: var(--muted);
+    padding-bottom: 8px;
+    border-bottom: 1px dashed var(--ax-dash);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .settings-nav-item.active {
+    background-color: var(--ax-chip);
+    box-shadow: inset 0 0 0 1px var(--panel-border);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .settings-modal-card > #settings-save-btn {
+    color: var(--ax-grad-fg);
+    background-image: var(--ax-grad);
+    border: 1px solid var(--ax-grad-line);
+    border-radius: var(--ax-radius);
+    box-shadow: var(--ax-glow);
+}
+
+/* 开关行 / 滑杆行（原型的 .setting-row / .range-row） */
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-rows {
+    display: flex;
+    flex-direction: column;
+    margin: 4px 0 14px;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-switch-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 14px 0;
+    border-bottom: 1px dashed var(--ax-dash);
+    cursor: pointer;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-switch-row:last-child {
+    border-bottom: 0;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-switch-main {
+    min-width: 0;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-switch-main b {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-switch-main small {
+    display: block;
+    margin-top: 5px;
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--muted);
+}
+
+/* 开关本体：Fluent 的 checkbox 是方块打勾，C+ 用轨道 + 滑块。
+   ⚠️ 只改 `[role=switch]`，不碰项目里其它复选框（那些是"勾选"语义，不是开关）。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-switch-row input[type="checkbox"][role="switch"] {
+    appearance: none;
+    flex: 0 0 auto;
+    position: relative;
+    width: 38px;
+    height: 22px;
+    margin: 0;
+    border-radius: var(--fluent-radius-full);
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border-strong);
+    cursor: pointer;
+    transition: background-color var(--fluent-dur-fast) var(--fluent-ease-standard);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-switch-row input[type="checkbox"][role="switch"]::before {
+    content: '';
+    position: absolute;
+    left: 3px;
+    top: 3px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background-color: var(--muted);
+    transition: transform var(--fluent-dur-fast) var(--fluent-ease-standard);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-switch-row input[type="checkbox"][role="switch"]:checked {
+    background-image: var(--ax-grad);
+    border-color: var(--ax-grad-line);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-switch-row input[type="checkbox"][role="switch"]:checked::before {
+    transform: translateX(16px);
+    background-color: var(--ax-grad-fg);
+}
+
+/* 即时预览 */
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-preview {
+    display: grid;
+    grid-template-columns: 128px minmax(0, 1fr);
+    gap: 18px;
+    align-items: center;
+    padding: 18px;
+    margin: 0 0 20px;
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-preview-art {
+    display: grid;
+    place-items: center;
+    height: 128px;
+    font-size: 40px;
+    color: var(--ax-grad-fg);
+    background-image: var(--ax-grad);
+    border: 1px solid var(--ax-grad-line);
+    border-radius: var(--ax-radius-sm);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-preview-body {
+    min-width: 0;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-preview-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    text-align: left;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-preview-sub {
+    margin: 5px 0 12px;
+    font-size: 11px;
+    line-height: 1.7;
+    color: var(--muted);
+    text-align: left;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-preview-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 5px;
+    max-width: 240px;
+    margin-bottom: 14px;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-preview-grid i {
+    aspect-ratio: 1;
+    /* ⚠️ 用 --border（不是 --border-strong）：高对比开关改的正是 --border，
+       写成 strong 的话"即时预览"在这件事上就不即时了（实测两者同色）。 */
+    border: 1px solid var(--border);
+    background-color: var(--cell-bg);
+    border-radius: var(--fluent-radius-sm);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-preview-grid i.marked {
+    background-color: var(--miss-dot);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-preview-grid i.hit {
+    background-color: var(--hit-fire);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-preview-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+/* 窄屏：预览折成单列（原型在手机上也是纵向堆叠的） */
+@media (max-width: 720px) {
+    html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-preview {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-preview-art {
+        height: 92px;
+    }
+}
+

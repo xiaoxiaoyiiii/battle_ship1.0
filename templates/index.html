@@ -797,6 +797,15 @@
             <button type="button" id="lb-tab-record" class="lb-tab active" data-tab="record" role="tab">战绩榜</button>
             <button type="button" id="lb-tab-ranked" class="lb-tab" data-tab="ranked" role="tab">段位榜</button>
         </div>
+        <!-- C+ 前三名领奖台（2026-09-29）。**数据来自当前那张表的前三行**（不是示例数字）：
+             战绩榜取 /api/leaderboard 的首三行，段位榜取 /api/ranked_leaderboard 的首三行
+             —— 两个接口都是服务端排好序的，所以"前三名"就是服务端说的前三名。
+             ⚠️ 故意**不做指标切换**：两个接口都不支持排序参数，/api/leaderboard 还有
+                limit<=100 的截断，在前端重排会得到"这一页里的第一名"，
+                而页面写的是"全服"——那就是一个看着有、其实错了的控件（实施方案 §3
+                要求"按接口实际支持的指标提供排序"，这就是它支持的全集）。
+             ⚠️ 空/加载/失败时整块收起（class="hidden"），不留三张空卡。 -->
+        <div id="leaderboard-podium" class="ax-podium hidden"></div>
         <div id="leaderboard-container">
             <table id="leaderboard-table">
                 <thead>
@@ -1231,6 +1240,29 @@
                 </nav>
                 <div class="settings-panes">
                     <section class="settings-pane" data-pane="look">
+                        <!-- 即时视觉预览（C+ 设置屏，2026-09-29）。⚠️ 它**不是一张画**：
+                             里面每个色块引用的都是真实令牌（--primary-gradient / --cell-bg /
+                             --hit-fire / --border…），所以换主题预设、拉主色、开高对比，
+                             这块会立刻跟着变 —— 这正是"即时"的含义。
+                             aria-hidden：它是同一批开关的重复表达，读屏读它只会重复。
+                             所以里面不放任何真按钮（用 span 扮演出按钮的样子）。 -->
+                        <div id="settings-preview" class="ax-preview" aria-hidden="true">
+                            <div class="ax-preview-art"><span>⚓</span></div>
+                            <div class="ax-preview-body">
+                                <p class="ax-preview-title">你的专属竞技场</p>
+                                <p class="ax-preview-sub">主行动、棋盘格子与说明文字用的都是当前令牌。</p>
+                                <div class="ax-preview-grid">
+                                    <i></i><i></i><i class="marked"></i><i></i>
+                                    <i></i><i class="marked"></i><i></i><i></i>
+                                    <i class="hit"></i><i></i><i></i><i></i>
+                                </div>
+                                <div class="ax-preview-row">
+                                    <span class="ax-chip ax-gold">速阶 <b>2</b></span>
+                                    <span class="ax-go">主行动</span>
+                                    <span class="ax-ghost">次行动</span>
+                                </div>
+                            </div>
+                        </div>
                         <h4 class="settings-block-title">主题预设</h4>
                         <div id="theme-preset-grid" class="theme-grid">
                             <!-- 两个分组容器（data-group 由 fluent_style_check.mjs 断言）。
@@ -1262,6 +1294,30 @@
                             <input type="color" id="primary-color-picker" value="#1976d2">
                         </label>
                         <p class="muted-hint" id="theme-preset-hint"></p>
+
+                        <!-- 可读性（C+ 设置屏，2026-09-29）。两个开关都是真的：
+                             data-motion / data-contrast 挂在 <html> 上，覆盖**全站所有**组件
+                             （不是预览）。初值与保存范围见 game.js 的 readMotionPref() /
+                             readContrastPref()；两个 key 的引导写入在 <head> 那个同步脚本里，
+                             否则会先画一帧"有动效 / 低对比"再跳变。 -->
+                        <h4 class="settings-block-title">可读性</h4>
+                        <div class="ax-rows">
+                            <label class="ax-switch-row" for="settings-reduce-motion">
+                                <span class="ax-switch-main">
+                                    <b>减少动态效果</b>
+                                    <small>关掉入场、脉冲、悬浮位移等全部过渡与动画</small>
+                                </span>
+                                <input type="checkbox" id="settings-reduce-motion" role="switch">
+                            </label>
+                            <label class="ax-switch-row" for="settings-high-contrast">
+                                <span class="ax-switch-main">
+                                    <b>高对比</b>
+                                    <small>弱化的说明文字与描边提到最高一档，毛玻璃改为不透明</small>
+                                </span>
+                                <input type="checkbox" id="settings-high-contrast" role="switch">
+                            </label>
+                        </div>
+                        <p class="muted-hint" id="settings-readability-msg" role="status"></p>
                     </section>
 
                     <section class="settings-pane hidden" data-pane="sound">

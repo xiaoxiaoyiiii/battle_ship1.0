@@ -468,6 +468,21 @@ if (settingsSaveBtn && primaryColorPicker) {
     };
 }
 
+// 可读性两个开关（C+ 设置屏）。**边切边生效、立即落 localStorage** ——
+// 与主题预设 / 音量 / 壁纸同一套约定（设置面的「保存」只管主色微调那一项）。
+// 所以不需要等 settingsSaveBtn：那两个开关切完就已经生效了。
+(function bindReadabilitySwitches() {
+    const motion = document.getElementById('settings-reduce-motion');
+    if (motion) motion.addEventListener('change', () => setMotionPref(motion.checked ? 'reduce' : 'full'));
+    const contrast = document.getElementById('settings-high-contrast');
+    if (contrast) contrast.addEventListener('change', () => setContrastPref(contrast.checked ? 'high' : 'normal'));
+    // 首帧的值由 <head> 的同步脚本写好了；这里再写一次是为了"两份实现读同一组 key"
+    // 这件事本身成立 —— 万一引导脚本被裁掉，页面也不会停在没有任何 data-* 的状态。
+    applyMotionPref(readMotionPref());
+    applyContrastPref(readContrastPref());
+    syncReadabilityUI();
+})();
+
 // 设置页左导航：每次只显示一个 .settings-pane（pane 名与 data-pane 一致）
 function showSettingsPane(pane) {
     const name = pane || 'look';
@@ -483,6 +498,9 @@ function showSettingsPane(pane) {
     if (name === 'acct' && typeof loadSpectateSetting === 'function') loadSpectateSetting();
     // 回放开关同理：状态只认服务端（loadReplaySetting 在顶层，声明会提升）。
     if (name === 'acct' && typeof loadReplaySetting === 'function') loadReplaySetting();
+    // 可读性两个开关读的是 localStorage（不是服务端），但**进设置面时也要重读一次**：
+    // 另一个标签页改过、或系统偏好刚变过，这里必须显示当前真值。
+    if (name === 'look' && typeof syncReadabilityUI === 'function') syncReadabilityUI();
     return name;
 }
 
@@ -695,6 +713,87 @@ function restoreThemeFromStorage() {
     const color = localStorage.getItem('battleship_primary_color');
     if (color) return applyCustomPrimaryColor(color);
     return applyThemePreset(preset || 'arena');
+}
+
+// ---------------------------------------------------------------------------
+// 可读性选项（C+ 设置屏，2026-09-29）
+//
+// 两个开关都不进账号，只存 localStorage —— 与 theme / 音量 / 壁纸同一档"本机偏好"。
+// **保存范围与默认值**（实施方案 §3 要求明确）：
+//   减少动态效果  key `battleship_motion`    ∈ {reduce, full}
+//       默认值 = 跟随系统的 prefers-reduced-motion：没显式选过时按系统走，且系统偏好
+//       变化会实时跟随；一旦手动选过就固定下来，不再被系统改回去（与 theme 的三态
+//       同源思路，只是这里少一档"显式跟随系统"）。
+//   高对比        key `battleship_contrast`  ∈ {high, normal}，默认 normal。
+// 两个属性挂在 <html> 上，CSS 由 style.css 第 40 节消费 —— 覆盖全站所有组件。
+// ⚠️ 语义的**另一份实现**在 templates/index.html 的 <head> 同步脚本里（首帧就必须对），
+//    两边读同一组 key；改一处必须同步改另一处。
+// ---------------------------------------------------------------------------
+const MOTION_KEY = 'battleship_motion';
+const CONTRAST_KEY = 'battleship_contrast';
+
+function systemPrefersReduceMotion() {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+}
+
+function storedMotionPref() {
+    let v = null;
+    try { v = localStorage.getItem(MOTION_KEY); } catch (e) { v = null; }
+    return (v === 'reduce' || v === 'full') ? v : null;
+}
+
+function readMotionPref() {
+    return storedMotionPref() || (systemPrefersReduceMotion() ? 'reduce' : 'full');
+}
+
+function applyMotionPref(v) {
+    document.documentElement.setAttribute('data-motion', v === 'reduce' ? 'reduce' : 'full');
+}
+
+function readContrastPref() {
+    let v = null;
+    try { v = localStorage.getItem(CONTRAST_KEY); } catch (e) { v = null; }
+    return v === 'high' ? 'high' : 'normal';
+}
+
+function applyContrastPref(v) {
+    document.documentElement.setAttribute('data-contrast', v === 'high' ? 'high' : 'normal');
+}
+
+// 把两个开关的勾选状态同步到界面上（打开设置、或系统偏好变化后都要跑）
+function syncReadabilityUI() {
+    const motion = document.getElementById('settings-reduce-motion');
+    if (motion) motion.checked = readMotionPref() === 'reduce';
+    const contrast = document.getElementById('settings-high-contrast');
+    if (contrast) contrast.checked = readContrastPref() === 'high';
+}
+
+function setMotionPref(v) {
+    const val = v === 'reduce' ? 'reduce' : 'full';
+    // 存不进去也要生效（隐私模式 / 配额满）—— 与 applyTheme 一样只降级不报错
+    try { localStorage.setItem(MOTION_KEY, val); } catch (e) { /* 忽略 */ }
+    applyMotionPref(val);
+    syncReadabilityUI();
+    return val;
+}
+
+function setContrastPref(v) {
+    const val = v === 'high' ? 'high' : 'normal';
+    try { localStorage.setItem(CONTRAST_KEY, val); } catch (e) { /* 忽略 */ }
+    applyContrastPref(val);
+    syncReadabilityUI();
+    return val;
+}
+
+// 没显式选过 → 跟随系统；选过 → 固定。CSS 侧看不到"选没选过"，所以跟随只能写在这里。
+if (window.matchMedia) {
+    const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onSystemMotionChange = () => {
+        if (!storedMotionPref()) applyMotionPref(systemPrefersReduceMotion() ? 'reduce' : 'full');
+        syncReadabilityUI();
+    };
+    if (motionQuery.addEventListener) motionQuery.addEventListener('change', onSystemMotionChange);
+    else if (motionQuery.addListener) motionQuery.addListener(onSystemMotionChange);
 }
 
 if (document.readyState === 'loading') {
@@ -6711,6 +6810,62 @@ let rankedFetchToken = 0;            // 段位榜请求令牌：切页签/重拉
  * 切页签。**段位榜的数据只在这里（点页签时）才拉** ——
  * 页面加载、读秒、切到排行榜页都不拉（`/api/ranked_leaderboard` 要现算名次与船长池）。
  */
+// ---------------------------------------------------------------------------
+// C+ 排行榜的三件小事（2026-09-29）：前三名领奖台 / 自己那一行 / 行尾「档案 ↗」。
+// ---------------------------------------------------------------------------
+function leaderboardMeName() {
+    return String(window.__USERNAME || '').trim();
+}
+
+/* 「档案 ↗」是**提示而不是第二个入口**：整行本来就是 `.leaderboard-user` 按钮、
+   点开就是个人信息（showUserProfile）。真加一个按钮会变成"同一件事两个入口"，
+   还会把两张表的列数判据带偏（profile_leaderboard_check 数 `thead th === 6`）。 */
+function leaderboardOpenHint() {
+    return '<span class="ax-open" aria-hidden="true">档案 ↗</span>';
+}
+
+/* 前三名领奖台。数据 = **当前那张表的前三行**，两个接口都是服务端排好序的，
+   所以它就是服务端口径的前三名（页面文案也照这个说，不宣称"全服最强"）。
+   ⚠️ 顺序按原型的 [2,1,3] 排（第一名在中间、卡片更高），靠数组顺序而不是 CSS order ——
+      列顺序与读屏顺序保持一致，不必再补 tabindex 之类。 */
+function renderLeaderboardPodium(rows, opts) {
+    const host = document.getElementById('leaderboard-podium');
+    if (!host) return;
+    const list = Array.isArray(rows) ? rows.slice(0, 3) : [];
+    if (!list.length) { host.classList.add('hidden'); host.innerHTML = ''; return; }
+    const conf = opts || {};
+    const valueOf = typeof conf.value === 'function' ? conf.value : (() => '');
+    const order = list.length >= 3 ? [1, 0, 2] : list.map((_, i) => i);
+    host.innerHTML = order.map(i => {
+        const row = list[i] || {};
+        const name = String(row.username || '未知玩家');
+        const avatar = row.avatar ? String(row.avatar) : '/static/avatars/default.png';
+        const me = name === leaderboardMeName() && name !== '';
+        return '<button type="button" class="ax-podium-card place-' + (i + 1) + (me ? ' ax-me' : '') + '"'
+            + ' data-username="' + escapeHtml(name) + '"'
+            + ' aria-label="查看 ' + escapeHtml(name) + ' 的个人信息">'
+            + '<span class="ax-podium-num">' + (i + 1) + '</span>'
+            + '<img class="ax-podium-avatar" src="' + escapeHtml(avatar) + '" alt=""'
+            + " onerror=\"this.onerror=null;this.src='/static/avatars/default.png'\">"
+            + '<span class="ax-podium-name">' + escapeHtml(name)
+            + (me ? '<span class="ax-chip ax-gold">你</span>' : '') + '</span>'
+            + '<span class="ax-podium-score"><b>' + escapeHtml(String(valueOf(row))) + '</b>'
+            + '<small>' + escapeHtml(String(conf.label || '')) + '</small></span>'
+            + '</button>';
+    }).join('');
+    host.classList.remove('hidden');
+    // 领奖台是整段重建的 → 事件委托只绑一次（与两张表同一个约定）
+    if (host.dataset.podiumBound !== '1') {
+        host.dataset.podiumBound = '1';
+        host.addEventListener('click', (e) => {
+            const card = e.target && e.target.closest ? e.target.closest('.ax-podium-card') : null;
+            if (!card) return;
+            const username = card.dataset.username;
+            if (username && typeof window.showUserProfile === 'function') window.showUserProfile(username);
+        });
+    }
+}
+
 function setLeaderboardTab(tab) {
     const want = (tab === 'ranked') ? 'ranked' : 'record';
     leaderboardTab = want;
@@ -6723,7 +6878,13 @@ function setLeaderboardTab(tab) {
             b.setAttribute('aria-selected', on ? 'true' : 'false');
         });
     }
-    if (want === 'ranked') fetchRankedLeaderboard();
+    if (want === 'ranked') {
+        fetchRankedLeaderboard();
+    } else {
+        // 段位榜的数据只在切过去时拉，切回来时表**不重拉**（DOM 还在）——
+        // 所以领奖台要跟着用缓存下来的战绩榜行重画一次，否则它会停在段位榜那三个人上。
+        renderLeaderboardPodium(leaderboardRecordRows, { label: '胜场', value: (r) => String(Number(r.wins) || 0) });
+    }
     return want;
 }
 
@@ -6743,7 +6904,8 @@ function rankedRowHtml(row) {
     const cls = 'ranked-row' + (top ? ' top-tier' : (high ? ' high-tier' : ''));
     const username = String(r.username || '');
     const avatar = r.avatar ? String(r.avatar) : '/static/avatars/default.png';
-    return '<tr class="' + cls + '" data-tier="' + escapeHtml(String(r.tier_id || '')) + '"'
+    const me = username && username === leaderboardMeName();
+    return '<tr class="' + cls + (me ? ' ax-me' : '') + '" data-tier="' + escapeHtml(String(r.tier_id || '')) + '"'
         + ' data-tier-index="' + escapeHtml(String(tierIndex)) + '">'
         + '<td class="ranked-pos">' + escapeHtml(String(Number(r.position) || 0)) + '</td>'
         + '<td class="leaderboard-user-cell">'
@@ -6752,6 +6914,7 @@ function rankedRowHtml(row) {
         + '<img class="leaderboard-avatar" src="' + escapeHtml(avatar) + '" alt=""'
         + ' onerror="this.onerror=null;this.src=\'/static/avatars/default.png\'">'
         + '<span class="leaderboard-name">' + escapeHtml(username || '未知玩家') + '</span>'
+        + leaderboardOpenHint()
         + '</button></td>'
         + '<td class="ranked-tier"><span class="ranked-tier-icon">' + rankIconMarkup(r.tier_id, size) + '</span>'
         + '<span class="ranked-label">' + escapeHtml(rankLabelOf(r)) + '</span></td>'
@@ -6777,6 +6940,7 @@ function renderRankedTable(data) {
     };
     if (!rows) {
         keepPrevious();
+        renderLeaderboardPodium(null, null);
         if (rankedError) {
             rankedError.classList.remove('hidden');
             rankedError.textContent = '段位榜数据异常（接口没给 leaderboard 数组）';
@@ -6784,11 +6948,15 @@ function renderRankedTable(data) {
         return;
     }
     if (!rows.length) {
-        rankedTableBody.innerHTML = '<tr class="ranked-empty"><td colspan="5">还没有人打过排位</td></tr>';
+        rankedTableBody.innerHTML = '<tr class="ranked-empty"><td colspan="5">'
+            + '<span class="ax-empty">还没有人打过排位<br><small>打一场排位赛就会出现在这里。</small></span></td></tr>';
+        renderLeaderboardPodium(null, null);
         return;
     }
     rankedTableBody.innerHTML = rows.map(rankedRowHtml).join('');
     bindRankedUserClick();
+    // 领奖台跟着**当前这张表**走：段位榜用排位分
+    renderLeaderboardPodium(rows, { label: '排位分', value: (r) => String(Number(r.points) || 0) });
 }
 
 /** 段位榜取数。先渲染「加载中…」再异步取（弹窗可见 ≠ 内容就绪）。 */
@@ -6796,7 +6964,9 @@ function fetchRankedLeaderboard() {
     if (!rankedTableBody) return Promise.resolve();
     const token = ++rankedFetchToken;
     if (rankedError) { rankedError.classList.add('hidden'); rankedError.textContent = ''; }
-    rankedTableBody.innerHTML = '<tr class="ranked-loading"><td colspan="5">加载中…</td></tr>';
+    rankedTableBody.innerHTML = '<tr class="ranked-loading"><td colspan="5">'
+        + '<span class="ax-loading"><i></i><i></i><i></i></span></td></tr>';
+    renderLeaderboardPodium(null, null);
     return fetch('/api/ranked_leaderboard?limit=100&offset=0', { headers: { 'Accept': 'application/json' } })
         .then(resp => {
             if (!resp.ok) throw new Error('网络错误 ' + resp.status);
@@ -9075,20 +9245,37 @@ function showLeaderboard() {
 // ⚠️ 不要再在这里补一份：同名函数声明后出现的会覆盖前面的，
 //    两份实现并存正是本项目"改了没生效"的经典来源。
 
+let leaderboardRecordRows = null;   // 战绩榜最近一次的行（切页签回来时用它重画领奖台）
+
 function fetchLeaderboard() {
     if (!leaderboardTableBody || !leaderboardError) return;
     leaderboardTableBody.innerHTML = '';
     leaderboardError.classList.add('hidden');
     const loadingRow = document.createElement('tr');
-    loadingRow.innerHTML = '<td colspan="6" style="text-align:center; padding:12px">加载中...</td>';
+    // 骨架条而不是「加载中...」三个字：切页签/重进页面时布局不跳（原型没有加载态，
+    // 这一档是补的，节奏照它的空态内边距）。
+    loadingRow.innerHTML = '<td colspan="6"><span class="ax-loading"><i></i><i></i><i></i></span></td>';
     leaderboardTableBody.appendChild(loadingRow);
+    // 取数期间先把领奖台收起来：留着上一次的三个人会读成"这一页的前三名就是他们"
+    renderLeaderboardPodium(null, null);
 
     fetch('/api/leaderboard').then(resp => {
         if (!resp.ok) throw new Error('网络错误');
         return resp.json();
     }).then(data => {
         leaderboardTableBody.innerHTML = '';
-        data.forEach((row, idx) => {
+        const rows = Array.isArray(data) ? data : [];
+        if (!rows.length) {
+            // 空态（原来这一格什么都不画 —— 空白看起来像"坏了"）
+            leaderboardTableBody.innerHTML = '<tr><td colspan="6">'
+                + '<span class="ax-empty">榜单还空着<br><small>打完第一局并产生胜负记录后就会出现在这里。</small></span>'
+                + '</td></tr>';
+            leaderboardRecordRows = null;
+            renderLeaderboardPodium(null, null);
+            return;
+        }
+        const me = leaderboardMeName();
+        rows.forEach((row, idx) => {
             const tr = document.createElement('tr');
             const wins = row.wins || 0;
             const losses = row.losses || 0;
@@ -9099,6 +9286,7 @@ function fetchLeaderboard() {
             const avatar = row.avatar ? String(row.avatar) : '/static/avatars/default.png';
             // 名字样式（特权外观，服务端逐行下发；见 api.py 的 /api/leaderboard）
             const nameCls = 'leaderboard-name' + (String(row.name_style || '') === 'rainbow' ? ' name-rainbow' : '');
+            if (me && username === me) tr.className = 'ax-me';
             tr.innerHTML = `<td>${idx + 1}</td>`
                 + `<td class="leaderboard-user-cell">`
                 + `<button type="button" class="leaderboard-user" data-username="${escapeHtml(username)}"`
@@ -9106,16 +9294,23 @@ function fetchLeaderboard() {
                 + `<img class="leaderboard-avatar" src="${escapeHtml(avatar)}" alt=""`
                 + ` onerror="this.onerror=null;this.src='/static/avatars/default.png'">`
                 + `<span class="${nameCls}">${escapeHtml(username || '未知玩家')}</span>`
+                + leaderboardOpenHint()
                 + `</button></td>`
                 + `<td>${wins}</td><td>${losses}</td><td>${winrate}</td>`
                 + `<td>${row.longest_streak || 0}</td>`;
             leaderboardTableBody.appendChild(tr);
         });
         bindLeaderboardUserClick();
+        leaderboardRecordRows = rows;
+        // 战绩榜的排序口径是 wins DESC / longest_streak DESC（db._get_leaderboard），
+        // 所以领奖台上的数字就是**胜场** —— 换成"胜率/连胜"会和表里的名次对不上。
+        renderLeaderboardPodium(rows, { label: '胜场', value: (r) => String(Number(r.wins) || 0) });
     }).catch(err => {
         leaderboardTableBody.innerHTML = '';
         leaderboardError.classList.remove('hidden');
         leaderboardError.textContent = '无法加载排行榜：' + err.message;
+        leaderboardRecordRows = null;
+        renderLeaderboardPodium(null, null);
     });
 }
 

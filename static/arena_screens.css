@@ -1764,3 +1764,459 @@ html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #rps-result {
     border-radius: var(--ax-radius-sm);
 }
 
+/* ============================================================================
+   16. 对局结算（result）
+   正式版已经是"判定头 + 三张卡 + 操作行"（§35.11），这里按原型再补三件：
+   ① 胜负主视觉的徽记（原型是 45° 方形 + 光晕 + eyebrow）；
+   ② 三张卡的分区标题统一成 11px/.18em 小标题 + 虚线分隔；
+   ③ 本局数据改成**无框指标**（原型 .result-stats）而不是三行小卡片。
+   ⚠️ 结算屏的 id 由 index.html 注释冻结，一个不动；动画令牌
+      （xpAnimToken / rankAnimToken）也不碰 —— 这里只写样式。
+   ========================================================================== */
+/* 判定头的徽记 = `.over-head::before`（**不是** .over-verdict::before）。
+   ⚠️ 试过放在 .over-verdict 里：那一列是 flex column，方块一进去就变成"列的第一行"，
+      45° 旋转的光环还会溢到面板圆角外面（实测截图上压着边框）。而 .over-head 是
+      flex row —— ::before 天然成为最左边那一格，竖向自动居中，不必算旋转后的外接矩形。
+   徽记不旋转：C+ 的面板词汇本来就是 12–15px 圆角方块，斜 45° 是原型的仪式感，
+   在这个横向 hero 里既放不稳也不比现在好看。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="result"] .over-head::before {
+    content: '⚓';
+    display: grid;
+    place-items: center;
+    font-size: 24px;
+    line-height: 1;
+    color: var(--muted);
+    flex: 0 0 auto;
+    width: 54px;
+    height: 54px;
+    border-radius: 15px;
+    border: 1px solid var(--border-strong);
+    box-shadow: inset 0 0 0 1px var(--ax-chip);
+    background-image: var(--ax-halo-vio);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="result"] .over-head.win::before {
+    border-color: var(--ax-gold-strong);
+    color: var(--ax-gold-strong);
+    background-image: var(--ax-halo-win);
+    box-shadow: inset 0 0 0 1px var(--ax-chip), var(--ax-glow);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="result"] .over-head.lose::before {
+    border-color: var(--border-strong);
+    background-image: none;
+    box-shadow: inset 0 0 0 1px var(--ax-chip);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="result"] .over-head > .over-verdict > h2 {
+    text-align: left;
+    font-size: 32px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+}
+
+/* 对手 / 段位 / 用时：改成胶囊条，而不是一行裸文字 */
+html[data-arena-screens="v2"][data-arena-screen-list~="result"] .over-meta > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    font-size: 11px;
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--fluent-radius-full);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="result"] .over-lab {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    color: var(--muted);
+    padding-bottom: 8px;
+    margin: 0 0 12px;
+    border-bottom: 1px dashed var(--ax-dash);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="result"] .over-meta {
+    font-family: var(--fluent-font-mono);
+    font-size: 11px;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="result"] .over-meta b {
+    font-weight: 600;
+    color: var(--text);
+}
+
+/* 本局数据：无框指标（数值等宽、标签 10px） */
+html[data-arena-screens="v2"][data-arena-screen-list~="result"] .over-stats .over-stat {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 0;
+    background-color: transparent;
+    border: 0;
+    border-bottom: 1px dashed var(--ax-dash);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="result"] .over-stats .over-stat:last-child {
+    border-bottom: 0;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="result"] .over-stats .over-stat span {
+    font-size: 11px;
+    color: var(--muted);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="result"] .over-stats .over-stat b {
+    font-family: var(--fluent-font-mono);
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="result"] .game-over-actions > #play-again {
+    color: var(--ax-grad-fg);
+    background-image: var(--ax-grad);
+    border: 1px solid var(--ax-grad-line);
+    border-radius: var(--ax-radius);
+    box-shadow: var(--ax-glow);
+    padding: 11px 22px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="result"] .game-over-actions > #return-to-menu {
+    color: var(--text-subtle);
+    background-color: transparent;
+    background-image: none;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--ax-radius);
+    box-shadow: none;
+    padding: 11px 22px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+/* ============================================================================
+   17. 对局回放（replay）
+   原型：顶部状态条 + 两块只读海域 + 时间轴面板 + 右侧事件记录。
+   正式版已有 .replay-topbar / .replay-players / .replay-body（棋盘 + 右侧栏）/
+   .replay-controls（含 #replay-track），结构齐全 —— 这一节只换皮：
+   面板化、分段控件化的倍速、时间轴轨道与节点用 C+ 的紫金、事件列表虚线分隔。
+   ⚠️ 不动 `.board`/`.cell` 盒模型（replay_check 逐格比对）、不动 REPLAY_STEP_MS /
+      REPLAY_SPEEDS 两个常量、不碰 #replay-track 的 role/tabindex/aria。
+   ========================================================================== */
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-topbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 12px 16px;
+    margin: 0 0 16px;
+    background-color: var(--surface-strong);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--muted);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-stat b {
+    font-family: var(--fluent-font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-speed {
+    display: flex;
+    gap: 3px;
+    margin-left: auto;
+    padding: 3px;
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius-sm);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-speed-btn {
+    padding: 6px 12px;
+    font-family: var(--fluent-font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    background-color: transparent;
+    background-image: none;
+    border: 0;
+    border-radius: 6px;
+    box-shadow: none;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-speed-btn.active {
+    background-color: var(--ax-chip);
+    color: var(--text);
+    box-shadow: inset 0 0 0 1px var(--panel-border);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-player {
+    padding: 10px 14px;
+    background-color: var(--surface-strong);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius-sm);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-player-meta {
+    font-family: var(--fluent-font-mono);
+    font-size: 10px;
+    color: var(--muted);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-board-wrapper {
+    padding: 14px 12px;
+    background-color: var(--surface-strong);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius-sea);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-board-wrapper h3 {
+    font-family: var(--fluent-font-display);
+    font-size: 13px;
+    font-weight: 600;
+    text-align: left;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-side {
+    padding: 14px 14px;
+    gap: 10px;
+    background-color: var(--surface-strong);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-side h3 {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    color: var(--muted);
+    padding-bottom: 7px;
+    margin: 4px 0 2px;
+    border-bottom: 1px dashed var(--ax-dash);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-log-item {
+    padding: 8px 0;
+    border-bottom: 1px dashed var(--ax-dash);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-log-item:last-child {
+    border-bottom: 0;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-log-item.replay-log-current {
+    background-image: var(--ax-halo-row);
+    box-shadow: inset 2px 0 0 0 var(--ax-vio);
+    padding-left: 8px;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-controls {
+    padding: 12px 16px;
+    margin-top: 14px;
+    background-color: var(--surface-strong);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-controls > #replay-play {
+    color: var(--ax-grad-fg);
+    background-image: var(--ax-grad);
+    border: 1px solid var(--ax-grad-line);
+    border-radius: var(--ax-radius-sm);
+    box-shadow: var(--ax-glow);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-controls > #replay-prev,
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-controls > #replay-next {
+    color: var(--text-subtle);
+    background-color: transparent;
+    background-image: none;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--ax-radius-sm);
+    box-shadow: none;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-track-fill {
+    background-image: var(--ax-grad);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-track-thumb {
+    border-color: var(--ax-grad-line);
+    box-shadow: var(--ax-glow);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] #replay-leave {
+    color: var(--text-subtle);
+    background-color: transparent;
+    background-image: none;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--ax-radius);
+    box-shadow: none;
+    padding: 10px 18px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+/* ============================================================================
+   18. 观战席（spectate）
+   原型：顶部状态条 + 两块只读海域 + 右侧公开战报 + 底部"跟随公开战况"说明条。
+   正式版的结构已经是这套（.spectate-topbar / .spectate-players / .spectate-body /
+   .spectate-side），只换皮。
+   ⚠️ 不变量优先于观感：`renderSpectateBoards()` 只画命中的格子、未命中的留空 ——
+      这一节里**没有一条**规则给 `.cell` 加背景/内容，也没碰任何 id。
+      `spectate_check` 与 dom_spectate_frame_check 逐帧比对的就是那块 DOM。
+   ⚠️ 那张棋盘是 300×300 / 单格 42px 的断言对象之一（ui_layout_check 按 `.board`
+      选），所以 `.spectate-board` 的宽高/th 一格不改。
+   ========================================================================== */
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-title {
+    text-align: left;
+    font-size: 19px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-topbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 12px 16px;
+    margin: 0 0 16px;
+    background-color: var(--surface-strong);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--muted);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-stat b {
+    font-family: var(--fluent-font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] #spectate-leave {
+    margin-left: auto;
+    padding: 9px 16px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-subtle);
+    background-color: transparent;
+    background-image: none;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--ax-radius-sm);
+    box-shadow: none;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-player {
+    padding: 10px 14px;
+    background-color: var(--surface-strong);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius-sm);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-player-meta {
+    font-family: var(--fluent-font-mono);
+    font-size: 10px;
+    color: var(--muted);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-board-wrapper {
+    padding: 14px 12px;
+    background-color: var(--surface-strong);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius-sea);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-board-wrapper h3 {
+    font-family: var(--fluent-font-display);
+    font-size: 13px;
+    font-weight: 600;
+    text-align: left;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-side {
+    padding: 14px 14px;
+    gap: 10px;
+    background-color: var(--surface-strong);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-side h3 {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    color: var(--muted);
+    padding-bottom: 7px;
+    margin: 4px 0 2px;
+    border-bottom: 1px dashed var(--ax-dash);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-log-item,
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-chain-item {
+    padding: 8px 0;
+    border-bottom: 1px dashed var(--ax-dash);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-log-item:last-child,
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-chain-item:last-child {
+    border-bottom: 0;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-roster-item {
+    padding: 7px 0;
+    border-bottom: 1px dashed var(--ax-dash);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-roster-item.spectate-roster-me {
+    background-image: var(--ax-halo-row);
+    box-shadow: inset 2px 0 0 0 var(--ax-vio);
+    padding-left: 8px;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-chat-item {
+    padding: 7px 0;
+    border-bottom: 1px dashed var(--ax-dash);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-chat-input {
+    min-width: 0;
+    padding: 9px 12px;
+    font-size: 12px;
+    color: var(--text);
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius-sm);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] #spectate-chat-send {
+    padding: 9px 16px;
+    font-size: 12px;
+    color: var(--text-subtle);
+    background-color: transparent;
+    background-image: none;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--ax-radius-sm);
+    box-shadow: none;
+}
+

@@ -2323,6 +2323,9 @@ body.layout-tight.layout-ingame #phase-timing-toggle.phase-timing-toggle {
     box-shadow: 0 1px 6px var(--fluent-scrim-22);
 }
 body.layout-compact.layout-ingame #phase-timing-toggle.phase-timing-toggle .ptt-label { display: block; }
+@media (min-width: 700px) and (max-width: 1199px) {
+    body.layout-compact.layout-ingame #phase-timing-toggle.phase-timing-toggle { right: 0; }
+}
 
 /* ---------- 局内快捷语 / 表情（第 4 批） ----------
    入口按钮 + 非模态浮层 + 轻提示。文案全部来自 GET /api/quick_chat（见 game.js）。
@@ -2460,6 +2463,19 @@ body.layout-compact.layout-ingame #quick-chat-btn.quick-chat-btn,
 body.layout-tight.layout-ingame #quick-chat-btn.quick-chat-btn {
     box-shadow: 0 1px 6px var(--fluent-scrim-22);
 }
+@media (max-width: 600px) and (orientation: portrait) {
+    body.layout-compact.layout-ingame #quick-chat-btn.quick-chat-btn {
+        top: 6px;
+        left: 50%;
+        transform: translateX(-50%);
+    }
+    body.layout-compact.layout-ingame .quick-chat-panel {
+        top: 52px;
+        left: 50%;
+        transform: translateX(-50%);
+    }
+}
+body.layout-tight.layout-ingame :is(#quick-chat-btn.quick-chat-btn, .quick-chat-panel) { left: 4px; }
 body.layout-compact.layout-ingame .quick-chat-panel,
 body.layout-tight.layout-ingame .quick-chat-panel {
     /* 合并自原第 2135 行的重复定义 */
@@ -4176,6 +4192,7 @@ html.theme-dark .priority-hint { color: var(--deco-priority-hint-dark); }
     /* 角落里空间有限：窄屏上把角标压小一点，别盖住棋盘 —— ⚠️ 这两条注释原本是
        一条没写收尾 `*/` 的注释 + 一条正常注释，粘成了一个（CSS 注释不能嵌套）。 */
     cursor: help;
+    min-height: 40px;
     transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 .effect-indicators .effect-icon:hover,
@@ -4666,7 +4683,11 @@ body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] {
     flex-direction: column;
 }
 body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] #magic-system { order: -1; }
-body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card { height: 56px; width: 50px; }
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card { height: 36px; width: 46px; }
+body.layout-tight.layout-ingame .effect-indicators .effect-icon { min-height: 36px; }
+body.layout-tight.layout-ingame #aux-dock-body { padding: 2px; }
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-hand-container { padding: 0; }
+body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-hand { padding: 0; }
 body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card .card-nameplate { padding: 1px 2px; }
 body.layout-tight.layout-ingame .dock-panel[data-dock-panel="card"] .magic-card .card-name {
     font-size: 0.5rem; line-height: 1.1; padding-right: 0;
@@ -9726,10 +9747,10 @@ html[data-theme-preset="arena"] body:not(.layout-compact) .players-info > .playe
     display: none;
 }
 /* 海面尺寸：宽由 flex 等分决定，高由视口预算兜底 ——
-   calc(100vh - 480px) 是「除中场以外的固定开销」的实测上限（顶栏 + 对手条 + 底排三块
+   calc(100vh - 420px) 是「除中场以外的固定开销」的实测上限（顶栏 + 对手条 + 底排三块
    + 行间距 + 容器内边距 + 海域标题）。它只是**上限**：宽不够时 flex 会自动收窄。 */
 html[data-theme-preset="arena"] body:not(.layout-compact) .boards-container .board {
-    max-width: min(430px, calc(100vh - 480px));
+    max-width: min(430px, calc(100vh - 420px));
     border-radius: 14px;
     border-color: var(--border-strong);
 }
@@ -9798,24 +9819,27 @@ html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .cha
 }
 /* 叠牌卡在轨道里要放大到看得清：手牌条那套 40×56 是"贴条右角的袖珍叠牌"
    （见第 16 节的注释），搬进 200px 宽的轨道后卡名都读不出来。
-   示意稿 C 那摞 mini 是 126px 宽、带卡名与速阶；这里按真卡比例给 120×168
-   （120/168 = 0.714，与实体卡同比例，card_text_fit_check 量的也是这个比例）。 */
+   示意稿 C 那摞 mini 是 126px 宽、带卡名与速阶；这里用 104×144，
+   在 1440×900 下三张完整放进轨道，低视口时轨道仍可滚动。 */
 html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .magic-card.chain-stack-card {
-    width: 100px;
-    height: 140px;
+    width: 104px;
+    height: 144px;
 }
-/* 竖排的叠压：压 14px（照示意稿 C 的注释 —— 压 46px 时下面那张的卡名会被完全盖住），
+html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .chain-stack-card .card-nameplate {
+    margin-top: 18px;
+}
+/* 竖排的叠压：压 6px，保留每张卡的卡名与类型条，
    并把第 16 节那套"往右上错开"的位移收掉（那是行排的错位方式，竖排会歪出去）。 */
 html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .magic-card.chain-stack-card + .magic-card.chain-stack-card {
     margin-left: 0;
-    margin-top: -14px;
+    margin-top: -6px;
     transform: none;
 }
 /* 卡变大后，第 16 节为 40px 卡写的小字号跟着放大（"谁出的"角标 / 卡名 / 类型条） */
-html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .chain-stack-card .chain-card-who { font-size: 0.54rem; }
-html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .chain-stack-card .card-name { font-size: 0.7rem; }
+html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .chain-stack-card .chain-card-who { font-size: 0.66rem; }
+html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .chain-stack-card .card-name { font-size: 0.82rem; }
 html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .chain-stack-card .card-speed,
-html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .chain-stack-card .card-type { font-size: 0.56rem; }
+html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .chain-stack-card .card-type { font-size: 0.65rem; }
 
 /* --- 37.5 ③ 底排左格「你的舰队」（跨 4~6 行、贴底对齐） --- */
 html[data-theme-preset="arena"] body:not(.layout-compact) .players-info > .player-info:nth-child(1) {
@@ -9880,9 +9904,7 @@ html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fie
     background: none;
 }
 /* --- 37.7 ③ 底排中格「手牌」（跨 4~6 行、贴底对齐） ---
-   ⚠️ 手牌尺寸/扇形/两级预览是 Phase 2 的既有实现（86×118 + applyHandFan + .magic-card
-      各档位），这里只搬位置：position:static 覆盖宽屏那条「绝对贴底」，
-      卡片、字体、说明框一概不动（card_text_fit_check 量的就是这些盒子）。 */
+   位置改为网格流内，卡面在三区档放大到 100×136；文字与说明框仍沿用真卡组件。 */
 html[data-theme-preset="arena"] body:not(.layout-compact) #magic-system {
     position: static;
     grid-area: 4 / 2 / 7 / 3;
@@ -9923,6 +9945,10 @@ html[data-theme-preset="arena"] body:not(.layout-compact) #magic-system .magic-h
     justify-content: flex-start;
     overflow-x: auto;
     overflow-y: hidden;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) #magic-system .magic-hand .magic-card {
+    width: 100px;
+    height: 136px;
 }
 /* --- 37.8 ③ 底排右格「操作列」= #turn-indicator（阶段/回合/攻击 chip + 阶段按钮 + 计数） ---
    ⚠️ 为什么阶段按钮留在 #turn-indicator 里：ui_layout_check 的宽屏不变量按
@@ -10025,6 +10051,29 @@ html[data-theme-preset="arena"] body:not(.layout-compact) #view-discard-pile {
         --arena-row-gap: 10px;
     }
 }
+/* At laptop widths the fixed side panels can use narrower columns. Keep the
+   two interactive seas large enough to target without covering either panel. */
+@media (min-width: 1200px) and (max-width: 1439px) {
+    html[data-theme-preset="arena"] {
+        --arena-pad-l: 240px;
+        --arena-pad-r: 240px;
+        --arena-fleet-w: 150px;
+        --arena-ops-w: 150px;
+        --arena-gap: 12px;
+    }
+    html[data-theme-preset="arena"] body:not(.layout-compact) .log-container {
+        width: 210px;
+        max-width: 210px;
+    }
+    html[data-theme-preset="arena"] body:not(.layout-compact) #magic-card-preview,
+    html[data-theme-preset="arena"] body:not(.layout-compact) #in-game-chat-container {
+        width: 210px;
+        max-width: 210px;
+    }
+    html[data-theme-preset="arena"] body:not(.layout-compact) #opponent-ship-pips {
+        display: none;
+    }
+}
 /* --- 37.11 宽一档（≥1440）：把两侧留白还给海域与手牌 ---
    容器 max-width 是 1440 并居中，所以视口每宽 1px，容器左右各多留 0.5px；
    而三块 fixed 浮窗（日志右沿 300 / 预览与聊天左沿 312）贴着**视口**定位 ——
@@ -10033,7 +10082,22 @@ html[data-theme-preset="arena"] body:not(.layout-compact) #view-discard-pile {
    1600 下 308→228 / 320→244，两块海域 290→360px、手牌条 380→536px（6 张卡不再需要横滚）。
    ⚠️ 用 max(0px, …) 兜住超宽屏：负内边距是非法值，直接写 calc 会在
       超宽档"整条声明失效"（padding 退回初值 0 也许碰巧能看，但那不是设计）。 */
-@media (min-width: 1440px) {
+@media (min-width: 1440px) and (max-width: 1599px) {
+    html[data-theme-preset="arena"] {
+        --arena-pad-l: 265px;
+        --arena-pad-r: 265px;
+        --arena-fleet-w: 180px;
+        --arena-ops-w: 180px;
+        --arena-gap: 14px;
+    }
+    html[data-theme-preset="arena"] body:not(.layout-compact) .log-container,
+    html[data-theme-preset="arena"] body:not(.layout-compact) #magic-card-preview,
+    html[data-theme-preset="arena"] body:not(.layout-compact) #in-game-chat-container {
+        width: 240px;
+        max-width: 240px;
+    }
+}
+@media (min-width: 1600px) {
     html[data-theme-preset="arena"] {
         --arena-pad-l: max(0px, calc(308px - (100vw - 1440px) / 2));
         --arena-pad-r: max(0px, calc(320px - (100vw - 1440px) / 2));

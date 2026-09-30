@@ -48,9 +48,17 @@ FRIEND_REQUESTS_PER_HOUR = 10     # 每小时可发出的好友申请数（只�
 #   整批回退 = MODE 改成 'off'（或删掉 index.html 里那一行 <link>）；
 #   单屏回退 = 从 LIST 里删掉那个 token。
 # 都只改这里一个字符串，CSS 一行都不用动；也不向玩家展示这个开关。
-ARENA_SCREENS_MODE = 'v2'
-ARENA_SCREEN_LIST = ('lobby room placement collection leaderboard profile '
-                     'result spectate replay settings')
+#
+# 环境变量覆盖（2026-09-29 加，见 tools/cplus_gate_check.mjs 的负例验收）：
+#   负例（总关 / 删某一屏 token / 空清单 / 未知 token）必须走**真实的服务端渲染配置**
+#   才作数 —— 在 DevTools 里改属性只能证明"CSS 会跟着变"，证明不了模板真的注入了值。
+#   所以这两项可被同名环境变量覆盖；**默认值与上面写的完全相同**，
+#   不设环境变量时行为一个字都不变（生产/普通开发仍然是全开）。
+ARENA_SCREENS_MODE = os.environ.get('ARENA_SCREENS_MODE', 'v2')
+ARENA_SCREEN_LIST = os.environ.get(
+    'ARENA_SCREEN_LIST',
+    'lobby room placement collection leaderboard profile '
+    'result spectate replay settings')
 os.makedirs(AVATAR_UPLOAD_FOLDER, exist_ok=True)
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'),
             template_folder=os.path.join(os.path.dirname(__file__), 'templates'))

@@ -80,22 +80,35 @@ if (r.rects && r.rects.length >= 2) {
 }
 check(r.listCount === 3, '★ 10 秒响应窗的卡列表也用同一套真卡', r.listCount);
 
-// 常驻叠牌必须落在手牌条**之内**（条 overflow:hidden，超出去就被裁掉 = 看不见）
+// 常驻叠牌必须落在**装它的那个容器**之内（容器 overflow:hidden，超出去就被裁掉 = 看不见）。
+//
+// ⚠️ 2026-09-28 重定：原来是钉死"落在 #magic-system（手牌条）内"。arena 预设的对局屏三区
+//    （style.css 第 37 节 + adaptive_layout.js 的 arenaThreeZone()）按示意稿 C 把
+//    #chain-display 搬进了中场右列的轨道 #arena-chain-slot —— 这正是那一期要的效果，
+//    再按"必须在手牌条里"判定，等于要求它别按设计走。
+//    判据的本意是「不被 overflow 裁掉」，所以改成：**先在轨道里找，找不到再退回手牌条**
+//    （轨道本身就是 overflow:hidden，卡片超出它一样会被裁）。
 const fit = await ev(`(function(){
   var strip = document.getElementById('magic-system');
+  var cd = document.getElementById('chain-display');
+  var rail = document.getElementById('arena-chain-slot');
+  var inRail = !!(cd && rail && cd.parentElement === rail);
+  var host = inRail ? rail : strip;
+  var hostName = inRail ? '#arena-chain-slot' : '#magic-system';
   var cards = document.querySelectorAll('#chain-display .chain-stack-card');
-  if (!strip || !cards.length) return null;
-  var sr = strip.getBoundingClientRect();
+  if (!host || !cards.length) return null;
+  var sr = host.getBoundingClientRect();
   var out = 0, rects = [];
   cards.forEach(function(c){
     var q = c.getBoundingClientRect();
     rects.push({x:Math.round(q.x),y:Math.round(q.y),b:Math.round(q.bottom),r:Math.round(q.right)});
     if (q.bottom > sr.bottom + 1 || q.right > sr.right + 1 || q.y < sr.y - 1) out++;
   });
-  return { strip: {x:Math.round(sr.x),y:Math.round(sr.y),b:Math.round(sr.bottom),r:Math.round(sr.right)},
+  return { host: hostName,
+           strip: {x:Math.round(sr.x),y:Math.round(sr.y),b:Math.round(sr.bottom),r:Math.round(sr.right)},
            cards: rects, outside: out };
 })()`);
-check(fit && fit.outside === 0, '★ 常驻叠牌全部落在手牌条内（不被 overflow 裁掉）', fit);
+check(fit && fit.outside === 0, '★ 常驻叠牌全部落在它的容器内（轨道或手牌条，不被 overflow 裁掉）', fit);
 
 // 常驻叠牌不许被浮窗盖住 —— 尤其右下角的聊天窗。出图时实测过：两者同处右下角，
 // 叠牌只露出半张卡，而"看不见谁响应了谁"正是这一期要修的问题本身。

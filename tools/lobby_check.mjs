@@ -358,9 +358,16 @@ try {
     // ⚠️ 不能按空格 split：computed 值是 "minmax(0px, 1fr) minmax(0px, 1fr) …"，
     //    每条轨道内部就有一个空格（实测 3 列会被数成 6 列）。数 fr 才准。
     + ' return { cols: c ? (getComputedStyle(c).gridTemplateColumns.match(/fr/g) || []).length : 0,'
+    + '   areas: c ? getComputedStyle(c).gridTemplateAreas : "",'
+    + '   cplus: document.documentElement.getAttribute("data-arena-screens") === "v2"'
+    + '     && (document.documentElement.getAttribute("data-arena-screen-list") || "").split(/\\s+/).includes("lobby"),'
     + '   panels: panels.length,'
     + '   overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth }; })()');
-  check(layout.cols === 3, '宽屏下大厅是三列', layout);
+  // 旧判据只数 grid-template-columns 里的 fr 字面量。C+ 的主区跨两列、
+  // 玩家与公屏在侧栏；repeat(2, ...) 会让旧正则误读为两列。
+  // 四类业务入口与真实操作已由本工具上面的双浏览器流程逐一断言。
+  check(layout.cplus ? /rooms rooms players/.test(layout.areas) : layout.cols === 3,
+    layout.cplus ? 'C+ 大厅的房间主区与在线侧栏区域正确' : '旧大厅宽屏仍是三列', layout);
   // 观战第 3 批加了第 4 块面板「进行中的对局」（**在看板里，不在看板数里**：
   // 它复用同一个 .lobby-panel 类，所以列数仍是 3、面板数变成 4）。
   check(layout.panels === 4, '四块面板都在 DOM 里（含「进行中的对局」）', layout);

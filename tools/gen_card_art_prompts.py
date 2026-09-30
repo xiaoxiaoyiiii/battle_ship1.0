@@ -68,6 +68,10 @@ TYPE_COMPOSITION = {
     "普通": "single clearly lit focal subject, the surrounding sea only hinted at",
     "场地": "wide panoramic horizon, an environmental aura or persistent field "
             "dominating the whole frame, no single small focal character",
+    # 判定卡（2026-09-28 补：上游加的这一类，打出一张就要摇骰子拼点）。
+    # 构图上要能一眼看出"结果未定"：骰子/天平/掷出的弧线居中，画面留出两种结局的余地。
+    "判定": "a die or balance hanging at the tipping point as the central subject, "
+            "motion arc still unresolved, the outcome left visibly undecided",
 }
 
 # ---------------------------------------------------------------------------
@@ -404,6 +408,60 @@ CARD_ART = [
                "resetting to its pristine opening state, both players' hands of cards "
                "left glowing and untouched, time reversal, dust and embers, pale blue",
         zh="巨钟指针倒转，整片战场重置回开局状态，双方手牌仍发光未被影响，时间倒流",
+    ),
+    # ---- 2026-09-28 补：上游合并带进来的 7 张卡（判定魔法卡 3 张 + 普通 4 张）。
+    # 之前本脚本只覆盖 41 张，card_art_wiring_check 的「映射覆盖卡表里每一张唯一卡」
+    # 当场红了 —— 卡表是 static/magic_card.json，这里少一条就是少一张底图。
+    dict(
+        name="命运骰子", slug="mingyun-shaizi",
+        motif="一枚骨白色巨骰在半空翻滚，六个面各映出一种命运幻影，骰影投向海面",
+        prompt="a colossal bone-white die tumbling in mid-air above dark water, each of "
+               "its faces reflecting a different vision of fate, its long shadow falling "
+               "across the waves",
+        zh="半空翻滚的巨骰，六面各映出一种命运，骰影投向海面",
+    ),
+    dict(
+        name="无忧梦呓", slug="wuyou-mengyi",
+        motif="沉睡的水兵口中飘出半透明梦呓气泡，气泡里两口钟在隔空拼点",
+        prompt="translucent dream bubbles drifting from the mouth of a sleeping sailor, "
+               "two spectral bells clashing point against point inside them",
+        zh="沉睡者吐出的梦呓气泡里，两口钟隔空拼点",
+    ),
+    dict(
+        name="兵粮寸断", slug="bingliang-cunduan",
+        motif="补给缆绳被斩断、粮袋翻落海面，断口处浮着三枚骰子等判定",
+        prompt="a supply cable severed in mid-air over the sea, ration sacks spilling "
+               "into the waves, three dice floating where the cut was made",
+        zh="补给缆绳被斩断、粮袋落海，断口浮着三枚骰子待判定",
+    ),
+    dict(
+        name="亡羊补牢", slug="wangyang-bulao",
+        motif="破损的船坞栅栏正被补上木板，落潮里翻出的旧牌被一只手捞回",
+        prompt="a breached harbor fence being patched with fresh planks, an old card "
+               "surfacing from the ebb tide and lifted back by a hand",
+        zh="补好船坞栅栏的同时，落潮里捞回一张旧牌",
+    ),
+    dict(
+        name="守株待兔", slug="shouzhu-daitu",
+        motif="自家战舰桅杆挂起伪装成礁石的陷阱网，水下伏着一排尖锐锚钩",
+        prompt="a trap net disguised as a reef hanging from a warship's mast, a row of "
+               "barbed anchors waiting below the waterline",
+        zh="桅杆上挂着伪装成礁石的陷阱网，水下埋伏尖锐锚钩",
+    ),
+    dict(
+        name="卧薪尝胆", slug="woxin-changdan",
+        motif="残破舰队列成一线，船身裹着绷带般的护盾光膜，船艏抵着苦胆形铁砧",
+        prompt="a battered fleet in line ahead, hulls wrapped in bandage-like shields of "
+               "light, each bow resting against a bitter-gourd-shaped iron anvil",
+        zh="残破舰队裹上绷带般的护盾光膜，船艏抵着苦胆铁砧",
+    ),
+    dict(
+        name="滥竽充数", slug="lanyu-chongshu",
+        motif="真舰之间插进几艘纸糊假船，海风把假船吹得鼓如竽，边角露出临时铆钉",
+        prompt="a line of real warships interleaved with paper decoys, the fakes "
+               "billowing like flutes in the sea wind, temporary rivets showing at "
+               "their edges",
+        zh="真舰之间插进纸糊假船，海风吹得鼓如竽，边角露出临时铆钉",
     ),
 ]
 

@@ -12,13 +12,18 @@
   * `}` 落在空栈上 → 多出来的 `}`；
   * 块身里又出现 `{` → 说明上一条规则没关，下一条选择器被当成声明文本吞了。
 
-用法：python tools/fluent_css_lint.py [--quiet]
+用法：python tools/fluent_css_lint.py [--quiet] [--file <css> ...]
+      不给 --file 时按 DEFAULT_FILES 全量检查（style.css + C+ 十屏那一层）。
 退出码 1 表示发现坏块。
 """
 import sys
 import pathlib
 
-CSS = pathlib.Path(__file__).resolve().parent.parent / 'static' / 'style.css'
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+CSS = ROOT / 'static' / 'style.css'
+# 2026-09-29：把 C+ 十屏那一层也纳进来。它同样是"少个 `}` 就整段静默失效"的
+# 手写 CSS，而且规则比 style.css 更挤（两千多行覆盖层），没有理由只查主文件。
+DEFAULT_FILES = [ROOT / 'static' / 'style.css', ROOT / 'static' / 'arena_screens.css']
 
 
 def strip_comments(text: str) -> str:
@@ -86,15 +91,27 @@ def lint(path=CSS):
 def main(argv):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     quiet = '--quiet' in argv
-    problems = lint()
-    if not problems:
-        if not quiet:
-            print('style.css 块结构 OK（无缺花括号 / 无多余花括号 / 无畸形嵌套）')
-        return 0
-    print('style.css 发现 %d 处块结构问题：' % len(problems))
-    for p in problems:
-        print('  [%s] 第 %s 行 — %s' % (p['kind'], p['line'], p['detail']))
-    return 1
+    files = [pathlib.Path(a) for i, a in enumerate(argv)
+             if i > 0 and argv[i - 1] == '--file']
+    if not files:
+        files = DEFAULT_FILES
+    bad = 0
+    for path in files:
+        if not path.exists():
+            print('%s 不存在' % path)
+            bad += 1
+            continue
+        problems = lint(path)
+        if not problems:
+            if not quiet:
+                print('%s 块结构 OK（无缺花括号 / 无多余花括号 / 无畸形嵌套）'
+                      % path.relative_to(ROOT) if path.is_absolute() else path)
+            continue
+        bad += 1
+        print('%s 发现 %d 处块结构问题：' % (path, len(problems)))
+        for p in problems:
+            print('  [%s] 第 %s 行 — %s' % (p['kind'], p['line'], p['detail']))
+    return 1 if bad else 0
 
 
 if __name__ == '__main__':

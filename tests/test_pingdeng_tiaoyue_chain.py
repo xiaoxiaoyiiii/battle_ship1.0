@@ -697,12 +697,24 @@ def test_dead_snapshot_key_is_gone_from_the_whole_repo():
     ⚠️ 之所以连文档一起扫：`docs/CHAIN_ENGINE_SPEC.md` 开头原本写着
        「② 平等条约不走 negate_target，改读 <快照> 回滚 —— **别照那份文档改回去**」，
        留着它，下一个人就会照着把快照找回来。
+
+    ⚠️ 2026-09-29 扩边界（不是放宽）：下面多排掉的几个目录都是 `.gitignore` 里的
+       **本机工具缓存**，不是任何人的源码，也不是能"照着改回去"的文档：
+         .workbuddy / .pi  —— 本地审查与协作会话的历史记录（含 AI 会话原文，
+                              里面既有旧键名、也有"该怎么删它"的说明），
+                              留着它们只会让本守卫每跑必红，红得没信息。
+       真实残留只要落在受版本控制的源码或文档里，仍然会被抓到 ——
+       本测试末尾的「扫描面没有变瞎」断言就是防这条被悄悄改坏的。
     """
     skip_dirs = {'.git', '.tmp', '__pycache__', 'node_modules', '.venv', 'venv',
-                 '.pytest_cache', 'data', 'uploads', 'logs'}
+                 '.pytest_cache', 'data', 'uploads', 'logs',
+                 # 本地工具／审查缓存（.gitignore 里，不入库）
+                 '.workbuddy', '.pi', '.trae-html-share-packages', '.dsh',
+                 '.idea', '.vscode'}
     text_ext = {'.py', '.js', '.mjs', '.cjs', '.html', '.css', '.md', '.json',
                 '.txt', '.yml', '.yaml', '.sh', '.bat', '.ps1', '.cfg', '.ini'}
     hits = []
+    scanned = set()
     for base, dirs, files in os.walk(ROOT):
         dirs[:] = [d for d in dirs if d not in skip_dirs]
         for fn in files:
@@ -713,9 +725,17 @@ def test_dead_snapshot_key_is_gone_from_the_whole_repo():
                 text = open(path, encoding='utf-8').read()
             except (OSError, UnicodeDecodeError):
                 continue
+            if not os.path.relpath(path, ROOT).replace(os.sep, '/').startswith('.tmp/'):
+                scanned.add(os.path.relpath(path, ROOT).replace(os.sep, '/'))
             for i, line in enumerate(text.splitlines(), 1):
                 if DEAD_SNAPSHOT_KEY in line:
                     hits.append('%s:%d: %s' % (os.path.relpath(path, ROOT), i, line.strip()[:120]))
+    # 扫描面没有变瞎：受版本控制的正式源码与文档必须真的在扫描集合里，
+    # 否则"排掉本地缓存"这一步就可能被一路改成"什么都扫不到"。
+    for must in ('server.py', 'api.py', 'static/game.js', 'templates/index.html',
+                 'docs/CHAIN_ENGINE_SPEC.md', 'CLAUDE.md', 'tests/test_pingdeng_tiaoyue_chain.py'):
+        assert must in scanned, '源码守卫的扫描面漏掉了 %s —— 扫描边界被改坏了' % must
+    assert len(scanned) > 300, '只扫到 %d 个文件，扫描面明显不完整' % len(scanned)
     assert not hits, '旧快照机制的残留（必须为 0）：\n' + '\n'.join(hits)
 
 

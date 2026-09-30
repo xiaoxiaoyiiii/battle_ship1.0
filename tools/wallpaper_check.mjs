@@ -134,6 +134,21 @@ async function startServer(libDir) {
     // 隔离数据库：跑一次检查不该往正式库里写对局
     BATTLESHIP_DB_PATH: path.join(tmp, 'check.db'),
     BATTLESHIP_WALLPAPER_DIR: libDir,
+    /* ⚠️ 必须放行本端口（2026-09-29 修，W6）。
+       不加这一条时 server.py 的默认白名单只有 `http://localhost:5000` /
+       `http://127.0.0.1:5000`，而本工具用的是**随机空闲端口** —— 于是页面里那条
+       socket.io 握手一直 400、客户端不停重连（实测 245 次请求 / 137 个 4xx；
+       对照：加上这行后 24 次 / 0 个 4xx）。
+       后果不止"实时功能不可用"这么局部：**浏览器端的请求队列被这些重连挤住**，
+       `/api/wallpaper/media/…` 与 `/api/wallpaper/preview/…` 发出去却永远没有响应
+       （CDP 里只有 requestWillBeSent、没有 responseReceived，Werkzeug 访问日志里
+       也没有这条 GET），而 curl 打同一个 URL 是 206 / 2~12ms。
+       三个红项里有 2 个就是这么来的（缩略图解码、视频坏文件提示），
+       而且会**假报**成"无头 Edge 解不了 BMP"——实测 BMP 本身没问题
+       （data: URL 下 naturalWidth=96、naturalHeight=60）。
+       另一个坑：壁纸区块默认在隐藏分区里（`#wp-section` 的 rect 是 0×0，
+       `static/wallpaper.js` 自己也踩过），所以下面要先切到 wp 分区再断言。 */
+    CORS_ORIGINS: url,
   });
   const proc = spawn(pythonExe(), ['-m', 'flask', 'run', '--host=127.0.0.1', '--port=' + port],
     { cwd: ROOT, env, stdio: ['ignore', logFd, logFd] });
@@ -292,7 +307,21 @@ async function main() {
   check(listed.items === 4, '扫到 4 张壁纸（图片/视频/场景/mkv 各一）', listed);
   check(listed.usableItems === 2, '其中 2 张可用（场景型与 mkv 被判为不可用）', listed);
 
-  // 缩略图带 loading=lazy，得先把这一段滚进可视区才会真的去取图
+  // 缩略图带 loading=lazy，得先把这一段滚进可视区才会真的去取图。
+  /* ⚠️ 光滚动没用（2026-09-29 修，W6）：壁纸区块在**默认隐藏的设置分区**里
+     （`templates/index.html` 的 `<section class="settings-pane hidden" data-pane="wp">`，
+     同时只显示一个分区），隐藏时 `#wp-section` 的 rect 是 0×0、里面的 `<img>` 根本
+     不会被请求。`static/wallpaper.js` 自己就记着这个坑（走 `openSettingsModal('wp')`）。
+     第一版只 scrollIntoView，于是三个关于缩略图/视频的断言全红，还被误读成"BMP 解不了"。 */
+  await ev('(function(){ if (typeof openSettingsModal === "function") openSettingsModal("wp");'
+    + ' else { var b = document.querySelector(".settings-nav-item[data-pane=\\"wp\\"]"); if (b) b.click(); }'
+    + ' return 1; })()');
+  await waitFor(async () => {
+    const r = await ev('(function(){ var s = document.getElementById("wp-section");'
+      + ' if (!s) return null; var b = s.getBoundingClientRect();'
+      + ' return b.width > 0 && b.height > 0 ? 1 : null; })()');
+    return r === 1;
+  }, 5000, '切到壁纸分区（隐藏分区里的 img 不会被请求）');
   await ev('(function(){ document.getElementById("wp-section").scrollIntoView({ block: "start" }); return 1; })()');
   try {
     await waitFor(async () => await ev(

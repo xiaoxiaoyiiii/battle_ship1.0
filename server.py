@@ -43,7 +43,7 @@ from file import read_json
 ENABLE_TEST_EVENTS = os.environ.get('ENABLE_TEST_EVENTS') == '1'
 
 # 调试面板（按 F8 唤出）的账号白名单：逗号分隔的 user_id。
-# ⚠️ 12 个 test_* handler 里**没有任何身份校验**（它们靠上面那个开关兜底），
+# ⚠️ 14 个 test_* handler 的身份校验由下面的 _test_event 统一负责，
 # 所以只要在公网把开关打开，就等于对**所有访客**开放作弊。配置这个白名单之后，
 # 即使开关打开，也只有名单里的登录账号能用（其余一律拒绝）。
 # 留空 = 与旧行为一致（开关打开谁都能用）—— 只适合本地/自建环境。
@@ -1001,6 +1001,9 @@ class GameRoom:
         self.disconnect_seq = 0       # 掉线计时器代际令牌
         self.reconnect_tokens = {}    # player_id -> 一次性重连 token
         self.game_over_reason = None  # None | 'opponent_disconnected'
+        # 本局落库后的 match_id（由 `_finalize_match` 写，见 `_game_over_payload`）。
+        # 初值 None = "还没有/取不到" —— 结算 payload 据此决定带不带这个键。
+        self.match_id = None
 
         # ── 阶段转换的「优先权询问」 ──────────────────────────────────
         # 速阶3卡牌"任何时候都能使用"，于是双方会在阶段推进这类操作上抢时点：
@@ -2263,6 +2266,22 @@ def handle_debug_status(data=None):
     }
 
 
+# 测试功能：固定本次 AI 猜拳，用于确定性的真回放夹具
+@socketio.on('test_set_ai_rps_choice')
+@_test_event
+def test_set_ai_rps_choice(data):
+    """为本地真链路测试固定下一次 AI 出拳；生产环境由 _test_event 拒绝。"""
+    data = data or {}
+    room = room_manager.get_room(data.get('room_id'))
+    choice = data.get('choice')
+    if not room or not room.is_ai_room or room.state != 'rock_paper_scissors':
+        return {'status': 'error', 'message': '房间不在 AI 猜拳阶段'}
+    if choice not in ('rock', 'paper', 'scissors'):
+        return {'status': 'error', 'message': '无效的出拳'}
+    room.test_ai_rps_choice = choice
+    return {'status': 'success'}
+
+
 # 测试功能：添加所有魔法卡到手牌
 @socketio.on('test_add_all_magic_cards')
 @_test_event
@@ -2897,7 +2916,8 @@ def handle_join_room(data):
         join_room(room_id, request.sid)
         _lobby_broadcast_soon()
         _bind_presence_game(room)
-        return {'status': 'success', 'player_id': player_id, 'seat': 'reused'}
+        return {'status': 'success', 'player_id': player_id, 'seat': 'reused',
+                'player_seat': spectate.seat_label(room, player_id)}
 
     if len(room.players) >= 2:
         emit('error', {'message': '房间已满'}, to=request.sid)
@@ -2951,7 +2971,8 @@ def handle_join_room(data):
     _bind_presence_game(room)
 
     # 返回响应给客户端，包含player_id
-    return {'status': 'success', 'player_id': player_id}
+    return {'status': 'success', 'player_id': player_id,
+            'player_seat': spectate.seat_label(room, player_id)}
 
 
 # 局内聊天事件
@@ -4031,7 +4052,10 @@ def handle_rps_choice(data):
     if getattr(room, 'is_ai_room', False):
         ai_id = _ai_player_id(room)
         if ai_id and ai_id not in room.rps_choices:
-            room.rps_choices[ai_id] = random.choice(['rock', 'paper', 'scissors'])
+            forced = getattr(room, 'test_ai_rps_choice', None)
+            room.rps_choices[ai_id] = forced if forced in ('rock', 'paper', 'scissors') else random.choice(['rock', 'paper', 'scissors'])
+            if hasattr(room, 'test_ai_rps_choice'):
+                del room.test_ai_rps_choice
 
     room.rps_choices[player_id] = choice
     
@@ -4807,6 +4831,9 @@ def _finalize_match(room, winner_id, loser_id, streak_ctx=None):
         # ★ 回放批（§4/§5）：开关判定**在收口处一次**，然后与对局行同一个事务落库。
         #   没有这一步就没有回放 —— 它同时也是"任一方关掉 ⇒ 这一局不留回放"的落点。
         replay_blob = None
+        # 本局生成的 match_id（由 db.record_match 通过出参交回，见那里的说明）。
+        # 取不到就是空 list ⇒ 下面照旧发 game_over，只是没有"本局回放"入口。
+        room_match_ids = []
         try:
             if _replay_allowed_for_match(winner_user_id, loser_user_id):
                 replay_blob = replay.finalize(room)
@@ -4814,12 +4841,15 @@ def _finalize_match(room, winner_id, loser_id, streak_ctx=None):
             print(f'[replay] 打包回放失败（这局不留回放）: {e}')
             replay_blob = None
         try:
+            # `out_match_id`：把本局生成的 match_id 带出来，供结算 payload 使用
+            # （结算屏的「本局回放」入口要**本局的权威 id**，不许读"历史第一条"猜）。
             db.record_match(winner_user_id or winner_id, loser_user_id or loser_id,
                             getattr(room, 'game_logs', None), count_stats=count_stats,
                             replay=replay_blob,
                             replay_participants=replay.replay_participants(
                                 winner_user_id, loser_user_id),
-                            mode=_match_history_mode(room))
+                            mode=_match_history_mode(room),
+                            out_match_id=room_match_ids)
         except Exception:
             pass
         finally:
@@ -4827,6 +4857,13 @@ def _finalize_match(room, winner_id, loser_id, streak_ctx=None):
             #   内存在用 swap，回放绝不许留在房间里。放在 finally 里：落库失败也清，
             #   否则一份几十 KB 的录制会挂在这一局房间对象上直到房间回收。
             replay.reset(room)
+
+        # 把本局 id 挂在房间上：6 处 `emit('game_over')` 都紧跟在本函数之后，
+        # 由 `_game_over_payload()` 统一取用（结算屏的「本局回放」入口要它）。
+        # ⚠️ 取不到（写库失败 / 双方都是游客）就**不设**这个属性 ——
+        #    客户端那边按"没有本局回放"处理，绝不退化成"拿历史第一条来猜"
+        #    （任务书 §W5 明令禁止那种猜法）。
+        room.match_id = (room_match_ids[-1] if room_match_ids else None)
 
     if not count_stats:
         # 人机对局到此为止：只留下可回看的历史，不累计统计、不发徽章。
@@ -5292,7 +5329,7 @@ def _check_last_chance(room, attacker_id: str, defender_id: str) -> bool:
         })
         # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
         _finalize_match(room, attacker_id, defender_id)
-        emit('game_over', {'winner': attacker_id}, room=room.id)
+        emit('game_over', _game_over_payload(room, {'winner': attacker_id}), room=room.id)
         return True
     return False
 
@@ -5447,6 +5484,25 @@ def _apply_attacker_damage_buffs(room, room_id, attacker_id):
     attacker.damage_dealt_this_turn += 1
 
 
+def _game_over_payload(room, extra=None):
+    """`game_over` 的载荷（**唯一构造口**，2026-09-29 加）。
+
+    为什么要有这么一个只有几行的函数：结算屏的「本局回放」入口需要**本局的权威 id**，
+    而 6 处 `emit('game_over', …)` 各写各的字面量 —— 想加一个字段就得改 6 个地方，
+    漏一个就会出现"这一种结束方式没有回放入口"（本项目的老病根形状）。
+
+    ⚠️ `match_id` **只在真的拿到时才带上**：写库失败、双方都是游客、人机房不计战绩时
+        `_finalize_match` 不会设 `room.match_id`，于是这里就不放这个键。
+        客户端据此**隐藏**入口 —— 而不是退化成"读历史第一条来猜本局"
+        （任务书 §W5 明令禁止那种猜法）。
+    """
+    payload = dict(extra or {})
+    match_id = getattr(room, 'match_id', None)
+    if match_id:
+        payload['match_id'] = match_id
+    return payload
+
+
 def _finish_game_win(room, room_id, winner_id, loser_id, log_message=None):
     """对局结束：置状态、记日志、记录战绩并广播 game_over。"""
     if room.state == 'game_over':
@@ -5458,7 +5514,7 @@ def _finish_game_win(room, room_id, winner_id, loser_id, log_message=None):
                  'result', {'winner': winner_id, 'loser': loser_id})
     # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
     _finalize_match(room, winner_id, loser_id)
-    emit('game_over', {'winner': winner_id}, room=room_id)
+    emit('game_over', _game_over_payload(room, {'winner': winner_id}), room=room_id)
 
 
 @socketio.on('attack')
@@ -6164,10 +6220,26 @@ def _end_turn_locked(room, room_id, player_id):
                     if remaining_turns <= 0:
                         # 执行无暇圣心效果：施法者获胜
                         winner = check['caster']
+                        # ⚠️ 不要用上面极限增援分支里的 player1_id / player2_id：
+                        #    那两个名字只在**那个分支里**绑定，走到这里可能是未绑定的
+                        #    （实测直接抛 UnboundLocalError，tools/headless_game.py 的
+                        #     test_default_cap_is_not_hit_for_normal_games 当场变红）。
+                        #    从房间成员里取"不是赢家的那个"，与顺序无关。
+                        loser = next((pid for pid in room.players if pid != winner), None)
 
-                        # 直接结束游戏
-                        room.state = 'game_over'
-                        room.winner = winner
+                        # ★ 2026-09-29 修：这条终局路径原先只 `room.state = 'game_over'`
+                        #   + 广播 `game_state`，**从不调用 `_finalize_match`** ——
+                        #   于是"真打完的一局"在战绩里查不到、回放也没有。
+                        #   紧邻的极限增援那条（上面 8 行）已经改成统一收口
+                        #   `_finish_game_win(...)` 并留了同样的注释；无暇圣心这条被漏掉了。
+                        #   实测：直接驱动这一分支，`_finalize_match` / `_finish_game` 调用数为 0，
+                        #   而同一批账号在库里只有败场、没有对应的胜场记录。
+                        #   现在走同一个收口：置状态 + 记日志 + 记战绩 + 广播 game_over。
+                        #   下面那个 `game_state` 广播**保留**（客户端历史行为依赖它，
+                        #   而且它带着 `reason` 这句人话）；`_finish_game_win` 自带幂等
+                        #   （state 已是 game_over 就不再记账），所以两次广播不会重复计战绩。
+                        _finish_game_win(room, room_id, winner, loser,
+                                         f'第{room.round}回合 · 无暇圣心结算')
 
                         # 广播游戏结束
                         emit('game_state', {
@@ -10100,9 +10172,17 @@ def _disconnect_timeout(room_id: str, player_id: str, token: int):
 
     if ai_room or pre_battle or other is None or other in room.disconnected or room.state == 'game_over':
         # 人机房 / 未开战 / 双方都不在场：取消对局，不计战绩
+        # ⚠️ 必须带 room_id（2026-09-29 加）。这条广播是**房间级**的，而客户端要在
+        #    "我被取消的那个房间"与"我现在所在的房间"之间做判断 —— 载荷里没有房间号，
+        #    客户端就只能无条件认下，于是**旧房间**的取消广播会把已经进了新房间的玩家
+        #    踢回首页。实测（好友邀战工具连跑两次开局）：`game_canceled` 到达后
+        #    1.5s 就 NAV 到 `/`，而那条取消属于上一个已解散的房间；
+        #    同一条命令换一次运行又全绿 —— 典型竞态。
+        #    `_drop_room` 在 emit 之后，房间没了也不影响这条已经写进载荷的 id。
         emit('game_canceled', {
             'reason': 'opponent_disconnected',
             'message': '对局已取消（对手掉线）',
+            'room_id': room_id,
         }, room=room_id)
         # 房里可能还有人连着（掉线的是**对手**）→ 同样走收口，别留下「对局中」
         _drop_room(room_id, '对手掉线/未开局，取消对局')
@@ -10114,7 +10194,7 @@ def _disconnect_timeout(room_id: str, player_id: str, token: int):
     room.game_over_reason = 'opponent_disconnected'
     # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
     _finalize_match(room, other, player_id)
-    emit('game_over', {'winner': other, 'reason': 'opponent_disconnected'}, room=room_id)
+    emit('game_over', _game_over_payload(room, {'winner': other, 'reason': 'opponent_disconnected'}), room=room_id)
     # 房间保留约 2 分钟：让掉线者重连时收到一次性警告
     socketio.start_background_task(_cleanup_ended_room, room_id, 120)
 
@@ -12873,7 +12953,7 @@ def _finish_game(room, winner_id, loser_id, reason):
                  'result', {'winner': winner_id, 'loser': loser_id, 'reason': reason})
     # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
     _finalize_match(room, winner_id, loser_id)
-    emit('game_over', {'winner': winner_id, 'reason': reason}, room=room.id)
+    emit('game_over', _game_over_payload(room, {'winner': winner_id, 'reason': reason}), room=room.id)
 
 
 # ============ 复活 / 增援 统一放置流程（2026-09-10） ============
@@ -15011,7 +15091,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         add_game_log(room, f"第{room.round}回合 · {_log_name(room, caster_id)} 获胜，游戏结束", 'result', {'winner': caster_id, 'loser': opponent_id})
         # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
         _finalize_match(room, caster_id, opponent_id)
-        emit('game_over', {'winner': caster_id}, room=room.id)
+        emit('game_over', _game_over_payload(room, {'winner': caster_id}), room=room.id)
 
     return result
 
@@ -15052,10 +15132,10 @@ def handle_surrender(data):
     # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
     _finalize_match(room, opponent_id, player_id)
     # 向房间发送游戏结束事件
-    emit('game_over', {
+    emit('game_over', _game_over_payload(room, {
         'winner': opponent_id,
         'reason': 'surrender'  # 添加投降原因标记
-    }, room=room_id)
+    }), room=room_id)
     return {'status': 'success'}
 
 

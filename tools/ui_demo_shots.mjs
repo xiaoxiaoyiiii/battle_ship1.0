@@ -35,7 +35,7 @@ const ONLY_VIEW = argOf('--view', '');
 // --probe "sel1,sel2" 打印这些选择器的矩形（示意稿也会排版溢出，猜数字不如量一遍）
 const PROBE = argOf('--probe', '');
 const PORT = Number(argOf('--port', '9344'));
-const PROFILE = path.join(ROOT, '.tmp', 'ui_demo_shots_profile');
+const PROFILE = path.join(ROOT, '.tmp', 'ui_demo_shots_profile_' + PORT);
 
 const EDGE_CANDIDATES = [
   'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
@@ -48,6 +48,10 @@ if (!BROWSER) { console.error('找不到 Edge/Chrome，跳过 demo 截图'); pro
 
 /** 每个 demo 的视图名与视口。视口宽高取自本项目真正在意的档位（宽屏 1440/1280、手机 390）。 */
 const DEMOS = [
+  { file: 'arena-suite.html', views: ['lobby','room','placement','collection','leaderboard','profile','result','spectate','replay','settings'], viewports: [[1440, 900, 1], [1280, 720, 1], [390, 844, 1]] },
+  { file: 'x-arena-evolved.html', views: ['home', 'game'], viewports: [[1440, 900, 1], [1280, 720, 1], [390, 844, 1]] },
+  { file: 'y-bridge.html', views: ['home', 'game'], viewports: [[1440, 900, 1], [1280, 720, 1], [390, 844, 1]] },
+  { file: 'z-focus.html', views: ['home', 'game'], viewports: [[1440, 900, 1], [1280, 720, 1], [390, 844, 1]] },
   { file: 'a-tactical.html',  views: ['home', 'game'], viewports: [[1440, 900, 1], [1280, 720, 1]] },
   { file: 'b-tabletop.html',  views: ['home', 'game'], viewports: [[1440, 900, 1], [1280, 720, 1]] },
   { file: 'c-arena.html',     views: ['home', 'game'], viewports: [[1440, 900, 1], [1280, 720, 1]] },
@@ -126,6 +130,119 @@ async function renderDemo(demo) {
       const name = demo.file.replace(/\.html$/, '') + '-' + view + '-' + w + 'x' + h + '.png';
       fs.writeFileSync(path.join(OUT_DIR, name), Buffer.from(shot.data, 'base64'));
       console.log('已截图 ' + name);
+      if (demo.file === 'arena-suite.html') {
+        const suiteChecks = await ev(`(async () => {
+          const errors = [];
+          const check = (ok, message) => { if (!ok) errors.push(message); };
+          const click = selector => document.querySelector(selector).click();
+          const input = (selector, value, event = 'input') => {
+            const el = document.querySelector(selector); el.value = value;
+            el.dispatchEvent(new Event(event, { bubbles: true }));
+          };
+          check(document.documentElement.scrollWidth <= innerWidth, '页面横向溢出');
+          check(document.querySelector('.suite-nav [aria-current="page"]')?.dataset.go === ${JSON.stringify(view)}, '导航当前页错误');
+          switch (${JSON.stringify(view)}) {
+            case 'lobby':
+              click('[data-room-filter="等待加入"]');
+              check(document.querySelectorAll('.room-card').length === 2, '房间状态筛选错误');
+              input('#room-search', '不存在的房间');
+              check(!!document.querySelector('#room-list .empty'), '搜索空态缺失');
+              input('#room-search', '');
+              input('#room-code', 'xyz'); click('[data-action="join"]');
+              check(document.querySelector('#room-code').getAttribute('aria-invalid') === 'true', '无效房间号未标记');
+              input('#room-code', 'a7c2e1'); click('[data-action="join"]');
+              check(document.body.dataset.screen === 'room', '加入房间未跳转');
+              window.setDemoView('lobby'); click('[data-room-filter="全部房间"]'); break;
+            case 'room':
+              if (document.querySelector('[data-action="ready"]')) click('[data-action="ready"]');
+              check(!!document.querySelector('.ready-footer [data-go="placement"]'), '准备后无部署入口'); break;
+            case 'placement':
+              if (innerWidth >= 1000) check(document.querySelector('#confirm-deployment').getBoundingClientRect().bottom <= innerHeight, '桌面部署确认按钮超出视口');
+              click('[data-action="clear"]');
+              check(document.querySelector('#confirm-deployment').disabled, '未部署时按钮可用');
+              click('[data-action="random"]');
+              check(document.querySelectorAll('.s-cell.placed').length === 6 && !document.querySelector('#confirm-deployment').disabled, '随机部署不是6个独立格子');
+              click('.s-cell:not(.placed)');
+              check(document.querySelectorAll('.s-cell.placed').length === 6, '允许部署第7艘');
+              click('[data-action="deploy"]');
+              check(document.querySelector('#suite-dialog').open, '部署确认没有反馈');
+              document.querySelector('#suite-dialog').close();
+              click('.s-cell.placed');
+              check(document.querySelectorAll('.s-cell.placed').length === 5 && document.querySelector('#confirm-deployment').disabled, '撤回舰船失败'); break;
+            case 'collection':
+              input('#card-search', '硫磺火焰');
+              check(document.querySelectorAll('#codex-grid [data-card]').length === 1, '卡名搜索失败');
+              click('#codex-grid [data-card]');
+              check(document.querySelector('#card-inspector').textContent.includes('连续连接的6个格子'), '卡牌规则详情错误');
+              if (document.querySelector('#suite-dialog').open) document.querySelector('#suite-dialog').close();
+              input('#card-search', ''); click('[data-type="场地"]');
+              check(document.querySelectorAll('#codex-grid [data-card]').length === 4, '场地筛选错误');
+              input('#speed-filter', '1', 'change');
+              check([...document.querySelectorAll('#codex-grid .card-bottom')].every(el=>el.textContent.includes('速阶 1')), '速阶筛选错误');
+              input('#card-search', '完全不存在'); check(!!document.querySelector('#codex-grid .empty'), '图鉴无空态');
+              input('#card-search', ''); input('#speed-filter', '全部速阶', 'change'); click('[data-type="全部"]'); break;
+            case 'leaderboard':
+              click('[data-rank="胜率"]');
+              check(document.querySelector('.podium-score').textContent.includes('%'), '排行指标未切换');
+              click('[data-player="舰长阿 7"]');
+              check(document.querySelector('#suite-dialog').open && document.querySelector('#suite-dialog-content').textContent.includes('1240'), '排行档案未打开');
+              document.querySelector('#suite-dialog').close(); click('[data-rank="积分"]'); break;
+            case 'profile':
+              click('[data-badge="1"]'); check(document.querySelector('#equipped-name').textContent === '五连胜', '徽章佩戴预览失败');
+              click('[data-badge="0"]'); break;
+            case 'result':
+              click('[data-result="lose"]'); check(!!document.querySelector('.defeat') && document.querySelector('.points-gain').textContent.includes('−16'), '败方结算状态错误');
+              click('[data-result="win"]'); break;
+            case 'spectate':
+              check(document.querySelectorAll('.s-cell').length === 72 && !document.querySelector('.s-cell.placed'), '观战存在非公开船位或棋盘缺失');
+              check([...document.querySelectorAll('.s-cell')].every(el=>el.disabled), '观战棋盘可操作'); break;
+            case 'replay':
+              input('#timeline', '0'); check(!document.querySelector('.s-cell.hit,.s-cell.miss'), '回放零时刻仍有攻击');
+              click('[data-action="next"]'); check(document.querySelector('#timeline').value === '1', '回放下一步失败');
+              input('#timeline', '8'); click('[data-action="play"]');
+              await new Promise(resolve=>setTimeout(resolve,1150));
+              check(Number(document.querySelector('#timeline').value) > 0 && Number(document.querySelector('#timeline').value) < 8, '回放播放未从头推进');
+              click('[data-action="play"]'); input('#timeline', '4'); break;
+            case 'settings':
+              click('[data-theme="teal"]'); check(document.body.style.getPropertyValue('--accent') === '#69cfce', '强调色预览失败');
+              input('#music-volume', '70'); check(document.querySelector('output').textContent === '70%', '音量值不同步');
+              click('#high-contrast'); check(document.body.classList.contains('contrast-preview'), '高对比未应用');
+              window.setDemoView('lobby'); window.setDemoView('settings');
+              check(document.querySelector('[data-theme="teal"]').getAttribute('aria-pressed') === 'true' && document.querySelector('#music-volume').value === '70' && document.querySelector('#high-contrast').checked, '返回设置页状态不一致');
+              click('#high-contrast'); click('[data-theme="violet"]'); input('#music-volume', '45'); break;
+          }
+          window.setDemoView(${JSON.stringify(view)});
+          return errors;
+        })()`);
+        suiteChecks.forEach(message => problems.push(demo.file + ' ' + w + 'x' + h + ' ' + view + ': ' + message));
+        console.log('  全流程布局 / 交互: ' + (suiteChecks.length ? suiteChecks.join('；') : '通过'));
+      }
+      if (/^[xyz]-/.test(demo.file)) {
+        const checks = await ev(`(() => {
+          const errors = [];
+          if (document.documentElement.scrollWidth > innerWidth) errors.push('页面横向溢出');
+          if (${JSON.stringify(view)} === 'game') {
+            const hand = document.querySelector('.hand-zone').getBoundingClientRect();
+            if (innerWidth >= 901 && hand.bottom > innerHeight) errors.push('桌面手牌超出视口: ' + hand.bottom);
+            const sea = document.querySelector('.enemy');
+            sea.querySelector('.cell:not(.hit):not(.miss)').click();
+            if (document.querySelector('#fire').disabled || !sea.querySelector('.selected')) errors.push('选格失败');
+            const cell = sea.querySelector('.selected');
+            document.querySelector('#fire').click();
+            if (!cell.classList.contains('miss') || !document.querySelector('#fire').disabled) errors.push('攻击确认失败');
+          } else {
+            document.querySelector('[data-difficulty="困难"]').click();
+            if (document.querySelector('[data-difficulty="困难"]').getAttribute('aria-pressed') !== 'true') errors.push('难度切换失败');
+          }
+          document.querySelector('.screen:not([hidden]) [data-card="0"]').click();
+          const modal = document.querySelector('#detail');
+          if (!modal.open || !modal.textContent.includes('硫磺火焰')) errors.push('卡牌详情失败');
+          modal.close();
+          return errors;
+        })()`);
+        checks.forEach(message => problems.push(demo.file + ' ' + w + 'x' + h + ' ' + view + ': ' + message));
+        console.log('  布局 / 交互检查: ' + (checks.length ? checks.join('；') : '通过'));
+      }
       if (PROBE) {
         const out = await ev('(function(){' +
           'var sels=' + JSON.stringify(PROBE) + '.split(",");var o={};' +
@@ -145,6 +262,7 @@ async function renderDemo(demo) {
 (async () => {
   fs.mkdirSync(OUT_DIR, { recursive: true });
   // 清 profile：持久 profile 会带上一轮的 localStorage / 视图状态
+  if (path.dirname(PROFILE) !== path.join(ROOT, '.tmp')) throw new Error('Profile escaped workspace .tmp');
   try { fs.rmSync(PROFILE, { recursive: true, force: true }); } catch (e) { /* 无所谓 */ }
 
   browser = spawn(BROWSER, [

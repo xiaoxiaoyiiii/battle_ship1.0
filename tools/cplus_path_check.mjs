@@ -251,18 +251,33 @@ try {
   check(true, '④ 双方经「大厅 → 房间 → 部署」进入布船屏（不是靠首页直达）');
 
   // ---------- ⑤ 部署 ----------
+  /* ⚠️ 判据 2026-09-29 换过（W3 / A04）。旧判据是「摆满 6 格后 #confirm-ships
+     从 hidden 变可见」；新约定是**确认按钮常驻**，可用性由 disabled 表达，
+     不可用的原因写在旁边的 #deploy-hint 里（旧写法下按钮整块消失，
+     玩家看不出是"没摆够"还是"卡住了"）。
+     产品不变量没变、而且验得更细：
+       · 没摆满 → 不能提交（disabled=true）
+       · 摆满且数据合法 → 可以提交（disabled=false） */
   step(5, '双方各摆 6 格 → 确认');
   const place = (row) => '(function(){ var n = 0;'
     + ' document.querySelectorAll("#player-board .cell").forEach(function(c){'
     + '   if (Number(c.dataset.y) === ' + row + ' && n < 6) { c.click(); n++; } });'
     + ' var b = document.getElementById("confirm-ships");'
+    + ' var h = document.getElementById("deploy-hint");'
     + ' return { clicked: n, ships: (window.gameState.ships || []).length,'
-    + '          confirmHidden: b ? b.classList.contains("hidden") : null }; })()';
+    + '          confirmDisabled: b ? b.disabled : null,'
+    + '          confirmHidden: b ? b.classList.contains("hidden") : null,'
+    + '          hint: h ? h.textContent : null }; })()';
+  // 先记一次"没摆满时不能提交"，再摆满（同一屏，顺序不能反）
+  const beforeA = await A.ev('(function(){ var b = document.getElementById("confirm-ships");'
+    + ' var h = document.getElementById("deploy-hint");'
+    + ' return { disabled: b ? b.disabled : null, hint: h ? h.textContent : null }; })()');
+  check(beforeA && beforeA.disabled === true, '⑤ A 未摆满 6 格时「确认放置」不可提交', beforeA);
   const pa = await A.ev(place(0));
   const pb = await B.ev(place(5));
-  check(pa.cells === undefined && pa.clicked === 6 && pa.confirmHidden === false,
-    '⑤ A 摆满 6 格后「确认放置」出现', pa);
-  check(pb.clicked === 6 && pb.confirmHidden === false, '⑤ B 摆满 6 格后「确认放置」出现', pb);
+  check(pa.cells === undefined && pa.clicked === 6 && pa.confirmDisabled === false,
+    '⑤ A 摆满 6 格后「确认放置」可提交（常驻 + disabled 表达可用性）', pa);
+  check(pb.clicked === 6 && pb.confirmDisabled === false, '⑤ B 摆满 6 格后「确认放置」可提交', pb);
   check((await A.ev(SNAP)).cells === 36, '⑤ 布船棋盘 36 格', (await A.ev(SNAP)).cells);
   await A.shot('05-placement');
   await A.ev('document.getElementById("confirm-ships").click()');

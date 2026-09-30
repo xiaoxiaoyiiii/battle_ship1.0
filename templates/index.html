@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <!-- data-arena-screens / data-arena-screen-list = C+ 周边屏幕的开发期启用开关，
      由 api.py 的 ARENA_SCREENS_MODE / ARENA_SCREEN_LIST 渲染（不向玩家暴露）。
-     static/arena_screens.css 的每条规则都以这两个属性为前缀：
-       删掉下面那行 <link> = 整批回退；LIST 里少一个 token = 单屏回退。 -->
+     修改 mode 或 LIST 可配置退回旧布局；完整源码回退需回退本批代码补丁。
+     仅删除样式 <link> 不会撤销新增 DOM 和 JS 行为。 -->
 <html lang="zh-CN" data-arena-screens="{{ arena_screens.mode }}" data-arena-screen-list="{{ arena_screens.list }}">
 <head>
     <meta charset="UTF-8">
@@ -333,6 +333,18 @@
         </div>
         <div id="custom-room-info" class="hidden">
             <p>房间ID：<span id="custom-current-room-id"></span></p>
+            <!-- 席位（2026-09-29 / W3）：两格，一格自己、一格对手。
+                 数据全部来自服务端：自己那格用 `gameState.playerName`，
+                 对手那格用 `gameState.opponentName`（由 `game_state` 的
+                 `opponent_name` 下发，见 server.py 里那个逐人 emit 的循环）。
+                 ⚠️ **缺字段就显示"等待加入"，绝不伪造第二个人** —— 这是任务书
+                     §W3 点名的一条：宁可空着，也不能让玩家以为已经有人了。
+                 ⚠️ 不新增 ready 协议：这里只**展示**服务端已经有的两个名字。 -->
+            <ol id="custom-room-seats" class="room-seats" aria-label="房间席位"></ol>
+            <!-- 规则摘要：全部是这一屏真实生效的规则，不是装饰。
+                 数值来自既有常量与状态（#total-ships 的 6 / 房间模式 / 回合数），
+                 没有为了展示新增任何服务端字段。 -->
+            <dl id="custom-room-rules" class="room-rules" aria-label="本房规则"></dl>
             <p id="invite-link-row" class="invite-link-row">
                 <button id="copy-invite-link" class="secondary" type="button">🔗 复制邀请链接</button>
                 <!-- 复制失败的降级文案原先说「请手动复制上面的链接」，但页面上**从来没有链接**
@@ -440,12 +452,25 @@
             </div>
             <div class="ax-deploy-side">
                 <p id="ships-placed">已放置：<span id="placed-count">0</span>/<span id="total-ships">6</span></p>
+                <!-- 六槽（2026-09-29 / W3）：六个格子，全部**从 gameState.ships 派生**，
+                     不是第二份状态 —— 每一格显示对应那艘船占的坐标，「已放置 N/6」
+                     与棋盘上的高亮都由同一份数据画出来，三处不可能互相矛盾。
+                     空槽用虚线框占位，于是"还差几格"一眼可见。 -->
+                <ol id="deploy-slots" class="ax-slots" aria-label="已放置的战舰（六格）"></ol>
+                <!-- 常驻状态行：把"为什么现在不能提交"写出来。确认按钮从 2026-09-29 起
+                     常驻并靠 disabled 表达不可用（原来是整块 hidden —— 按钮直接不见了，
+                     玩家看不出是"没摆够"还是"卡住了"）。role=status + aria-live 让读屏也听得到。 -->
+                <p id="deploy-hint" class="ax-deploy-hint" role="status" aria-live="polite"></p>
                 <div class="placement-actions">
                     <!-- 主次（S1）：实测两个按钮像素级等重、style.css 里没有 `#confirm-ships` 规则。
                          `.primary` 走第 3 节的通用实心按钮（渐变+阴影），`.secondary` 走描边
-                         （style.css:277 `button.secondary`）—— 两个类都是既有类，无需新 CSS。 -->
+                         （style.css:277 `button.secondary`）—— 两个类都是既有类，无需新 CSS。
+                         ⚠️ #clear-ships 是 2026-09-29 新增（W3 的"清空"）。id 必须在 game.js
+                            里有引用 —— dom_contract_check 会检查"index.html 的 id 有没有人用"。 -->
+                    <button id="clear-ships" class="secondary" type="button"
+                            aria-label="清空已放置的格子，重新摆放">清空</button>
                     <button id="random-ships" class="secondary" type="button">随机摆放</button>
-                    <button id="confirm-ships" class="primary hidden" type="button"
+                    <button id="confirm-ships" class="primary" type="button" disabled
                             aria-label="确认放置：提交已摆好的 6 格并进入猜拳">确认放置</button>
                 </div>
             </div>
@@ -744,7 +769,7 @@
             back-to-main-from-lobby / lobby-player-count / lobby-players-list）——
             game.js 顶部有 getElementById 引用，删了就是"点了没反应"。
          ⚠️ 列表内容全部由 JS 渲染（renderLobbyState），这里只放容器。 -->
-    <div id="lobby-screen" class="screen">
+    <div id="lobby-screen" class="screen" data-lobby-filter="all">
         <h2>游戏大厅</h2>
         <p class="lobby-subtitle">匹配、房间、公屏 —— 都在这一页。</p>
 
@@ -754,6 +779,17 @@
             <span class="lobby-stat">休闲队列 <b id="lobby-queue-casual">0</b></span>
             <span class="lobby-stat">排位队列 <b id="lobby-queue-ranked">0</b></span>
             <button id="lobby-refresh" class="btn secondary" type="button">刷新</button>
+        </div>
+
+        <div class="lobby-filterbar">
+            <input type="search" id="lobby-room-search" maxlength="20"
+                   placeholder="搜索房名、房主或对局玩家…" aria-label="搜索房间或对局">
+            <div class="lobby-seg" id="lobby-room-filter" role="group" aria-label="大厅状态筛选">
+                <button type="button" data-filter="all" class="active" aria-pressed="true">全部</button>
+                <button type="button" data-filter="joinable" aria-pressed="false">可加入</button>
+                <button type="button" data-filter="watchable" aria-pressed="false">可观战</button>
+                <button type="button" data-filter="full" aria-pressed="false">已满</button>
+            </div>
         </div>
 
         <div class="lobby-columns">
@@ -956,6 +992,14 @@
                  tools/recent_opponent_check.mjs 的 BG14 断言都按它找落点。 -->
             <div class="game-over-actions">
                 <button id="play-again">再来一局</button>
+                <!-- 「本局回放」（2026-09-29 / W5）：**只在服务端给了本局权威 match_id
+                     时出现**（默认 hidden；由 game.js 的 rememberGameOverMatchId 决定显隐）。
+                     ⚠️ 刻意不做成"总能点、点开去战绩里挑最新一条" —— 那会串局：
+                        任务书 §W5 明令"不读取'历史第一条'猜本局"。
+                     权限不在这里判：`GET /api/replay/<id>` 自己会回 401/403，
+                     由既有 replayHandleLoadFailure 给人话提示。 -->
+                <button id="over-replay-btn" class="secondary hidden" type="button"
+                        aria-label="观看本局回放">本局回放</button>
                 <button id="return-to-menu">返回主菜单</button>
             </div>
         </div>
@@ -980,7 +1024,7 @@
             <span class="spectate-stat">当前行动 <b id="spectate-turn">—</b></span>
             <span class="spectate-stat">剩余攻击次数 <b id="spectate-attacks">0</b></span>
             <span class="spectate-stat">场地魔法 <b id="spectate-field-magic">无</b></span>
-            <span class="spectate-stat">观战 <b id="spectate-count">0</b>/<b id="spectate-limit">20</b></span>
+            <span class="spectate-stat">观战 <span class="spectate-stat-value"><b id="spectate-count">0</b>/<b id="spectate-limit">20</b></span></span>
             <button id="spectate-leave" class="btn secondary" type="button">退出观战</button>
         </div>
 
@@ -996,6 +1040,21 @@
         </div>
 
         <div class="spectate-body">
+            <!-- 公开信息提示（2026-09-29 / W5）：观众看到的棋盘**只有"已经轰过的格"**，
+                 没有任何船位。这件事必须写在界面上 —— 不然观众会把空海读成
+                 "这里没船"（而真相是"还没打过这里"，两者完全不同）。
+                 同一条提示也解释了为什么某几格是暗的：那是**未探明**，不是"安全"。
+                 ⚠️ 图例里**只有两档颜色**（命中 / 落空）：观战棋盘上"击沉"画的就是命中那
+                    个 ✕（第 5 批刻意与对局屏统一，避免同一个局面在两种屏上长得不一样），
+                    所以**不能**给它一个"专属色块" —— 那会是一张对不上的图例。
+                    "这一格击沉了战舰"在 title / aria-label 上（色盲与读屏用户拿得到），
+                    文案里如实说明。
+                 文案是**陈述产品事实**，不是免责声明。 -->
+            <p class="spectate-legend" id="spectate-legend" role="note">
+                <span class="spectate-legend-item"><i class="lg-hit" aria-hidden="true"></i>命中（✕）</span>
+                <span class="spectate-legend-item"><i class="lg-miss" aria-hidden="true"></i>落空（○）</span>
+                <span class="spectate-legend-note">棋盘只显示已经打过的格；没打过的格子看不出有没有船。击沉的格子也是 ✕，悬停或读屏会说明。</span>
+            </p>
             <div class="spectate-board-wrapper">
                 <h3 id="spectate-board-title-1">— 的棋盘</h3>
                 <div id="spectate-board-1" class="board spectate-board"></div>
@@ -1063,17 +1122,47 @@
             </div>
         </div>
 
+        <!-- 回放主体（2026-09-29 / W5 重排）：
+             任务书 §W5 要求「桌面双棋盘在主区，**时间轴与播放控件紧邻其下**，
+             右侧安排事件列表及可切换的手牌／效果信息」。
+             原结构是 `.replay-body` 里塞两块棋盘 + 右侧栏、`.replay-controls` 又落在
+             body **外面**（于是时间轴在最底下，跟它控制的棋盘隔了一整栏）。
+             现在：`.replay-main`（左）= 两块棋盘 + 紧贴其下的时间轴/播放控件；
+             `.replay-side`（右）= 手牌 + 这一步 + 对局记录。
+             ⚠️ **一个 id / 一个类都没改**（`#replay-board-1/2`、`#replay-track`、
+                `#replay-prev/play/next`、`#replay-logs`… 全在原位），只是换了父容器 ——
+                `tools/replay_check.mjs` 与 `dom_replay_frame_check.mjs` 都按 id 取元素，
+                所以重排对它们透明（改完两个都重跑过，全绿）。 -->
         <div class="replay-body">
-            <div class="replay-board-wrapper">
-                <h3 id="replay-board-title-1">— 的棋盘</h3>
-                <div id="replay-board-1" class="board replay-board" role="img"
-                     aria-label="第一位玩家的棋盘"></div>
+            <div class="replay-main">
+                <div class="replay-boards">
+                    <div class="replay-board-wrapper">
+                        <h3 id="replay-board-title-1">— 的棋盘</h3>
+                        <div id="replay-board-1" class="board replay-board" role="img"
+                             aria-label="第一位玩家的棋盘"></div>
+                    </div>
+                    <div class="replay-board-wrapper">
+                        <h3 id="replay-board-title-2">— 的棋盘</h3>
+                        <div id="replay-board-2" class="board replay-board" role="img"
+                             aria-label="第二位玩家的棋盘"></div>
+                    </div>
+                </div>
+
+                <!-- 时间轴 + 播放控件：**紧邻棋盘下方**（任务书明确要求）。
+                     顺序与原来一致（prev / play / next / track），只是搬了位置。 -->
+                <div class="replay-controls">
+                    <button id="replay-prev" class="btn secondary" type="button">上一步</button>
+                    <button id="replay-play" class="btn" type="button">播放</button>
+                    <button id="replay-next" class="btn secondary" type="button">下一步</button>
+                    <div id="replay-track" class="replay-track" role="slider" tabindex="0"
+                         aria-label="回放进度" aria-valuemin="0" aria-valuenow="0" aria-valuemax="0">
+                        <div class="replay-track-fill" id="replay-track-fill"></div>
+                        <div class="replay-track-nodes" id="replay-track-nodes"></div>
+                        <div class="replay-track-thumb" id="replay-track-thumb"></div>
+                    </div>
+                </div>
             </div>
-            <div class="replay-board-wrapper">
-                <h3 id="replay-board-title-2">— 的棋盘</h3>
-                <div id="replay-board-2" class="board replay-board" role="img"
-                     aria-label="第二位玩家的棋盘"></div>
-            </div>
+
             <div class="replay-side">
                 <h3 id="replay-hand-title-1">— 的手牌</h3>
                 <div class="replay-hand" id="replay-hand-1"></div>
@@ -1083,18 +1172,6 @@
                 <div class="replay-current" id="replay-current">—</div>
                 <h3>对局记录</h3>
                 <div class="replay-logs" id="replay-logs"></div>
-            </div>
-        </div>
-
-        <div class="replay-controls">
-            <button id="replay-prev" class="btn secondary" type="button">上一步</button>
-            <button id="replay-play" class="btn" type="button">播放</button>
-            <button id="replay-next" class="btn secondary" type="button">下一步</button>
-            <div id="replay-track" class="replay-track" role="slider" tabindex="0"
-                 aria-label="回放进度" aria-valuemin="0" aria-valuenow="0" aria-valuemax="0">
-                <div class="replay-track-fill" id="replay-track-fill"></div>
-                <div class="replay-track-nodes" id="replay-track-nodes"></div>
-                <div class="replay-track-thumb" id="replay-track-thumb"></div>
             </div>
         </div>
         <div class="replay-node-tip hidden" id="replay-node-tip" role="tooltip"></div>
@@ -1264,7 +1341,7 @@
                             <div class="ax-preview-art"><span>⚓</span></div>
                             <div class="ax-preview-body">
                                 <p class="ax-preview-title">你的专属竞技场</p>
-                                <p class="ax-preview-sub">主行动、棋盘格子与说明文字用的都是当前令牌。</p>
+                                <p class="ax-preview-sub">主行动、棋盘格子与说明文字都会跟着当前主题变。</p>
                                 <div class="ax-preview-grid">
                                     <i></i><i></i><i class="marked"></i><i></i>
                                     <i></i><i class="marked"></i><i></i><i></i>

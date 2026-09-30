@@ -11,7 +11,8 @@
     },
     "typeComposition": {
       "普通": "single clearly lit focal subject, the surrounding sea only hinted at",
-      "场地": "wide panoramic horizon, an environmental aura or persistent field dominating the whole frame, no single small focal character"
+      "场地": "wide panoramic horizon, an environmental aura or persistent field dominating the whole frame, no single small focal character",
+      "判定": "a die or balance hanging at the tipping point as the central subject, motion arc still unresolved, the outcome left visibly undecided"
     }
   },
   "spec": {
@@ -26,6 +27,20 @@
     "outputDir": "static/cards/"
   },
   "cards": [
+    {
+      "name": "亡羊补牢",
+      "slug": "wangyang-bulao",
+      "speed": 1,
+      "type": "普通",
+      "copiesInDeck": 1,
+      "effect": "当弃牌区有卡牌时可以发动。拿出弃牌区最新的n张卡牌（n为双方的最大船数），选定其中一张加入自己的手牌，其余的回归弃牌堆。",
+      "motif": "破损的船坞栅栏正被补上木板，落潮里翻出的旧牌被一只手捞回",
+      "promptKeywordsZh": "补好船坞栅栏的同时，落潮里捞回一张旧牌",
+      "promptEn": "Painterly digital illustration for a naval tactics card game, cinematic semi-realistic, deep-sea military aesthetic, dark teal and navy palette, cold rim light, volumetric god rays through water, subtle film grain, one strong readable silhouette, restrained fine detail, a breached harbor fence being patched with fresh planks, an old card surfacing from the ebb tide and lifted back by a hand, warm aged-brass and dim amber glow, slow ceremonial weight, embers drifting, calm deliberate mood, single clearly lit focal subject, the surrounding sea only hinted at, vertical 2:3 portrait composition, main subject centered in the middle band, empty shadowed space at the top and bottom for text overlay, no text, no letters, no numbers, no watermark, no logo, no signature, no card frame, no border, no UI elements",
+      "promptBodyEn": "a breached harbor fence being patched with fresh planks, an old card surfacing from the ebb tide and lifted back by a hand",
+      "negativePrompt": "text, letters, numbers, watermark, signature, logo, ui, card frame, border, typography, chinese characters, cluttered detail, multiple focal points, white background, pastel, kawaii, chibi, cartoon, oversaturated, blurry, low contrast, jpeg artifacts, extra limbs, deformed hands",
+      "outputFile": "static/cards/wangyang-bulao.webp"
+    },
     {
       "name": "仁王之盾",
       "slug": "renwang-zhidun",
@@ -55,6 +70,20 @@
       "outputFile": "static/cards/yuyin-raoliang.webp"
     },
     {
+      "name": "卧薪尝胆",
+      "slug": "woxin-changdan",
+      "speed": 1,
+      "type": "普通",
+      "copiesInDeck": 1,
+      "effect": "当自己的船数小于对方的场合可以发动。为自己的所有船添加护盾效果。",
+      "motif": "残破舰队列成一线，船身裹着绷带般的护盾光膜，船艏抵着苦胆形铁砧",
+      "promptKeywordsZh": "残破舰队裹上绷带般的护盾光膜，船艏抵着苦胆铁砧",
+      "promptEn": "Painterly digital illustration for a naval tactics card game, cinematic semi-realistic, deep-sea military aesthetic, dark teal and navy palette, cold rim light, volumetric god rays through water, subtle film grain, one strong readable silhouette, restrained fine detail, a battered fleet in line ahead, hulls wrapped in bandage-like shields of light, each bow resting against a bitter-gourd-shaped iron anvil, warm aged-brass and dim amber glow, slow ceremonial weight, embers drifting, calm deliberate mood, single clearly lit focal subject, the surrounding sea only hinted at, vertical 2:3 portrait composition, main subject centered in the middle band, empty shadowed space at the top and bottom for text overlay, no text, no letters, no numbers, no watermark, no logo, no signature, no card frame, no border, no UI elements",
+      "promptBodyEn": "a battered fleet in line ahead, hulls wrapped in bandage-like shields of light, each bow resting against a bitter-gourd-shaped iron anvil",
+      "negativePrompt": "text, letters, numbers, watermark, signature, logo, ui, card frame, border, typography, chinese characters, cluttered detail, multiple focal points, white background, pastel, kawaii, chibi, cartoon, oversaturated, blurry, low contrast, jpeg artifacts, extra limbs, deformed hands",
+      "outputFile": "static/cards/woxin-changdan.webp"
+    },
+    {
       "name": "回光返照",
       "slug": "huiguang-fanzhao",
       "speed": 1,
@@ -67,6 +96,20 @@
       "promptBodyEn": "an old fleet dissolving into a final flare of light while six pristine new warships materialize over the same waters, a cracked mirror image of the old formation, bittersweet golden blaze",
       "negativePrompt": "text, letters, numbers, watermark, signature, logo, ui, card frame, border, typography, chinese characters, cluttered detail, multiple focal points, white background, pastel, kawaii, chibi, cartoon, oversaturated, blurry, low contrast, jpeg artifacts, extra limbs, deformed hands",
       "outputFile": "static/cards/huiguang-fanzhao.webp"
+    },
+    {
+      "name": "守株待兔",
+      "slug": "shouzhu-daitu",
+      "speed": 1,
+      "type": "普通",
+      "copiesInDeck": 1,
+      "effect": "这张牌只会在当前大回合生效。选定自己的一艘船为其添加陷阱效果；如果这艘船死亡，那么对方需要自行牺牲两艘船；如果对方的船数为1那么也需要牺牲唯一的一艘船。",
+      "motif": "自家战舰桅杆挂起伪装成礁石的陷阱网，水下伏着一排尖锐锚钩",
+      "promptKeywordsZh": "桅杆上挂着伪装成礁石的陷阱网，水下埋伏尖锐锚钩",
+      "promptEn": "Painterly digital illustration for a naval tactics card game, cinematic semi-realistic, deep-sea military aesthetic, dark teal and navy palette, cold rim light, volumetric god rays through water, subtle film grain, one strong readable silhouette, restrained fine detail, a trap net disguised as a reef hanging from a warship's mast, a row of barbed anchors waiting below the waterline, warm aged-brass and dim amber glow, slow ceremonial weight, embers drifting, calm deliberate mood, single clearly lit focal subject, the surrounding sea only hinted at, vertical 2:3 portrait composition, main subject centered in the middle band, empty shadowed space at the top and bottom for text overlay, no text, no letters, no numbers, no watermark, no logo, no signature, no card frame, no border, no UI elements",
+      "promptBodyEn": "a trap net disguised as a reef hanging from a warship's mast, a row of barbed anchors waiting below the waterline",
+      "negativePrompt": "text, letters, numbers, watermark, signature, logo, ui, card frame, border, typography, chinese characters, cluttered detail, multiple focal points, white background, pastel, kawaii, chibi, cartoon, oversaturated, blurry, low contrast, jpeg artifacts, extra limbs, deformed hands",
+      "outputFile": "static/cards/shouzhu-daitu.webp"
     },
     {
       "name": "无中生有",
@@ -181,6 +224,34 @@
       "outputFile": "static/cards/yidianyuan.webp"
     },
     {
+      "name": "兵粮寸断",
+      "slug": "bingliang-cunduan",
+      "speed": 1,
+      "type": "判定",
+      "copiesInDeck": 1,
+      "effect": "这张牌只进行一次判定。当对方的准备阶段开始时，进行一次摇骰子判定：如果点数小于3，判定失败，卡牌结束，不产生任何效果；如果点数大于等于3，对方接下来的两个准备阶段各跳过一次摸牌，两个准备阶段处理完后清除状态。只跳过准备阶段的摸牌，不影响其他抽牌来源、其他玩家或其他效果。",
+      "motif": "补给缆绳被斩断、粮袋翻落海面，断口处浮着三枚骰子等判定",
+      "promptKeywordsZh": "补给缆绳被斩断、粮袋落海，断口浮着三枚骰子待判定",
+      "promptEn": "Painterly digital illustration for a naval tactics card game, cinematic semi-realistic, deep-sea military aesthetic, dark teal and navy palette, cold rim light, volumetric god rays through water, subtle film grain, one strong readable silhouette, restrained fine detail, a supply cable severed in mid-air over the sea, ration sacks spilling into the waves, three dice floating where the cut was made, warm aged-brass and dim amber glow, slow ceremonial weight, embers drifting, calm deliberate mood, a die or balance hanging at the tipping point as the central subject, motion arc still unresolved, the outcome left visibly undecided, vertical 2:3 portrait composition, main subject centered in the middle band, empty shadowed space at the top and bottom for text overlay, no text, no letters, no numbers, no watermark, no logo, no signature, no card frame, no border, no UI elements",
+      "promptBodyEn": "a supply cable severed in mid-air over the sea, ration sacks spilling into the waves, three dice floating where the cut was made",
+      "negativePrompt": "text, letters, numbers, watermark, signature, logo, ui, card frame, border, typography, chinese characters, cluttered detail, multiple focal points, white background, pastel, kawaii, chibi, cartoon, oversaturated, blurry, low contrast, jpeg artifacts, extra limbs, deformed hands",
+      "outputFile": "static/cards/bingliang-cunduan.webp"
+    },
+    {
+      "name": "命运骰子",
+      "slug": "mingyun-shaizi",
+      "speed": 1,
+      "type": "判定",
+      "copiesInDeck": 1,
+      "effect": "进行一次摇骰子判定。如果摇到了1那么复活对方的一艘战舰，如果没有就不用复活；如果摇到了2那么让对方抽一张牌；如果摇到了3那么双方都要弃掉一张手牌；如果摇到了4那么自己抽两张牌；如果摇到了5那么复活自己的至多两艘战舰；如果摇到了6那么让对手牺牲两艘战舰。",
+      "motif": "一枚骨白色巨骰在半空翻滚，六个面各映出一种命运幻影，骰影投向海面",
+      "promptKeywordsZh": "半空翻滚的巨骰，六面各映出一种命运，骰影投向海面",
+      "promptEn": "Painterly digital illustration for a naval tactics card game, cinematic semi-realistic, deep-sea military aesthetic, dark teal and navy palette, cold rim light, volumetric god rays through water, subtle film grain, one strong readable silhouette, restrained fine detail, a colossal bone-white die tumbling in mid-air above dark water, each of its faces reflecting a different vision of fate, its long shadow falling across the waves, warm aged-brass and dim amber glow, slow ceremonial weight, embers drifting, calm deliberate mood, a die or balance hanging at the tipping point as the central subject, motion arc still unresolved, the outcome left visibly undecided, vertical 2:3 portrait composition, main subject centered in the middle band, empty shadowed space at the top and bottom for text overlay, no text, no letters, no numbers, no watermark, no logo, no signature, no card frame, no border, no UI elements",
+      "promptBodyEn": "a colossal bone-white die tumbling in mid-air above dark water, each of its faces reflecting a different vision of fate, its long shadow falling across the waves",
+      "negativePrompt": "text, letters, numbers, watermark, signature, logo, ui, card frame, border, typography, chinese characters, cluttered detail, multiple focal points, white background, pastel, kawaii, chibi, cartoon, oversaturated, blurry, low contrast, jpeg artifacts, extra limbs, deformed hands",
+      "outputFile": "static/cards/mingyun-shaizi.webp"
+    },
+    {
       "name": "教皇旨意",
       "slug": "jiaohuang-zhiyi",
       "speed": 1,
@@ -193,6 +264,20 @@
       "promptBodyEn": "a towering pontiff silhouette in ceremonial robes over the sea, floating cards being discarded and hurled like missiles from emptied cannon barrels, cathedral light, holy decree",
       "negativePrompt": "text, letters, numbers, watermark, signature, logo, ui, card frame, border, typography, chinese characters, cluttered detail, multiple focal points, white background, pastel, kawaii, chibi, cartoon, oversaturated, blurry, low contrast, jpeg artifacts, extra limbs, deformed hands",
       "outputFile": "static/cards/jiaohuang-zhiyi.webp"
+    },
+    {
+      "name": "无忧梦呓",
+      "slug": "wuyou-mengyi",
+      "speed": 1,
+      "type": "判定",
+      "copiesInDeck": 1,
+      "effect": "这张牌通过后，在对方的下一个回合开始时双方进行一次摇骰子拼点判定。如果对方的点数小于自己，那么对方在这个回合的攻击次数恒定为0；如果对方的点数大于自己，那么对方必须弃置一张手牌（没有手牌则跳过）；如果双方点数相同，那么什么都不发生。这个效果只会触发一次。",
+      "motif": "沉睡的水兵口中飘出半透明梦呓气泡，气泡里两口钟在隔空拼点",
+      "promptKeywordsZh": "沉睡者吐出的梦呓气泡里，两口钟隔空拼点",
+      "promptEn": "Painterly digital illustration for a naval tactics card game, cinematic semi-realistic, deep-sea military aesthetic, dark teal and navy palette, cold rim light, volumetric god rays through water, subtle film grain, one strong readable silhouette, restrained fine detail, translucent dream bubbles drifting from the mouth of a sleeping sailor, two spectral bells clashing point against point inside them, warm aged-brass and dim amber glow, slow ceremonial weight, embers drifting, calm deliberate mood, a die or balance hanging at the tipping point as the central subject, motion arc still unresolved, the outcome left visibly undecided, vertical 2:3 portrait composition, main subject centered in the middle band, empty shadowed space at the top and bottom for text overlay, no text, no letters, no numbers, no watermark, no logo, no signature, no card frame, no border, no UI elements",
+      "promptBodyEn": "translucent dream bubbles drifting from the mouth of a sleeping sailor, two spectral bells clashing point against point inside them",
+      "negativePrompt": "text, letters, numbers, watermark, signature, logo, ui, card frame, border, typography, chinese characters, cluttered detail, multiple focal points, white background, pastel, kawaii, chibi, cartoon, oversaturated, blurry, low contrast, jpeg artifacts, extra limbs, deformed hands",
+      "outputFile": "static/cards/wuyou-mengyi.webp"
     },
     {
       "name": "禁忌果实",
@@ -501,6 +586,20 @@
       "promptBodyEn": "a sunken warship lifting back up out of the seabed, ghostly blue soul-light reassembling its broken hull, binding chains snapping, ethereal resurrection glow",
       "negativePrompt": "text, letters, numbers, watermark, signature, logo, ui, card frame, border, typography, chinese characters, cluttered detail, multiple focal points, white background, pastel, kawaii, chibi, cartoon, oversaturated, blurry, low contrast, jpeg artifacts, extra limbs, deformed hands",
       "outputFile": "static/cards/sizhe-susheng.webp"
+    },
+    {
+      "name": "滥竽充数",
+      "slug": "lanyu-chongshu",
+      "speed": 3,
+      "type": "普通",
+      "copiesInDeck": 1,
+      "effect": "这张牌仅可在当前大回合内生效。补充满自己的船数并自己选择放置被补充的船。这些在当前大回合被补充的船将会在大回合结束时强制收回，不会显示沉没。在极限情况下（即剩余的格子数比需要补充的船数少的时候）就尽可能多的补充就可以。",
+      "motif": "真舰之间插进几艘纸糊假船，海风把假船吹得鼓如竽，边角露出临时铆钉",
+      "promptKeywordsZh": "真舰之间插进纸糊假船，海风吹得鼓如竽，边角露出临时铆钉",
+      "promptEn": "Painterly digital illustration for a naval tactics card game, cinematic semi-realistic, deep-sea military aesthetic, dark teal and navy palette, cold rim light, volumetric god rays through water, subtle film grain, one strong readable silhouette, restrained fine detail, a line of real warships interleaved with paper decoys, the fakes billowing like flutes in the sea wind, temporary rivets showing at their edges, blinding cold white-cyan energy, high-speed motion, electric arcs and motion streaks, instantaneous impact, single clearly lit focal subject, the surrounding sea only hinted at, vertical 2:3 portrait composition, main subject centered in the middle band, empty shadowed space at the top and bottom for text overlay, no text, no letters, no numbers, no watermark, no logo, no signature, no card frame, no border, no UI elements",
+      "promptBodyEn": "a line of real warships interleaved with paper decoys, the fakes billowing like flutes in the sea wind, temporary rivets showing at their edges",
+      "negativePrompt": "text, letters, numbers, watermark, signature, logo, ui, card frame, border, typography, chinese characters, cluttered detail, multiple focal points, white background, pastel, kawaii, chibi, cartoon, oversaturated, blurry, low contrast, jpeg artifacts, extra limbs, deformed hands",
+      "outputFile": "static/cards/lanyu-chongshu.webp"
     },
     {
       "name": "疗愈",

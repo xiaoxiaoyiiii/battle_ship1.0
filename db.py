@@ -1011,7 +1011,7 @@ class Database:
             return None
     
     def record_match(self, winner_id: str, loser_id: str, logs=None, count_stats=True,
-                     replay=None, replay_participants=None, mode=None):
+                     replay=None, replay_participants=None, mode=None, out_match_id=None):
         """写入一条对局记录。
 
         count_stats=False 时只写历史（matches / match_logs），不更新任何用户的
@@ -1034,6 +1034,13 @@ class Database:
            是既有行为，回放是**追加**的；失败只记日志（下面的 try/except）。
            但**两者在同一个事务里提交** —— 回放插入失败会让整笔回滚，
            这是有意的：宁可这局没记上，也不许留下"有回放但没对局行"的孤儿。
+
+        `out_match_id`（2026-09-29 加）：一个**可选的 list**，成功时会把本局生成的
+            `match_id` 追加进去。存在的理由见 `server._finalize_match` 与结算屏的
+           「本局回放」入口：那条入口需要**本局的权威 id**，而不是"历史第一条"。
+           ⚠️ 用出参而不是改返回值：成功返回 `True` 是既有契约
+              （`tests/test_db_core.py` 有 `is True` 的断言），改它要动一批调用点与测试；
+              出参让 6 处老调用点**一个字都不用改**。
         """
         if not winner_id or not loser_id:
             logger.warning(f"尝试记录比赛但获胜者或失败者ID为空: winner_id={winner_id}, loser_id={loser_id}")
@@ -1092,6 +1099,15 @@ class Database:
             # 提交事务
             self.conn.commit()
             logger.info(f"成功记录比赛: match_id={mid}, winner_id={winner_id}, loser_id={loser_id}")
+            # 把这一局的 id 交给调用方（2026-09-29 加，配合结算屏的「本局回放」入口）。
+            # ⚠️ **不改返回值**：`record_match` 成功时返回 `True` 是既有契约
+            #    （`tests/test_db_core.py` 有 `is True` 的断言钉着）。要 id 就传一个
+            #    list 进来接 —— 这样 6 处老调用点一个字都不用改，新调用点按需取。
+            if out_match_id is not None:
+                try:
+                    out_match_id.append(mid)
+                except Exception:      # noqa: BLE001 —— 取 id 失败绝不能影响战绩
+                    pass
             return True
         except sqlite3.Error as e:
             logger.error(f"记录比赛时发生数据库错误: winner_id={winner_id}, loser_id={loser_id}, 错误: {e}")
@@ -3954,17 +3970,26 @@ def create_user(username: str, password_hash: str):
 
 
 def record_match(winner_id: str, loser_id: str, logs=None, count_stats=True,
-                 replay=None, replay_participants=None, mode=None):
+                 replay=None, replay_participants=None, mode=None, out_match_id=None):
     """记录比赛（count_stats=False 时只写历史、不计入胜场/连胜）
 
     `replay` / `replay_participants`（对局回放批）：回放与对局行**同一个事务**写入，
     `match_id` 由 `record_match` 内部生成（契约 §4）。
     `mode`（战绩模式批）：`'ranked'` / `'casual'` / `'ai'` / `'custom'`，可空
     （老数据留 NULL，**不兜底**）。
+    `out_match_id`（2026-09-29）：可选 list，成功时把本局 match_id 追加进去
+    （结算屏的「本局回放」入口要用它；详见 `Database.record_match` 的说明）。
+
+    ⚠️ **这一层是模块级转发**，`server.py` 里 `import db` 之后调的是**它**，
+    不是 `Database.record_match`。所以给下面那个方法加参数时**必须同步加在这里** ——
+    否则调用方会拿到 `TypeError: unexpected keyword argument`，而 `_finalize_match`
+    那段正好被 `except Exception: pass` 包着，**异常静默消失**：
+    症状是"战绩/回放都不写、game_over 载荷里没有 match_id"，
+    排查时看着像业务逻辑没走到，其实是**参数在这一层被丢掉了**（本轮实测踩过）。
     """
     return db.record_match(winner_id, loser_id, logs, count_stats,
                            replay=replay, replay_participants=replay_participants,
-                           mode=mode)
+                           mode=mode, out_match_id=out_match_id)
 
 
 def record_card_use(card_name: str, count: int = 1):

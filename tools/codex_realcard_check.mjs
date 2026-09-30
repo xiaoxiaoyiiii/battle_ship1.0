@@ -63,7 +63,14 @@ const r = await ev(`(function(){
     modalVisible: modal ? !modal.classList.contains('hidden') : null };
 })()`);
 console.log(JSON.stringify(r, null, 1));
-check(!r.none && r.total === 41, '（前提）图鉴渲染 41 张（与原判据一致）', r.total);
+// ⚠️ 2026-09-28 重定：原判据写死 `total === 41`（当时的真实卡数）。合并上游后卡表变成
+//    50 张 / 去重 48 张（判定魔法卡 3 张 + 普通 4 张），死数字当场红 —— 但它要守的是
+//    "图鉴把卡表里的牌一张不少地渲染出来"，所以改成从 static/magic_card.json 现算唯一
+//    卡名数，而不是再换一个死数字（下次加卡还会红）。
+const CARD_TABLE = JSON.parse(fs.readFileSync(new URL('../static/magic_card.json', import.meta.url), 'utf-8'));
+const CARD_LIST = Array.isArray(CARD_TABLE) ? CARD_TABLE : (CARD_TABLE.cards || []);
+const EXPECTED = new Set(CARD_LIST.map((c) => c && c.name).filter(Boolean)).size;
+check(!r.none && r.total === EXPECTED, '（前提）图鉴渲染张数 = 卡表唯一卡数（' + EXPECTED + ' 张）', r.total);
 const s0 = (r.sample || [])[0] || {};
 check((r.sample || []).every((x) => x.zones === true), '★ 每个条目都是真卡（名牌/说明/类型条三区齐）',
   (r.sample || []).map((x) => x.zones));
@@ -78,7 +85,7 @@ check((r.sample || []).every((x) => x.artVar && x.artVar.indexOf('cards/') >= 0)
 check((r.sample || []).every((x) => x.artLayers >= 3), '★ 底图 = 真图层 + 渐变占位（未出图也不破图）',
   (r.sample || []).map((x) => x.artLayers));
 
-// 41 张真卡比原来的一行文字高得多 → 必须确认容器**真的能滚**、且滚到底最后一张可见。
+// 48 张真卡比原来的一行文字高得多 → 必须确认容器**真的能滚**、且滚到底最后一张可见。
 // （只断言"有 overflow:auto"是不够的：本项目踩过"看着有、其实永远不触发"的一类判据。）
 const scrollState = await ev(`(function(){
   var grid = document.getElementById('help-magic-cards');
@@ -97,7 +104,7 @@ const scrollState = await ev(`(function(){
     lastVisible: last.bottom <= hr.bottom + 2, count: items.length };
 })()`);
 check(scrollState && scrollState.scrollable === true,
-  '★ 41 张真卡超出弹窗高度时容器可滚动（不是被裁死）', scrollState);
+  '★ 真卡超出弹窗高度时容器可滚动（' + r.total + ' 张，不是被裁死）', scrollState);
 check(scrollState && scrollState.lastVisible === true,
   '★ 滚到底后最后一张卡完整可见', scrollState);
 

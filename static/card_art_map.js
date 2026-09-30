@@ -2,9 +2,12 @@
 // 卡名 → 卡面图相对路径。出图后把文件按 slug 放进 static/cards/ 即生效；
 // 未出图的卡没有条目 → 前端退回 CSS 渐变占位（.card-art 的底层）。
 window.CARD_ART_MAP = {
+    "亡羊补牢": "cards/wangyang-bulao.webp",
     "仁王之盾": "cards/renwang-zhidun.webp",
     "余音绕梁": "cards/yuyin-raoliang.webp",
+    "卧薪尝胆": "cards/woxin-changdan.webp",
     "回光返照": "cards/huiguang-fanzhao.webp",
+    "守株待兔": "cards/shouzhu-daitu.webp",
     "无中生有": "cards/wuzhongshengyou.webp",
     "无暇圣心": "cards/wuxia-shengxin.webp",
     "极限增援": "cards/jixian-zengyuan.webp",
@@ -13,7 +16,10 @@ window.CARD_ART_MAP = {
     "灵气复苏": "cards/lingqi-fusu.webp",
     "败者食尘": "cards/baizhe-shichen.webp",
     "伊甸园": "cards/yidianyuan.webp",
+    "兵粮寸断": "cards/bingliang-cunduan.webp",
+    "命运骰子": "cards/mingyun-shaizi.webp",
     "教皇旨意": "cards/jiaohuang-zhiyi.webp",
+    "无忧梦呓": "cards/wuyou-mengyi.webp",
     "禁忌果实": "cards/jinji-guoshi.webp",
     "Freezing！": "cards/freezing.webp",
     "五险一金": "cards/wuxian-yijin.webp",
@@ -36,6 +42,7 @@ window.CARD_ART_MAP = {
     "失灵！": "cards/shiling.webp",
     "平等条约": "cards/pingdeng-tiaoyue.webp",
     "死者苏生": "cards/sizhe-susheng.webp",
+    "滥竽充数": "cards/lanyu-chongshu.webp",
     "疗愈": "cards/liaoyu.webp",
     "百亿补贴": "cards/baiyi-butie.webp",
     "盗亦有道": "cards/daoyi-youdao.webp",

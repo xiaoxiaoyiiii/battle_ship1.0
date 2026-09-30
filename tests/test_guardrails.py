@@ -2,7 +2,7 @@
 """测试护栏：把「最危险但零覆盖」的路径锁住。
 
 背景（2026-09-13 审计实测）：
-  * 13 个 test_* 高危调试事件里，此前只有 1 个有回归覆盖；
+  * test_* 高危调试事件逐个纳入生产门控回归覆盖；
   * 连锁引擎的超时/窗口推进/能否响应**没有任何测试**（grep 0 命中），
     而这部分逻辑一旦回归，表现为"对局卡死"或"效果凭空丢失"，极难排查。
 本文件按「参数化 + 直接单测纯函数」的方式补齐，避免以后重复踩坑。
@@ -77,7 +77,7 @@ def room():
 
 
 # ---------------------------------------------------------------------------
-# 1. 13 个调试事件在生产模式下必须全部被拒
+# 1. 14 个调试事件在生产模式下必须全部被拒
 # ---------------------------------------------------------------------------
 def _declared_test_events():
     """直接从 server.py 源码里取事件名：以后新增 test_* handler 会自动纳入覆盖。"""
@@ -85,14 +85,14 @@ def _declared_test_events():
     return sorted(set(re.findall(r"@socketio\.on\('(test_[^']+)'\)", src)))
 
 
-def test_declared_test_events_are_thirteen():
+def test_declared_test_events_are_fourteen():
     names = _declared_test_events()
-    assert len(names) == 13, names
+    assert len(names) == 14, names
 
 
 @pytest.mark.parametrize('event', _declared_test_events())
 def test_every_debug_event_rejected_by_default(room, event):
-    """生产模式（未设 ENABLE_TEST_EVENTS）下，13 个事件一个都不能放行。"""
+    """生产模式（未设 ENABLE_TEST_EVENTS）下，14 个事件一个都不能放行。"""
     assert server.ENABLE_TEST_EVENTS is False
     client = server.socketio.test_client(server.app)
     try:

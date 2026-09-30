@@ -15,7 +15,8 @@ Flask + Flask-SocketIO 的实时双人海战棋，50 条魔法卡 / 场地魔法
 - 核心文件：`server.py`（事件 + 对局）｜ `api.py`（HTTP）｜ `db.py`（SQLite/WAL）｜
   `static/game.js` + `templates/index.html` + `static/style.css`（前端单页）+
   `static/arena_screens.css`（**C+ 周边十屏**；按 `<html>` 上的 `data-arena-screens` 与逐屏清单门控，
-  回退 = 改 `api.py` 的 `ARENA_SCREEN_LIST` 一个字符串；不进 AC6 预算）
+  配置回退改 `ARENA_SCREENS_MODE` / `ARENA_SCREEN_LIST`，完整源码回退需回退补丁；
+  样式由 `fluent_css_metrics.mjs --summary` 合并检查）
 - 纯规则模块（都**只有一份实现**，前端不许重算）：`ranks.py` 段位 ｜ `leveling.py` 等级经验 ｜
   `achievements.py` 徽章 ｜ `profile_spec.py` 名片外观与解锁 ｜ `wallpaper.py` 壁纸 ｜
   `spectate.py` 观战（事件白/黑名单 + 净化函数 + 座位标签 + 快照禁字段表；观众**能进来了**，见 `docs/SPECTATE_BATCH2_2026_09_22.md`）｜
@@ -130,7 +131,7 @@ phase:                        preparation → battle → end
 - 大厅：`lobby_subscribe` `lobby_unsubscribe` `lobby_refresh` `lobby_create_room` `lobby_chat_send` `close_room`
   （契约见 `docs/LOBBY_2026_09_18.md`；`lobby_state` 是**广播**，没法逐人改 is_me → 前端拿 `lobby_hello.key` 自己比）
 - 服务端→客户端：`game_state` `attack_result` `ships_updated` `hand_updated` `game_over` `rps_result` `match_queued` `match_canceled` `magic_chain_updated` `chain_resolved` `field_magic_updated` `game_message` `message` `error` `achievements_unlocked` `xp_gained` `rank_changed`
-- ⚠️ 12 个**调试事件**（`test_win_game` / `test_get_game_state` / `test_set_opponent_ships` …）全部带
+- ⚠️ 14 个**调试事件**（含仅供回放夹具固定 AI 出拳的 `test_set_ai_rps_choice`）全部带
   `@_test_event`，未设 `ENABLE_TEST_EVENTS=1` 时一律拒绝。**它们没有 `_identity_ok`** —— 一旦为调试打开就是完全敞开的。
 - ⚠️ `test_win_game` **只设 state/winner 再 emit，不调 `_finalize_match`** —— 用它验"打完一局给分"会
   "成功但毫无反应"。真结算走**炮击击沉 / 投降 / 掉线判胜**。
@@ -395,7 +396,10 @@ phase:                        preparation → battle → end
 `docs/EQUAL_TREATY_CHAIN_2026_09_24.md`（**平等条约改连锁无效化**：座位不等价的根因 + 判据表 + 删掉整套快照）｜ `README.md`（用户向说明）｜
 `docs/C_ARENA_HOME_2026_09_27.md` + `…_THREE_ZONE_…` + `…_SCREENS_…`（首页三栏 / 对局屏三区 / 其余 5 屏的 arena 语言）｜
 `docs/C_PLUS_BASELINE_2026_09_29.md`（**C+ 十屏基线**：回归基线、差异清单、逐屏 DOM/事件/数据来源/进入与销毁映射表）｜
-`docs/C_PLUS_SCREENS_REPORT_2026_09_29.md`（**C+ 十屏交付**：逐屏与原型不同的理由、门控为何不绑主题预设、还差什么）
+`docs/C_PLUS_SCREENS_REPORT_2026_09_29.md`（**C+ 十屏交付**：逐屏与原型不同的理由、门控为何不绑主题预设、还差什么）｜
+`docs/C_PLUS_AGENT_HANDOFF_2026_09_29.md`（**只读复核与 Agent 任务书**：当前差距、门控验收缺陷、W0–W6 剩余实施与验收；后续交付以此为准）｜
+`docs/C_PLUS_AGENT_DELIVERY_2026_09_29.md`（**W0–W2/W6 的交付记录与当前状态**：门控逐屏退回、五支定向检查工具、四条历史红项的归因与修法、逐屏差异表、截图索引、已知问题与残余项。**旧报告里被证伪的说法以这一份为准**）｜
+`docs/cplus_shots/`（本轮验收截图：十屏桌面/手机 + 大厅筛选 + 布船锁定 + **真实两客户端全链路** `realpath-*.png`；`MANIFEST.json` 标注 shell / entered）
 
 > ⚠️ **部署前确认环境变量**：代码新增 `os.environ.get('XXX')` 时，服务器 systemd 必须同步配置 ——
 > 漏配会导致"服务能起来但带着错误默认值运行"（曾因漏配 `CORS_ORIGINS` 让线上所有操作卡十几秒）。

@@ -1,14 +1,9 @@
 /* ============================================================================
    C+ 周边屏幕（2026-09-29）
    ---------------------------------------------------------------------------
-   为什么**新开一个文件**而不是追加进 style.css：
-     ① tools/fluent_css_metrics.mjs 的 AC6 预算只统计 static/style.css，而那里
-        hex 只剩 10、重复选择器只剩 1 的余量（2026-09-29 实测 100/89/31/31 对
-        阈值 110/180/40/32）。这十屏的原型词汇有大量裸色，写进去当场顶爆。
-     ② 十屏是"一套视觉"，单独成文件 = 整体可回退（拆掉 index.html 里那一行
-        <link> 就退回原样，不需要逐条删规则）。
-   代价：本文件不进 AC6 统计，所以纪律靠人守 —— 能用令牌就用令牌；
-   只有"令牌里确实没有"的颜色（原型的紫调胶囊底、金色光晕、海面内发光）才写裸值。
+   十屏视觉单独成文件，便于逐屏门控与审核。fluent_css_metrics.mjs 对本文件
+   独立设预算，并用 --summary 汇总 style.css 与本文件；不要靠拆文件绕过指标。
+   配置回退使用 mode / 逐屏 token；完整源码回退还须回退模板与 JS 补丁。
 
    作用域 = **两道门，缺一不可**：
      html[data-arena-screens="v2"]     —— 开发期总开关（值改成别的一律失效）
@@ -26,9 +21,8 @@
       于是：**结构**由开发开关 + 屏清单管，**颜色**仍全部来自预设给的令牌
       （--arena-* 拿不到时按 --ax-* 别名兜底到当前预设的通用令牌）。
 
-   ⚠️ 只动外观与排列。id、文案、以及被 tools/*_check.mjs 断言的盒模型结构值
-      （棋盘 300×300 / 单格 42px / `.lobby-columns` 恒 3 条 fr 轨道 / `.magic-card`
-      比例 0.715）一律不改。
+   ⚠️ 保留业务 DOM id、棋盘和真卡比例。大厅已改成房间主区加在线侧栏，
+      相关测试检查真实功能与几何关系，不再以旧三列写法限制信息架构。
    ⚠️ 不许碰的目标（fluent_style_check 的圆角档位 + arena 形状签名）：
       #find-match / #player-name / #custom-create-room / .modal-content / .nav /
       .theme-card 的 border-radius。改其中一个要同时改另一个（签名必须唯一）。
@@ -70,6 +64,12 @@ html[data-arena-screens="v2"] {
     --ax-halo-win: radial-gradient(560px 300px at 50% 0%, rgba(201, 162, 76, 0.14), transparent 70%);
     --ax-halo-vio: radial-gradient(560px 300px at 50% 0%, rgba(124, 92, 240, 0.16), transparent 70%);
     --ax-halo-row: linear-gradient(90deg, rgba(124, 92, 240, 0.07), rgba(124, 92, 240, 0.01));
+    /* 段位榜「顶端那一档」的行底色（对应 style.css 的 --deco-amber-a20-1/a03 那对）。
+       为什么要有这个令牌：C+ 的排行榜样式会把 tbody td 的 background-image 一律清掉
+       （统一的表格皮肤），而「高段位那几行更重」正是靠 background-image 表达的 ——
+       清掉之后顶端档和普通行长得一样，产品语义就没了（W6 复现的 B13）。
+       重置照旧，但把这两档重新声明回来，用令牌而不是裸色。 */
+    --ax-gold-row: linear-gradient(90deg, rgba(201, 162, 76, 0.18), rgba(201, 162, 76, 0.03));
     --ax-glow-vio: 0 0 0 3px rgba(124, 92, 240, 0.22);
 }
 
@@ -79,20 +79,74 @@ html.theme-dark[data-arena-screens="v2"] {
     --ax-kicker: var(--primary);
 }
 
+/* @@TOKENS-END@@
+   ↑ 令牌区到此为止。tools/fluent_css_metrics.mjs 只统计**这一行之后**的正文，
+     所以本文件从"公共：屏头"往下每一次写裸色都是要还的账。
+     ⚠️ 必须**独立成行**：那条命令按整行正则找边界，写在别的注释里不算。
+     ⚠️ 加这个哨兵之前，工具会退化成"第一个 `/* ---------- 2.` 之前都算令牌区"，
+       于是整个第 1 节（屏头规则）被静默排除在统计外 —— 2026-09-29 补上。
+     ⚠️ 注释里会提到本哨兵的名字，所以真正的边界**是这一行**，不是提到它的那些行。 */
+
+/* ---------- 0.1 退回合同（2026-09-29 / W1）----------
+   **为什么必须有这一块**：这一层里凡是"给模板里**原有的**元素换样子"的规则，
+   都必须带逐屏 token —— 否则从 ARENA_SCREEN_LIST 里删掉某一屏，那一屏的标题照样
+   是 C+ 的左对齐 / 24px，只有内容生成器（`::before`）消失。实测（tools/
+   cplus_gate_check.mjs，改之前 212 PASS / 11 FAIL）：「只留 lobby」的配置下，
+   room / collection / leaderboard / result / spectate / replay / settings
+   七屏全部仍带着 C+ 标题样式，等于**单屏回退根本没生效**。
+
+   另一条同源的问题：C+ **新加进模板**的容器（图鉴详情栏、设置里的样式预览），
+   门关掉之后样式没了、容器本体还在，于是页面上留一个 display:block 的空块。
+   实测总关状态下 `#codex-detail` 与 `#settings-preview` 都是可见的 block。
+
+   这里的写法是**反过来限定"不该显示"的那一侧**：
+     · `html:not([data-arena-screens="v2"]) …` —— 总开关关掉
+     · `html[data-arena-screens="v2"]:not([data-arena-screen-list~="X"]) …` —— 本屏 token 被删
+   不写进门里面，是因为门里面已经有一堆规则，补在里面必然漏掉"总开关关掉"那一半。
+   两组条件互斥，且各自的 :not 保证只在"该退回"时才命中，不会和开着的规则打架。
+
+   ⚠️ 只收"关掉之后没有任何意义"的容器。`.ax-deploy*` 那一组**不在**名单里 ——
+      它装着棋盘与 #random-ships / #confirm-ships 这些真控件，关掉之后仍然要能用，
+      只是回到旧的纵向排布（可用性由 cplus_gate_check 的 anchor 断言守着）。 */
+html:not([data-arena-screens="v2"]) #codex-detail,
+html:not([data-arena-screens="v2"]) #settings-preview,
+html:not([data-arena-screens="v2"]) #leaderboard-podium,
+html:not([data-arena-screens="v2"]) .lobby-filterbar,
+html:not([data-arena-screens="v2"]) #spectate-legend,
+html[data-arena-screens="v2"]:not([data-arena-screen-list~="collection"]) #codex-detail,
+html[data-arena-screens="v2"]:not([data-arena-screen-list~="settings"]) #settings-preview,
+html[data-arena-screens="v2"]:not([data-arena-screen-list~="leaderboard"]) #leaderboard-podium,
+html[data-arena-screens="v2"]:not([data-arena-screen-list~="lobby"]) .lobby-filterbar,
+html[data-arena-screens="v2"]:not([data-arena-screen-list~="spectate"]) #spectate-legend {
+    display: none;
+}
+
 /* ---------- 1. 公共：屏头 ----------
    原型是 eyebrow + 30px 标题 + 副题 + 右下角页码。页码属于"选稿用"的导航
    （实施方案 §2 明确不进正式游戏），这里只做前两件。
    eyebrow 用 ::before 生成而不是加元素：**纯装饰**，不需要进无障碍树，
-   而且这样 index.html 一个节点都不用加（回退时自动消失）。 */
-html[data-arena-screens="v2"] #lobby-screen > h2,
-html[data-arena-screens="v2"] #leaderboard-screen > h2,
-html[data-arena-screens="v2"] #spectate-screen > .spectate-title,
-html[data-arena-screens="v2"] #replay-screen > .replay-title,
-html[data-arena-screens="v2"] #custom-room-screen > h1,
-html[data-arena-screens="v2"] #game-over-screen .over-verdict > h2,
-html[data-arena-screens="v2"] #help-modal .modal-content > h2,
-html[data-arena-screens="v2"] #settings-modal .modal-content > h2,
-html[data-arena-screens="v2"] #profile-modal .modal-content > h2 {
+   而且这样 index.html 一个节点都不用加（回退时自动消失）。
+
+   ⚠️ 下面三组都是**逐屏 token** 而不是只挂总开关：它们改的是模板里原有的
+      h1/h2/副题，不带 token 的话"删掉某一屏"会只删掉 eyebrow、留下新的字号与左对齐
+      （W1 修的就是这个）。拆成逐屏写法后规则条数变多，但每条的含义更窄，
+      与"单屏回退"这个对外承诺一致。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] #lobby-screen > h2,
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #leaderboard-screen > h2,
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] #spectate-screen > .spectate-title,
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] #replay-screen > .replay-title,
+html[data-arena-screens="v2"][data-arena-screen-list~="room"] #custom-room-screen > h1,
+html[data-arena-screens="v2"][data-arena-screen-list~="result"] #game-over-screen .over-verdict > h2,
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] #help-modal .modal-content > h2,
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] #settings-modal .modal-content > h2,
+/* 档案屏有两个面，两个面都归 `profile` 这一个 token：
+     #opponent-stats-modal = 看别人的名片（查看面）
+     #profile-modal        = 本人的个人信息（编辑面）
+   原来这里只写了 #profile-modal，而 CMDR 那套 eyebrow / 名片皮肤全都挂在
+   #opponent-stats-modal 上 —— 两边选了不同的 id，于是查看面拿不到 24px 标题。
+   2026-09-29 补齐（W1 顺带发现的漂移）。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="profile"] #opponent-stats-modal .modal-content > h2,
+html[data-arena-screens="v2"][data-arena-screen-list~="profile"] #profile-modal .modal-content > h2 {
     text-align: left;
     font-size: 24px;
     line-height: 1.25;
@@ -101,6 +155,17 @@ html[data-arena-screens="v2"] #profile-modal .modal-content > h2 {
     margin: 0 0 6px;
 }
 
+/* eyebrow 版式：**一条规则管七屏**，而"这一屏的文案是什么"由各屏自己声明一个
+   自定义属性（见下面那七行）。
+   为什么不是"版式一条 + content 七条"：那样七个选择器会在两个块里各出现一次，
+   正是本项目《四类静默坏样式》里的「同特异性死重复」—— 后者靠源码顺序压前者，
+   fluent_css_metrics 的 dupSel 也会各记一笔（加 token 后实测从 14 涨到 19）。
+   改成变量之后两边都干净：版式只有一份，逐屏声明只有一个属性。
+   ⚠️ `content: var(--ax-eyebrow, none)` 的兜底必须是 `none` —— 被关掉那一屏
+      没有声明这个变量，于是**不生成伪元素**，屏头上什么都不会留下。
+      这也正是"单屏回退"要的效果（token 一删，eyebrow 就不存在了）。
+   ⚠️ 变量声明在**元素**上（`h2`/`h1`/`.spectate-title`），不是伪元素上 ——
+      ::before 会从宿主元素继承自定义属性。 */
 html[data-arena-screens="v2"] #lobby-screen > h2::before,
 html[data-arena-screens="v2"] #leaderboard-screen > h2::before,
 html[data-arena-screens="v2"] #spectate-screen > .spectate-title::before,
@@ -108,6 +173,7 @@ html[data-arena-screens="v2"] #replay-screen > .replay-title::before,
 html[data-arena-screens="v2"] #custom-room-screen > h1::before,
 html[data-arena-screens="v2"] #help-modal .modal-content > h2::before,
 html[data-arena-screens="v2"] #settings-modal .modal-content > h2::before {
+    content: var(--ax-eyebrow, none);
     display: block;
     font-size: 10px;
     font-weight: 600;
@@ -118,22 +184,28 @@ html[data-arena-screens="v2"] #settings-modal .modal-content > h2::before {
 }
 
 /* 副题：原型是 12px 的 --muted，且左对齐（正式版原来是居中） */
-html[data-arena-screens="v2"] .lobby-subtitle,
-html[data-arena-screens="v2"] .spectate-subtitle,
-html[data-arena-screens="v2"] .replay-subtitle {
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-subtitle,
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-subtitle,
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-subtitle {
     text-align: left;
     font-size: 12px;
     line-height: 1.7;
     margin: 0 0 16px;
 }
 
-html[data-arena-screens="v2"] #lobby-screen > h2::before { content: "LOBBY"; }
-html[data-arena-screens="v2"] #leaderboard-screen > h2::before { content: "RANKING"; }
-html[data-arena-screens="v2"] #spectate-screen > .spectate-title::before { content: "SPECTATE"; }
-html[data-arena-screens="v2"] #replay-screen > .replay-title::before { content: "REPLAY"; }
-html[data-arena-screens="v2"] #custom-room-screen > h1::before { content: "FRIEND ROOM"; }
-html[data-arena-screens="v2"] #help-modal .modal-content > h2::before { content: "HELP · CARD CODEX"; }
-html[data-arena-screens="v2"] #settings-modal .modal-content > h2::before { content: "PREFERENCES"; }
+/* 逐屏的 eyebrow 文案。**只有逐屏 token 在清单里时才声明**，所以删掉某屏 token
+   就等于那一屏没有 eyebrow —— 版式那条规则虽然还在，但没有 content 就没有盒子。
+   ⚠️ 变量声明在**屏根容器**上（而不是标题元素上）：标题那几个选择器在别处
+      （屏头版式、逐屏分区）已经出现过，再声明一次就是同一个选择器第二个块 ——
+      正是 dupSel 要抓的那种"靠源码顺序压"的形状（实测会从 16 涨到 21）。
+      自定义属性会继承，声明在屏根上，下面的 h1/h2::before 一样拿得到。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] #lobby-screen { --ax-eyebrow: "LOBBY"; }
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #leaderboard-screen { --ax-eyebrow: "RANKING"; }
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] #spectate-screen { --ax-eyebrow: "SPECTATE"; }
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] #replay-screen { --ax-eyebrow: "REPLAY"; }
+html[data-arena-screens="v2"][data-arena-screen-list~="room"] #custom-room-screen { --ax-eyebrow: "FRIEND ROOM"; }
+html[data-arena-screens="v2"][data-arena-screen-list~="collection"] #help-modal { --ax-eyebrow: "HELP · CARD CODEX"; }
+html[data-arena-screens="v2"][data-arena-screen-list~="settings"] #settings-modal { --ax-eyebrow: "PREFERENCES"; }
 
 /* ---------- 2. 公共：面板 ----------
    只有 arena 里带 ax-panel 的容器变 C+ 面板；其余既有组件不动。 */
@@ -513,6 +585,11 @@ html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .compendium-
 
 /* 详情栏：大卡 + 完整效果 —— 手机整块换成弹窗（见 §10） */
 html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-codex-detail {
+    position: sticky;
+    top: 8px;
+    max-height: calc(92vh - 160px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 18px;
     background-color: var(--surface-muted);
     border: 1px solid var(--border);
@@ -648,6 +725,9 @@ html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-detail-c
 
     html[data-arena-screens="v2"][data-arena-screen-list~="collection"] .ax-codex-detail {
         display: none;
+        position: static;
+        max-height: none;
+        overflow-y: visible;
     }
 
     /* 详情页：网格与筛选条让位，只留详情 */
@@ -733,6 +813,7 @@ html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] .ax-podium-
     padding: 22px 14px 18px;
     text-align: center;
     min-width: 0;
+    color: var(--text);
     background-color: var(--surface-strong);
     background-image: var(--ax-halo-vio);
     border: 1px solid var(--border);
@@ -857,6 +938,46 @@ html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #ranked-tab
     border-bottom-color: transparent;
 }
 
+/* ---------- 段位两档的行重（C+ 层把「高段位更重」抹掉了，这里补回来）----------
+   背景：上面那条 `#ranked-table tbody td { background-image: none; box-shadow: none }`
+   是 (1,2,3) 特异度，而 style.css 里表达"这一行更重"的两条是
+     #ranked-table .ranked-row.top-tier > td   → (1,2,1)
+     #ranked-table .ranked-row.high-tier > td:first-child → (1,2,2)
+   —— 都被那条统一皮肤压掉了。实测（tools/ranked_check.mjs 的 B13）：
+     top 与 low 两行的 background-image 都是 `none`，顶端档看起来和普通行一模一样。
+   这不是"样式更漂亮"的问题：docs/RANKED_2026_09_17.md §高阶行的视觉加权把它写明为
+   产品语义（段位高低要一眼可辨）。所以重置保留、这两档单独声明回来，用 C+ 令牌。
+   ⚠️ 必须**紧跟在重置之后**并且特异度不低于它，否则还是被压。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #ranked-table .ranked-row.top-tier > td {
+    background-image: var(--ax-gold-row);
+    font-weight: 800;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #ranked-table .ranked-row.top-tier > td:first-child {
+    /* ⚠️ 第二层必须是**一整条** shadow（--ax-glow-vio 就是 `0 0 0 3px rgba(...)`）。
+       写成 `0 0 12px var(--ax-glow-vio)` 会替换成 `0 0 12px 0 0 0 3px rgba(...)`
+       ——长度太多 ⇒ 整条声明在计算值阶段就是非法的 ⇒ box-shadow 落回 none，
+       于是"高段位行有左侧色条"这条产品语义又没了（tools/ranked_check.mjs 的 B14
+       正是这么抓到的：top 与 low 的 boxShadow 都是 none）。 */
+    box-shadow: inset 4px 0 0 var(--ax-gold-strong), var(--ax-glow-vio);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #ranked-table .ranked-row.high-tier > td:first-child {
+    box-shadow: inset 4px 0 0 var(--ax-cy);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #ranked-table .ranked-row.top-tier .ranked-label,
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #ranked-table .ranked-row.top-tier .ranked-points {
+    color: var(--ax-gold-strong);
+    font-weight: 800;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #ranked-table .ranked-row.high-tier .ranked-label,
+html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #ranked-table .ranked-row.high-tier .ranked-points {
+    color: var(--ax-cy);
+    font-weight: 700;
+}
+
 html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #leaderboard-table tbody tr.ax-me > td:first-child,
 html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] #ranked-table tbody tr.ax-me > td:first-child {
     box-shadow: inset 2px 0 0 0 var(--ax-vio);
@@ -875,6 +996,19 @@ html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] .leaderboar
 html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] .leaderboard-user:hover .ax-open,
 html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] .leaderboard-user:focus-visible .ax-open {
     opacity: 1;
+}
+
+/* 窄屏直接不显示这个提示（2026-09-29 / W6）。
+   实测 390×844：它被挤成 **10px 宽、42px 高**的竖条（"档案 ↗" 逐字换行），
+   而且**溢出了自己的单元格**，落在段位列上面（x 173..183 落在 164..216 里）。
+   平时它 opacity:0 看不见，但**键盘 focus 到那一行时它会显形并压住段位图标** ——
+   手机外接键盘 / 读屏用户的焦点顺序里这是真实的一帧。
+   它是纯装饰（`aria-hidden="true"`），行本身已经是按钮且带 `title`，
+   所以窄屏去掉它不损失任何信息。 */
+@media (max-width: 620px) {
+    html[data-arena-screens="v2"][data-arena-screen-list~="leaderboard"] .leaderboard-user .ax-open {
+        display: none;
+    }
 }
 
 /* 空态：表格里的空态要撑满整行 */
@@ -979,6 +1113,61 @@ html[data-arena-screens="v2"][data-arena-screen-list~="profile"] .history-list .
 html[data-arena-screens="v2"][data-arena-screen-list~="profile"] .pf-card .pf-meta {
     font-family: var(--fluent-font-mono);
     font-size: 11px;
+}
+
+/* ---------- 17.1 查看面：宽屏两栏（2026-09-29 / W3）----------
+   任务书要求"档案把**查看面**在宽屏扩成名片 + 数据／徽章／历史两栏，手机回单栏"。
+   原来查看面在宽屏下仍是那张 **560px 的窄名片**（style.css 的 `.pf-view-modal`
+   `max-width:560px`），于是"宽屏"只是把同一张窄卡居中 —— 一列到底，
+   数据/徽章/历史全挤在名字下面。
+   做法：**不动 DOM**，只给查看面加一层 grid。
+     · `.pf-cover`（封面色带）横跨两栏；
+     · `.pf-hero`（头像/名字/称号/简介/经验条）占左栏；
+     · 数据 / 徽章墙 / 最爱用的卡 / 历史战绩 / 留言板依次落在右栏。
+   ⚠️ 只作用于**查看面**（`#opponent-stats-content` 里的 `.pf-card`）——
+      编辑面是另一套结构（`#profile-edit` 的 `.pf-editor`），一行都不碰。
+   ⚠️ 断点取 861px：与既有"桌面档"判据一致（`.`ax-cols` 那套也是 860/861 分界）；
+      窄屏（含手机）保持单栏，`.pf-hero` 的 grid-row 跨度在单栏下无效、自然回落。
+   ⚠️ `grid-row: 2 / span 99` 是刻意的：不用给右栏每一项写行号 ——
+      哪几块被 hidden（三个 show_* 开关 / 没徽章 / 没历史）都不需要改 CSS，
+      右栏自动往上收。 */
+@media (min-width: 861px) {
+    html[data-arena-screens="v2"][data-arena-screen-list~="profile"]
+        #opponent-stats-content .pf-card {
+        display: grid;
+        grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+        column-gap: 18px;
+        align-content: start;
+    }
+
+    html[data-arena-screens="v2"][data-arena-screen-list~="profile"]
+        #opponent-stats-content .pf-card > .pf-cover {
+        grid-column: 1 / -1;
+        grid-row: 1;
+    }
+
+    html[data-arena-screens="v2"][data-arena-screen-list~="profile"]
+        #opponent-stats-content .pf-card > .pf-hero {
+        grid-column: 1;
+        grid-row: 2 / span 99;
+    }
+
+    html[data-arena-screens="v2"][data-arena-screen-list~="profile"]
+        #opponent-stats-content .pf-card > .pf-stats,
+    html[data-arena-screens="v2"][data-arena-screen-list~="profile"]
+        #opponent-stats-content .pf-card > .pf-block {
+        grid-column: 2;
+    }
+
+    /* 查看面在宽屏下把弹窗放宽到两栏排得开（左侧单栏时仍回到 560） */
+    html[data-arena-screens="v2"][data-arena-screen-list~="profile"] .pf-view-modal {
+        max-width: min(920px, 94vw);
+    }
+
+    html[data-arena-screens="v2"][data-arena-screen-list~="profile"]
+        #opponent-stats-content .pf-card > .pf-stats {
+        border-top: 0;      /* 两栏之后它不再挨着封面，留着那条线会像"分节错位" */
+    }
 }
 
 /* 编辑面：左导航选中 = 紫调胶囊；分区小标题 = 11px/.18em；底部保存 = 主行动 */
@@ -1244,11 +1433,8 @@ html[data-arena-screens="v2"][data-arena-screen-list~="settings"] .ax-preview-ro
 
 /* ============================================================================
    13. 游戏大厅（lobby）
-   原型是"房间卡片网格 + 右侧快速加入/在线好友"，正式版必须原样保留
-   `.lobby-columns` 的 **3 条 fr 轨道 + 4 块 .lobby-panel**（lobby_check 断言这两条），
-   所以这一屏**不重排骨架**，只按 C+ 词汇换皮：统计条 = 胶囊、面板 = 12px 无阴影、
-   列表行 = 虚线分隔、主行动 = 紫渐变。首屏那个"房间卡片网格"因此**不做** ——
-   见 docs 里的逐屏差异说明。
+   四类真实功能仍在原来的四块面板中。等待房占主区两列，在线玩家与公屏
+   放在右侧；进行中的对局单独列在主区下一行，避免把入座与观战混为一谈。
    ========================================================================== */
 /* ⚠️ 这里**曾经**有一条 `.game-container:has(#…-screen.active) { max-width: 1360px }`。
    删掉的原因：arena 预设下 style.css 第 35 节已经让容器是全幅（width:100% / max-width:1440px），
@@ -1264,6 +1450,89 @@ html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-topbar {
     padding: 0 0 14px;
     margin: 0 0 18px;
     border-bottom: 1px solid var(--border);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) minmax(240px, .78fr);
+    grid-template-areas: "rooms rooms players" "matches matches chat";
+    align-items: start;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-panel {
+    max-height: none;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-panel:nth-child(1) { grid-area: players; }
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-panel:nth-child(2) { grid-area: rooms; }
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-panel:nth-child(3) { grid-area: matches; }
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-panel:nth-child(4) { grid-area: chat; }
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] #lobby-screen[data-lobby-filter="watchable"] .lobby-columns {
+    grid-template-areas: "matches matches players" "matches matches chat";
+}
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] #lobby-screen[data-lobby-filter="watchable"] .lobby-panel:nth-child(2) {
+    display: none;
+}
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] #lobby-screen:is([data-lobby-filter="joinable"], [data-lobby-filter="full"]) .lobby-columns {
+    grid-template-areas: "rooms rooms players" "rooms rooms chat";
+}
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] #lobby-screen:is([data-lobby-filter="joinable"], [data-lobby-filter="full"]) .lobby-panel:nth-child(3) {
+    display: none;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] #lobby-rooms-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: start;
+    gap: 12px;
+    min-height: 240px;
+    max-height: min(54vh, 560px);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] #lobby-rooms-list > .lobby-empty {
+    grid-column: 1 / -1;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] #lobby-matches-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: start;
+    gap: 12px;
+    max-height: min(38vh, 400px);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] #lobby-matches-list > .lobby-empty {
+    grid-column: 1 / -1;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] :is(#lobby-rooms-list, #lobby-matches-list) > li {
+    min-width: 0;
+    color: var(--text);
+    margin: 0;
+}
+
+@media (max-width: 900px) {
+    html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-columns {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas: "rooms" "matches" "players" "chat";
+    }
+    html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] #lobby-screen[data-lobby-filter="watchable"] .lobby-columns {
+        grid-template-areas: "matches" "players" "chat";
+    }
+    html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] #lobby-screen:is([data-lobby-filter="joinable"], [data-lobby-filter="full"]) .lobby-columns {
+        grid-template-areas: "rooms" "players" "chat";
+    }
+}
+
+@media (max-width: 620px) {
+    html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] :is(#lobby-rooms-list, #lobby-matches-list) {
+        grid-template-columns: minmax(0, 1fr);
+        max-height: none;
+    }
+    html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-match-meta {
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
 }
 
 html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-stat {
@@ -1359,6 +1628,154 @@ html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-room-host 
     font-family: var(--fluent-font-mono);
     font-size: 10px;
     color: var(--muted);
+}
+
+/* ---------- 13.2 房间/对局的"卡片"观感 + 筛选栏（2026-09-29 / W3）----------
+   等待房与对局分别卡片化，真实加入/观战按钮仍是唯一行动目标。
+   ⚠️ 手感相关的东西（cursor / 卡片的可点区域）只落在**已经存在的按钮**上，
+      不给行加新的点击目标 —— 行本身不是按钮，加了会出现"点了没反应"或
+      "点了却进了别的房"这类问题（lobby_check 的 4 类功能覆盖断言也按按钮找）。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-list > .lobby-room,
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-list > .lobby-match {
+    padding: 12px 12px;
+    margin-bottom: 8px;
+    background-color: var(--surface-strong);
+    border: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    border-radius: var(--ax-radius-sm);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] #lobby-rooms-list > .lobby-room {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: minmax(90px, 1fr) auto;
+    gap: 12px 8px;
+    min-height: 158px;
+    align-items: end;
+    background-color: var(--surface-muted);
+    border-color: var(--border-strong);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] #lobby-rooms-list .lobby-room-main {
+    grid-column: 1 / -1;
+    align-self: stretch;
+    gap: 4px;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-room-state {
+    align-self: flex-start;
+    width: fit-content;
+    margin-bottom: 8px;
+    padding: 3px 7px;
+    font-size: 10px;
+    color: var(--ax-cy);
+    border: 1px solid currentColor;
+    border-radius: var(--ax-radius-sm);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-room-full .lobby-room-state {
+    color: var(--ax-gold-strong);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-room-code {
+    margin-top: auto;
+    font: 10px var(--fluent-font-mono);
+    color: var(--muted);
+    overflow-wrap: anywhere;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] #lobby-rooms-list .lobby-room-seats {
+    align-self: center;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] #lobby-rooms-list .lobby-room-join {
+    align-self: center;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] #lobby-matches-list > .lobby-match {
+    min-height: 88px;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-list > .lobby-room:hover,
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-list > .lobby-match:hover {
+    border-color: var(--ax-grad-line);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-list > .lobby-room:last-child,
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-list > .lobby-match:last-child {
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0;
+}
+
+/* 已满的房：坐位数旁边明说「已满」，加入按钮禁用（原来只有 2/2 这个数字，
+   玩家要自己换算"能不能进"）。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-room-seats small {
+    display: block;
+    margin-top: 2px;
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    color: var(--ax-gold-strong);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-room-full .lobby-room-name {
+    color: var(--muted);
+}
+
+/* 搜索与状态切换在两个真实列表上方，不占四块功能面板的席位。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-filterbar {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 8px;
+    align-items: center;
+    margin: 0 0 16px;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-filterbar input[type="search"] {
+    flex: 0 1 320px;
+    min-width: 0;
+    padding: 7px 10px;
+    font-size: 12px;
+    color: var(--text);
+    background-color: var(--surface-muted);
+    border: 1px solid var(--ax-hair);
+    border-radius: var(--ax-radius-sm);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-filterbar input::placeholder {
+    color: var(--muted);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-filterbar :is(input, button):focus-visible {
+    outline: 2px solid var(--ax-kicker);
+    outline-offset: 1px;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-seg {
+    display: inline-flex;
+    flex: 0 0 auto;
+    gap: 2px;
+    padding: 2px;
+    background-color: var(--surface-muted);
+    border: 1px solid var(--ax-hair);
+    border-radius: 999px;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-seg > button {
+    padding: 5px 11px;
+    font-size: 11px;
+    color: var(--muted);
+    background: none;
+    background-image: none;
+    border: 0;
+    border-radius: 999px;
+    cursor: pointer;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-seg > button.active {
+    color: var(--ax-grad-fg);
+    background-image: var(--ax-grad);
+    font-weight: 600;
 }
 
 html[data-arena-screens="v2"][data-arena-screen-list~="lobby"] .lobby-create-row input[type="text"],
@@ -1468,6 +1885,101 @@ html[data-arena-screens="v2"][data-arena-screen-list~="room"] #custom-current-ro
     font-size: 26px;
     letter-spacing: 0.16em;
     color: var(--ax-gold-strong);
+}
+
+/* ---------- 12.1 席位 + 规则摘要（2026-09-29 / W3）----------
+   两格席位（自己 / 对手）+ 四条规则。数据全部来自服务端已下发的字段
+   （见 game.js 的 renderCustomRoomSeats：缺对手名就显示"等待加入"，不伪造第二人）。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="room"] .room-seats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 8px;
+    margin: 0 0 14px;
+    padding: 0;
+    list-style: none;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="room"] .room-seat {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    background-color: var(--surface-muted);
+    border: 1px dashed var(--ax-dash);
+    border-radius: var(--ax-radius-sm);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="room"] .room-seat.on {
+    background-color: var(--ax-chip);
+    border: 1px solid var(--ax-grad-line);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="room"] .room-seat-label {
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    color: var(--muted);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="room"] .room-seat-name {
+    min-width: 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="room"] .room-seat:not(.on) .room-seat-name {
+    font-weight: 400;
+    color: var(--muted);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="room"] .room-seat-tag {
+    padding: 2px 8px;
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    background-color: var(--surface-strong);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="room"] .room-seat.on .room-seat-tag {
+    color: var(--ax-kicker);
+    border-color: var(--ax-grad-line);
+}
+
+/* 规则摘要：dt/dd 一行一条，虚线分隔（与列表行同一套词汇） */
+html[data-arena-screens="v2"][data-arena-screen-list~="room"] .room-rules {
+    margin: 0 0 14px;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="room"] .room-rule {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 7px 0;
+    border-bottom: 1px dashed var(--ax-dash);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="room"] .room-rule:last-child {
+    border-bottom: 0;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="room"] .room-rule dt {
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    color: var(--muted);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="room"] .room-rule dd {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text);
+    text-align: right;
 }
 
 html[data-arena-screens="v2"][data-arena-screen-list~="room"] #custom-room-code {
@@ -1634,10 +2146,122 @@ html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #confirm-ship
     box-shadow: var(--ax-glow);
 }
 
-html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #random-ships {
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #random-ships,
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #clear-ships {
     color: var(--text-subtle);
     background-color: transparent;
     border: 1px solid var(--border-strong);
+}
+
+/* 不可用（未摆满 / 提交中 / 已提交）：**按钮还在**，只是按不动 ——
+   真正的"为什么"写在下面的 #deploy-hint 里。
+   原来确认按钮走的是 hidden（整块消失），玩家看不出是没摆够还是卡住了。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"]
+    .ax-deploy-side .placement-actions button:disabled {
+    color: var(--muted);
+    background-image: none;
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border);
+    box-shadow: none;
+    cursor: not-allowed;
+    opacity: 1;      /* 用专门的配色表达禁用，不靠压低透明度（高对比档下要用同一个令牌） */
+}
+
+/* ---------- 4.1a 布船的六槽与状态行（2026-09-29 / W3） ----------
+   六槽 = 六个小格，一格一艘船，写它占的坐标（1 起算，与玩家看到的棋盘一致）。
+   ⚠️ 数据只有一份：全部由 renderDeploySlots() 从 gameState.ships 派生 ——
+      它不是第二个真相源，所以不会出现"棋盘上 5 格、槽里 6 格"这种自相矛盾的画面。
+   状态行（#deploy-hint）常驻，负责回答"为什么现在不能提交"，
+   role=status + aria-live=polite 让读屏也听得到（键盘用户看不到灰按钮的"原因"）。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .ax-slots {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin: 12px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .ax-slot {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 30px;
+    padding: 4px 6px;
+    font-family: var(--fluent-font-mono);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    background-color: transparent;
+    border: 1px dashed var(--ax-dash);
+    border-radius: var(--ax-radius-sm);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .ax-slot.on {
+    color: var(--text);
+    background-color: var(--ax-chip);
+    border: 1px solid var(--ax-grad-line);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .ax-slot-empty {
+    opacity: 0.65;
+    letter-spacing: 0.16em;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #deploy-hint {
+    margin: 12px 0 14px;
+    min-height: 1.5em;      /* 常驻一行：文案换长短时不再引起按钮跳动 */
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--muted);
+    text-align: left;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #deploy-hint.ready {
+    color: var(--ax-kicker);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #deploy-hint.busy {
+    color: var(--ax-gold-strong);
+}
+
+/* 提交中／已提交：棋盘整体压暗且不吃指针事件。
+   ⚠️ 真门在 handleCellClick 里（脚本与键盘点击不经过 pointer-events）；
+      这里只负责"看得出现在不能改"。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #player-board.deploy-locked {
+    pointer-events: none;
+    filter: saturate(0.7) brightness(0.92);
+}
+
+/* 棋盘坐标（W3 的"添加坐标"）：用 ::before/::after 生成，**不加 DOM 节点** ——
+   .cell 的 ::before/::after 在 style.css 里从未被使用（查过），所以不冲突；
+   加节点会改变 6×6 网格的子元素数量与顺序，风险比这大得多。
+   行列都从 1 起算，与玩家看到的坐标文案一致；只有最上行/最左列画，
+   免得每个格子里都糊一个数字。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"]
+    .ax-deploy-board .cell[data-y="0"]::after {
+    content: attr(data-cx);
+    position: absolute;
+    top: 1px;
+    left: 3px;
+    font-family: var(--fluent-font-mono);
+    font-size: 9px;
+    line-height: 1;
+    color: var(--muted);
+    pointer-events: none;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"]
+    .ax-deploy-board .cell[data-x="0"]::before {
+    content: attr(data-cy);
+    position: absolute;
+    bottom: 1px;
+    left: 1px;
+    font-family: var(--fluent-font-mono);
+    font-size: 9px;
+    line-height: 1;
+    color: var(--muted);
+    pointer-events: none;
 }
 
 /* 匹配成功屏：对手条与倒计时也走同一套词汇 */
@@ -1701,9 +2325,17 @@ html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #start-now {
     }
 
     html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .ax-deploy-side {
-        position: sticky;
-        bottom: 8px;
-        z-index: 3;
+        position: static;
+        padding-bottom: 72px;
+    }
+
+    html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #confirm-ships {
+        position: fixed;
+        left: 20px;
+        bottom: max(12px, env(safe-area-inset-bottom));
+        z-index: 5;
+        width: calc(100% - 40px);
+        max-width: 420px;
     }
 }
 
@@ -1813,6 +2445,44 @@ html[data-arena-screens="v2"][data-arena-screen-list~="result"] .over-head > .ov
     font-size: 32px;
     font-weight: 600;
     letter-spacing: 0.04em;
+}
+
+/* ---------- 18.1 结算：宽屏的**居中主视觉**（2026-09-29 / W5）----------
+   任务书 §4.1 第 5 条：「结算采用**居中主视觉**与三组真实数据……窄屏折列」。
+   原来判定头是一条**横向行**：徽记 + 胜负大字贴左、对手/段位/用时被
+   `margin-left:auto` 顶到最右 —— 那是"信息条"，不是主视觉。
+   现在在桌面档把它立成一列并整体居中：徽记在上、胜负大字居中、元信息胶囊居中排在下面。
+   ⚠️ 徽记是 `.over-head::before`（不是 `.over-verdict::before`，见上面那段注释）。
+      立成 column 之后它自然成为"居中的第一行"，旋转外接矩形的问题不存在。
+   ⚠️ 只改宽屏；窄屏本来就是折列的，保持原样（任务书要的是"窄屏折列"而不是"窄屏也居中"）。
+   ⚠️ `.over-cols` 那三组数据卡不动：它已经是 `auto-fit minmax(230px,1fr)`，
+      宽屏并排、窄屏自动折列 —— 这正是任务书要的行为。 */
+@media (min-width: 861px) {
+    html[data-arena-screens="v2"][data-arena-screen-list~="result"] .over-head {
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        gap: 12px;
+        padding: 24px 22px 20px;
+    }
+
+    html[data-arena-screens="v2"][data-arena-screen-list~="result"] .over-head > .over-verdict {
+        align-items: center;
+        text-align: center;
+    }
+
+    html[data-arena-screens="v2"][data-arena-screen-list~="result"] .over-head > .over-verdict > h2 {
+        text-align: center;
+    }
+
+    html[data-arena-screens="v2"][data-arena-screen-list~="result"] .over-vs {
+        text-align: center;
+    }
+
+    html[data-arena-screens="v2"][data-arena-screen-list~="result"] .over-meta {
+        margin-left: 0;
+        justify-content: center;
+    }
 }
 
 /* 对手 / 段位 / 用时：改成胶囊条，而不是一行裸文字 */
@@ -1982,6 +2652,49 @@ html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-board-wr
     border-radius: var(--ax-radius-sea);
 }
 
+/* ---------- 22.1 回放：主区（双盘 + 紧邻其下的时间轴）+ 右侧事件栏（W5）----------
+   `.replay-body` 原来是 `flex-wrap` 的裸 flex（棋盘各占 1 1 280px、右栏跟着挤），
+   而 `.replay-controls` 落在 body **外面** ⇒ 时间轴在最底下，跟它控制的棋盘隔了一整栏。
+   任务书要求「双棋盘在主区，时间轴与播放控件**紧邻其下**，右侧安排事件列表」。
+   做法：`.replay-body` 变两列 grid（主区 / 右栏），主区内部再纵排
+   「棋盘行 + 控件行」；右栏限宽并允许自己滚动（事件列表可以很长）。
+   ⚠️ 窄屏折成单列（下面那个媒体查询），且**主区仍在前面** ——
+      手机上先看到棋盘与时间轴，再往下才是手牌/记录。
+   ⚠️ 不改任何 id 与类名，只加容器（`.replay-main` / `.replay-boards`）。 */
+@media (min-width: 861px) {
+    html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-body {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+        gap: 12px;
+        align-items: start;
+    }
+
+    html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-side {
+        max-height: 62vh;
+        overflow-y: auto;
+    }
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-main {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+}
+
+/* 两块棋盘并排；窄屏自动折成一列（棋盘本身有 min-width 下限，折列比压扁好读） */
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-boards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px;
+    min-width: 0;
+}
+
+/* 时间轴紧贴在棋盘下面：与主区同宽、不再被推到屏底 */
+html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-main > .replay-controls {
+    margin-bottom: 0;
+}
+
 html[data-arena-screens="v2"][data-arena-screen-list~="replay"] .replay-board-wrapper h3 {
     font-family: var(--fluent-font-display);
     font-size: 13px;
@@ -2088,10 +2801,10 @@ html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-titl
 }
 
 html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-topbar {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+    align-items: stretch;
+    gap: 8px;
     padding: 12px 16px;
     margin: 0 0 16px;
     background-color: var(--surface-strong);
@@ -2100,11 +2813,18 @@ html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-topb
 }
 
 html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-stat {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 4px;
+    min-width: 0;
+    padding: 8px 10px;
     font-size: 11px;
     color: var(--muted);
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius-sm);
 }
 
 html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-stat b {
@@ -2112,10 +2832,18 @@ html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-stat
     font-size: 12px;
     font-weight: 600;
     color: var(--text);
+    overflow-wrap: anywhere;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-stat-value {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 3px;
 }
 
 html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] #spectate-leave {
-    margin-left: auto;
+    margin-left: 0;
+    align-self: center;
     padding: 9px 16px;
     font-size: 12px;
     font-weight: 600;
@@ -2125,6 +2853,21 @@ html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] #spectate-leav
     border: 1px solid var(--border-strong);
     border-radius: var(--ax-radius-sm);
     box-shadow: none;
+}
+
+@media (max-width: 1000px) {
+    html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-topbar {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 560px) {
+    html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-topbar {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] #spectate-leave {
+        grid-column: 1 / -1;
+    }
 }
 
 html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-player {
@@ -2145,6 +2888,62 @@ html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-boar
     background-color: var(--surface-strong);
     border: 1px solid var(--border);
     border-radius: var(--ax-radius-sea);
+}
+
+/* ---------- 20.1 公开信息图例（2026-09-29 / W5）----------
+   `.spectate-body` 是 `display:flex; flex-wrap:wrap`，图例是它的第一个子元素 ——
+   不写 `flex-basis:100%` 的话它会和两块棋盘挤在同一行，把棋盘顶下去。
+   ⚠️ 图例里的三个色块用的是**与棋盘同一批令牌**（命中/落空/已击沉的格子上色），
+      所以换主题/开高对比时它跟着变，不会出现"图例说红、棋盘上是别的颜色"。
+   ⚠️ `role=note` 已经在模板上，这里只负责外观。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-legend {
+    flex: 1 1 100%;
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 16px;
+    margin: 0;
+    padding: 9px 12px;
+    font-size: 11px;
+    color: var(--text-subtle);
+    background-color: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--ax-radius-sm);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-legend-item i {
+    width: 11px;
+    height: 11px;
+    border-radius: 3px;
+    border: 1px solid var(--board-border);
+}
+
+/* 两个色块与棋盘格子的**实际**观感一一对应。
+   ⚠️ 只有两档：观战棋盘上"击沉"用的就是 `.cell.hit` 的 `--hit-fire` + ✕
+      （见 game.js 里那段"字形与实战统一成 ✕"的注释），**没有**第三档颜色。
+      所以这里**不许**再给 `.lg-sunk` 之类造一个色块 —— 图例对不上棋盘比没有图例更糟。
+   ⚠️ 落空那一格在观战棋盘上的底是 `.cell.miss { background: var(--cell-bg) }`，
+      圆点是 `--miss-dot`。这里用后者（11px 的小色块上，圆点色比底色可辨）。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .lg-hit {
+    background: var(--hit-fire);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .lg-miss {
+    background-color: var(--cell-bg);
+    box-shadow: inset 0 0 0 3px var(--miss-dot);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-legend-note {
+    margin-left: auto;
+    color: var(--muted);
 }
 
 html[data-arena-screens="v2"][data-arena-screen-list~="spectate"] .spectate-board-wrapper h3 {

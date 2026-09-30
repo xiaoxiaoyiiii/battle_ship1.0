@@ -58,16 +58,19 @@ def test_same_account_two_tabs_take_one_seat_and_another_account_still_starts_it
     room_id = server.room_manager.create_room()
     try:
         c1 = _client(a, '甲')
-        c1.emit('join_room', {'room_id': room_id, 'player_name': '甲'})
+        first_ack = c1.emit('join_room', {'room_id': room_id, 'player_name': '甲'}, callback=True)
         c2 = _client(a, '甲')          # 同一个账号的**第二个标签页**
-        c2.emit('join_room', {'room_id': room_id, 'player_name': '甲'})
+        reused_ack = c2.emit('join_room', {'room_id': room_id, 'player_name': '甲'}, callback=True)
+        assert first_ack['player_seat'] == 'p1'
+        assert reused_ack['player_seat'] == 'p1', '同账号重入仍占房主原座位'
 
         room = server.room_manager.get_room(room_id)
         assert list(room.players) == [str(a)], f'同一身份不该占两个座位：{list(room.players)}'
         assert room.state == 'waiting', '只有一个人（同一身份的两次连接）时不该推进阶段'
 
         c3 = _client(b, '乙')
-        c3.emit('join_room', {'room_id': room_id, 'player_name': '乙'})
+        second_ack = c3.emit('join_room', {'room_id': room_id, 'player_name': '乙'}, callback=True)
+        assert second_ack['player_seat'] == 'p2', '加入者视角必须能识别真正的房主'
         room = server.room_manager.get_room(room_id)
         assert sorted(room.players) == sorted([str(a), str(b)]), room.players
         assert room.state == 'placing_ships', '两个**不同身份**的人到齐就该推进到布船'

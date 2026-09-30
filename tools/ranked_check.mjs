@@ -319,8 +319,23 @@ const OCCLUSION_PROBE = (sel) => `(function(){
     samples++;
     var top = document.elementFromPoint(x, y);
     var hit = top === el || (top && el.contains(top)) || (top && top.contains(el));
-    if (!hit) { occluded++; if (!worst) worst = { tag: top ? top.tagName : null, id: top ? top.id : null,
-      cls: top ? String(top.className).slice(0, 60) : null, x: Math.round(x), y: Math.round(y) }; }
+    /* ⚠️ 2026-09-29（W6）：只把**看得见**的元素算作遮挡物。
+       elementFromPoint 对 opacity: 0 / pointer-events: none 的元素照样命中，
+       而本项目里有一批**纯装饰、默认透明、hover/focus 才显形**的元素
+       （例如排行榜行里那个 <span class="ax-open" aria-hidden="true">档案 ↗</span>）。
+       原来把它们算成遮挡，于是手机档那一条永远红，报的还是"段位列被压住" ——
+       可那个元素当时根本不可见（opacity 0），什么都没压住。
+       （这段注释在模板字符串里，所以不能用反引号引用代码名。） */
+    var occluder = top && top !== el && !(el.contains(top)) && !(top.contains(el)) ? top : null;
+    if (occluder) {
+      var ocs = getComputedStyle(occluder);
+      var invisible = parseFloat(ocs.opacity) === 0 || ocs.visibility === 'hidden'
+        || ocs.display === 'none' || ocs.pointerEvents === 'none';
+      if (invisible) occluder = null;
+    }
+    if (occluder) { occluded++; if (!worst) worst = { tag: occluder.tagName, id: occluder.id || null,
+      cls: String(occluder.className).slice(0, 60), opacity: getComputedStyle(occluder).opacity,
+      x: Math.round(x), y: Math.round(y) }; }
   }
   return { present: true, samples: samples, occluded: occluded, worst: worst, rect: R(el) };
 })()`;
@@ -743,10 +758,15 @@ try {
       return { exists: true, checked: box.checked, kind: box.type, order: labels }; })()`);
     return o && o.exists ? o : null;
   }, 12000, '#profile-show-rank 出现').catch(() => null);
-  check(!!toggle, '★ D1 #profile-show-rank 存在（编辑面第 5 个展示开关）', toggle);
+  check(!!toggle, '★ D1 #profile-show-rank 存在（编辑面的展示开关之一）', toggle);
   check(!!toggle && toggle.checked === true, 'D2 默认是「公开」（checked）', toggle && toggle.checked);
   if (toggle) {
-    check(toggle.order.indexOf('profile-show-rank') === 4 && toggle.order.length === 5,
+    /* ⚠️ 2026-09-29 修（W6）：这里原来钉死"一共 5 个开关"，而后来加了
+       `#profile-friend-requests`（templates/index.html 里它就在 show-rank 后面），
+       于是 `length === 5` 恒假 —— 一个**因为别的功能而变红**的陈旧硬编码。
+       产品不变量是"前 4 个开关原样保留 + show-rank 是第 5 个"，
+       总个数不是不变量，所以只留索引断言。 */
+    check(toggle.order.indexOf('profile-show-rank') === 4,
       'D3 #profile-show-rank 是**第 5 个**展示开关（前 4 个原样保留）', toggle.order);
   }
 
@@ -754,10 +774,14 @@ try {
   await ev('(function(){ window.__cardPosts = []; document.getElementById("profile-card-save").click(); return true; })()');
   await waitFor(async () => await ev('window.__cardPosts.length > 0'), 15000, '保存请求发出');
   const post = await ev('window.__cardPosts[0]');
+  /* 必需字段表按 **api.py 的实际读法**列（少一个服务端就整次 400），
+     但**不再断言"恰好几个"**：载荷里多一个字段不是缺陷，少一个才是。
+     原来写 `Object.keys(post).length === 10`，加 `friend_requests_open` 之后恒假
+     —— 与 D3 同一类陈旧硬编码。 */
   const need = ['title_id', 'tags', 'status_text', 'frame_id', 'card_bg_id',
     'show_stats', 'show_fav_cards', 'show_history', 'show_guestbook', 'show_rank'];
-  check(!!post && need.every((k) => k in post) && Object.keys(post).length === 10,
-    '★ D4 保存载荷带齐全部 10 个字段（缺一个服务端就整次 400）',
+  check(!!post && need.every((k) => k in post),
+    '★ D4 保存载荷带齐全部必需字段（缺一个服务端就整次 400）',
     { got: post ? Object.keys(post) : null, missing: post ? need.filter((k) => !(k in post)) : null });
   check(!!post && Number(post.show_rank) === 0, '★ D5 关掉开关后请求体里 show_rank 真的是 0（不是假控件）', post && post.show_rank);
   await sleep(800);
@@ -1025,6 +1049,15 @@ try {
     await waitFor(async () => await ev('document.getElementById("leaderboard-screen").classList.contains("active")'), 12000, '排行榜页');
     await ev('(function(){ document.getElementById("lb-tab-ranked").click(); return true; })()');
     await waitFor(async () => await ev('!!document.querySelector("#ranked-table tbody tr.ranked-row")'), 20000, '段位榜有行');
+    /* ⚠️ 采样前先把它滚进视口（2026-09-29 修，W6）。
+       OCCLUSION_PROBE 只对**落在视口内**的采样点计数（`if (x < 0 || … ) continue`），
+       而手机档（390×844）下段位榜这几行在首屏折叠线以下（实测 rect.y=1276 > 844）
+       ⇒ samples 恒为 0 ⇒ `samples >= 3` 永远不成立。
+       那是一个**假的遮挡失败**：occluded 一直是 0，什么都没被压住。
+       产品语义要验的是"这一格没有被别的元素盖住"，所以把它滚到眼前再量。 */
+    await ev('(function(){ var el = document.querySelector("#ranked-table tbody tr.ranked-row .ranked-tier");'
+      + ' if (el) el.scrollIntoView({ block: "center" }); return 1; })()');
+    await sleep(400);
     const boardProbe = await ev(OCCLUSION_PROBE('#ranked-table tbody tr.ranked-row .ranked-tier'));
     check(boardProbe.present && boardProbe.occluded === 0 && boardProbe.samples >= 3,
       `${w}×${h}：段位榜的段位列没有被任何元素压住`, boardProbe);

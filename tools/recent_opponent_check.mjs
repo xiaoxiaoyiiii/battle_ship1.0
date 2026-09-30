@@ -975,12 +975,19 @@ async function runBrowserHalf() {
     var clicked = [];
     for (var i = 0; i < 6; i++) { var c = byKey[i + ',0']; if (c) { c.click(); clicked.push(i + ',0'); } }
     var btn = document.getElementById('confirm-ships');
+    var hint = document.getElementById('deploy-hint');
+    var slots = document.querySelectorAll('#deploy-slots .ax-slot.on');
     return { clicked: clicked, ships: (window.gameState.ships || []).length,
-             btnHidden: btn.classList.contains('hidden'),
+             btnDisabled: btn.disabled,
+             slots: slots.length,
+             hint: hint ? hint.textContent : null,
              shipsLabel: (document.getElementById('ships-placed') || {}).textContent };
   })()`);
-  check(placed.ships === 6 && placed.btnHidden === false,
-    '★ BG7 点满 6 格后 gameState.ships 有 6 艘且 #confirm-ships 从 hidden 变可见',
+  /* ⚠️ 判据 2026-09-29 换过（W3 / A04）：旧判据是「#confirm-ships 从 hidden 变可见」，
+     新约定是确认按钮**常驻**、可用性由 disabled 表达，原因写在 #deploy-hint。
+     产品不变量（摆满 6 格才允许提交）保留并验得更细：这里同时看 disabled 与六槽。 */
+  check(placed.ships === 6 && placed.btnDisabled === false && placed.slots === 6,
+    '★ BG7 点满 6 格后 gameState.ships 有 6 艘、六槽全亮且 #confirm-ships 可提交',
     placed);
 
   await clickJs('document.getElementById("confirm-ships")');

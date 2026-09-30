@@ -732,6 +732,30 @@ function restoreThemeFromStorage() {
 const MOTION_KEY = 'battleship_motion';
 const CONTRAST_KEY = 'battleship_contrast';
 
+// ---------------------------------------------------------------------------
+// C+ 周边屏幕的**逐屏能力判断**（2026-09-29 / W1）
+//
+// 判据就是 <html> 上那两个属性 —— 值与清单都由 api.py 的 ARENA_SCREENS_MODE /
+// ARENA_SCREEN_LIST 渲染，**不在这里另建一份清单**（那才会漂移）。
+// 语义必须和 CSS 的 `html[data-arena-screens="v2"][data-arena-screen-list~="X"]`
+// 完全一致：两道门都满足才算这一屏开着。
+//
+// ⚠️ 为什么 JS 也要判：CSS 只能管"长什么样"，管不了"要不要把 C+ 的 DOM 生出来"。
+//    实测（tools/cplus_gate_check.mjs）删掉 collection 的 token 之后，
+//    图鉴的详情栏仍会被渲染、领奖台仍会被填充 —— 页面于是留下无样式空块。
+//    CSS 侧在 arena_screens.css §0.1 有同一份退回合同（那边管显示，这边管不生成），
+//    两边是互补的，不是重复。
+//
+// ⚠️ 两个**可读性偏好**（减少动效 / 高对比）是独立的用户能力，不在这里判 ——
+//    它们跨屏生效，关掉 C+ 视觉不影响它们（实施方案 §5 第 5 条）。
+function isArenaScreenEnabled(key) {
+    const de = document.documentElement;
+    if (!de || de.getAttribute('data-arena-screens') !== 'v2') return false;
+    const tokens = String(de.getAttribute('data-arena-screen-list') || '').split(/\s+/);
+    for (let i = 0; i < tokens.length; i++) if (tokens[i] === key) return true;
+    return false;
+}
+
 function systemPrefersReduceMotion() {
     return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 }
@@ -1754,6 +1778,11 @@ function applyRoomSync(data) {
     if (data.state === 'placing_ships') {
         if (typeof switchScreen === 'function') switchScreen(shipPlacementScreen);
         if (typeof initBoard === 'function') initBoard(playerBoard, true);
+        /* 重连落在布船阶段：把服务端快照里的布船**画回棋盘**，并据此判断
+           "我是不是已经提交过了" —— 权威事实在服务端的 ships 里，不在前端。
+           没有这一步，重连后棋盘看着是空的（而服务端其实已经收下了），
+           玩家会以为白摆了；或者反过来，界面上允许再提交一次。 */
+        if (typeof paintPlacementFromState === 'function') paintPlacementFromState();
     } else if (data.state === 'rock_paper_scissors') {
         if (typeof switchScreen === 'function') switchScreen(rpsScreen);
         if (typeof rpsResult !== 'undefined' && rpsResult) rpsResult.textContent = '等待双方出拳…';
@@ -2939,6 +2968,65 @@ function renderAchievementUnlockPanel() {
 //      剩余战舰 ← HUD 上那两个数字（服务端 ships_updated 的权威值）
 //    示意稿里那张卡还有「用了 N 张魔法卡」—— 前端没有权威来源
 //    （`room.magic_history` 不下发），宁可少摆一行，也不编一个数字。
+/* 结束原因 → 一句话解释（按**当前视角**说）。返回 null 表示"没有额外原因"。
+   ---------------------------------------------------------------------------
+   服务端实际会发的 reason（2026-09-29 逐个核对 server.py）：
+     · 不传        —— 正常击沉（server.py 里 6 处 `emit('game_over', {'winner': …})` 都没有 reason）
+     · 'surrender' —— handle_surrender()（15057）
+     · 'opponent_disconnected' —— 掉线判负（10117）
+     · 自由文本    —— `_finish_game(room, w, l, reason)` 把 reason 原样透传（12876），
+                      调用点写的是中文句子，例如「神威！清空对方棋盘」
+   所以这里**不能**只认一张写死的表：表里没有的必须原样输出服务端那句话，
+   而不是退回"击沉全部战舰"（那会与真实结束方式矛盾）。
+   ⚠️ 历史缺陷（A05，实测复现）：胜方视角下 reason='surrender' 会拼出
+      「对方投降 · 击沉对方全部战舰」—— 对方都投降了，哪来的全部击沉。 */
+function gameOverReasonText(reason, won) {
+    const r = String(reason == null ? '' : reason).trim();
+    if (!r) return null;
+    if (r === 'surrender') return won ? '对方投降' : '我方投降';
+    if (r === 'opponent_disconnected') return won ? '对手掉线超时' : '我方掉线超时';
+    if (r === 'timeout') return '操作超时';
+    return r;                      // 卡牌效果等自由文本：服务端写的就是权威解释，照抄
+}
+
+/* 本局回放入口（2026-09-29 / W5）。
+   ---------------------------------------------------------------------------
+   任务书 §W5 要求「增加"本局回放"**真实入口**：先追踪 `_finalize_match`、持久化和
+   正常／重连结束 payload 的真实 match id。缺少权威标识时追加最小兼容字段
+   （名称按当前代码定），确认记录已可读取与权限后启用；**不读取"历史第一条"猜本局**。」
+
+   追踪结果与实现：
+     · 服务端 `db.record_match` 内部生成 `mid`，通过 `out_match_id` 出参交回
+       `_finalize_match`，后者写到 `room.match_id`；
+     · 6 处 `emit('game_over', …)` 全部改走 `_game_over_payload()`，那个键
+       **只在真的拿到 id 时才带上**（写库失败 / 双方游客 / 人机不计战绩时不带）；
+     · 所以这里**只认 `data.match_id`**：没有它就**隐藏**这个入口 ——
+       绝不退化成"去战绩里挑最新一条"（那正是任务书禁止的猜法，会串局）。
+     · 权限沿用既有那条路：`openReplayForMatch` → `GET /api/replay/<id>`，
+       401/403 由既有 `replayHandleLoadFailure` 给人话提示（不新增权限判定）。 */
+let gameOverMatchId = '';
+
+/* 记下/清掉本局的权威 id。`data` 就是 `game_over` / `room_sync` 的那份载荷。 */
+function rememberGameOverMatchId(data) {
+    const id = (data && data.match_id) ? String(data.match_id) : '';
+    gameOverMatchId = id;
+    /* 入口只在**有权威 id** 时出现：没有就整块隐藏，而不是显示一个点了没反应的按钮。
+       判据就一个 `hidden` 类（与项目里其它可选块一致）。 */
+    const btn = document.getElementById('over-replay-btn');
+    if (btn) {
+        btn.classList.toggle('hidden', !id);
+        btn.disabled = !id;
+    }
+}
+
+function openGameOverReplay() {
+    if (!gameOverMatchId) return;      // 没有权威 id 就没有入口（按钮本身也隐藏着）
+    if (typeof openReplayForMatch !== 'function') return;
+    // matchData / playerId 传 null：回放屏只把它们当"可选展示元信息"，
+    // 真正的内容全部来自 GET /api/replay/<id>（权威数据源）。
+    openReplayForMatch(gameOverMatchId, null, null);
+}
+
 function renderGameOverHead(data) {
     const d = data || {};
     const won = d.winner != null && d.winner === gameState.playerId;
@@ -2950,18 +3038,23 @@ function renderGameOverHead(data) {
         head.classList.toggle('win', won && !draw);
         head.classList.toggle('lose', !won && !draw);
     }
-    // 一句话说明：先说这局怎么结束的，再说结果。
-    // ⚠️ 措辞按**视角**分：`reason` 只说明"这一局是怎么结束的"，不含"谁干的" ——
-    //    败方照抄胜方那套话就会出现「对方投降 · 你的舰队被击沉」这种自相矛盾的句子
-    //    （实测：自己在人机局投降，结算却写着"对方投降"）。
-    const reasonText = {
-        surrender: won ? '对方投降' : '我方投降',
-        opponent_disconnected: won ? '对手掉线超时' : '我方掉线超时',
-        timeout: '操作超时',
-    }[d.reason] || '';
+    /* 一句话说明：先说这局**怎么结束的**，再说结果。
+       ⚠️ 「击沉对方全部战舰 / 你的舰队被击沉」**只在正常击沉时**出现（reason 为空）。
+          有明确原因时改成中性的"你获胜 / 你落败"，因为在那种局面下"击沉"根本不是
+          这局的结束方式 —— 这是 A05 的另一半：把矛盾句换成不矛盾的句子，
+          而不是只把措辞换个方向。
+          平局同理：原因（如果有）照说，结论是"双方未分胜负"，不补任何一方的战损。 */
     const parts = [];
-    if (reasonText) parts.push(reasonText);
-    parts.push(draw ? '双方未分胜负' : (won ? '击沉对方全部战舰' : '你的舰队被击沉'));
+    const why = gameOverReasonText(d.reason, won);
+    if (draw) {
+        if (why) parts.push(why);
+        parts.push('双方未分胜负');
+    } else if (why) {
+        parts.push(why);
+        parts.push(won ? '你获胜' : '你落败');
+    } else {
+        parts.push(won ? '击沉对方全部战舰' : '你的舰队被击沉');
+    }
     const round = currentRoundNumber();
     if (round > 0) parts.push(round + ' 回合');
     homeText('over-sub', parts.join(' · '));
@@ -3422,16 +3515,47 @@ function initGameLogCardRefs() {
 // 卡牌图鉴：去重后的全部卡面 + 按速阶/类型筛选 + 关键词搜索 + 使用次数排序
 // （卡面数据源是 window.magicCards，使用次数来自只读接口 /api/card_usage，拉一次就缓存）
 let cardUsage = {};
-let cardUsageLoaded = false;      // 「已经发起过拉取」——用于去重，不代表数据已到
-let cardUsageReady = false;       // 「数据真的到了」——图鉴的「统计中…」看这个
+/* 使用次数的加载状态机（2026-09-29 / A06）。四态而不是两个布尔：
+     idle    从没拉过
+     loading 请求在飞
+     ready   数据真的到了（次数可以显示）
+     error   这一次失败了（**可以重试**，不是"永远统计中"）
+   历史缺陷：原来只有 `cardUsageLoaded`（发起过）与 `cardUsageReady`（到了）两个标志，
+   失败时 `loaded=true / ready=false` 永久停住 —— 计数条永远写"统计中…"，
+   而且 `loaded` 为真还会把后续调用全部短路，连重开图鉴都不会再试一次。
+   实测：拦截 /api/card_usage 后连调两次，请求数=1、loaded=true、ready=false。 */
+let cardUsageState = 'idle';
+let cardUsagePromise = null;   // 在飞的请求：并发调用共享同一个 promise，不会打两枪
 
-function loadCardUsage() {
-    if (cardUsageLoaded) return Promise.resolve(cardUsage);
-    cardUsageLoaded = true;
-    return fetch('/api/card_usage')
-        .then(r => (r && r.ok) ? r.json() : {})
-        .then(d => { cardUsage = (d && d.usage) || {}; cardUsageReady = true; return cardUsage; })
-        .catch(() => ({}));   // 拉不到就不显示次数，不影响图鉴本身
+function loadCardUsage(force) {
+    if (cardUsageState === 'ready' && !force) return Promise.resolve(cardUsage);
+    /* 在飞的那一次**对谁都共享**，包括 force。
+       理由：force 要表达的是"别拿缓存/别记着上次失败，真的再去问一次"，
+       而不是"再打一枪" —— 已经有一个请求在路上时，答案就在路上，
+       再发一次只会让计数条在两次回包之间来回跳（也可能是两倍的统计开销）。
+       force 真正要绕过的只是上面那条"已经 ready 就直接返回"。 */
+    if (cardUsagePromise) return cardUsagePromise;
+    cardUsageState = 'loading';
+    cardUsagePromise = fetch('/api/card_usage')
+        .then(r => {
+            // ⚠️ 非 2xx 必须当成失败：原来写成 `(r && r.ok) ? r.json() : {}`，
+            //    4xx/5xx 会被解析成空对象，界面上于是显示"全部卡都用了 0 次"——
+            //    一个看着有、其实是假的数字（比"统计中"更糟）。
+            if (!r || !r.ok) throw new Error('card_usage ' + (r ? r.status : 'network'));
+            return r.json();
+        })
+        .then(d => {
+            cardUsage = (d && d.usage) || {};
+            cardUsageState = 'ready';
+            cardUsagePromise = null;
+            return cardUsage;
+        })
+        .catch(() => {
+            cardUsageState = 'error';
+            cardUsagePromise = null;
+            return cardUsage;      // 失败时保留上一次拿到的次数（可能是空的），但状态是 error
+        });
+    return cardUsagePromise;
 }
 
 function compendiumCards() {
@@ -3470,6 +3594,11 @@ function renderCardCompendium() {
             || String(a.name).localeCompare(String(b.name), 'zh'));
     }
 
+    // 重绘前记下"焦点在哪张卡上"：整格换 DOM 会让焦点掉回 body（见下面恢复那段）
+    const focusedCard = (document.activeElement && helpMagicCards.contains(document.activeElement)
+        && document.activeElement.classList && document.activeElement.classList.contains('magic-card-help'))
+        ? document.activeElement.getAttribute('data-card-name') : null;
+
     helpMagicCards.innerHTML = list.map(card => {
         const uses = cardUsage[card.name] || 0;
         const speed = parseInt(card.speed, 10);
@@ -3505,18 +3634,61 @@ function renderCardCompendium() {
 
     const counter = document.getElementById('compendium-count');
     if (counter) {
-        counter.textContent = '共 ' + list.length + ' / ' + all.length + ' 张'
-            // 使用次数是**真的异步**（/api/card_usage 还没回来）—— 把它标出来，
-            // 而不是让玩家以为"所有卡都一次没用过"
-            + (cardUsageReady ? '' : ' · 统计中…');
+        if (cardUsageState === 'error') {
+            // 失败态：**说清楚 + 给出口**。原来这里会永远写"统计中…"（看着像还在拉），
+            // 而且没有重试入口，只能靠整页刷新 —— 一个不可用的状态就得说它不可用。
+            counter.innerHTML = '共 ' + list.length + ' / ' + all.length + ' 张'
+                + ' · <span class="codex-usage-error">使用次数暂不可用</span> '
+                + '<button type="button" class="ax-ghost" id="compendium-usage-retry">重试</button>';
+            const retry = document.getElementById('compendium-usage-retry');
+            if (retry) retry.addEventListener('click', () => {
+                retry.disabled = true;
+                retry.textContent = '重试中…';
+                loadCardUsage(true).then(() => { renderCardCompendium(); refreshCodexDetail(); });
+            });
+        } else {
+            counter.textContent = '共 ' + list.length + ' / ' + all.length + ' 张'
+                // 使用次数是**真的异步**（/api/card_usage 还没回来）—— 把它标出来，
+                // 而不是让玩家以为"所有卡都一次没用过"
+                + (cardUsageState === 'ready' ? '' : ' · 统计中…');
+        }
     }
 
     // 详情栏空着就先放占位（每次打开帮助都会走到这里）
-    const detailHost = document.getElementById('codex-detail');
-    if (detailHost && !String(detailHost.innerHTML).trim()) codexRenderDetail(null);
+    // ⚠️ 只在 collection 这一屏开着时才填 —— 关掉那一屏时 `#codex-detail` 整块
+    //    不显示（arena_screens.css §0.1），往里面写 HTML 就是白写，
+    //    而且会在"无样式空块"的检查里留下可见残留（W1）。
+    if (isArenaScreenEnabled('collection')) {
+        const detailHost = document.getElementById('codex-detail');
+        if (detailHost && !String(detailHost.innerHTML).trim()) codexRenderDetail(null);
+    }
 
     // 重绘（筛选/搜索）后恢复选中态：整格是重画的，类名不会自己回来
     if (codexPickedName) codexMarkPicked(codexPickedName);
+
+    // 焦点也要恢复：键盘用户在卡网格里按一下筛选，焦点会掉回 body，
+    // 接着按 Tab 从头开始 —— 对只能靠键盘的人来说等于被踢出了图鉴。
+    // 找回同名那一格而不是"第 N 格"：筛选后位置会变，恢复位置是错的。
+    if (focusedCard) {
+        const again = helpMagicCards.querySelector('.magic-card-help[data-card-name="'
+            + (window.CSS && CSS.escape ? CSS.escape(focusedCard) : focusedCard) + '"]');
+        if (again) again.focus();
+    }
+
+    // 重绘会**整格换掉 DOM**，于是两件事同时丢：
+    //   ① 键盘焦点（Tab 进到第 5 张卡、筛一下 → 焦点回到 body，接着按 Tab 从头开始）；
+    //   ② 已经渲染好的详情内容（"已用 N 次"那个胶囊不会自己更新）。
+    // 原来看不出问题，是因为统计只在打开弹窗时拉一次、重绘紧随其后；
+    // 现在统计可以在"卡已经选中"之后才到（A06 的重试/迟到成功），所以必须补这两条。
+    if (cardUsageState === 'ready') refreshCodexDetail();
+}
+
+/* 把"当前选中的那张卡"的详情重画一遍（含使用次数）。没有选中就什么都不做 ——
+   占位文案不含次数，不需要刷新。 */
+function refreshCodexDetail() {
+    if (!codexPickedName) return;
+    const card = codexCardByName(codexPickedName);
+    if (card) codexRenderDetail(card);
 }
 
 // ---- C+ 图鉴详情（2026-09-29）----------------------------------------------
@@ -3562,8 +3734,7 @@ function codexDetailHtml(card) {
         </div>
         <h5 class="ax-detail-h">效果说明</h5>
         <p class="ax-detail-text">${escapeHtml(card.description || '（这张卡没有文字说明）')}</p>
-        <div class="ax-detail-foot">手牌 / 连锁 / 图鉴读的是同一份卡表与同一个卡面组件，
-            所以这张卡的名称、类型、速阶三处必然一致。</div>`;
+        <div class="ax-detail-foot">效果以游戏内实际结算为准。</div>`;
 }
 
 function codexDetailPlaceholder() {
@@ -3582,6 +3753,7 @@ function codexMarkPicked(name) {
 }
 
 function codexRenderDetail(card) {
+    if (!isArenaScreenEnabled('collection')) return;
     const host = document.getElementById('codex-detail');
     if (!host) return;
     host.innerHTML = card ? codexDetailHtml(card) : codexDetailPlaceholder();
@@ -3590,12 +3762,23 @@ function codexRenderDetail(card) {
     if (back) back.addEventListener('click', codexShowList);
 }
 
-// 窄屏的"退回到列表"；桌面档只是把 .ax-show-detail 去掉，一栏布局本来就没变
+/* 窄屏的"退回到列表"；桌面档只是把 .ax-show-detail 去掉，一栏布局本来就没变。
+   ⚠️ 焦点要**送回点开它的那张卡**（2026-09-29 / W2 的验收项）。
+      不送回去的话，键盘/读屏用户在窄屏上读完一张卡按「返回图鉴」，
+      焦点会掉到 body —— 接着按 Tab 是从页面最开头重来，
+      对只能靠键盘的人来说等于"读完一张就被踢出图鉴"。
+      找不到那张卡（比如筛选把它筛掉了）才退而求其次，落到网格容器上。 */
 function codexShowList() {
     if (helpContent) helpContent.classList.remove('ax-show-detail');
+    if (!codexPickedName || !helpMagicCards) return;
+    const back = helpMagicCards.querySelector('.magic-card-help[data-card-name="'
+        + (window.CSS && CSS.escape ? CSS.escape(codexPickedName) : codexPickedName) + '"]');
+    if (back) back.focus();
+    else helpMagicCards.focus();
 }
 
 function codexSelectCard(name) {
+    if (!isArenaScreenEnabled('collection')) return;   // 关掉的屏不做 C+ 行为
     const card = codexCardByName(name);
     if (!card) return;
     codexPickedName = card.name;
@@ -3603,10 +3786,35 @@ function codexSelectCard(name) {
     codexRenderDetail(card);
     const host = document.getElementById('codex-detail');
     // 详情栏此刻不可见 ⇒ 是窄屏档（CSS 把右栏折到了网格下面并收起）→ 换成详情页
-    if (helpContent && host && host.offsetParent === null) {
+    const narrow = !!(helpContent && host && host.offsetParent === null);
+    if (narrow) {
         helpContent.classList.add('ax-show-detail');
+        /* 焦点跟着进详情页（窄屏）：网格这一刻被 display:none 收起了，
+           `aria-pressed` 那格已经不可达，焦点留在它上面等同于"焦点消失了"。
+           详情页里第一个可聚焦的东西是「← 返回图鉴」，就是它。 */
+        const first = host.querySelector('button, [href], [tabindex]:not([tabindex="-1"])');
+        if (first) first.focus();
+        else if (host) { host.setAttribute('tabindex', '-1'); host.focus(); }
     }
 }
+
+/* 图鉴详情页的键盘出口（W2 验收项）。
+   只在**窄屏详情页开着**的时候接管 Escape：桌面档右栏常驻，Esc 应该留给
+   上层弹窗（关帮助），抢走它会变成"按 Esc 没关掉图鉴"。 */
+function initCodexKeys() {
+    if (initCodexKeys.done) return;
+    initCodexKeys.done = true;
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape' && e.key !== 'Esc') return;
+        if (!helpContent || !helpContent.classList.contains('ax-show-detail')) return;
+        const help = document.getElementById('help-modal');
+        if (help && help.classList.contains('hidden')) return;   // 图鉴没开着，不接管
+        e.preventDefault();
+        e.stopPropagation();          // 别让上层把整个帮助弹窗一起关掉
+        codexShowList();
+    }, true);                          // 捕获阶段：先于 help 弹窗自己的 Esc 处理
+}
+initCodexKeys();
 
 // 回放批 §7 的「与观战彻底隔离」声明（**放在界面段之外**，见下面那条说明）。
 //
@@ -3657,6 +3865,15 @@ var replayState = {
     frame: null,        // 当前帧解算结果（replayComputeFrame）
     nodeEls: [],        // 进度条节点元素（帧变化时只改 class，不重建）
     keyBound: false,
+    /* 加载身份（generation）。每次"打开/退出/换一局"都 ++，回包时对不上就整包丢弃。
+       ⚠️ 为什么必须有（A07，已读码 + 定向用例）：`/api/replay/<id>` 的响应原来
+          无条件写进 replayState.payload，于是两条真实路径都能串局：
+            · 先点 A 局（慢）再点 B 局（快）→ A 的响应后到，覆盖 B 的 payload，
+              棋盘/事件/回合数全是 A 的，而屏幕上是 B 的标题；
+            · 打开回放后马上退出 → 回包仍然写状态、**还会启动播放计时器**，
+              回到首页之后后台还在按帧推进（没人看，但定时器在跑）。
+          所以成功、失败、finally 三条路都要先核对身份与"回放屏是否还开着"。 */
+    loadToken: 0,
     entryMatches: {},   // match_id → 战绩行（点回放时暂存，用来展示模式标签）
     socket: null        // 只读引用：退出时断开这条连接。**绝不 emit**
 };
@@ -4388,6 +4605,9 @@ function replaySeekFromPointer(clientX) {
 // ---------------------------------------------------------------------------
 function resetReplayState() {
     replayStopTimer();
+    /* 作废在飞的加载包：退出/换局时 ++，迟到的响应于是整包丢弃
+       （否则退出之后回包还会写状态并启动按帧推进的计时器）。 */
+    replayState.loadToken++;
     replayState.payload = null;
     replayState.youAre = null;
     replayState.k = 0;
@@ -4468,6 +4688,15 @@ function openReplayForMatch(matchId, matchData, playerId) {
 
     bindReplayKeys();
 
+    // 这一趟加载的身份。**先取号再发请求**，回包时用它判断"我还是不是当前那一次"。
+    var loadToken = ++replayState.loadToken;
+    /* "这一包还算数吗"只有一个判据：身份没被作废 **且** 回放屏还开着。
+       第二条不能省：退出回放只是把屏切走，不会自动让 fetch 停 —— 只靠 token
+       的话"退出后再打开同一局"会因为 token 相同而把旧包当新包用。 */
+    function replayLoadStillCurrent() {
+        return loadToken === replayState.loadToken && replayIsActive();
+    }
+
     fetch('/api/replay/' + encodeURIComponent(String(matchId)), {
         credentials: 'same-origin',
         headers: { 'Accept': 'application/json' }
@@ -4475,6 +4704,7 @@ function openReplayForMatch(matchId, matchData, playerId) {
         return resp.json().then(function (data) { return { ok: resp.ok, status: resp.status, data: data }; },
             function () { return { ok: false, status: resp.status, data: null }; });
     }).then(function (out) {
+        if (!replayLoadStillCurrent()) return;      // 过期包 / 已经退出：不写 UI、不启动计时器
         var data = out.data || {};
         if (!out.ok || data.success !== true || !data.replay) {
             replayHandleLoadFailure(out.status);
@@ -4489,6 +4719,7 @@ function openReplayForMatch(matchId, matchData, playerId) {
         buildReplayTrackNodes();
         renderReplayFrame();
     }).catch(function () {
+        if (!replayLoadStillCurrent()) return;
         replaySetStatus('加载回放失败（网络问题），请稍后重试。', true);
     });
 }
@@ -6536,6 +6767,10 @@ function bindEventListeners() {
 
     // 返回主菜单按钮事件处理
     returnToMenuBtn.addEventListener('click', resetGame);
+    // 结算屏的「本局回放」（W5）。⚠️ 绑定**在这里、不在结算时**：
+    // 结算屏可能被多次打开，绑在渲染里就会累积监听（同一件事做 N 次）。
+    const overReplayBtn = document.getElementById('over-replay-btn');
+    if (overReplayBtn) overReplayBtn.addEventListener('click', openGameOverReplay);
 
     // 自定义房间游戏界面
     customCreateRoomBtn.addEventListener('click', customCreateRoom);
@@ -6556,6 +6791,10 @@ if (copyInviteLinkBtn) copyInviteLinkBtn.addEventListener('click', copyInviteLin
     if (randomShipsBtn) {
         randomShipsBtn.addEventListener('click', randomizeShips);
     }
+    // 「清空」（2026-09-29 / W3 新增）：撤回全部已放置的格子。
+    // 原来只能逐格再点一次 —— 摆错了想重来要点 6 次，而且没有任何"全部撤掉"的入口。
+    const clearShipsBtn = document.getElementById('clear-ships');
+    if (clearShipsBtn) clearShipsBtn.addEventListener('click', clearShipPlacement);
 
     // 猜拳选择
     rpsChoices.forEach(choice => {
@@ -6584,6 +6823,39 @@ if (copyInviteLinkBtn) copyInviteLinkBtn.addEventListener('click', copyInviteLin
     if (lobbyRankedBtn) lobbyRankedBtn.addEventListener('click', lobbyRankedMatch);
     if (lobbyRefreshBtn) lobbyRefreshBtn.addEventListener('click', refreshLobby);
     if (lobbyCreateRoomBtn) lobbyCreateRoomBtn.addEventListener('click', createLobbyRoom);
+    /* 大厅筛选（2026-09-29 / W3）：搜索框与状态分段都**只在本地重绘**，
+       不打服务端 —— 数据在 lobby_state 里已经拿到了，为一层过滤再发一次请求
+       既慢又会和 4 秒一次的订阅抢着改同一块 DOM。
+       重绘的数据源是 gameState.lobbyState（最后一份广播），
+       所以刚改完筛选、还没等到下一次广播时，列表内容也是完整的。 */
+    const lobbyRoomSearchEl = document.getElementById('lobby-room-search');
+    const rerenderLobbyLists = () => {
+        const st = (gameState && gameState.lobbyState) || {};
+        renderLobbyRooms(Array.isArray(st.rooms) ? st.rooms : []);
+        renderLobbyMatches(Array.isArray(st.matches) ? st.matches : []);
+    };
+    if (lobbyRoomSearchEl) {
+        lobbyRoomSearchEl.addEventListener('input', rerenderLobbyLists);
+        // 回车不清空、不提交（大厅没有表单语义）；Esc 清空搜索词是通用预期
+        lobbyRoomSearchEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') { e.preventDefault(); lobbyRoomSearchEl.value = ''; rerenderLobbyLists(); }
+        });
+    }
+    const lobbyRoomFilterEl = document.getElementById('lobby-room-filter');
+    if (lobbyRoomFilterEl) {
+        lobbyRoomFilterEl.addEventListener('click', (e) => {
+            const btn = e.target && e.target.closest ? e.target.closest('[data-filter]') : null;
+            if (!btn) return;
+            lobbyRoomFilter = String(btn.dataset.filter || 'all');
+            if (lobbyScreen) lobbyScreen.dataset.lobbyFilter = lobbyRoomFilter;
+            [].slice.call(lobbyRoomFilterEl.querySelectorAll('[data-filter]')).forEach((b) => {
+                const on = b === btn;
+                b.classList.toggle('active', on);
+                b.setAttribute('aria-pressed', on ? 'true' : 'false');
+            });
+            rerenderLobbyLists();
+        });
+    }
     if (lobbyChatSendBtn) lobbyChatSendBtn.addEventListener('click', sendLobbyChat);
     // 公屏输入框回车即发（没绑的话玩家按回车什么都不会发生）
     if (lobbyChatInput) lobbyChatInput.addEventListener('keydown', (e) => {
@@ -6805,6 +7077,7 @@ function cancelRankedMatch() {
 
 let leaderboardTab = 'record';       // 当前页签（'record' | 'ranked'）
 let rankedFetchToken = 0;            // 段位榜请求令牌：切页签/重拉时作废上一次
+let recordFetchToken = 0;            // 战绩榜请求令牌：同上（2026-09-29 补 —— 原来只有段位榜有）
 
 /**
  * 切页签。**段位榜的数据只在这里（点页签时）才拉** ——
@@ -6827,10 +7100,15 @@ function leaderboardOpenHint() {
 /* 前三名领奖台。数据 = **当前那张表的前三行**，两个接口都是服务端排好序的，
    所以它就是服务端口径的前三名（页面文案也照这个说，不宣称"全服最强"）。
    ⚠️ 顺序按原型的 [2,1,3] 排（第一名在中间、卡片更高），靠数组顺序而不是 CSS order ——
-      列顺序与读屏顺序保持一致，不必再补 tabindex 之类。 */
+      列顺序与读屏顺序保持一致，不必再补 tabindex 之类。
+   ⚠️ **这一块不写"谁该写它"的判断** —— 那是 publishLeaderboardPodium() 的职责。
+      直接调这里等于跳过身份校验（历史缺陷：慢响应回来覆盖了当前页签的前三名）。 */
 function renderLeaderboardPodium(rows, opts) {
     const host = document.getElementById('leaderboard-podium');
     if (!host) return;
+    // 门控：关掉 leaderboard 这一屏时整块不生成（W1）。CSS 侧 §0.1 也把这块压住了，
+    // 两层是互补的 —— 这里保证连 DOM 都不写，那边保证即使写了也看不见。
+    if (!isArenaScreenEnabled('leaderboard')) { host.classList.add('hidden'); host.innerHTML = ''; return; }
     const list = Array.isArray(rows) ? rows.slice(0, 3) : [];
     if (!list.length) { host.classList.add('hidden'); host.innerHTML = ''; return; }
     const conf = opts || {};
@@ -6864,6 +7142,22 @@ function renderLeaderboardPodium(rows, opts) {
             if (username && typeof window.showUserProfile === 'function') window.showUserProfile(username);
         });
     }
+}
+
+/* 领奖台写入口 —— 异步回来的两条榜**只能从这里**落笔（2026-09-29 / A03）。
+   两道门都必须满足：
+     ① 活动页签：这次响应属于的榜，必须是此刻正在显示的那张
+        （证据：fetchLeaderboard 成功后原来**没有**任何页签判断就写领奖台；
+         段位榜切回战绩时它的 token 也不会失效 —— 两条路都能覆盖同一个领奖台）；
+     ② 请求身份：自己那一代 token 仍是最新（后一次请求已经把它作废就丢弃）。
+   注释里记一个具体的坏情形：先点战绩榜（慢），马上切段位榜（快）——
+   段位榜先画好三张卡，战绩榜的响应随后到达，把三张卡**换成战绩榜的前三名**，
+   而下面的表还是段位榜。看着有、其实错了。 */
+function publishLeaderboardPodium(tab, token, rows, opts) {
+    if (tab !== leaderboardTab) return;                    // ① 不是当前活动页签
+    const latest = (tab === 'ranked') ? rankedFetchToken : recordFetchToken;
+    if (token !== latest) return;                          // ② 过期响应
+    renderLeaderboardPodium(rows, opts);                   // 门控在 renderLeaderboardPodium 里
 }
 
 function setLeaderboardTab(tab) {
@@ -6930,7 +7224,7 @@ function rankedRowHtml(row) {
  *    （`updateHandUI` 那条教训）：所以这里清空之前先把新表拼成一个字符串，
  *    数据形状不对就原样返回，只在错误条上说明。
  */
-function renderRankedTable(data) {
+function renderRankedTable(data, token) {
     if (!rankedTableBody) return;
     const rows = (data && Array.isArray(data.leaderboard)) ? data.leaderboard : null;
     const keepPrevious = () => {
@@ -6940,7 +7234,7 @@ function renderRankedTable(data) {
     };
     if (!rows) {
         keepPrevious();
-        renderLeaderboardPodium(null, null);
+        publishLeaderboardPodium('ranked', token, null, null);
         if (rankedError) {
             rankedError.classList.remove('hidden');
             rankedError.textContent = '段位榜数据异常（接口没给 leaderboard 数组）';
@@ -6950,13 +7244,15 @@ function renderRankedTable(data) {
     if (!rows.length) {
         rankedTableBody.innerHTML = '<tr class="ranked-empty"><td colspan="5">'
             + '<span class="ax-empty">还没有人打过排位<br><small>打一场排位赛就会出现在这里。</small></span></td></tr>';
-        renderLeaderboardPodium(null, null);
+        publishLeaderboardPodium('ranked', token, null, null);
         return;
     }
     rankedTableBody.innerHTML = rows.map(rankedRowHtml).join('');
     bindRankedUserClick();
-    // 领奖台跟着**当前这张表**走：段位榜用排位分
-    renderLeaderboardPodium(rows, { label: '排位分', value: (r) => String(Number(r.points) || 0) });
+    // 领奖台跟着**当前这张表**走：段位榜用排位分。
+    // ⚠️ 必须走 publishLeaderboardPodium：这一屏的响应可能在玩家切回战绩榜之后才到，
+    //    直接落笔就会把战绩榜的领奖台换成段位榜的前三名（A03 的另一半）。
+    publishLeaderboardPodium('ranked', token, rows, { label: '排位分', value: (r) => String(Number(r.points) || 0) });
 }
 
 /** 段位榜取数。先渲染「加载中…」再异步取（弹窗可见 ≠ 内容就绪）。 */
@@ -6966,7 +7262,7 @@ function fetchRankedLeaderboard() {
     if (rankedError) { rankedError.classList.add('hidden'); rankedError.textContent = ''; }
     rankedTableBody.innerHTML = '<tr class="ranked-loading"><td colspan="5">'
         + '<span class="ax-loading"><i></i><i></i><i></i></span></td></tr>';
-    renderLeaderboardPodium(null, null);
+    if (leaderboardTab === 'ranked') renderLeaderboardPodium(null, null);
     return fetch('/api/ranked_leaderboard?limit=100&offset=0', { headers: { 'Accept': 'application/json' } })
         .then(resp => {
             if (!resp.ok) throw new Error('网络错误 ' + resp.status);
@@ -6974,7 +7270,7 @@ function fetchRankedLeaderboard() {
         })
         .then(data => {
             if (token !== rankedFetchToken) return;      // 已经被后一次请求作废
-            renderRankedTable(data);
+            renderRankedTable(data, token);
         })
         .catch(err => {
             if (token !== rankedFetchToken) return;
@@ -7084,8 +7380,13 @@ function customCreateRoom() {
         socket.emit('create_room', {}, (response) => {
             if (response.status === 'success') {
                 gameState.roomId = response.room_id;
+                gameState.playerSeat = 'p1';
                 customCurrentRoomId.textContent = gameState.roomId;
                 customRoomInfo.classList.remove('hidden');
+                // 席位/规则摘要（W3）：三个"显示房间信息"的入口都要画一次，
+                // 漏一个就会出现"从这里进房看不到席位"（本项目的老病根形状）。
+                renderCustomRoomSeats();
+                renderCustomRoomRules();
 
                 // 自动加入创建的房间（名称用登录账号名）
                 socket.emit('join_room', {
@@ -7093,6 +7394,7 @@ function customCreateRoom() {
                 }, (joinResponse) => {
                     if (joinResponse.status === 'success') {
                         gameState.playerId = joinResponse.player_id;
+                        acceptRoomSeat(joinResponse);
                     } else {
                         showAlert(joinResponse.message);
                     }
@@ -7115,8 +7417,11 @@ function customJoinRoom() {
         if (response.status === 'success') {
             gameState.roomId = roomId;
             gameState.playerId = response.player_id;
+            acceptRoomSeat(response);
             customCurrentRoomId.textContent = roomId;
             customRoomInfo.classList.remove('hidden');
+            renderCustomRoomSeats();
+            renderCustomRoomRules();
         } else {
             showAlert(response.message);
         }
@@ -7220,6 +7525,9 @@ function setupSocketListeners() {
         // 隐藏所有屏幕和信息面板
         customRoomInfo.classList.add('hidden');
         customRoomIdInput.classList.add('hidden');
+        // 新一局开始：清掉上一局记下的回放 id（否则上一局的入口会挂到这一局的结算屏上）。
+        // 只清"要开始新对局"的那些状态分支，见下面 `placing_ships` 那段。
+
         // 屏清单一律走 hideAllScreens()（唯一来源）。这里原先是手抄的，漏了
         // lobbyScreen / leaderboardScreen —— 在大厅点人机对战会两个屏同时 active。
         hideAllScreens();
@@ -7259,6 +7567,11 @@ function setupSocketListeners() {
         if (data.player_seat === 'p1' || data.player_seat === 'p2') {
             gameState.playerSeat = data.player_seat;
         }
+
+        /* 好友房：对手进房那一刻席位要变（服务端在 `len(room.players)==2` 时逐人 emit
+           `game_state`，里面带 `opponent_name`）。挂在既有链路的收尾位上，
+           不新开监听；房间信息没显示时它自己会跳过。 */
+        if (typeof refreshCustomRoomInfo === 'function') refreshCustomRoomInfo();
 
         // 掉线重连准备：记录对局上下文并按需领取重连 token
         if (data.room_id && data.player_id) {
@@ -7380,6 +7693,13 @@ function setupSocketListeners() {
                 gameOverScreen.classList.add('active');
                 // 结算展示（判定头 + 本局数据）只有一份实现 —— 与 socket 事件那条路径共用
                 renderGameOverHead(data);
+                /* 重连落在一个**已经结束**的对局上时也要有「本局回放」入口。
+                   这条载荷来自 `game_state`（服务端的 game_over 分支），它**不带**
+                   `match_id`（那是 `game_over` 事件专有的）⇒ 这里只能清空入口。
+                   ⚠️ 刻意**不去** fetch 战绩挑最新一条来补 —— 那正是任务书禁止的猜法
+                      （可能挑到别人的局或上一局）。重连场景下入口消失是**如实**的：
+                      这一条路径上没有权威 id。 */
+                rememberGameOverMatchId(data);
                 clearActiveGame();
                 break;
             default:
@@ -7394,6 +7714,11 @@ function setupSocketListeners() {
 
     // ===== 掉线/重连（2026-09-07 新增）=====
     socket.on('connect', () => {
+        // 重连 = 一个新的部署阶段（A04）：掉线时那条在飞的 place_ships ack 永远不会来了，
+        // 不重置的话界面会带着"正在提交，等待对手…"的锁回到重连后的页面。
+        // 权威状态由下面的 rejoin_room + room_sync 拿回来（重连落在布船阶段时，
+        // applyRoomSync 会把屏切回布船并有 initBoard 重画棋盘）。
+        newDeployPhase('socket_connect');
         const active = loadActiveGame();
         if (active && active.room_id && active.player_id) {
             console.log('尝试自动重连对局:', active.room_id);
@@ -7438,6 +7763,18 @@ function setupSocketListeners() {
     });
     socket.on('game_canceled', (data) => {
         console.log('对局取消:', data);
+        /* ⚠️ 房间身份核对（2026-09-29 修，实测竞态）：
+           这条是房间级广播，可能属于**上一个已经解散的房间**。原样认下的话，
+           一个刚进新房间的玩家会被上一条迟到的取消踢回首页
+           —— `friend_invite_battle_check.mjs` 的 ★9s/★9t 就是这么红的
+           （同一命令换次运行又全绿）。
+           判据：两边都有 room_id 且不相等 ⇒ 这条与我无关，忽略。
+           只有一边有（旧服务端载荷 / 还没进房）→ 照旧认下，不改变原有行为。 */
+        if (data && data.room_id && gameState.roomId
+            && String(data.room_id) !== String(gameState.roomId)) {
+            console.log('忽略：这条取消属于别的房间', data.room_id, '当前', gameState.roomId);
+            return;
+        }
         hideOpponentGoneBanner();
         clearActiveGame();
         if (data && data.message) showAlert(data.message);
@@ -7527,6 +7864,8 @@ function setupSocketListeners() {
         renderAchievementUnlockPanel();
         // 根据胜利原因显示不同的提示（判定头 + 本局数据，与 room_sync 那条路径共用一份实现）
         renderGameOverHead(data);
+        // 本局回放入口（W5）：只认服务端给的权威 match_id，没有就隐藏入口
+        rememberGameOverMatchId(data);
         // 好友批：结算界面把对手那一行的「加好友」按钮补上。
         // ⚠️ 触发它的是 socket 事件 `recent_opponent`（服务端结算时**双方各收一条**），
         //    那条事件的到达顺序不保证 —— 可能在 game_over **之前**也可能在之后
@@ -8382,6 +8721,13 @@ function setupSocketListeners() {
 
         // 重置已放置船数
         gameState.placedShips = 0;
+        // 新的一次部署阶段：清掉上一次的 pending / 已提交标记，并刷新六槽与状态行。
+        // ⚠️ 必须在这里（而不是在初始化时一次性）—— 卡牌重摆（绝处逢生、回光返照）
+        //    会**再来一次** `reset_gameboard`，那是一个新的部署阶段，
+        //    不能被"已经提交过"的标记锁死（A04 明确要求 handle_place_ships
+        //    同时服务开局与重摆）。放在 `placedShips = 0` 之后：
+        //    updateDeployControls 读的是这一刻的状态。
+        newDeployPhase('reset_gameboard');
     });
 
 
@@ -9199,6 +9545,17 @@ function switchScreen(screen) {
     hideAllScreens();
     if (screen) screen.classList.add('active');
 
+    /* 离开布船屏 = 这个部署阶段结束：清掉 pending 与"已提交"标记（A04 的收尾要求）。
+       ⚠️ 这一段**必须排在 hideAllScreens() 之后** ——
+          tests/test_screen_overlay_registry.py 冻结了"switchScreen 的第一件事就是
+          hideAllScreens()"这条不变量（屏之间必须互斥）。第一版把守卫写在它前面，
+          那条测试当场变红：不变量本身没问题，是我把语句顺序改了。
+       判据只看**目标屏**：目标不是布船屏 ⇒ 一定是"离开"。这样既不用记住上一屏，
+       也不会因为退出/换屏时那条在飞的 ack 迟到而把新阶段的状态写坏。 */
+    if ((deployPending || deploySubmitted) && (!screen || screen.id !== 'ship-placement-screen')) {
+        newDeployPhase('leave_placement');
+    }
+
     // 大厅批：切走就退订（否则打完一局还在收大厅广播）。函数声明会提升，
     // 这里调它不存在时序问题。
     leaveLobbySubscription(screen);
@@ -9249,6 +9606,7 @@ let leaderboardRecordRows = null;   // 战绩榜最近一次的行（切页签�
 
 function fetchLeaderboard() {
     if (!leaderboardTableBody || !leaderboardError) return;
+    const token = ++recordFetchToken;         // 身份：后一次请求作废前一次（A03）
     leaderboardTableBody.innerHTML = '';
     leaderboardError.classList.add('hidden');
     const loadingRow = document.createElement('tr');
@@ -9257,12 +9615,18 @@ function fetchLeaderboard() {
     loadingRow.innerHTML = '<td colspan="6"><span class="ax-loading"><i></i><i></i><i></i></span></td>';
     leaderboardTableBody.appendChild(loadingRow);
     // 取数期间先把领奖台收起来：留着上一次的三个人会读成"这一页的前三名就是他们"
-    renderLeaderboardPodium(null, null);
+    // （只有这一张榜是当前活动页签时才允许动它）
+    if (leaderboardTab === 'record') renderLeaderboardPodium(null, null);
 
     fetch('/api/leaderboard').then(resp => {
         if (!resp.ok) throw new Error('网络错误');
         return resp.json();
     }).then(data => {
+        // 过期响应整体丢弃（不只是领奖台）：连刷两次时，先回来的那一份不该覆盖后一份。
+        // 切页签不算过期（页签判断在 publishLeaderboardPodium 里），
+        // 所以"在段位榜上收到了战绩榜的响应"仍然会把战绩榜那份缓存下来 ——
+        // 切回战绩榜时 setLeaderboardTab 用的就是它。
+        if (token !== recordFetchToken) return;
         leaderboardTableBody.innerHTML = '';
         const rows = Array.isArray(data) ? data : [];
         if (!rows.length) {
@@ -9271,7 +9635,7 @@ function fetchLeaderboard() {
                 + '<span class="ax-empty">榜单还空着<br><small>打完第一局并产生胜负记录后就会出现在这里。</small></span>'
                 + '</td></tr>';
             leaderboardRecordRows = null;
-            renderLeaderboardPodium(null, null);
+            publishLeaderboardPodium('record', token, null, null);
             return;
         }
         const me = leaderboardMeName();
@@ -9304,13 +9668,15 @@ function fetchLeaderboard() {
         leaderboardRecordRows = rows;
         // 战绩榜的排序口径是 wins DESC / longest_streak DESC（db._get_leaderboard），
         // 所以领奖台上的数字就是**胜场** —— 换成"胜率/连胜"会和表里的名次对不上。
-        renderLeaderboardPodium(rows, { label: '胜场', value: (r) => String(Number(r.wins) || 0) });
+        // ⚠️ 行数据照存（缓存），但领奖台**只在战绩榜还是活动页签、且这次响应没过期时**才落笔。
+        publishLeaderboardPodium('record', token, rows, { label: '胜场', value: (r) => String(Number(r.wins) || 0) });
     }).catch(err => {
+        if (token !== recordFetchToken) return;    // 过期请求连表都不许动
         leaderboardTableBody.innerHTML = '';
         leaderboardError.classList.remove('hidden');
         leaderboardError.textContent = '无法加载排行榜：' + err.message;
         leaderboardRecordRows = null;
-        renderLeaderboardPodium(null, null);
+        publishLeaderboardPodium('record', token, null, null);
     });
 }
 
@@ -9424,24 +9790,67 @@ function renderLobbyPlayers(players) {
     });
 }
 
-// 房间列表：只列等待中、公开、房主仍在线的房间（服务端已经过滤，这里只渲染）。
+/* 房间列表的筛选状态（2026-09-29 / W3）。
+   ⚠️ **不放进 gameState**：它是"这一屏怎么看"的视图状态，不是对局事实。
+      放进去反而会被 room_sync / lobby_state 的重绘逻辑当成业务字段来回覆盖。
+   两个值也**不随 lobby_state 广播重置** —— 订阅每 4 秒推一次，重置就等于
+   玩家正在输的关键词每 4 秒被清一次。 */
+let lobbyRoomFilter = 'all';        // 'all' | 'joinable' | 'watchable' | 'full'
+
+/* 当前搜索词（小写）。每次都从 DOM 现读：没有第二份状态就不会漂移。 */
+function lobbyRoomQuery() {
+    const el = document.getElementById('lobby-room-search');
+    return el ? String(el.value || '').trim().toLowerCase() : '';
+}
+
+/* 一条记录是否命中搜索词。字段全部来自服务端下发的可见数据。 */
+function lobbyHitQuery(parts) {
+    const q = lobbyRoomQuery();
+    if (!q) return true;
+    return parts.some((p) => String(p == null ? '' : p).toLowerCase().indexOf(q) >= 0);
+}
+
+/* 一条等待房现在能不能加入（人数没满）。容量缺省按 2 —— 与渲染里的默认值一致。 */
+function lobbyRoomJoinable(r) {
+    return Number((r && r.players) || 1) < Number((r && r.capacity) || 2);
+}
+
+/* 房间列表重绘：只列等待中、公开、房主仍在线的房间（服务端已经过滤，这里只渲染）。
+   ⚠️ 这里**不重新判断可见性**：私密房服务端根本不下发，前端也无从变出来；
+      本函数只做"在已经给到的数据里按玩家输入筛一层"。 */
 function renderLobbyRooms(rooms) {
     if (!lobbyRoomsList) return;
+    const all = Array.isArray(rooms) ? rooms : [];
+    const list = all.filter((r) => {
+        if (lobbyRoomFilter === 'joinable' && !lobbyRoomJoinable(r)) return false;
+        if (lobbyRoomFilter === 'full' && lobbyRoomJoinable(r)) return false;
+        return lobbyHitQuery([r && r.name, r && r.host, r && r.room_id]);
+    });
     lobbyRoomsList.innerHTML = '';
-    if (!rooms.length) {
-        lobbyRoomsList.innerHTML = '<li class="lobby-empty">暂无等待中的房间，点下面的「创建房间」开一桌</li>';
+    if (!list.length) {
+        // 空态分两种：本来就没有 / 是筛掉的。混成一句会让玩家以为大厅空了。
+        lobbyRoomsList.innerHTML = '<li class="lobby-empty">'
+            + (all.length
+                ? '没有符合条件的房间（共 ' + all.length + ' 间在等，试着改一下搜索或筛选）'
+                : '暂无等待中的房间，点下面的「创建房间」开一桌')
+            + '</li>';
         return;
     }
-    rooms.forEach((r) => {
+    list.forEach((r) => {
+        const joinable = lobbyRoomJoinable(r);
         const li = document.createElement('li');
-        li.className = 'lobby-room';
+        li.className = 'lobby-room' + (joinable ? '' : ' lobby-room-full');
         li.innerHTML = '<span class="lobby-room-main">'
+            + '<span class="lobby-room-state">' + (joinable ? '等待加入' : '已满') + '</span>'
             + '<span class="lobby-room-name">' + escapeHtml(r.name || r.room_id) + '</span>'
             + '<span class="lobby-room-host">房主 ' + escapeHtml(r.host || '') + '</span>'
+            + '<span class="lobby-room-code">房号 ' + escapeHtml(String(r.room_id || '')) + '</span>'
             + '</span>'
-            + '<span class="lobby-room-seats">' + String(r.players || 1) + '/' + String(r.capacity || 2) + '</span>'
+            + '<span class="lobby-room-seats">' + String(r.players || 1) + '/' + String(r.capacity || 2)
+            + (joinable ? '' : '<small>已满</small>') + '</span>'
             + '<button type="button" class="btn secondary lobby-room-join" data-room="'
-            + escapeHtml(String(r.room_id || '')) + '">加入</button>';
+            + escapeHtml(String(r.room_id || '')) + '"' + (joinable ? '' : ' disabled')
+            + (joinable ? '' : ' title="这间房已经坐满了"') + '>加入</button>';
         lobbyRoomsList.appendChild(li);
     });
 }
@@ -9619,8 +10028,23 @@ function renderSpectatePlayers() {
 function renderSpectateChain() {
     if (!spectateChainEl) return;
     const snap = gameState.spectate.snapshot;
-    // 快照里的 chain 与实时流的 magic_chain_updated 是**同一个净化函数**出来的，
-    // 形状一致：{chain: [{seat, card_name/…, negated}], chain_len, targets_dropped}。
+    /* 快照里的 chain 与实时流的 magic_chain_updated 是**同一个净化函数**出来的，
+       形状一致：`{chain: [{seat, card, negated, preview}], chain_len, targets_dropped}`
+       —— ⚠️ `card` 是**卡名字符串**，不是对象。契约在服务端：
+         `spectate.py:503`  `'card': card_name,`（白名单重建，dict 形式被刻意丢掉）
+         在局内那份里由 `game.js` 的 chain 处理器注释说明同一个形状，
+         而 `tests/test_spectate_batch2.py:356` 用 `item['card'] == '卧薪尝胆'` 钉住了它。
+       这里原来读的是 `item.card.name`（按对象读），于是一个字段都取不到，
+       观众看到的永远是「（未知卡牌）」。已实测：真实载荷下 DOM 里就是这五个字。
+       修法是**兼容三种形态**（字符串 / 对象 / 旧字段名），而不是去改服务端 ——
+       服务端形状是冻结契约，改了会同时打断 pytest 与局内渲染。 */
+    const cardNameOf = (item) => {
+        if (!item) return '';
+        if (typeof item.card === 'string') return item.card;
+        if (item.card && typeof item.card === 'object' && item.card.name) return String(item.card.name);
+        if (item.card_name) return String(item.card_name);
+        return '';
+    };
     const payload = (snap && snap.chain) || {};
     const chain = Array.isArray(payload.chain) ? payload.chain : [];
     if (!chain.length) {
@@ -9634,7 +10058,7 @@ function renderSpectateChain() {
         row.className = 'spectate-chain-item';
         const seat = item && item.seat ? String(item.seat) : 'unknown';
         const who = (seat === 'p1' || seat === 'p2') ? spectateNameOf(seat) : '未知座位';
-        const cardName = item && (item.card_name || (item.card && item.card.name)) || '（未知卡牌）';
+        const cardName = cardNameOf(item) || '（未知卡牌）';
         const negated = !!(item && item.negated);
         row.textContent = '第' + (i + 1) + '张 · ' + who + '：' + cardName + (negated ? '（已被康）' : '');
         if (negated) row.classList.add('spectate-chain-negated');
@@ -10225,9 +10649,16 @@ function leaveSpectateScreen(fromServer) {
 function renderLobbyMatches(matches) {
     if (!lobbyMatchesList) return;
     lobbyMatchesList.innerHTML = '';
-    const rows = Array.isArray(matches) ? matches : [];
+    const all = Array.isArray(matches) ? matches : [];
+    /* 搜索框是**统一**的（W3：搜索房名／房主）—— 对局列表按两位玩家的名字筛。
+       为什么对局列表不参与"可加入/已满"那个状态筛选：那块语义只属于等待房
+       （对局列表是"点进去观战"，没有座位可加入），拿它筛对局会把两件事混起来。 */
+    const rows = all.filter((m) => lobbyHitQuery(Array.isArray(m && m.names) ? m.names : []));
     if (!rows.length) {
-        lobbyMatchesList.innerHTML = '<li class="lobby-empty">当前没有正在进行的对局</li>';
+        lobbyMatchesList.innerHTML = '<li class="lobby-empty">'
+            + (all.length ? '没有符合搜索的对局（共 ' + all.length + ' 局在进行）'
+                          : '当前没有正在进行的对局')
+            + '</li>';
         return;
     }
     rows.forEach((m) => {
@@ -10323,8 +10754,11 @@ function createLobbyRoom() {
                 return;
             }
             gameState.roomId = response.room_id;
+            gameState.playerSeat = 'p1';
             if (customCurrentRoomId) customCurrentRoomId.textContent = response.room_id;
             if (customRoomInfo) customRoomInfo.classList.remove('hidden');
+            renderCustomRoomSeats();
+            renderCustomRoomRules();
             if (lobbyRoomNameInput) lobbyRoomNameInput.value = '';
             switchScreen(customRoomScreen);
         });
@@ -10342,8 +10776,11 @@ function joinLobbyRoom(roomId) {
             }
             gameState.roomId = roomId;
             gameState.playerId = response.player_id;
+            acceptRoomSeat(response);
             if (customCurrentRoomId) customCurrentRoomId.textContent = roomId;
             if (customRoomInfo) customRoomInfo.classList.remove('hidden');
+            renderCustomRoomSeats();
+            renderCustomRoomRules();
             switchScreen(customRoomScreen);
         });
     });
@@ -10477,6 +10914,14 @@ function initBoard(boardElement, isEditable = false) {
             cell.classList.add('cell');
             cell.dataset.x = x;
             cell.dataset.y = y;
+            /* 给玩家看的坐标（1 起算）。`data-x`/`data-y` 是**内部**的 0–5 约定，
+               到处都是按它写的（布局、候选格、冻结区…），不能动；但把它们直接印给玩家
+               就会出现"第 0 行"这种说法。所以另开两个只用于显示的属性，
+               棋盘坐标与六槽坐标都读这一对，两边不可能对不上。
+               ⚠️ 只有布船屏用到它们（arena_screens.css 里带 placement token 的选择器），
+                  对局屏的两块棋盘不受影响。 */
+            cell.dataset.cx = x + 1;
+            cell.dataset.cy = y + 1;
             if (isEditable) {
                 cell.addEventListener('click', () => handleCellClick(x, y));
             }
@@ -10719,13 +11164,179 @@ function randomizeShips() {
 
     // 更新放置计数
     shipsPlaced.textContent = gameState.placedShips;
+    updateDeployControls();
+}
 
-    // 显示确认按钮
-    confirmShipsBtn.classList.remove('hidden');
+/* ===========================================================================
+   布船：提交状态机（2026-09-29 / A04 + W3）
+   ---------------------------------------------------------------------------
+   原来这里只有一句 `socket.emit('place_ships', …, cb)`：确认没有 pending 锁、
+   没有前置校验、ack 失败只弹一个 alert、**没有超时处理**，而且成功之后界面上
+   什么都不变（玩家只能猜"到底提交上没有"）。双击确认就会发两枪。
+   下面把它补成一个小小的状态机。
+
+   状态放在**两个**变量里，刻意拆开：
+     deployPhase   —— "本次部署"的代号。新开一局 / 卡牌重摆（绝处逢生、回光返照）/
+                      离开这一屏 / 重连，都 ++。它解决的是"上一局的 ack 迟到了"
+                      这一类问题（`handle_place_ships` 不只有开局，还有卡牌重摆，
+                      所以不能用一句全局"已经提交过"把第二次永久锁死）。
+     deployPending —— 正在提交中的那一次：{ phase, roomId, at }。为 null 表示可编辑。
+     deploySubmitted —— 本次阶段是否**已经成功提交过**（提交成功后棋盘不该再能改）。
+   三者都不是"游戏状态的真相源"，权威状态始终在服务端（room_sync / 事件推进）。
+   =========================================================================== */
+/* ⚠️ 这四个用 `var` 而不是 `let`：`switchScreen()` 每次切屏都会读它们，
+   而 switchScreen 由很多入口调用、其中有些（applyRoomSync 那条重连路由）可能在
+   脚本还没求值到这一行时就被触发 —— `var` 提升后初值是 undefined（守卫直接跳过），
+   `let` 则是 TDZ 抛错（整个切屏炸掉）。这几个值是纯客户端状态，没有"必须晚于
+   某一行才存在"的含义，所以用 var 是合适的。 */
+var deployPhase = 0;
+var deployPending = null;
+var deploySubmitted = false;
+var deployResyncTimer = null;
+/* ack 超时。socket.io 的 ack 在断网时**不会失败也不会成功**，回调永远不来 ——
+   没有这个计时器，界面会永久停在"正在提交，等待对手…"，棋盘也永久锁着。 */
+const DEPLOY_ACK_TIMEOUT_MS = 6000;
+
+/* 进入一个新的部署阶段：清掉 pending、解锁、刷新六槽与状态行。
+   `why` 只用于注释/调试，不进 UI。 */
+function newDeployPhase(why) {
+    deployPhase++;
+    deployPending = null;
+    deploySubmitted = false;
+    if (typeof clearDeployResyncTimer === 'function') clearDeployResyncTimer();
+    updateDeployControls();
+    void why;
+}
+
+/* 提交前校验：恰好 `maxShips` 个**有效且唯一**的格子。
+   实测过的坏情况：`gameState.ships` 里混进重复坐标时，服务端按"船数"判满 6，
+   前端也以为摆好了，于是双方在猜拳屏互相等一个永远不来的开局 ——
+   在提交前把这件事说清楚，比事后排查一个"卡在等待对手"的界面便宜得多。 */
+function deployCellsValid() {
+    const ships = Array.isArray(gameState.ships) ? gameState.ships : [];
+    const want = Number(gameState.maxShips);
+    if (!Number.isFinite(want) || want <= 0) return { ok: false, count: 0, reason: '棋盘还没准备好' };
+    const seen = new Set();
+    let count = 0;
+    for (const ship of ships) {
+        const positions = (ship && Array.isArray(ship.positions)) ? ship.positions : [];
+        for (const pos of positions) {
+            const x = Number(pos && pos.x), y = Number(pos && pos.y);
+            if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0 || x > 5 || y > 5) {
+                return { ok: false, count, reason: '有格子越界了' };
+            }
+            const key = x + ',' + y;
+            if (seen.has(key)) return { ok: false, count, reason: '有格子重复了' };
+            seen.add(key);
+            count++;
+        }
+    }
+    if (count !== want) return { ok: false, count, reason: null };
+    return { ok: true, count };
+}
+
+/* 六槽：**全部从 gameState.ships 派生**（不是第二份状态，见模板里那段注释）。
+   每一格写它占的坐标；空格用虚线框。 */
+function renderDeploySlots() {
+    const host = document.getElementById('deploy-slots');
+    if (!host) return;
+    const want = Math.max(0, Number(gameState.maxShips) || 0);
+    const cells = [];
+    (Array.isArray(gameState.ships) ? gameState.ships : []).forEach(ship => {
+        ((ship && ship.positions) || []).forEach(pos => {
+            if (pos && Number.isInteger(Number(pos.x)) && Number.isInteger(Number(pos.y))) {
+                cells.push((Number(pos.x) + 1) + ',' + (Number(pos.y) + 1));
+            }
+        });
+    });
+    let html = '';
+    for (let i = 0; i < want; i++) {
+        html += cells[i]
+            ? '<li class="ax-slot on">' + escapeHtml(cells[i]) + '</li>'
+            : '<li class="ax-slot"><span class="ax-slot-empty">空</span></li>';
+    }
+    host.innerHTML = html;
+}
+
+/* 这一屏所有控件的**唯一刷新口**：确认按钮的可用性、状态行文案、六槽。
+   任何改动布船数据的路径（点格 / 随机 / 清空 / 提交 / ack / 阶段重开）都只调它，
+   于是"按钮为什么是灰的"永远只有一个答案。 */
+function updateDeployControls() {
+    const slots = document.getElementById('deploy-slots');
+    if (slots) renderDeploySlots();
+    const hint = document.getElementById('deploy-hint');
+    const check = deployCellsValid();
+    const pending = !!deployPending;
+    let hintText;
+    if (pending) {
+        hintText = '正在提交，等待对手…';
+    } else if (deploySubmitted) {
+        hintText = '已提交 · 等待对手摆好，双方都就绪后进入猜拳';
+    } else if (!check.ok && check.reason) {
+        hintText = '暂时不能提交：' + check.reason;
+    } else if (check.count < (Number(gameState.maxShips) || 0)) {
+        hintText = '还差 ' + ((Number(gameState.maxShips) || 0) - check.count) + ' 格就能提交';
+    } else {
+        hintText = '6 格已就绪，可以提交';
+    }
+    if (hint) {
+        hint.textContent = hintText;
+        hint.classList.toggle('ready', !pending && !deploySubmitted && check.ok);
+        hint.classList.toggle('busy', pending || deploySubmitted);
+    }
+    const locked = pending || deploySubmitted;
+    if (confirmShipsBtn) {
+        // 常驻 + disabled（不再用 hidden）：不可用的时候按钮还在，旁边的状态行说明原因。
+        confirmShipsBtn.disabled = locked || !check.ok;
+        confirmShipsBtn.classList.toggle('deploy-locked', locked);
+    }
+    if (randomShipsBtn) randomShipsBtn.disabled = locked;
+    const clearBtn = document.getElementById('clear-ships');
+    if (clearBtn) clearBtn.disabled = locked || check.count === 0;
+    if (playerBoard) playerBoard.classList.toggle('deploy-locked', locked);
+    /* 棋盘锁：`.deploy-locked` 只做视觉与 `pointer-events`；真正的门在
+       handleCellClick 里（键盘/脚本点击不经过 pointer-events）。 */
+}
+
+/* 清空：把已放置的格子全撤掉（撤回是幂等的，重复点没有副作用）。 */
+function clearShipPlacement() {
+    if (deployPending || deploySubmitted) return;
+    gameState.ships = [];
+    gameState.placedShips = 0;
+    if (typeof initBoard === 'function') initBoard(playerBoard, true);
+    shipsPlaced.textContent = '0';
+    updateDeployControls();
+}
+
+/* 按当前 gameState.ships 把棋盘上的 `.ship` 类画一遍，并据此决定锁不锁。
+   用途只有一个：**重连 / 重新同步之后**把服务端快照里的布船还原到界面上
+   （`initBoard` 只造格子，不画船）。判"是否已提交"的依据是服务端的 ships
+   是否已经满员 —— 权威事实在服务端，前端不猜。 */
+function paintPlacementFromState() {
+    newDeployPhase('room_sync_placement');
+    const ships = Array.isArray(gameState.ships) ? gameState.ships : [];
+    let placed = 0;
+    ships.forEach(ship => {
+        ((ship && ship.positions) || []).forEach(pos => {
+            const x = Number(pos && pos.x), y = Number(pos && pos.y);
+            if (!Number.isInteger(x) || !Number.isInteger(y)) return;
+            const cell = playerBoard && playerBoard.querySelector(`[data-x="${x}"][data-y="${y}"]`);
+            if (cell) cell.classList.add('ship');
+            placed++;
+        });
+    });
+    gameState.placedShips = placed;
+    if (shipsPlaced) shipsPlaced.textContent = placed;
+    const want = Number(gameState.maxShips) || 0;
+    // 快照里已经有满员的一副布船 ⇒ 这一阶段我已经提交过了（服务端还留着它）
+    if (want > 0 && placed === want && deployCellsValid().ok) deploySubmitted = true;
+    updateDeployControls();
 }
 
 // 处理棋盘单元格点击（放置/移除战舰）
 function handleCellClick(x, y) {
+    // 提交中／已提交：棋盘整个锁住（视觉由 .deploy-locked 表达，这里是真正的门）
+    if (deployPending || deploySubmitted) return;
     // 检查该位置是否已经放置了战舰
     const shipIndex = gameState.ships.findIndex(ship =>
         ship.positions.some(pos => pos.x === x && pos.y === y)
@@ -10739,12 +11350,7 @@ function handleCellClick(x, y) {
 
         // 更新界面，移除战舰显示
         const cell = playerBoard.querySelector(`[data-x="${x}"][data-y="${y}"]`);
-        cell.classList.remove('ship');
-
-        // 如果之前显示了确认按钮，检查是否需要隐藏
-        if (gameState.placedShips < gameState.maxShips) {
-            confirmShipsBtn.classList.add('hidden');
-        }
+        if (cell) cell.classList.remove('ship');
     } else {
         // 检查是否已经放置了最大数量的战舰
         if (gameState.placedShips >= gameState.maxShips) return;
@@ -10761,54 +11367,136 @@ function handleCellClick(x, y) {
 
         // 更新界面
         const cell = playerBoard.querySelector(`[data-x="${x}"][data-y="${y}"]`);
-        cell.classList.add('ship');
-
-        // 如果放置了最大数量的战舰，显示确认按钮
-        if (gameState.placedShips === gameState.maxShips) {
-            confirmShipsBtn.classList.remove('hidden');
-        }
+        if (cell) cell.classList.add('ship');
     }
+    // 确认按钮的可用性与六槽都从这里刷新 —— 不再由本函数自己 add/remove `hidden`
+    // （原来"按钮该不该出现"的判断散在三处，加一个"清空"就会漏掉一处）。
+    updateDeployControls();
 }
 
-// 确认战舰放置
+// 确认战舰放置（提交状态机见上面 A04 那一段）
 function confirmShipPlacement() {
-    console.log('确认放置按钮被点击');
-    console.log('gameState.socket:', gameState.socket);
-    console.log('gameState.roomId:', gameState.roomId);
-    console.log('gameState.playerId:', gameState.playerId);
-    console.log('gameState.ships:', gameState.ships);
-
-    if (!gameState.socket) {
-        console.error('socket连接为null');
-        showAlert('socket连接为null，请重新创建或加入房间');
+    // ① 已在提交中／本阶段已经提交成功 → 直接忽略（双击、回车连按都不会发第二枪）
+    if (deployPending || deploySubmitted) return;
+    // ② 连接与身份：断线时把话说清楚，而不是发一条永远没有回复的事件
+    if (!gameState.socket || gameState.socket.connected === false) {
+        showAlert('连接已断开，正在重连。稍后会自动同步房间状态，再试一次即可。');
+        return;
+    }
+    if (!gameState.roomId || !gameState.playerId) {
+        showAlert('还没进入房间，请重新创建或加入房间。');
+        return;
+    }
+    // ③ 数据校验：恰好 maxShips 个有效且唯一的格子
+    const check = deployCellsValid();
+    if (!check.ok) {
+        updateDeployControls();
+        showAlert('布船数据无效（' + (check.reason || ('只放好了 ' + check.count + ' 格，需要 '
+            + gameState.maxShips + ' 格')) + '），请调整后再提交。');
         return;
     }
 
-    if (!gameState.roomId) {
-        console.error('roomId为null');
-        showAlert('roomId为null，请重新创建或加入房间');
-        return;
-    }
+    const phase = deployPhase;                 // 记下这一次提交属于哪个部署阶段
+    const roomId = gameState.roomId;
+    let acked = false;
+    deployPending = { phase, roomId, at: Date.now() };
+    updateDeployControls();                    // 立即锁：棋盘 / 随机 / 清空 / 确认
 
-    if (!gameState.playerId) {
-        console.error('playerId为null');
-        showAlert('playerId为null，请重新创建或加入房间');
-        return;
-    }
+    /* ④ 超时：socket.io 的 ack 在断网时**既不成功也不失败**，回调永远不来。
+       没有这一步，界面会永久停在"正在提交，等待对手…"，棋盘永久锁着。
+       超时后**不盲目重发**（那正是最坏的做法：服务端可能已经收下了，
+       重发要么被拒要么变成两次提交），而是先重新同步房间状态，
+       由服务端的事实决定"能不能再试"。 */
+    const timeoutId = setTimeout(() => {
+        if (acked || deployPending === null || deployPending.phase !== phase) return;
+        requestDeployResync(phase, roomId);
+    }, DEPLOY_ACK_TIMEOUT_MS);
+    deployResyncTimer = timeoutId;
 
     gameState.socket.emit('place_ships', {
-        room_id: gameState.roomId,
+        room_id: roomId,
         player_id: gameState.playerId,
         ships: gameState.ships
     }, (response) => {
-        console.log('place_ships响应:', response);
-        if (response.status === 'success') {
-            console.log('Ships placed successfully');
+        acked = true;
+        if (deployResyncTimer === timeoutId) { clearTimeout(deployResyncTimer); deployResyncTimer = null; }
+        // ⑤ 身份核对：阶段换了（新一局 / 卡牌重摆 / 重连）就丢弃这个迟到的 ack
+        if (deployPending === null || deployPending.phase !== phase) return;
+        const ok = !!(response && response.status === 'success');
+        if (ok) {
+            // ack 成功只是"服务端收下了"：紧接着它会广播事件推进阶段
+            //（双方都提交完 → 猜拳）。在那之前保持锁定并显示等待态。
+            deployPending = null;
+            deploySubmitted = true;
+            updateDeployControls();
+            setRPSWaiting(false);
         } else {
-            console.error('Ships placement failed:', response.message);
-            showAlert('放置战舰失败：' + response.message);
+            // 被拒：恢复可修改，并把服务端给的原因原样转达
+            deployPending = null;
+            deploySubmitted = false;
+            updateDeployControls();
+            showAlert('放置战舰失败：' + ((response && response.message) || '服务端没有说明原因') + '。可以调整后重试。');
         }
     });
+}
+
+/* 提交 ack 超时后的重新同步（A04 第 4 条）。
+   走既有重连路径 `rejoin_room` —— 服务端会回一条 `room_sync`，那才是权威状态。
+   拿不到快照就解锁并明确告诉玩家"状态未知"，绝不再自动重发一次。 */
+function clearDeployResyncTimer() {
+    if (deployResyncTimer !== null) { clearTimeout(deployResyncTimer); deployResyncTimer = null; }
+}
+function requestDeployResync(phase, roomId) {
+    if (!gameState.socket || gameState.socket.connected === false) {
+        // 连接都没了：解锁并提示，重连后由 connect 处理走 rejoin_room 拿快照
+        deployPending = null;
+        updateDeployControls();
+        showAlert('提交后没收到回执，而且连接已断开。重连后会自动同步房间状态。');
+        return;
+    }
+    const active = (typeof loadActiveGame === 'function' ? loadActiveGame() : null) || {};
+    let settled = false;
+    const finish = (advanced) => {
+        if (settled) return;
+        settled = true;
+        clearDeployResyncTimer();
+        if (deployPending === null || deployPending.phase !== phase) return;
+        if (advanced) {
+            // 服务端其实已经收下了（阶段往前走了）→ 保持"已提交"，不要重发
+            deployPending = null;
+            deploySubmitted = true;
+            updateDeployControls();
+        } else {
+            deployPending = null;
+            deploySubmitted = false;
+            updateDeployControls();
+            showAlert('提交后 6 秒没收到回执。已同步房间状态：还没有记录到你提交的布船，可以重试。');
+        }
+    };
+    const onSync = (data) => {
+        if (!data || String(data.room_id || '') !== String(roomId)) return;
+        // 阶段已经不是 placing_ships ⇒ 服务端收到了并推进了
+        finish(String(data.current_phase || '') !== 'placing_ships');
+    };
+    if (gameState.socket.once) gameState.socket.once('room_sync', onSync);
+    gameState.socket.emit('rejoin_room', {
+        room_id: roomId,
+        player_id: gameState.playerId,
+        token: gameState.reconnectToken || active.token || ''
+    }, (resp) => {
+        if (resp && resp.status === 'error') {
+            settled = true;
+            clearDeployResyncTimer();
+            if (deployPending && deployPending.phase === phase) {
+                deployPending = null;
+                deploySubmitted = false;
+                updateDeployControls();
+                showAlert('提交后没收到回执，重新同步房间也失败了（' + resp.message + '）。可以重试。');
+            }
+        }
+    });
+    // 兜底：连 room_sync 也等不到就别一直锁着
+    deployResyncTimer = setTimeout(() => finish(false), 8000);
 }
 
 /**
@@ -11184,6 +11872,8 @@ function resetGame() {
     renderAchievementUnlockPanel();
     xpAnimToken++;                     // 作废上一局的滚动动画（避免它接着改新一局的条）
     hideRankGainPanel();               // 段位面板同理（含作废它的动画）
+    // 上一局的「本局回放」id 一并作废：重置后回到首页，那个 id 已经不属于任何在屏内容。
+    rememberGameOverMatchId(null);
     const xpPanel = document.getElementById('xp-gain-panel');
     if (xpPanel) xpPanel.classList.add('hidden');
     // 断开socket连接（如果存在）
@@ -12751,7 +13441,8 @@ function applyCardEffect(card, casterId) {
             gameState.ships = [];
             gameState.placedShips = 0;
             shipsPlaced.textContent = '0';
-            confirmShipsBtn.classList.add('hidden');
+            // 卡牌重摆 = 一个新的部署阶段（A04：绝处逢生会再走一次 place_ships）
+            newDeployPhase('last_stand_redeploy');
             break;
 
         case '死者苏生':
@@ -14449,7 +15140,79 @@ function init() {
 function showCustomRoomWaiting(roomId) {
     if (customCurrentRoomId) customCurrentRoomId.textContent = roomId || '';
     if (customRoomInfo) customRoomInfo.classList.remove('hidden');
+    renderCustomRoomSeats();
     if (customRoomScreen && typeof switchScreen === 'function') switchScreen(customRoomScreen);
+}
+
+/* ===========================================================================
+   好友房：席位 + 规则摘要（2026-09-29 / W3）
+   ---------------------------------------------------------------------------
+   任务书 §W3 的好友房条目要求「呈现本人席位与空席／已加入者、真实房号、
+   邀请与规则摘要」，并明确两条边界：
+     · "双方名称和状态只从真实房间数据取；缺字段显示等待，**不伪造第二人**"
+     · "**不新增 ready 协议**"
+   所以下面两个渲染函数只做一件事：把服务端**已经下发**的字段摆出来。
+   数据来源（逐个核对过 server.py）：
+     · 自己的名字 → `gameState.playerName`（`game_state` 的 `player_name`）
+     · 对手的名字 → `gameState.opponentName`（`game_state` 的 `opponent_name`；
+       服务端在 `len(room.players) == 2` 那一刻逐人 emit，见 handle_join_room）
+     · 房号 → `#custom-current-room-id` 的既有值（各处写入点不动）
+   没有对手名字 = 还没第二个人 ⇒ 显示"等待加入"，**不编名字、不显示假头像**。
+   =========================================================================== */
+function renderCustomRoomSeats() {
+    const host = document.getElementById('custom-room-seats');
+    if (!host) return;
+    const me = String(gameState.playerName || '').trim();
+    const opp = String(gameState.opponentName || '').trim();
+    // ⚠️ `opponentName` 的初值是字面量 '对手'（gameState 的默认值），
+    //    那不是"有一个叫对手的人"。只有它被服务端改写过（不等于默认值）才算真的有人。
+    const hasOpponent = !!opp && opp !== '对手';
+    const seat = (label, name, filled, tag) => '<li class="room-seat' + (filled ? ' on' : '') + '">'
+        + '<span class="room-seat-label">' + escapeHtml(label) + '</span>'
+        + '<span class="room-seat-name">' + escapeHtml(filled ? name : '等待加入…') + '</span>'
+        + '<span class="room-seat-tag">' + escapeHtml(tag) + '</span>'
+        + '</li>';
+    const joined = gameState.playerSeat === 'p2';
+    const known = gameState.playerSeat === 'p1' || joined;
+    host.innerHTML = seat('席位 1', joined ? opp : (me || '你'), joined ? hasOpponent : !!me,
+            known ? '房主' : '待确认')
+        + seat('席位 2', joined ? (me || '你') : opp, joined ? !!me : hasOpponent,
+            joined || hasOpponent ? '已加入' : '空');
+}
+
+function acceptRoomSeat(response) {
+    if (!response || (response.player_seat !== 'p1' && response.player_seat !== 'p2')) return;
+    gameState.playerSeat = response.player_seat;
+    refreshCustomRoomInfo();
+}
+
+/* 规则摘要：只列**这一屏真实生效**的规则。
+   每一条都能指到实现处，不写装饰性的"规则"：
+     · 棋盘 / 船只：6×6、每人 6 格（单格船）—— 与 #total-ships 同源
+     · 模式：自定义房恒为休闲局（server.py 的 create_room 注释写明 `ranked` 恒假）
+     · 开局：双方都摆完 → 猜拳定先手（既有流程）
+   数值从 DOM/状态现读，不写死第二份。 */
+function renderCustomRoomRules() {
+    const host = document.getElementById('custom-room-rules');
+    if (!host) return;
+    const total = (document.getElementById('total-ships') || {}).textContent;
+    const ships = String(total || '6').trim() || '6';
+    const rows = [
+        ['棋盘', '6 × 6'],
+        ['每人战舰', ships + ' 格（单格船）'],
+        ['模式', '休闲（自定义房不计排位）'],
+        ['开局', '双方摆好后猜拳定先手'],
+    ];
+    host.innerHTML = rows.map(([k, v]) => '<div class="room-rule">'
+        + '<dt>' + escapeHtml(k) + '</dt><dd>' + escapeHtml(v) + '</dd></div>').join('');
+}
+
+// 席位/规则会在"对手进房"那一刻变（服务端逐人 emit 的 game_state 里带 opponent_name）。
+// 挂在既有 game_state 处理链的收尾位上，而不是新开一个监听。
+function refreshCustomRoomInfo() {
+    if (!customRoomInfo || customRoomInfo.classList.contains('hidden')) return;
+    renderCustomRoomSeats();
+    renderCustomRoomRules();
 }
 
 function joinRoomById(roomId, opts) {
@@ -14475,6 +15238,7 @@ function joinRoomById(roomId, opts) {
         socket.emit('join_room', { room_id: roomId, player_name: playerName }, (resp) => {
             if (resp && resp.status === 'success') {
                 gameState.roomId = roomId;
+                acceptRoomSeat(resp);
                 // 房号也写进地址栏：页内刷新 / 掉线重连用的还是既有那条 `?room=`
                 // 自动入房逻辑，这里只是把状态同步过去（history.replaceState 不触发导航，
                 // 不会把当前这局打断）。失败时静默忽略（file:// 等场景没有 history API）。

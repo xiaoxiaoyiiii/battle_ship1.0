@@ -1,4 +1,4 @@
-# 魔法卡卡面美术提示词（41 张）
+# 魔法卡卡面美术提示词（48 张）
 
 > 由 `tools/gen_card_art_prompts.py` 生成，**不要手改本文件**。
 > 改提示词请改脚本里的 `STYLE_*` / `SPEED_ACCENT` / `TYPE_COMPOSITION` / `CARD_ART`，
@@ -15,7 +15,7 @@
 
 ## 二、统一风格块
 
-41 张卡共用同一套风格，这是它们看起来像「一套牌」而不是「一堆图」的唯一原因。
+48 张卡共用同一套风格，这是它们看起来像「一套牌」而不是「一堆图」的唯一原因。
 每张卡的完整提示词已经按下面的公式拼好了，**直接整段复制即可**，
 需要自己改的时候按这个公式拼：
 
@@ -107,7 +107,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 
 | 类型 | 张数 | 构图 |
 | --- | --- | --- |
-| 普通 | 37 | 单一明确主体，海面只作背景暗示 |
+| 普通 | 41 | 单一明确主体，海面只作背景暗示 |
 | 场地 | 4 | 广角地平线，环境光环占据整幅画面，不设小主体 |
 
 场地卡是持续存在的环境（`恶魔契约`/`禁忌果实`/`伊甸园`/`教皇旨意`），
@@ -127,17 +127,29 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 
 ## 六、逐卡提示词
 
-共 41 张。编号按「速阶 → 类型 → 卡名」排，**同速阶的卡挨在一起**，
+共 48 张。编号按「速阶 → 类型 → 卡名」排，**同速阶的卡挨在一起**，
 方便横向比对同一组的光效是否统一；按卡名找编号看下面的名录。
 
 | 分组 | 卡（编号） |
 | --- | --- |
-| 速阶 3（任何阶段可用） | `29` 八方来财、`30` 加百列之光、`31` 增援、`32` 失灵！、`33` 平等条约、`34` 死者苏生、`35` 疗愈、`36` 百亿补贴、`37` 盗亦有道、`38` 神之宣告、`39` 神机妙算、`40` 绝处逢生、`41` 钢筋铁骨 |
-| 速阶 2（准备 + 战斗阶段） | `14` Freezing！、`15` 五险一金、`16` 克苏鲁之眼、`17` 冻结、`18` 探测雷达、`19` 明智埋葬、`20` 溅射、`21` 看破！、`22` 硫磺火焰、`23` 神威！、`24` 越战越勇、`25` 轰炸、`26` 雷达子弹、`27` 饮血 |
-| 速阶 1（仅自己的准备阶段） | `01` 仁王之盾、`02` 余音绕梁、`03` 回光返照、`04` 无中生有、`05` 无暇圣心、`06` 极限增援、`07` 桃园结义、`08` 火力全开、`09` 灵气复苏、`10` 败者食尘 |
-| 场地卡 | `11` 伊甸园、`12` 教皇旨意、`13` 禁忌果实、`28` 恶魔契约 |
+| 速阶 3（任何阶段可用） | `35` 八方来财、`36` 加百列之光、`37` 增援、`38` 失灵！、`39` 平等条约、`40` 死者苏生、`41` 滥竽充数、`42` 疗愈、`43` 百亿补贴、`44` 盗亦有道、`45` 神之宣告、`46` 神机妙算、`47` 绝处逢生、`48` 钢筋铁骨 |
+| 速阶 2（准备 + 战斗阶段） | `20` Freezing！、`21` 五险一金、`22` 克苏鲁之眼、`23` 冻结、`24` 探测雷达、`25` 明智埋葬、`26` 溅射、`27` 看破！、`28` 硫磺火焰、`29` 神威！、`30` 越战越勇、`31` 轰炸、`32` 雷达子弹、`33` 饮血 |
+| 速阶 1（仅自己的准备阶段） | `01` 亡羊补牢、`02` 仁王之盾、`03` 余音绕梁、`04` 卧薪尝胆、`05` 回光返照、`06` 守株待兔、`07` 无中生有、`08` 无暇圣心、`09` 极限增援、`10` 桃园结义、`11` 火力全开、`12` 灵气复苏、`13` 败者食尘 |
+| 场地卡 | `14` 伊甸园、`17` 教皇旨意、`19` 禁忌果实、`34` 恶魔契约 |
 
-### 01. 仁王之盾 · 速阶 1 · 普通
+### 01. 亡羊补牢 · 速阶 1 · 普通
+
+- **画面**：破损的船坞栅栏正被补上木板，落潮里翻出的旧牌被一只手捞回
+- **英文提示词**：
+
+  ```text
+  Painterly digital illustration for a naval tactics card game, cinematic semi-realistic, deep-sea military aesthetic, dark teal and navy palette, cold rim light, volumetric god rays through water, subtle film grain, one strong readable silhouette, restrained fine detail, a breached harbor fence being patched with fresh planks, an old card surfacing from the ebb tide and lifted back by a hand, warm aged-brass and dim amber glow, slow ceremonial weight, embers drifting, calm deliberate mood, single clearly lit focal subject, the surrounding sea only hinted at, vertical 2:3 portrait composition, main subject centered in the middle band, empty shadowed space at the top and bottom for text overlay, no text, no letters, no numbers, no watermark, no logo, no signature, no card frame, no border, no UI elements
+  ```
+
+- **中文关键词**：补好船坞栅栏的同时，落潮里捞回一张旧牌
+- **落盘**：`static/cards/wangyang-bulao.webp`
+
+### 02. 仁王之盾 · 速阶 1 · 普通
 
 - **画面**：三艘战舰被半透明六边形护盾环住，上方浮着柔和的光之王冠徽记
 - **英文提示词**：
@@ -149,7 +161,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：三艘战舰被半透明六边形能量护盾环绕，上方悬浮光之王冠徽记，守护，平和
 - **落盘**：`static/cards/renwang-zhidun.webp`
 
-### 02. 余音绕梁 · 速阶 1 · 普通
+### 03. 余音绕梁 · 速阶 1 · 普通
 
 - **画面**：水下的巨钟荡出可见的同心声波，一发炮声的余响凝在半空，仍在切割海面
 - **英文提示词**：
@@ -161,7 +173,19 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：水下青铜巨钟荡出同心音波，炮声余响凝成实体刀刃悬停切割海面
 - **落盘**：`static/cards/yuyin-raoliang.webp`
 
-### 03. 回光返照 · 速阶 1 · 普通
+### 04. 卧薪尝胆 · 速阶 1 · 普通
+
+- **画面**：残破舰队列成一线，船身裹着绷带般的护盾光膜，船艏抵着苦胆形铁砧
+- **英文提示词**：
+
+  ```text
+  Painterly digital illustration for a naval tactics card game, cinematic semi-realistic, deep-sea military aesthetic, dark teal and navy palette, cold rim light, volumetric god rays through water, subtle film grain, one strong readable silhouette, restrained fine detail, a battered fleet in line ahead, hulls wrapped in bandage-like shields of light, each bow resting against a bitter-gourd-shaped iron anvil, warm aged-brass and dim amber glow, slow ceremonial weight, embers drifting, calm deliberate mood, single clearly lit focal subject, the surrounding sea only hinted at, vertical 2:3 portrait composition, main subject centered in the middle band, empty shadowed space at the top and bottom for text overlay, no text, no letters, no numbers, no watermark, no logo, no signature, no card frame, no border, no UI elements
+  ```
+
+- **中文关键词**：残破舰队裹上绷带般的护盾光膜，船艏抵着苦胆铁砧
+- **落盘**：`static/cards/woxin-changdan.webp`
+
+### 05. 回光返照 · 速阶 1 · 普通
 
 - **画面**：旧舰队化作最后一次光爆消散，六艘崭新战舰在同片海面成型，旧阵型裂成镜面碎片
 - **英文提示词**：
@@ -173,7 +197,19 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：旧舰队化作最后光爆消散，六艘崭新战舰在同一海面成型，旧阵型如镜面碎裂
 - **落盘**：`static/cards/huiguang-fanzhao.webp`
 
-### 04. 无中生有 · 速阶 1 · 普通
+### 06. 守株待兔 · 速阶 1 · 普通
+
+- **画面**：自家战舰桅杆挂起伪装成礁石的陷阱网，水下伏着一排尖锐锚钩
+- **英文提示词**：
+
+  ```text
+  Painterly digital illustration for a naval tactics card game, cinematic semi-realistic, deep-sea military aesthetic, dark teal and navy palette, cold rim light, volumetric god rays through water, subtle film grain, one strong readable silhouette, restrained fine detail, a trap net disguised as a reef hanging from a warship's mast, a row of barbed anchors waiting below the waterline, warm aged-brass and dim amber glow, slow ceremonial weight, embers drifting, calm deliberate mood, single clearly lit focal subject, the surrounding sea only hinted at, vertical 2:3 portrait composition, main subject centered in the middle band, empty shadowed space at the top and bottom for text overlay, no text, no letters, no numbers, no watermark, no logo, no signature, no card frame, no border, no UI elements
+  ```
+
+- **中文关键词**：桅杆上挂着伪装成礁石的陷阱网，水下埋伏尖锐锚钩
+- **落盘**：`static/cards/shouzhu-daitu.webp`
+
+### 07. 无中生有 · 速阶 1 · 普通
 
 - **画面**：两张华丽卡牌从旋转的虚空中凝结成型，虚空在其后封上一道石门
 - **英文提示词**：
@@ -185,7 +221,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：两张华丽卡牌从旋转虚空中凝结而成，虚空随后被沉重石门封死，冷银光
 - **落盘**：`static/cards/wuzhongshengyou.webp`
 
-### 05. 无暇圣心 · 速阶 1 · 普通
+### 08. 无暇圣心 · 速阶 1 · 普通
 
 - **画面**：一枚无瑕的透明水晶之心悬在完全未受伤的海面上，无烟无残骸
 - **英文提示词**：
@@ -197,7 +233,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：无瑕透明水晶之心悬浮于毫无伤痕的平静海面上，无烟无残骸，纯净静穆
 - **落盘**：`static/cards/wuxia-shengxin.webp`
 
-### 06. 极限增援 · 速阶 1 · 普通
+### 09. 极限增援 · 速阶 1 · 普通
 
 - **画面**：两座倒计时光柱夹住棋盘，天平向更残破、更少船的一方倾斜
 - **英文提示词**：
@@ -209,7 +245,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：两座巨大倒计时光柱夹着海面网格，天平向船更少更破的一方倾斜，光数字
 - **落盘**：`static/cards/jixian-zengyuan.webp`
 
-### 07. 桃园结义 · 速阶 1 · 普通
+### 10. 桃园结义 · 速阶 1 · 普通
 
 - **画面**：桃花庭院悬于海上，两只手从缓慢旋转的空白卡扇中各取一张
 - **英文提示词**：
@@ -221,7 +257,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：桃花庭院浮于平海之上，两只手从旋转的空白发光卡扇中各抽一张，结义
 - **落盘**：`static/cards/taoyuan-jieyi.webp`
 
-### 08. 火力全开 · 速阶 1 · 普通
+### 11. 火力全开 · 速阶 1 · 普通
 
 - **画面**：战舰全炮塔齐射，炮口焰重叠成一片，硝烟里浮出整支舰队的重影
 - **英文提示词**：
@@ -233,7 +269,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：战舰全炮塔同时齐射，炮口焰层层重叠，硝烟中浮现整支舰队的重影，火力全开
 - **落盘**：`static/cards/huoli-quankai.webp`
 
-### 09. 灵气复苏 · 速阶 1 · 普通
+### 12. 灵气复苏 · 速阶 1 · 普通
 
 - **画面**：灵光潮水漫上海面，双方舰队同时增删到同一规模，舰船在灵液中凝成或溶解
 - **英文提示词**：
@@ -245,7 +281,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：灵光潮水漫过海面，双方舰队重塑为同等规模，舰船在灵液中凝结或溶解，均衡
 - **落盘**：`static/cards/lingqi-fusu.webp`
 
-### 10. 败者食尘 · 速阶 1 · 普通
+### 13. 败者食尘 · 速阶 1 · 普通
 
 - **画面**：巨型时钟指针倒转，整片战场海面重置回开局状态，双方手牌却依然发光未被触碰
 - **英文提示词**：
@@ -257,7 +293,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：巨钟指针倒转，整片战场重置回开局状态，双方手牌仍发光未被影响，时间倒流
 - **落盘**：`static/cards/baizhe-shichen.webp`
 
-### 11. 伊甸园 · 速阶 1 · 场地
+### 14. 伊甸园 · 速阶 1 · 场地
 
 - **画面**：镜面平海上浮着一座发光的乐园岛，一座黄铜摆锤随舰数下降而倾斜
 - **英文提示词**：
@@ -269,7 +305,31 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：镜面般平静海面上悬浮发光天堂岛，黄铜摆锤随战舰消失而下降，宁静诡异
 - **落盘**：`static/cards/yidianyuan.webp`
 
-### 12. 教皇旨意 · 速阶 1 · 场地
+### 15. 兵粮寸断 · 速阶 1 · 判定
+
+- **画面**：补给缆绳被斩断、粮袋翻落海面，断口处浮着三枚骰子等判定
+- **英文提示词**：
+
+  ```text
+  Painterly digital illustration for a naval tactics card game, cinematic semi-realistic, deep-sea military aesthetic, dark teal and navy palette, cold rim light, volumetric god rays through water, subtle film grain, one strong readable silhouette, restrained fine detail, a supply cable severed in mid-air over the sea, ration sacks spilling into the waves, three dice floating where the cut was made, warm aged-brass and dim amber glow, slow ceremonial weight, embers drifting, calm deliberate mood, a die or balance hanging at the tipping point as the central subject, motion arc still unresolved, the outcome left visibly undecided, vertical 2:3 portrait composition, main subject centered in the middle band, empty shadowed space at the top and bottom for text overlay, no text, no letters, no numbers, no watermark, no logo, no signature, no card frame, no border, no UI elements
+  ```
+
+- **中文关键词**：补给缆绳被斩断、粮袋落海，断口浮着三枚骰子待判定
+- **落盘**：`static/cards/bingliang-cunduan.webp`
+
+### 16. 命运骰子 · 速阶 1 · 判定
+
+- **画面**：一枚骨白色巨骰在半空翻滚，六个面各映出一种命运幻影，骰影投向海面
+- **英文提示词**：
+
+  ```text
+  Painterly digital illustration for a naval tactics card game, cinematic semi-realistic, deep-sea military aesthetic, dark teal and navy palette, cold rim light, volumetric god rays through water, subtle film grain, one strong readable silhouette, restrained fine detail, a colossal bone-white die tumbling in mid-air above dark water, each of its faces reflecting a different vision of fate, its long shadow falling across the waves, warm aged-brass and dim amber glow, slow ceremonial weight, embers drifting, calm deliberate mood, a die or balance hanging at the tipping point as the central subject, motion arc still unresolved, the outcome left visibly undecided, vertical 2:3 portrait composition, main subject centered in the middle band, empty shadowed space at the top and bottom for text overlay, no text, no letters, no numbers, no watermark, no logo, no signature, no card frame, no border, no UI elements
+  ```
+
+- **中文关键词**：半空翻滚的巨骰，六面各映出一种命运，骰影投向海面
+- **落盘**：`static/cards/mingyun-shaizi.webp`
+
+### 17. 教皇旨意 · 速阶 1 · 场地
 
 - **画面**：披礼袍的教皇剪影立于海上，炮管被清空，卡牌被弃置后如炮弹般掷出
 - **英文提示词**：
@@ -281,7 +341,19 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：礼袍教皇剪影立于海面，空炮管掷出弃置的卡牌如导弹，教堂圣光，敕令
 - **落盘**：`static/cards/jiaohuang-zhiyi.webp`
 
-### 13. 禁忌果实 · 速阶 1 · 场地
+### 18. 无忧梦呓 · 速阶 1 · 判定
+
+- **画面**：沉睡的水兵口中飘出半透明梦呓气泡，气泡里两口钟在隔空拼点
+- **英文提示词**：
+
+  ```text
+  Painterly digital illustration for a naval tactics card game, cinematic semi-realistic, deep-sea military aesthetic, dark teal and navy palette, cold rim light, volumetric god rays through water, subtle film grain, one strong readable silhouette, restrained fine detail, translucent dream bubbles drifting from the mouth of a sleeping sailor, two spectral bells clashing point against point inside them, warm aged-brass and dim amber glow, slow ceremonial weight, embers drifting, calm deliberate mood, a die or balance hanging at the tipping point as the central subject, motion arc still unresolved, the outcome left visibly undecided, vertical 2:3 portrait composition, main subject centered in the middle band, empty shadowed space at the top and bottom for text overlay, no text, no letters, no numbers, no watermark, no logo, no signature, no card frame, no border, no UI elements
+  ```
+
+- **中文关键词**：沉睡者吐出的梦呓气泡里，两口钟隔空拼点
+- **落盘**：`static/cards/wuyou-mengyi.webp`
+
+### 19. 禁忌果实 · 速阶 1 · 场地
 
 - **画面**：黑海上枯树挂着一颗发光的禁果，树下所有符文牌化为灰石，寂静禁忌
 - **英文提示词**：
@@ -293,7 +365,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：漆黑海面枯树挂一颗发光禁果，树下符文卡牌全部化为灰石，禁忌寂静
 - **落盘**：`static/cards/jinji-guoshi.webp`
 
-### 14. Freezing！ · 速阶 2 · 普通
+### 20. Freezing！ · 速阶 2 · 普通
 
 - **画面**：一只冰之巨手捏碎悬浮的黄铜沙漏，对手的整个回合结晶成冰屑
 - **英文提示词**：
@@ -305,7 +377,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：冰之巨手捏碎悬浮黄铜沙漏，整个回合结晶碎裂为冰屑，酷寒骤然静止
 - **落盘**：`static/cards/freezing.webp`
 
-### 15. 五险一金 · 速阶 2 · 普通
+### 21. 五险一金 · 速阶 2 · 普通
 
 - **画面**：五枚发光护盾代币与一把金锁悬在未被触碰的棋盘上方，空弹匣重新装填
 - **英文提示词**：
@@ -317,7 +389,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：五枚发光护盾代币与金锁悬于完好的海面网格上方，空弹匣重新填装光弹
 - **落盘**：`static/cards/wuxian-yijin.webp`
 
-### 16. 克苏鲁之眼 · 速阶 2 · 普通
+### 22. 克苏鲁之眼 · 速阶 2 · 普通
 
 - **画面**：波浪下张开的巨型触手之眼，两艘战舰在诡异绿光中互相暴露位置
 - **英文提示词**：
@@ -329,7 +401,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：海面下张开的巨眼与触手，两艘战舰在诡异绿光中同时暴露位置，克苏鲁
 - **落盘**：`static/cards/kesulu-zhiyan.webp`
 
-### 17. 冻结 · 速阶 2 · 普通
+### 23. 冻结 · 速阶 2 · 普通
 
 - **画面**：一片海格瞬间冻成狰狞蓝冰，战舰被封在透明冰里，浪花定格悬空
 - **英文提示词**：
@@ -341,7 +413,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：海面网格瞬间冻结成尖锐蓝冰晶，战舰被封于透明冰中，浪花悬停定格
 - **落盘**：`static/cards/dongjie.webp`
 
-### 18. 探测雷达 · 速阶 2 · 普通
+### 24. 探测雷达 · 速阶 2 · 普通
 
 - **画面**：旋转的雷达波扫过 2×2 海格，四艘潜艇剪影在绿磷光下亮起
 - **英文提示词**：
@@ -353,7 +425,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：旋转雷达波扫过 2×2 海面，四艘隐藏潜艇在绿色磷光中显形，声纳科技感
 - **落盘**：`static/cards/tance-leida.webp`
 
-### 19. 明智埋葬 · 速阶 2 · 普通
+### 25. 明智埋葬 · 速阶 2 · 普通
 
 - **画面**：一把光铸之铲把一张发光卡牌压入海床下的黑暗坟坑，另一张新牌升起交换
 - **英文提示词**：
@@ -365,7 +437,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：光铸之铲将发光卡牌压入海床黑暗坟坑，一张新卡作为交换升起，冷青骨白
 - **落盘**：`static/cards/mingzhi-maizang.webp`
 
-### 20. 溅射 · 速阶 2 · 普通
+### 26. 溅射 · 速阶 2 · 普通
 
 - **画面**：炮弹命中船体，海水与火焰向上下左右四个方向炸成十字形的冲击环
 - **英文提示词**：
@@ -377,7 +449,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：炮弹命中战舰船体，火焰与海水向四个正方向炸开成十字冲击环
 - **落盘**：`static/cards/jianshe.webp`
 
-### 21. 看破！ · 速阶 2 · 普通
+### 27. 看破！ · 速阶 2 · 普通
 
 - **画面**：一只水晶巨瞳看穿层层幻象，对面一整排符文牌变透明并崩解
 - **英文提示词**：
@@ -389,7 +461,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：水晶巨瞳穿透层层幻象，一整排敌方符文卡变透明崩解，冷光透视
 - **落盘**：`static/cards/kanpo.webp`
 
-### 22. 硫磺火焰 · 速阶 2 · 普通
+### 28. 硫磺火焰 · 速阶 2 · 普通
 
 - **画面**：一条蜿蜒的硫磺火河烧过六个相连格子，钢板熔融，浓烟与火星
 - **英文提示词**：
@@ -401,7 +473,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：蜿蜒的硫磺熔岩火河席卷六个相连网格，黄绿白炽烈焰熔穿船体，浓烟
 - **落盘**：`static/cards/liuhuang-huoyan.webp`
 
-### 23. 神威！ · 速阶 2 · 普通
+### 29. 神威！ · 速阶 2 · 普通
 
 - **画面**：3×3 的海面格子上方悬着一只巨眼，战舰被抽离水面升入现实裂隙
 - **英文提示词**：
@@ -413,7 +485,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：3×3 海面网格上方悬浮巨眼，战舰被从水中抽离升入空间裂隙，神性威严
 - **落盘**：`static/cards/shenwei.webp`
 
-### 24. 越战越勇 · 速阶 2 · 普通
+### 30. 越战越勇 · 速阶 2 · 普通
 
 - **画面**：站在倾斜甲板上的舰长剪影，身后的燃烧残骸越来越多，金光节节拔高
 - **英文提示词**：
@@ -425,7 +497,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：倾斜甲板上的舰长剪影，身后燃烧残骸渐次增加，金光攀升，越战越强
 - **落盘**：`static/cards/yuezhan-yueyong.webp`
 
-### 25. 轰炸 · 速阶 2 · 普通
+### 31. 轰炸 · 速阶 2 · 普通
 
 - **画面**：轰炸机编队沿着一整行依次投弹，爆炸连成一条笔直的线
 - **英文提示词**：
@@ -437,7 +509,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：轰炸机编队沿一整行网格依次投弹，爆炸连成笔直一线，黑烟，高空视角
 - **落盘**：`static/cards/hongzha.webp`
 
-### 26. 雷达子弹 · 速阶 2 · 普通
+### 32. 雷达子弹 · 速阶 2 · 普通
 
 - **画面**：曳光弹贯穿船体，同心声纳环荡开，八艘幽灵船影在环中被点亮
 - **英文提示词**：
@@ -449,7 +521,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：曳光弹穿透船体，同心声纳波环扩散，八艘半透明幽灵战舰显现
 - **落盘**：`static/cards/leida-zidan.webp`
 
-### 27. 饮血 · 速阶 2 · 普通
+### 33. 饮血 · 速阶 2 · 普通
 
 - **画面**：舰首刀刃从沉船中饮下猩红之光，抽出的能量在浪尖上凝成一张卡
 - **英文提示词**：
@@ -461,7 +533,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：战舰舰首刀刃从沉船中吸取猩红之光，能量在浪尖凝聚成一张浮空卡牌
 - **落盘**：`static/cards/yinxue.webp`
 
-### 28. 恶魔契约 · 速阶 2 · 场地
+### 34. 恶魔契约 · 速阶 2 · 场地
 
 - **画面**：两艘战舰被发光的猩红锁链绑在一起，一只爪状暗影手托着燃烧的契约
 - **英文提示词**：
@@ -473,7 +545,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：两艘战舰被猩红符文锁链相连，爪状暗影手托起燃烧契约，背景天平，邪恶
 - **落盘**：`static/cards/emo-qiyue.webp`
 
-### 29. 八方来财 · 速阶 3 · 普通
+### 35. 八方来财 · 速阶 3 · 普通
 
 - **画面**：八道金光从四面八方汇入一只张开的手，财货如雨，卡牌虚影环绕
 - **英文提示词**：
@@ -485,7 +557,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：八道金色光流自八方汇入掌心，财宝如雨落下，卡牌虚影环绕，富贵
 - **落盘**：`static/cards/bafang-laicai.webp`
 
-### 30. 加百列之光 · 速阶 3 · 普通
+### 36. 加百列之光 · 速阶 3 · 普通
 
 - **画面**：天使的号角喷出一道白金光柱，击碎一张黑卡并蒸散一层场地光环
 - **英文提示词**：
@@ -497,7 +569,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：天使号角喷出白金光柱，光柱内黑卡碎裂、场地光环消散，云中大教堂，圣裁
 - **落盘**：`static/cards/jiabailie-zhiguang.webp`
 
-### 31. 增援 · 速阶 3 · 普通
+### 37. 增援 · 速阶 3 · 普通
 
 - **画面**：一艘新战舰带着气泡与探照灯从深海浮起，周围水面干净未被击中过
 - **英文提示词**：
@@ -509,7 +581,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：全新战舰从深海浮出，气泡与探照灯环绕，四周水面完好无损，增援
 - **落盘**：`static/cards/zengyuan.webp`
 
-### 32. 失灵！ · 速阶 3 · 普通（牌堆里 3 张）
+### 38. 失灵！ · 速阶 3 · 普通（牌堆里 3 张）
 
 - **画面**：一张刻满符文的牌在半空中生生折断，碎片化作飞散的火星，背后的全息印记裂开
 - **英文提示词**：
@@ -521,7 +593,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：漂浮的符文卡牌在半空折断，碎片化为火星，背后全息法阵开裂，失效感
 - **落盘**：`static/cards/shiling.webp`
 
-### 33. 平等条约 · 速阶 3 · 普通
+### 39. 平等条约 · 速阶 3 · 普通
 
 - **画面**：两支舰队隔静海对峙，中间悬着发光的条约印章，天平平衡，一发炮弹绕过印章
 - **英文提示词**：
@@ -533,7 +605,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：两支舰队隔平静海面对峙，中央悬浮发光条约印章与天平，一发炮弹绕开印章
 - **落盘**：`static/cards/pingdeng-tiaoyue.webp`
 
-### 34. 死者苏生 · 速阶 3 · 普通
+### 40. 死者苏生 · 速阶 3 · 普通
 
 - **画面**：沉船从海床重新抬升，幽蓝魂光重组断裂的船体，锁链崩断
 - **英文提示词**：
@@ -545,7 +617,19 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：沉船自海床缓缓抬升，幽蓝魂光重组断裂船体，束缚锁链崩断，亡者归来
 - **落盘**：`static/cards/sizhe-susheng.webp`
 
-### 35. 疗愈 · 速阶 3 · 普通
+### 41. 滥竽充数 · 速阶 3 · 普通
+
+- **画面**：真舰之间插进几艘纸糊假船，海风把假船吹得鼓如竽，边角露出临时铆钉
+- **英文提示词**：
+
+  ```text
+  Painterly digital illustration for a naval tactics card game, cinematic semi-realistic, deep-sea military aesthetic, dark teal and navy palette, cold rim light, volumetric god rays through water, subtle film grain, one strong readable silhouette, restrained fine detail, a line of real warships interleaved with paper decoys, the fakes billowing like flutes in the sea wind, temporary rivets showing at their edges, blinding cold white-cyan energy, high-speed motion, electric arcs and motion streaks, instantaneous impact, single clearly lit focal subject, the surrounding sea only hinted at, vertical 2:3 portrait composition, main subject centered in the middle band, empty shadowed space at the top and bottom for text overlay, no text, no letters, no numbers, no watermark, no logo, no signature, no card frame, no border, no UI elements
+  ```
+
+- **中文关键词**：真舰之间插进纸糊假船，海风吹得鼓如竽，边角露出临时铆钉
+- **落盘**：`static/cards/lanyu-chongshu.webp`
+
+### 42. 疗愈 · 速阶 3 · 普通
 
 - **画面**：两艘破裂的船体在原地愈合，暖金光线把撕裂的钢板缝回去，修复符文
 - **英文提示词**：
@@ -557,7 +641,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：两艘残破战舰在原地愈合，暖金色光丝缝合钢板，水面浮起修复符文，治愈
 - **落盘**：`static/cards/liaoyu.webp`
 
-### 36. 百亿补贴 · 速阶 3 · 普通
+### 43. 百亿补贴 · 速阶 3 · 普通
 
 - **画面**：沉没的己方战舰化作金光瀑布，转化成炮弹上的发光攻击标记
 - **英文提示词**：
@@ -569,7 +653,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：沉没的友舰化为金光瀑布汇入炮口，凝成发光的攻击计数，牺牲换力量
 - **落盘**：`static/cards/baiyi-butie.webp`
 
-### 37. 盗亦有道 · 速阶 3 · 普通
+### 44. 盗亦有道 · 速阶 3 · 普通
 
 - **画面**：戴手套的盗手从阴影里伸出，从对手牌架中抽走一张发光卡牌
 - **英文提示词**：
@@ -581,7 +665,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：戴手套的盗贼之手自阴影中伸出，从对手牌架抽走一张发光卡牌，暗金光
 - **落盘**：`static/cards/daoyi-youdao.webp`
 
-### 38. 神之宣告 · 速阶 3 · 普通
+### 45. 神之宣告 · 速阶 3 · 普通
 
 - **画面**：两艘己方战舰化作祭品升入神光，一只巨手指出两条分岔的光路
 - **英文提示词**：
@@ -593,7 +677,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：两艘友舰化为祭品升入神光，巨大手指向下，光柱分岔出两种结局，庄严裁决
 - **落盘**：`static/cards/shenzhi-xuangao.webp`
 
-### 39. 神机妙算 · 速阶 3 · 普通
+### 46. 神机妙算 · 速阶 3 · 普通
 
 - **画面**：发光算盘与围棋盘叠在海面网格上，幽灵标记预演损失，被预言的船即刻归位
 - **英文提示词**：
@@ -605,7 +689,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：发光算盘与围棋盘叠加于海面网格，幽灵标记预演损失，被预言的舰船瞬间归位
 - **落盘**：`static/cards/shenji-miaosuan.webp`
 
-### 40. 绝处逢生 · 速阶 3 · 普通
+### 47. 绝处逢生 · 速阶 3 · 普通
 
 - **画面**：一片沉船残骸之间唯一一艘孤舰升起，绯金胜利光轮破云
 - **英文提示词**：
@@ -617,7 +701,7 @@ text, letters, numbers, watermark, signature, logo, ui, card frame, border, typo
 - **中文关键词**：数十艘沉船残骸之间仅剩一艘孤舰升起，绯金胜利光轮穿透阴云，背水一战
 - **落盘**：`static/cards/juechu-fengsheng.webp`
 
-### 41. 钢筋铁骨 · 速阶 3 · 普通
+### 48. 钢筋铁骨 · 速阶 3 · 普通
 
 - **画面**：一艘战舰自毁崩解成发光钢肋骨架，骨架铺展覆盖全舰队，把每艘船包进铁光里
 - **英文提示词**：

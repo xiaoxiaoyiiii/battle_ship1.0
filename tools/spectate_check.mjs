@@ -59,7 +59,7 @@
  *     详见 `tests/test_spectate_batch6_huiguang_state.py`。
  *
  * 用法：
- *   node tools/spectate_check.mjs --url http://127.0.0.1:5099/ [--shot out.png] [--debug]
+ *   node tools/spectate_check.mjs --url http://127.0.0.1:5099/ [--spectate-shot active.png] [--shot end.png] [--debug]
  *
  * ⚠️ 需要一个**已经起好的**服务端，且必须带：
  *      BATTLESHIP_DB_PATH=.tmp/spectate_check.db   （隔离数据库）
@@ -90,6 +90,7 @@ const argv = process.argv.slice(2);
 const argOf = (name, def) => { const i = argv.indexOf(name); return i >= 0 && argv[i + 1] ? argv[i + 1] : def; };
 const APP = argOf('--url', 'http://127.0.0.1:5000/').replace(/\/+$/, '');
 const SHOT = argOf('--shot', '');
+const SPECTATE_SHOT = argOf('--spectate-shot', '');
 const HERE = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
 const TMP = path.join(HERE, '..', '.tmp');
 const BROWSER = ['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
@@ -586,7 +587,15 @@ const CHAIN_LEDGER_DUMP = '(function(){'
   + '   var p = r.payload || {};'
   + '   var ch = (p && p.chain) || (p && p.snapshot && p.snapshot.chain && p.snapshot.chain.chain) || [];'
   + '   (ch || []).forEach(function (it) {'
-  + '     var n = (it && (it.card_name || (it.card && it.card.name))) || "?";'
+  /* ⚠️ 2026-09-29 修（W6 观战连锁）：净化后的 `chain[].card` 是**卡名字符串**
+     （服务端 spectate.py 的白名单重建 `'card': card_name`，被
+      tests/test_spectate_batch2.py 的 `item['card'] == '卧薪尝胆'` 钉住）。
+     这里原来只按 `it.card.name`（对象）读 ⇒ 每一帧都记成 "?"，
+     于是「观众收到了带这张牌的连锁帧」这类断言永远红 —— 而帧其实是带着卡名的。
+     修成三种形态都认（字符串 / 对象 / 旧字段名），与 game.js 的
+     renderSpectateChain 用同一套判据。 */
+  + '     var n = (it && (typeof it.card === "string" ? it.card'
+  + '                : ((it.card && it.card.name) || it.card_name))) || "?";'
   + '     names.push(String(it && it.seat ? it.seat : "?") + ":" + String(n)); });'
   + '   out.push({ ev: r.ev, t: r.t, chainLen: ch ? ch.length : -1, names: names,'
   + '     domCountBefore: r.domCountBefore, domTextBefore: r.domTextBefore,'
@@ -1157,6 +1166,13 @@ try {
   } catch (e) {
     after = await C.ev(SPECTATE_PROBE);
     check(false, '★★ 甲打炮后，丙那边应当实时多一格', { before: beforeMarks, after: after });
+  }
+  if (SPECTATE_SHOT) {
+    await sleep(2200); // 登录提示消失后留下一张可审阅的真实观战状态图
+    fs.mkdirSync(path.dirname(SPECTATE_SHOT), { recursive: true });
+    const image = await C.send('Page.captureScreenshot', { format: 'png' });
+    fs.writeFileSync(SPECTATE_SHOT, Buffer.from(image.data, 'base64'));
+    console.log('真实观战截图已保存: ' + SPECTATE_SHOT);
   }
 
   // 打出去的格只能出现在**挨打那一位**的棋盘上（两块棋盘不许画反）

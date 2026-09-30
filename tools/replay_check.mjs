@@ -193,8 +193,14 @@ function pagePlaceAndState() {
   });
 }
 
-// 猜拳：出一手指定的拳。**平局要重出**，而"重出同一手"永远还是平局，
-// 所以这里把三手循环着出（调用方按下标传），既躲平局也不引入"猜 AI 出什么"的假设。
+// 本地测试实例先指定 AI 出剪刀，再由真人出石头；正式规则仍随机。
+function pageSetAiRpsChoice() {
+  var gs = window.gameState;
+  return new Promise(function (resolve) {
+    gs.socket.emit('test_set_ai_rps_choice', { room_id: gs.roomId, choice: 'scissors' }, resolve);
+  });
+}
+
 function pageRpsWith(choice) {
   var gs = window.gameState;
   return new Promise(function (resolve) {
@@ -202,10 +208,6 @@ function pageRpsWith(choice) {
       { room_id: gs.roomId, player_id: gs.playerId, choice: choice },
       function (r) { resolve(r); });
   });
-}
-
-function pageRps() {
-  return pageRpsWith('rock');
 }
 
 function pageState() {
@@ -348,64 +350,26 @@ try {
   console.log('浏览器侧登录态: ' + (who ? '已认出 ' + USERNAME : '（页面里没找到用户名，仍按 cookie 会话继续）'));
 
   // ---------- ① 真打完一局（人机局） ----------
-  // ★★★ 猜拳必须先手 —— 这是本工具**最主要的脆性来源**，不是"偶发"。
-  //   实测（同一份源码连跑 3 次）：后手那两轮都停在
-  //   `[poll 8..14] attacker=me attacks=6→1、oppShips 停在 1` ⇒ 150 秒没打完。
-  //   根因是规则本身：**攻击次数 = 存活船数 − 冻结船数**。先手方每回合白打 6 发，
-  //   后手方每回合先挨打（沉一艘 ⇒ 次数上限永久 −1），于是"6 艘追不满"。
-  //   这是真实的对局劣势，不是工具写错。
-  //   ⇒ 猜拳是随机的 ⇒ **AI 拿到先手就放弃这一局、重开一间房再来**（上限 5 次）。
-  //     拿不到先手就直接抛错（绝不假装跑完）。
-  let room = null;
-  let st = null;
-  const rpsChoices = ['rock', 'paper', 'scissors'];
-  for (let attempt = 1; attempt <= 5 && !room; attempt++) {
-    const opened = await ev('(' + pageStartAiRoom.toString() + ')()');
-    if (opened.error) throw new Error(opened.error);
-    const placed = await ev('(' + pagePlaceAndState.toString() + ')()');
-    if (placed.error) throw new Error(placed.error);
-    if (!placed.game_state) throw new Error('摆完船后读不到 game_state');
-    check(placed.game_state.state === 'rock_paper_scissors'
-      || placed.game_state.state === 'attacking',
-      '摆完船后进入猜拳（或直接开打）', placed.game_state.state);
-
-    // 猜拳会**平局**（1/3 概率）：平局时服务端清空选择、双方要重新出拳。
-    // 所以这里必须**循环出拳直到进入 attacking**（第一版只发一手，撞上平局就卡死）。
-    let rpsTries = 0;
-    let cur = null;
-    const t0r = Date.now();
-    while (Date.now() - t0r < 60000) {
-      const rawst = await ev('(' + pageState.toString() + ')()');
-      const gs0 = rawst && rawst.game_state;
-      if (gs0 && (gs0.state === 'attacking' || gs0.state === 'game_over')) { cur = gs0; break; }
-      if (gs0 && gs0.state === 'rock_paper_scissors') {
-        await ev('(' + pageRpsWith.toString() + ')(' +
-          JSON.stringify(rpsChoices[rpsTries % 3]) + ')');
-        rpsTries++;
-      }
-      await sleep(500);
-    }
-    if (!cur || cur.state !== 'attacking') {
-      console.log('   第 ' + attempt + ' 次：猜拳后一直没进入 attacking ⇒ 重开');
-      continue;
-    }
-    if (cur.current_attacker !== opened.player_id) {
-      console.log('   第 ' + attempt + ' 次：AI 拿到先手（出拳 ' + rpsTries
-        + ' 次）⇒ 放弃这一局、重开一间房');
-      // 关掉这间房，别在服务器上留一堆打不完的人机房
-      await ev('(function(){try{window.gameState.socket.emit("surrender",' +
-        '{room_id:window.gameState.roomId,player_id:window.gameState.playerId},function(){});}catch(e){}})()');
-      await sleep(600);
-      continue;
-    }
-    console.log('   第 ' + attempt + ' 次：我方先手（出拳 ' + rpsTries + ' 次）');
-    room = { room_id: opened.room_id, player_id: opened.player_id };
-    st = cur;
-  }
-  if (!room) throw new Error('连续 5 次都没拿到先手（猜拳是随机的，应属极小概率）');
+  // 只开一间真实人机房。固定出拳的调试事件受 ENABLE_TEST_EVENTS 保护，
+  // 在正式服务上会拒绝；工具明确失败，不退回随机尝试。
+  const opened = await ev('(' + pageStartAiRoom.toString() + ')()');
+  if (opened.error) throw new Error(opened.error);
+  const placed = await ev('(' + pagePlaceAndState.toString() + ')()');
+  if (placed.error) throw new Error(placed.error);
+  if (!placed.game_state || placed.game_state.state !== 'rock_paper_scissors')
+    throw new Error('摆完船后没有进入猜拳阶段');
+  const forced = await ev('(' + pageSetAiRpsChoice.toString() + ')()');
+  if (!forced || forced.status !== 'success')
+    throw new Error('本地测试实例未允许固定 AI 出拳：' + JSON.stringify(forced));
+  const choice = await ev('(' + pageRpsWith.toString() + ')("rock")');
+  if (!choice || choice.status !== 'success')
+    throw new Error('出拳失败：' + JSON.stringify(choice));
+  const stateAfterRps = await ev('(' + pageState.toString() + ')()');
+  const st = stateAfterRps && stateAfterRps.game_state;
+  const room = { room_id: opened.room_id, player_id: opened.player_id };
   console.log('人机房: room_id=' + room.room_id + ' player_id=' + room.player_id);
   check(!!st && st.state === 'attacking' && st.current_attacker === room.player_id,
-    '★ 这一局是**我方先手**（攻击次数 = 存活船数 − 冻结数 ⇒ 后手追不上 6 艘）',
+    '★ 固定 AI 出剪刀、我方出石头后由我方先手',
     { attacker: st && st.current_attacker, me: room.player_id });
 
   // 目标：把对方的 6 艘单格船全打沉（打完就是 `game_over` + `_finalize_match`）。
@@ -522,7 +486,15 @@ try {
     '.then(function(r){return r.json();})');
   const history = (stats && stats.history) || [];
   check(history.length > 0, '战绩里出现了这一局', { rows: history.length });
-  const latest = history.find((h) => h.has_replay === true) || history[0];
+  let matchId = '';
+  for (let i = 0; i < 20 && !matchId; i++) {
+    matchId = await ev('(typeof gameOverMatchId !== "undefined" ? gameOverMatchId : "")');
+    if (!matchId) await sleep(250);
+  }
+  check(!!matchId, '结算事件带本局权威 match_id', matchId);
+  if (!matchId) throw new Error('结算事件没有权威 match_id，不能猜战绩第一条');
+  const latest = history.find((h) => String(h.id || h.match_id || '') === String(matchId));
+  check(!!latest, '战绩里找到结算事件指向的同一局', { matchId });
   check(!!latest && latest.has_replay === true,
     '★ 这一局带 has_replay=true（回放真的落库了）',
     { keys: latest ? Object.keys(latest) : null,
@@ -530,50 +502,17 @@ try {
       logs: latest && (latest.logs || []).length });
   if (!latest) throw new Error('这一局没有回放，后面无法继续');
   check(latest.mode === 'ai', '★ 这一局的 mode 是 ai（任务 B 的数据源）', latest.mode);
-  let matchId = latest.id || latest.match_id;
   console.log('本局 match id: ' + matchId + '（行字段: ' + Object.keys(latest).join(',') + '）');
-  if (!matchId) throw new Error('战绩行里没有 match id，无法继续');
-
-  // ⚠️⚠️ 战绩里**最新的一行不一定是我们真打完的那一局**：
-  //   本工具为了拿到先手会**放弃若干间人机房**（见上面那一段），那些局**也会被结算落库**
-  //   并各留一条回放 —— 其中"AI 先手一炮把 6 艘全打沉"那种局只有 3 步、**一个攻击标记都没有**，
-  //   挑到它会让"攻击标记必须出现过"这条**假红**（实测：第 3 次连跑就是这么红的）。
-  //   所以按"回放里真的带 attack 步"来挑，挑不到就明确报错（绝不静默退回随便一局）。
-  //
-  // ⚠️ 判据是 `attacks >= SHOTS_NEEDED`（**不是** `> 0`）：被放弃的那种小局里"只有一两炮"，
-  //   它过得了 `> 0`，却会让下面几条**固定步数**的断言假红（实测本批第 2 次连跑：
-  //   挑到一局 4 步 / 1 炮的回放 ⇒「连点 6 次下一步后 k=6」读到 [1,2,2,2,2,2]、节点数也不等）。
-  //   那是**工具挑错了局**，不是产品缺陷 —— 本工具打的是"6 炮收工"的局，就该按这个口径挑。
-  //   （放弃掉的局不会超过 6 步：AI 先手一回合 6 炮全中就是 game over。）
-  const SHOTS_NEEDED = 6;
-  let replayPayload = null;
-  for (const row of history) {
-    if (row.has_replay !== true) continue;
-    const mid = row.id || row.match_id;
-    if (!mid) continue;
-    const got = await ev('fetch("/api/replay/" + encodeURIComponent(' + JSON.stringify(String(mid)) + '),' +
-      '{credentials:"same-origin"}).then(function(r){return r.json().then(function(j){return {status:r.status,body:j};});})');
-    const pay = got && got.body && got.body.replay;
-    const attacks = pay ? (pay.steps || []).filter((s) => s && s.kind === 'attack').length : 0;
-    console.log('  候选回放 ' + String(mid).slice(0, 8) + '…: status=' + (got && got.status)
-      + ' steps=' + (pay ? (pay.steps || []).length : '-') + ' attack步=' + attacks);
-    if (got && got.status === 200 && attacks >= SHOTS_NEEDED) {
-      matchId = mid;
-      replayPayload = pay;
-      break;
-    }
-  }
-  check(!!replayPayload,
-    '★★ 战绩里能找到**这一局真打完的**那份回放（≥' + SHOTS_NEEDED + ' 个 attack 步，不是被放弃的那几局）',
-    { 试过的行数: history.length });
-  if (!replayPayload) {
-    // ⚠️ 这一步**不是**为了掩盖问题，而是这条判据的**前置条件**：
-    //   偶尔会出现"3 炮就赢了"的局（某张卡直接结束对局）⇒ 回放里 `attack` 步为 0
-    //   ⇒ "攻击标记必须出现过"这条根本没有可断言的对象（实测第 1 次就是这样）。
-    //   所以这里**明确失败并说明原因**，让调用方知道"这一次的局不适合做这条判据"。
-    throw new Error('这一局是"没打几炮就结束"的局（回放里 attack 步为 0）'
-      + '—— 请重跑一次工具（它会重新打一局）');
-  }
+  const got = await ev('fetch("/api/replay/" + encodeURIComponent(' + JSON.stringify(String(matchId)) + '),' +
+    '{credentials:"same-origin"}).then(function(r){return r.json().then(function(j){return {status:r.status,body:j};});})');
+  const replayPayload = got && got.body && got.body.replay;
+  const steps = replayPayload ? (replayPayload.steps || []) : [];
+  const attacks = steps.filter((s) => s && s.kind === 'attack').length;
+  check(got && got.status === 200 && attacks >= 1 && steps.length >= 7,
+    '本局回放含攻击与至少七步，可验证时间轴和标记',
+    { status: got && got.status, steps: steps.length, attacks });
+  if (!replayPayload || attacks < 1 || steps.length < 7)
+    throw new Error('本局回放步骤不足：' + JSON.stringify({ status: got && got.status, steps: steps.length, attacks }));
 
   // ---------- ③ 从战绩列表点开 → 详情页有「对局回放」按钮 ----------
   await ev('(function(){var m=document.getElementById("user-stats-modal");m.classList.remove("hidden");' +

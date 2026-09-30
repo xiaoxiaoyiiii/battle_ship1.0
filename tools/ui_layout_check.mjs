@@ -587,6 +587,8 @@ try {
                   ' 手牌=' + wv.handCards + '张(可点' + wv.handClickable + ')');
       check(wv.boardInView, wlabel + ' 棋盘完整落在首屏内（不需滚动）',
         { bottom: wv.boardBottom, vh: wv.vh, rect: wv.boardRect });
+      check(!!wv.boardRect && wv.boardRect.w >= 280,
+        wlabel + ' 棋盘宽度至少 280px', wv.boardRect);
       check(wv.blockedHud.length === 0, wlabel + ' HUD 控件未被浮窗盖住（点得到）', wv.blockedHud);
       check(wv.handCards > 0 && wv.handClickable > 0, wlabel + ' 手牌可见且可点（可点计数 > 0）',
         { cards: wv.handCards, clickable: wv.handClickable, rect: wv.handRect });
@@ -669,6 +671,8 @@ try {
       check(m.handCards > 0 && m.handClickable > 0,
         label + ' 手牌可见且可点（可点计数 > 0）',
         { cards: m.handCards, clickable: m.handClickable, rect: m.handRect });
+      check(!!m.handRect && m.handRect.y >= -1 && m.handRect.bottom <= m.innerHeight + 1,
+        label + ' 整条手牌都在视口内', { rect: m.handRect, vh: m.innerHeight });
       // 导航 / 弹窗里的可点元素同样要达触摸下限。
       check(m.navSmallTargets.length === 0,
         label + ' 导航可点元素不小于 ' + tap + 'px',

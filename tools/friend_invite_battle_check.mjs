@@ -622,9 +622,29 @@ try {
   }
   await A.setCookie(cookieA);
   await B.setCookie(cookieB);
+  /* ⚠️ 先清掉本机残留的"进行中对局"（2026-09-29 / W6）。
+     浏览器 profile 是**跨运行复用**的，而客户端在 `connect` 时会把
+     `localStorage['battleship_active_game']` 里的房间拿去 `rejoin_room`
+     （自动重连是设计如此）。于是上一次运行留下的尾巴会让这一次**开局就不干净**：
+     两边一进页面就被拉回上一局的房间 —— 实测拿到的基线是
+     `roomId:"21ff16"` + `rps-screen`，基线断言 1d 当场红。
+     那是环境残留，不是产品缺陷，所以这里在导航**之前**用 CDP 把该源的本地存储清掉。
+     ⚠️ 用 CDP 而不是"先导航一次再 localStorage.removeItem 再导航"：
+        多出来的两次导航会改变整个时序，把本工具后面几条**本来只是偶发**的
+        探针断言（4c：B 的 join_room 报文）打得更不稳 —— 第一版就是这么做的，
+        三次连跑里两次 4c 红。清存储是"导航前就把环境弄干净"，不额外花时间。 */
+  for (const br of [A, B]) {
+    try { await br.send('Storage.clearDataForOrigin', { origin: new URL(APP).origin, storageTypes: 'local_storage' }); }
+    catch (e) { /* 老版本 CDP 没有这个方法：退化为"不清"（只是可能不干净，不会更糟） */ }
+  }
   for (const br of [A, B]) {
     await br.send('Page.navigate', { url: APP });
     await br.waitFor(async () => await br.ev('document.readyState === "complete"'), 25000, '页面加载 ' + br.tag);
+  }
+  // 清干净这件事本身也要有证据，否则它只是"我以为清了"
+  for (const br of [A, B]) {
+    const leftover = await br.ev('(function(){ try { return localStorage.getItem("battleship_active_game"); } catch (e) { return "err"; } })()');
+    if (leftover) console.log('   [' + br.tag + '] 警告：本地仍有 battleship_active_game=' + leftover);
   }
   const meA = await A.ev('window.__USERNAME || null');
   const meB = await B.ev('window.__USERNAME || null');

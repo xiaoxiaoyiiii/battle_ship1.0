@@ -6465,6 +6465,10 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, var(--deco-
 .help-rank-tier.is-top {
     border-color: var(--deco-amber-a42);
     background: linear-gradient(180deg, var(--deco-amber-a12), var(--fluent-light-02));
+    grid-template-areas:
+        "icon name"
+        ". unlock"
+        ". note";
 }
 /* 图鉴：一行一个段位（外层靠 grid + 两列，见上面的注释） */
 .help-rank-tiers { display: block; min-width: 0; max-width: 100%; }
@@ -6474,6 +6478,11 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, var(--deco-
 .help-rank-tier {
     display: grid;
     grid-template-columns: 26px minmax(0, 1fr);
+    grid-template-areas:
+        "icon name"
+        ". meta"
+        ". unlock"
+        ". note";
     column-gap: 10px;
     row-gap: 2px;
     align-items: center;
@@ -6488,21 +6497,21 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, var(--deco-
     overflow-wrap: anywhere;
 }
 .help-rank-tier > * { min-width: 0; }
-.help-rank-icon { display: inline-flex; align-items: center; flex: 0 0 auto; }
-.help-rank-name { font-weight: 800; font-size: 0.98rem; letter-spacing: 0.02em; min-width: 0; overflow-wrap: anywhere; }
-    /* 合并自原第 5981 行的重复定义 */
-.help-rank-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; min-width: 0; }
+.help-rank-icon { grid-area: icon; display: inline-flex; align-items: center; flex: 0 0 auto; }
+.help-rank-name { grid-area: name; font-weight: 800; font-size: 0.98rem; letter-spacing: 0.02em; min-width: 0; overflow-wrap: anywhere; }
+/* 合并自原第 5981 行的重复定义 */
+.help-rank-meta { grid-area: meta; display: flex; flex-wrap: wrap; gap: 4px 10px; min-width: 0; }
 .help-rank-start { font-weight: 700; color: var(--text, inherit); }
 .help-rank-subs { font-size: 0.74rem; color: var(--muted, var(--muted)); min-width: 0; overflow-wrap: anywhere; }
 .help-rank-unlock {
-    grid-column: 2;
+    grid-area: unlock;
     font-size: 0.8rem;
     color: var(--muted, var(--muted));
     min-width: 0;
     overflow-wrap: anywhere;
 }
 .help-rank-note {
-    grid-column: 2;
+    grid-area: note;
     font-size: 0.74rem;
     color: var(--fluent-gold);
     opacity: 0.92;

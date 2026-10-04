@@ -3,8 +3,8 @@
  * 顶部「当前生效的场地魔法」横条回归检查（三区档 / arena 宽屏 + 紧凑档）。
  *
  * 覆盖用户提出的四类要求：
- *   1. 有生效场地魔法 → 顶部横条显示 卡名/类型/速阶/效果摘要/持续说明（全部真实数据）
- *   2. 没有生效场地魔法 → 顶部仍保留一条同样高的占位栏，**两种状态布局零跳动**
+ *   1. 有生效场地魔法 → 高屏展示卡面、卡名与效果；矮屏收为紧凑信息条
+ *   2. 没有生效场地魔法 → 桌面顶部保留较矮的占位栏
  *   3. 桌面宽屏横向展示；窄屏/紧凑档不产生横向滚动、不遮挡棋盘/手牌
  *   4. 悬停轻量预览 + 点击完整详情（复用既有 showCardTooltip / showCardDetail）
  *
@@ -15,7 +15,7 @@
  *   node tools/field_magic_bar_check.mjs --shots
  *
  * 退出码：0 = 全通过；1 = 有失败；0 且打印 skip = 环境不可用（没装 Edge/Chrome、连不上页面）。
- * 依赖：一个已跑起来的服务端（CDP 端口 9455，profile 在 C:/Windows/Temp）。
+ * 依赖：一个已跑起来的服务端（CDP 端口 9455，profile 在本仓库 .tmp）。
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -28,7 +28,7 @@ const APP = argOf('--url', 'http://127.0.0.1:5000/');
 const SHOTS = has('--shots');
 const SHOT_DIR = path.resolve('.tmp/field_magic_bar_shots');
 const PORT = 9455;
-const PROFILE = 'C:/Windows/Temp/field_magic_bar_profile';
+const PROFILE = path.resolve('.tmp/field_magic_bar_profile');
 
 const EDGE = [
   'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
@@ -179,6 +179,9 @@ const MEASURE = `(function(){
     barScrollW: bar ? bar.scrollWidth : null, barClientW: bar ? bar.clientWidth : null,
     cfmText: cfm ? cfm.textContent.replace(/\\s+/g, ' ').trim() : null,
     cfmHasNoMagic: !!(cfm && cfm.querySelector('.no-magic')),
+    fmArt: R(cfm && cfm.querySelector('.fm-art')),
+    fmNameFont: cfm && cfm.querySelector('.fm-name') ? parseFloat(getComputedStyle(cfm.querySelector('.fm-name')).fontSize) : null,
+    fmDetails: R(cfm && cfm.querySelector('.fm-details')),
     boardRow: R(bc),
     boardGridRow: bc ? getComputedStyle(bc).gridRow : null,
     boardRects: boards.map(R), boardOccluded: occ,
@@ -204,13 +207,6 @@ const MEASURE = `(function(){
     docScrollH: document.documentElement.scrollHeight,
   };
 })()`;
-
-// 「不跳动」的判据：整个对局屏的几何签名在「有/无场地」两态之间必须逐字相同
-const SIG = (m) => JSON.stringify([
-  m.gridRows, m.boardRow, m.boardRects, m.barRect, m.turnIndicator,
-  m.magicSystem, m.fleet, m.discard, m.chainSlot, m.oppInfo,
-  m.docScrollW, m.docScrollH,
-]);
 
 const PREVIEW_ON = `(function(){
   var el = document.getElementById('current-field-magic');
@@ -268,13 +264,15 @@ for (const spec of wideList) {
     some.barRect.y >= some.oppInfo.bottom - 1,
     { barTop: some.barRect.y, oppBottom: some.oppInfo.bottom });
 
-  // --- 不跳动：两态几何签名完全相同 ---
-  ok(`${tag} 有/无场地两态整屏几何零跳动`,
-    SIG(none) === SIG(some), SIG(none) === SIG(some) ? '签名一致' : { none: SIG(none), has: SIG(some) });
-  ok(`${tag} 有/无场地两态横条高度相同`,
-    none.barRect.h === some.barRect.h, { none: none.barRect.h, has: some.barRect.h });
-  ok(`${tag} 横条高度够放一行字（>= 24px）`,
-    some.barRect.h >= 24, some.barRect.h);
+  // 空场地保留矮栏；生效后展示概念图中的卡面横幅。两态的高度差是用户指定的行为。
+  ok(`${tag} 空场地是矮占位栏`,
+    none.barRect.h >= 28 && none.barRect.h <= 38, none.barRect.h);
+  ok(`${tag} 生效场地扩展成卡面横幅`,
+    some.barRect.h >= (vh <= 760 ? 42 : 100) && some.barRect.h >= none.barRect.h + (vh <= 760 ? 8 : 30),
+    { none: none.barRect.h, has: some.barRect.h });
+  ok(`${tag} 高屏显示卡面图案，所有宽屏均有详情入口和醒目卡名`,
+    (vh <= 760 || some.fmArt?.w >= 50) && some.fmDetails?.w >= 70 && some.fmNameFont >= 17,
+    { art: some.fmArt, details: some.fmDetails, titleFont: some.fmNameFont });
 
   // --- 棋盘不能被改坏 ---
   ok(`${tag} 棋盘尺寸与基线一致`, some.boardRects.every((r) => r.w === spec.board && r.h === spec.board),
@@ -317,7 +315,8 @@ for (const spec of wideList) {
     barTextHasAll(some.cfmText), some.cfmText);
   ok(`${tag} 有场地时不再渲染 .no-magic`, some.cfmHasNoMagic === false, some.cfmText);
   ok(`${tag} 三区档展开了类型/速阶/摘要/持续说明`,
-    some.fmExtraShown.every((v) => v === true), some.fmExtraShown);
+    vh <= 760 ? (some.fmExtraShown[1] === true && some.fmExtraShown[2] === false)
+      : some.fmExtraShown.every((v) => v === true), some.fmExtraShown);
 
   // --- 预览：悬停轻量浮层 + 点击完整详情 ---
   const tip = await ev(PREVIEW_ON); await sleep(80);
@@ -363,7 +362,7 @@ for (const [vw, vh] of compactList) {
   // 紧凑档的契约与三区档不同：这里没有「顶部横条」，场地魔法是一条内联胶囊，
   // 且**项目既有决定**是无场地时整条隐藏（`#game-screen[data-field-magic="none"] .field-magic-area{display:none}`）。
   // 因此紧凑档**不**要求两态零跳动 —— 消掉这个位移需要常驻占位胶囊，会永久吃掉一行，
-  // 而 664×336 的纵向预算刚好用满；零跳动由三区档的顶部横条负责。
+  // 而 664×336 的纵向预算刚好用满。
   // 紧凑档这里只要求：横条不撑出视口 / 不外露长文本 / 有场地时仍显示卡名 / 不遮挡棋盘。
   ok(`${tag} 确实落在紧凑档`, /layout-compact/.test(some.body), some.body);
   ok(`${tag} 两态都无横向滚动`,

@@ -615,16 +615,8 @@ html[data-theme-preset="arena"] {
     --arena-ops-w: 200px;
     --arena-gap: 16px;
     --arena-row-gap: 12px;
-    /* 顶部「当前生效的场地魔法」横条的**定高**（行 3，横跨三列）。
-       ⚠️ 必须是定值，不能用 auto：auto 会让「有场地」时文案变长 → 行变高 →
-       从 minmax(0,1fr) 的棋盘行里抢走高度。旧版（行 4 的右列下格）实测 1280×720 是
-       35px → 58px，棋盘行随之 **257 → 234**，棋盘肉眼可见地跳一下。
-       34px 是照 1280×720 实测校准过的那一档（下面各数是实测 gridTemplateRows）：
-           顶栏 96 + 对手条 36 + 本横条 34 + 操作列 184 + 弃牌堆 38 = 388
-           5 个行距 5×10 = 50，容器上下内边距 6+18 = 24
-           ⇒ 棋盘行 = 720 − 388 − 50 − 24 = **258px**
-       比旧版无场地时的 257 还高 1px，而且**两种状态完全一样**（不再 257/234 抖动）。
-       行数也不变（仍 6 行），只是 1fr 从行 3 挪到行 4 —— 棋盘尺寸零变化。 */
+    /* 空场地保留矮占位；生效后由下方的 :has(.field-magic.active) 切换为卡片横幅。
+       两档均定高，描述长度不会再改变网格行高。 */
     --arena-fieldbar-h: 34px;
     --arena-pad-l: 308px;
     --arena-pad-r: 320px;
@@ -4413,8 +4405,7 @@ body.layout-compact.layout-ingame #turn-indicator > .game-info > div:nth-child(2
    注：这条隐藏会让棋盘在场地出现的一瞬间往下挪一点（既有行为）。
    想消掉它就得让占位胶囊常驻，但紧凑档最窄的 664×336 纵向预算刚好用满
    （棋盘已经贴着底边），常驻会永久吃掉一行；且占位态与生效态的胶囊宽高本就不同
-   （实测 160×46 vs 206×54），常驻也换不来真正的零跳动。所以维持既有的"无则不显示"，
-   零跳动由三区档的顶部横条负责。 */
+   （实测 160×46 vs 206×54），常驻也换不来真正的零跳动。所以维持既有的"无则不显示"。 */
 body.layout-compact.layout-ingame #game-screen[data-field-magic="none"] .field-magic-area { display: none; }
 body.layout-compact.layout-ingame .phase-btn,
 body.layout-compact.layout-ingame .surrender-btn,
@@ -9454,7 +9445,7 @@ html[data-theme-preset="arena"] .home-wrap .mode-ai { align-items: center; }
    目标（作者原话：「一比一复刻 demo」）：把 #game-screen 摆成 `docs/ui_demos/c-arena.html`
    「对局屏」那三块 ——
      ① 对手条 .opp-bar：头像圆牌 + 名字/剩余舰 + 剩余舰 pips + 右侧回合胶囊/投降
-     ② 中场 .arena-mid：两块海域（焦点）+ 右侧一列（连锁叠牌 + 场地魔法）
+     ② 中场 .arena-mid：两块海域（焦点）+ 右侧连锁叠牌；场地魔法在上方独立横条
      ③ 底排 .arena-bottom：你的舰队（摘要卡）+ 手牌（真卡）+ 操作列（阶段按钮 / 弃牌堆 / 计数）
 
    ⚠️ 为什么用「网格 + display:contents」而不是重排 DOM：
@@ -9507,6 +9498,9 @@ html[data-theme-preset="arena"] body:not(.layout-compact) .game-container:has(> 
     row-gap: var(--arena-row-gap);
     padding: 6px var(--arena-pad-r) 18px var(--arena-pad-l);
     box-sizing: border-box;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .game-container:has(> #game-screen.active .field-magic.active) {
+    --arena-fieldbar-h: clamp(68px, calc(50vh - 330px), 112px);
 }
 /* 顶栏横跨三列（它是页面级导航，不属于三区） */
 html[data-theme-preset="arena"] body:not(.layout-compact) .game-container:has(> #game-screen.active) > .nav {
@@ -9919,27 +9913,18 @@ html[data-theme-preset="arena"] body:not(.layout-compact) .arena-fleet-head .s {
     font-size: 10.5px;
     color: var(--text-subtle);
 }
-/* --- 37.6 ③ 场地魔法横条（对局屏顶部状态区之下、两块海域之上，横跨三列） ---
-   设计决定：它不再是右列下格的一块小卡片，而是行 3 的一条**定高横条**。
-   ⚠️ 高度固定成 var(--arena-fieldbar-h)（见 §37.1 变量区的推算），不用 auto ——
-      否则「有场地」时文案变长会把棋盘行挤矮，棋盘会跳。
-   ⚠️ overflow:hidden 是**兜底**：真遇上超长卡名/描述也只截断，绝不把行撑高。
-   ⚠️ 条内的「卡名 / 类型 / 速阶 / 效果摘要 / 持续说明」全部来自真实数据：
-      卡名与归属来自 payload，类型与描述来自卡表（lookupCard 兜底回 payload），
-      持续说明是场地魔法的真实生命周期 —— 服务端 room.field_magic 只存卡牌实例、
-      **没有"剩余回合"字段**（见 server.py 的 _place_field_magic / _clear_field_magic_effects：
-      放下后持续生效，直到被顶替或被拆除）。没有数字可显示，就不编数字。 */
+/* --- 37.6 ③ 场地魔法横条：空态矮占位，生效态按概念图展示卡面 ---
+   高度由网格变量确定，长文只在摘要行省略；实际剩余回合没有数据，不展示数字。 */
 html[data-theme-preset="arena"] body:not(.layout-compact) .game-content > .game-info > .field-magic-area {
     grid-area: 4 / 1 / 5 / 4;
     display: block;
     margin: 0;
-    padding: 0 12px;
+    padding: 0 14px;
     height: var(--arena-fieldbar-h);
     box-sizing: border-box;
     overflow: hidden;
     text-align: left;
-    background-color: var(--panel);
-    background-image: none;
+    background: linear-gradient(110deg, var(--panel), var(--surface-strong));
     border: 1px solid var(--border);
     border-radius: 12px;
 }
@@ -9951,7 +9936,7 @@ html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fie
     height: 100%;
     min-width: 0;
     padding: 0;
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 400;
     line-height: 1.2;
     border-radius: 0;
@@ -9959,51 +9944,152 @@ html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fie
     white-space: nowrap;
     overflow: hidden;
 }
+html[data-theme-preset="arena"] body:not(.layout-compact) .game-content > .game-info > .field-magic-area:has(.field-magic.active) {
+    padding: 0 14px;
+    border-color: var(--warning);
+    background:
+        radial-gradient(circle at 9% 50%, var(--deco-yellow-a18), transparent 30%),
+        linear-gradient(110deg, var(--panel), var(--surface-strong));
+    box-shadow: inset 0 0 0 1px var(--deco-yellow-a18), 0 0 16px var(--deco-yellow-a18);
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .field-magic.active {
+    display: grid;
+    grid-template-columns: clamp(54px, calc(var(--arena-fieldbar-h) - 28px), 84px) minmax(0, 1fr) auto;
+    gap: 14px;
+    border: 0;
+    box-shadow: none;
+    background: none;
+    cursor: pointer;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-art {
+    display: grid;
+    place-items: center;
+    width: clamp(54px, calc(var(--arena-fieldbar-h) - 28px), 84px);
+    aspect-ratio: 1;
+    border: 1px solid var(--warning);
+    border-radius: 9px;
+    color: #9beaff;
+    font-size: clamp(27px, 3vw, 42px);
+    text-shadow: 0 0 12px #18bbf1;
+    background: radial-gradient(circle at 50% 45%, #1697c8 0, #143b79 34%, #0b1739 70%);
+    box-shadow: inset 0 0 16px #4da9ec80;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-content {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    min-width: 0;
+    overflow: hidden;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-kicker {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
 html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-label {
     flex: 0 0 auto;
-    color: var(--text-subtle);
+    color: var(--warning);
+    font-size: 11px;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .field-magic.active .fm-label {
+    font-size: 0;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .field-magic.active .fm-label::after {
+    content: "场地魔法";
+    font-size: 11px;
 }
 html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .no-magic {
     flex: 0 0 auto;
     color: var(--text-subtle);
 }
-/* 卡名胶囊：沿用 .field-magic-card 的既有观感（金底 + 圆角 + 描边阴影），只把它从
-   "行内一小截"改成横条里的一枚定宽块 —— 卡名本身允许被压缩省略，不许换行撑高。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-state {
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: #146c63;
+    color: #b5fff1;
+    font-size: 11px;
+}
 html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .field-magic-card.fm-name {
-    flex: 0 1 auto;
+    display: block;
     min-width: 0;
     margin: 0;
-    padding: 3px 9px;
-    font-weight: 600;
+    padding: 0;
+    color: var(--text);
+    background: none;
+    box-shadow: none;
+    font-size: clamp(17px, 1.5vw, 23px);
+    font-weight: 700;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-meta {
     flex: 0 0 auto;
-    padding: 2px 7px;
+    padding: 1px 6px;
     font-size: 11px;
     color: var(--text-subtle);
     background-color: var(--surface-muted);
     border-radius: 999px;
 }
-/* 效果摘要：横条里唯一可伸缩的一段（真放不下就省略号，完整文本走悬停/点击预览）。 */
 html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-desc {
-    flex: 0 1 auto;
+    display: block;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
+    color: var(--text-subtle);
+    font-size: 13px;
 }
-/* 持续说明贴右端（margin-left:auto 吃掉剩余空隙）。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-aside {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
 html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-duration {
-    flex: 0 0 auto;
-    margin-left: auto;
-    padding-left: 10px;
     font-size: 11px;
     color: var(--text-subtle);
 }
-/* 只有真有一张场地魔法时才是可点的（点击=完整详情）。无场地时是纯占位条，不给手型。 */
-html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .field-magic.active {
-    cursor: pointer;
+html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-details {
+    padding: 7px 12px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    color: var(--text);
+    background: var(--surface-strong);
+    font-size: 12px;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .field-magic.active:hover .fm-details,
+html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .field-magic.active:focus-visible .fm-details {
+    border-color: var(--warning);
+    color: var(--warning);
+}
+/* 720px 高的对局屏已把棋盘行用满；此档收为加强版信息条，避免卡面压住棋盘首尾行。 */
+@media (max-height: 760px) {
+    html[data-theme-preset="arena"] body:not(.layout-compact) .game-container:has(> #game-screen.active .field-magic.active) {
+        --arena-fieldbar-h: 42px;
+    }
+    html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .field-magic.active {
+        display: flex;
+        gap: 10px;
+    }
+    html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-art,
+    html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-state,
+    html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-duration,
+    html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-kicker { display: none; }
+    html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-content {
+        flex: 1 1 auto;
+        flex-direction: row;
+        align-items: center;
+        gap: 9px;
+    }
+    html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-aside { flex: 0 0 auto; }
+    html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-name { flex: 0 0 auto; }
+    html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-desc {
+        flex: 1 1 auto;
+        white-space: nowrap;
+    }
 }
 /* 横条新增的「类型 / 速阶 / 效果摘要 / 持续说明」**只在三区档的定高横条里展开**。
    其余布局的场地魔法区是 inline-block（默认主题）或 40px 的 nowrap chip（紧凑档），
@@ -10014,11 +10100,21 @@ html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fie
 html:not([data-theme-preset="arena"]) body .field-magic-area .fm-meta,
 html:not([data-theme-preset="arena"]) body .field-magic-area .fm-desc,
 html:not([data-theme-preset="arena"]) body .field-magic-area .fm-duration,
+html:not([data-theme-preset="arena"]) body .field-magic-area .fm-art,
+html:not([data-theme-preset="arena"]) body .field-magic-area .fm-state,
+html:not([data-theme-preset="arena"]) body .field-magic-area .fm-details,
 body.layout-compact .field-magic-area .fm-meta,
 body.layout-compact .field-magic-area .fm-desc,
-body.layout-compact .field-magic-area .fm-duration {
+body.layout-compact .field-magic-area .fm-duration,
+body.layout-compact .field-magic-area .fm-art,
+body.layout-compact .field-magic-area .fm-state,
+body.layout-compact .field-magic-area .fm-details {
     display: none;
 }
+html:not([data-theme-preset="arena"]) body .field-magic-area .fm-content,
+html:not([data-theme-preset="arena"]) body .field-magic-area .fm-kicker,
+body.layout-compact .field-magic-area .fm-content,
+body.layout-compact .field-magic-area .fm-kicker { display: inline; }
 /* --- 37.7 ③ 底排中格「手牌」（跨 4~6 行、贴底对齐） ---
    位置改为网格流内，卡面在三区档放大到 100×136；文字与说明框仍沿用真卡组件。 */
 html[data-theme-preset="arena"] body:not(.layout-compact) #magic-system {

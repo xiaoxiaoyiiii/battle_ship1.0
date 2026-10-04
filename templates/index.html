@@ -46,8 +46,8 @@
     <link rel="stylesheet" href="/static/style.css?v={{ asset_v('style.css') }}">
     <!-- C+ 周边屏幕（十屏）。**必须排在 style.css 之后**：它整层是在覆盖公共样式，
          顺序反了会被 style.css 里同特异度的规则压掉（本项目的静默坏样式三类别之一）。
-         作用域 = html[data-theme-preset="arena"] + data-arena-screens + 逐屏清单，
-         所以另外 7 个主题预设下这一整层等于不存在。 -->
+         作用域 = html[data-theme-preset="arena"] + data-arena-screens + 逐屏清单；
+         设置页已只保留竞技场预设。 -->
     <link rel="stylesheet" href="/static/arena_screens.css?v={{ asset_v('arena_screens.css') }}">
     <!-- ⚠️ defer 不能去掉：这是 191KB 的同步脚本，在 <head> 里会阻塞 FCP。
          实测阻断实验：只挡 style.css → FCP 2,472ms；只挡 socket.io.js → 2,944ms；
@@ -551,18 +551,6 @@
                          只负责画示意稿 C 那条 .opp-bar（红调渐变 + 1px 描边 + 12 圆角）。
                          HUD 自己的节点一个没动 —— 条里的内容仍是下面这些既有元素。 -->
                     <div class="arena-oppbar-bg" aria-hidden="true"></div>
-                    <!-- 极限增援倒计回合显示 -->
-                    <div id="reinforcement-countdown" class="reinforcement-countdown hidden">
-                        <h3>极限增援结算倒计时</h3>
-                        <div class="countdown-text">剩余 <span id="reinforcement-remaining">0</span> 回合后将结算！</div>
-                    </div>
-
-                    <!-- 无暇圣心倒计回合显示 -->
-                    <div id="holy-heart-countdown" class="holy-heart-countdown hidden">
-                        <h3>无暇圣心结算倒计时</h3>
-                        <div class="countdown-text">剩余 <span id="holy-heart-remaining">0</span> 回合后将结算！</div>
-                    </div>
-
                     <div class="turn-indicator-inner">
                         <h2>第<span id="game-round">1</span>回合</h2>
                         <button id="surrender-btn" class="surrender-btn danger">投降</button>
@@ -582,22 +570,37 @@
                         <span class="arena-chip" id="arena-chip-turn">你</span>
                         <span class="arena-chip">攻击 <b id="arena-chip-attacks">×0</b></span>
                     </div>
-                    <!-- 状态显示栏 - 显示延迟结算效果 -->
+                    <!-- 状态显示栏 - 长久效果提示胶囊（极限增援 / 无暇圣心）
+                         ⚠️ 这里原先挂着两条大横幅（`#reinforcement-countdown` /
+                            `#holy-heart-countdown`，样式是「剩余 N 回合后将结算！」）。
+                            它们与 `.arena-turn-chips` 被分到**同一个网格格**，生效时整块盖住
+                            顶部状态条；而且把行 2 从 36px 顶到 98px，棋盘那一行被吃掉 62px。
+                            现改为紧凑胶囊：卡名 + 剩余回合留在胶囊上，效果说明走悬停/点击预览。
+                         ⚠️ 剩余回合没有消失：仍由胶囊里的 `#*-status-remaining` 承载，
+                            服务端的计时、判定、结算逻辑一行未动。
+                         ⚠️ 无效果时由 initEffectStatusBarSync 给整条加 .hidden（display:none），
+                            所以不会留下空白占位；行高由 grid 的 auto 轨道塌成 0。 -->
                     <div id="effect-status-bar" class="effect-status-bar hidden">
-                        <div class="status-item hidden" id="reinforcement-status">
-                            <span class="status-label">极限增援：</span>
+                        <div class="status-item hidden" id="reinforcement-status" tabindex="0" role="button"
+                            aria-label="查看极限增援效果">
+                            <span class="status-label">极限增援</span>
                             <span class="status-value">剩余 <span id="reinforcement-status-remaining">0</span> 回合</span>
                         </div>
-                        <div class="status-item hidden" id="holy-heart-status">
-                            <span class="status-label">无暇圣心：</span>
+                        <div class="status-item hidden" id="holy-heart-status" tabindex="0" role="button"
+                            aria-label="查看无暇圣心效果">
+                            <span class="status-label">无暇圣心</span>
                             <span class="status-value">剩余 <span id="holy-heart-status-remaining">0</span> 回合</span>
                         </div>
                     </div>
 
-                    <!-- 场地魔法显示区域 -->
+                    <!-- 场地魔法显示区域（三区档是顶部行 3 的横条；见 style.css §37.6）
+                         ⚠️ 这里只写「无场地」这一态，有场地时由 updateFieldMagicUI 重写 innerHTML。
+                         ⚠️ 标签「当前生效的场地魔法：」必须留在 HTML 里
+                            （tests/test_ui_review_fixes.py 的全角冒号用例钉着它），
+                            JS 侧同名字符串也要保留。 -->
                     <div class="field-magic-area">
-                        <div id="current-field-magic" class="field-magic">当前生效的场地魔法：<span
-                                class="no-magic">无</span></div>
+                        <div id="current-field-magic" class="field-magic"><span class="fm-label">当前生效的场地魔法：</span><span
+                                class="no-magic">暂无</span></div>
                     </div>
                     <div class="players-info">
                         <div class="player-info">
@@ -1356,26 +1359,10 @@
                         </div>
                         <h4 class="settings-block-title">主题预设</h4>
                         <div id="theme-preset-grid" class="theme-grid">
-                            <!-- 两个分组容器（data-group 由 fluent_style_check.mjs 断言）。
-                                 ⚠️ 卡片仍然是 .theme-card[data-preset]，点击委托挂在 #theme-preset-grid 上、
-                                 用 e.target.closest('.theme-card[data-preset]') 命中 —— 嵌套容器不影响 closest。
-                                 「默认」这个属性只属于 fluent（默认预设），别再给 deep 加 selected。 -->
-                            <div class="theme-group" data-group="fluent">
-                                <p class="theme-group-title">Fluent（默认）</p>
+                            <div class="theme-group" data-group="arena">
+                                <p class="theme-group-title">竞技场</p>
                                 <div class="theme-group-cards">
-                                    <button type="button" class="theme-card" data-preset="fluent"><span class="theme-strip"></span><b>Fluent</b><small>Windows 11 · 微软风格</small></button>
                                     <button type="button" class="theme-card" data-preset="arena"><span class="theme-strip"></span><b>竞技场</b><small>卡牌竞技场 · 紫金</small></button>
-                                </div>
-                            </div>
-                            <div class="theme-group" data-group="legacy">
-                                <p class="theme-group-title">旧风格</p>
-                                <div class="theme-group-cards">
-                                    <button type="button" class="theme-card" data-preset="deep"><span class="theme-strip"></span><b>深海</b><small>默认 · 冷蓝</small></button>
-                                    <button type="button" class="theme-card" data-preset="lava"><span class="theme-strip"></span><b>熔岩</b><small>高对比暖色</small></button>
-                                    <button type="button" class="theme-card" data-preset="cyber"><span class="theme-strip"></span><b>赛博</b><small>紫青霓虹</small></button>
-                                    <button type="button" class="theme-card" data-preset="dusk"><span class="theme-strip"></span><b>暮光</b><small>柔和粉紫</small></button>
-                                    <button type="button" class="theme-card" data-preset="aurora"><span class="theme-strip"></span><b>极光</b><small>青绿清爽</small></button>
-                                    <button type="button" class="theme-card" data-preset="classic"><span class="theme-strip"></span><b>经典</b><small>原来的配色</small></button>
                                 </div>
                             </div>
                         </div>

@@ -9,8 +9,8 @@
  *
  * 四个断言组（`--only` 可单跑）：
  *   set      令牌 / 字体 / 圆角档位 / 材质（半透明+模糊）与定位安全 / 强调色与对比度 / 首页标题不再是渐变文字
- *   presets  8 个预设存在且分成两组 / 默认预设 = fluent / 8 个预设同规范（形状与间距必须一致）/
- *            强调色两两不同 / 8 预设 × 明暗两态的正文对比度
+ *   presets  仅保留竞技场预设 / 默认预设 = arena / 竞技场形状与间距可解析 /
+ *            明暗两态的正文对比度
  *   dark     跟随系统（dark/light）+ 用户显式选择优先 + 主题引导脚本在 <head>（无闪烁）
  *   shots    6 个视口截图
  *
@@ -44,15 +44,12 @@ const SHOTS_DIR = path.isAbsolute(SHOTS_ARG) ? SHOTS_ARG : path.join(ROOT, SHOTS
 const ACCENT = '#0078d4';                        // Fluent 2 的默认强调色
 const ACCENT_RGB = 'rgb(0, 120, 212)';
 const ACCENT_OBJ = { r: 0, g: 120, b: 212, a: 1 };
-/* Fluent 的两档：控件 4 / 卡片 8。
-   2026-09-27（1:1 复刻示意稿 C/V 批）追加 12px：**arena 预设自带一套形状** ——
-   示意稿里的入口卡/主行动就是 12px 圆角、面板 14px，压成 8px 就不叫复刻了。
-   其它 7 个预设仍然只用 4/8（下面的"同规范签名"断言把这层区分也钉住了）。 */
+/* Fluent 的两档：控件 4 / 卡片 8；arena 预设另外保留示意稿要求的 12px 入口圆角。 */
 const RADIUS_ALLOWED = ['4px', '8px', '12px'];
 // arena 的专属形状档（其余预设必须完全一致，见下面那条断言）
 const ARENA_PRESET = 'arena';
-const PRESETS = ['fluent', 'deep', 'lava', 'cyber', 'dusk', 'aurora', 'classic', 'arena'];
-const LEGACY_PRESETS = ['deep', 'lava', 'cyber', 'dusk', 'aurora', 'classic'];
+const PRESETS = ['arena'];
+const LEGACY_PRESETS = [];
 const SPACE_TOKENS = ['--fluent-space-2', '--fluent-space-3', '--fluent-space-4'];
 const CONTRAST_MIN = 4.5;
 const GROUPS = ['set', 'presets', 'dark', 'shots'];
@@ -707,20 +704,14 @@ async function groupPresets() {
     st.children.forEach((c, i) => console.log('     子[' + i + '] ' + c.tag + '.' + c.cls +
       ' isCard=' + c.isCard + ' 卡=' + JSON.stringify(c.presets)));
     const missing = PRESETS.filter((p) => !st.gridPresets.includes(p));
-    check(missing.length === 0, '预设区含 8 个 data-preset（fluent/deep/lava/cyber/dusk/aurora/classic/arena）',
-      { found: st.gridPresets, missing });
-    // 分组结构：不猜标签名/类名，只要求「直接子节点里有两个装卡的容器」这一个可判定的形状。
-    // 当前 DOM 若是平的（8 张卡直接挂在 #theme-preset-grid 下），这里就是 FAIL —— 正是要抓的。
-    check(st.groupCount >= 2, '预设区存在两个分组容器（默认组 + 旧风格组）',
+    const unexpected = st.gridPresets.filter((p) => !PRESETS.includes(p));
+    check(missing.length === 0 && unexpected.length === 0, '预设区只含竞技场一个 data-preset',
+      { found: st.gridPresets, missing, unexpected });
+    check(st.groupCount === 1, '预设区只保留一个竞技场分组',
       { groupCount: st.groupCount, groups: st.groups, ungroupedCards: st.ungroupedCards, childShape: st.childShape });
-    if (st.groupCount >= 2) {
+    if (st.groupCount === 1) {
       const flat = st.groups.map((g) => g.filter(Boolean));
-      const fluentIdx = flat.findIndex((g) => g.includes('fluent'));
-      const defaultGroupClean = fluentIdx >= 0 && flat[fluentIdx].filter((p) => LEGACY_PRESETS.includes(p)).length === 0;
-      const legacyGroupOk = fluentIdx >= 0
-        && flat.some((g, i) => i !== fluentIdx && LEGACY_PRESETS.every((p) => g.includes(p)));
-      check(defaultGroupClean, '默认组只含新式预设（fluent/arena），不含旧 6 个', { groups: st.groups, fluentGroupIndex: fluentIdx });
-      check(legacyGroupOk, '另一组含其余 6 个旧预设', { groups: st.groups });
+      check(flat.length === 1 && flat[0].length === 1 && flat[0][0] === 'arena', '竞技场分组只含竞技场', { groups: st.groups });
     }
   }
 
@@ -754,15 +745,15 @@ async function groupPresets() {
   const arenaSig = new Set(arenaRows.map(arenaKey));
   console.log('   规范签名不同取值数：除 arena 外 = ' + legacySigs.size + '，arena 自身 = ' + arenaSig.size);
   console.log('   arena 的形状签名 = ' + [...arenaSig].join(' , '));
-  check(legacySigs.size === 1, '除 arena 外的 7 个预设字体/圆角/间距完全一致（只有颜色允许不同）',
+  check(legacySigs.size === 0, '已移除竞技场之外的旧预设',
     { distinctSignatures: legacySigs.size, signatures: [...legacySigs], radius: rows.map((r) => r.radius) });
   check(arenaSig.size === 1, 'arena 预设自身形状自洽（字体 + 圆角 + 间距只有一个取值）',
     { arenaSignatures: [...arenaSig], arenaRadius: arenaRows.map((r) => r.radius) });
   const distinctPrimaries = new Set(Object.values(primaries).map((v) => String(v).trim()));
-  check(distinctPrimaries.size === PRESETS.length, '8 个预设的 --primary 两两不同',
+  check(distinctPrimaries.size === PRESETS.length, '竞技场预设的 --primary 可解析',
     { distinct: distinctPrimaries.size, map: primaries });
 
-  // ---------- 11. 8 预设 × 明暗两态的正文对比度 ----------
+  // ---------- 11. 竞技场预设 × 明暗两态的正文对比度 ----------
   // 明暗态走「清掉 theme 键 + 系统偏好 + reload」（真实路径）；
   // 预设在同一态内点卡片切换即可（CSS 靠 html[data-theme-preset] 生效，不用重新加载）。
   for (const mode of ['light', 'dark']) {

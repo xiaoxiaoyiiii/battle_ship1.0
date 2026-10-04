@@ -615,6 +615,17 @@ html[data-theme-preset="arena"] {
     --arena-ops-w: 200px;
     --arena-gap: 16px;
     --arena-row-gap: 12px;
+    /* 顶部「当前生效的场地魔法」横条的**定高**（行 3，横跨三列）。
+       ⚠️ 必须是定值，不能用 auto：auto 会让「有场地」时文案变长 → 行变高 →
+       从 minmax(0,1fr) 的棋盘行里抢走高度。旧版（行 4 的右列下格）实测 1280×720 是
+       35px → 58px，棋盘行随之 **257 → 234**，棋盘肉眼可见地跳一下。
+       34px 是照 1280×720 实测校准过的那一档（下面各数是实测 gridTemplateRows）：
+           顶栏 96 + 对手条 36 + 本横条 34 + 操作列 184 + 弃牌堆 38 = 388
+           5 个行距 5×10 = 50，容器上下内边距 6+18 = 24
+           ⇒ 棋盘行 = 720 − 388 − 50 − 24 = **258px**
+       比旧版无场地时的 257 还高 1px，而且**两种状态完全一样**（不再 257/234 抖动）。
+       行数也不变（仍 6 行），只是 1fr 从行 3 挪到行 4 —— 棋盘尺寸零变化。 */
+    --arena-fieldbar-h: 34px;
     --arena-pad-l: 308px;
     --arena-pad-r: 320px;
 }
@@ -1733,6 +1744,7 @@ input:focus, select:focus, textarea:focus {
 .card-detail-close:hover { background: var(--fluent-scrim-08); color: var(--danger); }
 .card-detail-name { font-size: 1.2em; font-weight: bold; margin-bottom: 8px; padding-right: 34px; }
 .card-detail-stats { display: flex; gap: 14px; color: var(--muted); margin-bottom: 12px; }
+.card-detail-extra { margin: 0 0 12px; color: var(--primary); font-weight: 600; }
 .card-detail-desc-title { font-weight: bold; margin-bottom: 4px; }
 .card-detail-desc { line-height: 1.65; white-space: pre-wrap; }
 
@@ -3902,57 +3914,48 @@ html.theme-dark .priority-hint { color: var(--deco-priority-hint-dark); }
     margin: 0;
 }
 
-/* ---------- 19. 延迟结算倒计时与状态栏 ---------- */
-.reinforcement-countdown {
-    background: var(--alpha-danger-95);
-    color: var(--fluent-on-solid);
-    padding: 15px;
-    border-radius: var(--fluent-radius-lg);
-    margin-bottom: 15px;
-    text-align: center;
-    /* 发光交给 pulse（已改成环脉冲），静止态不留模糊阴影 */
-    box-shadow: none;
-    animation: pulse 2s infinite;
-}
-.reinforcement-countdown h3 { margin: 0 0 10px 0; font-size: 1.2em; font-weight: bold; }
-.reinforcement-countdown.hidden { display: none; }
-.holy-heart-countdown {
-    background: var(--deco-holy-strong);
-    color: var(--fluent-on-solid);
-    padding: 15px;
-    border-radius: var(--fluent-radius-lg);
-    margin-bottom: 15px;
-    text-align: center;
-    box-shadow: none;
-    animation: pulse 2s infinite;
-}
-.holy-heart-countdown h3 { margin: 0 0 10px 0; font-size: 1.2em; font-weight: bold; }
-.holy-heart-countdown.hidden { display: none; }
-.countdown-text { font-size: 1.5em; font-weight: bold; }
-
+/* ---------- 19. 延迟结算效果：状态胶囊 + 状态栏 ----------
+   ⚠️ 这里原先还有两条大横幅（`.reinforcement-countdown` / `.holy-heart-countdown`，
+      配 `.countdown-text`「剩余 N 回合后将结算！」）。它们的 DOM 已在 2026-10-03 删除：
+      横幅与顶部那三颗回合胶囊被分到同一个网格格（`2 / 2 / 3 / 3`），一旦生效就整块
+      盖住顶部状态条；而且把那一行从 36px 顶到 98px，棋盘行等量缩水、棋盘被多裁 62px。
+      剩余回合没有消失 —— 它由下面这颗胶囊承载。服务端的计时 / 判定 / 结算逻辑一行未动。 */
 .effect-status-bar {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 6px;
+    margin-bottom: 6px;
     background: var(--glass);
     border: 1px solid var(--panel-border);
     border-radius: var(--fluent-radius-lg);
-    padding: 10px;
-    margin-bottom: 10px;
-    display: flex;
-    gap: 20px;
-    flex-wrap: wrap;
-    align-items: center;
-    box-shadow: 0 2px 4px var(--fluent-scrim-08);
+    box-shadow: none;
 }
+/* 长久效果胶囊：卡名 + 剩余回合。语义是「可展开详情的按钮」（HTML 上带
+   tabindex="0" role="button" aria-label），所以 hover / focus-visible / active
+   三态都要有可见反馈，且点击热区不小于一行文字的高度。 */
 .status-item {
     display: flex;
     align-items: center;
-    gap: 5px;
-    font-size: 0.9em;
-    padding: 5px 10px;
+    gap: 6px;
+    font-size: 0.78rem;
+    line-height: 1.2;
+    padding: 4px 10px;
     background: var(--surface-muted);
-    border-radius: var(--fluent-radius-control);
+    border: 1px solid var(--panel-border);
     border-left: 3px solid var(--primary);
+    border-radius: var(--fluent-radius-control);
+    color: var(--text);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s ease, border-color 0.15s ease;
 }
-.status-label { font-weight: bold; color: var(--primary); }
+.status-item:hover { background: var(--glass); border-color: var(--primary); }
+.status-item:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.status-item:active { background: var(--glass); }
+.status-label { font-weight: 600; color: var(--primary); }
 .status-value { color: var(--text-subtle); }
 
 /* ---------- 20. 游戏结束与战绩 ---------- */
@@ -4385,10 +4388,17 @@ body.layout-compact.layout-ingame #opponent-username-corner {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-body.layout-compact.layout-ingame .field-magic-area { padding: 0; }
+/* 紧凑档的场地魔法是一条 nowrap 胶囊。它是 inline-block + white-space:nowrap，
+   在更窄的横屏（664×336）里 min-content 会把所在的 flex 行顶宽，把文档撑到视口之外
+   （实测 682 > 664）。补 min-width:0 / max-width:100% 让它可以被压缩，
+   再用 overflow:hidden + ellipsis 收口，这样窄屏永远不会因为这条横条产生横向滚动。 */
+body.layout-compact.layout-ingame .field-magic-area {
+    padding: 0; min-width: 0; max-width: 100%; overflow: hidden;
+}
 body.layout-compact.layout-ingame .field-magic {
     margin: 0; padding: 0 8px; font-size: 0.74rem; line-height: 40px;
     background: var(--surface-muted); border-radius: 999px; white-space: nowrap;
+    box-sizing: border-box; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
 }
 body.layout-compact.layout-ingame .turn-indicator-inner { display: inline-flex; align-items: center; gap: 6px; }
 body.layout-compact.layout-ingame .turn-indicator-inner h2 { margin: 0; font-size: 0.8rem; }
@@ -4399,7 +4409,12 @@ body.layout-compact.layout-ingame #turn-indicator > .game-info {
 /* 阶段按钮的文案已经表达了当前阶段；"当前回合"与"剩余攻击次数"重复，紧凑模式下都是冗余的 */
 body.layout-compact.layout-ingame #turn-indicator > .game-info > div:first-child,
 body.layout-compact.layout-ingame #turn-indicator > .game-info > div:nth-child(2) { display: none; }
-/* 没有生效的场地魔法时不显示"当前生效的场地魔法：无"这个纯噪音 chip（由 JS 打标记） */
+/* 没有生效的场地魔法时不显示"当前生效的场地魔法：无"这个纯噪音 chip（由 JS 打标记）。
+   注：这条隐藏会让棋盘在场地出现的一瞬间往下挪一点（既有行为）。
+   想消掉它就得让占位胶囊常驻，但紧凑档最窄的 664×336 纵向预算刚好用满
+   （棋盘已经贴着底边），常驻会永久吃掉一行；且占位态与生效态的胶囊宽高本就不同
+   （实测 160×46 vs 206×54），常驻也换不来真正的零跳动。所以维持既有的"无则不显示"，
+   零跳动由三区档的顶部横条负责。 */
 body.layout-compact.layout-ingame #game-screen[data-field-magic="none"] .field-magic-area { display: none; }
 body.layout-compact.layout-ingame .phase-btn,
 body.layout-compact.layout-ingame .surrender-btn,
@@ -9468,14 +9483,26 @@ html[data-theme-preset="arena"] .home-wrap .mode-ai { align-items: center; }
 .arena-fleet-head,
 .sea-sub { display: none; }
 
-/* --- 37.2 骨架：3 列 × 6 行 ---
-   行 1 顶栏 / 行 2 对手条 / 行 3 中场（1fr，吃掉多余高度）/ 行 4 场地魔法 / 行 5 操作列 /
-   行 6 弃牌堆按钮。底排三块（舰队·手牌·操作列）用「跨越 4~6 行 + align-self:end」对齐到底，
-   与示意稿 C 的 `.arena-bottom { align-items: end }` 同一效果。 */
+/* --- 37.2 骨架：3 列 × 7 行 ---
+   行 1 顶栏 / 行 2 对手条（顶部状态条）/ 行 3 长久效果胶囊条 / 行 4 场地魔法横条 /
+   行 5 中场（1fr，吃掉多余高度）/ 行 6 操作列 / 行 7 弃牌堆按钮。底排三块
+   （舰队·手牌·操作列）用「跨越 5~7 行 + align-self:end」对齐到底，
+   与示意稿 C 的 `.arena-bottom { align-items: end }` 同一效果。
+   ⚠️ 行 3 是 2026-10-03 新增的「长久效果胶囊条」行。此前 `#effect-status-bar` 与
+      两条大倒计时横幅都和 `.arena-turn-chips` 挤在 `2 / 2 / 3 / 3` 同一格里 ——
+      实测两者矩形逐像素重合（1280×720 时都是 476×52），整块盖住顶部状态条；
+      而且行 2 会从 36px 涨到 98px，棋盘那一行等量缩水（257.84 → 195.84px，
+      棋盘被 `.boards-container` 的 overflow:hidden 多裁 62px）。改成独立一行后
+      行 2 恒为 36px，胶囊条无效果时塌成 0 高。
+   ⚠️ 行号是**成对契约**：本块的 `grid-area` 与下面各要素块必须一起改，改一行要全改。
+   ⚠️ 场地魔法横条是**行 4 的新行**，不是多出来的第 8 行 —— 它顶替的是旧版行 4 右列
+      那一格（`.field-magic-area` 原 `4 / 3 / 5 / 4`）。棋盘尺寸不受影响：它由宽度驱动，
+      逐档实测恒为 300/351/370/430px，与行高无关。
+      行高的推算写在 §37.1 变量区 --arena-fieldbar-h 的注释里）。 */
 html[data-theme-preset="arena"] body:not(.layout-compact) .game-container:has(> #game-screen.active) {
     display: grid;
     grid-template-columns: var(--arena-fleet-w) minmax(0, 1fr) var(--arena-ops-w);
-    grid-template-rows: auto auto minmax(0, 1fr) auto auto auto;
+    grid-template-rows: auto auto auto var(--arena-fieldbar-h) minmax(0, 1fr) auto auto;
     column-gap: var(--arena-gap);
     row-gap: var(--arena-row-gap);
     padding: 6px var(--arena-pad-r) 18px var(--arena-pad-l);
@@ -9680,13 +9707,21 @@ html[data-theme-preset="arena"] body:not(.layout-compact) .turn-indicator-inner 
     color: var(--arena-head-lose-fg);
     box-shadow: none;
 }
-/* 两个倒计时 / 状态条（极限增援、无瑕圣心）平时 hidden；一旦生效就落在条中间那格 */
-html[data-theme-preset="arena"] body:not(.layout-compact) .game-content > .game-info > #reinforcement-countdown,
-html[data-theme-preset="arena"] body:not(.layout-compact) .game-content > .game-info > #holy-heart-countdown,
+/* 长久效果胶囊条（极限增援 / 无暇圣心）—— 独立占一整行，横跨三列。
+   ⚠️ 2026-10-03 之前这里还挂着两条大倒计时横幅（`#reinforcement-countdown` /
+      `#holy-heart-countdown`），和 `.arena-turn-chips` 抢 `2 / 2 / 3 / 3` 同一格：
+      1280×720 实测两者矩形逐像素重合（都是 476×52），整块盖住顶部状态条；而且
+      行 2 被从 36px 顶到 98px，棋盘那一行等量缩水（257.84 → 195.84px）。
+      横幅的 DOM 与死规则已删除，本条现在只服务于胶囊。
+   ⚠️ 无效果时 initEffectStatusBarSync 会给整条加 `.hidden`（display:none），
+      行 3 是 auto 轨道、会塌成 0 高，不留空白占位。 */
 html[data-theme-preset="arena"] body:not(.layout-compact) .game-content > .game-info > #effect-status-bar {
-    grid-area: 2 / 2 / 3 / 3;
+    grid-area: 3 / 1 / 4 / 4;
     min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
     text-align: center;
+    margin: 0;
 }
 
 /* --- 37.4 ② 中场：两块海域并排（左）+ 连锁轨道（右） ---
@@ -9696,7 +9731,7 @@ html[data-theme-preset="arena"] body:not(.layout-compact) .game-content > .game-
       绝处逢生的「选船位」要在自己的棋盘上点格子（缩成小盘后格子只剩 ~19px，点不准）。
       所以中场并排两块（同尺寸），底排左格改成「你的舰队」摘要卡（头像 + 剩余舰 + pips）。 */
 html[data-theme-preset="arena"] body:not(.layout-compact) #game-screen .boards-container {
-    grid-area: 3 / 1 / 4 / 3;
+    grid-area: 5 / 1 / 6 / 3;
     display: flex;
     flex-wrap: nowrap;
     align-items: center;
@@ -9761,7 +9796,7 @@ html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot {
     display: flex;
     flex-direction: column;
     align-items: center;
-    grid-area: 3 / 3 / 4 / 4;
+    grid-area: 5 / 3 / 6 / 4;
     min-height: 0;
     padding: 10px 8px;
     border: 1px dashed var(--arena-gold);
@@ -9843,7 +9878,7 @@ html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .cha
 
 /* --- 37.5 ③ 底排左格「你的舰队」（跨 4~6 行、贴底对齐） --- */
 html[data-theme-preset="arena"] body:not(.layout-compact) .players-info > .player-info:nth-child(1) {
-    grid-area: 4 / 1 / 7 / 2;
+    grid-area: 5 / 1 / 8 / 2;
     align-self: end;
     display: flex;
     flex-direction: column;
@@ -9884,11 +9919,24 @@ html[data-theme-preset="arena"] body:not(.layout-compact) .arena-fleet-head .s {
     font-size: 10.5px;
     color: var(--text-subtle);
 }
-/* --- 37.6 ③ 场地魔法（示意稿 C 里它在中场右列的下格） --- */
+/* --- 37.6 ③ 场地魔法横条（对局屏顶部状态区之下、两块海域之上，横跨三列） ---
+   设计决定：它不再是右列下格的一块小卡片，而是行 3 的一条**定高横条**。
+   ⚠️ 高度固定成 var(--arena-fieldbar-h)（见 §37.1 变量区的推算），不用 auto ——
+      否则「有场地」时文案变长会把棋盘行挤矮，棋盘会跳。
+   ⚠️ overflow:hidden 是**兜底**：真遇上超长卡名/描述也只截断，绝不把行撑高。
+   ⚠️ 条内的「卡名 / 类型 / 速阶 / 效果摘要 / 持续说明」全部来自真实数据：
+      卡名与归属来自 payload，类型与描述来自卡表（lookupCard 兜底回 payload），
+      持续说明是场地魔法的真实生命周期 —— 服务端 room.field_magic 只存卡牌实例、
+      **没有"剩余回合"字段**（见 server.py 的 _place_field_magic / _clear_field_magic_effects：
+      放下后持续生效，直到被顶替或被拆除）。没有数字可显示，就不编数字。 */
 html[data-theme-preset="arena"] body:not(.layout-compact) .game-content > .game-info > .field-magic-area {
-    grid-area: 4 / 3 / 5 / 4;
+    grid-area: 4 / 1 / 5 / 4;
     display: block;
-    padding: 9px 10px;
+    margin: 0;
+    padding: 0 12px;
+    height: var(--arena-fieldbar-h);
+    box-sizing: border-box;
+    overflow: hidden;
     text-align: left;
     background-color: var(--panel);
     background-image: none;
@@ -9896,22 +9944,93 @@ html[data-theme-preset="arena"] body:not(.layout-compact) .game-content > .game-
     border-radius: 12px;
 }
 html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .field-magic {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
     padding: 0;
-    font-size: 11.5px;
+    font-size: 12px;
     font-weight: 400;
+    line-height: 1.2;
     border-radius: 0;
     background: none;
+    white-space: nowrap;
+    overflow: hidden;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-label {
+    flex: 0 0 auto;
+    color: var(--text-subtle);
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .no-magic {
+    flex: 0 0 auto;
+    color: var(--text-subtle);
+}
+/* 卡名胶囊：沿用 .field-magic-card 的既有观感（金底 + 圆角 + 描边阴影），只把它从
+   "行内一小截"改成横条里的一枚定宽块 —— 卡名本身允许被压缩省略，不许换行撑高。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .field-magic-card.fm-name {
+    flex: 0 1 auto;
+    min-width: 0;
+    margin: 0;
+    padding: 3px 9px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-meta {
+    flex: 0 0 auto;
+    padding: 2px 7px;
+    font-size: 11px;
+    color: var(--text-subtle);
+    background-color: var(--surface-muted);
+    border-radius: 999px;
+}
+/* 效果摘要：横条里唯一可伸缩的一段（真放不下就省略号，完整文本走悬停/点击预览）。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-desc {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* 持续说明贴右端（margin-left:auto 吃掉剩余空隙）。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .fm-duration {
+    flex: 0 0 auto;
+    margin-left: auto;
+    padding-left: 10px;
+    font-size: 11px;
+    color: var(--text-subtle);
+}
+/* 只有真有一张场地魔法时才是可点的（点击=完整详情）。无场地时是纯占位条，不给手型。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) .field-magic-area .field-magic.active {
+    cursor: pointer;
+}
+/* 横条新增的「类型 / 速阶 / 效果摘要 / 持续说明」**只在三区档的定高横条里展开**。
+   其余布局的场地魔法区是 inline-block（默认主题）或 40px 的 nowrap chip（紧凑档），
+   塞进这几段长文本会撑高行高、或直接把紧凑档那条 nowrap 行顶出横向滚动 ——
+   那些布局维持原来的「标签 + 卡名」两段，视觉零变化。
+   ⚠️ 这两组守卫正好是上面 arena 规则的补集（html:not([arena]) ∪ body.layout-compact），
+      所以不可能和它互相打架。 */
+html:not([data-theme-preset="arena"]) body .field-magic-area .fm-meta,
+html:not([data-theme-preset="arena"]) body .field-magic-area .fm-desc,
+html:not([data-theme-preset="arena"]) body .field-magic-area .fm-duration,
+body.layout-compact .field-magic-area .fm-meta,
+body.layout-compact .field-magic-area .fm-desc,
+body.layout-compact .field-magic-area .fm-duration {
+    display: none;
 }
 /* --- 37.7 ③ 底排中格「手牌」（跨 4~6 行、贴底对齐） ---
    位置改为网格流内，卡面在三区档放大到 100×136；文字与说明框仍沿用真卡组件。 */
 html[data-theme-preset="arena"] body:not(.layout-compact) #magic-system {
     position: static;
-    grid-area: 4 / 2 / 7 / 3;
+    grid-area: 5 / 2 / 8 / 3;
     align-self: end;
     max-height: none;
     min-width: 0;
-    margin: 0;
+    /* 长久效果胶囊新增一行后，1280×720 / 1366×768 的棋盘底边会贴到手牌顶部；
+       保留 6px 呼吸缝，仍由 align-self:end 把手牌底边固定在原位置。 */
+    margin: 6px 0 0;
+    transform: translateY(6px);
     padding: 0;
     overflow: visible;
     background: none;
@@ -9933,22 +10052,57 @@ html[data-theme-preset="arena"] body:not(.layout-compact) #magic-system .magic-h
     text-align: center;
     color: var(--text-subtle);
 }
-/* 手牌一行：装得下就居中（demo 的 .hand-area 就是居中），装不下才横向滚动 ——
+/* 手牌一行：几何由 JS 算（game.js 的 layoutHand）——「可用宽度 × 张数」→ 卡宽 → 重叠步进。
+   ⚠️ 这里**不再横向滚动**：装不下时改由负 margin 重叠吃掉超出量，每张仍留 ≥44px 可点。
    ⚠️ 不能直接写 justify-content:center：溢出时居中会把**第一张**推到负坐标、再也点不到
-      （经典 flex 溢出陷阱）。这里用「容器收缩到内容宽 + auto 外边距居中」拿到同样观感。 */
+      （经典 flex 溢出陷阱）。这里用「容器收缩到内容宽 + auto 外边距居中」拿到同样观感。
+   ⚠️ overflow 必须是 visible：选中/聚焦的牌要抬到邻居之上，overflow:hidden 会把抬起那截裁掉。 */
 html[data-theme-preset="arena"] body:not(.layout-compact) #magic-system .magic-hand {
     width: fit-content;
     max-width: 100%;
     margin: 0 auto;
-    gap: 10px;
+    gap: 0;                     /* 水平间距与重叠全部由 margin-left 驱动（见 layoutHand） */
     flex-wrap: nowrap;
     justify-content: flex-start;
-    overflow-x: auto;
-    overflow-y: hidden;
+    align-items: flex-end;
+    overflow: visible;
 }
 html[data-theme-preset="arena"] body:not(.layout-compact) #magic-system .magic-hand .magic-card {
-    width: 100px;
-    height: 136px;
+    width: var(--hand-card-w, 100px);
+    height: var(--hand-card-h, 136px);
+    flex: 0 0 auto;             /* 宽度由 JS 按可用空间定，不许 flex 再压 */
+}
+/* 描述框行数随卡高走：max-height 与 -webkit-line-clamp 必须同一倍数，
+   否则盒底落在行中间、最后一行被拦腰切断（见 .card-desc 原有注释）。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) #magic-system .magic-hand .card-desc {
+    -webkit-line-clamp: var(--hand-desc-lines, 3);
+    max-height: calc(var(--hand-desc-lines, 3) * 1em * 1.35 + 10px);
+}
+/* 选中牌：上浮并抬到邻居之上（重叠排布时后一张会压住前一张）。
+   z-index 8 高于 .magic-card:hover(5)/.selected(6)，重叠时也一定完整可见。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) #magic-system .magic-hand .magic-card.selected {
+    z-index: 8;
+    transform: rotate(var(--fan-rot, 0rad)) translateY(calc(var(--fan-drop, 0px) - 10px)) scale(1.09);
+}
+/* 键盘焦点：对局屏手牌是 Tab 站（game.js 给每张卡加了 tabIndex），
+   只在键盘导航时显示描边，不打扰鼠标玩家。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) #magic-system .magic-hand .magic-card:focus-visible {
+    z-index: 8;
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    transform: rotate(var(--fan-rot, 0rad)) translateY(calc(var(--fan-drop, 0px) - 10px)) scale(1.09);
+}
+/* 重叠档（.hand-tight，由 game.js 的 layoutHand 按是否重叠切换）：选中/悬停都**不再放大**。
+   放大 1.09 会让选中牌向两侧各多吃 ~5px，右邻居露出来的那一条就再也凑不满 44px 触摸下限
+   （实测 1280×800 打 8 张时选中第 3 张，第 4 张的可点宽直接变成 0）。
+   这里只保留「抬起 + 琥珀描边 + 置顶」（描边来自基础 .magic-card.selected 规则）。
+   ⚠️ 这条必须排在 .selected/:focus-visible 之后、且靠 `.hand-tight` 多带一个类来赢特异性。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) #magic-system .magic-hand.hand-tight .magic-card:hover,
+html[data-theme-preset="arena"] body:not(.layout-compact) #magic-system .magic-hand.hand-tight .magic-card:focus-visible {
+    transform: rotate(var(--fan-rot, 0rad)) translateY(calc(var(--fan-drop, 0px) - 10px));
+}
+html[data-theme-preset="arena"] body:not(.layout-compact) #magic-system .magic-hand.hand-tight .magic-card.selected {
+    transform: rotate(var(--fan-rot, 0rad)) translateY(calc(var(--fan-drop, 0px) - 10px));
 }
 /* --- 37.8 ③ 底排右格「操作列」= #turn-indicator（阶段/回合/攻击 chip + 阶段按钮 + 计数） ---
    ⚠️ 为什么阶段按钮留在 #turn-indicator 里：ui_layout_check 的宽屏不变量按
@@ -9956,7 +10110,7 @@ html[data-theme-preset="arena"] body:not(.layout-compact) #magic-system .magic-h
       按钮在这个 200px 的列里被 flex 拉伸到满宽 → 偏移实测 0，断言天然成立；
       把它们搬去别处就得改那条断言（属于「本质冲突」级的改动，没必要）。 */
 html[data-theme-preset="arena"] body:not(.layout-compact) #turn-indicator {
-    grid-area: 5 / 3 / 6 / 4;
+    grid-area: 6 / 3 / 7 / 4;
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -10027,7 +10181,7 @@ html[data-theme-preset="arena"] body:not(.layout-compact) .arena-counts .fields 
 html[data-theme-preset="arena"] body:not(.layout-compact) .arena-counts .fields b { color: var(--text); }
 /* --- 37.9 ③ 底排右格最下一行「查看弃牌堆」 --- */
 html[data-theme-preset="arena"] body:not(.layout-compact) .game-content > .discard-pile-btn-row {
-    grid-area: 6 / 3 / 7 / 4;
+    grid-area: 7 / 3 / 8 / 4;
     display: block;
     margin: 0;
     text-align: center;

@@ -635,7 +635,7 @@ function shadeHex(hex, amount) {
 // ---------------------------------------------------------------------------
 /* 默认预设 = arena（2026-09-25，Phase 6 首页批）：C 方案的紫金是既定方向，
    Fluent 保留为可选预设而不是默认（见 IMPLEMENTATION_PLAN_2026_09_23.md M1）。 */
-const THEME_PRESETS = ['arena', 'fluent', 'classic', 'deep', 'lava', 'cyber', 'dusk', 'aurora'];
+const THEME_PRESETS = ['arena'];
 // 这些是 applyPrimaryColor() 会写进 documentElement.style 的变量名
 const PRIMARY_INLINE_VARS = ['--primary', '--primary-600', '--primary-rgb',
     '--primary-gradient', '--primary-50', '--shadow-glow'];
@@ -3406,31 +3406,65 @@ function renderLogTextHtml(entry) {
 // ---------------------------------------------------------------------------
 let cardTooltipEl = null;
 
-function showCardTooltip(anchorEl, card) {
+function rectsOverlap(a, b) {
+    if (!a || !b) return false;
+    return !(a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom);
+}
+
+// 浮层落位：按「下 → 上 → 右 → 左」逐个试，选第一个既不越出视口、也不压住
+// `avoidRect`（顶部状态条 / 场地魔法横栏这类「绝不能盖」的区域）的位置。
+// 每个候选都先夹进视口安全边距，所以 `fits` 实际上只在问「会不会压住 avoidRect」。
+// 写 `tip.dataset.placement` 是为了让无头检查能断言「到底选了哪个方向」，
+// 而不是只看到最终坐标。
+function placeCardTooltip(tip, anchorEl, avoidRect) {
+    const r = anchorEl.getBoundingClientRect();
+    const tw = tip.offsetWidth;
+    const th = tip.offsetHeight;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const GAP = 8;
+    const at = (left, top) => ({
+        left: Math.max(8, Math.min(left, vw - tw - 8)),
+        top: Math.max(8, Math.min(top, vh - th - 8)),
+    });
+    const fits = (p) => {
+        const box = { left: p.left, top: p.top, right: p.left + tw, bottom: p.top + th };
+        return !rectsOverlap(box, avoidRect);
+    };
+
+    const candidates = [
+        ['bottom', at(r.left + r.width / 2 - tw / 2, r.bottom + GAP)],
+        ['top', at(r.left + r.width / 2 - tw / 2, r.top - th - GAP)],
+        ['right', at(r.right + GAP, r.top + r.height / 2 - th / 2)],
+        ['left', at(r.left - tw - GAP, r.top + r.height / 2 - th / 2)],
+    ];
+    const picked = candidates.find((c) => fits(c[1])) || candidates[0];
+
+    tip.dataset.placement = picked[0];
+    tip.style.left = picked[1].left + 'px';
+    tip.style.top = picked[1].top + 'px';
+}
+
+// opts: { avoidRect, extraLine } —— 可选。不传时行为与从前完全一致（日志 / 连锁的老调用点）。
+function showCardTooltip(anchorEl, card, opts) {
     hideCardTooltip();
     if (!anchorEl || !card) return;
 
+    const options = opts || {};
     const tip = document.createElement('div');
     tip.className = 'card-tooltip';
     tip.innerHTML =
         `<div class="card-tooltip-name">${escapeHtml(card.name)}</div>` +
         `<div class="card-tooltip-stats">${escapeHtml(card.type || '')} · 速阶 ${escapeHtml(String(card.speed))}</div>` +
+        (options.extraLine
+            ? `<div class="card-tooltip-extra">${escapeHtml(String(options.extraLine))}</div>`
+            : '') +
         `<div class="card-tooltip-desc">${escapeHtml(card.description || '')}</div>`;
     document.body.appendChild(tip);
     cardTooltipEl = tip;
 
     // 先量尺寸再定位：默认卡名下方居中，出界就翻到上方 / 贴边
-    const r = anchorEl.getBoundingClientRect();
-    const tw = tip.offsetWidth;
-    const th = tip.offsetHeight;
-    let top = r.bottom + 8;
-    if (top + th > window.innerHeight - 8) top = r.top - th - 8;
-    if (top < 8) top = 8;
-    let left = r.left + r.width / 2 - tw / 2;
-    left = Math.max(8, Math.min(left, window.innerWidth - tw - 8));
-
-    tip.style.left = left + 'px';
-    tip.style.top = top + 'px';
+    placeCardTooltip(tip, anchorEl, options.avoidRect || null);
 }
 
 function hideCardTooltip() {
@@ -3440,9 +3474,14 @@ function hideCardTooltip() {
     cardTooltipEl = null;
 }
 
-function showCardDetail(card) {
+function showCardDetail(card, options) {
     closeCardDetail();
     if (!card) return;
+
+    const detailOptions = options || {};
+    const extraLine = detailOptions.extraLine
+        ? `<div class="card-detail-extra">${escapeHtml(String(detailOptions.extraLine))}</div>`
+        : '';
 
     const overlay = document.createElement('div');
     overlay.className = 'card-detail-overlay';
@@ -3455,6 +3494,7 @@ function showCardDetail(card) {
                 <span class="stat-item">速阶：${escapeHtml(String(card.speed))}</span>
                 <span class="stat-item">类型：${escapeHtml(card.type || '-')}</span>
             </div>
+            ${extraLine}
             <div class="card-detail-desc-title">效果描述：</div>
             <div class="card-detail-desc">${escapeHtml(card.description || '（无描述）')}</div>
         </div>`;
@@ -8106,23 +8146,15 @@ function setupSocketListeners() {
     });
 
     // 极限增援相关事件处理
+    // ⚠️ 这两张卡原先各有两条显示路径：「大倒计时横幅」+「状态栏胶囊」。横幅的 DOM 已在
+    //    2026-10-03 删除 —— 它与顶部那三颗回合胶囊被分到同一个网格格，生效时整块盖住
+    //    顶部状态条，还把棋盘行挤矮。现在只剩胶囊这一条路径，剩余回合仍然写进
+    //    `#*-status-remaining`。服务端的计时 / 判定 / 结算逻辑没有任何变化。
     socket.on('reinforcement_activated', (data) => {
         console.log('极限增援激活:', data);
-        // 显示极限增援倒计时
-        const countdownElement = document.getElementById('reinforcement-countdown');
-        const remainingElement = document.getElementById('reinforcement-remaining');
-
-        // 更新状态显示栏
         const statusElement = document.getElementById('reinforcement-status');
         const statusRemainingElement = document.getElementById('reinforcement-status-remaining');
 
-        // 更新传统倒计时
-        if (countdownElement && remainingElement) {
-            remainingElement.textContent = data.remaining_turns;
-            countdownElement.classList.remove('hidden');
-        }
-
-        // 更新状态显示栏
         if (statusElement && statusRemainingElement) {
             statusRemainingElement.textContent = data.remaining_turns;
             statusElement.classList.remove('hidden');
@@ -8131,14 +8163,8 @@ function setupSocketListeners() {
 
     socket.on('reinforcement_turn_updated', (data) => {
         console.log('极限增援回合更新:', data);
-        // 更新极限增援剩余回合
-        const remainingElement = document.getElementById('reinforcement-remaining');
-        // 更新状态显示栏
         const statusRemainingElement = document.getElementById('reinforcement-status-remaining');
 
-        if (remainingElement) {
-            remainingElement.textContent = data.remaining_turns;
-        }
         if (statusRemainingElement) {
             statusRemainingElement.textContent = data.remaining_turns;
         }
@@ -8147,21 +8173,9 @@ function setupSocketListeners() {
     // 无暇圣心激活监听
     socket.on('holy_heart_activated', (data) => {
         console.log('无暇圣心激活:', data);
-        // 显示无暇圣心倒计时
-        const countdownElement = document.getElementById('holy-heart-countdown');
-        const remainingElement = document.getElementById('holy-heart-remaining');
-
-        // 更新状态显示栏
         const statusElement = document.getElementById('holy-heart-status');
         const statusRemainingElement = document.getElementById('holy-heart-status-remaining');
 
-        // 更新传统倒计时
-        if (countdownElement && remainingElement) {
-            remainingElement.textContent = data.remaining_turns;
-            countdownElement.classList.remove('hidden');
-        }
-
-        // 更新状态显示栏
         if (statusElement && statusRemainingElement) {
             statusRemainingElement.textContent = data.remaining_turns;
             statusElement.classList.remove('hidden');
@@ -8171,14 +8185,8 @@ function setupSocketListeners() {
     // 无暇圣心回合更新监听
     socket.on('holy_heart_turn_updated', (data) => {
         console.log('无暇圣心回合更新:', data);
-        // 更新无暇圣心剩余回合
-        const remainingElement = document.getElementById('holy-heart-remaining');
-        // 更新状态显示栏
         const statusRemainingElement = document.getElementById('holy-heart-status-remaining');
 
-        if (remainingElement) {
-            remainingElement.textContent = data.remaining_turns;
-        }
         if (statusRemainingElement) {
             statusRemainingElement.textContent = data.remaining_turns;
         }
@@ -8187,14 +8195,8 @@ function setupSocketListeners() {
     // 无暇圣心中断监听
     socket.on('holy_heart_interrupted', (data) => {
         console.log('无暇圣心中断:', data);
-        // 隐藏无暇圣心倒计时
-        const countdownElement = document.getElementById('holy-heart-countdown');
-        // 隐藏状态显示栏中的无暇圣心
         const statusElement = document.getElementById('holy-heart-status');
 
-        if (countdownElement) {
-            countdownElement.classList.add('hidden');
-        }
         if (statusElement) {
             statusElement.classList.add('hidden');
         }
@@ -13784,18 +13786,66 @@ function updateFieldMagicUI(playerId, card) {
     if (card) {
         // 获取当前场地魔法的拥有者
         const owner = playerId === gameState.playerId ? '你的' : '对方的';
-        fieldElement.innerHTML = `当前生效的场地魔法：<span class="field-magic-card">${owner}${card.name}</span>`;
+        // 顶部横条要给出「卡名 / 类型 / 效果摘要 / 持续信息」，全部走真实数据：
+        //   · 卡名与归属来自 payload；
+        //   · 类型、速阶、效果描述来自卡表（lookupCard 找不到就退回 payload 本身）；
+        //   · 持续信息是场地魔法的**真实生命周期** —— 服务端 room.field_magic 只存卡牌
+        //     实例、没有"剩余回合"字段（_place_field_magic 顶替 / _clear_field_magic_effects
+        //     拆除），所以照实写「持续生效，直到被替换或拆除」，不编一个数字出来。
+        const full = (typeof lookupCard === 'function' ? lookupCard(card.name) : null) || card;
+        const summary = String(full.description || '').replace(/\s+/g, ' ').trim();
+        const speedText = (full.speed === undefined || full.speed === null)
+            ? '' : `<span class="fm-meta">速阶 ${escapeHtml(String(full.speed))}</span>`;
+        fieldElement.innerHTML =
+            `<span class="fm-label">当前生效的场地魔法：</span>`
+            + `<span class="field-magic-card fm-name">${escapeHtml(owner + card.name)}</span>`
+            + (full.type ? `<span class="fm-meta">${escapeHtml(full.type)}</span>` : '')
+            + speedText
+            + (summary ? `<span class="fm-desc">${escapeHtml(summary)}</span>` : '')
+            + `<span class="fm-duration">持续生效，直到被替换或拆除</span>`;
         fieldElement.className = `field-magic active`;
         gameState.fieldMagic = card.name;
+        // 悬停/点击预览用的完整卡面。⚠️ 挂在元素上而不是 gameState 上：
+        // gameState 有被整体重置/序列化的路径，多塞一个对象容易被顺手带走。
+        fieldElement._fieldMagicCard = {
+            name: owner + card.name,
+            type: full.type || '场地',
+            speed: full.speed,
+            description: summary || String(full.description || ''),
+        };
     } else {
-        fieldElement.innerHTML = `当前生效的场地魔法：<span class="no-magic">无</span>`;
+        fieldElement.innerHTML = `<span class="fm-label">当前生效的场地魔法：</span><span class="no-magic">暂无</span>`;
         fieldElement.className = 'field-magic';
+        fieldElement._fieldMagicCard = null;
         // 场地被拆除/顶替时必须同步清掉本地状态：此前只改文案，
         // gameState.fieldMagic 仍留着旧卡名（教皇旨意等判断会读到过期的场地）。
         gameState.fieldMagic = null;
     }
+    bindFieldMagicPreview(fieldElement);
     // 教皇旨意会改变"怎么攻击"，按钮显隐要跟着场地走
     if (typeof updatePapalDiscardButton === 'function') updatePapalDiscardButton();
+}
+
+// 场地魔法横条的「悬停轻量预览 / 点击完整详情」——复用既有的 showCardTooltip /
+// showCardDetail，不另起一套数据解析，也不新增任何状态通道。只做"看"，不改变响应行为
+// （与连锁弹窗里 :8461 那一套用法完全一致）。
+// ⚠️ 监听器只绑一次：updateFieldMagicUI 每次都重写 innerHTML，绑在子节点上会随节点一起消失；
+//    这里绑在 #current-field-magic 自己身上（它从不被替换，只有 innerHTML/className 在变）。
+function bindFieldMagicPreview(el) {
+    if (!el || el._fieldPreviewBound) return;
+    el._fieldPreviewBound = true;
+    const canHover = !window.matchMedia || window.matchMedia('(hover: hover)').matches;
+    if (canHover) {
+        el.addEventListener('mouseenter', () => {
+            if (el._fieldMagicCard) showCardTooltip(el, el._fieldMagicCard);
+        });
+        el.addEventListener('mouseleave', () => hideCardTooltip());
+    }
+    el.addEventListener('click', () => {
+        if (!el._fieldMagicCard) return;
+        hideCardTooltip();
+        showCardDetail(el._fieldMagicCard);
+    });
 }
 
 // 恶魔契约：在自己棋盘上点选要牺牲的战舰（不弹额外窗口，直接点格子）
@@ -14472,46 +14522,180 @@ function applyCardArt(el, cardName) {
     art.style.setProperty('--card-art-image', `url("/static/${rel}")`);
 }
 
-// 扇形手牌（Phase 2）：照 Balatro 的公开公式把一排卡摆成扇形。
-//   · 总张角上限 ±5.73°（≈0.1 弧度），每张步进 0.2/n 弧度；
-//   · 间距按手牌上限算、不按当前张数算 —— 抽牌/出牌时手牌不整体重排；
-//   · 只在宽屏启用：紧凑/矮屏档 CSS 已把 transform 压掉（小卡抬起会跳出可视带）。
-// 旋转量写进 CSS 变量 --fan-rot / --fan-drop，真正的 transform 在 CSS 里合成
-// （fan 旋转 ⊗ 预览缩放），这样 hover/selected 的预览位移不会被内联样式盖掉。
+// 手牌几何（第 37.7 节手牌改版）：由「实测可用宽度 × 张数」算出**唯一**的卡尺寸与重叠步进，
+// 结果写进 CSS 变量，真正的 width/height/transform 都在 CSS 里合成。
+//   · 装得下就摆到目标大卡 132×186（示意稿 c-arena 的 .hand-area）；
+//   · 装不下退到可读下限 100px（卡名两行 + 速阶宝石 + 描述仍成立）；
+//   · 再装不下就**保可读宽度、用重叠吃掉超出量**，每张至少留 44px 可点。
+//   ⇒ 任何张数都不会出现横向滚动条，也不会把牌挤出容器（首尾被裁）。
+// ⚠️ 必须是内联 CSS 变量而不是内联 width：紧凑/矮屏档的既有规则要能照常接管。
+const HAND_CARD_W_MAX = 132;          // 目标卡宽（c-arena 大卡）
+const HAND_CARD_W_MIN = 100;          // 可读下限：再窄卡名/速阶就要被邻牌压住看不全
+const HAND_CARD_H = 186;              // 目标卡高（c-arena 132×186 的高）
+const HAND_CARD_H_MIN = 136;          // 不低于改版前的卡高
+const HAND_TAP_MIN = 44;              // 未选中时每张牌至少要留出的可点宽度
+// 选中某张牌时，它的邻居要跟「选中牌那一对加宽」抢同一份预算（列宽没变），
+// 1280 打 8 张时物理上顶不到 44 ⇒ 这一档的下限放到 40（项目里 MIN_TAP_TIGHT=36 的口径），
+// 且**只在有牌被选中的那一帧**成立；未选中态仍按 44 断言。
+const HAND_TAP_SEL_MIN = 40;
+const HAND_GAP = 10;                  // 不重叠时的卡间距
+// 留给扇形旋转外摆的安全边距：132×186 的卡转 ±4° 时横向 bbox 会宽出 ~12px，
+// 不预留就会越过网格列边界压到旁边的舰队/操作列上。
+const HAND_SAFE = 20;
 const HAND_FAN_MAX_RAD = 0.1;         // 总张角上限（弧度）≈ ±5.73°
-const HAND_LIMIT_FOR_SPACING = 8;     // 手牌上限：间距按它算，不按当前张数
-function applyHandFan(handElement, count) {
+const HAND_DESC_LINE_PX = 0.62 * 16 * 1.35;  // .card-desc 的行高（font-size × line-height）
+function layoutHand(handElement, count) {
     if (!handElement) return;
     const compact = document.body.classList.contains('layout-compact')
         || document.body.classList.contains('layout-dense')
         || document.body.classList.contains('layout-tight');
-    handElement.classList.toggle('fan', !compact && count > 1);
     const cards = handElement.children;
     const n = cards.length;
+    const clearInline = () => {
+        handElement.style.removeProperty('--hand-card-w');
+        handElement.style.removeProperty('--hand-card-h');
+        handElement.style.removeProperty('--hand-desc-lines');
+        for (let i = 0; i < n; i++) {
+            cards[i].style.removeProperty('--fan-rot');
+            cards[i].style.removeProperty('--fan-drop');
+            cards[i].style.marginLeft = '';
+        }
+    };
+    if (compact || n === 0) {
+        // 紧凑/矮屏档由 CSS 的固定小卡接管（64×92 / 46×62 等），这里一律不插手
+        handElement.classList.remove('fan');
+        clearInline();
+        return;
+    }
+
+    // 可用宽 = 手牌所在的网格列宽（#magic-system 的宽）。
+    // ⚠️ 不能问 .magic-hand 自己：它是 fit-content，问它会拿到上一轮的答案。
+    const box = document.getElementById('magic-system');
+    const measuredWidth = box ? box.getBoundingClientRect().width : handElement.getBoundingClientRect().width;
+    // 新回合切换时，游戏网格可能会先经历一帧 display/grid 重新计算。
+    // 这时读到的 0 宽不是实际可用空间；若继续计算会把 w 压成 24px，
+    // 于是整组手牌变成截图里的竖条。保留 CSS 的安全默认尺寸，等容器稳定后再重排。
+    if (!Number.isFinite(measuredWidth) || measuredWidth < HAND_CARD_W_MIN + HAND_SAFE) {
+        handElement.classList.remove('fan', 'hand-tight');
+        clearInline();
+        if (_handInvalidLayoutRetries < 4) {
+            _handInvalidLayoutRetries += 1;
+            scheduleHandRelayout();
+        }
+        return;
+    }
+    _handInvalidLayoutRetries = 0;
+    const avail = Math.max(0, measuredWidth - HAND_SAFE);
+
+    let w = Math.min(HAND_CARD_W_MAX, (avail - HAND_GAP * (n - 1)) / n);
+    let step;
+    if (w >= HAND_CARD_W_MIN) {
+        step = w + HAND_GAP;                       // 装得下：不重叠
+    } else {
+        w = HAND_CARD_W_MIN;                       // 保可读宽度，超出量交给重叠
+        step = (n > 1) ? (avail - w) / (n - 1) : w;
+        if (step < HAND_TAP_MIN) {
+            step = HAND_TAP_MIN;                   // 张数极多时先保可点，再让宽度退让
+            w = Math.min(HAND_CARD_W_MIN, avail - step * (n - 1));
+        }
+    }
+    w = Math.floor(Math.max(24, w));
+    step = Math.floor(step);
+    const overlapping = step < w + HAND_GAP - 1;
+    // 卡高不跟卡宽走：竖向上方到第 4 行轨道顶还有 ~70px 余量（改版前白白空着），
+    // 而底排 4~6 行的高由操作列（#turn-indicator 184px）撑住、与本块无关，
+    // 所以把 186 拿满**不会**挤压棋盘 —— 实测各视口 boardRect/单格尺寸均不变。
+    const h = Math.max(HAND_CARD_H_MIN, HAND_CARD_H);
+    // pitch[i] = 第 i 张到第 i+1 张的左边缘距离，也就是**第 i 张露出来的那一条**。
+    // 默认全相等；有牌被选中时要把「选中牌 + 它右邻居」这一对加宽 ——
+    // 选中牌会盖住右邻居左侧一截，只按均分算的话那张牌会整条被吃掉（实测 8 张时可点宽 0）。
+    //
+    // 前提是重叠档的选中牌**不再横向放大**（见 style.css 的 .hand-tight 规则）：
+    // 放大 1.09 会让选中牌向两侧各多压 ~5px，右邻居那一条就再也凑不够 44px。
+    // 重叠档的选中反馈改为「抬起 + 琥珀描边 + 置顶」——不放大就够用，也更省空间。
+    const pitches = new Array(Math.max(0, n - 1)).fill(step);
+    const selIndex = Array.prototype.findIndex.call(cards, (el) => el.classList.contains('selected'));
+    if (overlapping && selIndex >= 0 && selIndex <= n - 2) {
+        const need = w + HAND_TAP_MIN;                 // 这一对合计要占的宽度
+        const restCount = n - 3;                       // 除这一对以外还剩几个 pitch
+        let other = restCount > 0 ? (avail - w - need) / restCount : 0;
+        if (restCount === 0 || other < HAND_TAP_SEL_MIN) {
+            other = HAND_TAP_SEL_MIN;
+            // 预算不够就让宽度退让：这里「每张都点得到」优先于「卡够宽」
+            const shrunk = Math.floor(avail - need - restCount * HAND_TAP_SEL_MIN);
+            if (shrunk >= 24 && shrunk < w) w = shrunk;
+        }
+        const half = Math.floor(need / 2);
+        for (let i = 0; i < pitches.length; i++) pitches[i] = Math.floor(other);
+        pitches[selIndex] = half;
+        pitches[selIndex + 1] = Math.max(HAND_TAP_MIN, need - half);
+    }
+    // 兜底：任何情况下总宽都不许超过可用宽（宁可靠紧也不许溢出/出列）
+    let total = w;
+    for (let i = 0; i < pitches.length; i++) total += pitches[i];
+    if (total > avail && pitches.length) {
+        const k = (avail - w) / (total - w);
+        for (let i = 0; i < pitches.length; i++) pitches[i] = Math.floor(pitches[i] * k);
+    }
+
+    handElement.style.setProperty('--hand-card-w', `${w}px`);
+    handElement.style.setProperty('--hand-card-h', `${h}px`);
+    // 描述框行数 = 卡高扣掉卡名区与速阶/类型条之后还能放几行（clamp 与 max-height 同源）
+    handElement.style.setProperty('--hand-desc-lines',
+        String(Math.max(3, Math.min(7, Math.floor((h - 72) / HAND_DESC_LINE_PX)))));
+    handElement.classList.toggle('fan', n > 1);
+    // 重叠档：选中/悬停都不许横向放大（会压掉邻居露出来的那一条），见上面的 pitches 注释
+    handElement.classList.toggle('hand-tight', overlapping);
+
+    const mid = (n - 1) / 2;
     for (let i = 0; i < n; i++) {
         const el = cards[i];
-        if (compact || n <= 1) {
+        // pitch[i-1] 是第 i 张相对前一张的左边缘位移 → 转成 margin：
+        // 位移比卡宽小就是负 margin（吃掉重叠量），比卡宽大就是正 margin（留缝）
+        el.style.marginLeft = (i === 0) ? '' : `${pitches[i - 1] - w}px`;
+        // 弧顶比两侧略高：两侧下沉一个随离心距离增大的量（最多 4~6px）
+        const norm = mid > 0 ? Math.abs(i - mid) / mid : 0;
+        el.style.setProperty('--fan-drop', `${Math.round(norm * (overlapping ? 4 : 6))}px`);
+        if (overlapping || n <= 1) {
+            // 重叠排布不再旋转：转到一半的牌会斜着压住邻居，反而看不清卡名，
+            // 而且旋转外摆会吃掉可用宽度（留 HAND_SAFE 就是为它）。
             el.style.removeProperty('--fan-rot');
-            el.style.removeProperty('--fan-drop');
-            el.style.marginLeft = '';
-            continue;
+        } else {
+            const spread = Math.min(0.2 / Math.max(n, 1), HAND_FAN_MAX_RAD * 2 / Math.max(n - 1, 1));
+            el.style.setProperty('--fan-rot', `${(i - mid) * spread}rad`);
         }
-        // 居中为 0，向两边对称展开；step = 0.2/n（弧度），整体再限到 ±MAX
-        const step = Math.min(0.2 / Math.max(n, 1), HAND_FAN_MAX_RAD * 2 / Math.max(n - 1, 1));
-        const angle = (i - (n - 1) / 2) * step;
-        // 弧顶比两侧略高：两侧下沉一个随角度增大而增大的量
-        const drop = Math.abs(angle) / HAND_FAN_MAX_RAD * 6;  // 最多下沉 6px
-        el.style.setProperty('--fan-rot', `${angle}rad`);
-        el.style.setProperty('--fan-drop', `${drop}px`);
-        // 重叠量按手牌上限算：张数越多负间距越大，但只对 2 张起生效
-        const overlap = n > 3 ? -Math.min(46, (n - 3) * 9) : 6;
-        el.style.marginLeft = (i === 0) ? '' : `${overlap}px`;
     }
 }
+
+// 窗口尺寸变了要重算几何（张数没变但列宽变了）。
+// 双 rAF：adaptive_layout.js 的 schedule() 也是 rAF，等它把 layout-compact 之类切换完再量。
+let _handRelayoutRaf = 0;
+let _handInvalidLayoutRetries = 0;
+let _handLayoutObserver = null;
+function ensureHandLayoutObserver() {
+    if (_handLayoutObserver || !window.ResizeObserver) return;
+    const box = document.getElementById('magic-system');
+    if (!box) return;
+    _handLayoutObserver = new ResizeObserver(() => scheduleHandRelayout());
+    _handLayoutObserver.observe(box);
+}
+function scheduleHandRelayout() {
+    if (_handRelayoutRaf) cancelAnimationFrame(_handRelayoutRaf);
+    _handRelayoutRaf = requestAnimationFrame(() => {
+        _handRelayoutRaf = requestAnimationFrame(() => {
+            _handRelayoutRaf = 0;
+            const hand = document.getElementById('magic-hand');
+            if (hand) layoutHand(hand, hand.children.length);
+        });
+    });
+}
+window.addEventListener('resize', scheduleHandRelayout);
+window.addEventListener('orientationchange', scheduleHandRelayout);
 
 function updateHandUI() {
     const handElement = document.getElementById('magic-hand');
     if (!handElement) return;
+    ensureHandLayoutObserver();
 
     // hand 被写坏时不要让它继续坏下去：先纠正成空数组再要一份权威数据。
     // （这里必须在清空 DOM 之前处理 —— 以前是清空之后才遍历，一抛异常就是整块空白。）
@@ -14575,6 +14759,15 @@ function updateHandUI() {
         `;
         applyCardArt(cardElement, card.name);
 
+        // 键盘可达（第 37.7 节手牌）：Tab 进得来，Enter/Space 与点击完全同义
+        //（直接转 click，选卡/用牌与被挡原因都只有一份实现）。
+        cardElement.tabIndex = 0;
+        cardElement.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            e.preventDefault();
+            cardElement.click();
+        });
+
         // 添加点击事件，实现点击选择/使用功能
         cardElement.addEventListener('click', () => {
             // ★ 被更高优先级选船效果挡住时，直接给出原因并中止
@@ -14602,8 +14795,23 @@ function updateHandUI() {
         rendered += 1;
     });
 
+    // 键盘焦点会随旧节点一起被换掉 —— 先记下下标，重建后放回同一张（否则按一次 Enter
+    // 焦点就掉回 body，键盘玩家得从头 Tab 一遍）。
+    const refocusIndex = (() => {
+        const ae = document.activeElement;
+        if (!ae || !ae.classList || !ae.classList.contains('magic-card')) return -1;
+        if (!handElement.contains(ae)) return -1;
+        const idx = parseInt(ae.dataset.index, 10);
+        return Number.isFinite(idx) ? idx : -1;
+    })();
+
     handElement.replaceChildren(frag);
-    applyHandFan(handElement, rendered);
+    layoutHand(handElement, rendered);
+    // updateHandUI 可能发生在新回合网格切换的同一帧；再排一次确保使用稳定列宽。
+    scheduleHandRelayout();
+    if (refocusIndex >= 0 && handElement.children[refocusIndex]) {
+        handElement.children[refocusIndex].focus({ preventScroll: true });
+    }
 
     if (rendered !== gameState.hand.length) {
         // 渲染出来的张数和状态里的不一致 —— 状态被污染了，要一份权威数据纠正
@@ -14761,6 +14969,71 @@ function initEffectStatusBarSync() {
         items.forEach((el) => observer.observe(el, { attributes: true, attributeFilter: ['class'] }));
     }
     sync();
+}
+
+// 长久效果胶囊（极限增援 / 无暇圣心）的悬停 / 点击 / 键盘绑定。
+// ⚠️ 不新增第二套效果数据真源：
+//    · 卡面说明走 `lookupCard(name)` —— 与图鉴 / 卡牌详情窗同一份卡表；
+//    · 剩余回合读胶囊里那个真实 span —— 与服务端事件写的是同一个节点。
+// ⚠️ `#reinforcement-countdown` / `#holy-heart-countdown` 两条大横幅的 DOM 已删除，
+//    详情改由复用的浮层（悬停）与详情窗（点击）承载，见 showCardTooltip /
+//    showCardDetail。这里只负责把它们接到胶囊上。
+const EFFECT_PILL_CARD_NAMES = {
+    'reinforcement-status': '极限增援',
+    'holy-heart-status': '无暇圣心',
+};
+
+// 详情浮层绝不能压住的区域 = 顶部状态条（`.arena-oppbar-bg` 是它横跨三列的那块底）。
+// 三区档里胶囊排在它下面一行，浮层选「向下」天然不冲突；若换到别处让胶囊落到上方，
+// placeCardTooltip 会自动改选侧边展开。取不到就当没有约束（老行为）。
+function effectDetailAvoidRect() {
+    const bg = document.querySelector('.arena-oppbar-bg');
+    return bg ? bg.getBoundingClientRect() : null;
+}
+
+function bindEffectStatusPills() {
+    const bar = document.getElementById('effect-status-bar');
+    if (!bar || bar.dataset.pillsBound === '1') return;
+    bar.dataset.pillsBound = '1';
+
+    bar.querySelectorAll('.status-item').forEach((el) => {
+        const cardName = EFFECT_PILL_CARD_NAMES[el.id];
+        if (!cardName) return;
+
+        const getCard = () => (typeof lookupCard === 'function' ? lookupCard(cardName) : null);
+        const remainingLine = () => {
+            const span = el.querySelector('[id$="-status-remaining"]');
+            return span ? `剩余 ${span.textContent} 回合` : '';
+        };
+        const showTip = () => {
+            const card = getCard();
+            if (card) {
+                showCardTooltip(el, card, {
+                    avoidRect: effectDetailAvoidRect(),
+                    extraLine: remainingLine(),
+                });
+            }
+        };
+        const openDetail = () => {
+            const card = getCard();
+            hideCardTooltip();
+            if (card) showCardDetail(card, { extraLine: remainingLine() });
+        };
+
+        // 桌面：悬停出轻量详情；触屏没有 hover，点一下直接开完整详情。
+        el.addEventListener('mouseenter', showTip);
+        el.addEventListener('mouseleave', hideCardTooltip);
+        // 键盘：胶囊是 tabindex=0 + role=button，聚焦出详情、回车/空格开窗。
+        el.addEventListener('focus', showTip);
+        el.addEventListener('blur', hideCardTooltip);
+        el.addEventListener('click', openDetail);
+        el.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+                e.preventDefault();
+                openDetail();
+            }
+        });
+    });
 }
 
 // ==================== 对局屏三区（示意稿 C）的 HUD 数字 ====================
@@ -15063,6 +15336,7 @@ function init() {
     bindEventListeners();
     // 状态显示栏容器显隐（避免出现空横条）
     initEffectStatusBarSync();
+    bindEffectStatusPills();
     // 对局屏三区的 HUD 数字（剩余舰 pips + 计数面板；第 37 节）
     initArenaRail();
     // 效果角标的事件委托（桌面 hover / 手机点击）。角标会被反复重绘，

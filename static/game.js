@@ -13797,12 +13797,14 @@ function updateFieldMagicUI(playerId, card) {
         const speedText = (full.speed === undefined || full.speed === null)
             ? '' : `<span class="fm-meta">速阶 ${escapeHtml(String(full.speed))}</span>`;
         fieldElement.innerHTML =
-            `<span class="fm-label">当前生效的场地魔法：</span>`
+            `<span class="fm-art" aria-hidden="true">✦</span>`
+            + `<span class="fm-content">`
+            + `<span class="fm-kicker"><span class="fm-label">当前生效的场地魔法：</span><span class="fm-state">生效中</span>`
+            + (full.type ? `<span class="fm-meta">${escapeHtml(full.type)}</span>` : '') + speedText + `</span>`
             + `<span class="field-magic-card fm-name">${escapeHtml(owner + card.name)}</span>`
-            + (full.type ? `<span class="fm-meta">${escapeHtml(full.type)}</span>` : '')
-            + speedText
             + (summary ? `<span class="fm-desc">${escapeHtml(summary)}</span>` : '')
-            + `<span class="fm-duration">持续生效，直到被替换或拆除</span>`;
+            + `</span><span class="fm-aside"><span class="fm-duration">持续生效，直到被替换或拆除</span>`
+            + `<span class="fm-details">查看详情 ›</span></span>`;
         fieldElement.className = `field-magic active`;
         gameState.fieldMagic = card.name;
         // 悬停/点击预览用的完整卡面。⚠️ 挂在元素上而不是 gameState 上：

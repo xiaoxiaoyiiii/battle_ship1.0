@@ -352,8 +352,10 @@ phase:                        preparation → battle → end
 7. **含 `position:fixed` 后代的元素不能加 `transform`/`filter`/`backdrop-filter`**
    （`.game-container`/`.game-content`/`.game-main-container`/`.screen`），否则浮窗会改以它为基准定位。
 8. **跑 e2e / 工具要隔离数据库**：`BATTLESHIP_DB_PATH=.tmp/xxx.db`，别往正式库写测试数据。
-9. **本机连 GitHub/PyPI 时通时断**：`bash tools/relay.sh …` 走云服务器中转；日常发布用
-   `bash push.sh`（服务器当 GitHub 出入口）+ `bash deploy.sh`（拉代码 + 重启 + 健康检查）。
+9. **功能分支走 PR，发布另行执行**：在独立 worktree 的 `feature/<任务名>` 分支开发，
+   用 `git push -u origin <分支>` 推送并开 draft PR；`push.sh` 固定推 `main`，不能用于功能分支。
+   合并与部署分别等用户指令。`main` 发布才用 `bash push.sh` + `bash deploy.sh`；本机连
+   GitHub/PyPI 不通时可用 `bash tools/relay.sh …` 走云服务器中转。
    本机与远端 SHA 会不一致（服务器重新 apply 补丁）→ **用 `git rev-parse HEAD^{tree}` 对比内容**；
    若分叉先 `git fetch server main:refs/remotes/server/main --force` 再 `git rebase server/main`。
 10. **提交 / 推送说明只写"改了什么"**：一句话，**不写**根因分析、排查过程、验证清单、改了哪些文件，

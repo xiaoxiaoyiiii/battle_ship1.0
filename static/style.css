@@ -1819,6 +1819,25 @@ input:focus, select:focus, textarea:focus {
     color: var(--primary);
     text-align: center;
 }
+/* 选中卡采用「卡名 → 卡面缩略图 → 可读规则」三段式。完整卡面仅作插图，
+   规则仍从卡表文字渲染，长效果由原浮窗滚动承载。 */
+#magic-card-preview[data-empty="false"] .preview-content > .card-name { display: none; }
+#magic-card-preview[data-empty="false"] .preview-card-face {
+    display: block;
+    width: min(100%, 156px);
+    margin: 0 auto 12px;
+}
+#magic-card-preview[data-empty="false"] .magic-card.preview-face-card {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 2 / 3;
+    cursor: default;
+}
+#magic-card-preview[data-empty="false"] .preview-header h3 { overflow-wrap: anywhere; }
+#magic-card-preview[data-empty="true"] .preview-card-face { display: none; }
+body.layout-ingame:not(.layout-compact) #magic-card-preview[data-empty="false"] {
+    max-height: min(580px, calc(100vh - 332px));
+}
 
 /* ---------- 9. 浮窗：局内聊天 ---------- */
 .in-game-chat-container {
@@ -1998,6 +2017,19 @@ html.theme-dark .board {
     border-radius: var(--fluent-radius-full);
     background: var(--alpha-primary-12);
     color: var(--primary);
+}
+/* 完整卡面图片只盖住总览卡片，使用次数仍悬浮在卡面外层。 */
+#help-magic-cards .magic-card-help .magic-card.has-card-face .card-typebar {
+    z-index: 3;
+    visibility: visible;
+    background: none;
+    border: 0;
+    justify-content: flex-end;
+}
+#help-magic-cards .magic-card-help .magic-card.has-card-face .card-speed { display: none; }
+#help-magic-cards .magic-card-help .magic-card.has-card-face .compendium-uses {
+    background: var(--panel);
+    color: var(--text);
 }
 .compendium-meta {
     color: var(--muted);
@@ -2586,6 +2618,25 @@ body.layout-tight.layout-ingame .quick-chat-toast {
     background-repeat: no-repeat, no-repeat, no-repeat;
     pointer-events: none;
 }
+/* 完整卡面包含自带文字，加载成功后遮住旧的 DOM 卡面；加载失败则自动退回旧卡。 */
+.magic-card > .card-face-image,
+.discard-pile-card > .card-face-image {
+    display: block;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    z-index: 2;
+    pointer-events: none;
+    opacity: 0;
+}
+.magic-card.has-card-face > .card-face-image,
+.discard-pile-card.has-card-face > .card-face-image { opacity: 1; }
+.magic-card.has-card-face > .card-nameplate,
+.magic-card.has-card-face > .card-desc,
+.magic-card.has-card-face > .card-typebar,
+.discard-pile-card.has-card-face > :not(.card-face-image) { visibility: hidden; }
 /* 名牌：**不用 flex** —— 卡名要独占整行才有稳定的两行折行高度；
    速阶宝石绝对定位在右上角，不参与卡名的宽度竞争（实测：flex 行里长卡名
    被宝石挤到只剩一行高，scrollHeight−clientHeight = 29px，名字被裁）。 */
@@ -2722,7 +2773,8 @@ body.layout-ingame .magic-card.chain-stack-card .card-speed,
 body.layout-ingame .magic-card.chain-stack-card .card-type { font-size: 0.52rem; }
 /* 是谁出的：一条角标（我方金 / 对手红） */
 .chain-card-who {
-    position: absolute; left: 3px; top: 3px; z-index: 2;
+    position: absolute; left: 50%; top: 34px; z-index: 3;
+    transform: translateX(-50%);
     font-size: 0.5rem; line-height: 1.4; padding: 0 4px;
     border-radius: var(--fluent-radius-full);
     background: var(--fluent-scrim-55); color: var(--fluent-light-95);
@@ -2736,10 +2788,8 @@ body.layout-ingame .magic-card.chain-mine .chain-card-who {
 /* 10 秒响应窗里的卡列表用同一套真卡（容器类 .chain-stack 由 JS 一并加上，
    见 updateChainUI —— 不再为 #chain-cards-list 单独起选择器，省 dupSel 预算） */
 
-/* 大卡面（Phase 5.3）：手机档手牌只有 64×92，中文效果文字读不了 —— 选中后在抽屉里
-   给一张 200×280 的真卡（200/280 = 0.714，与实体 TCG 同比例，MTG 资产 744×1040 交叉验证）。
-   宽屏不显示：那里手牌 118px + 右侧说明窗已经够读，且宽屏的预览框只有 288px 宽、
-   再塞 200×280 会把「预览与聊天不重叠」那条断言顶破。 */
+/* 旧卡面分区保留作图片失败时的后备。紧凑档原本在这里展示 200×280 的文字卡；
+   选中卡后的完整图片与宽屏尺寸由上方「卡名 → 缩略图 → 规则」规则控制。 */
 .preview-card-face { display: none; }
 /* ⚠️ 三个选择器写在**同一条规则**里（不要拆成两条 —— 拆开就成了「同选择器重复定义」，
    AC6 的 dupSel 预算顶格）。横向窄的档（横屏 664×336 的槽只有 ~186px）由 max-width 兜底。 */
@@ -3432,6 +3482,27 @@ body.cool-effects-enabled .cell.cool-flash {
     color: var(--primary);
 }
 html.theme-dark .chain-request-panel { border-color: var(--alpha-primary-50); }
+.chain-request-prompt.is-collapsed { display: none; }
+.chain-request-actions { gap: 8px; flex-wrap: wrap; }
+.chain-request-collapse { min-width: 0; }
+.chain-request-reopen {
+    position: fixed;
+    top: 136px;
+    left: calc(50% + 100px);
+    z-index: 2147483647;
+    padding: 10px 16px;
+    border: 1px solid var(--primary);
+    border-radius: var(--fluent-radius-control);
+    background: var(--surface-strong);
+    color: var(--text);
+    box-shadow: var(--fluent-elev-8);
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+}
+.chain-request-reopen:hover,
+.chain-request-reopen:focus-visible { border-color: var(--accent); background: var(--alpha-primary-16); }
+.chain-request-reopen-time { color: var(--primary); }
 
 /* 卡牌信息：卡名 / 速阶占一行，描述摘要单独一行（桌面不悬停也看得到大意） */
 .chain-request-card { flex-direction: column; align-items: flex-start; }
@@ -3878,6 +3949,7 @@ html.theme-dark .priority-hint { color: var(--deco-priority-hint-dark); }
     border-radius: 8px;
 }
 .discard-pile-card {
+    position: relative;
     background: var(--surface-strong);
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -3891,6 +3963,13 @@ html.theme-dark .priority-hint { color: var(--deco-priority-hint-dark); }
     border-color: var(--primary);
     transform: translateY(-2px);
     box-shadow: 0 4px 8px var(--fluent-scrim-15);
+}
+.discard-pile-card.has-card-face {
+    position: relative;
+    aspect-ratio: 2 / 3;
+    min-height: 0;
+    padding: 0;
+    overflow: hidden;
 }
 .discard-pile-card-name { font-weight: bold; font-size: 1rem; margin-bottom: 5px; color: var(--text); }
 .discard-pile-card-type { font-size: 0.85rem; opacity: 0.8; margin-bottom: 5px; color: var(--secondary); }
@@ -8784,12 +8863,23 @@ body:has(#start-screen.active) {
     background: var(--arena-card-grad);
 }
 .hcard .ha {
-    height: 54px;
+    position: relative;
+    aspect-ratio: 2 / 3;
     display: grid;
     place-items: center;
     font-size: 1.2rem;
     background: var(--arena-card-art);
+    overflow: hidden;
 }
+.hcard .ha > .card-face-image {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0;
+}
+.hcard .ha.has-card-face > .card-face-image { opacity: 1; }
 .hcard .hn {
     padding: 6px 4px 3px;
     font-size: 0.72rem;
@@ -9783,16 +9873,16 @@ html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .cha
    在 1440×900 下三张完整放进轨道，低视口时轨道仍可滚动。 */
 html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .magic-card.chain-stack-card {
     width: 104px;
-    height: 144px;
+    height: 156px;
 }
 html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .chain-stack-card .card-nameplate {
     margin-top: 18px;
 }
-/* 竖排的叠压：压 6px，保留每张卡的卡名与类型条，
+/* 竖排的叠压：每张压住下一张约三分之一，留出画面与身份角标，
    并把第 16 节那套"往右上错开"的位移收掉（那是行排的错位方式，竖排会歪出去）。 */
 html[data-theme-preset="arena"] body:not(.layout-compact) #arena-chain-slot .magic-card.chain-stack-card + .magic-card.chain-stack-card {
     margin-left: 0;
-    margin-top: -6px;
+    margin-top: -52px;
     transform: none;
 }
 /* 卡变大后，第 16 节为 40px 卡写的小字号跟着放大（"谁出的"角标 / 卡名 / 类型条） */
@@ -10098,6 +10188,10 @@ html[data-theme-preset="arena"] body:not(.layout-compact) #magic-system .magic-h
     width: var(--hand-card-w, 100px);
     height: var(--hand-card-h, 136px);
     flex: 0 0 auto;             /* 宽度由 JS 按可用空间定，不许 flex 再压 */
+}
+/* 完整卡面已有边框和文字；手牌沿用原可点尺寸，把图铺满以免窄卡出现大空框。 */
+html[data-theme-preset="arena"] body:not(.layout-compact) #magic-system .magic-hand .magic-card.has-card-face > .card-face-image {
+    object-fit: fill;
 }
 /* 描述框行数随卡高走：max-height 与 -webkit-line-clamp 必须同一倍数，
    否则盒底落在行中间、最后一行被拦腰切断（见 .card-desc 原有注释）。 */

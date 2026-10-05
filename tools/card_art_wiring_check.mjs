@@ -5,7 +5,7 @@
  * 计划里 Phase 7 依赖出图，但「接线」本身可以先用占位验证：
  *   ① window.CARD_ART_MAP 覆盖卡表里**每一张**唯一卡（漏一张就是漏一张底图）
  *   ② 每条路径形如 cards/<slug>.webp（与提示词文件 spec.outputDir 的约定一致）
- *   ③ 手牌 / 连锁 / 大卡面三处渲染出来的卡，都真的把 --card-art-image 写上了
+ *   ③ 手牌、连锁与选中卡预览使用完整卡面
  *   ④ **出图前不破图**：文件不存在时计算样式里仍是「url + 两层渐变占位」，
  *      即真图只是最上面一层、拿不到就落回占位（不需要存在性探测）
  *   ⑤ 美术层不许承担文字与交互：.card-art 必须 aria-hidden + pointer-events:none
@@ -95,6 +95,7 @@ const r = await ev(`(function(){
       ariaHidden: art.getAttribute('aria-hidden'),
       pointerEvents: cs.pointerEvents,
       bgSize: cs.backgroundSize,
+      fullFace: !!el.querySelector('.card-face-image[src^="/static/card_faces/"]'),
     };
   }
   return {
@@ -115,6 +116,12 @@ check(r.mapCount === uniqueNames.length,
 for (const [key, label] of [['hand', '③ 手牌'], ['chain', '③ 连锁叠牌'], ['face', '③ 大卡面']]) {
   const p = r[key];
   if (key === 'face' && !r.faceExists) { check(false, label + '：卡面元素存在', p); continue; }
+  if (key === 'hand' || key === 'chain' || key === 'face') {
+    check(!!p && p.fullFace === true, label + '：使用完整卡面图片', p && p.fullFace);
+    check(!!p && p.ariaHidden === 'true' && p.pointerEvents === 'none',
+      label + '：原有底图为无交互后备', p && { ariaHidden: p.ariaHidden, pointerEvents: p.pointerEvents });
+    continue;
+  }
   check(!!p && /url\("\/static\/cards\//.test(p.varSet), label + '：写上了 --card-art-image（指向 static/cards/）', p && p.varSet);
   check(!!p && p.hasUrl === true, label + '：真图层已进入 background-image', p && p.layers);
   check(!!p && p.hasGradient === true,

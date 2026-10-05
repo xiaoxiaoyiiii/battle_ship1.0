@@ -31,12 +31,27 @@ const ev = async (e) => { const r = await send('Runtime.evaluate', { expression:
 await send('Runtime.enable');
 for (let i = 0; i < 40; i++) { if (await ev('typeof window.gameState==="object"')) break; await sleep(250); }
 
-const r = await ev(`(function(){
+await ev('renderHomeHotCards({ usage: { "失灵！": 3, "轰炸": 2 } })');
+await sleep(700);
+const homeFaces = await ev(`(function(){
+  var cards = [].slice.call(document.querySelectorAll('#home-hot-cards .hcard'));
+  return { count: cards.length, ready: cards.filter(function(c){
+    var image = c.querySelector('.ha .card-face-image');
+    return image && image.naturalWidth > 0 && image.parentElement.classList.contains('has-card-face');
+  }).length, names: cards.map(function(c){ return c.querySelector('.hn')?.textContent; }) };
+})()`);
+check(homeFaces.count === 5 && homeFaces.ready === 5, '★ 首页热门卡五张都显示完整卡面缩略图', homeFaces);
+
+await ev(`(function(){
   var btn = document.getElementById('help-btn') || document.querySelector('[id$="help-btn"]');
   if (btn) btn.click();
   var modal = document.getElementById('help-modal');
   if (modal) modal.classList.remove('hidden');
   if (typeof renderCardCompendium === 'function') renderCardCompendium();
+})()`);
+await sleep(600);
+const r = await ev(`(function(){
+  var modal = document.getElementById('help-modal');
   var items = [].slice.call(document.querySelectorAll('#help-magic-cards .magic-card-help'));
   if (!items.length) return { none: true };
   var out = [];
@@ -45,7 +60,7 @@ const r = await ev(`(function(){
     if (!c) { out.push({ noCard: true, name: it.getAttribute('data-card-name') }); return; }
     var q = c.getBoundingClientRect();
     var desc = c.querySelector('.card-desc');
-    var art = c.querySelector('.card-art');
+    var image = c.querySelector('.card-face-image');
     out.push({
       name: it.getAttribute('data-card-name'),
       hasAttrs: !!(it.getAttribute('data-card-speed') && it.getAttribute('data-card-type') && it.hasAttribute('data-card-uses')),
@@ -53,8 +68,8 @@ const r = await ev(`(function(){
       ratio: +(q.width / q.height).toFixed(3),
       zones: !!c.querySelector('.card-nameplate') && !!c.querySelector('.card-typebar') && !!desc,
       descClamp: desc ? getComputedStyle(desc).webkitLineClamp : null,
-      artVar: art ? art.style.getPropertyValue('--card-art-image').trim() : null,
-      artLayers: art ? (getComputedStyle(art).backgroundImage.match(/url\\(|gradient\\(/g) || []).length : null,
+      faceReady: !!(image && image.naturalWidth > 0 && c.classList.contains('has-card-face')),
+      faceSrc: image ? new URL(image.src).pathname : null,
     });
   });
   var usesBadge = document.querySelector('#help-magic-cards .compendium-uses');
@@ -80,10 +95,86 @@ check((r.sample || []).every((x) => Math.abs(x.ratio - 0.715) < 0.02), '★ 卡�
   (r.sample || []).map((x) => x.ratio));
 check((r.sample || []).every((x) => x.descClamp && x.descClamp !== 'none'), '★ 说明框按多行截断（图鉴要尽量读全 → 9 行）',
   (r.sample || []).map((x) => x.descClamp));
-check((r.sample || []).every((x) => x.artVar && x.artVar.indexOf('cards/') >= 0), '★ Phase 7 底图已接（图鉴也是出图的落位之一）',
-  (r.sample || []).map((x) => x.artVar));
-check((r.sample || []).every((x) => x.artLayers >= 3), '★ 底图 = 真图层 + 渐变占位（未出图也不破图）',
-  (r.sample || []).map((x) => x.artLayers));
+check((r.sample || []).every((x) => x.faceReady && x.faceSrc?.startsWith('/static/card_faces/')),
+  '★ 图鉴显示已加载的完整卡面，旧 DOM 文字仍作后备', (r.sample || []).map((x) => x.faceSrc));
+await ev(`(function(){
+  document.querySelector('#help-magic-cards .magic-card-help[data-card-name="失灵！"]')?.click();
+})()`);
+await sleep(600);
+const detail = await ev(`(function(){
+  var card = document.querySelector('#codex-detail .ax-detail-card .magic-card');
+  var image = card && card.querySelector('.card-face-image');
+  return { ready: !!(card && card.classList.contains('has-card-face') && image && image.naturalWidth > 0),
+    rules: !!document.querySelector('#codex-detail .ax-detail-text'),
+    image: !!image, naturalWidth: image?.naturalWidth, active: card?.className };
+})()`);
+check(detail.ready && detail.rules, '★ 图鉴右侧详情显示完整卡面，规则原文仍可读', detail);
+
+// 同一张牌在手牌和弃牌堆也要真正加载；其它界面仍沿用原卡面结构。
+await ev(`(function(){
+  var card = { name:'失灵！', speed:3, type:'普通', description:'无效化上一张魔法卡。' };
+  document.getElementById('help-modal')?.classList.add('hidden');
+  document.querySelectorAll('.screen').forEach(function(s){ s.classList.remove('active'); });
+  document.getElementById('game-screen')?.classList.add('active');
+  document.body.classList.add('layout-ingame');
+  gameState.hand = [card];
+  gameState.selectedCardIndex = -1;
+  updateHandUI();
+  document.getElementById('discard-pile-modal')?.classList.remove('hidden');
+  displayDiscardPile([card]);
+})()`);
+await sleep(800);
+const surfaces = await ev(`(function(){
+  function ready(sel) {
+    var el = document.querySelector(sel);
+    var img = el && el.querySelector('.card-face-image');
+    return !!(el && el.classList.contains('has-card-face') && img && img.naturalWidth > 0);
+  }
+  return {
+    hand: ready('#magic-hand .magic-card'),
+    discard: ready('#discard-pile-cards .discard-pile-card'),
+    handText: !!document.querySelector('#magic-hand .card-desc'),
+    discardText: !!document.querySelector('#discard-pile-cards .discard-pile-card-desc'),
+  };
+})()`);
+check(surfaces.hand && surfaces.discard && surfaces.handText && surfaces.discardText,
+  '★ 手牌与弃牌堆加载完整卡面，文字后备结构保留', surfaces);
+await ev(`(function(){
+  document.getElementById('discard-pile-modal')?.classList.add('hidden');
+  updateCardPreview({ name:'失灵！', speed:3, type:'普通', description:'无效化上一张魔法卡。' }, 0);
+})()`);
+await sleep(400);
+const preview = await ev(`(function(){
+  var host = document.getElementById('magic-card-preview');
+  var face = host.querySelector('.preview-face-card .card-face-image');
+  var title = host.querySelector('.preview-header h3');
+  var effect = host.querySelector('#preview-description');
+  var imageRect = face?.getBoundingClientRect();
+  var effectRect = effect?.getBoundingClientRect();
+  return { title:title?.textContent, faceReady:!!(face && face.naturalWidth > 0),
+    effect:effect?.textContent, imageBeforeEffect:!!(imageRect && effectRect && imageRect.bottom <= effectRect.top),
+    titleVisible:getComputedStyle(title).display !== 'none' };
+})()`);
+check(preview.title === '失灵！' && preview.faceReady && preview.effect.includes('无效化')
+  && preview.imageBeforeEffect && preview.titleVisible,
+  '★ 待使用卡按卡名、完整卡面缩略图、可读效果三段显示', preview);
+await ev(`(function(){
+  var card = window.magicCards.find(function(c){ return c.name === '恶魔契约'; });
+  updateCardPreview(card, 0);
+})()`);
+const longPreview = await ev(`(function(){
+  var host = document.getElementById('magic-card-preview');
+  var chat = document.getElementById('in-game-chat-container');
+  return { scrollable:host.scrollHeight > host.clientHeight,
+    panelBottom:host.getBoundingClientRect().bottom,
+    chatTop:chat.getBoundingClientRect().top,
+    effectLength:host.querySelector('#preview-description').textContent.length };
+})()`);
+check(longPreview.scrollable && longPreview.panelBottom + 4 <= longPreview.chatTop,
+  '★ 长效果可滚动阅读，预览框不压住聊天窗', longPreview);
+await ev(`(function(){
+  document.getElementById('help-modal')?.classList.remove('hidden');
+})()`);
 
 // 48 张真卡比原来的一行文字高得多 → 必须确认容器**真的能滚**、且滚到底最后一张可见。
 // （只断言"有 overflow:auto"是不够的：本项目踩过"看着有、其实永远不触发"的一类判据。）

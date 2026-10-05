@@ -2545,8 +2545,7 @@ function renderHomeOnline(data) {
     }
 }
 
-// 热门卡缩略图上的小徽记：示意稿 C 用的就是这种"符号当卡面占位"的写法，
-// 真卡面（static/cards/<slug>.webp）出图后由底图层接管（applyCardArt → CSS 变量）。
+// 热门卡的小徽记作为图片加载失败时的占位。
 const HOME_CARD_GLYPH = {
     '神威！': '🌀', '失灵！': '⛔', '轰炸': '💥', '硫磺火焰': '🔥', '增援': '⚓',
     '桃园结义': '🌿', '恶魔契约': '🎲', '看破！': '👁', '冻结！': '❄', '八方来财': '🧧',
@@ -2559,7 +2558,7 @@ function renderHomeHotCards(usage) {
     const note = document.getElementById('home-hot-note');
     if (!box) return;
     const cards = Array.isArray(window.magicCards) ? window.magicCards : [];
-    // 卡表 43 条 / 41 个唯一卡名（`失灵！`×3 是故意的）→ 榜单按**卡名**去重
+    // 卡池中 `失灵！` 有重复条目，榜单按卡名去重。
     const unique = [];
     const seen = new Set();
     for (const c of cards) { if (c && c.name && !seen.has(c.name)) { seen.add(c.name); unique.push(c); } }
@@ -2596,9 +2595,9 @@ function renderHomeHotCards(usage) {
             + '<div class="hs">' + pips + '</div>'
             + '</div>';
     }).join('');
-    // 底图位（真图存在时自动显示，不存在时保持渐变占位 —— 与手牌同一套 applyCardArt 机制）
+    // 热门榜单与手牌共用同一套完整卡面资源；加载失败时保留徽记与卡名。
     box.querySelectorAll('.hcard').forEach((el, i) => {
-        if (picks[i]) applyCardArt(el, picks[i].name);
+        if (picks[i]) applyFullCardFace(el.querySelector('.ha'), picks[i].name, true);
     });
 }
 
@@ -3667,9 +3666,9 @@ function renderCardCompendium() {
         </div>`;
     }).join('') || '<p class="ax-empty muted-hint">没有符合条件的卡牌<br>试试别的关键词，或把速阶/类型改回「全部」。</p>';
 
-    // 出图后给图鉴里的每张卡接上底图（Phase 7）
+    // 总览使用完整卡面；详情窗仍保留可选取的规则文字。
     helpMagicCards.querySelectorAll('.magic-card-help').forEach(el => {
-        applyCardArt(el, el.getAttribute('data-card-name'));
+        applyFullCardFace(el.querySelector('.magic-card'), el.getAttribute('data-card-name'), true);
     });
 
     const counter = document.getElementById('compendium-count');
@@ -3797,7 +3796,7 @@ function codexRenderDetail(card) {
     const host = document.getElementById('codex-detail');
     if (!host) return;
     host.innerHTML = card ? codexDetailHtml(card) : codexDetailPlaceholder();
-    if (card) applyCardArt(host, card.name);
+    if (card) applyFullCardFace(host.querySelector('.ax-detail-card .magic-card'), card.name);
     const back = document.getElementById('codex-detail-back');
     if (back) back.addEventListener('click', codexShowList);
 }
@@ -8345,7 +8344,9 @@ function setupSocketListeners() {
 
     // 连锁响应弹窗（10 秒倒计时 + 点选速阶 3 卡）。
     // 抽成具名函数是为了让「重连正好落在响应窗口内」也能把弹窗补回来。
+    let activeChainPromptCleanup = null;
     function showChainRequestPrompt(data) {
+        if (activeChainPromptCleanup) activeChainPromptCleanup();
         // 绝处逢生生效中：自己的其余魔法卡全部无效，连锁响应同样打不出去。
         // 服务端（chain_response → can_play_magic_card）一定会拒绝，所以别弹这个
         // 窗口让玩家白点一次 —— 那会让窗口凭空消失、也没有任何解释。
@@ -8419,17 +8420,24 @@ function setupSocketListeners() {
                 <p class="priority-hint chain-request-hint">${cardsHint}</p>
                 <div class="priority-cards chain-request-cards">${cardsHTML}</div>
                 <div class="priority-actions chain-request-actions">
+                    <button type="button" id="chain-collapse" class="priority-cancel-btn chain-request-collapse">暂时收起 · 查看棋盘</button>
                     <button type="button" id="chain-cancel" class="priority-cancel-btn chain-request-cancel">不响应</button>
                 </div>
             </div>
         `;
         document.body.appendChild(chainPrompt);
+        const reopenButton = document.createElement('button');
+        reopenButton.type = 'button';
+        reopenButton.className = 'chain-request-reopen';
+        reopenButton.innerHTML = '连锁响应 <span class="chain-request-reopen-time"></span> 秒 · 展开';
 
         // 倒计时圆环：与优先权弹窗同一个 --ring-deg 机制，≤3 秒变红
         const ring = chainPrompt.querySelector('#chain-request-ring');
         const tick = () => {
             const el = chainPrompt.querySelector('#chain-countdown-time');
             if (el) el.textContent = left;
+            const reopenTime = reopenButton.querySelector('.chain-request-reopen-time');
+            if (reopenTime) reopenTime.textContent = left;
             if (ring) {
                 const deg = Math.max(0, Math.min(360, (left / total) * 360));
                 ring.style.setProperty('--ring-deg', deg + 'deg');
@@ -8438,14 +8446,39 @@ function setupSocketListeners() {
         };
         tick();
 
+        let countdownTimer = null;
         const closePrompt = () => {
             clearInterval(countdownTimer);
             hideCardTooltip();
             if (chainPrompt.parentNode) chainPrompt.parentNode.removeChild(chainPrompt);
+            if (reopenButton.parentNode) reopenButton.parentNode.removeChild(reopenButton);
+            if (activeChainPromptCleanup === closePrompt) activeChainPromptCleanup = null;
         };
+        activeChainPromptCleanup = closePrompt;
+
+        const collapseButton = chainPrompt.querySelector('#chain-collapse');
+        collapseButton.addEventListener('click', () => {
+            hideCardTooltip();
+            chainPrompt.classList.add('is-collapsed');
+            document.body.appendChild(reopenButton);
+            const chainSlot = document.getElementById('arena-chain-slot');
+            if (chainSlot) {
+                const rect = chainSlot.getBoundingClientRect();
+                if (rect.width > 0) {
+                    reopenButton.style.left = `${Math.round(rect.left - reopenButton.offsetWidth - 2)}px`;
+                    reopenButton.style.top = `${Math.round(rect.top - 7)}px`;
+                }
+            }
+            reopenButton.focus({ preventScroll: true });
+        });
+        reopenButton.addEventListener('click', () => {
+            if (reopenButton.parentNode) reopenButton.parentNode.removeChild(reopenButton);
+            chainPrompt.classList.remove('is-collapsed');
+            collapseButton.focus({ preventScroll: true });
+        });
 
         // 倒计时结束 → 自动「不响应」（与旧行为一致）
-        const countdownTimer = setInterval(() => {
+        countdownTimer = setInterval(() => {
             left -= 1;
             tick();
             if (left <= 0) {
@@ -14146,9 +14179,8 @@ function showPlacementPrompt(data) {
 
 // 更新手牌UI
 // 更新卡牌预览信息
-// 大卡面（Phase 5.3）：手机档手牌 64×92，中文效果读不了。
-//   在抽屉里给一张 200×280 的真卡（200/280 = 0.714，与实体 TCG 同比例），
-//   复用 Phase 2 的卡面分区（插画/名牌/说明/类型条），所以 Phase 7 出图后一处接、两处换。
+// 选中卡预览：上方卡名、中间完整卡面缩略图、下方可读的卡表效果。
+// 保留原 DOM 分区作为图片加载失败时的后备，紧凑布局也沿用同一入口。
 function renderPreviewCardFace(card) {
     const face = document.getElementById('preview-card-face');
     if (!face) return;
@@ -14171,11 +14203,13 @@ function renderPreviewCardFace(card) {
             <span class="card-type">${escapeHtml(card.type)}魔法</span>
         </div>
     `;
-    applyCardArt(el, card.name);
+    applyFullCardFace(el, card.name);
     face.replaceChildren(el);
 }
 
 function updateCardPreview(card, index) {
+    const preview = document.getElementById('magic-card-preview');
+    const previewTitle = preview && preview.querySelector('.preview-header h3');
     const cardName = document.querySelector('#magic-card-preview .card-name');
     const previewSpeed = document.getElementById('preview-speed');
     const previewType = document.getElementById('preview-type');
@@ -14183,6 +14217,8 @@ function updateCardPreview(card, index) {
     const cancelBtn = document.getElementById('cancel-magic');
 
     renderPreviewCardFace(card);
+    if (preview) preview.dataset.empty = card ? 'false' : 'true';
+    if (previewTitle) previewTitle.textContent = card ? card.name : '待使用魔法卡';
 
     if (card) {
         cardName.textContent = card.name;
@@ -14524,6 +14560,32 @@ function applyCardArt(el, cardName) {
     art.style.setProperty('--card-art-image', `url("/static/${rel}")`);
 }
 
+// 已审定的卡面同时包含插画和规则文字，供首页热门榜、手牌、弃牌堆、图鉴、连锁及选中卡预览使用。
+// 路径复用卡表映射的 slug；图片未加载成功时，保留原有 DOM 卡面作为后备。
+function applyFullCardFace(el, cardName, lazy = false) {
+    if (!el || !cardName) return;
+    const rel = window.CARD_ART_MAP && window.CARD_ART_MAP[cardName];
+    if (!/^cards\/[a-z0-9-]+\.webp$/.test(rel || '')) return;
+    const face = document.createElement('img');
+    face.className = 'card-face-image';
+    face.alt = '';
+    face.setAttribute('aria-hidden', 'true');
+    face.loading = lazy ? 'lazy' : 'eager';
+    face.decoding = 'async';
+    // load 后等一帧再切换，避免文字先消失、图片还没绘制；隐藏详情栏也能完成加载。
+    const reveal = () => requestAnimationFrame(() => {
+        if (face.isConnected && face.naturalWidth > 0) el.classList.add('has-card-face');
+    });
+    face.addEventListener('load', reveal);
+    face.addEventListener('error', () => {
+        el.classList.remove('has-card-face');
+        face.remove();
+    });
+    el.appendChild(face);
+    face.src = '/static/card_faces/' + rel.slice('cards/'.length);
+    if (face.complete && face.naturalWidth > 0) reveal();
+}
+
 // 手牌几何（第 37.7 节手牌改版）：由「实测可用宽度 × 张数」算出**唯一**的卡尺寸与重叠步进，
 // 结果写进 CSS 变量，真正的 width/height/transform 都在 CSS 里合成。
 //   · 装得下就摆到目标大卡 132×186（示意稿 c-arena 的 .hand-area）；
@@ -14732,10 +14794,7 @@ function updateHandUI() {
             cardElement.classList.add('selected');
         }
 
-        // 真卡结构（照 MTG §201-213 分区）：满幅插画底 → 名牌 + 速阶宝石 → 说明框 → 类型条。
-        // ⚠️ 分工不变：美术只负责底图（.card-art 的渐变占位，Phase 7 换真图），
-        //    卡名/速阶/类型/描述仍由 DOM 叠（.card-name/.card-speed/.card-type/.card-desc），
-        //    这样「美术不生成文字与卡框」的约定与检查工具的选择器都不变。
+        // 原有文字结构保留作为图片加载失败时的后备，也供辅助功能读取。
         const speed = parseInt(card.speed, 10);
         const speedGems = isNaN(speed) ? '' : Array.from({ length: Math.min(speed, 3) })
             .map(() => '<i class="gem"></i>').join('');
@@ -14759,11 +14818,13 @@ function updateHandUI() {
                 <span class="card-type">${escapeHtml(card.type)}魔法</span>
             </div>
         `;
-        applyCardArt(cardElement, card.name);
+        applyFullCardFace(cardElement, card.name);
 
         // 键盘可达（第 37.7 节手牌）：Tab 进得来，Enter/Space 与点击完全同义
         //（直接转 click，选卡/用牌与被挡原因都只有一份实现）。
         cardElement.tabIndex = 0;
+        cardElement.setAttribute('role', 'button');
+        cardElement.setAttribute('aria-label', `${card.name}，速阶 ${card.speed}，${card.type}魔法。${card.description || ''}`);
         cardElement.addEventListener('keydown', (e) => {
             if (e.key !== 'Enter' && e.key !== ' ') return;
             e.preventDefault();
@@ -14903,7 +14964,7 @@ function displayDiscardPile(discardPile) {
     }
 
     // 显示弃牌堆卡牌
-    discardPile.forEach((card, index) => {
+    discardPile.forEach((card) => {
         const cardElement = document.createElement('div');
         cardElement.className = 'discard-pile-card';
         cardElement.innerHTML = `
@@ -14911,6 +14972,9 @@ function displayDiscardPile(discardPile) {
             <div class="discard-pile-card-type">${escapeHtml(card.type)}·速阶${escapeHtml(card.speed)}</div>
             <div class="discard-pile-card-desc">${escapeHtml(card.description)}</div>
         `;
+        cardElement.setAttribute('role', 'img');
+        cardElement.setAttribute('aria-label', `${card.name}，速阶 ${card.speed}，${card.type}魔法。${card.description || ''}`);
+        applyFullCardFace(cardElement, card.name, true);
         cardsContainer.appendChild(cardElement);
     });
 }
@@ -15600,7 +15664,7 @@ function buildChainCardEl(item, index, total) {
         </div>
         <div class="chain-card-who">${who}</div>
     `;
-    applyCardArt(el, card.name);
+    applyFullCardFace(el, card.name);
     return el;
 }
 

@@ -154,44 +154,24 @@
              ⚠️ DOM 顺序 = 中 → 左 → 右：窄屏收成单列时**主行动必须排在最前**，
                 三栏的左右关系由 CSS 的 grid-column 指定（不依赖 DOM 顺序）——
                 桌面观感与 C 一致，手机上先能开一局、再看自己的名片与状态。
-             ⚠️ 原有 id 一个都没动（9 个无头工具按 id 点击首页）：
+             ⚠️ 原有 id 一个都没动（无头工具按 id 点击首页）：
                 #player-name #find-match #match-status #cancel-match #ranked-status #cancel-ranked
                 #ranked-match #ai-match #ai-difficulty #custom-room #lobby-btn
                 #my-level-strip #mls-level #mls-fill #mls-text #online-count-container #online-count。
+                #player-name 保留为隐藏兼容字段；玩家名来自登录账号或默认昵称。
                 等级条从「底部状态行」搬进了指挥官名片（C 的名片里本来就有一条轨道）；
                 `ui_layout_check` 只查「可见时轨道宽 > 0」，搬位置不影响它。 -->
         <div class="home-wrap">
         <div class="home-mid">
         <span class="home-lead">选 择 一 种 打 法</span>
-        <!-- 出海区（Phase 6 首页批）：首页**唯一的主行动**单独成块。
-             2026-09-25 之前主行动与排位/人机/自定义/大厅同处一个网格，
-             五个入口视觉等重 —— 现在 #find-match 独占一块带材质的区域，
-             其余入口降成下方两列的次级卡片。
-             ⚠️ 所有 id 一个都没改（9 个无头工具按 id 点击这里）；
-                #match-status / #ranked-status 与主行动同块，排队时就地替换文案。 -->
-        <section class="home-hero">
-            <!-- C 的 .gobtn.lg 结构：图标块 + 标题/说明 + 右侧 ENTER 角标。
-                 主标题与导航品牌字面重复，2026-09-19 起改成引导语（h1 仍是视觉锚点）。
-                 没有任何测试/工具断言这行文案。 -->
-            <div class="hero-head">
-                <span class="hero-ic" aria-hidden="true">⚔</span>
-                <div class="hero-txt">
-                    <h1>选择你的战场</h1>
-                    <p class="home-sub">3 分钟一局 · 猜拳定先手 · 击沉对方全部战舰者胜</p>
-                </div>
-                <span class="hero-go" aria-hidden="true">ENTER</span>
-            </div>
-        </section>
-        <!-- 名字 + 主行动：示意稿 C 的 hero 是**一行**入口（图标 + 标题 + 说明 + ENTER），
-             没有输入框、也没有第二个按钮。我们的流程需要"游客先起个名字"，所以
-             这两件搬到了 hero 正下方的一条窄行里 —— hero 本体的观感与 demo 一致。 -->
-        <div class="home-cta-row">
-            <div class="input-group">
-                <input type="text" id="player-name" placeholder="输入你的名字">
-            </div>
-            <button id="find-match" class="mode-btn primary home-cta">开始匹配</button>
-        </div>
-        <section class="home-hero-status">
+        <!-- 休闲匹配沿用 C 的大号紫色入口；原 id 保证匹配与排队状态流程不变。 -->
+        <input type="hidden" id="player-name" value="{{ username|default('', true) }}">
+        <button id="find-match" class="mode-btn primary">
+            <span class="mbtn-ic" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3"></path></svg></span>
+            <span class="mbtn-txt"><span class="tt">休闲匹配</span><span class="td">随机匹配一位在线玩家 · 不计段位分 · 随时开一局</span></span>
+            <span class="mbtn-go" aria-hidden="true">ENTER</span>
+        </button>
+        <section class="home-match-status">
             <div id="match-status" class="hidden">
                 <p>正在寻找匹配...</p>
                 <button id="cancel-match">取消匹配</button>

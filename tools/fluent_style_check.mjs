@@ -638,15 +638,17 @@ async function groupSet() {
   check(String(fm.backgroundImage).trim() === 'none', '#find-match 没有残留 linear-gradient 背景图（Fluent 实心按钮 = 纯色）',
     { backgroundImage: fm.backgroundImage });
 
-  // ---------- 6. 首页标题不再是渐变文字 ----------
-  const h1raw = await ev('(' + styleProbe.toString() + ')([["首页主标题","#start-screen h1"]])');
-  const h1 = h1raw[0];
-  const h1c = parseColor(h1.color);
-  const h1f = parseColor(h1.webkitFill);
-  console.log('   #start-screen h1 color=' + h1.color + ' -webkit-text-fill-color=' + h1.webkitFill +
-    ' backgroundImage=' + h1.backgroundImage);
-  check(h1.found && !!h1c && h1c.a > 0, '#start-screen h1 的 color 不是 transparent', { color: h1.color, fill: h1.webkitFill });
-  check(h1.found && !!h1f && h1f.a > 0, '#start-screen h1 的 -webkit-text-fill-color 不是 transparent', { fill: h1.webkitFill });
+  // ---------- 6. 首页主行动标题保持实色可读（C 版把标题移入匹配按钮） ----------
+  const mainTitleRaw = await ev('(' + styleProbe.toString() + ')([["首页主行动标题","#find-match .tt"]])');
+  const mainTitle = mainTitleRaw[0];
+  const mainTitleColor = parseColor(mainTitle.color);
+  const mainTitleFill = parseColor(mainTitle.webkitFill);
+  console.log('   #find-match .tt color=' + mainTitle.color + ' -webkit-text-fill-color=' + mainTitle.webkitFill +
+    ' backgroundImage=' + mainTitle.backgroundImage);
+  check(mainTitle.found && !!mainTitleColor && mainTitleColor.a > 0,
+    '#find-match 标题 color 不是 transparent', { color: mainTitle.color, fill: mainTitle.webkitFill });
+  check(mainTitle.found && !!mainTitleFill && mainTitleFill.a > 0,
+    '#find-match 标题 -webkit-text-fill-color 不是 transparent', { fill: mainTitle.webkitFill });
 
   await closeOverlays();
 }

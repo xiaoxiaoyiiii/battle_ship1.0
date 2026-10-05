@@ -1463,7 +1463,6 @@ input:focus, select:focus, textarea:focus {
     gap: var(--fluent-space-2);
 }
 #start-screen .button-group button { width: min(320px, 80%); }
-#find-match { font-size: var(--fluent-text-body-lg); padding: var(--fluent-space-3) var(--fluent-space-5); }
 #online-count-container {
     display: inline-flex;
     align-items: center;
@@ -6465,6 +6464,10 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, var(--deco-
 .help-rank-tier.is-top {
     border-color: var(--deco-amber-a42);
     background: linear-gradient(180deg, var(--deco-amber-a12), var(--fluent-light-02));
+    grid-template-areas:
+        "icon name"
+        ". unlock"
+        ". note";
 }
 /* 图鉴：一行一个段位（外层靠 grid + 两列，见上面的注释） */
 .help-rank-tiers { display: block; min-width: 0; max-width: 100%; }
@@ -6474,6 +6477,11 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, var(--deco-
 .help-rank-tier {
     display: grid;
     grid-template-columns: 26px minmax(0, 1fr);
+    grid-template-areas:
+        "icon name"
+        ". meta"
+        ". unlock"
+        ". note";
     column-gap: 10px;
     row-gap: 2px;
     align-items: center;
@@ -6488,21 +6496,21 @@ html:not(.theme-dark) .pf-rank { background: linear-gradient(180deg, var(--deco-
     overflow-wrap: anywhere;
 }
 .help-rank-tier > * { min-width: 0; }
-.help-rank-icon { display: inline-flex; align-items: center; flex: 0 0 auto; }
-.help-rank-name { font-weight: 800; font-size: 0.98rem; letter-spacing: 0.02em; min-width: 0; overflow-wrap: anywhere; }
-    /* 合并自原第 5981 行的重复定义 */
-.help-rank-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; min-width: 0; }
+.help-rank-icon { grid-area: icon; display: inline-flex; align-items: center; flex: 0 0 auto; }
+.help-rank-name { grid-area: name; font-weight: 800; font-size: 0.98rem; letter-spacing: 0.02em; min-width: 0; overflow-wrap: anywhere; }
+/* 合并自原第 5981 行的重复定义 */
+.help-rank-meta { grid-area: meta; display: flex; flex-wrap: wrap; gap: 4px 10px; min-width: 0; }
 .help-rank-start { font-weight: 700; color: var(--text, inherit); }
 .help-rank-subs { font-size: 0.74rem; color: var(--muted, var(--muted)); min-width: 0; overflow-wrap: anywhere; }
 .help-rank-unlock {
-    grid-column: 2;
+    grid-area: unlock;
     font-size: 0.8rem;
     color: var(--muted, var(--muted));
     min-width: 0;
     overflow-wrap: anywhere;
 }
 .help-rank-note {
-    grid-column: 2;
+    grid-area: note;
     font-size: 0.74rem;
     color: var(--fluent-gold);
     opacity: 0.92;
@@ -8640,116 +8648,46 @@ body:has(#start-screen.active) {
     color: var(--muted);
 }
 
-/* ---------- 出海区 = C 的 .gobtn.lg（紫渐变 + 光晕 + 图标块 + ENTER 角标） ---------- */
-.home-hero {
+/* 休闲匹配入口复刻 C 的 .gobtn.lg：比排位卡更高、更醒目；纯色按钮底保留 Fluent 对比度契约。 */
+#find-match {
     position: relative;
+    isolation: isolate;
     overflow: hidden;
-    width: 100%;
-    padding: 16px 20px 18px;
+    gap: 16px;
+    padding: 32px 24px;
     text-align: left;
-    border: 1px solid var(--arena-hero-border);
-    border-radius: var(--fluent-radius-xl);
     background-color: var(--primary);
-    background-image: var(--arena-hero-veil), var(--arena-hero-grad);
-    box-shadow: var(--arena-hero-glow);
-    color: var(--arena-hero-fg);
+    background-image: none;
+    border-color: var(--arena-hero-border, var(--primary));
+    box-shadow: var(--arena-hero-glow, var(--fluent-elev-8));
 }
-/* 上缘 1px 内高光（C 的 inset 高光），纯装饰、不吃事件 */
-.home-hero::after {
+#find-match::before {
     content: "";
     position: absolute;
+    z-index: 0;
     inset: 0;
     border-radius: inherit;
-    box-shadow: inset 0 1px 0 var(--arena-hero-chip-line);
+    background-image: var(--arena-hero-veil, radial-gradient(320px 92px at 14% 0%, rgba(255, 255, 255, 0.22), transparent 70%)),
+        var(--arena-hero-grad, var(--primary-gradient));
     pointer-events: none;
 }
-.home-hero > * { position: relative; }
-.hero-head { display: flex; align-items: center; gap: 16px; }
-.hero-ic {
-    flex: 0 0 auto;
-    width: 46px;
-    height: 46px;
-    display: grid;
-    place-items: center;
-    font-size: 1.35rem;
-    border-radius: var(--fluent-radius-lg);
-    background: var(--arena-hero-ic-bg);
-    border: 1px solid var(--arena-hero-ic-line);
+#find-match > * { position: relative; z-index: 1; }
+#find-match .mbtn-ic {
+    width: 52px;
+    height: 52px;
+    border-radius: 10px;
+    color: var(--fluent-on-solid);
+    background: var(--arena-hero-ic-bg, rgba(11, 13, 24, 0.35));
+    border-color: var(--arena-hero-ic-line, var(--border));
 }
-.hero-txt { flex: 1 1 auto; min-width: 0; }
-.hero-txt h1 {
-    margin: 0;
-    font-size: 1.4rem;
-    letter-spacing: 0.06em;
-    text-align: left;
-    color: var(--arena-hero-fg);
-}
-.hero-go {
-    flex: 0 0 auto;
-    padding: 6px 12px;
-    font-size: 0.68rem;
-    letter-spacing: 0.16em;
-    color: var(--arena-hero-fg-dim);
-    border: 1px solid var(--arena-hero-chip-line);
-    border-radius: var(--fluent-radius-full);
-}
-.home-sub {
-    margin: 4px 0 0;
-    font-size: 0.9rem;
-    color: var(--arena-hero-fg-dim);
-}
-.home-hero .input-group { margin: 16px 0 12px; }
-.home-hero #player-name {
-    background-color: var(--arena-hero-ic-bg);
-    border-color: var(--arena-hero-ic-line);
-    color: var(--arena-hero-fg);
-}
-/* 主行动：C 的实心大按钮。底色 = 预设强调色（fluent_style_check 断言
-   「#find-match 的计算底色 = 当前预设的强调色」且必须不透明），
-   渐变只作装饰层 —— 那次"颜色只落在 background-image 里导致假对比度"的坑就是这么来的。 */
-.home-cta {
-    width: 100%;
-    max-width: none;
-    margin: 0;
-    min-height: 48px;
-    font-size: 1.05rem;
-    font-weight: var(--fluent-weight-bold);
-    letter-spacing: 0.06em;
-    border: 1px solid var(--arena-hero-border);
-    border-radius: var(--fluent-radius-lg);
-    box-shadow: var(--fluent-elev-8);
-}
-.home-hero #match-status p,
-.home-hero #ranked-status p { margin: 4px 0 10px; font-weight: 600; color: var(--arena-hero-fg); }
-.home-hero #match-status button,
-.home-hero #ranked-status button {
-    background-color: var(--arena-hero-ic-bg);
-    border-color: var(--arena-hero-chip-line);
-    color: var(--arena-hero-fg);
-}
-
-/* 名字 + 主行动（hero 下方的一条窄行）。样式对齐 demo 的 .gobtn 尺寸感：
-   输入框与按钮同高、圆角 12/8，行距 12px。 */
-.home-cta-row {
-    display: flex;
-    gap: 12px;
-    align-items: stretch;
-    width: 100%;
-}
-/* ⚠️ 主行动按钮同时带 `.mode-btn`，而 `.home-wrap .mode-btn { width: 100% }` 与
-   `.home-cta-row .home-cta` 同特异性、又排在后面 → 第一版按钮把整行吃光、输入框被压成
-   0 宽（实测 `#player-name` 只有 26px、`#find-match` 712px）。这里把特异性提到 (0,3,0)。 */
-.home-wrap .home-cta-row .input-group { flex: 1 1 auto; min-width: 0; margin: 0; }
-.home-wrap .home-cta-row #player-name { width: 100%; height: 100%; }
-.home-wrap .home-cta-row .home-cta {
-    flex: 0 0 auto;
-    width: auto;
-    min-width: 168px;
-    max-width: none;
-    margin: 0;
-}
-.home-hero-status:empty { display: none; }
-.home-hero-status > div { margin-top: 10px; }
+#find-match .tt { font-size: 22px; color: var(--fluent-on-solid); }
+#find-match .td { font-size: 12.5px; color: rgba(255, 255, 255, 0.78); }
+#find-match .mbtn-go { color: rgba(255, 255, 255, 0.85); border-color: rgba(255, 255, 255, 0.28); }
+#find-match:hover::before { filter: brightness(1.08); }
+.home-match-status:empty { display: none; }
+.home-match-status > div { margin-top: 10px; }
+.home-match-status #match-status p,
+.home-match-status #ranked-status p { margin: 4px 0 10px; font-weight: 600; color: var(--text); }
 
 /* ---------- 模式入口 = C 的 .gobtn（图标块 + 标题/说明 + 右侧角标） ----------
    ⚠️ 这两条**不写成一条分组规则**：分组规则里再补一条 `.home-wrap .start-modes` 的覆盖
@@ -9070,9 +9008,6 @@ body:has(#start-screen.active) {
 @media (max-width: 560px) {
     .home-wrap { gap: 14px; }
     .home-right { grid-template-columns: minmax(0, 1fr); }
-    .hero-head { gap: 12px; }
-    .hero-txt h1 { font-size: 1.2rem; }
-    .hero-go { display: none; }
     .hotrow { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 420px) {
@@ -9093,7 +9028,6 @@ body:has(#start-screen.active) {
     .stat-grid .s { padding: 9px 10px; }
     .ladder .li { padding: 5px 0; }
     .cmdr-kv .kv { padding: 6px 0; }
-    .home-hero { padding: 16px 18px 18px; }
 }
 /* --- 35.10 对局棋盘（arena 预设）：示意稿 C 的「海」 ---
    只动颜色与阴影，盒模型一行不动（128 项布局断言的棋盘尺寸/遮挡与这里无关）：
@@ -9333,7 +9267,6 @@ html[data-theme-preset="arena"] .over-head {
     box-shadow: none;
 }
 /* demo：.gobtn{padding:24px 22px} / .gobtn.lg{padding:32px 24px} */
-html[data-theme-preset="arena"] .home-hero { border-radius: 12px; padding: 26px 24px; }
 html[data-theme-preset="arena"] .home-wrap .mode-btn { border-radius: 12px; padding: 18px 22px; }
 
 html[data-theme-preset="arena"] .cmdr-card { border-radius: 14px; }
@@ -9355,8 +9288,6 @@ html[data-theme-preset="arena"] .home-lead { font-size: 11px; letter-spacing: 0.
 html[data-theme-preset="arena"] .home-wrap .tt { font-size: 19px; font-weight: 600; }
 html[data-theme-preset="arena"] .home-wrap .td { font-size: 11.5px; }
 html[data-theme-preset="arena"] .mbtn-go { font-size: 11px; letter-spacing: 0.16em; }
-html[data-theme-preset="arena"] .hero-go { font-size: 11px; letter-spacing: 0.16em; }
-html[data-theme-preset="arena"] .home-sub { font-size: 12.5px; }
 html[data-theme-preset="arena"] .card-panel h4,
 html[data-theme-preset="arena"] .over-lab { font-size: 11px; letter-spacing: 0.2em; }
 html[data-theme-preset="arena"] .stat-grid .s .l { font-size: 10.5px; }

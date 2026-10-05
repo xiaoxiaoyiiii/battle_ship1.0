@@ -227,7 +227,7 @@
         <section class="card-panel home-hot">
             <h4>全 服 热 门 卡</h4>
             <div class="hotrow" id="home-hot-cards"></div>
-            <p class="hot-note" id="home-hot-note">43 张魔法卡 · 场地 4 张 · 普通 39 张</p>
+            <p class="hot-note" id="home-hot-note">魔法卡统计载入中</p>
         </section>
         </div><!-- /.home-mid -->
 
@@ -497,9 +497,8 @@
                         <button id="cancel-magic" class="cancel-btn">取消</button>
                     </div>
                     <div class="preview-content">
-                        <!-- 大卡面（Phase 5.3）：手机档手牌只有 64×92，中文效果文字读不了 ——
-                             选中后在这里给一张 200×280 的真卡面（200/280 = 0.714，与实体卡同比例）。
-                             宽屏不显示（那里有 118px 的卡 + 足够的说明区）。id 由 game.js 填充。 -->
+                        <!-- 选中卡缩略图：上方显示卡名，下方仍从卡表渲染完整效果文字。
+                             手机档与宽屏共用这个位置，内容由 game.js 填充。 -->
                         <div id="preview-card-face" class="preview-card-face" aria-hidden="true"></div>
                         <div class="card-name">未选择魔法卡</div>
                         <div class="card-stats">

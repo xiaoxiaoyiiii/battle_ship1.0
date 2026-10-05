@@ -94,12 +94,12 @@ const TRIGGER_CARD = {
   description: '在这张牌成功生效之后，接下来如果自己的船被对方不管用什么手段击败了，自己的攻击次数每有一艘船死亡就加3。',
 };
 
-function fireChain(cards) {
+function fireChain(cards, countdown = 10) {
   return '(function(){ var s = gameState.socket; var cbs = s && s._callbacks && s._callbacks["$chain_request"];' +
     ' if (!cbs || !cbs.length) return "no-handler";' +
     ' var payload = { speed3_cards: ' + JSON.stringify(cards) +
     ', card: ' + JSON.stringify(TRIGGER_CARD) +
-    ', caster: "opponent-x", countdown: 10 };' +
+    ', caster: "opponent-x", countdown: ' + countdown + ' };' +
     ' cbs.slice().forEach(function (f) { f(payload); }); return "ok"; })()';
 }
 
@@ -177,6 +177,28 @@ try {
   check(s1 && (s1.titleText || '').indexOf('对方发动了') >= 0, 'P1e 文案仍是「对方发动了魔法卡…」', s1 && s1.titleText);
   check(s1 && /卡名/.test(s1.hint || ''), 'P1f 提示文案写明可以看卡名', s1 && s1.hint);
 
+  const collapsed = await ev('(function(){ document.getElementById("chain-collapse").click();' +
+    ' var p=document.querySelector(".chain-request-prompt"); var b=document.querySelector(".chain-request-reopen");' +
+    ' var board=document.querySelector(".boards-container"); var r=board.getBoundingClientRect();' +
+    ' var slot=document.getElementById("arena-chain-slot").getBoundingClientRect(); var chip=b.getBoundingClientRect();' +
+    ' var front=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);' +
+    ' return { hidden:getComputedStyle(p).display==="none", reopen:!!b && getComputedStyle(b).display!=="none",' +
+    ' boardFree:!front || !front.closest(".chain-request-prompt"), seconds:Number(b.querySelector(".chain-request-reopen-time").textContent),' +
+    ' beforeSlot:Math.abs(chip.right-slot.left)<=3, alignedTop:Math.abs(chip.top-(slot.top-7))<=2,' +
+    ' priority:getComputedStyle(b).zIndex, emits:window.__cap.length }; })()');
+  check(collapsed.hidden && collapsed.reopen && collapsed.boardFree, 'P1g 收起后遮罩消失、固定展开入口出现且棋盘可见', collapsed);
+  check(collapsed.beforeSlot && collapsed.alignedTop && collapsed.priority === '2147483647',
+    'P1g2 展开入口紧靠连锁栏左上方且层级最高', collapsed);
+  check(collapsed.emits === 0, 'P1h 收起不等于不响应', collapsed.emits);
+  await sleep(1150);
+  const reopened = await ev('(function(){ var b=document.querySelector(".chain-request-reopen");' +
+    ' var seconds=Number(b.querySelector(".chain-request-reopen-time").textContent); b.click();' +
+    ' return { seconds:seconds, visible:getComputedStyle(document.querySelector(".chain-request-prompt")).display!=="none",' +
+    ' chipGone:!document.querySelector(".chain-request-reopen"), emits:window.__cap.length }; })()');
+  check(reopened.seconds < collapsed.seconds && reopened.visible && reopened.chipGone,
+    'P1i 收起期间倒计时继续，点入口恢复原窗口', reopened);
+  check(reopened.emits === 0, 'P1j 展开不等于打出或不响应', reopened.emits);
+
   const hov = await ev(HOVER_REF);
   await sleep(250);
   const s2 = await ev(PROMPT_STATE);
@@ -248,6 +270,17 @@ try {
   check(!!lastCap && lastCap.ev === 'chain_response' && lastCap.data && lastCap.data.card
     && lastCap.data.card.name === '失灵！', 'P8b 仍然正常发出 chain_response（预览锚点没抢走点击）',
     lastCap && lastCap.data && lastCap.data.card);
+
+  await ev('window.__cap = []');
+  await ev(fireChain([], 2));
+  await ev('document.getElementById("chain-collapse").click()');
+  await sleep(2300);
+  const expired = await ev('(function(){ var last=window.__cap[window.__cap.length-1]; return {' +
+    ' promptGone:!document.querySelector(".chain-request-prompt"),' +
+    ' chipGone:!document.querySelector(".chain-request-reopen"),' +
+    ' last:last }; })()');
+  check(expired.promptGone && expired.chipGone && expired.last && expired.last.ev === 'chain_response'
+    && expired.last.data.chain === false, 'P9 收起后到时仍自动不响应，并清理入口', expired);
 
   check(jsProblems.length === 0, '全程无 JS 异常 / console.error', jsProblems.slice(0, 4));
 } catch (err) {

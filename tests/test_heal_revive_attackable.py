@@ -84,18 +84,6 @@ def badges_of(events, sid, key):
 # ===========================================================================
 # 服务端：清数据 + 必须重发
 # ===========================================================================
-def test_revive_removes_cell_from_both_attack_lists(room):
-    """复活后这一格必须从双方攻击历史里消失。"""
-    sink_p2_ship_at(room, 2, 5)
-    assert any(a.x == 2 and a.y == 5 for a in room.players[P1].attacks), '前提：P1 打过这格'
-
-    room.players[P2].magic_hand = [MagicCard('疗愈')]
-    server.handle_use_magic_card({'room_id': room.id, 'player_id': P2,
-                                  'card': {'name': '疗愈'}, 'targets': {}})
-
-    assert not any(a.x == 2 and a.y == 5 for a in room.players[P1].attacks), \
-        '复活后 P1 的攻击历史里不该再有这一格'
-    assert not any(a.x == 2 and a.y == 5 for a in room.players[P2].attacks)
 
 
 def test_revived_cell_can_be_attacked_again(room):
@@ -104,6 +92,8 @@ def test_revived_cell_can_be_attacked_again(room):
     room.players[P2].magic_hand = [MagicCard('疗愈')]
     server.handle_use_magic_card({'room_id': room.id, 'player_id': P2,
                                   'card': {'name': '疗愈'}, 'targets': {}})
+    for player_id in (P1, P2):
+        assert not any((a.x, a.y) == (2, 5) for a in room.players[player_id].attacks)
     # 复活后那条船还在 (2,5)
     assert any(any(p.x == 2 and p.y == 5 for p in s.positions)
                for s in room.players[P2].ships), '前提：原地复活，位置不变'

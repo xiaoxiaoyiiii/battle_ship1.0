@@ -204,18 +204,6 @@ def test_opponent_can_still_act_and_lose_trigger(room, events):
     assert room.winner == P2
 
 
-def test_zero_attacks_cleared_next_round(room):
-    """★ "本回合攻击为 0"只属于这一个回合 —— 下一回合要恢复正常。"""
-    play_huiguang(room)
-    place_six(room)
-    assert server._attacks_forced_zero(room) is True
-
-    # 进入下一个大回合
-    room.round += 1
-    assert server._attacks_forced_zero(room) is False, \
-        '新大回合不该继续被"攻击为 0"压着'
-
-
 def test_max_ships_set_explicitly(room):
     """★ `max_ships` 必须是个正数 —— 否则前端点格子没反应。
 

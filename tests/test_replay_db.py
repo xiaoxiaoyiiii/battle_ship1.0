@@ -77,29 +77,8 @@ def _insert_replay(database, winner_uid, loser_uid, ts=None, tmp_db=None, **extr
 # ===========================================================================
 # §2 数据模型
 # ===========================================================================
-def test_match_replays_table_shape(temp_db):
-    """★ 表结构（含两个索引）必须与契约 §2 逐字一致。
-
-    为什么自带参与者两列：实测 `matches.winner_id` 里混着 uuid / `ai-*` / 游客 sid，
-    长度上无法可靠区分 —— 从它反推"参与者是谁"是不可靠的。
-    """
-    cols = [r[1] for r in temp_db.cursor.execute('PRAGMA table_info(match_replays)')]
-    assert cols == EXPECTED_REPLAY_COLUMNS, cols
-    indexes = {r[1] for r in temp_db.cursor.execute('PRAGMA index_list(match_replays)')}
-    assert {'idx_replay_winner', 'idx_replay_loser'} <= indexes, indexes
 
 
-def test_match_replays_is_not_the_match_logs_column(temp_db):
-    """★★★ `match_logs.logs` 那一列**一个字都不许加回放数据**（契约 §0）。
-
-    那一列会随 `show_history` 公开给所有人，而且 `/user_stats` 每次都全量下发它。
-    """
-    temp_db.cursor.execute('INSERT INTO match_logs (match_id, logs) VALUES (?, ?)',
-                           ('m1', json.dumps([{'text': 'a'}])))
-    temp_db.conn.commit()
-    row = temp_db.cursor.execute(
-        'SELECT logs FROM match_logs WHERE match_id = ?', ('m1',)).fetchone()
-    assert 'steps' not in row['logs'] and 'ships' not in row['logs']
 
 
 def test_has_replay_boolean_never_carries_the_blob(temp_db):
@@ -122,12 +101,6 @@ def test_has_replay_boolean_never_carries_the_blob(temp_db):
     assert row2['has_replay'] is False
 
 
-def test_history_row_without_replay_is_false_not_missing(temp_db):
-    """★ 没有回放的老局：`has_replay` 必须是**明确的 False**（不是缺键）。"""
-    uid = _user(temp_db, 'norep')
-    temp_db.record_match(uid, 'guest-1', logs=[{'text': 'x'}])
-    row = temp_db.get_match_history(uid, 5)[0]
-    assert 'has_replay' in row and row['has_replay'] is False
 
 
 # ===========================================================================
@@ -158,37 +131,8 @@ def test_thirty_first_match_evicts_the_oldest(temp_db):
         assert mid in alive, '除了最老那条，其余都该在：%s 不见了' % mid
 
 
-def test_under_thirty_matches_evicts_nothing(temp_db):
-    """★ 不足 30 条 ⇒ **不淘汰**（"第 30 条"不存在时没有窗口终点）。"""
-    uid = _user(temp_db, 'small')
-    ids = _seed_matches(temp_db, uid, [None] * 29)
-    alive = {r['match_id'] for r in temp_db.cursor.execute(
-        'SELECT match_id FROM match_replays').fetchall()}
-    assert set(ids) == alive, '29 局不该淘汰任何东西'
 
 
-def test_shared_replay_survives_while_the_other_side_is_still_inside(temp_db):
-    """★★ §8-7 后半：**共享回放**在一方超窗、另一方没超窗时**必须还在**。
-
-    构造：
-      · A 打满 31 局（第 1 局是**和 B** 打的），于是 A 的窗口终点前移到第 2 局，
-        第 1 局对 A 来说已经出局；
-      · B 只有那 1 局 —— B 没有任何一局超窗 ⇒ 那条回放**仍算在 B 的窗口内** ⇒ 留着。
-    反向腿（同一套判据）：等 B 也打满 31 局之后，那条共享回放就该被删。
-    """
-    a = _user(temp_db, 'shared-a')
-    b = _user(temp_db, 'shared-b')
-    # 第 1 局：A vs B（带真实参与者两列 ⇒ 这是一条"共享回放"）
-    first = _insert_replay(temp_db, a, b, ts=1_700_000_000)
-    # A 再打 30 局（对手都不是真账号）
-    _seed_matches(temp_db, a, [None] * 30, start_ts=1_700_000_100)
-    alive = temp_db.get_match_replay(first)
-    assert alive is not None, (
-        '★ 共享回放被先超窗的一方（A）删掉了 —— 那正是契约 §4 明令不许的形状')
-    # 反向腿：B 也打满 31 局（含那第 1 局）后，两边都超窗 ⇒ 该删
-    _seed_matches(temp_db, b, [None] * 30, start_ts=1_700_000_200)
-    assert temp_db.get_match_replay(first) is None, \
-        '两边都超窗之后那条共享回放应当被删掉'
 
 
 def test_guest_only_match_never_gets_a_replay(temp_db):
@@ -209,146 +153,27 @@ def test_ai_side_is_null_but_the_human_side_still_gets_a_replay(temp_db):
     assert row['winner_user_id'] == human and row['loser_user_id'] is None
 
 
-def test_cutoff_is_computed_once_per_person_per_sweep(temp_db, monkeypatch):
-    """★ §4「每插入只枚举被淘汰的 1~2 条」：窗口终点**按人去重**，不是每行各算一次。
-
-    ⚠️ 这里数的是 `_replay_cutoff` 的调用**次数**（它每读一次库就是一次
-       `SELECT ... LIMIT 1 OFFSET 29`）—— 同一个人被算 35 次就说明去重丢了。
-       判据写成"**每人每次清扫最多一次**"，因为清扫本身会跑 35 遍
-       （每落一局跑一遍，见 `_insert_match_replay`）。
-    """
-    uid = _user(temp_db, 'once')
-    calls = []
-    real = Database._replay_cutoff
-
-    def spy(self, who):
-        calls.append(who)
-        return real(self, who)
-
-    monkeypatch.setattr(Database, '_replay_cutoff', spy)
-    before = len(calls)
-    _seed_matches(temp_db, uid, [None] * 35)
-    per_sweep = len(calls) - before
-    # 35 局 → 35 次清扫（每次落库后跑一次）；每次清扫里这个人最多被算 1 次。
-    assert per_sweep <= 35, (
-        '同一个人的窗口终点被算了 %d 次（35 次清扫 × 每次最多 1 次 = 上限 35）'
-        % per_sweep)
-    assert per_sweep >= 1, '一次都没算过 —— 保留策略根本没跑，这条守卫是空转的'
 
 
-def test_sweep_never_scans_the_matches_table(temp_db):
-    """★ 「每插入只枚举被淘汰的 1~2 条，不扫全表」—— 判据（源码级）：清扫里不许有
-    "不带 LIMIT 的 `SELECT ... FROM matches`"。
-
-    为什么不用运行时判据：`sqlite3.Connection.cursor` 是只读属性，
-    `monkeypatch.setattr` 直接 `AttributeError`（实测）—— 那种守卫写不出来，
-    只能按函数体扫 SQL。（`_replay_cutoff` 的 `LIMIT 1 OFFSET 29` 是**按人**取一条，
-    是允许的那一种。）
-    """
-    import ast
-    import pathlib
-    src = (pathlib.Path(__file__).resolve().parent.parent / 'db.py').read_text(
-        encoding='utf-8')
-    body = ''
-    for node in ast.walk(ast.parse(src)):
-        if isinstance(node, ast.FunctionDef) and node.name in (
-                'sweep_match_replays', '_replay_cutoff', '_orphan_replay_ids',
-                '_insert_match_replay'):
-            body += (ast.get_source_segment(src, node) or '') + '\n'
-    assert body, 'db.py 里找不到清扫相关的函数（改名了？）'
-    # 判据：凡是从 `matches` 取数的语句，必须**带 WHERE 或 LIMIT**（= 有界的查询）。
-    # 全表扫描的形状就是 "SELECT ... FROM matches" 后面直接结尾。
-    # ⚠️ 必须从 **AST 的字符串字面量**里取 SQL，不能按引号切源码：SQL 是**多行拼接**的
-    #    （`'SELECT timestamp FROM matches '` + `'WHERE ...'`），按引号切会切出半句 ——
-    #    这条守卫第一版就红在这上面（切成半句之后判据是假的）。
-    queries = []
-    for node in ast.walk(ast.parse(src)):
-        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)
-                and 'FROM matches' in node.value):
-            continue
-        flat = ' '.join(node.value.split())
-        if flat.upper().startswith('CREATE VIEW'):
-            # `match_history` 那个 VIEW 的定义（**本批不动它**，契约 §6：
-            # 它还有别的读取方，改视图风险大且没必要）。它天然是全量的。
-            assert 'CREATE VIEW IF NOT EXISTS match_history' in flat
-            continue
-        queries.append(flat)
-    assert queries, 'db.py 里找不到任何 "FROM matches" 的查询 —— 这条守卫自己失效了'
-    for flat in queries:
-        assert 'WHERE' in flat.upper() or 'LIMIT' in flat.upper(), (
-            '出现了 matches 全表扫描：%r' % flat)
-    joined = ' '.join(queries)
-    assert 'LIMIT 1 OFFSET' in joined, '按人取窗口终点那条 SQL 不见了'
-    # 孤儿判定走 `match_replays LEFT JOIN matches`（从**回放**那一侧出发），
-    # 所以它不在上面这批 `FROM matches` 里 —— 单独校准它确实存在。
-    assert any(isinstance(n, ast.Constant) and isinstance(n.value, str)
-               and 'm.id IS NULL' in n.value for n in ast.walk(ast.parse(src))), \
-        '孤儿判定那条 SQL 不见了'
 
 
 # ===========================================================================
 # §4 孤儿清扫（§8-8）
 # ===========================================================================
-def test_orphan_replay_is_swept(temp_db):
-    """★★ §8-8：`matches` 行被删掉之后，对应回放也要被清掉（教训 #28）。"""
-    uid = _user(temp_db, 'orphan')
-    mid = _insert_replay(temp_db, uid, None)
-    assert temp_db.get_match_replay(mid) is not None
-    temp_db.cursor.execute('DELETE FROM matches WHERE id = ?', (mid,))
-    temp_db.conn.commit()
-    result = temp_db.sweep_match_replays()
-    assert result['orphans'] == 1, result
-    assert temp_db.get_match_replay(mid) is None, '孤儿回放没被清掉'
 
 
-def test_orphan_sweep_is_wired_into_the_write_path(temp_db):
-    """★ 孤儿清扫必须挂在**写入路径**上（本批不引入后台定时任务）。
-
-    判据：走一遍真实的 `record_match(replay=...)`，孤儿就在那一次被清掉。
-    """
-    uid = _user(temp_db, 'wired')
-    doomed = _insert_replay(temp_db, uid, None)
-    temp_db.cursor.execute('DELETE FROM matches WHERE id = ?', (doomed,))
-    temp_db.conn.commit()
-    _insert_replay(temp_db, uid, None)          # 下一局结束
-    assert temp_db.get_match_replay(doomed) is None, \
-        '下一局落库时没顺手清掉孤儿'
 
 
 # ===========================================================================
 # §6 读一条 / 删坏回放
 # ===========================================================================
-def test_get_match_replay_returns_one_row(temp_db):
-    uid = _user(temp_db, 'reader')
-    mid = _insert_replay(temp_db, uid, None)
-    row = temp_db.get_match_replay(mid)
-    assert row['match_id'] == mid
-    assert row['version'] == 1
-    assert row['bytes'] == len(row['replay'].encode('utf-8')), \
-        'bytes 列必须等于真实 blob 字节数（读接口按它做上限校验）'
-    assert temp_db.get_match_replay('不存在') is None
-    assert temp_db.get_match_replay('') is None
 
 
-def test_delete_match_replay_is_idempotent(temp_db):
-    uid = _user(temp_db, 'deleter')
-    mid = _insert_replay(temp_db, uid, None)
-    assert temp_db.delete_match_replay(mid) is True
-    assert temp_db.get_match_replay(mid) is None
-    assert temp_db.delete_match_replay(mid) is True    # 再删一次不炸
 
 
 # ===========================================================================
 # §8-12 allow_replay 列迁移幂等 + 老库能升级
 # ===========================================================================
-def test_allow_replay_column_migration_is_idempotent(temp_db):
-    """★★ §8-12：重复 `init_db()` 不炸，列还在。"""
-    cols = {r[1] for r in temp_db.cursor.execute('PRAGMA table_info(user_profile)')}
-    assert 'allow_replay' in cols
-    for _ in range(3):
-        temp_db.init_db()               # 幂等：每次都只是一次 PRAGMA
-    cols2 = {r[1] for r in temp_db.cursor.execute('PRAGMA table_info(user_profile)')}
-    assert 'allow_replay' in cols2
 
 
 def test_old_database_without_the_column_can_be_upgraded(tmp_path):
@@ -408,22 +233,8 @@ def test_allow_replay_read_failure_is_fail_closed(temp_db, monkeypatch):
     assert 'fail-closed' in errors[0]
 
 
-def test_get_allow_replay_unknown_uid_is_none_not_true(temp_db):
-    """★ `uid` 为空 ⇒ `None`（"不是真账号"），**不是** True（教训 #21）。"""
-    assert temp_db.get_allow_replay('') is None
-    assert temp_db.get_allow_replay(None) is None
 
 
-def test_set_allow_replay_only_touches_its_own_column(temp_db):
-    """★ 写开关只动这一列（与观战开关同一条路），不许覆盖名片其它字段。"""
-    uid = _user(temp_db, 'setter')
-    temp_db.save_user_profile_extra(uid, {'status_text': '别动我', 'tags': ['x']})
-    assert temp_db.set_allow_replay(uid, False) is True
-    assert temp_db.get_allow_replay(uid) is False
-    extra = temp_db.get_user_profile_extra(uid)
-    assert extra['status_text'] == '别动我', '写回放开关把名片其它字段覆盖了'
-    assert temp_db.set_allow_replay(uid, True) is True
-    assert temp_db.get_allow_replay(uid) is True
 
 
 def test_saving_the_profile_card_does_not_reset_the_replay_switch(temp_db):

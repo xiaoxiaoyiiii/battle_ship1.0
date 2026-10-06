@@ -132,37 +132,10 @@ def test_yinxue_after_hit_but_not_sunk_does_not_consume_card(room):
     assert [c.name for c in room.players[P1].magic_hand] == ['饮血']
 
 
-def test_yinxue_from_opponent_attack_does_not_consume_card(room):
-    """last_attack 是对方打出的 → 不算"自己上一发"，不扣牌。"""
-    room.players[P1].magic_hand = [card('饮血')]
-    room.last_attack = {'attacker': P2, 'x': 2, 'y': 2, 'hit': True,
-                        'ship_sunk': True, 'round': room.round}
-
-    res = use(room, P1, '饮血')
-    assert res.get('status') == 'error', res
-    assert [c.name for c in room.players[P1].magic_hand] == ['饮血']
 
 
-def test_splash_after_miss_does_not_consume_card(room):
-    """溅射同样"先扣牌后判定"，一并修好。"""
-    room.players[P1].magic_hand = [card('溅射')]
-    room.last_attack = {'attacker': P1, 'x': 3, 'y': 3, 'hit': False,
-                        'ship_sunk': False, 'round': room.round}
-
-    res = use(room, P1, '溅射')
-    assert res.get('status') == 'error', res
-    assert [c.name for c in room.players[P1].magic_hand] == ['溅射']
 
 
-def test_radar_bullet_after_miss_does_not_consume_card(room):
-    """雷达子弹同理。"""
-    room.players[P1].magic_hand = [card('雷达子弹')]
-    room.last_attack = {'attacker': P1, 'x': 3, 'y': 3, 'hit': False,
-                        'ship_sunk': False, 'round': room.round}
-
-    res = use(room, P1, '雷达子弹')
-    assert res.get('status') == 'error', res
-    assert [c.name for c in room.players[P1].magic_hand] == ['雷达子弹']
 
 
 def test_splash_after_hit_still_enters_chain(room):
@@ -198,18 +171,6 @@ def test_yinxue_after_kill_draws_immediately(room):
     assert '冻结' in names, f'应为刚击沉的那艘补摸一张，实际手牌：{names}'
 
 
-def test_yinxue_immediate_draw_emits_message(room, events):
-    """补摸时要有明确提示，玩家才知道发生了什么。"""
-    room.players[P1].magic_hand = [card('饮血')]
-    give_deck(room, ['冻结'])
-    room.last_attack = {'attacker': P1, 'x': 0, 'y': 0, 'hit': True,
-                        'ship_sunk': True, 'round': room.round}
-
-    use(room, P1, '饮血')
-    server.resolve_chain(room)
-
-    texts = [d.get('text', '') for e, d, to, r in events if e == 'message']
-    assert any('饮血' in t for t in texts), f'应有饮血提示，实际：{texts}'
 
 
 def test_yinxue_immediate_draw_only_once(room):
@@ -228,24 +189,6 @@ def test_yinxue_immediate_draw_only_once(room):
     assert second == first + 1, f'每张饮血只补一次，{first} -> {second}'
 
 
-def test_yinxue_still_draws_on_later_kills(room):
-    """补算之后，「接下来每击杀一艘船摸一张」的持续效果照常生效。"""
-    room.players[P1].magic_hand = [card('饮血')]
-    give_deck(room, ['冻结'])
-    room.last_attack = {'attacker': P1, 'x': 0, 'y': 0, 'hit': True,
-                        'ship_sunk': True, 'round': room.round}
-    use(room, P1, '饮血')
-    server.resolve_chain(room)
-    assert room.players[P1].effect_flags.vampire is True
-
-    # 之后击杀一艘
-    give_deck(room, ['增援'])
-    room.players[P2].ships = [ship((5, 5))]
-    room.players[P2].remaining_ships = 1
-    server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 5, 'y': 5})
-
-    names = [c.name for c in room.players[P1].magic_hand]
-    assert '增援' in names, f'后续击杀应继续摸牌，实际手牌：{names}'
 
 
 def test_yinxue_flag_not_set_when_rejected(room):

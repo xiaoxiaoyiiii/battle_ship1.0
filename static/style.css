@@ -2077,6 +2077,21 @@ html.theme-dark .board {
     font-size: clamp(10px, 2.2vw, 15px);
     pointer-events: none;
 }
+/* 对手公开的护盾位置复用盾牌图标，不添加 .ship 类以避免泄露一般船位。 */
+.cell.opponent-shielded:not(.hit) {
+    border-color: var(--shield-tint);
+    box-shadow: inset 0 0 10px 2px var(--deco-shield-edge);
+}
+.cell.opponent-shielded:not(.hit)::before {
+    content: '🛡';
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: clamp(10px, 2.2vw, 15px);
+    pointer-events: none;
+}
 /* 无敌中的己方战舰（钢筋铁骨）：本回合打不沉。
    不画出来的话，玩家会朝无敌船白费炮弹。 */
 .cell.ship.invincible:not(.hit) {

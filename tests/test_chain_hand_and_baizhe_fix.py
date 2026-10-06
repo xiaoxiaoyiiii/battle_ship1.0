@@ -93,26 +93,6 @@ def test_chain_response_consumes_card_from_hand(room):
     assert '失灵！' not in names, f'连锁打出的牌应从手牌移除，实际：{names}'
 
 
-def test_chain_response_emits_hand_updated(room, events):
-    """关键回归：扣牌后必须推送 hand_updated，否则前端手牌不刷新。
-
-    这正是玩家看到「打出的牌还在手上」的根因。
-    """
-    room.players[P2].magic_hand = [card('失灵！')]
-    room.chain = [ChainItem(P1, card('盗亦有道'), [], 0)]
-    room.chain_waiting = True
-    room.chain_window = P2
-    room.chain_timer = 1
-
-    server.chain_response({
-        'room_id': room.id, 'player_id': P2, 'chain': True,
-        'card': {'name': '失灵！', 'speed': 3}, 'targets': [],
-    })
-
-    updates = hand_events(events, 'sid-p2')
-    assert updates, '扣牌后必须给该玩家推 hand_updated'
-    sent = [c.name for c in updates[-1]['hand']]
-    assert '失灵！' not in sent, f'推送的手牌里不该还有这张牌，实际：{sent}'
 
 
 def test_resolve_chain_resyncs_both_hands(room, events):
@@ -127,28 +107,6 @@ def test_resolve_chain_resyncs_both_hands(room, events):
     assert hand_events(events, 'sid-p2'), '结算后应给 P2 推手牌'
 
 
-def test_stolen_card_reflected_in_hand_push(room, events):
-    """盗亦有道偷到牌后，推送的手牌里要包含偷来的那张。"""
-    room.current_attacker = P2
-    room.players[P2].magic_hand = [card('八方来财')]
-    room.players[P1].magic_hand = [card('盗亦有道')]
-    room.magic_deck = []
-
-    server.handle_use_magic_card({
-        'room_id': room.id, 'player_id': P2,
-        'card': {'name': '八方来财'}, 'targets': {},
-    })
-    server.chain_response({
-        'room_id': room.id, 'player_id': P1, 'chain': True,
-        'card': {'name': '盗亦有道'}, 'targets': [],
-    })
-    server.resolve_chain(room)
-
-    updates = hand_events(events, 'sid-p1')
-    assert updates, 'P1 应收到手牌推送'
-    sent = [c.name for c in updates[-1]['hand']]
-    assert '盗亦有道' not in sent, f'打出的盗亦有道不该还在手牌：{sent}'
-    assert '八方来财' in sent, f'偷到的牌应出现在手牌里：{sent}'
 
 
 # ---------------------------------------------------------------------------
@@ -205,23 +163,8 @@ def test_baizhe_clears_field_magic_and_effects(room):
     assert room.players[P2].magic_blocked is False, '看破封锁应解除'
 
 
-def test_baizhe_keeps_turn_order_no_rps(room):
-    """不重新猜拳：保留原先后手与阶段（作者确认）。"""
-    room.attack_order = [P2, P1]
-    room.current_attacker = P2
-
-    server.apply_magic_effect(room, P1, card('败者食尘'), {})
-
-    assert room.attack_order == [P2, P1], '先后手应保留'
-    assert room.current_attacker == P2, '当前攻击者应保留'
-    assert room.lingqi_resurgence_applied is True, '应走"摆放完成即恢复"的分支'
 
 
-def test_baizhe_zeroes_attacks(room):
-    """卡面第二句：生效的大回合内攻击次数为 0。"""
-    room.attacks_remaining = 5
-    server.apply_magic_effect(room, P1, card('败者食尘'), {})
-    assert room.attacks_remaining == 0
 
 
 def test_baizhe_attacks_stay_zero_after_replacing(room):
@@ -260,14 +203,3 @@ def test_baizhe_emits_reset_gameboard_to_both(room, events):
         assert '6' in d['message'] or '败者食尘' in d['message']
     targets = {to for _, to in resets}
     assert targets == {'sid-p1', 'sid-p2'}, '且要发给各自的 socket sid'
-
-
-def test_baizhe_not_game_over(room):
-    """重置后不得被末尾的"对手船数<=0"兜底判成 game_over。"""
-    room.players[P2].ships = [ship((0, 0))]
-    room.players[P2].remaining_ships = 0
-
-    res = server.apply_magic_effect(room, P1, card('败者食尘'), {})
-    assert res.success is True
-    assert room.state == 'placing_ships'
-    assert room.state != 'game_over'

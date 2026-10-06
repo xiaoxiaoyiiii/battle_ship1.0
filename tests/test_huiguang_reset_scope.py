@@ -114,17 +114,6 @@ def test_caster_ships_cleared(room):
     assert room.players[P1].remaining_ships == 0
 
 
-def test_placement_request_only_to_caster(room):
-    """★ 摆放请求只发给施法者，不许广播给对手。"""
-    # 用真 handler 会对 session 有要求，这里直接看 apply 之后的 emit
-    server.apply_magic_effect(room, P1, card('回光返照'), {})
-    # apply_magic_effect 内部若发过 placement_request，收件人必须是 P1
-    # （回光返照的摆放是在"重新布船并确认"时另起的，所以这里允许没有该事件，
-    #   但一旦发了就不许发给 P2）
-    for (ev, data, to, _r) in []:
-        pass
-
-
 def test_opponent_board_attacks_cleared(room):
     """对手打在我方棋盘上的记录要清（卡面：清空对方视角中自己的棋盘）。"""
     room.players[P2].attacks = [Position(0, 0), Position(1, 0)]

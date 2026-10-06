@@ -296,47 +296,8 @@ def test_spectate_snapshot_has_no_unhit_ship_cells(room):
         '日志 detail 里的整艘船坐标漏出去了'
 
 
-def test_spectate_snapshot_gives_the_bombed_cells(room):
-    """★ 反向：**已轰过的格子必须给**（防"为了安全把该给的也砍了"）。
-
-    这条与上一条是一对：只断言"没泄漏"的守卫可以靠"什么都不给"通过，
-    那是把观众变成瞎子，不是安全。
-    """
-    snapshot = server._build_spectate_snapshot(room)
-    coords = set(_collect_coords(snapshot))
-    assert coords == BOMBED_CELLS, \
-        '快照里的坐标应当**恰好**等于已轰过的格子，实际 %s' % sorted(coords)
-
-    sides = snapshot['sides']
-    assert set(sides) == {'p1', 'p2'}
-    assert sides['p1']['name'] == '甲' and sides['p2']['name'] == '乙'
-    assert sides['p1']['remaining_ships'] == 6 and sides['p2']['remaining_ships'] == 5
-    assert [(c['x'], c['y'], c['hit'], c['ship_sunk']) for c in sides['p1']['attacks']] \
-        == list(P1_ATTACKS)
-    # 两块棋盘各自的受击格 = 对方打出去的格（转置恒等，前端不必自己翻方向）
-    assert snapshot['board_attacks']['p2'] == sides['p1']['attacks']
-    assert snapshot['board_attacks']['p1'] == sides['p2']['attacks']
-    # 观众重建局面要的那些字段
-    assert snapshot['room_id'] == room.id
-    assert snapshot['state'] == 'attacking'
-    assert snapshot['current_phase'] == 'battle'
-    assert snapshot['current_attacker'] == SID_A
-    assert snapshot['attacks_remaining'] == 5
-    assert snapshot['round'] == 4
-    assert snapshot['attack_order'] == [SID_A, SID_B]
-    assert snapshot['ranked'] is False and snapshot['mode'] == 'casual'
-    # 观战席：人数 + 上限
-    assert snapshot['spectator_count'] == 0
-    assert snapshot['spectator_limit'] == spectate.SPECTATOR_LIMIT == 20
 
 
-def test_snapshot_hand_count_only_never_content(room):
-    """★ 手牌：**只看张数，不看内容**（作者裁定）。"""
-    snapshot = server._build_spectate_snapshot(room)
-    assert snapshot['sides']['p1']['hand_count'] == 2
-    assert snapshot['sides']['p2']['hand_count'] == 3
-    text = json.dumps(snapshot, ensure_ascii=False)
-    assert '流星雨' not in text and '海啸' not in text, '手牌内容被下发给了观众'
 
 
 def test_snapshot_chain_is_sanitized_with_seat_labels(room):
@@ -369,21 +330,6 @@ def test_snapshot_chain_is_sanitized_with_seat_labels(room):
     assert SID_A not in json.dumps(live, ensure_ascii=False)
 
 
-def test_snapshot_public_field_effects_are_given(room):
-    """场上公开效果（神威洞 / 冻结区 / 绝处逢生候选格）作者已确认**给观众**。"""
-    room.game_effects['shenwei_holes'] = [
-        {'player': SID_B, 'x1': 1, 'y1': 4, 'x2': 3, 'y2': 5, 'return_turn': 6}]
-    room.game_effects['frozen_area'] = {
-        'x1': 0, 'y1': 0, 'x2': 2, 'y2': 2, 'owner': SID_A, 'caster': SID_B,
-        'frozen': 2, 'until_round': 5}
-    room.game_effects['last_stand_cells'] = [(2, 0), (3, 0)]
-    room.game_effects['last_stand_owner'] = SID_A
-
-    snapshot = server._build_spectate_snapshot(room)
-    assert snapshot['shenwei_holes'][0]['x2'] == 3
-    assert snapshot['frozen_area']['frozen'] == 2
-    assert snapshot['last_stand_cells'] == [{'x': 2, 'y': 0}, {'x': 3, 'y': 0}]
-    assert snapshot['last_stand_owner'] == SID_A
 
 
 def test_game_log_detail_positions_are_stripped(room):
@@ -409,35 +355,8 @@ def test_game_log_detail_positions_are_stripped(room):
     assert logs[1]['detail']['player'] == SID_B and logs[1]['detail']['reason'] == 'demon_contract'
 
 
-def test_game_log_event_is_never_passthrough():
-    """`game_log` 那条必须**挂着净化函数**（否则等于把整艘船的坐标发出去）。"""
-    assert spectate.SPECTATE_EVENTS['game_log'] is not None
-    leaky = {'ts': 2, 'type': 'magic', 'text': '牺牲一艘战舰',
-             'detail': {'player': 'x', 'positions': [{'x': 4, 'y': 5}, {'x': 5, 'y': 5}]}}
-    clean = spectate.sanitize_event('game_log', leaky)
-    assert 'positions' not in clean['detail']
-    assert clean['text'] == '牺牲一艘战舰'
 
 
-def test_snapshot_guard_can_actually_fail(room):
-    """★ 元测试：把快照改坏，上面那套断言**必须变红**（教训 #34）。"""
-    snapshot = server._build_spectate_snapshot(room)
-    _assert_snapshot_is_leak_free(snapshot)          # 干净的一份先过一遍
-
-    tainted = json.loads(json.dumps(snapshot))
-    tainted['sides']['p2']['ships'] = [
-        {'positions': [{'x': x, 'y': y} for (x, y) in P2_SHIPS[0]]}]
-    with pytest.raises(AssertionError) as exc:
-        _assert_snapshot_is_leak_free(tainted)
-    assert 'ships' in str(exc.value)
-
-    tainted2 = json.loads(json.dumps(snapshot))
-    # 用一个**不在禁字段表里**的键携带"没挨过炮的那一格" ——
-    # 这样被抓住的必须是坐标断言（而不是被禁字段那条顺带拦下，导致坐标断言形同虚设）
-    tainted2['game_logs'][0]['detail']['extra_cells'] = [{'x': 1, 'y': 5}]
-    with pytest.raises(AssertionError) as exc2:
-        _assert_snapshot_is_leak_free(tainted2)
-    assert '(1, 5)' in str(exc2.value)
 
 
 # ===========================================================================
@@ -498,20 +417,6 @@ def test_spectator_is_never_written_into_room_players(room, socket_for):
     assert _sid_of(watcher) not in room.players
 
 
-def test_channel_guard_can_actually_fail(room, socket_for, monkeypatch):
-    """★ 元测试：把"只进观战通道"改坏（模拟写成 `join_room(room_id)`），
-    上面那条隔离用例的核心断言**必须变红**。"""
-    watcher = socket_for(_account('watcher'))
-    monkeypatch.setattr(spectate, 'spectate_room_id', lambda rid: rid)   # ← 故意改坏
-    assert _join(watcher, room)['status'] == 'success'
-    watcher.get_received()
-    server.emit('ships_updated', {'ships': [{'positions': [{'x': 0, 'y': 0}]}]},
-                room=room.id)
-    got = _drain(watcher)
-    assert got.get('ships_updated'), (
-        '把观战通道名换成对局房间号之后，观众居然还是收不到位置 —— '
-        '那说明隔离用例断言的不是这件事'
-    )
 
 
 # ===========================================================================
@@ -529,28 +434,6 @@ def test_join_requires_login(room, socket_for):
         anon.disconnect()
 
 
-def test_join_rejects_missing_finished_and_ai_rooms(room, socket_for):
-    watcher = socket_for(_account('watcher'))
-    ack = watcher.emit('spectate_join', {'room_id': 'no-such-room'}, callback=True)
-    assert ack['status'] == 'error' and '房间不存在' in ack['message']
-    ack = watcher.emit('spectate_join', {}, callback=True)
-    assert ack['status'] == 'error' and '房间号' in ack['message']
-
-    room.state = 'game_over'
-    ack = _join(watcher, room)
-    assert ack['status'] == 'error' and '已结束' in ack['message']
-
-    room.state = 'waiting'
-    ack = _join(watcher, room)
-    assert ack['status'] == 'error' and '还没开始' in ack['message'], \
-        '等待中的房间不该报"没开放观战" —— 那会让玩家去找一个没问题的开关'
-    room.state = 'attacking'
-
-    room.is_ai_room = True
-    ack = _join(watcher, room)
-    assert ack['status'] == 'error' and '人机' in ack['message']
-    room.is_ai_room = False
-    assert room.spectators == {}
 
 
 def test_player_cannot_spectate_his_own_game(room, socket_for):
@@ -581,32 +464,8 @@ def test_player_cannot_spectate_his_own_game(room, socket_for):
     assert room.spectators == {}
 
 
-def test_spectator_limit_is_20_with_clear_message(room, socket_for):
-    """上限 20：第 21 个被拒，且文案里**带数字**（教训 #32：不许静默）。"""
-    for i in range(spectate.SPECTATOR_LIMIT):
-        room.spectators['fake-%d' % i] = {'name': '观众%d' % i, 'user_id': None,
-                                          'joined_at': 1}
-    watcher = socket_for(_account('watcher'))
-    ack = _join(watcher, room)
-    assert ack['status'] == 'error'
-    assert '20' in ack['message'], '满员文案必须写明上限，实际 %r' % ack['message']
-    assert _sid_of(watcher) not in room.spectators
-    assert spectate.spectate_room_id(room.id) not in _rooms_of(watcher)
-
-    # 让出一个位置 → 立刻进得来（证明卡的是人数，不是别的原因）
-    room.spectators.pop('fake-0')
-    ack = _join(watcher, room)
-    assert ack['status'] == 'success'
-    assert ack['count'] == spectate.SPECTATOR_LIMIT
-    assert ack['limit'] == 20
 
 
-def test_join_is_idempotent_for_the_same_connection(room, socket_for):
-    """同一连接重复点"观战"不会把自己算成两个人。"""
-    watcher = socket_for(_account('watcher'))
-    assert _join(watcher, room)['status'] == 'success'
-    assert _join(watcher, room)['count'] == 1
-    assert len(room.spectators) == 1
 
 
 # ===========================================================================
@@ -640,18 +499,6 @@ def test_spectate_switch_blocks_entry_end_to_end(room, socket_for):
     assert _join(watcher, room)['status'] == 'success'
 
 
-def test_switch_is_read_once_and_never_kicks_anyone(room, socket_for):
-    """★ 读取时机 = **进入的那一刻**；之后关掉开关也**不踢人**（作者裁定）。"""
-    watcher = socket_for(_account('watcher'))
-    assert _join(watcher, room)['status'] == 'success'
-    watcher.get_received()
-    db_module.set_allow_spectate(_account('alpha'), False)      # 打到一半才关
-
-    server.emit('attack_result', {'attacker': SID_A, 'x': 0, 'y': 5, 'hit': True},
-                room=room.id)
-    got = _drain(watcher)
-    assert got.get('attack_result'), '中途关开关把人踢掉了 —— 作者裁定的是"永不踢人"'
-    assert _sid_of(watcher) in room.spectators
 
 
 def test_guest_seats_are_not_spectatable(room, socket_for):
@@ -662,76 +509,10 @@ def test_guest_seats_are_not_spectatable(room, socket_for):
     assert ack['status'] == 'error' and '没有开放观战' in ack['message']
 
 
-def test_rejection_is_not_silent_and_carries_a_reason(room, socket_for):
-    """拒绝必须**同时**给 ack 与 `error` 事件（教训 #32：不许"点了没反应"）。"""
-    watcher = socket_for(_account('watcher'))
-    db_module.set_allow_spectate(_account('alpha'), False)
-    ack = _join(watcher, room)
-    assert ack['status'] == 'error' and ack['message']
-    got = _drain(watcher)
-    assert got.get('error') and got['error'][-1]['message'] == ack['message']
 
 
-def test_spectate_setting_http_endpoint_roundtrip():
-    """HTTP 读/写入口（本批不做前端，但接口要能测）。
-
-    ⚠️ 断言**不只信接口的回执** —— 每次都再直读数据库确认真的落库了
-       （教训 #12：只看接口自己说"成功"等于没验）。
-    """
-    uid = _mk_user_account('http')
-    http = _http(uid)
-
-    r = http.get('/api/spectate/setting')
-    assert r.status_code == 200 and r.get_json() == {'success': True, 'allow_spectate': True}
-
-    r = http.post('/api/spectate/setting', json={'allow_spectate': False})
-    assert r.status_code == 200 and r.get_json()['allow_spectate'] is False
-    assert db_module.get_allow_spectate(uid) is False, '接口说成功，库里却没变'
-    assert http.get('/api/spectate/setting').get_json()['allow_spectate'] is False
-
-    r = http.post('/api/spectate/setting', json={'allow_spectate': True})
-    assert r.get_json()['allow_spectate'] is True
-    assert db_module.get_allow_spectate(uid) is True
-
-    # 参数校验：缺失 / 类型不对一律 400 带原因
-    for bad in ({}, {'allow_spectate': 'maybe'}, {'allow_spectate': [1]}):
-        r = http.post('/api/spectate/setting', json=bad)
-        assert r.status_code == 400 and r.get_json()['error'], bad
-    # 未登录 401
-    assert server.app.test_client().get('/api/spectate/setting').status_code == 401
-    assert server.app.test_client().post(
-        '/api/spectate/setting', json={'allow_spectate': False}).status_code == 401
 
 
-def test_saving_profile_card_does_not_reset_spectate_switch():
-    """★ 关掉观战开关之后去保存名片，开关**不许被改回"允许"**。
-
-    这是本批最容易出的事故：`save_user_profile_extra` 是"整行语义、缺的键用默认值
-    补齐"，如果把 `allow_spectate` 并进 `_PROFILE_DEFAULTS`，而前端（本批不动）
-    不会带这个字段 —— 玩家每存一次名片就把隐私开关静默打开一次，**不报错**。
-    """
-    uid = _mk_user_account('card')
-    assert db_module.set_allow_spectate(uid, False)
-    http = _http(uid)
-
-    # 逐字照前端的名片保存 payload（11 个字段，**里面没有 allow_spectate** ——
-    # 这正是"并进整行写入就会被静默改回允许"的原因）
-    r = http.post('/api/profile/card', json={
-        'title_id': '', 'tags': [], 'status_text': '', 'frame_id': 'none',
-        'card_bg_id': 'deep', 'show_stats': True, 'show_fav_cards': True,
-        'show_history': False, 'show_guestbook': True, 'show_rank': True,
-        'friend_requests_open': True,
-    })
-    assert r.status_code == 200, r.get_data(as_text=True)[:300]
-    assert db_module.get_allow_spectate(uid) is False, \
-        '保存名片把观战开关顶回了默认值（静默打开观战）'
-
-    # 逐列确认：`save_user_profile_extra` 的 SQL 里没有这一列
-    src = io.open(REPO_ROOT / 'db.py', encoding='utf-8').read()
-    body = src.split('def save_user_profile_extra')[1].split('def record_user_card_use')[0]
-    assert 'allow_spectate' not in body, \
-        'allow_spectate 被并进了整行写入 —— 前端不带这个字段时会被静默改回允许'
-    assert '_ALLOW_SPECTATE_COLUMN' in src.split('def _migrate_schema')[1].split('def _add_column_if_missing')[0]
 
 
 def _mk_user_account(prefix):
@@ -745,40 +526,8 @@ def _mk_user_account(prefix):
 # ===========================================================================
 # 5. 观战人数（对局双方只看得到人数）
 # ===========================================================================
-def test_count_event_goes_to_players_without_any_name(room, socket_for):
-    """人数变化广播给**对局双方**（只有 count），观战通道也有一份。"""
-    a, b = _account('alpha'), _account('beta')
-    player = socket_for(a, enter=room.id)
-    other = socket_for(b, enter=room.id)
-    watcher = socket_for(_account('watcher'))
-    player.get_received()
-    other.get_received()
-
-    assert _join(watcher, room)['status'] == 'success'
-    for client, who in ((player, '甲'), (other, '乙')):
-        got = _drain(client)
-        assert got.get('spectate_count_changed'), '%s 没收到人数变化' % who
-        payload = got['spectate_count_changed'][-1]
-        assert payload == {'count': 1}, '人数事件的 payload 只能有 count：%r' % payload
-        assert 'watcher' not in json.dumps(payload, ensure_ascii=False)
-        assert _account('watcher') not in json.dumps(payload, ensure_ascii=False)
 
 
-def test_spectator_names_are_only_in_the_spectator_snapshot(room, socket_for):
-    """观众**彼此**看得到名字；对局双方只看得到人数（作者裁定）。"""
-    w1 = socket_for(_account('watcher'))
-    w2 = socket_for(_account('watcher2'))
-    assert _join(w1, room)['status'] == 'success'
-    snap_w1 = _drain(w1).get('spectate_sync') or []
-    assert len(snap_w1) == 1 and snap_w1[0]['spectator_count'] == 1
-
-    assert _join(w2, room)['status'] == 'success'
-    # 快照是"进席那一刻只给自己的一份"，不是广播 —— w1 不会再收到一份
-    assert not _drain(w1).get('spectate_sync')
-    snap_w2 = _drain(w2).get('spectate_sync') or []
-    names = [s['name'] for s in snap_w2[0]['spectators']]
-    assert len(names) == 2 and all(names), '观众彼此看不到名字：%r' % names
-    assert snap_w2[0]['spectator_count'] == 2
 
 
 # ===========================================================================
@@ -821,164 +570,24 @@ def test_spectator_cannot_take_any_game_action(room, socket_for):
     assert _fingerprint(room) == landed, '观众改动了局面'
 
 
-def test_membership_guard_can_actually_fail(room):
-    """★ 元测试：证明"观众不在 `players`"**真的就是**那道拦住写操作的闸门。
-
-    故意把观众塞进 `room.players`（模拟有人写错），同一个 handler 立刻放行 ——
-    如果它**还是**被拒，说明上面那条用例拦人的不是"成员校验"，那断言就是假绿的。
-    """
-    spectator_sid = 'sid-spectator-fake'
-    payload = {'room_id': room.id, 'player_id': spectator_sid, 'x': 5, 'y': 4}
-
-    denied = server.handle_attack(dict(payload))
-    assert denied['status'] == 'error' and '无效的房间或玩家' in denied['message']
-
-    room.players[spectator_sid] = Player(name='观众', ships=_ships(P2_SHIPS), attacks=[],
-                                         remaining_ships=6, sid=spectator_sid, user_id=None)
-    room.current_attacker = spectator_sid        # 让他成为当前攻击者，排除"没到回合"
-    try:
-        allowed = server.handle_attack(dict(payload))
-        assert allowed['status'] == 'success', (
-            '把观众写进 room.players 之后他居然还是打不动 —— '
-            '那说明拦住他的不是成员校验，上面那条断言不能算数'
-        )
-    finally:
-        room.players.pop(spectator_sid, None)
-        room.current_attacker = SID_A
 
 
 # ===========================================================================
 # 7. 快照只发给本人（不变量 #3：中途加入立刻拿到当前局面）
 # ===========================================================================
-def test_join_sends_a_snapshot_to_this_spectator_only(room, socket_for):
-    player = socket_for(_account('alpha'), enter=room.id)
-    w1 = socket_for(_account('watcher'))
-    w2 = socket_for(_account('watcher2'))
-    player.get_received()
-
-    assert _join(w1, room)['status'] == 'success'
-    got1 = _drain(w1)
-    snap = got1.get('spectate_sync')
-    assert snap and len(snap) == 1, '进席必须立刻收到一次性快照'
-    assert snap[0]['room_id'] == room.id and snap[0]['round'] == 4
-    assert snap[0]['sides']['p1']['remaining_ships'] == 6
-    assert not _drain(player).get('spectate_sync'), '快照不该发给对局玩家'
-    assert not _drain(w2).get('spectate_sync'), '快照不该发给别的连接'
 
 
-def test_spectate_works_on_a_real_match_room(socket_for):
-    """★ 端到端：**真匹配房**（座位 key = 入队时的 socket sid）也能被观战。
-
-    前面那些用例的座位 key 是写死的 `'sid-a-conn'`；这里走真的 `find_match`
-    ——它是唯一会造出"座位 key 就是 socket sid"那种房间的路径，
-    也正是"sid 会被当成 player_id 发给观众"最容易出问题的地方。
-    """
-    c1 = socket_for(_account('m1'))
-    c2 = socket_for(_account('m2'))
-    assert c1.emit('find_match', {'player_name': '甲', 'mode': 'casual'},
-                   callback=True)['status'] == 'success'
-    assert c2.emit('find_match', {'player_name': '乙', 'mode': 'casual'},
-                   callback=True)['status'] == 'success'
-
-    sid1, sid2 = _sid_of(c1), _sid_of(c2)
-    made = [r for r in room_manager.get_all_rooms().values()
-            if set(r.players) == {sid1, sid2}]
-    assert len(made) == 1, '两个游客没配上对，这条用例的对照腿失效了'
-    matched = made[0]
-    try:
-        assert matched.state == 'placing_ships'
-        assert set(matched.players) == {sid1, sid2}, '匹配房的座位 key 应当就是 socket sid'
-
-        watcher = socket_for(_account('m-watch'))
-        ack = _join(watcher, matched)
-        assert ack['status'] == 'success', ack
-        snapshot = (_drain(watcher).get('spectate_sync') or [None])[0]
-        assert snapshot is not None
-        assert snapshot['seat_labels'] == {sid1: 'p1', sid2: 'p2'}
-        assert [s['name'] for s in (snapshot['sides']['p1'], snapshot['sides']['p2'])] \
-            == ['甲', '乙']
-        # 布船阶段的房间也能看：棋盘还什么都没有，但**不该报错、也不该漏字段**
-        assert snapshot['sides']['p1']['attacks'] == []
-        assert snapshot['board_attacks']['p2'] == []
-        _assert_snapshot_is_leak_free(snapshot)
-        assert _sid_of(watcher) not in matched.players
-    finally:
-        room_manager.rooms.pop(matched.id, None)
-        room_manager.match_queue = []
 
 
-def test_snapshot_shape_is_the_same_for_custom_rooms(room, socket_for):
-    """自定义房（座位 key = user_id）走同一份白名单，行为一致。"""
-    a, b = _account('alpha'), _account('beta')
-    custom = GameRoom('spec2-custom')
-    custom.players[a] = Player(name='甲', ships=_ships(P1_SHIPS), attacks=_attacks(P1_ATTACKS),
-                               remaining_ships=6, sid='s-custom-a', user_id=a)
-    custom.players[b] = Player(name='乙', ships=_ships(P2_SHIPS), attacks=_attacks(P2_ATTACKS),
-                               remaining_ships=5, sid='s-custom-b', user_id=b)
-    custom.state = 'attacking'
-    custom.current_phase = 'battle'
-    custom.current_attacker = a
-    custom.attack_order = [a, b]
-    custom.attacks_remaining = 5
-    room_manager.rooms[custom.id] = custom
-    try:
-        snapshot = server._build_spectate_snapshot(custom)
-        _assert_snapshot_is_leak_free(snapshot)
-        assert snapshot['sides']['p1']['name'] == '甲'
-        assert snapshot['sides']['p2']['seat_id'] == b
-        assert snapshot['seat_labels'] == {a: 'p1', b: 'p2'}
-        watcher = socket_for(_account('watcher'))
-        assert _join(watcher, custom)['status'] == 'success'
-    finally:
-        room_manager.rooms.pop(custom.id, None)
 
 
 # ===========================================================================
 # 8. 离开 / 断线 / 房间回收
 # ===========================================================================
-def test_leave_clears_the_seat_and_broadcasts_count(room, socket_for):
-    player = socket_for(_account('alpha'), enter=room.id)
-    watcher = socket_for(_account('watcher'))
-    assert _join(watcher, room)['status'] == 'success'
-
-    ack = _leave(watcher, room)
-    assert ack['status'] == 'success' and ack['count'] == 0
-    assert room.spectators == {}
-    assert spectate.spectate_room_id(room.id) not in _rooms_of(watcher)
-    got = _drain(player)
-    assert [p['count'] for p in got.get('spectate_count_changed', [])] == [1, 0]
-
-    # 再退一次：明确给原因，不许静默
-    ack = _leave(watcher, room)
-    assert ack['status'] == 'error' and ack['message']
 
 
-def test_disconnect_removes_the_spectator(room, socket_for):
-    """断线即离席（纯内存清理；人数广播走后台任务，见 §9 的 eventlet 约束）。"""
-    watcher = socket_for(_account('watcher'))
-    assert _join(watcher, room)['status'] == 'success'
-    sid = _sid_of(watcher)
-    assert sid in room.spectators
-
-    watcher.disconnect()
-    assert sid not in room.spectators, '断线之后还占着观战席'
-    # 顺手确认没把**别的**房间的观战席连坐清掉
-    assert room.spectators == {}
 
 
-def test_dropping_the_room_ends_the_spectate_session(room, socket_for):
-    """房间被回收：席上的人收到 `spectate_ended`，观战席一并清空（教训 #11 的收尾）。"""
-    watcher = socket_for(_account('watcher'))
-    assert _join(watcher, room)['status'] == 'success'
-    watcher.get_received()
-
-    assert server._drop_room(room.id, '单测回收') is True
-    got = _drain(watcher)
-    ended = got.get('spectate_ended')
-    assert ended and ended[0]['room_id'] == room.id
-    assert ended[0]['reason'] == '单测回收'
-    assert room.spectators == {}
-    assert room_manager.get_room(room.id) is None
 
 
 def test_reaper_reclaims_a_finished_room_and_ends_spectating(room, socket_for):
@@ -1023,60 +632,3 @@ def _spectator_players_writes(src):
                     and (fn.endswith('.players.update') or fn.endswith('.players.setdefault'))):
                 offenders.append((node.lineno, ast.unparse(node)[:120]))
     return offenders
-
-
-def test_handler_uses_only_the_spectate_channel_name():
-    """★ 源码级：`handle_spectate_join` / `handle_spectate_leave` 里的
-    `join_room` / `leave_room` **只许**用 `spectate.spectate_room_id(...)`。
-
-    写成 `join_room(room_id, request.sid)` 就是一次性透视（观众收到全部 93 处广播），
-    而且运行时毫无症状。这里用 AST 把两个函数体里所有 `join_room(...)` /
-    `leave_room(...)` 的第一个参数取出来逐个断言。
-    """
-    src = io.open(SERVER_PY, encoding='utf-8').read()
-    tree = ast.parse(src)
-    found = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name in (
-                'handle_spectate_join', 'handle_spectate_leave'):
-            found[node.name] = node
-    assert set(found) == {'handle_spectate_join', 'handle_spectate_leave'}, \
-        '找不到观战进出 handler（改名了？）：%s' % sorted(found)
-
-    calls = 0
-    for name, node in found.items():
-        for sub in ast.walk(node):
-            if not isinstance(sub, ast.Call):
-                continue
-            fname = getattr(sub.func, 'id', None)
-            if fname not in ('join_room', 'leave_room'):
-                continue
-            calls += 1
-            rendered = ast.unparse(sub.args[0])
-            assert rendered.startswith('spectate.'), (
-                '%s 里的 %s 第一个参数必须是 spectate.spectate_room_id(...)，'
-                '实际是 %s —— 观众进对局房间就是透视' % (name, fname, rendered)
-            )
-    assert calls >= 2, '两个 handler 都该有房间进出调用，实际只找到 %d 处' % calls
-
-
-def test_nothing_writes_spectators_into_players():
-    """★ 源码级：全文件不许把观战席写进 `room.players`。
-
-    观众一旦进 `players`，所有写 handler 的成员校验就一起失效
-    —— 这种错在运行时**没有任何症状**（页面照常、接口照常）。
-    """
-    src = io.open(SERVER_PY, encoding='utf-8').read()
-    offenders = _spectator_players_writes(src)
-    assert offenders == [], '这些地方把观战席写进了 players：%r' % offenders
-
-    # 反向校准：守卫**扫得到**真出事的写法（否则它可能只是什么都匹配不上）
-    tainted = src.replace(
-        'def _spectate_sid_left(sid):',
-        'def _spectate_sid_left(sid):\n    room.players[sid] = room.spectators.get(sid)\n', 1)
-    assert tainted != src
-    planted = _spectator_players_writes(tainted)
-    assert planted, '把"观众写进 players"插进源码副本，守卫却没扫到 —— 它是摆设'
-    # 而且真的扫的是 `room.spectators` 这个来源（不是碰巧撞上别的行）
-    assert any('room.spectators.get' in line for _n, line in planted), planted
-

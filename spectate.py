@@ -184,6 +184,8 @@ def _pub_shields_added(data, room=None):
     if not isinstance(data, dict):
         return None
     out, _ = _scrub_positions(data)
+    # 玩家侧可用 ships 分组清理护盾标记；观众仍只看动作，不接收船位分组。
+    out.pop('ships', None)
     out['count'] = _as_int(out.get('count'))
     return out
 

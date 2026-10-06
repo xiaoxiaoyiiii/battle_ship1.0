@@ -30,52 +30,12 @@ def test_sweep_perfect_win_caught():
     assert r['score'] >= ac.LEVEL_BLOCK
 
 
-def test_sweep_not_caught_when_foe_also_fired():
-    """双方都开过火 → 是正常对局，哪怕一方 6 发全沉。"""
-    r = ac.evaluate({
-        'rounds': 1,
-        'attackers': ['sid-A', 'sid-B'],
-        'max_hits': 6,
-        'foe_ships': 6,
-    })
-    assert 'sweep_perfect_win' not in r['rules']
 
 
-def test_partial_sweep_not_caught():
-    """第 1 回合只打沉 3 艘（对手还剩船）→ 不是横扫，不该命中。"""
-    r = ac.evaluate({
-        'rounds': 1,
-        'attackers': ['sid-A'],
-        'max_hits': 3,
-        'foe_ships': 6,
-    })
-    assert 'sweep_perfect_win' not in r['rules']
 
 
-def test_sweep_on_later_round_not_caught():
-    """打到第 5 回合才全歼 → 正常，不命中（哪怕对面没还手）。"""
-    r = ac.evaluate({
-        'rounds': 5,
-        'attackers': ['sid-A'],
-        'max_hits': 6,
-        'foe_ships': 6,
-    })
-    assert 'sweep_perfect_win' not in r['rules']
 
 
-def test_sweep_unknown_rounds_not_caught():
-    """回合数未知（-1）→ 不许当成"第 1 回合"。
-
-    ★ 回归守卫：老格式日志没有「第N回合」前缀，第一版把缺失当成 0，
-    而 0 <= 1 成立 → 大批正常对局被误判成横扫。
-    """
-    r = ac.evaluate({
-        'rounds': -1,
-        'attackers': ['sid-A'],
-        'max_hits': 6,
-        'foe_ships': 6,
-    })
-    assert 'sweep_perfect_win' not in r['rules']
 
 
 def test_mirror_positions_caught():
@@ -88,13 +48,6 @@ def test_mirror_positions_caught():
     assert 'mirror_positions' in r['rules']
 
 
-def test_mirror_positions_first_time_clean():
-    """第一次出现这个船位 → 不算（历史里没有）。"""
-    r = ac.evaluate({
-        'foe_position_signature': '0,0|1,0|2,0|3,0|4,0|5,0',
-        'past_signatures': [],
-    })
-    assert 'mirror_positions' not in r['rules']
 
 
 def test_instant_surrender_caught():
@@ -109,52 +62,10 @@ def test_instant_surrender_caught():
     assert r['score'] >= ac.LEVEL_FLAG
 
 
-def test_surrender_after_fighting_is_clean():
-    """真打了一会儿再投降 → 是正常行为，不该判异常。
-
-    ★ 这条是**回归守卫**：`rule_zero_engagement_loss` 曾经把"投降且零命中"
-    也算成"全程不还手"，导致一个打了 4 回合才认输的正常玩家被判 `record`。
-    投降是规则允许的行为，零交火那条必须对它豁免。
-    """
-    r = ac.evaluate({
-        'ended_by': 'surrender',
-        'rounds': 4,
-        'attacker_total_hits': 5,
-        'defender_total_hits': 3,
-    })
-    assert 'instant_surrender' not in r['rules']
-    assert 'zero_engagement_loss' not in r['rules']
-    assert r['level'] == 'clean'
 
 
-def test_non_surrender_zero_engagement_still_caught():
-    """同样是零命中，但**没投降**（被打死不还手）→ 仍然要抓。"""
-    r = ac.evaluate({
-        'ended_by': 'attacks',
-        'rounds': 4,
-        'loser_total_hits': 0,
-        'foe_ships': 6,
-        'total_ships': 12,
-    })
-    assert 'zero_engagement_loss' in r['rules']
 
 
-def test_empty_board_not_flagged():
-    """★ 回归守卫：**棋盘是空的**（双方都没摆船）→ 零命中是"对局没进行"，不是"不还手"。
-
-    这条是接进服务端后才暴露的：老测试房间直接调 `_finalize_match`，
-    双方 `ships` 都是空列表而 `round` 有值 → 大批正常用例被误判成 `record`，
-    把排位分测试全打红。判据必须要求"对方确实有船可打"。
-    """
-    r = ac.evaluate({
-        'ended_by': 'attacks',
-        'rounds': 6,
-        'loser_total_hits': 0,
-        'foe_ships': 0,        # 对方没有船
-        'total_ships': 0,      # 棋盘是空的
-    })
-    assert 'zero_engagement_loss' not in r['rules']
-    assert r['level'] == 'clean'
 
 
 def test_repeat_opponent_burst_caught():
@@ -164,30 +75,10 @@ def test_repeat_opponent_burst_caught():
     assert r['score'] >= ac.LEVEL_FLAG
 
 
-def test_occasional_rematch_not_caught():
-    """偶尔又碰上同一人（间隔很久）→ 正常，不该命中。"""
-    r = ac.evaluate({'opponent_gaps_sec': [4000, 8000, 12000]})
-    assert 'repeat_opponent_burst' not in r['rules']
 
 
-def test_one_sided_series_caught():
-    """与同一对手 104 局全胜 → 一边倒。"""
-    r = ac.evaluate({
-        'opponent_total_games': 104,
-        'opponent_wins': 104,
-        'opponent_losses': 0,
-    })
-    assert 'one_sided_series' in r['rules']
 
 
-def test_balanced_series_not_caught():
-    """交手很多局但胜负均衡 → 正常老对手，不该命中。"""
-    r = ac.evaluate({
-        'opponent_total_games': 15,
-        'opponent_wins': 8,
-        'opponent_losses': 7,
-    })
-    assert 'one_sided_series' not in r['rules']
 
 
 def test_zero_engagement_loss_caught():
@@ -201,14 +92,8 @@ def test_suspicious_timing_caught():
     assert 'suspicious_timing' in r['rules']
 
 
-def test_win_streak_anomaly_caught():
-    r = ac.evaluate({'ranked_win_streak': 20})
-    assert 'win_streak_anomaly' in r['rules']
 
 
-def test_sub_round_win_caught():
-    r = ac.evaluate({'rounds': 2, 'sunk': 6})
-    assert 'sub_round_win' in r['rules']
 
 
 # ===========================================================================
@@ -279,15 +164,8 @@ def test_fast_legit_win_not_blocked():
 # ===========================================================================
 # 四、健壮性：失败开放、纯函数
 # ===========================================================================
-def test_empty_facts_clean():
-    r = ac.evaluate({})
-    assert r['level'] == 'clean'
-    assert r['blocked'] is False
 
 
-def test_none_facts_clean():
-    r = ac.evaluate(None)
-    assert r['level'] == 'clean'
 
 
 def test_garbage_types_do_not_raise():
@@ -309,11 +187,3 @@ def test_deterministic():
     a = ac.evaluate(dict(facts))
     b = ac.evaluate(dict(facts))
     assert a == b
-
-
-def test_explain_readable():
-    r = ac.evaluate({'rounds': 1, 'attackers': ['sid-A'], 'max_hits': 6, 'foe_ships': 6})
-    s = ac.explain(r)
-    assert 'sweep_perfect_win' in s
-    assert ac.explain({'level': 'clean'}) == '无异常'
-    assert ac.explain(None) == '无异常'

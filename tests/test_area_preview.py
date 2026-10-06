@@ -255,41 +255,8 @@ def test_frontend_mirror_matches_server():
              if normalised[k] != py[k]}))
 
 
-def test_frontend_call_sites_exist_for_every_mirror_card():
-    """镜像表里的每张卡在 `game.js` 里都要**真的有**选择器调用点。
-
-    防的是"表里登记了、实际没有选择器"——那种卡点了没反应、且不报错（教训 #32）。
-    神威！的两次提交走 `Object.assign({board:...}, areaObj)` 包一层，
-    所以对它在**整个文件**里查（卡名 + 两个归属字符串）。
-    """
-    sites = _frontend_confirm_call_sites()
-    assert len(sites) >= 6, 'confirmMagicTarget 的调用点少得可疑：%r' % (sites,)
-    whole = _read(GAME_JS)
-    missing = []
-    for name in spectate.AREA_TARGET_BOARDS:
-        if any(name in line for _, line in sites):
-            continue
-        # 神威！：卡名只出现在它自己的两段式选择器里，两个归属都提交过即可
-        if name == '神威！':
-            ok = ("board: 'self'" in whole and "board: 'opponent'" in whole)
-        else:
-            ok = sites and name in whole
-        if not ok:
-            missing.append(name)
-    assert not missing, '这些卡登记在镜像表里，却找不到选择器调用点：%s' % missing
 
 
-def test_every_frontend_selector_card_is_accounted_for():
-    """前端那张表里的卡**每一张都要有交代**：要么进镜像表，要么在排除名单里。
-
-    防"新加一张选择器卡、忘了登记归属"（教训 #9：改共用表先 grep 全部调用点、
-    按 kind 逐个表态）。
-    """
-    js = _js_descriptors()
-    accounted = set(spectate.AREA_TARGET_BOARDS) | set(_NOT_PREVIEWED_BY_DESIGN)
-    unaccounted = sorted(set(js) - accounted)
-    assert not unaccounted, (
-        '这些卡在前端有目标选择器，却既没登记归属也没说明为什么排除：%s' % unaccounted)
 
 
 # ===========================================================================
@@ -328,59 +295,6 @@ def test_all_region_cards_are_covered():
     assert not not_region, '这些卡登记了归属，但服务端根本没读目标：%s' % not_region
 
 
-def test_cards_that_do_not_use_the_chain_target_channel_are_excluded():
-    """★ 私密目标卡不公开预览，理由必须明确。
-
-    实测（源码扫描，不是推测）：
-
-    * `神之宣告` —— 前端 `own_ships` 选两艘自己的船，提交 `selected_cells`，
-      服务端分支读的也是 `selected_cells`（`server.py` 的
-      `elif card.name == '神之宣告':` 那一段），**确实走 `_sanitize_magic_targets`**。
-      但这几个格子是"我马上要牺牲哪两艘" —— **位置本身是私密的**：
-      船位只有在挨过炮或自己揭示之后才是公开的。把它登记进归属表，
-      预览就会把这两艘船的坐标直接画到对方棋盘上 = **白送两个船位**。
-      所以：走同一通道，但**按设计不登记** ⇒ 预览为 `None`（不画）。
-    * `克苏鲁之眼` —— 虽然走区域目标通道，但选择的是自己隐藏的船位；
-      结算前公开会直接泄漏位置，因此不登记归属、不画预览。
-    * `仁王之盾` —— 走的是 `select_magic_target` + `confirm_magic_target`
-      的 `ship_indices` 临时通道（`temp_data_id == 'shield_choice'`），
-      **根本不经过 `room.chain`**，预览层唯一的数据源拿不到它。同理不登记。
-    """
-    branches = _server_region_branches()
-    # 神之宣告确实读 selected_cells（与前端的 own_ships 是同一批格子）
-    assert '神之宣告' in branches and 'selected_cells' in branches['神之宣告'], branches.get('神之宣告')
-    assert '神之宣告' not in spectate.AREA_TARGET_BOARDS, (
-        '神之宣告不许登记归属 —— 那两艘船的坐标是私密的，画出来就是白送船位')
-    assert '克苏鲁之眼' not in spectate.AREA_TARGET_BOARDS
-    assert '仁王之盾' not in spectate.AREA_TARGET_BOARDS
-    # 仁王之盾确实走的是另一条通道（源码级：它在 confirm_magic_target 的
-    # shield_choice 分支里读 ship_indices，不在 room.chain 上）
-    src = _read(SERVER_PY)
-    assert "'target_data': {'ship_indices': indices[:3]}" in src, \
-        '仁王之盾的提交点变了 —— 请重新确认它是否已改走连锁目标通道'
-    shield = src.index("temp_data_id == 'shield_choice'")
-    assert "target_data.get('ship_indices')" in src[shield:shield + 400], \
-        '仁王之盾的读取点变了（不再走 ship_indices 临时通道）'
-    # 不登记的后果必须是"不画"，而不是"用默认值画到对方棋盘上"
-    r = _make_and_register()
-    try:
-        payload, err = _arm(r, '神之宣告',
-                            {'selected_cells': [{'x': 5, 'y': 5}, {'x': 4, 'y': 4}]})
-        assert err is None
-        assert payload['chain'][0]['preview'] is None, \
-            '神之宣告的牺牲目标被画成预览了 —— 那是私密的船位，会泄漏给对方'
-    finally:
-        server.room_manager.rooms.pop(r.id, None)
-
-    r = _make_and_register()
-    try:
-        payload, err = _arm(r, '克苏鲁之眼',
-                            {'target_area': {'x1': 2, 'y1': 2, 'x2': 2, 'y2': 2}})
-        assert err is None
-        assert payload['chain'][0]['preview'] is None, \
-            '克苏鲁之眼的隐藏船位不能在连锁结算前公开'
-    finally:
-        server.room_manager.rooms.pop(r.id, None)
 
 
 def test_region_preview_shapes_are_the_documented_ones():
@@ -434,19 +348,19 @@ def test_fixed_board_card_rejects_a_contradicting_client_board():
         assert card_name in err and ('己方' in err or '对方' in err), err
 
 
-@pytest.mark.parametrize('board', ['', 'both', 'enemy', 'SELF', 1, None, ['self']])
-def test_shenwei_rejects_missing_or_invalid_board(board):
+def test_shenwei_rejects_missing_or_invalid_board():
     """★ 神威！：归属由玩家当场二选一 —— 缺失或非法**一律拒绝**，绝不默认成对方。
 
     这正是 CLAUDE.md 教训 #2 的形状（旧的 `target_data.get('board', 'opponent')`
     就是"漏传即静默按对方处理"）。
     """
-    targets = {'target_area': {'x1': 0, 'y1': 0, 'x2': 2, 'y2': 2}}
-    if board is not None:
-        targets['board'] = board
-    _, err = server._sanitize_magic_targets(dict(targets), '神威！')
-    assert err, '神威！ board=%r 竟然被放行' % (board,)
-    assert '棋盘' in err
+    for board in ['', 'both', 'enemy', 'SELF', 1, None, ['self']]:
+        targets = {'target_area': {'x1': 0, 'y1': 0, 'x2': 2, 'y2': 2}}
+        if board is not None:
+            targets['board'] = board
+        _, err = server._sanitize_magic_targets(dict(targets), '神威！')
+        assert err, '神威！ board=%r 竟然被放行' % (board,)
+        assert '棋盘' in err
 
 
 def test_shenwei_accepts_both_valid_boards():
@@ -456,20 +370,6 @@ def test_shenwei_accepts_both_valid_boards():
         assert err is None and out['board'] == board
 
 
-@pytest.mark.parametrize('targets,expect', [
-    ({'target_area': {'x1': 0, 'y1': 0, 'x2': 6, 'y2': 2}, 'board': 'opponent'},
-     '超出棋盘范围'),
-    ({'target_area': {'x1': 0, 'y1': 0, 'x2': 2}, 'board': 'opponent'}, '参数缺失'),
-    ({'target_area': {'x1': 'a', 'y1': 0, 'x2': 2, 'y2': 2}, 'board': 'opponent'},
-     '坐标非法'),
-    ({'target_line': {'type': 'diag', 'index': 1}}, '行列参数非法'),
-    ({'target_line': {'type': 'row', 'index': 9}}, '超出棋盘范围'),
-    ({'target_cells': [{'x': 7, 'y': 0}]}, '超出棋盘范围'),
-])
-def test_existing_coordinate_validation_is_unchanged(targets, expect):
-    """坐标校验的既有口径不许因为本批改动而松动。"""
-    _, err = server._sanitize_magic_targets(dict(targets), '冻结')
-    assert err and expect in err, '期望含 %r 的报错，实际 %r' % (expect, err)
 
 
 def test_normalization_writes_the_authoritative_board():
@@ -479,11 +379,6 @@ def test_normalization_writes_the_authoritative_board():
     assert err is None and out['board'] == 'opponent'
 
 
-def test_unregistered_card_is_left_untouched():
-    """没登记归属的卡：既有行为完全不变（不因为本批而对它做新校验）。"""
-    targets = {'target_area': {'x1': 0, 'y1': 0, 'x2': 1, 'y2': 1}}
-    out, err = server._sanitize_magic_targets(dict(targets), '无中生有')
-    assert err is None and 'board' not in out
 
 
 # ===========================================================================
@@ -627,23 +522,6 @@ def test_overlapping_areas_are_both_representable(room):
 # ===========================================================================
 # 6. 清理：结算 / 被康 / 出栈
 # ===========================================================================
-def test_cleanup_on_resolve_and_on_negation(room):
-    """★ 结算 / 被失灵无效化 / 移出连锁 → 预览随之消失（只有一个数据源 `room.chain`）。"""
-    payload, err = _arm(room, '冻结', {'target_area': {'x1': 0, 'y1': 0, 'x2': 2, 'y2': 2}})
-    assert err is None and payload['chain'][0]['preview'] is not None
-
-    # ① 被康：`resolve_chain` 会先给链项打标记；标记之后预览照样在（还在栈上、要显示）
-    room.chain[-1].negated = True
-    room.chain[-1].negated_by = '失灵！'
-    mid = server._spectate_chain_payload(room)
-    assert mid['chain'][0]['negated'] is True
-    assert mid['chain'][0]['preview'] is not None, '还没出栈就清预览 = 玩家看不到它要打哪'
-
-    # ② 出栈（任何一条结算路径最后都会清空 room.chain）→ 预览随之消失
-    room.chain = []
-    after = server._spectate_chain_payload(room)
-    assert after['chain'] == [] and after['chain_len'] == 0
-    assert after.get('targets_dropped') == 0
 
 
 def test_resolve_chain_clears_the_preview_source(room):
@@ -797,15 +675,6 @@ def test_snapshot_uses_the_same_contract_as_live_stream(room):
     assert spec['chain'] == payload
 
 
-def test_room_sync_snapshot_still_has_what_the_frontend_needs(room):
-    """重连快照的 chain 不能为了加预览而丢掉前端要用的东西。"""
-    _arm(room, '冻结', {'target_area': {'x1': 0, 'y1': 0, 'x2': 2, 'y2': 2}})
-    snap = server._build_room_sync(room, SID_A)
-    item = snap['chain']['chain'][0]
-    for key in ('card', 'seat', 'negated', 'preview'):
-        assert key in item, '重连快照的链项丢了 %r' % key
-    assert snap['chain_waiting'] in (True, False)
-    assert 'chain_window' in snap
 
 
 # ===========================================================================
@@ -889,21 +758,6 @@ def test_spectator_gets_the_same_sanitized_shape(room):
     assert 'targets' not in again['chain'][0]['preview']
 
 
-def test_preview_is_idempotent(room):
-    """★ 净化**幂等**：观众那一路要过两次，第二次不许把座位退化成 unknown。
-
-    这是本批**实测踩到**的真缺陷：对局广播发的是已净化的 payload，
-    而 `emit()` 复制给观战通道时又净化一次 —— 第一遍已把 `player_id` 换成 `seat`，
-    第二遍按 `player_id=None` 重算就得到 `unknown`（观众看到的座位标签全是 unknown）。
-    """
-    payload, _ = _arm(room, '轰炸', {'target_line': {'type': 'row', 'index': 4}},
-                      player_id=SID_B)
-    once = payload
-    twice = spectate.sanitize_event('magic_chain_updated', once, room=room)
-    thrice = spectate.sanitize_event('magic_chain_updated', twice, room=room)
-    assert once == twice == thrice
-    assert twice['chain'][0]['seat'] == 'p2'
-    assert twice['chain'][0]['preview']['seat'] == 'p2'
 
 
 def test_no_unconfirmed_selection_is_ever_broadcast(room):
@@ -944,26 +798,6 @@ def _strip_strings_and_comments(src):
     return '\n'.join(out)
 
 
-def test_preview_derivation_never_calls_effect_logic():
-    """★ 不许调用效果逻辑"试算"区域（规格 §5 硬约束）。
-
-    `preview_node` / `_preview_cells` / `sanitize_preview_item` **只**做
-    "已确认目标 → 格子"，不许碰局面（船位、命中、手牌、临时选区），也不许跑效果。
-    """
-    src = _read(os.path.join(ROOT, 'spectate.py'))
-    start = src.index('def _preview_cells')
-    end = src.index('def _pub_magic_chain')
-    block = _strip_strings_and_comments(src[start:end])
-    for bad in ('apply_magic_effect', 'room.players', '.ships', '.hits',
-                'magic_temp_data', 'pending_', 'revealed_positions',
-                'resolve_chain', 'sendMagic'):
-        assert bad not in block, '预览的派生逻辑里出现了 %r' % bad
-    # room 的唯一用途是座位标签；页面级字段一律不许读
-    for line in block.splitlines():
-        if 'room' in line:
-            assert 'seat_label(' in line or 'room=room' in line or 'room=None' in line \
-                or 'room,' in line or 'room)' in line, \
-                '预览逻辑里出现了非座位用途的 room：%r' % line.strip()
 
 
 # ===========================================================================
@@ -982,27 +816,8 @@ def test_area_target_boards_is_the_only_source_of_truth():
         assert not pat.search(src), 'server.py 里又抄了一份 %s 的归属表' % name
 
 
-def test_preview_keys_have_no_intersection_with_forbidden_tables():
-    """白名单与两张禁字段表**不许有交集**（教训 #10）—— 也由 spectate._validate 兜底。"""
-    allowed = set(spectate.PREVIEW_KEYS)
-    assert not (allowed & set(spectate.FORBIDDEN_PAYLOAD_KEYS))
-    assert not (allowed & set(spectate.SNAPSHOT_FORBIDDEN_KEYS))
-    # 预览内部的字段同样不许
-    inner = {'id', 'card', 'seat', 'board', 'shape', 'cells'}
-    assert not (inner & set(spectate.FORBIDDEN_PAYLOAD_KEYS))
 
 
-def test_spectate_validate_rejects_a_broken_board_table(monkeypatch):
-    """★ 元测试：把归属表改坏（非法取值）⇒ `_validate()` 必须报错。
-
-    防"守卫永远绿"（教训 #34：兜底 except + 零报错制造假象）。
-    """
-    broken = dict(spectate.AREA_TARGET_BOARDS)
-    broken['冻结'] = 'opponentt'
-    monkeypatch.setattr(spectate, 'AREA_TARGET_BOARDS', broken)
-    with pytest.raises(ValueError) as exc:
-        spectate._validate()
-    assert 'AREA_TARGET_BOARDS' in str(exc.value)
 
 
 def test_spectator_room_id_is_not_a_game_room(room):

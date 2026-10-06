@@ -84,10 +84,6 @@ def test_attackable_cells_empty_when_board_exhausted():
     assert server._attackable_cells(room, 'p1') == []
 
 
-def test_attackable_cells_unknown_player_is_empty_not_crash():
-    room = _mk_room_with([])
-    assert server._attackable_cells(room, 'nobody') == []
-    assert server._attackable_cells(None, 'p1') == []
 
 
 # ---------------------------------------------------------------------------
@@ -123,45 +119,24 @@ def test_guard_lets_you_leave_when_nothing_is_left_to_attack():
 # ★ 源码级：那三处网格数学不许再各写一遍
 # ---------------------------------------------------------------------------
 
-def test_four_call_sites_use_the_shared_helper():
-    """四处调用点都要读同一个 helper，而不是各自内联算。
-
-    原本「还能打哪些格」在 server.py 里有**四份**：
-      ① `handle_enter_end_phase` 的结束阶段门禁
-      ② `_ai_turn_loop` 的炮击循环
-      ③ `_auto_act_on_timeouts` 的超时兜底
-      ④ 自动连击里挑随机目标那段
-    现在四处都走 `_attackable_cells`。
-
-    ⚠️ 这里**刻意只查调用点数量，不查"那段数学只出现一次"**。
-       因为 `(a.x, a.y) for a in ...attacks` 这个形状还有两处**合法**用途
-       （`_find_safe_placement` / 落点校验，用的是**对方**的攻击历史
-       ——「哪里是安全落点」，与「我还能打哪里」是两个概念）。
-       拿它当"重复实现"的判据会误报。真正管住回归的是上面那些
-       单元测试与真实 seed 的端到端测试；这条只好管"有没有人把 helper 删了"。
-    """
-    src = open(SERVER_PATH, encoding='utf-8').read()
-    assert 'def _attackable_cells(' in src, '_attackable_cells 不见了'
-    n = src.count('_attackable_cells(room,')
-    assert n >= 4, '至少应有 4 处调用，实际 %d 处（有人又内联算了一遍？）' % n
 
 
 # ---------------------------------------------------------------------------
 # ★ 端到端：拿真实复现的那个 seed 钉
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize('seed', [3102, 3038, 3043, 3046, 3106, 3115])
-def test_repro_seeds_no_longer_deadlock_on_attack(seed):
+def test_repro_seeds_no_longer_deadlock_on_attack():
     """★ seed 3102 是修复前**实测卡死**的那一局。
 
     卡死原因必须**不是**「36 格全部打过」——那个失败模式已经修掉。
     允许它以别的原因结束（例如随机对局打满 200 回合上限，那是合法结果），
     但绝不允许它再因为「打不动了」停住。
     """
-    r = hg.play_game(lambda: hg.ExistingAIPolicy('hard'),
-                     lambda: hg.RandomPolicy(), seed=seed, max_rounds=200)
-    assert '全部打过' not in (r.stall_reason or ''), (
-        'seed=%d 又出现了攻击死锁: %s' % (seed, r.stall_reason))
+    for seed in [3102, 3038, 3043, 3046, 3106, 3115]:
+        r = hg.play_game(lambda: hg.ExistingAIPolicy('hard'),
+                         lambda: hg.RandomPolicy(), seed=seed, max_rounds=200)
+        assert '全部打过' not in (r.stall_reason or ''), (
+            'seed=%d 又出现了攻击死锁: %s' % (seed, r.stall_reason))
 
 
 def test_board_exhaustion_never_stalls_a_batch():

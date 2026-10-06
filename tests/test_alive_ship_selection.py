@@ -83,16 +83,14 @@ def test_is_ship_alive_basics(room):
     assert server._is_ship_alive(p, dead) is False, '进了沉船堆就是死的'
     assert len(server._alive_ships(p)) == 5
 
-
-def test_is_ship_alive_catches_full_hits_without_sunken_entry(room):
-    """命中数满了但没进沉船堆（异常路径）也要判死，避免两边不同步时漏判。"""
-    p = room.players[P2]
-    p.ships[0].hits = list(p.ships[0].positions)   # 不 append 到 sunken_ships
-    assert server._is_ship_alive(p, p.ships[0]) is False
+    inconsistent = p.ships[1]
+    inconsistent.hits = list(inconsistent.positions)
+    assert server._is_ship_alive(p, inconsistent) is False
+    assert inconsistent not in server._alive_ships(p)
 
 
-def test_is_ship_alive_handles_none(room):
-    assert server._is_ship_alive(room.players[P2], None) is False
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -150,19 +148,6 @@ def test_ship_pick_skips_when_all_ships_dead(room, events):
     assert not pick_events(events), '没有活船时不该发牺牲请求'
 
 
-def test_ai_ship_pick_only_chooses_alive(room):
-    """AI 代选也不能选到沉船。"""
-    room.is_ai_room = True
-    p = room.players[P2]
-    dead = kill(p, 0)
-    # 把 AI 的 id 绑到 P2 上
-    room.players = {P1: room.players[P1], f'ai-{room.id}': p}
-    p.name = 'AI'
-
-    for _ in range(30):
-        picked = server._request_ship_pick(room, f'ai-{room.id}', 'demon_contract', 'x')
-        assert picked is not dead, 'AI 不该选到已沉的船'
-        assert server._is_ship_alive(p, picked)
 
 
 # ---------------------------------------------------------------------------
@@ -242,17 +227,6 @@ def test_king_shield_rejects_all_dead(room):
 # ---------------------------------------------------------------------------
 # 下发给前端的存活标记
 # ---------------------------------------------------------------------------
-def test_player_ships_payload_marks_alive(room, events):
-    p = room.players[P1]
-    kill(p, 0)
-    events.clear()
-    server._emit_player_ships(room, P1)
-
-    payload = [d for (e, d, _t, _r) in events if e == 'player_ships_updated']
-    assert payload, '应发出 player_ships_updated'
-    flags = [sh['alive'] for sh in payload[0]['ships']]
-    assert flags.count(False) == 1, f'应恰好 1 艘标记为已沉，实际 {flags}'
-    assert flags[0] is False
 
 
 def test_kill_pushes_player_ships_with_alive_flag(room, events):

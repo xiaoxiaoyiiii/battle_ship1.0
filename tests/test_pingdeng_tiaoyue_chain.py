@@ -506,8 +506,8 @@ def test_jianshe_without_neighbor_ship_fails(room, events):
     assert ping in room.players[P1].magic_hand
 
 
-def test_jianshe_blocked_by_shield_fails(room, events):
-    """溅射受**护盾**影响（卡面）：带盾的船这一发沉不了 ⇒ 失败。"""
+def test_jianshe_can_be_negated_when_a_neighbor_ship_is_shielded(room, events):
+    """溅射无视护盾会击沉邻船，因此平等条约可以无效化它。"""
     shielded = ship((2, 3))
     shielded.shield = True
     room.players[P1].ships = [shielded]
@@ -516,8 +516,9 @@ def test_jianshe_blocked_by_shield_fails(room, events):
 
     results, ping = _run_chain(room, events, P2, '溅射', {}, P1)
 
-    assert _by_name(results, '平等条约').success is False
-    assert ping in room.players[P1].magic_hand
+    assert _by_name(results, '平等条约').success is True
+    assert getattr(_by_name(results, '溅射'), 'negated_skip', False) is True
+    assert ping not in room.players[P1].magic_hand
     assert room.players[P1].remaining_ships == 1
 
 

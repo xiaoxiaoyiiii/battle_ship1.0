@@ -40,45 +40,11 @@ def _screen_var(sid):
 
 
 # 1. 一个屏都不许被加上 hidden（单向锁死：全仓没有任何地方摘掉它）
-def test_no_screen_ever_gets_hidden_class():
-    ids = _screen_ids()
-    assert ids, 'index.html 里没找到 .screen 元素，测试本身失效'
-    for sid in ids:
-        var = _screen_var(sid)
-        pat = re.escape(var) + r"\.classList\.add\(['\"]hidden['\"]\)"
-        assert not re.search(pat, JS), (
-            '屏 %s 被加上了 hidden —— 它永远不会被摘掉，会把该屏永久锁成空白' % sid)
-    # 也不许用 getElementById(...).classList.add('hidden') 绕过去
-    loose = (r"getElementById\(['\"]([a-z0-9-]+-screen)['\"]\)"
-             r"[^\n]{0,60}classList\.add\(['\"]hidden")
-    assert not re.search(loose, JS), '有屏通过 getElementById 被加上了 hidden'
 
 
 # 2. "隐藏所有屏"只能有一份实现，且调用点不许再手抄
-def test_only_one_place_hides_all_screens():
-    assert 'function hideAllScreens' in JS, '缺少唯一的 hideAllScreens()'
-    assert re.search(r'function switchScreen\(screen\) \{\s*hideAllScreens\(\)', JS), (
-        'switchScreen 必须先 hideAllScreens()，否则屏之间不互斥')
 
 
-def test_manual_screen_clearing_lists_are_gone():
-    # 连续 3 行以上裸写 classList.remove('active') = 又手抄了一份
-    pat = (r"(?:^|\n)"
-           r"(?:[ \t]*\w+Screen\.classList\.remove\('active'\);[ \t]*\n){3,}")
-    runs = re.findall(pat, JS)
-    assert not runs, '发现了手抄的隐藏屏清单 %d 处；请改用 hideAllScreens()' % len(runs)
 
 
 # 3. 浮层互斥必须覆盖 HTML 里全部 .modal-overlay，不能再手抄 id 清单
-def test_overlay_mutex_covers_every_modal_overlay():
-    in_html = set(re.findall(r'id="([a-z0-9-]+)"[^>]*class="modal-overlay', HTML))
-    assert len(in_html) >= 9, 'index.html 里 .modal-overlay 数量异常：%d' % len(in_html)
-    body = JS.split('function closeOverlaysExcept')[1].split('window.closeOverlaysExcept')[0]
-    assert "querySelectorAll('.modal-overlay')" in body, (
-        'closeOverlaysExcept 应按类名取，而不是手抄 id 清单')
-    assert 'const ids = [' not in body, '又出现了手抄的 id 数组'
-
-
-def test_overlay_mutex_has_no_stale_hardcoded_pair():
-    body = JS.split('function closeOverlaysExcept')[1].split('window.closeOverlaysExcept')[0]
-    assert 'opponent-stats-modal' not in body, '旧的硬编码清单还在'

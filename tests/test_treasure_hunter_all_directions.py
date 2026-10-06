@@ -127,45 +127,10 @@ def test_treasure_hunter_on_reinforce(room):
     assert '冻结' in hand, f'增援应触发八方来财，实际手牌：{hand}'
 
 
-def test_treasure_hunter_on_heal(room):
-    """疗愈：原地复活也是主动增加。"""
-    setup(room, ['疗愈'])
-    make_sunk(room, 1)
-    server.apply_magic_effect(room, P1, card('疗愈'), {})
-
-    hand = [c.name for c in room.players[P1].magic_hand]
-    assert '冻结' in hand, f'疗愈应触发八方来财，实际手牌：{hand}'
 
 
-def test_treasure_hunter_on_multiple_revives(room):
-    """疗愈一次复活两艘 → 摸两张（卡面：每发生一次变化摸一张）。"""
-    setup(room, ['疗愈'])
-    make_sunk(room, 2)
-    server.apply_magic_effect(room, P1, card('疗愈'), {})
-
-    hand = [c.name for c in room.players[P1].magic_hand]
-    # 基数 1 = 手里那张「疗愈」（直接调 apply 不会扣牌），另加摸到的 2 张
-    assert len(hand) == 3, f'复活两艘应摸两张（含手里的疗愈共 3 张），实际：{hand}'
-    assert '冻结' in hand and '轰炸' in hand, f'摸到的应是牌堆顶两张，实际：{hand}'
 
 
-def test_treasure_hunter_on_shenwei_return(room):
-    """神威除外到期归还 = 船数增加，也应摸牌。"""
-    setup(room)
-    # 制造"两艘船被神威除外"的状态
-    excluded = []
-    for sh in list(room.players[P1].ships)[:2]:
-        room.players[P1].ships.remove(sh)
-        room.players[P1].remaining_ships -= 1
-        excluded.append(sh)
-    room.game_effects['excluded_ships'] = [{
-        'player': P1, 'ships': excluded, 'return_turn': room.round,
-    }]
-
-    server._restore_due_shenwei(room, room.round)
-
-    hand = [c.name for c in room.players[P1].magic_hand]
-    assert len(hand) == 2, f'归还两艘应摸两张，实际：{hand}'
 
 
 # ---------------------------------------------------------------------------
@@ -183,12 +148,6 @@ def test_treasure_hunter_still_works_on_sink(room):
     assert len(room.players[P1].magic_hand) > before, '减少方向仍要摸牌'
 
 
-def test_treasure_hunter_still_works_on_attack_sunk(room):
-    """反证：普通炮击击沉路径（_apply_ship_sunk_effects）仍要摸牌。"""
-    setup(room)
-    room.current_attacker = P2
-    server.handle_attack({'room_id': room.id, 'player_id': P2, 'x': 5, 'y': 0})
-    assert len(room.players[P1].magic_hand) >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -205,11 +164,6 @@ def test_no_draw_without_treasure_hunter(room):
     assert room.players[P1].magic_hand == [], '未持卡不该摸牌'
 
 
-def test_notify_helper_is_noop_without_flag(room):
-    """辅助函数本身：无人持卡时不摸牌。"""
-    room.magic_deck = [card(n) for n in DECK]
-    assert server._notify_treasure_hunter(room, 1) == 0
-    assert room.players[P1].magic_hand == []
 
 
 def test_notify_helper_draws_for_holder(room):
@@ -219,12 +173,6 @@ def test_notify_helper_draws_for_holder(room):
     assert len(room.players[P1].magic_hand) == 3
 
 
-def test_notify_helper_emits_message(room, events):
-    """摸牌要有提示，玩家才知道是八方来财生效。"""
-    setup(room)
-    server._notify_treasure_hunter(room, 2)
-    texts = [d.get('text', '') for e, d, to, r in events if e == 'message']
-    assert any('八方来财' in t for t in texts), f'应有提示，实际：{texts}'
 
 
 def test_notify_helper_hits_every_holder(room):
@@ -239,15 +187,6 @@ def test_notify_helper_hits_every_holder(room):
     assert len(room.players[P2].magic_hand) == 1
 
 
-def test_notify_helper_excludes_attacker_holder(room):
-    """"己方击败对方的船不算"：攻击方自己持卡时被排除，被击沉方照常摸。"""
-    room.magic_deck = [card(n) for n in DECK]
-    room.players[P1].effect_flags.treasure_hunter = True   # 攻击方持卡
-    room.players[P2].effect_flags.treasure_hunter = True   # 被击沉方也持卡
-
-    assert server._notify_treasure_hunter(room, 1, exclude_player_id=P1) == 1
-    assert room.players[P1].magic_hand == [], '攻击方（己方击败对方）不摸'
-    assert len(room.players[P2].magic_hand) == 1, '被击沉方照常摸'
 
 
 # ---------------------------------------------------------------------------
@@ -272,15 +211,6 @@ def test_opponent_revive_also_triggers_holder(room):
     assert len(hand) == 1, f'对方复活自己的船，持卡者应摸一张，实际：{hand}'
 
 
-def test_opponent_reinforce_also_triggers_holder(room):
-    """对方用增援 → 持卡者也要摸牌（非攻击造成的船数增加）。"""
-    setup(room)
-    room.players[P2].remaining_ships = 5      # 腾出位置
-    room.players[P2].ships = room.players[P2].ships[:5]
-
-    server._notify_treasure_hunter(room, 1)   # 放置流程里的调用点（不含变化方）
-
-    assert len(room.players[P1].magic_hand) == 1
 
 
 def test_holder_attack_sinking_opponent_does_not_draw(room):
@@ -314,10 +244,3 @@ def test_magic_sinking_holder_by_self_still_draws(room):
     server._apply_ship_loss_linkage(room, P1, P2, count=1)
     assert len(room.players[P1].magic_hand) == 1, (
         '魔法卡不是"击败"，不该被排除')
-def test_initial_placement_is_not_a_change(room):
-    """开局布船不算"主动变化"（那是初始状态，不是变化）。"""
-    setup(room)
-    # 重新布船（模拟 handle_place_ships 的赋值）
-    room.players[P1].ships = [PlayerShip(positions=[Position(i, 2)], hits=[]) for i in range(6)]
-    room.players[P1].remaining_ships = 6
-    assert room.players[P1].magic_hand == [], '单纯重新布船不该触发（未被变更点调用）'

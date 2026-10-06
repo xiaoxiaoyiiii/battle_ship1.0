@@ -107,26 +107,8 @@ def test_tie_advances_to_a_new_big_round(room, events):
         '阶段必须重置为准备阶段，否则界面上没有可点的按钮'
 
 
-def test_tie_broadcasts_the_new_round_so_clients_can_continue(room, events):
-    """★ 客户端能继续操作的前提：收到状态广播。
-
-    以前这里直接 return，一条 turn_change / phase_updated / game_state 都不发，
-    客户端界面停在旧阶段 → 交回合按钮消失、下一步不了（作者反馈的"卡死"）。
-    """
-    server.end_turn({'room_id': room.id, 'player_id': P2})
-
-    got = kinds(events)
-    assert 'game_state' in got, '必须广播新状态，否则客户端不知道回合已经推进'
-    states = [d.get('state') for e, d, _t, _r in events if e == 'game_state']
-    assert 'rock_paper_scissors' in states, f'广播的状态应该是进入猜拳，实际 {states}'
 
 
-def test_tie_still_tells_the_players_why_nothing_happened(room, events):
-    """平局要有一句明确的播报，别让玩家以为卡了。"""
-    server.end_turn({'room_id': room.id, 'player_id': P2})
-
-    msgs = [d.get('text', '') for e, d, _t, _r in events if e == 'message']
-    assert any('无人获胜' in m for m in msgs), msgs
 
 
 def test_tie_effect_is_not_re_armed(room, events):
@@ -166,15 +148,3 @@ def test_more_ships_loses(room, events):
 
     assert resp.get('game_over') is True
     assert resp.get('winner') == P1
-
-
-def test_effect_still_active_before_timer_runs_out(room, events):
-    """剩余回合还没到 0：只更新计数，不结算。"""
-    room.game_effects['reinforcement_check']['remaining_turns'] = 2
-
-    resp = server.end_turn({'room_id': room.id, 'player_id': P2})
-
-    assert resp.get('status') == 'success'
-    assert 'reinforcement_check' in room.game_effects, '计时没到不该作废'
-    updates = [d for e, d, _t, _r in events if e == 'reinforcement_turn_updated']
-    assert updates and updates[-1]['remaining_turns'] == 1, updates

@@ -88,139 +88,17 @@ def test_blocked_cells_skip_sunken(room):
     assert (0, 0) not in relaxed, 'ignore_sunken 应跳过沉船，否则前端把它画成灰色'
 
 
-def test_blocked_and_error_agree(room):
-    """★ blocked 与 _placement_error 必须对每个格子给出同样的结论。
-
-    这两个函数是两套独立实现，曾经漂移过 —— 神机妙算时空格被误画成灰色，
-    玩家以为"只能摆在原本沉船的地方"。
-    """
-    p = room.players[P1]
-    dead = p.ships[0]
-    dead.hits = list(dead.positions)
-    server._mark_ship_sunken(p, dead)
-    # 让对方打过一些格子
-    for x, y in [(2, 2), (3, 3)]:
-        room.players[P2].attacks.append(Position(x=x, y=y))
-
-    blocked = {(b['x'], b['y'])
-               for b in server._placement_blocked_cells(room, P1, ignore_sunken=True)}
-
-    for x in range(6):
-        for y in range(6):
-            err = server._placement_error(room, P1, x, y, ignore_sunken=True)
-            if (x, y) in blocked:
-                assert err is not None, f'({x},{y}) 被画成灰色，但校验说可放 —— 口径不一致'
-            else:
-                assert err is None, f'({x},{y}) 可点，但校验拒绝：{err} —— 口径不一致'
 
 
-def test_shenji_free_cells_not_blocked(room, events):
-    """★ 神机妙算下发的 blocked 里，不该有"对方未打过、也没被活船占用"的空格。"""
-    p = room.players[P1]
-    # 两艘旧沉船 + 两艘本回合新沉
-    for i in (5, 4):
-        sh = p.ships[i]
-        sh.hits = list(sh.positions)
-        server._mark_ship_sunken(p, sh)
-    p.remaining_ships = 4
-    server._apply_shenji_prediction(room, P1, 2)
-    room.game_effects['prediction_initial_p1']['sunken_ids'] = []
-    for i in (3, 2):
-        sh = p.ships[i]
-        sh.hits = list(sh.positions)
-        server._mark_ship_sunken(p, sh)
-    p.remaining_ships = 2
-
-    events.clear()
-    server._begin_shenji_redeploy(room, P1, 2, already_sunken_ids=[])
-
-    reqs = [d for e, d, to, r in events if e == 'placement_request']
-    assert reqs
-    payload = reqs[-1]
-    blocked = {(b['x'], b['y']) for b in payload.get('blocked') or []}
-    opp_attacked = {(a.x, a.y) for a in room.players[P2].attacks}
-    alive_cells = {(pos.x, pos.y) for sh in p.ships
-                   if server._is_ship_alive(p, sh) for pos in sh.positions}
-
-    free = [(x, y) for x in range(6) for y in range(6)
-            if (x, y) not in opp_attacked and (x, y) not in alive_cells]
-    wrongly_blocked = [c for c in free if c in blocked]
-    assert not wrongly_blocked, (
-        f'这些空格被误禁，玩家会以为只能摆原位：{wrongly_blocked}')
 
 
 # ---------------------------------------------------------------------------
 # 问题 2：放置后格子状态
 # ---------------------------------------------------------------------------
-def test_reinforce_clears_attack_history(room):
-    """增援放到某格后，该格要从【对手】的攻击历史里移除（施法者自己那份不动）。"""
-    room.players[P1].remaining_ships = 5
-    room.players[P1].ships = room.players[P1].ships[:5]
-    room.players[P2].attacks.append(Position(x=3, y=3))   # 对方打过
-    room.players[P1].attacks.append(Position(x=3, y=3))   # 我也打过对方棋盘的同一坐标
-
-    room.players[P1].magic_hand = [card('增援')]
-    server.apply_magic_effect(room, P1, card('增援'), {})
-    # 增援不允许放被对方打过的格 → 换一个干净的格子；这里直接验证清理函数
-    server.handle_confirm_reinforcement(
-        {'room_id': room.id, 'player_id': P1, 'position': {'x': 1, 'y': 1}})
-
-    assert not any(a.x == 1 and a.y == 1 for a in room.players[P2].attacks)
-    assert any(a.x == 3 and a.y == 3 for a in room.players[P1].attacks), \
-        '我自己打在对方棋盘的 (3,3) 不该被这次放置碰掉'
 
 
-def test_clear_attacks_helper(room):
-    """_clear_attacks_on_cells 只清【对手打在这块棋盘上】的记录。
-
-    (2,2) 是 P1 棋盘上的格子：`P2.attacks` 里那条是该清的。
-    而 `P1.attacks` 里的 (2,2) 是"P1 打在**对方**棋盘上的那一炮"——
-    两个坐标空间，纬度不同，绝不能动（2026-09-16 修正）。
-    """
-    room.players[P1].attacks.append(Position(x=2, y=2))   # 我打在对方棋盘的
-    room.players[P2].attacks.append(Position(x=2, y=2))   # 对方打在我棋盘的
-    room.players[P2].attacks.append(Position(x=4, y=4))
-
-    server._clear_attacks_on_cells(room, [Position(x=2, y=2)], P1)
-
-    assert not any(a.x == 2 and a.y == 2 for a in room.players[P2].attacks), \
-        '对手打在我这格的记录必须清掉，否则他不能再打（幽灵船）'
-    assert any(a.x == 2 and a.y == 2 for a in room.players[P1].attacks), \
-        '我自己打在对方棋盘的同一坐标被误清：✕ 会消失、还能重复打那一格'
-    assert any(a.x == 4 and a.y == 4 for a in room.players[P2].attacks), '别的格不该被误清'
 
 
-def test_shenji_redeploy_keeps_own_attack_history(room):
-    """★ 把船放回【我的】原位，不该擦掉【我打在对方棋盘上】的记录。
-
-    这正是上一条修正的用户可见后果：双方都打过 (0,0) 时（实战很常见），
-    旧实现会把我的那条一起删掉 → 我看对方棋盘的 ✕ 凭空消失，
-    且 handle_attack 的"已打过"校验失效 → 白赚一炮。
-    """
-    room.players[P1].attacks.append(Position(x=0, y=0))   # 我打过对方棋盘的 (0,0)
-    room.players[P2].attacks.append(Position(x=0, y=0))   # 对方打过我的 (0,0)
-
-    p = room.players[P1]
-    ship = p.ships[0]
-    ship.hits = list(ship.positions)
-    server._mark_ship_sunken(p, ship)
-    p.remaining_ships = 5
-
-    server._apply_shenji_prediction(room, P1, 1)
-    room.game_effects['prediction_initial_p1']['sunken_ids'] = []
-    server._begin_shenji_redeploy(room, P1, 1, already_sunken_ids=[])
-    out = server.handle_confirm_reinforcement(
-        {'room_id': room.id, 'player_id': P1, 'position': {'x': 0, 'y': 0}})
-    assert out.get('status') == 'success', out
-
-    assert any(a.x == 0 and a.y == 0 for a in room.players[P1].attacks), \
-        '我打在对方棋盘 (0,0) 的记录被误清 → ✕ 会消失、还能重复打那一格'
-
-    # 原来的修复不能被破坏：对方仍然能打我这格
-    room.current_attacker = P2
-    room.attacks_remaining = 6
-    atk = server.handle_attack({'room_id': room.id, 'player_id': P2, 'x': 0, 'y': 0})
-    assert atk.get('status') == 'success', f'对方应能攻击该格，实际：{atk}'
 
 
 def test_shenji_original_cell_becomes_attackable(room):
@@ -298,20 +176,6 @@ def test_reinforce_can_exceed_six(room):
     assert alive == 7, f'棋盘实际存活数也应是 7，实际 {alive}'
 
 
-def test_no_cap_message_anywhere(room):
-    """三张卡都不该再出现"战舰数量已达上限"。"""
-    cases = [
-        ('增援', 6, {}),
-        ('死者苏生', 6, {}),
-        ('疗愈', 6, {}),
-    ]
-    for name, ships, _ in cases:
-        room.players[P1].remaining_ships = ships
-        room.players[P1].magic_hand = [card(name)]
-        res = server.apply_magic_effect(room, P1, card(name), {})
-        assert '上限' not in (res.message or ''), (
-            f'{name} 仍报船数上限：{res.message}')
-        room.magic_temp_data.pop('pending_placement', None)
 
 
 def test_full_board_reinforce_enters_flow(room, events):

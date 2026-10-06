@@ -5437,7 +5437,9 @@ def _trigger_ship_trap(room, owner_id, sunk_ship):
 
 
 
-def _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id, ship):
+def _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id, ship,
+                             *, exclude_attacker_from_treasure=True,
+                             request_demon_contract=True):
     """击沉一艘战舰后的共同副作用（普通攻击 / 区域魔法 共用）。
 
     包含：船数扣减、沉船记录、百亿补贴、恶魔契约、八方来财、无暇圣心中断。
@@ -5455,14 +5457,17 @@ def _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id, ship):
 
     # 恶魔契约: 绑定船数增减 - 任意一方船被击杀，另一方也要牺牲一艘
     # 牺牲由该方玩家自己在棋盘上点选（AI 自动），不再随机。
-    if room.game_effects.get('demon_contract'):
+    if request_demon_contract and room.game_effects.get('demon_contract'):
         _request_demon_contract_sacrifice(room, defender_id)
 
     # 八方来财: 战舰数目变化时抽一张牌。
     # 这是【炮击/弃卡攻击】造成的减少，所以"己方击败对方的船"要排除 ——
     # 即：攻击方自己持有八方来财时，他打沉别人不算变化；
     # 而被击沉的那一方若持有八方来财，则照常摸牌（是对方击败了我方）。
-    _notify_treasure_hunter(room, 1, exclude_player_id=attacker_id)
+    if exclude_attacker_from_treasure:
+        _notify_treasure_hunter(room, 1, exclude_player_id=attacker_id)
+    else:
+        _notify_treasure_hunter(room, 1)
 
     # 检查无暇圣心效果：如果有战舰被击沉，中断效果
     if 'holy_heart' in room.game_effects:
@@ -9259,8 +9264,7 @@ def _treaty_splash_kills(room, target_item):
 
     ⚠️ 溅射的目标**不在** `ChainItem.targets` 里（它读 `room.last_attack`）——
        拿 targets 去判会判成"永远不打人"，等于把它整张卡漏掉。
-    ⚠️ 卡面「这次伤害不受状态'无敌'影响」但**受护盾影响**：带盾的船这一发沉不了
-       （盾被打破、船毫发无伤）⇒ 必须把带盾的排除，否则"看着会沉、其实不沉"。
+    溅射按规则无视护盾并强制击沉仍有未受伤格的战舰，因此带盾船也必须纳入判定。
     """
     last = getattr(room, 'last_attack', None) or {}
     if last.get('attacker') != target_item.player_id or not last.get('hit'):
@@ -9276,8 +9280,6 @@ def _treaty_splash_kills(room, target_item):
     if victim is None:
         return False
     for sh in _alive_ships(victim):
-        if getattr(sh, 'shield', False):
-            continue
         hits = {(h.x, h.y) for h in sh.hits}
         if any((p.x, p.y) in neighbors and (p.x, p.y) not in hits for p in sh.positions):
             return True
@@ -9358,7 +9360,7 @@ EQUAL_TREATY_SHIP_CHANGE_RULES = {
     '硫磺火焰': (_treaty_sulfur_kills,
                  '选定的 6 个格子里必须有还活着的船'),
     '溅射':     (_treaty_splash_kills,
-                 '上一发命中格的上下左右四格里必须有会沉掉的船（带盾的不算）'),
+                 '上一发命中格的上下左右四格里必须有仍可被溅射击沉的战舰（护盾无效）'),
     # ── 复活类：判据是「真的会复活」──
     '疗愈':     (_treaty_revive_has_wreck,
                  '场上没有可复活的沉船时不会复活'),
@@ -10509,8 +10511,16 @@ def _build_room_sync(room, player_id: str) -> dict:
         'remaining_ships': p.remaining_ships,
         'ships': [{'positions': [{'x': pos.x, 'y': pos.y} for pos in sh.positions],
                    'frozen': bool(getattr(sh, 'frozen', None)),
+                   'shield': bool(getattr(sh, 'shield', False)),
                    # 存活状态：重连后前端也要能把沉船从「可选的自己的船」里排除掉
                    'alive': _is_ship_alive(p, sh)} for sh in p.ships],
+        # 对手带盾船的位置已通过 shields_added 对双方公开；重连后恢复棋盘上的盾标记，
+        # 但不下发对手未带盾船的位置，避免借快照泄露舰队布局。
+        'opponent_shielded_ships': [
+            [{'x': pos.x, 'y': pos.y} for pos in sh.positions]
+            for sh in (opp.ships if opp else [])
+            if bool(getattr(sh, 'shield', False)) and _is_ship_alive(opp, sh)
+        ],
         'hand': [{'name': c.name, 'speed': c.speed, 'type': c.type, 'description': c.description} for c in p.magic_hand],
         'attacks': [{'x': a.x, 'y': a.y, 'hit': a.hit} for a in getattr(p, 'attacks', [])],
         # 对手打在我方棋盘上的格：前端自己棋盘的伤损/沉船只认这份数据，
@@ -11640,8 +11650,9 @@ def confirm_magic_target(data):
         raw_indices = target_data.get('ship_indices') or []
         if not isinstance(raw_indices, list) or not raw_indices:
             return {'status': 'error', 'message': '请至少选择一艘战舰'}
-        applied = 0
+        selected_ships = []
         skipped = 0
+        seen_indices = set()
         for idx in raw_indices[:3]:
             try:
                 idx = int(idx)
@@ -11649,20 +11660,33 @@ def confirm_magic_target(data):
                 continue
             if not (0 <= idx < len(caster.ships)):
                 continue
+            if idx in seen_indices:
+                continue
+            seen_indices.add(idx)
             # 已沉的船不给加盾：护盾加在沉船上等于白白浪费一次选择
             if not _is_ship_alive(caster, caster.ships[idx]):
                 skipped += 1
                 continue
+            # shield 是单层布尔状态；重复选择已有护盾的船不会叠加护盾层数。
             caster.ships[idx].shield = True
-            applied += 1
-        if applied == 0:
+            selected_ships.append(caster.ships[idx])
+        if not selected_ships:
             return {'status': 'error', 'message': '无效的选择（已沉没的船不能加护盾）'}
+        applied = len(selected_ships)
         room.magic_temp_data = {}
         # 消费优先队列里的那条登记（见仁王之盾发动处的说明）
         _consume_ship_pick(room, player_id, 'shield_choice')
         # （一次性挡伤，剩几艘有盾直接决定后面几炮打谁），前端此前完全收不到，
         # 连"我加了盾"都没有任何反馈。
         _emit_player_ships(room, player_id)
+        emit('shields_added', {
+            'player': player_id,
+            'count': applied,
+            'positions': [{'x': p.x, 'y': p.y}
+                          for ship in selected_ships for p in ship.positions],
+            'ships': [[{'x': p.x, 'y': p.y} for p in ship.positions]
+                      for ship in selected_ships],
+        }, room=room.id)
         emit('message', {'text': f'已为{applied}艘战舰添加护盾'}, to=caster.sid)
         msg = f'为{applied}艘战舰添加了护盾'
         if skipped:
@@ -13619,56 +13643,48 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
         valid_positions = [p for p in splash_positions if 0 <= p['x'] < 6 and 0 <= p['y'] < 6]
         hit_count = 0
         ships_changed = False
+        demon_contract_requested = False
 
         affected_positions = []
         for pos in valid_positions:
             # 检查是否击中
             hit = False
             ship_sunk = False
-            for i, ship in enumerate(opponent.ships):
-                if Position(**pos) in ship.positions and Position(**pos) not in ship.hits:
-                    # 溅射伤害不受无敌影响（文本），但受护盾影响（护盾抵挡一次）
-                    # 造成伤害：解除无暇圣心"双方未受伤"判定
+            for ship in opponent.ships:
+                position = Position(**pos)
+                if (_is_ship_alive(opponent, ship)
+                        and position in ship.positions
+                        and position not in ship.hits):
+                    # 溅射无视护盾和无敌，并在命中任一未受伤船格时直接击沉整艘船。
+                    # 造成伤害：解除无暇圣心"双方未受伤"判定。
                     if 'holy_heart' in room.game_effects:
                         room.game_effects['holy_heart']['no_damage'] = False
-                    if ship.shield:
-                        hit = True
-                        ship.shield=False
-                        ship_sunk = False
-                    else:
-                        hit = True
-                        ship.hits.append(Position(**pos))
-                        if len(ship.hits) == len(ship.positions):
-                            ship_sunk = True
-                            opponent.remaining_ships -= 1
-                            ships_changed = True
-                            # 记录本回合造成的伤害（五险一金/Freezing! 判定）
-                            caster.damage_dealt_this_turn += 1
+                    hit = True
+                    ship.shield = False
+                    ship.hits.append(Position(**pos))
+                    ship_sunk = True
+                    ships_changed = True
+                    # 使用普通击沉的唯一收口，保证存活状态、双方棋盘和击沉副作用一致。
+                    _apply_ship_sunk_effects(
+                        room, room.id, caster_id, opponent_id, ship,
+                        exclude_attacker_from_treasure=False,
+                        request_demon_contract=False,
+                    )
+                    # 记录本回合造成的伤害（五险一金/Freezing! 判定）。
+                    caster.damage_dealt_this_turn += 1
 
-                            # 保存被击沉的船到sunken_ships
-                            _mark_ship_sunken(opponent, ship)
+                    # 恶魔契约（由牺牲方自己点选，AI 自动）：一次结算里只请求一次。
+                    if (not demon_contract_requested
+                            and room.game_effects.get('demon_contract')
+                            and not _my_ship_picks(room, _opponent_of(room, opponent_id))):
+                        _request_demon_contract_sacrifice(room, opponent_id)
+                        demon_contract_requested = True
+                        ships_changed = True
 
-                            # 百亿补贴 + 无暇圣心中断（与普通攻击共用）
-                            _on_ship_destroyed(room, opponent_id, ship)
-
-                            # 八方来财
-                            _notify_treasure_hunter(room, 1)   # 魔法卡造成的变化：全场持卡者都摸
-
-                            # 恶魔契约（由牺牲方自己点选，AI 自动）：
-                            # 一次结算里多艘沉没时只请求一次。判据查**优先队列**（该玩家已有待选就跳过）；
-                            # 队列内部也会按 player+reason 去重，这里是双保险。
-                            if (room.game_effects.get('demon_contract')
-                                    and not _my_ship_picks(room, _opponent_of(room, opponent_id))):
-                                _request_demon_contract_sacrifice(room, opponent_id)
-                                ships_changed = True
-
-                            # 检查回光返照效果（统一走 helper：置状态 / 记日志 / 记战绩 / 广播）
-                            # 注意必须返回 ChainResult：原实现返回普通 dict，
-                            # resolve_chain 里对 result.caster 赋值会抛 AttributeError，
-                            # 导致连锁不结算、残留连锁栈。
-                            if _check_last_chance(room, caster_id, opponent_id):
-                                result['game_over'] = True
-                                return result
+                    # 检查回光返照效果（统一走 helper：置状态 / 记日志 / 记战绩 / 广播）。
+                    if _check_last_chance(room, caster_id, opponent_id):
+                        result['game_over'] = True
+                        return result
                     hit_count += 1
                     break
 
@@ -13688,6 +13704,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
                 'y': pos['y'],
                 'hit': hit,
                 'ship_sunk': ship_sunk,
+                'shield_blocked': False,
                 'remaining_attacks': room.attacks_remaining,
                 'attacker_remaining_ships': room.players[caster_id].remaining_ships,
                 'defender_remaining_ships': opponent.remaining_ships
@@ -14913,6 +14930,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             'player': caster_id,
             'count': applied,
             'positions': [{'x': p.x, 'y': p.y} for s in alive for p in s.positions],
+            'ships': [[{'x': p.x, 'y': p.y} for p in s.positions] for s in alive],
         }, room=room.id)
         add_game_log(room,
                      f'第{room.round}回合 · {_log_name(room, caster_id)} 的【卧薪尝胆】'

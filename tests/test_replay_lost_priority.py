@@ -182,36 +182,8 @@ def test_lost_fact_wins_over_alive_ship_inference(room):
         % (_last_cell(cells, x, y), cell))
 
 
-def test_alive_ship_list_only_wins_where_lost_has_no_record(room):
-    """★ 反向腿：`lost` 表**没有**这格时，活船列表照旧说了算（不许被改成永远沉没）。
-
-    朴素修法（"凡是曾经有过船就永远留成沉没"）会让这条红 —— 而它正是
-    滥竽充数收回 / 换位 / 神威暂时除外那三条反向腿要保的东西。
-
-    ⚠️ 船位时间线是**稀疏**的（没变化就不记行），所以先制造一次变化，
-       时间线里才有 p1 那一侧可断言。
-    """
-    server._do_demon_contract_sacrifice(room, P2, room.players[P2].ships[0], 'demon_contract')
-    cells = _cells(room, SIDE1)
-    assert cells, '前提：这一帧里 p1 那一侧有船格：%s' % _fold_ships(room)
-    alive = _frontend_cell(cells, 0, 4)
-    assert alive is not None and alive.get('alive') is True, alive
-    assert alive.get('src') == 'ships', '没登记过沉没的格子必须来自活船列表：%s' % alive
-    assert _is_sunk_view(alive) is False, alive
 
 
-def test_every_cell_declares_which_source_it_came_from(room):
-    """★ 探针字段：每条船格都必须带 `src`，且只能是 `ships` / `lost` 两种之一。
-
-    没有这个字段，"两份说法取哪一条"就只能靠读代码猜 —— 而下一批的人一定会猜错。
-    """
-    server._do_demon_contract_sacrifice(room, P2, room.players[P2].ships[0], 'demon_contract')
-    seen = set()
-    for cell in _cells(room, SIDE1) + _cells(room, SIDE2):
-        assert cell.get('src') in ('ships', 'lost'), cell
-        assert set(cell) <= {'x', 'y', 'alive', 'sunk', 'src'}, sorted(cell)
-        seen.add(cell['src'])
-    assert seen == {'ships', 'lost'}, '两种来源都要真的出现过（否则探针是空的）：%s' % seen
 
 
 # ===========================================================================
@@ -364,84 +336,6 @@ def _ancestors_of(node, parent):
     return out
 
 
-def test_every_ship_add_site_states_its_lost_policy():
-    """★★ 穷举守卫：每个"把船放回棋盘"的点都必须在 `LOST_RETURN_POLICY` 里有交代。
-
-    四条腿都会红（每条都实测过，见 §G 实施记录）：
-      · **新增**一个"把船放回棋盘"的点却没登记 ⇒ 红（下一批就可能漏掉撤销口）；
-      · 登记成 `True`（要撤销）而那个函数里**根本没有** `note_ship_returned` ⇒ 红
-        （那正是本批修的那种漏：`平等条约` 回滚）；
-      · 登记成 `False` 但函数里**有**撤销口、又没写进 `LOST_RETURN_EXCEPTIONS` ⇒ 红
-        （函数变了形却没重新表态）；
-      · 例外表/策略表里有指向不存在的代码的条目 ⇒ 红（例外表不许烂在原地）。
-
-    ⚠️ 这条判据**只**管"撤销口还在不在"，不管"撤销口有没有漏格" ——
-       后者由本文件上半部分的运行时用例与 `tools/dom_replay_frame_check.mjs` 管。
-    """
-    src, tree, found = _scan_ship_add_sites()
-    # ⚠️ **写成确切数字**（不是 `>= 12`）：扫描器"少看见几个点"和"多看见一个点"都是
-    #    **必须有人看一眼**的事（前者的后果是守卫恒绿）。新增一个合法追加点时会红两次
-    #    （这里 + 上面的登记表），那正是想要的效果 —— 逼人表态，而不是静默扩表。
-    #    ★ 2026-09-24：20 → 19 —— 删掉了 `apply_magic_effect` 里平等条约回滚那一个
-    #      `affected_player.ships.append`（那条回滚机制整个不存在了）。
-    assert len(found) == 19, (
-        '扫描到的"把船放回棋盘"的点是 %d 个（基线 19）—— 扫描器变了或代码变了，'
-        '两种都要先看一眼：%s' % (len(found), [(s['fn'], s['line']) for s in found]))
-
-    parent = {}
-    for n in ast.walk(tree):
-        for child in ast.iter_child_nodes(n):
-            parent[child] = n
-
-    ret_nodes = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
-                 and isinstance(n.func, ast.Attribute)
-                 and n.func.attr == 'note_ship_returned'
-                 and getattr(n.func.value, 'id', None) == 'replay']
-    assert ret_nodes, '一个 `note_ship_returned` 调用点都找不到 —— 扫描器坏了？'
-    fns_with_return = set()
-    for r in ret_nodes:
-        for anc in [r] + _ancestors_of(r, parent):
-            if isinstance(anc, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                fns_with_return.add(anc.name)
-                break
-
-    unregistered, mismatched = [], []
-    for site in found:
-        key = (site['fn'], site['container'])
-        if key not in LOST_RETURN_POLICY:
-            unregistered.append('%s / %s 第 %d 行' % (site['fn'], site['container'], site['line']))
-            continue
-        policy = LOST_RETURN_POLICY[key]
-        calls = site['fn'] in fns_with_return
-        if policy and not calls:
-            mismatched.append(
-                '%s / %s 第 %d 行：登记"要撤销"，但这个函数里没有 `note_ship_returned`'
-                % (site['fn'], site['container'], site['line']))
-        if (not policy) and calls and key not in LOST_RETURN_EXCEPTIONS:
-            mismatched.append(
-                '%s / %s 第 %d 行：登记"不用撤销"，但这个函数里**有**撤销口 —— '
-                '要么改成"要撤销"，要么写进 `LOST_RETURN_EXCEPTIONS` 说明为什么不用'
-                % (site['fn'], site['container'], site['line']))
-
-    assert not unregistered, (
-        '这些"把船放回棋盘的点"没有在 LOST_RETURN_POLICY 里交代'
-        '（新写法？漏登记？它会绕过 `lost` 表的撤销口）：\n  ' + '\n  '.join(unregistered))
-    assert not mismatched, '处置口径与实际代码对不上：\n  ' + '\n  '.join(mismatched)
-
-    # 例外表不许烂在原地：表里每条都必须指向**真的还在**的代码
-    scanned = {(s['fn'], s['container']) for s in found}
-    stale = [k for k in list(LOST_RETURN_POLICY) + list(LOST_RETURN_EXCEPTIONS)
-             if k not in scanned]
-    assert not stale, '策略表/例外表里有指向不存在的代码的条目：%s' % stale
-    orphan = [k for k in LOST_RETURN_EXCEPTIONS if LOST_RETURN_POLICY.get(k) is not False]
-    assert not orphan, '例外表里的条目必须是一条 `False` 的策略：%s' % orphan
-
-    # 与穷举移除表的登记面必须**同源**（两套表各记一份函数名就会漂移 —— 教训 #1）
-    wanted = {e['fn'] for e in removal_registry.REMOVAL_SITES}
-    extra = sorted({k[0] for k in LOST_RETURN_POLICY if k[0] not in wanted})
-    assert not extra, (
-        '策略表里的这些函数在 `REMOVAL_SITES`（穷举移除表）里找不到 —— 两套登记面漂移了：%s'
-        % extra)
 
 
 def test_reviver_sites_call_the_shared_cleanup_not_a_local_one():

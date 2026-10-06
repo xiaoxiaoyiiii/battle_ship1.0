@@ -64,7 +64,16 @@ def room():
 
 
 def attack(room, x, y, attacker=P1):
+    room.current_attacker = attacker
     return server.handle_attack({'room_id': room.id, 'player_id': attacker, 'x': x, 'y': y})
+
+
+def choose_shield(room, player=P1, indices=(0,)):
+    room.magic_temp_data = {'temp_data_id': 'shield_choice'}
+    return server.confirm_magic_target({
+        'room_id': room.id, 'player_id': player, 'temp_data_id': 'shield_choice',
+        'target_data': {'ship_indices': list(indices)},
+    })
 
 
 def attack_results(events):
@@ -171,6 +180,63 @@ def test_forced_kill_still_goes_through_a_shield(room, events):
     assert res['ship_sunk'] is True
     assert res['shield_blocked'] is False, '强制击杀不该被盾挡下'
     assert (3, 5) in attacked_cells(room)
+
+
+def test_reapplying_shield_still_absorbs_only_one_attack(room, events):
+    """同一艘已有护盾的船再选中时仍只有一层护盾。"""
+    ship = room.players[P1].ships[0]
+    assert choose_shield(room)['status'] == 'success'
+    assert choose_shield(room)['status'] == 'success'
+    assert ship.shield is True
+
+    first = attack(room, 0, 0, attacker=P2)
+    assert first['status'] == 'success'
+    assert ship.shield is False and ship.hits == []
+    assert attack_results(events)[-1]['shield_blocked'] is True
+
+    second = attack(room, 0, 0, attacker=P2)
+    assert second['status'] == 'success'
+    assert server._is_ship_alive(room.players[P1], ship) is False
+    assert room.players[P1].remaining_ships == 5
+
+
+def test_broken_shield_can_be_reapplied_and_is_broadcast_to_both_views(room, events):
+    """破盾但存活的船可重获护盾，双方都收到该船坐标与状态。"""
+    ship = room.players[P1].ships[0]
+    ship.shield = True
+    assert attack(room, 0, 0, attacker=P2)['status'] == 'success'
+    assert ship.shield is False
+    assert server._is_ship_alive(room.players[P1], ship) is True
+    events.clear()
+
+    result = choose_shield(room)
+
+    assert result['status'] == 'success', result
+    assert ship.shield is True
+    own_updates = [data for event, data, to, _room in events
+                   if event == 'player_ships_updated' and to == 'sid-p1']
+    assert own_updates and own_updates[-1]['ships'][0]['shield'] is True
+    public_updates = [data for event, data, _to, event_room in events
+                      if event == 'shields_added' and event_room == room.id]
+    assert public_updates and public_updates[-1]['player'] == P1
+    assert public_updates[-1]['positions'] == [{'x': 0, 'y': 0}]
+    assert public_updates[-1]['ships'] == [[{'x': 0, 'y': 0}]]
+
+
+def test_room_sync_restores_own_and_opponent_shield_views(room, events):
+    """重连快照同时恢复自己的盾状态和对手已公开的带盾船位置。"""
+    ship = room.players[P1].ships[0]
+    ship.shield = True
+
+    own_sync = server._build_room_sync(room, P1)
+    opponent_sync = server._build_room_sync(room, P2)
+
+    assert own_sync['ships'][0]['shield'] is True
+    assert own_sync['ships'][1]['shield'] is False
+    assert opponent_sync['opponent_shielded_ships'] == [[{'x': 0, 'y': 0}]]
+    assert all(len(positions) == 1 for positions in opponent_sync['opponent_shielded_ships'])
+    assert not any(ship_data['positions'] == [{'x': 1, 'y': 0}]
+                   for ship_data in opponent_sync['ships'])
 
 
 # ===========================================================================

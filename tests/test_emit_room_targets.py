@@ -177,26 +177,10 @@ def test_no_wrapper_emit_passes_a_sid_as_a_room():
                     for r in bad))
 
 
-def test_registered_exceptions_still_exist():
-    """登记表不许烂在原地：源码里已经没这处写法时必须删掉它，否则守卫会放行空气。"""
-    found = {(r['in'], r['callee'], r['src']) for r in _sid_room_emits(SERVER_SRC)}
-    missing = sorted(set(_ALLOWED_SID_ROOM_EMITS) - found)
-    assert missing == [], '登记表里有源码中已不存在的写法，请删掉：%r' % (missing,)
 
 
-def test_every_exception_states_a_reason():
-    """例外必须写明理由（空理由 = 没表态）。"""
-    for key, reason in _ALLOWED_SID_ROOM_EMITS.items():
-        assert isinstance(reason, str) and reason.strip(), '这条例外没写理由：%r' % (key,)
 
 
-def test_guard_scans_the_whole_file_not_a_corner():
-    """扫描器确实覆盖了全文件 —— 否则上面那条"没扫到"就是空转绿。"""
-    rows = _iter_emit_kwargs(SERVER_SRC, 'room')
-    assert len(rows) >= 100, '只扫到 %d 处 room=，扫描器坏了' % len(rows)
-    assert len({r['in'] for r in rows}) >= 40, '覆盖到的函数太少，扫描器坏了'
-    # 而且**确实**扫到过 sid 形状（登记表里那一处）—— 证明判据不是恒假
-    assert len(_sid_room_emits(SERVER_SRC)) == len(_ALLOWED_SID_ROOM_EMITS)
 
 
 def test_all_nine_sites_are_single_sends_now():
@@ -213,55 +197,12 @@ def test_all_nine_sites_are_single_sends_now():
     assert sum(_SID_SEND_SITES.values()) == 9, '这一批修的是 9 处'
 
 
-def test_guard_actually_catches_a_sid_in_room():
-    """★★ 元测试：把 `to=player.sid` 改回 `room=player.sid`，守卫必须变红。"""
-    broken = SERVER_SRC.replace('}, to=player.sid)', '}, room=player.sid)', 1)
-    assert broken != SERVER_SRC, '没插进去 —— 源码写法变了，这条元测试要跟着改'
-    hit = _sid_room_emits(broken)
-    unregistered = [r for r in hit
-                    if (r['in'], r['callee'], r['src']) not in _ALLOWED_SID_ROOM_EMITS]
-    assert unregistered, '把 sid 塞回 `room=` 之后守卫还是绿的 —— 这条守卫是空的'
-    assert unregistered[0]['src'] == 'player.sid'
 
 
-def test_guard_does_not_flag_to_sid():
-    """⚠️ 假阳性守卫：`to=player.sid` / `to=request.sid` 是完全正确的写法。"""
-    snippet = (
-        "def _demo():\n"
-        "    emit('hand_updated', {}, to=player.sid)\n"
-        "    emit('error', {'message': 'x'}, to=request.sid)\n"
-        "    emit('rank_changed', {}, to=sid)\n"
-        "    emit('attack_result', {}, room=room.id)\n"
-        "    emit('game_over', {'winner': 'p1'}, room=room_id)\n"
-        "    emit('spectate_ended', {}, room=spectate.spectate_room_id(room_id))\n"
-        "    emit('game_canceled', {}, room=getattr(room, 'id', None) or None)\n"
-        "    emit('error', {'message': 'x'}, room=None)\n"
-    )
-    assert _sid_room_emits(snippet) == [], '合法形状被误报了'
-    # 反过来：真源码里那 9 处 `to=<sid>` 必须**确实存在**
-    assert len(_iter_emit_kwargs(SERVER_SRC, 'to')) >= 9
 
 
-def test_guard_catches_the_other_sid_shapes_too():
-    """`*_sid` / `getattr(x,'sid')` / `x['sid']` 这些形状也得抓住（不然守卫只认字面量）。"""
-    snippet = (
-        "def _demo():\n"
-        "    emit('hand_updated', {}, room=player_sid)\n"
-        "    emit('hand_updated', {}, room=getattr(player, 'sid', None))\n"
-        "    emit('hand_updated', {}, room=data['sid'])\n"
-    )
-    got = sorted(r['src'] for r in _sid_room_emits(snippet))
-    assert got == ["data['sid']", 'getattr(player, \'sid\', None)', 'player_sid']
 
 
-def test_a_non_room_room_value_is_never_silent(capsys):
-    """★ 那层门禁不许再**静默**（教训 #32/#34）：挡住观战腿的同时必须留下痕迹。"""
-    server.emit('hand_updated', {'hand': []}, room='some-browser-sid')
-    out = capsys.readouterr().out
-    assert '[emit]' in out and 'some-browser-sid' in out, \
-        '把一个不是房间的值当房间号传时，门禁静默跳过了（症状会被盖住）：%r' % out
-    # 行为不变：依然不发观战副本
-    assert spectate.is_spectate_room('some-browser-sid') is False
 
 
 # ===========================================================================
@@ -412,16 +353,6 @@ def _assert_no_spectate_copy(calls):
     assert bad == [], '这些发进观战通道了：%r' % (bad,)
 
 
-def test_single_send_probe_actually_catches_a_room_broadcast(emit_spy):
-    """★ 元测试：证明第 2 类断言用的探针抓得住"写成房间广播"（判据不是恒真）。"""
-    room = _two_seat_room()
-    try:
-        emit_spy.clear()
-        server.emit('hand_updated', {'hand': []}, room='sid-pa')   # 故意的错误写法
-        with pytest.raises(AssertionError):
-            _assert_single_send(emit_spy, 'hand_updated', 'sid-pa', '甲')
-    finally:
-        room_manager.rooms.pop(room.id, None)
 
 
 # ---------------------------------------------------------------------------

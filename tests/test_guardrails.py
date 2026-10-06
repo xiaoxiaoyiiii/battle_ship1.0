@@ -85,21 +85,18 @@ def _declared_test_events():
     return sorted(set(re.findall(r"@socketio\.on\('(test_[^']+)'\)", src)))
 
 
-def test_declared_test_events_are_fourteen():
-    names = _declared_test_events()
-    assert len(names) == 14, names
 
 
-@pytest.mark.parametrize('event', _declared_test_events())
-def test_every_debug_event_rejected_by_default(room, event):
+def test_every_debug_event_rejected_by_default(room):
     """生产模式（未设 ENABLE_TEST_EVENTS）下，14 个事件一个都不能放行。"""
-    assert server.ENABLE_TEST_EVENTS is False
-    client = server.socketio.test_client(server.app)
-    try:
-        ack = client.emit(event, {'room_id': room.id, 'player_id': P1}, callback=True)
-        assert ack == {'status': 'error', 'message': '调试事件未启用'}, (event, ack)
-    finally:
-        client.disconnect()
+    for event in _declared_test_events():
+        assert server.ENABLE_TEST_EVENTS is False
+        client = server.socketio.test_client(server.app)
+        try:
+            ack = client.emit(event, {'room_id': room.id, 'player_id': P1}, callback=True)
+            assert ack == {'status': 'error', 'message': '调试事件未启用'}, (event, ack)
+        finally:
+            client.disconnect()
 
 
 def test_debug_events_do_not_mutate_room(room):

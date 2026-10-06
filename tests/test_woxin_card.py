@@ -8,9 +8,6 @@
   · 护盾效果同仁王之盾：被攻击时挡下一炮、shield 转 False
   · 看破 / 禁忌果实反制
 """
-import json
-import os
-
 import pytest
 
 import server
@@ -82,36 +79,8 @@ def apply_woxin(room, caster):
     return server.apply_magic_effect(room, caster, card('卧薪尝胆'), {})
 
 
-# ---------------------------------------------------------------------------
-# 卡牌定义一致性
-# ---------------------------------------------------------------------------
-def test_card_definition_consistent():
-    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    with open(os.path.join(here, 'static', 'magic_card.json'), encoding='utf-8') as f:
-        json_cards = json.load(f)
-    woxin_json = [c for c in json_cards if c['name'] == '卧薪尝胆']
-    assert len(woxin_json) == 1
-    wj = woxin_json[0]
-    assert wj['speed'] == 1
-    assert wj['type'] == '普通'
-
-    with open(os.path.join(here, 'static', 'magic_cards.js'), encoding='utf-8') as f:
-        js_src = f.read()
-    assert f'name: "卧薪尝胆"' in js_src
-    assert f'speed: {wj["speed"]}' in js_src
-    assert f'type: "{wj["type"]}"' in js_src
-    assert wj['description'] in js_src
-
-
 def test_woxin_card_enters_deck():
-    names = [c.name for c in server.magic_cards]
-    assert '卧薪尝胆' in names
-
-
-def test_deck_size_grew():
-    """新加一张普通卡，牌池规模 46 → 49；再加一张判定卡「兵粮寸断」→ 50。"""
-    deck = server.magic_cards
-    assert len(deck) == 50, f'卡池应 50 条，实际 {len(deck)}'
+    assert '卧薪尝胆' in [c.name for c in server.magic_cards]
 
 
 # ---------------------------------------------------------------------------

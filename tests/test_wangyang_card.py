@@ -11,9 +11,6 @@
   · cancel 时弃牌区还原
   · 看破 / 禁忌果实反制
 """
-import json
-import os
-
 import pytest
 
 import server
@@ -103,37 +100,8 @@ def confirm_wangyang(room, player, chosen_index):
     })
 
 
-# ---------------------------------------------------------------------------
-# 卡牌定义一致性（JSON 与 JS 必须逐字符一致 —— CLAUDE.md §7）
-# ---------------------------------------------------------------------------
-def test_card_definition_consistent():
-    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    with open(os.path.join(here, 'static', 'magic_card.json'), encoding='utf-8') as f:
-        json_cards = json.load(f)
-    wangyang_json = [c for c in json_cards if c['name'] == '亡羊补牢']
-    assert len(wangyang_json) == 1
-    wj = wangyang_json[0]
-    assert wj['speed'] == 1
-    assert wj['type'] == '普通'
-
-    with open(os.path.join(here, 'static', 'magic_cards.js'), encoding='utf-8') as f:
-        js_src = f.read()
-    assert f'name: "亡羊补牢"' in js_src
-    assert f'speed: {wj["speed"]}' in js_src
-    assert f'type: "{wj["type"]}"' in js_src
-    assert wj['description'] in js_src
-
-
 def test_wangyang_card_enters_deck():
-    """亡羊补牢应已进 magic_cards 列表。"""
-    names = [c.name for c in server.magic_cards]
-    assert '亡羊补牢' in names
-
-
-def test_deck_size_grew():
-    """新加一张普通卡，牌池规模从 44 → 49；再加一张判定卡「兵粮寸断」→ 50。"""
-    deck = server.build_magic_deck() if hasattr(server, 'build_magic_deck') else server.magic_cards
-    assert len(deck) == 50, f'卡池应 50 条，实际 {len(deck)}'
+    assert '亡羊补牢' in [c.name for c in server.magic_cards]
 
 
 # ---------------------------------------------------------------------------

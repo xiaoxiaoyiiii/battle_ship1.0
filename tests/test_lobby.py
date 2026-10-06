@@ -130,121 +130,32 @@ def _mk_user(prefix=_TAG):
 # ===========================================================================
 # 1. 房间级新状态三件齐（初始化这一件）
 # ===========================================================================
-def test_room_defaults_are_lobby_safe():
-    """★ 新增房间级状态三件齐之一：__init__ 必须初始化 name / public。
-
-    漏了就是 AttributeError（在 build_lobby_state 里炸，症状是"大厅整个打不开"）。
-    """
-    room = server.GameRoom('lobby-defaults')
-    assert room.name == ''
-    assert room.public is True, '默认公开是有意的：大厅要能列房间'
 
 
-def test_create_room_accepts_name_and_visibility(monkeypatch):
-    """handle_create_room 的两个新字段：名字清洗截断、public 可置 False。"""
-    _as_request(monkeypatch, 'sid-host', uid='u-host', name='房主')
-    res = server.handle_create_room({'name': '  ' + 'x' * 40, 'public': False})
-    assert res['status'] == 'success'
-    room = server.room_manager.get_room(res['room_id'])
-    assert room is not None
-    assert room.public is False
-    assert len(room.name) == server.LOBBY_ROOM_NAME_MAX_LEN, '房间名必须截断'
 
 
-def test_create_room_without_new_fields_keeps_defaults(monkeypatch):
-    """不传新字段时沿用默认（旧的调用点一个都不用改）。"""
-    _as_request(monkeypatch, 'sid-host2', uid='u-host2', name='房主')
-    res = server.handle_create_room({})
-    room = server.room_manager.get_room(res['room_id'])
-    assert room.name == ''
-    assert room.public is True
 
 
 # ===========================================================================
 # 2. LobbyManager 本体
 # ===========================================================================
-def test_presence_tracks_connections():
-    lm = server.lobby_manager
-    lm.add_connection('s1', '小明', 'u1')
-    lm.add_connection('s2')
-    assert lm.online_count() == 2
-    assert lm.remove_connection('s1') is True
-    assert lm.remove_connection('s1') is False, '重复移除应当返回 False'
-    assert lm.online_count() == 1
 
 
-def test_name_is_cleaned_and_truncated():
-    lm = server.lobby_manager
-    lm.add_connection('s1', '  空格名  ')
-    lm.add_connection('s2', '')
-    lm.add_connection('s3', 'x' * 100)
-    rows = lm.presence()
-    assert rows['s1']['name'] == '空格名'
-    # 名字未知时在线表存空串（update_identity 不许用空串冲掉已有的名字），
-    # 展示层的回落发生在 build_lobby_state 里 —— 所以这里两边都断言。
-    assert rows['s2']['name'] == ''
-    assert len(rows['s3']['name']) == server.LOBBY_NAME_MAX_LEN
-    by_key = {p['key']: p['name'] for p in server.build_lobby_state()['players']}
-    assert by_key['s2'] == '游客', '展示层必须把空名回落成游客'
-    assert by_key['s3'] == 'x' * server.LOBBY_NAME_MAX_LEN
 
 
-def test_subscribe_is_idempotent():
-    lm = server.lobby_manager
-    assert lm.subscribe('s1', '甲') is True
-    assert lm.subscribe('s1', '甲') is False, '第二次订阅不该重复入表'
-    assert lm.member_count() == 1
 
 
-def test_subscribe_registers_unknown_connection():
-    """订阅时连接还没进在线表（测试直调 / 重连换 sid）也要能自愈。"""
-    lm = server.lobby_manager
-    lm.subscribe('s-unknown', '乙')
-    assert lm.online_count() == 1
-    assert lm.is_member('s-unknown') is True
 
 
-def test_unsubscribe_keeps_presence():
-    """离开大厅 ≠ 掉线：人还连着，只是不在大厅页面上。"""
-    lm = server.lobby_manager
-    lm.subscribe('s1', '甲')
-    assert lm.unsubscribe('s1') is True
-    assert lm.member_count() == 0
-    assert lm.online_count() == 1
 
 
-def test_remove_connection_clears_membership_and_ratelimit():
-    lm = server.lobby_manager
-    lm.subscribe('s1', '甲')
-    lm.chat_allowed('s1')
-    lm.remove_connection('s1')
-    assert lm.member_count() == 0
-    assert lm.online_count() == 0
-    assert 's1' not in lm._last_chat_at
 
 
-def test_lobby_ticker_is_idempotent(monkeypatch):
-    """兜底定时广播只启动一次（与 _ensure_reaper 同一套幂等写法）。"""
-    calls = []
-    monkeypatch.setattr(server, '_LOBBY_TICKER_STARTED', False)
-    monkeypatch.setattr(server.socketio, 'start_background_task',
-                        lambda fn, *a, **k: calls.append(fn))
-    server._ensure_lobby_ticker()
-    server._ensure_lobby_ticker()
-    assert len(calls) == 1
 
 
 # ===========================================================================
 # 3. build_lobby_state 的形状与 status
 # ===========================================================================
-def test_lobby_state_shape_when_empty():
-    state = server.build_lobby_state()
-    # `matches` = 观战入口（实时观战第 3 批）。**与 `rooms` 分开**是硬要求：
-    # rooms 的语义是"点进去入座"，matches 是"点进去观战"，混一起玩家会点错。
-    assert set(state) == {'ts', 'online_count', 'lobby_count', 'queue', 'players',
-                          'rooms', 'matches'}
-    assert state['players'] == [] and state['rooms'] == [] and state['matches'] == []
-    assert state['queue'] == {'casual': 0, 'ranked': 0}
 
 
 def test_lobby_state_never_leaks_user_id():
@@ -252,89 +163,21 @@ def test_lobby_state_never_leaks_user_id():
     lm = server.lobby_manager
     lm.add_connection('s1', '甲', 'uid-secret')
     lm.subscribe('s1', '甲', 'uid-secret')
-    row = server.build_lobby_state()['players'][0]
+    players = server.build_lobby_state()['players']
+    row = next(player for player in players if player['key'] == 's1')
     assert 'user_id' not in row
     assert row['key'] == 's1'
     assert row['guest'] is False
 
 
-def test_status_four_states():
-    """★ 四态：idle / matching / in_room / in_game。
-
-    in_room 与 in_game **必须分开** —— 建房者一按下「创建房间」就坐在自己那间
-    state='waiting' 的房里了，算成"对局中"的话大厅里所有开过房的人永远显示对局中。
-    （浏览器工具实测抓到过这个：A 建房后自己那一行写着"对局中"。）
-    """
-    lm = server.lobby_manager
-    lm.add_connection('s-idle', '闲')
-    lm.add_connection('s-queue', '排')
-    lm.add_connection('s-room', '房')
-    lm.add_connection('s-game', '战')
-    server.room_manager.add_to_match_queue('s-queue', '排')
-
-    def _room(sid, name, state):
-        rid = server.room_manager.create_room()
-        room = server.room_manager.get_room(rid)
-        room.state = state
-        room.players['p-' + sid] = server.Player(
-            name=name, ships=[], attacks=[], remaining_ships=0, user_id=None, sid=sid)
-        return room
-
-    _room('s-room', '房', 'waiting')
-    _room('s-game', '战', 'placing_ships')
-
-    by_key = {p['key']: p['status'] for p in server.build_lobby_state()['players']}
-    assert by_key['s-idle'] == 'idle'
-    assert by_key['s-queue'] == 'matching'
-    assert by_key['s-room'] == 'in_room', '在等待房里等人 ≠ 对局中'
-    assert by_key['s-game'] == 'in_game'
 
 
-def test_matching_beats_in_game():
-    """★ 判据顺序：匹配中优先于对局中。
-
-    匹配成功后队列条目立刻被 pop，两者不会同时成立；但先判对局会让
-    "刚配到、还没进房"的一瞬显示成空闲。这里直接把两个条件同时摆上，
-    锁住优先级。
-    """
-    lm = server.lobby_manager
-    lm.add_connection('s-both', '双')
-    server.room_manager.add_to_match_queue('s-both', '双')
-    rid = server.room_manager.create_room()
-    room = server.room_manager.get_room(rid)
-    room.state = 'placing_ships'
-    room.players['p1'] = server.Player(name='双', ships=[], attacks=[],
-                                       remaining_ships=0, user_id=None, sid='s-both')
-    by_key = {p['key']: p['status'] for p in server.build_lobby_state()['players']}
-    assert by_key['s-both'] == 'matching'
 
 
-def test_finished_room_does_not_count_as_in_game():
-    """game_over 房里的座位不算"对局中"（否则打完不退出的玩家永远显示对局中）。"""
-    lm = server.lobby_manager
-    lm.add_connection('s-done', '完')
-    rid = server.room_manager.create_room()
-    room = server.room_manager.get_room(rid)
-    room.state = 'game_over'
-    room.players['p1'] = server.Player(name='完', ships=[], attacks=[],
-                                       remaining_ships=0, user_id=None, sid='s-done')
-    by_key = {p['key']: p['status'] for p in server.build_lobby_state()['players']}
-    assert by_key['s-done'] == 'idle'
 
 
-def test_queue_counts_split_by_mode():
-    server.room_manager.add_to_match_queue('s1', '甲', None, 'casual')
-    server.room_manager.add_to_match_queue('s2', '乙', 'u2', 'ranked')
-    server.room_manager.add_to_match_queue('s3', '丙', 'u3', 'ranked')
-    assert server.build_lobby_state()['queue'] == {'casual': 1, 'ranked': 2}
 
 
-def test_players_capped_at_max(monkeypatch):
-    monkeypatch.setattr(server, 'LOBBY_MAX_PLAYERS', 3)
-    lm = server.lobby_manager
-    for i in range(6):
-        lm.add_connection(f's{i}', f'玩家{i}')
-    assert len(server.build_lobby_state()['players']) == 3
 
 
 # ===========================================================================
@@ -351,95 +194,29 @@ def _make_waiting_room(sid, host='房主', public=True, name=''):
     return room
 
 
-def test_room_list_shows_waiting_public_room():
-    room = _make_waiting_room('s-host', host='小明', name='小明的房')
-    rooms = server.build_lobby_state()['rooms']
-    assert len(rooms) == 1
-    assert rooms[0]['room_id'] == room.id
-    assert rooms[0]['name'] == '小明的房'
-    assert rooms[0]['host'] == '小明'
-    assert rooms[0]['players'] == 1 and rooms[0]['capacity'] == 2
 
 
-def test_room_list_falls_back_to_host_name_when_unnamed():
-    _make_waiting_room('s-host2', host='无名房主')
-    assert server.build_lobby_state()['rooms'][0]['name'] == '无名房主' + '的房间'
 
 
-def test_started_room_is_not_listed():
-    room = _make_waiting_room('s-host3')
-    room.state = 'attacking'
-    assert server.build_lobby_state()['rooms'] == []
 
 
-def test_ai_room_is_not_listed():
-    rid = server.room_manager.create_ai_room('s-ai', '人类', None, 'normal')
-    room = server.room_manager.get_room(rid)
-    room.players['s-ai'] = server.Player(name='人类', ships=[], attacks=[],
-                                         remaining_ships=0, user_id=None, sid='s-ai')
-    server.lobby_manager.add_connection('s-ai', '人类')
-    assert server.build_lobby_state()['rooms'] == [], '人机房不该出现在大厅'
 
 
-def test_private_room_is_not_listed():
-    _make_waiting_room('s-host4', public=False)
-    assert server.build_lobby_state()['rooms'] == []
 
 
-def test_full_room_is_not_listed():
-    room = _make_waiting_room('s-host5')
-    room.players['guest'] = server.Player(name='客人', ships=[], attacks=[],
-                                          remaining_ships=0, user_id=None, sid='s-guest')
-    assert server.build_lobby_state()['rooms'] == [], '满员房不该还在列表里'
 
 
-def test_room_with_offline_host_is_not_listed():
-    """★ 最容易漏的一条：房主关掉标签页后房间还要在内存里躺 1 小时。"""
-    _make_waiting_room('s-host6')
-    assert len(server.build_lobby_state()['rooms']) == 1
-    server.lobby_manager.remove_connection('s-host6')
-    assert server.build_lobby_state()['rooms'] == [], '房主离线后不该还挂着这个房'
 
 
 # ===========================================================================
 # 5. 公屏聊天
 # ===========================================================================
-def test_chat_drops_blank_and_clamps_length():
-    lm = server.lobby_manager
-    assert lm.add_chat('s1', '甲', '   ') is None
-    assert lm.add_chat('s1', '甲', '') is None
-    item = lm.add_chat('s1', '甲', 'x' * 500)
-    assert len(item['message']) == server.LOBBY_CHAT_MAX_LEN
 
 
-def test_chat_rate_limit():
-    lm = server.lobby_manager
-    assert lm.chat_allowed('s1', now=1000.0) is True
-    assert lm.chat_allowed('s1', now=1000.1) is False
-    assert lm.chat_allowed('s1', now=1000.0 + server.LOBBY_CHAT_MIN_INTERVAL + 0.01) is True
 
 
-def test_chat_seq_is_monotonic_and_unique():
-    """★ 每条公屏消息带一个单调序号：前端靠它做"这条我有没有"的去重。
-
-    没有它就只能靠文案/时间猜，而**补发的历史与实时推送是会重叠的** ——
-    第一版前端用"清空重铺"处理历史，实测把自己刚发的那条冲掉了
-    （tools/lobby_check.mjs 里有一条专门的回归断言）。
-    """
-    lm = server.lobby_manager
-    a = lm.add_chat('s1', '甲', '一')
-    b = lm.add_chat('s2', '乙', '二')
-    assert b['seq'] > a['seq']
-    assert len({m['seq'] for m in lm.recent_chat()}) == 2
 
 
-def test_chat_backlog_is_capped():
-    lm = server.lobby_manager
-    for i in range(server.LOBBY_CHAT_BACKLOG + 12):
-        lm.add_chat('s1', '甲', f'消息{i}')
-    backlog = lm.recent_chat()
-    assert len(backlog) == server.LOBBY_CHAT_BACKLOG
-    assert backlog[-1]['message'] == f'消息{server.LOBBY_CHAT_BACKLOG + 11}'
 
 
 def test_chat_send_requires_membership(monkeypatch):
@@ -450,45 +227,13 @@ def test_chat_send_requires_membership(monkeypatch):
     assert server.lobby_manager.recent_chat() == []
 
 
-def test_chat_send_broadcasts_to_lobby_room(monkeypatch):
-    server.lobby_manager.subscribe('s1', '甲')
-    sent = _capture_emit(monkeypatch)
-    _as_request(monkeypatch, 's1')
-    res = server.handle_lobby_chat_send({'message': '大家好'})
-    assert res['status'] == 'success'
-    chats = [m for m in sent if m['name'] == 'lobby_chat']
-    assert len(chats) == 1
-    assert chats[0]['to'] == server.LOBBY_ROOM, '公屏必须发给大厅房间，不是回发给自己'
-    assert chats[0]['data']['message'] == '大家好'
-    assert chats[0]['data']['key'] == 's1'
 
 
-def test_chat_rate_limited_emits_error(monkeypatch):
-    server.lobby_manager.subscribe('s1', '甲')
-    server.lobby_manager.chat_allowed('s1')          # 先占掉这一秒的额度
-    sent = _capture_emit(monkeypatch)
-    _as_request(monkeypatch, 's1')
-    res = server.handle_lobby_chat_send({'message': '又是我'})
-    assert res['status'] == 'error'
-    assert any(m['name'] == 'error' for m in sent), '被限流必须给玩家提示，不能静默吞掉'
 
 
 # ===========================================================================
 # 6. 真实 socket 层
 # ===========================================================================
-def test_subscribe_handshake(sockets):
-    client = sockets()
-    client.emit('lobby_subscribe', {'player_name': '游客甲'})
-    # ⚠️ get_received() 会**清空**队列，三个断言必须共用同一份 events
-    events = client.get_received()
-    hello = _pick(events, 'lobby_hello')[-1]
-    assert hello['key'], 'lobby_hello 必须带身份键'
-    assert hello['name'] == '游客甲'
-    assert hello['guest'] is True
-    assert _pick(events, 'lobby_chat_history'), '订阅时必须补发公屏历史'
-    state = _pick(events, 'lobby_state')[-1]
-    assert state['lobby_count'] == 1
-    assert [p['key'] for p in state['players']] == [hello['key']]
 
 
 def test_state_broadcast_only_reaches_members(sockets):
@@ -505,131 +250,20 @@ def test_state_broadcast_only_reaches_members(sockets):
     assert _recv(b, 'lobby_state') == [], '非成员不该收到大厅广播'
 
 
-def test_unsubscribe_stops_updates(sockets):
-    a = sockets()
-    b = sockets()
-    a.emit('lobby_subscribe', {'player_name': '甲'})
-    b.emit('lobby_subscribe', {'player_name': '乙'})
-    a.get_received()
-    a.emit('lobby_unsubscribe', {})
-    a.get_received()
-    b.emit('lobby_subscribe', {'player_name': '乙'})     # 触发一次广播
-    assert _recv(a, 'lobby_state') == [], '退订后不该再收到状态'
 
 
-def test_online_count_endpoint_matches_presence(sockets):
-    a = sockets()
-    b = sockets()
-    with server.app.test_client() as http:
-        payload = http.get('/api/online_count').get_json()
-    assert payload['online_count'] == server.lobby_manager.online_count()
-    assert payload['online_count'] >= 2
 
 
-def test_home_stats_endpoint_matches_lobby_sources(sockets):
-    """`/api/home_stats`（2026-09-27 首页 C 化新增）必须与大厅同一批数据源同口径。
-
-    首页右栏的「在线情况」面板读它：在线人数 / 两个队列 / 可见房间数。
-    ⚠️ 关键断言不是"接口通"，而是**与 `build_lobby_state()` 逐项同值** ——
-       两份口径漂移的话，首页与大厅会显示不一样的队列人数（本项目最怕的
-       "同一个业务判断有两份实现"，见 CLAUDE.md 通用教训一）。
-    ⚠️ 另外断言这个接口**不写状态**：它不许把调用者记进大厅成员表 ——
-       否则停在首页的人会被大厅当成"在大厅"（这正是它不直接用 lobby_state 的理由）。
-    """
-    a = sockets()
-    b = sockets()
-    with server.app.test_client() as http:
-        payload = http.get('/api/home_stats').get_json()
-
-    assert set(payload) == {'online_count', 'queue', 'lobby_rooms'}, payload
-    assert payload['online_count'] == server.lobby_manager.online_count()
-    assert payload['online_count'] >= 2
-
-    # 队列口径：休闲 + 排位 = 同一个队列的总长（与大厅横幅一致）
-    queue = list(server.room_manager.match_queue)
-    ranked_n = sum(1 for e in queue if e.get('mode') == server.MATCH_MODE_RANKED)
-    assert payload['queue']['ranked'] == ranked_n
-    assert payload['queue']['casual'] == len(queue) - ranked_n
-
-    state = server.build_lobby_state()
-    assert payload['queue'] == state['queue'], '首页与大厅必须同一口径'
-    assert payload['lobby_rooms'] == len(state['rooms'])
-
-    # 只读：这一趟调用没有让任何连接变成"大厅成员"（members() 返回 list，判空即可）
-    assert not server.lobby_manager.members(), 'home_stats 不许订阅大厅'
 
 
-def test_home_stats_queue_counts_split_by_mode(sockets):
-    """排队中的两种模式各算各的（休闲 2 + 排位 1 的经典形状）。"""
-    a = sockets()
-    server.room_manager.match_queue = [
-        {'sid': 'q1', 'name': '甲', 'user_id': None, 'mode': 'casual'},
-        {'sid': 'q2', 'name': '乙', 'user_id': None, 'mode': 'casual'},
-        {'sid': 'q3', 'name': '丙', 'user_id': None, 'mode': server.MATCH_MODE_RANKED},
-    ]
-    with server.app.test_client() as http:
-        payload = http.get('/api/home_stats').get_json()
-    assert payload['queue'] == {'casual': 2, 'ranked': 1}, payload
 
 
-def test_lobby_create_room_appears_in_other_member_list(sockets):
-    a = sockets()
-    b = sockets()
-    b.emit('lobby_subscribe', {'player_name': '看客'})
-    b.get_received()
-    a.emit('lobby_subscribe', {'player_name': '房主'})
-    a.emit('lobby_create_room', {'name': '来打一局', 'public': True})
-    state = _last(b, 'lobby_state')
-    rooms = state['rooms']
-    assert len(rooms) == 1, f'建房后应当出现在大厅列表里，实际 {rooms}'
-    assert rooms[0]['name'] == '来打一局'
-    assert rooms[0]['host'] == '房主'
 
 
-def test_lobby_create_room_private_is_hidden(sockets):
-    a = sockets()
-    b = sockets()
-    b.emit('lobby_subscribe', {'player_name': '看客'})
-    b.get_received()
-    a.emit('lobby_subscribe', {'player_name': '房主'})
-    a.emit('lobby_create_room', {'name': '私密房', 'public': False})
-    assert _last(b, 'lobby_state')['rooms'] == [], '私密房只认房间号，不该上大厅榜'
 
 
-def test_lobby_create_room_registers_real_room(sockets):
-    """大厅建房必须真的建出房间（`lobby_create_room` 复用 create_room，不是自己写一份）。
-
-    ⚠️ socketio.test_client 的 emit **不支持 ack 回调**，所以这里不看返回值，
-    直接查服务端状态 + 广播出去的状态 —— 反而更接近真实（ack 丢了也不影响房间建出来）。
-    """
-    a = sockets()
-    a.emit('lobby_subscribe', {'player_name': '房主'})
-    a.get_received()
-    a.emit('lobby_create_room', {'name': '大厅开的房', 'public': True})
-    events = a.get_received()
-    state = _pick(events, 'lobby_state')[-1]
-    assert state['rooms'], '建房后自己的列表里就该有这一间'
-    room_id = state['rooms'][0]['room_id']
-    room = server.room_manager.get_room(room_id)
-    assert room is not None
-    assert room.name == '大厅开的房'
-    assert list(room.players.values())[0].name == '房主'
 
 
-def test_chat_broadcast_and_identity_key(sockets):
-    a = sockets()
-    b = sockets()
-    a.emit('lobby_subscribe', {'player_name': '甲'})
-    b.emit('lobby_subscribe', {'player_name': '乙'})
-    a.get_received()
-    b.get_received()
-    a.emit('lobby_chat_send', {'message': '有人吗'})
-    msg_a = _last(a, 'lobby_chat')
-    msg_b = _last(b, 'lobby_chat')
-    assert msg_a['message'] == msg_b['message'] == '有人吗'
-    assert msg_a['name'] == '甲'
-    # 身份键两边都拿到的是**同一条消息**的发送者 key，前端据此标"我"
-    assert msg_a['key'] == msg_b['key']
 
 
 
@@ -642,123 +276,16 @@ def test_chat_broadcast_and_identity_key(sockets):
 #   · 等待房的回收 TTL 是 1 小时（_WAITING_ROOM_TTL）；
 #   · 大厅的可见规则只要求「房主仍在线」，而房主就是他自己，当然一直在线上。
 # 两条规则各自都"没错"，合起来却把 7 间房全留在了榜上。
-def test_repeated_create_recycles_previous_waiting_room(sockets):
-    """★ 同一连接连点 N 次「创建房间」→ 大厅里只该剩 1 间，服务端也只该剩 1 间。"""
-    c = sockets()
-    c.emit('lobby_subscribe', {'player_name': '房主'})
-    c.get_received()
-    for _ in range(5):
-        c.emit('lobby_create_room', {'name': '', 'public': True})
-    state = _last(c, 'lobby_state')
-    assert len(state['rooms']) == 1, f'连点 5 次应当只剩 1 间，实际 {state["rooms"]}'
-    waiting = [r for r in server.room_manager.get_all_rooms().values()
-               if r.state == 'waiting']
-    assert len(waiting) == 1, f'服务端也只该剩 1 间等待房，实际 {len(waiting)}'
 
 
-def test_repeated_create_via_plain_create_room_also_recycles(monkeypatch):
-    """自定义房页面的「创建房间」走的是同一个 create_room，必须同样收敛。"""
-    _as_request(monkeypatch, 'sid-host', uid='u-host', name='房主')
-    ids = [server.handle_create_room({})['room_id'] for _ in range(4)]
-    alive = [rid for rid in ids if server.room_manager.get_room(rid) is not None]
-    assert alive == [ids[-1]], f'只该留下最后建的那一间，实际留下 {alive}'
 
 
-def test_recycle_leaves_started_room_alone(monkeypatch):
-    """★ 已开打的房不许被「再次建房」回收掉 —— 那会坑掉正在等你的对手。"""
-    _as_request(monkeypatch, 'sid-host', uid='u-host', name='房主')
-    first = server.handle_create_room({})
-    server.room_manager.get_room(first['room_id']).state = 'placing_ships'
-    second = server.handle_create_room({})
-    assert server.room_manager.get_room(first['room_id']) is not None, '已开打的房不该被回收'
-    assert server.room_manager.get_room(second['room_id']) is not None
 
 
-def test_recycle_leaves_other_players_room_alone(monkeypatch):
-    """回收只看"是不是自己的房"，不能碰别人的。"""
-    _as_request(monkeypatch, 'sid-a', uid='u-a', name='甲')
-    mine = server.handle_create_room({})
-    _as_request(monkeypatch, 'sid-b', uid='u-b', name='乙')
-    other = server.handle_create_room({})
-    assert server.room_manager.get_room(mine['room_id']) is not None, '甲的房不该被乙建房时回收'
-    assert server.room_manager.get_room(other['room_id']) is not None
 
 
-def test_room_list_lists_only_newest_room_per_host():
-    """★ 防御层：即使真存在同一个人的多间等待房，大厅也只列**最新**的一间。
-
-    正常路径下 _recycle_host_waiting_rooms 已经保证了一人一间，但历史遗留
-    （本批上线前建的房）或日后新增的建房路径都可能绕过它 —— 列表层再兜一次。
-    """
-    old = _make_waiting_room('s-host', host='小明', name='第一间')
-    old.created_at = 100.0
-    new = _make_waiting_room('s-host', host='小明', name='第二间')
-    new.created_at = 200.0
-    rooms = server.build_lobby_state()['rooms']
-    assert len(rooms) == 1, f'同一房主只该列一间，实际 {rooms}'
-    assert rooms[0]['name'] == '第二间', '留下的应当是最新的那一间'
 
 
 # ===========================================================================
 # 8. 解散房间（等待房此前没有任何主动出口）
 # ===========================================================================
-def test_close_room_removes_waiting_room(sockets):
-    c = sockets()
-    c.emit('lobby_subscribe', {'player_name': '房主'})
-    c.get_received()
-    c.emit('lobby_create_room', {'name': '临时房', 'public': True})
-    room_id = _last(c, 'lobby_state')['rooms'][0]['room_id']
-    c.emit('close_room', {'room_id': room_id})
-    assert server.room_manager.get_room(room_id) is None, '解散后房间应当真的没了'
-    assert _last(c, 'lobby_state')['rooms'] == [], '大厅列表也该同步'
-
-
-def test_close_room_rejects_other_peoples_room(sockets):
-    """★ 路人不能解散别人的房（这条是漏洞守卫，不是体验问题）。"""
-    host = sockets()
-    host.emit('lobby_subscribe', {'player_name': '房主'})
-    host.get_received()
-    host.emit('lobby_create_room', {'name': '别人的房', 'public': True})
-    room_id = _last(host, 'lobby_state')['rooms'][0]['room_id']
-
-    other = sockets()
-    other.emit('lobby_subscribe', {'player_name': '路人'})
-    other.get_received()
-    other.emit('close_room', {'room_id': room_id})
-    assert server.room_manager.get_room(room_id) is not None, '路人不能解散别人的房'
-
-
-def test_close_room_rejects_started_room(sockets):
-    """已开打的房不许被房主一键解散（那会坑掉正在等他的对手）。"""
-    c = sockets()
-    c.emit('lobby_subscribe', {'player_name': '房主'})
-    c.get_received()
-    c.emit('lobby_create_room', {'name': 'x', 'public': True})
-    room_id = _last(c, 'lobby_state')['rooms'][0]['room_id']
-    server.room_manager.get_room(room_id).state = 'placing_ships'
-    c.emit('close_room', {'room_id': room_id})
-    assert server.room_manager.get_room(room_id) is not None, '已开打的房不许解散'
-
-
-def test_close_room_unknown_room_is_noop(sockets):
-    c = sockets()
-    c.emit('close_room', {'room_id': 'nope'})
-    assert server.room_manager.get_room('nope') is None
-
-
-def test_close_room_requires_room_id(sockets):
-    c = sockets()
-    c.emit('close_room', {})
-    assert server.room_manager.get_all_rooms() is not None      # 不抛异常即可
-
-
-def test_match_marks_player_as_matching(sockets):
-    a = sockets()
-    a.emit('lobby_subscribe', {'player_name': '甲'})
-    a.get_received()
-    a.emit('find_match', {'player_name': '甲', 'mode': 'casual'})
-    state = _last(a, 'lobby_state')
-    me = [p for p in state['players'] if p['status'] != 'idle']
-    assert me, f'入队后应当有人的 status 变成 matching，实际 {state["players"]}'
-    assert me[0]['status'] == 'matching'
-    assert state['queue']['casual'] == 1

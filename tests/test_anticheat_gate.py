@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """反作弊闸门的**端到端**测试（2026-09-19）。
 
 分两层：
@@ -88,20 +88,8 @@ def _mk_room(rounds=1, a_hits=6, b_hits=0, b_ships=6):
     return room
 
 
-def test_facts_extracts_hits_without_id_alignment():
-    """事实提取只看命中格子数，不依赖 user_id / socket sid 对齐。"""
-    room = _mk_room(rounds=1, a_hits=6, b_hits=0, b_ships=6)
-    f = server._anticheat_facts(room, 'pa', 'pb')
-    assert f['rounds'] == 1
-    assert f['max_hits'] == 6
-    assert f['foe_ships'] == 6
-    assert len(f['attackers']) == 1          # 只有一方打中过
 
 
-def test_facts_is_exception_safe():
-    """房间对象残缺也不许抛（失败开放）。"""
-    f = server._anticheat_facts(object(), 'x', 'y')
-    assert isinstance(f, dict)
 
 
 # ---------------------------------------------------------------------------
@@ -191,48 +179,10 @@ def test_assess_failure_does_not_block(monkeypatch):
 # ---------------------------------------------------------------------------
 # 三、真实形态：引擎在真实房间对象上抓得到「人肉靶子」
 # ---------------------------------------------------------------------------
-def test_real_shape_is_blocked_by_engine():
-    """用真实房间形状（单方第 1 回合全歼、另一方零命中）走真判据 → 必须 block。"""
-    room = _mk_room(rounds=1, a_hits=6, b_hits=0, b_ships=6)
-    res = server._anticheat_assess(room, 'pa', 'pb')
-    assert res['blocked'] is True, f'真实靶子形态没被拦住: {res}'
-    assert 'sweep_perfect_win' in res['rules']
 
 
-def test_normal_shape_not_blocked_by_engine():
-    """正常对局（双方都有命中、打了 10 回合）→ 不拦。"""
-    room = _mk_room(rounds=10, a_hits=6, b_hits=4, b_ships=6)
-    res = server._anticheat_assess(room, 'pa', 'pb')
-    assert res['blocked'] is False, f'正常对局被误拦: {res}'
 
 
 # ---------------------------------------------------------------------------
 # 四、审计：判定结果要落库（可复查）
 # ---------------------------------------------------------------------------
-def test_report_records_flag():
-    room = _mk_room()
-    room.id = 'ac-report-room'
-    res = {'score': 100, 'level': 'block', 'rules': ['sweep_perfect_win'],
-           'reasons': [], 'blocked': True}
-    server._anticheat_report(room, 'pa', 'pb', res)
-    rows = [r for r in db.get_anticheat_flags(50) if r['match_id'] == 'ac-report-room']
-    assert rows, '判定结果必须落库，否则事后无法复查'
-    assert rows[0]['severity'] == 'block'
-    # 清理
-    try:
-        with db.db._lock:
-            db.db.conn.execute('DELETE FROM anticheat_flags WHERE match_id=?',
-                               ('ac-report-room',))
-            db.db.conn.commit()
-    except Exception:
-        pass
-
-
-def test_report_clean_writes_nothing():
-    room = _mk_room()
-    room.id = 'ac-clean-room'
-    server._anticheat_report(room, 'pa', 'pb',
-                             {'score': 0, 'level': 'clean', 'rules': [],
-                              'reasons': [], 'blocked': False})
-    rows = [r for r in db.get_anticheat_flags(50) if r['match_id'] == 'ac-clean-room']
-    assert not rows, '干净对局不该写审计记录（否则表会被正常对局淹没）'

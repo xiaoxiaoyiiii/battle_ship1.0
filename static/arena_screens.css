@@ -2264,29 +2264,89 @@ html[data-arena-screens="v2"][data-arena-screen-list~="placement"]
     pointer-events: none;
 }
 
-/* 匹配成功屏：对手条与倒计时也走同一套词汇 */
+/* 匹配成功屏（2026-10-05 重做）：从「一个标题 + 一个小信息框」改成一块对阵板 ——
+   左「你」、中 VS、右对手，下面是 chip 行与倒计时，整块在窗口里居中。
+   ⚠️ 这一屏在 DOM 上**一个 id 都没改**（理由逐条写在 templates/index.html 的注释里），
+      这里只换视觉；`.match-chip.*` 那套还是 style.css 里的公共样式，不在这里重画。
+   ⚠️ 居中用的是 `#match-success-screen.screen.active`（不是光写 id）：
+      `.screen` 是 `display:none`、只有 `.screen.active` 才是 `display:block`，
+      直接给 id 写 display:flex 会让**没激活时也显出来**。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #match-success-screen.screen.active {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 28px 16px;
+}
+
 html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #match-success-screen > h2 {
-    text-align: left;
+    text-align: center;
     font-size: 19px;
     font-weight: 600;
     letter-spacing: 0.03em;
-    margin: 0 0 12px;
+    margin: 0;
 }
 
 html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-info {
+    width: 100%;
     max-width: 560px;
-    margin: 0 auto;
+    margin: 0;
     padding: 22px 24px;
-    text-align: left;
+    text-align: center;
     background-color: var(--surface-strong);
     border: 1px solid var(--border);
     border-radius: var(--ax-radius);
 }
 
-html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-info > p {
-    text-align: left;
+/* 对阵板：三列 —— 「你」/ VS / 对手。窄屏折成一列由下面的媒体查询接管。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-versus {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 12px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-fighter {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-fighter-tag {
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    color: var(--text-subtle);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-fighter-name {
+    font-family: var(--fluent-font-display);
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--text);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-foe-line {
+    margin: 0;
+    text-align: center;
     font-size: 12px;
     color: var(--text-subtle);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-vs {
+    font-family: var(--fluent-font-mono);
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    padding: 6px 10px;
+    color: var(--ax-gold-strong);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--fluent-radius-full);
 }
 
 html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #countdown-timer {
@@ -2294,6 +2354,20 @@ html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #countdown-ti
     font-size: 20px;
     font-weight: 600;
     color: var(--ax-gold-strong);
+}
+
+/* ⚠️ 这里只给「行距」加了一层壳（.match-countdown），没有动 #countdown-bar 自己的
+   盒模型：game.js 的 5 秒定时器是直接写 `countdownFill.style.width` 的百分比，
+   宽度基准还是这条 bar 的 content box。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-countdown {
+    margin-top: 14px;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-countdown-line {
+    margin: 0;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-subtle);
 }
 
 html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .countdown-bar {
@@ -2315,6 +2389,22 @@ html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #start-now {
     color: var(--text-subtle);
     background-color: transparent;
     border: 1px solid var(--border-strong);
+}
+
+/* 窄屏：对阵板折成一列，「你 / VS / 对手」竖着排，仍然一眼看得清谁打谁。 */
+@media (max-width: 620px) {
+    html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-versus {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 8px;
+    }
+
+    html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #match-success-screen.screen.active {
+        padding: 18px 10px;
+    }
+
+    html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-info {
+        padding: 16px 14px;
+    }
 }
 
 /* 窄屏：信息栏折到棋盘下面（手机上先看棋盘，再看到操作） */
@@ -2394,6 +2484,15 @@ html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #rps-result {
     background-color: var(--surface-muted);
     border: 1px solid var(--border);
     border-radius: var(--ax-radius-sm);
+}
+
+/* 平局反馈要压过上面那条（上面那条的特异性是 1 个 id + 2 个属性，比
+   style.css 里 `html[data-theme-preset="arena"] #rps-result.is-tie` 多一个属性，
+   所以这一份必须写在这里、且带上 .is-tie 才够）。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #rps-result.is-tie {
+    font-weight: 600;
+    background-color: var(--alpha-danger-16);
+    border-color: var(--danger);
 }
 
 /* ============================================================================

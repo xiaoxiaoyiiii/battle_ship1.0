@@ -1134,6 +1134,18 @@ const rpsChoices = document.querySelectorAll('.rps-choice');
 const rpsResult = document.getElementById('rps-result');
 const rpsRound = document.getElementById('rps-round');
 
+// 猜拳的「一次判定只提交一次」闸门。
+// ⚠️ 为什么是**轮次令牌**而不是一个裸布尔：`rps_choice` 的 ack 与 `rps_result`
+//    是两条独立到达的路径，ack 完全可能晚于 `rps_result`。裸布尔会被那条迟到的
+//    ack 抢着清掉 —— 于是新一轮刚锁上就被上一轮的回声解开，玩家能重复提交
+//    （与教训 #31「裸布尔是无主的状态」同一形状）。这里每次判定结束就 ++ 令牌，
+//    迟到的 ack 一看 round 对不上，自己丢弃，绝不写回新一轮。
+let rpsChoicePending = false;
+let rpsChoiceRound = 0;
+let rpsChoiceAckTimer = null;
+// ack 超时（断线 / 服务端没回 ack）：收回锁定，绝不让三个手势永久点不动。
+const RPS_ACK_TIMEOUT_MS = 6000;
+
 // 游戏界面元素
 const gamePlayerBoard = document.getElementById('game-player-board');
 const opponentBoard = document.getElementById('opponent-board');
@@ -3163,7 +3175,7 @@ function renderServerLog(entry) {
 //      {groups, items:[{id, group, text}]}。前后端各写一份必然漂移，本项目已吃过多次。
 //      这里只允许出现按钮自身的中文标签（如「快捷语」）与加载失败时的提示。
 //   ② 面板是非模态浮层，绝不用 .modal-overlay：那是全屏遮罩，会挡住棋盘、格子点不动。
-//   ③ 收到快捷语只做两件事：写进对局日志（复用 addGameLog）+ 轻提示。
+//   ③ 收到快捷语只做三件事：写进对局日志（服务端 side）、聊天区回显一行、轻提示。
 //      不碰棋盘 / 手牌 / 阶段 / 连锁 —— 收到之后对局界面其他部分必须一模一样。
 const QUICK_CHAT_API = '/api/quick_chat';
 const QUICK_CHAT_TOAST_MS = 4000;   // 轻提示停留时长
@@ -3264,6 +3276,33 @@ function renderQuickChatPanel(data) {
     });
 }
 
+// 把浮层摆到按钮附近。
+// ⚠️ 为什么必须**算**而不是写死 top/left：按钮现在住在局内聊天窗底部那一行里，
+//    而聊天窗是可以用标题栏拖到屏幕任意位置的（makeFloatingDraggable）。
+//    写死的 fixed 坐标会在窗子被拖走之后和按钮分家 —— 面板开在屏幕另一个角落，
+//    玩家根本看不出它跟这个按钮有关系。每次开都按按钮的实时矩形重算，拖动时再跟着算。
+function positionQuickChatPanel() {
+    const { btn, panel } = getQuickChatEls();
+    if (!btn || !panel) return;
+    const r = btn.getBoundingClientRect();
+    const pw = panel.offsetWidth || 260;
+    const ph = panel.offsetHeight || 200;
+    const M = 8;
+    // 左右：与按钮左边缘对齐，再夹进视口（窄屏上按钮可能贴着右边缘）
+    const left = Math.max(M, Math.min(r.left, window.innerWidth - pw - M));
+    // 上下：优先开在按钮【上方】—— 按钮就在输入行里，往下开会盖住输入框和发送键；
+    // 上方放不下（视口很矮）才翻到下面，两边都放不下就贴住上沿，绝不溢出视口。
+    let top = r.top - ph - M;
+    if (top < M) {
+        const below = r.bottom + M;
+        top = (below + ph <= window.innerHeight - M) ? below : M;
+    }
+    panel.style.left = Math.round(left) + 'px';
+    panel.style.top = Math.round(top) + 'px';
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+}
+
 function showQuickChatPanel() {
     const { panel } = getQuickChatEls();
     if (!panel) return;
@@ -3276,9 +3315,11 @@ function showQuickChatPanel() {
         panel.appendChild(hint);
     }
     setQuickChatPanelOpen(true);
+    positionQuickChatPanel();   // 打开后立刻按按钮位置摆好（量尺寸要等 hidden 摘掉）
     fetchQuickChatData().then((data) => {
         if (!isQuickChatPanelOpen()) return;   // 已经收起来了就别再动 DOM
         renderQuickChatPanel(data);
+        positionQuickChatPanel();              // 内容填进来后高度变了，重摆一次
     });
 }
 
@@ -3318,18 +3359,23 @@ function sendQuickChat(msgId) {
     });
 }
 
-// 收到快捷语：只弹轻提示。
+// 收到快捷语：写进聊天区 + （对手发的才）弹轻提示。
 // ⚠️ 日志**不在这里写**：服务端广播 quick_chat 的同时还走既有日志助手把一条
 // type='quick_chat' 的条目 push 给房间（客户端由 game_log → renderServerLog 渲染），
 // 那才是写进 room.game_logs / 对局历史的同一份来源。这里再 addGameLog 一次，
 // 真机上每条快捷语都会在日志里出现两遍（广播一次 + game_log 一次）。
-// 同理：只碰 #quick-chat-toast 一个节点，不碰棋盘 / 手牌 / 阶段 / 连锁。
+// ⚠️ 聊天区这条也**不是**第二份真源：服务端已经把这条广播给了房间双方，
+// 这里只是把同一条 payload 渲染到聊天消息区 —— 客户端**绝不**再 emit 一次 chat_message
+// （那会绕过快捷语的白名单与频率限制，还会让同一条话出现两遍）。
+// 自己发的那条不弹轻提示（自己刚点过，弹了是噪音），但聊天区照样要有一行。
 function handleQuickChatReceived(payload) {
     if (!payload || !payload.text) return;
     const name = payload.name || '对手';
+    const text = String(payload.text);
     const isMine = !!(gameState.playerId && payload.player_id === gameState.playerId);
-    // 自己发的那条不弹提示（自己刚点过，弹了是噪音）；回显只写日志
-    if (!isMine) showQuickChatToast(name, String(payload.text));
+    // 双方各显示一条：发送者与文本都在，自己/对方样式由 appendChatMessage 按 isMe 判
+    appendChatMessage(name, text, isMine);
+    if (!isMine) showQuickChatToast(name, text);
 }
 
 // 绑定入口与面板（幂等：init 只跑一次；重绘不会碰这两个节点）
@@ -3361,6 +3407,18 @@ function initQuickChatUI() {
     if (gameState.socket) {
         gameState.socket.on('reconnect', () => { quickChatPanelData = null; quickChatPanelLoading = null; });
     }
+    // 面板浮在按钮附近 —— 按钮住在可拖动的聊天窗里，所以窗子一动面板就得跟着走。
+    // 拖拽改的是容器的 style.left/top（makeFloatingDraggable），盯它的 style 属性
+    // 比在 document 上收 pointermove 便宜得多，而且只在真的拖动时才触发。
+    const chatBox = document.getElementById('in-game-chat-container');
+    if (chatBox && typeof MutationObserver === 'function') {
+        new MutationObserver(() => {
+            if (isQuickChatPanelOpen()) positionQuickChatPanel();
+        }).observe(chatBox, { attributes: true, attributeFilter: ['style'] });
+    }
+    window.addEventListener('resize', () => {
+        if (isQuickChatPanelOpen()) positionQuickChatPanel();
+    });
 }
 
 // 从 window.magicCards 里按卡名取卡；不存在返回 null
@@ -7511,6 +7569,16 @@ function setupSocketListeners() {
 
     socket.on('connect', () => {
         console.log('Connected to server');
+        // 重连后服务端的猜拳状态可能已经推进（对家出完、甚至已经判定完），
+        // 本地那个「已出拳」锁定只会变成一副点不动的死锁 —— 收干净，等 room_sync / rps_result 说话。
+        if (typeof resetRPSChoiceLock === 'function') resetRPSChoiceLock();
+    });
+
+    // 断线同样不能把「已出拳」留在页面上：连接断了，ack 永远不会回来，
+    // 不收的话回来时会发现三个手势全点不动（而且没有任何提示）。
+    socket.on('disconnect', () => {
+        console.log('Disconnected from server');
+        if (typeof resetRPSChoiceLock === 'function') resetRPSChoiceLock();
     });
 
     // 匹配相关事件处理
@@ -7719,7 +7787,11 @@ function setupSocketListeners() {
                 if (gameNav) gameNav.style.display = 'none';
                 rpsScreen.classList.add('active');
                 rpsRound.textContent = data.round || 1;
-                rpsResult.classList.add('hidden');
+                // 新一回合的猜拳：把上一轮的锁定 / 选中 / 平局提示一并收干净。
+                // 服务端在平局后会重新广播这个 state，只清 rpsResult 的话，
+                // `is-tie` 和三个按钮的 `.picked` 会带着上一轮的残留状态进新回合。
+                if (typeof resetRPSChoiceLock === 'function') resetRPSChoiceLock();
+                else rpsResult.classList.add('hidden');
                 break;
             // 在setupSocketListeners的game_state事件处理中添加
             case 'attacking':
@@ -7843,11 +7915,23 @@ function setupSocketListeners() {
 
     socket.on('rps_result', (result) => {
         console.log('RPS result:', result);
+        // 结果到达 = 这一次判定结束：先把这一轮的令牌作废（还在路上的 ack 从此失效），
+        // 再收回「已出拳」锁定。平局时服务端已经清空 rps_choices 等双方重出，
+        // 所以这里必须真的解锁，否则玩家会卡在"三个手势都点不动"。
+        rpsChoiceRound++;
+        rpsChoicePending = false;
+        if (rpsChoiceAckTimer) { clearTimeout(rpsChoiceAckTimer); rpsChoiceAckTimer = null; }
         rpsResult.classList.remove('hidden');
         setRPSWaiting(false);
         if (result.status === 'tie') {
-            rpsResult.textContent = result.message;
+            // 服务端文案是「平局，重新猜拳」；这一屏要给的是一句"接下来做什么"的准话，
+            // 服务端原文里「平局」二字已经在标题里说过了，就不再重复。
+            const detail = String(result.message || '');
+            rpsResult.textContent = '平局，请重新选择一种手势'
+                + (detail && detail.indexOf('平局') === -1 ? '：' + detail : '');
+            rpsResult.classList.add('is-tie');
         } else {
+            rpsResult.classList.remove('is-tie');
             const winnerName = result.winner === gameState.playerId ? '你' : '对手';
             rpsResult.textContent = `猜拳结果：你选择了${getRPSName(result.choices[gameState.playerId])}, 对手选择了${getRPSName(result.choices[Object.keys(result.choices).find(k => k !== gameState.playerId)])}。${winnerName}获胜，先攻击！`;
         }
@@ -9637,10 +9721,11 @@ function switchScreen(screen) {
         markMatchStart();
     }
 
-    // 进猜拳屏时先把上一次的出拳反馈收干净（平局会再进来一次，不能带着"已出拳"的状态）。
-    if (screen && screen.id === 'rps-screen' && typeof setRPSWaiting === 'function') {
-        setRPSWaiting(false);
-    }
+    // 猜拳这一屏进出都要把「出拳锁定」收干净：
+    //   · 进来时（含平局后重新进来）不能带着上一次的"已出拳" —— 那会让三个手势全点不动；
+    //   · 离开时（投降 / 掉线 / 被踢回首页）也不能留着一个孤儿锁定，下次进来照样点不动。
+    // 所以这里不判 screen.id，切换任意屏都收一次；它只碰猜拳那几个节点。
+    if (typeof resetRPSChoiceLock === 'function') resetRPSChoiceLock();
 
     // 回到首页时刷新右栏那几个"会变的数字"（在线 / 队列 / 房间 / 战绩 / 最近解锁）。
     // 段位表与卡表是静态件，loadHomeStatic() 自己只拉一次。
@@ -11590,23 +11675,76 @@ function setRPSWaiting(on, choice) {
         const picked = !!on && (!choice || el.dataset.choice === choice);
         el.classList.toggle('picked', picked);
         el.setAttribute('aria-pressed', picked ? 'true' : 'false');
+        // ⚠️ 这里**不用** `disabled`：十几个既有工具都用 `.rps-choice` 的 `.click()`
+        //    驱动猜拳，把按钮置灰会让它们在等待窗口里的点击静默变成空操作。
+        //    「重复提交」由 handleRPSChoice 里的 rpsChoicePending 闸门挡住就够了。
     });
+}
+
+// 结束当前这一轮判定：作废还在路上的 ack + 解除锁定 + 清掉选中/等待态。
+function endRPSChoiceRound() {
+    rpsChoiceRound++;
+    rpsChoicePending = false;
+    if (rpsChoiceAckTimer) { clearTimeout(rpsChoiceAckTimer); rpsChoiceAckTimer = null; }
+    setRPSWaiting(false);
+}
+
+// 离开 / 重新进入猜拳屏、断线、重连都走这里：绝不留下一副点不动的死锁。
+// （平局会再进这一屏一次，带着上一次的「已出拳」回来就是三个手势全点不动。）
+function resetRPSChoiceLock() {
+    endRPSChoiceRound();
+    if (rpsResult) {
+        rpsResult.classList.add('hidden');
+        rpsResult.classList.remove('is-tie');
+        rpsResult.textContent = '';
+    }
 }
 
 // 处理猜拳选择
 function handleRPSChoice(choice) {
-    gameState.socket.emit('rps_choice', {
+    const socket = gameState.socket;
+    if (!socket) return;
+    // 同一次判定里只认第一次有效点击：等待期间再点（点哪个都一样）直接忽略。
+    if (rpsChoicePending) return;
+    if (!gameState.roomId || !gameState.playerId) return;
+
+    // ⚠️ 顺序是要紧的：**先**亮选中/等待态，**再** emit。
+    //    反过来（原来是 emit 在前）在服务端快到同一帧就把 `rps_result` 推回来时，
+    //    结果已经被写出来了，紧接着那行 setRPSWaiting(true) 又把它盖成「等待中/已选中」
+    //    —— 玩家看到"结果已出却仍显示等待"。
+    rpsChoicePending = true;
+    const round = rpsChoiceRound;
+    if (rpsResult) { rpsResult.classList.add('hidden'); rpsResult.classList.remove('is-tie'); }
+    setRPSWaiting(true, choice);
+
+    if (rpsChoiceAckTimer) clearTimeout(rpsChoiceAckTimer);
+    rpsChoiceAckTimer = setTimeout(() => {
+        if (round !== rpsChoiceRound) return;   // 这一轮早结束了，超时器作废
+        endRPSChoiceRound();
+        showAlert('出拳没有送到服务器，请重新选择');
+    }, RPS_ACK_TIMEOUT_MS);
+
+    socket.emit('rps_choice', {
         room_id: gameState.roomId,
         player_id: gameState.playerId,
         choice: choice
     }, (response) => {
-        if (response.status === 'success') {
+        // 迟到 ack：这一轮已经由 rps_result / 重置结束了，丢弃，绝不写回新一轮。
+        if (round !== rpsChoiceRound) return;
+        if (rpsChoiceAckTimer) { clearTimeout(rpsChoiceAckTimer); rpsChoiceAckTimer = null; }
+        // socket.io 在连接异常时会把错误当第一个参数回调进来
+        const ok = !!(response && !response.__err && response.status === 'success');
+        if (ok) {
+            // ack 只是"服务端收下了"：保持锁定，等服务端广播 rps_result。
             console.log('RPS choice sent:', choice);
+            return;
         }
+        // 被拒（无效出拳 / 身份不符）或回调没带载荷：收回锁定并把原因转达出去。
+        rpsChoicePending = false;
+        setRPSWaiting(false);
+        const msg = (response && response.message) || '';
+        if (msg) showAlert(msg);
     });
-    // 先给反馈再等服务端：这一屏没有别的加载态，等 ack 再亮会让人以为没点上
-    // （`test_*` 调试事件与正常路径都会走这里，两者都不受影响）。
-    setRPSWaiting(true, choice);
 }
 
 // 处理攻击
@@ -14440,7 +14578,19 @@ function makeFloatingDraggable(el, handle, storageKey) {
         // 回写成 left/top 会把宽屏下的浮窗坐标写坏（表现为聊天框跑到左上角）
         if (window.__adaptiveDragDisabled) return;
         const r = el.getBoundingClientRect();
-        place(r.left, r.top);
+        // ⚠️ 视口变矮/变窄后必须把整块浮窗拉回屏内。
+        //    拖拽（place）只保证 KEEP_VISIBLE=48px 留在屏内 —— 那是用户自己拖的，认；
+        //    但视口变化不是用户的意图，而 place() 会把当次 rect 钉成绝对 left/top：
+        //    1440x900 下钉成 top:648，窗口缩到 768 高时它仍停在 648..876，
+        //    底部的输入框和行内的 #quick-chat-btn 整块落在屏外，鼠标点不到、也滚不到
+        //    （对局屏 body 是 overflow:hidden）。实测 ui_layout_check 宽屏三档因此红。
+        //    只在越界时纠正；屏内的位置一律原样保留，不改变拖拽后的观感。
+        let left = r.left, top = r.top;
+        if (r.bottom > window.innerHeight) top = window.innerHeight - r.height;
+        if (r.right > window.innerWidth) left = window.innerWidth - r.width;
+        if (top < 0) top = 0;
+        if (left < 0) left = 0;
+        place(left, top);
     });
 
     const restored = restore();

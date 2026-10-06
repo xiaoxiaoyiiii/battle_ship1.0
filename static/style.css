@@ -2382,38 +2382,32 @@ body.layout-compact.layout-ingame #phase-timing-toggle.phase-timing-toggle .ptt-
    ⚠️ 这里【没有】.modal-overlay：快捷语浮层只是一个普通浮标，
      不会出现全屏遮罩，因此棋盘、手牌、阶段按钮照样能点。 */
 #quick-chat-btn.quick-chat-btn {
-    /* 紧凑 / 矮屏（手机、横屏手机）：屏幕左上角区域的浮标。
-       为什么卡片里放不下：阶段卡片在紧凑布局里只有 ~94px 宽（实测 320x568 下卡片
-       94x17、664x336 下 94x17），那个 40px 触控目标实测会与「投降」按钮重叠 9x37、
-       与棋盘重叠 50x15 —— 与「阶段时点」开关当初被赶出卡片是同一个原因。
-       (left, top) 是按【实测网格扫描】选出来的：把按钮摆到 7×7 个候选格点上，
-       在 320x568 / 336x664 / 390x844 / 430x932 / 664x336 / 768x1024 六个视口上逐个量
-       与棋盘 / 手牌 / 面板槽 / 两个头像 chip / 投降 / 阶段按钮 / 阶段时点开关 / 回合标题
-       的重叠，只有 11 个格点六个视口全绿，这里取其中留白最稳的 (80, 98)。
-       实测被否掉的：y=0/24 压「投降」与回合标题、y=52~70 压「我的头像」chip、
-       x≥128 的顶部格点压「对手头像」chip、y≥190 压棋盘。
-       z-index 必须高于右上角那块卡牌预览浮窗（.magic-preview-container，z-index 1000）：
-       第一版给了 60，结果浮层展开时上半截被预览压住，玩家点快捷语条目时点击被预览
-       接走（实测 elementFromPoint 返回 preview-content 而不是那个 button）→
-       "看着在、点不动"。 */
-    position: fixed;
-    top: 52px;
-    left: 40px;
-    z-index: 1150;
+    /* 入口住在局内聊天窗底部那一行的最左边（2026-10-05 起）。
+       ⚠️ 这一段的历史：按钮最早挂在阶段卡片角上，因为窄屏卡片只有 ~94px 宽、
+         实测会压住「投降」和棋盘，被赶成屏幕角落的 fixed 浮标；随后为紧凑 / 竖屏 /
+          宽屏各写了一条逐档定位规则（旧注释里那张"7×7 格点扫描表"就是那个来路）。
+       现在它进了聊天窗的输入行 —— 聊天窗本身可以被拖到任意位置，按钮跟着窗子走，
+       于是那套逐档定位**整套删掉**，只剩这一条"行内小按钮"。
+       ⚠️ 绝不能再给它 position:fixed / absolute：那会让它从输入行里"飞"出去，
+          聊天窗一拖就和按钮分家 —— 正是这次要修的那个毛病。
+       ⚠️ 高度**不要写死**：输入行是 flex，默认 align-items:stretch，它会自己撑到
+          和输入框一样高，于是紧凑档那条「可点元素 ≥ 40px」的断言照旧成立。 */
+    position: static;
+    flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 64px;
-    min-height: 40px;
+    min-width: 44px;
     margin: 0;
-    padding: 4px 8px;
-    /* 同「阶段时点」浮标：chip 走胶囊令牌（也是 664×336 下格心可点的前提） */
+    padding: 2px 8px;
+    /* chip 走胶囊令牌（与「阶段时点」开关同一手法） */
     border-radius: var(--fluent-radius-full);
     border: 1px solid var(--alpha-primary-45);
     background: var(--alpha-primary-10);
     color: var(--text);
     font-size: 0.68rem;
     line-height: 1.15;
+    white-space: nowrap;
     cursor: pointer;
 }
 #quick-chat-btn.quick-chat-btn:hover { background: var(--alpha-primary-20); }
@@ -2432,9 +2426,12 @@ html.theme-dark #quick-chat-btn.quick-chat-btn {
    低于全屏弹窗（10000~12000）。二者都是 fixed 元素、在同一条层叠轴上，
    所以直接比数值即可（实测确认：z-index 60 时浮层被预览压住、条目点不动）。 */
 .quick-chat-panel {
+    /* ⚠️ left/top **故意不写在这里**：按钮住在可拖动的聊天窗输入行里，
+       固定坐标会在窗子被拖走之后和按钮分家。位置由 game.js 的
+       positionQuickChatPanel() 在每次打开时按按钮的实时矩形算出来
+       （优先开在按钮上方，放不下翻到下方，两边都夹进视口）。
+       它默认带 hidden，所以这里没有兜底 left/top 也不会有人看见。 */
     position: fixed;
-    top: 98px;
-    left: 40px;
     z-index: 1200;
     max-width: min(320px, calc(100vw - 24px));
     max-height: min(60vh, 420px);
@@ -2505,48 +2502,14 @@ html.theme-dark .quick-chat-panel { background: var(--deco-chat-panel-dark); }
 }
 .quick-chat-toast.is-show { opacity: 1; visibility: visible; }
 
-/* 紧凑布局（手机竖屏）：位置与宽屏相同（都是左上角浮标），这里只补一条阴影，
-   让它在紧凑布局里更像"浮标"而不是卡片的一部分。
-   浮层也继续挂在按钮正下方（top:98px）—— 实测手机上浮层从 y=98 起、宽 ≤300px 时
-   与右上角的「阶段时点」开关（6~46 那一列，x ≥ W-60）零重叠。 */
-body.layout-compact.layout-ingame #quick-chat-btn.quick-chat-btn,
-body.layout-tight.layout-ingame #quick-chat-btn.quick-chat-btn {
-    box-shadow: 0 1px 6px var(--fluent-scrim-22);
-}
-@media (max-width: 600px) and (orientation: portrait) {
-    body.layout-compact.layout-ingame #quick-chat-btn.quick-chat-btn {
-        top: 6px;
-        left: 50%;
-        transform: translateX(-50%);
-    }
-    body.layout-compact.layout-ingame .quick-chat-panel {
-        top: 52px;
-        left: 50%;
-        transform: translateX(-50%);
-    }
-}
-body.layout-tight.layout-ingame :is(#quick-chat-btn.quick-chat-btn, .quick-chat-panel) { left: 4px; }
+/* 逐档定位规则已整套删除（2026-10-05）：按钮进了聊天窗底部输入行，跟着窗子走，
+   不再需要为紧凑 / 竖屏 / 宽屏各写一套"按钮该摆哪、浮层该开在哪"。
+   浮层的 left/top 现在由 game.js 按按钮的实时矩形算（可上可下、夹在视口内），
+   这里只剩"别太宽、别太高"这一条。 */
 body.layout-compact.layout-ingame .quick-chat-panel,
-body.layout-tight.layout-ingame .quick-chat-panel {
-    /* 合并自原第 2135 行的重复定义 */
-/* 浮层同样贴着屏幕右上角展开（向量与按钮一致，这里只压窄屏的可用宽高） */
-body.layout-compact.layout-ingame .quick-chat-panel,
-    /* 紧凑布局下浮层开在按钮正下方；宽度按"左边距 80 + 右侧留 6"反推，绝不横向溢出 */
-    max-width: min(300px, calc(100vw - 92px));
-    max-height: min(56vh, 380px);
-}
-/* 宽屏（≥1200 且高≥700）：左上角被「我的头像」胶囊占着（实测重叠 54x16），
-   右上角被对手头像胶囊 + 右上角卡牌预览占着，顶部整条都是别人的地盘。
-   改成【左下角浮标】：实测 (6, 视口高-64) 处棋盘 / 手牌 / 日志 / 聊天 / 面板槽
-   全部不重叠，中心点也真的落在按钮自己身上。
-   浮层跟着按钮往上展开（bottom 锚定），这样即使视口很矮也不会溢出去。 */
-body:not(.layout-compact):not(.layout-tight).layout-ingame #quick-chat-btn.quick-chat-btn {
-    top: auto;
-    bottom: 24px;
-    left: 6px;
-}
+body.layout-tight.layout-ingame .quick-chat-panel,
 body:not(.layout-compact):not(.layout-tight).layout-ingame .quick-chat-panel {
-    max-width: min(320px, calc(100vw - 12px));
+    max-width: min(320px, calc(100vw - 24px));
     max-height: min(56vh, 380px);
 }
 body.layout-compact.layout-ingame .quick-chat-toast,
@@ -10864,6 +10827,15 @@ html[data-theme-preset="arena"] #rps-result {
     background-color: var(--panel);
     border: 1px solid var(--border);
     border-radius: 12px;
+}
+/* 平局那一刻：走同一个盒子，但换成警示色的底与描边并加粗 ——
+   「再选一次」这件事必须一眼可见（原来它和「XX 获胜」长得一模一样，
+   玩家会以为已经结束了）。类名由 game.js 的 rps_result 处理器按
+   `result.status === 'tie'` 增删，非平局时会被摘掉。 */
+html[data-theme-preset="arena"] #rps-result.is-tie {
+    font-weight: 600;
+    background-color: var(--alpha-danger-16);
+    border-color: var(--danger);
 }
 
 /* --- 39.3 大厅：面板 / 标签 / 胶囊 / 列表行 / 底部动作 --- */

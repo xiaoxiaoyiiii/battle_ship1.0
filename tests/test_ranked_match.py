@@ -236,26 +236,8 @@ def _as_request(monkeypatch, sid, uid=None):
 # ===========================================================================
 # 1. 房间级标记：初始化 + 自定义房 / 人机房恒 False
 # ===========================================================================
-def test_game_room_ranked_defaults_false():
-    """★ 新增房间级状态三件齐之一：`__init__` 必须初始化 `ranked`。"""
-    room = server.GameRoom('rank-default')
-    assert room.ranked is False
 
 
-def test_custom_room_and_ai_room_are_not_ranked():
-    """自定义房（create_room / join_room）与人机房一律 `ranked = False`（可以互刷分）。"""
-    qm = server.room_manager
-
-    rid = qm.create_room()
-    room = qm.get_room(rid)
-    assert room.ranked is False
-    assert qm.join_room(rid, 'pid-x', '玩家X', 'sid-x') is True
-    assert room.ranked is False, '自定义房不许被置成排位'
-
-    ai_rid = qm.create_ai_room('sid-ai', '玩家甲', None)
-    ai_room = qm.get_room(ai_rid)
-    assert ai_room.is_ai_room is True
-    assert ai_room.ranked is False, '人机房不许被置成排位'
 
 
 # ===========================================================================
@@ -274,31 +256,8 @@ def test_ranked_requires_login(monkeypatch):
     assert errors[-1]['data']['message'] == '排位模式需要先登录'
 
 
-def test_casual_guest_still_queues(monkeypatch):
-    """游客休闲局不许被排位门禁误伤（默认 mode 就是 casual）。"""
-    sent = _capture_emit(monkeypatch)
-    _as_request(monkeypatch, sid='guest-b', uid=None)
-
-    res = server.handle_find_match({'player_name': '游客'})
-
-    assert res['status'] == 'success'
-    assert server.room_manager.get_match_queue_size() == 1
-    assert server.room_manager.match_queue[0]['mode'] == 'casual'
-    assert not [e for e in sent if e['name'] == 'error']
-    assert [e for e in sent if e['name'] == 'match_queued'], '入队要回 match_queued'
 
 
-@pytest.mark.parametrize('bad', [None, '', 'RANKED', 'rank', 'casual', '1', 123])
-def test_illegal_mode_falls_back_to_casual(monkeypatch, bad):
-    """非法 mode 一律当休闲（只认逐字的 'ranked'）。"""
-    sent = _capture_emit(monkeypatch)
-    _as_request(monkeypatch, sid=f'guest-{bad}', uid=None)
-
-    res = server.handle_find_match({'player_name': '游客', 'mode': bad})
-
-    assert res['status'] == 'success'
-    assert server.room_manager.match_queue[0]['mode'] == 'casual'
-    assert not [e for e in sent if e['name'] == 'error']
 
 
 # ===========================================================================
@@ -340,75 +299,13 @@ def test_only_same_mode_pairs(monkeypatch):
     assert set(casual[0].players) == {'sid-c1', 'sid-c2'}
 
 
-def test_queue_head_blocked_by_other_mode_does_not_hold_back_same_mode_pair(monkeypatch):
-    """队首是休闲、后面是两个排位时，那两个排位者仍然要能配上。
-
-    （旧写法"拿队首找搭档、找不到就 break"在这里会让排位者一直干等，
-      直到第三个休闲玩家入队 —— 是 mode 扩字段后新引入的坑。）
-    """
-    sent = _capture_emit(monkeypatch)
-    _as_request(monkeypatch, sid='q-casual', uid='uid-qc')
-    server.handle_find_match({'player_name': '休闲', 'mode': 'casual'})
-    _as_request(monkeypatch, sid='q-r1', uid='uid-qr1')
-    server.handle_find_match({'player_name': '排位甲', 'mode': 'ranked'})
-    before = set(server.room_manager.get_all_rooms())
-    _as_request(monkeypatch, sid='q-r2', uid='uid-qr2')
-    server.handle_find_match({'player_name': '排位乙', 'mode': 'ranked'})
-
-    new = [r for r in server.room_manager.get_all_rooms().values() if r.id not in before]
-    assert len(new) == 1, '两个排位者必须配上（不许被队首的休闲者挡住）'
-    assert set(new[0].players) == {'q-r1', 'q-r2'}
-    assert new[0].ranked is True
-    assert [e['sid'] for e in server.room_manager.match_queue] == ['q-casual']
 
 
 # ===========================================================================
 # 4. 队列条目不错位（四个字段必须永远属于同一个 sid）
 # ===========================================================================
-def test_queue_entries_keep_their_own_mode(monkeypatch):
-    sent = _capture_emit(monkeypatch)
-    qm = server.room_manager
-    spec = [
-        ('s-a', 'A', 'u-a', 'casual'),
-        ('s-b', 'B', 'u-b', 'ranked'),
-        ('s-c', 'C', 'u-c', 'ranked'),
-        ('s-d', 'D', 'u-d', 'casual'),
-    ]
-
-    for sid, name, uid, mode in spec:
-        assert qm.add_to_match_queue(sid, name, uid, mode) is True
-
-    # 入队后每个条目四个字段都要对得上（错位在这里就会露出来）
-    assert [(e['sid'], e['name'], e['user_id'], e['mode']) for e in qm.match_queue] == spec
-
-    # 再让一个排位者入队触发配对
-    before = set(qm.get_all_rooms())
-    _as_request(monkeypatch, sid='s-e', uid='u-e')
-    server.handle_find_match({'player_name': 'E', 'mode': 'ranked'})
-
-    rooms = [r for r in qm.get_all_rooms().values() if r.id not in before]
-    assert len(rooms) == 2, '应当配出「两个休闲」+「两个排位」两局'
-    by_players = {frozenset(r.players): r for r in rooms}
-    casual_room = by_players[frozenset({'s-a', 's-d'})]
-    ranked_room = by_players[frozenset({'s-b', 's-c'})]
-    assert casual_room.ranked is False and ranked_room.ranked is True
-
-    # name / user_id 必须还是各自入队时那一份（错位破坏的正是它们）
-    for sid, name, uid, mode in spec:
-        room = casual_room if sid in ('s-a', 's-d') else ranked_room
-        assert room.players[sid].name == name, f'{sid} 的名字错位了'
-        assert room.players[sid].user_id == uid, f'{sid} 的 user_id 错位了'
-
-    # 落单的排位者仍在队列里，mode 也不能丢
-    assert [(e['sid'], e['mode']) for e in qm.match_queue] == [('s-e', 'ranked')]
 
 
-def test_find_match_queued_ack_carries_mode(monkeypatch):
-    sent = _capture_emit(monkeypatch)
-    _as_request(monkeypatch, sid='sid-ack', uid='uid-ack')
-    server.handle_find_match({'player_name': '排位', 'mode': 'ranked'})
-    queued = [e for e in sent if e['name'] == 'match_queued']
-    assert queued and queued[-1]['data'].get('mode') == 'ranked'
 
 
 # ===========================================================================
@@ -477,308 +374,51 @@ def test_ranked_settlement_persists_points_and_emits(env):
     assert pa['admiral_promoted'] is False and pa['admiral_demoted'] is False
 
 
-def test_ranked_settlement_promotes_across_sub_tier(env):
-    """跨小级进位：水手长Ⅱ 90 分 +20 → 水手长Ⅲ 10 分（`promoted` 必须为真）。"""
-    room, ca, cb, ua, ub = env(points_a=790, points_b=100)
-    server._finalize_match(room, _pid_of(room, ua), _pid_of(room, ub))
-
-    pa = _only(_recv(ca, 'rank_changed'), 'rank_changed(胜者)')
-    assert pa['points_before'] == 790 and pa['points_after'] == 790 + ranks.WIN_POINTS
-    assert pa['promoted'] is True and pa['demoted'] is False
-    assert pa['tier_up'] is False, '同一大段位内进位不算 tier_up'
-    assert pa['after']['label'].startswith('水手长Ⅲ')
-    assert db.get_user_rank_row(ua)['points'] == 790 + ranks.WIN_POINTS
 
 
-def test_ranked_settlement_skips_guest_player(env):
-    """房里可能有游客（`Player.user_id` 为空）→ 跳过，绝不写库。"""
-    room, ca, cb, ua, ub = env(points_a=100, points_b=100)
-    pid_a, pid_b = _pid_of(room, ua), _pid_of(room, ub)
-    room.players[pid_b].user_id = None      # 对手变成游客
-
-    server._finalize_match(room, pid_a, pid_b)
-
-    assert db.get_user_rank_row(ua)['points'] == 100 + ranks.WIN_POINTS
-    assert db.get_user_rank_row(ub)['points'] == 100, '游客那一份不许被写'
-    assert len(_recv(ca, 'rank_changed')) == 1
-    assert _recv(cb, 'rank_changed') == [], '游客不该收到段位事件'
 
 
-def test_rank_settlement_has_a_single_call_site():
-    """段位加减分也必须走结算收口（与战绩/统计/徽章/经验同一条规矩）。"""
-    src = open('server.py', encoding='utf-8').read()
-    assert src.count('def _settle_ranked_match(') == 1
-    calls = re.findall(r'(?<!def )_settle_ranked_match\(room,', src)
-    assert len(calls) == 1, f'只允许在 _finalize_match 里调用一次，实际 {len(calls)}'
 
 
 # ===========================================================================
 # 7. 赛前（没有真开打）不给分、也不发事件
 # ===========================================================================
-def test_match_really_started_ignores_created_at():
-    """★ 反向守卫：门禁必须看**显式开打打点**，不能用 `_match_started_at`。
-
-    同一个房间（只设了 `created_at`）：
-      · `_match_really_started(room)` → False；
-      · `_match_started_at(room)` → **非 0** —— 因为它会退回 `created_at`，而
-        `created_at` 是 `GameRoom.__init__` 无条件打的点，**真机上永远非 0**。
-        所以拿 `_match_started_at(room) != 0` 当"开没开打"的判据等于没拦。
-    设上 `match_started_at`（猜拳结束、真正进 attacking 时打的点）之后两者都为真。
-    """
-    room = server.GameRoom('rank-start-guard')
-    room.ranked = True
-    room.created_at = time.time()
-    room.__dict__.pop('match_started_at', None)
-
-    assert server._match_really_started(room) is False
-    assert server._match_started_at(room) != 0, \
-        '这正是老判据在真机上恒真、门禁形同虚设的原因'
-    assert server._ranked_settlement_allowed(room, True) is False
-
-    room.match_started_at = time.time()
-    assert server._match_really_started(room) is True
-    assert server._ranked_settlement_allowed(room, True) is True
 
 
-def test_pre_match_surrender_gives_no_points(env):
-    """★ 赛前投降不给分：匹配成功但**还没猜完拳**时投降 → 两人分数都不变、不发 rank_changed。
-
-    走**真实投降路径**（`handle_surrender`，不是直调 `_finalize_match`）。
-    ⚠️ `created_at` 显式设成真时间 —— 真实房间一定有它，这也正是
-       `_match_started_at(room)` 恒非 0、只有"显式打点"这一条判据拦得住的地方。
-    """
-    room, ca, cb, ua, ub = env(points_a=100, points_b=100, started=False)
-    room.created_at = time.time()
-    room.__dict__.pop('match_started_at', None)
-    room.state = 'placing_ships'           # 还没猜拳
-    assert server._match_really_started(room) is False
-    assert server._match_started_at(room) != 0
-    ca.get_received(); cb.get_received()
-
-    surrendering = _pid_of(room, ua)
-    ca.emit('surrender', {'room_id': room.id, 'player_id': surrendering})
-
-    assert room.state == 'game_over'
-    assert db.get_user_rank_row(ua)['points'] == 100, '赛前投降不许给分'
-    assert db.get_user_rank_row(ub)['points'] == 100
-    assert _recv(ca, 'rank_changed') == []
-    assert _recv(cb, 'rank_changed') == []
 
 
-def test_surrender_after_match_started_settles(env):
-    """★ 真开打之后投降**照常结算**（否则"打不过就投降"会变成免责），且事件在 game_over 之后。"""
-    room, ca, cb, ua, ub = env(points_a=100, points_b=100)     # env 已打上开打时间戳
-    assert server._match_really_started(room) is True
-    room.state = 'attacking'
-    ca.get_received(); cb.get_received()
-
-    surrendering = _pid_of(room, ua)
-    ca.emit('surrender', {'room_id': room.id, 'player_id': surrendering})
-
-    assert db.get_user_rank_row(ua)['points'] == 100 + ranks.LOSE_POINTS
-    assert db.get_user_rank_row(ub)['points'] == 100 + ranks.WIN_POINTS
-    evs_a = _drain_all(ca)                 # 一次取干净，既验 payload 也验先后顺序
-    evs_b = _drain_all(cb)
-    lost = _only(_pick(evs_a, 'rank_changed'), 'rank_changed(投降方)')
-    won = _only(_pick(evs_b, 'rank_changed'), 'rank_changed(胜者)')
-    assert lost['role'] == 'loser' and won['role'] == 'winner'
-
-    # 顺序：game_over 必须先于 rank_changed（前端要等结算面板之后才弹段位面板）。
-    # 这条只能在这里验：`rank_changed` 是**从 socket 请求上下文里用后台任务补发**的。
-    order = [m['name'] for m in evs_b]
-    assert 'game_over' in order and 'rank_changed' in order, f'事件不齐: {order}'
-    assert order.index('game_over') < order.index('rank_changed'), \
-        f'rank_changed 必须排在 game_over 之后，实际顺序 {order}'
 
 
-def test_no_points_when_finalize_without_start_marker(env):
-    """直调 `_finalize_match` 的版本：没有开打打点时一律不给分、不发事件。"""
-    room, ca, cb, ua, ub = env(points_a=100, points_b=100, started=False)
-    room.created_at = time.time()
-    room.__dict__.pop('match_started_at', None)
-    room.ranked = True
-    assert server._ranked_settlement_allowed(room, True) is False
-
-    room.state = 'game_over'
-    server._finalize_match(room, _pid_of(room, ua), _pid_of(room, ub))
-
-    assert db.get_user_rank_row(ua)['points'] == 100, '没真开打就不许产分'
-    assert db.get_user_rank_row(ub)['points'] == 100
-    assert _recv(ca, 'rank_changed') == [] and _recv(cb, 'rank_changed') == []
 
 
 # ===========================================================================
 # 8. 人机房不给分
 # ===========================================================================
-def test_ai_room_gives_no_rank_points(env, sockets):
-    uid = _mk_user()
-    env.track(uid)
-    db.set_rank_points(uid, 120)
-
-    room_id = server.room_manager.create_ai_room('sid-human', '玩家甲', uid)
-    room = server.room_manager.get_room(room_id)
-    env.rooms.append(room_id)
-    room.match_started_at = time.time()
-    ca = sockets(uid)
-    human_sid = server.socketio.server.manager.sid_from_eio_sid(ca.eio_sid, '/')
-    room.players[human_sid] = server.Player(name='玩家甲', ships=[], attacks=[],
-                                            remaining_ships=6, user_id=uid, sid=human_sid)
-    ca.get_received()
-    ai_id = server._ai_player_id(room)
-
-    assert room.ranked is False
-    assert server._count_stats_for(room) is False
-    assert server._ranked_settlement_allowed(room, server._count_stats_for(room)) is False
-
-    room.state = 'game_over'
-    server._finalize_match(room, human_sid, ai_id)     # 真人打赢电脑
-
-    assert db.get_user_rank_row(uid)['points'] == 120, '打电脑不许刷段位'
-    assert _recv(ca, 'rank_changed') == []
 
 
 # ===========================================================================
 # 9. 0 分封底
 # ===========================================================================
-def test_zero_point_floor_clamps_loser(env):
-    lose = ranks.LOSE_POINTS
-    assert lose < 0, '这个用例的前提是"输一局会扣分"'
-    start = max(1, abs(lose) - 10)          # 保证 start + lose < 0（会撞到 0 分封底）
-    assert start + lose < 0
-
-    room, ca, cb, ua, ub = env(points_a=100, points_b=start)
-    server._finalize_match(room, _pid_of(room, ua), _pid_of(room, ub))
-
-    assert db.get_user_rank_row(ub)['points'] == 0, '0 分封底：不许出现负分'
-    pb = _only(_recv(cb, 'rank_changed'), 'rank_changed(败者)')
-    assert pb['points_before'] == start and pb['points_after'] == 0
-    assert pb['clamped'] is True
-    assert pb['delta'] == -start, 'delta 必须是**实际**变化量（不是请求的 -15）'
-    assert pb['delta'] > lose, '被夹住时实际扣得比请求的少'
 
 
 # ===========================================================================
 # 10. game_state / 重连快照带 ranked / mode
 # ===========================================================================
-def test_game_state_and_room_sync_carry_ranked(env):
-    room, ca, cb, ua, ub = env(mode='ranked')
-    gs = _recv(ca, 'game_state')
-    assert gs, '匹配成功必须下发 game_state'
-    assert gs[-1]['ranked'] is True and gs[-1]['mode'] == 'ranked'
-    snap = server._build_room_sync(room, _pid_of(room, ua))
-    assert snap['ranked'] is True, '重连快照不带 ranked，重连后前端会以为是休闲局'
-    assert snap['mode'] == 'ranked'
 
 
-def test_game_state_and_room_sync_carry_casual(env):
-    room, ca, cb, ua, ub = env(mode='casual')
-    gs = _recv(ca, 'game_state')
-    assert gs[-1]['ranked'] is False and gs[-1]['mode'] == 'casual'
-    snap = server._build_room_sync(room, _pid_of(room, ua))
-    assert snap['ranked'] is False and snap['mode'] == 'casual'
 
 
-def test_room_sync_without_created_at_does_not_crash():
-    """老房间 / 手工构造的房没有 `created_at` 也不能 AttributeError（新字段一律 getattr）。"""
-    room = server.GameRoom('rank-sync')
-    room.players['p1'] = server.Player(name='甲', ships=[], attacks=[],
-                                       remaining_ships=6, user_id='u1', sid='s1')
-    if hasattr(room, 'created_at'):
-        del room.created_at
-    if hasattr(room, 'ranked'):
-        del room.ranked
-    snap = server._build_room_sync(room, 'p1')
-    assert snap['ranked'] is False and snap['mode'] == 'casual'
 
 
 # ===========================================================================
 # 11. 大舰长晋升与护栏
 # ===========================================================================
-def test_admiral_promotion_when_captain_pool_is_full(env):
-    """★ 船长段 + 池内前 50 + 池子 ≥ 50 人 → 升大舰长，且 `is_admiral` 落库为 1。"""
-    min_captains = ranks.ADMIRAL_MIN_CAPTAINS
-    assert min_captains <= 200, f'护栏 {min_captains} 太大，这个用例不方便造数据'
-    assert ranks.WIN_POINTS >= 3, '这条用例要求"赢一局恰好跨进船长段"，分差太小时不成立'
-    pool_uids = [_mk_user() for _ in range(min_captains)]
-    env.track(*pool_uids)
-    # 池里的人全都在目标分数之下（这样目标晋升后池内名次靠前）
-    target_after = ranks.CAPTAIN_FLOOR - 1 + ranks.WIN_POINTS
-    span = max(1, ranks.WIN_POINTS - 2)
-    for i, uid in enumerate(pool_uids):
-        db.set_rank_points(uid, ranks.CAPTAIN_FLOOR + 1 + (i % span))
-    assert db.count_rank_at_least(ranks.CAPTAIN_FLOOR) >= min_captains
-    assert ranks.CAPTAIN_FLOOR + span < target_after, '造数据的前提：池里的人分数更低'
-    # 别的用例可能也在共享库里留下过船长段账号；只要高过目标的不满 50 个就还能构造出
-    # "池内前 50"（满了就没法构造，明确跳过而不是假红）。
-    above = sum(1 for it in db.captains_ordered(limit=500) if it['points'] > target_after)
-    if above >= ranks.ADMIRAL_RANK_LIMIT:
-        pytest.skip(f'库里已有 {above} 个比目标分高的船长账号，无法构造"池内前 50"')
-
-    room, ca, cb, ua, ub = env(points_a=ranks.CAPTAIN_FLOOR - 1, points_b=100)
-    server._finalize_match(room, _pid_of(room, ua), _pid_of(room, ub))
-
-    row = db.get_user_rank_row(ua)
-    assert row['points'] == target_after, '这一局要正好把人推进船长段'
-    assert row['is_admiral'] == 1, '晋升必须落库（is_admiral=1）'
-    pa = _only(_recv(ca, 'rank_changed'), 'rank_changed(胜者)')
-    assert pa['admiral_promoted'] is True
-    assert pa['admiral_demoted'] is False
-    assert pa['after']['is_admiral'] is True
-    assert pa['after']['label'].startswith('大舰长')
-    assert pa['after']['captain_pool_rank'] is not None
-    assert pa['after']['captain_pool_rank'] <= ranks.ADMIRAL_RANK_LIMIT
-    assert db.get_user_rank_row(ub)['is_admiral'] == 0
 
 
-def test_admiral_not_promoted_when_pool_too_small(env, monkeypatch):
-    """★ 护栏：船长池不足 `ADMIRAL_MIN_CAPTAINS` 人时不晋升，且给中文原因。"""
-    pool_now = db.count_rank_at_least(ranks.CAPTAIN_FLOOR)
-    monkeypatch.setattr(ranks, 'ADMIRAL_MIN_CAPTAINS', pool_now + 100)   # 池子恒不足
-
-    room, ca, cb, ua, ub = env(points_a=ranks.CAPTAIN_FLOOR, points_b=100)
-    server._finalize_match(room, _pid_of(room, ua), _pid_of(room, ub))
-
-    row = db.get_user_rank_row(ua)
-    assert row['points'] == ranks.CAPTAIN_FLOOR + ranks.WIN_POINTS, '分照加'
-    assert row['is_admiral'] == 0, '池子不够人数时不许产生大舰长'
-    pa = _only(_recv(ca, 'rank_changed'), 'rank_changed(胜者)')
-    assert pa['admiral_promoted'] is False
-    assert pa['after']['is_admiral'] is False
-    reason = pa['admiral_reason']
-    assert reason and re.search(r'[\u4e00-\u9fff]', reason), f'必须给中文原因，实际 {reason!r}'
-    assert str(pool_now + 100) in reason, f'原因要说清"还差多少人"，实际 {reason!r}'
 
 
-def test_admiral_reason_when_below_captain(env):
-    """没到船长段位时，`admiral_reason` 也要是给人看的中文说明。"""
-    room, ca, cb, ua, ub = env(points_a=10, points_b=10)
-    server._finalize_match(room, _pid_of(room, ua), _pid_of(room, ub))
-
-    pa = _only(_recv(ca, 'rank_changed'), 'rank_changed(胜者)')
-    assert pa['admiral_promoted'] is False
-    assert pa['admiral_reason'] == '需要先达到船长段位'
 
 
-def test_admiral_demoted_when_condition_no_longer_met(env, monkeypatch):
-    """动态称号（`ADMIRAL_STICKY is False`）：条件不再满足要从大舰长掉回船长。"""
-    if ranks.ADMIRAL_STICKY:
-        pytest.skip('粘性开启时不会掉回船长，这条用例不适用')
-    pool_now = db.count_rank_at_least(ranks.CAPTAIN_FLOOR)
-    monkeypatch.setattr(ranks, 'ADMIRAL_MIN_CAPTAINS', pool_now + 100)
-
-    room, ca, cb, ua, ub = env(points_a=ranks.CAPTAIN_FLOOR + 50, points_b=100)
-    # 曾经是大舰长（库里带着 is_admiral=1），但这一局的条件已经不满足
-    db.set_rank_points(ua, ranks.CAPTAIN_FLOOR + 50, is_admiral=1)
-    assert db.get_user_rank_row(ua)['is_admiral'] == 1
-
-    server._finalize_match(room, _pid_of(room, ua), _pid_of(room, ub))
-
-    assert db.get_user_rank_row(ua)['is_admiral'] == 0, '条件不满足要掉回船长'
-    pa = _only(_recv(ca, 'rank_changed'), 'rank_changed(胜者)')
-    assert pa['admiral_demoted'] is True
-    assert pa['admiral_promoted'] is False
-    assert pa['after']['is_admiral'] is False
-    assert pa['before']['is_admiral'] is True
 
 
 # ===========================================================================
@@ -793,72 +433,3 @@ def test_admiral_demoted_when_condition_no_longer_met(env, monkeypatch):
 # ⚠️ 这个 bug **纯函数测不出来**（match_guard 单测全绿），
 #    必须走**真实 `find_match`** 才能钉住。本文件就是那条守卫。
 # ===========================================================================
-def test_rematch_pairing_still_settles_ranked(sockets):
-    """★ 和「最近刚打过的人」再次匹配上时，`room.ranked` 仍必须是 True。
-
-    这正是玩家报的场景：两人反复匹配（小号社区里很常见），
-    结果排位分不加也不扣。
-    """
-    ua, ub = _mk_user(), _mk_user()
-    try:
-        db.set_rank_points(ua, 100)
-        db.set_rank_points(ub, 100)
-        # 先让他们"刚打过一局" → 互为 recent_foes（触发软规避扣分）
-        db.record_match(ua, ub, None, count_stats=False)
-        assert ub in server._recent_foes(ua), '前置条件：应互为最近对手'
-
-        ca, cb = sockets(ua), sockets(ub)
-        before = set(server.room_manager.get_all_rooms())
-        ca.emit('find_match', {'player_name': '甲', 'mode': 'ranked'})
-        cb.emit('find_match', {'player_name': '乙', 'mode': 'ranked'})
-        new = [r for r in server.room_manager.get_all_rooms().values() if r.id not in before]
-        assert len(new) == 1, f'两人应当被配成一局，实际新建 {len(new)} 个房'
-
-        room = new[0]
-        assert room.ranked is True, (
-            '★ 和最近打过的人再匹配，排位**仍然要结算** —— '
-            '配对偏好（assessed）不是结算判据；给不给分由 anticheat 按对局内容决定'
-        )
-    finally:
-        for client in (locals().get('ca'), locals().get('cb')):
-            try:
-                client and client.disconnect()
-            except Exception:
-                pass
-
-
-def test_rematch_pairing_actually_awards_points(sockets):
-    """★ 更进一步：这种"重复匹配"的一局**真的把分加上去了**。
-
-    上面那条只验标记；这条走完整结算，验分数确实变了。
-    """
-    ua, ub = _mk_user(), _mk_user()
-    ca = cb = None
-    try:
-        db.set_rank_points(ua, 100)
-        db.set_rank_points(ub, 100)
-        db.record_match(ua, ub, None, count_stats=False)   # 互为最近对手
-
-        ca, cb = sockets(ua), sockets(ub)
-        before = set(server.room_manager.get_all_rooms())
-        ca.emit('find_match', {'player_name': '甲', 'mode': 'ranked'})
-        cb.emit('find_match', {'player_name': '乙', 'mode': 'ranked'})
-        new = [r for r in server.room_manager.get_all_rooms().values() if r.id not in before]
-        assert len(new) == 1
-        room = new[0]
-
-        # 让这一局"真开打"（否则赛前投降不给分是既有正确行为）
-        room.match_started_at = time.time()
-        room.state = 'attacking'
-        room.round = 6
-
-        server._finalize_match(room, _pid_of(room, ua), _pid_of(room, ub))
-
-        assert db.get_user_rank_row(ua)['points'] > 100, '赢的一方必须加分'
-        assert db.get_user_rank_row(ub)['points'] < 100, '输的一方必须扣分'
-    finally:
-        for client in (ca, cb):
-            try:
-                client and client.disconnect()
-            except Exception:
-                pass

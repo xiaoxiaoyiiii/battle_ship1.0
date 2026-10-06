@@ -401,6 +401,7 @@ def _payloads(room):
         'shields_added': {
             'player': 'p1', 'count': 6,
             'positions': [{'x': x, 'y': y} for x, y in P1_SHIPS],
+            'ships': [[{'x': x, 'y': y}] for x, y in P1_SHIPS],
         },
         # ★ 挨打那艘船的**全部**坐标（server.py `shield_absorbed`）——
         #    注意 (5,5) 从没被轰过：这就是它比 attack_result 多送出去的那一格。
@@ -595,6 +596,7 @@ def test_spectator_payloads_keep_the_action():
         shields = spectate.sanitize_event('shields_added', _sample_for('shields_added', room))
         assert shields['player'] == 'p1' and shields['count'] == 6
         assert 'positions' not in shields
+        assert 'ships' not in shields
 
         # 陷阱 / 牺牲：归属与数量还在
         trap = spectate.sanitize_event('trap_triggered', _sample_for('trap_triggered', room))

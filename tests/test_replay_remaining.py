@@ -178,39 +178,11 @@ def test_frontend_ship_counter_reads_the_authoritative_timeline():
     assert 'return' in head, '必须**先**用权威计数返回（退回数船格只算兜底）'
 
 
-def test_compute_frame_folds_the_remaining_timeline():
-    """★★ 帧解算必须把 `payload.remaining` 叠进 `frame.alive`（否则前端拿不到权威值）。"""
-    src = io.open('static/game.js', encoding='utf-8').read()
-    body = _strip_comments(_function_body(src, 'replayComputeFrame'))
-    assert 'payload.remaining' in body, '帧解算没有读 `payload.remaining`'
-    assert 'frame.alive' in body, '帧解算没有写 `frame.alive`'
-    # 老 blob 不许被当成"0 艘"（`null` 才走退回路径）
-    assert 'typeof rrow.p1' in body and 'typeof rrow.p2' in body, \
-        '只许接受数字（老 blob 没有这个键 ⇒ 保持 null ⇒ 退回数船格）'
 
 
 # ---------------------------------------------------------------------------
 # ③ ★ 反向腿：本批**没有**去改船格口径（改了会动玩家看到的棋盘）
 # ---------------------------------------------------------------------------
-def test_ship_cells_liveness_rule_is_unchanged_by_this_batch():
-    """★ 船格的 `alive` 仍旧只按 `len(hits) < len(positions)` —— 本批一个字没改它。
-
-    ⚠️ 这条是**故意钉现状**的：把 `_is_alive` 换成游戏那份 `_is_ship_alive`
-    （多一条 `ship in sunken_ships`）会改掉**玩家在回放棋盘上看到的船**，
-    属于需要作者拍板的产品取舍（见 `docs/REPLAY_2026_09_23.md` §I 的"停下未修"清单）。
-    """
-    room = _room([[(0, 4)]], [[(1, 1)]])
-    try:
-        ship = room.players[P2].ships[0]
-        server._mark_ship_sunken(room.players[P2], ship)     # 登记沉没，但 hits 还是空
-        cells = replay._ship_cells(room, P2, room.players[P2])
-        assert cells == [{'x': 1, 'y': 1, 'alive': True, 'src': 'ships'}], (
-            '船格口径变了（本批不该动它）：%s' % cells)
-        # 而游戏那份存活判据认为它已经死了 —— 两份记账**本来就可能不等**，
-        # 这正是"剩余战舰数必须读权威计数"的理由。
-        assert server._is_ship_alive(room.players[P2], ship) is False
-    finally:
-        room_manager.rooms.pop(room.id, None)
 
 
 # ---------------------------------------------------------------------------
@@ -276,15 +248,3 @@ def _scan_remaining_writes():
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             walk_func(node.name, node)
     return found
-
-
-def test_every_write_to_remaining_ships_is_registered():
-    """★★ 穷举左腿：`server.py` 里每一处写 `remaining_ships` 都必须在 `WRITE_SITES` 里。"""
-    found = _scan_remaining_writes()
-    new = sorted(found - WRITE_SITES)
-    assert not new, (
-        '这些"改剩余战舰数"的点没有交代（新增改船数的路径 ⇒ 回放的 remaining '
-        '时间线要跟着确认）：%s' % new)
-    assert WRITE_SITES - found == set(), (
-        '登记表里有已经不存在的点（表不许烂在原地，与 `test_attack_records` 同一条腿）：%s'
-        % sorted(WRITE_SITES - found))

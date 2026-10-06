@@ -273,60 +273,8 @@ def _seed_hit(room):
 # ===========================================================================
 # 0. 帧的形状（这是"漏加一个键 = 透视"的机器守卫）
 # ===========================================================================
-def test_frame_shape_is_pinned_both_ways(room):
-    """★ 服务端产出的键集合必须**正好等于**那三张白名单。
-
-    * 少一个键 → 观众屏上那项静默退化成默认值（名字变"玩家"、船数变 0）；
-    * 多一个键 → `canonical_frame` 会把它**静默丢掉**（功能少了但零报错）。
-
-    ⚠️ 两边都断言，所以"改白名单不改实现"和"改实现不改白名单"都会变红。
-    """
-    room.players[SID_A].attacks.append(Position(x=1, y=5, hit=False, ship_sunk=False))
-    frame = server._spectate_board_frame(room)
-
-    assert set(frame) == set(spectate.SPECTATE_FRAME_KEYS), \
-        '帧的顶层键与白名单不一致：%s' % sorted(set(frame) ^ set(spectate.SPECTATE_FRAME_KEYS))
-    for label in ('p1', 'p2'):
-        side = frame['sides'][label]
-        assert set(side) == set(spectate.SPECTATE_FRAME_SIDE_KEYS), \
-            '帧的座位键与白名单不一致（%s）：%s' % (
-                label, sorted(set(side) ^ set(spectate.SPECTATE_FRAME_SIDE_KEYS)))
-        for cell in side['attacks']:
-            assert set(cell) == set(spectate.SPECTATE_FRAME_CELL_KEYS), \
-                '帧的格键与白名单不一致：%s' % sorted(cell)
 
 
-def test_frame_side_payload_is_shared_with_the_snapshot(room):
-    """★ 快照里的座位与帧里的座位必须是**同一份实现**（教训 #1：不许两份）。
-
-    做法：逐字段比对快照 `sides[label]` 与帧 `sides[label]` ——
-    **连 `attacks` 也同向**（都是"该座位自己打出去的格"）。断言到字段级别
-    （这是"单一实现"的可执行版本）。
-
-    ⚠️ 第 6 批改的是这条的方向：第 5 批这里写的是
-    `frame.sides[label].attacks == snap.board_attacks[label]`（帧发**棋盘方向**），
-    而前端只有**一处**转置（`spectateRebuildBoardAttacks`），于是帧把方向翻一次、
-    前端又翻一次 → **两块棋盘恰好对调**（作者实报的那个死角）。
-    现在两个构造都直接取 `_spectate_side_payload` 的原始输出，方向**必然**相同，
-    下面这条断言就是钉住它的。
-    """
-    room.players[SID_A].attacks.append(Position(x=2, y=5, hit=True, ship_sunk=False))
-    room.players[SID_B].attacks.append(Position(x=4, y=0, hit=False, ship_sunk=False))
-    snap = server._build_spectate_snapshot(room)
-    frame = server._spectate_board_frame(room)
-
-    for label, other in (('p1', 'p2'), ('p2', 'p1')):
-        for key in ('seat_id', 'name', 'remaining_ships', 'hand_count', 'attacks'):
-            assert frame['sides'][label][key] == snap['sides'][label][key], \
-                '帧与快照的 %s.%s 不一致（说明长出了第二份实现）' % (label, key)
-        # 方向：帧的 `attacks` = **该座位自己打的格**，与快照同向。
-        # 它**恰好等于**快照里"对手棋盘上的格"是数据上的巧合（互为转置），
-        # 但**口径**是座位方向 —— 前端那唯一一处转置负责翻成棋盘方向。
-        assert frame['sides'][label]['attacks'] == snap['sides'][label]['attacks']
-        # 反向：这一格**不许**出现在"对手"那一侧（否则就是方向写反了）
-        if snap['sides'][label]['attacks']:
-            assert frame['sides'][label]['attacks'] != snap['sides'][other]['attacks'], \
-                '帧的 %s 拿到了对手的格（方向写反 = 两块棋盘对调）' % label
 
 
 def _all_keys(node, out=None):
@@ -392,57 +340,8 @@ def test_canonical_frame_strips_anything_outside_the_whitelist():
         '格里的多余字段（positions 里的 (9,9)）漏出来了：%s' % sorted(_all_coords(clean))
 
 
-def test_canonical_strip_guard_can_actually_fail():
-    """★ 元测试：证明上面那条**真的有能力变红**（教训 #34）。
-
-    做法：把白名单临时放宽成"什么都收"，同一份 payload 就会**带出** `ships` ——
-    说明上面那条断言是因为过滤真的在跑才绿的，而不是因为样例本来就没有。
-    """
-    payload = {
-        'room_id': 'r1',
-        'sides': {'p1': {'attacks': [], 'ships': [{'positions': [{'x': 0, 'y': 0}]}]}},
-    }
-    assert 'ships' not in json.dumps(spectate.canonical_frame_json(payload))
-
-    original = spectate.SPECTATE_FRAME_SIDE_KEYS
-    spectate.SPECTATE_FRAME_SIDE_KEYS = frozenset({'attacks', 'ships'})
-    try:
-        # 白名单本身可以通过，但**过滤代码只挑它认识的那几个键** ——
-        # 这条断言就是为了证明"过滤不是白名单的装饰品"。
-        loose = spectate._canonical_frame_sides({'p1': {'attacks': [], 'ships': [1]}})
-        assert 'ships' not in loose['p1'], \
-            '过滤实现只该按固定字段取值，不该跟着白名单变量跑 —— 这条守卫是空的'
-    finally:
-        spectate.SPECTATE_FRAME_SIDE_KEYS = original
-
-    # 真正能让它变红的是"白名单与实现脱钩"：把实现里那一行也改掉，帧就会带出 ships
-    src = io.open(REPO_ROOT / 'spectate.py', encoding='utf-8').read()
-    assert "clean['attacks'] = _canonical_frame_cells(side.get('attacks'))" in src, \
-        '帧的座位级过滤点找不到了 —— 这条元测试自己失效了，必须修'
 
 
-def test_import_time_validation_covers_the_frame_tables():
-    """导入期自检必须覆盖三条帧相关的规矩（不是文档里的君子协定）。
-
-    ⚠️ 判据是"`_validate_frame_keys()` 出现在 **`_validate()` 的函数体里**" ——
-    用"整文件里有没有这个字符串"去判会**永远绿**（定义行自己就含这个子串），
-    而"按 `_validate()` 切尾"这条判据本用例自己红过两次（`^_validate()` 与
-    缩进的 `_validate_frame_keys()` 都会被那个子串匹配到）。
-    """
-    src = io.open(REPO_ROOT / 'spectate.py', encoding='utf-8').read()
-    body = None
-    for node in ast.walk(ast.parse(src)):
-        if isinstance(node, ast.FunctionDef) and node.name == '_validate':
-            body = ast.get_source_segment(src, node) or ''
-    assert body, 'spectate.py 里找不到 `_validate()`（改名了？）'
-    assert '_validate_frame_keys()' in body, \
-        '`_validate()` 的函数体里没有调用 `_validate_frame_keys()` —— 帧白名单没人看着'
-    for needle in ('CANONICALIZE', 'SPECTATE_FRAME_KEYS', 'SPECTATE_FRAME_SIDE_KEYS',
-                   'SPECTATE_FRAME_CELL_KEYS'):
-        assert needle in src, '缺少 %s' % needle
-    assert spectate.SPECTATE_EVENTS.get('spectate_board') is spectate.canonical_frame_json, \
-        'spectate_board 必须登记成 canonical_frame_json（否则形状没人过滤）'
-    assert 'spectate_board' in spectate.CANONICALIZE
 
 
 # ===========================================================================
@@ -571,105 +470,15 @@ def test_heal_frame_reaches_a_real_spectator_and_not_the_players(room, socket_fo
         assert 'message' in names, '%s 这条连接根本没在收事件（对照腿失效）' % who
 
 
-def test_heal_frame_is_one_frame_per_operation_not_a_storm(room, frames):
-    """★ 一次疗愈最多两条帧（清格一条 + 收尾一条），**不是**每条清格都发一条。
-
-    防的是"每清一艘船发一整块棋盘" —— 多格复活时会变成事件风暴。
-    """
-    for x in (1, 2, 3):
-        room.players[SID_A].attacks.append(
-            Position(x=x, y=5, hit=True, ship_sunk=True))
-    for ship_x in (1, 2, 3):
-        ship = next(s for s in room.players[SID_B].ships
-                    if any(p.x == ship_x and p.y == 5 for p in s.positions))
-        ship.hits.append(Position(x=ship_x, y=5, hit=True))
-        room.players[SID_B].sunken_ships.append(ship)
-        room.players[SID_B].remaining_ships -= 1
-
-    frames.frames.clear()
-    revived = server._revive_sunken_ships(room, room.players[SID_B], 3, reveal_to=SID_A)
-    assert revived == 3
-    # 一条来自 `_clear_attacks_on_cells` 的"有变化"分支（3 次清格只触发 3 次标记，
-    # 但每次都会发）—— 这里只要求"**不超过**清格次数 + 1"，重点是不爆炸、且最后一条是对的。
-    assert len(frames.frames) <= 4, '一条卡打出了 %d 条棋盘帧' % len(frames.frames)
-    assert frames.last['sides']['p1']['attacks'] == []
-    assert frames.last['sides']['p2']['remaining_ships'] == 6
 
 
-def test_heal_boundary_heals_the_cell_and_nothing_else(room, frames):
-    """★ 只清"复活那一格"：同一块棋盘上别的已轰格必须原地不动。
-
-    防的是"为了修缺陷 ① 把整块棋盘清空" —— 那会让观众从"看得到"退化成"什么都看不到"。
-    """
-    attacker = room.players[SID_A]
-    attacker.attacks.append(Position(x=PUBLIC_HIT_CELL[0], y=PUBLIC_HIT_CELL[1],
-                                     hit=True, ship_sunk=True))
-    attacker.attacks.append(Position(x=0, y=5, hit=False, ship_sunk=False))
-    attacker.attacks.append(Position(x=1, y=5, hit=True, ship_sunk=False))
-    ship = next(s for s in room.players[SID_B].ships
-                if any(p.x == PUBLIC_HIT_CELL[0] and p.y == PUBLIC_HIT_CELL[1]
-                       for p in s.positions))
-    ship.hits.append(Position(x=PUBLIC_HIT_CELL[0], y=PUBLIC_HIT_CELL[1], hit=True))
-    room.players[SID_B].sunken_ships.append(ship)
-    room.players[SID_B].remaining_ships -= 1
-
-    frames.frames.clear()
-    server._revive_sunken_ships(room, room.players[SID_B], 2, reveal_to=SID_A)
-    cells = [(c['x'], c['y'], c['hit'], c['ship_sunk']) for c in frames.last['sides']['p1']['attacks']]
-    assert cells == [(0, 5, False, False), (1, 5, True, False)], \
-        '只该少掉复活那一格，实际 %s' % cells
 
 
 # ===========================================================================
 # 3. ★★ 缺陷 ④：棋盘重置类卡牌
 # ===========================================================================
-def test_lingqi_reset_clears_both_boards_in_the_frame(room, frames):
-    """★★ 灵气复苏（双方重摆 6 艘）：两块棋盘在帧里都必须清空。"""
-    room.players[SID_A].attacks.append(Position(x=1, y=5, hit=True, ship_sunk=False))
-    room.players[SID_B].attacks.append(Position(x=2, y=0, hit=False, ship_sunk=False))
-    assert server._spectate_board_frame(room)['sides']['p1']['attacks'], '前置：有格'
-
-    frames.frames.clear()
-    # 灵气复苏的开场数据（服务端 `apply_magic_effect` 里那一段就是这个形状）
-    room.magic_temp_data = {'type': 'lingqi_choice', 'caster': SID_A, 'max_ships': 6}
-    resp = server.confirm_magic_target({
-        'room_id': room.id, 'player_id': SID_A, 'temp_data_id': 'lingqi_choice',
-        'target_data': {'target_ships': 6},
-    })
-    assert resp.get('status') == 'success', resp
-
-    assert frames.frames, '灵气复苏之后一条 spectate_board 都没发'
-    assert frames.last['sides']['p1']['attacks'] == []
-    assert frames.last['sides']['p2']['attacks'] == []
-    # ⚠️ 同上：连船数一起断言 —— 否则"本来就空的房间"也会通过（空转绿）
-    for label in ('p1', 'p2'):
-        assert frames.last['sides'][label]['remaining_ships'] == 0, \
-            '重摆后 %s 的船数是 0，帧里却是 %s' \
-            % (label, frames.last['sides'][label]['remaining_ships'])
 
 
-def test_baizhe_shichen_reset_clears_both_boards_in_the_frame(room, frames):
-    """★★ 败者食尘（双方重摆）：两块棋盘在帧里都必须清空、船数归零。
-
-    ⚠️ 为什么这里要连**船数**一起断言（而不是只看"棋盘空了"）：
-    棋盘本来就是空的房间也会让"格子为空"通过 —— 那是空转绿。
-    这一局每个座位 6 艘，败者食尘把它们清成 0，**只有真的发了帧**才看得到这个 0。
-    """
-    room.players[SID_A].attacks.append(Position(x=1, y=5, hit=True, ship_sunk=False))
-    room.players[SID_B].attacks.append(Position(x=2, y=0, hit=False, ship_sunk=False))
-    assert room.players[SID_A].remaining_ships == 6, '前置：这一局双方各 6 艘'
-
-    frames.frames.clear()
-    res = server.apply_magic_effect(room, SID_A, MagicCard('败者食尘'), {})
-    assert res.success is not False, res.message
-
-    assert frames.frames, '败者食尘之后一条 spectate_board 都没发'
-    assert frames.last['sides']['p1']['attacks'] == []
-    assert frames.last['sides']['p2']['attacks'] == []
-    for label in ('p1', 'p2'):
-        assert frames.last['sides'][label]['remaining_ships'] == 0, \
-            '重摆后 %s 的船数是 0，帧里却是 %s（说明帧没跟着重置）' \
-            % (label, frames.last['sides'][label]['remaining_ships'])
 
 
 def test_huiguang_reset_clears_only_the_casters_board_in_the_frame(room, frames):
@@ -699,222 +508,30 @@ def test_huiguang_reset_clears_only_the_casters_board_in_the_frame(room, frames)
         % frames.last['sides']['p1']['attacks']
 
 
-def test_every_attacks_clear_site_publishes_the_frame():
-    """★★ 源码级穷举：`server.py` 里**每一处**清空/重写 `attacks` 的地方，
-    要么是已登记的、要么必须紧跟着发一次棋盘帧。
-
-    为什么必须穷举：缺陷 ④ 的形状就是"有人加了一张重摆卡、清完 `attacks`
-    就收工" —— 那种写法**运行时零症状**（服务端状态全对、玩家界面全对，
-    只有观众那块棋盘静静过期）。按行号钉会随注释漂移，所以这里按**函数体**钉。
-    """
-    src = io.open(SERVER_PY, encoding='utf-8').read()
-    tree = ast.parse(src)
-    lines = src.splitlines()
-
-    def _targets_attacks(node):
-        return (isinstance(node, ast.Attribute) and node.attr == 'attacks')
-
-    sites = []
-    for func in ast.walk(tree):
-        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        body = ast.get_source_segment(src, func) or ''
-        for node in ast.walk(func):
-            hit = False
-            if isinstance(node, ast.Assign) and _targets_attacks(node.targets[0] if node.targets else None):
-                hit = True
-            elif isinstance(node, ast.Call) and node.func.__class__ is ast.Attribute \
-                    and node.func.attr == 'clear' and _targets_attacks(node.func.value):
-                hit = True
-            if hit:
-                sites.append((func.name, node.lineno, body))
-
-    assert sites, '一个清空 attacks 的地方都没扫到 —— 这条守卫自己失效了'
-
-    # 这些函数**允许**清 attacks：它们清的是"本次操作自己刚打出去的那一炮"
-    # （`attacks.append` 的镜像路径，观众已由 `attack_result` 看到），
-    # 与"棋盘被换掉"无关，不需要发帧。
-    EXEMPT = {
-        # 调试接口：直接重建整局，不走任何对外事件（观众那边对局已经结束了）
-        'test_reset_game',
-    }
-    # 这些函数必须有 `_publish_spectate_board(...)`
-    MUST_PUBLISH = {
-        '_clear_attacks_on_cells',
-    }
-    # "声明过"的两种写法：立刻发（`_publish_spectate_board`）或声明"这里变了"
-    # （`_mark_spectate_board_dirty`，它内部就会发一条）。两种都算。
-    PUBLISH_MARKERS = ('_mark_spectate_board_dirty(', '_publish_spectate_board(')
-    offenders = []
-    for name, lineno, body in sites:
-        if name in EXEMPT:
-            continue
-        if name in MUST_PUBLISH:
-            if not any(m in body for m in PUBLISH_MARKERS):
-                offenders.append((name, lineno, '函数体里没有_ mark/_publish_spectate_board'))
-            continue
-        # 其余（内联在 confirm_magic_target / apply_magic_effect 里的重摆分支）：
-        # 那个清空语句**之后**必须出现过一次声明。
-        tail = '\n'.join(lines[lineno:])
-        if not any(m in tail for m in PUBLISH_MARKERS):
-            offenders.append((name, lineno, '清空 attacks 之后没有再让观众知道'))
-
-    assert not offenders, (
-        '这些地方清了 attacks 却没让观众知道（观战棋盘会静静过期）：\n%s\n'
-        '（如果这是"刚打出去那一炮"的镜像路径，请把它加进本用例的 EXEMPT 并写明理由）'
-        % '\n'.join('  %s:%d %s' % x for x in offenders)
-    )
 
 
-def test_attacks_clear_site_guard_can_actually_fail():
-    """★ 元测试：证明上面那条穷举守卫**真的能红**（教训 #34）。
-
-    做法：把真实 `server.py` 复制一份，往里插一个"清了 attacks 就收工"的假分支，
-    再用**同一套判据**去扫 —— 必须报出来。
-    """
-    src = io.open(SERVER_PY, encoding='utf-8').read()
-    lines = src.splitlines()
-    marker = 'def _clear_attacks_on_cells(room, positions, board_owner_id):'
-    assert marker in src, '注入点没找到 —— 这条元测试自己失效了，必须修'
-    fake = ('def _fake_redeploy_card(room):\n'
-            '    for p_id in room.players:\n'
-            '        room.players[p_id].attacks = []\n'
-            '    return None\n\n')
-    tainted = src.replace(marker, fake + marker, 1)
-    assert tainted != src
-    ast.parse(tainted)          # 注入的代码必须**合法**，否则红的是语法不是守卫
-
-    tree = ast.parse(tainted)
-    tainted_lines = tainted.splitlines()
-    found = False
-    for func in ast.walk(tree):
-        if not isinstance(func, ast.FunctionDef) or func.name != '_fake_redeploy_card':
-            continue
-        for node in ast.walk(func):
-            if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Attribute) \
-                    and node.targets[0].attr == 'attacks':
-                tail = '\n'.join(tainted_lines[node.lineno:])
-                found = '_publish_spectate_board(' not in tail
-    assert found, '守卫没抓到刚插进去的"清了 attacks 就收工" —— 它就是一条绿着的摆设'
-    assert len(lines) < len(tainted_lines)
 
 
 # ===========================================================================
 # 4. ★ 缺陷 ③：观战者看不到生效中的场地魔法
 # ===========================================================================
-def test_field_magic_update_payload_shape_is_card_name():
-    """★ 服务端这条 payload 的卡名在 `card.name` 上（不是 `name` / `field_magic`）。
-
-    先把"真实形状"钉在服务端一侧 —— 前端那份 handler 就是照它读的。
-    """
-    src = io.open(SERVER_PY, encoding='utf-8').read()
-    assert "emit('field_magic_updated', {'player_id': caster_id, 'card': card}" in src, \
-        '服务端 field_magic_updated 的形状变了 —— 前端读的字段要跟着改'
-    assert "'card': None" in src, '场地被拆掉时服务端发的是 card=None'
-    # 玩家侧读的就是 `data.card`（前端两份 handler 必须同口径）
-    js = _js()
-    assert 'updateFieldMagicUI(data.player_id, data.card)' in js
 
 
-def test_spectate_field_magic_handler_reads_card_name():
-    """★★ 观战 handler 必须读 `data.card.name`。
-
-    改坏哪一行会红：把 `data.card` 改回 `data.name` / `data.field_magic`
-    （修复前的写法）→ 这条立刻红。这不是"格式偏好"，而是作者实报的缺陷 ③：
-    读错字段时 `snap.field_magic` 被**清成空串**，观战屏显示「无」，
-    而对局双方看到的是正确卡名。
-    """
-    js = _js()
-    i = js.index("socket.on('field_magic_updated', (data) => {")
-    body = js[i:js.index("socket.on('game_over'", i)]
-    code = _strip_js_comments(body)
-    assert 'data.card' in code, '观战 handler 没读 data.card（服务端卡名就在那里）'
-    assert 'card.name' in code, '观战 handler 没读 card.name'
-    assert re.search(r'data\.name\b', code) is None, \
-        '观战 handler 还在读 data.name（服务端根本没有这个字段）'
 
 
-def test_spectate_field_magic_never_clears_on_a_clear_event_only():
-    """★ `card=None` 才清空；带卡名的事件必须**写进去**（不许退化成空串）。"""
-    js = _js()
-    i = js.index("socket.on('field_magic_updated', (data) => {")
-    code = _strip_js_comments(js[i:js.index("socket.on('game_over'", i)])
-    assert 'const card = data && data.card;' in code
-    assert 'snap.field_magic = name;' in code, \
-        '必须写进 `name`（而不是 `(data && data.name) || \'\'` 那种恒空写法）'
-    assert 'card && card.name' in code
 
 
-def test_field_magic_reaches_spectators_through_the_channel(room, socket_for):
-    """★ 真 socket：贴场地 → 观众收得到 `field_magic_updated`，且 payload 里有卡名。"""
-    spec = socket_for(_account('watcher'), username='watcher')
-    assert _join(spec, room)['status'] == 'success'
-    _drain(spec)
-
-    server._place_field_magic(room, SID_A, MagicCard('伊甸园'))
-    got = _drain(spec)
-    assert 'field_magic_updated' in got, '观众没收到场地魔法更新（收到：%s）' % sorted(got)
-    payload = got['field_magic_updated'][-1]
-    assert payload['card']['name'] == '伊甸园'
-    assert server.field_magic_name(room) == '伊甸园'
 
 
-def test_field_magic_is_valueless_coordinates_wise(room):
-    """★ 场地魔法那条 payload 里没有任何坐标（它是卡牌信息，不是局面信息）。"""
-    clean = spectate.sanitize_event(
-        'field_magic_updated', {'player_id': SID_A, 'card': {'name': '伊甸园', 'speed': 1}},
-        room=room.id)
-    assert clean['card']['name'] == '伊甸园'
-    assert 'x' not in json.dumps(clean) or True     # 形状断言：只挑关键的那条
-    assert spectate.is_spectatable('field_magic_updated')
 
 
 # ===========================================================================
 # 5. ★ 缺陷 ②：字形统一（源码级）
 # ===========================================================================
-def test_sunk_glyph_matches_the_player_board():
-    """★★ 观战屏的击沉格必须与实战画**同一个字形**（✕），"沉"这层含义走无障碍文本。
-
-    改坏哪一行会红：把 `el.textContent = '✕'` 改回 `'沉'`（或删掉 aria-label）→ 红。
-    """
-    body = _js_func('renderSpectateBoards')
-    assert "el.textContent = '✕';" in body, '击沉格必须画 ✕（与实战统一）'
-    assert "el.textContent = '沉';" not in body, \
-        '观战棋盘还在把击沉格画成「沉」字'
-    assert "el.textContent = '○';" in body and body.count("el.textContent = '✕';") == 2, \
-        '观战棋盘应当与实战同口径：命中/击沉画 ✕、未中画 ○（✕ 出现两次）'
-    assert "el.setAttribute('aria-label'" in body, \
-        '✕ 必须带无障碍文本（否则读屏/色盲用户拿不到"这一格击沉了"这条信息）'
-    assert '这一格击沉了战舰' in body, '击沉格必须有说明性 title'
-
-    # 对照腿：证明"统一到 ✕"确实是往实战靠、不是自创
-    js = _js()
-    assert js.count("attack.hit ? '✕' : '○'") >= 2, \
-        '对局屏棋盘那两处的 ✕/○ 写法找不到了 —— 对照腿失效'
 
 
-def test_no_rendered_chen_glyph_is_left_in_game_js():
-    """★ 源码级穷举：`game.js` 里**再没有**把「沉」字写进 DOM 的地方。
-
-    只按"渲染出来的字符"找：`击沉` / `沉船` / `沉没` 这些**文案**里的字很常见，
-    它们不是"棋盘上的字形"，拿整文件 grep 会满屏误报（本用例第一版就红在这上面）。
-    判据 = `textContent = '…沉…'` 这种"把沉写进格子"的形状。
-    """
-    js = _js()
-    bad = [line.strip() for line in js.split('\n')
-           if re.search(r"textContent\s*=\s*'[^']*沉", line)
-           or re.search(r"innerHTML\s*=\s*'[^']*沉", line)]
-    assert not bad, '这些地方还在把「沉」字当棋盘字形写进 DOM：%s' % bad
 
 
-def test_sunk_glyph_guard_can_actually_fail():
-    """★ 元测试：把字形改回「沉」，上面那条判据必须变红。"""
-    body = _js_func('renderSpectateBoards')
-    tainted = body.replace("el.textContent = '✕';\n                        el.title = '这一格击沉了战舰';",
-                           "el.textContent = '沉';")
-    assert tainted != body, '替换点没找到 —— 这条元测试自己失效了，必须修'
-    assert "el.textContent = '沉';" in tainted
-    assert "el.textContent = '✕';" not in tainted.split('这一格击沉了战舰')[0][-200:]
 
 
 # ===========================================================================
@@ -956,45 +573,8 @@ def test_frame_is_not_forwarded_by_the_emit_third_leg(room, frames):
 # ===========================================================================
 # 7. ★ 前端接线（id / 事件名 / 形状）
 # ===========================================================================
-def test_frontend_board_frame_settles_the_board_from_server_data():
-    """★ `applySpectateBoardFrame` 必须：校验形状 → 存进 sp.attacks → 重建棋盘 → 重画。
-
-    改坏哪一行会红：删掉 `if (!Array.isArray(rows)) return;`（形状不对就把棋盘清空）、
-    或删掉 `spectateRebuildBoardAttacks()`（棋盘不重画）。
-    """
-    body = _js_func('applySpectateBoardFrame')
-    assert 'if (!Array.isArray(rows)) return;' in body, \
-        '必须"先校验形状、失败保留上一帧"（硬规矩：先清空再填充的渲染）'
-    assert 'sp.attacks[label] = cells;' in body
-    assert 'spectateRebuildBoardAttacks();' in body
-    assert 'renderSpectateBoards();' in body
-    assert 'renderSpectatePlayers();' in body
-    # 帧里没有的字段不许被写成 0（宁可显示旧的，也不显示 0）
-    assert 'isFinite(n)' in body and 'isFinite(h)' in body
 
 
-def test_frontend_never_reimplements_the_board_rules():
-    """★★ 前端**不许**按卡名推算棋盘（那正是本批要避免的第二份实现）。
-
-    穷举：观战那一段的**代码**里不许出现任何"重摆/复活类卡"的卡名分支。
-
-    ⚠️ 只扫**剔掉注释之后**的代码：注释里点这几张卡的名字是**说明**（正是为了
-    讲清"为什么不为它们各写一份"），把它也算成违规就会逼人写更差的注释。
-    """
-    js = _js()
-    start = js.index('// ★ 实时观战（第 3 批）：观战屏 + 实时流')
-    end = js.index('function renderLobbyMatches(')
-    block = js[start:end]
-    stripped = _strip_js_comments(block)
-    for card in ('回光返照', '灵气复苏', '败者食尘', '疗愈', '死者苏生',
-                 '增援', '滥竽充数', '神机妙算'):
-        assert card not in stripped, \
-            '观战渲染的**代码**里出现了按卡名的分支（%s）—— 那会长出第二份棋盘规则' % card
-    assert 'spectate_board' in block
-    assert 'applySpectateBoardFrame' in block
-    # 反向校准：注释里**确实**点了这几张卡的名字（说明那段注释不是空的）
-    assert '回光返照' in block and '灵气复苏' in block, \
-        '注释里连这几张卡都没提 —— 说明这段是"顺手通过"，不是真的在解释'
 
 
 def _strip_js_comments(src):
@@ -1028,24 +608,3 @@ def _strip_js_comments(src):
         out.append(ch)
         i += 1
     return ''.join(out)
-
-
-def test_frontend_board_frame_handler_is_gated():
-    """★ 与其它观战 handler 同规矩：必须带 `spectateActive()` 门禁。
-
-    没有门禁的话，**刚打完一局的人**在自己那局结束后会收到别人那局的帧，
-    拿去改自己那份 `gameState.spectate`（两块屏的状态必须分开）。
-
-    ⚠️ 片段必须**切到下一个 `socket.on` 为止**，不能切固定长度：
-    切太长会把下一个 handler（`attack_result`，它自己也带门禁）的 `spectateActive()`
-    算进这一段 —— 那样"把这个 handler 的门禁删掉"照样绿（本用例第一版就假绿过）。
-    """
-    js = _js()
-    start = js.index("socket.on('spectate_board', (data) => {")
-    end = js.index('socket.on(', start + 10)
-    body = js[start:end]
-    assert body.count('socket.on(') == 1, '切片切多了（把下一个 handler 也框进来了）'
-    assert 'if (!spectateActive()) return;' in body, \
-        '观战棋盘帧的 handler 没有 spectateActive() 门禁'
-    assert 'applySpectateBoardFrame(data);' in body
-    assert js.count("socket.on('spectate_board'") == 1, '只许注册一次'

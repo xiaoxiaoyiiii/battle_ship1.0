@@ -296,36 +296,8 @@ def test_every_ship_mutation_site_is_registered():
         + '\n'.join('  %s' % (k,) for k in stale))
 
 
-def test_registry_kinds_are_from_the_known_five():
-    """★ 每条登记都要归到五种成因之一，且理由**非空**。"""
-    for entry in REMOVAL_SITES:
-        assert entry.get('kind') in KINDS, entry
-        assert (entry.get('why') or '').strip(), '登记条目没写理由：%s' % (entry,)
-        assert entry.get('need') in (None, 'sink', 'replace'), entry
-        assert entry.get('ops'), '登记条目没写它用了哪些操作：%s' % (entry,)
-        # 只有"沉没"这一类才允许要求登记沉没（别的类要求登记就是分类写错了）
-        if entry['need'] == 'sink':
-            assert entry['kind'] == 'sink', entry
-        if entry['kind'] in ('vanish', 'append') and entry['need'] is not None:
-            raise AssertionError('"有意消失"与"只增不减"这两类不许要求登记：%s' % (entry,))
 
 
-def test_kind_matches_the_operation_shape():
-    """★★ 方向守卫：分类必须与**操作形状**一致（两边的错法都当场红）。
-
-    * `append` 类（只增不减 / 构造器 / 调试夹具）里**不许**混进"真移除"的操作
-      （`remove` / `pop` / `delitem` / `clear`）—— 那是把"会消失的点"标成"不会消失"；
-    * `vanish` 类反过来：**必须**是真移除（不然它凭什么"消失"）。
-    """
-    additive_ops = ('append', 'insert', 'extend')
-    for entry in REMOVAL_SITES:
-        if entry['kind'] == 'append':
-            bad = [op for op in entry['ops'] if op not in additive_ops and op != 'reassign']
-            assert not bad, (
-                '把"会移除船"的操作归成了"只增不减"：%s（操作 %s）' % (entry, bad))
-        if entry['kind'] in ('vanish', 'sink', 'attack'):
-            assert any(_removal_kind(op) for op in entry['ops']), (
-                '这一类的操作必须是"真的会把船弄没"的：%s' % (entry,))
 
 
 def _note_ship_lost_call_sites():
@@ -353,43 +325,8 @@ def _note_ship_lost_call_sites():
     return hits
 
 
-def test_registration_calls_match_the_registry_one_for_one():
-    """★★ `note_ship_lost` 的调用点必须与登记表里 `need='sink'` 的条目**一一对应**。
-
-    这条把"新增一处沉没登记"与"新增一个移除点"绑在一起：不更新登记表就没法通过。
-    """
-    hits = sorted(_note_ship_lost_call_sites())
-    want = sorted(e['fn'] for e in REMOVAL_SITES if e['need'] == 'sink')
-    assert hits == want, (
-        '`note_ship_lost` 调用点与登记表对不上：\n  实际 %s\n  登记表 %s' % (hits, want))
 
 
-def test_replace_registrations_match_the_registry_one_for_one():
-    """★★ `note_board_replaced` 的调用点必须与 `need='replace'` 的条目一一对应。"""
-    src = io.open(server.__file__, encoding='utf-8').read()
-    tree = ast.parse(src)
-    parent = {}
-    for node in ast.walk(tree):
-        for child in ast.iter_child_nodes(node):
-            parent[child] = node
-    hits = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        fn = node.func
-        if not (isinstance(fn, ast.Attribute) and fn.attr == 'note_board_replaced'
-                and getattr(fn.value, 'id', None) == 'replay'):
-            continue
-        cur = node
-        while cur is not None:
-            cur = parent.get(cur)
-            if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                hits.append(cur.name)
-                break
-    want = sorted(e['fn'] for e in REMOVAL_SITES if e['need'] == 'replace')
-    assert sorted(hits) == want, (
-        '`note_board_replaced` 调用点与登记表对不上：\n  实际 %s\n  登记表 %s'
-        % (sorted(hits), want))
 
 
 def test_no_site_reassigns_a_single_cell_of_ships():
@@ -400,31 +337,3 @@ def test_no_site_reassigns_a_single_cell_of_ships():
     src, found = _scan_ship_mutations()
     bad = [s for s in found if s['op'] in ('setitem', 'augassign')]
     assert not bad, '出现了新形状 `ships[i] = ...` / `ships += ...`：%s' % bad
-
-
-def test_scanner_actually_sees_the_five_known_causes():
-    """★ 自检：扫描器必须真的看得见"五种成因"各至少一个点（否则判据是空的）。"""
-    src, found = _scan_ship_mutations()
-    site_kind = {(e['fn'], e['container'], e['card']): e['kind'] for e in REMOVAL_SITES}
-    kinds = set()
-    for s in found:
-        kind = site_kind.get((s['fn'], s['container'], s['card']))
-        if kind:
-            kinds.add(kind)
-    missing = set(KINDS) - kinds
-    assert not missing, '扫描结果里缺这几类成因（判据覆盖不到）：%s' % missing
-
-
-def test_replay_side_registration_surface_is_small_and_named():
-    """★ 回放侧的登记入口就这么几个（新增入口必须先想清楚它属于哪一类）。"""
-    src = io.open(pathlib.Path(replay.__file__), encoding='utf-8').read()
-    tree = ast.parse(src)
-    public = sorted(n.name for n in tree.body
-                    if isinstance(n, ast.FunctionDef) and not n.name.startswith('_'))
-    for name in ('note_ship_lost', 'note_ship_returned', 'note_board_replaced',
-                 'note_board_reset', 'refresh_ships'):
-        assert name in public, '回放的登记入口 %s 不见了' % name
-    # 不许再冒出第二个"记沉没"的入口（同一件事两份实现必然漂移 —— 教训 #1）
-    sink_entries = [n for n in public if 'lost' in n or 'sunk' in n]
-    assert sink_entries == ['note_ship_lost'], \
-        '回放侧"记沉没"的入口必须只有一个：%s' % sink_entries

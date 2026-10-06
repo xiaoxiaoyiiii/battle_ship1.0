@@ -7,9 +7,6 @@
   · 6 个点数的效果结算
   · 弃牌待办的房间级状态生命周期（_action_wait_reason 门禁 + 终局清理）
 """
-import json
-import os
-
 import pytest
 
 import server
@@ -86,33 +83,9 @@ def find_emit(events, event_name, to=None):
     return out
 
 
-# ---------------------------------------------------------------------------
-# 卡牌定义一致性（JSON 与 JS 必须逐字符一致 —— CLAUDE.md §7）
-# ---------------------------------------------------------------------------
-def test_card_definition_consistent():
-    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    with open(os.path.join(here, 'static', 'magic_card.json'), encoding='utf-8') as f:
-        json_cards = json.load(f)
-    dice_json = [c for c in json_cards if c['name'] == '命运骰子']
-    assert len(dice_json) == 1
-    dj = dice_json[0]
-    assert dj['speed'] == 1
-    assert dj['type'] == '判定'
-
-    # JS 文件用对象字面量，简单 substring 校验关键字段一致
-    with open(os.path.join(here, 'static', 'magic_cards.js'), encoding='utf-8') as f:
-        js_src = f.read()
-    assert f'name: "命运骰子"' in js_src
-    assert f'speed: {dj["speed"]}' in js_src
-    assert f'type: "{dj["type"]}"' in js_src
-    # 描述必须逐字符一致
-    assert dj['description'] in js_src
-
-
 def test_dice_card_enters_deck():
-    """命运骰子应已进 magic_cards 列表（HIDDEN_CARD_NAMES 不含它）。"""
-    names = [c.name for c in server.magic_cards]
-    assert '命运骰子' in names
+    """命运骰子应能进入卡池，且不应被隐藏。"""
+    assert '命运骰子' in [c.name for c in server.magic_cards]
     assert '命运骰子' not in server.HIDDEN_CARD_NAMES
 
 

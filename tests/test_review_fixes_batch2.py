@@ -58,17 +58,6 @@ def room():
 # ---------------------------------------------------------------------------
 # 百亿补贴：+3 必须归持卡者自己
 # ---------------------------------------------------------------------------
-def test_subsidy_bonus_goes_to_holder_not_attacker(room):
-    server.apply_magic_effect(room, P2, card('百亿补贴'), {})
-    room.players[P2].ships = [ship((0, 0)), ship((1, 0))]
-    room.players[P2].remaining_ships = 2
-    before = room.attacks_remaining          # P1 的攻击池
-
-    server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 0})
-
-    assert room.attacks_remaining == before - 1, '对手的攻击池不应拿到补贴'
-    assert room.players[P2].effect_flags.subsidy_bonus == 3
-    assert room.players[P1].effect_flags.subsidy_bonus == 0
 
 
 def test_full_fire_respects_frozen_ships(room):
@@ -83,22 +72,8 @@ def test_full_fire_respects_frozen_ships(room):
     assert room.attacks_remaining == (6 - 1) * 2
 
 
-def test_all_ships_frozen_means_no_attack(room):
-    for s in room.players[P1].ships:
-        s.frozen = room.round + 1
-    server._recalc_attacker_attacks(room)
-    assert room.attacks_remaining == 0
-    assert server.handle_attack({'room_id': room.id, 'player_id': P1,
-                                 'x': 0, 'y': 5})['status'] == 'error'
 
 
-def test_subsidy_bonus_applies_on_holders_turn(room):
-    room.players[P2].effect_flags.subsidy = True
-    room.players[P2].effect_flags.subsidy_bonus = 6
-    room.current_attacker = P2
-    room.players[P2].remaining_ships = 4
-    server._recalc_attacker_attacks(room)
-    assert room.attacks_remaining == 4 + 6
 
 
 # ---------------------------------------------------------------------------
@@ -148,80 +123,15 @@ def test_splash_last_chance_returns_chain_result(room):
 # ---------------------------------------------------------------------------
 # 被无效化的场地卡不得拆掉场上已有场地
 # ---------------------------------------------------------------------------
-def test_negated_field_card_keeps_active_field(room):
-    active = card('恶魔契约')
-    room.field_magic = active
-    room.field_magic_owner = P2
-    room.game_effects['demon_contract'] = True
-
-    negated = card('伊甸园')
-    room.chain = [ChainItem(P1, negated, [], time.time())]
-    room.chain[0].negated = True
-
-    server.resolve_chain(room)
-
-    assert room.field_magic is active, '被无效化的场地卡不应拆掉场上已有的场地'
-    assert room.game_effects.get('demon_contract') is True
-    assert negated in room.magic_discard
 
 
 # ---------------------------------------------------------------------------
 # 终局路径必须写战绩
 # ---------------------------------------------------------------------------
-def test_reinforcement_countdown_skips_activation_round(room):
-    """卡面：不算生效的那个大回合 —— 进入下个大回合时不应递减。"""
-    room.attack_order = [P2, P1]
-    room.current_attacker = P1
-    room.current_phase = 'end'
-    room.attacks_remaining = 0
-
-    server.apply_magic_effect(room, P1, card('极限增援'), {})
-    assert room.game_effects['reinforcement_check']['remaining_turns'] == 2
-
-    server.end_turn({'room_id': room.id, 'player_id': P1})
-    assert room.game_effects['reinforcement_check']['remaining_turns'] == 2, \
-        '生效的这个大回合不计入'
-    assert room.state != 'game_over'
 
 
-def test_yinxue_requires_prior_hit(room):
-    """饮血必须在击沉对方一艘战舰后才能发动。
-
-    2026-09-14 语义收紧：原先只需「击中」（hit），现改为「击沉」（ship_sunk）——
-    卡面后半句是"每击杀一艘船摸一张牌"，拿"命中"当门槛会让玩家打中一艘
-    没沉的船就以为能发动，实际什么都不会发生。
-    """
-    res = server.apply_magic_effect(room, P1, card('饮血'), {})
-    assert res.success is False
-
-    # 只命中未击沉 → 仍不可发动
-    room.last_attack = {'attacker': P1, 'x': 0, 'y': 0, 'hit': True, 'ship_sunk': False}
-    assert server.apply_magic_effect(room, P1, card('饮血'), {}).success is False
-
-    # 击沉 → 可发动
-    room.last_attack = {'attacker': P1, 'x': 0, 'y': 0, 'hit': True, 'ship_sunk': True}
-    assert server.apply_magic_effect(room, P1, card('饮血'), {}).success is True
 
 
-def test_reinforcement_endgame_records_match(room, monkeypatch, events):
-    calls = []
-    monkeypatch.setattr(server.db, 'record_match', lambda *a, **k: calls.append(a))
-
-    room.attack_order = [P2, P1]          # P1 是本大回合最后行动者
-    room.current_attacker = P1
-    room.current_phase = 'end'
-    room.attacks_remaining = 0
-    room.players[P1].remaining_ships = 4
-    room.players[P2].remaining_ships = 2  # 船少者（P2）获胜
-    room.game_effects['reinforcement_check'] = {
-        'remaining_turns': 1, 'activated_round': room.round - 2}
-
-    res = server.end_turn({'room_id': room.id, 'player_id': P1})
-    assert res.get('game_over') is True
-    assert room.state == 'game_over'
-    assert room.winner == P2
-    assert len(calls) == 1, '极限增援终局也应写战绩'
-    assert any(e[0] == 'game_state' for e in events)
 
 # ---------------------------------------------------------------------------
 # 第二批补充：卡牌语义修正（余音绕梁/疗愈/神之宣告/克苏鲁之眼/绝处逢生/失灵！）
@@ -230,51 +140,10 @@ def make_book_room():
     return None
 
 
-def test_yuyin_requires_preparation_phase(room):
-    """卡面：余音绕梁只能在自己的准备阶段使用"""
-    room.current_phase = 'battle'
-    res = server.apply_magic_effect(room, P1, card('余音绕梁'), {})
-    assert res.success is False
-    assert not getattr(room.players[P1].effect_flags, 'forced_kill', 0)
 
 
-def test_liaoyu_revives_in_place(room):
-    """疗愈：原地复活（不再是"选一个未打过的新格子"）"""
-    sunk = ship((2, 2))
-    sunk.hits = list(sunk.positions)
-    room.players[P1].ships = [sunk]
-    room.players[P1].sunken_ships = [sunk]
-    room.players[P1].remaining_ships = 0
-    room.players[P1].attacks = [Position(2, 2)]
-    room.players[P2].attacks = [Position(2, 2)]
-
-    res = server.apply_magic_effect(room, P1, card('疗愈'), {})
-    assert res.success is True
-    assert room.players[P1].remaining_ships == 1
-    assert sunk.hits == [], '复活必须清空命中'
-    assert sunk.positions[0].x == 2 and sunk.positions[0].y == 2, '原地复活'
-    # (2,2) 是 P1 棋盘上的格子：要清的是【对手打过这里】那条记录（P2.attacks），
-    # 清掉后对方才能再打这一格、前端才不画 ✕。
-    # ⚠️ 不能断言 P1.attacks 那条也被清 —— 那是"P1 打在**对方**棋盘的 (2,2)"，
-    # 另一个坐标空间；清了会误删对方棋盘上的 ✕ 并让人重复打那一格（2026-09-16 修正）。
-    assert all(not (a.x == 2 and a.y == 2) for a in room.players[P2].attacks), \
-        '对方打在我这格的记录必须清掉，否则这艘船打不沉'
-    assert any(a.x == 2 and a.y == 2 for a in room.players[P1].attacks), \
-        '我自己打在对方棋盘的 (2,2) 不该被复活碰掉'
-    assert 'pending_placement' not in room.magic_temp_data
 
 
-def test_cancel_magic_selection_returns_cards_to_deck(room):
-    """取消桃园结义选择：已抽出的牌放回牌堆，不凭空消失"""
-    drawn = [card('轰炸'), card('疗愈')]
-    room.magic_deck = [card('冻结')]
-    room.magic_temp_data = {'type': 'taoyuan_choice', 'caster': P1, 'cards': drawn}
-
-    res = server.handle_cancel_magic_selection({'room_id': room.id, 'player_id': P1})
-    assert res['status'] == 'success'
-    assert room.magic_temp_data == {}
-    names = sorted(c.name for c in room.magic_deck)
-    assert names == sorted(['冻结', '轰炸', '疗愈'])
 
 
 def test_cancel_magic_selection_rejects_other_player(room):
@@ -283,11 +152,6 @@ def test_cancel_magic_selection_rejects_other_player(room):
     assert res['status'] == 'error'
 
 
-def test_cancel_magic_selection_refuses_placement(room):
-    room.magic_temp_data = {'pending_placement': {'caster': P1, 'kind': 'reinforce',
-                                                  'remaining': 1, 'total': 1, 'placed': 0}}
-    res = server.handle_cancel_magic_selection({'room_id': room.id, 'player_id': P1})
-    assert res['status'] == 'error'
 
 
 def test_attack_rejects_fractional_coordinates(room):

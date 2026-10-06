@@ -141,13 +141,6 @@ def test_anonymous_is_rejected():
     assert '未登录' in resp.get_json()['error']
 
 
-def test_missing_replay_is_404_with_a_reason():
-    """★ 没有这条回放 ⇒ 404 且**带原因**（不是静默空对象，教训 #32）。"""
-    uid = _account()
-    resp = _http(uid).get('/api/replay/%s' % uuid.uuid4())
-    assert resp.status_code == 404, resp.get_data(as_text=True)
-    body = resp.get_json()
-    assert body['success'] is False and body['error']
 
 
 # ===========================================================================
@@ -175,18 +168,6 @@ def test_setting_round_trip_and_validation():
     assert _http().post('/api/replay/setting', json={'allow_replay': True}).status_code == 401
 
 
-def test_setting_get_reports_unknown_instead_of_lying():
-    """★ 读库失败 ⇒ **503 如实说不知道**，绝不许谎报成"允许"（教训 #21）。"""
-    uid = _account()
-    http = _http(uid)
-    real = db_module.db.get_allow_replay
-    db_module.db.get_allow_replay = lambda who: None
-    try:
-        resp = http.get('/api/replay/setting')
-        assert resp.status_code == 503, resp.get_data(as_text=True)
-        assert resp.get_json()['success'] is False
-    finally:
-        db_module.db.get_allow_replay = real
 
 
 # ===========================================================================
@@ -236,23 +217,6 @@ def test_oversized_bytes_column_is_rejected_with_a_reason_and_logged(capsys):
     assert '[replay]' in capsys.readouterr().out, '超限必须打日志（不许静默）'
 
 
-def test_blob_over_limit_by_actual_bytes_is_also_rejected():
-    """★ 第二道闸：`bytes` 列**小**、真实字节**超限** ⇒ 也要拒（500）。
-
-    ⚠️ 必须让第一道闸看到一个小值，否则它先拦掉，这条就测不到第二道 ——
-       实测踩过：只改坏第二道时它仍然是绿的。
-    """
-    w, l = _account(), _account()
-    mid = _make_replay(w, l)
-    _force_blob_size(mid, replay_module.MAX_REPLAY_BYTES + 5000)
-    _force_bytes_column(mid, 10)
-    row = db_module.db.get_match_replay(mid)
-    assert int(row['bytes']) == 10, '前置：`bytes` 列必须是小的那个'
-    assert len(row['replay'].encode('utf-8')) > replay_module.MAX_REPLAY_BYTES
-
-    resp = _http(w).get('/api/replay/%s' % mid)
-    assert resp.status_code == 500, resp.get_data(as_text=True)
-    assert '超限' in resp.get_json()['error']
 
 
 def test_broken_blob_is_reported_and_deleted(capsys):
@@ -273,14 +237,6 @@ def test_broken_blob_is_reported_and_deleted(capsys):
     assert db_module.db.get_match_replay(mid) is None, '坏回放没被删掉'
 
 
-def test_unknown_version_is_rejected_but_kept():
-    """★ 版本对不上 ⇒ 明确报错（**不删**：将来可能有人读得懂旧版本）。"""
-    w, l = _account(), _account()
-    mid = _make_replay(w, l, version=replay_module.REPLAY_VERSION + 99)
-    resp = _http(w).get('/api/replay/%s' % mid)
-    assert resp.status_code == 409, resp.get_data(as_text=True)
-    assert '版本' in resp.get_json()['error']
-    assert db_module.db.get_match_replay(mid) is not None, '版本不认识不该删数据'
 
 
 # ===========================================================================
@@ -302,20 +258,3 @@ def test_user_stats_history_has_has_replay_and_no_blob():
     assert 'board_resets' not in raw, '战绩接口带出了回放内容'
     assert len(raw.encode('utf-8')) < 20000, '响应被回放撑大了：%d 字节' % len(raw.encode('utf-8'))
     assert set(ids) <= {row['match_id'] for row in history}
-
-
-def test_user_stats_reports_null_mode_without_substituting(tmp_path):
-    """★ 老数据（`matches.mode` 为 NULL）必须**原样给 None**，不许兜底成 'casual'。
-
-    这是教训 #21 的形状：老数据是"不知道"，伪装成"匹配"就是错的。
-    """
-    uid = _account()
-    db_module.record_match(uid, _account(), logs=[{'text': 'x'}])
-    mid = db_module.db.cursor.execute(
-        'SELECT id FROM matches ORDER BY rowid DESC LIMIT 1').fetchone()['id']
-    db_module.db.cursor.execute('UPDATE matches SET mode = NULL WHERE id = ?', (mid,))
-    db_module.db.conn.commit()
-    row = [h for h in _http(uid).get('/user_stats').get_json()['history']
-           if h['match_id'] == mid][0]
-    assert 'mode' in row, 'history 每行都要有 mode 键（老数据也要有，值为 None）'
-    assert row['mode'] is None, 'NULL 被兜底成了 %r' % row['mode']

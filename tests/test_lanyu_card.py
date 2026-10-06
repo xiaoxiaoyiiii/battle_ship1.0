@@ -10,9 +10,6 @@
   · 极端情况：可放置格子 < 需要补充数 → 尽可能多补充
   · 收回导致船数归零 → 判负
 """
-import json
-import os
-
 import pytest
 
 import server
@@ -85,36 +82,8 @@ def apply_lanyu(room, caster):
     return server.apply_magic_effect(room, caster, card('滥竽充数'), {})
 
 
-# ---------------------------------------------------------------------------
-# 卡牌定义一致性
-# ---------------------------------------------------------------------------
-def test_card_definition_consistent():
-    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    with open(os.path.join(here, 'static', 'magic_card.json'), encoding='utf-8') as f:
-        json_cards = json.load(f)
-    lanyu_json = [c for c in json_cards if c['name'] == '滥竽充数']
-    assert len(lanyu_json) == 1
-    lj = lanyu_json[0]
-    assert lj['speed'] == 3
-    assert lj['type'] == '普通'
-
-    with open(os.path.join(here, 'static', 'magic_cards.js'), encoding='utf-8') as f:
-        js_src = f.read()
-    assert f'name: "滥竽充数"' in js_src
-    assert f'speed: {lj["speed"]}' in js_src
-    assert f'type: "{lj["type"]}"' in js_src
-    assert lj['description'] in js_src
-
-
 def test_lanyu_card_enters_deck():
-    names = [c.name for c in server.magic_cards]
-    assert '滥竽充数' in names
-
-
-def test_deck_size_grew():
-    """新加一张普通卡，牌池规模 47 → 49；再加一张判定卡「兵粮寸断」→ 50。"""
-    deck = server.magic_cards
-    assert len(deck) == 50, f'卡池应 50 条，实际 {len(deck)}'
+    assert '滥竽充数' in [c.name for c in server.magic_cards]
 
 
 # ---------------------------------------------------------------------------

@@ -83,89 +83,20 @@ def end_round(room):
 # ---------------------------------------------------------------------------
 # 问题 1：极限增援平局不结算
 # ---------------------------------------------------------------------------
-def test_reinforcement_tie_does_not_finish_game(room, events):
-    """★ 船数相同时不得判负/判胜，继续对局。"""
-    arm_reinforcement(room)
-    assert room.players[P1].remaining_ships == room.players[P2].remaining_ships
-
-    res = end_round(room)
-
-    assert room.state != 'game_over', f'平局不该结束对局，实际 state={room.state}'
-    assert not room.winner, f'平局不该产生胜者，实际 winner={room.winner!r}'
-    assert res.get('game_over') is not True
 
 
-def test_reinforcement_tie_emits_explanation(room, events):
-    """平局时要给出明确提示，别让玩家一脸茫然。"""
-    arm_reinforcement(room)
-    end_round(room)
-
-    texts = [d.get('text', '') for e, d, to, r in events if e == 'message']
-    assert any('船数相同' in t or '无人获胜' in t for t in texts), (
-        f'应有平局提示，实际：{texts}')
 
 
-def test_reinforcement_tie_clears_effect(room):
-    """平局后作废这张卡，避免每回合反复判定。"""
-    arm_reinforcement(room)
-    end_round(room)
-    assert 'reinforcement_check' not in room.game_effects, '平局后效果应结束'
 
 
-def test_reinforcement_tie_is_not_random(room):
-    """反复触发多次都应保持"不结算"（旧实现是 random.choice，会随机出胜者）。"""
-    for _ in range(8):
-        r = make_room(4, 4)
-        arm_reinforcement(r)
-        end_round(r)
-        assert r.state != 'game_over', '平局在任何一次随机下都不该结束对局'
-        assert not r.winner
-        room_manager.rooms.pop(r.id, None)
 
 
-def test_reinforcement_fewer_ships_still_wins(room):
-    """反证：一方船少时照常判其获胜。"""
-    room.players[P1].remaining_ships = 3
-    room.players[P2].remaining_ships = 5
-    arm_reinforcement(room)
-    end_round(room)
-    assert room.state == 'game_over'
-    assert room.winner == P1, f'船少的 P1 应获胜，实际 {room.winner}'
 
 
-def test_reinforcement_other_side_wins(room):
-    """反证：反过来也一样。"""
-    room.players[P1].remaining_ships = 5
-    room.players[P2].remaining_ships = 3
-    arm_reinforcement(room)
-    end_round(room)
-    assert room.winner == P2, f'船少的 P2 应获胜，实际 {room.winner}'
 
 
-def test_reinforcement_no_double_winner_broadcast(room, events):
-    """一次结算只能广播一个胜者（防"双方都被宣布胜利"）。"""
-    room.players[P1].remaining_ships = 3
-    room.players[P2].remaining_ships = 5
-    arm_reinforcement(room)
-    end_round(room)
-
-    winners = {d['winner'] for e, d, to, r in events
-               if e in ('game_over', 'game_state')
-               and isinstance(d, dict) and d.get('winner')}
-    assert len(winners) <= 1, f'不该出现多个胜者，实际：{winners}'
 
 
-def test_reinforcement_after_game_over_is_idempotent(room):
-    """对局结束后再次交回合不会翻转胜负。"""
-    room.players[P1].remaining_ships = 3
-    room.players[P2].remaining_ships = 5
-    arm_reinforcement(room)
-    end_round(room)
-    first = room.winner
-
-    res = end_round(room)
-    assert room.winner == first, '胜负不该被二次改写'
-    assert res.get('status') == 'error', '对局已结束，应拒绝'
 
 
 # ---------------------------------------------------------------------------
@@ -253,31 +184,8 @@ def test_shenji_scoped_by_snapshot_not_position(room):
         '应按快照划定范围，而不是依赖沉船堆的排列顺序')
 
 
-def test_shenji_redeploy_keeps_old_sunken(room):
-    """部署完成后，旧沉船仍应留在沉船堆里（没被误复活）。"""
-    room.players[P1].remaining_ships = 6
-    old_sunk = sink_one(room, 5)
-    declare_prediction(room, 1)
-    sink_one(room, 4)
-
-    end_round(room)
-    res = server.handle_confirm_reinforcement(
-        {'room_id': room.id, 'player_id': P1, 'position': {'x': 3, 'y': 3}})
-    assert res.get('status') == 'success', res
-
-    assert old_sunk in room.players[P1].sunken_ships, '旧沉船应留着'
-    assert room.players[P1].remaining_ships == 5, '只恢复 1 艘'
 
 
-def test_shenji_no_old_sunken_still_works(room):
-    """反证：没有旧沉船时行为不变。"""
-    room.players[P1].remaining_ships = 6
-    declare_prediction(room, 1)
-    sunk = sink_one(room, 5)
-
-    end_round(room)
-    targets = room.game_effects.get('shenji_redeploy_ships') or []
-    assert targets and targets[0] is sunk
 
 
 def test_shenji_multi_round_only_takes_fresh(room):

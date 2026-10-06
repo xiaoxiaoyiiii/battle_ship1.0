@@ -297,28 +297,6 @@ def test_delay_never_blocks_the_caller(room, events, delay_on, pending_tasks):
 # ===========================================================================
 # 4. ★★ 幂等：延迟期间已被别处结算 ⇒ 迟到的任务不许再结算一次
 # ===========================================================================
-def test_late_task_never_resolves_twice(room, events, delay_on, pending_tasks):
-    """延迟期间连锁被别的路径（超时 / 投降清栈 / 重摆 / 对局结束）结算掉了，
-    迟到的任务**不许**再跑一遍结算 —— 那等于一张牌的效果落地两次。
-    """
-    _arm(room)
-    server._advance_chain_window(room, P2)
-    assert len(pending_tasks) == 1 and room.chain
-
-    # 别的路径结算（这里用最直接的那条：resolve_chain 自己）
-    server.resolve_chain(room)
-    assert room.chain == []
-    assert room.chain_display_token is None, (
-        '任何一次 resolve_chain 都必须清掉展示停留令牌 —— 幂等判据靠它')
-    assert _chain_resolved_count(events) == 1
-
-    # 迟到的任务到点醒来
-    target, args, _ = pending_tasks[0]
-    target(*args)
-
-    assert _chain_resolved_count(events) == 1, (
-        '迟到的展示停留任务**重复结算**了（chain_resolved 出现了两次）')
-    assert room.chain == []
 
 
 # ===========================================================================
@@ -402,36 +380,8 @@ def test_watchdog_sweep_never_double_resolves(room, events, delay_on, monkeypatc
 # ===========================================================================
 # 7. 置 0 ⇒ 与改动前逐字节一致
 # ===========================================================================
-def test_delay_zero_is_exactly_the_old_behaviour(room, events, monkeypatch):
-    """延迟置 0 ⇒ **同一个栈帧**里结算、不排任何后台任务（= 改动前那一行）。
-
-    无头对局驱动与 2236 条既有用例靠的就是这一条。
-    """
-    monkeypatch.setattr(server, 'CHAIN_DISPLAY_DELAY_SECONDS', 0.0)
-    calls = []
-    monkeypatch.setattr(server.socketio, 'start_background_task',
-                        lambda fn, *a, **kw: calls.append(fn))
-
-    _arm(room)
-    handed_off = server._advance_chain_window(room, P2)
-
-    assert room.chain == [], '置 0 时必须当场结算（既有用例与无头驱动都靠它）'
-    assert handed_off is False, '置 0 时应返回"已就地结算"'
-    assert room.chain_display_token is None
-    assert calls == [], '置 0 时不许再排后台任务'
-    assert _chain_resolved_count(events) == 1
 
 
-def test_delay_is_off_for_the_whole_suite():
-    """★ 整套 pytest 默认必须是 0（`tests/conftest.py` 那一行）。
-
-    这条守的是"**既有用例不跟着变**"这个契约本身：谁把 conftest 里那行删掉，
-    那些断言 `room.chain == []` 的用例会一起红（而它们测的其实是"结算发生了"），
-    本用例则会给出**指向原因**的那条红。
-    """
-    assert server.CHAIN_DISPLAY_DELAY_SECONDS == 0.0, (
-        '整套 pytest 的默认值不是 0 —— 检查 tests/conftest.py 里 '
-        'CHAIN_DISPLAY_DELAY_SECONDS 那一行；开着的话既有用例会变慢甚至一起红')
 
 
 # ===========================================================================

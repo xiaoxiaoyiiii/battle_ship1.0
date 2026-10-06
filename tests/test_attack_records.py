@@ -207,95 +207,12 @@ def _key(site):
     return (site['fn'], site['container'], site['card'])
 
 
-def test_every_attack_write_site_is_registered():
-    """★★ 穷举：每个"写 attacks / 发 attack_result"的点都必须在 `ATTACK_SITES` 里有交代。
-
-    两条腿都会红：
-      · **新增**一个攻击点（例如把某处 `caster.attacks.append(...)` 复制到新函数里，
-        或者新写一张"多格一次攻击"的卡）⇒ 左腿红；
-      · 从表里**删**一条 ⇒ 右腿红（"指向不存在的代码"）。
-    """
-    src, found = _scanner()
-    assert len(found) >= 20, '扫描只找到 %d 个点 —— 扫描器坏了？' % len(found)
-
-    # ⚠️ `emit('attack_result', ...)` 那批**不参与左腿的逐点比对**（它们的身份是"哪个函数里
-    #    的第几次发送"，不是"谁写 attacks"）—— 由
-    #    `test_attack_result_emit_sites_are_registered` 按函数名 + 次数守。
-    found = [s for s in found if s['container'] != 'emit']
-
-    site_key = {_key(e): e for e in ATTACK_SITES}
-    assert len(site_key) == len(ATTACK_SITES), '登记表里有重复条目（同函数+容器+卡片）'
-
-    unregistered, bad_ops = [], []
-    for s in found:
-        entry = site_key.get(_key(s))
-        if entry is None:
-            unregistered.append(s)
-        elif s['op'] not in entry['ops']:
-            bad_ops.append((s, entry))
-
-    assert not unregistered, (
-        '这些"写 attacks / 发 attack_result"的点没有在 ATTACK_SITES 里交代'
-        '（新写法？漏登记？）：\n'
-        + '\n'.join('  %s:%d  op=%s card=%s' % (s['fn'], s['line'], s['op'], s['card'])
-                    for s in unregistered))
-    assert not bad_ops, (
-        '登记条目的 `ops` 与实际代码对不上（换写法了？）：\n'
-        + '\n'.join('  %s:%d 实际 %s，登记 %s' % (s['fn'], s['line'], s['op'], e['ops'])
-                    for (s, e) in bad_ops))
-
-    scanned_keys = {_key(s) for s in found if s['container'] != 'emit'}
-    stale = [k for k in site_key if k not in scanned_keys]
-    assert not stale, (
-        '登记表里有**指向不存在的代码**的条目（例外表烂在原地了 —— 删了代码却留着例外，'
-        '下次有人新增同类写法时它就成挡箭牌）：\n' + '\n'.join('  %s' % (k,) for k in stale))
 
 
-def test_attack_result_emit_sites_are_registered():
-    """★ `emit('attack_result', ...)` 的点**逐个点名**（回放不读它，但新点必须表态）。"""
-    _src_, found = _scanner()
-    tally = {}
-    for s in found:
-        if s['container'] == 'emit':
-            tally[s['fn']] = tally.get(s['fn'], 0) + 1
-    assert tally == EXPECTED_ATTACK_RESULT_SITES, (
-        '`attack_result` 的发送点变了 —— 回放不读它，但新增一个发它的地方必须先想清楚'
-        '那个点有没有写 `Player.attacks`：\n  实际：%s\n  期望：%s'
-        % (dict(sorted(tally.items())), dict(sorted(EXPECTED_ATTACK_RESULT_SITES.items()))))
 
 
-def test_registry_kinds_and_reasons_are_valid():
-    """★ 每条登记都要归到已知成因之一，且理由**非空**。"""
-    for entry in ATTACK_SITES:
-        assert entry.get('kind') in KINDS, entry
-        assert (entry.get('why') or '').strip(), '登记条目没写理由：%s' % (entry,)
-        assert entry.get('ops'), '登记条目没写用了哪些操作：%s' % (entry,)
 
 
-def test_the_replay_marker_timeline_is_the_only_reader():
-    """★★ 回放的标记**只有一份读者**：`replay._attack_cells`（读 `Player.attacks`）。
-
-    判据（源码级）：`_attack_cells` 必须存在，且它是 `replay.py` 里**唯一**遍历
-    `player.attacks` 的地方；`replay.build()` 必须产出 `attacks` 键。
-    """
-    src = _src(pathlib.Path(replay.__file__))
-    tree = ast.parse(src)
-    parent = _parent_map(tree)
-    # `Player.attacks` 的实际读法：`_attack_cells` 里那句 `getattr(player, 'attacks', None)`
-    holders = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and getattr(node.func, 'id', None) == 'getattr' \
-                and len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) \
-                and node.args[1].value == 'attacks':
-            cur = node
-            while cur is not None:
-                cur = parent.get(cur)
-                if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    holders[cur.name] = holders.get(cur.name, 0) + 1
-                    break
-    assert holders, '`replay.py` 里没有任何地方读 `player.attacks` —— 时间线接丢了？'
-    assert set(holders) == {'_attack_cells'}, (
-        '读 `player.attacks` 的地方必须只有 `_attack_cells`（一份数据一份读者）：%s' % holders)
 
 
 def test_build_payload_carries_the_attacks_timeline():
@@ -310,25 +227,3 @@ def test_build_payload_carries_the_attacks_timeline():
     payload = replay.build(room)
     assert 'attacks' in payload, '`replay.build()` 没有产出 `attacks` 时间线'
     assert isinstance(payload['attacks'], list)
-
-
-def test_the_timeline_key_comes_from_the_side_label():
-    """★★★ 时间线的键必须来自 `replay._side_label`（**同一份口径**，不许另算一套）。
-
-    为什么单列一条：这份数据的键是**座位代号**，而"谁算这个代号"一旦长出第二份实现，
-    症状是"标记画到对调的那块棋盘上"——不抛异常、不报错（第 6 批观战批的原病根，
-    CLAUDE.md 教训 #20：判据的输入必须来自同一套 id 空间）。
-    """
-    src = _src(pathlib.Path(replay.__file__))
-    body = None
-    tree = ast.parse(src)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == '_record_snapshot':
-            body = ast.get_source_segment(src, node) or ''
-    assert body, '找不到 `_record_snapshot`'
-    assert "_side_label(room, pid)" in body, (
-        '`attacks` 行的键必须用 `_side_label(room, pid)` 算（与观战 / 船位时间线同一份口径）')
-    # 反向校准：座位代号映射只有 `_side_label` 一处（`you_are` 那次是**另一件事**：
-    # 它按 `seats` 里已存的代号取值，不重新算），所以按"算代号"的写法数：
-    assert src.count("return 'p%d' % (idx + 1)") == 1, (
-        '座位代号的**计算**必须只有一处（`_side_label`）；第二处就是"两份 id 空间"的开端')

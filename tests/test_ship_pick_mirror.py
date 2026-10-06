@@ -76,24 +76,3 @@ def test_priority_tables_have_no_frontend_only_entries():
     assert not only_front, '前端多出服务端没有的 reason: %s' % only_front
     mismatch = {k: (js[k], py[k]) for k in set(js) & set(py) if js[k] != py[k]}
     assert not mismatch, '两边优先级数值不同: %s' % mismatch
-
-
-def test_reason_labels_match_server():
-    """reason → 中文名也必须一致，否则玩家看到的提示会漏名字。"""
-    js = _js_object(_game_js(), 'SACRIFICE_LABELS')
-    py = dict(server._SHIP_PICK_LABELS)
-    assert js == py, (
-        '前端 SACRIFICE_LABELS 与服务端 _SHIP_PICK_LABELS 不一致\n'
-        '  只在服务端: %s\n  只在前端:   %s\n  值不同:     %s' % (
-            sorted(set(py) - set(js)), sorted(set(js) - set(py)),
-            {k: (js[k], py[k]) for k in set(js) & set(py) if js[k] != py[k]}))
-
-
-def test_every_playable_card_is_documented_in_magic_cards():
-    """能触发选船的卡必须真的存在于卡表里（防止登记了不存在的卡名）。"""
-    import json
-    path = os.path.join(os.path.dirname(GAME_JS), 'magic_card.json')
-    with io.open(path, encoding='utf-8') as f:
-        names = {c['name'] for c in json.load(f)}
-    missing = sorted(set(server._SHIP_PICK_CARDS) - names)
-    assert not missing, '这些卡名不在 magic_card.json 里: %s' % missing

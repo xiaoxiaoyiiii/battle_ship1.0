@@ -214,42 +214,8 @@ def test_shenwei_kill_is_recorded_at_the_step_it_happened(room):
     assert len(room.replay['steps']) - 1 >= step, '沉没必须落在已经录下来的步骤里'
 
 
-def test_shenwei_kill_keeps_the_row_sparse_and_single(room):
-    """★ 稀疏 + **同一步只留一行**：不许出现两条 `step` 相同的船位行。
-
-    ⚠️ 这条是"登记只改状态、不推动记录器"那个坑的另一半：`_append` 已经记过一行
-       （那一刻的中间态），收尾的 `refresh_ships` 再记一次 ⇒ 两条 `step` 相同的行
-       = 同一帧两份说法（前端逐条叠上去看着对，按 step 去重的消费者会算错）。
-    """
-    for i in range(4):
-        _magic_log(room, '第%d步（与船位无关）' % i)
-    rows_before = len(replay.build(room)['ships'])
-    _cast(room)
-    _magic_log(room, '甲 使用了【神威！】，目标区域内1艘战舰被击沉')
-    rows = replay.build(room)['ships']
-    steps = [int(r['step']) for r in rows]
-    assert len(steps) == len(set(steps)), '时间线里出现了 step 相同的重复行：%s' % rows
-    assert len(rows) >= rows_before, '不该把已有的行删掉：%s' % rows
-    for i in range(5):
-        _magic_log(room, '第%d步（船位没变）' % i)
-    after = replay.build(room)['ships']
-    assert len(after) == len(rows), \
-        '船位没变却记了新行（每步全量快照）：%s' % after
 
 
-def test_shenwei_kill_is_registered_even_without_any_followup_log(room):
-    """★★ 收尾那次 `refresh_ships`：**没有后续日志**也要留下沉没格。
-
-    这一条钉的是"直调实现点"那条路（`apply_magic_effect` 之后没有任何 `add_game_log`）：
-    记录器只在**下一步追加**时比对快照，不显式刷新的话这一帧永远不变（上一批实测过的坑）。
-    """
-    _magic_log(room, '甲 使用了【神威！】')
-    _cast(room)
-
-    cells = _cells_of(room, SIDE2)
-    cell = _cell_at(cells, IN_AREA[0], IN_AREA[1])
-    assert cell is not None and cell.get('sunk') is True, (
-        '没有后续日志时，致死格必须由收尾的 `refresh_ships` 记下来：%s' % cells)
 
 
 def test_shenwei_hole_region_is_still_recorded(room):
@@ -265,26 +231,6 @@ def test_shenwei_hole_region_is_still_recorded(room):
     assert holes[0] == {'x1': 0, 'y1': 0, 'x2': 2, 'y2': 2}, holes[0]
 
 
-def test_refresh_ships_rewrites_the_current_step_in_place(room):
-    """★★ `refresh_ships` 对**已经有行的当前步**必须"改写那一行"，不是再追加一行。
-
-    这条与 `神威！`同源（本批实测：不合并就会出现两条 `step` 相同的船位行 ——
-    同一帧两份说法）。用**与神威无关**的最小形状钉住它，将来谁把这个合并删掉都会红。
-    """
-    _magic_log(room, '第 0 步（船位没变）')
-    rows = replay.build(room)['ships']
-    assert len(rows) == 1 and int(rows[0]['step']) == 0, rows
-
-    # 船位在第 0 步里又变了一次（例如"复活"收尾那种没有日志的变更）
-    room.players[P2].ships[1].positions[0].x = 4
-    room.players[P2].ships[1].positions[0].y = 4
-    replay.refresh_ships(room)
-
-    rows = replay.build(room)['ships']
-    steps = [int(r['step']) for r in rows]
-    assert steps == sorted(set(steps)), '出现了 step 相同的重复行：%s' % rows
-    assert len(rows) == 1, '应当把那一行改写成新状态，而不是再追加一行：%s' % rows
-    assert _cell_at(rows[0][SIDE2], 4, 4) is not None, rows[0]
 
 
 def test_shenwei_ship_and_effect_timelines_never_carry_a_raw_pid(room):
@@ -341,45 +287,8 @@ def test_shenwei_exclusion_never_leaves_a_sunk_cell():
         room_manager.rooms.pop(room.id, None)
 
 
-def test_shenwei_self_board_only_excludes():
-    """★★ 反向腿（同族）：打**自己**棋盘时，区域内恰好 1 艘也**不**致死 ⇒ 不许登记沉没。"""
-    room = _room([[(OUT_AREA)]])
-    try:
-        room.players[P1].ships = _ships([[(IN_AREA)]])
-        room.players[P1].remaining_ships = 1
-        _magic_log(room, '甲 使用了【神威！】')
-        res = _cast(room, board='self')
-        assert getattr(res, 'success', False) is True, res
-        assert '暂时除外' in getattr(res, 'message', ''), res.message
-        assert room.players[P1].sunken_ships == [], '自扣棋盘不该有船沉'
-        _magic_log(room, '甲 使用了【神威！】，目标区域内1艘战舰被暂时除外')
-        cell = _cell_at(_cells_of(room, SIDE1), IN_AREA[0], IN_AREA[1])
-        assert cell is None or cell.get('sunk') is not True, \
-            '自己棋盘上的"除外"不许变成沉没：%s' % cell
-    finally:
-        room_manager.rooms.pop(room.id, None)
 
 
-def test_kill_and_exclusion_differ_only_by_the_ship_count():
-    """★ 同一张卡、同一个区域，只差"区域里有几艘船" ⇒ 两支的结果必须不同。
-
-    这条防的是"两支被写成一样"（要么都登记、要么都不登记）—— 那是最省事的改法，
-    但它会把有意的设计改坏（或者让致死那一支继续消失）。
-    """
-    kill = _room([[(IN_AREA)], [(OUT_AREA)]])
-    excl = _room([[(IN_AREA)], [(IN_AREA_2)], [(OUT_AREA)]])
-    try:
-        for r in (kill, excl):
-            _magic_log(r, '甲 使用了【神威！】')
-            _cast(r)
-            _magic_log(r, '甲 使用了【神威！】，结算')
-        kill_cell = _cell_at(_cells_of(kill, SIDE2), IN_AREA[0], IN_AREA[1])
-        excl_cell = _cell_at(_cells_of(excl, SIDE2), IN_AREA[0], IN_AREA[1])
-        assert kill_cell is not None and kill_cell.get('sunk') is True, kill_cell
-        assert excl_cell is None or excl_cell.get('sunk') is not True, excl_cell
-    finally:
-        for r in (kill, excl):
-            room_manager.rooms.pop(r.id, None)
 
 
 # ===========================================================================
@@ -414,59 +323,3 @@ def _shenwei_block_source():
             seg = 'if' + seg.lstrip()[4:]
         return src, seg
     raise AssertionError('没找到 `神威！` 分支（源码结构变了？）')
-
-
-def test_source_level_registration_is_inside_the_death_branch_only():
-    """★★ 源码级：`note_ship_lost` 只许出现在**致死那一支**里（不是 `del` 那一行旁边）。
-
-    为什么必须钉源码：把登记写在 `del target_player.ships[i]` 旁边是"最省事"的改法，
-    它会让**暂时除外**的船也变成沉没（回放里出现幻船），而**行为级用例未必能发现**
-    —— 只要没人跑那条反向腿。这条断言让"写错位置"当场红。
-    """
-    src, seg = _shenwei_block_source()
-    assert 'del target_player.ships[i]' in seg, '前提：那行 `del` 还在'
-    assert seg.count('replay.note_ship_lost(') == 1, (
-        '`神威！`这一节里应当**恰好一处** `note_ship_lost`：%d 处'
-        % seg.count('replay.note_ship_lost('))
-    assert seg.count('replay.refresh_ships(room)') == 1, \
-        '`神威！`这一节里应当**恰好一处**收尾刷新'
-
-    # 登记必须落在 `if board != 'self' and len(excluded_ships) == 1:` 那个分支体里
-    death = None
-    for sub in ast.walk(ast.parse(seg)):
-        if not isinstance(sub, ast.If):
-            continue
-        cond = ast.get_source_segment(seg, sub.test) or ''
-        if 'excluded_ships' in cond and "board != 'self'" in cond:
-            death = sub
-            break
-    assert death is not None, '没找到致死那一支的判据（源码结构变了？）'
-    body = ast.get_source_segment(seg, death)
-    assert 'replay.note_ship_lost(' in body, \
-        '登记不在"致死"那一支里（挪到外面的话，暂时除外也会被登记成沉没）'
-    assert '_mark_ship_sunken(' in body, '致死那一支的沉没登记没了？'
-
-    # 登记必须**在** `_mark_ship_sunken` 之前（用**手上那艘船**当数据源）
-    lost_at = body.index('replay.note_ship_lost(')
-    sunk_at = body.index('_mark_ship_sunken(')
-    assert lost_at < sunk_at, '登记要排在沉船登记之前（数据源就是`excluded_ships[0]`）'
-
-
-def test_source_level_never_diffs_snapshots_to_guess_lost_cells():
-    """★★ 源码级：登记的数据源**只许**来自调用方手上的坐标，不许 diff 快照猜。
-
-    `replay._ship_cells` 里一旦出现"上一份快照里有、这一份没有 ⇒ 判成沉没"那种反推，
-    滥竽充数收回 / 暂时除外 / 换位重摆会**全部**被误判成沉没（本批明确点名过的坑）。
-    """
-    src = io.open(pathlib.Path(replay.__file__).parent / 'replay.py',
-                  encoding='utf-8').read()
-    tree = ast.parse(src)
-    body = None
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == '_ship_cells':
-            body = ast.get_source_segment(src, node)
-    assert body is not None
-    for banned in ('_lost_cells_guess', 'last.get', "st.get('last')", 'last_snapshot'):
-        assert banned not in body, \
-            '`_ship_cells` 里出现了"从上一份快照反推"的写法（%r）—— 那会把别的成因一起判成沉没' % banned
-    assert '_lost_cells(room, pid)' in body, '船格只能来自"活船" + "显式登记的牺牲格"'

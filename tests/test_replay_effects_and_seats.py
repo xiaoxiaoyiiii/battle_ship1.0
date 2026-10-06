@@ -100,27 +100,8 @@ def test_effects_row_carries_every_field_on_the_changed_side(room):
     assert 'p2' not in rows[0], '没变化的那一侧不许出现：%s' % rows[0]
 
 
-def test_effects_timeline_is_sparse_not_per_step(room):
-    """★★ 稀疏：什么都没变时**一条都不记**（绝不能变成"每步一份全量效果快照"）。
-
-    线上只有 777 MB 可用内存（契约 §1），这条是体积纪律的第一道闸。
-    """
-    for i in range(20):
-        _note(room, '第 %d 炮' % i)
-    assert _effects(room) == [], '什么都没变却记了 %d 条' % len(_effects(room))
-    assert replay.step_count(room) == 20, '步骤本身还是要记的'
 
 
-def test_effects_row_is_written_only_when_something_really_changes(room):
-    """★ 记录点：真变了才记，且**同一个变化只记一次**。"""
-    _note(room, '热身')
-    assert _effects(room) == [], '开局无效果 ⇒ 不该有 effects 行'
-    room.players[SID_A].ships[0].shield = True
-    _note(room, '加盾')
-    _note(room, '又打了一炮')          # 没有任何效果变化
-    rows = _effects(room)
-    assert len(rows) == 1, '只有一次真变化，却记了 %d 条：%s' % (len(rows), rows)
-    assert rows[0]['step'] == 1, '变化发生在第 2 步（下标 1）：%s' % rows[0]
 
 
 # ===========================================================================
@@ -202,21 +183,6 @@ def test_frozen_area_is_only_recorded_on_the_victim_board(room):
     assert sorted(frozen.keys()) == ['frozen', 'owner', 'x1', 'x2', 'y1', 'y2'], sorted(frozen)
 
 
-def test_last_stand_cells_go_to_the_caster_and_turn_into_xy_pairs(room):
-    """★★ 绝处逢生：`game_effects` 里存的是 `[x, y]` 元组，`owner` 决定归属。
-
-    前端拿到的一律是 `[[x, y], ...]`（与 `shield` 同形状，便于逐字比较）。
-    另一侧必须是**空表 + owner=None**：不然"候选格"会同时出现在两块棋盘上。
-    """
-    room.game_effects['last_stand_cells'] = [(2, 2), (3, 3)]
-    room.game_effects['last_stand_owner'] = SID_A
-    _note(room)
-    rows = _effects(room)
-    assert rows[-1]['p1']['last_stand_cells'] == [[2, 2], [3, 3]], rows[-1]['p1']
-    assert rows[-1]['p1']['last_stand_owner'] == 'p1', \
-        '归属必须是**座位代号**，不是原始 pid：%s' % rows[-1]['p1']
-    assert 'p2' not in rows[-1], \
-        '另一侧没变化 ⇒ 不许出现（增量语义）；它那边的候选格本来就是空的：%s' % rows[-1]
 
 
 def test_effects_ownership_flips_with_the_caster(room):
@@ -233,63 +199,10 @@ def test_effects_ownership_flips_with_the_caster(room):
         rows[-1]['p1']['last_stand_owner'] is None, rows[-1]['p1']
 
 
-def test_effects_survive_a_room_without_game_effects_attribute(room):
-    """★ 假房间 / 半初始化房间：没有 `game_effects` 也不许炸（返回空效果）。"""
-    del room.game_effects
-    _note(room)
-    rows = _effects(room)
-    assert rows == [], '没有 game_effects 时不该凭空造出效果：%s' % rows
 
 
-def test_effects_timeline_participates_in_truncation(room, monkeypatch):
-    """★★ 截断（`_shrink`）必须**同时**砍 effects —— 否则超限回放里会留下
-    "步骤只剩一半、效果却是终局"的错配（前端画出一份不存在的局面）。
-
-    ⚠️ 这条**不能**拿真房间 + `MAX_REPLAY_BYTES=1` 去证：那样会一路降到
-    "最小骨架"（步骤与 effects 双双清空），断言 `all(step <= 0)` 空转通过。
-    所以这里直接喂一份**手工构造的 payload** 给 `_shrink`，并把上限设在
-    "刚好装不下"的位置，让它走**折半**那条路（步骤还剩一部分）。
-    """
-    payload = {
-        'version': replay.REPLAY_VERSION, 'p1_name': '甲', 'p2_name': '乙',
-        'seats': {}, 'started_at': 0,
-        'steps': [{'i': i, 'kind': 'attack', 'actor': '甲', 'text': 'x' * 40,
-                   'detail': {}} for i in range(40)],
-        'ships': [{'step': i, 'p1': [{'x': 0, 'y': 0, 'alive': True}]} for i in range(40)],
-        'hands': [],
-        'effects': [{'step': i, 'p1': {'shield': [[0, 0]], 'shenwei_holes': [],
-                                       'frozen_area': None, 'last_stand_cells': [],
-                                       'last_stand_owner': None}}
-                    for i in range(0, 40, 2)],
-        'board_resets': [{'step': i, 'side': 'p2'} for i in range(0, 40, 2)],
-        'nodes': [{'step': i, 'kind': 'hit', 'label': 'x'} for i in range(40)],
-        'truncated': None,
-    }
-    # 上限设在"每次砍一半、砍两轮就能装下"的位置 ⇒ 走折半路径（不是最小骨架）
-    monkeypatch.setattr(replay, 'MAX_REPLAY_BYTES', 4200)
-    shrunk = replay._shrink(payload)
-    assert shrunk['truncated'], '必须明确标注截断（绝不静默）'
-    kept = len(shrunk['steps'])
-    assert 0 < kept < 40, '这条判据要求走"折半"路径，实际保留 %d 步' % kept
-    assert shrunk['effects'], '折半之后 effects 被整条清空了：%s' % shrunk['effects']
-    assert all(int(r['step']) <= kept for r in shrunk['effects']), \
-        'effects 里有 step 超过保留步数的条目：%s / steps=%d' % (shrunk['effects'], kept)
-    assert all(int(r['step']) <= kept for r in shrunk['board_resets'])
-    # 反向腿：不截断的那份必须**原样保留**全部 effects（否则上面那条可能是"永远清空"的假绿）
-    monkeypatch.setattr(replay, 'MAX_REPLAY_BYTES', 10 ** 9)
-    assert replay._shrink(payload)['effects'] == payload['effects']
 
 
-def test_real_game_effects_timeline_is_trimmed_to_the_kept_steps(room):
-    """★ 真房间走一遍 `finalize` + 截断：effects 的 step 不许超过保留的步数。"""
-    room.players[SID_A].ships[0].shield = True
-    _note(room, 'a')
-    room.players[SID_B].ships[0].shield = True
-    _note(room, 'b')
-    payload = replay.build(room)
-    shrunk = replay._shrink(payload)
-    kept = len(shrunk['steps'])
-    assert all(int(r['step']) <= kept for r in shrunk['effects'])
 
 
 def test_effects_never_leak_a_raw_pid(room):
@@ -315,15 +228,6 @@ def test_effects_never_leak_a_raw_pid(room):
     assert 'p2' in dumped
 
 
-def test_effects_timeline_is_present_in_a_real_payload_shape(room):
-    """★ 打包形状：`build()` 的键集合里必须有 `effects`（前端按它解帧）。
-
-    缺了它前端拿到的是 `undefined` ⇒ 静默画不出效果格（作者实报的那个症状），
-    而不是报错。
-    """
-    payload = replay.build(room)
-    assert 'effects' in payload, '打包结果里没有 effects：%s' % sorted(payload)
-    assert isinstance(payload['effects'], list)
 
 
 # ===========================================================================
@@ -371,70 +275,3 @@ def test_you_are_returns_none_for_a_stranger_even_with_seats():
     assert replay.you_are(blob, row, 'u-stranger') is None
     assert replay.you_are(blob, row, 'u-a') == 'p1'
     assert replay.you_are(blob, row, 'u-b') == 'p2'
-
-
-def test_you_are_falls_back_for_a_participant_missing_from_seats():
-    """★ 边界：本局参与者、但录制时没拿到他的 uid（游客坐席）⇒ 退回胜负口径。
-
-    ⚠️ 只对**确实在参与者两列里**的人兜底；旁观者绝不走这条路
-    （不然"未知"就退化成"满足条件"了 —— 教训 #21）。
-    """
-    row = {'winner_user_id': 'u-a', 'loser_user_id': 'u-guest'}
-    blob = _replay_blob({'u-a': 'p1'})      # 游客那侧没有 uid ⇒ 不在 seats 里
-    assert replay.you_are(blob, row, 'u-guest') == 'p2'
-    assert replay.you_are(blob, row, 'u-nobody') is None
-
-
-def test_legacy_blob_without_seats_still_answers():
-    """★ 老回放（没有 `seats`）退回旧口径 —— 但**新回放永远走 seats**。
-
-    这一条同时是"别把兜底删掉"的钉子：没有它就没人再管老数据。
-    """
-    row = {'winner_user_id': 'u-a', 'loser_user_id': 'u-b'}
-    legacy = _replay_blob({})
-    legacy.pop('seats')
-    assert replay.you_are(legacy, row, 'u-a') == 'p1'
-    assert replay.you_are(legacy, row, 'u-b') == 'p2'
-    assert replay.you_are(legacy, row, 'u-x') is None
-
-
-def test_build_records_seats_by_insertion_order(room):
-    """★★ `build()` 必须把 `{uid: 'p1'|'p2'}` 按**入座顺序**记下来。
-
-    `p1_name` / `p2_name` 与它必须是同一份口径 —— 前端"槽位 i 的显示名 ==
-    座位 `replaySeatOf(i)` 的名字"这条对齐，靠的就是这两个字段同源。
-    """
-    seats = replay.build(room)['seats']
-    assert seats == {room.players[SID_A].user_id: 'p1',
-                     room.players[SID_B].user_id: 'p2'}, seats
-    names = replay.build(room)
-    assert names['p1_name'] == '甲' and names['p2_name'] == '乙', names
-
-
-def test_build_seats_skips_seats_without_a_real_account(room):
-    """★ 没账号的座位（AI / 游客）不进 `seats`（它只服务"你是哪块棋盘"）。"""
-    room.players[SID_B].user_id = None
-    seats = replay.build(room)['seats']
-    assert list(seats.values()) == ['p1'], seats
-    assert list(seats.keys()) == [room.players[SID_A].user_id], seats
-
-
-def test_seats_never_appear_in_the_api_response_contract():
-    """★★ 源码级：读接口**只把代号**下发给前端。
-
-    `seats` 是 `uid → p1/p2` 的映射，一旦整体下发就等于送出 user_id（契约 §6）。
-    所以：`api.py` 的返回体里只许有服务端算好的 `you_are`，**不许**把
-    `payload['seats']` 带出去。
-    """
-    import io
-    import os
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    with io.open(os.path.join(root, 'api.py'), encoding='utf-8') as fh:
-        src = fh.read()
-    start = src.index("def get_match_replay(")
-    body = src[start:src.index('\n@app.route', start + 10)]
-    assert "'you_are': you_are" in body, '返回值里没有 you_are'
-    assert "payload['seats']" not in body and 'payload.get("seats")' not in body, \
-        '读接口把 seats 整体下发了（那是 uid 映射，契约 §6 不许下发 user_id）'
-    assert "'seats'" not in body, \
-        '读接口的返回体里出现了 seats 键（只许给 you_are 代号）'

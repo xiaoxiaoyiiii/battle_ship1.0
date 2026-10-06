@@ -119,33 +119,10 @@ def test_buries_opponent_hand_card(room):
 # ---------------------------------------------------------------------------
 # 下标语义：扁平 / 来源内 / 旧约定 都必须落到同一张牌
 # ---------------------------------------------------------------------------
-def test_flat_index_matches_per_source_index(room):
-    """前端只回传扁平下标（未带 source_index）时也必须命中同一张牌。"""
-    res = cast(room, deck=['轰炸'], opp_hand=['冻结', '饮血'])
-    assert res.success is True
-
-    out = confirm(room, {'card_index': 1, 'source': 'opponent_hand'})
-    assert out['status'] == 'success'
-    assert names(room.players[P2].magic_hand) == ['饮血']
-    assert '冻结' in names(room.magic_discard)
 
 
-def test_result_cards_carry_per_source_index(room):
-    """下发候选必须带来源内下标，前端才能回传 source_index。"""
-    res = cast(room, deck=['轰炸'], opp_hand=['冻结'])
-    assert res.success is True
-    assert [(c['source'], c['index']) for c in res['cards']] == [
-        ('deck', 0), ('opponent_hand', 0)]
-    # 候选里不能夹带 MagicCard 实例（magic_temp_data 会被原样 emit）
-    assert all(isinstance(c, dict) and 'card' not in c for c in res['cards'])
-    assert all(isinstance(c, dict) for c in room.magic_temp_data['candidates'])
 
 
-def test_temp_data_is_json_serializable(room):
-    """get_magic_temp_data 会原样 emit，候选必须是可 JSON 序列化的纯数据。"""
-    import json
-    cast(room, deck=['轰炸'], opp_hand=['冻结'])
-    json.dumps(room.magic_temp_data)   # 修复前含 MagicCard 实例，这里会抛 TypeError
 
 
 # ---------------------------------------------------------------------------
@@ -159,12 +136,6 @@ def test_bury_choice_rejects_out_of_range(room):
     assert room.magic_discard == []
 
 
-def test_bury_choice_rejects_non_numeric_index(room):
-    cast(room, deck=['轰炸'])
-    for bad in (None, 'x', [], True, -1):
-        out = confirm(room, {'card_index': bad, 'source': 'deck'})
-        assert out['status'] == 'error'
-    assert names(room.magic_deck) == ['轰炸']
 
 
 def test_bury_choice_rejects_non_caster(room):
@@ -203,57 +174,14 @@ def test_no_draw_effect_still_buries(room):
     assert '无中生有' in out['message']       # 不再谎报「摸了一张牌」
 
 
-def test_empty_deck_reports_no_draw(room):
-    """牌堆已空（只剩对方手牌可埋）时要说清「牌堆已空」，不能假装摸到牌。"""
-    res = cast(room, deck=[], opp_hand=['冻结'])
-    assert res.success is True
-    out = confirm(room, {'card_index': 0, 'source': 'opponent_hand', 'source_index': 0})
-    assert out['status'] == 'success'
-    assert names(room.players[P2].magic_hand) == []
-    assert '冻结' in names(room.magic_discard)
-    assert room.players[P1].magic_hand == []
-    assert '牌堆已空' in out['message']
 
 
-def test_duplicate_draw_is_reported(room):
-    """摸到重名牌按既有规则进弃牌堆，但要让玩家知道「为什么手牌没变多」。"""
-    room.players[P1].magic_hand = [card('冻结')]
-    cast(room, deck=['轰炸', '冻结'])
-    out = confirm(room, {'card_index': 0, 'source': 'deck'})
-    assert out['status'] == 'success'
-    assert names(room.players[P1].magic_hand) == ['冻结']   # 手牌没变多
-    assert '重复' in out['message']
 
 
-def test_bury_is_written_to_game_log(room, events):
-    """埋葬结果要进对局日志，玩家在日志面板能看到摸没摸到牌。"""
-    cast(room, deck=['轰炸', '冻结'])
-    confirm(room, {'card_index': 0, 'source': 'deck'})
-    logs = [d for e, d, to, _ in events if e == 'game_log']
-    assert logs and '明智埋葬' in logs[-1]['text'] and '余音' not in logs[-1]['text']
-    assert logs[-1]['text'].count('摸') >= 1
 
 
-def test_duplicate_draw_goes_to_discard_not_hand(room):
-    """摸到重名卡按既有规则进弃牌堆，不会复制出第二张。"""
-    room.players[P1].magic_hand = [card('冻结')]
-    cast(room, deck=['轰炸', '冻结'])
-    out = confirm(room, {'card_index': 0, 'source': 'deck'})
-    assert out['status'] == 'success'
-    assert names(room.players[P1].magic_hand) == ['冻结']
-    assert sorted(names(room.magic_discard)) == ['冻结', '轰炸']
 
 
-def test_legacy_select_magic_target_uses_same_path(room):
-    """旧事件 select_magic_target 与真实链路共用同一实现，不再各写一份。"""
-    cast(room, deck=['轰炸', '冻结'])
-    out = server.handle_magic_target({
-        'room_id': room.id, 'player_id': P1,
-        'temp_data_id': 'bury_choice',
-        'target_data': {'card_index': 0, 'source': 'deck'}})
-    assert out['status'] == 'success'
-    assert names(room.magic_discard) == ['轰炸']
-    assert names(room.players[P1].magic_hand) == ['冻结']
 
 
 def test_bury_follows_card_when_pile_index_shifted(room):

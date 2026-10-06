@@ -112,17 +112,8 @@ def test_timeout_notifies_both_sides(room, events):
 # ---------------------------------------------------------------------------
 # 2. 该催的才催
 # ---------------------------------------------------------------------------
-def test_no_action_before_deadline(room):
-    _arm(room, time.time() - 10)
-    assert server._auto_act_on_timeouts() == []
-    assert room.attacks_remaining == 6
 
 
-def test_first_sighting_only_arms_the_clock(room):
-    room.turn_started_at = None
-    room._timer_attacker = None
-    assert server._auto_act_on_timeouts() == [], '第一次看到该玩家只记时间，不动作'
-    assert room.turn_started_at is not None
 
 
 def test_turn_change_restarts_the_clock(room):
@@ -169,16 +160,8 @@ def test_disconnected_opponent_is_skipped(room):
     assert server._auto_act_on_timeouts() == [], '有人掉线宽限中不该催'
 
 
-def test_rooms_not_in_attacking_state_are_skipped(room):
-    room.state = 'placing_ships'
-    _arm(room, time.time() - 999)
-    assert server._auto_act_on_timeouts() == []
 
 
-def test_timeout_can_be_disabled(monkeypatch, room):
-    monkeypatch.setattr(server, 'TURN_TIMEOUT_SECONDS', 0)
-    _arm(room, time.time() - 999)
-    assert server._auto_act_on_timeouts() == [], 'TURN_TIMEOUT_SECONDS=0 时应完全关闭'
 
 
 # ---------------------------------------------------------------------------

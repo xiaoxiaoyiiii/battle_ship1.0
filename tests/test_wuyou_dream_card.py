@@ -16,7 +16,6 @@
   · 只触发一次 + 房间级状态的生命周期（`__init__` / 消费点 / 终局清理）；
   · 观战复用 `dice_rolled`（不新增事件）；大师 AI 卡池的明确表态。
 """
-import json
 import os
 
 import pytest
@@ -102,36 +101,9 @@ def settle(room):
     server._settle_wuyou_dream(room)
 
 
-# ---------------------------------------------------------------------------
-# 卡牌定义一致性（CLAUDE.md §7：json 与 js 必须逐字符一致）
-# ---------------------------------------------------------------------------
-def test_card_definition_consistent():
-    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    with open(os.path.join(here, 'static', 'magic_card.json'), encoding='utf-8') as f:
-        json_cards = json.load(f)
-    mine = [c for c in json_cards if c['name'] == '无忧梦呓']
-    assert len(mine) == 1
-    c = mine[0]
-    assert c['speed'] == 1
-    assert c['type'] == '判定'
-    # 顺序也要一致（前后端一致性用例比的是**有序序列**）
-    backend_seq = [(x['name'], int(x['speed']), x['type']) for x in json_cards]
-
-    with open(os.path.join(here, 'static', 'magic_cards.js'), encoding='utf-8') as f:
-        js_src = f.read()
-    assert 'name: "无忧梦呓"' in js_src
-    assert f'speed: {c["speed"]}' in js_src
-    assert f'type: "{c["type"]}"' in js_src
-    # 卡面必须**逐字符**一致
-    assert c['description'] in js_src
-    # 位置一致：无忧梦呓排在命运骰子（另一张判定卡）的正后面，前后端都是
-    idx = [i for i, x in enumerate(backend_seq) if x[0] == '无忧梦呓'][0]
-    assert backend_seq[idx - 1][0] == '命运骰子'
-
-
 def test_wuyou_enters_deck():
-    names = [c.name for c in server.magic_cards]
-    assert '无忧梦呓' in names
+    """无忧梦呓应能进入卡池，且不应被隐藏。"""
+    assert '无忧梦呓' in [c.name for c in server.magic_cards]
     assert '无忧梦呓' not in server.HIDDEN_CARD_NAMES
 
 

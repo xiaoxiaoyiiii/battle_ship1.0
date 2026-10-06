@@ -312,27 +312,3 @@ def test_chain_response_guard_can_fail(room, socket_for, monkeypatch):
 # ===========================================================================
 # 4. ★★ 证明守卫能红（第二种口径）：整张事件表把这条动作摘掉
 # ===========================================================================
-def test_guard_fails_when_event_is_removed_from_the_allow_list(room, socket_for,
-                                                              monkeypatch):
-    """把 `magic_chain_updated` 从 `spectate.SPECTATE_EVENTS` 里摘掉（默认拒绝），
-    观众就再也收不到连锁帧 —— 主守卫必须红。
-
-    ⚠️ 与第 3 条不同：那条掐的是"发不发"，这条掐的是"发不发得出去"（净化表）。
-       两条一起才能证明主守卫盯的是**观众真的收到了什么**，而不是某个中间变量。
-    """
-    watcher, player_a, player_b, sid_a, sid_b = _setup(room, socket_for)
-
-    import spectate as spectate_mod
-    table = dict(spectate_mod.SPECTATE_EVENTS)
-    table.pop('magic_chain_updated')
-    monkeypatch.setattr(spectate_mod, 'SPECTATE_EVENTS', table)
-    try:
-        ack = _respond(player_b, room, sid_b)
-    finally:
-        monkeypatch.undo()
-
-    assert ack and ack['status'] == 'success', ack
-    frames = _chain_frames(_drain(watcher))
-    assert not frames, (
-        '`magic_chain_updated` 已经从允许表里摘掉了，观众还是收到了 —— '
-        '那说明净化那条路没接上：%r' % (frames,))

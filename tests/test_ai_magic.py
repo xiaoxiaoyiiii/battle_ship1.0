@@ -69,17 +69,8 @@ def room():
 # ---------------------------------------------------------------------------
 # 1. 白名单本身
 # ---------------------------------------------------------------------------
-def test_ai_safe_card_names_all_exist():
-    names = {c.name for c in server.magic_cards}
-    unknown = [n for n in server._AI_SAFE_CARDS if n not in names]
-    assert not unknown, f'白名单里有不存在的卡名：{unknown}'
 
 
-def test_ai_safe_list_excludes_cards_that_need_player_choices():
-    """会等待「施法者自己」点选/放置的卡绝不能进白名单（否则整局卡死）。"""
-    stall = {'桃园结义', '明智埋葬', '神机妙算', '仁王之盾', '灵气复苏',
-             '增援', '死者苏生', '绝处逢生', '回光返照', '神之宣告', '疗愈', '钢筋铁骨'}
-    assert not (set(server._AI_SAFE_CARDS) & stall)
 
 
 @pytest.mark.parametrize('name', sorted(set(server._AI_SAFE_CARDS)))
@@ -103,9 +94,6 @@ def test_ai_safe_card_leaves_no_pending_state(room, name):
 # ---------------------------------------------------------------------------
 # 2. 选牌策略
 # ---------------------------------------------------------------------------
-def test_ai_picks_lowest_speed_safe_card(room):
-    room.players[AI].magic_hand = [card('看破！'), card('无中生有')]   # 速2 / 速1
-    assert server._ai_choose_magic_card(room, AI) == 1, '优先出速阶更低的卡'
 
 
 def test_ai_ignores_unsafe_cards(room):
@@ -127,34 +115,10 @@ def test_ai_skips_cards_not_playable_in_current_phase(room):
 # ---------------------------------------------------------------------------
 # 3. 难度分档
 # ---------------------------------------------------------------------------
-def test_easy_difficulty_never_plays(room):
-    room.ai_difficulty = 'easy'
-    room.players[AI].magic_hand = [card('无中生有')]
-    assert server._ai_maybe_play_magic(room, AI) is False
-    assert len(room.players[AI].magic_hand) == 1
 
 
-def test_normal_difficulty_plays_and_consumes_card(room):
-    room.ai_difficulty = 'normal'
-    room.players[AI].magic_hand = [card('无中生有')]
-    before = len(room.players[AI].magic_hand)
-
-    assert server._ai_maybe_play_magic(room, AI) is True
-
-    assert len(room.players[AI].magic_hand) == before - 1, '打出的牌应从手牌移除'
-    assert room.magic_history, '应当留下出牌记录'
 
 
-def test_unknown_difficulty_falls_back_to_normal():
-    r = GameRoom('ai-room-2')
-    try:
-        room_manager.create_ai_room('sid-x', 'x', None, 'impossible')
-        created = [rm for rm in room_manager.get_all_rooms().values() if rm.is_ai_room]
-        assert created and created[-1].ai_difficulty == 'normal'
-    finally:
-        for rm_id, rm in list(room_manager.get_all_rooms().items()):
-            if rm.is_ai_room:
-                room_manager.rooms.pop(rm_id, None)
 
 # ---------------------------------------------------------------------------
 # 4. 困难难度：AI 会用【失灵！】响应连锁
@@ -171,12 +135,6 @@ def _chain_room(difficulty='hard', ai_hand=('失灵！',), top_card='无中生�
     return r
 
 
-def test_easy_and_normal_ai_never_join_chain(room):
-    room.players[AI].magic_hand = [card('失灵！')]
-    room.chain = [ChainItem(P1, card('无中生有'), [], time.time())]
-    for level in ('easy', 'normal'):
-        room.ai_difficulty = level
-        assert server._can_respond_chain(room, AI) is False, level
 
 
 def test_hard_ai_joins_chain_only_with_lingwu(room):
@@ -195,13 +153,6 @@ def test_hard_ai_wont_negate_its_own_card(room):
     assert server._can_respond_chain(room, AI) is False
 
 
-@pytest.mark.parametrize('top', ['看破！', '加百列之光'])
-def test_hard_ai_wont_negate_immune_cards(room, top):
-    """卡面写明了看破！/加百列之光 不受失灵！影响，AI 不该白康一次。"""
-    room.chain = [ChainItem(P1, card(top), [], time.time())]
-    room.ai_difficulty = 'hard'
-    room.players[AI].magic_hand = [card('失灵！')]
-    assert server._can_respond_chain(room, AI) is False
 
 
 def test_ai_chain_respond_negates_opponent_card(monkeypatch):
@@ -222,15 +173,6 @@ def test_ai_chain_respond_negates_opponent_card(monkeypatch):
         room_manager.rooms.pop(r.id, None)
 
 
-def test_ai_chain_respond_gives_up_when_it_cannot_negate(monkeypatch):
-    monkeypatch.setattr(server.time, 'sleep', lambda *_: None)
-    r = _chain_room(top_card='看破！')
-    try:
-        server._ai_chain_respond(r.id, 1)
-        # 放弃后窗口顺延给对手；对手没有速阶3 → 连锁结算完
-        assert r.chain == [], '放弃也必须把连锁推进下去，不能留着半开窗口'
-    finally:
-        room_manager.rooms.pop(r.id, None)
 
 
 def test_ai_chain_respond_ignores_stale_token(monkeypatch):

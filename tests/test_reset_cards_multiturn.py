@@ -76,19 +76,19 @@ def _seed_multiturn(room, caster='p1'):
 # ===========================================================================
 # ★ 核心：重摆后不许残留跨回合效果
 # ===========================================================================
-@pytest.mark.parametrize('why', ['灵气复苏', '败者食尘', '回光返照', '绝处逢生'])
-def test_multiturn_effects_cleared_by_reset(why, monkeypatch):
+def test_multiturn_effects_cleared_by_reset(monkeypatch):
     """★ 四张重摆卡之后，跨回合计数效果**一律不许残留**。"""
-    room = _mk_room()
-    _seed_multiturn(room)
-    _capture(monkeypatch)
+    for why in ['灵气复苏', '败者食尘', '回光返照', '绝处逢生']:
+        room = _mk_room()
+        _seed_multiturn(room)
+        _capture(monkeypatch)
 
-    server._clear_multiturn_effects(room, why)
+        server._clear_multiturn_effects(room, why)
 
-    for key in MULTITURN_KEYS:
-        assert key not in room.game_effects, (
-            f'{why} 之后 {key} 仍残留 → 它会在后续大回合继续递减并凭空判胜负'
-        )
+        for key in MULTITURN_KEYS:
+            assert key not in room.game_effects, (
+                f'{why} 之后 {key} 仍残留 → 它会在后续大回合继续递减并凭空判胜负'
+            )
 
 
 def test_clear_emits_events_to_frontend(monkeypatch):

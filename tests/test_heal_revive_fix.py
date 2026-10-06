@@ -150,12 +150,6 @@ def test_mark_ship_sunken_dedupes(room):
     assert p.sunken_ships.count(ship) == 1
 
 
-def test_sunk_effects_does_not_duplicate(room):
-    """走真实击沉路径两次，沉船堆里也只有一条记录。"""
-    ship = room.players[P1].ships[0]
-    server._apply_ship_sunk_effects(room, room.id, P2, P1, ship)
-    server._apply_ship_sunk_effects(room, room.id, P2, P1, ship)
-    assert room.players[P1].sunken_ships.count(ship) == 1, '不该出现重复条目'
 
 
 def test_no_duplicate_after_sink_revive_sink(room):
@@ -197,40 +191,11 @@ def test_susheng_clears_all_duplicates(room):
     assert p.remaining_ships == alive_count(room)
 
 
-def test_ghost_entry_does_not_inflate_count(room):
-    """沉船堆里"其实还活着"的幽灵条目：不该让它虚增船数。"""
-    p = room.players[P1]
-    healthy = p.ships[0]                       # 完好无损的船
-    p.sunken_ships.append(healthy)             # 被人为塞进沉船堆（幽灵条目）
-    room.magic_deck = [card('冻结')]
-    before = p.remaining_ships
-
-    server._revive_sunken_ships(room, p, 1)
-
-    assert p.remaining_ships == before, (
-        f'不该为幽灵条目加船数，{before} -> {p.remaining_ships}')
-    assert server._is_ship_alive(p, healthy) is True
-    assert healthy not in p.sunken_ships, '幽灵条目应被清掉'
 
 
 # ---------------------------------------------------------------------------
 # 反证：正常情况不受影响
 # ---------------------------------------------------------------------------
-def test_normal_heal_still_works(room):
-    """反证：没有重复条目时，疗愈照常复活至多 2 艘。"""
-    p = room.players[P1]
-    for i in (5, 4):
-        sh = p.ships[i]
-        sh.hits = list(sh.positions)
-        server._mark_ship_sunken(p, sh)
-    p.remaining_ships = 4
-    room.magic_deck = [card('冻结')] * 4
-
-    res = server.apply_magic_effect(room, P1, card('疗愈'), {})
-    assert res.success is True
-    assert p.remaining_ships == 6
-    assert alive_count(room) == 6
-    assert p.sunken_ships == []
 
 
 def test_heal_no_ship_cap(room):

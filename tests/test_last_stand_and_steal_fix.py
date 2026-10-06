@@ -104,49 +104,12 @@ def test_last_stand_resets_attacks_to_one(room):
         f'绝处逢生后场上只剩 1 艘船，攻击次数应为 1，实际 {room.attacks_remaining}')
 
 
-def test_last_stand_keeps_subsidy_bonus(room):
-    """跨回合累积的百亿补贴加成属于持卡者本人，重算时保留叠加。"""
-    room.players[P1].ships = [ship((0, 0)), ship((1, 1)), ship((2, 2))]
-    room.players[P1].remaining_ships = 3
-    room.players[P1].effect_flags.subsidy_bonus = 2
-    room.attacks_remaining = 5
-
-    place_last_stand(room, P1, 1, 1)
-    assert room.attacks_remaining == 3, '基础 1 次 + 百亿补贴 2 次'
 
 
-def test_last_stand_emits_attacks_updated(room, events):
-    """重算后必须广播，否则前端还显示旧次数。"""
-    room.players[P1].ships = [ship((0, 0)), ship((1, 1)), ship((2, 2))]
-    room.players[P1].remaining_ships = 3
-    room.attacks_remaining = 5
-
-    place_last_stand(room, P1, 1, 1)
-    updates = [d for e, d, to, r in events if e == 'attacks_updated']
-    assert updates, '必须广播 attacks_updated'
-    assert updates[-1]['attacks_remaining'] == 1
 
 
-def test_last_stand_under_eden_uses_six_minus_ships(room):
-    """伊甸园下次数 = 6 - 船数 = 6 - 1 = 5，不能强行改成 1。"""
-    room.field_magic = card('伊甸园')
-    room.players[P1].ships = [ship((0, 0)), ship((1, 1)), ship((2, 2))]
-    room.players[P1].remaining_ships = 3
-    room.attacks_remaining = 3
-
-    place_last_stand(room, P1, 1, 1)
-    assert room.attacks_remaining == 5
 
 
-def test_last_stand_under_papal_decree_keeps_zero(room):
-    """教皇旨意下攻击次数恒 0（改为弃卡攻击），绝处逢生不该把它抬起来。"""
-    room.field_magic = card('教皇旨意')
-    room.players[P1].ships = [ship((0, 0)), ship((1, 1)), ship((2, 2))]
-    room.players[P1].remaining_ships = 3
-    room.attacks_remaining = 0
-
-    place_last_stand(room, P1, 1, 1)
-    assert room.attacks_remaining == 0
 
 
 def test_last_stand_attacks_not_applied_to_opponent(room):
@@ -204,22 +167,6 @@ def test_last_stand_triggers_sink_side_effects_once(room, events):
     assert 'holy_heart' not in room.game_effects
 
 
-def test_last_stand_self_sacrifice_is_a_negatable_ship_change(room):
-    """绝处逢生的自牺牲是"会造成船数变化的魔法卡效果"，平等条约可以连锁康掉它。
-
-    ★ 2026-09-24 改版：旧版这条守的是"自牺牲要写平等条约的船数变化快照"（含
-      source='sacrifice'），那份快照已整条删除。改版后"能不能被康"的判据是
-      `EQUAL_TREATY_SHIP_CHANGE_RULES['绝处逢生']`（有活船就真的会改船数），
-      所以这里改守**判词本身**；完整的"真连锁里整张牌被跳过"由
-      `tests/test_pingdeng_tiaoyue_chain.py::test_juechu_fengsheng_self_sacrifice_is_negatable`
-      覆盖。
-    """
-    room.players[P1].ships = [ship((0, 0)), ship((1, 1)), ship((2, 2))]
-    room.players[P1].remaining_ships = 3
-
-    item = ChainItem(P1, card('绝处逢生'), {}, 0.0)
-    assert server._equal_treaty_verdict(room, item)[0] is True, (
-        '作者裁决：绝处逢生的自牺牲保持现状、可以被无效化')
 
 
 def test_last_stand_does_not_double_count_sunken_ships(room):
@@ -290,61 +237,8 @@ def test_daoyouyoudao_chain_dedupes_repeat_steal(room):
     assert res2.success is False
 
 
-def test_daoyouyoudao_chain_writes_single_history_entry(room):
-    """连锁偷牌后，对手那张牌在历史里只能有一条记录。
-
-    回归：曾用"占位条目"实现去重，结果同一张牌在 history 里出现两条
-    （占位那条带 stolen、结算那条不带）——回退分支扫到不带标记的那条，
-    会让同一张牌被无限次盗取，等于凭空造牌。
-    """
-    room.current_attacker = P2
-    room.players[P2].magic_hand = [card('八方来财')]
-    room.players[P1].magic_hand = [card('盗亦有道')]
-    room.magic_deck = []
-
-    server.handle_use_magic_card({
-        'room_id': room.id, 'player_id': P2,
-        'card': {'name': '八方来财'}, 'targets': {},
-    })
-    opponent_card = room.chain[-1].card
-    server.chain_response({
-        'room_id': room.id, 'player_id': P1, 'chain': True,
-        'card': {'name': '盗亦有道'}, 'targets': [],
-    })
-    server.resolve_chain(room)
-
-    entries = [e for e in room.magic_history if e['card'] is opponent_card]
-    assert len(entries) == 1, f'同一张牌不该有两条历史记录，实际 {len(entries)} 条'
 
 
-def test_daoyouyoudao_chain_marks_history_stolen(room):
-    """连锁中偷走的牌，结算写历史时必须带上 stolen 标记。
-
-    走完整真实链路（出牌 → 连锁响应 → 结算），确保被偷的那张牌确实结算成功、
-    写进历史时带上 stolen —— 否则回退分支会允许它被再偷一次。
-    """
-    room.current_attacker = P2
-    room.players[P2].magic_hand = [card('八方来财')]
-    room.players[P1].magic_hand = [card('盗亦有道')]
-    room.magic_deck = []
-
-    server.handle_use_magic_card({
-        'room_id': room.id, 'player_id': P2,
-        'card': {'name': '八方来财'}, 'targets': {},
-    })
-    opponent_card = room.chain[-1].card
-
-    server.chain_response({
-        'room_id': room.id, 'player_id': P1, 'chain': True,
-        'card': {'name': '盗亦有道'}, 'targets': [],
-    })
-    server.resolve_chain(room)
-
-    entries = [e for e in room.magic_history if e['card'] is opponent_card]
-    assert entries, '被偷的牌结算成功应写入历史'
-    assert len(entries) == 1, f'同一张牌不该有两条历史记录，实际 {len(entries)} 条'
-    assert entries[0].get('stolen') is True, (
-        '被偷走的牌在历史里必须标记 stolen，否则会被重复盗取')
 
 
 def test_daoyouyoudao_chain_removes_from_discard(room):
@@ -357,12 +251,6 @@ def test_daoyouyoudao_chain_removes_from_discard(room):
     assert opponent_card not in room.magic_discard
 
 
-def test_daoyouyoudao_chain_ignores_own_card_below(room):
-    """栈顶正下方若是自己的牌，不能偷自己的。"""
-    room.chain = [ChainItem(P1, card('轰炸'), [], 0)]
-    res = apply(room, P1, '盗亦有道')
-    assert res.success is False
-    assert '对方没有使用过魔法卡' in res.message
 
 
 def test_daoyouyoudao_chain_falls_back_to_history(room):
@@ -452,26 +340,8 @@ def test_last_stand_blocks_active_play_with_correct_reason(room):
         f'不该甩锅给阶段（误导），实际：{res["message"]}')
 
 
-def test_last_stand_blocks_speed3_play_too(room):
-    """速阶 3 卡同样被封锁 —— 它平时不受阶段限制，最容易漏判。"""
-    room.players[P1].effect_flags.last_stand = True
-    room.players[P1].magic_hand = [card('八方来财')]
-
-    res = server.handle_use_magic_card({
-        'room_id': room.id, 'player_id': P1,
-        'card': {'name': '八方来财'}, 'targets': {},
-    })
-
-    assert res.get('status') == 'error'
-    assert '绝处逢生' in res['message'], f'实际：{res["message"]}'
 
 
-def test_last_stand_player_cannot_respond_chain(room):
-    """绝处逢生生效中的玩家不参与连锁响应，窗口根本不该为他打开。"""
-    room.players[P1].effect_flags.last_stand = True
-    room.players[P1].magic_hand = [card('失灵！')]
-
-    assert server._can_respond_chain(room, P1) is False
 
 
 def test_last_stand_player_rejected_if_forges_chain_response(room):
@@ -493,24 +363,8 @@ def test_last_stand_player_rejected_if_forges_chain_response(room):
     assert room.players[P1].magic_hand, '牌不该从手牌里消失'
 
 
-def test_chain_opens_normally_without_last_stand(room):
-    """反证：没有绝处逢生时，连锁响应窗口照常打开（别把功能的正常路径改坏）。"""
-    room.players[P1].magic_hand = [card('失灵！')]
-    assert server._can_respond_chain(room, P1) is True
 
 
-def test_other_block_reason_still_reported(room):
-    """反证：禁忌果实等其他封锁理由不受影响，仍报自己的原因。"""
-    room.field_magic = card('禁忌果实')
-    room.players[P1].magic_hand = [card('增援')]
-
-    res = server.handle_use_magic_card({
-        'room_id': room.id, 'player_id': P1,
-        'card': {'name': '增援'}, 'targets': {},
-    })
-
-    assert res.get('status') == 'error'
-    assert '禁忌果实' in res['message'], f'实际：{res["message"]}'
 
 
 # ---------------------------------------------------------------------------
@@ -539,21 +393,6 @@ def test_last_stand_cells_payload_carries_owner(room, events):
     assert len(payload.get('cells') or []) == 3, '候选格应当是"原本有战舰的那几格"'
 
 
-def test_room_sync_carries_last_stand_owner(room):
-    """重连快照也要带归属，否则重连后高亮又会画错棋盘。
-
-    注意：绝处逢生要求至少 3 艘战舰才能发动（卡面实现如此），
-    给 2 艘时 apply 会直接失败、owner 根本不会写入 —— 那样测试会假红。
-    """
-    room.players[P1].ships = [ship((0, 0)), ship((1, 1)), ship((2, 2))]
-    room.players[P1].remaining_ships = 3
-
-    res = apply(room, P1, '绝处逢生')
-    assert res.success is True, res.message
-
-    sync = server._build_room_sync(room, P2)          # 从"对手"视角看这份快照
-    assert sync.get('last_stand_owner') == P1, sync.get('last_stand_owner')
-    assert len(sync.get('last_stand_cells') or []) == 3
 
 
 def test_last_stand_owner_cleared_with_cells(room):

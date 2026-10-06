@@ -1438,6 +1438,8 @@ window.gameState = {
     // 画成"破盾"标记而不是普通命中叉，玩家才看得懂发生了什么。
     shieldBrokenMine: [],       // 我打出来的破盾格 → 画在对方棋盘
     shieldBrokenOpponent: [],   // 对方打出来的破盾格 → 画在我自己棋盘
+    // 对方公开施加护盾的战舰位置；按整艘船分组，破盾或击沉时可准确清除。
+    opponentShieldedShips: [],
     // 「绝处逢生」的候选格：牺牲前原本有战舰的那几格，唯一一艘新船必在其中。
     // 公开信息，双方棋盘都高亮；这些格子【不是红叉】，对方照样能打。
     lastStandCells: [],
@@ -1668,6 +1670,15 @@ function applyRoomSync(data) {
         requestHandSync('room_sync:no-hand-array');
     }
     gameState.ships = data.ships || [];
+    // 自己的盾状态来自 ships；对手只恢复已公开的带盾船坐标，不能泄露其他船位。
+    gameState.opponentShieldedShips = Array.isArray(data.opponent_shielded_ships)
+        ? data.opponent_shielded_ships
+            .filter(Array.isArray)
+            .map((positions) => positions.filter((pos) => pos
+                && Number.isFinite(Number(pos.x))
+                && Number.isFinite(Number(pos.y))))
+            .filter((positions) => positions.length > 0)
+        : [];
     gameState.myAttacks = data.attacks || [];
     // 对手打在我棋盘上的格：不恢复的话，重连后自己的伤损/沉船会全部显示成完好
     gameState.opponentAttacks = data.opponent_attacks || [];
@@ -8709,6 +8720,7 @@ function setupSocketListeners() {
         gameState.myAttacks = [];
         gameState.opponentAttacks = [];
         gameState.revealedCells = [];   // 服务端在重开棋盘时也会清空已显形记录，本地同步
+        gameState.opponentShieldedShips = [];
         gameState.lastStandOwner = null;   // 归属也要一起清，免得重开后又高亮错棋盘
         gameState.frozenArea = null;       // 冻结区域同理
         dismissTaoyuanWaitingOverlay();    // 重开棋盘：桃园全屏等待浮层一并收掉
@@ -9269,6 +9281,7 @@ function setupSocketListeners() {
         const positions = (data && data.positions) || [];
         if (!positions.length) return;
         const mine = data.player === gameState.playerId;
+        if (!mine) clearOpponentShieldedShips(positions);
 
         // ⚠️ 绝处逢生的自牺牲【不画叉】。
         // 它的六个格子是"唯一一艘新船可能落点"，对方必须能打；画成红叉
@@ -9389,6 +9402,10 @@ function setupSocketListeners() {
     // 防守方会以为自己的船挨了一炮（其实毫发无伤）。
     socket.on('shield_absorbed', (data) => {
         const mine = data && data.player === gameState.playerId;
+        if (!mine && data && Array.isArray(data.positions)) {
+            clearOpponentShieldedShips(data.positions);
+            if (typeof initGameBoards === 'function') initGameBoards();
+        }
         showMessage(mine ? '你的战舰用护盾挡下了这次攻击'
                          : '对方的战舰用护盾挡下了这次攻击',
                     { type: 'info' });
@@ -9504,6 +9521,22 @@ function setupSocketListeners() {
     socket.on('shields_added', (data) => {
         const isMine = data && data.player === gameState.playerId;
         const cnt = (data && data.count) || 0;
+        if (!isMine && data) {
+            const validPositions = (positions) => (Array.isArray(positions) ? positions : [])
+                .filter(p => p && Number.isInteger(p.x) && Number.isInteger(p.y)
+                    && p.x >= 0 && p.x < 6 && p.y >= 0 && p.y < 6)
+                .map(p => ({ x: p.x, y: p.y }));
+            let ships = Array.isArray(data.ships)
+                ? data.ships.map(validPositions).filter(positions => positions.length)
+                : [];
+            // 兼容旧载荷：只有 positions 时，每格作为独立条目，避免误删其他船的状态。
+            if (!ships.length) ships = validPositions(data.positions).map(p => [p]);
+            const incomingKeys = new Set(ships.flat().map(p => `${p.x},${p.y}`));
+            gameState.opponentShieldedShips = (gameState.opponentShieldedShips || [])
+                .filter(ship => !(ship || []).some(p => incomingKeys.has(`${p.x},${p.y}`)))
+                .concat(ships);
+            if (typeof initGameBoards === 'function') initGameBoards();
+        }
         const msg = isMine
             ? `已为${cnt}艘战舰添加护盾`
             : `对方为${cnt}艘战舰添加了护盾`;
@@ -11088,6 +11121,14 @@ function initGameBoards() {
                 cell.textContent = attack.hit ? '✕' : '○';
             }
 
+            // 对方公开加盾的位置：显示在对手棋盘上，直到护盾被消耗或该船被击沉。
+            const opponentShielded = (gameState.opponentShieldedShips || [])
+                .some(ship => (ship || []).some(p => p.x === x && p.y === y));
+            if (opponentShielded) {
+                cell.classList.add('opponent-shielded');
+                if (!cell.title) cell.title = '对方这艘战舰带有护盾，可抵挡一次伤害';
+            }
+
             // 对方因恶魔契约等效果牺牲的船：公开信息，同样画叉
             if ((gameState.sacrificedOpponent || []).some(p => p.x === x && p.y === y)) {
                 cell.classList.add('hit', 'sacrificed');
@@ -11616,9 +11657,22 @@ function handleAttack(x, y) {
     });
 }
 
+// 清理一艘对手战舰的公开护盾标记；positions 可来自破盾或牺牲事件。
+function clearOpponentShieldedShips(positions) {
+    const keys = new Set((Array.isArray(positions) ? positions : [])
+        .filter(p => p && Number.isInteger(p.x) && Number.isInteger(p.y))
+        .map(p => `${p.x},${p.y}`));
+    if (!keys.size) return;
+    gameState.opponentShieldedShips = (gameState.opponentShieldedShips || [])
+        .filter(ship => !(ship || []).some(p => keys.has(`${p.x},${p.y}`)));
+}
+
 // 更新攻击显示
 function updateAttackDisplay(result) {
     const mine = result.attacker === gameState.playerId;
+    if (mine && result.ship_sunk) {
+        clearOpponentShieldedShips([{ x: result.x, y: result.y }]);
+    }
 
     // 这一炮被「仁王之盾」挡下：不算"已攻击"，改记成"破盾"标记。
     //

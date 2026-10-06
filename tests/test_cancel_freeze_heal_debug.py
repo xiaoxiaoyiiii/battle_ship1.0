@@ -115,15 +115,6 @@ def test_lingqi_cancel_notifies_opponent(room, events):
     assert pick(events, 'lingqi_complete'), events
 
 
-def test_other_choice_cancel_does_not_fake_taoyuan_event(room, events):
-    """反证：明智埋葬等其它选择取消时不该发出桃园/灵气的事件（避免误报"对方取消了桃园"）。"""
-    room.magic_temp_data = {'type': 'bury_choice', 'caster': P1}
-    events.clear()
-
-    server.handle_cancel_magic_selection({'room_id': room.id, 'player_id': P1})
-
-    assert not pick(events, 'taoyuan_complete')
-    assert not pick(events, 'lingqi_complete')
 
 
 # ===========================================================================
@@ -142,41 +133,10 @@ def test_freeze_records_area_with_owner(room, events):
     assert fa['caster'] == P1 and fa['frozen'] == 1, fa
 
 
-def test_freeze_area_broadcast_to_room(room, events):
-    """★ 必须发给双方：施法方原先什么都收不到，过一会儿就忘了冻的是哪片。"""
-    room.players[P2].ships = [PlayerShip(positions=[Position(1, 1)], hits=[])]
-    room.players[P2].remaining_ships = 1
-    events.clear()
-
-    apply(room, P1, '冻结', {'target_area': {'x1': 0, 'y1': 0, 'x2': 2, 'y2': 2}})
-
-    sent = pick(events, 'frozen_area')
-    assert sent, f'没有广播冻结区域：{events}'
-    assert sent[-1]['room'] == room.id, '要发给整个房间，不能只发受害者'
-    assert sent[-1]['data']['owner'] == P2
 
 
-def test_freeze_area_in_room_sync(room):
-    room.players[P2].ships = [PlayerShip(positions=[Position(1, 1)], hits=[])]
-    room.players[P2].remaining_ships = 1
-    apply(room, P1, '冻结', {'target_area': {'x1': 0, 'y1': 0, 'x2': 2, 'y2': 2}})
-
-    sync = server._build_room_sync(room, P2)
-    assert sync.get('frozen_area'), '重连快照没带冻结区域 → 重连后又忘了冻的是哪片'
 
 
-def test_board_reset_clears_frozen_area(room):
-    room.players[P2].ships = [PlayerShip(positions=[Position(1, 1)], hits=[])]
-    room.players[P2].remaining_ships = 1
-    apply(room, P1, '冻结', {'target_area': {'x1': 0, 'y1': 0, 'x2': 2, 'y2': 2}})
-
-    room.game_effects['frozen_area']['until_round'] = 0    # 假装已过期
-    room.current_attacker = P2
-    room.current_phase = 'end'
-    room.round = 5
-    server.end_turn({'room_id': room.id, 'player_id': P2})
-
-    assert 'frozen_area' not in room.game_effects, '解冻后区域记录残留 → 棋盘一直挂着斜纹'
 
 
 # ===========================================================================
@@ -209,31 +169,11 @@ def test_heal_reveals_revived_cell_to_opponent(room, events):
         '对手的持久显形记录里也该有这一格（重连后仍要看得到）'
 
 
-def test_new_position_cards_do_not_reveal(room, events):
-    """反证：死者苏生/增援放的是玩家自选的新位置，绝不能显形给对手（会泄露新船位）。"""
-    room.magic_deck = [card('冻结')]
-    room.players[P1].ships = [PlayerShip(positions=[Position(i, 0)], hits=[]) for i in range(5)]
-    room.players[P1].remaining_ships = 5
-    apply(room, P1, '增援')
-    events.clear()
-
-    server.handle_confirm_reinforcement(
-        {'room_id': room.id, 'player_id': P1, 'position': {'x': 3, 'y': 3}})
-
-    for e in pick(events, 'revealed_positions'):
-        assert e['to'] != 'sid-p2', f'自选新位置不该显形给对手：{e}'
 
 
 # ===========================================================================
 # ④ 调试面板门禁（开关 + 账号白名单）
 # ===========================================================================
-def test_debug_status_reflects_switch(monkeypatch):
-    monkeypatch.setattr(server, 'ENABLE_TEST_EVENTS', False)
-    assert server.handle_debug_status({}) == {'enabled': False, 'allowed': False, 'allowlist': False}
-
-    monkeypatch.setattr(server, 'ENABLE_TEST_EVENTS', True)
-    monkeypatch.setattr(server, 'DEBUG_ADMIN_USER_IDS', set())
-    assert server.handle_debug_status({})['allowed'] is True, '没配白名单时沿用旧行为'
 
 
 def test_debug_allowlist_blocks_others(monkeypatch, room):

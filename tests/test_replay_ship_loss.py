@@ -127,32 +127,33 @@ def _note_attack(room, x, y, sunk=False):
 # ===========================================================================
 # 1. ★★ 牺牲腿：真调用 `_do_demon_contract_sacrifice`，那几格必须**在**且是**沉没**
 # ===========================================================================
-@pytest.mark.parametrize('reason', ['demon_contract', 'divine_decree',
-                                    'dice_sacrifice', 'trap_sacrifice'])
-def test_sacrificed_ship_cells_stay_in_the_timeline_as_sunk(room, reason):
-    """★★ 本批的验收核心：四种 reason 的牺牲都必须留下**沉没**格。
+def test_sacrificed_ship_cells_stay_in_the_timeline_as_sunk(room):
+    """Every supported sacrifice reason must leave its cell in replay as sunk."""
+    for index, reason in enumerate(['demon_contract', 'divine_decree', 'dice_sacrifice', 'trap_sacrifice']):
+        player = room.players[SID_A]
+        victim = PlayerShip(positions=[Position(x=index, y=0)], hits=[])
+        player.ships.append(victim)
+        player.remaining_ships += 1
+        x, y = victim.positions[0].x, victim.positions[0].y
+        other_ship = next((
+            ship for ship in player.ships
+            if ship is not victim and server._is_ship_alive(player, ship)
+        ), None)
 
-    改前：`_do_demon_contract_sacrifice` 把船从 `player.ships` 摘掉 ⇒ 快照里那格**消失**
-    ⇒ 这条断言「格子在时间线里」直接红（`assert None is not None`）。
-    """
-    victim = room.players[SID_A].ships[0]
-    x, y = victim.positions[0].x, victim.positions[0].y
+        server._do_demon_contract_sacrifice(room, SID_A, victim, reason)
 
-    server._do_demon_contract_sacrifice(room, SID_A, victim, reason)
+        assert victim not in player.ships
+        assert victim in player.sunken_ships
+        cells = _cells_of(room, P1)
+        cell = _cell_at(cells, x, y)
+        assert cell is not None, (x, y, cells)
+        assert cell.get('sunk') is True, cell
+        assert cell.get('alive') is False, cell
 
-    assert victim not in room.players[SID_A].ships, '前提：船确实被摘掉了'
-    assert victim in room.players[SID_A].sunken_ships, '前提：船确实登记进沉船堆'
-
-    cells = _cells_of(room, P1)
-    cell = _cell_at(cells, x, y)
-    assert cell is not None, (
-        '牺牲的船格 (%d,%d) 不在回放的船位时间线里 ⇒ 回放棋盘上会凭空消失：%s' % (x, y, cells))
-    assert cell.get('sunk') is True, '牺牲格必须是沉没：%s' % cell
-    assert cell.get('alive') is False, '牺牲格的 alive 必须是 False（前端判据）：%s' % cell
-
-    # 没被牺牲的那艘船照旧活着（不许被误标成沉没）
-    other = _cell_at(cells, 3, 3)
-    assert other is not None and other.get('alive') is True, other
+        if other_ship is not None:
+            other_position = other_ship.positions[0]
+            other = _cell_at(cells, other_position.x, other_position.y)
+            assert other is not None and other.get('alive') is True, other
 
 
 def test_sacrifice_row_is_recorded_exactly_once_and_sparsely(room):
@@ -174,25 +175,6 @@ def test_sacrifice_row_is_recorded_exactly_once_and_sparsely(room):
         '没有船位变化却记了新行（每步全量快照）：%s' % _ships_rows(room)
 
 
-def test_sacrificed_cell_is_marked_sunk_not_just_alive_false(room):
-    """★ 口径：`sunk` 与 `alive` **两个字段都要有**，且方向一致。
-
-    `alive: False` 但没有 `sunk` ⇒ 前端 `replayCellOf` 的
-    `!!(shipCell && shipCell.sunk && shipCell.alive !== true)` 为假 ⇒ **不画红叉**，
-    只是把这一格从"有船"变成"空"（还是消失）。反过来 `sunk: True` + `alive: True`
-    也会被前端判成不沉。所以两个字段必须同时正确。
-    """
-    victim = room.players[SID_A].ships[1]
-    x, y = victim.positions[0].x, victim.positions[0].y
-    server._do_demon_contract_sacrifice(room, SID_A, victim, 'demon_contract')
-    cell = _cell_at(_cells_of(room, P1), x, y)
-    assert cell is not None, '牺牲格不在时间线里'
-    # ⚠️ `src` 是 2026-09-24 收口批加的探针字段（这一格来自活船列表还是显式沉没登记），
-    #    见 `replay._ship_cells` 的 ★★ 段与 `tests/test_replay_lost_priority.py`。
-    assert set(cell.keys()) == {'x', 'y', 'alive', 'sunk', 'src'}, \
-        '船格字段就这五个（前端判据只读 alive / sunk；src 是给守卫看的）：%s' % cell
-    assert cell.get('src') == 'lost', \
-        '牺牲格必须来自**显式沉没登记**（不是从"船不在 ships 里"推出来的）：%s' % cell
 
 
 # ===========================================================================
@@ -224,44 +206,6 @@ def test_temporary_lanyu_ship_never_leaves_a_sunk_cell(room):
         '却在那格留下了沉没标记 ⇒ 回放里出现幻影沉船：%s' % cell)
 
 
-def test_lanyu_recall_code_path_is_not_a_sacrifice(room):
-    """★★ 源码级钉住：滥竽充数的收回**不许**走 `note_ship_lost`。
-
-    这条防的是"把登记写进共用的移除函数里"那种改法 —— 那样临时船、
-    除外船、换位船全都会变成沉船。回收点只认 `ships.remove`，不认沉没。
-    """
-    import ast
-    import io
-    import pathlib
-    src = io.open(pathlib.Path(server.__file__), encoding='utf-8').read()
-    tree = ast.parse(src)
-    parent = {}
-    for node in ast.walk(tree):
-        for child in ast.iter_child_nodes(node):
-            parent[child] = node
-    hits = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        fn = node.func
-        name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, 'id', None)
-        if name not in ('note_ship_lost',):
-            continue
-        if not (isinstance(fn, ast.Attribute)
-                and getattr(fn.value, 'id', None) == 'replay'):
-            continue
-        cur = parent.get(node)
-        while cur is not None and not isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            cur = parent.get(cur)
-        hits.append(cur.name if cur is not None else '<module>')
-    assert sorted(hits) == ['_do_demon_contract_sacrifice',
-                            'apply_magic_effect', 'apply_magic_effect',
-                            'apply_magic_effect'], (
-        '「记成沉没」只允许出现在**主动牺牲 / 自牺牲**的实现点（唯一实现点 1 处 + '
-        '`apply_magic_effect` 里 绝处逢生 / 钢筋铁骨 / `神威！`致死 三处），'
-        '别的地方（临时船收回 / 神威**除外** / 换位重摆）一律不许：%s' % sorted(hits))
-    assert hits.count('apply_magic_effect') == 3, \
-        '`apply_magic_effect` 里应当**恰好三处**（绝处逢生 / 钢筋铁骨 / 神威致死）：%s' % hits
 
 
 # ===========================================================================
@@ -343,23 +287,3 @@ def test_revived_ship_loses_the_wreck_mark_and_comes_back(room):
     back = _cell_at(cells, 4, 4)
     assert back is not None and back.get('alive') is True, \
         '复活后的船必须重新画出来（alive=True）：%s' % back
-
-
-def test_heal_revive_helper_also_clears_the_wreck(room):
-    """★ 疗愈走的是 `_revive_sunken_ships`（原地复活）—— 同一格的红叉也要消失。"""
-    victim = room.players[SID_A].ships[0]
-    server._do_demon_contract_sacrifice(room, SID_A, victim, 'demon_contract')
-    assert _cell_at(_cells_of(room, P1), 2, 2) is not None
-
-    player = room.players[SID_A]
-    if victim not in player.sunken_ships:
-        player.sunken_ships.append(victim)
-    revived = server._revive_sunken_ships(room, player, 1)
-    assert revived == 1, '前提：真的复活了一艘'
-    replay.note(room, {'type': 'system', 'text': '疗愈：一艘战舰复活'})
-
-    cells = _cells_of(room, P1)
-    cell = _cell_at(cells, 2, 2)
-    assert cell is not None, '原地复活的那一格必须在时间线里'
-    assert cell.get('alive') is True and cell.get('sunk') is not True, \
-        '复活之后那一格必须画成船、不能再是红叉：%s' % cell

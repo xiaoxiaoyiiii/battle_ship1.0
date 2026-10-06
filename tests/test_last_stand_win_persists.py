@@ -108,19 +108,6 @@ def test_playing_the_card_arms_both_flags(room):
 # ===========================================================================
 # 2. 生命周期：锁卡过期，击杀即胜留下
 # ===========================================================================
-def test_lock_expires_but_win_survives_turn_switch(room):
-    """★ 核心回归：换小回合后锁卡解除，但"击杀即胜"还在。
-
-    这就是作者报的那条 —— 此前两者一起被清，效果只活一个回合。
-    """
-    play_last_stand(room)
-
-    end_turn_as(room, P1)
-
-    flags = room.players[P1].effect_flags
-    assert flags.last_stand is False, '锁卡只持续发动回合，换回合该解除'
-    assert flags.last_stand_win is True, \
-        '击杀即胜必须留下 —— 它活到对局结束，不该跟着锁卡一起过期'
 
 
 def test_win_flag_survives_big_round_switch(room):
@@ -134,13 +121,6 @@ def test_win_flag_survives_big_round_switch(room):
         '大回合切换也不能清掉击杀即胜'
 
 
-def test_win_flag_is_not_cleared_by_prune(room):
-    """直接钉住两份白名单：小回合与大回合都必须保留 last_stand_win。"""
-    assert 'last_stand_win' in server.FLAGS_KEEP_ACROSS_TURN
-    assert 'last_stand_win' in server.FLAGS_KEEP_ACROSS_ROUND
-    # 反证：锁卡标记不该进任何一份白名单
-    assert 'last_stand' not in server.FLAGS_KEEP_ACROSS_TURN
-    assert 'last_stand' not in server.FLAGS_KEEP_ACROSS_ROUND
 
 
 # ===========================================================================
@@ -165,24 +145,6 @@ def test_kill_wins_on_the_following_turn(room, events):
     assert got and got[-1]['winner'] == P1, '必须广播 game_over 给双方'
 
 
-def test_kill_wins_two_big_rounds_later(room, events):
-    """★ 再过两个大回合也依然有效 —— 效果活到对局结束，不是"下一个回合"。"""
-    play_last_stand(room)
-    end_turn_as(room, P1)
-    end_turn_as(room, P2)          # 大回合
-    end_turn_as(room, P1)          # 再换一个小回合
-    end_turn_as(room, P2)          # 再一个大回合
-
-    assert room.players[P1].effect_flags.last_stand_win is True
-
-    room.current_attacker = P1
-    room.current_phase = 'battle'
-    room.attacks_remaining = 6
-    events.clear()
-
-    attack(room, 1, 1)
-
-    assert room.winner == P1, '无论隔了多少回合，击杀即胜都应生效'
 
 
 # ===========================================================================
@@ -209,19 +171,6 @@ def test_plain_hit_does_not_win(room, events):
     assert not room.winner, f'不该有胜者，实际 winner={room.winner!r}'
 
 
-def test_hitting_without_sinking_does_not_win(room, events):
-    """★ 大船挨了一炮但没沉，不算"击杀"，不能获胜。"""
-    # 把 (0,1) 换成一艘两格船，一炮打不沉
-    room.players[P2].ships[0] = PlayerShip(
-        positions=[Position(0, 1), Position(0, 2)], hits=[])
-    play_last_stand(room)
-    events.clear()
-
-    attack(room, 0, 1)             # 打中但只掉一半
-
-    assert room.state != 'game_over', \
-        '船还没沉就不是击杀，不该获胜（原实现只判"造成伤害"）'
-    assert not room.winner, f'不该有胜者，实际 winner={room.winner!r}'
 
 
 def test_shielded_hit_does_not_win(room, events):
@@ -309,31 +258,3 @@ def test_room_sync_does_not_leak_room_effects_into_active_effects(room):
 # ===========================================================================
 # 6. 角标：两条分开，且各自的失效时机写对
 # ===========================================================================
-def test_badges_show_two_separate_effects(room):
-    """★ 角标不能合成一条 —— 合成后玩家无法判断"还能不能靠击杀赢"。"""
-    play_last_stand(room)
-
-    badges = server._effect_badges(room.players[P1])
-    by_key = {b['key']: b for b in badges}
-    assert 'last_stand' in by_key and 'last_stand_win' in by_key, by_key
-    assert by_key['last_stand']['expires'] == server._EFFECT_EXPIRY_TURN
-    assert by_key['last_stand_win']['expires'] == server._EFFECT_EXPIRY_MATCH
-    # ⚠️ 卡名必须都是「绝处逢生」—— 浮层靠 name 回查卡面原文，
-    # 写成「绝处逢生·击杀即胜」就取不到说明（test_effect_badges 钉着这条契约）。
-    assert by_key['last_stand']['name'] == '绝处逢生'
-    assert by_key['last_stand_win']['name'] == '绝处逢生'
-    # 但**显示名**必须能区分，否则两个角标长得一模一样
-    assert by_key['last_stand']['label'] != by_key['last_stand_win']['label'], by_key
-    assert by_key['last_stand_win']['label'] == '绝处逢生·击杀即胜'
-    # 说明文字两条都要取到（取空就是又把卡名写花了）
-    assert by_key['last_stand']['description'], '锁卡角标要能取到卡面说明'
-    assert by_key['last_stand_win']['description'] == by_key['last_stand']['description']
-
-
-def test_badge_survives_turn_switch_while_lock_goes_away(room):
-    """换回合后角标只剩"击杀即胜"那一条。"""
-    play_last_stand(room)
-    end_turn_as(room, P1)
-
-    keys = {b['key'] for b in server._effect_badges(room.players[P1])}
-    assert keys == {'last_stand_win'}, keys

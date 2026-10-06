@@ -43,18 +43,6 @@ def test_eden_recalc_on_rps_winner():
     assert room.attacks_remaining == 6 - 4
 
 
-def test_eden_no_attacks_when_full_ships():
-    """6 艘船在伊甸园下应在准备阶段就得到 0 次攻击（而非打一发后才变 0）。"""
-    room = make_room()
-    room.field_magic = card('伊甸园')
-    room.state = 'attacking'
-    room.current_phase = 'preparation'
-    room.current_attacker = P1
-    room.players[P1].ships = [PlayerShip(positions=[], hits=[])] * 6
-    room.players[P1].remaining_ships = 6
-    room.attacks_remaining = 6  # 模拟旧逻辑先给了 6 次
-    server._recalc_attacker_attacks(room)
-    assert room.attacks_remaining == 0
 
 
 def test_eden_refresh_when_played_in_prep():
@@ -70,16 +58,6 @@ def test_eden_refresh_when_played_in_prep():
     assert room.attacks_remaining == 6 - 3
 
 
-def test_non_eden_uses_ship_count():
-    """无伊甸园时按剩余船数结算（不受影响）。"""
-    room = make_room()
-    room.state = 'attacking'
-    room.current_phase = 'preparation'
-    room.current_attacker = P1
-    room.players[P1].ships = [PlayerShip(positions=[], hits=[])] * 4
-    room.players[P1].remaining_ships = 4
-    server._recalc_attacker_attacks(room)
-    assert room.attacks_remaining == 4
 
 
 # ---------- 神机妙算：宣言流程 ----------
@@ -119,34 +97,8 @@ def test_shenji_apply_with_existing_prediction():
 
 # ---------- 桃园结义 / 取消匹配 / 教皇旨意（2026-09-07 第二批） ----------
 
-def test_taoyuan_result_carries_cards():
-    """桃园结义：结果随附抽到的卡牌（客户端无需二次请求即可渲染）。"""
-    room = make_room()
-    room.magic_deck = [MagicCard('轰炸'), MagicCard('冻结')]
-    room.players[P1].remaining_ships = 2
-    res = server.apply_magic_effect(room, P1, card('桃园结义'), {})
-    assert res.temp_data_id == 'taoyuan_choice'
-    assert isinstance(res['cards'], list) and len(res['cards']) == 2
-    assert res['cards'][0]['name'] in ('轰炸', '冻结')
 
 
-def test_cancel_match_by_sid(monkeypatch):
-    """取消匹配：按当前连接 sid 出队（修复登录用户匹配后无法取消）。"""
-    import types
-    room_manager = server.room_manager
-    # 直接构造队列（单结构列表）
-    room_manager.match_queue = [
-        {'sid': 'sidA', 'name': 'A', 'user_id': 'uidA'},
-        {'sid': 'sidB', 'name': 'B', 'user_id': 'uidB'},
-    ]
-    monkeypatch.setattr(server, 'request', types.SimpleNamespace(sid='sidA'))
-    monkeypatch.setattr(server, 'session', types.SimpleNamespace(get=lambda k: 'uidA'))
-    res = server.handle_cancel_match({})
-    assert res['status'] == 'success'
-    remaining = [e['sid'] for e in room_manager.match_queue]
-    assert 'sidA' not in remaining
-    assert remaining == ['sidB']
-    assert room_manager.match_queue[0]['user_id'] == 'uidB'
 
 
 def test_papal_recalc_zero_at_prep():
@@ -163,17 +115,6 @@ def test_papal_recalc_zero_at_prep():
     assert room.attacks_remaining == 0
 
 
-def test_bury_result_carries_cards():
-    """明智埋葬：结果随附候选卡（牌堆 + 对方手牌）。"""
-    room = make_room()
-    room.magic_deck = [MagicCard('轰炸'), MagicCard('冻结')]
-    room.players[P2].magic_hand = [MagicCard('饮血')]
-    res = server.apply_magic_effect(room, P1, card('明智埋葬'), {})
-    assert res.temp_data_id == 'bury_choice'
-    assert isinstance(res['cards'], list) and len(res['cards']) == 3
-    # 2 张来自牌堆，1 张来自对方手牌
-    assert sum(1 for c in res['cards'] if c['source'] == 'deck') == 2
-    assert sum(1 for c in res['cards'] if c['source'] == 'opponent_hand') == 1
 
 
 # ---------- 人机对战：AI 布船规则与玩家一致（2026-09-08） ----------

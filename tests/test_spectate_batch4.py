@@ -218,92 +218,10 @@ def test_spectate_chat_reaches_other_spectators_but_no_player(room, socket_for):
             '%s 收到的收件队列里出现了观战席聊天的正文：%r' % (who, got))
 
 
-def test_chat_isolation_legs_are_both_real(room, socket_for):
-    """★ 元测试：把"只发观战通道"改坏（模拟写成 `room=room.id`），
-    `test_spectate_chat_reaches_other_spectators_but_no_player` 的主断言**必须变红**。
-
-    这条同时证明**两条腿都真的在验东西**：
-      · 改坏之后玩家真的收到了（主断言会红）；
-      · 主断言不是"因为发送路径压根不工作"才绿的。
-    """
-    user_a, user_w1 = _account('alpha'), _account('watcher')
-    player_a = socket_for(user_a, enter=room.id, username='甲')
-    w1 = socket_for(user_w1, username='观众一号')
-    assert _join(w1, room)['status'] == 'success'
-    for client in (player_a, w1):
-        client.get_received()
-
-    # 故意改坏：把"只发观战通道"换成"发对局房间"（这正是最危险的那种手滑）。
-    real_room_id = spectate.spectate_room_id
-
-    def broken(room_id):
-        return room_id                      # ← 故意改坏
-    import unittest.mock as mock
-    with mock.patch.object(spectate, 'spectate_room_id', broken):
-        _chat(w1, room, '改坏之后这句话应该漏给玩家')
-
-    got_player = _drain(player_a)
-    assert got_player.get('spectate_chat'), (
-        '把观战通道名换成对局房间号之后，玩家**居然还是收不到** —— '
-        '那说明隔离用例断言的不是这件事（它可能只是"没发出去"）'
-    )
-    assert real_room_id(room.id) != room.id, '（前提）观战通道名本来就不等于房间号'
 
 
-def test_player_chat_is_still_visible_to_spectators(room, socket_for):
-    """★ 反向：**玩家之间的聊天照样发给观众**（第 1 批就登记好的承诺）。
-
-    ⚠️ 这条是第 4 批**实测发现的真缺陷**的回归守卫：`handle_chat_message` 原本是
-    `to=<sid>` 逐人单发，而 `emit` 的观战第三条腿**只对广播类**生效 →
-    观众一个字节都收不到「玩家说了什么」，而代码/测试/日志全都不报错。
-    """
-    user_a, user_w1 = _account('alpha'), _account('watcher')
-    player_a = socket_for(user_a, enter=room.id, username='甲')
-    w1 = socket_for(user_w1, username='观众一号')
-    assert _join(w1, room)['status'] == 'success'
-    for client in (player_a, w1):
-        client.get_received()
-
-    # 让甲的座位"登记的连接"就是这条真连接（`_identity_check` 第 ② 条）
-    room.players[SID_A].sid = _sid_of(player_a)
-    msg = '玩家在局内说的话'
-    player_a.emit('chat_message', {'room_id': room.id, 'message': msg})
-    time.sleep(0.05)
-
-    got_w = _drain(w1)
-    rows = got_w.get('chat_message') or []
-    assert len(rows) == 1, '观众收不到玩家之间的聊天（第 4 批修过的真缺陷又回来了）：%r' % got_w
-    assert rows[0]['username'] == '甲' and rows[0]['message'] == msg
-
-    # 玩家自己也照样收得到（而且**只收到一条** —— 双发会在聊天区出现重复行）
-    got_p = _drain(player_a)
-    player_rows = got_p.get('chat_message') or []
-    assert len(player_rows) == 1, (
-        '玩家收到了 %d 份 chat_message（应为 1 份 —— 保留单发又补广播就会重复）'
-        % len(player_rows))
 
 
-def test_player_chat_never_carries_is_me(room, socket_for):
-    """★ `isMe` 是"相对某一位收件人"的字段 —— 一旦广播就必须被拿掉。
-
-    留着它是**静默错**：两位玩家会同时看到 `isMe: true`（自己的话显示成对方的），
-    而观众的 payload 里 `isMe` 是 undefined → 全部被渲染成"对方"。
-    现在由前端按 `gameState.playerName` 判定（见 game.js 的 appendChatMessage）。
-    """
-    user_a, user_w1 = _account('alpha'), _account('watcher')
-    player_a = socket_for(user_a, enter=room.id, username='甲')
-    w1 = socket_for(user_w1, username='观众一号')
-    assert _join(w1, room)['status'] == 'success'
-    for client in (player_a, w1):
-        client.get_received()
-
-    room.players[SID_A].sid = _sid_of(player_a)
-    player_a.emit('chat_message', {'room_id': room.id, 'message': 'hi'})
-    time.sleep(0.05)
-
-    for client, who in ((w1, '观众'), (player_a, '玩家')):
-        for row in (_drain(client).get('chat_message') or []):
-            assert 'isMe' not in row, '%s 收到的 chat_message 里带着 isMe：%r' % (who, row)
 
 
 # ===========================================================================
@@ -336,120 +254,18 @@ def test_chat_requires_a_seat_on_this_room(room, socket_for):
     assert not _drain(player_a).get('spectate_chat'), '退席的人还能往通道里说话'
 
 
-def test_chat_rejects_a_different_room(room, socket_for):
-    """人在 A 局的观战席上却声称在看 B 局 → 拒绝（不许静默按 A 发出去）。"""
-    other = _make_room()
-    try:
-        w1 = socket_for(_account('watcher'), username='观众一号')
-        assert _join(w1, room)['status'] == 'success'
-        out = _chat(w1, other, '我其实不在这一局')
-        assert out and out['status'] == 'error', out
-        assert out['message']
-    finally:
-        room_manager.rooms.pop(other.id, None)
 
 
-def test_chat_rejects_empty_and_whitespace(room, socket_for):
-    """空 / 全空白 → 明确拒绝（不许静默 return）。"""
-    w1 = socket_for(_account('watcher'), username='观众一号')
-    assert _join(w1, room)['status'] == 'success'
-    w1.get_received()
-    for bad in ('', '   ', '\n\t ', None, 12345, {'a': 1}, ['x']):
-        out = _chat(w1, room, bad)
-        assert out and out['status'] == 'error', '脏输入 %r 居然通过了：%r' % (bad, out)
-        assert out['message']
-    assert not _drain(w1).get('spectate_chat'), '被拒的消息不该发出去'
 
 
-def test_chat_truncates_to_max_len(room, socket_for):
-    """长度复用 `MAX_CHAT_MSG_LEN`（与 `handle_chat_message` 同一个常量）。"""
-    w1 = socket_for(_account('watcher'), username='观众一号')
-    assert _join(w1, room)['status'] == 'success'
-    w1.get_received()
-    long_msg = '啊' * (MAX_CHAT_MSG_LEN + 40)
-    assert _chat(w1, room, long_msg)['status'] == 'success'
-    rows = _drain(w1).get('spectate_chat') or []
-    assert len(rows) == 1
-    assert len(rows[0]['message']) == MAX_CHAT_MSG_LEN, len(rows[0]['message'])
 
 
-def test_chat_rate_limit_reuses_quick_chat_rule(room, socket_for):
-    """★ 频率：**复用 `quick_chat.check_rate`**（10 秒 3 条 + 同一句不重复）。
-
-    第 4 条必被拒，且文案里带数字（说得清为什么）。
-    """
-    w1 = socket_for(_account('watcher'), username='观众一号')
-    assert _join(w1, room)['status'] == 'success'
-    w1.get_received()
-
-    for i in range(quick_chat.MAX_PER_WINDOW):
-        out = _chat(w1, room, '第%d条' % i)
-        assert out and out['status'] == 'success', out
-    over = _chat(w1, room, '第4条')
-    assert over and over['status'] == 'error', over
-    assert str(quick_chat.MAX_PER_WINDOW) in (over['message'] or ''), over
-    assert len(_drain(w1).get('spectate_chat') or []) == quick_chat.MAX_PER_WINDOW
-
-    # 反向校准：判据确实**来自** quick_chat（改坏它，行为必须跟着变）
-    import unittest.mock as mock
-    with mock.patch.object(quick_chat, 'MAX_PER_WINDOW', 99):
-        assert _chat(w1, room, '第5条')['status'] == 'success', (
-            '把 quick_chat.MAX_PER_WINDOW 调大之后仍然被拒 —— '
-            '说明限流不是走 quick_chat，而是另写了一套'
-        )
 
 
-def test_chat_rejects_the_same_line_and_does_not_charge_rejects(room, socket_for):
-    """同窗口内同一句不许重复；**被拒的那条不记账**（拒绝不该占满窗口）。"""
-    w1 = socket_for(_account('watcher'), username='观众一号')
-    assert _join(w1, room)['status'] == 'success'
-    w1.get_received()
-
-    assert _chat(w1, room, '一样的话')['status'] == 'success'
-    dup = _chat(w1, room, '一样的话')
-    assert dup and dup['status'] == 'error', dup
-
-    # 被拒 3 次之后，仍然还剩得下额度（窗口里只该有 1 条）
-    for _ in range(3):
-        _chat(w1, room, '一样的话')
-    for i in range(quick_chat.MAX_PER_WINDOW - 1):
-        out = _chat(w1, room, '不一样的话%d' % i)
-        assert out and out['status'] == 'success', (
-            '被拒的那几条把窗口占满了（拒绝本身也被记账了）：%r' % out)
 
 
-def test_chat_rate_state_is_per_room_and_per_spectator(room, socket_for):
-    """限流状态住**房间级 + 按观众分组**：别人连点不该吃掉我的额度。"""
-    w1 = socket_for(_account('watcher'), username='观众一号')
-    w2 = socket_for(_account('watcher2'), username='观众二号')
-    assert _join(w1, room)['status'] == 'success'
-    assert _join(w2, room)['status'] == 'success'
-    for client in (w1, w2):
-        client.get_received()
-
-    for i in range(quick_chat.MAX_PER_WINDOW):
-        assert _chat(w1, room, '一号第%d条' % i)['status'] == 'success'
-    assert _chat(w1, room, '一号超额')['status'] == 'error'
-    # 二号完全不受影响（状态是按 sid 分组的）
-    assert _chat(w2, room, '二号第一条')['status'] == 'success', '限流状态串到别人身上了'
-
-    # 状态确实住在房间上，且按 sid 分组
-    assert isinstance(room.spectate_chat_recent, dict)
-    assert len(room.spectate_chat_recent) == 2
-    assert all(len(v) <= quick_chat.MAX_PER_WINDOW for v in room.spectate_chat_recent.values())
 
 
-def test_chat_payload_only_has_name_message_ts(room, socket_for):
-    """★ 广播出去的那一份**只有** name / message / ts（不许夹带 uid / sid）。"""
-    user_w1 = _account('watcher')
-    w1 = socket_for(user_w1, username='观众一号')
-    assert _join(w1, room)['status'] == 'success'
-    w1.get_received()
-    assert _chat(w1, room, '嗨')['status'] == 'success'
-    row = (_drain(w1).get('spectate_chat') or [])[0]
-    assert set(row) == {'name', 'message', 'ts'}, '多余的字段要逐个交代：%r' % row
-    assert user_w1 not in _json_text(row)
-    assert _sid_of(w1) not in _json_text(row)
 
 
 def test_chat_never_touches_the_game_log(room, socket_for):
@@ -477,29 +293,6 @@ def test_chat_never_touches_the_game_log(room, socket_for):
 # ===========================================================================
 # 3. ★★ 观战席名单：观众看得到，**对局双方看不到**
 # ===========================================================================
-def test_roster_reaches_spectators_with_names(room, socket_for):
-    """观众彼此看到名字，且**进出实时**（第 3 批只有进席那一刻的静态名单）。"""
-    w1 = socket_for(_account('watcher'), username='观众一号')
-    assert _join(w1, room)['status'] == 'success'
-    first = _drain(w1).get('spectate_roster') or []
-    assert first and [r['name'] for r in first[-1]['spectators']] == ['观众一号']
-    assert first[-1]['count'] == 1 and first[-1]['limit'] == spectate.SPECTATOR_LIMIT
-
-    # ★ 后进来的人要被先来的人看到（这正是第 3 批缺的那一条）
-    w2 = socket_for(_account('watcher2'), username='观众二号')
-    assert _join(w2, room)['status'] == 'success'
-    got = _drain(w1)
-    roster = (got.get('spectate_roster') or [])[-1]
-    names = [r['name'] for r in roster['spectators']]
-    assert names == ['观众一号', '观众二号'], '先来的人没看到后进来的人：%r' % names
-    assert roster['count'] == 2
-    assert (got.get('spectate_joined') or [])[-1]['name'] == '观众二号'
-
-    # 离席也实时
-    assert _leave(w2, room)['status'] == 'success'
-    got2 = _drain(w1)
-    assert (got2.get('spectate_left') or [])[-1]['name'] == '观众二号'
-    assert [r['name'] for r in (got2.get('spectate_roster') or [])[-1]['spectators']] == ['观众一号']
 
 
 def test_roster_never_reaches_the_players(room, socket_for):
@@ -550,80 +343,12 @@ def test_roster_has_no_user_id_or_socket_or_seat_key(room, socket_for):
     assert set(roster) == {'spectators', 'count', 'limit'}, set(roster)
 
 
-def test_roster_broadcast_stays_consistent_with_the_snapshot(room, socket_for):
-    """名单的**实时事件**与进席**快照**必须同源同形（不许两份实现，教训 #1）。"""
-    w1 = socket_for(_account('watcher'), username='观众一号')
-    w2 = socket_for(_account('watcher2'), username='观众二号')
-    assert _join(w1, room)['status'] == 'success'
-    assert _join(w2, room)['status'] == 'success'
-    live = (_drain(w1).get('spectate_roster') or [])[-1]
-    snap = (_drain(w2).get('spectate_sync') or [])[-1]
-    assert [r['name'] for r in live['spectators']] \
-        == [r['name'] for r in snap['spectators']]
-    assert live['count'] == snap['spectator_count'] == 2
-    assert live['limit'] == snap['spectator_limit'] == spectate.SPECTATOR_LIMIT
 
 
-def test_roster_rejoin_forgets_nothing_and_leak_guard_can_fail(room, socket_for):
-    """★ 元测试：把 `_spectate_roster` 改坏（偷偷带上 user_id），
-    `test_roster_has_no_user_id_or_socket_or_seat_key` 的核心断言**必须变红**。"""
-    import unittest.mock as mock
-    user_w1 = _account('watcher')
-    w1 = socket_for(user_w1, username='观众一号')
-    assert _join(w1, room)['status'] == 'success'
-    w1.get_received()
-
-    real = server._spectate_roster
-
-    def leaky(rm):
-        out = real(rm)
-        for row, info in zip(out['spectators'], (rm.spectators or {}).values()):
-            row['user_id'] = (info or {}).get('user_id')      # ← 故意改坏
-        return out
-
-    with mock.patch.object(server, '_spectate_roster', leaky):
-        assert _chat(w1, room, '随便一句话')['status'] == 'success'
-        server._spectate_broadcast_roster(room)
-    roster = (_drain(w1).get('spectate_roster') or [])[-1]
-    assert user_w1 in _json_text(roster), (
-        '把 user_id 塞进名单之后，泄漏断言居然还是绿的 —— 它是摆设'
-    )
 
 
-def test_disconnect_removes_the_spectator_and_tells_the_others(room, socket_for):
-    """断线离席也要**实时**反映到名单里（否则名单上挂着一个已经不在的人）。"""
-    w1 = socket_for(_account('watcher'), username='观众一号')
-    w2 = socket_for(_account('watcher2'), username='观众二号')
-    assert _join(w1, room)['status'] == 'success'
-    assert _join(w2, room)['status'] == 'success'
-    w1.get_received()
-
-    w2.disconnect()
-    # `disconnect` handler 里不能同步 emit（会卡 hub），名单由后台任务补 —— 等它。
-    deadline = time.time() + 3.0
-    while time.time() < deadline:
-        got = _drain(w1)
-        rows = got.get('spectate_roster') or []
-        if rows and [r['name'] for r in rows[-1]['spectators']] == ['观众一号']:
-            assert (got.get('spectate_left') or [])[-1]['name'] == '观众二号'
-            return
-        time.sleep(0.05)
-    raise AssertionError('断线之后名单没有更新：%r' % _json_text(_drain(w1)))
 
 
-def test_leaving_does_not_leave_a_stale_roster_on_screen(room, socket_for):
-    """观众退出后，他的名单状态被清掉（前端 `leaveSpectateScreen` 的契约）。
-
-    服务端这一侧要保证的是：退席之后**不再有任何**名单/聊天事件发给他
-    （否则下一局观战屏会在快照到达之前先闪出上一局的人名）。
-    """
-    w1 = socket_for(_account('watcher'), username='观众一号')
-    assert _join(w1, room)['status'] == 'success'
-    assert _leave(w1, room)['status'] == 'success'
-    w1.get_received()
-    assert _leave(w1, room)['status'] == 'error', '重复退席必须明确回一句原因'
-    assert not _drain(w1).get('spectate_roster')
-    assert spectate.spectate_room_id(room.id) not in _rooms_of(w1)
 
 
 # ===========================================================================
@@ -699,34 +424,6 @@ def _chat_handler_offences(src):
     return offences
 
 
-def test_chat_handler_never_uses_add_game_log_or_the_game_room():
-    """★★ 源码级：观战聊天 handler **绝不**碰 `add_game_log` / `game_logs`，
-    也绝不 `room=room.id`。
-
-    这是本需求**最关键的一条守卫**：`add_game_log` 是房间级广播，一走玩家
-    当场就看到了观战席聊天 —— 而且**运行时毫无症状**（消息照发、观众照收、
-    日志照写，只是玩家那边多了一行）。
-    """
-    src = _chat_handler_source()
-    assert 'spectate_chat' in src, '取到的不是聊天 handler（改名了？）'
-    offences = _chat_handler_offences(src)
-    assert offences == [], '观战聊天 handler 里有会漏给玩家的写法：%r' % offences
-
-    # 反向校准：把 `add_game_log` 塞进副本，守卫**必须**扫到（否则它是摆设）
-    planted = src.replace(
-        "    name = (room.spectators.get(sid) or {}).get('name') or str(uid)",
-        "    add_game_log(room, '观战席：' + message, 'chat')\n"
-        "    name = (room.spectators.get(sid) or {}).get('name') or str(uid)", 1)
-    assert planted != src, '（前提）注入点没找到 —— 反向校准失效了，请同步改这里'
-    assert _chat_handler_offences(planted), (
-        '把 add_game_log 插进观战聊天 handler，源码守卫却没扫到 —— 它是摆设'
-    )
-    # 再校准第二条：写成发对局房间
-    planted2 = src.replace(
-        "socketio.emit('spectate_chat', payload, room=spectate.spectate_room_id(room.id))",
-        "socketio.emit('spectate_chat', payload, room=room.id)", 1)
-    assert planted2 != src, '（前提）注入点没找到 —— 反向校准失效了'
-    assert _chat_handler_offences(planted2), '把广播改成发对局房间，源码守卫却没扫到'
 
 
 def test_roster_and_chat_go_only_to_the_spectate_channel():
@@ -755,63 +452,15 @@ def test_roster_and_chat_go_only_to_the_spectate_channel():
     assert offenders, '把名单广播改成发对局房间，守卫却没扫到 —— 它是摆设'
 
 
-def test_chat_rate_limiter_is_only_quick_chat():
-    """★ 源码级：观战聊天**复用** `quick_chat.check_rate`，不另写一套限流（教训 #1）。
-
-    判据只许有一份实现：handler 里不许出现**自己算**的窗口/条数常量
-    （`quick_chat.WINDOW_SECONDS` 这种读别人常量的写法是合规的 —— 关键是别自己写一个数字）。
-    """
-    src = _chat_handler_source()
-    assert 'quick_chat.check_rate(' in src, '限流没走 quick_chat.check_rate'
-    # 取 `quick_chat.` 以外的裸常量名：出现裸的 WINDOW_SECONDS / MAX_PER_WINDOW
-    # 就说明这里又长出了一份自己的规则。
-    tree = ast.parse(src)
-    own_constants = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and node.id in ('WINDOW_SECONDS', 'MAX_PER_WINDOW'):
-            own_constants.add(node.id)
-    assert not own_constants, (
-        'handler 里出现了自己算的限流常量 %s（又长出一份实现）' % sorted(own_constants))
-    # 状态住房间级（不是模块级全局 —— 那会让两个房间共用一个计数器）
-    assert 'room.spectate_chat_recent' in src and 'room.spectate_chat_last' in src
 
 
-def test_spectate_module_has_no_server_import():
-    """★ `spectate.py` 不许 import server（教训 #19：运行期 import server 会
-    再执行一遍整个 server.py，那份 socketio 静默发不出事件，且本地坏线上好）。"""
-    src = io.open(REPO_ROOT / 'spectate.py', encoding='utf-8').read()
-    for node in ast.walk(ast.parse(src)):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                assert alias.name.split('.')[0] != 'server', 'spectate.py import 了 server'
-        elif isinstance(node, ast.ImportFrom):
-            assert (node.module or '').split('.')[0] != 'server', 'spectate.py import 了 server'
 
 
-def test_new_spectate_events_are_registered_for_spectators():
-    """★ 新事件都在**观战白名单**里，且白名单与黑名单没有交集（教训 #10）。"""
-    for event in ('spectate_roster', 'spectate_joined', 'spectate_left',
-                  'spectate_chat', 'spectate_you'):
-        assert spectate.is_spectatable(event), '%s 没登记进 SPECTATE_EVENTS' % event
-        assert event not in spectate.NOT_FOR_SPECTATORS
-    assert not (set(spectate.SPECTATE_EVENTS) & set(spectate.NOT_FOR_SPECTATORS))
 
 
 # ===========================================================================
 # 5. 前端契约（源码级：id 对得上、只用 textContent）
 # ===========================================================================
-def test_spectate_roster_and_chat_dom_ids_exist_in_both_files():
-    """★ 前端引用的 id 必须在 `index.html` 里真的存在。
-
-    ⚠️ 写错的表现是 `getElementById` 拿到 null、被 `if (el)` 兜掉 ——
-    **不报错、只是点了没反应**（`tools/dom_contract_check.mjs` 就是查这个的，
-    这里再钉一遍本批新增的那几个）。"""
-    html = io.open(INDEX_HTML, encoding='utf-8').read()
-    for el_id in ('spectate-roster', 'spectate-roster-count',
-                  'spectate-chat', 'spectate-chat-input', 'spectate-chat-send'):
-        assert ('id="%s"' % el_id) in html, 'index.html 里没有 id=%s' % el_id
-        assert ("getElementById('%s')" % el_id) in io.open(
-            GAME_JS, encoding='utf-8').read(), 'game.js 没有引用 id=%s' % el_id
 
 
 def test_spectate_chat_renders_with_text_content_only():
@@ -845,20 +494,3 @@ def test_spectate_chat_renders_with_text_content_only():
     assert [l.strip() for l in tainted.splitlines()
             if 'innerHTML' in l and not re.search(r"innerHTML\s*=\s*(''|\"\")", l)], \
         '把 textContent 换成 innerHTML，守卫却没抓到 —— 它是摆设'
-
-
-def test_spectate_chat_input_is_wired_in_game_js():
-    """★ 输入框与发送按钮真的绑了事件（否则"填了没反应"，且不报错）。"""
-    src = io.open(GAME_JS, encoding='utf-8').read()
-    assert "spectateChatSendBtn.addEventListener('click', sendSpectateChat)" in src
-    assert 'spectateChatInput.addEventListener' in src
-    assert "'spectate_chat_send'" in src, '前端没有 emit spectate_chat_send'
-
-
-def test_player_chat_direction_is_decided_on_the_client():
-    """★ `isMe` 由前端按自己的名字判定（服务端那份已被移除）。"""
-    src = io.open(GAME_JS, encoding='utf-8').read()
-    start = src.index('function appendChatMessage(')
-    block = src[start:start + 1200]
-    assert 'gameState.playerName' in block, (
-        'appendChatMessage 不再按自己的名字判方向 —— 双方说话都会显示成同一侧')

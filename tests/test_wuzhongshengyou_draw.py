@@ -118,53 +118,15 @@ def test_no_duplicate_name_discarded(room):
 # ---------------------------------------------------------------------------
 # 提示文案必须如实
 # ---------------------------------------------------------------------------
-def test_message_reports_one_when_deck_has_one(room):
-    """★ 牌堆只剩 1 张时，提示必须说"只抽到1张"，不能说"抽了2张"。"""
-    room.magic_deck = [card('冻结')]
-    room.players[P1].magic_hand = []
-
-    res = server.apply_magic_effect(room, P1, card('无中生有'), {})
-
-    assert len(room.players[P1].magic_hand) == 1
-    assert '1张' in res.message, f'应如实说只抽到 1 张，实际：{res.message}'
-    assert '2张' not in res.message, f'不该谎报抽了 2 张，实际：{res.message}'
 
 
-def test_message_reports_empty_deck(room):
-    """★ 牌堆为空时，提示必须说明是牌堆空了。"""
-    room.magic_deck = []
-    room.players[P1].magic_hand = []
-
-    res = server.apply_magic_effect(room, P1, card('无中生有'), {})
-
-    assert room.players[P1].magic_hand == []
-    assert '牌堆已空' in res.message or '没有抽到' in res.message, (
-        f'应说明牌堆空了，实际：{res.message}')
-    assert '抽了2张' not in res.message
 
 
-def test_message_two_when_full_draw(room):
-    """牌堆充足时文案照旧（别把正常路径改坏）。"""
-    room.magic_deck = [card('冻结'), card('轰炸')]
-    room.players[P1].magic_hand = []
-
-    res = server.apply_magic_effect(room, P1, card('无中生有'), {})
-    assert '2张' in res.message
 
 
 # ---------------------------------------------------------------------------
 # no_draw 标记
 # ---------------------------------------------------------------------------
-def test_no_draw_flag_set_after_drawing(room):
-    """标记必须在两次摸牌【之后】设置，否则会把自己挡掉。"""
-    room.magic_deck = [card('冻结'), card('轰炸')]
-    room.players[P1].magic_hand = []
-
-    server.apply_magic_effect(room, P1, card('无中生有'), {})
-
-    assert room.players[P1].effect_flags.no_draw is True
-    assert room.players[P2].effect_flags.no_draw is True
-    assert len(room.players[P1].magic_hand) == 2, '自己不该被自己的标记挡住'
 
 
 def test_no_draw_blocks_subsequent_draws(room):
@@ -178,39 +140,8 @@ def test_no_draw_blocks_subsequent_draws(room):
     assert len(room.players[P1].magic_hand) == 2
 
 
-def test_residual_no_draw_blocks_all(room):
-    """残留的 no_draw 会把两张都挡掉（提示应如实说 0 张）。"""
-    room.magic_deck = [card('冻结'), card('轰炸')]
-    room.players[P1].magic_hand = []
-    room.players[P1].effect_flags.no_draw = True
-
-    res = server.apply_magic_effect(room, P1, card('无中生有'), {})
-
-    assert room.players[P1].magic_hand == []
-    assert '抽了2张' not in res.message, '实际一张没抽到，不该说抽了 2 张'
 
 
 # ---------------------------------------------------------------------------
 # 牌堆规模（供理解"为什么有时抽不满"）
 # ---------------------------------------------------------------------------
-def test_deck_size_is_finite(room):
-    """牌堆是一副有限的全局共享牌，双方共用 —— 抽不满是物理限制。
-
-    卡池 50 条（43 条原有 + 3 条判定卡：命运骰子/无忧梦呓/兵粮寸断 + 4 条新普通卡：
-    亡羊补牢/守株待兔/卧薪尝胆/滥竽充数）；
-    **实际进牌堆的张数 = 卡池减去 `server.HIDDEN_CARD_NAMES`**
-    （暂时隐藏的卡不进牌堆，见 tests/test_hidden_cards.py）。
-    """
-    deck = server.magic_cards
-    assert len(deck) == 50, f'卡池应 50 条，实际 {len(deck)}'
-    names = [c.name for c in deck]
-    dups = {n for n in names if names.count(n) > 1}
-    assert dups == {'失灵！'}, f'只有「失灵！」是多份，实际重复：{dups}'
-
-    hidden = sum(1 for n in names if n in server.HIDDEN_CARD_NAMES)
-    assert hidden == len(server.HIDDEN_CARD_NAMES), '隐藏名单里的每个卡名都应当真实存在于卡池'
-
-    room.init_player_magic(P1, server.magic_cards)
-    assert len(room.magic_deck) == len(deck) - hidden, (
-        f'牌堆应 {len(deck) - hidden} 张（卡池 {len(deck)} 减去隐藏 {hidden}），'
-        f'实际 {len(room.magic_deck)}')

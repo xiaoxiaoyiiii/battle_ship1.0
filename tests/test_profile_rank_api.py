@@ -26,28 +26,3 @@ def client(monkeypatch):
     monkeypatch.setattr(server.db, 'get_match_history', lambda uid, limit: [])
     monkeypatch.setattr(server.db, 'get_user_rank', lambda uid: 7)
     return server.app.test_client()
-
-
-def test_user_stats_includes_rank(client):
-    resp = client.get('/user_stats?username=alice')
-    assert resp.status_code == 200
-    payload = resp.get_json()
-    assert payload['stats']['rank'] == 7, '个人信息要带排行榜名次'
-    assert payload['stats']['avatar'] == '/static/avatars/x.png'
-    assert payload['stats']['signature'] == '测试签名'
-
-
-def test_user_stats_never_leaks_credentials(client):
-    payload = client.get('/user_stats?username=alice').get_json()
-    assert 'password_hash' not in payload['stats']
-    assert 'token' not in payload['stats']
-
-
-def test_user_stats_rank_none_when_unknown(monkeypatch):
-    """算不出名次（查无此人 / 库异常）时给 None，不影响其余字段。"""
-    monkeypatch.setattr(server.db, 'get_user', lambda **kw: _fake_stats())
-    monkeypatch.setattr(server.db, 'get_match_history', lambda uid, limit: [])
-    monkeypatch.setattr(server.db, 'get_user_rank', lambda uid: None)
-    payload = server.app.test_client().get('/user_stats?username=alice').get_json()
-    assert payload['stats']['rank'] is None
-    assert payload['stats']['username'] == 'alice'

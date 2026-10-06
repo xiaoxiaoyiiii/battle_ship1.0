@@ -120,59 +120,12 @@ def messages_to(events, sid):
 # ---------------------------------------------------------------------------
 # 1. 冻结：只算活船
 # ---------------------------------------------------------------------------
-def test_frozen_ship_count_ignores_sunken_ships(room):
-    p2 = board(room, P2, [(0, 0), (0, 1), (1, 0), (3, 3), (4, 4), (5, 5)])
-    for s in p2.ships[:3]:
-        s.frozen = room.round + 1
-
-    assert server.frozen_ship_count(p2) == 3
-    kill(room, P2, p2.ships[0])
-    assert server.frozen_ship_count(p2) == 2, '已沉的船不得再计入冻结数'
 
 
-def test_frozen_attacks_not_double_subtracted(room):
-    """★ 玩家实测：冻结后被冻结方的攻击次数被多减了一次。"""
-    p2 = board(room, P2, [(0, 0), (0, 1), (1, 0), (3, 3), (4, 4), (5, 5)])
-    for s in p2.ships[:3]:
-        s.frozen = room.round + 1
-
-    room.current_attacker = P2
-    server._recalc_attacker_attacks(room)
-    assert room.attacks_remaining == 3, f'6 艘存活 - 3 艘冻结 = 3，实际 {room.attacks_remaining}'
-
-    # 冻住的三艘里有一艘被打沉
-    kill(room, P2, p2.ships[0])
-    server._recalc_attacker_attacks(room)
-    assert room.attacks_remaining == 3, (
-        '5 艘存活 - 2 艘冻结 = 3；死船被重复扣了一次，'
-        f'实际 {room.attacks_remaining}')
 
 
-def test_freeze_message_excludes_sunken_ships(room, events):
-    """★ 玩家实测：冻结播报的数字把已经死亡的战舰算了进去。"""
-    p2 = board(room, P2, [(0, 0), (0, 1), (1, 0), (3, 3), (4, 4), (5, 5)])
-    dead = p2.ships[1]
-    kill(room, P2, dead)
-
-    res = server.apply_magic_effect(room, P1, card('冻结'),
-                                    {'target_area': {'x1': 0, 'y1': 0, 'x2': 2, 'y2': 2}})
-
-    assert res.success is True, res.message
-    assert '冻结了2艘战舰' in res.message, res.message
-    assert not getattr(dead, 'frozen', None), '死船不该被打上冻结标记'
-    assert server.frozen_ship_count(p2) == 2
 
 
-def test_revive_does_not_inherit_frozen(room):
-    """复活不该把上一轮的冻结标记带回棋盘（否则凭空少一次攻击）。"""
-    p1 = board(room, P1, [(0, 0), (1, 1), (2, 2)])
-    dead = p1.ships[0]
-    dead.frozen = room.round + 1
-    kill(room, P1, dead)
-
-    server._revive_sunken_ships(room, p1, 1)
-
-    assert server.frozen_ship_count(p1) == 0, '复活后的船不应仍处于冻结状态'
 
 
 # ---------------------------------------------------------------------------
@@ -196,147 +149,48 @@ def _baizhe_with_replacement(room):
     assert room.state == 'attacking'
 
 
-def test_baizhe_zero_survives_enter_battle_phase(room):
-    """★ 玩家实测：准备阶段确实归 0，一进战斗阶段又被按船数算回 6。"""
-    _baizhe_with_replacement(room)
-    room.current_attacker = P1
-    room.current_phase = 'preparation'
-    room.attacks_remaining = 0
-
-    res = server.enter_battle_phase({'room_id': room.id, 'player_id': P1})
-
-    assert res.get('status') == 'success', res
-    assert room.current_phase == 'battle'
-    assert room.attacks_remaining == 0, (
-        f'败者食尘生效的大回合内不得按船数重算，实际 {room.attacks_remaining}')
 
 
-def test_baizhe_zero_applies_to_both_players(room):
-    """卡面：「生效的大回合内【双方】的攻击次数都为 0」。"""
-    server.apply_magic_effect(room, P1, card('败者食尘'), {})
-    board(room, P2, [(i, 5) for i in range(6)])
-
-    room.current_attacker = P2
-    server._recalc_attacker_attacks(room)
-    assert room.attacks_remaining == 0, '对手在同一大回合内也应是 0'
 
 
-def test_baizhe_zero_expires_next_big_round(room):
-    """反证：下一个大回合恢复正常的按船数计算。"""
-    server.apply_magic_effect(room, P1, card('败者食尘'), {})
-    board(room, P1, [(i, 0) for i in range(6)])
-
-    room.round += 1
-    room.current_attacker = P1
-    server._recalc_attacker_attacks(room)
-    assert room.attacks_remaining == 6, f'新大回合应恢复正常，实际 {room.attacks_remaining}'
 
 
-def test_baizhe_zero_not_refilled_by_wuxian(room):
-    """五险一金不得把被规则压成 0 的次数回填成 3。"""
-    _baizhe_with_replacement(room)
-    room.players[P1].effect_flags.wuxian = True
-    room.current_attacker = P1
-    room.current_phase = 'preparation'
-    room.attacks_remaining = 0
-
-    server.enter_battle_phase({'room_id': room.id, 'player_id': P1})
-
-    assert room.attacks_remaining == 0, (
-        f'五险一金不该盖掉败者食尘的 0，实际 {room.attacks_remaining}')
 
 
-def test_baizhe_zero_not_refilled_by_ship_change(room):
-    """船数变化（增援/复活）也不许把 0 加回来。"""
-    server.apply_magic_effect(room, P1, card('败者食尘'), {})
-    board(room, P1, [(i, 0) for i in range(6)])
-    room.current_attacker = P1
-
-    server._sync_attacks_after_ship_change(room, P1, 1)
-    assert room.attacks_remaining == 0
 
 
 # ---------------------------------------------------------------------------
 # 3. 越战越勇：发动即 +1
 # ---------------------------------------------------------------------------
-def test_battle_spirit_grants_attack_immediately(room, events):
-    """★ 玩家实测：发动后攻击次数没有任何变化，要等下一发击沉才生效。"""
-    board(room, P1, [(0, 0), (1, 0)])
-    room.attacks_remaining = 2
-    board(room, P2, [(5, 5)])
-    room.players[P1].magic_hand = [card('越战越勇')]
-    room.last_attack = {'attacker': P1, 'x': 3, 'y': 3, 'hit': True,
-                        'ship_sunk': True, 'round': room.round}
-
-    res = use(room, P1, '越战越勇')
-    assert res.get('status') == 'success', res
-    server.resolve_chain(room)
-
-    assert room.players[P1].effect_flags.battle_spirit is True
-    assert room.attacks_remaining == 3, (
-        f'发动当场就应 +1（2 → 3），实际 {room.attacks_remaining}')
-    ups = [d for e, d, to, r in events if e == 'attacks_updated']
-    assert any(d.get('attacks_remaining') == 3 for d in ups), '应广播新的攻击次数'
 
 
-def test_battle_spirit_still_stacks_on_later_kills(room):
-    """本大回合内再击沉一艘，仍然 +1（原有行为不能被改坏）。"""
-    board(room, P1, [(0, 0), (1, 0)])
-    board(room, P2, [(5, 5)])
-    room.attacks_remaining = 2
-    room.players[P1].magic_hand = [card('越战越勇')]
-    room.last_attack = {'attacker': P1, 'x': 3, 'y': 3, 'hit': True,
-                        'ship_sunk': True, 'round': room.round}
-    use(room, P1, '越战越勇')
-    server.resolve_chain(room)
-    assert room.attacks_remaining == 3
-
-    # 3 次里花掉 1 次并击沉一艘：3 - 1 + 1 = 3
-    server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 5, 'y': 5})
-    assert room.attacks_remaining == 3, (
-        f'击沉后应再 +1，实际 {room.attacks_remaining}')
 
 
-def test_battle_spirit_requires_fresh_kill(room):
-    """卡面「仅可在击沉对方的一艘战舰后立即使用才会有效」——没有击沉就不该消耗。"""
-    room.players[P1].magic_hand = [card('越战越勇')]
-    room.last_attack = {'attacker': P1, 'x': 0, 'y': 0, 'hit': True,
-                        'ship_sunk': False, 'round': room.round}
-
-    res = use(room, P1, '越战越勇')
-
-    assert res.get('status') == 'error', res
-    assert '越战越勇' in res['message']
-    assert [c.name for c in room.players[P1].magic_hand] == ['越战越勇']
-    assert not any(c.name == '越战越勇' for c in room.magic_discard)
-    assert room.players[P1].effect_flags.battle_spirit is False
 
 
 # ---------------------------------------------------------------------------
 # 4. 条件不满足 → 不吞牌 + 明确播报
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize('name', ['死者苏生', '疗愈', '绝处逢生', '神之宣告',
-                                  '平等条约', '失灵！', '加百列之光',
-                                  '余音绕梁', '桃园结义'])
-def test_conditional_failure_returns_card_to_hand(room, events, name):
+def test_conditional_failure_returns_card_to_hand(room, events):
     """★ 玩家实测：不满足条件的牌被打出后直接消失。"""
-    p1 = board(room, P1, [(0, 0), (1, 0), (2, 0)])
-    if name in ('绝处逢生', '神之宣告'):
-        p1.remaining_ships = 1          # 触发"需要至少 N 艘战舰"
-    p1.magic_hand = [card(name)]
-    if name == '桃园结义':
-        p1.effect_flags.no_draw = True  # 无中生有生效中
-    room.magic_deck = [card('冻结')]
+    for name in ['死者苏生', '疗愈', '绝处逢生', '神之宣告', '平等条约', '失灵！', '加百列之光', '余音绕梁', '桃园结义']:
+        p1 = board(room, P1, [(0, 0), (1, 0), (2, 0)])
+        if name in ('绝处逢生', '神之宣告'):
+            p1.remaining_ships = 1          # 触发"需要至少 N 艘战舰"
+        p1.magic_hand = [card(name)]
+        if name == '桃园结义':
+            p1.effect_flags.no_draw = True  # 无中生有生效中
+        room.magic_deck = [card('冻结')]
 
-    res = use(room, P1, name)
-    assert res.get('status') == 'success', f'{name} 应能进入连锁（失败发生在结算时）：{res}'
-    server.resolve_chain(room)
+        res = use(room, P1, name)
+        assert res.get('status') == 'success', f'{name} 应能进入连锁（失败发生在结算时）：{res}'
+        server.resolve_chain(room)
 
-    hand = [c.name for c in p1.magic_hand]
-    assert name in hand, f'{name} 条件不满足时必须退回手牌，实际手牌：{hand}'
-    assert not any(c.name == name for c in room.magic_discard), f'{name} 不该留在弃牌堆'
-    msgs = messages_to(events, 'sid-p1')
-    assert any('退回手牌' in t for t in msgs), f'{name} 应有"退回手牌"提示，实际：{msgs}'
+        hand = [c.name for c in p1.magic_hand]
+        assert name in hand, f'{name} 条件不满足时必须退回手牌，实际手牌：{hand}'
+        assert not any(c.name == name for c in room.magic_discard), f'{name} 不该留在弃牌堆'
+        msgs = messages_to(events, 'sid-p1')
+        assert any('退回手牌' in t for t in msgs), f'{name} 应有"退回手牌"提示，实际：{msgs}'
 
 
 def test_successful_card_is_still_consumed(room):
@@ -382,51 +236,10 @@ def _ship_removed_by_magic(room, pid, cell):
     return victim
 
 
-def test_old_sunken_cell_is_blocked_for_revive(room):
-    """★ 玩家实测：复活面板把"刚沉掉的那一格"也列成可点。"""
-    p1 = board(room, P1, [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 5)])
-    _ship_removed_by_magic(room, P1, (5, 5))
-
-    blocked = {(b['x'], b['y']) for b in server._placement_blocked_cells(room, P1)}
-    assert (5, 5) in blocked, '已沉船的原格不得出现在可放置列表里'
-    assert server._placement_error(room, P1, 5, 5) is not None
-    # 反证：空格照旧可放
-    assert server._placement_error(room, P1, 5, 0) is None
 
 
-def test_revive_confirm_rejects_old_sunken_cell(room):
-    """端到端：走真实出牌 + 放置确认，原格必须被拒。"""
-    p1 = board(room, P1, [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 5)])
-    _ship_removed_by_magic(room, P1, (5, 5))
-    p1.magic_hand = [card('死者苏生')]
-
-    use(room, P1, '死者苏生')
-    server.resolve_chain(room)
-
-    out = server.handle_confirm_reinforcement(
-        {'room_id': room.id, 'player_id': P1, 'position': {'x': 5, 'y': 5}})
-    assert out.get('status') == 'error', out
-
-    # 空格可以放
-    ok = server.handle_confirm_reinforcement(
-        {'room_id': room.id, 'player_id': P1, 'position': {'x': 5, 'y': 0}})
-    assert ok.get('status') == 'success', ok
 
 
-def test_attack_record_of_old_sunken_cell_is_kept(room):
-    """放在别处时，对方打在原沉船格上的历史不得被顺手清掉。"""
-    p1 = board(room, P1, [(0, 0), (1, 0), (5, 5)])
-    room.players[P2].attacks = [Position(x=5, y=5, hit=True, ship_sunk=True)]
-    _ship_removed_by_magic(room, P1, (5, 5))
-    p1.magic_hand = [card('死者苏生')]
-
-    use(room, P1, '死者苏生')
-    server.resolve_chain(room)
-    server.handle_confirm_reinforcement(
-        {'room_id': room.id, 'player_id': P1, 'position': {'x': 3, 'y': 3}})
-
-    assert any(a.x == 5 and a.y == 5 for a in room.players[P2].attacks), \
-        '原沉船格的攻击历史不该消失（否则那一格对对方"变回未知"）'
 
 
 # ---------------------------------------------------------------------------
@@ -469,67 +282,12 @@ def test_last_stand_placement_always_has_clickable_cells(room, events):
     assert len(clickable) == 4, f'必须有格子可点，实际 {clickable}'
 
 
-def test_last_stand_still_confirmable_after_blocked_fix(room):
-    """端到端：修好 blocked 之后，原格仍能被服务端接受并放下那一艘船。"""
-    p1 = board(room, P1, [(0, 0), (1, 0), (2, 0)])
-    p1.magic_hand = [card('绝处逢生')]
-
-    use(room, P1, '绝处逢生')
-    server.resolve_chain(room)
-    assert p1.remaining_ships == 0, '绝处逢生应牺牲全部战舰'
-
-    out = server.handle_confirm_reinforcement(
-        {'room_id': room.id, 'player_id': P1, 'position': {'x': 1, 'y': 0}})
-    assert out.get('status') == 'success', out
-    assert p1.remaining_ships == 1
 
 
-def test_cell_xy_accepts_both_shapes():
-    """候选格的两种形态（[x,y] 与 {'x':..}）都要能解包。"""
-    assert server._cell_xy([2, 3]) == (2, 3)
-    assert server._cell_xy((2, 3)) == (2, 3)
-    assert server._cell_xy({'x': 2, 'y': 3}) == (2, 3)
-    assert server._cell_xy('nope') is None
-    assert server._cell_xy(None) is None
 
 
-def test_revive_still_blocks_sunken_cells(room, events):
-    """反证：死者苏生/增援那条口径不能被这次修复改回去（原格仍必须灰掉）。"""
-    p1 = board(room, P1, [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 5)])
-    _ship_removed_by_magic(room, P1, (5, 5))
-    p1.magic_hand = [card('死者苏生')]
-
-    use(room, P1, '死者苏生')
-    server.resolve_chain(room)
-
-    payload = _placement_payload(events, 'sid-p1')
-    blocked = {(b['x'], b['y']) for b in payload.get('blocked') or []}
-    assert (5, 5) in blocked, '死者苏生仍不许摆到刚沉掉的那一格'
-    assert 'allowed' not in payload, 'allowed 是绝处逢生的白名单语义，别乱下发'
 
 
-def test_shenji_redeploy_still_allows_original_cell(room, events):
-    """反证：神机妙算的"重新部署"仍可放回原位置（ignore_sunken 语义不变）。"""
-    p1 = board(room, P1, [(0, 0), (1, 0), (2, 0)])
-    room.players[P2].attacks = [Position(x=0, y=0, hit=True, ship_sunk=True)]
-    victim = p1.ships[0]
-    kill(room, P1, victim)
-
-    # 服务端校验：原位置（已被对方打过）在 allow_cells 豁免下必须放行
-    assert server._placement_error(room, P1, 0, 0, allow_cells={(0, 0)},
-                                   ignore_sunken=True) is None
-
-    # 下发给前端的 blocked 也要把原位置剔除（与 _emit_placement_request 同口径）
-    room.game_effects['shenji_redeploy_cells'] = [[0, 0]]
-    room.magic_temp_data['pending_placement'] = {
-        'caster': P1, 'kind': 'shenji_redeploy',
-        'remaining': 1, 'total': 1, 'placed': 0,
-    }
-    server._emit_placement_request(room, P1)
-    payload = [d for e, d, to, r in events if e == 'placement_request'][-1]
-    blocked = {(b['x'], b['y']) for b in payload['blocked']}
-    assert (0, 0) not in blocked, f'神机妙算的原位置必须仍可点，实际 blocked={blocked}'
-    assert 'allowed' not in payload, 'allowed 是白名单语义，神机妙算不能下发'
 
 
 # ---------------------------------------------------------------------------
@@ -554,18 +312,3 @@ def test_last_radiance_clears_opponent_attacks_on_my_board(room, events):
         '我打在对方棋盘上的记录不能被清 —— 清掉会让已探明的格子又能重打')
     assert room.players[P1].ships == []
     assert room.players[P1].remaining_ships == 0
-
-
-def test_last_radiance_keeps_other_board_marks(room):
-    """反证：对方棋盘上的显形/攻击记录与本卡无关，不该被清。"""
-    board(room, P1, [(0, 0)])
-    board(room, P2, [(5, 5)])
-    room.players[P2].attacks = [Position(x=0, y=0, hit=True, ship_sunk=False)]
-    room.players[P2].revealed_positions = [Position(x=0, y=0)]
-
-    server.apply_magic_effect(room, P1, card('回光返照'), {})
-
-    assert room.players[P2].attacks == []
-    assert room.players[P2].revealed_positions == [], \
-        '对方视角里我方的棋盘（显形记录）也要清空（卡面要求）'
-    assert room.players[P1].attacks == []

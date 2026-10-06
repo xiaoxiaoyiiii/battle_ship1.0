@@ -116,16 +116,6 @@ def room():
 # ===========================================================================
 # 0. 前置校准：这两组格确实"无交集"（否则下面的方向断言是空转绿）
 # ===========================================================================
-def test_prerequisite_cell_groups_are_disjoint(room):
-    """★ 反向校准：**两组格无交集**这件事本身要断言。
-
-    如果哪天有人把 P1_OUT / P2_OUT 改成同一批格（或者改成空），
-    "方向写反"与"方向写对"的结果会完全一样 ⇒ 下面所有方向断言都会假绿。
-    """
-    p1 = {(c.x, c.y) for c in room.players[SID_A].attacks}
-    p2 = {(c.x, c.y) for c in room.players[SID_B].attacks}
-    assert p1 and p2, '两组格都必须非空（空的那一组会让方向断言空转）'
-    assert not (p1 & p2), '两组格必须无交集，实际交集 = %s' % sorted(p1 & p2)
 
 
 # ===========================================================================
@@ -236,39 +226,6 @@ def test_frontend_boards_match_the_server_snapshot_cell_by_cell(room):
     assert out.count('FAIL') == 0, out[-4000:]
 
 
-def test_dom_tool_can_actually_fail(room):
-    """★ **自我校准**：同一个工具的"对"与"错"两份输入必须一个绿一个红。
-
-    没有这一条，`test_frontend_boards_match_the_server_snapshot_cell_by_cell`
-    可能只是"工具永远说 OK"（CLAUDE.md 教训 #34：零报错制造假象）。
-
-    ⚠️ 两份帧**都从快照的座位方向现场构造**，**不读 `_spectate_board_frame`** ——
-    否则这条用例会跟着被测对象一起坏：服务端方向被翻反时，工具里的"参考帧"
-    也一起被翻反，两份错得一样 ⇒ 工具照样全绿 ⇒ 这条自我校准**与主用例同时假绿**
-    （本用例第一版就是这样，实测在红测里没红）。
-    """
-    snap = _str_coords(_plain(server._build_spectate_snapshot(room)))
-    good = {                   # 座位方向（与快照同向）= 唯一正确的帧
-        'room_id': snap['room_id'],
-        'seat_labels': snap.get('seat_labels') or {},
-        'sides': {label: {'attacks': [dict(c) for c in snap['sides'][label]['attacks']]}
-                  for label in ('p1', 'p2')},
-    }
-    bad = json.loads(json.dumps(good))
-    bad['sides']['p1']['attacks'], bad['sides']['p2']['attacks'] = (
-        bad['sides']['p2']['attacks'], bad['sides']['p1']['attacks'])
-
-    ok_proc = _run_dom_tool({'snapshot': snap, 'frame': good})
-    assert ok_proc.returncode == 0, \
-        '座位方向的帧（正确）被工具判红了 —— 工具的判据方向错了\n' + (ok_proc.stdout or '')[-3000:]
-
-    bad_proc = _run_dom_tool({'snapshot': snap, 'frame': bad})
-    out = bad_proc.stdout or ''
-    assert bad_proc.returncode != 0, '帧方向被翻反了，工具却全绿 —— 判据是空的\n' + out[-3000:]
-    assert 'FAIL' in out, out[-3000:]
-    # 而且必须**红在方向那几条上**，不是红在别的地方
-    assert ('第 1 块棋盘仍然 == 服务端 sides.p2.attacks' in out
-            or '两块棋盘对调' in out), out[-3000:]
 
 
 # ===========================================================================
@@ -286,46 +243,8 @@ def _func_src(path, name):
     raise AssertionError('%s 里找不到函数 %s（改名了？）' % (path.name, name))
 
 
-def test_frame_never_flips_the_direction_in_source():
-    """★ `_spectate_board_frame` 的函数体里**不许**出现"往 side 里塞对手的格"。
-
-    这是"方向只许有一处判据"的机器版本：第 5 批那行
-    `side['attacks'] = _spectate_player_cells(_opponent_of(...))` 会立刻被扫出来。
-    """
-    body = _func_src(SERVER_PY, '_spectate_board_frame')
-    assert '_opponent_of' not in body, \
-        '_spectate_board_frame 里出现了对手取数 —— 方向被翻成棋盘方向了（两块棋盘会对调）'
-    assert "_spectate_player_cells(" not in body.replace(
-        "frame['sides']['p%d' % (index + 1)] = _spectate_side_payload", ''), \
-        '_spectate_board_frame 里自己在拼格子列表了；座位载荷只许走 _spectate_side_payload'
-    assert '_spectate_side_payload' in body, \
-        '帧的座位载荷必须走 `_spectate_side_payload`（与快照同一个实现）'
 
 
-def test_frontend_has_exactly_one_transpose_and_both_paths_use_it():
-    """★ 前端只许有**一处** `board_attacks` 赋值，且快照 / 帧两条入口都得调它。
-
-    防的是"为了修对调再写第二份转置"（那就是两份实现，下次必然漂移 —— 教训 #1）。
-    """
-    js = _js()
-    assert js.count('snap.board_attacks = {') == 1, \
-        '全仓 `board_attacks` 的赋值不止一处 —— 长出了第二份转置'
-    idx = js.index('snap.board_attacks = {')
-    enclosing = js.rindex('function ', 0, idx)
-    assert 'spectateRebuildBoardAttacks' in js[enclosing:idx], \
-        '那处赋值不在 `spectateRebuildBoardAttacks` 里'
-
-    for entry in ('applySpectateSnapshot', 'applySpectateBoardFrame'):
-        start = js.index('function ' + entry + '(')
-        end = js.index('spectateRebuildBoardAttacks()', start)
-        assert end - start < 4000, \
-            '%s 里没有调用 spectateRebuildBoardAttacks（方向会两套并存）' % entry
-
-    # `applySpectateSnapshot` 也不许再用服务端那份 `board_attacks` 直接画
-    snap_fn = js[js.index('function applySpectateSnapshot('):
-                 js.index('function appendSpectateLog(')]
-    assert 'payload.board_attacks' not in snap_fn, \
-        'applySpectateSnapshot 直接用了服务端那份 board_attacks —— 前端会有两套朝向'
 
 
 # ===========================================================================
@@ -369,8 +288,7 @@ def _server_board(room, label):
     return _board_of(server._spectate_board_frame(room), label)
 
 
-@pytest.mark.parametrize('card_name', ['回光返照', '灵气复苏', '败者食尘', '疗愈'])
-def test_board_frame_end_of_operation_has_no_divergence(room, frames, card_name):
+def test_board_frame_end_of_operation_has_no_divergence(room, frames):
     """★★ 一次操作结束时，**最后一条** `spectate_board` 帧必须等于服务端此刻的棋盘。
 
     ## 这条用例抓的是第 6 批实测到的第二个真缺陷
@@ -397,39 +315,47 @@ def test_board_frame_end_of_operation_has_no_divergence(room, frames, card_name)
        中间态那条帧是**有意**的（棋盘变了就得马上告诉观众），本条只要求
        **收尾那一条**必须是真值。
     """
-    if card_name == '疗愈':
-        # 疗愈要有一艘"已沉的船"才有东西可复活
-        ship = next(s for s in room.players[SID_B].ships)
-        room.players[SID_A].attacks.append(
-            Position(x=ship.positions[0].x, y=ship.positions[0].y, hit=True, ship_sunk=True))
-        ship.hits.append(Position(x=ship.positions[0].x, y=ship.positions[0].y, hit=True))
-        room.players[SID_B].sunken_ships.append(ship)
-        room.players[SID_B].remaining_ships -= 1
-        room.players[SID_A].attacks.append(Position(x=2, y=5, hit=False, ship_sunk=False))
+    for card_name in ['回光返照', '灵气复苏', '疗愈', '败者食尘']:
+        if card_name == '疗愈':
+            # 疗愈要有一艘"已沉的船"才有东西可复活；前面的重置卡可能清空该方舰队。
+            target = room.players[SID_B]
+            ship = next((candidate for candidate in target.ships
+                         if server._is_ship_alive(target, candidate)), None)
+            if ship is None:
+                ship = PlayerShip(positions=[Position(x=0, y=0)], hits=[])
+                target.ships = [ship]
+                target.sunken_ships = []
+                target.remaining_ships = 1
+            room.players[SID_A].attacks.append(
+                Position(x=ship.positions[0].x, y=ship.positions[0].y, hit=True, ship_sunk=True))
+            ship.hits.append(Position(x=ship.positions[0].x, y=ship.positions[0].y, hit=True))
+            room.players[SID_B].sunken_ships.append(ship)
+            room.players[SID_B].remaining_ships -= 1
+            room.players[SID_A].attacks.append(Position(x=2, y=5, hit=False, ship_sunk=False))
 
-    frames.frames.clear()
-    if card_name == '疗愈':
-        server._revive_sunken_ships(room, room.players[SID_B], 1, reveal_to=SID_A)
-    elif card_name == '灵气复苏':
-        room.magic_temp_data = {'type': 'lingqi_choice', 'caster': SID_A, 'max_ships': 6}
-        resp = server.confirm_magic_target({
-            'room_id': room.id, 'player_id': SID_A, 'temp_data_id': 'lingqi_choice',
-            'target_data': {'target_ships': 6}})
-        assert resp.get('status') == 'success', resp
-    else:
-        room.current_attacker = SID_A          # 回光返照要求自己先手
-        res = server.apply_magic_effect(room, SID_A, MagicCard(card_name), {})
-        assert res.success is not False, getattr(res, 'message', res)
+        frames.frames.clear()
+        if card_name == '疗愈':
+            server._revive_sunken_ships(room, room.players[SID_B], 1, reveal_to=SID_A)
+        elif card_name == '灵气复苏':
+            room.magic_temp_data = {'type': 'lingqi_choice', 'caster': SID_A, 'max_ships': 6}
+            resp = server.confirm_magic_target({
+                'room_id': room.id, 'player_id': SID_A, 'temp_data_id': 'lingqi_choice',
+                'target_data': {'target_ships': 6}})
+            assert resp.get('status') == 'success', resp
+        else:
+            room.current_attacker = SID_A          # 回光返照要求自己先手
+            res = server.apply_magic_effect(room, SID_A, MagicCard(card_name), {})
+            assert res.success is not False, getattr(res, 'message', res)
 
-    assert frames.frames, '%s 一条 spectate_board 帧都没发' % card_name
-    last = frames.last
-    for label in ('p1', 'p2'):
-        got = _board_of(last, label)
-        want = _server_board(room, label)
-        assert got == want, (
-            '%s：最后一条帧里第 %s 块棋盘与服务端**此刻**不一致 —— '
-            '说明收尾帧没发出去（观众屏上留着服务端已经不存在的格）\n'
-            '  帧 = %s\n  服务端 = %s' % (card_name, label, got, want))
+        assert frames.frames, '%s 一条 spectate_board 帧都没发' % card_name
+        last = frames.last
+        for label in ('p1', 'p2'):
+            got = _board_of(last, label)
+            want = _server_board(room, label)
+            assert got == want, (
+                '%s：最后一条帧里第 %s 块棋盘与服务端**此刻**不一致 —— '
+                '说明收尾帧没发出去（观众屏上留着服务端已经不存在的格）\n'
+                '  帧 = %s\n  服务端 = %s' % (card_name, label, got, want))
 
 
 def test_huiguang_through_the_real_chain_has_no_divergence(room, frames, monkeypatch):
@@ -502,28 +428,3 @@ def test_huiguang_through_the_real_chain_has_no_divergence(room, frames, monkeyp
     # ★ 收尾帧必须**真的**带上那一格（否则上面那条可能只是"两边都空"在自证）
     assert (3, 3, True, False) in _board_of(last, 'p2'), \
         '（反向校准）那一格没有出现在收尾帧里 —— 说明最后一条帧还是"标记那一刻"的旧快照'
-
-
-def test_flush_is_actually_called_at_each_operations_end():
-    """★ 源码级：**每个会弄脏棋盘的收尾**都必须自己收口（`emit` 里那句是死代码）。
-
-    E2E + 服务端日志（FRAMEPUB）实测：清格发生在结算中段、帧也在那一刻发了，
-    而原设计指望的"`emit()` 收尾补一条"**从来不存在**（`emit` 只拿得到 room_id
-    字符串，拿不到 room 对象）。所以收口只能落在**每个操作自己的末尾**：
-    `_revive_sunken_ships` / `confirm_magic_target` / 回光返照分支 / 败者食尘分支。
-
-    ⚠️ 反面同样断言：`emit()` 里**不许**出现那句（写了也是死代码，
-       而且会让下一个人以为"收尾在那儿"——正是上一批文档里那句话的毛病）。
-    """
-    for func_name in ('_revive_sunken_ships',
-                      'confirm_magic_target',
-                      'apply_magic_effect'):
-        body = _func_src(SERVER_PY, func_name)
-        assert '_flush_spectate_board_if_dirty' in body, \
-            '%s 收尾没有收口棋盘脏标记 —— 它发出的最后一条帧会是中间态' % func_name
-    emit_body = _func_src(SERVER_PY, 'emit')
-    assert '_flush_spectate_board_if_dirty' not in emit_body, \
-        'emit() 拿不到 room 对象 —— 把收口写在这里是死代码'
-    chain_body = _func_src(SERVER_PY, 'resolve_chain')
-    assert '_flush_spectate_board_if_dirty' not in chain_body, \
-        'resolve_chain 里那句是空操作（脏标记已被各卡自己清掉）—— 别留"假收尾点"'

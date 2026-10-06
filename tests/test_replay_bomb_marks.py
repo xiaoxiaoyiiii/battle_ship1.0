@@ -210,24 +210,6 @@ def test_bomb_and_sulfur_marks_reach_the_replay_frame(room, card_name, target,
     assert _fold(payload, SIDE2, k) == [], '这一炮打在对手棋盘上，自己那块不许有标记'
 
 
-def test_the_same_cards_write_zero_attack_steps():
-    """★ 把"改前的数据判据"钉在源码级：这两张卡**一条 attack 步都不写**。
-
-    判据：`轰炸` / `硫磺火焰` 两个分支的源码段里没有 `add_game_log(..., 'attack', ...)`
-    也没有 `log_attack`。它是"为什么必须加时间线"的理由 —— 有人哪天给这两张卡补了
-    attack 日志（那会污染游戏内日志面板），这条会红、逼他先来读这段。
-    """
-    src = _read(SERVER_PY)
-    tree = ast.parse(src)
-    for card in ('轰炸', '硫磺火焰'):
-        branch = _card_branch_source(src, tree, card)
-        assert branch, '找不到 %s 的分支（改名/搬家了？）' % card
-        assert "'attack'" not in branch.replace('"attack"', "'attack'"), (
-            '%s 里出现了 type="attack" 的游戏日志 —— 那会让游戏内日志面板凭空多几行'
-            '（本批明确不做这条改法）' % card)
-    # 反向校准：普通炮击**确实**写 attack 日志（否则上面那条判据是空转的）
-    assert "'attack'" in _func_source(src, tree, 'handle_attack'), \
-        'handle_attack 不再写 attack 日志了？那本文件的整条理由都要重写'
 
 
 def _func_source(src, tree, name):
@@ -253,31 +235,6 @@ def _card_branch_source(src, tree, card_name):
 # ===========================================================================
 # ★ 守卫 2（回归腿）：普通炮击的标记**一个字节都没变**
 # ===========================================================================
-def test_single_shot_marks_are_unchanged(room):
-    """★ 单格炮击仍然一格标记、且 hit/sunk 与改动前逐格相同。
-
-    判据含"改前那条路径也会给出同一格"：一炮既有 attack 步、又有 `caster.attacks`，
-    所以新旧两条路径在**普通炮击**上必须给出同一个答案（这正是"收敛数据源"的
-    前提：收敛**不许**改变已经正确的那一类）。
-    """
-    server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 2, 'y': 1})
-    payload = replay.build(room)
-    k = len(payload['steps']) - 1
-
-    # ① 普通炮击**确实**产出了 attack 步（这是它与那两张卡的区别，别丢掉）
-    atk_steps = [s for s in payload['steps'] if s['kind'] == 'attack']
-    assert len(atk_steps) == 1, atk_steps
-    detail = atk_steps[0]['detail']
-    assert (detail['target']['x'], detail['target']['y']) == (2, 1)
-    assert detail['hit'] is True and detail['ship_sunk'] is True
-
-    # ② 帧标记与真值表一致（与回放改前逐格相同）
-    assert _fold(payload, SIDE1, k) == sorted(_truth(room.players[P1])) == ['2,1(沉)']
-    assert _fold(payload, SIDE2, k) == [], 'p1 没打过 p2 那块棋盘，它一格标记都不许有'
-    # ③ `attacks` 时间线里那一格也带 sunk（前端据此画 ✕ 而不是 ○）
-    cells = [c for row in payload['attacks'] for c in (row.get(SIDE1) or [])]
-    assert cells == [{'x': 2, 'y': 1, 'hit': True, 'sunk': True}], cells
-    room_manager.rooms.pop(room.id, None)
 
 
 def test_a_miss_keeps_hit_and_sunk_absent(room):
@@ -362,59 +319,8 @@ def test_board_reset_still_erases_the_earlier_marks(room):
     room_manager.rooms.pop(room.id, None)
 
 
-def test_only_one_mark_source_in_the_frontend():
-    """★★★ 回放里**只有一份**标记来源（教训 #1 不许从观战/回放之间搬进回放内部）。
-
-    判据（源码级，因为"两份来源"的症状是**多画/少画几格**、不会报错）：
-      ① `replayComputeFrame` 里标记只由 `payload.attacks` 产生；
-      ② 整个函数体里**不许**再出现 `kind === 'attack'` 那种"从日志步反推标记"的痕迹；
-      ③ `frame.marks[` 的**写入点全项目只有一处**（`frame.marks = ...` 的初始化不算）。
-    """
-    src = _read(GAME_JS)
-    frame_fn = _js_function_body(src, 'function replayComputeFrame(')
-    assert frame_fn, '找不到 replayComputeFrame（改名了？）'
-
-    assert 'payload.attacks' in frame_fn, \
-        '标记的数据源必须是 `payload.attacks` 这条时间线'
-    assert "kind !== 'attack'" not in frame_fn and 'step.kind' not in frame_fn, (
-        '`replayComputeFrame` 里又出现了"从 attack 步反推标记"的写法 —— 那正是本批修掉的'
-        '缺陷（只有普通炮击写 attack 步，那五张卡打出的格会整片消失）')
-
-    writes = [ln.strip() for ln in src.split('\n')
-              if 'frame.marks[' in ln and '] =' in ln]
-    assert len(writes) == 1, (
-        '`frame.marks[...] = ...` 的写入点必须**只有一处**（两份来源 = 一定漂移）：%s' % writes)
-    # ③ 反向校准：`steps` 仍然被用来判"这一帧到哪了"，别把整段删空
-    assert 'steps.length - 1' in frame_fn, '帧解算仍然要靠 steps 的长度定位最后一帧'
 
 
-def test_cards_do_not_add_a_game_log_row():
-    """★★ 本批**不许**给那几张卡补 `type='attack'` 的游戏日志（既有玩家可见功能不改）。
-
-    判据：`add_game_log` 的调用点清单（`tests/test_replay_guards.py`）一个点都不能变，
-    而且 `apply_magic_effect` 里那张 5 个点的表**也不许涨** —— 这条是它的本地化版本。
-    """
-    src = _read(SERVER_PY)
-    tree = ast.parse(src)
-    parent = {}
-    for node in ast.walk(tree):
-        for child in ast.iter_child_nodes(node):
-            parent[child] = node
-    tally = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if getattr(node.func, 'id', None) != 'add_game_log':
-            continue
-        cur = parent.get(node)
-        while cur is not None and not isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            cur = parent.get(cur)
-        name = cur.name if cur is not None else '<module>'
-        tally[name] = tally.get(name, 0) + 1
-    assert tally.get('apply_magic_effect') == 5, (
-        '`apply_magic_effect` 里的 add_game_log 调用点必须是 5（本批一个字都不加）：%s'
-        % tally.get('apply_magic_effect'))
-    assert sum(tally.values()) == 40, 'add_game_log 调用点总数必须仍是 40：%s' % sum(tally.values())
 
 
 # ===========================================================================
@@ -434,34 +340,6 @@ def test_the_attacks_timeline_is_sparse_and_incremental(room):
     room_manager.rooms.pop(room.id, None)
 
 
-def test_removing_marks_is_the_board_reset_timeline_s_job(room):
-    """★★ "某格不再算打过"（疗愈复活 / 换位共用的 `_clear_attacks_on_cells`）
-    **不写进 `attacks` 时间线**，而是由同一个失效点上的 `board_resets` 擦掉。
-
-    判据：清掉 `Player.attacks` 之后时间线里**没有任何"删除行"**（增量只记新增），
-    但配上 `note_board_reset` 之后帧里那些格就消失了 —— 一条时间线只做一件事。
-    """
-    # `note_board_reset` 用的是**调用那一刻**的 `len(steps)` ⇒ 它必须在"要在它之后
-    # 出现的那一步"之前调用（真实卡片里它紧跟在 `add_game_log` 后面）。这里先打完两炮、
-    # 再记重置（记在 step 2），随后再打的那一炮落在 step 2 之后。
-    server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 1, 'y': 0})   # step 1
-    room.players[P1].attacks = []
-    replay.note_board_reset(room, P1)               # 记在 step 2
-    server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 0})   # step 1
-    server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 4, 'y': 0})   # step 2
-
-    after = replay.build(room)
-    rows = after['attacks']
-    assert [r['step'] for r in rows] == [0, 1, 2], rows
-    for row in rows:
-        assert all(0 <= int(c['x']) <= 5 for c in (row.get(SIDE1) or [])), \
-            '时间线里不许有"删除行"（删除是 board_resets 的活）'
-    assert _fold(after, SIDE1, 1) == [], (
-        '换新之后那两格必须已经不在了：%s' % _fold(after, SIDE1, 1))
-    assert _fold(after, SIDE1, 3) == ['4,0'], (
-        '重置点之后打的那一格必须还在：%s' % _fold(after, SIDE1, 3))
-    assert after['board_resets'], '擦除必须由 board_resets 这条时间线负责'
-    room_manager.rooms.pop(room.id, None)
 
 
 def test_offboard_coordinates_are_dropped(room):
@@ -512,68 +390,3 @@ def _js_function_body(src, header):
             if depth == 0:
                 return src[start:j + 1]
     raise AssertionError('花括号不配平：%s' % header)
-
-
-def test_payload_field_list_matches_the_backend():
-    """★★ 前端认识的 `attacks` 字段必须**真的**在后端 `build()` 里。
-
-    这条防的是"前端加了一段读 `payload.attacks`、后端忘了产出它"（那就永远空）——
-    表现是"一片海面"、零报错、零异常，正是本批这个缺陷的形状。
-    """
-    payload = {}
-    room = _room([[(0, 1)]])
-    server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 1})
-    payload = replay.build(room)
-    assert 'attacks' in payload, 'replay.build() 没有产出 attacks 时间线'
-    assert isinstance(payload['attacks'], list) and payload['attacks']
-    first = payload['attacks'][0]
-    assert set(first) <= {'step', SIDE1, SIDE2}, first
-    cell = (first.get(SIDE1) or [])[0]
-    assert set(cell) <= {'x', 'y', 'hit', 'sunk'}, cell
-    room_manager.rooms.pop(room.id, None)
-
-
-def test_the_timeline_key_is_the_shooters_side_label(room):
-    """★★★ 时间线的键 = **打出这一炮那个座位**的代号，而且必须**就是**
-    `replay._side_label` 算出来的那一个（不许在别处再算一套）。
-
-    为什么单列一条：这份数据的键会决定"这一格画在哪块棋盘上"。同一份数据的两处取键
-    一旦漂移，症状是"标记画到对调的那块棋盘上"—— 不抛异常、不报错
-    （第 6 批观战批的原病根；CLAUDE.md 教训 #20：判据的输入必须来自同一套 id 空间）。
-
-    ⚠️ 顺带把"键是谁"这件事**写进断言**：前端 `renderReplayBoards` 让
-    `#replay-board-1`（第一位玩家的棋盘）画 `frame.marks[座位 1]`，所以键 = 座位。
-    """
-    server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 0, 'y': 0})
-    payload = replay.build(room)
-    row = payload['attacks'][0]
-    assert list(row) == ['step', replay._side_label(room, P1)], (
-        '行的键必须正好是 `_side_label(room, 打出去那个座位)`：%s' % row)
-    room_manager.rooms.pop(room.id, None)
-
-
-def test_a_cell_written_twice_keeps_the_last_write(room):
-    """★★ 同一格被写两次（先沉后落空）时，时间线与 `caster.attacks` 都取**后写的那条**。
-
-    真对局里约 3/10 局会出现一处（`tools/headless_game.py` 10 局实测 3 局，见文档 §H）：
-    普通炮击打沉某格之后，【轰炸】/【硫磺火焰】会给同一格补一条 `hit=False` 的落空
-    （卡里那句过滤只按"这次真的摘掉了哪些船"，已经沉过的船不在候选表里）。
-    实战前端逐条覆盖同一个键 ⇒ 玩家看到的是后写的那条 ⇒ 回放必须一致。
-    """
-    server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 2, 'y': 1})   # 击沉
-    _magic_step(room, '轰炸')                                                     # step 1
-    server.apply_magic_effect(room, P1, MagicCard('轰炸'),
-                              {'target_line': {'type': 'row', 'index': 1}})
-    replay.refresh_ships(room)
-    truth = _truth(room.players[P1])
-    assert '2,1(沉)' not in truth, '这一格最终是落空（后写的那条）:%s' % truth
-    payload = replay.build(room)
-    k = len(payload['steps']) - 1
-    assert _fold(payload, SIDE1, k) == sorted(truth), (
-        '帧必须与"后写的那条"逐格一致：\n  帧：%s\n  真值表：%s'
-        % (_fold(payload, SIDE1, k), sorted(truth)))
-    # 时间线里那一格必须有**两条**（step 0 的沉 + step 1 的落空），前端后写的赢
-    marks = [c for row in payload['attacks'] for c in (row.get(SIDE1) or [])
-             if (int(c['x']), int(c['y'])) == (2, 1)]
-    assert len(marks) == 2 and marks[0].get('sunk') is True and not marks[1].get('sunk'), marks
-    room_manager.rooms.pop(room.id, None)

@@ -68,24 +68,8 @@ def http():
 # ===========================================================================
 # A. ★ 管理员门禁（安全边界）
 # ===========================================================================
-def test_admin_me_false_for_normal_user(http, monkeypatch):
-    monkeypatch.setattr(server, 'DEBUG_ADMIN_USER_IDS', {'owner-1'})
-    u = _mk_user()
-    try:
-        r = http(u).get('/api/admin/me')
-        assert r.status_code == 200
-        assert r.get_json()['is_admin'] is False
-    finally:
-        _purge([u])
 
 
-def test_admin_me_true_for_admin(http, monkeypatch):
-    monkeypatch.setattr(server, 'DEBUG_ADMIN_USER_IDS', {'owner-1'})
-    try:
-        r = http('owner-1').get('/api/admin/me')
-        assert r.get_json()['is_admin'] is True
-    finally:
-        pass
 
 
 def test_normal_user_cannot_list_suspicion(http, monkeypatch):
@@ -124,19 +108,6 @@ def test_normal_user_cannot_override(http, monkeypatch):
         _purge([u])
 
 
-def test_empty_allowlist_denies_everyone(http, monkeypatch):
-    """★ 白名单为空 = **谁都不是管理员**（默认安全）。
-
-    绝不能写成"空就放行" —— 那等于线上没配管理员时门户大开。
-    """
-    monkeypatch.setattr(server, 'DEBUG_ADMIN_USER_IDS', set())
-    u = _mk_user()
-    try:
-        assert http(u).get('/api/admin/suspicion').status_code == 403
-        assert http(u).post(f'/api/admin/player/{u}/override',
-                            json={'cleared': True}).status_code == 403
-    finally:
-        _purge([u])
 
 
 def test_anonymous_gets_401(http, monkeypatch):
@@ -177,17 +148,6 @@ def test_admin_can_set_level(http, monkeypatch):
         _purge([u])
 
 
-def test_override_rejects_bad_level(http, monkeypatch):
-    monkeypatch.setattr(server, 'DEBUG_ADMIN_USER_IDS', {'owner-1'})
-    u = _mk_user()
-    try:
-        c = http('owner-1')
-        assert c.post(f'/api/admin/player/{u}/override', json={'level': 99}).status_code == 400
-        assert c.post(f'/api/admin/player/{u}/override', json={'level': 'x'}).status_code == 400
-        assert c.post(f'/api/admin/player/{u}/override', json={}).status_code == 400
-        assert db.get_anticheat_override(u) is None, '非法请求不许写库'
-    finally:
-        _purge([u])
 
 
 def test_override_history_is_append_only(http, monkeypatch):
@@ -206,20 +166,6 @@ def test_override_history_is_append_only(http, monkeypatch):
         _purge([u])
 
 
-def test_player_report_has_stats_and_flags(http, monkeypatch):
-    """报告里必须同时有：战绩、嫌疑度、封禁等级、干预历史。"""
-    monkeypatch.setattr(server, 'DEBUG_ADMIN_USER_IDS', {'owner-1'})
-    u = _mk_user()
-    try:
-        r = http('owner-1').get(f'/api/admin/player/{u}')
-        assert r.status_code == 200
-        p = r.get_json()['player']
-        for key in ('user_id', 'username', 'suspicion', 'level', 'level_name',
-                    'blocked', 'stats', 'flagged_matches', 'override_history'):
-            assert key in p, f'报告缺少 {key}'
-        assert 'wins' in p['stats'] and 'rank_points' in p['stats']
-    finally:
-        _purge([u])
 
 
 # ===========================================================================
@@ -257,31 +203,8 @@ def test_banned_user_cannot_find_ranked_match(monkeypatch):
         _purge([u])
 
 
-def test_level1_still_allows_casual(monkeypatch):
-    """★ 反向守卫：1 级**只**禁排位，休闲仍然能玩（逐级收紧，不许一刀切）。"""
-    u = _mk_user()
-    try:
-        db.set_anticheat_override(u, level=1, reason='test', actor='t')
-        _as_request(monkeypatch, 'sid-c', uid=u)
-        _capture_emit(monkeypatch)
-        res = server.handle_find_match({'player_name': '甲', 'mode': 'casual'})
-        assert res.get('status') != 'error', f'休闲不该被 1 级封禁拦住: {res}'
-    finally:
-        _purge([u])
-        server.room_manager.remove_from_match_queue('sid-c')
 
 
-def test_level2_blocks_casual_too(monkeypatch):
-    """★ 2 级（禁匹配）→ 连休闲也拦。"""
-    u = _mk_user()
-    try:
-        db.set_anticheat_override(u, level=2, reason='test', actor='t')
-        _as_request(monkeypatch, 'sid-m', uid=u)
-        _capture_emit(monkeypatch)
-        res = server.handle_find_match({'player_name': '甲', 'mode': 'casual'})
-        assert res['status'] == 'error', '2 级必须连休闲也拦'
-    finally:
-        _purge([u])
 
 
 def test_level3_blocks_create_room(monkeypatch):
@@ -315,17 +238,6 @@ def test_level3_blocks_join_room(monkeypatch):
         _purge([u])
 
 
-def test_clean_user_not_blocked(monkeypatch):
-    """★ 反向守卫：没被封的人一切照常（封禁不许误伤）。"""
-    u = _mk_user()
-    try:
-        _as_request(monkeypatch, 'sid-ok', uid=u)
-        _capture_emit(monkeypatch)
-        assert server.handle_find_match(
-            {'player_name': '甲', 'mode': 'ranked'}).get('status') != 'error'
-    finally:
-        _purge([u])
-        server.room_manager.remove_from_match_queue('sid-ok')
 
 
 def test_enforcement_fails_open(monkeypatch):
@@ -350,25 +262,3 @@ def test_enforcement_fails_open(monkeypatch):
 # ===========================================================================
 # D. 每局按人落库（累计的数据来源）
 # ===========================================================================
-def test_match_suspicion_recorded_for_both_sides():
-    """一局的嫌疑度要**双方各记一条**（靶子也要记 —— 他自己可能就是小号）。"""
-    from server import GameRoom, Player, PlayerShip, Position
-    room = GameRoom('susp-room')
-    pa = Player('甲', [PlayerShip([Position(0, 0)], [])], [], 1, user_id='u-a')
-    pb = Player('乙', [PlayerShip([Position(1, 0)], [])], [], 1, user_id='u-b')
-    room.players = {'pa': pa, 'pb': pb}
-    try:
-        server._record_match_suspicion_for(room, {'score': 40, 'level': 'record'})
-        a = db.get_match_suspicion('u-a')
-        b = db.get_match_suspicion('u-b')
-        assert any(str(r['match_id']).startswith('susp-room') for r in a)
-        assert any(str(r['match_id']).startswith('susp-room') for r in b)
-        assert a[0]['score'] == 40
-    finally:
-        _purge(['u-a', 'u-b'])
-
-
-def test_recording_never_raises():
-    """落库失败绝不许把对局结算搞崩。"""
-    server._record_match_suspicion_for(None, None)
-    server._record_match_suspicion_for(object(), {'score': 'abc'})

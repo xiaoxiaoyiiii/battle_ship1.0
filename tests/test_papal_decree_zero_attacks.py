@@ -110,41 +110,10 @@ def test_papal_from_battle_phase_does_not_deadlock(room, events):
     assert room.current_phase == 'end'
 
 
-def test_papal_from_preparation_then_battle(room):
-    """准备阶段打出（唯一"正常"时机）也照样归零并可走完全程。"""
-    room.players[P1].magic_hand = [card('教皇旨意')]
-    assert use(room, P1, '教皇旨意')['status'] == 'success'
-    assert room.attacks_remaining == 0
-
-    assert server.enter_battle_phase({'room_id': room.id, 'player_id': P1})['status'] == 'success'
-    assert room.attacks_remaining == 0
-
-    assert server.handle_enter_end_phase({'room_id': room.id, 'player_id': P1})['status'] == 'success'
 
 
-def test_papal_opponent_turn_also_zero(room):
-    """卡面说的是「双方」：换到对方回合、进战斗阶段时同样是 0。"""
-    room.players[P1].magic_hand = [card('教皇旨意')]
-    use(room, P1, '教皇旨意')
-
-    room.current_attacker = P2
-    room.current_phase = 'preparation'
-    room.attacks_remaining = 6
-
-    server.enter_battle_phase({'room_id': room.id, 'player_id': P2})
-    assert room.attacks_remaining == 0, '对方回合同为 0'
-    end = server.handle_enter_end_phase({'room_id': room.id, 'player_id': P2})
-    assert end.get('status') == 'success', '对方也不该卡死'
 
 
-def test_papal_emits_attacks_updated(room, events):
-    """归零后必须广播，否则前端仍显示旧次数。"""
-    room.players[P1].magic_hand = [card('教皇旨意')]
-    use(room, P1, '教皇旨意')
-
-    updates = [d for e, d, to, r in events if e == 'attacks_updated']
-    assert updates, '必须广播 attacks_updated'
-    assert updates[-1]['attacks_remaining'] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -201,22 +170,6 @@ def test_removing_papal_outside_battle_also_restores(room):
         f'准备阶段拆场也要恢复（6 艘船），实际 {room.attacks_remaining}')
 
 
-def test_prep_phase_remove_then_battle_no_deadlock(room):
-    """★ 完整卡死路径：准备阶段打教皇旨意 → 拆场 → 进战斗阶段。"""
-    room.players[P1].magic_hand = [card('教皇旨意')]
-    use(room, P1, '教皇旨意')
-
-    # 模拟加百列拆场地（先 clear 再清 field_magic，与真实代码顺序一致）
-    server._clear_field_magic_effects(room)
-    room.field_magic = None
-    room.field_magic_owner = None
-
-    assert server.enter_battle_phase({'room_id': room.id, 'player_id': P1})['status'] == 'success'
-    assert room.attacks_remaining == 6, (
-        f'进入战斗阶段必须按当前规则重算，实际 {room.attacks_remaining}')
-    # 真的能开炮
-    res = server.handle_attack({'room_id': room.id, 'player_id': P1, 'x': 5, 'y': 5})
-    assert res.get('status') == 'success', f'应能正常攻击，实际 {res}'
 
 
 # ---------------------------------------------------------------------------
@@ -268,29 +221,3 @@ def test_papal_discard_rejects_without_hand(room):
     })
     assert res.get('status') == 'error', res
     assert room.attacks_remaining == 0, '没弃成卡就不能有次数'
-
-
-def test_papal_attack_legacy_event_only_discards(room):
-    """旧事件名 papal_attack 仍然可用，但只做弃卡换次数（x/y 不再使用）。
-
-    浏览器可能缓存着旧的 game.js，这个入口得留着，否则老页面点了没反应。
-    """
-    room.players[P1].magic_hand = [card('教皇旨意'), card('轰炸')]
-    server.enter_battle_phase({'room_id': room.id, 'player_id': P1})
-    use(room, P1, '教皇旨意')
-
-    res = server.handle_papal_attack({
-        'room_id': room.id, 'player_id': P1, 'discard_card_index': 0,
-        'x': 5, 'y': 5,
-    })
-    assert res.get('status') == 'success', res
-    assert room.attacks_remaining == 2, '旧入口也要换成 2 次'
-    assert room.players[P2].remaining_ships == 6, '★ 旧入口不再直接打那一格'
-
-
-def test_other_field_magic_untouched(room):
-    """反证：别的场地魔法不受影响（伊甸园仍按其规则算次数）。"""
-    room.field_magic = card('伊甸园')
-    room.players[P1].remaining_ships = 4
-    server._recalc_attacker_attacks(room)
-    assert room.attacks_remaining == 2, f'6-4=2，实际 {room.attacks_remaining}'

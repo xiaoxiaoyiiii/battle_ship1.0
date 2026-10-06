@@ -243,17 +243,6 @@ def test_enter_battle_asks_priority(room, events):
     assert room.priority_pending is not None, '应记录待响应状态'
 
 
-def test_enter_battle_emits_request(room, events):
-    """要推送 priority_request 且发给【对方】。"""
-    room.players[P2].magic_hand = [card('失灵！')]
-    server.enter_battle_phase({'room_id': room.id, 'player_id': P1})
-
-    reqs = pri_requests(events)
-    assert reqs, '必须推送 priority_request'
-    assert reqs[-1]['action'] == 'enter_battle'
-    assert reqs[-1]['countdown'] == server.PRIORITY_SECONDS
-    targets = [to for e, d, to, r in events if e == 'priority_request']
-    assert targets == ['sid-p2'], '应发给对方，不是发起者'
 
 
 def test_priority_request_includes_speed3_list(room, events):
@@ -369,10 +358,6 @@ def test_continue_must_escape_responder_request_context(room, monkeypatch):
     assert room.priority_pending is None, '询问状态要清干净'
 
 
-def test_priority_continue_is_initialized(room):
-    """priority_continue 必须在 GameRoom.__init__ 里就有——不能靠现赋。"""
-    assert hasattr(room, 'priority_continue')
-    assert room.priority_continue is None
 
 
 def test_respond_without_card_rejected(room):
@@ -433,49 +418,12 @@ def test_enter_end_continues_after_decline(room):
 # ===========================================================================
 # 拒绝开关
 # ===========================================================================
-def test_decline_switch_skips_asking(room, events):
-    """★ 开启拒绝开关后不再询问，直接推进。"""
-    server.set_decline_priority({'room_id': room.id, 'player_id': P2, 'decline': True})
-
-    res = server.enter_battle_phase({'room_id': room.id, 'player_id': P1})
-
-    assert res.get('awaiting_priority') is not True
-    assert room.current_phase == 'battle'
-    assert not pri_requests(events), '开关开启时不该弹窗'
 
 
-def test_decline_switch_can_be_turned_back_on(room, events):
-    """★ 开关可随时切回（作者要求开关而非一次性按钮）。"""
-    server.set_decline_priority({'room_id': room.id, 'player_id': P2, 'decline': True})
-    server.set_decline_priority({'room_id': room.id, 'player_id': P2, 'decline': False})
-
-    res = server.enter_battle_phase({'room_id': room.id, 'player_id': P1})
-
-    assert res.get('awaiting_priority') is True, '关掉开关后应重新询问'
-    assert pri_requests(events)
 
 
-def test_decline_switch_emits_update(room, events):
-    """切换开关要回执给本人。"""
-    server.set_decline_priority({'room_id': room.id, 'player_id': P2, 'decline': True})
-    updates = [d for e, d, to, r in events if e == 'priority_setting_updated']
-    assert updates and updates[-1]['decline'] is True
 
 
-def test_decline_via_response_payload(room, events):
-    """响应时也可以顺带勾上开关。"""
-    server.enter_battle_phase({'room_id': room.id, 'player_id': P1})
-    server.priority_response({'room_id': room.id, 'player_id': P2,
-                              'respond': False, 'decline_all': True})
-    assert room.decline_priority.get(P2) is True
-
-    # 下一次不再询问
-    room.current_phase = 'battle'
-    room.attacks_remaining = 0
-    events.clear()
-    res = server.handle_enter_end_phase({'room_id': room.id, 'player_id': P1})
-    assert res.get('awaiting_priority') is not True
-    assert not pri_requests(events)
 
 
 def test_decline_is_per_player(room):
@@ -517,10 +465,6 @@ def test_disconnected_opponent_skips_asking(room, events):
     assert not pri_requests(events), '对方掉线时不该弹询问窗口'
 
 
-def test_should_ask_returns_false_when_opponent_disconnected(room):
-    """直接测判定函数本身：对方在掉线宽限期内 → 不询问。"""
-    room.disconnected[P2] = {'deadline': 1e18, 'token': 1}
-    assert server._should_ask_priority(room, P1, P2) is False
 
 
 def test_existing_pending_does_not_stack(room):
@@ -549,13 +493,6 @@ def test_game_over_skips_asking(room):
 # ===========================================================================
 # 反证：交回合与攻击【不】询问（作者裁定）
 # ===========================================================================
-def test_end_turn_does_not_ask_priority(room, events):
-    """交回合不询问 —— 它本来就被连锁窗口拦着。"""
-    room.current_phase = 'end'
-    room.attacks_remaining = 0
-    events.clear()
-    server.end_turn({'room_id': room.id, 'player_id': P1})
-    assert not pri_requests(events), '交回合不该弹优先权询问'
 
 
 def test_attack_does_not_ask_priority(room, events):

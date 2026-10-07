@@ -57,7 +57,7 @@ const VIEW_H = 900;
 // ⚠️ 手机那档是 2026-10-07 审查回单补的：这块屏的验收里写着「手机首屏可见」，
 //    而工具此前只量了 1280×720 / 1024×640 —— 手机档**从没被测过**。
 //    390×844 是项目里既有的手机基准（changelog_check / friend_dm_check 都用它）。
-const VIEWPORTS = [[1280, 720], [1024, 640], [390, 844]];
+const VIEWPORTS = [[1280, 720], [1024, 640], [390, 844], [320, 568]];
 
 if (!BROWSER) { console.error('找不到 Edge/Chrome，跳过本检查'); process.exit(0); }
 
@@ -324,11 +324,12 @@ try {
   //    用桩数据走的是**同一条渲染路径**，比等一个永远不来的响应有意义。
   await A.ev(`(function(){
     window.__mrRealFetch = window.fetch;
+    window.__mrMockStats = {
+      level_info: { level: 42 }, title_id: 'sea_emperor', title_name: '海皇', rank_info: null, show_rank: 0,
+      tag_names: ['快枪手', '老船长'] };
     window.fetch = function(u){
       if (String(u).indexOf('/user_stats') === 0) {
-        return Promise.resolve({ ok: true, json: function(){ return Promise.resolve({ stats: {
-          level_info: { level: 42 }, title_name: '海军上将', rank_info: null, show_rank: 0,
-          tag_names: ['快枪手', '老船长'] } }); } });
+        return Promise.resolve({ ok: true, json: function(){ return Promise.resolve({ stats: window.__mrMockStats }); } });
       }
       return window.__mrRealFetch.apply(this, arguments);
     };
@@ -347,12 +348,37 @@ try {
       scroll: box.scrollWidth - box.clientWidth,
       inScreen: !!document.querySelector('#match-success-screen #opponent-chips'),
       text: (box.textContent || '').trim() }; })()`);
-  check(chips && chips.hidden === false && chips.lv === 'Lv.42' && chips.title === '海军上将' && chips.tags.length === 2,
+  check(chips && chips.hidden === false && chips.lv === 'Lv.42' && chips.title === '海皇' && chips.tags.length === 2,
     '★ 4 对手 chip 行完整：等级 / 称号 / 两个标签都还在（层级重排没吃掉任何 chip）',
     chips && { lv: chips.lv, title: chips.title, tags: chips.tags, inScreen: chips.inScreen });
+  const aura = await A.ev(`(function(){
+    var s = document.getElementById('match-success-screen');
+    var f = s.querySelector('.match-fighter-foe');
+    return { kind: s.dataset.foeAura, color: getComputedStyle(f).getPropertyValue('--match-side-glow').trim(),
+      rootColor: getComputedStyle(s).getPropertyValue('--match-foe-glow').trim(),
+      matched: s.matches('html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #match-success-screen[data-foe-aura="royal"]') };
+  })()`);
+  check(aura && aura.kind === 'royal' && aura.color === '#ffdc81',
+    '★ 4b 公开称号「海皇」触发专属对阵光效', aura);
   check(chips && chips.scroll <= 1,
     '★ 5 chip 行不横向溢出（scrollWidth - clientWidth <= 1）', chips && chips.scroll);
   await A.shot('match-chips');
+  for (const sample of [
+    { title: 'storm_helmsman', level: 42, aura: 'storm', glow: '#a789ff' },
+    { title: '', level: 100, aura: 'level-100', glow: '#ffe5a6' },
+  ]) {
+    const effect = await A.ev(`(async function(){
+      window.__mrMockStats.title_id = ${JSON.stringify(sample.title)};
+      window.__mrMockStats.level_info.level = ${sample.level};
+      showOpponentChips(${JSON.stringify(roomA.nameB)});
+      await new Promise(function(r){ setTimeout(r, 60); });
+      var s = document.getElementById('match-success-screen');
+      return { aura: s.dataset.foeAura,
+        glow: getComputedStyle(s.querySelector('.match-fighter-foe')).getPropertyValue('--match-side-glow').trim() };
+    })()`);
+    check(effect && effect.aura === sample.aura && effect.glow === sample.glow,
+      `★ 4c ${sample.title || '满级'}切换到对应光效`, effect);
+  }
   await A.ev(`(function(){ if (window.__mrRealFetch) { window.fetch = window.__mrRealFetch; delete window.__mrRealFetch; }
     return true; })()`);
 
@@ -366,7 +392,7 @@ try {
       s.classList.add('active'); window.scrollTo(0,0); return true; })()`);
     await sleep(300);
     const geo = await A.ev(`(function(){
-      var ids = ['#match-success-screen > h2', '#match-success-screen .match-versus',
+      var ids = ['#match-success-screen .match-entry-heading h2', '#match-success-screen .match-versus',
                  '#match-success-screen #opponent-chips', '#match-success-screen .countdown-bar'];
       var rows = ids.map(function (sel) {
         var e = document.querySelector(sel); if (!e) return { sel: sel, miss: true };
@@ -382,7 +408,7 @@ try {
       var scr = box('#match-success-screen');
       var cont = box('.game-container');
       var info = box('.match-info');
-      var h2 = box('#match-success-screen > h2');
+      var h2 = box('#match-success-screen .match-entry-heading h2');
       return { rows: rows, vw: window.innerWidth, vh: window.innerHeight,
         docScrollW: de.scrollWidth, docClientW: de.clientWidth,
         screenBottom: scr.b, containerBottom: cont.b,

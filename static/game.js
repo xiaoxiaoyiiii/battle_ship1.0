@@ -12022,17 +12022,38 @@ async function handleRegisterSubmit() {
  *    `.then()` 里连异常都不显眼（同一天里第二次踩这个作用域的坑）。
  *    现在服务端把 `title_name` 与 `tag_names` 直接下发，这里只负责拼 DOM。
  */
+let matchOpponentInfoRequest = 0;
+
+// 仅用于等待屏的外观分档；等级与称号仍由公开名片给出，战斗判定一概不读这些值。
+function matchOpponentAura(stats) {
+    const titleAura = {
+        storm_helmsman: 'storm', deep_navigator: 'abyss', hunter: 'abyss',
+        iron_soul: 'forge', unsinkable: 'royal', sea_emperor: 'royal',
+        streak10: 'streak', immortal: 'streak'
+    }[String(stats.title_id || '')];
+    if (titleAura) return titleAura;
+    const level = Number(stats.level_info && stats.level_info.level) || 0;
+    if (level >= 100) return 'level-100';
+    if (level >= 50) return 'level-50';
+    if (level >= 25) return 'level-25';
+    return 'base';
+}
+
 function showOpponentChips(username) {
     const box = document.getElementById('opponent-chips');
     if (!box) return;
+    const request = ++matchOpponentInfoRequest;
     box.innerHTML = '';
     box.classList.add('hidden');
+    if (matchSuccessScreen) matchSuccessScreen.dataset.foeAura = 'base';
     if (!username) return;
     fetch('/user_stats?username=' + encodeURIComponent(username), { headers: { 'Accept': 'application/json' } })
         .then(r => (r.ok ? r.json() : null))
         .then(d => {
+            if (request !== matchOpponentInfoRequest) return;
             const s = (d && d.stats) || null;
             if (!s) return;
+            if (matchSuccessScreen) matchSuccessScreen.dataset.foeAura = matchOpponentAura(s);
             const parts = [];
             const lv = s.level_info && Number(s.level_info.level);
             if (lv) parts.push('<span class="match-chip lv">Lv.' + escapeHtml(String(lv)) + '</span>');
@@ -12074,6 +12095,11 @@ function showMyRankChip() {
     const box = document.getElementById('match-self-rank');
     if (!box) return;
     const paint = (info) => {
+        if (matchSuccessScreen) {
+            const tier = Number(info && info.tier_index);
+            matchSuccessScreen.dataset.selfAura = Number.isFinite(tier) && tier >= 8 ? 'royal'
+                : Number.isFinite(tier) && tier >= 7 ? 'captain' : 'base';
+        }
         if (!info || typeof info !== 'object') {
             box.innerHTML = '';
             box.classList.add('hidden');

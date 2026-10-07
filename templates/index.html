@@ -403,27 +403,34 @@
              （docs/C_PLUS_BASELINE_2026_09_29.md 明载"点击无反应"，那一轮决定
              "不新增行为，也不删元素"），本批只动视觉，同样不接线、不删。 -->
     <div id="match-success-screen" class="screen">
-        <h2>匹配成功！</h2>
+        <div class="match-entry-heading">
+            <span class="match-entry-eyebrow">BATTLE FOUND <span aria-hidden="true">·</span> 对阵已确认</span>
+            <h2>匹配成功！</h2>
+            <span class="match-entry-rule" aria-hidden="true"></span>
+        </div>
         <div class="match-info">
             <div class="match-versus">
                 <div class="match-fighter match-fighter-me">
-                    <span class="match-fighter-tag">你</span>
+                    <span class="match-fighter-tag">PLAYER 01 <span aria-hidden="true">/</span> 你</span>
+                    <span class="match-ship-emblem" aria-hidden="true"><svg viewBox="0 0 180 90" fill="none"><path d="M13 58h154l-19 21H40L13 58Z"/><path d="M54 58V40h23V23h28v17h24v18M88 23V11m0 0h24M26 84h31m9 0h48m11 0h34"/><path d="M43 49h11m78 0h11M71 40h36"/></svg></span>
                     <span class="match-fighter-name">我方舰队</span>
+                    <div id="match-self-rank" class="match-chips match-self-rank hidden"></div>
                 </div>
-                <div class="match-vs" aria-hidden="true">VS</div>
+                <div class="match-vs" aria-hidden="true"><span class="match-vs-ring"></span><strong>VS</strong><small>LOCKED</small></div>
                 <div class="match-fighter match-fighter-foe">
-                    <span class="match-fighter-tag">对手</span>
-                    <p class="match-foe-line">你的对手是：<span id="opponent-info"></span></p>
+                    <span class="match-fighter-tag">PLAYER 02 <span aria-hidden="true">/</span> 对手</span>
+                    <span class="match-ship-emblem" aria-hidden="true"><svg viewBox="0 0 180 90" fill="none"><path d="M13 58h154l-19 21H40L13 58Z"/><path d="M54 58V40h23V23h28v17h24v18M88 23V11m0 0h24M26 84h31m9 0h48m11 0h34"/><path d="M43 49h11m78 0h11M71 40h36"/></svg></span>
+                    <p class="match-foe-line"><span class="match-foe-prefix">你的对手是：</span><span id="opponent-info"></span></p>
+                    <div id="opponent-chips" class="match-chips opponent-chips"></div>
                 </div>
             </div>
             <!-- 对手的称号 / 标签 / 等级（2026-09-17 追加）。
                  数据取自公开的 /user_stats（与名片同一份来源），在 5 秒倒计时里异步填进来；
                  拿不到就保持空白，不影响开局。 -->
-            <div id="opponent-chips" class="match-chips opponent-chips"></div>
             <!-- 自己的段位（段位批）。数据来自 /api/profile 的 rank_info，**页面加载时取一次**就缓存住
                  （不在这 5 秒里现拉）；游客 / 没登录时整块隐藏。 -->
-            <div id="match-self-rank" class="match-chips match-self-rank hidden"></div>
             <div class="match-countdown">
+                <span class="match-countdown-label">舰队即将交战</span>
                 <p class="match-countdown-line">游戏将在 <span id="countdown-timer">5</span> 秒后开始</p>
                 <div id="countdown-bar" class="countdown-bar">
                     <div class="countdown-fill"></div>

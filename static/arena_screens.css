@@ -71,6 +71,86 @@ html[data-arena-screens="v2"] {
        重置照旧，但把这两档重新声明回来，用令牌而不是裸色。 */
     --ax-gold-row: linear-gradient(90deg, rgba(201, 162, 76, 0.18), rgba(201, 162, 76, 0.03));
     --ax-glow-vio: 0 0 0 3px rgba(124, 92, 240, 0.22);
+    --match-c-000: #000;
+    --match-c-010713b3: #010713b3;
+    --match-c-020711: #020711;
+    --match-c-020717: #020717;
+    --match-c-061027: #061027;
+    --match-c-091426f5: #091426f5;
+    --match-c-0a1326: #0a1326;
+    --match-c-0b1b3155: #0b1b3155;
+    --match-c-0d1933f0: #0d1933f0;
+    --match-c-117eaa30: #117eaa30;
+    --match-c-14213e: #14213e;
+    --match-c-1a1830f0: #1a1830f0;
+    --match-c-21152788: #21152788;
+    --match-c-264a68: #264a68;
+    --match-c-2daee623: #2daee623;
+    --match-c-35cbff88: #35cbff88;
+    --match-c-3678db: #3678db;
+    --match-c-3bd7ff56: #3bd7ff56;
+    --match-c-3bd7ffa0: #3bd7ffa0;
+    --match-c-43d8ff: #43d8ff;
+    --match-c-46cfff65: #46cfff65;
+    --match-c-4ba9d577: #4ba9d577;
+    --match-c-4cddf6: #4cddf6;
+    --match-c-4fdcff: #4fdcff;
+    --match-c-55bdff25: #55bdff25;
+    --match-c-55bdff65: #55bdff65;
+    --match-c-57dfff: #57dfff;
+    --match-c-5dd4f7: #5dd4f7;
+    --match-c-5dd4f7bb: #5dd4f7bb;
+    --match-c-60aee775: #60aee775;
+    --match-c-65e0ff: #65e0ff;
+    --match-c-6bd9ff0b: #6bd9ff0b;
+    --match-c-6bd9ff0e: #6bd9ff0e;
+    --match-c-7054c64d: #7054c64d;
+    --match-c-79b0ff: #79b0ff;
+    --match-c-79dbfa: #79dbfa;
+    --match-c-8ad9ff: #8ad9ff;
+    --match-c-8edcec: #8edcec;
+    --match-c-92dcf899: #92dcf899;
+    --match-c-956ef333: #956ef333;
+    --match-c-9bdbed: #9bdbed;
+    --match-c-a660332b: #a660332b;
+    --match-c-a789ff: #a789ff;
+    --match-c-a789ff13: #a789ff13;
+    --match-c-a789ff66: #a789ff66;
+    --match-c-ad8bffbb: #ad8bffbb;
+    --match-c-b2bbd3: #b2bbd3;
+    --match-c-b3e9ff3d: #b3e9ff3d;
+    --match-c-b79aff: #b79aff;
+    --match-c-c2f3ff26: #c2f3ff26;
+    --match-c-d6e6f3: #d6e6f3;
+    --match-c-eee6ff: #eee6ff;
+    --match-c-f4c875: #f4c875;
+    --match-c-f4faff: #f4faff;
+    --match-c-f5fbff: #f5fbff;
+    --match-c-f785ce: #f785ce;
+    --match-c-f8d882: #f8d882;
+    --match-c-ff6c2944: #ff6c2944;
+    --match-c-ff70302b: #ff70302b;
+    --match-c-ff703069: #ff703069;
+    --match-c-ff733d40: #ff733d40;
+    --match-c-ff814d: #ff814d;
+    --match-c-ff82d8: #ff82d8;
+    --match-c-ffb06955: #ffb06955;
+    --match-c-ffbf73: #ffbf73;
+    --match-c-ffcc6a91: #ffcc6a91;
+    --match-c-ffcf74: #ffcf74;
+    --match-c-ffd679bb: #ffd679bb;
+    --match-c-ffd97b: #ffd97b;
+    --match-c-ffdb8a: #ffdb8a;
+    --match-c-ffdc81: #ffdc81;
+    --match-c-ffdd8a: #ffdd8a;
+    --match-c-ffdd9b8a: #ffdd9b8a;
+    --match-c-ffde9a: #ffde9a;
+    --match-c-ffe5a1: #ffe5a1;
+    --match-c-ffe5a6: #ffe5a6;
+    --match-c-ffe6ad80: #ffe6ad80;
+    --match-c-fff4dc: #fff4dc;
+    --match-c-fff5cd: #fff5cd;
+    --match-c-ffffff07: #ffffff07;
 }
 
 /* 屏头的 kicker 要过 4.5:1 正文门槛：暗色态 #6d4bd8 在 #0b0d18 上只有 4.29:1，
@@ -2264,57 +2344,482 @@ html[data-arena-screens="v2"][data-arena-screen-list~="placement"]
     pointer-events: none;
 }
 
-/* 匹配成功屏：对手条与倒计时也走同一套词汇 */
-html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #match-success-screen > h2 {
-    text-align: left;
-    font-size: 19px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    margin: 0 0 12px;
+/* 匹配成功屏（2026-10-05 重做）：从「一个标题 + 一个小信息框」改成一块对阵板 ——
+   左「你」、中 VS、右对手，下面是 chip 行与倒计时，整块在窗口里居中。
+   ⚠️ 这一屏在 DOM 上**一个 id 都没改**（理由逐条写在 templates/index.html 的注释里），
+      这里只换视觉；`.match-chip.*` 那套还是 style.css 里的公共样式，不在这里重画。
+   ⚠️ 居中用的是 `#match-success-screen.screen.active`（不是光写 id）：
+      `.screen` 是 `display:none`、只有 `.screen.active` 才是 `display:block`，
+      直接给 id 写 display:flex 会让**没激活时也显出来**。
+
+   ⚠️⚠️ 高度修正（2026-10-07 审查回单）：上面那条 `justify-content: center` 曾经
+      **等于没写** —— 它的父链（`.game-container` → `body`）全是 auto 高，`.screen`
+      的高度就等于自己的内容高。实测 1280×720：这一屏 rect 59..447（高 388），
+      视口 720 —— center 在一个没有富余空间的盒子里不起作用，于是标题贴着导航、
+      页面下方 273px 全空（Codex 实拍 `03-match-success-1280x720.png` 抓到的）。
+      修法是把**整条父链**补成能长高的：body（本来就是 flex 行）在这一屏激活时转成
+      column + 100dvh，`.game-container` 与这一屏各自 `flex: 1` 吃掉剩余空间。
+      这样这一屏才真的拿到视口高度，里面的 center 才落在对阵板上。
+      ⚠️ 两条都挂在 `:has(#match-success-screen.active)` 上，别的屏一行不动。 */
+body:has(#match-success-screen.active) {
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    min-height: 100dvh;
+}
+
+.game-container:has(#match-success-screen.active) {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #match-success-screen.screen.active {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    /* 吃掉导航以下、容器以内的全部高度（配合上面那条父链修正才有效） */
+    flex: 1 1 auto;
+    gap: clamp(16px, 3vh, 28px);
+    padding: 22px 16px;
+    isolation: isolate;
+    overflow: hidden;
+    --match-self-glow: var(--match-c-43d8ff);
+    --match-foe-glow: var(--match-c-ffbf73);
+    background:
+        radial-gradient(ellipse 58% 52% at 22% 52%, var(--match-c-117eaa30), transparent 72%),
+        radial-gradient(ellipse 55% 50% at 78% 52%, var(--match-c-a660332b), transparent 74%);
+}
+
+#match-success-screen::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: repeating-linear-gradient(0deg, transparent 0 63px, var(--match-c-6bd9ff0b) 64px 65px),
+                repeating-linear-gradient(90deg, transparent 0 63px, var(--match-c-6bd9ff0b) 64px 65px);
+    mask-image: radial-gradient(ellipse at center, black 20%, transparent 75%);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #match-success-screen .match-entry-heading {
+    text-align: center;
+    animation: match-entry-in .55s both;
+}
+
+#match-success-screen .match-entry-eyebrow {
+    display: block;
+    color: var(--match-c-79dbfa);
+    font: 700 11px/1.2 var(--fluent-font-mono);
+    letter-spacing: .26em;
+    text-shadow: 0 0 18px var(--match-c-35cbff88);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #match-success-screen h2 {
+    text-align: center;
+    font: 800 clamp(28px, 4vw, 48px)/1.1 var(--fluent-font-display);
+    letter-spacing: .15em;
+    margin: 10px 0 8px;
+    color: var(--match-c-f5fbff);
+    text-shadow: 0 3px 22px var(--match-c-46cfff65), 0 2px 2px var(--match-c-020711);
+}
+
+#match-success-screen .match-entry-rule {
+    display: block;
+    width: min(160px, 38vw);
+    height: 2px;
+    margin: 0 auto;
+    background: linear-gradient(90deg, transparent, var(--match-c-5dd4f7), var(--match-c-f4c875), transparent);
+    box-shadow: 0 0 16px var(--match-c-5dd4f7bb);
 }
 
 html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-info {
-    max-width: 560px;
-    margin: 0 auto;
-    padding: 22px 24px;
-    text-align: left;
-    background-color: var(--surface-strong);
-    border: 1px solid var(--border);
-    border-radius: var(--ax-radius);
+    width: 100%;
+    max-width: 930px;
+    /* ⚠️ 面板自己也要有「块头」：这一屏的验收是"对阵信息成为页面视觉主体"，
+       而一块内容自适应的小卡片在高视口里只是个贴顶的小方块（实拍截图里的原问题）。
+       min-height 跟着视口走（56vh，天花板 420px），里面的东西竖直居中，
+       于是桌面 / 手机上它都占住中部，而不是被内容撑成一条窄带。 */
+    min-height: min(58vh, 470px);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: clamp(16px, 3vh, 26px);
+    margin: 0;
+    padding: clamp(22px, 3vw, 34px);
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(135deg, var(--match-c-0d1933f0) 0%, var(--match-c-091426f5) 52%, var(--match-c-1a1830f0) 100%);
+    border: 1px solid var(--match-c-60aee775);
+    border-radius: 18px;
+    box-shadow: 0 25px 70px var(--match-c-010713b3), inset 0 1px var(--match-c-b3e9ff3d), 0 0 55px var(--match-c-2daee623);
+    animation: match-board-in .75s cubic-bezier(.16, 1, .3, 1) both;
 }
 
-html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-info > p {
-    text-align: left;
-    font-size: 12px;
-    color: var(--text-subtle);
+#match-success-screen .match-info::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent 0 46%, var(--match-c-6bd9ff0e) 50%, transparent 54% 100%),
+                repeating-linear-gradient(110deg, transparent 0 38px, var(--match-c-ffffff07) 39px 40px);
+}
+
+#match-success-screen .match-info::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background: linear-gradient(105deg, transparent 15%, var(--match-c-c2f3ff26) 49%, transparent 58%);
+    transform: translateX(-140%);
+    animation: match-light-sweep 5s 1.1s linear infinite;
+}
+
+/* 面板内改由 gap 排行距：清掉公共样式里那几个"给块流用"的外边距，否则会叠加两份。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-info .match-chips {
+    margin: 0;
+}
+
+/* 对阵板：三列 —— 「你」/ VS / 对手。窄屏折成一列由下面的媒体查询接管。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-versus {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 116px minmax(0, 1fr);
+    align-items: stretch;
+    gap: clamp(8px, 2vw, 22px);
+    min-height: 285px;
+    position: relative;
+    z-index: 1;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-fighter {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    min-width: 0;
+    padding: 20px 12px;
+    position: relative;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--match-side-glow) 42%, transparent);
+    border-radius: 13px;
+    background: radial-gradient(circle at 50% 20%, color-mix(in srgb, var(--match-side-glow) 20%, transparent), transparent 68%), var(--match-c-0b1b3155);
+    box-shadow: inset 0 1px color-mix(in srgb, var(--match-side-glow) 42%, transparent), 0 0 30px color-mix(in srgb, var(--match-side-glow) 13%, transparent);
+}
+
+#match-success-screen .match-fighter-me { --match-side-glow: var(--match-self-glow); animation: match-side-left .7s .12s both; }
+#match-success-screen .match-fighter-foe { --match-side-glow: var(--match-foe-glow); animation: match-side-right .7s .22s both; }
+
+#match-success-screen .match-fighter::before {
+    content: '';
+    position: absolute;
+    width: 185px;
+    aspect-ratio: 1;
+    border: 1px solid color-mix(in srgb, var(--match-side-glow) 43%, transparent);
+    border-radius: 50%;
+    top: 10px;
+    left: calc(50% - 93px);
+    box-shadow: 0 0 0 23px color-mix(in srgb, var(--match-side-glow) 5%, transparent),
+                0 0 0 47px color-mix(in srgb, var(--match-side-glow) 3%, transparent);
+    opacity: .7;
+    animation: match-sonar 3.6s ease-out infinite;
+    pointer-events: none;
+}
+
+#match-success-screen .match-fighter::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(135deg, color-mix(in srgb, var(--match-side-glow) 45%, transparent), transparent 29% 71%, color-mix(in srgb, var(--match-side-glow) 40%, transparent));
+    mask: linear-gradient(var(--match-c-000) 0 0) content-box, linear-gradient(var(--match-c-000) 0 0);
+    mask-composite: exclude;
+    padding: 3px;
+    border-radius: inherit;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-fighter-tag {
+    font: 700 10px/1.2 var(--fluent-font-mono);
+    letter-spacing: .22em;
+    color: color-mix(in srgb, var(--match-side-glow) 76%, white);
+    z-index: 1;
+}
+
+#match-success-screen .match-ship-emblem {
+    width: min(86%, 210px);
+    height: 105px;
+    display: grid;
+    place-items: center;
+    color: var(--match-side-glow);
+    filter: drop-shadow(0 0 12px color-mix(in srgb, var(--match-side-glow) 65%, transparent));
+    z-index: 1;
+    animation: match-ship-float 3s ease-in-out infinite;
+}
+
+#match-success-screen .match-ship-emblem svg {
+    width: 100%;
+    max-height: 100%;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+#match-success-screen .match-fighter-foe .match-ship-emblem svg { transform: scaleX(-1); }
+
+#match-success-screen .match-fighter-foe .match-ship-emblem { animation-delay: -.8s; }
+
+#match-success-screen .match-fighter .match-chips {
+    max-width: 100%;
+    min-height: 20px;
+    position: relative;
+    z-index: 2;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-fighter-name {
+    font-family: var(--fluent-font-display);
+    font-size: clamp(20px, 2.3vw, 28px);
+    font-weight: 800;
+    letter-spacing: .04em;
+    color: var(--match-c-f4faff);
+    text-shadow: 0 0 16px color-mix(in srgb, var(--match-side-glow) 50%, transparent);
+    z-index: 1;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-foe-line {
+    margin: 0;
+    text-align: center;
+    font-size: clamp(18px, 2vw, 24px);
+    font-weight: 800;
+    color: var(--match-c-fff4dc);
+    text-shadow: 0 0 16px color-mix(in srgb, var(--match-side-glow) 58%, transparent);
+    z-index: 1;
+}
+
+#match-success-screen .match-foe-prefix {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .12em;
+    color: var(--match-c-b2bbd3);
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-vs {
+    align-self: center;
+    justify-self: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 112px;
+    height: 112px;
+    border-radius: 50%;
+    position: relative;
+    background: radial-gradient(circle, var(--match-c-14213e) 0 44%, var(--match-c-0a1326) 46% 62%, var(--match-c-264a68) 63%, var(--match-c-0a1326) 66%);
+    border: 1px solid var(--match-c-92dcf899);
+    box-shadow: 0 0 24px var(--match-c-3bd7ff56), inset 0 0 22px var(--match-c-55bdff25);
+    color: var(--match-c-ffdd8a);
+    z-index: 3;
+    animation: match-target-pulse 2.6s ease-in-out infinite;
+}
+
+#match-success-screen .match-vs strong {
+    font: 900 28px/1 var(--fluent-font-display);
+    letter-spacing: .08em;
+    text-shadow: 0 0 16px var(--match-c-ffd679bb);
+}
+
+#match-success-screen .match-vs small {
+    margin-top: 7px;
+    font: 700 8px/1 var(--fluent-font-mono);
+    letter-spacing: .16em;
+    color: var(--match-c-9bdbed);
+}
+
+#match-success-screen .match-vs-ring {
+    position: absolute;
+    inset: -7px;
+    border-radius: 50%;
+    background: conic-gradient(from 0deg, var(--match-c-65e0ff) 0 16deg, transparent 17deg 90deg, var(--match-c-ffcf74) 91deg 107deg, transparent 108deg 360deg);
+    mask: radial-gradient(transparent 0 88%, black 90%);
+    animation: match-radar-rotate 4s linear infinite;
+    pointer-events: none;
 }
 
 html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #countdown-timer {
     font-family: var(--fluent-font-mono);
-    font-size: 20px;
-    font-weight: 600;
-    color: var(--ax-gold-strong);
+    font-size: 34px;
+    font-weight: 800;
+    color: var(--match-c-ffdb8a);
+    text-shadow: 0 0 16px var(--match-c-ffcc6a91);
+}
+
+/* ⚠️ 这里只给「行距」加了一层壳（.match-countdown），没有动 #countdown-bar 自己的
+   盒模型：game.js 的 5 秒定时器是直接写 `countdownFill.style.width` 的百分比，
+   宽度基准还是这条 bar 的 content box。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-countdown {
+    width: min(100%, 590px);
+    align-self: center;
+    margin-top: 2px;
+    position: relative;
+    z-index: 1;
+}
+
+#match-success-screen .match-countdown-label {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--match-c-8edcec);
+    font: 700 10px/1 var(--fluent-font-mono);
+    letter-spacing: .22em;
+}
+
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-countdown-line {
+    margin: 0;
+    text-align: center;
+    font-size: 14px;
+    color: var(--match-c-d6e6f3);
 }
 
 html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .countdown-bar {
-    background-color: var(--surface-muted);
-    border: 1px solid var(--border);
+    height: 9px;
+    margin-top: 12px;
+    overflow: hidden;
+    background: var(--match-c-061027);
+    border: 1px solid var(--match-c-4ba9d577);
+    box-shadow: inset 0 0 10px var(--match-c-020717);
 }
 
 html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .countdown-fill {
-    background-image: var(--ax-grad);
+    height: 100%;
+    background: linear-gradient(90deg, var(--match-c-3678db), var(--match-c-4cddf6) 58%, var(--match-c-ffe5a1));
+    box-shadow: 0 0 18px var(--match-c-57dfff), 0 0 8px var(--match-c-fff5cd);
+    transition: width .7s linear;
 }
 
 html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #start-now {
     width: 100%;
-    margin-top: 10px;
-    padding: 11px 18px;
-    font-size: 12px;
+    margin-top: 12px;
+    padding: 13px 18px;
+    font-size: 13px;
     font-weight: 600;
     border-radius: var(--ax-radius);
     color: var(--text-subtle);
     background-color: transparent;
     border: 1px solid var(--border-strong);
+}
+
+/* 称号与等级只改变对阵卡的光效。数据取公开名片；没资料时保留基础琥珀色。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #match-success-screen.screen.active[data-foe-aura="storm"] { --match-foe-glow: var(--match-c-a789ff); }
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #match-success-screen.screen.active[data-foe-aura="abyss"] { --match-foe-glow: var(--match-c-4fdcff); }
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #match-success-screen.screen.active[data-foe-aura="forge"] { --match-foe-glow: var(--match-c-ff814d); }
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #match-success-screen.screen.active[data-foe-aura="royal"] { --match-foe-glow: var(--match-c-ffdc81); }
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #match-success-screen.screen.active[data-foe-aura="streak"] { --match-foe-glow: var(--match-c-f785ce); }
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #match-success-screen.screen.active[data-foe-aura="level-25"] { --match-foe-glow: var(--match-c-8ad9ff); }
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #match-success-screen.screen.active[data-foe-aura="level-50"] { --match-foe-glow: var(--match-c-b79aff); }
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #match-success-screen.screen.active[data-foe-aura="level-100"] { --match-foe-glow: var(--match-c-ffe5a6); }
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #match-success-screen.screen.active[data-self-aura="captain"] { --match-self-glow: var(--match-c-79b0ff); }
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #match-success-screen.screen.active[data-self-aura="royal"] { --match-self-glow: var(--match-c-f8d882); }
+
+#match-success-screen.screen.active[data-foe-aura="storm"] .match-fighter-foe {
+    background: repeating-linear-gradient(135deg, transparent 0 34px, var(--match-c-a789ff13) 35px 37px, transparent 38px 66px),
+                radial-gradient(circle at 50% 20%, var(--match-c-7054c64d), transparent 68%), var(--match-c-0b1b3155);
+    animation: match-side-right .7s .22s both, match-storm-flash 2.8s 1s infinite;
+}
+#match-success-screen.screen.active[data-foe-aura="abyss"] .match-fighter-foe::before {
+    animation: match-sonar 2s ease-out infinite;
+}
+#match-success-screen.screen.active[data-foe-aura="forge"] .match-fighter-foe {
+    background: radial-gradient(circle at 30% 95%, var(--match-c-ff6c2944) 0 3px, transparent 5px),
+                radial-gradient(circle at 76% 28%, var(--match-c-ffb06955) 0 2px, transparent 4px),
+                radial-gradient(circle at 50% 20%, var(--match-c-ff733d40), transparent 68%), var(--match-c-21152788);
+    animation: match-side-right .7s .22s both, match-ember-pulse 2.1s ease-in-out infinite;
+}
+#match-success-screen.screen.active[data-foe-aura="royal"] .match-fighter-foe .match-ship-emblem,
+#match-success-screen.screen.active[data-foe-aura="level-100"] .match-fighter-foe .match-ship-emblem {
+    filter: drop-shadow(0 0 12px var(--match-c-ffd97b)) drop-shadow(0 0 25px var(--match-c-ffdd9b8a));
+    animation: match-ship-float 3s ease-in-out infinite, match-royal-glow 2.5s ease-in-out infinite;
+}
+#match-success-screen.screen.active[data-self-aura="royal"] .match-fighter-me .match-ship-emblem {
+    filter: drop-shadow(0 0 12px var(--match-c-ffde9a)) drop-shadow(0 0 24px var(--match-c-ffe6ad80));
+}
+#match-success-screen.screen.active[data-foe-aura="streak"] .match-fighter-foe::after {
+    background: linear-gradient(135deg, var(--match-c-ff82d8), transparent 28% 72%, var(--match-c-ff82d8));
+    animation: match-streak-border 1.4s ease-in-out infinite;
+}
+#match-success-screen.screen.active[data-foe-aura="level-50"] .match-fighter-foe::before,
+#match-success-screen.screen.active[data-foe-aura="level-100"] .match-fighter-foe::before {
+    animation: match-sonar 2.4s ease-out infinite;
+}
+
+@keyframes match-entry-in { from { opacity: 0; transform: translateY(-16px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes match-board-in { from { opacity: 0; transform: scale(.94) translateY(18px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+@keyframes match-side-left { from { opacity: 0; transform: translateX(-34px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes match-side-right { from { opacity: 0; transform: translateX(34px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes match-sonar { 0% { transform: scale(.65); opacity: .8; } 100% { transform: scale(1.3); opacity: 0; } }
+@keyframes match-ship-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
+@keyframes match-target-pulse { 0%, 100% { box-shadow: 0 0 24px var(--match-c-3bd7ff56), inset 0 0 22px var(--match-c-55bdff25); } 50% { box-shadow: 0 0 40px var(--match-c-3bd7ffa0), inset 0 0 28px var(--match-c-55bdff65); } }
+@keyframes match-radar-rotate { to { transform: rotate(360deg); } }
+@keyframes match-light-sweep { 0%, 10% { transform: translateX(-140%); } 65%, 100% { transform: translateX(140%); } }
+@keyframes match-storm-flash { 0%, 72%, 76%, 100% { box-shadow: inset 0 1px var(--match-c-a789ff66), 0 0 26px var(--match-c-956ef333); } 74% { box-shadow: inset 0 1px var(--match-c-eee6ff), 0 0 42px var(--match-c-ad8bffbb); } }
+@keyframes match-ember-pulse { 0%, 100% { box-shadow: 0 0 26px var(--match-c-ff70302b); } 50% { box-shadow: 0 0 43px var(--match-c-ff703069); } }
+@keyframes match-royal-glow { 0%, 100% { opacity: .74; } 50% { opacity: 1; } }
+@keyframes match-streak-border { 0%, 100% { opacity: .36; } 50% { opacity: .96; } }
+
+/* 窄屏：对阵板折成一列，「你 / VS / 对手」竖着排，仍然一眼看得清谁打谁。 */
+@media (max-width: 620px) {
+    html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-versus {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 8px;
+        min-height: 0;
+    }
+
+    html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #match-success-screen.screen.active {
+        gap: 12px;
+        padding: 12px 10px;
+    }
+
+    html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-info {
+        min-height: 0;
+        gap: 12px;
+        padding: 15px 14px;
+    }
+
+    html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-fighter {
+        min-height: 114px;
+        gap: 2px;
+        padding: 8px 10px;
+    }
+
+    #match-success-screen .match-ship-emblem { height: 46px; width: 92px; }
+    #match-success-screen .match-fighter::before { width: 85px; left: calc(50% - 43px); top: -7px; }
+    #match-success-screen .match-fighter-name,
+    html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-foe-line { font-size: 18px; }
+    #match-success-screen .match-foe-prefix { display: none; }
+    html[data-arena-screens="v2"][data-arena-screen-list~="placement"] .match-vs {
+        width: 54px;
+        height: 54px;
+        margin: -7px auto;
+    }
+    #match-success-screen .match-vs strong { font-size: 15px; }
+    #match-success-screen .match-vs small { display: none; }
+    html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #match-success-screen h2 { font-size: 26px; margin: 5px 0; }
+    #match-success-screen .match-entry-eyebrow { font-size: 9px; }
+    html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #countdown-timer { font-size: 26px; }
+    #match-success-screen .match-fighter .match-chips { min-height: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #match-success-screen:not(#match-motion-override),
+    #match-success-screen:not(#match-motion-override) *,
+    #match-success-screen:not(#match-motion-override) *::before,
+    #match-success-screen:not(#match-motion-override) *::after {
+        animation: none;
+        transition-duration: 0s;
+    }
 }
 
 /* 窄屏：信息栏折到棋盘下面（手机上先看棋盘，再看到操作） */
@@ -2394,6 +2899,15 @@ html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #rps-result {
     background-color: var(--surface-muted);
     border: 1px solid var(--border);
     border-radius: var(--ax-radius-sm);
+}
+
+/* 平局反馈要压过上面那条（上面那条的特异性是 1 个 id + 2 个属性，比
+   style.css 里 `html[data-theme-preset="arena"] #rps-result.is-tie` 多一个属性，
+   所以这一份必须写在这里、且带上 .is-tie 才够）。 */
+html[data-arena-screens="v2"][data-arena-screen-list~="placement"] #rps-result.is-tie {
+    font-weight: 600;
+    background-color: var(--alpha-danger-16);
+    border-color: var(--danger);
 }
 
 /* ============================================================================

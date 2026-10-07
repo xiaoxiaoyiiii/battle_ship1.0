@@ -385,21 +385,56 @@
         </div>
     </div>
 
-    <!-- 匹配成功等待界面 -->
+    <!-- 匹配成功等待界面（2026-10-05 重做视觉）。
+         这一屏此前是「一个标题 + 一个小信息框」，在 1280×720 上实测信息只占屏幕中间
+         窄窄一条、上下大片留白；而它恰好是玩家从"匹配中"跨进对局的**唯一过渡**，
+         值得做完整。现在改成一块对阵板：左「你」、中 VS、右对手（对手的称号 / 标签 /
+         等级挂在下方 chip 行），再往下是段位与 5 秒倒计时。
+         ⚠️ 全部既有 id 与文案锚点原样保留，理由逐条：
+           - `#opponent-info` 里**只能**装对手名（tools/level_check.mjs ★13b 拿它的
+             `textContent.trim()` 与对手名逐字比对，多一个字都算红）；
+           - `#opponent-chips` 内由 game.js 的 showOpponentChips() 填
+             `.match-chip.lv` / `.title` / `.tag` ×2 / `.rank`，且它不许横向溢出
+             （tools/ranked_check.mjs F1.6 比的是 scrollWidth 与 clientWidth）；
+           - `#match-self-rank` 由 showMyRankChip() 填自己的段位 chip；
+           - `#countdown-timer` 与 `.countdown-bar > .countdown-fill` 由 game_state
+             处理器里的 5 秒定时器逐秒改（直接写 `countdownFill.style.width`）；
+           - `#start-now` **保持原样不接线**：它至今没有任何 JS 监听
+             （docs/C_PLUS_BASELINE_2026_09_29.md 明载"点击无反应"，那一轮决定
+             "不新增行为，也不删元素"），本批只动视觉，同样不接线、不删。 -->
     <div id="match-success-screen" class="screen">
-        <h2>匹配成功！</h2>
+        <div class="match-entry-heading">
+            <span class="match-entry-eyebrow">BATTLE FOUND <span aria-hidden="true">·</span> 对阵已确认</span>
+            <h2>匹配成功！</h2>
+            <span class="match-entry-rule" aria-hidden="true"></span>
+        </div>
         <div class="match-info">
-            <p>你的对手是：<span id="opponent-info"></span></p>
+            <div class="match-versus">
+                <div class="match-fighter match-fighter-me">
+                    <span class="match-fighter-tag">PLAYER 01 <span aria-hidden="true">/</span> 你</span>
+                    <span class="match-ship-emblem" aria-hidden="true"><svg viewBox="0 0 180 90" fill="none"><path d="M13 58h154l-19 21H40L13 58Z"/><path d="M54 58V40h23V23h28v17h24v18M88 23V11m0 0h24M26 84h31m9 0h48m11 0h34"/><path d="M43 49h11m78 0h11M71 40h36"/></svg></span>
+                    <span class="match-fighter-name">我方舰队</span>
+                    <div id="match-self-rank" class="match-chips match-self-rank hidden"></div>
+                </div>
+                <div class="match-vs" aria-hidden="true"><span class="match-vs-ring"></span><strong>VS</strong><small>LOCKED</small></div>
+                <div class="match-fighter match-fighter-foe">
+                    <span class="match-fighter-tag">PLAYER 02 <span aria-hidden="true">/</span> 对手</span>
+                    <span class="match-ship-emblem" aria-hidden="true"><svg viewBox="0 0 180 90" fill="none"><path d="M13 58h154l-19 21H40L13 58Z"/><path d="M54 58V40h23V23h28v17h24v18M88 23V11m0 0h24M26 84h31m9 0h48m11 0h34"/><path d="M43 49h11m78 0h11M71 40h36"/></svg></span>
+                    <p class="match-foe-line"><span class="match-foe-prefix">你的对手是：</span><span id="opponent-info"></span></p>
+                    <div id="opponent-chips" class="match-chips opponent-chips"></div>
+                </div>
+            </div>
             <!-- 对手的称号 / 标签 / 等级（2026-09-17 追加）。
                  数据取自公开的 /user_stats（与名片同一份来源），在 5 秒倒计时里异步填进来；
                  拿不到就保持空白，不影响开局。 -->
-            <div id="opponent-chips" class="match-chips opponent-chips"></div>
             <!-- 自己的段位（段位批）。数据来自 /api/profile 的 rank_info，**页面加载时取一次**就缓存住
                  （不在这 5 秒里现拉）；游客 / 没登录时整块隐藏。 -->
-            <div id="match-self-rank" class="match-chips match-self-rank hidden"></div>
-            <p>游戏将在 <span id="countdown-timer">5</span> 秒后开始</p>
-            <div id="countdown-bar" class="countdown-bar">
-                <div class="countdown-fill"></div>
+            <div class="match-countdown">
+                <span class="match-countdown-label">舰队即将交战</span>
+                <p class="match-countdown-line">游戏将在 <span id="countdown-timer">5</span> 秒后开始</p>
+                <div id="countdown-bar" class="countdown-bar">
+                    <div class="countdown-fill"></div>
+                </div>
             </div>
             <!-- 跳过入口：这块屏此前**一个可点元素都没有**（实测 buttons:0 / links:0），
                  320×568 下 `#countdown-bar` 甚至被 chip 块挤出首屏（bottom=727）。
@@ -520,6 +555,19 @@
                     <div id="in-game-chat-header" class="in-game-chat-header" title="拖动以移动聊天框">聊天</div>
                     <div id="in-game-chat-messages" class="in-game-chat-messages"></div>
                     <div class="in-game-chat-input-row">
+                        <!-- 快捷语入口（2026-10-05 挪进聊天窗底部这一行）。
+                             ⚠️ 为什么必须住在**聊天窗里面**：聊天窗是可以用标题栏拖动的
+                                （game.js 的 makeFloatingDraggable 改的是容器的 style.left/top）。
+                                按钮原来是一个独立 fixed 浮标，窗子一拖走它就孤悬在页面角落，
+                                和聊天彻底脱钩。放进输入行之后它天然跟着窗子走，也不需要
+                                再为紧凑/宽屏各写一套"按钮该摆哪"的定位规则。
+                             ⚠️ 面板与轻提示**刻意留在窗子外面**（见下面那块注释）：
+                                聊天窗有 overflow:hidden（圆角 + 消息区滚动），浮层挂在里面会被裁掉。
+                             文案仍然一个字都不写在这里，全部来自 GET /api/quick_chat。 -->
+                        <button type="button" id="quick-chat-btn" class="quick-chat-btn"
+                                aria-expanded="false" aria-controls="quick-chat-panel" title="局内快捷语">
+                            <span class="qc-btn-label">快捷语</span>
+                        </button>
                         <input type="text" id="in-game-chat-input" maxlength="100" placeholder="输入聊天内容..."
                                autocomplete="off"/>
                         <button id="in-game-chat-send">发送</button>
@@ -660,20 +708,18 @@
                 </div>
 
                 <!--
-                    局内快捷语（第 4 批）。
-                    ⚠️ 三条硬约束：
+                    局内快捷语（第 4 批）—— 入口按钮已挪进上面的聊天输入行（2026-10-05）。
+                    ⚠️ 这里只留【浮层】与【轻提示】两个节点，原因：
+                       · 聊天窗有 overflow:hidden，浮层挂在它里面会被裁掉；
+                       · 浮层位置由 game.js 的 positionQuickChatPanel() 按按钮的实时矩形
+                         每次打开时算出来（可上可下、夹在视口内），所以这里不写死 top/left。
+                    ⚠️ 两条硬约束：
                       ① 绝不能用 .modal-overlay（那是全屏遮罩，会挡住棋盘、点不动格子）；
                          这里的浮层是纯展示的，pointer-events 只在自己身上，没有遮罩层。
-                      ② 按钮位置和 #phase-timing-toggle 同一套路：宽屏挂在阶段卡片角上，
-                         紧凑/矮屏改成屏幕角落的固定浮标 —— 窄屏阶段卡片里塞不下第二个
-                         40px 触控目标（历史上「阶段时点」开关就因此翻过车）。
-                      ③ 文案一个字都不写在这里：全部来自 GET /api/quick_chat，
+                         轻提示同理，pointer-events:none，永远不挡任何可点区域。
+                      ② 文案一个字都不写在这里：全部来自 GET /api/quick_chat，
                          由 game.js 渲染（前后端各写一份必然漂移）。
                 -->
-                <button type="button" id="quick-chat-btn" class="quick-chat-btn"
-                        aria-expanded="false" aria-controls="quick-chat-panel" title="局内快捷语">
-                    <span class="qc-btn-label">快捷语</span>
-                </button>
                 <div id="quick-chat-panel" class="quick-chat-panel" role="group"
                      aria-label="局内快捷语" aria-hidden="true" hidden></div>
                 <div id="quick-chat-toast" class="quick-chat-toast" role="status" aria-live="polite"></div>

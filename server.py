@@ -11509,7 +11509,11 @@ def confirm_magic_target(data):
                 f'自己拿「{cards[caster_choice].name}」'
                 + (f'，对方拿「{_taoyuan_took}」' if _taoyuan_took else '，没有对方那一份')
                 + (f'，其余 {len(remaining_cards)} 张放回牌堆' if remaining_cards else ''),
-                {'caster': player_id, 'opponent': opponent_id, 'card': '桃园结义',
+                # ⚠️ detail 里**不放** `player_id` / `opponent_id` 这两个内部座位键：
+                #   回放的 `_step_detail()` 原样保留标量、`build()` 原样复制步骤，
+                #   它们会进最终回放 JSON（前端没有消费者）。要的是卡名与数量，
+                #   "谁"由 4 个位置参数 `_log_name(...)` 的显示名承担。
+                {'card': '桃园结义',
                  'mine': cards[caster_choice].name, 'theirs': _taoyuan_took,
                  'returned': len(remaining_cards)},
                 _log_name(room, player_id))

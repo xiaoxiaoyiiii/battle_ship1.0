@@ -4323,12 +4323,21 @@ function replayAliveShips(frame, side) {
 //    若这次重置之后再没有步骤，那个重置节点就落在"最后一格的下一格"。
 //    位置夹到最后一格（与"这一刻还没有下一步"的语义一致）——
 //    `updateReplayTrack` 判"到了没"用的仍是 `node.step <= k` 的原值，两者不冲突。
+//
+// ⚠️ `totalSteps <= 1`（0 步 / 只有 1 步）时返回 **0**，不是 50：
+//    `updateReplayTrack` 的 `percent = total > 1 ? (index / (total - 1)) * 100 : 0`
+//    （`updateReplayTrack`）把 `fill` / `thumb` 放在 **0%** ——
+//    这是分母 `total - 1 == 0` 的唯一有意义的取值（没有可拖动的区间，
+//    游标只能停在起点）。节点若按"摆正中"给 50%，
+//    就会出现"游标在 0%、唯一的节点在中间"的坐标不一致（本批审查发现）。
+//    两边同口径 ⇒ 单步回放里节点与游标重叠，点击跳转也仍落在它自己那一步。
 function replayNodePercent(step, totalSteps) {
-    if (totalSteps <= 1) return 50;                  // 只有一个点：摆正中，别贴左边
+    var total = replayInt(totalSteps, 0);
+    if (total <= 1) return 0;
     var at = replayInt(step, 0);
     if (at < 0) at = 0;
-    if (at > totalSteps - 1) at = totalSteps - 1;
-    return (at / (totalSteps - 1)) * 100;
+    if (at > total - 1) at = total - 1;
+    return (at / (total - 1)) * 100;
 }
 
 // 某个节点的 tooltip：说出"那一步做了什么"（契约 §7）。

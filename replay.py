@@ -1041,7 +1041,11 @@ def note_card_played(room, player_id, card, chained: bool = False) -> None:
     actor = _actor_name(room, player_id)
     card_name = str(getattr(card, 'name', '') or '魔法卡')
     label = '%s %s【%s】' % (actor, '连锁打出' if chained else '打出', card_name)
-    detail = {'caster': player_id, 'card': card_name, 'played': True}
+    # ⚠️ `detail` 里**不放**原始 `player_id`：`_step_detail()` 会原样保留标量、
+    #    `build()` 又原样复制步骤 ⇒ 内部座位键会进最终回放 JSON。
+    #    回放侧要的是"谁打的"（`actor` 已经是显示名）与卡名，不需要座位 ID
+    #    （前端也没有消费者）。隐私口径见契约 §10。
+    detail = {'card': card_name, 'played': True}
     if chained:
         detail['chained'] = True
     _append(room, 'magic', label, detail, actor)

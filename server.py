@@ -8398,6 +8398,16 @@ def handle_use_magic_card(data):
     # 服务端是手牌的唯一权威，改了就说，别让前端猜。
     emit('hand_updated', {'hand': player.magic_hand}, to=player.sid)
 
+    # ★ 回放批：魔法卡**出手**也是一个可定位的步骤（与上面那条 emit 同一个时点）。
+    #   ⚠️ 必须在扣牌之后调：回放的 `hands` 时间线是在这一步拿当前房间状态比对后写的，
+    #     早一行调就会把"牌还在手上"记成出手时刻的状态，等于没修。
+    #   ⚠️ 连锁窗口可能停留好几个事件（对方响应 / 自连锁 / 放弃），此前这段路一个步骤
+    #     都不记 ⇒ 回放里那张牌要等到**结算**才离手，与玩家当场看到的不符；
+    #     被康掉的卡结算文案是"被X无效化"，手牌更是彻底没有着落（作者实报口径：
+    #     被康的卡也已经出手，出手/结算要分两个时点展示）。
+    #   ⚠️ 只进回放，**绝不往 `room.game_logs` 加行**（那是实战里玩家可见的日志）。
+    replay.note_card_played(room, player_id, card)
+
     # 场地魔法卡不再在此预置：改由结算（apply_magic_effect 场地分支）实例入区，
     # 避免"打出即进弃牌堆 + 贴场"产生游离副本；被顶掉/被康时实例移入弃牌堆。
 
@@ -11058,6 +11068,11 @@ def chain_response(data):
         # magic_chain_updated（连锁栈），手牌更新从未下发，所有速阶3响应都受影响。
         emit('hand_updated', {'hand': player.magic_hand}, to=player.sid)
 
+        # ★ 回放批：连锁响应里的**出手**同样要记（与上面那条 emit 同一个时点、同一个理由：
+        #   扣牌当场就发生，回放必须有可定位的步骤承载这次手牌变化，不能等到结算）。
+        #   ⚠️ 必须留在扣牌之后：`note_card_played` 会在这一步比对并写下 `hands` 时间线。
+        replay.note_card_played(room, player_id, card, chained=True)
+
         room.chain.append(ChainItem(player_id, card, targets, time.time()))
         # 与 `handle_use_magic_card` 同一份净化（区域预览必须让双方看到选区）。
         emit('magic_chain_updated', _spectate_chain_payload(room), room=room_id)
@@ -11479,6 +11494,25 @@ def confirm_magic_target(data):
             emit('hand_updated', {
                 'hand': opponent.magic_hand
             }, to=room.players[opponent_id].sid)
+
+            # ★ 回放批：这次「分配」也要有可定位的步骤（**只在回放里**，不加实战日志行）。
+            #   ⚠️ 必须在两个 append 之后调：回放的 `hands` 时间线是在这一步拿当前房间
+            #     状态比对后写的；早一行调就等于"牌还没到手"，等于没修。
+            #   ⚠️ 为什么这里必须单独补：`resolve_chain` 记的那条 `log_magic` 步骤在
+            #     **本选择之前**（那时双方还没拿到牌），而本函数**不走** `add_game_log`
+            #     ⇒ 不补的话，这几张牌要等到下一个步骤才"突然"出现在回放里。
+            _taoyuan_took = (cards[opponent_choice].name
+                             if 0 <= opponent_choice < len(cards) else None)
+            replay.note_hand_change(
+                room,
+                f'{_log_name(room, player_id)} 的【桃园结义】分配：'
+                f'自己拿「{cards[caster_choice].name}」'
+                + (f'，对方拿「{_taoyuan_took}」' if _taoyuan_took else '，没有对方那一份')
+                + (f'，其余 {len(remaining_cards)} 张放回牌堆' if remaining_cards else ''),
+                {'caster': player_id, 'opponent': opponent_id, 'card': '桃园结义',
+                 'mine': cards[caster_choice].name, 'theirs': _taoyuan_took,
+                 'returned': len(remaining_cards)},
+                _log_name(room, player_id))
 
             # 通知对手等待结束
             emit('taoyuan_complete', {

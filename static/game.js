@@ -4309,9 +4309,26 @@ function replayAliveShips(frame, side) {
 // ---------------------------------------------------------------------------
 // 关键节点（**只用服务端给的 `nodes`**，前端不许另算一套 —— 两套判据必然漂移）
 // ---------------------------------------------------------------------------
-function replayNodePercent(index, total) {
-    if (total <= 1) return 50;                       // 只有一个点：摆正中，别贴左边
-    return (index / (total - 1)) * 100;
+// 关键节点在进度条上的**位置**：按它**真实落在第几步**算，不是按它是第几个节点。
+//
+// ⚠️ 这两者**必须**同口径，否则节点与进度、跳转全对不上（本批修掉的缺陷）：
+//    拖动/点击/`fill`/`thumb` 用的都是 `k / (steps.length - 1)`（见 `updateReplayTrack`
+//    与 `replaySeekFromPointer`），而节点原来按 `i / (nodes.length - 1)` 摆 ——
+//    节点是**稀的**（只有魔法卡 / 命中 / 击沉 / 阶段 / 重置才有一个），
+//    一局 91 步里只有 51 个节点时，绝大多数节点都被摆到了与它真实步骤无关的位置
+//    （实测那局 51 个节点里 47 个位置不符），于是"点这个点跳到那一步"完全错位。
+//
+// ⚠️ 越界夹住：服务端 `board_resets` 的重置点记在**下一个** step 上
+//    （`replay.note_board_reset` 不追加步骤，直接记 `len(steps)`），
+//    若这次重置之后再没有步骤，那个重置节点就落在"最后一格的下一格"。
+//    位置夹到最后一格（与"这一刻还没有下一步"的语义一致）——
+//    `updateReplayTrack` 判"到了没"用的仍是 `node.step <= k` 的原值，两者不冲突。
+function replayNodePercent(step, totalSteps) {
+    if (totalSteps <= 1) return 50;                  // 只有一个点：摆正中，别贴左边
+    var at = replayInt(step, 0);
+    if (at < 0) at = 0;
+    if (at > totalSteps - 1) at = totalSteps - 1;
+    return (at / (totalSteps - 1)) * 100;
 }
 
 // 某个节点的 tooltip：说出"那一步做了什么"（契约 §7）。
@@ -4566,13 +4583,16 @@ function buildReplayTrackNodes() {
     if (!replayTrackNodesEl) return;
     var payload = replayState.payload;
     var nodes = (payload && Array.isArray(payload.nodes)) ? payload.nodes : [];
+    var steps = (payload && Array.isArray(payload.steps)) ? payload.steps : [];
     replayTrackNodesEl.innerHTML = '';
     replayState.nodeEls = [];
     for (var i = 0; i < nodes.length; i++) {
         var node = nodes[i] || {};
         var el = document.createElement('span');
         el.className = 'replay-track-node kind-' + String(node.kind || 'phase');
-        el.style.left = replayNodePercent(i, nodes.length) + '%';
+        // ★ 位置按**节点真实的 step**（不是节点序号）：与进度条的
+        //   `k / (steps.length - 1)` 同一把尺子，点节点跳转才落在它自己那一步。
+        el.style.left = replayNodePercent(replayInt(node.step, 0), steps.length) + '%';
         el.dataset.step = String(replayInt(node.step, 0));
         el.dataset.nodeIndex = String(i);
         el.title = replayNodeTipText(node);

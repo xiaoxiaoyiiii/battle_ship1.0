@@ -19,6 +19,8 @@
  *   - 猜拳的重复提交 / 迟到 ack / 平局重试，既有工具**一条都没有**。
  *   - 匹配成功屏只有 `level_check.mjs` / `ranked_check.mjs` 读过它的**文字**，
  *     没人量过它的**几何**（两档视口下核心信息在不在首屏、有没有横向溢出）。
+ *     ⚠️ 2026-10-07 审查回单补的第三档手机视口 + ★13a/13b/13c 三条几何断言，
+ *        就是被"文字/在首屏内都过了、实拍却是贴顶的一小块"这件事逼出来的。
  *
  * 用法：
  *   node tools/match_rps_chat_check.mjs --url http://127.0.0.1:5000/
@@ -51,8 +53,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const VIEW_W = 1440;
 const VIEW_H = 900;
-// 两档视口：桌面 + 一个真正的紧凑档（项目里 `layout-compact` 的判定线）。
-const VIEWPORTS = [[1280, 720], [1024, 640]];
+// 三档视口：桌面 + 紧凑档（项目里 `layout-compact` 的判定线）+ 手机竖屏。
+// ⚠️ 手机那档是 2026-10-07 审查回单补的：这块屏的验收里写着「手机首屏可见」，
+//    而工具此前只量了 1280×720 / 1024×640 —— 手机档**从没被测过**。
+//    390×844 是项目里既有的手机基准（changelog_check / friend_dm_check 都用它）。
+const VIEWPORTS = [[1280, 720], [1024, 640], [390, 844]];
 
 if (!BROWSER) { console.error('找不到 Edge/Chrome，跳过本检查'); process.exit(0); }
 
@@ -137,7 +142,9 @@ async function openTab(url) {
       await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: Math.round(x), y: Math.round(y), button: 'left', clickCount: 1 });
     },
     setViewport: async (w, h) => {
-      await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
+      // 窄于 600 走真实手机档（项目里 cplus_* 系列同一判据）：`mobile:true` 会改
+      // 布局视口/缩放的处理，只缩宽度不打开它，量到的就不是手机上的那块屏。
+      await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: w < 600 });
       await sleep(350);
     },
     clearViewport: async () => { await send('Emulation.clearDeviceMetricsOverride'); await sleep(250); },
@@ -368,15 +375,49 @@ try {
                  r: Math.round(r.right), b: Math.round(r.bottom) };
       });
       var de = document.documentElement;
+      var box = function (sel) { var e = document.querySelector(sel); if (!e) return null;
+        var r = e.getBoundingClientRect();
+        return { t: Math.round(r.top), b: Math.round(r.bottom), h: Math.round(r.height),
+                 cy: Math.round(r.top + r.height / 2) }; };
+      var scr = box('#match-success-screen');
+      var cont = box('.game-container');
+      var info = box('.match-info');
+      var h2 = box('#match-success-screen > h2');
       return { rows: rows, vw: window.innerWidth, vh: window.innerHeight,
         docScrollW: de.scrollWidth, docClientW: de.clientWidth,
-        screenH: Math.round(document.getElementById('match-success-screen').getBoundingClientRect().height) }; })()`);
+        screenBottom: scr.b, containerBottom: cont.b,
+        cellTop: (h2.t < info.t ? h2.t : info.t), cellBottom: info.b,
+        versusCy: box('.match-versus').cy }; })()`);
     const vp = w + 'x' + h;
     check(geo && geo.docScrollW === geo.docClientW, `★ 12 ${vp} 匹配成功屏没有横向溢出`, geo && { scroll: geo.docScrollW, client: geo.docClientW });
     const outside = (geo.rows || []).filter((r) => !r.miss && (r.l < -1 || r.t < -1 || r.r > geo.vw + 1 || r.b > geo.vh + 1));
     check(geo && outside.length === 0, `★ 13 ${vp} 核心信息（标题 / 对阵板 / chip 行 / 进度条）全在首屏内`,
       outside.map((r) => r.sel + ' ' + r.l + ',' + r.t + '-' + r.r + ',' + r.b));
     check(geo && geo.rows.every((r) => !r.miss), `14 ${vp} 四个关键节点都还在 DOM 里`, (geo.rows || []).filter((r) => r.miss).map((r) => r.sel));
+
+    // ---- 几何验收（2026-10-07 审查回单新增：★ 13a / 13b / 13c）----------------
+    // 历史缺陷：`#match-success-screen.screen.active` 写了 justify-content:center，
+    // 但它的父链全是 auto 高 ⇒ 这一屏的高度就等于自己的内容高（1280×720 实测 388px），
+    // center 在**没有富余空间**的盒子里等于没写 —— 实拍 `03-match-success-1280x720.png`
+    // 里标题贴着导航，视口下方 273px 全是空的。
+    // ⚠️ 上面 ★13 只要求"在首屏内"：一个贴在顶部的 388px 小盒子**照样满足它**，
+    //    所以这三条几何断言必须单独写死，且要能判死在"贴顶"这个状态上。
+    // ① 这一屏真的取得了视口高度：屏底贴到容器底（差 ≤ 容器的下 padding），容器底贴到视口底。
+    check(geo && (geo.containerBottom - geo.screenBottom) <= 26 && (geo.vh - geo.containerBottom) <= 48,
+      `★ 13a ${vp} 匹配成功屏取得视口高度（屏底 / 容器底都落到底，不留整屏空白）`,
+      geo && { screenBottom: geo.screenBottom, containerBottom: geo.containerBottom, vh: geo.vh,
+        screenGap: geo.containerBottom - geo.screenBottom, pageGap: geo.vh - geo.containerBottom });
+    // ② 对阵板**不贴近顶部**：它的中心要落在视口中部带（30%~70% 视口高）里。
+    //    修前实测：1280×720 上 versus 中心在 186px = 25.8% 视口高 —— 贴着导航。
+    const vRatio = geo ? geo.versusCy / geo.vh : -1;
+    check(geo && vRatio >= 0.3 && vRatio <= 0.7,
+      `★ 13b ${vp} 对阵板中心落在视口中部带（30%~70% 视口高，不贴顶）`,
+      geo && { versusCy: geo.versusCy, vh: geo.vh, ratio: +vRatio.toFixed(3) });
+    // ③ 核心区域（标题顶 → 信息块底）有充分高度：≥ 40% 视口高。
+    const coreH = geo ? geo.cellBottom - geo.cellTop : 0;
+    check(geo && coreH >= 0.4 * geo.vh, `★ 13c ${vp} 核心区域（标题 + 对阵信息块）占视口高 ≥ 40%`,
+      geo && { coreH: coreH, vh: geo.vh, ratio: +(coreH / geo.vh).toFixed(3) });
+
     await A.shot('match-success-' + vp);
   }
   await A.clearViewport();

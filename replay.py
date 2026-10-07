@@ -1015,6 +1015,66 @@ def note_action(room, kind, label, detail=None, actor=None) -> None:
         _mark_node(_state(room), entry['i'], 'phase', str(label))
 
 
+def note_card_played(room, player_id, card, chained: bool = False) -> None:
+    """喂一口「魔法卡**出手**」—— 入连锁那一刻，**不是**结算那一刻。
+
+    ⚠️ 为什么必须有这一步（作者实报「棋盘或手牌状态不对」的根因之一）：
+
+    * `hand_updated` 是在**入连锁**时发出的（`handle_use_magic_card` 扣牌后立刻推，
+      连锁响应路径同理）—— 玩家在对局里**当场**就看见那张牌离手了，
+      而这一幕在连锁窗口期间停留好几个事件（对方响应 / 自己自连锁 / 放弃）。
+    * 但回放的 `hands` 时间线是**稀疏快照**：它只在 `_append` 里跟当前房间状态比对，
+      而原来"扣牌"这段路**一个步骤都不记** —— 于是回放要等到连锁结算那次
+      `log_magic` 才有步可挂，那一刻手牌才**突然**变。中间这段时间回放显示的
+      是"牌还在手上"，与真实对局当场可见的状态不符；
+      若这张牌被康掉，结算步的文案是「被X无效化」，手牌消失更是彻底没有了着落。
+    * 按作者口径：被康掉的卡**也已经出手了**，回放要按「出手」/「结算」**两个时点**展示。
+
+    ⚠️ 与 `note_action` 一样：**绝不往 `room.game_logs` 加行**（那是对局里玩家可见的
+       日志，凭空多一行等于改了实战显示）。本函数只进回放。
+
+    `chained=True` 表示这是连锁响应里打出的速阶3（`handle_chain_response`），
+    文案与之区分 —— 那是"响应"而不是"发起"。
+    """
+    if room is None or card is None:
+        return
+    actor = _actor_name(room, player_id)
+    card_name = str(getattr(card, 'name', '') or '魔法卡')
+    label = '%s %s【%s】' % (actor, '连锁打出' if chained else '打出', card_name)
+    # ⚠️ `detail` 里**不放**原始 `player_id`：`_step_detail()` 会原样保留标量、
+    #    `build()` 又原样复制步骤 ⇒ 内部座位键会进最终回放 JSON。
+    #    回放侧要的是"谁打的"（`actor` 已经是显示名）与卡名，不需要座位 ID
+    #    （前端也没有消费者）。隐私口径见契约 §10。
+    detail = {'card': card_name, 'played': True}
+    if chained:
+        detail['chained'] = True
+    _append(room, 'magic', label, detail, actor)
+
+
+def note_hand_change(room, label, detail=None, actor=None) -> None:
+    """喂一口**改了手牌却没有游戏内日志**的选择（回放专用，`kind='system'`）。
+
+    ⚠️ 为什么不像别的卡那样靠 `add_game_log` 顺带记：
+
+    * `add_game_log` 的末尾会调 `note()`（一处覆盖 38 个记录点），**多数**手牌变化
+      因此天然有步骤可挂。但有一类**等待玩家选择**的卡，扣牌/发牌发生在
+      `handle_magic_temp_choice` 里、**根本没过 `add_game_log`** ——
+      桃园结义的"分配"就是（`resolve_chain` 那次 `log_magic` 记在**选择之前**，
+      手里那一刻还没拿到牌）。
+    * 于是那几张牌要等到**下一个**步骤才出现在回放里，与真实对局当场发生的时间点
+      差了一步（作者实报「手牌状态不对」的一类）。本函数就是给这类选择补一个
+      **可定位的步骤**。
+
+    ⚠️ **绝不往 `room.game_logs` 加行**（不能给玩家凭空多出一条实战日志），
+       所以这里**不调** `add_game_log`，只 `_append` 一步。
+    ⚠️ 必须在**状态改完之后**调：`_append` → `_record_snapshot` 是拿**当时**的房间状态
+       比对后写 `hands` 时间线的，早一行调就等于没记。
+    """
+    if room is None:
+        return
+    _append(room, 'system', label, detail, actor)
+
+
 def note_board_reset(room, board_owner_id=None) -> None:
     """喂一口**棋盘重置**（复用第 5 批为观战加的 4 个失效点，一处地方两个消费方）。
 

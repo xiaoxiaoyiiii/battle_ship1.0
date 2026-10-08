@@ -9767,6 +9767,11 @@ function switchScreen(screen) {
     const hideEls = document.querySelectorAll('.hide-in-game');
     const inRoomScreens = ['ship-placement-screen', 'rps-screen', 'game-screen', 'custom-room-screen'];
     const shouldHide = screen && inRoomScreens.includes(screen.id);
+    // `gameNav` itself is hidden while a match is in progress.  Restoring only
+    // the individual `.hide-in-game` links leaves the whole bar at
+    // `display:none` after returning from replay (or another in-game screen),
+    // so the home screen appears to lose every top-level action.
+    if (gameNav) gameNav.style.display = shouldHide ? 'none' : 'block';
     hideEls.forEach(el => {
         el.style.display = shouldHide ? 'none' : '';
     });

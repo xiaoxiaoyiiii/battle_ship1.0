@@ -28,7 +28,7 @@
 <br>
 
 <p align="center">
-  <img src="docs/cplus_shots/realpath-01-home.png" alt="竞技场首页" width="92%">
+  <img src="docs/ui_demos/shots/r-real-cards-home-1440x900.png" alt="竞技场首页与完整卡面" width="92%">
 </p>
 
 ---
@@ -49,16 +49,16 @@
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/cplus_shots/realpath-06-game.png" alt="对局"><p align="center"><sub><b>对局</b> · 双方海域 / 连锁区 / 手牌 / 聊天</sub></p></td>
-    <td width="50%"><img src="docs/cplus_shots/result-live-2026-09-30.png" alt="结算"><p align="center"><sub><b>结算</b> · 徽章解锁 / 经验 / 本局回放入口</sub></p></td>
+    <td width="50%"><img src="docs/ui_demos/shots/r-real-cards-game-1440x900.png" alt="对局与完整卡面"><p align="center"><sub><b>对局</b> · 双方海域 / 目标选择 / 完整卡面 / 对局数据</sub></p></td>
+    <td width="50%"><img src="docs/ui_demos/shots/arena-suite-result-1440x900.png" alt="结算"><p align="center"><sub><b>结算</b> · 胜负判定 / 段位进度 / 本局数据 / 回放入口</sub></p></td>
   </tr>
   <tr>
-    <td><img src="docs/cplus_shots/lobby-live-2026-09-29.png" alt="大厅"><p align="center"><sub><b>游戏大厅</b> · 房间列表 / 在线玩家 / 公屏</sub></p></td>
-    <td><img src="docs/cplus_shots/spectate-live-2026-09-29.png" alt="观战"><p align="center"><sub><b>实时观战</b> · 只看已打过的格子，绝不泄露船位</sub></p></td>
+    <td><img src="docs/ui_demos/shots/arena-suite-room-1440x900.png" alt="游戏大厅"><p align="center"><sub><b>游戏大厅</b> · 房间列表 / 在线玩家 / 房间入口</sub></p></td>
+    <td><img src="docs/ui_demos/shots/arena-suite-spectate-1440x900.png" alt="观战"><p align="center"><sub><b>实时观战</b> · 观战席 / 对局信息 / 船位隐私</sub></p></td>
   </tr>
   <tr>
-    <td><img src="docs/cplus_shots/replay-live-2026-09-29.png" alt="回放"><p align="center"><sub><b>对局回放</b> · 逐步回看 / 1×2×4× 倍速 / 关键节点</sub></p></td>
-    <td><img src="docs/cplus_shots/collection.png" alt="图鉴"><p align="center"><sub><b>卡牌图鉴</b> · 按速阶、类型筛选与全文搜索</sub></p></td>
+    <td><img src="docs/ui_demos/shots/arena-suite-replay-1440x900.png" alt="回放"><p align="center"><sub><b>对局回放</b> · 逐步回看 / 倍速控制 / 关键节点</sub></p></td>
+    <td><img src="docs/ui_demos/shots/arena-suite-collection-1440x900.png" alt="图鉴"><p align="center"><sub><b>卡牌图鉴</b> · 完整卡面 / 速阶与类型筛选 / 详情面板</sub></p></td>
   </tr>
 </table>
 

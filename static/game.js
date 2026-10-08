@@ -9630,25 +9630,13 @@ function setupSocketListeners() {
         }
     });
 
-    // 卧薪尝胆：为所有活船加护盾（双方都可见，所以 room 广播）
+    // 卧薪尝胆：双方只知道加盾数量；船位仍只在施法者自己的棋盘同步。
     socket.on('shields_added', (data) => {
         const isMine = data && data.player === gameState.playerId;
         const cnt = (data && data.count) || 0;
         if (!isMine && data) {
-            const validPositions = (positions) => (Array.isArray(positions) ? positions : [])
-                .filter(p => p && Number.isInteger(p.x) && Number.isInteger(p.y)
-                    && p.x >= 0 && p.x < 6 && p.y >= 0 && p.y < 6)
-                .map(p => ({ x: p.x, y: p.y }));
-            let ships = Array.isArray(data.ships)
-                ? data.ships.map(validPositions).filter(positions => positions.length)
-                : [];
-            // 兼容旧载荷：只有 positions 时，每格作为独立条目，避免误删其他船的状态。
-            if (!ships.length) ships = validPositions(data.positions).map(p => [p]);
-            const incomingKeys = new Set(ships.flat().map(p => `${p.x},${p.y}`));
-            gameState.opponentShieldedShips = (gameState.opponentShieldedShips || [])
-                .filter(ship => !(ship || []).some(p => incomingKeys.has(`${p.x},${p.y}`)))
-                .concat(ships);
-            if (typeof initGameBoards === 'function') initGameBoards();
+            // 不读取 positions/ships：旧版本曾在这里把对方所有活船坐标画到
+            // 对手棋盘，卧薪尝胆因此变成了主动泄露舰队位置的卡。
         }
         const msg = isMine
             ? `已为${cnt}艘战舰添加护盾`

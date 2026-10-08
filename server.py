@@ -14964,11 +14964,12 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             ship.shield = True
             applied += 1
         _emit_player_ships(room, caster_id)
+        # 护盾状态只应让施法者在自己的棋盘上看到。把船位放进房间广播会
+        # 直接把未被攻击过的舰队坐标泄露给对手；对手只需要知道“对方加了
+        # 几艘护盾”，实际位置应继续保持未知，直到正常攻击/显形规则公开。
         emit('shields_added', {
             'player': caster_id,
             'count': applied,
-            'positions': [{'x': p.x, 'y': p.y} for s in alive for p in s.positions],
-            'ships': [[{'x': p.x, 'y': p.y} for p in s.positions] for s in alive],
         }, room=room.id)
         add_game_log(room,
                      f'第{room.round}回合 · {_log_name(room, caster_id)} 的【卧薪尝胆】'

@@ -28,7 +28,7 @@
 <br>
 
 <p align="center">
-  <img src="docs/ui_demos/shots/r-real-cards-home-1440x900.png" alt="竞技场首页与完整卡面" width="92%">
+  <img src="docs/readme/01-home-live.png" alt="竞技场首页与完整卡面" width="92%">
 </p>
 
 ---
@@ -49,16 +49,16 @@
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/ui_demos/shots/r-real-cards-game-1440x900.png" alt="对局与完整卡面"><p align="center"><sub><b>对局</b> · 双方海域 / 目标选择 / 完整卡面 / 对局数据</sub></p></td>
-    <td width="50%"><img src="docs/ui_demos/shots/arena-suite-result-1440x900.png" alt="结算"><p align="center"><sub><b>结算</b> · 胜负判定 / 段位进度 / 本局数据 / 回放入口</sub></p></td>
+    <td width="50%"><img src="docs/readme/04-game-live.png" alt="人机对局"><p align="center"><sub><b>对局</b> · 双方海域 / 游戏日志 / 手牌与完整卡面</sub></p></td>
+    <td width="50%"><img src="docs/readme/05-result-live.png" alt="对局结算"><p align="center"><sub><b>结算</b> · 胜负判定 / 本局数据 / 再来一局 / 回放入口</sub></p></td>
   </tr>
   <tr>
-    <td><img src="docs/ui_demos/shots/arena-suite-room-1440x900.png" alt="游戏大厅"><p align="center"><sub><b>游戏大厅</b> · 房间列表 / 在线玩家 / 房间入口</sub></p></td>
-    <td><img src="docs/ui_demos/shots/arena-suite-spectate-1440x900.png" alt="观战"><p align="center"><sub><b>实时观战</b> · 观战席 / 对局信息 / 船位隐私</sub></p></td>
+    <td><img src="docs/readme/02-lobby-live.png" alt="游戏大厅"><p align="center"><sub><b>游戏大厅</b> · 房间列表 / 在线玩家 / 大厅公屏</sub></p></td>
+    <td><img src="docs/readme/03-match-found-live.png" alt="匹配成功"><p align="center"><sub><b>匹配成功</b> · 双方舰队 / 段位信息 / 开局倒计时</sub></p></td>
   </tr>
   <tr>
-    <td><img src="docs/ui_demos/shots/arena-suite-replay-1440x900.png" alt="回放"><p align="center"><sub><b>对局回放</b> · 逐步回看 / 倍速控制 / 关键节点</sub></p></td>
-    <td><img src="docs/ui_demos/shots/arena-suite-collection-1440x900.png" alt="图鉴"><p align="center"><sub><b>卡牌图鉴</b> · 完整卡面 / 速阶与类型筛选 / 详情面板</sub></p></td>
+    <td><img src="docs/readme/06-replay-live.png" alt="对局回放"><p align="center"><sub><b>对局回放</b> · 逐步回看 / 倍速控制 / 关键节点</sub></p></td>
+    <td><img src="docs/readme/07-game-cards-live.png" alt="对局中的完整卡面"><p align="center"><sub><b>卡面适配</b> · 手牌完整卡面 / 目标卡详情 / 游戏日志</sub></p></td>
   </tr>
 </table>
 

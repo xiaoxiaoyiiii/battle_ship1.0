@@ -1,236 +1,281 @@
-# ⚓ 战舰游戏（Battleship + 魔法卡）
+<div align="center">
 
-一个基于 **Flask + Flask-SocketIO** 的实时双人海战棋网页游戏：在经典战舰玩法（布船 → 猜先 → 轮流炮击）之上，叠加了 **43 张魔法卡 / 场地魔法** 的回合制策略系统，支持账号系统、战绩排行、人机对战与自定义房间。
+<img src="docs/readme/banner.svg" alt="战舰棋 · 竞技场 BATTLESHIP ARENA" width="100%">
 
-> 在线体验：http://8.133.180.159:5000/
+<br>
+
+**经典海战棋 × 48 种魔法卡 × 连锁对决 —— 一款实时双人网页对战游戏**
+
+<p>
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white">
+  <img alt="Flask" src="https://img.shields.io/badge/Flask-3.1-000000?style=flat-square&logo=flask&logoColor=white">
+  <img alt="Socket.IO" src="https://img.shields.io/badge/Socket.IO-5.x-010101?style=flat-square&logo=socketdotio&logoColor=white">
+  <img alt="SQLite" src="https://img.shields.io/badge/SQLite-WAL-003B57?style=flat-square&logo=sqlite&logoColor=white">
+  <img alt="Vanilla JS" src="https://img.shields.io/badge/前端-原生_JS·零构建-F7DF1E?style=flat-square&logo=javascript&logoColor=black">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-999_passed-2ea44f?style=flat-square&logo=pytest&logoColor=white">
+</p>
+
+<p>
+  <a href="http://8.133.180.159:5000/"><b>🎮 在线试玩</b></a> ·
+  <a href="#-快速开始"><b>🚀 本地运行</b></a> ·
+  <a href="#-魔法卡"><b>🃏 魔法卡</b></a> ·
+  <a href="#-功能一览"><b>✨ 功能</b></a> ·
+  <a href="./docs"><b>📚 设计文档</b></a>
+</p>
+
+</div>
+
+<br>
+
+<p align="center">
+  <img src="docs/cplus_shots/realpath-01-home.png" alt="竞技场首页" width="92%">
+</p>
+
+---
+
+## 🌊 这是什么
+
+在 6×6 的海域里藏好你的 **6 艘战舰**，猜拳决定先手，然后轮流开炮 —— 先击沉对方全部战舰的人获胜。
+
+听起来是小时候的纸笔游戏？再加上 **48 种魔法卡**：冻结敌舰、3×3 区域放逐、整行轰炸、偷看对方手牌、改写全场规则的场地魔法……
+对手出牌时，你还可以用速阶 3 的卡**连锁响应**，把局势在一瞬间翻过来。
+
+> [!TIP]
+> 不想注册也能以游客身份直接匹配；想冲段位就登录打 **排位对战**。
+
+---
+
+## 📸 游戏画面
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/cplus_shots/realpath-06-game.png" alt="对局"><p align="center"><sub><b>对局</b> · 双方海域 / 连锁区 / 手牌 / 聊天</sub></p></td>
+    <td width="50%"><img src="docs/cplus_shots/result-live-2026-09-30.png" alt="结算"><p align="center"><sub><b>结算</b> · 徽章解锁 / 经验 / 本局回放入口</sub></p></td>
+  </tr>
+  <tr>
+    <td><img src="docs/cplus_shots/lobby-live-2026-09-29.png" alt="大厅"><p align="center"><sub><b>游戏大厅</b> · 房间列表 / 在线玩家 / 公屏</sub></p></td>
+    <td><img src="docs/cplus_shots/spectate-live-2026-09-29.png" alt="观战"><p align="center"><sub><b>实时观战</b> · 只看已打过的格子，绝不泄露船位</sub></p></td>
+  </tr>
+  <tr>
+    <td><img src="docs/cplus_shots/replay-live-2026-09-29.png" alt="回放"><p align="center"><sub><b>对局回放</b> · 逐步回看 / 1×2×4× 倍速 / 关键节点</sub></p></td>
+    <td><img src="docs/cplus_shots/collection.png" alt="图鉴"><p align="center"><sub><b>卡牌图鉴</b> · 按速阶、类型筛选与全文搜索</sub></p></td>
+  </tr>
+</table>
+
+---
+
+## 🎯 玩法
+
+```text
+  ┌─────────┐    ┌───────────┐    ┌──────────────────────────────────┐    ┌────────┐
+  │  布 船  │ ─▶ │ 猜拳定先手 │ ─▶ │ 准备阶段 ─▶ 战斗阶段 ─▶ 结束阶段 │ ─▶ │  胜 负  │
+  │ 6 艘单格 │    │ 先手抽1张  │    │   出牌       开炮        交回合   │    │ 全灭即负 │
+  └─────────┘    │ 后手抽2张  │    └───────────────▲──────┬──────────┘    └────────┘
+                 └───────────┘                    └──────┘ 轮流进行
+```
+
+- 通常 **攻击次数 = 存活战舰数 − 被冻结的战舰数**；场地和其他卡牌效果可以改变火力。
+- **速阶 1 / 2** 通常在自己回合的准备、战斗阶段打出；「Freezing！」只在满足条件的先手结束阶段发动。**速阶 3** 可以在双方回合使用，包括对方出牌时的**连锁响应**；具体仍受卡牌发动条件和禁牌效果限制。
+- 连锁按**后进先出**结算，每次响应窗口 10 秒；「失灵！」「平等条约」能直接无效化栈中下方那张卡。
+- **场地魔法**全场同时只能存在一张，后来者顶替前者。
+- 回合思考时间默认 90 秒，超时只做保底动作（进入战斗 / 随机开一炮 / 交回合），**不会判负**。
+
+---
+
+## 🃏 魔法卡
+
+<p align="center">
+  <img src="static/card_faces/shenwei.webp" width="19%" alt="神威！">
+  <img src="static/card_faces/emo-qiyue.webp" width="19%" alt="恶魔契约">
+  <img src="static/card_faces/kesulu-zhiyan.webp" width="19%" alt="克苏鲁之眼">
+  <img src="static/card_faces/jiaohuang-zhiyi.webp" width="19%" alt="教皇旨意">
+  <img src="static/card_faces/shiling.webp" width="19%" alt="失灵！">
+</p>
+
+卡池共 **50 张 / 48 种**（「失灵！」有 3 张），每一张都有独立绘制的完整卡面。
+
+| 类别 | 速阶 | 数量 | 代表卡牌 |
+|:--|:--:|:--:|:--|
+| ⚔️ 普通 | 1 | 13 | 仁王之盾 · 火力全开 · 桃园结义 · 败者食尘 · 回光返照 |
+| ⚔️ 普通 | 2 | 14 | 神威！ · 冻结 · 轰炸 · 探测雷达 · 克苏鲁之眼 · 溅射 |
+| ⚡ 普通（可连锁） | 3 | 16 | 失灵！×3 · 平等条约 · 神机妙算 · 绝处逢生 · 加百列之光 |
+| 🌀 场地 | 1–2 | 4 | 恶魔契约 · 禁忌果实 · 伊甸园 · 教皇旨意 |
+| 🎲 判定 | 1 | 3 | 命运骰子 · 无忧梦呓 · 兵粮寸断 |
+
+<details>
+<summary><b>几张值得一提的卡</b></summary>
+
+<br>
+
+| 卡牌 | 效果 |
+|:--|:--|
+| **神威！** | 选定任一方 3×3 区域，其中战舰暂时离场；若是对方棋盘且只框住一艘船，那艘船直接沉没 |
+| **恶魔契约** | 场地：双方船数绑定，我沉一艘你也得沉一艘 |
+| **教皇旨意** | 场地：攻击次数归零，改为弃一张魔法卡换两次攻击 |
+| **伊甸园** | 场地：每回合攻击次数变为 `6 − 自身战舰数`，越劣势越凶 |
+| **禁忌果实** | 场地：除「失灵！」与其他场地卡外，双方都不能出牌 |
+| **败者食尘** | 立即重开对局，但双方保留手牌 |
+| **绝处逢生** | 自己至少有 3 艘战舰时，牺牲舰队并重部署唯一一艘；之后击沉对方一艘即判胜 |
+
+</details>
 
 ---
 
 ## ✨ 功能一览
 
-| 模块 | 说明 |
-|---|---|
-| 👤 账号系统 | 注册 / 登录 / 登出（Werkzeug 密码哈希）、头像上传、个性签名、修改密码 |
-| 🏆 战绩排行 | 胜场/负场/连胜记录，排行榜与个人战绩查询 |
-| 🎖️ 段位系统 | 9 个段位（二级水手 → 一级水手 → 水手长 → 三副 → 二副 → 大副 → 轮机长 → 船长 → **大舰长**），前 8 个各分 Ⅰ/Ⅱ/Ⅲ，每小段位 100 分（赢 +20 / 输 −15 / 0 分封底）。**船长**与大舰长另显示全服排名（如「船长Ⅲ 2300分 #60」）。段位可在个人信息里**设为不公开** |
-| ⚔️ 排位模式 | 首页「排位对战」：只与同样在排位的玩家配对，**需要登录**。每局按胜负加减排位积分；**赛前投降、人机局、自定义房都不给分**。结算后播放积分滚动动画（升段时进度条重置后接着涨） |
-| 🥇 段位榜 | 排行榜页的第二个页签，按排位分排名，段位越高图标与配色越"重"。段位榜是**公共竞技数据**，不受"段位是否公开"影响 |
-| 🎮 对战模式 | 匹配对战（自动配对）、人机对战（AI，三档难度）、自定义房间（房间号 + **一键复制邀请链接**） |
-| ❄️ 状态可视化 | 被冻结的战舰在自己棋盘上直接画出雪花（冻结的船本回合不提供攻击次数） |
-| 🤖 人机 AI | **会打出手上的魔法卡**（简单档不出牌 / 普通档每回合一张安全卡 / 困难档还会用「失灵！」响应连锁），炮击按未打过的格子随机（单格船下已近最优） |
-| 🚢 布船阶段 | 6 格棋盘自由布船（单格船 ×6），服务端校验 |
-| ✊ 猜先 | 石头剪刀布决定先手，先手先攻 |
-| 💥 攻击回合 | 准备阶段 → 战斗阶段 → 结束阶段，攻击次数随存活战舰数变化 |
-| 🃏 魔法卡系统 | 41 种卡（43 条目，含重复的"失灵！"）：速阶 1/2/3 与场地魔法，支持连锁响应、弃牌、目标选择 |
-| 📖 卡牌图鉴 | 帮助弹窗内：按速阶 / 类型筛选 + 卡名与效果关键词搜索 + **按使用次数排序**（每张卡显示全场使用次数），一次看全 41 张卡面 |
-| 🌀 场地魔法 | 恶魔契约 / 禁忌果实 / 伊甸园 / 教皇旨意，同时仅 1 张生效，可被顶替或无效化 |
-| 🔌 断线重连 | 掉线 30 秒宽限：重连恢复整局；超时判负/取消；对手掉线显示倒计时 |
-| 🎵 背景音乐 | 优先播放 `static/music/` 下的 mp3；目录为空时**自动切换到内置合成环境音**（Web Audio 现场合成，零素材），设置面板可静音/调音量 |
-| 🖼️ 动态壁纸 | 把**自己的 Wallpaper Engine 壁纸**设成游戏背景：一键扫描本机创意工坊 / 粘贴壁纸文件夹路径 / 粘贴图片视频直链；不透明度、压暗遮罩、模糊、铺满方式四档可调，偏好记在浏览器本地。场景型（scene.pkg）与网页型壁纸会在列表里标出"为什么不能播" |
-| 🔔 战斗音效 | 命中 / 落空 / 击沉 / 摸牌 / 出牌 / 连锁 / 回合 / 胜负，全部由 Web Audio 现场合成（无需音频素材），设置面板可单独静音 |
-| ⏱️ 回合思考计时 | 默认 90 秒（`TURN_TIMEOUT_SECONDS` 可调，0 = 关闭）。超时只做一次保底动作（进战斗 / 随机开火一发 / 交出回合），**不判负**；每做一次操作就重新计时 |
-| 💬 局内聊天 | 房间内实时聊天，窗口可拖拽 |
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### ⚔️ 对战
+- **休闲匹配 / 排位对战** —— 自动配对
+- **人机对战** —— 简单 · 普通 · 困难 · **大师** 四档
+- **自定义房间** —— 6 位房号 + 一键复制邀请链接
+- **游戏大厅** —— 房间列表、在线玩家、公屏聊天
+- **好友** —— 加好友、私聊、邀请对战
+- **断线重连** —— 30 秒宽限，整局状态完整恢复
+
+</td>
+<td width="50%" valign="top">
+
+### 🏆 成长
+- **段位** —— 二级水手 → … → 船长 → **大舰长**，9 段 25 级
+- **等级经验** —— 1–100 级，结算有滚动升级动画
+- **12 枚成就徽章** —— 首胜、五连胜、零伤获胜、闪电战…
+- **名片外观** —— 12 称号 · 10 头像框 · 11 卡背随段位解锁
+- **排行榜** —— 战绩榜 + 段位榜，前三名领奖台
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 👀 观看
+- **实时观战** —— 每局最多 20 名观众，独立观战席聊天
+- **对局回放** —— 从战绩一键回看，支持倍速与关键节点跳转
+- **隐私开关** —— 段位、回放、观战都可以设为不公开
+
+</td>
+<td valign="top">
+
+### 🎨 体验
+- **C+ 竞技场视觉** —— 深色玻璃拟态，桌面 / 平板 / 手机三档自适应
+- **动态壁纸** —— 直接导入 Wallpaper Engine 的视频/图片壁纸
+- **音效与 BGM** —— 全部 Web Audio 现场合成，零素材也能响
+- **局内快捷语** · **更新公告** · **深浅色主题**
+
+</td>
+</tr>
+</table>
+
+### 🤖 关于「大师」AI
+
+大师档会**试算每张候选卡的结果再挑最优**、交错出牌、每回合最多打 3 张，并根据已暴露的情报决定开炮位置。
+在固定种子、可复现的自对弈中，**大师 vs 困难 = 75.00%**（25 000 局，95% CI 74.46–75.53）。
+详细的决策层设计与逐项消融数据见 [`docs/MASTER_AI_2026_09_21.md`](docs/MASTER_AI_2026_09_21.md)。
 
 ---
 
-## 🧱 技术栈
+## 🚀 快速开始
 
-| 层 | 技术 | 说明 |
-|---|---|---|
-| 后端框架 | Flask ≥ 2.0 | 轻量 Web 框架 |
-| 实时通信 | Flask-SocketIO ≥ 5.0 | WebSocket / 长轮询双工通信 |
-| 数据存储 | SQLite（WAL 模式） | 本地文件数据库 `data/battleship.db` |
-| 密码安全 | Werkzeug `generate_password_hash` / `check_password_hash` | 加盐哈希存储 |
-| 前端 | 原生 HTML + CSS + JavaScript | 无构建工具，Jinja2 渲染单页 |
-| 生产运行 | eventlet（线上） | 单进程协程，注意需 `eventlet.monkey_patch()` |
-
----
-
-## 📂 目录结构
-
-```
-battle_ship1.0/
-├── api.py                 # Flask 应用与 HTTP 路由（登录/注册/排行/资料/首页/壁纸）
-├── server.py              # 核心：SocketIO 事件、房间管理、游戏状态机、魔法卡结算
-├── db.py                  # 数据访问层（users / matches / chat_messages / active_games / match_logs）
-├── wallpaper.py           # 动态壁纸：定位 Steam 创意工坊库、解析 project.json、登记可播放的媒体
-├── file.py                # JSON 读取工具（加载卡牌配置）
-├── start_server.py        # 一键启动脚本（依赖检查 + flask run）
-├── start_server.bat       # Windows 双击启动
-├── requirements.txt       # Python 依赖
-├── templates/
-│   └── index.html         # 单页应用：游戏界面、登录注册、排行榜、设置等
-├── static/
-│   ├── game.js            # 前端游戏逻辑（棋盘、状态机、Socket 事件、UI 渲染）
-│   ├── style.css          # 全站样式（深/浅色主题、棋盘、卡牌、响应式、动态壁纸层）
-│   ├── magic_card.json    # 卡牌数据（后端读取）
-│   ├── magic_cards.js     # 卡牌数据（前端读取，与 JSON 保持一致）
-│   ├── music_player.js    # 背景音乐控制（优先放 static/music/ 下的 mp3；没有则切内置合成环境音）
-│   ├── sfx.js             # 战斗音效（Web Audio 现场合成，无需素材）
-│   ├── wallpaper.js       # 动态壁纸引擎（应用/参数/持久化/扫描列表/路径与直链导入）
-│   ├── adaptive_layout.js # 移动端自适应布局
-│   └── socket.io.js       # Socket.IO 客户端库（本地副本）
-├── tests/                 # pytest 回归测试（790 个用例）
-└── tools/                 # 开发辅助脚本（截图、验收、数据修复、无头浏览器回归等）
-```
-
----
-
-## 🚀 本地运行
-
-### 1. 安装依赖
+> [!IMPORTANT]
+> 需要 **Python 3.10+**，所有命令都要在**项目根目录**执行（服务端按相对路径读取卡表）。
 
 ```bash
-pip install -r requirements.txt
+git clone https://github.com/xiaoxiaoyiiii/battle_ship1.0.git
+cd battle_ship1.0
+python -m venv .venv
+source .venv/bin/activate    # Windows PowerShell：.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+
+python server.py             # 启动 Socket.IO 服务，读取 PORT 环境变量
 ```
 
-### 2. 启动
+打开 <http://localhost:5000>，开两个浏览器窗口就能自己和自己对战，或者直接选人机。
 
-```bash
-python start_server.py        # 推荐（自动检查依赖）
-# 或
-python server.py
-# 或 Windows 双击
-start_server.bat
-```
-
-浏览器打开 <http://localhost:5000> 即可。
-
-> 若用较新版本 Werkzeug 且直接 `python server.py` 报 "Werkzeug web server is not designed to run in production"，这是 Flask-SocketIO 的显式保护。开发时可用 `flask run` 或加 `allow_unsafe_werkzeug=True`；**生产环境请用 eventlet/gevent**。
-
-### 3. 跑测试
+### 运行测试
 
 ```bash
 python -m pytest tests/ -q
 ```
 
----
+截至 2026-10-08，测试结果为 **999 passed**；运行时间随环境变化。
+未设置 `BATTLESHIP_DB_PATH` 时，测试会把数据库重定向到临时目录；若已设置该变量，请先取消设置或指向专用测试库，避免写入真实数据。
+`tools/` 下另有 80 余个无头浏览器检查脚本（`*.mjs`），覆盖布局、手牌、连锁、观战、回放与跨屏完整路径。
 
-## 🎮 玩法说明
+### 环境变量
 
-1. **登录/注册** 后选择模式：匹配对战 / 人机对战 / 自定义房间
-2. **布船**：在 6×6 棋盘放置 6 艘单格战舰（可点击或随机）
-3. **猜先**：石头剪刀布，胜者先手
-4. **回合流程**：
-   - **准备阶段**：可使用速阶 1/2 魔法卡（部分场地卡）
-   - **战斗阶段**：炮击对方棋盘；攻击次数 = 存活战舰数（受场地/卡牌效果影响）
-   - **结束阶段**：攻击次数用尽后交出回合
-5. **魔法卡**：速阶 1/2 限己方回合准备/战斗阶段，速阶 3 任意时机（含连锁响应）；场地魔法全场仅 1 张
-6. **胜利条件**：击沉对方全部战舰
-
----
-
-## 🃏 魔法卡系统
-
-- **卡池**：43 条目 / 41 个唯一卡名（"失灵！"×3）
-- **速阶分布**：速阶 1 = 13 张，速阶 2 = 15 张，速阶 3 = 15 张
-- **类型分布**：普通 39 张 + 场地 4 张（恶魔契约 / 禁忌果实 / 伊甸园 / 教皇旨意）
-- **连锁机制**：对手持有速阶 3 卡时可响应连锁（限时 10 秒，超时自动结算）
-- **代表卡牌**：
-  - `败者食尘`：重启对局、保留手牌，双方回到布船阶段
-  - `伊甸园`：双方攻击次数变为 `6 - 自身战舰数`（每回合准备阶段结算）
-  - `教皇旨意`：攻击次数归 0，改为弃置魔法卡攻击（一次弃卡 = 攻击两次）
-  - `神机妙算`：宣言船数减少量，命中则减免
-  - `桃园结义`：从牌堆抽 N 张，自己先选 1 张，对方再选 1 张
+| 变量 | 默认 | 说明 |
+|:--|:--|:--|
+| `SECRET_KEY` | 随机 | **生产必设**，否则重启后所有登录失效 |
+| `PORT` | `5000` | 监听端口（`python server.py` 时生效） |
+| `CORS_ORIGINS` | `http://localhost:5000,http://127.0.0.1:5000` | 允许的来源，多个地址用逗号分隔；使用其他端口或生产域名时须配置对应来源 |
+| `BATTLESHIP_DB_PATH` | `data/battleship.db` | SQLite 数据库路径 |
+| `TURN_TIMEOUT_SECONDS` | `90` | 回合思考时间，`0` 关闭 |
+| `ARENA_SCREENS_MODE` | `v2` | C+ 周边屏幕样式门控；设 `off` 关闭这批样式，不等于回退全部界面源码 |
+| `BATTLESHIP_WALLPAPER_ALLOW_REMOTE` | — | 设 `1` 允许非本机访问时扫描壁纸库 |
+| `ENABLE_TEST_EVENTS` | — | 仅本地调试 / E2E 用，**生产切勿开启** |
 
 ---
 
-## 🖼️ 动态壁纸（Wallpaper Engine）
+## 🧱 架构
 
-导航栏点 🎬（或「设置」）打开「动态壁纸」区块，三条导入通道：
-
-| 通道 | 可用范围 | 怎么用 |
-|---|---|---|
-| 扫描本机壁纸库 | 仅 localhost | 点「🔍 扫描本机壁纸库」，自动定位 `steamapps/workshop/content/431960`，列出所有壁纸（带缩略图），点一张即可 |
-| 粘贴本机路径 | 仅 localhost | 把壁纸文件夹（或装壁纸的父目录、或单个 mp4/webm/gif/png）路径粘进去点「导入」 |
-| 粘贴图片/视频直链 | 任何环境 | 站点部署在远端时用这条（浏览器直接去取，不经服务端） |
-
-四个滑杆即时生效：**不透明度 / 压暗遮罩 / 模糊 / 铺满方式**，偏好存在浏览器本地。
-还有「暂停播放」与「恢复默认背景」。
-
-**能播什么、不能播什么**
-
-| Wallpaper Engine 类型 | 结果 |
-|---|---|
-| 视频型（mp4 / webm） | ✅ 可直接当背景 |
-| 图片型（含 gif / apng 动图） | ✅ |
-| 视频型但是 mkv / mov / avi | ❌ 浏览器解不了，列表里注明原因 |
-| 场景型（scene.pkg） | ❌ 需要 Wallpaper Engine 自己的渲染器；想用请先在 WE 里导出成视频 |
-| 网页型（index.html） | ❌ 是一整套本地网页，出于安全考虑没有内嵌 |
-
-不能播的壁纸**仍然列出来**并写明原因（而不是凭空消失），但点了没反应。
-
-> 扫描与按路径导入会读本机磁盘，因此**只允许本机（localhost）访问时使用**；
-> 远端访客看到的是"请在直链里填地址"的提示。需要在自己服务器上开放：
-> `BATTLESHIP_WALLPAPER_ALLOW_REMOTE=1`。
-> 壁纸文件本身不限制回环（id 是路径哈希、不可枚举），所以手机/局域网访问同一台服务器时
-> 壁纸依然显示得出来。
-
-壁纸太亮压不住界面时，把「压暗遮罩」调到 50% 以上；**深色模式下壁纸观感最好**。
-
-> 实现细节、安全模型与踩过的坑见 [`docs/WALLPAPER_ENGINE.md`](./docs/WALLPAPER_ENGINE.md)。
-
----
-
-## 🗄️ 数据模型（SQLite）
-
-| 表 / 视图 | 用途 |
-|---|---|
-| `users` | 账号、密码哈希、头像、签名、战绩统计 |
-| `matches` | 对局记录（胜者/败者/时间） |
-| `chat_messages` | 局内聊天记录 |
-| `active_games` | 活跃对局（预留） |
-| `match_logs` | 对局过程日志 |
-| `match_history`（视图） | 战绩查询用视图 |
-
----
-
-## 🧪 测试
-
-```bash
-python -m pytest tests/ -q      # 790 passed
+```text
+ 浏览器  index.html + game.js + arena_screens.css
+   │  ▲
+   │  │  Socket.IO（实时对局 / 大厅 / 观战）      HTTP（账号 / 排行 / 回放 / 公告）
+   ▼  │                                                  │
+ server.py ── 房间 · 状态机 · 魔法卡结算 · 连锁引擎 ──┐   │
+   │            ▲                                     │   ▼
+   │            └──── from api import app ───────── api.py (Flask)
+   ▼                                                  │
+ db.py  ─────────────── SQLite（WAL）◀────────────────┘
 ```
 
-| 测试文件 | 覆盖 |
-|---|---|
-| `test_all_magic_cards.py` | 全部魔法卡效果与边界 |
-| `test_db_core.py` | 数据访问层（用户 / 战绩 / 历史 / 日志） |
-| `test_disconnect_and_eden_shenji.py` | 掉线宽限/重连、伊甸园结算时机、神机妙算宣言、AI 布船规则 |
-| `test_fixes_regression.py` | 安全/健壮性修复回归（调试事件开关、游客匹配、输入校验、房间回收等） |
-| `test_review_fixes_2026_09_12.py` / `test_review_fixes_batch2.py` | 2026-09-12 两批审查修复回归 |
-| `test_ui_review_fixes.py` / `test_mobile_adaptive_layout.py` | 界面审查与移动端自适应回归 |
-| `test_stats_display_fixes.py` | 个人战绩弹窗 / 人机战绩统计回归 |
-| `test_mingzhi_burial_fix.py` | 明智埋葬真实链路回归 |
-| `test_defect_fixes_round1.py` | 2026-09-13 缺陷审计修复回归（终局门禁 / 出拳校验 / 沉船计数 / 区域击杀副作用） |
-| `test_guardrails.py` | 测试护栏：12 个 `test_*` 事件参数化拒绝 + 连锁窗口推进 / 超时代际令牌 |
-| `test_ai_magic.py` | 人机 AI 出牌（白名单不得留下待处理状态 / 三档难度 / 困难档用失灵！响应连锁） |
-| `test_wallpaper.py` | 动态壁纸：创意工坊目录解析（场景型/mkv/越界 file）、回环门禁、媒体与缩略图路由 |
+**核心规则在服务端统一实现**：段位、等级、徽章、名片解锁与观战过滤拆成独立模块；回放模块记录对局并生成时间线。前端读取服务端结果，负责展示和交互。
 
-> 测试通过 `tests/conftest.py` 把数据库指向临时目录，**不会写仓库里的 `data/battleship.db`**。
-> 无头浏览器回归：`tools/wallpaper_check.mjs`（壁纸全链路，会自己造假壁纸库并起服务端）、
-> `tools/ui_layout_check.mjs`（布局不变量，改样式后必跑）。
+| 模块 | 职责 |
+|:--|:--|
+| `server.py` | Socket.IO 事件、房间管理、游戏状态机、魔法卡结算、连锁引擎、人机 |
+| `api.py` · `db.py` | HTTP 路由 · 数据访问层（SQLite / WAL） |
+| `ai_brain.py` | 大师 AI 决策层（试算 → 评分 → 选择） |
+| `ranks.py` · `leveling.py` · `achievements.py` · `profile_spec.py` | 段位 · 等级经验 · 徽章 · 名片外观与解锁 |
+| `spectate.py` · `replay.py` | 观战事件白名单与净化 · 对局回放时间线 |
+| `anticheat.py` · `suspicion.py` · `match_guard.py` | 反作弊判据 · 嫌疑度 · 匹配规避 |
+| `presence.py` · `dm.py` · `quick_chat.py` · `changelog.py` | 在线状态 · 好友私聊 · 快捷语 · 更新公告 |
+| `wallpaper.py` | Wallpaper Engine 壁纸扫描与媒体服务 |
+| `static/` · `templates/` | 原生 JS 单页前端、样式、卡面、音效 |
 
 ---
 
-## 🔐 安全与运维注意
+## 🔐 安全设计
 
-- `SECRET_KEY`、`CORS_ORIGINS`、`PORT` 可通过环境变量注入；未配置 `SECRET_KEY` 时使用随机值（重启后 session 失效）。**生产部署务必设置 `SECRET_KEY`。**
-- 调试事件（`test_*`）**默认关闭**，仅本地设置 `ENABLE_TEST_EVENTS=1` 启用；生产页面已不加载 `test_magic.js`。
-- 登录/注册/改密有简易限流（同 IP 60 秒 10 次）；头像上传限 2MB 并校验图片魔数。
-- 动态壁纸的**扫描/按路径导入只允许回环地址**，且 `scan_path` 另需自定义请求头（跨站请求会因此触发 CORS 预检而被挡），可读的文件也仅限扩展名与**魔数**都合法的图片/视频。
-- 生产运行必须使用 eventlet（`python server.py`）；`FLASK_DEBUG=1` 仅限本地调试。
-- 数据库（SQLite WAL）建议定期备份 `data/battleship.db`。
-
----
-
-## 📖 延伸阅读
-
-- 代码架构与逐模块说明：[`CLAUDE.md`](./CLAUDE.md)（面向 AI 代理的项目索引）
-- 动态壁纸实现与安全模型：[`docs/WALLPAPER_ENGINE.md`](./docs/WALLPAPER_ENGINE.md)
-- 历代修复记录：[`docs/`](./docs)（含 `DEFECT_FIXES_2026_09_13.md`、`UI_REVIEW_FIXES.md`、`MOBILE_ADAPTIVE_LAYOUT.md` 等）
+- 密码使用 Werkzeug 加盐哈希；登录 / 注册 / 改密带 IP 限流；头像上传限 2 MB 并校验文件魔数。
+- 所有对局操作都在服务端做**身份 + 连接双重校验**，客户端上报的任何数据都不被信任。
+- 观战者只进入独立的观战频道，下发的每一帧都经过**白名单净化**，看不到任何未暴露的船位。
+- 排位结算接入实时反作弊判据，赛前投降、人机局、自定义房不计分。
+- 壁纸扫描与本机路径导入**仅限回环地址**访问。
 
 ---
 
-## 📄 License
+## 📚 延伸阅读
 
-本项目为个人学习/娱乐项目。魔法卡牌名称与效果设计灵感来自各类卡牌游戏，仅供交流学习使用。
+| 文档 | 内容 |
+|:--|:--|
+| [`CLAUDE.md`](CLAUDE.md) | 面向开发者 / AI 代理的代码索引与踩坑记录 |
+| [`docs/CHAIN_ENGINE_SPEC.md`](docs/CHAIN_ENGINE_SPEC.md) | 连锁引擎规格 |
+| [`docs/RANKED_2026_09_17.md`](docs/RANKED_2026_09_17.md) | 段位与排位系统 |
+| [`docs/MASTER_AI_2026_09_21.md`](docs/MASTER_AI_2026_09_21.md) | 大师 AI 设计与度量 |
+| [`docs/SPECTATE_2026_09_22.md`](docs/SPECTATE_2026_09_22.md) · [`docs/REPLAY_2026_09_23.md`](docs/REPLAY_2026_09_23.md) | 观战与回放 |
+| [`docs/WALLPAPER_ENGINE.md`](docs/WALLPAPER_ENGINE.md) | 动态壁纸实现与安全模型 |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | 部署说明 |
+
+---
+
+<div align="center">
+
+<sub>个人学习 / 娱乐项目 · 卡牌名称与效果灵感来自各类卡牌游戏，仅供交流学习</sub>
+
+<sub>⚓ 祝你炮炮命中</sub>
+
+</div>

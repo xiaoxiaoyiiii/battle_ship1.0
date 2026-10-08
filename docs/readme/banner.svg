@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="400" viewBox="0 0 1280 400" role="img" aria-label="战舰棋 · 竞技场 BATTLESHIP ARENA">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b0d1f"/>
+      <stop offset="0.55" stop-color="#16123a"/>
+      <stop offset="1" stop-color="#0a1a2a"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0" r="0.8">
+      <stop offset="0" stop-color="#7c5cff" stop-opacity="0.55"/>
+      <stop offset="0.6" stop-color="#7c5cff" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#7c5cff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="teal" cx="0.05" cy="1" r="0.5">
+      <stop offset="0" stop-color="#2dd4bf" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#2dd4bf" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="title" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#c9b8ff"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f6d58a"/>
+      <stop offset="1" stop-color="#c8913a"/>
+    </linearGradient>
+    <linearGradient id="cell" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#26306a"/>
+      <stop offset="1" stop-color="#1b2150"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="400" fill="url(#bg)"/>
+  <rect width="1280" height="400" fill="url(#glow)"/>
+  <rect width="1280" height="400" fill="url(#teal)"/>
+
+  <!-- 放射光束（与游戏首页同一母题） -->
+  <g fill="#ffffff" opacity="0.035">
+    <polygon points="640,-40 560,400 600,400"/>
+    <polygon points="640,-40 420,400 480,400"/>
+    <polygon points="640,-40 240,400 320,400"/>
+    <polygon points="640,-40 40,400 140,400"/>
+    <polygon points="640,-40 680,400 720,400"/>
+    <polygon points="640,-40 800,400 860,400"/>
+    <polygon points="640,-40 960,400 1040,400"/>
+    <polygon points="640,-40 1140,400 1240,400"/>
+  </g>
+
+  <!-- 漂浮的气泡 -->
+  <g fill="none" stroke="#5eead4" stroke-opacity="0.35">
+    <circle cx="96" cy="70" r="4"/><circle cx="210" cy="330" r="3"/>
+    <circle cx="1180" cy="60" r="5"/><circle cx="1220" cy="300" r="3"/>
+    <circle cx="560" cy="360" r="2.5"/><circle cx="380" cy="48" r="3"/>
+  </g>
+
+  <!-- 左侧：标题 -->
+  <g font-family="'PingFang SC','Microsoft YaHei','Noto Sans CJK SC','Source Han Sans SC',sans-serif">
+    <text x="88" y="118" fill="#a78bfa" font-size="16" letter-spacing="8" font-weight="600">REAL-TIME · MAGIC CARDS · 1 v 1</text>
+    <text x="84" y="200" fill="url(#title)" font-size="74" font-weight="800" letter-spacing="2">战舰棋 · 竞技场</text>
+    <text x="88" y="244" fill="#8b93c9" font-size="20" letter-spacing="12" font-weight="600">BATTLESHIP ARENA</text>
+    <text x="88" y="300" fill="#cfd3f5" font-size="22">布船 · 猜拳定先手 · 炮击与魔法卡连锁，击沉对方全部战舰者胜</text>
+    <g transform="translate(88,330)">
+      <rect width="118" height="32" rx="16" fill="#7c5cff" fill-opacity="0.22" stroke="#a78bfa" stroke-opacity="0.6"/>
+      <text x="59" y="21" text-anchor="middle" fill="#e4dcff" font-size="14" font-weight="700">48 种魔法卡</text>
+      <rect x="130" width="104" height="32" rx="16" fill="url(#gold)" fill-opacity="0.18" stroke="#e7b860" stroke-opacity="0.7"/>
+      <text x="182" y="21" text-anchor="middle" fill="#f6d58a" font-size="14" font-weight="700">段位排位</text>
+      <rect x="246" width="104" height="32" rx="16" fill="#2dd4bf" fill-opacity="0.14" stroke="#5eead4" stroke-opacity="0.6"/>
+      <text x="298" y="21" text-anchor="middle" fill="#a7f3e7" font-size="14" font-weight="700">观战回放</text>
+      <rect x="362" width="104" height="32" rx="16" fill="#f472b6" fill-opacity="0.14" stroke="#f9a8d4" stroke-opacity="0.6"/>
+      <text x="414" y="21" text-anchor="middle" fill="#fbcfe8" font-size="14" font-weight="700">大师 AI</text>
+    </g>
+  </g>
+
+  <!-- 右侧：6×6 棋盘 -->
+  <g transform="translate(900,62) rotate(-4 138 138)">
+    <rect x="-14" y="-14" width="304" height="304" rx="18" fill="#12163a" stroke="#5b5fc7" stroke-opacity="0.55" stroke-width="1.5"/>
+    <g fill="url(#cell)" stroke="#3a438f" stroke-opacity="0.8">
+      <rect x="0"   y="0" width="40" height="40" rx="6"/><rect x="47"  y="0" width="40" height="40" rx="6"/><rect x="94"  y="0" width="40" height="40" rx="6"/><rect x="141" y="0" width="40" height="40" rx="6"/><rect x="188" y="0" width="40" height="40" rx="6"/><rect x="235" y="0" width="40" height="40" rx="6"/>
+      <rect x="0"   y="47" width="40" height="40" rx="6"/><rect x="47"  y="47" width="40" height="40" rx="6"/><rect x="94"  y="47" width="40" height="40" rx="6"/><rect x="141" y="47" width="40" height="40" rx="6"/><rect x="188" y="47" width="40" height="40" rx="6"/><rect x="235" y="47" width="40" height="40" rx="6"/>
+      <rect x="0"   y="94" width="40" height="40" rx="6"/><rect x="47"  y="94" width="40" height="40" rx="6"/><rect x="94"  y="94" width="40" height="40" rx="6"/><rect x="141" y="94" width="40" height="40" rx="6"/><rect x="188" y="94" width="40" height="40" rx="6"/><rect x="235" y="94" width="40" height="40" rx="6"/>
+      <rect x="0"   y="141" width="40" height="40" rx="6"/><rect x="47"  y="141" width="40" height="40" rx="6"/><rect x="94"  y="141" width="40" height="40" rx="6"/><rect x="141" y="141" width="40" height="40" rx="6"/><rect x="188" y="141" width="40" height="40" rx="6"/><rect x="235" y="141" width="40" height="40" rx="6"/>
+      <rect x="0"   y="188" width="40" height="40" rx="6"/><rect x="47"  y="188" width="40" height="40" rx="6"/><rect x="94"  y="188" width="40" height="40" rx="6"/><rect x="141" y="188" width="40" height="40" rx="6"/><rect x="188" y="188" width="40" height="40" rx="6"/><rect x="235" y="188" width="40" height="40" rx="6"/>
+      <rect x="0"   y="235" width="40" height="40" rx="6"/><rect x="47"  y="235" width="40" height="40" rx="6"/><rect x="94"  y="235" width="40" height="40" rx="6"/><rect x="141" y="235" width="40" height="40" rx="6"/><rect x="188" y="235" width="40" height="40" rx="6"/><rect x="235" y="235" width="40" height="40" rx="6"/>
+    </g>
+    <!-- 落空 -->
+    <g fill="none" stroke="#5eead4" stroke-width="2.5">
+      <circle cx="67" cy="20" r="8"/><circle cx="208" cy="67" r="8"/><circle cx="20" cy="161" r="8"/><circle cx="161" cy="255" r="8"/>
+    </g>
+    <!-- 命中 -->
+    <g>
+      <rect x="141" y="94" width="40" height="40" rx="6" fill="#e11d48"/>
+      <path d="M151 104 L171 124 M171 104 L151 124" stroke="#fff" stroke-width="3.5" stroke-linecap="round"/>
+      <rect x="47" y="188" width="40" height="40" rx="6" fill="#e11d48"/>
+      <path d="M57 198 L77 218 M77 198 L57 218" stroke="#fff" stroke-width="3.5" stroke-linecap="round"/>
+    </g>
+    <!-- 瞄准中 -->
+    <g stroke="#f6d58a" stroke-width="2.5" fill="none">
+      <rect x="235" y="141" width="40" height="40" rx="6" fill="#f6d58a" fill-opacity="0.12"/>
+      <circle cx="255" cy="161" r="10"/>
+      <path d="M255 145 V153 M255 169 V177 M239 161 H247 M263 161 H271"/>
+    </g>
+  </g>
+
+  <!-- 飘在棋盘前的魔法卡 -->
+  <g transform="translate(818,214) rotate(-12)">
+    <rect width="96" height="136" rx="10" fill="#1d1846" stroke="url(#gold)" stroke-width="2.5"/>
+    <rect x="8" y="8" width="80" height="22" rx="4" fill="#f3e6c4"/>
+    <text x="48" y="24" text-anchor="middle" fill="#2a1d0e" font-size="14" font-weight="800" font-family="'PingFang SC','Microsoft YaHei',sans-serif">神威！</text>
+    <rect x="8" y="36" width="80" height="58" rx="4" fill="#3b2f8f"/>
+    <circle cx="48" cy="65" r="18" fill="none" stroke="#a78bfa" stroke-width="2"/>
+    <circle cx="48" cy="65" r="6" fill="#c4b5fd"/>
+    <rect x="8" y="100" width="80" height="28" rx="4" fill="#f3e6c4" fill-opacity="0.85"/>
+  </g>
+</svg>

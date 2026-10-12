@@ -534,6 +534,33 @@ def test_tance_reveals_2x2(room):
     assert {(0, 0), (0, 1), (1, 0), (1, 1)} == revealed
 
 
+@pytest.mark.parametrize('name,target,ship_cell,expected_empty', [
+    ('雷达子弹', {}, (3, 2), 7),
+    ('探测雷达', {'target_area': {'x1': 0, 'x2': 1, 'y1': 0, 'y2': 1}}, (1, 1), 3),
+])
+def test_radar_events_keep_empty_cell_timeline(
+        room, events, name, target, ship_cell, expected_empty):
+    """雷达只把空格写入攻击时间线，且最后才向施法者发送完整显形区域。"""
+    room.players[P2].ships = [ship(ship_cell)]
+    room.players[P2].remaining_ships = 1
+    room.last_attack = {'attacker': P1, 'x': 3, 'y': 3, 'hit': True}
+
+    result = apply(room, P1, name, target)
+
+    attack_events = [data for event, data, _, _ in events if event == 'attack_result']
+    reveal_events = [(data, to) for event, data, to, _ in events
+                     if event == 'revealed_positions']
+    assert result.success
+    assert len(attack_events) == len(result['affected_positions']) == expected_empty
+    assert len(room.players[P1].attacks) == expected_empty
+    assert all((data['x'], data['y']) != ship_cell and not data['hit']
+               for data in attack_events)
+    assert len(reveal_events) == 1 and reveal_events[0][1] == room.players[P1].sid
+    assert len(reveal_events[0][0]['positions']) == expected_empty + 1
+    assert [event for event, _, _, _ in events
+            if event in ('attack_result', 'revealed_positions')][-1] == 'revealed_positions'
+
+
 # ---------------------------------------------------------------------------
 # 伊甸园（场地）
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 # 基础重构当前状态与原文件拆分清单
 
-> 核对对象：`review/battleship-refactor`，草稿 PR #13。本文最初按 `82ce5e6` 核对 Phase 0–8；随后新增阶段 9 的大厅与房间运行时拆分，详见 `2026-10-12-phase9-server-runtime-extraction.md`。本文不表示已合并、已部署或生产主流程已全部切换。
+> 核对对象：`review/battleship-refactor`，草稿 PR #13。本文最初按 `82ce5e6` 核对 Phase 0–8；随后新增阶段 9 的运行时状态拆分和阶段 10 的首批卡牌效果迁移，详见对应阶段报告。本文不表示已合并、已部署或生产主流程已全部切换。
 
 ## 总体进度
 
@@ -12,7 +12,8 @@ Phase 0–8 的设计基线、领域模型、观察边界、仓储边界、前�
 | --- | --- | --- |
 | 攻击输入、船与棋盘快照、命中/沉船等纯规则 | `domain/combat.py`、`application/attack_service.py` | `handle_attack` 调用新内核做 shadow 对照；旧处理器仍决定生产结果。默认关闭，由 `COMBAT_SHADOW_MODE` 控制。 |
 | 准备/战斗/结束与交接状态转换 | `domain/turns.py`、`application/turn_service.py` | 已有纯状态机和旧房间适配器；`server.py` 中进入阶段、结束阶段和换回合的旧路径仍写入实际状态。 |
-| 卡牌目标规范化、连锁栈与响应状态 | `domain/cards.py`、`domain/chain.py`、`application/chain_service.py` | 模型与适配器可独立验证；`resolve_chain`、响应处理及卡牌效果仍在 `server.py` 执行。 |
+| 卡牌目标规范化、连锁栈与响应状态 | `domain/cards.py`、`domain/chain.py`、`application/chain_service.py` | 模型与适配器可独立验证；`resolve_chain`、响应处理及多数卡牌效果仍在 `server.py` 执行。 |
+| 首批七张卡的实际效果 | `application/card_opening_effects.py` | 阶段 10 已在生产结算入口调用；其他卡牌分支、未知卡兜底与最终胜负检查仍在 `server.py`。 |
 | 匹配队列、断线宽限与房间生命周期判断 | `domain/rooms.py`、`application/room_service.py` | 模型与只读适配器已建立；匹配、断线、重连和房间清理仍由原处理器编排。 |
 | 房间注册表、入座、人机房及匹配队列运行时 | `application/room_runtime.py` | 阶段 9 已迁走实际运行的 `RoomManager`；Socket 匹配处理器仍在 `server.py`，从同一实例读写。 |
 | 旧 `GameRoom` 状态与牌堆操作 | `application/room_state.py` | 阶段 9 已迁走状态初始化和抽弃牌；`server.py` 仅保留成功抽牌后单发事件的适配类。 |

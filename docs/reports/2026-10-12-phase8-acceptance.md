@@ -14,7 +14,7 @@
 - 隔离库、端口 5188 的本地服务：`/health/live` 和 `/health/ready` 均返回 200。`/health/ready` 缺库返回 503 且不会建库，已有测试覆盖。
 - Edge 浏览器：客户端状态、卡目录、首页渲染与 Socket 监听函数均加载；Socket 已连接；进入大厅后收到在线玩家状态。`node tools/codex_realcard_check.mjs --url http://127.0.0.1:5188/` 全部通过。
 - `node tools/cplus_path_check.mjs --url http://127.0.0.1:5188/` 全部通过：双浏览器真实按钮走通首页→大厅→建房/加入→布船→开炮→结算→回放→首页，全程无 JS 异常。
-- `python tools/release_preflight.py --db .tmp/phase8-smoke.db --backup-to .tmp/phase8-smoke-backup.db --migration-copy .tmp/phase8-smoke-migration.db`：配置、数据库完整性、WAL 一致性备份及迁移副本检查通过。另有子进程测试确认首次导入数据库模块不会迁移源库。
+- `python tools/release_preflight.py --db .tmp/phase8-smoke.db --backup-to .tmp/phase8-smoke-backup.db --migration-copy .tmp/phase8-smoke-migration.db`：配置、数据库完整性、WAL 一致性备份及迁移副本检查通过。同进程隔离导入测试确认首次导入数据库模块不会迁移源库。
 
 ## 限制与回滚
 
@@ -24,4 +24,4 @@
 
 ## 下一入口
 
-等待长期 PR 的审查与 CI；合并和部署分别由用户授权。发布窗口再验证真实生产环境的备份位置、服务重启、健康端点、Socket 建连和回滚演练。
+长期 PR 的 Windows CI 已通过，等待用户审查；合并和部署分别由用户授权。发布窗口再验证真实生产环境的备份位置、服务重启、健康端点、Socket 建连和回滚演练。

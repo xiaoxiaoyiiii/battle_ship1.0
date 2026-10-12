@@ -42,6 +42,9 @@ from __future__ import annotations
 
 import random
 
+from application.observations import attack_observation
+from domain.observations import AttackObservation
+
 # 棋盘边长。现有对局层到处写 `range(6)`，这里给个名字免得又长出一份魔法数。
 BOARD_SIZE = 6
 
@@ -218,16 +221,20 @@ def choose_attack(room, ai_id, rng=None):
        情报就是全部优势。想再强只能靠更准的探明手段，不是靠更聪明的猜。
     """
     try:
-        rng = _rng(rng)
-        me = (getattr(room, 'players', None) or {}).get(ai_id)
-        if me is None:
-            return None
-        known, _safe, unknown = enemy_cell_model(room, ai_id)
-        if known:
-            return rng.choice(sorted(known))     # 已探明 → 必中，优先打掉
-        if unknown:
-            return rng.choice(sorted(unknown))
+        return choose_attack_from_observation(attack_observation(room, ai_id), rng)
+    except Exception:
         return None
+
+
+def choose_attack_from_observation(observation: AttackObservation, rng=None):
+    """只使用该座位的已攻击与已探明信息，随机源由调用方注入。"""
+    try:
+        if not observation.present:
+            return None
+        known = observation.revealed - observation.attacked
+        unknown = set(_all_cells()) - observation.attacked
+        candidates = known or unknown
+        return _rng(rng).choice(sorted(candidates)) if candidates else None
     except Exception:
         return None
 

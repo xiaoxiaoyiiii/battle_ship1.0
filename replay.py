@@ -8,9 +8,8 @@
 而 pytest 里 server 就叫 `server`，**这类 bug pytest 永远测不到**，
 守卫只能是源码级断言，见 `tests/test_replay_guards.py::test_replay_never_imports_server`）。
 
-需要 server 的能力时，由 server.py 在 **import 期注入模块对象**（`bind()`），
-本模块**按名字现取**（`_srv('...')`）—— 注入**函数对象**会把测试里的 monkeypatch
-静默架空（教训 #19 后半句），所以注入的只有模块对象自己。
+开局时间通过 bind_started_at() 注入查询函数；运行时不保存服务器模块。
+旧 bind() 保留为兼容入口，调用方通过延迟查询保留运行时替换能力。
 
 ## 铁律：记录器**绝不 emit 任何东西**
 
@@ -105,28 +104,20 @@ ACTION_KINDS = ('place_ships', 'rps_choice', 'enter_battle', 'enter_end',
                 'end_turn', 'surrender')
 
 # ---------------------------------------------------------------------------
-# 反向注入：server.py 在 import 期把**模块对象自己**交进来（不是一个函数）
+# 开局时间端口：记录器只持有回调，不保存服务器模块。
 # ---------------------------------------------------------------------------
-_SERVER = None
+_STARTED_AT = None
 
 
-def bind(server_module) -> None:
-    """由 `server.py` 在 import 期调用：把 server 模块对象交给本模块。
-
-    ⚠️ 注入的是**模块对象**，调用点一律 `getattr(_SERVER, 名字)` 现取
-       （`_srv()`）—— 注入函数对象会把测试里的 monkeypatch **静默架空**
-       （教训 #19）。没有 server（纯单测）时 `_srv()` 返回 None，
-       记录器**照常工作**（它只需要 room 对象，不需要 server 的任何能力）。
-    """
-    global _SERVER
-    _SERVER = server_module
+def bind_started_at(provider):
+    """注入开局时间查询；调用方负责动态解析，保留运行时替换能力。"""
+    global _STARTED_AT
+    _STARTED_AT = provider
 
 
-def _srv(name):
-    """按名字从注入的 server 模块取属性（取不到返回 None，绝不抛）。"""
-    if _SERVER is None:
-        return None
-    return getattr(_SERVER, name, None)
+def bind(server_module):
+    """旧集成兼容入口；新入口直接提供开局时间查询。"""
+    bind_started_at(lambda room: getattr(server_module, '_match_started_at')(room))
 
 
 # ---------------------------------------------------------------------------
@@ -1145,10 +1136,10 @@ def build(room):
     # 没有打点才退回 `room.created_at`。**这里不许自己读 `created_at`**：那会让同一个概念
     # 长出第二份判据（教训 #1），而且自定义房可能建好后放很久才开局，
     # 直接读 `created_at` 会把"对局时间"标早十几分钟。
-    # 纯单测没注入 server 时（`_srv()` 返回 None）退回 `created_at`：只影响这一个**展示**字段，
+    # 纯单测没注入时间查询时退回 `created_at`：只影响这一个**展示**字段，
     # 它不参与任何门禁 —— 教训 #2 禁的是"拿会兜底的取数函数当判据"，不是禁展示用兜底。
     started_at = 0
-    _started_fn = _srv('_match_started_at')
+    _started_fn = _STARTED_AT
     if _started_fn is not None:
         started_at = int(_started_fn(room) or 0)
     if not started_at:

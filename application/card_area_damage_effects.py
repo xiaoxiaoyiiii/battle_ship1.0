@@ -314,7 +314,7 @@ def apply_area_damage_card_effect(
         result['message'] = f'硫磺火焰成功击杀{sunk_count}艘战舰'
         result['affected_positions'] = affected_positions
         result['caster_id'] = caster_id
-        
+
         # 添加游戏日志
         add_game_log(room, f"第{room.round}回合 · {log_name(room, caster_id)} 使用了【硫磺火焰】，击杀了{sunk_count}艘战舰", 'magic', {
             'caster_id': caster_id,

@@ -1,6 +1,6 @@
 # 基础重构当前状态与原文件拆分清单
 
-> 核对对象：`review/battleship-refactor`，截至 `82ce5e6`；对应草稿 PR #13。本文记录审查前状态，不表示已合并、已部署或生产主流程已全部切换。
+> 核对对象：`review/battleship-refactor`，草稿 PR #13。本文最初按 `82ce5e6` 核对 Phase 0–8；随后新增阶段 9 的大厅与房间运行时拆分，详见 `2026-10-12-phase9-server-runtime-extraction.md`。本文不表示已合并、已部署或生产主流程已全部切换。
 
 ## 总体进度
 
@@ -14,13 +14,16 @@ Phase 0–8 的设计基线、领域模型、观察边界、仓储边界、前�
 | 准备/战斗/结束与交接状态转换 | `domain/turns.py`、`application/turn_service.py` | 已有纯状态机和旧房间适配器；`server.py` 中进入阶段、结束阶段和换回合的旧路径仍写入实际状态。 |
 | 卡牌目标规范化、连锁栈与响应状态 | `domain/cards.py`、`domain/chain.py`、`application/chain_service.py` | 模型与适配器可独立验证；`resolve_chain`、响应处理及卡牌效果仍在 `server.py` 执行。 |
 | 匹配队列、断线宽限与房间生命周期判断 | `domain/rooms.py`、`application/room_service.py` | 模型与只读适配器已建立；匹配、断线、重连和房间清理仍由原处理器编排。 |
+| 房间注册表、入座、人机房及匹配队列运行时 | `application/room_runtime.py` | 阶段 9 已迁走实际运行的 `RoomManager`；Socket 匹配处理器仍在 `server.py`，从同一实例读写。 |
+| 旧 `GameRoom` 状态与牌堆操作 | `application/room_state.py` | 阶段 9 已迁走状态初始化和抽弃牌；`server.py` 仅保留成功抽牌后单发事件的适配类。 |
+| 大厅在线状态、消息与公开投影 | `application/lobby_state.py`、`application/lobby_projection.py` | 阶段 9 已接入生产路径；Socket 入口和广播仍留在 `server.py`。 |
 | 回放所需的房间观察值 | `application/replay_observation.py` | 生产录制入口已改为传观察快照，`replay.py` 不再直接接收运行中的完整房间；兼容入口仍保留。 |
 | 观战公开快照的投影 | `application/spectate_projection.py` | 生产路径已调用投影函数；`server.py` 仍收集公开事实并发送 Socket 事件。 |
 | AI 决策观察值、随机源与等待时间 | `domain/observations.py`、`application/observations.py`、`application/ai_runtime.py` | `ai_brain.py` 已从观察值读取决策事实，生产 AI 运行时可注入随机源和等待；游戏规则的所有随机数尚未统一迁移。 |
 | 结算反作弊事实 | `domain/observations.py`、`application/observations.py` | `server.py` 通过 `SettlementSnapshot` 生成事实字典，再交给既有反作弊判据。 |
 | 数据访问边界及数据库维护 | `infrastructure/persistence.py`、`infrastructure/sqlite_maintenance.py`、`db.py` | `server.py`/`api.py` 共用受限仓储；三个直接 SQL 查询迁至 DAO。仍是单进程 SQLite，暂无版本化迁移。 |
 
-这些项目不是等量地从 `server.py` 剪切出去。相对 `origin/main`，该文件的 PR 差异为 **新增 145 行、删除 157 行**。它仍定义 `PlayerShip`、`MagicCard`、`Player`、`GameRoom`、`RoomManager`，保留匹配、布船、攻击、回合、连锁、卡牌效果、重连和结算的主要 Socket 编排。尤其 `handle_attack`、`resolve_chain`、`apply_magic_effect` 还在原文件。新领域实现与旧规则并存的部分仍有漂移风险，后续切换须逐条验证，再删除重复规则。
+Phase 0–8 时，这些项目并非等量地从 `server.py` 剪切出去：相对 `origin/main`，当时该文件的 PR 差异为新增 145 行、删除 157 行。阶段 9 又从当前生产路径实移了大厅和房间运行时代码。`server.py` 仍定义 `PlayerShip`、`MagicCard`、`Player` 和薄层 `GameRoom` 适配类，保留匹配、布船、攻击、回合、连锁、卡牌效果、重连和结算的主要 Socket 编排。尤其 `handle_attack`、`resolve_chain`、`apply_magic_effect` 还在原文件。新领域实现与旧规则并存的部分仍有漂移风险，后续切换须逐条验证，再删除重复规则。
 
 ### `static/game.js` 拆出了什么
 

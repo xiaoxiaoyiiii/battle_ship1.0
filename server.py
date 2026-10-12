@@ -35,12 +35,16 @@ import quick_chat  # 局内快捷语表 + 频率规则（纯数据/纯函数，�
 import ranks  # 段位规则 / 每局加减分 / 大舰长晋升（唯一一份，结算与接口共用）
 import presence  # 在线 / 对局中状态（纯内存零依赖：api.py 也要读它，见 presence.py 头部说明）
 import replay  # 对局回放的纯模块：记录器 + 终局打包（**绝不 emit**，见 replay.py 头部）
+from application.attack_service import build_combat_state, resolve_legacy_attack
+from application.attack_shadow import compare_core_result
 from api import app
 from file import read_json
 
 # 调试事件开关：仅在显式设置环境变量 ENABLE_TEST_EVENTS=1 时启用。
 # 默认关闭，避免公网玩家通过 test_* 事件作弊（直接判胜、白嫖卡牌、读取对方船位等）。
 ENABLE_TEST_EVENTS = os.environ.get('ENABLE_TEST_EVENTS') == '1'
+# 新旧攻击路径对照开关：默认关闭，不改变线上行为；仅用于 Phase 2 迁移验证。
+COMBAT_SHADOW_MODE = os.environ.get('COMBAT_SHADOW_MODE') == '1'
 
 # 调试面板（按 F8 唤出）的账号白名单：逗号分隔的 user_id。
 # ⚠️ 14 个 test_* handler 的身份校验由下面的 _test_event 统一负责，
@@ -5588,6 +5592,28 @@ def handle_attack(data):
     if _cell_in_shenwei_hole(room, defender_id, target_x, target_y):
         return {'status': 'error', 'message': '该区域已被神威！扣掉，无法攻击'}
 
+    # Phase 2 shadow：在旧逻辑改变房间状态前计算一份纯规则预期。
+    # 默认关闭；开启时只记录差异，绝不阻断旧路径或改变返回值。
+    shadow_resolution = None
+    if COMBAT_SHADOW_MODE:
+        try:
+            shadow_state = build_combat_state(
+                attacker_id=attacker_id,
+                defender_id=defender_id,
+                attacker=room.players[attacker_id],
+                defender=room.players[defender_id],
+                attacks_remaining=room.attacks_remaining,
+            )
+            shadow_resolution = resolve_legacy_attack(
+                shadow_state,
+                attacker_id=attacker_id,
+                x=target_x,
+                y=target_y,
+                forced_kill=room.players[attacker_id].effect_flags.forced_kill > 0,
+            )
+        except Exception:
+            logging.getLogger(__name__).exception('combat shadow 预期计算失败')
+
     # 检查是否击中（统一路径：强制击杀与普通攻击共用一套结算）
     hit = False
     ship_sunk = False
@@ -5685,6 +5711,25 @@ def handle_attack(data):
     room.attacks_remaining -= 1
     # 确保攻击次数不会为负数
     room.attacks_remaining = max(0, room.attacks_remaining)
+
+    if shadow_resolution is not None:
+        shadow_diff = compare_core_result(
+            shadow_resolution,
+            hit=hit,
+            ship_sunk=ship_sunk,
+            shield_blocked=shield_blocked,
+            remaining_attacks=room.attacks_remaining,
+            defender_remaining_ships=room.players[defender_id].remaining_ships,
+        )
+        if shadow_diff:
+            logging.getLogger(__name__).warning(
+                'combat shadow mismatch room=%s attacker=%s target=(%s,%s) diff=%r',
+                room_id,
+                attacker_id,
+                target_x,
+                target_y,
+                shadow_diff,
+            )
 
     # 记录本次攻击到attacks列表（修复重复攻击校验与AI追踪失效）
     #

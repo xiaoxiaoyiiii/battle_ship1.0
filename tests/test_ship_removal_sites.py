@@ -17,7 +17,7 @@
 
 ## 判据（本文件钉住的三件事）
 
-1. **穷举**：扫 `server.py` 里所有对 `*.ships` 的 `remove` / `pop` / `del` / `clear` /
+1. **穷举**：扫 `server.py` 与 `application/player_state.py` 里所有对 `*.ships` 的 `remove` / `pop` / `del` / `clear` /
    `extend` / `insert` / **整体重建**（`x.ships = ...`）/ 下标赋值 —— 每一个点
    都必须在 `REMOVAL_SITES` 里有一条（**按函数名 + 容器变量 + 卡片分支**登记，
    **不按行号**：行号一定会漂移）；
@@ -44,6 +44,7 @@ import pytest
 
 import replay
 import server
+import application.player_state as player_state
 
 # 只扫描 Player 的两个名字（`player` / `owner` / `caster` / 局部变量…），
 # 排掉明显不是 Player 的容器（本项目里没有，留着给将来）：
@@ -165,7 +166,16 @@ def _card_branch_of(node, parent, src):
 
 
 def _scan_ship_mutations():
-    """扫出 `server.py` 里所有"改 `*.ships`"的点。
+    """扫出服务端运行时代码里所有"改 `*.ships`"的点。"""
+    found = []
+    for path in (server.__file__, player_state.__file__):
+        src = io.open(path, encoding='utf-8').read()
+        found.extend(_scan_ship_mutations_in(src))
+    return found
+
+
+def _scan_ship_mutations_in(src):
+    """扫描一个源码文件，保持登记点按函数、容器和卡片分支识别。
 
     判据只认**属性写法** `X.ships` 本身（含下标 `X.ships[i]`）：
 
@@ -177,7 +187,6 @@ def _scan_ship_mutations():
       里就有一处：那是回给前端的会话快照，跟 `player.ships` 没有半点关系 ——
       本批第一版扫描器就是把它当成了"整体重建"而假红）。
     """
-    src = io.open(server.__file__, encoding='utf-8').read()
     tree = ast.parse(src)
     parent = {}
     for node in ast.walk(tree):
@@ -241,7 +250,7 @@ def _scan_ship_mutations():
                               op='augassign', card=_card_branch_of(node, parent, src),
                               line=node.lineno,
                               seg=(ast.get_source_segment(src, node) or '')[:90]))
-    return src, found
+    return found
 
 
 def _key(site):
@@ -266,7 +275,7 @@ def test_every_ship_mutation_site_is_registered():
       · **新增**一个移除点（例如把某处 `ships.remove` 复制到新函数里）⇒ 左腿红；
       · 从表里**删**一条 ⇒ 右腿红。
     """
-    src, found = _scan_ship_mutations()
+    found = _scan_ship_mutations()
     assert len(found) >= 25, '扫描只找到 %d 个点 —— 扫描器坏了？' % len(found)
 
     site_key = {(e['fn'], e['container'], e['card']): e for e in REMOVAL_SITES}
@@ -334,6 +343,6 @@ def test_no_site_reassigns_a_single_cell_of_ships():
 
     出现了就红（它同样是"换掉一艘船"，但不在任何既有成因里 —— 必须先想清楚再登记）。
     """
-    src, found = _scan_ship_mutations()
+    found = _scan_ship_mutations()
     bad = [s for s in found if s['op'] in ('setitem', 'augassign')]
     assert not bad, '出现了新形状 `ships[i] = ...` / `ships += ...`：%s' % bad

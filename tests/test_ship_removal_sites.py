@@ -17,7 +17,7 @@
 
 ## 判据（本文件钉住的三件事）
 
-1. **穷举**：扫 `server.py` 与 `application/player_state.py` 里所有对 `*.ships` 的 `remove` / `pop` / `del` / `clear` /
+1. **穷举**：扫 `server.py`、`application/player_state.py` 与卡牌范围伤害模块里所有对 `*.ships` 的 `remove` / `pop` / `del` / `clear` /
    `extend` / `insert` / **整体重建**（`x.ships = ...`）/ 下标赋值 —— 每一个点
    都必须在 `REMOVAL_SITES` 里有一条（**按函数名 + 容器变量 + 卡片分支**登记，
    **不按行号**：行号一定会漂移）；
@@ -45,6 +45,7 @@ import pytest
 import replay
 import server
 import application.player_state as player_state
+import application.card_area_damage_effects as area_damage_effects
 
 # 只扫描 Player 的两个名字（`player` / `owner` / `caster` / 局部变量…），
 # 排掉明显不是 Player 的容器（本项目里没有，留着给将来）：
@@ -94,13 +95,13 @@ REMOVAL_SITES = [
              '`_mark_ship_sunken`，**且不产生攻击步** ⇒ 不登记就凭空消失。'
              '同一行的"暂时除外"那一支**有意不登记**（下个大回合原样归还）'),
     # ---- ③ 同时产出攻击步：回放靠 attack 标记画红叉，**不需要**登记 ----
-    dict(fn='apply_magic_effect', container='opponent', ops=['remove'], card='轰炸',
+    dict(fn='apply_area_damage_card_effect', container='opponent', ops=['remove'], card='轰炸',
          kind='attack', need=None,
          why='轰炸逐格写 `caster.attacks`（`hit=True, ship_sunk=True`）并 emit `attack_result`。'
              '⚠️ 这两处**不写** `type="attack"` 的游戏日志 ⇒ 改前回放**画不出**这些格'
              '（第 7 处，作者实报）—— 本批已修：回放的标记收敛到 `attacks` 时间线'
              '（数据源 = `Player.attacks`），见 `docs/REPLAY_2026_09_23.md` §H'),
-    dict(fn='apply_magic_effect', container='opponent', ops=['remove'], card='硫磺火焰',
+    dict(fn='apply_area_damage_card_effect', container='opponent', ops=['remove'], card='硫磺火焰',
          kind='attack', need=None,
          why='同上：逐格 `caster.attacks` + `attack_result`（不写 attack 日志；本批修好）'),
     # ---- ④ 有意消失：临时船收回 / 神威暂时除外 ⇒ 一格沉没标记都不许有 ----
@@ -168,7 +169,7 @@ def _card_branch_of(node, parent, src):
 def _scan_ship_mutations():
     """扫出服务端运行时代码里所有"改 `*.ships`"的点。"""
     found = []
-    for path in (server.__file__, player_state.__file__):
+    for path in (server.__file__, player_state.__file__, area_damage_effects.__file__):
         src = io.open(path, encoding='utf-8').read()
         found.extend(_scan_ship_mutations_in(src))
     return found

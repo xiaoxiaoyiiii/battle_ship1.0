@@ -55,6 +55,8 @@ GAME_JS = os.path.join(ROOT, 'static', 'game.js')
 SOCKET_EVENTS_JS = os.path.join(ROOT, 'static', 'client_socket_events.js')
 SERVER_PY = os.path.join(ROOT, 'server.py')
 STATUS_EFFECTS_PY = os.path.join(ROOT, 'application', 'card_status_effects.py')
+REVEAL_EFFECTS_PY = os.path.join(ROOT, 'application', 'card_reveal_effects.py')
+AREA_DAMAGE_EFFECTS_PY = os.path.join(ROOT, 'application', 'card_area_damage_effects.py')
 
 # 座位 key：用**匹配房的约定**（key = socket sid）—— 最容易出问题的那一套，
 # 而且 `seat_label` 的结果与自定义房（user_id）无关，两种约定下都是 p1/p2。
@@ -79,6 +81,7 @@ _SERVER_SHAPE_KEYS = {
     'selected_cells': 'cells',
     # 单格：克苏鲁之眼走 `_pick_cell_from_target`
     '_pick_cell_from_target': 'single',
+    'pick_cell_from_target': 'single',  # 迁入应用层后显式传入的同一个回调
     # 多选自己的船（仁王之盾那类）——**不是**区域，用来把这类卡认出来而非当成区域
     'ship_indices': 'ships',
 }
@@ -156,7 +159,9 @@ def _server_region_branches():
     out = {}
     branch_count = 0
     for path, function in ((SERVER_PY, 'apply_magic_effect'),
-                           (STATUS_EFFECTS_PY, 'apply_status_card_effect')):
+                           (STATUS_EFFECTS_PY, 'apply_status_card_effect'),
+                           (REVEAL_EFFECTS_PY, 'apply_reveal_card_effect'),
+                           (AREA_DAMAGE_EFFECTS_PY, 'apply_area_damage_card_effect')):
         src = _read(path)
         start = src.index(f'def {function}(')
         nxt = src.find('\ndef ', start + 10)

@@ -24,3 +24,13 @@
 相对第一批提交，`server.py` 删除 210 行、新增 13 行；该文件仍约 1.2 万行，`apply_magic_effect` 及主要对局编排还没有完成拆分。源码扫描型区域卡测试原先只读 `server.py`，现同时扫描新模块，确保“仁王之盾”迁出后仍纳入覆盖检查。
 
 验证：`python -m py_compile server.py application/card_status_effects.py` 通过；卡牌与连锁定向测试 91 passed；区域预览测试 27 passed；`python -m pytest -q` 为 1060 passed、1 个既有 Eventlet 弃用警告。
+
+## 第三批：侦查与范围伤害
+
+`application/card_reveal_effects.py` 接管雷达子弹、冻结、探测雷达、克苏鲁之眼；两种雷达共用一个内部的公开格子与空格探测流程。`application/card_area_damage_effects.py` 接管溅射、轰炸、硫磺火焰。它们在真实卡牌结算入口执行，并通过显式传入的旧辅助函数完成沉船、恶魔契约及事件发送；失败提前返回、未知卡处理和结算后胜负检查仍由原入口保留。
+
+相对第二批提交，`server.py` 删除 523 行、新增 30 行，净减少 493 行；按当前非空行统计仍有约 11,723 行。范围伤害分支虽已迁出，`handle_attack`、`resolve_chain`、神威及大量其他卡牌效果仍在 `server.py`，不能据此宣称服务端拆分完成。
+
+源码扫描守卫同步覆盖新增模块：区域预览继续发现全部区域目标卡，战舰增删登记继续覆盖轰炸与硫磺火焰。攻击记录守卫原先只有扫描器、没有真正执行的登记核对测试；本批补齐双向核对，并登记两种雷达共用的攻击写入点。新增两例运行时断言检查雷达对空格的攻击时间线和事件顺序。
+
+验证：`python -m py_compile server.py application/card_reveal_effects.py application/card_area_damage_effects.py`、`git diff --check`；相关卡牌与源码守卫定向测试通过；`python -m pytest -q` 为 1063 passed、1 个既有 Eventlet 弃用警告。Windows CI 结果以本批提交的检查为准。

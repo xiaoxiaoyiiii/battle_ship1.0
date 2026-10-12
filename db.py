@@ -139,11 +139,13 @@ def _add_column_if_missing(cursor, table: str, column: str, ddl: str) -> bool:
 
 
 class Database:
-    def __init__(self):
+    def __init__(self, db_path=None):
         # BATTLESHIP_DB_PATH 用于把数据库指到别处（测试隔离用）。
         # 此前 pytest 直接跑在仓库里会往正式库写假对局。
         override = os.environ.get('BATTLESHIP_DB_PATH')
-        self.db_path = Path(override) if override else (Path(__file__).parent / 'data' / 'battleship.db')
+        self.db_path = Path(db_path) if db_path is not None else (
+            Path(override) if override else (Path(__file__).parent / 'data' / 'battleship.db')
+        )
         self.conn = None
         self.cursor = None
         self._lock = threading.RLock()
@@ -3899,6 +3901,55 @@ class Database:
 db = Database()
 
 # 向后兼容的函数封装
+def recent_foes(uid: str, limit: int) -> set[str]:
+    """最近 N 局交手账号；匹配策略在应用层决定时间窗。"""
+    if not uid:
+        return set()
+    with db._lock:
+        rows = db.conn.execute(
+            'SELECT winner_id, loser_id FROM matches '
+            'WHERE (winner_id = ? OR loser_id = ?) '
+            'ORDER BY timestamp DESC LIMIT ?', (uid, uid, int(limit))
+        ).fetchall()
+    foes = {row['loser_id'] if row['winner_id'] == uid else row['winner_id']
+            for row in rows}
+    foes.discard(uid)
+    foes.discard(None)
+    return foes
+
+
+def consecutive_losses(uid: str, limit: int = 50) -> int:
+    """在记录当前比赛前读取连败数。"""
+    if not uid:
+        return 0
+    with db._lock:
+        rows = db.conn.execute(
+            'SELECT winner_id FROM matches WHERE winner_id = ? OR loser_id = ? '
+            'ORDER BY timestamp DESC LIMIT ?', (uid, uid, int(limit))
+        ).fetchall()
+    losses = 0
+    for row in rows:
+        if str(row['winner_id']) == str(uid):
+            break
+        losses += 1
+    return losses
+
+
+def public_user_cards(uids) -> dict:
+    """只读取排行榜公开字段；凭证列不会离开仓储层。"""
+    ids = [str(uid) for uid in (uids or ()) if uid]
+    if not ids:
+        return {}
+    marks = ','.join('?' for _ in ids)
+    with db._lock:
+        rows = db.conn.execute(
+            f'SELECT id, username, avatar FROM users WHERE id IN ({marks})', ids
+        ).fetchall()
+    return {str(row['id']): {'username': row['username'] or '',
+                             'avatar': row['avatar'] or ''}
+            for row in rows if row['id']}
+
+
 def init_db():
     """初始化数据库"""
     db.init_db()

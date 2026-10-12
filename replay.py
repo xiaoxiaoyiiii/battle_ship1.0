@@ -128,7 +128,17 @@ def _state(room):
     st = getattr(room, _ROOM_ATTR, None)
     if isinstance(st, dict):
         return st
-    st = {
+    st = new_state()
+    try:
+        setattr(room, _ROOM_ATTR, st)
+    except Exception:       # noqa: BLE001 —— 假房间（测试替身）不挂属性也不许抛
+        pass
+    return st
+
+
+def new_state():
+    """创建单局录制状态；应用适配器持有其生命周期。"""
+    return {
         'steps': [],
         'ships': [],        # 船位时间线（稀疏）
         'hands': [],        # 手牌时间线（稀疏）
@@ -143,11 +153,6 @@ def _state(room):
         'last_remaining': None,  # 上一次"每个座位的剩余战舰数"（同上）
         'truncated': None,  # None = 没截断；否则是原因字符串
     }
-    try:
-        setattr(room, _ROOM_ATTR, st)
-    except Exception:       # noqa: BLE001 —— 假房间（测试替身）不挂属性也不许抛
-        pass
-    return st
 
 
 def reset(room) -> None:

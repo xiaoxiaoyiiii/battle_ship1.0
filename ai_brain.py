@@ -42,8 +42,14 @@ from __future__ import annotations
 
 import random
 
-from application.observations import attack_observation
-from domain.observations import AttackObservation
+from application.observations import (
+    attack_observation, card_observation, choice_observation, placement_observation,
+    ship_pick_observation, target_observation,
+)
+from domain.observations import (
+    AttackObservation, CardObservation, ChoiceObservation, PlacementObservation, ShipPickObservation,
+    TargetObservation,
+)
 
 # 棋盘边长。现有对局层到处写 `range(6)`，这里给个名字免得又长出一份魔法数。
 BOARD_SIZE = 6
@@ -264,45 +270,32 @@ def resolve_ship_pick(room, ai_id, reason, candidates, rng=None):
     ⚠️ 只用 `对方.attacks`（公开的炮击记录）来判断，不看 `对方.ships`。
     """
     try:
-        rng = _rng(rng)
-        cands = [s for s in (candidates or []) if s is not None]
+        cands = [ship for ship in (candidates or []) if ship is not None]
         if not cands:
             return None
-        opp_id = _opponent_id(room, ai_id)
-        opp = (getattr(room, 'players', None) or {}).get(opp_id) if opp_id else None
-        probed = _attacked_cells(opp) if opp is not None else set()
-        if not probed:
-            # 对方还没开过炮 → 无信息可用，退化成确定性随机（注入的 rng 保证可复现）
-            return rng.choice(cands)
-
-        def neighbour_hits(ship):
-            """这艘船周围（含自身格）有多少格是对方已经轰过的。"""
-            n = 0
-            for (x, y) in _cells_of(ship):
-                for dx in (-1, 0, 1):
-                    for dy in (-1, 0, 1):
-                        if (x + dx, y + dy) in probed:
-                            n += 1
-            return n
-
-        # 守株待兔（trap_setup）是**反向**目标：希望这艘船尽早被打到，让陷阱触发。
-        # 所以它挑"对方正在往这片找"的那艘 —— 判据就是邻里被轰过的格数**最多**。
-        if str(reason or '') == 'trap_setup':
-            return cands[max(range(len(cands)),
-                             key=lambda i: (neighbour_hits(cands[i]), -i))]
-
-        # 牺牲/暴露类：越多邻里被轰过 → 泄露代价越小 → 越该拿它去抵账。
-        #
-        # ⚠️ 试过一版"更讲道理"的启发式：把"周围一格都没被搜过的船"判为最不该牺牲
-        #    （对方知道位置就白赚一艘），实测**没有变好**：
-        #      同批 2000 局 · 旧版 69.5% / 新版 68.7%（差 0.8 个百分点，在噪声内，
-        #      但至少没有证据支持新版）。
-        #    → 所以保留这一版。**"讲得通"不等于"更强"**，两版都留在
-        #      `tools/master_ablation.py` 的 `ship_old` / `ship_new` 里可随时复测。
-        best = max(range(len(cands)), key=lambda i: (neighbour_hits(cands[i]), -i))
-        return cands[best]
+        index = choose_ship_index(
+            ship_pick_observation(room, ai_id, cands), reason, rng
+        )
+        return cands[index] if index is not None else None
     except Exception:
         return None
+
+
+def choose_ship_index(observation: ShipPickObservation, reason, rng=None):
+    """仅从候选船位与公开炮击记录选下标，不持有战舰对象。"""
+    if not observation.candidate_cells:
+        return None
+    probed = observation.opponent_attacked
+    if not probed:
+        return _rng(rng).choice(range(len(observation.candidate_cells)))
+
+    def neighbour_hits(cells):
+        return sum((x + dx, y + dy) in probed
+                   for x, y in cells
+                   for dx in (-1, 0, 1) for dy in (-1, 0, 1))
+
+    return max(range(len(observation.candidate_cells)),
+               key=lambda i: (neighbour_hits(observation.candidate_cells[i]), -i))
 
 
 # ===========================================================================
@@ -319,29 +312,34 @@ def resolve_placement(room, ai_id, kind, candidates, rng=None):
        调用方算出的 `candidates` 已经是合法集，本函数**不做二次过滤**。
     """
     try:
-        rng = _rng(rng)
-        cands = [c for c in (candidates or []) if c is not None]
+        cands = [cell for cell in (candidates or []) if cell is not None]
         if not cands:
             return None
-        opp_id = _opponent_id(room, ai_id)
-        opp = (getattr(room, 'players', None) or {}).get(opp_id) if opp_id else None
-        probed = _attacked_cells(opp) if opp is not None else set()
-
-        def safety(cell):
-            """该格「被对方轰过」得满分；否则看四邻被轰过的数量（对方在扫这片）。"""
-            c = _cell_of(cell) or (cell if isinstance(cell, tuple) else None)
-            if c is None:
-                return -1
-            if c in probed:
-                return 100                      # 对方打过的格 → 不会再打
-            x, y = c
-            return sum(1 for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))
-                       if (x + dx, y + dy) in probed)
-
-        best = max(range(len(cands)), key=lambda i: (safety(cands[i]), -i))
-        return cands[best]
+        index = choose_placement_index(
+            placement_observation(room, ai_id, cands)
+        )
+        return cands[index] if index is not None else None
     except Exception:
         return None
+
+
+def choose_placement_index(observation: PlacementObservation):
+    """仅用已给出的合法落点与对手公开炮击记录选下标。"""
+    if not observation.candidates:
+        return None
+    probed = observation.opponent_attacked
+
+    def safety(cell):
+        if cell is None:
+            return -1
+        if cell in probed:
+            return 100
+        x, y = cell
+        return sum((x + dx, y + dy) in probed
+                   for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)))
+
+    return max(range(len(observation.candidates)),
+               key=lambda i: (safety(observation.candidates[i]), -i))
 
 
 # ===========================================================================
@@ -542,67 +540,40 @@ def _situational(room, ai_id, name):
     只读公开信息：自己的船、对方的剩余船数（界面上就显示）、上一次炮击结果、
     双方手牌**张数**（不是内容）。
     """
-    me = (getattr(room, 'players', None) or {}).get(ai_id)
-    if me is None:
+    return _situational_from_observation(card_observation(room, ai_id), name)
+
+
+def _situational_from_observation(observation: CardObservation, name):
+    if not observation.present:
         return 0.0
-    opp_id = _opponent_id(room, ai_id)
-    opp = (getattr(room, 'players', None) or {}).get(opp_id) if opp_id else None
-
-    my_ships = int(getattr(me, 'remaining_ships', 0) or 0)
-    opp_ships = int(getattr(opp, 'remaining_ships', 0) or 0) if opp else 0
-    behind = opp_ships - my_ships          # >0 = 我落后
-
+    behind = observation.opponent_ships - observation.own_ships
     k = 1.0
-
-    # ① 条件卡：前置不成立就是废牌，价值直接归零
-    la = _last_attack(room)
-    if name in NEEDS_LAST_HIT and not la.get('hit'):
+    if name in NEEDS_LAST_HIT and not observation.last_hit:
         return 0.0
-    if name in NEEDS_LAST_SUNK and not la.get('ship_sunk'):
+    if name in NEEDS_LAST_SUNK and not observation.last_sunk:
         return 0.0
-
-    # ② 卧薪尝胆：卡面要求「自己船数 < 对方」
     if name == '卧薪尝胆' and behind <= 0:
         return 0.0
-
-    # ③ 重摆类：只有局面很差时才值得把盘面推倒重来
     if name in ('回光返照', '败者食尘'):
         if behind >= 2:
             k *= 1.8
         elif behind <= 0:
             k *= 0.5
-
-    # ④ 落后时进攻卡加码、领先时防守卡加码
     if name in ('轰炸', '神威！', '神之宣告', '硫磺火焰'):
         k *= 1.0 + min(0.4, 0.15 * max(0, behind))
     if name in ('疗愈', '仁王之盾', '卧薪尝胆', '无暇圣心'):
         k *= 1.0 + min(0.4, 0.15 * max(0, -behind))
-
-    # ⑤ 手牌少时抽牌类更值钱
-    hand = len(getattr(me, 'magic_hand', None) or [])
-    if name in ('无中生有', '八方来财', '亡羊补牢') and hand <= 2:
+    if name in ('无中生有', '八方来财', '亡羊补牢') and len(observation.hand_names) <= 2:
         k *= 1.5
-
-    # ⑥ 克苏鲁之眼：**双方各暴露一艘**。单格船下"被暴露 = 必被击沉"，
-    #    所以它不是纯收益，而是**信息交换**：换到对方一艘、赔上自己一艘。
-    #    只有在自己手里的情报比对方少时才划算（对方已经知道我几艘船了，
-    #    再暴露一艘的边际代价小；而我因此多知道它一艘）。
-    #    ⚠️ 实测：不做这个判别时它会成为大师出得最多的一张（占比 31%），
-    #       等于每局白送对方几次必中。
     if name == '克苏鲁之眼':
-        mine_known = len(set(_known_enemy_cells(me)))
-        theirs_known = 0
-        if opp is not None:
-            theirs_known = len(set(_known_enemy_cells(opp)))
-        if theirs_known <= mine_known:
-            k *= 0.35          # 我的情报不少于对方 → 这次交换不划算
+        if observation.opponent_known_count <= observation.own_known_count:
+            k *= 0.35
         else:
             k *= 1.4
-        missed = len(_attacked_cells(me))
-        if missed >= 20:       # 残局：已知格够多，情报卡价值下降
+        if observation.own_attacked_count >= 20:
             k *= 0.6
-
     return k
+
 
 
 def choose_card(room, ai_id, playable, rng=None):
@@ -617,23 +588,24 @@ def choose_card(room, ai_id, playable, rng=None):
        等于白白浪费一次出牌时机）。
     """
     try:
-        me = (getattr(room, 'players', None) or {}).get(ai_id)
-        if me is None:
-            return None
-        hand = list(getattr(me, 'magic_hand', None) or [])
-        best_i, best_v = None, 0.0
-        for i in (playable or []):
-            if not isinstance(i, int) or i < 0 or i >= len(hand):
-                continue
-            name = getattr(hand[i], 'name', None)
-            v = card_value(name) * _situational(room, ai_id, name)
-            if v > best_v:
-                best_i, best_v = i, v
-        if best_i is None or best_v < PLAY_THRESHOLD:
-            return None
-        return best_i
+        return choose_card_from_observation(card_observation(room, ai_id), playable)
     except Exception:
         return None
+
+
+def choose_card_from_observation(observation: CardObservation, playable):
+    """基于独立快照计算出牌下标；候选顺序与旧路径相同。"""
+    if not observation.present:
+        return None
+    best_i, best_v = None, 0.0
+    for i in (playable or []):
+        if isinstance(i, bool) or not isinstance(i, int) or i < 0 or i >= len(observation.hand_names):
+            continue
+        name = observation.hand_names[i]
+        value = card_value(name) * _situational_from_observation(observation, name)
+        if value > best_v:
+            best_i, best_v = i, value
+    return best_i if best_i is not None and best_v >= PLAY_THRESHOLD else None
 
 
 # ===========================================================================
@@ -679,23 +651,28 @@ def _score_cells(room, ai_id, cells, self_harm=False):
       · 打过而没中的格  0     单格船打中即沉 → 这格**证明是空的**，再打纯属浪费
       · 自己的船       -20/格 对会打到自己人的卡（神威！打己方棋盘）是实打实的代价
     """
-    me = (getattr(room, 'players', None) or {}).get(ai_id)
-    if me is None:
+    return _score_cells_from_observation(
+        target_observation(room, ai_id), cells, self_harm
+    )
+
+
+def _score_cells_from_observation(observation: TargetObservation, cells, self_harm=False):
+    if not observation.present:
         return -1.0
-    known, safe, _unknown = enemy_cell_model(room, ai_id)
-    mine = _my_ship_cells(room, ai_id)
-    s = 0.0
-    for c in cells:
-        c = _cell_of(c) if not isinstance(c, tuple) else c
-        if c is None:
+    known = observation.revealed - observation.attacked
+    score = 0.0
+    for cell in cells:
+        cell = _cell_of(cell) if not isinstance(cell, tuple) else cell
+        if cell is None:
             continue
-        if c in known:
-            s += 3.0
-        elif c not in safe:
-            s += 1.0
-        if c in mine:
-            s += -20.0 if self_harm else -1.0
-    return s
+        if cell in known:
+            score += 3.0
+        elif cell not in observation.attacked:
+            score += 1.0
+        if cell in observation.own_ship_cells:
+            score += -20.0 if self_harm else -1.0
+    return score
+
 
 
 def _area_cells(x, y, size=3):
@@ -717,7 +694,18 @@ def resolve_target(room, ai_id, card, rng=None):
     （继续打只会被判失败并退牌，白费一次出牌时机）。
     """
     try:
+        observation = target_observation(room, ai_id)
         name = str(getattr(card, 'name', card) or '')
+        return resolve_target_from_observation(observation, name)
+    except Exception:
+        return None
+
+
+def resolve_target_from_observation(observation: TargetObservation, name):
+    """从已允许的信息中选择区域、行列或连续格。"""
+    try:
+        if not observation.present:
+            return None
         # 神威！ 的目标是【别人棋盘】——`apply_magic_effect` 里 `board` 缺省就是
         # 'opponent'，所以这里按对方棋盘算，区域里的**自己船**才是代价。
         self_harm = name == '神威！'
@@ -727,7 +715,7 @@ def resolve_target(room, ai_id, card, rng=None):
             best, best_s = None, None
             for x, y in _window_positions(size):
                 cells = _area_cells(x, y, size)
-                s = _score_cells(room, ai_id, cells, self_harm=self_harm)
+                s = _score_cells_from_observation(observation, cells, self_harm=self_harm)
                 if best_s is None or s > best_s:
                     best, best_s = (x, y), s
             if best is None:
@@ -744,7 +732,7 @@ def resolve_target(room, ai_id, card, rng=None):
             for i in range(BOARD_SIZE):
                 for kind, cells in (('row', [(x, i) for x in range(BOARD_SIZE)]),
                                     ('col', [(i, y) for y in range(BOARD_SIZE)])):
-                    s = _score_cells(room, ai_id, cells)
+                    s = _score_cells_from_observation(observation, cells)
                     if best_s is None or s > best_s:
                         best, best_s = (kind, i), s
             if best is None:
@@ -758,13 +746,13 @@ def resolve_target(room, ai_id, card, rng=None):
             for y in range(BOARD_SIZE):        # 横向滑动窗口
                 for x in range(0, BOARD_SIZE - n + 1):
                     cells = [(x + k, y) for k in range(n)]
-                    s = _score_cells(room, ai_id, cells)
+                    s = _score_cells_from_observation(observation, cells)
                     if best_s is None or s > best_s:
                         best, best_s = cells, s
             for x in range(BOARD_SIZE):        # 纵向
                 for y in range(0, BOARD_SIZE - n + 1):
                     cells = [(x, y + k) for k in range(n)]
-                    s = _score_cells(room, ai_id, cells)
+                    s = _score_cells_from_observation(observation, cells)
                     if best_s is None or s > best_s:
                         best, best_s = cells, s
             if best is None:
@@ -787,6 +775,16 @@ def resolve_choice(room, ai_id, kind, options, rng=None):
     一律挑**价值最高**的那个；价值相同的按下标最小（保证可复现）。
     """
     try:
+        return resolve_choice_from_observation(
+            choice_observation(room, ai_id), kind, options
+        )
+    except Exception:
+        return None
+
+
+def resolve_choice_from_observation(observation: ChoiceObservation, kind, options):
+    """从有限公开数据与调用方提供的候选中作出选择。"""
+    try:
         opts = list(options or [])
         if not opts:
             return None
@@ -797,11 +795,8 @@ def resolve_choice(room, ai_id, kind, options, rng=None):
             nums = [int(o) for o in opts if str(o).lstrip('-').isdigit()]
             if not nums:
                 return opts[0]
-            me = (getattr(room, 'players', None) or {}).get(ai_id)
-            mine = int(getattr(me, 'remaining_ships', 0) or 0)
-            opp_id = _opponent_id(room, ai_id)
-            opp = (getattr(room, 'players', None) or {}).get(opp_id) if opp_id else None
-            theirs = int(getattr(opp, 'remaining_ships', 0) or 0) if opp else 0
+            mine = observation.own_ships
+            theirs = observation.opponent_ships
             want = mine if mine >= theirs else max(1, theirs - 1)
             return min(nums, key=lambda n: (abs(n - want), n))
 
@@ -817,9 +812,8 @@ def resolve_choice(room, ai_id, kind, options, rng=None):
             nums = [int(o) for o in opts if str(o).lstrip('-').isdigit()]
             if not nums:
                 return opts[0]
-            me = (getattr(room, 'players', None) or {}).get(ai_id)
-            mine = int(getattr(me, 'remaining_ships', 0) or 0)
-            incoming = int(getattr(room, 'attacks_remaining', 0) or 0)
+            mine = observation.own_ships
+            incoming = observation.attacks_remaining
             want = min(mine, max(0, incoming))
             return min(nums, key=lambda n: (abs(n - want), n))
 

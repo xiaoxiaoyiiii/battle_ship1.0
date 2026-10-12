@@ -10,6 +10,46 @@ class AttackObservation:
 
 
 @dataclass(frozen=True)
+class CardObservation:
+    present: bool
+    hand_names: tuple[str | None, ...]
+    own_ships: int
+    opponent_ships: int
+    last_hit: bool
+    last_sunk: bool
+    own_known_count: int
+    opponent_known_count: int
+    own_attacked_count: int
+
+
+@dataclass(frozen=True)
+class PlacementObservation:
+    opponent_attacked: frozenset[tuple[int, int]]
+    candidates: tuple[tuple[int, int] | None, ...]
+
+
+@dataclass(frozen=True)
+class ShipPickObservation:
+    opponent_attacked: frozenset[tuple[int, int]]
+    candidate_cells: tuple[frozenset[tuple[int, int]], ...]
+
+
+@dataclass(frozen=True)
+class TargetObservation:
+    present: bool
+    attacked: frozenset[tuple[int, int]]
+    revealed: frozenset[tuple[int, int]]
+    own_ship_cells: frozenset[tuple[int, int]]
+
+
+@dataclass(frozen=True)
+class ChoiceObservation:
+    own_ships: int
+    opponent_ships: int
+    attacks_remaining: int
+
+
+@dataclass(frozen=True)
 class SeatSnapshot:
     player_ids: tuple[str, ...]
 

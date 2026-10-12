@@ -6,7 +6,10 @@ import ai_brain
 import replay
 import server
 import spectate
-from application.observations import attack_observation, settlement_snapshot
+from application.observations import (
+    attack_observation, card_observation, choice_observation, placement_observation,
+    settlement_snapshot, ship_pick_observation, target_observation,
+)
 
 
 def test_attack_snapshot_never_reads_enemy_and_survives_source_mutation():
@@ -66,3 +69,89 @@ def test_replay_clock_port_looks_up_current_server_function(monkeypatch):
     assert replay._STARTED_AT(Obj()) == 123
     monkeypatch.setattr(server, '_match_started_at', lambda _: 456)
     assert replay._STARTED_AT(Obj()) == 456
+
+
+def test_card_snapshot_does_not_read_enemy_hand_or_ships():
+    class PublicEnemy:
+        remaining_ships = 4
+        revealed_positions = [{'x': 1, 'y': 2}]
+
+        @property
+        def ships(self):
+            raise AssertionError('读取了对手船位')
+
+        @property
+        def magic_hand(self):
+            raise AssertionError('读取了对手手牌')
+
+    own = Obj(magic_hand=[Obj(name='轰炸'), Obj(name='克苏鲁之眼')],
+              remaining_ships=2, attacks=[{'x': 0, 'y': 0}],
+              revealed_positions=[])
+    room = Obj(players={'me': own, 'enemy': PublicEnemy()}, last_attack={'hit': True})
+    snapshot = card_observation(room, 'me')
+    expected = ai_brain.choose_card(room, 'me', [0, 1])
+    own.magic_hand.clear()
+    assert ai_brain.choose_card_from_observation(snapshot, [0, 1]) == expected
+    assert snapshot.hand_names == ('轰炸', '克苏鲁之眼')
+
+
+def test_placement_and_ship_pick_use_only_public_enemy_attacks():
+    class PublicEnemy:
+        attacks = [{'x': 3, 'y': 3}]
+
+        @property
+        def ships(self):
+            raise AssertionError('读取了对手船位')
+
+    room = Obj(players={'me': Obj(), 'enemy': PublicEnemy()})
+    cells = [(0, 0), (3, 3)]
+    placement = placement_observation(room, 'me', cells)
+    assert ai_brain.choose_placement_index(placement) == 1
+    assert ai_brain.resolve_placement(room, 'me', 'reinforce', cells) == (3, 3)
+
+    ships = [Obj(positions=[Obj(x=0, y=0)]), Obj(positions=[Obj(x=3, y=3)])]
+    choice = ship_pick_observation(room, 'me', ships)
+    assert ai_brain.choose_ship_index(choice, 'demon_contract') == 1
+    assert ai_brain.resolve_ship_pick(room, 'me', 'demon_contract', ships) is ships[1]
+    PublicEnemy.attacks.clear()
+    assert ai_brain.choose_placement_index(placement) == 1
+    assert ai_brain.choose_ship_index(choice, 'demon_contract') == 1
+
+
+def test_target_snapshot_is_independent_of_enemy_private_board():
+    class HiddenEnemy:
+        @property
+        def ships(self):
+            raise AssertionError('读取了对手船位')
+
+        @property
+        def magic_hand(self):
+            raise AssertionError('读取了对手手牌')
+
+    own = Obj(attacks=[{'x': 0, 'y': 0}],
+              revealed_positions=[{'x': 2, 'y': 2}],
+              ships=[Obj(positions=[Obj(x=5, y=5)])])
+    room = Obj(players={'me': own, 'enemy': HiddenEnemy()})
+    snapshot = target_observation(room, 'me')
+    for name in ('冻结', '轰炸', '硫磺火焰'):
+        expected = ai_brain.resolve_target(room, 'me', Obj(name=name))
+        assert ai_brain.resolve_target_from_observation(snapshot, name) == expected
+    own.revealed_positions.clear()
+    own.ships.clear()
+    assert snapshot.revealed == frozenset({(2, 2)})
+    assert snapshot.own_ship_cells == frozenset({(5, 5)})
+
+
+def test_numeric_choice_uses_public_counts_only():
+    class PublicEnemy:
+        remaining_ships = 5
+
+        @property
+        def ships(self):
+            raise AssertionError('读取了对手船位')
+
+    room = Obj(players={'me': Obj(remaining_ships=3), 'enemy': PublicEnemy()},
+               attacks_remaining=2)
+    snapshot = choice_observation(room, 'me')
+    assert ai_brain.resolve_choice(room, 'me', 'lingqi_choice', list(range(7))) == 4
+    assert ai_brain.resolve_choice_from_observation(snapshot, 'shenji_predict', list(range(7))) == 2

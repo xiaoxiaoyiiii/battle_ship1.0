@@ -4,6 +4,28 @@ from __future__ import annotations
 from pathlib import Path
 from contextlib import closing
 import sqlite3
+import os
+
+
+def configured_database_path() -> Path:
+    """返回当前部署使用的 SQLite 路径，不打开或修改数据库。"""
+    return Path(os.environ.get('BATTLESHIP_DB_PATH') or
+                Path(__file__).resolve().parents[1] / 'data' / 'battleship.db')
+
+
+def database_ready(path: str | Path) -> bool:
+    """只读探测关键表；绝不让健康检查触发建库或迁移。"""
+    source = Path(path)
+    if not source.is_file():
+        return False
+    try:
+        with closing(sqlite3.connect(source.resolve().as_uri() + '?mode=ro',
+                                     uri=True, timeout=2)) as conn:
+            return conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'"
+            ).fetchone() is not None
+    except sqlite3.Error:
+        return False
 
 
 def integrity_check(path: str | Path) -> str:
@@ -39,12 +61,21 @@ def backup_database(source: str | Path, destination: str | Path) -> Path:
 
 def validate_migration_copy(source: str | Path, destination: str | Path) -> Path:
     """仅在备份副本运行当前代码的建表/加列迁移。"""
-    from db import Database
-
     copied = backup_database(source, destination)
-    probe = Database(db_path=copied)
+    # db 模块首次导入会实例化默认连接。临时将默认路径指向副本，
+    # 防止这个隐式初始化抢在显式 Database(db_path=...) 之前修改源库。
+    previous = os.environ.get('BATTLESHIP_DB_PATH')
     try:
-        integrity_check(copied)
+        os.environ['BATTLESHIP_DB_PATH'] = str(copied.resolve())
+        from db import Database
+        probe = Database(db_path=copied)
+        try:
+            integrity_check(copied)
+        finally:
+            probe.close()
     finally:
-        probe.close()
+        if previous is None:
+            os.environ.pop('BATTLESHIP_DB_PATH', None)
+        else:
+            os.environ['BATTLESHIP_DB_PATH'] = previous
     return copied

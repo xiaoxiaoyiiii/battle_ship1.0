@@ -13,6 +13,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
 from infrastructure.persistence import repository as db
+from infrastructure.sqlite_maintenance import configured_database_path, database_ready
 import achievements
 import anticheat
 import dm
@@ -62,6 +63,19 @@ ARENA_SCREEN_LIST = os.environ.get(
 os.makedirs(AVATAR_UPLOAD_FOLDER, exist_ok=True)
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'),
             template_folder=os.path.join(os.path.dirname(__file__), 'templates'))
+
+
+@app.get('/health/live')
+def health_live():
+    """进程已能处理 HTTP 请求；不泄露部署细节。"""
+    return jsonify(status='ok')
+
+
+@app.get('/health/ready')
+def health_ready():
+    """SQLite 关键表可读时才允许新流量进入。"""
+    ready = database_ready(configured_database_path())
+    return jsonify(status='ok' if ready else 'unavailable'), (200 if ready else 503)
 
 
 @app.context_processor

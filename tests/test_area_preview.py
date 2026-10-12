@@ -52,6 +52,7 @@ from spectate import spectate_room_id
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GAME_JS = os.path.join(ROOT, 'static', 'game.js')
+SOCKET_EVENTS_JS = os.path.join(ROOT, 'static', 'client_socket_events.js')
 SERVER_PY = os.path.join(ROOT, 'server.py')
 
 # 座位 key：用**匹配房的约定**（key = socket sid）—— 最容易出问题的那一套，
@@ -610,7 +611,7 @@ def test_frontend_clears_preview_on_resolve_and_game_over():
     ⚠️ `game.js` 里有**两个** `chain_resolved` 处理器：先注册的是观战屏那个
        （它只清观战快照），对局屏那个在后面。这里必须查**对局屏**那个。
     """
-    src = _read(GAME_JS)
+    src = _read(GAME_JS) + _read(SOCKET_EVENTS_JS)
     assert 'function clearChainPreview' in src
     handlers = [m.start() for m in re.finditer(r"socket\.on\('chain_resolved'", src)]
     assert len(handlers) >= 2, 'chain_resolved 的处理器比预期少：%r' % handlers
@@ -647,7 +648,7 @@ def test_frontend_renders_before_response_prompt():
         '先开响应窗口、后广播连锁 = 响应按钮出现时预览还没到（作者明确要求不许这样）'
     # 前端：预览画在 magic_chain_updated 处理器里，不需要等 chain_request。
     # ⚠️ 这个事件有**两个**处理器（先注册的是观战屏那个），对局屏的在后面。
-    js = _read(GAME_JS)
+    js = _read(SOCKET_EVENTS_JS)
     hs = [m.start() for m in re.finditer(r"socket\.on\('magic_chain_updated'", js)]
     assert len(hs) >= 2, 'magic_chain_updated 的处理器比预期少：%r' % hs
     assert 'updateChainUI()' in js[hs[-1]:hs[-1] + 700], \

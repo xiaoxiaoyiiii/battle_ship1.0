@@ -7,6 +7,7 @@ on:
 jobs:
   test:
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,4 +25,5 @@ jobs:
           Get-ChildItem static -Filter *.js | ForEach-Object { node --check $_.FullName; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
           node tools/dom_contract_check.mjs
       - name: 运行回归测试
-        run: python -m pytest -q
+        timeout-minutes: 10
+        run: python -u -m pytest -vv --tb=short -o faulthandler_timeout=90

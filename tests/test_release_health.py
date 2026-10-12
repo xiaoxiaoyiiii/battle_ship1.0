@@ -1,13 +1,13 @@
 """发布门禁与健康端点不修改生产库，也不暴露内部路径。"""
 import os
+import builtins
 from pathlib import Path
 import sqlite3
-import subprocess
-import sys
+from types import SimpleNamespace
 
 import api
 from db import Database
-from infrastructure.sqlite_maintenance import database_ready
+from infrastructure.sqlite_maintenance import database_ready, validate_migration_copy
 from tools.release_preflight import configuration_errors
 
 
@@ -42,18 +42,38 @@ def test_production_preflight_rejects_unsafe_configuration():
     assert configuration_errors({**safe, 'CORS_ORIGINS': 'https://game.example.com/path'})
 
 
-def test_migration_probe_never_initializes_source_database(tmp_path):
+def test_migration_probe_never_initializes_source_database(tmp_path, monkeypatch):
     source = tmp_path / 'source.db'
     copied = tmp_path / 'copy.db'
     sqlite3.connect(source).close()
-    script = ('from infrastructure.sqlite_maintenance import validate_migration_copy; '
-              'import sys; validate_migration_copy(sys.argv[1], sys.argv[2])')
-    env = {**os.environ, 'BATTLESHIP_DB_PATH': str(source),
-           'PYTHONPATH': str(Path(__file__).resolve().parents[1])}
-    result = subprocess.run([sys.executable, '-c', script, str(source), str(copied)],
-                            env=env, cwd=str(tmp_path), text=True, capture_output=True,
-                            timeout=30)
-    assert result.returncode == 0, result.stderr
+    monkeypatch.setenv('BATTLESHIP_DB_PATH', str(source))
+
+    # db 在整套测试中已导入；拦截这次 import，模拟模块首次导入时按环境变量建库。
+    # 不在 Eventlet monkey_patch 后启动子进程，避免 Windows CI 的 subprocess 等待挂住。
+    class ProbeDatabase:
+        def __init__(self, db_path):
+            assert Path(db_path) == copied
+
+        def close(self):
+            pass
+
+    original_import = builtins.__import__
+    observed = []
+
+    def probe_import(name, *args, **kwargs):
+        if name == 'db':
+            path = Path(os.environ['BATTLESHIP_DB_PATH'])
+            observed.append(path)
+            with sqlite3.connect(path) as conn:
+                conn.execute('CREATE TABLE import_probe (id INTEGER)')
+            return SimpleNamespace(Database=ProbeDatabase)
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', probe_import)
+    validate_migration_copy(source, copied)
+    assert observed == [copied.resolve()]
+    assert os.environ['BATTLESHIP_DB_PATH'] == str(source)
     with sqlite3.connect(source) as conn:
         assert conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall() == []
-    assert database_ready(copied)
+    with sqlite3.connect(copied) as conn:
+        assert conn.execute("SELECT name FROM sqlite_master WHERE name='import_probe'").fetchone()

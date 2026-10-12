@@ -74,15 +74,7 @@ systemctl restart battleship
 
 ## 3. 代码更新流程
 
-```bash
-cd /opt/battleship
-git fetch origin main
-git reset --hard origin/main          # 用 reset 而非 pull，避免服务器本地改动干扰
-systemctl restart battleship
-curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/   # 应为 200
-```
-
-**部署前建议**：先在有 pytest 的环境跑 `python -m pytest tests/ -q`。
+发布与回滚的完整顺序见 [Phase 8 发布手册](PHASE8_RELEASE.md)。发布前必须完成 PR 合并授权、备份和配置预检；这里不再用 `git reset --hard` 覆盖服务器工作目录。
 
 ### 服务器上的 git 保护规则
 

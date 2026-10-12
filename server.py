@@ -15266,7 +15266,11 @@ if __name__ == '__main__':
     db.init_db()
     # 添加详细日志输出
 
-    logging.basicConfig(level=logging.DEBUG)
+    log_level = os.environ.get('LOG_LEVEL', 'INFO').upper()
+    if log_level not in {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}:
+        raise ValueError('LOG_LEVEL 必须是 DEBUG、INFO、WARNING、ERROR 或 CRITICAL')
+    logging.basicConfig(level=getattr(logging, log_level))
+    logging.getLogger().setLevel(getattr(logging, log_level))
     # 启动服务器
     # 默认关闭调试模式（Werkzeug 调试器可被用于远程代码执行）；
     # 本地需要时设置环境变量 FLASK_DEBUG=1。

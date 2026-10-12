@@ -4528,41 +4528,13 @@ def _match_duration_sec(room) -> int:
 # ===========================================================================
 def _anticheat_facts(room, winner_id, loser_id) -> dict:
     """组装反作弊判据需要的事实（取不到的一律留空，绝不影响结算）。"""
-    facts = {}
+    from application.observations import settlement_snapshot
     try:
-        winner = room.players.get(winner_id)
-        loser = room.players.get(loser_id)
-
-        # 本局开到第几回合（`room.round` 是服务端权威值）
-        facts['rounds'] = max(0, int(getattr(room, 'round', 0) or 0))
-
-        # 双方各自的"命中次数" —— 用**船上被打中的格子数**，与 `_took_any_damage` 同口径
-        def _hits(p):
-            if p is None:
-                return 0
-            return sum(len(getattr(s, 'hits', None) or []) for s in (getattr(p, 'ships', None) or []))
-
-        wh, lh = _hits(winner), _hits(loser)
-        facts['attacker_total_hits'] = wh
-        facts['defender_total_hits'] = lh
-        facts['loser_total_hits'] = lh
-
-        # 形态特征：本局有几个玩家真正打中过对方 + 单方最大命中数
-        # （不依赖 id 对齐 —— 见上面那段教训）
-        n_shooters = (1 if wh > 0 else 0) + (1 if lh > 0 else 0)
-        facts['attackers'] = ['a'] * n_shooters if n_shooters else []
-        facts['max_hits'] = max(wh, lh)
-
-        # 双方总船数（对手船数 = 判"全歼"的分母）
-        w_ships = len(getattr(winner, 'ships', None) or []) if winner else 0
-        l_ships = len(getattr(loser, 'ships', None) or []) if loser else 0
-        facts['foe_ships'] = l_ships
-        facts['total_ships'] = w_ships + l_ships     # 0 = 棋盘是空的，对局没真进行
-        facts['duration_sec'] = _match_duration_sec(room)
-        facts['ended_by'] = getattr(room, 'end_reason', None) or 'attacks'
+        return settlement_snapshot(
+            room, winner_id, loser_id, _match_duration_sec(room)
+        ).facts()
     except Exception:
-        pass
-    return facts
+        return {}
 
 
 def _anticheat_assess(room, winner_id, loser_id) -> dict:
@@ -6506,13 +6478,14 @@ def _ai_choose_magic_card(room, ai_id: str):
     return candidates[0][1]
 
 
-def _ai_choose_attack(room, ai_id):
+def _ai_choose_attack(room, ai_id, rng=None):
     """AI 这一炮打哪格；没有可打的格返回 None。
 
     ⚠️ **只有这一份实现**：`_ai_turn_loop` 与无头模拟器 (`tools/headless_game.py`)
        都读它。模拟器此前自己抄了一份 `random.choice(candidates)`，于是它量的是
        **复刻品**而不是真的 AI —— 改了 AI 胜率却纹丝不动，等于没测。
     """
+    rng = random if rng is None else rng
     candidates = _attackable_cells(room, ai_id)
     if not candidates:
         return None
@@ -6520,10 +6493,10 @@ def _ai_choose_attack(room, ai_id):
         # 大师：先打自己已探明的敌船位置（必中）。
         # ⚠️ 这条只在**有情报**时有意义；情报要靠克苏鲁之眼/探测雷达产生，
         #    所以"读情报"和"打情报卡"必须一起做，否则等于没改。
-        got = ai_brain.choose_attack(room, ai_id)
+        got = ai_brain.choose_attack(room, ai_id, rng=rng)
         if got:
             return got
-    return random.choice(candidates)
+    return rng.choice(candidates)
 
 
 def _ai_choose_card(room, ai_id, cards_played=0):
@@ -15304,19 +15277,10 @@ except Exception as _e:                                          # noqa: BLE001
 # ---------------------------------------------------------------------------
 # 把本模块对象交给对局回放的纯模块（`replay.py`）。
 #
-# 与上面 api 那一处同一个理由、同一套写法（教训 #19）：`replay.py` **运行期不许 import
-# 本模块** —— 本模块以 `python server.py` 启动时名字是 `__main__`，`import server` 会把
-# 整个文件再执行一遍成另一个模块对象（本地坏、线上好）。
-# 注入的是 `sys.modules[__name__]`（无论叫 `__main__` 还是 `server`，都一定是正在跑的那一份），
-# 且注入**模块对象**、调用点按名字现取 —— 注入函数对象会把测试里的 monkeypatch 静默架空。
-#
-# ⚠️ 少了这一句**不会报错**：`replay._srv()` 返回 None，回放 `started_at` 会静默退回
-#    `room.created_at`（建房时刻）—— 自定义房会把"对局时间"标早十几分钟。
-#    这就是"静默兜底掩盖漏接线"的形状（教训 #32/#34），所以有一条用例专门钉住它已接上
-#    （`tests/test_replay_recorder.py::test_replay_module_is_bound_to_the_server`）。
+# 回放只需要开局时间查询；延迟查找保留测试及运行时替换能力。
 # ---------------------------------------------------------------------------
 try:
-    replay.bind(sys.modules[__name__])
+    replay.bind_started_at(lambda room: _match_started_at(room))
 except Exception as _e:                                          # noqa: BLE001
     # 同 api 那一处：回放能力降级，但绝不能让整个服务起不来。
     print(f'[replay] 注入后端模块失败（回放的"开打时刻"将退回建房时刻）: {_e}')

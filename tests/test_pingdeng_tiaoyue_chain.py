@@ -127,6 +127,22 @@ def _verdict(room, target_caster, name, targets=None):
     return bool(fn(room, item))
 
 
+def test_board_query_adapter_observes_runtime_replacement(room, monkeypatch):
+    """服务端查询被替换后，AI 判词和真实卡牌结算必须同时读到新查询。"""
+    for player_id in (P1, P2):
+        room.players[player_id].ships = [ship((0, 0))]
+        room.players[player_id].remaining_ships = 1
+    item = ChainItem(P2, card('增援'), {}, 0.0)
+    room.chain = [item]
+    monkeypatch.setattr(server, '_placement_blocked_cells', lambda *args: list(range(36)))
+    assert server._equal_treaty_verdict(room, item)[0] is False
+    assert server.apply_magic_effect(room, P1, card('平等条约'), {}).success is False
+    monkeypatch.setattr(server, '_placement_blocked_cells', lambda *args: [])
+    assert server._equal_treaty_verdict(room, item)[0] is True
+    result = server.apply_magic_effect(room, P1, card('平等条约'), {})
+    assert result.success and result.negate_target
+
+
 # ===========================================================================
 # 1. ★ 座位等价性 —— 同一张卡、同一次连锁，换座位顺序结果必须逐项相同
 # ===========================================================================
@@ -278,11 +294,11 @@ NOT_NEGOTIABLE = {
 def test_judgement_table_covers_author_picked_cards():
     """源码级穷举：作者勾选的 8 张**逐张**必须在判据表里有交代。"""
     table = _table()
-    src = open(os.path.join(ROOT, 'server.py'), encoding='utf-8').read()
+    src = open(os.path.join(ROOT, 'application', 'card_negation_effects.py'), encoding='utf-8').read()
     missing_table = [n for n in AUTHOR_PICKED if n not in table]
     missing_src = ["'%s':" % n for n in AUTHOR_PICKED if "'%s':" % n not in src]
     assert not missing_table, '判据表里少了这几张（作者已勾选）：%s' % missing_table
-    assert not missing_src, 'server.py 的判据表字面量里少了这几张：%s' % missing_src
+    assert not missing_src, '无效化模块的判据表字面量里少了这几张：%s' % missing_src
 
 
 def test_judgement_table_has_no_undeclared_entries():
@@ -733,7 +749,8 @@ def test_dead_snapshot_key_is_gone_from_the_whole_repo():
                     hits.append('%s:%d: %s' % (os.path.relpath(path, ROOT), i, line.strip()[:120]))
     # 扫描面没有变瞎：受版本控制的正式源码与文档必须真的在扫描集合里，
     # 否则"排掉本地缓存"这一步就可能被一路改成"什么都扫不到"。
-    for must in ('server.py', 'api.py', 'static/game.js', 'templates/index.html',
+    for must in ('server.py', 'application/card_negation_effects.py',
+                 'api.py', 'static/game.js', 'templates/index.html',
                  'docs/CHAIN_ENGINE_SPEC.md', 'CLAUDE.md', 'tests/test_pingdeng_tiaoyue_chain.py'):
         assert must in scanned, '源码守卫的扫描面漏掉了 %s —— 扫描边界被改坏了' % must
     assert len(scanned) > 300, '只扫到 %d 个文件，扫描面明显不完整' % len(scanned)

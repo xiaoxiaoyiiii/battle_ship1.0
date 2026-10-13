@@ -26,6 +26,7 @@ API_PY = REPO_ROOT / 'api.py'
 DB_PY = REPO_ROOT / 'db.py'
 REPLAY_PY = REPO_ROOT / 'replay.py'
 SPECTATE_PY = REPO_ROOT / 'spectate.py'
+BOARD_EFFECTS_PY = REPO_ROOT / 'application' / 'card_board_effects.py'
 
 
 def _src(path):
@@ -178,7 +179,7 @@ EXPECTED_NOTE_ACTION_SITES = {
 EXPECTED_BOARD_RESET_SITES = {
     '_clear_attacks_on_cells': 1,
     'confirm_magic_target': 1,
-    'apply_magic_effect': 2,
+    'apply_board_card_effect': 2,
 }
 
 
@@ -191,22 +192,23 @@ def test_board_reset_marks_only_the_affected_side():
     `caster_id` 这类"指定侧"的实参，其余两处**不传**（= 双方）。
     传错了的症状是回放里把对手的棋盘也一起擦掉（玩家会以为自己那半边被打过）。
     """
-    src = _src(SERVER_PY)
-    tree = ast.parse(src)
     with_side, without_side = [], []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if getattr(node.func, 'attr', None) != 'note_board_reset':
-            continue
-        (with_side if len(node.args) > 1 else without_side).append(
-            _enclosing_func(tree, node))
+    for path in (SERVER_PY, BOARD_EFFECTS_PY):
+        tree = _tree(path)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if getattr(node.func, 'attr', None) != 'note_board_reset':
+                continue
+            (with_side if len(node.args) > 1 else without_side).append(
+                _enclosing_func(tree, node))
     assert len(with_side) == 2, (
         '只有"只清一侧"的调用点该把归属传进去（回光返照 + 清格入口）：%s' % with_side)
-    assert sorted(with_side) == ['_clear_attacks_on_cells', 'apply_magic_effect'], with_side
-    assert sorted(without_side) == ['apply_magic_effect', 'confirm_magic_target'], without_side
+    assert sorted(with_side) == ['_clear_attacks_on_cells', 'apply_board_card_effect'], with_side
+    assert sorted(without_side) == ['apply_board_card_effect', 'confirm_magic_target'], without_side
     # 不带归属的那两处必须**正好**是"双方一起重摆"的那两张卡
-    dirty = _tally(_call_sites(SERVER_PY, '_mark_spectate_board_dirty'))
+    dirty = _tally(_call_sites(SERVER_PY, '_mark_spectate_board_dirty')
+                   + _call_sites(BOARD_EFFECTS_PY, 'mark_spectate_board_dirty'))
     assert dirty == EXPECTED_BOARD_RESET_SITES, \
         '观战失效点清单变了：%s' % dict(sorted(dirty.items()))
 

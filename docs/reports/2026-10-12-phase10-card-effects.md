@@ -34,3 +34,9 @@
 源码扫描守卫同步覆盖新增模块：区域预览继续发现全部区域目标卡，战舰增删登记继续覆盖轰炸与硫磺火焰。攻击记录守卫原先只有扫描器、没有真正执行的登记核对测试；本批补齐双向核对，并登记两种雷达共用的攻击写入点。新增两例运行时断言检查雷达对空格的攻击时间线和事件顺序。
 
 验证：`python -m py_compile server.py application/card_reveal_effects.py application/card_area_damage_effects.py`、`git diff --check`；相关卡牌与源码守卫定向测试通过；`python -m pytest -q` 为 1063 passed、1 个既有 Eventlet 弃用警告。Windows CI 结果以本批提交的检查为准。
+
+## 第四批：棋盘重置与自救
+
+`application/card_board_effects.py` 接管败者食尘、绝处逢生、回光返照。三个效果分别负责双侧重摆、牺牲后单船部署、单侧重摆；回放重置归属、观战棋盘刷新和 AI 当场布船继续走原有函数，通过显式参数传入。败者食尘的提前终止返回语义保留。
+
+源码守卫现在也扫描新模块里的 `ships` / `attacks` 写入和回放板面重置点，并把登记从旧 `apply_magic_effect` 调整到 `apply_board_card_effect`。`server.py` 本批删除 314 行、增加 21 行调度代码。定向回归 94 passed；`python -m py_compile server.py application/card_board_effects.py tests/test_attack_records.py tests/test_ship_removal_sites.py tests/test_replay_guards.py` 与 `git diff --check` 通过。全量回归曾通过 1063 项；本次提交前会再跑一次，Windows CI 以新提交的检查为准。

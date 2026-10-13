@@ -46,6 +46,7 @@ import replay
 import server
 import application.player_state as player_state
 import application.card_area_damage_effects as area_damage_effects
+import application.card_board_effects as board_effects
 
 # 只扫描 Player 的两个名字（`player` / `owner` / `caster` / 局部变量…），
 # 排掉明显不是 Player 的容器（本项目里没有，留着给将来）：
@@ -82,7 +83,7 @@ REMOVAL_SITES = [
     dict(fn='_do_demon_contract_sacrifice', container='player', ops=['remove'], card=None,
          kind='sink', need='sink',
          why='主动牺牲的唯一实现点（4 种 reason 全汇到这里）；紧挨着就是 `replay.note_ship_lost`'),
-    dict(fn='apply_magic_effect', container='caster', ops=['remove'], card='绝处逢生',
+    dict(fn='apply_board_card_effect', container='caster', ops=['remove'], card='绝处逢生',
          kind='sink', need='sink',
          why='`绝处逢生` 牺牲自己**全部**战舰（不走 `_do_demon_contract_sacrifice`）'),
     dict(fn='apply_magic_effect', container='caster', ops=['remove'], card='钢筋铁骨',
@@ -112,10 +113,10 @@ REMOVAL_SITES = [
     dict(fn='confirm_magic_target', container='player', ops=['reassign'], card=None,
          kind='replace', need='replace',
          why='灵气复苏：双方棋盘整块换新（紧跟着 `replay.note_board_replaced(room)`）'),
-    dict(fn='apply_magic_effect', container='player', ops=['reassign'], card='败者食尘',
+    dict(fn='apply_board_card_effect', container='player', ops=['reassign'], card='败者食尘',
          kind='replace', need='replace',
          why='败者食尘：双方棋盘清空重摆'),
-    dict(fn='apply_magic_effect', container='caster', ops=['reassign'], card='回光返照',
+    dict(fn='apply_board_card_effect', container='caster', ops=['reassign'], card='回光返照',
          kind='replace', need='replace',
          why='回光返照：只重摆施法者那一块（`note_board_replaced(room, caster_id)`）'),
     dict(fn='handle_place_ships', container='players', ops=['reassign'], card=None,
@@ -169,7 +170,8 @@ def _card_branch_of(node, parent, src):
 def _scan_ship_mutations():
     """扫出服务端运行时代码里所有"改 `*.ships`"的点。"""
     found = []
-    for path in (server.__file__, player_state.__file__, area_damage_effects.__file__):
+    for path in (server.__file__, player_state.__file__, area_damage_effects.__file__,
+                 board_effects.__file__):
         src = io.open(path, encoding='utf-8').read()
         found.extend(_scan_ship_mutations_in(src))
     return found

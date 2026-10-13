@@ -43,6 +43,7 @@ SERVER_PY = REPO_ROOT / 'server.py'
 PLAYER_STATE_PY = REPO_ROOT / 'application' / 'player_state.py'
 REVEAL_EFFECTS_PY = REPO_ROOT / 'application' / 'card_reveal_effects.py'
 AREA_DAMAGE_EFFECTS_PY = REPO_ROOT / 'application' / 'card_area_damage_effects.py'
+BOARD_EFFECTS_PY = REPO_ROOT / 'application' / 'card_board_effects.py'
 
 #: 写入点所属的"成因"——每条登记都必须归到其中一类。
 #:
@@ -97,10 +98,10 @@ ATTACK_SITES = [
     dict(fn='confirm_magic_target', container='player', ops=['reassign'], card=None,
          kind='reset',
          why='灵气复苏：双方 `attacks = []` + `replay.note_board_reset(room)`（双方）'),
-    dict(fn='apply_magic_effect', container='player', ops=['reassign'], card='败者食尘',
+    dict(fn='apply_board_card_effect', container='player', ops=['reassign'], card='败者食尘',
          kind='reset',
          why='败者食尘：双方清空 + `note_board_reset(room)`'),
-    dict(fn='apply_magic_effect', container='players', ops=['reassign'], card='回光返照',
+    dict(fn='apply_board_card_effect', container='players', ops=['reassign'], card='回光返照',
          kind='reset',
          why='回光返照：只清施法者那一块 + `note_board_reset(room, caster_id)`'
              '（`room.players[opponent_id].attacks = []` 那种下标持有 = 容器名 `players`）'),
@@ -141,7 +142,8 @@ def _parent_map(tree):
 def _scanner():
     """扫出各生产模块里所有攻击记录写入与攻击结果发送点。"""
     found = []
-    for path in (SERVER_PY, PLAYER_STATE_PY, REVEAL_EFFECTS_PY, AREA_DAMAGE_EFFECTS_PY):
+    for path in (SERVER_PY, PLAYER_STATE_PY, REVEAL_EFFECTS_PY,
+                 AREA_DAMAGE_EFFECTS_PY, BOARD_EFFECTS_PY):
         found.extend(_scan_source(_src(path)))
     return found
 

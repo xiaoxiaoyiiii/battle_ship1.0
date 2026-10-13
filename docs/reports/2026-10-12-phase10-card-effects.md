@@ -39,4 +39,12 @@
 
 `application/card_board_effects.py` 接管败者食尘、绝处逢生、回光返照。三个效果分别负责双侧重摆、牺牲后单船部署、单侧重摆；回放重置归属、观战棋盘刷新和 AI 当场布船继续走原有函数，通过显式参数传入。败者食尘的提前终止返回语义保留。
 
-源码守卫现在也扫描新模块里的 `ships` / `attacks` 写入和回放板面重置点，并把登记从旧 `apply_magic_effect` 调整到 `apply_board_card_effect`。`server.py` 本批删除 314 行、增加 21 行调度代码。定向回归 94 passed；`python -m py_compile server.py application/card_board_effects.py tests/test_attack_records.py tests/test_ship_removal_sites.py tests/test_replay_guards.py` 与 `git diff --check` 通过。全量回归曾通过 1063 项；本次提交前会再跑一次，Windows CI 以新提交的检查为准。
+源码守卫现在也扫描新模块里的 `ships` / `attacks` 写入和回放板面重置点，并把登记从旧 `apply_magic_effect` 调整到 `apply_board_card_effect`。`server.py` 本批删除 314 行、增加 21 行调度代码。定向回归 94 passed；语法检查与 `git diff --check` 通过。提交前全量回归为 1063 passed；提交 `8b4a4d5` 的 Windows CI 已通过。
+
+## 第五批：连锁无效化与共享判据
+
+`application/card_negation_effects.py` 接管平等条约、失灵！、加百列之光的真实结算，并拥有连锁目标解析、免疫关系、九项船数变化判据及四项不适用规则。`NegationEffects` 不保存房间状态，也不导入服务器；共享的存活、坐标、空位查询和拆场动作通过六个显式依赖注入。AI 的判词入口、原有诊断表与实际结算使用同一个实例中的规则，服务端仅保留延迟查询适配与兼容名称。
+
+保留原有提前返回、场地拆除、历史记录回退和失灵的类型分发优先级。该模块不会自行消费连锁栈；卡牌入栈、逐项出栈、响应计时和胜负收口仍由 `server.py` 编排。本批从 `server.py` 删除 355 行、补入 24 行，净减少 331 行；当前非空行数为 11,140。累计已有 32 个卡名的效果迁至六个卡牌模块，阶段 10 尚未完成。
+
+验证：连锁与全卡牌定向回归 117 passed；新增独立运行时查询隔离、查询失败拒绝无效化，以及服务端查询替换后 AI/真实结算一致性的三项测试。源码守卫同时检查新模块实现与生产调用入口。`python -m pytest -q` 最终为 1066 passed、1 个既有 Eventlet 弃用警告；语法检查与 `git diff --check` 通过。远端 CI 以本批提交检查为准。

@@ -1,6 +1,6 @@
 # 基础重构当前状态与原文件拆分清单
 
-> 核对对象：`review/battleship-refactor`，草稿 PR #13。本文最初按 `82ce5e6` 核对 Phase 0–8；随后新增阶段 9 的运行时状态拆分和阶段 10 的四批卡牌效果迁移，详见对应阶段报告。本文不表示已合并、已部署或生产主流程已全部切换。
+> 核对对象：`review/battleship-refactor`，草稿 PR #13。本文最初按 `82ce5e6` 核对 Phase 0–8；随后新增阶段 9 的运行时状态拆分和阶段 10 的五批卡牌效果迁移，详见对应阶段报告。本文不表示已合并、已部署或生产主流程已全部切换。
 
 ## 总体进度
 
@@ -12,11 +12,12 @@ Phase 0–8 的设计基线、领域模型、观察边界、仓储边界、前�
 | --- | --- | --- |
 | 攻击输入、船与棋盘快照、命中/沉船等纯规则 | `domain/combat.py`、`application/attack_service.py` | `handle_attack` 调用新内核做 shadow 对照；旧处理器仍决定生产结果。默认关闭，由 `COMBAT_SHADOW_MODE` 控制。 |
 | 准备/战斗/结束与交接状态转换 | `domain/turns.py`、`application/turn_service.py` | 已有纯状态机和旧房间适配器；`server.py` 中进入阶段、结束阶段和换回合的旧路径仍写入实际状态。 |
-| 卡牌目标规范化、连锁栈与响应状态 | `domain/cards.py`、`domain/chain.py`、`application/chain_service.py` | 模型与适配器可独立验证；`resolve_chain`、响应处理及多数卡牌效果仍在 `server.py` 执行。 |
+| 卡牌目标规范化、连锁栈与响应状态 | `domain/cards.py`、`domain/chain.py`、`application/chain_service.py` | 模型与适配器可独立验证；`resolve_chain`、响应处理仍在 `server.py` 执行，卡牌效果按下面五批迁移。 |
 | 首批七张卡的实际效果 | `application/card_opening_effects.py` | 阶段 10 已在生产结算入口调用；其他卡牌分支、未知卡兜底与最终胜负检查仍在 `server.py`。 |
 | 十二张状态与选目标卡的实际效果 | `application/card_status_effects.py` | 阶段 10 第二批已在生产结算入口调用；通过显式传入的五个旧辅助函数结算，失败时提前返回。其余卡牌分支仍在 `server.py`。 |
 | 七张侦查与范围伤害卡的实际效果 | `application/card_reveal_effects.py`、`application/card_area_damage_effects.py` | 阶段 10 第三批已在生产结算入口调用；雷达流程合并重复代码，范围伤害继续使用旧沉船与事件辅助函数。 |
 | 三张棋盘重置与自救卡的实际效果 | `application/card_board_effects.py` | 阶段 10 第四批已在生产结算入口调用；回放、观战刷新、AI 布船和沉船流程仍注入原辅助函数。 |
+| 三张无效化卡及共享判据 | `application/card_negation_effects.py` | 阶段 10 第五批已接管连锁目标、免疫关系、平等条约船数变化判据和实际结算；AI 与真实出牌读取同一份规则。 |
 | 匹配队列、断线宽限与房间生命周期判断 | `domain/rooms.py`、`application/room_service.py` | 模型与只读适配器已建立；匹配、断线、重连和房间清理仍由原处理器编排。 |
 | 房间注册表、入座、人机房及匹配队列运行时 | `application/room_runtime.py` | 阶段 9 已迁走实际运行的 `RoomManager`；Socket 匹配处理器仍在 `server.py`，从同一实例读写。 |
 | 旧 `GameRoom` 状态与牌堆操作 | `application/room_state.py` | 阶段 9 已迁走状态初始化和抽弃牌；`server.py` 仅保留成功抽牌后单发事件的适配类。 |
@@ -32,9 +33,11 @@ Phase 0–8 时，这些项目并非等量地从 `server.py` 剪切出去：相�
 
 阶段 10 第二批从 `server.py` 的真实 `apply_magic_effect` 再移出十二个分支，相对前次提交删除 210 行、补入 13 行调用与导入代码；源码扫描守卫同步覆盖新模块。`server.py` 仍约 1.2 万行，当前拆分远未解决核心对局编排过度集中的问题。
 
-阶段 10 第三批再移出七个侦查与范围伤害分支，相对前次提交删除 523 行、补入 30 行；`server.py` 当前约 11,723 个非空行。代码分布改善，但多个应用层效果仍依赖 `server.py` 的旧辅助函数，下一轮需要继续迁走编排与共享规则，收窄这些回调边界。
+阶段 10 第三批再移出七个侦查与范围伤害分支，相对前次提交删除 523 行、补入 30 行；当时 `server.py` 约 11,723 个非空行。代码分布改善，但多个应用层效果仍依赖 `server.py` 的旧辅助函数，需要继续迁走编排与共享规则，收窄这些回调边界。
 
-阶段 10 第四批再移出败者食尘、绝处逢生、回光返照三个分支，`server.py` 删除 314 行、增加 21 行适配调用；当前约 11,428 个非空行。相关回放与房间重置规则仍由旧辅助函数承担，攻击、回合、连锁和剩余卡牌结算仍集中在原文件。全量回归本批为 1063 passed、1 个既有 Eventlet 弃用警告；Windows CI 以推送后的本批提交为准。
+阶段 10 第四批再移出败者食尘、绝处逢生、回光返照三个分支，`server.py` 删除 314 行、增加 21 行适配调用；完成后约 11,428 个非空行。相关回放与房间重置规则仍由旧辅助函数承担。全量回归为 1063 passed，提交 `8b4a4d5` 的 Windows CI 已通过。
+
+阶段 10 第五批再移出平等条约、失灵！、加百列之光及其共享判据，删除 355 行、增加 24 行适配与调度代码；当前 `server.py` 约 11,140 个非空行。全量回归为 1066 passed、1 个既有 Eventlet 弃用警告。攻击、回合、连锁调度及其余卡牌结算仍集中在原文件；这批完成不代表整体重构完成。
 
 ### `static/game.js` 拆出了什么
 

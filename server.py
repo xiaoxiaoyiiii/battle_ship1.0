@@ -53,6 +53,7 @@ from application.ship_attack_sync import ShipAttackSync
 from application.placement_flow import PlacementFlow
 from application.placement_completion import PlacementCompletion
 from application.placement_projection import PlacementProjection
+from application.card_sacrifice_effects import apply_steel_bone
 from application.ship_selection import (
     ShipSelection, SHIP_PICK_PRIORITY, _SHIP_PICK_CARDS, _SACRIFICE_REASONS,
     _SHIP_PICK_LABELS, _ship_pick_priority,
@@ -11940,37 +11941,12 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
 
 
     elif card.name == '钢筋铁骨':
-        # 牺牲一艘船，其他船进入无敌状态
-        if caster.remaining_ships < 2:
-            result['success'] = False
-            result['message'] = '需要至少2艘战舰才能发动'
-            return result
-
-        # 牺牲一艘船（进入沉船堆，可被复活类卡牌回收）。
-        # 注意：普通击沉只减 remaining_ships、不会把船从 ships 里移除，
-        # 所以不能直接 pop 列表末尾 —— 那可能是一艘已沉的船，等于零代价发动，
-        # 还会让沉船堆出现重复条目（复活类卡牌按 len(sunken_ships) 恢复时
-        # 会把船数算多，产生幽灵船）。
-        alive_ships = [sh for sh in caster.ships if sh not in caster.sunken_ships]
-        if not alive_ships:
-            result['success'] = False
-            result['message'] = '没有可牺牲的战舰'
-            return result
-        popped = alive_ships[-1]
-        # ★ 回放批：这也是"主动牺牲"（双方看得见沉没）⇒ 回放的船位时间线必须留下
-        #   这一格。与 `_do_demon_contract_sacrifice` 同一个口径，数据源就是这艘船自己。
-        replay.note_ship_lost(capture_replay_observation(room), caster_id,
-                              [{'x': p.x, 'y': p.y} for p in popped.positions])
-        caster.ships.remove(popped)
-        if popped not in caster.sunken_ships:
-            _mark_ship_sunken(caster, popped)
-        caster.remaining_ships -= 1
-
-        # 其他船进入无敌状态
-        for ship in caster.ships:
-            ship.invincible = True
-
-        result['message'] = '牺牲一艘战舰，其他战舰进入无敌状态'
+        apply_steel_bone(
+            room, caster_id, result, caster=caster,
+            note_ship_lost=replay.note_ship_lost,
+            capture_observation=capture_replay_observation,
+            mark_ship_sunken=_mark_ship_sunken,
+        )
 
     elif card.name == '守株待兔':
         # 守株待兔（速阶1 普通）：选自己一艘船打上陷阱标记，

@@ -1,6 +1,6 @@
 # 基础重构当前状态与原文件拆分清单
 
-> 核对对象：`review/battleship-refactor`，草稿 PR #13。本文最初按 `82ce5e6` 核对 Phase 0–8；随后新增阶段 9 的运行时状态拆分和阶段 10 的五批卡牌效果迁移，详见对应阶段报告。本文不表示已合并、已部署或生产主流程已全部切换。
+> 核对对象：`review/battleship-refactor`，草稿 PR #13。本文最初按 `82ce5e6` 核对 Phase 0–8；随后新增阶段 9 的运行时状态拆分和阶段 10 的七批效果与界面迁移，详见对应阶段报告。本文不表示已合并、已部署或生产主流程已全部切换。
 
 ## 总体进度
 
@@ -12,12 +12,14 @@ Phase 0–8 的设计基线、领域模型、观察边界、仓储边界、前�
 | --- | --- | --- |
 | 攻击输入、船与棋盘快照、命中/沉船等纯规则 | `domain/combat.py`、`application/attack_service.py` | `handle_attack` 调用新内核做 shadow 对照；旧处理器仍决定生产结果。默认关闭，由 `COMBAT_SHADOW_MODE` 控制。 |
 | 准备/战斗/结束与交接状态转换 | `domain/turns.py`、`application/turn_service.py` | 已有纯状态机和旧房间适配器；`server.py` 中进入阶段、结束阶段和换回合的旧路径仍写入实际状态。 |
-| 卡牌目标规范化、连锁栈与响应状态 | `domain/cards.py`、`domain/chain.py`、`application/chain_service.py` | 模型与适配器可独立验证；`resolve_chain`、响应处理仍在 `server.py` 执行，卡牌效果按下面五批迁移。 |
+| 卡牌目标规范化、连锁栈与响应状态 | `domain/cards.py`、`domain/chain.py`、`application/chain_service.py` | 模型与适配器可独立验证；`resolve_chain`、响应处理仍在 `server.py` 执行，卡牌效果按后续批次持续迁移。 |
 | 首批七张卡的实际效果 | `application/card_opening_effects.py` | 阶段 10 已在生产结算入口调用；其他卡牌分支、未知卡兜底与最终胜负检查仍在 `server.py`。 |
 | 十二张状态与选目标卡的实际效果 | `application/card_status_effects.py` | 阶段 10 第二批已在生产结算入口调用；通过显式传入的五个旧辅助函数结算，失败时提前返回。其余卡牌分支仍在 `server.py`。 |
 | 七张侦查与范围伤害卡的实际效果 | `application/card_reveal_effects.py`、`application/card_area_damage_effects.py` | 阶段 10 第三批已在生产结算入口调用；雷达流程合并重复代码，范围伤害继续使用旧沉船与事件辅助函数。 |
 | 三张棋盘重置与自救卡的实际效果 | `application/card_board_effects.py` | 阶段 10 第四批已在生产结算入口调用；回放、观战刷新、AI 布船和沉船流程仍注入原辅助函数。 |
 | 三张无效化卡及共享判据 | `application/card_negation_effects.py` | 阶段 10 第五批已接管连锁目标、免疫关系、平等条约船数变化判据和实际结算；AI 与真实出牌读取同一份规则。 |
+| 命运骰子与共享弃牌待办 | `application/card_dice_effects.py` | 阶段 10 第七批已接管六种结果、弃牌请求、确认和完成广播；服务端保留身份验证与兼容入口。 |
+| 选船待办与优先级仲裁 | `application/ship_selection.py` | 阶段 10 第六批已接管按玩家队列、消费、取消、投递和重连投影；牺牲结算仍由服务端编排。 |
 | 匹配队列、断线宽限与房间生命周期判断 | `domain/rooms.py`、`application/room_service.py` | 模型与只读适配器已建立；匹配、断线、重连和房间清理仍由原处理器编排。 |
 | 房间注册表、入座、人机房及匹配队列运行时 | `application/room_runtime.py` | 阶段 9 已迁走实际运行的 `RoomManager`；Socket 匹配处理器仍在 `server.py`，从同一实例读写。 |
 | 旧 `GameRoom` 状态与牌堆操作 | `application/room_state.py` | 阶段 9 已迁走状态初始化和抽弃牌；`server.py` 仅保留成功抽牌后单发事件的适配类。 |
@@ -39,7 +41,9 @@ Phase 0–8 时，这些项目并非等量地从 `server.py` 剪切出去：相�
 
 阶段 10 第五批再移出平等条约、失灵！、加百列之光及其共享判据，删除 355 行、增加 24 行适配与调度代码；当前 `server.py` 约 11,140 个非空行。全量回归为 1066 passed、1 个既有 Eventlet 弃用警告。攻击、回合、连锁调度及其余卡牌结算仍集中在原文件；这批完成不代表整体重构完成。
 
-阶段 10 第六批迁出选船待办编排到 `application/ship_selection.py`：按玩家隔离队列、优先级与顺序、去重、消费、取消、重连投影及投递均由模块管理。服务端保留 AI 策略适配和兼容名称，本批净减少 282 行，目前约 10,898 个非空行。全量回归 1068 passed；实际牺牲结算与 Socket 输入验证仍需继续拆分。
+阶段 10 第六批迁出选船待办编排到 `application/ship_selection.py`：按玩家隔离队列、优先级与顺序、去重、消费、取消、重连投影及投递均由模块管理。服务端保留 AI 策略适配和兼容名称，本批净减少 282 行；随后第七批迁出骰子效果后，`server.py` 为 10,731 个非空行。全量回归 1068 passed；实际牺牲结算与 Socket 输入验证仍需继续拆分。
+
+阶段 10 第七批把命运骰子和共享弃牌待办迁入 `application/card_dice_effects.py`，把回放播放器迁入 `static/replay_player.js`。`server.py` 再删除 208 行、增加 17 行；`static/game.js` 再删除 1,133 行、增加 2 行说明，当前分别为 10,731 与 13,216 个非空行。全量回归 1069 passed；回放逐格检查 108 项、DOM 契约和真实 Edge 回放流程均通过。实际攻击、连锁、重连输入验证和剩余卡牌编排仍集中在服务端。
 
 ### `static/game.js` 拆出了什么
 
@@ -50,8 +54,9 @@ Phase 0–8 时，这些项目并非等量地从 `server.py` 剪切出去：相�
 | `static/client_socket_events.js` | `setupSocketListeners` 和 Socket 事件监听注册、回调 | 回调仍直接修改共享状态和界面；尚未成为独立的事件/状态架构。 |
 | `static/home_panels.js` | 首页名片、统计、成就、段位、在线情况及热门卡数据与渲染 | 首页逻辑已集中到独立脚本。 |
 | `static/card_catalog.js` | 卡牌名称查询与图鉴目录查询 | 卡牌原始数据继续由既有 `static/magic_cards.js` 提供。 |
+| `static/replay_player.js` | 回放 DOM、帧解算、时间线、棋盘/手牌渲染、播放与设置 | 通过经典脚本共享作用域与 `game.js` 的入口衔接；HTTP 回放和观战隔离契约保持。 |
 
-相对 `origin/main`，`static/game.js` **删除 2,535 行、没有新增行**；新增五个脚本合计 2,539 行。模板按依赖顺序加载它们。`game.js` 仍有约 14,304 个非空行，保留布船、对局棋盘、卡牌交互、好友、回放/观战等大量界面逻辑。这一轮属于实体文件拆分，尚未迁成 ES module，也未消除共享全局状态。
+相对 `origin/main`，`static/game.js` **删除 3,668 行、增加 2 行说明**；六个前端辅助脚本承接迁出内容。模板按依赖顺序加载它们。`game.js` 仍有 13,216 个非空行，保留布船、对局棋盘、卡牌交互、好友、观战等大量界面逻辑；回放播放器已独立成文件。这一轮仍使用经典脚本共享作用域，尚未迁成 ES module，也未消除共享全局状态。
 
 ## 阶段完成度与交付边界
 
@@ -61,7 +66,7 @@ Phase 0–8 时，这些项目并非等量地从 `server.py` 剪切出去：相�
 - Phase 7：HTTP/Socket 的仓储入口和 SQLite 维护工具已接入；连接池、业务级事务、版本化迁移和多实例状态共享仍未实现。
 - Phase 8：前端首批拆分、健康端点、发布预检、备份/回滚手册和 Windows PR CI 已建立；尚未在真实生产环境演练部署与回滚。
 
-截至上述提交，本地全量回归与 Windows CI 均为 **1060 passed、1 个既有 Eventlet 弃用警告**；前端脚本语法、DOM 契约、隔离库健康检查、双浏览器对局链路和发布预检已有 Phase 8 验收记录，详见 `2026-10-12-phase8-acceptance.md`。这些证据支持审查当前 PR，不等于证明上线环境已完成切换。PR 保持草稿；合并 `main` 和部署均等待用户另行指令。
+截至最新批次，本地全量回归为 **1069 passed、1 个既有 Eventlet 弃用警告**；回放逐格 108 项、DOM 契约和真实浏览器回放流程均通过。前端脚本语法、隔离库健康检查、双浏览器对局链路和发布预检已有 Phase 8 验收记录，详见 `2026-10-12-phase8-acceptance.md`。这些证据支持审查当前 PR，不等于证明上线环境已完成切换。PR 保持草稿；合并 `main` 和部署均等待用户另行指令。
 
 ## 原设计目标尚缺的验收关口
 

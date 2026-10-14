@@ -169,7 +169,7 @@ def _strip_comments(text):
 
 def test_frontend_ship_counter_reads_the_authoritative_timeline():
     """★★ `replayAliveShips` 的第一数据源必须是 `frame.alive[side]`（权威计数）。"""
-    src = io.open('static/game.js', encoding='utf-8').read()
+    src = io.open('static/replay_player.js', encoding='utf-8').read()
     body = _strip_comments(_function_body(src, 'replayAliveShips'))
     assert 'frame.alive' in body, (
         '剩余战舰数必须读权威计数（`frame.alive`，来自 `payload.remaining`）：%s' % body[:400])

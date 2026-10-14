@@ -176,6 +176,8 @@ const ctx = vm.createContext(sandbox);
 try {
   vm.runInContext(fs.readFileSync(STATE_JS, 'utf8'), ctx, { filename: 'client_state.js' });
   vm.runInContext(SRC, ctx, { filename: 'game.js' });
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'static', 'replay_player.js'), 'utf8'), ctx,
+    { filename: 'replay_player.js' });
 } catch (e) {
   console.error('game.js 加载失败: ' + (e && e.stack));
   process.exit(2);

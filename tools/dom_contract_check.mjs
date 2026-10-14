@@ -33,6 +33,7 @@ const ROOT = findRoot(HERE);
 const HTML = path.join(ROOT, 'templates', 'index.html');
 const JS_FILES = ['static/game.js', 'static/client_state.js', 'static/client_socket.js',
   'static/client_socket_events.js', 'static/home_panels.js', 'static/card_catalog.js',
+  'static/replay_player.js',
   'static/adaptive_layout.js', 'static/wallpaper.js',
   'static/music_player.js', 'static/sfx.js', 'static/magic_cards.js', 'static/test_magic.js'];
 // 契约文档：默认取 docs/ 下最新的 *_PLAN.md（历史计划文档里的 id 早就不作数了），

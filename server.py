@@ -52,6 +52,7 @@ from application.placement_rules import PlacementRules
 from application.ship_attack_sync import ShipAttackSync
 from application.placement_flow import PlacementFlow
 from application.placement_completion import PlacementCompletion
+from application.placement_projection import PlacementProjection
 from application.ship_selection import (
     ShipSelection, SHIP_PICK_PRIORITY, _SHIP_PICK_CARDS, _SACRIFICE_REASONS,
     _SHIP_PICK_LABELS, _ship_pick_priority,
@@ -11497,56 +11498,14 @@ def _cell_xy(cell):
 
 
 def _emit_placement_request(room, player_id):
-    p = room.magic_temp_data.get('pending_placement')
-    if not p:
-        return
-    payload = {
-        'kind': p['kind'],
-        'remaining': p['remaining'],
-        'total': p['total'],
-        'placed': p['placed'],
-        'blocked': _placement_blocked_cells(room, player_id),
-    }
-    if p['kind'] == 'last_stand':
-        # 只允许放在原本有战舰的格子：交给前端做高亮/禁点
-        payload['allowed'] = room.game_effects.get('last_stand_cells') or []
-        # ⚠️ 白名单与黑名单绝不能互相矛盾（2026-09-17 实测回归，作者报「绝处逢生
-        # 生效后没有可用位置供玩家选择」）：
-        #   绝处逢生把【全部】战舰都牺牲了 —— 每艘都 `ships.remove()` 并记进
-        #   `sunken_ships`。而 blocked 现在按「ships ∪ sunken_ships」算己方占位
-        #   （那是为死者苏生/增援加的"刚沉掉那格不能摆"口径）→ 这 6 个候选格
-        #   全被判成"已占用"。前端是 `if (blocked.has(key) || (allowed && !allowed.has(key)))`
-        #   —— blocked 优先，于是六个格子全灰、一个都点不了。
-        # 绝处逢生的合法性由服务端按 allowed 单独校验（见 handle_confirm_reinforcement），
-        # 所以这里只要把候选格从 blocked 里剔除，就能恢复"只在这几格里选"的原意。
-        allow = {_cell_xy(a) for a in payload['allowed']}
-        allow.discard(None)
-        payload['blocked'] = [b for b in payload['blocked']
-                              if (b['x'], b['y']) not in allow]
-    elif p['kind'] == 'shenji_redeploy':
-        # 神机妙算：原位置（即便被对方打过）+ 对方未打过的空格都可选。
-        # ⚠️ blocked 必须按"沉船不占位"的口径重算，不能沿用默认那份：
-        # 默认口径把【所有】己方船（含沉船）都算作占用，于是旧沉船的位置
-        # 也会被画成灰色 —— 实测玩家以为"只能摆在原本沉船的地方"。
-        #
-        # ⚠️ 这里【不能】下发 allowed：allowed 在前端是**白名单**语义
-        # （game.js: `if (blocked.has(key) || (allowed && !allowed.has(key)))`
-        # 直接禁点且不绑 click），那是绝处逢生"只准放在原本有船的格子"用的。
-        # 神机妙算下发它 = 除了原位置全部点不动，玩家报的"只能摆在原位置/
-        # 被打过的格子、放不到没打过的空格"就是这么来的。
-        # 原位置的处理在下面：把它们从 blocked 里剔除即可，点得动。
-        allow = {(int(a[0]), int(a[1]))
-                 for a in (room.game_effects.get('shenji_redeploy_cells') or [])}
-        payload['blocked'] = _placement_blocked_cells(room, player_id, ignore_sunken=True)
-        payload['blocked'] = [b for b in payload['blocked']
-                              if (b['x'], b['y']) not in allow]
-        payload['message'] = '预言成功：请选择这艘战舰重新部署的位置（原位置或对方未打过的格子）'
-    elif p['kind'] == 'lanyu':
-        # 滥竽充数：默认占位口径即可（未被对方打过的空格）。
-        # 提示玩家这些船大回合结束时会被收回，避免以为永久保留。
-        payload['message'] = '滥竽充数：请选择补充战舰的部署位置（未被攻击过的空格，大回合结束时收回）'
-    emit('placement_request', payload, to=room.players[player_id].sid)
+    return _PLACEMENT_PROJECTION.emit_request(room, player_id)
 
+
+_PLACEMENT_PROJECTION = PlacementProjection(
+    blocked_cells=_placement_blocked_cells,
+    cell_xy=_cell_xy,
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+)
 
 _PLACEMENT_FLOW = PlacementFlow(emit_request=_emit_placement_request)
 

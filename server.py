@@ -50,6 +50,7 @@ from application.card_board_effects import apply_board_card_effect
 from application.card_dice_effects import DiceEffects, DICE_EFFECT_TEXT
 from application.placement_rules import PlacementRules
 from application.ship_attack_sync import ShipAttackSync
+from application.placement_flow import PlacementFlow
 from application.ship_selection import (
     ShipSelection, SHIP_PICK_PRIORITY, _SHIP_PICK_CARDS, _SACRIFICE_REASONS,
     _SHIP_PICK_LABELS, _ship_pick_priority,
@@ -11546,53 +11547,14 @@ def _emit_placement_request(room, player_id):
     emit('placement_request', payload, to=room.players[player_id].sid)
 
 
-def _start_placement(room, caster_id, kind, count):
-    """开启放置流程：kind='reinforce' 增援 / 'revive' 复活 / 'shenji_redeploy' 神机妙算重新部署。"""
-    room.magic_temp_data['pending_placement'] = {
-        'caster': caster_id, 'kind': kind,
-        'remaining': count, 'total': count, 'placed': 0,
-    }
-    _emit_placement_request(room, caster_id)
+_PLACEMENT_FLOW = PlacementFlow(emit_request=_emit_placement_request)
 
+def _start_placement(room, caster_id, kind, count):
+    return _PLACEMENT_FLOW.start(room, caster_id, kind, count)
 
 def _begin_shenji_redeploy(room, player_id, count, already_sunken_ids=None):
-    """神机妙算预言成功：让玩家逐艘重新部署"原本会减少的那些船"。
-
-    卡面：「那些原本会减少的船不会减少并在【原位置或者对方没有打过的位置重新部署】。」
-    —— "重新部署"是玩家的主动选择，不能替他决定。
-
-    ⚠️ 只算【本次判定所属的那个大回合内】沉的船（作者确认）。
-    上一回合就沉掉的船不属于"原本会减少的船"，不该被复活。
-
-    用【宣言时已沉船的 id 快照】做差集来判定"哪些是本回合新沉的" ——
-    不能按 sunken_ships 的排列位置切分：那个列表的顺序并不保证等于沉没先后
-    （复活用 pop() 从末尾取、旧船也可能被重新沉回去），按位置会取错船。
-    """
-    player = room.players.get(player_id)
-    if player is None:
-        return 0
-    sunken = list(getattr(player, 'sunken_ships', []) or [])
-    if already_sunken_ids is None:
-        # 兼容旧快照（没有 sunken_ids 字段）：退回"按数量取最新 N 艘"。
-        # 那个假设不总是成立，但总比什么都不做好。
-        fresh = sunken[-int(count):] if count else []
-    else:
-        before = set(already_sunken_ids)
-        fresh = [s for s in sunken if id(s) not in before]
-    n = min(int(count), len(fresh))
-    if n <= 0:
-        return 0
-    chosen = fresh[:n]
-    # 把候选船的原位置记下来，供放置校验豁免
-    original_cells = []
-    for ship in chosen:
-        for pos in ship.positions:
-            original_cells.append([pos.x, pos.y])
-    # 登记本次要重新部署的船，放置时按顺序取
-    room.game_effects['shenji_redeploy_cells'] = original_cells
-    room.game_effects['shenji_redeploy_ships'] = chosen
-    _start_placement(room, player_id, 'shenji_redeploy', n)
-    return n
+    return _PLACEMENT_FLOW.begin_shenji_redeploy(
+        room, player_id, count, already_sunken_ids)
 
 
 def _finish_placement(room, player_id, kind):

@@ -56,6 +56,7 @@ from application.placement_projection import PlacementProjection
 from application.card_sacrifice_effects import apply_steel_bone
 from application.card_judgement_effects import JudgementEffects
 from application.card_tactical_effects import TacticalEffects
+from application.card_field_effects import FieldEffects
 from application.ship_selection import (
     ShipSelection, SHIP_PICK_PRIORITY, _SHIP_PICK_CARDS, _SACRIFICE_REASONS,
     _SHIP_PICK_LABELS, _ship_pick_priority,
@@ -11618,6 +11619,11 @@ _TACTICAL_EFFECTS = TacticalEffects(
     apply_prediction=_apply_shenji_prediction,
 )
 
+_FIELD_EFFECTS = FieldEffects(
+    place_field_magic=_place_field_magic, recalc_attacks=_recalc_attacker_attacks,
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+)
+
 def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_data):
     result = ChainResult(card=card, caster=caster_id, success=True, message='')
     opponent_id = next(p for p in room.players if p != caster_id)
@@ -11973,26 +11979,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
 
     # ==== 场地魔法卡 ====
     elif card.type == '场地':
-        # 场地魔法处理 - 全场只能有一张场地魔法卡生效。
-        # 将实例放入场地区域；被顶掉的旧卡实例移入弃牌堆（不造副本）。
-        _place_field_magic(room, caster_id, card)
-
-        if card.name == '恶魔契约':
-            room.game_effects['demon_contract'] = True
-            result.message = '恶魔契约生效，双方船数增减绑定'
-        elif card.name == '禁忌果实':
-            result.message = '禁忌果实生效，双方只能使用失灵！和场地魔法'
-        elif card.name == '伊甸园':
-            result.message = '伊甸园生效，攻击次数变为6-n'
-            if room.state == 'attacking' and getattr(room, 'current_phase', None) == 'preparation' and room.current_attacker in room.players:
-                # 场地变更需要整体重算（不是"船数增减"），用 _recalc
-                _recalc_attacker_attacks(room)
-                emit('attacks_updated', {
-                    'current_attacker': room.current_attacker,
-                    'attacks_remaining': room.attacks_remaining
-                }, room=room.id)
-        # 注意：教皇旨意在上面的场地魔法分支之前就被 elif card.name 捕获，
-        # 这里原本还有一份重复分支，永远不可达，已删除。
+        _FIELD_EFFECTS.apply(room, caster_id, card, result)
 
     # ==== 已实现的魔法卡 ====
 

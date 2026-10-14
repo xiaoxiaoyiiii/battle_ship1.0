@@ -6,7 +6,7 @@
 
 `static/replay_player.js` 接管回放页面的 DOM 引用、稀疏时间线叠加、船位与攻击标记帧解算、棋盘/手牌/日志渲染、播放控制、拖动定位、倍速、键盘操作、回放加载错误和回放设置。`game.js` 只保留进入回放的调用点与页面初始化；模板在 `game.js` 后、Socket 事件脚本前加载新文件。回放仍只读 HTTP 回放接口，观战渲染继续留在原脚本。
 
-本批相对上一提交从 `server.py` 删除 208 行、增加 17 行适配，当前非空行数为 10,731；从 `static/game.js` 删除 1,133 行、增加 2 行说明，当前非空行数为 13,216。`application/card_dice_effects.py` 有 197 个非空行，`static/replay_player.js` 有 1,077 个非空行。相对 `origin/main`，`static/game.js` 累计删除 3,668 行，六个前端辅助脚本承接迁出内容。
+本批相对上一提交从 `server.py` 删除 208 行、增加 17 行适配，当前非空行数为 10,731；从 `static/game.js` 删除 1,144 行、增加 7 行说明与接线，当前非空行数为 13,210。`application/card_dice_effects.py` 有 197 个非空行，`static/replay_player.js` 有 1,078 个非空行。相对 `origin/main`，`static/game.js` 累计删除 3,679 行、增加 7 行，六个前端辅助脚本承接迁出内容。
 
 ## 兼容边界
 

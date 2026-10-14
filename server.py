@@ -48,6 +48,7 @@ from application.card_reveal_effects import apply_reveal_card_effect
 from application.card_area_damage_effects import apply_area_damage_card_effect
 from application.card_board_effects import apply_board_card_effect
 from application.card_dice_effects import DiceEffects, DICE_EFFECT_TEXT
+from application.placement_rules import PlacementRules
 from application.ship_selection import (
     ShipSelection, SHIP_PICK_PRIORITY, _SHIP_PICK_CARDS, _SACRIFICE_REASONS,
     _SHIP_PICK_LABELS, _ship_pick_priority,
@@ -11460,63 +11461,18 @@ def _own_occupied_cells(player, ignore_sunken=False):
     return cells
 
 
+_PLACEMENT_RULES = PlacementRules(
+    opponent_of=_opponent_of,
+    cell_in_shenwei_hole=_cell_in_shenwei_hole,
+    own_occupied_cells=_own_occupied_cells,
+    shenwei_holes=_shenwei_holes,
+)
+
 def _placement_error(room, player_id, x, y, allow_cells=None, ignore_sunken=False):
-    """返回该格子不可放置的原因；None 表示可放置。
-    规则：棋盘内、未被对方打过、不在神威扣洞内、未被己方船占用。
-
-    allow_cells：一组 (x, y)，这些格子即使"已被对方打过"也放行。
-    神机妙算预言成功后的"重新部署"要用它 —— 卡面写的是
-    「在原位置**或者**对方没有打过的位置重新部署」，而原位置必然是被打过的，
-    不加这个豁免就会把"回原位"这条路整个堵死。
-
-    ignore_sunken：本项目的「击沉」只减 remaining_ships、**不会把船移出 ships**
-    （沉船留在列表里供复活回收）。所以占位检查会把"沉船的原位置"也算成已占用，
-    导致预言成功后连原位都放不回去。为 True 时跳过已沉的船。
-    """
-    if not (0 <= x <= 5 and 0 <= y <= 5):
-        return '坐标超出棋盘范围'
-    allow = allow_cells or set()
-    opponent_id = _opponent_of(room, player_id)
-    if opponent_id:
-        opp_attacks = [(a.x, a.y) for a in room.players[opponent_id].attacks]
-        if (x, y) in opp_attacks and (x, y) not in allow:
-            return '该位置已被对方攻击过，不能放置'
-    if _cell_in_shenwei_hole(room, player_id, x, y):
-        return '该区域已被神威！扣掉，不能放置'
-    owner = room.players[player_id]
-    # 占位判定与 _placement_blocked_cells 共用一份口径（两份独立实现漂移过一次：
-    # 一处把沉船算占用、一处不算，前端就画出"看着能点、点了报错"的格子）。
-    if (x, y) in _own_occupied_cells(owner, ignore_sunken=ignore_sunken):
-        return '该位置已被己方战舰占用'
-    return None
-
+    return _PLACEMENT_RULES.error(room, player_id, x, y, allow_cells, ignore_sunken)
 
 def _placement_blocked_cells(room, player_id, ignore_sunken=False):
-    """列出该玩家棋盘上不可放置的格子（已被攻击 / 己方占用 / 神威扣洞）。
-
-    ⚠️ 必须与 _placement_error 的口径一致 —— 两套独立实现已经漂移过一次：
-    这里把【所有】己方船（含沉船）的位置都算作占用，而 _placement_error 在
-    ignore_sunken=True 时会跳过沉船，于是神机妙算重新部署时空格被误画成灰色，
-    玩家以为"只能摆在原本沉船的地方"。
-    2026-09-17 起两边共用 `_own_occupied_cells`，不再各写一份（另：沉船若已被
-    轰炸/硫磺火焰移出 ships，只看 ships 会漏掉它的格子）。
-
-    ignore_sunken：跳过已沉的船（它们的格子其实是空的）。
-    """
-    blocked = set()
-    opponent_id = _opponent_of(room, player_id)
-    if opponent_id:
-        for a in room.players[opponent_id].attacks:
-            blocked.add((a.x, a.y))
-    owner = room.players[player_id]
-    blocked |= _own_occupied_cells(owner, ignore_sunken=ignore_sunken)
-    for h in _shenwei_holes(room):
-        if h['player'] == player_id:
-            for x in range(h['x1'], h['x2'] + 1):
-                for y in range(h['y1'], h['y2'] + 1):
-                    blocked.add((x, y))
-    return [{'x': x, 'y': y} for (x, y) in sorted(blocked)]
-
+    return _PLACEMENT_RULES.blocked_cells(room, player_id, ignore_sunken)
 
 def _cell_xy(cell):
     """把格子的两种形态统一成 (x, y)：`[x, y]` / `(x, y)` / `{'x':..,'y':..}`。
@@ -12442,3 +12398,4 @@ if __name__ == '__main__':
         host='0.0.0.0',
         port=int(os.environ.get('PORT', 5000)),
     )
+

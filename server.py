@@ -49,6 +49,7 @@ from application.card_area_damage_effects import apply_area_damage_card_effect
 from application.card_board_effects import apply_board_card_effect
 from application.card_dice_effects import DiceEffects, DICE_EFFECT_TEXT
 from application.placement_rules import PlacementRules
+from application.ship_attack_sync import ShipAttackSync
 from application.ship_selection import (
     ShipSelection, SHIP_PICK_PRIORITY, _SHIP_PICK_CARDS, _SACRIFICE_REASONS,
     _SHIP_PICK_LABELS, _ship_pick_priority,
@@ -11619,33 +11620,14 @@ def _finish_placement(room, player_id, kind):
         _sync_attacks_after_ship_change(room, player_id, placed)
 
 
-def _sync_attacks_after_ship_change(room, player_id, ships_added=1):
-    """己方船数变化后按增量同步攻击次数（仅当当前攻击者是本人时）。
+_SHIP_ATTACK_SYNC = ShipAttackSync(
+    attacks_forced_zero=_attacks_forced_zero,
+    field_magic_name=field_magic_name,
+    emit=emit,
+)
 
-    伊甸园（次数 = 6 - 船数）与教皇旨意（次数恒 0，靠弃卡攻击）的换算
-    规则不同，这里按每艘船的增减量换算，保留已消耗的次数。
-    """
-    if room.state != 'attacking':
-        return
-    if room.current_attacker != player_id:
-        return
-    if _attacks_forced_zero(room):
-        return          # 败者食尘生效的大回合：次数恒为 0，加不上去
-    if ships_added <= 0:
-        return
-    field = field_magic_name(room)
-    if field == '教皇旨意':
-        per_ship = 0
-    elif field == '伊甸园':
-        per_ship = -1
-    else:
-        per_ship = 1
-    if per_ship:
-        room.attacks_remaining = max(0, room.attacks_remaining + per_ship * ships_added)
-    emit('attacks_updated', {
-        'current_attacker': room.current_attacker,
-        'attacks_remaining': room.attacks_remaining
-    }, room=room.id)
+def _sync_attacks_after_ship_change(room, player_id, ships_added=1):
+    return _SHIP_ATTACK_SYNC.sync(room, player_id, ships_added)
 
 
 def _apply_last_stand_attacks(room, player_id):

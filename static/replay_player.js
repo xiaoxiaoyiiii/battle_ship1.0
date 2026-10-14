@@ -1134,5 +1134,3 @@ function bindReplayEntryPoints() {
         });
     }
 }
-
-\n

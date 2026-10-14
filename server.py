@@ -54,6 +54,7 @@ from application.placement_flow import PlacementFlow
 from application.placement_completion import PlacementCompletion
 from application.placement_projection import PlacementProjection
 from application.card_sacrifice_effects import apply_steel_bone
+from application.card_judgement_effects import JudgementEffects
 from application.ship_selection import (
     ShipSelection, SHIP_PICK_PRIORITY, _SHIP_PICK_CARDS, _SACRIFICE_REASONS,
     _SHIP_PICK_LABELS, _ship_pick_priority,
@@ -586,7 +587,7 @@ class GameLog:
         self.type = event_type
         self.text = text
         self.detail = payload
-    
+
     def to_dict(self):
         return {
             'ts': self.ts,
@@ -702,7 +703,7 @@ class GameRoom(RoomState):
             # 手牌只单发本人；不能用 room= 广播。
             emit('hand_updated', {'hand': player.magic_hand}, to=player.sid)
         return card
-    
+
 # 添加魔法卡牌数据定义（与客户端 magic_cards.js 保持一致）
 magic_cards = list(map(lambda x: MagicCard(**x), read_json('./static/magic_card.json')))
 
@@ -1485,7 +1486,7 @@ def test_set_player_ships(data):
                 ship_positions = [Position(x=x, y=y) for x, y in positions]
                 player.ships.append(PlayerShip(positions=ship_positions, hits=[]))
                 player.remaining_ships += 1
-                
+
                 # 更新已用位置
                 used_positions.update(positions)
                 placed = True
@@ -1667,13 +1668,13 @@ def test_reset_game(data):
         player.attacks = []
         player.magic_hand = []
         player.damage_dealt_this_turn = 0
-        
+
         if hasattr(player, 'effect_flags'):
             player.effect_flags = EffectFlags()
-        
+
         if hasattr(player, 'opponent_attacks'):
             player.opponent_attacks = []
-        
+
         player.revealed_positions = []
         player.needs_reset = True
 
@@ -1690,14 +1691,14 @@ def handle_create_ai_room(data):
 
     # 创建人机对战房间
     room_id = room_manager.create_ai_room(player_id, player_name, player_user_id, difficulty)
-    
+
     # 让玩家加入房间
     join_room(room_id)
 
     # 好友功能：人机房同样算"对局中"（真人那一侧的标记由 join_room 那一步补上；
     # 这里挂了也不会有副作用 —— AI 的 user_id 是 None，`_live_uids` 会跳过）。
     _bind_presence_game(room_manager.get_room(room_id))
-    
+
     # 返回房间信息
     return {
         'status': 'success',
@@ -1750,7 +1751,7 @@ def test_set_opponent_ships(data):
                 ship_positions = [Position(x=x, y=y) for x, y in positions]
                 opponent.ships.append(PlayerShip(positions=ship_positions, hits=[]))
                 opponent.remaining_ships += 1
-                
+
                 # 更新已用位置
                 used_positions.update(positions)
                 placed = True
@@ -1798,7 +1799,7 @@ def test_win_game(data):
     # 直接设置玩家为胜利
     room.state = 'game_over'
     room.winner = player_id
-    
+
     emit('game_over', {'winner': player_id}, room=room_id)
     return {'status': 'success', 'message': '游戏胜利已设置'}
 
@@ -1817,7 +1818,7 @@ def test_lose_game(data):
     opponent_id = next(p for p in room.players if p != player_id)
     room.state = 'game_over'
     room.winner = opponent_id
-    
+
     emit('game_over', {'winner': opponent_id}, room=room_id)
     return {'status': 'success', 'message': '游戏失败已设置'}
 
@@ -1883,7 +1884,7 @@ def test_get_magic_cards_list(data):
             'type': card.type,
             'description': card.description
         })
-    
+
     return {'status': 'success', 'magic_cards': cards_list}
 
 
@@ -1921,20 +1922,20 @@ def test_auto_attack(data):
         # 执行攻击
         hit = False
         ship_sunk = False
-        
+
         for i, ship in enumerate(opponent.ships):
             if Position(x=target_x, y=target_y) in ship.positions:
                 hit = True
-                
+
                 if ship.shield:
                     ship.shield = False
                 elif not ship.invincible:
                     ship.hits.append(Position(x=target_x, y=target_y))
-                    
+
                     if len(ship.hits) == len(ship.positions):
                         ship_sunk = True
                         opponent.remaining_ships -= 1
-                
+
                 break
 
         # 记录攻击
@@ -1943,7 +1944,7 @@ def test_auto_attack(data):
         attack.y = target_y
         attack.hit = hit
         attack.ship_sunk = ship_sunk
-        
+
         room.players[player_id].attacks.append(attack)
         room.attacks_remaining -= 1
 
@@ -3178,12 +3179,12 @@ def handle_rps_choice(data):
                 del room.test_ai_rps_choice
 
     room.rps_choices[player_id] = choice
-    
+
     # 检查是否所有玩家都已做出选择
     if len(room.rps_choices) == len(room.players) and not room.rps_processed:
         # 标记为已处理，防止重复执行
         room.rps_processed = True
-        
+
         # 决定猜拳结果
         result = determine_rps_winner(room)
         emit('rps_result', result, room=room_id)
@@ -3285,7 +3286,7 @@ class RPSResult:
         self.loser = loser
         self.choices = choices or {}
         self.order = order or []
-    
+
     def to_dict(self):
         return {
             'status': self.status,
@@ -3353,13 +3354,13 @@ class ChainResult:
         self.caster = caster
         self.success = success
         self.message = message
-    
+
     def __getitem__(self, key):
         return getattr(self, key)
-    
+
     def __setitem__(self, key, value):
         setattr(self, key, value)
-    
+
     def to_dict(self):
         return {
             'card': self.card,
@@ -5030,7 +5031,7 @@ def handle_enter_end_phase(data, _priority_confirmed=False):
 
         # 清除越战越勇效果
         room.players[player_id].effect_flags.battle_spirit=False
-        
+
         emit('phase_updated', {
             'current_phase': room.current_phase,
             'current_attacker': room.current_attacker
@@ -5058,7 +5059,7 @@ def switch_turn_after_end_phase(room, opponent_id):
     room.attacks_remaining = max(0, room.players[opponent_id].remaining_ships - frozen_ship_count(room.players[opponent_id]))  # 存活战舰数减去冻结数
     _recalc_attacker_attacks(room)
     room.current_phase = 'preparation'
-    
+
     # 重置本回合伤害统计
     room.players[opponent_id].damage_dealt_this_turn = 0
 
@@ -11150,6 +11151,12 @@ _dice_effects = DiceEffects(
     ai_player_id=lambda room: _ai_player_id(room),
 )
 _apply_dice_of_fate = _dice_effects.apply
+
+_JUDGEMENT_EFFECTS = JudgementEffects(
+    opponent_of=_opponent_of,
+    log_name=_log_name,
+    apply_dice=_apply_dice_of_fate,
+)
 _start_dice_discard = _dice_effects.start_discard
 _check_dice_discard_complete = _dice_effects.complete_discard
 
@@ -12026,22 +12033,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             _apply_shenji_prediction(room, caster_id, x, result)
 
     # ==== 判定魔法卡 ====
-    # 与「普通」「场地」并列的第三类。先摇骰子（动画+结果广播给双方），
-    # 再按点数结算不同效果。命运骰子是第一张判定卡；为后续扩展留 type 分支。
     elif card.type == '判定':
-        if card.name == '命运骰子':
-            _apply_dice_of_fate(room, caster_id, result)
-        elif card.name == '无忧梦呓':
-            # 与命运骰子不同：**打出时不摇骰子**，只登记；
-            # 摇点在对方回合开始时的 `_settle_wuyou_dream`（卡面写的就是那时判定）。
-            _register_wuyou_dream(room, caster_id, result)
-        elif card.name == '兵粮寸断':
-            # 同款"打出时不摇骰子"：摇点在对方**准备阶段开始时**的 `_settle_bingliang`；
-            # 但那一次判定之后要留下两次跳过额度（见 `_bingliang_consume_skip`）。
-            _register_bingliang(room, caster_id, result)
-        else:
-            result.success = False
-            result.message = f'未实现的判定魔法卡：{card.name}'
+        _JUDGEMENT_EFFECTS.apply(room, caster_id, card, result)
 
     # ==== 场地魔法卡 ====
     elif card.type == '场地':
@@ -12110,7 +12103,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
 
 
 
-    
+
     #result['success'] = False
     #result['message'] = f'魔法效果应用失败: {str(e)}'
 

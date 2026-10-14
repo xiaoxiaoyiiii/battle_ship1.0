@@ -51,6 +51,7 @@ from application.card_dice_effects import DiceEffects, DICE_EFFECT_TEXT
 from application.placement_rules import PlacementRules
 from application.ship_attack_sync import ShipAttackSync
 from application.placement_flow import PlacementFlow
+from application.placement_completion import PlacementCompletion
 from application.ship_selection import (
     ShipSelection, SHIP_PICK_PRIORITY, _SHIP_PICK_CARDS, _SACRIFICE_REASONS,
     _SHIP_PICK_LABELS, _ship_pick_priority,
@@ -11558,34 +11559,13 @@ def _begin_shenji_redeploy(room, player_id, count, already_sunken_ids=None):
 
 
 def _finish_placement(room, player_id, kind):
-    pending = room.magic_temp_data.get('pending_placement') or {}
-    placed = int(pending.get('placed') or 0)
-    room.magic_temp_data.pop('pending_placement', None)
-    if kind == 'last_stand':
-        room.game_effects.pop('last_stand_cells', None)
-        room.game_effects.pop('last_stand_owner', None)
-    if kind == 'shenji_redeploy':
-        room.game_effects.pop('shenji_redeploy_cells', None)
-        room.game_effects.pop('shenji_redeploy_ships', None)
-    emit('placement_done', {'kind': kind}, to=room.players[player_id].sid)
-
-    if kind == 'last_stand':
-        # 绝处逢生：场上只剩这唯一一艘船，攻击次数必须【重算为 1】，
-        # 不能按增量 +1 —— 那会保留发动前那一堆旧额度（实测：发动前 5 次，
-        # 放完船变 6 次，与"只剩一艘船"完全脱节）。
-        # 跨回合累积的百亿补贴加成属于持卡者本人，按既定规则保留叠加。
-        _apply_last_stand_attacks(room, player_id)
-    else:
-        # 增援/复活改变了自己的船数，攻击次数要按【增量】跟着变：
-        # 例：绝境中增援一艘船 = 多一条命，同时本回合还多一次攻击。
-        # 注意不能用 _recalc_attacker_attacks 从头算——那会把已经用掉的次数退还。
-        _sync_attacks_after_ship_change(room, player_id, placed)
+    return _PLACEMENT_COMPLETION.finish(room, player_id, kind)
 
 
 _SHIP_ATTACK_SYNC = ShipAttackSync(
     attacks_forced_zero=_attacks_forced_zero,
     field_magic_name=field_magic_name,
-    emit=emit,
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
 )
 
 def _sync_attacks_after_ship_change(room, player_id, ships_added=1):
@@ -11629,6 +11609,12 @@ def _apply_last_stand_attacks(room, player_id):
         'attacks_remaining': room.attacks_remaining
     }, room=room.id)
 
+
+_PLACEMENT_COMPLETION = PlacementCompletion(
+    apply_last_stand_attacks=_apply_last_stand_attacks,
+    sync_attacks=_sync_attacks_after_ship_change,
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+)
 
 def _tear_down_field_magic(room, caster_id):
     """拆除当前生效的场地魔法（失灵！/ 加百列之光 共用）。

@@ -55,6 +55,7 @@ from application.placement_completion import PlacementCompletion
 from application.placement_projection import PlacementProjection
 from application.card_sacrifice_effects import apply_steel_bone
 from application.card_judgement_effects import JudgementEffects
+from application.card_tactical_effects import TacticalEffects
 from application.ship_selection import (
     ShipSelection, SHIP_PICK_PRIORITY, _SHIP_PICK_CARDS, _SACRIFICE_REASONS,
     _SHIP_PICK_LABELS, _ship_pick_priority,
@@ -11609,6 +11610,14 @@ def _tear_down_field_magic(room, caster_id):
     return field
 
 
+_TACTICAL_EFFECTS = TacticalEffects(
+    opponent_of=_opponent_of, alive_ships=_alive_ships,
+    request_ship_pick=_request_ship_pick, emit_player_ships=_emit_player_ships,
+    emit=lambda *args, **kwargs: emit(*args, **kwargs), add_game_log=add_game_log,
+    log_name=_log_name, open_prediction=_open_shenji_declare_window,
+    apply_prediction=_apply_shenji_prediction,
+)
+
 def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_data):
     result = ChainResult(card=card, caster=caster_id, success=True, message='')
     opponent_id = next(p for p in room.players if p != caster_id)
@@ -11955,82 +11964,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
             mark_ship_sunken=_mark_ship_sunken,
         )
 
-    elif card.name == '守株待兔':
-        # 守株待兔（速阶1 普通）：选自己一艘船打上陷阱标记，
-        # 本大回合内这艘船被击沉时让对方牺牲 min(2, 对方活船数) 艘。
-        # 卡面只在本大回合生效 → 跨回合清理由 end_turn 内"进入新大回合"分支兜底。
-        if caster.remaining_ships == 0:
-            result['success'] = False
-            result['message'] = '没有战舰可设置陷阱'
-            return result
-
-        # 用 _request_ship_pick 让施法者点选一艘自己的活船；
-        # AI 路径会直接随机返回一艘，立刻打上陷阱；人类路径入队，由
-        # handle_confirm_sacrifice 的 'trap_setup' 分支确认后打上陷阱。
-        picked = _request_ship_pick(room, caster_id, 'trap_setup',
-                                    '守株待兔：请点选一艘自己的战舰设置陷阱')
-        if picked is not None:
-            # AI 自动选好：直接打标记
-            picked.trap = True
-            add_game_log(room,
-                         f'第{room.round}回合 · {_log_name(room, caster_id)} 的【守株待兔】'
-                         f'为一艘战舰设置陷阱',
-                         'magic', {'caster': caster_id, 'card': '守株待兔'})
-            emit('trap_set', {
-                'player': caster_id,
-                'positions': [{'x': p.x, 'y': p.y} for p in picked.positions],
-            }, room=room.id)
-            result['message'] = '已为一艘战舰设置陷阱（本回合该船被击沉时对方需牺牲两艘）'
-        else:
-            # 人类：等待玩家点选
-            result['message'] = '请选择要设置陷阱的战舰'
-
-    elif card.name == '卧薪尝胆':
-        # 卧薪尝胆（速阶1 普通）：为所有活船添加护盾（同仁王之盾的 shield=True）。
-        # 发动条件「自己船数 < 对方船数」已在 handle_use_magic_card 扣牌前拦过，
-        # 这里再判一次作纯防御（连锁结算时船数可能变化）。
-        opponent_id = _opponent_of(room, caster_id)
-        if opponent_id and opponent_id in room.players:
-            if caster.remaining_ships >= room.players[opponent_id].remaining_ships:
-                result.success = False
-                result.message = '自己的船数不小于对方，卧薪尝胆无法发动'
-                return result
-        alive = _alive_ships(caster)
-        if not alive:
-            result.success = False
-            result.message = '没有战舰可添加护盾'
-            return result
-        applied = 0
-        for ship in alive:
-            ship.shield = True
-            applied += 1
-        _emit_player_ships(room, caster_id)
-        # 护盾状态只应让施法者在自己的棋盘上看到。把船位放进房间广播会
-        # 直接把未被攻击过的舰队坐标泄露给对手；对手只需要知道“对方加了
-        # 几艘护盾”，实际位置应继续保持未知，直到正常攻击/显形规则公开。
-        emit('shields_added', {
-            'player': caster_id,
-            'count': applied,
-        }, room=room.id)
-        add_game_log(room,
-                     f'第{room.round}回合 · {_log_name(room, caster_id)} 的【卧薪尝胆】'
-                     f'为{applied}艘战舰添加护盾',
-                     'magic', {'caster': caster_id, 'card': '卧薪尝胆', 'count': applied})
-        result['message'] = f'已为{applied}艘战舰添加护盾'
-
-    elif card.name == '神机妙算':
-        # 宣言x：若结束阶段自己船数减少恰好x，那些船不减少。
-        # 尚未宣言 → 打开宣言窗口（同时拍基线、冻结对方、挂超时）；
-        # 已宣言（confirm 落临时数据）→ 直接生效。
-        if 'prediction' not in room.magic_temp_data:
-            _open_shenji_declare_window(room, caster_id, result)
-        else:
-            x = room.magic_temp_data.get('prediction')
-            try:
-                x = max(0, min(6, int(x)))
-            except Exception:
-                x = 0
-            _apply_shenji_prediction(room, caster_id, x, result)
+    elif card.name in ('守株待兔', '卧薪尝胆', '神机妙算'):
+        _TACTICAL_EFFECTS.apply(room, caster_id, card, result, caster=caster)
 
     # ==== 判定魔法卡 ====
     elif card.type == '判定':

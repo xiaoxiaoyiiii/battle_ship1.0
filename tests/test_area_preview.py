@@ -52,11 +52,13 @@ from spectate import spectate_room_id
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GAME_JS = os.path.join(ROOT, 'static', 'game.js')
+MAGIC_RULES_JS = os.path.join(ROOT, 'static', 'magic_rules.js')
 SOCKET_EVENTS_JS = os.path.join(ROOT, 'static', 'client_socket_events.js')
 SERVER_PY = os.path.join(ROOT, 'server.py')
 STATUS_EFFECTS_PY = os.path.join(ROOT, 'application', 'card_status_effects.py')
 REVEAL_EFFECTS_PY = os.path.join(ROOT, 'application', 'card_reveal_effects.py')
 AREA_DAMAGE_EFFECTS_PY = os.path.join(ROOT, 'application', 'card_area_damage_effects.py')
+SPECIAL_EFFECTS_PY = os.path.join(ROOT, 'application', 'card_special_effects.py')
 
 # 座位 key：用**匹配房的约定**（key = socket sid）—— 最容易出问题的那一套，
 # 而且 `seat_label` 的结果与自定义房（user_id）无关，两种约定下都是 p1/p2。
@@ -116,15 +118,15 @@ def _read(path):
 
 
 def _js_descriptors():
-    """解析 `static/game.js` 的 `MAGIC_TARGET_DESCRIPTORS`。
+    """解析 `static/magic_rules.js` 的 `MAGIC_TARGET_DESCRIPTORS`。
 
     ⚠️ 不解析"函数体里的 map"—— 那张表是模块级 const（见它上面的注释），
        解析器只认 `const NAME = { ... };`，格式变了就直接断言失败，
        而不是静默返回空表（那样就没在测任何东西了）。
     """
-    src = _read(GAME_JS)
+    src = _read(MAGIC_RULES_JS)
     m = re.search(r'const\s+MAGIC_TARGET_DESCRIPTORS\s*=\s*\{(.*?)\n\};', src, re.S)
-    assert m, 'game.js 里找不到模块级的 `const MAGIC_TARGET_DESCRIPTORS = { ... };`'
+    assert m, 'magic_rules.js 里找不到模块级的 `const MAGIC_TARGET_DESCRIPTORS = { ... };`'
     out = {}
     for line in m.group(1).splitlines():
         em = _JS_ENTRY.match(line)
@@ -138,7 +140,7 @@ def _js_descriptors():
             'board': (_JS_BOARD.search(body).group(1)
                       if _JS_BOARD.search(body) else None),
         }
-    assert out, 'game.js 的 MAGIC_TARGET_DESCRIPTORS 解析为空（格式变了？）'
+    assert out, 'magic_rules.js 的 MAGIC_TARGET_DESCRIPTORS 解析为空（格式变了？）'
     return out
 
 
@@ -175,6 +177,21 @@ def _server_region_branches():
             found = sorted(k for k in _SERVER_SHAPE_KEYS if k in blk)
             if found:
                 out[name] = found
+    # These handlers each own one card, so their target reads live in a
+    # dedicated method instead of an if/elif card-name block.  Scan the
+    # method body directly rather than pretending the dispatch adapter owns
+    # the implementation again.
+    for function, name in (('apply_shenwei', '神威！'),
+                           ('apply_divine_decree', '神之宣告'),
+                           ('apply_healing', '疗愈')):
+        src = _read(SPECIAL_EFFECTS_PY)
+        start = src.index(f'def {function}(')
+        nxt = src.find('\n    def ', start + 10)
+        blk = src[start:nxt if nxt > start else len(src)]
+        branch_count += 1
+        found = sorted(k for k in _SERVER_SHAPE_KEYS if k in blk)
+        if found:
+            out[name] = found
     assert branch_count > 20, '没扫到卡牌分支（正则过期了？扫到 %d 个）' % branch_count
     return out
 

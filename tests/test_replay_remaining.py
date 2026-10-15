@@ -22,6 +22,7 @@ import re
 
 import replay
 import server
+import application.card_special_effects as special_effects
 from server import GameRoom, Player, PlayerShip, Position, room_manager
 
 P1, P2 = 'rembuf-p1', 'rembuf-p2'      # ⚠️ 与座位代号 `p1`/`p2` 故意取不同的串（教训 #20）
@@ -198,6 +199,7 @@ WRITE_SITES = {
     ('handle_confirm_reinforcement', 'augassign'),
     ('_revive_sunken_ships', 'augassign'),
     ('_restore_due_shenwei', 'augassign'),
+    ('apply_shenwei', 'augassign'),
     ('_do_demon_contract_sacrifice', 'assign'),
     ('_apply_ship_sunk_effects', 'augassign'),
     ('_recall_lanyu_ships', 'augassign'),
@@ -214,8 +216,7 @@ WRITE_SITES = {
 
 
 def _scan_remaining_writes():
-    """`server.py` 里所有写 `<某物>.remaining_ships` 的 `(最外层函数名, 操作)`。"""
-    tree = ast.parse(io.open('server.py', encoding='utf-8').read())
+    """服务端及迁出卡牌模块里所有写 `remaining_ships` 的函数与操作。"""
     found = set()
 
     def walk_func(name, node):
@@ -244,7 +245,9 @@ def _scan_remaining_writes():
                     if isinstance(tgt, ast.Attribute) and tgt.attr == 'remaining_ships':
                         found.add((name, op))
 
-    for node in ast.iter_child_nodes(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            walk_func(node.name, node)
+    for path in (server.__file__, special_effects.__file__):
+        tree = ast.parse(io.open(path, encoding='utf-8').read())
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                walk_func(node.name, node)
     return found

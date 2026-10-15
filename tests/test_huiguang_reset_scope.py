@@ -140,7 +140,7 @@ def test_frontend_reset_case_checks_caster():
     """
     import io
     import re
-    src = io.open('static/game.js', encoding='utf-8').read()
+    src = io.open('static/magic_effect_feedback.js', encoding='utf-8').read()
     m = re.search(r"case '回光返照':(.*?)\n\s*case ", src, re.S)
     assert m, '没找到 回光返照 的 case 分支'
     body = m.group(1)

@@ -60,6 +60,7 @@ from application.card_steal_effects import StealEffects
 from application.card_temporary_effects import TemporaryShipEffects
 from application.card_refund import refund_card_to_hand
 from application.chain_policy import ChainPolicy
+from application.chain_window import ChainWindow
 from application.card_tactical_effects import TacticalEffects
 from application.card_field_effects import FieldEffects
 from application.ship_selection import (
@@ -8326,6 +8327,20 @@ _CHAIN_POLICY = ChainPolicy(
     ai_can_negate_top=_ai_can_negate_chain_top,
 )
 
+_CHAIN_WINDOW = ChainWindow(
+    can_respond=lambda room, player_id: _can_respond_chain(room, player_id),
+    resolve_chain=lambda room: resolve_chain(room),
+    finish_chain=lambda room, display_delay=True: _finish_chain(
+        room, display_delay=display_delay),
+    opponent_of=lambda room, player_id: _opponent_of(room, player_id),
+    speed3_cards=lambda room, player_id: _speed3_cards(room, player_id),
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    schedule_timeout=lambda room_id, token: _schedule_chain_timeout(room_id, token),
+    start_background_task=lambda fn, *args: socketio.start_background_task(fn, *args),
+    ai_chain_respond=lambda room_id, token: _ai_chain_respond(room_id, token),
+    response_seconds=lambda: CHAIN_RESPONSE_SECONDS,
+)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 连锁无效化：「正下方那一项」的目标解析 + 免疫关系（**只此一份**）
@@ -8471,33 +8486,7 @@ def _advance_chain_window(room, player_id, display_delay: bool = True):
     （它已经让所有人盯着连锁区看了 10 秒，再停一下纯属添乱；
     作者的要求是"10 秒窗口那条路径不动"）。
     """
-    while True:
-        if not player_id or player_id not in room.players:
-            return resolve_chain(room)
-        if _can_respond_chain(room, player_id):
-            room.chain_window = player_id
-            room.chain_waiting = True
-            room.chain_timer += 1
-            emit('chain_request', {
-                'card': room.chain[-1].card,
-                # 告诉客户端这张卡是谁打的：响应窗口会绕回最后压栈者自己
-                # （自连锁），此时前端不能再写「对方发动了」。
-                'caster': room.chain[-1].player_id,
-                'speed3_cards': _speed3_cards(room, player_id),
-                'countdown': CHAIN_RESPONSE_SECONDS,
-            }, to=room.players[player_id].sid)
-            _schedule_chain_timeout(room.id, room.chain_timer)
-            if player_id.startswith('ai-'):
-                # 窗口落在 AI 头上：让它自己响应，别干等到超时
-                socketio.start_background_task(_ai_chain_respond, room.id, room.chain_timer)
-            return
-        # 无法响应：视为放弃
-        room.chain_passes += 1
-        if room.chain_passes >= 2:
-            # ★ 双方都接不了 ⇒ 连锁到此为止。默认先停留一下再结算，
-            #   否则栈顶到结算只隔几毫秒、连锁区一闪而过（见 CHAIN_DISPLAY_DELAY_SECONDS）。
-            return _finish_chain(room, display_delay=display_delay)
-        player_id = _opponent_of(room, player_id)
+    return _CHAIN_WINDOW.advance(room, player_id, display_delay=display_delay)
 
 
 def _refund_card_to_hand(room, player_id, card, result) -> bool:

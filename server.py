@@ -57,6 +57,7 @@ from application.card_sacrifice_effects import apply_steel_bone
 from application.card_judgement_effects import JudgementEffects
 from application.card_special_effects import SpecialCardEffects
 from application.card_steal_effects import StealEffects
+from application.card_temporary_effects import TemporaryShipEffects
 from application.card_tactical_effects import TacticalEffects
 from application.card_field_effects import FieldEffects
 from application.ship_selection import (
@@ -10827,69 +10828,8 @@ def _restore_due_shenwei(room, current_round):
 
 
 def _recall_lanyu_ships(room, room_id) -> bool:
-    """滥竽充数：大回合结束时强制收回临时船，不显示沉没。
-
-    卡面：「这些在当前大回合被补充的船将会在大回合结束时强制收回，不会显示沉没。」
-    收回 = 从 ships 移除 + 减 remaining_ships，但【不】登记到 sunken_ships、
-    【不】发击沉事件 —— 玩家看到的是船直接从棋盘上消失，不是被打沉。
-
-    只收回【还活着】的临时船；已在回合内被击沉的临时船按沉船口径原样保留
-    （已计入 sunken_ships、remaining_ships 已减），不动它。
-
-    返回 True 表示收回导致某方船数归零、对局已结束（end_turn 应当立即返回）。
-    """
-    lanyu = room.game_effects.pop('lanyu_temp_ships', None)
-    if not lanyu:
-        return False
-    changed = {}
-    for player_id, ship_list in lanyu.items():
-        if player_id not in room.players:
-            continue
-        player = room.players[player_id]
-        removed = 0
-        for ship in ship_list:
-            if ship not in player.ships:
-                continue  # 已被移除（轰炸/硫磺火焰/重摆棋盘）
-            # 只收回【还活着】的临时船；沉船留着（已计入击沉统计）
-            if not _is_ship_alive(player, ship):
-                continue
-            player.ships.remove(ship)
-            player.remaining_ships -= 1
-            removed += 1
-        if removed > 0:
-            changed[player_id] = removed
-            _emit_player_ships(room, player_id)
-    if not changed:
-        return False
-    _emit_ships_updated(room)
-    for pid, cnt in changed.items():
-        emit('lanyu_recalled', {
-            'player': pid,
-            'count': cnt,
-        }, room=room_id)
-        add_game_log(room,
-                     f'第{room.round}回合 · {_log_name(room, pid)} 的【滥竽充数】'
-                     f'临时战舰已收回({cnt}艘)',
-                     'magic', {'player': pid, 'card': '滥竽充数', 'count': cnt})
-    # 收回导致船数归零 → 判负（与攻击/魔法卡路径同口径）
-    for pid in changed:
-        player = room.players[pid]
-        if player.remaining_ships <= 0 and len(player.ships) > 0 \
-                and room.state != 'game_over':
-            opponent_id = _opponent_of(room, pid)
-            if opponent_id and opponent_id in room.players:
-                _finish_game_win(room, room_id, opponent_id, pid,
-                                 f'第{room.round}回合 · {_log_name(room, pid)} 的'
-                                 f'临时战舰已全部收回，无战舰可用')
-                emit('game_state', {
-                    'state': 'game_over',
-                    'winner': opponent_id,
-                    'reason': '滥竽充数临时战舰已收回，无战舰可用',
-                    **_rank_payload(room),
-                }, room=room_id)
-                return True
-    return False
-
+    """兼容入口：由应用层收回滥竽充数的临时战舰。"""
+    return _TEMPORARY_SHIP_EFFECTS.recall(room, room_id)
 
 def _clear_board_effects(room, player_ids, why: str) -> None:
     """**重摆棋盘**时终止"持续生效的范围类"效果（幂等）。
@@ -11648,6 +11588,21 @@ _SPECIAL_EFFECTS = SpecialCardEffects(
 
 _STEAL_EFFECTS = StealEffects()
 
+_TEMPORARY_SHIP_EFFECTS = TemporaryShipEffects(
+    requirement_reason=_lanyu_requirement_reason,
+    blocked_cells=_placement_blocked_cells,
+    start_placement=_start_placement,
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    add_game_log=add_game_log,
+    log_name=_log_name,
+    is_ship_alive=_is_ship_alive,
+    emit_player_ships=_emit_player_ships,
+    emit_ships_updated=_emit_ships_updated,
+    opponent_of=_opponent_of,
+    finish_game_win=_finish_game_win,
+    rank_payload=_rank_payload,
+)
+
 # 兼容旧的直接调用入口；实际效果全部由 application.card_special_effects
 # 结算，避免业务代码和测试夹具继续依赖 server.py 内的实现细节。
 def _apply_shenwei_card(room, caster_id, card, target_data, result):
@@ -11772,43 +11727,21 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
     # ==== 已实现的魔法卡 ====
 
     elif card.name == '滥竽充数':
-        # 滥竽充数（速阶3 普通）：补充满自己的船数，自己选择放置位置。
-        # 卡面：「这张牌仅可在当前大回合内生效。补充满自己的船数并自己选择放置
-        #   被补充的船。这些在当前大回合被补充的船将会在大回合结束时强制收回，
-        #   不会显示沉没。在极限情况下（即剩余的格子数比需要补充的船数少的时
-        #   候）就尽可能多的补充就可以。」
-        # 发动条件已在 handle_use_magic_card 扣牌前拦过，这里再判一次作纯防御。
-        reason = _lanyu_requirement_reason(room, caster_id, card)
-        if reason:
-            result.success = False
-            result.message = reason
+        lanyu_handled, lanyu_stop = _TEMPORARY_SHIP_EFFECTS.apply(
+            room, caster_id, card, result)
+        if lanyu_stop:
             return result
-        max_ships = int(getattr(caster, 'max_ships', 6) or 6)
-        needed = max_ships - caster.remaining_ships
-        # 极端情况：可放置格子 < needed，按可放置格子数补充（"尽可能多"）
-        blocked = _placement_blocked_cells(room, caster_id)
-        available = 36 - len(blocked)
-        count = min(needed, available)
-        if count <= 0:
-            result.success = False
-            result.message = '没有可放置的格子，滥竽充数无法生效'
-            return result
-        # 登记本大回合的临时船列表（end_turn 大回合切换时强制收回）。
-        # 用 dict 按 player_id 分桶：同一玩家可能多次发动（被击沉后再补）。
-        lanyu = room.game_effects.setdefault('lanyu_temp_ships', {})
-        lanyu.setdefault(caster_id, [])
-        _start_placement(room, caster_id, 'lanyu', count)
-        result.temp_data_id = 'lanyu_placement'
-        result.message = f'请选择{count}艘补充战舰的部署位置（大回合结束时强制收回）'
-        add_game_log(room,
-                     f'第{room.round}回合 · {_log_name(room, caster_id)} 的【滥竽充数】'
-                     f'补充{count}艘战舰（大回合结束时收回）',
-                     'magic', {'caster': caster_id, 'card': '滥竽充数', 'count': count})
 
     else:
-        if not (opening_handled or status_handled or reveal_handled
-                or area_handled or board_handled or negation_handled
-                or special_handled or steal_handled):
+        lanyu_handled, lanyu_stop = _TEMPORARY_SHIP_EFFECTS.apply(
+            room, caster_id, card, result)
+        if lanyu_stop:
+            return result
+        if lanyu_handled:
+            pass
+        elif not (opening_handled or status_handled or reveal_handled
+                  or area_handled or board_handled or negation_handled
+                  or special_handled or steal_handled):
             result.success = False
             result.message = f'未实现的魔法卡: {card.name}'
 

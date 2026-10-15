@@ -49,6 +49,7 @@ import application.card_area_damage_effects as area_damage_effects
 import application.card_board_effects as board_effects
 import application.card_sacrifice_effects as sacrifice_effects
 import application.card_special_effects as special_effects
+import application.card_temporary_effects as temporary_effects
 
 # 只扫描 Player 的两个名字（`player` / `owner` / `caster` / 局部变量…），
 # 排掉明显不是 Player 的容器（本项目里没有，留着给将来）：
@@ -108,7 +109,7 @@ REMOVAL_SITES = [
          kind='attack', need=None,
          why='同上：逐格 `caster.attacks` + `attack_result`（不写 attack 日志；本批修好）'),
     # ---- ④ 有意消失：临时船收回 / 神威暂时除外 ⇒ 一格沉没标记都不许有 ----
-    dict(fn='_recall_lanyu_ships', container='player', ops=['remove'], card=None,
+    dict(fn='recall', container='player', ops=['remove'], card=None,
          kind='vanish', need=None,
          why='滥竽充数临时船被大回合末强制收回，卡面明写"不会显示沉没"'),
     # ---- ⑤ 棋盘整块换新 / 布船阶段重建：由 `note_board_replaced` 撤掉旧账 ----
@@ -174,7 +175,7 @@ def _scan_ship_mutations():
     found = []
     for path in (server.__file__, player_state.__file__, area_damage_effects.__file__,
                  board_effects.__file__, sacrifice_effects.__file__,
-                 special_effects.__file__):
+                 special_effects.__file__, temporary_effects.__file__):
         src = io.open(path, encoding='utf-8').read()
         found.extend(_scan_ship_mutations_in(src))
     return found

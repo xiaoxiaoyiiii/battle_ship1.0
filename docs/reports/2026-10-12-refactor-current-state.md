@@ -47,7 +47,7 @@ Phase 0–8 时，这些项目并非等量地从 `server.py` 剪切出去：相�
 
 阶段 10 第七批把命运骰子和共享弃牌待办迁入 `application/card_dice_effects.py`，把回放播放器迁入 `static/replay_player.js`。`server.py` 再删除 208 行、增加 17 行；`static/game.js` 再删除 1,144 行、增加 7 行说明与接线，当前分别为 10,731 与 13,210 个非空行。全量回归 1069 passed；回放逐格检查 108 项、DOM 契约和真实 Edge 回放流程均通过。实际攻击、连锁、重连输入验证和剩余卡牌编排仍集中在服务端。
 
-阶段 10 第八批把神威、神之宣告和疗愈迁入 `application/card_special_effects.py`，将教皇旨意与盗亦有道分别接入 `application/card_field_effects.py`、`application/card_steal_effects.py`，并把前端魔法卡使用门禁与目标描述迁入 `static/magic_rules.js`。`server.py` 当前约 10,286 个非空行，`static/game.js` 当前约 13,058 个非空行；旧服务端特殊卡入口和经典脚本共享作用域保持兼容。全量回归仍为 1069 passed；剩余主要卡牌效果是滥竽充数，攻击与连锁编排仍在原文件。
+阶段 10 第八批把神威、神之宣告和疗愈迁入 `application/card_special_effects.py`，将教皇旨意、盗亦有道和滥竽充数分别接入 `application/card_field_effects.py`、`application/card_steal_effects.py`、`application/card_temporary_effects.py`，并把前端魔法卡使用门禁与目标描述迁入 `static/magic_rules.js`。`server.py` 当前约 10,222 个非空行，`static/game.js` 当前约 13,058 个非空行；旧服务端入口和经典脚本共享作用域保持兼容。卡牌效果已全部按依赖组迁出，攻击、连锁和放置编排仍在原文件。
 
 ### `static/game.js` 拆出了什么
 

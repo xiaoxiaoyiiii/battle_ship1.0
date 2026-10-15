@@ -8,6 +8,8 @@
 
 `application/card_steal_effects.py` 接管 `盗亦有道` 在连锁栈与历史记录之间选择目标、避免重复盗取、从弃牌堆转移卡牌的逻辑；`server.py` 只保留调度和最终收口。
 
+`application/card_temporary_effects.py` 接管 `滥竽充数` 的发动登记和回合末临时战舰回收；放置确认仍复用既有 placement 流程，旧 `_recall_lanyu_ships` 入口保留兼容。
+
 前端新增 `static/magic_rules.js`，承接魔法卡使用阶段门禁、命中前置条件、绝处逢生锁卡判断和 `MAGIC_TARGET_DESCRIPTORS`。目标选择器和发送逻辑仍留在 `game.js`，模板按依赖顺序在 `game.js` 前加载新脚本。经典脚本共享作用域保留现有页面、浏览器工具和旧入口兼容。
 
 源码级回放与区域预览守卫同步扫描迁出的模块：船位移除、剩余船数、区域目标和无忧梦呓实现检查不再硬编码旧的 `server.py` 位置。
@@ -19,9 +21,9 @@
 - 所有静态脚本 `node --check`：通过。
 - `node tools/dom_contract_check.mjs`：DOM 契约通过，保留 3 条已核实无害的悬空提示。
 - `node tools/dom_replay_frame_check.mjs`：108 项逐格回放断言通过。
-- `python -m py_compile server.py application/card_special_effects.py application/card_field_effects.py application/card_steal_effects.py` 与 `git diff --check`：通过。
+- `python -m py_compile server.py application/card_special_effects.py application/card_field_effects.py application/card_steal_effects.py application/card_temporary_effects.py` 与 `git diff --check`：通过。
 - 隔离 SQLite 启动服务后，首页和 `/api/rank_constants` HTTP smoke：通过。
 
 ## 兼容与剩余范围
 
-事件名、回放载荷、卡牌行为和旧服务端函数入口保持不变。服务端仍有 `滥竽充数` 一个主要卡牌效果分支及攻击、连锁编排待迁；`game.js` 仍保留目标选择器组件、卡牌效果提示和对局渲染。下一批应继续按效果依赖切片，迁移后保留兼容入口并同步源码守卫。
+事件名、回放载荷、卡牌行为和旧服务端函数入口保持不变。卡牌效果已全部接入应用模块；`game.js` 仍保留目标选择器组件、卡牌效果提示和对局渲染，攻击、连锁和放置编排仍待拆分。后续迁移继续保留兼容入口并同步源码守卫。

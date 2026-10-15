@@ -23,6 +23,7 @@ import re
 import replay
 import server
 import application.card_special_effects as special_effects
+import application.card_temporary_effects as temporary_effects
 from server import GameRoom, Player, PlayerShip, Position, room_manager
 
 P1, P2 = 'rembuf-p1', 'rembuf-p2'      # ⚠️ 与座位代号 `p1`/`p2` 故意取不同的串（教训 #20）
@@ -202,7 +203,7 @@ WRITE_SITES = {
     ('apply_shenwei', 'augassign'),
     ('_do_demon_contract_sacrifice', 'assign'),
     ('_apply_ship_sunk_effects', 'augassign'),
-    ('_recall_lanyu_ships', 'augassign'),
+    ('recall', 'augassign'),
     ('apply_magic_effect', 'assign'),
     ('apply_magic_effect', 'augassign'),
     ('confirm_magic_target', 'assign'),
@@ -245,7 +246,7 @@ def _scan_remaining_writes():
                     if isinstance(tgt, ast.Attribute) and tgt.attr == 'remaining_ships':
                         found.add((name, op))
 
-    for path in (server.__file__, special_effects.__file__):
+    for path in (server.__file__, special_effects.__file__, temporary_effects.__file__):
         tree = ast.parse(io.open(path, encoding='utf-8').read())
         for node in ast.iter_child_nodes(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):

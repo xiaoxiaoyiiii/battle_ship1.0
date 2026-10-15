@@ -58,6 +58,7 @@ from application.card_judgement_effects import JudgementEffects
 from application.card_special_effects import SpecialCardEffects
 from application.card_steal_effects import StealEffects
 from application.card_temporary_effects import TemporaryShipEffects
+from application.card_refund import refund_card_to_hand
 from application.chain_policy import ChainPolicy
 from application.card_tactical_effects import TacticalEffects
 from application.card_field_effects import FieldEffects
@@ -8500,48 +8501,10 @@ def _advance_chain_window(room, player_id, display_delay: bool = True):
 
 
 def _refund_card_to_hand(room, player_id, card, result) -> bool:
-    """卡牌「根本没满足发动条件」时退回手牌，并明确告诉玩家原因。
-
-    ⚠️ 为什么需要它：`handle_use_magic_card` 是【先扣牌进弃牌堆、再压连锁】，
-    而一大批卡的条件要到 `apply_magic_effect` 结算时才发现不满足 ——
-    那些分支一律 `result['success'] = False; return result`，牌既不退还也不回手，
-    玩家看到「不满足某某条件」的同时牌没了（实测报的「效果没生效却把牌吞掉了」）。
-    涉及：死者苏生/疗愈没有沉船、绝处逢生不足 3 艘、神之宣告不足 3 艘、
-    平等条约没有船数变化、余音绕梁不在准备阶段、桃园结义撞上无中生有、
-    区域卡没选目标、失灵！/加百列之光没有可无效化的目标 …
-
-    只按【同一引用】退还：卡牌对象可能已被「盗亦有道」从弃牌堆偷走，
-    按名字找会把同一张牌变成两张（凭空造牌），找不到一律不退。
-    """
-    player = room.players.get(player_id)
-    if player is None or card is None:
-        return False
-    # 已经在手上：什么都不做（重复退还同样会造牌）
-    if any(c is card for c in player.magic_hand):
-        return False
-
-    refunded = False
-    for i, c in enumerate(room.magic_discard):
-        if c is card:
-            room.magic_discard.pop(i)
-            player.magic_hand.append(card)
-            refunded = True
-            break
-    if not refunded:
-        # 场地卡出牌时【不入弃牌堆】（实例直接贴到 field_magic），
-        # 所以它失败时只能在"确实不在场上"的前提下补回手牌。
-        if getattr(card, 'type', None) == '场地' and room.field_magic is not card:
-            player.magic_hand.append(card)
-            refunded = True
-    if not refunded:
-        return False
-
-    reason = (getattr(result, 'message', '') or '不满足发动条件').strip()
-    emit('message', {'text': f'{card.name}未发动：{reason}，卡牌已退回手牌'}, to=player.sid)
-    add_game_log(room, f'{_log_name(room, player_id)} 发动 {card.name} 失败：'
-                       f'{reason}（卡牌退回手牌）', 'magic')
-    return True
-
+    """兼容入口：由应用层执行卡牌失败退回。"""
+    return refund_card_to_hand(
+        room, player_id, card, result,
+        emit=emit, add_game_log=add_game_log, log_name=_log_name)
 
 def resolve_chain(room):
     """结算连锁：栈顶先出（后发先至）。被无效化的项跳过效果。"""

@@ -1,0 +1,27 @@
+# 阶段 10：特殊魔法卡与前端目标规则迁移
+
+## 迁移内容
+
+`application/card_special_effects.py` 接管 `神威！`、`神之宣告` 和 `疗愈` 的实际结算。模块通过显式注入使用广播、回放、选船、牺牲、复活和终局结算能力，不反向导入 `server.py`。`server.py` 保留三个兼容包装入口，`apply_magic_effect` 继续负责连锁编排、未知卡处理和最终收口，并在特殊卡模块之后保持原有的立即返回语义。
+
+`application/card_field_effects.py` 现在也接管 `教皇旨意` 的即时归零逻辑，与另外三张场地卡共用同一入口；战斗阶段中途打出时仍会立即广播 `attacks_updated`，不会退回到阶段切换时机。
+
+`application/card_steal_effects.py` 接管 `盗亦有道` 在连锁栈与历史记录之间选择目标、避免重复盗取、从弃牌堆转移卡牌的逻辑；`server.py` 只保留调度和最终收口。
+
+前端新增 `static/magic_rules.js`，承接魔法卡使用阶段门禁、命中前置条件、绝处逢生锁卡判断和 `MAGIC_TARGET_DESCRIPTORS`。目标选择器和发送逻辑仍留在 `game.js`，模板按依赖顺序在 `game.js` 前加载新脚本。经典脚本共享作用域保留现有页面、浏览器工具和旧入口兼容。
+
+源码级回放与区域预览守卫同步扫描迁出的模块：船位移除、剩余船数、区域目标和无忧梦呓实现检查不再硬编码旧的 `server.py` 位置。
+
+## 验证
+
+- `python -m pytest -q`：1069 passed，1 个既有 Eventlet 弃用警告。
+- 特殊卡、回放、观战和目标预览定向测试：通过。
+- 所有静态脚本 `node --check`：通过。
+- `node tools/dom_contract_check.mjs`：DOM 契约通过，保留 3 条已核实无害的悬空提示。
+- `node tools/dom_replay_frame_check.mjs`：108 项逐格回放断言通过。
+- `python -m py_compile server.py application/card_special_effects.py application/card_field_effects.py application/card_steal_effects.py` 与 `git diff --check`：通过。
+- 隔离 SQLite 启动服务后，首页和 `/api/rank_constants` HTTP smoke：通过。
+
+## 兼容与剩余范围
+
+事件名、回放载荷、卡牌行为和旧服务端函数入口保持不变。服务端仍有 `滥竽充数` 一个主要卡牌效果分支及攻击、连锁编排待迁；`game.js` 仍保留目标选择器组件、卡牌效果提示和对局渲染。下一批应继续按效果依赖切片，迁移后保留兼容入口并同步源码守卫。

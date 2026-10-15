@@ -47,6 +47,8 @@ import server
 import application.player_state as player_state
 import application.card_area_damage_effects as area_damage_effects
 import application.card_board_effects as board_effects
+import application.card_sacrifice_effects as sacrifice_effects
+import application.card_special_effects as special_effects
 
 # 只扫描 Player 的两个名字（`player` / `owner` / `caster` / 局部变量…），
 # 排掉明显不是 Player 的容器（本项目里没有，留着给将来）：
@@ -86,11 +88,11 @@ REMOVAL_SITES = [
     dict(fn='apply_board_card_effect', container='caster', ops=['remove'], card='绝处逢生',
          kind='sink', need='sink',
          why='`绝处逢生` 牺牲自己**全部**战舰（不走 `_do_demon_contract_sacrifice`）'),
-    dict(fn='apply_magic_effect', container='caster', ops=['remove'], card='钢筋铁骨',
+    dict(fn='apply_steel_bone', container='caster', ops=['remove'], card=None,
          kind='sink', need='sink',
          why='`钢筋铁骨` 牺牲一艘换无敌（同上）'),
     # ---- ② 神威！：致死那一支要登记；暂时除外那一支**绝不许**登记 ----
-    dict(fn='apply_magic_effect', container='target_player', ops=['delitem'], card='神威！',
+    dict(fn='apply_shenwei', container='target_player', ops=['delitem'], card=None,
          kind='sink', need='sink',
          why='★ 本批修的第五处：致死那一支（`board != "self"` 且区域内恰好 1 艘）会 '
              '`_mark_ship_sunken`，**且不产生攻击步** ⇒ 不登记就凭空消失。'
@@ -171,7 +173,8 @@ def _scan_ship_mutations():
     """扫出服务端运行时代码里所有"改 `*.ships`"的点。"""
     found = []
     for path in (server.__file__, player_state.__file__, area_damage_effects.__file__,
-                 board_effects.__file__):
+                 board_effects.__file__, sacrifice_effects.__file__,
+                 special_effects.__file__):
         src = io.open(path, encoding='utf-8').read()
         found.extend(_scan_ship_mutations_in(src))
     return found

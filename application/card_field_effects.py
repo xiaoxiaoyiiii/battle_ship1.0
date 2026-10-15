@@ -24,4 +24,15 @@ class FieldEffects:
                     'current_attacker': room.current_attacker,
                     'attacks_remaining': room.attacks_remaining,
                 }, room=room.id)
+        elif card.name == '教皇旨意':
+            # 这张速阶 1 场地卡也允许在战斗阶段打出，所以不能只依赖
+            # preparation -> battle 的阶段切换来归零；必须在结算当场更新。
+            room.game_effects['papal_edict'] = True
+            room.attacks_remaining = 0
+            self._emit('attacks_updated', {
+                'current_attacker': room.current_attacker,
+                'attacks_remaining': room.attacks_remaining,
+            }, room=room.id)
+            result.message = (
+                '教皇旨意已生效，双方攻击次数变为0，通过弃置魔法卡攻击对方两次')
         return True

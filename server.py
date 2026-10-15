@@ -55,6 +55,8 @@ from application.placement_completion import PlacementCompletion
 from application.placement_projection import PlacementProjection
 from application.card_sacrifice_effects import apply_steel_bone
 from application.card_judgement_effects import JudgementEffects
+from application.card_special_effects import SpecialCardEffects
+from application.card_steal_effects import StealEffects
 from application.card_tactical_effects import TacticalEffects
 from application.card_field_effects import FieldEffects
 from application.ship_selection import (
@@ -11624,194 +11626,43 @@ _FIELD_EFFECTS = FieldEffects(
     emit=lambda *args, **kwargs: emit(*args, **kwargs),
 )
 
+_SPECIAL_EFFECTS = SpecialCardEffects(
+    opponent_of=_opponent_of,
+    add_shenwei_hole=_add_shenwei_hole,
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    replay_note_ship_lost=replay.note_ship_lost,
+    capture_replay_observation=capture_replay_observation,
+    mark_ship_sunken=_mark_ship_sunken,
+    apply_ship_loss_linkage=_apply_ship_loss_linkage,
+    finish_game=_finish_game,
+    replay_refresh_ships=replay.refresh_ships,
+    find_ship_at=_find_ship_at,
+    alive_ships=_alive_ships,
+    shuffle=lambda pool: random.shuffle(pool),
+    request_ship_pick=_request_ship_pick,
+    sacrifice_ship=_do_demon_contract_sacrifice,
+    revive_sunken_ships=_revive_sunken_ships,
+    emit_ships_updated=_emit_ships_updated,
+    emit_player_ships=_emit_player_ships,
+)
+
+_STEAL_EFFECTS = StealEffects()
+
+# 兼容旧的直接调用入口；实际效果全部由 application.card_special_effects
+# 结算，避免业务代码和测试夹具继续依赖 server.py 内的实现细节。
 def _apply_shenwei_card(room, caster_id, card, target_data, result):
-    opponent_id = next(p for p in room.players if p != caster_id)
-    caster = room.players[caster_id]
-    opponent = room.players[opponent_id]
-    # 选定己方/对方棋盘上的 3*3 区域：该区域从棋盘上“扣掉”，
-    # 区域内战舰暂时除外，下一个大回合开始时回归原位、区域恢复。
-    if 'target_area' not in target_data:
-        result['success'] = False
-        result['message'] = '需要选择目标区域'
-        return result
-    area = target_data['target_area']
-    board = target_data.get('board', 'opponent')  # 'self' | 'opponent'
-    target_id = caster_id if board == 'self' else opponent_id
-    target_player = room.players[target_id]
-    # 收集并移除区域内的战舰
-    excluded_ships = []
-    for i in range(len(target_player.ships) - 1, -1, -1):
-        ship = target_player.ships[i]
-        in_area = any(
-            area['x1'] <= pos.x <= area['x2'] and
-            area['y1'] <= pos.y <= area['y2']
-            for pos in ship.positions
-        )
-        if in_area:
-            excluded_ships.append(ship)
-            del target_player.ships[i]
-            target_player.remaining_ships -= 1
-    # 把这片区域从棋盘上扣掉（下个大回合恢复）
-    return_turn = room.round + 1
-    _add_shenwei_hole(room, target_id, area, return_turn)
-    emit('shenwei_hole', {
-        'player': target_id, 'area': area, 'return_turn': return_turn
-    }, room=room.id)
-    # 卡面：仅当作用于对方棋盘且区域内恰好 1 艘船时，直接死亡
-    if board != 'self' and len(excluded_ships) == 1:
-        # ★ 2026-09-24（回放批）：这一支是**致死**，不是"暂时除外"——
-        #   上面那句 `del target_player.ships[i]` 会让这一格**从船位时间线里消失**
-        #   （`replay._ship_cells` 只遍历 `player.ships`），而且它**不产生 attack 步**、
-        #   也没有任何"沉没"记录 ⇒ 回放里那格凭空消失（症状与主动牺牲一模一样）。
-        #   这里把它登记成沉没格，用**手上的这艘船**当数据源（绝不去 diff 快照猜）。
-        #   ⚠️ 与"暂时除外"那一支的差别是**有意的**：除外的船是棋盘上挖出来的洞、
-        #      下个大回合原样归还（`_restore_due_shenwei`），所以那一支**不登记**；
-        #      这一支在游戏里双方看到的是"被打沉"（下面 `_apply_ship_loss_linkage`
-        #      与 `_mark_ship_sunken` 就是沉没口径），回放必须跟着画成沉没。
-        #   ⚠️ 登记只改记录器状态、不推动它；本分支末尾那次 `refresh_ships` 才把
-        #      "船的位置 / 船数 / 待办全部落定之后"的局面记进时间线。
-        replay.note_ship_lost(capture_replay_observation(room), target_id,
-                              [{'x': p.x, 'y': p.y}
-                               for p in excluded_ships[0].positions])
-        _mark_ship_sunken(target_player, excluded_ships[0])
-        _apply_ship_loss_linkage(room, caster_id, opponent_id, count=1)
-        result['message'] = '目标区域内1艘战舰被击沉'
-    else:
-        room.game_effects.setdefault('excluded_ships', []).append({
-            'ships': excluded_ships,
-            'player': target_id,
-            'return_turn': return_turn,
-        })
-        if excluded_ships:
-            _apply_ship_loss_linkage(room, caster_id, target_id,
-                                     count=len(excluded_ships))
-        result['message'] = f'目标区域内{len(excluded_ships)}艘战舰被暂时除外'
-    _emit_ships_updated(room)
-    # 斩杀线：对方船被清空直接获胜；己方自扣清空则判负
-    if opponent.remaining_ships <= 0 and room.state != 'game_over':
-        _finish_game(room, caster_id, opponent_id, '神威！清空对方棋盘')
-        result['message'] += '，对方战舰全灭，直接获胜'
-    elif caster.remaining_ships <= 0 and room.state != 'game_over':
-        _finish_game(room, opponent_id, caster_id, '神威！清空己方棋盘')
-        result['message'] += '，己方战舰全灭，判负'
-    # ★ 2026-09-24（回放批）：**船位/船数全部落定之后**再显式刷新一次回放的船位时间线。
-    #
-    # ⚠️ 先说清楚它**不是**这条修复能不能生效的前提（本批实测过）：真对局走
-    #    `use_magic_card` → `resolve_chain`，那里在 `apply_magic_effect` **之后**
-    #    调 `log_magic` ⇒ 追加下一步时比对快照，这一帧**顺带就被记下来了**
-    #    （打枪前 vs 打枪后：那一格由"活船"变成"沉没格"，行只多一条）。
-    #    所以刻意在这里留一枪，是给**不经过日志的顺序**兜底（`apply_magic_effect`
-    #    被直调时 —— 上一批踩过的正是这个形状："收尾不写任何日志 ⇒ 那一帧永远不变"）：
-    #      · 致死那一支的沉没格是**登记**出来的（上面 `note_ship_lost`），
-    #        而登记只改记录器状态、不推动它；
-    #      · 神威洞也是这一步才进 `game_effects` 的。
-    #    `refresh_ships` 幂等（`_record_snapshot` 自己比对，没变就不写），
-    #    所以这里随手调是安全的；**实测过它两处都不可省**：
-    #    去掉它 + 只喂第一步日志 ⇒ 时间线里那一格又变成"凭空消失"。
-    # ⚠️ 排在 `_finish_game` **之后**：终局会在同一步里再追加一条日志、再比对一次快照，
-    #    早刷新记下来的是"终局日志还没写"的中间态。
-    replay.refresh_ships(capture_replay_observation(room))
-
-
+    return _SPECIAL_EFFECTS.apply_shenwei(
+        room, caster_id, card, target_data, result)
 
 
 def _apply_divine_decree_card(room, caster_id, card, target_data, result):
-    opponent_id = next(p for p in room.players if p != caster_id)
-    caster = room.players[caster_id]
-    opponent = room.players[opponent_id]
-    # 牺牲两艘船，选择一个效果。
-    # ⚠️ 判据是 **<= 2**（即需要 3 艘以上），不是 `< 2`（作者 2026-09-19 明确要求）：
-    #    牺牲两艘之后至少得留一艘 —— 否则"打出这张牌"等于把自己送到 0 艘，
-    #    紧接着就被判负，那不是玩家想要的取舍。
-    if caster.remaining_ships <= 2:
-        result['success'] = False
-        result['message'] = '您的船数不足，无法使用神之宣告'
-        return result
-    # 牺牲两艘船：优先采用玩家点选的两艘（前端 own_ships → selected_cells），
-    # 非法/不足时用随机补齐（AI 与老客户端仍可出牌）。
-    chosen = []
-    cells = target_data.get('selected_cells') if isinstance(target_data, dict) else None
-    if isinstance(cells, list):
-        for c in cells:
-            try:
-                pos = (int(c.get('x')), int(c.get('y')))
-            except (AttributeError, TypeError, ValueError):
-                continue
-            # alive_only：点到沉船的格子不算数（否则牺牲变成零代价）
-            ship_at = _find_ship_at(caster, pos, alive_only=True)
-            if ship_at is not None and ship_at not in chosen:
-                chosen.append(ship_at)
-    if len(chosen) < 2:
-        # 只从"还活着"的船里补：已沉的船在 ships 里仍占位，不排除会把
-        # 牺牲变成零代价（沉船堆还会出现重复条目）
-        pool = [s for s in _alive_ships(caster) if s not in chosen]
-        random.shuffle(pool)
-        chosen.extend(pool[:2 - len(chosen)])
-    if len(chosen) < 2:
-        result['success'] = False
-        result['message'] = '您的船数不足，无法使用神之宣告'
-        return result
-    # 逐个走统一结算：移船 + 记日志 + 公开广播 ship_sacrificed + 按视角刷船数。
-    # 以前这里是自己 remove/append 就完事，结果对方完全看不到这两艘船沉了。
-    for sacr in chosen[:2]:
-        _do_demon_contract_sacrifice(room, caster_id, sacr, 'divine_decree')
-    # 获取选择的效果：优先采用出牌时携带的 effect_choice（前端出牌前选择），
-    # 其次回退到临时数据，缺省为 1（摧毁对方一艘战舰）。
-    if isinstance(target_data, dict) and target_data.get('effect_choice'):
-        try:
-            effect_choice = int(target_data['effect_choice'])
-        except (TypeError, ValueError):
-            effect_choice = 1
-    else:
-        try:
-            effect_choice = int(room.magic_temp_data.get('effect_choice', 1))
-        except (TypeError, ValueError):
-            effect_choice = 1
-    if effect_choice == 1:
-        # 卡面：让对方【自己选择】一艘船使其死亡（AI 由服务端代选）
-        picked = _request_ship_pick(
-            room, opponent_id, 'divine_decree',
-            '神之宣告生效：请点选一艘自己的战舰，使其阵亡')
-        if picked is not None:
-            _do_demon_contract_sacrifice(room, opponent_id, picked, 'divine_decree')
-            result['message'] = '牺牲两艘战舰，对方一艘战舰被摧毁'
-        else:
-            result['message'] = '牺牲两艘战舰，等待对方选择阵亡的战舰'
-    else:
-        # 跳过对方**本大回合内**的所有阶段（存玩家ID）。
-        # ⚠️ 用 `skip_opponent_stages` 而**不是** `skip_opponent_turn`：
-        #    后者是 Freezing！ 的标记，它跳完会**直接翻页**（重新猜拳 + 发牌）。
-        #    卡面写的是"跳过这一个大回合内对方的所有阶段" —— **不含翻页**。
-        #    两者混用会让神之宣告白送一次状态重置（作者实测反馈的
-        #    "效果二疑似没实现"根因就在这，它做的不是卡面承诺的事）。
-        room.skip_opponent_stages = opponent_id
-        result['message'] = '牺牲两艘战舰，跳过对方本回合所有阶段'
-
-
+    return _SPECIAL_EFFECTS.apply_divine_decree(
+        room, caster_id, card, target_data, result)
 
 
 def _apply_healing_card(room, caster_id, card, target_data, result):
-    opponent_id = next(p for p in room.players if p != caster_id)
-    caster = room.players[caster_id]
-    opponent = room.players[opponent_id]
-    # 复活至多两艘被击杀的船（原地复活）。
-    # 没有"6 艘上限"（作者确认：船数只受棋盘格数限制）。
-    if not caster.sunken_ships:
-        result['success'] = False
-        result['message'] = '没有可复活的战舰'
-        return result
-    # 卡面："选定自己至多两艘被击杀的船并将他们在原地复活。"
-    # 原先走的是"选一个未打过的空格"的放置流程，与卡面不符。
-    count = min(2, len(caster.sunken_ships))
-    # reveal_to=对手：疗愈是【原地复活】，那些格子的位置对方本来就知道
-    # （是他打沉的），显形只是防止他忘记、不是泄露新信息（作者 2026-09-16 要求）
-    revived = _revive_sunken_ships(room, caster, count, reveal_to=_opponent_of(room, caster_id))
-    _emit_ships_updated(room)
-    _emit_player_ships(room, caster_id)
-    result['message'] = f'疗愈生效，{revived} 艘战舰在原地复活'
-
-
-
+    return _SPECIAL_EFFECTS.apply_healing(
+        room, caster_id, card, target_data, result)
 
 
 def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_data):
@@ -11888,97 +11739,17 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
     if negation_stop:
         return result
 
-    if card.name == '神威！':
-        _apply_shenwei_card(room, caster_id, card, target_data, result)
-        return result
-    if card.name == '神之宣告':
-        _apply_divine_decree_card(room, caster_id, card, target_data, result)
-        return result
-    if card.name == '疗愈':
-        _apply_healing_card(room, caster_id, card, target_data, result)
+    special_handled, special_stop = _SPECIAL_EFFECTS.apply(
+        room, caster_id, card, target_data, result)
+    if special_stop:
         return result
 
-    if card.name == '教皇旨意':
-        # 场地魔法，攻击次数变为0，通过弃置魔法卡攻击
-        _place_field_magic(room, caster_id, card)
-        room.game_effects['papal_edict'] = True
-
-        # ⚠️ 必须【在这里】立即归零，不能只依赖"进入战斗阶段"那一刻。
-        # 教皇旨意是速阶1，而 can_play_magic_card 允许速阶1在【战斗阶段】使用 ——
-        # 从战斗阶段打出时，enter_battle_phase 的阶段转换早已发生（或压根不再发生），
-        # attacks_remaining 会一直停在旧值（实测：6），于是
-        # handle_enter_end_phase 的 "还有剩余攻击次数" 门禁永远拒绝 → 对局卡死。
-        room.attacks_remaining = 0
-        emit('attacks_updated', {
-            'current_attacker': room.current_attacker,
-            'attacks_remaining': room.attacks_remaining
-        }, room=room.id)
-
-        result['message'] = '教皇旨意已生效，双方攻击次数变为0，通过弃置魔法卡攻击对方两次'
-
-    elif card.name == '盗亦有道':
-        # 卡面：立即获取对方打出的上一张魔法卡。
-        #
-        # ⚠️ 不能在连锁里读 room.magic_history：连锁是 LIFO（后发先至）结算，
-        # 盗亦有道先出栈时，它要偷的那张对手的牌【还没轮到结算、自然还没写进历史】，
-        # 于是恒报「对方没有使用过魔法卡」。这与失灵！当初康不到目标是同一个病灶，
-        # 修法也一致 —— 读【连锁栈】而不是读历史。
-        # 结算中当前项已出栈，故 chain[-1] 即"紧邻下方那一项"（下一个待结算项）。
-        stolen_card = None
-        stolen_entry = None
-        stolen_from_chain = False
-
-        target = room.chain[-1] if room.chain else None
-        if target is not None and target.player_id != caster_id:
-            # 连锁内：偷栈上紧邻的下方那一项
-            stolen_card = target.card
-            stolen_from_chain = True
-        else:
-            # 非连锁（对手的牌已结算完）或栈顶是自己：回退到全局历史里对方最近的一张
-            for entry in reversed(room.magic_history):
-                if entry['caster'] != caster_id and not entry.get('negated_skip'):
-                    stolen_entry = entry
-                    stolen_card = entry['card']
-                    break
-
-        if stolen_card is None:
-            result['success'] = False
-            result['message'] = '对方没有使用过魔法卡'
-            return result
-
-        # 同一条历史只能被偷一次，否则可反复盗取同一张卡造成卡牌增殖
-        if stolen_entry is not None and stolen_entry.get('stolen'):
-            result['success'] = False
-            result['message'] = '该魔法卡已被盗取过'
-            return result
-
-        # 连锁内偷到的牌【还没结算】，此刻不可能有历史条目可标记。把"这张牌已被盗取"
-        # 记在房间级台账里，等 resolve_chain 真正结算它、写入历史时再合并进去。
-        # （不能在这里往 magic_history 塞占位条目 —— 那会让同一张牌出现两条记录，
-        #   回退分支扫到没标记的那条就会重复盗取，等于凭空造牌。）
-        ledger = room.game_effects.setdefault('stolen_cards', {})
-        if id(stolen_card) in ledger:
-            result['success'] = False
-            result['message'] = '该魔法卡已被盗取过'
-            return result
-
-        # 从弃牌堆中移除对应卡牌，保证是"转移"而非"复制"
-        # （非场地卡在出牌时即进入弃牌堆，不移除会出现弃牌堆与手牌同时存在的副本）
-        for i, c in enumerate(room.magic_discard):
-            if c is stolen_card or (c.name == stolen_card.name and c.speed == stolen_card.speed):
-                room.magic_discard.pop(i)
-                break
-
-        if stolen_from_chain:
-            ledger[id(stolen_card)] = True
-        else:
-            stolen_entry['stolen'] = True
-
-        caster.magic_hand.append(stolen_card)
-
-        result['message'] = f'成功盗取对方的{stolen_card.name}'
-
-
+    steal_handled, steal_stop = _STEAL_EFFECTS.apply(
+        room, caster_id, card, result)
+    if steal_stop:
+        return result
+    if steal_handled:
+        pass
     elif card.name == '钢筋铁骨':
         apply_steel_bone(
             room, caster_id, result, caster=caster,
@@ -12036,7 +11807,8 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
 
     else:
         if not (opening_handled or status_handled or reveal_handled
-                or area_handled or board_handled or negation_handled):
+                or area_handled or board_handled or negation_handled
+                or special_handled or steal_handled):
             result.success = False
             result.message = f'未实现的魔法卡: {card.name}'
 

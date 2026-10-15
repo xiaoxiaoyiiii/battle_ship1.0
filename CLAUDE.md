@@ -164,10 +164,10 @@ phase:                        preparation → battle → end
 
 - **50 条 / 48 唯一卡名**（`失灵！` ×3 是**故意的**，`draw_card` 去重对它特例放行；速阶与类型分布以 `magic_card.json` 为准）；
   类型：普通 + 场地 4（恶魔契约 / 禁忌果实 / 伊甸园 / 教皇旨意）+ 判定 3（命运骰子 / 无忧梦呓 / 兵粮寸断）。
-- 核心分发 `apply_magic_effect(room, caster_id, card, target_data)`（约 1240 行，42 处 `card.name ==`）。
+- 核心分发 `apply_magic_effect(room, caster_id, card, target_data)` 现在主要负责模块调度、连锁编排、未知卡兜底和最终收口；卡牌效果按依赖组位于 `application/card_*_effects.py`。当前仍在入口内的主要卡牌分支是滥竽充数。
 - ⚠️ **改卡要同步 4 处**：`static/magic_card.json`、`static/magic_cards.js`、`apply_magic_effect` 分支、测试。
   前两者须逐字符一致（一致性测试不校验 `description`，需人工留意）。
-- 目标选择：前端 `confirmMagicTarget({target_area|target_line|ship_indices|…})` → `use_magic_card` → 服务端读
+- 目标选择规则镜像位于 `static/magic_rules.js`；前端 `confirmMagicTarget({target_area|target_line|ship_indices|…})` → `use_magic_card` → 服务端读
   `target_area {x1,y1,x2,y2}`（神威/冻结/探测雷达）与 `target_line {type:'row'|'col',index}`（轰炸）。
 
 ---

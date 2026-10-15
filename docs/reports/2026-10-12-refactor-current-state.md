@@ -17,6 +17,8 @@ Phase 0–8 的设计基线、领域模型、观察边界、仓储边界、前�
 | 十二张状态与选目标卡的实际效果 | `application/card_status_effects.py` | 阶段 10 第二批已在生产结算入口调用；通过显式传入的五个旧辅助函数结算，失败时提前返回。其余卡牌分支仍在 `server.py`。 |
 | 七张侦查与范围伤害卡的实际效果 | `application/card_reveal_effects.py`、`application/card_area_damage_effects.py` | 阶段 10 第三批已在生产结算入口调用；雷达流程合并重复代码，范围伤害继续使用旧沉船与事件辅助函数。 |
 | 三张棋盘重置与自救卡的实际效果 | `application/card_board_effects.py` | 阶段 10 第四批已在生产结算入口调用；回放、观战刷新、AI 布船和沉船流程仍注入原辅助函数。 |
+| 三张特殊卡的实际效果 | `application/card_special_effects.py` | 阶段 10 第八批已接入生产结算入口；神威洞生命周期、选船队列和复活/牺牲基础能力通过显式依赖注入，旧 `_apply_*` 入口保留兼容。 |
+| 四张场地魔法的实际效果 | `application/card_field_effects.py` | 阶段 10 第八批将教皇旨意的即时攻击归零接入既有场地效果入口；拆场地和攻击次数恢复仍由服务端生命周期辅助函数完成。 |
 | 三张无效化卡及共享判据 | `application/card_negation_effects.py` | 阶段 10 第五批已接管连锁目标、免疫关系、平等条约船数变化判据和实际结算；AI 与真实出牌读取同一份规则。 |
 | 命运骰子与共享弃牌待办 | `application/card_dice_effects.py` | 阶段 10 第七批已接管六种结果、弃牌请求、确认和完成广播；服务端保留身份验证与兼容入口。 |
 | 选船待办与优先级仲裁 | `application/ship_selection.py` | 阶段 10 第六批已接管按玩家队列、消费、取消、投递和重连投影；牺牲结算仍由服务端编排。 |
@@ -45,6 +47,8 @@ Phase 0–8 时，这些项目并非等量地从 `server.py` 剪切出去：相�
 
 阶段 10 第七批把命运骰子和共享弃牌待办迁入 `application/card_dice_effects.py`，把回放播放器迁入 `static/replay_player.js`。`server.py` 再删除 208 行、增加 17 行；`static/game.js` 再删除 1,144 行、增加 7 行说明与接线，当前分别为 10,731 与 13,210 个非空行。全量回归 1069 passed；回放逐格检查 108 项、DOM 契约和真实 Edge 回放流程均通过。实际攻击、连锁、重连输入验证和剩余卡牌编排仍集中在服务端。
 
+阶段 10 第八批把神威、神之宣告和疗愈迁入 `application/card_special_effects.py`，将教皇旨意与盗亦有道分别接入 `application/card_field_effects.py`、`application/card_steal_effects.py`，并把前端魔法卡使用门禁与目标描述迁入 `static/magic_rules.js`。`server.py` 当前约 10,286 个非空行，`static/game.js` 当前约 13,058 个非空行；旧服务端特殊卡入口和经典脚本共享作用域保持兼容。全量回归仍为 1069 passed；剩余主要卡牌效果是滥竽充数，攻击与连锁编排仍在原文件。
+
 ### `static/game.js` 拆出了什么
 
 | 新文件 | 从原文件移出的内容 | 当前边界 |
@@ -54,6 +58,7 @@ Phase 0–8 时，这些项目并非等量地从 `server.py` 剪切出去：相�
 | `static/client_socket_events.js` | `setupSocketListeners` 和 Socket 事件监听注册、回调 | 回调仍直接修改共享状态和界面；尚未成为独立的事件/状态架构。 |
 | `static/home_panels.js` | 首页名片、统计、成就、段位、在线情况及热门卡数据与渲染 | 首页逻辑已集中到独立脚本。 |
 | `static/card_catalog.js` | 卡牌名称查询与图鉴目录查询 | 卡牌原始数据继续由既有 `static/magic_cards.js` 提供。 |
+| `static/magic_rules.js` | 魔法卡使用门禁、命中前置条件、目标描述镜像 | 经典脚本共享作用域；目标选择器组件与目标发送仍在 `game.js`。 |
 | `static/replay_player.js` | 回放 DOM、帧解算、时间线、棋盘/手牌渲染、播放与设置 | 通过经典脚本共享作用域与 `game.js` 的入口衔接；HTTP 回放和观战隔离契约保持。 |
 
 相对 `origin/main`，`static/game.js` **删除 3,679 行、增加 7 行说明与接线**；六个前端辅助脚本承接迁出内容。模板按依赖顺序加载它们。`game.js` 仍有 13,210 个非空行，保留布船、对局棋盘、卡牌交互、好友、观战等大量界面逻辑；回放播放器已独立成文件。这一轮仍使用经典脚本共享作用域，尚未迁成 ES module，也未消除共享全局状态。

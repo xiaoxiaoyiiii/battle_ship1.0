@@ -553,10 +553,12 @@ def test_master_pool_excludes_wuyou_dream():
         '无忧梦呓被加进大师卡池了 —— 它和命运骰子是同一个形状（AI 侧弃牌待办'
         '没有消费点 + 收益延迟到账），见 server.py _MASTER_ENABLED_CARDS 旁边那条')
     # 卡本身必须照常实现（"AI 不打" ≠ "这张卡没了"）：真人对局里能用
-    src = open(os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'server.py'),
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(root, 'server.py'), encoding='utf-8').read()
+    judgement_src = open(os.path.join(
+        root, 'application', 'card_judgement_effects.py'),
         encoding='utf-8').read()
-    assert "elif card.name == '无忧梦呓':" in src
+    assert "elif card.name == '无忧梦呓':" in judgement_src
     assert 'def _register_wuyou_dream' in src
     assert 'def _settle_wuyou_dream' in src
 

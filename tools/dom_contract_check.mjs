@@ -31,7 +31,7 @@ const HERE = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z
 const ROOT = findRoot(HERE);
 
 const HTML = path.join(ROOT, 'templates', 'index.html');
-const JS_FILES = ['static/game.js', 'static/magic_rules.js', 'static/magic_effect_feedback.js', 'static/magic_target_ui.js', 'static/client_state.js', 'static/client_socket.js',
+const JS_FILES = ['static/game.js', 'static/magic_rules.js', 'static/magic_effect_feedback.js', 'static/magic_target_ui.js', 'static/magic_actions.js', 'static/client_state.js', 'static/client_socket.js',
   'static/client_socket_events.js', 'static/home_panels.js', 'static/card_catalog.js',
   'static/replay_player.js',
   'static/adaptive_layout.js', 'static/wallpaper.js',

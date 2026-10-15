@@ -14,6 +14,8 @@
 
 `static/magic_target_ui.js` 接管魔法卡区域、行列、连续格、神威棋盘和选船目标 UI，通过经典脚本共享作用域调用棋盘 DOM 与 `confirmMagicTarget`，目标提交协议保持不变。
 
+`static/magic_actions.js` 接管魔法卡出牌入口、目标确认后的普通出牌/连锁响应/优先级响应分流，以及神之宣告的二段确认；服务端事件名与 payload 保持不变。
+
 前端新增 `static/magic_rules.js`，承接魔法卡使用阶段门禁、命中前置条件、绝处逢生锁卡判断和 `MAGIC_TARGET_DESCRIPTORS`；`static/magic_target_ui.js` 承接目标选择器，目标发送逻辑仍在 `game.js`。模板按依赖顺序在 `game.js` 前加载新脚本。经典脚本共享作用域保留现有页面、浏览器工具和旧入口兼容。
 
 源码级回放与区域预览守卫同步扫描迁出的模块：船位移除、剩余船数、区域目标和无忧梦呓实现检查不再硬编码旧的 `server.py` 位置。

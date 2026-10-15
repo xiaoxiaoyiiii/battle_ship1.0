@@ -58,6 +58,7 @@ from application.card_judgement_effects import JudgementEffects
 from application.card_special_effects import SpecialCardEffects
 from application.card_steal_effects import StealEffects
 from application.card_temporary_effects import TemporaryShipEffects
+from application.chain_policy import ChainPolicy
 from application.card_tactical_effects import TacticalEffects
 from application.card_field_effects import FieldEffects
 from application.ship_selection import (
@@ -8319,6 +8320,12 @@ def _ai_can_negate_chain_top(room, ai_id: str) -> bool:
     return getattr(getattr(top, 'card', None), 'name', None) not in ('看破！', '加百列之光')
 
 
+_CHAIN_POLICY = ChainPolicy(
+    speed3_cards=_speed3_cards,
+    ai_can_negate_top=_ai_can_negate_chain_top,
+)
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 连锁无效化：「正下方那一项」的目标解析 + 免疫关系（**只此一份**）
 # ═══════════════════════════════════════════════════════════════════════════
@@ -8339,27 +8346,8 @@ _equal_treaty_verdict = _negation_effects.verdict
 
 
 def _can_respond_chain(room, player_id):
-    """该玩家此刻能否打出速阶3响应连锁。
-
-    AI 默认不参与；只有「困难」难度、手里有【失灵！】、且当前连锁康得动时才参与。
-    """
-    if not player_id:
-        return False
-    player = room.players.get(player_id)
-    if not player or player.magic_blocked:
-        return False
-    # 绝处逢生：生效回合内自己的其余魔法卡全部无效 —— 连锁响应也不例外。
-    # chain_response 里 can_play_magic_card 会拒掉，但那要等玩家点完卡才知道；
-    # 在这里拦掉，窗口就不会打开，也不会被白白点一次。
-    if player.effect_flags.last_stand:
-        return False
-    if player_id.startswith('ai-'):
-        if getattr(room, 'ai_difficulty', 'normal') != 'hard':
-            return False
-        if not any(c.name == '失灵！' for c in player.magic_hand):
-            return False
-        return _ai_can_negate_chain_top(room, player_id)
-    return bool(_speed3_cards(room, player_id))
+    """兼容入口：交给纯连锁响应资格策略。"""
+    return _CHAIN_POLICY.can_respond(room, player_id)
 
 
 def _clear_chain_display(room):

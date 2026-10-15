@@ -12,7 +12,7 @@ Phase 0–8 的设计基线、领域模型、观察边界、仓储边界、前�
 | --- | --- | --- |
 | 攻击输入、船与棋盘快照、命中/沉船等纯规则 | `domain/combat.py`、`application/attack_service.py` | `handle_attack` 调用新内核做 shadow 对照；旧处理器仍决定生产结果。默认关闭，由 `COMBAT_SHADOW_MODE` 控制。 |
 | 准备/战斗/结束与交接状态转换 | `domain/turns.py`、`application/turn_service.py` | 已有纯状态机和旧房间适配器；`server.py` 中进入阶段、结束阶段和换回合的旧路径仍写入实际状态。 |
-| 卡牌目标规范化、连锁栈与响应状态 | `domain/cards.py`、`domain/chain.py`、`application/chain_service.py` | 模型与适配器可独立验证；`resolve_chain`、响应处理仍在 `server.py` 执行，卡牌效果按后续批次持续迁移。 |
+| 卡牌目标规范化、连锁栈与响应状态 | `domain/cards.py`、`domain/chain.py`、`application/chain_service.py`、`application/chain_policy.py` | 连锁模型和响应资格策略可独立验证；`resolve_chain`、窗口计时、广播和响应处理仍在 `server.py` 执行。 |
 | 首批七张卡的实际效果 | `application/card_opening_effects.py` | 阶段 10 已在生产结算入口调用；其他卡牌分支、未知卡兜底与最终胜负检查仍在 `server.py`。 |
 | 十二张状态与选目标卡的实际效果 | `application/card_status_effects.py` | 阶段 10 第二批已在生产结算入口调用；通过显式传入的五个旧辅助函数结算，失败时提前返回。其余卡牌分支仍在 `server.py`。 |
 | 七张侦查与范围伤害卡的实际效果 | `application/card_reveal_effects.py`、`application/card_area_damage_effects.py` | 阶段 10 第三批已在生产结算入口调用；雷达流程合并重复代码，范围伤害继续使用旧沉船与事件辅助函数。 |

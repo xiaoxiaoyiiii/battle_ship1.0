@@ -54,6 +54,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GAME_JS = os.path.join(ROOT, 'static', 'game.js')
 MAGIC_RULES_JS = os.path.join(ROOT, 'static', 'magic_rules.js')
 SOCKET_EVENTS_JS = os.path.join(ROOT, 'static', 'client_socket_events.js')
+TARGET_UI_JS = os.path.join(ROOT, 'static', 'magic_target_ui.js')
 SERVER_PY = os.path.join(ROOT, 'server.py')
 STATUS_EFFECTS_PY = os.path.join(ROOT, 'application', 'card_status_effects.py')
 REVEAL_EFFECTS_PY = os.path.join(ROOT, 'application', 'card_reveal_effects.py')
@@ -198,7 +199,7 @@ def _server_region_branches():
 
 def _frontend_confirm_call_sites():
     """`game.js` 里全部 `confirmMagicTarget(` 的**行号 + 行内容**（真选择器调用点）。"""
-    src = _read(GAME_JS)
+    src = _read(GAME_JS) + _read(TARGET_UI_JS)
     sites = []
     for i, line in enumerate(src.splitlines(), 1):
         # 跳过函数定义本身

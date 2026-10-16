@@ -5103,36 +5103,7 @@ def _end_turn_locked(room, room_id, player_id):
             if _recall_lanyu_ships(room, room_id):
                 return {'status': 'success', 'game_over': True}
 
-            # 解冻到期的战舰（冻结跨本大回合+下一大回合，第三大回合开始时解除）
-            for p_id in room.players:
-                thawed = False
-                for s in room.players[p_id].ships:
-                    if getattr(s, 'frozen', None) and s.frozen < room.round:
-                        _thaw_ship(s)
-                        thawed = True
-                if thawed:
-                    # 解冻同样要让玩家看到（否则棋盘上一直挂着雪花）
-                    _emit_player_ships(room, p_id)
-
-            # 守株待兔只在本大回合生效：进入新大回合时清掉所有船上的陷阱标记。
-            # （卡面"这张牌只会在当前大回合生效"；旧标记残留到下一回合会让玩家
-            #   以为陷阱还在，但触发条件已过。）
-            for p_id in room.players:
-                cleared = False
-                for s in room.players[p_id].ships:
-                    if getattr(s, 'trap', False):
-                        s.trap = False
-                        cleared = True
-                if cleared:
-                    _emit_player_ships(room, p_id)
-                    emit('trap_expired', {'player': p_id}, room=room_id)
-
-            # 冻结区域记录与解冻同步清理：条件与上面 `s.frozen < room.round` 一致，
-            # 否则棋盘上会一直挂着那片斜纹、玩家以为还在冻结
-            _fa = room.game_effects.get('frozen_area') if isinstance(room.game_effects, dict) else None
-            if _fa and int(_fa.get('until_round') or 0) < int(room.round):
-                room.game_effects.pop('frozen_area', None)
-                emit('frozen_area', {'cleared': True}, room=room_id)
+            _TURN_STATE_MACHINE.expire_round_effects(room)
 
             _TURN_STATE_MACHINE.clear_round_scoped_effects(room)
 
@@ -8203,6 +8174,8 @@ _TURN_STATE_MACHINE = TurnStateMachine(
     prune_flags=lambda room, keep: _prune_effect_flags(room, keep),
     emit_active_effects=lambda room: _emit_active_effects(room),
     keep_across_turn=FLAGS_KEEP_ACROSS_TURN,
+    thaw_ship=lambda ship: _thaw_ship(ship),
+    emit_player_ships=lambda room, player_id: _emit_player_ships(room, player_id),
 )
 
 

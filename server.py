@@ -5086,19 +5086,7 @@ def _end_turn_locked(room, room_id, player_id):
             # （Freezing！ 走 `skip_opponent_turn`，`skip_stages` 为假，
             #   翻页行为原样保留，见上面的守卫用例。）
             if skip_stages:
-                room.current_attacker = next_attacker
-                room.current_phase = 'preparation'
-                room.attacks_remaining = 0
-                room.state = 'attacking'
-                emit('phase_updated', {
-                    'current_phase': room.current_phase,
-                    'current_attacker': room.current_attacker,
-                }, room=room_id)
-                emit('turn_skipped', {
-                    'skipped': next_attacker,
-                    'current_attacker': room.current_attacker,
-                    'round': room.round,
-                }, room=room_id)
+                _TURN_STATE_MACHINE.skip_stages_turn(room, next_attacker)
                 return {'status': 'success', 'message': '神之宣告：对方本回合被跳过'}
             # 进入新回合，重置状态
             room.round += 1

@@ -63,6 +63,7 @@ from application.chain_policy import ChainPolicy
 from application.chain_window import ChainWindow
 from application.chain_timeout import ChainTimeout
 from application.chain_ai_response import ChainAIResponse
+from application.priority_timeout import PriorityTimeout
 from application.card_tactical_effects import TacticalEffects
 from application.card_field_effects import FieldEffects
 from application.ship_selection import (
@@ -8359,6 +8360,13 @@ _CHAIN_AI_RESPONSE = ChainAIResponse(
     respond=lambda payload: chain_response(payload),
     report_error=lambda exc: print(f'AI chain respond error: {exc}'),
 )
+_PRIORITY_TIMEOUT = PriorityTimeout(
+    sleep=lambda seconds: time.sleep(seconds),
+    get_room=lambda room_id: room_manager.get_room(room_id),
+    resolve=lambda room, respond=False: _resolve_priority(room, respond=respond),
+    seconds=lambda: PRIORITY_SECONDS,
+    start_background_task=lambda fn: socketio.start_background_task(fn),
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -8810,12 +8818,7 @@ def _ask_priority(room, actor_id, action, on_decline=None):
 def _schedule_priority_timeout(room_id: str, token: int):
     """询问超时兜底：视为对方放弃，继续执行原操作。
     代际令牌使旧定时器自动作废，防止与玩家正常响应竞态双重执行。"""
-    def _timeout():
-        time.sleep(PRIORITY_SECONDS)
-        room = room_manager.get_room(room_id)
-        if room and room.priority_pending and room.priority_token == token:
-            _resolve_priority(room, respond=False)
-    socketio.start_background_task(_timeout)
+    return _PRIORITY_TIMEOUT.schedule(room_id, token)
 
 
 def _clear_priority(room):

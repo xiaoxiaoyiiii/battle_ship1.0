@@ -18,6 +18,8 @@
 
 `application/chain_policy.py` 接管连锁响应资格判定（普通玩家速阶 3、绝处逢生锁卡和困难 AI 的失灵响应条件）；`application/chain_window.py` 接管响应窗口轮转，`application/chain_timeout.py` 接管超时推进，`application/chain_ai_response.py` 接管困难 AI 的失灵响应，`server.py` 仅保留兼容入口与动态依赖注入。
 
+阶段转换优先权询问的超时调度已迁入 `application/priority_timeout.py`，超时仍通过服务端兼容入口清理待处理状态并继续原操作。
+
 `application/card_refund.py` 接管卡牌发动条件不满足时按对象引用退回手牌的补偿规则；`server.py` 保留兼容包装并注入事件、日志能力。
 
 前端新增 `static/magic_rules.js`，承接魔法卡使用阶段门禁、命中前置条件、绝处逢生锁卡判断和 `MAGIC_TARGET_DESCRIPTORS`；`static/magic_target_ui.js` 承接目标选择器，目标发送逻辑仍在 `game.js`。模板按依赖顺序在 `game.js` 前加载新脚本。经典脚本共享作用域保留现有页面、浏览器工具和旧入口兼容。

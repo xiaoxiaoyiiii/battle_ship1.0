@@ -61,6 +61,7 @@ from application.card_temporary_effects import TemporaryShipEffects
 from application.card_refund import refund_card_to_hand
 from application.chain_policy import ChainPolicy
 from application.chain_window import ChainWindow
+from application.chain_timeout import ChainTimeout
 from application.card_tactical_effects import TacticalEffects
 from application.card_field_effects import FieldEffects
 from application.ship_selection import (
@@ -8340,6 +8341,16 @@ _CHAIN_WINDOW = ChainWindow(
     ai_chain_respond=lambda room_id, token: _ai_chain_respond(room_id, token),
     response_seconds=lambda: CHAIN_RESPONSE_SECONDS,
 )
+_CHAIN_TIMEOUT = ChainTimeout(
+    sleep=lambda seconds: time.sleep(seconds),
+    get_room=lambda room_id: room_manager.get_room(room_id),
+    resolve_chain=lambda room: resolve_chain(room),
+    advance_window=lambda room, player_id, display_delay=True: _advance_chain_window(
+        room, player_id, display_delay=display_delay),
+    opponent_of=lambda room, player_id: _opponent_of(room, player_id),
+    response_seconds=lambda: CHAIN_RESPONSE_SECONDS,
+    start_background_task=lambda fn: socketio.start_background_task(fn),
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -8668,20 +8679,7 @@ def _schedule_chain_timeout(room_id: str, token: int):
     所有人已经盯着连锁区看了 10 秒，超时到点就该当结算 —— 作者的要求是
     "10 秒窗口那条路径不动"。（`_finish_chain` 里的展示停留只作用于
     "双方都接不了 ⇒ 立刻就要结算"那条一闪而过的路径。）"""
-    def _timeout():
-        time.sleep(CHAIN_RESPONSE_SECONDS)
-        room = room_manager.get_room(room_id)
-        if room and room.chain_waiting and room.chain_timer == token:
-            window_player = room.chain_window
-            room.chain_waiting = False
-            room.chain_window = None
-            room.chain_passes += 1
-            if room.chain_passes >= 2 or window_player is None:
-                resolve_chain(room)
-            else:
-                _advance_chain_window(room, _opponent_of(room, window_player),
-                                      display_delay=False)
-    socketio.start_background_task(_timeout)
+    return _CHAIN_TIMEOUT.schedule(room_id, token)
 
 
 # ============================================================================

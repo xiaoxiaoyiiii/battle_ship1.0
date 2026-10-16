@@ -82,6 +82,15 @@ class TurnStateMachine:
         }, room=room.id)
         self._run_ai_turn(room)
 
+    def begin_new_round(self, room):
+        """切入新大回合的猜拳阶段，清理上一大回合的流程状态。"""
+        room.state = 'rock_paper_scissors'
+        room.rps_choices = {}
+        room.rps_processed = False
+        room.skip_opponent_turn = None
+        room.skip_next_turn = None
+        room.current_phase = 'preparation'
+
     def switch_after_end(self, room, opponent_id, delay=2):
         self._sleep(delay)
         room.current_attacker = opponent_id

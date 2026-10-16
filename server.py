@@ -5289,9 +5289,7 @@ def _end_turn_locked(room, room_id, player_id):
                     # 更新game_effects中的剩余回合
                     room.game_effects['holy_heart'] = check
 
-            room.state = 'rock_paper_scissors'
-            room.rps_choices = {}
-            room.rps_processed = False
+            _TURN_STATE_MACHINE.begin_new_round(room)
 
             # 神机妙算: 检查沉船数是否增加了x（击沉不从ships移除，用沉船差值判定）
             for p_id in room.players:
@@ -5329,14 +5327,6 @@ def _end_turn_locked(room, room_id, player_id):
                 'round': room.round,
                 **_rank_payload(room),
             }, room=room_id)
-            # 新大回合开始，清掉上一回合残留的跳过标记。
-            # 否则若 skip 未能匹配到目标，会一直留着并在后续回合误跳。
-            room.skip_opponent_turn = None
-            room.skip_next_turn = None
-            # 阶段也要重置：Freezing！ 是在【结束阶段】打出的，跳过后若把
-            # current_phase 留在 'end'，新大回合一开始就处于结束阶段 ——
-            # 猜拳完直接能交回合、且准备/战斗阶段的 UI 与校验全都不对。
-            room.current_phase = 'preparation'
             return {'status': 'success', 'new_round': True}
         else:
             # 跳过判定已经在上面的 `next_index == 0` 判断之前做完了

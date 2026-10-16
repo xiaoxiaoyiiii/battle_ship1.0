@@ -87,6 +87,7 @@ class TurnStateMachine:
         room.rps_processed = False
         room.skip_opponent_turn = None
         room.skip_next_turn = None
+        room.skip_opponent_stages = None
         room.current_phase = 'preparation'
 
     def enter_end(self, room, player_id):

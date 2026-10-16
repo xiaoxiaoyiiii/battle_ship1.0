@@ -5,7 +5,7 @@ class TurnStateMachine:
     def __init__(self, *, recalc_attacks,
                  emit, run_ai_turn, attacks_forced_zero, trigger_wuxian,
                  settle_wuyou, settle_bingliang, prune_flags, emit_active_effects,
-                 keep_across_turn):
+                 keep_across_turn, thaw_ship, emit_player_ships):
         self._recalc_attacks = recalc_attacks
         self._emit = emit
         self._run_ai_turn = run_ai_turn
@@ -16,6 +16,8 @@ class TurnStateMachine:
         self._prune_flags = prune_flags
         self._emit_active_effects = emit_active_effects
         self._keep_across_turn = keep_across_turn
+        self._thaw_ship = thaw_ship
+        self._emit_player_ships = emit_player_ships
 
     def enter_battle(self, room, player_id):
         room.current_phase = 'battle'
@@ -120,6 +122,29 @@ class TurnStateMachine:
         """新大回合开始时清零双方本回合伤害统计。"""
         for player in room.players.values():
             player.damage_dealt_this_turn = 0
+
+    def expire_round_effects(self, room):
+        """清理跨大回合到期的战舰、陷阱和冻结区域状态。"""
+        for player_id, player in room.players.items():
+            thawed = False
+            traps_cleared = False
+            for ship in player.ships:
+                if getattr(ship, 'frozen', None) and ship.frozen < room.round:
+                    self._thaw_ship(ship)
+                    thawed = True
+                if getattr(ship, 'trap', False):
+                    ship.trap = False
+                    traps_cleared = True
+            if thawed or traps_cleared:
+                self._emit_player_ships(room, player_id)
+            if traps_cleared:
+                self._emit('trap_expired', {'player': player_id}, room=room.id)
+
+        frozen_area = room.game_effects.get('frozen_area')
+        if (isinstance(frozen_area, dict)
+                and int(frozen_area.get('until_round') or 0) < int(room.round)):
+            room.game_effects.pop('frozen_area', None)
+            self._emit('frozen_area', {'cleared': True}, room=room.id)
 
     def enter_end(self, room, player_id):
         """完成当前行动者从战斗阶段进入结束阶段的状态转换。"""

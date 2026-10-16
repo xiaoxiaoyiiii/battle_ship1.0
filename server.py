@@ -62,6 +62,7 @@ from application.card_refund import refund_card_to_hand
 from application.chain_policy import ChainPolicy
 from application.chain_window import ChainWindow
 from application.chain_timeout import ChainTimeout
+from application.chain_ai_response import ChainAIResponse
 from application.card_tactical_effects import TacticalEffects
 from application.card_field_effects import FieldEffects
 from application.ship_selection import (
@@ -8351,6 +8352,13 @@ _CHAIN_TIMEOUT = ChainTimeout(
     response_seconds=lambda: CHAIN_RESPONSE_SECONDS,
     start_background_task=lambda fn: socketio.start_background_task(fn),
 )
+_CHAIN_AI_RESPONSE = ChainAIResponse(
+    sleep=lambda seconds: time.sleep(seconds),
+    get_room=lambda room_id: room_manager.get_room(room_id),
+    can_negate_top=lambda room, ai_id: _ai_can_negate_chain_top(room, ai_id),
+    respond=lambda payload: chain_response(payload),
+    report_error=lambda exc: print(f'AI chain respond error: {exc}'),
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -8638,37 +8646,7 @@ def _ai_chain_respond(room_id: str, token: int):
     响应不了（没牌 / 康不动）时明确放弃，避免把窗口拖到 10 秒超时。
     代际令牌保证过期窗口不会被旧任务误响应。
     """
-    try:
-        time.sleep(0.8)
-        room = room_manager.get_room(room_id)
-        if not room or room.state == 'game_over':
-            return
-        if not room.chain_waiting or room.chain_timer != token:
-            return
-        ai_id = room.chain_window
-        if not ai_id or not ai_id.startswith('ai-'):
-            return
-        player = room.players.get(ai_id)
-        if not player:
-            return
-
-        card = next((c for c in player.magic_hand if c.name == '失灵！'), None)
-        if card is None or not _ai_can_negate_chain_top(room, ai_id):
-            chain_response({'room_id': room_id, 'player_id': ai_id, 'chain': False})
-            return
-
-        resp = chain_response({
-            'room_id': room_id,
-            'player_id': ai_id,
-            'chain': True,
-            'card': {'name': card.name, 'speed': card.speed, 'type': card.type},
-            'targets': [],
-        })
-        if not (resp and resp.get('status') == 'success'):
-            # 万一被规则拒绝（例如窗口已过期），明确放弃而不是留个半开窗口
-            chain_response({'room_id': room_id, 'player_id': ai_id, 'chain': False})
-    except Exception as e:
-        print(f'AI chain respond error: {e}')
+    return _CHAIN_AI_RESPONSE.respond(room_id, token)
 
 
 def _schedule_chain_timeout(room_id: str, token: int):

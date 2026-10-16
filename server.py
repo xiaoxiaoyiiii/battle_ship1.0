@@ -4911,54 +4911,7 @@ def enter_battle_phase(data, _priority_confirmed=False):
         if not _priority_confirmed and _ask_priority(room, player_id, 'enter_battle'):
             return {'status': 'success', 'awaiting_priority': True}
 
-        # 切换到战斗阶段
-        room.current_phase = 'battle'
-
-        # ⚠️ 无条件按【当前场地规则】重算攻击次数。
-        #
-        # 旧实现只处理伊甸园与教皇旨意两个特例，其余情况原样保留准备阶段的值。
-        # 于是出现两条实测缺陷：
-        #   ① 准备阶段打出教皇旨意（次数被压成 0）→ 场地被拆除 → 进战斗阶段时
-        #      两个特例都不命中 → 次数停在 0：玩家 4 艘船却一发都打不出去。
-        #   ② 准备阶段挂着伊甸园（次数=6-船数）→ 场地被顶替/拆除 → 次数不被纠正。
-        # _recalc_attacker_attacks 已经是"按当前场地规则算"的唯一权威实现，
-        # 直接用它兜底，特例自然被覆盖，也不会再随场地增减而漂移。
-        _recalc_attacker_attacks(room)
-
-        # 攻击次数翻倍（火力全开）：直接翻【当前】攻击次数。
-        #
-        # ⚠️ 不能重算「船数 - 冻结数」再 ×2（旧实现）：那等于把场地魔法
-        # 压过的次数又还原回来了。作者实测：自己先打了教皇旨意（本回合
-        # 攻击次数归 0），对方用火力全开却照样拿到 2×船数 的次数。
-        # 卡面是"自己的攻击次数翻倍"，所以基准就是 attacks_remaining 本身。
-        if room.players[player_id].effect_flags.double_attacks:
-            room.attacks_remaining = max(0, room.attacks_remaining) * 2
-            # 广播攻击次数更新
-            emit('attacks_updated', {
-                'current_attacker': room.current_attacker,
-                'attacks_remaining': room.attacks_remaining
-            }, room=room_id)
-            # 移除翻倍效果，因为它只持续一个大回合
-            room.players[player_id].effect_flags.double_attacks = False
-
-        # 重算后必须广播，否则前端仍显示准备阶段的旧值
-        emit('attacks_updated', {
-            'current_attacker': room.current_attacker,
-            'attacks_remaining': room.attacks_remaining
-        }, room=room_id)
-
-        # 五险一金：进战斗阶段时攻击次数就可能是 0（教皇旨意直接把次数压成 0），
-        # 这也算「本回合第一次归零」，要给它触发机会。
-        # ⚠️ 但败者食尘生效的大回合不算：「双方攻击次数为 0」是大回合规则，
-        # 让五险一金回填 3 次等于当场把这个 0 抹掉。
-        if room.attacks_remaining <= 0 and not _attacks_forced_zero(room):
-            _maybe_trigger_wuxian_yijin(room, player_id)
-
-        # 广播阶段更新
-        emit('phase_updated', {
-            'current_phase': room.current_phase,
-            'current_attacker': room.current_attacker
-        }, room=room_id)
+        _TURN_STATE_MACHINE.enter_battle(room, player_id)
         # ★ 回放批：进入战斗阶段（**唯一实现点**）。**不往游戏内日志加行**。
         replay.note_action(capture_replay_observation(room), 'enter_battle',
                            f'{_log_name(room, player_id)} 进入战斗阶段',
@@ -8340,6 +8293,8 @@ _TURN_STATE_MACHINE = TurnStateMachine(
     recalc_attacks=lambda room: _recalc_attacker_attacks(room),
     emit=lambda *args, **kwargs: emit(*args, **kwargs),
     run_ai_turn=lambda room: _maybe_run_ai_turn(room),
+    attacks_forced_zero=lambda room: _attacks_forced_zero(room),
+    trigger_wuxian=lambda room, player_id: _maybe_trigger_wuxian_yijin(room, player_id),
 )
 
 

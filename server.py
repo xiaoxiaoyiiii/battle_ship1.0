@@ -5341,46 +5341,7 @@ def _end_turn_locked(room, room_id, player_id):
         else:
             # 跳过判定已经在上面的 `next_index == 0` 判断之前做完了
             # （否则"跳过对方后绕回起点"不会被识别为新大回合）。
-            # 切换到下一个攻击者的准备阶段
-            room.current_attacker = next_attacker
-            room.current_phase = 'preparation'
-            # 新回合伤害统计归零（见上：原重置点在死代码里）
-            room.players[room.current_attacker].damage_dealt_this_turn = 0
-            # 统一走 _recalc：伊甸园/教皇旨意下按场地规则计算
-            _recalc_attacker_attacks(room)
-            # ★ 无忧梦呓：**对方的回合开始时**结算拼点。
-            #   ⚠️ 必须排在 `_recalc_attacker_attacks` **之后**（作者裁定）——
-            #      它按船数把 attacks_remaining 重算一遍，排前面的话
-            #      「这回合攻击次数恒定为 0」会被当场覆盖掉。
-            _settle_wuyou_dream(room)
-            # ★ 兵粮寸断：**对方的准备阶段开始时**判定（与无忧梦呓同一批时点）。
-            #   回合中段接手这一支没有摸牌动作，所以这里只会**摇骰子/挂额度**，
-            #   跳过额度由下一次新大回合发放时消耗。
-            _settle_bingliang(room)
-
-            # 重置所有临时效果标志 —— 保留名单以 FLAGS_KEEP_ACROSS_TURN 为唯一声明。
-            #
-            # ⚠️ 这里原本是写死的内联列表，与上面的常量各存一份，注释却指着常量说
-            #    "分类见 FLAGS_KEEP_ACROSS_TURN"。两份一漂移就出事：绝处逢生的
-            #    "击杀即胜"（last_stand_win）两边都没登记 → 换小回合就被清掉，
-            #    效果只在发动当回合有效（作者实测反馈）。现在统一走常量。
-            _prune_effect_flags(room, FLAGS_KEEP_ACROSS_TURN)
-
-            # 标记刚被清了一批，角标要跟着消失（否则百亿补贴等会一直亮着）
-            _emit_active_effects(room)
-
-            # 广播回合和阶段更新
-            emit('phase_updated', {
-                'current_phase': room.current_phase,
-                'current_attacker': room.current_attacker
-            }, room=room_id)
-            emit('turn_change', {
-                'current_attacker': room.current_attacker,
-                'attacks_remaining': room.attacks_remaining,
-                'phase': room.current_phase
-            }, room=room_id)
-            # 轮到AI时自动驱动其回合
-            _maybe_run_ai_turn(room)
+            _TURN_STATE_MACHINE.continue_turn(room, next_attacker)
             return {'status': 'success'}
 
     return {'status': 'error', 'message': '无法结束当前回合'}
@@ -8277,6 +8238,11 @@ _TURN_STATE_MACHINE = TurnStateMachine(
     run_ai_turn=lambda room: _maybe_run_ai_turn(room),
     attacks_forced_zero=lambda room: _attacks_forced_zero(room),
     trigger_wuxian=lambda room, player_id: _maybe_trigger_wuxian_yijin(room, player_id),
+    settle_wuyou=lambda room: _settle_wuyou_dream(room),
+    settle_bingliang=lambda room: _settle_bingliang(room),
+    prune_flags=lambda room, keep: _prune_effect_flags(room, keep),
+    emit_active_effects=lambda room: _emit_active_effects(room),
+    keep_across_turn=FLAGS_KEEP_ACROSS_TURN,
 )
 
 

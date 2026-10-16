@@ -116,6 +116,11 @@ class TurnStateMachine:
                 'cells': [], 'owner': None,
             }, room=room.id)
 
+    def reset_round_damage(self, room):
+        """新大回合开始时清零双方本回合伤害统计。"""
+        for player in room.players.values():
+            player.damage_dealt_this_turn = 0
+
     def enter_end(self, room, player_id):
         """完成当前行动者从战斗阶段进入结束阶段的状态转换。"""
         room.current_phase = 'end'

@@ -90,6 +90,22 @@ class TurnStateMachine:
         room.skip_opponent_stages = None
         room.current_phase = 'preparation'
 
+    def skip_stages_turn(self, room, next_attacker):
+        """应用神之宣告的阶段跳过结果，不推进大回合。"""
+        room.current_attacker = next_attacker
+        room.current_phase = 'preparation'
+        room.attacks_remaining = 0
+        room.state = 'attacking'
+        self._emit('phase_updated', {
+            'current_phase': room.current_phase,
+            'current_attacker': room.current_attacker,
+        }, room=room.id)
+        self._emit('turn_skipped', {
+            'skipped': next_attacker,
+            'current_attacker': room.current_attacker,
+            'round': room.round,
+        }, room=room.id)
+
     def enter_end(self, room, player_id):
         """完成当前行动者从战斗阶段进入结束阶段的状态转换。"""
         room.current_phase = 'end'

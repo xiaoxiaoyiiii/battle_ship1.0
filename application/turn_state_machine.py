@@ -3,12 +3,36 @@
 
 class TurnStateMachine:
     def __init__(self, *, sleep, frozen_ship_count, recalc_attacks,
-                 emit, run_ai_turn):
+                 emit, run_ai_turn, attacks_forced_zero, trigger_wuxian):
         self._sleep = sleep
         self._frozen_ship_count = frozen_ship_count
         self._recalc_attacks = recalc_attacks
         self._emit = emit
         self._run_ai_turn = run_ai_turn
+        self._attacks_forced_zero = attacks_forced_zero
+        self._trigger_wuxian = trigger_wuxian
+
+    def enter_battle(self, room, player_id):
+        room.current_phase = 'battle'
+        self._recalc_attacks(room)
+        player = room.players[player_id]
+        if player.effect_flags.double_attacks:
+            room.attacks_remaining = max(0, room.attacks_remaining) * 2
+            self._emit('attacks_updated', {
+                'current_attacker': room.current_attacker,
+                'attacks_remaining': room.attacks_remaining,
+            }, room=room.id)
+            player.effect_flags.double_attacks = False
+        self._emit('attacks_updated', {
+            'current_attacker': room.current_attacker,
+            'attacks_remaining': room.attacks_remaining,
+        }, room=room.id)
+        if room.attacks_remaining <= 0 and not self._attacks_forced_zero(room):
+            self._trigger_wuxian(room, player_id)
+        self._emit('phase_updated', {
+            'current_phase': room.current_phase,
+            'current_attacker': room.current_attacker,
+        }, room=room.id)
 
     def switch_after_end(self, room, opponent_id, delay=2):
         self._sleep(delay)

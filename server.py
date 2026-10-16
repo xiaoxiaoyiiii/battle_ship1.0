@@ -64,6 +64,7 @@ from application.chain_window import ChainWindow
 from application.chain_timeout import ChainTimeout
 from application.chain_ai_response import ChainAIResponse
 from application.priority_timeout import PriorityTimeout
+from application.turn_state_machine import TurnStateMachine
 from application.card_tactical_effects import TacticalEffects
 from application.card_field_effects import FieldEffects
 from application.ship_selection import (
@@ -5062,26 +5063,7 @@ def handle_enter_end_phase(data, _priority_confirmed=False):
 
 
 def switch_turn_after_end_phase(room, opponent_id):
-    # 模拟结束阶段处理时间
-    time.sleep(2)
-
-    # 切换到对方回合
-    room.current_attacker = opponent_id
-    room.attacks_remaining = max(0, room.players[opponent_id].remaining_ships - frozen_ship_count(room.players[opponent_id]))  # 存活战舰数减去冻结数
-    _recalc_attacker_attacks(room)
-    room.current_phase = 'preparation'
-
-    # 重置本回合伤害统计
-    room.players[opponent_id].damage_dealt_this_turn = 0
-
-    # 广播回合变化 - 移除了回合切换时的额外抽卡
-    emit('turn_change', {
-        'current_attacker': opponent_id,
-        'attacks_remaining': room.attacks_remaining,
-        'phase': 'preparation'
-    }, room=room.id)
-    # 轮到AI时自动驱动其回合
-    _maybe_run_ai_turn(room)
+    return _TURN_STATE_MACHINE.switch_after_end(room, opponent_id)
 
 
 # 添加结束结束阶段，切换到对方准备阶段
@@ -8366,6 +8348,13 @@ _PRIORITY_TIMEOUT = PriorityTimeout(
     resolve=lambda room, respond=False: _resolve_priority(room, respond=respond),
     seconds=lambda: PRIORITY_SECONDS,
     start_background_task=lambda fn: socketio.start_background_task(fn),
+)
+_TURN_STATE_MACHINE = TurnStateMachine(
+    sleep=lambda seconds: time.sleep(seconds),
+    frozen_ship_count=lambda player: frozen_ship_count(player),
+    recalc_attacks=lambda room: _recalc_attacker_attacks(room),
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    run_ai_turn=lambda room: _maybe_run_ai_turn(room),
 )
 
 

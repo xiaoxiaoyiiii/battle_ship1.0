@@ -34,6 +34,26 @@ class TurnStateMachine:
             'current_attacker': room.current_attacker,
         }, room=room.id)
 
+    def next_turn_target(self, room):
+        """计算下一位行动者并消费一次性跳过标记。"""
+        current_index = room.attack_order.index(room.current_attacker)
+        next_index = (current_index + 1) % len(room.attack_order)
+        next_attacker = room.attack_order[next_index]
+        if room.skip_opponent_turn == next_attacker:
+            room.skip_opponent_turn = None
+            next_index = (next_index + 1) % len(room.attack_order)
+            next_attacker = room.attack_order[next_index]
+        if room.skip_next_turn == next_attacker:
+            room.skip_next_turn = None
+            next_index = (next_index + 1) % len(room.attack_order)
+            next_attacker = room.attack_order[next_index]
+        skip_stages = room.skip_opponent_stages == next_attacker
+        if skip_stages:
+            room.skip_opponent_stages = None
+            next_index = (next_index + 1) % len(room.attack_order)
+            next_attacker = room.attack_order[next_index]
+        return next_index, next_attacker, skip_stages
+
     def switch_after_end(self, room, opponent_id, delay=2):
         self._sleep(delay)
         room.current_attacker = opponent_id

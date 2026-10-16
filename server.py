@@ -1789,8 +1789,7 @@ def test_end_turn(data):
         room.current_phase = 'end'
     elif room.current_phase == 'end':
         # 切换到下一回合
-        current_index = room.attack_order.index(room.current_attacker)
-        next_index = (current_index + 1) % len(room.attack_order)
+        next_index, next_attacker, skip_stages = _TURN_STATE_MACHINE.next_turn_target(room)
         room.current_attacker = room.attack_order[next_index]
         room.current_phase = 'preparation'
         room.attacks_remaining = room.players[room.current_attacker].remaining_ships
@@ -5055,8 +5054,7 @@ def _end_turn_locked(room, room_id, player_id):
     ⚠️ 拆出来**只为**让回放记录点能写在唯一的 finally 里；语义与拆分前逐字一致。
     """
     if True:                # 保持原有的缩进层级（减少这次拆分的 diff 噪音）
-        current_index = room.attack_order.index(room.current_attacker)
-        next_index = (current_index + 1) % len(room.attack_order)
+        next_index, next_attacker, skip_stages = _TURN_STATE_MACHINE.next_turn_target(room)
 
         # ── 跳过回合（Freezing！/ 神之宣告）──────────────────────────────
         # ⚠️ 这段必须在 `next_index == 0` 的"进入新大回合"判断【之前】执行。
@@ -5076,26 +5074,10 @@ def _end_turn_locked(room, room_id, player_id):
         #   白送一次"重新猜拳 + 重新摸牌 + damage_dealt_this_turn 归零"。
         #   作者实测反馈的"效果二疑似没实现"，根因就在这里：
         #   它做的不是卡面承诺的那件事。
-        next_attacker = room.attack_order[next_index]
-        if room.skip_opponent_turn and room.skip_opponent_turn == next_attacker:
-            room.skip_opponent_turn = None
-            next_index = (next_index + 1) % len(room.attack_order)
-            next_attacker = room.attack_order[next_index]
-        if room.skip_next_turn and room.skip_next_turn == next_attacker:
-            room.skip_next_turn = None
-            next_index = (next_index + 1) % len(room.attack_order)
-            next_attacker = room.attack_order[next_index]
-
         # 神之宣告：跳过对方在**本大回合**内的所有阶段（不翻页）。
         # 作用域差别的来历见上面那段。这里只吃 `skip_opponent_stages`，
         # 与 Freezing 的 `skip_opponent_turn` 各管一条路，互不干扰。
-        skip_stages = False
-        if room.skip_opponent_stages and room.skip_opponent_stages == next_attacker:
-            room.skip_opponent_stages = None
-            skip_stages = True
-            # 跳到下一个人（正常是绕回自己），让大回合**正常推进**
-            next_index = (next_index + 1) % len(room.attack_order)
-            next_attacker = room.attack_order[next_index]
+        if skip_stages:
             emit('game_message', {
                 'message': f'{_log_name(room, next_attacker)} 的回合被神之宣告跳过',
             }, room=room_id)

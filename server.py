@@ -4999,10 +4999,6 @@ def handle_enter_end_phase(data, _priority_confirmed=False):
     return {'status': 'error', 'message': '当前不是你的战斗阶段'}
 
 
-def switch_turn_after_end_phase(room, opponent_id):
-    return _TURN_STATE_MACHINE.switch_after_end(room, opponent_id)
-
-
 # 添加结束结束阶段，切换到对方准备阶段
 @socketio.on('end_turn')
 @_require_live_room
@@ -5164,7 +5160,7 @@ def _end_turn_locked(room, room_id, player_id):
                 emit('last_stand_cells', {'cells': [], 'owner': None}, room=room_id)
 
             # 新大回合：双方本回合伤害统计归零
-            # （此前唯一重置点在死代码 switch_turn_after_end_phase 内，
+            # （此前唯一重置点曾位于已废弃的换手辅助函数内，
             #  导致 damage_dealt_this_turn 只增不减，五险一金/Freezing! 失效）
             for p_id in room.players:
                 room.players[p_id].damage_dealt_this_turn = 0
@@ -8221,8 +8217,6 @@ _PRIORITY_TIMEOUT = PriorityTimeout(
     start_background_task=lambda fn: socketio.start_background_task(fn),
 )
 _TURN_STATE_MACHINE = TurnStateMachine(
-    sleep=lambda seconds: time.sleep(seconds),
-    frozen_ship_count=lambda player: frozen_ship_count(player),
     recalc_attacks=lambda room: _recalc_attacker_attacks(room),
     emit=lambda *args, **kwargs: emit(*args, **kwargs),
     run_ai_turn=lambda room: _maybe_run_ai_turn(room),

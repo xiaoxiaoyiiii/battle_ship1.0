@@ -22,6 +22,8 @@
 
 回合状态机已迁入 `application/turn_state_machine.py`：准备阶段进入战斗阶段的攻击次数重算、翻倍效果、五险一金触发与阶段广播，以及战斗阶段进入结束阶段的状态更新、阶段性效果清理、结束阶段切换到对手准备阶段、回合广播和 AI 驱动集中由应用层协作者处理。
 
+回合结束时下一位行动者的计算及 Freezing、神之宣告等跳过标记的消费也已迁入同一状态机；特殊卡结算和新大回合副作用仍由 `server.py` 编排。
+
 `application/card_refund.py` 接管卡牌发动条件不满足时按对象引用退回手牌的补偿规则；`server.py` 保留兼容包装并注入事件、日志能力。
 
 前端新增 `static/magic_rules.js`，承接魔法卡使用阶段门禁、命中前置条件、绝处逢生锁卡判断和 `MAGIC_TARGET_DESCRIPTORS`；`static/magic_target_ui.js` 承接目标选择器，目标发送逻辑仍在 `game.js`。模板按依赖顺序在 `game.js` 前加载新脚本。经典脚本共享作用域保留现有页面、浏览器工具和旧入口兼容。

@@ -5134,18 +5134,7 @@ def _end_turn_locked(room, room_id, player_id):
                 room.game_effects.pop('frozen_area', None)
                 emit('frozen_area', {'cleared': True}, room=room_id)
 
-            # 回光返照只持续自己发动的那一个大回合
-            room.game_effects.pop('last_chance', None)
-
-            # 败者食尘的"双方攻击次数为 0"只属于生效的那个大回合。
-            # 条件里已带 round 判定（_attacks_forced_zero），这里顺手清掉防残留。
-            room.game_effects.pop('zero_attacks_round', None)
-
-            # 绝处逢生的"候选格高亮"只在本大回合有效：新大回合双方棋盘信息重置，
-            # 再亮着六个格子就是过期线索了（唯一一艘船还在，但线索不该跨回合留着）。
-            if room.game_effects.pop('last_stand_cells', None):
-                room.game_effects.pop('last_stand_owner', None)
-                emit('last_stand_cells', {'cells': [], 'owner': None}, room=room_id)
+            _TURN_STATE_MACHINE.clear_round_scoped_effects(room)
 
             # 新大回合：双方本回合伤害统计归零
             # （此前唯一重置点曾位于已废弃的换手辅助函数内，

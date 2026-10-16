@@ -106,6 +106,16 @@ class TurnStateMachine:
             'round': room.round,
         }, room=room.id)
 
+    def clear_round_scoped_effects(self, room):
+        """清理只在当前大回合有效的场地与提示状态。"""
+        room.game_effects.pop('last_chance', None)
+        room.game_effects.pop('zero_attacks_round', None)
+        if room.game_effects.pop('last_stand_cells', None):
+            room.game_effects.pop('last_stand_owner', None)
+            self._emit('last_stand_cells', {
+                'cells': [], 'owner': None,
+            }, room=room.id)
+
     def enter_end(self, room, player_id):
         """完成当前行动者从战斗阶段进入结束阶段的状态转换。"""
         room.current_phase = 'end'

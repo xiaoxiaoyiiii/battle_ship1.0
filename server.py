@@ -5031,23 +5031,8 @@ def handle_enter_end_phase(data, _priority_confirmed=False):
         if not _priority_confirmed and _ask_priority(room, player_id, 'enter_end'):
             return {'status': 'success', 'awaiting_priority': True}
 
-        # 进入结束阶段
-        room.current_phase = 'end'
-
-        # 余音绕梁按攻击阶段计数：本回合的攻击阶段结束即消耗一次
-        flags = room.players[player_id].effect_flags
-        if getattr(flags, 'forced_kill', 0) > 0:
-            flags.forced_kill -= 1
-            if flags.forced_kill <= 0:
-                del flags.forced_kill
-
-        # 清除越战越勇效果
-        room.players[player_id].effect_flags.battle_spirit=False
-
-        emit('phase_updated', {
-            'current_phase': room.current_phase,
-            'current_attacker': room.current_attacker
-        }, room=room_id)
+        # 进入结束阶段并清理本阶段效果
+        _TURN_STATE_MACHINE.enter_end(room, player_id)
 
         # ★ 回放批：进入结束阶段（**唯一实现点**）。**不往游戏内日志加行**。
         replay.note_action(capture_replay_observation(room), 'enter_end',

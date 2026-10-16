@@ -26,3 +26,17 @@ class TurnStateMachine:
             'phase': 'preparation',
         }, room=room.id)
         self._run_ai_turn(room)
+
+    def enter_end(self, room, player_id):
+        """完成当前行动者从战斗阶段进入结束阶段的状态转换。"""
+        room.current_phase = 'end'
+        flags = room.players[player_id].effect_flags
+        if getattr(flags, 'forced_kill', 0) > 0:
+            flags.forced_kill -= 1
+            if flags.forced_kill <= 0:
+                del flags.forced_kill
+        room.players[player_id].effect_flags.battle_spirit = False
+        self._emit('phase_updated', {
+            'current_phase': room.current_phase,
+            'current_attacker': room.current_attacker,
+        }, room=room.id)

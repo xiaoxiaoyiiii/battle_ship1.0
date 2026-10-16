@@ -20,7 +20,7 @@
 
 阶段转换优先权询问的超时调度已迁入 `application/priority_timeout.py`，超时仍通过服务端兼容入口清理待处理状态并继续原操作。
 
-回合状态机的首个转换已迁入 `application/turn_state_machine.py`：结束阶段切换到对手准备阶段的状态更新、攻击次数重算、回合广播和 AI 驱动集中由应用层协作者处理。
+回合状态机已迁入 `application/turn_state_machine.py`：战斗阶段进入结束阶段的状态更新、阶段性效果清理、结束阶段切换到对手准备阶段、攻击次数重算、回合广播和 AI 驱动集中由应用层协作者处理。
 
 `application/card_refund.py` 接管卡牌发动条件不满足时按对象引用退回手牌的补偿规则；`server.py` 保留兼容包装并注入事件、日志能力。
 

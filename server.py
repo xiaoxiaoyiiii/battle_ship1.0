@@ -5139,8 +5139,7 @@ def _end_turn_locked(room, room_id, player_id):
             # 新大回合：双方本回合伤害统计归零
             # （此前唯一重置点曾位于已废弃的换手辅助函数内，
             #  导致 damage_dealt_this_turn 只增不减，五险一金/Freezing! 失效）
-            for p_id in room.players:
-                room.players[p_id].damage_dealt_this_turn = 0
+            _TURN_STATE_MACHINE.reset_round_damage(room)
 
             # 更新并检查极限增援效果
             if 'reinforcement_check' in room.game_effects:

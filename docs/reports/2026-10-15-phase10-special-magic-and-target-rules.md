@@ -16,7 +16,7 @@
 
 `static/magic_actions.js` 接管魔法卡出牌入口、目标确认后的普通出牌/连锁响应/优先级响应分流，以及神之宣告的二段确认；服务端事件名与 payload 保持不变。
 
-`application/chain_policy.py` 接管连锁响应资格判定（普通玩家速阶 3、绝处逢生锁卡和困难 AI 的失灵响应条件）；`application/chain_window.py` 进一步接管响应窗口的玩家轮转、自动放弃、广播和超时任务接线，`server.py` 仅保留兼容入口与动态依赖注入。
+`application/chain_policy.py` 接管连锁响应资格判定（普通玩家速阶 3、绝处逢生锁卡和困难 AI 的失灵响应条件）；`application/chain_window.py` 接管响应窗口轮转，`application/chain_timeout.py` 接管超时推进，`application/chain_ai_response.py` 接管困难 AI 的失灵响应，`server.py` 仅保留兼容入口与动态依赖注入。
 
 `application/card_refund.py` 接管卡牌发动条件不满足时按对象引用退回手牌的补偿规则；`server.py` 保留兼容包装并注入事件、日志能力。
 

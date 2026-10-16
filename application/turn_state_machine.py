@@ -3,7 +3,9 @@
 
 class TurnStateMachine:
     def __init__(self, *, sleep, frozen_ship_count, recalc_attacks,
-                 emit, run_ai_turn, attacks_forced_zero, trigger_wuxian):
+                 emit, run_ai_turn, attacks_forced_zero, trigger_wuxian,
+                 settle_wuyou, settle_bingliang, prune_flags, emit_active_effects,
+                 keep_across_turn):
         self._sleep = sleep
         self._frozen_ship_count = frozen_ship_count
         self._recalc_attacks = recalc_attacks
@@ -11,6 +13,11 @@ class TurnStateMachine:
         self._run_ai_turn = run_ai_turn
         self._attacks_forced_zero = attacks_forced_zero
         self._trigger_wuxian = trigger_wuxian
+        self._settle_wuyou = settle_wuyou
+        self._settle_bingliang = settle_bingliang
+        self._prune_flags = prune_flags
+        self._emit_active_effects = emit_active_effects
+        self._keep_across_turn = keep_across_turn
 
     def enter_battle(self, room, player_id):
         room.current_phase = 'battle'
@@ -53,6 +60,27 @@ class TurnStateMachine:
             next_index = (next_index + 1) % len(room.attack_order)
             next_attacker = room.attack_order[next_index]
         return next_index, next_attacker, skip_stages
+
+    def continue_turn(self, room, next_attacker):
+        """完成同一大回合内的普通换手。"""
+        room.current_attacker = next_attacker
+        room.current_phase = 'preparation'
+        room.players[next_attacker].damage_dealt_this_turn = 0
+        self._recalc_attacks(room)
+        self._settle_wuyou(room)
+        self._settle_bingliang(room)
+        self._prune_flags(room, self._keep_across_turn)
+        self._emit_active_effects(room)
+        self._emit('phase_updated', {
+            'current_phase': room.current_phase,
+            'current_attacker': room.current_attacker,
+        }, room=room.id)
+        self._emit('turn_change', {
+            'current_attacker': room.current_attacker,
+            'attacks_remaining': room.attacks_remaining,
+            'phase': room.current_phase,
+        }, room=room.id)
+        self._run_ai_turn(room)
 
     def switch_after_end(self, room, opponent_id, delay=2):
         self._sleep(delay)

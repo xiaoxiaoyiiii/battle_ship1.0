@@ -73,6 +73,7 @@ from application.attack_gate import AttackGate
 from application.attack_resolution import AttackResolution
 from application.attack_finalization import AttackFinalization
 from application.ship_sunk_effects import ShipSunkEffects
+from application.game_end import GameEnd
 from application.chain_resolution import ChainResolution
 from application.priority_resolution import PriorityResolution
 from application.priority_continuation import PriorityContinuation
@@ -4419,21 +4420,8 @@ def _settle_ranked_match(room, winner_id, loser_id, streak_ctx=None):
 
 
 def _check_last_chance(room, attacker_id: str, defender_id: str) -> bool:
-    """回光返照：对使用者的船造成伤害则其直接判负。返回是否触发。"""
-    eff = room.game_effects.get('last_chance')
-    if eff and eff.get('caster') == defender_id and eff.get('round', room.round) == room.round:
-        room.state = 'game_over'
-        room.winner = attacker_id
-        add_game_log(room, f"第{room.round}回合 · {_log_name(room, defender_id)} 触发回光返照失败并判负", 'result', {
-            'winner': attacker_id,
-            'loser': defender_id
-        })
-        # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
-        _finalize_match(room, attacker_id, defender_id)
-        emit('game_over', _game_over_payload(room, {'winner': attacker_id}), room=room.id)
-        return True
-    return False
-
+    """兼容入口：检查回光返照判负。"""
+    return _GAME_END.check_last_chance(room, attacker_id, defender_id)
 
 def _mark_ship_sunken(player, ship):
     """兼容入口：登记沉船并去重。"""
@@ -4470,36 +4458,13 @@ def _apply_attacker_damage_buffs(room, room_id, attacker_id):
 
 
 def _game_over_payload(room, extra=None):
-    """`game_over` 的载荷（**唯一构造口**，2026-09-29 加）。
-
-    为什么要有这么一个只有几行的函数：结算屏的「本局回放」入口需要**本局的权威 id**，
-    而 6 处 `emit('game_over', …)` 各写各的字面量 —— 想加一个字段就得改 6 个地方，
-    漏一个就会出现"这一种结束方式没有回放入口"（本项目的老病根形状）。
-
-    ⚠️ `match_id` **只在真的拿到时才带上**：写库失败、双方都是游客、人机房不计战绩时
-        `_finalize_match` 不会设 `room.match_id`，于是这里就不放这个键。
-        客户端据此**隐藏**入口 —— 而不是退化成"读历史第一条来猜本局"
-        （任务书 §W5 明令禁止那种猜法）。
-    """
-    payload = dict(extra or {})
-    match_id = getattr(room, 'match_id', None)
-    if match_id:
-        payload['match_id'] = match_id
-    return payload
+    """兼容入口：构造终局载荷。"""
+    return _GAME_END.payload(room, extra)
 
 
 def _finish_game_win(room, room_id, winner_id, loser_id, log_message=None):
-    """对局结束：置状态、记日志、记录战绩并广播 game_over。"""
-    if room.state == 'game_over':
-        # 幂等：对局已结束时不重复记账/广播（防止刷战绩）
-        return
-    room.state = 'game_over'
-    room.winner = winner_id
-    add_game_log(room, log_message or f"第{room.round}回合 · {_log_name(room, winner_id)} 获胜，游戏结束",
-                 'result', {'winner': winner_id, 'loser': loser_id})
-    # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
-    _finalize_match(room, winner_id, loser_id)
-    emit('game_over', _game_over_payload(room, {'winner': winner_id}), room=room_id)
+    """兼容入口：统一收口胜利结算。"""
+    return _GAME_END.finish_win(room, room_id, winner_id, loser_id, log_message)
 
 
 @socketio.on('attack')
@@ -7918,6 +7883,12 @@ _SHIP_SUNK_EFFECTS = ShipSunkEffects(
     treasure=lambda room, count, **kwargs: _notify_treasure_hunter(room, count, **kwargs),
     emit=lambda *args, **kwargs: emit(*args, **kwargs),
     log=lambda *args, **kwargs: add_game_log(*args, **kwargs),
+    log_name=lambda room, player_id: _log_name(room, player_id),
+)
+_GAME_END = GameEnd(
+    add_log=lambda room, message, kind, data: add_game_log(room, message, kind, data),
+    finalize_match=lambda room, winner, loser: _finalize_match(room, winner, loser),
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
     log_name=lambda room, player_id: _log_name(room, player_id),
 )
 _CHAIN_RESOLUTION = ChainResolution(

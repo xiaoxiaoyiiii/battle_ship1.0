@@ -72,6 +72,7 @@ from application.disconnect_resolution import DisconnectResolution
 from application.attack_gate import AttackGate
 from application.attack_resolution import AttackResolution
 from application.attack_finalization import AttackFinalization
+from application.ship_sunk_effects import ShipSunkEffects
 from application.chain_resolution import ChainResolution
 from application.priority_resolution import PriorityResolution
 from application.priority_continuation import PriorityContinuation
@@ -4435,26 +4436,8 @@ def _check_last_chance(room, attacker_id: str, defender_id: str) -> bool:
 
 
 def _mark_ship_sunken(player, ship):
-    """把一艘船登记进沉船堆（带去重）。
-
-    ⚠️ 全项目登记沉船都必须走这里。本项目的「击沉」不会把船移出 ships，
-    所以同一艘船对象会在"沉→复活→再沉"的循环里被反复登记；不去重就会在
-    sunken_ships 里留下重复引用，进而造成：
-      · 幽灵计数：复活类 pop() 到重复条目时船其实还活着 → 只加 remaining_ships、
-        棋盘上却没有船复活（玩家实测报的"疗愈后战舰并没有复活"）；
-      · 一艘船被复活两次，船数突破 6 艘上限。
-    返回 True 表示本次真的新增了一条。
-    """
-    if ship is None:
-        return False
-    sunken = getattr(player, 'sunken_ships', None)
-    if sunken is None:
-        player.sunken_ships = sunken = []
-    if ship in sunken:
-        return False
-    sunken.append(ship)
-    return True
-
+    """兼容入口：登记沉船并去重。"""
+    return _SHIP_SUNK_EFFECTS.mark_sunken(player, ship)
 
 def _on_ship_destroyed(room, owner_id: str, ship):
     """一艘船被摧毁后的通用副作用（普通攻击与区域魔法共用同一份实现）。
@@ -4540,42 +4523,12 @@ def _trigger_ship_trap(room, owner_id, sunk_ship):
 def _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id, ship,
                              *, exclude_attacker_from_treasure=True,
                              request_demon_contract=True):
-    """击沉一艘战舰后的共同副作用（普通攻击 / 区域魔法 共用）。
-
-    包含：船数扣减、沉船记录、百亿补贴、恶魔契约、八方来财、无暇圣心中断。
-
-    ★ 2026-09-24：末尾的 `target_x, target_y` 两个参数一起删掉了 —— 它们**只**用来
-      给平等条约那张船数变化快照记"这一炮打在哪一格"（供回滚撤销命中格），
-      快照已整条删除 ⇒ 参数没有人读。留着就是"只写不读"的僵尸参数。
-    """
-    defender = room.players[defender_id]
-    defender.remaining_ships -= 1
-    _mark_ship_sunken(defender, ship)   # 去重，见该函数说明
-
-    # 百亿补贴 + 无瑕圣心中断（与区域魔法共用）
-    _on_ship_destroyed(room, defender_id, ship)
-
-    # 恶魔契约: 绑定船数增减 - 任意一方船被击杀，另一方也要牺牲一艘
-    # 牺牲由该方玩家自己在棋盘上点选（AI 自动），不再随机。
-    if request_demon_contract and room.game_effects.get('demon_contract'):
-        _request_demon_contract_sacrifice(room, defender_id)
-
-    # 八方来财: 战舰数目变化时抽一张牌。
-    # 这是【炮击/弃卡攻击】造成的减少，所以"己方击败对方的船"要排除 ——
-    # 即：攻击方自己持有八方来财时，他打沉别人不算变化；
-    # 而被击沉的那一方若持有八方来财，则照常摸牌（是对方击败了我方）。
-    if exclude_attacker_from_treasure:
-        _notify_treasure_hunter(room, 1, exclude_player_id=attacker_id)
-    else:
-        _notify_treasure_hunter(room, 1)
-
-    # 检查无暇圣心效果：如果有战舰被击沉，中断效果
-    if 'holy_heart' in room.game_effects:
-        del room.game_effects['holy_heart']
-        emit('holy_heart_interrupted', {
-            'reason': '有战舰被击沉，无暇圣心效果中断'
-        }, room=room_id)
-
+    """兼容入口：执行共享击沉副作用。"""
+    return _SHIP_SUNK_EFFECTS.apply(
+        room, room_id, attacker_id, defender_id, ship,
+        exclude_attacker_from_treasure=exclude_attacker_from_treasure,
+        request_demon_contract=request_demon_contract,
+    )
 
 def _apply_attacker_damage_buffs(room, room_id, attacker_id):
     """攻击造成伤害后攻击方触发的效果：饮血、越战越勇、伤害统计。"""
@@ -8024,6 +7977,13 @@ _ATTACK_FINALIZATION = AttackFinalization(
     warn_shadow=lambda room_id, attacker_id, x, y, diff: logging.getLogger(__name__).warning(
         'combat shadow mismatch room=%s attacker=%s target=(%s,%s) diff=%r',
         room_id, attacker_id, x, y, diff),
+)
+_SHIP_SUNK_EFFECTS = ShipSunkEffects(
+    on_destroyed=lambda room, owner_id, ship: _on_ship_destroyed(room, owner_id, ship),
+    demon_contract=lambda room, owner_id: _request_demon_contract_sacrifice(room, owner_id),
+    treasure=lambda room, count, **kwargs: _notify_treasure_hunter(room, count, **kwargs),
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    log=lambda *args, **kwargs: add_game_log(*args, **kwargs),
 )
 _CHAIN_RESOLUTION = ChainResolution(
     chain_result=lambda **kwargs: ChainResult(**kwargs),

@@ -3,13 +3,28 @@
 
 class PriorityGate:
     def __init__(self, *, has_context, is_ai_room, is_disconnected,
-                 decline_enabled, has_chain, emit):
+                 decline_enabled, has_chain, emit, action_text):
         self._has_context = has_context
         self._is_ai_room = is_ai_room
         self._is_disconnected = is_disconnected
         self._decline_enabled = decline_enabled
         self._has_chain = has_chain
         self._emit = emit
+        self._action_text = action_text
+
+    def pending_for(self, room, player_id):
+        pending = getattr(room, 'priority_pending', None)
+        if pending and pending.get('actor') == player_id:
+            return pending
+        return None
+
+    def wait_reason(self, room, player_id):
+        pending = self.pending_for(room, player_id)
+        if not pending:
+            return None
+        action_text = self._action_text() if callable(self._action_text) else self._action_text
+        action = action_text.get(pending.get('action'), '阶段转换')
+        return f'正在等待对方响应「{action}」，请稍候再操作'
 
     def should_ask(self, room, actor_id, responder_id):
         if not self._has_context() or self._is_ai_room(room):

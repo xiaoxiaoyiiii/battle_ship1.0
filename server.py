@@ -8458,37 +8458,18 @@ _PRIORITY_GATE = PriorityGate(
     decline_enabled=lambda room, player_id: (getattr(room, 'decline_priority', None) or {}).get(player_id),
     has_chain=lambda room: bool(room.chain or room.chain_waiting),
     emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    action_text=lambda: PRIORITY_ACTION_TEXT,
 )
 
 
 def _priority_pending_for(room, player_id):
-    """如果该玩家正是"被拦下的那次阶段转换"的发起者，返回 pending，否则 None。"""
-    pending = getattr(room, 'priority_pending', None)
-    if pending and pending.get('actor') == player_id:
-        return pending
-    return None
+    """兼容入口：读取发起方的待处理优先权询问。"""
+    return _PRIORITY_GATE.pending_for(room, player_id)
 
 
 def _priority_wait_reason(room, player_id):
-    """发起方在等待对方响应期间，其余写操作一律冻结；返回拒绝原因，否则 None。
-
-    ⚠️ 为什么必须冻（作者实测反馈：「在等待阶段转换的响应的时候，对方不能暂停行动」）：
-    这个 10 秒窗口的**全部意义**就是仲裁"谁先动手"。可旧实现只拦了阶段转换本身，
-    发起方在等待期间仍然能继续开炮、出牌、交回合 ——
-    对方正在决定要不要打速阶3，这边已经把攻击打完了；
-    窗口结束时 _priority_continue 再把阶段转换补上。
-    于是"拦下来问一句"形同虚设，双方看到的效果顺序仍然没有定义。
-
-    连带修掉的另一个洞：`_should_ask_priority` 看到已有 pending 会返回 False，
-    于是发起方**再点一次**「进入战斗阶段」会直接跳过询问、当场推进
-    （双击即可绕过询问）。
-    """
-    pending = _priority_pending_for(room, player_id)
-    if not pending:
-        return None
-    action = PRIORITY_ACTION_TEXT.get(pending.get('action'), '阶段转换')
-    return f'正在等待对方响应「{action}」，请稍候再操作'
-
+    """兼容入口：返回等待优先权询问时的冻结原因。"""
+    return _PRIORITY_GATE.wait_reason(room, player_id)
 
 def _should_ask_priority(room, actor_id, responder_id):
     """兼容入口：交给应用层优先权门禁。"""

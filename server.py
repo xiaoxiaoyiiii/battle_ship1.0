@@ -8256,15 +8256,6 @@ def _finish_chain(room, display_delay: bool = True) -> bool:
     return _CHAIN_DISPLAY.finish(room, display_delay=display_delay)
 
 
-def _chain_display_then_resolve(room_id: str, token: int):
-    """兼容入口：执行展示停留后的连锁结算。"""
-    return _CHAIN_DISPLAY._display_then_resolve(room_id, token)
-
-
-def _chain_display_still_current(room, token: int) -> bool:
-    return _CHAIN_DISPLAY.still_current(room, token)
-
-
 def _sweep_overdue_chain_display(now: float = None) -> list:
     return _CHAIN_DISPLAY.sweep(now=now)
 

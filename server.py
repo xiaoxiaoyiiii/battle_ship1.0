@@ -4440,46 +4440,8 @@ def _mark_ship_sunken(player, ship):
     return _SHIP_SUNK_EFFECTS.mark_sunken(player, ship)
 
 def _on_ship_destroyed(room, owner_id: str, ship):
-    """一艘船被摧毁后的通用副作用（普通攻击与区域魔法共用同一份实现）。
-
-    普通攻击路径原先在 _apply_ship_sunk_effects 里内联；溅射 / 轰炸 / 硫磺火焰
-    各自又写了一份，且都漏掉了一件事：
-
-      **无瑕圣心中断** —— 它们只把 no_damage 置 False，效果本身既没被中断
-      也没有广播，等于"有船沉了但无暇圣心还在"。
-
-    ★ 2026-09-24：原来的 `hits_added` / `source` 两个参数是**只为平等条约那张
-      船数变化快照服务的**（记录"沉了哪艘、加了哪些命中格、怎么死的"供回滚），
-      那张快照已整条删除 ⇒ 两个参数一起删掉。留着就是"只写不读"的僵尸参数，
-      下一个人会照着它把快照找回来（`docs/CHAIN_ENGINE_SPEC.md` §4 的同款教训）。
-      平等条约现在看的是连锁栈正下方那一项，判据见
-      `EQUAL_TREATY_SHIP_CHANGE_RULES`。
-    """
-    owner = room.players[owner_id]
-
-    # 百亿补贴: 自己的船被击败时，自己的攻击次数 +3
-    _grant_subsidy_bonus(room, owner_id)
-
-    # 无暇圣心：只要有战舰被击沉就中断
-    if 'holy_heart' in room.game_effects:
-        del room.game_effects['holy_heart']
-        emit('holy_heart_interrupted', {
-            'reason': '有战舰被击沉，无暇圣心效果中断'
-        }, room=room.id)
-
-    # 守株待兔：被击沉的船带陷阱标记 → 让对方牺牲 min(2, 对方活船数) 艘。
-    # 卡面"如果这艘船死亡"按字面解释为任意死亡方式都触发；为防 caster
-    # 自己主动牺牲陷阱船造成递归（牺牲→触发trap→对方牺牲→可能再触发），
-    # 触发后**立刻清掉 trap 标记**，同一艘船只能触发一次。
-    if getattr(ship, 'trap', False):
-        ship.trap = False
-        _trigger_ship_trap(room, owner_id, ship)
-
-    # 把己方棋盘重新推给本人：不然前端手里那份还是摆船时自己拼的，
-    # 既不知道哪艘已经沉了（没有 alive 标记），也不知道船被移除，
-    # 「选一艘自己的船」类的卡就会把沉船也画成可点。
-    _emit_player_ships(room, owner_id)
-
+    """兼容入口：执行沉船后的通用同步和触发。"""
+    return _SHIP_SUNK_EFFECTS.on_destroyed(room, owner_id, ship)
 
 def _trigger_ship_trap(room, owner_id, sunk_ship):
     """守株待兔陷阱被踩中：让【对方】牺牲 min(2, 对方活船数) 艘战舰。
@@ -7979,7 +7941,9 @@ _ATTACK_FINALIZATION = AttackFinalization(
         room_id, attacker_id, x, y, diff),
 )
 _SHIP_SUNK_EFFECTS = ShipSunkEffects(
-    on_destroyed=lambda room, owner_id, ship: _on_ship_destroyed(room, owner_id, ship),
+    grant_subsidy=lambda room, owner_id: _grant_subsidy_bonus(room, owner_id),
+    trigger_trap=lambda room, owner_id, ship: _trigger_ship_trap(room, owner_id, ship),
+    emit_player_ships=lambda room, owner_id: _emit_player_ships(room, owner_id),
     demon_contract=lambda room, owner_id: _request_demon_contract_sacrifice(room, owner_id),
     treasure=lambda room, count, **kwargs: _notify_treasure_hunter(room, count, **kwargs),
     emit=lambda *args, **kwargs: emit(*args, **kwargs),

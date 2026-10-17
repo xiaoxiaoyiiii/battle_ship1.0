@@ -8193,8 +8193,12 @@ _CHAIN_RESOLUTION = ChainResolution(
 )
 _PRIORITY_RESOLUTION = PriorityResolution(
     clear=lambda room: _clear_priority(room),
-    play_speed3=lambda room, player_id, card, targets: _play_speed3_as_priority(
-        room, player_id, card, targets),
+    play_speed3=lambda room, player_id, card, targets: handle_use_magic_card({
+        'room_id': room.id,
+        'player_id': player_id,
+        'card': card,
+        'targets': targets,
+    }),
     emit=lambda *args, **kwargs: emit(*args, **kwargs),
     continue_action=lambda room, actor, action: _priority_continue(room, actor, action),
 )
@@ -8497,20 +8501,6 @@ def _resolve_priority(room, respond=False, card=None, targets=None):
 def _priority_continue(room, actor_id, action):
     """兼容入口：交给应用层恢复被拦下的阶段操作。"""
     return _PRIORITY_CONTINUATION.continue_action(room, actor_id, action)
-
-def _play_speed3_as_priority(room, player_id, card_data, targets):
-    """优先权询问里打出的速阶3：走与出牌相同的校验与入链。
-
-    复用 handle_use_magic_card，但入口处会因 chain_waiting 拦截 ——
-    这里是询问场景，没有连锁窗口，所以直接调用即可。
-    """
-    return handle_use_magic_card({
-        'room_id': room.id,
-        'player_id': player_id,
-        'card': card_data,
-        'targets': targets,
-    })
-
 
 @socketio.on('priority_response')
 @_require_live_room

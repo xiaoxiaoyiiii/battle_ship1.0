@@ -68,6 +68,7 @@ from application.turn_state_machine import TurnStateMachine
 from application.chain_settlement import ChainSettlement
 from application.chain_display import ChainDisplay
 from application.round_transition import RoundTransition
+from application.disconnect_resolution import DisconnectResolution
 from application.chain_resolution import ChainResolution
 from application.priority_resolution import PriorityResolution
 from application.priority_continuation import PriorityContinuation
@@ -8191,6 +8192,20 @@ _ROUND_TRANSITION = RoundTransition(
     restore_shenwei=lambda room, round_number: _restore_due_shenwei(room, round_number),
     recall_lanyu=lambda room, room_id: _recall_lanyu_ships(room, room_id),
 )
+_DISCONNECT_RESOLUTION = DisconnectResolution(
+    sleep=lambda seconds: time.sleep(seconds),
+    now=lambda: time.time(),
+    get_room=lambda room_id: room_manager.get_room(room_id),
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    drop_room=lambda room_id, reason: _drop_room(room_id, reason),
+    finalize_match=lambda room, winner, loser: _finalize_match(room, winner, loser),
+    game_over_payload=lambda room, extra: _game_over_payload(room, extra),
+    start_cleanup=lambda room_id, delay: socketio.start_background_task(
+        _cleanup_ended_room, room_id, delay),
+    start_timeout=lambda room_id, player_id, token: socketio.start_background_task(
+        _disconnect_timeout, room_id, player_id, token),
+    grace=lambda: DISCONNECT_GRACE_SECONDS,
+)
 _CHAIN_RESOLUTION = ChainResolution(
     chain_result=lambda **kwargs: ChainResult(**kwargs),
     apply_effect=lambda room, player_id, card, targets: apply_magic_effect(
@@ -8474,66 +8489,12 @@ DISCONNECT_GRACE_SECONDS = 30
 def _start_disconnect_grace(room_id: str, player_id: str):
     """玩家掉线：启动 30s 重连窗口并通知对手。由后台任务调用（避免在
     disconnect 处理器内同步 emit 导致 eventlet hub 卡死）。"""
-    time.sleep(0.2)  # 让 disconnect 收尾完成
-    room = room_manager.get_room(room_id)
-    if not room or room.state == 'game_over' or player_id in room.disconnected:
-        return
-    room.disconnect_seq += 1
-    deadline = time.time() + DISCONNECT_GRACE_SECONDS
-    room.disconnected[player_id] = {'deadline': deadline, 'token': room.disconnect_seq}
-    for pid, p in list(room.players.items()):
-        if pid != player_id:
-            emit('opponent_disconnected', {
-                'player_id': player_id,
-                'seconds': DISCONNECT_GRACE_SECONDS,
-                'deadline': deadline,
-            }, to=p.sid)
-    socketio.start_background_task(_disconnect_timeout, room_id, player_id, room.disconnect_seq)
+    return _DISCONNECT_RESOLUTION.start_grace(room_id, player_id)
 
 
 def _disconnect_timeout(room_id: str, player_id: str, token: int):
-    """掉线宽限到期结算：未重连则按房间阶段决定取消对局或判对手胜利。"""
-    time.sleep(DISCONNECT_GRACE_SECONDS)
-    room = room_manager.get_room(room_id)
-    if not room:
-        return
-    entry = room.disconnected.get(player_id)
-    if not entry or entry.get('token') != token:
-        return  # 已重连或已由其它路径处理
-    room.disconnected.pop(player_id, None)
-
-    other = next((p for p in room.players if p != player_id), None)
-    ai_room = getattr(room, 'is_ai_room', False)
-    pre_battle = room.state in ('placing_ships', 'rock_paper_scissors')
-
-    if ai_room or pre_battle or other is None or other in room.disconnected or room.state == 'game_over':
-        # 人机房 / 未开战 / 双方都不在场：取消对局，不计战绩
-        # ⚠️ 必须带 room_id（2026-09-29 加）。这条广播是**房间级**的，而客户端要在
-        #    "我被取消的那个房间"与"我现在所在的房间"之间做判断 —— 载荷里没有房间号，
-        #    客户端就只能无条件认下，于是**旧房间**的取消广播会把已经进了新房间的玩家
-        #    踢回首页。实测（好友邀战工具连跑两次开局）：`game_canceled` 到达后
-        #    1.5s 就 NAV 到 `/`，而那条取消属于上一个已解散的房间；
-        #    同一条命令换一次运行又全绿 —— 典型竞态。
-        #    `_drop_room` 在 emit 之后，房间没了也不影响这条已经写进载荷的 id。
-        emit('game_canceled', {
-            'reason': 'opponent_disconnected',
-            'message': '对局已取消（对手掉线）',
-            'room_id': room_id,
-        }, room=room_id)
-        # 房里可能还有人连着（掉线的是**对手**）→ 同样走收口，别留下「对局中」
-        _drop_room(room_id, '对手掉线/未开局，取消对局')
-        return
-
-    # 正式对局：在场方判胜，正常计入战绩（无特殊标签）
-    room.state = 'game_over'
-    room.winner = other
-    room.game_over_reason = 'opponent_disconnected'
-    # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
-    _finalize_match(room, other, player_id)
-    emit('game_over', _game_over_payload(room, {'winner': other, 'reason': 'opponent_disconnected'}), room=room_id)
-    # 房间保留约 2 分钟：让掉线者重连时收到一次性警告
-    socketio.start_background_task(_cleanup_ended_room, room_id, 120)
-
+    """兼容入口：交给应用层处理掉线宽限到期。"""
+    return _DISCONNECT_RESOLUTION.resolve(room_id, player_id, token)
 
 def _cleanup_ended_room(room_id: str, delay: float):
     time.sleep(delay)

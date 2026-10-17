@@ -70,6 +70,7 @@ from application.chain_display import ChainDisplay
 from application.round_transition import RoundTransition
 from application.disconnect_resolution import DisconnectResolution
 from application.attack_gate import AttackGate
+from application.attack_resolution import AttackResolution
 from application.chain_resolution import ChainResolution
 from application.priority_resolution import PriorityResolution
 from application.priority_continuation import PriorityContinuation
@@ -4637,7 +4638,6 @@ def handle_attack(data):
     target_x = gate['target_x']
     target_y = gate['target_y']
     defender_id = gate['defender_id']
-    defender_ships = room.players[defender_id].ships
 
     # Phase 2 shadow：在旧逻辑改变房间状态前计算一份纯规则预期。
     # 默认关闭；开启时只记录差异，绝不阻断旧路径或改变返回值。
@@ -4661,88 +4661,13 @@ def handle_attack(data):
         except Exception:
             logging.getLogger(__name__).exception('combat shadow 预期计算失败')
 
-    # 检查是否击中（统一路径：强制击杀与普通攻击共用一套结算）
-    hit = False
-    ship_sunk = False
-    shield_blocked = False
-    for i, ship in enumerate(defender_ships):
-        if {'x': target_x, 'y': target_y} not in ship.positions:
-            continue
-        hit = True
-
-        # 更新无暇圣心效果：如果有伤害，标记no_damage为False（无敌状态不算造成伤害）
-        if 'holy_heart' in room.game_effects and not ship.invincible:
-            room.game_effects['holy_heart']['no_damage'] = False
-
-        # 检查攻击者是否有强制击杀效果
-        has_forced_kill = room.players[attacker_id].effect_flags.forced_kill > 0
-
-        if has_forced_kill:
-            # 强制击杀效果：忽略无敌和盾牌状态，记录击中位置并直接击沉
-            defender_ships[i].hits = defender_ships[i].hits + [Position(x=target_x, y=target_y)]
-            ship_sunk = True
-            _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id,
-                                     defender_ships[i])
-        elif ship.invincible:
-            # 无敌状态，只显形不造成伤害
-            ship_sunk = False
-        elif ship.shield:
-            # 盾牌状态，抵挡一次伤害
-            ship_sunk = False
-            shield_blocked = True
-            ship.shield = False
-            # 盾挡下一击：必须明确广播"这一炮被挡了"。否则双方只看到一次普通
-            # "命中"，防守方会以为自己的船挨了一炮（实际毫发无伤），
-            # 也完全不知道自己的盾已经用掉。
-            emit('shield_absorbed', {
-                'player': defender_id,
-                'positions': [{'x': p.x, 'y': p.y} for p in ship.positions],
-            }, room=room_id)
-            _emit_player_ships(room, defender_id)
-        else:
-            # 记录击中位置
-            defender_ships[i].hits = defender_ships[i].hits + [Position(x=target_x, y=target_y)]
-            # 检查船是否被击沉
-            if len(defender_ships[i].hits) == len(defender_ships[i].positions):
-                ship_sunk = True
-                _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id,
-                                         defender_ships[i])
-            else:
-                ship_sunk = False
-
-        # 造成伤害（含强制击杀）时才触发攻击方增益与胜负检查
-        if has_forced_kill or (not ship.invincible and not ship.shield):
-            # 检查回光返照效果：造成伤害即判负
-            if _check_last_chance(room, attacker_id, defender_id):
-                return {'status': 'success', 'game_over': True}
-
-            # 发送战舰数更新事件
-            _emit_ships_updated(room)
-
-            # 饮血 / 越战越勇 / 伤害统计
-            _apply_attacker_damage_buffs(room, room_id, attacker_id)
-
-            # 检查绝处逢生效果：击杀任何一艘战舰直接获胜。
-            #
-            # ⚠️ 两个条件都不能少：
-            # ① last_stand_win 而不是 last_stand —— 后者是"发动回合锁卡"的标记，
-            #    换小回合就被清，用它会把效果限制在发动当回合（作者实测反馈：
-            #    "只会在绝处逢生生效的那一个回合有效 到了下一个回合就没有了"）。
-            # ② 必须【真的打死了一艘船】才判胜。原先只判"造成了伤害"就获胜，
-            #    于是普通命中（甚至一次没打沉的炮）都能直接赢 —— 那不是卡面写的
-            #    "击杀了对方的任何一艘船"。船沉了才走 _apply_ship_sunk_effects，
-            #    到这一行 remaining_ships 已经扣过，所以判胜即"击杀"。
-            #    强制击杀（余音绕梁）本身就是击杀，同样算数。
-            if (room.players[attacker_id].effect_flags.last_stand_win
-                    and (ship_sunk or has_forced_kill)):
-                _finish_game_win(room, room_id, attacker_id, defender_id,
-                                 f"第{room.round}回合 · {_log_name(room, attacker_id)} 绝处逢生击杀敌舰获胜")
-                return {'status': 'success', 'game_over': True}
-
-            # 注意：强制击杀按【攻击阶段】计数，不按击杀次数消耗，
-            # 改为在进入结束阶段时消耗（见 handle_enter_end_phase）。
-        break
-
+    resolution = _ATTACK_RESOLUTION.resolve(
+        room, room_id, attacker_id, defender_id, target_x, target_y)
+    hit = resolution['hit']
+    ship_sunk = resolution['ship_sunk']
+    shield_blocked = resolution['shield_blocked']
+    if resolution['game_over']:
+        return {'status': 'success', 'game_over': True}
 
     # 记录最后一次攻击（用于溅射等效果）
     room.last_attack = {
@@ -8161,6 +8086,21 @@ _ATTACK_GATE = AttackGate(
     action_wait=lambda room, player_id: _action_wait_reason(room, player_id),
     cell_in_shenwei_hole=lambda room, player_id, x, y: _cell_in_shenwei_hole(
         room, player_id, x, y),
+)
+_ATTACK_RESOLUTION = AttackResolution(
+    position=lambda x, y: Position(x=x, y=y),
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    emit_player_ships=lambda room, player_id: _emit_player_ships(room, player_id),
+    ship_sunk_effects=lambda room, room_id, attacker, defender, ship: _apply_ship_sunk_effects(
+        room, room_id, attacker, defender, ship),
+    check_last_chance=lambda room, attacker, defender: _check_last_chance(
+        room, attacker, defender),
+    emit_ships_updated=lambda room: _emit_ships_updated(room),
+    apply_damage_buffs=lambda room, room_id, attacker: _apply_attacker_damage_buffs(
+        room, room_id, attacker),
+    finish_game=lambda room, room_id, winner, loser, message: _finish_game_win(
+        room, room_id, winner, loser, message),
+    log_name=lambda room, player_id: _log_name(room, player_id),
 )
 _CHAIN_RESOLUTION = ChainResolution(
     chain_result=lambda **kwargs: ChainResult(**kwargs),

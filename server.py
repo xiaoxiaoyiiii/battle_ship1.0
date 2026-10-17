@@ -69,6 +69,7 @@ from application.chain_settlement import ChainSettlement
 from application.chain_resolution import ChainResolution
 from application.priority_resolution import PriorityResolution
 from application.priority_continuation import PriorityContinuation
+from application.priority_prompt import PriorityPrompt
 from application.card_tactical_effects import TacticalEffects
 from application.card_field_effects import FieldEffects
 from application.ship_selection import (
@@ -8439,6 +8440,17 @@ PRIORITY_ACTION_TEXT = {
     'enter_end': '进入结束阶段',
 }
 
+_PRIORITY_PROMPT = PriorityPrompt(
+    opponent_of=lambda room, player_id: _opponent_of(room, player_id),
+    should_ask=lambda room, actor, responder: _should_ask_priority(
+        room, actor, responder),
+    speed3_cards=lambda room, player_id: _speed3_cards(room, player_id),
+    action_text=PRIORITY_ACTION_TEXT,
+    seconds=lambda: PRIORITY_SECONDS,
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    schedule_timeout=lambda room_id, token: _schedule_priority_timeout(room_id, token),
+)
+
 
 def _priority_pending_for(room, player_id):
     """如果该玩家正是"被拦下的那次阶段转换"的发起者，返回 pending，否则 None。"""
@@ -8500,51 +8512,8 @@ def _should_ask_priority(room, actor_id, responder_id):
 
 
 def _ask_priority(room, actor_id, action, on_decline=None):
-    """向对手发起「是否响应」询问。
-
-    返回 True 表示【已发出询问】——此时调用方必须立刻返回，
-    真正的操作要等对方的响应（或超时）到了再执行，由 _resolve_priority 负责。
-    返回 False 表示【无需询问】（人机房 / 对方已拒绝 / 有连锁挂起…），
-    调用方可以继续执行原操作。
-
-    action：给前端显示的文案键，如 'enter_battle' / 'enter_end'。
-    on_decline：不需要 —— 真正要做的事由调用方在"无需询问"分支里自己执行；
-                等待响应时，_resolve_priority 会重新走一遍调用方的入口函数
-                （见 _priority_continue）。
-    """
-    responder_id = _opponent_of(room, actor_id)
-    if not _should_ask_priority(room, actor_id, responder_id):
-        return False
-
-    room.priority_token += 1
-    token = room.priority_token
-    room.priority_pending = {
-        'actor': actor_id,
-        'responder': responder_id,
-        'action': action,
-        # 告知对方"他手上有没有速阶3卡"——没有也照样问（作者裁定：
-        # 玩家要有选择权），但前端可以据此把提示写得更清楚。
-        'speed3_cards': _speed3_cards(room, responder_id),
-        'countdown': PRIORITY_SECONDS,
-    }
-    emit('priority_request', {
-        'action': action,
-        'actor': actor_id,
-        'speed3_cards': _speed3_cards(room, responder_id),
-        'countdown': PRIORITY_SECONDS,
-    }, to=room.players[responder_id].sid)
-    # 同时告诉【发起方】"你被拦下了，正在等对方"。
-    # 以前只发 priority_request 给响应者，发起方那边毫无提示：
-    # 点了「进入战斗阶段」之后界面一动不动，既不知道在等谁、也不知道等多久，
-    # 甚至可以在等待期间继续操作（见 _priority_wait_reason 的说明）。
-    emit('priority_waiting', {
-        'action': action,
-        'action_text': PRIORITY_ACTION_TEXT.get(action, '阶段转换'),
-        'countdown': PRIORITY_SECONDS,
-    }, to=room.players[actor_id].sid)
-    _schedule_priority_timeout(room.id, token)
-    return True
-
+    """兼容入口：交给应用层打开优先权询问窗口。"""
+    return _PRIORITY_PROMPT.ask(room, actor_id, action)
 
 def _schedule_priority_timeout(room_id: str, token: int):
     """询问超时兜底：视为对方放弃，继续执行原操作。

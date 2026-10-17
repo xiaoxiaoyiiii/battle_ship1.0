@@ -67,6 +67,7 @@ from application.priority_timeout import PriorityTimeout
 from application.turn_state_machine import TurnStateMachine
 from application.chain_settlement import ChainSettlement
 from application.chain_display import ChainDisplay
+from application.round_transition import RoundTransition
 from application.chain_resolution import ChainResolution
 from application.priority_resolution import PriorityResolution
 from application.priority_continuation import PriorityContinuation
@@ -5098,16 +5099,9 @@ def _end_turn_locked(room, room_id, player_id):
             # 进入新回合，重置状态
             room.round += 1
 
-            # 看破！：新大回合开始重置双方的魔法封锁
-            for p_id in room.players:
-                room.players[p_id].magic_blocked = None
-
-            # 神威！：除外的战舰到期回归原位，并恢复被扣掉的区域
-            _restore_due_shenwei(room, room.round)
-
             # 滥竽充数：大回合结束时强制收回临时船（不显示沉没）。
             # 若收回导致某方船数归零则直接判负，跳过下面的猜拳重置。
-            if _recall_lanyu_ships(room, room_id):
+            if _ROUND_TRANSITION.prepare(room, room_id):
                 return {'status': 'success', 'game_over': True}
 
             _TURN_STATE_MACHINE.expire_round_effects(room)
@@ -8192,6 +8186,10 @@ _CHAIN_DISPLAY = ChainDisplay(
     start_background_task=lambda fn, *args: socketio.start_background_task(fn, *args),
     sleep=lambda seconds: socketio.sleep(seconds),
     log=lambda message: print(message),
+)
+_ROUND_TRANSITION = RoundTransition(
+    restore_shenwei=lambda room, round_number: _restore_due_shenwei(room, round_number),
+    recall_lanyu=lambda room, room_id: _recall_lanyu_ships(room, room_id),
 )
 _CHAIN_RESOLUTION = ChainResolution(
     chain_result=lambda **kwargs: ChainResult(**kwargs),

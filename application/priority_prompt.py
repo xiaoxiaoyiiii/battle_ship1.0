@@ -19,23 +19,24 @@ class PriorityPrompt:
         room.priority_token += 1
         token = room.priority_token
         cards = self._speed3_cards(room, responder_id)
+        countdown = self._seconds()
         room.priority_pending = {
             'actor': actor_id,
             'responder': responder_id,
             'action': action,
             'speed3_cards': cards,
-            'countdown': self._seconds(),
+            'countdown': countdown,
         }
         self._emit('priority_request', {
             'action': action,
             'actor': actor_id,
             'speed3_cards': cards,
-            'countdown': self._seconds(),
+            'countdown': countdown,
         }, to=room.players[responder_id].sid)
         self._emit('priority_waiting', {
             'action': action,
             'action_text': self._action_text.get(action, '阶段转换'),
-            'countdown': self._seconds(),
+            'countdown': countdown,
         }, to=room.players[actor_id].sid)
         self._schedule_timeout(room.id, token)
         return True

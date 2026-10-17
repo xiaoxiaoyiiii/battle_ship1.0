@@ -70,6 +70,7 @@ from application.chain_resolution import ChainResolution
 from application.priority_resolution import PriorityResolution
 from application.priority_continuation import PriorityContinuation
 from application.priority_prompt import PriorityPrompt
+from application.priority_gate import PriorityGate
 from application.card_tactical_effects import TacticalEffects
 from application.card_field_effects import FieldEffects
 from application.ship_selection import (
@@ -8450,6 +8451,14 @@ _PRIORITY_PROMPT = PriorityPrompt(
     emit=lambda *args, **kwargs: emit(*args, **kwargs),
     schedule_timeout=lambda room_id, token: _schedule_priority_timeout(room_id, token),
 )
+_PRIORITY_GATE = PriorityGate(
+    has_context=lambda: _has_request_context(),
+    is_ai_room=lambda room: getattr(room, 'is_ai_room', False),
+    is_disconnected=lambda room, player_id: player_id in getattr(room, 'disconnected', {}),
+    decline_enabled=lambda room, player_id: (getattr(room, 'decline_priority', None) or {}).get(player_id),
+    has_chain=lambda room: bool(room.chain or room.chain_waiting),
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+)
 
 
 def _priority_pending_for(room, player_id):
@@ -8482,34 +8491,8 @@ def _priority_wait_reason(room, player_id):
 
 
 def _should_ask_priority(room, actor_id, responder_id):
-    """判断这次阶段转换是否需要先询问对方。返回 True/False。
-    阻断条件（都不询问，直接放行）：
-      · 无 socket 请求上下文（单元测试直调 handler）
-      · 人机房 —— AI 不会主动响应，弹窗只会让人干等
-      · 对方已掉线（在宽限期内）
-      · 对局已结束
-      · 对方已开启「拒绝」开关
-      · 已有连锁窗口挂起 —— 连锁窗口优先，避免双重弹窗
-      · 已有未处理的询问 —— 不叠加
-    """
-    if not _has_request_context():
-        return False
-    if getattr(room, 'is_ai_room', False):
-        return False
-    if not responder_id or responder_id not in room.players:
-        return False
-    if room.state == 'game_over':
-        return False
-    if responder_id in getattr(room, 'disconnected', {}):
-        return False
-    if (getattr(room, 'decline_priority', None) or {}).get(responder_id):
-        return False
-    if room.chain or room.chain_waiting:
-        return False
-    if getattr(room, 'priority_pending', None):
-        return False
-    return True
-
+    """兼容入口：交给应用层优先权门禁。"""
+    return _PRIORITY_GATE.should_ask(room, actor_id, responder_id)
 
 def _ask_priority(room, actor_id, action, on_decline=None):
     """兼容入口：交给应用层打开优先权询问窗口。"""
@@ -8522,23 +8505,8 @@ def _schedule_priority_timeout(room_id: str, token: int):
 
 
 def _clear_priority(room):
-    """清掉待处理的询问状态（不触发后续动作）。
-
-    顺带通知【发起方】"等待结束、可以继续操作了" ——
-    前端要靠它把冻结的按钮恢复回来。漏发的话发起方会一直停在
-    "等待对方响应"的界面里点不动（比卡死更难查：服务端其实已经继续了）。
-    """
-    pending = getattr(room, 'priority_pending', None)
-    actor_id = pending.get('actor') if pending else None
-    room.priority_pending = None
-    room.priority_token += 1
-    if actor_id and actor_id in room.players:
-        sid = getattr(room.players[actor_id], 'sid', None)
-        if sid:
-            emit('priority_waiting_end', {
-                'action': pending.get('action'),
-            }, to=sid)
-
+    """兼容入口：清理待处理优先权询问。"""
+    return _PRIORITY_GATE.clear(room)
 
 def _resolve_priority(room, respond=False, card=None, targets=None):
     """兼容入口：交给应用层处理优先权询问结果。"""

@@ -5257,19 +5257,7 @@ def _end_turn_locked(room, room_id, player_id):
                         # 快照缺失（旧对局/异常中断）：退回原地复活，至少不吞效果
                         room.players[p_id].effect_flags.prediction = 0
 
-            # 大回合结束（重新猜拳）：本大回合内的所有效果到此为止。
-            # 分类见 FLAGS_KEEP_ACROSS_ROUND 的说明。
-            _prune_effect_flags(room, FLAGS_KEEP_ACROSS_ROUND)
-
-            # 标记刚被清了一批，角标要跟着消失（否则百亿补贴等会一直亮着）
-            _emit_active_effects(room)
-
-            # 广播进入猜拳阶段
-            emit('game_state', {
-                'state': 'rock_paper_scissors',
-                'round': room.round,
-                **_rank_payload(room),
-            }, room=room_id)
+            _TURN_STATE_MACHINE.finalize_new_round(room)
             return {'status': 'success', 'new_round': True}
         else:
             # 跳过判定已经在上面的 `next_index == 0` 判断之前做完了
@@ -8176,6 +8164,8 @@ _TURN_STATE_MACHINE = TurnStateMachine(
     keep_across_turn=FLAGS_KEEP_ACROSS_TURN,
     thaw_ship=lambda ship: _thaw_ship(ship),
     emit_player_ships=lambda room, player_id: _emit_player_ships(room, player_id),
+    keep_across_round=FLAGS_KEEP_ACROSS_ROUND,
+    rank_payload=lambda room: _rank_payload(room),
 )
 
 

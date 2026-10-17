@@ -5,7 +5,8 @@ class TurnStateMachine:
     def __init__(self, *, recalc_attacks,
                  emit, run_ai_turn, attacks_forced_zero, trigger_wuxian,
                  settle_wuyou, settle_bingliang, prune_flags, emit_active_effects,
-                 keep_across_turn, thaw_ship, emit_player_ships):
+                 keep_across_turn, thaw_ship, emit_player_ships,
+                 keep_across_round, rank_payload):
         self._recalc_attacks = recalc_attacks
         self._emit = emit
         self._run_ai_turn = run_ai_turn
@@ -18,6 +19,8 @@ class TurnStateMachine:
         self._keep_across_turn = keep_across_turn
         self._thaw_ship = thaw_ship
         self._emit_player_ships = emit_player_ships
+        self._keep_across_round = keep_across_round
+        self._rank_payload = rank_payload
 
     def enter_battle(self, room, player_id):
         room.current_phase = 'battle'
@@ -145,6 +148,16 @@ class TurnStateMachine:
                 and int(frozen_area.get('until_round') or 0) < int(room.round)):
             room.game_effects.pop('frozen_area', None)
             self._emit('frozen_area', {'cleared': True}, room=room.id)
+
+    def finalize_new_round(self, room):
+        """清理大回合效果并广播新的猜拳阶段。"""
+        self._prune_flags(room, self._keep_across_round)
+        self._emit_active_effects(room)
+        self._emit('game_state', {
+            'state': 'rock_paper_scissors',
+            'round': room.round,
+            **self._rank_payload(room),
+        }, room=room.id)
 
     def enter_end(self, room, player_id):
         """完成当前行动者从战斗阶段进入结束阶段的状态转换。"""

@@ -4444,43 +4444,8 @@ def _on_ship_destroyed(room, owner_id: str, ship):
     return _SHIP_SUNK_EFFECTS.on_destroyed(room, owner_id, ship)
 
 def _trigger_ship_trap(room, owner_id, sunk_ship):
-    """守株待兔陷阱被踩中：让【对方】牺牲 min(2, 对方活船数) 艘战舰。
-
-    与命运骰子摇到6共用牺牲链路：reason='trap_sacrifice'，allow_duplicate=True
-    跳过同 reason 去重，让对方连点两艘；AI 路径由 _request_ship_pick 自动选。
-    对方没有活船则跳过。
-    """
-    opponent_id = _opponent_of(room, owner_id)
-    if not opponent_id or opponent_id not in room.players:
-        return
-    opponent = room.players[opponent_id]
-    alive = _alive_ships(opponent)
-    need = min(2, len(alive))
-    if need <= 0:
-        emit('trap_triggered', {
-            'owner': owner_id, 'sunk_positions': [{'x': p.x, 'y': p.y} for p in sunk_ship.positions],
-            'sacrificed': 0, 'message': '陷阱触发，但对方没有可牺牲的战舰',
-        }, room=room.id)
-        return
-
-    emit('trap_triggered', {
-        'owner': owner_id, 'sunk_positions': [{'x': p.x, 'y': p.y} for p in sunk_ship.positions],
-        'sacrificed': need, 'message': f'陷阱触发！对方需牺牲{need}艘战舰',
-    }, room=room.id)
-    add_game_log(room,
-                 f'第{room.round}回合 · {_log_name(room, owner_id)} 的【守株待兔】陷阱被踩中，'
-                 f'对方需牺牲{need}艘战舰',
-                 'magic', {'owner': owner_id, 'card': '守株待兔', 'sacrifice': need})
-
-    for _ in range(need):
-        picked = _request_ship_pick(room, opponent_id, 'trap_sacrifice',
-                                    '守株待兔：请点选一艘战舰牺牲',
-                                    allow_duplicate=True)
-        if picked is not None:
-            # AI 自动选好：立即执行
-            _do_demon_contract_sacrifice(room, opponent_id, picked, 'trap_sacrifice')
-
-
+    """兼容入口：执行守株待兔陷阱。"""
+    return _SHIP_SUNK_EFFECTS.trigger_trap(room, owner_id, sunk_ship)
 
 def _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id, ship,
                              *, exclude_attacker_from_treasure=True,
@@ -7942,12 +7907,18 @@ _ATTACK_FINALIZATION = AttackFinalization(
 )
 _SHIP_SUNK_EFFECTS = ShipSunkEffects(
     grant_subsidy=lambda room, owner_id: _grant_subsidy_bonus(room, owner_id),
-    trigger_trap=lambda room, owner_id, ship: _trigger_ship_trap(room, owner_id, ship),
+    opponent_of=lambda room, owner_id: _opponent_of(room, owner_id),
+    alive_ships=lambda player: _alive_ships(player),
+    request_ship_pick=lambda room, player_id, reason, prompt, **kwargs: _request_ship_pick(
+        room, player_id, reason, prompt, **kwargs),
+    sacrifice=lambda room, player_id, picked, reason: _do_demon_contract_sacrifice(
+        room, player_id, picked, reason),
     emit_player_ships=lambda room, owner_id: _emit_player_ships(room, owner_id),
     demon_contract=lambda room, owner_id: _request_demon_contract_sacrifice(room, owner_id),
     treasure=lambda room, count, **kwargs: _notify_treasure_hunter(room, count, **kwargs),
     emit=lambda *args, **kwargs: emit(*args, **kwargs),
     log=lambda *args, **kwargs: add_game_log(*args, **kwargs),
+    log_name=lambda room, player_id: _log_name(room, player_id),
 )
 _CHAIN_RESOLUTION = ChainResolution(
     chain_result=lambda **kwargs: ChainResult(**kwargs),

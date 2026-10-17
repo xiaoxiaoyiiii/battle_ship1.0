@@ -67,6 +67,7 @@ from application.priority_timeout import PriorityTimeout
 from application.turn_state_machine import TurnStateMachine
 from application.chain_settlement import ChainSettlement
 from application.chain_resolution import ChainResolution
+from application.priority_resolution import PriorityResolution
 from application.card_tactical_effects import TacticalEffects
 from application.card_field_effects import FieldEffects
 from application.ship_selection import (
@@ -8187,6 +8188,13 @@ _CHAIN_RESOLUTION = ChainResolution(
         room, player_id, card, result),
     now=lambda: time.time(),
 )
+_PRIORITY_RESOLUTION = PriorityResolution(
+    clear=lambda room: _clear_priority(room),
+    play_speed3=lambda room, player_id, card, targets: _play_speed3_as_priority(
+        room, player_id, card, targets),
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    continue_action=lambda room, actor, action: _priority_continue(room, actor, action),
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -8557,40 +8565,9 @@ def _clear_priority(room):
 
 
 def _resolve_priority(room, respond=False, card=None, targets=None):
-    """询问有结果了：对方放弃（或超时），或他打出了一张速阶3。
-
-    respond=False → 继续执行被拦下的那个操作（重新走一遍入口）
-    respond=True  → 先把他的牌入链；连锁结算完再继续原操作
-    """
-    pending = getattr(room, 'priority_pending', None)
-    if not pending:
-        return
-    actor_id = pending['actor']
-    responder_id = pending['responder']
-    action = pending['action']
-    # 先清状态（代际令牌 +1 使超时定时器作废）
-    _clear_priority(room)
-
-    if respond and card is not None:
-        resp = _play_speed3_as_priority(room, responder_id, card, targets or [])
-        if resp is not None and resp.get('status') == 'error':
-            # 出牌失败（没这张牌 / 不是速阶3 / 被封锁…）：
-            # 退回"放弃"处理，并把原因回给本人，避免对局卡住
-            emit('message', {'text': resp.get('message', '响应失败，已视为取消')},
-                 to=room.players[responder_id].sid)
-            _priority_continue(room, actor_id, action)
-            return
-        # 出牌成功 → 已入链；连锁结算完后由这里继续原操作
-        if room.chain or room.chain_waiting:
-            # 结算完成后再继续：把续做动作挂上，交给 resolve_chain 之后触发
-            room.priority_continue = {'actor': actor_id, 'action': action}
-            return
-        # 没有连锁要结算（理论上不会走到，入链必然有窗口）——直接续做
-        _priority_continue(room, actor_id, action)
-        return
-
-    _priority_continue(room, actor_id, action)
-
+    """兼容入口：交给应用层处理优先权询问结果。"""
+    return _PRIORITY_RESOLUTION.resolve(
+        room, respond=respond, card=card, targets=targets)
 
 def _priority_continue(room, actor_id, action):
     """询问结束后，继续执行被拦下的那个操作。

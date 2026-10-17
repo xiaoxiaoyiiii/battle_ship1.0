@@ -71,6 +71,7 @@ from application.round_transition import RoundTransition
 from application.disconnect_resolution import DisconnectResolution
 from application.attack_gate import AttackGate
 from application.attack_resolution import AttackResolution
+from application.attack_finalization import AttackFinalization
 from application.chain_resolution import ChainResolution
 from application.priority_resolution import PriorityResolution
 from application.priority_continuation import PriorityContinuation
@@ -4669,103 +4670,11 @@ def handle_attack(data):
     if resolution['game_over']:
         return {'status': 'success', 'game_over': True}
 
-    # 记录最后一次攻击（用于溅射等效果）
-    room.last_attack = {
-        'attacker': attacker_id,
-        'x': target_x,
-        'y': target_y,
-        'hit': hit,
-        'ship_sunk': ship_sunk,
-        'round': room.round
-    }
-
-    # 减少攻击次数
-    room.attacks_remaining -= 1
-    # 确保攻击次数不会为负数
-    room.attacks_remaining = max(0, room.attacks_remaining)
-
-    if shadow_resolution is not None:
-        shadow_diff = compare_core_result(
-            shadow_resolution,
-            hit=hit,
-            ship_sunk=ship_sunk,
-            shield_blocked=shield_blocked,
-            remaining_attacks=room.attacks_remaining,
-            defender_remaining_ships=room.players[defender_id].remaining_ships,
-        )
-        if shadow_diff:
-            logging.getLogger(__name__).warning(
-                'combat shadow mismatch room=%s attacker=%s target=(%s,%s) diff=%r',
-                room_id,
-                attacker_id,
-                target_x,
-                target_y,
-                shadow_diff,
-            )
-
-    # 记录本次攻击到attacks列表（修复重复攻击校验与AI追踪失效）
-    #
-    # ⚠️ 被盾挡下的那一炮【不记】。
-    # `attacks` 的含义是"这一格已经打过了"：前端据此画叉并**不再绑定点击**，
-    # 服务端也用它做重复攻击校验。可盾牌只是把这一炮吃掉、船毫发无伤 ——
-    # 把格子算成"已打过"，玩家就会看到"打了一炮 → 格子变红叉 → 同一回合再也点不动"，
-    # 而他的船明明还完好地停在那儿（作者实测反馈）。
-    # 不记之后：同一回合可以再打这一格（盾已经破了，这一炮就正常结算伤害）。
-    # 攻击次数照扣 —— 盾挡掉的是一发炮弹，这一点没有变化。
-    if not shield_blocked:
-        room.players[attacker_id].attacks.append(Position(**{
-            'x': target_x,
-            'y': target_y,
-            'hit': hit,
-            'ship_sunk': ship_sunk
-        }))
-
-    # 准备攻击结果
-    attack_result = AttackResult(
-        attacker=attacker_id,
-        x=target_x,
-        y=target_y,
-        hit=hit,
-        ship_sunk=ship_sunk,
-        remaining_attacks=room.attacks_remaining,
-        attacker_remaining_ships=room.players[attacker_id].remaining_ships,
-        defender_remaining_ships=room.players[defender_id].remaining_ships,
-        shield_blocked=shield_blocked
-    )
-
-    _shield_note = '，被护盾挡下' if shield_blocked else ('，击沉战舰' if ship_sunk else '')
-    add_game_log(room, f"第{room.round}回合 · {_log_name(room, attacker_id)} 攻击 ({target_x},{target_y}) — {'命中' if hit else '未命中'}{_shield_note}",
-                 'attack', {
-                     'attacker': attacker_id,
-                     'target': {'x': target_x, 'y': target_y},
-                     'hit': hit,
-                     'ship_sunk': ship_sunk,
-                     'shield_blocked': shield_blocked
-                 })
-
-    emit('attack_result', attack_result, room=room_id)
-
-    # 检查游戏是否结束（统一用 <= 0 判据，兼容效果的非常规扣减）；
-    # 对手"根本没船"（未布船 / 放置流程中途）不算被消灭，避免空棋盘被一击判胜
-    if (room.players[defender_id].remaining_ships <= 0
-            and len(room.players[defender_id].ships) > 0):
-        _finish_game_win(room, room_id, attacker_id, defender_id)
+    final = _ATTACK_FINALIZATION.finalize(
+        room, room_id, attacker_id, defender_id, target_x, target_y,
+        hit, ship_sunk, shield_blocked, shadow_resolution)
+    if final.get('game_over'):
         return {'status': 'success', 'game_over': True}
-
-    # 攻击次数为0时，不自动切换攻击者，让玩家手动进入结束阶段
-    # 玩家需要点击"进入结束阶段"按钮来结束当前回合
-    if room.attacks_remaining == 0:
-        # 五险一金：本回合攻击次数第一次归零 —— 若此刻确实没让对方减船，则 +3
-        # （触发后攻击次数不再是 0，下面的广播会把最新次数带给前端）
-        _maybe_trigger_wuxian_yijin(room, attacker_id)
-
-    if room.attacks_remaining == 0:
-        # 只发送攻击次数更新，不切换攻击者
-        emit('attacks_updated', {
-            'current_attacker': room.current_attacker,
-            'attacks_remaining': room.attacks_remaining
-        }, room=room_id)
-
     return {'status': 'success'}
 
 
@@ -8101,6 +8010,20 @@ _ATTACK_RESOLUTION = AttackResolution(
     finish_game=lambda room, room_id, winner, loser, message: _finish_game_win(
         room, room_id, winner, loser, message),
     log_name=lambda room, player_id: _log_name(room, player_id),
+)
+_ATTACK_FINALIZATION = AttackFinalization(
+    attack_result=lambda **kwargs: AttackResult(**kwargs),
+    position=lambda x, y, **kwargs: Position(x=x, y=y, **kwargs),
+    compare_shadow=lambda resolution, **kwargs: compare_core_result(resolution, **kwargs),
+    log_name=lambda room, player_id: _log_name(room, player_id),
+    add_game_log=lambda room, message, kind, data: add_game_log(room, message, kind, data),
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    finish_game=lambda room, room_id, winner, loser: _finish_game_win(
+        room, room_id, winner, loser),
+    trigger_wuxian=lambda room, player_id: _maybe_trigger_wuxian_yijin(room, player_id),
+    warn_shadow=lambda room_id, attacker_id, x, y, diff: logging.getLogger(__name__).warning(
+        'combat shadow mismatch room=%s attacker=%s target=(%s,%s) diff=%r',
+        room_id, attacker_id, x, y, diff),
 )
 _CHAIN_RESOLUTION = ChainResolution(
     chain_result=lambda **kwargs: ChainResult(**kwargs),

@@ -44,6 +44,7 @@ PLAYER_STATE_PY = REPO_ROOT / 'application' / 'player_state.py'
 REVEAL_EFFECTS_PY = REPO_ROOT / 'application' / 'card_reveal_effects.py'
 AREA_DAMAGE_EFFECTS_PY = REPO_ROOT / 'application' / 'card_area_damage_effects.py'
 BOARD_EFFECTS_PY = REPO_ROOT / 'application' / 'card_board_effects.py'
+ATTACK_FINALIZATION_PY = REPO_ROOT / 'application' / 'attack_finalization.py'
 
 #: 写入点所属的"成因"——每条登记都必须归到其中一类。
 #:
@@ -64,8 +65,8 @@ KINDS = ('timeline', 'clear', 'fixture', 'reset')
 #:   * `why` —— **为什么它在这个类里**（非空）。
 ATTACK_SITES = [
     # ---- ① 写进 Player.attacks：自动进回放的 attacks 时间线 ----
-    dict(fn='handle_attack', container='players', ops=['append'], card=None, kind='timeline',
-         why='普通炮击（唯一的"两条腿都有"的点：既 append `attacker.attacks`，又写 attack 日志）'),
+    dict(fn='finalize', container='players', ops=['append'], card=None, kind='timeline',
+         why='普通炮击由 AttackFinalization 记录，自动进入 attacks 时间线并写 attack 日志'),
     dict(fn='apply_area_damage_card_effect', container='caster', ops=['append'], card='溅射',
          kind='timeline',
          why='★ 本批一并查出来的第 3 处：【溅射】逐格写 `caster.attacks`（四格）但**不写** '
@@ -117,7 +118,7 @@ ATTACK_SITES = [
 #:    （回放读的是 `Player.attacks` 那条时间线）。列在这里是为了"新增一个发
 #:    `attack_result` 的攻击点"时能被点到名上 —— 那个点八成也写了 `attacks`。
 EXPECTED_ATTACK_RESULT_SITES = {
-    'handle_attack': 1,
+    'finalize': 1,
     '_reveal_cells': 1,  # 两种雷达共用同一发送点
     'apply_area_damage_card_effect': 5,  # 溅射 1、轰炸 2、硫磺火焰 2
 }
@@ -142,7 +143,7 @@ def _parent_map(tree):
 def _scanner():
     """扫出各生产模块里所有攻击记录写入与攻击结果发送点。"""
     found = []
-    for path in (SERVER_PY, PLAYER_STATE_PY, REVEAL_EFFECTS_PY,
+    for path in (SERVER_PY, ATTACK_FINALIZATION_PY, PLAYER_STATE_PY, REVEAL_EFFECTS_PY,
                  AREA_DAMAGE_EFFECTS_PY, BOARD_EFFECTS_PY):
         found.extend(_scan_source(_src(path)))
     return found
@@ -192,7 +193,8 @@ def _scan_source(src):
                 found.append(dict(fn=owner_fn(node), container=attacks_owner(fn.value),
                                   op=fn.attr, card=card_branch(node), line=node.lineno))
             # emit('attack_result', ...)
-            if getattr(fn, 'id', None) == 'emit' and node.args \
+            if (getattr(fn, 'id', None) == 'emit'
+                    or (isinstance(fn, ast.Attribute) and fn.attr == '_emit')) and node.args \
                     and isinstance(node.args[0], ast.Constant) \
                     and node.args[0].value == 'attack_result':
                 found.append(dict(fn=owner_fn(node), container='emit', op='emit',

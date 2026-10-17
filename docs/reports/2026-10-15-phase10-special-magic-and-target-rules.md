@@ -30,6 +30,8 @@
 
 阶段转换优先权的结果处理已迁入 `application/priority_resolution.py`，负责取消/超时续接、速阶 3 入链失败回退和连锁结算后的原操作续接。
 
+优先权结束后的后台动作恢复已迁入 `application/priority_continuation.py`，统一处理脱离请求上下文、游戏结束检查和阶段 handler 续接。
+
 新大回合切入猜拳阶段的基础状态重置也已迁入状态机，统一清理猜拳缓存、阶段和上一大回合遗留的跳过标记。
 
 `application/card_refund.py` 接管卡牌发动条件不满足时按对象引用退回手牌的补偿规则；`server.py` 保留兼容包装并注入事件、日志能力。

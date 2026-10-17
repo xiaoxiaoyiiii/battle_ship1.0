@@ -68,6 +68,7 @@ from application.turn_state_machine import TurnStateMachine
 from application.chain_settlement import ChainSettlement
 from application.chain_resolution import ChainResolution
 from application.priority_resolution import PriorityResolution
+from application.priority_continuation import PriorityContinuation
 from application.card_tactical_effects import TacticalEffects
 from application.card_field_effects import FieldEffects
 from application.ship_selection import (
@@ -8195,6 +8196,12 @@ _PRIORITY_RESOLUTION = PriorityResolution(
     emit=lambda *args, **kwargs: emit(*args, **kwargs),
     continue_action=lambda room, actor, action: _priority_continue(room, actor, action),
 )
+_PRIORITY_CONTINUATION = PriorityContinuation(
+    sleep=lambda seconds: time.sleep(seconds),
+    start_background_task=lambda fn: socketio.start_background_task(fn),
+    enter_battle=lambda data, **kwargs: enter_battle_phase(data, **kwargs),
+    enter_end=lambda data, **kwargs: handle_enter_end_phase(data, **kwargs),
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -8570,39 +8577,8 @@ def _resolve_priority(room, respond=False, card=None, targets=None):
         room, respond=respond, card=card, targets=targets)
 
 def _priority_continue(room, actor_id, action):
-    """询问结束后，继续执行被拦下的那个操作。
-
-    ⚠️ 必须【脱离当前请求上下文】再执行（2026-09-13 实测踩坑）：
-    本函数是在 *响应者* 的 socket 请求里被调用的（priority_response /
-    超时后台任务），而它要代 *发起者* 重放 enter_battle_phase /
-    handle_enter_end_phase。那两个 handler 开头都有 _identity_ok，
-    会拿 request.sid（= 响应者的连接）去比对发起者座位的 sid —— 必然不匹配，
-    于是重放静默失败（返回 error），阶段永远停在 preparation，
-    玩家点完「取消」后整个回合就死了。
-
-    实测证据：priority_pending 被清空、阶段仍是 preparation，
-    发起者收不到任何事件。
-
-    做法与 disconnect 处理器同一惯例：把重放丢进后台任务，
-    那时已无请求上下文，_identity_ok 走"仅成员校验"分支（与单测一致）。
-    """
-    def _run():
-        time.sleep(0)
-        if room.state == 'game_over':
-            return
-        if action == 'enter_battle':
-            enter_battle_phase({'room_id': room.id, 'player_id': actor_id},
-                               _priority_confirmed=True)
-        elif action == 'enter_end':
-            handle_enter_end_phase({'room_id': room.id, 'player_id': actor_id},
-                                   _priority_confirmed=True)
-
-    try:
-        socketio.start_background_task(_run)
-    except Exception:
-        # 没有 eventlet/socketio 上下文（如单测直调）时同步执行即可
-        _run()
-
+    """兼容入口：交给应用层恢复被拦下的阶段操作。"""
+    return _PRIORITY_CONTINUATION.continue_action(room, actor_id, action)
 
 def _play_speed3_as_priority(room, player_id, card_data, targets):
     """优先权询问里打出的速阶3：走与出牌相同的校验与入链。

@@ -66,6 +66,7 @@ from application.chain_ai_response import ChainAIResponse
 from application.priority_timeout import PriorityTimeout
 from application.turn_state_machine import TurnStateMachine
 from application.chain_settlement import ChainSettlement
+from application.chain_resolution import ChainResolution
 from application.card_tactical_effects import TacticalEffects
 from application.card_field_effects import FieldEffects
 from application.ship_selection import (
@@ -8176,6 +8177,16 @@ _CHAIN_SETTLEMENT = ChainSettlement(
     emit_player_ships=lambda room, player_id: _emit_player_ships(room, player_id),
     continue_priority=lambda room, actor, action: _priority_continue(room, actor, action),
 )
+_CHAIN_RESOLUTION = ChainResolution(
+    chain_result=lambda **kwargs: ChainResult(**kwargs),
+    apply_effect=lambda room, player_id, card, targets: apply_magic_effect(
+        room, player_id, card, targets),
+    log_magic=lambda room, player_id, card, message: log_magic(
+        room, player_id, card, message),
+    refund_card=lambda room, player_id, card, result: _refund_card_to_hand(
+        room, player_id, card, result),
+    now=lambda: time.time(),
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -8333,61 +8344,7 @@ def _refund_card_to_hand(room, player_id, card, result) -> bool:
 
 def resolve_chain(room):
     """结算连锁：栈顶先出（后发先至）。被无效化的项跳过效果。"""
-    results = []
-
-    while room.chain:
-        chain_item = room.chain.pop()
-        player_id = chain_item.player_id
-        card = chain_item.card
-        targets = chain_item.targets
-
-        # 已被上方某张无效化卡标记：跳过其效果
-        if chain_item.negated:
-            # 把「被谁康的」写进提示：只说「X被无效化」玩家分不清是"被对手康了"
-            # 还是"自己发动失败"，实测会误判成"效果没生效"。
-            by = getattr(chain_item, 'negated_by', None)
-            detail = f'{card.name}被{by}无效化' if by else f'{card.name}被无效化'
-            result = ChainResult(card=card, caster=player_id, success=False,
-                                 message=detail)
-            result.negated_skip = True
-            result.negated_by = by
-            log_magic(room, player_id, card, f'但被{by}无效化' if by else '但被无效化')
-            # 被无效化的场地卡：只进弃牌堆，绝不能顶掉/拆掉场上已有的场地。
-            # （原实现用 _place_field_magic "贴了再拆"，会把场上另一张场地
-            #   连带扫进弃牌堆 —— 一次无效化同时干掉两张场地。）
-            if getattr(card, 'type', None) == '场地':
-                if room.field_magic is not card:
-                    room.magic_discard.append(card)
-            results.append(result)
-            continue
-
-        # 应用卡牌效果
-        result = apply_magic_effect(room, player_id, card, targets)
-        result.caster = player_id
-        log_magic(room, player_id, card, result.message if getattr(result, 'success', False) else '')
-
-        # 条件不满足（效果根本没落地）：把牌退回手牌并说清原因，别让玩家白丢一张卡。
-        # ⚠️ 被康的项不会走到这里（上面 negated 分支已经 continue），被康就该被消耗。
-        if not getattr(result, 'success', False) and not getattr(result, 'negated_skip', False):
-            _refund_card_to_hand(room, player_id, card, result)
-
-        # 无效化类效果：把“正下方那一项”（下一个待结算项）标记为无效
-        if getattr(result, 'negate_target', False) and room.chain:
-            room.chain[-1].negated = True
-            # 记下是谁康的，供结算时写出「X被Y无效化」这种明确因果
-            room.chain[-1].negated_by = card.name
-
-        results.append(result)
-        # 记录魔法使用历史（盗亦有道等读取）
-        if result.success:
-            entry = {'card': card, 'caster': player_id,
-                     'timestamp': time.time(), 'round': room.round}
-            # 这张牌若在本轮连锁里已被「盗亦有道」偷走，写历史时要把标记带上 ——
-            # 否则回退分支扫到这条没有 stolen 的记录，会允许同一张牌被再偷一次。
-            ledger = room.game_effects.get('stolen_cards') or {}
-            if id(card) in ledger:
-                entry['stolen'] = True
-            room.magic_history.append(entry)
+    results = _CHAIN_RESOLUTION.resolve_items(room)
 
     _CHAIN_SETTLEMENT.finalize(room, results)
 

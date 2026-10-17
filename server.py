@@ -65,6 +65,7 @@ from application.chain_timeout import ChainTimeout
 from application.chain_ai_response import ChainAIResponse
 from application.priority_timeout import PriorityTimeout
 from application.turn_state_machine import TurnStateMachine
+from application.chain_settlement import ChainSettlement
 from application.card_tactical_effects import TacticalEffects
 from application.card_field_effects import FieldEffects
 from application.ship_selection import (
@@ -8167,6 +8168,14 @@ _TURN_STATE_MACHINE = TurnStateMachine(
     keep_across_round=FLAGS_KEEP_ACROSS_ROUND,
     rank_payload=lambda room: _rank_payload(room),
 )
+_CHAIN_SETTLEMENT = ChainSettlement(
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    clear_display=lambda room: _clear_chain_display(room),
+    active_effects=lambda room: _emit_active_effects(room),
+    emit_ships_updated=lambda room: _emit_ships_updated(room),
+    emit_player_ships=lambda room, player_id: _emit_player_ships(room, player_id),
+    continue_priority=lambda room, actor, action: _priority_continue(room, actor, action),
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -8380,57 +8389,7 @@ def resolve_chain(room):
                 entry['stolen'] = True
             room.magic_history.append(entry)
 
-    # 广播连锁结算结果
-    emit('chain_resolved', {
-        'results': results
-    }, room=room.id)
-
-    # 重置连锁状态
-    room.chain = []
-    room.chain_waiting = False
-    room.chain_window = None
-    room.chain_passes = 0
-    # 结算前那段展示停留的令牌也一起清掉：**任何一条结算路径都会走到这里**，
-    # 于是"已经结算过了"这件事对迟到的后台任务自证（幂等判据的一半）。
-    _clear_chain_display(room)
-    # 盗亦有道的"已盗取"台账已完成合并，清掉避免无限增长
-    # （卡牌实例被回收后 id() 可能被新对象复用，留着会误判新牌为已盗取）
-    room.game_effects.pop('stolen_cards', None)
-
-    # 这一批卡的效果刚落地，双方的 effect_flags 可能变了 —— 刷新角标
-    _emit_active_effects(room)
-
-    # 手牌也要重推：结算期间有多条路径会改变手牌，而它们各自的 emit 并不齐备 ——
-    # 盗亦有道把偷来的牌 append 进手牌、桃园结义分配候选牌、无中生有等摸牌效果。
-    # 漏推的表现是玩家看到"打出的牌还在手上"或"偷到了但没显示"。
-    # 这里在连锁收尾统一同步一次，双方各自收自己的那份。
-    for p in room.players.values():
-        if getattr(p, 'sid', None):
-            emit('hand_updated', {'hand': p.magic_hand}, to=p.sid)
-
-    # 船数 / 自己的棋盘 / 阶段也要一并重推。
-    # 结算期间有一批卡会直接改船或改阶段，而它们的分支里【一个 emit 都没有】：
-    #   · 仁王之盾  —— 给至多 3 艘船加 shield，前端完全收不到（连加盾都不知道）
-    #   · 钢筋铁骨  —— 牺牲 1 艘 + 其余无敌；前端仍显示 6 艘、无敌无标记
-    #   · 回光返照  —— 清空自己的棋盘并把阶段推到 end
-    # 靠每张卡各自补 emit 容易漏（已经漏过三次），统一在这里兜底最稳：
-    # 与上面 active_effects / hand_updated 并列，覆盖所有在结算里改状态的卡。
-    _emit_ships_updated(room)
-    for pid in room.players:
-        _emit_player_ships(room, pid)
-    emit('phase_updated', {
-        'current_phase': room.current_phase,
-        'current_attacker': room.current_attacker
-    }, room=room.id)
-
-    # 优先权询问的收尾：响应者在窗口里打了速阶3，连锁现在结算完了，
-    # 该把他拦下的那次阶段转换补上（否则发起者的回合永远停在原地）。
-    # ⚠️ 先取出再清空：_priority_continue 会再进 enter_battle_phase，
-    # 那条路径可能又开一次询问，不清就会重入。
-    cont = getattr(room, 'priority_continue', None)
-    if cont:
-        room.priority_continue = None
-        _priority_continue(room, cont['actor'], cont['action'])
+    _CHAIN_SETTLEMENT.finalize(room, results)
 
     # ★ 第 6 批：这里**故意不**再收口一次。
     #

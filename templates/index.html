@@ -1801,6 +1801,8 @@
 
 <!-- 确保正确的加载顺序 -->
 <script src="/static/magic_cards.js?v={{ asset_v('magic_cards.js') }}"></script>
+<script src="/static/card_catalog.js?v={{ asset_v('card_catalog.js') }}"></script>
+<script src="/static/client_state.js?v={{ asset_v('client_state.js') }}"></script>
 <!-- 先加载游戏核心逻辑 -->
 <script>window.__USERNAME = {{ username|tojson }};</script>
 <script src="/static/sfx.js?v={{ asset_v('sfx.js') }}"></script>
@@ -1810,7 +1812,15 @@
      ⚠️ 必须在 game.js 之前：卡组件渲染时要读 window.CARD_ART_MAP 决定底图，
         放在后面会让首屏渲染出来的那批卡没有底图（换手牌时才补上）。 -->
 <script src="/static/card_art_map.js?v={{ asset_v('card_art_map.js') }}"></script>
+<script src="/static/magic_rules.js?v={{ asset_v('magic_rules.js') }}"></script>
+<script src="/static/magic_effect_feedback.js?v={{ asset_v('magic_effect_feedback.js') }}"></script>
+<script src="/static/magic_target_ui.js?v={{ asset_v('magic_target_ui.js') }}"></script>
+<script src="/static/magic_actions.js?v={{ asset_v('magic_actions.js') }}"></script>
 <script src="/static/game.js?v={{ asset_v('game.js') }}"></script>
+<script src="/static/replay_player.js?v={{ asset_v('replay_player.js') }}"></script>
+<script src="/static/client_socket.js?v={{ asset_v('client_socket.js') }}"></script>
+<script src="/static/client_socket_events.js?v={{ asset_v('client_socket_events.js') }}"></script>
+<script src="/static/home_panels.js?v={{ asset_v('home_panels.js') }}"></script>
 <!-- 移动端自适应布局：按可用空间在「桌面浮窗」与「一屏网格」之间切换（见 style.css 第 22 节） -->
 <script src="/static/adaptive_layout.js?v={{ asset_v('adaptive_layout.js') }}"></script>
 <!-- 背景音乐播放器 -->

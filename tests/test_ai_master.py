@@ -391,7 +391,7 @@ def test_pingdeng_tiaoyue_stays_out_of_the_master_pool(master_room):
     只是把一次出牌机会花掉了（出牌机会很稀缺：71% 的决策一张可打的牌都没有）。
 
     ⚠️ 这条断言的是**卡池**，不是"卡牌本身"：`apply_magic_effect` 的
-       平等条约分支、快照台账、`_master_card_readiness` 的闸门**全部原样保留**，
+        平等条约结算、共享判据、`_master_card_readiness` 的闸门**全部保留**，
        真人对局里这张牌照常能用。要把它加回大师卡池，必须先在
        "对手真的会改船数"的场合重新量一次并更新这里。
     """
@@ -407,8 +407,12 @@ def test_pingdeng_tiaoyue_stays_out_of_the_master_pool(master_room):
     assert "if name == '平等条约':" in src, (
         '平等条约的试算闸门被删了 —— 那是它"此刻能不能打"的判据，'
         '不该跟着卡池一起删（真人对局里这张卡照常能用）')
-    assert "elif card.name == '平等条约':" in src, (
+    effects_src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                   'application', 'card_negation_effects.py'),
+                       encoding='utf-8').read()
+    assert "if card.name == '平等条约':" in effects_src, (
         '平等条约的结算分支被删了 —— 卡池开关不该动卡牌实现')
+    assert '_negation_effects.apply(' in src, '无效化模块没有接入真实卡牌结算入口'
 
 
 

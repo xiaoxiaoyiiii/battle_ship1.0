@@ -17,7 +17,7 @@
 
 ## 判据（本文件钉住的三件事）
 
-1. **穷举**：扫 `server.py` 里所有对 `*.ships` 的 `remove` / `pop` / `del` / `clear` /
+1. **穷举**：扫 `server.py`、`application/player_state.py` 与卡牌范围伤害模块里所有对 `*.ships` 的 `remove` / `pop` / `del` / `clear` /
    `extend` / `insert` / **整体重建**（`x.ships = ...`）/ 下标赋值 —— 每一个点
    都必须在 `REMOVAL_SITES` 里有一条（**按函数名 + 容器变量 + 卡片分支**登记，
    **不按行号**：行号一定会漂移）；
@@ -44,6 +44,12 @@ import pytest
 
 import replay
 import server
+import application.player_state as player_state
+import application.card_area_damage_effects as area_damage_effects
+import application.card_board_effects as board_effects
+import application.card_sacrifice_effects as sacrifice_effects
+import application.card_special_effects as special_effects
+import application.card_temporary_effects as temporary_effects
 
 # 只扫描 Player 的两个名字（`player` / `owner` / `caster` / 局部变量…），
 # 排掉明显不是 Player 的容器（本项目里没有，留着给将来）：
@@ -80,40 +86,40 @@ REMOVAL_SITES = [
     dict(fn='_do_demon_contract_sacrifice', container='player', ops=['remove'], card=None,
          kind='sink', need='sink',
          why='主动牺牲的唯一实现点（4 种 reason 全汇到这里）；紧挨着就是 `replay.note_ship_lost`'),
-    dict(fn='apply_magic_effect', container='caster', ops=['remove'], card='绝处逢生',
+    dict(fn='apply_board_card_effect', container='caster', ops=['remove'], card='绝处逢生',
          kind='sink', need='sink',
          why='`绝处逢生` 牺牲自己**全部**战舰（不走 `_do_demon_contract_sacrifice`）'),
-    dict(fn='apply_magic_effect', container='caster', ops=['remove'], card='钢筋铁骨',
+    dict(fn='apply_steel_bone', container='caster', ops=['remove'], card=None,
          kind='sink', need='sink',
          why='`钢筋铁骨` 牺牲一艘换无敌（同上）'),
     # ---- ② 神威！：致死那一支要登记；暂时除外那一支**绝不许**登记 ----
-    dict(fn='apply_magic_effect', container='target_player', ops=['delitem'], card='神威！',
+    dict(fn='apply_shenwei', container='target_player', ops=['delitem'], card=None,
          kind='sink', need='sink',
          why='★ 本批修的第五处：致死那一支（`board != "self"` 且区域内恰好 1 艘）会 '
              '`_mark_ship_sunken`，**且不产生攻击步** ⇒ 不登记就凭空消失。'
              '同一行的"暂时除外"那一支**有意不登记**（下个大回合原样归还）'),
     # ---- ③ 同时产出攻击步：回放靠 attack 标记画红叉，**不需要**登记 ----
-    dict(fn='apply_magic_effect', container='opponent', ops=['remove'], card='轰炸',
+    dict(fn='apply_area_damage_card_effect', container='opponent', ops=['remove'], card='轰炸',
          kind='attack', need=None,
          why='轰炸逐格写 `caster.attacks`（`hit=True, ship_sunk=True`）并 emit `attack_result`。'
              '⚠️ 这两处**不写** `type="attack"` 的游戏日志 ⇒ 改前回放**画不出**这些格'
              '（第 7 处，作者实报）—— 本批已修：回放的标记收敛到 `attacks` 时间线'
              '（数据源 = `Player.attacks`），见 `docs/REPLAY_2026_09_23.md` §H'),
-    dict(fn='apply_magic_effect', container='opponent', ops=['remove'], card='硫磺火焰',
+    dict(fn='apply_area_damage_card_effect', container='opponent', ops=['remove'], card='硫磺火焰',
          kind='attack', need=None,
          why='同上：逐格 `caster.attacks` + `attack_result`（不写 attack 日志；本批修好）'),
     # ---- ④ 有意消失：临时船收回 / 神威暂时除外 ⇒ 一格沉没标记都不许有 ----
-    dict(fn='_recall_lanyu_ships', container='player', ops=['remove'], card=None,
+    dict(fn='recall', container='player', ops=['remove'], card=None,
          kind='vanish', need=None,
          why='滥竽充数临时船被大回合末强制收回，卡面明写"不会显示沉没"'),
     # ---- ⑤ 棋盘整块换新 / 布船阶段重建：由 `note_board_replaced` 撤掉旧账 ----
     dict(fn='confirm_magic_target', container='player', ops=['reassign'], card=None,
          kind='replace', need='replace',
          why='灵气复苏：双方棋盘整块换新（紧跟着 `replay.note_board_replaced(room)`）'),
-    dict(fn='apply_magic_effect', container='player', ops=['reassign'], card='败者食尘',
+    dict(fn='apply_board_card_effect', container='player', ops=['reassign'], card='败者食尘',
          kind='replace', need='replace',
          why='败者食尘：双方棋盘清空重摆'),
-    dict(fn='apply_magic_effect', container='caster', ops=['reassign'], card='回光返照',
+    dict(fn='apply_board_card_effect', container='caster', ops=['reassign'], card='回光返照',
          kind='replace', need='replace',
          why='回光返照：只重摆施法者那一块（`note_board_replaced(room, caster_id)`）'),
     dict(fn='handle_place_ships', container='players', ops=['reassign'], card=None,
@@ -165,7 +171,18 @@ def _card_branch_of(node, parent, src):
 
 
 def _scan_ship_mutations():
-    """扫出 `server.py` 里所有"改 `*.ships`"的点。
+    """扫出服务端运行时代码里所有"改 `*.ships`"的点。"""
+    found = []
+    for path in (server.__file__, player_state.__file__, area_damage_effects.__file__,
+                 board_effects.__file__, sacrifice_effects.__file__,
+                 special_effects.__file__, temporary_effects.__file__):
+        src = io.open(path, encoding='utf-8').read()
+        found.extend(_scan_ship_mutations_in(src))
+    return found
+
+
+def _scan_ship_mutations_in(src):
+    """扫描一个源码文件，保持登记点按函数、容器和卡片分支识别。
 
     判据只认**属性写法** `X.ships` 本身（含下标 `X.ships[i]`）：
 
@@ -177,7 +194,6 @@ def _scan_ship_mutations():
       里就有一处：那是回给前端的会话快照，跟 `player.ships` 没有半点关系 ——
       本批第一版扫描器就是把它当成了"整体重建"而假红）。
     """
-    src = io.open(server.__file__, encoding='utf-8').read()
     tree = ast.parse(src)
     parent = {}
     for node in ast.walk(tree):
@@ -241,7 +257,7 @@ def _scan_ship_mutations():
                               op='augassign', card=_card_branch_of(node, parent, src),
                               line=node.lineno,
                               seg=(ast.get_source_segment(src, node) or '')[:90]))
-    return src, found
+    return found
 
 
 def _key(site):
@@ -266,7 +282,7 @@ def test_every_ship_mutation_site_is_registered():
       · **新增**一个移除点（例如把某处 `ships.remove` 复制到新函数里）⇒ 左腿红；
       · 从表里**删**一条 ⇒ 右腿红。
     """
-    src, found = _scan_ship_mutations()
+    found = _scan_ship_mutations()
     assert len(found) >= 25, '扫描只找到 %d 个点 —— 扫描器坏了？' % len(found)
 
     site_key = {(e['fn'], e['container'], e['card']): e for e in REMOVAL_SITES}
@@ -334,6 +350,6 @@ def test_no_site_reassigns_a_single_cell_of_ships():
 
     出现了就红（它同样是"换掉一艘船"，但不在任何既有成因里 —— 必须先想清楚再登记）。
     """
-    src, found = _scan_ship_mutations()
+    found = _scan_ship_mutations()
     bad = [s for s in found if s['op'] in ('setitem', 'augassign')]
     assert not bad, '出现了新形状 `ships[i] = ...` / `ships += ...`：%s' % bad

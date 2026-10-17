@@ -18,7 +18,7 @@ attack 日志"的那些点，打出的格子在回放里**一个标记都没有*
 "谁写 `attacks`"于是**自动**进时间线（`replay._record_snapshot` 比上一次快照取新增的格），
 **不需要**每个点单独登记 —— 所以这条穷举守卫守的不是"谁会画出来"，而是：
 
-1. **穷举**：扫 `server.py` 里所有 `X.attacks` 的写入点（`append` / `extend` / `insert` /
+1. **穷举**：扫服务端实际对局模块里所有 `X.attacks` 的写入点（`append` / `extend` / `insert` /
    `remove` / `clear` / 下标赋值 / 整体重建）与所有 `emit('attack_result', ...)` 的调用点，
    **每一处**都必须在 `ATTACK_SITES` 里有交代（按**函数名 + 容器 + 操作 + 卡片分支**登记，
    **不按行号** —— 行号每次提交都会漂移）；
@@ -31,6 +31,7 @@ attack 日志"的那些点，打出的格子在回放里**一个标记都没有*
 import ast
 import io
 import pathlib
+from collections import Counter
 
 import pytest
 
@@ -39,6 +40,11 @@ import server
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SERVER_PY = REPO_ROOT / 'server.py'
+PLAYER_STATE_PY = REPO_ROOT / 'application' / 'player_state.py'
+REVEAL_EFFECTS_PY = REPO_ROOT / 'application' / 'card_reveal_effects.py'
+AREA_DAMAGE_EFFECTS_PY = REPO_ROOT / 'application' / 'card_area_damage_effects.py'
+BOARD_EFFECTS_PY = REPO_ROOT / 'application' / 'card_board_effects.py'
+ATTACK_FINALIZATION_PY = REPO_ROOT / 'application' / 'attack_finalization.py'
 
 #: 写入点所属的"成因"——每条登记都必须归到其中一类。
 #:
@@ -59,23 +65,20 @@ KINDS = ('timeline', 'clear', 'fixture', 'reset')
 #:   * `why` —— **为什么它在这个类里**（非空）。
 ATTACK_SITES = [
     # ---- ① 写进 Player.attacks：自动进回放的 attacks 时间线 ----
-    dict(fn='handle_attack', container='players', ops=['append'], card=None, kind='timeline',
-         why='普通炮击（唯一的"两条腿都有"的点：既 append `attacker.attacks`，又写 attack 日志）'),
-    dict(fn='apply_magic_effect', container='caster', ops=['append'], card='溅射',
+    dict(fn='finalize', container='players', ops=['append'], card=None, kind='timeline',
+         why='普通炮击由 AttackFinalization 记录，自动进入 attacks 时间线并写 attack 日志'),
+    dict(fn='apply_area_damage_card_effect', container='caster', ops=['append'], card='溅射',
          kind='timeline',
          why='★ 本批一并查出来的第 3 处：【溅射】逐格写 `caster.attacks`（四格）但**不写** '
              'attack 日志 —— 改前那四格在回放里一个标记都没有'),
-    dict(fn='apply_magic_effect', container='caster', ops=['append'], card='雷达子弹',
+    dict(fn='_reveal_cells', container='caster', ops=['append'], card=None,
          kind='timeline',
-         why='★ 第 4 处：【雷达子弹】逐格写周围八格（未命中的那些），同样不写 attack 日志'),
-    dict(fn='apply_magic_effect', container='caster', ops=['append'], card='探测雷达',
-         kind='timeline',
-         why='★ 第 5 处：【探测雷达】逐格写 2×2 里落空的格，同样不写 attack 日志'),
-    dict(fn='apply_magic_effect', container='caster', ops=['append'], card='轰炸',
+         why='雷达子弹与探测雷达共用入口，逐格写未命中的位置；同样不写 attack 日志'),
+    dict(fn='apply_area_damage_card_effect', container='caster', ops=['append'], card='轰炸',
          kind='timeline',
          why='★ 本批修的缺陷本身（第 7 处）：整行/整列 6 格逐格写 `caster.attacks`，'
              '两条循环（命中的 + 落空的）都写'),
-    dict(fn='apply_magic_effect', container='caster', ops=['append'], card='硫磺火焰',
+    dict(fn='apply_area_damage_card_effect', container='caster', ops=['append'], card='硫磺火焰',
          kind='timeline',
          why='★ 同上（整列 6 格），与轰炸是同一形状的两个实现点'),
     dict(fn='test_auto_attack', container='players', ops=['append'], card=None, kind='fixture',
@@ -96,10 +99,10 @@ ATTACK_SITES = [
     dict(fn='confirm_magic_target', container='player', ops=['reassign'], card=None,
          kind='reset',
          why='灵气复苏：双方 `attacks = []` + `replay.note_board_reset(room)`（双方）'),
-    dict(fn='apply_magic_effect', container='player', ops=['reassign'], card='败者食尘',
+    dict(fn='apply_board_card_effect', container='player', ops=['reassign'], card='败者食尘',
          kind='reset',
          why='败者食尘：双方清空 + `note_board_reset(room)`'),
-    dict(fn='apply_magic_effect', container='players', ops=['reassign'], card='回光返照',
+    dict(fn='apply_board_card_effect', container='players', ops=['reassign'], card='回光返照',
          kind='reset',
          why='回光返照：只清施法者那一块 + `note_board_reset(room, caster_id)`'
              '（`room.players[opponent_id].attacks = []` 那种下标持有 = 容器名 `players`）'),
@@ -115,10 +118,9 @@ ATTACK_SITES = [
 #:    （回放读的是 `Player.attacks` 那条时间线）。列在这里是为了"新增一个发
 #:    `attack_result` 的攻击点"时能被点到名上 —— 那个点八成也写了 `attacks`。
 EXPECTED_ATTACK_RESULT_SITES = {
-    'handle_attack': 1,
-    # 溅射 2 + 雷达子弹 1 + 轰炸 2 + 硫磺火焰 2 + 探测雷达 1 = 8？—— 实测是 7：
-    # 《雷达子弹》那一支的发送点在 `if hit: continue` 之后，落空格才发。
-    'apply_magic_effect': 7,
+    'finalize': 1,
+    '_reveal_cells': 1,  # 两种雷达共用同一发送点
+    'apply_area_damage_card_effect': 5,  # 溅射 1、轰炸 2、硫磺火焰 2
 }
 
 
@@ -139,8 +141,15 @@ def _parent_map(tree):
 
 
 def _scanner():
-    """扫出 `server.py` 里所有"写 `X.attacks`"与"`emit('attack_result', ...)`"的点。"""
-    src = _src(SERVER_PY)
+    """扫出各生产模块里所有攻击记录写入与攻击结果发送点。"""
+    found = []
+    for path in (SERVER_PY, ATTACK_FINALIZATION_PY, PLAYER_STATE_PY, REVEAL_EFFECTS_PY,
+                 AREA_DAMAGE_EFFECTS_PY, BOARD_EFFECTS_PY):
+        found.extend(_scan_source(_src(path)))
+    return found
+
+
+def _scan_source(src):
     tree = ast.parse(src)
     parent = _parent_map(tree)
 
@@ -184,7 +193,8 @@ def _scanner():
                 found.append(dict(fn=owner_fn(node), container=attacks_owner(fn.value),
                                   op=fn.attr, card=card_branch(node), line=node.lineno))
             # emit('attack_result', ...)
-            if getattr(fn, 'id', None) == 'emit' and node.args \
+            if (getattr(fn, 'id', None) == 'emit'
+                    or (isinstance(fn, ast.Attribute) and fn.attr == '_emit')) and node.args \
                     and isinstance(node.args[0], ast.Constant) \
                     and node.args[0].value == 'attack_result':
                 found.append(dict(fn=owner_fn(node), container='emit', op='emit',
@@ -200,11 +210,31 @@ def _scanner():
         elif isinstance(node, ast.AugAssign) and attacks_owner(node.target):
             found.append(dict(fn=owner_fn(node), container=attacks_owner(node.target),
                               op='augassign', card=card_branch(node), line=node.lineno))
-    return src, found
+    return found
 
 
 def _key(site):
     return (site['fn'], site['container'], site['card'])
+
+
+def test_every_attack_record_site_is_registered():
+    """实际扫描所有生产写入点，并双向核对登记表与事件发送次数。"""
+    found = _scanner()
+    assert len(found) >= 20, '攻击记录扫描范围异常缩小'
+    recorded = [site for site in found if site['container'] != 'emit']
+    registry = {_key(entry): entry for entry in ATTACK_SITES}
+    assert len(registry) == len(ATTACK_SITES), '登记表有重复的攻击记录点'
+    assert all(entry['kind'] in KINDS and entry['why'].strip()
+               for entry in ATTACK_SITES), '登记条目缺少类别或原因'
+
+    scanned_keys = {_key(site) for site in recorded}
+    assert scanned_keys == set(registry), (
+        f'未登记：{scanned_keys - set(registry)}；失效登记：{set(registry) - scanned_keys}')
+    assert all(site['op'] in registry[_key(site)]['ops'] for site in recorded), (
+        '攻击记录操作与登记表不符')
+
+    emitted = Counter(site['fn'] for site in found if site['container'] == 'emit')
+    assert emitted == EXPECTED_ATTACK_RESULT_SITES
 
 
 

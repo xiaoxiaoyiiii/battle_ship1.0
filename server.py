@@ -21,7 +21,7 @@ import logging
 from flask import render_template, request, session, jsonify, has_request_context
 from flask_socketio import SocketIO, join_room, leave_room, emit as semit
 
-import db  # local database helpers for users and matches
+from infrastructure.persistence import repository as db  # 持久化接口
 import ai_brain  # 大师难度的决策层（纯函数，不许反向 import 本模块）
 import achievements  # 徽章判据（纯函数，唯一一份 evaluate()）
 import anticheat  # 反作弊判据（纯函数；只判定不处罚，动作在本文件里做）
@@ -35,12 +35,82 @@ import quick_chat  # 局内快捷语表 + 频率规则（纯数据/纯函数，�
 import ranks  # 段位规则 / 每局加减分 / 大舰长晋升（唯一一份，结算与接口共用）
 import presence  # 在线 / 对局中状态（纯内存零依赖：api.py 也要读它，见 presence.py 头部说明）
 import replay  # 对局回放的纯模块：记录器 + 终局打包（**绝不 emit**，见 replay.py 头部）
+from application.attack_service import build_combat_state, resolve_legacy_attack
+from application.attack_shadow import compare_core_result
+from application.ai_runtime import default_runtime, seeded_runtime
+from application.spectate_projection import project_snapshot
+from application.replay_observation import capture_replay_observation, clear_replay_observation
+from application.room_runtime import RoomManager
+from application.room_state import RoomState
+from application.card_opening_effects import apply_opening_card_effect
+from application.card_status_effects import apply_status_card_effect
+from application.card_reveal_effects import apply_reveal_card_effect
+from application.card_area_damage_effects import apply_area_damage_card_effect
+from application.card_board_effects import apply_board_card_effect
+from application.card_dice_effects import DiceEffects, DICE_EFFECT_TEXT
+from application.placement_rules import PlacementRules
+from application.ship_attack_sync import ShipAttackSync
+from application.placement_flow import PlacementFlow
+from application.placement_completion import PlacementCompletion
+from application.placement_projection import PlacementProjection
+from application.card_sacrifice_effects import apply_steel_bone
+from application.card_judgement_effects import JudgementEffects
+from application.card_special_effects import SpecialCardEffects
+from application.card_steal_effects import StealEffects
+from application.card_temporary_effects import TemporaryShipEffects
+from application.card_refund import refund_card_to_hand
+from application.chain_policy import ChainPolicy
+from application.chain_window import ChainWindow
+from application.chain_timeout import ChainTimeout
+from application.chain_ai_response import ChainAIResponse
+from application.priority_timeout import PriorityTimeout
+from application.turn_state_machine import TurnStateMachine
+from application.chain_settlement import ChainSettlement
+from application.chain_display import ChainDisplay
+from application.round_transition import RoundTransition
+from application.disconnect_resolution import DisconnectResolution
+from application.attack_gate import AttackGate
+from application.attack_resolution import AttackResolution
+from application.attack_finalization import AttackFinalization
+from application.ship_sunk_effects import ShipSunkEffects
+from application.game_end import GameEnd
+from application.attack_damage_effects import AttackDamageEffects
+from application.chain_resolution import ChainResolution
+from application.priority_resolution import PriorityResolution
+from application.priority_continuation import PriorityContinuation
+from application.priority_prompt import PriorityPrompt
+from application.priority_gate import PriorityGate
+from application.card_tactical_effects import TacticalEffects
+from application.card_field_effects import FieldEffects
+from application.ship_selection import (
+    ShipSelection, SHIP_PICK_PRIORITY, _SHIP_PICK_CARDS, _SACRIFICE_REASONS,
+    _SHIP_PICK_LABELS, _ship_pick_priority,
+)
+from application.card_negation_effects import (
+    NegationEffects, EQUAL_TREATY_NOT_NEGOTIABLE,
+    chain_negation_target as _chain_negation_target,
+)
+from application.player_state import (
+    Position, PlayerShip, EffectFlags, Player, _PUBLIC_EFFECT_FLAGS,
+    FLAGS_KEEP_ACROSS_TURN, FLAGS_KEEP_ACROSS_ROUND, _prune_effect_flags,
+)
+from application.lobby_projection import (
+    lobby_occupied_sids, lobby_player_status, recycle_host_waiting_rooms,
+    visible_lobby_rooms, project_lobby_state,
+)
+from application.lobby_state import (
+    LobbyManager, clean_lobby_name as _lobby_clean_name,
+    LOBBY_CHAT_MAX_LEN, LOBBY_CHAT_MIN_INTERVAL, LOBBY_CHAT_BACKLOG,
+    LOBBY_PROFILE_TTL, LOBBY_NAME_MAX_LEN,
+)
 from api import app
 from file import read_json
 
 # 调试事件开关：仅在显式设置环境变量 ENABLE_TEST_EVENTS=1 时启用。
 # 默认关闭，避免公网玩家通过 test_* 事件作弊（直接判胜、白嫖卡牌、读取对方船位等）。
 ENABLE_TEST_EVENTS = os.environ.get('ENABLE_TEST_EVENTS') == '1'
+# 新旧攻击路径对照开关：默认关闭，不改变线上行为；仅用于 Phase 2 迁移验证。
+COMBAT_SHADOW_MODE = os.environ.get('COMBAT_SHADOW_MODE') == '1'
 
 # 调试面板（按 F8 唤出）的账号白名单：逗号分隔的 user_id。
 # ⚠️ 14 个 test_* handler 的身份校验由下面的 _test_event 统一负责，
@@ -544,7 +614,7 @@ class GameLog:
         self.type = event_type
         self.text = text
         self.detail = payload
-    
+
     def to_dict(self):
         return {
             'ts': self.ts,
@@ -576,7 +646,7 @@ def add_game_log(room, text: str, event_type: str = 'info', payload: dict | None
     #   **不 emit 任何东西**（回放数据里有双方船位，进对局房间就是灾难级泄露 ——
     #   源码级守卫见 tests/test_replay_guards.py）。
     #   ⚠️ 放在**最后**：上面那条 `emit('game_log', ...)` 的行为一个字都不许改。
-    replay.note(room, entry.to_dict())
+    replay.note(capture_replay_observation(room), entry.to_dict())
 
 
 def log_magic(room, caster_id, card, extra=''):
@@ -626,58 +696,6 @@ def api_home_stats():
         return jsonify({'online_count': None, 'queue': None, 'lobby_rooms': None})
 
 
-class Position:
-    x: int
-    y: int
-    hit: bool = False
-    ship_sunk: bool = False
-    is_sulfur: bool = False
-    is_bomb: bool = False
-    is_splash: bool = False
-
-    def __init__(self, x: int, y: int, hit=False, ship_sunk=False, is_sulfur=False, is_bomb=False, is_splash=False):
-        self.x = x
-        self.y = y
-        self.ship_sunk = ship_sunk
-        self.is_sulfur = is_sulfur
-        self.round = None
-        self.hit = hit
-        self.is_bomb = is_bomb
-        self.is_splash = is_splash
-
-    def __eq__(self, other):
-        if isinstance(other, dict):
-            return self.x == other.get('x') and self.y == other.get('y')
-        else:
-            return self.x == other.x and self.y == other.y
-
-
-class PlayerShip:
-    invincible: bool
-    positions: list[Position]
-    hits: list[Position]
-    shield: bool = False  # 是否有护盾
-    trap: bool = False  # 守株待兔：是否带陷阱标记（本大回合内被击沉时让对方牺牲两艘）
-
-    def __init__(self, positions: list[Position], hits: list[Position],**kwargs):
-        self.invincible = False
-        self.trap = False
-        # 确保positions是Position对象列表
-        self.positions = []
-        for pos in positions:
-            if isinstance(pos, dict):
-                self.positions.append(Position(**pos))
-            else:
-                self.positions.append(pos)
-        # 确保hits是Position对象列表
-        self.hits = []
-        for hit in hits:
-            if isinstance(hit, dict):
-                self.hits.append(Position(**hit))
-            else:
-                self.hits.append(hit)
-
-
 class MagicCard:
     name: str
     speed: int
@@ -701,431 +719,18 @@ class MagicCard:
         self.description = card.description
 
 
-class EffectFlags:
-    treasure_hunter: bool = False
-    prediction: bool = False
-    subsidy: bool = False
-    subsidy_bonus: int = 0  # 百亿补贴：自己每沉一艘船累计的额外攻击次数
-    no_draw: bool = False
-    forced_kill: int = 0  # 强制击杀次数
-    vampire: bool = False  # 饮血效果
-    # 绝处逢生【拆分两个标记，生命周期不同】—— 此前合成一个，于是"击杀即胜"
-    # 跟着回合清理一起过期，只在发动当回合有效（作者实测反馈）。
-    #   last_stand     ：发动回合内自己的其余魔法卡全部无效 → 只持续本回合
-    #   last_stand_win ：此后任意回合击杀对方战舰即直接获胜 → 活到对局结束
-    last_stand: bool = False  # 绝处逢生：发动回合的锁卡
-    last_stand_win: bool = False  # 绝处逢生：本局后续击杀即胜
-    double_attacks: bool = False
-    battle_spirit: bool = False
-    # 五险一金：出牌时只「挂上保险」，等本回合攻击次数第一次归零、
-    # 且那时确实没让对方减船，才真正 +3（见 _maybe_trigger_wuxian_yijin）。
-    # 不放进 permanent_flags，所以回合切换会被清掉 —— 没触发就作废，符合卡面「这一回合」。
-    wuxian: bool = False
-
-
-# EffectFlags 里允许下发给前端的标记名（`_build_room_sync` 的 active_effects）。
-# ⚠️ 只登记**玩家身上**的效果标记。房间级效果住在 room.game_effects，语义完全不同，
-# 混进这份名单会出事：last_stand_cells / last_stand_owner 都以 'last_stand' 开头，
-# 前端按前缀匹配就会把"候选格还在场"误判成"锁卡生效中"。
-_PUBLIC_EFFECT_FLAGS = frozenset(
-    name for name, value in vars(EffectFlags).items()
-    if not name.startswith('_') and isinstance(value, (bool, int))
-)
-
-
-# ---------------------------------------------------------------------------
-# 效果标记的生命周期分类
-# ---------------------------------------------------------------------------
-# 两处回合清理（end_turn 的普通换回合 / 大回合重新猜拳）都引用这里，
-# 避免各写一份白名单而互相漂移 —— 此前一处写 1 个字段、一处写 5 个，
-# 且两边都塞了 'holy_heart'/'reinforcement_check' 这种根本不属于 EffectFlags
-# 的名字（它们住在 room.game_effects 里，永远匹配不到，是无效条目）。
-#
-# 分类依据是卡面原文：
-#   越战越勇 "接下来【这一回合内】"      → 本回合，换回合即清
-#   五险一金 "【这一回合】…第一次用尽时"  → 本回合，换回合即清
-#   火力全开（double_attacks）本回合      → 换回合即清
-#   绝处逢生 "在绝处逢生生效的【回合】"    → 本回合，换回合即清
-#
-# ⚠️ 上面这句只对绝处逢生的【锁卡】部分成立。它还有后半截
-#    "只要自己击杀了对方的任何一艘船，自己直接获胜" —— 作者明确裁定这部分
-#    **不随回合过期，活到对局结束**，所以拆成了独立标记 last_stand_win。
-#    两个标记的字段含义差异见 EffectFlags 里的注释，改动时必须一起看。
-#
-# 下面这些写的是"接下来…"，没有回合限定，但按作者裁定统一为【本大回合】：
-#   百亿补贴 / 饮血 / 八方来财 —— 跨小回合保留，大回合结束时清。
-#   （此前它们在小回合切换就被清掉，于是对手回合里攒到的加成还没轮到自己
-#     的回合就没了，玩家永远拿不到。）
-#
-# ⚠️ 这份名单是【唯一实现】。end_turn 里曾经另有一份写死的 permanent_flags
-#    内联列表，两份一漂移就出事：绝处逢生的"击杀即胜"新标记加进来时只改了
-#    注释、没加进任何一份名单，于是换小回合就被清掉（作者实测反馈）。改动时
-#    只改这里，别在调用点再抄一份。
-FLAGS_KEEP_ACROSS_TURN = frozenset({
-    'no_draw',          # 无中生有：接下来这一个大回合内
-    'prediction',       # 神机妙算：到对方结束阶段结束之后
-    'forced_kill',      # 余音绕梁：本回合 + 下一个回合的攻击阶段
-    'subsidy',          # 百亿补贴：接下来（本大回合内）
-    'subsidy_bonus',    # 百亿补贴已累计的额外攻击次数，与上面同生命周期
-    'vampire',          # 饮血：接下来自己的攻击
-    'treasure_hunter',  # 八方来财：接下来场上战舰数主动变化
-    # 绝处逢生的"击杀即胜"：活到对局结束（大回合白名单为空集，见下）
-    'last_stand_win',
-})
-
-# 大回合结束（重新猜拳）时的白名单。
-# ⚠️ 这份名单同样是【唯一实现】—— end_turn 的大回合分支直接调它，
-#    别在那里另抄一份（小回合那边就抄过一份，见 FLAGS_KEEP_ACROSS_TURN 的说明）。
-#
-# 按作者裁定，百亿补贴等"接下来…"的效果都只持续本大回合，全部清掉；
-# 唯一要跨大回合活下来的是绝处逢生的"击杀即胜"（活到对局结束）。
-FLAGS_KEEP_ACROSS_ROUND = frozenset({
-    'last_stand_win',
-})
-
-
-def _prune_effect_flags(room, keep):
-    """按白名单裁剪双方的 effect_flags，返回是否有变化。
-
-    用 __dict__ 过滤即可：EffectFlags 的字段是"类属性 + 注解"，
-    没被显式赋过值的字段不在实例 __dict__ 里，读取时走类属性默认值（False/0），
-    所以裁剪后实例依然是完整可用的对象。
-    """
-    changed = False
-    for p_id in room.players:
-        flags = room.players[p_id].effect_flags
-        before = dict(flags.__dict__)
-        after = {k: v for k, v in before.items() if k in keep}
-        if after != before:
-            flags.__dict__ = after
-            changed = True
-    return changed
-
-
-class Player:
-    magic_hand: list[MagicCard]
-    effect_flags: EffectFlags
-    name: str
-    ships: list[PlayerShip]
-    attacks: list[Position]
-    remaining_ships: int
-    needs_reset: bool
-    revealed_positions: list[Position]
-    # 设置新的船数限制
-    max_ships: Any
-    sunken_ships: Any
-    user_id: str
-    sid: str  # 添加sid属性来存储socket会话ID
-
-    def __init__(self, name: str, ships: list[PlayerShip], attacks: list[Position], remaining_ships: int, user_id: str = None, sid: str = None):
-        self.magic_blocked = None
-        self.damage_dealt_this_turn = 0
-        self.magic_hand = []
-        self.effect_flags = EffectFlags()
-        self.name = name
-        self.ships = ships
-        self.sid = sid  # 初始化sid属性
-        self.attacks = attacks
-        self.remaining_ships = remaining_ships
-        self.needs_reset = False
-        self.revealed_positions = []
-        self.max_ships = None
-        self.user_id = user_id
-        self.sunken_ships = []  # 被击沉的船，用于死者苏生/疗愈等效果
-
-
-class GameRoom:
-    id: str
-    players: dict[str, Player]
-    state: str
-    rps_choices: dict[str, str]
-    attack_order: list[str]
-    current_attacker: str
-    attacks_remaining: int
-    round: int
-    winner: str
-    field_magic: str
-    magic_history: list[dict[str, Any]]  # 无写入
-    game_effects: dict[str, Any]
-    current_phase: str
-    magic_temp_data: dict[str, Any]
-    magic_discard: list[MagicCard]
-    magic_deck: list[MagicCard]
-    chain: list[dict[str, Any]]
-    chain_waiting: bool
-    chain_timer: float
-    chain_window: str | None
-    chain_passes: int
-    chain_display_token: int | None
-    chain_display_deadline: float | None
-    last_attack: Any
+class GameRoom(RoomState):
     def __init__(self, room_id):
-        self.id = room_id
-        self.created_at = time.time()  # 用于回收「建了但一直没人入座」的房间
-        self.players = {}
-        self.state = 'waiting'  # waiting, placing_ships, rock_paper_scissors, attacking, game_over
-        # 大厅可见性（2026-09-18 大厅批）：**新增房间级状态三件齐** ——
-        #   ① 这里初始化 ② 消费点 = _lobby_visible_rooms() + handle_create_room 的写入
-        #   ③ 回归测试 tests/test_lobby.py::test_room_defaults_are_lobby_safe
-        # 默认 public=True 是有意的：大厅要能列出等待中的房间，默认私密等于这个功能不存在。
-        self.name = ''       # 房间名（空 = 前端回落成"{房主名}的房间"）
-        self.public = True   # False = 私密房，只认 6 位房间号，不出现在大厅列表
-        self.rps_choices = {}
-        self.attack_order = []
-        self.current_attacker = ""
-        self.attacks_remaining = 0
-        self.round = 1
-        self.winner = ""
-        # 排位房标记（2026-09-17 排位批）：只有**匹配成功**的房才可能为 True，
-        # 自定义房 / 人机房恒 False。唯一消费点是结算里的段位加减分
-        # （`_settle_ranked_match`：`room.ranked and count_stats and 有开打时间`）
-        # 与下发（`game_state` / `_build_room_sync` 的 `ranked` / `mode`）。
-        # ⚠️ 必须在这里初始化（第 2 批的硬规矩：新增房间级状态要
-        #   ① __init__ 初始化 ② 明确消费点 ③ 回归测试）—— 漏了就会在别处 AttributeError。
-        self.ranked = False
-        # ★ 战绩模式批：这间房是不是**匹配**出来的（`handle_find_match` 配对成功时置 True）。
-        #   按 CLAUDE.md 第 10.11 条「新增房间级状态三件齐」：
-        #     ① 这里初始化 ② 消费点 = `_match_history_mode`（战绩落库时的 `matches.mode`）
-        #     ③ 回归 = tests/test_match_mode.py（含源码级穷举守卫 + 三条非匹配路径的反例）
-        #   ⚠️ 存在的理由：`matches` 表原先只有 id / winner / loser / timestamp，
-        #     "这一局是排位 / 匹配 / 人机 / 自定义房"**根本没存**，界面只能靠 id 猜人机
-        #     （`isAiOpponent`）—— 那是猜测不是记录。有了它才谈得上如实标出模式。
-        #   ⚠️ 它是"**事实**"而不是"从 `room.players` 的 key 形状反推"：key 有两套约定
-        #     （自定义房 = user_id / 匹配房 = 入座 sid），历史上漂移过一次，
-        #     形状判据一旦漂移就是"匹配局静默标成自定义局"，零报错。
-        self.matchmade = False
-        # 魔法卡相关状态
-        self.field_magic = None  # 场地区域（存卡牌实例，空=None）
-        self.magic_history = []  # 魔法卡使用历史
-        self.game_effects = {}  # 游戏效果跟踪
-        self.current_phase = 'preparation'  # 当前阶段
-        self.magic_temp_data = {}  # 魔法卡临时数据
-        self.field_magic_owner = None  # 当前场地魔法的施放者（用于归属判断）
-        self.magic_discard = []  # 全局弃牌堆（所有玩家使用过的魔法卡）
-        self.magic_deck = []  # 全局共享魔法卡堆
-        # 连锁相关状态
-        self.chain = []  # 连锁栈
-        self.chain_waiting = False  # 是否有待响应的连锁窗口
-        self.chain_timer = -1  # 连锁回应计时器（代际令牌）
-        self.chain_window = None  # 当前响应窗口归属的玩家
-        self.chain_passes = 0  # 连续放弃次数（达 2 即结算）
-        # ★ 2026-09-23 新增房间级状态三件齐（CLAUDE.md 第 10.11 条）：
-        #   ① 这里初始化 ② 消费点 = `_finish_chain` / `_chain_display_then_resolve` /
-        #   `_sweep_overdue_chain_display`；任何一次 `resolve_chain` 都会清掉它们
-        #   ③ 回归 = tests/test_chain_display_delay.py
-        # 含义见 `CHAIN_DISPLAY_DELAY_SECONDS`：结算前那段固定展示停留的代际令牌
-        # 与兜底截止时刻（`time.monotonic()`）。None = 当前没有待结算的停留。
-        self.chain_display_token = None
-        self.chain_display_deadline = None
-        self.last_attack = None  # 记录最后一次攻击的信息
-        self.game_logs: list[dict[str, Any]] = []
-        # ★ 2026-09-23（回放批）新增房间级状态三件齐（CLAUDE.md 第 10.11 条）：
-        #   ① 这里初始化 ② 消费点 = `replay.note` / `replay.note_action` /
-        #   `replay.note_board_reset` / `replay.note_ship_lost` /
-        #   `replay.note_ship_returned` / `replay.note_board_replaced`（喂）
-        #   与 `replay.finalize` + `replay.reset`（收）
-        #   ③ 回归 = tests/test_replay_recorder.py / tests/test_replay_ship_loss.py
-        # 形状见 replay._state（steps / 三条时间线 / board_resets / nodes / 截断标记）。
-        # ⚠️ 每局常驻 ≤30 KB，`_finalize_match` 落库后**立刻置空**（契约 §1：服务器只有
-        #    777 MB 可用内存在用 swap，回放绝不进内存缓存）。
-        self.replay: dict[str, Any] | None = None
-        self.rps_processed = False  # 记录猜拳结果是否已经处理过
-        self.skip_opponent_turn = None  # Freezing!：跳过对方本回合 → **直接进新大回合**
-        self.skip_next_turn = None  # 用于跳过下一个玩家回合
-        # ★ 2026-09-20 新增：神之宣告效果二「跳过这一个大回合内对方的所有阶段」。
-        # 与 `skip_opponent_turn` **故意分开**（两者作用域不同）：
-        #   · skip_opponent_turn    —— Freezing！，跳过对方后**翻页**（重新猜拳+发牌）
-        #   · skip_opponent_stages  —— 神之宣告，只跳过对方在本大回合内的阶段，**不翻页**
-        # 混用一个标记会让神之宣告白拿 Freezing 的翻页副作用（作者实测报的就是这个）。
-        self.skip_opponent_stages = None
-        # 回光返照：施法者正在重摆棋盘（布船完成后的收尾走"重开新大回合 + 重新猜拳"）
-        self.huiguang_awaiting_placement = False
-        # ★ 2026-09-22（第 5 批）：观战棋盘"脏了"的标记（按 CLAUDE.md 第 11 条三件齐）。
-        #   `True` = 本次操作改过棋盘上的格（清格 / 整块重摆），要在收尾时补发一次
-        #   `spectate_board` 帧。**标记而不立刻发**的理由见 `_mark_spectate_board_dirty`：
-        #   清格发生在结算中段，同一张卡后面还会改局面（复活要加船数）——
-        #   立刻发就是一条半成品帧（实测帧里船数是 5、真值 6）。
-        #   消费点：`_flush_spectate_board_if_dirty`（由 `emit()` 收尾调用）。
-        #   回归用例：tests/test_spectate_batch5.py（疗愈 / 灵气复苏 / 败者食尘 / 回光返照）。
-        self.spectate_board_dirty = False
-        # ★ 2026-09-20 新增：**待点选的战舰队列**（选船类效果的优先级仲裁）。
-        #
-        # 每项：`{'player': pid, 'reason': str, 'message': str, 'priority': int, 'seq': int}`
-        #
-        # 为什么不是单槽（旧实现是 `magic_temp_data['pending_sacrifice']` 一个 dict）：
-        #   ① 单槽会被**第二个请求直接覆盖** —— 恶魔契约刚让 A 选船，A 又打出克苏鲁之眼
-        #      让 B 选，A 再点船就变成"当前没有待牺牲的战舰"（作者实测报的 bug）；
-        #   ② `magic_temp_data` 有 8 处被**整体覆写**成 `{}`，待选放在里面，
-        #      等待期间打出别的卡就会把待选静默抹掉。
-        # 队列放在房间级字段上，两个问题一起解决。
-        # ⚠️ 按 CLAUDE.md 第 11 条「新增房间级状态三件齐」：这里是 __init__ 初始化，
-        #    消费点见 `_consume_ship_pick`，回归用例见 `tests/test_ship_pick_priority.py`。
-        self.pending_ship_picks: list[dict[str, Any]] = []
-        self.ship_pick_seq = 0        # 单调递增序号：同优先级先到先得，且顺序确定可测
-        # 命运骰子摇到 3 时的「双方各弃一张」待办（按 CLAUDE.md 第 11 条三件齐）。
-        # 结构：{player_id: True/False}，True=已弃/无需弃，False=等待玩家选择。
-        # 消费点：handle_dice_discard_choose / _start_dice_discard / _check_dice_discard_complete。
-        # 不放 magic_temp_data：它有 8 处被整体覆写 = {}，等待期间打出别的卡就抹掉。
-        self.pending_dice_discard: dict[str, bool] = {}
-        # ★ 2026-09-24：`无忧梦呓`（判定卡）**打出并通过之后**挂着的延迟拼点。
-        # 结构：`{caster_id: 份数}` —— 打出后**对方的回合开始时**结算并清除。
-        # 消费点：`_settle_wuyou_dream`（两个回合开始处各调一次）。
-        # 回归用例：`tests/test_wuyou_dream_card.py`。
-        # ⚠️ 用 dict **计数**而不是单槽：单槽会被第二张同名牌静默覆盖
-        #    （CLAUDE.md 教训 #29「单槽 = 隐藏的数据丢失」）。
-        # 不放 magic_temp_data：它有 8 处被整体覆写成 {}（教训 #30）。
-        self.pending_wuyou_dreams: dict[str, int] = {}
-        # ★ 2026-09-25：`兵粮寸断`（判定卡）的两份房间级状态。
-        #   · `pending_bingliang = {caster_id: 份数}`：打出后挂着、**对方的准备阶段开始时**
-        #     摇一次骰子并 pop 掉（判定只发生一次）；
-        #   · `bingliang_skip_draw = {player_id: 剩余跳过次数}`：判定通过后给目标挂 2 次，
-        #     在**目标接下来两个准备阶段**的摸牌处各消耗一次，用完即清。
-        # 消费点：`_settle_bingliang`（两个回合开始处各调一次）
-        #         + `_bingliang_consume_skip`（新大回合发放摸牌处）。
-        # 回归用例：`tests/test_bingliang_card.py`。
-        # ⚠️ 两份都用 dict **计数**而不是单槽（教训 #29「单槽 = 隐藏的数据丢失」）；
-        #    不放 `magic_temp_data`：它有 8 处被整体覆写成 {}（教训 #30）。
-        self.pending_bingliang: dict[str, int] = {}
-        self.bingliang_skip_draw: dict[str, int] = {}
-        # 弃牌待办的**来源卡名**（`{player_id: 卡名}`），与 `pending_dice_discard`
-        # **同生共死**：谁开的待办，日志与弹窗就写谁的名字。
-        # 为什么另存一张表、而不是把 `pending_dice_discard` 的值改成字典：
-        # 那个字段的 True/False 被 5 处下游按**布尔直读**
-        # （`_check_dice_discard_complete` 的 all() / `_dice_discard_wait_reason` /
-        #   `_master_unsettled` / `tools/headless_game.py` / `handle_dice_discard_choose`
-        #   的 `is not False`），改类型会一次性打穿它们。
-        # 两张表的**键集合必须同步** —— 由用例钉住（教训 #1：删不掉的镜像要用测试钉）。
-        self.pending_dice_discard_label: dict[str, str] = {}
-        # 掉线/重连（2026-09-07 新增）
-        self.disconnected = {}        # player_id -> {'deadline': float, 'token': int}（宽限期内）
-        self.disconnect_seq = 0       # 掉线计时器代际令牌
-        self.reconnect_tokens = {}    # player_id -> 一次性重连 token
-        self.game_over_reason = None  # None | 'opponent_disconnected'
-        # 本局落库后的 match_id（由 `_finalize_match` 写，见 `_game_over_payload`）。
-        # 初值 None = "还没有/取不到" —— 结算 payload 据此决定带不带这个键。
-        self.match_id = None
-
-        # ── 阶段转换的「优先权询问」 ──────────────────────────────────
-        # 速阶3卡牌"任何时候都能使用"，于是双方会在阶段推进这类操作上抢时点：
-        # 我推进阶段的同时对方出牌，谁先谁后没有定义（实测确认）。
-        # 参照游戏王 YGO 的优先权确认：推进阶段前先问对方"要不要响应一下"。
-        # 与连锁窗口（chain_*）是两套独立状态 —— 连锁窗口优先，询问期间不开
-        # 新的连锁窗口，避免双重弹窗。
-        self.priority_pending = None   # {'actor','responder','action','countdown'} 或 None
-        self.priority_token = 0        # 代际令牌：旧定时器自动作废，防双重结算
-        # 响应者在窗口里打出了速阶3 → 连锁结算完后要"续做"的那个阶段转换。
-        # {'actor','action'} 或 None。⚠️ 必须在这里初始化：此前只在
-        # _resolve_priority 里现赋，未打出卡时该属性不存在，任何
-        # getattr/直读都可能踩 AttributeError。
-        self.priority_continue = None
-        # 拒绝开关：player_id -> bool。为 True 时不再向他弹这类询问
-        # （作者要求做成可随时切回的开关，不是一次性按钮）。
-        self.decline_priority = {}
-
-        # ── 局内快捷语（第 4 批）───────────────────────────────────────
-        # 频率状态住【房间级】，不能放模块级全局：否则 A 房间里连点会把
-        # B 房间里另一个人的额度一起吃光（两个房间共用一个计数器）。
-        # key 一律是 player_id：
-        #   quick_chat_recent: player_id -> [发送时间戳…]（升序，只留窗口内的）
-        #   quick_chat_last:   player_id -> {'id': msg_id, 'ts': 时间戳}
-        # 唯一的消费点是 handle_quick_chat()（读写都只在那里）。
-        # ⚠️ 必须在这里初始化 —— 漏了就会在第一个真人身上 AttributeError
-        #    （第 2 批的硬规矩：新增房间级状态要 ① __init__ 初始化
-        #     ② 有明确消费点 ③ 有回归测试）。
-        self.quick_chat_recent: dict[str, list[float]] = {}
-        self.quick_chat_last: dict[str, dict[str, Any]] = {}
-
-        # ── 观战席（实时观战第 2 批）───────────────────────────────────
-        # `sid -> {'name','user_id','joined_at'}`。
-        # ★★ **观众绝不写进 `room.players`** ★★ ——
-        #    这是本批最重要的既成安全属性：所有写操作 handler 的鉴权都是
-        #    "`player_id in room.players` + `_identity_ok`"，观众不在 players 里，
-        #    于是那 90 多处写 handler 天然、无一例外地拒绝它。
-        #    把观众塞进 players（哪怕只是"为了让他收到广播"）＝ 一次性废掉全部鉴权。
-        #    守卫：tests/test_spectate_batch2.py 的
-        #    `test_spectator_is_never_written_into_room_players`
-        #    （并附"故意塞进去 → 断言变红"的元测试）。
-        #
-        # ⚠️ 按 CLAUDE.md 第 11 条「新增房间级状态三件齐」：
-        #    ① 这里初始化；② 消费点 = `handle_spectate_join` / `handle_spectate_leave`
-        #    / `handle_disconnect` / `_drop_room` / `_build_spectate_snapshot`；
-        #    ③ 回归用例见 `tests/test_spectate_batch2.py`。
-        self.spectators: dict[str, dict[str, Any]] = {}
-
-        # ── 观战席聊天（实时观战第 4 批）───────────────────────────────
-        # **观众**的发言频率状态。与 `quick_chat_recent` 一样住房间级
-        # （模块级全局会让 A 房间的连点吃光 B 房间另一个人的额度）。
-        # key 一律是**观众的 sid**（观众不在 `room.players` 里，没有 player_id）。
-        #   spectate_chat_recent: sid -> [发送时间戳…]（升序，只留窗口内的）
-        #   spectate_chat_last:   sid -> {'id': 上一条正文, 'ts': 时间戳}
-        # 判据**不在这里** —— 复用 `quick_chat.check_rate`（教训 #1：
-        # 同一个业务判断不许有第二份实现）。这里只是它的状态存放处。
-        # 消费点：`handle_spectate_chat_send`（读写都只在那里）。
-        self.spectate_chat_recent: dict[str, list[float]] = {}
-        self.spectate_chat_last: dict[str, dict[str, Any]] = {}
-
-    def init_player_magic(self, player_id: str, magic_cards):
-        """初始化玩家魔法卡相关状态"""
-        # 初始化玩家的魔法卡状态
-        self.players[player_id].magic_hand = []  # 初始手牌为空
-
-        # 仅在第一次调用时初始化全局共享魔法卡堆
-        if not self.magic_deck:
-            # 复制并洗牌创建全局共享卡堆。
-            # 剔除 HIDDEN_CARD_NAMES（暂时隐藏的卡）：牌堆里没有 ⇒ 谁也摸不到，
-            # 而卡池、结算分支、前端文案都不动。
-            self.magic_deck = [c for c in magic_cards if c.name not in HIDDEN_CARD_NAMES]
-            random.shuffle(self.magic_deck)
+        super().__init__(room_id, hidden_card_names=lambda: HIDDEN_CARD_NAMES)
 
     def draw_card(self, player_id: str):
-        """抽卡逻辑，返回抽到的卡牌，使用全局共享卡堆"""
-        # 检查是否有禁止抽卡效果
-        effect_flags = self.players[player_id].effect_flags
-        if effect_flags.no_draw:
-            return None
+        card = super().draw_card(player_id)
+        if card is not None:
+            player = self.players[player_id]
+            # 手牌只单发本人；不能用 room= 广播。
+            emit('hand_updated', {'hand': player.magic_hand}, to=player.sid)
+        return card
 
-        # 牌堆为空，无法抽卡
-        if not self.magic_deck:
-            return None
-
-        # 从全局共享牌堆顶部抽一张卡
-        card = self.magic_deck.pop(0)
-
-        # 检查手牌中是否已有相同卡牌（除了"失灵！"）
-        if card.name != '失灵！' and any(c.name == card.name and c.speed == card.speed for c in
-                                        self.players[player_id].magic_hand):
-            # 避免重复卡牌，放入弃牌堆
-            self.discard_card(player_id, card)
-            return None
-
-        # 将卡牌加入手牌
-        self.players[player_id].magic_hand.append(card)
-        # 通知客户端手牌更新
-        # ⚠️ `to=` 单发（**不是** `room=`）：手牌只给本人，`room=` 会被当成房间广播。
-        player = self.players[player_id]
-        emit('hand_updated', {
-            'hand': player.magic_hand
-        }, to=player.sid)
-
-        return card  # 返回抽到的卡牌
-
-    def discard_card(self, player_id: str, card: MagicCard):
-        """将卡牌放入弃牌堆；若它仍在手牌中，一并移出手牌。
-
-        注意：MagicCard 没有 __eq__，原先用 list.index(card) 在"牌堆抽出的同名牌"
-        场景下必然抛 ValueError（把整条攻击/魔法结算打断）。这里改为按对象身份匹配，
-        找不到就只进弃牌堆，不再抛异常。
-        """
-        hand = self.players[player_id].magic_hand
-        removed = False
-        for i, c in enumerate(hand):
-            if c is card:
-                hand.pop(i)
-                removed = True
-                break
-        self.magic_discard.append(card)
-        return removed
-    
 # 添加魔法卡牌数据定义（与客户端 magic_cards.js 保持一致）
 magic_cards = list(map(lambda x: MagicCard(**x), read_json('./static/magic_card.json')))
 
@@ -1156,13 +761,8 @@ MAX_CHAT_MSG_LEN = 100
 # ---------------------------------------------------------------------------
 # 改这里必须同步：docs/LOBBY_2026_09_18.md / tests/test_lobby.py / tools/lobby_check.mjs。
 LOBBY_ROOM = '__lobby__'          # socket.io 房间名（房间 id 是 uuid4()[:6] 十六进制，撞不上）
-LOBBY_CHAT_MAX_LEN = 120          # 大厅公屏单条上限（服务端截断，不报错）
-LOBBY_CHAT_MIN_INTERVAL = 1.0     # 同一连接两条之间的最小间隔（秒），防刷
-LOBBY_CHAT_BACKLOG = 30           # 新进大厅者补发的最近消息条数
 LOBBY_MAX_PLAYERS = 200           # lobby_state.players 上限
 LOBBY_STATE_TICK_SECONDS = 4.0    # 兜底定时广播间隔（只在有成员时才真的 emit）
-LOBBY_PROFILE_TTL = 60.0          # 头像/称号缓存时长，避免每次广播都查库
-LOBBY_NAME_MAX_LEN = 24           # 玩家名在大厅里的显示上限
 LOBBY_ROOM_NAME_MAX_LEN = 20      # 大厅建房时的房间名上限
 
 # ---------------------------------------------------------------------------
@@ -1247,137 +847,18 @@ def _rank_payload(room) -> dict:
     return {'ranked': ranked, 'mode': MATCH_MODE_RANKED if ranked else MATCH_MODE_CASUAL}
 
 
-class RoomManager:
-    def __init__(self):
-        # 游戏房间数据结构
-        self.rooms: dict[str, GameRoom] = {}
-        # 匹配队列：单结构列表，避免"三列平行数组"在并发下错位。
-        # 每项形如 {'sid': str, 'name': str, 'user_id': str | None, 'mode': str}
-        # ⚠️ `mode` 是 2026-09-17 排位批新增的第 4 个字段（'casual' / 'ranked'），
-        #    **只在同 mode 之间配对**。所有使用点：入队 / 出队 / 去重 / 取消 /
-        #    配对扫描（add_to_match_queue / remove_from_match_queue /
-        #    has_player_in_match_queue / handle_find_match / handle_disconnect /
-        #    handle_cancel_match）—— 改成平行数组的话漏一处就是错位。
-        self.match_queue: list[dict] = []
-        # 保护 rooms / match_queue 的读写（eventlet 下 threading 已被 monkey_patch）
-        self._lock = threading.RLock()
-
-    # 房间管理方法
-    def create_room(self, room_id: str = None) -> str:
-        """创建新房间，返回房间ID"""
-        if not room_id:
-            room_id = str(uuid.uuid4())[:6]
-        room = GameRoom(room_id)
-        # 自定义房（create_room / join_room）**恒为休闲局**：双方可以互相刷分，
-        # 所以排位标记只可能由匹配流程（handle_find_match）置 True。
-        room.ranked = False
-        with self._lock:
-            self.rooms[room_id] = room
-        return room_id
-
-    def create_ai_room(self, player_id: str, player_name: str, player_user_id=None,
-                         difficulty: str = 'normal') -> str:
-        """创建人机对战房间：预置AI玩家，真人随后 join_room 走正常双人开局流程"""
-        room_id = str(uuid.uuid4())[:6]
-        room = GameRoom(room_id)
-        room.is_ai_room = True
-        # 人机局不给段位分（打电脑不能刷段位，与"人机不计 users.wins / 不发徽章"同一口径）。
-        room.ranked = False
-        room.ai_difficulty = difficulty if difficulty in AI_DIFFICULTIES else 'normal'
-        # 逐座位难度覆盖（默认空 = 全房间同档，即线上人机房的语义）。
-        # 只有**自对弈度量**（tools/headless_game.py 的两个 AI 座位）才会填它：
-        # 房间级的单一档位表达不了"p1 大师 / p2 困难"，不区分就会量成大师 vs 大师。
-        room.ai_difficulty_by_player = {}
-        with self._lock:
-            self.rooms[room_id] = room
-        ai_id = 'ai-' + room_id
-        room.players[ai_id] = Player(name='AI', ships=[], attacks=[], remaining_ships=0, user_id=None, sid=ai_id)
-        room.init_player_magic(ai_id, magic_cards)
-        return room_id
-
-    def join_room(self, room_id: str, player_id: str, player_name: str, sid: str) -> bool:
-        """玩家加入房间，返回是否成功"""
-        with self._lock:
-            if room_id not in self.rooms:
-                return False
-
-            room = self.rooms[room_id]
-            if len(room.players) >= 2:
-                return False
-
-            # 自定义房恒为休闲局（排位房只由匹配流程直接建，不走这里）。
-            room.ranked = False
-            room.players[player_id] = Player(**{
-                'name': player_name,
-                'ships': [],
-                'attacks': [],
-                'remaining_ships': 0,
-                'user_id': player_id,
-                'sid': sid
-            })
-        return True
-
-    def get_room(self, room_id: str) -> GameRoom | None:
-        """获取房间对象"""
-        return self.rooms.get(room_id)
-
-    def delete_room(self, room_id: str) -> bool:
-        """删除房间，返回是否成功"""
-        with self._lock:
-            if room_id in self.rooms:
-                del self.rooms[room_id]
-                return True
-        return False
-
-    def get_all_rooms(self) -> dict[str, GameRoom]:
-        """获取所有房间"""
-        return self.rooms
-
-    # 匹配功能方法
-    def add_to_match_queue(self, player_id: str, player_name: str, user_id: str = None,
-                           mode: str = MATCH_MODE_CASUAL, ip: str = '') -> bool:
-        """添加玩家到匹配队列，返回是否成功。
-
-        `mode` 是**队列条目上的第四个字段**（2026-09-17 排位批）。队列本身仍是
-        「单结构列表」（每项一个 dict，见 `match_queue` 的注释）—— 早年那版
-        **三列平行数组** `[sids, names, user_ids]` 已被 2026-09-11 的有序性修复
-        取代，因为"平行数组漏改一个就是错位"（把 A 的 mode 配给 B）。
-        所以这里扩的是 dict 的键，不是列表的列；口径不变、错位风险更小。
-
-        `ip` / `enqueued_at`（2026-09-20 匹配规避批）同样是**新增的键**：
-        `ip` 用于同 IP 规避；`enqueued_at` 用于"等得久的人优先配上"。
-        ⚠️ `ip` 只放在内存里，**不落库**（隐私决策，见 `_dirty_ips` 的说明）。
-        """
-        mode = _normalize_match_mode(mode)
-        with self._lock:
-            if any(e['sid'] == player_id for e in self.match_queue):
-                return False
-            self.match_queue.append({'sid': player_id, 'name': player_name,
-                                     'user_id': user_id, 'mode': mode,
-                                     'ip': ip or '',
-                                     'enqueued_at': time.time()})
-        return True
-
-    def remove_from_match_queue(self, player_id: str) -> bool:
-        """从匹配队列移除玩家，返回是否成功"""
-        with self._lock:
-            for i, entry in enumerate(self.match_queue):
-                if entry['sid'] == player_id:
-                    self.match_queue.pop(i)
-                    return True
-        return False
-
-    def has_player_in_match_queue(self, player_id: str) -> bool:
-        """检查玩家是否在匹配队列中"""
-        return any(e['sid'] == player_id for e in self.match_queue)
-
-    def get_match_queue_size(self) -> int:
-        """获取匹配队列大小"""
-        return len(self.match_queue)
 
 
 # 创建RoomManager实例
-room_manager = RoomManager()
+room_manager = RoomManager(
+    room_factory=lambda room_id: GameRoom(room_id),
+    player_factory=lambda **kwargs: Player(**kwargs),
+    card_catalog=lambda: magic_cards,
+    ai_runtime_factory=lambda seed: seeded_runtime(seed),
+    difficulties=lambda: AI_DIFFICULTIES,
+    normalize_mode=lambda mode: _normalize_match_mode(mode),
+    default_mode=MATCH_MODE_CASUAL,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1390,163 +871,8 @@ room_manager = RoomManager()
 #   _presence  —— 在线表（= 在线人数口径）。连接建立即入表，断开即出表。
 #   _members   —— 大厅成员（_presence 的**子集**）。只有真的站在大厅页面上的
 #                 连接才收 lobby_state 推送；否则每个对局中的玩家都被大厅广播打扰。
-def _lobby_clean_name(name, fallback: str = '游客') -> str:
-    """玩家名的统一清洗：去首尾空白 → 截断 → 空串回落。
+lobby_manager = LobbyManager(profile_lookup=lambda uid: _lobby_lookup_profile(uid))
 
-    ⚠️ 大厅的名字有三个来源（session / find_match 的 payload / 大厅订阅的 payload），
-    必须在**入口处**统一，不能各写各的截断长度。
-    """
-    text = str(name or '').strip()
-    if not text:
-        return fallback
-    return text[:LOBBY_NAME_MAX_LEN]
-
-
-class LobbyManager:
-    """大厅状态：在线表 + 成员表 + 公屏聊天。
-
-    所有读写都持同一把锁（eventlet 下 threading 已被 monkey_patch，锁是绿的）。
-    """
-
-    def __init__(self):
-        self._lock = threading.RLock()
-        # sid -> {'name','user_id','connected_at','profile','profile_at'}
-        self._presence: dict[str, dict] = {}
-        # sid -> {'name','joined_at'}（presence 的子集）
-        self._members: dict[str, dict] = {}
-        # 公屏最近消息（只保留 LOBBY_CHAT_BACKLOG 条）
-        self._chat: list[dict] = []
-        # 单调序号：前端靠它做"这条我有没有"的判断。没有它就只能靠文案/时间猜，
-        # 而补发的历史与实时推送**会重叠**（见 applyLobbyChatHistory 的注释）。
-        self._chat_seq = 0
-        # sid -> 上一条发言时间（防刷）
-        self._last_chat_at: dict[str, float] = {}
-
-    # ---- 在线表 -----------------------------------------------------------
-    def add_connection(self, sid: str, name=None, user_id=None) -> None:
-        """连接建立时登记。名字可能还不知道（游客在首页才输入），后面再补。"""
-        with self._lock:
-            row = self._presence.get(sid)
-            if row is None:
-                row = {'name': '', 'user_id': None, 'connected_at': time.time(),
-                       'profile': None, 'profile_at': 0.0}
-                self._presence[sid] = row
-            if name:
-                row['name'] = _lobby_clean_name(name)
-            if user_id is not None:
-                row['user_id'] = user_id
-
-    def update_identity(self, sid: str, name=None, user_id=None) -> None:
-        """补写身份（游客名 / 登录态）。连接不在表里时自动补登。"""
-        if sid not in self._presence:
-            self.add_connection(sid, name, user_id)
-            return
-        with self._lock:
-            row = self._presence[sid]
-            if name:
-                row['name'] = _lobby_clean_name(name)
-            if user_id is not None:
-                row['user_id'] = user_id
-
-    def remove_connection(self, sid: str) -> bool:
-        """连接断开：同时退出在线表、成员表与防刷记录。"""
-        with self._lock:
-            existed = self._presence.pop(sid, None) is not None
-            self._members.pop(sid, None)
-            self._last_chat_at.pop(sid, None)
-        return existed
-
-    def online_count(self) -> int:
-        with self._lock:
-            return len(self._presence)
-
-    def presence(self) -> dict:
-        """在线表快照（浅拷贝，供 build_lobby_state 遍历用）。"""
-        with self._lock:
-            return {sid: dict(row) for sid, row in self._presence.items()}
-
-    def profile_of(self, sid: str) -> dict:
-        """取该连接的头像 / 称号缓存；过期或缺失时查库并回写（TTL = LOBBY_PROFILE_TTL）。
-
-        ⚠️ 必须缓存：`lobby_state` 每 4 秒兜底广播一次，逐人查库等于每秒几十次查询。
-        游客（没有 user_id）直接返回空缓存，不查库。
-        """
-        now = time.time()
-        with self._lock:
-            row = self._presence.get(sid)
-            if row is None:
-                return {'avatar': '', 'title': '', 'name_style': ''}
-            cached = row.get('profile')
-            if cached is not None and now - float(row.get('profile_at') or 0) < LOBBY_PROFILE_TTL:
-                return dict(cached)
-            uid = row.get('user_id')
-        profile = _lobby_lookup_profile(uid)
-        with self._lock:
-            row = self._presence.get(sid)
-            if row is not None:
-                row['profile'] = profile
-                row['profile_at'] = now
-        return dict(profile)
-
-    # ---- 大厅成员 ---------------------------------------------------------
-    def subscribe(self, sid: str, name=None, user_id=None) -> bool:
-        """进入大厅。幂等：重复调用只刷新名字，不重复入表。"""
-        self.update_identity(sid, name, user_id)
-        with self._lock:
-            if sid in self._members:
-                if name:
-                    self._members[sid]['name'] = _lobby_clean_name(name)
-                return False
-            self._members[sid] = {'name': _lobby_clean_name(name), 'joined_at': time.time()}
-        return True
-
-    def unsubscribe(self, sid: str) -> bool:
-        with self._lock:
-            return self._members.pop(sid, None) is not None
-
-    def is_member(self, sid: str) -> bool:
-        with self._lock:
-            return sid in self._members
-
-    def member_count(self) -> int:
-        with self._lock:
-            return len(self._members)
-
-    def members(self) -> list[str]:
-        with self._lock:
-            return list(self._members.keys())
-
-    # ---- 公屏聊天 ---------------------------------------------------------
-    def chat_allowed(self, sid: str, now: float = None) -> bool:
-        """频率闸门：同一连接两条之间至少间隔 LOBBY_CHAT_MIN_INTERVAL 秒。"""
-        now = time.time() if now is None else now
-        with self._lock:
-            last = self._last_chat_at.get(sid)
-            if last is not None and now - last < LOBBY_CHAT_MIN_INTERVAL:
-                return False
-            self._last_chat_at[sid] = now
-        return True
-
-    def add_chat(self, sid: str, name: str, message: str) -> dict | None:
-        """入库一条公屏消息。空白消息返回 None（调用方据此静默丢弃）。"""
-        text = str(message or '').strip()[:LOBBY_CHAT_MAX_LEN]
-        if not text:
-            return None
-        with self._lock:
-            self._chat_seq += 1
-            item = {'key': sid, 'name': _lobby_clean_name(name),
-                    'message': text, 'ts': time.time(), 'seq': self._chat_seq}
-            self._chat.append(item)
-            if len(self._chat) > LOBBY_CHAT_BACKLOG:
-                del self._chat[:len(self._chat) - LOBBY_CHAT_BACKLOG]
-        return item
-
-    def recent_chat(self) -> list[dict]:
-        with self._lock:
-            return [dict(m) for m in self._chat]
-
-
-lobby_manager = LobbyManager()
 
 
 def _lobby_lookup_profile(uid) -> dict:
@@ -1574,191 +900,28 @@ def _lobby_lookup_profile(uid) -> dict:
 
 
 def _lobby_sids_by_room_state() -> tuple:
-    """一次遍历算出两拨人：真正在打的（in_game）与只是在房里等人的（in_room）。
-
-    ⚠️ **必须区分这两拨**：建房者一按下「创建房间」就坐在自己的房里了，
-    而那个房间的 state 是 'waiting' —— 把它算成"对局中"的话，大厅里所有
-    开过房的人永远显示"对局中"，而他们其实完全可以被别人拉进一局。
-    （浏览器工具实测抓到的：A 建房后在自己那一行显示"对局中"。）
-    """
-    in_game, in_room = set(), set()
-    for room in room_manager.get_all_rooms().values():
-        state = getattr(room, 'state', None)
-        if state == 'game_over':
-            continue
-        bucket = in_room if state == 'waiting' else in_game
-        for player in room.players.values():
-            if player.sid:
-                bucket.add(player.sid)
-    return in_game, in_room
+    return lobby_occupied_sids(room_manager.get_all_rooms())
 
 
 def _lobby_player_status(sid: str, in_game: set, in_room: set) -> str:
-    """大厅里的四态之一：matching / in_game / in_room / idle。
-
-    ⚠️ 顺序不能反：匹配中**优先于**对局中。匹配成功后队列条目立刻被 pop，
-    两者不会同时成立；但先判对局会让"刚配到、还没进房"的一瞬显示成空闲。
-    """
-    if room_manager.has_player_in_match_queue(sid):
-        return 'matching'
-    if sid in in_game:
-        return 'in_game'
-    if sid in in_room:
-        return 'in_room'
-    return 'idle'
+    return lobby_player_status(sid, in_game, in_room, room_manager.has_player_in_match_queue(sid))
 
 
 def _recycle_host_waiting_rooms(player_id: str) -> list:
-    """回收该玩家**之前主持的、还没人入座**的等待房，返回被回收的 room_id 列表。
-
-    ★ 为什么必须有它（2026-09-18 大厅批上线后实测的缺陷）：
-    作者截图里大厅房间列表挂着 **7 间一模一样的房**（同名、同房主、都是 1/2）。
-    复现确认「一次点击 = 一间房」（ack 正常、界面也正常跳到自定义房界面），
-    所以不是双击/重复绑定 —— 是**玩家每回大厅点一次「创建房间」就多一间，而旧房
-    永远不会消失**：
-
-      · 等待房的回收 TTL 是 1 小时（`_WAITING_ROOM_TTL`）；
-      · 大厅的可见规则只要求「房主仍在线」，而房主就是他自己 —— 当然一直在线上。
-
-    于是两条规则各自都"没错"，合起来却把 7 间房全留在了榜上。
-    规则改成：**一个玩家同时最多主持一间等待中的房**，再次建房 = 换一间。
-    （只回收 `waiting` 且房内恰好 1 人、且那个人就是自己的房 —— 已经开打的、
-    或者已经有人入座的房一律不碰。）
-    """
-    reaped = []
-    for room_id, room in list(room_manager.get_all_rooms().items()):
-        if getattr(room, 'state', None) != 'waiting':
-            continue
-        entries = list(room.players.items())
-        if len(entries) != 1 or entries[0][0] != player_id:
-            continue
-        _drop_room(room_id, '建房时回收自己上一间等待房')
-        reaped.append(room_id)
-    return reaped
+    return recycle_host_waiting_rooms(room_manager.get_all_rooms(), player_id, _drop_room)
 
 
 def _lobby_visible_rooms() -> list[dict]:
-    """大厅房间列表。可见规则见 docs/LOBBY_2026_09_18.md §1.4。
-
-    最容易被漏掉的是第 4 条「房主仍在线」：房间的回收 TTL 是 1 小时
-    （_WAITING_ROOM_TTL），房主关掉标签页后房间还要在内存里躺一小时 ——
-    不加这条就会在大厅里挂出一堆"点进去没人"的僵尸房。
-
-    第 5 条（**同一房主只列最新的一间**）是防御性的：正常路径下
-    `_recycle_host_waiting_rooms` 已经保证一个玩家只有一间等待房，但历史遗留
-    （本批上线前建的房）、或者日后新增的建房路径都可能绕过它 —— 列表层再兜一次，
-    大厅就永远不会出现"同一个人的一串同名房"。
-    """
-    online = set(lobby_manager.presence().keys())
-    rows = []
-    seen_hosts = set()
-    # 按建房时间**倒序**扫：同一房主先命中的就是最新的那一间
-    ordered = sorted(room_manager.get_all_rooms().values(),
-                     key=lambda r: getattr(r, 'created_at', 0) or 0, reverse=True)
-    for room in ordered:
-        if getattr(room, 'state', None) != 'waiting':
-            continue
-        if getattr(room, 'is_ai_room', False):
-            continue
-        if not bool(getattr(room, 'public', True)):
-            continue
-        entries = list(room.players.items())
-        if len(entries) != 1:
-            continue
-        host_key, host = entries[0]
-        if not host.sid or host.sid not in online:
-            continue
-        if host_key in seen_hosts:
-            continue          # 同一房主的第二间（见上面的第 5 条）
-        seen_hosts.add(host_key)
-        rows.append({
-            'room_id': room.id,
-            'name': str(getattr(room, 'name', '') or '') or f'{host.name}的房间',
-            'host': host.name,
-            'players': 1,
-            'capacity': 2,
-            'created_at': int(getattr(room, 'created_at', 0) or 0),
-        })
-    rows.sort(key=lambda r: r['created_at'])
-    return rows
+    return visible_lobby_rooms(room_manager.get_all_rooms(), lobby_manager.presence().keys())
 
 
 def build_lobby_state() -> dict:
-    """组装一份 lobby_state（契约见 docs/LOBBY_2026_09_18.md §1.3）。
-
-    每次广播现算：房间/队列/在线都在内存里，只有等级与段位要查库，且都是
-    **批量**接口（一次 IN (...) 取完），绝不逐人查。
-    """
-    now = time.time()
-    presence = lobby_manager.presence()
-    members = set(lobby_manager.members())
-    in_game, in_room = _lobby_sids_by_room_state()
-
-    # 队列分 mode 计数（休闲 / 排位共用同一个队列）
-    queue = list(room_manager.match_queue)
-    ranked_n = sum(1 for e in queue if e.get('mode') == MATCH_MODE_RANKED)
-    casual_n = len(queue) - ranked_n
-
-    # 按连接时间排序，超出上限直接截断（契约 §5：本批不做分页）
-    ordered = sorted(presence.items(), key=lambda kv: kv[1].get('connected_at') or 0)
-    ordered = ordered[:LOBBY_MAX_PLAYERS]
-
-    uids = [str(row.get('user_id')) for _, row in ordered if row.get('user_id')]
-    try:
-        xp_map = db.get_xp_map(uids) if uids else {}
-    except Exception:
-        xp_map = {}
-    try:
-        rank_map = db.get_rank_map(uids) if uids else {}
-    except Exception:
-        rank_map = {}
-
-    players = []
-    for sid, row in ordered:
-        uid = row.get('user_id')
-        uid_s = str(uid) if uid else ''
-        profile = lobby_manager.profile_of(sid)
-        level = 1
-        if uid_s:
-            try:
-                level = leveling.level_from_xp(int(xp_map.get(uid_s, 0) or 0))
-            except Exception:
-                level = 1
-        rank = None
-        points_row = rank_map.get(uid_s) if uid_s else None
-        if points_row is not None:
-            try:
-                points = points_row.get('points') if isinstance(points_row, dict) else points_row
-                view = ranks.rank_view(points)
-                rank = {'tier_id': view['tier_id'], 'tier_name': view['tier_name'],
-                        'label': view['label']}
-            except Exception:
-                rank = None
-        players.append({
-            'key': sid,
-            'name': row.get('name') or '游客',
-            'guest': not bool(uid_s),
-            'in_lobby': sid in members,
-            'status': _lobby_player_status(sid, in_game, in_room),
-            'avatar': profile.get('avatar') or '',
-            'level': level,
-            'name_style': profile.get('name_style') or '',
-            'title': profile.get('title') or '',
-            'rank': rank,
-        })
-
-    return {
-        'ts': int(now),
-        'online_count': len(presence),
-        'lobby_count': len(members),
-        'queue': {'casual': casual_n, 'ranked': ranked_n},
-        'players': players,
-        'rooms': _lobby_visible_rooms(),
-        # ★ 进行中的对局（观战入口）。**与 `rooms` 分开**是硬要求：
-        #   `rooms` = "点进去入座"，`matches` = "点进去观战"，混在一起玩家会点错。
-        #   契约见 docs/LOBBY_2026_09_18.md §1.3。
-        'matches': _lobby_live_matches(),
-    }
+    return project_lobby_state(
+        lobby_manager=lobby_manager, room_manager=room_manager,
+        repository=db, level_from_xp=leveling.level_from_xp,
+        rank_view=ranks.rank_view, live_matches=_lobby_live_matches,
+        max_players=LOBBY_MAX_PLAYERS, ranked_mode=MATCH_MODE_RANKED,
+    )
 
 
 def _broadcast_lobby_state() -> dict:
@@ -2350,7 +1513,7 @@ def test_set_player_ships(data):
                 ship_positions = [Position(x=x, y=y) for x, y in positions]
                 player.ships.append(PlayerShip(positions=ship_positions, hits=[]))
                 player.remaining_ships += 1
-                
+
                 # 更新已用位置
                 used_positions.update(positions)
                 placed = True
@@ -2532,13 +1695,13 @@ def test_reset_game(data):
         player.attacks = []
         player.magic_hand = []
         player.damage_dealt_this_turn = 0
-        
+
         if hasattr(player, 'effect_flags'):
             player.effect_flags = EffectFlags()
-        
+
         if hasattr(player, 'opponent_attacks'):
             player.opponent_attacks = []
-        
+
         player.revealed_positions = []
         player.needs_reset = True
 
@@ -2555,14 +1718,14 @@ def handle_create_ai_room(data):
 
     # 创建人机对战房间
     room_id = room_manager.create_ai_room(player_id, player_name, player_user_id, difficulty)
-    
+
     # 让玩家加入房间
     join_room(room_id)
 
     # 好友功能：人机房同样算"对局中"（真人那一侧的标记由 join_room 那一步补上；
     # 这里挂了也不会有副作用 —— AI 的 user_id 是 None，`_live_uids` 会跳过）。
     _bind_presence_game(room_manager.get_room(room_id))
-    
+
     # 返回房间信息
     return {
         'status': 'success',
@@ -2615,7 +1778,7 @@ def test_set_opponent_ships(data):
                 ship_positions = [Position(x=x, y=y) for x, y in positions]
                 opponent.ships.append(PlayerShip(positions=ship_positions, hits=[]))
                 opponent.remaining_ships += 1
-                
+
                 # 更新已用位置
                 used_positions.update(positions)
                 placed = True
@@ -2641,8 +1804,7 @@ def test_end_turn(data):
         room.current_phase = 'end'
     elif room.current_phase == 'end':
         # 切换到下一回合
-        current_index = room.attack_order.index(room.current_attacker)
-        next_index = (current_index + 1) % len(room.attack_order)
+        next_index, next_attacker, skip_stages = _TURN_STATE_MACHINE.next_turn_target(room)
         room.current_attacker = room.attack_order[next_index]
         room.current_phase = 'preparation'
         room.attacks_remaining = room.players[room.current_attacker].remaining_ships
@@ -2663,7 +1825,7 @@ def test_win_game(data):
     # 直接设置玩家为胜利
     room.state = 'game_over'
     room.winner = player_id
-    
+
     emit('game_over', {'winner': player_id}, room=room_id)
     return {'status': 'success', 'message': '游戏胜利已设置'}
 
@@ -2682,7 +1844,7 @@ def test_lose_game(data):
     opponent_id = next(p for p in room.players if p != player_id)
     room.state = 'game_over'
     room.winner = opponent_id
-    
+
     emit('game_over', {'winner': opponent_id}, room=room_id)
     return {'status': 'success', 'message': '游戏失败已设置'}
 
@@ -2748,7 +1910,7 @@ def test_get_magic_cards_list(data):
             'type': card.type,
             'description': card.description
         })
-    
+
     return {'status': 'success', 'magic_cards': cards_list}
 
 
@@ -2786,20 +1948,20 @@ def test_auto_attack(data):
         # 执行攻击
         hit = False
         ship_sunk = False
-        
+
         for i, ship in enumerate(opponent.ships):
             if Position(x=target_x, y=target_y) in ship.positions:
                 hit = True
-                
+
                 if ship.shield:
                     ship.shield = False
                 elif not ship.invincible:
                     ship.hits.append(Position(x=target_x, y=target_y))
-                    
+
                     if len(ship.hits) == len(ship.positions):
                         ship_sunk = True
                         opponent.remaining_ships -= 1
-                
+
                 break
 
         # 记录攻击
@@ -2808,7 +1970,7 @@ def test_auto_attack(data):
         attack.y = target_y
         attack.hit = hit
         attack.ship_sunk = ship_sunk
-        
+
         room.players[player_id].attacks.append(attack)
         room.attacks_remaining -= 1
 
@@ -3490,26 +2652,11 @@ def _recent_foes(uid: str, limit: int = None) -> set:
     """
     if not uid:
         return set()
-    n = limit or match_guard.RECENT_OPPONENT_LOOKBACK
     try:
-        with db.db._lock:
-            cur = db.db.conn.execute(
-                'SELECT winner_id, loser_id FROM matches '
-                'WHERE (winner_id = ? OR loser_id = ?) '
-                'ORDER BY timestamp DESC LIMIT ?', (uid, uid, int(n)))
-            rows = cur.fetchall()
+        return db.recent_foes(uid, limit or match_guard.RECENT_OPPONENT_LOOKBACK)
     except Exception:
         return set()
-    out = set()
-    for row in rows or ():
-        try:
-            w, l = (row[0], row[1]) if not isinstance(row, dict) else (row['winner_id'], row['loser_id'])
-        except Exception:
-            continue
-        out.add(l if w == uid else w)
-    out.discard(uid)
-    out.discard(None)
-    return out
+
 
 
 def _dirty_ips() -> set:
@@ -3957,7 +3104,7 @@ def handle_place_ships(data):
             }, room=room_id)
             # ★ 回放批：布船收尾（回光返照那条路）。**不往游戏内日志加行** ——
             #   游戏内日志是既有玩家可见功能，本批不改它的显示。
-            replay.note_action(room, 'place_ships',
+            replay.note_action(capture_replay_observation(room), 'place_ships',
                                f'{_log_name(room, player_id)} 布好了 {len(ships)} 艘战舰',
                                {'player': player_id, 'ships': len(ships)},
                                _log_name(room, player_id))
@@ -4005,7 +3152,7 @@ def handle_place_ships(data):
             }, room=room_id)
             # ★ 回放批：布船收尾（灵气复苏那条路）。**不往游戏内日志加行** ——
             #   游戏内日志是既有玩家可见功能，本批不改它的显示。
-            replay.note_action(room, 'place_ships',
+            replay.note_action(capture_replay_observation(room), 'place_ships',
                                f'{_log_name(room, player_id)} 布好了 {len(ships)} 艘战舰',
                                {'player': player_id, 'ships': len(ships)},
                                _log_name(room, player_id))
@@ -4023,7 +3170,7 @@ def handle_place_ships(data):
     # ★ 回放批：布船收尾（**唯一实现点**：三条路都从这里返回）。
     #   ⚠️ 只记回放步骤，**绝不往游戏内日志加行** —— 游戏内日志是既有玩家可见功能，
     #      本批不改它的显示。
-    replay.note_action(room, 'place_ships',
+    replay.note_action(capture_replay_observation(room), 'place_ships',
                        f'{_log_name(room, player_id)} 布好了 {len(ships)} 艘战舰',
                        {'player': player_id, 'ships': len(ships)},
                        _log_name(room, player_id))
@@ -4058,12 +3205,12 @@ def handle_rps_choice(data):
                 del room.test_ai_rps_choice
 
     room.rps_choices[player_id] = choice
-    
+
     # 检查是否所有玩家都已做出选择
     if len(room.rps_choices) == len(room.players) and not room.rps_processed:
         # 标记为已处理，防止重复执行
         room.rps_processed = True
-        
+
         # 决定猜拳结果
         result = determine_rps_winner(room)
         emit('rps_result', result, room=room_id)
@@ -4150,7 +3297,7 @@ def handle_rps_choice(data):
     #   ⚠️ 平局那条早退路径（`len(result.order) < 2`）**在函数中间就 return 了**，
     #      走不到这里 —— 所以"平局也算一步猜拳"不会污染回放。
     if room.state == 'attacking':
-        replay.note_action(room, 'rps_choice',
+        replay.note_action(capture_replay_observation(room), 'rps_choice',
                            f'{_log_name(room, winner)} 猜拳取胜，先手',
                            {'first': winner, 'round': room.round},
                            _log_name(room, winner))
@@ -4165,7 +3312,7 @@ class RPSResult:
         self.loser = loser
         self.choices = choices or {}
         self.order = order or []
-    
+
     def to_dict(self):
         return {
             'status': self.status,
@@ -4233,13 +3380,13 @@ class ChainResult:
         self.caster = caster
         self.success = success
         self.message = message
-    
+
     def __getitem__(self, key):
         return getattr(self, key)
-    
+
     def __setitem__(self, key, value):
         setattr(self, key, value)
-    
+
     def to_dict(self):
         return {
             'card': self.card,
@@ -4524,41 +3671,13 @@ def _match_duration_sec(room) -> int:
 # ===========================================================================
 def _anticheat_facts(room, winner_id, loser_id) -> dict:
     """组装反作弊判据需要的事实（取不到的一律留空，绝不影响结算）。"""
-    facts = {}
+    from application.observations import settlement_snapshot
     try:
-        winner = room.players.get(winner_id)
-        loser = room.players.get(loser_id)
-
-        # 本局开到第几回合（`room.round` 是服务端权威值）
-        facts['rounds'] = max(0, int(getattr(room, 'round', 0) or 0))
-
-        # 双方各自的"命中次数" —— 用**船上被打中的格子数**，与 `_took_any_damage` 同口径
-        def _hits(p):
-            if p is None:
-                return 0
-            return sum(len(getattr(s, 'hits', None) or []) for s in (getattr(p, 'ships', None) or []))
-
-        wh, lh = _hits(winner), _hits(loser)
-        facts['attacker_total_hits'] = wh
-        facts['defender_total_hits'] = lh
-        facts['loser_total_hits'] = lh
-
-        # 形态特征：本局有几个玩家真正打中过对方 + 单方最大命中数
-        # （不依赖 id 对齐 —— 见上面那段教训）
-        n_shooters = (1 if wh > 0 else 0) + (1 if lh > 0 else 0)
-        facts['attackers'] = ['a'] * n_shooters if n_shooters else []
-        facts['max_hits'] = max(wh, lh)
-
-        # 双方总船数（对手船数 = 判"全歼"的分母）
-        w_ships = len(getattr(winner, 'ships', None) or []) if winner else 0
-        l_ships = len(getattr(loser, 'ships', None) or []) if loser else 0
-        facts['foe_ships'] = l_ships
-        facts['total_ships'] = w_ships + l_ships     # 0 = 棋盘是空的，对局没真进行
-        facts['duration_sec'] = _match_duration_sec(room)
-        facts['ended_by'] = getattr(room, 'end_reason', None) or 'attacks'
+        return settlement_snapshot(
+            room, winner_id, loser_id, _match_duration_sec(room)
+        ).facts()
     except Exception:
-        pass
-    return facts
+        return {}
 
 
 def _anticheat_assess(room, winner_id, loser_id) -> dict:
@@ -4836,7 +3955,7 @@ def _finalize_match(room, winner_id, loser_id, streak_ctx=None):
         room_match_ids = []
         try:
             if _replay_allowed_for_match(winner_user_id, loser_user_id):
-                replay_blob = replay.finalize(room)
+                replay_blob = replay.finalize(capture_replay_observation(room))
         except Exception as e:              # noqa: BLE001 —— 回放绝不许把结算搞崩
             print(f'[replay] 打包回放失败（这局不留回放）: {e}')
             replay_blob = None
@@ -4856,7 +3975,7 @@ def _finalize_match(room, winner_id, loser_id, streak_ctx=None):
             # ★ 内存纪律（契约 §1）：落库之后**立刻置空** —— 服务器只有 777 MB 可用
             #   内存在用 swap，回放绝不许留在房间里。放在 finally 里：落库失败也清，
             #   否则一份几十 KB 的录制会挂在这一局房间对象上直到房间回收。
-            replay.reset(room)
+            clear_replay_observation(room)
 
         # 把本局 id 挂在房间上：6 处 `emit('game_over')` 都紧跟在本函数之后，
         # 由 `_game_over_payload()` 统一取用（结算屏的「本局回放」入口要它）。
@@ -5059,27 +4178,11 @@ def _consecutive_losses(uid) -> int:
     """
     if not uid:
         return 0
-    cursor = None
     try:
-        cursor = db.db.conn.cursor()
-        cursor.execute(
-            'SELECT winner_id FROM matches WHERE winner_id = ? OR loser_id = ? '
-            'ORDER BY timestamp DESC LIMIT 50',
-            (uid, uid))
-        streak = 0
-        for match_row in cursor.fetchall():
-            if str(match_row['winner_id']) == str(uid):
-                break          # 上一场是胜仗：连败到这里就断了
-            streak += 1
-        return streak
-    except Exception:                                             # noqa: BLE001
+        return db.consecutive_losses(uid)
+    except Exception:  # noqa: BLE001 —— 统计失败不阻断结算
         return 0
-    finally:
-        try:
-            if cursor is not None:
-                cursor.close()
-        except Exception:                                         # noqa: BLE001
-            pass
+
 
 
 def _ranked_settlement_allowed(room, count_stats: bool) -> bool:
@@ -5318,208 +4421,44 @@ def _settle_ranked_match(room, winner_id, loser_id, streak_ctx=None):
 
 
 def _check_last_chance(room, attacker_id: str, defender_id: str) -> bool:
-    """回光返照：对使用者的船造成伤害则其直接判负。返回是否触发。"""
-    eff = room.game_effects.get('last_chance')
-    if eff and eff.get('caster') == defender_id and eff.get('round', room.round) == room.round:
-        room.state = 'game_over'
-        room.winner = attacker_id
-        add_game_log(room, f"第{room.round}回合 · {_log_name(room, defender_id)} 触发回光返照失败并判负", 'result', {
-            'winner': attacker_id,
-            'loser': defender_id
-        })
-        # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
-        _finalize_match(room, attacker_id, defender_id)
-        emit('game_over', _game_over_payload(room, {'winner': attacker_id}), room=room.id)
-        return True
-    return False
-
+    """兼容入口：检查回光返照判负。"""
+    return _GAME_END.check_last_chance(room, attacker_id, defender_id)
 
 def _mark_ship_sunken(player, ship):
-    """把一艘船登记进沉船堆（带去重）。
-
-    ⚠️ 全项目登记沉船都必须走这里。本项目的「击沉」不会把船移出 ships，
-    所以同一艘船对象会在"沉→复活→再沉"的循环里被反复登记；不去重就会在
-    sunken_ships 里留下重复引用，进而造成：
-      · 幽灵计数：复活类 pop() 到重复条目时船其实还活着 → 只加 remaining_ships、
-        棋盘上却没有船复活（玩家实测报的"疗愈后战舰并没有复活"）；
-      · 一艘船被复活两次，船数突破 6 艘上限。
-    返回 True 表示本次真的新增了一条。
-    """
-    if ship is None:
-        return False
-    sunken = getattr(player, 'sunken_ships', None)
-    if sunken is None:
-        player.sunken_ships = sunken = []
-    if ship in sunken:
-        return False
-    sunken.append(ship)
-    return True
-
+    """兼容入口：登记沉船并去重。"""
+    return _SHIP_SUNK_EFFECTS.mark_sunken(player, ship)
 
 def _on_ship_destroyed(room, owner_id: str, ship):
-    """一艘船被摧毁后的通用副作用（普通攻击与区域魔法共用同一份实现）。
-
-    普通攻击路径原先在 _apply_ship_sunk_effects 里内联；溅射 / 轰炸 / 硫磺火焰
-    各自又写了一份，且都漏掉了一件事：
-
-      **无瑕圣心中断** —— 它们只把 no_damage 置 False，效果本身既没被中断
-      也没有广播，等于"有船沉了但无暇圣心还在"。
-
-    ★ 2026-09-24：原来的 `hits_added` / `source` 两个参数是**只为平等条约那张
-      船数变化快照服务的**（记录"沉了哪艘、加了哪些命中格、怎么死的"供回滚），
-      那张快照已整条删除 ⇒ 两个参数一起删掉。留着就是"只写不读"的僵尸参数，
-      下一个人会照着它把快照找回来（`docs/CHAIN_ENGINE_SPEC.md` §4 的同款教训）。
-      平等条约现在看的是连锁栈正下方那一项，判据见
-      `EQUAL_TREATY_SHIP_CHANGE_RULES`。
-    """
-    owner = room.players[owner_id]
-
-    # 百亿补贴: 自己的船被击败时，自己的攻击次数 +3
-    _grant_subsidy_bonus(room, owner_id)
-
-    # 无暇圣心：只要有战舰被击沉就中断
-    if 'holy_heart' in room.game_effects:
-        del room.game_effects['holy_heart']
-        emit('holy_heart_interrupted', {
-            'reason': '有战舰被击沉，无暇圣心效果中断'
-        }, room=room.id)
-
-    # 守株待兔：被击沉的船带陷阱标记 → 让对方牺牲 min(2, 对方活船数) 艘。
-    # 卡面"如果这艘船死亡"按字面解释为任意死亡方式都触发；为防 caster
-    # 自己主动牺牲陷阱船造成递归（牺牲→触发trap→对方牺牲→可能再触发），
-    # 触发后**立刻清掉 trap 标记**，同一艘船只能触发一次。
-    if getattr(ship, 'trap', False):
-        ship.trap = False
-        _trigger_ship_trap(room, owner_id, ship)
-
-    # 把己方棋盘重新推给本人：不然前端手里那份还是摆船时自己拼的，
-    # 既不知道哪艘已经沉了（没有 alive 标记），也不知道船被移除，
-    # 「选一艘自己的船」类的卡就会把沉船也画成可点。
-    _emit_player_ships(room, owner_id)
-
+    """兼容入口：执行沉船后的通用同步和触发。"""
+    return _SHIP_SUNK_EFFECTS.on_destroyed(room, owner_id, ship)
 
 def _trigger_ship_trap(room, owner_id, sunk_ship):
-    """守株待兔陷阱被踩中：让【对方】牺牲 min(2, 对方活船数) 艘战舰。
-
-    与命运骰子摇到6共用牺牲链路：reason='trap_sacrifice'，allow_duplicate=True
-    跳过同 reason 去重，让对方连点两艘；AI 路径由 _request_ship_pick 自动选。
-    对方没有活船则跳过。
-    """
-    opponent_id = _opponent_of(room, owner_id)
-    if not opponent_id or opponent_id not in room.players:
-        return
-    opponent = room.players[opponent_id]
-    alive = _alive_ships(opponent)
-    need = min(2, len(alive))
-    if need <= 0:
-        emit('trap_triggered', {
-            'owner': owner_id, 'sunk_positions': [{'x': p.x, 'y': p.y} for p in sunk_ship.positions],
-            'sacrificed': 0, 'message': '陷阱触发，但对方没有可牺牲的战舰',
-        }, room=room.id)
-        return
-
-    emit('trap_triggered', {
-        'owner': owner_id, 'sunk_positions': [{'x': p.x, 'y': p.y} for p in sunk_ship.positions],
-        'sacrificed': need, 'message': f'陷阱触发！对方需牺牲{need}艘战舰',
-    }, room=room.id)
-    add_game_log(room,
-                 f'第{room.round}回合 · {_log_name(room, owner_id)} 的【守株待兔】陷阱被踩中，'
-                 f'对方需牺牲{need}艘战舰',
-                 'magic', {'owner': owner_id, 'card': '守株待兔', 'sacrifice': need})
-
-    for _ in range(need):
-        picked = _request_ship_pick(room, opponent_id, 'trap_sacrifice',
-                                    '守株待兔：请点选一艘战舰牺牲',
-                                    allow_duplicate=True)
-        if picked is not None:
-            # AI 自动选好：立即执行
-            _do_demon_contract_sacrifice(room, opponent_id, picked, 'trap_sacrifice')
-
-
+    """兼容入口：执行守株待兔陷阱。"""
+    return _SHIP_SUNK_EFFECTS.trigger_trap(room, owner_id, sunk_ship)
 
 def _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id, ship,
                              *, exclude_attacker_from_treasure=True,
                              request_demon_contract=True):
-    """击沉一艘战舰后的共同副作用（普通攻击 / 区域魔法 共用）。
-
-    包含：船数扣减、沉船记录、百亿补贴、恶魔契约、八方来财、无暇圣心中断。
-
-    ★ 2026-09-24：末尾的 `target_x, target_y` 两个参数一起删掉了 —— 它们**只**用来
-      给平等条约那张船数变化快照记"这一炮打在哪一格"（供回滚撤销命中格），
-      快照已整条删除 ⇒ 参数没有人读。留着就是"只写不读"的僵尸参数。
-    """
-    defender = room.players[defender_id]
-    defender.remaining_ships -= 1
-    _mark_ship_sunken(defender, ship)   # 去重，见该函数说明
-
-    # 百亿补贴 + 无瑕圣心中断（与区域魔法共用）
-    _on_ship_destroyed(room, defender_id, ship)
-
-    # 恶魔契约: 绑定船数增减 - 任意一方船被击杀，另一方也要牺牲一艘
-    # 牺牲由该方玩家自己在棋盘上点选（AI 自动），不再随机。
-    if request_demon_contract and room.game_effects.get('demon_contract'):
-        _request_demon_contract_sacrifice(room, defender_id)
-
-    # 八方来财: 战舰数目变化时抽一张牌。
-    # 这是【炮击/弃卡攻击】造成的减少，所以"己方击败对方的船"要排除 ——
-    # 即：攻击方自己持有八方来财时，他打沉别人不算变化；
-    # 而被击沉的那一方若持有八方来财，则照常摸牌（是对方击败了我方）。
-    if exclude_attacker_from_treasure:
-        _notify_treasure_hunter(room, 1, exclude_player_id=attacker_id)
-    else:
-        _notify_treasure_hunter(room, 1)
-
-    # 检查无暇圣心效果：如果有战舰被击沉，中断效果
-    if 'holy_heart' in room.game_effects:
-        del room.game_effects['holy_heart']
-        emit('holy_heart_interrupted', {
-            'reason': '有战舰被击沉，无暇圣心效果中断'
-        }, room=room_id)
-
+    """兼容入口：执行共享击沉副作用。"""
+    return _SHIP_SUNK_EFFECTS.apply(
+        room, room_id, attacker_id, defender_id, ship,
+        exclude_attacker_from_treasure=exclude_attacker_from_treasure,
+        request_demon_contract=request_demon_contract,
+    )
 
 def _apply_attacker_damage_buffs(room, room_id, attacker_id):
-    """攻击造成伤害后攻击方触发的效果：饮血、越战越勇、伤害统计。"""
-    attacker = room.players[attacker_id]
-    if attacker.effect_flags.vampire:
-        room.draw_card(attacker_id)
-        emit('message', {'text': '饮血效果发动，抽一张卡'}, to=attacker.sid)
-    if attacker.effect_flags.battle_spirit:
-        room.attacks_remaining += 1
-        emit('message', {'text': '越战越勇效果发动，攻击次数净增加1'}, room=room_id)
-    attacker.damage_dealt_this_turn += 1
+    """兼容入口：执行攻击方伤害增益。"""
+    return _ATTACK_DAMAGE_EFFECTS.apply(room, room_id, attacker_id)
 
 
 def _game_over_payload(room, extra=None):
-    """`game_over` 的载荷（**唯一构造口**，2026-09-29 加）。
-
-    为什么要有这么一个只有几行的函数：结算屏的「本局回放」入口需要**本局的权威 id**，
-    而 6 处 `emit('game_over', …)` 各写各的字面量 —— 想加一个字段就得改 6 个地方，
-    漏一个就会出现"这一种结束方式没有回放入口"（本项目的老病根形状）。
-
-    ⚠️ `match_id` **只在真的拿到时才带上**：写库失败、双方都是游客、人机房不计战绩时
-        `_finalize_match` 不会设 `room.match_id`，于是这里就不放这个键。
-        客户端据此**隐藏**入口 —— 而不是退化成"读历史第一条来猜本局"
-        （任务书 §W5 明令禁止那种猜法）。
-    """
-    payload = dict(extra or {})
-    match_id = getattr(room, 'match_id', None)
-    if match_id:
-        payload['match_id'] = match_id
-    return payload
+    """兼容入口：构造终局载荷。"""
+    return _GAME_END.payload(room, extra)
 
 
 def _finish_game_win(room, room_id, winner_id, loser_id, log_message=None):
-    """对局结束：置状态、记日志、记录战绩并广播 game_over。"""
-    if room.state == 'game_over':
-        # 幂等：对局已结束时不重复记账/广播（防止刷战绩）
-        return
-    room.state = 'game_over'
-    room.winner = winner_id
-    add_game_log(room, log_message or f"第{room.round}回合 · {_log_name(room, winner_id)} 获胜，游戏结束",
-                 'result', {'winner': winner_id, 'loser': loser_id})
-    # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
-    _finalize_match(room, winner_id, loser_id)
-    emit('game_over', _game_over_payload(room, {'winner': winner_id}), room=room_id)
+    """兼容入口：统一收口胜利结算。"""
+    return _GAME_END.finish_win(room, room_id, winner_id, loser_id, log_message)
 
 
 @socketio.on('attack')
@@ -5533,222 +4472,48 @@ def handle_attack(data):
     room = room_manager.get_room(room_id)
     if not room or attacker_id not in room.players or not _identity_ok(room, attacker_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
-    if room.state == 'game_over':
-        return {'status': 'error', 'message': '对局已结束'}
-    frz = _frozen_reason(room, attacker_id)
-    if frz:
-        return {'status': 'error', 'message': frz}
+    gate = _ATTACK_GATE.validate(room, attacker_id, target_x, target_y)
+    if 'error' in gate:
+        return {'status': 'error', 'message': gate['error']}
+    target_x = gate['target_x']
+    target_y = gate['target_y']
+    defender_id = gate['defender_id']
 
-    # 输入校验：坐标必须是 0-5 的【整数】，避免越界/非法类型被记为一次攻击；
-    # 也拒绝 1.9 这类小数（原先 int() 会静默截断成 1，打到别的格子）
-    try:
-        fx, fy = float(target_x), float(target_y)
-    except (TypeError, ValueError):
-        return {'status': 'error', 'message': '非法的攻击坐标'}
-    if not (fx.is_integer() and fy.is_integer()):
-        return {'status': 'error', 'message': '非法的攻击坐标'}
-    target_x, target_y = int(fx), int(fy)
-    if not (0 <= target_x <= 5 and 0 <= target_y <= 5):
-        return {'status': 'error', 'message': '攻击坐标超出棋盘范围'}
+    # Phase 2 shadow：在旧逻辑改变房间状态前计算一份纯规则预期。
+    # 默认关闭；开启时只记录差异，绝不阻断旧路径或改变返回值。
+    shadow_resolution = None
+    if COMBAT_SHADOW_MODE:
+        try:
+            shadow_state = build_combat_state(
+                attacker_id=attacker_id,
+                defender_id=defender_id,
+                attacker=room.players[attacker_id],
+                defender=room.players[defender_id],
+                attacks_remaining=room.attacks_remaining,
+            )
+            shadow_resolution = resolve_legacy_attack(
+                shadow_state,
+                attacker_id=attacker_id,
+                x=target_x,
+                y=target_y,
+                forced_kill=room.players[attacker_id].effect_flags.forced_kill > 0,
+            )
+        except Exception:
+            logging.getLogger(__name__).exception('combat shadow 预期计算失败')
 
-    # 检查是否是当前攻击者
-    if attacker_id != room.current_attacker:
-        return {'status': 'error', 'message': '还没到你的攻击回合'}
-
-    # 新增：检查当前是否为战斗阶段
-    if room.current_phase != 'battle':
-        return {'status': 'error', 'message': '当前不是战斗阶段'}
-
-    # 连锁窗口开着时不能继续攻击：卡牌效果要到 resolve_chain 才真正执行，
-    # 此时放行会让「先结算的攻击」与「后结算的卡」互相盖掉（end_turn 早已用
-    # 同一条件拦截，攻击却漏了 —— 同一状态两种口径）。
-    if room.chain or room.chain_waiting:
-        return {'status': 'error', 'message': '连锁结算中，请等待响应窗口结束后再攻击'}
-
-    # 已被拦下的阶段转换：等待对方响应期间不能继续开炮。
-    # 这是这个窗口存在的意义 —— 对方正在决定要不要打速阶3，
-    # 这边要是能把攻击先打完，"拦下来问一句"就没有任何意义了。
-    wait = _action_wait_reason(room, attacker_id)
-    if wait:
-        return {'status': 'error', 'message': wait}
-
-    # 次数校验：此前缺失，改客户端（或前端连点绕过 DOM 判断）即可无限攻击
-    if room.attacks_remaining <= 0:
-        return {'status': 'error', 'message': '本回合攻击次数已用尽'}
-
-    # 检查是否已经攻击过这个位置
-    if any(a.x == target_x and a.y == target_y for a in room.players[attacker_id].attacks):
-        return {'status': 'error', 'message': '你已经攻击过这个位置了'}
-
-    # 找到对手
-    defender_id = next(p for p in room.players if p != attacker_id)
-    defender_ships = room.players[defender_id].ships
-
-    # 神威！：被扣掉的区域不可攻击
-    if _cell_in_shenwei_hole(room, defender_id, target_x, target_y):
-        return {'status': 'error', 'message': '该区域已被神威！扣掉，无法攻击'}
-
-    # 检查是否击中（统一路径：强制击杀与普通攻击共用一套结算）
-    hit = False
-    ship_sunk = False
-    shield_blocked = False
-    for i, ship in enumerate(defender_ships):
-        if {'x': target_x, 'y': target_y} not in ship.positions:
-            continue
-        hit = True
-
-        # 更新无暇圣心效果：如果有伤害，标记no_damage为False（无敌状态不算造成伤害）
-        if 'holy_heart' in room.game_effects and not ship.invincible:
-            room.game_effects['holy_heart']['no_damage'] = False
-
-        # 检查攻击者是否有强制击杀效果
-        has_forced_kill = room.players[attacker_id].effect_flags.forced_kill > 0
-
-        if has_forced_kill:
-            # 强制击杀效果：忽略无敌和盾牌状态，记录击中位置并直接击沉
-            defender_ships[i].hits = defender_ships[i].hits + [Position(x=target_x, y=target_y)]
-            ship_sunk = True
-            _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id,
-                                     defender_ships[i])
-        elif ship.invincible:
-            # 无敌状态，只显形不造成伤害
-            ship_sunk = False
-        elif ship.shield:
-            # 盾牌状态，抵挡一次伤害
-            ship_sunk = False
-            shield_blocked = True
-            ship.shield = False
-            # 盾挡下一击：必须明确广播"这一炮被挡了"。否则双方只看到一次普通
-            # "命中"，防守方会以为自己的船挨了一炮（实际毫发无伤），
-            # 也完全不知道自己的盾已经用掉。
-            emit('shield_absorbed', {
-                'player': defender_id,
-                'positions': [{'x': p.x, 'y': p.y} for p in ship.positions],
-            }, room=room_id)
-            _emit_player_ships(room, defender_id)
-        else:
-            # 记录击中位置
-            defender_ships[i].hits = defender_ships[i].hits + [Position(x=target_x, y=target_y)]
-            # 检查船是否被击沉
-            if len(defender_ships[i].hits) == len(defender_ships[i].positions):
-                ship_sunk = True
-                _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id,
-                                         defender_ships[i])
-            else:
-                ship_sunk = False
-
-        # 造成伤害（含强制击杀）时才触发攻击方增益与胜负检查
-        if has_forced_kill or (not ship.invincible and not ship.shield):
-            # 检查回光返照效果：造成伤害即判负
-            if _check_last_chance(room, attacker_id, defender_id):
-                return {'status': 'success', 'game_over': True}
-
-            # 发送战舰数更新事件
-            _emit_ships_updated(room)
-
-            # 饮血 / 越战越勇 / 伤害统计
-            _apply_attacker_damage_buffs(room, room_id, attacker_id)
-
-            # 检查绝处逢生效果：击杀任何一艘战舰直接获胜。
-            #
-            # ⚠️ 两个条件都不能少：
-            # ① last_stand_win 而不是 last_stand —— 后者是"发动回合锁卡"的标记，
-            #    换小回合就被清，用它会把效果限制在发动当回合（作者实测反馈：
-            #    "只会在绝处逢生生效的那一个回合有效 到了下一个回合就没有了"）。
-            # ② 必须【真的打死了一艘船】才判胜。原先只判"造成了伤害"就获胜，
-            #    于是普通命中（甚至一次没打沉的炮）都能直接赢 —— 那不是卡面写的
-            #    "击杀了对方的任何一艘船"。船沉了才走 _apply_ship_sunk_effects，
-            #    到这一行 remaining_ships 已经扣过，所以判胜即"击杀"。
-            #    强制击杀（余音绕梁）本身就是击杀，同样算数。
-            if (room.players[attacker_id].effect_flags.last_stand_win
-                    and (ship_sunk or has_forced_kill)):
-                _finish_game_win(room, room_id, attacker_id, defender_id,
-                                 f"第{room.round}回合 · {_log_name(room, attacker_id)} 绝处逢生击杀敌舰获胜")
-                return {'status': 'success', 'game_over': True}
-
-            # 注意：强制击杀按【攻击阶段】计数，不按击杀次数消耗，
-            # 改为在进入结束阶段时消耗（见 handle_enter_end_phase）。
-        break
-
-
-    # 记录最后一次攻击（用于溅射等效果）
-    room.last_attack = {
-        'attacker': attacker_id,
-        'x': target_x,
-        'y': target_y,
-        'hit': hit,
-        'ship_sunk': ship_sunk,
-        'round': room.round
-    }
-
-    # 减少攻击次数
-    room.attacks_remaining -= 1
-    # 确保攻击次数不会为负数
-    room.attacks_remaining = max(0, room.attacks_remaining)
-
-    # 记录本次攻击到attacks列表（修复重复攻击校验与AI追踪失效）
-    #
-    # ⚠️ 被盾挡下的那一炮【不记】。
-    # `attacks` 的含义是"这一格已经打过了"：前端据此画叉并**不再绑定点击**，
-    # 服务端也用它做重复攻击校验。可盾牌只是把这一炮吃掉、船毫发无伤 ——
-    # 把格子算成"已打过"，玩家就会看到"打了一炮 → 格子变红叉 → 同一回合再也点不动"，
-    # 而他的船明明还完好地停在那儿（作者实测反馈）。
-    # 不记之后：同一回合可以再打这一格（盾已经破了，这一炮就正常结算伤害）。
-    # 攻击次数照扣 —— 盾挡掉的是一发炮弹，这一点没有变化。
-    if not shield_blocked:
-        room.players[attacker_id].attacks.append(Position(**{
-            'x': target_x,
-            'y': target_y,
-            'hit': hit,
-            'ship_sunk': ship_sunk
-        }))
-
-    # 准备攻击结果
-    attack_result = AttackResult(
-        attacker=attacker_id,
-        x=target_x,
-        y=target_y,
-        hit=hit,
-        ship_sunk=ship_sunk,
-        remaining_attacks=room.attacks_remaining,
-        attacker_remaining_ships=room.players[attacker_id].remaining_ships,
-        defender_remaining_ships=room.players[defender_id].remaining_ships,
-        shield_blocked=shield_blocked
-    )
-
-    _shield_note = '，被护盾挡下' if shield_blocked else ('，击沉战舰' if ship_sunk else '')
-    add_game_log(room, f"第{room.round}回合 · {_log_name(room, attacker_id)} 攻击 ({target_x},{target_y}) — {'命中' if hit else '未命中'}{_shield_note}",
-                 'attack', {
-                     'attacker': attacker_id,
-                     'target': {'x': target_x, 'y': target_y},
-                     'hit': hit,
-                     'ship_sunk': ship_sunk,
-                     'shield_blocked': shield_blocked
-                 })
-
-    emit('attack_result', attack_result, room=room_id)
-
-    # 检查游戏是否结束（统一用 <= 0 判据，兼容效果的非常规扣减）；
-    # 对手"根本没船"（未布船 / 放置流程中途）不算被消灭，避免空棋盘被一击判胜
-    if (room.players[defender_id].remaining_ships <= 0
-            and len(room.players[defender_id].ships) > 0):
-        _finish_game_win(room, room_id, attacker_id, defender_id)
+    resolution = _ATTACK_RESOLUTION.resolve(
+        room, room_id, attacker_id, defender_id, target_x, target_y)
+    hit = resolution['hit']
+    ship_sunk = resolution['ship_sunk']
+    shield_blocked = resolution['shield_blocked']
+    if resolution['game_over']:
         return {'status': 'success', 'game_over': True}
 
-    # 攻击次数为0时，不自动切换攻击者，让玩家手动进入结束阶段
-    # 玩家需要点击"进入结束阶段"按钮来结束当前回合
-    if room.attacks_remaining == 0:
-        # 五险一金：本回合攻击次数第一次归零 —— 若此刻确实没让对方减船，则 +3
-        # （触发后攻击次数不再是 0，下面的广播会把最新次数带给前端）
-        _maybe_trigger_wuxian_yijin(room, attacker_id)
-
-    if room.attacks_remaining == 0:
-        # 只发送攻击次数更新，不切换攻击者
-        emit('attacks_updated', {
-            'current_attacker': room.current_attacker,
-            'attacks_remaining': room.attacks_remaining
-        }, room=room_id)
-
+    final = _ATTACK_FINALIZATION.finalize(
+        room, room_id, attacker_id, defender_id, target_x, target_y,
+        hit, ship_sunk, shield_blocked, shadow_resolution)
+    if final.get('game_over'):
+        return {'status': 'success', 'game_over': True}
     return {'status': 'success'}
 
 
@@ -5781,56 +4546,9 @@ def enter_battle_phase(data, _priority_confirmed=False):
         if not _priority_confirmed and _ask_priority(room, player_id, 'enter_battle'):
             return {'status': 'success', 'awaiting_priority': True}
 
-        # 切换到战斗阶段
-        room.current_phase = 'battle'
-
-        # ⚠️ 无条件按【当前场地规则】重算攻击次数。
-        #
-        # 旧实现只处理伊甸园与教皇旨意两个特例，其余情况原样保留准备阶段的值。
-        # 于是出现两条实测缺陷：
-        #   ① 准备阶段打出教皇旨意（次数被压成 0）→ 场地被拆除 → 进战斗阶段时
-        #      两个特例都不命中 → 次数停在 0：玩家 4 艘船却一发都打不出去。
-        #   ② 准备阶段挂着伊甸园（次数=6-船数）→ 场地被顶替/拆除 → 次数不被纠正。
-        # _recalc_attacker_attacks 已经是"按当前场地规则算"的唯一权威实现，
-        # 直接用它兜底，特例自然被覆盖，也不会再随场地增减而漂移。
-        _recalc_attacker_attacks(room)
-
-        # 攻击次数翻倍（火力全开）：直接翻【当前】攻击次数。
-        #
-        # ⚠️ 不能重算「船数 - 冻结数」再 ×2（旧实现）：那等于把场地魔法
-        # 压过的次数又还原回来了。作者实测：自己先打了教皇旨意（本回合
-        # 攻击次数归 0），对方用火力全开却照样拿到 2×船数 的次数。
-        # 卡面是"自己的攻击次数翻倍"，所以基准就是 attacks_remaining 本身。
-        if room.players[player_id].effect_flags.double_attacks:
-            room.attacks_remaining = max(0, room.attacks_remaining) * 2
-            # 广播攻击次数更新
-            emit('attacks_updated', {
-                'current_attacker': room.current_attacker,
-                'attacks_remaining': room.attacks_remaining
-            }, room=room_id)
-            # 移除翻倍效果，因为它只持续一个大回合
-            room.players[player_id].effect_flags.double_attacks = False
-
-        # 重算后必须广播，否则前端仍显示准备阶段的旧值
-        emit('attacks_updated', {
-            'current_attacker': room.current_attacker,
-            'attacks_remaining': room.attacks_remaining
-        }, room=room_id)
-
-        # 五险一金：进战斗阶段时攻击次数就可能是 0（教皇旨意直接把次数压成 0），
-        # 这也算「本回合第一次归零」，要给它触发机会。
-        # ⚠️ 但败者食尘生效的大回合不算：「双方攻击次数为 0」是大回合规则，
-        # 让五险一金回填 3 次等于当场把这个 0 抹掉。
-        if room.attacks_remaining <= 0 and not _attacks_forced_zero(room):
-            _maybe_trigger_wuxian_yijin(room, player_id)
-
-        # 广播阶段更新
-        emit('phase_updated', {
-            'current_phase': room.current_phase,
-            'current_attacker': room.current_attacker
-        }, room=room_id)
+        _TURN_STATE_MACHINE.enter_battle(room, player_id)
         # ★ 回放批：进入战斗阶段（**唯一实现点**）。**不往游戏内日志加行**。
-        replay.note_action(room, 'enter_battle',
+        replay.note_action(capture_replay_observation(room), 'enter_battle',
                            f'{_log_name(room, player_id)} 进入战斗阶段',
                            {'player': player_id, 'attacks_remaining': room.attacks_remaining,
                             'round': room.round},
@@ -5864,11 +4582,7 @@ def _attackable_cells(room, player_id):
 
     判据：36 格减去他自己已经轰过的格（与 `handle_attack` 的拒因同一口径）。
     """
-    player = (getattr(room, 'players', None) or {}).get(player_id)
-    if player is None:
-        return []
-    attacked = {(a.x, a.y) for a in (getattr(player, 'attacks', None) or [])}
-    return [(x, y) for x in range(6) for y in range(6) if (x, y) not in attacked]
+    return AttackGate.available_cells(room, player_id)
 
 
 # 添加结束战斗阶段，进入结束阶段
@@ -5901,26 +4615,11 @@ def handle_enter_end_phase(data, _priority_confirmed=False):
         if not _priority_confirmed and _ask_priority(room, player_id, 'enter_end'):
             return {'status': 'success', 'awaiting_priority': True}
 
-        # 进入结束阶段
-        room.current_phase = 'end'
-
-        # 余音绕梁按攻击阶段计数：本回合的攻击阶段结束即消耗一次
-        flags = room.players[player_id].effect_flags
-        if getattr(flags, 'forced_kill', 0) > 0:
-            flags.forced_kill -= 1
-            if flags.forced_kill <= 0:
-                del flags.forced_kill
-
-        # 清除越战越勇效果
-        room.players[player_id].effect_flags.battle_spirit=False
-        
-        emit('phase_updated', {
-            'current_phase': room.current_phase,
-            'current_attacker': room.current_attacker
-        }, room=room_id)
+        # 进入结束阶段并清理本阶段效果
+        _TURN_STATE_MACHINE.enter_end(room, player_id)
 
         # ★ 回放批：进入结束阶段（**唯一实现点**）。**不往游戏内日志加行**。
-        replay.note_action(room, 'enter_end',
+        replay.note_action(capture_replay_observation(room), 'enter_end',
                            f'{_log_name(room, player_id)} 进入结束阶段',
                            {'player': player_id, 'round': room.round},
                            _log_name(room, player_id))
@@ -5930,29 +4629,6 @@ def handle_enter_end_phase(data, _priority_confirmed=False):
     # 返回 None 会让前端 ack 回调拿到 undefined，读 response.status 直接抛
     # TypeError，把真正的错误提示整个吞掉（控制台里只剩一行莫名其妙的报错）。
     return {'status': 'error', 'message': '当前不是你的战斗阶段'}
-
-
-def switch_turn_after_end_phase(room, opponent_id):
-    # 模拟结束阶段处理时间
-    time.sleep(2)
-
-    # 切换到对方回合
-    room.current_attacker = opponent_id
-    room.attacks_remaining = max(0, room.players[opponent_id].remaining_ships - frozen_ship_count(room.players[opponent_id]))  # 存活战舰数减去冻结数
-    _recalc_attacker_attacks(room)
-    room.current_phase = 'preparation'
-    
-    # 重置本回合伤害统计
-    room.players[opponent_id].damage_dealt_this_turn = 0
-
-    # 广播回合变化 - 移除了回合切换时的额外抽卡
-    emit('turn_change', {
-        'current_attacker': opponent_id,
-        'attacks_remaining': room.attacks_remaining,
-        'phase': 'preparation'
-    }, room=room.id)
-    # 轮到AI时自动驱动其回合
-    _maybe_run_ai_turn(room)
 
 
 # 添加结束结束阶段，切换到对方准备阶段
@@ -5990,7 +4666,7 @@ def end_turn(data):
         try:
             return _end_turn_locked(room, room_id, player_id)
         finally:
-            replay.note_action(room, 'end_turn',
+            replay.note_action(capture_replay_observation(room), 'end_turn',
                                f'{_log_name(room, player_id)} 结束了回合',
                                {'player': player_id,
                                 'current_attacker': room.current_attacker,
@@ -6006,8 +4682,7 @@ def _end_turn_locked(room, room_id, player_id):
     ⚠️ 拆出来**只为**让回放记录点能写在唯一的 finally 里；语义与拆分前逐字一致。
     """
     if True:                # 保持原有的缩进层级（减少这次拆分的 diff 噪音）
-        current_index = room.attack_order.index(room.current_attacker)
-        next_index = (current_index + 1) % len(room.attack_order)
+        next_index, next_attacker, skip_stages = _TURN_STATE_MACHINE.next_turn_target(room)
 
         # ── 跳过回合（Freezing！/ 神之宣告）──────────────────────────────
         # ⚠️ 这段必须在 `next_index == 0` 的"进入新大回合"判断【之前】执行。
@@ -6027,26 +4702,10 @@ def _end_turn_locked(room, room_id, player_id):
         #   白送一次"重新猜拳 + 重新摸牌 + damage_dealt_this_turn 归零"。
         #   作者实测反馈的"效果二疑似没实现"，根因就在这里：
         #   它做的不是卡面承诺的那件事。
-        next_attacker = room.attack_order[next_index]
-        if room.skip_opponent_turn and room.skip_opponent_turn == next_attacker:
-            room.skip_opponent_turn = None
-            next_index = (next_index + 1) % len(room.attack_order)
-            next_attacker = room.attack_order[next_index]
-        if room.skip_next_turn and room.skip_next_turn == next_attacker:
-            room.skip_next_turn = None
-            next_index = (next_index + 1) % len(room.attack_order)
-            next_attacker = room.attack_order[next_index]
-
         # 神之宣告：跳过对方在**本大回合**内的所有阶段（不翻页）。
         # 作用域差别的来历见上面那段。这里只吃 `skip_opponent_stages`，
         # 与 Freezing 的 `skip_opponent_turn` 各管一条路，互不干扰。
-        skip_stages = False
-        if room.skip_opponent_stages and room.skip_opponent_stages == next_attacker:
-            room.skip_opponent_stages = None
-            skip_stages = True
-            # 跳到下一个人（正常是绕回自己），让大回合**正常推进**
-            next_index = (next_index + 1) % len(room.attack_order)
-            next_attacker = room.attack_order[next_index]
+        if skip_stages:
             emit('game_message', {
                 'message': f'{_log_name(room, next_attacker)} 的回合被神之宣告跳过',
             }, room=room_id)
@@ -6059,84 +4718,24 @@ def _end_turn_locked(room, room_id, player_id):
             # （Freezing！ 走 `skip_opponent_turn`，`skip_stages` 为假，
             #   翻页行为原样保留，见上面的守卫用例。）
             if skip_stages:
-                room.current_attacker = next_attacker
-                room.current_phase = 'preparation'
-                room.attacks_remaining = 0
-                room.state = 'attacking'
-                emit('phase_updated', {
-                    'current_phase': room.current_phase,
-                    'current_attacker': room.current_attacker,
-                }, room=room_id)
-                emit('turn_skipped', {
-                    'skipped': next_attacker,
-                    'current_attacker': room.current_attacker,
-                    'round': room.round,
-                }, room=room_id)
+                _TURN_STATE_MACHINE.skip_stages_turn(room, next_attacker)
                 return {'status': 'success', 'message': '神之宣告：对方本回合被跳过'}
             # 进入新回合，重置状态
             room.round += 1
 
-            # 看破！：新大回合开始重置双方的魔法封锁
-            for p_id in room.players:
-                room.players[p_id].magic_blocked = None
-
-            # 神威！：除外的战舰到期回归原位，并恢复被扣掉的区域
-            _restore_due_shenwei(room, room.round)
-
             # 滥竽充数：大回合结束时强制收回临时船（不显示沉没）。
             # 若收回导致某方船数归零则直接判负，跳过下面的猜拳重置。
-            if _recall_lanyu_ships(room, room_id):
+            if _ROUND_TRANSITION.prepare(room, room_id):
                 return {'status': 'success', 'game_over': True}
 
-            # 解冻到期的战舰（冻结跨本大回合+下一大回合，第三大回合开始时解除）
-            for p_id in room.players:
-                thawed = False
-                for s in room.players[p_id].ships:
-                    if getattr(s, 'frozen', None) and s.frozen < room.round:
-                        _thaw_ship(s)
-                        thawed = True
-                if thawed:
-                    # 解冻同样要让玩家看到（否则棋盘上一直挂着雪花）
-                    _emit_player_ships(room, p_id)
+            _TURN_STATE_MACHINE.expire_round_effects(room)
 
-            # 守株待兔只在本大回合生效：进入新大回合时清掉所有船上的陷阱标记。
-            # （卡面"这张牌只会在当前大回合生效"；旧标记残留到下一回合会让玩家
-            #   以为陷阱还在，但触发条件已过。）
-            for p_id in room.players:
-                cleared = False
-                for s in room.players[p_id].ships:
-                    if getattr(s, 'trap', False):
-                        s.trap = False
-                        cleared = True
-                if cleared:
-                    _emit_player_ships(room, p_id)
-                    emit('trap_expired', {'player': p_id}, room=room_id)
-
-            # 冻结区域记录与解冻同步清理：条件与上面 `s.frozen < room.round` 一致，
-            # 否则棋盘上会一直挂着那片斜纹、玩家以为还在冻结
-            _fa = room.game_effects.get('frozen_area') if isinstance(room.game_effects, dict) else None
-            if _fa and int(_fa.get('until_round') or 0) < int(room.round):
-                room.game_effects.pop('frozen_area', None)
-                emit('frozen_area', {'cleared': True}, room=room_id)
-
-            # 回光返照只持续自己发动的那一个大回合
-            room.game_effects.pop('last_chance', None)
-
-            # 败者食尘的"双方攻击次数为 0"只属于生效的那个大回合。
-            # 条件里已带 round 判定（_attacks_forced_zero），这里顺手清掉防残留。
-            room.game_effects.pop('zero_attacks_round', None)
-
-            # 绝处逢生的"候选格高亮"只在本大回合有效：新大回合双方棋盘信息重置，
-            # 再亮着六个格子就是过期线索了（唯一一艘船还在，但线索不该跨回合留着）。
-            if room.game_effects.pop('last_stand_cells', None):
-                room.game_effects.pop('last_stand_owner', None)
-                emit('last_stand_cells', {'cells': [], 'owner': None}, room=room_id)
+            _TURN_STATE_MACHINE.clear_round_scoped_effects(room)
 
             # 新大回合：双方本回合伤害统计归零
-            # （此前唯一重置点在死代码 switch_turn_after_end_phase 内，
+            # （此前唯一重置点曾位于已废弃的换手辅助函数内，
             #  导致 damage_dealt_this_turn 只增不减，五险一金/Freezing! 失效）
-            for p_id in room.players:
-                room.players[p_id].damage_dealt_this_turn = 0
+            _TURN_STATE_MACHINE.reset_round_damage(room)
 
             # 更新并检查极限增援效果
             if 'reinforcement_check' in room.game_effects:
@@ -6258,9 +4857,7 @@ def _end_turn_locked(room, room_id, player_id):
                     # 更新game_effects中的剩余回合
                     room.game_effects['holy_heart'] = check
 
-            room.state = 'rock_paper_scissors'
-            room.rps_choices = {}
-            room.rps_processed = False
+            _TURN_STATE_MACHINE.begin_new_round(room)
 
             # 神机妙算: 检查沉船数是否增加了x（击沉不从ships移除，用沉船差值判定）
             for p_id in room.players:
@@ -6285,71 +4882,12 @@ def _end_turn_locked(room, room_id, player_id):
                         # 快照缺失（旧对局/异常中断）：退回原地复活，至少不吞效果
                         room.players[p_id].effect_flags.prediction = 0
 
-            # 大回合结束（重新猜拳）：本大回合内的所有效果到此为止。
-            # 分类见 FLAGS_KEEP_ACROSS_ROUND 的说明。
-            _prune_effect_flags(room, FLAGS_KEEP_ACROSS_ROUND)
-
-            # 标记刚被清了一批，角标要跟着消失（否则百亿补贴等会一直亮着）
-            _emit_active_effects(room)
-
-            # 广播进入猜拳阶段
-            emit('game_state', {
-                'state': 'rock_paper_scissors',
-                'round': room.round,
-                **_rank_payload(room),
-            }, room=room_id)
-            # 新大回合开始，清掉上一回合残留的跳过标记。
-            # 否则若 skip 未能匹配到目标，会一直留着并在后续回合误跳。
-            room.skip_opponent_turn = None
-            room.skip_next_turn = None
-            # 阶段也要重置：Freezing！ 是在【结束阶段】打出的，跳过后若把
-            # current_phase 留在 'end'，新大回合一开始就处于结束阶段 ——
-            # 猜拳完直接能交回合、且准备/战斗阶段的 UI 与校验全都不对。
-            room.current_phase = 'preparation'
+            _TURN_STATE_MACHINE.finalize_new_round(room)
             return {'status': 'success', 'new_round': True}
         else:
             # 跳过判定已经在上面的 `next_index == 0` 判断之前做完了
             # （否则"跳过对方后绕回起点"不会被识别为新大回合）。
-            # 切换到下一个攻击者的准备阶段
-            room.current_attacker = next_attacker
-            room.current_phase = 'preparation'
-            # 新回合伤害统计归零（见上：原重置点在死代码里）
-            room.players[room.current_attacker].damage_dealt_this_turn = 0
-            # 统一走 _recalc：伊甸园/教皇旨意下按场地规则计算
-            _recalc_attacker_attacks(room)
-            # ★ 无忧梦呓：**对方的回合开始时**结算拼点。
-            #   ⚠️ 必须排在 `_recalc_attacker_attacks` **之后**（作者裁定）——
-            #      它按船数把 attacks_remaining 重算一遍，排前面的话
-            #      「这回合攻击次数恒定为 0」会被当场覆盖掉。
-            _settle_wuyou_dream(room)
-            # ★ 兵粮寸断：**对方的准备阶段开始时**判定（与无忧梦呓同一批时点）。
-            #   回合中段接手这一支没有摸牌动作，所以这里只会**摇骰子/挂额度**，
-            #   跳过额度由下一次新大回合发放时消耗。
-            _settle_bingliang(room)
-
-            # 重置所有临时效果标志 —— 保留名单以 FLAGS_KEEP_ACROSS_TURN 为唯一声明。
-            #
-            # ⚠️ 这里原本是写死的内联列表，与上面的常量各存一份，注释却指着常量说
-            #    "分类见 FLAGS_KEEP_ACROSS_TURN"。两份一漂移就出事：绝处逢生的
-            #    "击杀即胜"（last_stand_win）两边都没登记 → 换小回合就被清掉，
-            #    效果只在发动当回合有效（作者实测反馈）。现在统一走常量。
-            _prune_effect_flags(room, FLAGS_KEEP_ACROSS_TURN)
-
-            # 标记刚被清了一批，角标要跟着消失（否则百亿补贴等会一直亮着）
-            _emit_active_effects(room)
-
-            # 广播回合和阶段更新
-            emit('phase_updated', {
-                'current_phase': room.current_phase,
-                'current_attacker': room.current_attacker
-            }, room=room_id)
-            emit('turn_change', {
-                'current_attacker': room.current_attacker,
-                'attacks_remaining': room.attacks_remaining,
-                'phase': room.current_phase
-            }, room=room_id)
-            # 轮到AI时自动驱动其回合
-            _maybe_run_ai_turn(room)
+            _TURN_STATE_MACHINE.continue_turn(room, next_attacker)
             return {'status': 'success'}
 
     return {'status': 'error', 'message': '无法结束当前回合'}
@@ -6461,13 +4999,24 @@ def _ai_choose_magic_card(room, ai_id: str):
     return candidates[0][1]
 
 
-def _ai_choose_attack(room, ai_id):
+def _ai_runtime(room):
+    """房间可注入独立随机源与等待函数；旧房间沿用默认运行时。"""
+    return getattr(room, 'ai_runtime', None) or default_runtime
+
+
+def _ai_pause(room_id, seconds):
+    room = room_manager.get_room(room_id)
+    _ai_runtime(room).pause(seconds)
+
+
+def _ai_choose_attack(room, ai_id, rng=None):
     """AI 这一炮打哪格；没有可打的格返回 None。
 
     ⚠️ **只有这一份实现**：`_ai_turn_loop` 与无头模拟器 (`tools/headless_game.py`)
        都读它。模拟器此前自己抄了一份 `random.choice(candidates)`，于是它量的是
        **复刻品**而不是真的 AI —— 改了 AI 胜率却纹丝不动，等于没测。
     """
+    rng = _ai_runtime(room).rng if rng is None else rng
     candidates = _attackable_cells(room, ai_id)
     if not candidates:
         return None
@@ -6475,10 +5024,10 @@ def _ai_choose_attack(room, ai_id):
         # 大师：先打自己已探明的敌船位置（必中）。
         # ⚠️ 这条只在**有情报**时有意义；情报要靠克苏鲁之眼/探测雷达产生，
         #    所以"读情报"和"打情报卡"必须一起做，否则等于没改。
-        got = ai_brain.choose_attack(room, ai_id)
+        got = ai_brain.choose_attack(room, ai_id, rng=rng)
         if got:
             return got
-    return random.choice(candidates)
+    return rng.choice(candidates)
 
 
 def _ai_choose_card(room, ai_id, cards_played=0):
@@ -7029,7 +5578,7 @@ def _ai_master_pick(room, ai_id, cards_played=0):
             targets_by_idx[i] = t
         playable.append(i)
 
-    idx = ai_brain.choose_card(room, ai_id, playable)
+    idx = ai_brain.choose_card(room, ai_id, playable, rng=_ai_runtime(room).rng)
     if idx is None:
         return None, {}
     return idx, (targets_by_idx.get(idx) or {})
@@ -7288,7 +5837,7 @@ def _master_settle(room_id, ai_id):
         unsettled = _master_unsettled(room, ai_id)
         if not unsettled:
             return room, True
-        time.sleep(0.3)
+        _ai_pause(room_id, 0.3)
     # 迟迟不收敛：显式记一笔（带上**具体哪条通道**），让运营能在日志里看到 —— 不静默
     room = room_manager.get_room(room_id)
     if room is not None:
@@ -7496,7 +6045,8 @@ def _ai_consume_own_choice(room, ai_id) -> bool:
         # 仍然走一次 `resolve_ship_pick` 保持"选船只有一份实现"，
         # 由它挑出第一艘，其余按活船顺序补齐到上限（至多 3 艘）。
         first = ai_brain.resolve_ship_pick(room, ai_id, 'shield_choice',
-                                           [caster.ships[i] for i in alive_idx])
+                                           [caster.ships[i] for i in alive_idx],
+                                           rng=_ai_runtime(room).rng)
         indices = [i for i in alive_idx if caster.ships[i] is first] or [alive_idx[0]]
         for i in alive_idx:
             if len(indices) >= 3:
@@ -7593,7 +6143,8 @@ def _ai_consume_own_ship_picks(room, ai_id) -> bool:
             _clear_ship_picks(room, ai_id)
             add_game_log(room, '大师 AI 的选船待办无可选战舰，已清理', 'system')
             return True
-        picked = ai_brain.resolve_ship_pick(room, ai_id, entry.get('reason'), alive)
+        picked = ai_brain.resolve_ship_pick(
+            room, ai_id, entry.get('reason'), alive, rng=_ai_runtime(room).rng)
         if picked is None:
             _clear_ship_picks(room, ai_id)
             add_game_log(room, '大师 AI 的选船待办无法决策，已清理', 'system')
@@ -7687,7 +6238,7 @@ def _ai_master_turn(room_id: str, room, ai_id: str):
         #   ⚠️ 这个停顿**只在"真的结算完"之上才有意义**：循环每圈的
         #      `_master_settle` 已经保证上一张牌的连锁窗口与待办都落地了
         #      （判据见 `_master_unsettled`）。先保证正确，再谈停顿。
-        time.sleep(_MASTER_CARD_PACING)
+        _ai_pause(room_id, _MASTER_CARD_PACING)
         if not _master_play_one(room_id, ai_id, played):
             break
         played += 1
@@ -7748,7 +6299,7 @@ def _ai_master_turn(room_id: str, room, ai_id: str):
         #   必须排在攻击之前 —— 反过来的话「溅射 / 越战越勇」的窗口永远被自己错过。
         if played < int(getattr(ai_brain, 'CARDS_PER_TURN', 1) or 1):
             # ★ 节奏：出牌前停一下（详见 `_MASTER_CARD_PACING`）。
-            time.sleep(_MASTER_CARD_PACING)
+            _ai_pause(room_id, _MASTER_CARD_PACING)
             if _master_play_one(room_id, ai_id, played):
                 played += 1
                 progressed = True
@@ -7781,7 +6332,7 @@ def _ai_master_turn(room_id: str, room, ai_id: str):
                 #    这个 `_master_settle` 保证（`handle_attack` 自己也会拒绝
                 #    连锁未收敛时的攻击，见它的门禁），不需要靠停顿来兜。
                 handle_attack({'room_id': room_id, 'player_id': ai_id, 'x': x, 'y': y})
-                time.sleep(0.3)
+                _ai_pause(room_id, 0.3)
                 room, ok = _master_settle(room_id, ai_id)
                 if not ok:
                     return
@@ -7804,15 +6355,15 @@ def _ai_master_turn(room_id: str, room, ai_id: str):
                 return
             continue
         if room.chain or room.chain_waiting:
-            time.sleep(0.5)
+            _ai_pause(room_id, 0.5)
             continue
         resp = handle_enter_end_phase({'room_id': room_id, 'player_id': ai_id})
         if resp and resp.get('status') == 'success':
             break
-        time.sleep(0.5)
+        _ai_pause(room_id, 0.5)
 
     # ③ 交回合（沿用现有重试逻辑）
-    time.sleep(0.5)
+    _ai_pause(room_id, 0.5)
     for _ in range(20):
         room = room_manager.get_room(room_id)
         if not room or room.state == 'game_over' or room.current_attacker != ai_id:
@@ -7820,13 +6371,13 @@ def _ai_master_turn(room_id: str, room, ai_id: str):
         resp = end_turn({'room_id': room_id, 'player_id': ai_id})
         if resp and resp.get('status') == 'success':
             return
-        time.sleep(0.5)
+        _ai_pause(room_id, 0.5)
 
 
 def _ai_turn_loop(room_id: str):
     """AI回合：进入战斗阶段→随机攻击至次数耗尽→结束阶段→交出回合。"""
     try:
-        time.sleep(1)
+        _ai_pause(room_id, 1)
         room = room_manager.get_room(room_id)
         if not room or room.state == 'game_over':
             return
@@ -7847,7 +6398,7 @@ def _ai_turn_loop(room_id: str):
                 return
             if not (room.chain or room.chain_waiting):
                 break
-            time.sleep(0.3)
+            _ai_pause(room_id, 0.3)
 
         for _ in range(40):
             room = room_manager.get_room(room_id)
@@ -7860,7 +6411,7 @@ def _ai_turn_loop(room_id: str):
                 break
             x, y = shot
             handle_attack({'room_id': room_id, 'player_id': ai_id, 'x': x, 'y': y})
-            time.sleep(0.3)
+            _ai_pause(room_id, 0.3)
         room = room_manager.get_room(room_id)
         if not room or room.state == 'game_over' or room.current_attacker != ai_id:
             return
@@ -7873,13 +6424,13 @@ def _ai_turn_loop(room_id: str):
             if not room or room.state == 'game_over' or room.current_attacker != ai_id:
                 return
             if room.chain or room.chain_waiting:
-                time.sleep(0.5)
+                _ai_pause(room_id, 0.5)
                 continue
             resp = handle_enter_end_phase({'room_id': room_id, 'player_id': ai_id})
             if resp and resp.get('status') == 'success':
                 break
-            time.sleep(0.5)
-        time.sleep(0.5)
+            _ai_pause(room_id, 0.5)
+        _ai_pause(room_id, 0.5)
 
         for _ in range(20):
             room = room_manager.get_room(room_id)
@@ -7888,7 +6439,7 @@ def _ai_turn_loop(room_id: str):
             resp = end_turn({'room_id': room_id, 'player_id': ai_id})
             if resp and resp.get('status') == 'success':
                 return
-            time.sleep(0.5)
+            _ai_pause(room_id, 0.5)
     except Exception as e:
         print(f'AI turn error: {e}')
 
@@ -8406,7 +6957,7 @@ def handle_use_magic_card(data):
     #     被康掉的卡结算文案是"被X无效化"，手牌更是彻底没有着落（作者实报口径：
     #     被康的卡也已经出手，出手/结算要分两个时点展示）。
     #   ⚠️ 只进回放，**绝不往 `room.game_logs` 加行**（那是实战里玩家可见的日志）。
-    replay.note_card_played(room, player_id, card)
+    replay.note_card_played(capture_replay_observation(room), player_id, card)
 
     # 场地魔法卡不再在此预置：改由结算（apply_magic_effect 场地分支）实例入区，
     # 避免"打出即进弃牌堆 + 贴场"产生游离副本；被顶掉/被康时实例移入弃牌堆。
@@ -9062,7 +7613,7 @@ def _clear_attacks_on_cells(room, positions, board_owner_id):
         #   没有这件事（第 5 批那个 bug 的回放版，契约 §9）。
         #   这一处是**四张"清格子"的卡共用的唯一入口**（疗愈复活 / 增援 / 死者苏生 /
         #   滥竽充数 / 神机妙算），所以四张卡在回放里也都对。
-        replay.note_board_reset(room, board_owner_id)
+        replay.note_board_reset(capture_replay_observation(room), board_owner_id)
 
 
 def _reveal_cells_to(room, player_id, positions, kind=None):
@@ -9130,7 +7681,7 @@ def _revive_sunken_ships(room, player, count, reveal_to=None):
         #      （`note_ship_returned` 末尾会按当前步记一次）：必须在船的状态**完全落定**
         #      之后调用，否则记下来的还是"船不在 ships 里"的中间态。
         replay.note_ship_returned(
-            room, next((pid for pid, pl in room.players.items() if pl is player), None),
+            capture_replay_observation(room), next((pid for pid, pl in room.players.items() if pl is player), None),
             revived)
         # 这块棋盘属于 player：只清【对手】打在这里的记录
         _owner_id = next((pid for pid, pl in room.players.items() if pl is player), None)
@@ -9183,379 +7734,226 @@ def _ai_can_negate_chain_top(room, ai_id: str) -> bool:
     return getattr(getattr(top, 'card', None), 'name', None) not in ('看破！', '加百列之光')
 
 
+_CHAIN_POLICY = ChainPolicy(
+    speed3_cards=_speed3_cards,
+    ai_can_negate_top=_ai_can_negate_chain_top,
+)
+
+_CHAIN_WINDOW = ChainWindow(
+    can_respond=lambda room, player_id: _can_respond_chain(room, player_id),
+    resolve_chain=lambda room: resolve_chain(room),
+    finish_chain=lambda room, display_delay=True: _finish_chain(
+        room, display_delay=display_delay),
+    opponent_of=lambda room, player_id: _opponent_of(room, player_id),
+    speed3_cards=lambda room, player_id: _speed3_cards(room, player_id),
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    schedule_timeout=lambda room_id, token: _schedule_chain_timeout(room_id, token),
+    start_background_task=lambda fn, *args: socketio.start_background_task(fn, *args),
+    ai_chain_respond=lambda room_id, token: _ai_chain_respond(room_id, token),
+    response_seconds=lambda: CHAIN_RESPONSE_SECONDS,
+)
+_CHAIN_TIMEOUT = ChainTimeout(
+    sleep=lambda seconds: time.sleep(seconds),
+    get_room=lambda room_id: room_manager.get_room(room_id),
+    resolve_chain=lambda room: resolve_chain(room),
+    advance_window=lambda room, player_id, display_delay=True: _advance_chain_window(
+        room, player_id, display_delay=display_delay),
+    opponent_of=lambda room, player_id: _opponent_of(room, player_id),
+    response_seconds=lambda: CHAIN_RESPONSE_SECONDS,
+    start_background_task=lambda fn: socketio.start_background_task(fn),
+)
+_CHAIN_AI_RESPONSE = ChainAIResponse(
+    sleep=lambda seconds: time.sleep(seconds),
+    get_room=lambda room_id: room_manager.get_room(room_id),
+    can_negate_top=lambda room, ai_id: _ai_can_negate_chain_top(room, ai_id),
+    respond=lambda payload: chain_response(payload),
+    report_error=lambda exc: print(f'AI chain respond error: {exc}'),
+)
+_PRIORITY_TIMEOUT = PriorityTimeout(
+    sleep=lambda seconds: time.sleep(seconds),
+    get_room=lambda room_id: room_manager.get_room(room_id),
+    resolve=lambda room, respond=False: _resolve_priority(room, respond=respond),
+    seconds=lambda: PRIORITY_SECONDS,
+    start_background_task=lambda fn: socketio.start_background_task(fn),
+)
+_TURN_STATE_MACHINE = TurnStateMachine(
+    recalc_attacks=lambda room: _recalc_attacker_attacks(room),
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    run_ai_turn=lambda room: _maybe_run_ai_turn(room),
+    attacks_forced_zero=lambda room: _attacks_forced_zero(room),
+    trigger_wuxian=lambda room, player_id: _maybe_trigger_wuxian_yijin(room, player_id),
+    settle_wuyou=lambda room: _settle_wuyou_dream(room),
+    settle_bingliang=lambda room: _settle_bingliang(room),
+    prune_flags=lambda room, keep: _prune_effect_flags(room, keep),
+    emit_active_effects=lambda room: _emit_active_effects(room),
+    keep_across_turn=FLAGS_KEEP_ACROSS_TURN,
+    thaw_ship=lambda ship: _thaw_ship(ship),
+    emit_player_ships=lambda room, player_id: _emit_player_ships(room, player_id),
+    keep_across_round=FLAGS_KEEP_ACROSS_ROUND,
+    rank_payload=lambda room: _rank_payload(room),
+)
+_CHAIN_SETTLEMENT = ChainSettlement(
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    clear_display=lambda room: _clear_chain_display(room),
+    active_effects=lambda room: _emit_active_effects(room),
+    emit_ships_updated=lambda room: _emit_ships_updated(room),
+    emit_player_ships=lambda room, player_id: _emit_player_ships(room, player_id),
+    continue_priority=lambda room, actor, action: _priority_continue(room, actor, action),
+)
+_CHAIN_DISPLAY = ChainDisplay(
+    delay=lambda: CHAIN_DISPLAY_DELAY_SECONDS,
+    slack=lambda: CHAIN_DISPLAY_SWEEP_SLACK_SECONDS,
+    monotonic=lambda: time.monotonic(),
+    resolve=lambda room: resolve_chain(room),
+    get_room=lambda room_id: room_manager.get_room(room_id),
+    get_rooms=lambda: room_manager.get_all_rooms(),
+    start_background_task=lambda fn, *args: socketio.start_background_task(fn, *args),
+    sleep=lambda seconds: socketio.sleep(seconds),
+    log=lambda message: print(message),
+)
+_ROUND_TRANSITION = RoundTransition(
+    restore_shenwei=lambda room, round_number: _restore_due_shenwei(room, round_number),
+    recall_lanyu=lambda room, room_id: _recall_lanyu_ships(room, room_id),
+)
+_DISCONNECT_RESOLUTION = DisconnectResolution(
+    sleep=lambda seconds: time.sleep(seconds),
+    now=lambda: time.time(),
+    get_room=lambda room_id: room_manager.get_room(room_id),
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    drop_room=lambda room_id, reason: _drop_room(room_id, reason),
+    finalize_match=lambda room, winner, loser: _finalize_match(room, winner, loser),
+    game_over_payload=lambda room, extra: _game_over_payload(room, extra),
+    start_cleanup=lambda room_id, delay: socketio.start_background_task(
+        _cleanup_ended_room, room_id, delay),
+    start_timeout=lambda room_id, player_id, token: socketio.start_background_task(
+        _disconnect_timeout, room_id, player_id, token),
+    grace=lambda: DISCONNECT_GRACE_SECONDS,
+)
+_ATTACK_GATE = AttackGate(
+    frozen_reason=lambda room, player_id: _frozen_reason(room, player_id),
+    action_wait=lambda room, player_id: _action_wait_reason(room, player_id),
+    cell_in_shenwei_hole=lambda room, player_id, x, y: _cell_in_shenwei_hole(
+        room, player_id, x, y),
+)
+_ATTACK_RESOLUTION = AttackResolution(
+    position=lambda x, y: Position(x=x, y=y),
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    emit_player_ships=lambda room, player_id: _emit_player_ships(room, player_id),
+    ship_sunk_effects=lambda room, room_id, attacker, defender, ship: _apply_ship_sunk_effects(
+        room, room_id, attacker, defender, ship),
+    check_last_chance=lambda room, attacker, defender: _check_last_chance(
+        room, attacker, defender),
+    emit_ships_updated=lambda room: _emit_ships_updated(room),
+    apply_damage_buffs=lambda room, room_id, attacker: _ATTACK_DAMAGE_EFFECTS.apply(
+        room, room_id, attacker),
+    finish_game=lambda room, room_id, winner, loser, message: _finish_game_win(
+        room, room_id, winner, loser, message),
+    log_name=lambda room, player_id: _log_name(room, player_id),
+)
+_ATTACK_FINALIZATION = AttackFinalization(
+    attack_result=lambda **kwargs: AttackResult(**kwargs),
+    position=lambda x, y, **kwargs: Position(x=x, y=y, **kwargs),
+    compare_shadow=lambda resolution, **kwargs: compare_core_result(resolution, **kwargs),
+    log_name=lambda room, player_id: _log_name(room, player_id),
+    add_game_log=lambda room, message, kind, data: add_game_log(room, message, kind, data),
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    finish_game=lambda room, room_id, winner, loser: _finish_game_win(
+        room, room_id, winner, loser),
+    trigger_wuxian=lambda room, player_id: _maybe_trigger_wuxian_yijin(room, player_id),
+    warn_shadow=lambda room_id, attacker_id, x, y, diff: logging.getLogger(__name__).warning(
+        'combat shadow mismatch room=%s attacker=%s target=(%s,%s) diff=%r',
+        room_id, attacker_id, x, y, diff),
+)
+_SHIP_SUNK_EFFECTS = ShipSunkEffects(
+    grant_subsidy=lambda room, owner_id: _grant_subsidy_bonus(room, owner_id),
+    opponent_of=lambda room, owner_id: _opponent_of(room, owner_id),
+    alive_ships=lambda player: _alive_ships(player),
+    request_ship_pick=lambda room, player_id, reason, prompt, **kwargs: _request_ship_pick(
+        room, player_id, reason, prompt, **kwargs),
+    sacrifice=lambda room, player_id, picked, reason: _do_demon_contract_sacrifice(
+        room, player_id, picked, reason),
+    emit_player_ships=lambda room, owner_id: _emit_player_ships(room, owner_id),
+    demon_contract=lambda room, owner_id: _request_demon_contract_sacrifice(room, owner_id),
+    treasure=lambda room, count, **kwargs: _notify_treasure_hunter(room, count, **kwargs),
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    log=lambda *args, **kwargs: add_game_log(*args, **kwargs),
+    log_name=lambda room, player_id: _log_name(room, player_id),
+)
+_GAME_END = GameEnd(
+    add_log=lambda room, message, kind, data: add_game_log(room, message, kind, data),
+    finalize_match=lambda room, winner, loser: _finalize_match(room, winner, loser),
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    log_name=lambda room, player_id: _log_name(room, player_id),
+)
+_ATTACK_DAMAGE_EFFECTS = AttackDamageEffects(
+    draw_card=lambda room, player_id: room.draw_card(player_id),
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+)
+_CHAIN_RESOLUTION = ChainResolution(
+    chain_result=lambda **kwargs: ChainResult(**kwargs),
+    apply_effect=lambda room, player_id, card, targets: apply_magic_effect(
+        room, player_id, card, targets),
+    log_magic=lambda room, player_id, card, message: log_magic(
+        room, player_id, card, message),
+    refund_card=lambda room, player_id, card, result: _refund_card_to_hand(
+        room, player_id, card, result),
+    now=lambda: time.time(),
+)
+_PRIORITY_RESOLUTION = PriorityResolution(
+    clear=lambda room: _clear_priority(room),
+    play_speed3=lambda room, player_id, card, targets: handle_use_magic_card({
+        'room_id': room.id,
+        'player_id': player_id,
+        'card': card,
+        'targets': targets,
+    }),
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    continue_action=lambda room, actor, action: _priority_continue(room, actor, action),
+)
+_PRIORITY_CONTINUATION = PriorityContinuation(
+    sleep=lambda seconds: time.sleep(seconds),
+    start_background_task=lambda fn: socketio.start_background_task(fn),
+    enter_battle=lambda data, **kwargs: enter_battle_phase(data, **kwargs),
+    enter_end=lambda data, **kwargs: handle_enter_end_phase(data, **kwargs),
+)
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 连锁无效化：「正下方那一项」的目标解析 + 免疫关系（**只此一份**）
 # ═══════════════════════════════════════════════════════════════════════════
-def _chain_negation_target(room, self_name):
-    """「康正下方那一项」类的目标解析与免疫关系 —— `失灵！` / `平等条约` 共用。
-
-    调用契约：**当前项已经出栈**（`resolve_chain` 先 `pop()` 再 `apply_magic_effect`），
-    所以 `room.chain[-1]` 就是"正下方那一项"＝下一个待结算项。
-
-    返回 `(target_item, reason)`：拿到目标时 `reason is None`；免疫 / 没有目标时
-    `target_item is None`、`reason` 是给玩家看的文案。
-
-    ⚠️ 为什么必须共用一份：作者裁决「平等条约与失灵！**完全同一套**目标解析与免疫
-       关系」。各写一份的话，将来给其中一张加免疫（例如"某卡免疫"）必然漏掉另一张，
-       而症状是"康得动/康不动"这种玩家一眼看得出、代码里却看不出的偏差（教训 #1）。
-    """
-    if not room.chain:
-        return None, f'{self_name}只能在连锁中发动：现在没有可无效化的「正下方那一项」'
-    target = room.chain[-1]
-    tname = getattr(getattr(target, 'card', None), 'name', None)
-    if tname == '看破！':
-        return None, f'看破！优先于{self_name}，无法无效化'
-    if tname == '加百列之光':
-        return None, f'加百列之光免疫{self_name}'
-    return target, None
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 平等条约：目标「会不会**真的**改变船数」——判据只此一份（作者裁决 2026-09-24）
-# ═══════════════════════════════════════════════════════════════════════════
-# 卡面：「在双方场上有船数改变的场合可以立即发动，使那个使船数改变的**魔法卡**
-#   无效化；炮击造成的船数减少无法被无效化。」
-#
-# ★ 判据必须是"**这一炮 / 这张牌打下去真的会变**"，不是"这张卡名义上属于某一类"。
-#   作者原话：「对于轰炸和硫磺火焰这种的，也是必须有船处于待死亡状态了再发动
-#   平等条约才能做到无效化」⇒ 打在空行/空列上 ⇒ 失败。
-#
-# 判据函数签名 `(room, target_item) -> bool`：True = 这一项真的会改变某方船数。
-def _treaty_kill_hits_alive_ship(room, target_item, cells):
-    """`cells` 里只要有**还活着的**船 ⇒ 这一发真的会沉船（轰炸 / 硫磺火焰共用）。
-
-    两处口径都照产品实现走：目标方 = **施法者的对手**（这两张卡打的都是对方棋盘），
-    存活判据用项目唯一那份 `_alive_ships`（`_is_ship_alive`）。
-    """
-    victim_id = _opponent_of(room, target_item.player_id)
-    victim = room.players.get(victim_id) if victim_id else None
-    if victim is None:
-        return False
-    wanted = {_cell_xy(c) for c in cells}
-    wanted.discard(None)
-    if not wanted:
-        return False
-    return any((p.x, p.y) in wanted
-               for sh in _alive_ships(victim) for p in sh.positions)
-
-
-def _treaty_bomb_line_kills(room, target_item):
-    """轰炸：选定的**行/列里真的有还活着的船**才会沉（空行/空列 ⇒ 失败）。"""
-    targets = target_item.targets if isinstance(target_item.targets, dict) else {}
-    line = targets.get('target_line')
-    if not isinstance(line, dict):
-        return False
-    try:
-        index = int(line.get('index'))
-    except (TypeError, ValueError):
-        return False
-    if not 0 <= index < 6:
-        return False
-    if line.get('type') == 'row':
-        cells = [{'x': x, 'y': index} for x in range(6)]
-    elif line.get('type') == 'col':
-        cells = [{'x': index, 'y': y} for y in range(6)]
-    else:
-        return False
-    return _treaty_kill_hits_alive_ship(room, target_item, cells)
-
-
-def _treaty_sulfur_kills(room, target_item):
-    """硫磺火焰：选定的 6 个格子里真的有还活着的船才会沉。"""
-    targets = target_item.targets if isinstance(target_item.targets, dict) else {}
-    cells = targets.get('target_cells')
-    if not isinstance(cells, list) or len(cells) != 6:
-        return False
-    return _treaty_kill_hits_alive_ship(room, target_item, cells)
-
-
-def _treaty_splash_kills(room, target_item):
-    """溅射：它打的是**自己上一发命中格**的上下左右四格 ⇒ 判据必须读同一份数据。
-
-    ⚠️ 溅射的目标**不在** `ChainItem.targets` 里（它读 `room.last_attack`）——
-       拿 targets 去判会判成"永远不打人"，等于把它整张卡漏掉。
-    溅射按规则无视护盾并强制击沉仍有未受伤格的战舰，因此带盾船也必须纳入判定。
-    """
-    last = getattr(room, 'last_attack', None) or {}
-    if last.get('attacker') != target_item.player_id or not last.get('hit'):
-        return False
-    try:
-        x, y = int(last['x']), int(last['y'])
-    except (KeyError, TypeError, ValueError):
-        return False
-    neighbors = {(x, y - 1), (x, y + 1), (x - 1, y), (x + 1, y)}
-    neighbors = {(a, b) for (a, b) in neighbors if 0 <= a < 6 and 0 <= b < 6}
-    victim_id = _opponent_of(room, target_item.player_id)
-    victim = room.players.get(victim_id) if victim_id else None
-    if victim is None:
-        return False
-    for sh in _alive_ships(victim):
-        hits = {(h.x, h.y) for h in sh.hits}
-        if any((p.x, p.y) in neighbors and (p.x, p.y) not in hits for p in sh.positions):
-            return True
-    return False
-
-
-def _treaty_revive_has_wreck(room, target_item):
-    """疗愈 / 死者苏生：**场上没有可复活的沉船**就复活不了 ⇒ 失败。
-
-    与这两张卡自己的发动判据同一份口径（`caster.sunken_ships` 为空时它们必然
-    `success = False`），所以这里读的就是同一个字段，不是另写一套。
-    """
-    player = room.players.get(target_item.player_id)
-    return bool(player is not None and getattr(player, 'sunken_ships', None))
-
-
-def _treaty_reinforce_has_cell(room, target_item):
-    """增援：棋盘上**真的还有可放置的格子**才会 +1。
-
-    与放置流程共用同一份占位口径（`_placement_blocked_cells`，36 格）。
-    全被占满（己方船 + 对方打过的格 + 神威扣洞）⇒ 放不下 ⇒ 船数不会变。
-    """
-    if target_item.player_id not in room.players:
-        return False
-    return len(_placement_blocked_cells(room, target_item.player_id)) < 36
-
-
-def _treaty_lanyu_refills(room, target_item):
-    """滥竽充数：真的补得满才有船数变化 —— 直接复用**它自己的出牌闸门**。
-
-    `_lanyu_requirement_reason` 就是它的真实条件（remaining_ships < max_ships
-    且至少一个可放置格子）；返回 None 表示"这张牌打下去会真的补船"。
-    """
-    if target_item.player_id not in room.players:
-        return False
-    return _lanyu_requirement_reason(room, target_item.player_id, target_item.card) is None
-
-
-def _treaty_shenji_can_restore(room, target_item):
-    """神机妙算：**只能判到必要条件**（还有活船可沉）。
-
-    ⚠️⚠️ 这张卡做不到"准确预判会不会改船数"，原因在时序上：
-
-      卡面：「宣言一个数目 x，如果对方的结束阶段结束之后自己的船数减少了 x，
-             那么那些原本会减少的船不会减少并重新部署。」
-      · `x` 是**神机妙算自己结算时**才开的宣言窗口里由玩家填的
-        （`magic_temp_data['pending_shenji']` → `handle_confirm_shenji_declare`）；
-      · 平等条约在连锁里**排在它上面 ⇒ 先结算**，此刻 `x` 还没有、基线快照
-        （`prediction_initial_<pid>`）也还没拍；
-      · 就算有 x，"这一大回合会不会正好沉 x 艘"也要等对方的结束阶段才知道。
-
-      ⇒ 充分条件在这一刻**不存在**。这里只给出必要条件：**还有活船**才可能再减船
-        （一艘活船都没有 ⇒ 船数不可能再变 ⇒ 失败）。已单列在报告里请作者裁决。
-    """
-    player = room.players.get(target_item.player_id)
-    return bool(player is not None and _alive_ships(player))
-
-
-def _treaty_last_stand_self_sacrifice(room, target_item):
-    """绝处逢生：牺牲自己**全部**战舰 ⇒ 只要有活船就真的会改船数。
-
-    作者裁决：「绝处逢生的自牺牲**保持现状**（可以被无效化）—— 作者裁过，别改。」
-    ⚠️ 与"牺牲类"（恶魔契约 / 神之宣告 / 命运骰子 / 守株待兔）**不是一回事**：
-       那几张是**让别人**牺牲，作者早先已裁过「不算可被无效化的船数变化」⇒ 康不动。
-    ⚠️ 新机制下"无效化"= **整张牌被跳过** ⇒ 一艘都不会牺牲
-       （旧快照实现回的是 1 艘，那条差异已单列在报告里）。
-    """
-    player = room.players.get(target_item.player_id)
-    return bool(player is not None and _alive_ships(player))
-
-
-#: 卡名 → `(判据函数, 人话说明)`。**这是"平等条约康不康得动"的唯一一份实现。**
-#: 顺序 = 卡面分类；新增一行 = 作者裁决，必须先问（守卫会同时红两条腿）。
-EQUAL_TREATY_SHIP_CHANGE_RULES = {
-    # ── 击沉类：判据是「这一发真的会沉船」（不是"它属于击沉类"）──
-    '轰炸':     (_treaty_bomb_line_kills,
-                 '目标行/列里必须有还活着的船；打在空行/空列上不沉船'),
-    '硫磺火焰': (_treaty_sulfur_kills,
-                 '选定的 6 个格子里必须有还活着的船'),
-    '溅射':     (_treaty_splash_kills,
-                 '上一发命中格的上下左右四格里必须有仍可被溅射击沉的战舰（护盾无效）'),
-    # ── 复活类：判据是「真的会复活」──
-    '疗愈':     (_treaty_revive_has_wreck,
-                 '场上没有可复活的沉船时不会复活'),
-    '死者苏生': (_treaty_revive_has_wreck,
-                 '同上（与疗愈共用同一个判据函数）'),
-    # ── 增加类：判据是「真的会让某方船数 +1」──
-    '增援':     (_treaty_reinforce_has_cell,
-                 '棋盘上还有可放置的空格才会真的 +1'),
-    '滥竽充数': (_treaty_lanyu_refills,
-                 '与它自己的出牌闸门同一份判据（船数未满 + 有空格）'),
-    '神机妙算': (_treaty_shenji_can_restore,
-                 '★ 只判到必要条件（还有活船可沉）：改船数与否要等它自己结算后才宣言 x'),
-    # ── 自我牺牲（作者裁决：保持现状、可以被无效化）──
-    '绝处逢生': (_treaty_last_stand_self_sacrifice,
-                 '牺牲自己全部战舰 ⇒ 只要有活船就真的会改船数'),
-}
-
-#: **不在上表里**、且必须逐条写清"为什么不康"的卡名 → 理由。
-#: 判据不是"这张卡不改船数"，而是"它改船数的方式不属于平等条约管的那一类"。
-#: 有一张自动化的守卫要求这张表逐条等于 `tests/test_pingdeng_tiaoyue_chain.py`
-#: 里的 `NOT_NEGOTIABLE` —— 防止下一批有人凭"价值表分数高"顺手加进可康列表。
-EQUAL_TREATY_NOT_NEGOTIABLE = {
-    '恶魔契约': '作者已裁：它造成的「牺牲」不算可被无效化的船数变化',
-    '神之宣告': '同上（牺牲两艘自己的船，再让对方牺牲一艘）',
-    '命运骰子': '同上（摇到 6 点让对方牺牲）',
-    '守株待兔': '同上（陷阱触发后让对方牺牲）',
-}
-# 另外还有两类**根本没有链上目标**，因此永远康不到（写在这里供下一个人对照）：
-#   · 普通炮击（`handle_attack`）与教皇旨意弃卡攻击（`_do_attack`）——它们是【攻击】，
-#     不是连锁项，压根不会出现在 `room.chain` 里；船被炮击打沉之后再打平等条约，
-#     只会得到「没有可无效化的『正下方那一项』」（卡面本来就写"炮击无法被无效化"）。
-
-
-def _equal_treaty_verdict(room, target_item):
-    """平等条约对**这一项**的判词：`(会不会真的改船数, 人话说明)`。
-
-    这是判据的**唯一**消费口 —— 结算分支只读这里的结果，不许自己再写 `if`。
-    """
-    name = getattr(getattr(target_item, 'card', None), 'name', None)
-    row = EQUAL_TREATY_SHIP_CHANGE_RULES.get(name)
-    if row is None:
-        return False, f'{name}不会造成可被无效化的船数变化'
-    fn, why = row
-    try:
-        ok = bool(fn(room, target_item))
-    except Exception as exc:                       # noqa: BLE001 - 兜底不许静默
-        # 判据自己炸了 = 这张牌**不确定能不能康** ⇒ 当作康不动，并把原因留痕。
-        return False, f'{name}的船数变化判据无法判定（{exc!r}）'
-    return ok, why
+# 使用延迟查询适配，保留共享规则的唯一实现及测试替换后的可见性。
+_negation_effects = NegationEffects(
+    alive_ships=lambda player: _alive_ships(player),
+    opponent_of=lambda room, player_id: _opponent_of(room, player_id),
+    cell_xy=lambda cell: _cell_xy(cell),
+    placement_blocked_cells=lambda room, player_id: _placement_blocked_cells(
+        room, player_id),
+    lanyu_requirement_reason=lambda room, player_id, card: _lanyu_requirement_reason(
+        room, player_id, card),
+    tear_down_field_magic=lambda room, caster_id: _tear_down_field_magic(room, caster_id),
+)
+# 兼容已有 AI 和诊断入口；规则及登记表仍只有模块内这一份。
+EQUAL_TREATY_SHIP_CHANGE_RULES = _negation_effects.ship_change_rules
+_equal_treaty_verdict = _negation_effects.verdict
 
 
 def _can_respond_chain(room, player_id):
-    """该玩家此刻能否打出速阶3响应连锁。
-
-    AI 默认不参与；只有「困难」难度、手里有【失灵！】、且当前连锁康得动时才参与。
-    """
-    if not player_id:
-        return False
-    player = room.players.get(player_id)
-    if not player or player.magic_blocked:
-        return False
-    # 绝处逢生：生效回合内自己的其余魔法卡全部无效 —— 连锁响应也不例外。
-    # chain_response 里 can_play_magic_card 会拒掉，但那要等玩家点完卡才知道；
-    # 在这里拦掉，窗口就不会打开，也不会被白白点一次。
-    if player.effect_flags.last_stand:
-        return False
-    if player_id.startswith('ai-'):
-        if getattr(room, 'ai_difficulty', 'normal') != 'hard':
-            return False
-        if not any(c.name == '失灵！' for c in player.magic_hand):
-            return False
-        return _ai_can_negate_chain_top(room, player_id)
-    return bool(_speed3_cards(room, player_id))
+    """兼容入口：交给纯连锁响应资格策略。"""
+    return _CHAIN_POLICY.can_respond(room, player_id)
 
 
 def _clear_chain_display(room):
-    """清掉「结算前展示停留」的待办标记（幂等）。"""
-    room.chain_display_token = None
-    room.chain_display_deadline = None
+    """兼容入口：清理连锁展示停留。"""
+    return _CHAIN_DISPLAY.clear(room)
 
 
 def _finish_chain(room, display_delay: bool = True) -> bool:
-    """连锁收尾：**默认先让连锁区停一下**再结算。返回是否已交给后台任务。
-
-    返回值语义（调用方一般不需要看）：
-      · `True`  —— 已排上后台任务，连锁**还没**结算（延迟期间状态仍是"连锁挂着"）；
-      · `False` —— 已经在**当前栈帧就地**结算完了（置 0 / 超时路径 / 排不进任务）。
-
-    ★ 为什么绝不能在请求里阻塞：`_advance_chain_window` 是在 socket 请求
-      （或 `_ai_chain_respond` 的后台任务）里被调用的，eventlet 是单线程 hub ——
-      在这里 `time.sleep(1.2)` 会把**整个服务器**按住 1.2 秒。所以延迟一律走
-      `socketio.start_background_task` + `socketio.sleep`，与 `_schedule_chain_timeout`
-      同一套写法。
-
-    ★ 代际令牌：令牌直接用 `room.chain_timer`（与 10 秒窗口共用同一个 id 空间）。
-      任何"又开了一个窗口"或"又排了一次停留"都会让它 +1 ⇒ 迟到的任务自动作废。
-      再加 `resolve_chain` 收尾会清掉 `chain_display_token` ⇒ 任何别的路径
-      （超时 / 投降后清栈 / 重摆 / 再来一次）结算过之后，迟到的任务也一律作废。
-      **这是本改动最贵的一种失败：重复结算 = 一张牌的效果落地两次。**
-    """
-    if not display_delay or CHAIN_DISPLAY_DELAY_SECONDS <= 0:
-        # 关掉延迟时就是改动前那一行：同一个栈帧就地结算，行为逐字节一致。
-        resolve_chain(room)
-        return False
-
-    room.chain_timer += 1
-    token = room.chain_timer
-    room.chain_display_token = token
-    room.chain_display_deadline = (time.monotonic() + CHAIN_DISPLAY_DELAY_SECONDS
-                                   + CHAIN_DISPLAY_SWEEP_SLACK_SECONDS)
-    try:
-        socketio.start_background_task(_chain_display_then_resolve, room.id, token)
-    except Exception as exc:                     # noqa: BLE001 - 兜底不许静默
-        # ★ 兜底一（排不进去就当场结算）：后台任务因为任何原因排不上时，
-        #   **绝不能把连锁挂死** —— `room.chain` 非空会把攻击与交回合都拒掉
-        #   （「连锁结算中」），整局就此冻死。这里直接走改动前那条路径。
-        _clear_chain_display(room)
-        print(f'连锁展示停留排不进后台任务，改为就地结算：{exc!r}')
-        resolve_chain(room)
-        return False
-    return True
-
-
-def _chain_display_then_resolve(room_id: str, token: int):
-    """展示停留到期 → 结算连锁。迟到的任务（令牌过期 / 已结算过）一律不动手。"""
-    try:
-        socketio.sleep(CHAIN_DISPLAY_DELAY_SECONDS)
-        room = room_manager.get_room(room_id)
-        if room is None or getattr(room, 'chain_display_token', None) != token:
-            return
-        _clear_chain_display(room)
-        if not _chain_display_still_current(room, token):
-            return
-        resolve_chain(room)
-    except Exception as exc:                     # noqa: BLE001 - 兜底不许静默
-        print(f'连锁展示停留结算失败：{exc!r}')
-
-
-def _chain_display_still_current(room, token: int) -> bool:
-    """这次展示停留还算不算数（幂等判据）。
-
-    三个条件缺一不可：
-      · `room.chain` 还非空 —— 已经被任何一条路径结算过就不许再结算；
-      · `room.chain_timer == token` —— 期间又开过窗口 / 又排过一次停留 ⇒ 作废；
-      · 对局没结束 —— 别把卡牌效果落到一局已经结束的对局上（投降 / 掉线判胜）。
-    """
-    if not room.chain:
-        return False
-    if room.chain_timer != token:
-        return False
-    if getattr(room, 'state', None) == 'game_over':
-        return False
-    return not room.chain_waiting
+    """兼容入口：安排连锁展示停留或立即结算。"""
+    return _CHAIN_DISPLAY.finish(room, display_delay=display_delay)
 
 
 def _sweep_overdue_chain_display(now: float = None) -> list:
-    """★ 兜底二：展示停留过了截止时刻还没结算的房间，由看门狗就地结算。
-
-    为什么必须有这条**不依赖那个后台任务**的兜底：延迟一旦排不进去或任务本身
-    抛异常，`room.chain` 会一直挂着 ⇒ 攻击 / 交回合全被「连锁结算中」拒掉 ⇒
-    **整局冻死**（作者最在意的那一类失败）。这里复用本来就每 5 秒扫一次的看门狗，
-    不新增任何定时器。
-
-    ⚠️ 这条兜底只在"后台任务没按预期跑完"时才可能命中：正常路径下任务会先结算、
-    并清掉 `chain_display_token`，这里连门都进不来。
-    """
-    now = time.monotonic() if now is None else now
-    swept = []
-    for room_id, room in list(room_manager.get_all_rooms().items()):
-        token = getattr(room, 'chain_display_token', None)
-        if token is None:
-            continue
-        deadline = getattr(room, 'chain_display_deadline', None)
-        if deadline is None or now < deadline:
-            continue
-        if not _chain_display_still_current(room, token):
-            # 已经结算过 / 已经作废：只把标记清掉，别再去碰连锁栈。
-            _clear_chain_display(room)
-            continue
-        _clear_chain_display(room)
-        print(f'连锁展示停留超时未结算，看门狗兜底结算：room={room_id} token={token}')
-        resolve_chain(room)
-        swept.append(room_id)
-    return swept
-
+    return _CHAIN_DISPLAY.sweep(now=now)
 
 def _advance_chain_window(room, player_id, display_delay: bool = True):
     """把响应窗口交给 player_id；无法响应者自动记为放弃并顺延。
@@ -9566,188 +7964,20 @@ def _advance_chain_window(room, player_id, display_delay: bool = True):
     （它已经让所有人盯着连锁区看了 10 秒，再停一下纯属添乱；
     作者的要求是"10 秒窗口那条路径不动"）。
     """
-    while True:
-        if not player_id or player_id not in room.players:
-            return resolve_chain(room)
-        if _can_respond_chain(room, player_id):
-            room.chain_window = player_id
-            room.chain_waiting = True
-            room.chain_timer += 1
-            emit('chain_request', {
-                'card': room.chain[-1].card,
-                # 告诉客户端这张卡是谁打的：响应窗口会绕回最后压栈者自己
-                # （自连锁），此时前端不能再写「对方发动了」。
-                'caster': room.chain[-1].player_id,
-                'speed3_cards': _speed3_cards(room, player_id),
-                'countdown': CHAIN_RESPONSE_SECONDS,
-            }, to=room.players[player_id].sid)
-            _schedule_chain_timeout(room.id, room.chain_timer)
-            if player_id.startswith('ai-'):
-                # 窗口落在 AI 头上：让它自己响应，别干等到超时
-                socketio.start_background_task(_ai_chain_respond, room.id, room.chain_timer)
-            return
-        # 无法响应：视为放弃
-        room.chain_passes += 1
-        if room.chain_passes >= 2:
-            # ★ 双方都接不了 ⇒ 连锁到此为止。默认先停留一下再结算，
-            #   否则栈顶到结算只隔几毫秒、连锁区一闪而过（见 CHAIN_DISPLAY_DELAY_SECONDS）。
-            return _finish_chain(room, display_delay=display_delay)
-        player_id = _opponent_of(room, player_id)
+    return _CHAIN_WINDOW.advance(room, player_id, display_delay=display_delay)
 
 
 def _refund_card_to_hand(room, player_id, card, result) -> bool:
-    """卡牌「根本没满足发动条件」时退回手牌，并明确告诉玩家原因。
-
-    ⚠️ 为什么需要它：`handle_use_magic_card` 是【先扣牌进弃牌堆、再压连锁】，
-    而一大批卡的条件要到 `apply_magic_effect` 结算时才发现不满足 ——
-    那些分支一律 `result['success'] = False; return result`，牌既不退还也不回手，
-    玩家看到「不满足某某条件」的同时牌没了（实测报的「效果没生效却把牌吞掉了」）。
-    涉及：死者苏生/疗愈没有沉船、绝处逢生不足 3 艘、神之宣告不足 3 艘、
-    平等条约没有船数变化、余音绕梁不在准备阶段、桃园结义撞上无中生有、
-    区域卡没选目标、失灵！/加百列之光没有可无效化的目标 …
-
-    只按【同一引用】退还：卡牌对象可能已被「盗亦有道」从弃牌堆偷走，
-    按名字找会把同一张牌变成两张（凭空造牌），找不到一律不退。
-    """
-    player = room.players.get(player_id)
-    if player is None or card is None:
-        return False
-    # 已经在手上：什么都不做（重复退还同样会造牌）
-    if any(c is card for c in player.magic_hand):
-        return False
-
-    refunded = False
-    for i, c in enumerate(room.magic_discard):
-        if c is card:
-            room.magic_discard.pop(i)
-            player.magic_hand.append(card)
-            refunded = True
-            break
-    if not refunded:
-        # 场地卡出牌时【不入弃牌堆】（实例直接贴到 field_magic），
-        # 所以它失败时只能在"确实不在场上"的前提下补回手牌。
-        if getattr(card, 'type', None) == '场地' and room.field_magic is not card:
-            player.magic_hand.append(card)
-            refunded = True
-    if not refunded:
-        return False
-
-    reason = (getattr(result, 'message', '') or '不满足发动条件').strip()
-    emit('message', {'text': f'{card.name}未发动：{reason}，卡牌已退回手牌'}, to=player.sid)
-    add_game_log(room, f'{_log_name(room, player_id)} 发动 {card.name} 失败：'
-                       f'{reason}（卡牌退回手牌）', 'magic')
-    return True
-
+    """兼容入口：由应用层执行卡牌失败退回。"""
+    return refund_card_to_hand(
+        room, player_id, card, result,
+        emit=emit, add_game_log=add_game_log, log_name=_log_name)
 
 def resolve_chain(room):
     """结算连锁：栈顶先出（后发先至）。被无效化的项跳过效果。"""
-    results = []
+    results = _CHAIN_RESOLUTION.resolve_items(room)
 
-    while room.chain:
-        chain_item = room.chain.pop()
-        player_id = chain_item.player_id
-        card = chain_item.card
-        targets = chain_item.targets
-
-        # 已被上方某张无效化卡标记：跳过其效果
-        if chain_item.negated:
-            # 把「被谁康的」写进提示：只说「X被无效化」玩家分不清是"被对手康了"
-            # 还是"自己发动失败"，实测会误判成"效果没生效"。
-            by = getattr(chain_item, 'negated_by', None)
-            detail = f'{card.name}被{by}无效化' if by else f'{card.name}被无效化'
-            result = ChainResult(card=card, caster=player_id, success=False,
-                                 message=detail)
-            result.negated_skip = True
-            result.negated_by = by
-            log_magic(room, player_id, card, f'但被{by}无效化' if by else '但被无效化')
-            # 被无效化的场地卡：只进弃牌堆，绝不能顶掉/拆掉场上已有的场地。
-            # （原实现用 _place_field_magic "贴了再拆"，会把场上另一张场地
-            #   连带扫进弃牌堆 —— 一次无效化同时干掉两张场地。）
-            if getattr(card, 'type', None) == '场地':
-                if room.field_magic is not card:
-                    room.magic_discard.append(card)
-            results.append(result)
-            continue
-
-        # 应用卡牌效果
-        result = apply_magic_effect(room, player_id, card, targets)
-        result.caster = player_id
-        log_magic(room, player_id, card, result.message if getattr(result, 'success', False) else '')
-
-        # 条件不满足（效果根本没落地）：把牌退回手牌并说清原因，别让玩家白丢一张卡。
-        # ⚠️ 被康的项不会走到这里（上面 negated 分支已经 continue），被康就该被消耗。
-        if not getattr(result, 'success', False) and not getattr(result, 'negated_skip', False):
-            _refund_card_to_hand(room, player_id, card, result)
-
-        # 无效化类效果：把“正下方那一项”（下一个待结算项）标记为无效
-        if getattr(result, 'negate_target', False) and room.chain:
-            room.chain[-1].negated = True
-            # 记下是谁康的，供结算时写出「X被Y无效化」这种明确因果
-            room.chain[-1].negated_by = card.name
-
-        results.append(result)
-        # 记录魔法使用历史（盗亦有道等读取）
-        if result.success:
-            entry = {'card': card, 'caster': player_id,
-                     'timestamp': time.time(), 'round': room.round}
-            # 这张牌若在本轮连锁里已被「盗亦有道」偷走，写历史时要把标记带上 ——
-            # 否则回退分支扫到这条没有 stolen 的记录，会允许同一张牌被再偷一次。
-            ledger = room.game_effects.get('stolen_cards') or {}
-            if id(card) in ledger:
-                entry['stolen'] = True
-            room.magic_history.append(entry)
-
-    # 广播连锁结算结果
-    emit('chain_resolved', {
-        'results': results
-    }, room=room.id)
-
-    # 重置连锁状态
-    room.chain = []
-    room.chain_waiting = False
-    room.chain_window = None
-    room.chain_passes = 0
-    # 结算前那段展示停留的令牌也一起清掉：**任何一条结算路径都会走到这里**，
-    # 于是"已经结算过了"这件事对迟到的后台任务自证（幂等判据的一半）。
-    _clear_chain_display(room)
-    # 盗亦有道的"已盗取"台账已完成合并，清掉避免无限增长
-    # （卡牌实例被回收后 id() 可能被新对象复用，留着会误判新牌为已盗取）
-    room.game_effects.pop('stolen_cards', None)
-
-    # 这一批卡的效果刚落地，双方的 effect_flags 可能变了 —— 刷新角标
-    _emit_active_effects(room)
-
-    # 手牌也要重推：结算期间有多条路径会改变手牌，而它们各自的 emit 并不齐备 ——
-    # 盗亦有道把偷来的牌 append 进手牌、桃园结义分配候选牌、无中生有等摸牌效果。
-    # 漏推的表现是玩家看到"打出的牌还在手上"或"偷到了但没显示"。
-    # 这里在连锁收尾统一同步一次，双方各自收自己的那份。
-    for p in room.players.values():
-        if getattr(p, 'sid', None):
-            emit('hand_updated', {'hand': p.magic_hand}, to=p.sid)
-
-    # 船数 / 自己的棋盘 / 阶段也要一并重推。
-    # 结算期间有一批卡会直接改船或改阶段，而它们的分支里【一个 emit 都没有】：
-    #   · 仁王之盾  —— 给至多 3 艘船加 shield，前端完全收不到（连加盾都不知道）
-    #   · 钢筋铁骨  —— 牺牲 1 艘 + 其余无敌；前端仍显示 6 艘、无敌无标记
-    #   · 回光返照  —— 清空自己的棋盘并把阶段推到 end
-    # 靠每张卡各自补 emit 容易漏（已经漏过三次），统一在这里兜底最稳：
-    # 与上面 active_effects / hand_updated 并列，覆盖所有在结算里改状态的卡。
-    _emit_ships_updated(room)
-    for pid in room.players:
-        _emit_player_ships(room, pid)
-    emit('phase_updated', {
-        'current_phase': room.current_phase,
-        'current_attacker': room.current_attacker
-    }, room=room.id)
-
-    # 优先权询问的收尾：响应者在窗口里打了速阶3，连锁现在结算完了，
-    # 该把他拦下的那次阶段转换补上（否则发起者的回合永远停在原地）。
-    # ⚠️ 先取出再清空：_priority_continue 会再进 enter_battle_phase，
-    # 那条路径可能又开一次询问，不清就会重入。
-    cont = getattr(room, 'priority_continue', None)
-    if cont:
-        room.priority_continue = None
-        _priority_continue(room, cont['actor'], cont['action'])
+    _CHAIN_SETTLEMENT.finalize(room, results)
 
     # ★ 第 6 批：这里**故意不**再收口一次。
     #
@@ -9771,37 +8001,7 @@ def _ai_chain_respond(room_id: str, token: int):
     响应不了（没牌 / 康不动）时明确放弃，避免把窗口拖到 10 秒超时。
     代际令牌保证过期窗口不会被旧任务误响应。
     """
-    try:
-        time.sleep(0.8)
-        room = room_manager.get_room(room_id)
-        if not room or room.state == 'game_over':
-            return
-        if not room.chain_waiting or room.chain_timer != token:
-            return
-        ai_id = room.chain_window
-        if not ai_id or not ai_id.startswith('ai-'):
-            return
-        player = room.players.get(ai_id)
-        if not player:
-            return
-
-        card = next((c for c in player.magic_hand if c.name == '失灵！'), None)
-        if card is None or not _ai_can_negate_chain_top(room, ai_id):
-            chain_response({'room_id': room_id, 'player_id': ai_id, 'chain': False})
-            return
-
-        resp = chain_response({
-            'room_id': room_id,
-            'player_id': ai_id,
-            'chain': True,
-            'card': {'name': card.name, 'speed': card.speed, 'type': card.type},
-            'targets': [],
-        })
-        if not (resp and resp.get('status') == 'success'):
-            # 万一被规则拒绝（例如窗口已过期），明确放弃而不是留个半开窗口
-            chain_response({'room_id': room_id, 'player_id': ai_id, 'chain': False})
-    except Exception as e:
-        print(f'AI chain respond error: {e}')
+    return _CHAIN_AI_RESPONSE.respond(room_id, token)
 
 
 def _schedule_chain_timeout(room_id: str, token: int):
@@ -9812,20 +8012,7 @@ def _schedule_chain_timeout(room_id: str, token: int):
     所有人已经盯着连锁区看了 10 秒，超时到点就该当结算 —— 作者的要求是
     "10 秒窗口那条路径不动"。（`_finish_chain` 里的展示停留只作用于
     "双方都接不了 ⇒ 立刻就要结算"那条一闪而过的路径。）"""
-    def _timeout():
-        time.sleep(CHAIN_RESPONSE_SECONDS)
-        room = room_manager.get_room(room_id)
-        if room and room.chain_waiting and room.chain_timer == token:
-            window_player = room.chain_window
-            room.chain_waiting = False
-            room.chain_window = None
-            room.chain_passes += 1
-            if room.chain_passes >= 2 or window_player is None:
-                resolve_chain(room)
-            else:
-                _advance_chain_window(room, _opponent_of(room, window_player),
-                                      display_delay=False)
-    socketio.start_background_task(_timeout)
+    return _CHAIN_TIMEOUT.schedule(room_id, token)
 
 
 # ============================================================================
@@ -9868,227 +8055,62 @@ PRIORITY_ACTION_TEXT = {
     'enter_end': '进入结束阶段',
 }
 
+_PRIORITY_PROMPT = PriorityPrompt(
+    opponent_of=lambda room, player_id: _opponent_of(room, player_id),
+    should_ask=lambda room, actor, responder: _should_ask_priority(
+        room, actor, responder),
+    speed3_cards=lambda room, player_id: _speed3_cards(room, player_id),
+    action_text=PRIORITY_ACTION_TEXT,
+    seconds=lambda: PRIORITY_SECONDS,
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    schedule_timeout=lambda room_id, token: _schedule_priority_timeout(room_id, token),
+)
+_PRIORITY_GATE = PriorityGate(
+    has_context=lambda: _has_request_context(),
+    is_ai_room=lambda room: getattr(room, 'is_ai_room', False),
+    is_disconnected=lambda room, player_id: player_id in getattr(room, 'disconnected', {}),
+    decline_enabled=lambda room, player_id: (getattr(room, 'decline_priority', None) or {}).get(player_id),
+    has_chain=lambda room: bool(room.chain or room.chain_waiting),
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    action_text=lambda: PRIORITY_ACTION_TEXT,
+)
+
 
 def _priority_pending_for(room, player_id):
-    """如果该玩家正是"被拦下的那次阶段转换"的发起者，返回 pending，否则 None。"""
-    pending = getattr(room, 'priority_pending', None)
-    if pending and pending.get('actor') == player_id:
-        return pending
-    return None
+    """兼容入口：读取发起方的待处理优先权询问。"""
+    return _PRIORITY_GATE.pending_for(room, player_id)
 
 
 def _priority_wait_reason(room, player_id):
-    """发起方在等待对方响应期间，其余写操作一律冻结；返回拒绝原因，否则 None。
-
-    ⚠️ 为什么必须冻（作者实测反馈：「在等待阶段转换的响应的时候，对方不能暂停行动」）：
-    这个 10 秒窗口的**全部意义**就是仲裁"谁先动手"。可旧实现只拦了阶段转换本身，
-    发起方在等待期间仍然能继续开炮、出牌、交回合 ——
-    对方正在决定要不要打速阶3，这边已经把攻击打完了；
-    窗口结束时 _priority_continue 再把阶段转换补上。
-    于是"拦下来问一句"形同虚设，双方看到的效果顺序仍然没有定义。
-
-    连带修掉的另一个洞：`_should_ask_priority` 看到已有 pending 会返回 False，
-    于是发起方**再点一次**「进入战斗阶段」会直接跳过询问、当场推进
-    （双击即可绕过询问）。
-    """
-    pending = _priority_pending_for(room, player_id)
-    if not pending:
-        return None
-    action = PRIORITY_ACTION_TEXT.get(pending.get('action'), '阶段转换')
-    return f'正在等待对方响应「{action}」，请稍候再操作'
-
+    """兼容入口：返回等待优先权询问时的冻结原因。"""
+    return _PRIORITY_GATE.wait_reason(room, player_id)
 
 def _should_ask_priority(room, actor_id, responder_id):
-    """判断这次阶段转换是否需要先询问对方。返回 True/False。
-    阻断条件（都不询问，直接放行）：
-      · 无 socket 请求上下文（单元测试直调 handler）
-      · 人机房 —— AI 不会主动响应，弹窗只会让人干等
-      · 对方已掉线（在宽限期内）
-      · 对局已结束
-      · 对方已开启「拒绝」开关
-      · 已有连锁窗口挂起 —— 连锁窗口优先，避免双重弹窗
-      · 已有未处理的询问 —— 不叠加
-    """
-    if not _has_request_context():
-        return False
-    if getattr(room, 'is_ai_room', False):
-        return False
-    if not responder_id or responder_id not in room.players:
-        return False
-    if room.state == 'game_over':
-        return False
-    if responder_id in getattr(room, 'disconnected', {}):
-        return False
-    if (getattr(room, 'decline_priority', None) or {}).get(responder_id):
-        return False
-    if room.chain or room.chain_waiting:
-        return False
-    if getattr(room, 'priority_pending', None):
-        return False
-    return True
-
+    """兼容入口：交给应用层优先权门禁。"""
+    return _PRIORITY_GATE.should_ask(room, actor_id, responder_id)
 
 def _ask_priority(room, actor_id, action, on_decline=None):
-    """向对手发起「是否响应」询问。
-
-    返回 True 表示【已发出询问】——此时调用方必须立刻返回，
-    真正的操作要等对方的响应（或超时）到了再执行，由 _resolve_priority 负责。
-    返回 False 表示【无需询问】（人机房 / 对方已拒绝 / 有连锁挂起…），
-    调用方可以继续执行原操作。
-
-    action：给前端显示的文案键，如 'enter_battle' / 'enter_end'。
-    on_decline：不需要 —— 真正要做的事由调用方在"无需询问"分支里自己执行；
-                等待响应时，_resolve_priority 会重新走一遍调用方的入口函数
-                （见 _priority_continue）。
-    """
-    responder_id = _opponent_of(room, actor_id)
-    if not _should_ask_priority(room, actor_id, responder_id):
-        return False
-
-    room.priority_token += 1
-    token = room.priority_token
-    room.priority_pending = {
-        'actor': actor_id,
-        'responder': responder_id,
-        'action': action,
-        # 告知对方"他手上有没有速阶3卡"——没有也照样问（作者裁定：
-        # 玩家要有选择权），但前端可以据此把提示写得更清楚。
-        'speed3_cards': _speed3_cards(room, responder_id),
-        'countdown': PRIORITY_SECONDS,
-    }
-    emit('priority_request', {
-        'action': action,
-        'actor': actor_id,
-        'speed3_cards': _speed3_cards(room, responder_id),
-        'countdown': PRIORITY_SECONDS,
-    }, to=room.players[responder_id].sid)
-    # 同时告诉【发起方】"你被拦下了，正在等对方"。
-    # 以前只发 priority_request 给响应者，发起方那边毫无提示：
-    # 点了「进入战斗阶段」之后界面一动不动，既不知道在等谁、也不知道等多久，
-    # 甚至可以在等待期间继续操作（见 _priority_wait_reason 的说明）。
-    emit('priority_waiting', {
-        'action': action,
-        'action_text': PRIORITY_ACTION_TEXT.get(action, '阶段转换'),
-        'countdown': PRIORITY_SECONDS,
-    }, to=room.players[actor_id].sid)
-    _schedule_priority_timeout(room.id, token)
-    return True
-
+    """兼容入口：交给应用层打开优先权询问窗口。"""
+    return _PRIORITY_PROMPT.ask(room, actor_id, action)
 
 def _schedule_priority_timeout(room_id: str, token: int):
     """询问超时兜底：视为对方放弃，继续执行原操作。
     代际令牌使旧定时器自动作废，防止与玩家正常响应竞态双重执行。"""
-    def _timeout():
-        time.sleep(PRIORITY_SECONDS)
-        room = room_manager.get_room(room_id)
-        if room and room.priority_pending and room.priority_token == token:
-            _resolve_priority(room, respond=False)
-    socketio.start_background_task(_timeout)
+    return _PRIORITY_TIMEOUT.schedule(room_id, token)
 
 
 def _clear_priority(room):
-    """清掉待处理的询问状态（不触发后续动作）。
-
-    顺带通知【发起方】"等待结束、可以继续操作了" ——
-    前端要靠它把冻结的按钮恢复回来。漏发的话发起方会一直停在
-    "等待对方响应"的界面里点不动（比卡死更难查：服务端其实已经继续了）。
-    """
-    pending = getattr(room, 'priority_pending', None)
-    actor_id = pending.get('actor') if pending else None
-    room.priority_pending = None
-    room.priority_token += 1
-    if actor_id and actor_id in room.players:
-        sid = getattr(room.players[actor_id], 'sid', None)
-        if sid:
-            emit('priority_waiting_end', {
-                'action': pending.get('action'),
-            }, to=sid)
-
+    """兼容入口：清理待处理优先权询问。"""
+    return _PRIORITY_GATE.clear(room)
 
 def _resolve_priority(room, respond=False, card=None, targets=None):
-    """询问有结果了：对方放弃（或超时），或他打出了一张速阶3。
-
-    respond=False → 继续执行被拦下的那个操作（重新走一遍入口）
-    respond=True  → 先把他的牌入链；连锁结算完再继续原操作
-    """
-    pending = getattr(room, 'priority_pending', None)
-    if not pending:
-        return
-    actor_id = pending['actor']
-    responder_id = pending['responder']
-    action = pending['action']
-    # 先清状态（代际令牌 +1 使超时定时器作废）
-    _clear_priority(room)
-
-    if respond and card is not None:
-        resp = _play_speed3_as_priority(room, responder_id, card, targets or [])
-        if resp is not None and resp.get('status') == 'error':
-            # 出牌失败（没这张牌 / 不是速阶3 / 被封锁…）：
-            # 退回"放弃"处理，并把原因回给本人，避免对局卡住
-            emit('message', {'text': resp.get('message', '响应失败，已视为取消')},
-                 to=room.players[responder_id].sid)
-            _priority_continue(room, actor_id, action)
-            return
-        # 出牌成功 → 已入链；连锁结算完后由这里继续原操作
-        if room.chain or room.chain_waiting:
-            # 结算完成后再继续：把续做动作挂上，交给 resolve_chain 之后触发
-            room.priority_continue = {'actor': actor_id, 'action': action}
-            return
-        # 没有连锁要结算（理论上不会走到，入链必然有窗口）——直接续做
-        _priority_continue(room, actor_id, action)
-        return
-
-    _priority_continue(room, actor_id, action)
-
+    """兼容入口：交给应用层处理优先权询问结果。"""
+    return _PRIORITY_RESOLUTION.resolve(
+        room, respond=respond, card=card, targets=targets)
 
 def _priority_continue(room, actor_id, action):
-    """询问结束后，继续执行被拦下的那个操作。
-
-    ⚠️ 必须【脱离当前请求上下文】再执行（2026-09-13 实测踩坑）：
-    本函数是在 *响应者* 的 socket 请求里被调用的（priority_response /
-    超时后台任务），而它要代 *发起者* 重放 enter_battle_phase /
-    handle_enter_end_phase。那两个 handler 开头都有 _identity_ok，
-    会拿 request.sid（= 响应者的连接）去比对发起者座位的 sid —— 必然不匹配，
-    于是重放静默失败（返回 error），阶段永远停在 preparation，
-    玩家点完「取消」后整个回合就死了。
-
-    实测证据：priority_pending 被清空、阶段仍是 preparation，
-    发起者收不到任何事件。
-
-    做法与 disconnect 处理器同一惯例：把重放丢进后台任务，
-    那时已无请求上下文，_identity_ok 走"仅成员校验"分支（与单测一致）。
-    """
-    def _run():
-        time.sleep(0)
-        if room.state == 'game_over':
-            return
-        if action == 'enter_battle':
-            enter_battle_phase({'room_id': room.id, 'player_id': actor_id},
-                               _priority_confirmed=True)
-        elif action == 'enter_end':
-            handle_enter_end_phase({'room_id': room.id, 'player_id': actor_id},
-                                   _priority_confirmed=True)
-
-    try:
-        socketio.start_background_task(_run)
-    except Exception:
-        # 没有 eventlet/socketio 上下文（如单测直调）时同步执行即可
-        _run()
-
-
-def _play_speed3_as_priority(room, player_id, card_data, targets):
-    """优先权询问里打出的速阶3：走与出牌相同的校验与入链。
-
-    复用 handle_use_magic_card，但入口处会因 chain_waiting 拦截 ——
-    这里是询问场景，没有连锁窗口，所以直接调用即可。
-    """
-    return handle_use_magic_card({
-        'room_id': room.id,
-        'player_id': player_id,
-        'card': card_data,
-        'targets': targets,
-    })
-
+    """兼容入口：交给应用层恢复被拦下的阶段操作。"""
+    return _PRIORITY_CONTINUATION.continue_action(room, actor_id, action)
 
 @socketio.on('priority_response')
 @_require_live_room
@@ -10150,66 +8172,12 @@ DISCONNECT_GRACE_SECONDS = 30
 def _start_disconnect_grace(room_id: str, player_id: str):
     """玩家掉线：启动 30s 重连窗口并通知对手。由后台任务调用（避免在
     disconnect 处理器内同步 emit 导致 eventlet hub 卡死）。"""
-    time.sleep(0.2)  # 让 disconnect 收尾完成
-    room = room_manager.get_room(room_id)
-    if not room or room.state == 'game_over' or player_id in room.disconnected:
-        return
-    room.disconnect_seq += 1
-    deadline = time.time() + DISCONNECT_GRACE_SECONDS
-    room.disconnected[player_id] = {'deadline': deadline, 'token': room.disconnect_seq}
-    for pid, p in list(room.players.items()):
-        if pid != player_id:
-            emit('opponent_disconnected', {
-                'player_id': player_id,
-                'seconds': DISCONNECT_GRACE_SECONDS,
-                'deadline': deadline,
-            }, to=p.sid)
-    socketio.start_background_task(_disconnect_timeout, room_id, player_id, room.disconnect_seq)
+    return _DISCONNECT_RESOLUTION.start_grace(room_id, player_id)
 
 
 def _disconnect_timeout(room_id: str, player_id: str, token: int):
-    """掉线宽限到期结算：未重连则按房间阶段决定取消对局或判对手胜利。"""
-    time.sleep(DISCONNECT_GRACE_SECONDS)
-    room = room_manager.get_room(room_id)
-    if not room:
-        return
-    entry = room.disconnected.get(player_id)
-    if not entry or entry.get('token') != token:
-        return  # 已重连或已由其它路径处理
-    room.disconnected.pop(player_id, None)
-
-    other = next((p for p in room.players if p != player_id), None)
-    ai_room = getattr(room, 'is_ai_room', False)
-    pre_battle = room.state in ('placing_ships', 'rock_paper_scissors')
-
-    if ai_room or pre_battle or other is None or other in room.disconnected or room.state == 'game_over':
-        # 人机房 / 未开战 / 双方都不在场：取消对局，不计战绩
-        # ⚠️ 必须带 room_id（2026-09-29 加）。这条广播是**房间级**的，而客户端要在
-        #    "我被取消的那个房间"与"我现在所在的房间"之间做判断 —— 载荷里没有房间号，
-        #    客户端就只能无条件认下，于是**旧房间**的取消广播会把已经进了新房间的玩家
-        #    踢回首页。实测（好友邀战工具连跑两次开局）：`game_canceled` 到达后
-        #    1.5s 就 NAV 到 `/`，而那条取消属于上一个已解散的房间；
-        #    同一条命令换一次运行又全绿 —— 典型竞态。
-        #    `_drop_room` 在 emit 之后，房间没了也不影响这条已经写进载荷的 id。
-        emit('game_canceled', {
-            'reason': 'opponent_disconnected',
-            'message': '对局已取消（对手掉线）',
-            'room_id': room_id,
-        }, room=room_id)
-        # 房里可能还有人连着（掉线的是**对手**）→ 同样走收口，别留下「对局中」
-        _drop_room(room_id, '对手掉线/未开局，取消对局')
-        return
-
-    # 正式对局：在场方判胜，正常计入战绩（无特殊标签）
-    room.state = 'game_over'
-    room.winner = other
-    room.game_over_reason = 'opponent_disconnected'
-    # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
-    _finalize_match(room, other, player_id)
-    emit('game_over', _game_over_payload(room, {'winner': other, 'reason': 'opponent_disconnected'}), room=room_id)
-    # 房间保留约 2 分钟：让掉线者重连时收到一次性警告
-    socketio.start_background_task(_cleanup_ended_room, room_id, 120)
-
+    """兼容入口：交给应用层处理掉线宽限到期。"""
+    return _DISCONNECT_RESOLUTION.resolve(room_id, player_id, token)
 
 def _cleanup_ended_room(room_id: str, delay: float):
     time.sleep(delay)
@@ -10722,11 +8690,6 @@ def _build_spectate_snapshot(room) -> dict:
     # 与上面的 `attacks` 是**同一份数据的转置**（前端画棋盘时不必自己翻方向）：
     # 守卫 `test_board_attacks_is_the_transpose_of_attacks` 断言两者恒等，
     # 所以这不是"两份实现"，而是"一份数据两个朝向"。
-    board_attacks = {}
-    for label in list(sides):
-        other = 'p2' if label == 'p1' else 'p1'
-        board_attacks[label] = [dict(cell) for cell in sides.get(other, {}).get('attacks', [])]
-
     effects = room.game_effects if isinstance(room.game_effects, dict) else {}
     logs = []
     for entry in (getattr(room, 'game_logs', None) or []):
@@ -10735,7 +8698,8 @@ def _build_spectate_snapshot(room) -> dict:
         if cleaned is not None:
             logs.append(cleaned)
 
-    return {
+    return project_snapshot(
+        room_public={
         'room_id': room.id,
         'state': room.state,
         'current_phase': getattr(room, 'current_phase', None),
@@ -10748,30 +8712,22 @@ def _build_spectate_snapshot(room) -> dict:
         'winner': getattr(room, 'winner', None),
         'game_over_reason': getattr(room, 'game_over_reason', None),
         'field_magic': field_magic_name(room) or '',
-        'sides': sides,
-        'seat_labels': labels,
-        'board_attacks': board_attacks,
-        'game_logs': logs,
-        'chain': _spectate_chain_payload(room),
+        },
+        sides=sides,
+        seat_labels=labels,
+        game_logs=logs,
+        chain=_spectate_chain_payload(room),
         # —— 场上公开效果（作者已确认给观众：这些坐标本来就是**有意公开给双方**的）——
         # 神威洞与冻结区都是"卡面公开宣布的区域"，绝处逢生的候选格更必须是公开的
         # （对方要据此知道那艘新船可能在哪，而且这些格子得能打）。
-        'shenwei_holes': [dict(h) for h in (effects.get('shenwei_holes') or [])],
-        'frozen_area': dict(effects.get('frozen_area') or {}) or None,
-        'last_stand_cells': [{'x': cx, 'y': cy}
-                             for (cx, cy) in (effects.get('last_stand_cells') or [])],
-        'last_stand_owner': effects.get('last_stand_owner'),
+        effects=effects,
         # —— 观战席：人数 + 上限给所有人，**名单只给观众自己**（见下）——
-        'spectator_count': _spectate_count(room),
-        'spectator_limit': spectate.SPECTATOR_LIMIT,
+        spectator_limit=spectate.SPECTATOR_LIMIT,
         # ★ 名单（作者裁定：观众彼此看得到名字；对局双方只看到人数）。
         #   它**只**出现在这份发给观众自己的快照里 —— 绝不进 `spectate_count_changed`
         #   （那条是广播给对局双方的）。守卫断言人数事件里没有任何名字。
-        'spectators': [
-            {'name': info.get('name'), 'joined_at': info.get('joined_at')}
-            for info in (room.spectators or {}).values()
-        ],
-    }
+        spectators=list((room.spectators or {}).values()),
+    )
 
 
 @socketio.on('get_reconnect_token')
@@ -11071,7 +9027,7 @@ def chain_response(data):
         # ★ 回放批：连锁响应里的**出手**同样要记（与上面那条 emit 同一个时点、同一个理由：
         #   扣牌当场就发生，回放必须有可定位的步骤承载这次手牌变化，不能等到结算）。
         #   ⚠️ 必须留在扣牌之后：`note_card_played` 会在这一步比对并写下 `hands` 时间线。
-        replay.note_card_played(room, player_id, card, chained=True)
+        replay.note_card_played(capture_replay_observation(room), player_id, card, chained=True)
 
         room.chain.append(ChainItem(player_id, card, targets, time.time()))
         # 与 `handle_use_magic_card` 同一份净化（区域预览必须让双方看到选区）。
@@ -11184,7 +9140,7 @@ def handle_confirm_reinforcement(data):
         # ★ 回放批：这艘船**回到棋盘上**，它原来那几格的红叉要跟着消失 ——
         #   登记好待撤销的旧格（`note_ship_returned` 会把"撤销 + 按当前步记一次快照"
         #   一起做掉，见文件末尾的调用点）。
-        replay.note_ship_returned(room, player_id, revived)
+        replay.note_ship_returned(capture_replay_observation(room), player_id, revived)
         # 与复活类一致：清空命中并移到新位置，否则复活后打不沉（幽灵船）
         revived.positions = [Position(x=x, y=y)]
         revived.hits = []
@@ -11207,7 +9163,7 @@ def handle_confirm_reinforcement(data):
             caster.sunken_ships.remove(revived)
         # ★ 回放批：同上（船回到棋盘 ⇒ 旧格的红叉必须消失）。见上面 `shenji_redeploy`
         #   分支里的说明：撤销在改 `positions` **之前**，记快照在函数收尾统一做。
-        replay.note_ship_returned(room, player_id, revived)
+        replay.note_ship_returned(capture_replay_observation(room), player_id, revived)
         # 关键修复：清空命中并移到新位置，否则复活后打不沉（幽灵船）
         revived.positions = [Position(x=x, y=y)]
         revived.hits = []
@@ -11267,7 +9223,7 @@ def handle_confirm_reinforcement(data):
     #   撤销"主动牺牲格"这件事必须在这一步的帧里看得见，不能等下一次别处的日志
     #   （实测：不补这一句，回放里那格的红叉会一直挂着，直到下一次日志才消失）。
     #   ⚠️ 放在最后：必须在船的位置/船数/待办**全部落定**之后记，才是这一帧的真实局面。
-    replay.refresh_ships(room)
+    replay.refresh_ships(capture_replay_observation(room))
     return {'status': 'success', 'message': msg}
 
 
@@ -11504,7 +9460,7 @@ def confirm_magic_target(data):
             _taoyuan_took = (cards[opponent_choice].name
                              if 0 <= opponent_choice < len(cards) else None)
             replay.note_hand_change(
-                room,
+                capture_replay_observation(room),
                 f'{_log_name(room, player_id)} 的【桃园结义】分配：'
                 f'自己拿「{cards[caster_choice].name}」'
                 + (f'，对方拿「{_taoyuan_took}」' if _taoyuan_took else '，没有对方那一份')
@@ -11579,10 +9535,10 @@ def confirm_magic_target(data):
         _mark_spectate_board_dirty(room)
         # ★ 回放批：双方棋盘整块换新 → 回放的棋盘标记时间线记一笔（**双方**，
         #   所以这里不传 board_owner_id）。同一个失效点、第二个消费方。
-        replay.note_board_reset(room)
+        replay.note_board_reset(capture_replay_observation(room))
         # ★ 回放批：旧棋盘上的"主动牺牲格"也随之作废（船跟着 `ships = []` 一起没了，
         #   留着就是幻影沉船）。与 `note_board_reset` 分开记（见它的说明）。
-        replay.note_board_replaced(room)
+        replay.note_board_replaced(capture_replay_observation(room))
 
         # 清除临时数据
         room.magic_temp_data = {}
@@ -11924,69 +9880,8 @@ def _restore_due_shenwei(room, current_round):
 
 
 def _recall_lanyu_ships(room, room_id) -> bool:
-    """滥竽充数：大回合结束时强制收回临时船，不显示沉没。
-
-    卡面：「这些在当前大回合被补充的船将会在大回合结束时强制收回，不会显示沉没。」
-    收回 = 从 ships 移除 + 减 remaining_ships，但【不】登记到 sunken_ships、
-    【不】发击沉事件 —— 玩家看到的是船直接从棋盘上消失，不是被打沉。
-
-    只收回【还活着】的临时船；已在回合内被击沉的临时船按沉船口径原样保留
-    （已计入 sunken_ships、remaining_ships 已减），不动它。
-
-    返回 True 表示收回导致某方船数归零、对局已结束（end_turn 应当立即返回）。
-    """
-    lanyu = room.game_effects.pop('lanyu_temp_ships', None)
-    if not lanyu:
-        return False
-    changed = {}
-    for player_id, ship_list in lanyu.items():
-        if player_id not in room.players:
-            continue
-        player = room.players[player_id]
-        removed = 0
-        for ship in ship_list:
-            if ship not in player.ships:
-                continue  # 已被移除（轰炸/硫磺火焰/重摆棋盘）
-            # 只收回【还活着】的临时船；沉船留着（已计入击沉统计）
-            if not _is_ship_alive(player, ship):
-                continue
-            player.ships.remove(ship)
-            player.remaining_ships -= 1
-            removed += 1
-        if removed > 0:
-            changed[player_id] = removed
-            _emit_player_ships(room, player_id)
-    if not changed:
-        return False
-    _emit_ships_updated(room)
-    for pid, cnt in changed.items():
-        emit('lanyu_recalled', {
-            'player': pid,
-            'count': cnt,
-        }, room=room_id)
-        add_game_log(room,
-                     f'第{room.round}回合 · {_log_name(room, pid)} 的【滥竽充数】'
-                     f'临时战舰已收回({cnt}艘)',
-                     'magic', {'player': pid, 'card': '滥竽充数', 'count': cnt})
-    # 收回导致船数归零 → 判负（与攻击/魔法卡路径同口径）
-    for pid in changed:
-        player = room.players[pid]
-        if player.remaining_ships <= 0 and len(player.ships) > 0 \
-                and room.state != 'game_over':
-            opponent_id = _opponent_of(room, pid)
-            if opponent_id and opponent_id in room.players:
-                _finish_game_win(room, room_id, opponent_id, pid,
-                                 f'第{room.round}回合 · {_log_name(room, pid)} 的'
-                                 f'临时战舰已全部收回，无战舰可用')
-                emit('game_state', {
-                    'state': 'game_over',
-                    'winner': opponent_id,
-                    'reason': '滥竽充数临时战舰已收回，无战舰可用',
-                    **_rank_payload(room),
-                }, room=room_id)
-                return True
-    return False
-
+    """兼容入口：由应用层收回滥竽充数的临时战舰。"""
+    return _TEMPORARY_SHIP_EFFECTS.recall(room, room_id)
 
 def _clear_board_effects(room, player_ids, why: str) -> None:
     """**重摆棋盘**时终止"持续生效的范围类"效果（幂等）。
@@ -12152,322 +10047,37 @@ def _apply_ship_loss_linkage(room, caster_id, lost_player_id, count=1):
         _request_demon_contract_sacrifice(room, lost_player_id)
 
 
-# ===========================================================================
-# 选船类效果的**优先级仲裁**（2026-09-20）
-#
-# 背景（作者实测报的）：需要选船的多个效果同时发生时，在选船环节会卡住。
-# 最典型的是「恶魔契约生效中 + 自己在战斗阶段打出克苏鲁之眼」——
-# 第二次请求把第一次的覆盖掉，先那个玩家点船就报「当前没有待牺牲的战舰」。
-#
-# 修法两条：
-#   ① 待选从「单槽」改成**按玩家分组的队列**（`room.pending_ship_picks`），
-#      同一个人的多项按**优先级**依次交付，不同玩家互不影响；
-#   ② 低优先级的选船卡在有更高优先级待选时**拒绝出牌并给出明确文案**
-#      （而不是排队后延迟重放 —— 见计划 §3.4 的取舍）。
-#
-# ⚠️ **优先级只有这一份**（与 `_MULTITURN_EFFECTS` / `FLAGS_KEEP_ACROSS_TURN` 同一路数）。
-#    新增选船类效果时必须在这里登记，否则 `.get(reason, 0)` 会让它排到最后。
-# ===========================================================================
-SHIP_PICK_PRIORITY = {
-    # 持续场地效果，船数**已经变了**，不立刻结算会与后续船数变化打架
-    'demon_contract': 100,
-    # 卡牌自身结算的组成部分：不出结果这张牌等于没打完
-    'divine_decree': 80,
-    # 守株待兔：打出去就要选船设陷阱，不出结果牌等于没打完
-    'trap_setup': 75,
-    # 命运骰子摇到 6：让对方牺牲两艘。同样是**卡牌自身结算**的一部分，
-    # 略低于神之宣告（它是一次性随机效果，施法者自己的结算流程更短）
-    'dice_sacrifice': 70,
-    # 纯信息披露，延后无任何副作用
-    'kraken_eye': 60,
-    # 仁王之盾（至多 3 艘加盾）：自己的战术选择，最可延后
-    'shield_choice': 40,
-}
-
-# 「打这张卡会触发选船」的卡名 → 它对应哪个 reason（用于出牌闸门）。
-# ⚠️ 只有**会产生待选请求**的卡在这里；`恶魔契约` 是场地效果、不由玩家主动打出。
-_SHIP_PICK_CARDS = {
-    '克苏鲁之眼': 'kraken_eye',
-    '神之宣告': 'divine_decree',
-    '仁王之盾': 'shield_choice',
-    '命运骰子': 'dice_sacrifice',
-    '守株待兔': 'trap_setup',
-}
+# 选船策略在运行时适配；队列与投递顺序由应用层统一管理。
+def _choose_ai_ship(room, chooser_id, reason, alive):
+    if _is_master(room, chooser_id):
+        picked = ai_brain.resolve_ship_pick(
+            room, chooser_id, reason, alive, rng=_ai_runtime(room).rng)
+        if picked is not None:
+            return picked
+    return random.choice(alive)
 
 
-# ⚠️ 2026-09-21：`handle_confirm_sacrifice` 走到这里 = 玩家点船格触发牺牲。
-# 只有 reason **确实要牺牲船**的才允许走到 `_do_demon_contract_sacrifice`。
-# 不在这个白名单里的 reason（如 `shield_choice` 仁王之盾）必须显式拒绝并保留队列条目，
-# 让玩家走正确的提交入口（仁王之盾走 `confirm_magic_target` 的 `ship_indices`）。
-# 旧实现没有白名单 → 仁王之盾的护盾选择被 fall-through 走成"船牺牲"，
-# 正是作者报的"第一次点击直接让自己的船牺牲了 / 第二次弹当前没有待牺牲的船"。
-_SACRIFICE_REASONS = frozenset({
-    'demon_contract',     # 恶魔契约：场地效果
-    'divine_decree',      # 神之宣告：自身结算
-    'dice_sacrifice',     # 命运骰子 6 点：对方牺牲两艘
-    'trap_sacrifice',     # 守株待兔：踩陷阱者额外牺牲
-})
+_ship_selection = ShipSelection(
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    alive_ships=lambda player: _alive_ships(player),
+    is_ai_player=lambda room, pid: (
+        getattr(room, 'is_ai_room', False) and pid == _ai_player_id(room)),
+    choose_ai_ship=lambda *args: _choose_ai_ship(*args),
+)
+_my_ship_picks = _ship_selection.for_player
+_top_ship_pick = _ship_selection.top
+_emit_ship_pick_request = _ship_selection.emit_request
+_register_simple_ship_pick = _ship_selection.register_silent
+_dispatch_ship_pick = _ship_selection.dispatch
+_consume_ship_pick = _ship_selection.consume
+_clear_ship_picks = _ship_selection.clear
+_clear_ship_picks_by_reason = _ship_selection.cancel_reason
+_ship_pick_blocked_reason = _ship_selection.blocked_reason
+_my_pending_sacrifice_payload = _ship_selection.pending_payload
+_my_pending_sacrifice_ships = _ship_selection.pending_ships
+_request_ship_pick = _ship_selection.request
 
 
-def _ship_pick_priority(reason) -> int:
-    """取某类选船效果的优先级；未登记的一律 0（排最后，不报错）。"""
-    try:
-        return int(SHIP_PICK_PRIORITY.get(str(reason), 0))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _my_ship_picks(room, player_id) -> list:
-    """该玩家当前挂着的全部待选项（按优先级降序、同优先级按 seq 升序）。"""
-    picks = getattr(room, 'pending_ship_picks', None)
-    if not isinstance(picks, list) or not player_id:
-        return []
-    mine = [p for p in picks if isinstance(p, dict) and p.get('player') == player_id]
-    mine.sort(key=lambda p: (-_ship_pick_priority(p.get('reason')), int(p.get('seq') or 0)))
-    return mine
-
-
-def _top_ship_pick(room, player_id):
-    """该玩家**当前应该处理**的那一项（队列里优先级最高的）；没有则 None。"""
-    mine = _my_ship_picks(room, player_id)
-    return mine[0] if mine else None
-
-
-def _emit_ship_pick_request(room, entry) -> None:
-    """把某一项待选下发给对应玩家（内部用；失败绝不影响对局）。"""
-    try:
-        if entry.get('silent'):
-            return                          # 静默登记项：前端有自己的选区 UI
-        player = room.players.get(entry.get('player'))
-        if player is None or not getattr(player, 'sid', None):
-            return
-        alive = _alive_ships(player)
-        if not alive:
-            return
-        emit('sacrifice_request', {
-            'reason': entry.get('reason'),
-            'message': entry.get('message') or '请点选一艘自己的战舰',
-            # 只下发活船：前端直接拿这份来点亮可点格子（服务端即唯一真相）
-            'ships': [
-                {'positions': [{'x': p.x, 'y': p.y} for p in sh.positions]}
-                for sh in alive
-            ],
-        }, to=player.sid)
-    except Exception:
-        pass
-
-
-def _register_simple_ship_pick(room, player_id, reason, message) -> None:
-    """把一项选船待办**只登记进优先级队列**，**不发** `sacrifice_request`。
-
-    给"交互方式不同、但同样占用棋盘选区"的效果用（目前是仁王之盾：
-    它走 `select_magic_target` 的多选，前端自己有选区 UI，不需要我们去弹提示）。
-    登记的意义是让**优先级仲裁看得见它** —— 别的效果据此让路。
-    """
-    picks = getattr(room, 'pending_ship_picks', None)
-    if not isinstance(picks, list):
-        room.pending_ship_picks = picks = []
-    for p in picks:
-        if isinstance(p, dict) and p.get('player') == player_id \
-                and p.get('reason') == reason:
-            return                          # 已在队列里，不重复登记
-    room.ship_pick_seq = int(getattr(room, 'ship_pick_seq', 0) or 0) + 1
-    picks.append({
-        'player': player_id,
-        'reason': reason,
-        'message': message,
-        'priority': _ship_pick_priority(reason),
-        'seq': room.ship_pick_seq,
-        'silent': True,                     # 不发 sacrifice_request（前端自有点选 UI）
-    })
-
-
-def _dispatch_ship_pick(room, player_id) -> None:
-    """把该玩家队列里优先级最高的那一项（重新）下发给前端。
-
-    幂等：没有待选时不发任何事件（无事也发会让客户端白弹一次提示）。
-    """
-    entry = _top_ship_pick(room, player_id)
-    if entry is not None:
-        _emit_ship_pick_request(room, entry)
-
-
-def _consume_ship_pick(room, player_id, reason=None) -> bool:
-    """消费该玩家**栈顶**那一项，然后自动投递剩下的下一项。
-
-    `reason` 给出时只消费匹配的那一项（防止"点了一下却把别的效果也吃掉"）。
-    返回是否真的消费掉了。
-    """
-    picks = getattr(room, 'pending_ship_picks', None)
-    if not isinstance(picks, list):
-        return False
-    top = _top_ship_pick(room, player_id)
-    if top is None:
-        return False
-    if reason is not None and top.get('reason') != reason:
-        return False
-    try:
-        picks.remove(top)
-    except ValueError:
-        return False                       # 并发下已被消费，视作无事发生
-    _dispatch_ship_pick(room, player_id)   # 还有就接着弹下一项
-    return True
-
-
-def _clear_ship_picks(room, player_id=None) -> None:
-    """清空待选队列（`player_id` 为 None 时清全部）。终局 / 重摆棋盘时用。"""
-    picks = getattr(room, 'pending_ship_picks', None)
-    if not isinstance(picks, list):
-        return
-    if player_id is None:
-        room.pending_ship_picks = []
-    else:
-        room.pending_ship_picks = [
-            p for p in picks if not (isinstance(p, dict) and p.get('player') == player_id)]
-
-
-def _clear_ship_picks_by_reason(room, reason) -> list:
-    """撤掉所有 reason 匹配的待选条目；返回被撤掉的条目列表（含 player 字段）。
-
-    用于"某个效果整体作废"的场景：例如恶魔契约场地被顶替后，挂在队列里的
-    demon_contract 待选必须一起撤掉 —— 否则玩家会接到一个永远等不到的牺牲请求，
-    而它的优先级又最高（100），会把后面所有低优先级选船卡（如仁王之盾 40）堵死，
-    表现就是作者报的"场上根本没有恶魔契约在生效，但点船格还是被当成牺牲"。
-
-    撤掉后会向受影响的玩家 emit `sacrifice_cancelled`，让前端撤回 sacrifice 弹窗：
-    否则前端那个 `selectingOnBoard = true` 会一直挂着，把后续 createBoardAreaPicker
-    等点选器全部挡在外面（"请先完成恶魔契约的点选"那条提示会反复弹）。
-    """
-    if not reason:
-        return []
-    picks = getattr(room, 'pending_ship_picks', None)
-    if not isinstance(picks, list):
-        return []
-    removed = [p for p in picks
-               if isinstance(p, dict) and p.get('reason') == reason]
-    if not removed:
-        return []
-    room.pending_ship_picks = [
-        p for p in picks if not (isinstance(p, dict) and p.get('reason') == reason)]
-    # 通知受影响的玩家：那个等待你点船的效果已经没了，撤回弹窗
-    # （同一个玩家可能有多项被撤，去重后只发一次）
-    affected_sids = set()
-    for p in removed:
-        pid = p.get('player')
-        if pid and pid in room.players:
-            sid = room.players[pid].sid
-            if sid:
-                affected_sids.add(sid)
-    for sid in affected_sids:
-        try:
-            emit('sacrifice_cancelled', {'reason': reason}, to=sid)
-        except Exception:
-            pass
-    return removed
-
-
-def _ship_pick_blocked_reason(room, player_id, card_name) -> str:
-    """打这张卡是否被"更高优先级的待选"挡住。返回拒绝文案（空串 = 放行）。
-
-    ⚠️ **只拦选船类卡**：非选船卡（轰炸等）任何时候都放行 ——
-       闸门开大了会把正常出牌也堵死（`_action_wait_reason` 那种全局门禁不适合这里）。
-    """
-    reason_wanted = _SHIP_PICK_CARDS.get(str(card_name or ''))
-    if not reason_wanted:
-        return ''
-    top = _top_ship_pick(room, player_id)
-    if top is None:
-        return ''
-    if _ship_pick_priority(top.get('reason')) <= _ship_pick_priority(reason_wanted):
-        return ''
-    pending_name = _SHIP_PICK_LABELS.get(str(top.get('reason')), '一个待处理的选船效果')
-    return f'请先完成「{pending_name}」的选船，再使用这张卡'
-
-
-# 待选 reason → 中文名（只用于**给玩家看的提示**；判据一律用 reason 本身）
-_SHIP_PICK_LABELS = {
-    'demon_contract': '恶魔契约',
-    'divine_decree': '神之宣告',
-    'kraken_eye': '克苏鲁之眼',
-    'shield_choice': '仁王之盾',
-    'trap_setup': '守株待兔',
-    'trap_sacrifice': '守株待兔',
-    'dice_sacrifice': '命运骰子',
-}
-
-
-def _my_pending_sacrifice_payload(room, player_id):
-    """重连快照：该玩家当前该处理的那一项待选（没有/静默项 → None）。"""
-    top = _top_ship_pick(room, player_id)
-    if top is None or top.get('silent'):
-        return None
-    return {k: top.get(k) for k in ('reason', 'message', 'priority')}
-
-
-def _my_pending_sacrifice_ships(room, player_id, player):
-    """重连快照：该玩家可点选的**活船**名单（与下发的候选保持一致）。
-
-    只给活船 —— 沉船还留在 `player.ships` 里，混进去会让重连后又点到自己的沉船。
-    """
-    top = _top_ship_pick(room, player_id)
-    if top is None or top.get('silent'):
-        return []
-    return [{'positions': [{'x': q.x, 'y': q.y} for q in sh.positions]}
-            for sh in _alive_ships(player)]
-
-
-def _request_ship_pick(room, chooser_id, reason, message, allow_duplicate=False):
-    """让指定玩家在自己的棋盘上点选一艘【活着的】战舰（恶魔契约 / 神之宣告 / 克苏鲁之眼 共用）。
-
-    AI 不参与交互：直接返回替它选中的那艘；人类玩家则**入队**并交付优先级最高的那一项。
-    候选只给活船 —— 沉船还留在 player.ships 里，混进去会让玩家（或 AI）
-    拿一艘早就沉了的船抵账，等于零代价。
-
-    ⚠️ 2026-09-20 改为**队列**（旧实现是单槽覆写，第二个请求会把第一个挤掉）。
-    ⚠️ `allow_duplicate`：默认同玩家+同 reason 去重（同一张卡不会连开两个一样的请求）；
-       命运骰子摇到6需要对方连点两艘，传 True 跳过去重。
-    """
-    chooser = room.players.get(chooser_id) if chooser_id else None
-    if not chooser:
-        return None
-
-    alive = _alive_ships(chooser)
-    if not alive:
-        return None
-
-    if getattr(room, 'is_ai_room', False) and chooser_id == _ai_player_id(room):
-        # 大师难度：交给决策层按目的挑（要被牺牲/被窥探时挑信息价值最低的那艘），
-        # 而不是随机送一条船。决策层拿不出结果就退回原来的随机，绝不返回 None
-        # —— 返回 None 会让这个待选没人消费，回合就卡死了。
-        if _is_master(room, chooser_id):
-            picked = ai_brain.resolve_ship_pick(room, chooser_id, reason, alive)
-            if picked is not None:
-                return picked
-        return random.choice(alive)
-
-    picks = getattr(room, 'pending_ship_picks', None)
-    if not isinstance(picks, list):
-        room.pending_ship_picks = picks = []
-    # 同一玩家、同一 reason **不重复入队**（同一张卡不会连开两个一样的请求；
-    # 真出现也只需要一次点击，重复项会让玩家被要求连点两下）
-    # 例外：allow_duplicate=True 时跳过（命运骰子摇到6要让对方连点两艘）
-    if not allow_duplicate:
-        for p in picks:
-            if isinstance(p, dict) and p.get('player') == chooser_id \
-                    and p.get('reason') == reason:
-                _dispatch_ship_pick(room, chooser_id)
-                return None
-
-    room.ship_pick_seq = int(getattr(room, 'ship_pick_seq', 0) or 0) + 1
-    picks.append({
-        'player': chooser_id,
-        'reason': reason,
-        'message': message,
-        'priority': _ship_pick_priority(reason),
-        'seq': room.ship_pick_seq,
-    })
-    _dispatch_ship_pick(room, chooser_id)
-    return None
 
 
 def _request_demon_contract_sacrifice(room, lost_player_id):
@@ -12506,7 +10116,7 @@ def _do_demon_contract_sacrifice(room, player_id, ship, reason='demon_contract')
     #      登记晚一步这一帧就只记到"船没了"，回放里那格照样凭空消失（作者实报）。
     #   ⚠️ 数据来源就是上面这行 `positions`，**绝不去 diff 快照猜**（那会把
     #      滥竽充数收回的临时船一起判成沉没 —— 卡面明写"不会显示沉没"）。
-    replay.note_ship_lost(room, player_id, positions)
+    replay.note_ship_lost(capture_replay_observation(room), player_id, positions)
 
     add_game_log(room,
                  f'第{room.round}回合 · {_log_name(room, player_id)} 因{reason_text}牺牲一艘战舰',
@@ -12524,180 +10134,27 @@ def _do_demon_contract_sacrifice(room, player_id, ship, reason='demon_contract')
     _emit_ships_updated(room)
 
 
-# ============ 判定魔法卡：命运骰子 ============
-# 各点数对应的播报文案（前端动画结束后的"会发生什么效果"也用这份）
-DICE_EFFECT_TEXT = {
-    1: '复活对方的一艘战舰',
-    2: '对方抽一张牌',
-    3: '双方各弃一张手牌',
-    4: '自己抽两张牌',
-    5: '复活自己的至多两艘战舰',
-    6: '对手牺牲两艘战舰',
-}
+# 骰子结果与弃牌待办由应用层管理，运行时依赖延迟解析。
+_dice_effects = DiceEffects(
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    add_game_log=lambda *args, **kwargs: add_game_log(*args, **kwargs),
+    log_name=lambda *args: _log_name(*args),
+    roll=lambda *args: random.randint(*args),
+    revive=lambda *args, **kwargs: _revive_sunken_ships(*args, **kwargs),
+    alive_ships=lambda player: _alive_ships(player),
+    request_ship_pick=lambda *args, **kwargs: _request_ship_pick(*args, **kwargs),
+    sacrifice=lambda *args, **kwargs: _do_demon_contract_sacrifice(*args, **kwargs),
+    ai_player_id=lambda room: _ai_player_id(room),
+)
+_apply_dice_of_fate = _dice_effects.apply
 
-
-def _apply_dice_of_fate(room, caster_id, result):
-    """命运骰子：摇 1-6，按点数结算不同效果。
-
-    1 复活对方一艘 / 2 对方抽一张 / 3 双方各弃一张 /
-    4 自己抽两张 / 5 复活自己至多两艘 / 6 对方牺牲两艘。
-
-    3 与 6 需要"玩家点选"，登记房间级待办：
-      · 弃牌（3）：room.pending_dice_discard = {pid: False}
-        + emit 'dice_discard_request' 给每位需弃牌的玩家；
-        玩家通过 'dice_discard_choose' 事件回传选择。
-      · 牺牲两艘（6）：复用 _request_ship_pick，reason='dice_sacrifice'，
-        入队两次；人类走 sacrifice_request 流程，AI 由 _request_ship_pick 自动选。
-    """
-    opponent_id = next(p for p in room.players if p != caster_id)
-    caster = room.players[caster_id]
-    opponent = room.players[opponent_id]
-
-    roll = random.randint(1, 6)
-    effect_text = DICE_EFFECT_TEXT.get(roll, '')
-
-    # 广播骰子动画 + 结果给双方（动画在前，结果文本一并下发，前端动画结束再显示文本）
-    emit('dice_rolled', {
-        'roll': roll,
-        'caster': caster_id,
-        'effect_text': effect_text,
-    }, room=room.id)
-
-    add_game_log(room,
-                 f'第{room.round}回合 · {_log_name(room, caster_id)} 使用【命运骰子】摇出 {roll} 点：{effect_text}',
-                 'magic', {'caster': caster_id, 'roll': roll, 'card': '命运骰子'})
-
-    if roll == 1:
-        # 复活对方一艘（原地复活，无副作用）。对方没有沉船则不复活。
-        revived = 0
-        if opponent.sunken_ships:
-            revived = _revive_sunken_ships(room, opponent, 1, reveal_to=caster_id)
-        result.message = '摇出1点：' + effect_text + (
-            '，对方一艘战舰复活' if revived else '，对方没有沉船，未复活')
-    elif roll == 2:
-        drawn = room.draw_card(opponent_id)
-        result.message = '摇出2点：' + effect_text + (
-            '，对方抽了一张牌' if drawn else '，但对方未能抽牌（牌堆空或被禁止抽卡）')
-    elif roll == 3:
-        # 双方各弃一张：无牌者跳过；AI 自动弃第一张；人类登记待办
-        _start_dice_discard(room, caster_id, opponent_id)
-        result.message = '摇出3点：' + effect_text + '，等待双方选择弃牌'
-    elif roll == 4:
-        drawn = 0
-        for _ in range(2):
-            if room.draw_card(caster_id) is not None:
-                drawn += 1
-        result.message = f'摇出4点：{effect_text}（实际抽到{drawn}张）'
-    elif roll == 5:
-        count = min(2, len(caster.sunken_ships))
-        revived = _revive_sunken_ships(room, caster, count, reveal_to=opponent_id) if count > 0 else 0
-        result.message = '摇出5点：' + effect_text + (
-            f'，自己复活了{revived}艘战舰' if revived else '，自己没有沉船，未复活')
-    elif roll == 6:
-        # 对方牺牲两艘：复用 ship_pick 队列，reason='dice_sacrifice'。
-        # 人类入队两次（allow_duplicate=True 跳过同 reason 去重，否则第二次被吞）；
-        # AI 由 _request_ship_pick 自动选并立即执行。
-        alive = _alive_ships(opponent)
-        need = min(2, len(alive))
-        sacrificed = 0
-        for _ in range(need):
-            picked = _request_ship_pick(room, opponent_id, 'dice_sacrifice',
-                                        '命运骰子：请点选一艘战舰牺牲',
-                                        allow_duplicate=True)
-            if picked is not None:
-                _do_demon_contract_sacrifice(room, opponent_id, picked, 'dice_sacrifice')
-                sacrificed += 1
-        if need == 0:
-            result.message = '摇出6点：' + effect_text + '，但对方没有可牺牲的战舰'
-        elif sacrificed == need:
-            result.message = f'摇出6点：{effect_text}（对方已牺牲{sacrificed}艘）'
-        else:
-            result.message = '摇出6点：' + effect_text + '，等待对方点选牺牲的战舰'
-
-
-def _start_dice_discard(room, caster_id, opponent_id, only_player=None,
-                        card_name='命运骰子'):
-    """命运骰子摇到3：让双方各弃一张手牌。
-
-    · 无手牌的玩家直接跳过；
-    · AI 自动弃第一张；
-    · 人类登记 room.pending_dice_discard[pid] = False 并 emit 'dice_discard_request'。
-
-    ★ 2026-09-24 两条参数（都是为 `无忧梦呓` 加的，**不改既有语义**）：
-
-    * `only_player` —— 只让**这一位**弃牌。`无忧梦呓` 的「对方必须弃置一张手牌」
-      只针对对方一个人，走的是同一条链路（作者裁定：复用，不另起一套）。
-      传 `None` = 原有行为（双方各弃一张），命运骰子的调用点未受影响。
-    * `card_name` —— 弹窗文案与日志里的来源卡名。默认仍是 `命运骰子`
-      → 既有文案逐字不变。
-
-    ⚠️ **不再无条件 `room.pending_dice_discard = {}`**（这是一处真 bug 的修复）：
-       那个字段是**房间级单槽**，旧写法会把进行中的待办静默抹掉。
-       真会发生：命运骰子摇到 3 时**没轮到的那一方**可以带着未完成的待办
-       把回合交出去（`_dice_discard_wait_reason` 只冻他自己），
-       随后 `无忧梦呓` 在对方回合开始时再开一次 —— 两条待办叠在同一时刻，
-       旧写法会让先那条无声消失（正是作者对 `_start_dice_discard` 的预警）。
-       现在改成**并入**：只写自己要写的那几个键，别人的原样留着。
-    """
-    pending = getattr(room, 'pending_dice_discard', None)
-    if not isinstance(pending, dict):
-        pending = {}
-        room.pending_dice_discard = pending
-    labels = getattr(room, 'pending_dice_discard_label', None)
-    if not isinstance(labels, dict):
-        labels = {}
-        room.pending_dice_discard_label = labels
-
-    targets = (only_player,) if only_player else (caster_id, opponent_id)
-    ai_id = _ai_player_id(room) if getattr(room, 'is_ai_room', False) else None
-
-    for pid in targets:
-        player = room.players[pid]
-        # 这位玩家已经有一张没弃完：不重复开窗、也不改写那条待办的来源名
-        # （他眼前开着的弹窗写着第一次那张卡，改写会让"点了之后日志说的是另一张卡"）。
-        # 代价是两次弃牌义务合并成"弃一张"——既有链路的已知收窄，
-        # 单槽布尔存不下计数，要修得改 `pending_dice_discard` 的值类型（会打穿 5 处下游）。
-        if pending.get(pid) is False:
-            continue
-        if not player.magic_hand:
-            # 无牌可弃：直接标记完成，不弹窗
-            pending[pid] = True
-            labels[pid] = card_name
-            continue
-        if pid == ai_id:
-            # AI 自动弃第一张（与教皇旨意弃卡同一口径：随机选没意义，取首张）
-            discarded = player.magic_hand.pop(0)
-            room.magic_discard.append(discarded)
-            emit('hand_updated', {'hand': player.magic_hand}, to=player.sid)
-            add_game_log(room,
-                         f'第{room.round}回合 · {_log_name(room, pid)} 因{card_name}弃置「{discarded.name}」',
-                         'magic', {'player': pid, 'card': discarded.name,
-                                   'reason': 'dice_discard', 'source': card_name})
-            pending[pid] = True
-            labels[pid] = card_name
-        else:
-            pending[pid] = False
-            labels[pid] = card_name
-            emit('dice_discard_request', {
-                'message': f'{card_name}：请选择一张手牌弃置',
-                'reason': 'dice_discard',
-                'card': card_name,
-            }, to=player.sid)
-
-    # 双方都无需弃（都没手牌 / 都是 AI）→ 立即收尾，别留下空待办挂着
-    _check_dice_discard_complete(room)
-
-
-def _check_dice_discard_complete(room):
-    """双方都完成弃牌后清掉待办并广播结束。"""
-    pending = getattr(room, 'pending_dice_discard', None)
-    if not isinstance(pending, dict) or not pending:
-        return
-    if all(pending.values()):
-        room.pending_dice_discard = {}
-        # 待办没了，来源名跟着清 —— 两张表同期"非空"（键集合同步由用例钉住）
-        room.pending_dice_discard_label = {}
-        emit('dice_discard_complete', {}, room=room.id)
+_JUDGEMENT_EFFECTS = JudgementEffects(
+    opponent_of=_opponent_of,
+    log_name=_log_name,
+    apply_dice=_apply_dice_of_fate,
+)
+_start_dice_discard = _dice_effects.start_discard
+_check_dice_discard_complete = _dice_effects.complete_discard
 
 
 @socketio.on('dice_discard_choose')
@@ -12717,40 +10174,7 @@ def handle_dice_discard_choose(data):
     if not room or player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
 
-    pending = getattr(room, 'pending_dice_discard', None)
-    if not isinstance(pending, dict) or pending.get(player_id) is not False:
-        return {'status': 'error', 'message': '当前没有等待你弃牌的魔法效果'}
-
-    labels = getattr(room, 'pending_dice_discard_label', None)
-    source = '命运骰子'
-    if isinstance(labels, dict):
-        source = labels.get(player_id) or source
-
-    player = room.players[player_id]
-    if not player.magic_hand:
-        # 没牌可弃：直接完成
-        room.pending_dice_discard[player_id] = True
-        _check_dice_discard_complete(room)
-        return {'status': 'success', 'message': '没有手牌可弃，已跳过'}
-
-    try:
-        idx = int(card_index)
-    except (TypeError, ValueError):
-        return {'status': 'error', 'message': '无效的卡牌位置'}
-    if not (0 <= idx < len(player.magic_hand)):
-        return {'status': 'error', 'message': '无效的卡牌位置'}
-
-    discarded = player.magic_hand.pop(idx)
-    room.magic_discard.append(discarded)
-    emit('hand_updated', {'hand': player.magic_hand}, to=player.sid)
-    add_game_log(room,
-                 f'第{room.round}回合 · {_log_name(room, player_id)} 因{source}弃置「{discarded.name}」',
-                 'magic', {'player': player_id, 'card': discarded.name,
-                           'reason': 'dice_discard', 'source': source})
-
-    room.pending_dice_discard[player_id] = True
-    _check_dice_discard_complete(room)
-    return {'status': 'success', 'message': f'已弃置「{discarded.name}」'}
+    return _dice_effects.choose_discard(room, player_id, card_index)
 
 
 # ============ 判定魔法卡：无忧梦呓 ============
@@ -13045,63 +10469,18 @@ def _own_occupied_cells(player, ignore_sunken=False):
     return cells
 
 
+_PLACEMENT_RULES = PlacementRules(
+    opponent_of=_opponent_of,
+    cell_in_shenwei_hole=_cell_in_shenwei_hole,
+    own_occupied_cells=_own_occupied_cells,
+    shenwei_holes=_shenwei_holes,
+)
+
 def _placement_error(room, player_id, x, y, allow_cells=None, ignore_sunken=False):
-    """返回该格子不可放置的原因；None 表示可放置。
-    规则：棋盘内、未被对方打过、不在神威扣洞内、未被己方船占用。
-
-    allow_cells：一组 (x, y)，这些格子即使"已被对方打过"也放行。
-    神机妙算预言成功后的"重新部署"要用它 —— 卡面写的是
-    「在原位置**或者**对方没有打过的位置重新部署」，而原位置必然是被打过的，
-    不加这个豁免就会把"回原位"这条路整个堵死。
-
-    ignore_sunken：本项目的「击沉」只减 remaining_ships、**不会把船移出 ships**
-    （沉船留在列表里供复活回收）。所以占位检查会把"沉船的原位置"也算成已占用，
-    导致预言成功后连原位都放不回去。为 True 时跳过已沉的船。
-    """
-    if not (0 <= x <= 5 and 0 <= y <= 5):
-        return '坐标超出棋盘范围'
-    allow = allow_cells or set()
-    opponent_id = _opponent_of(room, player_id)
-    if opponent_id:
-        opp_attacks = [(a.x, a.y) for a in room.players[opponent_id].attacks]
-        if (x, y) in opp_attacks and (x, y) not in allow:
-            return '该位置已被对方攻击过，不能放置'
-    if _cell_in_shenwei_hole(room, player_id, x, y):
-        return '该区域已被神威！扣掉，不能放置'
-    owner = room.players[player_id]
-    # 占位判定与 _placement_blocked_cells 共用一份口径（两份独立实现漂移过一次：
-    # 一处把沉船算占用、一处不算，前端就画出"看着能点、点了报错"的格子）。
-    if (x, y) in _own_occupied_cells(owner, ignore_sunken=ignore_sunken):
-        return '该位置已被己方战舰占用'
-    return None
-
+    return _PLACEMENT_RULES.error(room, player_id, x, y, allow_cells, ignore_sunken)
 
 def _placement_blocked_cells(room, player_id, ignore_sunken=False):
-    """列出该玩家棋盘上不可放置的格子（已被攻击 / 己方占用 / 神威扣洞）。
-
-    ⚠️ 必须与 _placement_error 的口径一致 —— 两套独立实现已经漂移过一次：
-    这里把【所有】己方船（含沉船）的位置都算作占用，而 _placement_error 在
-    ignore_sunken=True 时会跳过沉船，于是神机妙算重新部署时空格被误画成灰色，
-    玩家以为"只能摆在原本沉船的地方"。
-    2026-09-17 起两边共用 `_own_occupied_cells`，不再各写一份（另：沉船若已被
-    轰炸/硫磺火焰移出 ships，只看 ships 会漏掉它的格子）。
-
-    ignore_sunken：跳过已沉的船（它们的格子其实是空的）。
-    """
-    blocked = set()
-    opponent_id = _opponent_of(room, player_id)
-    if opponent_id:
-        for a in room.players[opponent_id].attacks:
-            blocked.add((a.x, a.y))
-    owner = room.players[player_id]
-    blocked |= _own_occupied_cells(owner, ignore_sunken=ignore_sunken)
-    for h in _shenwei_holes(room):
-        if h['player'] == player_id:
-            for x in range(h['x1'], h['x2'] + 1):
-                for y in range(h['y1'], h['y2'] + 1):
-                    blocked.add((x, y))
-    return [{'x': x, 'y': y} for (x, y) in sorted(blocked)]
-
+    return _PLACEMENT_RULES.blocked_cells(room, player_id, ignore_sunken)
 
 def _cell_xy(cell):
     """把格子的两种形态统一成 (x, y)：`[x, y]` / `(x, y)` / `{'x':..,'y':..}`。
@@ -13123,158 +10502,37 @@ def _cell_xy(cell):
 
 
 def _emit_placement_request(room, player_id):
-    p = room.magic_temp_data.get('pending_placement')
-    if not p:
-        return
-    payload = {
-        'kind': p['kind'],
-        'remaining': p['remaining'],
-        'total': p['total'],
-        'placed': p['placed'],
-        'blocked': _placement_blocked_cells(room, player_id),
-    }
-    if p['kind'] == 'last_stand':
-        # 只允许放在原本有战舰的格子：交给前端做高亮/禁点
-        payload['allowed'] = room.game_effects.get('last_stand_cells') or []
-        # ⚠️ 白名单与黑名单绝不能互相矛盾（2026-09-17 实测回归，作者报「绝处逢生
-        # 生效后没有可用位置供玩家选择」）：
-        #   绝处逢生把【全部】战舰都牺牲了 —— 每艘都 `ships.remove()` 并记进
-        #   `sunken_ships`。而 blocked 现在按「ships ∪ sunken_ships」算己方占位
-        #   （那是为死者苏生/增援加的"刚沉掉那格不能摆"口径）→ 这 6 个候选格
-        #   全被判成"已占用"。前端是 `if (blocked.has(key) || (allowed && !allowed.has(key)))`
-        #   —— blocked 优先，于是六个格子全灰、一个都点不了。
-        # 绝处逢生的合法性由服务端按 allowed 单独校验（见 handle_confirm_reinforcement），
-        # 所以这里只要把候选格从 blocked 里剔除，就能恢复"只在这几格里选"的原意。
-        allow = {_cell_xy(a) for a in payload['allowed']}
-        allow.discard(None)
-        payload['blocked'] = [b for b in payload['blocked']
-                              if (b['x'], b['y']) not in allow]
-    elif p['kind'] == 'shenji_redeploy':
-        # 神机妙算：原位置（即便被对方打过）+ 对方未打过的空格都可选。
-        # ⚠️ blocked 必须按"沉船不占位"的口径重算，不能沿用默认那份：
-        # 默认口径把【所有】己方船（含沉船）都算作占用，于是旧沉船的位置
-        # 也会被画成灰色 —— 实测玩家以为"只能摆在原本沉船的地方"。
-        #
-        # ⚠️ 这里【不能】下发 allowed：allowed 在前端是**白名单**语义
-        # （game.js: `if (blocked.has(key) || (allowed && !allowed.has(key)))`
-        # 直接禁点且不绑 click），那是绝处逢生"只准放在原本有船的格子"用的。
-        # 神机妙算下发它 = 除了原位置全部点不动，玩家报的"只能摆在原位置/
-        # 被打过的格子、放不到没打过的空格"就是这么来的。
-        # 原位置的处理在下面：把它们从 blocked 里剔除即可，点得动。
-        allow = {(int(a[0]), int(a[1]))
-                 for a in (room.game_effects.get('shenji_redeploy_cells') or [])}
-        payload['blocked'] = _placement_blocked_cells(room, player_id, ignore_sunken=True)
-        payload['blocked'] = [b for b in payload['blocked']
-                              if (b['x'], b['y']) not in allow]
-        payload['message'] = '预言成功：请选择这艘战舰重新部署的位置（原位置或对方未打过的格子）'
-    elif p['kind'] == 'lanyu':
-        # 滥竽充数：默认占位口径即可（未被对方打过的空格）。
-        # 提示玩家这些船大回合结束时会被收回，避免以为永久保留。
-        payload['message'] = '滥竽充数：请选择补充战舰的部署位置（未被攻击过的空格，大回合结束时收回）'
-    emit('placement_request', payload, to=room.players[player_id].sid)
+    return _PLACEMENT_PROJECTION.emit_request(room, player_id)
 
+
+_PLACEMENT_PROJECTION = PlacementProjection(
+    blocked_cells=_placement_blocked_cells,
+    cell_xy=_cell_xy,
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+)
+
+_PLACEMENT_FLOW = PlacementFlow(emit_request=_emit_placement_request)
 
 def _start_placement(room, caster_id, kind, count):
-    """开启放置流程：kind='reinforce' 增援 / 'revive' 复活 / 'shenji_redeploy' 神机妙算重新部署。"""
-    room.magic_temp_data['pending_placement'] = {
-        'caster': caster_id, 'kind': kind,
-        'remaining': count, 'total': count, 'placed': 0,
-    }
-    _emit_placement_request(room, caster_id)
-
+    return _PLACEMENT_FLOW.start(room, caster_id, kind, count)
 
 def _begin_shenji_redeploy(room, player_id, count, already_sunken_ids=None):
-    """神机妙算预言成功：让玩家逐艘重新部署"原本会减少的那些船"。
-
-    卡面：「那些原本会减少的船不会减少并在【原位置或者对方没有打过的位置重新部署】。」
-    —— "重新部署"是玩家的主动选择，不能替他决定。
-
-    ⚠️ 只算【本次判定所属的那个大回合内】沉的船（作者确认）。
-    上一回合就沉掉的船不属于"原本会减少的船"，不该被复活。
-
-    用【宣言时已沉船的 id 快照】做差集来判定"哪些是本回合新沉的" ——
-    不能按 sunken_ships 的排列位置切分：那个列表的顺序并不保证等于沉没先后
-    （复活用 pop() 从末尾取、旧船也可能被重新沉回去），按位置会取错船。
-    """
-    player = room.players.get(player_id)
-    if player is None:
-        return 0
-    sunken = list(getattr(player, 'sunken_ships', []) or [])
-    if already_sunken_ids is None:
-        # 兼容旧快照（没有 sunken_ids 字段）：退回"按数量取最新 N 艘"。
-        # 那个假设不总是成立，但总比什么都不做好。
-        fresh = sunken[-int(count):] if count else []
-    else:
-        before = set(already_sunken_ids)
-        fresh = [s for s in sunken if id(s) not in before]
-    n = min(int(count), len(fresh))
-    if n <= 0:
-        return 0
-    chosen = fresh[:n]
-    # 把候选船的原位置记下来，供放置校验豁免
-    original_cells = []
-    for ship in chosen:
-        for pos in ship.positions:
-            original_cells.append([pos.x, pos.y])
-    # 登记本次要重新部署的船，放置时按顺序取
-    room.game_effects['shenji_redeploy_cells'] = original_cells
-    room.game_effects['shenji_redeploy_ships'] = chosen
-    _start_placement(room, player_id, 'shenji_redeploy', n)
-    return n
+    return _PLACEMENT_FLOW.begin_shenji_redeploy(
+        room, player_id, count, already_sunken_ids)
 
 
 def _finish_placement(room, player_id, kind):
-    pending = room.magic_temp_data.get('pending_placement') or {}
-    placed = int(pending.get('placed') or 0)
-    room.magic_temp_data.pop('pending_placement', None)
-    if kind == 'last_stand':
-        room.game_effects.pop('last_stand_cells', None)
-        room.game_effects.pop('last_stand_owner', None)
-    if kind == 'shenji_redeploy':
-        room.game_effects.pop('shenji_redeploy_cells', None)
-        room.game_effects.pop('shenji_redeploy_ships', None)
-    emit('placement_done', {'kind': kind}, to=room.players[player_id].sid)
+    return _PLACEMENT_COMPLETION.finish(room, player_id, kind)
 
-    if kind == 'last_stand':
-        # 绝处逢生：场上只剩这唯一一艘船，攻击次数必须【重算为 1】，
-        # 不能按增量 +1 —— 那会保留发动前那一堆旧额度（实测：发动前 5 次，
-        # 放完船变 6 次，与"只剩一艘船"完全脱节）。
-        # 跨回合累积的百亿补贴加成属于持卡者本人，按既定规则保留叠加。
-        _apply_last_stand_attacks(room, player_id)
-    else:
-        # 增援/复活改变了自己的船数，攻击次数要按【增量】跟着变：
-        # 例：绝境中增援一艘船 = 多一条命，同时本回合还多一次攻击。
-        # 注意不能用 _recalc_attacker_attacks 从头算——那会把已经用掉的次数退还。
-        _sync_attacks_after_ship_change(room, player_id, placed)
 
+_SHIP_ATTACK_SYNC = ShipAttackSync(
+    attacks_forced_zero=_attacks_forced_zero,
+    field_magic_name=field_magic_name,
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+)
 
 def _sync_attacks_after_ship_change(room, player_id, ships_added=1):
-    """己方船数变化后按增量同步攻击次数（仅当当前攻击者是本人时）。
-
-    伊甸园（次数 = 6 - 船数）与教皇旨意（次数恒 0，靠弃卡攻击）的换算
-    规则不同，这里按每艘船的增减量换算，保留已消耗的次数。
-    """
-    if room.state != 'attacking':
-        return
-    if room.current_attacker != player_id:
-        return
-    if _attacks_forced_zero(room):
-        return          # 败者食尘生效的大回合：次数恒为 0，加不上去
-    if ships_added <= 0:
-        return
-    field = field_magic_name(room)
-    if field == '教皇旨意':
-        per_ship = 0
-    elif field == '伊甸园':
-        per_ship = -1
-    else:
-        per_ship = 1
-    if per_ship:
-        room.attacks_remaining = max(0, room.attacks_remaining + per_ship * ships_added)
-    emit('attacks_updated', {
-        'current_attacker': room.current_attacker,
-        'attacks_remaining': room.attacks_remaining
-    }, room=room.id)
+    return _SHIP_ATTACK_SYNC.sync(room, player_id, ships_added)
 
 
 def _apply_last_stand_attacks(room, player_id):
@@ -13315,6 +10573,12 @@ def _apply_last_stand_attacks(room, player_id):
     }, room=room.id)
 
 
+_PLACEMENT_COMPLETION = PlacementCompletion(
+    apply_last_stand_attacks=_apply_last_stand_attacks,
+    sync_attacks=_sync_attacks_after_ship_change,
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+)
+
 def _tear_down_field_magic(room, caster_id):
     """拆除当前生效的场地魔法（失灵！/ 加百列之光 共用）。
 
@@ -13341,6 +10605,73 @@ def _tear_down_field_magic(room, caster_id):
     return field
 
 
+_TACTICAL_EFFECTS = TacticalEffects(
+    opponent_of=_opponent_of, alive_ships=_alive_ships,
+    request_ship_pick=_request_ship_pick, emit_player_ships=_emit_player_ships,
+    emit=lambda *args, **kwargs: emit(*args, **kwargs), add_game_log=add_game_log,
+    log_name=_log_name, open_prediction=_open_shenji_declare_window,
+    apply_prediction=_apply_shenji_prediction,
+)
+
+_FIELD_EFFECTS = FieldEffects(
+    place_field_magic=_place_field_magic, recalc_attacks=_recalc_attacker_attacks,
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+)
+
+_SPECIAL_EFFECTS = SpecialCardEffects(
+    opponent_of=_opponent_of,
+    add_shenwei_hole=_add_shenwei_hole,
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    replay_note_ship_lost=replay.note_ship_lost,
+    capture_replay_observation=capture_replay_observation,
+    mark_ship_sunken=_mark_ship_sunken,
+    apply_ship_loss_linkage=_apply_ship_loss_linkage,
+    finish_game=_finish_game,
+    replay_refresh_ships=replay.refresh_ships,
+    find_ship_at=_find_ship_at,
+    alive_ships=_alive_ships,
+    shuffle=lambda pool: random.shuffle(pool),
+    request_ship_pick=_request_ship_pick,
+    sacrifice_ship=_do_demon_contract_sacrifice,
+    revive_sunken_ships=_revive_sunken_ships,
+    emit_ships_updated=_emit_ships_updated,
+    emit_player_ships=_emit_player_ships,
+)
+
+_STEAL_EFFECTS = StealEffects()
+
+_TEMPORARY_SHIP_EFFECTS = TemporaryShipEffects(
+    requirement_reason=_lanyu_requirement_reason,
+    blocked_cells=_placement_blocked_cells,
+    start_placement=_start_placement,
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    add_game_log=add_game_log,
+    log_name=_log_name,
+    is_ship_alive=_is_ship_alive,
+    emit_player_ships=_emit_player_ships,
+    emit_ships_updated=_emit_ships_updated,
+    opponent_of=_opponent_of,
+    finish_game_win=_finish_game_win,
+    rank_payload=_rank_payload,
+)
+
+# 兼容旧的直接调用入口；实际效果全部由 application.card_special_effects
+# 结算，避免业务代码和测试夹具继续依赖 server.py 内的实现细节。
+def _apply_shenwei_card(room, caster_id, card, target_data, result):
+    return _SPECIAL_EFFECTS.apply_shenwei(
+        room, caster_id, card, target_data, result)
+
+
+def _apply_divine_decree_card(room, caster_id, card, target_data, result):
+    return _SPECIAL_EFFECTS.apply_divine_decree(
+        room, caster_id, card, target_data, result)
+
+
+def _apply_healing_card(room, caster_id, card, target_data, result):
+    return _SPECIAL_EFFECTS.apply_healing(
+        room, caster_id, card, target_data, result)
+
+
 def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_data):
     result = ChainResult(card=card, caster=caster_id, success=True, message='')
     opponent_id = next(p for p in room.players if p != caster_id)
@@ -13350,1791 +10681,125 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
 
 
     # ==== 速阶1 魔法卡 ====
-    if card.name == '余音绕梁':
-        # 卡面：只能在自己的准备阶段使用；接下来的「自己的攻击阶段」与
-        # 「下一个回合自己的攻击阶段」造成伤害即强制击杀。
-        # 因此 forced_kill 是【剩余攻击阶段数】，不是击杀次数：
-        # 在 handle_attack 里只判断 >0，进入结束阶段时消耗一次。
-        if room.current_phase != 'preparation' or room.current_attacker != caster_id:
-            result['success'] = False
-            result['message'] = '只能在自己的准备阶段使用'
-            return result
-        room.players[caster_id].effect_flags.forced_kill = 2
-        result.message = '接下来两个攻击阶段（本回合与下一回合）将造成强制击杀'
-    elif card.name == '桃园结义':
-        # 无中生有生效期间双方都不能以任何方式获得魔法卡（原实现直接 pop 牌堆绕过）
-        if caster.effect_flags.no_draw or room.players[opponent_id].effect_flags.no_draw:
-            result['success'] = False
-            result['message'] = '无中生有生效期间，双方无法获得魔法卡'
-            return result
-        # 从牌堆抽取n张牌(n为自己的战舰数)，自己选1张，再给对方选1张，已修复
-        n = caster.remaining_ships
-        drawn_cards = []
-
-        # 只抽取牌堆中实际存在的牌
-        for i in range(min(n, len(room.magic_deck))):
-            drawn_cards.append(room.magic_deck.pop(0))
-
-        if drawn_cards:
-            # 记录待选择的牌
-            room.magic_temp_data = {
-                'type': 'taoyuan_choice',
-                'caster': caster_id,
-                'opponent': opponent_id,
-                'cards': drawn_cards,
-                'player_deck_backup': []  # 备份，用于记录放回的牌
-            }
-            result.message = f'抽了{len(drawn_cards)}张牌，请选择'
-            result.temp_data_id = 'taoyuan_choice'
-            result['cards'] = [{'name': c.name, 'speed': c.speed, 'type': c.type, 'description': c.description} for c in drawn_cards]
-            # 通知对手等待
-            emit('taoyuan_waiting', {
-                'message': '对方正在结算桃园结义效果 请等待'
-            }, to=room.players[opponent_id].sid)
-        else:
-            result.success = False
-            result.message = '无法抽取卡牌'
-
-    elif card.name == '无中生有':
-        # 抽两张牌，本回合双方无法获得魔法卡。
-        #
-        # ⚠️ draw_card 可能返回 None（牌堆已空 / 已被 no_draw 挡下 / 摸到重名牌
-        # 自动进弃牌堆），旧实现无论实际抽到几张都报"抽了2张牌"——
-        # 实测玩家因此以为卡坏了（"手牌只有无中生有时只摸上来一张"，
-        # 真实原因是全局共享的 43 张牌堆快摸完了）。
-        # 这里按实际抽到的张数给提示，让玩家能区分"规则限制"和"牌堆空了"。
-        drawn = 0
-        for _ in range(2):
-            if room.draw_card(caster_id) is not None:
-                drawn += 1
-        # 设置禁止抽卡标记
-        room.players[caster_id].effect_flags.no_draw = True
-        room.players[opponent_id].effect_flags.no_draw = True
-        if drawn == 2:
-            result.message = '抽了2张牌，本回合双方无法获得魔法卡'
-        elif drawn == 1:
-            result.message = '只抽到1张牌（牌堆不足），本回合双方无法获得魔法卡'
-        else:
-            result.message = '牌堆已空，没有抽到牌；本回合双方仍无法获得魔法卡'
-
-    elif card.name == '亡羊补牢':
-        # 从弃牌区最新 n 张里挑 1 张进手牌，其余回归弃牌堆。
-        # n = 双方剩余船数的最大值（用户裁定）。
-        # ⚠️ 候选不含刚打出的亡羊补牢自己：出牌扣牌流程已经把它 append 到
-        # magic_discard 末尾，所以先把它 pop 出来暂存，结算后再放回。
-        n = max(caster.remaining_ships, opponent.remaining_ships)
-        # 暂存刚打出的亡羊补牢自己（位于 magic_discard 末尾）
-        own_card = room.magic_discard.pop() if room.magic_discard else None
-        # 防御性兜底：理论上 handle_use_magic_card 已经拦过发动条件，
-        # 但连锁结算时弃牌堆可能被同批次的别的卡清空，这里再判一次。
-        if not room.magic_discard or n <= 0:
-            result.success = False
-            result.message = '弃牌区没有可挑选的卡牌'
-            if own_card is not None:
-                room.magic_discard.append(own_card)
-            return result
-        # 从末尾取 min(n, len) 张作为候选（末尾是最新）
-        take = min(n, len(room.magic_discard))
-        candidates = room.magic_discard[-take:]
-        del room.magic_discard[-take:]
-        room.magic_temp_data = {
-            'type': 'wangyang_choice',
-            'caster': caster_id,
-            'cards': candidates,         # MagicCard 实例列表（结算时引用同一对象）
-            'own_card': own_card,        # 暂存的亡羊补牢自己，结算后回归弃牌堆
-        }
-        result['cards'] = [
-            {'name': c.name, 'speed': c.speed, 'type': c.type, 'description': c.description}
-            for c in candidates
-        ]
-        result.message = f'请从弃牌区最新{len(candidates)}张牌中选1张加入手牌'
-        result.temp_data_id = 'wangyang_choice'
-
-    elif card.name == '极限增援':
-        # 两个大回合后，船少的一方获胜，已修复
-        total_turns = 2
-        room.game_effects["reinforcement_check"] = {
-            'turn': room.round + total_turns,
-            'caster': caster_id,
-            'remaining_turns': total_turns,  # 添加剩余回合计数
-            # 卡面：不算他生效的这个大回合 → 计数从下一个大回合才开始递减
-            'activated_round': room.round,
-        }
-        # 通知双方客户端，极限增援已激活并显示剩余回合
-        emit('reinforcement_activated', {
-            'remaining_turns': total_turns
-        }, room=room.id)
-        result.message = '极限增援已激活，剩余2回合后结算'
-
-    elif card.name == '无暇圣心':
-        # 两个大回合后如果双方都没造成伤害，施法者获胜，已修复
-        total_turns = 2
-        room.game_effects['holy_heart'] = {
-            'turn': room.round + total_turns,
-            'caster': caster_id,
-            'remaining_turns': total_turns,  # 剩余回合计数
-            'no_damage': True  # 初始状态：双方都未造成伤害
-        }
-        # 通知双方客户端，无暇圣心已激活并显示剩余回合
-        emit('holy_heart_activated', {
-            'remaining_turns': total_turns
-        }, room=room.id)
-        result.message = '无暇圣心已激活，剩余2回合后结算'
-
-    elif card.name == '火力全开':
-        # 本回合攻击次数翻倍。
-        #
-        # ⚠️ 不能只设标记等 enter_battle_phase 去消费：那是速阶1的卡，
-        # can_play_magic_card 允许它在【战斗阶段】使用，而阶段转换早已发生
-        # （且 enter_battle_phase 在 phase 已是 battle 时直接返回 error），
-        # 标记就永远没人读 —— 实测：战斗阶段打出后 attacks 仍是 6 不翻倍，
-        # 标记一直挂着，玩家白扔一张牌还以为生效了。
-        # 卡面是「在这一个大回合内自己的攻击阶段时，自己的攻击次数翻倍」，
-        # 所以：还在准备阶段就留给 enter_battle_phase 翻（那时才知道最终次数）；
-        # 已经进入战斗阶段就【立即】翻当前次数。
-        #
-        # ⚠️ 基准是【当前攻击次数】attacks_remaining，不是「船数 - 冻结数」。
-        # 旧实现按船数重算，会把教皇旨意等场地压过的次数还原回来 ——
-        # 作者实测：自己先打教皇旨意（次数归 0），对方火力全开却照样
-        # 拿到 2×船数 的次数。翻倍就该是「现在有几次，就变成几次的两倍」，
-        # 已经是 0 的话翻倍仍是 0。
-        flags = room.players[caster_id].effect_flags
-        in_battle = (room.state == 'attacking'
-                     and room.current_phase == 'battle'
-                     and room.current_attacker == caster_id)
-        if in_battle and not flags.double_attacks:
-            room.attacks_remaining = max(0, room.attacks_remaining) * 2
-            flags.double_attacks = False      # 已当场消费，不再留给阶段转换
-            emit('attacks_updated', {
-                'current_attacker': room.current_attacker,
-                'attacks_remaining': room.attacks_remaining
-            }, room=room.id)
-            result.message = f'本回合攻击次数翻倍，当前攻击次数为{room.attacks_remaining}'
-        else:
-            flags.double_attacks = True
-            result.message = '本回合攻击次数翻倍'
-
-    elif card.name == '灵气复苏':
-        # 计算双方最大船数，已修复
-        max_ships = max(caster.remaining_ships, opponent.remaining_ships)
-        if max_ships < 1:
-            max_ships = 1
-
-        # 存储临时数据，等待玩家选择船数
-        room.magic_temp_data = {
-            'type': 'lingqi_choice',
-            'caster': caster_id,
-            'opponent': opponent_id,
-            'max_ships': max_ships
-        }
-
-        # 设置结果，只发送给施法者
-        result.message = '请选择灵气复苏的船数'
-        result.temp_data_id = 'lingqi_choice'
-        result.max_ships = max_ships
-
-        # 通知对手等待
-        emit('lingqi_waiting', {
-            'message': '对方正在结算灵气复苏效果 请等待'
-        }, to=room.players[opponent_id].sid)
-    
-    elif card.name == '教皇旨意':
-        # 场地魔法，攻击次数变为0，通过弃置魔法卡攻击
-        _place_field_magic(room, caster_id, card)
-        room.game_effects['papal_edict'] = True
-
-        # ⚠️ 必须【在这里】立即归零，不能只依赖"进入战斗阶段"那一刻。
-        # 教皇旨意是速阶1，而 can_play_magic_card 允许速阶1在【战斗阶段】使用 ——
-        # 从战斗阶段打出时，enter_battle_phase 的阶段转换早已发生（或压根不再发生），
-        # attacks_remaining 会一直停在旧值（实测：6），于是
-        # handle_enter_end_phase 的 "还有剩余攻击次数" 门禁永远拒绝 → 对局卡死。
-        room.attacks_remaining = 0
-        emit('attacks_updated', {
-            'current_attacker': room.current_attacker,
-            'attacks_remaining': room.attacks_remaining
-        }, room=room.id)
-
-        result['message'] = '教皇旨意已生效，双方攻击次数变为0，通过弃置魔法卡攻击对方两次'
-
-    elif card.name == '败者食尘':
-        # 卡面："立即重启正常对局但保留双方的手牌。
-        #        败者食尘生效的大回合内双方的攻击次数都为0。"
-        #
-        # 「重启正常对局」= 双方棋盘清空、各回 6 艘重新摆放（作者确认）。
-        # ⚠️ 原实现是【交换双方的船数】（caster.max_ships = opponent_ships），
-        # 卡面里根本没有这回事 —— 实测玩家反馈"重置后船数不对"即源于此。
-        # 这里改为双方一律重置为默认船数（6）。
-        DEFAULT_SHIPS = 6
-        # 双方棋盘都要换掉 → 除外船不再是这批棋盘上的船；**范围效果也要终止**
-        _clear_board_effects(room, list(room.players), '败者食尘')
-        # 跨回合计数效果一并终止（**在 game_effects 整体清空之前**：
-        # 直接清空会让前端收不到清除事件，角标永远挂着）
-        _clear_multiturn_effects(room, '败者食尘')
-        for p_id in room.players:
-            player = room.players[p_id]
-            player.ships = []
-            player.attacks = []
-            player.remaining_ships = 0
-            player.needs_reset = True
-            player.revealed_positions = []
-            player.max_ships = DEFAULT_SHIPS
-            # 棋盘相关的一次性状态也清掉，避免上一局残留（冻结/无敌/护盾）
-            player.sunken_ships = []
-            if hasattr(player, 'opponent_attacks'):
-                player.opponent_attacks = []
-            for ship in list(getattr(player, 'ships', []) or []):
-                ship.frozen = False
-                ship.invincible = False
-                ship.shield = False
-                ship.trap = False
-        # ★ 第 5 批：双方棋盘整块换新 → 观众那块棋盘跟着清空（与灵气复苏同一句）。
-        _mark_spectate_board_dirty(room)
-        # ★ 回放批：同上（败者食尘也是双方重摆）—— 同一个失效点、第二个消费方。
-        replay.note_board_reset(room)
-        replay.note_board_replaced(room)
-
-        # 冻结区域记录也一并清掉（重开棋盘后区域标记不该残留）
-        if isinstance(room.game_effects, dict):
-            room.game_effects.pop('frozen_area', None)
-
-        # 只保留手牌 —— 场地魔法、生效中的效果、弃牌堆统统回到开局状态
-        # （作者确认：「只保留手牌，其余全部重置」）
-        room.field_magic = None
-        room.field_magic_owner = None
-        room.game_effects = {}
-        room.magic_discard = []
-        room.magic_temp_data = {}
-        room.chain = []
-        room.chain_waiting = False
-        room.chain_window = None
-        room.chain_passes = 0
-        _clear_chain_display(room)
-        room.last_attack = None
-        room.skip_opponent_turn = None
-        # 双方的玩家级效果标记清零（EffectFlags 整个换新）
-        for p_id in room.players:
-            room.players[p_id].effect_flags = EffectFlags()
-            room.players[p_id].magic_blocked = False
-
-        # 与灵气复苏同样保存进度：重新摆放完成后回到原先后手与阶段，不重新猜拳。
-        room.lingqi_saved_state = {
-            'attack_order': list(room.attack_order),
-            'current_attacker': room.current_attacker,
-            'current_phase': room.current_phase,
-            'round': room.round,
-            'attacks_remaining': room.attacks_remaining,
-        }
-        # 复用灵气复苏的"摆放完成即恢复"分支
-        room.lingqi_resurgence_applied = True
-
-        room.state = 'placing_ships'
-        # 卡面第二句：本大回合内双方攻击次数为 0。
-        # 这里先置 0（摆放期间本就没有攻击），摆放完成回到攻击阶段时会再确认一次
-        # （见 handle_place_ships 里的 polar_reversal_applied 分支）。
-        room.attacks_remaining = 0
-        room.polar_reversal_applied = True
-        # ⚠️ 大回合级标记：上面 `room.game_effects = {}` 已经清过一次场，
-        # 所以必须写在这一行【之后】。它让本大回合内**双方**的攻击次数恒为 0 ——
-        # 只靠上面那个一次性标记的话，进战斗阶段时会被按船数重算成 6（实测缺陷）。
-        room.game_effects['zero_attacks_round'] = room.round
-
-        for p_id in room.players:
-            player = room.players[p_id]
-            emit('reset_gameboard', {
-                'new_max_ships': player.max_ships,
-                'message': '败者食尘生效，双方棋盘已重置为6艘，请重新摆放（手牌保留）'
-            }, to=player.sid)
-
-        # ★ 2026-09-22：与回光返照同一形状 —— **AI 当施法者时它自己那一半必须
-        #   当场摆完**（详见 `_ai_seat_places_board_now` 与回光返照分支的说明）。
-        #   败者食尘是"双方一起重摆"，真人那份 `reset_gameboard` 已经发出去了
-        #   （他确实要重新摆，这是卡面要求），但房间不该停在"AI 还没摆"的中间态：
-        #   那个中间态里 AI 的自救排在后一个大回合的预算检查后面（异步），
-        #   实测会出现"AI 一直 0 艘船、却已经在开炮"的窗口
-        #   （`tools/probe_ai_redeploy.py` 的手牌 ['败者食尘'] 一栏）。
-        _ai_seat_places_board_now(room, caster_id)
-
-        result['message'] = '败者食尘生效：双方棋盘重置为6艘并重新摆放，手牌保留；本大回合双方攻击次数为0'
-        # ★ 第 5 批：本分支发出去的全是 `to=<sid>` 单发，`emit` 的收尾不跑 ⇒ 自己收口。
-        _flush_spectate_board_if_dirty(room)
-        # 立即返回：已清空双方战舰并重置为布船阶段，
-        # 不能落入末尾"对手剩余船数<=0 则游戏结束"的兜底判断（会误判 game_over）
+    opening_handled, opening_stop = apply_opening_card_effect(
+        room, caster_id, card, result, emit)
+    if opening_stop:
+        return result
+    status_handled, status_stop = apply_status_card_effect(
+        room, caster_id, card, result, emit,
+        grant_extra_attacks=_grant_extra_attacks,
+        maybe_trigger_wuxian_yijin=_maybe_trigger_wuxian_yijin,
+        field_magic_name=field_magic_name,
+        register_simple_ship_pick=_register_simple_ship_pick,
+        start_placement=_start_placement,
+    )
+    if status_stop:
+        return result
+    reveal_handled, reveal_stop = apply_reveal_card_effect(
+        room, caster_id, card, target_data, result, emit,
+        is_ship_alive=_is_ship_alive,
+        emit_player_ships=_emit_player_ships,
+        pick_cell_from_target=_pick_cell_from_target,
+        find_ship_at=_find_ship_at,
+        request_ship_pick=_request_ship_pick,
+    )
+    if reveal_stop:
+        return result
+    area_handled, area_stop = apply_area_damage_card_effect(
+        room, caster_id, card, target_data, result, emit,
+        apply_ship_sunk_effects=_apply_ship_sunk_effects,
+        check_last_chance=_check_last_chance,
+        emit_ships_updated=_emit_ships_updated,
+        is_ship_alive=_is_ship_alive,
+        my_ship_picks=_my_ship_picks,
+        opponent_of=_opponent_of,
+        request_demon_contract_sacrifice=_request_demon_contract_sacrifice,
+        mark_ship_sunken=_mark_ship_sunken,
+        notify_treasure_hunter=_notify_treasure_hunter,
+        on_ship_destroyed=_on_ship_destroyed,
+        log_name=_log_name,
+        add_game_log=add_game_log,
+    )
+    if area_stop:
+        return result
+    board_handled, board_stop = apply_board_card_effect(
+        room, caster_id, card, result, emit,
+        ai_seat_places_board_now=_ai_seat_places_board_now,
+        clear_board_effects=_clear_board_effects,
+        clear_chain_display=_clear_chain_display,
+        clear_multiturn_effects=_clear_multiturn_effects,
+        flush_spectate_board_if_dirty=_flush_spectate_board_if_dirty,
+        mark_spectate_board_dirty=_mark_spectate_board_dirty,
+        alive_ships=_alive_ships,
+        emit_active_effects=_emit_active_effects,
+        emit_board_attacks=_emit_board_attacks,
+        emit_player_ships=_emit_player_ships,
+        emit_ships_updated=_emit_ships_updated,
+        mark_ship_sunken=_mark_ship_sunken,
+        on_ship_destroyed=_on_ship_destroyed,
+        start_placement=_start_placement,
+    )
+    if board_stop:
+        return result
+    negation_handled, negation_stop = _negation_effects.apply(
+        room, caster_id, card, result)
+    if negation_stop:
         return result
 
-    # ==== 速阶2 魔法卡 ===
-    elif card.name == '溅射':
-        # 对击中格子的上下左右四格造成伤害
-        if not room.last_attack or room.last_attack['attacker'] != caster_id or not room.last_attack.get('hit'):
-            result['success'] = False
-            result['message'] = '必须在击中对方后使用'
-            return result
-
-        x, y = room.last_attack["x"], room.last_attack["y"]
-        splash_positions = [
-            {'x': x, 'y': y - 1},  # 上
-            {'x': x, 'y': y + 1},  # 下
-            {'x': x - 1, 'y': y},  # 左
-            {'x': x + 1, 'y': y}  # 右
-        ]
-
-        # 过滤有效位置
-        valid_positions = [p for p in splash_positions if 0 <= p['x'] < 6 and 0 <= p['y'] < 6]
-        hit_count = 0
-        ships_changed = False
-        demon_contract_requested = False
-
-        affected_positions = []
-        for pos in valid_positions:
-            # 检查是否击中
-            hit = False
-            ship_sunk = False
-            for ship in opponent.ships:
-                position = Position(**pos)
-                if (_is_ship_alive(opponent, ship)
-                        and position in ship.positions
-                        and position not in ship.hits):
-                    # 溅射无视护盾和无敌，并在命中任一未受伤船格时直接击沉整艘船。
-                    # 造成伤害：解除无暇圣心"双方未受伤"判定。
-                    if 'holy_heart' in room.game_effects:
-                        room.game_effects['holy_heart']['no_damage'] = False
-                    hit = True
-                    ship.shield = False
-                    ship.hits.append(Position(**pos))
-                    ship_sunk = True
-                    ships_changed = True
-                    # 使用普通击沉的唯一收口，保证存活状态、双方棋盘和击沉副作用一致。
-                    _apply_ship_sunk_effects(
-                        room, room.id, caster_id, opponent_id, ship,
-                        exclude_attacker_from_treasure=False,
-                        request_demon_contract=False,
-                    )
-                    # 记录本回合造成的伤害（五险一金/Freezing! 判定）。
-                    caster.damage_dealt_this_turn += 1
-
-                    # 恶魔契约（由牺牲方自己点选，AI 自动）：一次结算里只请求一次。
-                    if (not demon_contract_requested
-                            and room.game_effects.get('demon_contract')
-                            and not _my_ship_picks(room, _opponent_of(room, opponent_id))):
-                        _request_demon_contract_sacrifice(room, opponent_id)
-                        demon_contract_requested = True
-                        ships_changed = True
-
-                    # 检查回光返照效果（统一走 helper：置状态 / 记日志 / 记战绩 / 广播）。
-                    if _check_last_chance(room, caster_id, opponent_id):
-                        result['game_over'] = True
-                        return result
-                    hit_count += 1
-                    break
-
-            # 记录攻击（包括未命中）
-            caster.attacks.append(Position(**{
-                'x': pos['x'],
-                'y': pos['y'],
-                'hit': hit,
-                'ship_sunk': ship_sunk,
-                'is_splash': True
-            }))
-
-            # 发送单点攻击结果，保持与普通攻击一致的 UI 更新
-            attack_result = {
-                'attacker': caster_id,
-                'x': pos['x'],
-                'y': pos['y'],
-                'hit': hit,
-                'ship_sunk': ship_sunk,
-                'shield_blocked': False,
-                'remaining_attacks': room.attacks_remaining,
-                'attacker_remaining_ships': room.players[caster_id].remaining_ships,
-                'defender_remaining_ships': opponent.remaining_ships
-            }
-            emit('attack_result', attack_result, room=room.id)
-
-            affected_positions.append(Position(**{
-                'x': pos['x'],
-                'y': pos['y'],
-                'hit': hit,
-                'ship_sunk': ship_sunk
-            }))
-
-        # 若有船只数量变化，广播更新
-        if ships_changed:
-            _emit_ships_updated(room)
-
-        result['message'] = f'溅射攻击命中{hit_count}个目标'
-        result['affected_positions'] = affected_positions
-        result['caster_id'] = caster_id
-
-    elif card.name == '雷达子弹':
-        # 显示击中位置周围八格的战舰
-        if not room.last_attack or room.last_attack['attacker'] != caster_id or not room.last_attack['hit']:
-            result['success'] = False
-            result['message'] = '必须在击中对方战舰后使用'
-            return result
-        affected_positions = []
-        x, y = room.last_attack["x"], room.last_attack["y"]
-        # 记录需要显示的位置
-        new_positions = []
-        for dy in [-1, 0, 1]:
-            for dx in [-1, 0, 1]:
-                if dx == 0 and dy == 0: continue
-                nx, ny = x + dx, y + dy
-                if 0 <= nx < 6 and 0 <= ny < 6:
-                    pos = {'x': nx, 'y': ny}
-                    room.players[caster_id].revealed_positions.append(Position(**pos))
-                    new_positions.append(pos)
-        for pos in new_positions:
-            # 检查是否击中
-            hit = False
-            ship_sunk = False
-            for i, ship in enumerate(opponent.ships):
-                if Position(**pos) in ship.positions and Position(**pos) not in ship.hits:
-                    hit=True
-            if hit:continue 
-            # 记录攻击（包括未命中）
-            caster.attacks.append(Position(**{
-                'x': pos['x'],
-                'y': pos['y'],
-                'hit': hit,
-                'ship_sunk': ship_sunk,
-                'is_splash': True
-            }))
-
-            # 发送单点攻击结果，保持与普通攻击一致的 UI 更新
-            attack_result = {
-                'attacker': caster_id,
-                'x': pos['x'],
-                'y': pos['y'],
-                'hit': hit,
-                'ship_sunk': ship_sunk,
-                'remaining_attacks': room.attacks_remaining,
-                'attacker_remaining_ships': room.players[caster_id].remaining_ships,
-                'defender_remaining_ships': opponent.remaining_ships
-            }
-            emit('attack_result', attack_result, room=room.id)
-
-            affected_positions.append(Position(**{
-                'x': pos['x'],
-                'y': pos['y'],
-                'hit': hit,
-                'ship_sunk': ship_sunk
-            }))
-        # 立即将被揭示的位置发送给触发方
-        emit('revealed_positions', {'positions': new_positions}, to=room.players[caster_id].sid)
-        result['message'] = '已扫描周围八格战舰位置'
-        result['affected_positions'] = affected_positions
-
-    elif card.name == '越战越勇':
-        # 每击沉一艘战舰，攻击次数净增加1
-        if not room.last_attack or room.last_attack['attacker'] != caster_id or not room.last_attack['ship_sunk']:
-            result['success'] = False
-            result['message'] = '必须在击沉对方战舰后立即使用'
-            return result
-
-        # 添加越战越勇效果标记（本大回合内每次击沉都再 +1）
-        room.players[caster_id].effect_flags.battle_spirit = True
-
-        # ⚠️ 发动前提就是"刚刚击沉了一艘"，所以那一艘的 +1 必须【当场结算】。
-        # 旧实现只挂标记，要等下一发击沉才生效 —— 玩家实测报「打完这张牌攻击次数
-        # 没有任何变化，以为卡没生效」，而卡面写的是「攻击次数净增加1」。
-        gained = _grant_extra_attacks(room, caster_id, 1)
-        if gained:
-            result['message'] = (f'越战越勇生效：攻击次数 +{gained}'
-                                 f'（当前 {room.attacks_remaining} 次），本大回合再击沉战舰还会 +1')
-        else:
-            result['message'] = '越战越勇生效，本回合击沉战舰时攻击次数净增加1'
-
-    elif card.name == '神威！':
-        # 选定己方/对方棋盘上的 3*3 区域：该区域从棋盘上“扣掉”，
-        # 区域内战舰暂时除外，下一个大回合开始时回归原位、区域恢复。
-        if 'target_area' not in target_data:
-            result['success'] = False
-            result['message'] = '需要选择目标区域'
-            return result
-
-        area = target_data['target_area']
-        board = target_data.get('board', 'opponent')  # 'self' | 'opponent'
-        target_id = caster_id if board == 'self' else opponent_id
-        target_player = room.players[target_id]
-
-        # 收集并移除区域内的战舰
-        excluded_ships = []
-        for i in range(len(target_player.ships) - 1, -1, -1):
-            ship = target_player.ships[i]
-            in_area = any(
-                area['x1'] <= pos.x <= area['x2'] and
-                area['y1'] <= pos.y <= area['y2']
-                for pos in ship.positions
-            )
-            if in_area:
-                excluded_ships.append(ship)
-                del target_player.ships[i]
-                target_player.remaining_ships -= 1
-
-        # 把这片区域从棋盘上扣掉（下个大回合恢复）
-        return_turn = room.round + 1
-        _add_shenwei_hole(room, target_id, area, return_turn)
-        emit('shenwei_hole', {
-            'player': target_id, 'area': area, 'return_turn': return_turn
-        }, room=room.id)
-
-        # 卡面：仅当作用于对方棋盘且区域内恰好 1 艘船时，直接死亡
-        if board != 'self' and len(excluded_ships) == 1:
-            # ★ 2026-09-24（回放批）：这一支是**致死**，不是"暂时除外"——
-            #   上面那句 `del target_player.ships[i]` 会让这一格**从船位时间线里消失**
-            #   （`replay._ship_cells` 只遍历 `player.ships`），而且它**不产生 attack 步**、
-            #   也没有任何"沉没"记录 ⇒ 回放里那格凭空消失（症状与主动牺牲一模一样）。
-            #   这里把它登记成沉没格，用**手上的这艘船**当数据源（绝不去 diff 快照猜）。
-            #   ⚠️ 与"暂时除外"那一支的差别是**有意的**：除外的船是棋盘上挖出来的洞、
-            #      下个大回合原样归还（`_restore_due_shenwei`），所以那一支**不登记**；
-            #      这一支在游戏里双方看到的是"被打沉"（下面 `_apply_ship_loss_linkage`
-            #      与 `_mark_ship_sunken` 就是沉没口径），回放必须跟着画成沉没。
-            #   ⚠️ 登记只改记录器状态、不推动它；本分支末尾那次 `refresh_ships` 才把
-            #      "船的位置 / 船数 / 待办全部落定之后"的局面记进时间线。
-            replay.note_ship_lost(room, target_id,
-                                  [{'x': p.x, 'y': p.y}
-                                   for p in excluded_ships[0].positions])
-            _mark_ship_sunken(target_player, excluded_ships[0])
-            _apply_ship_loss_linkage(room, caster_id, opponent_id, count=1)
-            result['message'] = '目标区域内1艘战舰被击沉'
-        else:
-            room.game_effects.setdefault('excluded_ships', []).append({
-                'ships': excluded_ships,
-                'player': target_id,
-                'return_turn': return_turn,
-            })
-            if excluded_ships:
-                _apply_ship_loss_linkage(room, caster_id, target_id,
-                                         count=len(excluded_ships))
-            result['message'] = f'目标区域内{len(excluded_ships)}艘战舰被暂时除外'
-
-        _emit_ships_updated(room)
-
-        # 斩杀线：对方船被清空直接获胜；己方自扣清空则判负
-        if opponent.remaining_ships <= 0 and room.state != 'game_over':
-            _finish_game(room, caster_id, opponent_id, '神威！清空对方棋盘')
-            result['message'] += '，对方战舰全灭，直接获胜'
-        elif caster.remaining_ships <= 0 and room.state != 'game_over':
-            _finish_game(room, opponent_id, caster_id, '神威！清空己方棋盘')
-            result['message'] += '，己方战舰全灭，判负'
-
-        # ★ 2026-09-24（回放批）：**船位/船数全部落定之后**再显式刷新一次回放的船位时间线。
-        #
-        # ⚠️ 先说清楚它**不是**这条修复能不能生效的前提（本批实测过）：真对局走
-        #    `use_magic_card` → `resolve_chain`，那里在 `apply_magic_effect` **之后**
-        #    调 `log_magic` ⇒ 追加下一步时比对快照，这一帧**顺带就被记下来了**
-        #    （打枪前 vs 打枪后：那一格由"活船"变成"沉没格"，行只多一条）。
-        #    所以刻意在这里留一枪，是给**不经过日志的顺序**兜底（`apply_magic_effect`
-        #    被直调时 —— 上一批踩过的正是这个形状："收尾不写任何日志 ⇒ 那一帧永远不变"）：
-        #      · 致死那一支的沉没格是**登记**出来的（上面 `note_ship_lost`），
-        #        而登记只改记录器状态、不推动它；
-        #      · 神威洞也是这一步才进 `game_effects` 的。
-        #    `refresh_ships` 幂等（`_record_snapshot` 自己比对，没变就不写），
-        #    所以这里随手调是安全的；**实测过它两处都不可省**：
-        #    去掉它 + 只喂第一步日志 ⇒ 时间线里那一格又变成"凭空消失"。
-        # ⚠️ 排在 `_finish_game` **之后**：终局会在同一步里再追加一条日志、再比对一次快照，
-        #    早刷新记下来的是"终局日志还没写"的中间态。
-        replay.refresh_ships(room)
-
-    elif card.name == '冻结':
-        # 冻结3*3区域内的船，使其无法攻击
-        if 'target_area' not in target_data:
-            result['success'] = False
-            result['message'] = '需要选择目标区域'
-            return result
-
-        area = target_data['target_area']
-        frozen_count = 0
-
-        # 标记区域内的战舰
-        for ship in opponent.ships:
-            # 已沉没的船不参与冻结（2026-09-17）：
-            #   · 它本来就不提供攻击次数，算进 frozen_count 只会让播报数字虚高
-            #     （实测玩家报「冻结的战舰数目居然会把已经死亡的战舰加进去」）；
-            #   · 给它打上 frozen 标记也没意义，反而会在被复活后带着旧标记回来。
-            if not _is_ship_alive(opponent, ship):
-                continue
-            in_area = any(
-                area['x1'] <= pos.x <= area['x2'] and
-                area['y1'] <= pos.y <= area['y2']
-                for pos in ship.positions
-            )
-
-            if in_area and getattr(ship, 'frozen', None) is None:
-                ship.frozen = room.round + 1  # 冻结到下一回合
-                frozen_count += 1
-
-        if frozen_count:
-            # 立刻把「哪几艘被冻住了」同步给被冻结的一方（画在ta自己的棋盘上）
-            _emit_player_ships(room, opponent_id)
-        result['message'] = f'冻结了{frozen_count}艘战舰'
-
-        # ★ 记录"冻的是哪片 3×3 区域"并**下发给双方**（2026-09-16）。
-        # 作者实测：施法方原先什么都收不到（上面那个 _emit_player_ships 只发受害者），
-        # 过一会儿就忘了自己冻的是哪片；受害者也只看到自己的船上有雪花、看不出区域边界。
-        # 区域属于【受害者棋盘】，所以带 owner 让前端按归属决定画在哪块棋盘上
-        # （与 last_stand_cells 同一套归属模式）。
-        # ⚠️ 即便一艘都没冻住也照发：那片区域是公开信息（双方都看到了选区），
-        # 前端会按 frozen 数量决定怎么描述。
-        room.game_effects['frozen_area'] = {
-            'x1': int(area['x1']), 'y1': int(area['y1']),
-            'x2': int(area['x2']), 'y2': int(area['y2']),
-            'owner': opponent_id,        # 这片区域在哪块棋盘上（受害者）
-            'caster': caster_id,         # 谁冻的
-            'frozen': frozen_count,
-            'until_round': room.round + 1,
-        }
-        emit('frozen_area', dict(room.game_effects['frozen_area']), room=room.id)
-
-
-    elif card.name == '轰炸':
-        # 选定一行或一列进行轰炸
-        if 'target_line' not in target_data:
-            result['success'] = False
-            result['message'] = '需要选择目标行或列'
-            return result
-
-        line = target_data['target_line']
-        # 检查是行还是列
-        if line["type"] == 'row':
-            positions = [{'x': x, 'y': line['index']} for x in range(6)]
-        else:
-            positions = [{'x': line['index'], 'y': y} for y in range(6)]
-
-        # 找出所有与该行/列相交的船只，整艘摧毁
-        to_remove = [ship for ship in opponent.ships if len(ship.hits) < len(ship.positions) and any(pos in ship.positions for pos in positions)]
-        sunk_count = 0
-        ships_changed = False
-        removed_positions = set()
-
-        # 移除受影响的船只，并为其所有格子生成命中事件
-        for ship in to_remove:
-            if ship in opponent.ships:
-                # 保存被摧毁的船到sunken_ships
-                _mark_ship_sunken(opponent, ship)
-                opponent.ships.remove(ship)
-                opponent.remaining_ships -= 1
-                ships_changed = True
-                sunk_count += 1
-                # 记录本回合伤害（五险一金/Freezing!）
-                caster.damage_dealt_this_turn += 1
-
-                # 百亿补贴 + 无暇圣心中断（与普通攻击共用）
-                _on_ship_destroyed(room, opponent_id, ship)
-
-                # 恶魔契约：一次结算里多艘沉没时只请求一次
-                # （判据查**优先队列**：该玩家已有待选就跳过；队列内部也会按
-                #   player+reason 去重，这里是双保险）
-                if (room.game_effects.get('demon_contract')
-                        and not _my_ship_picks(room, _opponent_of(room, opponent_id))):
-                    _request_demon_contract_sacrifice(room, opponent_id)
-                    ships_changed = True
-
-                # 八方来财
-                _notify_treasure_hunter(room, 1)   # 魔法卡造成的变化：全场持卡者都摸
-                for ship_pos in ship.positions:
-                    removed_positions.add((ship_pos.x, ship_pos.y))
-                    caster.attacks.append(Position(**{
-                        'x': ship_pos.x,
-                        'y': ship_pos.y,
-                        'hit': True,
-                        'ship_sunk': True,
-                        'is_bomb': True
-                    }))
-                    attack_result = {
-                        'attacker': caster_id,
-                        'x': ship_pos.x,
-                        'y': ship_pos.y,
-                        'hit': True,
-                        'ship_sunk': True,
-                        'remaining_attacks': room.attacks_remaining,
-                        'attacker_remaining_ships': room.players[caster_id].remaining_ships,
-                        'defender_remaining_ships': opponent.remaining_ships
-                    }
-                    emit('attack_result', attack_result, room=room.id)
-
-        # 对于该行/列中未命中的格子也发出未命中事件，以保持 UI 一致性
-        for pos in positions:
-            if (pos['x'], pos['y']) not in removed_positions:
-                caster.attacks.append(Position(**{
-                    'x': pos['x'],
-                    'y': pos['y'],
-                    'hit': False,
-                    'ship_sunk': False,
-                    'is_bomb': True
-                }))
-                attack_result = {
-                    'attacker': caster_id,
-                    'x': pos['x'],
-                    'y': pos['y'],
-                    'hit': False,
-                    'ship_sunk': False,
-                    'remaining_attacks': room.attacks_remaining,
-                    'attacker_remaining_ships': room.players[caster_id].remaining_ships,
-                    'defender_remaining_ships': opponent.remaining_ships
-                }
-                emit('attack_result', attack_result, room=room.id)
-
-        # 若有船只数量变化，广播更新
-        if ships_changed:
-            _emit_ships_updated(room)
-
-        result['message'] = f'轰炸成功击沉{sunk_count}艘战舰'
-
-    elif card.name == '硫磺火焰':
-        # 对选定的连续6格释放硫磺火焰，强制击杀这些格子上所属的所有战舰（无视护盾/无敌）
-        if 'target_cells' not in target_data:
-            result['success'] = False
-            result['message'] = '需要选择6个连续的目标格子'
-            return result
-        positions = target_data['target_cells']
-        if not isinstance(positions, list) or len(positions) != 6:
-            result['success'] = False
-            result['message'] = '需要选择恰好6个连续的格子'
-            return result
-
-        # 找出所有与这些格子相交的船只，并整艘摧毁
-        to_remove = [ship for ship in opponent.ships if len(ship.hits) < len(ship.positions) and any(pos in ship.positions for pos in positions)]
-        sunk_count = 0
-        ships_changed = False
-        removed_positions = set()
-        affected_positions: list[Position] = []
-        for ship in to_remove:
-            if ship in opponent.ships:
-                # 保存被摧毁的船到sunken_ships
-                _mark_ship_sunken(opponent, ship)
-                opponent.ships.remove(ship)
-                opponent.remaining_ships -= 1
-                ships_changed = True
-                sunk_count += 1
-                # 记录本回合伤害（五险一金/Freezing!）
-                caster.damage_dealt_this_turn += 1
-
-                # 八方来财: 战舰数目变化时抽一张牌
-                _notify_treasure_hunter(room, 1)   # 魔法卡造成的变化：全场持卡者都摸
-
-                # 百亿补贴 + 无暇圣心中断（与普通攻击共用）
-                _on_ship_destroyed(room, opponent_id, ship)
-
-                # 恶魔契约：一次结算里多艘沉没时只请求一次
-                # （判据查**优先队列**：该玩家已有待选就跳过；队列内部也会按
-                #   player+reason 去重，这里是双保险）
-                if (room.game_effects.get('demon_contract')
-                        and not _my_ship_picks(room, _opponent_of(room, opponent_id))):
-                    _request_demon_contract_sacrifice(room, opponent_id)
-                    ships_changed = True
-                for ship_pos in ship.positions:
-                    removed_positions.add((ship_pos.x, ship_pos.y))
-                    caster.attacks.append(Position(**{
-                        'x': ship_pos.x,
-                        'y': ship_pos.y,
-                        'hit': True,
-                        'ship_sunk': True,
-                        'is_sulfur': True
-                    }))
-                    attack_result = {
-                        'attacker': caster_id,
-                        'x': ship_pos.x,
-                        'y': ship_pos.y,
-                        'hit': True,
-                        'ship_sunk': True,
-                        'remaining_attacks': room.attacks_remaining,
-                        'attacker_remaining_ships': room.players[caster_id].remaining_ships,
-                        'defender_remaining_ships': opponent.remaining_ships
-                    }
-                    emit('attack_result', attack_result, room=room.id)
-                    affected_positions.append(Position(**{
-                        'x': ship_pos.x,
-                        'y': ship_pos.y,
-                        'hit': True,
-                        'ship_sunk': True
-                    }))
-
-        # 对于选定格子中未命中的格子，发送未命中事件
-        for pos in positions:
-            if (pos["x"], pos["y"]) not in removed_positions:
-                caster.attacks.append(Position(**{
-                    'x': pos["x"],
-                    'y': pos["y"],
-                    'hit': False,
-                    'ship_sunk': False,
-                    'is_sulfur': True
-                }))
-                attack_result = {
-                    'attacker': caster_id,
-                    'x': pos["x"],
-                    'y': pos["y"],
-                    'hit': False,
-                    'ship_sunk': False,
-                    'remaining_attacks': room.attacks_remaining,
-                    'attacker_remaining_ships': room.players[caster_id].remaining_ships,
-                    'defender_remaining_ships': opponent.remaining_ships
-                }
-                emit('attack_result', attack_result, room=room.id)
-                affected_positions.append(Position(**{
-                    'x': pos["x"],
-                    'y': pos["y"],
-                    'hit': False,
-                    'ship_sunk': False
-                }))
-
-        # 广播被摧毁舰只更新
-        if ships_changed:
-            _emit_ships_updated(room)
-
-        result['message'] = f'硫磺火焰成功击杀{sunk_count}艘战舰'
-        result['affected_positions'] = affected_positions
-        result['caster_id'] = caster_id
-        
-        # 添加游戏日志
-        add_game_log(room, f"第{room.round}回合 · {_log_name(room, caster_id)} 使用了【硫磺火焰】，击杀了{sunk_count}艘战舰", 'magic', {
-            'caster_id': caster_id,
-            'card_name': card.name,
-            'sunk_count': sunk_count,
-            'affected_positions': affected_positions
-        })
-
-    elif card.name == '探测雷达':
-        # 显示2*2区域内的战舰
-        if 'target_area' not in target_data:
-            result['success'] = False
-            result['message'] = '需要选择目标区域'
-            return result
-
-        area = target_data['target_area']
-        positions = []
-        room.players[caster_id].revealed_positions = room.players[caster_id].revealed_positions
-        affected_positions = []
-        # 添加需要显示的位置
-        for y in range(area['y1'], area['y2'] + 1):
-            for x in range(area['x1'], area['x2'] + 1):
-                pos = {'x': x, 'y': y}
-                room.players[caster_id].revealed_positions.append(Position(**pos))
-                positions.append(pos)
-        for pos in positions:
-            # 检查是否击中
-            hit = False
-            ship_sunk = False
-            for i, ship in enumerate(opponent.ships):
-                if Position(**pos) in ship.positions and Position(**pos) not in ship.hits:
-                    hit=True
-            if hit:continue 
-            # 记录攻击（包括未命中）
-            caster.attacks.append(Position(**{
-                'x': pos['x'],
-                'y': pos['y'],
-                'hit': hit,
-                'ship_sunk': ship_sunk,
-                'is_splash': True
-            }))
-
-            # 发送单点攻击结果，保持与普通攻击一致的 UI 更新
-            attack_result = {
-                'attacker': caster_id,
-                'x': pos['x'],
-                'y': pos['y'],
-                'hit': hit,
-                'ship_sunk': ship_sunk,
-                'remaining_attacks': room.attacks_remaining,
-                'attacker_remaining_ships': room.players[caster_id].remaining_ships,
-                'defender_remaining_ships': opponent.remaining_ships
-            }
-            emit('attack_result', attack_result, room=room.id)
-
-            affected_positions.append(Position(**{
-                'x': pos['x'],
-                'y': pos['y'],
-                'hit': hit,
-                'ship_sunk': ship_sunk
-            }))
-        # 立即发送给触发者
-        emit('revealed_positions', {'positions': positions}, to=room.players[caster_id].sid)
-        result['message'] = '已探测目标区域战舰位置'
-        result['affected_positions'] = affected_positions
-
-    elif card.name == '饮血':
-        # 卡面："可在击中对方后选择使用" —— 发动前提是自己上一次攻击【击沉了一艘船】。
-        #
-        # ⚠️ 判定依据必须是 last_attack['ship_sunk'] 而不是 ['hit']：
-        #   hit 只说明那一格有船，ship_sunk 才是"击杀"。
-        #   卡面后半句是"接下来每击杀一艘船抽一张牌"，拿 hit 当门槛会让玩家
-        #   打中一艘没沉的船就以为能发动，实际摸不到牌。
-        last = getattr(room, 'last_attack', None) or {}
-        if not (last.get('attacker') == caster_id and last.get('ship_sunk')):
-            result['success'] = False
-            result['message'] = '需要在击沉对方一艘战舰后才能使用'
-            return result
-
-        room.players[caster_id].effect_flags.vampire = True
-
-        # 刚打完的那一发「补算」：饮血是在击沉之后才打出的，若只对以后生效，
-        # 玩家会觉得自己刚打沉的那艘白沉了。这里立即补摸一张。
-        # （每张饮血只补一次 —— 它记录的就是"发动时那一次击沉"。）
-        room.draw_card(caster_id)
-        emit('message', {'text': '饮血发动，立即抽一张卡'}, to=room.players[caster_id].sid)
-        result['message'] = '饮血生效：已为刚才击沉的战舰抽一张牌，接下来每击杀一艘船再抽一张。'
-
-    elif card.name == '克苏鲁之眼':
-        # 双方各暴露一艘船。施法者必须点选一艘【自己的船】所在格，不能选空格。
-        if not caster.ships or not opponent.ships:
-            result['success'] = False
-            result['message'] = '双方都必须有战舰才能使用'
-            return result
-
-        cell = _pick_cell_from_target(target_data)
-        if cell is None:
-            result['success'] = False
-            result['message'] = '请选择一艘自己的战舰'
-            return result
-
-        caster_ship = _find_ship_at(caster, cell, alive_only=True)
-        if caster_ship is None:
-            result['success'] = False
-            result['message'] = '必须选择自己【还活着】的战舰所在的格子（已沉没的船不能选）'
-            return result
-
-        caster_positions = caster_ship.positions
-        # 先把自己的位置暴露给对方
-        room.players[opponent_id].revealed_positions.extend(caster_positions)
-        emit('revealed_positions', {'positions': caster_positions}, to=room.players[opponent_id].sid)
-
-        # 卡面：然后【对方也选择一艘船】暴露位置（AI 由服务端代选 —— 见
-        # `_request_ship_pick`：chooser 是 AI 才同步返回一艘船，是真人则**只入队**）。
-        picked = _request_ship_pick(
-            room, opponent_id, 'kraken_eye',
-            '克苏鲁之眼生效：请点选一艘自己的战舰暴露位置')
-        opponent_positions = picked.positions if picked is not None else []
-        if picked is not None:
-            room.players[caster_id].revealed_positions.extend(picked.positions)
-            emit('revealed_positions', {'positions': picked.positions}, to=room.players[caster_id].sid)
-        emit('revealed_positions', {'positions': caster_positions}, to=room.players[opponent_id].sid)
-
-        # ⚠️ 2026-09-22：**不能说假话**。
-        # 对手是真人时上面那句 `_request_ship_pick` 只是**入队**（对方还没选），
-        # 这里却曾经无条件宣布「双方各暴露一艘战舰位置」—— 卡面承诺的事只完成了
-        # 一半，而对外宣称全做完了（CLAUDE.md 的落地口径：等真人回答的效果，
-        # 不许在回答之前宣称完成）。文案按"对手到底选了没"分岔。
-        if picked is not None:
-            result['message'] = '双方各暴露一艘战舰位置'
-        else:
-            result['message'] = '已暴露自己一艘战舰的位置，等待对方选择要暴露的战舰'
-
-    elif card.name == 'Freezing！':
-        # 发动条件（三条缺一不可）：
-        #   1. 自己先手（attack_order[0]）
-        #   2. 当前是结束阶段
-        #   3. 本回合没有让对方船数减少
-        if room.attack_order and room.attack_order[0] != caster_id:
-            result['success'] = False
-            result['message'] = 'Freezing！只能在自己先手的回合发动'
-            return result
-
-        if room.current_phase != 'end':
-            result['success'] = False
-            result['message'] = 'Freezing！只能在结束阶段发动'
-            return result
-
-        # damage_dealt_this_turn 只在击沉对方战舰时累加，等价于「让对方船数减少」
-        if caster.damage_dealt_this_turn > 0:
-            result['success'] = False
-            result['message'] = '本回合已使对方船数减少，无法发动 Freezing！'
-            return result
-
-        # 跳过对方本回合的所有阶段
-        room.skip_opponent_turn = opponent_id
-        result['message'] = 'Freezing！生效，跳过对方本回合的所有阶段'
-
-    elif card.name == '五险一金':
-        # 教皇旨意生效中本回合任何人都没有攻击次数（场地规则），这张牌一次都触发不了，
-        # 直接拒绝出牌，别让它白白浪费。
-        if field_magic_name(room) == '教皇旨意':
-            result['success'] = False
-            result['message'] = '教皇旨意生效中，本回合攻击次数为0，五险一金无法发动'
-            return result
-
-        # 本回合已经让对方减过船 → 这张牌无论如何都不会再触发了，直接拒绝，别浪费一张卡
-        if caster.damage_dealt_this_turn > 0:
-            result['success'] = False
-            result['message'] = '本回合已造成伤害，无法发动'
-            return result
-
-        # 只「挂上保险」：真正的 +3 要等本回合攻击次数第一次归零时才结算，
-        # 不是一打出就白送 3 次（见 _maybe_trigger_wuxian_yijin）。
-        caster.effect_flags.wuxian = True
-        if _maybe_trigger_wuxian_yijin(room, caster_id):
-            # 出牌时攻击次数本来就已是 0：条件当场成立
-            result['message'] = '攻击次数已用尽且未造成伤害，攻击次数 +3'
-        else:
-            result['message'] = '五险一金已生效：用完本回合所有攻击次数且未造成伤害时，攻击次数 +3'
-
-    elif card.name == '明智埋葬':
-        # 埋葬对象 = 牌堆中的卡 + 对方手牌（可埋葬对方手里的牌）
-        deck = room.magic_deck or []
-        opp_hand = opponent.magic_hand or []
-        if not deck and not opp_hand:
-            result['success'] = False
-            result['message'] = '牌堆与对方手牌均为空，无法发动'
-            return result
-
-        # 候选池：先牌堆，后对方手牌（扁平下标 = 前端展示顺序）。
-        # 只存纯数据、不存 MagicCard 实例：magic_temp_data 会被
-        # get_magic_temp_data 原样 emit，实例无法 JSON 序列化。
-        candidates = []
-        for source, pile in (('deck', deck), ('opponent_hand', opp_hand)):
-            for i, c in enumerate(pile):
-                candidates.append({
-                    'source': source, 'index': i, 'name': c.name, 'speed': c.speed,
-                    'type': c.type, 'description': c.description,
-                })
-
-        room.magic_temp_data = {
-            'type': 'bury_choice',
-            'caster': caster_id,
-            'candidates': candidates,
-        }
-        # index 是该卡在自己来源列表内的下标，前端回传 source_index 用它精确定位
-        result['cards'] = [dict(c) for c in candidates]
-        result['message'] = '请选择要埋葬的卡牌（牌堆或对方手牌）'
-        result['temp_data_id'] = 'bury_choice'
-
-    elif card.name == '仁王之盾':
-        # 选择至多3艘船进入盾牌状态
-        if caster.remaining_ships == 0:
-            result['success'] = False
-            result['message'] = '没有战舰可保护'
-            return result
-
-        # 记录需要选择的船
-        # ⚠️ 这里**不能**改成 `pending_ship_picks` 的选船请求：仁王之盾是"至多 3 艘"
-        #    的**多选**（走 `select_magic_target` 的 ship_indices），与
-        #    "点一艘船"的 `confirm_sacrifice` 不是同一种交互。
-        #    但仍然要在**优先级队列**里登记一条，理由：
-        #      · 它同样会占用棋盘选区（前端 `selectingOnBoard`）；
-        #      · 别的选船效果要能看到"这个人手上有优先级 40 的选船待办"。
-        #    消费点在 `shield_choice` 的确认分支与 `cancel_magic_selection`。
-        room.magic_temp_data = {
-            'type': 'shield_choice',
-            'caster': caster_id,
-            'ships': caster.ships
-        }
-        _register_simple_ship_pick(room, caster_id, 'shield_choice',
-                                   '仁王之盾：请选择要保护的战舰（至多 3 艘）')
-        result['message'] = '请选择要保护的战舰'
-        result['temp_data_id'] = 'shield_choice'
-
-    # ==== 速阶3 魔法卡 ====
-    elif card.name == '八方来财':
-        # 战舰数目主动变化时抽一张牌
-        room.players[caster_id].effect_flags = room.players[caster_id].effect_flags
-        room.players[caster_id].effect_flags.treasure_hunter = True
-        result['message'] = '战舰数目变化时抽一张牌'
-
-    elif card.name == '平等条约':
-        # ★ 2026-09-24 作者裁决：改成**连锁无效化**（`docs/CHAIN_ENGINE_SPEC.md` §1.2
-        #   原本的设计），**删掉**原来的"船数变化快照回滚"。原因：那份快照的过期判据
-        #   绑在 `room.round`（大回合）上，而 `room.round` 只在 `next_index == 0` 时
-        #   递增 ⇒ **对两个座位不等价**（受害方是先手时必被拒，作者实报
-        #   「船数改变发生在上一个大回合，无法再无效化」）。
-        #
-        # 新规则（三条，逐条都只在一个地方实现）：
-        #   ① 目标 = **栈中正下方那一项**，与「失灵！」共用 `_chain_negation_target`
-        #      （所以看破！/ 加百列之光的免疫、以及"不在连锁里就失败"都自动同口径）；
-        #   ② **只有目标真的会造成船数变化时才成功** —— 判据只此一份
-        #      （`EQUAL_TREATY_SHIP_CHANGE_RULES` + `_equal_treaty_verdict`）；
-        #   ③ 成功 = `negate_target` ⇒ `resolve_chain` 把正下方那一项标 `negated`、
-        #      结算时**整项跳过**（不再"先结算再回滚"，所以也不再需要任何台账）。
-        target_item, why = _chain_negation_target(room, '平等条约')
-        if target_item is None:
-            result['success'] = False
-            result['message'] = why
-            return result
-
-        # 看破！压制期间自己这一侧的魔法卡一律无效（与失灵！同口径；失灵！那两条
-        # 闸门在出牌/响应层就拦掉了，而平等条约在**同一条连锁**里可能被上方刚结算的
-        # 看破！压制住 —— 那一帧只有这里看得到）。
-        if getattr(caster, 'magic_blocked', False):
-            result['success'] = False
-            result['message'] = '你已被看破！压制，本回合魔法卡无效，平等条约无法发动'
-            return result
-
-        would_change, reason = _equal_treaty_verdict(room, target_item)
-        if not would_change:
-            result['success'] = False
-            # 作者原话的文案打头，后面跟这一张卡的**真实理由**（不许只说"没有效果"）。
-            result['message'] = f'没有可无效化的船数改变效果（{reason}）'
-            return result
-
-        result.negate_target = True
-        result['message'] = f'将无效化{target_item.card.name}'
-
-    elif card.name == '百亿补贴':
-        # 船被击败时攻击次数加3
-        room.players[caster_id].effect_flags = room.players[caster_id].effect_flags
-        room.players[caster_id].effect_flags.subsidy = True
-        result['message'] = '船被击败时攻击次数加3'
-
-    elif card.name == '神之宣告':
-        # 牺牲两艘船，选择一个效果。
-        # ⚠️ 判据是 **<= 2**（即需要 3 艘以上），不是 `< 2`（作者 2026-09-19 明确要求）：
-        #    牺牲两艘之后至少得留一艘 —— 否则"打出这张牌"等于把自己送到 0 艘，
-        #    紧接着就被判负，那不是玩家想要的取舍。
-        if caster.remaining_ships <= 2:
-            result['success'] = False
-            result['message'] = '您的船数不足，无法使用神之宣告'
-            return result
-
-        # 牺牲两艘船：优先采用玩家点选的两艘（前端 own_ships → selected_cells），
-        # 非法/不足时用随机补齐（AI 与老客户端仍可出牌）。
-        chosen = []
-        cells = target_data.get('selected_cells') if isinstance(target_data, dict) else None
-        if isinstance(cells, list):
-            for c in cells:
-                try:
-                    pos = (int(c.get('x')), int(c.get('y')))
-                except (AttributeError, TypeError, ValueError):
-                    continue
-                # alive_only：点到沉船的格子不算数（否则牺牲变成零代价）
-                ship_at = _find_ship_at(caster, pos, alive_only=True)
-                if ship_at is not None and ship_at not in chosen:
-                    chosen.append(ship_at)
-        if len(chosen) < 2:
-            # 只从"还活着"的船里补：已沉的船在 ships 里仍占位，不排除会把
-            # 牺牲变成零代价（沉船堆还会出现重复条目）
-            pool = [s for s in _alive_ships(caster) if s not in chosen]
-            random.shuffle(pool)
-            chosen.extend(pool[:2 - len(chosen)])
-        if len(chosen) < 2:
-            result['success'] = False
-            result['message'] = '您的船数不足，无法使用神之宣告'
-            return result
-
-        # 逐个走统一结算：移船 + 记日志 + 公开广播 ship_sacrificed + 按视角刷船数。
-        # 以前这里是自己 remove/append 就完事，结果对方完全看不到这两艘船沉了。
-        for sacr in chosen[:2]:
-            _do_demon_contract_sacrifice(room, caster_id, sacr, 'divine_decree')
-
-        # 获取选择的效果：优先采用出牌时携带的 effect_choice（前端出牌前选择），
-        # 其次回退到临时数据，缺省为 1（摧毁对方一艘战舰）。
-        if isinstance(target_data, dict) and target_data.get('effect_choice'):
-            try:
-                effect_choice = int(target_data['effect_choice'])
-            except (TypeError, ValueError):
-                effect_choice = 1
-        else:
-            try:
-                effect_choice = int(room.magic_temp_data.get('effect_choice', 1))
-            except (TypeError, ValueError):
-                effect_choice = 1
-        if effect_choice == 1:
-            # 卡面：让对方【自己选择】一艘船使其死亡（AI 由服务端代选）
-            picked = _request_ship_pick(
-                room, opponent_id, 'divine_decree',
-                '神之宣告生效：请点选一艘自己的战舰，使其阵亡')
-            if picked is not None:
-                _do_demon_contract_sacrifice(room, opponent_id, picked, 'divine_decree')
-                result['message'] = '牺牲两艘战舰，对方一艘战舰被摧毁'
-            else:
-                result['message'] = '牺牲两艘战舰，等待对方选择阵亡的战舰'
-        else:
-            # 跳过对方**本大回合内**的所有阶段（存玩家ID）。
-            # ⚠️ 用 `skip_opponent_stages` 而**不是** `skip_opponent_turn`：
-            #    后者是 Freezing！ 的标记，它跳完会**直接翻页**（重新猜拳 + 发牌）。
-            #    卡面写的是"跳过这一个大回合内对方的所有阶段" —— **不含翻页**。
-            #    两者混用会让神之宣告白送一次状态重置（作者实测反馈的
-            #    "效果二疑似没实现"根因就在这，它做的不是卡面承诺的事）。
-            room.skip_opponent_stages = opponent_id
-            result['message'] = '牺牲两艘战舰，跳过对方本回合所有阶段'
-
-    elif card.name == '绝处逢生':
-        # 卡面：牺牲自己所有的战舰，然后在"所有原本有战舰的地方"选一格，
-        # 放置唯一一艘战舰；此后击杀对方任何一艘船直接获胜。
-        if caster.remaining_ships < 3:
-            result['success'] = False
-            result['message'] = '需要至少3艘战舰才能发动'
-            return result
-
-        # 只取【活船】：沉船还留在 caster.ships 里，把它们也算进"牺牲"会重复入堆，
-        # 复活类卡牌据此会把已经沉掉的船再恢复一次。
-        sacrificed = _alive_ships(caster)
-        original_cells = [(p.x, p.y) for sh in sacrificed for p in sh.positions]
-
-        # 牺牲 = 走完整击沉流程，不再"凭空消失"：
-        #   ① 从 caster.ships 移入 caster.sunken_ships（供复活类回收）
-        #   ② 置满命中，让"这艘船已经没了"在双方棋盘与 _is_ship_alive 上口径一致
-        #   ③ 触发击沉通用副作用（无瑕圣心中断 / 百亿补贴 / 八方来财 / 恶魔契约）
-        #
-        # ⚠️ 通用副作用只结算【一次】，不能逐艘调 _on_ship_destroyed ——
-        # 那会触发 N 次无瑕圣心中断与 N 次恶魔契约。
-        for sh in sacrificed:
-            sh.hits = list(sh.positions)  # 满命中 = 已沉
-            if sh in caster.ships:
-                caster.ships.remove(sh)
-            if sh not in caster.sunken_ships:
-                _mark_ship_sunken(caster, sh)
-        caster.remaining_ships = 0
-
-        # ⚠️ 绝处逢生同样是"重摆自己棋盘"（全部牺牲 + 只放 1 艘）：这里也得终止
-        #    自己棋盘上的范围效果与除外船 —— 少这一句，除外的船到期会 append 回来
-        #    变成幽灵船（本项目实测过 6 艘变 8 艘）。
-        _clear_board_effects(room, [caster_id], '绝处逢生')
-
-        if sacrificed:
-            # ⚠️ 顺序要紧：**先**走击沉结算，**再**清跨回合效果。
-            #    `_on_ship_destroyed` 会用 `holy_heart_interrupted`（"因船被沉而中断"）
-            #    这个**更具体**的原因清掉无暇圣心；若我们先清，那条路径就什么都找不到，
-            #    玩家看到的原因从"有船被击沉"退化成"棋盘被重摆"——语义变糊，
-            #    而且 `tests/test_last_stand_and_steal_fix.py` 钉的就是前者。
-            #    所以下面那句 `_clear_multiturn_effects` 必须排在击沉结算**之后**
-            #    （它负责兜住"没被击沉路径清掉"的那些，比如玩家没牺牲任何船的情况）。
-            _on_ship_destroyed(room, caster_id, sacrificed[-1])
-            # 逐艘公开广播，让双方棋盘都画出"这艘船没了"，而不是无声消失
-            for sh in sacrificed:
-                # ★ 回放批：自牺牲同样是**双方看得见的沉没** ⇒ 回放的船位时间线
-                #   必须留下这几格（否则回放里它们凭空消失）。与上面那句广播同一份数据。
-                replay.note_ship_lost(room, caster_id,
-                                      [{'x': p.x, 'y': p.y} for p in sh.positions])
-                emit('ship_sacrificed', {
-                    'player': caster_id,
-                    'positions': [{'x': p.x, 'y': p.y} for p in sh.positions],
-                    'reason': 'last_stand',
-                }, room=room.id)
-            _emit_ships_updated(room)
-            _emit_player_ships(room, caster_id)
-
-        # ⚠️ 兜底清理排在这里（击沉结算**之后**）：被 `holy_heart_interrupted`
-        #    处理掉的不再重复，没被处理掉的（比如本局没牺牲任何船）由这里收口。
-        #    跨回合计数效果是**房间级**的（记的是"再过几回合谁获胜"），
-        #    绝处逢生虽只重摆自己的棋盘，也必须终止它们。
-        _clear_multiturn_effects(room, '绝处逢生')
-
-        # 神机妙算按"沉船差值"判定，牺牲不是被击沉，需同步快照避免误判
-        snap = room.game_effects.get(f'prediction_initial_{caster_id}')
-        if isinstance(snap, dict):
-            snap['sunken'] = len(caster.sunken_ships)
-
-        room.game_effects['last_stand_cells'] = original_cells
-        # ⚠️ 必须记下这批候选格是【谁棋盘上的】。两块棋盘各有自己的 0-5 坐标，
-        # 不下发归属的话前端无从判断该高亮哪块 —— 实测（2026-09-16 作者反馈）
-        # 施法者自己放绝处逢生时，他那几个候选格被画到了**对手棋盘**上，
-        # 看着像"敌方可能在这儿"，直接误导他自己的攻击。
-        room.game_effects['last_stand_owner'] = caster_id
-        # 把"原本有战舰的格子"公开给双方 —— 对方要据此知道唯一一艘新船可能在哪，
-        # 而且这些格子必须【能打】。
-        #
-        # ⚠️ 以前这里只发 ship_sacrificed（reason='last_stand'），前端把它当成
-        # 「牺牲的船」画成红叉 —— 而红叉在玩家眼里就是"已打过、别再点了"，
-        # 结果对方看着六个叉子根本不知道能打哪儿、也以为打不了（作者实测反馈）。
-        # 现在改成下发一份"候选格"名单，前端画成高亮而不是叉。
-        cells_payload = [{'x': cx, 'y': cy} for (cx, cy) in original_cells]
-        emit('last_stand_cells', {'cells': cells_payload, 'owner': caster_id}, room=room.id)
-        # 生效回合内其余魔法卡无效 + 击杀任何船直接获胜
-        # ⚠️ 两个标记生命周期不同，别合并：
-        #   last_stand     —— 锁卡，换小回合就被清（卡面写的是"在……生效的回合"）
-        #   last_stand_win —— 击杀即胜，作者裁定"接下来所有回合"都有效，活到对局结束
-        caster.effect_flags.last_stand = True
-        caster.effect_flags.last_stand_win = True
-        # 角标要在发动当场就亮起来。这里没有走"裁剪返回 True 才发"的那条路
-        # （新标记是直接赋值的），所以得显式广播一次。
-        _emit_active_effects(room)
-        _start_placement(room, caster_id, 'last_stand', 1)
-        result.temp_data_id = 'last_stand_choice'
-        result['message'] = '已牺牲全部战舰，请在所有原本有战舰的格子上选择一格放置唯一一艘战舰'
-
-    elif card.name == '死者苏生':
-        # 复活一艘船：必须有已阵亡的战舰，否则不可用。
-        # 没有"6 艘上限"（作者确认：船数只受棋盘格数限制）。
-        if not caster.sunken_ships:
-            result['success'] = False
-            result['message'] = '没有可复活的战舰'
-            return result
-
-        _start_placement(room, caster_id, 'revive', 1)
-        result.temp_data_id = 'revive_choice'
-        result['message'] = '请选择复活战舰的部署位置（未被攻击过的空格）'
-
-    elif card.name == '疗愈':
-        # 复活至多两艘被击杀的船（原地复活）。
-        # 没有"6 艘上限"（作者确认：船数只受棋盘格数限制）。
-        if not caster.sunken_ships:
-            result['success'] = False
-            result['message'] = '没有可复活的战舰'
-            return result
-
-        # 卡面："选定自己至多两艘被击杀的船并将他们在原地复活。"
-        # 原先走的是"选一个未打过的空格"的放置流程，与卡面不符。
-        count = min(2, len(caster.sunken_ships))
-        # reveal_to=对手：疗愈是【原地复活】，那些格子的位置对方本来就知道
-        # （是他打沉的），显形只是防止他忘记、不是泄露新信息（作者 2026-09-16 要求）
-        revived = _revive_sunken_ships(room, caster, count, reveal_to=_opponent_of(room, caster_id))
-        _emit_ships_updated(room)
-        _emit_player_ships(room, caster_id)
-        result['message'] = f'疗愈生效，{revived} 艘战舰在原地复活'
-
-    elif card.name == '盗亦有道':
-        # 卡面：立即获取对方打出的上一张魔法卡。
-        #
-        # ⚠️ 不能在连锁里读 room.magic_history：连锁是 LIFO（后发先至）结算，
-        # 盗亦有道先出栈时，它要偷的那张对手的牌【还没轮到结算、自然还没写进历史】，
-        # 于是恒报「对方没有使用过魔法卡」。这与失灵！当初康不到目标是同一个病灶，
-        # 修法也一致 —— 读【连锁栈】而不是读历史。
-        # 结算中当前项已出栈，故 chain[-1] 即"紧邻下方那一项"（下一个待结算项）。
-        stolen_card = None
-        stolen_entry = None
-        stolen_from_chain = False
-
-        target = room.chain[-1] if room.chain else None
-        if target is not None and target.player_id != caster_id:
-            # 连锁内：偷栈上紧邻的下方那一项
-            stolen_card = target.card
-            stolen_from_chain = True
-        else:
-            # 非连锁（对手的牌已结算完）或栈顶是自己：回退到全局历史里对方最近的一张
-            for entry in reversed(room.magic_history):
-                if entry['caster'] != caster_id and not entry.get('negated_skip'):
-                    stolen_entry = entry
-                    stolen_card = entry['card']
-                    break
-
-        if stolen_card is None:
-            result['success'] = False
-            result['message'] = '对方没有使用过魔法卡'
-            return result
-
-        # 同一条历史只能被偷一次，否则可反复盗取同一张卡造成卡牌增殖
-        if stolen_entry is not None and stolen_entry.get('stolen'):
-            result['success'] = False
-            result['message'] = '该魔法卡已被盗取过'
-            return result
-
-        # 连锁内偷到的牌【还没结算】，此刻不可能有历史条目可标记。把"这张牌已被盗取"
-        # 记在房间级台账里，等 resolve_chain 真正结算它、写入历史时再合并进去。
-        # （不能在这里往 magic_history 塞占位条目 —— 那会让同一张牌出现两条记录，
-        #   回退分支扫到没标记的那条就会重复盗取，等于凭空造牌。）
-        ledger = room.game_effects.setdefault('stolen_cards', {})
-        if id(stolen_card) in ledger:
-            result['success'] = False
-            result['message'] = '该魔法卡已被盗取过'
-            return result
-
-        # 从弃牌堆中移除对应卡牌，保证是"转移"而非"复制"
-        # （非场地卡在出牌时即进入弃牌堆，不移除会出现弃牌堆与手牌同时存在的副本）
-        for i, c in enumerate(room.magic_discard):
-            if c is stolen_card or (c.name == stolen_card.name and c.speed == stolen_card.speed):
-                room.magic_discard.pop(i)
-                break
-
-        if stolen_from_chain:
-            ledger[id(stolen_card)] = True
-        else:
-            stolen_entry['stolen'] = True
-
-        caster.magic_hand.append(stolen_card)
-
-        result['message'] = f'成功盗取对方的{stolen_card.name}'
-
-    elif card.name == '回光返照':
-        # 只能在自己先手时发动
-        if room.attack_order and room.attack_order[0] != caster_id:
-            result['success'] = False
-            result['message'] = '只能在自己先手时发动'
-            return result
-
-        # 清空棋盘重新摆放6艘船
-        # 棋盘换新 → 除外船不再是这批棋盘上的船；**范围效果也要终止**
-        # ⚠️ 只清**自己**棋盘上的（对方棋盘没被重摆，那上面的区域照旧）
-        _clear_board_effects(room, [caster_id], '回光返照')
-        # 同上：跨回合计数效果是房间级的，施法者重摆棋盘就得一起终止
-        _clear_multiturn_effects(room, '回光返照')
-        caster.ships = []
-        caster.remaining_ships = 0
-        # ⚠️ 要清的是【对方打在我方棋盘上的记录】＝ `opponent.attacks`，
-        # 不是 `caster.attacks`。两个数组是不同坐标空间：
-        #   · caster.attacks   = 我打在【对方】棋盘上的格子 → 与本次重摆无关；
-        #     清掉反而会把我已经探明的格子重新变成可打（白赚一炮）。
-        #   · opponent.attacks = 对方打在【我方】棋盘上的格子 → 卡面
-        #     「在使用回光返照后，也会清空对方视角中自己的棋盘」清的就是它。
-        # 旧实现清错了那一份，于是玩家实测：「原本被打过 / 沉船的格子仍然会
-        # 显示在使用回光返照者的棋盘上」。
-        room.players[opponent_id].attacks = []
-        # 标记需要重新摆放
-        room.players[caster_id].needs_reset = True
-        # 清空对方视角（显形记录 + 攻击历史一起清，否则前端本地缓存还画着 ✕）
-        room.players[opponent_id].revealed_positions = []
-        _emit_board_attacks(room)
-        # ★ 第 5 批：施法者那块棋盘整块换新 → 观众那块也得清空（作者实报的缺陷 ④）。
-        #   重摆之后的**新位置仍然保密**：新位置的船没挨过炮，不在 `attacks` 里。
-        _mark_spectate_board_dirty(room)
-        # ★ 回放批：回光返照**只清施法者那一块** → 棋盘标记只记他这一侧
-        #   （传 caster_id，不要顺手把对手也标上）。
-        replay.note_board_reset(room, caster_id)
-        # ★ 回放批：施法者旧棋盘上的"主动牺牲格"也一起作废（他的船全没了）。
-        replay.note_board_replaced(room, caster_id)
-
-        # 跳过自己的战斗阶段
-        room.current_phase = 'end'
-
-        # ★ 2026-09-20 修（第二版）：让施法者进入**摆放阶段**，只发给他一个人。
-        #
-        # 卡面：「立即清空自己的棋盘，并在其上重新摆放 6 艘船。**跳过自己的战斗阶段**。
-        #        接下来如果对方**在这一个大回合内**对任何一艘自己的船造成了伤害，
-        #        那么自己直接判负。」
-        #
-        # ⚠️ 两条必须点，前一版各自栽过一次：
-        #
-        # ① **走服务端驱动的 `reset_gameboard`**（与败者食尘同一条路），
-        #    而不是靠前端 `applyCardEffect` 的 `case '回光返照'`。
-        #    那个 case 是**广播**处理器（双方都跑），会把对手也拽进布船界面，
-        #    而且让"谁该重摆"有两份实现（前端 case + 服务端状态）。按 sid 单发天然只有施法者收到。
-        #
-        # ② `room.state` 显式置为 `'placing_ships'`。
-        #    否则 `handle_place_ships` 的收尾判据 `all(len(p.ships) > 0 ...)`
-        #    在"对手没被清船"时**恒为真**，直接掉进通用分支 → 收尾不受控。
-        #
-        # ③ ★ **`max_ships` 必须显式给一个数**。
-        #    `Player.max_ships` 初值是 `None`，而 `reset_gameboard` 的
-        #    `new_max_ships` 会被前端写进 `gameState.maxShips` ——
-        #    传 None 过去，前端 `placedShips >= maxShips` 立刻成立 →
-        #    **点格子没反应**，且 `ships` 始终为空 → 「布船数据无效」。
-        #    （败者食尘在它那边显式设了 `player.max_ships = DEFAULT_SHIPS`，回光返照漏了。）
-        room.state = 'placing_ships'
-        room.attacks_remaining = 0          # 摆放期间本就没有攻击
-        caster.max_ships = int(caster.max_ships or 6)
-        # 标记"这次摆放属于回光返照" → `handle_place_ships` 走**本回合续行**的收尾
-        room.huiguang_awaiting_placement = True
-        emit('reset_gameboard', {
-            'new_max_ships': caster.max_ships,
-            'message': '回光返照生效，请重新摆放战舰',
-        }, to=caster.sid)
-
-        # ★ 2026-09-22 修：**AI 当施法者时，摆放必须在同一个调用里就地做完。**
-        #
-        # 上面那份 `reset_gameboard` 是 `to=caster.sid` 单发的，而 AI 的 sid 是
-        # `'ai-'+room_id` —— **没有这条 socket 连接**，事件石沉大海；可
-        # `room.state` 已经变成 `placing_ships` 了。于是房间停在"等待摆放"，
-        # 等的人却是施法者自己（AI）。AI 的自救在 `_ai_master_turn` 的后台循环里
-        # （`if room.state == 'placing_ships': _ai_place_board(...)`），那是
-        # **异步**的、要等下一圈才跑 —— 中间这段窗口里真人既不在对局里、也没收到
-        # 任何事件，表现就是作者实测的「棋盘上一艘船都没有、界面卡没了」。
-        #
-        # AI 没有 UI 要等，所以它就地摆完：`_ai_place_board` 走的是
-        # `handle_place_ships`，也就是**玩家点"确认布船"时同一个入口**，
-        # 收尾（`huiguang_awaiting_placement` 分支 → 回到自己的准备阶段、
-        # 攻击次数为 0）一份不差。对手因此永远不会看到 `placing_ships`。
-        #
-        # ⚠️ 必须排在上面那个 emit **之后**：语义仍是"重摆 + 重摆完成"两条事件，
-        #    只是不再有中间那段谁都不正常的窗口。
-        # ⚠️ `_ai_seat_places_board_now` 内部对真人座位直接返回 False（真人要自己摆），
-        #    这里绝不会替真人做选择。
-        _ai_seat_places_board_now(room, caster_id)
-
-        # 设置效果：如果对方在这一大回合内对自己的船造成伤害，自己直接判负
-        room.game_effects['last_chance'] = {
-            'caster': caster_id,
-            'active': True,
-            'round': room.round,
-        }
-
-        # ★ 第 6 批：这一分支发出去的全是 `to=<sid>` 单发（`reset_gameboard` 给施法者、
-        #   AI 施法时那份甚至没人收），`emit` 的收尾不跑 ⇒ 必须在这里自己收口。
-        #   上面 `_mark_spectate_board_dirty` 已经**立刻**发过一帧（那一刻棋盘真的变了、
-        #   观众必须知道），但它是"清格之后、`state` 还没推到 placing_ships"的中间态；
-        #   这一句用**结算完之后**的真值覆盖掉它 —— 判据口径与其它三张卡一致：
-        #   交给 `_flush_spectate_board_if_dirty` 统一收口，不在这里重写发布逻辑。
-        _flush_spectate_board_if_dirty(room)
-
-        result['message'] = '已清空棋盘，请重新摆放战舰，本回合战斗阶段跳过。若对方在本大回合内对您的船造成伤害，您将直接判负'
-
-    elif card.name == '加百列之光':
-        # 无效化：连锁栈里有牌就康「正下方那一项」；没有连锁栈则主动拆场地魔法。
-        # （作者裁定：这两条是二选一 —— 这解决了"场地早贴上了、过了一会想反悔"
-        #   却因为没有连锁窗口而做不到的问题。）
-        #
-        # ⚠️ 不判归属：此前要求 chain[-1].player_id != caster_id，导致【自连锁】
-        # 时康不掉自己前面打出的牌 —— 实测场景：对方出牌 → 我失灵 → 我又加百列，
-        # 结算时加百列看到正下方是自己的失灵就不康，失灵照常无效化了对方那张牌。
-        # 作者裁定：同一连锁里后手应能推翻前手，一律康正下方那一项。
-        negated_count = 0
-        chain_negated = False
-        if room.chain:
-            result.negate_target = True
-            chain_negated = True
-            negated_count += 1
-        elif room.field_magic is None and room.magic_history \
-                and room.magic_history[-1]['caster'] != caster_id:
-            # 既没有连锁项、场上也没有场地：回退到"对方最近用过的那张"
-            # （原行为，别让这张卡在这种情形下变成纯粹的空牌）
-            room.magic_history.pop()
-            chain_negated = True
-            negated_count += 1
-
-        # 没有连锁项时：拆掉当前生效的场地魔法（自己贴的与对方贴的都可以拆）
-        torn = None
-        if not chain_negated and room.field_magic:
-            torn = _tear_down_field_magic(room, caster_id)
-            negated_count += 1
-
-        if negated_count == 0:
-            result['success'] = False
-            result['message'] = '没有可无效化的魔法卡或场地魔法'
-            return result
-        if torn is not None:
-            result['message'] = f'成功无效化场地魔法「{getattr(torn, "name", "")}」'
-        else:
-            result['message'] = '成功无效化连锁中的魔法卡'
-
+    special_handled, special_stop = _SPECIAL_EFFECTS.apply(
+        room, caster_id, card, target_data, result)
+    if special_stop:
+        return result
+
+    steal_handled, steal_stop = _STEAL_EFFECTS.apply(
+        room, caster_id, card, result)
+    if steal_stop:
+        return result
+    if steal_handled:
+        pass
     elif card.name == '钢筋铁骨':
-        # 牺牲一艘船，其他船进入无敌状态
-        if caster.remaining_ships < 2:
-            result['success'] = False
-            result['message'] = '需要至少2艘战舰才能发动'
-            return result
+        apply_steel_bone(
+            room, caster_id, result, caster=caster,
+            note_ship_lost=replay.note_ship_lost,
+            capture_observation=capture_replay_observation,
+            mark_ship_sunken=_mark_ship_sunken,
+        )
 
-        # 牺牲一艘船（进入沉船堆，可被复活类卡牌回收）。
-        # 注意：普通击沉只减 remaining_ships、不会把船从 ships 里移除，
-        # 所以不能直接 pop 列表末尾 —— 那可能是一艘已沉的船，等于零代价发动，
-        # 还会让沉船堆出现重复条目（复活类卡牌按 len(sunken_ships) 恢复时
-        # 会把船数算多，产生幽灵船）。
-        alive_ships = [sh for sh in caster.ships if sh not in caster.sunken_ships]
-        if not alive_ships:
-            result['success'] = False
-            result['message'] = '没有可牺牲的战舰'
-            return result
-        popped = alive_ships[-1]
-        # ★ 回放批：这也是"主动牺牲"（双方看得见沉没）⇒ 回放的船位时间线必须留下
-        #   这一格。与 `_do_demon_contract_sacrifice` 同一个口径，数据源就是这艘船自己。
-        replay.note_ship_lost(room, caster_id,
-                              [{'x': p.x, 'y': p.y} for p in popped.positions])
-        caster.ships.remove(popped)
-        if popped not in caster.sunken_ships:
-            _mark_ship_sunken(caster, popped)
-        caster.remaining_ships -= 1
-
-        # 其他船进入无敌状态
-        for ship in caster.ships:
-            ship.invincible = True
-
-        result['message'] = '牺牲一艘战舰，其他战舰进入无敌状态'
-
-    elif card.name == '守株待兔':
-        # 守株待兔（速阶1 普通）：选自己一艘船打上陷阱标记，
-        # 本大回合内这艘船被击沉时让对方牺牲 min(2, 对方活船数) 艘。
-        # 卡面只在本大回合生效 → 跨回合清理由 end_turn 内"进入新大回合"分支兜底。
-        if caster.remaining_ships == 0:
-            result['success'] = False
-            result['message'] = '没有战舰可设置陷阱'
-            return result
-
-        # 用 _request_ship_pick 让施法者点选一艘自己的活船；
-        # AI 路径会直接随机返回一艘，立刻打上陷阱；人类路径入队，由
-        # handle_confirm_sacrifice 的 'trap_setup' 分支确认后打上陷阱。
-        picked = _request_ship_pick(room, caster_id, 'trap_setup',
-                                    '守株待兔：请点选一艘自己的战舰设置陷阱')
-        if picked is not None:
-            # AI 自动选好：直接打标记
-            picked.trap = True
-            add_game_log(room,
-                         f'第{room.round}回合 · {_log_name(room, caster_id)} 的【守株待兔】'
-                         f'为一艘战舰设置陷阱',
-                         'magic', {'caster': caster_id, 'card': '守株待兔'})
-            emit('trap_set', {
-                'player': caster_id,
-                'positions': [{'x': p.x, 'y': p.y} for p in picked.positions],
-            }, room=room.id)
-            result['message'] = '已为一艘战舰设置陷阱（本回合该船被击沉时对方需牺牲两艘）'
-        else:
-            # 人类：等待玩家点选
-            result['message'] = '请选择要设置陷阱的战舰'
-
-    elif card.name == '卧薪尝胆':
-        # 卧薪尝胆（速阶1 普通）：为所有活船添加护盾（同仁王之盾的 shield=True）。
-        # 发动条件「自己船数 < 对方船数」已在 handle_use_magic_card 扣牌前拦过，
-        # 这里再判一次作纯防御（连锁结算时船数可能变化）。
-        opponent_id = _opponent_of(room, caster_id)
-        if opponent_id and opponent_id in room.players:
-            if caster.remaining_ships >= room.players[opponent_id].remaining_ships:
-                result.success = False
-                result.message = '自己的船数不小于对方，卧薪尝胆无法发动'
-                return result
-        alive = _alive_ships(caster)
-        if not alive:
-            result.success = False
-            result.message = '没有战舰可添加护盾'
-            return result
-        applied = 0
-        for ship in alive:
-            ship.shield = True
-            applied += 1
-        _emit_player_ships(room, caster_id)
-        # 护盾状态只应让施法者在自己的棋盘上看到。把船位放进房间广播会
-        # 直接把未被攻击过的舰队坐标泄露给对手；对手只需要知道“对方加了
-        # 几艘护盾”，实际位置应继续保持未知，直到正常攻击/显形规则公开。
-        emit('shields_added', {
-            'player': caster_id,
-            'count': applied,
-        }, room=room.id)
-        add_game_log(room,
-                     f'第{room.round}回合 · {_log_name(room, caster_id)} 的【卧薪尝胆】'
-                     f'为{applied}艘战舰添加护盾',
-                     'magic', {'caster': caster_id, 'card': '卧薪尝胆', 'count': applied})
-        result['message'] = f'已为{applied}艘战舰添加护盾'
-
-    elif card.name == '神机妙算':
-        # 宣言x：若结束阶段自己船数减少恰好x，那些船不减少。
-        # 尚未宣言 → 打开宣言窗口（同时拍基线、冻结对方、挂超时）；
-        # 已宣言（confirm 落临时数据）→ 直接生效。
-        if 'prediction' not in room.magic_temp_data:
-            _open_shenji_declare_window(room, caster_id, result)
-        else:
-            x = room.magic_temp_data.get('prediction')
-            try:
-                x = max(0, min(6, int(x)))
-            except Exception:
-                x = 0
-            _apply_shenji_prediction(room, caster_id, x, result)
+    elif card.name in ('守株待兔', '卧薪尝胆', '神机妙算'):
+        _TACTICAL_EFFECTS.apply(room, caster_id, card, result, caster=caster)
 
     # ==== 判定魔法卡 ====
-    # 与「普通」「场地」并列的第三类。先摇骰子（动画+结果广播给双方），
-    # 再按点数结算不同效果。命运骰子是第一张判定卡；为后续扩展留 type 分支。
     elif card.type == '判定':
-        if card.name == '命运骰子':
-            _apply_dice_of_fate(room, caster_id, result)
-        elif card.name == '无忧梦呓':
-            # 与命运骰子不同：**打出时不摇骰子**，只登记；
-            # 摇点在对方回合开始时的 `_settle_wuyou_dream`（卡面写的就是那时判定）。
-            _register_wuyou_dream(room, caster_id, result)
-        elif card.name == '兵粮寸断':
-            # 同款"打出时不摇骰子"：摇点在对方**准备阶段开始时**的 `_settle_bingliang`；
-            # 但那一次判定之后要留下两次跳过额度（见 `_bingliang_consume_skip`）。
-            _register_bingliang(room, caster_id, result)
-        else:
-            result.success = False
-            result.message = f'未实现的判定魔法卡：{card.name}'
+        _JUDGEMENT_EFFECTS.apply(room, caster_id, card, result)
 
     # ==== 场地魔法卡 ====
     elif card.type == '场地':
-        # 场地魔法处理 - 全场只能有一张场地魔法卡生效。
-        # 将实例放入场地区域；被顶掉的旧卡实例移入弃牌堆（不造副本）。
-        _place_field_magic(room, caster_id, card)
-
-        if card.name == '恶魔契约':
-            room.game_effects['demon_contract'] = True
-            result.message = '恶魔契约生效，双方船数增减绑定'
-        elif card.name == '禁忌果实':
-            result.message = '禁忌果实生效，双方只能使用失灵！和场地魔法'
-        elif card.name == '伊甸园':
-            result.message = '伊甸园生效，攻击次数变为6-n'
-            if room.state == 'attacking' and getattr(room, 'current_phase', None) == 'preparation' and room.current_attacker in room.players:
-                # 场地变更需要整体重算（不是"船数增减"），用 _recalc
-                _recalc_attacker_attacks(room)
-                emit('attacks_updated', {
-                    'current_attacker': room.current_attacker,
-                    'attacks_remaining': room.attacks_remaining
-                }, room=room.id)
-        # 注意：教皇旨意在上面的场地魔法分支之前就被 elif card.name 捕获，
-        # 这里原本还有一份重复分支，永远不可达，已删除。
+        _FIELD_EFFECTS.apply(room, caster_id, card, result)
 
     # ==== 已实现的魔法卡 ====
-    elif card.name == '失灵！':
-        # 连锁结算中：康紧邻下方那一项（下一个待结算项）。
-        # ⚠️ 与「加百列之光」同口径：不判归属 —— 自连锁时要能康掉自己前面
-        # 打出的牌（作者裁定：同一连锁里后手能推翻前手）。
-        if room.chain:
-            # 目标解析 + 免疫关系与「平等条约」共用同一份实现（`_chain_negation_target`）。
-            # ⚠️ 走这条支时 `room.chain` 必非空 ⇒ 该函数只会返回目标、不会返回免疫理由；
-            #    下面那个 `if target is None` 是防御性的（将来若给它加新的免疫规则，
-            #    失灵！与平等条约会一起生效，不会只改一张）。
-            target, why = _chain_negation_target(room, '失灵！')
-            if target is None:
-                result.success = False
-                result.message = why
-                return result
-            result.negate_target = True
-            result.message = f'将无效化{target.card.name}'
-            return result
-
-        # 没有连锁栈：优先主动拆掉已贴出的场地魔法。
-        # 作者裁定 —— 这解决了"场地早贴上了、过了一会想反悔"却因为没有
-        # 连锁窗口而做不到的问题（原实现在这种情况下只能回退到历史记录）。
-        # 自己贴的与对方贴的都可以拆。
-        if room.field_magic:
-            torn = _tear_down_field_magic(room, caster_id)
-            result.message = f'成功无效化场地魔法「{getattr(torn, "name", "")}」'
-            return result
-
-        # 直接调用（无连锁栈、场上也没有场地）时回退历史记录。
-        # 卡面："无效化对方使用的上一张魔法卡，被影响的魔法卡必须为当前时段刚使用的。"
-        if room.magic_history and room.magic_history[-1]['caster'] != caster_id:
-            last_magic = room.magic_history[-1]
-            if getattr(last_magic.get('card'), 'name', None) in ('看破！', '加百列之光'):
-                result.success = False
-                result.message = '该魔法免疫失灵！'
-                return result
-            # 只允许无效化本大回合内刚使用的卡（老条目没有 round 时按旧行为放行）
-            if last_magic.get('round', room.round) != room.round:
-                result.success = False
-                result.message = '对方上一张魔法卡不是本回合使用的，失灵！无法无效化'
-                return result
-            room.magic_history.pop()
-            result.message = f'无效化了{last_magic["card"].name}（若其效果已结算则不会回滚）'
-            result.negated = last_magic
-        else:
-            result.success = False
-            result.message = '没有可无效化的魔法卡'
-
-    elif card.name == '看破！':
-        # 无效化对方本回合所有魔法卡
-        room.players[opponent_id].magic_blocked = True
-        result.message = '本回合对方魔法卡被无效化'
-
-    elif card.name == '增援':
-        # 召唤一艘战舰：等待玩家选择放置位置。
-        # ⚠️ 没有"6 艘上限"这种东西 —— 作者确认船数只受棋盘格数（36 格）限制。
-        # 旧实现在 remaining_ships >= 6 时直接拒绝，但那时牌已经离手
-        # （handle_use_magic_card 先扣牌再结算），玩家被白吞一张卡。
-        _start_placement(room, caster_id, 'reinforce', 1)
-        result.temp_data_id = 'reinforcement_choice'
-        result.message = '请选择增援战舰的部署位置（未被攻击过的空格）'
 
     elif card.name == '滥竽充数':
-        # 滥竽充数（速阶3 普通）：补充满自己的船数，自己选择放置位置。
-        # 卡面：「这张牌仅可在当前大回合内生效。补充满自己的船数并自己选择放置
-        #   被补充的船。这些在当前大回合被补充的船将会在大回合结束时强制收回，
-        #   不会显示沉没。在极限情况下（即剩余的格子数比需要补充的船数少的时
-        #   候）就尽可能多的补充就可以。」
-        # 发动条件已在 handle_use_magic_card 扣牌前拦过，这里再判一次作纯防御。
-        reason = _lanyu_requirement_reason(room, caster_id, card)
-        if reason:
-            result.success = False
-            result.message = reason
+        lanyu_handled, lanyu_stop = _TEMPORARY_SHIP_EFFECTS.apply(
+            room, caster_id, card, result)
+        if lanyu_stop:
             return result
-        max_ships = int(getattr(caster, 'max_ships', 6) or 6)
-        needed = max_ships - caster.remaining_ships
-        # 极端情况：可放置格子 < needed，按可放置格子数补充（"尽可能多"）
-        blocked = _placement_blocked_cells(room, caster_id)
-        available = 36 - len(blocked)
-        count = min(needed, available)
-        if count <= 0:
-            result.success = False
-            result.message = '没有可放置的格子，滥竽充数无法生效'
-            return result
-        # 登记本大回合的临时船列表（end_turn 大回合切换时强制收回）。
-        # 用 dict 按 player_id 分桶：同一玩家可能多次发动（被击沉后再补）。
-        lanyu = room.game_effects.setdefault('lanyu_temp_ships', {})
-        lanyu.setdefault(caster_id, [])
-        _start_placement(room, caster_id, 'lanyu', count)
-        result.temp_data_id = 'lanyu_placement'
-        result.message = f'请选择{count}艘补充战舰的部署位置（大回合结束时强制收回）'
-        add_game_log(room,
-                     f'第{room.round}回合 · {_log_name(room, caster_id)} 的【滥竽充数】'
-                     f'补充{count}艘战舰（大回合结束时收回）',
-                     'magic', {'caster': caster_id, 'card': '滥竽充数', 'count': count})
 
     else:
-        result.success = False
-        result.message = f'未实现的魔法卡: {card.name}'
+        lanyu_handled, lanyu_stop = _TEMPORARY_SHIP_EFFECTS.apply(
+            room, caster_id, card, result)
+        if lanyu_stop:
+            return result
+        if lanyu_handled:
+            pass
+        elif not (opening_handled or status_handled or reveal_handled
+                  or area_handled or board_handled or negation_handled
+                  or special_handled or steal_handled):
+            result.success = False
+            result.message = f'未实现的魔法卡: {card.name}'
 
 
 
-    
+
     #result['success'] = False
     #result['message'] = f'魔法效果应用失败: {str(e)}'
 
@@ -15182,7 +10847,7 @@ def handle_surrender(data):
     #   仍由 `_finish_game` / `_finish_game_win` 出，本批不改它的显示。
     #   ⚠️ 必须放在 `_finalize_match` **之前**：收口里会 `replay.finalize` + `reset`
     #      （落库后立刻置空），放在后面就等于这一步永远录不进去。
-    replay.note_action(room, 'surrender',
+    replay.note_action(capture_replay_observation(room), 'surrender',
                        f'{_log_name(room, player_id)} 投降了',
                        {'player': player_id, 'winner': opponent_id},
                        _log_name(room, player_id))
@@ -15259,19 +10924,10 @@ except Exception as _e:                                          # noqa: BLE001
 # ---------------------------------------------------------------------------
 # 把本模块对象交给对局回放的纯模块（`replay.py`）。
 #
-# 与上面 api 那一处同一个理由、同一套写法（教训 #19）：`replay.py` **运行期不许 import
-# 本模块** —— 本模块以 `python server.py` 启动时名字是 `__main__`，`import server` 会把
-# 整个文件再执行一遍成另一个模块对象（本地坏、线上好）。
-# 注入的是 `sys.modules[__name__]`（无论叫 `__main__` 还是 `server`，都一定是正在跑的那一份），
-# 且注入**模块对象**、调用点按名字现取 —— 注入函数对象会把测试里的 monkeypatch 静默架空。
-#
-# ⚠️ 少了这一句**不会报错**：`replay._srv()` 返回 None，回放 `started_at` 会静默退回
-#    `room.created_at`（建房时刻）—— 自定义房会把"对局时间"标早十几分钟。
-#    这就是"静默兜底掩盖漏接线"的形状（教训 #32/#34），所以有一条用例专门钉住它已接上
-#    （`tests/test_replay_recorder.py::test_replay_module_is_bound_to_the_server`）。
+# 回放只需要开局时间查询；延迟查找保留测试及运行时替换能力。
 # ---------------------------------------------------------------------------
 try:
-    replay.bind(sys.modules[__name__])
+    replay.bind_started_at(lambda room: _match_started_at(room))
 except Exception as _e:                                          # noqa: BLE001
     # 同 api 那一处：回放能力降级，但绝不能让整个服务起不来。
     print(f'[replay] 注入后端模块失败（回放的"开打时刻"将退回建房时刻）: {_e}')
@@ -15282,7 +10938,11 @@ if __name__ == '__main__':
     db.init_db()
     # 添加详细日志输出
 
-    logging.basicConfig(level=logging.DEBUG)
+    log_level = os.environ.get('LOG_LEVEL', 'INFO').upper()
+    if log_level not in {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}:
+        raise ValueError('LOG_LEVEL 必须是 DEBUG、INFO、WARNING、ERROR 或 CRITICAL')
+    logging.basicConfig(level=getattr(logging, log_level))
+    logging.getLogger().setLevel(getattr(logging, log_level))
     # 启动服务器
     # 默认关闭调试模式（Werkzeug 调试器可被用于远程代码执行）；
     # 本地需要时设置环境变量 FLASK_DEBUG=1。
@@ -15292,3 +10952,4 @@ if __name__ == '__main__':
         host='0.0.0.0',
         port=int(os.environ.get('PORT', 5000)),
     )
+

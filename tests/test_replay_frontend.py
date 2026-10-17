@@ -21,6 +21,7 @@ import re
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GAME_JS = os.path.join(ROOT, 'static', 'game.js')
+REPLAY_JS = os.path.join(ROOT, 'static', 'replay_player.js')
 INDEX_HTML = os.path.join(ROOT, 'templates', 'index.html')
 
 
@@ -50,16 +51,17 @@ def _func_body(src, header):
     raise AssertionError('花括号不配平：%s' % header)
 
 
-# REPLAY 段 = 从 `// REPLAY 界面段开始` 到 `bindEventListeners` 之前的**全部代码**。
-_REPLAY_HEADER = '// REPLAY 界面段开始'
-_REPLAY_END = '// 绑定事件监听器\nfunction bindEventListeners'
-
-
 def _replay_code():
-    src = _read(GAME_JS)
-    start = src.index(_REPLAY_HEADER)
-    end = src.index(_REPLAY_END, start)
-    return _strip_comments(src[start:end])
+    return _strip_comments(_read(REPLAY_JS))
+
+
+def test_replay_player_is_loaded_before_page_initialization():
+    """独立播放器必须实际加载，且在共享入口之后、事件适配之前。"""
+    html = _read(INDEX_HTML)
+    script = '<script src="/static/replay_player.js?'
+    assert html.count(script) == 1
+    assert html.index('<script src="/static/game.js?') < html.index(script)
+    assert html.index(script) < html.index('<script src="/static/client_socket_events.js?')
 
 
 # ===========================================================================
@@ -136,7 +138,7 @@ def test_replay_progress_nodes_come_from_the_server_only():
     code = _replay_code()
     # 节点渲染只读 payload.nodes；不许出现"前端自己推导节点"的痕迹
     assert 'payload.nodes' in code or 'Array.isArray(replayState.payload.nodes)' in code
-    body = _strip_comments(_func_body(_read(GAME_JS), 'function buildReplayTrackNodes('))
+    body = _strip_comments(_func_body(_read(REPLAY_JS), 'function buildReplayTrackNodes('))
     assert '.nodes' in body, '进度条节点必须来自服务端 payload.nodes'
     assert "ship_sunk" not in body and "detail.hit" not in body, \
         '节点不许由前端从 attack 步自己推导（两套判据必然漂移）'
@@ -154,7 +156,7 @@ def test_ship_cell_is_not_drawn_as_a_hit_glyph():
     原来的写法是 `(cell.hasShip || cell.hit) ? '✕' : …` —— 任何有船的格子都成了
     叉（那是"命中"的字形），玩家看着像"这一格已经打过、别再点了"。
     """
-    body = _strip_comments(_func_body(_read(GAME_JS), 'function renderReplayBoard('))
+    body = _strip_comments(_func_body(_read(REPLAY_JS), 'function renderReplayBoard('))
     assert "(item.cell.hasShip || item.cell.hit) ? '✕'" not in body, \
         '船格又被写成了 ✕（缺陷 ① 的原写法）'
     assert "item.cell.sunk || item.cell.hit) el.textContent = '✕'" in body, \
@@ -173,7 +175,7 @@ def test_replay_board_renders_the_public_effect_cells():
 
     类名复用实战场那几个（一份样式两处用），绝不另起一套（教训 #1）。
     """
-    src = _read(GAME_JS)
+    src = _read(REPLAY_JS)
     body = _strip_comments(_func_body(src, 'function renderReplayBoard('))
     for cls in ('shielded', 'shenwei-hole', 'frozen-area', 'last-stand-candidate'):
         assert "' " + cls + "'" in body or '" ' + cls + '"' in body, \

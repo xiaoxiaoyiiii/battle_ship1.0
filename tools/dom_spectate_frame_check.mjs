@@ -51,6 +51,7 @@ import vm from 'node:vm';
 const HERE = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
 const ROOT = path.join(HERE, '..');
 const GAME_JS = path.join(ROOT, 'static', 'game.js');
+const STATE_JS = path.join(ROOT, 'static', 'client_state.js');
 
 const problems = [];
 let checks = 0;
@@ -173,7 +174,10 @@ try {
 
 const ctx = vm.createContext(sandbox);
 try {
+  vm.runInContext(fs.readFileSync(STATE_JS, 'utf8'), ctx, { filename: 'client_state.js' });
   vm.runInContext(SRC, ctx, { filename: 'game.js' });
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'static', 'replay_player.js'), 'utf8'), ctx,
+    { filename: 'replay_player.js' });
 } catch (e) {
   console.error('game.js 加载失败: ' + (e && e.stack));
   process.exit(2);

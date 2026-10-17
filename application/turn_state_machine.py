@@ -1,0 +1,174 @@
+"""回合状态机的基础转换。"""
+
+
+class TurnStateMachine:
+    def __init__(self, *, recalc_attacks,
+                 emit, run_ai_turn, attacks_forced_zero, trigger_wuxian,
+                 settle_wuyou, settle_bingliang, prune_flags, emit_active_effects,
+                 keep_across_turn, thaw_ship, emit_player_ships,
+                 keep_across_round, rank_payload):
+        self._recalc_attacks = recalc_attacks
+        self._emit = emit
+        self._run_ai_turn = run_ai_turn
+        self._attacks_forced_zero = attacks_forced_zero
+        self._trigger_wuxian = trigger_wuxian
+        self._settle_wuyou = settle_wuyou
+        self._settle_bingliang = settle_bingliang
+        self._prune_flags = prune_flags
+        self._emit_active_effects = emit_active_effects
+        self._keep_across_turn = keep_across_turn
+        self._thaw_ship = thaw_ship
+        self._emit_player_ships = emit_player_ships
+        self._keep_across_round = keep_across_round
+        self._rank_payload = rank_payload
+
+    def enter_battle(self, room, player_id):
+        room.current_phase = 'battle'
+        self._recalc_attacks(room)
+        player = room.players[player_id]
+        if player.effect_flags.double_attacks:
+            room.attacks_remaining = max(0, room.attacks_remaining) * 2
+            self._emit('attacks_updated', {
+                'current_attacker': room.current_attacker,
+                'attacks_remaining': room.attacks_remaining,
+            }, room=room.id)
+            player.effect_flags.double_attacks = False
+        self._emit('attacks_updated', {
+            'current_attacker': room.current_attacker,
+            'attacks_remaining': room.attacks_remaining,
+        }, room=room.id)
+        if room.attacks_remaining <= 0 and not self._attacks_forced_zero(room):
+            self._trigger_wuxian(room, player_id)
+        self._emit('phase_updated', {
+            'current_phase': room.current_phase,
+            'current_attacker': room.current_attacker,
+        }, room=room.id)
+
+    def next_turn_target(self, room):
+        """计算下一位行动者并消费一次性跳过标记。"""
+        current_index = room.attack_order.index(room.current_attacker)
+        next_index = (current_index + 1) % len(room.attack_order)
+        next_attacker = room.attack_order[next_index]
+        if room.skip_opponent_turn == next_attacker:
+            room.skip_opponent_turn = None
+            next_index = (next_index + 1) % len(room.attack_order)
+            next_attacker = room.attack_order[next_index]
+        if room.skip_next_turn == next_attacker:
+            room.skip_next_turn = None
+            next_index = (next_index + 1) % len(room.attack_order)
+            next_attacker = room.attack_order[next_index]
+        skip_stages = room.skip_opponent_stages == next_attacker
+        if skip_stages:
+            room.skip_opponent_stages = None
+            next_index = (next_index + 1) % len(room.attack_order)
+            next_attacker = room.attack_order[next_index]
+        return next_index, next_attacker, skip_stages
+
+    def continue_turn(self, room, next_attacker):
+        """完成同一大回合内的普通换手。"""
+        room.current_attacker = next_attacker
+        room.current_phase = 'preparation'
+        room.players[next_attacker].damage_dealt_this_turn = 0
+        self._recalc_attacks(room)
+        self._settle_wuyou(room)
+        self._settle_bingliang(room)
+        self._prune_flags(room, self._keep_across_turn)
+        self._emit_active_effects(room)
+        self._emit('phase_updated', {
+            'current_phase': room.current_phase,
+            'current_attacker': room.current_attacker,
+        }, room=room.id)
+        self._emit('turn_change', {
+            'current_attacker': room.current_attacker,
+            'attacks_remaining': room.attacks_remaining,
+            'phase': room.current_phase,
+        }, room=room.id)
+        self._run_ai_turn(room)
+
+    def begin_new_round(self, room):
+        """切入新大回合的猜拳阶段，清理上一大回合的流程状态。"""
+        room.state = 'rock_paper_scissors'
+        room.rps_choices = {}
+        room.rps_processed = False
+        room.skip_opponent_turn = None
+        room.skip_next_turn = None
+        room.skip_opponent_stages = None
+        room.current_phase = 'preparation'
+
+    def skip_stages_turn(self, room, next_attacker):
+        """应用神之宣告的阶段跳过结果，不推进大回合。"""
+        room.current_attacker = next_attacker
+        room.current_phase = 'preparation'
+        room.attacks_remaining = 0
+        room.state = 'attacking'
+        self._emit('phase_updated', {
+            'current_phase': room.current_phase,
+            'current_attacker': room.current_attacker,
+        }, room=room.id)
+        self._emit('turn_skipped', {
+            'skipped': next_attacker,
+            'current_attacker': room.current_attacker,
+            'round': room.round,
+        }, room=room.id)
+
+    def clear_round_scoped_effects(self, room):
+        """清理只在当前大回合有效的场地与提示状态。"""
+        room.game_effects.pop('last_chance', None)
+        room.game_effects.pop('zero_attacks_round', None)
+        if room.game_effects.pop('last_stand_cells', None):
+            room.game_effects.pop('last_stand_owner', None)
+            self._emit('last_stand_cells', {
+                'cells': [], 'owner': None,
+            }, room=room.id)
+
+    def reset_round_damage(self, room):
+        """新大回合开始时清零双方本回合伤害统计。"""
+        for player in room.players.values():
+            player.damage_dealt_this_turn = 0
+
+    def expire_round_effects(self, room):
+        """清理跨大回合到期的战舰、陷阱和冻结区域状态。"""
+        for player_id, player in room.players.items():
+            thawed = False
+            traps_cleared = False
+            for ship in player.ships:
+                if getattr(ship, 'frozen', None) and ship.frozen < room.round:
+                    self._thaw_ship(ship)
+                    thawed = True
+                if getattr(ship, 'trap', False):
+                    ship.trap = False
+                    traps_cleared = True
+            if thawed or traps_cleared:
+                self._emit_player_ships(room, player_id)
+            if traps_cleared:
+                self._emit('trap_expired', {'player': player_id}, room=room.id)
+
+        frozen_area = room.game_effects.get('frozen_area')
+        if (isinstance(frozen_area, dict)
+                and int(frozen_area.get('until_round') or 0) < int(room.round)):
+            room.game_effects.pop('frozen_area', None)
+            self._emit('frozen_area', {'cleared': True}, room=room.id)
+
+    def finalize_new_round(self, room):
+        """清理大回合效果并广播新的猜拳阶段。"""
+        self._prune_flags(room, self._keep_across_round)
+        self._emit_active_effects(room)
+        self._emit('game_state', {
+            'state': 'rock_paper_scissors',
+            'round': room.round,
+            **self._rank_payload(room),
+        }, room=room.id)
+
+    def enter_end(self, room, player_id):
+        """完成当前行动者从战斗阶段进入结束阶段的状态转换。"""
+        room.current_phase = 'end'
+        flags = room.players[player_id].effect_flags
+        if getattr(flags, 'forced_kill', 0) > 0:
+            flags.forced_kill -= 1
+            if flags.forced_kill <= 0:
+                del flags.forced_kill
+        room.players[player_id].effect_flags.battle_spirit = False
+        self._emit('phase_updated', {
+            'current_phase': room.current_phase,
+            'current_attacker': room.current_attacker,
+        }, room=room.id)

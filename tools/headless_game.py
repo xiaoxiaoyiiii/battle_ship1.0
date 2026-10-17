@@ -710,6 +710,9 @@ class HeadlessGame:
             'human-0', self.player_names[1], None,
             self.ai_difficulty or 'hard')
         room = server.room_manager.get_room(room_id)
+        # 模拟器使用显式种子复现 AI 决策；游戏规则仍沿用上方的全局种子。
+        room.ai_seed = self.seed
+        room.ai_runtime = server.seeded_runtime(self.seed)
         room.players['human-0'] = server.Player(
             name=self.player_names[1], ships=[], attacks=[], remaining_ships=0,
             user_id=None, sid='human-0')

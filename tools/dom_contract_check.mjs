@@ -31,7 +31,10 @@ const HERE = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z
 const ROOT = findRoot(HERE);
 
 const HTML = path.join(ROOT, 'templates', 'index.html');
-const JS_FILES = ['static/game.js', 'static/adaptive_layout.js', 'static/wallpaper.js',
+const JS_FILES = ['static/game.js', 'static/magic_rules.js', 'static/magic_effect_feedback.js', 'static/magic_target_ui.js', 'static/magic_actions.js', 'static/client_state.js', 'static/client_socket.js',
+  'static/client_socket_events.js', 'static/home_panels.js', 'static/card_catalog.js',
+  'static/replay_player.js',
+  'static/adaptive_layout.js', 'static/wallpaper.js',
   'static/music_player.js', 'static/sfx.js', 'static/magic_cards.js', 'static/test_magic.js'];
 // 契约文档：默认取 docs/ 下最新的 *_PLAN.md（历史计划文档里的 id 早就不作数了），
 // 也可以用 `--plan <文件名>` 指定

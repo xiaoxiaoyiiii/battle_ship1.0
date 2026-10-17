@@ -52,7 +52,14 @@ from spectate import spectate_room_id
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GAME_JS = os.path.join(ROOT, 'static', 'game.js')
+MAGIC_RULES_JS = os.path.join(ROOT, 'static', 'magic_rules.js')
+SOCKET_EVENTS_JS = os.path.join(ROOT, 'static', 'client_socket_events.js')
+TARGET_UI_JS = os.path.join(ROOT, 'static', 'magic_target_ui.js')
 SERVER_PY = os.path.join(ROOT, 'server.py')
+STATUS_EFFECTS_PY = os.path.join(ROOT, 'application', 'card_status_effects.py')
+REVEAL_EFFECTS_PY = os.path.join(ROOT, 'application', 'card_reveal_effects.py')
+AREA_DAMAGE_EFFECTS_PY = os.path.join(ROOT, 'application', 'card_area_damage_effects.py')
+SPECIAL_EFFECTS_PY = os.path.join(ROOT, 'application', 'card_special_effects.py')
 
 # 座位 key：用**匹配房的约定**（key = socket sid）—— 最容易出问题的那一套，
 # 而且 `seat_label` 的结果与自定义房（user_id）无关，两种约定下都是 p1/p2。
@@ -64,7 +71,7 @@ _JS_ENTRY = re.compile(
 _JS_BOARD = re.compile(r"""board\s*:\s*'([^']+)'""")
 _JS_TYPE = re.compile(r"""type\s*:\s*'([^']+)'""")
 
-# 服务端 `apply_magic_effect` 里"哪些卡在读哪种目标形状"的**源码扫描**结果，
+# 服务端实际卡牌效果入口里"哪些卡在读哪种目标形状"的**源码扫描**结果，
 # 由 `test_all_region_cards_are_covered` 现算（不硬编码结论）。
 #
 # ⚠️ 这张表必须**穷举**全部目标形状 key：漏一个就会把那张卡判成"没读目标"
@@ -77,6 +84,7 @@ _SERVER_SHAPE_KEYS = {
     'selected_cells': 'cells',
     # 单格：克苏鲁之眼走 `_pick_cell_from_target`
     '_pick_cell_from_target': 'single',
+    'pick_cell_from_target': 'single',  # 迁入应用层后显式传入的同一个回调
     # 多选自己的船（仁王之盾那类）——**不是**区域，用来把这类卡认出来而非当成区域
     'ship_indices': 'ships',
 }
@@ -111,15 +119,15 @@ def _read(path):
 
 
 def _js_descriptors():
-    """解析 `static/game.js` 的 `MAGIC_TARGET_DESCRIPTORS`。
+    """解析 `static/magic_rules.js` 的 `MAGIC_TARGET_DESCRIPTORS`。
 
     ⚠️ 不解析"函数体里的 map"—— 那张表是模块级 const（见它上面的注释），
        解析器只认 `const NAME = { ... };`，格式变了就直接断言失败，
        而不是静默返回空表（那样就没在测任何东西了）。
     """
-    src = _read(GAME_JS)
+    src = _read(MAGIC_RULES_JS)
     m = re.search(r'const\s+MAGIC_TARGET_DESCRIPTORS\s*=\s*\{(.*?)\n\};', src, re.S)
-    assert m, 'game.js 里找不到模块级的 `const MAGIC_TARGET_DESCRIPTORS = { ... };`'
+    assert m, 'magic_rules.js 里找不到模块级的 `const MAGIC_TARGET_DESCRIPTORS = { ... };`'
     out = {}
     for line in m.group(1).splitlines():
         em = _JS_ENTRY.match(line)
@@ -133,12 +141,12 @@ def _js_descriptors():
             'board': (_JS_BOARD.search(body).group(1)
                       if _JS_BOARD.search(body) else None),
         }
-    assert out, 'game.js 的 MAGIC_TARGET_DESCRIPTORS 解析为空（格式变了？）'
+    assert out, 'magic_rules.js 的 MAGIC_TARGET_DESCRIPTORS 解析为空（格式变了？）'
     return out
 
 
 def _server_region_branches():
-    """扫描 `apply_magic_effect`：`{卡名: [读到的目标形状 key, ...]}`。
+    """扫描实际卡牌效果入口：`{卡名: [读到的目标形状 key, ...]}`。
 
     这是"**服务端**哪些卡真的在用区域/行列/连续格/单格目标通道"的机器判据
     —— 不靠人肉记，也不靠硬编码轰炸与冻结（那正是本批要避免的做法）。
@@ -146,32 +154,52 @@ def _server_region_branches():
     ⚠️ 两个坑都实测踩过：
       ① 第一张卡的分支是 `if card.name == 'X':`，其余是 `elif` —— 只扫 elif
          会把第一张卡整个漏掉；
-      ② **必须把扫描窗口限死在 `apply_magic_effect` 里面** —— 别处（如
+      ② **必须把扫描窗口限死在对应效果函数里** —— 别处（如
          `confirm_magic_target` 的 `shield_choice`）也有关键字，不限窗口会
          把它们算到最后一个卡牌分支头上（实测：仁王之盾的 `ship_indices`
          被算成了「神之宣告」的）。
     """
-    src = _read(SERVER_PY)
-    start = src.index('def apply_magic_effect(')
-    nxt = src.find('\ndef ', start + 10)
-    assert nxt > start, '找不到 apply_magic_effect 的结尾'
-    src = src[start:nxt]
-    marks = [(mm.start(), mm.group(1))
-             for mm in re.finditer(r"(?:el)?if card\.name == '([^']+)':", src)]
-    assert len(marks) > 20, '没扫到卡牌分支（正则过期了？扫到 %d 个）' % len(marks)
     out = {}
-    for i, (pos, name) in enumerate(marks):
-        end = marks[i + 1][0] if i + 1 < len(marks) else len(src)
-        blk = src[pos:end]
+    branch_count = 0
+    for path, function in ((SERVER_PY, 'apply_magic_effect'),
+                           (STATUS_EFFECTS_PY, 'apply_status_card_effect'),
+                           (REVEAL_EFFECTS_PY, 'apply_reveal_card_effect'),
+                           (AREA_DAMAGE_EFFECTS_PY, 'apply_area_damage_card_effect')):
+        src = _read(path)
+        start = src.index(f'def {function}(')
+        nxt = src.find('\ndef ', start + 10)
+        src = src[start:nxt if nxt > start else len(src)]
+        marks = [(mm.start(), mm.group(1))
+                 for mm in re.finditer(r"(?:el)?if card\.name == '([^']+)':", src)]
+        branch_count += len(marks)
+        for i, (pos, name) in enumerate(marks):
+            end = marks[i + 1][0] if i + 1 < len(marks) else len(src)
+            blk = src[pos:end]
+            found = sorted(k for k in _SERVER_SHAPE_KEYS if k in blk)
+            if found:
+                out[name] = found
+    # These handlers each own one card, so their target reads live in a
+    # dedicated method instead of an if/elif card-name block.  Scan the
+    # method body directly rather than pretending the dispatch adapter owns
+    # the implementation again.
+    for function, name in (('apply_shenwei', '神威！'),
+                           ('apply_divine_decree', '神之宣告'),
+                           ('apply_healing', '疗愈')):
+        src = _read(SPECIAL_EFFECTS_PY)
+        start = src.index(f'def {function}(')
+        nxt = src.find('\n    def ', start + 10)
+        blk = src[start:nxt if nxt > start else len(src)]
+        branch_count += 1
         found = sorted(k for k in _SERVER_SHAPE_KEYS if k in blk)
         if found:
             out[name] = found
+    assert branch_count > 20, '没扫到卡牌分支（正则过期了？扫到 %d 个）' % branch_count
     return out
 
 
 def _frontend_confirm_call_sites():
     """`game.js` 里全部 `confirmMagicTarget(` 的**行号 + 行内容**（真选择器调用点）。"""
-    src = _read(GAME_JS)
+    src = _read(GAME_JS) + _read(TARGET_UI_JS)
     sites = []
     for i, line in enumerate(src.splitlines(), 1):
         # 跳过函数定义本身
@@ -610,7 +638,7 @@ def test_frontend_clears_preview_on_resolve_and_game_over():
     ⚠️ `game.js` 里有**两个** `chain_resolved` 处理器：先注册的是观战屏那个
        （它只清观战快照），对局屏那个在后面。这里必须查**对局屏**那个。
     """
-    src = _read(GAME_JS)
+    src = _read(GAME_JS) + _read(SOCKET_EVENTS_JS)
     assert 'function clearChainPreview' in src
     handlers = [m.start() for m in re.finditer(r"socket\.on\('chain_resolved'", src)]
     assert len(handlers) >= 2, 'chain_resolved 的处理器比预期少：%r' % handlers
@@ -647,7 +675,7 @@ def test_frontend_renders_before_response_prompt():
         '先开响应窗口、后广播连锁 = 响应按钮出现时预览还没到（作者明确要求不许这样）'
     # 前端：预览画在 magic_chain_updated 处理器里，不需要等 chain_request。
     # ⚠️ 这个事件有**两个**处理器（先注册的是观战屏那个），对局屏的在后面。
-    js = _read(GAME_JS)
+    js = _read(SOCKET_EVENTS_JS)
     hs = [m.start() for m in re.finditer(r"socket\.on\('magic_chain_updated'", js)]
     assert len(hs) >= 2, 'magic_chain_updated 的处理器比预期少：%r' % hs
     assert 'updateChainUI()' in js[hs[-1]:hs[-1] + 700], \

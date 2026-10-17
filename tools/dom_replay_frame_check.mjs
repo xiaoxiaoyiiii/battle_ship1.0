@@ -202,7 +202,9 @@ const documentStub = {
 const sandbox = makeSandbox();
 
 if (!fs.existsSync(GAME_JS)) { console.error('找不到 static/game.js'); process.exit(2); }
-const SRC = fs.readFileSync(GAME_JS, 'utf8');
+// 与页面一致，先初始化共享状态，再加载主入口和回放播放器。
+const SRC = ['client_state.js', 'game.js', 'replay_player.js']
+  .map(file => fs.readFileSync(path.join(ROOT, 'static', file), 'utf8')).join('\n');
 const ctx = vm.createContext(sandbox);
 try {
   vm.runInContext(SRC, ctx, { filename: 'game.js' });

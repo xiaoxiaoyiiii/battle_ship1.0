@@ -80,10 +80,9 @@ def seat_order(room) -> list:
 
     顺序 = `room.players` 的插入顺序 = 入座顺序（匹配房是配对时的 p1/p2）。
     """
-    players = getattr(room, 'players', None)
-    if isinstance(players, dict):
-        return [str(pid) for pid in players]
-    return []
+    from application.observations import seat_snapshot
+    return list(seat_snapshot(room).player_ids)
+
 
 
 def seat_label(room, player_id) -> str:

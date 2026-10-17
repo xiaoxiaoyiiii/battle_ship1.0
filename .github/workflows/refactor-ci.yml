@@ -1,0 +1,31 @@
+name: 重构验收
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 安装 Python 依赖
+        run: python -m pip install -r requirements.txt
+      - name: 检查前端语法与 DOM 契约
+        shell: pwsh
+        run: |
+          Get-ChildItem static -Filter *.js | ForEach-Object { node --check $_.FullName; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
+          node tools/dom_contract_check.mjs
+      - name: 运行回归测试
+        timeout-minutes: 10
+        run: python -u -m pytest -vv --tb=short -o faulthandler_timeout=90

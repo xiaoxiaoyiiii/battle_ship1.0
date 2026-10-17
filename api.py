@@ -12,7 +12,8 @@ from flask import (Flask, session, jsonify, request, render_template, redirect,
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
-import db
+from infrastructure.persistence import repository as db
+from infrastructure.sqlite_maintenance import configured_database_path, database_ready
 import achievements
 import anticheat
 import dm
@@ -62,6 +63,19 @@ ARENA_SCREEN_LIST = os.environ.get(
 os.makedirs(AVATAR_UPLOAD_FOLDER, exist_ok=True)
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'),
             template_folder=os.path.join(os.path.dirname(__file__), 'templates'))
+
+
+@app.get('/health/live')
+def health_live():
+    """进程已能处理 HTTP 请求；不泄露部署细节。"""
+    return jsonify(status='ok')
+
+
+@app.get('/health/ready')
+def health_ready():
+    """SQLite 关键表可读时才允许新流量进入。"""
+    ready = database_ready(configured_database_path())
+    return jsonify(status='ok' if ready else 'unavailable'), (200 if ready else 503)
 
 
 @app.context_processor
@@ -657,25 +671,12 @@ def _users_brief_map(uids):
     读失败返回空 map → 榜上用户名/头像落成空串、页面照常出（降级而不是 500，
     与 `_card_speeds` / `_safe_read` 同一套口径）。
     """
-    ids = [str(u) for u in (uids or []) if u]
-    if not ids:
-        return {}
     try:
-        # `db.db` 是 db 模块里的单例（`Database()`），与各 DAO 共用同一条 sqlite
-        # 连接（`row_factory = sqlite3.Row`，所以这里能按列名取值）。
-        conn = getattr(getattr(db, 'db', None), 'conn', None)
-        if conn is None:
-            return {}
-        marks = ','.join('?' for _ in ids)
-        cursor = conn.cursor()
-        rows = cursor.execute(
-            f'SELECT id, username, avatar FROM users WHERE id IN ({marks})', ids).fetchall()
-        cursor.close()
-        return {str(r['id']): {'username': r['username'] or '', 'avatar': r['avatar'] or ''}
-                for r in rows if r['id']}
-    except Exception as e:      # noqa: BLE001 —— 展示层读不到不该把整张榜打成 500
+        return db.public_user_cards(uids)
+    except Exception as e:  # noqa: BLE001 —— 展示层降级，不暴露凭证
         print(f'[ranked] 批量读取用户名/头像失败，榜上按空串处理: {e}')
         return {}
+
 
 
 def rank_view_for(uid, server_rank=None, captain_pool_rank=None, is_admiral=None,

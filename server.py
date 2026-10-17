@@ -66,6 +66,7 @@ from application.chain_ai_response import ChainAIResponse
 from application.priority_timeout import PriorityTimeout
 from application.turn_state_machine import TurnStateMachine
 from application.chain_settlement import ChainSettlement
+from application.chain_display import ChainDisplay
 from application.chain_resolution import ChainResolution
 from application.priority_resolution import PriorityResolution
 from application.priority_continuation import PriorityContinuation
@@ -8181,6 +8182,17 @@ _CHAIN_SETTLEMENT = ChainSettlement(
     emit_player_ships=lambda room, player_id: _emit_player_ships(room, player_id),
     continue_priority=lambda room, actor, action: _priority_continue(room, actor, action),
 )
+_CHAIN_DISPLAY = ChainDisplay(
+    delay=lambda: CHAIN_DISPLAY_DELAY_SECONDS,
+    slack=lambda: CHAIN_DISPLAY_SWEEP_SLACK_SECONDS,
+    monotonic=lambda: time.monotonic(),
+    resolve=lambda room: resolve_chain(room),
+    get_room=lambda room_id: room_manager.get_room(room_id),
+    get_rooms=lambda: room_manager.get_all_rooms(),
+    start_background_task=lambda fn, *args: socketio.start_background_task(fn, *args),
+    sleep=lambda seconds: socketio.sleep(seconds),
+    log=lambda message: print(message),
+)
 _CHAIN_RESOLUTION = ChainResolution(
     chain_result=lambda **kwargs: ChainResult(**kwargs),
     apply_effect=lambda room, player_id, card, targets: apply_magic_effect(
@@ -8235,115 +8247,26 @@ def _can_respond_chain(room, player_id):
 
 
 def _clear_chain_display(room):
-    """清掉「结算前展示停留」的待办标记（幂等）。"""
-    room.chain_display_token = None
-    room.chain_display_deadline = None
+    """兼容入口：清理连锁展示停留。"""
+    return _CHAIN_DISPLAY.clear(room)
 
 
 def _finish_chain(room, display_delay: bool = True) -> bool:
-    """连锁收尾：**默认先让连锁区停一下**再结算。返回是否已交给后台任务。
-
-    返回值语义（调用方一般不需要看）：
-      · `True`  —— 已排上后台任务，连锁**还没**结算（延迟期间状态仍是"连锁挂着"）；
-      · `False` —— 已经在**当前栈帧就地**结算完了（置 0 / 超时路径 / 排不进任务）。
-
-    ★ 为什么绝不能在请求里阻塞：`_advance_chain_window` 是在 socket 请求
-      （或 `_ai_chain_respond` 的后台任务）里被调用的，eventlet 是单线程 hub ——
-      在这里 `time.sleep(1.2)` 会把**整个服务器**按住 1.2 秒。所以延迟一律走
-      `socketio.start_background_task` + `socketio.sleep`，与 `_schedule_chain_timeout`
-      同一套写法。
-
-    ★ 代际令牌：令牌直接用 `room.chain_timer`（与 10 秒窗口共用同一个 id 空间）。
-      任何"又开了一个窗口"或"又排了一次停留"都会让它 +1 ⇒ 迟到的任务自动作废。
-      再加 `resolve_chain` 收尾会清掉 `chain_display_token` ⇒ 任何别的路径
-      （超时 / 投降后清栈 / 重摆 / 再来一次）结算过之后，迟到的任务也一律作废。
-      **这是本改动最贵的一种失败：重复结算 = 一张牌的效果落地两次。**
-    """
-    if not display_delay or CHAIN_DISPLAY_DELAY_SECONDS <= 0:
-        # 关掉延迟时就是改动前那一行：同一个栈帧就地结算，行为逐字节一致。
-        resolve_chain(room)
-        return False
-
-    room.chain_timer += 1
-    token = room.chain_timer
-    room.chain_display_token = token
-    room.chain_display_deadline = (time.monotonic() + CHAIN_DISPLAY_DELAY_SECONDS
-                                   + CHAIN_DISPLAY_SWEEP_SLACK_SECONDS)
-    try:
-        socketio.start_background_task(_chain_display_then_resolve, room.id, token)
-    except Exception as exc:                     # noqa: BLE001 - 兜底不许静默
-        # ★ 兜底一（排不进去就当场结算）：后台任务因为任何原因排不上时，
-        #   **绝不能把连锁挂死** —— `room.chain` 非空会把攻击与交回合都拒掉
-        #   （「连锁结算中」），整局就此冻死。这里直接走改动前那条路径。
-        _clear_chain_display(room)
-        print(f'连锁展示停留排不进后台任务，改为就地结算：{exc!r}')
-        resolve_chain(room)
-        return False
-    return True
+    """兼容入口：安排连锁展示停留或立即结算。"""
+    return _CHAIN_DISPLAY.finish(room, display_delay=display_delay)
 
 
 def _chain_display_then_resolve(room_id: str, token: int):
-    """展示停留到期 → 结算连锁。迟到的任务（令牌过期 / 已结算过）一律不动手。"""
-    try:
-        socketio.sleep(CHAIN_DISPLAY_DELAY_SECONDS)
-        room = room_manager.get_room(room_id)
-        if room is None or getattr(room, 'chain_display_token', None) != token:
-            return
-        _clear_chain_display(room)
-        if not _chain_display_still_current(room, token):
-            return
-        resolve_chain(room)
-    except Exception as exc:                     # noqa: BLE001 - 兜底不许静默
-        print(f'连锁展示停留结算失败：{exc!r}')
+    """兼容入口：执行展示停留后的连锁结算。"""
+    return _CHAIN_DISPLAY._display_then_resolve(room_id, token)
 
 
 def _chain_display_still_current(room, token: int) -> bool:
-    """这次展示停留还算不算数（幂等判据）。
-
-    三个条件缺一不可：
-      · `room.chain` 还非空 —— 已经被任何一条路径结算过就不许再结算；
-      · `room.chain_timer == token` —— 期间又开过窗口 / 又排过一次停留 ⇒ 作废；
-      · 对局没结束 —— 别把卡牌效果落到一局已经结束的对局上（投降 / 掉线判胜）。
-    """
-    if not room.chain:
-        return False
-    if room.chain_timer != token:
-        return False
-    if getattr(room, 'state', None) == 'game_over':
-        return False
-    return not room.chain_waiting
+    return _CHAIN_DISPLAY.still_current(room, token)
 
 
 def _sweep_overdue_chain_display(now: float = None) -> list:
-    """★ 兜底二：展示停留过了截止时刻还没结算的房间，由看门狗就地结算。
-
-    为什么必须有这条**不依赖那个后台任务**的兜底：延迟一旦排不进去或任务本身
-    抛异常，`room.chain` 会一直挂着 ⇒ 攻击 / 交回合全被「连锁结算中」拒掉 ⇒
-    **整局冻死**（作者最在意的那一类失败）。这里复用本来就每 5 秒扫一次的看门狗，
-    不新增任何定时器。
-
-    ⚠️ 这条兜底只在"后台任务没按预期跑完"时才可能命中：正常路径下任务会先结算、
-    并清掉 `chain_display_token`，这里连门都进不来。
-    """
-    now = time.monotonic() if now is None else now
-    swept = []
-    for room_id, room in list(room_manager.get_all_rooms().items()):
-        token = getattr(room, 'chain_display_token', None)
-        if token is None:
-            continue
-        deadline = getattr(room, 'chain_display_deadline', None)
-        if deadline is None or now < deadline:
-            continue
-        if not _chain_display_still_current(room, token):
-            # 已经结算过 / 已经作废：只把标记清掉，别再去碰连锁栈。
-            _clear_chain_display(room)
-            continue
-        _clear_chain_display(room)
-        print(f'连锁展示停留超时未结算，看门狗兜底结算：room={room_id} token={token}')
-        resolve_chain(room)
-        swept.append(room_id)
-    return swept
-
+    return _CHAIN_DISPLAY.sweep(now=now)
 
 def _advance_chain_window(room, player_id, display_delay: bool = True):
     """把响应窗口交给 player_id；无法响应者自动记为放弃并顺延。

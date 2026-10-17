@@ -32,6 +32,8 @@
 
 优先权结束后的后台动作恢复已迁入 `application/priority_continuation.py`，统一处理脱离请求上下文、游戏结束检查和阶段 handler 续接。
 
+优先权询问窗口创建已迁入 `application/priority_prompt.py`，现在窗口打开、结果处理、超时和续接均由应用层协作者负责。
+
 新大回合切入猜拳阶段的基础状态重置也已迁入状态机，统一清理猜拳缓存、阶段和上一大回合遗留的跳过标记。
 
 `application/card_refund.py` 接管卡牌发动条件不满足时按对象引用退回手牌的补偿规则；`server.py` 保留兼容包装并注入事件、日志能力。

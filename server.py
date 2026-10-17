@@ -74,6 +74,7 @@ from application.attack_resolution import AttackResolution
 from application.attack_finalization import AttackFinalization
 from application.ship_sunk_effects import ShipSunkEffects
 from application.game_end import GameEnd
+from application.attack_damage_effects import AttackDamageEffects
 from application.chain_resolution import ChainResolution
 from application.priority_resolution import PriorityResolution
 from application.priority_continuation import PriorityContinuation
@@ -4446,15 +4447,8 @@ def _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id, ship,
     )
 
 def _apply_attacker_damage_buffs(room, room_id, attacker_id):
-    """攻击造成伤害后攻击方触发的效果：饮血、越战越勇、伤害统计。"""
-    attacker = room.players[attacker_id]
-    if attacker.effect_flags.vampire:
-        room.draw_card(attacker_id)
-        emit('message', {'text': '饮血效果发动，抽一张卡'}, to=attacker.sid)
-    if attacker.effect_flags.battle_spirit:
-        room.attacks_remaining += 1
-        emit('message', {'text': '越战越勇效果发动，攻击次数净增加1'}, room=room_id)
-    attacker.damage_dealt_this_turn += 1
+    """兼容入口：执行攻击方伤害增益。"""
+    return _ATTACK_DAMAGE_EFFECTS.apply(room, room_id, attacker_id)
 
 
 def _game_over_payload(room, extra=None):
@@ -7850,7 +7844,7 @@ _ATTACK_RESOLUTION = AttackResolution(
     check_last_chance=lambda room, attacker, defender: _check_last_chance(
         room, attacker, defender),
     emit_ships_updated=lambda room: _emit_ships_updated(room),
-    apply_damage_buffs=lambda room, room_id, attacker: _apply_attacker_damage_buffs(
+    apply_damage_buffs=lambda room, room_id, attacker: _ATTACK_DAMAGE_EFFECTS.apply(
         room, room_id, attacker),
     finish_game=lambda room, room_id, winner, loser, message: _finish_game_win(
         room, room_id, winner, loser, message),
@@ -7890,6 +7884,10 @@ _GAME_END = GameEnd(
     finalize_match=lambda room, winner, loser: _finalize_match(room, winner, loser),
     emit=lambda *args, **kwargs: emit(*args, **kwargs),
     log_name=lambda room, player_id: _log_name(room, player_id),
+)
+_ATTACK_DAMAGE_EFFECTS = AttackDamageEffects(
+    draw_card=lambda room, player_id: room.draw_card(player_id),
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
 )
 _CHAIN_RESOLUTION = ChainResolution(
     chain_result=lambda **kwargs: ChainResult(**kwargs),

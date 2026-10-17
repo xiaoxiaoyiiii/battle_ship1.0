@@ -69,6 +69,7 @@ from application.chain_settlement import ChainSettlement
 from application.chain_display import ChainDisplay
 from application.round_transition import RoundTransition
 from application.disconnect_resolution import DisconnectResolution
+from application.attack_gate import AttackGate
 from application.chain_resolution import ChainResolution
 from application.priority_resolution import PriorityResolution
 from application.priority_continuation import PriorityContinuation
@@ -4630,60 +4631,13 @@ def handle_attack(data):
     room = room_manager.get_room(room_id)
     if not room or attacker_id not in room.players or not _identity_ok(room, attacker_id):
         return {'status': 'error', 'message': '无效的房间或玩家'}
-    if room.state == 'game_over':
-        return {'status': 'error', 'message': '对局已结束'}
-    frz = _frozen_reason(room, attacker_id)
-    if frz:
-        return {'status': 'error', 'message': frz}
-
-    # 输入校验：坐标必须是 0-5 的【整数】，避免越界/非法类型被记为一次攻击；
-    # 也拒绝 1.9 这类小数（原先 int() 会静默截断成 1，打到别的格子）
-    try:
-        fx, fy = float(target_x), float(target_y)
-    except (TypeError, ValueError):
-        return {'status': 'error', 'message': '非法的攻击坐标'}
-    if not (fx.is_integer() and fy.is_integer()):
-        return {'status': 'error', 'message': '非法的攻击坐标'}
-    target_x, target_y = int(fx), int(fy)
-    if not (0 <= target_x <= 5 and 0 <= target_y <= 5):
-        return {'status': 'error', 'message': '攻击坐标超出棋盘范围'}
-
-    # 检查是否是当前攻击者
-    if attacker_id != room.current_attacker:
-        return {'status': 'error', 'message': '还没到你的攻击回合'}
-
-    # 新增：检查当前是否为战斗阶段
-    if room.current_phase != 'battle':
-        return {'status': 'error', 'message': '当前不是战斗阶段'}
-
-    # 连锁窗口开着时不能继续攻击：卡牌效果要到 resolve_chain 才真正执行，
-    # 此时放行会让「先结算的攻击」与「后结算的卡」互相盖掉（end_turn 早已用
-    # 同一条件拦截，攻击却漏了 —— 同一状态两种口径）。
-    if room.chain or room.chain_waiting:
-        return {'status': 'error', 'message': '连锁结算中，请等待响应窗口结束后再攻击'}
-
-    # 已被拦下的阶段转换：等待对方响应期间不能继续开炮。
-    # 这是这个窗口存在的意义 —— 对方正在决定要不要打速阶3，
-    # 这边要是能把攻击先打完，"拦下来问一句"就没有任何意义了。
-    wait = _action_wait_reason(room, attacker_id)
-    if wait:
-        return {'status': 'error', 'message': wait}
-
-    # 次数校验：此前缺失，改客户端（或前端连点绕过 DOM 判断）即可无限攻击
-    if room.attacks_remaining <= 0:
-        return {'status': 'error', 'message': '本回合攻击次数已用尽'}
-
-    # 检查是否已经攻击过这个位置
-    if any(a.x == target_x and a.y == target_y for a in room.players[attacker_id].attacks):
-        return {'status': 'error', 'message': '你已经攻击过这个位置了'}
-
-    # 找到对手
-    defender_id = next(p for p in room.players if p != attacker_id)
+    gate = _ATTACK_GATE.validate(room, attacker_id, target_x, target_y)
+    if 'error' in gate:
+        return {'status': 'error', 'message': gate['error']}
+    target_x = gate['target_x']
+    target_y = gate['target_y']
+    defender_id = gate['defender_id']
     defender_ships = room.players[defender_id].ships
-
-    # 神威！：被扣掉的区域不可攻击
-    if _cell_in_shenwei_hole(room, defender_id, target_x, target_y):
-        return {'status': 'error', 'message': '该区域已被神威！扣掉，无法攻击'}
 
     # Phase 2 shadow：在旧逻辑改变房间状态前计算一份纯规则预期。
     # 默认关闭；开启时只记录差异，绝不阻断旧路径或改变返回值。
@@ -4955,11 +4909,7 @@ def _attackable_cells(room, player_id):
 
     判据：36 格减去他自己已经轰过的格（与 `handle_attack` 的拒因同一口径）。
     """
-    player = (getattr(room, 'players', None) or {}).get(player_id)
-    if player is None:
-        return []
-    attacked = {(a.x, a.y) for a in (getattr(player, 'attacks', None) or [])}
-    return [(x, y) for x in range(6) for y in range(6) if (x, y) not in attacked]
+    return AttackGate.available_cells(room, player_id)
 
 
 # 添加结束战斗阶段，进入结束阶段
@@ -8205,6 +8155,12 @@ _DISCONNECT_RESOLUTION = DisconnectResolution(
     start_timeout=lambda room_id, player_id, token: socketio.start_background_task(
         _disconnect_timeout, room_id, player_id, token),
     grace=lambda: DISCONNECT_GRACE_SECONDS,
+)
+_ATTACK_GATE = AttackGate(
+    frozen_reason=lambda room, player_id: _frozen_reason(room, player_id),
+    action_wait=lambda room, player_id: _action_wait_reason(room, player_id),
+    cell_in_shenwei_hole=lambda room, player_id, x, y: _cell_in_shenwei_hole(
+        room, player_id, x, y),
 )
 _CHAIN_RESOLUTION = ChainResolution(
     chain_result=lambda **kwargs: ChainResult(**kwargs),

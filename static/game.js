@@ -7473,6 +7473,21 @@ function initGameBoards() {
     const sacrificedSelf = coordSet(gameState.sacrificedSelf);
     const sacrificedOpponent = coordSet(gameState.sacrificedOpponent);
     const lastStandCells = coordSet(gameState.lastStandCells);
+    const ownShipMap = new Map();
+    for (const ship of (Array.isArray(gameState.ships) ? gameState.ships : [])) {
+        for (const pos of (Array.isArray(ship.positions) ? ship.positions : [])) {
+            const key = `${pos.x},${pos.y}`;
+            if (!ownShipMap.has(key)) ownShipMap.set(key, ship);
+        }
+    }
+    const opponentShieldedCells = new Set();
+    for (const ship of (gameState.opponentShieldedShips || [])) {
+        for (const pos of (Array.isArray(ship) ? ship : [])) {
+            if (pos && Number.isInteger(pos.x) && Number.isInteger(pos.y)) {
+                opponentShieldedCells.add(`${pos.x},${pos.y}`);
+            }
+        }
+    }
     // 初始化玩家棋盘
     gamePlayerBoard.innerHTML = '';
     for (let y = 0; y < 6; y++) {
@@ -7483,7 +7498,7 @@ function initGameBoards() {
             cell.dataset.y = y;
 
             // 显示自己的战舰（冻结中的要能一眼看出来：它本回合不提供攻击次数）
-            const ownShip = gameState.ships.find(ship => ship.positions.some(pos => pos.x === x && pos.y === y));
+            const ownShip = ownShipMap.get(`${x},${y}`);
             if (ownShip) {
                 cell.classList.add('ship');
                 // 已沉的船：沉船仍留在 ships 列表里，服务端用 alive 标记死活，
@@ -7575,8 +7590,7 @@ function initGameBoards() {
             }
 
             // 对方公开加盾的位置：显示在对手棋盘上，直到护盾被消耗或该船被击沉。
-            const opponentShielded = (gameState.opponentShieldedShips || [])
-                .some(ship => (ship || []).some(p => p.x === x && p.y === y));
+            const opponentShielded = opponentShieldedCells.has(`${x},${y}`);
             if (opponentShielded) {
                 cell.classList.add('opponent-shielded');
                 if (!cell.title) cell.title = '对方这艘战舰带有护盾，可抵挡一次伤害';

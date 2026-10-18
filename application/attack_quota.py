@@ -40,3 +40,25 @@ class AttackQuota:
         else:
             base = max(0, player.remaining_ships - self._frozen_ships(player))
         room.attacks_remaining = base + bonus
+
+    def apply_last_stand(self, room, player_id):
+        """绝处逢生后按唯一存活战舰重置攻击额度。"""
+        if room.state != 'attacking' or room.current_attacker != player_id:
+            return
+        if self._forced_zero(room):
+            room.attacks_remaining = 0
+        else:
+            player = room.players[player_id]
+            field = self._field_magic(room)
+            if field == '教皇旨意':
+                base = 0
+            elif field == '伊甸园':
+                base = max(0, 6 - player.remaining_ships)
+            else:
+                base = 1
+            bonus = int(getattr(player.effect_flags, 'subsidy_bonus', 0) or 0)
+            room.attacks_remaining = max(0, base + bonus)
+        self._emit('attacks_updated', {
+            'current_attacker': room.current_attacker,
+            'attacks_remaining': room.attacks_remaining,
+        }, room=room.id)

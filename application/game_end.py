@@ -20,18 +20,31 @@ class GameEnd:
             payload['match_id'] = match_id
         return payload
 
-    def finish_win(self, room, room_id, winner_id, loser_id, log_message=None):
-        if room.state == 'game_over':
+    def _finish(self, room, room_id, winner_id, loser_id, *, reason=None,
+                log_message=None, clear_pending=False):
+        if reason is None and room.state == 'game_over':
             return
         room.state = 'game_over'
         room.winner = winner_id
+        if clear_pending:
+            self._clear_ship_picks(room)
+            self._clear_pending(room)
+        payload = {'winner': winner_id}
+        log_data = {'winner': winner_id, 'loser': loser_id}
+        if reason is not None:
+            payload['reason'] = reason
+            log_data['reason'] = reason
         self._add_log(
             room,
             log_message or f'第{room.round}回合 · {self._log_name(room, winner_id)} 获胜，游戏结束',
-            'result', {'winner': winner_id, 'loser': loser_id},
+            'result', log_data,
         )
         self._finalize_match(room, winner_id, loser_id)
-        self._emit('game_over', self.payload(room, {'winner': winner_id}), room=room_id)
+        self._emit('game_over', self.payload(room, payload), room=room_id)
+
+    def finish_win(self, room, room_id, winner_id, loser_id, log_message=None):
+        return self._finish(room, room_id, winner_id, loser_id,
+                            log_message=log_message)
 
     def check_last_chance(self, room, attacker_id, defender_id):
         effect = room.game_effects.get('last_chance')
@@ -45,17 +58,8 @@ class GameEnd:
         return True
 
     def finish_reason(self, room, winner_id, loser_id, reason):
-        room.state = 'game_over'
-        room.winner = winner_id
-        self._clear_ship_picks(room)
-        self._clear_pending(room)
-        self._add_log(
-            room, f'第{room.round}回合 · {self._log_name(room, winner_id)} 获胜，游戏结束',
-            'result', {'winner': winner_id, 'loser': loser_id, 'reason': reason},
-        )
-        self._finalize_match(room, winner_id, loser_id)
-        self._emit('game_over', self.payload(
-            room, {'winner': winner_id, 'reason': reason}), room=room.id)
+        return self._finish(room, room.id, winner_id, loser_id,
+                            reason=reason, clear_pending=True)
 
     def finish_surrender(self, room, loser_id, winner_id):
         room.state = 'game_over'

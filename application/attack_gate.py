@@ -33,8 +33,7 @@ class AttackGate:
             return {'error': waiting}
         if room.attacks_remaining <= 0:
             return {'error': '本回合攻击次数已用尽'}
-        if any(a.x == target_x and a.y == target_y
-               for a in room.players[attacker_id].attacks):
+        if (target_x, target_y) in self.attacked_cells(room, attacker_id):
             return {'error': '你已经攻击过这个位置了'}
         defender_id = next(p for p in room.players if p != attacker_id)
         if self._cell_in_shenwei_hole(room, defender_id, target_x, target_y):
@@ -46,11 +45,17 @@ class AttackGate:
         }
 
     @staticmethod
-    def available_cells(room, player_id):
+    def attacked_cells(room, player_id):
         player = (getattr(room, 'players', None) or {}).get(player_id)
         if player is None:
+            return set()
+        return {(attack.x, attack.y)
+                for attack in (getattr(player, 'attacks', None) or [])}
+
+    @staticmethod
+    def available_cells(room, player_id):
+        if player_id not in (getattr(room, 'players', None) or {}):
             return []
-        attacked = {(attack.x, attack.y)
-                    for attack in (getattr(player, 'attacks', None) or [])}
+        attacked = AttackGate.attacked_cells(room, player_id)
         return [(x, y) for x in range(6) for y in range(6)
                 if (x, y) not in attacked]

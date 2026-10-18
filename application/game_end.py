@@ -43,6 +43,8 @@ class GameEnd:
         self._emit('game_over', self.payload(room, payload), room=room_id)
 
     def finish_win(self, room, room_id, winner_id, loser_id, log_message=None):
+        # 普通胜利不清理待选战舰：恶魔契约等击沉触发效果可能仍要求
+        # 另一方完成一次选船，清理由带原因终局和投降路径负责。
         return self._finish(room, room_id, winner_id, loser_id,
                             log_message=log_message)
 

@@ -10795,12 +10795,7 @@ def apply_magic_effect(room: GameRoom, caster_id: str, card: MagicCard, target_d
     # 否则在空房间出任何一张卡都会直接判胜。
     if (opponent and opponent.remaining_ships <= 0 and len(opponent.ships) > 0
             and room.state != 'game_over'):
-        room.state = 'game_over'
-        room.winner = caster_id
-        add_game_log(room, f"第{room.round}回合 · {_log_name(room, caster_id)} 获胜，游戏结束", 'result', {'winner': caster_id, 'loser': opponent_id})
-        # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
-        _finalize_match(room, caster_id, opponent_id)
-        emit('game_over', _game_over_payload(room, {'winner': caster_id}), room=room.id)
+        _finish_game_win(room, room.id, caster_id, opponent_id)
 
     return result
 

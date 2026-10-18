@@ -1342,14 +1342,7 @@ def _clear_field_magic_effects(room, prev_field_name=None):
     prev_field_name：刚离场的场地卡名。调用方若已经改动 room.field_magic，
     必须显式传入（见 _place_field_magic），否则这里读到的是新卡名。
     """
-    # 未显式传入时（加百列拆场地的路径：先调这里、后清 field_magic）就地读取。
-    had_papal = bool(room.game_effects.get('papal_edict'))
-    prev_field = prev_field_name if prev_field_name is not None else field_magic_name(room)
-    if room.game_effects.pop('demon_contract', None) is not None:
-        _clear_ship_picks_by_reason(room, 'demon_contract')
-    room.game_effects.pop('papal_edict', None)
-    _ATTACK_QUOTA.recalculate_after_field_removal(
-        room, prev_field, had_papal=had_papal)
+    return _FIELD_EFFECTS.clear(room, prev_field_name)
 
 
 def _place_field_magic(room, caster_id, card):
@@ -10421,6 +10414,9 @@ _TACTICAL_EFFECTS = TacticalEffects(
 _FIELD_EFFECTS = FieldEffects(
     place_field_magic=_place_field_magic, recalc_attacks=_recalc_attacker_attacks,
     emit=lambda *args, **kwargs: emit(*args, **kwargs),
+    clear_ship_picks=_clear_ship_picks_by_reason,
+    recalc_after_removal=_ATTACK_QUOTA.recalculate_after_field_removal,
+    field_name=field_magic_name,
 )
 
 _SPECIAL_EFFECTS = SpecialCardEffects(

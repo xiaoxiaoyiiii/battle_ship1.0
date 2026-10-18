@@ -60,10 +60,14 @@ class GameEnd:
         return True
 
     def finish_reason(self, room, winner_id, loser_id, reason):
+        if room.state == 'game_over':
+            return
         return self._finish(room, room.id, winner_id, loser_id,
                             reason=reason, clear_pending=True)
 
     def finish_surrender(self, room, loser_id, winner_id):
+        if room.state == 'game_over':
+            return
         room.state = 'game_over'
         room.winner = winner_id
         self._clear_ship_picks(room)

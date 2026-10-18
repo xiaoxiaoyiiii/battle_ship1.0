@@ -7437,7 +7437,7 @@ function initBoard(boardElement, isEditable = false) {
 function initGameBoards() {
     // 绝处逢生候选格属于【谁的棋盘】——两块棋盘各有自己的 0-5 坐标，画错棋盘会误导攻击。
     // owner 为空（旧载荷 / 已清空）时按"不是我"处理，与修复前的行为保持一致。
-    const lastStandIsMine = () => !!(gameState.lastStandOwner && gameState.playerId
+    const lastStandIsMine = !!(gameState.lastStandOwner && gameState.playerId
         && gameState.lastStandOwner === gameState.playerId);
 
     // 冻结的 3×3 区域同样按归属画：owner 是受害者，所以区域只画在**受害者的那块棋盘**上。
@@ -7448,13 +7448,13 @@ function initGameBoards() {
     const inFrozenArea = (x, y) => !!(frozenArea
         && x >= frozenArea.x1 && x <= frozenArea.x2
         && y >= frozenArea.y1 && y <= frozenArea.y2);
-    const frozenAreaTitle = () => {
+    const frozenAreaTitle = (() => {
         if (!frozenArea) return '';
         const n = Number(frozenArea.frozen || 0);
         return frozenAreaIsMine
             ? `冻结区域：对方冻结了这片 3×3 区域${n ? '（' + n + ' 艘被冻）' : ''}，被冻的船本回合不提供攻击次数`
             : `冻结区域：你冻结的这片 3×3 区域${n ? '（' + n + ' 艘被冻）' : ''}，区域内对方的船本回合不提供攻击次数`;
-    };
+    })();
     const attackMap = (rows) => {
         const map = new Map();
         for (const row of (Array.isArray(rows) ? rows : [])) {
@@ -7548,7 +7548,7 @@ function initGameBoards() {
             // 绝处逢生的候选格（**我的棋盘**上的）：我自己放的那次，唯一一艘必在这几格之一。
             // 修复前这里只写在对手棋盘的循环里 —— 于是自己放绝处逢生时，
             // 属于我棋盘的候选格被画到了对手棋盘上（作者实测反馈）。
-            if (lastStandIsMine() && lastStandCells.has(`${x},${y}`)) {
+            if (lastStandIsMine && lastStandCells.has(`${x},${y}`)) {
                 cell.classList.add('last-stand-candidate');
                 if (!cell.textContent) cell.title = '绝处逢生的唯一一艘战舰可能在这一格（你的棋盘）';
             }
@@ -7557,7 +7557,7 @@ function initGameBoards() {
             // 只加区域类，绝不加 hit/miss（否则玩家以为这几格打过了/打不了）。
             if (frozenAreaIsMine && inFrozenArea(x, y)) {
                 cell.classList.add('frozen-area');
-                if (!cell.title) cell.title = frozenAreaTitle();
+                if (!cell.title) cell.title = frozenAreaTitle;
             }
 
             gamePlayerBoard.appendChild(cell);
@@ -7613,7 +7613,7 @@ function initGameBoards() {
             // ⚠️ 属于我自己棋盘的候选格绝不能画到这块棋盘上 —— 看起来就是"敌方可能在这几格"，
             // 会直接误导我自己的攻击（作者 2026-09-16 实测反馈）。
             // ⚠️ 仍然绝不能画成叉或加 hit/miss 类 —— 那会让玩家以为"已经打过、打不了"。
-            if (!lastStandIsMine() && lastStandCells.has(`${x},${y}`)) {
+            if (!lastStandIsMine && lastStandCells.has(`${x},${y}`)) {
                 cell.classList.add('last-stand-candidate');
                 if (!cell.textContent) cell.title = '绝处逢生的唯一一艘战舰可能在这一格（对方棋盘）';
             }

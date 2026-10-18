@@ -5575,7 +5575,7 @@ function findMatch() {
         player_name: gameState.playerName,
         mode: 'casual'
     }, (response) => {
-        if (response.status === 'error') {
+        if (response && response.status === 'error') {
             showAlert(response.message);
         }
     });

@@ -33,6 +33,7 @@ class AttackResolution:
         defender_ships = defender.ships
         forced = attacker.effect_flags.forced_kill > 0
         target = {'x': x, 'y': y}
+        hit_position = self._position(x, y)
         for ship in defender_ships:
             if target not in ship.positions:
                 continue
@@ -40,7 +41,7 @@ class AttackResolution:
             if 'holy_heart' in room.game_effects and not ship.invincible:
                 room.game_effects['holy_heart']['no_damage'] = False
             if forced:
-                ship.hits.append(self._position(x, y))
+                ship.hits.append(hit_position)
                 ship_sunk = True
                 self._ship_sunk_effects(room, room_id, attacker_id, defender_id, ship)
             elif ship.invincible:
@@ -54,7 +55,7 @@ class AttackResolution:
                 }, room=room_id)
                 self._emit_player_ships(room, defender_id)
             else:
-                ship.hits.append(self._position(x, y))
+                ship.hits.append(hit_position)
                 ship_sunk = len(ship.hits) == len(ship.positions)
                 if ship_sunk:
                     self._ship_sunk_effects(room, room_id, attacker_id, defender_id, ship)

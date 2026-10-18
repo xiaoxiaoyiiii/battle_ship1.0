@@ -64,6 +64,8 @@ class GameEnd:
     def finish_surrender(self, room, loser_id, winner_id):
         room.state = 'game_over'
         room.winner = winner_id
+        self._clear_ship_picks(room)
+        self._clear_pending(room)
         self._note_replay(room, loser_id, winner_id)
         self._finalize_match(room, winner_id, loser_id)
         self._emit('game_over', self.payload(

@@ -15,6 +15,15 @@ class AttackResolution:
         self._finish_game = finish_game
         self._log_name = log_name
 
+    @staticmethod
+    def _result(*, game_over, hit, ship_sunk, shield_blocked):
+        return {
+            'game_over': game_over,
+            'hit': hit,
+            'ship_sunk': ship_sunk,
+            'shield_blocked': shield_blocked,
+        }
+
     def resolve(self, room, room_id, attacker_id, defender_id, x, y):
         hit = False
         ship_sunk = False
@@ -53,8 +62,9 @@ class AttackResolution:
             damaged = forced or (not ship.invincible and not ship.shield)
             if damaged:
                 if self._check_last_chance(room, attacker_id, defender_id):
-                    return {'game_over': True, 'hit': hit, 'ship_sunk': ship_sunk,
-                            'shield_blocked': shield_blocked}
+                    return self._result(
+                        game_over=True, hit=hit, ship_sunk=ship_sunk,
+                        shield_blocked=shield_blocked)
                 self._emit_ships_updated(room)
                 self._apply_damage_buffs(room, room_id, attacker_id)
                 if (room.players[attacker_id].effect_flags.last_stand_win
@@ -62,8 +72,10 @@ class AttackResolution:
                     self._finish_game(
                         room, room_id, attacker_id, defender_id,
                         f'第{room.round}回合 · {self._log_name(room, attacker_id)} 绝处逢生击杀敌舰获胜')
-                    return {'game_over': True, 'hit': hit, 'ship_sunk': ship_sunk,
-                            'shield_blocked': shield_blocked}
+                    return self._result(
+                        game_over=True, hit=hit, ship_sunk=ship_sunk,
+                        shield_blocked=shield_blocked)
             break
-        return {'game_over': False, 'hit': hit, 'ship_sunk': ship_sunk,
-                'shield_blocked': shield_blocked}
+        return self._result(
+            game_over=False, hit=hit, ship_sunk=ship_sunk,
+            shield_blocked=shield_blocked)

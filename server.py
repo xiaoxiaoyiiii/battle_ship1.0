@@ -7879,6 +7879,8 @@ _GAME_END = GameEnd(
     finalize_match=lambda room, winner, loser: _finalize_match(room, winner, loser),
     emit=lambda *args, **kwargs: emit(*args, **kwargs),
     log_name=lambda room, player_id: _log_name(room, player_id),
+    clear_ship_picks=lambda room: _clear_ship_picks(room),
+    clear_pending=lambda room: _clear_game_pending(room),
 )
 _ATTACK_DAMAGE_EFFECTS = AttackDamageEffects(
     draw_card=lambda room, player_id: room.draw_card(player_id),
@@ -10413,28 +10415,18 @@ def _bingliang_consume_skip(room, player_id):
     return True
 
 
-def _finish_game(room, winner_id, loser_id, reason):
-    """统一结算：设置胜利者、记战绩、广播 game_over。"""
-    room.state = 'game_over'
-    room.winner = winner_id
-    # 终局：待选队列整批作废（对局已经结束，再挂着只会挡住后续逻辑）
-    _clear_ship_picks(room)
-    # 命运骰子的弃牌待办同样作废（同 _clear_ship_picks 的理由）
+def _clear_game_pending(room):
+    """终局时清理所有会阻塞 AI/回合状态的待办。"""
     room.pending_dice_discard = {}
     room.pending_dice_discard_label = {}
-    # 无忧梦呓挂着的延迟拼点同样作废：对局已经结束，再挂着只会让
-    # `_master_unsettled` 把房间判成"没结算完"（它是个房间级事实，不是历史记录）
     room.pending_wuyou_dreams = {}
-    # 兵粮寸断挂着的延迟判定 + 未用完的跳过额度同理作废：对局已经结束，
-    # 留着只会让 `_master_unsettled` 把房间判成"没结算完"，
-    # 也会把跳过额度带进同一房间的下一局。
     room.pending_bingliang = {}
     room.bingliang_skip_draw = {}
-    add_game_log(room, f"第{room.round}回合 · {_log_name(room, winner_id)} 获胜，游戏结束",
-                 'result', {'winner': winner_id, 'loser': loser_id, 'reason': reason})
-    # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
-    _finalize_match(room, winner_id, loser_id)
-    emit('game_over', _game_over_payload(room, {'winner': winner_id, 'reason': reason}), room=room.id)
+
+
+def _finish_game(room, winner_id, loser_id, reason):
+    """统一结算：设置胜利者、记战绩、广播 game_over。"""
+    return _GAME_END.finish_reason(room, winner_id, loser_id, reason)
 
 
 # ============ 复活 / 增援 统一放置流程（2026-09-10） ============

@@ -36,7 +36,7 @@ import ranks  # 段位规则 / 每局加减分 / 大舰长晋升（唯一一份�
 import presence  # 在线 / 对局中状态（纯内存零依赖：api.py 也要读它，见 presence.py 头部说明）
 import replay  # 对局回放的纯模块：记录器 + 终局打包（**绝不 emit**，见 replay.py 头部）
 from application.attack_service import build_combat_state, resolve_legacy_attack
-from application.attack_shadow import compare_core_result
+from application.attack_shadow import AttackShadow, compare_core_result
 from application.ai_runtime import default_runtime, seeded_runtime
 from application.spectate_projection import project_snapshot
 from application.replay_observation import capture_replay_observation, clear_replay_observation
@@ -4474,27 +4474,11 @@ def handle_attack(data):
     target_y = gate['target_y']
     defender_id = gate['defender_id']
 
-    # Phase 2 shadow：在旧逻辑改变房间状态前计算一份纯规则预期。
-    # 默认关闭；开启时只记录差异，绝不阻断旧路径或改变返回值。
-    shadow_resolution = None
-    if COMBAT_SHADOW_MODE:
-        try:
-            shadow_state = build_combat_state(
-                attacker_id=attacker_id,
-                defender_id=defender_id,
-                attacker=room.players[attacker_id],
-                defender=room.players[defender_id],
-                attacks_remaining=room.attacks_remaining,
-            )
-            shadow_resolution = resolve_legacy_attack(
-                shadow_state,
-                attacker_id=attacker_id,
-                x=target_x,
-                y=target_y,
-                forced_kill=room.players[attacker_id].effect_flags.forced_kill > 0,
-            )
-        except Exception:
-            logging.getLogger(__name__).exception('combat shadow 预期计算失败')
+    # Phase 2 shadow：只做诊断，不改变正式攻击路径。
+    shadow_resolution = _ATTACK_SHADOW.resolve(
+        room, attacker_id, defender_id, target_x, target_y,
+        enabled=COMBAT_SHADOW_MODE,
+    )
 
     resolution = _ATTACK_RESOLUTION.resolve(
         room, room_id, attacker_id, defender_id, target_x, target_y)
@@ -7858,6 +7842,11 @@ _ATTACK_FINALIZATION = AttackFinalization(
     warn_shadow=lambda room_id, attacker_id, x, y, diff: logging.getLogger(__name__).warning(
         'combat shadow mismatch room=%s attacker=%s target=(%s,%s) diff=%r',
         room_id, attacker_id, x, y, diff),
+)
+_ATTACK_SHADOW = AttackShadow(
+    build_state=lambda **kwargs: build_combat_state(**kwargs),
+    resolve_legacy=lambda state, **kwargs: resolve_legacy_attack(state, **kwargs),
+    log_exception=lambda message: logging.getLogger(__name__).exception(message),
 )
 _SHIP_SUNK_EFFECTS = ShipSunkEffects(
     grant_subsidy=lambda room, owner_id: _grant_subsidy_bonus(room, owner_id),

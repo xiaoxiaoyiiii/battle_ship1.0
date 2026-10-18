@@ -30,3 +30,54 @@ function handleAttack(x, y) {
         if (response && response.status === 'error') showAlert(response.message);
     });
 }
+
+function clearOpponentShieldedShips(positions) {
+    const keys = new Set((Array.isArray(positions) ? positions : [])
+        .filter(p => p && Number.isInteger(p.x) && Number.isInteger(p.y))
+        .map(p => `${p.x},${p.y}`));
+    if (!keys.size) return;
+    gameState.opponentShieldedShips = (gameState.opponentShieldedShips || [])
+        .filter(ship => !(ship || []).some(p => keys.has(`${p.x},${p.y}`)));
+}
+
+function updateAttackDisplay(result) {
+    const mine = result.attacker === gameState.playerId;
+    if (mine && result.ship_sunk) clearOpponentShieldedShips([{x: result.x, y: result.y}]);
+    if (result.shield_blocked) {
+        const sink = mine ? gameState.shieldBrokenMine : gameState.shieldBrokenOpponent;
+        if (!sink.some(p => p.x === result.x && p.y === result.y)) {
+            sink.push({x: result.x, y: result.y});
+        }
+        if (mine) {
+            yourShips.textContent = result.attacker_remaining_ships;
+            opponentShips.textContent = result.defender_remaining_ships;
+        } else {
+            yourShips.textContent = result.defender_remaining_ships;
+            opponentShips.textContent = result.attacker_remaining_ships;
+        }
+        gameState.lastAttack = {
+            x: result.x, y: result.y, attacker: result.attacker,
+            hit: true, shipSunk: false, shieldBlocked: true,
+        };
+        initGameBoards();
+        return;
+    }
+    if (mine) {
+        gameState.shieldBrokenMine = (gameState.shieldBrokenMine || [])
+            .filter(p => !(p.x === result.x && p.y === result.y));
+        gameState.myAttacks.push({x: result.x, y: result.y, hit: result.hit});
+        yourShips.textContent = result.attacker_remaining_ships;
+        opponentShips.textContent = result.defender_remaining_ships;
+    } else {
+        gameState.shieldBrokenOpponent = (gameState.shieldBrokenOpponent || [])
+            .filter(p => !(p.x === result.x && p.y === result.y));
+        gameState.opponentAttacks.push({x: result.x, y: result.y, hit: result.hit});
+        yourShips.textContent = result.defender_remaining_ships;
+        opponentShips.textContent = result.attacker_remaining_ships;
+    }
+    gameState.lastAttack = {
+        x: result.x, y: result.y, attacker: result.attacker,
+        hit: result.hit, shipSunk: !!result.ship_sunk,
+    };
+    initGameBoards();
+}

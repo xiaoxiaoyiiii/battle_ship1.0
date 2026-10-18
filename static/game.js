@@ -7455,6 +7455,16 @@ function initGameBoards() {
             ? `冻结区域：对方冻结了这片 3×3 区域${n ? '（' + n + ' 艘被冻）' : ''}，被冻的船本回合不提供攻击次数`
             : `冻结区域：你冻结的这片 3×3 区域${n ? '（' + n + ' 艘被冻）' : ''}，区域内对方的船本回合不提供攻击次数`;
     };
+    const attackMap = (rows) => {
+        const map = new Map();
+        for (const row of (Array.isArray(rows) ? rows : [])) {
+            const key = `${row.x},${row.y}`;
+            if (!map.has(key)) map.set(key, row);
+        }
+        return map;
+    };
+    const opponentAttackMap = attackMap(gameState.opponentAttacks);
+    const myAttackMap = attackMap(gameState.myAttacks);
     // 初始化玩家棋盘
     gamePlayerBoard.innerHTML = '';
     for (let y = 0; y < 6; y++) {
@@ -7493,8 +7503,8 @@ function initGameBoards() {
             }
 
             // 显示被攻击的位置
-            if (gameState.opponentAttacks.some(attack => attack.x === x && attack.y === y)) {
-                const attack = gameState.opponentAttacks.find(a => a.x === x && a.y === y);
+            const attack = opponentAttackMap.get(`${x},${y}`);
+            if (attack) {
                 cell.classList.add(attack.hit ? 'hit' : 'miss');
                 cell.textContent = attack.hit ? '✕' : '○';
             }
@@ -7543,15 +7553,15 @@ function initGameBoards() {
             // 如果是自己的回合，可以点击攻击
             if (gameState.isMyTurn) {
                 // 检查是否已经攻击过
-                const alreadyAttacked = gameState.myAttacks.some(attack => attack.x === x && attack.y === y);
+                const alreadyAttacked = myAttackMap.has(`${x},${y}`);
                 if (!alreadyAttacked) {
                     cell.addEventListener('click', () => handleAttack(x, y));
                 }
             }
 
             // 显示攻击结果
-            if (gameState.myAttacks.some(attack => attack.x === x && attack.y === y)) {
-                const attack = gameState.myAttacks.find(a => a.x === x && a.y === y);
+            const attack = myAttackMap.get(`${x},${y}`);
+            if (attack) {
                 cell.classList.add(attack.hit ? 'hit' : 'miss');
                 cell.textContent = attack.hit ? '✕' : '○';
             }

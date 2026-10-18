@@ -2,10 +2,24 @@
 
 
 class FieldEffects:
-    def __init__(self, *, place_field_magic, recalc_attacks, emit):
+    def __init__(self, *, place_field_magic, recalc_attacks, emit,
+                 clear_ship_picks, recalc_after_removal, field_name):
         self._place_field_magic = place_field_magic
         self._recalc_attacks = recalc_attacks
         self._emit = emit
+        self._clear_ship_picks = clear_ship_picks
+        self._recalc_after_removal = recalc_after_removal
+        self._field_name = field_name
+
+    def clear(self, room, previous_field=None):
+        """清理场地留下的效果，并修正受影响的攻击额度。"""
+        had_papal = bool(room.game_effects.get('papal_edict'))
+        previous = (previous_field if previous_field is not None
+                    else self._field_name(room))
+        if room.game_effects.pop('demon_contract', None) is not None:
+            self._clear_ship_picks(room, 'demon_contract')
+        room.game_effects.pop('papal_edict', None)
+        self._recalc_after_removal(room, previous, had_papal=had_papal)
 
     def apply(self, room, caster_id, card, result):
         self._place_field_magic(room, caster_id, card)

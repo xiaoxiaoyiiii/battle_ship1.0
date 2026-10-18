@@ -10421,41 +10421,7 @@ def _sync_attacks_after_ship_change(room, player_id, ships_added=1):
 
 
 def _apply_last_stand_attacks(room, player_id):
-    """绝处逢生放置完唯一一艘战舰后，把攻击次数【重算】为「1 + 保留的额外加成」。
-
-    与 _sync_attacks_after_ship_change 的区别：后者按增量加减、保留旧额度，
-    对绝处逢生不适用 —— 它牺牲了全部战舰，旧额度是按"牺牲前那一堆船"算出来的，
-    留着就会出现"只剩 1 艘船却有 5 次攻击"。
-
-    场地魔法仍按其规则换算：
-      · 教皇旨意：攻击次数恒 0（改为弃卡攻击），不受绝处逢生影响
-      · 伊甸园：次数 = 6 - 自身船数 = 6 - 1 = 5
-      · 其余：1 次
-    """
-    if room.state != 'attacking' or room.current_attacker != player_id:
-        return
-    if _attacks_forced_zero(room):
-        # 败者食尘生效的大回合：连"只剩一艘船的那 1 次"也不给
-        room.attacks_remaining = 0
-        emit('attacks_updated', {
-            'current_attacker': room.current_attacker,
-            'attacks_remaining': room.attacks_remaining
-        }, room=room.id)
-        return
-    field = field_magic_name(room)
-    if field == '教皇旨意':
-        base = 0
-    elif field == '伊甸园':
-        base = max(0, 6 - room.players[player_id].remaining_ships)
-    else:
-        base = 1
-    # 百亿补贴等跨回合累积的加成属于持卡者自己，继续保留
-    bonus = int(getattr(room.players[player_id].effect_flags, 'subsidy_bonus', 0) or 0)
-    room.attacks_remaining = max(0, base + bonus)
-    emit('attacks_updated', {
-        'current_attacker': room.current_attacker,
-        'attacks_remaining': room.attacks_remaining
-    }, room=room.id)
+    return _ATTACK_QUOTA.apply_last_stand(room, player_id)
 
 
 _PLACEMENT_COMPLETION = PlacementCompletion(

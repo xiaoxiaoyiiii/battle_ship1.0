@@ -20,13 +20,13 @@ class AttackResolution:
         ship_sunk = False
         shield_blocked = False
         defender_ships = room.players[defender_id].ships
+        forced = room.players[attacker_id].effect_flags.forced_kill > 0
         for ship in defender_ships:
             if {'x': x, 'y': y} not in ship.positions:
                 continue
             hit = True
             if 'holy_heart' in room.game_effects and not ship.invincible:
                 room.game_effects['holy_heart']['no_damage'] = False
-            forced = room.players[attacker_id].effect_flags.forced_kill > 0
             if forced:
                 ship.hits.append(self._position(x, y))
                 ship_sunk = True

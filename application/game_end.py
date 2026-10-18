@@ -3,13 +3,14 @@
 
 class GameEnd:
     def __init__(self, *, add_log, finalize_match, emit, log_name,
-                 clear_ship_picks, clear_pending):
+                 clear_ship_picks, clear_pending, note_replay):
         self._add_log = add_log
         self._finalize_match = finalize_match
         self._emit = emit
         self._log_name = log_name
         self._clear_ship_picks = clear_ship_picks
         self._clear_pending = clear_pending
+        self._note_replay = note_replay
 
     @staticmethod
     def payload(room, extra=None):
@@ -55,3 +56,11 @@ class GameEnd:
         self._finalize_match(room, winner_id, loser_id)
         self._emit('game_over', self.payload(
             room, {'winner': winner_id, 'reason': reason}), room=room.id)
+
+    def finish_surrender(self, room, loser_id, winner_id):
+        room.state = 'game_over'
+        room.winner = winner_id
+        self._note_replay(room, loser_id, winner_id)
+        self._finalize_match(room, winner_id, loser_id)
+        self._emit('game_over', self.payload(
+            room, {'winner': winner_id, 'reason': 'surrender'}), room=room.id)

@@ -7881,6 +7881,10 @@ _GAME_END = GameEnd(
     log_name=lambda room, player_id: _log_name(room, player_id),
     clear_ship_picks=lambda room: _clear_ship_picks(room),
     clear_pending=lambda room: _clear_game_pending(room),
+    note_replay=lambda room, loser, winner: replay.note_action(
+        capture_replay_observation(room), 'surrender',
+        f'{_log_name(room, loser)} 投降了',
+        {'player': loser, 'winner': winner}, _log_name(room, loser)),
 )
 _ATTACK_DAMAGE_EFFECTS = AttackDamageEffects(
     draw_card=lambda room, player_id: room.draw_card(player_id),
@@ -10818,28 +10822,8 @@ def handle_surrender(data):
     if player_id not in room.players or not _identity_ok(room, player_id):
         return {'status': 'error', 'message': '你不在这个房间'}
 
-    # 设置游戏结束状态
-    room.state = 'game_over'
-
-    # 投降玩家失败，对手获胜
     opponent_id = next(p for p in room.players if p != player_id)
-    room.winner = opponent_id
-
-    # ★ 回放批：投降（**唯一实现点**）。**不往游戏内日志加行** —— 玩家可见的结算播报
-    #   仍由 `_finish_game` / `_finish_game_win` 出，本批不改它的显示。
-    #   ⚠️ 必须放在 `_finalize_match` **之前**：收口里会 `replay.finalize` + `reset`
-    #      （落库后立刻置空），放在后面就等于这一步永远录不进去。
-    replay.note_action(capture_replay_observation(room), 'surrender',
-                       f'{_log_name(room, player_id)} 投降了',
-                       {'player': player_id, 'winner': opponent_id},
-                       _log_name(room, player_id))
-    # 记录战绩 + 每局统计 + 徽章（统一收口，见 _finalize_match）
-    _finalize_match(room, opponent_id, player_id)
-    # 向房间发送游戏结束事件
-    emit('game_over', _game_over_payload(room, {
-        'winner': opponent_id,
-        'reason': 'surrender'  # 添加投降原因标记
-    }), room=room_id)
+    _GAME_END.finish_surrender(room, player_id, opponent_id)
     return {'status': 'success'}
 
 

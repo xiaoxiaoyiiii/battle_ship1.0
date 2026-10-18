@@ -87,8 +87,3 @@ class ShipSunkEffects:
             self._treasure(room, 1, exclude_player_id=attacker_id)
         else:
             self._treasure(room, 1)
-        if 'holy_heart' in room.game_effects:
-            del room.game_effects['holy_heart']
-            self._emit('holy_heart_interrupted', {
-                'reason': '有战舰被击沉，无暇圣心效果中断',
-            }, room=room_id)

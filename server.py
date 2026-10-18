@@ -38,6 +38,7 @@ import replay  # 对局回放的纯模块：记录器 + 终局打包（**绝不 
 from application.attack_service import build_combat_state, resolve_legacy_attack
 from application.attack_shadow import AttackShadow, compare_core_result
 from application.attack_policy import attacks_forced_zero
+from application.attack_quota import AttackQuota
 from application.ai_runtime import default_runtime, seeded_runtime
 from application.spectate_projection import project_snapshot
 from application.replay_observation import capture_replay_observation, clear_replay_observation
@@ -8823,45 +8824,11 @@ def _attacks_forced_zero(room) -> bool:
     return attacks_forced_zero(room)
 
 def _grant_extra_attacks(room, player_id, n=1) -> int:
-    """给某玩家额外增加 n 次攻击次数，返回【实际】增加的次数。
-
-    教皇旨意生效时本回合攻击次数恒为 0（攻击方式改为弃卡攻击），
-    给它加次数没有意义 —— 与 `_sync_attacks_after_ship_change` 同口径返回 0。
-    """
-    if int(n) <= 0 or room.state != 'attacking':
-        return 0
-    if room.current_attacker != player_id:
-        return 0
-    if _attacks_forced_zero(room) or field_magic_name(room) == '教皇旨意':
-        return 0
-    before = int(room.attacks_remaining or 0)
-    room.attacks_remaining = max(0, before + int(n))
-    emit('attacks_updated', {
-        'current_attacker': room.current_attacker,
-        'attacks_remaining': room.attacks_remaining
-    }, room=room.id)
-    return room.attacks_remaining - before
+    return _ATTACK_QUOTA.grant(room, player_id, n)
 
 
 def _recalc_attacker_attacks(room):
-    """按当前攻击者在准备阶段结算攻击次数：伊甸园生效时 = 6-自身船数；否则按剩余船数-冻结。"""
-    pid = room.current_attacker
-    if not pid or pid not in room.players:
-        return
-    if _attacks_forced_zero(room):
-        # 败者食尘生效的大回合：双方恒为 0，不许被船数重算覆盖
-        room.attacks_remaining = 0
-        return
-    # 百亿补贴累计的额外次数（属于持卡者自己，跨回合保留）
-    bonus = int(getattr(room.players[pid].effect_flags, 'subsidy_bonus', 0) or 0)
-    if field_magic_name(room) == '教皇旨意':
-        room.attacks_remaining = 0
-    elif field_magic_name(room) == '伊甸园':
-        room.attacks_remaining = max(0, 6 - room.players[pid].remaining_ships) + bonus
-    else:
-        # 用 remaining_ships：ships 列表含已沉没的战舰，不能直接取长度
-        room.attacks_remaining = max(
-            0, room.players[pid].remaining_ships - frozen_ship_count(room.players[pid])) + bonus
+    return _ATTACK_QUOTA.recalculate(room)
 
 
 # 添加处理连锁响应
@@ -10439,6 +10406,13 @@ def _finish_placement(room, player_id, kind):
 _SHIP_ATTACK_SYNC = ShipAttackSync(
     attacks_forced_zero=_attacks_forced_zero,
     field_magic_name=field_magic_name,
+    emit=lambda *args, **kwargs: emit(*args, **kwargs),
+)
+
+_ATTACK_QUOTA = AttackQuota(
+    forced_zero=_attacks_forced_zero,
+    field_magic=field_magic_name,
+    frozen_ships=lambda player: frozen_ship_count(player),
     emit=lambda *args, **kwargs: emit(*args, **kwargs),
 )
 

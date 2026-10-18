@@ -1342,60 +1342,14 @@ def _clear_field_magic_effects(room, prev_field_name=None):
     prev_field_name：刚离场的场地卡名。调用方若已经改动 room.field_magic，
     必须显式传入（见 _place_field_magic），否则这里读到的是新卡名。
     """
+    # 未显式传入时（加百列拆场地的路径：先调这里、后清 field_magic）就地读取。
     had_papal = bool(room.game_effects.get('papal_edict'))
-    # 未显式传入时（加百列拆场地的路径：先调这里、后清 field_magic）就地读取
     prev_field = prev_field_name if prev_field_name is not None else field_magic_name(room)
-    # ⚠️ 2026-09-21：场地作废时，挂在 pending_ship_picks 里的对应 reason 待选
-    #    也要一并撤掉。旧实现只 pop game_effects，不撤队列条目 →
-    #    恶魔契约被顶替后 demon_contract 条目残留，priority=100 永远压在
-    #    shield_choice (40) 等低优先级卡前面，玩家点船格时会被错误地走成牺牲
-    #    （作者报的"场上根本没有恶魔契约在生效，但点船格还是被当成牺牲"）。
     if room.game_effects.pop('demon_contract', None) is not None:
         _clear_ship_picks_by_reason(room, 'demon_contract')
     room.game_effects.pop('papal_edict', None)
-
-    # 攻击次数是按【当前场地规则】算出来的，场地一没，那个数就不再有效：
-    #   · 教皇旨意：次数被压成 0 —— 不恢复的话玩家"有船却一次也打不出去"
-    #   · 伊甸园：次数 = 6-船数 —— 不重算的话，场地被拆了还能白拿额外次数
-    #     （实测：2 艘船时白拿 2 次攻击）
-    #
-    # ⚠️ 必须覆盖【所有相位】，不能只在 battle 里做。
-    #   拆场地的守卫原先写了 current_phase == 'battle'，于是准备阶段的路径整段被跳过：
-    #   准备阶段打出教皇旨意（次数归零）→ 场地被拆除 → 进战斗阶段时
-    #   两个特例分支都不命中，次数停在 0 → 玩家 4 艘船零输出。
-    #   （进战斗阶段的 _recalc 兜底也一并补上了，两处都要有。）
-    #
-    # ⚠️ 调用方的清理顺序不统一：_place_field_magic 是【先换 field_magic 再调这里】，
-    #   而加百列拆场地是【先调这里再清 field_magic】。因此用 prev_field 判断，
-    #   不依赖 field_magic 调用后的值 —— 否则后一种情况会按"旧场地还在"去算。
-    if room.state != 'attacking':
-        return
-    pid = room.current_attacker
-    if not pid or pid not in room.players:
-        return
-    # 场地没变过、且与影响攻击次数的场地无关 → 无需纠正
-    if not had_papal and prev_field not in ('伊甸园', '教皇旨意'):
-        return
-    # ⚠️ 不能用 _recalc_attacker_attacks：它读 field_magic_name(room)，
-    # 而加百列拆场地的路径是【先调这里、后清 field_magic】—— 此刻 field_magic
-    # 还指向那张已离场的卡，重算结果不变，纠正等于没做（实测：伊甸园被拆后仍是 4 次）。
-    # 这里显式按"那张场地已不存在"来算，只看【当前仍在场的场地】。
-    stay_field = field_magic_name(room)
-    if prev_field is not None and stay_field == prev_field:
-        stay_field = None      # field_magic 尚未被清，说明它就是要拆掉的那张
-    bonus = int(getattr(room.players[pid].effect_flags, 'subsidy_bonus', 0) or 0)
-    if stay_field == '伊甸园':
-        base = max(0, 6 - room.players[pid].remaining_ships)
-    elif stay_field == '教皇旨意':
-        base = 0
-    else:
-        base = max(0, room.players[pid].remaining_ships
-                   - frozen_ship_count(room.players[pid]))
-    room.attacks_remaining = max(0, base + bonus)
-    emit('attacks_updated', {
-        'current_attacker': pid,
-        'attacks_remaining': room.attacks_remaining
-    }, room=room.id)
+    _ATTACK_QUOTA.recalculate_after_field_removal(
+        room, prev_field, had_papal=had_papal)
 
 
 def _place_field_magic(room, caster_id, card):

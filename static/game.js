@@ -8097,54 +8097,6 @@ function handleRPSChoice(choice) {
     });
 }
 
-// 处理攻击
-function handleAttack(x, y) {
-    // 检查是否正在进行魔法卡目标选择，如果是则不执行攻击
-    if (gameState.currentMagicCard) return;
-
-    if (!gameState.isMyTurn) return;
-    if (freezeAlert()) return;
-
-    // 教皇旨意：攻击次数被压成 0，必须【弃一张魔法卡换 2 次攻击】。
-    // ⚠️ 只有"次数为 0"时才拦下来引导去弃卡；已经换到次数之后就【走正常攻击】——
-    // 作者裁定："弃置魔法卡之后应该是让自己攻击次数+2 然后可以和正常攻击逻辑一样"。
-    // 旧实现是拿到次数也一律走 papal_attack（服务端对着同一个格子一次打两发），
-    // 玩家既选不了目标，也走不到这里的正常路径。
-    if (gameState.fieldMagic === '教皇旨意') {
-        const left = parseInt(attacksRemaining.textContent, 10) || 0;
-        if (left <= 0) {
-            if (!gameState.hand || gameState.hand.length === 0) {
-                showAlert('教皇旨意：攻击次数为 0，需要弃一张魔法卡换 2 次攻击，但你没有手牌');
-                return;
-            }
-            showPapalDiscardChoice();
-            return;
-        }
-        // 有次数了 → 落到下面走普通攻击
-    }
-
-    // 检查当前是否为战斗阶段
-    if (gameState.currentPhase !== 'battle') {
-        showAlert('当前不是战斗阶段');
-        return;
-    }
-    if (attacksRemaining.textContent === "0") {
-        showAlert('无剩余攻击次数');
-        return;
-    }
-
-    gameState.socket.emit('attack', {
-        room_id: gameState.roomId,
-        player_id: gameState.playerId,
-        x: x,
-        y: y
-    }, (response) => {
-        if (response.status === 'error') {
-            showAlert(response.message);
-        }
-    });
-}
-
 // 清理一艘对手战舰的公开护盾标记；positions 可来自破盾或牺牲事件。
 function clearOpponentShieldedShips(positions) {
     const keys = new Set((Array.isArray(positions) ? positions : [])

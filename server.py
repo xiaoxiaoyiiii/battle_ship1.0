@@ -37,6 +37,7 @@ import presence  # 在线 / 对局中状态（纯内存零依赖：api.py 也要
 import replay  # 对局回放的纯模块：记录器 + 终局打包（**绝不 emit**，见 replay.py 头部）
 from application.attack_service import build_combat_state, resolve_legacy_attack
 from application.attack_shadow import AttackShadow, compare_core_result
+from application.attack_policy import attacks_forced_zero
 from application.ai_runtime import default_runtime, seeded_runtime
 from application.spectate_projection import project_snapshot
 from application.replay_observation import capture_replay_observation, clear_replay_observation
@@ -8818,78 +8819,8 @@ def handle_confirm_shenji_declare(data):
 
 
 def _attacks_forced_zero(room) -> bool:
-    """本回合的攻击次数是否被规则强制为 0。
-
-    三个来源，**作用域不同，别混**：
-
-    ① `zero_attacks_round`（**房间级**）—— 败者食尘。
-       卡面：「败者食尘生效的大回合内**双方**的攻击次数都为 0」。
-       全房生效，与谁在行动无关。
-
-    ② `zero_attacks_for`（**玩家级 / 大回合级**）—— 回光返照。
-       卡面：「跳过**自己的**战斗阶段」—— 只有施法者打不出去，对手照常。
-       ⚠️ 这一条是作者实测报出来的：我第一版借用了①的机制，
-          结果**对手的攻击次数也被归零**了。两张卡的作用域根本不同。
-
-    ③ `zero_attacks_turn`（**玩家级 / 回合级**，`{player_id: round}`）—— 无忧梦呓。
-       ★ 2026-09-24 新增。卡面：「对方的点数小于自己 → 对方**这回合**的攻击次数
-         恒定为 0」。与②的关键差别是**只锁那一个回合**，不是整个大回合：
-         它在**对方回合开始时**才写入，而写入的 `round` 就是对方那个回合所在的大回合，
-         所以回合结束（或大回合翻页）后这条立刻失效。
-       ⚠️ **必须与②分开一个 key**：两者都是"某个玩家这一轮打不出去"，
-          共用 `zero_attacks_for` 会让先写的那一条被静默覆盖
-          （回光返照先打、无忧梦呓随后结算 —— 前者当场失效，
-           症状是"我明明跳过了战斗阶段却还是能打"）。
-          与 `pending_dice_discard` 那次覆写事故同形状（作者已预警）。
-
-    这三个都是硬规则，优先级高于任何"按船数重算 / 按增量加减"。
-    写 `attacks_remaining` 的地方（`_recalc_attacker_attacks` /
-    `_sync_attacks_after_ship_change` / `_apply_last_stand_attacks` /
-    `_grant_extra_attacks`）都必须先过它，否则那个 0 会在进入战斗阶段时
-    被按船数还原回来 —— 玩家实测：准备阶段确实是 0，一进战斗阶段又变成 6 次。
-
-    ⚠️ ② 必须在 `room.current_attacker` 是施法者时才拦：他一旦交回合出去，
-       这个 0 就不该再管别人（否则又变成房间级了）。③ 同理。
-    """
-    effects = getattr(room, 'game_effects', None)
-    if not isinstance(effects, dict):
-        return False
-    try:
-        rnd = int(room.round)
-    except (TypeError, ValueError):
-        return False
-
-    # ① 房间级（败者食尘）
-    try:
-        if int(effects.get('zero_attacks_round') or -1) == rnd:
-            return True
-    except (TypeError, ValueError):
-        pass
-
-    # ② 玩家级（回光返照）：只对**该玩家**、且正好轮到他行动时生效
-    try:
-        entry = effects.get('zero_attacks_for')
-        if isinstance(entry, dict):
-            if int(entry.get('round') or -1) == rnd \
-                    and entry.get('player') == room.current_attacker:
-                return True
-    except (TypeError, ValueError):
-        pass
-
-    # ③ 玩家级 / 回合级（无忧梦呓）：`{player_id: round}`。
-    #    写成 dict 而不是单槽：同一张卡理论上可能同时锁住不同玩家
-    #    （`盗亦有道` / `亡羊补牢` 都能让同名牌换手再打一次），
-    #    单槽会让前一条静默丢失 —— 与上面②分开 key 是同一个理由。
-    try:
-        turn_entry = effects.get('zero_attacks_turn')
-        if isinstance(turn_entry, dict):
-            if int(turn_entry.get(room.current_attacker) or -1) == rnd:
-                return True
-    except (TypeError, ValueError):
-        pass
-
-    return False
-
+    """兼容层：判断本回合攻击次数是否被规则锁为 0。"""
+    return attacks_forced_zero(room)
 
 def _grant_extra_attacks(room, player_id, n=1) -> int:
     """给某玩家额外增加 n 次攻击次数，返回【实际】增加的次数。

@@ -4446,11 +4446,6 @@ def _apply_ship_sunk_effects(room, room_id, attacker_id, defender_id, ship,
         request_demon_contract=request_demon_contract,
     )
 
-def _apply_attacker_damage_buffs(room, room_id, attacker_id):
-    """兼容入口：执行攻击方伤害增益。"""
-    return _ATTACK_DAMAGE_EFFECTS.apply(room, room_id, attacker_id)
-
-
 def _game_over_payload(room, extra=None):
     """兼容入口：构造终局载荷。"""
     return _GAME_END.payload(room, extra)

@@ -7493,12 +7493,13 @@ function initGameBoards() {
     for (let y = 0; y < 6; y++) {
         for (let x = 0; x < 6; x++) {
             const cell = document.createElement('div');
+            const key = `${x},${y}`;
             cell.classList.add('cell');
             cell.dataset.x = x;
             cell.dataset.y = y;
 
             // 显示自己的战舰（冻结中的要能一眼看出来：它本回合不提供攻击次数）
-            const ownShip = ownShipMap.get(`${x},${y}`);
+            const ownShip = ownShipMap.get(key);
             if (ownShip) {
                 cell.classList.add('ship');
                 // 已沉的船：沉船仍留在 ships 列表里，服务端用 alive 标记死活，
@@ -7526,21 +7527,21 @@ function initGameBoards() {
             }
 
             // 显示被攻击的位置
-            const attack = opponentAttackMap.get(`${x},${y}`);
+            const attack = opponentAttackMap.get(key);
             if (attack) {
                 cell.classList.add(attack.hit ? 'hit' : 'miss');
                 cell.textContent = attack.hit ? '✕' : '○';
             }
 
             // 自己因恶魔契约等效果牺牲的船：画叉
-            if (sacrificedSelf.has(`${x},${y}`)) {
+            if (sacrificedSelf.has(key)) {
                 cell.classList.add('hit', 'sacrificed');
                 cell.textContent = '✕';
             }
 
             // 对方打过来、被我的护盾挡下的那一炮：画"破盾"标记，不画命中叉。
             // （这一格在他那边不算已攻击，他还能再打一次）
-            if (shieldBrokenOpponent.has(`${x},${y}`)) {
+            if (shieldBrokenOpponent.has(key)) {
                 cell.classList.add('shield-broken');
                 cell.title = '护盾挡住了这一炮，本回合还能被再打一次';
             }
@@ -7548,7 +7549,7 @@ function initGameBoards() {
             // 绝处逢生的候选格（**我的棋盘**上的）：我自己放的那次，唯一一艘必在这几格之一。
             // 修复前这里只写在对手棋盘的循环里 —— 于是自己放绝处逢生时，
             // 属于我棋盘的候选格被画到了对手棋盘上（作者实测反馈）。
-            if (lastStandIsMine && lastStandCells.has(`${x},${y}`)) {
+            if (lastStandIsMine && lastStandCells.has(key)) {
                 cell.classList.add('last-stand-candidate');
                 if (!cell.textContent) cell.title = '绝处逢生的唯一一艘战舰可能在这一格（你的棋盘）';
             }
@@ -7569,6 +7570,7 @@ function initGameBoards() {
     for (let y = 0; y < 6; y++) {
         for (let x = 0; x < 6; x++) {
             const cell = document.createElement('div');
+            const key = `${x},${y}`;
             cell.classList.add('cell');
             cell.dataset.x = x;
             cell.dataset.y = y;
@@ -7576,35 +7578,35 @@ function initGameBoards() {
             // 如果是自己的回合，可以点击攻击
             if (gameState.isMyTurn) {
                 // 检查是否已经攻击过
-                const alreadyAttacked = myAttackMap.has(`${x},${y}`);
+                const alreadyAttacked = myAttackMap.has(key);
                 if (!alreadyAttacked) {
                     cell.addEventListener('click', () => handleAttack(x, y));
                 }
             }
 
             // 显示攻击结果
-            const attack = myAttackMap.get(`${x},${y}`);
+            const attack = myAttackMap.get(key);
             if (attack) {
                 cell.classList.add(attack.hit ? 'hit' : 'miss');
                 cell.textContent = attack.hit ? '✕' : '○';
             }
 
             // 对方公开加盾的位置：显示在对手棋盘上，直到护盾被消耗或该船被击沉。
-            const opponentShielded = opponentShieldedCells.has(`${x},${y}`);
+            const opponentShielded = opponentShieldedCells.has(key);
             if (opponentShielded) {
                 cell.classList.add('opponent-shielded');
                 if (!cell.title) cell.title = '对方这艘战舰带有护盾，可抵挡一次伤害';
             }
 
             // 对方因恶魔契约等效果牺牲的船：公开信息，同样画叉
-            if (sacrificedOpponent.has(`${x},${y}`)) {
+            if (sacrificedOpponent.has(key)) {
                 cell.classList.add('hit', 'sacrificed');
                 cell.textContent = '✕';
             }
 
             // 我打过去被对方护盾挡下的那一炮：画"破盾"标记（不是命中叉）。
             // 服务端没把这一格记进"已攻击"，所以它仍然有 click 监听、还能再打。
-            if (shieldBrokenMine.has(`${x},${y}`)) {
+            if (shieldBrokenMine.has(key)) {
                 cell.classList.add('shield-broken');
                 cell.title = '这一炮被护盾挡下，船毫发无伤 —— 本回合还能再打这一格';
             }
@@ -7613,7 +7615,7 @@ function initGameBoards() {
             // ⚠️ 属于我自己棋盘的候选格绝不能画到这块棋盘上 —— 看起来就是"敌方可能在这几格"，
             // 会直接误导我自己的攻击（作者 2026-09-16 实测反馈）。
             // ⚠️ 仍然绝不能画成叉或加 hit/miss 类 —— 那会让玩家以为"已经打过、打不了"。
-            if (!lastStandIsMine && lastStandCells.has(`${x},${y}`)) {
+            if (!lastStandIsMine && lastStandCells.has(key)) {
                 cell.classList.add('last-stand-candidate');
                 if (!cell.textContent) cell.title = '绝处逢生的唯一一艘战舰可能在这一格（对方棋盘）';
             }
@@ -7685,7 +7687,7 @@ function randomizeShips() {
     while (positions.size < gameState.maxShips) {
         const x = Math.floor(Math.random() * 6);
         const y = Math.floor(Math.random() * 6);
-        positions.add(`${x},${y}`);
+        positions.add(key);
     }
 
     // 放置战舰

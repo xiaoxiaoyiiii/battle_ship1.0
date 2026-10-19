@@ -94,3 +94,40 @@ def unsettled(room, ai_id):
         reasons.append('被拦下的阶段转换还没补上')
     return reasons
 
+
+
+def consume_pending(room_id, ai_id, *, get_room, consume_placement,
+                    consume_choice, consume_shenji):
+    room = get_room(room_id)
+    if room is None:
+        return
+    consume_placement(room, ai_id)
+    room = get_room(room_id)
+    if room is None:
+        return
+    consume_choice(room, ai_id)
+    room = get_room(room_id)
+    if room is None:
+        return
+    consume_shenji(room, ai_id)
+
+
+def settle(room_id, ai_id, *, steps, get_room, consume_pending,
+           unsettled, pause, add_log):
+    for _ in range(steps):
+        room = get_room(room_id)
+        if not room or room.state == 'game_over' or room.current_attacker != ai_id:
+            return room, False
+        consume_pending(room_id, ai_id)
+        room = get_room(room_id)
+        if not room or room.state == 'game_over' or room.current_attacker != ai_id:
+            return room, False
+        reasons = unsettled(room, ai_id)
+        if not reasons:
+            return room, True
+        pause(room_id, 0.3)
+    room = get_room(room_id)
+    if room is not None:
+        reasons = '、'.join(unsettled(room, ai_id)) or '未知'
+        add_log(room, f'大师 AI 等待结算收敛超时（{reasons}），跳过等待继续回合', 'system')
+    return room, True

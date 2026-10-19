@@ -48,6 +48,7 @@ from application.ai_runtime_helpers import (
     runtime as ai_runtime_for,
 )
 from application.ai_master_actions import play_one, maybe_play_magic
+from application.ai_turn_loop import turn_loop
 from application.ai_settlement import (
     unsettled, consume_pending, settle, consume_placement, consume_choice,
     consume_shenji, consume_ship_picks, ship_pick_effect,
@@ -5849,73 +5850,15 @@ def _ai_master_turn(room_id: str, room, ai_id: str):
 
 
 def _ai_turn_loop(room_id: str):
-    """AI回合：进入战斗阶段→随机攻击至次数耗尽→结束阶段→交出回合。"""
-    try:
-        _ai_pause(room_id, 1)
-        room = room_manager.get_room(room_id)
-        if not room or room.state == 'game_over':
-            return
-        ai_id = _ai_player_id(room)
-        if not ai_id or room.current_attacker != ai_id:
-            return
-        if _is_master(room, ai_id):
-            return _ai_master_turn(room_id, room, ai_id)
-        enter_battle_phase({'room_id': room_id, 'player_id': ai_id})
+    return turn_loop(
+        room_id, pause=_ai_pause, get_room=room_manager.get_room,
+        ai_player=_ai_player_id, is_master=_is_master,
+        master_turn=_ai_master_turn, enter_battle=enter_battle_phase,
+        play_magic=_ai_maybe_play_magic, choose_attack=_ai_choose_attack,
+        attack=handle_attack, enter_end=handle_enter_end_phase,
+        end_turn=end_turn, log_error=lambda error: print(f'AI turn error: {error}'),
+    )
 
-        # 先出一张安全卡（normal / hard 难度）。出牌可能打开连锁响应窗口，
-        # 而连锁未结算时攻击会被 handle_attack 门禁拒绝 —— 必须等窗口关闭再开炮，
-        # 否则 AI 的攻击会全军覆没、回合草草结束。
-        _ai_maybe_play_magic(room, ai_id)
-        for _ in range(40):
-            room = room_manager.get_room(room_id)
-            if not room or room.state == 'game_over' or room.current_attacker != ai_id:
-                return
-            if not (room.chain or room.chain_waiting):
-                break
-            _ai_pause(room_id, 0.3)
-
-        for _ in range(40):
-            room = room_manager.get_room(room_id)
-            if not room or room.state == 'game_over' or room.current_attacker != ai_id:
-                return
-            if room.attacks_remaining <= 0:
-                break
-            shot = _ai_choose_attack(room, ai_id)
-            if shot is None:
-                break
-            x, y = shot
-            handle_attack({'room_id': room_id, 'player_id': ai_id, 'x': x, 'y': y})
-            _ai_pause(room_id, 0.3)
-        room = room_manager.get_room(room_id)
-        if not room or room.state == 'game_over' or room.current_attacker != ai_id:
-            return
-
-        # 收尾必须重试：连锁若还没结算完，enter_end_phase / end_turn 会被门禁拒绝，
-        # 而 AI 回合没有别的触发点 —— 一旦这里失败，回合就会永远停在 AI 手上，
-        # 真人只能干等（此前 AI 不出牌，所以碰不到这个竞态）。
-        for _ in range(20):
-            room = room_manager.get_room(room_id)
-            if not room or room.state == 'game_over' or room.current_attacker != ai_id:
-                return
-            if room.chain or room.chain_waiting:
-                _ai_pause(room_id, 0.5)
-                continue
-            resp = handle_enter_end_phase({'room_id': room_id, 'player_id': ai_id})
-            if resp and resp.get('status') == 'success':
-                break
-            _ai_pause(room_id, 0.5)
-        _ai_pause(room_id, 0.5)
-
-        for _ in range(20):
-            room = room_manager.get_room(room_id)
-            if not room or room.state == 'game_over' or room.current_attacker != ai_id:
-                return
-            resp = end_turn({'room_id': room_id, 'player_id': ai_id})
-            if resp and resp.get('status') == 'success':
-                return
-            _ai_pause(room_id, 0.5)
-    except Exception as e:
-        print(f'AI turn error: {e}')
 
 
 # ── 教皇旨意：弃一张魔法卡 → 自己的攻击次数 +2 ──────────────────────

@@ -47,6 +47,7 @@ from application.ai_runtime_helpers import (
     difficulty as ai_difficulty,
     runtime as ai_runtime_for,
 )
+from application.ai_master_actions import play_one
 from application.ai_settlement import (
     unsettled, consume_pending, settle, consume_placement, consume_choice,
     consume_shenji, consume_ship_picks, ship_pick_effect,
@@ -5683,39 +5684,12 @@ def _consume_ship_pick_effect(room, ai_id, entry, picked) -> None:
     return ship_pick_effect(room, ai_id, entry, picked)
 
 def _master_play_one(room_id, ai_id, played) -> bool:
-    """尝试出一张牌。返回 True = **打出并成功结算**（调用方把预算 +1）。
-
-    ⚠️ 用 `handle_use_magic_card` 的返回值判成败；失败（被拒）也算"这次机会用掉了"，
-    但**不计入预算** —— 被拒说明这张卡当时打不出去，`_master_card_readiness`
-    漏判了，不该因此白扣一次出牌额度（正是要消灭的失败模式）。
-    """
-    room = room_manager.get_room(room_id)
-    if not room or room.state == 'game_over':
-        return False
-    if played >= int(getattr(ai_brain, 'CARDS_PER_TURN', 1) or 1):
-        return False
-    idx, targets = _ai_choose_card(room, ai_id, played)
-    if idx is None:
-        return False
-    hand = room.players[ai_id].magic_hand
-    if not isinstance(idx, int) or not (0 <= idx < len(hand)):
-        return False
-    card = hand[idx]
-    resp = handle_use_magic_card({
-        'room_id': room_id, 'player_id': ai_id,
-        'card': {'name': card.name, 'speed': card.speed, 'type': card.type,
-                 'description': getattr(card, 'description', '')},
-        'targets': targets or {},
-    })
-    if resp and resp.get('status') == 'success':
-        return True
-    # 试算漏判：记一笔（含拒绝原因），便于离线统计哪张卡的闸门还缺
-    room = room_manager.get_room(room_id)
-    if room is not None:
-        add_game_log(room, f'大师 AI 出牌被拒（{card.name}）：'
-                           f'{(resp or {}).get("message", "")}', 'magic')
-    return False
-
+    return play_one(
+        room_id, ai_id, played, get_room=room_manager.get_room,
+        card_limit=int(getattr(ai_brain, 'CARDS_PER_TURN', 1) or 1),
+        choose_card=_ai_choose_card, use_card=handle_use_magic_card,
+        log=add_game_log,
+    )
 
 def _ai_master_turn(room_id: str, room, ai_id: str):
     """大师难度的完整回合：决策循环（§5）+ 收尾重试。

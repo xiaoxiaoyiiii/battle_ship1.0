@@ -39,6 +39,7 @@ from application.attack_service import build_combat_state, resolve_legacy_attack
 from application.attack_shadow import AttackShadow, compare_core_result
 from application.attack_policy import attacks_forced_zero
 from application.attack_quota import AttackQuota
+from application.ai_attack import choose_attack as choose_ai_attack
 from application.ai_runtime import default_runtime, seeded_runtime
 from application.spectate_projection import project_snapshot
 from application.replay_observation import capture_replay_observation, clear_replay_observation
@@ -4945,17 +4946,14 @@ def _ai_choose_attack(room, ai_id, rng=None):
        **复刻品**而不是真的 AI —— 改了 AI 胜率却纹丝不动，等于没测。
     """
     rng = _ai_runtime(room).rng if rng is None else rng
-    candidates = _attackable_cells(room, ai_id)
-    if not candidates:
-        return None
-    if _is_master(room, ai_id):
-        # 大师：先打自己已探明的敌船位置（必中）。
-        # ⚠️ 这条只在**有情报**时有意义；情报要靠克苏鲁之眼/探测雷达产生，
-        #    所以"读情报"和"打情报卡"必须一起做，否则等于没改。
-        got = ai_brain.choose_attack(room, ai_id, rng=rng)
-        if got:
-            return got
-    return rng.choice(candidates)
+    return choose_ai_attack(
+        room=room,
+        player_id=ai_id,
+        rng=rng,
+        candidates=_attackable_cells(room, ai_id),
+        is_master=_is_master(room, ai_id),
+        informed_choice=ai_brain.choose_attack,
+    )
 
 
 def _ai_choose_card(room, ai_id, cards_played=0):

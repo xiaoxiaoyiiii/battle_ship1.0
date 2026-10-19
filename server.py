@@ -47,7 +47,7 @@ from application.ai_runtime_helpers import (
     difficulty as ai_difficulty,
     runtime as ai_runtime_for,
 )
-from application.ai_master_actions import play_one
+from application.ai_master_actions import play_one, maybe_play_magic
 from application.ai_settlement import (
     unsettled, consume_pending, settle, consume_placement, consume_choice,
     consume_shenji, consume_ship_picks, ship_pick_effect,
@@ -4977,18 +4977,10 @@ def _ai_maybe_play_magic(room, ai_id: str) -> bool:
 
     每回合最多一张，避免把整手牌一次性倒光。简单难度（easy）不出牌。
     """
-    idx, targets = _ai_choose_card(room, ai_id)
-    if idx is None:
-        return False
-    card = room.players[ai_id].magic_hand[idx]
-    resp = handle_use_magic_card({
-        'room_id': room.id,
-        'player_id': ai_id,
-        'card': {'name': card.name, 'speed': card.speed, 'type': card.type,
-                 'description': getattr(card, 'description', '')},
-        'targets': targets or {},
-    })
-    return bool(resp and resp.get('status') == 'success')
+    return maybe_play_magic(
+        room, ai_id, choose_card=_ai_choose_card,
+        use_card=handle_use_magic_card,
+    )
 
 
 # 大师能被允许打出的卡 —— 白名单见下面的 `_MASTER_ENABLED_CARDS`。

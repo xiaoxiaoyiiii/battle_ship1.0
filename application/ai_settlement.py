@@ -360,3 +360,88 @@ def consume_choice(room, ai_id, *, resolve_choice, resolve_ship_pick, confirm, i
 
     # 不认识的待办类型：不碰（可能是别人/别通道的），交给原来那套逻辑
     return True
+
+
+def consume_shenji(room, ai_id, *, resolve_choice, confirm, log) -> bool:
+    """把挂在 AI 名下的**神机妙算宣言**待办消费掉。
+
+    `神机妙算` 打出后会开一个「宣言一个 0~6 的数字」的窗口
+    （`magic_temp_data['pending_shenji']`），并且**冻结对方的写操作**
+    （`_action_wait_reason` 里的 `_shenji_wait_reason`）。
+    AI 不自己宣言，这个窗口只能等超时，整局就停在那里。
+
+    宣言值交给 `resolve_choice`（与其它挑数值同一份决策），
+    落效走 `confirm` —— 玩家真正在用的那个入口。
+    """
+    if not isinstance(room.magic_temp_data, dict):
+        return True
+    pending = room.magic_temp_data.get('pending_shenji')
+    if not pending or pending.get('caster') != ai_id:
+        return True
+
+    # 卡面：宣言 x = "这一大回合我的船数会减少 x 艘"。预言命中则这些船不减少。
+    #   候选 0~6（`confirm` 会再夹一次范围）。
+    #   ⚠️ 期望值：不宣言（=超时按 0 处理）在"一艘都没掉"时同样无效，
+    #      所以这里不能靠"保守填 0"取胜 —— 交给价值函数，用实测对比。
+    value = resolve_choice(room, ai_id, 'shenji_predict', list(range(7)))
+    try:
+        value = max(0, min(6, int(value)))
+    except (TypeError, ValueError):
+        value = 0
+    resp = confirm(
+        {'room_id': room.id, 'player_id': ai_id, 'prediction': value})
+    if not (resp and resp.get('status') == 'success'):
+        # 宣言不了就把窗口拆掉，绝不留下一个冻结对方写操作的死待办
+        room.magic_temp_data.pop('pending_shenji', None)
+        log(room, f'大师 AI 的神机妙算宣言失败（{resp}），已清理待办', 'system')
+    return True
+
+
+def consume_ship_picks(room, ai_id, *, get_room, top_pick, alive_ships, resolve_ship_pick, runtime, clear_picks, ship_pick_effect, log) -> bool:
+    """把挂在 AI 名下的选船待办逐个消费掉（brain 挑船）。
+
+    返回 False = 消费不掉（没有可选的活船等），调用方据此停下。
+    """
+    for _ in range(8):
+        room = get_room(room.id)
+        if not room or room.state == 'game_over':
+            return False
+        entry = top_pick(room, ai_id)
+        if not entry:
+            return True
+        caster = room.players.get(ai_id)
+        alive = alive_ships(caster) if caster else []
+        if not alive:
+            # 没有可选对象：显式清掉，别留一个永远没人能消费的待办
+            clear_picks(room, ai_id)
+            log(room, '大师 AI 的选船待办无可选战舰，已清理', 'system')
+            return True
+        picked = resolve_ship_pick(
+            room, ai_id, entry.get('reason'), alive, rng=runtime(room).rng)
+        if picked is None:
+            clear_picks(room, ai_id)
+            log(room, '大师 AI 的选船待办无法决策，已清理', 'system')
+            return True
+        room.pending_ship_picks = [
+            p for p in (room.pending_ship_picks or []) if p is not entry]
+        ship_pick_effect(room, ai_id, entry, picked)
+    return False
+
+
+def ship_pick_effect(room, ai_id, entry, picked) -> None:
+    """把「AI 代选的那艘船」真正结算掉（牺牲 / 加盾 / 触发陷阱）。
+
+    走的是与 `handle_confirm_sacrifice` 同一组内部原语，**不复刻**它们：
+    `_SACRIFICE_REASONS` 里的 reason 走牺牲，其余（如 shield_choice）只做记录。
+    """
+    reason = str(entry.get('reason') or '')
+    if reason in _SACRIFICE_REASONS:
+        _do_demon_contract_sacrifice(room, ai_id, picked, reason)
+    elif reason == 'kraken_eye':
+        # 克苏鲁之眼：被窥探的一方暴露位置给施法者（AI 房间由 `_request_ship_pick`
+        # 同步代选，正常不会走到这里；兜底时把位置补上，别让效果半途而废）。
+        for pos in (getattr(picked, 'positions', None) or []):
+            c = _cell_of(pos)
+            if c is not None:
+                room.players[ai_id].revealed_positions.append(pos)
+    _emit_active_effects(room)

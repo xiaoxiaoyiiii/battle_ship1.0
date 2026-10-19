@@ -47,7 +47,7 @@ from application.ai_runtime_helpers import (
     difficulty as ai_difficulty,
     runtime as ai_runtime_for,
 )
-from application.ai_settlement import unsettled
+from application.ai_settlement import unsettled, consume_pending, settle
 from application.ai_board_flow import (
     is_ai_seat as ai_is_seat,
     place_board as ai_place_board_flow,
@@ -5608,67 +5608,26 @@ def _ai_place_board(room, pid) -> bool:
 
 
 def _ai_consume_own_pending(room_id, ai_id) -> None:
-    """把 AI 名下**所有通道**的待办一次消费掉（放置 / 挑牌 / 神机妙算宣言）。
-
-    三条通道各有各的消费函数，但调用点永远是同一组 —— 这里收口成一处，
-    免得将来新增第四条通道时漏接一个调用点（那正是「待办没人消费 → 回合卡死」）。
-    """
-    room = room_manager.get_room(room_id)
-    if room is None:
-        return
-    _ai_consume_own_placement(room, ai_id)
-    room = room_manager.get_room(room_id)
-    if room is None:
-        return
-    _ai_consume_own_choice(room, ai_id)
-    room = room_manager.get_room(room_id)
-    if room is None:
-        return
-    _ai_consume_own_shenji(room, ai_id)
-
+    return consume_pending(
+        room_id, ai_id, get_room=room_manager.get_room,
+        consume_placement=_ai_consume_own_placement,
+        consume_choice=_ai_consume_own_choice,
+        consume_shenji=_ai_consume_own_shenji,
+    )
 
 def _master_unsettled(room, ai_id):
     """兼容入口：返回大师回合尚未收敛的状态原因。"""
     return unsettled(room, ai_id)
 
 def _master_settle(room_id, ai_id):
-    """等**真的结算完**，并把**属于 AI 的待办**消费掉。
-
-    返回 `(room, ok)`：`ok=False` = 回合已经不该继续（对局结束/换人/房间没了）。
-
-    ⚠️ 待办必须由 brain 消费掉，**绝不能留着**：`_ai_turn_loop` 一旦交回合，
-    那个待办就再没有消费点（AI 房间的看门狗还会主动跳过），整局就停在那里。
-    消费不掉时显式清理并记日志 —— 宁可少一个效果，也不能留下没人管的待办。
-
-    ★ 判据用 `_master_unsettled`：**连锁窗口与待处理交互一起看**（2026-09-22）。
-      此前这里只判 `room.chain or room.chain_waiting`，于是"打完一张会开放置
-      流程的牌"这类情况下，只要连锁刚好是空的就会往下走 —— 而那张牌的放置
-      还没落地。现在**每一圈都先替 AI 把待办消费掉再判**，所以正常的待办一定
-      能收敛；走成超时的只可能是"消费不掉"的异常局面（那时会显式记日志）。
-    """
-    for _ in range(_MASTER_SETTLE_STEPS):
-        room = room_manager.get_room(room_id)
-        if not room or room.state == 'game_over' or room.current_attacker != ai_id:
-            return room, False
-        # 1) 先把**属于 AI 自己的**待办消费掉（放置 / 挑牌 / 神机妙算宣言）。
-        #    ⚠️ 这一步必须排在判据之前：AI 名下的待办是**它自己**该回答的，
-        #    留着不消费会永远收敛不了（`_ai_turn_loop` 一交回合就再没有消费点）。
-        _ai_consume_own_pending(room_id, ai_id)
-        room = room_manager.get_room(room_id)
-        if not room or room.state == 'game_over' or room.current_attacker != ai_id:
-            return room, False
-        # 2) 再判"房间里还有没有东西没落地"（连锁窗口 + 四条待办通道）。
-        unsettled = _master_unsettled(room, ai_id)
-        if not unsettled:
-            return room, True
-        _ai_pause(room_id, 0.3)
-    # 迟迟不收敛：显式记一笔（带上**具体哪条通道**），让运营能在日志里看到 —— 不静默
-    room = room_manager.get_room(room_id)
-    if room is not None:
-        still = '、'.join(_master_unsettled(room, ai_id)) or '未知'
-        add_game_log(room, f'大师 AI 等待结算收敛超时（{still}），跳过等待继续回合', 'system')
-    return room, True
-
+    return settle(
+        room_id, ai_id, steps=_MASTER_SETTLE_STEPS,
+        get_room=room_manager.get_room,
+        consume_pending=_ai_consume_own_pending,
+        unsettled=_master_unsettled,
+        pause=_ai_pause,
+        add_log=add_game_log,
+    )
 
 def _ai_has_placement_spot(room, ai_id) -> bool:
     """AI 现在有没有**至少一个合法放置格**。

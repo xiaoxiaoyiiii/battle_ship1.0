@@ -40,6 +40,7 @@ from application.attack_shadow import AttackShadow, compare_core_result
 from application.attack_policy import attacks_forced_zero
 from application.attack_quota import AttackQuota
 from application.ai_attack import choose_attack as choose_ai_attack
+from application.ai_card_selection import choose_card as choose_ai_card
 from application.ai_runtime import default_runtime, seeded_runtime
 from application.spectate_projection import project_snapshot
 from application.replay_observation import capture_replay_observation, clear_replay_observation
@@ -4912,20 +4913,10 @@ def _ai_choose_magic_card(room, ai_id: str):
 
     只做选择、不改状态，方便单测。按速阶从低到高挑（速阶 1 最便宜）。
     """
-    player = room.players.get(ai_id)
-    if not player or not player.magic_hand:
-        return None
-    candidates = []
-    for idx, c in enumerate(player.magic_hand):
-        if c.name not in _AI_SAFE_CARDS:
-            continue
-        if not can_play_magic_card(room, ai_id, c):
-            continue
-        candidates.append((int(c.speed), idx))
-    if not candidates:
-        return None
-    candidates.sort()
-    return candidates[0][1]
+    return choose_ai_card(
+        room, ai_id, difficulty='normal', is_master=False,
+        safe_cards=_AI_SAFE_CARDS, can_play=can_play_magic_card,
+        master_pick=lambda *_args: (None, {}))[0]
 
 
 def _ai_runtime(room):
@@ -4964,11 +4955,15 @@ def _ai_choose_card(room, ai_id, cards_played=0):
 
     `cards_played` = 本回合已经出过几张（只有大师看它，用于每回合出牌预算）。
     """
-    if _ai_difficulty_of(room, ai_id) == 'easy':
-        return None, {}
-    if not _is_master(room, ai_id):
-        return _ai_choose_magic_card(room, ai_id), {}
-    return _ai_master_pick(room, ai_id, cards_played)
+    return choose_ai_card(
+        room, ai_id,
+        difficulty=_ai_difficulty_of(room, ai_id),
+        is_master=_is_master(room, ai_id),
+        safe_cards=_AI_SAFE_CARDS,
+        can_play=can_play_magic_card,
+        master_pick=_ai_master_pick,
+        cards_played=cards_played,
+    )
 
 
 def _ai_maybe_play_magic(room, ai_id: str) -> bool:

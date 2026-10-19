@@ -41,6 +41,12 @@ from application.attack_policy import attacks_forced_zero
 from application.attack_quota import AttackQuota
 from application.ai_attack import choose_attack as choose_ai_attack
 from application.ai_card_selection import choose_card as choose_ai_card
+from application.ai_runtime_helpers import (
+    player_id as ai_player_id,
+    is_master as ai_is_master,
+    difficulty as ai_difficulty,
+    runtime as ai_runtime_for,
+)
 from application.ai_runtime import default_runtime, seeded_runtime
 from application.spectate_projection import project_snapshot
 from application.replay_observation import capture_replay_observation, clear_replay_observation
@@ -4832,25 +4838,21 @@ def _end_turn_locked(room, room_id, player_id):
 # ---------------------------------------------------------------------------
 def _ai_player_id(room):
     """返回房间内AI玩家ID；不存在返回None。"""
-    for pid in room.players:
-        if pid.startswith('ai-'):
-            return pid
-    return None
+    return ai_player_id(room)
 
 
 def _ai_place_ships(room, ai_id: str):
     """为AI随机摆放战舰——规则与人类玩家完全一致：
     单格船、数量取该玩家的 max_ships（默认6）、坐标 0-5 内不重叠。"""
-    import random as _rnd
+    # 保留此处的战舰写入点：ship-removal 守卫会扫描 server.py 的所有棋盘变更。
     player = room.players[ai_id]
     player.ships = []
     player.remaining_ships = 0
-    # 与人类一致：默认 6 艘（或按 room/玩家已设定的 max_ships，如灵气复苏后）
     max_ships = int(getattr(player, 'max_ships', 6) or 6)
-    all_positions = [(x, y) for x in range(6) for y in range(6)]
-    _rnd.shuffle(all_positions)
-    for (px, py) in all_positions[:max_ships]:
-        player.ships.append(PlayerShip(positions=[Position(x=px, y=py)], hits=[]))
+    positions = [(x, y) for x in range(6) for y in range(6)]
+    random.shuffle(positions)
+    for x, y in positions[:max_ships]:
+        player.ships.append(PlayerShip(positions=[Position(x=x, y=y)], hits=[]))
         player.remaining_ships += 1
 
 
@@ -4882,18 +4884,12 @@ def _is_master(room, player_id=None) -> bool:
     实现：房间级 `ai_difficulty` 仍是**默认值**（线上唯一真相），
     自对弈时由驱动器用 `room.ai_difficulty_by_player` 逐座位覆盖。
     """
-    by_player = getattr(room, 'ai_difficulty_by_player', None)
-    if player_id and isinstance(by_player, dict) and player_id in by_player:
-        return by_player[player_id] == 'master'
-    return getattr(room, 'ai_difficulty', 'normal') == 'master'
+    return ai_is_master(room, player_id)
 
 
 def _ai_difficulty_of(room, player_id) -> str:
     """这个座位实际生效的难度（与 `_is_master` 同一份判据，供驱动器/日志读）。"""
-    by_player = getattr(room, 'ai_difficulty_by_player', None)
-    if player_id and isinstance(by_player, dict) and player_id in by_player:
-        return str(by_player[player_id] or 'normal')
-    return str(getattr(room, 'ai_difficulty', 'normal') or 'normal')
+    return ai_difficulty(room, player_id)
 
 # AI 可以安全打出的卡：无目标、无后续选择、也不需要「本回合刚命中/刚击沉」之类前置条件。
 # 其余卡一律不打，原因有二：
@@ -4921,7 +4917,7 @@ def _ai_choose_magic_card(room, ai_id: str):
 
 def _ai_runtime(room):
     """房间可注入独立随机源与等待函数；旧房间沿用默认运行时。"""
-    return getattr(room, 'ai_runtime', None) or default_runtime
+    return ai_runtime_for(room, default_runtime)
 
 
 def _ai_pause(room_id, seconds):

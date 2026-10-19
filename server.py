@@ -47,7 +47,9 @@ from application.ai_runtime_helpers import (
     difficulty as ai_difficulty,
     runtime as ai_runtime_for,
 )
-from application.ai_settlement import unsettled, consume_pending, settle
+from application.ai_settlement import (
+    unsettled, consume_pending, settle, consume_placement,
+)
 from application.ai_board_flow import (
     is_ai_seat as ai_is_seat,
     place_board as ai_place_board_flow,
@@ -5644,83 +5646,12 @@ def _ai_has_placement_spot(room, ai_id) -> bool:
 
 
 def _ai_consume_own_placement(room, ai_id) -> bool:
-    """把挂在 AI 名下的**放置流程**（`pending_placement`）逐艘消费掉。
-
-    返回 True = 已经没有待办了。
-
-    这是 §5.1.5 第 1 条「AI 摆放入口」：没有它，`回光返照 / 败者食尘 / 增援 /
-    死者苏生 / 滥竽充数 / 绝处逢生 / 神机妙算` 全都会卡死 ——
-    打出后 `pending_placement` 挂在**施法者自己**头上（=AI），而 AI 没有放置入口，
-    `enter_end_phase` / `end_turn` 又会被 `_action_wait_reason` 拦住，
-    回合永远交不出去、真人零提示（§1.1 缺陷 2 的原形）。
-
-    候选格**完全按各卡的规则算**（复用 `_placement_error` 这一份实现，
-    不复刻合法性判断），brain 只负责在给定候选里挑。
-    """
-    for _ in range(12):
-        room = room_manager.get_room(room.id)
-        if not room or room.state == 'game_over':
-            return True
-        temp = room.magic_temp_data if isinstance(room.magic_temp_data, dict) else {}
-        pending = temp.get('pending_placement')
-        if not pending or pending.get('caster') != ai_id:
-            return True
-
-        kind = pending.get('kind')
-        allow = set()
-        if kind == 'last_stand':
-            allow = {(int(a[0]), int(a[1]))
-                     for a in (room.game_effects.get('last_stand_cells') or [])}
-        elif kind == 'shenji_redeploy':
-            allow = {(int(a[0]), int(a[1]))
-                     for a in (room.game_effects.get('shenji_redeploy_cells') or [])}
-
-        # 候选格 = 全盘枚举后逐格过 `_placement_error`（就是玩家点格子时服务端
-        # 用的那个校验，所以"AI 挑的格"与"玩家能点的格"必然同一套口径）。
-        #
-        # ⚠️ `last_stand` 是个例外：绝处逢生已经把**全部**战舰都牺牲掉了
-        #    （每艘都 `ships.remove()` 并记进 `sunken_ships`），于是
-        #    `_placement_error` 的"未被己方船占用"会把**六个候选格全判成非法**
-        #    （沉船仍留在 `ships` 里）→ 一个能放的位置都没有 → 流程只能取消，
-        #    卡就白打了。服务端对这条路径的合法性是**按 `allowed` 单独校验**的
-        #    （见 `handle_confirm_reinforcement` 的 last_stand 分支），
-        #    所以这里也照它的口径来：只认白名单，不再过默认规则。
-        if kind == 'last_stand':
-            legal = sorted(allow)
-        else:
-            ignore_sunken = kind == 'shenji_redeploy'
-            legal = []
-            for (x, y) in ((cx, cy) for cx in range(6) for cy in range(6)):
-                if allow and (x, y) not in allow:
-                    continue
-                if _placement_error(room, ai_id, x, y, allow_cells=allow,
-                                    ignore_sunken=ignore_sunken):
-                    continue
-                legal.append((x, y))
-
-        if not legal:
-            # 没有合法落点：显式取消放置流程（`handle_cancel_placement` 会收尾并
-            # 清掉待办），绝不把一个没人能消费的待办留在房间里。
-            handle_cancel_placement({'room_id': room.id, 'player_id': ai_id})
-            add_game_log(room, '大师 AI 的放置流程没有合法落点，已取消', 'system')
-            continue
-
-        cell = ai_brain.resolve_placement(room, ai_id, kind, legal)
-        if cell is None:
-            handle_cancel_placement({'room_id': room.id, 'player_id': ai_id})
-            add_game_log(room, '大师 AI 的放置流程无法决策，已取消', 'system')
-            continue
-
-        resp = handle_confirm_reinforcement({
-            'room_id': room.id, 'player_id': ai_id,
-            'position': {'x': int(cell[0]), 'y': int(cell[1])}})
-        if not (resp and resp.get('status') == 'success'):
-            # 被拒说明候选格算错了，再试也是同一批 → 直接取消，别空转
-            handle_cancel_placement({'room_id': room.id, 'player_id': ai_id})
-            add_game_log(room, f'大师 AI 放置被拒（{resp}），已取消放置流程', 'system')
-            continue
-    return True
-
+    return consume_placement(
+        room, ai_id, get_room=room_manager.get_room,
+        placement_error=_placement_error, cancel=handle_cancel_placement,
+        confirm=handle_confirm_reinforcement,
+        resolve=ai_brain.resolve_placement, log=add_game_log,
+    )
 
 def _ai_consume_own_choice(room, ai_id) -> bool:
     """把挂在 AI 名下的**挑牌/数值选择**（`magic_temp_data` 里的 `*_choice`）消费掉。

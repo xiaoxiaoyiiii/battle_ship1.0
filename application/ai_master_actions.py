@@ -34,3 +34,18 @@ def play_one(room_id, ai_id, played, *, get_room, card_limit, choose_card, use_c
                            f'{(resp or {}).get("message", "")}', 'magic')
     return False
 
+
+def maybe_play_magic(room, player_id, *, choose_card, use_card):
+    index, targets = choose_card(room, player_id)
+    if index is None:
+        return False
+    card = room.players[player_id].magic_hand[index]
+    response = use_card({
+        'room_id': room.id,
+        'player_id': player_id,
+        'card': {'name': card.name, 'speed': card.speed, 'type': card.type,
+                 'description': getattr(card, 'description', '')},
+        'targets': targets or {},
+    })
+    return bool(response and response.get('status') == 'success')
+

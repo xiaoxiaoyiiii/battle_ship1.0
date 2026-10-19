@@ -32,8 +32,8 @@ class AttackResolution:
         defender = room.players[defender_id]
         defender_ships = defender.ships
         forced = attacker.effect_flags.forced_kill > 0
-        target = {'x': x, 'y': y}
         hit_position = self._position(x, y)
+        target = hit_position
         for ship in defender_ships:
             if target not in ship.positions:
                 continue

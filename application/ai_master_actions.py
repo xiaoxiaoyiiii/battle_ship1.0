@@ -48,4 +48,3 @@ def maybe_play_magic(room, player_id, *, choose_card, use_card):
         'targets': targets or {},
     })
     return bool(response and response.get('status') == 'success')
-

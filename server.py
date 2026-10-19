@@ -47,6 +47,11 @@ from application.ai_runtime_helpers import (
     difficulty as ai_difficulty,
     runtime as ai_runtime_for,
 )
+from application.ai_board_flow import (
+    is_ai_seat as ai_is_seat,
+    place_board as ai_place_board_flow,
+    seat_places_board_now as ai_seat_places_board_now,
+)
 from application.ai_runtime import default_runtime, seeded_runtime
 from application.spectate_projection import project_snapshot
 from application.replay_observation import capture_replay_observation, clear_replay_observation
@@ -5554,7 +5559,7 @@ def _is_ai_seat(player_id) -> bool:
         人机房里只有一个 AI，但施法者/对手是**两个不同的座位**，
         拿 `_ai_player_id` 判"对手是不是 AI"会在别处读错。
     """
-    return str(player_id or '').startswith('ai-')
+    return ai_is_seat(player_id)
 
 
 def _ai_seat_places_board_now(room, pid) -> bool:
@@ -5576,11 +5581,9 @@ def _ai_seat_places_board_now(room, pid) -> bool:
     ⚠️ 这里**不自己写收尾逻辑**，一律走 `_ai_place_board` → `handle_place_ships`
        （收尾只在那一处，别的地方复刻就是第二份真相，CLAUDE.md 教训 #1）。
     """
-    if not _is_ai_seat(pid):
-        return False
-    if room.players.get(pid) is None:
-        return False
-    return _ai_place_board(room, pid)
+    return ai_seat_places_board_now(
+        room, pid, place_board=lambda current_room, player_id:
+        _ai_place_board(current_room, player_id))
 
 
 def _ai_place_board(room, pid) -> bool:
@@ -5596,17 +5599,11 @@ def _ai_place_board(room, pid) -> bool:
     ⚠️ 摆放用的坐标与服务端自己给 AI 摆船的随机算法同源（都是从全盘随机取 N 格），
        所以代真人座位补摆不会给出任何优势 —— 只是把"人没点"这件事自动化掉。
     """
-    player = room.players.get(pid)
-    if player is None:
-        return False
-    count = int(getattr(player, 'max_ships', None) or 6)
-    if len(getattr(player, 'ships', None) or []) >= count:
-        return False          # 已经摆好了
-    _ai_place_ships(room, pid)          # 只改 ships，不写 remaining_ships
-    ships = [{'positions': [{'x': p.x, 'y': p.y} for p in sh.positions], 'hits': []}
-             for sh in player.ships]
-    resp = handle_place_ships({'room_id': room.id, 'player_id': pid, 'ships': ships})
-    return bool(resp and resp.get('status') == 'success')
+    return ai_place_board_flow(
+        room, pid,
+        place_ships=_ai_place_ships,
+        handle_place=handle_place_ships,
+    )
 
 
 def _ai_consume_own_pending(room_id, ai_id) -> None:

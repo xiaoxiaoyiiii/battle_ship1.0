@@ -48,7 +48,7 @@ from application.ai_runtime_helpers import (
     runtime as ai_runtime_for,
 )
 from application.ai_settlement import (
-    unsettled, consume_pending, settle, consume_placement,
+    unsettled, consume_pending, settle, consume_placement, consume_choice,
 )
 from application.ai_board_flow import (
     is_ai_seat as ai_is_seat,
@@ -5654,154 +5654,13 @@ def _ai_consume_own_placement(room, ai_id) -> bool:
     )
 
 def _ai_consume_own_choice(room, ai_id) -> bool:
-    """把挂在 AI 名下的**挑牌/数值选择**（`magic_temp_data` 里的 `*_choice`）消费掉。
-
-    返回 True = 已经没有待办了。
-
-    这是 §5.1.5 那条「待办必须有人消费」在**挑牌通道**上的对应物：
-    `桃园结义 / 亡羊补牢 / 明智埋葬 / 灵气复苏` 打出后都会把 `magic_temp_data`
-    设成 `type='xxx_choice'` 并等**施法者自己**回一个选择（前端走
-    `select_magic_target` → `confirm_magic_target`）。AI 不自己去回，
-    这个待办就永远挂在那里，回合再也交不出去。
-
-    判据与候选**全部复用 `ai_brain.resolve_choice`**（价值表只有一份），
-    并且用 `confirm_magic_target` —— 也就是前端真正在用的那个入口，
-    不另写一套结算（CLAUDE.md 教训 #1）。
-    """
-    if not isinstance(room.magic_temp_data, dict):
-        return True
-    kind = room.magic_temp_data.get('type')
-    if not kind or room.magic_temp_data.get('caster') != ai_id:
-        return True
-
-    if kind == 'taoyuan_choice':
-        cards = list(room.magic_temp_data.get('cards') or [])
-        if not cards:
-            return True
-        pick = ai_brain.resolve_choice(room, ai_id, kind, cards)
-        idx = cards.index(pick) if pick in cards else 0
-        # 对方那一张也由 AI 代答（`opponent_choice`）——AI 房间的对方是电脑，
-        # 不代答就会停在「等待对方选择」。给它剩下里最值的那张对**对手**是利好，
-        # 所以这里按"给我自己后剩下最差的"给对手：价值表升序取第一张其余。
-        rest = [i for i in range(len(cards)) if i != idx]
-        opp_idx = min(rest, key=lambda i: ai_brain.card_value(
-            getattr(cards[i], 'name', cards[i]))) if rest else -1
-        resp = confirm_magic_target({
-            'room_id': room.id, 'player_id': ai_id,
-            'temp_data_id': kind,
-            'target_data': {'caster_choice': idx, 'opponent_choice': opp_idx},
-        })
-        if not (resp and resp.get('status') == 'success'):
-            # 回不去就显式清掉，别留下没人能消费的待办
-            room.magic_temp_data = {}
-            add_game_log(room, f'大师 AI 的桃园结义选择失败（{resp}），已清理待办', 'system')
-        return True
-
-    if kind == 'wangyang_choice':
-        cards = list(room.magic_temp_data.get('cards') or [])
-        if not cards:
-            room.magic_temp_data = {}
-            return True
-        pick = ai_brain.resolve_choice(room, ai_id, kind, cards)
-        idx = cards.index(pick) if pick in cards else 0
-        # ⚠️ 字段名是 `chosen_index`（`confirm_magic_target` 的 wangyang 分支读它），
-        #    不是 `card_index` —— 写错不会报"字段名错"，只会回一句
-        #    「无效的卡牌选择」，看起来像 AI 挑错了牌。
-        resp = confirm_magic_target({
-            'room_id': room.id, 'player_id': ai_id,
-            'temp_data_id': kind, 'target_data': {'chosen_index': idx}})
-        if not (resp and resp.get('status') == 'success'):
-            room.magic_temp_data = {}
-            add_game_log(room, f'大师 AI 的亡羊补牢选择失败（{resp}），已清理待办', 'system')
-        return True
-
-    if kind == 'bury_choice':
-        candidates = list(room.magic_temp_data.get('candidates') or [])
-        if not candidates:
-            room.magic_temp_data = {}
-            return True
-        # 候选是**纯数据 dict**（不能存实例：magic_temp_data 会被原样 emit），
-        # 所以这里按 'name' 取价值，`source/index` 由 confirm 自己解回。
-        #
-        # ★ 口径：**优先埋对方手里最值的那张**。埋牌同时会给自己摸一张
-        #   （`_apply_bury_choice` 里已实现），所以"埋对方的"是纯赚；
-        #   埋自己牌堆里的牌等于把好牌扔掉再换一张，是净亏。
-        #   只有对方手牌为空时才退回去埋牌堆顶里最值的那张。
-        opp_side = [c for c in candidates if c.get('source') == 'opponent_hand']
-        pool = opp_side or candidates
-        best_name = ai_brain.resolve_choice(
-            room, ai_id, kind, [c.get('name') for c in pool])
-        chosen = next((c for c in pool if c.get('name') == best_name), pool[0])
-        idx = candidates.index(chosen)
-        resp = confirm_magic_target({
-            'room_id': room.id, 'player_id': ai_id, 'temp_data_id': kind,
-            'target_data': {'source': chosen.get('source'),
-                            'source_index': chosen.get('index'),
-                            'chosen_index': idx}})
-        if not (resp and resp.get('status') == 'success'):
-            room.magic_temp_data = {}
-            add_game_log(room, f'大师 AI 的明智埋葬选择失败（{resp}），已清理待办', 'system')
-        return True
-
-    if kind == 'shield_choice':
-        # 仁王之盾：至多 3 艘**活船**加护盾。这是**多选**通道（`ship_indices`），
-        # 与 `pending_ship_picks`（点一艘）和放置流程都不是同一条路。
-        # ⚠️ 下标是 `caster.ships` 里的位置，且沉船会被服务端跳过 ——
-        #    所以这里必须自己先把沉船剔掉，否则"选 3 艘但只有 1 艘加上盾"。
-        caster = room.players.get(ai_id)
-        alive_idx = [i for i, sh in enumerate(getattr(caster, 'ships', None) or [])
-                     if _is_ship_alive(caster, sh)] if caster else []
-        if not alive_idx:
-            room.magic_temp_data = {}
-            _consume_ship_pick(room, ai_id, 'shield_choice')
-            return True
-        # 护盾本身对所有船等价（一次性挡伤），所以选哪几艘**不改变收益**；
-        # 仍然走一次 `resolve_ship_pick` 保持"选船只有一份实现"，
-        # 由它挑出第一艘，其余按活船顺序补齐到上限（至多 3 艘）。
-        first = ai_brain.resolve_ship_pick(room, ai_id, 'shield_choice',
-                                           [caster.ships[i] for i in alive_idx],
-                                           rng=_ai_runtime(room).rng)
-        indices = [i for i in alive_idx if caster.ships[i] is first] or [alive_idx[0]]
-        for i in alive_idx:
-            if len(indices) >= 3:
-                break
-            if i not in indices:
-                indices.append(i)
-        resp = confirm_magic_target({
-            'room_id': room.id, 'player_id': ai_id, 'temp_data_id': kind,
-            'target_data': {'ship_indices': indices[:3]}})
-        if not (resp and resp.get('status') == 'success'):
-            room.magic_temp_data = {}
-            _consume_ship_pick(room, ai_id, 'shield_choice')
-            add_game_log(room, f'大师 AI 的仁王之盾选择失败（{resp}），已清理待办', 'system')
-        return True
-
-    if kind == 'lingqi_choice':
-        # 残缺状态安全：`max_ships` 可能是脏值（历史上被客户端字段合并过），
-        # 这里绝不让它抛出去 —— 抛在回合循环里就是一个没人消费的待办。
-        try:
-            max_ships = int(room.magic_temp_data.get('max_ships') or 6)
-        except (TypeError, ValueError):
-            max_ships = 6
-        max_ships = max(1, min(6, max_ships))
-        options = list(range(1, max_ships + 1))
-        chosen = ai_brain.resolve_choice(room, ai_id, kind, options)
-        try:
-            chosen = int(chosen)
-        except (TypeError, ValueError):
-            chosen = max_ships
-        chosen = max(1, min(max_ships, chosen))
-        resp = confirm_magic_target({
-            'room_id': room.id, 'player_id': ai_id, 'temp_data_id': kind,
-            'target_data': {'target_ships': chosen}})
-        if not (resp and resp.get('status') == 'success'):
-            room.magic_temp_data = {}
-            add_game_log(room, f'大师 AI 的灵气复苏选择失败（{resp}），已清理待办', 'system')
-        return True
-
-    # 不认识的待办类型：不碰（可能是别人/别通道的），交给原来那套逻辑
-    return True
-
+    return consume_choice(
+        room, ai_id, resolve_choice=ai_brain.resolve_choice,
+        resolve_ship_pick=ai_brain.resolve_ship_pick,
+        confirm=confirm_magic_target, is_ship_alive=_is_ship_alive,
+        consume_ship_pick=_consume_ship_pick, runtime=_ai_runtime,
+        log=add_game_log,
+    )
 
 def _ai_consume_own_shenji(room, ai_id) -> bool:
     """把挂在 AI 名下的**神机妙算宣言**待办消费掉。

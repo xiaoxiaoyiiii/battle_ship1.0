@@ -51,6 +51,7 @@ from application.ai_master_actions import play_one, maybe_play_magic
 from application.ai_turn_loop import turn_loop
 from application.target_rules import (
     sanitize_magic_targets, pick_cell_from_target, is_ship_alive, alive_ships,
+    dead_ship_count, took_any_damage,
 )
 from application.ai_settlement import (
     unsettled, consume_pending, settle, consume_placement, consume_choice,
@@ -6019,53 +6020,11 @@ def _alive_ships(player):
     return alive_ships(player)
 
 def _dead_ship_count(player) -> int:
-    """该玩家**已经沉掉**的船数（第 2 批的「累计击沉」口径）。
-
-    ⚠️ 不许写成 `len(player.ships)`：本项目的击沉大多**不把船移出 `ships`**
-    （沉船留在列表里供复活回收），扫 `ships` 数长度会得到「一艘都没沉」这种完全
-    相反的结论 —— 第 1 批为这个口径专门写过一节（`frozen_ship_count`、
-    冻结播报、放置合法性都栽过）。
-
-    不许只读 `len(sunken_ships)`：那只是**登记表**，虽然 `_mark_ship_sunken()`
-    是唯一登记入口，但只要有一条路径忘了登记（本项目真发生过：幽灵计数那批），
-    单看登记表就会漏计。所以取**两份来源的并集**（与 `_own_occupied_cells` 同一形状）：
-
-      · `ships` 里**已经不活**的（`_is_ship_alive` 为假）—— 与 `_alive_ships()`
-        用同一个判据，两者互补：一个数活的、一个数死的；
-      · `sunken_ships` 里**已经不在 `ships` 中**的 —— 轰炸 / 硫磺火焰 / 牺牲会
-        `ships.remove(...)`，这些船只剩在登记表里。
-
-    复活会把船从 `sunken_ships` 里 pop 掉且 `hits < positions`，于是两边都不算它。
-
-    ⚠️ **已知的口径边界**：自牺牲（恶魔契约 / 神之宣告 / 绝处逢生）也走
-    `_mark_ship_sunken`，所以"己方自牺牲"会被算进**对方的**击沉数。要精确区分
-    "被对方打沉"与"自己牺牲"需要额外的登记字段，本批不做（计划只要求「活船变死船」）。
-    """
-    ships = getattr(player, 'ships', None) or []
-    dead = set()
-    for ship in ships:
-        if ship is not None and not _is_ship_alive(player, ship):
-            dead.add(id(ship))
-    for ship in (getattr(player, 'sunken_ships', None) or []):
-        if ship is None:
-            continue
-        if ship not in ships:
-            dead.add(id(ship))
-    return len(dead)
+    return dead_ship_count(player)
 
 
 def _took_any_damage(player) -> bool:
-    """该玩家这局是否有过任何**实际伤害**（船被打中过）。
-
-    「零伤获胜」的判据：被盾挡下的一炮不算伤害（仁王之盾把炮弹吃掉、船毫发无伤，
-    盾挡的那一发也不会进 `hits` —— 这是 2026-09-14 那批定下的口径），
-    无敌（infinite）与只显形不掉血的攻击同理：它们都**不往 `hits` 里写**，
-    所以「扫 hits」天然就是「实际受伤」。
-    """
-    for ship in (getattr(player, 'ships', None) or []):
-        if getattr(ship, 'hits', None):
-            return True
-    return False
+    return took_any_damage(player)
 
 
 def _match_started_at(room) -> float:

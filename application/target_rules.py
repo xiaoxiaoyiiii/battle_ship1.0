@@ -134,3 +134,17 @@ def is_ship_alive(player, ship):
 def alive_ships(player):
     """该玩家目前还活着的船（顺序与 player.ships 一致，便于按原下标回传）。"""
     return [sh for sh in (getattr(player, 'ships', None) or []) if is_ship_alive(player, sh)]
+
+
+def dead_ship_count(player):
+    ships = getattr(player, 'ships', None) or []
+    dead = {id(ship) for ship in ships
+            if ship is not None and not is_ship_alive(player, ship)}
+    dead.update(id(ship) for ship in (getattr(player, 'sunken_ships', None) or [])
+                if ship is not None and ship not in ships)
+    return len(dead)
+
+
+def took_any_damage(player):
+    return any(getattr(ship, 'hits', None)
+               for ship in (getattr(player, 'ships', None) or []))

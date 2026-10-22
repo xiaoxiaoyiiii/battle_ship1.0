@@ -1054,7 +1054,10 @@
   left: 50%;
   transform: translateX(-50%);
   width: min(560px, calc(100% - 28px));
-  max-height: min(78vh, 560px);
+  /* Bounded by the stage, not the viewport: the stage starts below the app bar,
+     so a vh-based cap let the panel run past the stage's bottom edge and get
+     clipped by its overflow. */
+  max-height: min(560px, calc(100% - 64px));
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -1597,17 +1600,36 @@
     width: auto;
   }
 
+  /* The target banner docks to the bottom edge on phones: a top-anchored banner
+     covered 30 of the 36 cells it was asking you to tap. The hand and the CTA
+     are the only things it now sits on top of, and they are not needed while a
+     target is being picked. */
   .game-target {
-    top: 4px;
+    top: auto;
+    bottom: 6px;
     width: calc(100% - 12px);
     flex-direction: column;
-    max-height: 62vh;
+    max-height: min(46vh, 260px);
+    padding: 8px 10px;
+    gap: 6px;
     overflow-y: auto;
   }
 
+  /* `flex: 1 1 280px` was written for the desktop row; in column mode the basis
+     became a 280px *height* and inflated the banner to ~400px. */
+  .game-target__main {
+    flex: 0 0 auto;
+  }
+
   .game-target__controls {
-    align-items: stretch;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
     width: 100%;
+  }
+
+  .game-target__row {
+    flex: 1 1 auto;
   }
 
   .game-target__row {
@@ -1642,8 +1664,63 @@
   }
 }
 
-/* Short *desktop* windows shrink the hand a little; phones have their own
-   budget below, so this block must not fight the <=719px rules. */
+/* Very short phones (<=700px of height): the board + rail + hand minimum is
+   taller than the window, so the body must keep its natural height and let the
+   stage scroll inside itself. Shrinking it (flex: 1 with min-height: 0) made the
+   board paint over the rail row and the field bar creep under the board tabs. */
+@media (max-width: 719px) and (max-height: 700px) {
+  .game-body {
+    flex: 0 0 auto;
+  }
+
+  /* Compress everything that is not a tap target so a 640px-tall phone still
+     shows the hand and the primary button without scrolling the stage. */
+  .game {
+    gap: 2px;
+    padding: 2px 6px 3px;
+  }
+
+  .game-status {
+    padding: 4px 8px;
+    gap: 2px 4px;
+  }
+
+  .game-fieldbar {
+    padding: 2px 8px;
+    font-size: 10.5px;
+  }
+
+  .game-tab {
+    min-height: 34px;
+  }
+
+  /* The ship-slot row repeats what the 我的海域 board already shows; dropping it
+     is what keeps the board, the hand and the CTA on one screen. Its entries
+     (日志 / 聊天 / 弃牌堆) stay available in the 更多操作 menu. */
+  .game-rail {
+    display: none;
+  }
+
+  .game-hand-wrap {
+    gap: 2px;
+  }
+
+  .game-hand {
+    min-height: 88px;
+  }
+
+  .game-board-column {
+    --cell: clamp(38px, min(11.4vw, calc((100dvh - var(--game-chrome)) / 6)), 52px);
+  }
+
+  /* 40px is this project's touch floor (see styles/base.css); the phones that
+     hit this block cannot afford the 44px row. */
+  .game-primary,
+  .game-more {
+    min-height: 40px;
+  }
+}
+
 @media (max-height: 780px) and (min-width: 720px) {
   .game-hand {
     min-height: 156px;
@@ -1825,6 +1902,46 @@
   /* The turn hint duplicates the HUD chips in this layout. */
   .game-turn-hint {
     display: none;
+  }
+
+  /* The chain window spans the stage's full height instead of 78vh: in a 390px
+     tall window the vh cap let the 不响应 button sit below the clipped edge. */
+  .game-chain-panel {
+    top: 6px;
+    bottom: 6px;
+    max-height: none;
+    width: min(520px, calc(100% - 12px));
+  }
+
+  /* Landscape keeps the board on the left, so the target banner takes the right
+     column (over the HUD and hand) and never covers a tappable cell. */
+  .game-target {
+    top: 6px;
+    bottom: auto;
+    left: auto;
+    right: 8px;
+    transform: none;
+    width: min(320px, calc(100% - 16px));
+    max-height: calc(100% - 12px);
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    overflow-y: auto;
+  }
+
+  .game-target__main {
+    flex: 0 0 auto;
+  }
+
+  .game-target__controls {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    width: 100%;
+  }
+
+  .game-target__row {
+    flex: 1 1 auto;
   }
 
   /* The detail sheet anchors to the top edge in landscape: anchoring it to the

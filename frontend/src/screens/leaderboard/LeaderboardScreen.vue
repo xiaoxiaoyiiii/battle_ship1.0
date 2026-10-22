@@ -106,7 +106,7 @@ function backHome(): void {
     aria-labelledby="screen-leaderboard-title"
   >
     <header class="leaderboard__head">
-      <p class="leaderboard__eyebrow">P4 · 排行</p>
+      <p class="leaderboard__eyebrow">竞技场 · 排行</p>
       <h1 id="screen-leaderboard-title" class="leaderboard__title" data-testid="leaderboard-heading">排行榜</h1>
       <p class="leaderboard__hint">
         战绩榜按胜场排序，段位榜按排位分排序；两张榜都是服务端排好的名次。
@@ -315,7 +315,7 @@ function backHome(): void {
 
 .leaderboard__eyebrow {
   margin: 0 0 2px;
-  color: #8f9bc4;
+  color: var(--text-secondary);
   font-size: 10px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -361,7 +361,7 @@ function backHome(): void {
 }
 
 .leaderboard__tab.is-active {
-  border-color: rgba(124, 92, 240, 0.6);
+  border-color: color-mix(in srgb, var(--role-action) 60%, transparent);
   background: var(--accent-soft);
   color: var(--text);
 }
@@ -405,7 +405,7 @@ function backHome(): void {
   padding: 16px;
   border: 1px solid var(--panel-line);
   border-radius: 10px;
-  background: linear-gradient(160deg, #1b2140, #12172e);
+  background: linear-gradient(160deg, var(--surface-elevated), #12172e);
   color: var(--text);
   font: inherit;
   text-align: center;
@@ -417,9 +417,9 @@ function backHome(): void {
   content: '';
   width: 72px;
   height: 72px;
-  border: 2px solid rgba(124, 92, 240, 0.4);
+  border: 2px solid color-mix(in srgb, var(--role-action) 40%, transparent);
   border-radius: 50%;
-  background: radial-gradient(circle at 50% 38%, #e8ecff 0 30%, #a9b2d8 31% 46%, #6d7aa8 47% 100%);
+  background: radial-gradient(circle at 50% 38%, #e8ecff 0 30%, var(--text-tertiary) 31% 46%, #6d7aa8 47% 100%);
   box-shadow: inset 0 0 0 4px rgba(11, 13, 24, 0.55);
 }
 
@@ -494,7 +494,7 @@ function backHome(): void {
 .leaderboard__table td {
   padding: 12px 16px;
   text-align: left;
-  border-bottom: 1px dashed rgba(42, 51, 88, 0.8);
+  border-bottom: 1px dashed var(--surface-elevated);
   white-space: nowrap;
 }
 
@@ -530,11 +530,11 @@ function backHome(): void {
   height: 24px;
   border-radius: 50%;
   object-fit: cover;
-  background: #0b1a24;
+  background: var(--surface-deck);
 }
 
 .leaderboard__name.is-rainbow {
-  background: linear-gradient(90deg, #ff8a7a, #ffd76a, #6fe0a0, #4ec8e0);
+  background: linear-gradient(90deg, var(--role-enemy), var(--gold-strong), #6fe0a0, #4ec8e0);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -567,7 +567,7 @@ function backHome(): void {
 
 .button--ghost {
   border-color: var(--border-strong);
-  background: rgba(13, 17, 34, 0.72);
+  background: var(--surface-deck);
   color: var(--text-muted);
 }
 

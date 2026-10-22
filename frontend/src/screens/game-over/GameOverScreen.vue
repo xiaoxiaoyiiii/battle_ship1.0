@@ -366,7 +366,7 @@ function openReplay(): void {
     aria-labelledby="screen-game-over-title"
   >
     <header class="game-over__head">
-      <p class="game-over__eyebrow">{{ hasResult ? modeLabel + ' · 结算' : 'P3 · 结算' }}</p>
+      <p class="game-over__eyebrow">{{ hasResult ? modeLabel + ' · 结算' : '竞技场 · 结算' }}</p>
       <h1 id="screen-game-over-title" class="game-over__title" data-testid="game-over-heading">结算</h1>
       <p v-if="hasResult" class="game-over__verdict" data-testid="game-over-verdict">{{ verdict }}</p>
       <p v-if="hasResult" class="game-over__summary" data-testid="game-over-reason">{{ summary }}</p>
@@ -562,7 +562,7 @@ function openReplay(): void {
   width: 100%;
   max-width: 1120px;
   padding: 20px 30px 22px;
-  border: 1px solid rgba(201, 162, 76, 0.55);
+  border: 1px solid color-mix(in srgb, var(--gold) 55%, transparent);
   border-radius: var(--radius);
   background:
     radial-gradient(420px 140px at 50% 0%, rgba(201, 162, 76, 0.12), transparent 72%),
@@ -587,7 +587,7 @@ function openReplay(): void {
 
 .game-over__eyebrow {
   margin: 0;
-  color: #8f9bc4;
+  color: var(--text-secondary);
   font-size: 10px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -611,11 +611,11 @@ function openReplay(): void {
 
 .game-over[data-outcome='win'] .game-over__verdict {
   color: var(--gold-strong);
-  text-shadow: 0 0 26px rgba(201, 162, 76, 0.35);
+  text-shadow: 0 0 26px color-mix(in srgb, var(--gold) 35%, transparent);
 }
 
 .game-over[data-outcome='lose'] .game-over__verdict {
-  color: #ff8a7a;
+  color: var(--role-enemy);
 }
 
 .game-over__summary {
@@ -729,7 +729,7 @@ function openReplay(): void {
   justify-content: space-between;
   gap: 16px;
   padding: 11px 2px;
-  border-bottom: 1px dashed rgba(42, 51, 88, 0.8);
+  border-bottom: 1px dashed var(--surface-elevated);
   background: none;
 }
 
@@ -818,7 +818,7 @@ function openReplay(): void {
 .game-over__bar-fill {
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, #b8873a, var(--gold-strong));
+  background: linear-gradient(90deg, var(--gold), var(--gold-strong));
   /* Ticket #48: 600ms reveal, inside the 2s budget, and skippable. */
   transition: width 600ms ease-out;
 }
@@ -861,7 +861,7 @@ function openReplay(): void {
 }
 
 .game-over__bar-fill--xp {
-  background: linear-gradient(90deg, #2a8f68, var(--success));
+  background: linear-gradient(90deg, var(--role-success), var(--success));
 }
 
 .game-over__xp-progress,
@@ -1004,7 +1004,7 @@ function openReplay(): void {
 
 .button--ghost {
   border-color: var(--border-strong);
-  background: rgba(13, 17, 34, 0.72);
+  background: var(--surface-deck);
   color: var(--text-muted);
 }
 

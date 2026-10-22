@@ -304,7 +304,7 @@ watch(targetUsername, () => {
     aria-labelledby="screen-profile-title"
   >
     <header class="profile__head">
-      <p class="profile__eyebrow">P4 · 名片</p>
+      <p class="profile__eyebrow">竞技场 · 名片</p>
       <h1 id="screen-profile-title" class="profile__title" data-testid="profile-heading">名片</h1>
       <p class="profile__viewing" data-testid="profile-viewing">
         {{ ready ? (isSelf ? '我的名片' : displayName + ' 的名片') : '玩家名片' }}
@@ -505,7 +505,7 @@ watch(targetUsername, () => {
 
 .profile__eyebrow {
   margin: 0;
-  color: #8f9bc4;
+  color: var(--text-secondary);
   font-size: 10px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -590,7 +590,7 @@ watch(targetUsername, () => {
   position: absolute;
   inset: 0 0 auto;
   height: 152px;
-  border-bottom: 1px solid rgba(124, 92, 240, 0.4);
+  border-bottom: 1px solid color-mix(in srgb, var(--role-action) 40%, transparent);
   background:
     repeating-linear-gradient(115deg, rgba(255, 255, 255, 0.06) 0 2px, transparent 2px 12px),
     radial-gradient(300px 120px at 22% 0%, rgba(255, 255, 255, 0.24), transparent 72%),
@@ -630,7 +630,7 @@ watch(targetUsername, () => {
 .profile__avatar--empty {
   display: grid;
   place-items: center;
-  color: #cfc2ff;
+  color: var(--role-action);
   font-size: 34px;
 }
 
@@ -661,7 +661,7 @@ watch(targetUsername, () => {
 }
 
 .profile__name .is-rainbow {
-  background: linear-gradient(90deg, #ff8a7a, #ffd76a, #6fe0a0, #4ec8e0);
+  background: linear-gradient(90deg, var(--role-enemy), var(--gold-strong), #6fe0a0, #4ec8e0);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -669,7 +669,7 @@ watch(targetUsername, () => {
 
 .profile__title-chip {
   padding: 2px 8px;
-  border: 1px solid rgba(201, 162, 76, 0.5);
+  border: 1px solid color-mix(in srgb, var(--gold) 50%, transparent);
   border-radius: 999px;
   background: var(--gold-soft);
   color: var(--gold-strong);
@@ -732,11 +732,11 @@ watch(targetUsername, () => {
 .profile__bar-fill {
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, #2a8f68, var(--success));
+  background: linear-gradient(90deg, var(--role-success), var(--success));
 }
 
 .profile__bar-fill--rank {
-  background: linear-gradient(90deg, #b8873a, var(--gold-strong));
+  background: linear-gradient(90deg, var(--gold), var(--gold-strong));
 }
 
 .profile__bar-text {
@@ -753,7 +753,7 @@ watch(targetUsername, () => {
   padding: 8px 12px;
   border: 1px solid var(--panel-line);
   border-radius: var(--radius-sm);
-  background: rgba(13, 17, 34, 0.7);
+  background: var(--surface-deck);
 }
 
 .profile__rank-label {
@@ -773,7 +773,7 @@ watch(targetUsername, () => {
   padding: 10px 12px;
   border: 1px solid rgba(42, 51, 88, 0.6);
   border-radius: var(--radius-sm);
-  background: rgba(13, 17, 34, 0.7);
+  background: var(--surface-deck);
 }
 
 .profile__stat b {
@@ -790,7 +790,7 @@ watch(targetUsername, () => {
   padding: 12px 14px;
   border: 1px solid var(--panel-line);
   border-radius: var(--radius-sm);
-  background: rgba(13, 17, 34, 0.55);
+  background: var(--surface-deck);
 }
 
 .profile__block-title {
@@ -887,7 +887,7 @@ watch(targetUsername, () => {
   gap: 8px;
   padding: 6px 8px;
   border-radius: 6px;
-  background: rgba(13, 17, 34, 0.7);
+  background: var(--surface-deck);
   font-size: 12px;
 }
 
@@ -906,7 +906,7 @@ watch(targetUsername, () => {
 }
 
 .profile__history-row .is-lose {
-  color: #ff8a7a;
+  color: var(--role-enemy);
 }
 
 .profile__private {
@@ -944,7 +944,7 @@ watch(targetUsername, () => {
 
 .button--ghost {
   border-color: var(--border-strong);
-  background: rgba(13, 17, 34, 0.72);
+  background: var(--surface-deck);
   color: var(--text-muted);
 }
 

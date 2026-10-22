@@ -247,17 +247,17 @@ function close(): void {
 
 .collection__title {
   margin: 4px 0 0;
-  color: var(--text, #f2efff);
+  color: var(--text, var(--text-primary));
   font-size: 19px;
   letter-spacing: 0.12em;
 }
 
 .collection__close {
   padding: 7px 16px;
-  border: 1px solid var(--border-strong, rgba(140, 124, 214, 0.4));
+  border: 1px solid var(--border-strong, color-mix(in srgb, var(--role-action) 40%, transparent));
   border-radius: 999px;
   background: transparent;
-  color: var(--text-muted, #b5aed6);
+  color: var(--text-muted, var(--text-tertiary));
   font-size: 12px;
   cursor: pointer;
 }
@@ -273,7 +273,7 @@ function close(): void {
 .collection__modes {
   display: inline-flex;
   padding: 2px;
-  border: 1px solid var(--border-strong, rgba(140, 124, 214, 0.4));
+  border: 1px solid var(--border-strong, color-mix(in srgb, var(--role-action) 40%, transparent));
   border-radius: 999px;
 }
 
@@ -282,37 +282,37 @@ function close(): void {
   border: 0;
   border-radius: 999px;
   background: transparent;
-  color: var(--text-muted, #b5aed6);
+  color: var(--text-muted, var(--text-tertiary));
   font-size: 12px;
   cursor: pointer;
 }
 
 .collection__mode.is-active {
   background: rgba(111, 91, 212, 0.35);
-  color: var(--text, #f2efff);
+  color: var(--text, var(--text-primary));
 }
 
 .collection__search {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: var(--text-dim, #8f9bc4);
+  color: var(--text-dim, var(--text-secondary));
   font-size: 12px;
 }
 
 .collection__search input {
   width: 180px;
   padding: 6px 10px;
-  border: 1px solid var(--border-strong, rgba(140, 124, 214, 0.4));
+  border: 1px solid var(--border-strong, color-mix(in srgb, var(--role-action) 40%, transparent));
   border-radius: 8px;
   background: rgba(8, 11, 24, 0.8);
-  color: var(--text, #f2efff);
+  color: var(--text, var(--text-primary));
   font-size: 12px;
 }
 
 .collection__count {
   margin: 0 0 0 auto;
-  color: var(--text-dim, #8f9bc4);
+  color: var(--text-dim, var(--text-secondary));
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -325,7 +325,7 @@ function close(): void {
 
 .collection__empty {
   margin: 24px 0;
-  color: var(--text-muted, #b5aed6);
+  color: var(--text-muted, var(--text-tertiary));
   font-size: 13px;
   text-align: center;
 }
@@ -341,14 +341,14 @@ function close(): void {
   margin: 0 0 8px;
   padding-bottom: 4px;
   border-bottom: 1px dashed var(--line-dash, rgba(140, 124, 214, 0.35));
-  color: var(--text, #f2efff);
+  color: var(--text, var(--text-primary));
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.08em;
 }
 
 .collection__group-title small {
-  color: var(--text-dim, #8f9bc4);
+  color: var(--text-dim, var(--text-secondary));
   font-size: 11px;
   font-weight: 400;
 }
@@ -385,7 +385,7 @@ function close(): void {
   display: grid;
   place-items: center;
   aspect-ratio: 3 / 4;
-  background: rgba(6, 9, 20, 0.9);
+  background: var(--surface-sea);
   overflow: hidden;
 }
 
@@ -396,7 +396,7 @@ function close(): void {
 }
 
 .collection-card__missing {
-  color: var(--text-dim, #8f9bc4);
+  color: var(--text-dim, var(--text-secondary));
   font-size: 11px;
 }
 
@@ -406,7 +406,7 @@ function close(): void {
 
 .collection-card__name {
   margin: 0 0 3px;
-  color: var(--text, #f2efff);
+  color: var(--text, var(--text-primary));
   font-size: 12px;
   font-weight: 600;
 }
@@ -421,7 +421,7 @@ function close(): void {
 
 .collection-card__desc {
   margin: 0;
-  color: var(--text-muted, #b5aed6);
+  color: var(--text-muted, var(--text-tertiary));
   font-size: 11px;
   line-height: 1.45;
   display: -webkit-box;
@@ -438,17 +438,17 @@ function close(): void {
 
 .collection__more {
   padding: 8px 22px;
-  border: 1px solid rgba(140, 124, 214, 0.5);
+  border: 1px solid color-mix(in srgb, var(--role-action) 50%, transparent);
   border-radius: 999px;
   background: rgba(111, 91, 212, 0.2);
-  color: var(--text, #f2efff);
+  color: var(--text, var(--text-primary));
   font-size: 12px;
   cursor: pointer;
 }
 
 .collection__done {
   margin: 0;
-  color: var(--text-dim, #8f9bc4);
+  color: var(--text-dim, var(--text-secondary));
   font-size: 12px;
 }
 </style>

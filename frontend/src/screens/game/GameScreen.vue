@@ -1133,29 +1133,30 @@ function backToLobby(): void {
     <h1 id="screen-game-title" class="visually-hidden">对局</h1>
 
     <header class="game-status" data-testid="game-hud">
-      <span class="game-status__chip" data-testid="game-round">第 {{ state.round }} 回合</span>
-      <span class="game-status__chip" data-testid="game-phase">{{ phaseText }}</span>
-      <span class="game-status__chip game-status__chip--turn" data-testid="game-attacker">{{ turnLabel }}</span>
-      <span class="game-status__chip game-status__chip--num" data-testid="game-attacks">剩余攻击 {{ state.attacks_remaining }}</span>
-      <span
-        v-if="clock.visible"
-        class="game-status__chip game-status__chip--clock"
-        :class="{ 'is-warning': clock.warning, 'is-expired': clock.expired }"
-        data-testid="game-turn-clock"
-        :data-warning="clock.warning ? 'true' : 'false'"
-        :data-remaining-ms="clock.remaining * 1000"
-        :data-remaining="clock.remaining"
-      >
-        回合计时 {{ clock.label }}
+      <span class="game-status__chips">
+        <span class="game-status__chip" data-testid="game-round">第 {{ state.round }} 回合</span>
+        <span class="game-status__chip" data-testid="game-phase">{{ phaseText }}</span>
+        <span class="game-status__chip game-status__chip--turn" data-testid="game-attacker">{{ turnLabel }}</span>
+        <span class="game-status__chip game-status__chip--num" data-testid="game-attacks">剩余攻击 {{ state.attacks_remaining }}</span>
+        <span
+          v-if="clock.visible"
+          class="game-status__chip game-status__chip--clock"
+          :class="{ 'is-warning': clock.warning, 'is-expired': clock.expired }"
+          data-testid="game-turn-clock"
+          :data-warning="clock.warning ? 'true' : 'false'"
+          :data-remaining-ms="clock.remaining * 1000"
+          :data-remaining="clock.remaining"
+        >
+          回合计时 {{ clock.label }}
+        </span>
+        <span v-if="turnOrderText" class="game-status__chip game-status__chip--muted" data-testid="game-turn-order">{{ turnOrderText }}</span>
+        <span class="game-status__chip game-status__chip--muted" data-testid="game-mode">{{ modeText }}</span>
+        <span
+          class="game-status__chip"
+          :class="ui.connection === 'online' ? 'is-online' : 'is-offline'"
+          data-testid="game-connection"
+        >{{ connectionText }}</span>
       </span>
-      <span v-if="turnOrderText" class="game-status__chip game-status__chip--muted" data-testid="game-turn-order">{{ turnOrderText }}</span>
-      <span class="game-status__chip game-status__chip--muted" data-testid="game-mode">{{ modeText }}</span>
-      <span class="game-status__chip game-status__chip--muted" data-testid="game-field-magic">场地：{{ fieldMagic }}</span>
-      <span
-        class="game-status__chip"
-        :class="ui.connection === 'online' ? 'is-online' : 'is-offline'"
-        data-testid="game-connection"
-      >{{ connectionText }}</span>
       <span class="game-status__names">
         <span data-testid="game-self-name">{{ selfName }}</span>
         <span class="game-status__vs" aria-hidden="true">VS</span>
@@ -1163,6 +1164,11 @@ function backToLobby(): void {
         <span class="game-status__ships" data-testid="game-ships">{{ shipsText }}</span>
       </span>
     </header>
+
+    <div class="game-fieldbar">
+      <span class="game-fieldbar__label">当前生效的场地魔法</span>
+      <span class="game-fieldbar__value" data-testid="game-field-magic">{{ fieldMagic }}</span>
+    </div>
 
     <p class="visually-hidden" role="status" aria-live="polite" aria-atomic="true" data-testid="game-live">{{ liveText }}</p>
     <p v-if="receiptText" class="game-receipt" data-testid="game-receipt" role="status" aria-live="polite">{{ receiptText }}</p>
@@ -1424,10 +1430,21 @@ function backToLobby(): void {
 
     <section v-if="detailOpen && hand[selectedCardIndex]" class="game-detail" data-testid="game-card-detail" aria-label="卡牌详情">
       <header class="game-detail__head">
-        <h2 class="game-detail__name">{{ hand[selectedCardIndex].name }}</h2>
+        <div class="game-detail__ident">
+          <img
+            v-if="cardArtUrl(hand[selectedCardIndex].name)"
+            class="game-detail__art"
+            :src="cardArtUrl(hand[selectedCardIndex].name) || ''"
+            alt=""
+            aria-hidden="true"
+          />
+          <div class="game-detail__ident-text">
+            <h2 class="game-detail__name">{{ hand[selectedCardIndex].name }}</h2>
+            <p class="game-detail__meta">{{ typeLabel(hand[selectedCardIndex]) }}</p>
+          </div>
+        </div>
         <button type="button" class="game-close" data-testid="game-card-detail-close" aria-label="关闭卡牌详情" @click="cancelCardSelection">×</button>
       </header>
-      <p class="game-detail__meta">{{ typeLabel(hand[selectedCardIndex]) }}</p>
       <p class="game-detail__desc">{{ hand[selectedCardIndex].description }}</p>
       <p v-if="cardDisabled(hand[selectedCardIndex])" class="game-detail__reason" data-testid="game-card-detail-reason">
         {{ cardDisabled(hand[selectedCardIndex]) }}

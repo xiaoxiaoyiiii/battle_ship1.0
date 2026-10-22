@@ -170,7 +170,7 @@ function onCellFocus(index: number): void {
 .board {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -178,31 +178,37 @@ function onCellFocus(index: number): void {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px;
+  padding: 0 2px;
 }
 
 .board__title {
   margin: 0;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.08em;
-  color: var(--text-secondary);
+  letter-spacing: 0.16em;
+  color: var(--text-tertiary);
 }
 
 .board__subtitle {
   margin: 0;
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 
 .board__grid {
   display: grid;
   grid-template-columns: repeat(6, var(--cell, 40px));
-  gap: 3px;
-  padding: 6px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: radial-gradient(120% 120% at 50% 0%, var(--surface-chamber), var(--surface-sea) 72%);
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--board-border);
+  border-radius: 14px;
+  background: var(--board-bg);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--role-action) 12%, transparent),
+    inset 0 0 42px rgba(0, 0, 0, 0.45),
+    0 16px 40px rgba(0, 0, 0, 0.35);
   width: fit-content;
   outline: none;
 }
@@ -212,11 +218,15 @@ function onCellFocus(index: number): void {
 }
 
 .board--opponent .board__grid {
-  box-shadow: inset 0 0 0 1px var(--role-enemy-soft);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--role-enemy) 22%, transparent),
+    inset 0 0 42px rgba(0, 0, 0, 0.45),
+    0 16px 40px rgba(0, 0, 0, 0.35);
 }
 
 .board--picking .board__grid {
-  box-shadow: 0 0 0 2px var(--role-action);
+  border-color: var(--role-action);
+  box-shadow: 0 0 0 2px var(--role-action-soft), 0 16px 40px rgba(0, 0, 0, 0.35);
 }
 
 .cell {
@@ -224,24 +234,26 @@ function onCellFocus(index: number): void {
   width: var(--cell, 40px);
   height: var(--cell, 40px);
   padding: 0;
-  border: 1px solid rgba(98, 210, 232, 0.12);
-  border-radius: 6px;
-  background: var(--surface-deck);
+  border: 1px solid color-mix(in srgb, var(--board-border) 70%, transparent);
+  border-radius: 8px;
+  background: var(--cell-bg);
   color: var(--text-tertiary);
   font: inherit;
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1;
   cursor: default;
+  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
 
 .cell--attackable {
   cursor: crosshair;
-  border-color: var(--role-enemy);
+  border-color: color-mix(in srgb, var(--role-enemy) 42%, transparent);
 }
 
 .cell--attackable:hover,
 .cell--cursor {
-  background: var(--role-enemy-soft);
+  background: color-mix(in srgb, var(--role-enemy) 26%, var(--cell-bg));
+  border-color: var(--role-enemy);
 }
 
 .cell--legal {
@@ -249,22 +261,23 @@ function onCellFocus(index: number): void {
 }
 
 .cell--ship {
-  background: #7f93a3;
-  border-color: #b8cbd6;
+  background: linear-gradient(160deg, var(--ship-metal), color-mix(in srgb, var(--ship-metal) 62%, #0b0d18));
+  border-color: color-mix(in srgb, var(--ship-metal) 80%, #fff);
   color: #08131a;
 }
 
 .cell--sunk {
-  background: #2a1414;
+  background: linear-gradient(160deg, #2a1414, #140a0a);
   border-color: #6b2b26;
   color: var(--role-enemy);
 }
 
 .cell--ship-hit,
 .cell--hit {
-  background: #3a1a16;
-  border-color: #8a3a2f;
-  color: var(--role-enemy);
+  background: radial-gradient(circle at 50% 45%, #c22a3e, #6d1622 72%);
+  border-color: #e0596a;
+  color: #fff;
+  box-shadow: 0 0 12px rgba(194, 42, 62, 0.55);
 }
 
 .cell--miss {
@@ -272,7 +285,7 @@ function onCellFocus(index: number): void {
 }
 
 .cell--frozen {
-  box-shadow: inset 0 0 0 1px #6fb7ff;
+  box-shadow: inset 0 0 0 1px var(--role-self);
 }
 
 .cell--shielded {
@@ -284,8 +297,8 @@ function onCellFocus(index: number): void {
 }
 
 .cell--revealed {
-  background: rgba(240, 182, 78, 0.28);
-  border-color: rgba(240, 182, 78, 0.6);
+  background: color-mix(in srgb, var(--gold) 32%, var(--cell-bg));
+  border-color: color-mix(in srgb, var(--gold) 70%, transparent);
 }
 
 .cell--hole {
@@ -294,7 +307,7 @@ function onCellFocus(index: number): void {
 }
 
 .cell--frozen-area {
-  outline: 1px dashed #6fb7ff;
+  outline: 1px dashed var(--role-self);
   outline-offset: -2px;
 }
 
@@ -308,45 +321,65 @@ function onCellFocus(index: number): void {
 }
 
 .cell--preview {
-  background: var(--role-action-soft);
+  background: color-mix(in srgb, var(--role-action) 34%, var(--cell-bg));
 }
 
 .cell__mark {
   pointer-events: none;
   font-weight: 700;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
 }
 
 .cell__mark--miss {
-  font-size: 12px;
+  font-size: 13px;
+  color: var(--role-self);
 }
 
 .cell__mark--ship {
-  font-size: 10px;
-  opacity: 0.55;
+  font-size: 11px;
+  opacity: 0.6;
 }
 
 .cell__badge {
   position: absolute;
-  right: 1px;
-  bottom: 0;
+  right: 2px;
+  bottom: 1px;
   font-size: 9px;
   line-height: 1;
   color: var(--role-action);
 }
 
 .cell__badge--frozen {
-  color: #6fb7ff;
+  color: var(--role-self);
 }
 
 .cell__badge--broken {
-  left: 1px;
+  left: 2px;
   right: auto;
 }
 
 @media (max-width: 719px) {
   .board__grid {
     gap: 2px;
-    padding: 4px;
+    padding: 5px;
+  }
+}
+@media (max-width: 719px) {
+  .board {
+    gap: 4px;
+  }
+
+  .board__head {
+    gap: 6px;
+  }
+
+  .board__title {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+  }
+
+  .board__subtitle {
+    font-size: 10.5px;
   }
 }
 </style>

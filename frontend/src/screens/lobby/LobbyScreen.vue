@@ -483,7 +483,7 @@ onBeforeUnmount(() => {
   >
     <header class="lobby__head">
       <div class="lobby__title-block">
-        <p class="lobby__eyebrow">P4 · 大厅</p>
+        <p class="lobby__eyebrow">竞技场 · 大厅</p>
         <h1 id="screen-lobby-title" class="lobby__title" data-testid="lobby-heading">游戏大厅</h1>
         <p class="lobby__hint">匹配、房间、公屏与好友邀战都在这一页，状态由服务端实时推送。</p>
       </div>
@@ -906,7 +906,7 @@ onBeforeUnmount(() => {
 
 .lobby__eyebrow {
   margin: 0 0 2px;
-  color: #8f9bc4;
+  color: var(--text-secondary);
   font-size: 10px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -940,7 +940,7 @@ onBeforeUnmount(() => {
   padding: 5px 12px;
   border: 1px solid var(--border-strong);
   border-radius: 999px;
-  background: rgba(13, 17, 34, 0.6);
+  background: var(--surface-deck);
   color: var(--text-muted);
   font-size: 12px;
   white-space: nowrap;
@@ -1005,7 +1005,7 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  color: #ffb4a8;
+  color: var(--role-enemy);
   background: #2a1414;
   border-color: #6a2a2a;
 }
@@ -1145,7 +1145,7 @@ onBeforeUnmount(() => {
   padding: 7px 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: rgba(13, 17, 34, 0.6);
+  background: var(--surface-deck);
 }
 
 .lobby__room {
@@ -1177,7 +1177,7 @@ onBeforeUnmount(() => {
 }
 
 .lobby__room.is-full .lobby__room-state {
-  border-color: rgba(201, 162, 76, 0.55);
+  border-color: color-mix(in srgb, var(--gold) 55%, transparent);
   color: var(--gold-strong);
 }
 
@@ -1190,7 +1190,8 @@ onBeforeUnmount(() => {
 }
 
 .lobby__player.is-me {
-  border-color: var(--accent-strong);
+  border-color: color-mix(in srgb, var(--role-action) 60%, transparent);
+  background: var(--role-action-soft);
 }
 
 .lobby__avatar {
@@ -1200,10 +1201,10 @@ onBeforeUnmount(() => {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background-color: #1b2140;
+  background-color: var(--surface-elevated);
   background-position: center;
   background-size: cover;
-  color: #cfc2ff;
+  color: var(--role-action);
   font-size: 14px;
   font-weight: 700;
 }
@@ -1245,7 +1246,7 @@ onBeforeUnmount(() => {
 }
 
 .lobby__player-name--rainbow {
-  background: linear-gradient(90deg, #7ee8fa, #ffd76a, #ff8a7a, #7ee8fa);
+  background: linear-gradient(90deg, #7ee8fa, var(--gold-strong), var(--role-enemy), #7ee8fa);
   background-clip: text;
   color: transparent;
 }
@@ -1266,7 +1267,7 @@ onBeforeUnmount(() => {
 
 .lobby__tag {
   padding: 1px 6px;
-  border: 1px solid rgba(124, 92, 240, 0.6);
+  border: 1px solid color-mix(in srgb, var(--role-action) 60%, transparent);
   border-radius: 999px;
   color: var(--accent-strong);
   font-size: 10px;
@@ -1282,7 +1283,7 @@ onBeforeUnmount(() => {
 }
 
 .lobby__status[data-status='matching'] {
-  color: #ffd76a;
+  color: var(--gold-strong);
 }
 
 .lobby__status[data-status='in_room'] {
@@ -1328,11 +1329,11 @@ onBeforeUnmount(() => {
 }
 
 .lobby__empty--error {
-  color: #ffb4a8;
+  color: var(--role-enemy);
 }
 
 .lobby__empty--error {
-  color: #ffb4a8;
+  color: var(--role-enemy);
 }
 
 .lobby__own {
@@ -1341,9 +1342,9 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  border: 1px solid rgba(111, 224, 160, 0.4);
+  border: 1px solid color-mix(in srgb, var(--role-success) 40%, transparent);
   border-radius: 8px;
-  background: rgba(42, 143, 104, 0.14);
+  background: color-mix(in srgb, var(--role-success) 14%, transparent);
 }
 
 .lobby__own-main {
@@ -1398,14 +1399,15 @@ onBeforeUnmount(() => {
   gap: 3px;
   min-height: 74px;
   padding: 13px 18px;
-  border: 1px solid var(--role-action);
+  border: 1px solid color-mix(in srgb, var(--role-action) 55%, transparent);
   border-radius: var(--radius);
-  background: var(--role-action-soft);
-  color: var(--text-primary);
+  background: var(--hero-grad);
+  color: #fff;
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease);
+  box-shadow: var(--shadow-accent);
+  transition: border-color var(--duration-fast) var(--ease), filter var(--duration-fast) var(--ease);
 }
 
 .lobby__primary-action b {
@@ -1414,17 +1416,28 @@ onBeforeUnmount(() => {
 }
 
 .lobby__primary-action span {
-  color: var(--text-secondary);
+  color: rgba(255, 255, 255, 0.78);
   font-size: 12px;
 }
 
 .lobby__primary-action:hover:not(:disabled) {
-  background: var(--surface-chamber);
+  filter: brightness(1.07);
 }
 
+/* Secondary action stays on the panel surface so the purple hero wins. */
 .lobby__primary-action--room {
-  border-color: var(--role-self);
-  background: var(--role-self-soft);
+  border-color: var(--panel-line);
+  background: var(--surface-chamber);
+  color: var(--text-primary);
+  box-shadow: none;
+}
+
+.lobby__primary-action--room:hover:not(:disabled) {
+  background: var(--surface-raised);
+}
+
+.lobby__primary-action--room span {
+  color: var(--text-secondary);
 }
 
 .lobby__primary-action:disabled {
@@ -1532,7 +1545,7 @@ onBeforeUnmount(() => {
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: rgba(13, 17, 34, 0.7);
+  background: var(--surface-deck);
 }
 
 .lobby__chat-item {
@@ -1577,9 +1590,9 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   padding: 9px 12px;
-  border: 1px solid rgba(111, 224, 160, 0.4);
+  border: 1px solid color-mix(in srgb, var(--role-success) 40%, transparent);
   border-radius: 8px;
-  background: rgba(42, 143, 104, 0.14);
+  background: color-mix(in srgb, var(--role-success) 14%, transparent);
 }
 
 .lobby__invite-text {
@@ -1615,7 +1628,7 @@ onBeforeUnmount(() => {
 .button--danger {
   border-color: #6a2a2a;
   background: #2a1414;
-  color: #ffb4a8;
+  color: var(--role-enemy);
 }
 
 .button--danger:hover {

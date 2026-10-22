@@ -9,10 +9,16 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 8px 14px 10px;
+  gap: 10px;
+  padding: 12px 20px 16px;
   min-height: 0;
-  overflow: hidden;
+  /* The stage fits the window by design; on windows smaller than the budget can
+     serve it scrolls inside itself rather than hiding the hand or the CTA. */
+  overflow: hidden auto;
+  overscroll-behavior: contain;
+  /* One centred stage keeps the single board, the rail and the hand from
+     drifting to the far edges of a wide desktop window. */
+  --game-w: 1040px;
 }
 
 .visually-hidden {
@@ -25,21 +31,45 @@
 }
 
 /* ------------------------------------------------------------ status band --- */
+/* The HUD is one raised strip, like main's in-game header: a run of small pills
+   on the left and the two commanders on the right. */
 .game-status {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 8px;
+  gap: 8px 12px;
   flex: 0 0 auto;
+  width: 100%;
+  max-width: var(--game-w);
+  margin: 0 auto;
+  padding: 10px 14px;
+  border: 1px solid var(--panel-line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(10px);
+}
+
+.game-status__chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .game-status__chip {
-  padding: 4px 10px;
-  border: 1px solid var(--border-strong);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-pill);
-  background: var(--panel);
+  background: var(--surface-raised);
   color: var(--text-secondary);
   font-size: 12px;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -48,16 +78,17 @@
   border-color: var(--role-action);
   background: var(--role-action-soft);
   color: var(--text-primary);
+  font-weight: 600;
 }
 
 .game-status__chip--num {
   color: var(--role-self);
-  border-color: var(--border-strong);
+  border-color: var(--border-subtle);
 }
 
 .game-status__chip--clock {
   color: var(--text-primary);
-  border-color: var(--role-self);
+  border-color: color-mix(in srgb, var(--role-self) 55%, transparent);
 }
 
 .game-status__chip--clock.is-warning {
@@ -89,20 +120,69 @@
 .game-status__names {
   margin-left: auto;
   display: flex;
-  align-items: baseline;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
+  padding-left: 14px;
+  border-left: 1px solid var(--border-subtle);
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--text-primary);
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .game-status__vs {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 20px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
   color: var(--text-tertiary);
-  font-size: 11px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
 }
 
 .game-status__ships {
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--role-action-soft);
   color: var(--role-action);
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------- field magic bar --- */
+.game-fieldbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: var(--game-w);
+  margin: 0 auto;
+  padding: 5px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.game-fieldbar__label {
+  color: var(--text-tertiary);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.game-fieldbar__value {
+  color: var(--role-action);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @keyframes game-clock-pulse {
@@ -115,21 +195,30 @@
 .game-body {
   flex: 1;
   display: flex;
-  gap: 14px;
+  justify-content: center;
+  gap: 18px;
   min-height: 0;
   align-items: stretch;
+  width: 100%;
+  max-width: var(--game-w);
+  margin: 0 auto;
 }
 
 .game-board-column {
   position: relative;
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  --cell: clamp(64px, min(9.2vh, 8.6vw), 84px);
+  gap: 8px;
+  /* The board is sized from the window height budget, not from a fixed cap:
+     `100dvh` minus the app bar, the HUD/field bar, this screen's hand + action
+     rows, gaps and the board's own padding + grid gaps. That keeps the hand and
+     the primary button inside a 900px-tall window without hiding anything. */
+  --game-chrome: 480px;
+  --cell: clamp(34px, min(9.4vw, calc((100dvh - var(--game-chrome)) / 6)), 92px);
 }
 
 .game-tabs {
@@ -226,61 +315,81 @@
   font-size: 13px;
 }
 
+/* Transient bars (receipts, timeout notes, empty states) line up with the
+   centred stage instead of stretching across the whole window. */
+.game > .game-receipt,
+.game > .game-banner,
+.game > .game-empty {
+  width: 100%;
+  max-width: var(--game-w);
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
 /* ------------------------------------------------------------------ rail --- */
 .game-rail {
-  flex: 0 0 244px;
-  width: 244px;
+  flex: 0 0 300px;
+  width: 300px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   min-height: 0;
   overflow-y: auto;
+  padding-right: 2px;
 }
 
 .game-map {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 8px;
+  gap: 8px;
+  padding: 12px;
   min-height: 44px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
-  background: var(--panel);
+  background: linear-gradient(180deg, var(--surface-chamber), var(--surface-deck));
   color: var(--text-secondary);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
 }
 
 .game-map:hover {
   border-color: var(--role-self);
+  box-shadow: 0 0 0 1px var(--role-self-soft), var(--shadow-panel);
 }
 
 .game-map__grid {
   display: grid;
-  grid-template-columns: repeat(6, 11px);
-  gap: 2px;
+  grid-template-columns: repeat(6, 18px);
+  gap: 3px;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  background: var(--board-bg);
+  box-shadow: inset 0 0 0 1px var(--board-border);
 }
 
 .game-map__cell {
-  width: 11px;
-  height: 11px;
-  border-radius: 2px;
-  background: var(--surface-deck);
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  background: var(--cell-bg);
   box-shadow: inset 0 0 0 1px var(--border-subtle);
 }
 
 .game-map__cell.is-ship {
-  background: #7f93a3;
+  background: var(--ship-metal);
 }
 
 .game-map__cell.is-hit {
   background: var(--role-enemy);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--role-enemy) 60%, transparent);
 }
 
 .game-map__cell.is-miss {
-  background: var(--role-self-soft);
+  background: color-mix(in srgb, var(--role-self) 30%, var(--cell-bg));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--role-self) 55%, transparent);
 }
 
 .game-map__label {
@@ -289,10 +398,11 @@
   justify-content: center;
   gap: 4px;
   color: var(--text-tertiary);
+  font-size: 11.5px;
 }
 
 .game-map__note {
-  color: #6fb7ff;
+  color: var(--role-self);
 }
 
 .game-slots {
@@ -305,8 +415,8 @@
 }
 
 .game-slot {
-  padding: 3px 7px;
-  border: 1px solid var(--role-self);
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--role-self) 55%, transparent);
   border-radius: var(--radius-pill);
   background: var(--role-self-soft);
   color: var(--text-primary);
@@ -315,14 +425,14 @@
 }
 
 .game-slot.is-lost {
-  border-color: var(--role-enemy);
+  border-color: color-mix(in srgb, var(--role-enemy) 55%, transparent);
   background: var(--role-enemy-soft);
   color: var(--role-enemy);
   text-decoration: line-through;
 }
 
 .game-slot.is-frozen {
-  border-color: #6fb7ff;
+  border-color: var(--role-self);
 }
 
 .game-slot.is-shielded {
@@ -331,32 +441,41 @@
 }
 
 .game-rail__actions {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
 }
 
 .game-mini-button {
   flex: 1 1 auto;
-  min-height: 40px;
+  min-height: 36px;
   padding: 4px 8px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: var(--surface-deck);
+  background: var(--surface-raised);
   color: var(--text-secondary);
   font: inherit;
   font-size: 12px;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
 }
 
 .game-mini-button:hover {
   border-color: var(--role-action);
   color: var(--text-primary);
+  background: var(--role-action-soft);
 }
 
+/* The empty chain slot keeps main's dashed "连锁结算" placeholder. */
 .game-chain-empty {
   margin: 0;
+  padding: 18px 14px;
+  border: 1px dashed color-mix(in srgb, var(--gold) 42%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--gold) 5%, transparent);
   color: var(--text-tertiary);
   font-size: 12px;
+  text-align: center;
 }
 
 .game-badges {
@@ -389,8 +508,11 @@
   flex: 0 0 auto;
   display: flex;
   align-items: flex-end;
-  gap: 14px;
+  gap: 18px;
   min-height: 0;
+  width: 100%;
+  max-width: var(--game-w);
+  margin: 0 auto;
 }
 
 .game-hand-wrap {
@@ -437,13 +559,15 @@
   height: 165px;
   padding: 0;
   overflow: hidden;
-  border: 1px solid var(--border-strong);
+  border: 1px solid color-mix(in srgb, var(--gold) 60%, transparent);
   border-radius: var(--radius-sm);
-  background: linear-gradient(170deg, #16333f, #0a1720 72%);
+  background: linear-gradient(170deg, #12203c, #0a1120 72%);
   color: var(--text-primary);
   font: inherit;
   text-align: left;
   cursor: pointer;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.4);
+  transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
 }
 
 /* Card semantics (spec §2, ticket #52): the type is encoded on the card
@@ -467,7 +591,6 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  opacity: 0.28;
 }
 
 .card__body {
@@ -475,10 +598,17 @@
   z-index: 1;
   display: flex;
   flex-direction: column;
+  justify-content: flex-end;
   gap: 2px;
   height: 100%;
-  padding: 6px 7px;
-  background: linear-gradient(180deg, rgba(4, 12, 18, 0.35), rgba(4, 12, 18, 0.82));
+  padding: 6px 7px 8px;
+  background: linear-gradient(
+    180deg,
+    rgba(6, 10, 22, 0) 0%,
+    rgba(6, 10, 22, 0.28) 34%,
+    rgba(6, 10, 22, 0.86) 56%,
+    rgba(6, 10, 22, 0.96) 100%
+  );
 }
 
 .card__name {
@@ -487,10 +617,11 @@
   line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.85);
 }
 
 .card__gems {
-  color: var(--role-action);
+  color: var(--gold-strong);
   font-size: 10px;
   letter-spacing: 1px;
 }
@@ -503,7 +634,7 @@
 }
 
 .card__type {
-  color: var(--text-tertiary);
+  color: var(--gold-strong);
   font-size: 10px;
   white-space: nowrap;
   overflow: hidden;
@@ -511,12 +642,12 @@
 
 .card__desc {
   display: -webkit-box;
-  -webkit-line-clamp: 4;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  color: var(--text-secondary);
-  font-size: 10px;
-  line-height: 1.32;
+  color: color-mix(in srgb, var(--text-primary) 78%, transparent);
+  font-size: 9.5px;
+  line-height: 1.3;
 }
 
 .card__reason {
@@ -524,7 +655,7 @@
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  margin-top: auto;
+  margin-top: 2px;
   color: var(--role-warning);
   font-size: 9px;
   line-height: 1.25;
@@ -532,25 +663,27 @@
 
 .card:hover {
   border-color: var(--role-action);
+  transform: translateY(-3px);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.5);
 }
 
 .card--selected {
-  border-color: var(--role-action);
-  box-shadow: 0 0 0 2px var(--role-action-soft);
+  border-color: var(--gold-strong);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--gold) 55%, transparent), 0 12px 24px rgba(0, 0, 0, 0.5);
+  transform: translateY(-3px);
 }
 
 .card--disabled {
   border-color: var(--border-subtle);
+  box-shadow: none;
 }
 
 .card--disabled .card__body {
-  background: repeating-linear-gradient(
-    -45deg,
-    rgba(4, 12, 18, 0.85),
-    rgba(4, 12, 18, 0.85) 6px,
-    rgba(4, 12, 18, 0.7) 6px,
-    rgba(4, 12, 18, 0.7) 12px
-  );
+  background: linear-gradient(180deg, rgba(6, 10, 22, 0.55), rgba(6, 10, 22, 0.95) 62%);
+}
+
+.card--disabled .card__art {
+  filter: grayscale(0.7) brightness(0.6);
 }
 
 .card--disabled .card__name,
@@ -570,50 +703,76 @@
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
+  align-items: stretch;
+  gap: 8px;
+  width: 320px;
   max-width: 320px;
 }
 
 .game-turn-hint {
   margin: 0;
-  color: var(--text-tertiary);
+  padding: 7px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
   font-size: 12px;
-  text-align: right;
+  text-align: center;
 }
 
 .game-actions__row {
   display: flex;
-  gap: 6px;
+  gap: 8px;
 }
 
 .game-primary {
-  min-height: 44px;
-  padding: 8px 18px;
-  border: 1px solid var(--role-action);
+  flex: 1 1 auto;
+  min-height: 46px;
+  padding: 10px 18px;
+  border: 1px solid color-mix(in srgb, var(--role-action) 60%, transparent);
   border-radius: var(--radius-sm);
-  background: var(--role-action);
-  color: #08131a;
+  background: var(--hero-grad);
+  color: var(--on-accent, #fff);
   font: inherit;
+  font-size: 14px;
   font-weight: 700;
+  letter-spacing: 0.02em;
   cursor: pointer;
+  box-shadow: var(--shadow-accent);
+  transition: filter 140ms ease, transform 140ms ease;
+}
+
+.game-primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.game-primary:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .game-primary:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 .game-more {
-  min-height: 44px;
+  flex: 0 0 auto;
+  min-height: 46px;
   padding: 8px 12px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: var(--surface-deck);
+  background: var(--surface-raised);
   color: var(--text-secondary);
   font: inherit;
   font-size: 13px;
   cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease;
+}
+
+.game-more:hover {
+  border-color: var(--role-action);
+  color: var(--text-primary);
 }
 
 .game-more-menu {
@@ -687,63 +846,95 @@
 .game-detail {
   position: absolute;
   z-index: 26;
-  right: 14px;
-  bottom: 196px;
-  width: min(340px, calc(100% - 28px));
+  right: 24px;
+  bottom: 214px;
+  width: min(370px, calc(100% - 48px));
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 12px;
-  border: 1px solid var(--role-action);
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--gold) 55%, transparent);
   border-radius: var(--radius);
   background: var(--surface-chamber);
-  box-shadow: var(--shadow-panel);
+  box-shadow: var(--shadow-panel), 0 24px 60px rgba(0, 0, 0, 0.5);
 }
 
 .game-detail__head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
+}
+
+.game-detail__ident {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.game-detail__art {
+  flex: 0 0 auto;
+  width: 64px;
+  height: 88px;
+  object-fit: cover;
+  border: 1px solid color-mix(in srgb, var(--gold) 55%, transparent);
+  border-radius: 6px;
+}
+
+.game-detail__ident-text {
+  min-width: 0;
 }
 
 .game-detail__name {
-  margin: 0;
-  font-size: 16px;
+  margin: 0 0 4px;
+  font-size: 17px;
+  line-height: 1.2;
 }
 
 .game-detail__meta {
   margin: 0;
-  color: var(--role-action);
+  color: var(--gold-strong);
   font-size: 12px;
+  letter-spacing: 0.04em;
 }
 
 .game-detail__desc {
   margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
   color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 1.7;
 }
 
 .game-detail__reason {
   margin: 0;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--role-warning) 55%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--role-action-soft);
   color: var(--role-warning);
   font-size: 12px;
+  line-height: 1.5;
 }
 
 .game-detail__actions {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .game-detail__use,
 .game-detail__actions .button {
-  min-height: 40px;
-  padding: 6px 12px;
+  flex: 1 1 auto;
+  min-height: 42px;
+  padding: 8px 14px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: var(--surface-deck);
+  background: var(--surface-raised);
   color: var(--text-primary);
   font: inherit;
   font-size: 13px;
@@ -751,15 +942,17 @@
 }
 
 .game-detail__use {
-  border-color: var(--role-action);
-  background: var(--role-action);
-  color: #08131a;
+  border-color: color-mix(in srgb, var(--role-action) 60%, transparent);
+  background: var(--hero-grad);
+  color: #fff;
   font-weight: 700;
+  box-shadow: var(--shadow-accent);
 }
 
 .game-detail__use:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 /* ---------------------------------------------------------- target banner --- */
@@ -861,7 +1054,10 @@
   left: 50%;
   transform: translateX(-50%);
   width: min(560px, calc(100% - 28px));
-  max-height: min(78vh, 560px);
+  /* Bounded by the stage, not the viewport: the stage starts below the app bar,
+     so a vh-based cap let the panel run past the stage's bottom edge and get
+     clipped by its overflow. */
+  max-height: min(560px, calc(100% - 64px));
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -1221,7 +1417,8 @@
   }
 
   .game-board-column {
-    --cell: clamp(58px, min(8.6vh, 8vw), 76px);
+    --game-chrome: 470px;
+    --cell: clamp(34px, min(8vw, calc((100dvh - var(--game-chrome)) / 6)), 76px);
   }
 }
 
@@ -1232,18 +1429,22 @@
   }
 
   .game-status {
-    gap: 3px 4px;
+    gap: 2px 4px;
   }
 
   .game-status__chip {
-    padding: 2px 6px;
-    font-size: 10px;
+    padding: 2px 5px;
+    font-size: 9.5px;
   }
 
+  /* Names + ship count ride the chip row instead of forcing a second line:
+     every extra HUD row costs board height on a phone. */
   .game-status__names {
-    width: 100%;
-    margin-left: 0;
-    font-size: 11px;
+    flex: 0 0 auto;
+    width: auto;
+    margin-left: 6px;
+    font-size: 10px;
+    gap: 4px;
   }
 
   .game-status__chip--muted {
@@ -1256,7 +1457,10 @@
   }
 
   .game-board-column {
-    --cell: clamp(40px, min(11.4vw, 5.2vh), 52px);
+    /* Phone budget: viewport minus the app bar (two rows), HUD, field bar,
+       board head, rail row, hand, action row, gaps and padding. */
+    --game-chrome: 540px;
+    --cell: clamp(40px, min(11.4vw, calc((100dvh - var(--game-chrome)) / 6)), 52px);
     gap: 2px;
   }
 
@@ -1396,17 +1600,36 @@
     width: auto;
   }
 
+  /* The target banner docks to the bottom edge on phones: a top-anchored banner
+     covered 30 of the 36 cells it was asking you to tap. The hand and the CTA
+     are the only things it now sits on top of, and they are not needed while a
+     target is being picked. */
   .game-target {
-    top: 4px;
+    top: auto;
+    bottom: 6px;
     width: calc(100% - 12px);
     flex-direction: column;
-    max-height: 62vh;
+    max-height: min(46vh, 260px);
+    padding: 8px 10px;
+    gap: 6px;
     overflow-y: auto;
   }
 
+  /* `flex: 1 1 280px` was written for the desktop row; in column mode the basis
+     became a 280px *height* and inflated the banner to ~400px. */
+  .game-target__main {
+    flex: 0 0 auto;
+  }
+
   .game-target__controls {
-    align-items: stretch;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
     width: 100%;
+  }
+
+  .game-target__row {
+    flex: 1 1 auto;
   }
 
   .game-target__row {
@@ -1441,11 +1664,64 @@
   }
 }
 
-@media (max-height: 780px) {
-  .game-board-column {
-    --cell: clamp(56px, 8vh, 74px);
+/* Very short phones (<=700px of height): the board + rail + hand minimum is
+   taller than the window, so the body must keep its natural height and let the
+   stage scroll inside itself. Shrinking it (flex: 1 with min-height: 0) made the
+   board paint over the rail row and the field bar creep under the board tabs. */
+@media (max-width: 719px) and (max-height: 700px) {
+  .game-body {
+    flex: 0 0 auto;
   }
 
+  /* Compress everything that is not a tap target so a 640px-tall phone still
+     shows the hand and the primary button without scrolling the stage. */
+  .game {
+    gap: 2px;
+    padding: 2px 6px 3px;
+  }
+
+  .game-status {
+    padding: 4px 8px;
+    gap: 2px 4px;
+  }
+
+  .game-fieldbar {
+    padding: 2px 8px;
+    font-size: 10.5px;
+  }
+
+  .game-tab {
+    min-height: 34px;
+  }
+
+  /* The ship-slot row repeats what the 我的海域 board already shows; dropping it
+     is what keeps the board, the hand and the CTA on one screen. Its entries
+     (日志 / 聊天 / 弃牌堆) stay available in the 更多操作 menu. */
+  .game-rail {
+    display: none;
+  }
+
+  .game-hand-wrap {
+    gap: 2px;
+  }
+
+  .game-hand {
+    min-height: 88px;
+  }
+
+  .game-board-column {
+    --cell: clamp(38px, min(11.4vw, calc((100dvh - var(--game-chrome)) / 6)), 52px);
+  }
+
+  /* 40px is this project's touch floor (see styles/base.css); the phones that
+     hit this block cannot afford the 44px row. */
+  .game-primary,
+  .game-more {
+    min-height: 40px;
+  }
+}
+
+@media (max-height: 780px) and (min-width: 720px) {
   .game-hand {
     min-height: 156px;
   }
@@ -1458,5 +1734,254 @@
 
   .card__desc {
     -webkit-line-clamp: 3;
+  }
+}
+
+/* Narrow phones: keep the HUD on one row and let it scroll sideways instead of
+   wrapping, because every extra HUD row is board height we cannot afford. */
+@media (max-width: 430px) {
+  /* Chips scroll sideways on their own row; names + ship count keep a full
+     second row so neither the turn clock nor the VS block gets cut. */
+  .game-status {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .game-status::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Without this the wrapper shrank to 0 and its chips painted over the
+     names block; the chip row is meant to scroll sideways instead. */
+  .game-status__chips {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .game-status__chips::-webkit-scrollbar {
+    display: none;
+  }
+
+  .game-status__names {
+    flex: 0 0 100%;
+    order: 2;
+    width: 100%;
+    margin-left: 0;
+    border-left: 0;
+    padding-left: 0;
+    justify-content: space-between;
+  }
+}
+
+/* ------------------------------------------------- landscape phones (<=480px tall) ---
+   A 6x6 board plus a hand strip, a rail and a CTA do not stack in 390px of
+   height, so the stage becomes two columns: the board keeps the full height and
+   the HUD, field bar, hand and actions stack in a side column. */
+@media (orientation: landscape) and (max-height: 480px) {
+  .game {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'board hud'
+      'board field'
+      'board hand'
+      'board act';
+    gap: 4px 8px;
+    padding: 4px 8px 6px;
+    overflow: hidden;
+  }
+
+  .game-status {
+    grid-area: hud;
+    flex-wrap: wrap;
+    max-height: 64px;
+    overflow-y: auto;
+    justify-content: flex-start;
+  }
+
+  .game-status__chips {
+    flex: 0 0 auto;
+    min-width: auto;
+  }
+
+  .game-status__chip {
+    padding: 1px 5px;
+    font-size: 9px;
+  }
+
+  .game-status__names {
+    width: 100%;
+    margin-left: 0;
+    font-size: 9.5px;
+  }
+
+  /* Same trade as the portrait phone: fewer HUD rows, no duplicated chips. */
+  .game-status__chip--muted {
+    display: none;
+  }
+
+  .game-fieldbar {
+    grid-area: field;
+    padding: 2px 8px;
+    font-size: 10px;
+  }
+
+  .game-body {
+    grid-area: board;
+    min-height: 0;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+  }
+
+  .game-board-column {
+    --game-chrome: 170px;
+    --cell: clamp(28px, min(7.5vw, calc((100dvh - var(--game-chrome)) / 6)), 64px);
+    min-height: 0;
+    gap: 2px;
+  }
+
+  /* 横屏保留舰位与己方海域入口；日志、聊天和弃牌堆继续从更多菜单进入。 */
+  .game-rail {
+    flex: 0 0 auto;
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: center;
+    gap: 4px;
+  }
+
+  .game-chain-empty,
+  .game-rail__actions {
+    display: none;
+  }
+
+  /* 横屏没有海域标签，保留此按钮才能打开己方海域并完成卡牌选目标。 */
+  .game-map {
+    display: flex;
+    flex: 0 0 auto;
+    width: auto;
+    min-height: 40px;
+    padding: 4px 8px;
+  }
+
+  .game-map__grid {
+    display: none;
+  }
+
+  .game-map__label {
+    font-size: 10.5px;
+  }
+
+  .game-bottom {
+    grid-area: act;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    min-height: 0;
+  }
+
+  .game-hand-wrap {
+    flex-direction: column;
+    align-items: stretch;
+    min-height: 0;
+  }
+
+  .game-hand {
+    min-height: 0;
+    flex-wrap: wrap;
+    gap: 6px;
+    overflow-y: auto;
+  }
+
+  .card {
+    flex-basis: 64px;
+    width: 64px;
+    height: 92px;
+  }
+
+  .game-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    max-width: none;
+  }
+
+  /* The turn hint duplicates the HUD chips in this layout. */
+  .game-turn-hint {
+    display: none;
+  }
+
+  /* The chain window spans the stage's full height instead of 78vh: in a 390px
+     tall window the vh cap let the 不响应 button sit below the clipped edge. */
+  .game-chain-panel {
+    top: 6px;
+    bottom: 6px;
+    max-height: none;
+    width: min(520px, calc(100% - 12px));
+  }
+
+  /* Landscape keeps the board on the left, so the target banner takes the right
+     column (over the HUD and hand) and never covers a tappable cell. */
+  .game-target {
+    top: 6px;
+    bottom: auto;
+    left: auto;
+    right: 8px;
+    transform: none;
+    width: min(320px, calc(100% - 16px));
+    max-height: calc(100% - 12px);
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    overflow-y: auto;
+  }
+
+  .game-target__main {
+    flex: 0 0 auto;
+  }
+
+  .game-target__controls {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    width: 100%;
+  }
+
+  .game-target__row {
+    flex: 1 1 auto;
+  }
+
+  /* The detail sheet anchors to the top edge in landscape: anchoring it to the
+     bottom (desktop) pushed its header off-screen. */
+  .game-detail {
+    top: 8px;
+    bottom: auto;
+    right: 8px;
+    width: min(360px, calc(100vw - 16px));
+    max-height: calc(100dvh - 90px);
+    overflow-y: auto;
+  }
+
+  /* Primary + 更多 share a single row: the column is 90px of height budget we
+     do not have when the window is only ~390px tall. */
+  .game-actions__row {
+    width: 100%;
+  }
+
+  .game-primary,
+  .game-more {
+    flex: 1 1 0;
+    width: auto;
+    height: 36px;
+    min-height: 36px;
+    padding: 0 8px;
+    font-size: 12px;
   }
 }

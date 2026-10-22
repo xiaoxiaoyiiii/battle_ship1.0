@@ -3,6 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import MatchFoundOverlay from '../../components/MatchFoundOverlay.vue'
 import StateSurface from '../../components/StateSurface.vue'
+import { cardArtUrl } from '../../cards/cardArt'
+import { CARDS, UNIQUE_CARD_NAMES } from '../../cards/cardData'
 import { useAuthStore } from '../../stores/auth'
 import { useCollectionStore } from '../../stores/collection'
 import { useGameStore } from '../../stores/game'
@@ -156,6 +158,10 @@ watch(
   },
 )
 const actionsDisabled = computed(() => home.busy || home.awaitingPlacement)
+/** Bottom strip: six real card faces, count comes from the frozen card table. */
+const showcase = UNIQUE_CARD_NAMES.slice(0, 6)
+const cardCount = UNIQUE_CARD_NAMES.length
+const fieldCount = CARDS.filter((card) => card.type === '场地').length
 
 /**
  * Hand-off to placement. A real matchmaking pair first shows the 匹配成功
@@ -280,11 +286,12 @@ async function startAi(): Promise<void> {
   >
     <header class="home-head">
       <div class="home-head__main">
-        <p class="home-head__eyebrow">P4 · 出 海 指 挥 台</p>
+        <p class="home-kicker">竞技场 · 出 海</p>
         <h1 id="screen-start-title" class="home-head__title" data-testid="start-heading">首页</h1>
       </div>
       <div class="home-head__meta">
         <span class="home-pill" title="在线玩家（/api/online_count）">
+          <i class="home-pill__dot" aria-hidden="true"></i>
           <span class="home-pill__label">在线</span>
           <b class="home-pill__value" data-testid="start-online-pill">{{ pillText }}</b>
           <span class="home-pill__unit">人</span>
@@ -301,94 +308,12 @@ async function startAi(): Promise<void> {
     </header>
 
     <div class="home-grid">
-      <!-- 主行动入口：DOM 第一位，窄屏收成单列时“先能开一局”。 -->
-      <section class="home-panel home-actions" data-testid="start-actions" aria-labelledby="home-actions-title">
-        <div class="home-actions__meta">
-          <h2 id="home-actions-title" class="home-panel__title">开 一 局</h2>
-          <p class="home-actions__lead">休闲与排位共用一个匹配队列；人机随时开局，不结算段位分。</p>
-        </div>
-
-        <button
-          type="button"
-          class="home-action home-action--primary"
-          data-testid="start-primary-action"
-          data-primary-action
-          :disabled="actionsDisabled"
-          @click="startMatch('casual')"
-        >
-          <span class="home-action__title">开始休闲匹配</span>
-          <span class="home-action__desc">随机匹配一位在线玩家 · 不计段位分</span>
-        </button>
-
-        <div v-if="home.queuePending" class="home-queue" role="status">
-          <p class="home-queue__text" data-testid="start-queue-status">
-            {{ queueText }} · 已等待 <b data-testid="start-queue-waited">{{ queueSeconds }}</b> 秒
-          </p>
-          <button type="button" class="button home-queue__cancel" data-testid="start-queue-cancel" @click="cancelQueue">
-            取消匹配
-          </button>
-        </div>
-
-        <button
-          type="button"
-          class="home-action"
-          data-testid="start-ranked-action"
-          :disabled="actionsDisabled"
-          @click="startMatch('ranked')"
-        >
-          <span class="home-action__title">开始排位对战</span>
-          <span class="home-action__desc" data-testid="start-ranked-desc">{{ rankedDesc }}</span>
-        </button>
-
-        <div class="home-ai" data-testid="start-ai-difficulty" role="radiogroup" aria-label="电脑难度">
-          <div class="home-ai__caps">
-            <button
-              v-for="option in difficultyOptions"
-              :key="option.value"
-              type="button"
-              role="radio"
-              class="home-ai__cap"
-              :class="{ 'is-active': difficulty === option.value }"
-              :aria-checked="difficulty === option.value"
-              :title="option.hint"
-              :data-testid="'start-ai-difficulty-' + option.value"
-              :disabled="actionsDisabled"
-              @click="difficulty = option.value"
-            >
-              <b>{{ option.label }}</b>
-              <small>{{ option.hint }}</small>
-            </button>
-          </div>
-          <button
-            type="button"
-            class="home-action home-ai__action"
-            data-testid="start-ai-action"
-            :disabled="actionsDisabled"
-            @click="startAi"
-          >
-            <span class="home-action__title">开始人机对战</span>
-            <span class="home-action__desc">当前难度：{{ difficultyOptions.find((o) => o.value === difficulty)?.label }}</span>
-          </button>
-        </div>
-
-        <p v-if="home.notice" class="home-notice" role="alert" data-testid="start-notice">
-          {{ home.notice }}
-        </p>
-
-        <nav class="home-links" aria-label="更多入口">
-          <router-link class="home-link" :to="{ name: 'lobby' }" data-testid="start-lobby-link">游戏大厅</router-link>
-          <router-link class="home-link" :to="{ name: 'leaderboard' }" data-testid="start-leaderboard-link">排行榜</router-link>
-          <router-link class="home-link" :to="{ name: 'settings' }" data-testid="start-settings-link">设置</router-link>
-          <button type="button" class="home-link home-link--button" data-testid="start-collection-link" @click="collection.open()">
-            图鉴 / 卡库
-          </button>
-        </nav>
-      </section>
-
       <!-- 玩家信息：/api/profile 的服务端字段，前端只排版。 -->
-      <aside class="home-panel home-player" data-testid="start-player" aria-labelledby="home-player-title">
-        <h2 id="home-player-title" class="home-panel__title">指 挥 官</h2>
-        <div class="home-player__emblem" aria-hidden="true"><span>舰</span></div>
+      <aside class="home-card home-player" data-testid="start-player" aria-labelledby="home-player-title">
+        <div class="home-player__crest">
+          <span class="home-player__emblem" aria-hidden="true"><span>舰</span></span>
+        </div>
+        <h2 id="home-player-title" class="home-kicker home-player__kicker">指 挥 官</h2>
         <p class="home-player__name" data-testid="start-player-name">{{ playerName }}</p>
 
         <template v-if="auth.isGuest">
@@ -414,21 +339,24 @@ async function startAi(): Promise<void> {
 
         <StateSurface
           v-else
+          class="home-player__body"
           data-testid="start-profile-surface"
           :state="profileState"
           loading-text="名片载入中…"
           error-text="名片暂时取不到。"
           @retry="home.loadProfile()"
         >
-          <p v-if="player.rankLabel" class="home-player__rank" data-testid="start-player-rank">{{ player.rankLabel }}</p>
+          <div class="home-player__rankrow">
+            <span v-if="player.rankLabel" class="home-player__rank" data-testid="start-player-rank">{{ player.rankLabel }}</span>
+            <span class="home-player__level">
+              <span data-testid="start-player-level">{{ player.level }}</span>
+              <span class="home-player__level-text" data-testid="start-player-level-text">{{ player.levelText }}</span>
+            </span>
+          </div>
           <div class="home-bar" role="img" :aria-label="'段位进度 ' + player.rankFill + '%'">
             <div class="home-bar__fill" data-testid="start-player-rank-fill" :style="{ width: player.rankFill + '%' }"></div>
           </div>
-          <div class="home-player__level">
-            <span class="home-player__level-label" data-testid="start-player-level">{{ player.level }}</span>
-            <span class="home-player__level-text" data-testid="start-player-level-text">{{ player.levelText }}</span>
-          </div>
-          <div class="home-bar" role="img" :aria-label="'等级经验 ' + player.levelFill + '%'">
+          <div class="home-bar home-bar--xp" role="img" :aria-label="'等级经验 ' + player.levelFill + '%'">
             <div class="home-bar__fill home-bar__fill--xp" data-testid="start-player-level-fill" :style="{ width: player.levelFill + '%' }"></div>
           </div>
           <dl class="home-player__kv">
@@ -445,14 +373,131 @@ async function startAi(): Promise<void> {
               <dd data-testid="start-player-streak">{{ player.streak || '暂无' }}</dd>
             </div>
           </dl>
-          <router-link class="home-link" :to="{ name: 'profile' }" data-testid="start-profile-link">查看我的名片</router-link>
+          <router-link class="home-link home-link--wide" :to="{ name: 'profile' }" data-testid="start-profile-link">
+            查看我的名片
+          </router-link>
         </StateSurface>
       </aside>
 
+      <!-- 主行动入口：DOM 中先于右栏，窄屏收成单列时“先能开一局”。 -->
+      <section class="home-main" data-testid="start-actions" aria-labelledby="home-actions-title">
+        <div class="home-main__head">
+          <h2 id="home-actions-title" class="home-kicker">选 择 一 种 打 法</h2>
+          <p class="home-main__lead">休闲与排位共用一个匹配队列；人机随时开局，不结算段位分。</p>
+        </div>
+
+        <button
+          type="button"
+          class="home-play home-play--casual"
+          data-testid="start-primary-action"
+          data-primary-action
+          :disabled="actionsDisabled"
+          @click="startMatch('casual')"
+        >
+          <span class="home-play__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6">
+              <path d="M4 12a8 8 0 1 0 8-8" />
+              <path d="M4 4v4h4" />
+              <path d="M12 8v4l3 2" />
+            </svg>
+          </span>
+          <span class="home-play__copy">
+            <span class="home-play__title">休闲匹配</span>
+            <span class="home-play__desc">随机匹配一位在线玩家 · 不计段位分 · 随时开一局</span>
+          </span>
+          <span class="home-play__cta" aria-hidden="true">ENTER</span>
+        </button>
+
+        <div v-if="home.queuePending" class="home-queue" role="status">
+          <p class="home-queue__text" data-testid="start-queue-status">
+            {{ queueText }} · 已等待 <b data-testid="start-queue-waited">{{ queueSeconds }}</b> 秒
+          </p>
+          <button type="button" class="button home-queue__cancel" data-testid="start-queue-cancel" @click="cancelQueue">
+            取消匹配
+          </button>
+        </div>
+
+        <button
+          type="button"
+          class="home-play home-play--ranked"
+          data-testid="start-ranked-action"
+          :disabled="actionsDisabled"
+          @click="startMatch('ranked')"
+        >
+          <span class="home-play__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6">
+              <path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6z" />
+              <path d="M9 12l2 2 4-4" />
+            </svg>
+          </span>
+          <span class="home-play__copy">
+            <span class="home-play__title">排位对战</span>
+            <span class="home-play__desc" data-testid="start-ranked-desc">{{ rankedDesc }}</span>
+          </span>
+          <span class="home-play__cta" aria-hidden="true">RANKED</span>
+        </button>
+
+        <div class="home-ai home-card" data-testid="start-ai-difficulty" role="radiogroup" aria-label="电脑难度">
+          <div class="home-ai__head">
+            <span class="home-ai__title">人机对战</span>
+            <span class="home-ai__hint">练习规则与连锁 · 当前难度：{{ difficultyOptions.find((o) => o.value === difficulty)?.label }}</span>
+          </div>
+          <div class="home-ai__caps">
+            <button
+              v-for="option in difficultyOptions"
+              :key="option.value"
+              type="button"
+              role="radio"
+              class="home-ai__cap"
+              :class="{ 'is-active': difficulty === option.value }"
+              :aria-checked="difficulty === option.value"
+              :title="option.hint"
+              :data-testid="'start-ai-difficulty-' + option.value"
+              :disabled="actionsDisabled"
+              @click="difficulty = option.value"
+            >
+              <b>{{ option.label }}</b>
+              <small>{{ option.hint }}</small>
+            </button>
+          </div>
+          <button
+            type="button"
+            class="home-ai__action"
+            data-testid="start-ai-action"
+            :disabled="actionsDisabled"
+            @click="startAi"
+          >
+            开始人机对战
+          </button>
+        </div>
+
+        <p v-if="home.notice" class="home-notice" role="alert" data-testid="start-notice">
+          {{ home.notice }}
+        </p>
+
+        <nav class="home-links" aria-label="更多入口">
+          <router-link class="home-link home-link--tile" :to="{ name: 'lobby' }" data-testid="start-lobby-link">
+            <b>游戏大厅</b><small>房间列表 · 公屏</small>
+          </router-link>
+          <router-link class="home-link home-link--tile" :to="{ name: 'leaderboard' }" data-testid="start-leaderboard-link">
+            <b>排行榜</b><small>段位与胜场</small>
+          </router-link>
+          <router-link class="home-link home-link--tile" :to="{ name: 'settings' }" data-testid="start-settings-link">
+            <b>设置</b><small>主题 · 音效 · 账号</small>
+          </router-link>
+          <button type="button" class="home-link home-link--tile home-link--button" data-testid="start-collection-link" @click="collection.open()">
+            <b>图鉴 / 卡库</b><small>48 张魔法卡</small>
+          </button>
+        </nav>
+      </section>
+
       <!-- 在线与公告。 -->
       <aside class="home-side">
-        <section class="home-panel" data-testid="start-online" aria-labelledby="home-online-title">
-          <h2 id="home-online-title" class="home-panel__title">在 线</h2>
+        <section class="home-card" data-testid="start-online" aria-labelledby="home-online-title">
+          <div class="home-card__head">
+            <h2 id="home-online-title" class="home-kicker">在 线</h2>
+            <i class="home-card__dot" aria-hidden="true"></i>
+          </div>
           <StateSurface
             data-testid="start-stats-surface"
             :state="statsState"
@@ -474,7 +519,7 @@ async function startAi(): Promise<void> {
                 <dt>排位队列</dt>
                 <dd><b data-testid="start-queue-ranked">{{ stats.ranked }}</b><span class="home-stat__unit">人</span></dd>
               </div>
-              <div class="home-stat">
+              <div class="home-stat home-stat--wide">
                 <dt>大厅房间</dt>
                 <dd><b data-testid="start-lobby-rooms">{{ stats.rooms }}</b><span class="home-stat__unit">间</span></dd>
               </div>
@@ -482,9 +527,11 @@ async function startAi(): Promise<void> {
           </StateSurface>
         </section>
 
-        <section class="home-panel home-changelog" data-testid="start-changelog" aria-labelledby="home-changelog-title">
-          <h2 id="home-changelog-title" class="home-panel__title">最 近 公 告</h2>
-          <p class="home-changelog__latest" data-testid="start-changelog-latest">{{ latestText }}</p>
+        <section class="home-card home-changelog" data-testid="start-changelog" aria-labelledby="home-changelog-title">
+          <div class="home-card__head">
+            <h2 id="home-changelog-title" class="home-kicker">最 近 公 告</h2>
+            <span class="home-changelog__latest" data-testid="start-changelog-latest">{{ latestText }}</span>
+          </div>
           <StateSurface
             :state="changelogState"
             loading-text="公告载入中…"
@@ -504,270 +551,492 @@ async function startAi(): Promise<void> {
               </li>
             </ul>
             <template #empty>
-              <p class="home-panel__note" data-testid="start-changelog-empty">暂时没有公告。</p>
+              <p class="home-card__note" data-testid="start-changelog-empty">暂时没有公告。</p>
             </template>
             <template #error>
-              <p class="home-panel__note" data-testid="start-changelog-empty">
+              <p class="home-card__note" data-testid="start-changelog-empty">
                 暂时没有公告（载入失败），可以重试。
               </p>
             </template>
           </StateSurface>
         </section>
       </aside>
+
+      <!-- 卡牌展示条：main 首页底部那排卡面。这里只做图鉴入口的展示，
+           点击打开卡库 overlay；不宣称任何“热度”数据。 -->
+      <section class="home-card home-showcase" aria-labelledby="home-showcase-title">
+        <div class="home-card__head">
+          <h2 id="home-showcase-title" class="home-kicker">卡 牌</h2>
+          <span class="home-showcase__meta">{{ cardCount }} 张魔法卡 · 场地 {{ fieldCount }} 张</span>
+        </div>
+        <ul class="home-showcase__row">
+          <li v-for="card in showcase" :key="card">
+            <button type="button" class="home-cardface" :title="card" @click="collection.open()">
+              <img v-if="cardArtUrl(card)" class="home-cardface__art" :src="cardArtUrl(card) || ''" :alt="card" loading="lazy" />
+              <span v-else class="home-cardface__art home-cardface__art--none" aria-hidden="true">舰</span>
+              <span class="home-cardface__name">{{ card }}</span>
+            </button>
+          </li>
+        </ul>
+      </section>
     </div>
   </section>
 </template>
 
 <style scoped>
+/* 首页 —— 按 main（BattleShip Arena）的三栏布局重画。
+   左 288px 指挥官卡 / 中 1fr 打法列表 / 右 300px 在线与公告；卡片全部落在
+   --panel 面层上，层级靠 12px 圆角 + --panel-line 描边 + --shadow-panel 区分，
+   不再使用旧版的虚线标题下划线和 12px 全小写标题。 */
 .home-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   width: 100%;
-  max-width: 1280px;
+  max-width: 1440px;
   margin: 0 auto;
-  padding: 0 0 24px;
-  gap: 4px;
+  padding: 20px 24px 36px;
 }
 
+/* ------------------------------------------------------------- 页头 --- */
 .home-head {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
-  gap: 4px 18px;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
 .home-head__main {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
 }
 
-.home-head__eyebrow {
+.home-kicker {
   margin: 0;
-  color: #8f9bc4;
-  font-size: 9px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
 }
 
 .home-head__title {
   margin: 0;
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .home-head__meta {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
-  min-width: 0;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .home-pill {
   display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
-  padding: 4px 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
-  background: rgba(13, 17, 34, 0.72);
-  font-size: 12px;
-  white-space: nowrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 3px 12px;
+  border: 1px solid var(--chip-line);
+  border-radius: var(--radius-pill);
+  background: rgba(124, 92, 240, 0.08);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
 }
 
-.home-pill__value {
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
+.home-pill__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--role-success);
 }
 
 .home-pill__label,
 .home-pill__unit {
-  color: var(--text-muted);
-  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.home-pill__value {
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 .home-conn {
-  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-tertiary);
   font-size: 12px;
 }
 
-.home-conn[data-connected='true'] {
-  color: var(--success);
+.home-conn::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--role-success);
 }
 
+.home-conn[data-connected='false']::before {
+  background: var(--role-warning);
+}
+
+/* ------------------------------------------------------------- 栅格 --- */
 .home-grid {
   display: grid;
+  grid-template-columns: 288px minmax(0, 1fr) 300px;
   gap: 16px;
-  min-width: 0;
-  grid-template-columns: minmax(0, 280px) minmax(0, 1fr) minmax(0, 292px);
-  grid-template-areas: 'player actions side';
   align-items: start;
 }
 
-.home-actions {
-  grid-area: actions;
-  display: flex;
-  flex-direction: column;
+/* 通用卡片面层。 */
+.home-card {
   min-width: 0;
-}
-
-.home-player {
-  grid-area: player;
-}
-
-.home-side {
-  grid-area: side;
-  display: grid;
-  gap: 16px;
-  min-width: 0;
-}
-
-/* Panel language: translucent indigo card with a violet hairline and a dashed
-   header rule, matching the C+ arena panels. */
-.home-panel {
-  min-width: 0;
-  padding: 14px 16px;
+  padding: 16px 18px;
   border: 1px solid var(--panel-line);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   background: var(--panel);
   box-shadow: var(--shadow-panel);
 }
 
-.home-panel__title {
-  margin: 0 0 8px;
-  padding-bottom: 6px;
-  border-bottom: 1px dashed var(--line-dash);
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-}
-
-.home-panel__note {
-  margin: 10px 0 0;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.home-actions__meta {
+.home-card__head {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 8px;
-  margin-bottom: 8px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
-.home-actions__meta .home-panel__title {
+.home-card__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--role-success);
+}
+
+.home-card__note {
   margin: 0;
-  padding: 0;
-  border: 0;
-  color: var(--text);
-  font-size: 12px;
-  letter-spacing: 0.1em;
+  color: var(--text-tertiary);
+  font-size: 12.5px;
 }
 
-.home-actions__lead {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-/* Action cards. The casual card is the purple hero; ranked carries the gold
-   rank language; the AI card stays a quiet panel. */
-.home-action {
-  position: relative;
+/* --------------------------------------------------------- 指挥官卡 --- */
+.home-player {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  width: 100%;
-  margin: 0 0 10px;
-  padding: 15px 18px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: rgba(15, 19, 38, 0.72);
-  color: var(--text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
+  gap: 10px;
+  text-align: center;
 }
 
-.home-action:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: rgba(124, 92, 240, 0.18);
+.home-player__crest {
+  display: grid;
+  place-items: center;
+  padding: 6px 0 2px;
 }
 
-.home-action:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
+.home-player__emblem {
+  display: grid;
+  place-items: center;
+  width: 88px;
+  height: 88px;
+  border: 1px solid var(--gold);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 30%, rgba(201, 162, 76, 0.24), transparent 70%),
+    var(--surface-chamber);
+  box-shadow:
+    inset 0 0 0 6px color-mix(in srgb, var(--surface-chamber) 80%, transparent),
+    0 0 22px rgba(201, 162, 76, 0.22);
 }
 
-.home-action--primary {
-  min-height: 88px;
-  justify-content: center;
-  border-color: var(--accent-strong);
-  background: var(--hero-grad);
-  box-shadow: var(--shadow-accent);
-}
-
-.home-action--primary:hover:not(:disabled) {
-  filter: brightness(1.12);
-}
-
-.home-action--primary .home-action__title {
-  font-size: 23px;
+.home-player__emblem > span {
+  color: var(--gold-strong);
+  font-size: 26px;
+  font-weight: 600;
   letter-spacing: 0.04em;
 }
 
-.home-action--primary .home-action__desc {
-  color: rgba(255, 255, 255, 0.82);
+.home-player__kicker {
+  margin-top: 2px;
 }
 
-.home-action[data-testid='start-ranked-action'] {
-  border-color: var(--role-action);
-  background: var(--role-action-soft);
+.home-player__name {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
-.home-action__title {
-  font-size: 17px;
+.home-player__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+
+.home-player__note {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+  line-height: 1.6;
+  text-align: left;
+}
+
+.home-player__rankrow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.home-player__rank {
+  color: var(--gold-strong);
+  font-size: 13.5px;
   font-weight: 600;
 }
 
-.home-action__desc {
-  color: var(--text-muted);
-  font-size: 12px;
+.home-player__level {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
 }
 
+.home-player__level-text {
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+}
+
+.home-bar {
+  height: 5px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface-sea) 70%, transparent);
+}
+
+.home-bar__fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--gold), var(--gold-strong));
+}
+
+.home-bar--xp {
+  height: 4px;
+}
+
+.home-bar__fill--xp {
+  background: linear-gradient(90deg, var(--role-action), var(--accent-strong));
+}
+
+.home-player__kv {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 4px 0 0;
+}
+
+.home-player__kv-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 12.5px;
+}
+
+.home-player__kv-row dt {
+  color: var(--text-tertiary);
+}
+
+.home-player__kv-row dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.home-player__links {
+  display: flex;
+  gap: 8px;
+}
+
+.home-player__links > * {
+  flex: 1 1 0;
+}
+
+/* ------------------------------------------------------------ 打法区 --- */
+.home-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.home-main__head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 2px;
+}
+
+.home-main__lead {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.home-play {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 84px;
+  padding: 16px 18px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    transform var(--duration-fast) var(--ease),
+    filter var(--duration-fast) var(--ease),
+    border-color var(--duration-fast) var(--ease);
+}
+
+.home-play:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.06);
+}
+
+.home-play:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.home-play__icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.16);
+  color: currentColor;
+}
+
+.home-play__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.home-play__title {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.home-play__desc {
+  font-size: 12.5px;
+  line-height: 1.5;
+  opacity: 0.82;
+}
+
+.home-play__cta {
+  padding: 5px 14px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  opacity: 0.8;
+}
+
+/* 休闲：main 的紫色主 hero。 */
+.home-play--casual {
+  border-color: var(--hero-border);
+  background: var(--hero-grad);
+  color: #ffffff;
+  box-shadow: var(--shadow-accent);
+}
+
+/* 排位：金色主权行（main 的琥珀底 + RANKED）。 */
+.home-play--ranked {
+  border-color: color-mix(in srgb, var(--gold) 55%, transparent);
+  background: color-mix(in srgb, var(--gold) 16%, var(--surface-deck));
+  color: var(--text-primary);
+}
+
+.home-play--ranked .home-play__icon {
+  background: color-mix(in srgb, var(--gold) 26%, transparent);
+  color: var(--gold-strong);
+}
+
+.home-play--ranked .home-play__cta {
+  color: var(--gold-strong);
+}
+
+/* 组队等待条。 */
 .home-queue {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  margin: 0 0 10px;
-  padding: 10px 12px;
-  border: 1px dashed var(--accent-strong);
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px dashed var(--chip-line);
   border-radius: var(--radius);
-  background: var(--accent-soft);
+  background: var(--role-action-soft);
 }
 
 .home-queue__text {
   margin: 0;
+  color: var(--text-primary);
   font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 
+.home-queue__cancel {
+  min-height: 32px;
+  padding: 4px 12px;
+  font-size: 12.5px;
+}
+
+/* 人机：难度分段 + 主按钮。 */
 .home-ai {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
-  margin-bottom: 10px;
+  padding: 14px 16px;
 }
 
-.home-ai__action {
-  margin-bottom: 0;
+.home-ai__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
-/* Four directly clickable difficulty pills (story 17): no hidden dropdown. */
+.home-ai__title {
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.home-ai__hint {
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+}
+
 .home-ai__caps {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -775,209 +1044,146 @@ async function startAi(): Promise<void> {
 }
 
 .home-ai__cap {
-  display: grid;
-  justify-items: center;
+  display: flex;
+  flex-direction: column;
   gap: 2px;
-  min-height: 52px;
-  padding: 7px 6px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-chamber);
+  align-items: flex-start;
+  min-height: 54px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface-sea) 55%, transparent);
   color: var(--text-secondary);
-  font: inherit;
   cursor: pointer;
-  transition: border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease);
+  text-align: left;
+  transition:
+    border-color var(--duration-fast) var(--ease),
+    background var(--duration-fast) var(--ease);
 }
 
 .home-ai__cap b {
-  font-size: 14px;
+  color: var(--text-primary);
+  font-size: 13.5px;
   font-weight: 600;
 }
 
 .home-ai__cap small {
-  color: var(--text-tertiary);
-  font-size: 10px;
-  line-height: 1.3;
-  text-align: center;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.35;
 }
 
 .home-ai__cap:hover:not(:disabled) {
-  border-color: var(--role-action);
-  color: var(--text-primary);
+  border-color: var(--chip-line);
 }
 
 .home-ai__cap.is-active {
   border-color: var(--role-action);
   background: var(--role-action-soft);
-  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--role-action);
 }
 
-.home-ai__cap.is-active small {
-  color: var(--text-secondary);
-}
-
-.home-ai__cap:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-@media (max-width: 420px) {
-  .home-ai__caps {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-.home-notice {
-  margin: 0 0 10px;
-  padding: 8px 10px;
-  border: 1px solid var(--danger);
+.home-ai__action {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid var(--role-action);
   border-radius: var(--radius-sm);
-  background: rgba(42, 20, 24, 0.8);
-  color: #ffb3a8;
-  font-size: 13px;
+  background: var(--role-action-soft);
+  color: var(--role-action);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease);
 }
 
+.home-ai__action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--role-action) 26%, transparent);
+}
+
+.home-ai__action:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* 提示行。 */
+.home-notice {
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--role-enemy) 45%, transparent);
+  border-radius: var(--radius);
+  background: var(--role-enemy-soft);
+  color: var(--role-enemy);
+  font-size: 12.5px;
+}
+
+/* 更多入口：2×2 磁贴。 */
 .home-links {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
-.home-player__links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
-}
-
 .home-link {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 42px;
-  padding: 10px 14px;
-  border: 1px solid var(--border);
+  gap: 6px;
+  min-height: 38px;
+  padding: 6px 12px;
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
-  background: rgba(13, 17, 34, 0.72);
-  color: var(--text-muted);
+  background: var(--surface-chamber);
+  color: var(--text-primary);
   font-size: 13px;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease),
+    background var(--duration-fast) var(--ease);
 }
 
 .home-link:hover {
-  border-color: var(--accent);
-  color: var(--text);
-  background: var(--accent-soft);
+  border-color: var(--chip-line);
+  background: var(--surface-raised);
 }
 
-/* The collection entry is an overlay button that must look exactly like the
-   neighbouring route links (no new route name, same visual affordance). */
 .home-link--button {
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
+  font-family: inherit;
 }
 
-.home-player__emblem {
-  display: grid;
-  place-items: center;
-  width: 100px;
-  height: 100px;
-  margin: 2px auto 14px;
-  border: 2px solid rgba(201, 162, 76, 0.55);
-  border-radius: 50%;
-  background: radial-gradient(circle at 50% 32%, rgba(201, 162, 76, 0.3), rgba(124, 92, 240, 0.18) 58%, transparent 74%);
-  box-shadow: 0 0 34px rgba(201, 162, 76, 0.18), inset 0 0 24px rgba(201, 162, 76, 0.14);
+.home-link--wide {
+  width: 100%;
 }
 
-.home-player__emblem span {
-  color: var(--gold-strong);
-  font-size: 32px;
-  letter-spacing: 0.06em;
+.home-link--tile {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  min-height: 56px;
+  padding: 10px 14px;
+  border-color: var(--panel-line);
+  border-radius: var(--radius);
+  background: var(--panel);
 }
 
-.home-player__name {
-  margin: 0 0 8px;
-  overflow-wrap: anywhere;
-  font-size: 21px;
-  font-weight: 700;
-}
-
-.home-player__note {
-  margin: 0 0 4px;
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.home-player__rank {
-  margin: 0 0 6px;
-  overflow-wrap: anywhere;
-  color: var(--text);
-  font-size: 14px;
-}
-
-.home-bar {
-  height: 6px;
-  margin-bottom: 8px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--bg-sunken);
-}
-
-.home-bar__fill {
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #b8873a, var(--gold-strong));
-}
-
-.home-bar__fill--xp {
-  background: linear-gradient(90deg, #2a8f68, var(--success));
-}
-
-.home-player__level {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.home-player__level-label {
-  font-size: 14px;
+.home-link--tile b {
+  font-size: 13.5px;
   font-weight: 600;
 }
 
-.home-player__level-text {
-  color: var(--text-muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
+.home-link--tile small {
+  color: var(--text-tertiary);
+  font-size: 11px;
 }
 
-.home-player__kv {
-  display: grid;
-  gap: 4px;
-  margin: 0 0 12px;
-}
-
-.home-player__kv-row {
+/* --------------------------------------------------------- 右栏 --- */
+.home-side {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 6px 9px;
-  border: 1px solid rgba(42, 51, 88, 0.6);
-  border-radius: var(--radius-sm);
-  background: rgba(13, 17, 34, 0.62);
-}
-
-.home-player__kv-row dt {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.home-player__kv-row dd {
-  margin: 0;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
 }
 
 .home-stats {
@@ -988,59 +1194,70 @@ async function startAi(): Promise<void> {
 }
 
 .home-stat {
-  min-width: 0;
-  padding: 8px 10px;
-  border: 1px solid rgba(42, 51, 88, 0.6);
-  border-radius: var(--radius-sm);
-  background: rgba(13, 17, 34, 0.62);
+  padding: 9px 11px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface-sea) 50%, transparent);
 }
 
 .home-stat--wide {
-  grid-column: 1 / -1;
+  grid-column: span 2;
 }
 
 .home-stat dt {
-  color: var(--text-muted);
-  font-size: 12px;
+  color: var(--text-tertiary);
+  font-size: 11.5px;
 }
 
 .home-stat dd {
   display: flex;
   align-items: baseline;
-  gap: 3px;
+  gap: 4px;
   margin: 2px 0 0;
-  font-size: 18px;
+  color: var(--text-primary);
+  font-size: 20px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+.home-stat--wide dd {
+  font-size: 24px;
 }
 
 .home-stat__unit {
-  color: var(--text-muted);
-  font-size: 12px;
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+  font-weight: 400;
+}
+
+/* 公告：右栏里可滚动的一段。 */
+.home-changelog {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .home-changelog__latest {
-  margin: 0 0 8px;
-  color: var(--accent-cyan);
-  font-size: 12px;
+  color: var(--text-tertiary);
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
 }
 
-.home-changelog__list,
-.home-changelog__items {
+.home-changelog__list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   margin: 0;
   padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
   list-style: none;
 }
 
-.home-changelog__list {
-  display: grid;
-  gap: 10px;
-}
-
 .home-changelog__entry {
-  min-width: 0;
-  padding-top: 8px;
-  border-top: 1px solid rgba(42, 51, 88, 0.7);
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .home-changelog__entry:first-child {
@@ -1050,52 +1267,196 @@ async function startAi(): Promise<void> {
 
 .home-changelog__date {
   margin: 0 0 4px;
-  color: var(--text-dim);
+  color: var(--text-tertiary);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 
 .home-changelog__items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding-left: 14px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+/* 卡牌展示条（main 首页底部那排卡面）。 */
+.home-showcase {
+  grid-column: 1 / -1;
+}
+
+.home-showcase__meta {
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-showcase__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.home-cardface {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 112px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.home-cardface__art {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-chamber);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gold) 22%, transparent);
+  transition:
+    transform var(--duration-fast) var(--ease),
+    border-color var(--duration-fast) var(--ease),
+    box-shadow var(--duration-fast) var(--ease);
+}
+
+.home-cardface__art--none {
   display: grid;
-  gap: 3px;
-  color: var(--text);
+  place-items: center;
+  color: var(--gold-strong);
+  font-size: 22px;
+}
+
+.home-cardface:hover .home-cardface__art {
+  transform: translateY(-3px);
+  border-color: var(--chip-line);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--gold) 35%, transparent),
+    0 12px 22px rgba(0, 0, 0, 0.45);
+}
+
+.home-cardface__name {
+  color: var(--text-secondary);
   font-size: 12px;
-  overflow-wrap: anywhere;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-@media (max-width: 1179px) {
-  .home-grid {
-    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
-    grid-template-areas:
-      'actions actions'
-      'player side';
-  }
+.home-cardface:hover .home-cardface__name {
+  color: var(--text-primary);
 }
 
-@media (max-width: 759px) {
+/* ----------------------------------------------------------- 断点 --- */
+@media (max-width: 1180px) {
   .home-grid {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas:
-      'actions'
-      'player'
-      'side';
+    grid-template-columns: 260px minmax(0, 1fr) 268px;
   }
 
+  .home-ai__caps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+}
+
+@media (max-width: 1023px) {
   .home-screen {
-    max-width: none;
-    padding: 10px 14px 22px;
+    padding: 16px 16px 28px;
   }
 
-  .home-conn {
+  /* One column on tablets/phones: plain flex so the order below is exact
+     (grid-template-areas from the desktop layout cannot collapse to 1 column). */
+  .home-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .home-main {
+    order: 1;
+  }
+
+  .home-player {
+    order: 2;
+  }
+
+  .home-side {
+    order: 3;
+  }
+
+  /* Single column: the card shelf belongs after the actions, not on top. */
+  .home-showcase {
+    order: 4;
+  }
+
+  .home-ai__caps {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 719px) {
+  .home-screen {
+    padding: 12px 12px 24px;
+  }
+
+  .home-cardface {
+    width: 92px;
+  }
+
+  .home-head__title {
+    font-size: 19px;
+  }
+
+  .home-play {
+    grid-template-columns: 38px minmax(0, 1fr);
+    min-height: 72px;
+    padding: 12px 14px;
+  }
+
+  .home-play__icon {
+    width: 38px;
+    height: 38px;
+  }
+
+  .home-play__title {
+    font-size: 16px;
+  }
+
+  .home-play__cta {
     display: none;
   }
 
-  .home-action--primary {
-    min-height: 74px;
+  .home-ai__caps,
+  .home-links,
+  .home-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .home-player__emblem {
-    display: none;
+
+  .home-player__links {
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 519px) {
+  .home-ai__caps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .home-links {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>

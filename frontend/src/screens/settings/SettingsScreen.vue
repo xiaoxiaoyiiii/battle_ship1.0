@@ -235,7 +235,7 @@ onMounted(() => {
   >
     <div class="settings__modal">
       <header class="settings__head">
-        <p class="settings__eyebrow">P4 · 设置</p>
+        <p class="settings__eyebrow">竞技场 · 设置</p>
         <h1 id="screen-settings-title" class="settings__title" data-testid="settings-heading">设置</h1>
         <p class="settings__hint">回放与观战开关、名片隐私、密码与壁纸入口；改动立即生效。</p>
       </header>
@@ -642,12 +642,12 @@ onMounted(() => {
 .settings__head {
   flex: 0 0 auto;
   padding: 16px 22px 12px;
-  border-bottom: 1px dashed var(--line-dash);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .settings__eyebrow {
   margin: 0 0 2px;
-  color: #8f9bc4;
+  color: var(--text-secondary);
   font-size: 10px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -681,7 +681,7 @@ onMounted(() => {
   padding: 8px;
   border: 1px solid var(--panel-line);
   border-radius: 10px;
-  background: rgba(13, 17, 34, 0.5);
+  background: var(--surface-deck);
 }
 
 .settings__nav-item {
@@ -724,7 +724,7 @@ onMounted(() => {
   padding: 14px 16px;
   border: 1px dashed var(--border);
   border-radius: var(--radius);
-  background: rgba(13, 17, 34, 0.55);
+  background: var(--surface-deck);
   color: var(--text-muted);
   font-size: 13px;
 }
@@ -750,17 +750,17 @@ onMounted(() => {
   padding: 14px 16px;
   border: 1px solid var(--panel-line);
   border-radius: 10px;
-  background: rgba(13, 17, 34, 0.5);
+  background: var(--surface-deck);
 }
 
 .settings__block-title {
   margin: 0;
   padding-bottom: 8px;
-  border-bottom: 1px dashed var(--line-dash);
-  color: var(--text);
-  font-size: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.14em;
 }
 
 .settings__switch {
@@ -834,7 +834,7 @@ onMounted(() => {
   gap: 8px;
   margin-top: 10px;
   padding: 8px 10px;
-  border: 1px solid rgba(201, 162, 76, 0.35);
+  border: 1px solid color-mix(in srgb, var(--gold) 35%, transparent);
   border-radius: var(--radius-sm);
   background: rgba(201, 162, 76, 0.08);
 }
@@ -879,7 +879,7 @@ onMounted(() => {
   height: 54px;
   overflow: hidden;
   border-radius: 6px;
-  background: rgba(6, 9, 20, 0.9);
+  background: var(--surface-sea);
   color: var(--text-dim);
   font-size: 11px;
 }
@@ -923,7 +923,7 @@ onMounted(() => {
 
 .settings__actions [data-testid='settings-back'] {
   border-color: var(--border-strong);
-  background: rgba(13, 17, 34, 0.72);
+  background: var(--surface-deck);
   color: var(--text-muted);
 }
 
@@ -995,10 +995,10 @@ onMounted(() => {
 
 .settings__group-title {
   margin: 2px 0 0;
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
 }
 
 /* Segmented controls: theme / motion / contrast / font scale. */

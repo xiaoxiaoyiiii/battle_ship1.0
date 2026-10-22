@@ -269,6 +269,11 @@ const chainProgress = computed(() => {
 const logs = computed(() => match.logs.slice().reverse())
 const notices = computed(() => match.notices.slice(-4))
 const latestLog = computed(() => (match.logs.length ? match.logs[match.logs.length - 1].text : ''))
+
+// 左列日志：main 的日志窗是常驻的，这里取最近十几条，完整历史仍在日志抽屉里。
+const gameLogLines = computed(() => match.logs.slice(-14))
+
+const discardCountText = computed(() => (discardCards.value.length ? String(discardCards.value.length) : '—'))
 const quickChatMessages = computed(() => match.quickChat.slice(-8).reverse())
 const chatMessages = computed(() => match.chat.slice(-30))
 
@@ -300,7 +305,7 @@ function syncCompact(): void {
 }
 
 const opponentHidden = computed(() => compact.value && zoomOpen.value)
-const boardMode = computed(() => (compact.value ? 'tabs' : 'single'))
+const boardMode = computed(() => (compact.value ? 'tabs' : 'dual'))
 
 const shipSlots = computed(() => {
   const ships = Array.isArray(state.value.ships) ? state.value.ships : []
@@ -679,7 +684,8 @@ function onCell(board: 'self' | 'opponent', x: number, y: number): void {
     return
   }
   if (board === 'self') {
-    openZoom()
+    // 桌面双棋盘常驻：点己方海域不再需要放大浮层，只有手机档才切到己方格。
+    if (compact.value) openZoom()
     return
   }
   void fire(x, y)
@@ -1101,7 +1107,8 @@ onMounted(() => {
   }, 250)
   void loadQuickChatCatalog()
   if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
-    mq = window.matchMedia('(max-width: 719px)')
+    // 手机竖屏与手机横屏都走紧凑档：宽度 <=719 或 高度 <=520（原 main 的横屏单棋盘档）。
+    mq = window.matchMedia('(max-width: 719px), (max-height: 520px)')
     mq.addEventListener('change', syncCompact)
     syncCompact()
   }
@@ -1132,46 +1139,7 @@ function backToLobby(): void {
   >
     <h1 id="screen-game-title" class="visually-hidden">对局</h1>
 
-    <header class="game-status" data-testid="game-hud">
-      <span class="game-status__chips">
-        <span class="game-status__chip" data-testid="game-round">第 {{ state.round }} 回合</span>
-        <span class="game-status__chip" data-testid="game-phase">{{ phaseText }}</span>
-        <span class="game-status__chip game-status__chip--turn" data-testid="game-attacker">{{ turnLabel }}</span>
-        <span class="game-status__chip game-status__chip--num" data-testid="game-attacks">剩余攻击 {{ state.attacks_remaining }}</span>
-        <span
-          v-if="clock.visible"
-          class="game-status__chip game-status__chip--clock"
-          :class="{ 'is-warning': clock.warning, 'is-expired': clock.expired }"
-          data-testid="game-turn-clock"
-          :data-warning="clock.warning ? 'true' : 'false'"
-          :data-remaining-ms="clock.remaining * 1000"
-          :data-remaining="clock.remaining"
-        >
-          回合计时 {{ clock.label }}
-        </span>
-        <span v-if="turnOrderText" class="game-status__chip game-status__chip--muted" data-testid="game-turn-order">{{ turnOrderText }}</span>
-        <span class="game-status__chip game-status__chip--muted" data-testid="game-mode">{{ modeText }}</span>
-        <span
-          class="game-status__chip"
-          :class="ui.connection === 'online' ? 'is-online' : 'is-offline'"
-          data-testid="game-connection"
-        >{{ connectionText }}</span>
-      </span>
-      <span class="game-status__names">
-        <span data-testid="game-self-name">{{ selfName }}</span>
-        <span class="game-status__vs" aria-hidden="true">VS</span>
-        <span data-testid="game-opponent-name">{{ opponentName }}</span>
-        <span class="game-status__ships" data-testid="game-ships">{{ shipsText }}</span>
-      </span>
-    </header>
-
-    <div class="game-fieldbar">
-      <span class="game-fieldbar__label">当前生效的场地魔法</span>
-      <span class="game-fieldbar__value" data-testid="game-field-magic">{{ fieldMagic }}</span>
-    </div>
-
     <p class="visually-hidden" role="status" aria-live="polite" aria-atomic="true" data-testid="game-live">{{ liveText }}</p>
-    <p v-if="receiptText" class="game-receipt" data-testid="game-receipt" role="status" aria-live="polite">{{ receiptText }}</p>
 
     <p v-if="timeoutNote" class="game-banner game-banner--warning" data-testid="game-timeout-note">
       {{ timeoutNote }}
@@ -1180,61 +1148,132 @@ function backToLobby(): void {
       还没有收到对局数据。进对局时会自动显示双方海域、手牌与本回合状态；刷新后请从大厅或布船重新进入。
     </p>
 
-    <div class="game-body">
-      <div class="game-board-column">
-        <div v-if="compact" class="game-tabs" role="tablist" aria-label="切换棋盘">
+    <div class="game-main-container">
+      <!-- 左列：对局日志（原 main 的浮动日志窗，常驻在左列；手机上收进日志抽屉） -->
+      <aside v-if="!compact" class="log-container" aria-label="游戏日志">
+        <header class="log-header">
+          <h3>游戏日志</h3>
+          <button type="button" class="log-expand" data-testid="game-log-open" @click="logOpen = true">放大</button>
+        </header>
+        <ol class="log-content" data-testid="game-log-lines">
+          <li v-for="(line, index) in gameLogLines" :key="'log-' + index" class="log-line">{{ line.text }}</li>
+        </ol>
+        <p v-if="!gameLogLines.length" class="log-empty">还没有日志</p>
+      </aside>
+
+      <div class="game-content">
+        <!-- 顶部状态条：回合 / 阶段 / 攻击 / 计时 / 连接 + 双方名（原 main 的 .turn-indicator + .arena-turn-chips） -->
+        <header class="game-hud" data-testid="game-hud">
+          <h2 class="hud-round">第<span class="hud-round__num" data-testid="game-round">{{ state.round }}</span>回合</h2>
+          <div class="hud-chips">
+            <span class="hud-chip" data-testid="game-phase">{{ phaseText }}</span>
+            <span class="hud-chip hud-chip--turn" data-testid="game-attacker">{{ turnLabel }}</span>
+            <span class="hud-chip" data-testid="game-attacks">攻击 <b>×{{ state.attacks_remaining }}</b></span>
+            <span
+              v-if="clock.visible"
+              class="hud-chip hud-chip--clock"
+              :class="{ 'is-warning': clock.warning, 'is-expired': clock.expired }"
+              data-testid="game-turn-clock"
+              :data-warning="clock.warning ? 'true' : 'false'"
+              :data-remaining-ms="clock.remaining * 1000"
+              :data-remaining="clock.remaining"
+            >回合计时 {{ clock.label }}</span>
+            <span v-if="turnOrderText" class="hud-chip hud-chip--muted" data-testid="game-turn-order">{{ turnOrderText }}</span>
+            <span class="hud-chip hud-chip--muted" data-testid="game-mode">{{ modeText }}</span>
+            <span
+              class="hud-chip"
+              :class="ui.connection === 'online' ? 'is-online' : 'is-offline'"
+              data-testid="game-connection"
+            >{{ connectionText }}</span>
+          </div>
+          <div class="hud-players">
+            <span class="hud-name" data-testid="game-self-name">{{ selfName }}</span>
+            <span class="hud-vs" aria-hidden="true">VS</span>
+            <span class="hud-name" data-testid="game-opponent-name">{{ opponentName }}</span>
+            <span class="hud-pips" data-testid="game-ships">{{ shipsText }}</span>
+          </div>
+        </header>
+
+        <!-- 全宽场地魔法条（原 main 的 .field-magic-area） -->
+        <div class="field-magic-area">
+          <span class="fm-label">当前生效的场地魔法：</span>
+          <span class="fm-value" data-testid="game-field-magic">{{ fieldMagic }}</span>
+        </div>
+
+        <!-- 长久效果胶囊（极限增援 / 无暇圣心 / 其它效果角标） -->
+        <div v-if="selfEffects.length || opponentEffects.length" class="effect-status-bar" data-testid="game-effect-bar">
+          <span
+            v-for="badge in selfEffects"
+            :key="'self-' + badge.key"
+            class="status-item"
+            :data-testid="'game-effect-self-' + badge.key"
+            :title="badge.description + (badge.expires ? '（' + badge.expires + '）' : '')"
+          >{{ badge.label }}</span>
+          <span
+            v-for="badge in opponentEffects"
+            :key="'opp-' + badge.key"
+            class="status-item status-item--opponent"
+            :data-testid="'game-effect-opponent-' + badge.key"
+            :title="badge.description + (badge.expires ? '（' + badge.expires + '）' : '')"
+          >对方 · {{ badge.label }}</span>
+        </div>
+
+        <p v-if="receiptText" class="game-receipt" data-testid="game-receipt" role="status" aria-live="polite">{{ receiptText }}</p>
+
+        <!-- 手机档：单块棋盘 + 海域切换标签（标题与提交的棋盘同源） -->
+        <div v-if="compact" class="board-tabs" role="tablist" aria-label="切换棋盘">
           <button
             type="button"
-            class="game-tab"
+            class="board-tab"
             role="tab"
             :aria-selected="!zoomOpen"
             data-testid="game-board-tab-opponent"
             @click="closeZoom"
-          >
-            对手海域
-          </button>
+          >对手海域</button>
           <button
             type="button"
-            class="game-tab"
+            class="board-tab"
             role="tab"
             :aria-selected="zoomOpen"
             data-testid="game-board-tab-self"
             @click="openZoom"
-          >
-            我的海域
-          </button>
+          >你的海域</button>
         </div>
-        <BoardPanel
-          board="opponent"
-          board-testid="game-board-opponent"
-          title-testid="game-board-title-opponent"
-          :title="'对手海域 · ' + opponentName"
-          :subtitle="'存活 ' + state.opponent_remaining_ships + ' 艘' + (frozenTheirs.size ? ' · 对方 3×3 区域被冻结' : '')"
-          :cells="opponentCells"
-          :preview="previewKeys"
-          :legal="legalKeys"
-          :hidden="opponentHidden"
-          :picking="!!selection"
-          @cell="(x: number, y: number) => onCell('opponent', x, y)"
-        />
-        <section v-show="zoomOpen" class="game-zoom" data-testid="game-self-zoom" role="dialog" aria-label="我的海域放大">
-          <header class="game-zoom__head">
-            <h2 class="game-zoom__title">我的海域</h2>
-            <button type="button" class="game-close" data-testid="game-self-zoom-close" aria-label="收起我的海域" @click="closeZoom">×</button>
-          </header>
-          <BoardPanel
-            board="self"
-            board-testid="game-board-self"
-            title-testid="game-board-title-self"
-            :title="'我的海域 · ' + selfName"
-            :subtitle="'存活 ' + state.remaining_ships + ' 艘' + (frozenMine.size ? ' · 你的 3×3 区域被冻结' : '')"
-            :cells="selfCells"
-            :selected="selectedKeys.concat(shieldSelectedKeys)"
-            :legal="legalKeys"
-            :picking="!!selection || !!match.pickRequest || shieldOpen"
-            @cell="(x: number, y: number) => onCell('self', x, y)"
-          />
-        </section>
+
+        <!-- 双棋盘：桌面并排常驻；手机档按标签只显示一块 -->
+        <div class="boards-container" :data-board-mode="boardMode">
+          <div v-show="!compact || zoomOpen" class="board-wrapper">
+            <BoardPanel
+              board="self"
+              board-testid="game-board-self"
+              title-testid="game-board-title-self"
+              :title="'你的海域 · ' + selfName"
+              :subtitle="'存活 ' + state.remaining_ships + ' 艘' + (frozenMine.size ? ' · 你的 3×3 区域被冻结' : '')"
+              :cells="selfCells"
+              :selected="selectedKeys.concat(shieldSelectedKeys)"
+              :legal="legalKeys"
+              :hidden="compact && !zoomOpen"
+              :picking="!!selection || !!match.pickRequest || shieldOpen"
+              @cell="(x: number, y: number) => onCell('self', x, y)"
+            />
+          </div>
+          <div v-show="!opponentHidden" class="board-wrapper">
+            <BoardPanel
+              board="opponent"
+              board-testid="game-board-opponent"
+              title-testid="game-board-title-opponent"
+              :title="'对手海域 · ' + opponentName"
+              :subtitle="'已探明 ' + shots + ' / 36 格 · 命中 ' + hits + (frozenTheirs.size ? ' · 对方 3×3 区域被冻结' : '')"
+              :cells="opponentCells"
+              :preview="previewKeys"
+              :legal="legalKeys"
+              :hidden="opponentHidden"
+              :picking="!!selection"
+              @cell="(x: number, y: number) => onCell('opponent', x, y)"
+            />
+          </div>
+        </div>
+
         <p class="game-latest" data-testid="game-latest-event">{{ latestLog }}</p>
         <ul v-if="notices.length" class="game-notices" data-testid="game-notices" aria-live="polite">
           <li v-for="notice in notices" :key="notice.id" class="game-notice" :class="'game-notice--' + notice.kind">
@@ -1243,129 +1282,76 @@ function backToLobby(): void {
         </ul>
       </div>
 
-      <aside class="game-rail" aria-label="我的海域与工具">
-        <button
-          type="button"
-          class="game-map"
-          data-testid="game-mini-map"
-          aria-label="我的海域小地图，点开可放大"
-          @click="openZoom"
-        >
-          <span class="game-map__grid" aria-hidden="true">
-            <span
-              v-for="cell in miniMapCells"
-              :key="cell.key"
-              class="game-map__cell"
-              :class="{ 'is-ship': cell.ship, 'is-hit': cell.hit, 'is-miss': cell.miss }"
-            ></span>
-          </span>
-          <span class="game-map__label">
-            我的海域 · 存活 {{ state.remaining_ships }} 艘
-            <span v-if="frozenMine.size" class="game-map__note">3×3 冻结中</span>
-          </span>
-        </button>
-
-        <ol class="game-slots" data-testid="game-ship-slots" aria-label="六个舰位">
-          <li
-            v-for="slot in shipSlots"
-            :key="slot.index"
-            class="game-slot"
-            :class="{ 'is-lost': !slot.alive, 'is-frozen': slot.frozen, 'is-shielded': slot.shielded }"
-            :data-testid="'game-ship-slot-' + slot.index"
-          >
-            舰 {{ slot.index + 1 }}
-          </li>
-        </ol>
-
-        <div class="game-rail__actions">
-          <button type="button" class="game-mini-button" data-testid="game-log-open" @click="logOpen = true">日志</button>
-          <button type="button" class="game-mini-button" data-testid="game-chat-open" @click="quickChatOpen = true">聊天</button>
-          <button type="button" class="game-mini-button" data-testid="game-piles" @click="openDiscard">弃牌堆</button>
-        </div>
-
-        <p v-if="!chainList.length" class="game-chain-empty" data-testid="game-chain-empty">当前没有连锁</p>
-
-        <ul class="game-badges" data-testid="game-effect-self" aria-label="我的效果">
-          <li
-            v-for="badge in selfEffects"
-            :key="'self-' + badge.key"
-            class="game-badge"
-            :data-testid="'game-effect-self-' + badge.key"
-            :title="badge.description + (badge.expires ? '（' + badge.expires + '）' : '')"
-          >{{ badge.label }}</li>
-        </ul>
-        <ul class="game-badges game-badges--opponent" data-testid="game-effect-opponent" aria-label="对手的效果">
-          <li
-            v-for="badge in opponentEffects"
-            :key="'opponent-' + badge.key"
-            class="game-badge game-badge--opponent"
-            :data-testid="'game-effect-opponent-' + badge.key"
-            :title="badge.description + (badge.expires ? '（' + badge.expires + '）' : '')"
-          >{{ badge.label }}</li>
-        </ul>
-
-        <p v-if="state.priority_waiting" class="game-banner" data-testid="game-priority-waiting">
-          等待对方响应「{{ state.priority_waiting.action_text }}」
-        </p>
-        <p v-if="state.shenji_waiting" class="game-banner" data-testid="game-shenji-waiting">{{ state.shenji_waiting.text }}</p>
-        <p v-if="pendingPick && !match.pickRequest" class="game-banner" data-testid="game-pending-pick">
-          待处理：{{ pendingPick.message }}
-        </p>
-      </aside>
-    </div>
-
-    <div class="game-bottom">
-      <section class="game-hand-wrap" aria-label="手牌">
-        <div class="game-hand-head">
-          <span class="game-hand-stats" data-testid="game-stats">命中 {{ hits }} · 开火 {{ shots }}</span>
-          <span class="game-hand-count" data-testid="game-hand-count">手牌 {{ hand.length }} 张</span>
-        </div>
-        <div class="game-hand" data-testid="game-hand">
-          <p v-if="!hand.length" class="game-hand-empty" data-testid="game-hand-empty">手上没有魔法卡</p>
+      <!-- 右列：连锁结算 / 卡牌详情 / 计数与主行动（原 main 的 .arena-rail + 详情列） -->
+      <aside class="arena-rail" aria-label="连锁、卡牌与操作">
+        <section class="arena-rail-panel" data-testid="game-chain-rail">
+          <header class="arena-rail-head">连锁结算</header>
+          <ol v-if="chainList.length" class="arena-chain-list" data-testid="game-chain-stack">
+            <li
+              v-for="(item, index) in chainList"
+              :key="'chain-rail-' + index"
+              class="arena-chain-item"
+              :class="{ 'is-negated': item.negated }"
+              :data-testid="'game-chain-item-' + index"
+            >
+              <b :data-testid="'game-chain-item-' + index + '-name'">{{ item.name }}</b>
+              <span class="arena-chain-index">第 {{ index + 1 }} 张</span>
+              <span v-if="item.negated" class="arena-chain-negated">已无效</span>
+            </li>
+          </ol>
+          <p v-else class="arena-rail-empty" data-testid="game-chain-empty">暂无连锁</p>
           <button
-            v-for="(card, index) in hand"
-            :key="cardTestIdFor(card, index)"
+            v-if="chainWindow"
             type="button"
-            class="card"
-            :class="{
-              'card--selected': selectedCardIndex === index,
-              'card--disabled': !!cardDisabled(card),
-              'card--art': !!cardArtUrl(card.name),
-            }"
-            :data-testid="cardTestIdFor(card, index)"
-            :data-card-name="card.name"
-            :data-card-speed="String(card.speed)"
-            :data-type="String(card.type)"
-            :aria-pressed="selectedCardIndex === index"
-            :aria-label="card.name + '，' + typeLabel(card) + (cardDisabled(card) ? '，' + cardDisabled(card) : '，可以使用')"
-            :title="cardDisabled(card) || card.description || card.name"
-            @click="onCardClick(index)"
-          >
-            <img
-              v-if="cardArtUrl(card.name)"
-              class="card__art"
-              :src="cardArtUrl(card.name) || ''"
-              alt=""
-              aria-hidden="true"
-              loading="eager"
-              decoding="async"
-            />
-            <span class="card__body">
-              <span class="card__name">{{ card.name }}</span>
-              <span class="card__gems" :title="'速阶 ' + String(card.speed)">
-                {{ speedGems(cardSpeed(card)) }}<span class="card__speed">{{ card.speed }}</span>
-              </span>
-              <span class="card__type">{{ typeLabel(card) }}</span>
-              <span class="card__desc">{{ card.description }}</span>
-              <span v-if="cardDisabled(card)" class="card__reason">{{ cardDisabled(card) }}</span>
-            </span>
-          </button>
-        </div>
-      </section>
+            class="button button--ghost arena-rail-wide"
+            data-testid="game-chain-open"
+            @click="match.closeChainWindow()"
+          >收起连锁窗口</button>
+        </section>
 
-      <div class="game-actions" data-testid="game-actions">
-        <p class="game-turn-hint" data-testid="game-turn-hint">{{ turnLabel }} · {{ phaseText }}</p>
-        <div class="game-actions__row">
+        <!-- 卡牌详情 / 待使用：选中后原位展开，未选中时给出占位（原 main 的 .magic-preview-container） -->
+        <section v-if="detailOpen && hand[selectedCardIndex]" class="game-detail" data-testid="game-card-detail" aria-label="卡牌详情">
+          <header class="game-detail__head">
+            <div class="game-detail__ident">
+              <img
+                v-if="cardArtUrl(hand[selectedCardIndex].name)"
+                class="game-detail__art"
+                :src="cardArtUrl(hand[selectedCardIndex].name) || ''"
+                alt=""
+                aria-hidden="true"
+              />
+              <div class="game-detail__ident-text">
+                <h2 class="game-detail__name">{{ hand[selectedCardIndex].name }}</h2>
+                <p class="game-detail__meta">{{ typeLabel(hand[selectedCardIndex]) }} · 速阶 {{ hand[selectedCardIndex].speed }}</p>
+              </div>
+            </div>
+            <button type="button" class="game-close" data-testid="game-card-detail-close" aria-label="关闭卡牌详情" @click="cancelCardSelection">×</button>
+          </header>
+          <p class="game-detail__desc">{{ hand[selectedCardIndex].description }}</p>
+          <p v-if="cardDisabled(hand[selectedCardIndex])" class="game-detail__reason" data-testid="game-card-detail-reason">
+            {{ cardDisabled(hand[selectedCardIndex]) }}
+          </p>
+          <div class="game-detail__actions">
+            <button type="button" class="button game-detail__use" data-testid="game-card-detail-use" :disabled="!!cardDisabled(hand[selectedCardIndex])" @click="useSelectedCard">使用此卡</button>
+            <button type="button" class="button button--ghost" data-testid="game-card-detail-cancel" @click="cancelCardSelection">取消选择</button>
+          </div>
+        </section>
+        <section v-else class="arena-rail-panel arena-card-placeholder" data-testid="game-card-placeholder">
+          <header class="arena-rail-head">卡牌详情</header>
+          <p class="arena-rail-empty">点击一张手牌查看效果；再点一次「使用此卡」出牌。</p>
+        </section>
+
+        <section class="arena-rail-panel" data-testid="game-counts">
+          <div class="arena-counts">
+            <div class="fields"><span>手牌</span><b data-testid="game-hand-count">{{ hand.length }}</b></div>
+            <div class="fields"><span>弃牌堆</span><b data-testid="game-discard-count">{{ discardCountText }}</b></div>
+            <div class="fields"><span>剩余舰</span><b data-testid="game-self-ships">{{ state.remaining_ships }}</b></div>
+          </div>
+          <button type="button" class="button button--ghost arena-rail-wide" data-testid="game-piles" @click="openDiscard">查看弃牌堆</button>
+        </section>
+
+        <div v-if="!compact" class="arena-actions" data-testid="game-actions">
+          <p class="arena-turn-hint" data-testid="game-turn-hint">{{ turnLabel }} · {{ phaseText }}</p>
           <button
             type="button"
             class="button game-primary"
@@ -1373,87 +1359,131 @@ function backToLobby(): void {
             data-testid="game-primary"
             :disabled="!primaryAction.enabled"
             @click="runPrimary"
-          >
-            {{ primaryAction.label }}
-          </button>
+          >{{ primaryAction.label }}</button>
           <button
             type="button"
-            class="button button--ghost game-more"
+            class="button button--ghost"
             data-testid="game-more"
             :aria-expanded="moreOpen"
             aria-haspopup="true"
             @click="moreOpen = !moreOpen"
-          >
-            更多操作
-          </button>
+          >更多操作</button>
+          <div v-show="moreOpen" class="game-more-menu" data-testid="game-more-menu" role="menu" aria-label="更多操作">
+            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-battle" :disabled="!myTurn || state.current_phase !== 'preparation'" @click="turnAction('enter_battle_phase')">进入战斗阶段</button>
+            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-end" :disabled="!myTurn || state.current_phase !== 'battle'" @click="turnAction('enter_end_phase')">进入结束阶段</button>
+            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-end-turn" :disabled="!myTurn || state.current_phase !== 'end'" @click="turnAction('end_turn')">结束回合</button>
+            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-log-toggle" @click="logOpen = true">对局日志</button>
+            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-chat-open" @click="quickChatOpen = true">聊天与快捷语</button>
+            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-more-piles" @click="openDiscard">弃牌堆</button>
+            <button
+              type="button"
+              class="button button--danger game-more__item"
+              role="menuitem"
+              data-testid="game-surrender"
+              :class="{ 'is-armed': surrenderArmed }"
+              @click="armSurrender"
+            >{{ surrenderArmed ? '确认投降（判负）' : '投降' }}</button>
+            <p class="game-more__note" data-testid="game-surrender-consequence">{{ surrenderConsequence }}</p>
+          </div>
+          <p v-if="state.priority_waiting" class="game-banner" data-testid="game-priority-waiting">
+            等待对方响应「{{ state.priority_waiting.action_text }}」
+          </p>
+          <p v-if="state.shenji_waiting" class="game-banner" data-testid="game-shenji-waiting">{{ state.shenji_waiting.text }}</p>
+          <p v-if="pendingPick && !match.pickRequest" class="game-banner" data-testid="game-pending-pick">
+            待处理：{{ pendingPick.message }}
+          </p>
         </div>
-        <div v-show="moreOpen" class="game-more-menu" data-testid="game-more-menu" role="menu" aria-label="更多操作">
-          <button
-            type="button"
-            class="button button--ghost game-more__item"
-            role="menuitem"
-            data-testid="game-enter-battle"
-            :disabled="!myTurn || state.current_phase !== 'preparation'"
-            @click="turnAction('enter_battle_phase')"
-          >进入战斗阶段</button>
-          <button
-            type="button"
-            class="button button--ghost game-more__item"
-            role="menuitem"
-            data-testid="game-enter-end"
-            :disabled="!myTurn || state.current_phase !== 'battle'"
-            @click="turnAction('enter_end_phase')"
-          >进入结束阶段</button>
-          <button
-            type="button"
-            class="button button--ghost game-more__item"
-            role="menuitem"
-            data-testid="game-end-turn"
-            :disabled="!myTurn || state.current_phase !== 'end'"
-            @click="turnAction('end_turn')"
-          >结束回合</button>
-          <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-log-toggle" @click="logOpen = true">对局日志</button>
-          <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-quick-chat-button" @click="quickChatOpen = true">快捷语与聊天</button>
-          <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-more-piles" @click="openDiscard">弃牌堆</button>
-          <button
-            type="button"
-            class="button button--danger game-more__item"
-            role="menuitem"
-            data-testid="game-surrender"
-            :class="{ 'is-armed': surrenderArmed }"
-            @click="armSurrender"
-          >{{ surrenderArmed ? '确认投降（判负）' : '投降' }}</button>
-          <p class="game-more__note" data-testid="game-surrender-consequence">{{ surrenderConsequence }}</p>
-        </div>
-      </div>
+      </aside>
     </div>
 
-    <section v-if="detailOpen && hand[selectedCardIndex]" class="game-detail" data-testid="game-card-detail" aria-label="卡牌详情">
-      <header class="game-detail__head">
-        <div class="game-detail__ident">
+    <!-- 底部手牌条（原 main 的底部手牌） -->
+    <section class="game-hand-wrap" aria-label="手牌">
+      <div class="game-hand-head">
+        <span class="game-hand-stats" data-testid="game-stats">命中 {{ hits }} · 开火 {{ shots }}</span>
+        <span class="game-hand-count" data-testid="game-hand-counter">手牌 {{ hand.length }} 张</span>
+      </div>
+      <div class="game-hand" data-testid="game-hand">
+        <p v-if="!hand.length" class="game-hand-empty" data-testid="game-hand-empty">手上没有魔法卡</p>
+        <button
+          v-for="(card, index) in hand"
+          :key="cardTestIdFor(card, index)"
+          type="button"
+          class="card"
+          :class="{
+            'card--selected': selectedCardIndex === index,
+            'card--disabled': !!cardDisabled(card),
+            'card--art': !!cardArtUrl(card.name),
+          }"
+          :data-testid="cardTestIdFor(card, index)"
+          :data-card-name="card.name"
+          :data-card-speed="String(card.speed)"
+          :data-type="String(card.type)"
+          :aria-pressed="selectedCardIndex === index"
+          :aria-label="card.name + '，' + typeLabel(card) + (cardDisabled(card) ? '，' + cardDisabled(card) : '，可以使用')"
+          :title="cardDisabled(card) || card.description || card.name"
+          @click="onCardClick(index)"
+        >
           <img
-            v-if="cardArtUrl(hand[selectedCardIndex].name)"
-            class="game-detail__art"
-            :src="cardArtUrl(hand[selectedCardIndex].name) || ''"
+            v-if="cardArtUrl(card.name)"
+            class="card__art"
+            :src="cardArtUrl(card.name) || ''"
             alt=""
             aria-hidden="true"
+            loading="eager"
+            decoding="async"
           />
-          <div class="game-detail__ident-text">
-            <h2 class="game-detail__name">{{ hand[selectedCardIndex].name }}</h2>
-            <p class="game-detail__meta">{{ typeLabel(hand[selectedCardIndex]) }}</p>
-          </div>
-        </div>
-        <button type="button" class="game-close" data-testid="game-card-detail-close" aria-label="关闭卡牌详情" @click="cancelCardSelection">×</button>
-      </header>
-      <p class="game-detail__desc">{{ hand[selectedCardIndex].description }}</p>
-      <p v-if="cardDisabled(hand[selectedCardIndex])" class="game-detail__reason" data-testid="game-card-detail-reason">
-        {{ cardDisabled(hand[selectedCardIndex]) }}
-      </p>
-      <div class="game-detail__actions">
-        <button type="button" class="button game-detail__use" data-testid="game-card-detail-use" :disabled="!!cardDisabled(hand[selectedCardIndex])" @click="useSelectedCard">使用此卡</button>
-        <button type="button" class="button button--ghost" data-testid="game-card-detail-cancel" @click="cancelCardSelection">取消选择</button>
+          <span class="card__body">
+            <span class="card__name">{{ card.name }}</span>
+            <span class="card__gems" :title="'速阶 ' + String(card.speed)">
+              {{ speedGems(cardSpeed(card)) }}<span class="card__speed">{{ card.speed }}</span>
+            </span>
+            <span class="card__type">{{ typeLabel(card) }}</span>
+            <span class="card__desc">{{ card.description }}</span>
+            <span v-if="cardDisabled(card)" class="card__reason">{{ cardDisabled(card) }}</span>
+          </span>
+        </button>
       </div>
     </section>
+
+    <!-- 手机档：底部操作条 + 工具入口 -->
+    <div v-if="compact" class="game-compact-bar" data-testid="game-actions">
+      <p class="arena-turn-hint" data-testid="game-turn-hint">{{ turnLabel }} · {{ phaseText }}</p>
+      <div class="game-actions__row">
+        <button
+          type="button"
+          class="button game-primary"
+          data-primary-action
+          data-testid="game-primary"
+          :disabled="!primaryAction.enabled"
+          @click="runPrimary"
+        >{{ primaryAction.label }}</button>
+        <button
+          type="button"
+          class="button button--ghost"
+          data-testid="game-more"
+          :aria-expanded="moreOpen"
+          aria-haspopup="true"
+          @click="moreOpen = !moreOpen"
+        >更多操作</button>
+      </div>
+      <div v-show="moreOpen" class="game-more-menu" data-testid="game-more-menu" role="menu" aria-label="更多操作">
+        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-battle" :disabled="!myTurn || state.current_phase !== 'preparation'" @click="turnAction('enter_battle_phase')">进入战斗阶段</button>
+        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-end" :disabled="!myTurn || state.current_phase !== 'battle'" @click="turnAction('enter_end_phase')">进入结束阶段</button>
+        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-end-turn" :disabled="!myTurn || state.current_phase !== 'end'" @click="turnAction('end_turn')">结束回合</button>
+        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-log-toggle" @click="logOpen = true">对局日志</button>
+        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-chat-open" @click="quickChatOpen = true">聊天与快捷语</button>
+        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-more-piles" @click="openDiscard">弃牌堆</button>
+        <button
+          type="button"
+          class="button button--danger game-more__item"
+          role="menuitem"
+          data-testid="game-surrender"
+          :class="{ 'is-armed': surrenderArmed }"
+          @click="armSurrender"
+        >{{ surrenderArmed ? '确认投降（判负）' : '投降' }}</button>
+        <p class="game-more__note" data-testid="game-surrender-consequence">{{ surrenderConsequence }}</p>
+      </div>
+    </div>
 
     <section v-if="selection" class="game-target" data-testid="game-target" aria-label="目标选择" role="region">
       <div class="game-target__main">

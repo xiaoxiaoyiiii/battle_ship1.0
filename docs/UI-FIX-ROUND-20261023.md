@@ -132,14 +132,17 @@ main（`d16f706e61acb02a4ca7197cd2a92400c92c568d`）基准对照见
 | `1920/game-more-1920.jpg` | real | 「更多操作」菜单 |
 | `1920/game-log-1920.jpg` | real | 游戏日志抽屉 |
 | `1920/game-over-1920.jpg` | real | 结算 |
+| `1440/home-1440.jpg` | real | 首页（1440×900） |
 | `1440/game-1440.jpg` | real | 对局（修复后无页面滚动） |
 | `1440/toast-1440.jpg` | real | 右下角状态通知（选牌提示） |
 | `1440/game-reason-1440.jpg` | fixture | 卡牌不可用原因（服务端文案） |
 | `1440/detail-landscape-844.jpg` | fixture | 横屏卡牌详情贴顶 |
 | `390/home-390.jpg` | real | 首页 |
 | `390/game-390.jpg` | fixture | 对局（HUD 两行后） |
+| `390/gameover-390.jpg` | fixture | 结算（390×740） |
 | `390/game-detail-390.jpg` | real | 卡牌详情 |
 | `390/game-latest-390.jpg` | fixture | HUD 单行回归对比（问题现场） |
+| `844/home-844.jpg` | real | 横屏首页（844×390） |
 | `844/game-844.jpg` | fixture | 横屏两列布局 |
 | `themes/game-journal-1440.jpg` | fixture | 航海日志（浅色）主题棋盘 |
 | `themes/game-night-1440.jpg` | fixture | 夜航（高对比）主题棋盘 |

@@ -489,6 +489,23 @@ async function startAi(): Promise<void> {
             <b>图鉴 / 卡库</b><small>48 张魔法卡</small>
           </button>
         </nav>
+
+        <!-- 卡牌展示条：main 首页中间栏底部那排卡面（图鉴入口的展示，不宣称热度数据）。 -->
+        <section class="home-card home-showcase" aria-labelledby="home-showcase-title">
+        <div class="home-card__head">
+          <h2 id="home-showcase-title" class="home-kicker">卡 牌</h2>
+          <span class="home-showcase__meta">{{ cardCount }} 张魔法卡 · 场地 {{ fieldCount }} 张</span>
+        </div>
+        <ul class="home-showcase__row">
+          <li v-for="card in showcase" :key="card">
+            <button type="button" class="home-cardface" :title="card" @click="collection.open()">
+              <img v-if="cardArtUrl(card)" class="home-cardface__art" :src="cardArtUrl(card) || ''" :alt="card" loading="lazy" />
+              <span v-else class="home-cardface__art home-cardface__art--none" aria-hidden="true">舰</span>
+              <span class="home-cardface__name">{{ card }}</span>
+            </button>
+          </li>
+        </ul>
+      </section>
       </section>
 
       <!-- 在线与公告。 -->
@@ -562,23 +579,6 @@ async function startAi(): Promise<void> {
         </section>
       </aside>
 
-      <!-- 卡牌展示条：main 首页底部那排卡面。这里只做图鉴入口的展示，
-           点击打开卡库 overlay；不宣称任何“热度”数据。 -->
-      <section class="home-card home-showcase" aria-labelledby="home-showcase-title">
-        <div class="home-card__head">
-          <h2 id="home-showcase-title" class="home-kicker">卡 牌</h2>
-          <span class="home-showcase__meta">{{ cardCount }} 张魔法卡 · 场地 {{ fieldCount }} 张</span>
-        </div>
-        <ul class="home-showcase__row">
-          <li v-for="card in showcase" :key="card">
-            <button type="button" class="home-cardface" :title="card" @click="collection.open()">
-              <img v-if="cardArtUrl(card)" class="home-cardface__art" :src="cardArtUrl(card) || ''" :alt="card" loading="lazy" />
-              <span v-else class="home-cardface__art home-cardface__art--none" aria-hidden="true">舰</span>
-              <span class="home-cardface__name">{{ card }}</span>
-            </button>
-          </li>
-        </ul>
-      </section>
     </div>
   </section>
 </template>
@@ -1283,9 +1283,9 @@ async function startAi(): Promise<void> {
   line-height: 1.55;
 }
 
-/* 卡牌展示条（main 首页底部那排卡面）。 */
+/* 卡牌展示条（main 首页中间栏底部那排卡面）。 */
 .home-showcase {
-  grid-column: 1 / -1;
+  margin-top: 4px;
 }
 
 .home-showcase__meta {
@@ -1396,10 +1396,7 @@ async function startAi(): Promise<void> {
     order: 3;
   }
 
-  /* Single column: the card shelf belongs after the actions, not on top. */
-  .home-showcase {
-    order: 4;
-  }
+  /* 单列时卡牌条跟在中栏内容之后（已是中栏子块，无需 order）。 */
 
   .home-ai__caps {
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1412,7 +1409,7 @@ async function startAi(): Promise<void> {
   }
 
   .home-cardface {
-    width: 92px;
+    width: 88px;
   }
 
   .home-head__title {
@@ -1459,4 +1456,36 @@ async function startAi(): Promise<void> {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* 矮一些的桌面窗口（<=940px 高）收紧间距，让首页尽量一屏放下。 */
+@media (max-height: 940px) and (min-width: 1024px) {
+  .home-screen {
+    padding-top: 10px;
+  }
+
+  .home-card {
+    padding: 14px 16px;
+  }
+
+  .home-play--casual {
+    min-height: 74px;
+  }
+
+  .home-ai__cap {
+    min-height: 52px;
+  }
+
+  .home-link--tile {
+    padding: 10px 12px;
+  }
+
+  .home-cardface {
+    width: 84px;
+  }
+
+  .home-showcase__row {
+    gap: 8px;
+  }
+}
 </style>
+

@@ -113,7 +113,7 @@
   --rank-grad: linear-gradient(100deg, #c9a24c, #7a5b1d);
   --board-bg: radial-gradient(120% 120% at 50% 0%, #1d2a55, #101733 70%);
   --board-border: #3b4675;
-  --cell: #1f2850;
+  --cell-bg: #1f2850;
   --stage-glow: radial-gradient(60% 60% at 50% 0%, rgba(124, 92, 240, 0.16), transparent 72%);
 
   --font: 'Segoe UI', 'Segoe UI Variable Text', system-ui, -apple-system, 'Microsoft YaHei',
@@ -183,7 +183,7 @@ html[data-theme='night'] {
   --rank-grad: linear-gradient(100deg, #c98a3a, #7a4f16);
   --board-bg: radial-gradient(120% 120% at 50% 0%, #12294a, #0b1a30 70%);
   --board-border: #2c4d7f;
-  --cell: #14294d;
+  --cell-bg: #14294d;
   --stage-glow: radial-gradient(60% 60% at 50% 0%, rgba(56, 163, 240, 0.16), transparent 72%);
 }
 
@@ -249,7 +249,7 @@ html[data-theme='journal'] {
   --rank-grad: linear-gradient(100deg, #b28a3a, #7d5a20);
   --board-bg: radial-gradient(120% 120% at 50% 0%, #eaf2fd, #d5e6fb 70%);
   --board-border: #93c5fd;
-  --cell: #dbeafe;
+  --cell-bg: #dbeafe;
   --stage-glow: radial-gradient(60% 60% at 50% 0%, rgba(21, 101, 192, 0.1), transparent 72%);
 }
 

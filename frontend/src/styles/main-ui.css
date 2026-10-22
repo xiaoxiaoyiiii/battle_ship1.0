@@ -245,6 +245,13 @@ html[data-theme='journal'] body {
   width: min(380px, calc(100vw - 32px));
 }
 
+/* Battle screen on desktop: the hand and the primary action own the bottom
+   edge, so notices dock top-right (over the rail) instead of the CTA. */
+body:has([data-testid='screen-game']) .app-toasts {
+  top: 76px;
+  bottom: auto;
+}
+
 /* Phones: the bottom edge is the hand + primary action on the battle screen, so
    transient notices move to the top instead of covering the buttons. */
 @media (max-width: 719px) {
@@ -256,6 +263,18 @@ html[data-theme='journal'] body {
     width: auto;
     max-height: 42vh;
     overflow-y: auto;
+  }
+}
+
+/* Landscape phones: the battle screen keeps its hand and CTA in a right-hand
+   column, so the notices dock over the board's title strip instead. */
+@media (orientation: landscape) and (max-height: 480px) {
+  .app-toasts {
+    top: 6px;
+    right: auto;
+    bottom: auto;
+    left: 10px;
+    width: min(340px, 52vw);
   }
 }
 
@@ -449,4 +468,23 @@ input[type='radio'] {
 [class$='__eyebrow'] {
   color: var(--text-tertiary);
   font-weight: 600;
+}
+
+/* ---------------------------------------------------------- battle screen --- */
+/* The battle screen owns the window: it fits the viewport instead of pushing
+   the page down, so the hand and the primary action stay reachable. Cells and
+   cards scale from the height budget in game-screen.css; nothing is clipped. */
+body:has([data-testid='screen-game']) .app-shell {
+  height: 100dvh;
+  min-height: 0;
+}
+
+body:has([data-testid='screen-game']) .screen {
+  min-height: 0;
+}
+
+/* The routed screen sits in a `.screen-boundary` flex wrapper whose automatic
+   minimum would otherwise let the battle stage push the shell past the window. */
+body:has([data-testid='screen-game']) .screen-boundary {
+  min-height: 0;
 }

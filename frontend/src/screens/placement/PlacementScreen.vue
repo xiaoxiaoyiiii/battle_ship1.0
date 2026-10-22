@@ -553,7 +553,7 @@ function returnHome(): void {
   padding: 0;
   border: 1px solid color-mix(in srgb, var(--board-border) 70%, transparent);
   border-radius: 8px;
-  background: var(--cell);
+  background: var(--cell-bg);
   color: var(--role-action);
   font: inherit;
   cursor: pointer;
@@ -562,7 +562,7 @@ function returnHome(): void {
 
 .placement__cell:hover:not(:disabled) {
   border-color: var(--role-action);
-  background: color-mix(in srgb, var(--role-action) 26%, var(--cell));
+  background: color-mix(in srgb, var(--role-action) 26%, var(--cell-bg));
 }
 
 .placement__cell:disabled {

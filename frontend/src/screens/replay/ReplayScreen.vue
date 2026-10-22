@@ -805,7 +805,7 @@ onBeforeUnmount(() => {
   aspect-ratio: 1;
   border: 1px solid color-mix(in srgb, var(--board-border) 70%, transparent);
   border-radius: 6px;
-  background: var(--cell);
+  background: var(--cell-bg);
   color: var(--text-tertiary);
   font-size: clamp(11px, 3.4vw, 15px);
   line-height: 1;

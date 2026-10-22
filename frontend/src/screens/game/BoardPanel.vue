@@ -236,7 +236,7 @@ function onCellFocus(index: number): void {
   padding: 0;
   border: 1px solid color-mix(in srgb, var(--board-border) 70%, transparent);
   border-radius: 8px;
-  background: var(--cell);
+  background: var(--cell-bg);
   color: var(--text-tertiary);
   font: inherit;
   font-size: 15px;
@@ -252,7 +252,7 @@ function onCellFocus(index: number): void {
 
 .cell--attackable:hover,
 .cell--cursor {
-  background: color-mix(in srgb, var(--role-enemy) 26%, var(--cell));
+  background: color-mix(in srgb, var(--role-enemy) 26%, var(--cell-bg));
   border-color: var(--role-enemy);
 }
 
@@ -261,8 +261,8 @@ function onCellFocus(index: number): void {
 }
 
 .cell--ship {
-  background: linear-gradient(160deg, var(--ship-metal, var(--ship-metal)), color-mix(in srgb, var(--ship-metal, var(--ship-metal)) 62%, #0b0d18));
-  border-color: color-mix(in srgb, var(--ship-metal, var(--ship-metal)) 80%, #fff);
+  background: linear-gradient(160deg, var(--ship-metal), color-mix(in srgb, var(--ship-metal) 62%, #0b0d18));
+  border-color: color-mix(in srgb, var(--ship-metal) 80%, #fff);
   color: #08131a;
 }
 
@@ -297,7 +297,7 @@ function onCellFocus(index: number): void {
 }
 
 .cell--revealed {
-  background: color-mix(in srgb, var(--gold) 32%, var(--cell));
+  background: color-mix(in srgb, var(--gold) 32%, var(--cell-bg));
   border-color: color-mix(in srgb, var(--gold) 70%, transparent);
 }
 
@@ -321,7 +321,7 @@ function onCellFocus(index: number): void {
 }
 
 .cell--preview {
-  background: color-mix(in srgb, var(--role-action) 34%, var(--cell));
+  background: color-mix(in srgb, var(--role-action) 34%, var(--cell-bg));
 }
 
 .cell__mark {
@@ -362,6 +362,24 @@ function onCellFocus(index: number): void {
   .board__grid {
     gap: 2px;
     padding: 5px;
+  }
+}
+@media (max-width: 719px) {
+  .board {
+    gap: 4px;
+  }
+
+  .board__head {
+    gap: 6px;
+  }
+
+  .board__title {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+  }
+
+  .board__subtitle {
+    font-size: 10.5px;
   }
 }
 </style>

@@ -12,7 +12,10 @@
   gap: 10px;
   padding: 12px 20px 16px;
   min-height: 0;
-  overflow: hidden;
+  /* The stage fits the window by design; on windows smaller than the budget can
+     serve it scrolls inside itself rather than hiding the hand or the CTA. */
+  overflow: hidden auto;
+  overscroll-behavior: contain;
   /* One centred stage keeps the single board, the rail and the hand from
      drifting to the far edges of a wide desktop window. */
   --game-w: 1040px;
@@ -210,7 +213,12 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  --cell: clamp(64px, min(10.5vh, 9.4vw), 92px);
+  /* The board is sized from the window height budget, not from a fixed cap:
+     `100dvh` minus the app bar, the HUD/field bar, this screen's hand + action
+     rows, gaps and the board's own padding + grid gaps. That keeps the hand and
+     the primary button inside a 900px-tall window without hiding anything. */
+  --game-chrome: 480px;
+  --cell: clamp(34px, min(9.4vw, calc((100dvh - var(--game-chrome)) / 6)), 92px);
 }
 
 .game-tabs {
@@ -366,12 +374,12 @@
   width: 18px;
   height: 18px;
   border-radius: 3px;
-  background: var(--cell);
+  background: var(--cell-bg);
   box-shadow: inset 0 0 0 1px var(--border-subtle);
 }
 
 .game-map__cell.is-ship {
-  background: var(--ship-metal, var(--ship-metal));
+  background: var(--ship-metal);
 }
 
 .game-map__cell.is-hit {
@@ -380,7 +388,7 @@
 }
 
 .game-map__cell.is-miss {
-  background: color-mix(in srgb, var(--role-self) 30%, var(--cell));
+  background: color-mix(in srgb, var(--role-self) 30%, var(--cell-bg));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--role-self) 55%, transparent);
 }
 
@@ -1406,7 +1414,8 @@
   }
 
   .game-board-column {
-    --cell: clamp(58px, min(8.6vh, 8vw), 76px);
+    --game-chrome: 470px;
+    --cell: clamp(34px, min(8vw, calc((100dvh - var(--game-chrome)) / 6)), 76px);
   }
 }
 
@@ -1417,18 +1426,22 @@
   }
 
   .game-status {
-    gap: 3px 4px;
+    gap: 2px 4px;
   }
 
   .game-status__chip {
-    padding: 2px 6px;
-    font-size: 10px;
+    padding: 2px 5px;
+    font-size: 9.5px;
   }
 
+  /* Names + ship count ride the chip row instead of forcing a second line:
+     every extra HUD row costs board height on a phone. */
   .game-status__names {
-    width: 100%;
-    margin-left: 0;
-    font-size: 11px;
+    flex: 0 0 auto;
+    width: auto;
+    margin-left: 6px;
+    font-size: 10px;
+    gap: 4px;
   }
 
   .game-status__chip--muted {
@@ -1441,7 +1454,10 @@
   }
 
   .game-board-column {
-    --cell: clamp(40px, min(11.4vw, 5.2vh), 52px);
+    /* Phone budget: viewport minus the app bar (two rows), HUD, field bar,
+       board head, rail row, hand, action row, gaps and padding. */
+    --game-chrome: 540px;
+    --cell: clamp(40px, min(11.4vw, calc((100dvh - var(--game-chrome)) / 6)), 52px);
     gap: 2px;
   }
 
@@ -1626,11 +1642,9 @@
   }
 }
 
-@media (max-height: 780px) {
-  .game-board-column {
-    --cell: clamp(56px, 8vh, 74px);
-  }
-
+/* Short *desktop* windows shrink the hand a little; phones have their own
+   budget below, so this block must not fight the <=719px rules. */
+@media (max-height: 780px) and (min-width: 720px) {
   .game-hand {
     min-height: 156px;
   }
@@ -1643,5 +1657,200 @@
 
   .card__desc {
     -webkit-line-clamp: 3;
+  }
+}
+
+/* Narrow phones: keep the HUD on one row and let it scroll sideways instead of
+   wrapping, because every extra HUD row is board height we cannot afford. */
+@media (max-width: 430px) {
+  /* Chips scroll sideways on their own row; names + ship count keep a full
+     second row so neither the turn clock nor the VS block gets cut. */
+  .game-status {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .game-status::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Without this the wrapper shrank to 0 and its chips painted over the
+     names block; the chip row is meant to scroll sideways instead. */
+  .game-status__chips {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .game-status__chips::-webkit-scrollbar {
+    display: none;
+  }
+
+  .game-status__names {
+    flex: 0 0 100%;
+    order: 2;
+    width: 100%;
+    margin-left: 0;
+    border-left: 0;
+    padding-left: 0;
+    justify-content: space-between;
+  }
+}
+
+/* ------------------------------------------------- landscape phones (<=480px tall) ---
+   A 6x6 board plus a hand strip, a rail and a CTA do not stack in 390px of
+   height, so the stage becomes two columns: the board keeps the full height and
+   the HUD, field bar, hand and actions stack in a side column. */
+@media (orientation: landscape) and (max-height: 480px) {
+  .game {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'board hud'
+      'board field'
+      'board hand'
+      'board act';
+    gap: 4px 8px;
+    padding: 4px 8px 6px;
+    overflow: hidden;
+  }
+
+  .game-status {
+    grid-area: hud;
+    flex-wrap: wrap;
+    max-height: 64px;
+    overflow-y: auto;
+    justify-content: flex-start;
+  }
+
+  .game-status__chips {
+    flex: 0 0 auto;
+    min-width: auto;
+  }
+
+  .game-status__chip {
+    padding: 1px 5px;
+    font-size: 9px;
+  }
+
+  .game-status__names {
+    width: 100%;
+    margin-left: 0;
+    font-size: 9.5px;
+  }
+
+  /* Same trade as the portrait phone: fewer HUD rows, no duplicated chips. */
+  .game-status__chip--muted {
+    display: none;
+  }
+
+  .game-fieldbar {
+    grid-area: field;
+    padding: 2px 8px;
+    font-size: 10px;
+  }
+
+  .game-body {
+    grid-area: board;
+    min-height: 0;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+  }
+
+  .game-board-column {
+    --game-chrome: 170px;
+    --cell: clamp(28px, min(7.5vw, calc((100dvh - var(--game-chrome)) / 6)), 64px);
+    min-height: 0;
+    gap: 2px;
+  }
+
+  /* The rail keeps the ship slots visible; the mini-map, the chain placeholder
+     and the log/chat/pile shortcuts live in the 更多 menu while the window is
+     this short. */
+  .game-rail {
+    flex: 0 0 auto;
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: center;
+    gap: 4px;
+  }
+
+  .game-map,
+  .game-chain-empty,
+  .game-rail__actions {
+    display: none;
+  }
+
+  .game-bottom {
+    grid-area: act;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    min-height: 0;
+  }
+
+  .game-hand-wrap {
+    flex-direction: column;
+    align-items: stretch;
+    min-height: 0;
+  }
+
+  .game-hand {
+    min-height: 0;
+    flex-wrap: wrap;
+    gap: 6px;
+    overflow-y: auto;
+  }
+
+  .card {
+    flex-basis: 64px;
+    width: 64px;
+    height: 92px;
+  }
+
+  .game-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    max-width: none;
+  }
+
+  /* The turn hint duplicates the HUD chips in this layout. */
+  .game-turn-hint {
+    display: none;
+  }
+
+  /* The detail sheet anchors to the top edge in landscape: anchoring it to the
+     bottom (desktop) pushed its header off-screen. */
+  .game-detail {
+    top: 8px;
+    bottom: auto;
+    right: 8px;
+    width: min(360px, calc(100vw - 16px));
+    max-height: calc(100dvh - 90px);
+    overflow-y: auto;
+  }
+
+  /* Primary + 更多 share a single row: the column is 90px of height budget we
+     do not have when the window is only ~390px tall. */
+  .game-actions__row {
+    width: 100%;
+  }
+
+  .game-primary,
+  .game-more {
+    flex: 1 1 0;
+    width: auto;
+    height: 36px;
+    min-height: 36px;
+    padding: 0 8px;
+    font-size: 12px;
   }
 }

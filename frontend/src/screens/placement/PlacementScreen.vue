@@ -451,7 +451,7 @@ function returnHome(): void {
 
 .placement__eyebrow {
   margin: 0;
-  color: #8f9bc4;
+  color: var(--text-secondary);
   font-size: 10px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -483,7 +483,7 @@ function returnHome(): void {
   padding: 4px 12px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: rgba(13, 17, 34, 0.72);
+  background: var(--surface-deck);
   font-size: 13px;
 }
 
@@ -522,7 +522,7 @@ function returnHome(): void {
 /* Board + side card are one centred pair, as in the C+ deployment screen. */
 .placement__layout {
   display: grid;
-  grid-template-columns: 600px 260px;
+  grid-template-columns: minmax(0, 420px) 272px;
   gap: 24px;
   justify-content: center;
   align-items: start;
@@ -532,7 +532,7 @@ function returnHome(): void {
 .placement__board-wrap {
   display: flex;
   justify-content: center;
-  padding: 25px 0;
+  padding: 22px;
   border: 1px solid var(--panel-line);
   border-radius: var(--radius);
   background: var(--panel);
@@ -551,18 +551,18 @@ function returnHome(): void {
   display: grid;
   place-items: center;
   padding: 0;
-  border: 1px solid #232c54;
+  border: 1px solid color-mix(in srgb, var(--board-border) 70%, transparent);
   border-radius: 8px;
-  background: #1b2244;
-  color: var(--accent);
+  background: var(--cell);
+  color: var(--role-action);
   font: inherit;
   cursor: pointer;
   transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
 }
 
 .placement__cell:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: #283260;
+  border-color: var(--role-action);
+  background: color-mix(in srgb, var(--role-action) 26%, var(--cell));
 }
 
 .placement__cell:disabled {
@@ -571,13 +571,13 @@ function returnHome(): void {
 }
 
 .placement__cell.is-ship {
-  border-color: #a9b2d8;
-  background: #8b96c4;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
+  border-color: var(--ship-metal);
+  background: linear-gradient(160deg, var(--ship-metal), color-mix(in srgb, var(--ship-metal) 62%, #0b0d18));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ship-metal) 60%, #fff);
 }
 
 .placement__mark {
-  color: #1b2140;
+  color: #0b0d18;
   font-size: 16px;
   line-height: 1;
 }
@@ -623,9 +623,10 @@ function returnHome(): void {
 }
 
 .placement__ship {
-  min-width: 62px;
+  flex: 0 0 calc((100% - 12px) / 3);
+  min-width: 0;
   padding: 6px 10px;
-  border: 1px solid rgba(124, 92, 240, 0.5);
+  border: 1px solid color-mix(in srgb, var(--role-action) 50%, transparent);
   border-radius: 7px;
   background: var(--accent-soft);
   color: var(--text);
@@ -645,7 +646,7 @@ function returnHome(): void {
   margin: 0;
   padding: 4px 10px;
   justify-self: start;
-  border: 1px solid rgba(111, 224, 160, 0.4);
+  border: 1px solid color-mix(in srgb, var(--role-success) 40%, transparent);
   border-radius: 999px;
   background: rgba(42, 143, 104, 0.18);
   color: var(--success);
@@ -662,7 +663,7 @@ function returnHome(): void {
 .placement__pending {
   margin: 0;
   padding: 6px 10px;
-  border: 1px solid rgba(124, 92, 240, 0.4);
+  border: 1px solid color-mix(in srgb, var(--role-action) 40%, transparent);
   border-radius: 8px;
   background: var(--accent-soft);
   color: var(--accent-strong);
@@ -676,10 +677,10 @@ function returnHome(): void {
 .placement__error {
   margin: 0;
   padding: 6px 10px;
-  border: 1px solid rgba(255, 92, 108, 0.45);
+  border: 1px solid color-mix(in srgb, var(--role-enemy) 45%, transparent);
   border-radius: 8px;
   background: rgba(42, 20, 24, 0.8);
-  color: #ff9c8f;
+  color: var(--role-enemy);
   font-size: 12px;
 }
 
@@ -716,7 +717,7 @@ function returnHome(): void {
 
 .button--ghost {
   border-color: var(--border-strong);
-  background: rgba(13, 17, 34, 0.72);
+  background: var(--surface-deck);
   color: var(--text-muted);
 }
 
@@ -828,19 +829,19 @@ function returnHome(): void {
 }
 
 .placement__opponent-state[data-state='ready'] {
-  border-color: rgba(111, 224, 160, 0.45);
+  border-color: color-mix(in srgb, var(--role-success) 45%, transparent);
   color: var(--success);
 }
 
 .placement__opponent-state[data-state='offline'] {
-  border-color: rgba(255, 92, 108, 0.45);
-  color: #ff9c8f;
+  border-color: color-mix(in srgb, var(--role-enemy) 45%, transparent);
+  color: var(--role-enemy);
 }
 
 .placement__receipt {
   margin: 0;
   padding: 6px 10px;
-  border: 1px solid rgba(255, 215, 106, 0.45);
+  border: 1px solid color-mix(in srgb, var(--gold-strong) 45%, transparent);
   border-radius: 8px;
   background: var(--gold-soft);
   color: var(--gold-strong);

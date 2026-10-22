@@ -396,22 +396,35 @@ function returnHome(): void {
 .rps__choices {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  max-width: 560px;
+  gap: 16px;
+  width: min(100%, 720px);
 }
 
 .rps__choice {
   display: grid;
   place-items: center;
-  gap: 6px;
-  padding: 16px 8px;
-  border: 1px solid var(--border);
+  gap: 8px;
+  min-height: 128px;
+  padding: 20px 10px;
+  border: 1px solid color-mix(in srgb, var(--role-action) 28%, transparent);
   border-radius: var(--radius);
-  background: linear-gradient(160deg, #0d2230, #0b1a24 75%);
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--role-action) 14%, var(--surface-deck)),
+    var(--surface-deck) 78%
+  );
   color: var(--text);
   font: inherit;
   cursor: pointer;
   transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+/* Hover on a pointer device; touch devices keep the plain surface. */
+@media (hover: hover) {
+  .rps__choice:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--role-action) 62%, transparent);
+    transform: translateY(-2px);
+  }
 }
 
 .rps__choice:hover:not(:disabled) {
@@ -449,7 +462,7 @@ function returnHome(): void {
   padding: 8px 12px;
   border: 1px solid #2a5568;
   border-radius: 8px;
-  background: #0b1a24;
+  background: var(--surface-deck);
   color: var(--accent);
   font-size: 13px;
 }
@@ -469,7 +482,7 @@ function returnHome(): void {
   border: 1px solid #7a2f2a;
   border-radius: 8px;
   background: #2a1414;
-  color: #ff9c8f;
+  color: var(--role-enemy);
   font-size: 13px;
 }
 
@@ -477,7 +490,7 @@ function returnHome(): void {
   display: grid;
   gap: 6px;
   padding: 12px 16px;
-  border: 1px solid #2a8f68;
+  border: 1px solid var(--role-success);
   border-radius: var(--radius);
   background: linear-gradient(160deg, rgb(42 143 104 / 20%), rgb(42 143 104 / 6%));
   animation: rps-reveal 220ms ease-out;
@@ -495,7 +508,7 @@ function returnHome(): void {
 }
 
 .rps__result.is-tie .rps__verdict {
-  color: #ffd76a;
+  color: var(--gold-strong);
 }
 
 .rps__reveal {
@@ -593,19 +606,19 @@ function returnHome(): void {
 }
 
 .rps__opponent-state[data-state='ready'] {
-  border-color: rgba(111, 224, 160, 0.45);
+  border-color: color-mix(in srgb, var(--role-success) 45%, transparent);
   color: var(--success);
 }
 
 .rps__opponent-state[data-state='offline'] {
-  border-color: rgba(255, 92, 108, 0.45);
-  color: #ff9c8f;
+  border-color: color-mix(in srgb, var(--role-enemy) 45%, transparent);
+  color: var(--role-enemy);
 }
 
 .rps__receipt {
   margin: 0;
   padding: 6px 10px;
-  border: 1px solid rgba(255, 215, 106, 0.45);
+  border: 1px solid color-mix(in srgb, var(--gold-strong) 45%, transparent);
   border-radius: 8px;
   background: var(--gold-soft);
   color: var(--gold-strong);

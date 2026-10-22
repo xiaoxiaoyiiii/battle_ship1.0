@@ -421,7 +421,7 @@ function requestLogin(): void {
 
 .spectate__eyebrow {
   margin: 0 0 2px;
-  color: #8f9bc4;
+  color: var(--text-secondary);
   font-size: 10px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -442,7 +442,7 @@ function requestLogin(): void {
 .spectate__ended {
   margin: 8px 0 0;
   padding: 6px 10px;
-  border: 1px solid rgba(201, 162, 76, 0.5);
+  border: 1px solid color-mix(in srgb, var(--gold) 50%, transparent);
   border-radius: 8px;
   background: var(--gold-soft);
   color: var(--gold-strong);
@@ -614,18 +614,18 @@ function requestLogin(): void {
   align-items: center;
   justify-content: center;
   aspect-ratio: 1;
-  border: 1px solid #232c54;
+  border: 1px solid color-mix(in srgb, var(--board-border) 70%, transparent);
   border-radius: 6px;
-  background: #1b2244;
-  color: var(--text-muted);
+  background: var(--cell);
+  color: var(--text-tertiary);
   font-size: clamp(11px, 3.4vw, 15px);
   line-height: 1;
 }
 
 .spectate__board .cell.hit {
-  border-color: #ff8a7a;
+  border-color: var(--role-enemy);
   background: #4a1d1d;
-  color: #ffd0c8;
+  color: var(--role-enemy);
 }
 
 .spectate__board .cell.miss {
@@ -633,9 +633,9 @@ function requestLogin(): void {
 }
 
 .spectate__board .cell.sunk {
-  border-color: #ff5b47;
+  border-color: var(--role-enemy);
   background: #611f1a;
-  color: #ffe1db;
+  color: var(--role-enemy);
 }
 
 .spectate__hint {
@@ -684,11 +684,11 @@ function requestLogin(): void {
 .spectate__chat-line {
   padding: 4px 8px;
   border-radius: 6px;
-  background: rgba(13, 17, 34, 0.7);
+  background: var(--surface-deck);
 }
 
 .spectate__chain-item.negated {
-  color: #ff9b8a;
+  color: var(--role-enemy);
   text-decoration: line-through;
 }
 
@@ -708,7 +708,7 @@ function requestLogin(): void {
 }
 
 .spectate__chat-line.kind-error {
-  color: #ff9b8a;
+  color: var(--role-enemy);
   font-style: normal;
 }
 

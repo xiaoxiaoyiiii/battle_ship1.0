@@ -1,5 +1,8 @@
 import './styles/tokens.css'
 import './styles/base.css'
+// Loaded last so it wins over base.css at equal specificity (shell, buttons,
+// toasts, overlay chrome).
+import './styles/main-ui.css'
 import { createApp, type Component } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'

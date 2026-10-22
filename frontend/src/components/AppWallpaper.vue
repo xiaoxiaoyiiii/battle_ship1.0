@@ -114,7 +114,7 @@ watch(
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border: 1px solid var(--border-strong, rgba(140, 124, 214, 0.4));
+  border: 1px solid var(--border-strong, color-mix(in srgb, var(--role-action) 40%, transparent));
   border-radius: 999px;
   background: rgba(8, 11, 24, 0.78);
   backdrop-filter: blur(4px);
@@ -125,21 +125,21 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-muted, #b5aed6);
+  color: var(--text-muted, var(--text-tertiary));
   font-size: 12px;
 }
 
 .app-wallpaper__button {
   padding: 4px 10px;
-  border: 1px solid rgba(140, 124, 214, 0.4);
+  border: 1px solid color-mix(in srgb, var(--role-action) 40%, transparent);
   border-radius: 999px;
   background: transparent;
-  color: var(--text, #f2efff);
+  color: var(--text, var(--text-primary));
   font-size: 11px;
   cursor: pointer;
 }
 
 .app-wallpaper__button:hover {
-  border-color: rgba(214, 160, 92, 0.7);
+  border-color: color-mix(in srgb, var(--gold) 70%, transparent);
 }
 </style>

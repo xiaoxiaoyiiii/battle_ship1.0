@@ -1,0 +1,452 @@
+/* main-ui.css — 壳层与公共组件按 main 的视觉语言重写。
+ *
+ * 载入顺序：tokens.css → base.css → main-ui.css，所以这里的同名选择器
+ * 直接覆盖 base.css（同特异度、后出现者胜），屏幕里的 scoped 样式不受影响。
+ *
+ * 覆盖范围：页面底色、顶栏、头像菜单、按钮基元、Toast、Overlay、滚动条，
+ * 以及首页/对局两张主屏共用的 ui-* 小块（kicker / chunk / chip / stat）。
+ */
+
+/* ------------------------------------------------------------ 页面底色 --- */
+/* main 的首页是「深蓝黑 + 顶部紫色光晕 + 极淡网格」，页面本身不画卡片，
+   卡片面层交给每个 chunk。 */
+body {
+  background-color: var(--surface-sea);
+  background-image:
+    radial-gradient(1100px 560px at 50% -14%, rgba(124, 92, 240, 0.16), transparent 68%),
+    radial-gradient(760px 420px at 92% 8%, rgba(78, 200, 224, 0.07), transparent 70%),
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: auto, auto, 48px 48px, 48px 48px;
+  background-repeat: no-repeat, no-repeat, repeat, repeat;
+  background-attachment: fixed;
+  color: var(--text-primary);
+  font-size: 15px;
+}
+
+html[data-theme='journal'] body {
+  background-image:
+    radial-gradient(1000px 520px at 50% -14%, rgba(21, 101, 192, 0.12), transparent 68%),
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: auto, 48px 48px, 48px 48px;
+}
+
+::selection {
+  background: rgba(124, 92, 240, 0.35);
+  color: var(--text-primary);
+}
+
+/* ---------------------------------------------------------------- 顶栏 --- */
+.app-nav {
+  min-height: 64px;
+  gap: 8px 22px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-sea) 86%, transparent);
+  backdrop-filter: blur(14px);
+}
+
+.app-brand {
+  gap: 10px;
+  padding-right: 10px;
+}
+
+.app-brand__mark {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--chip-line);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 32% 22%, rgba(124, 92, 240, 0.55), transparent 68%),
+    var(--surface-chamber);
+  color: #d8ccff;
+}
+
+.app-brand__title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.app-brand__sub {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+}
+
+.app-nav__links {
+  gap: 2px;
+}
+
+.app-nav__link,
+.app-nav__flow {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 13.5px;
+}
+
+.app-nav__link:hover,
+.app-nav__flow:hover {
+  color: var(--text-primary);
+  background: rgba(124, 92, 240, 0.12);
+}
+
+.app-nav__link[aria-current='page'],
+.app-nav__link.is-active {
+  color: var(--text-primary);
+  background: rgba(124, 92, 240, 0.16);
+  border-color: var(--chip-line);
+}
+
+.app-nav__link[aria-current='page']::after {
+  content: '';
+  position: absolute;
+  inset-inline: 14px;
+  bottom: 6px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--role-action);
+}
+
+.app-nav__link[aria-current='page'] {
+  position: relative;
+}
+
+.app-nav__flow {
+  border-color: var(--chip-line);
+  color: var(--text-primary);
+}
+
+.app-nav__meta {
+  gap: 8px;
+}
+
+.app-nav__icon {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  color: var(--text-secondary);
+}
+
+.app-nav__icon:hover {
+  border-color: var(--chip-line);
+  color: var(--text-primary);
+  background: rgba(124, 92, 240, 0.12);
+}
+
+/* ------------------------------------------------------------ 头像菜单 --- */
+.app-menu {
+  gap: 10px;
+  width: min(320px, calc(100vw - 24px));
+  padding: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-chamber);
+  box-shadow: var(--shadow-panel);
+}
+
+.app-menu__title {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+}
+
+.app-menu__item {
+  min-height: 38px;
+  border-radius: var(--radius-sm);
+  font-size: 13.5px;
+}
+
+.app-menu__item:hover {
+  border-color: transparent;
+  background: rgba(124, 92, 240, 0.14);
+}
+
+.app-menu__theme {
+  min-height: 36px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-deck);
+  font-size: 12px;
+}
+
+.app-menu__theme[aria-pressed='true'] {
+  border-color: var(--chip-line);
+  background: rgba(124, 92, 240, 0.18);
+  color: var(--text-primary);
+}
+
+/* --------------------------------------------------------------- 按钮 --- */
+.button {
+  min-height: 38px;
+  padding: 8px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-chamber);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.button:hover:not(:disabled) {
+  border-color: var(--chip-line);
+  background: var(--surface-raised);
+}
+
+.button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.button--primary {
+  border-color: var(--hero-border);
+  background: var(--hero-grad);
+  color: #ffffff;
+  box-shadow: var(--shadow-accent);
+  font-weight: 600;
+}
+
+.button--primary:hover:not(:disabled) {
+  border-color: var(--hero-border);
+  background: var(--hero-grad);
+  filter: brightness(1.1);
+}
+
+.button--ghost {
+  border-color: var(--chip-line);
+  background: transparent;
+  color: var(--role-action);
+}
+
+.button--ghost:hover:not(:disabled) {
+  background: rgba(124, 92, 240, 0.14);
+}
+
+.button--danger {
+  border-color: var(--role-enemy);
+  background: var(--role-enemy-soft);
+  color: var(--role-enemy);
+}
+
+.button--danger:hover:not(:disabled) {
+  border-color: var(--role-enemy);
+  background: rgba(255, 107, 120, 0.24);
+}
+
+/* --------------------------------------------------------------- Toast --- */
+.app-toasts {
+  right: 20px;
+  bottom: 20px;
+  gap: 10px;
+  width: min(380px, calc(100vw - 32px));
+}
+
+/* Phones: the bottom edge is the hand + primary action on the battle screen, so
+   transient notices move to the top instead of covering the buttons. */
+@media (max-width: 719px) {
+  .app-toasts {
+    top: 6px;
+    right: 10px;
+    bottom: auto;
+    left: 10px;
+    width: auto;
+    max-height: 42vh;
+    overflow-y: auto;
+  }
+}
+
+.app-toast {
+  padding: 12px 38px 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-left-width: 3px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-chamber) 94%, transparent);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--shadow-panel);
+}
+
+.app-toast__message {
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.app-toast__next {
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
+.app-toast__dismiss {
+  top: 6px;
+  right: 6px;
+  border-radius: var(--radius-sm);
+}
+
+/* ------------------------------------------------------------- Overlay --- */
+.app-overlay {
+  background: var(--scrim);
+  backdrop-filter: blur(6px);
+}
+
+.app-overlay__panel {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-chamber);
+  box-shadow: var(--shadow-panel);
+}
+
+/* ------------------------------------------------------------ 滚动条 --- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(124, 92, 240, 0.45) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--role-action) 40%, transparent);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(124, 92, 240, 0.62);
+  background-clip: padding-box;
+}
+
+/* ------------------------------------------------- 共用小块（首页/对局） --- */
+/* main 的「小标签 + 粗标题」层级：kicker 全大写细字，标题不加字距。 */
+.ui-kicker {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.ui-chunk {
+  min-width: 0;
+  padding: 16px 18px;
+  border: 1px solid var(--panel-line);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-panel);
+}
+
+.ui-chunk__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.ui-chunk__title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.ui-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 3px 12px;
+  border: 1px solid var(--chip-line);
+  border-radius: var(--radius-pill);
+  background: rgba(124, 92, 240, 0.08);
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ui-stat {
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface-deck) 70%, transparent);
+}
+
+.ui-stat__label {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+}
+
+.ui-stat__value {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin: 2px 0 0;
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-stat__unit {
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+  font-weight: 400;
+}
+
+/* ---------------------------------------------------------------- controls --- */
+/* One control language for every screen: inputs, selects and textareas get the
+   same raised field as the buttons, so no screen falls back to the UA chrome. */
+input[type='text'],
+input[type='search'],
+input[type='password'],
+input[type='number'],
+input:not([type]),
+textarea,
+select {
+  min-height: 38px;
+  padding: 8px 11px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+input[type='text']:focus,
+input[type='search']:focus,
+input[type='password']:focus,
+input[type='number']:focus,
+input:not([type]):focus,
+textarea:focus,
+select:focus {
+  border-color: var(--role-action);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--role-action) 22%, transparent);
+  outline: none;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+input[type='checkbox'],
+input[type='radio'] {
+  accent-color: var(--role-action);
+}
+
+/* Screens that only carry a kicker + title get main's tight header rhythm. */
+.screen__eyebrow,
+[class$='__eyebrow'] {
+  color: var(--text-tertiary);
+  font-weight: 600;
+}

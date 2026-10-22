@@ -114,14 +114,14 @@ onBeforeUnmount(stop)
 
 .match-found__title {
   margin: 6px 0 2px;
-  color: var(--text, #f2efff);
+  color: var(--text, var(--text-primary));
   font-size: 24px;
   letter-spacing: 0.3em;
 }
 
 .match-found__countdown {
   margin: 0 0 18px;
-  color: var(--text-muted, #b5aed6);
+  color: var(--text-muted, var(--text-tertiary));
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
@@ -135,7 +135,7 @@ onBeforeUnmount(stop)
 
 .match-found__side {
   padding: 14px 12px;
-  border: 1px solid var(--border-strong, rgba(140, 124, 214, 0.4));
+  border: 1px solid var(--border-strong, color-mix(in srgb, var(--role-action) 40%, transparent));
   border-radius: 12px;
   background: rgba(10, 14, 30, 0.7);
 }
@@ -157,12 +157,12 @@ onBeforeUnmount(stop)
 }
 
 .match-found__badge--rival {
-  background: linear-gradient(160deg, #d6a05c, #7a4f20);
+  background: linear-gradient(160deg, var(--gold), #7a4f20);
 }
 
 .match-found__name {
   margin: 8px 0 10px;
-  color: var(--text, #f2efff);
+  color: var(--text, var(--text-primary));
   font-size: 15px;
   font-weight: 600;
   overflow: hidden;
@@ -184,17 +184,17 @@ onBeforeUnmount(stop)
 }
 
 .match-found__stats dt {
-  color: var(--text-dim, #8f9bc4);
+  color: var(--text-dim, var(--text-secondary));
 }
 
 .match-found__stats dd {
   margin: 0;
-  color: var(--text, #f2efff);
+  color: var(--text, var(--text-primary));
   font-variant-numeric: tabular-nums;
 }
 
 .match-found__versus {
-  color: #d6a05c;
+  color: var(--gold);
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.12em;
@@ -203,17 +203,17 @@ onBeforeUnmount(stop)
 .match-found__skip {
   margin-top: 20px;
   padding: 9px 22px;
-  border: 1px solid rgba(140, 124, 214, 0.5);
+  border: 1px solid color-mix(in srgb, var(--role-action) 50%, transparent);
   border-radius: 999px;
   background: transparent;
-  color: var(--text-muted, #b5aed6);
+  color: var(--text-muted, var(--text-tertiary));
   font-size: 12px;
   cursor: pointer;
 }
 
 .match-found__skip:hover {
-  border-color: rgba(214, 160, 92, 0.7);
-  color: var(--text, #f2efff);
+  border-color: color-mix(in srgb, var(--gold) 70%, transparent);
+  color: var(--text, var(--text-primary));
 }
 
 @media (max-width: 560px) {

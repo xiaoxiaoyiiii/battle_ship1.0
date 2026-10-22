@@ -567,7 +567,7 @@ onBeforeUnmount(() => {
 
 .replay__eyebrow {
   margin: 0 0 2px;
-  color: #8f9bc4;
+  color: var(--text-secondary);
   font-size: 10px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -597,7 +597,7 @@ onBeforeUnmount(() => {
 
 .replay__warning {
   margin: 4px 0 0;
-  color: #ffb15c;
+  color: var(--gold-strong);
   font-size: 12px;
 }
 
@@ -803,23 +803,23 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   aspect-ratio: 1;
-  border: 1px solid #232c54;
+  border: 1px solid color-mix(in srgb, var(--board-border) 70%, transparent);
   border-radius: 6px;
-  background: #1b2244;
-  color: var(--text-muted);
+  background: var(--cell);
+  color: var(--text-tertiary);
   font-size: clamp(11px, 3.4vw, 15px);
   line-height: 1;
 }
 
 .replay__board .cell.ship {
-  background: #8b96c4;
-  color: #1b2140;
+  background: var(--ship-metal);
+  color: var(--surface-elevated);
 }
 
 .replay__board .cell.hit {
-  border-color: #ff8a7a;
+  border-color: var(--role-enemy);
   background: #4a1d1d;
-  color: #ffd0c8;
+  color: var(--role-enemy);
 }
 
 .replay__board .cell.miss {
@@ -827,9 +827,9 @@ onBeforeUnmount(() => {
 }
 
 .replay__board .cell.sunk {
-  border-color: #ff5b47;
+  border-color: var(--role-enemy);
   background: #611f1a;
-  color: #ffe1db;
+  color: var(--role-enemy);
 }
 
 .replay__board .cell.shielded {
@@ -847,12 +847,12 @@ onBeforeUnmount(() => {
 /* Area magic (轰炸 / 硫磺火焰): the whole row/area shares this marker so a
    one-card wipe cannot be mistaken for a lucky single shot. Glyph unchanged. */
 .replay__board .cell.area-strike {
-  outline: 2px dashed #ffb15c;
+  outline: 2px dashed var(--gold-strong);
   outline-offset: -2px;
 }
 
 .replay__board .cell.last-stand-candidate {
-  outline: 1px dashed #ffd76a;
+  outline: 1px dashed var(--gold-strong);
 }
 
 .replay__controls {
@@ -1009,7 +1009,7 @@ onBeforeUnmount(() => {
 
 .replay__chip {
   padding: 3px 8px;
-  border: 1px solid rgba(124, 92, 240, 0.5);
+  border: 1px solid color-mix(in srgb, var(--role-action) 50%, transparent);
   border-radius: 6px;
   background: var(--accent-soft);
   font-size: 12px;
@@ -1023,7 +1023,7 @@ onBeforeUnmount(() => {
 .replay__current {
   padding: 8px 10px;
   border-radius: 8px;
-  background: rgba(13, 17, 34, 0.7);
+  background: var(--surface-deck);
   font-size: 13px;
 }
 
@@ -1069,7 +1069,7 @@ onBeforeUnmount(() => {
 
 .button--ghost {
   border-color: var(--border-strong);
-  background: rgba(13, 17, 34, 0.72);
+  background: var(--surface-deck);
   color: var(--text-muted);
 }
 

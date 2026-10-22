@@ -1846,9 +1846,7 @@
     gap: 2px;
   }
 
-  /* The rail keeps the ship slots visible; the mini-map, the chain placeholder
-     and the log/chat/pile shortcuts live in the 更多 menu while the window is
-     this short. */
+  /* 横屏保留舰位与己方海域入口；日志、聊天和弃牌堆继续从更多菜单进入。 */
   .game-rail {
     flex: 0 0 auto;
     width: 100%;
@@ -1858,10 +1856,26 @@
     gap: 4px;
   }
 
-  .game-map,
   .game-chain-empty,
   .game-rail__actions {
     display: none;
+  }
+
+  /* 横屏没有海域标签，保留此按钮才能打开己方海域并完成卡牌选目标。 */
+  .game-map {
+    display: flex;
+    flex: 0 0 auto;
+    width: auto;
+    min-height: 40px;
+    padding: 4px 8px;
+  }
+
+  .game-map__grid {
+    display: none;
+  }
+
+  .game-map__label {
+    font-size: 10.5px;
   }
 
   .game-bottom {

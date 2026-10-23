@@ -194,7 +194,7 @@ backend/src/battleship/
 5. 不用 `Get-Content -Raw | Set-Content` 改 UTF-8 源码（本机按 GBK 读写会写坏中文）；
    用编辑工具或 python 显式 `encoding='utf-8'`。含中文的 `.ps1` 必须存 UTF-8 带 BOM。
 6. 跑 E2E / 工具要隔离数据库：`BATTLESHIP_DB_PATH=.tmp/xxx.db`。
-7. 功能分支走 `feature/*` worktree；合并与部署分别等指令；不 push 到 main。
+7. 分支与写入交接遵循根目录 `AGENTS.md`；后续默认在用户指定的既有分支工作。
 8. **提交说明只写"改了什么"**：一句话，不写根因分析、验证清单、账号参数。
 9. **每批更新往 `backend/src/battleship/domain/social/changelog.py` 最上面加一条玩家公告**：
    口语、≤40 字、不写技术词与账号参数（规矩见 `docs/UPDATES_2026_09_19.md`）。

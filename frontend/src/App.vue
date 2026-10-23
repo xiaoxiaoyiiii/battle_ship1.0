@@ -6,6 +6,7 @@ import AppWallpaper from './components/AppWallpaper.vue'
 import AuthOverlay from './components/AuthOverlay.vue'
 import AvatarMenu from './components/AvatarMenu.vue'
 import CardCollectionOverlay from './components/CardCollectionOverlay.vue'
+import AdminOverlay from './components/AdminOverlay.vue'
 import FriendsOverlay from './components/FriendsOverlay.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
 import ScreenBoundary from './components/ScreenBoundary.vue'
@@ -117,6 +118,7 @@ onBeforeUnmount(() => window.removeEventListener('bs:auth-required', onAuthRequi
 
   <HelpOverlay v-if="ui.helpOpen" @close="ui.closeHelp()" />
   <FriendsOverlay v-if="ui.friendsOpen" @close="ui.closeFriends()" />
+  <AdminOverlay v-if="ui.adminOpen" @close="ui.closeAdmin()" />
 
   <div class="app-shell" data-testid="app-shell" :data-route-loading="loading ? 'true' : 'false'" :data-immersive="immersive ? 'true' : 'false'">
     <div

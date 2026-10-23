@@ -31,6 +31,8 @@ interface RankConstants {
   lose_points?: number
   min_points?: number
   captain_floor?: number
+  admiral_rank_limit?: number
+  admiral_min_captains?: number
   start_points_of_tier?: Record<string, number>
   scoring?: { win?: RankRow[]; lose?: RankRow[]; loss_floor?: number; base_win?: number; base_lose?: number } & Record<string, unknown>
 }
@@ -40,6 +42,9 @@ const emit = defineEmits<{ (event: 'close'): void }>()
 const loading = ref(true)
 const failed = ref(false)
 const rules = ref<RankConstants | null>(null)
+/** 每段的解锁外观（来自 /api/profile 的 catalog；游客拿不到就如实提示）。 */
+const unlocks = ref<Record<string, string[]>>({})
+const unlocksGuest = ref(false)
 
 const playRules = [
   { title: '目标', body: '先击沉对手全部战舰者获胜。双方轮流开炮，炮弹落在对手海域的格子上。' },
@@ -57,11 +62,80 @@ function tierName(tier: RankTier): string {
   return tier.name ?? tier.label ?? tier.id ?? '未知段位'
 }
 
+/** 只有靠分数晋级的段位才有「N 分起」；大舰长是晋升制，返回空串。 */
 function startPoints(tier: RankTier): string {
   const table = rules.value?.start_points_of_tier
-  if (!table || !tier.id) return '—'
+  if (!table || !tier.id) return ''
   const points = table[tier.id]
-  return typeof points === 'number' ? String(points) : '—'
+  return typeof points === 'number' ? String(points) : ''
+}
+
+function isTopTier(tier: RankTier, index: number): boolean {
+  return index === tiers.value.length - 1
+}
+
+/** 顶段（大舰长）的晋升条件：阈值全部来自服务端 constants，不写死。 */
+function admiralNote(tier: RankTier, index: number): string {
+  if (!isTopTier(tier, index)) return ''
+  const below = tiers.value[tiers.value.length - 2]
+  const belowName = below ? tierName(below) : ''
+  const limit = rules.value?.admiral_rank_limit
+  const minCaptains = rules.value?.admiral_min_captains
+  const parts = []
+  if (belowName) parts.push('先打到「' + belowName + '」')
+  if (typeof limit === 'number') parts.push('在该段位内排名前 ' + limit)
+  if (typeof minCaptains === 'number') parts.push('该段位人数不少于 ' + minCaptains + ' 人')
+  return parts.length ? '晋升条件：' + parts.join('，且') : ''
+}
+
+function unlockText(tier: RankTier): string {
+  const items = tier.name ? unlocks.value[tier.name] : undefined
+  if (!items || !items.length) return ''
+  return '解锁：' + items.join('、')
+}
+
+/** catalog 里 requirement 形如「段位达到 船长」，按段位名归组。 */
+function collectUnlocks(catalog: Record<string, unknown> | null | undefined): void {
+  const labels: Array<[string, string]> = [
+    ['titles', '称号'],
+    ['frames', '头像框'],
+    ['card_bgs', '名片底色'],
+  ]
+  const grouped: Record<string, string[]> = {}
+  for (const [key, label] of labels) {
+    const list = Array.isArray((catalog as Record<string, unknown>)?.[key])
+      ? ((catalog as Record<string, unknown>)[key] as Array<Record<string, unknown>>)
+      : []
+    for (const item of list) {
+      const requirement = String(item?.requirement ?? '').trim()
+      if (!requirement.startsWith('段位达到 ')) continue
+      const tierName = requirement.slice('段位达到 '.length).trim()
+      if (!tierName) continue
+      if (!grouped[tierName]) grouped[tierName] = []
+      grouped[tierName].push(label + ' ' + String(item?.name ?? ''))
+    }
+  }
+  unlocks.value = grouped
+}
+
+async function loadUnlocks(): Promise<void> {
+  try {
+    const response = await fetch('/api/profile', { headers: { accept: 'application/json' } })
+    if (!response.ok) {
+      unlocksGuest.value = true
+      return
+    }
+    const data = (await response.json()) as { profile?: { catalog?: Record<string, unknown> } }
+    const catalog = data?.profile?.catalog
+    if (!catalog) {
+      unlocksGuest.value = true
+      return
+    }
+    collectUnlocks(catalog)
+    unlocksGuest.value = false
+  } catch {
+    unlocksGuest.value = true
+  }
 }
 
 async function load(): Promise<void> {
@@ -80,7 +154,10 @@ async function load(): Promise<void> {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  void loadUnlocks()
+})
 </script>
 
 <template>
@@ -112,12 +189,23 @@ onMounted(load)
             段位规则暂不可用，稍后再看；玩法说明不受影响。
           </p>
           <ol v-else class="help__tiers" data-testid="help-tiers">
-            <li v-for="tier in tiers" :key="tier.id ?? tierName(tier)" class="help__tier">
+            <li
+              v-for="(tier, index) in tiers"
+              :key="tier.id ?? tierName(tier)"
+              class="help__tier"
+              :class="{ 'help__tier--top': isTopTier(tier, index) }"
+              :data-testid="'help-tier-' + (tier.id || tierName(tier))"
+            >
               <span class="help__tier-name">{{ tierName(tier) }}</span>
-              <span class="help__tier-sub">{{ rules?.subs?.join(' / ') }}</span>
-              <span class="help__tier-points">{{ startPoints(tier) }} 分起</span>
+              <span v-if="!isTopTier(tier, index)" class="help__tier-sub">{{ rules?.subs?.join(' / ') }}</span>
+              <span v-if="startPoints(tier)" class="help__tier-points">{{ startPoints(tier) }} 分起</span>
+              <span v-if="unlockText(tier)" class="help__tier-unlock" data-testid="help-unlock">{{ unlockText(tier) }}</span>
+              <span v-if="admiralNote(tier, index)" class="help__tier-note" data-testid="help-admiral-note">{{ admiralNote(tier, index) }}</span>
             </li>
           </ol>
+          <p v-if="unlocksGuest" class="help__hint" data-testid="help-unlock-guest">
+            登录后可查看每个段位对应的称号、头像框与名片底色解锁项。
+          </p>
           <p v-if="rules" class="help__foot">
             每个小级 {{ rules.sub_points }} 分；最低 {{ rules.min_points }} 分；胜利 {{ rules.win_points }} 分、失败
             {{ rules.lose_points }} 分起，具体加成为下表的组合。

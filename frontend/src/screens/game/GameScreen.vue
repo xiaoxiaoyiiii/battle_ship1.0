@@ -261,6 +261,12 @@ const shipsText = computed(() => remainingShipText(state.value))
 const chainWindow = computed(() => match.chainWindow)
 /** 面板被收起（请求还在，倒计时还在跑） */
 const chainCollapsed = computed(() => match.chainWindowCollapsed)
+/**
+ * 浮层是否展开 = 「有内容」且「没有被用户收起」。
+ * 旧写法把 chainList 绕过了收起标记，导致有真实连锁牌时点收起无效（审查 P2-4）。
+ */
+const chainHasContent = computed(() => chainList.value.length > 0 || !!chainWindow.value)
+const chainPanelOpen = computed(() => chainHasContent.value && !chainCollapsed.value)
 const speed3Hand = computed<CardLike[]>(() => chainWindow.value?.speed3Cards ?? [])
 const chainRemaining = computed(() => {
   const window = chainWindow.value
@@ -1515,14 +1521,14 @@ function backToLobby(): void {
 
     <!-- 底部手牌条（原 main 的底部手牌） -->
     <button
-      v-if="chainWindow && chainCollapsed"
+      v-if="chainCollapsed && chainHasContent"
       type="button"
       class="game-chain-reopen"
       data-testid="game-chain-reopen"
       @click="match.expandChainWindow()"
     >
       <span class="game-chain-reopen__dot" aria-hidden="true"></span>
-      连锁待响应：{{ chainWindow.card ? chainWindow.card.name : '魔法卡' }} · 剩余 {{ chainRemaining }} 秒 · 打开
+      连锁待响应：{{ chainWindow?.card ? chainWindow.card.name : '魔法卡' }} · 剩余 {{ chainRemaining }} 秒 · 打开
     </button>
 
     <section class="game-hand-wrap" aria-label="手牌" ref="handWrapEl">
@@ -1669,7 +1675,7 @@ function backToLobby(): void {
     </section>
 
     <section
-      v-if="chainList.length || (chainWindow && !chainCollapsed)"
+      v-if="chainPanelOpen"
       class="game-chain-panel"
       data-testid="game-chain-overlay"
       role="dialog"

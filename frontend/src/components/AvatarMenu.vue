@@ -17,9 +17,29 @@ const panel = ref<HTMLElement | null>(null)
 
 const themes: ThemeName[] = ['chart', 'journal', 'night']
 
+/** 反作弊入口只在 `/api/admin/me` 说 is_admin 时出现（真正的门禁在服务端）。 */
+const isAdmin = ref(false)
+
 onMounted(() => {
   panel.value?.querySelector<HTMLElement>('a, button')?.focus()
+  void loadAdminFlag()
 })
+
+async function loadAdminFlag(): Promise<void> {
+  try {
+    const response = await fetch('/api/admin/me', { headers: { accept: 'application/json' } })
+    if (!response.ok) return
+    const data = (await response.json()) as { is_admin?: boolean }
+    isAdmin.value = data?.is_admin === true
+  } catch {
+    isAdmin.value = false
+  }
+}
+
+function openAdmin(): void {
+  close()
+  ui.openAdmin()
+}
 
 function chooseTheme(theme: ThemeName): void {
   ui.setTheme(theme)
@@ -131,6 +151,15 @@ function logout(): void {
         @click="openHelp"
       >
         玩法与帮助
+      </button>
+      <button
+        v-if="isAdmin"
+        type="button"
+        class="app-menu__item"
+        data-testid="admin-entry"
+        @click="openAdmin"
+      >
+        反作弊管理
       </button>
       <button
         v-if="!auth.isGuest"

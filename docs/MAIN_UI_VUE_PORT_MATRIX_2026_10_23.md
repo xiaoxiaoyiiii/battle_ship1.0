@@ -16,7 +16,14 @@
 | `#game-over-screen`（:932） | `screens/game-over/GameOverScreen.vue` | 视觉已对齐（前一 PR） | 结算分块 + 四个去向 |
 | `#spectate-screen`（:1046） | `screens/spectate/SpectateScreen.vue` | 视觉已对齐（前一 PR） | 观战 |
 | `#replay-screen`（:1125） | `screens/replay/ReplayScreen.vue` | 视觉已对齐（前一 PR） | 回放 |
-| help / profile / settings / friends / changelog 等弹窗 | `components/HelpOverlay.vue`、`components/FriendsOverlay.vue`、`screens/profile/*`、`screens/settings/*`、`components/CardCollectionOverlay.vue`、`components/AuthOverlay.vue` | 已补齐（R2，见第七节） | 帮助取 `/api/rank_constants`、好友取 friends 系列接口、图鉴取 `/api/card_usage` |
+| help（:1627 九段图鉴 + 计分） | `components/HelpOverlay.vue` | 已迁移，取服务端常量 | `/api/rank_constants`（顶段显示晋升条件）、`/api/profile` 的 catalog 取解锁项；游客如实提示 |
+| friends + 私聊（:1761 三列表 / :1781 私聊） | `components/FriendsOverlay.vue` + `stores/dm.ts` + `realtime/friends.ts` | 已迁移，含实时与分页 | friends 系列接口；`friend_message`/`friend_request` 走共享 socket |
+| admin（:1717 反作弊弹层 + `static/admin.js`） | `components/AdminOverlay.vue` | **本轮迁移** | 入口按 `/api/admin/me` 的 `is_admin` 渲染；读写走 `/api/admin/*`，服务端鉴权未改 |
+| profile（:1367 名片） | `screens/profile/ProfileScreen.vue` | 视觉已对齐，内容态已取证 | 游客态 + 登录态（人机局不计段位，战绩为 0 属规则） |
+| settings（:1367-1397 预览 + 主色） | `screens/settings/SettingsScreen.vue` | 已迁移预览与主色 | 本地偏好，写 `--role-action` |
+| collection（:1584 图鉴） | `components/CardCollectionOverlay.vue` | 已迁移排序/筛选/详情 | `/api/card_usage` |
+| login/register（弹窗） | `components/AuthOverlay.vue` | 视觉已对齐 | 走既有 `/api/login`、`/api/register` |
+| changelog（:1367 内嵌公告） | 首页 `/api/changelog` 区块 + `LobbyScreen` 公告条 | 已对齐 | 数据来自后端公告表 |
 
 ## 二、main 对局 DOM → Vue 结构（本轮）
 
@@ -92,7 +99,7 @@
 | 左侧聊天 + 日志浮动窗、可拖动 | 左列常驻日志 + `.game-float` 浮动聊天（`useFloatingDrag.ts`）+ 抽屉 | `spec-floating-chat.mjs`：拖动 `{20,470}→{270,472}`，拖出视口夹到 `x=1132`（`1132+300≤1440`） | 日志用列内卡而非浮动窗（避免压棋盘） |
 | 右侧竖向连锁牌栈 | `.arena-rail-panel` 连锁列表 + 连锁浮层 + 收起后的 `game-chain-reopen` 胶囊 | `spec-regressions.mjs`（12/12 PASS） | — |
 | 独立完整卡牌预览 | rail 内 `game-detail`（大卡图 + 效果全文 + 使用/取消） | `spec-sheet.mjs` | 紧凑档是底部 sheet，可滚动 |
-| 底部扇形大卡 | `useHandFan.ts` + `--hand-card-*` / `--fan-rot` / `--fan-drop` | 探针：1440×900 `--hand-card-w:132px`、三张卡 `rot=-0.0667/0/0.0667` | 选中牌加宽尚未实现（选中只改描边） |
+| 底部扇形大卡 | `useHandFan.ts` + `--hand-card-*` / `--fan-rot` / `--fan-drop`（含 `selectedIndex`/`need = w + HAND_TAP_MIN`） | `spec-review3.mjs g`：8 张重叠手牌不溢出（right=1159 < 1440）、选中牌中心命中自身、右邻居整块可点 | 极窄档改不旋转的紧凑排布 |
 | 顶栏对手身份/舰数 | `.hud-players` + `hud-ship-dots` | 截图 `shots/port-1440x900-game.png` | — |
 
 ### R2 周边功能
@@ -111,7 +118,7 @@
 | 资料 `profile` | 已登录、有段位/等级/战绩框架 | `content-profile-1440x900.png` | 人机局不计段位，`总场次` 仍为 0；架构性内容（名片/徽章/回放入口）可见 |
 | 结算 `game-over` | 有内容 | `content-gameover-1440x900.png` | 显示本局结果与「本局回放」按钮 |
 | 回放 `replay` | 有内容 | `content-replay-1440x900.png` | `第 1/12 步`、双视角棋盘、6 艘舰、播放/步进、双方手牌与事件列表 |
-| 观战 `spectate` | 空态（无进行中对局） | `content-spectate-1440x900.png` | 文案「还没有选择要观战的对局…」，需大厅「进行中的对局」进入；登录 + 双方开放观战才可看 |
+| 观战 `spectate` | **真实链路有内容**（本仓脚本只截到空态） | `codex-r2-shots/real-spectate-1440x900.png`、`real-spectate-390x740.png`（Codex 用公开接口造两位玩家 + 一位观众） | 72 格双棋盘、攻击实时更新、390×740 切视角、观战聊天；本仓 `content-spectate-1440x900.png` 仅空态截图 |
 
 ### 复核时补的两处紧凑档可达性修复
 
@@ -121,9 +128,20 @@
   证据：`spec-target-compact.mjs`（先真实点击「使用此卡」再选格）恢复 PASS。
 - 极矮横屏隐藏胶囊行（`.hud-chips`），只保留回合 / 双方 / 舰数 / 聊天按钮，避免半截被压。
 
-### 本轮剩余缺口（如实）
+### 本轮剩余缺口（如实，2026-10-23 09:10 更新）
 
-1. 扇形手牌的「选中牌 + 右邻居加宽」（main 的 `need = w + 44`）未实现，选中只改描边与上浮。
-2. 观战只截到空态：本机没有第二位玩家持续对局，无法在不干扰数据的前提下造真实观战。
-3. 人机局不计段位分，资料页战绩数字仍为 0（这是规则，不是缺陷）；段位进度条要有真实排位局才有数字。
-4. 仓外 22 条 `data-testid` 浏览器门禁仍未跑（本机无 `D:/develop/battleship-verify`）。
+1. 人机局不计段位分，资料页战绩数字为 0（规则如此）；段位进度条要有真实排位局才有数字。
+2. 仓外 22 条 `data-testid` 浏览器门禁仍未跑（本机无 `D:/develop/battleship-verify` 基线）。
+3. 管理员处置历史里的 `actor` 显示的是账号 id（后端 `override_history.actor` 原样返回），原 main 同样如此，未另做用户名映射。
+
+## 八、审查轮第三批（2026-10-23 09:10，基点 c80ad9e）
+
+| 问题 | 根因 | 修法 | 证据 |
+| --- | --- | --- | --- |
+| 私聊切换竞态 | `openThread` 先切 `activeName`，异步回包无条件覆盖 `messages` | 新增 `stores/dm.ts`：每会话递增 `token` + `AbortController`，迟到回包丢弃；`send` 捕获发起时会话，只落回该会话 | `spec-review3.mjs a`：a0 证明 race 路径被走到（held=1），a2 内容不再被串，a3 草稿保留 |
+| 私聊无实时收信、刷新不更新 | 面板没有 socket 订阅，`loadFriends` 对已有会话不重读 | 新增 `realtime/friends.ts`（`acquireFriendsChannel` 复用共享 socket，引用计数释放）；`loadFriends` 末尾对当前会话 `dm.open` | `spec-review3.mjs b`：b1 不点刷新即出现、b2 其他会话未读角标、b3/b4 刷新更新且不清空 |
+| >50 条历史无法查看 | `limit=50` 写死、`has_more` 被丢弃 | `dm.loadOlder` 用 `before=最早 id`，`mergeMessages` 按 id 去重升序 | `spec-review3.mjs c`：首屏 50 + 「加载更早」，翻到 68 条，id 升序 94..166 |
+| 有真实牌栈时「收起」失效 | 浮层 `v-if` 让 `chainList.length` 绕过 `chainCollapsed` | `chainHasContent` / `chainPanelOpen` 两个 computed 统一语义，收起只改可见性 | `spec-review3.mjs d`：d1 非空牌栈打开、d2/d3 收起后 overlay=false + reopen=true、d4 重开倒计时 99→98 未重置 |
+| 帮助缺顶段条件与解锁 | 一律画「N 分起」，顶段没有起始分 | 顶段显示服务端 `admiral_rank_limit`/`admiral_min_captains` 条件；解锁项取 `/api/profile` 的 `catalog`（游客如实提示） | `spec-review3.mjs e`：e1 晋升条件、e2 阈值 50/50、e3 游客提示、e4 catalog 解锁 |
+| 管理员入口未迁 | 前一轮矩阵把 admin 行去掉且没有组件 | 新增 `components/AdminOverlay.vue`（总览/详情/处置/历史），入口按 `/api/admin/me` 渲染 | `spec-admin.mjs`：a0 is_admin、b0 游客无入口、b1 未登录接口 401、c1–c5 入口/列表/搜索/详情/处置历史 |
+| 手牌「选中加宽未实现」说法有误 | `useHandFan.ts` 早已实现 `selectedIndex` + `need` | 不做重复机制，改报告 | `spec-review3.mjs g` 3/3 PASS |

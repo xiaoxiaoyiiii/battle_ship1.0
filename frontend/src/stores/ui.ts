@@ -345,7 +345,16 @@ export const useUiStore = defineStore('ui', () => {
   }
 
   /** 好友面板（好友列表/申请/私聊）。 */
+  const adminOpen = ref(false)
   const friendsOpen = ref(false)
+  function openAdmin(): void {
+    adminOpen.value = true
+  }
+
+  function closeAdmin(): void {
+    adminOpen.value = false
+  }
+
   function openFriends(): void {
     friendsOpen.value = true
   }
@@ -429,6 +438,9 @@ export const useUiStore = defineStore('ui', () => {
     helpOpen,
     openHelp,
     closeHelp,
+    adminOpen,
+    openAdmin,
+    closeAdmin,
     friendsOpen,
     openFriends,
     closeFriends,

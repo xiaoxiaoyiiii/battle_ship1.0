@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import AppOverlay from './AppOverlay.vue'
+import { useDmStore } from '../stores/dm'
+import { acquireFriendsChannel } from '../realtime/friends'
 
 /**
  * 好友面板（原 main 的 `#friends-modal`：三列表 + 私聊）。
@@ -51,11 +53,16 @@ const incoming = ref<BriefRow[]>([])
 const outgoing = ref<BriefRow[]>([])
 const counts = ref<Counts>({})
 
-const activeName = ref('')
-const messages = ref<DmMessage[]>([])
-const draft = ref('')
+const dm = useDmStore()
+const activeName = computed(() => dm.active)
+const messages = computed(() => dm.activeMessages)
+const draft = computed({
+  get: () => dm.draft,
+  set: (value: string) => { dm.draft = value },
+})
 const sending = ref(false)
-const dmError = ref('')
+const dmError = computed(() => dm.activeError)
+const sendError = ref('')
 
 const activeFriend = computed(() => friends.value.find((row) => row.username === activeName.value) ?? null)
 const hasFriends = computed(() => friends.value.length > 0)
@@ -100,7 +107,13 @@ async function loadFriends(): Promise<void> {
   incoming.value = result.data.incoming ?? []
   outgoing.value = result.data.outgoing ?? []
   counts.value = result.data.counts ?? {}
-  if (!activeName.value && friends.value.length) void openThread(friends.value[0].username)
+  dm.prune(friends.value.map((row) => row.username))
+  if (!activeName.value && friends.value.length) {
+    void openThread(friends.value[0].username)
+  } else if (activeName.value) {
+    // 刷新要能带出当前会话的新消息（审查 P2-2）
+    await dm.open(activeName.value)
+  }
   loading.value = false
 }
 
@@ -132,53 +145,62 @@ async function removeFriend(username: string): Promise<void> {
   }
   friends.value = friends.value.filter((row) => row.username !== username)
   if (activeName.value === username) {
-    activeName.value = ''
-    messages.value = []
+    dm.active = ''
     if (friends.value.length) void openThread(friends.value[0].username)
   }
 }
 
 async function openThread(username: string): Promise<void> {
-  activeName.value = username
-  dmError.value = ''
-  messages.value = []
-  const result = await api<{ messages?: DmMessage[]; error?: string }>(
-    '/api/friends/messages?username=' + encodeURIComponent(username) + '&limit=50',
-  )
-  if (!result.ok) {
-    dmError.value = result.data?.error || '私聊记录没读出来。'
-    return
-  }
-  messages.value = result.data?.messages ?? []
   const row = friends.value.find((item) => item.username === username)
   if (row) row.unread = 0
+  await dm.open(username)
   void api('/api/friends/messages/read', {
     method: 'POST',
     body: JSON.stringify({ username }),
   })
 }
 
-async function send(): Promise<void> {
-  const body = draft.value.trim()
-  if (!body || !activeName.value || sending.value) return
-  sending.value = true
-  dmError.value = ''
-  const result = await api<{ status?: string; error?: string; message?: DmMessage }>(
-    '/api/friends/messages',
-    { method: 'POST', body: JSON.stringify({ username: activeName.value, body }) },
-  )
-  sending.value = false
-  if (!result.ok || result.data?.status === 'error') {
-    dmError.value = result.data?.error || '消息没发出去。'
-    return
-  }
-  draft.value = ''
-  const sent = result.data?.message
-  if (sent) messages.value = [...messages.value, sent]
-  else void openThread(activeName.value)
+async function loadOlder(): Promise<void> {
+  if (activeName.value) await dm.loadOlder(activeName.value)
 }
 
-onMounted(loadFriends)
+async function send(): Promise<void> {
+  const name = activeName.value
+  const body = draft.value
+  if (!body.trim() || !name || sending.value) return
+  sending.value = true
+  const result = await dm.send(name, body)
+  sending.value = false
+  if (!result.ok && result.error) sendError.value = result.error
+}
+
+let releaseChannel: (() => void) | null = null
+
+onMounted(() => {
+  void loadFriends()
+  try {
+    releaseChannel = acquireFriendsChannel(undefined, { onRequest: () => { void loadFriends() } })
+  } catch {
+    // socket 还没建立起就退化为纯 HTTP：面板仍可读历史与发送。
+    releaseChannel = null
+  }
+})
+
+onUnmounted(() => {
+  releaseChannel?.()
+  releaseChannel = null
+})
+
+// 会话内的未读角标：以好友列表的 unread 与实时推送的计数取较大者
+function badgeFor(row: FriendRow): number {
+  return Math.max(row.unread ?? 0, dm.unreadFor(row.username))
+}
+
+// 键盘/鼠标选中会话后立刻清零未读
+watch(activeName, (name) => {
+  if (!name) return
+  dm.unread[name] = 0
+})
 </script>
 
 <template>
@@ -223,7 +245,7 @@ onMounted(loadFriends)
                 <span class="friends__dot" :class="{ 'is-online': row.online }" aria-hidden="true"></span>
                 <span class="friends__name">{{ row.username }}</span>
                 <span v-if="row.in_game" class="friends__tag">对局中</span>
-                <span v-if="row.unread" class="friends__badge">{{ row.unread }}</span>
+                <span v-if="badgeFor(row)" class="friends__badge">{{ badgeFor(row) }}</span>
               </button>
               <button
                 type="button"
@@ -256,11 +278,20 @@ onMounted(loadFriends)
           </h3>
           <p v-if="!activeName" class="friends__empty">在左侧选一位好友开始私聊。</p>
           <template v-else>
-            <p v-if="dmError" class="friends__error" data-testid="friends-dm-error" role="alert">{{ dmError }}</p>
+            <p v-if="dmError || sendError" class="friends__error" data-testid="friends-dm-error" role="alert">{{ dmError || sendError }}</p>
+            <button
+              v-if="dm.activeHasMore"
+              type="button"
+              class="button button--ghost friends__more"
+              data-testid="friends-load-more"
+              :disabled="dm.activeLoadingOlder"
+              @click="loadOlder"
+            >{{ dm.activeLoadingOlder ? '正在读取更早的消息…' : '加载更早的消息' }}</button>
             <ol class="friends__thread" data-testid="friends-thread">
               <li
                 v-for="message in messages"
                 :key="message.id"
+                :data-msg-id="message.id"
                 class="friends__msg"
                 :class="{ 'is-mine': message.mine }"
               >
@@ -268,7 +299,15 @@ onMounted(loadFriends)
                 <span class="friends__msg-stamp">{{ message.stamp }}</span>
               </li>
             </ol>
-            <p v-if="!messages.length" class="friends__empty">还没有消息，打个招呼吧。</p>
+            <p v-if="!messages.length && !dm.activeLoading" class="friends__empty">还没有消息，打个招呼吧。</p>
+            <p v-if="dm.activeLoading" class="friends__empty" data-testid="friends-thread-loading">正在读取…</p>
+            <button
+              v-if="dm.activeError"
+              type="button"
+              class="button button--ghost friends__more"
+              data-testid="friends-thread-retry"
+              @click="openThread(activeName)"
+            >重试</button>
             <form class="friends__compose" @submit.prevent="send">
               <label class="friends__sr" for="friends-draft">私聊内容</label>
               <input

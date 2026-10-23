@@ -115,8 +115,8 @@ Codex 用公开注册/登录/建房/布船/猜拳/攻击接口造两位真实玩
 
 | main 区域 | Vue 实现 | 证据 | 仍存在差异 |
 | --- | --- | --- | --- |
-| 对手身份顶条 + 己方舰队摘要（`players-info`/`arena-fleet-head`/`arena-pips`） | `.hud-players` 内两个 `.arena-player`（头像首字、名字、剩余舰、pips 方块），宽屏为顶栏下方独立一行；手牌左侧 fixed `.arena-fleet` | `shots/main4j-1907x996-detail.png`、`shots/port-1440x900-game.png`（真实对局） | 头像为名字首字，不是原 main 的上传头像；战绩入口未做 |
-| 左侧聊天 + 可拖动/可收起日志（原为两块浮动窗） | `.game-float` + `useFloatingDrag`：聊天（左上，默认常驻、可关）、日志（其下，可拖/可收起/可放大） | `spec-floating-chat.mjs` PASS（拖动后坐标变化并被夹在视口内）；`shots/main4b-1907x996.png` | 紧凑档仍是抽屉 |
+| 对手身份顶条 + 己方舰队摘要（`players-info`/`arena-fleet-head`/`arena-pips`） | `.hud-players` 内两个 `.arena-player`（头像首字、名字、剩余舰、pips 方块），宽屏为顶栏下方独立一行；手牌左侧 fixed `.arena-fleet` | `shots/main4j-1907x996-detail.png`、`shots/port-1440x900-game.png`（真实对局） | 已接真实头像与战绩弹窗（`usePlayerCards.ts`，走 `/user_stats`）；对手为人机/游客时退回首字并给文案。**未解**：对手归属按昵称查询，同名游客会显示他人资料（见 8.5） |
+| 左侧聊天 + 可拖动/可收起日志（原为两块浮动窗） | `.game-float` + `useFloatingDrag`：聊天（左上，默认常驻、可关；快捷语从输入行按需展开并跟随浮窗）、日志（其下，可拖/可收起/可放大；两者位置记入 localStorage `in_game_chat_pos`/`game_log_pos`，缩放后夹回视口） | `spec-floating-chat.mjs` PASS；真实两账号链路里拖动→刷新→位置恢复 PASS | 紧凑档仍是抽屉，但抽屉改为 `position:fixed`，任意滚动位置打开都可见 |
 | 竖向连锁轨道（`arena-chain-slot`） | 宽屏右列拆 `96px` 轨道 + 操作列；空态保留高度，叠牌 `76×114`、`-38px` | `shots/main4j-1907x996-detail.png`、`spec-review4.mjs chain` | 轨道比原 main 的叠牌比例略小 |
 | 独立完整卡牌详情（`style.css:1821-1841`） | 卡名 → `156px` 宽、2:3 卡面 → 规则（局部滚动）→ 使用/取消；`shot` 里卡面 158px 高 | `shots/main4j-1907x996-detail.png`（face 156×234）、`port-1440x900-detail.png` | 极小高度时卡面按 `max-height:158px` 缩放 |
 | 手牌完整原画 + 扇形 | `useHandFan` 保留；`.card--art` 隐藏重复文字层，`card__art` 铺满；不可用原因缩成底部深色小条 | `shots/main4c-390x740.png`、`port-390x740-detail.png`（`reason:true`） | 无卡图时回退文字卡 |
@@ -133,3 +133,11 @@ Codex 用公开注册/登录/建房/布船/猜拳/攻击接口造两位真实玩
 
 - 原 main：`main-ui-reference-d16f706/docs/readme/04-game-live.png`（1907×996）。
 - 新版同视口：`docs/screenshots/main-ui-restoration/r4/vue-1907x996-game-detail.jpg`（1907×996）。
+
+### 8.5 当前结论（R2，替代前面各轮对应断言）
+
+- 头像 / 战绩：已接。顶栏与舰队卡显示账号真实头像，点头像或「战绩」开弹窗；极窄/极矮档身份条隐藏，入口在「更多操作 → 对手战绩」。
+- 快捷语：默认不常驻，输入行按钮展开，跟随聊天浮窗，发送成功后收起。
+- 浮窗位置：日志 `game_log_pos`、聊天 `in_game_chat_pos`，刷新恢复，缩放/旋转后夹回视口。
+- 紧凑档抽屉（聊天/日志/弃牌共用 `.game-drawer`）：原为 `.game` 内 absolute，`.game` 滚动后打开会把标题与关闭按钮顶出视口（360×640，scrollTop=125，关闭钮中心 y=-2）。现为 `position:fixed`。证据：`drawer-scroll.mjs` 在旧样式下 360×640 的聊天/日志/弃牌各 FAIL（关闭钮不在视口），新样式 360×640、390×740、844×390 共 21 项 PASS，全部为真实滚轮 + 真实 `mouse.click`，不回滚到顶部。
+- **未解（需后端字段）**：局内 `opponent_name` 是显示昵称，不是账号身份，游客可任意取名（`services/rooms.py:193-196` `_player_name`；排队时 `services/matchmaking.py:131,156` 直接用客户端 `player_name`）。`game_state`/`room_sync` 载荷没有对手 user_id 或是否注册（`domain/room/sync.py:218-219`、`services/rooms.py:425-426`、`services/matchmaking.py:238-239` 只有 name）；`Player.user_id` 只存在服务端（`domain/room/models.py:129`）。因此前端无法确认昵称对应哪个账号，同名游客会被显示成同名注册账号的头像与战绩。最小方案：在 `opponent_seat_state` 同处加性增加 `opponent_registered: bool`（座位 `user_id` 非空），排队项的 `name` 改用 `connection.username or player_name`，前端仅在为真时查 `/user_stats`；需重新生成契约与 `events.gen.ts`。该改动涉及协议，等确认后再做。

@@ -1245,7 +1245,7 @@
 
 /* ------------------------------------------------------------------ drawers --- */
 .game-drawer {
-  position: absolute;
+  position: fixed;
   z-index: 45;
   top: 8px;
   right: 8px;

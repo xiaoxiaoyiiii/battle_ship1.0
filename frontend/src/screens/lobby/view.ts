@@ -134,7 +134,7 @@ export function roomsEmptyText(
   filter: LobbyFilter,
   query: string,
 ): string {
-  if (!total) return '暂无等待中的房间，点下面的「创建房间」开一桌'
+  if (!total) return '暂无等待中的房间，点上方的「创建房间」开一桌'
   if (!normalizedQuery(query)) {
     if (filter === 'joinable') return '没有可加入的房间（共 ' + total + ' 间在等，可能都已满）'
     if (filter === 'full') return '没有已满的房间'

@@ -613,6 +613,23 @@ watch(activeName, (name) => {
     padding: 14px 14px 16px;
   }
 
+  /* 手机宽度下标题与按钮挤在一行会把「刷新/关闭」压成竖排，改成两行排列。 */
+  .friends__head {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .friends__head-actions {
+    flex: 1 1 100%;
+    justify-content: space-between;
+    gap: 6px;
+  }
+
+  .friends__head-actions .button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
   .friends__grid {
     grid-template-columns: minmax(0, 1fr);
   }

@@ -58,6 +58,7 @@ export const BATTLE_EVENTS = [
   'sacrifice_request',
   'sacrifice_cancelled',
   'placement_request',
+  'placement_done',
   'priority_waiting',
   'priority_waiting_end',
   'shenji_waiting',
@@ -79,6 +80,8 @@ export type BattleEmitEvent =
   | 'quick_chat'
   | 'chat_message'
   | 'confirm_sacrifice'
+  | 'confirm_reinforcement_position'
+  | 'cancel_placement'
   | 'confirm_magic_target'
   | 'cancel_magic_selection'
   | 'request_hand_sync'
@@ -95,6 +98,8 @@ export const BATTLE_EMIT_EVENTS: readonly BattleEmitEvent[] = [
   'quick_chat',
   'chat_message',
   'confirm_sacrifice',
+  'confirm_reinforcement_position',
+  'cancel_placement',
   'confirm_magic_target',
   'cancel_magic_selection',
   'request_hand_sync',
@@ -420,10 +425,15 @@ export function applyBattleEvent(
       break
     }
     case 'placement_request': {
-      match.pushNotice(
-        String(payload.message ?? '需要重新摆放战舰（放置面板见布船屏）'),
-        'warning',
-      )
+      game.applyServerState({
+        pending_placement: { ...payload, caster: state.player_id },
+        pending_placement_blocked: Array.isArray(payload.blocked) ? payload.blocked : [],
+        pending_placement_allowed: Array.isArray(payload.allowed) ? payload.allowed : [],
+      })
+      break
+    }
+    case 'placement_done': {
+      game.applyServerState({ pending_placement: null, pending_placement_blocked: [], pending_placement_allowed: [] })
       break
     }
     case 'priority_waiting': {

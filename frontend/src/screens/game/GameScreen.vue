@@ -6,6 +6,7 @@ import { useAdaptiveGameLayout } from './useAdaptiveGameLayout'
 import { useHandFan } from './useHandFan'
 import { useFloatingDrag } from './useFloatingDrag'
 import PlayerCardDialog from './PlayerCardDialog.vue'
+import MagicPlacementPanel from './MagicPlacementPanel.vue'
 import { CARDS } from '../../cards/cardData'
 import { usePlayerCards } from './usePlayerCards'
 import { acquireBattleChannel, getBattleSocket, sendBattleEvent, syncHand } from '../../realtime/battle'
@@ -2056,6 +2057,7 @@ function backToLobby(): void {
       </ul>
       <p class="game-drawer__empty">牌堆剩余数量服务端没有下发，这里只显示已经进弃牌堆的卡，不猜数字。</p>
     </section>
+    <MagicPlacementPanel />
   </section>
 </template>
 

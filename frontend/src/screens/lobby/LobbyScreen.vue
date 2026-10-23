@@ -509,6 +509,63 @@ onBeforeUnmount(() => {
       <button type="button" class="lobby__dismiss" data-testid="lobby-error-dismiss" @click="lobby.clearError">知道了</button>
     </p>
 
+    <section class="lobby__primary" aria-label="大厅主行动">
+      <button
+        type="button"
+        class="lobby__primary-action"
+        data-testid="lobby-match-casual"
+        data-primary-action
+        :disabled="lobby.queueMode === 'casual'"
+        @click="startMatch('casual')"
+      >
+        <b>快速匹配</b>
+        <span>随机找一位在线玩家，马上开局</span>
+      </button>
+      <button
+        type="button"
+        class="lobby__primary-action lobby__primary-action--room"
+        data-testid="lobby-create-room"
+        @click="createRoom"
+      >
+        <b>创建房间</b>
+        <span>开一桌，等好友或大厅玩家加入</span>
+      </button>
+      <div class="lobby__primary-side">
+        <button
+          type="button"
+          class="button button--ghost"
+          data-testid="lobby-match-ranked"
+          :disabled="lobby.queueMode === 'ranked'"
+          @click="startMatch('ranked')"
+        >排位匹配</button>
+        <button
+          v-if="lobby.queueMode"
+          type="button"
+          class="button button--danger"
+          data-testid="lobby-match-cancel"
+          @click="cancelMatch"
+        >取消匹配</button>
+        <button type="button" class="button button--ghost" data-testid="lobby-back-home" @click="backHome">返回首页</button>
+      </div>
+    </section>
+
+    <div class="lobby__create">
+      <input
+        v-model="roomName"
+        type="text"
+        class="lobby__input"
+        data-testid="lobby-room-name"
+        maxlength="20"
+        placeholder="房间名（可留空）"
+        aria-label="房间名"
+      />
+      <label class="lobby__checkbox" title="取消勾选 = 私密房，只能凭房号加入">
+        <input v-model="roomPublic" type="checkbox" data-testid="lobby-room-public" />
+        公开
+      </label>
+      <p class="lobby__create-hint">取消勾选「公开」= 私密房，只有拿到房号的人能加入。</p>
+    </div>
+
     <div class="lobby__filterbar">
       <input
         v-model="query"
@@ -637,31 +694,7 @@ onBeforeUnmount(() => {
         </template>
         </StateSurface>
 
-        <div class="lobby__create">
-          <input
-            v-model="roomName"
-            type="text"
-            class="lobby__input"
-            data-testid="lobby-room-name"
-            maxlength="20"
-            placeholder="房间名（可留空）"
-            aria-label="房间名"
-          />
-          <label class="lobby__checkbox" title="取消勾选 = 私密房，只能凭房号加入">
-            <input v-model="roomPublic" type="checkbox" data-testid="lobby-room-public" />
-            公开
-          </label>
-          <button
-            type="button"
-            class="lobby__primary-action lobby__primary-action--room"
-            data-testid="lobby-create-room"
-            @click="createRoom"
-          >
-            <b>创建房间</b>
-            <span>开一桌，等好友或大厅玩家加入</span>
-          </button>
-          <p class="lobby__create-hint">取消勾选「公开」= 私密房，只有拿到房号的人能加入。</p>
-        </div>
+
       </section>
 
       <section v-if="matchesVisible" class="lobby__panel lobby__panel--matches" aria-label="进行中的对局">
@@ -833,36 +866,7 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
-    <section class="lobby__primary" aria-label="大厅主行动">
-      <button
-        type="button"
-        class="lobby__primary-action"
-        data-testid="lobby-match-casual"
-        data-primary-action
-        :disabled="lobby.queueMode === 'casual'"
-        @click="startMatch('casual')"
-      >
-        <b>快速匹配</b>
-        <span>随机找一位在线玩家，马上开局</span>
-      </button>
-      <div class="lobby__primary-side">
-        <button
-          type="button"
-          class="button button--ghost"
-          data-testid="lobby-match-ranked"
-          :disabled="lobby.queueMode === 'ranked'"
-          @click="startMatch('ranked')"
-        >排位匹配</button>
-        <button
-          v-if="lobby.queueMode"
-          type="button"
-          class="button button--danger"
-          data-testid="lobby-match-cancel"
-          @click="cancelMatch"
-        >取消匹配</button>
-        <button type="button" class="button button--ghost" data-testid="lobby-back-home" @click="backHome">返回首页</button>
-      </div>
-    </section>
+
 
     <div v-if="lobby.activeInvite" class="lobby__invite" data-testid="lobby-invite-banner" role="status">
       <span class="lobby__invite-text">
@@ -1404,9 +1408,7 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  margin-top: auto;
-  padding-top: 10px;
-  border-top: 1px dashed var(--line-dash);
+  margin: 0;
 }
 
 .lobby__create .lobby__input {
@@ -1420,39 +1422,39 @@ onBeforeUnmount(() => {
   font-size: 11px;
 }
 
-/* 匹配操作集中放在底部，创建操作跟随房间列表。 */
+/* 顶部保留两个醒目的主按钮，下方列表沿用居中两列布局。 */
 .lobby__primary {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
   gap: 10px;
-  align-items: center;
-  padding-top: 4px;
+  align-items: stretch;
 }
 
 .lobby__primary-action {
   display: grid;
   gap: 3px;
-  min-height: 40px;
-  padding: 8px 16px;
+  min-height: 84px;
+  padding: 14px 18px;
   border: 1px solid color-mix(in srgb, var(--role-action) 55%, transparent);
   border-radius: var(--radius);
   background: var(--hero-grad);
   color: #fff;
   font: inherit;
-  text-align: center;
+  text-align: left;
   cursor: pointer;
   box-shadow: var(--shadow-accent);
   transition: border-color var(--duration-fast) var(--ease), filter var(--duration-fast) var(--ease);
 }
 
 .lobby__primary-action b {
-  font-size: 13px;
+  font-size: 18px;
   font-weight: 700;
 }
 
 .lobby__primary-action span {
-  display: none;
+  display: block;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 12px;
 }
 
 .lobby__primary-action:hover:not(:disabled) {
@@ -1482,10 +1484,9 @@ onBeforeUnmount(() => {
 
 .lobby__primary-side {
   display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
+  flex-direction: column;
   justify-content: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .lobby__primary-side .button {
@@ -1734,6 +1735,13 @@ onBeforeUnmount(() => {
   .lobby__panel--matches { order: 2; }
   .lobby__panel--chat { order: 3; }
   .lobby__panel--friends { order: 4; }
+  .lobby__primary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lobby__primary-side { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; }
+}
+
+@media (max-width: 560px) {
+  .lobby__primary { grid-template-columns: minmax(0, 1fr); }
+  .lobby__primary-action { min-height: 76px; }
 }
 
 @media (max-width: 520px) {

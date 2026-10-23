@@ -3096,3 +3096,12 @@ button.arena-avatar--btn {
   right: 12px;
   top: 64px;
 }
+
+/* 连锁响应使用常驻结算栏，不创建模态或遮罩。 */
+.arena-chain-slot .game-chain-window { padding:0; border:0; background:none; }
+.arena-chain-slot .game-chain-window__actions { display:flex; flex-direction:column; gap:8px; }
+.arena-chain-slot .game-chain-window__actions .button { white-space:normal; min-height:40px; }
+.arena-chain-slot .game-chain-countdown { font-size:13px; }
+.game[data-layout='compact'] .arena-rail--responding { display:block; position:static; width:100%; max-height:none; flex:0 0 auto; }
+.game[data-layout='compact'] .arena-rail--responding > :not(.arena-chain-slot) { display:none; }
+.game[data-layout='compact'] .arena-rail--responding .arena-chain-slot { display:flex; min-height:0; max-height:240px; overflow-y:auto; }

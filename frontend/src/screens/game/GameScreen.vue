@@ -7,9 +7,12 @@ import { useHandFan } from './useHandFan'
 import { useFloatingDrag } from './useFloatingDrag'
 import PlayerCardDialog from './PlayerCardDialog.vue'
 import MagicPlacementPanel from './MagicPlacementPanel.vue'
+import MagicChoicePanel from './MagicChoicePanel.vue'
+import MagicDiscardPanel from './MagicDiscardPanel.vue'
 import { CARDS } from '../../cards/cardData'
 import { usePlayerCards } from './usePlayerCards'
-import { acquireBattleChannel, getBattleSocket, sendBattleEvent, syncHand } from '../../realtime/battle'
+import { acquireBattleChannel, getBattleSocket, refreshMagicState, sendBattleEvent, syncHand } from '../../realtime/battle'
+import { acquireMatchChannel } from '../../realtime/match'
 import { cardArtUrl } from '../../cards/cardArt'
 import { useAuthStore } from '../../stores/auth'
 import { useGameStore } from '../../stores/game'
@@ -70,6 +73,7 @@ const result = useResultStore()
 const ui = useUiStore()
 
 let releaseChannel: (() => void) | null = null
+let releaseMatchChannel: (() => void) | null = null
 let ticker: number | null = null
 const now = ref(Date.now())
 const liveText = ref('')
@@ -124,6 +128,7 @@ const shieldSelectedKeys = computed<string[]>(() => {
 })
 
 interface SelectionState {
+  isChain?: boolean
   card: CardLike
   index: number
   descriptor: TargetDescriptor
@@ -243,7 +248,7 @@ const targetHint = computed(() => {
   const kind = sel.descriptor.kind
   if (kind === 'area') return '在对手海域点击一个格子，确定 ' + String(sel.descriptor.size ?? 3) + '×' + String(sel.descriptor.size ?? 3) + ' 区域的左上角'
   if (kind === 'line') return '选择行或列，再在对手海域点击一个格子'
-  if (kind === 'continuous') return '依次点击 6 个连续格子（正好一整行或一整列）'
+  if (kind === 'continuous') return '选择 6 个四邻接连通格，可以转弯；再次点击可撤销'
   if (kind === 'single') return '在自己海域点击一艘还活着的战舰'
   if (kind === 'own_ships') return '在自己海域选择两艘战舰，然后选择要发出的效果'
   if (kind === 'shenwei') return '先选择作用棋盘，再点击 3×3 区域的左上角'
@@ -666,22 +671,25 @@ async function playCard(index: number): Promise<void> {
   clearCardSelection()
 }
 
-async function dispatchCard(card: CardLike, targets: Record<string, unknown>): Promise<void> {
+async function dispatchCard(card: CardLike, targets: Record<string, unknown>, isChain = false): Promise<void> {
   if (busy.value) return
   busy.value = true
   try {
-    const ack = await sendBattleEvent('use_magic_card', {
+    const ack = await sendBattleEvent(isChain ? 'chain_response' : 'use_magic_card', {
       room_id: state.value.room_id,
       player_id: state.value.player_id,
       card: { name: card.name, speed: card.speed, type: card.type, description: card.description ?? '' },
       targets,
+      ...(isChain ? { chain: true } : {}),
     })
-    selection.value = null
     if (ack.status !== 'success') {
       const message = '使用魔法卡失败：' + (ack.message || '未知错误')
+      if (selection.value) selection.value.error = ack.message || '服务端未接受目标，请调整后重试'
       ui.notifyError('game-card-failed', message)
       return
     }
+    selection.value = null
+    if (isChain) match.closeChainWindow()
     ui.notify({ code: 'game-card-used', message: '已使用「' + card.name + '」', tone: 'success' })
     announce('已使用' + card.name)
     if (hand.value.some((item) => cardIdentity(item) === cardIdentity(card))) {
@@ -742,7 +750,7 @@ function pickCell(board: 'self' | 'opponent', x: number, y: number): void {
     const existing = sel.picks.findIndex((cell) => cell.x === x && cell.y === y)
     if (existing >= 0) sel.picks.splice(existing, 1)
     else if (sel.picks.length < (sel.descriptor.length ?? 6)) sel.picks.push({ x, y })
-    if (!continuousLine(sel.picks)) sel.error = ''
+    sel.error = ''
     return
   }
   if (kind === 'single' || kind === 'own_ships') {
@@ -794,6 +802,7 @@ function cancelSelection(): void {
   const sel = selection.value
   selection.value = null
   clearCardSelection()
+  if (sel?.isChain && match.chainWindow) match.expandChainWindow()
   if (sel) {
     const message = '已取消「' + sel.card.name + '」的目标选择'
     ui.notify({ code: 'game-target-cancelled', message, tone: 'info' })
@@ -804,17 +813,17 @@ function buildTargets(sel: SelectionState): Record<string, unknown> {
   const descriptor = sel.descriptor
   const kind = descriptor.kind
   if (kind === 'area' && sel.anchor) {
-    return { target_area: areaFromAnchor(sel.anchor.x, sel.anchor.y, descriptor.size ?? 3) }
+    return { board: descriptor.board, target_area: areaFromAnchor(sel.anchor.x, sel.anchor.y, descriptor.size ?? 3) }
   }
   if (kind === 'line' && sel.anchor) {
-    return { target_line: { type: sel.lineDir, index: sel.lineDir === 'row' ? sel.anchor.y : sel.anchor.x } }
+    return { board: 'opponent', target_line: { type: sel.lineDir, index: sel.lineDir === 'row' ? sel.anchor.y : sel.anchor.x } }
   }
-  if (kind === 'continuous') return { target_cells: sel.picks }
+  if (kind === 'continuous') return { board: 'opponent', target_cells: sel.picks }
   if (kind === 'single' && sel.picks.length === 1) {
     const cell = sel.picks[0]
-    return { target_area: { x1: cell.x, y1: cell.y, x2: cell.x, y2: cell.y } }
+    return { board: 'self', target_area: { x1: cell.x, y1: cell.y, x2: cell.x, y2: cell.y } }
   }
-  if (kind === 'own_ships') return { selected_cells: sel.picks, effect_choice: sel.effectChoice }
+  if (kind === 'own_ships') return { board: 'self', selected_cells: sel.picks, effect_choice: sel.effectChoice }
   if (kind === 'shenwei' && sel.anchor && sel.board) {
     return { board: sel.board, target_area: areaFromAnchor(sel.anchor.x, sel.anchor.y, 3) }
   }
@@ -830,7 +839,7 @@ async function confirmSelection(): Promise<void> {
     say('game-target-not-ready', '还不能确认：' + (sel.error || targetHint.value), '按横幅提示先选好目标。')
     return
   }
-  await dispatchCard(sel.card, buildTargets(sel))
+  await dispatchCard(sel.card, buildTargets(sel), sel.isChain)
 }
 
 // ---- board clicks ----------------------------------------------------------
@@ -1028,6 +1037,7 @@ function toggleShieldShip(x: number, y: number): void {
 
 async function confirmShieldChoice(): Promise<void> {
   if (!match.shieldChoice || !shieldPicks.value.length) return
+  const request = match.shieldChoice
   const picks = shieldPicks.value.slice(0, 3)
   try {
     const ack = await sendBattleEvent('confirm_magic_target', {
@@ -1040,9 +1050,10 @@ async function confirmShieldChoice(): Promise<void> {
       shieldError.value = ack.message || '加盾失败，请重新选择'
       return
     }
-    match.clearShieldChoice()
+    if (match.shieldChoice === request) match.clearShieldChoice()
     shieldPicks.value = []
     shieldError.value = ''
+    await refreshMagicState()
   } catch (error) {
     shieldError.value = '加盾失败：' + String(error)
   }
@@ -1054,44 +1065,51 @@ async function cancelShieldChoice(): Promise<void> {
       room_id: state.value.room_id,
       player_id: state.value.player_id,
     })
+    if (ack.status !== 'success') { shieldError.value = ack.message || '当前不能取消，请先处理待选效果'; return }
     match.clearShieldChoice()
     shieldPicks.value = []
     shieldError.value = ''
+    await refreshMagicState()
   } catch (error) {
     shieldError.value = '取消失败：' + String(error)
   }
 }
 
+const pickSubmitting = ref(false)
 async function choosePickCell(board: 'self' | 'opponent', x: number, y: number): Promise<void> {
   const pick = match.pickRequest
-  if (!pick || board !== 'self') return
+  if (!pick || board !== 'self' || pickSubmitting.value) return
   const offered = pick.ships.some((ship) => ship.positions.some((cell) => cell.x === x && cell.y === y))
   if (!offered) {
     say('game-pick-invalid', '请选择面板中列出的战舰格子')
     return
   }
+  pickSubmitting.value = true
+  try {
   const ack = await sendBattleEvent('confirm_sacrifice', {
     room_id: state.value.room_id,
     player_id: state.value.player_id,
     position: { x, y },
   })
   if (ack.status === 'success') {
-    match.clearPickRequest()
+    // 下一项可能先于旧确认的回执到达，不可把新请求一并清掉。
+    if (match.pickRequest === pick) match.clearPickRequest()
   } else {
+    say('game-pick-rejected', ack.message || '选舰未被接受，请重试')
   }
+  } catch { say('game-pick-connection', '连接不稳定，选舰请求仍保留，请重试') }
+  finally { pickSubmitting.value = false }
 }
 
 // ---- chain -----------------------------------------------------------------
 async function respondChain(card: CardLike): Promise<void> {
-  const ack = await sendBattleEvent('chain_response', {
-    room_id: state.value.room_id,
-    player_id: state.value.player_id,
-    chain: true,
-    card: { name: card.name, speed: card.speed, type: card.type, description: card.description ?? '' },
-    targets: [],
-  })
-  match.closeChainWindow()
-  if (ack.status !== 'success') ui.notifyError('game-chain-failed', ack.message || '')
+  const descriptor = targetDescriptor(card.name)
+  if (descriptor) {
+    selection.value = { isChain:true, card, index:hand.value.findIndex(c => c.name === card.name), descriptor, board:descriptor.board ?? null, anchor:null, lineDir:'row', picks:[], effectChoice:null, error:'' }
+    match.collapseChainWindow()
+    return
+  }
+  await dispatchCard(card, {}, true)
 }
 
 async function passChain(): Promise<void> {
@@ -1248,12 +1266,23 @@ let navigating = false
 
 // 后手结束后服务端进入新一轮猜拳；旧结束阶段视图必须随状态离开。
 watch(
-  () => state.value.state,
-  (next) => {
+  () => [state.value.state, state.value.needs_reset],
+  ([next, needsReset]) => {
     if (next === 'rock_paper_scissors') void router.replace({ name: 'rps' })
+    if (next === 'placing_ships' && needsReset) void router.replace({ name: 'placement' })
   },
   { immediate: true },
 )
+
+watch(() => [state.value.pending_sacrifice, state.value.pending_sacrifice_ships], () => {
+  const pick = state.value.pending_sacrifice
+  if (pick && pick.reason !== 'shield_choice') match.setPickRequest({ ...pick, ships: state.value.pending_sacrifice_ships })
+  else match.clearPickRequest()
+}, { deep: true, immediate: true })
+watch(() => state.value.magic_temp, (temp) => {
+  if (temp?.type === 'shield_choice') match.openShieldChoice({ caster: state.value.player_id })
+  else match.clearShieldChoice()
+}, { immediate: true })
 
 function maybeGoToSettlement(): void {
   const record = result.gameOver
@@ -1315,10 +1344,12 @@ watch(
 )
 
 onMounted(() => {
+  releaseMatchChannel = acquireMatchChannel()
   releaseChannel = acquireBattleChannel()
   // Ticket #53: the RPS draw frame was emitted before this channel existed;
   // ask for the authoritative hand once, so the screen never opens with 0 cards.
   void syncHand(getBattleSocket())
+  void refreshMagicState()
   seenGameOverAt = result.gameOver ? result.gameOver.receivedAt : 0
   seenRoom = state.value.room_id
   ticker = window.setInterval(() => {
@@ -1333,6 +1364,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   releaseChannel?.()
   releaseChannel = null
+  releaseMatchChannel?.()
+  releaseMatchChannel = null
   if (ticker !== null) window.clearInterval(ticker)
   ticker = null
   window.removeEventListener('keydown', onKeydown)
@@ -2058,6 +2091,8 @@ function backToLobby(): void {
       <p class="game-drawer__empty">牌堆剩余数量服务端没有下发，这里只显示已经进弃牌堆的卡，不猜数字。</p>
     </section>
     <MagicPlacementPanel />
+    <MagicChoicePanel />
+    <MagicDiscardPanel />
   </section>
 </template>
 

@@ -440,7 +440,9 @@ export interface AreaSelection {
 }
 
 export function areaFromAnchor(x: number, y: number, size: number): AreaSelection {
-  return { x1: x, y1: y, x2: x + size - 1, y2: y + size - 1 }
+  const x1 = Math.max(0, Math.min(BOARD_SIZE - size, x))
+  const y1 = Math.max(0, Math.min(BOARD_SIZE - size, y))
+  return { x1, y1, x2: x1 + size - 1, y2: y1 + size - 1 }
 }
 
 export function areaCells(area: AreaSelection | null): string[] {
@@ -458,18 +460,22 @@ export function lineFromCell(x: number, y: number, direction: 'row' | 'col'): Ar
     : { x1: x, y1: 0, x2: x, y2: BOARD_SIZE - 1 }
 }
 
-/** 硫磺火焰: six cells that form a full row or a full column. */
+/** 硫磺火焰：六个不同的四邻接连通格，可以转弯。返回范围仅供预览。 */
 export function continuousLine(cells: Point[]): AreaSelection | null {
   if (!Array.isArray(cells) || cells.length !== BOARD_SIZE) return null
-  const xs = new Set(cells.map((cell) => cell.x))
-  const ys = new Set(cells.map((cell) => cell.y))
-  if (ys.size === 1 && xs.size === BOARD_SIZE) {
-    return { x1: 0, y1: cells[0].y, x2: BOARD_SIZE - 1, y2: cells[0].y }
+  if (cells.some(p => !Number.isInteger(p.x) || !Number.isInteger(p.y) || p.x < 0 || p.y < 0 || p.x >= BOARD_SIZE || p.y >= BOARD_SIZE)) return null
+  const remaining = new Set(cells.map(p => cellKey(p.x, p.y)))
+  if (remaining.size !== BOARD_SIZE) return null
+  const stack = [cells[0]]
+  remaining.delete(cellKey(cells[0].x, cells[0].y))
+  while (stack.length) {
+    const p = stack.pop()!
+    for (const [x, y] of [[p.x - 1, p.y], [p.x + 1, p.y], [p.x, p.y - 1], [p.x, p.y + 1]]) {
+      if (remaining.delete(cellKey(x, y))) stack.push({ x, y })
+    }
   }
-  if (xs.size === 1 && ys.size === BOARD_SIZE) {
-    return { x1: cells[0].x, y1: 0, x2: cells[0].x, y2: BOARD_SIZE - 1 }
-  }
-  return null
+  if (remaining.size) return null
+  return { x1: Math.min(...cells.map(p => p.x)), y1: Math.min(...cells.map(p => p.y)), x2: Math.max(...cells.map(p => p.x)), y2: Math.max(...cells.map(p => p.y)) }
 }
 
 export function turnText(state: GameState, selfName: string, opponentName: string): string {

@@ -56,7 +56,7 @@ async function submit(cancel = false): Promise<void> {
 </script>
 
 <template>
-  <AppOverlay v-if="request" id="magic-placement-panel" :priority="180" :close-on-backdrop="false" labelledby="magic-placement-title">
+  <AppOverlay v-if="request && !game.state.dice_discard_pending" id="magic-placement-panel" :priority="180" :close-on-backdrop="false" labelledby="magic-placement-title">
     <section class="magic-placement">
       <h2 id="magic-placement-title">{{ title }} · 选择部署位置</h2>
       <p>{{ request.message || (kind === 'last_stand' ? '只能选择原本有自己战舰的位置。' : '在自己的海域选择一个合法位置，每次部署一艘。') }}</p>

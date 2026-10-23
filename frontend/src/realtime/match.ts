@@ -4,6 +4,7 @@ import type { TypedSocket } from '../socket/client'
 import { acquireSettlementChannel, getSettlementSocket } from './settlement'
 import { usePlacementStore } from '../stores/placement'
 import { useRpsStore } from '../stores/rps'
+import { useGameStore } from '../stores/game'
 
 /**
  * Ticket #23: the wire channel shared by the placement and rps screens.
@@ -31,6 +32,7 @@ export function applyMatchEvent(
       break
     case 'reset_gameboard':
       usePlacementStore(pinia).applyReset(payload)
+      useGameStore(pinia).applyServerState({ state: 'placing_ships', needs_reset: true, max_ships: Number(payload.new_max_ships) || 6, ships: [] })
       break
   }
 }

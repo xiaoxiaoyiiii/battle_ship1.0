@@ -101,6 +101,9 @@ onMounted(() => {
     offRoomSync = socket.on('room_sync', (payload) => placement.adoptOpponentState(payload))
   }
   placement.resetForEntry()
+  placement.maxShips = game.state.max_ships || 6
+  if (game.state.needs_reset) placement.applyReset({ new_max_ships: game.state.max_ships, message: '魔法效果要求重新部署战舰' })
+  else placement.resetPhase = false
   if (game.state.state === 'placing_ships') placement.adoptFromServer(game.state.ships)
 })
 
@@ -124,6 +127,12 @@ watch(
   },
   { deep: true },
 )
+
+watch(() => [game.state.needs_reset, game.state.max_ships], () => {
+  if (game.state.needs_reset && !placement.pending) {
+    placement.applyReset({ new_max_ships: game.state.max_ships, message: '请按当前数量重新部署战舰' })
+  }
+})
 
 watch(
   () => game.state.state,

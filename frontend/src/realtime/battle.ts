@@ -64,6 +64,7 @@ export const BATTLE_EVENTS = [
   'shenji_waiting',
   'shenji_waiting_end',
   'dice_discard_request',
+  'dice_discard_complete',
   'opponent_disconnected',
   'opponent_reconnected',
 ] as const satisfies readonly OutboundEvent[]
@@ -87,6 +88,9 @@ export type BattleEmitEvent =
   | 'request_hand_sync'
   | 'surrender'
   | 'get_discard_pile'
+  | 'get_magic_temp_data'
+  | 'confirm_shenji_declare'
+  | 'dice_discard_choose'
 
 export const BATTLE_EMIT_EVENTS: readonly BattleEmitEvent[] = [
   'attack',
@@ -105,6 +109,9 @@ export const BATTLE_EMIT_EVENTS: readonly BattleEmitEvent[] = [
   'request_hand_sync',
   'surrender',
   'get_discard_pile',
+  'get_magic_temp_data',
+  'confirm_shenji_declare',
+  'dice_discard_choose',
 ]
 
 const ALLOWED_EMITS: readonly string[] = BATTLE_EMIT_EVENTS satisfies readonly InboundEvent[]
@@ -282,6 +289,7 @@ export function applyBattleEvent(
         }
         if (result.success !== false && !result.negated_skip) audio.play('play_card')
       }
+      void refreshMagicState(pinia)
       break
     }
     case 'field_magic_updated': {
@@ -458,7 +466,12 @@ export function applyBattleEvent(
       break
     }
     case 'dice_discard_request': {
+      game.applyServerState({ dice_discard_pending: true })
       match.pushNotice(String(payload.message ?? '请选择一张手牌弃置'), 'warning')
+      break
+    }
+    case 'dice_discard_complete': {
+      game.applyServerState({ dice_discard_pending: false })
       break
     }
     case 'opponent_disconnected': {
@@ -561,6 +574,21 @@ export async function syncHand(socket: TypedSocket | null, pinia?: Pinia): Promi
 
 export function getBattleSocket(): TypedSocket | null {
   return active?.socket ?? null
+}
+
+let magicReadSeq = 0
+/** 当前激活待项由服务端选定，结算结果里排队的后续项不能抢先打开。 */
+export async function refreshMagicState(pinia?: Pinia): Promise<void> {
+  const socket = getBattleSocket()
+  const game = useGameStore(pinia)
+  const roomId = game.state.room_id, playerId = game.state.player_id
+  if (!socket || !roomId || !playerId) return
+  const seq = ++magicReadSeq, previous = game.state.magic_temp
+  try {
+    const ack = await socket.emitEvent('get_magic_temp_data', { room_id: roomId, player_id: playerId })
+    if (seq !== magicReadSeq || game.state.room_id !== roomId || game.state.player_id !== playerId || game.state.magic_temp !== previous) return
+    game.applyServerState({ magic_temp: ack.status === 'success' ? ack.data ?? null : null })
+  } catch { /* 请求失败不清掉尚未完成的选择；重连快照会恢复。 */ }
 }
 
 export function battleSocketConnected(): boolean {

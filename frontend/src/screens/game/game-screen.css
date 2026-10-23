@@ -1065,148 +1065,41 @@
   -webkit-backdrop-filter: blur(3px);
   backdrop-filter: blur(3px);
 }
-.game-chain-scrim > .game-chain-panel { pointer-events: auto; }
-
-.game-chain-panel {
-  position: relative;
-  z-index: 1;
-  width: min(560px, calc(100% - 28px));
-  /* Bounded by the stage, not the viewport: the stage starts below the app bar,
-     so a vh-based cap let the panel run past the stage's bottom edge and get
-     clipped by its overflow. */
-  max-height: min(640px, calc(100vh - 80px));
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--role-action);
-  border-radius: var(--radius);
-  background: var(--surface-chamber);
-  box-shadow: var(--shadow-panel);
+.game-chain-scrim > .game-chain-panel {
+  position:relative;
+  width:min(420px,calc(100vw - 24px));
+  max-height:calc(100dvh - 24px);
+  overflow-y:auto;
+  padding:24px;
+  border:1px solid color-mix(in srgb,var(--gold) 45%,transparent);
+  border-radius:9px;
+  background:#15202e;
+  box-shadow:0 20px 70px #0008;
 }
-
-.game-chain-panel__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.game-chain-panel__title {
-  margin: 0;
-  font-size: 14px;
-  color: var(--role-action);
-}
-
-.game-chain-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.game-chain-item {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 4px 8px;
-  border: 1px solid var(--role-self);
-  border-radius: var(--radius-sm);
-  background: var(--role-self-soft);
-  font-size: 13px;
-}
-
-.game-chain-item--negated {
-  border-color: var(--role-enemy);
-  background: var(--role-enemy-soft);
-  text-decoration: line-through;
-  opacity: 0.75;
-}
-
-.game-chain-index {
-  margin-left: auto;
-  color: var(--text-tertiary);
-  font-size: 11px;
-}
-
-.game-chain-negated {
-  color: var(--role-enemy);
-  font-size: 11px;
-  text-decoration: none;
-}
-
-.game-chain-window {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-top: 8px;
-  border-top: 1px dashed var(--border-strong);
-}
-
-.game-chain-window__who,
-.game-chain-window__card,
-.game-chain-window__consequence {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.game-chain-window__consequence {
-  color: var(--role-warning);
-}
-
-.game-chain-clock {
-  position: relative;
-  width: 76px;
-  height: 76px;
-  display: grid;
-  place-items: center;
-}
-
-/* Ring = remaining share of the 10s window (#52); the number stays inside. */
-.game-chain-ring {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: conic-gradient(
-    var(--role-action) calc(var(--chain-progress, 0) * 1turn),
-    var(--border-strong) 0
-  );
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 6px));
-  mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 6px));
-}
-
-.game-chain-countdown {
-  margin: 0;
-  color: var(--role-action);
-  font-size: 12px;
-  line-height: 1.2;
-  font-weight: 700;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-
-.game-chain-window__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.game-chain-window__actions .button {
-  min-height: 40px;
-  padding: 6px 12px;
-  border: 1px solid var(--role-action);
-  border-radius: var(--radius-sm);
-  background: var(--surface-deck);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
+.game-chain-panel__head { display:flex; justify-content:center; align-items:center; position:relative; margin-bottom:14px; }
+.game-chain-panel__head>.game-close { position:absolute; right:0; top:0; }
+.game-chain-panel__title { margin:0; padding:2px 12px; border-radius:99px; background:#fff0c5; color:#755117; font-size:13px; line-height:1.3; font-weight:500; }
+.game-chain-window { display:flex; flex-direction:column; gap:12px; }
+.game-chain-window__card { position:relative; margin:0; text-align:center; font-size:16px; line-height:1.7; font-weight:700; color:var(--role-action); }
+.game-chain-window__card > .chain-preview-anchor { position:static; }
+.game-chain-clock { position:relative; display:grid; place-items:center; width:56px; height:56px; margin:2px auto; flex:0 0 auto; }
+.game-chain-ring { position:absolute; inset:0; border-radius:50%; background:conic-gradient(#e6c778 calc(var(--chain-progress,0) * 1turn),#e6c77822 0); -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 6px),#000 calc(100% - 6px)); mask:radial-gradient(farthest-side,transparent calc(100% - 6px),#000 calc(100% - 6px)); }
+.game-chain-countdown { margin:0; color:#e6c778; font-size:19px; line-height:1; font-weight:700; font-variant-numeric:tabular-nums; }
+.game-chain-window__hint { margin:0; color:#b8c2cf; font-size:13px; line-height:1.7; font-weight:600; text-align:center; }
+.game-chain-options { display:grid; gap:8px; }
+.chain-preview-anchor { position:relative; min-width:0; }
+.game-chain-option { display:flex; flex-direction:column; gap:4px; width:100%; padding:11px 12px; text-align:left; color:var(--text-primary); font:inherit; border:1px solid #63512e88; border-radius:8px; background:#151a30; cursor:pointer; }
+.game-chain-option b { font-size:15px; }.game-chain-option small { font-size:12px; color:#a6b0ca; }
+.game-chain-option__desc { display:-webkit-box; -webkit-line-clamp:2; line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; font-size:12px; line-height:1.6; color:#a6b0ca; }
+.game-chain-option:hover,.game-chain-option:focus-visible { border-color:#e6c778; background:#1d233d; outline:2px solid #e6c77844; outline-offset:1px; }
+.chain-effect-preview { position:absolute; z-index:3; bottom:calc(100% + 8px); left:0; display:flex; flex-direction:column; gap:5px; width:100%; min-width:0; padding:12px; box-sizing:border-box; border:1px solid #b59b56; border-radius:8px; background:#101628; color:#dbe2f4; box-shadow:0 8px 24px #0009; text-align:left; font-weight:400; white-space:normal; overflow-wrap:anywhere; pointer-events:none; }
+.game-chain-window__card .chain-effect-preview { top:calc(100% + 8px); bottom:auto; left:50%; transform:translateX(-50%); width:min(340px,calc(100vw - 88px)); }
+.chain-effect-preview b { font-size:15px; }.chain-effect-preview small { font-size:12px; color:#b5bfd3; }.chain-effect-preview>span { font-size:14px; line-height:1.65; }
+.game-chain-no-options { color:var(--text-secondary); font-size:13px; text-align:center; }
+.game-chain-window__actions { display:flex; gap:8px; justify-content:center; padding-top:2px; }
+.game-chain-window__actions .button { flex:1; min-height:42px; padding:8px 10px; font-size:15px; font-weight:700; white-space:normal; border:1px solid #55567088; border-radius:4px; background:#161b31; color:var(--text-primary); }
+.game-chain-stack { margin:0; padding:0; list-style:none; display:grid; gap:6px; }.game-chain-item { padding:8px; background:var(--surface-deck); font-size:13px; }.game-chain-index { float:right; color:var(--text-tertiary); }.game-chain-item--negated { opacity:.6; text-decoration:line-through; }
+@media(max-width:430px) { .game-chain-panel { padding:18px; }.game-chain-window__actions .button { font-size:13px; }.game-chain-window__card { font-size:15px; } }
 
 /* ----------------------------------------------------------------- dialogs --- */
 .game-dialog {
@@ -3068,28 +2961,14 @@ button.arena-avatar--btn {
 .game-chain-ref {
   padding: 0 4px;
   border: 0;
-  border-bottom: 1px dashed var(--gold);
+  border-bottom: 1px dashed var(--role-action);
   background: transparent;
-  color: var(--gold-strong, var(--gold));
+  color: var(--role-action);
+  background:color-mix(in srgb,var(--role-action) 12%,transparent);
   font: inherit;
   font-weight: 700;
   cursor: pointer;
 }
-.game-chain-item { cursor: help; }
-.game-chain-inspect {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--gold) 45%, transparent);
-  border-radius: var(--radius-sm);
-  background: var(--surface-deck);
-}
-.game-chain-inspect__name { font-size: 15px; }
-.game-chain-inspect__meta { color: var(--text-tertiary); font-size: 12px; }
-.game-chain-inspect__desc { margin: 0; font-size: 15px; line-height: 1.6; color: var(--text-secondary); }
-.game-chain-window__actions .button.is-inspected { border-color: var(--gold); box-shadow: 0 0 0 2px color-mix(in srgb, var(--gold) 35%, transparent); }
-.game-chain-window__actions .button { font-size: 13px; }
 .game-chain-reopen {
   position: fixed;
   z-index: 8999;

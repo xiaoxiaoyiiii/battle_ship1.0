@@ -281,7 +281,9 @@ const chainRemaining = computed(() => {
 // 连锁里「看效果」：悬停/键盘聚焦直接显示；触屏没有 hover，第一次点只看、第二次点才打出。
 const canHover = typeof window.matchMedia !== 'function' || window.matchMedia('(hover: hover)').matches
 const chainInspect = ref<CardLike | null>(null)
-function fullCard(card: CardLike | null | undefined): CardLike | null {
+const chainPreviewSource = ref('')
+const chainTouchArmed = ref('')
+function fullCard(card: { name: string; speed?: number | string; type?: string; description?: string } | null | undefined): CardLike | null {
   if (!card) return null
   const known = CARDS.find((item) => item.name === card.name)
   return {
@@ -291,11 +293,13 @@ function fullCard(card: CardLike | null | undefined): CardLike | null {
     description: card.description || known?.description || '',
   }
 }
-function inspectChain(card: { name: string; speed?: number | string; type?: string; description?: string } | null | undefined): void {
+function inspectChain(card: { name: string; speed?: number | string; type?: string; description?: string } | null | undefined, source = ''): void {
   chainInspect.value = fullCard(card ? { speed: '', type: '', ...card } : null)
+  chainPreviewSource.value = source
 }
 function onChainCardClick(card: CardLike): void {
-  if (!canHover && chainInspect.value?.name !== card.name) {
+  if (!canHover && chainTouchArmed.value !== card.name) {
+    chainTouchArmed.value = card.name
     inspectChain(card)
     return
   }
@@ -305,6 +309,8 @@ watch(
   () => chainWindow.value?.openedAt,
   () => {
     chainInspect.value = null
+    chainPreviewSource.value = ''
+    chainTouchArmed.value = ''
   },
 )
 const chainOrderText = computed(() => '第 ' + String(chainList.value.length) + ' 张')
@@ -1873,77 +1879,47 @@ function backToLobby(): void {
       aria-label="连锁"
     >
       <header class="game-chain-panel__head">
-        <h2 class="game-chain-panel__title">连锁 {{ chainOrderText }}</h2>
-        <button type="button" class="game-close" data-testid="game-chain-close" aria-label="收起连锁" @click="match.collapseChainWindow()">×</button>
+        <h2 class="game-chain-panel__title">连锁</h2>
+        <button v-if="!chainWindow" type="button" class="game-close" data-testid="game-chain-close" aria-label="收起连锁" @click="match.collapseChainWindow()">×</button>
       </header>
-      <ol v-if="chainList.length" class="game-chain-stack" data-testid="game-chain-stack">
-        <li
-          v-for="(item, index) in chainList"
-          :key="'chain-' + index"
-          class="game-chain-item"
-          :class="{ 'game-chain-item--negated': item.negated }"
-          :data-testid="'game-chain-item-' + index"
-          tabindex="0"
-          :title="item.name"
-          @mouseenter="inspectChain(item)"
-          @focus="inspectChain(item)"
-          @click="inspectChain(item)"
-        >
-          <b :data-testid="'game-chain-item-' + index + '-name'">{{ item.name }}</b>
-          <span class="game-chain-index">第 {{ index + 1 }} 张</span>
-          <span v-if="item.negated" class="game-chain-negated">已无效</span>
+      <ol v-if="!chainWindow && chainList.length" class="game-chain-stack" data-testid="game-chain-stack">
+        <li v-for="(item, index) in chainList" :key="'chain-' + index" class="game-chain-item" :class="{ 'game-chain-item--negated': item.negated }" :data-testid="'game-chain-item-' + index" :title="fullCard(item)?.description" tabindex="0">
+          <b :data-testid="'game-chain-item-' + index + '-name'">{{ item.name }}</b><span class="game-chain-index">第 {{ index + 1 }} 张</span><span v-if="item.negated" class="game-chain-negated">已无效</span>
         </li>
       </ol>
       <section v-if="chainWindow" class="game-chain-window" data-testid="game-chain-window">
-        <p class="game-chain-window__who">
-          出牌者：<b data-testid="game-chain-window-caster">{{ chainWindow.caster === state.player_id ? selfName : opponentName }}</b>
-        </p>
         <p class="game-chain-window__card">
-          对方使用了
-          <button
-            type="button"
-            class="game-chain-ref"
-            data-testid="game-chain-window-card"
-            @mouseenter="inspectChain(chainWindow.card)"
-            @focus="inspectChain(chainWindow.card)"
-            @click="inspectChain(chainWindow.card)"
-          >{{ chainWindow.card ? chainWindow.card.name : '魔法卡' }}</button>
-          ，你可以用速阶 3 的卡连锁它。
+          {{ chainWindow.caster === state.player_id ? '你发动了魔法卡' : '对方发动了魔法卡' }}
+          <span class="chain-preview-anchor" @mouseleave="chainPreviewSource = ''">
+            <button type="button" class="game-chain-ref" data-testid="game-chain-window-card" :aria-describedby="chainPreviewSource === 'trigger' ? 'chain-trigger-preview' : undefined"
+              @mouseenter="inspectChain(chainWindow.card, 'trigger')" @focus="inspectChain(chainWindow.card, 'trigger')" @blur="chainPreviewSource = ''" @click="inspectChain(chainWindow.card, 'trigger')">【{{ chainWindow.card?.name || '魔法卡' }}】</button>
+            <span v-if="chainInspect && chainPreviewSource === 'trigger'" id="chain-trigger-preview" class="chain-effect-preview" data-testid="game-chain-inspect" role="tooltip">
+              <b data-testid="game-chain-inspect-name">{{ chainInspect.name }}</b><small>速阶 {{ chainInspect.speed }}</small><span data-testid="game-chain-inspect-desc">{{ chainInspect.description || '暂无效果描述' }}</span>
+            </span>
+          </span>
         </p>
-        <p class="game-chain-window__consequence game-chain-window__hint" data-testid="game-chain-hint">
-          {{ canHover ? '把鼠标移到卡上（或用键盘聚焦）查看完整效果，点击即打出。' : '点一下先看效果，再点一下才打出；点上面的卡名可看对方那张卡。' }}
-        </p>
-        <section v-if="chainInspect" class="game-chain-inspect" data-testid="game-chain-inspect" aria-live="polite">
-          <b class="game-chain-inspect__name" data-testid="game-chain-inspect-name">{{ chainInspect.name }}</b>
-          <span class="game-chain-inspect__meta">速阶 {{ chainInspect.speed }}<template v-if="chainInspect.type"> · {{ chainInspect.type }}</template></span>
-          <p class="game-chain-inspect__desc" data-testid="game-chain-inspect-desc">{{ chainInspect.description || '暂无效果描述' }}</p>
-        </section>
+        <span class="visually-hidden" data-testid="game-chain-window-caster">{{ chainWindow.caster === state.player_id ? selfName : opponentName }}</span>
         <div class="game-chain-clock">
-          <div
-            class="game-chain-ring"
-            :style="{ '--chain-progress': String(chainProgress) }"
-            aria-hidden="true"
-          ></div>
-          <p class="game-chain-countdown" data-testid="game-chain-window-countdown">剩余 {{ chainRemaining }} 秒</p>
+          <div class="game-chain-ring" :style="{ '--chain-progress': String(chainProgress) }" aria-hidden="true"></div>
+          <p class="game-chain-countdown" data-testid="game-chain-window-countdown" :aria-label="'剩余 ' + chainRemaining + ' 秒'">{{ chainRemaining }}</p>
         </div>
-        <p class="game-chain-window__consequence" data-testid="game-chain-window-consequence">
-          不响应：对方的卡直接生效，你放弃这次连锁机会（这一手不会退回来）。
-        </p>
+        <p class="game-chain-window__hint" data-testid="game-chain-hint">{{ canHover ? '把鼠标移到卡上可以看效果，点一下即打出；上面的卡名也能看对方那张卡。' : '点一下卡牌先看完整效果，再点一下打出；点上面的卡名可看触发卡。' }}不响应请点「不响应」。</p>
+        <div class="game-chain-options">
+          <div v-for="(card, index) in speed3Hand" :key="chainCardTestId(card, index, speed3Hand)" class="chain-preview-anchor" @mouseleave="chainPreviewSource = ''">
+            <button type="button" class="game-chain-option" :class="{ 'is-inspected': chainInspect?.name === card.name }" :data-testid="chainCardTestId(card, index, speed3Hand)"
+              :aria-describedby="chainPreviewSource === 'hand-' + index ? 'chain-hand-preview-' + index : undefined"
+              @mouseenter="canHover && inspectChain(card, 'hand-' + index)" @focus="inspectChain(card, 'hand-' + index)" @blur="chainPreviewSource = ''" @click="onChainCardClick(card); if (!canHover) chainPreviewSource = 'hand-' + index">
+              <b>{{ card.name }}</b><small>速阶 {{ fullCard(card)?.speed }}</small><span class="game-chain-option__desc">{{ fullCard(card)?.description || '暂无效果描述' }}</span>
+            </button>
+            <span v-if="chainInspect && chainPreviewSource === 'hand-' + index" :id="'chain-hand-preview-' + index" class="chain-effect-preview" data-testid="game-chain-inspect" role="tooltip"><b data-testid="game-chain-inspect-name">{{ chainInspect.name }}</b><small>速阶 {{ chainInspect.speed }}</small><span data-testid="game-chain-inspect-desc">{{ chainInspect.description || '暂无效果描述' }}</span></span>
+          </div>
+          <p v-if="!speed3Hand.length" class="game-chain-no-options">手中没有可响应的速阶 3 魔法卡。</p>
+        </div>
         <div class="game-chain-window__actions">
-          <button
-            v-for="(card, index) in speed3Hand"
-            :key="chainCardTestId(card, index, speed3Hand)"
-            type="button"
-            class="button"
-            :class="{ 'is-inspected': chainInspect?.name === card.name }"
-            :data-testid="chainCardTestId(card, index, speed3Hand)"
-            @mouseenter="canHover && inspectChain(card)"
-            @focus="inspectChain(card)"
-            @click="onChainCardClick(card)"
-          >连锁「{{ card.name }}」</button>
-          <button type="button" class="button button--ghost" data-testid="game-chain-collapse" @click="match.collapseChainWindow()">暂时收起 · 查看棋盘</button>
+          <button type="button" class="button button--ghost" data-testid="game-chain-collapse" @click="chainPreviewSource = ''; match.collapseChainWindow()">暂时收起 · 查看棋盘</button>
           <button type="button" class="button button--ghost" data-testid="game-chain-pass" @click="passChain">不响应</button>
         </div>
+        <span class="visually-hidden" data-testid="game-chain-window-consequence">不响应将放弃本次连锁机会，对方卡牌继续结算。</span>
       </section>
     </section>
     </div>

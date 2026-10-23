@@ -114,7 +114,7 @@ const detailOpen = computed(() => selectedCardIndex.value >= 0)
 
 const shieldPicks = ref<number[]>([])
 const shieldError = ref('')
-const shieldOpen = computed(() => Boolean(match.shieldChoice))
+const shieldOpen = computed(() => Boolean(match.shieldChoice) && !match.pickRequest)
 const shieldSelectedKeys = computed<string[]>(() => {
   const ships = Array.isArray(state.value.ships) ? state.value.ships : []
   const keys: string[] = []
@@ -191,7 +191,11 @@ const previewKeys = computed<string[]>(() => {
 /** Every cell the open target banner would accept (#47 legal-range highlight). */
 const legalKeys = computed<string[]>(() => {
   const sel = selection.value
-  if (!sel) return []
+  if (!sel) {
+    return match.pickRequest || shieldOpen.value
+      ? selfCells.value.filter(cell => cell.ship && !cell.sunk).map(cell => cell.key)
+      : []
+  }
   const kind = sel.descriptor.kind
   const mine = selfCells.value
   const theirs = opponentCells.value
@@ -504,6 +508,11 @@ watch([compact, tight, boardMode, () => state.value, () => hand.value.length], s
 /** 标签档只显示一块棋盘；并排/叠放档两块都常驻。 */
 const showSelfBoard = computed(() => boardMode.value !== 'tabs' || zoomOpen.value)
 const showOpponentBoard = computed(() => !(boardMode.value === 'tabs' && zoomOpen.value))
+
+// 点船和加盾都在己方海域完成，标签档收到请求时直接展示可操作的棋盘。
+watch([() => match.pickRequest, shieldOpen, boardMode], ([pick, shield, mode]) => {
+  if (mode === 'tabs' && (pick || shield)) zoomOpen.value = true
+}, { immediate: true })
 
 const shipSlots = computed(() => {
   const ships = Array.isArray(state.value.ships) ? state.value.ships : []
@@ -877,7 +886,7 @@ function onCell(board: 'self' | 'opponent', x: number, y: number): void {
     pickCell(board, x, y)
     return
   }
-  if (match.shieldChoice) {
+  if (shieldOpen.value) {
     // 双棋盘常驻后点对方海域也会走到这里；护盾只能保护自己的战舰。
     if (board !== 'self') {
       shieldError.value = '请在自己海域点击高亮的战舰格（对方海域不能加盾）'
@@ -919,6 +928,7 @@ interface PrimaryAction {
 
 const primaryAction = computed<PrimaryAction>(() => {
   const phase = state.value.current_phase
+  if (state.value.interaction_waiting) return { label:'等待完成魔法效果', event:'enter_battle_phase', enabled:false, reason:state.value.interaction_waiting }
   if (phase === 'preparation') {
     return {
       label: '进入战斗阶段',
@@ -1338,7 +1348,7 @@ watch(
 watch(
   () => match.chainWindow,
   (window) => {
-    if (!window) return
+    if (!window) { if (selection.value?.isChain) selection.value = null; return }
     announce('连锁响应窗口：剩余 ' + String(window.countdown) + ' 秒，可以用速阶 3 的卡响应')
   },
 )
@@ -1731,6 +1741,7 @@ function backToLobby(): void {
             等待对方响应「{{ state.priority_waiting.action_text }}」
           </p>
           <p v-if="state.shenji_waiting" class="game-banner" data-testid="game-shenji-waiting">{{ state.shenji_waiting.text }}</p>
+          <p v-if="state.interaction_waiting" class="game-banner" data-testid="game-interaction-waiting">{{ state.interaction_waiting }}</p>
           <p v-if="pendingPick && !match.pickRequest" class="game-banner" data-testid="game-pending-pick">
             待处理：{{ pendingPick.message }}
           </p>
@@ -1963,7 +1974,7 @@ function backToLobby(): void {
       <p class="game-dialog__hint" data-testid="game-shield-choice-hint">在自己海域点击高亮的战舰格；再点一次取消选择。</p>
       <p class="game-dialog__hint" data-testid="game-shield-choice-count">已选 {{ shieldPicks.length }} / 3 艘</p>
       <p v-if="shieldError" class="game-dialog__error" data-testid="game-shield-choice-error">{{ shieldError }}</p>
-      <p class="game-dialog__hint" data-testid="game-shield-choice-status">服务端没有选择倒计时；点「取消选择」可放弃本次加盾。</p>
+      <p class="game-dialog__hint" data-testid="game-shield-choice-status">超过本局思考时限会自动选择；点「取消选择」可放弃本次加盾。</p>
       <div class="game-dialog__actions">
         <button type="button" class="button" data-testid="game-shield-choice-confirm" :disabled="shieldPicks.length === 0" @click="confirmShieldChoice">确认加盾</button>
         <button type="button" class="button button--ghost" data-testid="game-shield-choice-cancel" @click="cancelShieldChoice">取消选择</button>

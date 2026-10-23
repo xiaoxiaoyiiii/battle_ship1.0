@@ -303,6 +303,15 @@ body:has([data-testid='screen-game']) .app-toasts {
   border-radius: var(--radius-sm);
 }
 
+/* 对局提示不拦截棋盘和选区操作，关闭按钮仍可点击。 */
+body:has(.screen.game) .app-toast {
+  pointer-events: none;
+}
+
+body:has(.screen.game) .app-toast__dismiss {
+  pointer-events: auto;
+}
+
 /* ------------------------------------------------------------- Overlay --- */
 .app-overlay {
   background: var(--scrim);

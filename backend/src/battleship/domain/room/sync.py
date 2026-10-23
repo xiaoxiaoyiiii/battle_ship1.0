@@ -212,6 +212,7 @@ def build_room_sync(
     """
 
     from ...contracts.events_out import RoomSync
+    from ..magic.interaction import pending_action_reason
 
     player = room.players[player_id]
     opponent_id = opponent_of(room, player_id)
@@ -326,6 +327,8 @@ def build_room_sync(
         # 待选项**只回给发起者**：对手与观战拿到的是 None / False，看不到别人的选择。
         "max_ships": int(getattr(player, "max_ships", 0) or 0),
         "needs_reset": bool(getattr(player, "needs_reset", False)),
+        "reset_allowed_cells": (room.game_effects.get("reset_allowed_cells") or {}).get(player_id),
+        "interaction_waiting": pending_action_reason(room, player_id),
         "magic_temp": _my_magic_temp(room, player_id),
         "dice_discard_pending": bool(
             (room.pending_dice_discard or {}).get(player_id) is False

@@ -87,7 +87,7 @@ def queued_kinds(room: Room) -> list[str]:
 def _promote_next(room: Room) -> dict[str, Any] | None:
     room.magic_temp_data = {}
     for pending_key in list(room.magic_temps):
-        promoted = room.magic_temps.pop(pending_key)
+        promoted = room.magic_temps[pending_key]
         room.magic_temp_data = promoted
         room.magic_promoted = promoted
         return promoted

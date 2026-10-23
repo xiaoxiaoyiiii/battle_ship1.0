@@ -151,7 +151,7 @@ function onCellFocus(index: number): void {
         :data-attackable="cell.attackable ? 'true' : 'false'"
         :data-legal="legalSet.has(cell.key) ? 'true' : 'false'"
         :aria-label="cellLabel(cell)"
-        :aria-disabled="board === 'opponent' && !cell.attackable ? 'true' : 'false'"
+        :aria-disabled="picking ? !legalSet.has(cell.key) : board === 'opponent' && !cell.attackable"
         @focus="onCellFocus(index)"
         @click="onCell(cell)"
       >

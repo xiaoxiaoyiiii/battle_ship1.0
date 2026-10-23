@@ -32,7 +32,7 @@ export function applyMatchEvent(
       break
     case 'reset_gameboard':
       usePlacementStore(pinia).applyReset(payload)
-      useGameStore(pinia).applyServerState({ state: 'placing_ships', needs_reset: true, max_ships: Number(payload.new_max_ships) || 6, ships: [] })
+      useGameStore(pinia).applyServerState({ state: 'placing_ships', needs_reset: true, max_ships: Number(payload.new_max_ships) || 6, ships: [], reset_allowed_cells: payload.reset_allowed_cells ?? null })
       break
   }
 }

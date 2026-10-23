@@ -51,6 +51,25 @@ SHIP_PICK_CARDS: dict[str, str] = {
 }
 
 
+def pending_action_reason(room: Room, player_id: str) -> str | None:
+    """未完成互动不能被开炮或跨阶段绕过；提示不包含对方私有候选位置。"""
+    temp = room.magic_temp_data or {}
+    owner = temp.get("caster")
+    for key in ("pending_placement", "pending_shenji"):
+        nested = temp.get(key)
+        if isinstance(nested, dict):
+            owner = nested.get("caster")
+    if owner and (temp.get("type") or temp.get("pending_placement") or temp.get("pending_shenji")):
+        return "请先完成当前魔法卡的选择或部署" if owner == player_id else "等待对方完成魔法卡的选择或部署"
+    picks = [p for p in room.pending_ship_picks if isinstance(p, dict)]
+    if picks:
+        return "请先完成战舰选择" if any(p.get("player") == player_id for p in picks) else "等待对方选择战舰"
+    pending = room.pending_dice_discard or {}
+    if any(value is False for value in pending.values()):
+        return "请先选择需要弃置的手牌" if pending.get(player_id) is False else "等待对方弃置手牌"
+    return None
+
+
 def ship_pick_priority(reason: Any) -> int:
     try:
         return int(SHIP_PICK_PRIORITY.get(str(reason), 0))

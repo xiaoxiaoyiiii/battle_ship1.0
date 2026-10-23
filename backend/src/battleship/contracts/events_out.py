@@ -195,6 +195,8 @@ class RoomSync(BaseModel):
     # 同理只回给正在等弃牌的本人。
     max_ships: int
     needs_reset: bool
+    reset_allowed_cells: list[dict[str, int]] | None
+    interaction_waiting: str | None
     magic_temp: dict[str, Any] | None
     dice_discard_pending: bool
 

@@ -101,6 +101,7 @@ onMounted(() => {
     offRoomSync = socket.on('room_sync', (payload) => placement.adoptOpponentState(payload))
   }
   placement.resetForEntry()
+  placement.setAllowed(game.state.reset_allowed_cells)
   placement.maxShips = game.state.max_ships || 6
   if (game.state.needs_reset) placement.applyReset({ new_max_ships: game.state.max_ships, message: '魔法效果要求重新部署战舰' })
   else placement.resetPhase = false
@@ -133,6 +134,7 @@ watch(() => [game.state.needs_reset, game.state.max_ships], () => {
     placement.applyReset({ new_max_ships: game.state.max_ships, message: '请按当前数量重新部署战舰' })
   }
 })
+watch(() => game.state.reset_allowed_cells, cells => placement.setAllowed(cells), { deep:true })
 
 watch(
   () => game.state.state,
@@ -284,7 +286,7 @@ function returnHome(): void {
               '第 ' + (cell.x + 1) + ' 列第 ' + (cell.y + 1) + ' 行，' +
               (cell.ship ? '已放置战舰，点击撤销' : '空格，点击放置战舰')
             "
-            :aria-disabled="!canEdit"
+            :aria-disabled="!canEdit || !placement.canPlace(cell.x,cell.y)"
             @click="toggleCell(cell.x, cell.y)"
           >
             <span v-if="cell.ship" class="placement__mark" aria-hidden="true">◆</span>
@@ -813,7 +815,7 @@ function returnHome(): void {
   }
 }
 
-@media (max-height: 720px) {
+@media (max-height: 720px), (max-width: 719px) and (max-height: 800px) {
   .placement__eyebrow,
   .placement__lead {
     display: none;

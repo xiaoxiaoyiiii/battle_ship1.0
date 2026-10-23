@@ -2001,6 +2001,35 @@
     flex-wrap: wrap;
     align-items: center;
   }
+
+/* 点船提示让出棋盘，避免护盾和献祭面板盖住需要点击的舰格。 */
+.game-shield-choice,
+.game-pick {
+  position: fixed;
+  top: auto;
+  left: auto;
+  right: 12px;
+  bottom: 12px;
+  transform: none;
+}
+.game[data-layout="compact"].is-picking .game-shield-choice,
+.game[data-layout="compact"].is-picking .game-pick {
+  position: static;
+  order: 3;
+  width: 100%;
+  flex: 0 0 auto;
+}
+@media (max-height: 520px) and (min-width: 600px) {
+  .game[data-layout="compact"].is-picking .game-shield-choice,
+  .game[data-layout="compact"].is-picking .game-pick {
+    position: fixed;
+    right: 8px;
+    bottom: 8px;
+    width: min(320px, 42vw);
+    max-height: calc(100dvh - 80px);
+    overflow-y: auto;
+  }
+}
 /* 需要时的底部面板：连锁响应 / 卡牌详情 / 待选请求都能在手机上完成 */
 .game[data-layout="compact"] .arena-rail--sheet {
     display: flex;

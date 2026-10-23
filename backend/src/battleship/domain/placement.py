@@ -92,7 +92,7 @@ def apply_placement(player: Player, ships: Sequence[PlayerShip]) -> None:
 
 
 def all_players_placed(room: Room) -> bool:
-    return bool(room.players) and all(len(seat.ships or []) > 0 for seat in room.players.values())
+    return len(room.players) == 2 and all(len(seat.ships or []) > 0 for seat in room.players.values())
 
 
 #: The debug boards' frozen ship-size ladder (legacy [3, 2, 2, 1, 1, 1]).
@@ -157,6 +157,10 @@ def auto_place_ai(room: Room, player_id: str, rng) -> list[PlayerShip]:
 
     player = room.players[player_id]
     cells = [(x, y) for x in range(BOARD_SIZE) for y in range(BOARD_SIZE)]
+    allowed = (room.game_effects.get("reset_allowed_cells") or {}).get(player_id)
+    if allowed is not None:
+        allowed_set = {(cell["x"], cell["y"]) for cell in allowed}
+        cells = [cell for cell in cells if cell in allowed_set]
     rng.shuffle(cells)
     ships = [
         PlayerShip(positions=[Position(x=x, y=y)])

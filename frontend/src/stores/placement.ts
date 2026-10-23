@@ -71,6 +71,14 @@ function normalizeCells(raw: unknown): BoardCell[] {
 export const usePlacementStore = defineStore('placement', () => {
   const maxShips = ref(DEFAULT_MAX_SHIPS)
   const cells = ref<BoardCell[]>([])
+  const allowed = ref<BoardCell[] | null>(null)
+  function canPlace(x: number, y: number): boolean {
+    return allowed.value === null || allowed.value.some(p => p.x === x && p.y === y)
+  }
+  function setAllowed(raw: unknown): void {
+    allowed.value = Array.isArray(raw) ? normalizeCells([{ positions: raw }]) : null
+    cells.value = cells.value.filter(p => canPlace(p.x, p.y))
+  }
   const submitted = ref(false)
   const pending = ref(false)
   const countdown = ref(0)
@@ -144,6 +152,7 @@ export const usePlacementStore = defineStore('placement', () => {
 
   function toggleCell(x: number, y: number): void {
     if (locked.value) return
+    if (!canPlace(x, y)) { receipt.value = '只能选择这张魔法允许的原船位。'; return }
     const index = cells.value.findIndex((cell) => cell.x === x && cell.y === y)
     if (index >= 0) {
       cells.value.splice(index, 1)
@@ -155,20 +164,12 @@ export const usePlacementStore = defineStore('placement', () => {
 
   function randomize(random: () => number = Math.random): void {
     if (locked.value) return
-    const want = Math.min(maxShips.value, BOARD_SIZE * BOARD_SIZE)
-    const picked: BoardCell[] = []
-    const seen = new Set<string>()
-    let guard = 0
-    while (picked.length < want && guard < 1000) {
-      guard += 1
-      const x = Math.floor(random() * BOARD_SIZE)
-      const y = Math.floor(random() * BOARD_SIZE)
-      const key = cellKey(x, y)
-      if (seen.has(key)) continue
-      seen.add(key)
-      picked.push({ x, y })
+    const pool = Array.from({length:BOARD_SIZE*BOARD_SIZE}, (_,i) => ({x:i%BOARD_SIZE,y:Math.floor(i/BOARD_SIZE)})).filter(p => canPlace(p.x,p.y))
+    for (let i=pool.length-1;i>0;i--) {
+      const j=Math.floor(random()*(i+1))
+      ;[pool[i],pool[j]]=[pool[j],pool[i]]
     }
-    cells.value = picked
+    cells.value = pool.slice(0,maxShips.value)
   }
 
   function clearBoard(): void {
@@ -266,6 +267,7 @@ export const usePlacementStore = defineStore('placement', () => {
   }
 
   function reset(): void {
+    allowed.value = null
     clearTimer()
     maxShips.value = DEFAULT_MAX_SHIPS
     cells.value = []
@@ -282,6 +284,8 @@ export const usePlacementStore = defineStore('placement', () => {
   }
 
   return {
+    canPlace,
+    setAllowed,
     maxShips,
     cells,
     submitted,

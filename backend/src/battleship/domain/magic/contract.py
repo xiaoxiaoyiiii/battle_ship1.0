@@ -9,9 +9,8 @@
 1. **一次原始变化只结算一次**：镜像动作本身也是船数变化，必须在 `mirroring()` 里执行，
    `enabled()` 在镜像期间返回 False，所以镜像不会再触发镜像。
 2. **失败 / 无效化 / 零变化不触发**：调用点只在确实增减了一艘之后才请求镜像。
-3. **整盘重布不算击杀**：灵气复苏、败者食尘、回光返照、绝处逢生、神威的临时除外与
-   返还、滥竽充数的临时船收回，都是「棋盘整体换了一次」而不是「被打掉 N 艘」，
-   用 `suppressed()` 包起来，避免把中间态当成击杀镜像给对手。
+3. **不观察魔法中间态**：整盘替换不把清空再摆回当成击杀；神威除外与返还、
+   临时船补充与收回按实际变化联动。绝处逢生等到唯一战舰落地后再结算净减少。
 """
 
 from __future__ import annotations
@@ -19,14 +18,11 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Any, Iterator
 
-#: 整盘重布 / 临时增减的卡：效果期间不镜像（边界取舍见模块注释第 3 条）。
+#: 整盘替换的清空中间态不产生契约义务。
 NO_MIRROR_CARDS = frozenset({
     "灵气复苏",
     "败者食尘",
     "回光返照",
-    "绝处逢生",
-    "神威！",
-    "滥竽充数",
 })
 
 #: 契约新增的摆船义务：这类船落地时不再反向触发契约。
@@ -35,6 +31,8 @@ MIRRORED_PLACEMENT = "mirrored"
 
 def in_play(room: Any) -> bool:
     effects = getattr(room, "game_effects", None) or {}
+    if getattr(getattr(room, "state", None), "value", None) == "game_over":
+        return False
     return bool(effects.get("demon_contract"))
 
 
@@ -42,7 +40,7 @@ def enabled(room: Any) -> bool:
     """此刻是否应该镜像：契约在场、且不是镜像自身/整盘重布引发的。"""
 
     effects = getattr(room, "game_effects", None) or {}
-    if not effects.get("demon_contract"):
+    if not in_play(room):
         return False
     return not effects.get("contract_mirroring") and not effects.get("contract_suppress")
 
@@ -65,7 +63,7 @@ def mirroring(room: Any) -> Iterator[None]:
 
 @contextmanager
 def suppressed(room: Any) -> Iterator[None]:
-    """整盘重布 / 临时增减的作用域：期间不镜像。"""
+    """屏蔽效果执行中间态，由调用方按最终净变化统一镜像。"""
 
     effects = room.game_effects
     previous = effects.get("contract_suppress")

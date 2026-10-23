@@ -36,6 +36,7 @@ from ..domain import placement as placement_rules
 from ..domain import replay as replay_rules
 from ..domain.magic import hooks
 from ..domain.magic import temps as magic_temps
+from ..domain.magic.interaction import pending_action_reason
 from ..domain.placement import PlacementError
 from ..domain.room import (
     Room,
@@ -211,7 +212,7 @@ class GameplayService:
         for pid in room.disconnected:
             if pid != player_id:
                 return OPPONENT_DISCONNECTED
-        return None
+        return pending_action_reason(room, player_id)
 
     def _start_timer(self, room: Room, now: float | None = None) -> None:
         room.turn_started_at = self.clock() if now is None else now
@@ -274,8 +275,9 @@ class GameplayService:
         player = room.players[player_id]
         # 只有「开局布船」和「自己确实欠着重布」时才允许提交棋盘。战斗进行中随手上交
         # 一份棋盘会重置对手已有的布局并把对局打回猜拳——这是破坏性副作用，先拒。
-        placing_phase = _state_value(room) == RoomState.PLACING_SHIPS.value
-        if not placing_phase and not player.needs_reset:
+        placing_phase = _state_value(room) in (RoomState.WAITING.value, RoomState.PLACING_SHIPS.value)
+        reset_in_progress = any(seat.needs_reset for seat in room.players.values())
+        if not placing_phase or (reset_in_progress and not player.needs_reset):
             return {"status": "error", "message": "战斗进行中不能重新布置战舰"}
         try:
             ships = placement_rules.validate_placement(
@@ -862,6 +864,10 @@ class GameplayService:
         for room in list(self.rooms.get_all_rooms().values()):
             if _state_value(room) != RoomState.ATTACKING.value:
                 continue
+            if self.magic is not None and await self.magic.settle_interaction_timeout(room, now, self.turn_timeout_seconds):
+                self._start_timer(room, now)
+                acted.append(room.id)
+                continue
             player_id = room.current_attacker
             if not player_id or player_id not in room.players:
                 continue
@@ -972,6 +978,8 @@ class GameplayService:
         return True
 
     async def _timeout_action(self, room: Room, player_id: str, now: float) -> bool:
+        if pending_action_reason(room, player_id):
+            return False
         note: str | None = None
         if _phase_value(room) == "preparation":
             if battle_rules.enter_battle(room, player_id) is None:

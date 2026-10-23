@@ -451,6 +451,10 @@ def attack_error(room: Room, attacker_id: str, x: Any, y: Any) -> str | None:
         return ATTACK_NOT_BATTLE_PHASE
     if room.chain or room.chain_waiting:
         return ATTACK_CHAIN_BUSY
+    from .magic.interaction import pending_action_reason
+    pending = pending_action_reason(room, attacker_id)
+    if pending:
+        return pending
     wait = action_wait_reason(room, attacker_id)
     if wait:
         return wait

@@ -17,7 +17,6 @@ from ..room import Room
 _MULTITURN_EFFECTS: tuple[tuple[str, str], ...] = (
     ("holy_heart", "无暇圣心效果已终止"),
     ("reinforcement_check", "极限增援效果已终止"),
-    ("demon_contract", "恶魔契约效果已终止"),
 )
 _MULTITURN_PREFIXES: tuple[str, ...] = ("prediction", "prediction_initial_")
 

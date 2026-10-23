@@ -102,6 +102,7 @@ class AiService:
         #: also cancels its AI turn; a private registry otherwise.
         self.timers = timers or TaskRegistry()
         self._active: set[tuple[str, str]] = set()
+        self.magic.ai_choice_hook = self.consume_pending
 
     # ------------------------------------------------------------- utilities
 

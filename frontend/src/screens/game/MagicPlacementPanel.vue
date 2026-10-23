@@ -11,7 +11,7 @@ const request = computed(() => game.state.pending_placement)
 const selected = ref<Point | null>(null)
 const busy = ref(false)
 const error = ref('')
-const names: Record<string, string> = { reinforce: '增援', revive: '死者苏生', last_stand: '绝处逢生', lanyu: '滥竽充数', shenji_redeploy: '神机妙算重部署' }
+const names: Record<string, string> = { reinforce: '增援', revive: '死者苏生', last_stand: '绝处逢生', lanyu: '滥竽充数', shenji_redeploy: '神机妙算重部署', contract_gain: '恶魔契约' }
 const kind = computed(() => String(request.value?.kind ?? ''))
 const title = computed(() => names[kind.value] || '部署战舰')
 function coordinates(value: unknown): Point | null {

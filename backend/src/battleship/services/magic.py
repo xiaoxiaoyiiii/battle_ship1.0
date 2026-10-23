@@ -150,6 +150,8 @@ class MagicService:
         #: Ticket #8 owns the placement completion path; #11 injects it so an
         #: AI caster can finish a reset board inside the same stack frame.
         self.ai_place_hook: Callable[[Room, str], Awaitable[bool]] | None = None
+        self.ai_choice_hook: Callable[[Room, str], Awaitable[bool]] | None = None
+        self._interaction_waits: dict[str, tuple[tuple, float]] = {}
         self.shenji_timeout_seconds = 30.0
         self._shenji_tasks: dict[tuple[str, int], asyncio.Task] = {}
         # Ticket #13 (priority) fills this; without it the chain still resolves.
@@ -430,6 +432,8 @@ class MagicService:
                         {"positions": [{"x": p.x, "y": p.y} for p in ship.positions]},
                         to=room.players[other_id].socket_id,
                     )
+            await self._dispatch_ship_pick(room, player_id)
+            await self._sync_each_seat(room)
             return {"status": "success", "message": "已暴露一艘战舰的位置"}
 
         if reason == "trap_setup":
@@ -449,6 +453,8 @@ class MagicService:
                 },
                 room=room.id,
             )
+            await self._dispatch_ship_pick(room, player_id)
+            await self._sync_each_seat(room)
             return {"status": "success", "message": "已为一艘战舰设置陷阱（本回合该船被击沉时对方需牺牲两艘）"}
 
         if reason not in interaction_rules.SACRIFICE_REASONS:
@@ -490,6 +496,11 @@ class MagicService:
         )
         await self._emit_ships_updated(room)
         await self._emit_player_ships(room, player_id)
+
+        if reason != "demon_contract":
+            await self._mirror_contract_loss(room, player_id)
+        await self._dispatch_ship_pick(room, player_id)
+        await self._sync_each_seat(room)
 
     async def _trigger_ship_trap(self, room: Room, owner_id: str,
                                  sunk_ship: PlayerShip) -> None:
@@ -546,7 +557,7 @@ class MagicService:
     async def _emit_placement_request(self, room: Room, player_id: str) -> None:
         pending = self._pending_placement(room)
         player = room.players.get(player_id)
-        if pending is None or player is None or not player.socket_id:
+        if pending is None or pending.get("caster") != player_id or player is None or not player.socket_id:
             return
         kind = pending.get("kind")
         payload: dict[str, Any] = {
@@ -570,7 +581,7 @@ class MagicService:
         await self._publisher.emit("placement_request", payload, to=player.socket_id)
 
     async def _start_placement(self, room: Room, caster_id: str, kind: str,
-                               count: int) -> None:
+                               count: int, *, mirrored: bool = False) -> None:
         # 摆船也是「待选择项」：必须走队列，否则和灵气/仁王这类 type 选择项互相覆盖，
         # 连续两张增援也会把上一张的进度盖掉。
         magic_temps.store(room, {
@@ -580,9 +591,10 @@ class MagicService:
                 "remaining": count,
                 "total": count,
                 "placed": 0,
+                "mirrored": mirrored,
             },
         })
-        await self._emit_placement_request(room, caster_id)
+        await self._activate_magic_temp(room)
 
     async def confirm_reinforcement_position(
         self, connection: Connection, data: dict[str, Any] | None = None
@@ -695,7 +707,7 @@ class MagicService:
 
         pending["remaining"] = int(pending.get("remaining") or 0) - 1
         pending["placed"] = int(pending.get("placed") or 0) + 1
-        if not pending.get(contract_rules.MIRRORED_PLACEMENT):
+        if not pending.get(contract_rules.MIRRORED_PLACEMENT) and kind != "last_stand":
             # 真实多了一艘（增援/复活/神机重布）：恶魔契约要求对手也补一艘。
             await self._mirror_contract_gain(room, player_id, 1)
         await self.notify_treasure(room, 1)
@@ -736,6 +748,7 @@ class MagicService:
     async def _finish_placement(self, room: Room, player_id: str, kind: str) -> None:
         pending = self._pending_placement(room) or {}
         placed = int(pending.get("placed") or 0)
+        baseline = pending.get("contract_baseline")
         magic_temps.finish(room, "pending_placement", owner=player_id)
         if kind == "last_stand":
             room.game_effects.pop("last_stand_cells", None)
@@ -760,6 +773,10 @@ class MagicService:
             },
             room=room.id,
         )
+        if baseline is not None:
+            await self._mirror_contract_delta(room, player_id, room.players[player_id].remaining_ships - int(baseline))
+        await self._activate_magic_temp(room)
+        await self._sync_each_seat(room)
 
     @staticmethod
     def _sync_attacks_after_ship_change(room: Room, player_id: str,
@@ -1248,7 +1265,26 @@ class MagicService:
                 )
             else:
                 try:
-                    effect_result = await effect(self._context(room, item))
+                    before_counts = {pid: p.remaining_ships for pid, p in room.players.items()}
+                    # 一张魔法的中间态不触发契约。效果成功后按实际净变化统一结算，
+                    # 兼容原地复活、批量击杀、献祭，避免多处回调重复结算。
+                    with contract_rules.suppressed(room):
+                        effect_result = await effect(self._context(room, item))
+                    after_counts = {pid: p.remaining_ships for pid, p in room.players.items()}
+                    if effect_result.success and not effect_result.game_over and room.state != RoomState.GAME_OVER and item.card.name not in contract_rules.NO_MIRROR_CARDS:
+                        if item.card.name == "绝处逢生":
+                            deferred = False
+                            for temp in [room.magic_temp_data, *room.magic_temps.values()]:
+                                pending = temp.get("pending_placement") or {}
+                                if pending.get("kind") == "last_stand" and pending.get("caster") == item.player_id:
+                                    pending["contract_baseline"] = before_counts[item.player_id]
+                                    deferred = True
+                            # AI可在效果调用内同步放好唯一战舰，此时没有待部署项可延后。
+                            if not deferred:
+                                await self._mirror_contract_delta(room, item.player_id, after_counts[item.player_id] - before_counts[item.player_id])
+                        else:
+                            for pid, count in after_counts.items():
+                                await self._mirror_contract_delta(room, pid, count - before_counts[pid])
                 except Exception as error:  # one bad card must not kill the room
                     logger.error(
                         "magic effect failed",
@@ -1358,6 +1394,7 @@ class MagicService:
         await self._emit_ships_updated(room)
         for pid in room.players:
             await self._emit_player_ships(room, pid)
+        await self._sync_each_seat(room)
         # Legacy order: phase_updated comes after every sync frame, even on the
         # game-over path (game_over itself was emitted by the effect).
         await self._publisher.emit(
@@ -1381,6 +1418,8 @@ class MagicService:
     def cancel_room_timers(self, room_id: str) -> int:
         """Destroy hook: cancel every background wait owned by one room."""
 
+        self._interaction_waits.pop(room_id, None)
+
         room = self.rooms.get_room(room_id)
         if room is not None:
             chain_rules.clear_display(room)
@@ -1392,6 +1431,7 @@ class MagicService:
     async def stop(self) -> None:
         """Server shutdown: cancel every chain/display/AI wait."""
 
+        self._interaction_waits.clear()
         await self.timers.cancel_all()
 
     def _context(self, room: Room, item: ChainItem) -> EffectContext:
@@ -1576,6 +1616,11 @@ class MagicService:
     async def finish(self, room: Room, winner: str, loser: str, reason: str) -> Any:
         # One ending funnel: every pending magic interaction dies with the match.
         interaction_rules.clear_ship_picks(room)
+        self._interaction_waits.pop(room.id, None)
+        magic_temps.clear(room)
+        for room_id, token in list(self._shenji_tasks):
+            if room_id == room.id:
+                self._cancel_shenji_task(room_id, token)
         room.pending_dice_discard = {}
         room.pending_dice_discard_label = {}
         room.pending_wuyou_dreams = {}
@@ -1647,6 +1692,8 @@ class MagicService:
 
         promoted = room.magic_promoted
         room.magic_promoted = None
+        await self._activate_magic_temp(room)
+        await self._sync_each_seat(room)
         if not promoted:
             return result
         owner = magic_temps.owner_of(promoted) or ""
@@ -1785,7 +1832,7 @@ class MagicService:
         room.game_effects["reset_allowed_cells"] = {
             pid: [
                 {"x": int(pos.x), "y": int(pos.y)}
-                for ship in pl.ships
+                for ship in [*pl.ships, *pl.sunken_ships]
                 for pos in ship.positions
             ]
             for pid, pl in room.players.items()
@@ -1816,12 +1863,13 @@ class MagicService:
         room.lingqi_resurgence_applied = True
         for frame, payload in frames:
             await self._publisher.emit(frame, payload, room=room.id)
-        for player in room.players.values():
+        for pid, player in room.players.items():
             if player.socket_id:
                 await self._publisher.emit(
                     "reset_gameboard",
                     {
                         "new_max_ships": target_ships,
+                        "reset_allowed_cells": room.game_effects["reset_allowed_cells"].get(pid),
                         "message": f"灵气复苏生效，双方需要重新摆放{target_ships}艘战舰",
                     },
                     to=player.socket_id,
@@ -2049,18 +2097,19 @@ class MagicService:
         if room is None:
             return dict(INVALID_SEAT)
         temp = room.magic_temp_data or {}
+        if magic_temps.owner_of(temp) != player_id:
+            return {"status": "error", "message": "当前没有等待你处理的选择"}
         pending = temp.get("pending_placement")
         if pending and pending.get("caster") == player_id:
             return {"status": "error", "message": "放置尚未完成，请用放置面板的「放弃」"}
         if temp.get("caster") and temp.get("caster") != player_id:
             return {"status": "error", "message": "当前不是你的选择"}
-        cancelled = temp.get("type")
+        cancelled = magic_temps.key_of(temp)
         cards = temp.get("cards")
 
         shenji = temp.get("pending_shenji")
         if isinstance(shenji, dict) and shenji.get("caster") == player_id:
             self._cancel_shenji_task(room.id, shenji.get("token"))
-            room.magic_temp_data.pop("pending_shenji", None)
             room.game_effects.pop(f"prediction_initial_{player_id}", None)
             await self._publisher.emit(
                 "shenji_waiting_end", {"reason": "declaration_timeout"}, room=room.id
@@ -2082,9 +2131,9 @@ class MagicService:
             room.magic_deck.extend(card for card in cards if isinstance(card, MagicCard))
         if cancelled == "shield_choice":
             interaction_rules.consume_ship_pick(room, player_id, "shield_choice")
-        magic_temps.finish(room, cancelled) if cancelled in (
-            "taoyuan_choice", "lingqi_choice", "bury_choice", "wangyang_choice", "shield_choice"
-        ) else magic_temps.clear(room)
+        magic_temps.finish(room, cancelled, owner=player_id)
+        await self._activate_magic_temp(room)
+        await self._sync_each_seat(room)
 
         if cancelled in ("taoyuan_choice", "lingqi_choice"):
             opponent_id = room.opponent_of(player_id)
@@ -2134,7 +2183,7 @@ class MagicService:
             return
         picked = await self.request_ship_pick(
             room, sacrifice_id, "demon_contract",
-            "恶魔契约生效：请点选一艘自己的战舰牺牲", False, False,
+            "恶魔契约生效：请点选一艘自己的战舰牺牲", True, False,
         )
         if picked is not None:
             await self._sacrifice_ship(room, sacrifice_id, picked, "demon_contract")
@@ -2160,12 +2209,14 @@ class MagicService:
         if not deploy_id:
             return
         with contract_rules.mirroring(room):
-            await self._start_placement(room, deploy_id, "contract_gain", gain)
-            pending = self._pending_placement(room)
-            if isinstance(pending, dict):
-                # 契约给的船落地时不再反向补一艘给对手，避免来回互送。
-                pending[contract_rules.MIRRORED_PLACEMENT] = True
-            await self._emit_placement_request(room, deploy_id)
+            await self._start_placement(room, deploy_id, "contract_gain", gain, mirrored=True)
+
+    async def _mirror_contract_delta(self, room: Room, player_id: str, delta: int) -> None:
+        if delta > 0:
+            await self._mirror_contract_gain(room, player_id, delta)
+        elif delta < 0:
+            for _ in range(-delta):
+                await self._mirror_contract_loss(room, player_id)
 
     @staticmethod
     def _last_attacker(room: Room) -> str | None:
@@ -2326,8 +2377,71 @@ class MagicService:
         }
 
     async def open_shenji(self, room: Room, caster_id: str) -> None:
-        token = int(self.clock() * 1000)
-        room.magic_temp_data["pending_shenji"] = {"caster": caster_id, "token": token}
+        token = int(getattr(room, "magic_temp_seq", 0)) + 1
+        magic_temps.store(room, {"pending_shenji": {"caster": caster_id, "token": token}})
+        await self._activate_magic_temp(room)
+
+    async def settle_interaction_timeout(self, room: Room, now: float, seconds: float) -> bool:
+        """沿用思考时限完成互动义务；不直接越过阶段，也不在重连宽限期代选。"""
+        temp = magic_temps.active(room)
+        picks = room.pending_ship_picks or []
+        dice = room.pending_dice_discard or {}
+        signature = (
+            temp.get("id"), magic_temps.owner_of(temp), temp.get("type"),
+            tuple((p.get("player"), p.get("reason")) for p in picks),
+            tuple(sorted(pid for pid, done in dice.items() if done is False)),
+        )
+        if seconds <= 0 or not interaction_rules.pending_action_reason(room, room.current_attacker):
+            self._interaction_waits.pop(room.id, None)
+            return False
+        if room.disconnected or room.chain or room.chain_waiting:
+            self._interaction_waits.pop(room.id, None)
+            return False
+        previous = self._interaction_waits.get(room.id)
+        if previous is None or previous[0] != signature:
+            self._interaction_waits[room.id] = (signature, now)
+            return False
+        if now - previous[1] < seconds or self.ai_choice_hook is None:
+            return False
+        owners = {magic_temps.owner_of(temp)} | {p.get("player") for p in picks}
+        for owner in owners:
+            if owner in room.players:
+                await self.ai_choice_hook(room, owner)
+        for pid, done in list((room.pending_dice_discard or {}).items()):
+            if done is False and pid in room.players:
+                await self.dice_discard_choose(
+                    Connection(sid=room.players[pid].socket_id or pid),
+                    {"room_id": room.id, "player_id": pid, "card_index": 0},
+                )
+        self._interaction_waits.pop(room.id, None)
+        await self._activate_magic_temp(room)
+        await self._sync_each_seat(room)
+        await self._publisher.emit("message", {"text": "魔法选择思考超时，已自动完成当前选择"}, room=room.id)
+        return True
+
+    async def _activate_magic_temp(self, room: Room) -> None:
+        """只激活队首：延迟启动宣言倒计时，并让非当前回合的AI也能答复自己的义务。"""
+        temp = magic_temps.active(room)
+        owner = magic_temps.owner_of(temp)
+        if not owner:
+            return
+        if owner.startswith("ai-") and room.is_ai_room and self.ai_choice_hook is not None:
+            if not room.game_effects.get("activating_ai_choice"):
+                room.game_effects["activating_ai_choice"] = True
+                try:
+                    await self.ai_choice_hook(room, owner)
+                finally:
+                    room.game_effects.pop("activating_ai_choice", None)
+            return
+        if temp.get("pending_placement"):
+            await self._emit_placement_request(room, owner)
+        pending = temp.get("pending_shenji")
+        if not isinstance(pending, dict):
+            return
+        token = pending["token"]
+        if (room.id, token) in self._shenji_tasks:
+            return
+        caster_id = owner
         self._snapshot_shenji_baseline(room, caster_id)
         opponent_id = room.opponent_of(caster_id)
         if opponent_id and room.players[opponent_id].socket_id:
@@ -2359,7 +2473,7 @@ class MagicService:
         if pending.get("token") != token:
             return
         caster = pending.get("caster")
-        room.magic_temp_data.pop("pending_shenji", None)
+        magic_temps.finish(room, "pending_shenji", owner=caster)
         if caster:
             room.game_effects.pop(f"prediction_initial_{caster}", None)
         await self._publisher.emit(
@@ -2368,6 +2482,8 @@ class MagicService:
         await self._publisher.emit(
             "message", {"text": "神机妙算宣言超时，本次效果作废"}, room=room.id
         )
+        await self._activate_magic_temp(room)
+        await self._sync_each_seat(room)
 
     async def apply_shenji(self, room: Room, caster_id: str, value: int) -> None:
         player = room.players.get(caster_id)
@@ -2383,7 +2499,7 @@ class MagicService:
         room.magic_temp_data.pop("prediction", None)
         pending = (room.magic_temp_data or {}).get("pending_shenji") or {}
         self._cancel_shenji_task(room.id, pending.get("token"))
-        room.magic_temp_data.pop("pending_shenji", None)
+        magic_temps.finish(room, "pending_shenji", owner=caster_id)
         opponent_id = room.opponent_of(caster_id)
         if opponent_id and room.players[opponent_id].socket_id:
             await self._publisher.emit(
@@ -2395,6 +2511,8 @@ class MagicService:
                 {"text": f"对方宣言神机妙算：船数减少{x}时生效"},
                 to=room.players[opponent_id].socket_id,
             )
+        await self._activate_magic_temp(room)
+        await self._sync_each_seat(room)
 
     async def confirm_shenji_declare(self, connection: Connection,
                                      data: dict[str, Any] | None = None) -> dict:
@@ -2629,6 +2747,7 @@ class MagicService:
         if not player.magic_hand:
             pending[player_id] = True
             await self._check_dice_discard_complete(room)
+            await self._sync_each_seat(room)
             return {"status": "success", "message": "没有手牌可弃，已跳过"}
         try:
             index = int(data.get("card_index"))
@@ -2649,6 +2768,7 @@ class MagicService:
         )
         pending[player_id] = True
         await self._check_dice_discard_complete(room)
+        await self._sync_each_seat(room)
         return {"status": "success", "message": f"已弃置「{discarded.name}」"}
 
     async def papal_discard(self, connection: Connection,
@@ -2737,7 +2857,7 @@ class MagicService:
     async def clear_multiturn_effects(self, room: Room, why: str) -> None:
         had_demon = room.game_effects.get("demon_contract") is not None
         frames = lifecycle_rules.clear_multiturn_effects(room, why)
-        if had_demon:
+        if had_demon and not room.game_effects.get("demon_contract"):
             await self._publisher.emit(
                 "sacrifice_cancelled", {"reason": "demon_contract"}, room=room.id
             )
@@ -2745,9 +2865,10 @@ class MagicService:
             await self._publisher.emit(frame, payload, room=room.id)
 
     async def _restore_due_shenwei(self, room: Room) -> None:
-        # 神威的临时除外/返还：棋盘没变，只是暂时离场，不算增减。
-        with contract_rules.suppressed(room):
-            await self._restore_due_shenwei_inner(room)
+        before = {pid: p.remaining_ships for pid, p in room.players.items()}
+        await self._restore_due_shenwei_inner(room)
+        for pid, p in room.players.items():
+            await self._mirror_contract_delta(room, pid, p.remaining_ships - before[pid])
 
     async def _restore_due_shenwei_inner(self, room: Room) -> None:
         entries = room.game_effects.get("excluded_ships") or []
@@ -2781,9 +2902,11 @@ class MagicService:
             room.game_effects.pop("shenwei_holes", None)
 
     async def _recall_lanyu(self, room: Room) -> dict[str, Any] | None:
-        # 滥竽充数的临时船收回：这些船本来就不属于真实战力。
-        with contract_rules.suppressed(room):
-            return await self._recall_lanyu_inner(room)
+        before = {pid: p.remaining_ships for pid, p in room.players.items()}
+        result = await self._recall_lanyu_inner(room)
+        for pid, p in room.players.items():
+            await self._mirror_contract_delta(room, pid, p.remaining_ships - before[pid])
+        return result
 
     async def _recall_lanyu_inner(self, room: Room) -> dict[str, Any] | None:
         lanyu = room.game_effects.pop("lanyu_temp_ships", None)

@@ -303,6 +303,7 @@ class RoomService:
             name=self._player_name(connection, data),
             user_id=player_id,
             socket_id=connection.sid,
+            registered=bool(connection.user_id),
         )
         self.rooms[room.id] = room
         await self._publisher.enter_room(connection.sid, room.id)
@@ -374,6 +375,7 @@ class RoomService:
             # reuse the seat and move its connection. Adding a second seat with
             # the same key would keep len(players) at 1 forever (legacy bug).
             seated.socket_id = connection.sid
+            seated.registered = bool(connection.user_id)
             if player_name:
                 seated.name = player_name
             await self._publisher.enter_room(connection.sid, room.id)
@@ -400,6 +402,7 @@ class RoomService:
             name=player_name,
             user_id=player_id,
             socket_id=connection.sid,
+            registered=bool(connection.user_id),
         )
         await self._publisher.enter_room(connection.sid, room.id)
 

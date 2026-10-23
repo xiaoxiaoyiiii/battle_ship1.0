@@ -187,7 +187,7 @@ def _magic_temp_data(room: Room) -> dict[str, Any]:
 def build_room_sync(
     room: Room, player_id: str, *, turn_timeout_seconds: int = 0
 ) -> dict[str, Any]:
-    """Build the reconnect snapshot for one seated player (49 keys, ticket #43).
+    """Build the reconnect snapshot for one seated player (ticket #43 plus `opponent_registered`).
 
     `turn_timeout_seconds` is the configured watchdog timeout; the room snapshot
     does not own a second copy, it asks the same service that performs the

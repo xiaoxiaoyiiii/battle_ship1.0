@@ -153,7 +153,7 @@
 | 分页锁死 | 已修 | `dm.ts` 两套序号 + `finally` 只清自己；`spec-review4.mjs pagination` PASS 2 |
 | 仅链栈收起 | 已修 | `collapseChainWindow()` 无条件写视图状态、重开文案分支；`spec-review4.mjs chain` PASS 5 |
 | 私聊生命周期/标读 | 已修 | `App.vue` 登录期常驻订阅 + `dm.setVisible/markRead`；`spec-review4.mjs lifecycle` PASS 6 |
-| 对手身份条 | 已迁，头像为账号真实头像，带战绩弹窗 | `.hud-players` 双 `.arena-player`；`real-chain.mjs` 两账号真实匹配 PASS；人机/游客兜底 `ai-guest.mjs` PASS。**遗留**：同名游客昵称会被当成注册账号（需后端字段，见报告 8.5） |
+| 对手身份条 | 已迁，头像为账号真实头像，带战绩弹窗 | `.hud-players` 双 `.arena-player`；`real-chain.mjs` 两账号真实匹配 PASS；人机/游客兜底 `ai-guest.mjs` PASS。同名游客由服务端 `opponent_registered=false` 拦住，`guest-name-card.mjs` 真实载荷 PASS（见报告 8.5） |
 | 己方舰队摘要 | 已迁 | `.arena-fleet`（fixed 左下，`game-self-fleet`） |
 | 浮动聊天 + 可拖日志 | 已迁，位置记忆，快捷语按需 | `useFloatingDrag`（`game_log_pos`/`in_game_chat_pos`，刷新恢复）；快捷语从输入行展开；紧凑档抽屉 `position:fixed`（`drawer-scroll.mjs` 360×640/390×740/844×390 PASS） |
 | 竖向连锁轨道 | 已迁 | 宽屏 96px 轨道 + 叠牌 76×114/-38px；空态保留高度 |

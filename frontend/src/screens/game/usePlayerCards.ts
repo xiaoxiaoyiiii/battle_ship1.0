@@ -17,6 +17,8 @@ export function usePlayerCards(options: {
   selfName: Ref<string>
   opponentName: Ref<string>
   opponentIsAi: Ref<boolean>
+  /** 服务端可信的 opponent_registered；缺省/false 一律不查对手资料。 */
+  opponentRegistered: Ref<boolean>
 }) {
   const self = ref<PlayerCard>({ status: 'idle', stats: null })
   const opponent = ref<PlayerCard>({ status: 'idle', stats: null })
@@ -60,8 +62,8 @@ export function usePlayerCards(options: {
 
   watch(options.selfName, (name) => void load('self', name, false), { immediate: true })
   watch(
-    [options.opponentName, options.opponentIsAi],
-    ([name, ai]) => void load('opponent', name, ai),
+    [options.opponentName, options.opponentIsAi, options.opponentRegistered],
+    ([name, ai, registered]) => void load('opponent', name, ai || !registered),
     { immediate: true },
   )
 

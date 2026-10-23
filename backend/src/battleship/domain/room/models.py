@@ -138,6 +138,9 @@ class Player:
     max_ships: int | None = None
     sunken_ships: list[PlayerShip] = field(default_factory=list)
     magic_blocked: bool = False
+    # Set only from the authenticated Connection when seating; user_id alone
+    # cannot tell (a custom-room guest seat key is its sid).
+    registered: bool = False
     damage_dealt_this_turn: int = 0
 
 
@@ -246,11 +249,19 @@ def opponent_seat_state(room: "Room", player_id: str) -> dict[str, bool]:
     opponent_id = opponent_of(room, player_id)
     opponent = room.players.get(opponent_id) if opponent_id else None
     if opponent is None:
-        return {"opponent_ready": False, "opponent_online": False}
+        return {
+            "opponent_ready": False,
+            "opponent_online": False,
+            "opponent_registered": False,
+        }
     online = bool(opponent.socket_id) and opponent_id not in (room.disconnected or {})
     if room.is_ai_room and opponent_id == ai_player_id(room.id):
         online = True
-    return {"opponent_ready": seat_ready(opponent), "opponent_online": online}
+    return {
+        "opponent_ready": seat_ready(opponent),
+        "opponent_online": online,
+        "opponent_registered": bool(opponent.registered),
+    }
 
 
 def new_room_id() -> str:

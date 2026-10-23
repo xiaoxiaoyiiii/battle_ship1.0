@@ -124,11 +124,11 @@ class OutboundEventEnvelope(BaseModel):
 class RoomSync(BaseModel):
     """The reconnect snapshot (`room_sync`).
 
-    Frozen at 49 top-level keys: the recorded legacy `_build_room_sync`
-    (server.py:10498-10639) 45 keys in their original order, plus the four
-    additive fields of ticket #43 (`turn_deadline`, `turn_timeout_seconds`,
-    `opponent_ready`, `opponent_online`). The legacy client reads every legacy
-    key; a missing legacy key shows up as a blank board/hand after reconnect.
+    Frozen at the top-level keys below: the recorded legacy `_build_room_sync`
+    (server.py:10498-10639) 45 keys in their original order, plus the additive
+    fields: ticket #43 (`turn_deadline`, `turn_timeout_seconds`,
+    `opponent_ready`, `opponent_online`) and `opponent_registered`.
+    The legacy client reads every legacy key; a missing legacy key shows up as a blank board/hand after reconnect.
     The model is the single freeze point, and additions are appended so the
     recorded key order stays a prefix.
     """
@@ -188,6 +188,8 @@ class RoomSync(BaseModel):
     # the existing seat + disconnect state; no new state machine.
     opponent_ready: bool
     opponent_online: bool
+    # Additive: the opponent seat is a logged-in account (server-trusted).
+    opponent_registered: bool
 
 
 #: Authoritative key order/count for the reconnect snapshot.

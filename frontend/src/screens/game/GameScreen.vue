@@ -391,6 +391,7 @@ const playerCards = usePlayerCards({
   selfName: computed(() => auth.user?.username || ''),
   opponentName: computed(() => state.value.opponent_name || ''),
   opponentIsAi: computed(() => Boolean(state.value.is_ai_room)),
+  opponentRegistered: computed(() => state.value.opponent_registered === true),
 })
 const brokenAvatars = ref({ self: '', opponent: '' })
 const selfAvatarUrl = computed(() =>

@@ -153,8 +153,13 @@ class MatchmakingService:
 
         self.rooms.match_queue.append({
             "sid": connection.sid,
-            "name": player_name,
+            "name": (
+                connection.username
+                if connection.user_id and connection.username
+                else player_name
+            ),
             "user_id": connection.user_id,
+            "registered": bool(connection.user_id),
             "mode": mode,
             "enqueued_at": time.time(),
             "ip": connection.ip,
@@ -214,6 +219,7 @@ class MatchmakingService:
                 name=entry.get("name"),
                 user_id=entry.get("user_id"),
                 socket_id=seat_id,
+                registered=bool(entry.get("registered")),
             )
         for seat_id in room.players:
             room.init_player_magic(seat_id)

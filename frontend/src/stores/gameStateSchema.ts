@@ -93,6 +93,8 @@ export interface GameState {
   turn_timeout_seconds: number
   opponent_ready: boolean
   opponent_online: boolean
+  // 服务端可信：对手席位是已登录账号（游客/AI/无对手均为 false）。
+  opponent_registered: boolean
   // game_state-only payload keys (never part of room_sync).
   winner_card: Record<string, unknown> | null
   loser_cards: Array<Record<string, unknown> | null>
@@ -160,6 +162,7 @@ const FIELD_SPECS = {
   turn_timeout_seconds: { type: 'number', nullable: false, default: 0, note: '服务端回合超时秒数（0=关闭）；客户端只渲染不裁决' },
   opponent_ready: { type: 'boolean', nullable: false, default: false, note: '对手是否已摆好战舰（布船/猜拳等待）' },
   opponent_online: { type: 'boolean', nullable: false, default: false, note: '对手是否在线（布船/猜拳等待）' },
+  opponent_registered: { type: 'boolean', nullable: false, default: false, note: '对手是否为已登录账号（服务端可信；缺省=false，游客/AI/无对手都不查公开资料）' },
   winner_card: { type: 'object', nullable: true, default: null, note: '猜拳胜者抽到的卡' },
   loser_cards: { type: 'array', nullable: false, default: [], note: '猜拳败者抽到的卡' },
 } as const satisfies Record<SchemaField, GameStateFieldSpec>

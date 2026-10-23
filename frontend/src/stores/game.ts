@@ -33,6 +33,7 @@ export const useGameStore = defineStore('game', () => {
       if (isKnownGameStateField(key)) next[key] = value
       else unknown.push(key)
     }
+    if ('opponent_name' in next && !('opponent_registered' in next)) next.opponent_registered = false
     Object.assign(state.value, next)
     unknownFields.value = unknown
     revision.value += 1

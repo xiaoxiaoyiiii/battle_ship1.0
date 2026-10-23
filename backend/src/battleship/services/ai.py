@@ -76,7 +76,7 @@ class AiService:
         rng: Any = None,
         pacing_seconds: float = 0.5,
         settle_poll_seconds: float = 0.3,
-        settle_steps: int = 100,
+        settle_steps: int = 40,
         turn_steps: int = MASTER_TURN_STEPS,
         retry_pause_seconds: float = 0.5,
         retries: int = 20,

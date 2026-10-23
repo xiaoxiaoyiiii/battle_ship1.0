@@ -1523,5 +1523,12 @@ async function startAi(): Promise<void> {
   .home-left { gap:8px; }.home-screen { padding:12px 24px 12px; gap:10px; }
   .home-showcase { padding:12px 14px; }.home-card { padding:12px 16px; }
 }
+@media(min-width:1024px) and (max-height:940px) {
+  .home-player__links { margin-top:0; }
+  .home-player { gap:4px; padding-top:8px; padding-bottom:8px; }
+  .home-head { margin-bottom:4px; }
+  .home-play { padding-top:8px; padding-bottom:8px; }
+  .home-ai { gap:4px; padding-top:8px; padding-bottom:8px; }
+}
 </style>
 

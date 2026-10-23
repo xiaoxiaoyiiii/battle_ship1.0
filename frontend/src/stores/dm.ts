@@ -68,6 +68,8 @@ export const useDmStore = defineStore('dm', () => {
   /** 标读请求在途 / 在途期间又来了新消息（要再补一次，否则会永久漏读）。 */
   const readInFlight = new Set<string>()
   const readPending = new Set<string>()
+  /** 每个会话"记了未读"的代数：标读响应只清它发出时已存在的未读，晚到的新消息不受影响。 */
+  const unreadGen: Record<string, number> = {}
 
   /**
    * 每个会话按「请求种类」各一个序号：只让当前这次请求收尾它自己的 loading。
@@ -223,13 +225,14 @@ export const useDmStore = defineStore('dm', () => {
       return
     }
     readInFlight.add(name)
+    const gen = unreadGen[name] ?? 0
     try {
-      await fetch('/api/friends/messages/read', {
+      const response = await fetch('/api/friends/messages/read', {
         method: 'POST',
         headers: { 'content-type': 'application/json', accept: 'application/json' },
         body: JSON.stringify({ username: name }),
       })
-      unread.value[name] = 0
+      if (response.ok && (unreadGen[name] ?? 0) === gen) unread.value[name] = 0
     } catch {
       // 网络失败：下次推送/打开会话时会再试，不在此处报错刷屏
     } finally {
@@ -265,6 +268,7 @@ export const useDmStore = defineStore('dm', () => {
     thread.messages = mergeMessages(thread.messages, [message])
     const reading = visible.value && active.value === name
     if (!reading) {
+      unreadGen[name] = (unreadGen[name] ?? 0) + 1
       unread.value[name] = (unread.value[name] ?? 0) + 1
       return { name, unread: unread.value[name] }
     }
@@ -302,6 +306,7 @@ export const useDmStore = defineStore('dm', () => {
     visible.value = false
     readInFlight.clear()
     readPending.clear()
+    for (const key of Object.keys(unreadGen)) delete unreadGen[key]
     for (const key of Object.keys(openSeq)) delete openSeq[key]
     for (const key of Object.keys(olderSeq)) delete olderSeq[key]
     for (const key of Object.keys(controllers)) {

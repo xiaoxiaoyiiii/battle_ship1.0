@@ -5,8 +5,11 @@ import BoardPanel from './BoardPanel.vue'
 import { useAdaptiveGameLayout } from './useAdaptiveGameLayout'
 import { useHandFan } from './useHandFan'
 import { useFloatingDrag } from './useFloatingDrag'
+import PlayerCardDialog from './PlayerCardDialog.vue'
+import { usePlayerCards } from './usePlayerCards'
 import { acquireBattleChannel, getBattleSocket, sendBattleEvent, syncHand } from '../../realtime/battle'
 import { cardArtUrl } from '../../cards/cardArt'
+import { useAuthStore } from '../../stores/auth'
 import { useGameStore } from '../../stores/game'
 import { useMatchStore } from '../../stores/match'
 import { useResultStore } from '../../stores/result'
@@ -58,6 +61,7 @@ import {
  * counts, ship survival or card legality.
  */
 const router = useRouter()
+const auth = useAuthStore()
 const game = useGameStore()
 const match = useMatchStore()
 const result = useResultStore()
@@ -294,6 +298,8 @@ const chatMessages = computed(() => match.chat.slice(-30))
 
 // ---- drawers and overlays --------------------------------------------------
 const quickChatOpen = ref(false)
+/** 快捷语目录按需展开（原 main 的 #quick-chat-btn 在输入行里），默认只留消息与输入。 */
+const quickPhrasesOpen = ref(false)
 /** 宽屏的聊天浮窗默认常驻；用户点 × 收起后由 HUD 的「聊天」重新打开。 */
 const chatDismissed = ref(false)
 const logOpen = ref(false)
@@ -364,6 +370,7 @@ const chatDrag = useFloatingDrag({
   handle: chatHeadEl,
   panel: chatPanelEl,
   initial: { x: 20, y: 96 },
+  storageKey: 'in_game_chat_pos',
 })
 
 const logPanelEl = ref<HTMLElement | null>(null)
@@ -373,11 +380,28 @@ const logDrag = useFloatingDrag({
   handle: logHeadEl,
   panel: logPanelEl,
   initial: { x: 20, y: 432 },
+  storageKey: 'game_log_pos',
 })
 
-/** 身份条上的首字头像：真实对局里拿不到对手头像，用名字首字，不编造账号资料。 */
+/** 头像来自 /user_stats 的公开资料；拿不到（游客、人机）就退回名字首字，不编造。 */
 const selfInitial = computed(() => (selfName.value || '你').slice(0, 1))
 const opponentInitial = computed(() => (opponentName.value || '对').slice(0, 1))
+const playerCards = usePlayerCards({
+  // 局内昵称可能是大厅里随手填的；公开资料只认登录账号的用户名，游客没有
+  selfName: computed(() => auth.user?.username || ''),
+  opponentName: computed(() => state.value.opponent_name || ''),
+  opponentIsAi: computed(() => Boolean(state.value.is_ai_room)),
+})
+const brokenAvatars = ref({ self: '', opponent: '' })
+const selfAvatarUrl = computed(() =>
+  playerCards.selfAvatar.value && brokenAvatars.value.self !== playerCards.selfAvatar.value ? playerCards.selfAvatar.value : '',
+)
+const opponentAvatarUrl = computed(() =>
+  playerCards.opponentAvatar.value && brokenAvatars.value.opponent !== playerCards.opponentAvatar.value
+    ? playerCards.opponentAvatar.value
+    : '',
+)
+const playerCardSide = ref<'self' | 'opponent' | null>(null)
 const handFan = useHandFan({
   target: handWrapEl,
   count: computed(() => hand.value.length),
@@ -1062,8 +1086,10 @@ async function sendQuickChat(item: QuickChatItem): Promise<void> {
     player_id: state.value.player_id,
     msg_id: item.id,
   })
-  if (ack.status === 'success') quickChatOpen.value = false
-  else ui.notifyError('game-chat-failed', ack.message || '')
+  if (ack.status === 'success') {
+    quickChatOpen.value = false
+    quickPhrasesOpen.value = false
+  } else ui.notifyError('game-chat-failed', ack.message || '')
 }
 
 async function sendChat(): Promise<void> {
@@ -1124,8 +1150,16 @@ function closeTopLayer(): boolean {
     closeZoom()
     return true
   }
+  if (playerCardSide.value) {
+    playerCardSide.value = null
+    return true
+  }
   if (discardOpen.value) {
     discardOpen.value = false
+    return true
+  }
+  if (quickPhrasesOpen.value) {
+    quickPhrasesOpen.value = false
     return true
   }
   if (quickChatOpen.value) {
@@ -1189,6 +1223,7 @@ watch(
     shieldError.value = ''
     zoomOpen.value = false
     quickChatOpen.value = false
+    quickPhrasesOpen.value = false
     logOpen.value = false
     moreOpen.value = false
     discardOpen.value = false
@@ -1341,11 +1376,18 @@ function backToLobby(): void {
         <!-- 身份条（原 main 的 .players-info / arena-oppbar-bg）：头像 + 名称 + 剩余舰 + pips -->
         <div class="hud-players">
           <div class="arena-player arena-player--opponent" data-testid="game-opponent-card">
-            <span class="arena-avatar arena-avatar--opponent" aria-hidden="true">{{ opponentInitial }}</span>
+            <button
+              type="button"
+              class="arena-avatar arena-avatar--opponent arena-avatar--btn"
+              data-testid="game-opponent-avatar"
+              aria-label="查看对手战绩"
+              @click="playerCardSide = 'opponent'"
+            ><img v-if="opponentAvatarUrl" :src="opponentAvatarUrl" alt="" @error="brokenAvatars.opponent = opponentAvatarUrl" /><template v-else>{{ opponentInitial }}</template></button>
             <div class="arena-player__meta">
               <b class="hud-name" data-testid="game-opponent-name">{{ opponentName }}</b>
               <span class="arena-player__line">
                 <span class="hud-pips" data-testid="game-ships">{{ shipsText }}</span>
+                <button type="button" class="arena-stats-btn" data-testid="game-opponent-stats-open" @click="playerCardSide = 'opponent'">战绩</button>
                 <span class="arena-player__pips" aria-hidden="true">
                   <i
                     v-for="index in 6"
@@ -1360,7 +1402,13 @@ function backToLobby(): void {
           <span class="hud-vs" aria-hidden="true">VS</span>
 
           <div class="arena-player arena-player--self" data-testid="game-self-card">
-            <span class="arena-avatar arena-avatar--self" aria-hidden="true">{{ selfInitial }}</span>
+            <button
+              type="button"
+              class="arena-avatar arena-avatar--self arena-avatar--btn"
+              data-testid="game-self-avatar"
+              aria-label="查看我的资料"
+              @click="playerCardSide = 'self'"
+            ><img v-if="selfAvatarUrl" :src="selfAvatarUrl" alt="" @error="brokenAvatars.self = selfAvatarUrl" /><template v-else>{{ selfInitial }}</template></button>
             <div class="arena-player__meta">
               <b class="hud-name" data-testid="game-self-name">{{ selfName }}</b>
               <span class="arena-player__line">
@@ -1563,6 +1611,7 @@ function backToLobby(): void {
             <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-end-turn" :disabled="!myTurn || state.current_phase !== 'end'" @click="turnAction('end_turn')">结束回合</button>
             <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-log-toggle" @click="logOpen = true">对局日志</button>
             <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-chat-open" @click="quickChatOpen = true">聊天与快捷语</button>
+            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-more-opponent-stats" @click="moreOpen = false; playerCardSide = 'opponent'">对手战绩</button>
             <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-more-piles" @click="openDiscard">弃牌堆</button>
             <button
               type="button"
@@ -1605,7 +1654,7 @@ function backToLobby(): void {
     <!-- 己方舰队摘要（原 main 手牌左侧的 .player-info / arena-fleet-head） -->
     <aside v-if="!compact" class="arena-fleet" data-testid="game-self-fleet" aria-label="你的舰队">
       <div class="arena-fleet__head">
-        <span class="arena-avatar arena-avatar--self" aria-hidden="true">{{ selfInitial }}</span>
+        <span class="arena-avatar arena-avatar--self" aria-hidden="true"><img v-if="selfAvatarUrl" :src="selfAvatarUrl" alt="" /><template v-else>{{ selfInitial }}</template></span>
         <div>
           <b class="arena-fleet__name">{{ selfName }}</b>
           <p class="arena-fleet__ships">你的舰队 · 剩余 {{ state.remaining_ships }} 艘</p>
@@ -1712,6 +1761,7 @@ function backToLobby(): void {
         <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-end-turn" :disabled="!myTurn || state.current_phase !== 'end'" @click="turnAction('end_turn')">结束回合</button>
         <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-log-toggle" @click="logOpen = true">对局日志</button>
         <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-chat-open" @click="quickChatOpen = true">聊天与快捷语</button>
+        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-more-opponent-stats" @click="moreOpen = false; playerCardSide = 'opponent'">对手战绩</button>
         <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-more-piles" @click="openDiscard">弃牌堆</button>
         <button
           type="button"
@@ -1836,6 +1886,15 @@ function backToLobby(): void {
     </section>
 
 
+    <PlayerCardDialog
+      v-if="playerCardSide"
+      :side="playerCardSide"
+      :name="playerCardSide === 'opponent' ? opponentName : selfName"
+      :card="playerCardSide === 'opponent' ? playerCards.opponent.value : playerCards.self.value"
+      :is-ai="Boolean(state.is_ai_room)"
+      @close="playerCardSide = null"
+    />
+
     <section v-if="logOpen" class="game-drawer game-drawer--log" data-testid="game-log-drawer" role="dialog" aria-label="对局日志">
       <header class="game-drawer__head">
         <h2 class="game-drawer__title">对局日志</h2>
@@ -1869,7 +1928,7 @@ function backToLobby(): void {
           class="game-close"
           data-testid="game-quick-chat-close"
           aria-label="关闭聊天"
-          @click="compact ? (quickChatOpen = false) : (chatDismissed = true)"
+          @click="quickPhrasesOpen = false; quickChatOpen = false; if (!compact) chatDismissed = true"
         >×</button>
       </header>
       <section class="game-chat-text" data-testid="game-chat" aria-label="文字聊天">
@@ -1897,16 +1956,26 @@ function backToLobby(): void {
             data-testid="game-chat-input"
             @keydown.enter.prevent="sendChat"
           />
+          <button
+            type="button"
+            class="button button--ghost game-chat-quick-toggle"
+            :class="{ 'is-open': quickPhrasesOpen }"
+            :aria-expanded="quickPhrasesOpen ? 'true' : 'false'"
+            aria-controls="game-quick-phrases"
+            data-testid="game-quick-chat-toggle"
+            @click="quickPhrasesOpen = !quickPhrasesOpen"
+          >快捷语</button>
           <button type="button" class="button" data-testid="game-chat-send" @click="sendChat">发送</button>
         </div>
+        <div v-if="quickPhrasesOpen" id="game-quick-phrases" class="game-chat-phrases" data-testid="game-quick-phrases">
+          <ul class="game-chat-items">
+            <li v-for="item in quickChatCatalog" :key="item.id">
+              <button type="button" class="button button--ghost game-chat-item" :data-testid="'game-quick-chat-item-' + item.id" @click="sendQuickChat(item)">{{ item.text }}</button>
+            </li>
+          </ul>
+          <p v-if="!quickChatCatalog.length" class="game-drawer__empty">快捷语目录暂不可用</p>
+        </div>
       </section>
-      <h3 class="game-drawer__subtitle">快捷语</h3>
-      <ul class="game-chat-items">
-        <li v-for="item in quickChatCatalog" :key="item.id">
-          <button type="button" class="button button--ghost game-chat-item" :data-testid="'game-quick-chat-item-' + item.id" @click="sendQuickChat(item)">{{ item.text }}</button>
-        </li>
-      </ul>
-      <p v-if="!quickChatCatalog.length" class="game-drawer__empty">快捷语目录暂不可用</p>
       <ol class="game-chat-log" data-testid="game-quick-chat-messages">
         <li v-for="(message, index) in quickChatMessages" :key="'qc-' + index" class="game-chat-line" :data-testid="'game-quick-chat-message-' + index">
           <b>{{ message.name }}</b>：{{ message.text }}

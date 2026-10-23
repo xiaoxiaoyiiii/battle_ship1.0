@@ -1,9 +1,31 @@
-import { onBeforeUnmount, ref, type Ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 
 export interface FloatingDragState {
   x: number
   y: number
   dragging: boolean
+}
+
+function readSaved(key?: string): { x: number; y: number } | null {
+  if (!key) return null
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(key) || 'null') as { left?: unknown; top?: unknown } | null
+    if (raw && Number.isFinite(raw.left) && Number.isFinite(raw.top)) {
+      return { x: Number(raw.left), y: Number(raw.top) }
+    }
+  } catch {
+    // 存档损坏就当没有
+  }
+  return null
+}
+
+function writeSaved(key: string | undefined, x: number, y: number): void {
+  if (!key) return
+  try {
+    window.localStorage.setItem(key, JSON.stringify({ left: x, top: y }))
+  } catch {
+    // 隐私模式写不了就算了，位置只在本次有效
+  }
 }
 
 /**
@@ -18,8 +40,12 @@ export function useFloatingDrag(options: {
   panel: Ref<HTMLElement | null>
   initial: { x: number; y: number }
   minY?: number
+  /** 位置记在 localStorage（原 main 的 game_log_pos / in_game_chat_pos）；没给就只在内存里。 */
+  storageKey?: string
 }) {
   const state = ref<FloatingDragState>({ x: options.initial.x, y: options.initial.y, dragging: false })
+  const saved = readSaved(options.storageKey)
+  if (saved) state.value = { x: saved.x, y: saved.y, dragging: false }
   let startX = 0
   let startY = 0
   let originX = 0
@@ -61,6 +87,7 @@ export function useFloatingDrag(options: {
 
   function onPointerUp(): void {
     state.value = { ...state.value, dragging: false }
+    writeSaved(options.storageKey, state.value.x, state.value.y)
     window.removeEventListener('pointermove', onPointerMove)
     window.removeEventListener('pointerup', onPointerUp)
   }
@@ -70,7 +97,28 @@ export function useFloatingDrag(options: {
     state.value = { x: next.x, y: next.y, dragging: false }
   }
 
+  /** 视口变化不是用户的意图：越界就拉回屏内，屏内的位置原样保留。 */
+  function reclamp(): void {
+    if (state.value.dragging) return
+    const next = clamp(state.value.x, state.value.y)
+    if (next.x !== state.value.x || next.y !== state.value.y) {
+      state.value = { ...state.value, x: next.x, y: next.y }
+    }
+  }
+
+  onMounted(() => {
+    window.addEventListener('resize', reclamp)
+    window.addEventListener('orientationchange', reclamp)
+    void nextTick(reclamp)
+  })
+  // 面板按布局档位挂载/卸载：重新出现时按它真实尺寸再夹一次
+  watch(options.panel, (el) => {
+    if (el) void nextTick(reclamp)
+  })
+
   onBeforeUnmount(() => {
+    window.removeEventListener('resize', reclamp)
+    window.removeEventListener('orientationchange', reclamp)
     window.removeEventListener('pointermove', onPointerMove)
     window.removeEventListener('pointerup', onPointerUp)
   })

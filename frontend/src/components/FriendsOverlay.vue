@@ -162,10 +162,7 @@ async function openThread(username: string): Promise<void> {
   const row = friends.value.find((item) => item.username === username)
   if (row) row.unread = 0
   await dm.open(username)
-  void api('/api/friends/messages/read', {
-    method: 'POST',
-    body: JSON.stringify({ username }),
-  })
+  void dm.markRead(username)
 }
 
 async function loadOlder(): Promise<void> {

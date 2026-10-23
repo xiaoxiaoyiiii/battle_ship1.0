@@ -113,6 +113,14 @@
 | 回放 `replay` | 有内容 | `content-replay-1440x900.png` | `第 1/12 步`、双视角棋盘、6 艘舰、播放/步进、双方手牌与事件列表 |
 | 观战 `spectate` | 空态（无进行中对局） | `content-spectate-1440x900.png` | 文案「还没有选择要观战的对局…」，需大厅「进行中的对局」进入；登录 + 双方开放观战才可看 |
 
+### 复核时补的两处紧凑档可达性修复
+
+- **极矮横屏（844×390，`data-tight`）手牌被裁成窄条**：`grid-template-rows` 的手牌行改成 `minmax(84px, 1fr)`、卡面 56×78、隐藏手牌信息行；`.game-hand-head` 全档 `pointer-events: none`（纯信息，不应吃掉点击）。
+  证据：`spec-target-compact.mjs` 的「手牌首张不可点（elementFromPoint=game-hand-wrap）」由 FAIL 转 PASS，844×390 神威！随后 36/36 可点。
+- **紧凑档打开卡牌详情 sheet 时手牌行与按钮重叠**：`.game[data-layout="compact"].is-sheet .game-hand-wrap { display: none }`，避免底部两层叠在一起。
+  证据：`spec-target-compact.mjs`（先真实点击「使用此卡」再选格）恢复 PASS。
+- 极矮横屏隐藏胶囊行（`.hud-chips`），只保留回合 / 双方 / 舰数 / 聊天按钮，避免半截被压。
+
 ### 本轮剩余缺口（如实）
 
 1. 扇形手牌的「选中牌 + 右邻居加宽」（main 的 `need = w + 44`）未实现，选中只改描边与上浮。

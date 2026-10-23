@@ -1876,6 +1876,8 @@
   margin-bottom: 4px;
   font-size: 11px;
   color: var(--text-tertiary);
+  /* 纯信息行：极窄/极矮窗口里即使压到手牌也不能吃掉点击 */
+  pointer-events: none;
 }
 
 .game-hand {
@@ -2043,6 +2045,11 @@
     display: none;
   }
 /* 选目标时把目标面板放进手牌/主行动腾出的位置：棋盘一格都不能被盖住 */
+/* 紧凑档打开卡牌详情 sheet 时，手牌行让位：两者在底部重叠会把按钮盖住。 */
+.game[data-layout="compact"].is-sheet .game-hand-wrap {
+  display: none;
+}
+
 .game[data-layout="compact"].is-picking .game-hand-wrap,
 .game[data-layout="compact"].is-picking .game-compact-bar {
     display: none;
@@ -2164,7 +2171,8 @@
     overflow-y: auto;
     overscroll-behavior: contain;
     grid-template-columns: minmax(0, 1fr) 300px;
-    grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+    /* 手牌行给下限：低于一张卡就会被压到操作条上（重叠） */
+    grid-template-rows: auto auto auto minmax(84px, 1fr) auto;
     grid-template-areas:
       'board hud'
       'board field'
@@ -2186,10 +2194,8 @@
     padding: 4px 8px;
   }
 .game[data-tight="true"] .hud-chips {
-    flex: 1 1 100%;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
+    /* 极矮横屏里胶囊行会被下一条压掉一半，只保留回合/双方/舰数 */
+    display: none;
   }
 .game[data-tight="true"] .hud-players {
     order: 0;
@@ -2222,7 +2228,8 @@
 .game[data-tight="true"] .game-hand-wrap {
     grid-area: hand;
     align-self: stretch;
-    min-height: 0;
+    /* 手牌必须能整张露出：低于一张卡的高度就会把卡面裁成不可点的窄条 */
+    min-height: 84px;
     padding: 3px 6px 5px;
     overflow: hidden;
   }
@@ -2235,13 +2242,14 @@
     gap: 6px;
   }
 .game[data-tight="true"] .game-hand .card {
-    flex: 0 0 64px;
-    width: 64px;
-    height: 88px;
+    flex: 0 0 56px;
+    width: 56px;
+    height: 78px;
   }
 .game[data-tight="true"] .game-hand-head {
     margin-bottom: 2px;
     font-size: 10px;
+    display: none;
   }
 .game[data-tight="true"] .game-hand .card__desc {
     display: none;

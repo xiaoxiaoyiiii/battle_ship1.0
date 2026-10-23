@@ -1239,7 +1239,7 @@ function backToLobby(): void {
     :data-boards="boardMode"
     :data-tight="tight ? 'true' : 'false'"
     :data-dense="dense ? 'true' : 'false'"
-    :class="{ 'is-picking': picking }"
+    :class="{ 'is-picking': picking, 'is-sheet': railSheet }"
     :style="boardSize ? { '--board-size': boardSize + 'px' } : undefined"
     aria-labelledby="screen-game-title"
     ref="gameEl"

@@ -375,7 +375,9 @@ html[data-font-scale='xlarge'] body {
 }
 
 .app-overlay--match-found .app-overlay__panel {
-  width: min(560px, 100%);
+  width: min(930px, 100%);
+  background: transparent;
+  border: 0;
   overflow: visible;
 }
 

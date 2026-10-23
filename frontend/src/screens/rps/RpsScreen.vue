@@ -7,7 +7,9 @@ import { useRpsStore } from '../../stores/rps'
 import { choiceName, rpsResultView } from './view'
 import AppOverlay from '../../components/AppOverlay.vue'
 import { getSettlementSocket } from '../../realtime/settlement'
+import { useAuthStore } from '../../stores/auth'
 import { useUiStore } from '../../stores/ui'
+import { usePlayerCards } from '../game/usePlayerCards'
 
 /**
  * Ticket #23: the rock-paper-scissors screen.
@@ -54,7 +56,8 @@ const opponentStatus = computed(() => {
 })
 const selfName = computed(() => game.state.player_name || '你')
 const opponentName = computed(() => game.state.opponent_name || '对手')
-const seatLabel = computed(() => game.state.player_seat || '—')
+const auth = useAuthStore()
+const cards = usePlayerCards({ selfName: computed(() => auth.user?.username || ''), opponentName, opponentIsAi: computed(() => Boolean(game.state.is_ai_room)), opponentRegistered: computed(() => game.state.opponent_registered === true) })
 const roundText = computed(() => String(game.state.round || 1))
 const resultView = computed(() => rpsResultView(rps.result, game.state.player_id))
 
@@ -178,6 +181,10 @@ function returnHome(): void {
     data-testid="screen-rps"
     aria-labelledby="screen-rps-title"
   >
+    <div class="rps__identities" aria-label="对阵双方">
+      <div class="rps__identity"><span class="rps__avatar"><img v-if="cards.selfAvatar.value" :src="cards.selfAvatar.value" alt="" /><span v-else>{{ selfName.slice(0,1) }}</span></span><b data-testid="rps-self">{{ selfName }}</b></div>
+      <div class="rps__identity rps__identity--opponent"><b data-testid="rps-opponent">{{ opponentName }}</b><span class="rps__avatar"><img v-if="cards.opponentAvatar.value" :src="cards.opponentAvatar.value" alt="" /><span v-else>{{ opponentName.slice(0,1) }}</span></span></div>
+    </div>
     <header class="rps__head">
       <p class="rps__eyebrow">开局 · 猜拳</p>
       <h1 id="screen-rps-title" class="rps__title" data-testid="rps-heading">猜拳决定攻击顺序</h1>
@@ -189,14 +196,7 @@ function returnHome(): void {
       </p>
     </header>
 
-    <div class="rps__players">
-      <span class="rps__player">你 <b data-testid="rps-self">{{ selfName }}</b></span>
-      <span class="rps__seat" aria-label="座位">{{ seatLabel }}</span>
-      <span class="rps__vs" aria-hidden="true">VS</span>
-      <span class="rps__player rps__player--opponent">
-        对手 <b data-testid="rps-opponent">{{ opponentName }}</b>
-      </span>
-    </div>
+
 
     <p
       class="rps__opponent-state"
@@ -650,4 +650,11 @@ function returnHome(): void {
   justify-content: flex-end;
 }
 
+
+.rps__identities { display:flex; justify-content:space-between; gap:16px; width:100%; }
+.rps__identity { display:flex; align-items:center; gap:10px; min-width:0; }
+.rps__identity b { overflow:hidden; text-overflow:ellipsis; }
+.rps__avatar { display:grid; place-items:center; width:44px; height:44px; flex:0 0 44px; border:1px solid var(--role-self); border-radius:50%; overflow:hidden; background:var(--panel); }
+.rps__avatar img { width:100%; height:100%; object-fit:cover; }
+.rps__identity--opponent .rps__avatar { border-color:var(--gold); }
 </style>

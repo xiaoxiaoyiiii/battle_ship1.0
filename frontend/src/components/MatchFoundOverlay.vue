@@ -30,7 +30,7 @@ const emit = defineEmits<{ (event: 'done'): void }>()
 const remaining = ref(Math.max(0, Math.floor(props.seconds)))
 const selfName = computed(() => props.selfName || '你')
 const opponentName = computed(() => props.opponentName || '对手')
-const modeLabel = computed(() => (props.mode === 'ranked' ? '排位对战' : '休闲对战'))
+const modeLabel = computed(() => (props.opponentName === 'AI' ? '人机对战' : props.mode === 'ranked' ? '排位对战' : '休闲对战'))
 const countdownText = computed(() => (remaining.value > 0 ? remaining.value + ' 秒' : '即将进入'))
 
 let timer: ReturnType<typeof setInterval> | null = null
@@ -71,25 +71,26 @@ onBeforeUnmount(stop)
   >
     <div class="match-found__panel">
       <p class="match-found__eyebrow">{{ modeLabel }} · 对战确认</p>
-      <h2 id="match-found-title" class="match-found__title">匹 配 成 功</h2>
+      <h2 id="match-found-title" class="match-found__title">匹配成功！</h2>
       <p class="match-found__countdown" data-testid="match-found-countdown" role="status" aria-live="polite">
         {{ countdownText }}
       </p>
 
       <div class="match-found__sides">
         <article class="match-found__side" data-testid="match-found-self">
-          <span class="match-found__badge" aria-hidden="true">我</span>
+          <p class="match-found__designation">PLAYER 01 / 你</p><svg class="match-found__ship" viewBox="0 0 200 120" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M10 80h180l-30 25H40z M56 80V58h88v22 M82 58V38h32v20 M98 38V20h25 M44 68h12 M144 68h16 M24 112h39m10 0h58m10 0h35"/></svg><h3>我方舰队</h3>
           <p class="match-found__name" data-testid="match-found-self-name">{{ selfName }}</p>
         </article>
 
         <span class="match-found__versus" aria-hidden="true">VS</span>
 
         <article class="match-found__side match-found__side--rival" data-testid="match-found-opponent">
-          <span class="match-found__badge match-found__badge--rival" aria-hidden="true">敌</span>
+          <p class="match-found__designation">PLAYER 02 / 对手</p><svg class="match-found__ship" viewBox="0 0 200 120" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M10 80h180l-30 25H40z M56 80V58h88v22 M82 58V38h32v20 M98 38V20h25 M44 68h12 M144 68h16 M24 112h39m10 0h58m10 0h35"/></svg><p>你的对手是：</p>
           <p class="match-found__name" data-testid="match-found-opponent-name">{{ opponentName }}</p>
         </article>
       </div>
 
+      <div class="match-found__progress"><i :style="{ width: (remaining / Math.max(1, seconds) * 100) + '%' }"></i></div>
       <button type="button" class="match-found__skip" data-primary-action="true" data-testid="match-found-skip" @click="finish">
         立即进入布船
       </button>
@@ -98,131 +99,23 @@ onBeforeUnmount(stop)
 </template>
 
 <style scoped>
-.match-found__panel {
-  width: min(560px, 100%);
-  padding: 26px 30px 22px;
-  text-align: center;
-}
-
-.match-found__eyebrow {
-  margin: 0;
-  color: #9c8fe0;
-  font-size: 10px;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-}
-
-.match-found__title {
-  margin: 6px 0 2px;
-  color: var(--text, var(--text-primary));
-  font-size: 24px;
-  letter-spacing: 0.3em;
-}
-
-.match-found__countdown {
-  margin: 0 0 18px;
-  color: var(--text-muted, var(--text-tertiary));
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
-
-.match-found__sides {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  gap: 10px;
-  align-items: center;
-}
-
-.match-found__side {
-  padding: 14px 12px;
-  border: 1px solid var(--border-strong, color-mix(in srgb, var(--role-action) 40%, transparent));
-  border-radius: 12px;
-  background: rgba(10, 14, 30, 0.7);
-}
-
-.match-found__side--rival {
-  border-color: rgba(214, 160, 92, 0.45);
-}
-
-.match-found__badge {
-  display: inline-grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  background: linear-gradient(160deg, #6f5bd4, #382a72);
-  color: #f4f1ff;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.match-found__badge--rival {
-  background: linear-gradient(160deg, var(--gold), #7a4f20);
-}
-
-.match-found__name {
-  margin: 8px 0 10px;
-  color: var(--text, var(--text-primary));
-  font-size: 15px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.match-found__stats {
-  display: grid;
-  gap: 4px;
-  margin: 0;
-  font-size: 12px;
-}
-
-.match-found__stats div {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.match-found__stats dt {
-  color: var(--text-dim, var(--text-secondary));
-}
-
-.match-found__stats dd {
-  margin: 0;
-  color: var(--text, var(--text-primary));
-  font-variant-numeric: tabular-nums;
-}
-
-.match-found__versus {
-  color: var(--gold);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-}
-
-.match-found__skip {
-  margin-top: 20px;
-  padding: 9px 22px;
-  border: 1px solid color-mix(in srgb, var(--role-action) 50%, transparent);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-muted, var(--text-tertiary));
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.match-found__skip:hover {
-  border-color: color-mix(in srgb, var(--gold) 70%, transparent);
-  color: var(--text, var(--text-primary));
-}
-
-@media (max-width: 560px) {
-  .match-found__sides {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .match-found__versus {
-    justify-self: center;
-  }
-}
+.match-found__panel { width:min(930px,calc(100vw - 40px)); padding:34px; text-align:center; background:linear-gradient(125deg,#0c2234dd,#1b192ddd); border:1px solid #366781; border-radius:20px; }
+.match-found__eyebrow { color:#7cdbfa; letter-spacing:.22em; font-size:12px; margin:0; }
+.match-found__title { font-size:clamp(28px,4vw,48px); margin:8px 0; color:#e9f7ff; text-shadow:0 0 24px #4ec8e066; }
+.match-found__countdown { color:var(--gold); margin:0 0 24px; }
+.match-found__sides { display:grid; grid-template-columns:minmax(0,1fr) 110px minmax(0,1fr); gap:24px; align-items:center; }
+.match-found__side { color:#4ec8e0; border:1px solid #2586a4; border-radius:14px; padding:24px 12px; background:radial-gradient(circle at 50% 40%,#20789555,transparent 70%); animation:fleet-enter .7s ease-out both; }
+.match-found__side--rival { color:#edb765; border-color:#967449; background:radial-gradient(circle at 50% 40%,#91734144,transparent 70%); animation-name:rival-enter; }
+.match-found__designation { font-size:11px; font-weight:700; letter-spacing:.16em; }
+.match-found__ship { display:block; width:180px; max-width:90%; height:120px; margin:auto; filter:drop-shadow(0 0 12px currentColor); }
+h3 { font-size:28px; margin:12px 0; color:#e9f7ff; }.match-found__name { font-size:20px; font-weight:700; margin:12px 0 0; }
+.match-found__versus { display:grid; place-items:center; width:110px; height:110px; border:4px double #397591; border-radius:50%; color:var(--gold); font-size:30px; font-weight:800; box-shadow:0 0 35px #4ec8e066; animation:versus-lock .8s ease-out both; }
+.match-found__progress { height:8px; border:1px solid #366781; border-radius:20px; margin:28px auto 12px; width:75%; overflow:hidden; }
+.match-found__progress i { display:block; height:100%; background:linear-gradient(90deg,#357bdb,#4ec8e0,#ffe3a0); transition:width 1s linear; }
+.match-found__skip { padding:8px 20px; border:1px solid #366781; background:transparent; color:#b9cfdf; border-radius:20px; cursor:pointer; }
+@keyframes fleet-enter { from {opacity:0;transform:translateX(-40px)} to {opacity:1;transform:none} }
+@keyframes rival-enter { from {opacity:0;transform:translateX(40px)} to {opacity:1;transform:none} }
+@keyframes versus-lock { from {opacity:0;transform:scale(1.5)} to {opacity:1;transform:none} }
+@media(max-width:600px) { .match-found__panel { padding:20px 12px; }.match-found__sides { grid-template-columns:minmax(0,1fr) 44px minmax(0,1fr);gap:6px; }.match-found__versus { width:44px;height:44px;font-size:20px; }.match-found__side { padding:12px 5px; }.match-found__ship { height:85px; }h3 { font-size:18px; }.match-found__name { font-size:14px; }.match-found__designation { font-size:9px; } }
+@media(prefers-reduced-motion:reduce) { .match-found__side,.match-found__versus { animation:none; }.match-found__progress i { transition:none; } }
 </style>

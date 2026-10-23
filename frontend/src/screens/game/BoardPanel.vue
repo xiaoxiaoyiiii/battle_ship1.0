@@ -251,7 +251,8 @@ function onCellFocus(index: number): void {
 }
 
 .cell--attackable:hover,
-.cell--cursor {
+.board__grid:focus-visible .cell--cursor,
+.cell--cursor:focus-visible {
   background: color-mix(in srgb, var(--role-enemy) 26%, var(--cell-bg));
   border-color: var(--role-enemy);
 }

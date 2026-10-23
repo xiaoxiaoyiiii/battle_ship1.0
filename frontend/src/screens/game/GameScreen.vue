@@ -1652,20 +1652,6 @@ function backToLobby(): void {
       </template>
     </button>
 
-    <!-- 己方舰队摘要（原 main 手牌左侧的 .player-info / arena-fleet-head） -->
-    <aside v-if="!compact" class="arena-fleet" data-testid="game-self-fleet" aria-label="你的舰队">
-      <div class="arena-fleet__head">
-        <span class="arena-avatar arena-avatar--self" aria-hidden="true"><img v-if="selfAvatarUrl" :src="selfAvatarUrl" alt="" /><template v-else>{{ selfInitial }}</template></span>
-        <div>
-          <b class="arena-fleet__name">{{ selfName }}</b>
-          <p class="arena-fleet__ships">你的舰队 · 剩余 {{ state.remaining_ships }} 艘</p>
-        </div>
-      </div>
-      <span class="arena-player__pips" aria-hidden="true">
-        <i v-for="slot in shipSlots" :key="'fleet-pip-' + slot.index" :class="{ 'is-lost': !slot.alive, 'is-frozen': slot.frozen }"></i>
-      </span>
-    </aside>
-
     <section class="game-hand-wrap" aria-label="手牌" ref="handWrapEl">
       <div class="game-hand-head">
         <span class="game-hand-stats" data-testid="game-stats">命中 {{ hits }} · 开火 {{ shots }}</span>
@@ -1946,6 +1932,11 @@ function backToLobby(): void {
         </ol>
         <p v-if="!chatMessages.length" class="game-drawer__empty" data-testid="game-chat-empty">还没有人说话</p>
         <p v-if="chatError" class="game-dialog__error" data-testid="game-chat-error">{{ chatError }}</p>
+      <ol class="game-chat-log" data-testid="game-quick-chat-messages">
+        <li v-for="(message, index) in quickChatMessages" :key="'qc-' + index" class="game-chat-line" :data-testid="'game-quick-chat-message-' + index">
+          <b>{{ message.name }}</b>：{{ message.text }}
+        </li>
+      </ol>
         <div class="game-chat-form">
           <input
             v-model="chatDraft"
@@ -1977,11 +1968,7 @@ function backToLobby(): void {
           <p v-if="!quickChatCatalog.length" class="game-drawer__empty">快捷语目录暂不可用</p>
         </div>
       </section>
-      <ol class="game-chat-log" data-testid="game-quick-chat-messages">
-        <li v-for="(message, index) in quickChatMessages" :key="'qc-' + index" class="game-chat-line" :data-testid="'game-quick-chat-message-' + index">
-          <b>{{ message.name }}</b>：{{ message.text }}
-        </li>
-      </ol>
+
     </section>
 
     <section v-if="discardOpen" class="game-drawer game-drawer--discard" data-testid="game-discard-drawer" role="dialog" aria-label="弃牌堆">

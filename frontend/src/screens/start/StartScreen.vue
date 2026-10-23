@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import HomeProgress from './HomeProgress.vue'
 import MatchFoundOverlay from '../../components/MatchFoundOverlay.vue'
 import StateSurface from '../../components/StateSurface.vue'
 import { cardArtUrl } from '../../cards/cardArt'
@@ -158,15 +159,25 @@ watch(
   },
 )
 const actionsDisabled = computed(() => home.busy || home.awaitingPlacement)
-/** Bottom strip: six real card faces, count comes from the frozen card table. */
-const showcase = UNIQUE_CARD_NAMES.slice(0, 6)
+/** 展示原 main 首页的五张完整卡面，计数仍取真实卡表。 */
+const showcase = ref(['余音绕梁', '溅射', '失灵！', '禁忌果实', '雷达子弹'])
+const hasUsage = ref(false)
+onMounted(async () => {
+  try {
+    const response = await fetch('/api/card_usage')
+    if (!response.ok) return
+    const body = await response.json() as { usage?: Record<string, number> }
+    const ranked = Object.entries(body.usage ?? {}).filter(([name,count]) => UNIQUE_CARD_NAMES.includes(name) && count > 0).sort((a,b) => b[1]-a[1]).map(([name])=>name)
+    if (ranked.length) { showcase.value = [...new Set([...ranked,...showcase.value])].slice(0,5); hasUsage.value = true }
+  } catch { /* 暂无使用统计时展示原版精选卡面。 */ }
+})
 const cardCount = UNIQUE_CARD_NAMES.length
 const fieldCount = CARDS.filter((card) => card.type === '场地').length
 
 /**
  * Hand-off to placement. A real matchmaking pair first shows the 匹配成功
  * overlay (five-second countdown, legacy screen) and navigates when it emits
- * done; AI/custom rooms have no matchFound entry and advance immediately.
+ * done; 人机创建成功后也播放演出，自定义房仍按房间流程推进。
  */
 function advanceToPlacement(): void {
   if (navigating) return
@@ -260,6 +271,7 @@ async function startAi(): Promise<void> {
       return
     }
     home.expectPlacement()
+    home.matchFound = { playerName: playerName.value, opponentName: game.state.opponent_name || 'AI', mode: 'casual', roomId: game.state.room_id }
     maybeAdvance()
   } catch {
     home.notifyMessage('网络不稳定，请再试一次')
@@ -309,6 +321,7 @@ async function startAi(): Promise<void> {
 
     <div class="home-grid">
       <!-- 玩家信息：/api/profile 的服务端字段，前端只排版。 -->
+      <div class="home-left">
       <aside class="home-card home-player" data-testid="start-player" aria-labelledby="home-player-title">
         <div class="home-player__crest">
           <span class="home-player__emblem" aria-hidden="true"><span>舰</span></span>
@@ -378,6 +391,8 @@ async function startAi(): Promise<void> {
           </router-link>
         </StateSurface>
       </aside>
+      <HomeProgress />
+      </div>
 
       <!-- 主行动入口：DOM 中先于右栏，窄屏收成单列时“先能开一局”。 -->
       <section class="home-main" data-testid="start-actions" aria-labelledby="home-actions-title">
@@ -493,7 +508,7 @@ async function startAi(): Promise<void> {
         <!-- 卡牌展示条：main 首页中间栏底部那排卡面（图鉴入口的展示，不宣称热度数据）。 -->
         <section class="home-card home-showcase" aria-labelledby="home-showcase-title">
         <div class="home-card__head">
-          <h2 id="home-showcase-title" class="home-kicker">卡 牌</h2>
+          <h2 id="home-showcase-title" class="home-kicker">{{ hasUsage ? '全服热门卡' : '魔法卡精选' }}</h2>
           <span class="home-showcase__meta">{{ cardCount }} 张魔法卡 · 场地 {{ fieldCount }} 张</span>
         </div>
         <ul class="home-showcase__row">
@@ -1486,6 +1501,24 @@ async function startAi(): Promise<void> {
   .home-showcase__row {
     gap: 8px;
   }
+}
+
+/* 原版首页的完整大卡展示，左栏继续承接成长信息。 */
+.home-left { display:grid; gap:12px; align-content:start; min-width:0; }
+.home-showcase__row { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px; overflow:visible; }
+.home-showcase__row li { min-width:0; }
+.home-cardface { width:100%; padding:0 0 8px; border:1px solid var(--panel-line); border-radius:10px; overflow:hidden; background:var(--surface-deck); }
+.home-cardface__art { width:100%; height:auto; aspect-ratio:2/3; object-fit:cover; }
+.home-showcase { padding:16px; }
+@media(max-width:700px) { .home-showcase__row { grid-template-columns:repeat(5, minmax(90px,1fr)); overflow-x:auto; }.home-left { order:2; } }
+
+@media(min-width:1024px) and (max-height:1000px) {
+  .home-head { margin-bottom:10px; }.home-head__main>.home-kicker { display:none; }.home-head__title { font-size:19px; }
+  .home-main { gap:8px; }.home-main__head { gap:2px; }.home-main__lead { margin:0; font-size:11px; }
+  .home-play { min-height:64px; padding:12px 18px; }.home-play--casual { min-height:76px; }
+  .home-ai { padding:10px 14px; gap:6px; }.home-ai__cap { min-height:40px; padding:6px 8px; }
+  .home-link--tile { min-height:48px; padding:6px 12px; }.home-links { gap:8px; }
+  .home-player__emblem { width:72px; height:72px; }
 }
 </style>
 

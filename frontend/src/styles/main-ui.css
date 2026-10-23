@@ -8,20 +8,19 @@
  */
 
 /* ------------------------------------------------------------ 页面底色 --- */
-/* main 的首页是「深蓝黑 + 顶部紫色光晕 + 极淡网格」，页面本身不画卡片，
-   卡片面层交给每个 chunk。 */
+/* 原 main 的紫色顶光、顶部中心放射条纹与左下青光。 */
 body {
   background-color: var(--surface-sea);
   background-image:
-    radial-gradient(1100px 560px at 50% -14%, rgba(124, 92, 240, 0.16), transparent 68%),
-    radial-gradient(760px 420px at 92% 8%, rgba(78, 200, 224, 0.07), transparent 70%),
-    linear-gradient(var(--grid-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
-  background-size: auto, auto, 48px 48px, 48px 48px;
-  background-repeat: no-repeat, no-repeat, repeat, repeat;
-  background-attachment: fixed;
-  color: var(--text-primary);
-  font-size: 15px;
+    radial-gradient(700px 420px at 50% -8%, rgba(124,92,240,.35), transparent 70%),
+    radial-gradient(600px 400px at 12% 105%, rgba(78,200,224,.16), transparent 70%),
+    repeating-conic-gradient(from 200deg at 50% -10%, rgba(255,255,255,.028) 0deg 3deg, transparent 3deg 11deg),
+    linear-gradient(180deg,#0d1020 0%,#0b0d18 55%,#090b14 100%);
+  background-size:auto;
+  background-repeat:no-repeat;
+  background-attachment:fixed;
+  color:var(--text-primary);
+  font-size:15px;
 }
 
 html[data-theme='journal'] body {

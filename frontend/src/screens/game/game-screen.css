@@ -2598,43 +2598,6 @@ button.arena-avatar--btn {
   box-shadow: 0 0 6px color-mix(in srgb, var(--role-warning) 60%, transparent);
 }
 
-/* ---- 己方舰队摘要：原 main 手牌左侧的整块（fixed，不挤中场） ---- */
-.arena-fleet {
-  position: fixed;
-  left: 20px;
-  bottom: 16px;
-  z-index: 30;
-  width: 232px;
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  background: var(--panel);
-  border: 1px solid var(--panel-line);
-  border-left: 3px solid color-mix(in srgb, var(--role-self) 70%, transparent);
-  border-radius: 12px;
-  box-shadow: var(--shadow-panel);
-}
-
-.arena-fleet__head {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-width: 0;
-}
-
-.arena-fleet__name {
-  display: block;
-  font-size: 12.5px;
-  color: var(--text-primary);
-}
-
-.arena-fleet__ships {
-  margin: 0;
-  font-size: 10.5px;
-  color: var(--text-tertiary);
-}
-
 /* ---- 浮动窗口：日志 / 聊天（原 main 的三块 fixed 浮窗之二） ---- */
 .game[data-layout='wide'] .game-main-container {
   padding-left: 300px;
@@ -2835,9 +2798,6 @@ button.arena-avatar--btn {
   height: 8px;
 }
 
-.game[data-layout='compact'] .arena-fleet {
-  display: none;
-}
 
 .game[data-layout='compact'] .chain-stack__item {
   width: 76px;
@@ -3020,3 +2980,60 @@ button.arena-avatar--btn {
 .game[data-layout="compact"].is-picking .board-wrapper {
   padding-bottom: 4px;
 }
+
+/* 用户截图验收：连锁与行动同列，详情独立；手牌脱离有边框的面板。 */
+.game[data-layout='wide'] .game-main-container { max-width:1800px; padding-left:clamp(240px,17vw,300px); padding-right:272px; position:relative; padding-top:120px; }
+.game[data-layout='wide'] .game-content { position:static; }
+.game[data-layout='wide'] .game-hud { position:absolute; top:0; left:clamp(240px,17vw,300px); right:272px; width:auto; min-height:56px; height:auto; flex-wrap:nowrap; }
+.game[data-layout='wide'] .hud-players { flex:0 1 auto; order:-1; padding:0; border:0; }
+.game[data-layout='wide'] .hud-chips { flex:1; justify-content:flex-end; }
+.game[data-layout='wide'] .hud-round { order:2; }
+.game[data-layout='wide'] .hud-vs { display:none; }
+.game[data-layout='wide'] .arena-player { border:0; background:none; padding:0; }
+.game[data-layout='wide'] .arena-player--self .arena-player__pips { display:none; }
+.game[data-layout='wide'] .field-magic-area { position:absolute; top:82px; left:clamp(240px,17vw,300px); right:272px; width:auto; }
+.game[data-layout='wide'] .boards-container { width:100%; gap:clamp(14px,3vw,64px); --cell:clamp(32px, calc((100vw - 1000px)/12),62px); }
+.game[data-layout='wide'] .board-wrapper { padding:0; background:none; border:0; box-shadow:none; }
+.game[data-layout='wide'] .arena-rail { flex:0 0 clamp(180px,12vw,220px); grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(200px,1fr) auto auto; grid-template-areas:'chain' 'actions' 'counts'; overflow:visible; margin-bottom:-220px; }
+.game[data-layout='wide'] .arena-chain-slot { padding:12px; }
+.game[data-layout='wide'] .chain-stack__item { width:104px; height:156px; }
+.game[data-layout='wide'] .arena-card-placeholder { display:none; }
+.game[data-layout='wide'] .arena-rail > .game-detail { position:fixed; right:12px; top:158px; bottom:190px; width:260px; max-height:640px; z-index:70; overflow-y:auto; }
+.game[data-layout='wide'] .arena-rail .game-detail__face .game-detail__art { max-height:234px; }
+.game[data-layout='wide'] .arena-rail .game-detail__desc { max-height:none; min-height:64px; }
+.game-hand-wrap { background:transparent; border:0; border-radius:0; box-shadow:none; }
+.game[data-layout='wide'] .game-hand { overflow:visible; padding:24px 12px 12px; }
+.game[data-layout='wide'] .game-hand-wrap { max-width:1000px; padding-top:0; }
+.game[data-layout='wide'] .game-hand .card--selected { transform:rotate(var(--fan-rot,0rad)) translateY(calc(var(--fan-drop,0px) - 16px)); z-index:20; }
+.game-drawer--chat.game-float { display:flex; flex-direction:column; height:260px; overflow:hidden; }
+.game-drawer--chat .game-chat-text { flex:1; min-height:0; display:flex; flex-direction:column; position:relative; }
+.game-drawer--chat .game-chat-form { margin-top:auto; flex:0 0 auto; display:flex; gap:6px; padding-top:8px; border-top:1px solid var(--panel-line); }
+.game-chat-form .button { white-space:nowrap; padding:0 10px; min-height:40px; }
+.game-chat-quick-toggle { order:-1; }
+.game-drawer--chat .game-chat-log { min-height:0; overflow-y:auto; }
+.game-drawer--chat .game-chat-phrases { position:absolute; bottom:48px; left:0; right:0; max-height:170px; overflow-y:auto; background:var(--panel); z-index:2; padding:8px; }
+@media(min-width:1800px) { .game[data-layout='wide'] .game-main-container { padding-right:280px; }.game[data-layout='wide'] .game-hud,.game[data-layout='wide'] .field-magic-area { right:280px; } }
+
+.game[data-layout='wide'] .game-hud { flex-wrap:wrap; row-gap:4px; }
+.game[data-layout='wide'] .hud-players { flex:1 1 auto; }
+.game[data-layout='wide'] .game-hand-wrap { width:calc(100% - 540px); margin-left:270px; }
+
+.game[data-layout="wide"] .game-hud [data-testid="game-turn-order"], .game[data-layout="wide"] .game-hud [data-testid="game-mode"] { display:none; }
+
+.game[data-layout='wide'] .game-drawer--chat.game-float,
+.game[data-layout='wide'] .log-container.game-float { width:clamp(210px,calc(17vw - 24px),280px); }
+@media(min-width:1200px) and (max-width:1439px) {
+  .game[data-layout='wide'] .game-main-container { padding-left:220px; padding-right:242px; }
+  .game[data-layout='wide'] .game-hud,.game[data-layout='wide'] .field-magic-area { left:220px; right:242px; }
+  .game[data-layout='wide'] .arena-rail { flex-basis:160px; }
+  .game[data-layout='wide'] .arena-rail > .game-detail { width:230px; }
+  .game[data-layout='wide'] .boards-container { gap:14px; }
+}
+
+/* 固定为两行网格，长昵称与计时不会再把身份或场地条挤出顶栏。 */
+.game[data-layout='wide'] .game-hud { display:grid; grid-template-columns:minmax(240px,1fr) minmax(220px,340px) auto; grid-template-rows:26px 26px; min-height:74px; gap:4px 10px; }
+.game[data-layout='wide'] .hud-players { grid-column:1; grid-row:1 / span 2; }
+.game[data-layout='wide'] .hud-chips { grid-column:2; grid-row:1 / span 2; }
+.game[data-layout='wide'] .hud-round { grid-column:3; grid-row:1; }
+.game[data-layout='wide'] .game-hud > .hud-btn { grid-column:3; grid-row:2; }
+.game[data-layout='wide'] .game-hud [data-testid='game-connection'].is-online { display:none; }

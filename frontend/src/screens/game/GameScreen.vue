@@ -161,20 +161,6 @@ const opponentCells = computed(() =>
  * 紧凑档一次只显示一块棋盘：选目标时必须把可见棋盘切到目标那一侧，
  * 否则用户看得到格子但点的是另一块（原 main 双棋盘不存在这个问题）。
  */
-watch(
-  () => {
-    const sel = selection.value
-    if (!sel) return null
-    // 「选自己两艘舰」这类没有棋盘开关的目标，棋盘就在自己这边。
-    if (sel.descriptor.kind === 'own_ships') return 'self'
-    return sel.board ?? sel.descriptor.board ?? 'opponent'
-  },
-  (board) => {
-    if (!compact.value || !board) return
-    zoomOpen.value = board === 'self'
-  },
-)
-
 const previewKeys = computed<string[]>(() => {
   const sel = selection.value
   if (!sel || !sel.anchor) return []
@@ -270,6 +256,8 @@ const shots = computed(() => (Array.isArray(state.value.attacks) ? state.value.a
 const shipsText = computed(() => remainingShipText(state.value))
 
 const chainWindow = computed(() => match.chainWindow)
+/** 面板被收起（请求还在，倒计时还在跑） */
+const chainCollapsed = computed(() => match.chainWindowCollapsed)
 const speed3Hand = computed<CardLike[]>(() => chainWindow.value?.speed3Cards ?? [])
 const chainRemaining = computed(() => {
   const window = chainWindow.value
@@ -315,6 +303,26 @@ interface QuickChatItem {
 
 // ---- self minimap, ship slots and piles ------------------------------------
 const compact = ref(false)
+
+watch(
+  () => {
+    const sel = selection.value
+    // 「选自己两艘舰」这类没有棋盘开关的目标，棋盘就在自己这边。
+    const board = !sel
+      ? null
+      : sel.descriptor.kind === 'own_ships'
+        ? 'self'
+        : sel.board ?? sel.descriptor.board ?? 'opponent'
+    // compact 也要进依赖：选目标途中把窗口缩成手机尺寸（或手机横竖屏切换）
+    // 时必须同步可见海域，否则目标在己方却只显示对方棋盘，格子点不动。
+    return { board, compact: compact.value }
+  },
+  ({ board, compact: isCompact }) => {
+    if (!board) return
+    zoomOpen.value = isCompact && board === 'self'
+  },
+)
+
 
 /**
  * 紧凑档没有常驻右列：连锁响应、卡牌详情、待选请求都必须能弹出成底部面板，
@@ -708,6 +716,11 @@ function onCell(board: 'self' | 'opponent', x: number, y: number): void {
     return
   }
   if (match.shieldChoice) {
+    // 双棋盘常驻后点对方海域也会走到这里；护盾只能保护自己的战舰。
+    if (board !== 'self') {
+      shieldError.value = '请在自己海域点击高亮的战舰格（对方海域不能加盾）'
+      return
+    }
     toggleShieldShip(x, y)
     return
   }
@@ -1334,11 +1347,11 @@ function backToLobby(): void {
           </ol>
           <p v-else class="arena-rail-empty" data-testid="game-chain-empty">暂无连锁</p>
           <button
-            v-if="chainWindow"
+            v-if="chainWindow && !chainCollapsed"
             type="button"
             class="button button--ghost arena-rail-wide"
             data-testid="game-chain-open"
-            @click="match.closeChainWindow()"
+            @click="match.collapseChainWindow()"
           >收起连锁窗口</button>
         </section>
 
@@ -1430,6 +1443,17 @@ function backToLobby(): void {
     </div>
 
     <!-- 底部手牌条（原 main 的底部手牌） -->
+    <button
+      v-if="chainWindow && chainCollapsed"
+      type="button"
+      class="game-chain-reopen"
+      data-testid="game-chain-reopen"
+      @click="match.expandChainWindow()"
+    >
+      <span class="game-chain-reopen__dot" aria-hidden="true"></span>
+      连锁待响应：{{ chainWindow.card ? chainWindow.card.name : '魔法卡' }} · 剩余 {{ chainRemaining }} 秒 · 打开
+    </button>
+
     <section class="game-hand-wrap" aria-label="手牌">
       <div class="game-hand-head">
         <span class="game-hand-stats" data-testid="game-stats">命中 {{ hits }} · 开火 {{ shots }}</span>
@@ -1559,10 +1583,16 @@ function backToLobby(): void {
       </div>
     </section>
 
-    <section v-if="chainList.length || chainWindow" class="game-chain-panel" data-testid="game-chain-overlay" role="dialog" aria-label="连锁">
+    <section
+      v-if="chainList.length || (chainWindow && !chainCollapsed)"
+      class="game-chain-panel"
+      data-testid="game-chain-overlay"
+      role="dialog"
+      aria-label="连锁"
+    >
       <header class="game-chain-panel__head">
         <h2 class="game-chain-panel__title">连锁 {{ chainOrderText }}</h2>
-        <button type="button" class="game-close" data-testid="game-chain-close" aria-label="收起连锁" @click="match.closeChainWindow()">×</button>
+        <button type="button" class="game-close" data-testid="game-chain-close" aria-label="收起连锁" @click="match.collapseChainWindow()">×</button>
       </header>
       <ol v-if="chainList.length" class="game-chain-stack" data-testid="game-chain-stack">
         <li

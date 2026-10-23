@@ -64,3 +64,17 @@
 3. **选目标期间棋盘必须跟手**：紧凑档一次只显示一块棋盘，选目标时按目标棋盘自动切到对应海域；
    期间隐藏海域标签（浮层自带「我的棋盘 / 对手棋盘」），避免两套开关互相打脸。
 4. **详情面板不再叠在连锁位上**：紧凑档详情的底部面板只留卡牌信息，不再重复「连锁结算」空面板。
+
+
+## 六、审查轮回归修复（2026-10-23，RED → GREEN）
+
+复跑脚本（仓外）：`BASE_URL=http://127.0.0.1:5457 node spec-regressions.mjs`，修复前 `RESULT: FAIL (5)`，修复后 `RESULT: PASS`（12/12）。
+
+1. **收起连锁会丢掉待响应请求**：`stores/match.ts` 拆开「收起」与「清空」——新增 `chainWindowCollapsed`、
+   `collapseChainWindow()`、`expandChainWindow()`；`closeChainWindow()` 只在协议层（`chain_resolved`、开局 `reset()`）调用。
+   面板收起后手牌上方出现 `game-chain-reopen` 提示条（含剩余秒数），点开恢复同一个请求与倒计时；`game-chain-close`、
+   `game-chain-open` 都改为收起语义。
+2. **选目标途中切手机尺寸卡住**：紧凑档可见海域的 watch 依赖加入 `compact`，布局变化时重新同步 `zoomOpen`
+   （目标在己方→显示己方棋盘）；watch 移到 `compact`/`zoomOpen` 声明之后，避免 getter 立即求值触发 TDZ。
+3. **护盾在对方海域误选己方舰**：`onCell` 的 `shieldChoice` 分支先判 `board !== 'self'` 直接拒绝并给出提示，
+   不再按坐标匹配己方舰船。

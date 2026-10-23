@@ -83,6 +83,11 @@ export const useMatchStore = defineStore('match', () => {
   const logs = ref<LogEntry[]>([])
   const notices = ref<Notice[]>([])
   const chainWindow = ref<ChainWindowState | null>(null)
+  /**
+   * 面板是否被收起。收起只是本地面板可见性，待响应请求与倒计时仍在
+   * `chainWindow` 里；真正的放弃必须走「不响应」协议。
+   */
+  const chainWindowCollapsed = ref(false)
   const lastAttack = ref<LastAttackLike | null>(null)
   const revealed = ref<Point[]>([])
   const shieldBrokenSelf = ref<Point[]>([])
@@ -127,6 +132,7 @@ export const useMatchStore = defineStore('match', () => {
     const speed3 = Array.isArray(payload.speed3_cards)
       ? payload.speed3_cards.map(asCard).filter((card): card is CardLike => card !== null)
       : []
+    chainWindowCollapsed.value = false
     chainWindow.value = {
       card: asCard(payload.card),
       caster: String(payload.caster ?? ''),
@@ -136,8 +142,20 @@ export const useMatchStore = defineStore('match', () => {
     }
   }
 
+  /** 收起面板：保留待响应请求与倒计时，随时可以再打开。 */
+  function collapseChainWindow(): void {
+    if (chainWindow.value) chainWindowCollapsed.value = true
+  }
+
+  /** 重新展开被收起的连锁面板。 */
+  function expandChainWindow(): void {
+    chainWindowCollapsed.value = false
+  }
+
+  /** 协议层清空：仅在连锁已结算/开局重置时调用，不能用于「收起」。 */
   function closeChainWindow(): void {
     chainWindow.value = null
+    chainWindowCollapsed.value = false
   }
 
   function recordQuickChat(payload: Record<string, unknown>): void {
@@ -251,6 +269,7 @@ export const useMatchStore = defineStore('match', () => {
       logs: logs.value.slice(),
       notices: notices.value.slice(),
       chainWindow: chainWindow.value ? { ...chainWindow.value } : null,
+      chainWindowCollapsed: chainWindowCollapsed.value,
       timeoutNote: timeoutNote.value,
       lastAttack: lastAttack.value ? { ...lastAttack.value } : null,
       revealed: revealed.value.slice(),
@@ -283,6 +302,9 @@ export const useMatchStore = defineStore('match', () => {
     pushNotice,
     dismissNotice,
     openChainWindow,
+    chainWindowCollapsed,
+    collapseChainWindow,
+    expandChainWindow,
     closeChainWindow,
     recordQuickChat,
     recordChatMessage,

@@ -1239,6 +1239,15 @@ let seenGameOverAt = 0
 let seenRoom = ''
 let navigating = false
 
+// 后手结束后服务端进入新一轮猜拳；旧结束阶段视图必须随状态离开。
+watch(
+  () => state.value.state,
+  (next) => {
+    if (next === 'rock_paper_scissors') void router.replace({ name: 'rps' })
+  },
+  { immediate: true },
+)
+
 function maybeGoToSettlement(): void {
   const record = result.gameOver
   if (!record || navigating) return

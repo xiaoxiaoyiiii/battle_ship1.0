@@ -502,6 +502,13 @@ class MagicService:
         await self._dispatch_ship_pick(room, player_id)
         await self._sync_each_seat(room)
 
+        # 二次确认发生在连锁收尾之后，必须在这里结算最后一艘献祭的败局。
+        # 效果执行中的献祭仍交给原效果处理，避免把重部署的中间态判负。
+        if player.remaining_ships <= 0 and not room.game_effects.get("contract_suppress"):
+            opponent_id = room.opponent_of(player_id)
+            if opponent_id and room.state != RoomState.GAME_OVER:
+                await self.finish(room, opponent_id, player_id, reason=f"{reason_text}献祭最后一艘战舰")
+
     async def _trigger_ship_trap(self, room: Room, owner_id: str,
                                  sunk_ship: PlayerShip) -> None:
         opponent_id = room.opponent_of(owner_id)

@@ -188,7 +188,7 @@ class RoomSync(BaseModel):
     # the existing seat + disconnect state; no new state machine.
     opponent_ready: bool
     opponent_online: bool
-    # Additive: the opponent seat is a logged-in account (server-trusted).
+    # 新增字段：对手座位是登录账号（由服务端可信判定，不来自客户端自述）。
     opponent_registered: bool
 
 

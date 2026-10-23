@@ -138,8 +138,7 @@ class Player:
     max_ships: int | None = None
     sunken_ships: list[PlayerShip] = field(default_factory=list)
     magic_blocked: bool = False
-    # Set only from the authenticated Connection when seating; user_id alone
-    # cannot tell (a custom-room guest seat key is its sid).
+    # 只在落座时按认证连接写入；单看 user_id 判断不了（自定义房的游客座位键就是 sid）。
     registered: bool = False
     damage_dealt_this_turn: int = 0
 

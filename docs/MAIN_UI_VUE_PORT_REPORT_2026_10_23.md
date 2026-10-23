@@ -75,7 +75,7 @@ Codex 用公开注册/登录/建房/布船/猜拳/攻击接口造两位真实玩
 ## 五、已知差异（当前仍存在）
 
 1. 紧凑档单棋盘：与 main 的 `adaptive_layout.js` 同类；桌面必须双棋盘，由 `spec-dual-board.mjs` 钉住。
-2. 日志用左列常驻卡（main 是可拖浮动窗），聊天是浮动窗 + 紧凑档抽屉：为避免遮挡棋盘的有意选择。
+2. 日志是宽屏浮动窗（可拖动、可收起、记住位置），主列用左内边距给它让位；紧凑档日志/聊天/弃牌堆共用视口固定的抽屉。
 3. 弃牌堆数量服务端未下发 → 计数显示「—」，另给「查看弃牌堆」。
 4. 人机局不计段位分，资料页战绩为 0（规则）；段位进度条需真实排位局。
 5. 管理员处置历史的 `actor` 显示账号 id（后端原样返回，与原 main 一致）。
@@ -141,3 +141,34 @@ Codex 用公开注册/登录/建房/布船/猜拳/攻击接口造两位真实玩
 - 浮窗位置：日志 `game_log_pos`、聊天 `in_game_chat_pos`，刷新恢复，缩放/旋转后夹回视口。
 - 紧凑档抽屉（聊天/日志/弃牌共用 `.game-drawer`）：原为 `.game` 内 absolute，`.game` 滚动后打开会把标题与关闭按钮顶出视口（360×640，scrollTop=125，关闭钮中心 y=-2）。现为 `position:fixed`。证据：`drawer-scroll.mjs` 在旧样式下 360×640 的聊天/日志/弃牌各 FAIL（关闭钮不在视口），新样式 360×640、390×740、844×390 共 21 项 PASS，全部为真实滚轮 + 真实 `mouse.click`，不回滚到顶部。
 - **已解（对手资料归属，R3）**：局内 `opponent_name` 仍只是显示昵称，不作身份。服务端在入座时按认证连接（`Connection.user_id`，会话签名）给 `Player.registered`（默认 false；`services/rooms.py` create_room/join_room/同身份重入，`services/matchmaking.py` 排队项→入座；人机恒 false），**不能**用 `Player.user_id` 判断——自定义房游客的 `user_id` 就是 sid，非空。`opponent_seat_state` 同处加性输出 `opponent_registered`（`game_state` 与 `room_sync` 一致，追加在 `opponent_online` 之后；无对手/人机/游客为 false）。已登录排队项的名字改取认证用户名，游客仍用自填昵称。前端 `usePlayerCards` 仅在 `opponent_registered===true` 且非人机时查 `/user_stats`，否则中止在途请求并清空旧资料；缺字段按 false。座位键约定与结算未动。
+## 九、审查第五批（2026-10-23 12:45 起，基点 c482aca）
+
+### 9.1 回收前置工作
+
+- 先核对祖先关系后 `git merge --ff-only c482aca902e977c34440df757d839d852e94969e`（无合并提交、无强推、未改他人树）：`d43499d`（真实头像与对手战绩、浮窗位置记忆、快捷语按需、标读晚到响应）、`9bc4cd2`（紧凑档抽屉改视口固定）、`c482aca`（`opponent_registered` 由服务端可信标记决定）。
+- 这三个提交的既有实现本轮未重写；本批只做刷新恢复修复 + 注释/文档/公告收尾。
+
+### 9.2 快速匹配刷新后座位恢复失败（P1）
+
+- 复现（RED）：`spec-identity-reload.mjs`（由 Codex 探针复制、只换端口与证据目录）在生产构建 + 独立库 + `ENABLE_TEST_EVENTS=0` 下，游客对手与注册对手两种情形都失败：`restoredName='对手'`，退出 1，截图 `dsh-r4-identity-shots/*-reload-failure.png`。
+- 实测线路（脱敏，仅记录令牌是否存在与前后是否相同）：
+  1. 刷新前 `sessionStorage['battleship.reconnect.seat']` 存有令牌（头部 6 位用于比对）。
+  2. 刷新后服务端先推 `resume_game`，紧接着推 `reconnect_token`，令牌头部与刷新前**不同**；
+  3. 客户端 `get_reconnect_token` 回「无效的房间或玩家」（新连接不是座位连接，符合 `identity_ok` 的 socket 校验）；
+  4. 客户端用**刷新前**的令牌 `rejoin_room` → 「身份校验失败」，没有 `room_sync`，界面退化成空对局。
+- 根因：`backend/src/battleship/services/rooms.py` 的 `notify_resume()` 在认证用户建立新连接时**无条件轮换**座位令牌，而推送出去的 `reconnect_token` 没有任何前端消费者；`frontend/src/realtime/reconnect.ts` 手里保存的仍是刷新前那枚，必然过期。即「两个签发方 + 一个消费方」，与 c482aca 无关，属既有缺陷。
+- 最小修复：`notify_resume()` 改为**复用已存在的令牌**（`room.reconnect_tokens.get(player_id) or room.issue_reconnect_token(player_id)`），仅当从未签发过时才补发。没有放松任何校验：`rejoin_room` 仍然要求令牌与座位存储的令牌 `compare_digest` 相等，或使用既有的「签名会话拥有该座位」fallback；`get_reconnect_token` 的显式轮换语义不变。
+- 验证（GREEN，均为本轮实跑）：
+  - `node spec-identity-reload.mjs` → `RESULT: PASS`（游客对手、注册对手两例；刷新后对手名/资料恢复、无「没能恢复原来的座位」提示）。
+  - `node spec-reconnect-r4.mjs` → `RESULT: PASS`：真实断网（`context.setOffline`）触发 socket 断开→重连（连接状态「重连中…」→「已连接」），线路出现 `rejoin_room`，room_id / player_id / 回合 / 手牌数量不变，令牌轮换为新值；随后再刷新一次仍恢复；陌生连接用错误令牌与不存在的座位都被拒绝（「身份校验失败」），且拒绝后原座位仍能 `get_reconnect_token` 成功。
+
+### 9.3 身份回归（本轮指向自己的树实跑）
+
+- `node spec-identity-af.mjs`（Codex `codex-identity-r3.mjs` 的副本，仅替换树路径与端口）→ 19 项 PASS、0 FAIL：注册/游客同名、自定义房、快匹认证名、人机、`room_sync` 标记、在途请求切换。
+- `PYTHONPATH=backend/src python -m pytest -q -p no:cacheprovider <仓外>/test_opponent_registered.py` → `3 passed`。
+- 以上均为 DSH 本轮执行；Codex 先前的独立证据（5463 栈、`codex-identity-r3.mjs` A–F、同批 pytest）不重复计入本轮。
+
+### 9.4 本批其他收尾
+
+- `backend/src/battleship/domain/room/models.py`、`backend/src/battleship/contracts/events_out.py` 的新增英文注释改为简体中文（只改本批相关处，不全仓翻译）。
+- 第五节第 2 条已更正为当前事实（日志是宽屏可拖浮动窗 + 紧凑档抽屉）。

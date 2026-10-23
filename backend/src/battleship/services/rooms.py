@@ -664,7 +664,12 @@ class RoomService:
         )
         room = self.rooms.get(room_id)
         if room is not None:
-            token = room.issue_reconnect_token(player_id)
+            # 已有令牌就原样复用：新连接上再轮换一次，会让客户端刷新前刚持久化的
+            # 令牌立刻作废，随后的 rejoin_room 必然回「身份校验失败」，座位也就
+            # 恢复不了（刷新后界面变空对局）。只有从未发过令牌时才补发一枚。
+            token = room.reconnect_tokens.get(str(player_id)) or room.issue_reconnect_token(
+                str(player_id)
+            )
             await self._publisher.emit("reconnect_token", {"token": token}, to=connection.sid)
 
     # -------------------------------------------------------------- disconnect

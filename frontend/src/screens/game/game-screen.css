@@ -1047,17 +1047,34 @@
 }
 
 /* ------------------------------------------------------------ chain overlay --- */
+.game-chain-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 64px;
+  pointer-events: none;
+}
+.game-chain-scrim--modal {
+  align-items: center;
+  padding: 12px;
+  pointer-events: auto;
+  background: rgba(4, 8, 14, 0.55);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+.game-chain-scrim > .game-chain-panel { pointer-events: auto; }
+
 .game-chain-panel {
-  position: absolute;
-  z-index: 35;
-  top: 52px;
-  left: 50%;
-  transform: translateX(-50%);
+  position: relative;
+  z-index: 1;
   width: min(560px, calc(100% - 28px));
   /* Bounded by the stage, not the viewport: the stage starts below the app bar,
      so a vh-based cap let the panel run past the stage's bottom edge and get
      clipped by its overflow. */
-  max-height: min(560px, calc(100% - 64px));
+  max-height: min(640px, calc(100vh - 80px));
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -1166,8 +1183,10 @@
 .game-chain-countdown {
   margin: 0;
   color: var(--role-action);
-  font-size: 20px;
+  font-size: 12px;
+  line-height: 1.2;
   font-weight: 700;
+  text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
@@ -3037,3 +3056,43 @@ button.arena-avatar--btn {
 .game[data-layout='wide'] .hud-round { grid-column:3; grid-row:1; }
 .game[data-layout='wide'] .game-hud > .hud-btn { grid-column:3; grid-row:2; }
 .game[data-layout='wide'] .game-hud [data-testid='game-connection'].is-online { display:none; }
+
+/* 详情窗可读：规则文字 15px；宽屏窗可拖动 */
+.arena-rail .game-detail__desc,
+.game[data-layout='wide'] .arena-rail .game-detail__desc { font-size: 15px; line-height: 1.6; }
+.game[data-layout='wide'] .arena-rail .game-detail__desc { max-height: none; }
+.game[data-layout='wide'] .arena-rail .game-detail--float { width: 260px; overflow-y: auto; }
+.game-detail--float .game-detail__head { cursor: grab; touch-action: none; }
+
+/* 连锁窗口：看效果 */
+.game-chain-ref {
+  padding: 0 4px;
+  border: 0;
+  border-bottom: 1px dashed var(--gold);
+  background: transparent;
+  color: var(--gold-strong, var(--gold));
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.game-chain-item { cursor: help; }
+.game-chain-inspect {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--gold) 45%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--surface-deck);
+}
+.game-chain-inspect__name { font-size: 15px; }
+.game-chain-inspect__meta { color: var(--text-tertiary); font-size: 12px; }
+.game-chain-inspect__desc { margin: 0; font-size: 15px; line-height: 1.6; color: var(--text-secondary); }
+.game-chain-window__actions .button.is-inspected { border-color: var(--gold); box-shadow: 0 0 0 2px color-mix(in srgb, var(--gold) 35%, transparent); }
+.game-chain-window__actions .button { font-size: 13px; }
+.game-chain-reopen {
+  position: fixed;
+  z-index: 8999;
+  right: 12px;
+  top: 64px;
+}

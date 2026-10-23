@@ -6,6 +6,7 @@ import { useAdaptiveGameLayout } from './useAdaptiveGameLayout'
 import { useHandFan } from './useHandFan'
 import { useFloatingDrag } from './useFloatingDrag'
 import PlayerCardDialog from './PlayerCardDialog.vue'
+import { CARDS } from '../../cards/cardData'
 import { usePlayerCards } from './usePlayerCards'
 import { acquireBattleChannel, getBattleSocket, sendBattleEvent, syncHand } from '../../realtime/battle'
 import { cardArtUrl } from '../../cards/cardArt'
@@ -277,6 +278,35 @@ const chainRemaining = computed(() => {
   if (!window) return 0
   return Math.max(0, Math.ceil(window.countdown - (now.value - window.openedAt) / 1000))
 })
+// 连锁里「看效果」：悬停/键盘聚焦直接显示；触屏没有 hover，第一次点只看、第二次点才打出。
+const canHover = typeof window.matchMedia !== 'function' || window.matchMedia('(hover: hover)').matches
+const chainInspect = ref<CardLike | null>(null)
+function fullCard(card: CardLike | null | undefined): CardLike | null {
+  if (!card) return null
+  const known = CARDS.find((item) => item.name === card.name)
+  return {
+    ...card,
+    speed: card.speed === '' || card.speed === undefined ? (known?.speed ?? '') : card.speed,
+    type: card.type || known?.type || '',
+    description: card.description || known?.description || '',
+  }
+}
+function inspectChain(card: { name: string; speed?: number | string; type?: string; description?: string } | null | undefined): void {
+  chainInspect.value = fullCard(card ? { speed: '', type: '', ...card } : null)
+}
+function onChainCardClick(card: CardLike): void {
+  if (!canHover && chainInspect.value?.name !== card.name) {
+    inspectChain(card)
+    return
+  }
+  void respondChain(card)
+}
+watch(
+  () => chainWindow.value?.openedAt,
+  () => {
+    chainInspect.value = null
+  },
+)
 const chainOrderText = computed(() => '第 ' + String(chainList.value.length) + ' 张')
 /** 0..1 remaining share of the response window, for the ring (#52). */
 const chainProgress = computed(() => {
@@ -371,6 +401,16 @@ const chatDrag = useFloatingDrag({
   panel: chatPanelEl,
   initial: { x: 20, y: 96 },
   storageKey: 'in_game_chat_pos',
+})
+
+// 宽屏卡牌详情恢复原 main 的可拖动窗；手机仍是底部 sheet，不挂拖动。
+const detailPanelEl = ref<HTMLElement | null>(null)
+const detailHeadEl = ref<HTMLElement | null>(null)
+const detailDrag = useFloatingDrag({
+  handle: detailHeadEl,
+  panel: detailPanelEl,
+  initial: { x: Math.max(0, window.innerWidth - 272), y: 158 },
+  minY: 72,
 })
 
 const logPanelEl = ref<HTMLElement | null>(null)
@@ -1550,8 +1590,22 @@ function backToLobby(): void {
         </section>
 
         <!-- 卡牌详情 / 待使用：选中后原位展开，未选中时给出占位（原 main 的 .magic-preview-container） -->
-        <section v-if="detailOpen && hand[selectedCardIndex]" class="game-detail" data-testid="game-card-detail" aria-label="卡牌详情">
-          <header class="game-detail__head">
+        <section
+          v-if="detailOpen && hand[selectedCardIndex]"
+          ref="detailPanelEl"
+          class="game-detail"
+          :class="{ 'game-detail--float': !compact }"
+          :style="compact ? undefined : { left: detailDrag.state.value.x + 'px', top: detailDrag.state.value.y + 'px', right: 'auto', bottom: 'auto', maxHeight: 'calc(100vh - ' + (detailDrag.state.value.y + 8) + 'px)' }"
+          data-testid="game-card-detail"
+          aria-label="卡牌详情"
+        >
+          <header
+            ref="detailHeadEl"
+            class="game-detail__head"
+            :class="{ 'game-float__head': !compact }"
+            :title="compact ? undefined : '拖动标题栏移动'"
+            @pointerdown="compact ? undefined : detailDrag.onPointerDown($event)"
+          >
             <h2 class="game-detail__name">{{ hand[selectedCardIndex].name }}</h2>
             <button type="button" class="game-close" data-testid="game-card-detail-close" aria-label="关闭卡牌详情" @click="cancelCardSelection">×</button>
           </header>
@@ -1796,11 +1850,17 @@ function backToLobby(): void {
       </div>
     </section>
 
-    <section
+    <div
       v-if="chainPanelOpen"
+      class="game-chain-scrim"
+      :class="{ 'game-chain-scrim--modal': !!chainWindow }"
+      data-testid="game-chain-scrim"
+    >
+    <section
       class="game-chain-panel"
       data-testid="game-chain-overlay"
       role="dialog"
+      :aria-modal="chainWindow ? 'true' : undefined"
       aria-label="连锁"
     >
       <header class="game-chain-panel__head">
@@ -1814,6 +1874,11 @@ function backToLobby(): void {
           class="game-chain-item"
           :class="{ 'game-chain-item--negated': item.negated }"
           :data-testid="'game-chain-item-' + index"
+          tabindex="0"
+          :title="item.name"
+          @mouseenter="inspectChain(item)"
+          @focus="inspectChain(item)"
+          @click="inspectChain(item)"
         >
           <b :data-testid="'game-chain-item-' + index + '-name'">{{ item.name }}</b>
           <span class="game-chain-index">第 {{ index + 1 }} 张</span>
@@ -1826,9 +1891,24 @@ function backToLobby(): void {
         </p>
         <p class="game-chain-window__card">
           对方使用了
-          <b data-testid="game-chain-window-card">{{ chainWindow.card ? chainWindow.card.name : '魔法卡' }}</b>
+          <button
+            type="button"
+            class="game-chain-ref"
+            data-testid="game-chain-window-card"
+            @mouseenter="inspectChain(chainWindow.card)"
+            @focus="inspectChain(chainWindow.card)"
+            @click="inspectChain(chainWindow.card)"
+          >{{ chainWindow.card ? chainWindow.card.name : '魔法卡' }}</button>
           ，你可以用速阶 3 的卡连锁它。
         </p>
+        <p class="game-chain-window__consequence game-chain-window__hint" data-testid="game-chain-hint">
+          {{ canHover ? '把鼠标移到卡上（或用键盘聚焦）查看完整效果，点击即打出。' : '点一下先看效果，再点一下才打出；点上面的卡名可看对方那张卡。' }}
+        </p>
+        <section v-if="chainInspect" class="game-chain-inspect" data-testid="game-chain-inspect" aria-live="polite">
+          <b class="game-chain-inspect__name" data-testid="game-chain-inspect-name">{{ chainInspect.name }}</b>
+          <span class="game-chain-inspect__meta">速阶 {{ chainInspect.speed }}<template v-if="chainInspect.type"> · {{ chainInspect.type }}</template></span>
+          <p class="game-chain-inspect__desc" data-testid="game-chain-inspect-desc">{{ chainInspect.description || '暂无效果描述' }}</p>
+        </section>
         <div class="game-chain-clock">
           <div
             class="game-chain-ring"
@@ -1846,13 +1926,18 @@ function backToLobby(): void {
             :key="chainCardTestId(card, index, speed3Hand)"
             type="button"
             class="button"
+            :class="{ 'is-inspected': chainInspect?.name === card.name }"
             :data-testid="chainCardTestId(card, index, speed3Hand)"
-            @click="respondChain(card)"
+            @mouseenter="canHover && inspectChain(card)"
+            @focus="inspectChain(card)"
+            @click="onChainCardClick(card)"
           >连锁「{{ card.name }}」</button>
+          <button type="button" class="button button--ghost" data-testid="game-chain-collapse" @click="match.collapseChainWindow()">暂时收起 · 查看棋盘</button>
           <button type="button" class="button button--ghost" data-testid="game-chain-pass" @click="passChain">不响应</button>
         </div>
       </section>
     </section>
+    </div>
 
     <section v-if="shieldOpen" class="game-dialog game-shield-choice" data-testid="game-shield-choice" role="dialog" aria-label="仁王之盾选择">
       <h2 class="game-dialog__title" data-testid="game-shield-choice-title">「仁王之盾」：请选择要保护的战舰</h2>

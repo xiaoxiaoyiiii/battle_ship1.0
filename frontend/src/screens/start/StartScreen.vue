@@ -1512,13 +1512,16 @@ async function startAi(): Promise<void> {
 .home-showcase { padding:16px; }
 @media(max-width:700px) { .home-showcase__row { grid-template-columns:repeat(5, minmax(90px,1fr)); overflow-x:auto; }.home-left { order:2; } }
 
-@media(min-width:1024px) and (max-height:1000px) {
+@media(min-width:1024px) and (max-height:1200px) {
   .home-head { margin-bottom:10px; }.home-head__main>.home-kicker { display:none; }.home-head__title { font-size:19px; }
   .home-main { gap:8px; }.home-main__head { gap:2px; }.home-main__lead { margin:0; font-size:11px; }
   .home-play { min-height:64px; padding:12px 18px; }.home-play--casual { min-height:76px; }
   .home-ai { padding:10px 14px; gap:6px; }.home-ai__cap { min-height:40px; padding:6px 8px; }
   .home-link--tile { min-height:48px; padding:6px 12px; }.home-links { gap:8px; }
-  .home-player__emblem { width:72px; height:72px; }
+  .home-player__emblem { width:48px; height:48px; }.home-player__emblem>span { font-size:18px; }
+  .home-player { gap:6px; padding:12px 16px; }.home-player__crest { padding:0; }.home-player__kicker { display:none; }
+  .home-left { gap:8px; }.home-screen { padding:12px 24px 12px; gap:10px; }
+  .home-showcase { padding:12px 14px; }.home-card { padding:12px 16px; }
 }
 </style>
 

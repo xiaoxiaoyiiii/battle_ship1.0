@@ -76,7 +76,7 @@ class AiService:
         rng: Any = None,
         pacing_seconds: float = 0.5,
         settle_poll_seconds: float = 0.3,
-        settle_steps: int = 40,
+        settle_steps: int = 100,
         turn_steps: int = MASTER_TURN_STEPS,
         retry_pause_seconds: float = 0.5,
         retries: int = 20,
@@ -212,6 +212,9 @@ class AiService:
             return False
         # A chain window opened by the other seat's last card must settle before
         # we act: attacks / plays are refused while the window is open.
+        # 上一轮遗留的本座位待办（如神机妙算宣言）先答掉，否则阶段转换会一直被挡。
+        await self.consume_pending(room, player_id)
+        room = self._room(room.id) or room
         if room.chain or room.chain_waiting:
             room, ok = await self.settle(room, player_id)
             if not ok:
@@ -373,6 +376,14 @@ class AiService:
                 return
             if room.current_attacker != player_id:
                 return
+            if not (room.chain or room.chain_waiting):
+                # 收尾阶段仍可能有本座位的未答待办；先答再换阶段，不靠强跳阶段。
+                await self.consume_pending(room, player_id)
+                room = self._room(room.id)
+                if room is None or _state(room) == RoomState.GAME_OVER.value:
+                    return
+                if room.current_attacker != player_id:
+                    return
             if _state(room) == RoomState.PLACING_SHIPS.value:
                 await self._place_board(room, player_id)
                 room = self._room(room.id)
@@ -522,6 +533,9 @@ class AiService:
             if room is None or _state(room) == RoomState.GAME_OVER.value:
                 return
             if not (room.chain or room.chain_waiting):
+                # 连锁结算后才会开出的待办（神机妙算宣言、选船等）要在这里就地答复，
+                # 否则回合收尾时 enter_end 一直被它挡住，AI 卡在结束阶段。
+                await self.consume_pending(room, player_id)
                 return
             await asyncio.sleep(self.retry_pause_seconds)
 

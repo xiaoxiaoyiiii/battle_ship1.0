@@ -887,9 +887,11 @@ class GameplayService:
         if room.disconnected:
             return False
         temp = room.magic_temp_data or {}
+        shenji = temp.get("pending_shenji")
+        own_shenji = isinstance(shenji, dict) and shenji.get("caster") == player_id
         if (
             temp.get("pending_placement")
-            or temp.get("pending_shenji")
+            or (temp.get("pending_shenji") and not (own_shenji and self.ai_turn_hook is not None))
             or any(
                 isinstance(pick, dict) and pick.get("player") == player_id
                 for pick in room.pending_ship_picks

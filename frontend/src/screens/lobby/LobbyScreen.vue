@@ -549,23 +549,6 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <div class="lobby__create">
-      <input
-        v-model="roomName"
-        type="text"
-        class="lobby__input"
-        data-testid="lobby-room-name"
-        maxlength="20"
-        placeholder="房间名（可留空）"
-        aria-label="房间名"
-      />
-      <label class="lobby__checkbox" title="取消勾选 = 私密房，只能凭房号加入">
-        <input v-model="roomPublic" type="checkbox" data-testid="lobby-room-public" />
-        公开
-      </label>
-      <p class="lobby__create-hint">取消勾选「公开」= 私密房，只有拿到房号的人能加入。</p>
-    </div>
-
     <div class="lobby__filterbar">
       <input
         v-model="query"
@@ -694,7 +677,23 @@ onBeforeUnmount(() => {
         </template>
         </StateSurface>
 
+        <div class="lobby__create">
+          <input
+            v-model="roomName"
+            type="text"
+            class="lobby__input"
+            data-testid="lobby-room-name"
+            maxlength="20"
+            placeholder="房间名（可留空）"
+            aria-label="房间名"
+          />
+          <label class="lobby__checkbox" title="取消勾选 = 私密房，只能凭房号加入">
+            <input v-model="roomPublic" type="checkbox" data-testid="lobby-room-public" />
+            公开
+          </label>
 
+          <p class="lobby__create-hint">取消勾选「公开」= 私密房，只有拿到房号的人能加入。</p>
+        </div>
       </section>
 
       <section v-if="matchesVisible" class="lobby__panel lobby__panel--matches" aria-label="进行中的对局">
@@ -820,7 +819,7 @@ onBeforeUnmount(() => {
         <p v-else-if="!lobby.friendsLoaded" class="lobby__empty">正在读取好友列表…</p>
       </details>
 
-      <section class="lobby__panel lobby__panel--chat" aria-label="大厅公屏">
+      <section class="lobby__panel lobby__panel--chat" :class="{ 'is-collapsed': !openFold.chat }" aria-label="大厅公屏">
         <div class="lobby__panel-head">
           <h2 class="lobby__panel-title">大厅公屏</h2>
           <span class="lobby__panel-meta">{{ lobby.chat.length }} 条</span>
@@ -1072,9 +1071,46 @@ onBeforeUnmount(() => {
 }
 
 .lobby__columns {
+  --lobby-panel-height: 300px;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 12px;
+}
+
+/* 四个主面板共用硬尺寸，内容的最小高度不能反过来撑大网格。 */
+.lobby__columns > section.lobby__panel {
+  box-sizing: border-box;
+  height: var(--lobby-panel-height);
+  min-height: 0;
+  max-height: var(--lobby-panel-height);
+  overflow: hidden;
+  contain: size;
+}
+
+.lobby__room-results {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.lobby__panel--rooms > .lobby__create {
+  flex: 0 0 auto;
+}
+
+.lobby__panel--rooms > .lobby__own {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 100px;
+  overflow-y: auto;
+}
+
+.lobby__panel-body > .lobby__list {
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .lobby__panel {
@@ -1091,6 +1127,7 @@ onBeforeUnmount(() => {
 
 .lobby__panel-head {
   display: flex;
+  flex: 0 0 auto;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
@@ -1105,6 +1142,8 @@ onBeforeUnmount(() => {
 
 .lobby__panel--friends {
   display: block;
+  max-height: 300px;
+  overflow-y: auto;
 }
 
 .lobby__panel--friends > summary {
@@ -1185,21 +1224,23 @@ onBeforeUnmount(() => {
 
 .lobby__room {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) 56px;
   grid-template-areas:
-    'main main'
-    'seats join';
-  gap: 10px 8px;
+    'main seats'
+    'main join'
+    'main close';
+  gap: 4px 8px;
   align-items: end;
-  padding: 14px;
+  padding: 10px;
   border-radius: 10px;
 }
 
-.lobby__room-main {
+.lobby__room .lobby__room-main {
   grid-area: main;
+  display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 3px;
+  gap: 2px;
 }
 
 .lobby__room-state {
@@ -1222,6 +1263,15 @@ onBeforeUnmount(() => {
 
 .lobby__room [data-testid^='lobby-room-join-'] {
   grid-area: join;
+}
+
+.lobby__room [data-testid^='lobby-room-close-'] {
+  grid-area: close;
+}
+
+.lobby__room .button {
+  min-height: 32px;
+  padding: 4px 6px;
 }
 
 .lobby__player.is-me {
@@ -1408,7 +1458,9 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  margin: 0;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line-dash);
 }
 
 .lobby__create .lobby__input {
@@ -1422,7 +1474,7 @@ onBeforeUnmount(() => {
   font-size: 11px;
 }
 
-/* 顶部保留两个醒目的主按钮，下方列表沿用居中两列布局。 */
+/* 两个主行动置于四个面板上方，沿用现有匹配与创建事件。 */
 .lobby__primary {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
@@ -1433,8 +1485,8 @@ onBeforeUnmount(() => {
 .lobby__primary-action {
   display: grid;
   gap: 3px;
-  min-height: 84px;
-  padding: 14px 18px;
+  min-height: 88px;
+  padding: 16px 20px;
   border: 1px solid color-mix(in srgb, var(--role-action) 55%, transparent);
   border-radius: var(--radius);
   background: var(--hero-grad);
@@ -1455,6 +1507,7 @@ onBeforeUnmount(() => {
   display: block;
   color: rgba(255, 255, 255, 0.78);
   font-size: 12px;
+  line-height: 1.5;
 }
 
 .lobby__primary-action:hover:not(:disabled) {
@@ -1486,7 +1539,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .lobby__primary-side .button {
@@ -1531,8 +1584,38 @@ onBeforeUnmount(() => {
 
 .lobby__panel-body {
   display: flex;
+  flex: 1 1 0;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 面板高度不跟随消息数变化，标题与输入栏常驻，只有消息区滚动。 */
+.lobby__panel--chat {
+  overflow: hidden;
+}
+
+.lobby__panel--chat > .lobby__panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.lobby__panel--chat .lobby__chat {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overscroll-behavior: contain;
+}
+
+.lobby__panel--chat .lobby__chat-row {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.lobby__chat-row .lobby__input {
   min-width: 0;
 }
 
@@ -1572,6 +1655,9 @@ onBeforeUnmount(() => {
 
 .lobby__chat-item {
   display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
   flex-wrap: wrap;
   gap: 2px 6px;
   color: var(--text);
@@ -1589,11 +1675,16 @@ onBeforeUnmount(() => {
 }
 
 .lobby__chat-name {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
   color: var(--gold-strong);
   font-size: 12px;
 }
 
 .lobby__chat-text {
+  min-width: 0;
+  max-width: 100%;
   overflow-wrap: anywhere;
 }
 
@@ -1664,47 +1755,59 @@ onBeforeUnmount(() => {
 
 /* 对照原版大厅：居中两列，左侧房间/对局，右侧玩家/公屏。 */
 @media (min-width: 980px) {
+  /* 先给房间卡留完整一行，再让下排分享剩余视口；两列使用相同网格行。 */
   .lobby {
-    --lobby-row-height: clamp(150px, calc((100dvh - 570px) / 2), 240px);
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    height: calc(100dvh - 64px);
+    min-height: 0;
     gap: 8px;
-    padding-top: 12px;
-    padding-bottom: 16px;
+    padding: 10px 22px 12px;
   }
 
-  .lobby__head {
-    gap: 8px;
-  }
-
-  .lobby__topbar {
-    padding-bottom: 8px;
-  }
+  .lobby > :not(.lobby__columns) { flex-shrink: 0; }
+  .lobby__head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+  .lobby__title { font-size: 24px; }
+  .lobby__hint { max-width: 42ch; font-size: 11px; }
+  .lobby__topbar { padding: 0; border: 0; gap: 6px; }
+  .lobby__stat { padding: 4px 8px; font-size: 11px; }
+  .lobby__primary-action { min-height: 76px; padding: 12px 18px; }
+  .lobby__primary-side .button { min-height: 32px; padding: 4px 12px; }
+  .lobby__filterbar { min-height: 34px; }
+  .lobby__panel-head { padding-bottom: 6px; gap: 6px; }
+  .lobby__fold { min-height: 28px; padding: 2px 10px; }
+  .lobby__own { padding: 6px 8px; gap: 6px; }
+  .lobby__own .button { min-height: 30px; padding: 3px 8px; }
+  .lobby__create { padding-top: 6px; gap: 6px; }
+  .lobby__create-hint { display: none; }
+  .lobby__create .lobby__input { min-height: 34px; }
+  .lobby__panel--friends { padding: 8px 12px; max-height: 90px; }
+  .lobby__panel--friends .button { min-height: 28px; padding: 2px 8px; }
 
   .lobby__columns {
+    flex: 1 1 0;
+    min-height: 0;
     grid-template-columns: minmax(0, 1fr) 294px;
-    grid-template-rows: var(--lobby-row-height) var(--lobby-row-height) auto;
-    gap: 12px 14px;
+    grid-template-rows: minmax(0, min(360px, calc((100% - 66px) * .69))) minmax(0, 1fr) auto;
+    gap: 10px 14px;
     align-items: stretch;
   }
 
-  .lobby__columns > .lobby__panel {
-    min-height: 0;
-    padding: 12px 14px;
-    gap: 8px;
+  .lobby__columns > section.lobby__panel {
+    height: 100%;
+    max-height: 100%;
+    padding: 10px 12px;
+    gap: 6px;
   }
 
-  .lobby__panel-head {
-    padding-bottom: 6px;
-  }
-
-  .lobby__fold {
-    min-height: 32px;
-    padding: 2px 10px;
+  .lobby__columns > section.lobby__panel--matches,
+  .lobby__columns > section.lobby__panel--chat {
+    max-height: 300px;
   }
 
   .lobby__panel--rooms {
     grid-column: 1;
     grid-row: 1;
-    overflow-y: auto;
   }
 
   .lobby__panel--matches {
@@ -1722,20 +1825,8 @@ onBeforeUnmount(() => {
     grid-row: 2;
   }
 
-  .lobby__panel-body {
+  .lobby__panel--chat > .lobby__panel-body {
     flex: 1;
-    min-height: 0;
-  }
-
-  .lobby__panel--matches .lobby__panel-body,
-  .lobby__panel--players .lobby__panel-body {
-    overflow-y: auto;
-  }
-
-  .lobby__panel--matches .lobby__list,
-  .lobby__panel--players .lobby__list {
-    flex: 0 0 auto;
-    max-height: none;
   }
 
   .lobby__panel--chat .lobby__chat {
@@ -1748,20 +1839,13 @@ onBeforeUnmount(() => {
   }
 
   .lobby__chat-row {
-    flex: 0 0 auto;
-    padding-top: 8px;
+    padding-top: 10px;
     border-top: 1px dashed var(--line-dash);
   }
 
   .lobby__panel--friends {
     grid-column: 1 / -1;
     grid-row: 3;
-  }
-
-  .lobby__panel--friends .button {
-    min-height: 32px;
-    padding-top: 4px;
-    padding-bottom: 4px;
   }
 
   .lobby__columns[data-filter='watchable'] .lobby__panel--matches {
@@ -1777,18 +1861,20 @@ onBeforeUnmount(() => {
 @media (max-width: 979px) {
   .lobby { padding: 14px 16px 24px; }
   .lobby__columns { gap: 14px; }
-  .lobby__panel--rooms { order: 0; min-height: 240px; }
+  .lobby__panel--rooms { order: 0; }
   .lobby__panel--players { order: 1; }
   .lobby__panel--matches { order: 2; }
   .lobby__panel--chat { order: 3; }
   .lobby__panel--friends { order: 4; }
   .lobby__primary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .lobby__primary-side { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; }
+  .lobby__columns > .lobby__panel--chat.is-collapsed { height: auto; contain: none; }
+  .lobby__columns > section.lobby__panel--rooms { height: 420px; max-height: 420px; }
+  .lobby__panel--rooms .lobby__list { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 560px) {
   .lobby__primary { grid-template-columns: minmax(0, 1fr); }
-  .lobby__primary-action { min-height: 76px; }
 }
 
 @media (max-width: 520px) {

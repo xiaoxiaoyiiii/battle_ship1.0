@@ -1,0 +1,16 @@
+:root { --route-motion-ready: 1; }
+.screen-boundary { view-transition-name: page-content; }
+::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+::view-transition-group(page-content) { animation-duration: 240ms; }
+::view-transition-old(page-content) { animation: page-out 110ms ease-out both; }
+::view-transition-new(page-content) { animation: page-in 180ms 60ms ease-out both; }
+html[data-route-motion='forward']::view-transition-new(page-content) { animation-name: page-forward; }
+html[data-route-motion='back']::view-transition-new(page-content) { animation-name: page-back; }
+::view-transition { pointer-events: none; }
+@keyframes page-out { to { opacity: 0; } }
+@keyframes page-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes page-forward { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }
+@keyframes page-back { from { opacity: 0; transform: translateX(-18px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
+}

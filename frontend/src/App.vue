@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppOverlay from './components/AppOverlay.vue'
 import AppWallpaper from './components/AppWallpaper.vue'
+import OceanParticles from './components/OceanParticles.vue'
 import AuthOverlay from './components/AuthOverlay.vue'
 import AvatarMenu from './components/AvatarMenu.vue'
 import CardCollectionOverlay from './components/CardCollectionOverlay.vue'
@@ -143,6 +144,7 @@ onBeforeUnmount(() => {
 <template>
   <!-- Applied wallpaper layer (spec story 2); renders nothing until applied. -->
   <AppWallpaper />
+  <OceanParticles />
 
   <!-- Single-overlay root: the card archive opens above the shell. -->
   <CardCollectionOverlay

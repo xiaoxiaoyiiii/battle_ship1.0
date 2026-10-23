@@ -43,6 +43,7 @@ from ..domain.magic import chain as chain_rules
 from ..domain.magic.chain import CHAIN_RESPONSE_SECONDS, ChainItem, ChainResult
 from ..domain.magic.effects.base import EffectContext, EffectResult
 from ..domain.spectate.rules import AREA_TARGET_BOARDS
+from ..domain.magic import targets as target_rules
 from ..domain.magic.rules import (
     BINGLIANG_FAIL_BELOW,
     BINGLIANG_SKIP_PHASES,
@@ -3152,6 +3153,9 @@ def sanitize_targets(targets: Any, card_name: str) -> tuple[dict[str, Any], str 
             targets["board"] = declared
         elif declared == "choice" and board not in ("self", "opponent"):
             return targets, "请选择目标棋盘（自己或对方）"
+    shape_error = target_rules.validate(card_name, targets)
+    if shape_error:
+        return targets, shape_error
     return targets, None
 
 

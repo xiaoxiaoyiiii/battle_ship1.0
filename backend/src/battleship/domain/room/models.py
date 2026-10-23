@@ -301,6 +301,10 @@ class Room:
     field_magic_owner: str | None = None
     magic_history: list[dict[str, Any]] = field(default_factory=list)
     magic_temp_data: dict[str, Any] = field(default_factory=dict)
+    #: 待选择项队列（键见 `domain/magic/temps.py`）；激活项仍在 `magic_temp_data`。
+    magic_temps: dict[str, Any] = field(default_factory=dict)
+    #: 上一次 `temps.finish()` 提升上来的选择项（确认入口读它拼响应，读完即清）。
+    magic_promoted: dict[str, Any] | None = None
     magic_discard: list[Any] = field(default_factory=list)
     magic_deck: list[Any] = field(default_factory=list)
 

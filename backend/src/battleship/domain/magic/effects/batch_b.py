@@ -14,6 +14,7 @@ from ... import effects
 from ... import replay as replay_rules
 from ...room import PlayerShip, alive_ships, card_payload
 from ..cards import MagicCard
+from .. import temps
 from ..interaction import (
     cell_xy,
     find_ship_at,
@@ -45,13 +46,13 @@ async def taoyuan(ctx: EffectContext) -> EffectResult:
         drawn.append(ctx.room.magic_deck.pop(0))
     if not drawn:
         return EffectResult(False, "无法抽取卡牌")
-    ctx.room.magic_temp_data = {
+    temps.store(ctx.room, {
         "type": "taoyuan_choice",
         "caster": ctx.caster_id,
         "opponent": ctx.opponent_id,
         "cards": drawn,
         "player_deck_backup": [],
-    }
+    })
     await ctx.emit(
         "taoyuan_waiting",
         {"message": "对方正在结算桃园结义效果 请等待"},
@@ -77,12 +78,12 @@ async def wangyang(ctx: EffectContext) -> EffectResult:
     take = min(count, len(ctx.room.magic_discard))
     candidates = ctx.room.magic_discard[-take:]
     del ctx.room.magic_discard[-take:]
-    ctx.room.magic_temp_data = {
+    temps.store(ctx.room, {
         "type": "wangyang_choice",
         "caster": ctx.caster_id,
         "cards": candidates,
         "own_card": own_card,
-    }
+    })
     result = EffectResult(
         True,
         f"请从弃牌区最新{len(candidates)}张牌中选1张加入手牌",
@@ -95,12 +96,12 @@ async def wangyang(ctx: EffectContext) -> EffectResult:
 @register("灵气复苏")
 async def lingqi(ctx: EffectContext) -> EffectResult:
     max_ships = max(1, int(ctx.caster.remaining_ships or 0), int(ctx.opponent.remaining_ships or 0))
-    ctx.room.magic_temp_data = {
+    temps.store(ctx.room, {
         "type": "lingqi_choice",
         "caster": ctx.caster_id,
         "opponent": ctx.opponent_id,
         "max_ships": max_ships,
-    }
+    })
     await ctx.emit(
         "lingqi_waiting",
         {"message": "对方正在结算灵气复苏效果 请等待"},
@@ -128,11 +129,11 @@ async def bury(ctx: EffectContext) -> EffectResult:
                 "type": card.type,
                 "description": card.description,
             })
-    ctx.room.magic_temp_data = {
+    temps.store(ctx.room, {
         "type": "bury_choice",
         "caster": ctx.caster_id,
         "candidates": candidates,
-    }
+    })
     result = EffectResult(True, "请选择要埋葬的卡牌（牌堆或对方手牌）", temp_data_id="bury_choice")
     result.extra["cards"] = [dict(entry) for entry in candidates]
     return result
@@ -142,14 +143,14 @@ async def bury(ctx: EffectContext) -> EffectResult:
 async def renwang(ctx: EffectContext) -> EffectResult:
     if int(ctx.caster.remaining_ships or 0) == 0:
         return EffectResult(False, "没有战舰可保护")
-    ctx.room.magic_temp_data = {
+    temps.store(ctx.room, {
         "type": "shield_choice",
         "caster": ctx.caster_id,
         "ships": [
             {"positions": [{"x": p.x, "y": p.y} for p in ship.positions]}
             for ship in ctx.caster.ships
         ],
-    }
+    })
     await ctx.request_ship_pick(
         ctx.caster_id,
         "shield_choice",
@@ -346,12 +347,9 @@ async def polar_reversal(ctx: EffectContext) -> EffectResult:
     ctx.room.field_magic = None
     ctx.room.field_magic_owner = None
     ctx.room.game_effects = {}
-    ctx.room.magic_discard = []
-    ctx.room.magic_temp_data = {}
-    ctx.room.chain = []
-    ctx.room.chain_waiting = False
-    ctx.room.chain_window = None
-    ctx.room.chain_passes = 0
+    # 不要在这里清连锁与弃牌堆：本效果可能正是连锁里的一张，清掉会让下层
+    # 待结算的卡既不被结算也不退牌（吞卡）；chain 由 _resolve_chain 收尾。
+    temps.clear(ctx.room)
     ctx.room.last_attack = None
     ctx.room.skip_opponent_turn = None
     ctx.room.skip_next_turn = None

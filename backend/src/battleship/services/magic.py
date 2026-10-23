@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import random
 import time
 from typing import Any, Awaitable, Callable
@@ -44,6 +45,7 @@ from ..domain.magic.chain import CHAIN_RESPONSE_SECONDS, ChainItem, ChainResult
 from ..domain.magic.effects.base import EffectContext, EffectResult
 from ..domain.spectate.rules import AREA_TARGET_BOARDS
 from ..domain.magic import targets as target_rules
+from ..domain.magic import temps as magic_temps
 from ..domain.magic.rules import (
     BINGLIANG_FAIL_BELOW,
     BINGLIANG_SKIP_PHASES,
@@ -724,7 +726,7 @@ class MagicService:
     async def _finish_placement(self, room: Room, player_id: str, kind: str) -> None:
         pending = self._pending_placement(room) or {}
         placed = int(pending.get("placed") or 0)
-        room.magic_temp_data.pop("pending_placement", None)
+        magic_temps.finish(room, "pending_placement")
         if kind == "last_stand":
             room.game_effects.pop("last_stand_cells", None)
             room.game_effects.pop("last_stand_owner", None)
@@ -1603,6 +1605,22 @@ class MagicService:
             })
         return {"status": "success"}
 
+    @staticmethod
+    def _with_promoted_choice(room: Room, result: dict) -> dict:
+        """确认完一项后，如果队列里还有下一项，就把它一并告诉客户端。"""
+
+        promoted = room.magic_promoted
+        room.magic_promoted = None
+        if not promoted or not isinstance(result, dict) or result.get("status") != "success":
+            return result
+        key = magic_temps.key_of(promoted)
+        if not key:
+            return result
+        result = dict(result)
+        result["next_temp_data_id"] = key
+        result["next_temp"] = json.loads(json.dumps(promoted, default=str))
+        return result
+
     async def confirm_magic_target(self, connection: Connection | dict[str, Any],
                                    data: dict[str, Any] | None = None) -> dict:
         # select_magic_target re-enters through a plain dict (legacy shape).
@@ -1626,19 +1644,19 @@ class MagicService:
             or temp.get("caster") not in (None, player_id)
         ):
             return {"status": "error", "message": "当前没有待处理的魔法卡选择"}
-        if temp_data_id == "taoyuan_choice":
-            return await self._confirm_taoyuan(room, player_id, temp, target_data)
-        if temp_data_id == "lingqi_choice":
-            return await self._confirm_lingqi(room, player_id, temp, target_data)
-        if temp_data_id == "bury_choice":
-            return await self._confirm_bury(room, player_id, temp, target_data)
-        if temp_data_id == "wangyang_choice":
-            return await self._confirm_wangyang(room, player_id, temp, target_data)
-        if temp_data_id == "shield_choice":
-            return await self._confirm_shield(room, player_id, temp, target_data)
-        if temp_data_id not in KNOWN_CHOICE_IDS:
-            return {"status": "error", "message": "无效的临时数据ID"}
-        return {"status": "error", "message": "当前没有待处理的魔法卡选择"}
+        handler = {
+            "taoyuan_choice": self._confirm_taoyuan,
+            "lingqi_choice": self._confirm_lingqi,
+            "bury_choice": self._confirm_bury,
+            "wangyang_choice": self._confirm_wangyang,
+            "shield_choice": self._confirm_shield,
+        }.get(temp_data_id)
+        if handler is None:
+            if temp_data_id not in KNOWN_CHOICE_IDS:
+                return {"status": "error", "message": "无效的临时数据ID"}
+            return {"status": "error", "message": "当前没有待处理的魔法卡选择"}
+        result = await handler(room, player_id, temp, target_data)
+        return self._with_promoted_choice(room, result)
 
     async def _confirm_taoyuan(self, room: Room, player_id: str,
                                temp: dict[str, Any], target_data: dict[str, Any]) -> dict:
@@ -1678,7 +1696,7 @@ class MagicService:
             if index not in (caster_choice, opponent_choice)
         ]
         room.magic_deck += remaining
-        room.magic_temp_data = {}
+        magic_temps.finish(room, "taoyuan_choice")
         await self._emit_hand(caster)
         await self._emit_hand(opponent)
         if opponent.socket_id:
@@ -1733,7 +1751,7 @@ class MagicService:
             player.max_ships = target_ships
         replay_rules.note_board_reset(room)
         replay_rules.note_board_replaced(room)
-        room.magic_temp_data = {}
+        magic_temps.finish(room, "lingqi_choice")
         # AI seats take their new board inside this stack frame (lesson #38).
         await self._ai_place_any(room)
         room.lingqi_saved_state = {
@@ -1819,7 +1837,7 @@ class MagicService:
         buried = pile.pop(index)
         room.magic_discard.append(buried)
         await self._emit_card_discarded(room, player_id, buried, "bury")
-        room.magic_temp_data = {}
+        magic_temps.finish(room, "bury_choice")
         deck_before = len(room.magic_deck)
         drawn = await self.draw(room, player_id)
         if opponent is not None:
@@ -1864,7 +1882,7 @@ class MagicService:
         if own_card is not None:
             room.magic_discard.append(own_card)
             await self._emit_card_discarded(room, player_id, own_card, "wangyang")
-        room.magic_temp_data = {}
+        magic_temps.finish(room, "wangyang_choice")
         await self._emit_hand(room.players[player_id])
         opponent_id = room.opponent_of(player_id)
         if opponent_id and room.players[opponent_id].socket_id:
@@ -1908,7 +1926,7 @@ class MagicService:
             selected.append(caster.ships[index])
         if not selected:
             return {"status": "error", "message": "无效的选择（已沉没的船不能加护盾）"}
-        room.magic_temp_data = {}
+        magic_temps.finish(room, "shield_choice")
         interaction_rules.consume_ship_pick(room, player_id, "shield_choice")
         await self._emit_player_ships(room, player_id)
         await self._publisher.emit(
@@ -2010,7 +2028,9 @@ class MagicService:
             room.magic_deck.extend(card for card in cards if isinstance(card, MagicCard))
         if cancelled == "shield_choice":
             interaction_rules.consume_ship_pick(room, player_id, "shield_choice")
-        room.magic_temp_data = {}
+        magic_temps.finish(room, cancelled) if cancelled in (
+            "taoyuan_choice", "lingqi_choice", "bury_choice", "wangyang_choice", "shield_choice"
+        ) else magic_temps.clear(room)
 
         if cancelled in ("taoyuan_choice", "lingqi_choice"):
             opponent_id = room.opponent_of(player_id)
@@ -3012,7 +3032,7 @@ class MagicService:
         room.field_magic = None
         room.field_magic_owner = None
         room.last_attack = None
-        room.magic_temp_data = {}
+        magic_temps.clear(room)
         for player in room.players.values():
             for ship in player.ships:
                 ship.invincible = False

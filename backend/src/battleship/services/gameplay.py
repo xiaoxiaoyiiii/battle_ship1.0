@@ -35,6 +35,7 @@ from ..domain import effects
 from ..domain import placement as placement_rules
 from ..domain import replay as replay_rules
 from ..domain.magic import hooks
+from ..domain.magic import temps as magic_temps
 from ..domain.placement import PlacementError
 from ..domain.room import (
     Room,
@@ -328,7 +329,7 @@ class GameplayService:
             result = await self.magic.cancel_placement(room, player_id)
             await self.rooms.push_room_sync(room)
             return result
-        room.magic_temp_data.pop("pending_placement", None)
+        magic_temps.finish(room, "pending_placement")
         player = room.players.get(player_id)
         if player is not None and player.socket_id:
             await self._publisher.emit(
@@ -802,7 +803,7 @@ class GameplayService:
         room.field_magic_owner = None
         room.game_effects = {}
         room.last_attack = None
-        room.magic_temp_data = {}
+        magic_temps.clear(room)
         room.chain = []
         room.chain_waiting = False
         room.chain_window = None

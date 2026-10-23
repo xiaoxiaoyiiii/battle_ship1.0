@@ -25,6 +25,7 @@ from ..domain import effects
 from ..domain import placement as placement_rules
 from ..domain import replay as replay_rules
 from ..domain.magic import hooks
+from ..domain.magic import temps as magic_temps
 from ..domain.magic import interaction as interaction_rules
 from ..domain.battle import AttackOutcome
 from ..domain.room import Player, PlayerShip, Position, Room, RoomState
@@ -386,7 +387,7 @@ class BattleService:
         room.pending_wuyou_dreams = {}
         room.pending_bingliang = {}
         room.bingliang_skip_draw = {}
-        room.magic_temp_data = {}
+        magic_temps.clear(room)
         # #37：终局已落定、结算之前广播一次（订阅者看到 winner 与 GAME_OVER 状态）。
         await hooks.emit(
             room,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppOverlay from './components/AppOverlay.vue'
 import AppWallpaper from './components/AppWallpaper.vue'
@@ -13,6 +13,8 @@ import ScreenBoundary from './components/ScreenBoundary.vue'
 import ToastHost from './components/ToastHost.vue'
 import { routeLoading } from './router'
 import { useAuthStore } from './stores/auth'
+import { useDmStore } from './stores/dm'
+import { acquireFriendsChannel } from './realtime/friends'
 import { useCollectionStore } from './stores/collection'
 import { useGameStore } from './stores/game'
 import { useUiStore } from './stores/ui'
@@ -33,6 +35,7 @@ const auth = useAuthStore()
 const game = useGameStore()
 const collection = useCollectionStore()
 const ui = useUiStore()
+const dm = useDmStore()
 
 /** Flow screens are reached from a match, not from the bar. */
 const FLOW_ROUTE_NAMES = new Set(['placement', 'rps', 'game', 'game-over'])
@@ -103,6 +106,38 @@ function onAuthRequired(event: Event): void {
 
 onMounted(() => window.addEventListener('bs:auth-required', onAuthRequired))
 onBeforeUnmount(() => window.removeEventListener('bs:auth-required', onAuthRequired))
+
+/**
+ * 好友事件的生命周期挂在**登录状态**上，而不是面板挂载（审查 P2-3）：
+ * 面板关着的时候也要收私聊与申请，否则关掉面板就再也收不到推送。
+ * 面板可见性单独交给 dm.setVisible，标读只发生在玩家正看着的会话里。
+ */
+let releaseFriends: (() => void) | null = null
+
+function syncFriendsChannel(guest: boolean): void {
+  if (!guest && !releaseFriends) {
+    try {
+      releaseFriends = acquireFriendsChannel()
+    } catch {
+      // 还没有共享 socket（未进过对局/大厅）时先跳过，后续登录态变化会再试
+      releaseFriends = null
+    }
+    return
+  }
+  if (guest && releaseFriends) {
+    releaseFriends()
+    releaseFriends = null
+    dm.reset()
+  }
+}
+
+watch(() => auth.isGuest, (guest) => syncFriendsChannel(Boolean(guest)), { immediate: true })
+watch(() => ui.friendsOpen, (open) => dm.setVisible(open), { immediate: true })
+
+onBeforeUnmount(() => {
+  releaseFriends?.()
+  releaseFriends = null
+})
 </script>
 
 <template>
@@ -216,10 +251,11 @@ onBeforeUnmount(() => window.removeEventListener('bs:auth-required', onAuthRequi
             type="button"
             class="app-nav__icon"
             data-testid="nav-friends"
-            aria-label="好友"
             :aria-pressed="ui.friendsOpen"
+            :aria-label="dm.totalUnread ? `好友（${dm.totalUnread} 条未读）` : '好友'"
             @click="ui.openFriends()"
           >
+            <span v-if="dm.totalUnread" class="app-nav__badge" data-testid="nav-friends-unread">{{ dm.totalUnread }}</span>
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
               <circle cx="9" cy="8" r="3.2" />
               <path d="M3.5 20c.6-3.4 2.9-5 5.5-5s4.9 1.6 5.5 5" />

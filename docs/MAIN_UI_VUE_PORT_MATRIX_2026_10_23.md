@@ -145,3 +145,18 @@
 | 帮助缺顶段条件与解锁 | 一律画「N 分起」，顶段没有起始分 | 顶段显示服务端 `admiral_rank_limit`/`admiral_min_captains` 条件；解锁项取 `/api/profile` 的 `catalog`（游客如实提示） | `spec-review3.mjs e`：e1 晋升条件、e2 阈值 50/50、e3 游客提示、e4 catalog 解锁 |
 | 管理员入口未迁 | 前一轮矩阵把 admin 行去掉且没有组件 | 新增 `components/AdminOverlay.vue`（总览/详情/处置/历史），入口按 `/api/admin/me` 渲染 | `spec-admin.mjs`：a0 is_admin、b0 游客无入口、b1 未登录接口 401、c1–c5 入口/列表/搜索/详情/处置历史 |
 | 手牌「选中加宽未实现」说法有误 | `useHandFan.ts` 早已实现 `selectedIndex` + `need` | 不做重复机制，改报告 | `spec-review3.mjs g` 3/3 PASS |
+
+## 九、审查轮第四批（2026-10-23 09:52，基点 776bf06）
+
+| 项 | 状态 | 说明与证据 |
+| --- | --- | --- |
+| 分页锁死 | 已修 | `dm.ts` 两套序号 + `finally` 只清自己；`spec-review4.mjs pagination` PASS 2 |
+| 仅链栈收起 | 已修 | `collapseChainWindow()` 无条件写视图状态、重开文案分支；`spec-review4.mjs chain` PASS 5 |
+| 私聊生命周期/标读 | 已修 | `App.vue` 登录期常驻订阅 + `dm.setVisible/markRead`；`spec-review4.mjs lifecycle` PASS 6 |
+| 对手身份条 | 已迁 | `.hud-players` 双 `.arena-player`（头像/名字/剩余舰/pips），宽屏独立一行 |
+| 己方舰队摘要 | 已迁 | `.arena-fleet`（fixed 左下，`game-self-fleet`） |
+| 浮动聊天 + 可拖日志 | 已迁 | `useFloatingDrag`；日志可拖/收起/放大（`game-log-collapse`）；`spec-floating-chat.mjs` PASS |
+| 竖向连锁轨道 | 已迁 | 宽屏 96px 轨道 + 叠牌 76×114/-38px；空态保留高度 |
+| 独立完整卡牌详情 | 已迁 | 卡名 → 156px 2:3 卡面 → 规则（局部滚动）→ 使用/取消 |
+| 手牌完整原画 | 已迁 | `.card--art` 隐藏重复文字层，卡面铺满；不可用原因保留为底部小条 |
+| 观战内容态 | 已复验（引用） | `codex-r2-shots/real-spectate-1440x900.png`、`real-spectate-390x740.png`（Codex 真实双玩家 + 观众链路） |

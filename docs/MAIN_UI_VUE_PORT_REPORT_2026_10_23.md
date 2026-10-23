@@ -100,3 +100,36 @@ Codex 用公开注册/登录/建房/布船/猜拳/攻击接口造两位真实玩
 
 > 说明：前几轮报告里写的「紧凑档 ≤719px / ≤520px」「聊天只有抽屉」「测试栈 5455」等描述
 > 都已被后续提交取代，当前结论以上面第一、二节为准。
+
+## 八、审查轮第四批（2026-10-23 09:52，基点 776bf06）
+
+### 8.1 三项交互（先复现失败，再修，再跑同一路径）
+
+| 项 | 根因 | 修法 | 证据（命令 / 结果） |
+| --- | --- | --- | --- |
+| 取消分页后 `loadingOlder` 永久锁死 | 只有一个 `token`：新 `open` 顶掉令牌，旧 `loadOlder` 直接 `return`，`finally` 不存在 | `stores/dm.ts` 改为 `openSeq`/`olderSeq` 两套序号 + `controllers` 键 `${kind}:${name}`，收尾只清自己那次 | `node spec-review4.mjs pagination` → PASS 2（held=1 证明 race 路径被走到；迟到的「更早一页」仍被合并到 70 条，「加载更早」不残留 disabled/「正在读取」） |
+| 只有链栈、没有响应窗口时收不起 | `match.collapseChainWindow()` 只在 `chainWindow` 存在时写 collapsed | 改为无条件写视图状态；入口由组件 `chainHasContent` 控制；重开文案区分「待响应」与「连锁结算（第 N 张）」 | `node spec-review4.mjs chain` → PASS 5（非空链栈 1 张、收起后 overlay=0/reopen=1、链栈未清空、文案不含「待响应」） |
+| 私聊实时生命周期与标读 | 只在面板挂载时订阅；关闭即 `off`；当前会话收到 push 只合并不标读 | `App.vue` 登录期间常驻 `acquireFriendsChannel`；`dm.setVisible` 区分「面板是否可见」；当前可见会话才 `POST /api/friends/messages/read`（在途 pending 补发）；关闭时累计未读 + 通知 + 导航角标 | `node spec-review4.mjs lifecycle` → PASS 6（打开时可见且 unread=0、关闭后 unread=1 + 通知 + 角标 1、重开后可见且 unread=0） |
+
+### 8.2 原 main 对局区域迁移（本轮补齐）
+
+| main 区域 | Vue 实现 | 证据 | 仍存在差异 |
+| --- | --- | --- | --- |
+| 对手身份顶条 + 己方舰队摘要（`players-info`/`arena-fleet-head`/`arena-pips`） | `.hud-players` 内两个 `.arena-player`（头像首字、名字、剩余舰、pips 方块），宽屏为顶栏下方独立一行；手牌左侧 fixed `.arena-fleet` | `shots/main4j-1907x996-detail.png`、`shots/port-1440x900-game.png`（真实对局） | 头像为名字首字，不是原 main 的上传头像；战绩入口未做 |
+| 左侧聊天 + 可拖动/可收起日志（原为两块浮动窗） | `.game-float` + `useFloatingDrag`：聊天（左上，默认常驻、可关）、日志（其下，可拖/可收起/可放大） | `spec-floating-chat.mjs` PASS（拖动后坐标变化并被夹在视口内）；`shots/main4b-1907x996.png` | 紧凑档仍是抽屉 |
+| 竖向连锁轨道（`arena-chain-slot`） | 宽屏右列拆 `96px` 轨道 + 操作列；空态保留高度，叠牌 `76×114`、`-38px` | `shots/main4j-1907x996-detail.png`、`spec-review4.mjs chain` | 轨道比原 main 的叠牌比例略小 |
+| 独立完整卡牌详情（`style.css:1821-1841`） | 卡名 → `156px` 宽、2:3 卡面 → 规则（局部滚动）→ 使用/取消；`shot` 里卡面 158px 高 | `shots/main4j-1907x996-detail.png`（face 156×234）、`port-1440x900-detail.png` | 极小高度时卡面按 `max-height:158px` 缩放 |
+| 手牌完整原画 + 扇形 | `useHandFan` 保留；`.card--art` 隐藏重复文字层，`card__art` 铺满；不可用原因缩成底部深色小条 | `shots/main4c-390x740.png`、`port-390x740-detail.png`（`reason:true`） | 无卡图时回退文字卡 |
+| 中场比例与操作列 | `.game-main-container` 左留 300px 给浮窗；`.arena-rail` 96+190 网格 | `shots/main4j-1907x996-detail.png` | 与 main 的 308/320 留白略有差异 |
+
+### 8.3 证据口径（逐类标注）
+
+- **真实服务器链路**（独立库、`ENABLE_TEST_EVENTS=1` 仅用于对局夹具以外）：`shots/port-1440x900-*`、`shots/port-390x740-*`（`flows/port-match.mjs` 真实走完首页→人机→布船→猜拳→战斗→开炮）。
+- **夹具布局**（注入 `game_state`，仅为把棋盘/手牌填满）：`shots/main4*.png`（1907×996 / 1440×900 / 390×740 / 360×640 / 844×390）。
+- **纯几何门禁**：`spec-dual-board.mjs`、`spec-compact.mjs`、`spec-sheet.mjs`、`spec-target-compact.mjs`、`spec-floating-chat.mjs`、`spec-review4.mjs`。
+- 入库副本：`docs/screenshots/main-ui-restoration/r4/`（8 张 JPEG）。
+
+### 8.4 原 main 对照图
+
+- 原 main：`main-ui-reference-d16f706/docs/readme/04-game-live.png`（1907×996）。
+- 新版同视口：`docs/screenshots/main-ui-restoration/r4/vue-1907x996-game-detail.jpg`（1907×996）。

@@ -294,6 +294,8 @@ const chatMessages = computed(() => match.chat.slice(-30))
 
 // ---- drawers and overlays --------------------------------------------------
 const quickChatOpen = ref(false)
+/** 宽屏的聊天浮窗默认常驻；用户点 × 收起后由 HUD 的「聊天」重新打开。 */
+const chatDismissed = ref(false)
 const logOpen = ref(false)
 const moreOpen = ref(false)
 const discardOpen = ref(false)
@@ -357,11 +359,25 @@ const handWrapEl = ref<HTMLElement | null>(null)
 const chatPanelEl = ref<HTMLElement | null>(null)
 const chatHeadEl = ref<HTMLElement | null>(null)
 // 宽屏保留原 main 的浮动聊天窗（可拖），紧凑档仍用底部抽屉。
+// 默认位置对齐原 main：聊天在左上、日志在其下方。
 const chatDrag = useFloatingDrag({
   handle: chatHeadEl,
   panel: chatPanelEl,
-  initial: { x: 20, y: 470 },
+  initial: { x: 20, y: 96 },
 })
+
+const logPanelEl = ref<HTMLElement | null>(null)
+const logHeadEl = ref<HTMLElement | null>(null)
+const logCollapsed = ref(false)
+const logDrag = useFloatingDrag({
+  handle: logHeadEl,
+  panel: logPanelEl,
+  initial: { x: 20, y: 432 },
+})
+
+/** 身份条上的首字头像：真实对局里拿不到对手头像，用名字首字，不编造账号资料。 */
+const selfInitial = computed(() => (selfName.value || '你').slice(0, 1))
+const opponentInitial = computed(() => (opponentName.value || '对').slice(0, 1))
 const handFan = useHandFan({
   target: handWrapEl,
   count: computed(() => hand.value.length),
@@ -1263,15 +1279,32 @@ function backToLobby(): void {
 
     <div class="game-main-container">
       <!-- 左列：对局日志（原 main 的浮动日志窗，常驻在左列；手机上收进日志抽屉） -->
-      <aside v-if="!compact" class="log-container" aria-label="游戏日志">
-        <header class="log-header">
+      <!-- 游戏日志：原 main 的浮动日志窗（可拖、可收起），不再占一整根左列 -->
+      <aside
+        v-if="!compact"
+        ref="logPanelEl"
+        class="log-container game-float"
+        :class="{ 'is-collapsed': logCollapsed }"
+        :style="{ left: logDrag.state.value.x + 'px', top: logDrag.state.value.y + 'px' }"
+        aria-label="游戏日志"
+        data-testid="game-log-panel"
+      >
+        <header class="log-header game-float__head" ref="logHeadEl" @pointerdown="logDrag.onPointerDown($event)">
           <h3>游戏日志</h3>
-          <button type="button" class="log-expand" data-testid="game-log-open" @click="logOpen = true">放大</button>
+          <span class="log-header__actions">
+            <button
+              type="button"
+              class="hud-btn"
+              data-testid="game-log-collapse"
+              @click="logCollapsed = !logCollapsed"
+            >{{ logCollapsed ? '展开' : '收起' }}</button>
+            <button type="button" class="log-expand" data-testid="game-log-open" @click="logOpen = true">放大</button>
+          </span>
         </header>
-        <ol class="log-content" data-testid="game-log-lines">
+        <ol v-show="!logCollapsed" class="log-content" data-testid="game-log-lines">
           <li v-for="(line, index) in gameLogLines" :key="'log-' + index" class="log-line">{{ line.text }}</li>
         </ol>
-        <p v-if="!gameLogLines.length" class="log-empty">还没有日志</p>
+        <p v-if="!logCollapsed && !gameLogLines.length" class="log-empty">还没有日志</p>
       </aside>
 
       <div class="game-content">
@@ -1303,18 +1336,46 @@ function backToLobby(): void {
           type="button"
           class="button button--ghost hud-btn"
           data-testid="game-hud-chat"
-          @click="quickChatOpen = true"
+          @click="chatDismissed = false; quickChatOpen = true"
         >聊天</button>
+        <!-- 身份条（原 main 的 .players-info / arena-oppbar-bg）：头像 + 名称 + 剩余舰 + pips -->
         <div class="hud-players">
-            <span class="hud-name" data-testid="game-self-name">{{ selfName }}</span>
-            <span class="hud-vs" aria-hidden="true">VS</span>
-            <span class="hud-name" data-testid="game-opponent-name">{{ opponentName }}</span>
-            <span class="hud-pips" data-testid="game-ships">{{ shipsText }}</span>
-            <!-- 原 main 顶栏的对手剩余舰方块：一眼看清还剩几艘 -->
-            <span class="hud-ship-dots" aria-hidden="true">
-              <i v-for="slot in shipSlots" :key="'hud-ship-' + slot.index" :class="{ 'is-lost': !slot.alive }"></i>
-            </span>
+          <div class="arena-player arena-player--opponent" data-testid="game-opponent-card">
+            <span class="arena-avatar arena-avatar--opponent" aria-hidden="true">{{ opponentInitial }}</span>
+            <div class="arena-player__meta">
+              <b class="hud-name" data-testid="game-opponent-name">{{ opponentName }}</b>
+              <span class="arena-player__line">
+                <span class="hud-pips" data-testid="game-ships">{{ shipsText }}</span>
+                <span class="arena-player__pips" aria-hidden="true">
+                  <i
+                    v-for="index in 6"
+                    :key="'opp-pip-' + index"
+                    :class="{ 'is-lost': index > state.opponent_remaining_ships }"
+                  ></i>
+                </span>
+              </span>
+            </div>
           </div>
+
+          <span class="hud-vs" aria-hidden="true">VS</span>
+
+          <div class="arena-player arena-player--self" data-testid="game-self-card">
+            <span class="arena-avatar arena-avatar--self" aria-hidden="true">{{ selfInitial }}</span>
+            <div class="arena-player__meta">
+              <b class="hud-name" data-testid="game-self-name">{{ selfName }}</b>
+              <span class="arena-player__line">
+                <span class="arena-player__ships">剩余 {{ state.remaining_ships }} 艘</span>
+                <span class="arena-player__pips" aria-hidden="true">
+                  <i
+                    v-for="slot in shipSlots"
+                    :key="'self-pip-' + slot.index"
+                    :class="{ 'is-lost': !slot.alive, 'is-frozen': slot.frozen }"
+                  ></i>
+                </span>
+              </span>
+            </div>
+          </div>
+        </div>
         </header>
 
         <!-- 全宽场地魔法条（原 main 的 .field-magic-area） -->
@@ -1407,24 +1468,31 @@ function backToLobby(): void {
 
       <!-- 右列：连锁结算 / 卡牌详情 / 计数与主行动（原 main 的 .arena-rail + 详情列） -->
       <aside class="arena-rail" :class="{ 'arena-rail--sheet': railSheet }" aria-label="连锁、卡牌与操作">
-        <section class="arena-rail-panel" data-testid="game-chain-rail">
+        <section class="arena-rail-panel arena-chain-slot" data-testid="game-chain-rail">
           <header class="arena-rail-head">连锁结算</header>
-          <ol v-if="chainList.length" class="arena-chain-list" data-testid="game-chain-stack">
+          <!-- 原 main 的 .chain-stack：104×156 卡面竖向叠放，相邻压住约 1/3 -->
+          <ol v-if="chainList.length" class="chain-stack" data-testid="game-chain-stack">
             <li
               v-for="(item, index) in chainList"
               :key="'chain-rail-' + index"
-              class="arena-chain-item"
-              :class="{ 'is-negated': item.negated }"
+              class="chain-stack__item"
+              :class="{ 'is-spent': item.negated }"
               :data-testid="'game-chain-item-' + index"
+              :title="item.name"
             >
-              <b :data-testid="'game-chain-item-' + index + '-name'">{{ item.name }}</b>
-              <span class="arena-chain-index">第 {{ index + 1 }} 张</span>
+              <img
+                v-if="cardArtUrl(item.name)"
+                :src="cardArtUrl(item.name) || ''"
+                :alt="item.name + ' 卡面'"
+                loading="lazy"
+              />
+              <span v-else class="chain-stack__name" :data-testid="'game-chain-item-' + index + '-name'">{{ item.name }}</span>
               <span v-if="item.negated" class="arena-chain-negated">已无效</span>
             </li>
           </ol>
           <p v-else class="arena-rail-empty" data-testid="game-chain-empty">暂无连锁</p>
           <button
-            v-if="chainWindow && !chainCollapsed"
+            v-if="chainHasContent && !chainCollapsed"
             type="button"
             class="button button--ghost arena-rail-wide"
             data-testid="game-chain-open"
@@ -1435,21 +1503,19 @@ function backToLobby(): void {
         <!-- 卡牌详情 / 待使用：选中后原位展开，未选中时给出占位（原 main 的 .magic-preview-container） -->
         <section v-if="detailOpen && hand[selectedCardIndex]" class="game-detail" data-testid="game-card-detail" aria-label="卡牌详情">
           <header class="game-detail__head">
-            <div class="game-detail__ident">
-              <img
-                v-if="cardArtUrl(hand[selectedCardIndex].name)"
-                class="game-detail__art"
-                :src="cardArtUrl(hand[selectedCardIndex].name) || ''"
-                alt=""
-                aria-hidden="true"
-              />
-              <div class="game-detail__ident-text">
-                <h2 class="game-detail__name">{{ hand[selectedCardIndex].name }}</h2>
-                <p class="game-detail__meta">{{ typeLabel(hand[selectedCardIndex]) }}</p>
-              </div>
-            </div>
+            <h2 class="game-detail__name">{{ hand[selectedCardIndex].name }}</h2>
             <button type="button" class="game-close" data-testid="game-card-detail-close" aria-label="关闭卡牌详情" @click="cancelCardSelection">×</button>
           </header>
+          <!-- 原 main 的三段式：卡名 → 完整卡面（156px 宽、2:3）→ 可读规则 -->
+          <figure v-if="cardArtUrl(hand[selectedCardIndex].name)" class="game-detail__face">
+            <img
+              class="game-detail__art"
+              :src="cardArtUrl(hand[selectedCardIndex].name) || ''"
+              :alt="hand[selectedCardIndex].name + ' 卡面'"
+              loading="eager"
+            />
+          </figure>
+          <p class="game-detail__meta">{{ typeLabel(hand[selectedCardIndex]) }}</p>
           <p class="game-detail__desc">{{ hand[selectedCardIndex].description }}</p>
           <p v-if="cardDisabled(hand[selectedCardIndex])" class="game-detail__reason" data-testid="game-card-detail-reason">
             {{ cardDisabled(hand[selectedCardIndex]) }}
@@ -1528,8 +1594,27 @@ function backToLobby(): void {
       @click="match.expandChainWindow()"
     >
       <span class="game-chain-reopen__dot" aria-hidden="true"></span>
-      连锁待响应：{{ chainWindow?.card ? chainWindow.card.name : '魔法卡' }} · 剩余 {{ chainRemaining }} 秒 · 打开
+      <template v-if="chainWindow">
+        连锁待响应：{{ chainWindow.card ? chainWindow.card.name : '魔法卡' }} · 剩余 {{ chainRemaining }} 秒 · 打开
+      </template>
+      <template v-else>
+        展开连锁结算（{{ chainOrderText }}）· 打开
+      </template>
     </button>
+
+    <!-- 己方舰队摘要（原 main 手牌左侧的 .player-info / arena-fleet-head） -->
+    <aside v-if="!compact" class="arena-fleet" data-testid="game-self-fleet" aria-label="你的舰队">
+      <div class="arena-fleet__head">
+        <span class="arena-avatar arena-avatar--self" aria-hidden="true">{{ selfInitial }}</span>
+        <div>
+          <b class="arena-fleet__name">{{ selfName }}</b>
+          <p class="arena-fleet__ships">你的舰队 · 剩余 {{ state.remaining_ships }} 艘</p>
+        </div>
+      </div>
+      <span class="arena-player__pips" aria-hidden="true">
+        <i v-for="slot in shipSlots" :key="'fleet-pip-' + slot.index" :class="{ 'is-lost': !slot.alive, 'is-frozen': slot.frozen }"></i>
+      </span>
+    </aside>
 
     <section class="game-hand-wrap" aria-label="手牌" ref="handWrapEl">
       <div class="game-hand-head">
@@ -1765,7 +1850,7 @@ function backToLobby(): void {
     </section>
 
     <section
-      v-if="quickChatOpen"
+      v-if="quickChatOpen || (!compact && !chatDismissed)"
       class="game-drawer game-drawer--chat"
       :class="{ 'game-float': !compact }"
       :style="compact ? undefined : { left: chatDrag.state.value.x + 'px', top: chatDrag.state.value.y + 'px' }"
@@ -1779,7 +1864,13 @@ function backToLobby(): void {
         @pointerdown="compact ? undefined : chatDrag.onPointerDown($event)"
       >
         <h2 class="game-drawer__title" ref="chatHeadEl">局内聊天{{ compact ? '' : '（可拖动）' }}</h2>
-        <button type="button" class="game-close" data-testid="game-quick-chat-close" aria-label="关闭聊天" @click="quickChatOpen = false">×</button>
+        <button
+          type="button"
+          class="game-close"
+          data-testid="game-quick-chat-close"
+          aria-label="关闭聊天"
+          @click="compact ? (quickChatOpen = false) : (chatDismissed = true)"
+        >×</button>
       </header>
       <section class="game-chat-text" data-testid="game-chat" aria-label="文字聊天">
         <ol class="game-chat-log" data-testid="game-chat-messages" aria-live="polite">

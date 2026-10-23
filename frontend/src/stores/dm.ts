@@ -60,9 +60,23 @@ export const useDmStore = defineStore('dm', () => {
   const drafts = ref<Record<string, string>>({})
   /** 未读：仅统计"不在当前会话"的推送，打开会话即清零。 */
   const unread = ref<Record<string, number>>({})
+  /**
+   * 面板是否正被玩家看着。关闭面板后即使上次会话还在 active 上，也不能算"正在读"——
+   * 这是审查 P2-3 的核心：原 main 只在**可见**的会话里标读。
+   */
+  const visible = ref(false)
+  /** 标读请求在途 / 在途期间又来了新消息（要再补一次，否则会永久漏读）。 */
+  const readInFlight = new Set<string>()
+  const readPending = new Set<string>()
 
-  /** 每个会话一个令牌：迟到的响应与令牌不一致就丢弃（审查 P1 的根因）。 */
-  const tokens: Record<string, number> = {}
+  /**
+   * 每个会话按「请求种类」各一个序号：只让当前这次请求收尾它自己的 loading。
+   * 审查 P2-1 的根因是 loadOlder 把 loadingOlder 置 true 后，令牌被 open 顶掉就
+   * 直接 return，永远没人清 —— 所以收尾必须挂在 finally 上，并且只清自己这一次。
+   */
+  const openSeq: Record<string, number> = {}
+  const olderSeq: Record<string, number> = {}
+  /** 首屏与「更早一页」各有自己的 AbortController：二者可以同时在途，互不打断。 */
   const controllers: Record<string, AbortController> = {}
 
   function ensure(name: string): ThreadState {
@@ -70,9 +84,9 @@ export const useDmStore = defineStore('dm', () => {
     return threads.value[name]
   }
 
-  function bumpToken(name: string): number {
-    tokens[name] = (tokens[name] ?? 0) + 1
-    return tokens[name]
+  function bumpSeq(seq: Record<string, number>, name: string): number {
+    seq[name] = (seq[name] ?? 0) + 1
+    return seq[name]
   }
 
   const activeMessages = computed<DmMessage[]>(() => (active.value ? ensure(active.value).messages : []))
@@ -81,6 +95,9 @@ export const useDmStore = defineStore('dm', () => {
   const activeError = computed(() => (active.value ? ensure(active.value).error : ''))
   const activeLoadingOlder = computed(() => (active.value ? ensure(active.value).loadingOlder : false))
   const unreadFor = computed(() => (name: string) => unread.value[name] ?? 0)
+  const totalUnread = computed(() =>
+    Object.values(unread.value).reduce((sum, count) => sum + (count > 0 ? count : 0), 0),
+  )
   const draft = computed({
     get: () => (active.value ? drafts.value[active.value] ?? '' : ''),
     set: (value: string) => {
@@ -88,12 +105,17 @@ export const useDmStore = defineStore('dm', () => {
     },
   })
 
-  async function fetchPage(name: string, before?: number): Promise<{ messages: DmMessage[]; hasMore: boolean; error: string }> {
+  async function fetchPage(
+    name: string,
+    before: number | undefined,
+    kind: 'open' | 'older',
+  ): Promise<{ messages: DmMessage[]; hasMore: boolean; error: string }> {
     const params = new URLSearchParams({ username: name, limit: String(PAGE_LIMIT) })
     if (before) params.set('before', String(before))
+    const key = `${kind}:${name}`
     const controller = new AbortController()
-    controllers[name]?.abort()
-    controllers[name] = controller
+    controllers[key]?.abort()
+    controllers[key] = controller
     try {
       const response = await fetch('/api/friends/messages?' + params.toString(), {
         headers: { accept: 'application/json' },
@@ -119,42 +141,47 @@ export const useDmStore = defineStore('dm', () => {
     active.value = name
     unread.value[name] = 0
     const thread = ensure(name)
-    const token = bumpToken(name)
+    const seq = bumpSeq(openSeq, name)
     thread.loading = true
     thread.error = ''
-    const page = await fetchPage(name)
-    if (tokens[name] !== token) return
-    thread.loading = false
-    if (page.error) {
-      thread.error = page.error
-      return
+    try {
+      const page = await fetchPage(name, undefined, 'open')
+      if (openSeq[name] !== seq) return
+      if (page.error) {
+        thread.error = page.error
+        return
+      }
+      // 首屏是最新一页：与已有的实时消息合并，而不是覆盖
+      thread.messages = mergeMessages(thread.messages, page.messages)
+      thread.hasMore = page.hasMore
+      thread.loaded = true
+      void markRead(name)
+    } finally {
+      // 只有仍是这次请求的主人时才收尾，新请求会自己置 true 并自己收尾
+      if (openSeq[name] === seq) thread.loading = false
     }
-    // 首屏是最新一页：与已有的实时消息合并，而不是覆盖
-    thread.messages = mergeMessages(thread.messages, page.messages)
-    thread.hasMore = page.hasMore
-    thread.loaded = true
   }
 
   async function loadOlder(name: string): Promise<void> {
     const thread = ensure(name)
     const oldest = thread.messages[0]?.id
     if (thread.loadingOlder || !thread.hasMore || !oldest) return
-    const token = bumpToken(name)
+    const seq = bumpSeq(olderSeq, name)
     thread.loadingOlder = true
     thread.error = ''
-    const page = await fetchPage(name, oldest)
-    if (tokens[name] !== token) return
-    thread.loadingOlder = false
-    if (page.error) {
-      thread.error = page.error
-      return
+    try {
+      const page = await fetchPage(name, oldest, 'older')
+      if (olderSeq[name] !== seq) return
+      if (page.error) {
+        thread.error = page.error
+        return
+      }
+      thread.messages = mergeMessages(page.messages, thread.messages)
+      thread.hasMore = page.hasMore
+    } finally {
+      // 关键：即使这次请求已被新一次 open 顶掉，也要把自己置的 loadingOlder 清掉
+      if (olderSeq[name] === seq) thread.loadingOlder = false
     }
-    thread.messages = mergeMessages(pathMessages(page.messages, thread.messages), [])
-    thread.hasMore = page.hasMore
-  }
-
-  function pathMessages(older: DmMessage[], current: DmMessage[]): DmMessage[] {
-    return mergeMessages(older, current)
   }
 
   /**
@@ -185,6 +212,41 @@ export const useDmStore = defineStore('dm', () => {
     }
   }
 
+  /**
+   * 标读：只对"面板可见 + 正是当前会话"生效。在途期间又收到消息时补一次，
+   * 保证新消息不会因为请求时序而永久漏读（审查 P2-3）。
+   */
+  async function markRead(name: string): Promise<void> {
+    if (!visible.value || active.value !== name || !name) return
+    if (readInFlight.has(name)) {
+      readPending.add(name)
+      return
+    }
+    readInFlight.add(name)
+    try {
+      await fetch('/api/friends/messages/read', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ username: name }),
+      })
+      unread.value[name] = 0
+    } catch {
+      // 网络失败：下次推送/打开会话时会再试，不在此处报错刷屏
+    } finally {
+      readInFlight.delete(name)
+      if (readPending.delete(name) && visible.value && active.value === name) {
+        void markRead(name)
+      }
+    }
+  }
+
+  /** 面板开关：打开时补标读，关闭后不再把缓存会话当成"正在阅读"。 */
+  function setVisible(next: boolean): void {
+    visible.value = next
+    if (!next) readPending.clear()
+    if (next && active.value) void markRead(active.value)
+  }
+
   /** 实时推送：归到发送者那一会话；不是当前会话就记未读。 */
   function receivePush(payload: Record<string, unknown> | null | undefined): { name: string; unread: number } {
     if (!payload) return { name: '', unread: 0 }
@@ -201,11 +263,27 @@ export const useDmStore = defineStore('dm', () => {
     }
     const thread = ensure(name)
     thread.messages = mergeMessages(thread.messages, [message])
-    if (active.value !== name) {
+    const reading = visible.value && active.value === name
+    if (!reading) {
       unread.value[name] = (unread.value[name] ?? 0) + 1
       return { name, unread: unread.value[name] }
     }
+    unread.value[name] = 0
+    void markRead(name)
     return { name, unread: 0 }
+  }
+
+  /**
+   * 用服务端读数校正本地角标：刷新面板后本地未读不会和服务器打架。
+   * 正在看的那条会话恒为 0（读屏即已读）。
+   */
+  function syncUnread(serverUnread: Record<string, number>): void {
+    const next: Record<string, number> = {}
+    for (const [name, count] of Object.entries(serverUnread)) {
+      if (name === active.value && visible.value) continue
+      if (count > 0) next[name] = count
+    }
+    unread.value = next
   }
 
   /** 重新拉一次列表后：清掉已不是好友的会话缓存，保留正在看的会话。 */
@@ -221,7 +299,11 @@ export const useDmStore = defineStore('dm', () => {
     threads.value = {}
     drafts.value = {}
     unread.value = {}
-    for (const key of Object.keys(tokens)) delete tokens[key]
+    visible.value = false
+    readInFlight.clear()
+    readPending.clear()
+    for (const key of Object.keys(openSeq)) delete openSeq[key]
+    for (const key of Object.keys(olderSeq)) delete olderSeq[key]
     for (const key of Object.keys(controllers)) {
       controllers[key].abort()
       delete controllers[key]
@@ -239,6 +321,11 @@ export const useDmStore = defineStore('dm', () => {
     activeLoadingOlder,
     activeError,
     unreadFor,
+    totalUnread,
+    syncUnread,
+    visible,
+    setVisible,
+    markRead,
     draft,
     open,
     loadOlder,

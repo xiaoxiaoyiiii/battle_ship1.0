@@ -2429,3 +2429,547 @@
   background: var(--border-strong);
   opacity: 0.5;
 }
+
+/* =========================================================================
+ * 原 main 视觉主体（第四批）：身份条 / 浮动聊天与日志 / 竖向连锁轨道 /
+ * 独立卡牌详情 / 手牌原画。全部按 main 的实际覆盖关系收敛，不再靠 token 近似。
+ * ====================================================================== */
+
+/* ---- 身份条：对手在顶、己方摘要成卡（原 .players-info + arena-oppbar-bg） ---- */
+.game[data-layout='wide'] .game-hud {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.hud-players {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* 宽屏把身份条做成顶栏下方的独立一行（原 main 的 arena-oppbar-bg） */
+.game[data-layout='wide'] .hud-players {
+  flex: 1 1 100%;
+  order: 3;
+  justify-content: flex-start;
+  padding-top: 5px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.arena-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 10px 4px 4px;
+  border: 1px solid var(--panel-line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-chamber) 82%, transparent);
+}
+
+.arena-player--opponent {
+  border-color: color-mix(in srgb, var(--role-enemy) 38%, transparent);
+}
+
+.arena-player--self {
+  border-color: color-mix(in srgb, var(--role-self) 38%, transparent);
+}
+
+.arena-avatar {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border-radius: 50%;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--role-action) 55%, transparent), transparent 70%), var(--surface-deck);
+  border: 1px solid var(--border-strong);
+}
+
+.arena-avatar--opponent {
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--role-enemy) 55%, transparent), transparent 70%), var(--surface-deck);
+  border-color: color-mix(in srgb, var(--role-enemy) 55%, transparent);
+}
+
+.arena-avatar--self {
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--role-self) 55%, transparent), transparent 70%), var(--surface-deck);
+  border-color: color-mix(in srgb, var(--role-self) 55%, transparent);
+}
+
+.arena-player__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.arena-player__meta .hud-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.arena-player__line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+}
+
+.arena-player__pips {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.arena-player__pips i {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  background: var(--role-self);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--role-self) 60%, transparent);
+}
+
+.arena-player--opponent .arena-player__pips i {
+  background: var(--role-enemy);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--role-enemy) 55%, transparent);
+}
+
+.arena-player__pips i.is-lost {
+  background: color-mix(in srgb, var(--role-disabled) 55%, transparent);
+  box-shadow: none;
+}
+
+.arena-player__pips i.is-frozen {
+  background: var(--role-warning);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--role-warning) 60%, transparent);
+}
+
+/* ---- 己方舰队摘要：原 main 手牌左侧的整块（fixed，不挤中场） ---- */
+.arena-fleet {
+  position: fixed;
+  left: 20px;
+  bottom: 16px;
+  z-index: 30;
+  width: 232px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-left: 3px solid color-mix(in srgb, var(--role-self) 70%, transparent);
+  border-radius: 12px;
+  box-shadow: var(--shadow-panel);
+}
+
+.arena-fleet__head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.arena-fleet__name {
+  display: block;
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+
+.arena-fleet__ships {
+  margin: 0;
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+}
+
+/* ---- 浮动窗口：日志 / 聊天（原 main 的三块 fixed 浮窗之二） ---- */
+.game[data-layout='wide'] .game-main-container {
+  padding-left: 300px;
+}
+
+.log-container.game-float {
+  width: 280px;
+  max-height: 340px;
+  flex: 0 0 auto;
+  z-index: 60;
+}
+
+.log-container.game-float.is-collapsed {
+  max-height: none;
+}
+
+.log-header__actions {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.game-float .hud-btn {
+  height: 22px;
+  min-height: 22px;
+  padding: 0 7px;
+  font-size: 10.5px;
+}
+
+/* ---- 竖向连锁轨道（原 #arena-chain-slot） ---- */
+.arena-chain-slot {
+  flex: 1 1 auto;
+  min-height: 236px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--gold) 60%, transparent);
+  background: color-mix(in srgb, var(--gold) 7%, var(--surface-chamber));
+  overflow-y: auto;
+}
+
+.arena-chain-slot .arena-rail-empty {
+  margin: auto 0;
+}
+
+.chain-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+
+.chain-stack__item {
+  width: 104px;
+  height: 156px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--gold) 55%, transparent);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-deck);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .45);
+}
+
+.chain-stack__item + .chain-stack__item {
+  margin-top: -52px;
+}
+
+.chain-stack__item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.chain-stack__item.is-spent {
+  filter: grayscale(.7) brightness(.75);
+}
+
+.chain-stack__name {
+  margin-top: 18px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+/* ---- 独立卡牌详情（原 #magic-card-preview：卡名 → 156px 卡面 → 规则） ---- */
+.arena-rail .game-detail {
+  position: static;
+  width: 100%;
+  max-height: none;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--gold) 42%, transparent);
+  background: var(--panel);
+  box-shadow: var(--shadow-panel);
+}
+
+.game-detail__face {
+  margin: 0;
+  display: flex;
+  justify-content: center;
+}
+
+.arena-rail .game-detail__face .game-detail__art {
+  width: min(100%, 156px);
+  height: auto;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--gold) 55%, transparent);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .45);
+}
+
+.arena-rail .game-detail__meta {
+  margin: 0;
+  font-size: 11px;
+  color: var(--gold-strong);
+}
+
+.arena-rail .game-detail__desc {
+  margin: 0;
+  max-height: 190px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--text-secondary);
+}
+
+/* ---- 手牌：完整卡面为主，重复文字层隐藏（原 .has-card-face） ---- */
+.game[data-layout='wide'] .card--art .card__name,
+.game[data-layout='wide'] .card--art .card__gems,
+.game[data-layout='wide'] .card--art .card__type,
+.game[data-layout='wide'] .card--art .card__desc {
+  display: none;
+}
+
+.game[data-layout='wide'] .card--art .card__art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 1;
+  border-radius: inherit;
+}
+
+.game[data-layout='wide'] .card--art {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-deck);
+}
+
+.game[data-layout='wide'] .card--art .card__body {
+  position: absolute;
+  inset: auto 0 0;
+  /* `.card__body` 原本 height:100%，会和 bottom:0 一起把内容拉回顶部 */
+  height: auto;
+  display: block;
+  padding: 0;
+  background: none;
+}
+
+/* 不可用原因保留成可读小条，不靠整层描述遮住卡面 */
+.game[data-layout='wide'] .card--art .card__reason {
+  display: block;
+  margin: 0;
+  padding: 3px 5px;
+  font-size: 9.5px;
+  line-height: 1.3;
+  color: #ffe1c2;
+  background: rgba(12, 8, 4, .82);
+  border-top: 1px solid color-mix(in srgb, var(--role-warning) 55%, transparent);
+}
+
+/* ---- 紧凑档：身份条收成一行，规则与浮窗沿用已验收的抽屉/面板 ---- */
+.game[data-layout='compact'] .arena-player {
+  padding: 2px 8px 2px 2px;
+  gap: 6px;
+}
+
+.game[data-layout='compact'] .arena-avatar {
+  width: 24px;
+  height: 24px;
+  flex-basis: 24px;
+  font-size: 11px;
+}
+
+.game[data-layout='compact'] .arena-player__line {
+  gap: 5px;
+  font-size: 9.5px;
+}
+
+.game[data-layout='compact'] .arena-player__pips i {
+  width: 8px;
+  height: 8px;
+}
+
+.game[data-layout='compact'] .arena-fleet {
+  display: none;
+}
+
+.game[data-layout='compact'] .chain-stack__item {
+  width: 76px;
+  height: 114px;
+}
+
+.game[data-layout='compact'] .chain-stack__item + .chain-stack__item {
+  margin-top: -38px;
+}
+
+/* ---- 宽屏右列拆成「竖向连锁轨道 + 操作列」（原 main 的 ops 列关系） ---- */
+.game[data-layout='wide'] .arena-rail {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    'chain detail'
+    'chain counts'
+    'chain actions';
+  align-content: stretch;
+  gap: 9px;
+  padding-right: 0;
+  overflow: hidden;
+}
+
+.game[data-layout='wide'] .arena-chain-slot {
+  grid-area: chain;
+  min-height: 0;
+  padding: 8px 6px;
+}
+
+.game[data-layout='wide'] .chain-stack__item {
+  width: 76px;
+  height: 114px;
+}
+
+.game[data-layout='wide'] .chain-stack__item + .chain-stack__item {
+  margin-top: -38px;
+}
+
+.game[data-layout='wide'] .arena-rail > .game-detail,
+.game[data-layout='wide'] .arena-rail > .arena-card-placeholder {
+  grid-area: detail;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+}
+
+/* 详情内部自己滚：卡面固定、规则可读、按钮常驻 */
+.game[data-layout='wide'] .arena-rail .game-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-height: 0;
+}
+
+.game[data-layout='wide'] .arena-rail .game-detail__face,
+.game[data-layout='wide'] .arena-rail .game-detail__head,
+.game[data-layout='wide'] .arena-rail .game-detail__meta {
+  flex: 0 0 auto;
+}
+
+.game[data-layout='wide'] .arena-rail .game-detail__desc {
+  flex: 1 1 auto;
+  min-height: 44px;
+  overflow-y: auto;
+}
+
+.game[data-layout='wide'] .arena-rail .game-detail__actions {
+  flex: 0 0 auto;
+  margin-top: 0;
+}
+
+.game[data-layout='wide'] .arena-rail > [data-testid='game-counts'] {
+  grid-area: counts;
+}
+
+.game[data-layout='wide'] .arena-rail > .arena-actions {
+  grid-area: actions;
+}
+
+.game[data-layout='wide'] .arena-rail .game-detail__desc {
+  max-height: 150px;
+}
+
+/* 详情面板：规则文本自己滚（按钮常驻可见，不吸底、不与文本重叠） */
+.game[data-layout='wide'] .arena-rail .game-detail__desc {
+  max-height: 96px;
+  min-height: 64px;
+  overflow-y: auto;
+}
+
+/* 卡面高度让位给规则文本：2:3 比例不变，只是按可用高度缩放 */
+.game[data-layout='wide'] .arena-rail .game-detail__face .game-detail__art {
+  width: auto;
+  max-width: 100%;
+  max-height: 158px;
+  aspect-ratio: 2 / 3;
+}
+
+.game[data-layout='wide'] .arena-rail .game-detail__desc {
+  min-height: 64px;
+}
+
+/* 紧凑档：身份条压成一行（两个小胶囊并排），极矮/极窄档直接让位给棋盘 */
+.game[data-layout='compact'] .hud-players {
+  flex-wrap: nowrap;
+  gap: 6px;
+  width: 100%;
+}
+
+.game[data-layout='compact'] .hud-vs {
+  display: none;
+}
+
+.game[data-layout='compact'] .arena-player {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.game[data-layout='compact'] .arena-player__meta {
+  overflow: hidden;
+}
+
+.game[data-tight='true'] .hud-players,
+.game[data-dense='true'] .hud-players {
+  display: none;
+}
+
+/* 极窄/极矮档：把非关键留白全部让给棋盘 + 主按钮（仍保留 40px 触控下限） */
+.game[data-dense='true'] {
+  gap: 2px;
+  padding: 2px 6px 3px;
+}
+
+.game[data-dense='true'] .game-hud {
+  padding: 3px 8px;
+  gap: 2px 4px;
+  min-height: 0;
+}
+
+.game[data-dense='true'] .hud-chip,
+.game[data-dense='true'] .hud-btn {
+  font-size: 9.5px;
+  padding: 1px 6px;
+  min-height: 20px;
+  height: 20px;
+}
+
+.game[data-dense='true'] .field-magic-area {
+  padding: 2px 8px;
+  font-size: 10.5px;
+}
+
+.game[data-dense='true'] .board-tab {
+  min-height: 32px;
+  font-size: 12px;
+}
+
+.game[data-dense='true'] .game-hand-wrap {
+  padding: 3px 4px 4px;
+}
+
+.game[data-dense='true'] .game-hand {
+  min-height: 0;
+}
+
+/* 紧凑档的详情 sheet 保持原本的紧凑高度：卡面靠手牌缩略图承载，这里只给文字与按钮 */
+.game[data-layout='compact'] .arena-rail--sheet .game-detail__face {
+  display: none;
+}
+
+/* 选目标时底部面板占位：棋盘按剩余高度收一档，避免压住最后一排格子 */
+.game[data-layout="compact"].is-picking .board-wrapper :deep(.board__grid) {
+  height: clamp(168px, 33dvh, 248px);
+  width: auto;
+  max-width: 100%;
+}
+
+.game[data-layout="compact"].is-picking .board-wrapper {
+  padding-bottom: 4px;
+}

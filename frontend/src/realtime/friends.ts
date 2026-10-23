@@ -69,11 +69,19 @@ interface ActiveFriendsChannel {
   releaseSettlement: () => void
   stop: () => void
   refs: number
+  /** 每个调用方自己的 onRequest：外壳与面板各注册一份，互不覆盖。 */
+  handlers: Set<FriendsEventHandlers>
 }
 
 let activeChannel: ActiveFriendsChannel | null = null
 
-/** 打开（或复用）好友事件通道；返回释放函数，引用计数归零时断开监听。 */
+/**
+ * 打开（或复用）好友事件通道；返回释放函数，引用计数归零时断开监听。
+ *
+ * 通道生命周期由外壳（登录期间常驻）与面板（临时）共同持有：监听只装一次，
+ * 每个调用方的 `onRequest` 各自注册，事件广播给所有注册方。这样面板关闭时
+ * 外壳仍在收信（审查 P2-3）。
+ */
 export function acquireFriendsChannel(pinia?: Pinia, handlers: FriendsEventHandlers = {}): () => void {
   if (!activeChannel) {
     const releaseSettlement = acquireSettlementChannel(pinia)
@@ -82,15 +90,28 @@ export function acquireFriendsChannel(pinia?: Pinia, handlers: FriendsEventHandl
       releaseSettlement()
       throw new Error('friends channel did not open a socket')
     }
-    const stop = installFriendsListeners(socket, pinia, handlers)
-    activeChannel = { socket, releaseSettlement, stop, refs: 0 }
+    const channel: ActiveFriendsChannel = {
+      socket,
+      releaseSettlement,
+      stop: () => {},
+      refs: 0,
+      handlers: new Set(),
+    }
+    channel.stop = installFriendsListeners(socket, pinia, {
+      onRequest: (payload) => {
+        for (const entry of channel.handlers) entry.onRequest?.(payload)
+      },
+    })
+    activeChannel = channel
   }
   const channel = activeChannel
   channel.refs += 1
+  channel.handlers.add(handlers)
   let released = false
   return () => {
     if (released) return
     released = true
+    channel.handlers.delete(handlers)
     channel.refs -= 1
     if (channel.refs <= 0 && activeChannel === channel) {
       channel.stop()

@@ -142,9 +142,16 @@ export const useMatchStore = defineStore('match', () => {
     }
   }
 
-  /** 收起面板：保留待响应请求与倒计时，随时可以再打开。 */
+  /**
+   * 收起面板：保留待响应请求、已有连锁牌栈与倒计时，随时可以再打开。
+   *
+   * 审查 P2-2：只有链栈（magic_chain_updated.chain 非空、没有 chain_request）时
+   * 原来什么都不做，因为条件写成了 `if (chainWindow.value)`。收起是**视图状态**，
+   * 与协议里有没有请求无关 —— 只要面板上有内容就该能收起。
+   */
   function collapseChainWindow(): void {
-    if (chainWindow.value) chainWindowCollapsed.value = true
+    // 收起是纯视图状态：面板上有内容（待响应请求或已有链栈）时调用方才给出入口。
+    chainWindowCollapsed.value = true
   }
 
   /** 重新展开被收起的连锁面板。 */

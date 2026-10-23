@@ -108,6 +108,14 @@ async function loadFriends(): Promise<void> {
   outgoing.value = result.data.outgoing ?? []
   counts.value = result.data.counts ?? {}
   dm.prune(friends.value.map((row) => row.username))
+  // 服务端读数覆盖本地角标：刷新后两边计数不会互相对不上
+  dm.syncUnread(
+    Object.fromEntries(
+      friends.value
+        .filter((row) => Number(row.unread ?? 0) > 0)
+        .map((row) => [row.username, Number(row.unread ?? 0)]),
+    ),
+  )
   if (!activeName.value && friends.value.length) {
     void openThread(friends.value[0].username)
   } else if (activeName.value) {

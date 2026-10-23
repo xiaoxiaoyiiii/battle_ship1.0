@@ -1565,60 +1565,9 @@ function backToLobby(): void {
       </div>
 
       <!-- 右列：连锁结算 / 卡牌详情 / 计数与主行动（原 main 的 .arena-rail + 详情列） -->
-      <aside class="arena-rail" :class="{ 'arena-rail--sheet': railSheet, 'arena-rail--responding': !!chainWindow }" aria-label="连锁、卡牌与操作">
+      <aside class="arena-rail" :class="{ 'arena-rail--sheet': railSheet }" aria-label="连锁、卡牌与操作">
         <section class="arena-rail-panel arena-chain-slot" data-testid="game-chain-rail">
           <header class="arena-rail-head">连锁结算</header>
-      <section v-if="chainWindow && chainPanelOpen" class="game-chain-window" data-testid="game-chain-window">
-        <p class="game-chain-window__who">
-          出牌者：<b data-testid="game-chain-window-caster">{{ chainWindow.caster === state.player_id ? selfName : opponentName }}</b>
-        </p>
-        <p class="game-chain-window__card">
-          对方使用了
-          <button
-            type="button"
-            class="game-chain-ref"
-            data-testid="game-chain-window-card"
-            @mouseenter="inspectChain(chainWindow.card)"
-            @focus="inspectChain(chainWindow.card)"
-            @click="inspectChain(chainWindow.card)"
-          >{{ chainWindow.card ? chainWindow.card.name : '魔法卡' }}</button>
-          ，你可以用速阶 3 的卡连锁它。
-        </p>
-        <p class="game-chain-window__consequence game-chain-window__hint" data-testid="game-chain-hint">
-          {{ canHover ? '把鼠标移到卡上（或用键盘聚焦）查看完整效果，点击即打出。' : '点一下先看效果，再点一下才打出；点上面的卡名可看对方那张卡。' }}
-        </p>
-        <section v-if="chainInspect" class="game-chain-inspect" data-testid="game-chain-inspect" aria-live="polite">
-          <b class="game-chain-inspect__name" data-testid="game-chain-inspect-name">{{ chainInspect.name }}</b>
-          <span class="game-chain-inspect__meta">速阶 {{ chainInspect.speed }}<template v-if="chainInspect.type"> · {{ chainInspect.type }}</template></span>
-          <p class="game-chain-inspect__desc" data-testid="game-chain-inspect-desc">{{ chainInspect.description || '暂无效果描述' }}</p>
-        </section>
-        <div class="game-chain-clock">
-          <div
-            class="game-chain-ring"
-            :style="{ '--chain-progress': String(chainProgress) }"
-            aria-hidden="true"
-          ></div>
-          <p class="game-chain-countdown" data-testid="game-chain-window-countdown">剩余 {{ chainRemaining }} 秒</p>
-        </div>
-        <p class="game-chain-window__consequence" data-testid="game-chain-window-consequence">
-          不响应：对方的卡直接生效，你放弃这次连锁机会（这一手不会退回来）。
-        </p>
-        <div class="game-chain-window__actions">
-          <button
-            v-for="(card, index) in speed3Hand"
-            :key="chainCardTestId(card, index, speed3Hand)"
-            type="button"
-            class="button"
-            :class="{ 'is-inspected': chainInspect?.name === card.name }"
-            :data-testid="chainCardTestId(card, index, speed3Hand)"
-            @mouseenter="canHover && inspectChain(card)"
-            @focus="inspectChain(card)"
-            @click="onChainCardClick(card)"
-          >连锁「{{ card.name }}」</button>
-          <button type="button" class="button button--ghost" data-testid="game-chain-collapse" @click="match.collapseChainWindow()">暂时收起 · 查看棋盘</button>
-          <button type="button" class="button button--ghost" data-testid="game-chain-pass" @click="passChain">不响应</button>
-        </div>
-      </section>
           <!-- 原 main 的 .chain-stack：104×156 卡面竖向叠放，相邻压住约 1/3 -->
           <ol v-if="chainList.length" class="chain-stack" data-testid="game-chain-stack">
             <li
@@ -1909,6 +1858,95 @@ function backToLobby(): void {
         </div>
       </div>
     </section>
+
+    <div
+      v-if="chainPanelOpen"
+      class="game-chain-scrim"
+      :class="{ 'game-chain-scrim--modal': !!chainWindow }"
+      data-testid="game-chain-scrim"
+    >
+    <section
+      class="game-chain-panel"
+      data-testid="game-chain-overlay"
+      role="dialog"
+      :aria-modal="chainWindow ? 'true' : undefined"
+      aria-label="连锁"
+    >
+      <header class="game-chain-panel__head">
+        <h2 class="game-chain-panel__title">连锁 {{ chainOrderText }}</h2>
+        <button type="button" class="game-close" data-testid="game-chain-close" aria-label="收起连锁" @click="match.collapseChainWindow()">×</button>
+      </header>
+      <ol v-if="chainList.length" class="game-chain-stack" data-testid="game-chain-stack">
+        <li
+          v-for="(item, index) in chainList"
+          :key="'chain-' + index"
+          class="game-chain-item"
+          :class="{ 'game-chain-item--negated': item.negated }"
+          :data-testid="'game-chain-item-' + index"
+          tabindex="0"
+          :title="item.name"
+          @mouseenter="inspectChain(item)"
+          @focus="inspectChain(item)"
+          @click="inspectChain(item)"
+        >
+          <b :data-testid="'game-chain-item-' + index + '-name'">{{ item.name }}</b>
+          <span class="game-chain-index">第 {{ index + 1 }} 张</span>
+          <span v-if="item.negated" class="game-chain-negated">已无效</span>
+        </li>
+      </ol>
+      <section v-if="chainWindow" class="game-chain-window" data-testid="game-chain-window">
+        <p class="game-chain-window__who">
+          出牌者：<b data-testid="game-chain-window-caster">{{ chainWindow.caster === state.player_id ? selfName : opponentName }}</b>
+        </p>
+        <p class="game-chain-window__card">
+          对方使用了
+          <button
+            type="button"
+            class="game-chain-ref"
+            data-testid="game-chain-window-card"
+            @mouseenter="inspectChain(chainWindow.card)"
+            @focus="inspectChain(chainWindow.card)"
+            @click="inspectChain(chainWindow.card)"
+          >{{ chainWindow.card ? chainWindow.card.name : '魔法卡' }}</button>
+          ，你可以用速阶 3 的卡连锁它。
+        </p>
+        <p class="game-chain-window__consequence game-chain-window__hint" data-testid="game-chain-hint">
+          {{ canHover ? '把鼠标移到卡上（或用键盘聚焦）查看完整效果，点击即打出。' : '点一下先看效果，再点一下才打出；点上面的卡名可看对方那张卡。' }}
+        </p>
+        <section v-if="chainInspect" class="game-chain-inspect" data-testid="game-chain-inspect" aria-live="polite">
+          <b class="game-chain-inspect__name" data-testid="game-chain-inspect-name">{{ chainInspect.name }}</b>
+          <span class="game-chain-inspect__meta">速阶 {{ chainInspect.speed }}<template v-if="chainInspect.type"> · {{ chainInspect.type }}</template></span>
+          <p class="game-chain-inspect__desc" data-testid="game-chain-inspect-desc">{{ chainInspect.description || '暂无效果描述' }}</p>
+        </section>
+        <div class="game-chain-clock">
+          <div
+            class="game-chain-ring"
+            :style="{ '--chain-progress': String(chainProgress) }"
+            aria-hidden="true"
+          ></div>
+          <p class="game-chain-countdown" data-testid="game-chain-window-countdown">剩余 {{ chainRemaining }} 秒</p>
+        </div>
+        <p class="game-chain-window__consequence" data-testid="game-chain-window-consequence">
+          不响应：对方的卡直接生效，你放弃这次连锁机会（这一手不会退回来）。
+        </p>
+        <div class="game-chain-window__actions">
+          <button
+            v-for="(card, index) in speed3Hand"
+            :key="chainCardTestId(card, index, speed3Hand)"
+            type="button"
+            class="button"
+            :class="{ 'is-inspected': chainInspect?.name === card.name }"
+            :data-testid="chainCardTestId(card, index, speed3Hand)"
+            @mouseenter="canHover && inspectChain(card)"
+            @focus="inspectChain(card)"
+            @click="onChainCardClick(card)"
+          >连锁「{{ card.name }}」</button>
+          <button type="button" class="button button--ghost" data-testid="game-chain-collapse" @click="match.collapseChainWindow()">暂时收起 · 查看棋盘</button>
+          <button type="button" class="button button--ghost" data-testid="game-chain-pass" @click="passChain">不响应</button>
+        </div>
+      </section>
+    </section>
+    </div>
 
     <section v-if="shieldOpen" class="game-dialog game-shield-choice" data-testid="game-shield-choice" role="dialog" aria-label="仁王之盾选择">
       <h2 class="game-dialog__title" data-testid="game-shield-choice-title">「仁王之盾」：请选择要保护的战舰</h2>

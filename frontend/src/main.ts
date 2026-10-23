@@ -7,6 +7,8 @@ import { createApp, type Component } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
+import { installRouteMotion } from './route-motion'
+import './styles/route-motion.css'
 import { createTestRoot, installTestHooks } from './test-hooks'
 import { applyStoredTheme, useUiStore } from './stores/ui'
 
@@ -18,6 +20,7 @@ const app = createApp((__BS_TEST_HOOKS__ ? createTestRoot(App as Component) : Ap
 const pinia = createPinia()
 
 app.use(pinia)
+installRouteMotion(router)
 app.use(router)
 
 app.config.errorHandler = (error, _instance, info) => {

@@ -14,7 +14,7 @@ from ... import effects
 from ... import replay as replay_rules
 from ...room import PlayerShip, alive_ships, card_payload
 from ..cards import MagicCard
-from .. import temps
+from .. import precheck, temps
 from ..interaction import (
     cell_xy,
     find_ship_at,
@@ -171,6 +171,13 @@ async def renwang(ctx: EffectContext) -> EffectResult:
 async def divine_decree(ctx: EffectContext) -> EffectResult:
     if int(ctx.caster.remaining_ships or 0) <= 2:
         return EffectResult(False, "您的船数不足，无法使用神之宣告")
+
+    # 连锁里可能已经把目标船弄死了：动手之前再查一次，整体失败而不是部分献祭。
+    stale = precheck.resolution_error(
+        ctx.room, ctx.caster_id, "神之宣告", ctx.targets
+    )
+    if stale:
+        return EffectResult(False, stale)
 
     chosen: list[PlayerShip] = []
     raw = ctx.targets.get("selected_cells") if isinstance(ctx.targets, dict) else None

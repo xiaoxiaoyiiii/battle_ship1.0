@@ -272,12 +272,26 @@ class GameplayService:
             return dict(FINISHED_GAME)
 
         player = room.players[player_id]
+        # 只有「开局布船」和「自己确实欠着重布」时才允许提交棋盘。战斗进行中随手上交
+        # 一份棋盘会重置对手已有的布局并把对局打回猜拳——这是破坏性副作用，先拒。
+        placing_phase = _state_value(room) == RoomState.PLACING_SHIPS.value
+        if not placing_phase and not player.needs_reset:
+            return {"status": "error", "message": "战斗进行中不能重新布置战舰"}
         try:
             ships = placement_rules.validate_placement(
                 data.get("ships"), placement_rules.expected_ship_count(player)
             )
         except PlacementError as error:
             return {"status": "error", "message": str(error)}
+        # 灵气复苏这类「只能摆在原船位」的卡：白名单由发牌方写进 game_effects。
+        allowed = (room.game_effects.get("reset_allowed_cells") or {}).get(player_id)
+        if allowed is not None:
+            allowed_cells = {(int(cell["x"]), int(cell["y"])) for cell in allowed}
+            submitted = {
+                (int(pos.x), int(pos.y)) for ship in ships for pos in ship.positions
+            }
+            if not submitted <= allowed_cells:
+                return {"status": "error", "message": "只能在原本有战舰的格子上重新布置"}
         placement_rules.apply_placement(player, ships)
 
         # AI room: the human's submission also fills the AI seat (legacy).
@@ -329,7 +343,7 @@ class GameplayService:
             result = await self.magic.cancel_placement(room, player_id)
             await self.rooms.push_room_sync(room)
             return result
-        magic_temps.finish(room, "pending_placement")
+        magic_temps.finish(room, "pending_placement", owner=player_id)
         player = room.players.get(player_id)
         if player is not None and player.socket_id:
             await self._publisher.emit(
@@ -341,8 +355,14 @@ class GameplayService:
     async def _complete_reset_placement(self, room: Room, player_id: str) -> bool:
         """Finish a mid-game board reset (回光返照 / 灵气复苏 / 败者食尘)."""
 
+        def _settle_obligations() -> None:
+            for seat in room.players.values():
+                seat.needs_reset = False
+            room.game_effects.pop("reset_allowed_cells", None)
+
         if getattr(room, "huiguang_awaiting_placement", False):
             room.huiguang_awaiting_placement = False
+            _settle_obligations()
             room.state = RoomState.ATTACKING
             room.current_attacker = player_id
             room.current_phase = RoomPhase.PREPARATION
@@ -379,6 +399,7 @@ class GameplayService:
             room.lingqi_saved_state = None
             room.attack_order = saved.get("attack_order") or list(room.players)
             room.current_attacker = saved.get("current_attacker") or room.attack_order[0]
+            _settle_obligations()
             room.round = saved.get("round", room.round)
             phase = saved.get("current_phase", RoomPhase.PREPARATION.value)
             room.current_phase = RoomPhase(phase) if phase in (

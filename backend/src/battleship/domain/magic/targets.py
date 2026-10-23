@@ -28,13 +28,29 @@ BOARD_MIN = 0
 BOARD_MAX = 5
 
 
-def _int(value: Any) -> int | None:
+def strict_int(value: Any) -> int | None:
+    """只接受真正的整数（或纯数字字符串）。
+
+    以前这里 `int(value)` 会把 0.5/1.5 截成 0/1、把 `True` 变成 1，等于替客户端
+    猜坐标。现在先按类型拒绝，再谈范围：布尔、浮点（含 1.0）、无穷、NaN 一律非法。
+    """
+
     if isinstance(value, bool):
         return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        digits = text[1:] if text[:1] in "+-" else text
+        if digits.isdigit():
+            return int(text)
+    return None
+
+
+def _int(value: Any) -> int | None:
+    """内部归一化仍允许整数型字符串，但绝不接受浮点。"""
+
+    return strict_int(value)
 
 
 def normalize_area(area: dict[str, Any]) -> tuple[int, int, int, int] | None:
@@ -137,5 +153,6 @@ __all__ = [
     "LINE_CARDS",
     "connected",
     "normalize_area",
+    "strict_int",
     "validate",
 ]

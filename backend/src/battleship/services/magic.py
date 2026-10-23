@@ -44,6 +44,7 @@ from ..domain.magic import chain as chain_rules
 from ..domain.magic.chain import CHAIN_RESPONSE_SECONDS, ChainItem, ChainResult
 from ..domain.magic.effects.base import EffectContext, EffectResult
 from ..domain.spectate.rules import AREA_TARGET_BOARDS
+from ..domain.magic import precheck as magic_precheck
 from ..domain.magic import targets as target_rules
 from ..domain.magic import temps as magic_temps
 from ..domain.magic.rules import (
@@ -101,6 +102,20 @@ def _init_descriptions() -> None:
 
 
 _init_descriptions()
+
+
+def _temp_payload(value: Any) -> Any:
+    """把待选择项序列化成线上 JSON：卡牌/战舰对象展开成 dict，不能变成 repr 字符串。"""
+
+    if isinstance(value, dict):
+        return {str(key): _temp_payload(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_temp_payload(item) for item in value]
+    if hasattr(value, "model_dump"):
+        return _temp_payload(value.model_dump())
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return repr(value)
 
 
 class MagicService:
@@ -553,13 +568,17 @@ class MagicService:
 
     async def _start_placement(self, room: Room, caster_id: str, kind: str,
                                count: int) -> None:
-        room.magic_temp_data["pending_placement"] = {
-            "caster": caster_id,
-            "kind": kind,
-            "remaining": count,
-            "total": count,
-            "placed": 0,
-        }
+        # 摆船也是「待选择项」：必须走队列，否则和灵气/仁王这类 type 选择项互相覆盖，
+        # 连续两张增援也会把上一张的进度盖掉。
+        magic_temps.store(room, {
+            "pending_placement": {
+                "caster": caster_id,
+                "kind": kind,
+                "remaining": count,
+                "total": count,
+                "placed": 0,
+            },
+        })
         await self._emit_placement_request(room, caster_id)
 
     async def confirm_reinforcement_position(
@@ -711,7 +730,7 @@ class MagicService:
     async def _finish_placement(self, room: Room, player_id: str, kind: str) -> None:
         pending = self._pending_placement(room) or {}
         placed = int(pending.get("placed") or 0)
-        magic_temps.finish(room, "pending_placement")
+        magic_temps.finish(room, "pending_placement", owner=player_id)
         if kind == "last_stand":
             room.game_effects.pop("last_stand_cells", None)
             room.game_effects.pop("last_stand_owner", None)
@@ -807,6 +826,10 @@ class MagicService:
         targets, target_error = sanitize_targets(data.get("targets", {}), card.name)
         if target_error:
             return {"status": "error", "message": target_error}
+        # 状态级预检（例如神之宣告必须选满两艘活舰）：扣牌之前拒绝，零副作用。
+        selection_error = magic_precheck.precheck(room, player_id, card.name, targets)
+        if selection_error:
+            return {"status": "error", "message": selection_error}
 
         frozen = self._frozen_reason(room, player_id)
         if frozen:
@@ -1590,20 +1613,47 @@ class MagicService:
             })
         return {"status": "success"}
 
-    @staticmethod
-    def _with_promoted_choice(room: Room, result: dict) -> dict:
-        """确认完一项后，如果队列里还有下一项，就把它一并告诉客户端。"""
+    async def _sync_each_seat(self, room: Room) -> None:
+        """给每个座位各推一份权威快照（同一事件、按人裁剪，不新增协议）。"""
+
+        for seat_id, seat in room.players.items():
+            if not seat.socket_id:
+                continue
+            await self._publisher.emit(
+                "room_sync",
+                build_room_sync(
+                    room,
+                    str(seat_id),
+                    turn_timeout_seconds=int(
+                        getattr(self.rooms, "turn_timeout_seconds", 0) or 0
+                    ),
+                ),
+                to=seat.socket_id,
+            )
+
+    async def _with_promoted_choice(self, room: Room, result: dict, confirmer: str) -> dict:
+        """确认完一项后，把下一项交给**它的主人**。
+
+        队列里下一项常常是另一个人的（两人先后放仁王之盾）。这时不能把别人的候选
+        船位塞进这个确认者的回包——那等于泄露信息且让他的面板跳到别人的待办上；
+        改为给每个座位各推一份权威快照，谁的待办谁自己看到。
+        """
 
         promoted = room.magic_promoted
         room.magic_promoted = None
-        if not promoted or not isinstance(result, dict) or result.get("status") != "success":
+        if not promoted:
             return result
-        key = magic_temps.key_of(promoted)
+        owner = magic_temps.owner_of(promoted) or ""
+        key = magic_temps.key_of(promoted) or ""
+        ok = isinstance(result, dict) and result.get("status") == "success"
+        if not ok or (owner and owner != confirmer):
+            await self._sync_each_seat(room)
+            return result
         if not key:
             return result
         result = dict(result)
         result["next_temp_data_id"] = key
-        result["next_temp"] = json.loads(json.dumps(promoted, default=str))
+        result["next_temp"] = _temp_payload(promoted)
         return result
 
     async def confirm_magic_target(self, connection: Connection | dict[str, Any],
@@ -1641,7 +1691,7 @@ class MagicService:
                 return {"status": "error", "message": "无效的临时数据ID"}
             return {"status": "error", "message": "当前没有待处理的魔法卡选择"}
         result = await handler(room, player_id, temp, target_data)
-        return self._with_promoted_choice(room, result)
+        return await self._with_promoted_choice(room, result, player_id)
 
     async def _confirm_taoyuan(self, room: Room, player_id: str,
                                temp: dict[str, Any], target_data: dict[str, Any]) -> dict:
@@ -1681,7 +1731,7 @@ class MagicService:
             if index not in (caster_choice, opponent_choice)
         ]
         room.magic_deck += remaining
-        magic_temps.finish(room, "taoyuan_choice")
+        magic_temps.finish(room, "taoyuan_choice", owner=player_id)
         await self._emit_hand(caster)
         await self._emit_hand(opponent)
         if opponent.socket_id:
@@ -1724,6 +1774,16 @@ class MagicService:
         if target_ships < 1 or target_ships > max_ships:
             return {"status": "error", "message": f"无效的船数选择，应在1-{max_ships}之间"}
 
+        # 卡面「只可以在自己原本有战舰的地方进行调整」：清空之前先把各自的原船位记下来，
+        # 由 `place_ships` 在真正写入前校验（含沉船位，复活/重摆都可能用到）。
+        room.game_effects["reset_allowed_cells"] = {
+            pid: [
+                {"x": int(pos.x), "y": int(pos.y)}
+                for ship in pl.ships
+                for pos in ship.positions
+            ]
+            for pid, pl in room.players.items()
+        }
         frames = lifecycle_rules.clear_board_effects(room, list(room.players), "灵气复苏")
         frames += lifecycle_rules.clear_multiturn_effects(room, "灵气复苏")
         interaction_rules.clear_ship_picks(room)
@@ -1736,7 +1796,7 @@ class MagicService:
             player.max_ships = target_ships
         replay_rules.note_board_reset(room)
         replay_rules.note_board_replaced(room)
-        magic_temps.finish(room, "lingqi_choice")
+        magic_temps.finish(room, "lingqi_choice", owner=player_id)
         # AI seats take their new board inside this stack frame (lesson #38).
         await self._ai_place_any(room)
         room.lingqi_saved_state = {
@@ -1822,7 +1882,7 @@ class MagicService:
         buried = pile.pop(index)
         room.magic_discard.append(buried)
         await self._emit_card_discarded(room, player_id, buried, "bury")
-        magic_temps.finish(room, "bury_choice")
+        magic_temps.finish(room, "bury_choice", owner=player_id)
         deck_before = len(room.magic_deck)
         drawn = await self.draw(room, player_id)
         if opponent is not None:
@@ -1867,7 +1927,7 @@ class MagicService:
         if own_card is not None:
             room.magic_discard.append(own_card)
             await self._emit_card_discarded(room, player_id, own_card, "wangyang")
-        magic_temps.finish(room, "wangyang_choice")
+        magic_temps.finish(room, "wangyang_choice", owner=player_id)
         await self._emit_hand(room.players[player_id])
         opponent_id = room.opponent_of(player_id)
         if opponent_id and room.players[opponent_id].socket_id:
@@ -1911,7 +1971,7 @@ class MagicService:
             selected.append(caster.ships[index])
         if not selected:
             return {"status": "error", "message": "无效的选择（已沉没的船不能加护盾）"}
-        magic_temps.finish(room, "shield_choice")
+        magic_temps.finish(room, "shield_choice", owner=player_id)
         interaction_rules.consume_ship_pick(room, player_id, "shield_choice")
         await self._emit_player_ships(room, player_id)
         await self._publisher.emit(
@@ -3115,9 +3175,8 @@ def sanitize_targets(targets: Any, card_name: str) -> tuple[dict[str, Any], str 
         for key in ("x1", "y1", "x2", "y2"):
             if key not in area:
                 return targets, "目标区域参数缺失"
-            try:
-                value = int(area[key])
-            except (TypeError, ValueError):
+            value = target_rules.strict_int(area[key])
+            if value is None:
                 return targets, "目标区域坐标非法"
             if not (0 <= value <= 5):
                 return targets, "目标区域坐标超出棋盘范围"
@@ -3127,9 +3186,8 @@ def sanitize_targets(targets: Any, card_name: str) -> tuple[dict[str, Any], str 
     if isinstance(line, dict):
         if line.get("type") not in ("row", "col"):
             return targets, "目标行列参数非法"
-        try:
-            index = int(line.get("index"))
-        except (TypeError, ValueError):
+        index = target_rules.strict_int(line.get("index"))
+        if index is None:
             return targets, "目标行列坐标非法"
         if not (0 <= index <= 5):
             return targets, "目标行列坐标超出棋盘范围"
@@ -3141,9 +3199,9 @@ def sanitize_targets(targets: Any, card_name: str) -> tuple[dict[str, Any], str 
             for cell in cells:
                 if not isinstance(cell, dict):
                     return targets, "目标格子格式错误"
-                try:
-                    x, y = int(cell["x"]), int(cell["y"])
-                except (KeyError, TypeError, ValueError):
+                x = target_rules.strict_int(cell.get("x"))
+                y = target_rules.strict_int(cell.get("y"))
+                if x is None or y is None:
                     return targets, "目标格子坐标非法"
                 if not (0 <= x <= 5 and 0 <= y <= 5):
                     return targets, "目标格子坐标超出棋盘范围"

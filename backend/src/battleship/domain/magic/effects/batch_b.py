@@ -151,13 +151,19 @@ async def renwang(ctx: EffectContext) -> EffectResult:
             for ship in ctx.caster.ships
         ],
     })
-    await ctx.request_ship_pick(
+    picked = await ctx.request_ship_pick(
         ctx.caster_id,
         "shield_choice",
         "仁王之盾：请选择要保护的战舰（至多 3 艘）",
         False,
         True,
     )
+    if picked is not None:
+        # AI 座位同步给出答案：就地加盾并结束这一项，否则 temp 会一直挂着。
+        picked.shield = True
+        temps.finish(ctx.room, "shield_choice")
+        await ctx.sync_player_ships(ctx.caster_id)
+        return EffectResult(True, "已为 1 艘战舰添加护盾")
     return EffectResult(True, "请选择要保护的战舰", temp_data_id="shield_choice")
 
 
@@ -177,11 +183,8 @@ async def divine_decree(ctx: EffectContext) -> EffectResult:
             if ship is not None and ship not in chosen:
                 chosen.append(ship)
     if len(chosen) < 2:
-        pool = [ship for ship in alive_ships(ctx.caster) if ship not in chosen]
-        ctx.rng.shuffle(pool)
-        chosen.extend(pool[: 2 - len(chosen)])
-    if len(chosen) < 2:
-        return EffectResult(False, "您的船数不足，无法使用神之宣告")
+        # 卡面要求「选自己两艘船死亡」：没选够就拒绝并退牌，不能替玩家随机献祭。
+        return EffectResult(False, "请先选中自己两艘要牺牲的战舰")
 
     for ship in chosen[:2]:
         await ctx.sacrifice_ship(ctx.caster_id, ship, "divine_decree")

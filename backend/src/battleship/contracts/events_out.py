@@ -190,6 +190,13 @@ class RoomSync(BaseModel):
     opponent_online: bool
     # 新增字段：对手座位是登录账号（由服务端可信判定，不来自客户端自述）。
     opponent_registered: bool
+    # 重连恢复：整盘重布要知道布船数量与「这盘已经作废」；
+    # `magic_temp` 只回给发起者（对手/观战为 None），`dice_discard_pending`
+    # 同理只回给正在等弃牌的本人。
+    max_ships: int
+    needs_reset: bool
+    magic_temp: dict[str, Any] | None
+    dice_discard_pending: bool
 
 
 #: Authoritative key order/count for the reconnect snapshot.

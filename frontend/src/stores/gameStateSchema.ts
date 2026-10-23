@@ -95,6 +95,12 @@ export interface GameState {
   opponent_online: boolean
   // 服务端可信：对手席位是已登录账号（游客/AI/无对手均为 false）。
   opponent_registered: boolean
+  // 重连恢复：整盘重布所需的布船数量与「本盘作废」；待选魔法项与骰子弃牌
+  // 只对发起者本人有值（对手/观战为 null / false）。
+  max_ships: number
+  needs_reset: boolean
+  magic_temp: Record<string, unknown> | null
+  dice_discard_pending: boolean
   // game_state-only payload keys (never part of room_sync).
   winner_card: Record<string, unknown> | null
   loser_cards: Array<Record<string, unknown> | null>
@@ -163,6 +169,10 @@ const FIELD_SPECS = {
   opponent_ready: { type: 'boolean', nullable: false, default: false, note: '对手是否已摆好战舰（布船/猜拳等待）' },
   opponent_online: { type: 'boolean', nullable: false, default: false, note: '对手是否在线（布船/猜拳等待）' },
   opponent_registered: { type: 'boolean', nullable: false, default: false, note: '对手是否为已登录账号（服务端可信；缺省=false，游客/AI/无对手都不查公开资料）' },
+  max_ships: { type: 'number', nullable: false, default: 6, note: '本盘允许的布船数量（灵气复苏/败者食尘会改）' },
+  needs_reset: { type: 'boolean', nullable: false, default: false, note: '本方棋盘已作废、需要按 max_ships 重布' },
+  magic_temp: { type: 'object', nullable: true, default: null, note: '只回给发起者的待选魔法项；对手/观战为 null' },
+  dice_discard_pending: { type: 'boolean', nullable: false, default: false, note: '自己是否正被要求弃牌（命运骰子）' },
   winner_card: { type: 'object', nullable: true, default: null, note: '猜拳胜者抽到的卡' },
   loser_cards: { type: 'array', nullable: false, default: [], note: '猜拳败者抽到的卡' },
 } as const satisfies Record<SchemaField, GameStateFieldSpec>

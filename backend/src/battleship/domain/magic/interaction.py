@@ -238,6 +238,57 @@ def placement_blocked_cells(
     return [{"x": x, "y": y} for (x, y) in sorted(blocked)]
 
 
+def placement_blocked_for(
+    room: Room, player_id: str, pending: dict[str, Any] | None
+) -> list[dict[str, int]]:
+    """同一份禁止格：实时 `placement_request` 与重连快照都用它。
+
+    `last_stand` 只允许原本有船的格子、`shenji_redeploy` 允许沉船格与自己未被打过的
+    格；两条规则**只能有一处实现**，否则刷新前后看到的合法格会不一样。
+    """
+
+    kind = (pending or {}).get("kind")
+    if kind == "shenji_redeploy":
+        allowed = {
+            xy
+            for xy in (
+                cell_xy(a)
+                for a in (room.game_effects.get("shenji_redeploy_cells") or [])
+            )
+            if xy
+        }
+        return [
+            cell
+            for cell in placement_blocked_cells(room, player_id, ignore_sunken=True)
+            if (cell["x"], cell["y"]) not in allowed
+        ]
+    blocked = placement_blocked_cells(room, player_id)
+    if kind == "last_stand":
+        allowed = {
+            xy
+            for xy in (
+                cell_xy(a)
+                for a in (room.game_effects.get("last_stand_cells") or [])
+            )
+            if xy
+        }
+        return [cell for cell in blocked if (cell["x"], cell["y"]) not in allowed]
+    return blocked
+
+
+def placement_allowed_for(
+    room: Room, pending: dict[str, Any] | None
+) -> list[Any]:
+    """与 `placement_blocked_for` 配套的「必须落在这些格」清单。"""
+
+    kind = (pending or {}).get("kind")
+    if kind == "last_stand":
+        return list(room.game_effects.get("last_stand_cells") or [])
+    if kind == "shenji_redeploy":
+        return list(room.game_effects.get("shenji_redeploy_cells") or [])
+    return []
+
+
 def placement_error(
     room: Room,
     player_id: str,
@@ -289,7 +340,9 @@ __all__ = [
     "my_ship_picks",
     "own_occupied_cells",
     "pick_cell_from_target",
+    "placement_allowed_for",
     "placement_blocked_cells",
+    "placement_blocked_for",
     "placement_error",
     "register_ship_pick",
     "ship_pick_blocked_reason",

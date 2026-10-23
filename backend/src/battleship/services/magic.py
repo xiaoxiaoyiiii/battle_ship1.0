@@ -536,27 +536,12 @@ class MagicService:
             "remaining": pending.get("remaining"),
             "total": pending.get("total"),
             "placed": pending.get("placed"),
-            "blocked": interaction_rules.placement_blocked_cells(room, player_id),
+            "blocked": interaction_rules.placement_blocked_for(room, player_id, pending),
         }
-        if kind == "last_stand":
-            allowed = room.game_effects.get("last_stand_cells") or []
+        allowed = interaction_rules.placement_allowed_for(room, pending)
+        if allowed:
             payload["allowed"] = allowed
-            allow = {xy for xy in (interaction_rules.cell_xy(a) for a in allowed) if xy}
-            payload["blocked"] = [
-                b for b in payload["blocked"] if (b["x"], b["y"]) not in allow
-            ]
-        elif kind == "shenji_redeploy":
-            allow = {
-                xy for xy in (
-                    interaction_rules.cell_xy(a)
-                    for a in (room.game_effects.get("shenji_redeploy_cells") or [])
-                ) if xy
-            }
-            payload["blocked"] = [
-                b for b in interaction_rules.placement_blocked_cells(
-                    room, player_id, ignore_sunken=True)
-                if (b["x"], b["y"]) not in allow
-            ]
+        if kind == "shenji_redeploy":
             payload["message"] = (
                 "预言成功：请选择这艘战舰重新部署的位置（原位置或对方未打过的格子）"
             )

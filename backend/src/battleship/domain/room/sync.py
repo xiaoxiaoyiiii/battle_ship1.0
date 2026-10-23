@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from ...contracts.identity import RoomKind
+from ..magic import interaction as interaction_rules
 from .models import (
     PUBLIC_EFFECT_FLAGS,
     Player,
@@ -50,6 +51,22 @@ PRIORITY_ACTION_TEXT = {
     "enter_battle": "进入战斗阶段",
     "enter_end": "进入结束阶段",
 }
+
+def _my_magic_temp(room: Room, player_id: str) -> dict[str, Any] | None:
+    """自己的待选魔法项（对手与观战永远拿不到）。"""
+
+    temp = room.magic_temp_data if isinstance(room.magic_temp_data, dict) else {}
+    if not temp:
+        return None
+    caster = temp.get("caster")
+    if caster is None and isinstance(temp.get("pending_placement"), dict):
+        caster = temp["pending_placement"].get("caster")
+    if caster is None and isinstance(temp.get("pending_shenji"), dict):
+        caster = temp["pending_shenji"].get("caster")
+    if caster != player_id:
+        return None
+    return dict(temp)
+
 
 def room_kind(room: Room) -> RoomKind:
     if room.is_ai_room:
@@ -280,14 +297,14 @@ def build_room_sync(
         },
         "pending_placement": dict(pending_placement) if placing_for_me else None,
         "pending_placement_blocked": (
-            _placement_blocked_cells(room, player_id) if placing_for_me else []
+            interaction_rules.placement_blocked_for(
+                room, player_id, pending_placement
+            )
+            if placing_for_me
+            else []
         ),
         "pending_placement_allowed": (
-            (
-                room.game_effects.get("shenji_redeploy_cells")
-                or room.game_effects.get("last_stand_cells")
-                or []
-            )
+            interaction_rules.placement_allowed_for(room, pending_placement)
             if placing_for_me
             else []
         ),
@@ -305,6 +322,14 @@ def build_room_sync(
         # visibility, both derived from state the snapshot already reads.
         **turn_timing(room, turn_timeout_seconds),
         **opponent_seat_state(room, player_id),
+        # 重连要能整盘重布（灵气复苏/败者食尘把船数改了）与恢复自己的待选项。
+        # 待选项**只回给发起者**：对手与观战拿到的是 None / False，看不到别人的选择。
+        "max_ships": int(getattr(player, "max_ships", 0) or 0),
+        "needs_reset": bool(getattr(player, "needs_reset", False)),
+        "magic_temp": _my_magic_temp(room, player_id),
+        "dice_discard_pending": bool(
+            (room.pending_dice_discard or {}).get(player_id) is False
+        ),
     }
     # Validation is the freeze: adding/removing a key without updating the
     # contract model fails here instead of silently drifting the wire shape.

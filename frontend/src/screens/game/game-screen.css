@@ -1922,6 +1922,37 @@
   border-radius: 12px;
 }
 
+/* 紧凑档也能一键打开日志/聊天/弃牌堆（原 main 的手机 aux-dock） */
+.game-compact-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.game-compact-top .arena-turn-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.compact-dock {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+}
+
+.compact-dock .button {
+  height: 28px;
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-family: inherit;
+}
+
 /* 详情面板现在住在右列（原 main 的待使用区），不再是浮层 */
 .arena-rail .game-detail {
   position: static;
@@ -2009,6 +2040,65 @@
 
   .arena-rail {
     display: none;
+  }
+
+  /* 选目标时把目标面板放进手牌/主行动腾出的位置：棋盘一格都不能被盖住 */
+  .game.is-picking .game-hand-wrap,
+  .game.is-picking .game-compact-bar {
+    display: none;
+  }
+
+  .game.is-picking .game-target {
+    position: static;
+    transform: none;
+    order: 3;
+    width: 100%;
+    max-height: none;
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  .game.is-picking .game-target__main {
+    flex: 0 0 auto;
+  }
+
+  .game.is-picking .game-target__controls {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  /* 需要时的底部面板：连锁响应 / 卡牌详情 / 待选请求都能在手机上完成 */
+  .arena-rail--sheet {
+    display: flex;
+    position: fixed;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    z-index: 45;
+    max-height: min(46vh, 340px);
+    overflow-y: auto;
+    padding: 8px 10px;
+    gap: 8px;
+    flex-basis: auto;
+    background: var(--surface-chamber);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+  }
+
+  /* 计数/占位/连锁面板在详情弹出层里属于噪音（连锁有自己的浮层） */
+  .arena-rail--sheet > [data-testid='game-counts'],
+  .arena-rail--sheet > [data-testid='game-chain-rail'],
+  .arena-rail--sheet > .arena-card-placeholder {
+    display: none;
+  }
+
+  .arena-rail--sheet .game-detail {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
   }
 
   /* 紧凑档的棋盘改成「按剩余高度取正方形」：宽高都由容器决定，
@@ -2196,6 +2286,15 @@
 
   .game-compact-bar .arena-turn-hint {
     display: none;
+  }
+
+  .game-compact-bar .compact-dock {
+    justify-content: flex-end;
+  }
+
+  .game-compact-bar .compact-dock .button {
+    height: 26px;
+    min-height: 26px;
   }
 
   .game-compact-bar .game-actions__row {

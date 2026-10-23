@@ -157,6 +157,24 @@ const opponentCells = computed(() =>
   }),
 )
 
+/**
+ * 紧凑档一次只显示一块棋盘：选目标时必须把可见棋盘切到目标那一侧，
+ * 否则用户看得到格子但点的是另一块（原 main 双棋盘不存在这个问题）。
+ */
+watch(
+  () => {
+    const sel = selection.value
+    if (!sel) return null
+    // 「选自己两艘舰」这类没有棋盘开关的目标，棋盘就在自己这边。
+    if (sel.descriptor.kind === 'own_ships') return 'self'
+    return sel.board ?? sel.descriptor.board ?? 'opponent'
+  },
+  (board) => {
+    if (!compact.value || !board) return
+    zoomOpen.value = board === 'self'
+  },
+)
+
 const previewKeys = computed<string[]>(() => {
   const sel = selection.value
   if (!sel || !sel.anchor) return []
@@ -297,6 +315,20 @@ interface QuickChatItem {
 
 // ---- self minimap, ship slots and piles ------------------------------------
 const compact = ref(false)
+
+/**
+ * 紧凑档没有常驻右列：连锁响应、卡牌详情、待选请求都必须能弹出成底部面板，
+ * 否则手机上连锁/详情不可达（原 main 用 aux-dock + chain-prompt 保证可达）。
+ */
+const picking = computed(() => !!selection.value || !!match.pickRequest || !!match.shieldChoice)
+
+const railSheet = computed(
+  () =>
+    compact.value &&
+    // 选目标/待选期间绝不能让面板盖住棋盘：棋盘本身就是点击面。
+    !picking.value &&
+    detailOpen.value,
+)
 let mq: MediaQueryList | null = null
 
 function syncCompact(): void {
@@ -1135,6 +1167,7 @@ function backToLobby(): void {
     data-screen="game"
     data-testid="screen-game"
     :data-board-mode="boardMode"
+    :class="{ 'is-picking': picking }"
     aria-labelledby="screen-game-title"
   >
     <h1 id="screen-game-title" class="visually-hidden">对局</h1>
@@ -1221,7 +1254,7 @@ function backToLobby(): void {
         <p v-if="receiptText" class="game-receipt" data-testid="game-receipt" role="status" aria-live="polite">{{ receiptText }}</p>
 
         <!-- 手机档：单块棋盘 + 海域切换标签（标题与提交的棋盘同源） -->
-        <div v-if="compact" class="board-tabs" role="tablist" aria-label="切换棋盘">
+        <div v-if="compact && !selection" class="board-tabs" role="tablist" aria-label="切换棋盘">
           <button
             type="button"
             class="board-tab"
@@ -1283,7 +1316,7 @@ function backToLobby(): void {
       </div>
 
       <!-- 右列：连锁结算 / 卡牌详情 / 计数与主行动（原 main 的 .arena-rail + 详情列） -->
-      <aside class="arena-rail" aria-label="连锁、卡牌与操作">
+      <aside class="arena-rail" :class="{ 'arena-rail--sheet': railSheet }" aria-label="连锁、卡牌与操作">
         <section class="arena-rail-panel" data-testid="game-chain-rail">
           <header class="arena-rail-head">连锁结算</header>
           <ol v-if="chainList.length" class="arena-chain-list" data-testid="game-chain-stack">
@@ -1322,7 +1355,7 @@ function backToLobby(): void {
               />
               <div class="game-detail__ident-text">
                 <h2 class="game-detail__name">{{ hand[selectedCardIndex].name }}</h2>
-                <p class="game-detail__meta">{{ typeLabel(hand[selectedCardIndex]) }} · 速阶 {{ hand[selectedCardIndex].speed }}</p>
+                <p class="game-detail__meta">{{ typeLabel(hand[selectedCardIndex]) }}</p>
               </div>
             </div>
             <button type="button" class="game-close" data-testid="game-card-detail-close" aria-label="关闭卡牌详情" @click="cancelCardSelection">×</button>
@@ -1447,7 +1480,14 @@ function backToLobby(): void {
 
     <!-- 手机档：底部操作条 + 工具入口 -->
     <div v-if="compact" class="game-compact-bar" data-testid="game-actions">
-      <p class="arena-turn-hint" data-testid="game-turn-hint">{{ turnLabel }} · {{ phaseText }}</p>
+      <div class="game-compact-top">
+        <p class="arena-turn-hint" data-testid="game-turn-hint">{{ turnLabel }} · {{ phaseText }}</p>
+        <div class="compact-dock" aria-label="日志与弃牌">
+          <button type="button" class="button button--ghost" data-testid="game-compact-log" @click="logOpen = true">日志</button>
+          <button type="button" class="button button--ghost" data-testid="game-compact-chat" @click="quickChatOpen = true">聊天</button>
+          <button type="button" class="button button--ghost" data-testid="game-compact-piles" @click="openDiscard">弃牌</button>
+        </div>
+      </div>
       <div class="game-actions__row">
         <button
           type="button"

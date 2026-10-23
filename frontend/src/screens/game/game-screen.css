@@ -1881,9 +1881,16 @@
 .game-hand {
   display: flex;
   align-items: flex-end;
+  justify-content: center;
   gap: 10px;
   overflow-x: auto;
   padding-bottom: 2px;
+}
+
+.game-hand-wrap {
+  max-width: 900px;
+  margin: 0 auto;
+  width: 100%;
 }
 
 /* ---- 手机档：单棋盘 + 切换标签 + 底部操作条 ----------------------------- */

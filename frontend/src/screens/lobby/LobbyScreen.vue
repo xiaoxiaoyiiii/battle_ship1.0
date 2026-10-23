@@ -1664,57 +1664,104 @@ onBeforeUnmount(() => {
 
 /* 对照原版大厅：居中两列，左侧房间/对局，右侧玩家/公屏。 */
 @media (min-width: 980px) {
+  .lobby {
+    --lobby-row-height: clamp(150px, calc((100dvh - 570px) / 2), 240px);
+    gap: 8px;
+    padding-top: 12px;
+    padding-bottom: 16px;
+  }
+
+  .lobby__head {
+    gap: 8px;
+  }
+
+  .lobby__topbar {
+    padding-bottom: 8px;
+  }
+
   .lobby__columns {
     grid-template-columns: minmax(0, 1fr) 294px;
-    gap: 14px;
-    align-items: start;
+    grid-template-rows: var(--lobby-row-height) var(--lobby-row-height) auto;
+    gap: 12px 14px;
+    align-items: stretch;
+  }
+
+  .lobby__columns > .lobby__panel {
+    min-height: 0;
+    padding: 12px 14px;
+    gap: 8px;
+  }
+
+  .lobby__panel-head {
+    padding-bottom: 6px;
+  }
+
+  .lobby__fold {
+    min-height: 32px;
+    padding: 2px 10px;
   }
 
   .lobby__panel--rooms {
     grid-column: 1;
     grid-row: 1;
-    min-height: 320px;
+    overflow-y: auto;
   }
 
   .lobby__panel--matches {
     grid-column: 1;
     grid-row: 2;
-    min-height: 240px;
   }
 
   .lobby__panel--players {
     grid-column: 2;
     grid-row: 1;
-    min-height: 250px;
   }
 
   .lobby__panel--chat {
     grid-column: 2;
     grid-row: 2;
-    min-height: 240px;
   }
 
-  .lobby__panel--chat > .lobby__panel-body {
+  .lobby__panel-body {
     flex: 1;
+    min-height: 0;
+  }
+
+  .lobby__panel--matches .lobby__panel-body,
+  .lobby__panel--players .lobby__panel-body {
+    overflow-y: auto;
+  }
+
+  .lobby__panel--matches .lobby__list,
+  .lobby__panel--players .lobby__list {
+    flex: 0 0 auto;
+    max-height: none;
   }
 
   .lobby__panel--chat .lobby__chat {
     flex: 1;
-    min-height: 120px;
-    max-height: 240px;
+    min-height: 0;
+    max-height: none;
     border: 0;
     background: transparent;
     padding: 0;
   }
 
   .lobby__chat-row {
-    padding-top: 10px;
+    flex: 0 0 auto;
+    padding-top: 8px;
     border-top: 1px dashed var(--line-dash);
   }
 
   .lobby__panel--friends {
     grid-column: 1 / -1;
     grid-row: 3;
+  }
+
+  .lobby__panel--friends .button {
+    min-height: 32px;
+    padding-top: 4px;
+    padding-bottom: 4px;
   }
 
   .lobby__columns[data-filter='watchable'] .lobby__panel--matches {

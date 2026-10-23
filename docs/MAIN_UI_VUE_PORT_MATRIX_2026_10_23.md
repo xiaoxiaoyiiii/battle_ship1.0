@@ -16,24 +16,26 @@
 | `#game-over-screen`（:932） | `screens/game-over/GameOverScreen.vue` | 视觉已对齐（前一 PR） | 结算分块 + 四个去向 |
 | `#spectate-screen`（:1046） | `screens/spectate/SpectateScreen.vue` | 视觉已对齐（前一 PR） | 观战 |
 | `#replay-screen`（:1125） | `screens/replay/ReplayScreen.vue` | 视觉已对齐（前一 PR） | 回放 |
-| help / profile / settings / admin / friends / changelog 等弹窗 | `screens/profile|settings/*`、`components/CardCollectionOverlay.vue`、`components/AuthOverlay.vue`、`components/HelpOverlay.vue` | 部分 | 对应关系见下表 |
+| help / profile / settings / friends / changelog 等弹窗 | `components/HelpOverlay.vue`、`components/FriendsOverlay.vue`、`screens/profile/*`、`screens/settings/*`、`components/CardCollectionOverlay.vue`、`components/AuthOverlay.vue` | 已补齐（R2，见第七节） | 帮助取 `/api/rank_constants`、好友取 friends 系列接口、图鉴取 `/api/card_usage` |
 
 ## 二、main 对局 DOM → Vue 结构（本轮）
 
 | main 结构 | fork 对应 | 备注 |
 | --- | --- | --- |
 | `.game-main-container`（flex + wrap） | `.game-main-container`（flex，左日志 / 中内容 / 右 rail） | 结构对齐 main |
-| `.log-container`（固定 280 宽浮动日志窗） | `.log-container`（左列常驻卡 + `game-log-toggle` 打开完整抽屉） | 不再浮动遮挡棋盘 |
+| `.log-container`（固定 280 宽浮动日志窗） | `.log-container`（左列常驻日志卡，逐条列出本局事件） + `game-log-toggle` 打开完整抽屉 | 左列常驻，不浮动遮挡棋盘 |
 | `.game-content`（max-width 900 居中） | `.game-content`（flex 列 + 居中） | |
 | `.game-info` + `.arena-turn-chips` + `#effect-status-bar` | `.game-hud`（回合 + 胶囊行 + 双方名/舰数） + `.effect-status-bar` | chip 类名改为 `hud-chip*` |
 | `.field-magic-area`（全宽条） | `.field-magic-area`（同一全宽条） | 承载 `data-testid="game-field-magic"` |
 | `.boards-container` + 两个 `.board-wrapper` | `.boards-container` + 两个 `.board-wrapper`（己方在左） | **桌面双棋盘常驻**，不再藏进小地图浮层 |
 | `.board-tabs`（me / opp） | `.board-tabs`（`.board-tab`，仅紧凑档显示） | 手机/横屏切换海域 |
 | `#arena-chain-slot`（连锁结算） | `.arena-rail-panel` 内的连锁列表 + 原 `game-chain-panel` 浮层 | |
-| 待使用魔法卡区（`.magic-preview-container`） | `.arena-rail-panel` 内的 `game-detail`（详情面板移到 rail） | 原浮层改为列内面板 |
+| 待使用魔法卡区（`.magic-preview-container`） | `.arena-rail-panel` 内的 `game-detail`（大卡图 + 完整效果文 + 使用/取消） | 原浮层改为列内面板；紧凑档改底部可滚动 sheet |
 | `#turn-indicator` 按钮组（进入战斗/结束大回合/结束回合/弃牌） | `.arena-actions`（`game-primary` + `game-more` 菜单） | 保持 data-testid |
 | `.arena-counts`（手牌/弃牌堆/剩余舰） | `.arena-counts`（三格计数） | 弃牌堆数量服务端未下发 → 显示「—」+ 查看弃牌堆 |
-| 底部手牌 | `.game-hand-wrap` + `.game-hand` + `.card` | 桌面 118×165，紧凑档 64×92（main 同款尺寸） |
+| 底部手牌（扇形） | `.game-hand-wrap` + `.game-hand` + `.card` + `useHandFan.ts` | 桌面按 main 的 `layoutHand` 算法：卡宽 96–132、`--fan-rot`/`--fan-drop`、描述行数 3–7；紧凑档 64×92 不旋转 |
+| `.in-game-chat-container`（可拖动浮窗） | `.game-float` + `useFloatingDrag.ts`（标题栏拖动、边界夹紧） | HUD「聊天」打开；紧凑档仍是抽屉 |
+| 顶栏对手剩余舰方块 | `hud-ship-dots`（6 个小方块，沉没变暗） | `game-ships` 文案与 testid 不变 |
 | `#aux-dock`（手机三选一面板） | `.game-compact-bar`（主操作 + 更多菜单 + 日志/聊天抽屉） | 手机上不放浮层压棋盘 |
 
 ## 三、有意保留的差异
@@ -41,7 +43,7 @@
 1. **卡牌不可用原因**：`game-detail__reason` / `.card__reason` 仍是 fork 的必保能力，main 没有对应文案；本轮保留于详情面板与手牌卡面。
 2. **右下角全局通知**：`components/ToastHost.vue` + `.app-toasts`，main 无此机制；对局屏桌面停靠右上、手机停靠顶部，避免遮住手牌与主操作。
 3. **抽屉式日志/聊天/弃牌堆**：main 用浮动窗口；fork 在对局内用抽屉，避免覆盖棋盘（内容与入口一致）。
-4. **紧凑档（≤719px 宽或 ≤520px 高）**：单棋盘 + 海域标签，与 main 的 `adaptive_layout.js` 同类做法；桌面（≥720×520）必须双棋盘常驻。
+4. **紧凑档判据回到 main**：`useAdaptiveGameLayout.ts` 用原 `adaptive_layout.js` 的 `1200×700`（`compact = !(w>=1200 && h>=700)`），棋盘模式按 `.boards-container` 实测预算选 `side/stack/tabs`，尺寸写 `--board-size`；只有 `tabs` 档才显示海域标签。
 
 ## 四、验证入口
 
@@ -78,3 +80,42 @@
    （目标在己方→显示己方棋盘）；watch 移到 `compact`/`zoomOpen` 声明之后，避免 getter 立即求值触发 TDZ。
 3. **护盾在对方海域误选己方舰**：`onCell` 的 `shieldChoice` 分支先判 `board !== 'self'` 直接拒绝并给出提示，
    不再按坐标匹配己方舰船。
+
+## 七、审查轮 R1 / R2 落地（2026-10-23，基点 23115e1 → 本轮 HEAD）
+
+### R1 对局还原
+
+| 原 main 行为 | Vue 实现 | 证据 | 剩余差异 |
+| --- | --- | --- | --- |
+| 宽屏判据 1200×700 + `--board-size` 实测预算 | `screens/game/useAdaptiveGameLayout.ts`（`WIDE_MIN_W/WIDE_MIN_H/TIGHT_MAX_H/MIN_CELL/MIN_BOARD` 同值） | `spec-dual-board.mjs`、`spec-compact.mjs` | 由「视口预算 + 调用方量到的 chrome 高」代替原 MutationObserver，极限窗口靠屏内滚动兜底 |
+| 双棋盘并排、己方在左、可直接点己方舰格 | `.boards-container` 两个 `.board-wrapper`，`v-show` 由 `boardMode` 决定 | `spec-dual-board.mjs`：1440×900 / 1920×1080 均 PASS，己方舰格 14/14 `elementFromPoint` 命中 | tabs 档（极窄/极矮）仍单棋盘 |
+| 左侧聊天 + 日志浮动窗、可拖动 | 左列常驻日志 + `.game-float` 浮动聊天（`useFloatingDrag.ts`）+ 抽屉 | `spec-floating-chat.mjs`：拖动 `{20,470}→{270,472}`，拖出视口夹到 `x=1132`（`1132+300≤1440`） | 日志用列内卡而非浮动窗（避免压棋盘） |
+| 右侧竖向连锁牌栈 | `.arena-rail-panel` 连锁列表 + 连锁浮层 + 收起后的 `game-chain-reopen` 胶囊 | `spec-regressions.mjs`（12/12 PASS） | — |
+| 独立完整卡牌预览 | rail 内 `game-detail`（大卡图 + 效果全文 + 使用/取消） | `spec-sheet.mjs` | 紧凑档是底部 sheet，可滚动 |
+| 底部扇形大卡 | `useHandFan.ts` + `--hand-card-*` / `--fan-rot` / `--fan-drop` | 探针：1440×900 `--hand-card-w:132px`、三张卡 `rot=-0.0667/0/0.0667` | 选中牌加宽尚未实现（选中只改描边） |
+| 顶栏对手身份/舰数 | `.hud-players` + `hud-ship-dots` | 截图 `shots/port-1440x900-game.png` | — |
+
+### R2 周边功能
+
+| 原 main | Vue 实现 | 数据来源 | 证据 |
+| --- | --- | --- | --- |
+| 好友三列表 + 私聊 | `components/FriendsOverlay.vue`（好友/申请/私聊），导航好友按钮接入 | `GET /api/friends`、`POST /api/friends/respond|remove`、`GET|POST /api/friends/messages`、`/messages/read` | `spec-social-help.mjs`：两个真实临时账号建立好友并互发消息，面板内发送成功（`friends-1440x900.png`、`friends-390x740.png`） |
+| 玩法与段位帮助（九段 + 计分） | `components/HelpOverlay.vue`（头像菜单「玩法与帮助」） | `GET /api/rank_constants`（不写死任何数字；失败显示「段位规则暂不可用」） | 同脚本：9 段阶梯 + 胜利 7 行/失败 7 行真实数据（`help-1440x900.png`、`help-390x740.png`） |
+| 设置预览 + 主色选择器 | `SettingsScreen.vue` 新增主色预设 + 棋盘/命中/主次行动预览；`stores/ui.ts` 的 `accent`/`setAccent` | 本地偏好（写 `--role-action`，可恢复跟随主题） | `spec-collection-settings.mjs`：主色 `#9d84f5 → #4ec8e0` 立即生效、可恢复（`settings-preview-1440x900.png`） |
+| 图鉴使用次数排序 + 速阶/类型独立筛选 + 点卡详情 | `CardCollectionOverlay.vue`（筛选条 + 排序 + 详情侧栏；手机详情在列表上方） | `GET /api/card_usage` | 同脚本：速阶筛选、类型叠加、点卡详情、手机详情在视口内（`collection-detail-1440x900.png`、`collection-detail-390x740.png`） |
+
+### 逐屏有内容证据（真实临时账号，`flows/content-screens.mjs` / `flows/replay-content.mjs`）
+
+| 屏幕 | 状态 | 证据 | 说明 |
+| --- | --- | --- | --- |
+| 资料 `profile` | 已登录、有段位/等级/战绩框架 | `content-profile-1440x900.png` | 人机局不计段位，`总场次` 仍为 0；架构性内容（名片/徽章/回放入口）可见 |
+| 结算 `game-over` | 有内容 | `content-gameover-1440x900.png` | 显示本局结果与「本局回放」按钮 |
+| 回放 `replay` | 有内容 | `content-replay-1440x900.png` | `第 1/12 步`、双视角棋盘、6 艘舰、播放/步进、双方手牌与事件列表 |
+| 观战 `spectate` | 空态（无进行中对局） | `content-spectate-1440x900.png` | 文案「还没有选择要观战的对局…」，需大厅「进行中的对局」进入；登录 + 双方开放观战才可看 |
+
+### 本轮剩余缺口（如实）
+
+1. 扇形手牌的「选中牌 + 右邻居加宽」（main 的 `need = w + 44`）未实现，选中只改描边与上浮。
+2. 观战只截到空态：本机没有第二位玩家持续对局，无法在不干扰数据的前提下造真实观战。
+3. 人机局不计段位分，资料页战绩数字仍为 0（这是规则，不是缺陷）；段位进度条要有真实排位局才有数字。
+4. 仓外 22 条 `data-testid` 浏览器门禁仍未跑（本机无 `D:/develop/battleship-verify`）。

@@ -41,6 +41,11 @@ function openCollection(): void {
   emit('close')
 }
 
+function openHelp(): void {
+  close()
+  ui.openHelp()
+}
+
 function close(): void {
   emit('close')
 }
@@ -119,9 +124,14 @@ function logout(): void {
 
     <section class="app-menu__group" data-testid="avatar-group-about" aria-labelledby="avatar-group-about-title">
       <h2 id="avatar-group-about-title" class="app-menu__title">帮助与关于</h2>
-      <router-link class="app-menu__item" :to="{ name: 'settings' }" data-testid="avatar-item-help" @click="close">
+      <button
+        type="button"
+        class="app-menu__item"
+        data-testid="avatar-item-help"
+        @click="openHelp"
+      >
         玩法与帮助
-      </router-link>
+      </button>
       <button
         v-if="!auth.isGuest"
         type="button"

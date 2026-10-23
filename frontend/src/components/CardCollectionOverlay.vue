@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import AppOverlay from './AppOverlay.vue'
 import { cardArtUrl } from '../cards/cardArt'
 import { CARDS, cardsBySpeed, cardsByType, type CardInfo } from '../cards/cardData'
@@ -23,6 +23,7 @@ const props = defineProps<{ returnFocus?: () => HTMLElement | null }>()
 const emit = defineEmits<{ (event: 'close'): void }>()
 
 type Mode = 'speed' | 'type'
+type SortMode = 'default' | 'usage' | 'name'
 interface Group {
   key: string
   label: string
@@ -33,8 +34,16 @@ interface Group {
 const PAGE_SIZE = 18
 
 const mode = ref<Mode>('speed')
+const sort = ref<SortMode>('default')
+const speedFilter = ref<number | 'all'>('all')
+const typeFilter = ref<string>('all')
 const query = ref('')
 const limit = ref(PAGE_SIZE)
+
+/** 使用次数（`GET /api/card_usage`，公开只读）。取不到就退回「默认」排序可用的空表。 */
+const usage = ref<Record<string, number>>({})
+const usageTotal = ref(0)
+const selected = ref<CardInfo | null>(null)
 
 const matches = (card: CardInfo, needle: string): boolean => {
   if (!needle) return true
@@ -45,23 +54,48 @@ const matches = (card: CardInfo, needle: string): boolean => {
   )
 }
 
-const sourceGroups = computed<Group[]>(() => {
+const speeds = computed<number[]>(() => Array.from(new Set(CARDS.map((card) => card.speed))).sort((a, b) => a - b))
+const types = computed<string[]>(() => Array.from(new Set(CARDS.map((card) => card.type))))
+
+const filtered = computed<CardInfo[]>(() => {
   const needle = query.value.trim().toLowerCase()
+  return CARDS.filter((card) => {
+    if (!matches(card, needle)) return false
+    if (speedFilter.value !== 'all' && card.speed !== speedFilter.value) return false
+    if (typeFilter.value !== 'all' && card.type !== typeFilter.value) return false
+    return true
+  })
+})
+
+function usageOf(card: CardInfo): number {
+  return usage.value[card.name] ?? 0
+}
+
+function sortCards(cards: CardInfo[]): CardInfo[] {
+  if (sort.value === 'name') return [...cards].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'))
+  if (sort.value === 'usage') {
+    return [...cards].sort((a, b) => usageOf(b) - usageOf(a) || a.name.localeCompare(b.name, 'zh-Hans-CN'))
+  }
+  return cards
+}
+
+const sourceGroups = computed<Group[]>(() => {
+  const pool = filtered.value
   if (mode.value === 'speed') {
-    return cardsBySpeed()
-      .map((group) => ({
-        key: 'speed-' + group.speed,
-        label: group.label,
-        cards: group.cards.filter((card) => matches(card, needle)),
+    return speeds.value
+      .map((speed) => ({
+        key: 'speed-' + speed,
+        label: '速阶 ' + speed,
+        cards: sortCards(pool.filter((card) => card.speed === speed)),
       }))
       .filter((group) => group.cards.length > 0)
       .map((group) => ({ ...group, total: group.cards.length }))
   }
-  return cardsByType()
-    .map((group) => ({
-      key: 'type-' + group.type,
-      label: group.type + ' 类',
-      cards: group.cards.filter((card) => matches(card, needle)),
+  return types.value
+    .map((type) => ({
+      key: 'type-' + type,
+      label: type + ' 类',
+      cards: sortCards(pool.filter((card) => card.type === type)),
     }))
     .filter((group) => group.cards.length > 0)
     .map((group) => ({ ...group, total: group.cards.length }))
@@ -86,9 +120,27 @@ const shown = computed(() => visibleGroups.value.reduce((sum, group) => sum + gr
 const hasMore = computed(() => shown.value < total.value)
 const empty = computed(() => total.value === 0)
 
-watch([mode, query], () => {
+watch([mode, query, sort, speedFilter, typeFilter], () => {
   limit.value = PAGE_SIZE
 })
+
+async function loadUsage(): Promise<void> {
+  try {
+    const response = await fetch('/api/card_usage', { headers: { accept: 'application/json' } })
+    if (!response.ok) return
+    const data = (await response.json()) as { usage?: Record<string, number>; total?: number }
+    usage.value = data.usage ?? {}
+    usageTotal.value = data.total ?? 0
+  } catch {
+    // 使用次数只是排序维度：读不到时保持默认顺序，不影响浏览。
+  }
+}
+
+function pick(card: CardInfo): void {
+  selected.value = selected.value?.name === card.name ? null : card
+}
+
+onMounted(loadUsage)
 
 function loadMore(): void {
   limit.value += PAGE_SIZE
@@ -156,7 +208,85 @@ function close(): void {
         <p class="collection__count" data-testid="collection-count">已显示 {{ shown }} / {{ total }} 张</p>
       </div>
 
-      <div class="collection__body">
+      <div class="collection__filters">
+        <div class="collection__filter-group" role="group" aria-label="速阶筛选">
+          <span class="collection__filter-label">速阶</span>
+          <button
+            type="button"
+            class="collection__chip"
+            :class="{ 'is-active': speedFilter === 'all' }"
+            data-testid="collection-filter-speed-all"
+            :aria-pressed="speedFilter === 'all'"
+            @click="speedFilter = 'all'"
+          >全部</button>
+          <button
+            v-for="speed in speeds"
+            :key="'sf-' + speed"
+            type="button"
+            class="collection__chip"
+            :class="{ 'is-active': speedFilter === speed }"
+            :data-testid="'collection-filter-speed-' + speed"
+            :aria-pressed="speedFilter === speed"
+            @click="speedFilter = speed"
+          >{{ speed }}</button>
+        </div>
+
+        <div class="collection__filter-group" role="group" aria-label="类型筛选">
+          <span class="collection__filter-label">类型</span>
+          <button
+            type="button"
+            class="collection__chip"
+            :class="{ 'is-active': typeFilter === 'all' }"
+            data-testid="collection-filter-type-all"
+            :aria-pressed="typeFilter === 'all'"
+            @click="typeFilter = 'all'"
+          >全部</button>
+          <button
+            v-for="type in types"
+            :key="'tf-' + type"
+            type="button"
+            class="collection__chip"
+            :class="{ 'is-active': typeFilter === type }"
+            :data-testid="'collection-filter-type-' + type"
+            :aria-pressed="typeFilter === type"
+            @click="typeFilter = type"
+          >{{ type }}</button>
+        </div>
+
+        <div class="collection__filter-group" role="group" aria-label="排序">
+          <span class="collection__filter-label">排序</span>
+          <button
+            type="button"
+            class="collection__chip"
+            :class="{ 'is-active': sort === 'default' }"
+            data-testid="collection-sort-default"
+            :aria-pressed="sort === 'default'"
+            @click="sort = 'default'"
+          >默认</button>
+          <button
+            type="button"
+            class="collection__chip"
+            :class="{ 'is-active': sort === 'usage' }"
+            data-testid="collection-sort-usage"
+            :aria-pressed="sort === 'usage'"
+            @click="sort = 'usage'"
+          >使用次数</button>
+          <button
+            type="button"
+            class="collection__chip"
+            :class="{ 'is-active': sort === 'name' }"
+            data-testid="collection-sort-name"
+            :aria-pressed="sort === 'name'"
+            @click="sort = 'name'"
+          >名称</button>
+        </div>
+        <p v-if="usageTotal" class="collection__usage-total" data-testid="collection-usage-total">
+          服务端累计使用 {{ usageTotal }} 次
+        </p>
+      </div>
+
+      <div class="collection__body" :class="{ 'has-detail': selected }">
+        <div class="collection__list">
         <p v-if="empty" class="collection__empty" data-testid="collection-empty">没有匹配的卡牌。</p>
         <section
           v-for="group in visibleGroups"
@@ -178,6 +308,13 @@ function close(): void {
               :data-speed="card.speed"
               :data-type="card.type"
             >
+              <button
+                type="button"
+                class="collection-card__pick"
+                :aria-label="'查看 ' + card.name"
+                :aria-pressed="selected?.name === card.name"
+                @click="pick(card)"
+              ></button>
               <div class="collection-card__face">
                 <img
                   v-if="faceFor(card)"
@@ -193,12 +330,34 @@ function close(): void {
                 <p class="collection-card__tags">
                   <span>速阶 {{ card.speed }}</span>
                   <span>{{ card.type }}</span>
+                  <span v-if="usage[card.name]" class="collection-card__usage">用过 {{ usage[card.name] }} 次</span>
                 </p>
                 <p class="collection-card__desc">{{ card.description }}</p>
               </div>
             </li>
           </ul>
         </section>
+        </div>
+
+        <aside v-if="selected" class="collection__detail" data-testid="collection-card-detail" aria-label="卡牌详情">
+          <button
+            type="button"
+            class="collection__detail-close"
+            data-testid="collection-detail-close"
+            aria-label="收起详情"
+            @click="selected = null"
+          >×</button>
+          <div class="collection__detail-face">
+            <img v-if="faceFor(selected)" :src="faceFor(selected) || ''" :alt="selected.name + ' 卡面'" />
+          </div>
+          <h3 class="collection__detail-name">{{ selected.name }}</h3>
+          <p class="collection__detail-tags">
+            <span data-testid="collection-detail-speed">速阶 {{ selected.speed }}</span>
+            <span data-testid="collection-detail-type">{{ selected.type }}</span>
+            <span v-if="usage[selected.name]" class="collection-card__usage">用过 {{ usage[selected.name] }} 次</span>
+          </p>
+          <p class="collection__detail-desc" data-testid="collection-detail-desc">{{ selected.description }}</p>
+        </aside>
       </div>
 
       <footer class="collection__foot">
@@ -450,5 +609,168 @@ function close(): void {
   margin: 0;
   color: var(--text-dim, var(--text-secondary));
   font-size: 12px;
+}
+</style>
+
+<style scoped>
+/* ---- 筛选条 + 详情栏（原 main 图鉴页的速阶/类型独立筛选与详情侧栏） ---- */
+.collection__filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin: 10px 0 4px;
+}
+
+.collection__filter-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.collection__filter-label {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--text-tertiary);
+}
+
+.collection__chip {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.collection__chip:hover {
+  border-color: color-mix(in srgb, var(--role-action) 55%, transparent);
+  color: var(--text-primary);
+}
+
+.collection__chip.is-active {
+  border-color: color-mix(in srgb, var(--role-action) 70%, transparent);
+  background: color-mix(in srgb, var(--role-action) 20%, transparent);
+  color: var(--text-primary);
+}
+
+.collection__usage-total {
+  margin: 0 0 0 auto;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.collection-card {
+  position: relative;
+}
+
+.collection-card__pick {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  cursor: pointer;
+}
+
+.collection-card__pick:focus-visible {
+  outline: 2px solid var(--role-action);
+  outline-offset: 2px;
+}
+
+.collection-card__usage {
+  color: var(--gold-strong, var(--role-action));
+}
+
+.collection__body.has-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 300px);
+  gap: 14px;
+  align-items: start;
+}
+
+.collection__list {
+  min-width: 0;
+}
+
+.collection__detail {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(100%, 560px);
+  overflow-y: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-chamber);
+}
+
+.collection__detail-close {
+  align-self: flex-end;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.collection__detail-close:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--role-action) 16%, transparent);
+}
+
+.collection__detail-face img {
+  width: 100%;
+  border-radius: 10px;
+  display: block;
+}
+
+.collection__detail-name {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-primary);
+}
+
+.collection__detail-tags {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+
+.collection__detail-desc {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 719px) {
+  .collection__body.has-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .collection__detail {
+    position: static;
+    order: -1;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .collection__detail-face {
+    display: none;
+  }
 }
 </style>

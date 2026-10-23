@@ -2006,56 +2006,48 @@
 }
 
 /* 紧凑档：与 JS 的 compact 同断点（手机竖屏 + 手机横屏） */
-@media (max-width: 719px), (max-height: 520px) {
-  .game {
+/* 原 main 的判据走 data 属性，而不是媒体查询：
+ * 宽 >=1200 且高 >=700 才是宽屏，其余按 compact / tight / dense 分档。 */
+.game[data-layout="compact"] {
     padding: 6px 8px 8px;
     gap: 6px;
   }
-
-  .game-main-container {
+.game[data-layout="compact"] .game-main-container {
     flex-direction: column;
     gap: 6px;
   }
-
-  .game-content {
+.game[data-layout="compact"] .game-content {
     gap: 6px;
   }
-
-  .game-hud {
+.game[data-layout="compact"] .game-hud {
     flex-wrap: wrap;
     gap: 6px;
     padding: 5px 8px;
   }
-
-  .hud-chips {
+.game[data-layout="compact"] .hud-chips {
     order: 3;
     flex: 1 1 100%;
     flex-wrap: nowrap;
     overflow-x: auto;
     scrollbar-width: none;
   }
-
-  /* 模式胶囊在紧凑档属于冗余信息，先让位给回合/阶段/攻击数 */
-  .hud-chip--muted {
+/* 模式胶囊在紧凑档属于冗余信息，先让位给回合/阶段/攻击数 */
+.game[data-layout="compact"] .hud-chip--muted {
     display: none;
   }
-
-  .hud-players {
+.game[data-layout="compact"] .hud-players {
     order: 2;
     margin-left: auto;
   }
-
-  .arena-rail {
+.game[data-layout="compact"] .arena-rail {
     display: none;
   }
-
-  /* 选目标时把目标面板放进手牌/主行动腾出的位置：棋盘一格都不能被盖住 */
-  .game.is-picking .game-hand-wrap,
-  .game.is-picking .game-compact-bar {
+/* 选目标时把目标面板放进手牌/主行动腾出的位置：棋盘一格都不能被盖住 */
+.game[data-layout="compact"].is-picking .game-hand-wrap,
+.game[data-layout="compact"].is-picking .game-compact-bar {
     display: none;
   }
-
-  .game.is-picking .game-target {
+.game[data-layout="compact"].is-picking .game-target {
     position: static;
     transform: none;
     order: 3;
@@ -2064,19 +2056,16 @@
     padding: 8px 10px;
     gap: 6px;
   }
-
-  .game.is-picking .game-target__main {
+.game[data-layout="compact"].is-picking .game-target__main {
     flex: 0 0 auto;
   }
-
-  .game.is-picking .game-target__controls {
+.game[data-layout="compact"].is-picking .game-target__controls {
     flex-direction: row;
     flex-wrap: wrap;
     align-items: center;
   }
-
-  /* 需要时的底部面板：连锁响应 / 卡牌详情 / 待选请求都能在手机上完成 */
-  .arena-rail--sheet {
+/* 需要时的底部面板：连锁响应 / 卡牌详情 / 待选请求都能在手机上完成 */
+.game[data-layout="compact"] .arena-rail--sheet {
     display: flex;
     position: fixed;
     left: 8px;
@@ -2093,97 +2082,87 @@
     border-radius: 12px;
     box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
   }
-
-  /* 计数/占位/连锁面板在详情弹出层里属于噪音（连锁有自己的浮层） */
-  .arena-rail--sheet > [data-testid='game-counts'],
-  .arena-rail--sheet > [data-testid='game-chain-rail'],
-  .arena-rail--sheet > .arena-card-placeholder {
+/* 计数/占位/连锁面板在详情弹出层里属于噪音（连锁有自己的浮层） */
+.game[data-layout="compact"] .arena-rail--sheet > [data-testid='game-counts'],
+.game[data-layout="compact"] .arena-rail--sheet > [data-testid='game-chain-rail'],
+.game[data-layout="compact"] .arena-rail--sheet > .arena-card-placeholder {
     display: none;
   }
-
-  .arena-rail--sheet .game-detail {
+.game[data-layout="compact"] .arena-rail--sheet .game-detail {
     padding: 0;
     border: 0;
     background: transparent;
     box-shadow: none;
   }
-
-  /* 紧凑档的棋盘改成「按剩余高度取正方形」：宽高都由容器决定，
+/* 紧凑档的棋盘改成「按剩余高度取正方形」：宽高都由容器决定，
      不再依赖 vh 预算公式（公式在 360x640 这类窗口会失准）。 */
-  .boards-container {
+.game[data-layout="compact"] .boards-container {
     flex: 1 1 auto;
     min-height: 0;
     gap: 0;
   }
-
-  .board-wrapper {
+.game[data-layout="compact"] .board-wrapper {
     display: flex;
     flex-direction: column;
     align-items: center;
     min-height: 0;
   }
-
-  :deep(.board) {
+.game[data-layout="compact"] :deep(.board) {
     display: flex;
     flex-direction: column;
     min-height: 0;
   }
-
-  /* BoardPanel 是子组件，scoped 样式必须走 :deep() 才命中它的元素 */
-  :deep(.board__grid) {
+/* BoardPanel 是子组件，scoped 样式必须走 :deep() 才命中它的元素 */
+.game[data-layout="compact"] :deep(.board__grid) {
     grid-template-columns: repeat(6, minmax(0, 1fr));
     grid-template-rows: repeat(6, minmax(0, 1fr));
-    aspect-ratio: 1 / 1;
-    width: min(100%, calc(100dvh - 500px));
-    height: auto;
+    /* 尺寸由 useAdaptiveGameLayout 按 main 的预算算好写进 --board-size */
+    width: var(--board-size, min(100%, calc(100dvh - 500px)));
+    height: var(--board-size, min(100%, calc(100dvh - 500px)));
     min-height: 0;
     margin: 0 auto;
   }
-
-  :deep(.board__grid .cell) {
+.game[data-layout="compact"] :deep(.board__grid .cell) {
     width: auto;
     height: auto;
     min-width: 0;
     min-height: 0;
   }
-
-  .board-wrapper {
+.game[data-layout="compact"] .board-wrapper {
     flex: 1 1 auto;
     width: 100%;
     padding: 4px 5px 6px;
   }
-
-  .game-hand-wrap {
+.game[data-layout="compact"] .game-hand-wrap {
     padding: 5px 7px 6px;
   }
-
-  .game-hand {
+.game[data-layout="compact"] .game-hand {
     gap: 7px;
   }
-
-  /* 手机档的手牌用 main 的 64x92 紧凑卡面，把高度让给棋盘 */
-  .game .game-hand {
+/* 手机档的手牌用 main 的 64x92 紧凑卡面，把高度让给棋盘 */
+.game[data-layout="compact"] .game-hand {
     min-height: 0;
   }
-
-  .game .game-hand .card {
+.game[data-layout="compact"] .game-hand .card {
     flex: 0 0 64px;
     width: 64px;
     height: 92px;
   }
-
-  .game .game-hand .card__desc {
+.game[data-layout="compact"] .game-hand .card__desc {
     display: none;
   }
-}
+
 
 /* ---- 手机横屏（矮视口）：棋盘在左、信息与手牌在右的两列布局 ---------------
  * 单列在 844x390 装不下：HUD + 场地条 + 棋盘 + 手牌 + 主操作 > 视口高度。
  * 这里用 grid 把 main 的「棋盘 / 信息 / 手牌 / 操作」四块并排摆，仍是完整可操作面。
  */
-@media (max-height: 520px) and (min-width: 600px) {
-  .game {
+/* 原 main 的判据走 data 属性，而不是媒体查询：
+ * 宽 >=1200 且高 >=700 才是宽屏，其余按 compact / tight / dense 分档。 */
+.game[data-tight="true"] {
     display: grid;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     grid-template-columns: minmax(0, 1fr) 300px;
     grid-template-rows: auto auto auto minmax(0, 1fr) auto;
     grid-template-areas:
@@ -2195,166 +2174,139 @@
     gap: 6px;
     align-items: stretch;
   }
-
-  .game-main-container,
-  .game-content {
+.game[data-tight="true"] .game-main-container,
+.game[data-tight="true"] .game-content {
     display: contents;
   }
-
-  .game-hud {
+.game[data-tight="true"] .game-hud {
     grid-area: hud;
     flex-wrap: wrap;
     gap: 4px;
     min-height: 0;
     padding: 4px 8px;
   }
-
-  .hud-chips {
+.game[data-tight="true"] .hud-chips {
     flex: 1 1 100%;
     flex-wrap: nowrap;
     overflow-x: auto;
     scrollbar-width: none;
   }
-
-  .hud-players {
+.game[data-tight="true"] .hud-players {
     order: 0;
     margin-left: 0;
   }
-
-  .field-magic-area {
+.game[data-tight="true"] .field-magic-area {
     grid-area: field;
     min-height: 26px;
     font-size: 11px;
   }
-
-  .board-tabs {
+.game[data-tight="true"] .board-tabs {
     grid-area: tabs;
   }
-
-  .board-tab {
+.game[data-tight="true"] .board-tab {
     min-height: 34px;
     font-size: 12px;
   }
-
-  .boards-container {
+.game[data-tight="true"] .boards-container {
     grid-area: board;
     --cell: clamp(30px, min(9.4vw, calc((100dvh - 152px) / 6)), 74px);
   }
-
-  :deep(.board__grid) {
-    aspect-ratio: 1 / 1;
-    height: calc(100dvh - 140px);
-    width: auto;
+.game[data-tight="true"] :deep(.board__grid) {
+    height: var(--board-size, calc(100dvh - 140px));
+    width: var(--board-size, calc(100dvh - 140px));
     max-width: 100%;
   }
-
-  .board-wrapper {
+.game[data-tight="true"] .board-wrapper {
     width: 100%;
   }
-
-  .game-hand-wrap {
+.game[data-tight="true"] .game-hand-wrap {
     grid-area: hand;
     align-self: stretch;
     min-height: 0;
     padding: 3px 6px 5px;
     overflow: hidden;
   }
-
-  .game .game-hand {
+.game[data-tight="true"] .game-hand {
     min-height: 0;
     overflow-x: auto;
     overflow-y: hidden;
   }
-
-  .game-hand {
+.game[data-tight="true"] .game-hand {
     gap: 6px;
   }
-
-  .game .game-hand .card {
+.game[data-tight="true"] .game-hand .card {
     flex: 0 0 64px;
     width: 64px;
     height: 88px;
   }
-
-  .game-hand-head {
+.game[data-tight="true"] .game-hand-head {
     margin-bottom: 2px;
     font-size: 10px;
   }
-
-  .game-hand .card__desc {
+.game[data-tight="true"] .game-hand .card__desc {
     display: none;
   }
-
-  .game-compact-bar {
+.game[data-tight="true"] .game-compact-bar {
     grid-area: bar;
     padding: 3px 6px;
     gap: 4px;
   }
-
-  .game-compact-bar .arena-turn-hint {
+.game[data-tight="true"] .game-compact-bar .arena-turn-hint {
     display: none;
   }
-
-  .game-compact-bar .compact-dock {
+.game[data-tight="true"] .game-compact-bar .compact-dock {
     justify-content: flex-end;
   }
-
-  .game-compact-bar .compact-dock .button {
+.game[data-tight="true"] .game-compact-bar .compact-dock .button {
     height: 26px;
     min-height: 26px;
   }
-
-  .game-compact-bar .game-actions__row {
+.game[data-tight="true"] .game-compact-bar .game-actions__row {
     display: flex;
     gap: 6px;
   }
-
-  .game-compact-bar .game-primary,
-  .game-compact-bar .game-more {
+.game[data-tight="true"] .game-compact-bar .game-primary,
+.game[data-tight="true"] .game-compact-bar .game-more {
     flex: 1 1 0;
     height: 36px;
     min-height: 36px;
   }
-
-  .effect-status-bar,
-  .game-latest,
-  .game-notices,
-  .game-receipt {
+.game[data-tight="true"] .effect-status-bar,
+.game[data-tight="true"] .game-latest,
+.game[data-tight="true"] .game-notices,
+.game[data-tight="true"] .game-receipt {
     display: none;
   }
-}
+
 
 /* ---- 很矮的手机窗口（<=700px 高）：允许屏内滚动而不是让子项互相遮挡 --------
  * 360x640 时装不下 HUD+场地条+标签+棋盘+手牌+操作条，这里改成内容自然高度 +
  * .game 自身滚动（任务允许「极小窗口可用的屏内滚动」），绝不用 overflow:hidden
  * 剪掉手牌或主操作。
  */
-@media (max-width: 719px) and (max-height: 700px) {
-  /* 屏内滚动档保留可用尺寸，不套 100dvh-500 的封顶 */
-  :deep(.board__grid) {
+/* 原 main 的判据走 data 属性，而不是媒体查询：
+ * 宽 >=1200 且高 >=700 才是宽屏，其余按 compact / tight / dense 分档。 */
+/* 屏内滚动档保留可用尺寸，不套 100dvh-500 的封顶 */
+.game[data-dense="true"] :deep(.board__grid) {
     max-height: none;
-    height: clamp(160px, 40vh, 280px);
-    width: clamp(160px, 40vh, 280px);
+    height: var(--board-size, clamp(160px, 40vh, 280px));
+    width: var(--board-size, clamp(160px, 40vh, 280px));
   }
-
-  .game {
+.game[data-dense="true"] {
     overflow-y: auto;
     overscroll-behavior: contain;
   }
-
-  .game-main-container {
+.game[data-dense="true"] .game-main-container {
     flex: 0 0 auto;
   }
-
-  .game-content {
+.game[data-dense="true"] .game-content {
     flex: 0 0 auto;
   }
-
-  .boards-container {
+.game[data-dense="true"] .boards-container {
     flex: 0 0 auto;
     --cell: clamp(32px, min(13vw, 7.4vh), 56px);
   }
-}
+
 
 /* ---- 连锁面板收起后的重新打开条（请求仍在倒计时，不能丢） ---------------- */
 .game-chain-reopen {
@@ -2384,4 +2336,88 @@
   border-radius: 50%;
   background: var(--gold);
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--gold) 22%, transparent);
+}
+
+
+/* ---- 手牌扇形（原 main static/game.js 的 layoutHand） ---------------------
+ * 尺寸/角度由 useHandFan 算好写进 --hand-card-w/h、--fan-rot、--fan-drop，
+ * 这里只负责把变量落到卡面上：宽屏扇形微旋 + 弧顶下沉，重叠档不旋转只抬起。
+ */
+.game[data-layout="wide"] .game-hand .card {
+  flex: 0 0 var(--hand-card-w, 132px);
+  width: var(--hand-card-w, 132px);
+  height: var(--hand-card-h, 186px);
+  transform-origin: 50% 100%;
+  transform: rotate(var(--fan-rot, 0rad)) translateY(var(--fan-drop, 0px));
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.game[data-layout="wide"] .game-hand .card:hover {
+  transform: rotate(var(--fan-rot, 0rad)) translateY(calc(var(--fan-drop, 0px) - 6px));
+}
+
+.game[data-layout="wide"] .game-hand--tight .card,
+.game[data-layout="wide"] .game-hand--tight .card:hover {
+  transform: translateY(var(--fan-drop, 0px));
+}
+
+.game[data-layout="wide"] .game-hand--tight .card--selected {
+  transform: translateY(calc(var(--fan-drop, 0px) - 8px));
+}
+
+.game[data-layout="wide"] .game-hand .card__desc {
+  -webkit-line-clamp: var(--hand-desc-lines, 4);
+  line-clamp: var(--hand-desc-lines, 4);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ---- 浮动聊天窗（原 main 的 .in-game-chat-container） ---------------------
+ * 宽屏是可拖动浮窗（标题栏按住拖，边界夹在视口内且不压导航）；
+ * 紧凑档不使用 .game-float，仍是底部抽屉。
+ */
+.game-float {
+  position: fixed;
+  z-index: 60;
+  width: 300px;
+  max-height: min(46vh, 320px);
+  overflow: auto;
+  border-radius: 12px;
+  border: 1px solid var(--panel-line);
+  background: var(--surface-chamber);
+  box-shadow: var(--shadow-panel);
+}
+
+.game-float__head {
+  cursor: move;
+  touch-action: none;
+  user-select: none;
+}
+
+.hud-btn {
+  height: 26px;
+  min-height: 26px;
+  padding: 0 10px;
+  font-size: 11.5px;
+}
+
+/* 顶栏对手舰数方块（原 main 的 .arena-ships） */
+.hud-ship-dots {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.hud-ship-dots i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--role-action);
+  opacity: 0.85;
+}
+
+.hud-ship-dots i.is-lost {
+  background: var(--border-strong);
+  opacity: 0.5;
 }

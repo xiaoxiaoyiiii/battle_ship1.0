@@ -44,6 +44,16 @@ function goGroup(key: GroupKey): void {
 }
 
 const themes: ThemeName[] = ['chart', 'journal', 'night']
+
+/** 主色预设（原 main 设置页的主色选择器）；空值 = 用主题自带的强调色。 */
+const accentPresets: { key: string; label: string }[] = [
+  { key: '', label: '跟随主题' },
+  { key: '#7c5cf0', label: '紫' },
+  { key: '#2f8fdd', label: '蓝' },
+  { key: '#4ec8e0', label: '青' },
+  { key: '#c9a24c', label: '金' },
+  { key: '#45d69b', label: '绿' },
+]
 const fontScales: { key: FontScale; label: string }[] = [
   { key: 'normal', label: '标准' },
   { key: 'large', label: '大' },
@@ -314,7 +324,47 @@ onMounted(() => {
               {{ scale.label }}
             </button>
           </div>
-          <p class="settings__note">主题、动效、对比度与字号立即生效，并在这台设备上记住。</p>
+          <h3 class="settings__block-title">主色</h3>
+          <div class="settings__seg settings__seg--wrap" role="group" aria-label="主色">
+            <button
+              v-for="preset in accentPresets"
+              :key="'accent-' + preset.label"
+              type="button"
+              class="settings__seg-item settings__seg-item--accent"
+              :class="{ 'is-active': (ui.accent || '') === preset.key }"
+              :data-testid="'settings-accent-' + (preset.key ? preset.key.replace('#', '') : 'theme')"
+              :aria-pressed="(ui.accent || '') === preset.key"
+              :style="preset.key ? { '--swatch': preset.key } : undefined"
+              @click="ui.setAccent(preset.key || null)"
+            >
+              <i v-if="preset.key" class="settings__swatch" aria-hidden="true"></i>
+              {{ preset.label }}
+            </button>
+          </div>
+
+          <h3 class="settings__block-title">预览</h3>
+          <div class="settings__preview" data-testid="settings-preview" aria-label="外观预览">
+            <div class="settings__preview-board" aria-hidden="true">
+              <span
+                v-for="cell in 36"
+                :key="'pc-' + cell"
+                class="settings__preview-cell"
+                :class="{
+                  'is-ship': cell === 8 || cell === 9 || cell === 14,
+                  'is-hit': cell === 20,
+                  'is-miss': cell === 27,
+                }"
+              ></span>
+            </div>
+            <div class="settings__preview-actions">
+              <span class="settings__preview-primary" data-testid="settings-preview-primary">主行动</span>
+              <span class="settings__preview-secondary" data-testid="settings-preview-secondary">次行动</span>
+              <span class="settings__preview-hit">命中</span>
+              <span class="settings__preview-miss">未命中</span>
+            </div>
+          </div>
+
+          <p class="settings__note">主题、主色、动效、对比度与字号立即生效，并在这台设备上记住。</p>
         </section>
 
         <section id="settings-wallpaper" class="settings__block" data-testid="settings-wallpaper">
@@ -1060,5 +1110,109 @@ onMounted(() => {
     min-height: 44px;
     min-width: 44px;
   }
+}
+</style>
+<style scoped>
+/* ---- 主色与即时预览（原 main 设置页的棋盘/命中/主次行动预览） ---- */
+.settings__seg--wrap {
+  flex-wrap: wrap;
+}
+
+.settings__seg-item--accent {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings__swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--swatch, var(--role-action));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-primary) 24%, transparent);
+}
+
+.settings__preview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin-top: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-deck);
+}
+
+.settings__preview-board {
+  display: grid;
+  grid-template-columns: repeat(6, 22px);
+  grid-auto-rows: 22px;
+  gap: 3px;
+  padding: 6px;
+  border-radius: 10px;
+  background: var(--board-bg, var(--surface-chamber));
+  border: 1px solid var(--board-border, var(--border-subtle));
+}
+
+.settings__preview-cell {
+  border-radius: 4px;
+  background: var(--cell-bg, var(--surface-chamber));
+  border: 1px solid color-mix(in srgb, var(--board-border, var(--border-subtle)) 70%, transparent);
+}
+
+.settings__preview-cell.is-ship {
+  background: linear-gradient(160deg, var(--ship-metal, var(--border-strong)), color-mix(in srgb, var(--ship-metal, var(--border-strong)) 55%, #000));
+}
+
+.settings__preview-cell.is-hit {
+  background: radial-gradient(circle, #ff6b6b, #b3261e);
+  border-color: #ff9a9a;
+}
+
+.settings__preview-cell.is-miss {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--role-self, #4ec8e0) 70%, transparent);
+}
+
+.settings__preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.settings__preview-primary,
+.settings__preview-secondary {
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.settings__preview-primary {
+  color: var(--on-accent, #fff);
+  background: var(--role-action);
+}
+
+.settings__preview-secondary {
+  color: var(--text-primary);
+  border: 1px solid color-mix(in srgb, var(--role-action) 55%, transparent);
+  background: color-mix(in srgb, var(--role-action) 12%, transparent);
+}
+
+.settings__preview-hit,
+.settings__preview-miss {
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
+.settings__preview-hit {
+  color: #ffd7d4;
+  background: color-mix(in srgb, #e5484d 26%, transparent);
+}
+
+.settings__preview-miss {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--role-self, #4ec8e0) 18%, transparent);
 }
 </style>

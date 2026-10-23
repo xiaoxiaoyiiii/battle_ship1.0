@@ -6,6 +6,8 @@ import AppWallpaper from './components/AppWallpaper.vue'
 import AuthOverlay from './components/AuthOverlay.vue'
 import AvatarMenu from './components/AvatarMenu.vue'
 import CardCollectionOverlay from './components/CardCollectionOverlay.vue'
+import FriendsOverlay from './components/FriendsOverlay.vue'
+import HelpOverlay from './components/HelpOverlay.vue'
 import ScreenBoundary from './components/ScreenBoundary.vue'
 import ToastHost from './components/ToastHost.vue'
 import { routeLoading } from './router'
@@ -113,6 +115,9 @@ onBeforeUnmount(() => window.removeEventListener('bs:auth-required', onAuthRequi
     @close="collection.close()"
   />
 
+  <HelpOverlay v-if="ui.helpOpen" @close="ui.closeHelp()" />
+  <FriendsOverlay v-if="ui.friendsOpen" @close="ui.closeFriends()" />
+
   <div class="app-shell" data-testid="app-shell" :data-route-loading="loading ? 'true' : 'false'" :data-immersive="immersive ? 'true' : 'false'">
     <div
       v-if="ui.connection === 'offline'"
@@ -205,7 +210,14 @@ onBeforeUnmount(() => window.removeEventListener('bs:auth-required', onAuthRequi
         </div>
 
         <div class="app-nav__meta">
-          <button type="button" class="app-nav__icon" data-testid="nav-friends" aria-label="好友">
+          <button
+            type="button"
+            class="app-nav__icon"
+            data-testid="nav-friends"
+            aria-label="好友"
+            :aria-pressed="ui.friendsOpen"
+            @click="ui.openFriends()"
+          >
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
               <circle cx="9" cy="8" r="3.2" />
               <path d="M3.5 20c.6-3.4 2.9-5 5.5-5s4.9 1.6 5.5 5" />

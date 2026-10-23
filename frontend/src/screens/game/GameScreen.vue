@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import BoardPanel from './BoardPanel.vue'
+import { useAdaptiveGameLayout } from './useAdaptiveGameLayout'
+import { useHandFan } from './useHandFan'
+import { useFloatingDrag } from './useFloatingDrag'
 import { acquireBattleChannel, getBattleSocket, sendBattleEvent, syncHand } from '../../realtime/battle'
 import { cardArtUrl } from '../../cards/cardArt'
 import { useGameStore } from '../../stores/game'
@@ -302,7 +305,9 @@ interface QuickChatItem {
 }
 
 // ---- self minimap, ship slots and piles ------------------------------------
-const compact = ref(false)
+// 布局判据移植自原 main 的 static/adaptive_layout.js（宽 >=1200 且高 >=700 才算宽屏）。
+const layout = useAdaptiveGameLayout()
+const compact = layout.compact
 
 watch(
   () => {
@@ -337,15 +342,69 @@ const railSheet = computed(
     !picking.value &&
     detailOpen.value,
 )
-let mq: MediaQueryList | null = null
+const boardMode = layout.mode
+const tight = layout.tight
+const dense = layout.dense
+const boardSize = layout.boardSize
+const gameEl = ref<HTMLElement | null>(null)
+const handWrapEl = ref<HTMLElement | null>(null)
+const chatPanelEl = ref<HTMLElement | null>(null)
+const chatHeadEl = ref<HTMLElement | null>(null)
+// 宽屏保留原 main 的浮动聊天窗（可拖），紧凑档仍用底部抽屉。
+const chatDrag = useFloatingDrag({
+  handle: chatHeadEl,
+  panel: chatPanelEl,
+  initial: { x: 20, y: 470 },
+})
+const handFan = useHandFan({
+  target: handWrapEl,
+  count: computed(() => hand.value.length),
+  selectedIndex: selectedCardIndex,
+  // 只有宽屏才排扇形；紧凑档由 CSS 的 64×92 小卡接管
+  enabled: computed(() => !compact.value),
+})
 
-function syncCompact(): void {
-  compact.value = mq ? mq.matches : false
-  if (!compact.value) zoomOpen.value = false
+/**
+ * 量出「棋盘以外」的垂直占用（HUD、场地条、海域标签、手牌条、主行动条 + 间距），
+ * 交给布局组合算棋盘边长。这几块的高度不随棋盘变化，所以不会和棋盘互相追着改。
+ */
+function measureGameChrome(): void {
+  const root = gameEl.value
+  if (!root) return
+  if (!compact.value || tight.value) {
+    layout.setChrome(0)
+    return
+  }
+  const heightOf = (selector: string): number => {
+    const node = root.querySelector<HTMLElement>(selector)
+    return node ? node.getBoundingClientRect().height : 0
+  }
+  const tabs = boardMode.value === 'tabs' ? heightOf('.board-tabs') : 0
+  const total =
+    heightOf('.game-hud') +
+    heightOf('.field-magic-area') +
+    tabs +
+    heightOf('.game-hand-wrap') +
+    heightOf('.game-compact-bar')
+  // .game 的 gap + 内边距（紧凑档 6px gap / 6-8px padding）
+  layout.setChrome(total + 40)
 }
 
-const opponentHidden = computed(() => compact.value && zoomOpen.value)
-const boardMode = computed(() => (compact.value ? 'tabs' : 'dual'))
+function scheduleChromeMeasure(): void {
+  if (typeof window === 'undefined') return
+  void nextTick(() => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(measureGameChrome)
+    })
+  })
+}
+
+watch([compact, tight, boardMode, () => state.value, () => hand.value.length], scheduleChromeMeasure, {
+  flush: 'post',
+})
+/** 标签档只显示一块棋盘；并排/叠放档两块都常驻。 */
+const showSelfBoard = computed(() => boardMode.value !== 'tabs' || zoomOpen.value)
+const showOpponentBoard = computed(() => !(boardMode.value === 'tabs' && zoomOpen.value))
 
 const shipSlots = computed(() => {
   const ships = Array.isArray(state.value.ships) ? state.value.ships : []
@@ -730,7 +789,8 @@ function onCell(board: 'self' | 'opponent', x: number, y: number): void {
   }
   if (board === 'self') {
     // 桌面双棋盘常驻：点己方海域不再需要放大浮层，只有手机档才切到己方格。
-    if (compact.value) openZoom()
+    // 标签档只显示一块棋盘：点己方格先切到己方棋盘；并排/叠放档两块都在，直接选。
+    if (boardMode.value === 'tabs') openZoom()
     return
   }
   void fire(x, y)
@@ -1151,13 +1211,9 @@ onMounted(() => {
     now.value = Date.now()
   }, 250)
   void loadQuickChatCatalog()
-  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
-    // 手机竖屏与手机横屏都走紧凑档：宽度 <=719 或 高度 <=520（原 main 的横屏单棋盘档）。
-    mq = window.matchMedia('(max-width: 719px), (max-height: 520px)')
-    mq.addEventListener('change', syncCompact)
-    syncCompact()
-  }
   window.addEventListener('keydown', onKeydown)
+  scheduleChromeMeasure()
+  window.addEventListener('resize', scheduleChromeMeasure)
 })
 
 onBeforeUnmount(() => {
@@ -1165,9 +1221,8 @@ onBeforeUnmount(() => {
   releaseChannel = null
   if (ticker !== null) window.clearInterval(ticker)
   ticker = null
-  if (mq) mq.removeEventListener('change', syncCompact)
-  mq = null
   window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('resize', scheduleChromeMeasure)
 })
 
 function backToLobby(): void {
@@ -1180,8 +1235,14 @@ function backToLobby(): void {
     data-screen="game"
     data-testid="screen-game"
     :data-board-mode="boardMode"
+    :data-layout="compact ? 'compact' : 'wide'"
+    :data-boards="boardMode"
+    :data-tight="tight ? 'true' : 'false'"
+    :data-dense="dense ? 'true' : 'false'"
     :class="{ 'is-picking': picking }"
+    :style="boardSize ? { '--board-size': boardSize + 'px' } : undefined"
     aria-labelledby="screen-game-title"
+    ref="gameEl"
   >
     <h1 id="screen-game-title" class="visually-hidden">对局</h1>
 
@@ -1232,11 +1293,21 @@ function backToLobby(): void {
               data-testid="game-connection"
             >{{ connectionText }}</span>
           </div>
-          <div class="hud-players">
+          <button
+          type="button"
+          class="button button--ghost hud-btn"
+          data-testid="game-hud-chat"
+          @click="quickChatOpen = true"
+        >聊天</button>
+        <div class="hud-players">
             <span class="hud-name" data-testid="game-self-name">{{ selfName }}</span>
             <span class="hud-vs" aria-hidden="true">VS</span>
             <span class="hud-name" data-testid="game-opponent-name">{{ opponentName }}</span>
             <span class="hud-pips" data-testid="game-ships">{{ shipsText }}</span>
+            <!-- 原 main 顶栏的对手剩余舰方块：一眼看清还剩几艘 -->
+            <span class="hud-ship-dots" aria-hidden="true">
+              <i v-for="slot in shipSlots" :key="'hud-ship-' + slot.index" :class="{ 'is-lost': !slot.alive }"></i>
+            </span>
           </div>
         </header>
 
@@ -1267,7 +1338,7 @@ function backToLobby(): void {
         <p v-if="receiptText" class="game-receipt" data-testid="game-receipt" role="status" aria-live="polite">{{ receiptText }}</p>
 
         <!-- 手机档：单块棋盘 + 海域切换标签（标题与提交的棋盘同源） -->
-        <div v-if="compact && !selection" class="board-tabs" role="tablist" aria-label="切换棋盘">
+        <div v-if="boardMode === 'tabs' && !selection" class="board-tabs" role="tablist" aria-label="切换棋盘">
           <button
             type="button"
             class="board-tab"
@@ -1288,7 +1359,7 @@ function backToLobby(): void {
 
         <!-- 双棋盘：桌面并排常驻；手机档按标签只显示一块 -->
         <div class="boards-container" :data-board-mode="boardMode">
-          <div v-show="!compact || zoomOpen" class="board-wrapper">
+          <div v-show="showSelfBoard" class="board-wrapper">
             <BoardPanel
               board="self"
               board-testid="game-board-self"
@@ -1298,12 +1369,12 @@ function backToLobby(): void {
               :cells="selfCells"
               :selected="selectedKeys.concat(shieldSelectedKeys)"
               :legal="legalKeys"
-              :hidden="compact && !zoomOpen"
+              :hidden="!showSelfBoard"
               :picking="!!selection || !!match.pickRequest || shieldOpen"
               @cell="(x: number, y: number) => onCell('self', x, y)"
             />
           </div>
-          <div v-show="!opponentHidden" class="board-wrapper">
+          <div v-show="showOpponentBoard" class="board-wrapper">
             <BoardPanel
               board="opponent"
               board-testid="game-board-opponent"
@@ -1313,7 +1384,7 @@ function backToLobby(): void {
               :cells="opponentCells"
               :preview="previewKeys"
               :legal="legalKeys"
-              :hidden="opponentHidden"
+              :hidden="!showOpponentBoard"
               :picking="!!selection"
               @cell="(x: number, y: number) => onCell('opponent', x, y)"
             />
@@ -1454,12 +1525,21 @@ function backToLobby(): void {
       连锁待响应：{{ chainWindow.card ? chainWindow.card.name : '魔法卡' }} · 剩余 {{ chainRemaining }} 秒 · 打开
     </button>
 
-    <section class="game-hand-wrap" aria-label="手牌">
+    <section class="game-hand-wrap" aria-label="手牌" ref="handWrapEl">
       <div class="game-hand-head">
         <span class="game-hand-stats" data-testid="game-stats">命中 {{ hits }} · 开火 {{ shots }}</span>
         <span class="game-hand-count" data-testid="game-hand-counter">手牌 {{ hand.length }} 张</span>
       </div>
-      <div class="game-hand" data-testid="game-hand">
+      <div
+        class="game-hand"
+        :class="{ 'game-hand--fan': handFan.layout.value.fan, 'game-hand--tight': handFan.layout.value.tight }"
+        data-testid="game-hand"
+        :style="{
+          '--hand-card-w': handFan.layout.value.cardW + 'px',
+          '--hand-card-h': handFan.layout.value.cardH + 'px',
+          '--hand-desc-lines': String(handFan.layout.value.descLines),
+        }"
+      >
         <p v-if="!hand.length" class="game-hand-empty" data-testid="game-hand-empty">手上没有魔法卡</p>
         <button
           v-for="(card, index) in hand"
@@ -1478,6 +1558,11 @@ function backToLobby(): void {
           :aria-pressed="selectedCardIndex === index"
           :aria-label="card.name + '，' + typeLabel(card) + (cardDisabled(card) ? '，' + cardDisabled(card) : '，可以使用')"
           :title="cardDisabled(card) || card.description || card.name"
+          :style="{
+            marginLeft: handFan.layout.value.cards[index]?.marginLeft,
+            '--fan-rot': handFan.layout.value.cards[index]?.rot,
+            '--fan-drop': handFan.layout.value.cards[index]?.drop,
+          }"
           @click="onCardClick(index)"
         >
           <img
@@ -1673,9 +1758,21 @@ function backToLobby(): void {
       </ol>
     </section>
 
-    <section v-if="quickChatOpen" class="game-drawer game-drawer--chat" data-testid="game-quick-chat" aria-label="局内聊天">
-      <header class="game-drawer__head">
-        <h2 class="game-drawer__title">局内聊天</h2>
+    <section
+      v-if="quickChatOpen"
+      class="game-drawer game-drawer--chat"
+      :class="{ 'game-float': !compact }"
+      :style="compact ? undefined : { left: chatDrag.state.value.x + 'px', top: chatDrag.state.value.y + 'px' }"
+      data-testid="game-quick-chat"
+      aria-label="局内聊天"
+      ref="chatPanelEl"
+    >
+      <header
+        class="game-drawer__head"
+        :class="{ 'game-float__head': !compact }"
+        @pointerdown="compact ? undefined : chatDrag.onPointerDown($event)"
+      >
+        <h2 class="game-drawer__title" ref="chatHeadEl">局内聊天{{ compact ? '' : '（可拖动）' }}</h2>
         <button type="button" class="game-close" data-testid="game-quick-chat-close" aria-label="关闭聊天" @click="quickChatOpen = false">×</button>
       </header>
       <section class="game-chat-text" data-testid="game-chat" aria-label="文字聊天">

@@ -23,6 +23,7 @@ const THEME_KEY = 'battleship.ui.theme'
 const MOTION_KEY = 'battleship.ui.motion'
 const CONTRAST_KEY = 'battleship.ui.contrast'
 const FONT_SCALE_KEY = 'battleship.ui.fontScale'
+const ACCENT_KEY = 'battleship.ui.accent'
 
 export const FONT_SCALE_LABELS: Record<FontScale, string> = {
   normal: '标准',
@@ -154,6 +155,15 @@ export function errorLanguage(code: string, fallback = ''): { message: string; n
 interface DialogEntry {
   id: string
   priority: number
+}
+
+function readAccent(): string {
+  try {
+    const value = storage()?.getItem(ACCENT_KEY) || ''
+    return /^#[0-9a-fA-F]{6}$/.test(value) ? value.toLowerCase() : ''
+  } catch {
+    return ''
+  }
 }
 
 export const useUiStore = defineStore('ui', () => {
@@ -294,6 +304,55 @@ export const useUiStore = defineStore('ui', () => {
     activeDialog.value = null
   }
 
+  /**
+   * 主色（原 main 设置页的「主色选择器」）。空值表示跟随主题自带的强调色；
+   * 选了具体颜色就写 `--role-action` 与它的柔和底，立刻在整站生效。
+   */
+  const accent = ref<string>(readAccent())
+  function setAccent(next: string | null): void {
+    const value = next && /^#[0-9a-fA-F]{6}$/.test(next) ? next.toLowerCase() : ''
+    accent.value = value
+    if (typeof document !== 'undefined') {
+      const root = document.documentElement
+      if (value) {
+        root.style.setProperty('--role-action', value)
+        root.style.setProperty('--role-action-soft', `color-mix(in srgb, ${value} 22%, transparent)`)
+        root.dataset.accent = 'custom'
+      } else {
+        root.style.removeProperty('--role-action')
+        root.style.removeProperty('--role-action-soft')
+        delete root.dataset.accent
+      }
+    }
+    try {
+      if (value) storage()?.setItem(ACCENT_KEY, value)
+      else storage()?.removeItem(ACCENT_KEY)
+    } catch {
+      // 主色只是外观偏好，存不下也不影响本次会话。
+    }
+  }
+
+  // 恢复上次选的主色（首次进入时把存储值写回 CSS 变量）
+  if (accent.value) setAccent(accent.value)
+
+  /** 帮助弹层（玩法与段位）：导航「帮助」和头像菜单共用同一入口。 */
+  const helpOpen = ref(false)
+  function openHelp(): void {
+    helpOpen.value = true
+  }
+  function closeHelp(): void {
+    helpOpen.value = false
+  }
+
+  /** 好友面板（好友列表/申请/私聊）。 */
+  const friendsOpen = ref(false)
+  function openFriends(): void {
+    friendsOpen.value = true
+  }
+  function closeFriends(): void {
+    friendsOpen.value = false
+  }
+
   /** Exit confirmation for the immersive match screens. */
   const exitConfirmOpen = ref(false)
   function requestExit(): void {
@@ -365,6 +424,14 @@ export const useUiStore = defineStore('ui', () => {
     setMotion,
     setContrast,
     setFontScale,
+    accent,
+    setAccent,
+    helpOpen,
+    openHelp,
+    closeHelp,
+    friendsOpen,
+    openFriends,
+    closeFriends,
     requestLogin,
     activeDialog,
     claimDialog,

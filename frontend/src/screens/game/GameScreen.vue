@@ -274,11 +274,8 @@ const shipsText = computed(() => remainingShipText(state.value))
 const chainWindow = computed(() => match.chainWindow)
 /** 面板被收起（请求还在，倒计时还在跑） */
 const chainCollapsed = computed(() => match.chainWindowCollapsed)
-/**
- * 浮层是否展开 = 「有内容」且「没有被用户收起」。
- * 旧写法把 chainList 绕过了收起标记，导致有真实连锁牌时点收起无效（审查 P2-4）。
- */
-const chainHasContent = computed(() => chainList.value.length > 0 || !!chainWindow.value)
+// 只有待响应请求使用弹窗；结算中的卡牌始终只展示在右侧竖栏。
+const chainHasContent = computed(() => !!chainWindow.value)
 const chainPanelOpen = computed(() => chainHasContent.value && !chainCollapsed.value)
 const speed3Hand = computed<CardLike[]>(() => chainWindow.value?.speed3Cards ?? [])
 const chainRemaining = computed(() => {
@@ -425,6 +422,21 @@ const detailDrag = useFloatingDrag({
   initial: { x: Math.max(0, window.innerWidth - 272), y: 158 },
   minY: 72,
 })
+
+// 选舰与加盾共用位置，桌面与触屏都可从标题拖动。
+const pickPanelEl = ref<HTMLElement | null>(null)
+const pickHeadEl = ref<HTMLElement | null>(null)
+const pickDrag = useFloatingDrag({
+  handle: pickHeadEl,
+  panel: pickPanelEl,
+  initial: { x: window.innerWidth * 0.22, y: window.innerHeight * 0.64 },
+  minY: 72,
+})
+const pickPanelStyle = computed(() => ({
+  left: pickDrag.state.value.x + 'px',
+  top: pickDrag.state.value.y + 'px',
+  maxHeight: `calc(100dvh - ${pickDrag.state.value.y + 8}px)`,
+}))
 
 const logPanelEl = ref<HTMLElement | null>(null)
 const logHeadEl = ref<HTMLElement | null>(null)
@@ -1869,13 +1881,7 @@ function backToLobby(): void {
     >
       <header class="game-chain-panel__head">
         <h2 class="game-chain-panel__title">连锁</h2>
-        <button v-if="!chainWindow" type="button" class="game-close" data-testid="game-chain-close" aria-label="收起连锁" @click="match.collapseChainWindow()">×</button>
       </header>
-      <ol v-if="!chainWindow && chainList.length" class="game-chain-stack" data-testid="game-chain-stack">
-        <li v-for="(item, index) in chainList" :key="'chain-' + index" class="game-chain-item" :class="{ 'game-chain-item--negated': item.negated }" :data-testid="'game-chain-item-' + index" :title="fullCard(item)?.description" tabindex="0">
-          <b :data-testid="'game-chain-item-' + index + '-name'">{{ item.name }}</b><span class="game-chain-index">第 {{ index + 1 }} 张</span><span v-if="item.negated" class="game-chain-negated">已无效</span>
-        </li>
-      </ol>
       <section v-if="chainWindow" class="game-chain-window" data-testid="game-chain-window">
         <p class="game-chain-window__card">
           {{ chainWindow.caster === state.player_id ? '你发动了魔法卡' : '对方发动了魔法卡' }}
@@ -1913,8 +1919,8 @@ function backToLobby(): void {
     </section>
     </div>
 
-    <section v-if="shieldOpen" class="game-dialog game-shield-choice" data-testid="game-shield-choice" role="dialog" aria-label="仁王之盾选择">
-      <h2 class="game-dialog__title" data-testid="game-shield-choice-title">「仁王之盾」：请选择要保护的战舰</h2>
+    <section v-if="shieldOpen" ref="pickPanelEl" :style="pickPanelStyle" class="game-dialog game-shield-choice game-pick-float" :class="{ 'is-dragging': pickDrag.state.value.dragging }" data-testid="game-shield-choice" role="dialog" aria-label="仁王之盾选择">
+      <h2 ref="pickHeadEl" class="game-dialog__title game-pick-float__handle" data-testid="game-shield-choice-title" @pointerdown="pickDrag.onPointerDown">「仁王之盾」：请选择要保护的战舰</h2>
       <p class="game-dialog__hint" data-testid="game-shield-choice-hint">在自己海域点击高亮的战舰格；再点一次取消选择。</p>
       <p class="game-dialog__hint" data-testid="game-shield-choice-count">已选 {{ shieldPicks.length }} / 3 艘</p>
       <p v-if="shieldError" class="game-dialog__error" data-testid="game-shield-choice-error">{{ shieldError }}</p>
@@ -1925,8 +1931,8 @@ function backToLobby(): void {
       </div>
     </section>
 
-    <section v-if="match.pickRequest" class="game-dialog game-pick" data-testid="game-ship-pick" role="alertdialog" aria-label="选船">
-      <h2 class="game-dialog__title">请选择一艘自己的战舰</h2>
+    <section v-if="match.pickRequest" ref="pickPanelEl" :style="pickPanelStyle" class="game-dialog game-pick game-pick-float" :class="{ 'is-dragging': pickDrag.state.value.dragging }" data-testid="game-ship-pick" role="alertdialog" aria-label="选船">
+      <h2 ref="pickHeadEl" class="game-dialog__title game-pick-float__handle" @pointerdown="pickDrag.onPointerDown">请选择一艘自己的战舰</h2>
       <p class="game-dialog__hint" data-testid="game-ship-pick-message">{{ match.pickRequest.message }}</p>
       <p class="game-dialog__hint">在自己海域点击高亮的战舰格子。</p>
     </section>

@@ -2002,34 +2002,33 @@
     align-items: center;
   }
 
-/* 点船提示让出棋盘，避免护盾和献祭面板盖住需要点击的舰格。 */
-.game-shield-choice,
-.game-pick {
+/* 选舰提示窗独立浮动，增加提示不会推移棋盘；各尺寸都可拖动。 */
+.game .game-pick-float,
+.game[data-layout="compact"].is-picking .game-pick-float {
   position: fixed;
-  top: auto;
-  left: auto;
-  right: 12px;
-  bottom: 12px;
+  right: auto;
+  bottom: auto;
   transform: none;
+  width: min(420px, calc(100vw - 16px));
+  overflow-y: auto;
+  z-index: 80;
 }
-.game[data-layout="compact"].is-picking .game-shield-choice,
-.game[data-layout="compact"].is-picking .game-pick {
-  position: static;
-  order: 3;
-  width: 100%;
-  flex: 0 0 auto;
+.game-pick-float__handle {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
 }
-@media (max-height: 520px) and (min-width: 600px) {
-  .game[data-layout="compact"].is-picking .game-shield-choice,
-  .game[data-layout="compact"].is-picking .game-pick {
-    position: fixed;
-    right: 8px;
-    bottom: 8px;
-    width: min(320px, 42vw);
-    max-height: calc(100dvh - 80px);
-    overflow-y: auto;
-  }
+.game-pick-float__handle::after {
+  content: '拖动标题可移动';
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+  font-weight: 400;
+  opacity: .65;
 }
+.game-pick-float.is-dragging .game-pick-float__handle { cursor: grabbing; }
 /* 需要时的底部面板：连锁响应 / 卡牌详情 / 待选请求都能在手机上完成 */
 .game[data-layout="compact"] .arena-rail--sheet {
     display: flex;

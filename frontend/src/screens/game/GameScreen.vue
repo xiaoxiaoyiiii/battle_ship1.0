@@ -1869,7 +1869,7 @@ function backToLobby(): void {
         </button>
       </div>
       <Transition name="card-inspect-fade">
-        <aside v-if="hoveredCard && selectedCardIndex < 0" class="game-card-inspect" data-testid="game-card-hover-preview" aria-live="polite" @mouseenter="showCardPreview(hoveredCardIndex)" @mouseleave="hideCardPreview()">
+        <aside v-if="hoveredCard" class="game-card-inspect" data-testid="game-card-hover-preview" aria-live="polite" @mouseenter="showCardPreview(hoveredCardIndex)" @mouseleave="hideCardPreview()">
           <div class="game-card-inspect__art" :class="{ 'is-empty': !cardArtUrl(hoveredCard.name) }">
             <img v-if="cardArtUrl(hoveredCard.name)" :src="cardArtUrl(hoveredCard.name) || ''" :alt="hoveredCard.name + ' 卡面预览'" />
             <span v-else>{{ hoveredCard.name }}</span>

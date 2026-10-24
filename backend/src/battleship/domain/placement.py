@@ -148,19 +148,15 @@ def _random_ship_cells(
     return [(0, 0)]
 
 
-def own_board_cells(room: Room, player_id: str) -> list[dict[str, int]] | None:
-    """A seat's "original" board cells, for cards that only allow re-placing there.
+def own_board_cells(room: Room, player_id: str) -> list[dict[str, int]]:
+    """收集本座位的原船位，含活舰、沉船与神威暂时除外的船，按坐标去重。
 
-    Includes living ships, sunken ships (revive / re-place both use them) and the
-    ships currently excluded by 【神威！】: they are only *temporarily* removed and
-    come back to these very cells next big round, so they still count as "cells
-    where this seat originally had a ship". Returns ``None`` when the seat never
-    had a board at all, which the callers read as "no restriction".
+    没有原船位时保留空白名单，不能把「无处可摆」误当作「全盘任意摆」。
     """
 
     player = room.players.get(player_id)
     if player is None:
-        return None
+        return []
     cells: list[dict[str, int]] = []
     for ship in [*player.ships, *player.sunken_ships]:
         cells.extend({"x": int(pos.x), "y": int(pos.y)} for pos in ship.positions)
@@ -169,8 +165,6 @@ def own_board_cells(room: Room, player_id: str) -> list[dict[str, int]] | None:
             continue
         for ship in entry.get("ships") or []:
             cells.extend({"x": int(pos.x), "y": int(pos.y)} for pos in ship.positions)
-    if not cells:
-        return None
     seen: set[tuple[int, int]] = set()
     unique: list[dict[str, int]] = []
     for cell in cells:

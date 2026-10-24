@@ -58,7 +58,7 @@ const areaPreviewCells = computed<string[]>(() => {
   const merged = new Set<string>([...(props.preview ?? []), ...(props.selected ?? [])])
   return [...merged]
 })
-const areaPreviewActive = computed(() => areaPreviewCells.value.length > 1)
+const areaPreviewActive = computed(() => areaPreviewCells.value.length > 0)
 
 const cursor = ref(0)
 const grid = ref<HTMLElement | null>(null)
@@ -370,8 +370,8 @@ function onCellFocus(index: number): void {
 
 @media (max-width: 719px) {
   .board__grid {
-    gap: 2px;
-    padding: 5px;
+    --gap: 2px;
+    --pad: 5px;
   }
 }
 @media (max-width: 719px) {

@@ -2913,7 +2913,7 @@ button.arena-avatar--btn {
 /* 选目标时底部面板占位：棋盘按剩余高度收一档，避免压住最后一排格子 */
 .game[data-layout="compact"].is-picking .board-wrapper :deep(.board__grid) {
   height: clamp(168px, 33dvh, 248px);
-  width: auto;
+  width: clamp(168px, 33dvh, 248px);
   max-width: 100%;
 }
 

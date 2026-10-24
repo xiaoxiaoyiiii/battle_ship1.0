@@ -8,7 +8,7 @@ import { computed } from 'vue'
  * D：轮廓与填色按卡牌主题取色（冻结冰蓝、硫磺火焰与轰炸琥珀、神威紫、雷达青绿），克制不发散。
  *
  * 只做绘制：不进 DOM 交互，`pointer-events: none`，格子照旧由 `BoardPanel` 渲染并接收点击。
- * 几何完全由 CSS 变量推导（`--cell` / `--gap` / `--pad`），与 `.board__grid` 的网格同源，
+ * 几何由实际容器比例与 `--gap` / `--pad` 推导，兼容紧凑档的自适应格子，
  * 因此不需要测量 DOM，也不会随窗口缩放错位。
  */
 const props = defineProps<{
@@ -30,7 +30,7 @@ const coords = computed(() =>
 )
 const has = (x: number, y: number) => keySet.value.has(x + '-' + y)
 
-/** 一片范围才有外轮廓；零散选船（穿帮场景）交给 `BoardPanel` 的轻量圆环，这里不画。 */
+/** 调用方只传区域目标；独立点船仍由 `BoardPanel` 画轻量圆环。 */
 const bounds = computed(() => {
   if (!coords.value.length) return null
   const xs = coords.value.map((c) => c.x)
@@ -47,7 +47,7 @@ const filled = computed(() => width.value * height.value === coords.value.length
 const band = computed(() => filled.value && (width.value === 1 || height.value === 1))
 
 const shape = computed<'rect' | 'band' | 'union' | 'none'>(() => {
-  if (!bounds.value || coords.value.length < 2) return 'none'
+  if (!bounds.value) return 'none'
   if (!filled.value) return 'union'
   return band.value ? 'band' : 'rect'
 })
@@ -62,11 +62,11 @@ const label = computed(() => {
 
 /** 每格的左/上偏移（与 `.board__grid` 的 padding + gap 同步）。 */
 function cellLeft(x: number): string {
-  return `calc(var(--pad, 10px) + ${x} * (var(--cell, 40px) + var(--gap, 4px)))`
+  return `calc(var(--pad, 10px) + ${x} * (var(--sel-cell) + var(--gap, 4px)) - var(--gap, 4px) / 2)`
 }
 
 function cellTop(y: number): string {
-  return `calc(var(--pad, 10px) + ${y} * (var(--cell, 40px) + var(--gap, 4px)))`
+  return `calc(var(--pad, 10px) + ${y} * (var(--sel-cell) + var(--gap, 4px)) - var(--gap, 4px) / 2)`
 }
 
 interface Edge {
@@ -80,26 +80,26 @@ interface Edge {
  * 不规则的六连格得到真实并集轮廓，而不会退化成包围矩形（暗示额外作用格）。
  */
 const edges = computed<Edge[]>(() => {
-  if (shape.value === 'none' || shape.value === 'union') {
-    if (shape.value !== 'union') return []
-  }
+  if (shape.value === 'none') return []
   const out: Edge[] = []
   const thickness = '2px'
   for (const cell of coords.value) {
     const left = cellLeft(cell.x)
     const top = cellTop(cell.y)
-    const base = { left, top, width: 'var(--cell, 40px)', height: 'var(--cell, 40px)' }
+    // 格距由两侧各分一半，邻格共用同一条边，避免轮廓在间隙处断开。
+    const extent = 'calc(var(--sel-cell) + var(--gap, 4px))'
+    const base = { left, top, width: extent, height: extent }
     if (!has(cell.x, cell.y - 1)) {
-      out.push({ key: cell.key + '-t', side: 'top', style: { ...base, transform: 'translate(0, -1px)', height: thickness } })
+      out.push({ key: cell.key + '-t', side: 'top', style: { ...base, height: thickness } })
     }
     if (!has(cell.x, cell.y + 1)) {
-      out.push({ key: cell.key + '-b', side: 'bottom', style: { ...base, transform: 'translate(0, 1px)', height: thickness } })
+      out.push({ key: cell.key + '-b', side: 'bottom', style: { ...base, top: `calc(${top} + ${extent} - ${thickness})`, height: thickness } })
     }
     if (!has(cell.x - 1, cell.y)) {
-      out.push({ key: cell.key + '-l', side: 'left', style: { ...base, transform: 'translate(-1px, 0)', width: thickness } })
+      out.push({ key: cell.key + '-l', side: 'left', style: { ...base, width: thickness } })
     }
     if (!has(cell.x + 1, cell.y)) {
-      out.push({ key: cell.key + '-r', side: 'right', style: { ...base, transform: 'translate(1px, 0)', width: thickness } })
+      out.push({ key: cell.key + '-r', side: 'right', style: { ...base, left: `calc(${left} + ${extent} - ${thickness})`, width: thickness } })
     }
   }
   return out
@@ -145,6 +145,7 @@ const badgeStyle = computed<Record<string, string>>(() => {
   inset: 0;
   z-index: 2;
   pointer-events: none;
+  --sel-cell: calc((100% - 2 * var(--pad, 10px) - 5 * var(--gap, 4px)) / 6);
   --sel-hue: var(--role-action);
   --sel-border: color-mix(in srgb, var(--sel-hue) 72%, white);
   /* 填色 10%、纹理约 5%：够看出“整片”，又不盖住命中 / 战舰 / 盾牌图标。 */
@@ -168,9 +169,8 @@ const badgeStyle = computed<Record<string, string>>(() => {
 
 .sel-preview__fill {
   position: absolute;
-  width: var(--cell, 40px);
-  height: var(--cell, 40px);
-  border-radius: 4px;
+  width: calc(var(--sel-cell) + var(--gap, 4px));
+  height: calc(var(--sel-cell) + var(--gap, 4px));
   background:
     repeating-linear-gradient(
       135deg,

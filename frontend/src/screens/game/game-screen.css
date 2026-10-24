@@ -3086,3 +3086,5 @@ button.arena-avatar--btn {
  .game[data-dense='true'] .game-compact-bar { padding:4px 6px; }
  .game[data-dense='true'] .game-actions__row > .button { height:40px; min-height:40px; padding:4px 8px; }
 }
+
+.game[data-layout='wide'] .arena-player--self .arena-player__pips { display:flex; }

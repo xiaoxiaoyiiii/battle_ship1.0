@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
+import BoardAreaPreview from './BoardAreaPreview.vue'
 import BoardCellIcon from './BoardCellIcon.vue'
 import { cellVisualState, cellHints } from './cellPresentation'
 import type { BoardCell } from './view'
@@ -27,6 +28,12 @@ const props = defineProps<{
   legal?: string[]
   hidden?: boolean
   selectionBoard?: 'self' | 'opponent' | null
+  /** 区域类卡牌的目标形状；'ships' 表示点船选择，不画整片轮廓。 */
+  selectionKind?: 'area' | 'line' | 'continuous' | 'ships' | null
+  /** A＋D 预览层的主题色档位。 */
+  selectionTone?: 'freeze' | 'fire' | 'divine' | 'radar' | 'default'
+  /** 预览层角落标记（缺省由覆盖范围推导）。 */
+  selectionBadge?: string
   selectionLabel?: string
   selectionHint?: string
   picking?: boolean
@@ -40,6 +47,19 @@ const previewSet = computed(() => new Set(props.preview ?? []))
 const legalSet = computed(() => new Set(
   props.picking && (!props.selectionBoard || props.selectionBoard === props.board) ? props.legal ?? [] : [],
 ))
+/**
+ * A＋D 区域预览：只有「成片」的目标（区域 / 行列 / 连续格）才画整片轮廓与填色；
+ * 点船类目标保持逐格轻量标记，不会把几艘独立的船连成假的整片范围。
+ */
+const areaPreviewCells = computed<string[]>(() => {
+  const kind = props.selectionKind
+  if (kind !== 'area' && kind !== 'line' && kind !== 'continuous') return []
+  if (props.hidden) return []
+  const merged = new Set<string>([...(props.preview ?? []), ...(props.selected ?? [])])
+  return [...merged]
+})
+const areaPreviewActive = computed(() => areaPreviewCells.value.length > 1)
+
 const cursor = ref(0)
 const grid = ref<HTMLElement | null>(null)
 
@@ -142,7 +162,7 @@ function onCellFocus(index: number): void {
   <section
     v-show="!hidden"
     class="board"
-    :class="['board--' + board, { 'board--picking': picking }]"
+    :class="['board--' + board, { 'board--picking': picking, 'board--area': areaPreviewActive }]"
     :data-testid="boardTestid"
     :data-board="board"
     :aria-label="title"
@@ -159,6 +179,12 @@ function onCellFocus(index: number): void {
       :aria-label="title + '，方向键移动，Enter 开炮'"
       @keydown="onKeydown"
     >
+      <BoardAreaPreview
+        v-if="areaPreviewActive"
+        :cells="areaPreviewCells"
+        :tone="selectionTone ?? 'default'"
+        :label="selectionBadge"
+      />
       <button
         v-for="(cell, index) in cells"
         :key="cell.key"
@@ -205,8 +231,6 @@ function onCellFocus(index: number): void {
         @click="onCell(cell)"
       >
         <BoardCellIcon v-if="!['empty', 'hole'].includes(cellVisualState(cell))" :kind="cellVisualState(cell)" />
-        <span v-if="legalSet.has(cell.key) && cellVisualState(cell) === 'empty'" class="cell__candidate" aria-hidden="true">+</span>
-        <span v-if="selectedSet.has(cell.key) || previewSet.has(cell.key)" class="cell__selected" aria-hidden="true">✓</span>
         <span v-if="cell.trap && cellVisualState(cell) !== 'trap' && !cell.sunk" class="cell__badge cell__badge--trap" aria-hidden="true">△</span>
         <span v-if="cell.frozen" class="cell__badge cell__badge--frozen" aria-hidden="true">冻</span>
       </button>
@@ -252,10 +276,13 @@ function onCellFocus(index: number): void {
 }
 
 .board__grid {
+  --gap: 4px;
+  --pad: 10px;
+  position: relative;
   display: grid;
   grid-template-columns: repeat(6, var(--cell, 40px));
-  gap: 4px;
-  padding: 10px;
+  gap: var(--gap);
+  padding: var(--pad);
   border: 1px solid var(--board-border);
   border-radius: 14px;
   background: var(--board-bg);
@@ -325,11 +352,13 @@ function onCellFocus(index: number): void {
 .cell--hole { background:repeating-linear-gradient(45deg,#0a141d,#0a141d 4px,#05101a 4px,#05101a 8px); border-style:dashed; }
 .cell--frozen-area { outline:1px dashed var(--role-self); outline-offset:-2px; }
 .cell--last-stand { outline:1px dashed var(--role-action); outline-offset:-2px; }
-.cell--legal::after,.cell--preview::after,.cell--selected::after { content:''; position:absolute; z-index:1; inset:3px; border:1.5px dashed #66e8b5; border-radius:4px; pointer-events:none; }
-.cell--preview::after,.cell--selected::after { border-style:solid; box-shadow:0 0 0 1px #142d28; }
+/* 可选格：只给光标的轻微暗示，不刷虚线框；区域模式整片由预览层表达。 */
 .cell--legal { cursor:crosshair; }
-.cell__candidate { color:#7af2c7; font-size:clamp(14px,calc(var(--cell,40px)*.42),25px); line-height:1; pointer-events:none; }
-.cell__selected { position:absolute; top:1px; right:1px; z-index:2; display:grid; place-items:center; width:14px; height:14px; border-radius:3px; background:#153e35; color:#fff; font-size:13px; font-weight:800; pointer-events:none; }
+.cell--legal:hover { background:color-mix(in srgb,var(--role-action) 18%,var(--cell-bg)); }
+.board--area .cell--legal::after,.board--area .cell--preview::after,.board--area .cell--selected::after { content:none; }
+/* 点船类目标：保留一格一条轻量实线轮廓，几艘船各自独立，不合成整片范围。 */
+.cell--preview::after,.cell--selected::after { content:''; position:absolute; z-index:3; inset:2px; border:1.5px solid #9ef0cf; border-radius:5px; pointer-events:none; }
+.cell--preview::after { border-style:dashed; border-color:#c8f5e3; }
 .cell__badge { position:absolute; left:2px; top:2px; z-index:2; padding:1px 2px; border-radius:3px; font-size:9px; line-height:1; background:#122333; color:#9ee6fa; pointer-events:none; }
 .cell__badge--trap { top:auto; bottom:2px; color:#d1a1ff; background:#2a1840; font-size:12px; }
 .board-cell-hint { position:fixed; z-index:260; width:270px; max-width:calc(100vw - 24px); max-height:calc(100dvh - 24px); overflow:hidden; box-sizing:border-box; padding:12px 14px; border:1px solid var(--panel-line,#666189); border-radius:10px; background:var(--panel,#151a30); box-shadow:0 10px 32px #0008; color:var(--text-primary,#eef0ff); pointer-events:none; }

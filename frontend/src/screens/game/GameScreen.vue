@@ -257,6 +257,48 @@ const targetHint = computed(() => {
   return ''
 })
 
+/** A＋D 区域预览：卡牌主题色档位（不引入新视觉体系，只借用既有主题色）。 */
+const TARGET_TONES: Record<string, 'freeze' | 'fire' | 'divine' | 'radar'> = {
+  '冻结': 'freeze',
+  '硫磺火焰': 'fire',
+  '轰炸': 'fire',
+  '神威！': 'divine',
+  '探测雷达': 'radar',
+}
+
+const selectionTone = computed(() => {
+  const sel = selection.value
+  if (!sel) return 'default' as const
+  return TARGET_TONES[sel.card.name] ?? ('default' as const)
+})
+
+/** 区域类目标画整片轮廓；点船/加盾类保持逐格轻量标记。 */
+const selectionKind = computed<'area' | 'line' | 'continuous' | 'ships' | null>(() => {
+  const sel = selection.value
+  if (!sel) {
+    if (match.pickRequest || shieldOpen.value) return 'ships'
+    return null
+  }
+  const kind = sel.descriptor.kind
+  if (kind === 'area' || kind === 'line' || kind === 'continuous') return kind
+  if (kind === 'shenwei') return 'area'
+  return 'ships'
+})
+
+/** 角落标记：3×3 / 2×2 / 行 6 格 / 已选 n 格。 */
+const selectionBadge = computed(() => {
+  const sel = selection.value
+  if (!sel || !sel.anchor) return ''
+  const kind = sel.descriptor.kind
+  if (kind === 'area' || kind === 'shenwei') {
+    const size = sel.descriptor.size ?? 3
+    return String(size) + '×' + String(size)
+  }
+  if (kind === 'line') return sel.lineDir === 'row' ? '行 6 格' : '列 6 格'
+  if (kind === 'continuous') return String(sel.picks.length) + ' 格'
+  return ''
+})
+
 const chainList = computed(() => chainItems(state.value.chain))
 const selfEffects = computed(() => effectBadgeList(state.value.effect_badges?.self))
 const opponentEffects = computed(() => effectBadgeList(state.value.effect_badges?.opponent))
@@ -1557,6 +1599,9 @@ function backToLobby(): void {
               :selection-board="selection ? (selection.board || selection.descriptor.board || (selection.descriptor.kind === 'own_ships' ? 'self' : null)) : 'self'"
               :selection-label="selection?.card.name || (shieldOpen ? '仁王之盾' : '')"
               :selection-hint="selection ? targetHint : (pendingPick?.message || '点击己方战舰选择目标。')"
+              :selection-kind="selectionKind"
+              :selection-tone="selectionTone"
+              :selection-badge="selectionBadge"
               :hidden="!showSelfBoard"
               :picking="!!selection || !!match.pickRequest || shieldOpen"
               @cell="(x: number, y: number) => onCell('self', x, y)"
@@ -1576,6 +1621,9 @@ function backToLobby(): void {
               :selection-board="selection ? (selection.board || selection.descriptor.board || (selection.descriptor.kind === 'own_ships' ? 'self' : null)) : 'self'"
               :selection-label="selection?.card.name || (shieldOpen ? '仁王之盾' : '')"
               :selection-hint="selection ? targetHint : (pendingPick?.message || '点击己方战舰选择目标。')"
+              :selection-kind="selectionKind"
+              :selection-tone="selectionTone"
+              :selection-badge="selectionBadge"
               :hidden="!showOpponentBoard"
               :picking="!!selection"
               @cell="(x: number, y: number) => onCell('opponent', x, y)"

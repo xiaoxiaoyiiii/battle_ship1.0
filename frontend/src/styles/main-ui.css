@@ -473,4 +473,4 @@ body:has([data-testid='screen-game']) .screen-boundary {
 .app-toast { animation: none; }
 .toast-enter-active,.toast-leave-active { transition: opacity 160ms ease, transform 160ms ease; }
 .toast-enter-from,.toast-leave-to { opacity: 0; transform: translateY(-4px); }
-.toast-leave-active { position: absolute; width: 100%; }
+.toast-leave-active { position: relative; }

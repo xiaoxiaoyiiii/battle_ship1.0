@@ -26,6 +26,7 @@ from typing import Any, Awaitable, Callable
 
 from ..domain import battle as battle_rules
 from ..domain import effects
+from ..domain import placement as placement_rules
 from ..domain import replay as replay_rules
 from ..domain.ai import policies
 from ..domain.magic import deck as deck_rules
@@ -1836,13 +1837,13 @@ class MagicService:
 
         # 卡面「只可以在自己原本有战舰的地方进行调整」：清空之前先把各自的原船位记下来，
         # 由 `place_ships` 在真正写入前校验（含沉船位，复活/重摆都可能用到）。
+        # 用 `placement_rules.own_board_cells`：除活舰与沉船外，还包括被【神威！】
+        # 暂时除外、下一大回合要回原位的船 —— 它们同样属于「自己原本有战舰的地方」。
+        # 漏掉这一项会让该座位白名单为空，AI 摆 0 艘后 `all_players_placed` 永假，
+        # 房间会卡在 placing_ships（有人提交后一直等对面摆船）。
         room.game_effects["reset_allowed_cells"] = {
-            pid: [
-                {"x": int(pos.x), "y": int(pos.y)}
-                for ship in [*pl.ships, *pl.sunken_ships]
-                for pos in ship.positions
-            ]
-            for pid, pl in room.players.items()
+            pid: placement_rules.own_board_cells(room, pid)
+            for pid in room.players
         }
         frames = lifecycle_rules.clear_board_effects(room, list(room.players), "灵气复苏")
         frames += lifecycle_rules.clear_multiturn_effects(room, "灵气复苏")

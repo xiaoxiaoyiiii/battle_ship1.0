@@ -148,6 +148,40 @@ def _random_ship_cells(
     return [(0, 0)]
 
 
+def own_board_cells(room: Room, player_id: str) -> list[dict[str, int]] | None:
+    """A seat's "original" board cells, for cards that only allow re-placing there.
+
+    Includes living ships, sunken ships (revive / re-place both use them) and the
+    ships currently excluded by 【神威！】: they are only *temporarily* removed and
+    come back to these very cells next big round, so they still count as "cells
+    where this seat originally had a ship". Returns ``None`` when the seat never
+    had a board at all, which the callers read as "no restriction".
+    """
+
+    player = room.players.get(player_id)
+    if player is None:
+        return None
+    cells: list[dict[str, int]] = []
+    for ship in [*player.ships, *player.sunken_ships]:
+        cells.extend({"x": int(pos.x), "y": int(pos.y)} for pos in ship.positions)
+    for entry in room.game_effects.get("excluded_ships") or []:
+        if str(entry.get("player")) != str(player_id):
+            continue
+        for ship in entry.get("ships") or []:
+            cells.extend({"x": int(pos.x), "y": int(pos.y)} for pos in ship.positions)
+    if not cells:
+        return None
+    seen: set[tuple[int, int]] = set()
+    unique: list[dict[str, int]] = []
+    for cell in cells:
+        key = (cell["x"], cell["y"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(cell)
+    return unique
+
+
 def auto_place_ai(room: Room, player_id: str, rng) -> list[PlayerShip]:
     """Random single-cell board for an AI seat, exactly like `_ai_place_ships`.
 

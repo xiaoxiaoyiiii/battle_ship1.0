@@ -21,7 +21,7 @@ from typing import Any, Callable
 from ..ai.difficulty import difficulty_of
 from ..room import Room, RoomState, alive_ships, opponent_of
 from .cards import MagicCard
-from .rules import blocked_cells, lanyu_requirement_reason
+from .rules import blocked_cells, evaluate_cast, lanyu_requirement_reason
 
 #: The response window every responder gets (legacy CHAIN_RESPONSE_SECONDS).
 CHAIN_RESPONSE_SECONDS = 10
@@ -115,6 +115,28 @@ def speed3_cards(player: Any) -> list[MagicCard]:
     return [card for card in player.magic_hand if int(card.speed) == 3]
 
 
+def usable_speed3_cards(room: Room, player_id: str | None) -> list[MagicCard]:
+    """Speed-3 cards this player could actually chain **right now**.
+
+    手牌里有速阶3 不等于能出：`can_play_magic_card` 对速阶3 恒为 True，卡片专属
+    条件（亡羊补牢没弃牌、卧薪尝胆船数不够、滥竽充数船已满、效果未接入…）只在
+    `evaluate_cast` 里拦。窗口按「有没有一张能出」开：否则玩家看到的是一个没有
+    任何可点选项的 10 秒窗口，双方都只能等超时才结算（实测 AI 出牌 → 人类连锁 →
+    AI 无合法响应 pass → 人类只剩不可用速阶3，结算被拖到 10.02s）。
+    """
+
+    if not player_id:
+        return []
+    player = room.players.get(player_id)
+    if player is None:
+        return []
+    return [
+        card
+        for card in player.magic_hand
+        if int(card.speed) == 3 and evaluate_cast(room, str(player_id), card) is None
+    ]
+
+
 def ai_can_negate_chain_top(room: Room, ai_id: str) -> bool:
     """Hard AI only negates cards it can actually negate.
 
@@ -156,7 +178,7 @@ def can_respond(room: Room, player_id: str | None) -> bool:
         if not any(card.name == "失灵！" for card in player.magic_hand):
             return False
         return ai_can_negate_chain_top(room, player_id)
-    return bool(speed3_cards(player))
+    return bool(usable_speed3_cards(room, player_id))
 
 
 def clear_display(room: Room) -> None:

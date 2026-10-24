@@ -990,9 +990,13 @@ class MagicService:
                         # Self-chain: the window can come back to the last
                         # caster, so the client must not assume "opponent".
                         "caster": top.player_id,
+                        # 窗口归属写进载荷：自连锁时 caster 就是自己，前端只看
+                        # caster 会把它当成「对方在连锁」而不显示响应面板。
+                        "responder": player_id,
+                        "self_chain": top.player_id == player_id,
                         "speed3_cards": [
                             card_payload(card)
-                            for card in chain_rules.speed3_cards(player)
+                            for card in chain_rules.usable_speed3_cards(room, player_id)
                         ],
                         "countdown": CHAIN_RESPONSE_SECONDS,
                     },
@@ -1138,10 +1142,12 @@ class MagicService:
         if room.chain_window and room.chain_window != player_id:
             return {"status": "error", "message": "当前不是你的连锁响应窗口"}
 
-        # Closing the window is what makes late/stale answers impossible.
-        room.chain_waiting = False
-        room.chain_window = None
-
+        # Closing the window is what makes late/stale answers impossible — but it
+        # happens only when this answer actually commits (a chained card, a pass,
+        # or a deliberate refusal-pass). Pure validation failures below leave the
+        # window open for the same player: closing it there left `chain_waiting`
+        # false with no window and no timer, i.e. a chain that never resolved
+        # (the 10s timeout also returns early once `chain_waiting` is false).
         if chain and card_payload_data:
             try:
                 card = card_from_payload(card_payload_data)
@@ -1150,6 +1156,8 @@ class MagicService:
             player = room.players[str(player_id)]
             # 看破！ suppress: pass and advance, never leave the window half-open.
             if player.magic_blocked:
+                room.chain_waiting = False
+                room.chain_window = None
                 await self._pass_after_refusal(room, str(player_id))
                 return {"status": "error", "message": "你的魔法卡已被看破，无法连锁"}
 
@@ -1171,8 +1179,13 @@ class MagicService:
             # 卡专属条件 / 待选船 / 未接入）。拒绝后让过并推窗，绝不留半开窗口。
             refusal = evaluate_cast(room, str(player_id), card)
             if refusal:
+                room.chain_waiting = False
+                room.chain_window = None
                 await self._pass_after_refusal(room, str(player_id))
                 return {"status": "error", "message": refusal}
+
+            room.chain_waiting = False
+            room.chain_window = None
 
             # 第二条支付路径：与 use_magic_card 发同一对事件（复审 finding 7）。
             await hooks.emit(
@@ -1221,6 +1234,9 @@ class MagicService:
             await self._advance_chain_window(room, room.opponent_of(str(player_id)))
             return {"status": "success", "message": f"魔法卡{card.name}已加入连锁"}
 
+        # 明确放弃：先关窗再计一次 pass（与 chained/refused 两条提交路径一致）。
+        room.chain_waiting = False
+        room.chain_window = None
         room.chain_passes += 1
         if room.chain_passes >= 2:
             await self._finish_chain(room)

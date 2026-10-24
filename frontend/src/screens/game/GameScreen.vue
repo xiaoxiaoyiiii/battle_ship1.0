@@ -726,6 +726,8 @@ async function playCard(index: number): Promise<void> {
 
 async function dispatchCard(card: CardLike, targets: Record<string, unknown>, isChain = false): Promise<void> {
   if (busy.value) return
+  // 服务端可能在本次回执前就交回响应权，只能关闭这次实际回答的窗口。
+  const answeredWindow = isChain ? match.chainWindow : null
   busy.value = true
   try {
     const ack = await sendBattleEvent(isChain ? 'chain_response' : 'use_magic_card', {
@@ -742,7 +744,7 @@ async function dispatchCard(card: CardLike, targets: Record<string, unknown>, is
       return
     }
     selection.value = null
-    if (isChain) match.closeChainWindow()
+    if (isChain && match.chainWindow === answeredWindow) match.closeChainWindow()
     announce('已使用' + card.name)
     if (hand.value.some((item) => cardIdentity(item) === cardIdentity(card))) {
       // Self-healing like the legacy client: the server is authoritative.
@@ -1155,13 +1157,21 @@ async function respondChain(card: CardLike): Promise<void> {
 }
 
 async function passChain(): Promise<void> {
+  if (busy.value) return
+  const answeredWindow = match.chainWindow
+  busy.value = true
+  try {
   const ack = await sendBattleEvent('chain_response', {
     room_id: state.value.room_id,
     player_id: state.value.player_id,
     chain: false,
   })
-  match.closeChainWindow()
-  if (ack.status !== 'success') ui.notifyError('game-chain-failed', ack.message || '')
+  if (ack.status === 'success') {
+    if (match.chainWindow === answeredWindow) match.closeChainWindow()
+  } else ui.notifyError('game-chain-failed', ack.message || '')
+  } catch (error) {
+    ui.notifyError('game-chain-failed', '连锁响应发送失败：' + String(error))
+  } finally { busy.value = false }
 }
 
 // ---- chat / piles ----------------------------------------------------------

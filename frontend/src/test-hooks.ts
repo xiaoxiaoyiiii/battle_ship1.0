@@ -235,6 +235,7 @@ const LOBBY_EVENTS: readonly string[] = [
 ]
 
 const SETTLEMENT_EVENTS: readonly string[] = [
+  'game_message',
   'game_over',
   'game_state',
   'room_sync',

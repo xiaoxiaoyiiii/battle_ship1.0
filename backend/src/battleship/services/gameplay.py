@@ -377,7 +377,7 @@ class GameplayService:
             self._start_timer(room)
             await self._publisher.emit(
                 "game_message",
-                {"message": "回光返照：棋盘已重摆，本回合无法攻击（攻击次数为 0）"},
+                {"message": "回光返照：棋盘已重摆，本回合无法攻击（攻击次数为 0）", "type": "magic_effect"},
                 room=room.id,
             )
             await self._publisher.emit(
@@ -414,13 +414,14 @@ class GameplayService:
                 room.attacks_remaining = saved.get(
                     "attacks_remaining", room.attacks_remaining
                 )
+            reset_card = "败者食尘" if getattr(room, "polar_reversal_applied", False) else "灵气复苏"
             if getattr(room, "polar_reversal_applied", False):
                 room.polar_reversal_applied = False
                 room.attacks_remaining = 0
             self._start_timer(room)
             await self._publisher.emit(
                 "game_message",
-                {"message": "双方已重新摆放战舰，继续当前回合", "type": "info"},
+                {"message": f"{reset_card}：双方已重新摆放战舰，继续当前回合", "type": "magic_effect"},
                 room=room.id,
             )
             await self._publisher.emit(

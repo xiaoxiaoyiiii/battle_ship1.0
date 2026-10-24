@@ -17,6 +17,7 @@ import { useResultStore } from '../stores/result'
 export type SettlementEventName =
   | 'game_over'
   | 'game_state'
+  | 'game_message'
   | 'room_sync'
   | 'xp_gained'
   | 'rank_changed'
@@ -29,6 +30,7 @@ export type SettlementEventName =
 const SETTLEMENT_EVENTS = [
   'game_over',
   'game_state',
+  'game_message',
   'room_sync',
   'xp_gained',
   'rank_changed',
@@ -51,6 +53,14 @@ export function applySettlementEvent(
   const result = useResultStore(pinia)
 
   switch (event) {
+    case 'game_message': {
+      // 重摆结束时仍可能停在布船页，由跨页面的共享连接接收最终效果。
+      const message = asString(payload.message).trim()
+      if (payload.type === 'magic_effect' && message) {
+        useUiStore(pinia).notify({ code: `battle-effect:${message}`, message, tone: 'info', ttl: 2000 })
+      }
+      break
+    }
     case 'game_over': {
       const winner = payload.winner
       game.applyServerState({

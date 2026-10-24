@@ -276,7 +276,7 @@ export function applyBattleEvent(
         const name = card ? String(card.name ?? '') : ''
         if (result.negated_skip) {
           match.pushNotice(`「${name}」被「${String(result.negated_by ?? '失灵！')}」无效化`, 'warning')
-        } else if (String(result.message ?? '').trim() && (result.success === false || !result.temp_data_id)) {
+        } else if (String(result.message ?? '').trim() && (result.success === false || (!result.temp_data_id && !['回光返照', '败者食尘'].includes(name)))) {
           match.pushNotice(String(result.message), result.success === false ? 'warning' : 'info')
         }
         if (String(result.temp_data_id ?? '') === 'shield_choice'

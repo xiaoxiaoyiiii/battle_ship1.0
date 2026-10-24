@@ -755,6 +755,14 @@ class MagicService:
         # Legacy ack shape for the generic cancel path: no extra message key.
         return {"status": "success"}
 
+    async def _emit_effect_notice(self, room: Room, player_id: str, card: str, result: str) -> None:
+        """只广播已落地的效果摘要，不把选择引导或私有手牌内容当作结果。"""
+        await self._publisher.emit(
+            "game_message",
+            {"type": "magic_effect", "message": f"{self._name(room, player_id)}的「{card}」：{result}"},
+            room=room.id,
+        )
+
     async def _finish_placement(self, room: Room, player_id: str, kind: str) -> None:
         pending = self._pending_placement(room) or {}
         placed = int(pending.get("placed") or 0)
@@ -785,6 +793,14 @@ class MagicService:
         )
         if baseline is not None:
             await self._mirror_contract_delta(room, player_id, room.players[player_id].remaining_ships - int(baseline))
+        # 放弃尚未放置的部分不能伪报成功；已放置的部分只汇总播报一次。
+        card = {
+            "reinforce": "增援", "revive": "死者苏生", "last_stand": "绝处逢生",
+            "lanyu": "滥竽充数", "shenji_redeploy": "神机妙算", "contract_gain": "恶魔契约",
+        }.get(kind)
+        if placed > 0 and card:
+            result = f"已复活并部署{placed}艘战舰" if kind == "revive" else f"已部署{placed}艘战舰"
+            await self._emit_effect_notice(room, player_id, card, result)
         await self._activate_magic_temp(room)
         await self._sync_each_seat(room)
 
@@ -1756,6 +1772,14 @@ class MagicService:
                 return {"status": "error", "message": "无效的临时数据ID"}
             return {"status": "error", "message": "当前没有待处理的魔法卡选择"}
         result = await handler(room, player_id, temp, target_data)
+        # 灵气仍需双方重摆，仁王之盾已有专属事件，神机宣言也不是最终效果。
+        completed = {
+            "taoyuan_choice": ("桃园结义", "已完成卡牌分配"),
+            "bury_choice": ("明智埋葬", "已埋葬一张魔法卡"),
+            "wangyang_choice": ("亡羊补牢", "已取回一张魔法卡"),
+        }.get(temp_data_id)
+        if result.get("status") == "success" and completed:
+            await self._emit_effect_notice(room, player_id, *completed)
         return await self._with_promoted_choice(room, result, player_id)
 
     async def _confirm_taoyuan(self, room: Room, player_id: str,

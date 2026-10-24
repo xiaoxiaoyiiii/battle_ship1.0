@@ -39,7 +39,7 @@ from alembic.config import Config
 from .models import Base
 from .schema import verify_schema
 
-HEAD_REVISION = "0001_initial_schema"
+HEAD_REVISION = "0002_task_progress"
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
 INTERNAL_TABLES = frozenset({"sqlite_sequence", "alembic_version"})
 

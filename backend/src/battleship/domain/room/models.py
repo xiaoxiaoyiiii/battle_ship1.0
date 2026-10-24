@@ -345,6 +345,8 @@ class Room:
     match_id: str | None = None
     # Ticket #9 settlement latch: one room may only be written to the database
     # once (surrender vs disconnect races must not double-count a match).
+    # 任务出牌按北京时间日期累计，随对局结算一次入库。
+    task_card_uses: dict[str, dict[str, int]] = field(default_factory=dict)
     settled: bool = False
     settlement_result: Any = None
 

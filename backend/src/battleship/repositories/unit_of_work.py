@@ -24,6 +24,7 @@ from .matches import MatchRepository
 from .replays import ReplayRepository
 from .social import SocialRepository
 from .stats import StatsRepository
+from .tasks import TaskRepository
 from .users import UserRepository
 
 
@@ -83,6 +84,10 @@ class UnitOfWork:
     @property
     def stats(self) -> StatsRepository:
         return self._repository("stats", StatsRepository)  # type: ignore[return-value]
+
+    @property
+    def tasks(self) -> TaskRepository:
+        return self._repository("tasks", TaskRepository)
 
     def flush(self) -> None:
         self._require_session().flush()

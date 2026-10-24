@@ -252,11 +252,8 @@ def build_room_sync(
             }
             for ship in player.ships
         ],
-        "opponent_shielded_ships": [
-            [{"x": pos.x, "y": pos.y} for pos in ship.positions]
-            for ship in (opponent.ships if opponent else [])
-            if bool(getattr(ship, "shield", False)) and is_ship_alive(opponent, ship)
-        ],
+        # 兼容字段保留，但未命中的护盾位置仅能由船主查看。
+        "opponent_shielded_ships": [],
         "hand": [card_payload(card) for card in player.magic_hand],
         "attacks": [
             {"x": attack.x, "y": attack.y, "hit": attack.hit}

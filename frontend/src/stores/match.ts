@@ -259,6 +259,7 @@ export const useMatchStore = defineStore('match', () => {
   /** A new match starts: no log/prompt from the previous room may leak in. */
   function reset(): void {
     logs.value = []
+    chainWindowCollapsed.value = false
     notices.value = []
     chainWindow.value = null
     lastAttack.value = null

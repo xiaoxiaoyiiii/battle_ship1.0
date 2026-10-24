@@ -230,16 +230,8 @@ class BattleService:
             return {"status": "success", "game_over": True}
 
         if outcome.shield_blocked:
-            ship = outcome.sunk_ship
-            # The hit ship is not part of the outcome when a shield absorbs it;
-            # rebuild its positions for the frozen shield_absorbed payload.
-            position_payload = []
-            for candidate in room.players[defender_id].ships:
-                if any(pos.x == x and pos.y == y for pos in candidate.positions):
-                    position_payload = [
-                        {"x": pos.x, "y": pos.y} for pos in candidate.positions
-                    ]
-                    break
+            # 公开事件只包含实际被炮击的一格，不泄露同舰其他位置。
+            position_payload = [{"x": x, "y": y}]
             await self._publisher.emit(
                 "shield_absorbed",
                 {"player": defender_id, "positions": position_payload},

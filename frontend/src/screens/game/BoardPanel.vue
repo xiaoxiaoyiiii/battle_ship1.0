@@ -40,7 +40,7 @@ const props = defineProps<{
   interactive?: boolean
 }>()
 
-const emit = defineEmits<{ (event: 'cell', x: number, y: number): void }>()
+const emit = defineEmits<{ (event: 'cell', x: number, y: number): void; (event: 'hover', point: { x: number; y: number } | null): void }>()
 
 const selectedSet = computed(() => new Set(props.selected ?? []))
 const previewSet = computed(() => new Set(props.preview ?? []))
@@ -224,9 +224,9 @@ function onCellFocus(index: number): void {
         :aria-label="cellLabel(cell)"
         :aria-disabled="picking ? !legalSet.has(cell.key) : board === 'opponent' && !cell.attackable"
         @focus="onCellFocus(index); showHint(cell, $event)"
-        @mouseenter="showHint(cell, $event)"
-        @mouseleave="hideHint"
-        @blur="hideHint"
+        @mouseenter="showHint(cell, $event); emit('hover', { x: cell.x, y: cell.y })"
+        @mouseleave="hideHint(); emit('hover', null)"
+        @blur="hideHint(); emit('hover', null)"
         @keydown.esc="hideHint"
         @click="onCell(cell)"
       >

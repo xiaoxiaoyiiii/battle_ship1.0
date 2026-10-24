@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { useMatchStore } from './match'
 import {
   GAME_STATE_SCHEMA,
   defaultGameState,
@@ -33,6 +34,13 @@ export const useGameStore = defineStore('game', () => {
       if (isKnownGameStateField(key)) next[key] = value
       else unknown.push(key)
     }
+    // 在接收新房间的第一帧时清理，不能依赖尚未挂载的对局页 watcher。
+    const newRoom = typeof next.room_id === 'string' && next.room_id !== state.value.room_id
+    const restarted = state.value.state === 'game_over' && next.state === 'placing_ships' && !next.needs_reset
+    if (newRoom || restarted) {
+      useMatchStore().reset()
+      state.value = defaultGameState()
+    }
     if ('opponent_name' in next && !('opponent_registered' in next)) next.opponent_registered = false
     Object.assign(state.value, next)
     unknownFields.value = unknown
@@ -44,6 +52,7 @@ export const useGameStore = defineStore('game', () => {
   }
 
   function reset(): void {
+    useMatchStore().reset()
     state.value = defaultGameState()
     unknownFields.value = []
     revision.value += 1

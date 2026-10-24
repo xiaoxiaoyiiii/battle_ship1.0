@@ -179,6 +179,12 @@ export function applyBattleEvent(
   const state = game.state
   const me = state.player_id
 
+  // 消费护盾的事件立即更新本地船状态，不等待下一份完整快照。
+  function breakOwnShield(points: Point[]) {
+    const keys = new Set(points.map(p => `${p.x}-${p.y}`))
+    game.applyServerState({ ships: state.ships.map(ship => ship.positions.some(p => keys.has(`${p.x}-${p.y}`)) ? { ...ship, shield: false } : ship) })
+  }
+
   switch (event) {
     case 'attack_result': {
       const x = numberOrNull(payload.x)
@@ -195,10 +201,12 @@ export function applyBattleEvent(
         // A shield-absorbed shot spends the attack but does not mark the cell
         // (legacy), so the same cell stays attackable.
         if (!shieldBlocked) game.applyServerState({ attacks: appendCell(state.attacks, { x, y }, hit) })
+        else match.markShieldBroken(false, [{ x, y }])
       } else if (!shieldBlocked) {
         game.applyServerState({ opponent_attacks: appendCell(state.opponent_attacks, { x, y }, hit) })
       } else {
         match.markShieldBroken(true, [{ x, y }])
+        breakOwnShield([{ x, y }])
       }
       const remaining = numberOrNull(payload.remaining_attacks)
       if (remaining !== null) game.applyServerState({ attacks_remaining: remaining })
@@ -320,7 +328,9 @@ export function applyBattleEvent(
     case 'shield_absorbed': {
       const owner = String(payload.player ?? '')
       const mine = owner === me
-      match.markShieldBroken(mine, pointList(payload.positions))
+      const positions = pointList(payload.positions)
+      match.markShieldBroken(mine, positions)
+      if (mine) breakOwnShield(positions)
       if (mine) match.pushNotice('你的护盾挡下了这一炮：该格本回合还能被再次攻击', 'warning')
       break
     }

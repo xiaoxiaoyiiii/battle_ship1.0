@@ -173,15 +173,24 @@ const opponentCells = computed(() =>
  * 紧凑档一次只显示一块棋盘：选目标时必须把可见棋盘切到目标那一侧，
  * 否则用户看得到格子但点的是另一块（原 main 双棋盘不存在这个问题）。
  */
+const hoveredTarget = ref<{ x: number; y: number } | null>(null)
+function previewTarget(board: 'self' | 'opponent', point: { x: number; y: number } | null) {
+  const sel = selection.value
+  const expected = sel?.descriptor.kind === 'shenwei' ? sel.board : sel?.descriptor.board ?? 'opponent'
+  hoveredTarget.value = sel && board === expected ? point : null
+}
+watch(() => [selection.value, selection.value?.board], () => { hoveredTarget.value = null })
 const previewKeys = computed<string[]>(() => {
   const sel = selection.value
-  if (!sel || !sel.anchor) return []
+  if (!sel) return []
+  const anchor = hoveredTarget.value ?? sel.anchor
+  if (!anchor) return []
   const descriptor = sel.descriptor
   if (descriptor.kind === 'area' || descriptor.kind === 'shenwei') {
-    return areaCells(areaFromAnchor(sel.anchor.x, sel.anchor.y, descriptor.size ?? 3))
+    return areaCells(areaFromAnchor(anchor.x, anchor.y, descriptor.size ?? 3))
   }
   if (descriptor.kind === 'line') {
-    return areaCells(lineFromCell(sel.anchor.x, sel.anchor.y, sel.lineDir))
+    return areaCells(lineFromCell(anchor.x, anchor.y, sel.lineDir))
   }
   return []
 })
@@ -1303,7 +1312,7 @@ watch(
   (room) => {
     if (!room || room === seenRoom) return
     seenRoom = room
-    match.reset()
+    // 对局数据由 game store 在接收新房间首帧时清空。
     selection.value = null
     shieldPicks.value = []
     shieldError.value = ''
@@ -1559,6 +1568,7 @@ function backToLobby(): void {
               :selection-hint="selection ? targetHint : (pendingPick?.message || '点击己方战舰选择目标。')"
               :hidden="!showSelfBoard"
               :picking="!!selection || !!match.pickRequest || shieldOpen"
+              @hover="point => previewTarget('self', point)"
               @cell="(x: number, y: number) => onCell('self', x, y)"
             />
           </div>
@@ -1578,6 +1588,7 @@ function backToLobby(): void {
               :selection-hint="selection ? targetHint : (pendingPick?.message || '点击己方战舰选择目标。')"
               :hidden="!showOpponentBoard"
               :picking="!!selection"
+              @hover="point => previewTarget('opponent', point)"
               @cell="(x: number, y: number) => onCell('opponent', x, y)"
             />
           </div>
@@ -1874,6 +1885,7 @@ function backToLobby(): void {
       </div>
     </section>
 
+    <Transition name="chain-fade">
     <div
       v-if="chainPanelOpen"
       class="game-chain-scrim"
@@ -1926,6 +1938,7 @@ function backToLobby(): void {
       </section>
     </section>
     </div>
+    </Transition>
 
     <section v-if="shieldOpen" ref="pickPanelEl" :style="pickPanelStyle" class="game-dialog game-shield-choice game-pick-float" :class="{ 'is-dragging': pickDrag.state.value.dragging }" data-testid="game-shield-choice" role="dialog" aria-label="仁王之盾选择">
       <h2 ref="pickHeadEl" class="game-dialog__title game-pick-float__handle" data-testid="game-shield-choice-title" @pointerdown="pickDrag.onPointerDown">「仁王之盾」：请选择要保护的战舰</h2>
@@ -2066,3 +2079,13 @@ function backToLobby(): void {
 </template>
 
 <style scoped src="./game-screen.css"></style>
+
+<style scoped>
+/* 只改变响应窗口的呈现，不改变连锁计时和响应状态。 */
+.chain-fade-enter-active { transition:opacity 160ms ease-out; }
+.chain-fade-leave-active { transition:opacity 120ms ease-in; pointer-events:none; }
+.chain-fade-enter-from,.chain-fade-leave-to { opacity:0; }
+@media(prefers-reduced-motion:reduce) {
+  .chain-fade-enter-active,.chain-fade-leave-active { transition:none; }
+}
+</style>

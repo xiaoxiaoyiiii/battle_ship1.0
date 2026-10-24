@@ -33,7 +33,7 @@ const props = defineProps<{
   interactive?: boolean
 }>()
 
-const emit = defineEmits<{ (event: 'cell', x: number, y: number): void }>()
+const emit = defineEmits<{ (event: 'cell', x: number, y: number): void; (event: 'hover', point: { x: number; y: number } | null): void }>()
 
 const selectedSet = computed(() => new Set(props.selected ?? []))
 const previewSet = computed(() => new Set(props.preview ?? []))
@@ -183,7 +183,7 @@ function onCellFocus(index: number): void {
             'cell--last-stand': cell.lastStand,
             'cell--attackable': cell.attackable,
             'cell--legal': legalSet.has(cell.key),
-            'cell--selected': selectedSet.has(cell.key) || previewSet.has(cell.key),
+            'cell--selected': selectedSet.has(cell.key),
             'cell--trap': cell.trap,
             'cell--preview': previewSet.has(cell.key),
             'cell--cursor': cursor === index,
@@ -197,16 +197,16 @@ function onCellFocus(index: number): void {
         :data-legal="legalSet.has(cell.key) ? 'true' : 'false'"
         :aria-label="cellLabel(cell)"
         :aria-disabled="picking ? !legalSet.has(cell.key) : board === 'opponent' && !cell.attackable"
-        @focus="onCellFocus(index); showHint(cell, $event)"
-        @mouseenter="showHint(cell, $event)"
-        @mouseleave="hideHint"
-        @blur="hideHint"
+        @focus="onCellFocus(index); showHint(cell, $event); emit('hover', { x: cell.x, y: cell.y })"
+        @mouseenter="showHint(cell, $event); emit('hover', { x: cell.x, y: cell.y })"
+        @mouseleave="hideHint(); emit('hover', null)"
+        @blur="hideHint(); emit('hover', null)"
         @keydown.esc="hideHint"
         @click="onCell(cell)"
       >
         <BoardCellIcon v-if="!['empty', 'hole'].includes(cellVisualState(cell))" :kind="cellVisualState(cell)" />
         <span v-if="legalSet.has(cell.key) && cellVisualState(cell) === 'empty'" class="cell__candidate" aria-hidden="true">+</span>
-        <span v-if="selectedSet.has(cell.key) || previewSet.has(cell.key)" class="cell__selected" aria-hidden="true">✓</span>
+        <span v-if="selectedSet.has(cell.key)" class="cell__selected" aria-hidden="true">✓</span>
         <span v-if="cell.trap && cellVisualState(cell) !== 'trap' && !cell.sunk" class="cell__badge cell__badge--trap" aria-hidden="true">△</span>
         <span v-if="cell.frozen" class="cell__badge cell__badge--frozen" aria-hidden="true">冻</span>
       </button>
@@ -325,9 +325,9 @@ function onCellFocus(index: number): void {
 .cell--hole { background:repeating-linear-gradient(45deg,#0a141d,#0a141d 4px,#05101a 4px,#05101a 8px); border-style:dashed; }
 .cell--frozen-area { outline:1px dashed var(--role-self); outline-offset:-2px; }
 .cell--last-stand { outline:1px dashed var(--role-action); outline-offset:-2px; }
-.cell--legal::after,.cell--preview::after,.cell--selected::after { content:''; position:absolute; z-index:1; inset:3px; border:1.5px dashed #66e8b5; border-radius:4px; pointer-events:none; }
-.cell--preview::after,.cell--selected::after { border-style:solid; box-shadow:0 0 0 1px #142d28; }
-.cell--legal { cursor:crosshair; }
+ .cell--legal::after,.cell--preview::after,.cell--selected::after { content:''; position:absolute; z-index:1; inset:3px; border:1.5px dashed #66e8b5; border-radius:4px; pointer-events:none; }
+.cell--preview::after { background:rgb(102 232 181 / 18%); box-shadow:inset 0 0 12px rgb(102 232 181 / 18%); }
+.cell--selected::after { border-style:solid; box-shadow:0 0 0 1px #142d28; }
 .cell__candidate { color:#7af2c7; font-size:clamp(14px,calc(var(--cell,40px)*.42),25px); line-height:1; pointer-events:none; }
 .cell__selected { position:absolute; top:1px; right:1px; z-index:2; display:grid; place-items:center; width:14px; height:14px; border-radius:3px; background:#153e35; color:#fff; font-size:13px; font-weight:800; pointer-events:none; }
 .cell__badge { position:absolute; left:2px; top:2px; z-index:2; padding:1px 2px; border-radius:3px; font-size:9px; line-height:1; background:#122333; color:#9ee6fa; pointer-events:none; }

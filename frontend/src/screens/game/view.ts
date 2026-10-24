@@ -409,7 +409,6 @@ export function buildOpponentBoard(state: GameState, marks: BoardMarks = {}): Bo
   const shots = Array.isArray(state.attacks) ? state.attacks : []
   const revealed = pointSet(marks.revealed)
   const broken = pointSet(marks.shieldBroken)
-  const shielded = pointSet((state.opponent_shielded_ships ?? []).flat())
   const other = opponentId(state)
   const holes = holeCells(state.shenwei_holes, other)
   const frozen = frozenAreaCells(state.frozen_area as unknown as FrozenAreaLike | null, other)
@@ -424,7 +423,6 @@ export function buildOpponentBoard(state: GameState, marks: BoardMarks = {}): Bo
         cell.hit = Boolean(shot.hit)
         cell.miss = !shot.hit
       }
-      cell.shielded = shielded.has(cell.key)
       cell.revealed = revealed.has(cell.key)
       cell.shieldBroken = broken.has(cell.key)
       cell.hole = holes.has(cell.key)

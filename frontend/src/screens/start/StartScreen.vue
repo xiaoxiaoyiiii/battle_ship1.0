@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import HomeProgress from './HomeProgress.vue'
+import HomeTasks from './HomeTasks.vue'
 import MatchFoundOverlay from '../../components/MatchFoundOverlay.vue'
 import StateSurface from '../../components/StateSurface.vue'
 import { cardArtUrl } from '../../cards/cardArt'
@@ -525,9 +526,10 @@ async function startAi(): Promise<void> {
 
       <!-- 在线与公告。 -->
       <aside class="home-side">
+        <HomeTasks />
         <section class="home-card" data-testid="start-online" aria-labelledby="home-online-title">
           <div class="home-card__head">
-            <h2 id="home-online-title" class="home-kicker">在 线</h2>
+            <h2 id="home-online-title" class="home-kicker">实时战况</h2>
             <i class="home-card__dot" aria-hidden="true"></i>
           </div>
           <StateSurface
@@ -539,7 +541,7 @@ async function startAi(): Promise<void> {
             @retry="home.loadStats(true)"
           >
             <dl class="home-stats">
-              <div class="home-stat home-stat--wide">
+              <div class="home-stat">
                 <dt>在线玩家</dt>
                 <dd><b data-testid="start-online-count">{{ stats.online }}</b><span class="home-stat__unit">人</span></dd>
               </div>
@@ -551,7 +553,7 @@ async function startAi(): Promise<void> {
                 <dt>排位队列</dt>
                 <dd><b data-testid="start-queue-ranked">{{ stats.ranked }}</b><span class="home-stat__unit">人</span></dd>
               </div>
-              <div class="home-stat home-stat--wide">
+              <div class="home-stat">
                 <dt>大厅房间</dt>
                 <dd><b data-testid="start-lobby-rooms">{{ stats.rooms }}</b><span class="home-stat__unit">间</span></dd>
               </div>
@@ -1529,6 +1531,23 @@ async function startAi(): Promise<void> {
   .home-head { margin-bottom:4px; }
   .home-play { padding-top:8px; padding-bottom:8px; }
   .home-ai { gap:4px; padding-top:8px; padding-bottom:8px; }
+}
+/* 右栏为任务留出空间，在线信息收成紧凑四格，公告内部滚动。 */
+.home-side { gap:8px; align-self:start; }
+.home-side > [data-testid='start-online'] { flex:0 0 auto; }
+.home-stat { display:flex; align-items:center; justify-content:space-between; gap:5px; min-height:36px; padding:6px 8px; }
+.home-stat dt { font-size:10.5px; line-height:1.2; }
+.home-stat dd { margin:0; font-size:16px; line-height:1.2; }
+.home-stats { gap:6px; }
+.home-side .home-changelog__list { max-height:clamp(100px,calc(100dvh - 620px),240px); }
+@media(min-width:1024px) {
+  .home-side { max-height:calc(100dvh - 144px); }
+  .home-side .home-changelog { overflow:hidden; }
+}
+@media(max-width:1023px) {
+  .home-grid { align-items:stretch; }
+  .home-side { align-self:stretch; }
+  .home-side .home-changelog__list { max-height:240px; }
 }
 </style>
 

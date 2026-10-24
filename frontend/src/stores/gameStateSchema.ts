@@ -29,6 +29,8 @@ export interface ShipSnapshot {
   positions: Array<{ x: number; y: number }>
   frozen: boolean
   shield: boolean
+  /** 仅本人的舰船快照携带；旧载荷缺省为无陷阱。 */
+  trap?: boolean
   alive: boolean
   /** Only `player_ships_updated` carries it; room_sync ships omit the flag. */
   invincible?: boolean

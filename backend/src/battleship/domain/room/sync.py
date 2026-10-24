@@ -247,6 +247,7 @@ def build_room_sync(
                 "positions": [{"x": pos.x, "y": pos.y} for pos in ship.positions],
                 "frozen": bool(getattr(ship, "frozen", None)),
                 "shield": bool(getattr(ship, "shield", False)),
+                "trap": bool(getattr(ship, "trap", False)),
                 "alive": is_ship_alive(player, ship),
             }
             for ship in player.ships

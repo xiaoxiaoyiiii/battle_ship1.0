@@ -418,7 +418,6 @@ async def trap(ctx: EffectContext) -> EffectResult:
         "trap_set",
         {
             "player": ctx.caster_id,
-            "positions": [{"x": p.x, "y": p.y} for p in picked.positions],
         },
         room=ctx.room.id,
     )

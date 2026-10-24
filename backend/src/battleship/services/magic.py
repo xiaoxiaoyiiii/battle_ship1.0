@@ -451,7 +451,6 @@ class MagicService:
                 "trap_set",
                 {
                     "player": player_id,
-                    "positions": [{"x": p.x, "y": p.y} for p in ship.positions],
                 },
                 room=room.id,
             )

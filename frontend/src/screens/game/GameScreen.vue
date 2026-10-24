@@ -78,8 +78,6 @@ let ticker: number | null = null
 const now = ref(Date.now())
 const liveText = ref('')
 /** Last refusal, rendered in a stable receipt element for 6s (#50 hook). */
-const receiptText = ref('')
-let receiptTimer: number | null = null
 
 const state = computed(() => game.state)
 const hand = computed<CardLike[]>(() =>
@@ -553,13 +551,7 @@ const discardLoading = ref(false)
 
 // ---- feedback helpers ------------------------------------------------------
 function say(code: string, message: string, next = '', tone: 'info' | 'warning' = 'warning'): void {
-  receiptText.value = next ? message + ' ' + next : message
-  if (receiptTimer !== null) window.clearTimeout(receiptTimer)
-  receiptTimer = window.setTimeout(() => {
-    receiptText.value = ''
-    receiptTimer = null
-  }, 6000)
-  ui.notify({ code, message, next, tone, ttl: tone === 'warning' ? 5000 : 3000 })
+  ui.notify({ code, message, next, tone, ttl: 2000 })
 }
 
 function announce(text: string): void {
@@ -1555,7 +1547,6 @@ function backToLobby(): void {
           >对方 · {{ badge.label }}</span>
         </div>
 
-        <p v-if="receiptText" class="game-receipt" data-testid="game-receipt" role="status" aria-live="polite">{{ receiptText }}</p>
 
         <!-- 手机档：单块棋盘 + 海域切换标签（标题与提交的棋盘同源） -->
         <div v-if="boardMode === 'tabs' && !selection" class="board-tabs" role="tablist" aria-label="切换棋盘">

@@ -123,6 +123,7 @@ export interface Notice {
   next: string
   tone: 'info' | 'success' | 'warning' | 'error'
   createdAt: number
+  ttl: number
 }
 
 /**
@@ -399,15 +400,16 @@ export const useUiStore = defineStore('ui', () => {
       next: input.next || '',
       tone,
       createdAt: now,
+      ttl: input.ttl ?? 2000,
     }
     notices.value = [...notices.value.slice(-2), notice]
     noticeId += 0
-    timers.set(notice.id, setTimeout(() => dismissNotice(notice.id), input.ttl ?? 4000))
+    timers.set(notice.id, setTimeout(() => dismissNotice(notice.id), notice.ttl))
   }
 
   function notifyError(code: string, fallback = ''): void {
     const language = errorLanguage(code, fallback)
-    notify({ code, message: language.message, next: language.next, tone: 'error', ttl: 6000 })
+    notify({ code, message: language.message, next: language.next, tone: 'error', ttl: 2000 })
   }
 
   function clearNotices(): void {

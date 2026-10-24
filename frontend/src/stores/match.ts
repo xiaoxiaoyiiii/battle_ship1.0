@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { useUiStore } from './ui'
 import type { CardLike, LastAttackLike, PendingPickLike, Point } from '../screens/game/view'
 
 /**
@@ -110,6 +111,7 @@ export const useMatchStore = defineStore('match', () => {
   function pushNotice(text: string, kind: NoticeKind = 'info'): void {
     const trimmed = String(text ?? '').trim()
     if (!trimmed) return
+    useUiStore().notify({ code: `battle-notice:${kind}:${trimmed}`, message: trimmed, tone: kind, ttl: 2000 })
     noticeSeq += 1
     notices.value.push({ id: noticeSeq, text: trimmed, kind })
     if (notices.value.length > NOTICE_LIMIT) notices.value.splice(0, notices.value.length - NOTICE_LIMIT)

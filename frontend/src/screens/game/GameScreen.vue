@@ -105,7 +105,6 @@ const turnOrderText = computed(() => {
   return '对手先手'
 })
 const connectionText = computed(() => (ui.connection === 'online' ? '已连接' : '重连中…'))
-const timeoutNote = computed(() => match.timeoutNote)
 
 // ---- hand selection --------------------------------------------------------
 const selectedCardIndex = ref(-1)
@@ -332,8 +331,6 @@ const chainProgress = computed(() => {
 })
 
 const logs = computed(() => match.logs.slice().reverse())
-const notices = computed(() => match.notices.slice(-4))
-const latestLog = computed(() => (match.logs.length ? match.logs[match.logs.length - 1].text : ''))
 
 // 左列日志：main 的日志窗是常驻的，这里取最近十几条，完整历史仍在日志抽屉里。
 const gameLogLines = computed(() => match.logs.slice(-14))
@@ -1294,6 +1291,17 @@ watch(() => state.value.magic_temp, (temp) => {
   else match.clearShieldChoice()
 }, { immediate: true })
 
+// 短提示只进入浮动通知，不在棋盘周围插入会改变布局的文字块。
+watch(() => [
+  state.value.priority_waiting?.action_text ? `等待对方响应「${state.value.priority_waiting.action_text}」` : '',
+  String(state.value.shenji_waiting?.text || ''),
+  String(state.value.interaction_waiting || ''),
+], (messages, previous) => {
+  messages.forEach((message, index) => {
+    if (message && message !== previous?.[index]) ui.notify({ code: `game-wait:${index}:${message}`, message, tone: 'info', ttl: 2000 })
+  })
+}, { immediate: true })
+
 function maybeGoToSettlement(): void {
   const record = result.gameOver
   if (!record || navigating) return
@@ -1405,9 +1413,6 @@ function backToLobby(): void {
 
     <p class="visually-hidden" role="status" aria-live="polite" aria-atomic="true" data-testid="game-live">{{ liveText }}</p>
 
-    <p v-if="timeoutNote" class="game-banner game-banner--warning" data-testid="game-timeout-note">
-      {{ timeoutNote }}
-    </p>
     <p v-if="!hasRoom" class="game-empty" data-testid="game-empty">
       还没有收到对局数据。进对局时会自动显示双方海域、手牌与本回合状态；刷新后请从大厅或布船重新进入。
     </p>
@@ -1606,12 +1611,6 @@ function backToLobby(): void {
           </div>
         </div>
 
-        <p class="game-latest" data-testid="game-latest-event">{{ latestLog }}</p>
-        <ul v-if="notices.length" class="game-notices" data-testid="game-notices" aria-live="polite">
-          <li v-for="notice in notices" :key="notice.id" class="game-notice" :class="'game-notice--' + notice.kind">
-            {{ notice.text }}
-          </li>
-        </ul>
       </div>
 
       <!-- 右列：连锁结算 / 卡牌详情 / 计数与主行动（原 main 的 .arena-rail + 详情列） -->
@@ -1737,14 +1736,6 @@ function backToLobby(): void {
             >{{ surrenderArmed ? '确认投降（判负）' : '投降' }}</button>
             <p class="game-more__note" data-testid="game-surrender-consequence">{{ surrenderConsequence }}</p>
           </div>
-          <p v-if="state.priority_waiting" class="game-banner" data-testid="game-priority-waiting">
-            等待对方响应「{{ state.priority_waiting.action_text }}」
-          </p>
-          <p v-if="state.shenji_waiting" class="game-banner" data-testid="game-shenji-waiting">{{ state.shenji_waiting.text }}</p>
-          <p v-if="state.interaction_waiting" class="game-banner" data-testid="game-interaction-waiting">{{ state.interaction_waiting }}</p>
-          <p v-if="pendingPick && !match.pickRequest" class="game-banner" data-testid="game-pending-pick">
-            待处理：{{ pendingPick.message }}
-          </p>
         </div>
       </aside>
     </div>

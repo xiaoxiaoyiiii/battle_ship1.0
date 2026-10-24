@@ -29,7 +29,7 @@ async function submit(cancel = false): Promise<void> {
     const card = cards.value[chosen.value]
     const target = kind.value === 'lingqi_choice' ? { target_ships:quantity.value }
       : kind.value === 'taoyuan_choice' ? { caster_choice:chosen.value, opponent_choice:other.value }
-      : kind.value === 'bury_choice' ? { source:card?.source, index:card?.index }
+      : kind.value === 'bury_choice' ? { source:card?.source, source_index:card?.index }
       : { chosen_index:chosen.value }
     const ack = await sendBattleEvent(cancel ? 'cancel_magic_selection' : kind.value === 'shenji_declare' ? 'confirm_shenji_declare' : 'confirm_magic_target', {
       ...identity, ...(cancel ? {} : kind.value === 'shenji_declare' ? { prediction:quantity.value } : { temp_data_id:kind.value, target_data:target }),

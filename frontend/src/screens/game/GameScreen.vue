@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import BoardPanel from './BoardPanel.vue'
+import StatusMonitor from './StatusMonitor.vue'
 import { useAdaptiveGameLayout } from './useAdaptiveGameLayout'
 import { useHandFan } from './useHandFan'
 import { useFloatingDrag } from './useFloatingDrag'
@@ -352,6 +353,7 @@ const chatDraft = ref('')
 const chatError = ref('')
 const CHAT_MAX_LENGTH = 100
 const surrenderArmed = ref(false)
+const surrenderError = ref('')
 const busy = ref(false)
 
 interface QuickChatItem {
@@ -551,7 +553,9 @@ const discardLoading = ref(false)
 
 // ---- feedback helpers ------------------------------------------------------
 function say(code: string, message: string, next = '', tone: 'info' | 'warning' = 'warning'): void {
-  ui.notify({ code, message, next, tone, ttl: 2000 })
+  if (['game-not-your-turn', 'game-wrong-phase', 'game-no-attacks', 'game-cannot-fire', 'game-primary-disabled'].includes(code)) {
+    ui.notify({ code, message, next, tone, ttl: 2000 })
+  }
 }
 
 function announce(text: string): void {
@@ -620,8 +624,6 @@ function onCardClick(index: number): void {
   if (disabled) {
     say('game-card-disabled', disabled, '点卡片看限制条件，换个阶段或用别的卡。')
   } else {
-    // Every click gets a receipt, including a successful selection (spec §5).
-    say('game-card-selected', '已选中「' + card.name + '」：再点一次或点「使用此卡」出牌。', '', 'info')
     announce('已选中' + card.name + '。再点一次或点「使用此卡」出牌。')
   }
 }
@@ -636,7 +638,6 @@ function useSelectedCard(): void {
 function cancelCardSelection(): void {
   if (!detailOpen.value) return
   clearCardSelection()
-  ui.notify({ code: 'game-card-deselected', message: '已取消选中的卡', tone: 'info', ttl: 2000 })
 }
 
 async function playCard(index: number): Promise<void> {
@@ -688,7 +689,6 @@ async function dispatchCard(card: CardLike, targets: Record<string, unknown>, is
     }
     selection.value = null
     if (isChain) match.closeChainWindow()
-    ui.notify({ code: 'game-card-used', message: '已使用「' + card.name + '」', tone: 'success' })
     announce('已使用' + card.name)
     if (hand.value.some((item) => cardIdentity(item) === cardIdentity(card))) {
       // Self-healing like the legacy client: the server is authoritative.
@@ -801,10 +801,7 @@ function cancelSelection(): void {
   selection.value = null
   clearCardSelection()
   if (sel?.isChain && match.chainWindow) match.expandChainWindow()
-  if (sel) {
-    const message = '已取消「' + sel.card.name + '」的目标选择'
-    ui.notify({ code: 'game-target-cancelled', message, tone: 'info' })
-  }
+
 }
 
 function buildTargets(sel: SelectionState): Record<string, unknown> {
@@ -972,18 +969,12 @@ function runPrimary(): void {
 
 // ---- surrender: two clicks, consequence written out ------------------------
 function armSurrender(): void {
+  surrenderError.value = ''
   if (!surrenderArmed.value) {
     surrenderArmed.value = true
     window.setTimeout(() => {
       surrenderArmed.value = false
     }, 5000)
-    ui.notify({
-      code: 'game-surrender-armed',
-      message: '再点一次「确认投降」即判负。',
-      next: surrenderConsequence.value,
-      tone: 'warning',
-      ttl: 6000,
-    })
     return
   }
   surrenderArmed.value = false
@@ -1003,11 +994,9 @@ async function sendSurrender(): Promise<void> {
       room_id: state.value.room_id,
       player_id: state.value.player_id,
     })
-    if (ack.status !== 'success') {
-      ui.notifyError('game-surrender-failed', ack.message || '')
-    }
-  } catch (error) {
-    ui.notifyError('game-surrender-failed', String(error))
+    if (ack.status !== 'success') surrenderError.value = ack.message || '投降请求未被接受，请重试。'
+  } catch {
+    surrenderError.value = '连接不稳定，投降未确认，请重试。'
   }
 }
 
@@ -1283,17 +1272,6 @@ watch(() => state.value.magic_temp, (temp) => {
   else match.clearShieldChoice()
 }, { immediate: true })
 
-// 短提示只进入浮动通知，不在棋盘周围插入会改变布局的文字块。
-watch(() => [
-  state.value.priority_waiting?.action_text ? `等待对方响应「${state.value.priority_waiting.action_text}」` : '',
-  String(state.value.shenji_waiting?.text || ''),
-  String(state.value.interaction_waiting || ''),
-], (messages, previous) => {
-  messages.forEach((message, index) => {
-    if (message && message !== previous?.[index]) ui.notify({ code: `game-wait:${index}:${message}`, message, tone: 'info', ttl: 2000 })
-  })
-}, { immediate: true })
-
 function maybeGoToSettlement(): void {
   const record = result.gameOver
   if (!record || navigating) return
@@ -1493,6 +1471,7 @@ function backToLobby(): void {
                   ></i>
                 </span>
               </span>
+              <StatusMonitor side="opponent" :badges="opponentEffects" />
             </div>
           </div>
 
@@ -1518,6 +1497,7 @@ function backToLobby(): void {
                   ></i>
                 </span>
               </span>
+              <StatusMonitor side="self" :badges="selfEffects" />
             </div>
           </div>
         </div>
@@ -1528,25 +1508,6 @@ function backToLobby(): void {
           <span class="fm-label">当前生效的场地魔法：</span>
           <span class="fm-value" data-testid="game-field-magic">{{ fieldMagic }}</span>
         </div>
-
-        <!-- 长久效果胶囊（极限增援 / 无暇圣心 / 其它效果角标） -->
-        <div v-if="selfEffects.length || opponentEffects.length" class="effect-status-bar" data-testid="game-effect-bar">
-          <span
-            v-for="badge in selfEffects"
-            :key="'self-' + badge.key"
-            class="status-item"
-            :data-testid="'game-effect-self-' + badge.key"
-            :title="badge.description + (badge.expires ? '（' + badge.expires + '）' : '')"
-          >{{ badge.label }}</span>
-          <span
-            v-for="badge in opponentEffects"
-            :key="'opp-' + badge.key"
-            class="status-item status-item--opponent"
-            :data-testid="'game-effect-opponent-' + badge.key"
-            :title="badge.description + (badge.expires ? '（' + badge.expires + '）' : '')"
-          >对方 · {{ badge.label }}</span>
-        </div>
-
 
         <!-- 手机档：单块棋盘 + 海域切换标签（标题与提交的棋盘同源） -->
         <div v-if="boardMode === 'tabs' && !selection" class="board-tabs" role="tablist" aria-label="切换棋盘">
@@ -1726,6 +1687,7 @@ function backToLobby(): void {
               @click="armSurrender"
             >{{ surrenderArmed ? '确认投降（判负）' : '投降' }}</button>
             <p class="game-more__note" data-testid="game-surrender-consequence">{{ surrenderConsequence }}</p>
+            <p v-if="surrenderError" class="game-more__note" role="alert">{{ surrenderError }}</p>
           </div>
         </div>
       </aside>

@@ -3004,3 +3004,85 @@ button.arena-avatar--btn {
   right: 12px;
   top: 64px;
 }
+
+/* 舰长名片：双方分列两端，状态监视区永久占位，状态数量不改变顶栏高度。 */
+.game[data-layout] .game-hud {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(180px,.95fr) minmax(0,1fr);
+  grid-template-rows:24px 46px;
+  height:90px;
+  min-height:90px;
+  gap:2px 12px;
+  padding:8px 12px;
+  align-items:center;
+}
+.game[data-layout] .hud-players { display:contents; }
+.game[data-layout] .hud-vs { display:none; }
+.game[data-layout] .arena-player {
+  grid-row:1 / span 2;
+  display:flex;
+  gap:10px;
+  width:100%;
+  height:70px;
+  min-width:0;
+  padding:6px 9px;
+  border:1px solid var(--border-subtle);
+  border-radius:10px;
+  background:color-mix(in srgb,var(--surface-deck) 60%,transparent);
+  box-sizing:border-box;
+}
+.game[data-layout] .arena-player--self { grid-column:1; border-left:2px solid var(--role-self); }
+.game[data-layout] .arena-player--opponent { grid-column:3; flex-direction:row-reverse; border-right:2px solid var(--role-enemy); }
+.game[data-layout] .arena-player__meta { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; overflow:hidden; }
+.game[data-layout] .arena-player--opponent .arena-player__meta { text-align:right; }
+.game[data-layout] .arena-player--opponent .arena-player__line { justify-content:flex-end; }
+.game[data-layout] .arena-player--opponent :deep(.captain-effects) { justify-content:safe flex-end; }
+.game[data-layout] .arena-player--opponent :deep(.captain-effects__icon) { border-color:color-mix(in srgb,var(--role-enemy) 40%,transparent); }
+.game[data-layout] .arena-player__meta .hud-name { font-size:13px; line-height:15px; }
+.game[data-layout] .arena-avatar { width:38px; height:38px; flex:0 0 38px; }
+.game[data-layout] .arena-player__line { height:14px; min-height:14px; gap:5px; font-size:11px; white-space:nowrap; }
+.game[data-layout] .arena-player__pips { display:flex; gap:3px; }
+.game[data-layout] .arena-player__pips i { width:7px; height:10px; border-radius:0; clip-path:polygon(0 30%,40% 30%,40% 0,60% 0,60% 30%,100% 30%,80% 100%,20% 100%); }
+.game[data-layout] .hud-round { grid-column:2; grid-row:1; margin:0; justify-self:start; font-size:12px; }
+.game[data-layout] .game-hud > .hud-btn { grid-column:2; grid-row:1; justify-self:end; min-height:24px; padding:1px 8px; }
+.game[data-layout] .hud-chips { grid-column:2; grid-row:2; display:flex; flex-wrap:wrap; gap:3px; justify-content:center; max-height:44px; overflow:auto; }
+.game[data-layout] .hud-chip { min-height:18px; padding:1px 6px; font-size:10px; line-height:16px; }
+.game[data-layout='wide'] .field-magic-area { top:98px; }
+.game[data-layout='wide'] .game-main-container { padding-top:136px; }
+@media (max-width:719px) {
+ .game[data-layout] .game-hud { grid-template-columns:minmax(0,1fr) minmax(0,1fr); grid-template-rows:64px 22px; height:98px; min-height:98px; gap:4px 6px; padding:4px 6px; }
+ .game[data-layout] .arena-player { grid-row:1; height:64px; padding:3px 4px; gap:5px; }
+ .game[data-layout] .arena-player--opponent { grid-column:2; }
+ .game[data-layout] .arena-avatar { width:28px; height:28px; flex-basis:28px; font-size:12px; }
+ .game[data-layout] .arena-player__meta .hud-name { font-size:11px; }
+ .game[data-layout] .arena-player__pips { display:none; }
+ .game[data-layout] .arena-stats-btn { display:none; }
+ .game[data-layout] .hud-chips { grid-column:1 / -1; grid-row:2; flex-wrap:nowrap; justify-content:flex-start; max-height:22px; }
+ .game[data-layout] .hud-round,.game[data-layout] .game-hud > .hud-btn { display:none; }
+ .game[data-layout] .hud-chip { flex-shrink:0; }
+}
+@media (min-width:720px) and (max-height:520px) {
+ .game[data-layout] .game-hud { height:70px; min-height:70px; grid-template-rows:20px 36px; padding:4px 8px; gap:2px 6px; }
+ .game[data-layout] .arena-player { height:60px; padding:2px 5px; gap:5px; }
+ .game[data-layout] .arena-avatar { width:28px; height:28px; flex-basis:28px; }
+ .game[data-layout] .arena-player__meta .hud-name { font-size:11px; }
+ .game[data-layout] .arena-player__pips,.game[data-layout] .arena-stats-btn { display:none; }
+ .game[data-layout] .hud-chips { max-height:36px; }
+}
+
+@media (min-width:720px) and (max-height:520px) {
+ .game[data-layout] .game-hud { grid-template-columns:minmax(0,1fr) minmax(0,1fr); grid-template-rows:60px; height:68px; min-height:68px; }
+ .game[data-layout] .arena-player { grid-row:1; }
+ .game[data-layout] .arena-player--opponent { grid-column:2; }
+ .game[data-layout] .hud-chips,.game[data-layout] .hud-round,.game[data-layout] .game-hud > .hud-btn { display:none; }
+}
+@media (max-width:719px) and (max-height:700px) {
+ .game[data-dense='true'] :deep(.board__grid) { width:min(var(--board-size),max(168px,calc(100dvh - 448px))); height:min(var(--board-size),max(168px,calc(100dvh - 448px))); }
+}
+
+@media (max-width:719px) and (max-height:700px) {
+ .game[data-dense='true'] .game-hand .card { flex-basis:56px; width:56px; height:78px; }
+ .game[data-dense='true'] .game-compact-top { display:none; }
+ .game[data-dense='true'] .game-compact-bar { padding:4px 6px; }
+ .game[data-dense='true'] .game-actions__row > .button { height:40px; min-height:40px; padding:4px 8px; }
+}

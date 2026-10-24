@@ -246,7 +246,7 @@ export const useUiStore = defineStore('ui', () => {
     connection.value = next
     if (next === 'offline') {
       droppedOnce = true
-      notify({ code: 'connection-offline', message: '连接中断，正在重连…', tone: 'warning', ttl: 15000 })
+      notify({ code: 'connection-offline', message: '连接中断，正在重连…', tone: 'warning', ttl: 2000 })
       return
     }
     if (droppedOnce) {

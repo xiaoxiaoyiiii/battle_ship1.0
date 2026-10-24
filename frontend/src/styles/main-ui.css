@@ -238,13 +238,13 @@ html[data-theme='journal'] body {
 
 /* --------------------------------------------------------------- Toast --- */
 .app-toasts {
-  top: 50%;
+  top: 18px;
   left: 50%;
   right: auto;
   bottom: auto;
-  transform: translate(-50%, -50%);
+  transform: translateX(-50%);
   gap: 10px;
-  width: min(420px, calc(100vw - 32px));
+  width: min(380px, calc(100vw - 32px));
   max-height: calc(100dvh - 32px);
   overflow-y: auto;
 }
@@ -469,17 +469,8 @@ body:has([data-testid='screen-game']) .screen-boundary {
   min-height: 0;
 }
 
-/* 倒计时只显示进度，不占内容高度，也不拦截点击。 */
-.app-toast { overflow: hidden; }
-.app-toast__progress {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 3px;
-  background: var(--accent);
-  transform-origin: left center;
-  animation: toast-countdown var(--toast-duration) linear forwards;
-  pointer-events: none;
-}
-@keyframes toast-countdown { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+/* 淡入淡出不参与页面布局，不显示倒计时进度条。 */
+.app-toast { animation: none; }
+.toast-enter-active,.toast-leave-active { transition: opacity 160ms ease, transform 160ms ease; }
+.toast-enter-from,.toast-leave-to { opacity: 0; transform: translateY(-4px); }
+.toast-leave-active { position: absolute; width: 100%; }

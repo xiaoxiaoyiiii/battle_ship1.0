@@ -14,7 +14,9 @@ const ui = useUiStore()
 
 <template>
   <Teleport to="body">
-    <div
+    <TransitionGroup
+      name="toast"
+      tag="div"
       class="app-toasts"
       data-testid="toast-host"
       role="status"
@@ -29,7 +31,6 @@ const ui = useUiStore()
         :class="'app-toast--' + notice.tone"
         data-testid="toast-item"
         :data-code="notice.code"
-        :style="{ '--toast-duration': notice.ttl + 'ms' }"
       >
         <p class="app-toast__message">{{ notice.message }}</p>
         <p v-if="notice.next" class="app-toast__next">{{ notice.next }}</p>
@@ -42,8 +43,7 @@ const ui = useUiStore()
         >
           ×
         </button>
-        <span class="app-toast__progress" data-testid="toast-progress" aria-hidden="true"></span>
       </article>
-    </div>
+    </TransitionGroup>
   </Teleport>
 </template>

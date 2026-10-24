@@ -276,7 +276,7 @@ export function applyBattleEvent(
         const name = card ? String(card.name ?? '') : ''
         if (result.negated_skip) {
           match.pushNotice(`「${name}」被「${String(result.negated_by ?? '失灵！')}」无效化`, 'warning')
-        } else if (String(result.message ?? '').trim()) {
+        } else if (String(result.message ?? '').trim() && (result.success === false || !result.temp_data_id)) {
           match.pushNotice(String(result.message), result.success === false ? 'warning' : 'info')
         }
         if (String(result.temp_data_id ?? '') === 'shield_choice'
@@ -403,17 +403,14 @@ export function applyBattleEvent(
     case 'game_message': {
       const text = String(payload.message ?? '')
       noteTimeoutIfAny(match, text)
-      match.pushNotice(text, payload.type === 'warning' ? 'warning' : 'info')
       break
     }
     case 'message': {
       const text = String(payload.text ?? payload.message ?? '')
       noteTimeoutIfAny(match, text)
-      match.pushNotice(text)
       break
     }
     case 'error': {
-      match.pushNotice(String(payload.message ?? ''), 'error')
       break
     }
     case 'quick_chat': {
@@ -467,7 +464,6 @@ export function applyBattleEvent(
     }
     case 'dice_discard_request': {
       game.applyServerState({ dice_discard_pending: true })
-      match.pushNotice(String(payload.message ?? '请选择一张手牌弃置'), 'warning')
       break
     }
     case 'dice_discard_complete': {

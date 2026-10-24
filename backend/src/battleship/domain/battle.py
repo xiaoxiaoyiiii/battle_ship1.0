@@ -620,7 +620,7 @@ def resolve_attack(room: Room, attacker_id: str, x: int, y: int) -> AttackOutcom
 
 
 def player_ships_payload(player: Player) -> list[dict[str, Any]]:
-    """Frozen player_ships_updated.ships shape (legacy _emit_player_ships)."""
+    """本人舰船快照；追加陷阱标记，不向对手发送本人舰位。"""
 
     return [
         {
@@ -630,6 +630,7 @@ def player_ships_payload(player: Player) -> list[dict[str, Any]]:
             "alive": is_ship_alive(player, ship),
             "shield": bool(getattr(ship, "shield", False)),
             "invincible": bool(getattr(ship, "invincible", False)),
+            "trap": bool(getattr(ship, "trap", False)),
         }
         for ship in player.ships
     ]

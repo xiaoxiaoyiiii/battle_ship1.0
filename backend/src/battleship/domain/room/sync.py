@@ -100,7 +100,33 @@ def card_payload(card: Any) -> dict[str, Any]:
     }
 
 
-def _effect_badges(player: Player | None) -> list[dict[str, Any]]:
+#: 多回合持续效果：`room.game_effects` 键 → 卡名（与 services/magic.py 同一份口径）。
+LONG_EFFECT_BADGES: tuple[tuple[str, str], ...] = (
+    ("holy_heart", "无暇圣心"),
+    ("reinforcement_check", "极限增援"),
+)
+
+
+def _card_badge(name: str) -> dict[str, Any]:
+    """卡面信息（名称/速阶/类型/文案），供监视栏画真实卡图与效果文。"""
+
+    from ..magic.cards import CARD_BY_NAME
+
+    card = CARD_BY_NAME.get(name)
+    if card is None:
+        return {"name": name, "speed": None, "type": None, "description": ""}
+    return {
+        "name": card.name,
+        "speed": int(card.speed) if getattr(card, "speed", None) is not None else None,
+        "type": getattr(card, "type", None),
+        "description": getattr(card, "description", None) or "",
+    }
+
+
+def _effect_badges(room: Room | None, player_id: str | None,
+                   player: Player | None) -> list[dict[str, Any]]:
+    """一次性 flags + 多回合 game_effects 合并成监视栏区块。"""
+
     if player is None:
         return []
     from ..magic.cards import CARD_BY_NAME
@@ -120,8 +146,35 @@ def _effect_badges(player: Player | None) -> list[dict[str, Any]]:
                 if label in CARD_BY_NAME
                 else "",
                 "expires": expiry,
+                "card": _card_badge(label),
             }
         )
+
+    effects = getattr(room, "game_effects", None)
+    if isinstance(effects, dict) and player_id:
+        for key, label in LONG_EFFECT_BADGES:
+            info = effects.get(key)
+            if not isinstance(info, dict) or info.get("caster") != player_id:
+                continue
+            remaining = info.get("remaining_turns")
+            try:
+                remaining_value = int(remaining) if remaining is not None else None
+            except (TypeError, ValueError):
+                remaining_value = None
+            badges.append(
+                {
+                    "name": label,
+                    "key": key,
+                    "label": f"{label}·剩余{remaining_value}回合" if remaining_value else label,
+                    "description": CARD_BY_NAME.get(label).description
+                    if label in CARD_BY_NAME
+                    else "",
+                    "expires": f"剩余{remaining_value}回合"
+                    if remaining_value
+                    else "本大回合结束（重新猜拳）时失效",
+                    "card": _card_badge(label),
+                }
+            )
     return badges
 
 
@@ -291,8 +344,8 @@ def build_room_sync(
         "last_stand_lock": bool(getattr(player.effect_flags, "last_stand", False)),
         "last_stand_win": bool(getattr(player.effect_flags, "last_stand_win", False)),
         "effect_badges": {
-            "self": _effect_badges(player),
-            "opponent": _effect_badges(opponent) if opponent else [],
+            "self": _effect_badges(room, player_id, player),
+            "opponent": _effect_badges(room, opponent_id, opponent) if opponent else [],
         },
         "pending_placement": dict(pending_placement) if placing_for_me else None,
         "pending_placement_blocked": (

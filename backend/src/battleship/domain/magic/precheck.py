@@ -62,11 +62,32 @@ def divine_decree_error(room: Room, player_id: str, targets: dict[str, Any]) -> 
     return None
 
 
+STEAL_CARD = "盗亦有道"
+
+
+def steal_error(room: Room, player_id: str) -> str | None:
+    """盗亦有道：对手还没有「可被偷」的结算记录时就别入链。
+
+    旧行为是把卡打出去、扣牌、入连锁，结算时才发现无牌可偷，再靠退款把卡塞回手里；
+    玩家看到的是「打出成功但卡还在」外加一次空连锁，很容易以为要再打一次才生效。
+    """
+
+    for entry in reversed(getattr(room, "magic_history", []) or []):
+        if entry.get("caster") == player_id:
+            continue
+        if entry.get("stolen"):
+            continue
+        return None
+    return "对方还没有使用过魔法卡，盗亦有道无法发动"
+
+
 def precheck(room: Room, player_id: str, card_name: str, targets: dict[str, Any]) -> str | None:
     """扣牌前的状态级校验入口；None 表示放行。"""
 
     if card_name == "神之宣告":
         return divine_decree_error(room, player_id, targets)
+    if card_name == STEAL_CARD:
+        return steal_error(room, player_id)
     return None
 
 
@@ -91,6 +112,8 @@ def resolution_error(
 
 __all__ = [
     "DIVINE_DECREE_SHIPS",
+    "STEAL_CARD",
+    "steal_error",
     "divine_decree_error",
     "precheck",
     "resolution_error",

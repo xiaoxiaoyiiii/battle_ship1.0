@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import BoardPanel from './BoardPanel.vue'
 import StatusMonitor from './StatusMonitor.vue'
+import EffectMonitor from './EffectMonitor.vue'
 import { useAdaptiveGameLayout } from './useAdaptiveGameLayout'
 import { useHandFan } from './useHandFan'
 import { useFloatingDrag } from './useFloatingDrag'
@@ -314,6 +315,14 @@ const selectionBadge = computed(() => {
 })
 
 const chainList = computed(() => chainItems(state.value.chain))
+const fieldEffectCard = computed(() => {
+  const stored = state.value.effect_badges?.field
+  if (stored && typeof stored === 'object') return stored as unknown as { name: string; speed?: number; type?: string; description?: string }
+  const name = fieldMagic.value && fieldMagic.value !== '无' ? fieldMagic.value : ''
+  if (!name) return null
+  return CARDS.find((card) => card.name === name) ?? { name }
+})
+const fieldEffectOwner = computed(() => state.value.effect_badges?.field_owner ?? null)
 const selfEffects = computed(() => effectBadgeList(state.value.effect_badges?.self))
 const opponentEffects = computed(() => effectBadgeList(state.value.effect_badges?.opponent))
 const frozenMine = computed(() =>
@@ -618,6 +627,41 @@ interface DiscardCard {
 const discardCards = ref<DiscardCard[]>([])
 const discardError = ref('')
 const discardLoading = ref(false)
+// 弃牌堆里的悬停预览复用普通手牌的预览层，点击再打开效果详情。
+const discardHover = ref<DiscardCard | null>(null)
+const discardDetail = ref<DiscardCard | null>(null)
+type PreviewCard = { name: string; speed: number | string; type: string; description?: string }
+const previewCard = computed<PreviewCard | null>(() => {
+  if (discardDetail.value) return null
+  const hovered = discardHover.value
+  if (hovered) {
+    const known = CARDS.find((item) => item.name === hovered.name)
+    return {
+      name: hovered.name,
+      speed: known?.speed ?? hovered.speed ?? 0,
+      type: known?.type ?? hovered.type ?? '普通',
+      description: known?.description ?? '',
+    }
+  }
+  const card = hoveredCard.value
+  if (!card) return null
+  return { name: card.name, speed: card.speed, type: card.type, description: card.description }
+})
+const discardDetailInfo = computed(() => (discardDetail.value ? CARDS.find((item) => item.name === discardDetail.value?.name) ?? null : null))
+function showDiscardPreview(card: DiscardCard): void {
+  discardHover.value = card
+}
+function hideDiscardPreview(): void {
+  discardHover.value = null
+}
+function openDiscardDetail(card: DiscardCard): void {
+  discardDetail.value = card
+}
+function closeDiscardDrawer(): void {
+  discardOpen.value = false
+  discardHover.value = null
+  discardDetail.value = null
+}
 
 // ---- feedback helpers ------------------------------------------------------
 function say(code: string, message: string, next = '', tone: 'info' | 'warning' = 'warning'): void {
@@ -1583,8 +1627,12 @@ function backToLobby(): void {
 
         <!-- 全宽场地魔法条（原 main 的 .field-magic-area） -->
         <div class="field-magic-area">
-          <span class="fm-label">当前生效的场地魔法：</span>
-          <span class="fm-value" data-testid="game-field-magic">{{ fieldMagic }}</span>
+          <EffectMonitor
+            :field="fieldEffectCard"
+            :field-owner="fieldEffectOwner"
+            :self-effects="selfEffects"
+            :opponent-effects="opponentEffects"
+          />
         </div>
 
         <!-- 手机档：单块棋盘 + 海域切换标签（标题与提交的棋盘同源） -->
@@ -1869,15 +1917,16 @@ function backToLobby(): void {
         </button>
       </div>
       <Transition name="card-inspect-fade">
-        <aside v-if="hoveredCard" class="game-card-inspect" data-testid="game-card-hover-preview" aria-live="polite" @mouseenter="showCardPreview(hoveredCardIndex)" @mouseleave="hideCardPreview()">
-          <div class="game-card-inspect__art" :class="{ 'is-empty': !cardArtUrl(hoveredCard.name) }">
-            <img v-if="cardArtUrl(hoveredCard.name)" :src="cardArtUrl(hoveredCard.name) || ''" :alt="hoveredCard.name + ' 卡面预览'" />
-            <span v-else>{{ hoveredCard.name }}</span>
+        <aside v-if="previewCard" class="game-card-inspect" data-testid="game-card-hover-preview" aria-live="polite" @mouseenter="showCardPreview(hoveredCardIndex)" @mouseleave="hideCardPreview()">
+          <div class="game-card-inspect__art" :class="{ 'is-empty': !cardArtUrl(previewCard.name) }">
+            <img v-if="cardArtUrl(previewCard.name)" :src="cardArtUrl(previewCard.name) || ''" :alt="previewCard.name + ' 卡面预览'" />
+            <span v-else>{{ previewCard.name }}</span>
           </div>
           <div class="game-card-inspect__body">
-            <div class="game-card-inspect__head"><strong>{{ hoveredCard.name }}</strong><span>{{ typeLabel(hoveredCard) }}</span></div>
-            <p>{{ hoveredCard.description || '暂无效果说明' }}</p>
-            <small v-if="cardDisabled(hoveredCard)" class="game-card-inspect__reason">{{ cardDisabled(hoveredCard) }}</small>
+            <div class="game-card-inspect__head"><strong>{{ previewCard.name }}</strong><span>{{ typeLabel(previewCard) }}</span></div>
+            <p>{{ previewCard.description || '暂无效果说明' }}</p>
+            <small v-if="discardHover" class="game-card-inspect__hint">点击这张牌查看完整效果详情</small>
+            <small v-else-if="cardDisabled(previewCard)" class="game-card-inspect__reason">{{ cardDisabled(previewCard) }}</small>
             <small v-else class="game-card-inspect__hint">再次点击使用 · 详情可用键盘 Enter 打开</small>
           </div>
         </aside>
@@ -2138,21 +2187,45 @@ function backToLobby(): void {
 
     </section>
 
-    <section v-if="discardOpen" class="game-drawer game-drawer--discard" data-testid="game-discard-drawer" role="dialog" aria-label="弃牌堆">
-      <header class="game-drawer__head">
-        <h2 class="game-drawer__title">弃牌堆</h2>
-        <button type="button" class="game-close" data-testid="game-discard-close" aria-label="关闭弃牌堆" @click="discardOpen = false">×</button>
+    <Transition name="drawer">
+      <section v-if="discardOpen" class="game-drawer game-drawer--discard" data-testid="game-discard-drawer" role="dialog" aria-label="弃牌堆">
+        <header class="game-drawer__head">
+          <h2 class="game-drawer__title">弃牌堆</h2>
+          <button type="button" class="game-close" data-testid="game-discard-close" aria-label="关闭弃牌堆" @click="closeDiscardDrawer">×</button>
+        </header>
+        <p v-if="discardLoading" class="game-drawer__empty">正在读取弃牌堆…</p>
+        <p v-if="discardError" class="game-dialog__error" data-testid="game-discard-error">{{ discardError }}</p>
+        <p v-if="!discardLoading && !discardCards.length && !discardError" class="game-drawer__empty" data-testid="game-discard-empty">弃牌堆还是空的</p>
+        <div class="game-discard-grid" data-testid="game-discard-grid">
+          <button
+            v-for="(card, index) in discardCards"
+            :key="'discard-' + index + '-' + card.name"
+            type="button"
+            class="game-discard-card"
+            :data-testid="'game-discard-card-' + index"
+            :aria-label="card.name + '（查看效果详情）'"
+            @mouseenter="showDiscardPreview(card)"
+            @mouseleave="hideDiscardPreview()"
+            @focus="showDiscardPreview(card)"
+            @blur="hideDiscardPreview()"
+            @click="openDiscardDetail(card)"
+          >
+            <img v-if="cardArtUrl(card.name)" class="game-discard-card__art" :src="cardArtUrl(card.name) || ''" :alt="card.name" draggable="false" />
+            <span v-else class="game-discard-card__fallback">{{ card.name }}</span>
+            <span class="game-discard-card__name">{{ card.name }}</span>
+          </button>
+        </div>
+        <p class="game-drawer__empty">点牌看效果详情；牌堆剩余数量服务端没有下发，这里只显示已经进弃牌堆的卡，不猜数字。</p>
+      </section>
+    </Transition>
+    <div v-if="discardDetail" class="game-discard-detail" data-testid="game-discard-detail" role="dialog" :aria-label="discardDetail.name + ' 效果详情'">
+      <header class="game-discard-detail__head">
+        <h3 class="game-discard-detail__title">{{ discardDetail.name }}</h3>
+        <button type="button" class="game-close" data-testid="game-discard-detail-close" aria-label="关闭效果详情" @click="discardDetail = null">×</button>
       </header>
-      <p v-if="discardLoading" class="game-drawer__empty">正在读取弃牌堆…</p>
-      <p v-if="discardError" class="game-dialog__error" data-testid="game-discard-error">{{ discardError }}</p>
-      <p v-if="!discardLoading && !discardCards.length && !discardError" class="game-drawer__empty" data-testid="game-discard-empty">弃牌堆还是空的</p>
-      <ul class="game-discard-list" data-testid="game-discard-list">
-        <li v-for="(card, index) in discardCards" :key="'discard-' + index" class="game-discard-item" :data-testid="'game-discard-item-' + index">
-          {{ card.name }}
-        </li>
-      </ul>
-      <p class="game-drawer__empty">牌堆剩余数量服务端没有下发，这里只显示已经进弃牌堆的卡，不猜数字。</p>
-    </section>
+      <p class="game-discard-detail__meta">{{ typeLabel(discardDetail) }}</p>
+      <p class="game-discard-detail__desc">{{ discardDetailInfo?.description || '服务端没有下发这张卡的效果描述。' }}</p>
+    </div>
     <MagicPlacementPanel />
     <MagicChoicePanel />
     <MagicDiscardPanel />

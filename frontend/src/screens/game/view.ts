@@ -496,7 +496,15 @@ export function speedGems(speed: number): string {
   return '●'.repeat(count)
 }
 
-export function effectBadgeList(source: unknown): Array<{ key: string; label: string; description: string; expires: string }> {
+export interface EffectMonitorCard { name: string; speed?: number | null; type?: string | null; description?: string }
+
+export function effectBadgeList(source: unknown): Array<{
+  key: string
+  label: string
+  description: string
+  expires: string
+  card?: EffectMonitorCard | null
+}> {
   if (!Array.isArray(source)) return []
   return source
     .map((item) => {
@@ -504,14 +512,23 @@ export function effectBadgeList(source: unknown): Array<{ key: string; label: st
       const record = item as Record<string, unknown>
       const key = String(record.key ?? record.name ?? '')
       if (!key) return null
+      const card = record.card && typeof record.card === 'object' ? (record.card as Record<string, unknown>) : null
       return {
         key,
         label: String(record.label ?? record.name ?? key),
         description: String(record.description ?? ''),
         expires: String(record.expires ?? ''),
+        card: card
+          ? ({
+              name: String(card.name ?? record.name ?? key),
+              speed: card.speed === null || card.speed === undefined ? null : Number(card.speed),
+              type: card.type === null || card.type === undefined ? null : String(card.type),
+              description: String(card.description ?? record.description ?? ''),
+            } satisfies EffectMonitorCard)
+          : null,
       }
     })
-    .filter((item): item is { key: string; label: string; description: string; expires: string } => item !== null)
+    .filter((item): item is NonNullable<typeof item> => item !== null)
 }
 
 export function chainItems(source: unknown): Array<{ name: string; caster: string; negated: boolean; negatedBy: string }> {

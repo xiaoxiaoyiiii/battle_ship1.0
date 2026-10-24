@@ -310,6 +310,11 @@ export function applyBattleEvent(
         effect_badges: {
           self: Array.isArray(payload.self) ? (payload.self as Array<Record<string, unknown>>) : [],
           opponent: Array.isArray(payload.opponent) ? (payload.opponent as Array<Record<string, unknown>>) : [],
+          field:
+            payload.field && typeof payload.field === 'object'
+              ? (payload.field as Record<string, unknown>)
+              : null,
+          field_owner: typeof payload.field_owner === 'string' ? payload.field_owner : null,
         },
       })
       break

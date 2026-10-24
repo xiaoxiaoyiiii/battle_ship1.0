@@ -47,6 +47,12 @@ from ..domain.magic import chain as chain_rules
 from ..domain.magic.chain import CHAIN_RESPONSE_SECONDS, ChainItem, ChainResult
 from ..domain.magic.effects.base import EffectContext, EffectResult
 from ..domain.spectate.rules import AREA_TARGET_BOARDS
+
+#: 多回合持续效果：`room.game_effects` 键 → 卡名（监视栏要显示成同一排区块）。
+LONG_EFFECT_BADGES: tuple[tuple[str, str], ...] = (
+    ("holy_heart", "无暇圣心"),
+    ("reinforcement_check", "极限增援"),
+)
 from ..domain.magic import contract as contract_rules
 from ..domain.magic import precheck as magic_precheck
 from ..domain.magic import targets as target_rules
@@ -265,7 +271,38 @@ class MagicService:
         )
 
     @staticmethod
-    def _badges(player: Player) -> list[dict[str, Any]]:
+    def _card_info(name: str) -> dict[str, Any]:
+        """监视栏用的卡面信息：名称/速阶/类型/服务端文案（取不到就留空）。"""
+
+        card = None
+        try:
+            card = card_by_name(name)
+        except Exception:  # pragma: no cover - 卡表异常不该拖垮整帧
+            card = None
+        if card is None:
+            return {
+                "name": name,
+                "speed": None,
+                "type": None,
+                "description": CARD_DESCRIPTIONS.get(name, ""),
+            }
+        return {
+            "name": card.name,
+            "speed": int(card.speed) if getattr(card, "speed", None) is not None else None,
+            "type": getattr(card, "type", None),
+            "description": getattr(card, "description", None) or CARD_DESCRIPTIONS.get(name, ""),
+        }
+
+    @staticmethod
+    def _badges(room: Room, player_id: str, player: Player | None) -> list[dict[str, Any]]:
+        """本局的持续效果：一次性 flags + 多回合 game_effects 两类合并。
+
+        多回合效果（极限增援、无暇圣心）存在 `room.game_effects` 里而不是
+        `player.effect_flags`，旧实现完全看不到它们，监视栏自然缺块。
+        """
+
+        if player is None:
+            return []
         badges: list[dict[str, Any]] = []
         flags = player.effect_flags
         for attr, label, expiry, suffix in EFFECT_BADGES:
@@ -277,10 +314,33 @@ class MagicService:
                 "label": f"{label}·{suffix}" if suffix else label,
                 "description": CARD_DESCRIPTIONS.get(label, ""),
                 "expires": expiry,
+                "card": MagicService._card_info(label),
+            })
+
+        game_effects = room.game_effects if isinstance(room.game_effects, dict) else {}
+        for key, label in LONG_EFFECT_BADGES:
+            info = game_effects.get(key)
+            if not isinstance(info, dict) or info.get("caster") != player_id:
+                continue
+            remaining = info.get("remaining_turns")
+            try:
+                remaining_value = int(remaining) if remaining is not None else None
+            except (TypeError, ValueError):
+                remaining_value = None
+            badges.append({
+                "name": label,
+                "key": key,
+                "label": f"{label}·剩余{remaining_value}回合" if remaining_value else label,
+                "description": CARD_DESCRIPTIONS.get(label, ""),
+                "expires": f"剩余{remaining_value}回合" if remaining_value else "本大回合结束（重新猜拳）时失效",
+                "card": MagicService._card_info(label),
             })
         return badges
 
     async def _emit_active_effects(self, room: Room) -> None:
+        field_name = field_magic_name(room)
+        field_info = self._card_info(field_name) if field_name else None
+        field_owner = getattr(room, "field_magic_owner", None)
         for pid, player in room.players.items():
             if not player.socket_id:
                 continue
@@ -289,8 +349,10 @@ class MagicService:
             await self._publisher.emit(
                 "active_effects",
                 {
-                    "self": self._badges(player),
-                    "opponent": self._badges(opponent) if opponent else [],
+                    "self": self._badges(room, pid, player),
+                    "opponent": self._badges(room, opponent_id, opponent) if opponent else [],
+                    "field": field_info,
+                    "field_owner": field_owner,
                 },
                 to=player.socket_id,
             )
@@ -479,6 +541,7 @@ class MagicService:
         battle_rules.mark_ship_sunken(player, ship)
         player.remaining_ships = max(0, int(player.remaining_ships) - 1)
         positions = [{"x": p.x, "y": p.y} for p in ship.positions]
+        await self._publish_sunken_cells(room, player_id, positions)
         replay_rules.note_ship_lost(room, player_id, positions)
         reason_text = {
             "divine_decree": "神之宣告",
@@ -510,6 +573,31 @@ class MagicService:
             opponent_id = room.opponent_of(player_id)
             if opponent_id and room.state != RoomState.GAME_OVER:
                 await self.finish(room, opponent_id, player_id, reason=f"{reason_text}献祭最后一艘战舰")
+
+    async def _publish_sunken_cells(self, room: Room, player_id: str,
+                                    positions: list[dict[str, int]]) -> None:
+        """献祭掉的战舰格要像被击中一样公开标成红色叉叉。
+
+        旧行为只把船从 `player.ships` 里删掉再同步自家棋盘，对手视角一格都没有，
+        看起来像船凭空消失。这里把这些格子写进**对手**的 `attacks`（hit/ship_sunk）
+        后广播棋盘：双方看到同一片击沉痕迹，且不会暴露其它隐藏船。
+        """
+
+        opponent_id = room.opponent_of(player_id)
+        opponent = room.players.get(opponent_id) if opponent_id else None
+        if opponent is None:
+            return
+        seen = {(p.x, p.y) for p in opponent.attacks}
+        changed = False
+        for cell in positions:
+            key = (int(cell["x"]), int(cell["y"]))
+            if key in seen:
+                continue
+            opponent.attacks.append(Position(x=key[0], y=key[1], hit=True, ship_sunk=True))
+            seen.add(key)
+            changed = True
+        if changed:
+            await self._emit_board_attacks(room)
 
     async def _trigger_ship_trap(self, room: Room, owner_id: str,
                                  sunk_ship: PlayerShip) -> None:

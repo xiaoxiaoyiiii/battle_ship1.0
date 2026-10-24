@@ -76,7 +76,12 @@ export interface GameState {
   active_effects: string[]
   last_stand_lock: boolean
   last_stand_win: boolean
-  effect_badges: { self: Array<Record<string, unknown>>; opponent: Array<Record<string, unknown>> }
+  effect_badges: {
+    self: Array<Record<string, unknown>>
+    opponent: Array<Record<string, unknown>>
+    field?: Record<string, unknown> | null
+    field_owner?: string | null
+  }
   pending_placement: Record<string, unknown> | null
   pending_placement_blocked: Array<Record<string, unknown>>
   pending_placement_allowed: unknown[]
@@ -156,7 +161,7 @@ const FIELD_SPECS = {
   active_effects: { type: 'array', nullable: false, default: [], note: '公开效果标记名（排序后）' },
   last_stand_lock: { type: 'boolean', nullable: false, default: false, note: '绝处逢生锁卡' },
   last_stand_win: { type: 'boolean', nullable: false, default: false, note: '绝处逢生击杀即胜' },
-  effect_badges: { type: 'object', nullable: false, default: { self: [], opponent: [] }, note: '效果角标（含卡面文案）' },
+  effect_badges: { type: 'object', nullable: false, default: { self: [], opponent: [], field: null, field_owner: null }, note: '效果角标（含卡面文案）与当前场地魔法' },
   pending_placement: { type: 'object', nullable: true, default: null, note: '局内重摆待放置面板' },
   pending_placement_blocked: { type: 'array', nullable: false, default: [], note: '重摆禁用格' },
   pending_placement_allowed: { type: 'array', nullable: false, default: [], note: '重摆白名单格；空=无白名单' },

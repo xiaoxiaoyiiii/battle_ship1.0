@@ -1331,22 +1331,154 @@
   font-size: 12px;
 }
 
-.game-discard-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+/* 弃牌区：真实卡图网格（4 列自适应），点牌看详情，悬停复用右侧预览层。 */
+.game-discard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 2px 6px;
+  align-content: start;
 }
 
-.game-discard-item {
-  padding: 4px 8px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-pill);
+.game-discard-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: calc(var(--radius) - 4px);
   background: var(--surface-deck);
   color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.game-discard-card:hover,
+.game-discard-card:focus-visible {
+  transform: translateY(-2px);
+  border-color: var(--border-strong);
+  box-shadow: 0 6px 14px color-mix(in srgb, #000 32%, transparent);
+  outline: none;
+}
+
+.game-discard-card__art {
+  width: 100%;
+  aspect-ratio: 5 / 7;
+  object-fit: cover;
+  border-radius: calc(var(--radius) - 6px);
+  display: block;
+}
+
+.game-discard-card__fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 5 / 7;
+  border-radius: calc(var(--radius) - 6px);
+  background: var(--surface-chamber);
   font-size: 12px;
+  text-align: center;
+  padding: 4px;
+}
+
+.game-discard-card__name {
+  font-size: 11px;
+  line-height: 1.2;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 抽屉滑入/滑出：只动 transform 与 opacity，不参与布局计算。 */
+.drawer-enter-active,
+.drawer-leave-active {
+  transition:
+    transform 220ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 180ms ease;
+}
+
+.drawer-enter-from,
+.drawer-leave-to {
+  transform: translateX(24px) scale(0.98);
+  opacity: 0;
+}
+
+/* 抽屉让开顶栏（64px 导航 + 8px 间距），否则关闭按钮会被导航栏盖住点不到。 */
+.game-drawer--discard {
+  top: 72px;
+  z-index: 80;
+}
+
+.game-drawer--discard .game-close {
+  position: relative;
+  z-index: 2;
+}
+
+/* 弃牌卡效果详情：叠在抽屉之上，固定定位，不推棋盘与行动栏。 */
+.game-discard-detail {
+  position: fixed;
+  z-index: 90;
+  right: 12px;
+  bottom: 12px;
+  width: min(320px, calc(100% - 24px));
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-chamber);
+  box-shadow: var(--shadow-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.game-discard-detail__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.game-discard-detail__title {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.game-discard-detail__meta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.game-discard-detail__desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  max-height: 168px;
+  overflow-y: auto;
+}
+
+@media (max-width: 719px) {
+  .game-discard-grid {
+    grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+    gap: 6px;
+  }
+
+  .game-discard-detail {
+    right: 8px;
+    left: 8px;
+    width: auto;
+    bottom: 8px;
+  }
 }
 
 /* ------------------------------------------------------------- self zoom --- */
@@ -1615,6 +1747,14 @@
 }
 
 /* ---- 场地魔法条 ---------------------------------------------------------- */
+/* 场地/持续效果监视栏自己画框，这里只留高度与宽度占位（高度预算仍按实测值算）。 */
+.field-magic-area {
+  padding: 0;
+  background: none;
+  border: 0;
+  gap: 0;
+}
+
 .field-magic-area {
   width: 100%;
   display: flex;
@@ -1700,6 +1840,10 @@
   min-height: 0;
   overflow-y: auto;
   padding-right: 2px;
+  /* 右栏必须收在中栏高度里：1440x900 下曾按内容长到 636px 并压到手牌行，
+     导致「查看弃牌堆 / 更多操作 / 进入战斗阶段」被手牌盖住点不到。 */
+  align-self: stretch;
+  max-height: 100%;
 }
 
 .arena-rail-panel {
@@ -2607,6 +2751,21 @@ button.arena-avatar--btn {
   font-size: 10.5px;
 }
 
+/* 矮屏（1440x900 这类）里连锁轨道最高 132px，保证计数面板与操作按钮
+   留在第一屏内，不需要用户滚右栏才能点到「查看弃牌堆 / 更多操作」。 */
+@media (max-height: 980px) {
+  .game[data-layout='wide'] .arena-chain-slot {
+    max-height: 132px;
+    overflow: hidden;
+  }
+
+  /* 右栏在矮屏里内容比容器高时自己滚，不要把计数面板/操作按钮顶到手牌下面。 */
+  .game[data-layout='wide'] .arena-rail {
+    overflow-y: auto;
+    align-content: start;
+  }
+}
+
 /* ---- 竖向连锁轨道（原 #arena-chain-slot） ---- */
 .arena-chain-slot {
   flex: 1 1 auto;
@@ -3127,3 +3286,14 @@ button.arena-avatar--btn {
 }
 
 .game[data-layout='wide'] .arena-player--self .arena-player__pips { display:flex; }
+
+/* 矮屏（1440x900）修正：右栏此前用 minmax(200px,1fr) + overflow:visible + margin-bottom:-220px
+   让计数面板与「查看弃牌堆 / 更多操作 / 进入战斗阶段」溢出到手牌行下方，真实鼠标点不到。
+   这里让三行都收在右栏高度内，高度不够时由连锁轨道吸收压缩。 */
+@media (max-height: 980px) {
+  .game[data-layout='wide'] .arena-rail {
+    grid-template-rows: minmax(0, 1fr) auto auto;
+    overflow: hidden;
+    margin-bottom: 0;
+  }
+}

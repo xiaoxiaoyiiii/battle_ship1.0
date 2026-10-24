@@ -32,6 +32,7 @@ from ..domain.room import Room
 from ..domain.settlement import SettlementFacts, settlement_facts
 from ..infra.logging import get_logger
 from ..repositories import Database, UnitOfWork
+from .tasks import settle_tasks
 
 logger = get_logger("settlement")
 
@@ -157,6 +158,7 @@ class SettlementService:
                     self._write_match(uow, room, context)
                     if facts.count_stats:
                         self._write_user_stats(uow, facts)
+                    settle_tasks(room, uow, context)
                     for hook in self.hooks:
                         hook(room, uow, context)
             except Exception as error:  # noqa: BLE001 - the UoW already rolled back

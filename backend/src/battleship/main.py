@@ -39,6 +39,7 @@ from .http.routers import progression as progression_router
 from .http.routers import replay as replay_router
 from .http.routers import spectate as spectate_router
 from .http.routers import stats as stats_router
+from .http.routers import tasks as tasks_router
 from .http.routers import wallpapers as wallpapers_router
 from .infra.assets import AssetPaths
 from .infra.health import HealthService
@@ -262,6 +263,7 @@ def create_application(settings: Settings | None = None,
     fastapi_app.include_router(progression_router.router)
     fastapi_app.include_router(wallpapers_router.router)
     fastapi_app.include_router(stats_router.router)
+    fastapi_app.include_router(tasks_router.router)
     fastapi_app.include_router(leaderboard_router.router)
     fastapi_app.include_router(replay_router.router)
     fastapi_app.include_router(lobby_router.router)

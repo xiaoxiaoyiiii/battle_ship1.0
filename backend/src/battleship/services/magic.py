@@ -17,6 +17,8 @@ battleship.domain.magic.effects and registered in battleship.domain.magic.regist
 
 from __future__ import annotations
 
+from ..domain.tasks import record_card_play
+
 import asyncio
 import inspect
 import json
@@ -917,6 +919,7 @@ class MagicService:
         replay_rules.note_card_played(room, player_id, card)
 
         room.chain.append(item)
+        record_card_play(room, player_id, now=self.clock())
         # #37：支付完成、已入连锁之后发 CAST_PAID（此后失败只能按连锁规则退牌）。
         await hooks.emit(
             room,
@@ -1182,6 +1185,7 @@ class MagicService:
             replay_rules.note_card_played(room, str(player_id), card, chained=True)
 
             room.chain.append(item)
+            record_card_play(room, str(player_id), now=self.clock())
             await hooks.emit(
                 room,
                 hooks.CAST_PAID,

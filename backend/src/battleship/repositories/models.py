@@ -334,3 +334,12 @@ SEMANTIC_REFERENCES: dict[tuple[str, str], tuple[str, str]] = {
     ("chat_messages", "user_id"): ("users", "id"),
     ("active_games", "user_id"): ("users", "id"),
 }
+
+
+class UserTaskCounter(Base):
+    """按账户、北京时间日期和任务指标累计的持久进度。"""
+    __tablename__ = 'user_task_counters'
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    day: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    metric: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    value: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text('0'))

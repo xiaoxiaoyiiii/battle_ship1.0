@@ -35,9 +35,9 @@ let offMessage: (() => void) | null = null
 let offRoomSync: (() => void) | null = null
 
 const choices = [
-  { value: 'rock', label: '石头', icon: '✊' },
-  { value: 'paper', label: '布', icon: '✋' },
-  { value: 'scissors', label: '剪刀', icon: '✌' },
+  { value: 'rock', label: '石头', icon: '✊', counter: '克制剪刀' },
+  { value: 'paper', label: '布', icon: '✋', counter: '克制石头' },
+  { value: 'scissors', label: '剪刀', icon: '✌', counter: '克制布' },
 ] as const
 
 const hasRoom = computed(() => Boolean(game.state.room_id))
@@ -186,27 +186,14 @@ function returnHome(): void {
       <div class="rps__identity rps__identity--opponent"><b data-testid="rps-opponent">{{ opponentName }}</b><span class="rps__avatar"><img v-if="cards.opponentAvatar.value" :src="cards.opponentAvatar.value" alt="" /><span v-else>{{ opponentName.slice(0,1) }}</span></span></div>
     </div>
     <header class="rps__head">
-      <p class="rps__eyebrow">开局 · 猜拳</p>
+      <p class="rps__eyebrow">第 <b data-testid="rps-round">{{ roundText }}</b> 回合 · 猜拳</p>
       <h1 id="screen-rps-title" class="rps__title" data-testid="rps-heading">猜拳决定攻击顺序</h1>
-      <p class="rps__round">
-        第 <b data-testid="rps-round">{{ roundText }}</b> 回合 · 选择一种手势
-      </p>
+      <p class="rps__round">选择一种手势，争取本回合的先手。</p>
       <p class="rps__rules" data-testid="rps-rules">
-        先手先开炮、只抽 1 张魔法卡；后手后开炮、抽 2 张。猜拳只决定这一大回合的出手顺序。
+        <span><b>先手 · 先开炮</b><i aria-hidden="true"></i>抽 1 张</span>
+        <span><b>后手 · 后开炮</b><i aria-hidden="true"></i>抽 2 张</span>
       </p>
     </header>
-
-
-
-    <p
-      class="rps__opponent-state"
-      data-testid="rps-opponent-status"
-      :data-state="opponentStatus.state"
-      role="status"
-      aria-live="polite"
-    >
-      {{ opponentStatus.text }}
-    </p>
 
     <p v-if="!hasRoom" class="rps__empty" data-testid="rps-empty" role="status">
       还没进入房间，先创建或加入房间再猜拳。
@@ -226,8 +213,21 @@ function returnHome(): void {
       >
         <span class="rps__icon" aria-hidden="true">{{ choice.icon }}</span>
         <span class="rps__label">{{ choice.label }}</span>
+        <span class="rps__counter">{{ choice.counter }}</span>
       </button>
     </div>
+
+    <p class="rps__hint">点击手势直接出拳，双方出拳后揭晓结果。</p>
+
+    <p
+      class="rps__opponent-state"
+      data-testid="rps-opponent-status"
+      :data-state="opponentStatus.state"
+      role="status"
+      aria-live="polite"
+    >
+      {{ opponentStatus.text }}
+    </p>
 
     <p
       v-if="rps.waiting"
@@ -320,341 +320,99 @@ function returnHome(): void {
 </template>
 
 <style scoped>
-.rps {
-  gap: 12px;
-}
-
-.rps__head {
-  display: grid;
-  gap: 2px;
-}
-
-.rps__eyebrow {
-  margin: 0;
-  color: var(--accent);
-  font-size: 12px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.rps__title {
-  margin: 0;
-  font-size: 26px;
-}
-
-.rps__round {
-  margin: 2px 0 0;
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.rps__round b {
-  color: var(--text);
-  font-size: 16px;
-  font-variant-numeric: tabular-nums;
-}
-
-.rps__players {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 14px;
-  padding: 8px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-elevated);
-  font-size: 14px;
-}
-
-.rps__player--opponent {
-  margin-left: auto;
-}
-
-.rps__seat {
-  padding: 1px 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.rps__vs {
-  color: var(--text-muted);
-  font-size: 11px;
-  letter-spacing: 0.12em;
-}
-
-.rps__empty {
-  margin: 0;
-  padding: 10px 14px;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius);
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.rps__choices {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-  width: min(100%, 720px);
-}
-
-.rps__choice {
-  display: grid;
-  place-items: center;
-  gap: 8px;
-  min-height: 128px;
-  padding: 20px 10px;
-  border: 1px solid color-mix(in srgb, var(--role-action) 28%, transparent);
-  border-radius: var(--radius);
-  background: linear-gradient(
-    160deg,
-    color-mix(in srgb, var(--role-action) 14%, var(--surface-deck)),
-    var(--surface-deck) 78%
-  );
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
-  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
-}
-
-/* Hover on a pointer device; touch devices keep the plain surface. */
-@media (hover: hover) {
-  .rps__choice:hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--role-action) 62%, transparent);
-    transform: translateY(-2px);
-  }
-}
-
-.rps__choice:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: #113140;
-  transform: translateY(-2px);
-}
-
-.rps__choice.is-picked {
-  border-color: var(--accent);
-  background: linear-gradient(160deg, #1c5f78, #14414f);
-  box-shadow: 0 0 0 1px rgb(120 220 240 / 35%), 0 8px 22px rgb(0 0 0 / 35%);
-}
-
-.rps__choice:disabled {
-  cursor: default;
-  opacity: 0.62;
-}
-
-.rps__choice:disabled.is-picked {
-  opacity: 1;
-}
-
-.rps__icon {
-  font-size: 30px;
-  line-height: 1;
-}
-
-.rps__label {
-  font-size: 14px;
-}
-
-.rps__waiting {
-  margin: 0;
-  padding: 8px 12px;
-  border: 1px solid #2a5568;
-  border-radius: 8px;
-  background: var(--surface-deck);
-  color: var(--accent);
-  font-size: 13px;
-}
-
-.rps__waiting b {
-  color: var(--text);
-}
-
-.rps__countdown {
-  margin-left: 6px;
-  font-variant-numeric: tabular-nums;
-}
-
-.rps__error {
-  margin: 0;
-  padding: 8px 12px;
-  border: 1px solid #7a2f2a;
-  border-radius: 8px;
-  background: #2a1414;
-  color: var(--role-enemy);
-  font-size: 13px;
-}
-
-.rps__result {
-  display: grid;
-  gap: 6px;
-  padding: 12px 16px;
-  border: 1px solid var(--role-success);
-  border-radius: var(--radius);
-  background: linear-gradient(160deg, rgb(42 143 104 / 20%), rgb(42 143 104 / 6%));
-  animation: rps-reveal 220ms ease-out;
-}
-
-.rps__result.is-tie {
-  border-color: #7a6a2a;
-  background: linear-gradient(160deg, rgb(122 106 42 / 22%), rgb(122 106 42 / 6%));
-}
-
-.rps__verdict {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 700;
-}
-
-.rps__result.is-tie .rps__verdict {
-  color: var(--gold-strong);
-}
-
-.rps__reveal {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 18px;
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.rps__reveal b {
-  color: var(--text);
-  font-size: 15px;
-}
-
-.rps__home {
-  align-self: flex-start;
-}
-
-@keyframes rps-reveal {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.button--ghost {
-  border-color: var(--border);
-  background: transparent;
-  color: var(--text-muted);
-}
-
-.button--ghost:hover {
-  background: #14303f;
-  color: var(--text);
-}
-
-@media (max-width: 520px) {
-  .rps {
-    gap: 10px;
-    padding: 12px;
-  }
-
-  .rps__title {
-    font-size: 22px;
-  }
-
-  .rps__choice {
-    padding: 12px 6px;
-  }
-
-  .rps__icon {
-    font-size: 26px;
-  }
-}
-
-@media (max-height: 680px) {
-  .rps__eyebrow {
-    display: none;
-  }
-
-  .rps__title {
-    font-size: 20px;
-  }
-
-  .rps__choice {
-    padding: 10px 6px;
-  }
-
-  .rps__icon {
-    font-size: 24px;
-  }
-}
-.rps__rules {
-  margin: 2px 0 0;
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.rps__opponent-state {
-  margin: 0;
-  padding: 6px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-elevated);
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.rps__opponent-state[data-state='ready'] {
-  border-color: color-mix(in srgb, var(--role-success) 45%, transparent);
-  color: var(--success);
-}
-
-.rps__opponent-state[data-state='offline'] {
-  border-color: color-mix(in srgb, var(--role-enemy) 45%, transparent);
-  color: var(--role-enemy);
-}
-
-.rps__receipt {
-  margin: 0;
-  padding: 6px 10px;
-  border: 1px solid color-mix(in srgb, var(--gold-strong) 45%, transparent);
-  border-radius: 8px;
-  background: var(--gold-soft);
-  color: var(--gold-strong);
-  font-size: 12px;
-}
-
-.rps__confirm {
-  display: grid;
-  gap: 10px;
-  padding: 20px 22px;
-  text-align: left;
-}
-
-.rps__confirm-title {
-  margin: 0;
-  font-size: 20px;
-}
-
-.rps__confirm-text {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.rps__confirm-actions {
-  display: flex;
-  gap: 10px;
-  justify-content: flex-end;
-}
-
-
+/* 手势与说明围绕同一中轴，头像仍保留在页面两侧。 */
+.rps { gap:18px; align-items:center; padding:24px 28px 32px; }
 .rps__identities { display:flex; justify-content:space-between; gap:16px; width:100%; }
-.rps__identity { display:flex; align-items:center; gap:10px; min-width:0; }
-.rps__identity b { overflow:hidden; text-overflow:ellipsis; }
+.rps__identity { display:flex; align-items:center; gap:10px; min-width:0; max-width:45%; }
+.rps__identity b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .rps__avatar { display:grid; place-items:center; width:44px; height:44px; flex:0 0 44px; border:1px solid var(--role-self); border-radius:50%; overflow:hidden; background:var(--panel); }
 .rps__avatar img { width:100%; height:100%; object-fit:cover; }
 .rps__identity--opponent .rps__avatar { border-color:var(--gold); }
+.rps__head { display:grid; justify-items:center; gap:12px; margin:16px 0 6px; text-align:center; max-width:100%; }
+.rps__eyebrow { display:inline-flex; align-items:center; gap:4px; margin:0; padding:7px 18px; border:1px solid color-mix(in srgb,var(--role-action) 60%,transparent); border-radius:999px; color:var(--accent); background:color-mix(in srgb,var(--role-action) 9%,transparent); font-size:13px; }
+.rps__eyebrow b { font-variant-numeric:tabular-nums; }
+.rps__title { margin:0; font-size:clamp(24px,2.4vw,36px); line-height:1.3; letter-spacing:.02em; }
+.rps__round { margin:0; font-size:15px; color:var(--text-muted); }
+.rps__rules { display:flex; flex-wrap:wrap; justify-content:center; gap:12px; margin:4px 0 0; font-size:13px; color:var(--text-muted); }
+.rps__rules>span { display:inline-flex; align-items:center; gap:12px; padding:10px 16px; border:1px solid var(--border); border-radius:9px; background:color-mix(in srgb,var(--panel) 70%,transparent); }
+.rps__rules b { color:var(--accent); font-weight:500; }
+.rps__rules i { height:14px; width:1px; background:var(--border); }
+.rps__choices { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:20px; width:min(100%,800px); margin:0 auto; }
+.rps__choice { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; min-width:0; min-height:220px; padding:28px 14px; border:1px solid color-mix(in srgb,var(--role-action) 45%,var(--border)); border-radius:14px; background:linear-gradient(155deg,color-mix(in srgb,var(--role-action) 12%,var(--surface-deck)),var(--surface-deck) 85%); color:var(--text); font:inherit; cursor:pointer; transition:transform 140ms ease,border-color 140ms ease,box-shadow 140ms ease; }
+.rps__choice:focus-visible { outline:2px solid var(--accent); outline-offset:4px; }
+@media(hover:hover) {
+  .rps__choice:hover:not([aria-disabled='true']) { transform:translateY(-3px); border-color:var(--accent); box-shadow:0 0 0 1px var(--accent),0 8px 24px color-mix(in srgb,var(--role-action) 12%,transparent); }
+}
+.rps__choice.is-picked { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); background:linear-gradient(155deg,color-mix(in srgb,var(--role-action) 22%,var(--surface-deck)),var(--surface-deck)); }
+.rps__choice[aria-disabled='true'] { cursor:default; opacity:.6; }
+.rps__choice[aria-disabled='true'].is-picked { opacity:1; }
+.rps__icon { font-size:62px; line-height:1.2; margin-bottom:5px; }
+.rps__label { font-size:20px; font-weight:650; }
+.rps__counter { color:var(--text-muted); font-size:13px; }
+.rps__hint { margin:2px 0 0; color:var(--text-muted); font-size:13px; text-align:center; }
+.rps__opponent-state { display:inline-flex; align-items:center; justify-content:center; gap:8px; max-width:min(100%,600px); margin:0; padding:7px 14px; border:1px solid var(--border); border-radius:999px; background:var(--bg-elevated); color:var(--text-muted); font-size:12px; text-align:center; }
+.rps__opponent-state::before { content:''; width:7px; height:7px; flex:0 0 7px; border-radius:50%; background:var(--text-muted); }
+.rps__opponent-state[data-state='ready'],.rps__opponent-state[data-state='thinking'] { border-color:color-mix(in srgb,var(--role-success) 45%,transparent); color:var(--role-success); }
+.rps__opponent-state[data-state='ready']::before,.rps__opponent-state[data-state='thinking']::before { background:var(--role-success); }
+.rps__opponent-state[data-state='offline'] { color:var(--role-enemy); border-color:var(--role-enemy); }
+.rps__opponent-state[data-state='offline']::before { background:var(--role-enemy); }
+.rps__empty,.rps__waiting,.rps__error,.rps__receipt,.rps__result { max-width:min(100%,700px); margin:0; padding:10px 16px; border:1px solid var(--border); border-radius:9px; background:var(--surface-deck); font-size:13px; text-align:center; }
+.rps__waiting { color:var(--accent); }
+.rps__waiting b { color:var(--text); }
+.rps__countdown { margin-left:6px; font-variant-numeric:tabular-nums; }
+.rps__error { color:var(--role-enemy); border-color:var(--role-enemy); }
+.rps__receipt { color:var(--gold-strong); border-color:var(--gold); }
+.rps__result { display:grid; gap:6px; border-color:var(--role-success); animation:rps-reveal 220ms ease-out; }
+.rps__result.is-tie { border-color:var(--gold); }
+.rps__verdict { margin:0; font-size:20px; font-weight:700; }
+.rps__result.is-tie .rps__verdict { color:var(--gold-strong); }
+.rps__reveal { display:flex; flex-wrap:wrap; justify-content:center; gap:6px 18px; margin:0; color:var(--text-muted); font-size:13px; }
+.rps__reveal b { color:var(--text); font-size:15px; }
+.rps__leave,.rps__home { align-self:center; width:190px; max-width:100%; min-height:42px; margin-top:12px; border-color:var(--border); background:transparent; color:var(--text-muted); }
+.rps__confirm { display:grid; gap:10px; padding:20px 22px; text-align:left; }
+.rps__confirm-title { margin:0; font-size:20px; }
+.rps__confirm-text { margin:0; color:var(--text-muted); font-size:13px; line-height:1.6; }
+.rps__confirm-actions { display:flex; flex-wrap:wrap; gap:10px; justify-content:flex-end; }
+@keyframes rps-reveal { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+@media(max-width:520px) {
+  .rps { gap:14px; padding:14px 12px 24px; }
+  .rps__identity { font-size:12px; gap:7px; }
+  .rps__avatar { width:34px; height:34px; flex-basis:34px; }
+  .rps__head { margin-top:14px; gap:10px; }
+  .rps__round { font-size:12px; }
+  .rps__rules { gap:6px; font-size:11px; }
+  .rps__rules>span { gap:7px; padding:8px; }
+  .rps__choices { gap:9px; }
+  .rps__choice { min-height:150px; padding:18px 5px; gap:10px; border-radius:10px; }
+  .rps__icon { font-size:40px; }
+  .rps__label { font-size:16px; }
+  .rps__counter { font-size:11px; }
+  .rps__hint { font-size:11px; }
+}
+@media(max-height:700px) {
+  .rps { gap:10px; padding-top:12px; padding-bottom:18px; }
+  .rps__head { margin:0; gap:8px; }
+  .rps__title { font-size:24px; }
+  .rps__eyebrow { padding:4px 14px; }
+  .rps__choice { min-height:150px; padding:14px 8px; gap:8px; }
+  .rps__icon { font-size:40px; margin:0; }
+  .rps__leave,.rps__home { margin-top:0; }
+}
+@media(max-height:450px) and (min-width:521px) {
+  .rps__identities { position:absolute; top:12px; left:20px; right:20px; width:auto; pointer-events:none; }
+  .rps { position:relative; gap:6px; padding-top:8px; padding-bottom:10px; }
+  .rps__head { padding:0 150px; }
+  .rps__title { font-size:20px; }
+  .rps__round { font-size:12px; }
+  .rps__eyebrow { display:none; }
+  .rps__rules { font-size:11px; margin:0; gap:8px; }
+  .rps__rules>span { padding:5px 10px; }
+  .rps__choices { max-width:540px; gap:12px; }
+  .rps__choice { min-height:100px; padding:10px; gap:5px; }
+  .rps__icon { font-size:30px; }
+  .rps__label { font-size:15px; }
+  .rps__counter,.rps__hint { font-size:11px; }
+  .rps__opponent-state { padding:4px 12px; }
+}
+@media(prefers-reduced-motion:reduce) { .rps__choice { transition:none; } .rps__choice:hover { transform:none; } .rps__result { animation:none; } }
 </style>

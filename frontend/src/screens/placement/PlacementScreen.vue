@@ -137,8 +137,9 @@ watch(() => [game.state.needs_reset, game.state.max_ships], () => {
 watch(() => game.state.reset_allowed_cells, cells => placement.setAllowed(cells), { deep:true })
 
 watch(
-  () => game.state.state,
-  (state) => routeForState(state),
+  // 重摆完成的状态帧可能早于提交回执；回执解除重摆锁后也必须重新检查跳转。
+  () => [game.state.state, placement.resetPhase] as const,
+  ([state]) => routeForState(state),
   { immediate: true },
 )
 

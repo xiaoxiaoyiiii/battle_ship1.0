@@ -107,6 +107,11 @@ const connectionText = computed(() => (ui.connection === 'online' ? '已连接' 
 
 // ---- hand selection --------------------------------------------------------
 const selectedCardIndex = ref(-1)
+const hoveredCardIndex = ref(-1)
+const hoveredCard = computed(() => hoveredCardIndex.value >= 0 ? hand.value[hoveredCardIndex.value] ?? null : null)
+let hoverCloseTimer = 0
+function showCardPreview(index: number): void { window.clearTimeout(hoverCloseTimer); hoveredCardIndex.value = index }
+function hideCardPreview(): void { window.clearTimeout(hoverCloseTimer); hoverCloseTimer = window.setTimeout(() => { hoveredCardIndex.value = -1 }, 90) }
 const selectedCardKey = ref('')
 const detailOpen = computed(() => selectedCardIndex.value >= 0)
 
@@ -1838,6 +1843,10 @@ function backToLobby(): void {
             '--fan-drop': handFan.layout.value.cards[index]?.drop,
           }"
           @click="onCardClick(index)"
+          @mouseenter="showCardPreview(index)"
+          @mouseleave="hideCardPreview()"
+          @focus="showCardPreview(index)"
+          @blur="hideCardPreview()"
         >
           <img
             v-if="cardArtUrl(card.name)"
@@ -1859,6 +1868,20 @@ function backToLobby(): void {
           </span>
         </button>
       </div>
+      <Transition name="card-inspect-fade">
+        <aside v-if="hoveredCard && selectedCardIndex < 0" class="game-card-inspect" data-testid="game-card-hover-preview" aria-live="polite" @mouseenter="showCardPreview(hoveredCardIndex)" @mouseleave="hideCardPreview()">
+          <div class="game-card-inspect__art" :class="{ 'is-empty': !cardArtUrl(hoveredCard.name) }">
+            <img v-if="cardArtUrl(hoveredCard.name)" :src="cardArtUrl(hoveredCard.name) || ''" :alt="hoveredCard.name + ' 卡面预览'" />
+            <span v-else>{{ hoveredCard.name }}</span>
+          </div>
+          <div class="game-card-inspect__body">
+            <div class="game-card-inspect__head"><strong>{{ hoveredCard.name }}</strong><span>{{ typeLabel(hoveredCard) }}</span></div>
+            <p>{{ hoveredCard.description || '暂无效果说明' }}</p>
+            <small v-if="cardDisabled(hoveredCard)" class="game-card-inspect__reason">{{ cardDisabled(hoveredCard) }}</small>
+            <small v-else class="game-card-inspect__hint">再次点击使用 · 详情可用键盘 Enter 打开</small>
+          </div>
+        </aside>
+      </Transition>
     </section>
 
     <!-- 手机档：底部操作条 + 工具入口 -->

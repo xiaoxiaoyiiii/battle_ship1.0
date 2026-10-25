@@ -3433,4 +3433,12 @@ button.arena-avatar--btn {
     transform: none;
     margin-bottom: 16px;
   }
+
+  /* 右栏会自然延伸到手牌行的高度；给手牌预留右侧安全区，避免两者互相盖住。 */
+  .game[data-layout='wide'] .game-hand-wrap {
+    width: min(940px, calc(100% - 780px));
+    max-width: none;
+    margin-left: 270px;
+    margin-right: 260px;
+  }
 }

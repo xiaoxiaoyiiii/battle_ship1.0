@@ -3321,11 +3321,14 @@ button.arena-avatar--btn {
 .game[data-layout] .hud-round { grid-column:2; grid-row:1; margin:0; justify-self:start; font-size:12px; }
 .game[data-layout] .game-hud > .hud-btn { grid-column:2; grid-row:1; justify-self:end; min-height:24px; padding:1px 8px; }
 .game[data-layout] .hud-chips { grid-column:2; grid-row:2; display:flex; flex-wrap:wrap; gap:3px; justify-content:center; max-height:44px; overflow:auto; }
-.game[data-layout] .hud-chip { min-height:18px; padding:1px 6px; font-size:10px; line-height:16px; }
+.game[data-layout] .hud-chips { max-height:none; overflow:hidden; }
+.game[data-layout] .hud-primary-chips { grid-template-columns:repeat(2,minmax(0,1fr)); min-width:0; width:100%; gap:4px; }
+.game[data-layout] .hud-primary-chips .hud-chip { min-height:22px; padding:2px 7px; font-size:11px; line-height:16px; }
+.game[data-layout] .hud-chip { min-height:22px; padding:2px 7px; font-size:11px; line-height:16px; }
 .game[data-layout='wide'] .field-magic-area { top:98px; }
 .game[data-layout='wide'] .game-main-container { padding-top:136px; }
 @media (max-width:719px) {
- .game[data-layout] .game-hud { grid-template-columns:minmax(0,1fr) minmax(0,1fr); grid-template-rows:64px 22px; height:98px; min-height:98px; gap:4px 6px; padding:4px 6px; }
+ .game[data-layout] .game-hud { grid-template-columns:minmax(0,1fr) minmax(0,1fr); grid-template-rows:64px 52px; height:128px; min-height:128px; gap:4px 6px; padding:4px 6px; }
  .game[data-layout] .arena-player { grid-row:1; height:64px; padding:3px 4px; gap:5px; }
  .game[data-layout] .arena-player--opponent { grid-column:2; }
  .game[data-layout] .arena-avatar { width:28px; height:28px; flex-basis:28px; font-size:12px; }

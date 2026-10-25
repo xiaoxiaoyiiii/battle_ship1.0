@@ -2766,6 +2766,48 @@ button.arena-avatar--btn {
   }
 }
 
+/* 场地魔法栏占用固定的顶部预算：棋盘从栏下方开始，避免栏与棋盘标题/连锁轨道重叠。 */
+@media (min-width: 1200px) and (min-height: 700px) {
+  .game[data-layout='wide'] .game-main-container {
+    padding-top: 198px;
+  }
+  .game[data-layout='wide'] .field-magic-area {
+    top: 98px;
+    height: 56px;
+    z-index: 20;
+  }
+  .game[data-layout='wide'] .arena-rail {
+    z-index: 25;
+  }
+  .game[data-layout='wide'] .arena-actions {
+    position: relative;
+  }
+  .game[data-layout='wide'] .arena-actions .game-more-menu {
+    position: absolute;
+    z-index: 120;
+    right: 0;
+    top: calc(100% + 6px);
+    width: min(230px, 18vw);
+    max-height: min(54vh, 520px);
+    overflow-y: auto;
+    box-sizing: border-box;
+  }
+}
+
+@media (max-width: 1199px) and (min-width: 720px) {
+  .game[data-layout='compact'] .field-magic-area {
+    min-height: 52px;
+  }
+  .game[data-layout='compact'] .game-more-menu {
+    position: absolute;
+    z-index: 120;
+    right: 0;
+    top: calc(100% + 4px);
+    max-height: 48vh;
+    overflow-y: auto;
+  }
+}
+
 /* ---- 竖向连锁轨道（原 #arena-chain-slot） ---- */
 .arena-chain-slot {
   flex: 1 1 auto;

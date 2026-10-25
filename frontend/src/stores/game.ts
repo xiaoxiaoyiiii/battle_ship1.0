@@ -42,6 +42,22 @@ export const useGameStore = defineStore('game', () => {
       state.value = defaultGameState()
     }
     if ('opponent_name' in next && !('opponent_registered' in next)) next.opponent_registered = false
+    // `active_effects` and `room_sync` are two valid sources for the same
+    // monitor. Keep a complete shape when an older snapshot omits the public
+    // field keys, so a reconnect frame cannot hide a still-active long effect
+    // or field card that was just rendered from the live event.
+    if ('effect_badges' in next && next.effect_badges && typeof next.effect_badges === 'object') {
+      const incoming = next.effect_badges as Record<string, unknown>
+      const current = state.value.effect_badges
+      next.effect_badges = {
+        self: Array.isArray(incoming.self) ? incoming.self : current.self,
+        opponent: Array.isArray(incoming.opponent) ? incoming.opponent : current.opponent,
+        field: Object.prototype.hasOwnProperty.call(incoming, 'field') ? incoming.field : (current.field ?? null),
+        field_owner: Object.prototype.hasOwnProperty.call(incoming, 'field_owner')
+          ? incoming.field_owner
+          : (current.field_owner ?? null),
+      }
+    }
     Object.assign(state.value, next)
     unknownFields.value = unknown
     revision.value += 1

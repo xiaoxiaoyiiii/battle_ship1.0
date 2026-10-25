@@ -166,7 +166,11 @@ class RoomSync(BaseModel):
     active_effects: list[str]
     last_stand_lock: bool
     last_stand_win: bool
-    effect_badges: dict[str, list[dict[str, Any]]]
+    # `self`/`opponent` are badge lists; `field` is the public card payload
+    # and `field_owner` is its caster.  They travel together so a reconnect
+    # snapshot cannot overwrite the live `active_effects` frame with a
+    # field-less shape.
+    effect_badges: dict[str, Any]
     pending_placement: dict[str, Any] | None
     pending_placement_blocked: list[dict[str, Any]]
     pending_placement_allowed: list[Any]

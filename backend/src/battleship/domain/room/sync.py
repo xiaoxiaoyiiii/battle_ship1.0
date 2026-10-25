@@ -343,9 +343,15 @@ def build_room_sync(
         ),
         "last_stand_lock": bool(getattr(player.effect_flags, "last_stand", False)),
         "last_stand_win": bool(getattr(player.effect_flags, "last_stand_win", False)),
+        # Keep the public field card in the same snapshot as the long-lived
+        # badges.  `room_sync` follows `active_effects` during a field-card
+        # resolution; omitting these keys here used to replace a complete
+        # monitor state with only self/opponent lists.
         "effect_badges": {
             "self": _effect_badges(room, player_id, player),
             "opponent": _effect_badges(room, opponent_id, opponent) if opponent else [],
+            "field": _card_badge(field_magic_name(room)) if field_magic_name(room) else None,
+            "field_owner": getattr(room, "field_magic_owner", None),
         },
         "pending_placement": dict(pending_placement) if placing_for_me else None,
         "pending_placement_blocked": (

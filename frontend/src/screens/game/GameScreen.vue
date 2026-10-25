@@ -335,6 +335,11 @@ const frozenTheirs = computed(() =>
 const hits = computed(() => hitCount(Array.isArray(state.value.attacks) ? state.value.attacks : []))
 const shots = computed(() => (Array.isArray(state.value.attacks) ? state.value.attacks.length : 0))
 const shipsText = computed(() => remainingShipText(state.value))
+const moveOrderLabel = computed(() => {
+  const order = Array.isArray(state.value.attack_order) ? state.value.attack_order : []
+  if (!state.value.player_id || order.length < 2) return ''
+  return order[0] === state.value.player_id ? '先手' : '后手'
+})
 
 const chainWindow = computed(() => match.chainWindow)
 /** 面板被收起（请求还在，倒计时还在跑） */
@@ -1544,18 +1549,21 @@ function backToLobby(): void {
         <header class="game-hud" data-testid="game-hud">
           <h2 class="hud-round">第<span class="hud-round__num" data-testid="game-round">{{ state.round }}</span>回合</h2>
           <div class="hud-chips">
-            <span class="hud-chip" data-testid="game-phase">{{ phaseText }}</span>
-            <span class="hud-chip hud-chip--turn" data-testid="game-attacker">{{ turnLabel }}</span>
-            <span class="hud-chip" data-testid="game-attacks">攻击 <b>×{{ state.attacks_remaining }}</b></span>
-            <span
-              v-if="clock.visible"
-              class="hud-chip hud-chip--clock"
-              :class="{ 'is-warning': clock.warning, 'is-expired': clock.expired }"
-              data-testid="game-turn-clock"
-              :data-warning="clock.warning ? 'true' : 'false'"
-              :data-remaining-ms="clock.remaining * 1000"
-              :data-remaining="clock.remaining"
-            >回合计时 {{ clock.label }}</span>
+            <div class="hud-primary-chips">
+              <span class="hud-chip" data-testid="game-phase">{{ phaseText }}</span>
+              <span class="hud-chip hud-chip--turn" data-testid="game-attacker">{{ turnLabel }}</span>
+              <span class="hud-chip" data-testid="game-attacks">攻击 <b>×{{ state.attacks_remaining }}</b></span>
+              <span
+                v-if="clock.visible"
+                class="hud-chip hud-chip--clock"
+                :class="{ 'is-warning': clock.warning, 'is-expired': clock.expired }"
+                data-testid="game-turn-clock"
+                :data-warning="clock.warning ? 'true' : 'false'"
+                :data-remaining-ms="clock.remaining * 1000"
+                :data-remaining="clock.remaining"
+              >回合计时 {{ clock.label }}</span>
+            </div>
+            <span v-if="moveOrderLabel" class="hud-chip hud-chip--order" data-testid="game-move-order">{{ moveOrderLabel }}</span>
             <span v-if="turnOrderText" class="hud-chip hud-chip--muted" data-testid="game-turn-order">{{ turnOrderText }}</span>
             <span class="hud-chip hud-chip--muted" data-testid="game-mode">{{ modeText }}</span>
             <span
@@ -1816,10 +1824,8 @@ function backToLobby(): void {
             <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-battle" :disabled="!myTurn || state.current_phase !== 'preparation'" @click="turnAction('enter_battle_phase')">进入战斗阶段</button>
             <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-end" :disabled="!myTurn || state.current_phase !== 'battle'" @click="turnAction('enter_end_phase')">进入结束阶段</button>
             <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-end-turn" :disabled="!myTurn || state.current_phase !== 'end'" @click="turnAction('end_turn')">结束回合</button>
-            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-log-toggle" @click="logOpen = true">对局日志</button>
-            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-chat-open" @click="quickChatOpen = true">聊天与快捷语</button>
+            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-log-toggle" @click="moreOpen = false; logOpen = true">对局日志</button>
             <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-more-opponent-stats" @click="moreOpen = false; playerCardSide = 'opponent'">对手战绩</button>
-            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-more-piles" @click="openDiscard">弃牌堆</button>
             <button
               type="button"
               class="button button--danger game-more__item"
@@ -1965,10 +1971,8 @@ function backToLobby(): void {
         <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-battle" :disabled="!myTurn || state.current_phase !== 'preparation'" @click="turnAction('enter_battle_phase')">进入战斗阶段</button>
         <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-end" :disabled="!myTurn || state.current_phase !== 'battle'" @click="turnAction('enter_end_phase')">进入结束阶段</button>
         <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-end-turn" :disabled="!myTurn || state.current_phase !== 'end'" @click="turnAction('end_turn')">结束回合</button>
-        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-log-toggle" @click="logOpen = true">对局日志</button>
-        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-chat-open" @click="quickChatOpen = true">聊天与快捷语</button>
+        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-log-toggle" @click="moreOpen = false; logOpen = true">对局日志</button>
         <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-more-opponent-stats" @click="moreOpen = false; playerCardSide = 'opponent'">对手战绩</button>
-        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-more-piles" @click="openDiscard">弃牌堆</button>
         <button
           type="button"
           class="button button--danger game-more__item"

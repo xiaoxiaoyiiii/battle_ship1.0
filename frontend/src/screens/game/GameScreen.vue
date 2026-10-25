@@ -722,7 +722,7 @@ function closeDiscardDrawer(): void {
 
 // ---- feedback helpers ------------------------------------------------------
 function say(code: string, message: string, next = '', tone: 'info' | 'warning' = 'warning'): void {
-  if (['game-not-your-turn', 'game-wrong-phase', 'game-no-attacks', 'game-cannot-fire', 'game-primary-disabled'].includes(code)) {
+  if (['game-not-your-turn', 'game-wrong-phase', 'game-no-attacks', 'game-cannot-fire', 'game-primary-disabled', 'game-card-refused'].includes(code)) {
     ui.notify({ code, message, next, tone, ttl: 2000 })
   }
 }

@@ -45,6 +45,14 @@ interface Segment {
   expires: string
 }
 
+// 横向监视栏只展示「双方都受影响」的持续效果。玩家个人状态仍然由头像旁的
+// StatusMonitor 展示，避免把诸如无中生有、神机妙算这类单方效果误放进全局栏。
+const SHARED_EFFECT_NAMES = new Set(['无暇圣心', '极限增援'])
+
+function sharedBadgeCard(badge: MonitorBadge): MonitorCard {
+  return badge.card ?? { name: badge.label, description: badge.description }
+}
+
 const segments = computed<Segment[]>(() => {
   const rows: Segment[] = []
   if (props.field?.name) {
@@ -56,21 +64,26 @@ const segments = computed<Segment[]>(() => {
       expires: props.fieldOwner ? '场地魔法' : '',
     })
   }
-  for (const badge of props.selfEffects) {
-    rows.push({
-      id: `self:${badge.key}`,
-      label: badge.label,
-      card: badge.card ?? { name: badge.label, description: badge.description },
-      tone: 'self',
-      expires: badge.expires,
-    })
+  // 长效全局效果由施放者一侧携带。两边都可能在重连/同步时携带同一项，
+  // 因此按卡名去重，保证监视栏一个效果只占一个区块。
+  const shared = new Map<string, { badge: MonitorBadge; tone: 'self' | 'opponent' }>()
+  for (const [badges, tone] of [
+    [props.selfEffects, 'self'] as const,
+    [props.opponentEffects, 'opponent'] as const,
+  ]) {
+    for (const badge of badges) {
+      const card = sharedBadgeCard(badge)
+      if (SHARED_EFFECT_NAMES.has(card.name) && !shared.has(card.name)) {
+        shared.set(card.name, { badge, tone })
+      }
+    }
   }
-  for (const badge of props.opponentEffects) {
+  for (const [name, { badge, tone }] of shared) {
     rows.push({
-      id: `opponent:${badge.key}`,
-      label: badge.label,
-      card: badge.card ?? { name: badge.label, description: badge.description },
-      tone: 'opponent',
+      id: `shared:${name}`,
+      label: '全局',
+      card: sharedBadgeCard(badge),
+      tone,
       expires: badge.expires,
     })
   }

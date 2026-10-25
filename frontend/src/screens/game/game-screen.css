@@ -3388,3 +3388,49 @@ button.arena-avatar--btn {
     margin-bottom: 0;
   }
 }
+
+/* 宽屏右栏最终布局：三块信息按自然高度纵向排列。
+ * 旧的 grid 行会把连锁轨道压成 132px，并由 overflow:hidden 截断计数面板；
+ * 这里让轨道、操作、计数各自占位，超出时由页面滚动承接，绝不裁掉按钮或文字。 */
+@media (min-width: 1200px) and (min-height: 700px) {
+  .game[data-layout='wide'] .game-main-container {
+    padding-top: 198px;
+  }
+
+  .game[data-layout='wide'] .arena-rail {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 clamp(190px, 14vw, 230px);
+    align-self: flex-start;
+    gap: 16px;
+    min-height: 0;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    margin: 0;
+    padding-right: 0;
+  }
+
+  .game[data-layout='wide'] .arena-chain-slot {
+    order: 1;
+    flex: 0 0 clamp(224px, 30vh, 278px);
+    height: auto;
+    min-height: 224px;
+    max-height: none;
+    margin: 0;
+    overflow-y: auto;
+  }
+
+  .game[data-layout='wide'] .arena-rail > .arena-actions {
+    order: 2;
+    flex: 0 0 auto;
+    transform: none;
+  }
+
+  .game[data-layout='wide'] .arena-rail > [data-testid='game-counts'] {
+    order: 3;
+    flex: 0 0 auto;
+    transform: none;
+    margin-bottom: 16px;
+  }
+}

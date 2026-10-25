@@ -2807,11 +2807,13 @@ button.arena-avatar--btn {
   }
   .game[data-layout='wide'] .arena-chain-slot {
     min-height: 278px;
+    height: 278px;
     margin-top: 12px;
     margin-bottom: 14px;
     transform: none;
   }
   .game[data-layout='wide'] .arena-rail {
+    grid-template-rows: 278px auto auto;
     row-gap: 14px;
   }
   .game[data-layout='wide'] .arena-actions {

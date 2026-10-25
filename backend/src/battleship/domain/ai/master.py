@@ -540,6 +540,7 @@ def resolve_target(room: Any, ai_id: str, card: Any,
     """
 
     try:
+        rng = _rng(rng)
         name = str(getattr(card, "name", card) or "")
         # 神威！ targets the *caster's own* board: it carves a 3x3 hole the
         # opponent cannot fire into; own ships inside are temporarily excluded
@@ -552,7 +553,7 @@ def resolve_target(room: Any, ai_id: str, card: Any,
             for x, y in _window_positions(size):
                 score = _score_cells(room, ai_id, _area_cells(x, y, size),
                                      self_harm=self_harm)
-                if best_score is None or score > best_score:
+                if best_score is None or score > best_score or (score == best_score and rng.random() < 0.5):
                     best, best_score = (x, y), score
             if best is None:
                 return None
@@ -570,7 +571,7 @@ def resolve_target(room: Any, ai_id: str, card: Any,
                     ("col", [(index, y) for y in range(BOARD_SIZE)]),
                 ):
                     score = _score_cells(room, ai_id, cells)
-                    if best_score is None or score > best_score:
+                    if best_score is None or score > best_score or (score == best_score and rng.random() < 0.5):
                         best, best_score = (kind, index), score
             if best is None:
                 return None
@@ -584,13 +585,13 @@ def resolve_target(room: Any, ai_id: str, card: Any,
                 for x in range(0, BOARD_SIZE - length + 1):
                     cells = [(x + k, y) for k in range(length)]
                     score = _score_cells(room, ai_id, cells)
-                    if best_score is None or score > best_score:
+                    if best_score is None or score > best_score or (score == best_score and rng.random() < 0.5):
                         best, best_score = cells, score
             for x in range(BOARD_SIZE):
                 for y in range(0, BOARD_SIZE - length + 1):
                     cells = [(x, y + k) for k in range(length)]
                     score = _score_cells(room, ai_id, cells)
-                    if best_score is None or score > best_score:
+                    if best_score is None or score > best_score or (score == best_score and rng.random() < 0.5):
                         best, best_score = cells, score
             if best is None:
                 return None

@@ -2806,8 +2806,13 @@ button.arena-avatar--btn {
     z-index: 25;
   }
   .game[data-layout='wide'] .arena-chain-slot {
-    min-height: 220px;
-    transform: translateY(12px);
+    min-height: 278px;
+    margin-top: 12px;
+    margin-bottom: 14px;
+    transform: none;
+  }
+  .game[data-layout='wide'] .arena-rail {
+    row-gap: 14px;
   }
   .game[data-layout='wide'] .arena-actions {
     position: relative;

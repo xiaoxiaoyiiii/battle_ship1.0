@@ -2814,7 +2814,11 @@ button.arena-avatar--btn {
   }
   .game[data-layout='wide'] .arena-rail {
     grid-template-rows: 278px auto auto;
-    row-gap: 14px;
+    row-gap: 24px;
+  }
+  .game[data-layout='wide'] .arena-rail > .arena-actions,
+  .game[data-layout='wide'] .arena-rail > [data-testid='game-counts'] {
+    transform: translateY(18px);
   }
   .game[data-layout='wide'] .arena-actions {
     position: relative;

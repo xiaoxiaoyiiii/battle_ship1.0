@@ -118,7 +118,7 @@ onBeforeUnmount(stop)
 h3 { font-size:28px; margin:12px 0; color:#e9f7ff; }.match-found__name { font-size:20px; font-weight:700; margin:12px 0 0; }
 .match-found__versus { display:grid; place-items:center; width:110px; height:110px; border:4px double #397591; border-radius:50%; color:var(--gold); font-size:30px; font-weight:800; box-shadow:0 0 35px #4ec8e066; animation:versus-lock .8s ease-out both; }
 .match-found__progress { height:8px; border:1px solid #366781; border-radius:20px; margin:28px auto 12px; width:75%; overflow:hidden; }
-.match-found__progress i { display:block; height:100%; background:linear-gradient(90deg,#357bdb,#4ec8e0,#ffe3a0); transition:width 1s linear; }
+.match-found__progress i { display:block; height:100%; background:linear-gradient(90deg,#357bdb,#4ec8e0,#ffe3a0); transition:none; }
 .match-found__skip { padding:8px 20px; border:1px solid #366781; background:transparent; color:#b9cfdf; border-radius:20px; cursor:pointer; }
 @keyframes fleet-enter { from {opacity:0;transform:translateX(-40px)} to {opacity:1;transform:none} }
 @keyframes rival-enter { from {opacity:0;transform:translateX(40px)} to {opacity:1;transform:none} }

@@ -35,6 +35,7 @@ END_PHASE_PLAYABLE: tuple[str, ...] = ("Freezing！",)
 BINGLIANG_FAIL_BELOW = 3
 BINGLIANG_SKIP_PHASES = 2
 _FIELD_NAME = "禁忌果实"
+_FIELD_NEGATION_CARDS = frozenset({"失灵！", "加百列之光"})
 
 #: Refusal text for a card whose effect is not registered yet. One wording for
 #: both activation paths and for the settlement refund path (services/magic.py).
@@ -136,7 +137,7 @@ def can_play_magic_card(room: Room, player_id: str, card: MagicCard) -> bool:
         return False
     speed = int(card.speed)
     if field_magic_name(room) == _FIELD_NAME:
-        if card.name != "失灵！" and card.type != "场地":
+        if card.name not in _FIELD_NEGATION_CARDS and card.type != "场地":
             return False
     if speed == 3:
         return True
@@ -161,7 +162,7 @@ def playability_reason(room: Room, player_id: str, card: MagicCard) -> str:
     if card.name == "五险一金" and field_magic_name(room) == "教皇旨意":
         return "教皇旨意生效中，本回合攻击次数为0，五险一金无法发动"
     if field_magic_name(room) == _FIELD_NAME and not (
-        card.name == "失灵！" or card.type == "场地"
+        card.name in _FIELD_NEGATION_CARDS or card.type == "场地"
     ):
         return "场地魔法“禁忌果实”生效中，非场地及失灵类魔法卡无法使用"
     if int(card.speed) != 3 and room.current_attacker != player_id:

@@ -213,7 +213,7 @@ export function cardDisabledReason(card: CardLike, state: GameState, ctx: Playab
 export function playRefusalReason(card: CardLike, state: GameState, ctx: PlayabilityContext): string {
   const disabled = cardDisabledReason(card, state, ctx)
   if (disabled) return disabled
-  if (state.field_magic === '禁忌果实' && card.name !== '失灵！' && card.type !== '场地') {
+  if (state.field_magic === '禁忌果实' && !['失灵！', '加百列之光'].includes(card.name) && card.type !== '场地') {
     return `无法使用${card.name}：场地魔法“禁忌果实”生效，非场地及失灵类魔法卡无法使用`
   }
   if (state.magic_blocked) return '你的魔法卡已被看破，本回合无法使用'

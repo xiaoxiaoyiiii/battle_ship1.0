@@ -149,6 +149,8 @@ export const useMatchStore = defineStore('match', () => {
   const chainWindowCollapsed = ref(false)
   const lastAttack = ref<LastAttackLike | null>(null)
   const revealed = ref<Point[]>([])
+  const revivedSelf = ref<Point[]>([])
+  const revivedOpponent = ref<Point[]>([])
   const shieldBrokenSelf = ref<Point[]>([])
   const shieldBrokenOpponent = ref<Point[]>([])
   const quickChat = ref<QuickChatMessage[]>([])
@@ -315,6 +317,13 @@ export const useMatchStore = defineStore('match', () => {
     }
   }
 
+  function markRevived(mine: boolean, points: Point[]): void {
+    const target = mine ? revivedSelf : revivedOpponent
+    for (const point of points) {
+      if (!target.value.some((cell) => cell.x === point.x && cell.y === point.y)) target.value.push({ x: point.x, y: point.y })
+    }
+  }
+
   function markShieldBroken(mine: boolean, points: Point[]): void {
     const target = mine ? shieldBrokenSelf : shieldBrokenOpponent
     for (const point of points) {
@@ -337,6 +346,8 @@ export const useMatchStore = defineStore('match', () => {
     chainWindow.value = null
     lastAttack.value = null
     revealed.value = []
+    revivedSelf.value = []
+    revivedOpponent.value = []
     shieldBrokenSelf.value = []
     shieldBrokenOpponent.value = []
     quickChat.value = []
@@ -358,6 +369,8 @@ export const useMatchStore = defineStore('match', () => {
       timeoutNote: timeoutNote.value,
       lastAttack: lastAttack.value ? { ...lastAttack.value } : null,
       revealed: revealed.value.slice(),
+      revivedSelf: revivedSelf.value.slice(),
+      revivedOpponent: revivedOpponent.value.slice(),
       shieldBrokenSelf: shieldBrokenSelf.value.slice(),
       shieldBrokenOpponent: shieldBrokenOpponent.value.slice(),
       quickChat: quickChat.value.slice(),
@@ -374,6 +387,8 @@ export const useMatchStore = defineStore('match', () => {
     chainWindow,
     lastAttack,
     revealed,
+    revivedSelf,
+    revivedOpponent,
     shieldBrokenSelf,
     shieldBrokenOpponent,
     quickChat,
@@ -386,6 +401,7 @@ export const useMatchStore = defineStore('match', () => {
     setTimeoutNote,
     clearTimeoutNote,
     appendLog,
+    markRevived,
     pushNotice,
     dismissNotice,
     openChainWindow,

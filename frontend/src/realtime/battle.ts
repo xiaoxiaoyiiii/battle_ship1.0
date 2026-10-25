@@ -43,6 +43,7 @@ export const BATTLE_EVENTS = [
   'shield_absorbed',
   'shields_added',
   'revealed_positions',
+  'revived_positions',
   'shenwei_hole',
   'shenwei_hole_restored',
   'frozen_area',
@@ -348,6 +349,12 @@ export function applyBattleEvent(
     }
     case 'revealed_positions': {
       match.markRevealed(pointList(payload.positions))
+      break
+    }
+    case 'revived_positions': {
+      const owner = String(payload.player ?? '')
+      if (!owner) break
+      match.markRevived(owner === me, pointList(payload.positions))
       break
     }
     case 'shenwei_hole': {

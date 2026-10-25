@@ -168,12 +168,13 @@ const playCtx = computed<PlayabilityContext>(() => ({
 }))
 
 const selfCells = computed(() =>
-  buildSelfBoard(state.value, { shieldBroken: match.shieldBrokenSelf }),
+  buildSelfBoard(state.value, { shieldBroken: match.shieldBrokenSelf, revived: match.revivedSelf }),
 )
 const opponentCells = computed(() =>
   buildOpponentBoard(state.value, {
     revealed: match.revealed,
     shieldBroken: match.shieldBrokenOpponent,
+    revived: match.revivedOpponent,
   }),
 )
 

@@ -980,7 +980,7 @@ class MagicService:
         wait = action_wait_reason(room, player_id)
         if wait:
             return {"status": "error", "message": wait}
-        if player.magic_blocked:
+        if player.magic_blocked and getattr(player, "magic_blocked_round", room.round) == room.round:
             return {"status": "error", "message": "你的魔法卡已被看破，本回合无法使用"}
         if not any(
             candidate.name == card.name and candidate.speed == card.speed
@@ -1259,7 +1259,7 @@ class MagicService:
                 return {"status": "error", "message": f"魔法卡数据无效: {error}"}
             player = room.players[str(player_id)]
             # 看破！ suppress: pass and advance, never leave the window half-open.
-            if player.magic_blocked:
+            if player.magic_blocked and getattr(player, "magic_blocked_round", room.round) == room.round:
                 room.chain_waiting = False
                 room.chain_window = None
                 await self._pass_after_refusal(room, str(player_id))
@@ -2414,11 +2414,12 @@ class MagicService:
             await self._trigger_ship_trap(room, defender_id, ship)
         if contract_rules.enabled(room):
             await self._mirror_contract_loss(room, defender_id)
-        if magic:
-            await self.notify_treasure(room, 1, exclude_player_id=None)
-        else:
-            last = room.last_attack or {}
-            await self.notify_treasure(room, 1, exclude_player_id=last.get("attacker"))
+        # 八方来财只响应对方造成的船数变化；自己主动击沉对方（包括轰炸等
+        # 魔法造成的击沉）不能让自己摸牌。优先使用调用链传入的攻击者，
+        # 旧路径再回退到 last_attack。
+        last = room.last_attack or {}
+        source_attacker = attacker_id or last.get("attacker")
+        await self.notify_treasure(room, 1, exclude_player_id=source_attacker)
         await self._emit_player_ships(room, defender_id)
 
     async def on_ship_destroyed(self, room: Room, owner_id: str, ship: Any,

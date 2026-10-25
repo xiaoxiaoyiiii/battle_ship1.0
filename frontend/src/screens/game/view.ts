@@ -142,6 +142,12 @@ export function isLastStandActive(state: GameState): boolean {
 /** Legacy canPlayCard, copied as-is (D10: the frontend mirror is not "fixed"). */
 export function canPlayCard(card: CardLike, state: GameState): boolean {
   if (isLastStandActive(state)) return false
+  if (card.name === '神机妙算') {
+    const firstPlayer = isFirstPlayer(state)
+    const ownTurn = state.current_attacker === state.player_id
+    const opponentPreparation = state.current_phase === 'preparation' && !ownTurn
+    return (ownTurn && firstPlayer) || opponentPreparation
+  }
   if (END_PHASE_PLAYABLE_CARDS.includes(card.name)) {
     return isFirstPlayer(state) && state.current_phase === 'end' && isMyTurn(state)
   }
@@ -192,6 +198,12 @@ export function cardDisabledReason(card: CardLike, state: GameState, ctx: Playab
       if (!isMyTurn(state)) reasons.push('不是你的回合')
       if (state.current_phase !== 'end') reasons.push('不是结束阶段')
       return `${card.name}只能在自己先手回合的结束阶段发动（${reasons.join('；') || '条件不满足'}）`
+    }
+    if (card.name === '神机妙算') {
+      if (state.current_attacker === state.player_id && !isFirstPlayer(state)) {
+        return '无法使用神机妙算：后手自己的阶段不能使用，只能在对方准备阶段或自己先手时使用'
+      }
+      return '无法使用神机妙算：只能在对方准备阶段，或自己先手时的全部阶段使用'
     }
     if (!isMyTurn(state)) return `无法使用${card.name}：现在不是你的回合`
     const phase = state.current_phase || '未开始'
@@ -312,6 +324,7 @@ export interface BoardMarks {
   reversed?: boolean
   revealed?: Point[]
   shieldBroken?: Point[]
+  revived?: Point[]
 }
 
 export interface BoardCell {
@@ -327,6 +340,7 @@ export interface BoardCell {
   hit: boolean
   miss: boolean
   shieldBroken: boolean
+  revived: boolean
   revealed: boolean
   hole: boolean
   frozenArea: boolean
@@ -349,6 +363,7 @@ function baseCell(x: number, y: number): BoardCell {
     hit: false,
     miss: false,
     shieldBroken: false,
+    revived: false,
     revealed: false,
     hole: false,
     frozenArea: false,
@@ -371,6 +386,7 @@ export function buildSelfBoard(state: GameState, marks: BoardMarks = {}): BoardC
   const ships = shipCellSet(state.ships)
   const shots = Array.isArray(state.opponent_attacks) ? state.opponent_attacks : []
   const broken = pointSet(marks.shieldBroken)
+  const revived = pointSet(marks.revived)
   const holes = holeCells(state.shenwei_holes, state.player_id)
   const frozen = frozenAreaCells(state.frozen_area as unknown as FrozenAreaLike | null, state.player_id)
   const lastStand = pointSet(
@@ -395,6 +411,7 @@ export function buildSelfBoard(state: GameState, marks: BoardMarks = {}): BoardC
         cell.miss = !shot.hit
       }
       cell.shieldBroken = broken.has(cell.key)
+      cell.revived = revived.has(cell.key)
       cell.hole = holes.has(cell.key)
       cell.frozenArea = frozen.has(cell.key)
       cell.lastStand = lastStand.has(cell.key)
@@ -409,6 +426,7 @@ export function buildOpponentBoard(state: GameState, marks: BoardMarks = {}): Bo
   const shots = Array.isArray(state.attacks) ? state.attacks : []
   const revealed = pointSet(marks.revealed)
   const broken = pointSet(marks.shieldBroken)
+  const revived = pointSet(marks.revived)
   const other = opponentId(state)
   const holes = holeCells(state.shenwei_holes, other)
   const frozen = frozenAreaCells(state.frozen_area as unknown as FrozenAreaLike | null, other)
@@ -425,6 +443,7 @@ export function buildOpponentBoard(state: GameState, marks: BoardMarks = {}): Bo
       }
       cell.revealed = revealed.has(cell.key)
       cell.shieldBroken = broken.has(cell.key)
+      cell.revived = revived.has(cell.key)
       cell.hole = holes.has(cell.key)
       cell.frozenArea = frozen.has(cell.key)
       cell.lastStand = lastStand.has(cell.key)

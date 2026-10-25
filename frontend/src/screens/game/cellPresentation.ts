@@ -1,11 +1,12 @@
 import type { BoardCell } from './view'
-export type CellVisual = 'empty' | 'ship' | 'ship-hit' | 'miss' | 'shield-blocked' | 'shielded' | 'trap' | 'hole'
+export type CellVisual = 'empty' | 'ship' | 'ship-hit' | 'miss' | 'shield-blocked' | 'shielded' | 'trap' | 'hole' | 'revived'
 export interface CellHint { title: string; detail: string }
 export interface SelectionHint { selectable?: boolean; card?: string; hint?: string }
 
 /** 当前真实状态优先；历史挡炮标记不能覆盖后来命中或新加的护盾。 */
 export function cellVisualState(cell: BoardCell): CellVisual {
   if (cell.hole) return 'hole'
+  if (cell.revived) return 'revived'
   if (cell.hit || cell.sunk) return 'ship-hit'
   if (cell.shielded) return 'shielded'
   if (cell.shieldBroken) return 'shield-blocked'

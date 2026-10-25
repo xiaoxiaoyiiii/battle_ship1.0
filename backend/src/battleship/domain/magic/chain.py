@@ -162,7 +162,10 @@ def can_respond(room: Room, player_id: str | None) -> bool:
     if not player_id:
         return False
     player = room.players.get(player_id)
-    if player is None or player.magic_blocked:
+    if player is None or (
+        player.magic_blocked
+        and getattr(player, "magic_blocked_round", room.round) == room.round
+    ):
         return False
     # 绝处逢生 locks every other magic card for the turn, chained responses included.
     if getattr(player.effect_flags, "last_stand", False):

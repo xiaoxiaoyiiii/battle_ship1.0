@@ -118,6 +118,7 @@ function cellLabel(cell: BoardCell): string {
   if (cell.miss) parts.push('未命中')
   if (cell.shieldBroken) parts.push('护盾挡下这一炮')
   if (cell.revealed) parts.push('已探明敌舰位置')
+  if (cell.revived) parts.push('疗愈复活的战舰')
   if (cell.hole) parts.push('被神威扣掉，无法攻击')
   if (cell.frozenArea) parts.push('冻结区域')
   if (cell.lastStand) parts.push('绝处逢生候选格')

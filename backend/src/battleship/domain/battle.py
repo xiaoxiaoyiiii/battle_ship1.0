@@ -319,6 +319,7 @@ def resolve_turn_end(room: Room, player_id: str) -> TurnEnd | None:
         room.skip_next_turn = None
         for seat in room.players.values():
             seat.magic_blocked = False
+            seat.magic_blocked_round = None
             seat.damage_dealt_this_turn = 0
         return TurnEnd("new_round", room.current_attacker, room.round)
 

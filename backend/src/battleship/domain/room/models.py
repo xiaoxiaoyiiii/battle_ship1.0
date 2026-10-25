@@ -138,6 +138,8 @@ class Player:
     max_ships: int | None = None
     sunken_ships: list[PlayerShip] = field(default_factory=list)
     magic_blocked: bool = False
+    # 看破只在施放所在的大回合有效，避免跨大回合残留。
+    magic_blocked_round: int | None = None
     # 只在落座时按认证连接写入；单看 user_id 判断不了（自定义房的游客座位键就是 sid）。
     registered: bool = False
     damage_dealt_this_turn: int = 0

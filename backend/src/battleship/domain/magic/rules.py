@@ -133,6 +133,15 @@ def can_play_magic_card(room: Room, player_id: str, card: MagicCard) -> bool:
         return False
     if card.name in END_PHASE_PLAYABLE:
         return freezing_block_reason(room, player_id, card) is None
+    if card.name == "神机妙算":
+        # 先手方可以在自己的全部阶段发动；双方的准备阶段都允许
+        # 对手响应，除此之外（尤其是后手自己的战斗/结束阶段）禁止。
+        first_player = bool(room.attack_order and room.attack_order[0] == player_id)
+        own_turn = room.current_attacker == player_id
+        opponent_preparation = (
+            value(room.current_phase) == RoomPhase.PREPARATION.value and not own_turn
+        )
+        return (own_turn and first_player) or opponent_preparation
     if card.name == "五险一金" and field_magic_name(room) == "教皇旨意":
         return False
     speed = int(card.speed)
@@ -159,6 +168,13 @@ def playability_reason(room: Room, player_id: str, card: MagicCard) -> str:
         return "绝处逢生生效中，本回合你的其余魔法卡全部无效"
     if card.name in END_PHASE_PLAYABLE:
         return freezing_block_reason(room, player_id, card) or ""
+    if card.name == "神机妙算":
+        first_player = bool(room.attack_order and room.attack_order[0] == player_id)
+        if room.current_attacker == player_id and not first_player:
+            return "神机妙算只能在自己先手时的全部阶段使用；后手自己的阶段无法使用"
+        if value(room.current_phase) != RoomPhase.PREPARATION.value:
+            return "神机妙算只能在对方准备阶段，或自己先手时的全部阶段使用"
+        return ""
     if card.name == "五险一金" and field_magic_name(room) == "教皇旨意":
         return "教皇旨意生效中，本回合攻击次数为0，五险一金无法发动"
     if field_magic_name(room) == _FIELD_NAME and not (

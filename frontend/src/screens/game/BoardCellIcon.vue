@@ -22,6 +22,10 @@ defineProps<{ kind: CellVisual }>()
       <path d="M2 19h28l-6 8H8Zm9-9h11v9H11Zm4-7h3v7h-3Z" fill="currentColor" opacity=".24" />
       <path d="m7 6 19 20M26 6 7 26" stroke="currentColor" stroke-width="4.4" />
     </g>
+    <g v-else-if="kind === 'revived'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M16 4v24M4 16h24" opacity=".9" />
+      <path d="m10 9 6-5 6 5M10 23l6 5 6-5" opacity=".45" />
+    </g>
     <path v-else-if="kind === 'ship'" d="M2 19h28l-6 8H8Zm9-9h11v9H11Zm4-7h3v7h-3Z" fill="currentColor" />
   </svg>
 </template>

@@ -1,7 +1,7 @@
 // GENERATED from backend contracts (JSON Schema). Do not edit by hand.
 // Regenerate: python -m battleship.contracts.export_schema --format ts --out frontend/src/socket/events.gen.ts
 export const CONTRACT_SCHEMA_VERSION = 1
-export const CONTRACT_SCHEMA_HASH = 'ec93e8852446e1cfa340dcc0deb760909834843e007a8d4f382b5518a4356c07'
+export const CONTRACT_SCHEMA_HASH = '9bde9a989e77405f6c1d718463dcee68de2364f014f8b3247782d8fdd7c761f7'
 
 export const INBOUND_EVENTS = [
   'connect',
@@ -122,6 +122,7 @@ export const OUTBOUND_EVENTS = [
   'reset_gameboard',
   'resume_game',
   'revealed_positions',
+  'revived_positions',
   'room_sync',
   'rps_result',
   'sacrifice_cancelled',

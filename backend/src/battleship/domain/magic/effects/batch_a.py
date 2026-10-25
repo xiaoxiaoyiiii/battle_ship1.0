@@ -152,6 +152,7 @@ async def reinforcement(ctx: EffectContext) -> EffectResult:
     await ctx.emit(
         "reinforcement_activated", {"remaining_turns": total_turns}, room=ctx.room.id
     )
+    await ctx.sync_active_effects()
     return EffectResult(True, "极限增援已激活，剩余2回合后结算")
 
 
@@ -167,6 +168,7 @@ async def holy_heart(ctx: EffectContext) -> EffectResult:
     await ctx.emit(
         "holy_heart_activated", {"remaining_turns": total_turns}, room=ctx.room.id
     )
+    await ctx.sync_active_effects()
     return EffectResult(True, "无暇圣心已激活，剩余2回合后结算")
 
 
@@ -530,6 +532,7 @@ async def subsidy(ctx: EffectContext) -> EffectResult:
 @register("看破！")
 async def see_through(ctx: EffectContext) -> EffectResult:
     ctx.opponent.magic_blocked = True
+    ctx.opponent.magic_blocked_round = ctx.room.round
     return EffectResult(True, "本回合对方魔法卡被无效化")
 
 
@@ -537,9 +540,22 @@ async def see_through(ctx: EffectContext) -> EffectResult:
 async def heal(ctx: EffectContext) -> EffectResult:
     if not ctx.caster.sunken_ships:
         return EffectResult(False, "没有可复活的战舰")
+    sunken_before = list(ctx.caster.sunken_ships)
     revived = revive_sunken_ships(ctx.room, ctx.caster_id, 2, reveal_to=ctx.opponent_id)
     if revived == 0:
         return EffectResult(False, "没有可复活的战舰")
+    revived_ids = {id(ship) for ship in ctx.caster.ships if id(ship) in {id(item) for item in sunken_before}}
+    revived_positions = [
+        {"x": position.x, "y": position.y}
+        for ship in ctx.caster.ships
+        if id(ship) in revived_ids
+        for position in ship.positions
+    ]
+    await ctx.emit(
+        "revived_positions",
+        {"player": ctx.caster_id, "positions": revived_positions, "card": "疗愈"},
+        room=ctx.room.id,
+    )
     await ctx.notify_treasure(revived, None)
     await ctx.sync_ships()
     await ctx.sync_player_ships(ctx.caster_id)

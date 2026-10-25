@@ -62,6 +62,7 @@ OUTBOUND_EVENTS: tuple[str, ...] = (
     "reset_gameboard",
     "resume_game",
     "revealed_positions",
+    "revived_positions",
     "room_sync",
     "rps_result",
     "sacrifice_cancelled",

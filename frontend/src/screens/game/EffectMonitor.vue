@@ -34,7 +34,7 @@ const props = withDefaults(
   { field: null, fieldOwner: null, selfEffects: () => [], opponentEffects: () => [] },
 )
 
-const hovered = ref<{ card: MonitorCard; label: string; tone: string } | null>(null)
+const hovered = ref<{ card: MonitorCard; label: string; tone: string; left: number; top: number } | null>(null)
 const opened = ref<{ card: MonitorCard; label: string; tone: string } | null>(null)
 
 interface Segment {
@@ -93,7 +93,26 @@ const segments = computed<Segment[]>(() => {
 const art = (card: MonitorCard): string | null => cardArtUrl(card.name)
 const hasAny = computed(() => segments.value.length > 0)
 
-function identityOf(segment: Segment) {
+function previewPosition(event: Event): { left: number; top: number } {
+  const target = event.currentTarget as HTMLElement | null
+  const bounds = target?.getBoundingClientRect()
+  const x = event instanceof MouseEvent ? event.clientX : (bounds?.left ?? 0) + (bounds?.width ?? 0) / 2
+  const y = event instanceof MouseEvent ? event.clientY : (bounds?.bottom ?? 0)
+  const width = Math.min(560, Math.max(260, window.innerWidth - 24))
+  const height = Math.min(290, Math.max(220, window.innerHeight * 0.42))
+  const left = Math.max(12, Math.min(window.innerWidth - width - 12, x + 18))
+  const above = y - height - 18
+  const top = above >= 12
+    ? above
+    : Math.min(window.innerHeight - height - 12, y + 18)
+  return { left, top: Math.max(12, top) }
+}
+
+function identityOf(segment: Segment, event: Event) {
+  return { card: segment.card, label: segment.label, tone: segment.tone, ...previewPosition(event) }
+}
+
+function openedIdentityOf(segment: Segment) {
   return { card: segment.card, label: segment.label, tone: segment.tone }
 }
 
@@ -116,13 +135,13 @@ function describe(card: MonitorCard): string {
         :class="`is-${segment.tone}`"
         :data-testid="`effect-slot-${segment.tone}-${segment.card.name}`"
         tabindex="0"
-        @mouseenter="hovered = identityOf(segment)"
+        @mouseenter="hovered = identityOf(segment, $event)"
         @mouseleave="hovered = null"
-        @focus="hovered = identityOf(segment)"
+        @focus="hovered = identityOf(segment, $event)"
         @blur="hovered = null"
-        @click="opened = identityOf(segment)"
-        @keydown.enter.prevent="opened = identityOf(segment)"
-        @keydown.space.prevent="opened = identityOf(segment)"
+        @click="opened = openedIdentityOf(segment)"
+        @keydown.enter.prevent="opened = openedIdentityOf(segment)"
+        @keydown.space.prevent="opened = openedIdentityOf(segment)"
       >
         <img v-if="art(segment.card)" class="monitor__art" :src="art(segment.card)!" :alt="`${segment.card.name} 卡面`" />
         <span v-else class="monitor__art monitor__art--none" aria-hidden="true">{{ segment.card.name.slice(0, 1) }}</span>
@@ -142,6 +161,7 @@ function describe(card: MonitorCard): string {
         v-if="hovered"
         class="monitor-preview"
         :class="`is-${hovered.tone}`"
+        :style="{ left: hovered.left + 'px', top: hovered.top + 'px' }"
         role="tooltip"
         data-testid="effect-monitor-preview"
       >
@@ -311,26 +331,23 @@ function describe(card: MonitorCard): string {
 
 .monitor-preview {
   position: fixed;
-  left: 50%;
-  bottom: 120px;
-  transform: translateX(-50%);
   z-index: 70;
   display: flex;
-  gap: 10px;
-  width: min(420px, 86vw);
-  padding: 10px;
-  border-radius: 12px;
-  border: 1px solid var(--line-dash);
+  gap: 14px;
+  width: min(560px, calc(100vw - 24px));
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--gold-strong, #e6c778) 60%, var(--line-dash));
   background: var(--surface-chamber, #101a2e);
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.58), 0 0 0 1px rgba(124, 92, 240, 0.14);
   pointer-events: none;
 }
 
-.monitor-preview__art { width: 84px; height: 122px; border-radius: 6px; object-fit: cover; }
+.monitor-preview__art { width: 142px; height: 208px; flex: 0 0 auto; border-radius: 8px; object-fit: cover; box-shadow: 0 8px 20px rgba(0, 0, 0, 0.36); }
 .monitor-preview__body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.monitor-preview__name { font-size: 13px; color: var(--text-primary); }
-.monitor-preview__meta { font-size: 11px; color: var(--text-muted); }
-.monitor-preview__text { margin: 0; font-size: 11px; line-height: 1.5; color: var(--text-secondary); max-height: 96px; overflow: hidden; }
+.monitor-preview__name { font-size: 18px; color: var(--text-primary); }
+.monitor-preview__meta { font-size: 13px; color: var(--text-muted); }
+.monitor-preview__text { margin: 4px 0 0; font-size: 14px; line-height: 1.7; color: var(--text-secondary); max-height: 168px; overflow: hidden; }
 
 .monitor-dialog { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; }
 .monitor-dialog__backdrop { position: absolute; inset: 0; background: rgba(4, 8, 18, 0.62); }
@@ -369,7 +386,11 @@ function describe(card: MonitorCard): string {
   .monitor__slot { min-width: 96px; padding: 2px 6px; }
   .monitor__art { width: 20px; height: 30px; }
   .monitor__name { font-size: 11px; }
-  .monitor-preview { bottom: 96px; width: min(320px, 92vw); }
+  .monitor-preview { width: min(420px, calc(100vw - 24px)); gap: 10px; padding: 10px; }
+  .monitor-preview__art { width: 104px; height: 152px; }
+  .monitor-preview__name { font-size: 15px; }
+  .monitor-preview__meta { font-size: 11px; }
+  .monitor-preview__text { font-size: 12px; line-height: 1.55; max-height: 132px; }
   .monitor-dialog__body { flex-direction: column; }
   .monitor-dialog__art { width: 96px; height: 140px; }
 }

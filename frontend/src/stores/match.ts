@@ -64,10 +64,21 @@ export interface ShieldChoice {
   caster: string
 }
 
+export interface DiceRollState {
+  id: number
+  card: string
+  caster: string
+  roll: number | null
+  opponentRoll: number | null
+  effectText: string
+  durationMs: number
+}
+
 const LOG_LIMIT = 200
 const NOTICE_LIMIT = 12
 const QUICK_CHAT_LIMIT = 30
 const CHAT_LIMIT = 50
+const DICE_DEFAULT_DURATION_MS = 3200
 
 function asCard(value: unknown): CardLike | null {
   if (!value || typeof value !== 'object') return null
@@ -105,6 +116,28 @@ function parseTargetPreview(value: unknown): PublicChainPreview | null {
   }
 }
 
+function parseDiceRoll(value: unknown, id: number): DiceRollState | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  const card = String(record.card ?? '判定')
+  const readRoll = (raw: unknown): number | null => {
+    const roll = Number(raw)
+    return Number.isInteger(roll) && roll >= 1 && roll <= 6 ? roll : null
+  }
+  const roll = readRoll(record.roll)
+  if (roll === null) return null
+  const duration = Number(record.duration_ms ?? DICE_DEFAULT_DURATION_MS)
+  return {
+    id,
+    card,
+    caster: String(record.caster ?? ''),
+    roll,
+    opponentRoll: readRoll(record.opponent_roll),
+    effectText: String(record.effect_text ?? ''),
+    durationMs: Number.isFinite(duration) ? Math.min(Math.max(duration, 2400), 5000) : DICE_DEFAULT_DURATION_MS,
+  }
+}
+
 export const useMatchStore = defineStore('match', () => {
   const logs = ref<LogEntry[]>([])
   const notices = ref<Notice[]>([])
@@ -122,10 +155,13 @@ export const useMatchStore = defineStore('match', () => {
   const chat = ref<ChatMessage[]>([])
   const pickRequest = ref<PickRequest | null>(null)
   const shieldChoice = ref<ShieldChoice | null>(null)
+  const diceRoll = ref<DiceRollState | null>(null)
+  const diceRollQueue = ref<DiceRollState[]>([])
   const chainResolvedAt = ref(0)
   /** "超时，已自动…" banner: the server's fallback action is player-visible (#47). */
   const timeoutNote = ref('')
   let noticeSeq = 0
+  let diceSeq = 0
 
   function appendLog(entry: LogEntry): void {
     if (!entry || typeof entry.text !== 'string') return
@@ -260,6 +296,17 @@ export const useMatchStore = defineStore('match', () => {
     shieldChoice.value = null
   }
 
+  function openDiceRoll(payload: Record<string, unknown>): void {
+    const next = parseDiceRoll(payload, ++diceSeq)
+    if (!next) return
+    if (diceRoll.value) diceRollQueue.value.push(next)
+    else diceRoll.value = next
+  }
+
+  function finishDiceRoll(): void {
+    diceRoll.value = diceRollQueue.value.shift() ?? null
+  }
+
   function markRevealed(points: Point[]): void {
     for (const point of points) {
       if (!revealed.value.some((cell) => cell.x === point.x && cell.y === point.y)) {
@@ -296,6 +343,8 @@ export const useMatchStore = defineStore('match', () => {
     chat.value = []
     pickRequest.value = null
     shieldChoice.value = null
+    diceRoll.value = null
+    diceRollQueue.value = []
     chainResolvedAt.value = 0
     timeoutNote.value = ''
   }
@@ -315,6 +364,7 @@ export const useMatchStore = defineStore('match', () => {
       chat: chat.value.slice(),
       pickRequest: pickRequest.value ? { ...pickRequest.value } : null,
       shieldChoice: shieldChoice.value ? { ...shieldChoice.value } : null,
+      diceRoll: diceRoll.value ? { ...diceRoll.value } : null,
     }
   }
 
@@ -330,6 +380,7 @@ export const useMatchStore = defineStore('match', () => {
     chat,
     pickRequest,
     shieldChoice,
+    diceRoll,
     chainResolvedAt,
     timeoutNote,
     setTimeoutNote,
@@ -348,6 +399,8 @@ export const useMatchStore = defineStore('match', () => {
     clearPickRequest,
     openShieldChoice,
     clearShieldChoice,
+    openDiceRoll,
+    finishDiceRoll,
     markRevealed,
     markShieldBroken,
     clearShieldMarks,

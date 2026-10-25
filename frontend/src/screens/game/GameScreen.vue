@@ -11,6 +11,7 @@ import PlayerCardDialog from './PlayerCardDialog.vue'
 import MagicPlacementPanel from './MagicPlacementPanel.vue'
 import MagicChoicePanel from './MagicChoicePanel.vue'
 import MagicDiscardPanel from './MagicDiscardPanel.vue'
+import DiceRollOverlay from './DiceRollOverlay.vue'
 import { CARDS } from '../../cards/cardData'
 import { usePlayerCards } from './usePlayerCards'
 import { acquireBattleChannel, getBattleSocket, refreshMagicState, sendBattleEvent, syncHand } from '../../realtime/battle'
@@ -2285,6 +2286,11 @@ function backToLobby(): void {
     <MagicPlacementPanel />
     <MagicChoicePanel />
     <MagicDiscardPanel />
+    <DiceRollOverlay
+      :self-id="state.player_id"
+      :self-name="selfName"
+      :opponent-name="opponentName"
+    />
   </section>
 </template>
 

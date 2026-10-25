@@ -570,7 +570,13 @@ async def dice_of_fate(ctx: EffectContext) -> EffectResult:
     effect_text = DICE_EFFECT_TEXT[roll]
     await ctx.emit(
         "dice_rolled",
-        {"roll": roll, "caster": ctx.caster_id, "effect_text": effect_text},
+        {
+            "roll": roll,
+            "caster": ctx.caster_id,
+            "effect_text": effect_text,
+            "card": "命运骰子",
+            "duration_ms": 3200,
+        },
         room=ctx.room.id,
     )
     await ctx.log(

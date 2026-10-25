@@ -2724,6 +2724,7 @@ class MagicService:
                 "caster": caster_id,
                 "effect_text": effect_text,
                 "card": "无忧梦呓",
+                "duration_ms": 3600,
             },
             room=room.id,
         )
@@ -2784,7 +2785,7 @@ class MagicService:
         await self._publisher.emit(
             "dice_rolled",
             {"roll": roll, "caster": caster_id, "effect_text": effect_text,
-             "card": "兵粮寸断"},
+             "card": "兵粮寸断", "duration_ms": 3200},
             room=room.id,
         )
         await self._add_log(

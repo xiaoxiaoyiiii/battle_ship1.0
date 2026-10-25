@@ -27,19 +27,20 @@ const props = withDefaults(
 
 const emit = defineEmits<{ (event: 'done'): void }>()
 
-const remaining = ref(Math.max(0, Math.floor(props.seconds)))
+const totalMs = Math.max(0, Math.floor(props.seconds * 1000))
+const remaining = ref(Math.ceil(totalMs / 1000))
+const progress = ref(1)
 const selfName = computed(() => props.selfName || '你')
 const opponentName = computed(() => props.opponentName || '对手')
 const modeLabel = computed(() => (props.opponentName === 'AI' ? '人机对战' : props.mode === 'ranked' ? '排位对战' : '休闲对战'))
 const countdownText = computed(() => (remaining.value > 0 ? remaining.value + ' 秒' : '即将进入'))
 
-let timer: ReturnType<typeof setInterval> | null = null
+let frame = 0
+let deadline = 0
 
 function stop(): void {
-  if (timer !== null) {
-    clearInterval(timer)
-    timer = null
-  }
+  if (frame) cancelAnimationFrame(frame)
+  frame = 0
 }
 
 function finish(): void {
@@ -48,13 +49,15 @@ function finish(): void {
 }
 
 onMounted(() => {
-  timer = setInterval(() => {
-    remaining.value -= 1
-    if (remaining.value <= 0) {
-      remaining.value = 0
-      finish()
-    }
-  }, 1000)
+  deadline = performance.now() + totalMs
+  const tick = () => {
+    const left = Math.max(0, deadline - performance.now())
+    progress.value = totalMs > 0 ? left / totalMs : 0
+    remaining.value = Math.ceil(left / 1000)
+    if (left <= 0) { remaining.value = 0; progress.value = 0; finish(); return }
+    frame = requestAnimationFrame(tick)
+  }
+  tick()
 })
 
 onBeforeUnmount(stop)
@@ -72,9 +75,10 @@ onBeforeUnmount(stop)
     <div class="match-found__panel">
       <p class="match-found__eyebrow">{{ modeLabel }} · 对战确认</p>
       <h2 id="match-found-title" class="match-found__title">匹配成功！</h2>
-      <p class="match-found__countdown" data-testid="match-found-countdown" role="status" aria-live="polite">
-        {{ countdownText }}
-      </p>
+      <div class="match-found__countdown-clock" :style="{ '--countdown-progress': String(progress) }">
+        <span class="match-found__countdown-ring" aria-hidden="true"></span>
+        <span class="match-found__countdown" data-testid="match-found-countdown" role="status" aria-live="polite">{{ countdownText }}</span>
+      </div>
 
       <div class="match-found__sides">
         <article class="match-found__side" data-testid="match-found-self">
@@ -90,7 +94,7 @@ onBeforeUnmount(stop)
         </article>
       </div>
 
-      <div class="match-found__progress"><i :style="{ width: (remaining / Math.max(1, seconds) * 100) + '%' }"></i></div>
+      <div class="match-found__progress"><i :style="{ width: (progress * 100) + '%' }"></i></div>
       <button type="button" class="match-found__skip" data-primary-action="true" data-testid="match-found-skip" @click="finish">
         立即进入布船
       </button>
@@ -103,6 +107,9 @@ onBeforeUnmount(stop)
 .match-found__eyebrow { color:#7cdbfa; letter-spacing:.22em; font-size:12px; margin:0; }
 .match-found__title { font-size:clamp(28px,4vw,48px); margin:8px 0; color:#e9f7ff; text-shadow:0 0 24px #4ec8e066; }
 .match-found__countdown { color:var(--gold); margin:0 0 24px; }
+.match-found__countdown-clock { position:relative; display:grid; place-items:center; width:76px; height:76px; margin:4px auto 20px; }
+.match-found__countdown-ring { position:absolute; inset:0; border-radius:50%; background:conic-gradient(var(--gold) calc(var(--countdown-progress) * 1turn),rgb(255 255 255 / 12%) 0); -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 6px),#000 calc(100% - 5px)); mask:radial-gradient(farthest-side,transparent calc(100% - 6px),#000 calc(100% - 5px)); }
+.match-found__countdown-clock .match-found__countdown { position:relative; margin:0; font-size:20px; font-weight:700; font-variant-numeric:tabular-nums; }
 .match-found__sides { display:grid; grid-template-columns:minmax(0,1fr) 110px minmax(0,1fr); gap:24px; align-items:center; }
 .match-found__side { color:#4ec8e0; border:1px solid #2586a4; border-radius:14px; padding:24px 12px; background:radial-gradient(circle at 50% 40%,#20789555,transparent 70%); animation:fleet-enter .7s ease-out both; }
 .match-found__side--rival { color:#edb765; border-color:#967449; background:radial-gradient(circle at 50% 40%,#91734144,transparent 70%); animation-name:rival-enter; }
@@ -116,6 +123,6 @@ h3 { font-size:28px; margin:12px 0; color:#e9f7ff; }.match-found__name { font-si
 @keyframes fleet-enter { from {opacity:0;transform:translateX(-40px)} to {opacity:1;transform:none} }
 @keyframes rival-enter { from {opacity:0;transform:translateX(40px)} to {opacity:1;transform:none} }
 @keyframes versus-lock { from {opacity:0;transform:scale(1.5)} to {opacity:1;transform:none} }
-@media(max-width:600px) { .match-found__panel { padding:20px 12px; }.match-found__sides { grid-template-columns:minmax(0,1fr) 44px minmax(0,1fr);gap:6px; }.match-found__versus { width:44px;height:44px;font-size:20px; }.match-found__side { padding:12px 5px; }.match-found__ship { height:85px; }h3 { font-size:18px; }.match-found__name { font-size:14px; }.match-found__designation { font-size:9px; } }
+@media(max-width:600px) { .match-found__panel { padding:20px 12px; }.match-found__sides { grid-template-columns:minmax(0,1fr) 44px minmax(0,1fr);gap:6px; }.match-found__versus { width:44px;height:44px;font-size:20px; }.match-found__side { padding:12px 5px; }.match-found__ship { height:85px; }h3 { font-size:18px; }.match-found__name { font-size:14px; }.match-found__designation { font-size:9px; }.match-found__countdown-clock { width:64px;height:64px; } }
 @media(prefers-reduced-motion:reduce) { .match-found__side,.match-found__versus { animation:none; }.match-found__progress i { transition:none; } }
 </style>

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useUiStore } from './ui'
-import type { CardLike, LastAttackLike, PendingPickLike, Point } from '../screens/game/view'
+import type { CardLike, LastAttackLike, PendingPickLike, Point, PublicChainPreview } from '../screens/game/view'
 
 /**
  * Live battle frames that are not part of the 45-key game-state schema
@@ -35,6 +35,7 @@ export interface Notice {
 export interface ChainWindowState {
   card: CardLike | null
   caster: string
+  targetPreview: PublicChainPreview | null
   speed3Cards: CardLike[]
   countdown: number
   openedAt: number
@@ -77,6 +78,30 @@ function asCard(value: unknown): CardLike | null {
     speed: (record.speed as number | string) ?? 0,
     type: String(record.type ?? ''),
     description: String(record.description ?? ''),
+  }
+}
+
+function parseTargetPreview(value: unknown): PublicChainPreview | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  if (record.board !== 'self' && record.board !== 'opponent') return null
+  if (record.shape !== 'area' && record.shape !== 'line' && record.shape !== 'cells' && record.shape !== 'single') return null
+  if (!Array.isArray(record.cells) || !record.cells.length) return null
+  const cells = record.cells
+    .map((cell) => {
+      if (!cell || typeof cell !== 'object') return null
+      const point = cell as Record<string, unknown>
+      const x = Number(point.x)
+      const y = Number(point.y)
+      return Number.isInteger(x) && Number.isInteger(y) && x >= 0 && x < 6 && y >= 0 && y < 6 ? { x, y } : null
+    })
+    .filter((cell): cell is Point => cell !== null)
+  if (!cells.length) return null
+  return {
+    card: String(record.card ?? ''),
+    board: record.board,
+    shape: record.shape,
+    cells,
   }
 }
 
@@ -138,6 +163,7 @@ export const useMatchStore = defineStore('match', () => {
     chainWindow.value = {
       card: asCard(payload.card),
       caster: String(payload.caster ?? ''),
+      targetPreview: parseTargetPreview(payload.target_preview),
       speed3Cards: speed3,
       countdown: Number(payload.countdown ?? 10) || 10,
       openedAt: Date.now(),

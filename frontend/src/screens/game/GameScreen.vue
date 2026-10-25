@@ -48,6 +48,7 @@ import {
   targetDescriptor,
   turnText,
   type CardLike,
+  type PublicChainPreview,
   type Point,
   type TargetDescriptor,
   type PendingPickLike,
@@ -342,6 +343,57 @@ const moveOrderLabel = computed(() => {
 })
 
 const chainWindow = computed(() => match.chainWindow)
+const remoteTargetPreview = computed<{
+  card: string
+  board: 'self' | 'opponent'
+  shape: PublicChainPreview['shape']
+  cells: Point[]
+} | null>(() => {
+  const chainItem = chainList.value[chainList.value.length - 1]
+  const candidate = chainItem?.preview ?? chainWindow.value?.targetPreview ?? null
+  if (!candidate) return null
+  const caster = chainItem?.caster || chainWindow.value?.caster || ''
+  const mine = new Set([state.value.player_id, state.value.player_seat])
+  if (!caster || mine.has(caster)) return null
+
+  const card = candidate.card || chainItem?.name || chainWindow.value?.card?.name || ''
+  // 轰炸/冻结/硫磺火焰只公开对手（也就是我方）棋盘上的范围；
+  // 神威！是唯一例外，选择对方自己的棋盘也公开，便于判断是否失灵。
+  if (card === '神威！') {
+    return { ...candidate, card, board: candidate.board === 'opponent' ? 'self' : 'opponent' }
+  }
+  if (!['轰炸', '冻结', '硫磺火焰', '探测雷达'].includes(card) || candidate.board !== 'opponent') return null
+  return { ...candidate, card, board: 'self' }
+})
+const remotePreviewKeys = computed(() => remoteTargetPreview.value?.cells.map((cell) => `${cell.x}-${cell.y}`) ?? [])
+const remotePreviewKind = computed<'area' | 'line' | 'continuous' | null>(() => {
+  const preview = remoteTargetPreview.value
+  if (!preview) return null
+  if (preview.shape === 'area') return 'area'
+  if (preview.shape === 'line') return 'line'
+  if (preview.shape === 'cells' && preview.cells.length > 1) return 'continuous'
+  return null
+})
+const remotePreviewTone = computed<'freeze' | 'fire' | 'divine' | 'radar' | 'default'>(() => {
+  const card = remoteTargetPreview.value?.card
+  if (card === '冻结') return 'freeze'
+  if (card === '轰炸' || card === '硫磺火焰') return 'fire'
+  if (card === '神威！') return 'divine'
+  if (card === '探测雷达') return 'radar'
+  return 'default'
+})
+const remotePreviewBadge = computed(() => remoteTargetPreview.value ? '对方选择 · ' + remoteTargetPreview.value.card : '')
+const boardPreviewKind = computed(() => selectionKind.value ?? remotePreviewKind.value)
+const boardPreviewTone = computed(() => selection.value ? selectionTone.value : remotePreviewTone.value)
+const boardPreviewBadge = computed(() => selection.value ? selectionBadge.value : remotePreviewBadge.value)
+const selfBoardPreviewKeys = computed(() => {
+  if (selection.value) return selection.value.board === 'self' ? previewKeys.value : []
+  return remoteTargetPreview.value?.board === 'self' ? remotePreviewKeys.value : []
+})
+const opponentBoardPreviewKeys = computed(() => {
+  if (selection.value) return selection.value.board === 'self' ? [] : previewKeys.value
+  return remoteTargetPreview.value?.board === 'opponent' ? remotePreviewKeys.value : []
+})
 /** 面板被收起（请求还在，倒计时还在跑） */
 const chainCollapsed = computed(() => match.chainWindowCollapsed)
 // 只有待响应请求使用弹窗；结算中的卡牌始终只展示在右侧竖栏。
@@ -1674,14 +1726,14 @@ function backToLobby(): void {
               :subtitle="'存活 ' + state.remaining_ships + ' 艘' + (frozenMine.size ? ' · 你的 3×3 区域被冻结' : '')"
               :cells="selfCells"
               :selected="(selection?.descriptor.board === 'opponent' ? [] : selectedKeys).concat(shieldSelectedKeys)"
-              :preview="selection?.board === 'self' ? previewKeys : []"
+              :preview="selfBoardPreviewKeys"
               :legal="legalKeys"
               :selection-board="selection ? (selection.board || selection.descriptor.board || (selection.descriptor.kind === 'own_ships' ? 'self' : null)) : 'self'"
               :selection-label="selection?.card.name || (shieldOpen ? '仁王之盾' : '')"
               :selection-hint="selection ? targetHint : (pendingPick?.message || '点击己方战舰选择目标。')"
-              :selection-kind="selectionKind"
-              :selection-tone="selectionTone"
-              :selection-badge="selectionBadge"
+              :selection-kind="boardPreviewKind"
+              :selection-tone="boardPreviewTone"
+              :selection-badge="boardPreviewBadge"
               :hidden="!showSelfBoard"
               :picking="!!selection || !!match.pickRequest || shieldOpen"
               @hover="point => previewTarget('self', point)"
@@ -1696,15 +1748,15 @@ function backToLobby(): void {
               :title="'对手海域 · ' + opponentName"
               :subtitle="'已探明 ' + shots + ' / 36 格 · 命中 ' + hits + (frozenTheirs.size ? ' · 对方 3×3 区域被冻结' : '')"
               :cells="opponentCells"
-              :preview="selection?.board === 'self' ? [] : previewKeys"
+              :preview="opponentBoardPreviewKeys"
               :selected="selection?.descriptor.board === 'self' ? [] : selectedKeys"
               :legal="legalKeys"
               :selection-board="selection ? (selection.board || selection.descriptor.board || (selection.descriptor.kind === 'own_ships' ? 'self' : null)) : 'self'"
               :selection-label="selection?.card.name || (shieldOpen ? '仁王之盾' : '')"
               :selection-hint="selection ? targetHint : (pendingPick?.message || '点击己方战舰选择目标。')"
-              :selection-kind="selectionKind"
-              :selection-tone="selectionTone"
-              :selection-badge="selectionBadge"
+              :selection-kind="boardPreviewKind"
+              :selection-tone="boardPreviewTone"
+              :selection-badge="boardPreviewBadge"
               :hidden="!showOpponentBoard"
               :picking="!!selection"
               @hover="point => previewTarget('opponent', point)"

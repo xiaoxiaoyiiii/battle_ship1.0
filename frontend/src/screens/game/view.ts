@@ -531,7 +531,22 @@ export function effectBadgeList(source: unknown): Array<{
     .filter((item): item is NonNullable<typeof item> => item !== null)
 }
 
-export function chainItems(source: unknown): Array<{ name: string; caster: string; negated: boolean; negatedBy: string }> {
+export interface PublicChainPreview {
+  card: string
+  board: 'self' | 'opponent'
+  shape: 'area' | 'line' | 'cells' | 'single'
+  cells: Point[]
+}
+
+export interface ChainItemView {
+  name: string
+  caster: string
+  negated: boolean
+  negatedBy: string
+  preview: PublicChainPreview | null
+}
+
+export function chainItems(source: unknown): ChainItemView[] {
   const record = source && typeof source === 'object' ? (source as Record<string, unknown>) : {}
   const list = Array.isArray(record.chain) ? record.chain : []
   return list
@@ -540,12 +555,35 @@ export function chainItems(source: unknown): Array<{ name: string; caster: strin
       const entry = item as Record<string, unknown>
       const card = entry.card && typeof entry.card === 'object' ? (entry.card as Record<string, unknown>) : null
       const name = card ? String(card.name ?? '') : typeof entry.card === 'string' ? entry.card : ''
+      const rawPreview = entry.preview && typeof entry.preview === 'object' ? entry.preview as Record<string, unknown> : null
+      const rawCells = rawPreview && Array.isArray(rawPreview.cells) ? rawPreview.cells : []
+      const previewCells = rawCells
+        .map((cell) => {
+          if (!cell || typeof cell !== 'object') return null
+          const point = cell as Record<string, unknown>
+          const x = Number(point.x)
+          const y = Number(point.y)
+          return Number.isInteger(x) && Number.isInteger(y) && x >= 0 && x < 6 && y >= 0 && y < 6 ? { x, y } : null
+        })
+        .filter((cell): cell is Point => cell !== null)
+      const preview = rawPreview
+        && (rawPreview.board === 'self' || rawPreview.board === 'opponent')
+        && (rawPreview.shape === 'area' || rawPreview.shape === 'line' || rawPreview.shape === 'cells' || rawPreview.shape === 'single')
+        && previewCells.length
+        ? {
+            card: String(rawPreview.card ?? name),
+            board: rawPreview.board,
+            shape: rawPreview.shape,
+            cells: previewCells,
+          } satisfies PublicChainPreview
+        : null
       return {
         name,
-        caster: String(entry.player_id ?? ''),
+        caster: String(entry.player_id ?? entry.seat ?? ''),
         negated: Boolean(entry.negated),
         negatedBy: entry.negated_by ? String(entry.negated_by) : '',
+        preview,
       }
     })
-    .filter((item): item is { name: string; caster: string; negated: boolean; negatedBy: string } => !!item && !!item.name)
+    .filter((item): item is ChainItemView => !!item && !!item.name)
 }

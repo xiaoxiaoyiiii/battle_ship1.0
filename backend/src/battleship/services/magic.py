@@ -1071,6 +1071,21 @@ class MagicService:
                 token = room.chain_timer
                 top = room.chain[-1]
                 player = room.players[player_id]
+                target_preview = None
+                # 目标已经在入链时由服务端校验过。响应者只需要知道对手
+                # 选中了自己棋盘的范围，才能决定是否用失灵；神威！是唯一
+                # 的双向选板卡，选择对手自己的棋盘也按规则公开。增援、
+                # 点船和其它自用效果不会进入这个预览字段。
+                if top.player_id != player_id:
+                    public_chain = _spectate_chain_payload(room)
+                    public_items = public_chain.get("chain", [])
+                    if isinstance(public_items, list) and public_items:
+                        candidate = public_items[-1]
+                        preview = candidate.get("preview") if isinstance(candidate, dict) else None
+                        if isinstance(preview, dict) and (
+                            top.card.name == "神威！" or preview.get("board") == "opponent"
+                        ):
+                            target_preview = preview
                 await self._publisher.emit(
                     "chain_request",
                     {
@@ -1086,6 +1101,7 @@ class MagicService:
                             card_payload(card)
                             for card in chain_rules.usable_speed3_cards(room, player_id)
                         ],
+                        "target_preview": target_preview,
                         "countdown": CHAIN_RESPONSE_SECONDS,
                     },
                     to=player.socket_id,

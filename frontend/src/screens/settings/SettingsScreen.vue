@@ -272,6 +272,15 @@ onMounted(() => {
       <section id="settings-appearance" class="settings__group" data-testid="settings-group-appearance" aria-labelledby="settings-group-appearance-title">
         <h2 id="settings-group-appearance-title" class="settings__group-title">外观</h2>
 
+        <section class="settings__block" aria-labelledby="settings-phase-title">
+          <h3 id="settings-phase-title" class="settings__block-title">阶段转换询问</h3>
+          <p>对手进入战斗或结束阶段前，手中有可用速阶三时提醒你响应。关闭后自动放行。</p>
+          <div class="settings__seg" role="group" aria-label="阶段转换询问">
+            <button type="button" class="settings__seg-item" data-testid="settings-phase-on" :aria-pressed="ui.phasePrompts" :class="{ 'is-active': ui.phasePrompts }" @click="ui.setPhasePrompts(true)">开启询问</button>
+            <button type="button" class="settings__seg-item" data-testid="settings-phase-off" :aria-pressed="!ui.phasePrompts" :class="{ 'is-active': !ui.phasePrompts }" @click="ui.setPhasePrompts(false)">自动放行</button>
+          </div>
+        </section>
+
         <section class="settings__block settings__appearance" data-testid="settings-appearance">
           <h3 class="settings__block-title">主题</h3>
           <div class="settings__seg" role="group" aria-label="主题">

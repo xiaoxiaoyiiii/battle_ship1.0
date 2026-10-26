@@ -48,6 +48,7 @@ from ..domain.room import (
 )
 from ..infra.logging import get_logger
 from .rooms import Connection, EventPublisher, NullPublisher, RoomService
+from .priority import PhasePriority, guard_phase_write
 
 logger = get_logger("gameplay")
 
@@ -119,6 +120,8 @@ class GameplayService:
         self.draw_skip_hook: Callable[[Room, str], Any] | None = None
         self.after_draw_hook: Callable[[Room, str], Any] | None = None
         self.round_end_hook: Callable[[Room], Any] | None = None
+        self.priority = PhasePriority(self)
+        self.rooms.priority_decline_hook = self.priority.decline
 
     # ------------------------------------------------------------------ wiring
 
@@ -209,10 +212,12 @@ class GameplayService:
 
     @staticmethod
     def _frozen_reason(room: Room, player_id: str) -> str | None:
+        if room.chain or room.chain_waiting or room.chain_resolving:
+            return '连锁尚未结算，请等待连锁结束'
         for pid in room.disconnected:
             if pid != player_id:
                 return OPPONENT_DISCONNECTED
-        return pending_action_reason(room, player_id)
+        return battle_rules.action_wait_reason(room, player_id) or pending_action_reason(room, player_id)
 
     def _start_timer(self, room: Room, now: float | None = None) -> None:
         room.turn_started_at = self.clock() if now is None else now
@@ -263,6 +268,7 @@ class GameplayService:
 
     # ------------------------------------------------------------- placement
 
+    @guard_phase_write
     async def place_ships(self, connection: Connection,
                           data: dict[str, Any] | None = None) -> dict:
         data = data if isinstance(data, dict) else {}
@@ -331,6 +337,7 @@ class GameplayService:
         await self.rooms.push_room_sync(room)
         return {"status": "success"}
 
+    @guard_phase_write
     async def cancel_placement(self, connection: Connection,
                                data: dict[str, Any] | None = None) -> dict:
         data = data if isinstance(data, dict) else {}
@@ -454,6 +461,7 @@ class GameplayService:
 
     # ------------------------------------------------------------------- RPS
 
+    @guard_phase_write
     async def rps_choice(self, connection: Connection,
                          data: dict[str, Any] | None = None) -> dict:
         data = data if isinstance(data, dict) else {}
@@ -583,8 +591,9 @@ class GameplayService:
             room=room.id,
         )
 
+    @guard_phase_write
     async def enter_battle_phase(self, connection: Connection,
-                                 data: dict[str, Any] | None = None) -> dict:
+                                 data: dict[str, Any] | None = None, *, _priority_confirmed: bool = False) -> dict:
         data = data if isinstance(data, dict) else {}
         room, player_id = self._seat(connection, data)
         if room is None:
@@ -595,6 +604,11 @@ class GameplayService:
         if frozen:
             return {"status": "error", "message": frozen}
 
+        error = battle_rules.phase_transition_error(room, player_id, 'enter_battle')
+        if error:
+            return {"status": "error", "message": error}
+        if not _priority_confirmed and await self.priority.request(room, player_id, 'enter_battle'):
+            return {'status': 'success', 'waiting_priority': True}
         error = battle_rules.enter_battle(room, player_id)
         if error:
             return {"status": "error", "message": error}
@@ -622,8 +636,9 @@ class GameplayService:
         self._touch_turn(room, player_id)
         return {"status": "success"}
 
+    @guard_phase_write
     async def enter_end_phase(self, connection: Connection,
-                              data: dict[str, Any] | None = None) -> dict:
+                              data: dict[str, Any] | None = None, *, _priority_confirmed: bool = False) -> dict:
         data = data if isinstance(data, dict) else {}
         room, player_id = self._seat(connection, data)
         if room is None:
@@ -634,6 +649,11 @@ class GameplayService:
         if frozen:
             return {"status": "error", "message": frozen}
 
+        error = battle_rules.phase_transition_error(room, player_id, 'enter_end')
+        if error:
+            return {"status": "error", "message": error}
+        if not _priority_confirmed and await self.priority.request(room, player_id, 'enter_end'):
+            return {'status': 'success', 'waiting_priority': True}
         error = battle_rules.enter_end(room, player_id)
         if error:
             return {"status": "error", "message": error}
@@ -756,6 +776,7 @@ class GameplayService:
         )
         return {"status": "success"}
 
+    @guard_phase_write
     async def end_turn(self, connection: Connection,
                        data: dict[str, Any] | None = None) -> dict:
         data = data if isinstance(data, dict) else {}
@@ -943,26 +964,19 @@ class GameplayService:
             return True
 
         if _phase_value(room) == "preparation":
-            if battle_rules.enter_battle(room, player_id) is not None:
+            player = room.players[player_id]
+            ack = await self.enter_battle_phase(Connection(sid=player.socket_id or player_id, user_id=player.user_id),
+                                                {'room_id': room.id, 'player_id': player_id})
+            if ack.get('status') != 'success':
                 return False
-            await self._publisher.emit(
-                "attacks_updated",
-                {
-                    "current_attacker": room.current_attacker,
-                    "attacks_remaining": room.attacks_remaining,
-                },
-                room=room.id,
-            )
-            await self._emit_phase(room)
-            self._note_enter_battle(room, player_id)
         elif _phase_value(room) == "battle":
             player = room.players[player_id]
             cells = battle_rules.attackable_cells(player)
             if not cells or room.attacks_remaining <= 0:
-                if battle_rules.enter_end(room, player_id) is not None:
+                ack = await self.enter_end_phase(Connection(sid=player.socket_id or player_id, user_id=player.user_id),
+                                                {'room_id': room.id, 'player_id': player_id})
+                if ack.get('status') != 'success':
                     return False
-                await self._emit_phase(room)
-                self._note_enter_end(room, player_id)
             elif self.fire_hook is None:
                 return False
             else:
@@ -979,31 +993,24 @@ class GameplayService:
         return True
 
     async def _timeout_action(self, room: Room, player_id: str, now: float) -> bool:
-        if pending_action_reason(room, player_id):
+        if battle_rules.action_wait_reason(room, player_id) or pending_action_reason(room, player_id):
             return False
         note: str | None = None
         if _phase_value(room) == "preparation":
-            if battle_rules.enter_battle(room, player_id) is None:
-                await self._publisher.emit(
-                    "attacks_updated",
-                    {
-                        "current_attacker": room.current_attacker,
-                        "attacks_remaining": room.attacks_remaining,
-                    },
-                    room=room.id,
-                )
-                await self._emit_phase(room)
-                self._note_enter_battle(room, player_id)
-                note = "思考超时：已自动进入战斗阶段"
+            player = room.players[player_id]
+            ack = await self.enter_battle_phase(Connection(sid=player.socket_id or player_id, user_id=player.user_id),
+                                                {'room_id': room.id, 'player_id': player_id})
+            if ack.get('status') == 'success':
+                note = '思考超时：等待对方响应阶段转换' if ack.get('waiting_priority') else '思考超时：已自动进入战斗阶段'
 
         elif _phase_value(room) == "battle":
             player = room.players[player_id]
             cells = battle_rules.attackable_cells(player)
             if not cells or room.attacks_remaining <= 0:
-                if battle_rules.enter_end(room, player_id) is None:
-                    await self._emit_phase(room)
-                    self._note_enter_end(room, player_id)
-                    note = "思考超时：已自动进入结束阶段"
+                ack = await self.enter_end_phase(Connection(sid=player.socket_id or player_id, user_id=player.user_id),
+                                                {'room_id': room.id, 'player_id': player_id})
+                if ack.get('status') == 'success':
+                    note = '思考超时：等待对方响应阶段转换' if ack.get('waiting_priority') else '思考超时：已自动进入结束阶段'
             else:
                 x, y = self.rng.choice(cells)
                 if self.fire_hook is None:

@@ -195,9 +195,23 @@ def _spectate_chain_payload(room: Room) -> dict[str, Any]:
 
 def _priority_pending_for(room: Room, player_id: str) -> dict[str, Any] | None:
     pending = room.priority_pending
-    if pending and pending.get("actor") == player_id:
+    if pending and player_id in (pending.get("actor"), pending.get("responder")):
         return pending
     return None
+
+
+def priority_payload(room: Room, player_id: str) -> dict[str, Any] | None:
+    """实时事件和重连快照共用；可响应手牌只回给响应者。"""
+    pending = _priority_pending_for(room, player_id)
+    if not pending:
+        return None
+    responder = pending.get('responder') == player_id
+    payload = {key: pending.get(key) for key in ('token', 'actor', 'action', 'countdown', 'deadline')}
+    payload['role'] = 'responder' if responder else 'actor'
+    payload['action_text'] = PRIORITY_ACTION_TEXT.get(pending.get('action'), '阶段转换')
+    if responder:
+        payload['speed3_cards'] = pending.get('speed3_cards', [])
+    return payload
 
 
 def _shenji_wait_reason(room: Room, player_id: str) -> str | None:
@@ -321,16 +335,7 @@ def build_room_sync(
         "chain": _spectate_chain_payload(room),
         "chain_waiting": bool(room.chain_waiting),
         "chain_window": room.chain_window,
-        "priority_waiting": (
-            {
-                "action": room.priority_pending.get("action"),
-                "action_text": PRIORITY_ACTION_TEXT.get(
-                    room.priority_pending.get("action"), "阶段转换"
-                ),
-            }
-            if _priority_pending_for(room, player_id)
-            else None
-        ),
+        "priority_waiting": priority_payload(room, player_id),
         "shenji_waiting": (
             {"text": "等待对方神机妙算宣言中"}
             if _shenji_wait_reason(room, player_id)

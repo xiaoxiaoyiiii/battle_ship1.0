@@ -50,6 +50,11 @@ def register_battle_handlers(
         connection = await connection_from_sio(sio, sid)
         return await gameplay.end_turn(connection, data)
 
+    @sio.on('priority_response')
+    async def priority_response(sid: str, data: dict[str, Any] | None = None) -> dict:
+        connection = await connection_from_sio(sio, sid)
+        return await gameplay.priority.response(connection, data)
+
     if battle is not None:
         @sio.on("attack")
         async def attack(sid: str, data: dict[str, Any] | None = None) -> dict:

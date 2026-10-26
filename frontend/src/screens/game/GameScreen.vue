@@ -12,6 +12,7 @@ import MagicPlacementPanel from './MagicPlacementPanel.vue'
 import MagicChoicePanel from './MagicChoicePanel.vue'
 import MagicDiscardPanel from './MagicDiscardPanel.vue'
 import DiceRollOverlay from './DiceRollOverlay.vue'
+import PhasePriorityPrompt from './PhasePriorityPrompt.vue'
 import { CARDS } from '../../cards/cardData'
 import { usePlayerCards } from './usePlayerCards'
 import { acquireBattleChannel, getBattleSocket, refreshMagicState, sendBattleEvent, syncHand } from '../../realtime/battle'
@@ -135,6 +136,7 @@ const shieldSelectedKeys = computed<string[]>(() => {
 
 interface SelectionState {
   isChain?: boolean
+  priorityToken?: number
   card: CardLike
   index: number
   descriptor: TargetDescriptor
@@ -147,6 +149,12 @@ interface SelectionState {
 }
 
 const selection = ref<SelectionState | null>(null)
+const priorityError = ref('')
+const priorityRequest = computed(() =>
+  state.value.state === 'attacking' && state.value.priority_waiting?.role === 'responder'
+    ? state.value.priority_waiting : null,
+)
+const priorityRemaining = computed(() => Math.max(0, Math.ceil((Number(priorityRequest.value?.deadline ?? 0) - now.value) / 1000)))
 const chainBusy = computed(
   () => Boolean(state.value.chain_waiting) || chainItems(state.value.chain).length > 0,
 )
@@ -738,6 +746,7 @@ function announce(text: string): void {
 
 /** Why a click on the main board cannot fire. Empty string = it can. */
 function fireRefusal(): string {
+  if (state.value.priority_waiting) return '阶段转换询问中，请等待响应完成。'
   if (!state.value.player_id) return '对局数据还没到，请稍候。'
   if (state.value.state !== 'attacking') return '对局还没进入战斗。'
   if (state.value.current_phase !== 'battle') return '现在不是战斗阶段，先点主行动进入战斗阶段。'
@@ -765,6 +774,7 @@ function clearCardSelection(): void {
 
 /** The ONE reason function: the card face and the click guard both call it. */
 function cardDisabled(card: CardLike): string {
+  if (state.value.priority_waiting) return '阶段转换询问中，请从询问框选择速阶三或等待对方响应'
   if (selection.value) return '正在选目标：先完成或取消当前选择'
   return cardDisabledReason(card, state.value, playCtx.value)
 }
@@ -812,6 +822,7 @@ function cancelCardSelection(): void {
 }
 
 async function playCard(index: number): Promise<void> {
+  if (state.value.priority_waiting) return
   const card = hand.value[index]
   if (!card) return
   const refusal = playRefusalReason(card, state.value, playCtx.value)
@@ -841,26 +852,31 @@ async function playCard(index: number): Promise<void> {
   clearCardSelection()
 }
 
-async function dispatchCard(card: CardLike, targets: Record<string, unknown>, isChain = false): Promise<void> {
+async function dispatchCard(card: CardLike, targets: Record<string, unknown>, isChain = false, priorityToken?: number): Promise<void> {
   if (busy.value) return
   // 服务端可能在本次回执前就交回响应权，只能关闭这次实际回答的窗口。
   const answeredWindow = isChain ? match.chainWindow : null
   busy.value = true
   try {
-    const ack = await sendBattleEvent(isChain ? 'chain_response' : 'use_magic_card', {
+    const ack = await sendBattleEvent(priorityToken !== undefined ? 'priority_response' : isChain ? 'chain_response' : 'use_magic_card', {
       room_id: state.value.room_id,
       player_id: state.value.player_id,
       card: { name: card.name, speed: card.speed, type: card.type, description: card.description ?? '' },
       targets,
       ...(isChain ? { chain: true } : {}),
+      ...(priorityToken !== undefined ? { respond: true, token: priorityToken } : {}),
     })
     if (ack.status !== 'success') {
       const message = '使用魔法卡失败：' + (ack.message || '未知错误')
       if (selection.value) selection.value.error = ack.message || '服务端未接受目标，请调整后重试'
+      if (priorityToken !== undefined) priorityError.value = ack.message || '出牌失败，可在剩余时间内重新选择'
       ui.notifyError('game-card-failed', message)
       return
     }
     selection.value = null
+    if (priorityToken !== undefined && state.value.priority_waiting?.token === priorityToken) {
+      game.applyServerState({ priority_waiting: null })
+    }
     if (isChain && match.chainWindow === answeredWindow) match.closeChainWindow()
     announce('已使用' + card.name)
     if (hand.value.some((item) => cardIdentity(item) === cardIdentity(card))) {
@@ -1007,7 +1023,7 @@ async function confirmSelection(): Promise<void> {
     say('game-target-not-ready', '还不能确认：' + (sel.error || targetHint.value), '按横幅提示先选好目标。')
     return
   }
-  await dispatchCard(sel.card, buildTargets(sel), sel.isChain)
+  await dispatchCard(sel.card, buildTargets(sel), sel.isChain, sel.priorityToken)
 }
 
 // ---- board clicks ----------------------------------------------------------
@@ -1087,6 +1103,7 @@ interface PrimaryAction {
 
 const primaryAction = computed<PrimaryAction>(() => {
   const phase = state.value.current_phase
+  if (state.value.priority_waiting) return { label:'等待阶段响应', event:'enter_battle_phase', enabled:false, reason:'对方正在决定是否响应阶段转换' }
   if (state.value.interaction_waiting) return { label:'等待完成魔法效果', event:'enter_battle_phase', enabled:false, reason:state.value.interaction_waiting }
   if (phase === 'preparation') {
     return {
@@ -1116,6 +1133,7 @@ const primaryAction = computed<PrimaryAction>(() => {
 })
 
 async function turnAction(event: 'enter_battle_phase' | 'enter_end_phase' | 'end_turn'): Promise<void> {
+  if (state.value.priority_waiting) return
   try {
     const ack = await sendBattleEvent(event, {
       room_id: state.value.room_id,
@@ -1263,6 +1281,44 @@ async function choosePickCell(board: 'self' | 'opponent', x: number, y: number):
 }
 
 // ---- chain -----------------------------------------------------------------
+async function respondPriority(card: CardLike): Promise<void> {
+  const request = priorityRequest.value
+  if (!request || busy.value || priorityRemaining.value <= 0) return
+  priorityError.value = ''
+  clearCardSelection()
+  const token = Number(request.token)
+  const descriptor = targetDescriptor(card.name)
+  if (descriptor) {
+    selection.value = { priorityToken: token, card, index: hand.value.findIndex(c => c.name === card.name), descriptor, board: descriptor.board ?? null, anchor: null, lineDir: 'row', picks: [], effectChoice: null, error: '' }
+    return
+  }
+  await dispatchCard(card, {}, false, token)
+}
+
+async function passPriority(): Promise<void> {
+  const request = priorityRequest.value
+  if (!request || busy.value) return
+  busy.value = true
+  try {
+    const ack = await sendBattleEvent('priority_response', {
+      room_id: state.value.room_id, player_id: state.value.player_id,
+      token: request.token, respond: false,
+    })
+    if (ack.status === 'success' && state.value.priority_waiting?.token === request.token) {
+      game.applyServerState({ priority_waiting: null })
+    } else if (ack.status !== 'success') priorityError.value = ack.message || '响应失败，请重试'
+  } catch { priorityError.value = '连接不稳定，请重试；超时将自动放行' }
+  finally { busy.value = false }
+}
+
+watch(() => state.value.priority_waiting?.token, (token) => {
+  priorityError.value = ''
+  if (selection.value?.priorityToken !== undefined && selection.value.priorityToken !== token) selection.value = null
+})
+watch([priorityRequest, () => ui.phasePrompts], ([request, enabled]) => {
+  if (request && !enabled) void passPriority()
+}, { immediate: true })
+
 async function respondChain(card: CardLike): Promise<void> {
   const descriptor = targetDescriptor(card.name)
   if (descriptor) {
@@ -1875,9 +1931,9 @@ function backToLobby(): void {
             @click="moreOpen = !moreOpen"
           >更多操作</button>
           <div v-show="moreOpen" class="game-more-menu" data-testid="game-more-menu" role="menu" aria-label="更多操作">
-            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-battle" :disabled="!myTurn || state.current_phase !== 'preparation'" @click="turnAction('enter_battle_phase')">进入战斗阶段</button>
-            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-end" :disabled="!myTurn || state.current_phase !== 'battle'" @click="turnAction('enter_end_phase')">进入结束阶段</button>
-            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-end-turn" :disabled="!myTurn || state.current_phase !== 'end'" @click="turnAction('end_turn')">结束回合</button>
+            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-battle" :disabled="!!state.priority_waiting || !myTurn || state.current_phase !== 'preparation'" @click="turnAction('enter_battle_phase')">进入战斗阶段</button>
+            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-end" :disabled="!!state.priority_waiting || !myTurn || state.current_phase !== 'battle'" @click="turnAction('enter_end_phase')">进入结束阶段</button>
+            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-end-turn" :disabled="!!state.priority_waiting || !myTurn || state.current_phase !== 'end'" @click="turnAction('end_turn')">结束回合</button>
             <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-log-toggle" @click="moreOpen = false; logOpen = true">对局日志</button>
             <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-more-opponent-stats" @click="moreOpen = false; playerCardSide = 'opponent'">对手战绩</button>
             <button
@@ -2022,9 +2078,9 @@ function backToLobby(): void {
         >更多操作</button>
       </div>
       <div v-show="moreOpen" class="game-more-menu" data-testid="game-more-menu" role="menu" aria-label="更多操作">
-        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-battle" :disabled="!myTurn || state.current_phase !== 'preparation'" @click="turnAction('enter_battle_phase')">进入战斗阶段</button>
-        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-end" :disabled="!myTurn || state.current_phase !== 'battle'" @click="turnAction('enter_end_phase')">进入结束阶段</button>
-        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-end-turn" :disabled="!myTurn || state.current_phase !== 'end'" @click="turnAction('end_turn')">结束回合</button>
+        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-battle" :disabled="!!state.priority_waiting || !myTurn || state.current_phase !== 'preparation'" @click="turnAction('enter_battle_phase')">进入战斗阶段</button>
+        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-end" :disabled="!!state.priority_waiting || !myTurn || state.current_phase !== 'battle'" @click="turnAction('enter_end_phase')">进入结束阶段</button>
+        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-end-turn" :disabled="!!state.priority_waiting || !myTurn || state.current_phase !== 'end'" @click="turnAction('end_turn')">结束回合</button>
         <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-log-toggle" @click="moreOpen = false; logOpen = true">对局日志</button>
         <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-more-opponent-stats" @click="moreOpen = false; playerCardSide = 'opponent'">对手战绩</button>
         <button
@@ -2043,6 +2099,7 @@ function backToLobby(): void {
       <div class="game-target__main">
         <h2 class="game-target__title" data-testid="game-target-title">{{ targetTitle }}</h2>
         <p class="game-target__hint" data-testid="game-target-hint">{{ targetHint }}</p>
+        <p v-if="selection.priorityToken !== undefined" class="game-target__hint" data-testid="game-phase-target-countdown">阶段响应剩余 {{ priorityRemaining }} 秒，超时自动放行。</p>
         <p class="game-target__selected" data-testid="game-target-selected">已选：{{ pickCountText }}</p>
         <p v-if="selection.error" class="game-target__error" data-testid="game-target-error" role="alert">{{ selection.error }}</p>
       </div>
@@ -2287,6 +2344,8 @@ function backToLobby(): void {
     <MagicPlacementPanel />
     <MagicChoicePanel />
     <MagicDiscardPanel />
+    <PhasePriorityPrompt v-if="priorityRequest && ui.phasePrompts && selection?.priorityToken === undefined" :key="String(priorityRequest.token)" :request="priorityRequest" :now="now" :busy="busy" :error="priorityError" @select="respondPriority" @pass="passPriority" />
+
     <DiceRollOverlay
       :self-id="state.player_id"
       :self-name="selfName"

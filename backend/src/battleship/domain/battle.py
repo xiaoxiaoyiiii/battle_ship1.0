@@ -232,11 +232,27 @@ def can_enter_end(room: Room, player_id: str) -> bool:
     return room.attacks_remaining <= 0 or not attackable_cells(player)
 
 
+def phase_transition_error(room: Room, player_id: str, action: str) -> str | None:
+    """只读预检；询问前和真正推进时复用同一份阶段规则。"""
+    if room.state != RoomState.ATTACKING:
+        return ENTER_BATTLE_ERROR if action == 'enter_battle' else ENTER_END_ERROR
+    if action == 'enter_battle':
+        if room.current_attacker != player_id or _value(room.current_phase) != 'preparation':
+            return ENTER_BATTLE_ERROR
+    else:
+        if room.current_attacker != player_id or _value(room.current_phase) != 'battle':
+            return ENTER_END_ERROR
+        if room.attacks_remaining > 0 and attackable_cells(room.players[player_id]):
+            return ATTACKS_LEFT_ERROR
+    return None
+
+
 def enter_battle(room: Room, player_id: str) -> str | None:
     """preparation -> battle. Returns the legacy error text or None."""
 
-    if room.current_attacker != player_id or _value(room.current_phase) != "preparation":
-        return ENTER_BATTLE_ERROR
+    error = phase_transition_error(room, player_id, 'enter_battle')
+    if error:
+        return error
     room.current_phase = RoomPhase.BATTLE
     player = room.players[player_id]
     recalc_attacker_attacks(room)
@@ -251,10 +267,9 @@ def enter_battle(room: Room, player_id: str) -> str | None:
 def enter_end(room: Room, player_id: str) -> str | None:
     """battle -> end, only when no shot is left or no cell is attackable."""
 
-    if room.current_attacker != player_id or _value(room.current_phase) != "battle":
-        return ENTER_END_ERROR
-    if room.attacks_remaining > 0 and attackable_cells(room.players[player_id]):
-        return ATTACKS_LEFT_ERROR
+    error = phase_transition_error(room, player_id, 'enter_end')
+    if error:
+        return error
 
     room.current_phase = RoomPhase.END
     # #38：余音绕梁每个结束阶段消耗 1 层（旧实现 -=1，0 即不再有强制击杀）。
@@ -418,8 +433,12 @@ def cell_in_shenwei_hole(room: Room, player_id: str, x: int, y: int) -> bool:
 def priority_wait_reason(room: Room, player_id: str) -> str | None:
     """The initiator cannot keep acting while the opponent answers a request."""
 
-    pending = room.priority_pending
-    if not pending or pending.get("actor") != player_id:
+    pending = room.priority_pending or room.priority_continue
+    if not pending:
+        return None
+    if pending.get('responder') == player_id and room.priority_pending:
+        return '请先从阶段转换询问中选择响应或不出牌'
+    if pending.get('actor') != player_id:
         return None
     action = {"enter_battle": "进入战斗阶段", "enter_end": "进入结束阶段"}.get(
         pending.get("action"), "阶段转换"

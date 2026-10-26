@@ -492,6 +492,9 @@ class RoomService:
             return {"status": "error", "message": "无效的房间或玩家"}
         decline = bool(data.get("decline"))
         room.decline_priority[player_id] = decline
+        hook = getattr(self, 'priority_decline_hook', None)
+        if decline and hook is not None:
+            await hook(room, player_id)
         await self._publisher.emit(
             "priority_setting_updated", {"decline": decline},
             to=room.players[player_id].socket_id,
@@ -692,13 +695,17 @@ class RoomService:
                     continue
                 self.presence.set_in_game(player.user_id, False)
                 if room.state != RoomState.GAME_OVER:
-                    self._spawn(self._start_disconnect_grace(room_id, player_id))
+                    self._spawn(self._start_disconnect_grace(room_id, player_id, disconnected_sid=sid))
                 return
 
-    async def _start_disconnect_grace(self, room_id: str, player_id: str) -> None:
+    async def _start_disconnect_grace(self, room_id: str, player_id: str, *, disconnected_sid: str | None = None) -> None:
         await asyncio.sleep(self.grace_initial_delay_seconds)
         room = self.rooms.get(room_id)
         if room is None or room.state == RoomState.GAME_OVER:
+            return
+        # 该等待期间可能已经重连并换了 socket；旧连接不得再冻结新连接的座位。
+        player = room.players.get(player_id)
+        if player is None or (disconnected_sid is not None and player.socket_id != disconnected_sid):
             return
         if player_id in room.disconnected:
             return

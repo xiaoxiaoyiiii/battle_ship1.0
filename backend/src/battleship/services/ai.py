@@ -231,7 +231,8 @@ class AiService:
         """easy/normal/hard: one card, then fire, then end the turn."""
 
         if _phase(room) == "preparation":
-            await self._enter_battle(room, player_id)
+            if not await self._enter_battle(room, player_id):
+                return
         await self._play_standard_card(room, player_id)
         await self._wait_chain(room, player_id)
 
@@ -421,6 +422,9 @@ class AiService:
             self._connection(room, player_id),
             {"room_id": room.id, "player_id": player_id},
         )
+        if ack and ack.get('waiting_priority'):
+            room, ok = await self.settle(room, player_id)
+            return bool(ok and room and _phase(room) == 'battle')
         return bool(ack and ack.get("status") == "success")
 
     async def _enter_end(self, room: Room, player_id: str) -> bool:
@@ -428,6 +432,9 @@ class AiService:
             self._connection(room, player_id),
             {"room_id": room.id, "player_id": player_id},
         )
+        if ack and ack.get('waiting_priority'):
+            room, ok = await self.settle(room, player_id)
+            return bool(ok and room and _phase(room) == 'end')
         return bool(ack and ack.get("status") == "success")
 
     async def _end_turn(self, room: Room, player_id: str) -> bool:
@@ -585,6 +592,8 @@ class AiService:
         """
 
         reasons: list[str] = []
+        if room.priority_pending:
+            reasons.append('等待对方回答阶段转换询问')
         if room.chain:
             reasons.append(f"连锁栈还有 {len(room.chain)} 项")
         if room.chain_waiting:

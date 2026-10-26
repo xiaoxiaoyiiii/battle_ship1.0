@@ -24,6 +24,11 @@ const MOTION_KEY = 'battleship.ui.motion'
 const CONTRAST_KEY = 'battleship.ui.contrast'
 const FONT_SCALE_KEY = 'battleship.ui.fontScale'
 const ACCENT_KEY = 'battleship.ui.accent'
+const PHASE_PROMPT_KEY = 'battleship.ui.phasePrompts'
+
+function readPhasePrompts(): boolean {
+  try { return storage()?.getItem(PHASE_PROMPT_KEY) !== 'off' } catch { return true }
+}
 
 export const FONT_SCALE_LABELS: Record<FontScale, string> = {
   normal: '标准',
@@ -168,6 +173,11 @@ function readAccent(): string {
 }
 
 export const useUiStore = defineStore('ui', () => {
+  const phasePrompts = ref(readPhasePrompts())
+  function setPhasePrompts(enabled: boolean): void {
+    phasePrompts.value = enabled
+    try { storage()?.setItem(PHASE_PROMPT_KEY, enabled ? 'on' : 'off') } catch { /* 本次会话仍生效。 */ }
+  }
   // ------------------------------------------------------------- theme ----
   const theme = ref<ThemeName>(readTheme())
   const motion = ref<MotionPreference>(readMotion())
@@ -422,6 +432,8 @@ export const useUiStore = defineStore('ui', () => {
   const hasNotices = computed(() => notices.value.length > 0)
 
   return {
+    phasePrompts,
+    setPhasePrompts,
     connection,
     connectionIssue,
     setConnection,

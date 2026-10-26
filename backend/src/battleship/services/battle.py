@@ -32,6 +32,7 @@ from ..domain.room import Player, PlayerShip, Position, Room, RoomState
 from ..domain.room.models import field_magic_name
 from ..infra.logging import get_logger
 from .rooms import Connection, EventPublisher, NullPublisher, RoomService
+from .priority import guard_phase_write
 from .settlement import SettlementResult, SettlementService
 
 logger = get_logger("battle")
@@ -142,6 +143,7 @@ class BattleService:
 
     # ---------------------------------------------------------------- attacks
 
+    @guard_phase_write
     async def attack(self, connection: Connection,
                      data: dict[str, Any] | None = None) -> dict:
         data = data if isinstance(data, dict) else {}
@@ -160,6 +162,7 @@ class BattleService:
             return {"status": "error", "message": frozen}
         return await self._perform_attack(room, player_id, data.get("x"), data.get("y"))
 
+    @guard_phase_write
     async def fire(self, room: Room, player_id: str, x: int, y: int) -> dict:
         """Turn-watchdog seam: same rules, no socket identity check."""
 
@@ -456,6 +459,7 @@ class BattleService:
             room, winner_id, loser_id, reason=reason, pre_marked=True
         )
 
+    @guard_phase_write(allow_priority=True)
     async def surrender(self, connection: Connection,
                         data: dict[str, Any] | None = None) -> dict:
         data = data if isinstance(data, dict) else {}

@@ -1,4 +1,5 @@
 import type { Pinia } from 'pinia'
+import { watch } from 'vue'
 import type { TypedSocket } from '../socket/client'
 import {
   acquireSettlementChannel,
@@ -62,6 +63,8 @@ export const BATTLE_EVENTS = [
   'placement_done',
   'priority_waiting',
   'priority_waiting_end',
+  'priority_request',
+  'priority_setting_updated',
   'shenji_waiting',
   'shenji_waiting_end',
   'dice_discard_request',
@@ -93,6 +96,8 @@ export type BattleEmitEvent =
   | 'get_magic_temp_data'
   | 'confirm_shenji_declare'
   | 'dice_discard_choose'
+  | 'priority_response'
+  | 'set_decline_priority'
 
 export const BATTLE_EMIT_EVENTS: readonly BattleEmitEvent[] = [
   'attack',
@@ -114,6 +119,8 @@ export const BATTLE_EMIT_EVENTS: readonly BattleEmitEvent[] = [
   'get_magic_temp_data',
   'confirm_shenji_declare',
   'dice_discard_choose',
+  'priority_response',
+  'set_decline_priority',
 ]
 
 const ALLOWED_EMITS: readonly string[] = BATTLE_EMIT_EVENTS satisfies readonly InboundEvent[]
@@ -464,9 +471,12 @@ export function applyBattleEvent(
       game.applyServerState({ pending_placement: null, pending_placement_blocked: [], pending_placement_allowed: [] })
       break
     }
+    case 'priority_request':
     case 'priority_waiting': {
       game.applyServerState({
         priority_waiting: {
+          ...payload,
+          role: event === 'priority_request' ? 'responder' : 'actor',
           action: String(payload.action ?? ''),
           action_text: String(payload.action_text ?? '阶段转换'),
         },
@@ -474,7 +484,13 @@ export function applyBattleEvent(
       break
     }
     case 'priority_waiting_end': {
-      game.applyServerState({ priority_waiting: null })
+      if (!payload.token || game.state.priority_waiting?.token === payload.token) {
+        game.applyServerState({ priority_waiting: null })
+      }
+      break
+    }
+    case 'priority_setting_updated': {
+      useUiStore(pinia).setPhasePrompts(payload.decline !== true)
       break
     }
     case 'shenji_waiting': {
@@ -546,8 +562,20 @@ export function acquireBattleChannel(pinia?: Pinia): () => void {
     // Connection state is a HUD fact (spec §5), so it is mirrored into the game
     // store here — the only place that owns this socket. No second flag.
     const ui = useUiStore(pinia)
+    const game = useGameStore(pinia)
+    const syncPhasePreference = (): void => {
+      if (!socket.socket.connected || !game.state.room_id || !game.state.player_id) return
+      void socket.emitEvent('set_decline_priority', {
+        room_id: game.state.room_id, player_id: game.state.player_id, decline: !ui.phasePrompts,
+      }).catch(() => { /* 重连时再次同步。 */ })
+    }
+    const stopPhasePreference = watch(
+      () => [game.state.room_id, game.state.player_id, ui.phasePrompts],
+      syncPhasePreference, { immediate: true },
+    )
     const onConnect = (): void => {
       ui.setConnection(true)
+      syncPhasePreference()
       // Ticket #53: the RPS draw is emitted before this channel exists. Pull the
       // authoritative hand once we are connected so the game screen never opens
       // with 0 cards (frozen event, no new protocol).
@@ -563,6 +591,7 @@ export function acquireBattleChannel(pinia?: Pinia): () => void {
       stop: () => {
         socket.socket.off('connect', onConnect)
         socket.socket.off('disconnect', onDisconnect)
+        stopPhasePreference()
         stopListeners()
         releaseSettlement()
       },

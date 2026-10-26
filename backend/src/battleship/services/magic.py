@@ -80,6 +80,7 @@ from ..domain.room.sync import EFFECT_BADGES, _spectate_chain_payload, card_payl
 from ..infra.logging import get_logger
 from ..infra.timers import TaskRegistry
 from .rooms import Connection, EventPublisher, NullPublisher, RoomService
+from .priority import guard_phase_write
 from .settlement import SettlementService
 
 logger = get_logger("magic")
@@ -464,6 +465,7 @@ class MagicService:
             await self._emit_ship_pick_request(room, entry)
         return None
 
+    @guard_phase_write
     async def confirm_sacrifice(self, connection: Connection,
                                 data: dict[str, Any] | None = None) -> dict:
         data = data if isinstance(data, dict) else {}
@@ -693,6 +695,7 @@ class MagicService:
         })
         await self._activate_magic_temp(room)
 
+    @guard_phase_write
     async def confirm_reinforcement_position(
         self, connection: Connection, data: dict[str, Any] | None = None
     ) -> dict:
@@ -943,6 +946,7 @@ class MagicService:
 
     # --------------------------------------------------------------- play card
 
+    @guard_phase_write
     async def use_magic_card(self, connection: Connection,
                              data: dict[str, Any] | None = None) -> dict:
         data = data if isinstance(data, dict) else {}
@@ -1205,6 +1209,7 @@ class MagicService:
                 None, {"room_id": room_id, "player_id": ai_id, "chain": False}
             )
 
+    @guard_phase_write
     async def chain_response(self, connection: Connection | None,
                              data: dict[str, Any] | None = None) -> dict:
         """Answer the open window: play a speed-3 card or pass.
@@ -1787,6 +1792,7 @@ class MagicService:
 
     # --------------------------------------------------------------- target API
 
+    @guard_phase_write
     async def select_magic_target(self, connection: Connection,
                                   data: dict[str, Any] | None = None) -> dict:
         data = data if isinstance(data, dict) else {}
@@ -1856,6 +1862,7 @@ class MagicService:
         result["next_temp"] = _temp_payload(promoted)
         return result
 
+    @guard_phase_write
     async def confirm_magic_target(self, connection: Connection | dict[str, Any],
                                    data: dict[str, Any] | None = None) -> dict:
         # select_magic_target re-enters through a plain dict (legacy shape).
@@ -2245,6 +2252,7 @@ class MagicService:
         }
 
 
+    @guard_phase_write
     async def cancel_magic_selection(self, connection: Connection,
                                      data: dict[str, Any] | None = None) -> dict:
         data = data if isinstance(data, dict) else {}
@@ -2670,6 +2678,7 @@ class MagicService:
         await self._activate_magic_temp(room)
         await self._sync_each_seat(room)
 
+    @guard_phase_write
     async def confirm_shenji_declare(self, connection: Connection,
                                      data: dict[str, Any] | None = None) -> dict:
         data = data if isinstance(data, dict) else {}
@@ -2887,6 +2896,7 @@ class MagicService:
             room.pending_dice_discard_label = {}
             await self._publisher.emit("dice_discard_complete", {}, room=room.id)
 
+    @guard_phase_write
     async def dice_discard_choose(self, connection: Connection,
                                   data: dict[str, Any] | None = None) -> dict:
         data = data if isinstance(data, dict) else {}
@@ -2928,6 +2938,7 @@ class MagicService:
         await self._sync_each_seat(room)
         return {"status": "success", "message": f"已弃置「{discarded.name}」"}
 
+    @guard_phase_write
     async def papal_discard(self, connection: Connection,
                             data: dict[str, Any] | None = None) -> dict:
         data = data if isinstance(data, dict) else {}
@@ -2989,6 +3000,7 @@ class MagicService:
             "message": f"已弃置「{discarded.name}」，攻击次数 +2",
         }
 
+    @guard_phase_write
     async def remove_field_magic(self, connection: Connection,
                                  data: dict[str, Any] | None = None) -> dict:
         data = data if isinstance(data, dict) else {}

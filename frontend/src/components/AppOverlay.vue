@@ -23,6 +23,9 @@ const props = withDefaults(
     /** Fallback accessible name when there is no visible heading id. */
     label?: string
     closeOnBackdrop?: boolean
+    /** 可控显示时保留组件，让离场动画播放完。 */
+    open?: boolean
+    transitionName?: string
     /** Where focus goes on close; defaults to whatever was focused on mount. */
     returnFocus?: () => HTMLElement | null
   }>(),
@@ -32,6 +35,8 @@ const props = withDefaults(
     labelledby: undefined,
     label: undefined,
     closeOnBackdrop: true,
+    open: true,
+    transitionName: undefined,
     returnFocus: undefined,
   },
 )
@@ -40,6 +45,7 @@ const emit = defineEmits<{ (event: 'close'): void }>()
 const ui = useUiStore()
 
 const panel = ref<HTMLElement | null>(null)
+const shown = ref(false)
 let opener: HTMLElement | null = null
 let claimed = false
 
@@ -96,9 +102,9 @@ function onFocusIn(event: FocusEvent): void {
   if (target && !root.contains(target)) items()[0]?.focus()
 }
 
-onMounted(async () => {
-  opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
-  claimed = ui.claimDialog(props.id, props.priority)
+async function activate(): Promise<void> {
+  if (!claimed) opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  claimed = claimed || ui.claimDialog(props.id, props.priority)
   if (!claimed) {
     // A higher-priority layer owns the screen: this dialog never shows.
     emit('close')
@@ -106,19 +112,38 @@ onMounted(async () => {
   }
   ui.registerDialogClose(props.id, close)
   document.addEventListener('focusin', onFocusIn)
+  shown.value = true
   await nextTick()
+  if (!shown.value) return
   const focusable = items()
   ;(focusable[0] ?? panel.value)?.focus()
-})
+}
 
-onBeforeUnmount(() => {
+function release(): void {
+  if (shown.value && props.open) return
   document.removeEventListener('focusin', onFocusIn)
   if (claimed) {
     ui.unregisterDialogClose(props.id)
     ui.releaseDialog(props.id)
   }
+  claimed = false
   const target = props.returnFocus ? props.returnFocus() : opener
   if (target && document.contains(target)) target.focus()
+  opener = null
+}
+
+onMounted(() => { if (props.open) void activate() })
+watch(() => props.open, (open) => {
+  if (open) void activate()
+  else {
+    shown.value = false
+    // 立即交还对话槽，后续的目标或连锁窗口不必等待动画结束。
+    release()
+  }
+})
+onBeforeUnmount(() => {
+  shown.value = false
+  release()
 })
 
 watch(
@@ -131,7 +156,9 @@ watch(
 
 <template>
   <Teleport to="body">
+    <Transition :name="transitionName" :css="Boolean(transitionName)" :appear="Boolean(transitionName)" @after-leave="release">
     <div
+      v-if="shown"
       class="app-overlay"
       :class="'app-overlay--' + layer"
       :data-overlay="id"
@@ -152,5 +179,6 @@ watch(
         <slot />
       </div>
     </div>
+    </Transition>
   </Teleport>
 </template>

@@ -2344,7 +2344,7 @@ function backToLobby(): void {
     <MagicPlacementPanel />
     <MagicChoicePanel />
     <MagicDiscardPanel />
-    <PhasePriorityPrompt v-if="priorityRequest && ui.phasePrompts && selection?.priorityToken === undefined" :key="String(priorityRequest.token)" :request="priorityRequest" :now="now" :busy="busy" :error="priorityError" @select="respondPriority" @pass="passPriority" />
+    <PhasePriorityPrompt :open="Boolean(priorityRequest && ui.phasePrompts && selection?.priorityToken === undefined)" :request="priorityRequest" :now="now" :busy="busy" :error="priorityError" @select="respondPriority" @pass="passPriority" />
 
     <DiceRollOverlay
       :self-id="state.player_id"
@@ -2355,6 +2355,7 @@ function backToLobby(): void {
 </template>
 
 <style scoped src="./game-screen.css"></style>
+<style scoped src="./card-inspect.css"></style>
 
 <style scoped>
 /* 只改变响应窗口的呈现，不改变连锁计时和响应状态。 */

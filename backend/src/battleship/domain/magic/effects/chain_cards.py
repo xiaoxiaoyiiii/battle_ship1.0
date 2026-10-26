@@ -31,10 +31,16 @@ def _tear_down_field_magic(room: Any, caster_id: str | None = None) -> tuple[Mag
     if not room.field_magic:
         return None, False
     before = int(room.attacks_remaining or 0)
+    in_battle = getattr(room.current_phase, 'value', room.current_phase) == 'battle'
+    previous_base = recalc_attacker_attacks(room) if in_battle else 0
+    room.attacks_remaining = before
     torn = field_tear_down(
         room, caster_id or room.current_attacker or ""
     )
-    recalc_attacker_attacks(room)
+    current_base = recalc_attacker_attacks(room)
+    if in_battle:
+        from ...battle import attacks_forced_zero
+        room.attacks_remaining = 0 if attacks_forced_zero(room) else max(0, before + current_base - previous_base)
     return torn, int(room.attacks_remaining or 0) != before
 
 
@@ -91,11 +97,7 @@ async def shiling(ctx: EffectContext) -> EffectResult:
 
 @register("加百列之光")
 async def gabriel(ctx: EffectContext) -> EffectResult:
-    """Negate the stack item below, or tear a field card when the stack is empty.
-
-    No owner check: a later card in the same chain may overturn an earlier one,
-    including one its caster played (legacy multi-level negation fix).
-    """
+    """无效上一张连锁牌，并同时拆除当前场地。"""
 
     negated_count = 0
     chain_negated = False
@@ -103,7 +105,7 @@ async def gabriel(ctx: EffectContext) -> EffectResult:
         negated_count += 1
         chain_negated = True
 
-    if not chain_negated and ctx.room.field_magic is None and ctx.room.magic_history:
+    if not chain_negated and ctx.room.magic_history:
         last = ctx.room.magic_history[-1]
         if last.get("caster") != ctx.caster_id:
             ctx.room.magic_history.pop()
@@ -112,7 +114,7 @@ async def gabriel(ctx: EffectContext) -> EffectResult:
 
     torn = None
     attacks_changed = False
-    if not chain_negated and ctx.room.field_magic:
+    if ctx.room.field_magic:
         torn, attacks_changed = _tear_down_field_magic(ctx.room, ctx.caster_id)
         negated_count += 1
 
@@ -120,7 +122,10 @@ async def gabriel(ctx: EffectContext) -> EffectResult:
         return EffectResult(False, "没有可无效化的魔法卡或场地魔法")
     if torn is not None:
         await _emit_field_teardown(ctx, torn, attacks_changed)
-        return EffectResult(True, f"成功无效化场地魔法「{getattr(torn, 'name', '')}」")
+        message = f"成功无效化场地魔法「{getattr(torn, 'name', '')}」"
+        if chain_negated:
+            message += "，并无效化上一张魔法卡"
+        return EffectResult(True, message, negate_target=chain_negated)
     return EffectResult(True, "成功无效化连锁中的魔法卡", negate_target=chain_negated)
 
 

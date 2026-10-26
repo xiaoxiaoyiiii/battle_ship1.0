@@ -577,6 +577,8 @@ class GameplayService:
                 actor,
             )
 
+        if room.state == RoomState.ATTACKING and self.magic is not None:
+            await self.magic._sync_each_seat(room)
         return {"status": "success"}
 
     # ---------------------------------------------------------------- phases
@@ -590,6 +592,8 @@ class GameplayService:
             },
             room=room.id,
         )
+        if self.magic is not None:
+            await self.magic._sync_each_seat(room)
 
     @guard_phase_write
     async def enter_battle_phase(self, connection: Connection,

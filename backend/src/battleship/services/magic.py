@@ -431,6 +431,7 @@ class MagicService:
     async def request_ship_pick(
         self, room: Room, chooser_id: str, reason: str, message: str,
         allow_duplicate: bool = False, silent: bool = False,
+        *, source_id: str | None = None,
     ) -> PlayerShip | None:
         """Ask one player to click an own living ship.
 
@@ -453,10 +454,14 @@ class MagicService:
                 room, chooser_id, reason, alive, rng=self.rng
             )
 
+        previous_seq = room.ship_pick_seq
         existing = interaction_rules.register_ship_pick(
             room, chooser_id, reason, message,
             allow_duplicate=allow_duplicate, silent=silent,
         )
+        registered = existing or next((pick for pick in room.pending_ship_picks if pick.get('seq', 0) > previous_seq), None)
+        if registered is not None and source_id is not None:
+            registered['source_caster'] = source_id
         if existing is not None:
             await self._emit_ship_pick_request(room, existing)
             return None
@@ -530,11 +535,11 @@ class MagicService:
                 "message": f"当前待处理的是「{label}」的选船，请用面板上的确认按钮提交，"
                            f"不要直接点船格（这条路径只用于牺牲类效果）",
             }
-        await self._sacrifice_ship(room, player_id, ship, reason)
+        await self._sacrifice_ship(room, player_id, ship, reason, source_id=entry.get('source_caster'))
         return {"status": "success", "message": "已选择一艘战舰"}
 
     async def _sacrifice_ship(self, room: Room, player_id: str,
-                              ship: PlayerShip, reason: str = "demon_contract") -> None:
+                              ship: PlayerShip, reason: str = "demon_contract", *, source_id: str | None = None) -> None:
         player = room.players.get(player_id)
         if player is None or ship is None or ship not in player.ships:
             return
@@ -542,6 +547,8 @@ class MagicService:
         player.ships.remove(ship)
         battle_rules.mark_ship_sunken(player, ship)
         player.remaining_ships = max(0, int(player.remaining_ships) - 1)
+        if not room.chain_resolving and source_id == room.current_attacker and source_id != player_id:
+            room.players[source_id].ship_reductions_this_turn += 1
         positions = [{"x": p.x, "y": p.y} for p in ship.positions]
         await self._publish_sunken_cells(room, player_id, positions)
         replay_rules.note_ship_lost(room, player_id, positions)
@@ -549,6 +556,7 @@ class MagicService:
             "divine_decree": "神之宣告",
             "dice_sacrifice": "命运骰子",
             "trap_sacrifice": "守株待兔",
+            "iron_bones": "钢筋铁骨",
         }.get(reason, "恶魔契约")
         await self._add_log(
             room,
@@ -561,6 +569,7 @@ class MagicService:
             {"player": player_id, "positions": positions, "reason": reason},
             room=room.id,
         )
+        await self.on_ship_destroyed(room, player_id, ship)
         await self._emit_ships_updated(room)
         await self._emit_player_ships(room, player_id)
 
@@ -642,9 +651,10 @@ class MagicService:
             picked = await self.request_ship_pick(
                 room, opponent_id, "trap_sacrifice",
                 "守株待兔：请点选一艘战舰牺牲", True, False,
+                source_id=owner_id,
             )
             if picked is not None:
-                await self._sacrifice_ship(room, opponent_id, picked, "trap_sacrifice")
+                await self._sacrifice_ship(room, opponent_id, picked, "trap_sacrifice", source_id=owner_id)
 
     # --------------------------------------------------------------- placement
 
@@ -1426,7 +1436,15 @@ class MagicService:
                     # 兼容原地复活、批量击杀、献祭，避免多处回调重复结算。
                     with contract_rules.suppressed(room):
                         effect_result = await effect(self._context(room, item))
+                    if effect_result.success and item.card.name == '败者食尘':
+                        for task_room, token in list(self._shenji_tasks):
+                            if task_room == room.id:
+                                self._cancel_shenji_task(task_room, token)
+                        self._interaction_waits.pop(room.id, None)
                     after_counts = {pid: p.remaining_ships for pid, p in room.players.items()}
+                    opponent_id = room.opponent_of(item.player_id)
+                    if effect_result.success and item.card.name not in ('灵气复苏', '败者食尘', '回光返照') and opponent_id and after_counts[opponent_id] < before_counts[opponent_id]:
+                        room.players[item.player_id].ship_reductions_this_turn += before_counts[opponent_id] - after_counts[opponent_id]
                     if effect_result.success and not effect_result.game_over and room.state != RoomState.GAME_OVER and item.card.name not in contract_rules.NO_MIRROR_CARDS:
                         if item.card.name == "绝处逢生":
                             deferred = False
@@ -1511,7 +1529,8 @@ class MagicService:
                 if (
                     opponent is not None
                     and opponent.remaining_ships <= 0
-                    and len(opponent.ships or []) > 0
+                    and room.state == RoomState.ATTACKING
+                    and not opponent.needs_reset
                 ):
                     await self.finish(
                         room, item.player_id, opponent_id,
@@ -1655,11 +1674,11 @@ class MagicService:
                                     allow_duplicate: bool = False,
                                     silent: bool = False):
             return await self.request_ship_pick(
-                room, chooser_id, reason, message, allow_duplicate, silent
+                room, chooser_id, reason, message, allow_duplicate, silent, source_id=item.player_id
             )
 
         async def sacrifice_ship(player_id: str, ship: Any, reason: str) -> None:
-            await self._sacrifice_ship(room, player_id, ship, reason)
+            await self._sacrifice_ship(room, player_id, ship, reason, source_id=item.player_id)
 
         async def on_ship_destroyed(player_id: str, ship: Any) -> None:
             await self.on_ship_destroyed(
@@ -1779,6 +1798,7 @@ class MagicService:
                 self._cancel_shenji_task(room_id, token)
         room.pending_dice_discard = {}
         room.pending_dice_discard_label = {}
+        room.dice_discard_queue = {}
         room.pending_wuyou_dreams = {}
         room.pending_bingliang = {}
         room.bingliang_skip_draw = {}
@@ -1920,14 +1940,21 @@ class MagicService:
         if not isinstance(cards, list) or not cards:
             return {"status": "error", "message": "没有可分配的卡牌"}
         try:
-            caster_choice = int(target_data.get("caster_choice"))
+            caster_choice = target_rules.strict_int(target_data.get("caster_choice"))
         except (TypeError, ValueError):
             return {"status": "error", "message": "无效的卡牌选择"}
         caster = room.players[player_id]
+        if caster_choice is None or not 0 <= caster_choice < len(cards):
+            return {"status": "error", "message": "无效的卡牌选择"}
         opponent_id = room.opponent_of(player_id)
         opponent = room.players.get(opponent_id) if opponent_id else None
         if opponent is None:
             return {"status": "error", "message": "房间人数不足"}
+        if caster.effect_flags.no_draw or opponent.effect_flags.no_draw:
+            room.magic_deck.extend(cards)
+            magic_temps.finish(room, 'taoyuan_choice', owner=player_id)
+            await self._sync_each_seat(room)
+            return {"status": "error", "message": "无中生有生效中，候选卡已放回牌堆，无法获得卡牌"}
         caster.magic_hand.append(cards[caster_choice])
 
         opponent_choice = -1
@@ -2008,6 +2035,7 @@ class MagicService:
         interaction_rules.clear_ship_picks(room)
         for player in room.players.values():
             player.ships = []
+            player.sunken_ships = []
             player.attacks = []
             player.remaining_ships = 0
             player.needs_reset = True
@@ -2138,6 +2166,13 @@ class MagicService:
         if not (0 <= chosen_index < len(cards)):
             return {"status": "error", "message": "无效的卡牌选择"}
         chosen = cards[chosen_index]
+        if room.players[player_id].effect_flags.no_draw:
+            room.magic_discard.extend(cards)
+            if temp.get('own_card') is not None:
+                room.magic_discard.append(temp['own_card'])
+            magic_temps.finish(room, 'wangyang_choice', owner=player_id)
+            await self._sync_each_seat(room)
+            return {"status": "error", "message": "无中生有生效中，候选卡已退回弃牌堆，无法获得卡牌"}
         room.players[player_id].magic_hand.append(chosen)
         for index, card in enumerate(cards):
             if index != chosen_index:
@@ -2351,9 +2386,10 @@ class MagicService:
         picked = await self.request_ship_pick(
             room, sacrifice_id, "demon_contract",
             "恶魔契约生效：请点选一艘自己的战舰牺牲", True, False,
+            source_id=lost_player_id,
         )
         if picked is not None:
-            await self._sacrifice_ship(room, sacrifice_id, picked, "demon_contract")
+            await self._sacrifice_ship(room, sacrifice_id, picked, "demon_contract", source_id=lost_player_id)
 
     async def _mirror_contract_loss(self, room: Room, lost_player_id: str) -> None:
         """一方少了一艘：另一方也要牺牲一艘（契约在场时由 on_ship_sunk 调用）。"""
@@ -2464,7 +2500,7 @@ class MagicService:
 
     async def on_damage(self, room: Room, attacker_id: str, outcome: Any) -> None:
         attacker = room.players.get(attacker_id)
-        if attacker is None:
+        if attacker is None or not getattr(outcome, 'ship_sunk', False):
             return
         if attacker.effect_flags.vampire:
             await self.draw(room, attacker_id)
@@ -2473,7 +2509,7 @@ class MagicService:
                     "message", {"text": "饮血效果发动，抽一张卡"}, to=attacker.socket_id
                 )
         if attacker.effect_flags.battle_spirit:
-            gained = battle_rules.grant_extra_attacks(room, attacker_id, 1)
+            gained = battle_rules.grant_extra_attacks(room, attacker_id, 2)
             if gained:
                 await self._publisher.emit(
                     "attacks_updated",
@@ -2496,7 +2532,7 @@ class MagicService:
         player = room.players.get(player_id)
         if player is None or not getattr(player.effect_flags, "wuxian", False):
             return False
-        if field_magic_name(room) == "教皇旨意":
+        if field_magic_name(room) == "教皇旨意" or battle_rules.attacks_forced_zero(room):
             return False
         if room.current_attacker != player_id:
             return False
@@ -2856,7 +2892,10 @@ class MagicService:
             ai_id = next((pid for pid in room.players if str(pid).startswith("ai-")), None)
         for pid in targets:
             player = room.players.get(pid)
-            if player is None or pending.get(pid) is False:
+            if player is None:
+                continue
+            if pending.get(pid) is False:
+                room.dice_discard_queue.setdefault(pid, []).append(card_name)
                 continue
             if not player.magic_hand:
                 pending[pid] = True
@@ -2898,7 +2937,26 @@ class MagicService:
         if all(pending.values()):
             room.pending_dice_discard = {}
             room.pending_dice_discard_label = {}
+            room.dice_discard_queue = {}
             await self._publisher.emit("dice_discard_complete", {}, room=room.id)
+
+    async def _advance_dice_discard(self, room: Room, player_id: str) -> None:
+        """完成一项后提升同一人的下一项，保留叠加判定的每次义务。"""
+        queue = room.dice_discard_queue.get(player_id, [])
+        if queue and room.players[player_id].magic_hand:
+            source = queue.pop(0)
+            room.pending_dice_discard[player_id] = False
+            room.pending_dice_discard_label[player_id] = source
+            player = room.players[player_id]
+            if player.socket_id:
+                await self._publisher.emit('dice_discard_request', {
+                    'message': f'{source}：请选择一张手牌弃置',
+                    'reason': 'dice_discard', 'card': source,
+                }, to=player.socket_id)
+        else:
+            room.dice_discard_queue.pop(player_id, None)
+            room.pending_dice_discard[player_id] = True
+        await self._check_dice_discard_complete(room)
 
     @guard_phase_write
     async def dice_discard_choose(self, connection: Connection,
@@ -2916,8 +2974,7 @@ class MagicService:
             source = labels.get(player_id) or source
         player = room.players[player_id]
         if not player.magic_hand:
-            pending[player_id] = True
-            await self._check_dice_discard_complete(room)
+            await self._advance_dice_discard(room, player_id)
             await self._sync_each_seat(room)
             return {"status": "success", "message": "没有手牌可弃，已跳过"}
         try:
@@ -2937,8 +2994,7 @@ class MagicService:
             {"player": player_id, "card": discarded.name,
              "reason": "dice_discard", "source": source},
         )
-        pending[player_id] = True
-        await self._check_dice_discard_complete(room)
+        await self._advance_dice_discard(room, player_id)
         await self._sync_each_seat(room)
         return {"status": "success", "message": f"已弃置「{discarded.name}」"}
 
@@ -2960,6 +3016,8 @@ class MagicService:
             return {"status": "error", "message": "还没到你的攻击回合"}
         if self._phase(room) != "battle":
             return {"status": "error", "message": "当前不是战斗阶段"}
+        if battle_rules.attacks_forced_zero(room):
+            return {"status": "error", "message": "当前效果使攻击次数恒定为0，不能通过弃牌获得攻击次数"}
         player = room.players[player_id]
         if not player.magic_hand:
             return {"status": "error", "message": "没有可弃置的魔法卡"}
@@ -3200,7 +3258,7 @@ class MagicService:
                                 "reason": "极限增援生效，船数少的一方获胜"}
 
         heart = room.game_effects.get("holy_heart")
-        if isinstance(heart, dict) and heart.get("no_damage"):
+        if isinstance(heart, dict):
             heart["remaining_turns"] = int(heart.get("remaining_turns") or 0) - 1
             remaining = int(heart.get("remaining_turns") or 0)
             await self._publisher.emit(
@@ -3209,10 +3267,11 @@ class MagicService:
             if remaining <= 0:
                 winner = heart.get("caster")
                 loser = next((pid for pid in room.players if pid != winner), None)
-                if winner and loser:
+                if winner and loser and heart.get('no_damage'):
                     await self.finish(room, winner, loser, reason="无暇圣心结算")
                     return {"game_over": True, "winner": winner,
                             "reason": "无暇圣心笼罩大地 愿这方世界不再有战争"}
+                room.game_effects.pop('holy_heart', None)
 
         for player_id, player in list(room.players.items()):
             # 先读宣言值（round 租约还没过期），大回合边界统一 expire 掉。
@@ -3221,7 +3280,7 @@ class MagicService:
                 continue
             saved = room.game_effects.get(f"prediction_initial_{player_id}")
             if isinstance(saved, dict):
-                diff = len(player.sunken_ships) - int(saved.get("sunken") or 0)
+                diff = int(saved.get('ships') or 0) - int(player.remaining_ships or 0)
                 if diff == prediction:
                     await self.begin_shenji_redeploy(
                         room, player_id, prediction,

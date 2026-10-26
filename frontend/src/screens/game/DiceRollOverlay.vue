@@ -171,7 +171,7 @@ onBeforeUnmount(clearTimers)
 }
 .dice-lock__die.is-rolling { animation: dice-shake 140ms linear infinite alternate, dice-glow 900ms ease-in-out infinite; }
 .dice-lock__die--opponent { border-color: var(--role-enemy); box-shadow: 0 0 0 7px rgba(255, 107, 120, 0.12), 0 16px 30px rgba(0, 0, 0, 0.42); }
-.dice-lock__die span { color: var(--text-primary); font-size: 58px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.dice-lock__die span { color: #f8fafc; font-size: 58px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .dice-lock__versus { color: var(--gold-strong); font-size: 18px; font-weight: 800; letter-spacing: .12em; }
 .dice-lock__result { color: var(--gold-strong); font-size: 16px; }
 .dice-lock__phase { margin: 0; color: var(--text-secondary); font-size: 13px; }

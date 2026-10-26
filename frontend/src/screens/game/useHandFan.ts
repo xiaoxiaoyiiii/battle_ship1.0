@@ -6,7 +6,7 @@ import { computed, onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
  * 原实现在窗口尺寸/张数变化时直接写行内样式；这里用「测量可用宽 → 计算 → 由模板绑定」
  * 的同一套算术，常量与原文件一致：
  * - 卡高 186（不低于 136），卡间距 10，旋转安全边距 20
- * - 每张至少露 44px 可点（有牌选中时相邻那张允许收紧到 40）
+ * - 每张至少露 44px 可点，空间不足时只在手牌条内横向滚动
  * - 张角上限 0.1rad，重叠排布不旋转（`hand-tight`），只做下沉
  */
 export const HAND_CARD_W_MAX = 132
@@ -14,7 +14,6 @@ export const HAND_CARD_W_MIN = 96
 export const HAND_CARD_H = 186
 export const HAND_CARD_H_MIN = 136
 export const HAND_TAP_MIN = 44
-export const HAND_TAP_SEL_MIN = 40
 export const HAND_GAP = 10
 export const HAND_SAFE = 20
 export const HAND_FAN_MAX_RAD = 0.1
@@ -32,6 +31,7 @@ export interface HandLayout {
   descLines: number
   fan: boolean
   tight: boolean
+  scrollable: boolean
   cards: HandCardLayout[]
 }
 
@@ -72,6 +72,7 @@ export function useHandFan(options: {
       descLines: 5,
       fan: false,
       tight: false,
+      scrollable: false,
       cards: [],
     }
     // 紧凑档交给 CSS 的固定小卡（原实现同样“compact 时不插手”）。
@@ -89,39 +90,18 @@ export function useHandFan(options: {
       step = n > 1 ? (avail - w) / (n - 1) : w
       if (step < HAND_TAP_MIN) {
         step = HAND_TAP_MIN
-        w = Math.min(HAND_CARD_W_MIN, avail - step * (n - 1))
       }
     }
-    w = Math.floor(Math.max(24, w))
+    w = Math.floor(Math.max(HAND_CARD_W_MIN, w))
     step = Math.floor(step)
     const overlapping = step < w + HAND_GAP - 1
     const h = HAND_CARD_H
 
-    // pitch[i] = 第 i 张到第 i+1 张的左边缘位移；选中牌要和右邻居分一份预算。
+    // 张数过多时保留可点宽度，让手牌条内部滚动，不再把卡压成细缝。
     const pitches = new Array<number>(Math.max(0, n - 1)).fill(step)
-    const sel = options.selectedIndex.value
-    if (overlapping && sel >= 0 && sel <= n - 2) {
-      const need = w + HAND_TAP_MIN
-      const restCount = n - 3
-      let other = restCount > 0 ? (avail - w - need) / restCount : 0
-      if (restCount === 0 || other < HAND_TAP_SEL_MIN) {
-        other = HAND_TAP_SEL_MIN
-        const shrunk = Math.floor(avail - need - restCount * HAND_TAP_SEL_MIN)
-        if (shrunk >= 24 && shrunk < w) w = shrunk
-      }
-      const half = Math.floor(need / 2)
-      for (let i = 0; i < pitches.length; i += 1) pitches[i] = Math.floor(other)
-      pitches[sel] = half
-      pitches[sel + 1] = Math.max(HAND_TAP_MIN, need - half)
-    }
-
-    // 兜底：总宽不超过可用宽（宁可贴紧也不许溢出）
     let total = w
     for (const pitch of pitches) total += pitch
-    if (total > avail && pitches.length) {
-      const k = (avail - w) / (total - w)
-      for (let i = 0; i < pitches.length; i += 1) pitches[i] = Math.floor(pitches[i] * k)
-    }
+    const scrollable = total > avail
 
     const mid = (n - 1) / 2
     const cards: HandCardLayout[] = []
@@ -146,6 +126,7 @@ export function useHandFan(options: {
       descLines: Math.max(3, Math.min(7, Math.floor((h - 72) / HAND_DESC_LINE_PX))),
       fan: n > 1,
       tight: overlapping,
+      scrollable,
       cards,
     }
   })

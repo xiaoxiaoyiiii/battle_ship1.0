@@ -58,7 +58,19 @@ export const useGameStore = defineStore('game', () => {
           : (current.field_owner ?? null),
       }
     }
+    const discardSourceChanged = 'dice_discard_card' in next && next.dice_discard_card !== state.value.dice_discard_card
     Object.assign(state.value, next)
+    // 完整快照也恢复事件展示态；显式 null/空数组必须清除旧对局痕迹。
+    const match = useMatchStore()
+    if (discardSourceChanged || state.value.dice_discard_pending === false) match.diceDiscardMessage = ''
+    if ('last_attack' in next) {
+      const attack = state.value.last_attack
+      match.lastAttack = attack ? {
+        attacker: attack.attacker, x: attack.x, y: attack.y,
+        hit: Boolean(attack.hit), shipSunk: Boolean(attack.ship_sunk),
+      } : null
+    }
+    if ('revealed_positions' in next) match.revealed = state.value.revealed_positions.map(point => ({ ...point }))
     unknownFields.value = unknown
     revision.value += 1
     if (unknown.length && import.meta.env.DEV) {

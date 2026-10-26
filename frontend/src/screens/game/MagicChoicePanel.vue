@@ -68,7 +68,7 @@ async function submit(cancel = false): Promise<void> {
             <img v-if="cardArtUrl(String(card.name))" :src="cardArtUrl(String(card.name))!" alt="" />
             <b>{{ card.name }}</b>
             <small>{{ card.type || '魔法卡' }} · 速阶 {{ card.speed ?? '—' }}<template v-if="kind === 'bury_choice'"> · {{ card.source === 'opponent_hand' ? '对方手牌' : '牌堆' }}</template></small>
-            <span>{{ card.description || '暂无效果说明' }}</span>
+            <span class="magic-choice__description" tabindex="0" :aria-label="String(card.name) + '完整效果'" @click.stop @keydown.stop>{{ card.description || '暂无效果说明' }}</span>
           </button>
         </div>
         <div v-if="kind === 'taoyuan_choice'" class="magic-choice__assignment" data-testid="magic-choice-other" aria-live="polite">
@@ -106,7 +106,8 @@ async function submit(cancel = false): Promise<void> {
 .magic-choice__card:hover img,.magic-choice__card:focus-visible img { filter:saturate(1.12) brightness(1.06); transform:scale(1.03); }
 .magic-choice__card b { display:block; font-size:17px; }
 .magic-choice__card small { display:block; margin-top:6px; color:var(--text-secondary); }
-.magic-choice__card > span:not(.magic-choice__recipient) { flex:1; min-height:0; overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:4; line-clamp:4; }
+.magic-choice__description { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; scrollbar-width:thin; }
+.magic-choice__description:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .magic-choice__card.is-mine { border-color:#64d4e9; background:rgb(78 200 224 / 10%); }
 .magic-choice__card.is-other { border-color:#e0bd70; background:rgb(224 189 112 / 9%); }
 .magic-choice__recipient { position:absolute; top:8px; left:8px; padding:4px 8px; border-radius:6px; background:var(--surface); font-weight:700; }

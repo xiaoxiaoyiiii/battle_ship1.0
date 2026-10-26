@@ -159,6 +159,7 @@ export const useMatchStore = defineStore('match', () => {
   const shieldChoice = ref<ShieldChoice | null>(null)
   const diceRoll = ref<DiceRollState | null>(null)
   const diceRollQueue = ref<DiceRollState[]>([])
+  const diceDiscardMessage = ref('')
   const chainResolvedAt = ref(0)
   /** "超时，已自动…" banner: the server's fallback action is player-visible (#47). */
   const timeoutNote = ref('')
@@ -362,6 +363,7 @@ export const useMatchStore = defineStore('match', () => {
     shieldChoice.value = null
     diceRoll.value = null
     diceRollQueue.value = []
+    diceDiscardMessage.value = ''
     chainResolvedAt.value = 0
     timeoutNote.value = ''
   }
@@ -402,6 +404,7 @@ export const useMatchStore = defineStore('match', () => {
     pickRequest,
     shieldChoice,
     diceRoll,
+    diceDiscardMessage,
     chainResolvedAt,
     timeoutNote,
     setTimeoutNote,

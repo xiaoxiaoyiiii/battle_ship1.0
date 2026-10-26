@@ -268,6 +268,29 @@ def _magic_temp_data(room: Room) -> dict[str, Any]:
     return room.magic_temp_data if isinstance(room.magic_temp_data, dict) else {}
 
 
+def _card_unavailable_reasons(room: Room, player_id: str) -> dict[str, str]:
+    """使用与真实出牌相同的状态规则；需要用户选目标的校验留在提交时。"""
+    from ..magic.rules import evaluate_cast
+    from ..magic.precheck import steal_error, healing_candidates
+    player = room.players[player_id]
+    reasons: dict[str, str] = {}
+    for card in player.magic_hand:
+        reason = evaluate_cast(room, player_id, card)
+        if not reason and player.magic_blocked:
+            reason = '你的魔法卡已被看破，本回合无法使用'
+        if not reason and card.name == '盗亦有道':
+            reason = steal_error(room, player_id)
+        if not reason and card.name == '疗愈' and not healing_candidates(player):
+            reason = '没有可原地复活的己方沉船'
+        if not reason and card.name == '死者苏生' and not player.sunken_ships:
+            reason = '没有可复活的己方沉船'
+        if not reason and card.name == '钢筋铁骨' and not alive_ships(player):
+            reason = '没有可牺牲的己方活舰'
+        if reason:
+            reasons[card.name] = reason
+    return reasons
+
+
 def build_room_sync(
     room: Room, player_id: str, *, turn_timeout_seconds: int = 0
 ) -> dict[str, Any]:
@@ -314,6 +337,7 @@ def build_room_sync(
                 "positions": [{"x": pos.x, "y": pos.y} for pos in ship.positions],
                 "frozen": bool(getattr(ship, "frozen", None)),
                 "shield": bool(getattr(ship, "shield", False)),
+                "invincible": bool(getattr(ship, "invincible", False)),
                 "trap": bool(getattr(ship, "trap", False)),
                 "alive": is_ship_alive(player, ship),
             }
@@ -395,6 +419,13 @@ def build_room_sync(
         "dice_discard_pending": bool(
             (room.pending_dice_discard or {}).get(player_id) is False
         ),
+        "dice_discard_card": (
+            (room.pending_dice_discard_label or {}).get(player_id)
+            if (room.pending_dice_discard or {}).get(player_id) is False else None
+        ),
+        "last_attack": dict(room.last_attack) if room.last_attack and room.last_attack.get('attacker') == player_id else None,
+        "revealed_positions": [{'x': pos.x, 'y': pos.y} for pos in player.revealed_positions],
+        "card_unavailable_reasons": _card_unavailable_reasons(room, player_id),
     }
     # Validation is the freeze: adding/removing a key without updating the
     # contract model fails here instead of silently drifting the wire shape.

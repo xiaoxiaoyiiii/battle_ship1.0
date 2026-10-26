@@ -274,7 +274,7 @@ def enter_end(room: Room, player_id: str) -> str | None:
     room.current_phase = RoomPhase.END
     # #38：余音绕梁每个结束阶段消耗 1 层（旧实现 -=1，0 即不再有强制击杀）。
     effects.adjust_flag(
-        room, player_id, "forced_kill", -1, boundary=effects.BOUNDARY_ROUND
+        room, player_id, "forced_kill", -1, boundary=effects.BOUNDARY_MATCH
     )
     # 越战越勇在本回合结束阶段失效（旧实现置回 False）。
     effects.consume_flag(room, player_id, "battle_spirit")
@@ -336,11 +336,13 @@ def resolve_turn_end(room: Room, player_id: str) -> TurnEnd | None:
             seat.magic_blocked = False
             seat.magic_blocked_round = None
             seat.damage_dealt_this_turn = 0
+            seat.ship_reductions_this_turn = 0
         return TurnEnd("new_round", room.current_attacker, room.round)
 
     room.current_attacker = next_attacker
     room.current_phase = RoomPhase.PREPARATION
     room.players[next_attacker].damage_dealt_this_turn = 0
+    room.players[next_attacker].ship_reductions_this_turn = 0
     recalc_attacker_attacks(room)
     return TurnEnd("next_player", next_attacker, room.round)
 
@@ -544,9 +546,6 @@ def resolve_attack(room: Room, attacker_id: str, x: int, y: int) -> AttackOutcom
     target = _find_hit_ship(defender, x, y)
     if target is not None:
         hit = True
-        if "holy_heart" in room.game_effects and not target.invincible:
-            room.game_effects["holy_heart"]["no_damage"] = False
-
         if forced_kill:
             target.hits = list(target.hits or []) + [Position(x=x, y=y)]
             ship_sunk = True
@@ -565,6 +564,11 @@ def resolve_attack(room: Room, attacker_id: str, x: int, y: int) -> AttackOutcom
                 ship_sunk = True
                 sunk_ship = target
                 apply_ship_sunk(room, defender_id, target)
+
+    if damage_dealt and "holy_heart" in room.game_effects:
+        room.game_effects["holy_heart"]["no_damage"] = False
+    if ship_sunk:
+        attacker.ship_reductions_this_turn += 1
 
     outcome = AttackOutcome(
         attacker=attacker_id,

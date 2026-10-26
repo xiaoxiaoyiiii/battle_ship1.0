@@ -1,5 +1,5 @@
 import type { Pinia } from 'pinia'
-import { watch } from 'vue'
+import { ref, watch } from 'vue'
 import type { TypedSocket } from '../socket/client'
 import {
   acquireSettlementChannel,
@@ -11,6 +11,7 @@ import { useUiStore } from '../stores/ui'
 import { useAudioStore } from '../stores/audio'
 import type { InboundEvent, OutboundEvent } from '../socket/events.gen'
 import type { CardLike, Point } from '../screens/game/view'
+import { actionWaitReason, WAIT_EXEMPT_EVENTS } from '../screens/game/view'
 
 /**
  * The live battle wire channel (ticket #27).
@@ -92,6 +93,7 @@ export type BattleEmitEvent =
   | 'request_hand_sync'
   | 'surrender'
   | 'get_discard_pile'
+  | 'papal_discard'
   | 'get_magic_temp_data'
   | 'confirm_shenji_declare'
   | 'dice_discard_choose'
@@ -115,6 +117,7 @@ export const BATTLE_EMIT_EVENTS: readonly BattleEmitEvent[] = [
   'request_hand_sync',
   'surrender',
   'get_discard_pile',
+  'papal_discard',
   'get_magic_temp_data',
   'confirm_shenji_declare',
   'dice_discard_choose',
@@ -123,6 +126,8 @@ export const BATTLE_EMIT_EVENTS: readonly BattleEmitEvent[] = [
 ]
 
 const ALLOWED_EMITS: readonly string[] = BATTLE_EMIT_EVENTS satisfies readonly InboundEvent[]
+/** 全部对局面板共用，防止不同按钮在上一请求未完成时重复写入。 */
+export const battleActionPending = ref(false)
 
 function numberOrNull(value: unknown): number | null {
   const parsed = Number(value)
@@ -202,7 +207,7 @@ export function applyBattleEvent(
       const attacker = String(payload.attacker ?? '')
       const shipSunk = Boolean(payload.ship_sunk)
       const shieldBlocked = Boolean(payload.shield_blocked)
-      match.lastAttack = { attacker, x, y, hit, shipSunk }
+      game.applyServerState({ last_attack: { attacker, x, y, hit, ship_sunk: shipSunk } })
       audio.play(shipSunk ? 'sunk' : hit ? 'hit' : 'miss')
       const mine = attacker === me
       if (hit && !shieldBlocked) match.clearRevived(!mine, [{ x, y }])
@@ -359,6 +364,7 @@ export function applyBattleEvent(
     }
     case 'revealed_positions': {
       match.markRevealed(pointList(payload.positions))
+      game.applyServerState({ revealed_positions: match.revealed.map(point => ({ ...point })) })
       break
     }
     case 'revived_positions': {
@@ -505,11 +511,13 @@ export function applyBattleEvent(
       break
     }
     case 'dice_discard_request': {
-      game.applyServerState({ dice_discard_pending: true })
+      game.applyServerState({ dice_discard_pending: true, dice_discard_card: String(payload.card ?? '魔法效果') })
+      match.diceDiscardMessage = String(payload.message ?? '')
       break
     }
     case 'dice_discard_complete': {
-      game.applyServerState({ dice_discard_pending: false })
+      match.diceDiscardMessage = ''
+      game.applyServerState({ dice_discard_pending: false, dice_discard_card: null })
       break
     }
     case 'opponent_disconnected': {
@@ -654,7 +662,16 @@ export function sendBattleEvent(
   const socket = active?.socket ?? null
   if (!socket) return Promise.reject(new Error('battle channel is not connected'))
   if (!ALLOWED_EMITS.includes(event)) return Promise.reject(new Error(`event not allowed: ${event}`))
-  return socket.emitEvent(event, data)
+  const match = useMatchStore()
+  const waiting = actionWaitReason(useGameStore().state, event, {
+    pending: battleActionPending.value,
+    chainBusy: Boolean(match.chainWindow),
+    interactionReason: match.pickRequest?.message || (match.shieldChoice ? '请先完成仁王之盾的选船' : ''),
+  })
+  if (waiting) return Promise.resolve({ status: 'error', message: waiting })
+  if (WAIT_EXEMPT_EVENTS.includes(event)) return socket.emitEvent(event, data)
+  battleActionPending.value = true
+  return socket.emitEvent(event, data).finally(() => { battleActionPending.value = false })
 }
 
 /** Test-build helper: drop the singleton between browser checks. */

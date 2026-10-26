@@ -32,7 +32,7 @@ export interface ShipSnapshot {
   /** 仅本人的舰船快照携带；旧载荷缺省为无陷阱。 */
   trap?: boolean
   alive: boolean
-  /** Only `player_ships_updated` carries it; room_sync ships omit the flag. */
+  /** 本人的完整快照和实时更新均携带无敌状态。 */
   invincible?: boolean
 }
 
@@ -110,6 +110,10 @@ export interface GameState {
   interaction_waiting: string | null
   magic_temp: Record<string, unknown> | null
   dice_discard_pending: boolean
+  dice_discard_card: string | null
+  last_attack: { attacker: string; x: number; y: number; hit: boolean; ship_sunk: boolean } | null
+  revealed_positions: Array<{ x: number; y: number }>
+  card_unavailable_reasons: Record<string, string>
   // game_state-only payload keys (never part of room_sync).
   winner_card: Record<string, unknown> | null
   loser_cards: Array<Record<string, unknown> | null>
@@ -183,7 +187,11 @@ const FIELD_SPECS = {
   reset_allowed_cells: { type: 'array', nullable: true, default: null, note: '整盘重布允许格；null 不限制，空数组表示没有合法格' },
   interaction_waiting: { type: 'string', nullable: true, default: null, note: '服务端当前未完成互动的等待提示，不含私有目标' },
   magic_temp: { type: 'object', nullable: true, default: null, note: '只回给发起者的待选魔法项；对手/观战为 null' },
-  dice_discard_pending: { type: 'boolean', nullable: false, default: false, note: '自己是否正被要求弃牌（命运骰子）' },
+  dice_discard_pending: { type: 'boolean', nullable: false, default: false, note: '自己是否正被要求完成魔法弃牌' },
+  dice_discard_card: { type: 'string', nullable: true, default: null, note: '当前弃牌义务的真实来源卡名；仅本人可见' },
+  last_attack: { type: 'object', nullable: true, default: null, note: '服务端上一炮的命中、击沉和攻击者，供重连恢复' },
+  revealed_positions: { type: 'array', nullable: false, default: [], note: '仅本人视角已经探明的敌方位置' },
+  card_unavailable_reasons: { type: 'object', nullable: false, default: {}, note: '服务端确定的卡牌状态限制，用于统一置灰' },
   winner_card: { type: 'object', nullable: true, default: null, note: '猜拳胜者抽到的卡' },
   loser_cards: { type: 'array', nullable: false, default: [], note: '猜拳败者抽到的卡' },
 } as const satisfies Record<SchemaField, GameStateFieldSpec>

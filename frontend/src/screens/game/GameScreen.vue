@@ -14,7 +14,7 @@ import MagicDiscardPanel from './MagicDiscardPanel.vue'
 import PhasePriorityPrompt from './PhasePriorityPrompt.vue'
 import { CARDS } from '../../cards/cardData'
 import { usePlayerCards } from './usePlayerCards'
-import { acquireBattleChannel, getBattleSocket, refreshMagicState, sendBattleEvent, syncHand } from '../../realtime/battle'
+import { acquireBattleChannel, battleActionPending, getBattleSocket, refreshMagicState, sendBattleEvent, syncHand } from '../../realtime/battle'
 import { acquireMatchChannel } from '../../realtime/match'
 import { cardArtUrl } from '../../cards/cardArt'
 import { useAuthStore } from '../../stores/auth'
@@ -26,6 +26,8 @@ import { turnClockView } from './turnClock'
 import {
   areaFromAnchor,
   areaCells,
+  areaSelectionLabel,
+  actionWaitReason,
   buildOpponentBoard,
   buildSelfBoard,
   cardDisabledReason,
@@ -172,8 +174,11 @@ const pendingPick = computed<PendingPickLike | null>(() => {
 const playCtx = computed<PlayabilityContext>(() => ({
   lastAttack: match.lastAttack,
   pendingPick: pendingPick.value,
-  chainBusy: chainBusy.value,
+  chainBusy: chainBusy.value || Boolean(match.chainWindow),
+  pending: battleActionPending.value,
+  interactionReason: pendingPick.value?.message || (match.shieldChoice ? '请先完成仁王之盾的选船' : ''),
 }))
+const writeWaitReason = computed(() => actionWaitReason(state.value, 'attack', playCtx.value))
 
 const selfCells = computed(() =>
   buildSelfBoard(state.value, { shieldBroken: match.shieldBrokenSelf, revived: match.revivedSelf }),
@@ -183,6 +188,7 @@ const opponentCells = computed(() =>
     revealed: match.revealed,
     shieldBroken: match.shieldBrokenOpponent,
     revived: match.revivedOpponent,
+    actionPending: Boolean(writeWaitReason.value),
   }),
 )
 
@@ -244,7 +250,7 @@ const canConfirm = computed(() => {
   if (kind === 'area' || kind === 'line') return sel.anchor !== null
   if (kind === 'continuous') return continuousLine(sel.picks) !== null
   if (kind === 'single') return sel.picks.length === 1
-  if (kind === 'own_ships') return sel.picks.length === 2 && sel.effectChoice !== null
+  if (kind === 'own_ships') return sel.picks.length === (sel.descriptor.count ?? 2) && (sel.card.name !== '神之宣告' || sel.effectChoice !== null)
   if (kind === 'own_sunken') return sel.picks.length >= 1 && sel.picks.length <= (sel.descriptor.count ?? 2)
   if (kind === 'shenwei') return sel.board !== null && sel.anchor !== null
   return false
@@ -262,7 +268,7 @@ const pickCountText = computed(() => {
     if (kind === 'line') {
       return '第 ' + String((sel.lineDir === 'row' ? sel.anchor.y : sel.anchor.x) + 1) + (sel.lineDir === 'row' ? ' 行' : ' 列')
     }
-    return '第 ' + String(sel.anchor.x + 1) + '-' + String(sel.anchor.x + (sel.descriptor.size ?? 3)) + ' 列，第 ' + String(sel.anchor.y + 1) + '-' + String(sel.anchor.y + (sel.descriptor.size ?? 3)) + ' 行'
+    return areaSelectionLabel(areaFromAnchor(sel.anchor.x, sel.anchor.y, sel.descriptor.size ?? 3))
   }
   return '尚未选中'
 })
@@ -280,7 +286,7 @@ const targetHint = computed(() => {
   if (kind === 'line') return '选择行或列，再在对手海域点击一个格子'
   if (kind === 'continuous') return '选择 6 个四邻接连通格，可以转弯；再次点击可撤销'
   if (kind === 'single') return '在自己海域点击一艘还活着的战舰'
-  if (kind === 'own_ships') return '在自己海域选择两艘战舰，然后选择要发出的效果'
+  if (kind === 'own_ships') return sel.card.name === '神之宣告' ? '在自己海域选择两艘战舰，然后选择要发出的效果' : '在自己海域选择一艘要主动牺牲的战舰，其余战舰将获得无敌'
   if (kind === 'own_sunken') return '在自己海域选择一艘或两艘沉船原地复活；再次点击可取消选择'
   if (kind === 'shenwei') return '先选择作用棋盘，再点击 3×3 区域的左上角'
   return ''
@@ -749,7 +755,7 @@ function announce(text: string): void {
 
 /** Why a click on the main board cannot fire. Empty string = it can. */
 function fireRefusal(): string {
-  if (state.value.priority_waiting) return '阶段转换询问中，请等待响应完成。'
+  if (writeWaitReason.value) return writeWaitReason.value
   if (!state.value.player_id) return '对局数据还没到，请稍候。'
   if (state.value.state !== 'attacking') return '对局还没进入战斗。'
   if (state.value.current_phase !== 'battle') return '现在不是战斗阶段，先点主行动进入战斗阶段。'
@@ -777,7 +783,6 @@ function clearCardSelection(): void {
 
 /** The ONE reason function: the card face and the click guard both call it. */
 function cardDisabled(card: CardLike): string {
-  if (state.value.priority_waiting) return '阶段转换询问中，请从询问框选择速阶三或等待对方响应'
   if (selection.value) return '正在选目标：先完成或取消当前选择'
   return cardDisabledReason(card, state.value, playCtx.value)
 }
@@ -819,13 +824,27 @@ function useSelectedCard(): void {
   void playCard(index)
 }
 
+async function discardSelectedForAttacks(): Promise<void> {
+  if (selectedCardIndex.value < 0 || busy.value || writeWaitReason.value) return
+  busy.value = true
+  try {
+    const ack = await sendBattleEvent('papal_discard', {
+      room_id: state.value.room_id, player_id: state.value.player_id,
+      discard_card_index: selectedCardIndex.value,
+    })
+    if (ack.status === 'success') clearCardSelection()
+    else ui.notifyError('game-papal-discard', ack.message || '弃牌失败')
+  } catch {
+    ui.notifyError('game-papal-discard', '连接不稳定，请稍后重试')
+  } finally { busy.value = false }
+}
+
 function cancelCardSelection(): void {
   if (!detailOpen.value) return
   clearCardSelection()
 }
 
 async function playCard(index: number): Promise<void> {
-  if (state.value.priority_waiting) return
   const card = hand.value[index]
   if (!card) return
   const refusal = playRefusalReason(card, state.value, playCtx.value)
@@ -857,11 +876,14 @@ async function playCard(index: number): Promise<void> {
 
 async function dispatchCard(card: CardLike, targets: Record<string, unknown>, isChain = false, priorityToken?: number): Promise<void> {
   if (busy.value) return
+  const event = priorityToken !== undefined ? 'priority_response' : isChain ? 'chain_response' : 'use_magic_card'
+  const refusal = cardDisabledReason(card, state.value, { ...playCtx.value, event })
+  if (refusal) { setSelectionError(refusal); say('game-card-refused', refusal); return }
   // 服务端可能在本次回执前就交回响应权，只能关闭这次实际回答的窗口。
   const answeredWindow = isChain ? match.chainWindow : null
   busy.value = true
   try {
-    const ack = await sendBattleEvent(priorityToken !== undefined ? 'priority_response' : isChain ? 'chain_response' : 'use_magic_card', {
+    const ack = await sendBattleEvent(event, {
       room_id: state.value.room_id,
       player_id: state.value.player_id,
       card: { name: card.name, speed: card.speed, type: card.type, description: card.description ?? '' },
@@ -1011,7 +1033,7 @@ function buildTargets(sel: SelectionState): Record<string, unknown> {
     const cell = sel.picks[0]
     return { board: 'self', target_area: { x1: cell.x, y1: cell.y, x2: cell.x, y2: cell.y } }
   }
-  if (kind === 'own_ships') return { board: 'self', selected_cells: sel.picks, effect_choice: sel.effectChoice }
+  if (kind === 'own_ships') return { board: 'self', selected_cells: sel.picks, ...(sel.card.name === '神之宣告' ? { effect_choice: sel.effectChoice } : {}) }
   if (kind === 'own_sunken') return { board: 'self', selected_cells: sel.picks }
   if (kind === 'shenwei' && sel.anchor && sel.board) {
     return { board: sel.board, target_area: areaFromAnchor(sel.anchor.x, sel.anchor.y, 3) }
@@ -1108,8 +1130,7 @@ interface PrimaryAction {
 
 const primaryAction = computed<PrimaryAction>(() => {
   const phase = state.value.current_phase
-  if (state.value.priority_waiting) return { label:'等待阶段响应', event:'enter_battle_phase', enabled:false, reason:'对方正在决定是否响应阶段转换' }
-  if (state.value.interaction_waiting) return { label:'等待完成魔法效果', event:'enter_battle_phase', enabled:false, reason:state.value.interaction_waiting }
+  if (writeWaitReason.value) return { label:'等待当前操作完成', event:'enter_battle_phase', enabled:false, reason:writeWaitReason.value }
   if (phase === 'preparation') {
     return {
       label: '进入战斗阶段',
@@ -1138,7 +1159,7 @@ const primaryAction = computed<PrimaryAction>(() => {
 })
 
 async function turnAction(event: 'enter_battle_phase' | 'enter_end_phase' | 'end_turn'): Promise<void> {
-  if (state.value.priority_waiting) return
+  if (writeWaitReason.value) { say('game-primary-disabled', writeWaitReason.value); return }
   try {
     const ack = await sendBattleEvent(event, {
       room_id: state.value.room_id,
@@ -1928,6 +1949,7 @@ function backToLobby(): void {
             <button type="button" class="button game-detail__use" data-testid="game-card-detail-use" :disabled="!!cardDisabled(hand[selectedCardIndex])" @click="useSelectedCard">使用此卡</button>
             <button type="button" class="button button--ghost" data-testid="game-card-detail-cancel" @click="cancelCardSelection">取消选择</button>
           </div>
+          <button v-if="state.field_magic === '教皇旨意' && state.current_phase === 'battle' && isMyTurn(state)" type="button" class="button button--ghost" data-testid="game-card-papal-discard" :disabled="busy || !!writeWaitReason" @click="discardSelectedForAttacks">弃置此卡 · 获得2次攻击</button>
         </section>
         <section v-else class="arena-rail-panel arena-card-placeholder" data-testid="game-card-placeholder">
           <header class="arena-rail-head">卡牌详情</header>
@@ -1962,9 +1984,9 @@ function backToLobby(): void {
             @click="moreOpen = !moreOpen"
           >更多操作</button>
           <div v-show="moreOpen" class="game-more-menu" data-testid="game-more-menu" role="menu" aria-label="更多操作">
-            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-battle" :disabled="!!state.priority_waiting || !myTurn || state.current_phase !== 'preparation'" @click="turnAction('enter_battle_phase')">进入战斗阶段</button>
-            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-end" :disabled="!!state.priority_waiting || !myTurn || state.current_phase !== 'battle'" @click="turnAction('enter_end_phase')">进入结束阶段</button>
-            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-end-turn" :disabled="!!state.priority_waiting || !myTurn || state.current_phase !== 'end'" @click="turnAction('end_turn')">结束回合</button>
+            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-battle" :disabled="!!writeWaitReason || !myTurn || state.current_phase !== 'preparation'" @click="turnAction('enter_battle_phase')">进入战斗阶段</button>
+            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-end" :disabled="!!writeWaitReason || !myTurn || state.current_phase !== 'battle'" @click="turnAction('enter_end_phase')">进入结束阶段</button>
+            <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-end-turn" :disabled="!!writeWaitReason || !myTurn || state.current_phase !== 'end'" @click="turnAction('end_turn')">结束回合</button>
             <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-log-toggle" @click="moreOpen = false; logOpen = true">对局日志</button>
             <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-more-opponent-stats" @click="moreOpen = false; playerCardSide = 'opponent'">对手战绩</button>
             <button
@@ -1991,7 +2013,7 @@ function backToLobby(): void {
       </div>
       <div
         class="game-hand"
-        :class="{ 'game-hand--fan': handFan.layout.value.fan, 'game-hand--tight': handFan.layout.value.tight }"
+        :class="{ 'game-hand--fan': handFan.layout.value.fan, 'game-hand--tight': handFan.layout.value.tight, 'game-hand--scrollable': handFan.layout.value.scrollable }"
         data-testid="game-hand"
         :style="{
           '--hand-card-w': handFan.layout.value.cardW + 'px',
@@ -2094,9 +2116,9 @@ function backToLobby(): void {
         >更多操作</button>
       </div>
       <div v-show="moreOpen" class="game-more-menu" data-testid="game-more-menu" role="menu" aria-label="更多操作">
-        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-battle" :disabled="!!state.priority_waiting || !myTurn || state.current_phase !== 'preparation'" @click="turnAction('enter_battle_phase')">进入战斗阶段</button>
-        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-end" :disabled="!!state.priority_waiting || !myTurn || state.current_phase !== 'battle'" @click="turnAction('enter_end_phase')">进入结束阶段</button>
-        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-end-turn" :disabled="!!state.priority_waiting || !myTurn || state.current_phase !== 'end'" @click="turnAction('end_turn')">结束回合</button>
+        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-battle" :disabled="!!writeWaitReason || !myTurn || state.current_phase !== 'preparation'" @click="turnAction('enter_battle_phase')">进入战斗阶段</button>
+        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-end" :disabled="!!writeWaitReason || !myTurn || state.current_phase !== 'battle'" @click="turnAction('enter_end_phase')">进入结束阶段</button>
+        <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-end-turn" :disabled="!!writeWaitReason || !myTurn || state.current_phase !== 'end'" @click="turnAction('end_turn')">结束回合</button>
         <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-log-toggle" @click="moreOpen = false; logOpen = true">对局日志</button>
         <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-more-opponent-stats" @click="moreOpen = false; playerCardSide = 'opponent'">对手战绩</button>
         <button
@@ -2128,7 +2150,7 @@ function backToLobby(): void {
           <button type="button" class="button game-target__option" :class="{ 'game__action--active': selection.board === 'self' }" data-testid="game-target-board-self" @click="setBoardSide('self')">我的棋盘</button>
           <button type="button" class="button game-target__option" :class="{ 'game__action--active': selection.board === 'opponent' }" data-testid="game-target-board-opponent" @click="setBoardSide('opponent')">对手棋盘</button>
         </div>
-        <div v-if="selection.descriptor.kind === 'own_ships'" class="game-target__row">
+        <div v-if="selection.card.name === '神之宣告'" class="game-target__row">
           <button type="button" class="button game-target__option" :class="{ 'game__action--active': selection.effectChoice === 1 }" data-testid="game-target-effect-destroy" @click="setEffectChoice(1)">摧毁对方一艘战舰</button>
           <button type="button" class="button game-target__option" :class="{ 'game__action--active': selection.effectChoice === 2 }" data-testid="game-target-effect-skip" @click="setEffectChoice(2)">跳过对方本回合</button>
         </div>

@@ -123,6 +123,13 @@ def steal_error(room: Room, player_id: str) -> str | None:
 def precheck(room: Room, player_id: str, card_name: str, targets: dict[str, Any]) -> str | None:
     """扣牌前的状态级校验入口；None 表示放行。"""
 
+    if card_name == '钢筋铁骨':
+        if len(alive_ships(room.players[player_id])) < 2:
+            return '需要至少两艘活舰才能发动钢筋铁骨'
+        raw = targets.get('selected_cells')
+        if targets.get('board', 'self') != 'self' or not isinstance(raw, list) or len(raw) != 1 or len(_selected_ships(room, player_id, targets)) != 1:
+            return '请选择一艘自己的存活战舰作为钢筋铁骨的牺牲目标'
+        return None
     if card_name == "神之宣告":
         return divine_decree_error(room, player_id, targets)
     if card_name == STEAL_CARD:
@@ -137,6 +144,8 @@ def resolution_error(
 ) -> str | None:
     """入链之后、真正动手之前再查一次：目标在连锁响应里被弄死就整体失败。"""
 
+    if card_name == '钢筋铁骨':
+        return precheck(room, player_id, card_name, targets)
     if card_name == '疗愈':
         return healing_error(room, player_id, targets)
     if card_name != "神之宣告":

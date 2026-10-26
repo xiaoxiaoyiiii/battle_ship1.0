@@ -143,6 +143,7 @@ class Player:
     # 只在落座时按认证连接写入；单看 user_id 判断不了（自定义房的游客座位键就是 sid）。
     registered: bool = False
     damage_dealt_this_turn: int = 0
+    ship_reductions_this_turn: int = 0
 
 
 def is_ship_alive(player: Player, ship: PlayerShip | None) -> bool:
@@ -336,6 +337,7 @@ class Room:
     ship_pick_seq: int = 0
     pending_dice_discard: dict[str, bool] = field(default_factory=dict)
     pending_dice_discard_label: dict[str, str] = field(default_factory=dict)
+    dice_discard_queue: dict[str, list[str]] = field(default_factory=dict)
     pending_wuyou_dreams: dict[str, int] = field(default_factory=dict)
     pending_bingliang: dict[str, int] = field(default_factory=dict)
     bingliang_skip_draw: dict[str, int] = field(default_factory=dict)

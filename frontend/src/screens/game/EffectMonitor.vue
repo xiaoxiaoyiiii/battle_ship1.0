@@ -8,6 +8,7 @@
  */
 import { computed, ref } from 'vue'
 import { cardArtUrl } from '../../cards/cardArt'
+import AppOverlay from '../../components/AppOverlay.vue'
 
 export interface MonitorCard {
   name: string
@@ -176,11 +177,11 @@ function describe(card: MonitorCard): string {
         </div>
       </div>
 
-      <div v-if="opened" class="monitor-dialog" role="dialog" aria-modal="true" data-testid="effect-monitor-dialog">
-        <div class="monitor-dialog__backdrop" @click="opened = null" />
+    </Teleport>
+    <AppOverlay v-if="opened" id="effect-monitor-dialog" :priority="120" labelledby="effect-monitor-dialog-title" @close="opened = null; hovered = null">
         <div class="monitor-dialog__card" :class="`is-${opened.tone}`">
           <header class="monitor-dialog__head">
-            <strong class="monitor-dialog__name">{{ opened.card.name }}</strong>
+            <strong id="effect-monitor-dialog-title" class="monitor-dialog__name">{{ opened.card.name }}</strong>
             <button type="button" class="monitor-dialog__close" data-testid="effect-monitor-close" @click="opened = null">
               关闭
             </button>
@@ -201,8 +202,7 @@ function describe(card: MonitorCard): string {
             </div>
           </div>
         </div>
-      </div>
-    </Teleport>
+    </AppOverlay>
   </div>
 </template>
 
@@ -349,11 +349,10 @@ function describe(card: MonitorCard): string {
 .monitor-preview__meta { font-size: 13px; color: var(--text-muted); }
 .monitor-preview__text { margin: 4px 0 0; font-size: 14px; line-height: 1.7; color: var(--text-secondary); max-height: 168px; overflow: hidden; }
 
-.monitor-dialog { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; }
-.monitor-dialog__backdrop { position: absolute; inset: 0; background: rgba(4, 8, 18, 0.62); }
+:global(.app-overlay__panel[data-testid='effect-monitor-dialog']) { width:min(520px,90vw); max-height:min(70vh,620px); }
 .monitor-dialog__card {
   position: relative;
-  width: min(520px, 90vw);
+  width: 100%;
   max-height: min(70vh, 620px);
   overflow-y: auto;
   padding: 14px 16px 16px;

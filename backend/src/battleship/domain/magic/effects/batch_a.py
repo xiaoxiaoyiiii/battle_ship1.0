@@ -19,6 +19,7 @@ from ... import effects
 from ...battle import (
     SPLASH_NEEDS_HIT,
     line_cells,
+    mark_ship_sunken,
     resolve_area_strike,
     resolve_splash,
     splash_error,
@@ -28,6 +29,7 @@ from ..cards import MagicCard
 from .. import precheck
 from ..deck import revive_sunken_ships
 from ..hooks import SHIP_DESTROYED, SHIP_SUNK
+from ..interaction import cell_xy, find_ship_at
 from ..registry import register
 from .base import EffectContext, EffectResult
 
@@ -75,7 +77,7 @@ def _unique_sunk(cells: Iterable[Any]) -> list[PlayerShip]:
 
 async def _finish_if_wiped(ctx: EffectContext) -> bool:
     opponent = ctx.opponent
-    if opponent.remaining_ships <= 0 and len(opponent.ships or []) > 0:
+    if opponent.remaining_ships <= 0:
         await ctx.finish(ctx.caster_id, ctx.opponent_id, "魔法卡清空对方棋盘")
         return True
     return False
@@ -115,10 +117,10 @@ def _record_reveal_misses(
 async def echoing_beam(ctx: EffectContext) -> EffectResult:
     if ctx.phase != "preparation" or ctx.room.current_attacker != ctx.caster_id:
         return EffectResult(False, "只能在自己的准备阶段使用")
-    # #38：余音绕梁 = round 边界、2 层的租约，每个结束阶段消耗 1 层。
+    # 两个己方攻击阶段分别消耗一层，大回合清理不能提前取消第二层。
     effects.grant_flag(
         ctx.room, ctx.caster_id, "forced_kill",
-        boundary=effects.BOUNDARY_ROUND, value=2,
+        boundary=effects.BOUNDARY_MATCH, value=2,
     )
     return EffectResult(True, "接下来两个攻击阶段（本回合与下一回合）将造成强制击杀")
 
@@ -284,6 +286,8 @@ async def shenwei(ctx: EffectContext) -> EffectResult:
     excluded: list[PlayerShip] = []
     for index in range(len(target.ships) - 1, -1, -1):
         ship = target.ships[index]
+        if not is_ship_alive(target, ship):
+            continue
         if any(_in_area(area, pos) for pos in ship.positions):
             excluded.append(ship)
             del target.ships[index]
@@ -302,8 +306,9 @@ async def shenwei(ctx: EffectContext) -> EffectResult:
 
     if board != "self" and len(excluded) == 1:
         ship = excluded[0]
-        if ship not in target.sunken_ships:
-            target.sunken_ships.append(ship)
+        ship.hits = list(ship.positions)
+        mark_ship_sunken(target, ship)
+        ctx.caster.damage_dealt_this_turn += 1
         await ctx.on_ship_sunk(ctx.opponent_id, ship)
         message = "目标区域内1艘战舰被击沉"
     else:
@@ -315,7 +320,7 @@ async def shenwei(ctx: EffectContext) -> EffectResult:
         message = f"目标区域内{len(excluded)}艘战舰被暂时除外"
 
     await ctx.sync_ships()
-    if ctx.opponent.remaining_ships <= 0 and len(ctx.opponent.ships or []) > 0:
+    if board != "self" and ctx.opponent.remaining_ships <= 0:
         await ctx.finish(ctx.caster_id, ctx.opponent_id, "神威！清空对方棋盘")
         return EffectResult(True, message + "，对方战舰全灭，直接获胜", game_over=True)
     if ctx.caster.remaining_ships <= 0 and board == "self":
@@ -359,7 +364,6 @@ async def bomb(ctx: EffectContext) -> EffectResult:
     result = resolve_area_strike(ctx.room, ctx.caster_id, cells, kind="bomb")
     affected = await _emit_area_cells(ctx, result.cells)
     for ship in _unique_sunk(result.cells):
-        await ctx.notify_treasure(1, None)
         await ctx.on_ship_sunk(ctx.opponent_id, ship)
     if result.ships_sunk:
         await ctx.sync_ships()
@@ -378,7 +382,6 @@ async def sulfur(ctx: EffectContext) -> EffectResult:
     result = resolve_area_strike(ctx.room, ctx.caster_id, cells, kind="sulfur")
     affected = await _emit_area_cells(ctx, result.cells)
     for ship in _unique_sunk(result.cells):
-        await ctx.notify_treasure(1, None)
         await ctx.on_ship_sunk(ctx.opponent_id, ship)
     if result.ships_sunk:
         await ctx.sync_ships()
@@ -429,12 +432,11 @@ async def vampire(ctx: EffectContext) -> EffectResult:
 
 @register("Freezing！")
 async def freezing(ctx: EffectContext) -> EffectResult:
-    if ctx.room.attack_order and ctx.room.attack_order[0] != ctx.caster_id:
-        return EffectResult(False, "Freezing！只能在自己先手的回合发动")
-    if ctx.phase != "end":
-        return EffectResult(False, "Freezing！只能在结束阶段发动")
-    if ctx.caster.damage_dealt_this_turn > 0:
-        return EffectResult(False, "本回合已使对方船数减少，无法发动 Freezing！")
+    from ..rules import freezing_block_reason
+
+    reason = freezing_block_reason(ctx.room, ctx.caster_id, ctx.card)
+    if reason:
+        return EffectResult(False, reason)
     ctx.room.skip_opponent_turn = ctx.opponent_id
     return EffectResult(True, "Freezing！生效，跳过对方本回合的所有阶段")
 
@@ -480,6 +482,8 @@ async def bitter_training(ctx: EffectContext) -> EffectResult:
 
 @register("八方来财")
 async def treasure_hunter(ctx: EffectContext) -> EffectResult:
+    if ctx.phase != "preparation":
+        return EffectResult(False, "八方来财只能在双方的准备阶段使用")
     effects.grant_flag(
         ctx.room, ctx.caster_id, "treasure_hunter", boundary=effects.BOUNDARY_ROUND
     )
@@ -566,6 +570,8 @@ async def heal(ctx: EffectContext) -> EffectResult:
 
 @register("盗亦有道")
 async def steal(ctx: EffectContext) -> EffectResult:
+    if ctx.caster.effect_flags.no_draw:
+        return EffectResult(False, "无中生有效果生效中，本回合无法获得魔法卡")
     stolen_card = None
     stolen_entry = None
     for entry in reversed(ctx.room.magic_history):
@@ -594,11 +600,14 @@ async def iron_bones(ctx: EffectContext) -> EffectResult:
     alive = alive_ships(ctx.caster)
     if ctx.caster.remaining_ships < 2 or len(alive) < 2:
         return EffectResult(False, "需要至少2艘战舰才能发动")
-    sacrificed = alive[-1]
-    ctx.caster.ships.remove(sacrificed)
-    if sacrificed not in ctx.caster.sunken_ships:
-        ctx.caster.sunken_ships.append(sacrificed)
-    ctx.caster.remaining_ships -= 1
+    selected = ctx.cells("selected_cells")
+    if ctx.board_side() == "opponent" or not selected or len(selected) != 1:
+        return EffectResult(False, "请选择自己一艘要牺牲的活舰")
+    xy = cell_xy(selected[0])
+    sacrificed = find_ship_at(ctx.caster, xy, alive_only=True) if xy is not None else None
+    if sacrificed is None:
+        return EffectResult(False, "目标战舰已失效，请选择自己一艘活舰")
+    await ctx.sacrifice_ship(ctx.caster_id, sacrificed, "iron_bones")
     for ship in ctx.caster.ships:
         if is_ship_alive(ctx.caster, ship):
             ship.invincible = True

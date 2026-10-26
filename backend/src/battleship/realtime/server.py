@@ -88,6 +88,7 @@ def create_socket_server(
         rooms, chain_display_delay_seconds=settings.chain_display_delay_seconds
     )
     gameplay.magic = magic
+    battle.state_sync_hook = magic._sync_each_seat
     if gameplay.draw_hook is None:
         gameplay.draw_hook = magic.draw
     if gameplay.turn_start_hook is None:

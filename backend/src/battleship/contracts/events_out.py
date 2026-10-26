@@ -204,6 +204,10 @@ class RoomSync(BaseModel):
     interaction_waiting: str | None
     magic_temp: dict[str, Any] | None
     dice_discard_pending: bool
+    dice_discard_card: str | None
+    last_attack: dict[str, Any] | None
+    revealed_positions: list[dict[str, int]]
+    card_unavailable_reasons: dict[str, str]
 
 
 #: Authoritative key order/count for the reconnect snapshot.

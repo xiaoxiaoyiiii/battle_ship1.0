@@ -13,10 +13,7 @@ module does not implement them (CLAUDE #1: one implementation per rule).
 (`services.magic.use_magic_card` and `services.magic.chain_response`) call
 (spec #35 §7), so the order and the wording of every refusal live here only.
 
-Legacy reference: server.py `can_play_magic_card` (8546-8588),
-`freezing_block_reason`, `_last_attack_requirement_reason` and the three
-requirement helpers. DECISIONS D10 keeps the front-end drift (speed-1 in battle
-is allowed by the server, rejected by the old UI) untouched.
+速阶一按统一口径只允许在自己的准备阶段发动；卡面另有时点限制时先校验卡面。
 """
 
 from __future__ import annotations
@@ -35,7 +32,7 @@ END_PHASE_PLAYABLE: tuple[str, ...] = ("Freezing！",)
 BINGLIANG_FAIL_BELOW = 3
 BINGLIANG_SKIP_PHASES = 2
 _FIELD_NAME = "禁忌果实"
-_FIELD_NEGATION_CARDS = frozenset({"失灵！", "加百列之光"})
+_FIELD_NEGATION_CARDS = frozenset({"失灵！"})
 
 #: Refusal text for a card whose effect is not registered yet. One wording for
 #: both activation paths and for the settlement refund path (services/magic.py).
@@ -49,11 +46,13 @@ def value(value: Any) -> Any:
 def freezing_block_reason(room: Room, player_id: str, card: MagicCard) -> str | None:
     """Freezing！ needs first player + end phase + no enemy ship lost this turn."""
 
+    if room.current_attacker != player_id:
+        return "Freezing！只能在自己的结束阶段发动"
     if room.attack_order and room.attack_order[0] != player_id:
         return "Freezing！只能在自己先手的回合发动"
     if value(room.current_phase) != RoomPhase.END.value:
         return "Freezing！只能在结束阶段发动"
-    if room.players[player_id].damage_dealt_this_turn > 0:
+    if room.players[player_id].ship_reductions_this_turn > 0:
         return "本回合已使对方船数减少，无法发动 Freezing！"
     return None
 
@@ -124,37 +123,35 @@ def blocked_cells(room: Room, player_id: str) -> set[tuple[int, int]]:
 
 
 def can_play_magic_card(room: Room, player_id: str, card: MagicCard) -> bool:
-    """Frozen server playability rules (D10: do not "fix" the UI drift here)."""
+    """统一发动时点与场地封锁，卡面限制优先于通用速阶。"""
 
     player = room.players.get(player_id)
     if player is None:
         return False
     if getattr(player.effect_flags, "last_stand", False):
         return False
-    if card.name in END_PHASE_PLAYABLE:
-        return freezing_block_reason(room, player_id, card) is None
-    if card.name == "神机妙算":
-        # 先手方可以在自己的全部阶段发动；双方的准备阶段都允许
-        # 对手响应，除此之外（尤其是后手自己的战斗/结束阶段）禁止。
-        first_player = bool(room.attack_order and room.attack_order[0] == player_id)
-        own_turn = room.current_attacker == player_id
-        opponent_preparation = (
-            value(room.current_phase) == RoomPhase.PREPARATION.value and not own_turn
-        )
-        return (own_turn and first_player) or opponent_preparation
-    if card.name == "五险一金" and field_magic_name(room) == "教皇旨意":
-        return False
-    speed = int(card.speed)
     if field_magic_name(room) == _FIELD_NAME:
         if card.name not in _FIELD_NEGATION_CARDS and card.type != "场地":
             return False
+    if card.name in END_PHASE_PLAYABLE:
+        return freezing_block_reason(room, player_id, card) is None
+    if card.name == "八方来财":
+        return value(room.current_phase) == RoomPhase.PREPARATION.value
+    if card.name == "神机妙算":
+        own_turn = room.current_attacker == player_id
+        return own_turn or value(room.current_phase) == RoomPhase.PREPARATION.value
+    if card.name == "五险一金" and field_magic_name(room) == "教皇旨意":
+        return False
+    speed = int(card.speed)
     if speed == 3:
         return True
     if room.current_attacker != player_id:
         return False
     phase = value(room.current_phase)
-    if phase in (RoomPhase.PREPARATION.value, RoomPhase.BATTLE.value):
+    if phase == RoomPhase.PREPARATION.value:
         return speed in (1, 2)
+    if phase == RoomPhase.BATTLE.value:
+        return speed == 2
     if phase == RoomPhase.END.value:
         return card.name in END_PHASE_PLAYABLE
     return False
@@ -166,23 +163,22 @@ def playability_reason(room: Room, player_id: str, card: MagicCard) -> str:
     player = room.players[player_id]
     if getattr(player.effect_flags, "last_stand", False):
         return "绝处逢生生效中，本回合你的其余魔法卡全部无效"
-    if card.name in END_PHASE_PLAYABLE:
-        return freezing_block_reason(room, player_id, card) or ""
-    if card.name == "神机妙算":
-        first_player = bool(room.attack_order and room.attack_order[0] == player_id)
-        if room.current_attacker == player_id and not first_player:
-            return "神机妙算只能在自己先手时的全部阶段使用；后手自己的阶段无法使用"
-        if value(room.current_phase) != RoomPhase.PREPARATION.value:
-            return "神机妙算只能在对方准备阶段，或自己先手时的全部阶段使用"
-        return ""
-    if card.name == "五险一金" and field_magic_name(room) == "教皇旨意":
-        return "教皇旨意生效中，本回合攻击次数为0，五险一金无法发动"
     if field_magic_name(room) == _FIELD_NAME and not (
         card.name in _FIELD_NEGATION_CARDS or card.type == "场地"
     ):
-        return "场地魔法“禁忌果实”生效中，非场地及失灵类魔法卡无法使用"
+        return "场地魔法“禁忌果实”生效中，只能使用失灵！与场地魔法卡"
+    if card.name in END_PHASE_PLAYABLE:
+        return freezing_block_reason(room, player_id, card) or ""
+    if card.name == "八方来财":
+        return "八方来财只能在双方的准备阶段使用"
+    if card.name == "神机妙算":
+        return "神机妙算只能在对方准备阶段，或自己的全部阶段使用"
+    if card.name == "五险一金" and field_magic_name(room) == "教皇旨意":
+        return "教皇旨意生效中，本回合攻击次数为0，五险一金无法发动"
     if int(card.speed) != 3 and room.current_attacker != player_id:
         return f"速阶{card.speed}的魔法卡只能在自己的回合使用（现在不是你的回合）"
+    if int(card.speed) == 1:
+        return "速阶1的魔法卡只能在自己的准备阶段使用"
     return f"当前阶段{value(room.current_phase)}无法使用速阶{card.speed}的魔法卡"
 
 
@@ -196,6 +192,8 @@ def evaluate_cast(room: Room, player_id: str, card: MagicCard) -> str | None:
 
     if not can_play_magic_card(room, player_id, card):
         return playability_reason(room, player_id, card)
+    if card.name in ("盗亦有道", "亡羊补牢") and room.players[player_id].effect_flags.no_draw:
+        return "无中生有效果生效中，本回合无法获得魔法卡"
     for reason in (
         last_attack_requirement_reason(room, player_id, card),
         wangyang_requirement_reason(room, player_id, card),

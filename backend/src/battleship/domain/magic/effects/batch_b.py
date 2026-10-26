@@ -17,6 +17,7 @@ from ..cards import MagicCard
 from .. import precheck, temps
 from ..interaction import (
     cell_xy,
+    clear_ship_picks,
     find_ship_at,
     pick_cell_from_target,
     placement_blocked_cells,
@@ -67,6 +68,8 @@ async def taoyuan(ctx: EffectContext) -> EffectResult:
 
 @register("亡羊补牢")
 async def wangyang(ctx: EffectContext) -> EffectResult:
+    if ctx.caster.effect_flags.no_draw:
+        return EffectResult(False, "无中生有生效期间，无法获得魔法卡")
     own_card = ctx.room.magic_discard.pop() if ctx.room.magic_discard else None
     count = max(int(ctx.caster.remaining_ships or 0), int(ctx.opponent.remaining_ships or 0))
     if not ctx.room.magic_discard or count <= 0:
@@ -301,6 +304,7 @@ async def last_chance(ctx: EffectContext) -> EffectResult:
     await ctx.clear_board_effects([ctx.caster_id], "回光返照")
     await ctx.clear_multiturn_effects("回光返照")
     ctx.caster.ships = []
+    ctx.caster.sunken_ships = []
     ctx.caster.remaining_ships = 0
     ctx.caster.needs_reset = True
     ctx.opponent.attacks = []
@@ -312,7 +316,7 @@ async def last_chance(ctx: EffectContext) -> EffectResult:
     ctx.room.current_phase = ctx.room.current_phase.__class__.END
     ctx.room.state = ctx.room.state.__class__.PLACING_SHIPS
     ctx.room.attacks_remaining = 0
-    ctx.caster.max_ships = int(ctx.caster.max_ships or 6)
+    ctx.caster.max_ships = 6
     ctx.room.huiguang_awaiting_placement = True
     await ctx.emit(
         "reset_gameboard",
@@ -351,6 +355,9 @@ async def polar_reversal(ctx: EffectContext) -> EffectResult:
         if hasattr(player, "opponent_attacks"):
             player.opponent_attacks = []
         player.magic_blocked = False
+        player.magic_blocked_round = None
+        player.damage_dealt_this_turn = 0
+        player.ship_reductions_this_turn = 0
     # #38：整对象重置统一走 reset_all（match 边界清租约 + 投影）。
     effects.reset_all(ctx.room)
 
@@ -360,10 +367,20 @@ async def polar_reversal(ctx: EffectContext) -> EffectResult:
     # 不要在这里清连锁与弃牌堆：本效果可能正是连锁里的一张，清掉会让下层
     # 待结算的卡既不被结算也不退牌（吞卡）；chain 由 _resolve_chain 收尾。
     temps.clear(ctx.room)
+    clear_ship_picks(ctx.room)
+    ctx.room.pending_wuyou_dreams = {}
+    ctx.room.pending_bingliang = {}
+    ctx.room.bingliang_skip_draw = {}
+    ctx.room.pending_dice_discard = {}
+    ctx.room.pending_dice_discard_label = {}
+    discard_queue = getattr(ctx.room, "dice_discard_queue", None)
+    if discard_queue is not None:
+        discard_queue.clear()
     ctx.room.last_attack = None
     ctx.room.skip_opponent_turn = None
     ctx.room.skip_next_turn = None
     ctx.room.skip_opponent_stages = None
+    ctx.room.huiguang_awaiting_placement = False
     replay_rules.note_board_reset(ctx.room)
     replay_rules.note_board_replaced(ctx.room)
 
@@ -594,7 +611,7 @@ async def dice_of_fate(ctx: EffectContext) -> EffectResult:
             else 0
         )
         message = "摇出1点：" + effect_text + (
-            "，对方一艘战舰复活" if revived else "，对方没有沉船，未复活"
+            "，对方一艘战舰复活" if revived else "，对方没有可原地复活的沉船"
         )
     elif roll == 2:
         drawn = await ctx.draw(ctx.opponent_id)
@@ -620,7 +637,7 @@ async def dice_of_fate(ctx: EffectContext) -> EffectResult:
             else 0
         )
         message = "摇出5点：" + effect_text + (
-            f"，自己复活了{revived}艘战舰" if revived else "，自己没有沉船，未复活"
+            f"，自己复活了{revived}艘战舰" if revived else "，自己没有可原地复活的沉船"
         )
     else:
         alive = alive_ships(ctx.opponent)

@@ -58,6 +58,7 @@ export const MAGIC_TARGET_DESCRIPTORS: Record<string, TargetDescriptor> = {
   '硫磺火焰': { kind: 'continuous', length: 6, board: 'opponent' },
   '克苏鲁之眼': { kind: 'single', board: 'self' },
   '神之宣告': { kind: 'own_ships', count: 2 },
+  '钢筋铁骨': { kind: 'own_ships', count: 1, board: 'self' },
   '疗愈': { kind: 'own_sunken', count: 2, board: 'self' },
   '神威！': { kind: 'shenwei' },
 }
@@ -140,14 +141,13 @@ export function isLastStandActive(state: GameState): boolean {
   return effects.includes('last_stand')
 }
 
-/** Legacy canPlayCard, copied as-is (D10: the frontend mirror is not "fixed"). */
+/** 阶段限制仅用于提示；出牌仍由服务端最终校验。 */
 export function canPlayCard(card: CardLike, state: GameState): boolean {
   if (isLastStandActive(state)) return false
   if (card.name === '神机妙算') {
-    const firstPlayer = isFirstPlayer(state)
     const ownTurn = state.current_attacker === state.player_id
     const opponentPreparation = state.current_phase === 'preparation' && !ownTurn
-    return (ownTurn && firstPlayer) || opponentPreparation
+    return (ownTurn && ['preparation', 'battle', 'end'].includes(state.current_phase ?? '')) || opponentPreparation
   }
   if (END_PHASE_PLAYABLE_CARDS.includes(card.name)) {
     return isFirstPlayer(state) && state.current_phase === 'end' && isMyTurn(state)
@@ -161,12 +161,12 @@ export function canPlayCard(card: CardLike, state: GameState): boolean {
   return true
 }
 
-/** Legacy afterHitBlockReason (饮血 / 溅射 / 雷达子弹 only, D10 parity). */
+/** 上一炮的命中/击沉前置与服务端保持一致。 */
 export function afterHitBlockReason(card: CardLike | null, lastAttack: LastAttackLike | null, playerId: string): string {
   if (!card) return ''
-  if (!['饮血', '溅射', '雷达子弹'].includes(card.name)) return ''
+  if (!['饮血', '越战越勇', '溅射', '雷达子弹'].includes(card.name)) return ''
   if (!lastAttack || lastAttack.attacker !== playerId) return '你这一局还没有攻击过'
-  if (card.name === '饮血') return lastAttack.shipSunk ? '' : '需要你先击沉对方一艘战舰'
+  if (['饮血', '越战越勇'].includes(card.name)) return lastAttack.shipSunk ? '' : '需要你先击沉对方一艘战舰'
   return lastAttack.hit ? '' : '需要你上一发攻击命中对方'
 }
 
@@ -185,10 +185,40 @@ export interface PlayabilityContext {
   lastAttack: LastAttackLike | null
   pendingPick: PendingPickLike | null
   chainBusy?: boolean
+  pending?: boolean
+  event?: string
+  interactionReason?: string
+}
+
+export const WAIT_EXEMPT_EVENTS: readonly string[] = ['quick_chat', 'chat_message', 'surrender', 'get_discard_pile', 'get_magic_temp_data', 'request_hand_sync', 'set_decline_priority']
+const INTERACTION_RESPONSE_EVENTS = new Set(['confirm_sacrifice', 'confirm_reinforcement_position', 'cancel_placement', 'confirm_magic_target', 'cancel_magic_selection', 'confirm_shenji_declare', 'dice_discard_choose'])
+
+/** 所有对局写操作共用的等待门禁；对应的响应仍可完成当前义务。 */
+export function actionWaitReason(state: GameState, event: string, ctx: { pending?: boolean; chainBusy?: boolean; interactionReason?: string } = {}): string {
+  if (WAIT_EXEMPT_EVENTS.includes(event)) return ''
+  if (ctx.pending) return '正在等待操作结果，请稍候'
+  if (state.priority_waiting && event !== 'priority_response') return '阶段转换询问中，请先完成阶段响应'
+  const chainBusy = ctx.chainBusy || state.chain_waiting || chainItems(state.chain).length > 0
+  if (chainBusy && event !== 'chain_response') return '连锁响应或结算中，请先完成连锁'
+  if (!INTERACTION_RESPONSE_EVENTS.has(event) && !['priority_response', 'chain_response'].includes(event)) {
+    if (ctx.interactionReason) return ctx.interactionReason
+    if (state.interaction_waiting) return state.interaction_waiting
+    if (state.dice_discard_pending) return '请先完成魔法弃牌'
+    if (state.pending_sacrifice || state.pending_placement || state.magic_temp || state.shenji_waiting) return '请先完成当前魔法效果的选择'
+  }
+  return ''
 }
 
 /** Why the card is grayed out (empty string = playable). */
 export function cardDisabledReason(card: CardLike, state: GameState, ctx: PlayabilityContext): string {
+  const waiting = actionWaitReason(state, ctx.event ?? 'use_magic_card', ctx)
+  if (waiting) return waiting
+  if (state.field_magic === '禁忌果实' && card.name !== '失灵！' && card.type !== '场地') {
+    return `无法使用${card.name}：场地魔法“禁忌果实”生效，只有场地魔法和失灵！可以发动`
+  }
+  if (state.magic_blocked) return '你的魔法卡已被看破，本回合无法使用'
+  const serverReason = state.card_unavailable_reasons?.[card.name]
+  if (serverReason) return `无法使用${card.name}：${serverReason}`
   if (!canPlayCard(card, state)) {
     if (isLastStandActive(state)) {
       return `无法使用${card.name}：绝处逢生生效中，本回合你的其余魔法卡全部无效`
@@ -201,10 +231,7 @@ export function cardDisabledReason(card: CardLike, state: GameState, ctx: Playab
       return `${card.name}只能在自己先手回合的结束阶段发动（${reasons.join('；') || '条件不满足'}）`
     }
     if (card.name === '神机妙算') {
-      if (state.current_attacker === state.player_id && !isFirstPlayer(state)) {
-        return '无法使用神机妙算：后手自己的阶段不能使用，只能在对方准备阶段或自己先手时使用'
-      }
-      return '无法使用神机妙算：只能在对方准备阶段，或自己先手时的全部阶段使用'
+      return '无法使用神机妙算：只能在自己的全部阶段或对方准备阶段使用'
     }
     if (!isMyTurn(state)) return `无法使用${card.name}：现在不是你的回合`
     const phase = state.current_phase || '未开始'
@@ -214,23 +241,16 @@ export function cardDisabledReason(card: CardLike, state: GameState, ctx: Playab
   if (afterHit) return `无法使用${card.name}：${afterHit}`
   const pickBlocked = shipPickBlockedReason(card.name, ctx.pendingPick)
   if (pickBlocked) return pickBlocked
-  if (ctx.chainBusy) return `无法使用${card.name}：连锁响应中，请先响应连锁`
+  if (card.name === '卧薪尝胆' && state.remaining_ships >= state.opponent_remaining_ships) return '自己的船数不小于对方，卧薪尝胆无法发动'
+  if (card.name === '滥竽充数' && state.remaining_ships >= state.max_ships) return '自己的船数已满，滥竽充数无法发动'
+  if (card.name === '神之宣告' && state.remaining_ships <= 2) return '至少需要三艘存活战舰才能使用神之宣告'
+  if (card.name === '钢筋铁骨' && state.remaining_ships <= 1) return '至少需要两艘存活战舰才能使用钢筋铁骨'
   return ''
 }
 
-/**
- * Refusal shown when the player actually clicks a card. Legacy also refuses
- * 禁忌果实 here (the field-magic check lives in playMagicCard, not canPlayCard),
- * so that card is not grayed but still explains itself on click.
- */
+/** 卡面置灰和点击拒绝共用同一判据，避免看似能出、点击才报错。 */
 export function playRefusalReason(card: CardLike, state: GameState, ctx: PlayabilityContext): string {
-  const disabled = cardDisabledReason(card, state, ctx)
-  if (disabled) return disabled
-  if (state.field_magic === '禁忌果实' && !['失灵！', '加百列之光'].includes(card.name) && card.type !== '场地') {
-    return `无法使用${card.name}：场地魔法“禁忌果实”生效，非场地及失灵类魔法卡无法使用`
-  }
-  if (state.magic_blocked) return '你的魔法卡已被看破，本回合无法使用'
-  return ''
+  return cardDisabledReason(card, state, ctx)
 }
 
 /** Stable business identity of a hand card (name+speed), plus its occurrence. */
@@ -326,6 +346,7 @@ export interface BoardMarks {
   revealed?: Point[]
   shieldBroken?: Point[]
   revived?: Point[]
+  actionPending?: boolean
 }
 
 export interface BoardCell {
@@ -432,7 +453,7 @@ export function buildOpponentBoard(state: GameState, marks: BoardMarks = {}): Bo
   const holes = holeCells(state.shenwei_holes, other)
   const frozen = frozenAreaCells(state.frozen_area as unknown as FrozenAreaLike | null, other)
   const lastStand = pointSet(state.last_stand_owner && state.last_stand_owner === other ? (state.last_stand_cells as Point[]) : [])
-  const canFire = isMyTurn(state) && state.current_phase === 'battle' && state.attacks_remaining > 0
+  const canFire = !actionWaitReason(state, 'attack', { pending: marks.actionPending }) && isMyTurn(state) && state.current_phase === 'battle' && state.attacks_remaining > 0
   const cells: BoardCell[] = []
   for (let y = 0; y < BOARD_SIZE; y += 1) {
     for (let x = 0; x < BOARD_SIZE; x += 1) {
@@ -466,6 +487,10 @@ export function areaFromAnchor(x: number, y: number, size: number): AreaSelectio
   const x1 = Math.max(0, Math.min(BOARD_SIZE - size, x))
   const y1 = Math.max(0, Math.min(BOARD_SIZE - size, y))
   return { x1, y1, x2: x1 + size - 1, y2: y1 + size - 1 }
+}
+
+export function areaSelectionLabel(area: AreaSelection): string {
+  return `第 ${area.x1 + 1}-${area.x2 + 1} 列，第 ${area.y1 + 1}-${area.y2 + 1} 行`
 }
 
 export function areaCells(area: AreaSelection | null): string[] {

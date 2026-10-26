@@ -70,6 +70,7 @@ class BattleService:
         # The spectator frame is flushed once the whole effect has settled, so a
         # spectator never ends on a half-applied frame (e.g. ship count 5 of 6).
         self.board_flush_hook: Any = None
+        self.state_sync_hook: Any = None
 
     def bind(self, publisher: EventPublisher) -> None:
         self._publisher = publisher
@@ -182,6 +183,8 @@ class BattleService:
         try:
             return await self._perform_attack_inner(room, player_id, raw_x, raw_y)
         finally:
+            if self.state_sync_hook is not None:
+                await self._maybe_await(self.state_sync_hook(room))
             if self.board_flush_hook is not None:
                 await self._maybe_await(self.board_flush_hook(room))
 

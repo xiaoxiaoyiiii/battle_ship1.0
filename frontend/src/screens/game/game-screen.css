@@ -2006,7 +2006,7 @@
 .game-hand {
   display: flex;
   align-items: flex-end;
-  justify-content: center;
+  justify-content: safe center;
   gap: 10px;
   overflow-x: auto;
   padding-bottom: 2px;
@@ -2141,6 +2141,8 @@
     gap: 6px;
   }
 .game[data-layout="compact"] .game-main-container {
+    /* 棋盘内容不能被压出主区域，再与下方实际卡牌重叠；超高由屏内滚动承接。 */
+    flex: 0 0 auto;
     flex-direction: column;
     gap: 6px;
   }
@@ -3209,8 +3211,11 @@ button.arena-avatar--btn {
 .game[data-layout='wide'] .arena-rail > .game-detail { position:fixed; right:12px; top:158px; bottom:190px; width:260px; max-height:640px; z-index:70; overflow-y:auto; }
 .game[data-layout='wide'] .arena-rail .game-detail__face .game-detail__art { max-height:234px; }
 .game[data-layout='wide'] .arena-rail .game-detail__desc { max-height:none; min-height:64px; }
-.game-hand-wrap { background:transparent; border:0; border-radius:0; box-shadow:none; }
+.game-hand-wrap { background:transparent; border:0; border-radius:0; box-shadow:none; pointer-events:none; }
+.game-hand-wrap .card { pointer-events:auto; }
+.game-hand-wrap .game-card-inspect { pointer-events:none; }
 .game[data-layout='wide'] .game-hand { overflow:visible; padding:24px 12px 12px; }
+.game[data-layout='wide'] .game-hand--scrollable { justify-content:flex-start; overflow-x:auto; overflow-y:hidden; overscroll-behavior-x:contain; scrollbar-width:thin; pointer-events:auto; }
 .game[data-layout='wide'] .game-hand-wrap { max-width:1000px; padding-top:0; }
 .game[data-layout='wide'] .game-hand .card--selected { transform:rotate(var(--fan-rot,0rad)) translateY(calc(var(--fan-drop,0px) - 16px)); z-index:20; }
 .game-drawer--chat.game-float { display:flex; flex-direction:column; height:260px; overflow:hidden; }

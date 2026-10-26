@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from .cards import DECK_CARDS, HIDDEN_CARD_NAMES, MagicCard, card_by_name
-from ..room import PlayerShip, Position, Room, is_ship_alive
+from ..room import PlayerShip, Position, Room
 
 
 @dataclass(frozen=True)
@@ -121,25 +121,42 @@ def revive_sunken_ships(
     if player is None or count <= 0:
         return 0
     revived = 0
-    guard = 0
-    selected = list(selected_ships) if selected_ships is not None else None
-    while revived < int(count) and player.sunken_ships and guard < 32:
-        guard += 1
-        if selected is not None:
-            if not selected:
-                break
-            ship = selected.pop(0)
-            if ship not in player.sunken_ships:
-                continue
-            player.sunken_ships.remove(ship)
-        else:
-            ship = player.sunken_ships.pop()
-        if selected is None and ship in player.ships and is_ship_alive(player, ship):
-            # A live duplicate entry: drop the ghost record, do not count it.
+    capacity = int(player.max_ships or 6)
+    candidates = (
+        list(selected_ships)
+        if selected_ships is not None
+        else list(reversed(player.sunken_ships))
+    )
+    for ship in candidates:
+        if revived >= int(count):
+            break
+        if not any(sunken is ship for sunken in player.sunken_ships):
             continue
-        while ship in player.sunken_ships:
-            player.sunken_ships.remove(ship)
-        if ship not in player.ships:
+        # 沉船按对象身份登记，避免同格同属性的旧沉船误伤重布后的新舰。
+        sunken_ids = {id(sunken) for sunken in player.sunken_ships}
+        living = [
+            existing for existing in player.ships
+            if id(existing) not in sunken_ids
+            and len(existing.hits or []) < len(existing.positions or [])
+        ]
+        if max(int(player.remaining_ships or 0), len(living)) >= capacity:
+            break
+        cells = {(position.x, position.y) for position in ship.positions}
+        if (
+            not cells
+            or len(cells) != len(ship.positions)
+            or any(not (0 <= x < 6 and 0 <= y < 6) for x, y in cells)
+        ):
+            continue
+        occupied = {
+            (position.x, position.y)
+            for existing in living for position in existing.positions
+        }
+        if cells & occupied:
+            # 原位已被活舰占用时保留沉船记录，继续寻找其他可复活战舰。
+            continue
+        player.sunken_ships = [sunken for sunken in player.sunken_ships if sunken is not ship]
+        if not any(existing is ship for existing in player.ships):
             player.ships.append(ship)
         ship.hits = []
         for position in ship.positions:

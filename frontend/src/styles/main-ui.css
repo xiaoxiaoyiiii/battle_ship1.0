@@ -8,16 +8,15 @@
  */
 
 /* ------------------------------------------------------------ 页面底色 --- */
-/* 原 main 的紫色顶光、顶部中心放射条纹与左下青光。 */
+/* 低对比海图底纹，让棋盘和真实卡面成为视觉重点。 */
 body {
   background-color: var(--surface-sea);
   background-image:
-    radial-gradient(700px 420px at 50% -8%, rgba(124,92,240,.35), transparent 70%),
-    radial-gradient(600px 400px at 12% 105%, rgba(78,200,224,.16), transparent 70%),
-    repeating-conic-gradient(from 200deg at 50% -10%, rgba(255,255,255,.028) 0deg 3deg, transparent 3deg 11deg),
-    linear-gradient(180deg,#0d1020 0%,#0b0d18 55%,#090b14 100%);
-  background-size:auto;
-  background-repeat:no-repeat;
+    radial-gradient(900px 540px at 65% -15%, color-mix(in srgb, var(--role-self) 9%, transparent), transparent 72%),
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size:auto, 80px 80px, 80px 80px;
+  background-repeat:no-repeat, repeat, repeat;
   background-attachment:fixed;
   color:var(--text-primary);
   font-size:15px;
@@ -39,7 +38,7 @@ html[data-theme='journal'] body {
 /* ---------------------------------------------------------------- 顶栏 --- */
 .app-nav {
   min-height: 64px;
-  gap: 8px 22px;
+  gap: 8px 28px;
   padding: 0 24px;
   border-bottom: 1px solid var(--border-subtle);
   background: color-mix(in srgb, var(--surface-sea) 86%, transparent);
@@ -56,10 +55,8 @@ html[data-theme='journal'] body {
   height: 30px;
   border: 1px solid var(--chip-line);
   border-radius: 8px;
-  background:
-    radial-gradient(circle at 32% 22%, rgba(124, 92, 240, 0.55), transparent 68%),
-    var(--surface-chamber);
-  color: #d8ccff;
+  background: var(--role-self-soft);
+  color: var(--role-self);
 }
 
 .app-brand__title {
@@ -97,8 +94,8 @@ html[data-theme='journal'] body {
 .app-nav__link[aria-current='page'],
 .app-nav__link.is-active {
   color: var(--text-primary);
-  background: rgba(124, 92, 240, 0.16);
-  border-color: var(--chip-line);
+  background: var(--role-action-soft);
+  border-color: transparent;
 }
 
 .app-nav__link[aria-current='page']::after {
@@ -116,7 +113,7 @@ html[data-theme='journal'] body {
 }
 
 .app-nav__flow {
-  border-color: var(--chip-line);
+  border-color: var(--border-strong);
   color: var(--text-primary);
 }
 
@@ -204,7 +201,7 @@ html[data-theme='journal'] body {
 .button--primary {
   border-color: var(--hero-border);
   background: var(--hero-grad);
-  color: #ffffff;
+  color: var(--on-accent);
   box-shadow: var(--shadow-accent);
   font-weight: 600;
 }

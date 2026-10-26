@@ -40,10 +40,15 @@ const activeGroup = ref<GroupKey>('appearance')
 
 function goGroup(key: GroupKey): void {
   activeGroup.value = key
-  document.getElementById('settings-' + key)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  document.getElementById('settings-' + key)?.scrollIntoView({ block: 'start', behavior: ui.motion === 'reduced' ? 'auto' : 'smooth' })
 }
 
 const themes: ThemeName[] = ['chart', 'journal', 'night']
+const themeHints: Record<ThemeName, string> = {
+  chart: '竞技场深蓝',
+  journal: '清晰明亮',
+  night: '沉静冷蓝',
+}
 
 /** 主色预设（原 main 设置页的主色选择器）；空值 = 用主题自带的强调色。 */
 const accentPresets: { key: string; label: string }[] = [
@@ -245,9 +250,11 @@ onMounted(() => {
   >
     <div class="settings__modal">
       <header class="settings__head">
-        <p class="settings__eyebrow">竞技场 · 设置</p>
-        <h1 id="screen-settings-title" class="settings__title" data-testid="settings-heading">设置</h1>
-        <p class="settings__hint">回放与观战开关、名片隐私、密码与壁纸入口；改动立即生效。</p>
+        <div>
+          <h1 id="screen-settings-title" class="settings__title" data-testid="settings-heading">设置</h1>
+          <p class="settings__hint">把作战室调整成适合你的样子。</p>
+        </div>
+        <span class="settings__instant"><span aria-hidden="true">✓</span> 更改即时生效</span>
       </header>
 
       <div class="settings__layout">
@@ -263,62 +270,69 @@ onMounted(() => {
             :aria-current="activeGroup === group.key ? 'true' : undefined"
             @click="goGroup(group.key)"
           >
+            <span class="settings__nav-symbol" aria-hidden="true">{{ group.key === 'appearance' ? '◈' : group.key === 'sound' ? '♫' : group.key === 'account' ? '◇' : '≡' }}</span>
             {{ group.label }}
           </button>
+          <p class="settings__nav-note">主题、字号与动效<br />会在这台设备上记住。</p>
         </nav>
 
         <div class="settings__panes">
 
       <section id="settings-appearance" class="settings__group" data-testid="settings-group-appearance" aria-labelledby="settings-group-appearance-title">
-        <h2 id="settings-group-appearance-title" class="settings__group-title">外观</h2>
-
-        <section class="settings__block" aria-labelledby="settings-phase-title">
-          <h3 id="settings-phase-title" class="settings__block-title">阶段转换询问</h3>
-          <p>对手进入战斗或结束阶段前，手中有可用速阶三时提醒你响应。关闭后自动放行。</p>
-          <div class="settings__seg" role="group" aria-label="阶段转换询问">
-            <button type="button" class="settings__seg-item" data-testid="settings-phase-on" :aria-pressed="ui.phasePrompts" :class="{ 'is-active': ui.phasePrompts }" @click="ui.setPhasePrompts(true)">开启询问</button>
-            <button type="button" class="settings__seg-item" data-testid="settings-phase-off" :aria-pressed="!ui.phasePrompts" :class="{ 'is-active': !ui.phasePrompts }" @click="ui.setPhasePrompts(false)">自动放行</button>
-          </div>
-        </section>
-
+        <div class="settings__section-head">
+          <h2 id="settings-group-appearance-title" class="settings__group-title">外观</h2>
+          <p class="settings__note">让信息清晰，让操作顺手。</p>
+        </div>
         <section class="settings__block settings__appearance" data-testid="settings-appearance">
+          <div class="settings__appearance-controls">
           <h3 class="settings__block-title">主题</h3>
-          <div class="settings__seg" role="group" aria-label="主题">
+          <div class="settings__themes" role="group" aria-label="主题">
             <button
               v-for="theme in themes"
               :key="theme"
               type="button"
-              class="settings__seg-item"
+              class="settings__theme"
+              :data-preview-theme="theme"
               :data-testid="'settings-theme-' + theme"
               :aria-pressed="ui.theme === theme"
               :class="{ 'is-active': ui.theme === theme }"
               @click="chooseTheme(theme)"
             >
-              {{ THEME_LABELS[theme] }}
+              <span class="settings__theme-scene" aria-hidden="true">
+                <span class="settings__theme-toolbar"></span>
+                <span class="settings__theme-boards"><i></i><i></i></span>
+                <span class="settings__theme-action"></span>
+              </span>
+              <span class="settings__theme-name">{{ THEME_LABELS[theme] }}</span>
+              <span class="settings__theme-hint">{{ themeHints[theme] }}</span>
+              <span v-if="ui.theme === theme" class="settings__theme-check" aria-hidden="true">✓</span>
             </button>
           </div>
 
-          <h3 class="settings__block-title">动效</h3>
-          <div class="settings__seg" role="group" aria-label="动效">
-            <button type="button" class="settings__seg-item" data-testid="settings-motion-auto"
-              :aria-pressed="ui.motion === 'auto'" :class="{ 'is-active': ui.motion === 'auto' }"
-              @click="chooseMotion(false)">完整动效</button>
-            <button type="button" class="settings__seg-item" data-testid="settings-motion-reduced"
-              :aria-pressed="ui.motion === 'reduced'" :class="{ 'is-active': ui.motion === 'reduced' }"
-              @click="chooseMotion(true)">减少动效</button>
+          <div class="settings__control-row">
+          <div class="settings__control-copy"><h3 class="settings__block-title">主色</h3><p class="settings__note">主操作与选中状态的强调色</p></div>
+          <div class="settings__seg settings__seg--colors" role="group" aria-label="主色">
+            <button
+              v-for="preset in accentPresets"
+              :key="'accent-' + preset.label"
+              type="button"
+              class="settings__seg-item settings__seg-item--accent"
+              :class="{ 'is-active': (ui.accent || '') === preset.key, 'is-swatch': Boolean(preset.key) }"
+              :data-testid="'settings-accent-' + (preset.key ? preset.key.replace('#', '') : 'theme')"
+              :aria-pressed="(ui.accent || '') === preset.key"
+              :aria-label="preset.key ? preset.label + '色' : preset.label"
+              :title="preset.label"
+              :style="preset.key ? { '--swatch': preset.key } : undefined"
+              @click="ui.setAccent(preset.key || null)"
+            >
+              <i v-if="preset.key" class="settings__swatch" aria-hidden="true"></i>
+              <span :class="{ 'sr-only': Boolean(preset.key) }">{{ preset.label }}</span>
+            </button>
+          </div>
           </div>
 
-          <h3 class="settings__block-title">对比度</h3>
-          <div class="settings__seg" role="group" aria-label="对比度">
-            <button type="button" class="settings__seg-item" data-testid="settings-contrast-auto"
-              :aria-pressed="ui.contrast === 'auto'" :class="{ 'is-active': ui.contrast === 'auto' }"
-              @click="chooseContrast(false)">标准对比</button>
-            <button type="button" class="settings__seg-item" data-testid="settings-contrast-high"
-              :aria-pressed="ui.contrast === 'high'" :class="{ 'is-active': ui.contrast === 'high' }"
-              @click="chooseContrast(true)">高对比</button>
-          </div>
-
-          <h3 class="settings__block-title">字号</h3>
+          <div class="settings__control-row">
+          <div class="settings__control-copy"><h3 class="settings__block-title">字号</h3><p class="settings__note">界面文字大小</p></div>
           <div class="settings__seg" role="group" aria-label="字号">
             <button
               v-for="scale in fontScales"
@@ -329,30 +343,39 @@ onMounted(() => {
               :aria-pressed="ui.fontScale === scale.key"
               :class="{ 'is-active': ui.fontScale === scale.key }"
               @click="chooseFontScale(scale.key)"
-            >
-              {{ scale.label }}
-            </button>
+            >{{ scale.label }}</button>
           </div>
-          <h3 class="settings__block-title">主色</h3>
-          <div class="settings__seg settings__seg--wrap" role="group" aria-label="主色">
-            <button
-              v-for="preset in accentPresets"
-              :key="'accent-' + preset.label"
-              type="button"
-              class="settings__seg-item settings__seg-item--accent"
-              :class="{ 'is-active': (ui.accent || '') === preset.key }"
-              :data-testid="'settings-accent-' + (preset.key ? preset.key.replace('#', '') : 'theme')"
-              :aria-pressed="(ui.accent || '') === preset.key"
-              :style="preset.key ? { '--swatch': preset.key } : undefined"
-              @click="ui.setAccent(preset.key || null)"
-            >
-              <i v-if="preset.key" class="settings__swatch" aria-hidden="true"></i>
-              {{ preset.label }}
-            </button>
           </div>
 
-          <h3 class="settings__block-title">预览</h3>
-          <div class="settings__preview" data-testid="settings-preview" aria-label="外观预览">
+          <div class="settings__control-row">
+          <div class="settings__control-copy"><h3 class="settings__block-title">对比度</h3><p class="settings__note">提高文字与边线的辨识度</p></div>
+          <div class="settings__seg" role="group" aria-label="对比度">
+            <button type="button" class="settings__seg-item" data-testid="settings-contrast-auto"
+              :aria-pressed="ui.contrast === 'auto'" :class="{ 'is-active': ui.contrast === 'auto' }"
+              @click="chooseContrast(false)">标准对比</button>
+            <button type="button" class="settings__seg-item" data-testid="settings-contrast-high"
+              :aria-pressed="ui.contrast === 'high'" :class="{ 'is-active': ui.contrast === 'high' }"
+              @click="chooseContrast(true)">高对比</button>
+          </div>
+          </div>
+
+          <div class="settings__control-row">
+          <div class="settings__control-copy"><h3 class="settings__block-title">动效</h3><p class="settings__note">减少动效后仍保留必要的状态提示</p></div>
+          <div class="settings__seg" role="group" aria-label="动效">
+            <button type="button" class="settings__seg-item" data-testid="settings-motion-auto"
+              :aria-pressed="ui.motion === 'auto'" :class="{ 'is-active': ui.motion === 'auto' }"
+              @click="chooseMotion(false)">完整动效</button>
+            <button type="button" class="settings__seg-item" data-testid="settings-motion-reduced"
+              :aria-pressed="ui.motion === 'reduced'" :class="{ 'is-active': ui.motion === 'reduced' }"
+              @click="chooseMotion(true)">减少动效</button>
+          </div>
+          </div>
+          </div>
+
+          <aside class="settings__preview" data-testid="settings-preview" aria-label="外观预览">
+            <div class="settings__preview-head"><h3 class="settings__block-title">效果预览</h3><span>跟随设置</span></div>
+            <div class="settings__preview-demo">
+            <p class="settings__preview-label">海域示意 <span>6×6</span></p>
             <div class="settings__preview-board" aria-hidden="true">
               <span
                 v-for="cell in 36"
@@ -371,9 +394,20 @@ onMounted(() => {
               <span class="settings__preview-hit">命中</span>
               <span class="settings__preview-miss">未命中</span>
             </div>
-          </div>
+            </div>
+            <p class="settings__note">主题、主色、字号与对比度会实时反映在此处。</p>
+          </aside>
+        </section>
 
-          <p class="settings__note">主题、主色、动效、对比度与字号立即生效，并在这台设备上记住。</p>
+        <section class="settings__block settings__control-row" aria-labelledby="settings-phase-title">
+          <div class="settings__control-copy">
+            <h3 id="settings-phase-title" class="settings__block-title">阶段转换询问</h3>
+            <p class="settings__note">对手进入战斗或结束阶段前，手中有可用速阶三时提醒你响应。关闭后自动放行。</p>
+          </div>
+          <div class="settings__seg" role="group" aria-label="阶段转换询问">
+            <button type="button" class="settings__seg-item" data-testid="settings-phase-on" :aria-pressed="ui.phasePrompts" :class="{ 'is-active': ui.phasePrompts }" @click="ui.setPhasePrompts(true)">开启询问</button>
+            <button type="button" class="settings__seg-item" data-testid="settings-phase-off" :aria-pressed="!ui.phasePrompts" :class="{ 'is-active': !ui.phasePrompts }" @click="ui.setPhasePrompts(false)">自动放行</button>
+          </div>
         </section>
 
         <section id="settings-wallpaper" class="settings__block" data-testid="settings-wallpaper">
@@ -462,9 +496,13 @@ onMounted(() => {
       </section>
 
       <section id="settings-sound" class="settings__group" data-testid="settings-group-sound" aria-labelledby="settings-group-sound-title">
-        <h2 id="settings-group-sound-title" class="settings__group-title">声音</h2>
+        <div class="settings__section-head">
+          <h2 id="settings-group-sound-title" class="settings__group-title">声音</h2>
+          <p class="settings__note">保留作战反馈，调到舒服的音量。</p>
+        </div>
         <section class="settings__block settings__audio" data-testid="settings-audio">
-        <h2 class="settings__block-title">音效与背景音乐</h2>
+        <div class="settings__control-row">
+        <div class="settings__control-copy"><h3 class="settings__block-title">游戏音效</h3><p class="settings__note">攻击、出牌与操作反馈</p></div>
         <div class="settings__audio-row">
           <button
             type="button"
@@ -478,6 +516,7 @@ onMounted(() => {
           <button type="button" class="button" data-testid="settings-sfx-preview" @click="audio.previewSfx()">
             试听
           </button>
+        </div>
         </div>
         <label class="settings__range">
           <span>音效音量</span>
@@ -493,6 +532,8 @@ onMounted(() => {
           <output data-testid="settings-sfx-volume-value">{{ audio.sfxVolumePercent }}%</output>
         </label>
 
+        <div class="settings__control-row settings__audio-divider">
+        <div class="settings__control-copy"><h3 class="settings__block-title">背景音乐</h3><p class="settings__note">随时播放、暂停或静音</p></div>
         <div class="settings__audio-row">
           <button
             type="button"
@@ -512,6 +553,7 @@ onMounted(() => {
           >
             {{ audio.bgmMuted ? '取消静音' : '静音' }}
           </button>
+        </div>
         </div>
         <label class="settings__range">
           <span>音乐音量</span>
@@ -533,7 +575,10 @@ onMounted(() => {
       </section>
 
       <section id="settings-account" class="settings__group" data-testid="settings-group-account" aria-labelledby="settings-group-account-title">
-        <h2 id="settings-group-account-title" class="settings__group-title">账号与隐私</h2>
+        <div class="settings__section-head">
+          <h2 id="settings-group-account-title" class="settings__group-title">账号与隐私</h2>
+          <p class="settings__note">决定哪些信息可见，以及谁能观看你的对局。</p>
+        </div>
 
     <section v-if="anonymous" class="settings__login" data-testid="settings-login-required">
       <h2>需要先登录</h2>
@@ -548,7 +593,6 @@ onMounted(() => {
 
     <template v-else>
       <section id="settings-replay" class="settings__block" data-testid="settings-replay">
-        <h2 class="settings__block-title">对局回放</h2>
         <label class="settings__switch">
           <input
             type="checkbox"
@@ -557,16 +601,14 @@ onMounted(() => {
             :disabled="settings.replay.status !== 'ready' || settings.replay.saving"
             @change="onReplayChange"
           />
-          <span>允许保留我的对局回放</span>
+          <span>允许保留我的对局回放<small class="settings__switch-hint">任一方关闭，这一局就不会留下回放。</small></span>
         </label>
         <p class="settings__note" data-testid="settings-replay-status" role="status">
           {{ toggleStatus('replay') }}
         </p>
-        <p class="settings__note">任一方关闭，这一局就不会留下回放。</p>
       </section>
 
       <section id="settings-spectate" class="settings__block" data-testid="settings-spectate">
-        <h2 class="settings__block-title">观战</h2>
         <label class="settings__switch">
           <input
             type="checkbox"
@@ -575,12 +617,11 @@ onMounted(() => {
             :disabled="settings.spectate.status !== 'ready' || settings.spectate.saving"
             @change="onSpectateChange"
           />
-          <span>允许他人观战我的对局</span>
+          <span>允许他人观战我的对局<small class="settings__switch-hint">观众只能看到双方已轰过的格子，看不到你的船位。</small></span>
         </label>
         <p class="settings__note" data-testid="settings-spectate-status" role="status">
           {{ toggleStatus('spectate') }}
         </p>
-        <p class="settings__note">观众只能看到双方已轰过的格子，看不到你的船位。</p>
       </section>
 
       <section id="settings-privacy" class="settings__block" data-testid="settings-privacy">
@@ -640,7 +681,10 @@ onMounted(() => {
       </section>
 
       <section id="settings-about" class="settings__group" data-testid="settings-group-about" aria-labelledby="settings-group-about-title">
-        <h2 id="settings-group-about-title" class="settings__group-title">关于</h2>
+        <div class="settings__section-head">
+          <h2 id="settings-group-about-title" class="settings__group-title">关于</h2>
+          <p class="settings__note">玩法说明、版本与最近的更新。</p>
+        </div>
 
         <section class="settings__block" data-testid="settings-about-help">
           <h2 class="settings__block-title">玩法与帮助</h2>
@@ -678,212 +722,685 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* C+ settings: one 1040px modal, left section rail + right scrolling pane. */
+/* 设置使用稳定侧栏与单一内容滚动区；预览独立占位，不覆盖控件。 */
 .settings {
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 28px clamp(18px, 5vw, 72px) 24px;
 }
 
 .settings__modal {
   display: flex;
   flex-direction: column;
-  width: 1040px;
+  width: 1440px;
   max-width: 100%;
-  max-height: calc(100vh - 104px);
-  overflow: hidden;
-  border: 1px solid var(--panel-line);
-  border-radius: var(--radius);
-  background: var(--panel);
-  box-shadow: var(--shadow-panel);
+  min-height: 0;
+  max-height: calc(100dvh - 124px);
+  margin: 0 auto;
 }
 
 .settings__head {
+  display: flex;
   flex: 0 0 auto;
-  padding: 16px 22px 12px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.settings__eyebrow {
-  margin: 0 0 2px;
-  color: var(--text-secondary);
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 0 0 26px;
 }
 
 .settings__title {
-  margin: 0;
-  font-size: 24px;
-  line-height: 1.2;
+  margin: 0 0 4px;
+  color: var(--text-primary);
+  font-size: 30px;
+  line-height: 1.25;
+  letter-spacing: -0.03em;
 }
 
-.settings__hint {
-  margin: 2px 0 0;
-  color: var(--text-muted);
-  font-size: 12px;
+.settings__hint,
+.settings__note,
+.settings__nav-note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.settings__instant {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  color: var(--role-success);
+  font-size: 13px;
 }
 
 .settings__layout {
   display: grid;
-  grid-template-columns: 182px minmax(0, 1fr);
-  gap: 18px;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 32px;
+  flex: 1;
   min-height: 0;
-  padding: 16px 22px 20px;
 }
 
 .settings__nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  align-self: start;
-  padding: 8px;
-  border: 1px solid var(--panel-line);
-  border-radius: 10px;
-  background: var(--surface-deck);
+  gap: 6px;
+  min-height: 0;
+  padding: 6px 30px 24px 0;
+  border-right: 1px solid var(--border-subtle);
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 .settings__nav-item {
-  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-height: 48px;
+  padding: 10px 14px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 7px;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
   text-align: left;
   cursor: pointer;
 }
 
 .settings__nav-item:hover {
-  border-color: var(--role-self);
-  background: var(--role-self-soft);
+  background: var(--surface-raised);
   color: var(--text-primary);
 }
 
-/* The highlight follows the group being read, not the first item forever. */
 .settings__nav-item.is-active {
-  border-color: var(--role-action);
+  border-color: var(--border-subtle);
   background: var(--role-action-soft);
   color: var(--text-primary);
+  box-shadow: inset 2px 0 var(--role-action);
+}
+
+.settings__nav-symbol {
+  width: 18px;
+  color: var(--text-secondary);
+  font-size: 19px;
+  text-align: center;
+}
+
+.settings__nav-note {
+  padding: 30px 14px 0;
+  font-size: 12px;
 }
 
 .settings__panes {
   display: grid;
   align-content: start;
-  gap: 12px;
+  gap: 38px;
+  min-width: 0;
   min-height: 0;
-  padding-right: 8px;
+  padding: 4px 10px 24px 0;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.settings__group {
+  display: grid;
+  align-content: start;
+  gap: 0;
+  min-width: 0;
+  scroll-margin-top: 4px;
+}
+
+.settings__section-head {
+  margin-bottom: 22px;
+}
+
+.settings__group-title {
+  margin: 0 0 6px;
+  color: var(--text-primary);
+  font-size: 21px;
+  line-height: 1.35;
+}
+
+.settings__block {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.settings__block-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.settings__appearance {
+  grid-template-columns: minmax(0, 1fr) 270px;
+  align-items: start;
+  gap: 28px;
+  padding-top: 0;
+}
+
+.settings__appearance-controls {
+  min-width: 0;
+}
+
+.settings__themes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 12px 0 16px;
+}
+
+.settings__theme {
+  --mini-bg: #0b1120;
+  --mini-panel: #1b2840;
+  --mini-cell: #23354d;
+  --mini-line: #3b4d68;
+  --mini-accent: #a990f5;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-deck);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings__theme[data-preview-theme='journal'] {
+  --mini-bg: #eff6ff;
+  --mini-panel: #b8cee5;
+  --mini-cell: #d5e6f4;
+  --mini-line: #93b4d3;
+  --mini-accent: #2f8fdd;
+}
+
+.settings__theme[data-preview-theme='night'] {
+  --mini-bg: #0a1428;
+  --mini-panel: #17304b;
+  --mini-cell: #12344a;
+  --mini-line: #2e5570;
+  --mini-accent: #58a6ff;
+}
+
+.settings__theme:hover {
+  border-color: var(--role-self);
+}
+
+.settings__theme.is-active {
+  border-color: var(--role-action);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--role-action) 30%, transparent);
+}
+
+.settings__theme-scene {
+  display: grid;
+  grid-template-rows: 7px minmax(0, 1fr) 5px;
+  gap: 7px;
+  width: 100%;
+  height: 76px;
+  margin-bottom: 7px;
+  padding: 7px;
+  border: 1px solid var(--mini-line);
+  border-radius: 4px;
+  background: var(--mini-bg);
+}
+
+.settings__theme-toolbar {
+  background: var(--mini-panel);
+}
+
+.settings__theme-boards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.settings__theme-boards i {
+  border: 1px solid var(--mini-line);
+  border-radius: 2px;
+  background-color: var(--mini-cell);
+  background-image: linear-gradient(var(--mini-line) 1px, transparent 1px), linear-gradient(90deg, var(--mini-line) 1px, transparent 1px);
+  background-size: 16.666% 33.333%;
+}
+
+.settings__theme-action {
+  width: 34%;
+  border-radius: 2px;
+  background: var(--mini-accent);
+}
+
+.settings__theme-name {
+  padding-right: 18px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings__theme-hint {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.settings__theme-check {
+  position: absolute;
+  right: 10px;
+  bottom: 11px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--role-action);
+  color: var(--on-accent);
+  font-size: 11px;
+}
+
+.settings__control-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px 20px;
+  padding: 15px 0;
+}
+
+.settings__control-copy {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.settings__control-copy .settings__note {
+  max-width: 62ch;
+  margin-top: 3px;
+  font-size: 12px;
+}
+
+.settings__seg {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  max-width: 100%;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface-sea);
+}
+
+.settings__seg-item {
+  min-height: 34px;
+  padding: 6px 13px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings__seg-item:hover {
+  color: var(--text-primary);
+  background: var(--surface-raised);
+}
+
+.settings__seg-item.is-active {
+  background: var(--role-action-soft);
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--role-action) 35%, transparent);
+}
+
+.settings__seg--colors {
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.settings__seg-item--accent.is-swatch {
+  display: grid;
+  place-items: center;
+  width: 33px;
+  min-height: 38px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.settings__seg-item--accent.is-swatch.is-active {
+  border-color: transparent;
+  background: transparent;
+}
+
+.settings__swatch {
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: var(--swatch);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-primary) 18%, transparent);
+}
+
+.is-active .settings__swatch {
+  outline: 1px solid var(--text-primary);
+  outline-offset: 3px;
+}
+
+.settings__preview {
+  display: grid;
+  gap: 20px;
+  padding: 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: 11px;
+  background: var(--surface-deck);
+}
+
+.settings__preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings__preview-head > span {
+  padding: 3px 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.settings__preview-demo {
+  padding: 14px;
+  border: 1px solid var(--board-border);
+  border-radius: 8px;
+  background: var(--surface-sea);
+}
+
+.settings__preview-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 16px;
+  color: var(--role-self);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings__preview-label span {
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.settings__preview-board {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 14px;
+}
+
+.settings__preview-cell {
+  position: relative;
+  aspect-ratio: 1;
+  border: 1px solid var(--board-border);
+  border-radius: 3px;
+  background: var(--cell-bg);
+}
+
+.settings__preview-cell.is-ship {
+  background: var(--ship-metal);
+}
+
+.settings__preview-cell.is-hit {
+  border-color: var(--role-enemy);
+  background: var(--role-enemy-soft);
+}
+
+.settings__preview-cell.is-hit::after,
+.settings__preview-cell.is-miss::after {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings__preview-cell.is-hit::after {
+  content: '×';
+  color: var(--role-enemy);
+}
+
+.settings__preview-cell.is-miss::after {
+  content: '○';
+  color: var(--role-self);
+}
+
+.settings__preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 9px;
+  font-size: 11px;
+}
+
+.settings__preview-primary {
+  flex-basis: 100%;
+  padding: 7px 12px;
+  border-radius: 5px;
+  background: var(--hero-grad);
+  color: var(--on-accent);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.settings__preview-secondary {
+  color: var(--role-action);
+}
+
+.settings__preview-hit {
+  color: var(--role-enemy);
+}
+
+.settings__preview-miss {
+  color: var(--role-self);
+}
+
+.settings__preview > .settings__note {
+  font-size: 12px;
+}
+
+.settings__switch {
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 60px;
+  padding: 12px 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.settings__switch + .settings__switch {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.settings__switch > span {
+  min-width: 0;
+}
+
+.settings__switch input {
+  appearance: none;
+  position: relative;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 24px;
+  margin: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease);
+}
+
+.settings__switch input::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: transform var(--duration-fast) var(--ease);
+}
+
+.settings__switch input:checked {
+  border-color: var(--role-action);
+  background: var(--role-action);
+}
+
+.settings__switch input:checked::before {
+  transform: translateX(16px);
+  background: var(--on-accent);
+}
+
+.settings__switch input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.settings__switch-hint {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.settings__note[role='status'] {
+  min-height: 24px;
+  overflow-wrap: anywhere;
+}
+
+.settings__note.is-error,
+.settings__state--error {
+  color: var(--danger);
 }
 
 .settings__login,
 .settings__state {
   margin: 0;
-  padding: 14px 16px;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius);
+  padding: 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
   background: var(--surface-deck);
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.settings__state--error {
-  border-color: var(--danger);
-  color: var(--danger);
+  color: var(--text-secondary);
+  font-size: 14px;
 }
 
 .settings__login h2 {
-  margin: 0 0 6px;
-  color: var(--text);
+  margin: 0 0 8px;
+  color: var(--text-primary);
   font-size: 18px;
 }
 
 .settings__login p {
-  margin: 0 0 10px;
+  margin: 0 0 16px;
 }
 
-.settings__block {
-  display: grid;
-  gap: 10px;
-  padding: 14px 16px;
-  border: 1px solid var(--panel-line);
-  border-radius: 10px;
-  background: var(--surface-deck);
+.settings__audio {
+  padding-top: 0;
+  gap: 18px;
 }
 
-.settings__block-title {
-  margin: 0;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-tertiary);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-}
-
-.settings__switch {
+.settings__audio-row,
+.settings__wallpaper-actions,
+.settings__actions {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings__audio .settings__control-row {
+  padding-bottom: 0;
+}
+
+.settings__audio-divider {
+  margin-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.settings__range {
+  display: grid;
+  grid-template-columns: 100px minmax(80px, 1fr) 46px;
+  align-items: center;
+  gap: 16px;
+  width: min(100%, 620px);
+  padding: 0 0 10px;
+  color: var(--text-secondary);
   font-size: 13px;
-  cursor: pointer;
 }
 
-.settings__switch input {
-  width: 18px;
-  height: 18px;
-  margin: 2px 0 0;
-  accent-color: var(--accent);
-}
-
-.settings__switch-hint {
-  display: block;
-  margin-top: 1px;
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.settings__note {
+.settings__range input {
+  width: 100%;
+  min-height: 32px;
   margin: 0;
-  color: var(--text-muted);
-  font-size: 12px;
+  accent-color: var(--role-action);
 }
 
-.settings__note.is-error {
-  color: var(--danger);
+.settings__range output {
+  color: var(--text-primary);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .settings__form {
   display: grid;
-  gap: 10px;
-  max-width: 340px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 16px;
+  max-width: 620px;
 }
 
 .settings__form label {
   display: grid;
-  gap: 4px;
-  color: var(--text-muted);
-  font-size: 12px;
+  gap: 7px;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .settings__form input {
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-sunken);
-  color: var(--text);
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-sea);
+  color: var(--text-primary);
   font: inherit;
 }
 
 .settings__form button {
+  grid-column: 1 / -1;
   justify-self: start;
-}
-
-.settings__wallpaper-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
 }
 
 .settings__wallpaper-current {
@@ -891,56 +1408,57 @@ onMounted(() => {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  margin-top: 10px;
-  padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--gold) 35%, transparent);
-  border-radius: var(--radius-sm);
-  background: rgba(201, 162, 76, 0.08);
+  margin-top: 4px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--role-action) 35%, transparent);
+  border-radius: 7px;
+  background: var(--role-action-soft);
 }
 
 .settings__wallpaper-current-title {
   flex: 1 1 220px;
   min-width: 0;
-  color: var(--text);
+  color: var(--text-primary);
   font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .settings__wallpaper-list {
   display: grid;
-  gap: 10px;
-  margin: 12px 0 0;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+  gap: 14px;
+  margin: 8px 0 0;
   padding: 0;
   list-style: none;
 }
 
 .settings__wallpaper-item {
   display: grid;
-  grid-template-columns: 96px minmax(0, 1fr) auto;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 12px;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: rgba(13, 17, 34, 0.62);
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-deck);
 }
 
 .settings__wallpaper-item[data-supported='false'] {
-  opacity: 0.72;
+  opacity: 0.7;
 }
 
 .settings__wallpaper-preview {
   display: grid;
+  grid-column: 1 / -1;
   place-items: center;
-  width: 96px;
-  height: 54px;
+  width: 100%;
+  aspect-ratio: 16 / 9;
   overflow: hidden;
-  border-radius: 6px;
-  background: var(--surface-sea);
-  color: var(--text-dim);
-  font-size: 11px;
+  border-radius: 5px;
+  background: var(--surface-chamber);
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 
 .settings__wallpaper-preview img {
@@ -954,274 +1472,305 @@ onMounted(() => {
 }
 
 .settings__wallpaper-title {
-  margin: 0 0 2px;
-  color: var(--text);
+  margin: 0 0 4px;
+  color: var(--text-primary);
   font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .settings__wallpaper-kind {
   margin: 0;
-  color: var(--text-dim);
-  font-size: 11px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.settings__about-list {
+  display: grid;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.settings__about-list b {
+  color: var(--text-primary);
 }
 
 .settings__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  padding-top: 4px;
+  padding-top: 2px;
 }
 
-.settings__actions .button {
+.settings__actions .button,
+.settings__wallpaper-actions .button,
+.settings__audio-row .button {
   min-height: 40px;
-  padding: 8px 20px;
 }
 
-.settings__actions [data-testid='settings-back'] {
-  border-color: var(--border-strong);
-  background: var(--surface-deck);
-  color: var(--text-muted);
-}
-
-.settings__audio-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.settings__range {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 13px;
-  color: var(--text-muted);
-}
-
-.settings__range input[type='range'] {
-  flex: 1;
-  min-width: 120px;
-  accent-color: var(--accent);
-}
-
-.settings__range output {
-  min-width: 42px;
-  text-align: right;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
-
-@media (max-width: 860px) {
+@media (max-width: 1250px) {
   .settings {
-    justify-content: flex-start;
-    padding: 12px;
+    padding: 22px 28px;
+  }
+
+  .settings__layout {
+    grid-template-columns: 170px minmax(0, 1fr);
+    gap: 24px;
+  }
+
+  .settings__nav {
+    padding-right: 20px;
+  }
+
+  .settings__appearance {
+    grid-template-columns: minmax(0, 1fr) 230px;
+    gap: 20px;
+  }
+
+  .settings__preview {
+    padding: 15px;
+  }
+}
+
+@media (max-width: 1050px) {
+  .settings__appearance {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings__preview {
+    grid-template-columns: minmax(0, 1fr) 210px;
+    align-items: start;
+  }
+
+  .settings__preview-head {
+    grid-column: 1;
+  }
+
+  .settings__preview-demo {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
+  .settings__preview > .settings__note {
+    grid-column: 1;
+    grid-row: 2;
+  }
+}
+
+@media (max-width: 719px) {
+  .settings {
+    padding: 18px 14px 24px;
   }
 
   .settings__modal {
     max-height: none;
   }
 
+  .settings__head {
+    align-items: flex-start;
+    gap: 12px;
+    padding-bottom: 18px;
+  }
+
+  .settings__title {
+    font-size: 26px;
+  }
+
+  .settings__instant {
+    gap: 4px;
+    margin-top: 6px;
+    font-size: 11px;
+  }
+
   .settings__layout {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 10px;
-    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
   }
 
   .settings__nav {
     flex-direction: row;
-    flex-wrap: wrap;
+    gap: 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0 0 10px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   .settings__nav-item {
+    flex: 0 0 auto;
+    gap: 6px;
+    min-height: 44px;
     padding: 8px 10px;
-    font-size: 12px;
+    font-size: 13px;
+  }
+
+  .settings__nav-symbol {
+    width: 14px;
+    font-size: 16px;
+  }
+
+  .settings__nav-note {
+    display: none;
   }
 
   .settings__panes {
+    gap: 32px;
+    padding: 0;
     overflow: visible;
-    padding-right: 0;
-  }
-}
-
-/* ------------------------------------------------- intent groups ------- */
-.settings__group {
-  display: grid;
-  gap: 10px;
-  min-width: 0;
-}
-
-.settings__group-title {
-  margin: 2px 0 0;
-  color: var(--text-tertiary);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-}
-
-/* Segmented controls: theme / motion / contrast / font scale. */
-.settings__seg {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.settings__seg-item {
-  min-height: 40px;
-  padding: 0 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-chamber);
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.settings__seg-item:hover {
-  border-color: var(--role-self);
-  color: var(--text-primary);
-}
-
-.settings__seg-item.is-active {
-  border-color: var(--role-action);
-  background: var(--role-action-soft);
-  color: var(--text-primary);
-}
-
-.settings__about-list {
-  display: grid;
-  gap: 4px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-@media (max-width: 719px) {
-  button[data-testid],
-  a[data-testid] {
-    min-height: 44px;
-    min-width: 44px;
+    scrollbar-gutter: auto;
   }
 
-  .settings__switch {
-    min-height: 44px;
-    align-items: center;
+  .settings__group {
+    scroll-margin-top: 76px;
+  }
+
+  .settings__themes {
+    gap: 7px;
+  }
+
+  .settings__theme {
+    padding: 7px;
+  }
+
+  .settings__theme-scene {
+    height: 61px;
+    gap: 5px;
+    padding: 5px;
+  }
+
+  .settings__theme-hint {
+    font-size: 10px;
+  }
+
+  .settings__theme-check {
+    right: 7px;
+    bottom: 8px;
+    width: 15px;
+    height: 15px;
+  }
+
+  .settings__control-row {
+    gap: 10px;
+    padding: 17px 0;
+  }
+
+  .settings__control-copy {
+    flex-basis: 100%;
   }
 
   .settings__seg-item,
-  .settings__nav-item,
   .settings__actions .button,
-  .settings__actions [data-testid='settings-back'] {
+  .settings__audio-row .button,
+  .settings__wallpaper-actions .button {
     min-height: 44px;
     min-width: 44px;
   }
-}
-</style>
-<style scoped>
-/* ---- 主色与即时预览（原 main 设置页的棋盘/命中/主次行动预览） ---- */
-.settings__seg--wrap {
-  flex-wrap: wrap;
+
+  .settings__seg-item--accent.is-swatch {
+    width: 42px;
+    min-width: 42px;
+  }
+
+  .settings__seg--colors {
+    gap: 0;
+  }
+
+  .settings__preview {
+    grid-template-columns: minmax(0, 1fr) 150px;
+    gap: 16px;
+  }
+
+  .settings__preview-head {
+    flex-direction: column;
+    align-items: start;
+    gap: 8px;
+  }
+
+  .settings__preview-demo {
+    padding: 10px;
+  }
+
+  .settings__preview-board {
+    gap: 3px;
+  }
+
+  .settings__preview-label {
+    gap: 6px;
+    margin-bottom: 10px;
+    font-size: 10px;
+  }
+
+  .settings__preview-actions {
+    gap: 7px;
+    font-size: 10px;
+  }
+
+  .settings__preview-primary {
+    font-size: 11px;
+  }
+
+  .settings__range {
+    grid-template-columns: 76px minmax(70px, 1fr) 40px;
+    gap: 10px;
+  }
+
+  .settings__form {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
-.settings__seg-item--accent {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+@media (min-width: 720px) and (max-height: 600px) {
+  .settings {
+    padding-top: 16px;
+    padding-bottom: 16px;
+  }
+
+  .settings__modal {
+    max-height: calc(100dvh - 104px);
+  }
+
+  .settings__head {
+    padding-bottom: 14px;
+  }
+
+  .settings__nav-note {
+    display: none;
+  }
 }
 
-.settings__swatch {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--swatch, var(--role-action));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-primary) 24%, transparent);
+@media (max-width: 359px) {
+  .settings__preview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings__preview-head,
+  .settings__preview-demo,
+  .settings__preview > .settings__note {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .settings__preview-head {
+    flex-direction: row;
+  }
+
+  .settings__preview-demo {
+    width: min(220px, 100%);
+  }
 }
 
-.settings__preview {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 16px;
-  margin-top: 8px;
-  padding: 12px 14px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  background: var(--surface-deck);
+@media (prefers-reduced-motion: reduce) {
+  .settings__switch input,
+  .settings__switch input::before {
+    transition: none;
+  }
 }
 
-.settings__preview-board {
-  display: grid;
-  grid-template-columns: repeat(6, 22px);
-  grid-auto-rows: 22px;
-  gap: 3px;
-  padding: 6px;
-  border-radius: 10px;
-  background: var(--board-bg, var(--surface-chamber));
-  border: 1px solid var(--board-border, var(--border-subtle));
-}
-
-.settings__preview-cell {
-  border-radius: 4px;
-  background: var(--cell-bg, var(--surface-chamber));
-  border: 1px solid color-mix(in srgb, var(--board-border, var(--border-subtle)) 70%, transparent);
-}
-
-.settings__preview-cell.is-ship {
-  background: linear-gradient(160deg, var(--ship-metal, var(--border-strong)), color-mix(in srgb, var(--ship-metal, var(--border-strong)) 55%, #000));
-}
-
-.settings__preview-cell.is-hit {
-  background: radial-gradient(circle, #ff6b6b, #b3261e);
-  border-color: #ff9a9a;
-}
-
-.settings__preview-cell.is-miss {
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--role-self, #4ec8e0) 70%, transparent);
-}
-
-.settings__preview-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-}
-
-.settings__preview-primary,
-.settings__preview-secondary {
-  padding: 6px 14px;
-  border-radius: 8px;
-  font-weight: 600;
-}
-
-.settings__preview-primary {
-  color: var(--on-accent, #fff);
-  background: var(--role-action);
-}
-
-.settings__preview-secondary {
-  color: var(--text-primary);
-  border: 1px solid color-mix(in srgb, var(--role-action) 55%, transparent);
-  background: color-mix(in srgb, var(--role-action) 12%, transparent);
-}
-
-.settings__preview-hit,
-.settings__preview-miss {
-  padding: 3px 8px;
-  border-radius: 999px;
-}
-
-.settings__preview-hit {
-  color: #ffd7d4;
-  background: color-mix(in srgb, #e5484d 26%, transparent);
-}
-
-.settings__preview-miss {
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--role-self, #4ec8e0) 18%, transparent);
+:global(html[data-motion='reduced']) .settings__switch input,
+:global(html[data-motion='reduced']) .settings__switch input::before {
+  transition: none;
 }
 </style>

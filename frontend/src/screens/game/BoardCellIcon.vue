@@ -26,6 +26,9 @@ defineProps<{ kind: CellVisual }>()
       <path d="M16 4v24M4 16h24" opacity=".9" />
       <path d="m10 9 6-5 6 5M10 23l6 5 6-5" opacity=".45" />
     </g>
-    <path v-else-if="kind === 'ship'" d="M2 19h28l-6 8H8Zm9-9h11v9H11Zm4-7h3v7h-3Z" fill="currentColor" />
+    <g v-else-if="kind === 'ship'" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 19h22l-5 7H10l-5-7Zm5 0V11h12v8M16 11V4m-4 3h8" fill="currentColor" fill-opacity=".1" />
+      <path d="M3 29c3-2 4 2 7 0s4 2 7 0 4 2 7 0 4 2 5 0" opacity=".6" />
+    </g>
   </svg>
 </template>

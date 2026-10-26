@@ -81,6 +81,10 @@ function isMe(row: JsonObject): boolean {
   return Boolean(name) && name === meName.value
 }
 
+function playerInitial(row: JsonObject): string {
+  return Array.from(text(row, 'username').trim())[0] || '舰'
+}
+
 function openTab(tab: 'record' | 'ranked'): void {
   if (tab === activeTab.value) return
   board.setTab(tab)
@@ -106,12 +110,12 @@ function backHome(): void {
     aria-labelledby="screen-leaderboard-title"
   >
     <header class="leaderboard__head">
-      <p class="leaderboard__eyebrow">竞技场 · 排行</p>
+      <div>
       <h1 id="screen-leaderboard-title" class="leaderboard__title" data-testid="leaderboard-heading">排行榜</h1>
       <p class="leaderboard__hint">
-        战绩榜按胜场排序，段位榜按排位分排序；两张榜都是服务端排好的名次。
+        每一场对局，都留下你的航迹。
       </p>
-    </header>
+      </div>
 
     <div class="leaderboard__tabs" data-testid="leaderboard-tabs" role="tablist" aria-label="榜单">
       <button
@@ -137,6 +141,7 @@ function backHome(): void {
         段位榜
       </button>
     </div>
+    </header>
 
     <p v-if="activeTab === 'ranked' && activeBoard.status === 'loading' && activeBoard.rows.length === 0"
        class="leaderboard__state" data-testid="leaderboard-ranked-loading" role="status">
@@ -165,15 +170,20 @@ function backHome(): void {
       还没有人打过排位 —— 打一场排位赛就会出现在这里。
     </p>
 
+    <div class="leaderboard__highlights">
     <section
       class="leaderboard__my-rank"
       data-testid="leaderboard-my-rank"
       :data-board="activeTab"
       aria-label="我的名次"
     >
-      <span class="leaderboard__my-rank-label">我的名次</span>
-      <b class="leaderboard__my-rank-value" data-testid="leaderboard-my-rank-position">{{ myRankPosition }}</b>
+      <h2 class="leaderboard__my-rank-label">我的名次</h2>
+      <div class="leaderboard__my-rank-number">
+        <b class="leaderboard__my-rank-value" data-testid="leaderboard-my-rank-position">{{ myRankPosition }}</b>
+        <span v-if="myRankPosition !== '暂无'">名</span>
+      </div>
       <span class="leaderboard__my-rank-note" data-testid="leaderboard-my-rank-note">{{ myRankNote }}</span>
+      <p class="leaderboard__my-rank-help">{{ meName ? '点击榜单中的玩家，查看名片与战绩。' : '登录后可在这里查看自己的名次。' }}</p>
     </section>
 
     <div v-if="podiumRows.length" class="leaderboard__podium" data-testid="leaderboard-podium" aria-label="前三名">
@@ -187,12 +197,23 @@ function backHome(): void {
         :data-place="activeTab === 'ranked' ? numberText(item.row, 'position') : String(item.place)"
         @click="openUser(text(item.row, 'username'))"
       >
+        <span class="leaderboard__podium-place">{{ activeTab === 'ranked' ? numberText(item.row, 'position') : item.place }}</span>
+        <span class="leaderboard__podium-avatar">
+          <img v-if="text(item.row, 'avatar')" :src="text(item.row, 'avatar')" alt="" />
+          <span v-else>{{ playerInitial(item.row) }}</span>
+        </span>
         <span class="leaderboard__podium-name">{{ text(item.row, 'username') || '未知玩家' }}</span>
-        <b class="leaderboard__podium-score">{{ podiumValue(item.row) }}</b>
-        <small class="leaderboard__podium-label">{{ podiumLabel() }}</small>
+        <span v-if="activeTab === 'ranked'" class="leaderboard__podium-tier">{{ text(item.row, 'label') || text(item.row, 'tier_name') || '—' }}</span>
+        <span class="leaderboard__podium-result">
+          <b class="leaderboard__podium-score">{{ podiumValue(item.row) }}</b>
+          <small class="leaderboard__podium-label">{{ podiumLabel() }}</small>
+        </span>
+        <span v-if="item.place === 1" class="leaderboard__podium-leader">榜首舰长</span>
       </button>
     </div>
+    </div>
 
+    <p class="leaderboard__scroll-hint">左右滑动榜单，可查看完整战绩。</p>
     <div v-if="activeTab === 'record'" class="leaderboard__table-wrap" data-testid="leaderboard-scroll">
       <table class="leaderboard__table" data-testid="leaderboard-table">
         <thead>
@@ -214,14 +235,14 @@ function backHome(): void {
             :class="{ 'is-me': isMe(row) }"
             @click="openUser(text(row, 'username'))"
           >
-            <td>{{ index + 1 }}</td>
+            <td class="leaderboard__position" :data-top="index < 3 ? String(index + 1) : undefined">{{ index + 1 }}</td>
             <td class="leaderboard__player">
               <button
                 type="button"
                 class="leaderboard__user"
                 :data-testid="'leaderboard-open-' + text(row, 'username')"
                 :title="'查看 ' + (text(row, 'username') || '玩家') + ' 的名片'"
-                @click="openUser(text(row, 'username'))"
+                @click.stop="openUser(text(row, 'username'))"
               >
                 <img
                   v-if="text(row, 'avatar')"
@@ -229,10 +250,11 @@ function backHome(): void {
                   :src="text(row, 'avatar')"
                   alt=""
                 />
+                <span v-else class="leaderboard__avatar leaderboard__avatar--initial" aria-hidden="true">{{ playerInitial(row) }}</span>
                 <span :class="['leaderboard__name', { 'is-rainbow': text(row, 'name_style') === 'rainbow' }]">
                   {{ text(row, 'username') || '未知玩家' }}
                 </span>
-                <span class="leaderboard__open-hint" aria-hidden="true">名片 ↗</span>
+                <span v-if="isMe(row)" class="leaderboard__me-tag">我</span>
               </button>
             </td>
             <td class="leaderboard__num">{{ numberText(row, 'wins') }}</td>
@@ -264,14 +286,14 @@ function backHome(): void {
             :class="{ 'is-me': isMe(row) }"
             @click="openUser(text(row, 'username'))"
           >
-            <td>{{ numberText(row, 'position') }}</td>
+            <td class="leaderboard__position" :data-top="Number(row.position) <= 3 ? numberText(row, 'position') : undefined">{{ numberText(row, 'position') }}</td>
             <td class="leaderboard__player">
               <button
                 type="button"
                 class="leaderboard__user"
                 :data-testid="'leaderboard-ranked-open-' + text(row, 'username')"
                 :title="'查看 ' + (text(row, 'username') || '玩家') + ' 的名片'"
-                @click="openUser(text(row, 'username'))"
+                @click.stop="openUser(text(row, 'username'))"
               >
                 <img
                   v-if="text(row, 'avatar')"
@@ -279,10 +301,11 @@ function backHome(): void {
                   :src="text(row, 'avatar')"
                   alt=""
                 />
+                <span v-else class="leaderboard__avatar leaderboard__avatar--initial" aria-hidden="true">{{ playerInitial(row) }}</span>
                 <span :class="['leaderboard__name', { 'is-rainbow': text(row, 'name_style') === 'rainbow' }]">
                   {{ text(row, 'username') || '未知玩家' }}
                 </span>
-                <span class="leaderboard__open-hint" aria-hidden="true">名片 ↗</span>
+                <span v-if="isMe(row)" class="leaderboard__me-tag">我</span>
               </button>
             </td>
             <td>
@@ -300,6 +323,7 @@ function backHome(): void {
     </div>
 
     <footer class="leaderboard__actions">
+      <p>战绩榜按胜场排序，段位榜按排位分排序。点击玩家查看名片。</p>
       <button type="button" class="button button--ghost" data-testid="leaderboard-back-home" @click="backHome">
         返回首页
       </button>
@@ -308,350 +332,108 @@ function backHome(): void {
 </template>
 
 <style scoped>
-.leaderboard {
-  gap: 14px;
-  padding-top: 8px;
+.leaderboard { width: min(1490px, 100%); margin: 0 auto; gap: 20px; padding: 24px 28px 28px; }
+.leaderboard__head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 18px 24px; }
+.leaderboard__title { margin: 0; color: var(--text-primary); font-size: 30px; line-height: 1.25; }
+.leaderboard__hint { margin: 6px 0 0; color: var(--text-secondary); font-size: 14px; }
+.leaderboard__tabs { display: flex; align-self: center; padding: 4px; gap: 3px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--surface-deck); }
+.leaderboard__tab { min-height: 36px; padding: 7px 16px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 13px; cursor: pointer; transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease); }
+.leaderboard__tab:hover { color: var(--text-primary); background: var(--role-self-soft); }
+.leaderboard__tab.is-active { border-color: var(--border-subtle); background: var(--surface-raised); color: var(--text-primary); }
+.leaderboard__state, .leaderboard__error { margin: 0; padding: 15px 18px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--panel); color: var(--text-secondary); font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
+.leaderboard__error { border-color: color-mix(in srgb, var(--role-enemy) 40%, transparent); background: var(--role-enemy-soft); color: var(--role-enemy); }
+.leaderboard__highlights { display: grid; grid-template-columns: minmax(0, 1fr) minmax(230px, 280px); align-items: stretch; gap: 24px; padding-top: 6px; }
+.leaderboard__podium { display: grid; grid-column: 1; grid-row: 1; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: 16px; min-width: 0; padding: 16px 12px 0; }
+.leaderboard__podium-card { --podium-color: var(--text-secondary); position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-width: 0; min-height: 182px; height: 100%; padding: 20px 18px; border: 1px solid var(--border-subtle); border-radius: 11px; background: var(--panel); color: var(--text-primary); font: inherit; text-align: center; cursor: pointer; transition: border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease); }
+.leaderboard__podium-card:hover { border-color: var(--podium-color); background: var(--surface-raised); }
+.leaderboard__podium-card[data-place='1'] { --podium-color: var(--gold-strong); margin-top: -16px; height: calc(100% + 16px); border-color: color-mix(in srgb, var(--gold) 60%, transparent); background: linear-gradient(155deg, color-mix(in srgb, var(--gold) 7%, var(--surface-chamber)), var(--surface-deck)); }
+.leaderboard__podium-card[data-place='2'] { --podium-color: color-mix(in srgb, var(--role-self) 30%, var(--text-secondary)); }
+.leaderboard__podium-card[data-place='3'] { --podium-color: color-mix(in srgb, var(--gold) 60%, var(--text-secondary)); }
+.leaderboard__podium-card.is-me { box-shadow: inset 0 0 0 1px var(--role-self); }
+.leaderboard__podium-place { position: absolute; top: 16px; left: 18px; color: var(--podium-color); font-size: 25px; font-variant-numeric: tabular-nums; font-style: italic; font-weight: 400; }
+.leaderboard__podium-avatar { display: grid; flex: 0 0 48px; place-items: center; width: 48px; height: 48px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--podium-color) 65%, transparent); border-radius: 50%; background: color-mix(in srgb, var(--podium-color) 12%, transparent); color: var(--podium-color); font-size: 23px; font-weight: 650; }
+.leaderboard__podium-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.leaderboard__podium-name { max-width: 100%; color: var(--text-primary); font-size: 15px; font-weight: 650; line-height: 1.4; overflow-wrap: anywhere; }
+.leaderboard__podium-tier { color: var(--text-secondary); font-size: 12px; line-height: 1.4; }
+.leaderboard__podium-result { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: 6px; }
+.leaderboard__podium-score { color: var(--text-primary); font-size: 30px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.leaderboard__podium-label { color: var(--text-secondary); font-size: 12px; }
+.leaderboard__podium-leader { color: var(--gold-strong); font-size: 12px; }
+.leaderboard__my-rank { display: flex; grid-column: 2; grid-row: 1; flex-direction: column; align-items: flex-start; min-width: 0; gap: 10px; padding: 22px; border: 1px solid var(--border-subtle); border-radius: 11px; background: var(--panel); }
+.leaderboard__my-rank-label { margin: 0; color: var(--text-primary); font-size: 17px; font-weight: 650; }
+.leaderboard__my-rank-number { display: flex; align-items: baseline; gap: 9px; color: var(--text-secondary); font-size: 13px; }
+.leaderboard__my-rank-value { color: var(--role-self); font-size: 40px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.leaderboard__my-rank-note { color: var(--text-secondary); font-size: 12px; }
+.leaderboard__my-rank-help { margin: auto 0 0; padding-top: 14px; border-top: 1px solid var(--border-subtle); color: var(--text-secondary); font-size: 12px; line-height: 1.65; }
+.leaderboard__table-wrap { width: 100%; min-width: 0; max-height: 530px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--border-subtle); border-radius: 11px; background: var(--panel); }
+.leaderboard__table { width: 100%; min-width: 680px; border-collapse: separate; border-spacing: 0; color: var(--text-primary); font-size: 14px; }
+.leaderboard__table th, .leaderboard__table td { padding: 13px 22px; text-align: right; vertical-align: middle; border-bottom: 1px solid var(--border-subtle); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.leaderboard__table th:first-child, .leaderboard__table td:first-child { width: 82px; text-align: left; }
+.leaderboard__table th:nth-child(2), .leaderboard__table td:nth-child(2) { width: 38%; text-align: left; }
+.leaderboard__table thead th { position: sticky; z-index: 1; top: 0; background: var(--surface-raised); color: var(--text-secondary); font-size: 12px; font-weight: 500; }
+.leaderboard__table tbody tr { cursor: pointer; transition: background var(--duration-fast) var(--ease); }
+.leaderboard__table tbody tr:hover { background: var(--role-self-soft); }
+.leaderboard__table tbody tr:last-child td { border-bottom: 0; }
+.leaderboard__table tbody tr.is-me { background: var(--role-self-soft); }
+.leaderboard__table tbody tr.is-me td:first-child { box-shadow: inset 3px 0 var(--role-self); }
+.leaderboard__position { color: var(--text-tertiary); }
+.leaderboard__position[data-top='1'], .leaderboard__position[data-top='2'], .leaderboard__position[data-top='3'] { color: var(--gold-strong); }
+.leaderboard__user { display: inline-flex; align-items: center; gap: 11px; max-width: 100%; min-height: 32px; padding: 0; border: 0; background: transparent; color: var(--text-primary); font: inherit; text-align: left; cursor: pointer; }
+.leaderboard__avatar { flex: 0 0 30px; width: 30px; height: 30px; border: 1px solid color-mix(in srgb, var(--role-self) 55%, transparent); border-radius: 50%; object-fit: cover; background: var(--role-self-soft); }
+.leaderboard__avatar--initial { display: inline-grid; place-items: center; color: var(--role-self); font-size: 14px; }
+.leaderboard__name { max-width: 32ch; white-space: normal; overflow-wrap: anywhere; }
+.leaderboard__name.is-rainbow { background: linear-gradient(90deg, var(--role-enemy), var(--gold-strong), var(--role-success), var(--role-self)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.leaderboard__me-tag { flex-shrink: 0; padding: 1px 6px; border: 1px solid var(--border-strong); border-radius: 4px; color: var(--text-secondary); font-size: 11px; }
+.leaderboard__num { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.leaderboard__table td:nth-child(3).leaderboard__num { color: var(--text-primary); font-weight: 650; }
+.leaderboard__tier { display: inline-block; padding: 3px 8px; border: 1px solid var(--border-strong); border-radius: 4px; color: var(--gold-strong); font-size: 12px; }
+.leaderboard__actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding-top: 0; }
+.leaderboard__actions p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.7; }
+.leaderboard__actions .button { min-height: 38px; border-color: var(--border-strong); background: transparent; color: var(--text-secondary); font-size: 13px; }
+.leaderboard__scroll-hint { display: none; }
+@media (max-width: 1099px) {
+  .leaderboard__highlights { grid-template-columns: minmax(0, 1fr) 220px; gap: 14px; }
+  .leaderboard__podium { gap: 10px; padding-right: 0; padding-left: 0; }
+  .leaderboard__podium-card { padding: 18px 12px; }
+  .leaderboard__podium-place { left: 12px; font-size: 22px; }
+  .leaderboard__my-rank { padding: 18px; }
 }
-
-.leaderboard__eyebrow {
-  margin: 0 0 2px;
-  color: var(--text-secondary);
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
+@media (max-width: 799px) {
+  .leaderboard { padding: 20px 18px 24px; }
+  .leaderboard__highlights { display: flex; flex-direction: column-reverse; gap: 16px; }
+  .leaderboard__my-rank { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 16px; padding: 16px 18px; }
+  .leaderboard__my-rank-label { grid-column: 1; grid-row: 1; font-size: 15px; }
+  .leaderboard__my-rank-number { grid-column: 1; grid-row: 2; }
+  .leaderboard__my-rank-value { font-size: 30px; }
+  .leaderboard__my-rank-note { grid-column: 2; grid-row: 1; text-align: right; }
+  .leaderboard__my-rank-help { grid-column: 2; grid-row: 2; margin: 0; padding: 0; border: 0; text-align: right; }
+  .leaderboard__podium-card { min-height: 168px; }
+  .leaderboard__table-wrap { max-height: 520px; }
+  .leaderboard__scroll-hint { display: block; margin: 0 0 -12px; color: var(--text-secondary); font-size: 12px; }
 }
-
-.leaderboard__title {
-  margin: 0;
-  font-size: 30px;
-  line-height: 1.2;
-}
-
-.leaderboard__hint {
-  margin: 2px 0 0;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-/* Tabs are a full-width rail with the two labels centred, as in C+. */
-.leaderboard__tabs {
-  display: flex;
-  justify-content: center;
-  gap: 2px;
-  padding: 4px;
-  border: 1px solid var(--panel-line);
-  border-radius: 8px;
-  background: var(--panel);
-  align-self: stretch;
-}
-
-.leaderboard__tab {
-  padding: 7px 20px;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.leaderboard__tab:hover {
-  color: var(--text);
-}
-
-.leaderboard__tab.is-active {
-  border-color: color-mix(in srgb, var(--role-action) 60%, transparent);
-  background: var(--accent-soft);
-  color: var(--text);
-}
-
-.leaderboard__state,
-.leaderboard__error {
-  width: min(1040px, 100%);
-  margin: 0 auto;
-  padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--panel);
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.leaderboard__error {
-  border-color: var(--danger);
-  color: var(--danger);
-}
-
-/* Podium + table share one 1040px column centred under the full-width rail. */
-.leaderboard__podium {
-  display: grid;
-  grid-template-columns: repeat(3, 335px);
-  gap: 20px;
-  justify-content: start;
-  width: 100%;
-  max-width: 1040px;
-  margin: 4px auto 0;
-}
-
-.leaderboard__podium-card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 202px;
-  padding: 16px;
-  border: 1px solid var(--panel-line);
-  border-radius: 10px;
-  background: linear-gradient(160deg, var(--surface-elevated), #12172e);
-  color: var(--text);
-  font: inherit;
-  text-align: center;
-  cursor: pointer;
-  box-shadow: var(--shadow-panel);
-}
-
-.leaderboard__podium-card::before {
-  content: '';
-  width: 72px;
-  height: 72px;
-  border: 2px solid color-mix(in srgb, var(--role-action) 40%, transparent);
-  border-radius: 50%;
-  background: radial-gradient(circle at 50% 38%, #e8ecff 0 30%, var(--text-tertiary) 31% 46%, #6d7aa8 47% 100%);
-  box-shadow: inset 0 0 0 4px rgba(11, 13, 24, 0.55);
-}
-
-.leaderboard__podium-card::after {
-  content: attr(data-place);
-  position: absolute;
-  top: 10px;
-  left: 14px;
-  color: var(--text-muted);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
-
-.leaderboard__podium-card[data-place='1'] {
-  border-color: rgba(201, 162, 76, 0.65);
-  box-shadow: 0 0 24px rgba(201, 162, 76, 0.16), var(--shadow-panel);
-}
-
-.leaderboard__podium-card[data-place='1']::before {
-  border-color: rgba(201, 162, 76, 0.8);
-}
-
-.leaderboard__podium-card[data-place='1']::after {
-  color: var(--gold-strong);
-}
-
-.leaderboard__podium-card.is-me {
-  outline: 1px solid var(--accent);
-  outline-offset: -1px;
-}
-
-.leaderboard__podium-name {
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.leaderboard__podium-score {
-  color: var(--gold-strong);
-  font-size: 22px;
-  font-variant-numeric: tabular-nums;
-}
-
-.leaderboard__podium-label {
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.leaderboard__table-wrap {
-  width: 100%;
-  max-width: 1040px;
-  margin: 0 auto;
-  overflow-x: auto;
-  border: 1px solid var(--panel-line);
-  border-radius: var(--radius);
-  background: var(--panel);
-  box-shadow: var(--shadow-panel);
-}
-
-.leaderboard__table {
-  width: 100%;
-  min-width: 640px;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.leaderboard__table th,
-.leaderboard__table td {
-  padding: 12px 16px;
-  text-align: left;
-  border-bottom: 1px dashed var(--surface-elevated);
-  white-space: nowrap;
-}
-
-.leaderboard__table thead th {
-  color: var(--text-muted);
-  font-weight: 600;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-}
-
-.leaderboard__table tbody tr:last-child td {
-  border-bottom: 0;
-}
-
-.leaderboard__table tbody tr.is-me {
-  background: var(--accent-soft);
-}
-
-.leaderboard__user {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
-}
-
-.leaderboard__avatar {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  object-fit: cover;
-  background: var(--surface-deck);
-}
-
-.leaderboard__name.is-rainbow {
-  background: linear-gradient(90deg, var(--role-enemy), var(--gold-strong), #6fe0a0, #4ec8e0);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
-.leaderboard__open-hint {
-  color: var(--text-dim);
-  font-size: 11px;
-}
-
-.leaderboard__num {
-  font-variant-numeric: tabular-nums;
-}
-
-.leaderboard__tier {
-  padding: 2px 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--gold-strong);
-  font-size: 12px;
-}
-
-.leaderboard__actions {
-  display: flex;
-  justify-content: center;
-  gap: 10px;
-  margin-top: auto;
-  padding-top: 6px;
-}
-
-.button--ghost {
-  border-color: var(--border-strong);
-  background: var(--surface-deck);
-  color: var(--text-muted);
-}
-
-/* Pinned "my rank" row: outside the scrolling area so it stays visible while
-   the board scrolls sideways on narrow screens (ticket #49). */
-.leaderboard__my-rank {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px 12px;
-  width: 100%;
-  max-width: 1040px;
-  margin: 0 auto;
-  padding: 10px 16px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--role-action-soft);
-}
-
-.leaderboard__my-rank-label {
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.leaderboard__my-rank-value {
-  color: var(--role-action);
-  font-size: 18px;
-  font-variant-numeric: tabular-nums;
-}
-
-.leaderboard__my-rank-note {
-  margin-left: auto;
-  color: var(--text-tertiary);
-  font-size: 11px;
-}
-
-.leaderboard__table tbody tr {
-  cursor: pointer;
-}
-
-.leaderboard__table tbody tr:hover {
-  background: var(--role-self-soft);
-}
-
-@media (max-width: 719px) {
-  button[data-testid],
-  a[data-testid] {
-    min-height: 44px;
-    min-width: 44px;
-  }
-
-  .leaderboard__tab,
-  .leaderboard__actions .button,
-  .leaderboard__actions [data-testid='leaderboard-back-home'] {
-    min-height: 44px;
-    min-width: 44px;
-  }
-}
-
-@media (max-width: 1100px) {
-  .leaderboard__podium {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px;
-  }
-
-  .leaderboard__podium-card {
-    height: 180px;
-  }
-}
-
-@media (max-width: 640px) {
-  .leaderboard__podium {
-    grid-template-columns: 1fr;
-  }
-
-  .leaderboard__podium-card {
-    height: auto;
-    min-height: 140px;
-    padding: 12px;
-  }
-
-  .leaderboard__podium-card::before {
-    width: 56px;
-    height: 56px;
-  }
+@media (max-width: 479px) {
+  .leaderboard { gap: 16px; padding: 18px 12px 24px; }
+  .leaderboard__head { gap: 14px; }
+  .leaderboard__title { font-size: 26px; }
+  .leaderboard__tabs { width: 100%; }
+  .leaderboard__tab { flex: 1; min-height: 44px; }
+  .leaderboard__podium { gap: 8px; padding-top: 10px; }
+  .leaderboard__podium-card { min-height: 166px; padding: 15px 8px 12px; gap: 7px; }
+  .leaderboard__podium-card[data-place='1'] { margin-top: -10px; height: calc(100% + 10px); }
+  .leaderboard__podium-place { top: 8px; left: 9px; font-size: 17px; }
+  .leaderboard__podium-avatar { flex-basis: 36px; width: 36px; height: 36px; font-size: 18px; }
+  .leaderboard__podium-name { font-size: 13px; }
+  .leaderboard__podium-score { font-size: 24px; }
+  .leaderboard__podium-result { gap: 4px; }
+  .leaderboard__podium-label, .leaderboard__podium-tier, .leaderboard__podium-leader { font-size: 11px; }
+  .leaderboard__my-rank { padding: 14px; gap: 7px 10px; }
+  .leaderboard__my-rank-help { font-size: 11px; }
+  .leaderboard__table { min-width: 640px; font-size: 13px; }
+  .leaderboard__table th, .leaderboard__table td { padding: 9px 14px; }
+  .leaderboard__table th:first-child, .leaderboard__table td:first-child { width: 60px; }
+  .leaderboard__user { min-height: 44px; gap: 8px; }
+  .leaderboard__table-wrap { max-height: 500px; }
+  .leaderboard__actions { flex-direction: column; align-items: stretch; text-align: center; }
+  .leaderboard__actions .button { min-height: 44px; }
 }
 </style>

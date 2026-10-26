@@ -17,28 +17,52 @@ const career = computed(() => {
 </script>
 <template>
   <div class="home-progress">
+    <section class="progress-panel progress-panel--career">
+      <h2>生涯战绩</h2>
+      <dl class="career-grid">
+        <div v-for="[label,value] in career" :key="String(label)">
+          <dd>{{ value }}</dd>
+          <dt>{{ label }}</dt>
+        </div>
+      </dl>
+    </section>
     <section class="progress-panel">
       <h2>最近解锁</h2>
       <p v-if="auth.isGuest">登录后记录你的成就与荣誉。</p>
       <p v-else-if="!badges.length">{{ home.profileFailed ? '成就暂时无法读取' : home.profileLoaded ? '尚未解锁成就，开始第一场对局吧' : '正在读取成就…' }}</p>
-      <ul v-else class="badge-list"><li v-for="badge in badges" :key="badge.id"><span class="badge-icon">⚓</span><div><b>{{ badge.name }}</b><small>{{ badge.desc }}</small></div><span :class="{unlocked:badge.unlocked}">{{ badge.unlocked ? '已解锁' : '未解锁' }}</span></li></ul>
+      <ul v-else class="badge-list" tabindex="0" aria-label="最近的成就">
+        <li v-for="badge in badges" :key="badge.id">
+          <span class="badge-icon" aria-hidden="true">⚓</span>
+          <div><b>{{ badge.name }}</b><small>{{ badge.desc }}</small><span class="badge-state" :class="{unlocked:badge.unlocked}">{{ badge.unlocked ? '已解锁' : '未解锁' }}</span></div>
+        </li>
+      </ul>
     </section>
-    <section class="progress-panel"><h2>生涯数据</h2><dl class="career-grid"><div v-for="[label,value] in career" :key="String(label)"><dt>{{ label }}</dt><dd>{{ value }}</dd></div></dl></section>
   </div>
 </template>
 <style scoped>
-.home-progress { display:grid; gap:12px; }
-.progress-panel { padding:14px; border:1px solid var(--panel-line); border-radius:14px; background:var(--panel); }
-h2 { margin:0 0 12px; color:var(--text-tertiary); font-size:12px; letter-spacing:.22em; }
-p,small,dt { color:var(--text-tertiary); font-size:12px; line-height:1.6; }
+.home-progress { display:grid; gap:16px; min-width:0; }
+.progress-panel { min-width:0; padding:18px 20px; border:1px solid var(--panel-line); border-radius:12px; background:var(--panel); }
+h2 { margin:0 0 16px; color:var(--text-primary); font-size:16px; font-weight:650; }
+p,small,dt { color:var(--text-secondary); font-size:12px; line-height:1.6; }
+p { margin:0; }
 ul { list-style:none; padding:0; margin:0; }
-.badge-list li { display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px dashed var(--panel-line); font-size:10px; }
-.badge-list li>div { flex:1; min-width:0; }.badge-list b,.badge-list small { display:block; }.badge-list b { font-size:13px; }
-.badge-icon { padding:7px; border-radius:8px; background:var(--surface-raised); }.unlocked { color:var(--gold); }
-.career-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:0; }.career-grid div { border:1px solid var(--panel-line); border-radius:9px; padding:9px; }dd { margin:4px 0 0; font-weight:700; }
-@media(min-width:1024px) and (max-height:1200px) {
-  .home-progress { gap:8px; }.progress-panel { padding:10px 14px; }h2 { margin:0 0 6px; }
-  .badge-list li { padding:5px 0; }.badge-list li:nth-child(n+4) { display:none; }
-  .career-grid { gap:6px; }.career-grid div { padding:6px 9px; }dd { margin:2px 0 0; }
+.badge-list { max-height:146px; overflow-y:auto; overscroll-behavior:contain; scrollbar-width:thin; }
+.badge-list li { display:flex; align-items:flex-start; gap:10px; padding:11px 0; }
+.badge-list li:first-child { padding-top:0; }
+.badge-list li + li { border-top:1px solid var(--panel-line); }
+.badge-list li>div { flex:1; min-width:0; }
+.badge-list b,.badge-list small,.badge-state { display:block; }
+.badge-list b { color:var(--text-primary); font-size:13px; font-weight:600; }
+.badge-list small { margin-top:3px; overflow-wrap:anywhere; }
+.badge-icon { display:grid; place-items:center; flex:0 0 36px; width:36px; height:36px; border:1px solid color-mix(in srgb,var(--gold) 40%,var(--panel-line)); border-radius:50%; color:var(--gold-strong); background:color-mix(in srgb,var(--gold) 10%,var(--panel)); font-size:19px; }
+.badge-state { margin-top:3px; color:var(--text-secondary); font-size:12px; }
+.badge-state.unlocked { color:var(--gold-strong); }
+.career-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px 12px; margin:0; }
+.career-grid div { min-width:0; }
+.career-grid dd { margin:0 0 4px; color:var(--text-primary); font-size:26px; line-height:1.1; font-weight:700; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.career-grid dt { font-size:12px; }
+@media(max-width:719px) {
+  .progress-panel { padding:18px; }
+  .badge-list { max-height:220px; }
 }
 </style>

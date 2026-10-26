@@ -213,20 +213,20 @@ function describe(card: MonitorCard): string {
   align-items: center;
   flex: 1 1 auto;
   width: 100%;
-  gap: 8px;
+  gap: 12px;
   height: 100%;
   min-height: 44px;
-  padding: 4px 10px;
-  border: 1px solid var(--line-dash);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--surface-elevated, #16203a) 82%, transparent);
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--surface-chamber);
   overflow: hidden;
 }
 
 .monitor__caption {
   flex: 0 0 auto;
   font-size: 11px;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.02em;
   color: var(--text-muted);
   writing-mode: horizontal-tb;
 }
@@ -240,7 +240,7 @@ function describe(card: MonitorCard): string {
 .monitor__list {
   display: flex;
   align-items: stretch;
-  gap: 6px;
+  gap: 0;
   flex: 1 1 auto;
   width: 100%;
   min-width: 0;
@@ -261,14 +261,15 @@ function describe(card: MonitorCard): string {
 .monitor__slot {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
+  justify-content: flex-start;
+  gap: 10px;
   min-width: 120px;
   max-width: 100%;
-  padding: 3px 8px;
-  border: 1px solid color-mix(in srgb, var(--role-action, #9d84f5) 35%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--role-action, #9d84f5) 10%, transparent);
+  padding: 3px 14px;
+  border: 1px solid transparent;
+  border-left-color: var(--border-subtle);
+  border-radius: 4px;
+  background: transparent;
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease;
 }
@@ -280,8 +281,8 @@ function describe(card: MonitorCard): string {
   outline: none;
 }
 
-.monitor__slot.is-field { border-color: color-mix(in srgb, var(--gold, #c9a24c) 45%, transparent); background: color-mix(in srgb, var(--gold, #c9a24c) 12%, transparent); }
-.monitor__slot.is-opponent { opacity: 0.78; border-style: dashed; }
+.monitor__slot.is-field .monitor__name { color:var(--gold-strong); }
+.monitor__slot.is-opponent .monitor__tag { border-color:color-mix(in srgb,var(--role-enemy) 50%,transparent); }
 
 .monitor__art {
   flex: 0 0 auto;
@@ -295,14 +296,14 @@ function describe(card: MonitorCard): string {
 .monitor__art--none {
   display: grid;
   place-items: center;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-muted);
 }
 
 .monitor__body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 
 .monitor__name {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
@@ -316,7 +317,7 @@ function describe(card: MonitorCard): string {
   flex: 0 0 auto;
   padding: 0 4px;
   border-radius: 4px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-muted);
   border: 1px solid color-mix(in srgb, var(--text-muted) 40%, transparent);
 }
@@ -384,7 +385,7 @@ function describe(card: MonitorCard): string {
   .monitor__caption { display: none; }
   .monitor__slot { min-width: 96px; padding: 2px 6px; }
   .monitor__art { width: 20px; height: 30px; }
-  .monitor__name { font-size: 11px; }
+  .monitor__name { font-size: 12px; }
   .monitor-preview { width: min(420px, calc(100vw - 24px)); gap: 10px; padding: 10px; }
   .monitor-preview__art { width: 104px; height: 152px; }
   .monitor-preview__name { font-size: 15px; }

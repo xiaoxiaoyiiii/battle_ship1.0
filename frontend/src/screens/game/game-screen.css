@@ -2782,6 +2782,12 @@ button.arena-avatar--btn {
 
 /* 场地魔法栏占用固定的顶部预算：棋盘从栏下方开始，避免栏与棋盘标题/连锁轨道重叠。 */
 @media (min-width: 1200px) and (min-height: 700px) {
+  .game[data-layout='wide'] {
+    --dock-left: clamp(210px, 15vw, 250px);
+    --dock-right: 258px;
+    --wide-hand-width: min(900px, calc(100% - var(--dock-left) - var(--dock-right)));
+  }
+
   .game[data-layout='wide'] .game-main-container {
     padding-top: 198px;
   }
@@ -3383,31 +3389,54 @@ button.arena-avatar--btn {
 
 .game[data-layout='wide'] .arena-player--self .arena-player__pips { display:flex; }
 
-/* 矮屏（1440x900）修正：右栏此前用 minmax(200px,1fr) + overflow:visible + margin-bottom:-220px
-   让计数面板与「查看弃牌堆 / 更多操作 / 进入战斗阶段」溢出到手牌行下方，真实鼠标点不到。
-   这里让三行都收在右栏高度内，高度不够时由连锁轨道吸收压缩。 */
-@media (max-height: 980px) {
-  .game[data-layout='wide'] .arena-rail {
-    grid-template-rows: minmax(0, 1fr) auto auto;
-    overflow: hidden;
-    margin-bottom: 0;
-  }
-}
-
-/* 宽屏右栏最终布局：三块信息按自然高度纵向排列。
- * 旧的 grid 行会把连锁轨道压成 132px，并由 overflow:hidden 截断计数面板；
- * 这里让轨道、操作、计数各自占位，超出时由页面滚动承接，绝不裁掉按钮或文字。 */
+/* 获批视觉方案的宽屏布局：顶部固定监视区，棋盘与手牌独占中列。
+ * 右栏有独立的宽度和垂直预算，不会被手牌外壳盖住。 */
 @media (min-width: 1200px) and (min-height: 700px) {
   .game[data-layout='wide'] .game-main-container {
-    padding-top: 198px;
+    --dock-left: clamp(210px, 15vw, 250px);
+    --dock-right: 258px;
+    --board-cell: clamp(40px, min(calc((100vw - 640px) / 12), calc((100dvh - 612px) / 6)), 62px);
+    max-width: 1560px;
+    padding: 190px var(--dock-right) 0 var(--dock-left);
+    min-height: calc(190px + var(--board-cell) * 6 + 84px);
+  }
+
+  .game[data-layout='wide'] .game-hud,
+  .game[data-layout='wide'] .field-magic-area {
+    left: var(--dock-left);
+    right: 0;
+  }
+
+  .game[data-layout='wide'] .game-hud {
+    background: var(--panel);
+    box-shadow: none;
+  }
+
+  .game[data-layout='wide'] .field-magic-area {
+    top: 104px;
+    height: 64px;
+    padding: 3px;
+    background: var(--surface-chamber);
+  }
+
+  .game[data-layout='wide'] .game-content {
+    justify-content: safe center;
+  }
+
+  .game[data-layout='wide'] .boards-container {
+    flex: 0 0 auto;
+    width: 100%;
+    max-width: 900px;
+    gap: 32px;
+    --cell: var(--board-cell);
   }
 
   .game[data-layout='wide'] .arena-rail {
     display: flex;
     flex-direction: column;
-    flex: 0 0 clamp(190px, 14vw, 230px);
+    flex: 0 0 230px;
     align-self: flex-start;
-    gap: 16px;
+    gap: 18px;
     min-height: 0;
     height: auto;
     max-height: none;
@@ -3418,12 +3447,76 @@ button.arena-avatar--btn {
 
   .game[data-layout='wide'] .arena-chain-slot {
     order: 1;
-    flex: 0 0 clamp(224px, 30vh, 278px);
-    height: auto;
-    min-height: 224px;
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 304px;
+    height: 304px;
+    min-height: 304px;
     max-height: none;
     margin: 0;
+    overflow: hidden;
+    border-color: color-mix(in srgb, var(--gold) 38%, var(--border-subtle));
+    background: color-mix(in srgb, var(--gold) 3%, var(--surface-chamber));
+    padding: 16px;
+  }
+
+  .game[data-layout='wide'] .arena-rail-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    flex: 0 0 auto;
+    font-size: 14px;
+    letter-spacing: .02em;
+    margin-bottom: 14px;
+  }
+
+  .game[data-layout='wide'] .chain-stack {
+    flex: 1 1 auto;
+    min-height: 0;
     overflow-y: auto;
+    overflow-x: hidden;
+    gap: 12px;
+    padding: 5px 5px 5px 7px;
+    margin: 0;
+    align-items: stretch;
+    scrollbar-width: thin;
+  }
+
+  .game[data-layout='wide'] .chain-stack__item {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    height: auto;
+    min-height: 110px;
+    margin: 0;
+    padding: 8px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 7px;
+    background: var(--surface-deck);
+    overflow: visible;
+  }
+
+  .game[data-layout='wide'] .chain-stack__item + .chain-stack__item { margin-top:0; }
+
+  .game[data-layout='wide'] .chain-stack__item img {
+    position: static;
+    width: 63px;
+    height: 92px;
+    flex: 0 0 63px;
+    object-fit: contain;
+  }
+
+  .game[data-layout='wide'] .chain-stack__label { font-size:13px; line-height:1.6; }
+  .game[data-layout='wide'] .arena-rail-empty { flex:1; display:grid; place-items:center; border:0; background:transparent; font-size:13px; }
+  .game[data-layout='wide'] .arena-chain-slot > .button { flex:0 0 auto; margin-top:10px; }
+  .game[data-layout='wide'] .arena-chain-negated { position:absolute; right:8px; bottom:8px; font-size:11px; }
+
+  .game[data-layout='wide'] .arena-player {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
   }
 
   .game[data-layout='wide'] .arena-rail > .arena-actions {
@@ -3436,17 +3529,44 @@ button.arena-avatar--btn {
     order: 3;
     flex: 0 0 auto;
     transform: none;
-    margin-bottom: 16px;
+    margin-bottom: 0;
   }
 
   /* 右栏会自然延伸到手牌行的高度；给手牌预留右侧安全区，避免两者互相盖住。 */
   .game[data-layout='wide'] .game-hand-wrap {
-    width: min(940px, calc(100% - 780px));
+    width: var(--wide-hand-width);
     max-width: none;
-    margin-left: 270px;
-    margin-right: 260px;
+    margin-left: calc((100% - var(--wide-hand-width) + var(--dock-left) - var(--dock-right)) / 2);
+    margin-right: auto;
   }
 }
+
+/* 正常桌面高度下右栏延伸到独立的安全区，不参与手牌行的高度分配。 */
+@media (min-width:1200px) and (min-height:700px) {
+  .game[data-layout='wide'] .arena-rail { position:absolute; top:190px; right:0; width:230px; }
+}
+
+@media (min-width:1200px) and (min-height:700px) and (max-height:819px) {
+  .game[data-layout='wide'] .arena-chain-slot { flex-basis:224px; min-height:224px; height:224px; }
+}
+
+@media (max-width:719px) {
+  .game[data-layout='compact'] .hud-chips { height:48px; max-height:none; overflow:visible; }
+  .game[data-layout='compact'] .field-magic-area { height:56px; min-height:56px; flex:0 0 56px; }
+}
+
+.chain-stack__item { position:relative; }
+.chain-stack__order { position:absolute; left:3px; top:3px; z-index:1; display:grid; place-items:center; width:19px; height:19px; border-radius:50%; background:var(--gold); color:var(--surface-sea); font-size:11px; border:2px solid var(--surface-chamber); }
+.chain-stack__label { display:none; }
+.game[data-layout='wide'] .chain-stack__label { display:block; }
+.arena-chain-count { color:var(--text-secondary); font-size:11px; font-weight:400; letter-spacing:0; }
+.game[data-layout] .arena-player__meta .hud-name { font-size:14px; line-height:18px; }
+.game[data-layout] .arena-player__line { color:var(--text-secondary); }
+.arena-actions,.arena-rail-panel { box-shadow:none; }
+.log-content { font-size:13px; line-height:1.7; }
+.log-line { border-bottom-style:solid; padding-bottom:8px; }
+.log-header h3 { font-size:14px; }
+.game-actions .button:disabled { color:var(--text-secondary); opacity:1; background:var(--surface-raised); border-color:var(--border-subtle); box-shadow:none; }
 .game-chain-window__actions [data-testid='game-chain-collapse'] {
   min-height: 46px;
   padding: 10px 14px;

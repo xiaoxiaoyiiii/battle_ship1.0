@@ -1880,7 +1880,7 @@ function backToLobby(): void {
       <!-- 右列：连锁结算 / 卡牌详情 / 计数与主行动（原 main 的 .arena-rail + 详情列） -->
       <aside class="arena-rail" :class="{ 'arena-rail--sheet': railSheet }" aria-label="连锁、卡牌与操作">
         <section class="arena-rail-panel arena-chain-slot" data-testid="game-chain-rail">
-          <header class="arena-rail-head">连锁结算</header>
+          <header class="arena-rail-head"><span>连锁结算</span><span v-if="chainList.length" class="arena-chain-count">{{ chainList.length }} 重</span></header>
           <!-- 原 main 的 .chain-stack：104×156 卡面竖向叠放，相邻压住约 1/3 -->
           <ol v-if="chainList.length" class="chain-stack" data-testid="game-chain-stack">
             <li
@@ -1891,6 +1891,7 @@ function backToLobby(): void {
               :data-testid="'game-chain-item-' + index"
               :title="item.name"
             >
+              <span class="chain-stack__order" aria-hidden="true">{{ index + 1 }}</span>
               <img
                 v-if="cardArtUrl(item.name)"
                 :src="cardArtUrl(item.name) || ''"
@@ -1898,6 +1899,7 @@ function backToLobby(): void {
                 loading="lazy"
               />
               <span v-else class="chain-stack__name" :data-testid="'game-chain-item-' + index + '-name'">{{ item.name }}</span>
+              <span v-if="cardArtUrl(item.name)" class="chain-stack__label">{{ item.name }}</span>
               <span v-if="item.negated" class="arena-chain-negated">已无效</span>
             </li>
           </ol>

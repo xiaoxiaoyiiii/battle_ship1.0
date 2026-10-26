@@ -1,32 +1,18 @@
-/* Design tokens — main 前端视觉语言的唯一来源（2026-10-23 回归 main）。
- *
- * 为什么重写：这里原来的三套主题是「深海作战室/航图」，面层、强调色、字形
- * 间距都和 main（BattleShip Arena，Vue+CSS 版）不是同一套语言；用户对 fork
- * 的评价是「整体不如 main」。所以色彩、面层、圆角、强调色全部按 main 的
- * 实际取值重新锚定，名字保持不变（--role-action 等），屏幕里的 var() 一处都不用改。
- *
- * main 的取值来源（仓库 D:/Codex workspace/battle-ship-ui/main/src/style.css）：
- *   暗色竞技场  --bg #0b0d18 / --panel #151a30 / --line #2a3358 / --tx #e7ecff
- *               --vio #7c5cf0 / --cy #4ec8e0 / --rd #ff5c6c / --gold #c9a24c
- *   浅色 Fluent --surface #dbeafe / --primary #2f8fdd / 卡片白底 8px 圆角
- *   深色 Fluent --surface #0a1428 / --surface-strong #12233f / --primary #2f8fdd
- *
- * 三套主题仍挂在 <html data-theme>：chart=竞技场暗（默认）、night=深海暗、
- * journal=浅色海图。主题翻转只换 token，不换组件规则。
- *
- * 层序：wallpaper < shell < nav < overlay < match-found；overlay 与 match-found
- * 都 teleport 到 <body>，靠 token 保证层级。
+/* 语义主题变量：2026-10-26 获批的深海竞技场视觉方案。
+ * 保留 chart / night / journal 三套主题及既有变量名；主色只表达操作，
+ * 青/红表示双方，金色表示连锁与场地。按钮底色随主色变化并压低亮度，
+ * 保持浅色按钮文字的对比度；浮层仍通过统一层级变量管理。
  */
 :root {
   color-scheme: dark;
 
   /* ---- 面层：main 的三级深蓝面 ---------------------------------------- */
-  --surface-sea: #0b0d18;
-  --surface-deck: #10142a;
-  --surface-chamber: #151a30;
-  --surface-raised: #1b2140;
+  --surface-sea: #0b1120;
+  --surface-deck: #0f192a;
+  --surface-chamber: #111c2e;
+  --surface-raised: #17243a;
   /* Screens still reference this older name for a slightly lifted panel. */
-  --surface-elevated: #1b2140;
+  --surface-elevated: #17243a;
   --ship-metal: #8b96c4;
   --on-accent: #ffffff;
 
@@ -35,13 +21,13 @@
   --bg-elevated: var(--surface-deck);
   --bg-raised: var(--surface-chamber);
   --bg-sunken: #070910;
-  --panel: rgba(21, 26, 48, 0.86);
-  --panel-line: rgba(124, 92, 240, 0.22);
+  --panel: rgba(17, 28, 46, 0.96);
+  --panel-line: rgba(117, 146, 180, 0.22);
 
   /* ---- 角色色：main 的紫/青/红/金 ------------------------------------- */
-  --role-action: #9d84f5;       /* 可行动/主行动：main 的 --vio 提亮一档 */
-  --role-self: #4ec8e0;         /* 己方/信息：main 的 --cy */
-  --role-enemy: #ff6b78;        /* 敌方/伤害：main 的 --rd 提亮一档 */
+  --role-action: #a990f5;
+  --role-self: #61c7d8;
+  --role-enemy: #e88492;
   --role-success: #45d69b;      /* 成功/恢复 */
   --role-warning: #f0b64e;      /* 警告：main 的金 */
   --role-disabled: #6c789e;
@@ -55,28 +41,28 @@
   --accent-strong: #c3aeff;
   --accent-soft: var(--role-action-soft);
   --accent-cyan: var(--role-self);
-  --gold: #c9a24c;
+  --gold: #debd79;
   --gold-strong: #e6c778;
   --gold-soft: rgba(201, 162, 76, 0.18);
   --danger: var(--role-enemy);
   --success: var(--role-success);
 
   /* ---- 文本三级：main 的 --tx / --tx2 / --tx3 ------------------------- */
-  --text-primary: #e7ecff;
-  --text-secondary: #a2adcf;
-  --text-tertiary: #8b96bb;
+  --text-primary: #e8edf6;
+  --text-secondary: #a6b6cc;
+  --text-tertiary: #8b9eb8;
   --text: var(--text-primary);
   --text-muted: var(--text-secondary);
   --text-dim: var(--text-tertiary);
 
   /* ---- 描边与装饰 ------------------------------------------------------ */
-  --border-subtle: rgba(158, 170, 214, 0.16);
-  --border-strong: #3b4675;
+  --border-subtle: rgba(117, 146, 180, 0.22);
+  --border-strong: #3d526e;
   --border: var(--border-subtle);
   --line-dash: var(--border-subtle);
-  --chip-line: rgba(124, 92, 240, 0.45);
+  --chip-line: rgba(169, 144, 245, 0.38);
   --focus-ring: var(--role-action);
-  --grid-line: rgba(124, 92, 240, 0.055);
+  --grid-line: rgba(117, 146, 180, 0.045);
   --scrim: rgba(4, 6, 14, 0.74);
 
   /* ---- 几何：main 的 6/8/12 圆角，密一点的行高 ------------------------ */
@@ -106,15 +92,15 @@
   --z-toast: 300;
 
   /* ---- 深度与主视觉渐变 ------------------------------------------------ */
-  --shadow-panel: 0 14px 34px rgba(0, 0, 0, 0.5);
-  --shadow-accent: 0 12px 30px rgba(124, 92, 240, 0.32);
-  --hero-grad: linear-gradient(100deg, #7c5cf0 0%, #6042cf 52%, #3f2a9c 100%);
-  --hero-border: #8f79f5;
+  --shadow-panel: 0 10px 28px rgba(0, 0, 0, 0.22);
+  --shadow-accent: 0 5px 16px rgba(124, 92, 240, 0.12);
+  --hero-grad: linear-gradient(110deg, color-mix(in srgb, var(--role-action) 55%, #10142a), color-mix(in srgb, var(--role-action) 48%, #10142a));
+  --hero-border: color-mix(in srgb, var(--role-action) 72%, #10142a);
   --rank-grad: linear-gradient(100deg, #c9a24c, #7a5b1d);
-  --board-bg: radial-gradient(120% 120% at 50% 0%, #1d2a55, #101733 70%);
-  --board-border: #3b4675;
-  --cell-bg: #1f2850;
-  --stage-glow: radial-gradient(60% 60% at 50% 0%, rgba(124, 92, 240, 0.16), transparent 72%);
+  --board-bg: #0f1a2b;
+  --board-border: #3a506c;
+  --cell-bg: #1e2e4a;
+  --stage-glow: radial-gradient(60% 60% at 50% 0%, rgba(97, 199, 216, 0.06), transparent 72%);
 
   --font: 'Segoe UI', 'Segoe UI Variable Text', system-ui, -apple-system, 'Microsoft YaHei',
     'PingFang SC', sans-serif;
@@ -178,8 +164,6 @@ html[data-theme='night'] {
 
   --shadow-panel: 0 14px 34px rgba(0, 0, 0, 0.55);
   --shadow-accent: 0 12px 30px rgba(58, 166, 255, 0.26);
-  --hero-grad: linear-gradient(100deg, #2f8fdd 0%, #1e6fb8 55%, #164a80 100%);
-  --hero-border: #64b5f6;
   --rank-grad: linear-gradient(100deg, #c98a3a, #7a4f16);
   --board-bg: radial-gradient(120% 120% at 50% 0%, #12294a, #0b1a30 70%);
   --board-border: #2c4d7f;
@@ -244,8 +228,6 @@ html[data-theme='journal'] {
 
   --shadow-panel: 0 10px 26px rgba(21, 60, 120, 0.12);
   --shadow-accent: 0 10px 24px rgba(21, 101, 192, 0.2);
-  --hero-grad: linear-gradient(100deg, #3b6fd4 0%, #1e4fa8 60%, #16407f 100%);
-  --hero-border: #2f6fc4;
   --rank-grad: linear-gradient(100deg, #b28a3a, #7d5a20);
   --board-bg: radial-gradient(120% 120% at 50% 0%, #eaf2fd, #d5e6fb 70%);
   --board-border: #93c5fd;

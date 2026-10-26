@@ -180,6 +180,12 @@ function onCellFocus(index: number): void {
       :aria-label="title + '，方向键移动，Enter 开炮'"
       @keydown="onKeydown"
     >
+      <div class="board__axis board__axis--columns" aria-hidden="true">
+        <span v-for="column in ['A', 'B', 'C', 'D', 'E', 'F']" :key="column">{{ column }}</span>
+      </div>
+      <div class="board__axis board__axis--rows" aria-hidden="true">
+        <span v-for="row in 6" :key="row">{{ row }}</span>
+      </div>
       <BoardAreaPreview
         v-if="areaPreviewActive"
         :cells="areaPreviewCells"
@@ -249,7 +255,7 @@ function onCellFocus(index: number): void {
 .board {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 20px;
   min-width: 0;
 }
 
@@ -263,10 +269,10 @@ function onCellFocus(index: number): void {
 
 .board__title {
   margin: 0;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
-  letter-spacing: 0.16em;
-  color: var(--text-tertiary);
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
 }
 
 .board__subtitle {
@@ -285,12 +291,9 @@ function onCellFocus(index: number): void {
   gap: var(--gap);
   padding: var(--pad);
   border: 1px solid var(--board-border);
-  border-radius: 14px;
+  border-radius: 10px;
   background: var(--board-bg);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--role-action) 12%, transparent),
-    inset 0 0 42px rgba(0, 0, 0, 0.45),
-    0 16px 40px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.18);
   width: fit-content;
   outline: none;
 }
@@ -300,11 +303,12 @@ function onCellFocus(index: number): void {
 }
 
 .board--opponent .board__grid {
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--role-enemy) 22%, transparent),
-    inset 0 0 42px rgba(0, 0, 0, 0.45),
-    0 16px 40px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.18);
 }
+
+.board__axis { position:absolute; display:grid; color:var(--text-tertiary); font-size:10px; line-height:12px; text-align:center; pointer-events:none; gap:var(--gap); }
+.board__axis--columns { left:var(--pad); right:var(--pad); top:-16px; grid-template-columns:repeat(6,minmax(0,1fr)); }
+.board__axis--rows { top:var(--pad); bottom:var(--pad); left:-16px; width:12px; grid-template-rows:repeat(6,minmax(0,1fr)); align-items:center; }
 
 .board--picking .board__grid {
   border-color: var(--role-action);
@@ -317,7 +321,7 @@ function onCellFocus(index: number): void {
   height: var(--cell, 40px);
   padding: 0;
   border: 1px solid color-mix(in srgb, var(--board-border) 70%, transparent);
-  border-radius: 8px;
+  border-radius: 5px;
   background: var(--cell-bg);
   color: var(--text-tertiary);
   font: inherit;
@@ -379,6 +383,8 @@ function onCellFocus(index: number): void {
   .board {
     gap: 4px;
   }
+
+  .board__axis { display:none; }
 
   .board__head {
     gap: 6px;

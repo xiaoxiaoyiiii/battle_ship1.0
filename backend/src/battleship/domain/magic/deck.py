@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from .cards import DECK_CARDS, HIDDEN_CARD_NAMES, MagicCard, card_by_name
-from ..room import Position, Room, is_ship_alive
+from ..room import PlayerShip, Position, Room, is_ship_alive
 
 
 @dataclass(frozen=True)
@@ -104,6 +104,7 @@ def revive_sunken_ships(
     count: int = 2,
     *,
     reveal_to: str | None = None,
+    selected_ships: Iterable[PlayerShip] | None = None,
 ) -> int:
     """Revive up to `count` sunk ships in place (疗愈, ticket #10 batch A).
 
@@ -121,10 +122,19 @@ def revive_sunken_ships(
         return 0
     revived = 0
     guard = 0
+    selected = list(selected_ships) if selected_ships is not None else None
     while revived < int(count) and player.sunken_ships and guard < 32:
         guard += 1
-        ship = player.sunken_ships.pop()
-        if ship in player.ships and is_ship_alive(player, ship):
+        if selected is not None:
+            if not selected:
+                break
+            ship = selected.pop(0)
+            if ship not in player.sunken_ships:
+                continue
+            player.sunken_ships.remove(ship)
+        else:
+            ship = player.sunken_ships.pop()
+        if selected is None and ship in player.ships and is_ship_alive(player, ship):
             # A live duplicate entry: drop the ghost record, do not count it.
             continue
         while ship in player.sunken_ships:

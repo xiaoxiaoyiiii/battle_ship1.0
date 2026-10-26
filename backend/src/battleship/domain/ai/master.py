@@ -29,6 +29,7 @@ import random
 from typing import Any
 
 from ..magic import interaction as interaction_rules
+from ..magic.precheck import healing_candidates
 from ..magic.rules import (
     lanyu_requirement_reason,
     last_attack_requirement_reason,
@@ -841,7 +842,10 @@ def card_readiness(room: Any, ai_id: str, card: Any) -> dict[str, Any] | None:
             if name in ("死者苏生", "疗愈") and not caster.sunken_ships:
                 return None
             if name == "疗愈":
-                return {}
+                candidates = list(reversed(healing_candidates(caster)))[:2]
+                return {'board': 'self', 'selected_cells': [
+                    {'x': ship.positions[0].x, 'y': ship.positions[0].y} for ship in candidates
+                ]} if candidates else None
             return {} if has_placement_spot(room, ai_id) else None
 
         if name == "桃园结义":

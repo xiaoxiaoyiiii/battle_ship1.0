@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..room.models import Room, alive_ships, is_ship_alive
+from ..room.models import Player, PlayerShip, Room, alive_ships, is_ship_alive
 from .interaction import cell_xy, find_ship_at
 
 #: 结算阶段重新校验用：目标船必须仍然活着且互不相同。
@@ -65,6 +65,45 @@ def divine_decree_error(room: Room, player_id: str, targets: dict[str, Any]) -> 
 STEAL_CARD = "盗亦有道"
 
 
+def healing_candidates(player: Player) -> list[PlayerShip]:
+    """原位置没有活舰占用的沉船，去掉重复记录。"""
+    occupied = {(p.x, p.y) for ship in alive_ships(player) for p in ship.positions}
+    candidates: list[PlayerShip] = []
+    for ship in player.sunken_ships:
+        if not ship.positions or any((p.x, p.y) in occupied for p in ship.positions):
+            continue
+        if not any(ship is other for other in candidates):
+            candidates.append(ship)
+    return candidates
+
+
+def healing_ships(room: Room, player_id: str, targets: dict[str, Any]) -> list[PlayerShip]:
+    """只返回明确选定的沉船，不替玩家补选其它目标。"""
+    player = room.players.get(player_id)
+    raw = targets.get('selected_cells')
+    if player is None or not isinstance(raw, list):
+        return []
+    candidates = healing_candidates(player)
+    picked: list[PlayerShip] = []
+    for cell in raw:
+        xy = cell_xy(cell)
+        ship = next((s for s in candidates if any((p.x, p.y) == xy for p in s.positions)), None)
+        if ship is not None and not any(ship is other for other in picked):
+            picked.append(ship)
+    return picked
+
+
+def healing_error(room: Room, player_id: str, targets: dict[str, Any]) -> str | None:
+    raw = targets.get('selected_cells')
+    if targets.get('board', 'self') != 'self':
+        return '疗愈只能选择自己的沉船'
+    if not isinstance(raw, list) or not 1 <= len(raw) <= 2:
+        return '请选择一艘或两艘要原地复活的沉船'
+    if len(healing_ships(room, player_id, targets)) != len(raw):
+        return '请选择不同的己方沉船，且原位置不能被活舰占用'
+    return None
+
+
 def steal_error(room: Room, player_id: str) -> str | None:
     """盗亦有道：对手还没有「可被偷」的结算记录时就别入链。
 
@@ -88,6 +127,8 @@ def precheck(room: Room, player_id: str, card_name: str, targets: dict[str, Any]
         return divine_decree_error(room, player_id, targets)
     if card_name == STEAL_CARD:
         return steal_error(room, player_id)
+    if card_name == '疗愈':
+        return healing_error(room, player_id, targets)
     return None
 
 
@@ -96,6 +137,8 @@ def resolution_error(
 ) -> str | None:
     """入链之后、真正动手之前再查一次：目标在连锁响应里被弄死就整体失败。"""
 
+    if card_name == '疗愈':
+        return healing_error(room, player_id, targets)
     if card_name != "神之宣告":
         return None
     player = room.players.get(player_id)
@@ -114,6 +157,9 @@ __all__ = [
     "DIVINE_DECREE_SHIPS",
     "STEAL_CARD",
     "steal_error",
+    "healing_candidates",
+    "healing_ships",
+    "healing_error",
     "divine_decree_error",
     "precheck",
     "resolution_error",

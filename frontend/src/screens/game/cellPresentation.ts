@@ -6,8 +6,8 @@ export interface SelectionHint { selectable?: boolean; card?: string; hint?: str
 /** 当前真实状态优先；历史挡炮标记不能覆盖后来命中或新加的护盾。 */
 export function cellVisualState(cell: BoardCell): CellVisual {
   if (cell.hole) return 'hole'
-  if (cell.revived) return 'revived'
   if (cell.hit || cell.sunk) return 'ship-hit'
+  if (cell.revived) return 'revived'
   if (cell.shielded) return 'shielded'
   if (cell.shieldBroken) return 'shield-blocked'
   if (cell.trap) return 'trap'

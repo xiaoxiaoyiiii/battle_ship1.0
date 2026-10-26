@@ -25,6 +25,7 @@ from ...battle import (
 )
 from ...room import BOARD_SIZE, PlayerShip, Position, alive_ships, is_ship_alive
 from ..cards import MagicCard
+from .. import precheck
 from ..deck import revive_sunken_ships
 from ..hooks import SHIP_DESTROYED, SHIP_SUNK
 from ..registry import register
@@ -538,17 +539,18 @@ async def see_through(ctx: EffectContext) -> EffectResult:
 
 @register("疗愈")
 async def heal(ctx: EffectContext) -> EffectResult:
-    if not ctx.caster.sunken_ships:
-        return EffectResult(False, "没有可复活的战舰")
-    sunken_before = list(ctx.caster.sunken_ships)
-    revived = revive_sunken_ships(ctx.room, ctx.caster_id, 2, reveal_to=ctx.opponent_id)
+    error = precheck.resolution_error(ctx.room, ctx.caster_id, '疗愈', ctx.targets)
+    if error:
+        return EffectResult(False, error)
+    selected = precheck.healing_ships(ctx.room, ctx.caster_id, ctx.targets)
+    revived = revive_sunken_ships(ctx.room, ctx.caster_id, len(selected),
+                                  reveal_to=ctx.opponent_id, selected_ships=selected)
     if revived == 0:
         return EffectResult(False, "没有可复活的战舰")
-    revived_ids = {id(ship) for ship in ctx.caster.ships if id(ship) in {id(item) for item in sunken_before}}
     revived_positions = [
         {"x": position.x, "y": position.y}
-        for ship in ctx.caster.ships
-        if id(ship) in revived_ids
+        for ship in selected
+        if is_ship_alive(ctx.caster, ship)
         for position in ship.positions
     ]
     await ctx.emit(

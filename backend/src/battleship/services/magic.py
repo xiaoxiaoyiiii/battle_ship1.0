@@ -1284,6 +1284,10 @@ class MagicService:
             if int(card.speed) != 3:
                 return {"status": "error", "message": "只能使用速阶3的卡牌进行连锁"}
 
+            selection_error = magic_precheck.precheck(room, str(player_id), card.name, targets if isinstance(targets, dict) else {})
+            if selection_error:
+                return {"status": "error", "message": selection_error}
+
             # §7：与 use_magic_card 同一个 pre-cast 评估（禁忌果实 / 绝处逢生 /
             # 卡专属条件 / 待选船 / 未接入）。拒绝后让过并推窗，绝不留半开窗口。
             refusal = evaluate_cast(room, str(player_id), card)

@@ -206,6 +206,7 @@ export function applyBattleEvent(
       match.lastAttack = { attacker, x, y, hit, shipSunk }
       audio.play(shipSunk ? 'sunk' : hit ? 'hit' : 'miss')
       const mine = attacker === me
+      if (hit && !shieldBlocked) match.clearRevived(!mine, [{ x, y }])
       if (mine) {
         // A shield-absorbed shot spends the attack but does not mark the cell
         // (legacy), so the same cell stays attackable.
@@ -330,6 +331,7 @@ export function applyBattleEvent(
     }
     case 'player_ships_updated': {
       if (Array.isArray(payload.ships)) game.applyServerState({ ships: payload.ships })
+      match.clearRevived(true, state.ships.filter(ship => ship.alive === false).flatMap(ship => ship.positions))
       break
     }
     case 'board_attacks_updated': {
@@ -337,6 +339,8 @@ export function applyBattleEvent(
         ...(Array.isArray(payload.my_attacks) ? { attacks: payload.my_attacks } : {}),
         ...(Array.isArray(payload.opponent_attacks) ? { opponent_attacks: payload.opponent_attacks } : {}),
       })
+      match.clearRevived(false, state.attacks.filter(cell => cell.hit))
+      match.clearRevived(true, state.opponent_attacks.filter(cell => cell.hit))
       break
     }
     case 'shield_absorbed': {

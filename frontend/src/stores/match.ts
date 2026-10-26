@@ -324,6 +324,12 @@ export const useMatchStore = defineStore('match', () => {
     }
   }
 
+  function clearRevived(mine: boolean, points: Point[]): void {
+    const target = mine ? revivedSelf : revivedOpponent
+    const keys = new Set(points.map(p => `${p.x}-${p.y}`))
+    target.value = target.value.filter(p => !keys.has(`${p.x}-${p.y}`))
+  }
+
   function markShieldBroken(mine: boolean, points: Point[]): void {
     const target = mine ? shieldBrokenSelf : shieldBrokenOpponent
     for (const point of points) {
@@ -402,6 +408,7 @@ export const useMatchStore = defineStore('match', () => {
     clearTimeoutNote,
     appendLog,
     markRevived,
+    clearRevived,
     pushNotice,
     dismissNotice,
     openChainWindow,

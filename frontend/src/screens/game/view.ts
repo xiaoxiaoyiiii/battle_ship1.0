@@ -41,7 +41,7 @@ export const BOARD_SIZE = 6
 export const END_PHASE_PLAYABLE_CARDS = ['Freezing！']
 
 /** Legacy MAGIC_TARGET_DESCRIPTORS: shape + board ownership, per card name. */
-export type TargetKind = 'area' | 'line' | 'continuous' | 'single' | 'own_ships' | 'shenwei'
+export type TargetKind = 'area' | 'line' | 'continuous' | 'single' | 'own_ships' | 'own_sunken' | 'shenwei'
 
 export interface TargetDescriptor {
   kind: TargetKind
@@ -58,6 +58,7 @@ export const MAGIC_TARGET_DESCRIPTORS: Record<string, TargetDescriptor> = {
   '硫磺火焰': { kind: 'continuous', length: 6, board: 'opponent' },
   '克苏鲁之眼': { kind: 'single', board: 'self' },
   '神之宣告': { kind: 'own_ships', count: 2 },
+  '疗愈': { kind: 'own_sunken', count: 2, board: 'self' },
   '神威！': { kind: 'shenwei' },
 }
 
@@ -411,7 +412,7 @@ export function buildSelfBoard(state: GameState, marks: BoardMarks = {}): BoardC
         cell.miss = !shot.hit
       }
       cell.shieldBroken = broken.has(cell.key)
-      cell.revived = revived.has(cell.key)
+      cell.revived = revived.has(cell.key) && !cell.hit && !cell.sunk
       cell.hole = holes.has(cell.key)
       cell.frozenArea = frozen.has(cell.key)
       cell.lastStand = lastStand.has(cell.key)
@@ -443,7 +444,7 @@ export function buildOpponentBoard(state: GameState, marks: BoardMarks = {}): Bo
       }
       cell.revealed = revealed.has(cell.key)
       cell.shieldBroken = broken.has(cell.key)
-      cell.revived = revived.has(cell.key)
+      cell.revived = revived.has(cell.key) && !cell.hit
       cell.hole = holes.has(cell.key)
       cell.frozenArea = frozen.has(cell.key)
       cell.lastStand = lastStand.has(cell.key)

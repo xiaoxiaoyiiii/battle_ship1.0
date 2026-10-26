@@ -223,6 +223,7 @@ const legalKeys = computed<string[]>(() => {
   const kind = sel.descriptor.kind
   const mine = selfCells.value
   const theirs = opponentCells.value
+  if (kind === 'own_sunken') return mine.filter(cell => cell.sunk || (!cell.ship && cell.hit)).map(cell => cell.key)
   if (kind === 'shenwei') return [...mine, ...theirs].map((cell) => cell.key)
   if (kind === 'single' || kind === 'own_ships') {
     return mine.filter((cell) => cell.ship && !cell.sunk).map((cell) => cell.key)
@@ -244,6 +245,7 @@ const canConfirm = computed(() => {
   if (kind === 'continuous') return continuousLine(sel.picks) !== null
   if (kind === 'single') return sel.picks.length === 1
   if (kind === 'own_ships') return sel.picks.length === 2 && sel.effectChoice !== null
+  if (kind === 'own_sunken') return sel.picks.length >= 1 && sel.picks.length <= (sel.descriptor.count ?? 2)
   if (kind === 'shenwei') return sel.board !== null && sel.anchor !== null
   return false
 })
@@ -253,7 +255,7 @@ const pickCountText = computed(() => {
   if (!sel) return '尚未选中'
   const kind = sel.descriptor.kind
   if (kind === 'continuous') return String(sel.picks.length) + ' / ' + String(sel.descriptor.length ?? 6)
-  if (kind === 'own_ships') return String(sel.picks.length) + ' / ' + String(sel.descriptor.count ?? 2)
+  if (kind === 'own_ships' || kind === 'own_sunken') return String(sel.picks.length) + ' / ' + String(sel.descriptor.count ?? 2)
   if (kind === 'single') return sel.picks.length ? '已选中 1 格' : '尚未选中'
   if (kind === 'area' || kind === 'line' || kind === 'shenwei') {
     if (!sel.anchor) return '尚未选中'
@@ -279,6 +281,7 @@ const targetHint = computed(() => {
   if (kind === 'continuous') return '选择 6 个四邻接连通格，可以转弯；再次点击可撤销'
   if (kind === 'single') return '在自己海域点击一艘还活着的战舰'
   if (kind === 'own_ships') return '在自己海域选择两艘战舰，然后选择要发出的效果'
+  if (kind === 'own_sunken') return '在自己海域选择一艘或两艘沉船原地复活；再次点击可取消选择'
   if (kind === 'shenwei') return '先选择作用棋盘，再点击 3×3 区域的左上角'
   return ''
 })
@@ -940,14 +943,15 @@ function pickCell(board: 'self' | 'opponent', x: number, y: number): void {
     sel.error = ''
     return
   }
-  if (kind === 'single' || kind === 'own_ships') {
+  if (kind === 'single' || kind === 'own_ships' || kind === 'own_sunken') {
     if (board !== 'self') {
       setSelectionError('请在自己海域选择战舰')
       return
     }
     const cell = selfCells.value.find((item) => item.x === x && item.y === y)
-    if (!cell || !cell.ship || cell.sunk) {
-      setSelectionError('请选择一艘还活着的战舰所在的格子')
+    const valid = cell && (kind === 'own_sunken' ? cell.sunk || (!cell.ship && cell.hit) : cell.ship && !cell.sunk)
+    if (!valid) {
+      setSelectionError(kind === 'own_sunken' ? '请选择自己已经沉没的战舰' : '请选择一艘还活着的战舰所在的格子')
       return
     }
     if (kind === 'single') {
@@ -1008,6 +1012,7 @@ function buildTargets(sel: SelectionState): Record<string, unknown> {
     return { board: 'self', target_area: { x1: cell.x, y1: cell.y, x2: cell.x, y2: cell.y } }
   }
   if (kind === 'own_ships') return { board: 'self', selected_cells: sel.picks, effect_choice: sel.effectChoice }
+  if (kind === 'own_sunken') return { board: 'self', selected_cells: sel.picks }
   if (kind === 'shenwei' && sel.anchor && sel.board) {
     return { board: sel.board, target_area: areaFromAnchor(sel.anchor.x, sel.anchor.y, 3) }
   }

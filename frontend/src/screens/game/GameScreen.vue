@@ -1759,7 +1759,7 @@ function backToLobby(): void {
         </div>
 
         <!-- 手机档：单块棋盘 + 海域切换标签（标题与提交的棋盘同源） -->
-        <div v-if="boardMode === 'tabs' && !selection" class="board-tabs" role="tablist" aria-label="切换棋盘">
+        <div v-if="boardMode === 'tabs' && !selection" class="board-tabs" :class="{ 'has-chain-reminder': chainCollapsed && chainHasContent }" role="tablist" aria-label="切换棋盘">
           <button
             type="button"
             class="board-tab"
@@ -1780,6 +1780,21 @@ function backToLobby(): void {
 
         <!-- 双棋盘：桌面并排常驻；手机档按标签只显示一块 -->
         <div class="boards-container" :data-board-mode="boardMode">
+          <button
+            v-if="chainCollapsed && chainHasContent && (!compact || !selection)"
+            type="button"
+            class="game-chain-reopen"
+            :class="{ 'is-counting': !!chainWindow && chainRemaining > 0 }"
+            data-testid="game-chain-reopen"
+            @click="match.expandChainWindow()"
+          >
+            <span class="game-chain-reopen__dot" aria-hidden="true"></span>
+            <template v-if="chainWindow">
+              <template v-if="compact">连锁 · {{ chainRemaining }} 秒 · 打开</template>
+              <template v-else>连锁待响应：{{ chainWindow.card ? chainWindow.card.name : '魔法卡' }} · 剩余 {{ chainRemaining }} 秒 · 打开</template>
+            </template>
+            <template v-else>展开连锁结算 · 打开</template>
+          </button>
           <div v-show="showSelfBoard" class="board-wrapper">
             <BoardPanel
               board="self"
@@ -1957,21 +1972,6 @@ function backToLobby(): void {
     </div>
 
     <!-- 底部手牌条（原 main 的底部手牌） -->
-    <button
-      v-if="chainCollapsed && chainHasContent"
-      type="button"
-      class="game-chain-reopen"
-      data-testid="game-chain-reopen"
-      @click="match.expandChainWindow()"
-    >
-      <span class="game-chain-reopen__dot" aria-hidden="true"></span>
-      <template v-if="chainWindow">
-        连锁待响应：{{ chainWindow.card ? chainWindow.card.name : '魔法卡' }} · 剩余 {{ chainRemaining }} 秒 · 打开
-      </template>
-      <template v-else>
-        展开连锁结算（{{ chainOrderText }}）· 打开
-      </template>
-    </button>
 
     <section class="game-hand-wrap" aria-label="手牌" ref="handWrapEl">
       <div class="game-hand-head">

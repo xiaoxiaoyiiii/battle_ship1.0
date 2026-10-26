@@ -1817,6 +1817,7 @@
 
 /* ---- 双棋盘 -------------------------------------------------------------- */
 .boards-container {
+  position: relative;
   width: 100%;
   flex: 1 1 auto;
   min-height: 0;
@@ -3265,10 +3266,24 @@ button.arena-avatar--btn {
   cursor: pointer;
 }
 .game-chain-reopen {
-  position: fixed;
-  z-index: 8999;
-  right: 12px;
-  top: 64px;
+  position: absolute;
+  z-index: 8;
+  right: 0;
+  top: -42px;
+  max-width: 100%;
+  white-space: nowrap;
+}
+.game-chain-reopen.is-counting { animation: chain-reminder-pulse 1s ease-in-out infinite; }
+.game-chain-reopen.is-counting .game-chain-reopen__dot { animation: chain-reminder-dot 1s ease-in-out infinite; }
+@keyframes chain-reminder-pulse {
+  0%, 100% { border-color: var(--gold); box-shadow: 0 0 0 0 transparent; }
+  50% { border-color: var(--gold-strong); box-shadow: 0 0 0 3px var(--gold-soft), 0 0 14px var(--gold-soft); }
+}
+@keyframes chain-reminder-dot { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+.game[data-layout='compact'] .board-tabs.has-chain-reminder { padding-right: 144px; }
+.game[data-layout='compact'] .game-chain-reopen { padding: 0 8px; gap: 6px; font-size: 12px; }
+@media (prefers-reduced-motion: reduce) {
+  .game-chain-reopen.is-counting, .game-chain-reopen.is-counting .game-chain-reopen__dot { animation: none; }
 }
 
 /* 舰长名片：双方分列两端，状态监视区永久占位，状态数量不改变顶栏高度。 */

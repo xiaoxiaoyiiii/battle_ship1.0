@@ -494,8 +494,8 @@ class AiService:
             targets = master_rules.card_readiness(room, player_id, card)
             if targets is None:
                 continue
-            if master_rules.is_target_card(getattr(card, "name", None)):
-                targets_by_index[index] = targets
+            # 非区域牌也可能有显式目标，例如疗愈选定的沉船。
+            targets_by_index[index] = targets
             playable.append(index)
         index = master_rules.choose_card(room, player_id, playable)
         if index is None:

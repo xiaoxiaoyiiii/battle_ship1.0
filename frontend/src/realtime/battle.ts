@@ -69,7 +69,6 @@ export const BATTLE_EVENTS = [
   'shenji_waiting_end',
   'dice_discard_request',
   'dice_discard_complete',
-  'dice_rolled',
   'opponent_disconnected',
   'opponent_reconnected',
 ] as const satisfies readonly OutboundEvent[]
@@ -511,12 +510,6 @@ export function applyBattleEvent(
     }
     case 'dice_discard_complete': {
       game.applyServerState({ dice_discard_pending: false })
-      break
-    }
-    case 'dice_rolled': {
-      // 判定结果由服务端一次广播给双方；界面层负责播放同一段锁定动画，
-      // 不在客户端重算点数，也不让任何一方提前操作。
-      match.openDiceRoll(payload)
       break
     }
     case 'opponent_disconnected': {

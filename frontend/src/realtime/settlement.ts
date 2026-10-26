@@ -4,6 +4,7 @@ import { useGameStore } from '../stores/game'
 import { useUiStore } from '../stores/ui'
 import { rememberSeat, restoreSeat } from './reconnect'
 import { useResultStore } from '../stores/result'
+import { useMatchStore } from '../stores/match'
 
 /**
  * The settlement wire channel (ticket #22).
@@ -15,6 +16,7 @@ import { useResultStore } from '../stores/result'
  * frozen payload without bypassing production logic.
  */
 export type SettlementEventName =
+  | 'dice_rolled'
   | 'game_over'
   | 'game_state'
   | 'game_message'
@@ -28,6 +30,7 @@ export type SettlementEventName =
 // Typed listeners: only the frames that exist in the generated outbound union.
 // recent_opponent is absent there (see the raw listener below).
 const SETTLEMENT_EVENTS = [
+  'dice_rolled',
   'game_over',
   'game_state',
   'game_message',
@@ -53,6 +56,11 @@ export function applySettlementEvent(
   const result = useResultStore(pinia)
 
   switch (event) {
+    case 'dice_rolled': {
+      // 准备阶段判定可能早于战斗页挂载，必须由跨页面连接接收。
+      useMatchStore(pinia).openDiceRoll(payload)
+      break
+    }
     case 'game_message': {
       // 重摆结束时仍可能停在布船页，由跨页面的共享连接接收最终效果。
       const message = asString(payload.message).trim()

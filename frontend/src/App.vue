@@ -12,6 +12,7 @@ import FriendsOverlay from './components/FriendsOverlay.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
 import ScreenBoundary from './components/ScreenBoundary.vue'
 import ToastHost from './components/ToastHost.vue'
+import DiceRollOverlay from './screens/game/DiceRollOverlay.vue'
 import { routeLoading } from './router'
 import { useAuthStore } from './stores/auth'
 import { useDmStore } from './stores/dm'
@@ -321,4 +322,9 @@ onBeforeUnmount(() => {
   </AppOverlay>
 
   <ToastHost />
+  <DiceRollOverlay
+    :self-id="game.state.player_id"
+    :self-name="game.state.player_name || '你'"
+    :opponent-name="game.state.opponent_name || '对手'"
+  />
 </template>

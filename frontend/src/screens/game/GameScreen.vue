@@ -150,6 +150,7 @@ interface SelectionState {
 
 const selection = ref<SelectionState | null>(null)
 const priorityError = ref('')
+const priorityCollapsed = ref(false)
 const priorityRequest = computed(() =>
   state.value.state === 'attacking' && state.value.priority_waiting?.role === 'responder'
     ? state.value.priority_waiting : null,
@@ -1317,6 +1318,7 @@ async function passPriority(): Promise<void> {
 }
 
 watch(() => state.value.priority_waiting?.token, (token) => {
+  priorityCollapsed.value = false
   priorityError.value = ''
   if (selection.value?.priorityToken !== undefined && selection.value.priorityToken !== token) selection.value = null
 })
@@ -1759,7 +1761,7 @@ function backToLobby(): void {
         </div>
 
         <!-- 手机档：单块棋盘 + 海域切换标签（标题与提交的棋盘同源） -->
-        <div v-if="boardMode === 'tabs' && !selection" class="board-tabs" :class="{ 'has-chain-reminder': chainCollapsed && chainHasContent }" role="tablist" aria-label="切换棋盘">
+        <div v-if="boardMode === 'tabs' && !selection" class="board-tabs" :class="{ 'has-chain-reminder': (priorityCollapsed && priorityRequest) || (chainCollapsed && chainHasContent) }" role="tablist" aria-label="切换棋盘">
           <button
             type="button"
             class="board-tab"
@@ -1781,7 +1783,17 @@ function backToLobby(): void {
         <!-- 双棋盘：桌面并排常驻；手机档按标签只显示一块 -->
         <div class="boards-container" :data-board-mode="boardMode">
           <button
-            v-if="chainCollapsed && chainHasContent && (!compact || !selection)"
+            v-if="priorityCollapsed && priorityRequest && ui.phasePrompts && (!compact || !selection)"
+            type="button" class="game-chain-reopen"
+            :class="{ 'is-counting': priorityRemaining > 0 }"
+            data-testid="game-phase-reopen" @click="priorityCollapsed = false"
+          >
+            <span class="game-chain-reopen__dot" aria-hidden="true"></span>
+            <template v-if="compact">阶段 · {{ priorityRemaining }} 秒 · 打开</template>
+            <template v-else>阶段转换待响应 · 剩余 {{ priorityRemaining }} 秒 · 打开</template>
+          </button>
+          <button
+            v-if="chainCollapsed && chainHasContent && !(priorityCollapsed && priorityRequest && ui.phasePrompts) && (!compact || !selection)"
             type="button"
             class="game-chain-reopen"
             :class="{ 'is-counting': !!chainWindow && chainRemaining > 0 }"
@@ -2349,7 +2361,7 @@ function backToLobby(): void {
     <MagicPlacementPanel />
     <MagicChoicePanel />
     <MagicDiscardPanel />
-    <PhasePriorityPrompt :open="Boolean(priorityRequest && ui.phasePrompts && selection?.priorityToken === undefined)" :request="priorityRequest" :now="now" :busy="busy" :error="priorityError" @select="respondPriority" @pass="passPriority" />
+    <PhasePriorityPrompt :open="Boolean(priorityRequest && ui.phasePrompts && !priorityCollapsed && selection?.priorityToken === undefined)" :request="priorityRequest" :now="now" :busy="busy" :error="priorityError" @select="respondPriority" @pass="passPriority" @collapse="priorityCollapsed = true" />
 
     <DiceRollOverlay
       :self-id="state.player_id"

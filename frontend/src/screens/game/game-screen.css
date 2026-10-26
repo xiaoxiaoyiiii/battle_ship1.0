@@ -3442,3 +3442,8 @@ button.arena-avatar--btn {
     margin-right: 260px;
   }
 }
+.game-chain-window__actions [data-testid='game-chain-collapse'] {
+  min-height: 46px;
+  padding: 10px 14px;
+  font-size: 15px;
+}

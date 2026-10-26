@@ -6,7 +6,7 @@ import { useUiStore } from '../../stores/ui'
 import type { CardLike } from './view'
 
 const props = defineProps<{ request: Record<string, unknown> | null; open: boolean; now: number; busy: boolean; error: string }>()
-const emit = defineEmits<{ select: [card: CardLike]; pass: [] }>()
+const emit = defineEmits<{ select: [card: CardLike]; pass: []; collapse: [] }>()
 const ui = useUiStore()
 // 关闭时保留最后一帧内容，避免淡出过程中标题和卡牌先被清空。
 const lastRequest = shallowRef<Record<string, unknown>>({})
@@ -83,6 +83,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', hidePreview))
         <p v-else>单击卡牌后此处会出现效果预览，再次点击那张牌或点击下方「打出」按钮就会打出。</p>
       </div>
       <p v-if="error" class="phase-prompt__error" role="alert">{{ error }}</p>
+      <button type="button" class="button button--ghost phase-prompt__collapse" data-testid="game-phase-collapse" :disabled="busy" @click="hidePreview(); emit('collapse')">暂时收起 · 查看棋盘</button>
       <footer>
         <label><input type="checkbox" data-testid="game-phase-disable" :checked="!ui.phasePrompts" @change="ui.setPhasePrompts(!(($event.target as HTMLInputElement).checked))" />以后自动放行<span>可在设置中恢复</span></label>
         <div class="phase-prompt__actions">
@@ -146,6 +147,7 @@ footer label { font-size: 13px; display: flex; flex-wrap: wrap; align-items: cen
 footer input[type='checkbox'] { width: 16px; height: 16px; min-height: 0; flex: 0 0 16px; margin: 0; padding: 0; }
 footer .button { white-space: nowrap; flex-shrink: 0; }
 .phase-prompt__actions { display: flex; gap: 8px; }
+.phase-prompt__collapse { min-height: 46px; padding: 10px 14px; font-size: 15px; margin-top: 16px; width: 100%; }
 footer label span { color: var(--text-muted, #b4bad4); font-size: 12px; }
 .phase-prompt__error { color: #ff8d97; font-size: 13px; }
 .phase-prompt__sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }

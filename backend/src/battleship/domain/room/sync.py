@@ -346,6 +346,7 @@ def build_room_sync(
         # 兼容字段保留，但未命中的护盾位置仅能由船主查看。
         "opponent_shielded_ships": [],
         "hand": [card_payload(card) for card in player.magic_hand],
+        "deck_count": len(room.magic_deck),
         "attacks": [
             {"x": attack.x, "y": attack.y, "hit": attack.hit}
             for attack in (player.attacks or [])

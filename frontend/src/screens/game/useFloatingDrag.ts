@@ -76,6 +76,7 @@ export function useFloatingDrag(options: {
     originY = state.value.y
     window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerup', onPointerUp)
+    window.addEventListener('pointercancel', onPointerUp)
     event.preventDefault()
   }
 
@@ -90,10 +91,11 @@ export function useFloatingDrag(options: {
     writeSaved(options.storageKey, state.value.x, state.value.y)
     window.removeEventListener('pointermove', onPointerMove)
     window.removeEventListener('pointerup', onPointerUp)
+    window.removeEventListener('pointercancel', onPointerUp)
   }
 
-  function reset(): void {
-    const next = clamp(options.initial.x, options.initial.y)
+  function reset(position = options.initial): void {
+    const next = clamp(position.x, position.y)
     state.value = { x: next.x, y: next.y, dragging: false }
   }
 
@@ -121,6 +123,7 @@ export function useFloatingDrag(options: {
     window.removeEventListener('orientationchange', reclamp)
     window.removeEventListener('pointermove', onPointerMove)
     window.removeEventListener('pointerup', onPointerUp)
+    window.removeEventListener('pointercancel', onPointerUp)
   })
 
   return { state, onPointerDown, reset }

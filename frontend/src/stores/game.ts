@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useMatchStore } from './match'
 import { useChainAnimationStore } from './chainAnimation'
+import { useCardDrawStore } from './cardDraw'
 import {
   GAME_STATE_SCHEMA,
   defaultGameState,
@@ -40,6 +41,7 @@ export const useGameStore = defineStore('game', () => {
     const restarted = state.value.state === 'game_over' && next.state === 'placing_ships' && !next.needs_reset
     if (newRoom || restarted) {
       useMatchStore().reset()
+      useCardDrawStore().reset()
       state.value = defaultGameState()
     }
     if ('opponent_name' in next && !('opponent_registered' in next)) next.opponent_registered = false
@@ -83,6 +85,7 @@ export const useGameStore = defineStore('game', () => {
 
   function reset(): void {
     useMatchStore().reset()
+    useCardDrawStore().reset()
     state.value = defaultGameState()
     unknownFields.value = []
     revision.value += 1

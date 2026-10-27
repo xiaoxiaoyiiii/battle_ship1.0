@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useChainAnimationStore } from '../../stores/chainAnimation'
 import { useGameStore } from '../../stores/game'
 import { useUiStore } from '../../stores/ui'
@@ -41,6 +41,7 @@ function tick(): void {
   }
   // 绘制可能跨过截止时刻；已有画面时仍需下一帧负责移除叠层。
   if (next || Date.now() < animation.until()) raf = window.requestAnimationFrame(tick)
+  else void nextTick(() => animation.finish())
 }
 function start(): void { if (mounted && !raf) raf = window.requestAnimationFrame(tick) }
 function syncMotion(): void {

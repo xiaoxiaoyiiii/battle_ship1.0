@@ -471,7 +471,7 @@ def attack_error(room: Room, attacker_id: str, x: Any, y: Any) -> str | None:
         return ATTACK_NOT_YOUR_TURN
     if _value(room.current_phase) != "battle":
         return ATTACK_NOT_BATTLE_PHASE
-    if room.chain or room.chain_waiting:
+    if room.chain or room.chain_waiting or room.chain_resolving:
         return ATTACK_CHAIN_BUSY
     from .magic.interaction import pending_action_reason
     pending = pending_action_reason(room, attacker_id)

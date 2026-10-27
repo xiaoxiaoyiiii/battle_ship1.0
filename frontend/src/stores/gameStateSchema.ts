@@ -64,6 +64,7 @@ export interface GameState {
   ships: ShipSnapshot[]
   opponent_shielded_ships: Array<Array<{ x: number; y: number }>>
   hand: Array<Record<string, unknown>>
+  deck_count: number
   attacks: CellAttack[]
   opponent_attacks: CellAttack[]
   opponent_remaining_ships: number
@@ -153,6 +154,7 @@ const FIELD_SPECS = {
   ships: { type: 'array', nullable: false, default: [], note: '自己的舰位/冻结/护盾/存活' },
   opponent_shielded_ships: { type: 'array', nullable: false, default: [], note: '兼容空字段；护盾位置仅船主可见' },
   hand: { type: 'array', nullable: false, default: [], note: '手牌卡面快照 name/speed/type/description' },
+  deck_count: { type: 'number', nullable: false, default: 0, note: '双方共享牌堆的剩余张数' },
   attacks: { type: 'array', nullable: false, default: [], note: '自己已开火格 x/y/hit' },
   opponent_attacks: { type: 'array', nullable: false, default: [], note: '对手已开火格 x/y/hit' },
   opponent_remaining_ships: { type: 'number', nullable: false, default: 0, note: '对手存活舰数（公开信息）' },

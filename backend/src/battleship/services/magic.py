@@ -24,6 +24,7 @@ import inspect
 import json
 import random
 import time
+import uuid
 from typing import Any, Awaitable, Callable
 
 from ..domain import battle as battle_rules
@@ -76,7 +77,7 @@ from ..domain.room import (
     build_room_sync,
     is_ship_alive,
 )
-from ..domain.room.sync import EFFECT_BADGES, _spectate_chain_payload, card_payload
+from ..domain.room.sync import EFFECT_BADGES, _card_unavailable_reasons, _spectate_chain_payload, card_payload
 from ..infra.logging import get_logger
 from ..infra.timers import TaskRegistry
 from .rooms import Connection, EventPublisher, NullPublisher, RoomService
@@ -382,6 +383,10 @@ class MagicService:
 
         result = deck_rules.draw_card(room, player_id, rng=self.rng)
         player = room.players.get(player_id)
+        if player is not None and (result.card is not None or result.duplicate is not None):
+            await self._emit_card_drawn(
+                room, player_id, "hand" if result.card is not None else "discard"
+            )
         if player is not None and result.card is not None:
             # #37：唯一真实摸牌点（gameplay._draw 只是转调它，重复发会算两次）。
             await hooks.emit(
@@ -400,6 +405,20 @@ class MagicService:
                 room, player_id, result.duplicate, "duplicate"
             )
         return result.card
+
+    async def _emit_card_drawn(self, room: Room, player_id: str,
+                               destination: str = "hand") -> None:
+        """只发布来自共享牌堆的摸牌事实；牌面仍由手牌私有帧发送。"""
+
+        player = room.players.get(player_id)
+        if player is None:
+            return
+        await self._publisher.emit("card_drawn", {
+            "room_id": room.id, "player": player_id,
+            "deck_count": len(room.magic_deck),
+            "hand_count": len(player.magic_hand),
+            "destination": destination,
+        }, room=room.id)
 
     # ------------------------------------------------------------- ship picks
 
@@ -1134,6 +1153,7 @@ class MagicService:
                         # caster 会把它当成「对方在连锁」而不显示响应面板。
                         "responder": player_id,
                         "self_chain": top.player_id == player_id,
+                        "card_unavailable_reasons": _card_unavailable_reasons(room, player_id),
                         "speed3_cards": [
                             card_payload(card)
                             for card in chain_rules.usable_speed3_cards(room, player_id)
@@ -1410,8 +1430,19 @@ class MagicService:
         """Resolve LIFO. Negated items are skipped (DECISIONS D2)."""
 
         results: list[ChainResult] = []
+        presentation_stack = _spectate_chain_payload(room)
+        finished_by_chain = False
         while room.chain:
+            if room.state == RoomState.GAME_OVER and not finished_by_chain:
+                break
             item = room.chain.pop()
+            finished_before_display = room.state == RoomState.GAME_OVER
+            await self._present_chain_item(room, item, presentation_stack, first=not results)
+            if self.rooms.get_room(room.id) is not room:
+                return results
+            if not finished_before_display and room.state == RoomState.GAME_OVER:
+                # 等待离场期间主动投降等外部终局，不能再执行尚未生效的卡。
+                break
             if getattr(item, "negated", False):
                 by = getattr(item, "negated_by", None)
                 detail = (
@@ -1443,6 +1474,7 @@ class MagicService:
                     {"caster": item.player_id, "card": item.card.name},
                 )
                 results.append(result)
+                await self._sync_each_seat(room)
                 continue
 
             effect = registry.effect_for(item.card)
@@ -1522,7 +1554,7 @@ class MagicService:
                 "magic",
                 {"caster": item.player_id, "card": item.card.name},
             )
-            if not effect_result.success and not effect_result.game_over:
+            if not effect_result.success and not effect_result.game_over and not getattr(item, "stolen", False):
                 await self._refund(
                     room, item.player_id, item.card, effect_result.message
                 )
@@ -1531,10 +1563,10 @@ class MagicService:
                     "card": item.card,
                     "caster": item.player_id,
                     "timestamp": self.clock(),
+                    "declared_at": item.timestamp,
                     "round": room.round,
                 }
-                ledger = room.game_effects.get("stolen_cards") or {}
-                if id(item.card) in ledger:
+                if getattr(item, "stolen", False):
                     entry["stolen"] = True
                 room.magic_history.append(entry)
 
@@ -1559,11 +1591,19 @@ class MagicService:
                     )
                     chain_result.game_over = True
 
-        await self._publisher.emit(
-            "chain_resolved",
-            {"results": [result.to_dict() for result in results]},
-            room=room.id,
-        )
+            finished_by_chain = finished_by_chain or chain_result.game_over
+
+            # 牌面已离场，再同步该张牌造成的棋盘、手牌与效果变化。
+            await self._emit_active_effects(room)
+            for player in room.players.values():
+                await self._emit_hand(player)
+            await self._emit_ships_updated(room)
+            await self._sync_each_seat(room)
+            if room.chain and room.chain_animation_clients:
+                await asyncio.sleep(0.18)
+
+        resolved_payload = {"results": [result.to_dict() for result in results], "presented": True}
+        await self._publisher.emit("chain_resolved", resolved_payload, room=room.id)
         room.chain = []
         room.chain_waiting = False
         room.chain_window = None
@@ -1611,6 +1651,61 @@ class MagicService:
 
     # ------------------------------------------------------- timer lifecycle
 
+    async def _present_chain_item(self, room: Room, item: ChainItem,
+                                  stack: dict, *, first: bool) -> None:
+        """双方卡面彻底离场后才调用效果；老客户端和断线不阻塞房间。"""
+        room.chain_animation_id = uuid.uuid4().hex
+        room.chain_animation_players = {
+            pid: player.socket_id for pid, player in room.players.items()
+            if player.socket_id and pid not in room.disconnected
+            and room.chain_animation_clients.get(pid) == player.socket_id
+        }
+        room.chain_animation_deadline = time.monotonic() + 6.0
+        await self._publisher.emit("chain_resolving", {
+            "room_id": room.id, "animation_id": room.chain_animation_id,
+            "chain": stack.get("chain", []), "order": len(room.chain) + 1,
+            "first": first, "negated_skip": bool(item.negated),
+        }, room=room.id)
+        finished_before_display = room.state == RoomState.GAME_OVER
+        while self.chain_animation_pending(room):
+            if (self.rooms.get_room(room.id) is not room
+                    or (not finished_before_display and room.state == RoomState.GAME_OVER)):
+                self._clear_chain_animation(room)
+                return
+            await asyncio.sleep(0.025)
+
+
+    def chain_animation_pending(self, room: Room) -> bool:
+        if room.chain_animation_id is None:
+            return False
+        room.chain_animation_players = {
+            pid: sid for pid, sid in room.chain_animation_players.items()
+            if pid in room.players and room.players[pid].socket_id == sid
+            and pid not in room.disconnected
+        }
+        if room.chain_animation_players and time.monotonic() < room.chain_animation_deadline:
+            return True
+        self._clear_chain_animation(room)
+        return False
+
+    @staticmethod
+    def _clear_chain_animation(room: Room) -> None:
+        room.chain_animation_id = None
+        room.chain_animation_players.clear()
+        room.chain_animation_deadline = 0.0
+
+    async def chain_animation_complete(self, connection: Connection,
+                                       data: dict[str, Any] | None = None) -> dict:
+        data = data if isinstance(data, dict) else {}
+        room, player_id = self._seat(connection, data)
+        if room is None:
+            return dict(INVALID_SEAT)
+        if data.get("ready") is True:
+            room.chain_animation_clients[player_id] = room.players[player_id].socket_id
+        elif data.get("animation_id") == room.chain_animation_id:
+            room.chain_animation_players.pop(player_id, None)
+        return {"status": "success"}
+
     def cancel_room_timers(self, room_id: str) -> int:
         """Destroy hook: cancel every background wait owned by one room."""
 
@@ -1619,6 +1714,8 @@ class MagicService:
         room = self.rooms.get_room(room_id)
         if room is not None:
             chain_rules.clear_display(room)
+            self._clear_chain_animation(room)
+            room.chain_animation_clients.clear()
         return self.timers.cancel_room(room_id)
 
     def pending_chain_tasks(self, room_id: str | None = None) -> int:
@@ -1999,6 +2096,10 @@ class MagicService:
         ]
         room.magic_deck += remaining
         magic_temps.finish(room, "taoyuan_choice", owner=player_id)
+        # 候选尚未入手时不算摸牌；只在分配确认后发布实际获得的那一张。
+        await self._emit_card_drawn(room, player_id)
+        if 0 <= opponent_choice < len(cards):
+            await self._emit_card_drawn(room, opponent_id)
         await self._emit_hand(caster)
         await self._emit_hand(opponent)
         if opponent.socket_id:

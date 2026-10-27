@@ -17,6 +17,11 @@ from ...services.magic import MagicService
 
 
 def register_magic_handlers(sio: socketio.AsyncServer, magic: MagicService) -> None:
+    @sio.on("chain_animation_complete")
+    async def chain_animation_complete(sid: str, data: dict[str, Any] | None = None) -> dict:
+        connection = await connection_from_sio(sio, sid)
+        return await magic.chain_animation_complete(connection, data)
+
     @sio.on("use_magic_card")
     async def use_magic_card(sid: str, data: dict[str, Any] | None = None) -> dict:
         connection = await connection_from_sio(sio, sid)

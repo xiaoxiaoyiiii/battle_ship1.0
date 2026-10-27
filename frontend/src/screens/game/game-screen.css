@@ -978,21 +978,15 @@
 
 /* ---------------------------------------------------------- target banner --- */
 .game-target {
-  position: absolute;
-  z-index: 30;
-  top: 54px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(760px, calc(100% - 28px));
+  position: fixed;
+  z-index: 80;
+  width: min(460px, calc(100vw - 24px));
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 14px;
-  border: 1px solid var(--role-action);
-  border-radius: var(--radius);
-  background: var(--surface-chamber);
-  box-shadow: var(--shadow-panel);
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+  padding: 22px;
+  transform: none;
 }
 
 .game-target__main {
@@ -2183,22 +2177,12 @@
     display: none;
   }
 .game[data-layout="compact"].is-picking .game-target {
-    position: static;
-    transform: none;
-    order: 3;
-    width: 100%;
-    max-height: none;
-    padding: 8px 10px;
-    gap: 6px;
-  }
-.game[data-layout="compact"].is-picking .game-target__main {
-    flex: 0 0 auto;
-  }
-.game[data-layout="compact"].is-picking .game-target__controls {
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
-  }
+  position: fixed;
+  transform: none;
+  width: min(460px, calc(100vw - 24px));
+  padding: 18px;
+  gap: 14px;
+}
 
 /* 选舰提示窗独立浮动，增加提示不会推移棋盘；各尺寸都可拖动。 */
 .game .game-pick-float,
@@ -3571,4 +3555,41 @@ button.arena-avatar--btn {
   min-height: 46px;
   padding: 10px 14px;
   font-size: 15px;
+}
+
+/* 决策面板：只调整提示窗，不改变海域与手牌的布局。 */
+.game .game-pick-float.battle-prompt,
+.game[data-layout="compact"].is-picking .game-pick-float.battle-prompt {
+  width:min(460px,calc(100vw - 24px));
+  padding:22px;
+  gap:15px;
+}
+.game-chain-scrim>.game-chain-panel.battle-prompt {
+  position:fixed;
+  width:min(600px,calc(100vw - 24px));
+  padding:24px;
+  border-color:#7c7050;
+  border-radius:14px;
+  background:#101f30;
+  pointer-events:auto;
+}
+.game-target.battle-prompt .button,
+.game-pick-float.battle-prompt .button,
+.game-chain-panel.battle-prompt .button {
+  min-height:46px;
+  padding:11px 16px;
+  border-radius:8px;
+  font-size:16px;
+}
+.game-target.battle-prompt .game-target__confirm,
+.game-pick-float.battle-prompt .button--primary {
+  background:#8edcec;
+  color:#09202b;
+  border-color:#8edcec;
+  font-weight:750;
+}
+@media(max-width:540px) {
+  .game .game-pick-float.battle-prompt,
+  .game[data-layout="compact"].is-picking .game-pick-float.battle-prompt,
+  .game-chain-scrim>.game-chain-panel.battle-prompt { padding:18px; }
 }

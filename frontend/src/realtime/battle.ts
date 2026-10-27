@@ -40,6 +40,7 @@ export const BATTLE_EVENTS = [
   'magic_chain_updated',
   'chain_request',
   'chain_resolved',
+  'chain_resolving',
   'field_magic_updated',
   'active_effects',
   'player_ships_updated',
@@ -285,7 +286,15 @@ export function applyBattleEvent(
     }
     case 'chain_request': {
       audio.play('chain')
+      if (payload.card_unavailable_reasons && typeof payload.card_unavailable_reasons === 'object') {
+        game.applyServerState({ card_unavailable_reasons: payload.card_unavailable_reasons })
+      }
       match.openChainWindow(payload)
+      break
+    }
+    case 'chain_resolving': {
+      useChainAnimationStore(pinia).present(payload)
+      match.closeChainWindow()
       break
     }
     case 'chain_resolved': {
@@ -541,6 +550,15 @@ export function installBattleListeners(socket: TypedSocket, pinia?: Pinia): () =
   const offs = (BATTLE_EVENTS as readonly string[]).map((event) =>
     socket.on(event as OutboundEvent, (payload) => {
       if (isBattleEvent(event)) applyBattleEvent(event, payload, pinia)
+      if (event === 'chain_resolving' && typeof payload.animation_id === 'string') {
+        const playerId = useGameStore(pinia).state.player_id
+        useChainAnimationStore(pinia).whenFinished(() => {
+          if (!socket.socket.connected) return
+          void socket.emitEvent('chain_animation_complete', {
+            room_id: payload.room_id, player_id: playerId, animation_id: payload.animation_id,
+          }).catch(() => { /* 断线由服务端有界等待兜底。 */ })
+        })
+      }
     }),
   )
   return () => {
@@ -581,15 +599,33 @@ export function acquireBattleChannel(pinia?: Pinia): () => void {
       () => [game.state.room_id, game.state.player_id, ui.phasePrompts],
       syncPhasePreference, { immediate: true },
     )
+    let registeredAnimationSeat = ''
+    const registerAnimation = (): void => {
+      if (!socket.socket.connected || !game.state.room_id || !game.state.player_id) return
+      const seat = `${socket.socket.id}:${game.state.room_id}:${game.state.player_id}`
+      if (registeredAnimationSeat === seat) return
+      void socket.emitEvent('chain_animation_complete', {
+        room_id: game.state.room_id, player_id: game.state.player_id, ready: true,
+      }).then(ack => { if (ack.status === 'success') registeredAnimationSeat = seat })
+        .catch(() => { /* 重连后的入座快照会重新登记播放能力。 */ })
+    }
+    // 重连的 connect 早于 rejoin_room，必须等重新入座快照后再登记新连接。
+    const stopAnimationSync = socket.on('room_sync', registerAnimation)
+    const stopAnimationState = socket.on('game_state', registerAnimation)
+    const stopAnimationRegistration = watch(
+      () => [game.state.room_id, game.state.player_id, ui.connection], registerAnimation, { immediate: true },
+    )
     const onConnect = (): void => {
       ui.setConnection(true)
       syncPhasePreference()
+      registerAnimation()
       // Ticket #53: the RPS draw is emitted before this channel exists. Pull the
       // authoritative hand once we are connected so the game screen never opens
       // with 0 cards (frozen event, no new protocol).
       void syncHand(socket, pinia)
     }
     const onDisconnect = (): void => {
+      registeredAnimationSeat = ''
       useChainAnimationStore(pinia).reset()
       ui.setConnection(false)
     }
@@ -603,6 +639,9 @@ export function acquireBattleChannel(pinia?: Pinia): () => void {
         socket.socket.off('connect', onConnect)
         socket.socket.off('disconnect', onDisconnect)
         stopPhasePreference()
+        stopAnimationRegistration()
+        stopAnimationSync()
+        stopAnimationState()
         stopListeners()
         releaseSettlement()
       },

@@ -92,6 +92,7 @@ export class ChainTimeline {
   }
 
   resolve(value: unknown, now: number): void {
+    if (record(value).presented === true) { this.clear(); return }
     const source = record(value).results
     const results = Array.isArray(source) ? source.map(record).filter(item => nameOf(item.card)) : []
     if (!results.length) { this.clear(); return }
@@ -106,6 +107,17 @@ export class ChainTimeline {
       result: { negated: Boolean(item.negated_skip), failed: item.success === false },
     }, now, CHAIN_RESOLVE_MS))
     this.stack = []; this.closed = true; this.lastResolution = signature
+  }
+
+  /** 服务端在执行牌效前请求单张展示；是否无效只采用当前项的真实标记。 */
+  present(value: unknown, now: number): void {
+    const payload = record(value), cards = parseStack(payload)
+    if (!cards.length) return
+    this.stack = cards; this.closed = false
+    if (payload.first) this.append({ kind: 'success', cards, order: cards.length }, now, CHAIN_SUCCESS_MS)
+    this.append({ kind: 'resolve', cards, order: Number(payload.order),
+      result: { negated: payload.negated_skip === true, failed: false },
+    }, now, CHAIN_RESOLVE_MS)
   }
 
   private append(cue: Omit<ChainCue, 'start' | 'duration'>, now: number, duration: number): void {

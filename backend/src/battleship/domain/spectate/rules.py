@@ -714,6 +714,7 @@ SPECTATE_EVENTS: dict[str, Any] = {
     # Chain: the raw client targets are stripped, the public preview is rebuilt.
     "magic_chain_updated": _pub_magic_chain,
     "chain_resolved": None,
+    "chain_resolving": None,
     # Play-by-play text: coordinates were really leaked inside detail.
     "game_log": _pub_summary_line,
     "game_message": None,

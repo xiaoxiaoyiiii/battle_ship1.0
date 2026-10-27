@@ -1,7 +1,7 @@
 // GENERATED from backend contracts (JSON Schema). Do not edit by hand.
 // Regenerate: python -m battleship.contracts.export_schema --format ts --out frontend/src/socket/events.gen.ts
 export const CONTRACT_SCHEMA_VERSION = 1
-export const CONTRACT_SCHEMA_HASH = '2f928f7d09f90a67c6175b3ad5f5aaf98dbdc3d0266d1f64418d81d77efbcf1e'
+export const CONTRACT_SCHEMA_HASH = '346f8f8ce17cd213307c601bd4d2ea48086b3600bf47cd411d5f45c9afc5bdf3'
 
 export const INBOUND_EVENTS = [
   'connect',
@@ -34,6 +34,7 @@ export const INBOUND_EVENTS = [
   'get_magic_temp_data',
   'get_discard_pile',
   'chain_response',
+  'chain_animation_complete',
   'remove_field_magic',
   'confirm_shenji_declare',
   'dice_discard_choose',
@@ -75,6 +76,8 @@ export const OUTBOUND_EVENTS = [
   'board_attacks_updated',
   'chain_request',
   'chain_resolved',
+  'chain_resolving',
+  'card_drawn',
   'chat_message',
   'dice_discard_complete',
   'dice_discard_request',
@@ -217,6 +220,7 @@ export const ROOM_SYNC_FIELDS = [
   'ships',
   'opponent_shielded_ships',
   'hand',
+  'deck_count',
   'attacks',
   'opponent_attacks',
   'opponent_remaining_ships',

@@ -212,6 +212,8 @@ class AiService:
             return False
         if room.current_attacker != player_id:
             return False
+        if not await self._wait_animation(room, player_id):
+            return False
         # A chain window opened by the other seat's last card must settle before
         # we act: attacks / plays are refused while the window is open.
         # 上一轮遗留的本座位待办（如神机妙算宣言）先答掉，否则阶段转换会一直被挡。
@@ -374,6 +376,8 @@ class AiService:
         """Enter the end phase and hand the turn over, retrying while refused."""
 
         for _ in range(self.retries):
+            if not await self._wait_animation(room, player_id):
+                return
             room = self._room(room.id)
             if room is None or _state(room) == RoomState.GAME_OVER.value:
                 return
@@ -536,12 +540,25 @@ class AiService:
 
     # ------------------------------------------------------- settle / waits
 
+    async def _wait_animation(self, room: Room, player_id: str) -> bool:
+        """演出等待独立于普通重试次数，长连锁也不能超额后抢跑。"""
+        pending = getattr(self.magic, "chain_animation_pending", None)
+        while callable(pending) and (pending(room) or room.chain_resolving):
+            if (self._room(room.id) is not room
+                    or _state(room) == RoomState.GAME_OVER.value
+                    or room.current_attacker != player_id):
+                return False
+            await asyncio.sleep(max(.01, min(.1, self.settle_poll_seconds)))
+        return True
+
     async def _wait_chain(self, room: Room, player_id: str) -> None:
         for _ in range(self.retries):
             room = self._room(room.id)
             if room is None or _state(room) == RoomState.GAME_OVER.value:
                 return
             if not (room.chain or room.chain_waiting):
+                if not await self._wait_animation(room, player_id):
+                    return
                 # 连锁结算后才会开出的待办（神机妙算宣言、选船等）要在这里就地答复，
                 # 否则回合收尾时 enter_end 一直被它挡住，AI 卡在结束阶段。
                 await self.consume_pending(room, player_id)
@@ -559,6 +576,8 @@ class AiService:
             room = self._room(room.id)
             if room is None:
                 return None, False
+            if not await self._wait_animation(room, player_id):
+                return room, False
             if _state(room) == RoomState.GAME_OVER.value:
                 return room, False
             if room.current_attacker != player_id:

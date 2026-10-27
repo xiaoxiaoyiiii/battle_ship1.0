@@ -5,6 +5,7 @@ import { useUiStore } from '../stores/ui'
 import { rememberSeat, restoreSeat } from './reconnect'
 import { useResultStore } from '../stores/result'
 import { useMatchStore } from '../stores/match'
+import { useCardDrawStore } from '../stores/cardDraw'
 
 /**
  * The settlement wire channel (ticket #22).
@@ -26,6 +27,7 @@ export type SettlementEventName =
   | 'achievements_unlocked'
   | 'ships_updated'
   | 'recent_opponent'
+  | 'card_drawn'
 
 // Typed listeners: only the frames that exist in the generated outbound union.
 // recent_opponent is absent there (see the raw listener below).
@@ -39,6 +41,7 @@ const SETTLEMENT_EVENTS = [
   'rank_changed',
   'achievements_unlocked',
   'ships_updated',
+  'card_drawn',
 ] as const
 
 function asString(value: unknown): string {
@@ -56,6 +59,12 @@ export function applySettlementEvent(
   const result = useResultStore(pinia)
 
   switch (event) {
+    case 'card_drawn': {
+      if (payload.room_id !== game.state.room_id) break
+      game.applyServerState({ deck_count: payload.deck_count })
+      useCardDrawStore(pinia).enqueue(payload)
+      break
+    }
     case 'dice_rolled': {
       // 准备阶段判定可能早于战斗页挂载，必须由跨页面连接接收。
       useMatchStore(pinia).openDiceRoll(payload)

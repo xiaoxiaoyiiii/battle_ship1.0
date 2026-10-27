@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useFloatingDrag } from '../screens/game/useFloatingDrag'
 import { useUiStore } from '../stores/ui'
 
 /**
@@ -23,6 +24,8 @@ const props = withDefaults(
     /** Fallback accessible name when there is no visible heading id. */
     label?: string
     closeOnBackdrop?: boolean
+    /** 仅从内容中标记 data-drag-handle 的标题栏拖动。 */
+    draggable?: boolean
     /** 可控显示时保留组件，让离场动画播放完。 */
     open?: boolean
     transitionName?: string
@@ -35,6 +38,7 @@ const props = withDefaults(
     labelledby: undefined,
     label: undefined,
     closeOnBackdrop: true,
+    draggable: false,
     open: true,
     transitionName: undefined,
     returnFocus: undefined,
@@ -46,6 +50,21 @@ const ui = useUiStore()
 
 const panel = ref<HTMLElement | null>(null)
 const shown = ref(false)
+const dragPositioned = ref(false)
+const drag = useFloatingDrag({ handle: panel, panel, initial: { x: 12, y: 12 }, minY: 12 })
+const dragStyle = computed(() => props.draggable && dragPositioned.value ? {
+  position: 'fixed' as const,
+  left: drag.state.value.x + 'px',
+  top: drag.state.value.y + 'px',
+  maxHeight: `calc(100dvh - ${drag.state.value.y + 12}px)`,
+  margin: '0',
+  transform: 'none',
+} : undefined)
+
+function startDrag(event: PointerEvent): void {
+  const target = event.target as HTMLElement | null
+  if (props.draggable && target?.closest('[data-drag-handle]')) drag.onPointerDown(event)
+}
 let opener: HTMLElement | null = null
 let claimed = false
 
@@ -115,6 +134,10 @@ async function activate(): Promise<void> {
   shown.value = true
   await nextTick()
   if (!shown.value) return
+  if (props.draggable && panel.value) {
+    drag.reset({ x: (window.innerWidth - panel.value.offsetWidth) / 2, y: (window.innerHeight - panel.value.offsetHeight) / 2 })
+    dragPositioned.value = true
+  }
   const focusable = items()
   ;(focusable[0] ?? panel.value)?.focus()
 }
@@ -168,6 +191,8 @@ watch(
       <div
         ref="panel"
         class="app-overlay__panel"
+        :class="{ 'app-overlay__panel--draggable': draggable, 'is-dragging': draggable && drag.state.value.dragging }"
+        :style="dragStyle"
         role="dialog"
         aria-modal="true"
         :aria-labelledby="labelledby"
@@ -175,6 +200,7 @@ watch(
         :data-testid="id"
         tabindex="-1"
         @keydown="onKeydown"
+        @pointerdown="startDrag"
       >
         <slot />
       </div>

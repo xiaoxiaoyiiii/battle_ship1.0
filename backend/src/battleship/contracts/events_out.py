@@ -15,6 +15,8 @@ OUTBOUND_EVENTS: tuple[str, ...] = (
     "board_attacks_updated",
     "chain_request",
     "chain_resolved",
+    "chain_resolving",
+    "card_drawn",
     "chat_message",
     "dice_discard_complete",
     "dice_discard_request",
@@ -155,6 +157,7 @@ class RoomSync(BaseModel):
     ships: list[dict[str, Any]]
     opponent_shielded_ships: list[list[dict[str, Any]]]
     hand: list[dict[str, Any]]
+    deck_count: int
     attacks: list[dict[str, Any]]
     opponent_attacks: list[dict[str, Any]]
     opponent_remaining_ships: int

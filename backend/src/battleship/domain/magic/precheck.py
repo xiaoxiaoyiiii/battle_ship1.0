@@ -11,6 +11,7 @@ from typing import Any
 
 from ..room.models import Player, PlayerShip, Room, alive_ships, is_ship_alive
 from .interaction import cell_xy, find_ship_at
+from .cards import MagicCard
 
 #: 结算阶段重新校验用：目标船必须仍然活着且互不相同。
 DIVINE_DECREE_SHIPS = 2
@@ -104,20 +105,32 @@ def healing_error(room: Room, player_id: str, targets: dict[str, Any]) -> str | 
     return None
 
 
-def steal_error(room: Room, player_id: str) -> str | None:
-    """盗亦有道：对手还没有「可被偷」的结算记录时就别入链。
+def steal_candidate(room: Room, player_id: str) -> tuple[MagicCard, Any] | None:
+    """按宣告先后取对手最近的未盗卡，已结算记录与当前连锁共用规则。"""
 
-    旧行为是把卡打出去、扣牌、入连锁，结算时才发现无牌可偷，再靠退款把卡塞回手里；
-    玩家看到的是「打出成功但卡还在」外加一次空连锁，很容易以为要再打一次才生效。
-    """
-
-    for entry in reversed(getattr(room, "magic_history", []) or []):
-        if entry.get("caster") == player_id:
+    candidates: list[tuple[float, int, MagicCard, Any]] = []
+    for index, entry in enumerate(getattr(room, "magic_history", []) or []):
+        if entry.get("caster") == player_id or entry.get("stolen"):
             continue
-        if entry.get("stolen"):
+        card = entry.get("card")
+        if card is not None:
+            declared_at = float(entry.get("declared_at", entry.get("timestamp", 0)) or 0)
+            candidates.append((declared_at, index, card, entry))
+    offset = len(room.magic_history)
+    for index, item in enumerate(room.chain):
+        if item.player_id == player_id or getattr(item, "stolen", False):
             continue
+        candidates.append((float(item.timestamp), offset + index, item.card, item))
+    if not candidates:
         return None
-    return "对方还没有使用过魔法卡，盗亦有道无法发动"
+    _timestamp, _index, card, source = max(candidates, key=lambda value: value[:2])
+    return card, source
+
+
+def steal_error(room: Room, player_id: str) -> str | None:
+    """没有可盗卡时在扣牌前拒绝，当前连锁中的卡也属于已打出的卡。"""
+
+    return None if steal_candidate(room, player_id) else "对方还没有使用过魔法卡，盗亦有道无法发动"
 
 
 def precheck(room: Room, player_id: str, card_name: str, targets: dict[str, Any]) -> str | None:

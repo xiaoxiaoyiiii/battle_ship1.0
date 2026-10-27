@@ -241,6 +241,8 @@ class PhasePriority:
         if room.state == RoomState.GAME_OVER or room.current_attacker != cont['actor'] or room.round != cont['round']:
             room.priority_continue = None
             return
+        if cont['actor'].startswith('ai-') and self.gameplay.magic.chain_animation_pending(room):
+            return
         if room.state != RoomState.ATTACKING or room.disconnected or room.chain or room.chain_waiting or room.chain_resolving or pending_action_reason(room, cont['actor']):
             return
         # 卡牌已改变阶段或回合时，旧转换不能覆盖它的结果。

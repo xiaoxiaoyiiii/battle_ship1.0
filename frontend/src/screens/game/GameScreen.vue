@@ -13,6 +13,8 @@ import MagicChoicePanel from './MagicChoicePanel.vue'
 import MagicDiscardPanel from './MagicDiscardPanel.vue'
 import PhasePriorityPrompt from './PhasePriorityPrompt.vue'
 import ChainAnimationOverlay from './ChainAnimationOverlay.vue'
+import CardDrawAnimation from './CardDrawAnimation.vue'
+import { useCardDrawStore } from '../../stores/cardDraw'
 import { useChainAnimationStore } from '../../stores/chainAnimation'
 import { CARDS } from '../../cards/cardData'
 import { usePlayerCards } from './usePlayerCards'
@@ -89,9 +91,12 @@ const liveText = ref('')
 /** Last refusal, rendered in a stable receipt element for 6s (#50 hook). */
 
 const state = computed(() => game.state)
-const hand = computed<CardLike[]>(() =>
-  Array.isArray(state.value.hand) ? (state.value.hand as unknown as CardLike[]) : [],
-)
+const cardDraw = useCardDrawStore()
+const hand = computed<CardLike[]>(() => {
+  const cards = Array.isArray(state.value.hand) ? state.value.hand as unknown as CardLike[] : []
+  const arrivals = cardDraw.queue.filter(item => item.room === state.value.room_id && item.player === state.value.player_id && !item.discard)
+  return arrivals.length ? cards.slice(0, Math.min(cards.length, ...arrivals.map(item => item.index))) : cards
+})
 const selfName = computed(() => state.value.player_name || '你')
 const opponentName = computed(() => state.value.opponent_name || '对手')
 const myTurn = computed(() => isMyTurn(state.value))
@@ -567,13 +572,28 @@ const detailDrag = useFloatingDrag({
   minY: 72,
 })
 
+// 目标面板不占棋盘布局空间，标题可拖动；各类目标复用同一交互。
+const targetPanelEl = ref<HTMLElement | null>(null)
+const targetHeadEl = ref<HTMLElement | null>(null)
+const targetDrag = useFloatingDrag({ handle: targetHeadEl, panel: targetPanelEl, initial: { x: 16, y: 104 }, minY: 80 })
+const targetPanelStyle = computed(() => ({ left: targetDrag.state.value.x + 'px', top: targetDrag.state.value.y + 'px', maxHeight: compact.value ? `min(44dvh, calc(100dvh - ${targetDrag.state.value.y + 12}px))` : `calc(100dvh - ${targetDrag.state.value.y + 12}px)` }))
+const targetStatus = computed(() => {
+  if (canConfirm.value) return '目标已就绪，可以确认使用。'
+  if (selection.value?.card.name === '神之宣告') return selection.value.picks.length < 2 ? '先选择两艘己方战舰作为代价。' : '已选好战舰，请再选择一种效果。'
+  return '请按提示在高亮的海域中选择目标。'
+})
+const chainPanelEl = ref<HTMLElement | null>(null)
+const chainHeadEl = ref<HTMLElement | null>(null)
+const chainDrag = useFloatingDrag({ handle: chainHeadEl, panel: chainPanelEl, initial: { x: Math.max(12, (window.innerWidth - 600) / 2), y: Math.max(80, (window.innerHeight - 560) / 2) }, minY: 12 })
+const chainPanelStyle = computed(() => ({ left: chainDrag.state.value.x + 'px', top: chainDrag.state.value.y + 'px', maxHeight: `calc(100dvh - ${chainDrag.state.value.y + 12}px)` }))
+
 // 选舰与加盾共用位置，桌面与触屏都可从标题拖动。
 const pickPanelEl = ref<HTMLElement | null>(null)
 const pickHeadEl = ref<HTMLElement | null>(null)
 const pickDrag = useFloatingDrag({
   handle: pickHeadEl,
   panel: pickPanelEl,
-  initial: { x: window.innerWidth * 0.22, y: window.innerHeight * 0.64 },
+  initial: { x: 16, y: 104 },
   minY: 72,
 })
 const pickPanelStyle = computed(() => ({
@@ -2015,6 +2035,7 @@ function backToLobby(): void {
 
     <section class="game-hand-wrap" aria-label="手牌" ref="handWrapEl">
       <div class="game-hand-head">
+        <CardDrawAnimation />
         <span class="game-hand-stats" data-testid="game-stats">命中 {{ hits }} · 开火 {{ shots }}</span>
         <span class="game-hand-count" data-testid="game-hand-counter">手牌 {{ hand.length }} 张</span>
       </div>
@@ -2140,36 +2161,34 @@ function backToLobby(): void {
       </div>
     </div>
 
-    <section v-if="selection" class="game-target" data-testid="game-target" aria-label="目标选择" role="region">
+    <section v-if="selection" ref="targetPanelEl" :style="targetPanelStyle" class="game-target battle-prompt" :class="{ 'is-dragging': targetDrag.state.value.dragging }" data-testid="game-target" aria-label="目标选择" role="region">
+      <header ref="targetHeadEl" class="battle-prompt__head battle-prompt__handle" @pointerdown="targetDrag.onPointerDown">
+        <div><p class="battle-prompt__context">卡牌目标选择</p><h2 class="game-target__title" data-testid="game-target-title">{{ targetTitle }}</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div>
+        <img v-if="cardArtUrl(selection.card.name)" class="battle-prompt__card-art" :src="cardArtUrl(selection.card.name)!" alt="" draggable="false" />
+      </header>
       <div class="game-target__main">
-        <h2 class="game-target__title" data-testid="game-target-title">{{ targetTitle }}</h2>
+        <ol v-if="selection.card.name === '神之宣告'" class="battle-prompt__steps" aria-label="施放步骤"><li :class="{ 'is-complete': selection.picks.length === 2 }">选两艘己方战舰</li><li :class="{ 'is-current': selection.picks.length === 2, 'is-complete': selection.effectChoice !== null }">选择一种效果</li></ol>
         <p class="game-target__hint" data-testid="game-target-hint">{{ targetHint }}</p>
-        <p v-if="selection.priorityToken !== undefined" class="game-target__hint" data-testid="game-phase-target-countdown">阶段响应剩余 {{ priorityRemaining }} 秒，超时自动放行。</p>
-        <p class="game-target__selected" data-testid="game-target-selected">已选：{{ pickCountText }}</p>
-        <p v-if="selection.error" class="game-target__error" data-testid="game-target-error" role="alert">{{ selection.error }}</p>
+        <p v-if="selection.priorityToken !== undefined" class="battle-prompt__deadline" data-testid="game-phase-target-countdown">阶段响应剩余 {{ priorityRemaining }} 秒，超时自动放行。</p>
+        <p class="game-target__selected battle-prompt__progress" data-testid="game-target-selected" aria-live="polite">已选：{{ pickCountText }}</p>
+        <p v-if="selection.error" class="game-target__error battle-prompt__error" data-testid="game-target-error" role="alert">{{ selection.error }}</p>
       </div>
       <div class="game-target__controls">
-        <div v-if="selection.descriptor.kind === 'line'" class="game-target__row">
-          <button type="button" class="button game-target__option" :class="{ 'game__action--active': selection.lineDir === 'row' }" data-testid="game-target-line-row" @click="setLineDir('row')">整行</button>
-          <button type="button" class="button game-target__option" :class="{ 'game__action--active': selection.lineDir === 'col' }" data-testid="game-target-line-col" @click="setLineDir('col')">整列</button>
+        <div v-if="selection.descriptor.kind === 'line'" class="game-target__row game-target__choices" aria-label="轰炸方向">
+          <button type="button" class="button game-target__option" :class="{ 'game__action--active': selection.lineDir === 'row' }" :aria-pressed="selection.lineDir === 'row'" data-testid="game-target-line-row" @click="setLineDir('row')">整行</button>
+          <button type="button" class="button game-target__option" :class="{ 'game__action--active': selection.lineDir === 'col' }" :aria-pressed="selection.lineDir === 'col'" data-testid="game-target-line-col" @click="setLineDir('col')">整列</button>
         </div>
-        <div v-if="selection.descriptor.kind === 'shenwei'" class="game-target__row">
-          <button type="button" class="button game-target__option" :class="{ 'game__action--active': selection.board === 'self' }" data-testid="game-target-board-self" @click="setBoardSide('self')">我的棋盘</button>
-          <button type="button" class="button game-target__option" :class="{ 'game__action--active': selection.board === 'opponent' }" data-testid="game-target-board-opponent" @click="setBoardSide('opponent')">对手棋盘</button>
+        <div v-if="selection.descriptor.kind === 'shenwei'" class="game-target__row game-target__choices" aria-label="作用海域">
+          <button type="button" class="button game-target__option" :class="{ 'game__action--active': selection.board === 'self' }" :aria-pressed="selection.board === 'self'" data-testid="game-target-board-self" @click="setBoardSide('self')">我的棋盘</button>
+          <button type="button" class="button game-target__option" :class="{ 'game__action--active': selection.board === 'opponent' }" :aria-pressed="selection.board === 'opponent'" data-testid="game-target-board-opponent" @click="setBoardSide('opponent')">对手棋盘</button>
         </div>
-        <div v-if="selection.card.name === '神之宣告'" class="game-target__row">
-          <button type="button" class="button game-target__option" :class="{ 'game__action--active': selection.effectChoice === 1 }" data-testid="game-target-effect-destroy" @click="setEffectChoice(1)">摧毁对方一艘战舰</button>
-          <button type="button" class="button game-target__option" :class="{ 'game__action--active': selection.effectChoice === 2 }" data-testid="game-target-effect-skip" @click="setEffectChoice(2)">跳过对方本回合</button>
+        <div v-if="selection.card.name === '神之宣告'" class="game-target__effects" aria-label="选择神之宣告效果">
+          <button type="button" class="button game-target__option game-target__effect" :class="{ 'game__action--active': selection.effectChoice === 1 }" :aria-pressed="selection.effectChoice === 1" data-testid="game-target-effect-destroy" @click="setEffectChoice(1)"><strong>摧毁对方一艘战舰</strong><span>选择此效果</span><b v-if="selection.effectChoice === 1" aria-hidden="true">✓</b></button>
+          <button type="button" class="button game-target__option game-target__effect" :class="{ 'game__action--active': selection.effectChoice === 2 }" :aria-pressed="selection.effectChoice === 2" data-testid="game-target-effect-skip" @click="setEffectChoice(2)"><strong>跳过对方本回合</strong><span>选择此效果</span><b v-if="selection.effectChoice === 2" aria-hidden="true">✓</b></button>
         </div>
-        <div class="game-target__row">
-          <button
-            type="button"
-            class="button game-target__confirm"
-            :class="{ 'is-disabled': !canConfirm }"
-            data-testid="game-target-confirm"
-            :aria-disabled="!canConfirm"
-            @click="confirmSelection"
-          >确认使用</button>
+        <p class="battle-prompt__status" :class="{ 'is-ready': canConfirm }" role="status">{{ targetStatus }}</p>
+        <div class="game-target__row game-target__actions">
+          <button type="button" class="button game-target__confirm" :class="{ 'is-disabled': !canConfirm }" data-testid="game-target-confirm" :aria-disabled="!canConfirm" @click="confirmSelection">确认使用</button>
           <button type="button" class="button button--ghost" data-testid="game-target-cancel" @click="cancelSelection">取消</button>
         </div>
       </div>
@@ -2183,14 +2202,17 @@ function backToLobby(): void {
       data-testid="game-chain-scrim"
     >
     <section
-      class="game-chain-panel"
+      ref="chainPanelEl"
+      :style="chainPanelStyle"
+      class="game-chain-panel battle-prompt"
+      :class="{ 'is-dragging': chainDrag.state.value.dragging }"
       data-testid="game-chain-overlay"
       role="dialog"
       :aria-modal="chainWindow ? 'true' : undefined"
       aria-label="连锁"
     >
-      <header class="game-chain-panel__head">
-        <h2 class="game-chain-panel__title">连锁</h2>
+      <header ref="chainHeadEl" class="game-chain-panel__head battle-prompt__head battle-prompt__handle" @pointerdown="chainDrag.onPointerDown">
+        <div><p class="battle-prompt__context">连锁响应</p><h2 class="game-chain-panel__title">是否接续这次连锁？</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div>
       </header>
       <section v-if="chainWindow" class="game-chain-window" data-testid="game-chain-window">
         <p class="game-chain-window__card">
@@ -2214,7 +2236,7 @@ function backToLobby(): void {
             <button type="button" class="game-chain-option" :class="{ 'is-inspected': chainInspect?.name === card.name }" :data-testid="chainCardTestId(card, index, speed3Hand)"
               :aria-describedby="chainPreviewSource === 'hand-' + index ? 'chain-hand-preview-' + index : undefined"
               @mouseenter="canHover && inspectChain(card, 'hand-' + index)" @focus="inspectChain(card, 'hand-' + index)" @blur="chainPreviewSource = ''" @click="onChainCardClick(card); if (!canHover) chainPreviewSource = 'hand-' + index">
-              <b>{{ card.name }}</b><small>速阶 {{ fullCard(card)?.speed }}</small><span class="game-chain-option__desc">{{ fullCard(card)?.description || '暂无效果描述' }}</span>
+              <img v-if="cardArtUrl(card.name)" class="game-chain-option__art" :src="cardArtUrl(card.name)!" alt="" draggable="false" /><b>{{ card.name }}</b><small>速阶 {{ fullCard(card)?.speed }}</small><span class="game-chain-option__desc">{{ fullCard(card)?.description || '暂无效果描述' }}</span>
             </button>
             <span v-if="chainInspect && chainPreviewSource === 'hand-' + index" :id="'chain-hand-preview-' + index" class="chain-effect-preview" data-testid="game-chain-inspect" role="tooltip"><b data-testid="game-chain-inspect-name">{{ chainInspect.name }}</b><small>速阶 {{ chainInspect.speed }}</small><span data-testid="game-chain-inspect-desc">{{ chainInspect.description || '暂无效果描述' }}</span></span>
           </div>
@@ -2230,22 +2252,22 @@ function backToLobby(): void {
     </div>
     </Transition>
 
-    <section v-if="shieldOpen" ref="pickPanelEl" :style="pickPanelStyle" class="game-dialog game-shield-choice game-pick-float" :class="{ 'is-dragging': pickDrag.state.value.dragging }" data-testid="game-shield-choice" role="dialog" aria-label="仁王之盾选择">
-      <h2 ref="pickHeadEl" class="game-dialog__title game-pick-float__handle" data-testid="game-shield-choice-title" @pointerdown="pickDrag.onPointerDown">「仁王之盾」：请选择要保护的战舰</h2>
+    <section v-if="shieldOpen" ref="pickPanelEl" :style="pickPanelStyle" class="game-dialog game-shield-choice game-pick-float battle-prompt" :class="{ 'is-dragging': pickDrag.state.value.dragging }" data-testid="game-shield-choice" role="dialog" aria-label="仁王之盾选择">
+      <header ref="pickHeadEl" class="battle-prompt__head battle-prompt__handle" @pointerdown="pickDrag.onPointerDown"><div><p class="battle-prompt__context">选择保护目标</p><h2 class="game-dialog__title" data-testid="game-shield-choice-title">「仁王之盾」：请选择要保护的战舰</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div><img v-if="cardArtUrl('仁王之盾')" class="battle-prompt__card-art" :src="cardArtUrl('仁王之盾')!" alt="" draggable="false" /></header>
       <p class="game-dialog__hint" data-testid="game-shield-choice-hint">在自己海域点击高亮的战舰格；再点一次取消选择。</p>
-      <p class="game-dialog__hint" data-testid="game-shield-choice-count">已选 {{ shieldPicks.length }} / 3 艘</p>
+      <p class="game-dialog__hint battle-prompt__progress" data-testid="game-shield-choice-count" aria-live="polite">已选 {{ shieldPicks.length }} / 3 艘</p>
       <p v-if="shieldError" class="game-dialog__error" data-testid="game-shield-choice-error">{{ shieldError }}</p>
       <p class="game-dialog__hint" data-testid="game-shield-choice-status">超过本局思考时限会自动选择；点「取消选择」可放弃本次加盾。</p>
       <div class="game-dialog__actions">
-        <button type="button" class="button" data-testid="game-shield-choice-confirm" :disabled="shieldPicks.length === 0" @click="confirmShieldChoice">确认加盾</button>
+        <button type="button" class="button button--primary" data-testid="game-shield-choice-confirm" :disabled="shieldPicks.length === 0" @click="confirmShieldChoice">确认加盾</button>
         <button type="button" class="button button--ghost" data-testid="game-shield-choice-cancel" @click="cancelShieldChoice">取消选择</button>
       </div>
     </section>
 
-    <section v-if="match.pickRequest" ref="pickPanelEl" :style="pickPanelStyle" class="game-dialog game-pick game-pick-float" :class="{ 'is-dragging': pickDrag.state.value.dragging }" data-testid="game-ship-pick" role="alertdialog" aria-label="选船">
-      <h2 ref="pickHeadEl" class="game-dialog__title game-pick-float__handle" @pointerdown="pickDrag.onPointerDown">请选择一艘自己的战舰</h2>
+    <section v-if="match.pickRequest" ref="pickPanelEl" :style="pickPanelStyle" class="game-dialog game-pick game-pick-float battle-prompt" :class="{ 'is-dragging': pickDrag.state.value.dragging }" data-testid="game-ship-pick" role="alertdialog" aria-label="选船">
+      <header ref="pickHeadEl" class="battle-prompt__head battle-prompt__handle" @pointerdown="pickDrag.onPointerDown"><div><p class="battle-prompt__context">等待你的选择</p><h2 class="game-dialog__title">请选择一艘自己的战舰</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div></header>
       <p class="game-dialog__hint" data-testid="game-ship-pick-message">{{ match.pickRequest.message }}</p>
-      <p class="game-dialog__hint">在自己海域点击高亮的战舰格子。</p>
+      <p class="game-dialog__hint battle-prompt__status">{{ pickSubmitting ? '正在确认选择…' : '在己方海域点击高亮的战舰，即可确认选择。' }}</p>
     </section>
 
 
@@ -2375,7 +2397,7 @@ function backToLobby(): void {
             <span class="game-discard-card__name">{{ card.name }}</span>
           </button>
         </div>
-        <p class="game-drawer__empty">点牌看效果详情；牌堆剩余数量服务端没有下发，这里只显示已经进弃牌堆的卡，不猜数字。</p>
+        <p class="game-drawer__empty">点牌查看效果详情。共享牌堆剩余 {{ state.deck_count }} 张。</p>
       </section>
     </Transition>
     <div v-if="discardDetail" class="game-discard-detail" data-testid="game-discard-detail" role="dialog" :aria-label="discardDetail.name + ' 效果详情'">
@@ -2396,6 +2418,7 @@ function backToLobby(): void {
 </template>
 
 <style scoped src="./game-screen.css"></style>
+<style src="./battle-prompt.css"></style>
 <style scoped src="./card-inspect.css"></style>
 
 <style scoped>

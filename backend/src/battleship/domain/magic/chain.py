@@ -35,6 +35,7 @@ class ChainItem:
     timestamp: float = field(default_factory=time.time)
     negated: bool = False
     negated_by: str | None = None
+    stolen: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {

@@ -321,6 +321,11 @@ class Room:
     chain_passes: int = 0
     chain_display_token: int | None = None
     chain_display_deadline: float | None = None
+    # 逐张展示结束后才执行牌效；连接标识和演出标识隔离旧回执。
+    chain_animation_clients: dict[str, str] = field(default_factory=dict)
+    chain_animation_id: str | None = None
+    chain_animation_players: dict[str, str] = field(default_factory=dict)
+    chain_animation_deadline: float = 0.0
     last_attack: Any = None
 
     game_effects: dict[str, Any] = field(default_factory=dict)

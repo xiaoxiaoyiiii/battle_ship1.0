@@ -62,6 +62,7 @@ INBOUND_EVENTS: tuple[str, ...] = (
     "get_magic_temp_data",
     "get_discard_pile",
     "chain_response",
+    "chain_animation_complete",
     "remove_field_magic",
     "confirm_shenji_declare",
     "dice_discard_choose",

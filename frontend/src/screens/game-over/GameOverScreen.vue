@@ -5,6 +5,7 @@ import { createAiRoom, emitFindMatch } from '../../realtime/home'
 import { acquireSettlementChannel, getSettlementSocket } from '../../realtime/settlement'
 import { useGameStore } from '../../stores/game'
 import { useHomeStore } from '../../stores/home'
+import { usePlacementStore } from '../../stores/placement'
 import { useResultStore } from '../../stores/result'
 import { useUiStore } from '../../stores/ui'
 import {
@@ -38,6 +39,7 @@ import {
 const router = useRouter()
 const game = useGameStore()
 const home = useHomeStore()
+const placement = usePlacementStore()
 const result = useResultStore()
 const ui = useUiStore()
 
@@ -326,8 +328,11 @@ async function playAgain(): Promise<void> {
         })
         return
       }
-      home.expectPlacement()
-      resetSettlement()
+      // 新房间已在入座回执前同步，只清理旧局展示，保留新的房间状态。
+      result.reset()
+      placement.reset()
+      home.placementHandled()
+      home.clearMatchFound()
       void router.push({ name: 'placement' })
       return
     }

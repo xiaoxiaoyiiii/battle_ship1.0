@@ -572,15 +572,10 @@ async def heal(ctx: EffectContext) -> EffectResult:
 async def steal(ctx: EffectContext) -> EffectResult:
     if ctx.caster.effect_flags.no_draw:
         return EffectResult(False, "无中生有效果生效中，本回合无法获得魔法卡")
-    stolen_card = None
-    stolen_entry = None
-    for entry in reversed(ctx.room.magic_history):
-        if entry.get("caster") != ctx.caster_id and not entry.get("stolen"):
-            stolen_entry = entry
-            stolen_card = entry.get("card")
-            break
-    if stolen_card is None:
+    candidate = precheck.steal_candidate(ctx.room, ctx.caster_id)
+    if candidate is None:
         return EffectResult(False, "对方没有使用过魔法卡")
+    stolen_card, source = candidate
     # Remove the physical copy from the discard pile so this is a transfer.
     for index, candidate in enumerate(ctx.room.magic_discard):
         if candidate is stolen_card or (
@@ -588,8 +583,11 @@ async def steal(ctx: EffectContext) -> EffectResult:
         ):
             ctx.room.magic_discard.pop(index)
             break
-    if stolen_entry is not None:
-        stolen_entry["stolen"] = True
+    if isinstance(source, dict):
+        source["stolen"] = True
+    else:
+        # 转移卡牌不无效化牌效；按连锁项记账，避免同名卡共享对象误伤另一张。
+        source.stolen = True
     ctx.caster.magic_hand.append(stolen_card)
     await ctx.sync_hand(ctx.caster_id)
     return EffectResult(True, f"成功盗取对方的{stolen_card.name}")

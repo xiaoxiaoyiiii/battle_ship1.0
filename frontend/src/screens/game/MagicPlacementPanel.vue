@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import AppOverlay from '../../components/AppOverlay.vue'
+import { cardArtUrl } from '../../cards/cardArt'
 import { useGameStore } from '../../stores/game'
 import { sendBattleEvent } from '../../realtime/battle'
 import type { Point } from './view'
@@ -56,11 +57,11 @@ async function submit(cancel = false): Promise<void> {
 </script>
 
 <template>
-  <AppOverlay v-if="request && !game.state.dice_discard_pending" id="magic-placement-panel" :priority="180" :close-on-backdrop="false" labelledby="magic-placement-title">
-    <section class="magic-placement">
-      <h2 id="magic-placement-title">{{ title }} · 选择部署位置</h2>
+  <AppOverlay draggable v-if="request && !game.state.dice_discard_pending" id="magic-placement-panel" :priority="180" :close-on-backdrop="false" labelledby="magic-placement-title">
+    <section class="magic-placement battle-prompt">
+      <header class="battle-prompt__head" data-drag-handle><div><p class="battle-prompt__context">部署战舰</p><h2 id="magic-placement-title">{{ title }} · 选择部署位置</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div><img v-if="cardArtUrl(title)" class="battle-prompt__card-art" :src="cardArtUrl(title)!" alt="" draggable="false" /></header>
       <p>{{ request.message || (kind === 'last_stand' ? '只能选择原本有自己战舰的位置。' : '在自己的海域选择一个合法位置，每次部署一艘。') }}</p>
-      <p data-testid="magic-placement-progress" role="status">已放置 {{ request.placed ?? 0 }} / {{ request.total ?? request.remaining }}，剩余 {{ request.remaining }} 艘</p>
+      <p class="battle-prompt__progress" data-testid="magic-placement-progress" role="status">已放置 {{ request.placed ?? 0 }} / {{ request.total ?? request.remaining }}，剩余 {{ request.remaining }} 艘</p>
       <div class="magic-placement__board" role="group" aria-label="自己的海域部署格">
         <button v-for="cell in cells" :key="cell.key" type="button" :data-testid="'magic-place-cell-' + cell.x + '-' + cell.y"
           :aria-label="'第' + (cell.x + 1) + '列第' + (cell.y + 1) + '行，' + (cell.blocked ? '不可部署' : '可部署')"
@@ -71,20 +72,27 @@ async function submit(cancel = false): Promise<void> {
       </div>
       <p v-if="error" class="magic-placement__error" data-testid="magic-placement-error" role="alert">{{ error }}</p>
       <p v-if="kind === 'last_stand'">交给系统放置时，服务端会从合法位置自动选定最后一艘。</p>
+      <p class="battle-prompt__status" :class="{ 'is-ready': selected }" role="status">{{ selected ? '已选 ' + String.fromCharCode(65 + selected.x) + (selected.y + 1) + '，确认后部署一艘。' : '请选择下方海域中可部署的格子。' }}</p>
       <footer>
-        <button type="button" class="button" data-testid="magic-placement-confirm" :disabled="busy || !selected" @click="submit()">{{ busy ? '正在提交…' : '确认部署' }}</button>
+        <button type="button" class="button button--primary" data-testid="magic-placement-confirm" :disabled="busy || !selected" @click="submit()">{{ busy ? '正在提交…' : '确认部署' }}</button>
         <button type="button" class="button button--ghost" data-testid="magic-placement-cancel" :disabled="busy" @click="submit(true)">{{ kind === 'last_stand' ? '交给系统放置' : '放弃剩余放置' }}</button>
       </footer>
     </section>
   </AppOverlay>
 </template>
 
+<style src="./battle-prompt.css"></style>
 <style scoped>
-.magic-placement { padding:20px; }.magic-placement h2 { margin:0 0 12px; font-size:18px; }.magic-placement p { margin:8px 0; font-size:13px; line-height:1.6; color:var(--text-secondary); }
-.magic-placement__board { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:4px; margin:12px 0; }
-.magic-placement__board button { min-width:0; aspect-ratio:1; border:1px solid var(--board-border); border-radius:6px; background:var(--cell-bg); color:var(--text-primary); cursor:pointer; }
-.magic-placement__board .is-blocked { opacity:.4; cursor:not-allowed; }.magic-placement__board .is-selected { outline:2px solid var(--role-self); background:var(--role-self-soft); }
-.magic-placement footer { display:flex; gap:8px; }.magic-placement footer button { flex:1; min-height:40px; }.magic-placement .magic-placement__error { color:var(--role-warning); }
-:global(.app-overlay__panel[data-testid='magic-placement-panel']) { width:min(420px,calc(100vw - 24px)); max-height:calc(100dvh - 24px); }
-@media(max-height:480px) and (min-width:640px) { .magic-placement { display:grid; grid-template-columns:1fr 230px; gap:4px 16px; padding:12px; }.magic-placement__board { grid-column:2; grid-row:1 / span 6; margin:0; }.magic-placement footer { grid-column:1; }:global(.app-overlay__panel[data-testid='magic-placement-panel']) { width:min(720px,calc(100vw - 24px)); } }
+.magic-placement { padding:24px; max-height:calc(100dvh - 24px); overflow-y:auto; }
+.magic-placement p { margin:12px 0; font-size:16px; line-height:1.7; color:var(--prompt-muted); }
+.magic-placement__board { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:6px; margin:18px 0; }
+.magic-placement__board button { min-width:0; aspect-ratio:1; border:1px solid #365d72; border-radius:8px; background:#142e40; color:var(--prompt-cyan); cursor:pointer; font-size:24px; }
+.magic-placement__board button:hover,.magic-placement__board button:focus-visible { border-color:var(--prompt-cyan); outline:2px solid rgb(116 215 233 / 20%); outline-offset:1px; }
+.magic-placement__board .is-blocked { opacity:.3; cursor:not-allowed; background:#0e1b29; }
+.magic-placement__board .is-selected { border-color:var(--prompt-gold); outline:2px solid var(--prompt-gold); background:rgb(224 190 112 / 14%); color:var(--prompt-gold); }
+.magic-placement footer { display:flex; flex-wrap:wrap; gap:10px; margin-top:18px; }.magic-placement footer button { flex:1; }
+.magic-placement .magic-placement__error { color:#ff9b9f; }
+:global(.app-overlay__panel[data-testid='magic-placement-panel']) { width:min(520px,calc(100vw - 24px)); }
+@media(max-width:540px) { .magic-placement { padding:18px; }.magic-placement__board { gap:5px; } }
+@media(max-height:600px) and (min-width:700px) { .magic-placement { display:grid; grid-template-columns:1fr 270px; gap:8px 24px; }.magic-placement .battle-prompt__head { grid-column:1; }.magic-placement__board { grid-column:2; grid-row:1 / span 7; margin:0; align-self:center; }.magic-placement p { margin:3px 0; }.magic-placement footer { grid-column:1; margin-top:4px; }:global(.app-overlay__panel[data-testid='magic-placement-panel']) { width:min(900px,calc(100vw - 24px)); } }
 </style>

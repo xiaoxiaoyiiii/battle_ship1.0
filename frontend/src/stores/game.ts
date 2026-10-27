@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useMatchStore } from './match'
+import { useChainAnimationStore } from './chainAnimation'
 import {
   GAME_STATE_SCHEMA,
   defaultGameState,
@@ -60,6 +61,7 @@ export const useGameStore = defineStore('game', () => {
     }
     const discardSourceChanged = 'dice_discard_card' in next && next.dice_discard_card !== state.value.dice_discard_card
     Object.assign(state.value, next)
+    if ('chain' in next) useChainAnimationStore().hydrate(next.chain)
     // 完整快照也恢复事件展示态；显式 null/空数组必须清除旧对局痕迹。
     const match = useMatchStore()
     if (discardSourceChanged || state.value.dice_discard_pending === false) match.diceDiscardMessage = ''

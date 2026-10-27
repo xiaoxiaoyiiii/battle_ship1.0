@@ -9,6 +9,7 @@ import { useGameStore } from '../stores/game'
 import { useMatchStore } from '../stores/match'
 import { useUiStore } from '../stores/ui'
 import { useAudioStore } from '../stores/audio'
+import { useChainAnimationStore } from '../stores/chainAnimation'
 import type { InboundEvent, OutboundEvent } from '../socket/events.gen'
 import type { CardLike, Point } from '../screens/game/view'
 import { actionWaitReason, WAIT_EXEMPT_EVENTS } from '../screens/game/view'
@@ -278,6 +279,7 @@ export function applyBattleEvent(
       break
     }
     case 'magic_chain_updated': {
+      if (useChainAnimationStore(pinia).update(payload)) match.closeChainWindow()
       game.applyServerState({ chain: payload })
       break
     }
@@ -287,6 +289,7 @@ export function applyBattleEvent(
       break
     }
     case 'chain_resolved': {
+      useChainAnimationStore(pinia).resolve(payload)
       game.applyServerState({ chain: { chain: [], chain_len: 0, targets_dropped: 0 } })
       match.closeChainWindow()
       match.chainResolvedAt = Date.now()
@@ -586,7 +589,10 @@ export function acquireBattleChannel(pinia?: Pinia): () => void {
       // with 0 cards (frozen event, no new protocol).
       void syncHand(socket, pinia)
     }
-    const onDisconnect = (): void => ui.setConnection(false)
+    const onDisconnect = (): void => {
+      useChainAnimationStore(pinia).reset()
+      ui.setConnection(false)
+    }
     socket.socket.on('connect', onConnect)
     socket.socket.on('disconnect', onDisconnect)
     ui.setConnection(socket.socket.connected)

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useUiStore } from './ui'
+import { useChainAnimationStore } from './chainAnimation'
 import type { CardLike, LastAttackLike, PendingPickLike, Point, PublicChainPreview } from '../screens/game/view'
 
 /**
@@ -347,6 +348,7 @@ export const useMatchStore = defineStore('match', () => {
 
   /** A new match starts: no log/prompt from the previous room may leak in. */
   function reset(): void {
+    useChainAnimationStore().reset()
     logs.value = []
     chainWindowCollapsed.value = false
     notices.value = []

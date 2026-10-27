@@ -12,6 +12,8 @@ import MagicPlacementPanel from './MagicPlacementPanel.vue'
 import MagicChoicePanel from './MagicChoicePanel.vue'
 import MagicDiscardPanel from './MagicDiscardPanel.vue'
 import PhasePriorityPrompt from './PhasePriorityPrompt.vue'
+import ChainAnimationOverlay from './ChainAnimationOverlay.vue'
+import { useChainAnimationStore } from '../../stores/chainAnimation'
 import { CARDS } from '../../cards/cardData'
 import { usePlayerCards } from './usePlayerCards'
 import { acquireBattleChannel, battleActionPending, getBattleSocket, refreshMagicState, sendBattleEvent, syncHand } from '../../realtime/battle'
@@ -77,6 +79,7 @@ const game = useGameStore()
 const match = useMatchStore()
 const result = useResultStore()
 const ui = useUiStore()
+const chainAnimation = useChainAnimationStore()
 
 let releaseChannel: (() => void) | null = null
 let releaseMatchChannel: (() => void) | null = null
@@ -1539,6 +1542,7 @@ watch(() => state.value.magic_temp, (temp) => {
 function maybeGoToSettlement(): void {
   const record = result.gameOver
   if (!record || navigating) return
+  if (chainBusy.value || chainAnimation.awaitingResults() || Date.now() < chainAnimation.until()) return
   if (record.receivedAt === seenGameOverAt) return
   seenGameOverAt = record.receivedAt
   navigating = true
@@ -1606,6 +1610,7 @@ onMounted(() => {
   seenRoom = state.value.room_id
   ticker = window.setInterval(() => {
     now.value = Date.now()
+    maybeGoToSettlement()
   }, 250)
   void loadQuickChatCatalog()
   window.addEventListener('keydown', onKeydown)
@@ -2381,6 +2386,7 @@ function backToLobby(): void {
       <p class="game-discard-detail__meta">{{ typeLabel(discardDetail) }}</p>
       <p class="game-discard-detail__desc">{{ discardDetailInfo?.description || '服务端没有下发这张卡的效果描述。' }}</p>
     </div>
+    <ChainAnimationOverlay :suspended="Boolean(selection || match.pickRequest || match.shieldChoice || state.needs_reset)" />
     <MagicPlacementPanel />
     <MagicChoicePanel />
     <MagicDiscardPanel />

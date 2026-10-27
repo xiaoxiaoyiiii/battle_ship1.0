@@ -140,6 +140,7 @@ class MagicService:
         clock: Callable[[], float] | None = None,
         rng: Any | None = None,
         touch_turn: Callable[[Room, str], None] | None = None,
+        chain_entry_delay_seconds: float = 0.8,
         chain_display_delay_seconds: float = 1.2,
         chain_response_seconds: float = CHAIN_RESPONSE_SECONDS,
         ai_chain_delay_seconds: float = 0.8,
@@ -150,6 +151,7 @@ class MagicService:
         self.clock = clock or time.time
         self.rng = rng or random
         self.touch_turn = touch_turn
+        self.chain_entry_delay_seconds = max(0.0, float(chain_entry_delay_seconds))
         # 0 reproduces the pre-display-delay behaviour exactly (tests/headless).
         self.chain_display_delay_seconds = max(0.0, float(chain_display_delay_seconds))
         self.chain_response_seconds = max(0.0, float(chain_response_seconds))
@@ -1062,6 +1064,27 @@ class MagicService:
 
     async def _open_chain_window(self, room: Room, caster_id: str) -> None:
         room.chain_passes = 0
+        if self.chain_entry_delay_seconds > 0 and room.chain:
+            # 先让双方看到飞入，再发出chain_request并开始完整响应倒计时。
+            # 等待期间不开放窗口，旧计时器或抢跑响应不能改变这条连锁。
+            room.chain_timer += 1
+            token = room.chain_timer
+            room.chain_waiting = True
+            room.chain_window = None
+            task = self.timers.spawn(room.id, self._chain_entry_then_open(room.id, token, caster_id))
+            if task is not None:
+                return
+            room.chain_waiting = False
+        await self._advance_chain_window(room, room.opponent_of(caster_id))
+
+    async def _chain_entry_then_open(self, room_id: str, token: int, caster_id: str) -> None:
+        await asyncio.sleep(self.chain_entry_delay_seconds)
+        room = self.rooms.get_room(room_id)
+        if (room is None or room.state != RoomState.ATTACKING
+                or room.chain_timer != token or not room.chain
+                or not room.chain_waiting or room.chain_window is not None):
+            return
+        room.chain_waiting = False
         await self._advance_chain_window(room, room.opponent_of(caster_id))
 
     async def _advance_chain_window(self, room: Room, player_id: str | None,
@@ -1258,7 +1281,7 @@ class MagicService:
 
         if not room.chain_waiting:
             return {"status": "error", "message": "没有待处理的连锁请求"}
-        if room.chain_window and room.chain_window != player_id:
+        if room.chain_window != player_id:
             return {"status": "error", "message": "当前不是你的连锁响应窗口"}
 
         # Closing the window is what makes late/stale answers impossible — but it
@@ -1354,7 +1377,7 @@ class MagicService:
             # A new card clears the pass count; the window goes to the opponent
             # and can come back for self-chaining.
             room.chain_passes = 0
-            await self._advance_chain_window(room, room.opponent_of(str(player_id)))
+            await self._open_chain_window(room, str(player_id))
             return {"status": "success", "message": f"魔法卡{card.name}已加入连锁"}
 
         # 明确放弃：先关窗再计一次 pass（与 chained/refused 两条提交路径一致）。

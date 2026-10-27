@@ -61,6 +61,21 @@ ul { list-style:none; padding:0; margin:0; }
 .career-grid div { min-width:0; }
 .career-grid dd { margin:0 0 4px; color:var(--text-primary); font-size:26px; line-height:1.1; font-weight:700; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
 .career-grid dt { font-size:12px; }
+@media(min-width:1024px) and (min-height:700px) {
+  .home-progress { flex:1; min-height:0; gap:12px; grid-template-rows:auto minmax(0,1fr); }
+  .progress-panel { min-height:0; padding:14px 16px; display:flex; flex-direction:column; }
+  h2 { flex-shrink:0; margin-bottom:10px; }
+  .career-grid { gap:14px 12px; }
+  .career-grid dd { font-size:24px; }
+  .badge-list { min-height:0; max-height:none; }
+}
+@media(min-width:1024px) and (min-height:700px) and (max-height:820px) {
+  .home-progress { gap:10px; }
+  .progress-panel { padding:10px 14px; }
+  h2 { margin-bottom:8px; font-size:15px; }
+  .career-grid { gap:8px 10px; }
+  .career-grid dd { font-size:21px; }
+}
 @media(max-width:719px) {
   .progress-panel { padding:18px; }
   .badge-list { max-height:220px; }

@@ -636,7 +636,7 @@ async function startAi(): Promise<void> {
 .home-player__kicker { align-self:end; font-size:12px; color:var(--text-secondary); }
 .home-player__name { align-self:start; min-width:0; overflow-wrap:anywhere; color:var(--text-primary); font-size:17px; line-height:1.4; font-weight:700; margin:0; }
 .home-player__body,.home-player__note,.home-player__links { grid-column:1 / -1; }
-.home-player__body { margin-top:12px; }
+.home-player__body { margin-top:12px; gap:0; }
 .home-player__note { margin:12px 0 0; color:var(--text-secondary); font-size:13px; line-height:1.6; }
 .home-player__rankrow { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px; margin-bottom:16px; font-size:12px; }
 .home-player__rank { color:var(--gold-strong); }
@@ -703,7 +703,7 @@ async function startAi(): Promise<void> {
 .home-showcase__row { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:14px; margin:0; padding:0; list-style:none; }
 .home-showcase__row li { min-width:0; }
 .home-cardface { display:flex; flex-direction:column; align-items:center; width:100%; gap:7px; border:0; padding:0; color:var(--text-primary); background:none; font:inherit; cursor:pointer; }
-.home-cardface__art { display:block; width:100%; max-width:104px; aspect-ratio:3 / 4; object-fit:contain; border-radius:5px; background:var(--surface-chamber); box-shadow:0 5px 12px #0003; transition:transform .16s; }
+.home-cardface__art { display:block; width:100%; aspect-ratio:2 / 3; object-fit:contain; border-radius:5px; background:var(--surface-chamber); box-shadow:0 5px 12px #0003; transition:transform .16s; }
 .home-cardface:hover .home-cardface__art { transform:translateY(-4px); }
 .home-cardface__art--none { display:grid; place-items:center; color:var(--gold); font-size:24px; }
 .home-cardface__name { max-width:100%; color:var(--text-secondary); font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
@@ -770,6 +770,65 @@ async function startAi(): Promise<void> {
   .home-card__head { gap:8px; align-items:baseline; }
   .home-card__head .home-kicker { font-size:15px; }
   .home-stat { min-height:24px; }
+}
+/* 桌面三栏共用可用高度，长公告与成就只在各自面板内滚动。 */
+@media (min-width:1024px) and (min-height:700px) {
+  .home-screen { flex:0 0 auto; height:calc(100dvh - 64px); min-height:0; padding:14px 24px 16px; gap:14px; }
+  .home-head { flex-shrink:0; }
+  .home-head__title { font-size:26px; }
+  .home-grid { flex:1; min-height:0; align-items:stretch; gap:18px; }
+  .home-left,.home-main,.home-side { min-height:0; gap:12px; }
+  .home-card { padding:14px 16px; }
+  .home-card__head { margin-bottom:10px; }
+  .home-player { flex-shrink:0; }
+  .home-player__body { margin-top:8px; }
+  .home-player__rankrow { margin-bottom:10px; }
+  .home-bar-label { margin-top:6px; }
+  .home-player__kv { margin:12px 0; }
+  .home-launch,.home-ai,.home-links { flex-shrink:0; }
+  .home-launch { min-height:180px; padding:20px 22px 16px; }
+  .home-launch__actions { margin-top:18px; }
+  .home-ai { gap:10px; }
+  .home-link--tile { min-height:58px; padding:9px 12px; }
+  .home-showcase { flex:1; min-height:0; display:flex; flex-direction:column; }
+  .home-showcase__row { flex:1; min-height:0; }
+  .home-showcase__row li { min-height:0; }
+  .home-cardface { height:100%; min-height:0; }
+  .home-cardface__art { flex:1; min-height:0; height:0; aspect-ratio:auto; }
+  .home-cardface__name { flex-shrink:0; }
+  .home-side > [data-testid='start-online'] { flex-shrink:0; }
+  .home-changelog { flex:1; display:flex; flex-direction:column; }
+  .home-changelog > .state-surface { flex:1; min-height:0; }
+  .home-changelog__list { max-height:none; min-height:0; }
+}
+@media (min-width:1024px) and (min-height:700px) and (max-height:820px) {
+  .home-screen { padding-top:10px; padding-bottom:12px; gap:10px; }
+  .home-head__title { font-size:22px; }
+  .home-head__subtitle { font-size:12px; }
+  .home-left,.home-main,.home-side { gap:10px; }
+  .home-card { padding:10px 14px; }
+  .home-player__emblem { width:44px; height:44px; font-size:21px; }
+  .home-player { grid-template-columns:44px minmax(0,1fr); }
+  .home-player__body { margin-top:4px; }
+  .home-player__rankrow { margin-bottom:6px; }
+  .home-player__kv { margin:8px 0; gap:5px; }
+  .home-link--wide { min-height:32px; }
+  .home-launch { min-height:140px; padding:12px 18px; }
+  .home-main__title { font-size:20px; }
+  .home-main__lead { margin-top:3px; font-size:12px; }
+  .home-launch__actions { margin-top:10px; }
+  .home-play { min-height:36px; padding:7px 12px; }
+  .home-launch__note { margin-top:6px; }
+  .home-ai { gap:6px; }
+  .home-ai__head { flex-direction:row; align-items:baseline; flex-wrap:wrap; gap:4px 10px; }
+  .home-ai__cap { min-height:32px; padding:4px 8px; }
+  .home-ai__action { min-height:32px; padding:5px 10px; }
+  .home-link--tile { min-height:44px; padding:5px 10px; }
+  .home-link--tile small { margin-top:2px; }
+  .home-stat { min-height:16px; }
+  .home-stat dt { font-size:12px; line-height:1.3; }
+  .home-stat dd { font-size:13px; line-height:1.3; }
+  .home-stats { gap:4px; }
 }
 @media (prefers-reduced-motion:reduce) {
   .home-play,.home-cardface__art { transition:none; }

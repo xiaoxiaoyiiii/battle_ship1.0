@@ -115,5 +115,19 @@ onBeforeUnmount(() => {
 .task-note,.task-guest { font-size:13px; color:var(--text-secondary); line-height:1.6; }
 .task-guest { text-align:center; margin:10px 0 0; }
 .task-note button,.task-guest button { color:var(--role-action); border:0; background:none; padding:0 3px; font:inherit; cursor:pointer; text-decoration:underline; }
+@media(min-width:1024px) and (min-height:700px) {
+  .home-tasks { padding:14px 16px; }
+  .task-heading { margin-bottom:10px; }
+  .task-row { padding:10px 0; }
+  .task-copy p { margin:4px 0 7px; }
+}
+@media(min-width:1024px) and (min-height:700px) and (max-height:820px) {
+  .home-tasks { padding:10px 14px; }
+  .task-heading { margin-bottom:8px; }
+  .task-tabs button { min-height:28px; }
+  .task-row { padding:4px 0; }
+  .task-copy p { margin:3px 0 5px; font-size:11px; line-height:1.4; }
+  .task-reset,.task-footnote { font-size:11px; line-height:1.3; }
+}
 @media(max-width:719px) { .home-tasks { padding:18px; } }
 </style>

@@ -138,12 +138,7 @@ def usable_speed3_cards(room: Room, player_id: str | None) -> list[MagicCard]:
 
 
 def ai_can_negate_chain_top(room: Room, ai_id: str) -> bool:
-    """Hard AI only negates cards it can actually negate.
-
-    This is an AI *policy*, not a rule: self-negation is legal for players but
-    almost always hurts the AI. 看破！/加百列之光 are immune, so prompting there
-    would only burn the 10s window.
-    """
+    """失灵与平等条约只反制对手的非免疫栈顶，避免自我无效化。"""
 
     if not room.chain:
         return False
@@ -154,6 +149,32 @@ def ai_can_negate_chain_top(room: Room, ai_id: str) -> bool:
         "看破！",
         "加百列之光",
     )
+
+
+def choose_ai_response_card(room: Room, player_id: str) -> MagicCard | None:
+    """困难和大师的反制选择，开窗与实际响应共用此入口。"""
+
+    player = room.players.get(player_id)
+    if (difficulty_of(room, player_id) not in ("hard", "master")
+            or player is None or not room.chain
+            or room.chain[-1].player_id == player_id):
+        return None
+    if (player.magic_blocked
+            and getattr(player, "magic_blocked_round", room.round) == room.round
+            or getattr(player.effect_flags, "last_stand", False)):
+        return None
+    usable = usable_speed3_cards(room, player_id)
+    # 能用失灵时保留加百列；平等条约额外遵守真实船数变化判据。
+    for name in ("失灵！", "平等条约", "加百列之光"):
+        card = next((card for card in usable if card.name == name), None)
+        if card is None:
+            continue
+        if name != "加百列之光" and not ai_can_negate_chain_top(room, player_id):
+            continue
+        if name == "平等条约" and not equal_treaty_verdict(room, room.chain[-1])[0]:
+            continue
+        return card
+    return None
 
 
 def can_respond(room: Room, player_id: str | None) -> bool:
@@ -171,16 +192,7 @@ def can_respond(room: Room, player_id: str | None) -> bool:
     if getattr(player.effect_flags, "last_stand", False):
         return False
     if player_id.startswith("ai-"):
-        # Difficulty is resolved **per seat** (lesson #35): the room-level field
-        # is only the default, and a self-play "master vs hard" room would
-        # otherwise let the hard seat answer exactly like a master seat (or the
-        # other way round). Live AI rooms have one computer seat, so this is the
-        # same answer there.
-        if difficulty_of(room, player_id) != "hard":
-            return False
-        if not any(card.name == "失灵！" for card in player.magic_hand):
-            return False
-        return ai_can_negate_chain_top(room, player_id)
+        return choose_ai_response_card(room, player_id) is not None
     return bool(usable_speed3_cards(room, player_id))
 
 
@@ -375,6 +387,7 @@ __all__ = [
     "EQUAL_TREATY_SHIP_CHANGE_RULES",
     "ai_can_negate_chain_top",
     "can_respond",
+    "choose_ai_response_card",
     "clear_display",
     "display_still_current",
     "equal_treaty_verdict",

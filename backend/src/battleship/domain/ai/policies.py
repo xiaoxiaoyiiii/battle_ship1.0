@@ -8,9 +8,9 @@ Difficulty is resolved **per seat** (difficulty.py, lesson #35):
 
 * easy   -- fires only, never plays a card;
 * normal -- at most one card per turn, from the safe list below;
-* hard   -- normal + answers a chain window with 失灵！ when it can negate;
+* hard   -- normal + 使用合法反制牌响应连锁；
 * master -- the decision layer in master.py (pool, 3 cards, interleaved play,
-            fires on recon).
+            fires on recon)，并共用困难档的连锁反制。
 
 The card policy is the frozen legacy one: pick the cheapest-speed card from the
 safe list. That list exists because cards that wait for the **caster's own**
@@ -118,26 +118,9 @@ def choose_attack(room: Any, player_id: str,
 
 
 def choose_chain_response(room: Any, player_id: str) -> dict[str, Any] | None:
-    """hard: answer the open chain window with 失灵！ when it can negate.
+    """困难和大师使用与开窗资格相同的选牌结果；没有合法反制时让过。"""
 
-    Returns None = pass. This is the same policy the production chain window
-    applies (domain/magic/chain.can_respond), so a self-play harness and the
-    live room make the same choice.
-
-    Deliberately **hard only**: docs/MASTER_AI_2026_09_21.md section 2 records
-    chain negation as the single capability hard adds over normal, and the
-    master tier's measured strength (~75%) was taken with that behaviour. The
-    master seat therefore passes, exactly as the legacy stack did.
-    """
-
-    if difficulty_of(room, player_id) != "hard":
-        return None
-    if not chain_rules.can_respond(room, player_id):
-        return None
-    card = next(
-        (card for card in room.players[player_id].magic_hand if card.name == "失灵！"),
-        None,
-    )
+    card = chain_rules.choose_ai_response_card(room, player_id)
     if card is None:
         return None
     return {"chain": True, "card": {"name": card.name, "speed": card.speed,

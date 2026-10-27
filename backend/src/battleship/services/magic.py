@@ -1207,7 +1207,7 @@ class MagicService:
         self.timers.spawn(room_id, self._ai_chain_respond(room_id, token))
 
     async def _ai_chain_respond(self, room_id: str, token: int) -> None:
-        """Hard AI: spend 失灵！ when it can, otherwise pass immediately."""
+        """按共享策略选择反制牌，确保与开窗时的资格判断一致。"""
 
         await asyncio.sleep(self.ai_chain_delay_seconds)
         room = self.rooms.get_room(room_id)
@@ -1221,8 +1221,8 @@ class MagicService:
         player = room.players.get(ai_id)
         if player is None:
             return
-        card = next((card for card in player.magic_hand if card.name == "失灵！"), None)
-        if card is None or not chain_rules.ai_can_negate_chain_top(room, ai_id):
+        response = policies.choose_chain_response(room, ai_id)
+        if response is None:
             await self.chain_response(
                 None, {"room_id": room_id, "player_id": ai_id, "chain": False}
             )
@@ -1232,9 +1232,7 @@ class MagicService:
             {
                 "room_id": room_id,
                 "player_id": ai_id,
-                "chain": True,
-                "card": {"name": card.name},
-                "targets": [],
+                **response,
             },
         )
         if not (ack and ack.get("status") == "success"):

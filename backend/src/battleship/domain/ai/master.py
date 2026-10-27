@@ -677,7 +677,7 @@ MASTER_ENABLED_CARDS: dict[str, str] = {
     # (3) preconditions simple enough to decide exactly
     "守株待兔": "给自己一艘活船挂陷阱（选船走同步代选，不留待办）",
     "盗亦有道": "偷对方刚用过的上一张牌；闸门读连锁栈/历史",
-    "加百列之光": "康掉正下方那一项 / 拆场地；三条路径任一成立才打",
+    "加百列之光": "反制正下方那一项或拆场地，不追溯已结算的历史",
     "溅射": "上一发命中后打四邻；条件因子在未命中时把价值归零",
     "雷达子弹": "上一发命中后显形八邻；条件因子在未命中时把价值归零",
     "越战越勇": "刚击沉后 +1 攻击；条件因子在未击沉时把价值归零",
@@ -717,7 +717,7 @@ MASTER_EXCLUDED_CARDS: dict[str, str] = {
     "绝处逢生": "实测 -3.4：牺牲全部船后只剩一发，把高胜率换成 1/36 抽奖",
     "仁王之盾": "实测 -0.6：三艘一次性挡伤不如换一张进攻牌（多选通道已接，但收益为负）",
     "Freezing！": "只能在结束阶段打，而 AI 回合没有结束阶段出牌窗口（can_play 会拒）",
-    "失灵！": "只用于连锁响应；主动打出是浪费（响应走 hard 档的连锁逻辑）",
+    "失灵！": "只用于连锁响应；困难和大师共用反制策略，不主动浪费",
     "禁忌果实": "场地卡，锁住双方非场地魔法；对 AI 是纯限制，未量过收益",
     "钢筋铁骨": "HIDDEN_CARD_NAMES：双方都摸不到，给它做决策没有意义",
 }
@@ -906,11 +906,8 @@ def card_readiness(room: Any, ai_id: str, card: Any) -> dict[str, Any] | None:
 
         if name == "加百列之光":
             if room.chain:
-                return {}
+                return {} if room.chain[-1].player_id != ai_id else None
             if room.field_magic is not None:
-                return {}
-            history = getattr(room, "magic_history", None) or []
-            if history and history[-1].get("caster") != ai_id:
                 return {}
             return None
 

@@ -107,7 +107,7 @@ backend/src/battleship/
   `publicDir: false`：同一批图不会在 dist 里再出现一份未哈希拷贝。
 - 视觉基线是 C+ 十屏；只允许改颜色/阴影/渐变/transform/opacity，不许动盒模型尺寸；
   改样式后必须跑 `tools/web/run_all.py` 对应工具 + 截图指纹。
-- 音效/BGM 是 Web Audio 现场合成，没有素材依赖。
+- 卡牌音效为 `src/audio/assets/` 的本地采样素材，Web Audio 缓存播放；BGM 保持现场合成。牌效声音只消费服务端公开完成提示，来源见音效目录说明。
 
 ---
 

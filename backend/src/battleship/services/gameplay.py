@@ -36,6 +36,7 @@ from ..domain import placement as placement_rules
 from ..domain import replay as replay_rules
 from ..domain.magic import hooks
 from ..domain.magic import temps as magic_temps
+from .magic_audio import emit_reset_sfx
 from ..domain.magic.interaction import pending_action_reason
 from ..domain.placement import PlacementError
 from ..domain.room import (
@@ -387,6 +388,7 @@ class GameplayService:
                 {"message": "回光返照：棋盘已重摆，本回合无法攻击（攻击次数为 0）", "type": "magic_effect"},
                 room=room.id,
             )
+            await emit_reset_sfx(self._publisher, room)
             await self._publisher.emit(
                 "game_state",
                 {
@@ -431,6 +433,7 @@ class GameplayService:
                 {"message": f"{reset_card}：双方已重新摆放战舰，继续当前回合", "type": "magic_effect"},
                 room=room.id,
             )
+            await emit_reset_sfx(self._publisher, room)
             await self._publisher.emit(
                 "game_state",
                 {

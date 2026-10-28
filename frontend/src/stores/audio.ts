@@ -6,7 +6,10 @@ import {
   startBgm,
   stopBgm,
   unlockAudio,
+  setSfxPreferences,
+  stopSfx,
 } from '../audio/engine'
+import { cardSound } from '../audio/cardSounds'
 
 /**
  * Local audio preferences (ticket #33).
@@ -63,6 +66,10 @@ export const useAudioStore = defineStore('audio', () => {
   const bgmMuted = ref(readBool(AUDIO_STORAGE.bgmMuted, false))
   const bgmVolume = ref(readVolume(AUDIO_STORAGE.bgmVolume, 0.5))
   const bgmPlaying = ref(readBool(AUDIO_STORAGE.bgmPlaying, false))
+  const heardEffects = new Set<string>()
+  let resultPlayedFor = ''
+  let battleScene = false
+  setSfxPreferences(sfxVolume.value, sfxMuted.value)
 
   const sfxVolumePercent = computed(() => Math.round(sfxVolume.value * 100))
   const bgmVolumePercent = computed(() => Math.round(bgmVolume.value * 100))
@@ -74,6 +81,7 @@ export const useAudioStore = defineStore('audio', () => {
   function setSfxMuted(value: boolean): void {
     sfxMuted.value = Boolean(value)
     write(AUDIO_STORAGE.sfxMuted, sfxMuted.value ? 'true' : 'false')
+    setSfxPreferences(sfxVolume.value, sfxMuted.value)
   }
 
   function toggleSfxMute(): boolean {
@@ -84,10 +92,11 @@ export const useAudioStore = defineStore('audio', () => {
   function setSfxVolume(value: number): void {
     sfxVolume.value = clampVolume(value, sfxVolume.value)
     write(AUDIO_STORAGE.sfxVolume, String(sfxVolume.value))
+    setSfxPreferences(sfxVolume.value, sfxMuted.value)
   }
 
   function previewSfx(): void {
-    playSfx('play_card', sfxVolume.value, sfxMuted.value)
+    playSfx('gabriel', sfxVolume.value, sfxMuted.value)
   }
 
   function applyBgm(): void {
@@ -128,6 +137,37 @@ export const useAudioStore = defineStore('audio', () => {
     playSfx(name, sfxVolume.value, sfxMuted.value)
   }
 
+  function playCardEffect(payload: Record<string, unknown>): void {
+    const id = typeof payload.effect_id === 'string' ? payload.effect_id : ''
+    const name = typeof payload.card === 'string' ? cardSound(payload.card) : null
+    if (!id || !name || heardEffects.has(id)) return
+    heardEffects.add(id)
+    if (heardEffects.size > 256) heardEffects.delete(heardEffects.values().next().value!)
+    if (battleScene) play(name)
+  }
+
+  function playBattle(name: string): void {
+    if (battleScene) play(name)
+  }
+
+  function setBattleScene(active: boolean): void {
+    battleScene = active
+    if (!active) stopSfx()
+  }
+
+  function resetMatchAudio(): void {
+    stopSfx()
+    heardEffects.clear()
+    resultPlayedFor = ''
+  }
+
+  function playOutcome(room: string, outcome: string): void {
+    if (!room || !['win', 'lose'].includes(outcome) || resultPlayedFor === room) return
+    resultPlayedFor = room
+    stopSfx()
+    play(outcome)
+  }
+
   if (typeof window !== 'undefined') {
     const unlock = (): void => {
       unlockAudio()
@@ -159,6 +199,12 @@ export const useAudioStore = defineStore('audio', () => {
     toggleBgmMute,
     setBgmVolume,
     play,
+    playCardEffect,
+    playBattle,
+    setBattleScene,
+    playOutcome,
+    resetMatchAudio,
+    stop: stopSfx,
     isBgmRunning,
   }
 })

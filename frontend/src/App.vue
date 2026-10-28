@@ -20,6 +20,7 @@ import { acquireFriendsChannel } from './realtime/friends'
 import { useCollectionStore } from './stores/collection'
 import { useGameStore } from './stores/game'
 import { useUiStore } from './stores/ui'
+import { useAudioStore } from './stores/audio'
 
 /**
  * Application shell (ticket #42).
@@ -37,6 +38,11 @@ const auth = useAuthStore()
 const game = useGameStore()
 const collection = useCollectionStore()
 const ui = useUiStore()
+const audio = useAudioStore()
+watch(() => game.state.room_id, () => audio.resetMatchAudio())
+watch(() => route.name, name => {
+  audio.setBattleScene(['game', 'placement', 'rps'].includes(String(name)))
+}, { immediate: true })
 const dm = useDmStore()
 
 /** Flow screens are reached from a match, not from the bar. */

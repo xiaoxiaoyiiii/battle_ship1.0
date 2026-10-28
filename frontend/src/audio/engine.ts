@@ -1,17 +1,18 @@
-/**
- * Web Audio engine for 音效 + BGM (ticket #33).
- *
- * Both are synthesised at runtime, exactly like the legacy `static/sfx.js` and
- * the BGM fallback in `static/music_player.js`: the repository ships no audio
- * files, so the SPA stays offline-capable. The module only owns the audio graph;
- * preferences live in the Pinia audio store.
- */
+import { SAMPLE_GAINS, SAMPLE_URLS } from './samples'
+
+/** 音效统一走可调音量的总线；采样素材缓存解码，BGM 保持独立。 */
 
 type SfxName =
   | 'hit' | 'miss' | 'sunk' | 'draw' | 'play_card'
   | 'chain' | 'turn' | 'win' | 'lose'
 
 let context: AudioContext | null = null
+let sfxBus: { master: GainNode; limiter: DynamicsCompressorNode } | null = null
+let sfxVolume = 0.8
+let sfxMuted = false
+const voices = new Set<AudioScheduledSourceNode>()
+const buffers = new Map<string, AudioBuffer>()
+const loading = new Map<string, Promise<void>>()
 let bgm: {
   master: GainNode
   filter: BiquadFilterNode
@@ -23,9 +24,6 @@ let bgmMuted = false
 
 function getContext(): AudioContext | null {
   if (context) {
-    if (context.state === 'suspended' && context.resume) {
-      void context.resume().catch(() => undefined)
-    }
     return context
   }
   if (typeof window === 'undefined') return null
@@ -46,6 +44,72 @@ export function unlockAudio(): void {
     void ctx.resume().catch(() => undefined)
   }
   if (bgm && ctx) applyBgm(bgmVolume, bgmMuted)
+  void preloadSfx()
+}
+
+function getSfxBus(ctx: AudioContext): AudioNode {
+  if (!sfxBus) {
+    const master = ctx.createGain(), limiter = ctx.createDynamicsCompressor()
+    limiter.threshold.value = -1
+    limiter.knee.value = 0
+    limiter.ratio.value = 20
+    limiter.attack.value = 0.002
+    limiter.release.value = 0.08
+    limiter.connect(master)
+    master.connect(ctx.destination)
+    master.gain.value = sfxMuted ? 0 : sfxVolume
+    sfxBus = { master, limiter }
+  }
+  return sfxBus.limiter
+}
+
+export function stopSfx(): void {
+  for (const source of [...voices]) {
+    try { source.stop() } catch { /* 已自然结束。 */ }
+  }
+  voices.clear()
+}
+
+export function setSfxPreferences(volume: number, muted: boolean): void {
+  sfxVolume = Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 0
+  sfxMuted = muted
+  if (sfxBus) sfxBus.master.gain.value = muted ? 0 : sfxVolume
+  if (muted || sfxVolume === 0) stopSfx()
+}
+
+function track(source: AudioScheduledSourceNode, nodes: AudioNode[] = []): void {
+  if (voices.size >= 12) {
+    const oldest = voices.values().next().value
+    try { oldest?.stop() } catch { /* 已结束。 */ }
+    if (oldest) voices.delete(oldest)
+  }
+  voices.add(source)
+  source.onended = () => {
+    voices.delete(source)
+    source.disconnect()
+    for (const node of nodes) node.disconnect()
+  }
+}
+
+/** 只准备后续事件，不在下载或解码完成后补播先前错过的声音。 */
+export async function preloadSfx(): Promise<void> {
+  const ctx = getContext()
+  if (!ctx) return
+  await Promise.all(Object.entries(SAMPLE_URLS).map(([name, url]) => {
+    if (buffers.has(name)) return Promise.resolve()
+    const pending = loading.get(name)
+    if (pending) return pending
+    const task = fetch(url).then(response => {
+      if (!response.ok) throw new Error(`音效素材加载失败：${name}`)
+      return response.arrayBuffer()
+    }).then(data => ctx.decodeAudioData(data)).then(buffer => {
+      buffers.set(name, buffer)
+    }).catch(error => {
+      console.warn(`音效暂不可用：${name}`, error)
+    }).finally(() => { loading.delete(name) })
+    loading.set(name, task)
+    return task
+  }))
 }
 
 function envelope(ctx: AudioContext, start: number, peak: number, duration: number): GainNode {
@@ -54,7 +118,7 @@ function envelope(ctx: AudioContext, start: number, peak: number, duration: numb
   gain.gain.setValueAtTime(0.0001, start)
   gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), start + attack)
   gain.gain.exponentialRampToValueAtTime(0.0001, start + duration)
-  gain.connect(ctx.destination)
+  gain.connect(getSfxBus(ctx))
   return gain
 }
 
@@ -67,7 +131,9 @@ function tone(
   oscillator.type = options.type ?? 'sine'
   oscillator.frequency.setValueAtTime(options.freq, start)
   if (options.to) oscillator.frequency.exponentialRampToValueAtTime(options.to, start + options.duration)
-  oscillator.connect(envelope(ctx, start, options.gain, options.duration))
+  const gain = envelope(ctx, start, options.gain, options.duration)
+  oscillator.connect(gain)
+  track(oscillator, [gain])
   oscillator.start(start)
   oscillator.stop(start + options.duration + 0.03)
 }
@@ -88,7 +154,9 @@ function noise(
   filter.frequency.setValueAtTime(options.from ?? 1200, start)
   if (options.to) filter.frequency.exponentialRampToValueAtTime(options.to, start + options.duration)
   source.connect(filter)
-  filter.connect(envelope(ctx, start, options.gain, options.duration))
+  const gain = envelope(ctx, start, options.gain, options.duration)
+  filter.connect(gain)
+  track(source, [filter, gain])
   source.start(start)
   source.stop(start + options.duration + 0.03)
 }
@@ -134,10 +202,26 @@ const RECIPES: Record<SfxName, (ctx: AudioContext, start: number) => void> = {
 }
 
 export function playSfx(name: string, volume: number, muted: boolean): boolean {
-  if (muted || !(name in RECIPES)) return false
+  setSfxPreferences(volume, muted)
+  if (sfxMuted || sfxVolume === 0 || (typeof document !== 'undefined' && document.hidden)) return false
+  const sample = name === 'win' ? 'victory' : name === 'lose' ? 'defeat' : name
+  if (!(sample in SAMPLE_URLS) && !(name in RECIPES)) return false
   const ctx = getContext()
-  if (!ctx) return false
+  if (!ctx || ctx.state !== 'running') return false
   try {
+    if (sample in SAMPLE_URLS) {
+      const buffer = buffers.get(sample)
+      if (!buffer) { void preloadSfx(); return false }
+      const source = ctx.createBufferSource()
+      const gain = ctx.createGain()
+      gain.gain.value = SAMPLE_GAINS[sample] ?? 1
+      source.buffer = buffer
+      source.connect(gain)
+      gain.connect(getSfxBus(ctx))
+      track(source, [gain])
+      source.start(ctx.currentTime + 0.001)
+      return true
+    }
     RECIPES[name as SfxName](ctx, ctx.currentTime + 0.001)
     return true
   } catch {

@@ -29,7 +29,8 @@ function tick(): void {
   const next = props.suspended ? null : animation.at(Date.now())
   if (frame.value?.cue !== next?.cue) {
     frame.value = next
-    if (next) audio.play(next.cue.kind === 'join' ? 'play_card' : 'chain')
+    if (next?.cue.kind === 'join') audio.play('play_card')
+    else if (next?.cue.kind === 'success') audio.play('chain')
   }
   if (next && canvas.value) {
     const width = window.innerWidth, height = window.innerHeight, ratio = Math.min(2, window.devicePixelRatio || 1)

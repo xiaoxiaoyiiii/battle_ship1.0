@@ -8,6 +8,7 @@ import { useHomeStore } from '../../stores/home'
 import { usePlacementStore } from '../../stores/placement'
 import { useResultStore } from '../../stores/result'
 import { useUiStore } from '../../stores/ui'
+import { useAudioStore } from '../../stores/audio'
 import {
   aiDifficulty,
   matchModeLabel,
@@ -80,6 +81,9 @@ const gameOver = computed(() => result.gameOver)
 const hasResult = computed(() => gameOver.value !== null)
 const matchId = computed(() => result.gameOverMatchId)
 const outcome = computed<Outcome>(() => outcomeOf(gameOver.value, game.state.player_id))
+watch([hasResult, outcome], () => {
+  if (hasResult.value) useAudioStore().playOutcome(game.state.room_id || matchId.value, outcome.value)
+}, { immediate: true })
 const verdict = computed(() => verdictText(outcome.value))
 const summary = computed(() => {
   const record = gameOver.value

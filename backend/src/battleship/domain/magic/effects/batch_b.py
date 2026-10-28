@@ -163,10 +163,11 @@ async def renwang(ctx: EffectContext) -> EffectResult:
     )
     if picked is not None:
         # AI 座位同步给出答案：就地加盾并结束这一项，否则 temp 会一直挂着。
+        already_shielded = picked.shield
         picked.shield = True
         temps.finish(ctx.room, "shield_choice")
         await ctx.sync_player_ships(ctx.caster_id)
-        return EffectResult(True, "已为 1 艘战舰添加护盾")
+        return EffectResult(True, "已为 1 艘战舰添加护盾", extra={"audio_silent": already_shielded})
     return EffectResult(True, "请选择要保护的战舰", temp_data_id="shield_choice")
 
 
@@ -318,6 +319,7 @@ async def last_chance(ctx: EffectContext) -> EffectResult:
     ctx.room.attacks_remaining = 0
     ctx.caster.max_ships = 6
     ctx.room.huiguang_awaiting_placement = True
+    ctx.room.game_effects["reset_audio"] = {"caster": ctx.caster_id, "card": "回光返照"}
     await ctx.emit(
         "reset_gameboard",
         {
@@ -396,6 +398,7 @@ async def polar_reversal(ctx: EffectContext) -> EffectResult:
     ctx.room.attacks_remaining = 0
     ctx.room.polar_reversal_applied = True
     ctx.room.game_effects["zero_attacks_round"] = ctx.room.round
+    ctx.room.game_effects["reset_audio"] = {"caster": ctx.caster_id, "card": "败者食尘"}
 
     for player in ctx.room.players.values():
         await ctx.emit(
@@ -425,6 +428,7 @@ async def trap(ctx: EffectContext) -> EffectResult:
     )
     if picked is None:
         return EffectResult(True, "请选择要设置陷阱的战舰")
+    already_trapped = picked.trap
     picked.trap = True
     await ctx.log(
         f"第{ctx.room.round}回合 · {ctx.name(ctx.caster_id)} 的【守株待兔】为一艘战舰设置陷阱",
@@ -438,7 +442,7 @@ async def trap(ctx: EffectContext) -> EffectResult:
         },
         room=ctx.room.id,
     )
-    return EffectResult(True, "已为一艘战舰设置陷阱（本回合该船被击沉时对方需牺牲两艘）")
+    return EffectResult(True, "已为一艘战舰设置陷阱（本回合该船被击沉时对方需牺牲两艘）", extra={"audio_silent": already_trapped})
 
 
 @register("神机妙算")
@@ -500,6 +504,7 @@ async def kraken_eye(ctx: EffectContext) -> EffectResult:
     if caster_ship is None:
         return EffectResult(False, "必须选择自己【还活着】的战舰所在的格子（已沉没的船不能选）")
 
+    revealed_new = any(p not in ctx.opponent.revealed_positions for p in caster_ship.positions)
     ctx.opponent.revealed_positions.extend(caster_ship.positions)
     if ctx.opponent.socket_id:
         await ctx.emit(
@@ -515,6 +520,7 @@ async def kraken_eye(ctx: EffectContext) -> EffectResult:
         False,
     )
     if picked is not None:
+        revealed_new |= any(p not in ctx.caster.revealed_positions for p in picked.positions)
         ctx.caster.revealed_positions.extend(picked.positions)
         if ctx.caster.socket_id:
             await ctx.emit(
@@ -522,7 +528,10 @@ async def kraken_eye(ctx: EffectContext) -> EffectResult:
                 {"positions": [{"x": p.x, "y": p.y} for p in picked.positions]},
                 to=ctx.caster.socket_id,
             )
-        return EffectResult(True, "双方各暴露一艘战舰位置")
+        return EffectResult(True, "双方各暴露一艘战舰位置", extra={"audio_silent": not revealed_new})
+    for pick in ctx.room.pending_ship_picks:
+        if pick.get("reason") == "kraken_eye" and pick.get("source_caster") == ctx.caster_id:
+            pick["audio_revealed_new"] = revealed_new
     return EffectResult(True, "已暴露自己一艘战舰的位置，等待对方选择要暴露的战舰")
 
 

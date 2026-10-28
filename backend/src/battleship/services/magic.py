@@ -83,6 +83,7 @@ from ..infra.timers import TaskRegistry
 from .rooms import Connection, EventPublisher, NullPublisher, RoomService
 from .priority import guard_phase_write
 from .settlement import SettlementService
+from .magic_audio import COMPLETION_AUDIO_CARDS, PICK_AUDIO_REASONS, emit_magic_sfx
 
 logger = get_logger("magic")
 
@@ -517,7 +518,9 @@ class MagicService:
         if reason == "kraken_eye":
             interaction_rules.consume_ship_pick(room, player_id, "kraken_eye")
             other_id = room.opponent_of(player_id)
+            revealed_new = bool(entry.get("audio_revealed_new"))
             if other_id and other_id in room.players:
+                revealed_new |= any(p not in room.players[other_id].revealed_positions for p in ship.positions)
                 room.players[other_id].revealed_positions.extend(ship.positions)
                 if room.players[other_id].socket_id:
                     await self._publisher.emit(
@@ -525,12 +528,15 @@ class MagicService:
                         {"positions": [{"x": p.x, "y": p.y} for p in ship.positions]},
                         to=room.players[other_id].socket_id,
                     )
+            if revealed_new:
+                await emit_magic_sfx(self._publisher, room, str(entry.get('source_caster') or other_id), "克苏鲁之眼")
             await self._dispatch_ship_pick(room, player_id)
             await self._sync_each_seat(room)
             return {"status": "success", "message": "已暴露一艘战舰的位置"}
 
         if reason == "trap_setup":
             interaction_rules.consume_ship_pick(room, player_id, "trap_setup")
+            already_trapped = ship.trap
             ship.trap = True
             await self._add_log(
                 room,
@@ -545,6 +551,8 @@ class MagicService:
                 },
                 room=room.id,
             )
+            if not already_trapped:
+                await emit_magic_sfx(self._publisher, room, player_id, "守株待兔")
             await self._dispatch_ship_pick(room, player_id)
             await self._sync_each_seat(room)
             return {"status": "success", "message": "已为一艘战舰设置陷阱（本回合该船被击沉时对方需牺牲两艘）"}
@@ -557,6 +565,8 @@ class MagicService:
                            f"不要直接点船格（这条路径只用于牺牲类效果）",
             }
         await self._sacrifice_ship(room, player_id, ship, reason, source_id=entry.get('source_caster'))
+        if reason == "divine_decree":
+            await emit_magic_sfx(self._publisher, room, str(entry.get('source_caster') or room.opponent_of(player_id)), "神之宣告")
         return {"status": "success", "message": "已选择一艘战舰"}
 
     async def _sacrifice_ship(self, room: Room, player_id: str,
@@ -878,6 +888,7 @@ class MagicService:
 
     async def _emit_effect_notice(self, room: Room, player_id: str, card: str, result: str) -> None:
         """只广播已落地的效果摘要，不把选择引导或私有手牌内容当作结果。"""
+        await emit_magic_sfx(self._publisher, room, player_id, card)
         await self._publisher.emit(
             "game_message",
             {"type": "magic_effect", "message": f"{self._name(room, player_id)}的「{card}」：{result}"},
@@ -1576,6 +1587,16 @@ class MagicService:
                 room.chain[-1].negated = True
                 room.chain[-1].negated_by = item.card.name
             results.append(chain_result)
+            # 单张展示已完全离场，且效果确已执行。未确认的选择不冒充成功。
+            pick_reason = PICK_AUDIO_REASONS.get(item.card.name)
+            awaiting_pick = pick_reason and any(
+                pick.get("reason") == pick_reason and pick.get("source_caster") == item.player_id
+                for pick in room.pending_ship_picks
+            )
+            if (effect_result.success and not effect_result.temp_data_id
+                    and not extra.get("audio_silent")
+                    and item.card.name not in COMPLETION_AUDIO_CARDS and not awaiting_pick):
+                await emit_magic_sfx(self._publisher, room, item.player_id, item.card.name)
             if effect_result.success and not effect_result.game_over and room.state != RoomState.GAME_OVER:
                 opponent_id = room.opponent_of(item.player_id)
                 opponent = room.players.get(opponent_id) if opponent_id else None
@@ -2179,6 +2200,7 @@ class MagicService:
         room.lingqi_resurgence_applied = True
         for frame, payload in frames:
             await self._publisher.emit(frame, payload, room=room.id)
+        room.game_effects["reset_audio"] = {"caster": player_id, "card": "灵气复苏"}
         for pid, player in room.players.items():
             if player.socket_id:
                 await self._publisher.emit(
@@ -2331,6 +2353,7 @@ class MagicService:
         if not isinstance(raw, list) or not raw:
             return {"status": "error", "message": "请至少选择一艘战舰"}
         selected: list[PlayerShip] = []
+        shields_added = 0
         skipped = 0
         seen: set[int] = set()
         for raw_index in raw[:3]:
@@ -2344,6 +2367,7 @@ class MagicService:
             if not is_ship_alive(caster, caster.ships[index]):
                 skipped += 1
                 continue
+            shields_added += int(not caster.ships[index].shield)
             caster.ships[index].shield = True
             selected.append(caster.ships[index])
         if not selected:
@@ -2368,6 +2392,8 @@ class MagicService:
                 "message", {"text": f"已为{len(selected)}艘战舰添加护盾"}, to=caster.socket_id
             )
         message = f"为{len(selected)}艘战舰添加了护盾"
+        if shields_added:
+            await emit_magic_sfx(self._publisher, room, player_id, "仁王之盾")
         if skipped:
             message += f"（{skipped}艘已沉没，已跳过）"
         return {"status": "success", "message": message}

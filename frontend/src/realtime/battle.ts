@@ -265,7 +265,6 @@ export function applyBattleEvent(
     case 'hand_updated': {
       const hand = asCardList(payload.hand)
       if (Array.isArray(payload.hand)) {
-        if (hand.length > (Array.isArray(state.hand) ? state.hand.length : 0)) audio.play('draw')
         game.applyServerState({ hand })
       }
       break
@@ -285,7 +284,6 @@ export function applyBattleEvent(
       break
     }
     case 'chain_request': {
-      audio.play('chain')
       if (payload.card_unavailable_reasons && typeof payload.card_unavailable_reasons === 'object') {
         game.applyServerState({ card_unavailable_reasons: payload.card_unavailable_reasons })
       }
@@ -321,7 +319,6 @@ export function applyBattleEvent(
             caster: me,
           })
         }
-        if (result.success !== false && !result.negated_skip) audio.play('play_card')
       }
       void refreshMagicState(pinia)
       break

@@ -6,6 +6,7 @@ import { rememberSeat, restoreSeat } from './reconnect'
 import { useResultStore } from '../stores/result'
 import { useMatchStore } from '../stores/match'
 import { useCardDrawStore } from '../stores/cardDraw'
+import { useAudioStore } from '../stores/audio'
 
 /**
  * The settlement wire channel (ticket #22).
@@ -63,14 +64,19 @@ export function applySettlementEvent(
       if (payload.room_id !== game.state.room_id) break
       game.applyServerState({ deck_count: payload.deck_count })
       useCardDrawStore(pinia).enqueue(payload)
+      useAudioStore(pinia).playBattle(payload.destination === 'discard' ? 'discard' : 'draw')
       break
     }
     case 'dice_rolled': {
+      useAudioStore(pinia).playBattle('dice')
       // 准备阶段判定可能早于战斗页挂载，必须由跨页面连接接收。
       useMatchStore(pinia).openDiceRoll(payload)
       break
     }
     case 'game_message': {
+      if (payload.type === 'magic_sfx' && payload.room_id === game.state.room_id) {
+        useAudioStore(pinia).playCardEffect(payload)
+      }
       // 重摆结束时仍可能停在布船页，由跨页面的共享连接接收最终效果。
       const message = asString(payload.message).trim()
       if (payload.type === 'magic_effect' && message) {
@@ -91,7 +97,10 @@ export function applySettlementEvent(
     case 'game_state': {
       game.applyServerState(payload)
       if (payload.state === 'game_over') result.recordGameOver(payload)
-      else if (payload.state === 'placing_ships') result.beginMatch()
+      else if (payload.state === 'placing_ships') {
+        if (result.gameOver) useAudioStore(pinia).resetMatchAudio()
+        result.beginMatch()
+      }
       break
     }
     case 'room_sync': {

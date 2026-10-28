@@ -1,10 +1,10 @@
 /** 按实际牌意映射；Freezing 跳过回合与冻结区域、极限增援与召唤分别处理。 */
 export const CARD_SOUNDS: Readonly<Record<string, string>> = {
-  '失灵！': 'electric', '溅射': 'fire', '雷达子弹': 'electric',
+  '失灵！': 'negate', '溅射': 'splash', '雷达子弹': 'electric',
   '越战越勇': 'steel_buff', '余音绕梁': 'steel_buff', '神威！': 'divine_banish',
   '增援': 'summon', '恶魔契约': 'dark_pact', '八方来财': 'card_transfer',
   '平等条约': 'holy_shield', '禁忌果实': 'dark_pact', '硫磺火焰': 'fire',
-  '百亿补贴': 'steel_buff', '看破！': 'electric', '冻结': 'freeze',
+  '百亿补贴': 'steel_buff', '看破！': 'seal', '冻结': 'freeze',
   '轰炸': 'bombardment', '探测雷达': 'recon', '伊甸园': 'heal',
   '神之宣告': 'gabriel', '五险一金': 'steel_buff', '绝处逢生': 'resurrect',
   '死者苏生': 'resurrect', '疗愈': 'heal', '桃园结义': 'card_transfer',

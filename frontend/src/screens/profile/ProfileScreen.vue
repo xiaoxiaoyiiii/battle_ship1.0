@@ -148,6 +148,26 @@ const badgeTotal = computed(() => {
   const count = badgeCount.value ? readNumber(badgeCount.value, 'total') : null
   return count ?? badges.value.length
 })
+const featuredBadge = computed(() => badges.value.find((item) => item.unlocked === true) || badges.value[0] || null)
+const cosmeticCatalog = computed(() => {
+  // /user_stats deliberately omits the full catalogue; the owner payload
+  // loaded by /api/profile is the authoritative source for own cosmetics.
+  return readObject(isSelf.value ? store.own : null, 'catalog') ?? readObject(stats.value, 'catalog')
+})
+const unlockedCosmetics = computed(() => {
+  const catalog = cosmeticCatalog.value
+  if (!catalog) return []
+  const rows: { kind: string; name: string; id: string }[] = []
+  for (const [key, label] of [['titles', '称号'], ['frames', '头像框'], ['card_bgs', '名片底色']] as const) {
+    for (const item of readArray(catalog, key)) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) continue
+      const row = item as JsonObject
+      if (row.unlocked !== true) continue
+      rows.push({ kind: label, name: readString(row, 'name'), id: readString(row, 'id') })
+    }
+  }
+  return rows
+})
 
 const showHistory = computed(() => isSelf.value || flag('show_history'))
 const history = computed(() => viewed.value.history)
@@ -399,6 +419,23 @@ watch(targetUsername, () => {
         </section>
         <p v-else class="profile__private" data-testid="profile-stats-private">该玩家未公开战绩亮点。</p>
 
+        <section class="profile__showcase" data-testid="profile-showcase" aria-label="个性展示">
+          <div class="profile__showcase-feature">
+            <p class="profile__showcase-kicker">FEATURED</p>
+            <h3>本季名片焦点</h3>
+            <div v-if="featuredBadge" class="profile__featured-badge">
+              <span class="profile__featured-badge-mark" aria-hidden="true">✦</span>
+              <div><b>{{ readString(featuredBadge, 'name') }}</b><small>{{ featuredBadge.unlocked === true ? readString(featuredBadge, 'desc') : readString(featuredBadge, 'requirement') }}</small></div>
+            </div>
+            <p v-else class="profile__private">完成成就后，这里会展示你的代表徽章。</p>
+          </div>
+          <div class="profile__showcase-pulse" aria-hidden="true"><i></i><i></i><i></i></div>
+          <div v-if="isSelf && unlockedCosmetics.length" class="profile__cosmetics" data-testid="profile-cosmetics">
+            <div class="profile__showcase-kicker">装扮收藏 · {{ unlockedCosmetics.length }}</div>
+            <div class="profile__cosmetic-list"><span v-for="item in unlockedCosmetics.slice(0, 6)" :key="item.kind + item.id" :data-kind="item.kind">{{ item.name }}</span></div>
+          </div>
+        </section>
+
         <section v-if="badges.length" class="profile__block" data-testid="profile-badges" aria-label="徽章墙">
           <h3 class="profile__block-title">
             徽章墙
@@ -481,8 +518,7 @@ watch(targetUsername, () => {
 </template>
 
 <style scoped>
-/* C+ profile: one 800px modal column with a violet hero band, then the
-   information blocks stacked inside the same card. */
+/* 个人名片：把身份、装备和成就做成一张有层次的舰队档案。 */
 .profile {
   align-items: center;
   gap: 0;
@@ -494,7 +530,7 @@ watch(targetUsername, () => {
   flex-wrap: wrap;
   align-items: baseline;
   gap: 4px 14px;
-  width: 800px;
+  width: 1120px;
   max-width: 100%;
   padding: 14px 26px 10px;
   border: 1px solid var(--panel-line);
@@ -525,7 +561,7 @@ watch(targetUsername, () => {
 
 .profile__state,
 .profile__login {
-  width: 800px;
+  width: 1120px;
   max-width: 100%;
   margin: 0;
   padding: 14px 26px;
@@ -554,14 +590,14 @@ watch(targetUsername, () => {
 .profile__card {
   display: grid;
   gap: 12px;
-  width: 800px;
+  width: 1120px;
   max-width: 100%;
   padding: 0 0 18px;
   overflow: hidden;
   border: 1px solid var(--panel-line);
   border-radius: 0 0 var(--radius) var(--radius);
   background: var(--panel);
-  box-shadow: var(--shadow-panel);
+  box-shadow: 0 24px 70px rgb(2 6 18 / 34%);
 }
 
 .profile__card[data-bg='graphite'] {
@@ -575,6 +611,16 @@ watch(targetUsername, () => {
 .profile__card[data-bg='lava'] {
   background: linear-gradient(160deg, #3a1a12, #1a0f0c 70%);
 }
+
+.profile__card[data-bg='kelp_green'] { background: linear-gradient(150deg, #122f2e, #08171d 72%); }
+.profile__card[data-bg='moonlit'] { background: linear-gradient(150deg, #1a294c, #080f22 72%); }
+.profile__card[data-bg='coral_dawn'] { background: linear-gradient(150deg, #492637, #1b1424 72%); }
+.profile__card[data-bg='abyssal_grid'] {
+  background-color: #080d18;
+  background-image: linear-gradient(rgb(201 162 76 / 8%) 1px, transparent 1px), linear-gradient(90deg, rgb(201 162 76 / 8%) 1px, transparent 1px), linear-gradient(160deg, #16131c, #060a12 76%);
+  background-size: 24px 24px, 24px 24px, auto;
+}
+.profile__card[data-bg='season_deep_1'] { background: radial-gradient(circle at 78% 12%, rgb(78 200 224 / 22%), transparent 26%), linear-gradient(150deg, #10334b, #07121f 70%); }
 
 .profile__hero {
   position: relative;
@@ -596,6 +642,22 @@ watch(targetUsername, () => {
     radial-gradient(300px 120px at 22% 0%, rgba(255, 255, 255, 0.24), transparent 72%),
     linear-gradient(120deg, #7a5af0, #4029a4 70%);
 }
+
+.profile__hero::after {
+  content: '航海档案';
+  position: absolute;
+  right: 26px;
+  top: 20px;
+  color: rgb(255 255 255 / 58%);
+  font-size: 10px;
+  letter-spacing: .22em;
+}
+
+.profile__card[data-bg='kelp_green'] .profile__hero::before { background: radial-gradient(300px 120px at 22% 0%, rgb(111 224 160 / 26%), transparent 72%), linear-gradient(120deg, #205c55, #102b2f 70%); }
+.profile__card[data-bg='moonlit'] .profile__hero::before { background: radial-gradient(300px 120px at 22% 0%, rgb(130 175 255 / 25%), transparent 72%), linear-gradient(120deg, #35548d, #17294d 70%); }
+.profile__card[data-bg='coral_dawn'] .profile__hero::before { background: radial-gradient(300px 120px at 22% 0%, rgb(255 181 145 / 24%), transparent 72%), linear-gradient(120deg, #a44f5e, #512c46 70%); }
+.profile__card[data-bg='abyssal_grid'] .profile__hero::before { background: repeating-linear-gradient(115deg, rgb(255 255 255 / 5%) 0 2px, transparent 2px 12px), linear-gradient(120deg, #493924, #17151c 70%); }
+.profile__card[data-bg='season_deep_1'] .profile__hero::before { background: radial-gradient(300px 120px at 22% 0%, rgb(142 220 236 / 28%), transparent 72%), linear-gradient(120deg, #1b7592, #17405f 70%); }
 
 .profile__avatar-wrap {
   position: relative;
@@ -626,6 +688,12 @@ watch(targetUsername, () => {
 .profile__avatar[data-frame='aurora'] {
   border-color: var(--success);
 }
+
+.profile__avatar[data-frame='abyssal_glow'] { border-color: #58d5ed; box-shadow: 0 0 0 4px rgb(88 213 237 / 16%), 0 0 30px rgb(88 213 237 / 34%); }
+.profile__avatar[data-frame='tideglass'] { border-color: #9bd8e7; box-shadow: 0 0 0 4px rgb(155 216 231 / 12%), inset 0 0 20px rgb(155 216 231 / 24%); }
+.profile__avatar[data-frame='ember_wake'] { border-color: #e78353; box-shadow: 0 0 0 4px rgb(231 131 83 / 15%), 0 0 24px rgb(231 131 83 / 28%); }
+.profile__avatar[data-frame='star_compass'] { border-color: #e7c36a; box-shadow: 0 0 0 4px rgb(231 195 106 / 16%), 0 0 22px rgb(231 195 106 / 26%); }
+.profile__avatar[data-frame='season_tide_ring'] { border-color: #8ee0ef; box-shadow: 0 0 0 5px rgb(78 200 224 / 18%), 0 0 34px rgb(78 200 224 / 36%); }
 
 .profile__avatar--empty {
   display: grid;
@@ -785,6 +853,48 @@ watch(targetUsername, () => {
   color: var(--text-muted);
   font-size: 11px;
 }
+
+.profile__showcase {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  margin: 2px 26px 0;
+  padding: 18px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--role-action) 35%, var(--panel-line));
+  border-radius: 12px;
+  background: radial-gradient(circle at 50% 50%, rgb(124 92 240 / 13%), transparent 42%), var(--surface-deck);
+}
+
+.profile__showcase::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 3%), transparent);
+  pointer-events: none;
+}
+
+.profile__showcase-feature h3 { margin: 0 0 9px; color: var(--text-primary); font-size: 17px; }
+.profile__showcase-kicker { margin: 0 0 6px; color: var(--role-action); font-size: 10px; letter-spacing: .16em; }
+.profile__featured-badge { display: flex; align-items: center; gap: 10px; }
+.profile__featured-badge-mark { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--gold-strong); border-radius: 11px; background: var(--gold-soft); color: var(--gold-strong); font-size: 18px; box-shadow: 0 0 20px rgb(201 162 76 / 18%); }
+.profile__featured-badge b,.profile__featured-badge small { display: block; }
+.profile__featured-badge b { color: var(--text-primary); font-size: 13px; }
+.profile__featured-badge small { margin-top: 3px; color: var(--text-muted); font-size: 11px; }
+.profile__showcase-pulse { position: relative; display: grid; place-items: center; width: 76px; height: 76px; margin: 0 auto; }
+.profile__showcase-pulse::before,.profile__showcase-pulse::after,.profile__showcase-pulse i { content: ''; position: absolute; border: 1px solid color-mix(in srgb, var(--role-action) 52%, transparent); border-radius: 50%; }
+.profile__showcase-pulse::before { width: 24px; height: 24px; background: var(--role-action-soft); box-shadow: 0 0 22px rgb(124 92 240 / 24%); }
+.profile__showcase-pulse::after { width: 52px; height: 52px; opacity: .55; }
+.profile__showcase-pulse i:nth-child(1) { width: 72px; height: 72px; opacity: .22; }
+.profile__showcase-pulse i:nth-child(2) { width: 7px; height: 7px; border: 0; background: var(--gold-strong); transform: translate(30px,-18px); }
+.profile__showcase-pulse i:nth-child(3) { width: 5px; height: 5px; border: 0; background: var(--role-self); transform: translate(-27px,22px); }
+.profile__cosmetics { min-width: 0; }
+.profile__cosmetic-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.profile__cosmetic-list span { padding: 5px 8px; border: 1px solid var(--border-subtle); border-radius: 999px; background: var(--surface-sea); color: var(--text-secondary); font-size: 10px; }
+.profile__cosmetic-list span[data-kind='称号'] { border-color: color-mix(in srgb, var(--gold) 34%, var(--border-subtle)); color: var(--gold-strong); }
+.profile__cosmetic-list span[data-kind='头像框'] { border-color: color-mix(in srgb, var(--role-self) 34%, var(--border-subtle)); color: var(--role-self); }
 
 .profile__block {
   padding: 12px 14px;
@@ -952,7 +1062,7 @@ watch(targetUsername, () => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  width: 800px;
+  width: 1120px;
   max-width: 100%;
   padding: 0 0 10px;
 }
@@ -1025,5 +1135,14 @@ watch(targetUsername, () => {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
   }
+
+  .profile__showcase {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    margin-left: 16px;
+    margin-right: 16px;
+  }
+
+  .profile__showcase-pulse { display: none; }
 }
 </style>

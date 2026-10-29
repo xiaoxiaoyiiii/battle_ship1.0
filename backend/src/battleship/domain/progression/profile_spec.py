@@ -69,6 +69,10 @@ TITLES = [
      "rank_tier": 8},
     {"id": "season_deep_1", "name": "深海远征舰长", "desc": "完成深海远征赛季通行证",
      "requirement": "赛季通行证奖励"},
+    {"id": "tide_watcher", "name": "潮汐观测员", "desc": "看懂每一次海况变化",
+     "requirement": "累计出牌 ≥ 60"},
+    {"id": "storm_cartographer", "name": "风暴测绘师", "desc": "把危险航线画成自己的地图",
+     "requirement": "总场次 ≥ 80"},
 ]
 
 # 12 个标签（设计稿 §5.2），id 用拼音短名（计划 §2.1 冻结）
@@ -112,6 +116,14 @@ FRAMES = [
      "rank_tier": 8},
     {"id": "season_tide_ring", "name": "潮汐星环", "desc": "深海远征赛季专属头像框",
      "requirement": "赛季通行证奖励"},
+    {"id": "abyssal_glow", "name": "深渊冷焰", "desc": "头像边缘留着一线幽蓝",
+     "requirement": "累计出牌 ≥ 150"},
+    {"id": "tideglass", "name": "潮汐玻璃", "desc": "像隔着一层清透海水",
+     "requirement": "总场次 ≥ 80"},
+    {"id": "ember_wake", "name": "余烬尾流", "desc": "航迹背后仍有热浪",
+     "requirement": "最高连胜 ≥ 12"},
+    {"id": "star_compass", "name": "星海罗盘", "desc": "指向最远的那片海",
+     "requirement": "赛季通行证奖励"},
 ]
 
 # 6 个名片底色（设计稿 §5.4）
@@ -140,6 +152,14 @@ CARD_BGS = [
     {"id": "starfield", "name": "星海", "desc": "整片星海泡在海里",
      "rank_tier": 8},
     {"id": "season_deep_1", "name": "深海远征", "desc": "深海远征赛季专属名片底色",
+     "requirement": "赛季通行证奖励"},
+    {"id": "kelp_green", "name": "深海藻绿", "desc": "低饱和青绿，像沉船旁的海水",
+     "requirement": "累计出牌 ≥ 60"},
+    {"id": "moonlit", "name": "月下潮痕", "desc": "深蓝里浮着银白航迹",
+     "requirement": "总场次 ≥ 80"},
+    {"id": "coral_dawn", "name": "珊瑚晨曦", "desc": "温暖但不喧闹的海面颜色",
+     "requirement": "最高连胜 ≥ 12"},
+    {"id": "abyssal_grid", "name": "深渊网格", "desc": "黑金网格标记未知海沟",
      "requirement": "赛季通行证奖励"},
 ]
 
@@ -214,6 +234,8 @@ _TITLE_RULES = {
     'veteran': lambda c: _registered_long_enough(c),
     'cardmaster': lambda c: c['card_uses_total'] >= 100,
     'season_deep_1': lambda c: 'title:season_deep_1' in c['battle_pass_rewards'],
+    'tide_watcher': lambda c: c['card_uses_total'] >= 60,
+    'storm_cartographer': lambda c: c['matches'] >= 80,
 }
 
 _FRAME_RULES = {
@@ -223,6 +245,10 @@ _FRAME_RULES = {
     'aurora': lambda c: c['wins'] >= 30,
     'crimson': lambda c: c['matches'] >= 50,
     'season_tide_ring': lambda c: 'frame:season_tide_ring' in c['battle_pass_rewards'],
+    'abyssal_glow': lambda c: c['card_uses_total'] >= 150,
+    'tideglass': lambda c: c['matches'] >= 80,
+    'ember_wake': lambda c: c['longest_streak'] >= 12,
+    'star_compass': lambda c: 'frame:star_compass' in c['battle_pass_rewards'],
 }
 
 _CARD_BG_RULES = {
@@ -233,6 +259,10 @@ _CARD_BG_RULES = {
     'dusk': lambda c: c['matches'] >= 30,
     'aurora': lambda c: c['wins'] >= 50,
     'season_deep_1': lambda c: 'card_bg:season_deep_1' in c['battle_pass_rewards'],
+    'kelp_green': lambda c: c['card_uses_total'] >= 60,
+    'moonlit': lambda c: c['matches'] >= 80,
+    'coral_dawn': lambda c: c['longest_streak'] >= 12,
+    'abyssal_grid': lambda c: 'card_bg:abyssal_grid' in c['battle_pass_rewards'],
 }
 
 

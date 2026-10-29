@@ -26,6 +26,7 @@ from .social import SocialRepository
 from .stats import StatsRepository
 from .tasks import TaskRepository
 from .users import UserRepository
+from .battle_pass import BattlePassRepository
 
 
 class UnitOfWork:
@@ -88,6 +89,10 @@ class UnitOfWork:
     @property
     def tasks(self) -> TaskRepository:
         return self._repository("tasks", TaskRepository)
+
+    @property
+    def battle_pass(self) -> BattlePassRepository:
+        return self._repository("battle_pass", BattlePassRepository)
 
     def flush(self) -> None:
         self._require_session().flush()

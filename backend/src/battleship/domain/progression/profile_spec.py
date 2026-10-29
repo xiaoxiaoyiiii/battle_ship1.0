@@ -67,6 +67,8 @@ TITLES = [
      "rank_tier": 7},
     {"id": "sea_emperor", "name": "海皇", "desc": "整片海域只认一个名字",
      "rank_tier": 8},
+    {"id": "season_deep_1", "name": "深海远征舰长", "desc": "完成深海远征赛季通行证",
+     "requirement": "赛季通行证奖励"},
 ]
 
 # 12 个标签（设计稿 §5.2），id 用拼音短名（计划 §2.1 冻结）
@@ -108,6 +110,8 @@ FRAMES = [
      "rank_tier": 7},
     {"id": "king_aura", "name": "海皇光环", "desc": "环外还有一圈极淡的光",
      "rank_tier": 8},
+    {"id": "season_tide_ring", "name": "潮汐星环", "desc": "深海远征赛季专属头像框",
+     "requirement": "赛季通行证奖励"},
 ]
 
 # 6 个名片底色（设计稿 §5.4）
@@ -135,6 +139,8 @@ CARD_BGS = [
      "rank_tier": 7},
     {"id": "starfield", "name": "星海", "desc": "整片星海泡在海里",
      "rank_tier": 8},
+    {"id": "season_deep_1", "name": "深海远征", "desc": "深海远征赛季专属名片底色",
+     "requirement": "赛季通行证奖励"},
 ]
 
 DEFAULT_TITLE_ID = ''      # 空 = 不展示称号（库里的默认值）
@@ -173,6 +179,9 @@ def unlock_context(stats):
     stats = stats if isinstance(stats, dict) else {}
     wins = _as_int(stats.get('wins'))
     losses = _as_int(stats.get('losses'))
+    rewards = stats.get('battle_pass_rewards')
+    if not isinstance(rewards, (list, tuple, set)):
+        rewards = ()
     return {
         'wins': wins,
         'losses': losses,
@@ -183,6 +192,7 @@ def unlock_context(stats):
         # 段位下标（0=二级水手 … 7=船长，8=大舰长）。**缺省 0**：没打过排位
         # 就是最低段位，不凭空送段位外观；上界夹到 8（脏数据不该解锁海皇）。
         'rank_tier': min(ranks.ADMIRAL['index'], _as_int(stats.get('rank_tier'))),
+        'battle_pass_rewards': {str(item) for item in rewards},
     }
 
 
@@ -203,6 +213,7 @@ _TITLE_RULES = {
     'immortal': lambda c: c['longest_streak'] >= 15,
     'veteran': lambda c: _registered_long_enough(c),
     'cardmaster': lambda c: c['card_uses_total'] >= 100,
+    'season_deep_1': lambda c: 'title:season_deep_1' in c['battle_pass_rewards'],
 }
 
 _FRAME_RULES = {
@@ -211,6 +222,7 @@ _FRAME_RULES = {
     'gold': lambda c: c['longest_streak'] >= 10,
     'aurora': lambda c: c['wins'] >= 30,
     'crimson': lambda c: c['matches'] >= 50,
+    'season_tide_ring': lambda c: 'frame:season_tide_ring' in c['battle_pass_rewards'],
 }
 
 _CARD_BG_RULES = {
@@ -220,6 +232,7 @@ _CARD_BG_RULES = {
     'lava': lambda c: c['longest_streak'] >= 5,
     'dusk': lambda c: c['matches'] >= 30,
     'aurora': lambda c: c['wins'] >= 50,
+    'season_deep_1': lambda c: 'card_bg:season_deep_1' in c['battle_pass_rewards'],
 }
 
 
@@ -278,17 +291,34 @@ def _unlocked(rules, stats):
 
 def unlocked_titles(stats):
     """已解锁的称号 id 集合。"""
-    return _unlocked(_TITLE_RULES, stats)
+    owned = _unlocked(_TITLE_RULES, stats)
+    owned.update(_pass_owned(stats, 'title', _BY_ID['titles']))
+    return owned
 
 
 def unlocked_frames(stats):
     """已解锁的头像框 id 集合。"""
-    return _unlocked(_FRAME_RULES, stats)
+    owned = _unlocked(_FRAME_RULES, stats)
+    owned.update(_pass_owned(stats, 'frame', _BY_ID['frames']))
+    return owned
 
 
 def unlocked_card_bgs(stats):
     """已解锁的名片底色 id 集合。"""
-    return _unlocked(_CARD_BG_RULES, stats)
+    owned = _unlocked(_CARD_BG_RULES, stats)
+    owned.update(_pass_owned(stats, 'card_bg', _BY_ID['card_bgs']))
+    return owned
+
+
+def _pass_owned(stats, kind, catalog):
+    """把已领取的赛季外观并入现有解锁集合。"""
+    rewards = unlock_context(stats).get('battle_pass_rewards', set())
+    prefix = f'{kind}:'
+    return {
+        item[len(prefix):] for item in rewards
+        if isinstance(item, str) and item.startswith(prefix)
+        and item[len(prefix):] in catalog
+    }
 
 
 def effective_equipped(stats, title_id='', frame_id='', card_bg_id=''):

@@ -358,6 +358,10 @@ class ProgressionService:
         }
         stats["card_uses_total"] = uow.stats.card_uses_total(user_id)
         stats["rank_tier"] = self._tier_of(uow, user_id)
+        stats["battle_pass_rewards"] = {
+            f"{kind}:{reward_id}"
+            for kind, reward_id in uow.battle_pass.cosmetic_rewards(user_id)
+        }
         if profile_spec.PERK_UNLOCK_ALL in uow.stats.list_perks(user_id):
             stats[profile_spec.UNLOCK_ALL_FLAG] = True
         return stats

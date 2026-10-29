@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import HomeProgress from './HomeProgress.vue'
 import HomeTasks from './HomeTasks.vue'
+import BattlePassCard from './BattlePassCard.vue'
 import MatchFoundOverlay from '../../components/MatchFoundOverlay.vue'
 import StateSurface from '../../components/StateSurface.vue'
 import { cardArtUrl } from '../../cards/cardArt'
@@ -536,6 +537,7 @@ async function startAi(): Promise<void> {
       <!-- 在线与公告。 -->
       <aside class="home-side">
         <HomeTasks />
+        <BattlePassCard />
         <section class="home-card" data-testid="start-online" aria-labelledby="home-online-title">
           <div class="home-card__head">
             <h2 id="home-online-title" class="home-kicker">实时战况</h2>

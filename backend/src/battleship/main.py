@@ -26,6 +26,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from . import __version__
 from .config import Settings, load_settings
 from .http.routers import admin as admin_router
+from .http.routers import battle_pass as battle_pass_router
 from .http.routers import auth as auth_router
 from .http.routers import chat as chat_router
 from .http.routers import contracts as contracts_router
@@ -51,6 +52,7 @@ from .repositories import Database
 from .services.ai import AiService
 from .services.anticheat import AnticheatService
 from .services.auth import AuthService
+from .services.battle_pass import BattlePassService
 from .services.battle import BattleService
 from .services.chat import ChatService
 from .services.friends import FriendsService
@@ -96,6 +98,7 @@ class Application:
     magic: MagicService
     settlement: SettlementService
     progression: ProgressionService
+    battle_pass: BattlePassService
     anticheat: AnticheatService
     auth: AuthService
     matchmaking: MatchmakingService
@@ -205,6 +208,8 @@ def create_application(settings: Settings | None = None,
     # written inside the same #9 transaction and emitted around game_over.
     progression = ProgressionService(database)
     progression.register(settlement)
+    battle_pass = BattlePassService(database)
+    settlement.add_hook(battle_pass.settlement_hook)
 
     fastapi_app = FastAPI(
         title="Battleship 1.0 backend",
@@ -271,6 +276,7 @@ def create_application(settings: Settings | None = None,
     fastapi_app.include_router(chat_router.router)
     fastapi_app.include_router(spectate_router.router)
     fastapi_app.include_router(admin_router.router)
+    fastapi_app.include_router(battle_pass_router.router)
 
     # User-uploaded avatars are the only surviving piece of `static/`; they keep
     # the frozen /static/avatars/... URL so existing profile rows still resolve.
@@ -360,6 +366,7 @@ def create_application(settings: Settings | None = None,
     fastapi_app.state.magic = magic
     fastapi_app.state.settlement = settlement
     fastapi_app.state.progression = progression
+    fastapi_app.state.battle_pass = battle_pass
     fastapi_app.state.anticheat = anticheat
     fastapi_app.state.auth = auth
     fastapi_app.state.matchmaking = matchmaking
@@ -386,6 +393,7 @@ def create_application(settings: Settings | None = None,
         magic=magic,
         settlement=settlement,
         progression=progression,
+        battle_pass=battle_pass,
         anticheat=anticheat,
         auth=auth,
         matchmaking=matchmaking,

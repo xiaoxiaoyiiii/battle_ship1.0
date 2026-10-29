@@ -193,6 +193,102 @@ class UserPerk(Base):
     granted_at: Mapped[int | None] = mapped_column(sa.Integer)
 
 
+class BattlePassSeason(Base):
+    __tablename__ = "battle_pass_seasons"
+
+    id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    starts_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    ends_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    claim_ends_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    level_cap: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    total_xp: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    rules_version: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    status: Mapped[str] = mapped_column(sa.Text, nullable=False, server_default=text("'draft'"))
+    created_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    updated_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+
+
+class BattlePassLevel(Base):
+    __tablename__ = "battle_pass_levels"
+
+    season_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    level: Mapped[int] = mapped_column(sa.Integer, primary_key=True)
+    xp_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    free_kind: Mapped[str | None] = mapped_column(sa.Text)
+    free_reward_id: Mapped[str | None] = mapped_column(sa.Text)
+    premium_kind: Mapped[str | None] = mapped_column(sa.Text)
+    premium_reward_id: Mapped[str | None] = mapped_column(sa.Text)
+
+
+class UserBattlePass(Base):
+    __tablename__ = "user_battle_pass"
+
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    season_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    xp: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text("0"))
+    premium_unlocked: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text("0"))
+    version: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text("0"))
+    created_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    updated_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+
+
+class BattlePassClaim(Base):
+    __tablename__ = "battle_pass_claims"
+
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    season_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    level: Mapped[int] = mapped_column(sa.Integer, primary_key=True)
+    track: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    reward_kind: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    reward_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    grant_key: Mapped[str] = mapped_column(sa.Text, nullable=False, unique=True)
+    claimed_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+
+
+class BattlePassEvent(Base):
+    __tablename__ = "battle_pass_events"
+
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    season_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    source_kind: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    source_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    xp_delta: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    payload_hash: Mapped[str | None] = mapped_column(sa.Text)
+    created_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+
+    __table_args__ = (
+        sa.UniqueConstraint("user_id", "season_id", "source_kind", "source_id",
+                            name="uq_battle_pass_event_source"),
+        Index("idx_battle_pass_events_user", "user_id", "season_id", "created_at"),
+    )
+
+
+class BattlePassChallengeProgress(Base):
+    """按赛季记录挑战累计进度；完成标记用于保证奖励只发一次。"""
+
+    __tablename__ = "battle_pass_challenge_progress"
+
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    season_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    challenge_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    progress: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text("0"))
+    completed_at: Mapped[int | None] = mapped_column(sa.Integer)
+    updated_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+
+
+class UserCosmeticReward(Base):
+    __tablename__ = "user_cosmetic_rewards"
+
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    kind: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    reward_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    source_season_id: Mapped[str | None] = mapped_column(sa.Text)
+    source_level: Mapped[int | None] = mapped_column(sa.Integer)
+    source_track: Mapped[str | None] = mapped_column(sa.Text)
+    granted_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+
+
 class ProfileLike(Base):
     __tablename__ = "profile_likes"
 

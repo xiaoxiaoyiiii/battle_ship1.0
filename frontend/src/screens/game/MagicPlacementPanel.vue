@@ -3,11 +3,13 @@ import { computed, ref, watch } from 'vue'
 import AppOverlay from '../../components/AppOverlay.vue'
 import { cardArtUrl } from '../../cards/cardArt'
 import { useGameStore } from '../../stores/game'
+import { useCardEffectsStore } from '../../stores/cardEffects'
 import { sendBattleEvent } from '../../realtime/battle'
 import type { Point } from './view'
 
 // 逐艘放置与开局整盘布船是两个协议；这里仅消费服务端的局内放置请求。
 const game = useGameStore()
+const cardEffects = useCardEffectsStore()
 const request = computed(() => game.state.pending_placement)
 const selected = ref<Point | null>(null)
 const busy = ref(false)
@@ -57,7 +59,7 @@ async function submit(cancel = false): Promise<void> {
 </script>
 
 <template>
-  <AppOverlay draggable v-if="request && !game.state.dice_discard_pending" id="magic-placement-panel" :priority="180" :close-on-backdrop="false" labelledby="magic-placement-title">
+  <AppOverlay draggable v-if="request && !game.state.dice_discard_pending" :open="!cardEffects.busy && !busy" id="magic-placement-panel" :priority="180" :close-on-backdrop="false" labelledby="magic-placement-title">
     <section class="magic-placement battle-prompt">
       <header class="battle-prompt__head" data-drag-handle><div><p class="battle-prompt__context">部署战舰</p><h2 id="magic-placement-title">{{ title }} · 选择部署位置</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div><img v-if="cardArtUrl(title)" class="battle-prompt__card-art" :src="cardArtUrl(title)!" alt="" draggable="false" /></header>
       <p>{{ request.message || (kind === 'last_stand' ? '只能选择原本有自己战舰的位置。' : '在自己的海域选择一个合法位置，每次部署一艘。') }}</p>

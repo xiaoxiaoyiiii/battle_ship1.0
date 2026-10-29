@@ -146,14 +146,15 @@ async def bury(ctx: EffectContext) -> EffectResult:
 async def renwang(ctx: EffectContext) -> EffectResult:
     if int(ctx.caster.remaining_ships or 0) == 0:
         return EffectResult(False, "没有战舰可保护")
-    temps.store(ctx.room, {
+    choice = {
         "type": "shield_choice",
         "caster": ctx.caster_id,
         "ships": [
             {"positions": [{"x": p.x, "y": p.y} for p in ship.positions]}
             for ship in ctx.caster.ships
         ],
-    })
+    }
+    temps.store(ctx.room, choice)
     picked = await ctx.request_ship_pick(
         ctx.caster_id,
         "shield_choice",
@@ -165,7 +166,7 @@ async def renwang(ctx: EffectContext) -> EffectResult:
         # AI 座位同步给出答案：就地加盾并结束这一项，否则 temp 会一直挂着。
         already_shielded = picked.shield
         picked.shield = True
-        temps.finish(ctx.room, "shield_choice")
+        temps.finish_id(ctx.room, str(choice["id"]))
         await ctx.sync_player_ships(ctx.caster_id)
         return EffectResult(True, "已为 1 艘战舰添加护盾", extra={"audio_silent": already_shielded})
     return EffectResult(True, "请选择要保护的战舰", temp_data_id="shield_choice")

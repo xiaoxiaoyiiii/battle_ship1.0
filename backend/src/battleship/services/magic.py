@@ -84,6 +84,7 @@ from .rooms import Connection, EventPublisher, NullPublisher, RoomService
 from .priority import guard_phase_write
 from .settlement import SettlementService
 from .magic_audio import COMPLETION_AUDIO_CARDS, PICK_AUDIO_REASONS, emit_magic_sfx
+from .card_animation import chain_card_effect, effect_description, effect_for_viewer
 
 logger = get_logger("magic")
 
@@ -782,6 +783,17 @@ class MagicService:
                 return {"status": "error", "message": error}
 
         caster = room.players[player_id]
+        motion = None
+        if kind in ("revive", "last_stand"):
+            if kind == "revive" and not caster.sunken_ships:
+                await self._finish_placement(room, player_id, kind)
+                return {"status": "error", "message": "没有可复活的战舰"}
+            motion = effect_description("死者苏生" if kind == "revive" else "绝处逢生",
+                                        "revive" if kind == "revive" else "last_chance", player_id, player_id)
+            motion["_private_cells"] = [{"x": x, "y": y}]
+            await self._present_card_effect(room, motion, "effect_windup")
+            if self.rooms.get_room(room.id) is not room or room.state == RoomState.GAME_OVER:
+                return dict(FINISHED_GAME)
         if kind == "shenji_redeploy":
             targets = list(room.game_effects.get("shenji_redeploy_ships") or [])
             revived = None
@@ -856,6 +868,11 @@ class MagicService:
         await self._emit_player_ships(room, player_id)
         if caster.socket_id:
             await self._publisher.emit("message", {"text": message}, to=caster.socket_id)
+        if motion:
+            await self._emit_board_attacks(room)
+            await emit_magic_sfx(self._publisher, room, player_id, motion["card"])
+            pending["animated_audio"] = True
+            await self._present_card_effect(room, motion, "effect_tail")
         if int(pending.get("remaining") or 0) > 0:
             await self._emit_placement_request(room, player_id)
         else:
@@ -886,9 +903,10 @@ class MagicService:
         # Legacy ack shape for the generic cancel path: no extra message key.
         return {"status": "success"}
 
-    async def _emit_effect_notice(self, room: Room, player_id: str, card: str, result: str) -> None:
+    async def _emit_effect_notice(self, room: Room, player_id: str, card: str, result: str, *, sound: bool = True) -> None:
         """只广播已落地的效果摘要，不把选择引导或私有手牌内容当作结果。"""
-        await emit_magic_sfx(self._publisher, room, player_id, card)
+        if sound:
+            await emit_magic_sfx(self._publisher, room, player_id, card)
         await self._publisher.emit(
             "game_message",
             {"type": "magic_effect", "message": f"{self._name(room, player_id)}的「{card}」：{result}"},
@@ -932,7 +950,7 @@ class MagicService:
         }.get(kind)
         if placed > 0 and card:
             result = f"已复活并部署{placed}艘战舰" if kind == "revive" else f"已部署{placed}艘战舰"
-            await self._emit_effect_notice(room, player_id, card, result)
+            await self._emit_effect_notice(room, player_id, card, result, sound=not pending.get("animated_audio"))
         await self._activate_magic_temp(room)
         await self._sync_each_seat(room)
 
@@ -1488,6 +1506,11 @@ class MagicService:
                 await self._sync_each_seat(room)
                 continue
 
+            motion = chain_card_effect(room, item)
+            if motion:
+                await self._present_card_effect(room, motion, "effect_windup")
+                if self.rooms.get_room(room.id) is not room or (not finished_before_display and room.state == RoomState.GAME_OVER):
+                    break
             effect = registry.effect_for(item.card)
             if effect is None:
                 effect_result = EffectResult(
@@ -1595,7 +1618,8 @@ class MagicService:
             )
             if (effect_result.success and not effect_result.temp_data_id
                     and not extra.get("audio_silent")
-                    and item.card.name not in COMPLETION_AUDIO_CARDS and not awaiting_pick):
+                    and item.card.name not in COMPLETION_AUDIO_CARDS and not awaiting_pick
+                    and not (effect_result.negate_target and room.chain)):
                 await emit_magic_sfx(self._publisher, room, item.player_id, item.card.name)
             if effect_result.success and not effect_result.game_over and room.state != RoomState.GAME_OVER:
                 opponent_id = room.opponent_of(item.player_id)
@@ -1620,6 +1644,8 @@ class MagicService:
                 await self._emit_hand(player)
             await self._emit_ships_updated(room)
             await self._sync_each_seat(room)
+            if motion:
+                await self._present_card_effect(room, motion, "effect_tail", success=effect_result.success)
             if room.chain and room.chain_animation_clients:
                 await asyncio.sleep(0.18)
 
@@ -1675,6 +1701,18 @@ class MagicService:
     async def _present_chain_item(self, room: Room, item: ChainItem,
                                   stack: dict, *, first: bool) -> None:
         """双方卡面彻底离场后才调用效果；老客户端和断线不阻塞房间。"""
+        await self._animation_stage(room, {
+            "stage": "card", "chain": stack.get("chain", []), "order": len(room.chain) + 1,
+            "first": first, "negated_skip": bool(item.negated), "negated_by": item.negated_by,
+        })
+
+    async def _present_card_effect(self, room: Room, effect: dict, stage: str,
+                                   *, success: bool = True) -> None:
+        effect.setdefault("effect_id", uuid.uuid4().hex)
+        await self._animation_stage(room, {"stage": stage, "success": success}, effect=effect)
+
+    async def _animation_stage(self, room: Room, payload: dict, *, effect: dict | None = None) -> None:
+        """每阶段独立令牌；双方到达落点/收尾后才放行，旧回执不能越级。"""
         room.chain_animation_id = uuid.uuid4().hex
         room.chain_animation_players = {
             pid: player.socket_id for pid, player in room.players.items()
@@ -1682,11 +1720,15 @@ class MagicService:
             and room.chain_animation_clients.get(pid) == player.socket_id
         }
         room.chain_animation_deadline = time.monotonic() + 6.0
-        await self._publisher.emit("chain_resolving", {
-            "room_id": room.id, "animation_id": room.chain_animation_id,
-            "chain": stack.get("chain", []), "order": len(room.chain) + 1,
-            "first": first, "negated_skip": bool(item.negated),
-        }, room=room.id)
+        common = {**payload, "room_id": room.id, "animation_id": room.chain_animation_id}
+        if effect:
+            for pid, player in room.players.items():
+                if player.socket_id:
+                    await self._publisher.emit("chain_resolving", {
+                        **common, "effect": effect_for_viewer(effect, pid),
+                    }, to=player.socket_id)
+        else:
+            await self._publisher.emit("chain_resolving", common, room=room.id)
         finished_before_display = room.state == RoomState.GAME_OVER
         while self.chain_animation_pending(room):
             if (self.rooms.get_room(room.id) is not room
@@ -1812,9 +1854,15 @@ class MagicService:
         async def request_ship_pick(chooser_id: str, reason: str, message: str,
                                     allow_duplicate: bool = False,
                                     silent: bool = False):
-            return await self.request_ship_pick(
+            picked = await self.request_ship_pick(
                 room, chooser_id, reason, message, allow_duplicate, silent, source_id=item.player_id
             )
+            if picked is not None and reason == "shield_choice":
+                # AI同步答案也走真人同一确认漏斗，卡面后等待前导与收尾。
+                index = next((i for i, ship in enumerate(room.players[chooser_id].ships) if ship is picked), None)
+                if index is not None:
+                    await self._confirm_shield(room, chooser_id, {"type": "shield_choice", "caster": chooser_id}, {"ship_indices": [index]})
+            return picked
 
         async def sacrifice_ship(player_id: str, ship: Any, reason: str) -> None:
             await self._sacrifice_ship(room, player_id, ship, reason, source_id=item.player_id)
@@ -2368,10 +2416,18 @@ class MagicService:
                 skipped += 1
                 continue
             shields_added += int(not caster.ships[index].shield)
-            caster.ships[index].shield = True
             selected.append(caster.ships[index])
         if not selected:
             return {"status": "error", "message": "无效的选择（已沉没的船不能加护盾）"}
+        motion = None
+        if shields_added:
+            motion = effect_description("仁王之盾", "shield", player_id, player_id)
+            motion["_private_cells"] = [{"x": p.x, "y": p.y} for ship in selected for p in ship.positions]
+            await self._present_card_effect(room, motion, "effect_windup")
+            if self.rooms.get_room(room.id) is not room or room.state == RoomState.GAME_OVER:
+                return dict(FINISHED_GAME)
+        for ship in selected:
+            ship.shield = True
         magic_temps.finish(room, "shield_choice", owner=player_id)
         interaction_rules.consume_ship_pick(room, player_id, "shield_choice")
         await self._emit_player_ships(room, player_id)
@@ -2380,10 +2436,6 @@ class MagicService:
             {
                 "player": player_id,
                 "count": len(selected),
-                "positions": [{"x": p.x, "y": p.y} for ship in selected for p in ship.positions],
-                "ships": [
-                    [{"x": p.x, "y": p.y} for p in ship.positions] for ship in selected
-                ],
             },
             room=room.id,
         )
@@ -2394,6 +2446,8 @@ class MagicService:
         message = f"为{len(selected)}艘战舰添加了护盾"
         if shields_added:
             await emit_magic_sfx(self._publisher, room, player_id, "仁王之盾")
+        if motion:
+            await self._present_card_effect(room, motion, "effect_tail")
         if skipped:
             message += f"（{skipped}艘已沉没，已跳过）"
         return {"status": "success", "message": message}

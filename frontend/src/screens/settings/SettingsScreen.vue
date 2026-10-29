@@ -370,6 +370,14 @@ onMounted(() => {
               @click="chooseMotion(true)">减少动效</button>
           </div>
           </div>
+          <div class="settings__control-row">
+            <div class="settings__control-copy"><h3 class="settings__block-title">战斗震动</h3><p class="settings__note">调整魔法命中时的画面震动，减少动效时自动关闭</p></div>
+            <div class="settings__seg" role="group" aria-label="战斗震动">
+              <button type="button" class="settings__seg-item" data-testid="settings-shake-strong" :aria-pressed="ui.battleShake === 'strong'" :class="{ 'is-active': ui.battleShake === 'strong' }" @click="ui.setBattleShake('strong')">明显</button>
+              <button type="button" class="settings__seg-item" data-testid="settings-shake-light" :aria-pressed="ui.battleShake === 'light'" :class="{ 'is-active': ui.battleShake === 'light' }" @click="ui.setBattleShake('light')">轻微</button>
+              <button type="button" class="settings__seg-item" data-testid="settings-shake-off" :aria-pressed="ui.battleShake === 'off'" :class="{ 'is-active': ui.battleShake === 'off' }" @click="ui.setBattleShake('off')">关闭</button>
+            </div>
+          </div>
           </div>
 
           <aside class="settings__preview" data-testid="settings-preview" aria-label="外观预览">

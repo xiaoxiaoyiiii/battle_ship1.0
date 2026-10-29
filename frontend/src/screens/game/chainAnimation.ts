@@ -13,12 +13,14 @@ export interface ChainArtCard {
 export interface ChainOutcome {
   negated: boolean
   failed: boolean
+  negatedBy?: string
 }
 export interface ChainCue {
   kind: 'join' | 'success' | 'resolve'
   cards: ChainArtCard[]
   order: number
   result?: ChainOutcome
+  animationId?: string
   start: number
   duration: number
 }
@@ -104,7 +106,7 @@ export class ChainTimeline {
     this.append({ kind: 'success', cards, order: cards.length }, now, CHAIN_SUCCESS_MS)
     results.forEach((item, i) => this.append({
       kind: 'resolve', cards, order: cards.length - i,
-      result: { negated: Boolean(item.negated_skip), failed: item.success === false },
+      result: { negated: Boolean(item.negated_skip), failed: item.success === false, negatedBy: String(item.negated_by ?? '') },
     }, now, CHAIN_RESOLVE_MS))
     this.stack = []; this.closed = true; this.lastResolution = signature
   }
@@ -116,7 +118,8 @@ export class ChainTimeline {
     this.stack = cards; this.closed = false
     if (payload.first) this.append({ kind: 'success', cards, order: cards.length }, now, CHAIN_SUCCESS_MS)
     this.append({ kind: 'resolve', cards, order: Number(payload.order),
-      result: { negated: payload.negated_skip === true, failed: false },
+      animationId: String(payload.animation_id ?? ''),
+      result: { negated: payload.negated_skip === true, failed: false, negatedBy: String(payload.negated_by ?? '') },
     }, now, CHAIN_RESOLVE_MS)
   }
 

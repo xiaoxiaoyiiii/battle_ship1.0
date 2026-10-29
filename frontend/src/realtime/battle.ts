@@ -10,6 +10,7 @@ import { useMatchStore } from '../stores/match'
 import { useUiStore } from '../stores/ui'
 import { useAudioStore } from '../stores/audio'
 import { useChainAnimationStore } from '../stores/chainAnimation'
+import { useCardEffectsStore } from '../stores/cardEffects'
 import type { InboundEvent, OutboundEvent } from '../socket/events.gen'
 import type { CardLike, Point } from '../screens/game/view'
 import { actionWaitReason, WAIT_EXEMPT_EVENTS } from '../screens/game/view'
@@ -291,11 +292,20 @@ export function applyBattleEvent(
       break
     }
     case 'chain_resolving': {
-      useChainAnimationStore(pinia).present(payload)
+      if(typeof payload.room_id==='string' && payload.room_id!==state.room_id)break
+      if(payload.stage==='effect_windup'||payload.stage==='effect_tail')useCardEffectsStore(pinia).begin(payload)
+      else {
+        useChainAnimationStore(pinia).present(payload)
+        // 声音消费真实服务端标记，不能依赖卡面动画是否启用。
+        if(payload.negated_skip===true && ['失灵！','加百列之光'].includes(String(payload.negated_by??''))) {
+          audio.playCardEffect({card:payload.negated_by,effect_id:payload.animation_id})
+        }
+      }
       match.closeChainWindow()
       break
     }
     case 'chain_resolved': {
+      useCardEffectsStore(pinia).reset()
       useChainAnimationStore(pinia).resolve(payload)
       game.applyServerState({ chain: { chain: [], chain_len: 0, targets_dropped: 0 } })
       match.closeChainWindow()
@@ -549,12 +559,14 @@ export function installBattleListeners(socket: TypedSocket, pinia?: Pinia): () =
       if (isBattleEvent(event)) applyBattleEvent(event, payload, pinia)
       if (event === 'chain_resolving' && typeof payload.animation_id === 'string') {
         const playerId = useGameStore(pinia).state.player_id
-        useChainAnimationStore(pinia).whenFinished(() => {
+        const complete = (): void => {
           if (!socket.socket.connected) return
           void socket.emitEvent('chain_animation_complete', {
             room_id: payload.room_id, player_id: playerId, animation_id: payload.animation_id,
           }).catch(() => { /* 断线由服务端有界等待兜底。 */ })
-        })
+        }
+        if(payload.stage==='effect_windup'||payload.stage==='effect_tail')useCardEffectsStore(pinia).whenFinished(complete,payload.animation_id)
+        else useChainAnimationStore(pinia).whenFinished(complete)
       }
     }),
   )
@@ -624,6 +636,7 @@ export function acquireBattleChannel(pinia?: Pinia): () => void {
     const onDisconnect = (): void => {
       registeredAnimationSeat = ''
       useChainAnimationStore(pinia).reset()
+      useCardEffectsStore(pinia).reset()
       ui.setConnection(false)
     }
     socket.socket.on('connect', onConnect)
@@ -707,7 +720,7 @@ export function sendBattleEvent(
   const match = useMatchStore()
   const waiting = actionWaitReason(useGameStore().state, event, {
     pending: battleActionPending.value,
-    chainBusy: Boolean(match.chainWindow),
+    chainBusy: Boolean(match.chainWindow) || useCardEffectsStore().busy,
     interactionReason: match.pickRequest?.message || (match.shieldChoice ? '请先完成仁王之盾的选船' : ''),
   })
   if (waiting) return Promise.resolve({ status: 'error', message: waiting })

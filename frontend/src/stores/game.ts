@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useMatchStore } from './match'
 import { useChainAnimationStore } from './chainAnimation'
 import { useCardDrawStore } from './cardDraw'
+import { useCardEffectsStore } from './cardEffects'
 import {
   GAME_STATE_SCHEMA,
   defaultGameState,
@@ -42,6 +43,7 @@ export const useGameStore = defineStore('game', () => {
     if (newRoom || restarted) {
       useMatchStore().reset()
       useCardDrawStore().reset()
+      useCardEffectsStore().reset(true)
       state.value = defaultGameState()
     }
     if ('opponent_name' in next && !('opponent_registered' in next)) next.opponent_registered = false
@@ -86,6 +88,7 @@ export const useGameStore = defineStore('game', () => {
   function reset(): void {
     useMatchStore().reset()
     useCardDrawStore().reset()
+    useCardEffectsStore().reset(true)
     state.value = defaultGameState()
     unknownFields.value = []
     revision.value += 1

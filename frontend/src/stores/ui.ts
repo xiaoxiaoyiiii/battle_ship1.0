@@ -14,6 +14,7 @@ import { SOCKET_ERROR_CODES } from '../socket/events.gen'
 
 export type ThemeName = 'chart' | 'journal' | 'night'
 export type MotionPreference = 'auto' | 'reduced'
+export type BattleShake = 'strong' | 'light' | 'off'
 export type ContrastPreference = 'auto' | 'high'
 export type FontScale = 'normal' | 'large' | 'xlarge'
 export type AuthRequestMode = 'login' | 'register'
@@ -21,6 +22,7 @@ export type ConnectionState = 'online' | 'offline'
 
 const THEME_KEY = 'battleship.ui.theme'
 const MOTION_KEY = 'battleship.ui.motion'
+const BATTLE_SHAKE_KEY = 'battleship.ui.battleShake'
 const CONTRAST_KEY = 'battleship.ui.contrast'
 const FONT_SCALE_KEY = 'battleship.ui.fontScale'
 const ACCENT_KEY = 'battleship.ui.accent'
@@ -76,6 +78,10 @@ function readMotion(): MotionPreference {
   } catch {
     return 'auto'
   }
+}
+
+function readBattleShake(): BattleShake {
+  try { const raw=storage()?.getItem(BATTLE_SHAKE_KEY);return raw==='off'||raw==='light'?raw:'strong' } catch { return 'strong' }
 }
 
 function readContrast(): ContrastPreference {
@@ -181,6 +187,11 @@ export const useUiStore = defineStore('ui', () => {
   // ------------------------------------------------------------- theme ----
   const theme = ref<ThemeName>(readTheme())
   const motion = ref<MotionPreference>(readMotion())
+  const battleShake = ref<BattleShake>(readBattleShake())
+  function setBattleShake(value: BattleShake): void {
+    battleShake.value=value==='light'||value==='off'?value:'strong'
+    try { storage()?.setItem(BATTLE_SHAKE_KEY,battleShake.value) } catch { /* 本次会话仍生效。 */ }
+  }
   const contrast = ref<ContrastPreference>(readContrast())
   const fontScale = ref<FontScale>(readFontScale())
 
@@ -441,6 +452,8 @@ export const useUiStore = defineStore('ui', () => {
     clearConnectionIssue,
     theme,
     motion,
+    battleShake,
+    setBattleShake,
     contrast,
     fontScale,
     setTheme,

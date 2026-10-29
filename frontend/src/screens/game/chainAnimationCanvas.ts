@@ -1,4 +1,5 @@
 import { CHAIN_FLIGHT_MS, CHAIN_ENTRY_MS, type ChainArtCard, type ChainFrame } from './chainAnimation'
+import { drawCounterEffect } from './cardEffects/canvas'
 
 type ArtLookup = (name: string) => HTMLImageElement | null
 const clamp = (n: number): number => Math.max(0, Math.min(1, n))
@@ -79,7 +80,8 @@ export function drawChainFrame(ctx: CanvasRenderingContext2D, frame: ChainFrame,
         card(ctx, item, art, center + (item.order < cue.order ? -1 : 1) * (compact ? 218 : 280), 340, compact ? 110 : 125)
         ctx.restore()
       }
-      const grey = Boolean(cue.result?.negated || cue.result?.failed)
+      const counter = cue.result?.negatedBy === '失灵！' ? 'negate' : cue.result?.negatedBy === '加百列之光' ? 'gabriel' : null
+      const grey = Boolean(cue.result?.failed || (cue.result?.negated && (!counter || progress >= (counter === 'gabriel' ? .50 : .33))))
       card(ctx, active, art, center, 330, compact ? 245 : 260, 0, grey)
       number(ctx, active.order, center + 137, 490, 106)
       if (grey) {
@@ -93,6 +95,7 @@ export function drawChainFrame(ctx: CanvasRenderingContext2D, frame: ChainFrame,
         const light = ctx.createRadialGradient(center, 330, 80, center, 330, 275)
         light.addColorStop(0, '#d6c78655'); light.addColorStop(1, 'transparent'); ctx.fillStyle = light; ctx.fillRect(center - 275, 55, 550, 550); ctx.restore()
       }
+      if(cue.result?.negated && counter)drawCounterEffect(ctx,counter,progress,{x:center-(compact?245:260)/2,y:330-(compact?245:260)*.75,w:compact?245:260,h:(compact?245:260)*1.5})
     }
   } else {
     for (let i = 1; i < positions.length; i++) chain(ctx, positions[i - 1].x + 45, positions[i - 1].y, positions[i].x - 45, positions[i].y)

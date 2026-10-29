@@ -14,6 +14,8 @@ import MagicDiscardPanel from './MagicDiscardPanel.vue'
 import PhasePriorityPrompt from './PhasePriorityPrompt.vue'
 import ChainAnimationOverlay from './ChainAnimationOverlay.vue'
 import CardDrawAnimation from './CardDrawAnimation.vue'
+import CardEffectOverlay from './CardEffectOverlay.vue'
+import { useCardEffectsStore } from '../../stores/cardEffects'
 import { useCardDrawStore } from '../../stores/cardDraw'
 import { useChainAnimationStore } from '../../stores/chainAnimation'
 import { CARDS } from '../../cards/cardData'
@@ -82,6 +84,7 @@ const match = useMatchStore()
 const result = useResultStore()
 const ui = useUiStore()
 const chainAnimation = useChainAnimationStore()
+const cardEffects = useCardEffectsStore()
 
 let releaseChannel: (() => void) | null = null
 let releaseMatchChannel: (() => void) | null = null
@@ -129,6 +132,7 @@ const selectedCardKey = ref('')
 const detailOpen = computed(() => selectedCardIndex.value >= 0)
 
 const shieldPicks = ref<number[]>([])
+const shieldSubmitting = ref(false)
 const shieldError = ref('')
 const shieldOpen = computed(() => Boolean(match.shieldChoice) && !match.pickRequest)
 const shieldSelectedKeys = computed<string[]>(() => {
@@ -166,7 +170,7 @@ const priorityRequest = computed(() =>
 )
 const priorityRemaining = computed(() => Math.max(0, Math.ceil((Number(priorityRequest.value?.deadline ?? 0) - now.value) / 1000)))
 const chainBusy = computed(
-  () => Boolean(state.value.chain_waiting) || chainItems(state.value.chain).length > 0,
+  () => Boolean(state.value.chain_waiting) || chainItems(state.value.chain).length > 0 || cardEffects.busy,
 )
 const pendingPick = computed<PendingPickLike | null>(() => {
   if (match.pickRequest) {
@@ -1264,7 +1268,8 @@ function toggleShieldShip(x: number, y: number): void {
 }
 
 async function confirmShieldChoice(): Promise<void> {
-  if (!match.shieldChoice || !shieldPicks.value.length) return
+  if (!match.shieldChoice || !shieldPicks.value.length || shieldSubmitting.value) return
+  shieldSubmitting.value = true
   const request = match.shieldChoice
   const picks = shieldPicks.value.slice(0, 3)
   try {
@@ -1284,7 +1289,7 @@ async function confirmShieldChoice(): Promise<void> {
     await refreshMagicState()
   } catch (error) {
     shieldError.value = '加盾失败：' + String(error)
-  }
+  } finally { shieldSubmitting.value = false }
 }
 
 async function cancelShieldChoice(): Promise<void> {
@@ -2252,7 +2257,7 @@ function backToLobby(): void {
     </div>
     </Transition>
 
-    <section v-if="shieldOpen" ref="pickPanelEl" :style="pickPanelStyle" class="game-dialog game-shield-choice game-pick-float battle-prompt" :class="{ 'is-dragging': pickDrag.state.value.dragging }" data-testid="game-shield-choice" role="dialog" aria-label="仁王之盾选择">
+    <section v-if="shieldOpen && !cardEffects.busy && !shieldSubmitting" ref="pickPanelEl" :style="pickPanelStyle" class="game-dialog game-shield-choice game-pick-float battle-prompt" :class="{ 'is-dragging': pickDrag.state.value.dragging }" data-testid="game-shield-choice" role="dialog" aria-label="仁王之盾选择">
       <header ref="pickHeadEl" class="battle-prompt__head battle-prompt__handle" @pointerdown="pickDrag.onPointerDown"><div><p class="battle-prompt__context">选择保护目标</p><h2 class="game-dialog__title" data-testid="game-shield-choice-title">「仁王之盾」：请选择要保护的战舰</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div><img v-if="cardArtUrl('仁王之盾')" class="battle-prompt__card-art" :src="cardArtUrl('仁王之盾')!" alt="" draggable="false" /></header>
       <p class="game-dialog__hint" data-testid="game-shield-choice-hint">在自己海域点击高亮的战舰格；再点一次取消选择。</p>
       <p class="game-dialog__hint battle-prompt__progress" data-testid="game-shield-choice-count" aria-live="polite">已选 {{ shieldPicks.length }} / 3 艘</p>
@@ -2264,7 +2269,7 @@ function backToLobby(): void {
       </div>
     </section>
 
-    <section v-if="match.pickRequest" ref="pickPanelEl" :style="pickPanelStyle" class="game-dialog game-pick game-pick-float battle-prompt" :class="{ 'is-dragging': pickDrag.state.value.dragging }" data-testid="game-ship-pick" role="alertdialog" aria-label="选船">
+    <section v-if="match.pickRequest && !cardEffects.busy" ref="pickPanelEl" :style="pickPanelStyle" class="game-dialog game-pick game-pick-float battle-prompt" :class="{ 'is-dragging': pickDrag.state.value.dragging }" data-testid="game-ship-pick" role="alertdialog" aria-label="选船">
       <header ref="pickHeadEl" class="battle-prompt__head battle-prompt__handle" @pointerdown="pickDrag.onPointerDown"><div><p class="battle-prompt__context">等待你的选择</p><h2 class="game-dialog__title">请选择一艘自己的战舰</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div></header>
       <p class="game-dialog__hint" data-testid="game-ship-pick-message">{{ match.pickRequest.message }}</p>
       <p class="game-dialog__hint battle-prompt__status">{{ pickSubmitting ? '正在确认选择…' : '在己方海域点击高亮的战舰，即可确认选择。' }}</p>
@@ -2409,6 +2414,7 @@ function backToLobby(): void {
       <p class="game-discard-detail__desc">{{ discardDetailInfo?.description || '服务端没有下发这张卡的效果描述。' }}</p>
     </div>
     <ChainAnimationOverlay :suspended="Boolean(selection || match.pickRequest || match.shieldChoice || state.needs_reset)" />
+    <CardEffectOverlay />
     <MagicPlacementPanel />
     <MagicChoicePanel />
     <MagicDiscardPanel />

@@ -70,6 +70,17 @@ const failed = computed(() => viewed.value.status === 'error')
 const ready = computed(() => viewed.value.status === 'ready' && stats.value !== null)
 
 const avatar = computed(() => readString(stats.value, 'avatar'))
+const avatarInput = ref<HTMLInputElement | null>(null)
+const avatarPreview = ref('')
+const avatarUploading = ref(false)
+const avatarMessage = ref('')
+const avatarError = ref(false)
+const avatarVersion = ref(0)
+const displayedAvatar = computed(() => {
+  if (avatarPreview.value) return avatarPreview.value
+  if (!avatar.value || !avatarVersion.value) return avatar.value
+  return avatar.value + (avatar.value.includes('?') ? '&' : '?') + 'v=' + avatarVersion.value
+})
 const displayName = computed(() => readString(stats.value, 'username') || targetUsername.value || '玩家')
 const statusText = computed(() => readString(stats.value, 'status_text'))
 const signature = computed(() => readString(stats.value, 'signature'))
@@ -281,6 +292,79 @@ function editorItemUnlocked(item: unknown): boolean {
 
 function editorTagSelected(id: string): boolean {
   return editorDraft.value.tags.includes(id)
+}
+
+const AVATAR_MAX_BYTES = 2 * 1024 * 1024
+const AVATAR_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif'])
+const AVATAR_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif'])
+
+function setAvatarMessage(message: string, error = false): void {
+  avatarMessage.value = message
+  avatarError.value = error
+}
+
+function clearAvatarPreview(): void {
+  if (avatarPreview.value.startsWith('blob:')) URL.revokeObjectURL(avatarPreview.value)
+  avatarPreview.value = ''
+}
+
+function openAvatarPicker(): void {
+  if (!isSelf.value || avatarUploading.value) return
+  avatarInput.value?.click()
+}
+
+async function uploadAvatar(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement | null
+  const file = input?.files?.[0]
+  if (input) input.value = ''
+  if (!file || !isSelf.value || avatarUploading.value) return
+
+  const extension = file.name.toLowerCase().split('.').pop() || ''
+  if (!AVATAR_MIME_TYPES.has(file.type) && !AVATAR_EXTENSIONS.has(extension)) {
+    setAvatarMessage('请选择 PNG、JPG 或 GIF 图片', true)
+    return
+  }
+  if (file.size > AVATAR_MAX_BYTES) {
+    setAvatarMessage('头像不能超过 2MB', true)
+    return
+  }
+
+  clearAvatarPreview()
+  avatarPreview.value = URL.createObjectURL(file)
+  avatarUploading.value = true
+  setAvatarMessage('正在上传头像…')
+  try {
+    const form = new FormData()
+    form.append('avatar', file)
+    const response = await fetch('/api/profile/avatar', {
+      method: 'POST',
+      headers: { accept: 'application/json' },
+      body: form,
+    })
+    let body: JsonObject | null = null
+    try {
+      const parsed: unknown = await response.json()
+      body = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed as JsonObject
+        : null
+    } catch {
+      body = null
+    }
+    if (!response.ok || body?.success !== true) {
+      throw new Error(String(body?.error || '头像上传失败'))
+    }
+    await store.loadOwn(true)
+    await settings.loadOwn()
+    await refresh()
+    avatarVersion.value = Date.now()
+    clearAvatarPreview()
+    setAvatarMessage('头像已更新')
+  } catch (error) {
+    clearAvatarPreview()
+    setAvatarMessage(error instanceof Error ? error.message : String(error), true)
+  } finally {
+    avatarUploading.value = false
+  }
 }
 
 async function saveEditor(): Promise<void> {
@@ -503,10 +587,33 @@ watch(targetUsername, () => {
       <article class="profile__card" :data-bg="cardBg">
         <header class="profile__hero">
           <div class="profile__avatar-wrap">
-            <img v-if="avatar" class="profile__avatar" data-testid="profile-avatar"
-                 :src="avatar" :data-frame="frame" alt="" />
+            <img v-if="displayedAvatar" class="profile__avatar" data-testid="profile-avatar"
+                 :src="displayedAvatar" :data-frame="frame" alt="" />
             <span v-else class="profile__avatar profile__avatar--empty" data-testid="profile-avatar"
                   :data-frame="frame" aria-hidden="true">⚓</span>
+            <div v-if="isSelf" class="profile__avatar-control">
+              <button
+                type="button"
+                class="profile__avatar-upload"
+                data-testid="profile-avatar-upload-button"
+                :disabled="avatarUploading"
+                @click="openAvatarPicker"
+              >
+                {{ avatarUploading ? '上传中…' : '更换头像' }}
+              </button>
+              <input
+                ref="avatarInput"
+                class="profile__avatar-input"
+                data-testid="profile-avatar-upload"
+                type="file"
+                accept="image/png,image/jpeg,image/gif"
+                @change="uploadAvatar"
+              />
+              <span class="profile__avatar-hint">PNG / JPG / GIF · 2MB</span>
+              <span v-if="avatarMessage" class="profile__avatar-message" :class="{ 'is-error': avatarError }" role="status">
+                {{ avatarMessage }}
+              </span>
+            </div>
             <span class="profile__level" data-testid="profile-level">{{ levelText }}</span>
           </div>
           <div class="profile__who">
@@ -663,7 +770,8 @@ watch(targetUsername, () => {
             <div class="profile-editor__preview-label">实时预览</div>
             <div class="profile-editor__preview-cover"></div>
             <div class="profile-editor__preview-identity">
-              <span class="profile-editor__preview-avatar" :data-frame="editorDraft.frame_id">⚓</span>
+              <img v-if="displayedAvatar" class="profile-editor__preview-avatar" :src="displayedAvatar" :data-frame="editorDraft.frame_id" alt="" />
+              <span v-else class="profile-editor__preview-avatar" :data-frame="editorDraft.frame_id">⚓</span>
               <div><h3>{{ displayName }}</h3><span>{{ editorTitle }}</span></div>
             </div>
             <p class="profile-editor__preview-status">{{ editorDraft.status_text || '写一句让别人记住你的航海状态' }}</p>
@@ -852,6 +960,61 @@ watch(targetUsername, () => {
   flex: 0 0 auto;
 }
 
+.profile__avatar-control {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  min-height: 36px;
+  margin-top: -2px;
+}
+
+.profile__avatar-upload {
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--role-action) 72%, white 8%);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--role-action) 18%, var(--panel));
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.profile__avatar-upload:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--role-action) 30%, var(--panel));
+}
+
+.profile__avatar-upload:disabled {
+  cursor: wait;
+  opacity: .65;
+}
+
+.profile__avatar-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.profile__avatar-hint,
+.profile__avatar-message {
+  color: var(--text-muted);
+  font-size: 9px;
+  line-height: 1.3;
+  text-align: center;
+}
+
+.profile__avatar-message {
+  color: var(--success);
+}
+
+.profile__avatar-message.is-error {
+  color: var(--danger);
+}
+
 .profile__avatar {
   width: 128px;
   height: 128px;
@@ -879,6 +1042,26 @@ watch(targetUsername, () => {
 .profile__avatar[data-frame='ember_wake'] { border-color: #e78353; box-shadow: 0 0 0 4px rgb(231 131 83 / 15%), 0 0 24px rgb(231 131 83 / 28%); }
 .profile__avatar[data-frame='star_compass'] { border-color: #e7c36a; box-shadow: 0 0 0 4px rgb(231 195 106 / 16%), 0 0 22px rgb(231 195 106 / 26%); }
 .profile__avatar[data-frame='season_tide_ring'] { border-color: #8ee0ef; box-shadow: 0 0 0 5px rgb(78 200 224 / 18%), 0 0 34px rgb(78 200 224 / 36%); }
+.profile__avatar[data-frame='bronze_compass'] { border-color: #c58a55; box-shadow: 0 0 0 4px rgb(197 138 85 / 18%), 0 0 20px rgb(197 138 85 / 24%); }
+.profile__avatar[data-frame='silver_chain'] { border-color: #b7c9d8; box-shadow: 0 0 0 5px rgb(183 201 216 / 16%), 0 0 24px rgb(183 201 216 / 26%); }
+.profile__avatar[data-frame='golden_wheel'] { border-color: #f3c85f; box-shadow: 0 0 0 5px rgb(243 200 95 / 20%), 0 0 30px rgb(243 200 95 / 34%); animation: profile-frame-wheel 4s linear infinite; }
+.profile__avatar[data-frame='mithril_ring'] { border-color: #cde8f3; box-shadow: 0 0 0 5px rgb(205 232 243 / 18%), 0 0 30px rgb(170 230 255 / 34%); animation: profile-frame-mithril 2.8s ease-in-out infinite; }
+.profile__avatar[data-frame='king_aura'] { border-color: #f6d77a; box-shadow: 0 0 0 5px rgb(246 215 122 / 20%), 0 0 0 10px rgb(246 215 122 / 8%), 0 0 38px rgb(246 215 122 / 42%); animation: profile-frame-king-aura 2.6s ease-in-out infinite; }
+
+@keyframes profile-frame-wheel {
+  0%, 100% { box-shadow: 0 0 0 5px rgb(243 200 95 / 20%), 0 0 22px rgb(243 200 95 / 28%); }
+  50% { box-shadow: 0 0 0 7px rgb(243 200 95 / 24%), 0 0 34px rgb(243 200 95 / 46%); }
+}
+
+@keyframes profile-frame-mithril {
+  0%, 100% { box-shadow: 0 0 0 5px rgb(205 232 243 / 18%), 0 0 26px rgb(170 230 255 / 28%); }
+  50% { box-shadow: 0 0 0 7px rgb(205 232 243 / 24%), 0 0 38px rgb(170 230 255 / 48%); }
+}
+
+@keyframes profile-frame-king-aura {
+  0%, 100% { box-shadow: 0 0 0 5px rgb(246 215 122 / 20%), 0 0 0 10px rgb(246 215 122 / 8%), 0 0 30px rgb(246 215 122 / 32%); }
+  50% { box-shadow: 0 0 0 7px rgb(246 215 122 / 28%), 0 0 0 13px rgb(246 215 122 / 12%), 0 0 48px rgb(246 215 122 / 55%); }
+}
 
 .profile__avatar--empty {
   display: grid;
@@ -1347,7 +1530,7 @@ watch(targetUsername, () => {
 .profile-editor__preview-label { position: absolute; top: 18px; left: 20px; color: var(--cyan); font-size: 11px; letter-spacing: .16em; }
 .profile-editor__preview-cover { position: absolute; inset: 0 0 auto; height: 190px; background: linear-gradient(120deg, rgb(122 90 240 / 88%), rgb(34 151 183 / 88%)); opacity: .82; }
 .profile-editor__preview-identity { position: absolute; left: 24px; right: 24px; bottom: 110px; display: flex; align-items: center; gap: 14px; }
-.profile-editor__preview-avatar { display: grid; place-items: center; width: 84px; height: 84px; border: 3px solid var(--cyan); border-radius: 24px; background: #182b54; color: #99ebff; font-size: 38px; box-shadow: 0 0 0 5px rgb(111 224 244 / 11%); }
+.profile-editor__preview-avatar { display: grid; place-items: center; width: 84px; height: 84px; border: 3px solid var(--role-action); border-radius: 50%; object-fit: cover; background: #182b54; color: #99ebff; font-size: 38px; box-shadow: 0 0 0 5px rgb(111 224 244 / 11%); }
 .profile-editor__preview-avatar[data-frame='gold'] { border-color: var(--gold-strong); }
 .profile-editor__preview-avatar[data-frame='silver'] { border-color: #c6d3dd; }
 .profile-editor__preview-avatar[data-frame='aurora'] { border-color: var(--success); }
@@ -1357,6 +1540,11 @@ watch(targetUsername, () => {
 .profile-editor__preview-avatar[data-frame='ember_wake'] { border-color: #e78353; }
 .profile-editor__preview-avatar[data-frame='star_compass'] { border-color: #e7c36a; }
 .profile-editor__preview-avatar[data-frame='season_tide_ring'] { border-color: #8ee0ef; }
+.profile-editor__preview-avatar[data-frame='bronze_compass'] { border-color: #c58a55; box-shadow: 0 0 0 5px rgb(197 138 85 / 18%), 0 0 20px rgb(197 138 85 / 28%); }
+.profile-editor__preview-avatar[data-frame='silver_chain'] { border-color: #b7c9d8; box-shadow: 0 0 0 5px rgb(183 201 216 / 16%), 0 0 24px rgb(183 201 216 / 26%); }
+.profile-editor__preview-avatar[data-frame='golden_wheel'] { border-color: #f3c85f; box-shadow: 0 0 0 5px rgb(243 200 95 / 20%), 0 0 28px rgb(243 200 95 / 36%); animation: profile-frame-wheel 4s linear infinite; }
+.profile-editor__preview-avatar[data-frame='mithril_ring'] { border-color: #cde8f3; box-shadow: 0 0 0 5px rgb(205 232 243 / 18%), 0 0 28px rgb(170 230 255 / 34%); animation: profile-frame-mithril 2.8s ease-in-out infinite; }
+.profile-editor__preview-avatar[data-frame='king_aura'] { border-color: #f6d77a; box-shadow: 0 0 0 5px rgb(246 215 122 / 20%), 0 0 0 10px rgb(246 215 122 / 8%), 0 0 34px rgb(246 215 122 / 42%); animation: profile-frame-king-aura 2.6s ease-in-out infinite; }
 .profile-editor__preview-identity h3 { margin: 0; color: #fff; font-size: 25px; }
 .profile-editor__preview-identity span { display: inline-block; margin-top: 7px; color: var(--gold-strong); font-size: 13px; }
 .profile-editor__preview-status { position: absolute; left: 24px; right: 24px; bottom: 32px; margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }

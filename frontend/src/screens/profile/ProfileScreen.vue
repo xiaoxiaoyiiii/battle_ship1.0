@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useProfileStore, type JsonObject } from '../../stores/profile'
 import { useSettingsStore } from '../../stores/settings'
 import { useUiStore } from '../../stores/ui'
+import AvatarStack from '../../components/AvatarStack.vue'
 
 /**
  * Ticket #25: own / other player's profile card.
@@ -70,9 +71,13 @@ const failed = computed(() => viewed.value.status === 'error')
 const ready = computed(() => viewed.value.status === 'ready' && stats.value !== null)
 
 const avatar = computed(() => readString(stats.value, 'avatar'))
+const avatarAlt = computed(() => readString(stats.value, 'avatar_alt'))
 const avatarInput = ref<HTMLInputElement | null>(null)
 const avatarPreview = ref('')
 const avatarUploading = ref(false)
+const avatarRemoving = ref(false)
+const avatarAltSaving = ref(false)
+const avatarAltDraft = ref('')
 const avatarMessage = ref('')
 const avatarError = ref(false)
 const avatarVersion = ref(0)
@@ -309,7 +314,7 @@ function clearAvatarPreview(): void {
 }
 
 function openAvatarPicker(): void {
-  if (!isSelf.value || avatarUploading.value) return
+  if (!isSelf.value || avatarUploading.value || avatarRemoving.value) return
   avatarInput.value?.click()
 }
 
@@ -317,7 +322,7 @@ async function uploadAvatar(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement | null
   const file = input?.files?.[0]
   if (input) input.value = ''
-  if (!file || !isSelf.value || avatarUploading.value) return
+  if (!file || !isSelf.value || avatarUploading.value || avatarRemoving.value) return
 
   const extension = file.name.toLowerCase().split('.').pop() || ''
   if (!AVATAR_MIME_TYPES.has(file.type) && !AVATAR_EXTENSIONS.has(extension)) {
@@ -336,6 +341,7 @@ async function uploadAvatar(event: Event): Promise<void> {
   try {
     const form = new FormData()
     form.append('avatar', file)
+    form.append('alt_text', avatarAltDraft.value.trim())
     const response = await fetch('/api/profile/avatar', {
       method: 'POST',
       headers: { accept: 'application/json' },
@@ -356,6 +362,7 @@ async function uploadAvatar(event: Event): Promise<void> {
     await store.loadOwn(true)
     await settings.loadOwn()
     await refresh()
+    avatarAltDraft.value = avatarAlt.value
     avatarVersion.value = Date.now()
     clearAvatarPreview()
     setAvatarMessage('头像已更新')
@@ -364,6 +371,63 @@ async function uploadAvatar(event: Event): Promise<void> {
     setAvatarMessage(error instanceof Error ? error.message : String(error), true)
   } finally {
     avatarUploading.value = false
+  }
+}
+
+async function saveAvatarAlt(): Promise<void> {
+  if (!isSelf.value || avatarUploading.value || avatarRemoving.value || avatarAltSaving.value) return
+  avatarAltSaving.value = true
+  setAvatarMessage('正在保存头像描述…')
+  try {
+    const form = new FormData()
+    form.append('alt_text', avatarAltDraft.value.trim())
+    const response = await fetch('/api/profile/avatar', {
+      method: 'POST',
+      headers: { accept: 'application/json' },
+      body: form,
+    })
+    const body = await response.json().catch(() => null) as JsonObject | null
+    if (!response.ok || body?.success !== true) {
+      throw new Error(String(body?.error || '头像描述保存失败'))
+    }
+    await store.loadOwn(true)
+    await refresh()
+    avatarAltDraft.value = avatarAlt.value
+    setAvatarMessage('头像描述已保存')
+  } catch (error) {
+    setAvatarMessage(error instanceof Error ? error.message : String(error), true)
+  } finally {
+    avatarAltSaving.value = false
+  }
+}
+
+async function removeAvatar(): Promise<void> {
+  if (!isSelf.value || !avatar.value || avatarUploading.value || avatarRemoving.value) return
+  if (!window.confirm('确定移除当前头像吗？')) return
+  avatarRemoving.value = true
+  setAvatarMessage('正在移除头像…')
+  try {
+    const form = new FormData()
+    form.append('action', 'delete')
+    const response = await fetch('/api/profile/avatar', {
+      method: 'POST',
+      headers: { accept: 'application/json' },
+      body: form,
+    })
+    const body = await response.json().catch(() => null) as JsonObject | null
+    if (!response.ok || body?.success !== true) {
+      throw new Error(String(body?.error || '头像移除失败'))
+    }
+    await store.loadOwn(true)
+    await refresh()
+    avatarAltDraft.value = ''
+    avatarVersion.value = Date.now()
+    clearAvatarPreview()
+    setAvatarMessage('头像已移除')
+  } catch (error) {
+    setAvatarMessage(error instanceof Error ? error.message : String(error), true)
+  } finally {
+    avatarRemoving.value = false
   }
 }
 
@@ -510,13 +574,12 @@ function useQuick(key: QuickKey): void {
 async function refresh(): Promise<void> {
   if (targetUsername.value) {
     await store.loadPublic(targetUsername.value)
-    return
-  }
-  if (store.viewerName) {
+  } else if (store.viewerName) {
     await store.loadPublic(store.viewerName)
   } else {
     store.clearViewed()
   }
+  if (!avatarAltSaving.value) avatarAltDraft.value = avatarAlt.value
 }
 
 onMounted(async () => {
@@ -587,19 +650,34 @@ watch(targetUsername, () => {
       <article class="profile__card" :data-bg="cardBg">
         <header class="profile__hero">
           <div class="profile__avatar-wrap">
-            <img v-if="displayedAvatar" class="profile__avatar" data-testid="profile-avatar"
-                 :src="displayedAvatar" :data-frame="frame" alt="" />
-            <span v-else class="profile__avatar profile__avatar--empty" data-testid="profile-avatar"
-                  :data-frame="frame" aria-hidden="true">⚓</span>
+            <AvatarStack
+              class="profile__avatar"
+              :src="displayedAvatar"
+              :frame="frame"
+              :alt="avatarAlt || displayName + '的头像'"
+              size="lg"
+              testid="profile-avatar"
+              @error="avatarPreview = ''"
+            />
             <div v-if="isSelf" class="profile__avatar-control">
               <button
                 type="button"
                 class="profile__avatar-upload"
                 data-testid="profile-avatar-upload-button"
-                :disabled="avatarUploading"
+                :disabled="avatarUploading || avatarRemoving"
                 @click="openAvatarPicker"
               >
-                {{ avatarUploading ? '上传中…' : '更换头像' }}
+                {{ avatarUploading ? '上传中…' : avatarRemoving ? '移除中…' : '更换头像' }}
+              </button>
+              <button
+                v-if="avatar"
+                type="button"
+                class="profile__avatar-remove"
+                data-testid="profile-avatar-remove-button"
+                :disabled="avatarUploading || avatarRemoving"
+                @click="removeAvatar"
+              >
+                移除头像
               </button>
               <input
                 ref="avatarInput"
@@ -609,7 +687,28 @@ watch(targetUsername, () => {
                 accept="image/png,image/jpeg,image/gif"
                 @change="uploadAvatar"
               />
-              <span class="profile__avatar-hint">PNG / JPG / GIF · 2MB</span>
+              <label class="profile__avatar-alt-label" for="profile-avatar-alt">头像描述（可选）</label>
+              <div class="profile__avatar-alt-row">
+                <input
+                  id="profile-avatar-alt"
+                  v-model="avatarAltDraft"
+                  class="profile__avatar-alt"
+                  data-testid="profile-avatar-alt"
+                  maxlength="160"
+                  placeholder="例如：戴着船长帽的头像"
+                  @keydown.enter.prevent="saveAvatarAlt"
+                />
+                <button
+                  type="button"
+                  class="profile__avatar-alt-save"
+                  data-testid="profile-avatar-alt-save"
+                  :disabled="avatarAltSaving || avatarUploading || avatarRemoving"
+                  @click="saveAvatarAlt"
+                >
+                  {{ avatarAltSaving ? '保存中…' : '保存描述' }}
+                </button>
+              </div>
+              <span class="profile__avatar-hint">PNG / JPG / GIF · 2MB · 描述最多 160 字</span>
               <span v-if="avatarMessage" class="profile__avatar-message" :class="{ 'is-error': avatarError }" role="status">
                 {{ avatarMessage }}
               </span>
@@ -770,8 +869,13 @@ watch(targetUsername, () => {
             <div class="profile-editor__preview-label">实时预览</div>
             <div class="profile-editor__preview-cover"></div>
             <div class="profile-editor__preview-identity">
-              <img v-if="displayedAvatar" class="profile-editor__preview-avatar" :src="displayedAvatar" :data-frame="editorDraft.frame_id" alt="" />
-              <span v-else class="profile-editor__preview-avatar" :data-frame="editorDraft.frame_id">⚓</span>
+              <AvatarStack
+                class="profile-editor__preview-avatar"
+                :src="displayedAvatar"
+                :frame="editorDraft.frame_id"
+                :alt="avatarAlt || displayName + '的头像'"
+                size="md"
+              />
               <div><h3>{{ displayName }}</h3><span>{{ editorTitle }}</span></div>
             </div>
             <p class="profile-editor__preview-status">{{ editorDraft.status_text || '写一句让别人记住你的航海状态' }}</p>
@@ -989,6 +1093,76 @@ watch(targetUsername, () => {
   opacity: .65;
 }
 
+.profile__avatar-remove {
+  padding: 4px 9px;
+  border: 1px solid color-mix(in srgb, var(--danger) 55%, transparent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--danger);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.profile__avatar-remove:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
+.profile__avatar-remove:disabled {
+  cursor: wait;
+  opacity: .65;
+}
+
+.profile__avatar-alt-label {
+  margin-top: 5px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.profile__avatar-alt-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  width: min(270px, 100%);
+}
+
+.profile__avatar-alt {
+  min-width: 0;
+  flex: 1;
+  padding: 5px 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--surface-sea);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 10px;
+}
+
+.profile__avatar-alt:focus {
+  outline: 2px solid color-mix(in srgb, var(--role-action) 50%, transparent);
+  outline-offset: 1px;
+}
+
+.profile__avatar-alt-save {
+  flex: 0 0 auto;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--role-action) 60%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--role-action) 14%, var(--panel));
+  color: var(--text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.profile__avatar-alt-save:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--role-action) 24%, var(--panel));
+  color: var(--text-primary);
+}
+
+.profile__avatar-alt-save:disabled {
+  cursor: wait;
+  opacity: .65;
+}
+
 .profile__avatar-input {
   position: absolute;
   width: 1px;
@@ -1018,56 +1192,6 @@ watch(targetUsername, () => {
 .profile__avatar {
   width: 128px;
   height: 128px;
-  border: 3px solid rgba(11, 13, 24, 0.65);
-  border-radius: 50%;
-  object-fit: cover;
-  background: #151a30;
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.4);
-}
-
-.profile__avatar[data-frame='gold'] {
-  border-color: var(--gold-strong);
-}
-
-.profile__avatar[data-frame='silver'] {
-  border-color: #c6d3dd;
-}
-
-.profile__avatar[data-frame='aurora'] {
-  border-color: var(--success);
-}
-
-.profile__avatar[data-frame='abyssal_glow'] { border-color: #58d5ed; box-shadow: 0 0 0 4px rgb(88 213 237 / 16%), 0 0 30px rgb(88 213 237 / 34%); }
-.profile__avatar[data-frame='tideglass'] { border-color: #9bd8e7; box-shadow: 0 0 0 4px rgb(155 216 231 / 12%), inset 0 0 20px rgb(155 216 231 / 24%); }
-.profile__avatar[data-frame='ember_wake'] { border-color: #e78353; box-shadow: 0 0 0 4px rgb(231 131 83 / 15%), 0 0 24px rgb(231 131 83 / 28%); }
-.profile__avatar[data-frame='star_compass'] { border-color: #e7c36a; box-shadow: 0 0 0 4px rgb(231 195 106 / 16%), 0 0 22px rgb(231 195 106 / 26%); }
-.profile__avatar[data-frame='season_tide_ring'] { border-color: #8ee0ef; box-shadow: 0 0 0 5px rgb(78 200 224 / 18%), 0 0 34px rgb(78 200 224 / 36%); }
-.profile__avatar[data-frame='bronze_compass'] { border-color: #c58a55; box-shadow: 0 0 0 4px rgb(197 138 85 / 18%), 0 0 20px rgb(197 138 85 / 24%); }
-.profile__avatar[data-frame='silver_chain'] { border-color: #b7c9d8; box-shadow: 0 0 0 5px rgb(183 201 216 / 16%), 0 0 24px rgb(183 201 216 / 26%); }
-.profile__avatar[data-frame='golden_wheel'] { border-color: #f3c85f; box-shadow: 0 0 0 5px rgb(243 200 95 / 20%), 0 0 30px rgb(243 200 95 / 34%); animation: profile-frame-wheel 4s linear infinite; }
-.profile__avatar[data-frame='mithril_ring'] { border-color: #cde8f3; box-shadow: 0 0 0 5px rgb(205 232 243 / 18%), 0 0 30px rgb(170 230 255 / 34%); animation: profile-frame-mithril 2.8s ease-in-out infinite; }
-.profile__avatar[data-frame='king_aura'] { border-color: #f6d77a; box-shadow: 0 0 0 5px rgb(246 215 122 / 20%), 0 0 0 10px rgb(246 215 122 / 8%), 0 0 38px rgb(246 215 122 / 42%); animation: profile-frame-king-aura 2.6s ease-in-out infinite; }
-
-@keyframes profile-frame-wheel {
-  0%, 100% { box-shadow: 0 0 0 5px rgb(243 200 95 / 20%), 0 0 22px rgb(243 200 95 / 28%); }
-  50% { box-shadow: 0 0 0 7px rgb(243 200 95 / 24%), 0 0 34px rgb(243 200 95 / 46%); }
-}
-
-@keyframes profile-frame-mithril {
-  0%, 100% { box-shadow: 0 0 0 5px rgb(205 232 243 / 18%), 0 0 26px rgb(170 230 255 / 28%); }
-  50% { box-shadow: 0 0 0 7px rgb(205 232 243 / 24%), 0 0 38px rgb(170 230 255 / 48%); }
-}
-
-@keyframes profile-frame-king-aura {
-  0%, 100% { box-shadow: 0 0 0 5px rgb(246 215 122 / 20%), 0 0 0 10px rgb(246 215 122 / 8%), 0 0 30px rgb(246 215 122 / 32%); }
-  50% { box-shadow: 0 0 0 7px rgb(246 215 122 / 28%), 0 0 0 13px rgb(246 215 122 / 12%), 0 0 48px rgb(246 215 122 / 55%); }
-}
-
-.profile__avatar--empty {
-  display: grid;
-  place-items: center;
-  color: var(--role-action);
-  font-size: 34px;
 }
 
 .profile__level {
@@ -1530,21 +1654,7 @@ watch(targetUsername, () => {
 .profile-editor__preview-label { position: absolute; top: 18px; left: 20px; color: var(--cyan); font-size: 11px; letter-spacing: .16em; }
 .profile-editor__preview-cover { position: absolute; inset: 0 0 auto; height: 190px; background: linear-gradient(120deg, rgb(122 90 240 / 88%), rgb(34 151 183 / 88%)); opacity: .82; }
 .profile-editor__preview-identity { position: absolute; left: 24px; right: 24px; bottom: 110px; display: flex; align-items: center; gap: 14px; }
-.profile-editor__preview-avatar { display: grid; place-items: center; width: 84px; height: 84px; border: 3px solid var(--role-action); border-radius: 50%; object-fit: cover; background: #182b54; color: #99ebff; font-size: 38px; box-shadow: 0 0 0 5px rgb(111 224 244 / 11%); }
-.profile-editor__preview-avatar[data-frame='gold'] { border-color: var(--gold-strong); }
-.profile-editor__preview-avatar[data-frame='silver'] { border-color: #c6d3dd; }
-.profile-editor__preview-avatar[data-frame='aurora'] { border-color: var(--success); }
-.profile-editor__preview-avatar[data-frame='crimson'] { border-color: #dd6b72; }
-.profile-editor__preview-avatar[data-frame='abyssal_glow'] { border-color: #58d5ed; }
-.profile-editor__preview-avatar[data-frame='tideglass'] { border-color: #9bd8e7; }
-.profile-editor__preview-avatar[data-frame='ember_wake'] { border-color: #e78353; }
-.profile-editor__preview-avatar[data-frame='star_compass'] { border-color: #e7c36a; }
-.profile-editor__preview-avatar[data-frame='season_tide_ring'] { border-color: #8ee0ef; }
-.profile-editor__preview-avatar[data-frame='bronze_compass'] { border-color: #c58a55; box-shadow: 0 0 0 5px rgb(197 138 85 / 18%), 0 0 20px rgb(197 138 85 / 28%); }
-.profile-editor__preview-avatar[data-frame='silver_chain'] { border-color: #b7c9d8; box-shadow: 0 0 0 5px rgb(183 201 216 / 16%), 0 0 24px rgb(183 201 216 / 26%); }
-.profile-editor__preview-avatar[data-frame='golden_wheel'] { border-color: #f3c85f; box-shadow: 0 0 0 5px rgb(243 200 95 / 20%), 0 0 28px rgb(243 200 95 / 36%); animation: profile-frame-wheel 4s linear infinite; }
-.profile-editor__preview-avatar[data-frame='mithril_ring'] { border-color: #cde8f3; box-shadow: 0 0 0 5px rgb(205 232 243 / 18%), 0 0 28px rgb(170 230 255 / 34%); animation: profile-frame-mithril 2.8s ease-in-out infinite; }
-.profile-editor__preview-avatar[data-frame='king_aura'] { border-color: #f6d77a; box-shadow: 0 0 0 5px rgb(246 215 122 / 20%), 0 0 0 10px rgb(246 215 122 / 8%), 0 0 34px rgb(246 215 122 / 42%); animation: profile-frame-king-aura 2.6s ease-in-out infinite; }
+.profile-editor__preview-avatar { width: 84px; height: 84px; --avatar-size: 84px; flex-basis: 84px; }
 .profile-editor__preview-identity h3 { margin: 0; color: #fff; font-size: 25px; }
 .profile-editor__preview-identity span { display: inline-block; margin-top: 7px; color: var(--gold-strong); font-size: 13px; }
 .profile-editor__preview-status { position: absolute; left: 24px; right: 24px; bottom: 32px; margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }

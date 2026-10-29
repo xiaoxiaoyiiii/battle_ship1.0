@@ -53,6 +53,7 @@ PROFILE_DEFAULTS: dict[str, Any] = {
     "title_id": "",
     "tags": [],
     "status_text": "",
+    "avatar_alt": "",
     "frame_id": "none",
     "card_bg_id": "deep",
     "show_stats": 1,
@@ -95,6 +96,7 @@ def profile_extra(uow, user_id: str) -> dict[str, Any]:
     data = dict(PROFILE_DEFAULTS)
     data.update({key: value for key, value in row.items() if value is not None})
     data["tags"] = _parse_tags(row.get("tags"))
+    data["avatar_alt"] = " ".join(str(data.get("avatar_alt") or "").split())[:160]
     for flag in _FLAG_FIELDS:
         value = row.get(flag)
         data[flag] = int(PROFILE_DEFAULTS[flag] if value is None else value)
@@ -180,6 +182,7 @@ def public_stats(database: Database, user: Any, viewer_id: str | None,
         stats["tags"] = extra["tags"]
         stats["tag_names"] = [profile_spec.tag_name(tag) for tag in extra["tags"]]
         stats["status_text"] = extra["status_text"]
+        stats["avatar_alt"] = extra["avatar_alt"]
         stats["frame_id"] = frame_id
         stats["card_bg_id"] = card_bg_id
         # D13: flags are sent for the frontend to draw/hide the section, but the

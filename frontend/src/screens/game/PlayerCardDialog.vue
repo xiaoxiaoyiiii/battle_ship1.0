@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { PlayerCard } from './usePlayerCards'
+import AvatarStack from '../../components/AvatarStack.vue'
 
 /**
  * 局内查看某一方的公开名片（原 main 的 #opponent-stats-modal）。
@@ -70,8 +71,14 @@ const emptyText = computed(() => {
         <button type="button" class="game-close" data-testid="game-player-card-close" aria-label="关闭" @click="emit('close')">×</button>
       </header>
       <div class="player-card__who">
-        <img v-if="ready && str('avatar')" class="player-card__avatar" data-testid="game-player-card-avatar" :src="str('avatar')" alt="" />
-        <span v-else class="player-card__avatar player-card__avatar--empty" aria-hidden="true">{{ (name || '?').slice(0, 1) }}</span>
+        <AvatarStack
+          class="player-card__avatar"
+          :src="ready ? str('avatar') : ''"
+          :frame="ready ? str('frame_id') : 'none'"
+          :fallback="(name || '?').slice(0, 1)"
+          testid="game-player-card-avatar"
+          size="md"
+        />
         <div>
           <b class="player-card__name" data-testid="game-player-card-name">{{ name }}</b>
           <p v-if="ready && str('title_name')" class="player-card__line">{{ str('title_name') }}</p>
@@ -153,17 +160,6 @@ const emptyText = computed(() => {
   width: 56px;
   height: 56px;
   flex: 0 0 56px;
-  border-radius: 50%;
-  object-fit: cover;
-  border: 1px solid var(--border-strong);
-}
-
-.player-card__avatar--empty {
-  display: grid;
-  place-items: center;
-  font-size: 22px;
-  font-weight: 700;
-  background: var(--surface-deck);
 }
 
 .player-card__name {

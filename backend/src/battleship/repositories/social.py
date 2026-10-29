@@ -23,6 +23,7 @@ PROFILE_COLUMNS = frozenset(
         "title_id",
         "tags",
         "status_text",
+        "avatar_alt",
         "frame_id",
         "card_bg_id",
         "show_stats",

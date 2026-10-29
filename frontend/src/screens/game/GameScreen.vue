@@ -8,6 +8,7 @@ import { useAdaptiveGameLayout } from './useAdaptiveGameLayout'
 import { useHandFan } from './useHandFan'
 import { useFloatingDrag } from './useFloatingDrag'
 import PlayerCardDialog from './PlayerCardDialog.vue'
+import AvatarStack from '../../components/AvatarStack.vue'
 import MagicPlacementPanel from './MagicPlacementPanel.vue'
 import MagicChoicePanel from './MagicChoicePanel.vue'
 import MagicDiscardPanel from './MagicDiscardPanel.vue'
@@ -635,6 +636,14 @@ const opponentAvatarUrl = computed(() =>
     ? playerCards.opponentAvatar.value
     : '',
 )
+const selfFrame = computed(() => {
+  const value = playerCards.self.value.stats?.frame_id
+  return typeof value === 'string' && value ? value : 'none'
+})
+const opponentFrame = computed(() => {
+  const value = playerCards.opponent.value.stats?.frame_id
+  return typeof value === 'string' && value ? value : 'none'
+})
 const playerCardSide = ref<'self' | 'opponent' | null>(null)
 const handFan = useHandFan({
   target: handWrapEl,
@@ -1754,7 +1763,13 @@ function backToLobby(): void {
               data-testid="game-opponent-avatar"
               aria-label="查看对手战绩"
               @click="playerCardSide = 'opponent'"
-            ><img v-if="opponentAvatarUrl" :src="opponentAvatarUrl" alt="" @error="brokenAvatars.opponent = opponentAvatarUrl" /><template v-else>{{ opponentInitial }}</template></button>
+            ><AvatarStack
+              :src="opponentAvatarUrl"
+              :frame="opponentFrame"
+              :fallback="opponentInitial"
+              size="sm"
+              @error="brokenAvatars.opponent = opponentAvatarUrl"
+            /></button>
             <div class="arena-player__meta">
               <b class="hud-name" data-testid="game-opponent-name">{{ opponentName }}</b>
               <span class="arena-player__line">
@@ -1781,7 +1796,13 @@ function backToLobby(): void {
               data-testid="game-self-avatar"
               aria-label="查看我的资料"
               @click="playerCardSide = 'self'"
-            ><img v-if="selfAvatarUrl" :src="selfAvatarUrl" alt="" @error="brokenAvatars.self = selfAvatarUrl" /><template v-else>{{ selfInitial }}</template></button>
+            ><AvatarStack
+              :src="selfAvatarUrl"
+              :frame="selfFrame"
+              :fallback="selfInitial"
+              size="sm"
+              @error="brokenAvatars.self = selfAvatarUrl"
+            /></button>
             <div class="arena-player__meta">
               <b class="hud-name" data-testid="game-self-name">{{ selfName }}</b>
               <span class="arena-player__line">

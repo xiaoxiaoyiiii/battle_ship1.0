@@ -7,6 +7,7 @@ frozen legacy shapes (D19), not the structured rewrite envelope.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -20,15 +21,16 @@ from ..session import read_session, session_user_id
 
 router = APIRouter(tags=["profile"])
 
-# Same magic prefixes / extension list / size cap as the legacy upload route.
+# Keep the legacy file formats and size cap while validating bytes and metadata.
 AVATAR_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
-AVATAR_MAGIC_PREFIXES = (
-    b"\x89PNG\r\n\x1a\n",
-    b"\xff\xd8\xff",
-    b"GIF87a",
-    b"GIF89a",
+AVATAR_MAGIC_TYPES = (
+    (b"\x89PNG\r\n\x1a\n", "png", "image/png"),
+    (b"\xff\xd8\xff", "jpg", "image/jpeg"),
+    (b"GIF87a", "gif", "image/gif"),
+    (b"GIF89a", "gif", "image/gif"),
 )
 MAX_AVATAR_SIZE = 2 * 1024 * 1024
+MAX_AVATAR_ALT_LENGTH = 160
 
 
 async def _payload(request: Request) -> Any:
@@ -110,8 +112,27 @@ async def upload_avatar(request: Request):
 
     form = await request.form()
     upload = form.get("avatar")
+    alt_text = _clean_avatar_alt(form.get("alt_text"))
+    action = str(form.get("action") or "").strip().lower()
+    remove = str(form.get("remove") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+    # Keep the frozen POST route while allowing the owner to remove an avatar
+    # or update its alternative text without re-uploading the image.
+    if action in {"delete", "remove"} or remove:
+        return _remove_avatar(request, user_id)
     if upload is None:
-        return JSONResponse({"error": "未选择文件"}, status_code=400)
+        if "alt_text" not in form:
+            return JSONResponse({"error": "未选择文件"}, status_code=400)
+        with request.app.state.database.unit_of_work() as uow:
+            user = uow.users.get(user_id)
+            if user is None:
+                return JSONResponse({"error": "账号不存在"}, status_code=401)
+            profile = uow.social.save_profile(user_id, {"avatar_alt": alt_text})
+        return JSONResponse({
+            "success": True,
+            "avatar": str(getattr(user, "avatar", "") or ""),
+            "avatar_alt": str(profile.get("avatar_alt") or ""),
+        })
     filename = str(getattr(upload, "filename", "") or "")
     if "." not in filename:
         return JSONResponse({"error": "文件类型不支持"}, status_code=400)
@@ -119,20 +140,71 @@ async def upload_avatar(request: Request):
     if extension not in AVATAR_EXTENSIONS:
         return JSONResponse({"error": "文件类型不支持"}, status_code=400)
 
-    data = await upload.read()
-    if not any(data.startswith(prefix) for prefix in AVATAR_MAGIC_PREFIXES):
-        return JSONResponse({"error": "文件内容不是有效的图片"}, status_code=400)
+    data = await upload.read(MAX_AVATAR_SIZE + 1)
     if len(data) > MAX_AVATAR_SIZE:
         return JSONResponse({"error": "图片不能超过 2MB"}, status_code=400)
+    detected = next((item for item in AVATAR_MAGIC_TYPES if data.startswith(item[0])), None)
+    if detected is None:
+        return JSONResponse({"error": "文件内容不是有效的图片"}, status_code=400)
+    _, detected_extension, detected_mime = detected
+    normalized_extension = "jpg" if extension == "jpeg" else extension
+    if normalized_extension != detected_extension:
+        return JSONResponse({"error": "文件扩展名与图片内容不匹配"}, status_code=400)
+    content_type = str(getattr(upload, "content_type", "") or "").lower()
+    if content_type and content_type != detected_mime:
+        return JSONResponse({"error": "图片类型与文件内容不匹配"}, status_code=400)
 
     folder = request.app.state.assets.avatars_dir
     folder.mkdir(parents=True, exist_ok=True)
-    stored_name = f"{user_id}_avatar.{extension}"
-    (folder / stored_name).write_bytes(data)
+    stored_name = f"{user_id}_avatar.{detected_extension}"
+    target = folder / stored_name
+    temporary = folder / f".{user_id}_avatar.uploading"
+    temporary.write_bytes(data)
+    temporary.replace(target)
     avatar_url = f"/static/avatars/{stored_name}"
     with request.app.state.database.unit_of_work() as uow:
         ok = uow.users.update(user_id, avatar=avatar_url)
-    return JSONResponse({"success": bool(ok), "avatar": avatar_url})
+        profile = uow.social.save_profile(user_id, {"avatar_alt": alt_text})
+    if not ok:
+        target.unlink(missing_ok=True)
+        return JSONResponse({"error": "头像保存失败"}, status_code=500)
+    _remove_old_avatar_files(folder, user_id, keep=target)
+    return JSONResponse({
+        "success": True,
+        "avatar": avatar_url,
+        "avatar_alt": str(profile.get("avatar_alt") or ""),
+    })
+
+
+def _clean_avatar_alt(value: Any) -> str:
+    """Keep alt text short and single-line; it is descriptive user content."""
+
+    text = str(value or "").replace("\r", " ").replace("\n", " ")
+    return " ".join(text.split())[:MAX_AVATAR_ALT_LENGTH]
+
+
+def _remove_old_avatar_files(folder: Path, user_id: str, *, keep: Path | None = None) -> None:
+    for candidate in folder.glob(f"{user_id}_avatar.*"):
+        if keep is None or candidate != keep:
+            candidate.unlink(missing_ok=True)
+
+
+def _remove_avatar(request: Request, user_id: str) -> JSONResponse:
+    folder = request.app.state.assets.avatars_dir
+    with request.app.state.database.unit_of_work() as uow:
+        user = uow.users.get(user_id)
+        if user is None:
+            return JSONResponse({"error": "账号不存在"}, status_code=401)
+        ok = uow.users.update(user_id, avatar="")
+        profile = uow.social.save_profile(user_id, {"avatar_alt": ""})
+    if not ok:
+        return JSONResponse({"error": "头像删除失败"}, status_code=500)
+    _remove_old_avatar_files(folder, user_id)
+    return JSONResponse({
+        "success": True,
+        "avatar": "",
+        "avatar_alt": str(profile.get("avatar_alt") or ""),
+    })
 
 
 # --------------------------------------------------------------------- likes

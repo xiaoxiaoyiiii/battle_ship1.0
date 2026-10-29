@@ -145,6 +145,7 @@ class UserProfile(Base):
     friend_requests_open: Mapped[int | None] = mapped_column(sa.Integer, server_default=text("1"))
     allow_spectate: Mapped[int | None] = mapped_column(sa.Integer, server_default=text("1"))
     allow_replay: Mapped[int | None] = mapped_column(sa.Integer, server_default=text("1"))
+    avatar_alt: Mapped[str | None] = mapped_column(sa.Text, server_default=text("''"))
 
 
 class UserCardUsage(Base):

@@ -243,4 +243,4 @@ export const useBattlePassStore = defineStore('battle-pass', () => {
   function reset(): void { status.value = 'idle'; error.value = ''; view.value = emptyView(); claiming.value = null; requestToken += 1 }
 
   return { status, error, view, season, progress, levels, challenges, claims, claiming, load, claim, isClaimed, canClaim, reset }
-})\n
+})

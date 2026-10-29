@@ -169,4 +169,4 @@ watch(() => auth.isGuest, () => { store.reset(); void store.load() })
 .battle-pass__action { margin-top:8px; padding:6px 10px; border:1px solid var(--border-strong); border-radius:5px; color:var(--text-primary); background:var(--surface-raised); font:inherit; font-size:12px; cursor:pointer; }
 @media(min-width:1024px) and (min-height:700px) { .battle-pass { padding:14px 16px; } .battle-pass__tracks { max-height:190px; } .battle-pass__section { margin-top:11px; } .battle-pass__summary { margin-top:10px; } }
 @media(max-width:719px) { .battle-pass { padding:18px; } .battle-pass__tracks { max-height:none; } }
-</style>\n
+</style>

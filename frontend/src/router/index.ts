@@ -15,6 +15,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/leaderboard', name: 'leaderboard', component: () => import('../screens/leaderboard/LeaderboardScreen.vue') },
   { path: '/profile', name: 'profile', component: () => import('../screens/profile/ProfileScreen.vue') },
   { path: '/settings', name: 'settings', component: () => import('../screens/settings/SettingsScreen.vue') },
+  { path: '/battle-pass', name: 'battle-pass', component: () => import('../screens/battle-pass/SeasonPassScreen.vue') },
   { path: '/replay', name: 'replay', component: () => import('../screens/replay/ReplayScreen.vue') },
   { path: '/spectate', name: 'spectate', component: () => import('../screens/spectate/SpectateScreen.vue') },
   { path: '/game-over', name: 'game-over', component: () => import('../screens/game-over/GameOverScreen.vue') },

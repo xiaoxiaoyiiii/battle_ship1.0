@@ -802,6 +802,8 @@ onMounted(() => {
 }
 
 .settings__nav-item {
+  position: relative;
+  overflow: hidden;
   display: flex;
   align-items: center;
   gap: 13px;
@@ -829,10 +831,45 @@ onMounted(() => {
   box-shadow: inset 2px 0 var(--role-action);
 }
 
+.settings__nav-item::after,
+.settings__theme::after,
+.settings__seg-item::after,
+.settings .button::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--role-action) 22%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.settings__nav-item:active::after,
+.settings__theme:active::after,
+.settings__seg-item:active::after,
+.settings .button:active::after {
+  animation: settings-ripple 420ms var(--ease-out, ease-out);
+}
+
+@keyframes settings-ripple {
+  0% { width: 0; height: 0; opacity: .42; }
+  100% { width: 260px; height: 260px; opacity: 0; }
+}
+
 .settings__nav-symbol {
-  width: 18px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-sea);
   color: var(--text-secondary);
-  font-size: 19px;
+  font-size: 15px;
   text-align: center;
 }
 
@@ -844,7 +881,7 @@ onMounted(() => {
 .settings__panes {
   display: grid;
   align-content: start;
-  gap: 38px;
+  gap: 24px;
   min-width: 0;
   min-height: 0;
   padding: 4px 10px 24px 0;
@@ -860,26 +897,54 @@ onMounted(() => {
   align-content: start;
   gap: 0;
   min-width: 0;
+  padding: 24px 26px 20px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-deck) 88%, transparent);
+  box-shadow: 0 14px 32px rgb(3 8 20 / 12%);
   scroll-margin-top: 4px;
 }
 
 .settings__section-head {
-  margin-bottom: 22px;
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 8px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .settings__group-title {
+  position: relative;
   margin: 0 0 6px;
   color: var(--text-primary);
   font-size: 21px;
   line-height: 1.35;
 }
 
+.settings__group-title::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin: 0 10px 3px 0;
+  border-radius: 50%;
+  background: var(--role-action);
+  box-shadow: 0 0 0 4px var(--role-action-soft);
+}
+
 .settings__block {
   display: grid;
   gap: 12px;
   min-width: 0;
-  padding: 20px 0;
+  padding: 18px 0;
   border-bottom: 1px solid var(--border-subtle);
+}
+
+.settings__group > .settings__block:last-child,
+.settings__group > template:last-child .settings__block:last-child {
+  border-bottom: 0;
 }
 
 .settings__block-title {
@@ -915,6 +980,7 @@ onMounted(() => {
   --mini-line: #3b4d68;
   --mini-accent: #a990f5;
   position: relative;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -1048,6 +1114,8 @@ onMounted(() => {
 }
 
 .settings__seg-item {
+  position: relative;
+  overflow: hidden;
   min-height: 34px;
   padding: 6px 13px;
   border: 1px solid transparent;
@@ -1238,7 +1306,11 @@ onMounted(() => {
   justify-content: space-between;
   gap: 20px;
   min-height: 60px;
-  padding: 12px 0;
+  margin: 7px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface-sea) 76%, transparent);
   color: var(--text-primary);
   font-size: 14px;
   cursor: pointer;
@@ -1517,6 +1589,22 @@ onMounted(() => {
   min-height: 40px;
 }
 
+.settings .button,
+.settings__theme,
+.settings__nav-item,
+.settings__seg-item {
+  outline: none;
+}
+
+.settings .button:focus-visible,
+.settings__theme:focus-visible,
+.settings__nav-item:focus-visible,
+.settings__seg-item:focus-visible,
+.settings__switch:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--role-action) 72%, transparent);
+  outline-offset: 2px;
+}
+
 @media (max-width: 1250px) {
   .settings {
     padding: 22px 28px;
@@ -1534,6 +1622,10 @@ onMounted(() => {
   .settings__appearance {
     grid-template-columns: minmax(0, 1fr) 230px;
     gap: 20px;
+  }
+
+  .settings__group {
+    padding-inline: 20px;
   }
 
   .settings__preview {
@@ -1629,6 +1721,17 @@ onMounted(() => {
     padding: 0;
     overflow: visible;
     scrollbar-gutter: auto;
+  }
+
+  .settings__group {
+    padding: 18px 14px 14px;
+    border-radius: 11px;
+  }
+
+  .settings__section-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
   }
 
   .settings__group {
@@ -1771,6 +1874,13 @@ onMounted(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .settings__nav-item::after,
+  .settings__theme::after,
+  .settings__seg-item::after,
+  .settings .button::after {
+    animation: none;
+  }
+
   .settings__switch input,
   .settings__switch input::before {
     transition: none;
@@ -1780,5 +1890,12 @@ onMounted(() => {
 :global(html[data-motion='reduced']) .settings__switch input,
 :global(html[data-motion='reduced']) .settings__switch input::before {
   transition: none;
+}
+
+:global(html[data-motion='reduced']) .settings__nav-item::after,
+:global(html[data-motion='reduced']) .settings__theme::after,
+:global(html[data-motion='reduced']) .settings__seg-item::after,
+:global(html[data-motion='reduced']) .settings .button::after {
+  animation: none;
 }
 </style>

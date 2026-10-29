@@ -55,6 +55,7 @@ const immersive = computed(() => FLOW_ROUTE_NAMES.has(String(route.name)) && !sc
 const destinations = [
   { name: 'start', label: '开战' },
   { name: 'lobby', label: '大厅' },
+  { name: 'battle-pass', label: '通行证' },
   { name: 'leaderboard', label: '排行' },
 ]
 

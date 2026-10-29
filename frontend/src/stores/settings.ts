@@ -96,6 +96,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const privacySaving = ref(false)
   const privacyMessage = ref('')
   const privacyError = ref(false)
+  const cardSaving = ref(false)
+  const cardMessage = ref('')
+  const cardError = ref(false)
 
   const replay = ref<ToggleState>(emptyToggle())
   const spectate = ref<ToggleState>(emptyToggle())
@@ -224,6 +227,42 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  async function saveCard(changes: JsonObject): Promise<JsonObject | null> {
+    const row = { ...(profile.value || {}), ...changes }
+    if (cardSaving.value) return null
+    if (!profile.value) {
+      cardError.value = true
+      cardMessage.value = '个人名片尚未加载'
+      return null
+    }
+    cardSaving.value = true
+    cardMessage.value = ''
+    cardError.value = false
+    try {
+      const response = await fetch('/api/profile/card', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify(cardPayload(row, privacy.value)),
+      })
+      const body = await readJson(response)
+      if (!response.ok || !body || body.success !== true) {
+        throw new Error(String(body?.error || '名片保存失败'))
+      }
+      const saved = body ? asObject(body.profile) : null
+      if (!saved) throw new Error('服务端没有返回已保存的名片')
+      profile.value = saved
+      syncPrivacy(saved)
+      cardMessage.value = '已保存'
+      return saved
+    } catch (error) {
+      cardError.value = true
+      cardMessage.value = error instanceof Error ? error.message : String(error)
+      return null
+    } finally {
+      cardSaving.value = false
+    }
+  }
+
   async function setPrivacy(key: PrivacyKey, on: boolean): Promise<boolean> {
     const row = profile.value
     if (!row || privacySaving.value) return false
@@ -327,6 +366,9 @@ export const useSettingsStore = defineStore('settings', () => {
     privacySaving.value = false
     privacyMessage.value = ''
     privacyError.value = false
+    cardSaving.value = false
+    cardMessage.value = ''
+    cardError.value = false
     replay.value = emptyToggle()
     spectate.value = emptyToggle()
     passwordSaving.value = false
@@ -345,6 +387,9 @@ export const useSettingsStore = defineStore('settings', () => {
     privacySaving,
     privacyMessage,
     privacyError,
+    cardSaving,
+    cardMessage,
+    cardError,
     replay,
     spectate,
     passwordSaving,
@@ -354,6 +399,7 @@ export const useSettingsStore = defineStore('settings', () => {
     loadOwn,
     loadToggle,
     setToggle,
+    saveCard,
     setPrivacy,
     changePassword,
     checkWallpapers,

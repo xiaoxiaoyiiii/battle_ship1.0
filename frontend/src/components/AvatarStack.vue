@@ -122,12 +122,15 @@ const hasAnimatedFrame = computed(() => ['aurora', 'golden_wheel', 'mithril_ring
 .avatar-stack[data-frame='silver_chain']::before { --avatar-ring: #b7c9d8; --avatar-glow: rgb(183 201 216 / 32%); border-width: 3px; border-style: dotted; }
 .avatar-stack[data-frame='golden_wheel'] { --avatar-ring: #f3c85f; --avatar-glow: rgb(243 200 95 / 48%); }
 .avatar-stack[data-frame='golden_wheel']::before { border-width: 4px; border-style: double; animation: avatar-stack-wheel 4s linear infinite; }
+.avatar-stack[data-frame='golden_wheel'] .avatar-stack__ornament { inset: -6px; opacity: .72; border: 1px dashed rgb(243 200 95 / 64%); animation: avatar-stack-wheel-reverse 7s linear infinite; }
 .avatar-stack[data-frame='mithril_ring'] { --avatar-ring: #cde8f3; --avatar-glow: rgb(170 230 255 / 54%); }
 .avatar-stack[data-frame='mithril_ring']::before { border-width: 3px; animation: avatar-stack-pulse 2.8s ease-in-out infinite; }
 .avatar-stack[data-frame='king_aura'] { --avatar-ring: #f6d77a; --avatar-glow: rgb(246 215 122 / 62%); }
 .avatar-stack[data-frame='king_aura']::before { border-width: 4px; box-shadow: 0 0 0 5px rgb(246 215 122 / 20%), 0 0 0 10px rgb(246 215 122 / 9%), 0 0 38px var(--avatar-glow); animation: avatar-stack-king 2.6s ease-in-out infinite; }
+.avatar-stack[data-frame='king_aura'] .avatar-stack__halo { opacity: .9; background: radial-gradient(circle, rgb(246 215 122 / 32%), transparent 62%); animation: avatar-stack-halo 2.6s ease-in-out infinite; }
 .avatar-stack[data-frame='season_tide_ring'] { --avatar-ring: #8ee0ef; --avatar-glow: rgb(78 200 224 / 58%); }
 .avatar-stack[data-frame='season_tide_ring']::before { border-width: 3px; border-style: double; animation: avatar-stack-pulse 3s ease-in-out infinite; }
+.avatar-stack[data-frame='season_tide_ring'] .avatar-stack__ornament { inset: -5px; opacity: .72; border: 1px dotted rgb(142 224 239 / 72%); animation: avatar-stack-wheel 12s linear infinite; }
 .avatar-stack[data-frame='abyssal_glow'] { --avatar-ring: #58d5ed; --avatar-glow: rgb(88 213 237 / 52%); }
 .avatar-stack[data-frame='abyssal_glow']::before { border-width: 3px; animation: avatar-stack-pulse 3.2s ease-in-out infinite; }
 .avatar-stack[data-frame='tideglass'] { --avatar-ring: #9bd8e7; --avatar-glow: rgb(155 216 231 / 46%); }
@@ -136,11 +139,14 @@ const hasAnimatedFrame = computed(() => ['aurora', 'golden_wheel', 'mithril_ring
 .avatar-stack[data-frame='ember_wake']::before { border-width: 3px; animation: avatar-stack-pulse 2.3s ease-in-out infinite; }
 .avatar-stack[data-frame='star_compass'] { --avatar-ring: #e7c36a; --avatar-glow: rgb(231 195 106 / 52%); }
 .avatar-stack[data-frame='star_compass']::before { border-width: 3px; border-style: dashed; animation: avatar-stack-wheel 9s linear infinite; }
+.avatar-stack[data-frame='star_compass'] .avatar-stack__halo { opacity: .62; inset: -9px; border: 1px solid rgb(231 195 106 / 40%); animation: avatar-stack-halo 4s ease-in-out infinite; }
 
 @keyframes avatar-stack-wheel { to { transform: rotate(360deg); } }
+@keyframes avatar-stack-wheel-reverse { to { transform: rotate(-360deg); } }
 @keyframes avatar-stack-pulse { 0%, 100% { transform: scale(1); box-shadow: 0 0 0 3px rgb(255 255 255 / 8%), 0 0 20px var(--avatar-glow); } 50% { transform: scale(1.035); box-shadow: 0 0 0 5px rgb(255 255 255 / 13%), 0 0 34px var(--avatar-glow); } }
 @keyframes avatar-stack-king { 0%, 100% { box-shadow: 0 0 0 5px rgb(246 215 122 / 20%), 0 0 0 10px rgb(246 215 122 / 9%), 0 0 30px var(--avatar-glow); } 50% { box-shadow: 0 0 0 7px rgb(246 215 122 / 28%), 0 0 0 13px rgb(246 215 122 / 13%), 0 0 48px var(--avatar-glow); } }
 @keyframes avatar-stack-shimmer { 0% { filter: brightness(1); } 50% { filter: brightness(1.22); } 100% { filter: brightness(1); } }
+@keyframes avatar-stack-halo { 0%, 100% { opacity: .38; transform: scale(.94); } 50% { opacity: .92; transform: scale(1.08); } }
 
 @media (prefers-reduced-motion: reduce) {
   .avatar-stack--animated::before,

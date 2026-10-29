@@ -188,8 +188,13 @@ const equippedCosmetics = computed(() => {
 })
 
 type EditorTab = 'hero' | 'frame' | 'title' | 'tags' | 'status'
+type ProfileFx = { id: number; kind: 'trail' | 'burst'; x: number; y: number }
 const editorOpen = ref(false)
 const editorTab = ref<EditorTab>('hero')
+const profileCardEl = ref<HTMLElement | null>(null)
+const profileFx = ref<ProfileFx[]>([])
+let profileFxId = 0
+let profileFxLastMove = 0
 const editorDraft = ref({
   title_id: '',
   tags: [] as string[],
@@ -297,6 +302,48 @@ function editorItemUnlocked(item: unknown): boolean {
 
 function editorTagSelected(id: string): boolean {
   return editorDraft.value.tags.includes(id)
+}
+
+function profileMotionDisabled(): boolean {
+  if (ui.motion === 'reduced') return true
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    : false
+}
+
+function profilePointerPosition(event: PointerEvent): { x: number; y: number } | null {
+  const target = profileCardEl.value
+  if (!target) return null
+  const rect = target.getBoundingClientRect()
+  if (!rect.width || !rect.height) return null
+  return {
+    x: Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100)),
+    y: Math.max(0, Math.min(100, ((event.clientY - rect.top) / rect.height) * 100)),
+  }
+}
+
+function addProfileFx(kind: ProfileFx['kind'], position: { x: number; y: number }, lifetime: number): void {
+  const id = ++profileFxId
+  profileFx.value = [...profileFx.value.slice(-18), { id, kind, ...position }]
+  window.setTimeout(() => {
+    profileFx.value = profileFx.value.filter((item) => item.id !== id)
+  }, lifetime)
+}
+
+function trackProfilePointer(event: PointerEvent): void {
+  if (profileMotionDisabled() || event.pointerType === 'touch') return
+  if (event.pointerType === 'mouse' && event.buttons === 0) return
+  const now = performance.now()
+  if (now - profileFxLastMove < 28) return
+  profileFxLastMove = now
+  const position = profilePointerPosition(event)
+  if (position) addProfileFx('trail', position, 520)
+}
+
+function burstProfilePointer(event: PointerEvent): void {
+  if (profileMotionDisabled()) return
+  const position = profilePointerPosition(event)
+  if (position) addProfileFx('burst', position, 760)
 }
 
 const AVATAR_MAX_BYTES = 2 * 1024 * 1024
@@ -647,7 +694,22 @@ watch(targetUsername, () => {
         </button>
       </nav>
 
-      <article class="profile__card" :data-bg="cardBg">
+      <article
+        ref="profileCardEl"
+        class="profile__card"
+        :data-bg="cardBg"
+        @pointermove="trackProfilePointer"
+        @pointerdown="burstProfilePointer"
+      >
+        <div class="profile__fx-layer" aria-hidden="true">
+          <span
+            v-for="item in profileFx"
+            :key="item.id"
+            class="profile__fx"
+            :class="'profile__fx--' + item.kind"
+            :style="{ left: item.x + '%', top: item.y + '%' }"
+          ></span>
+        </div>
         <header class="profile__hero">
           <div class="profile__avatar-wrap">
             <AvatarStack
@@ -984,6 +1046,7 @@ watch(targetUsername, () => {
 }
 
 .profile__card {
+  position: relative;
   display: grid;
   gap: 12px;
   width: 1120px;
@@ -994,6 +1057,69 @@ watch(targetUsername, () => {
   border-radius: 0 0 var(--radius) var(--radius);
   background: var(--panel);
   box-shadow: 0 24px 70px rgb(2 6 18 / 34%);
+  animation: profile-card-enter 720ms cubic-bezier(.2,.72,.2,1) both;
+}
+
+.profile__fx-layer {
+  position: absolute;
+  z-index: 20;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.profile__fx {
+  position: absolute;
+  display: block;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.profile__fx--trail {
+  width: 7px;
+  height: 7px;
+  border: 1px solid rgb(145 236 255 / 82%);
+  border-radius: 50%;
+  background: rgb(111 224 244 / 72%);
+  box-shadow: 0 0 10px rgb(111 224 244 / 72%), 0 0 24px rgb(124 92 240 / 44%);
+  animation: profile-fx-trail 520ms ease-out both;
+}
+
+.profile__fx--burst {
+  width: 12px;
+  height: 12px;
+  border: 1px solid rgb(246 215 122 / 82%);
+  border-radius: 50%;
+  box-shadow: 0 0 0 0 rgb(246 215 122 / 38%), 0 0 18px rgb(246 215 122 / 70%);
+  animation: profile-fx-burst 760ms cubic-bezier(.1,.75,.25,1) both;
+}
+
+@keyframes profile-card-enter {
+  from { opacity: 0; transform: translateY(14px) scale(.985); filter: saturate(.8); }
+  to { opacity: 1; transform: none; filter: saturate(1); }
+}
+
+@keyframes profile-fx-trail {
+  0% { opacity: .9; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(.2) translateY(-10px); }
+}
+
+@keyframes profile-fx-burst {
+  0% { opacity: .95; transform: translate(-50%, -50%) scale(.35); box-shadow: 0 0 0 0 rgb(246 215 122 / 38%), 0 0 18px rgb(246 215 122 / 70%); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.2); box-shadow: 0 0 0 30px rgb(246 215 122 / 0%), 0 0 4px rgb(246 215 122 / 0%); }
+}
+
+.profile__card[data-bg='cyber'] .profile__hero::before,
+.profile__card[data-bg='aurora'] .profile__hero::before,
+.profile__card[data-bg='starfield'] .profile__hero::before,
+.profile__card[data-bg='season_deep_1'] .profile__hero::before {
+  background-size: 180% 180%;
+  animation: profile-hero-drift 12s ease-in-out infinite alternate;
+}
+
+@keyframes profile-hero-drift {
+  from { background-position: 0% 0%; }
+  to { background-position: 100% 100%; }
 }
 
 .profile__card[data-bg='graphite'] {
@@ -1002,6 +1128,21 @@ watch(targetUsername, () => {
 
 .profile__card[data-bg='cyber'] {
   background: linear-gradient(160deg, #2a1840, #0f1a2c 70%);
+}
+
+.profile__card[data-bg='aurora'] {
+  background: radial-gradient(circle at 20% 10%, rgb(111 224 160 / 18%), transparent 28%), linear-gradient(160deg, #123b43, #08151f 74%);
+}
+
+.profile__card[data-bg='starfield'] {
+  background-color: #070b1b;
+  background-image: radial-gradient(circle at 18% 22%, rgb(255 255 255 / 42%) 0 1px, transparent 2px), radial-gradient(circle at 74% 16%, rgb(111 224 244 / 42%) 0 1px, transparent 2px), radial-gradient(circle at 52% 68%, rgb(246 215 122 / 34%) 0 1px, transparent 2px), linear-gradient(160deg, #182b5e, #060a18 76%);
+  background-size: 180px 180px, 240px 240px, 310px 310px, auto;
+  animation: profile-starfield-drift 18s linear infinite;
+}
+
+@keyframes profile-starfield-drift {
+  to { background-position: 180px 40px, -240px 80px, 310px -90px, 0 0; }
 }
 
 .profile__card[data-bg='lava'] {

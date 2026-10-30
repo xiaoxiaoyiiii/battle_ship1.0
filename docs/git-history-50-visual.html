@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>战斗舰 1.0 · 最近 50 次改动可视化</title>
+<style>
+:root{
+  --bg:#070d18; --bg2:#0b1526; --panel:rgba(16,27,46,.78); --panel2:#111d33;
+  --line:rgba(120,160,220,.16); --text:#e6eefc; --muted:#8aa1c0;
+  --cyan:#38bdf8; --gold:#fbbf24; --rose:#fb7185; --green:#34d399; --violet:#a78bfa;
+  --ins:#34d399; --del:#fb7185;
+  --radius:16px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; background:
+    radial-gradient(1100px 600px at 12% -10%, rgba(56,189,248,.12), transparent 60%),
+    radial-gradient(900px 500px at 92% 0%, rgba(167,139,250,.10), transparent 55%),
+    linear-gradient(180deg,#070d18 0%,#060a12 100%);
+  color:var(--text);
+  font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",Inter,system-ui,-apple-system,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  min-height:100vh;
+}
+.wrap{width:100%;max-width:1180px;margin:0 auto;padding:42px 26px 80px}
+a{color:var(--cyan)}
+.hero{position:relative;padding:10px 0 30px}
+.eyebrow{display:flex;align-items:center;gap:10px;font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--cyan);font-weight:600}
+.eyebrow .dot{width:8px;height:8px;border-radius:50%;background:var(--cyan);box-shadow:0 0 14px var(--cyan)}
+h1{font-size:clamp(28px,4vw,46px);line-height:1.16;margin:14px 0 10px;font-weight:800;letter-spacing:-.02em}
+h1 .thin{font-weight:400;color:var(--muted)}
+.sub{color:var(--muted);font-size:14px;line-height:1.8}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.chip{font-size:12px;color:#bcd2ee;background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.22);padding:5px 10px;border-radius:999px;font-variant-numeric:tabular-nums}
+.chip.gold{background:rgba(251,191,36,.08);border-color:rgba(251,191,36,.25);color:#f7d47a}
+
+.stat-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin:6px 0 8px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px 18px 16px;position:relative;overflow:hidden}
+.stat::after{content:"";position:absolute;inset:0;background:linear-gradient(120deg,transparent 30%,rgba(255,255,255,.03));pointer-events:none}
+.stat .k{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.stat .v{font-size:30px;font-weight:800;margin-top:8px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.stat .n{font-size:12px;color:var(--muted);margin-top:6px}
+.stat.ins .v{color:var(--ins)} .stat.del .v{color:var(--del)} .stat.files .v{color:var(--cyan)} .stat.days .v{color:var(--violet)} .stat.commits .v{color:var(--gold)}
+
+.section{margin-top:38px}
+.section-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px 16px;margin-bottom:14px;flex-wrap:wrap}
+.section-head h2{font-size:18px;margin:0;font-weight:700}
+.section-head .hint{font-size:12px;color:var(--muted)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:20px}
+.two{display:grid;grid-template-columns:1.15fr .85fr;gap:16px}
+.three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+
+/* day chart */
+.day-chart{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:12px;align-items:end;height:210px;padding:8px 4px 0;position:relative}
+.day{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;gap:8px;min-width:0}
+.day .bars{width:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%;gap:3px}
+.dseg{width:min(46px,72%);border-radius:6px 6px 3px 3px;background:linear-gradient(180deg,#4cc9f0,#2b7fd4);box-shadow:0 0 16px rgba(56,189,248,.22);transition:height .6s cubic-bezier(.2,.8,.2,1)}
+.dseg.d{background:linear-gradient(180deg,#fb7185,#b23b58);box-shadow:0 0 16px rgba(251,113,133,.18)}
+.day .cap{font-size:11px;color:var(--muted);text-align:center;line-height:1.4;white-space:normal}
+.day .cnt{font-size:11px;color:#cfe4ff;background:rgba(56,189,248,.12);border:1px solid rgba(56,189,248,.25);padding:1px 7px;border-radius:999px}
+.legend{display:flex;gap:16px;font-size:12px;color:var(--muted);margin-top:14px;flex-wrap:wrap}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:middle}
+
+/* donut */
+.donut-wrap{display:flex;align-items:center;gap:22px}
+.donut{width:168px;height:168px;border-radius:50%;flex:0 0 auto;position:relative;background:#0c1729}
+.donut::after{content:"";position:absolute;inset:26px;background:var(--panel2);border-radius:50%;border:1px solid var(--line)}
+.donut .center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:2}
+.donut .center b{font-size:24px}
+.donut .center span{font-size:11px;color:var(--muted)}
+.legend-list{display:flex;flex-direction:column;gap:9px;width:100%}
+.legend-list .row{display:flex;align-items:center;gap:9px;font-size:13px}
+.legend-list .sw{width:9px;height:9px;border-radius:3px;flex:0 0 auto}
+.legend-list .nm{color:#cfe0f5}
+.legend-list .pc{margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums;font-size:12px}
+
+/* ext bars */
+.mini-bars{display:flex;flex-direction:column;gap:10px;margin-top:4px}
+.mb{display:grid;grid-template-columns:64px 1fr 40px;align-items:center;gap:10px;font-size:12px}
+.mb .nm{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#cfe0f5}
+.mb .track{height:8px;border-radius:999px;background:rgba(140,170,210,.12);overflow:hidden}
+.mb .fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#38bdf8,#a78bfa);transform-origin:left;animation:grow 1s ease both}
+.mb .ct{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+@keyframes grow{from{transform:scaleX(.02)}to{transform:scaleX(1)}}
+
+/* tag chips */
+.tag-list{display:flex;flex-wrap:wrap;gap:10px}
+.tag{display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:13px;cursor:pointer;transition:.18s}
+.tag:hover{border-color:rgba(56,189,248,.4);transform:translateY(-1px)}
+.tag b{font-variant-numeric:tabular-nums}
+.tag.t0{color:#9be5bd} .tag.t1{color:#8fd3ff} .tag.t2{color:#ff9fb2} .tag.t3{color:#ffd777} .tag.t4{color:#c4b5fd}
+.tag .sw{width:8px;height:8px;border-radius:2px}
+
+/* hot files */
+.hot{display:flex;flex-direction:column;gap:11px}
+.hot .row{display:grid;grid-template-columns:minmax(0,1fr) 46px;gap:10px;align-items:center}
+.hot .path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#c9dcf3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+.hot .track{grid-column:1/-1;height:6px;border-radius:999px;background:rgba(140,170,210,.1);overflow:hidden}
+.hot .fill{height:100%;background:linear-gradient(90deg,#fbbf24,#fb7185);border-radius:999px}
+.hot .ct{font-size:12px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+
+/* timeline */
+.tl{position:relative;margin-top:6px;padding-left:26px}
+.tl::before{content:"";position:absolute;left:7px;top:6px;bottom:6px;width:2px;background:linear-gradient(180deg,rgba(56,189,248,.55),rgba(167,139,250,.25),rgba(56,189,248,.05))}
+.tl-item{position:relative;padding:0 0 12px}
+.tl-item .node{position:absolute;left:-26px;top:20px;width:12px;height:12px;border-radius:50%;background:#0b1526;border:2px solid var(--cyan);box-shadow:0 0 0 3px rgba(56,189,248,.08)}
+.tl-item.hot .node{background:var(--gold);border-color:var(--gold);box-shadow:0 0 0 3px rgba(251,191,36,.12)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:15px 17px;transition:.18s}
+.card:hover{border-color:rgba(56,189,248,.28);background:rgba(20,34,56,.86)}
+.card .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.idx{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;min-width:24px}
+.hash{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--cyan);background:rgba(56,189,248,.09);padding:2px 7px;border-radius:6px;border:1px solid rgba(56,189,248,.18)}
+.when{font-size:11px;color:var(--muted);margin-left:auto;font-variant-numeric:tabular-nums}
+.subject{font-size:15px;font-weight:650;margin:9px 0 6px;letter-spacing:.1px}
+.meta{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--muted)}
+.meta .t{color:#a9c6e8}
+.plus{color:var(--ins)} .minus{color:var(--del)}
+.cbar{height:5px;border-radius:999px;background:rgba(140,170,210,.12);overflow:hidden;display:flex;margin-top:10px}
+.cbar .i{height:100%;background:linear-gradient(90deg,#34d399,#22c55e)}
+.cbar .r{height:100%;background:linear-gradient(90deg,#fb7185,#e11d48)}
+.cbar-legend{display:flex;justify-content:space-between;margin-top:6px;font-size:10.5px;color:var(--muted)}
+details{margin-top:10px;border-top:1px dashed rgba(140,170,210,.15);padding-top:8px}
+summary{cursor:pointer;font-size:11.5px;color:var(--muted);list-style:none;user-select:none;display:inline-flex;align-items:center;gap:6px}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"▸";color:var(--cyan);transition:.18s;display:inline-block}
+details[open] summary::before{transform:rotate(90deg)}
+.files{margin:8px 0 0;padding:0;list-style:none;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 14px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
+.files li{padding:2px 0;color:#b9cee6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.files li.d{text-align:right;color:var(--muted);white-space:nowrap}
+.files li.d span.a{color:var(--ins)} .files li.d span.b{color:var(--del)}
+
+.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.filters{display:flex;gap:8px;flex-wrap:wrap}
+.fbtn{font-size:12px;color:#c8ddf5;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:999px;padding:6px 13px;cursor:pointer;transition:.16s}
+.fbtn:hover{border-color:rgba(56,189,248,.35)}
+.fbtn.on{color:#061321;background:linear-gradient(120deg,#7dd3fc,#38bdf8);border-color:transparent;font-weight:700}
+.count-note{font-size:12px;color:var(--muted);margin-left:auto;font-variant-numeric:tabular-nums}
+.empty{color:var(--muted);padding:30px;text-align:center;border:1px dashed var(--line);border-radius:12px;display:none}
+
+footer{margin-top:44px;padding-top:20px;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:12px}
+.fade{animation:fade .5s ease both}
+@keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+@media (max-width:900px){
+  .stat-grid{grid-template-columns:repeat(2,1fr)}
+  .two,.three{grid-template-columns:1fr}
+  .donut-wrap{flex-direction:column;align-items:flex-start}
+  .day-chart{height:170px;gap:6px}
+  .day .cnt{font-size:10px;padding:1px 5px}
+  .day .cap{font-size:9.5px}
+  .hot .path{font-size:11px}
+  h1{font-size:30px}
+  .wrap{padding:30px 16px 60px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="hero">
+    <div class="eyebrow"><span class="dot"></span>Repository Working Tree · Battle Ship 1.0</div>
+    <h1>工作树最近 50 次改动<br><span class="thin">从提交到文件的完整可视化</span></h1>
+    <div class="sub">基于本地 git 历史（只读统计）。当前工作区干净，无未提交改动；数据覆盖 2026-10-25 至 2026-10-30 的 50 次提交。</div>
+    <div class="chips">
+      <span class="chip gold" id="rangeChip">—</span>
+      <span class="chip" id="authorChip">—</span>
+      <span class="chip" id="headChip">—</span>
+      <span class="chip">分支 review/main-ui-vue-port</span>
+      <span class="chip">156 个源码/资源文件</span>
+    </div>
+  </header>
+
+  <section class="stat-grid">
+    <div class="stat commits"><div class="k">提交</div><div class="v" id="statCommits">—</div><div class="n">最近 50 次</div></div>
+    <div class="stat ins"><div class="k">新增行</div><div class="v" id="statIns">—</div><div class="n">所有提交累计</div></div>
+    <div class="stat del"><div class="k">删除行</div><div class="v" id="statDel">—</div><div class="n">所有提交累计</div></div>
+    <div class="stat files"><div class="k">涉及文件</div><div class="v" id="statFiles">—</div><div class="n">去重后的路径</div></div>
+    <div class="stat days"><div class="k">活跃天</div><div class="v" id="statDays">—</div><div class="n">连续 6 天</div></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>每日提交节奏</h2><span class="hint">柱高 = 当日新增 / 删除行数</span></div>
+    <div class="panel">
+      <div class="day-chart" id="dayChart"></div>
+      <div class="legend">
+        <span><i style="background:#4cc9f0"></i>新增行</span>
+        <span><i style="background:#fb7185"></i>删除行</span>
+        <span><i style="background:rgba(56,189,248,.2);border:1px solid rgba(56,189,248,.4)"></i>徽标 = 当日提交数</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>改动构成</h2><span class="hint">按文件触达次数统计</span></div>
+    <div class="two">
+      <div class="panel">
+        <div class="donut-wrap">
+          <div class="donut" id="donut"><div class="center"><b id="donutTotal">—</b><span>文件触达</span></div></div>
+          <div class="legend-list" id="dirLegend"></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="section-head" style="margin-bottom:10px"><h2 style="font-size:14px">文件类型</h2></div>
+        <div class="mini-bars" id="extBars"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>改动主题分布</h2><span class="hint">按提交标题关键词归类，一条提交可命中多个主题</span></div>
+    <div class="panel"><div class="tag-list" id="tagList"></div></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>热点文件 Top 15</h2><span class="hint">被提交改动次数最多的路径</span></div>
+    <div class="panel"><div class="hot" id="hotList"></div></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>提交流 · 由新到旧</h2><span class="hint"><span id="shownCount">50</span> / 50 次</span></div>
+    <div class="toolbar">
+      <div class="filters"><button class="fbtn" data-tag="全部">全部</button><button class="fbtn" data-tag="系统/玩法">系统/玩法</button><button class="fbtn" data-tag="界面/视觉">界面/视觉</button><button class="fbtn" data-tag="修复/缺陷">修复/缺陷</button><button class="fbtn" data-tag="新功能">新功能</button><button class="fbtn" data-tag="文档/方案">文档/方案</button></div>
+      <span class="count-note">点击上方主题也可筛选</span>
+    </div>
+    <div class="tl" id="timeline"></div>
+    <div class="empty" id="emptyNote">该类目下没有提交</div>
+  </section>
+
+  <footer>
+    <span>数据源：git log -50 --numstat · 分支 review/main-ui-vue-port · HEAD dadcfd8</span>
+    <span>工作树状态：干净（无未提交改动）· 生成于 2026-10-30</span>
+  </footer>
+</div>
+<script>
+const DATA = {"stats": {"commits": 50, "ins": 15142, "del": 4408, "files": 156, "days": 6, "first": "2026-10-25", "last": "2026-10-30", "author": "xiaoyiii"}, "days": [{"date": "2026-10-25", "commits": 20, "ins": 1825, "del": 165, "files": 59}, {"date": "2026-10-26", "commits": 8, "ins": 1565, "del": 373, "files": 81}, {"date": "2026-10-27", "commits": 4, "ins": 2654, "del": 3010, "files": 38}, {"date": "2026-10-28", "commits": 3, "ins": 1353, "del": 246, "files": 85}, {"date": "2026-10-29", "commits": 5, "ins": 3310, "del": 194, "files": 45}, {"date": "2026-10-30", "commits": 10, "ins": 4435, "del": 420, "files": 50}], "commits": [{"hash": "dadcfd8", "full": "dadcfd8630c1889a7efabdc39975f80c3ec7535e", "date": "2026-10-30 09:04", "author": "xiaoyiii", "subject": "缩短单卡连锁演出节奏", "ins": 8, "del": 4, "files": [{"p": "frontend/src/screens/game/chainAnimation.ts", "a": 8, "d": 4, "bin": false}], "dirs": {"frontend": 1}, "exts": {"/ts": 1}, "binary": 0, "nfiles": 1, "tags": ["系统/玩法"], "change": 12, "top_dirs": [["frontend", 1]]}, {"hash": "1840813", "full": "1840813e21da0c36bbcfd06288c22f8ebe180582", "date": "2026-10-30 08:58", "author": "xiaoyiii", "subject": "居中对局顶部状态栏", "ins": 12, "del": 0, "files": [{"p": "frontend/src/screens/game/game-screen.css", "a": 12, "d": 0, "bin": false}], "dirs": {"frontend": 1}, "exts": {"/css": 1}, "binary": 0, "nfiles": 1, "tags": ["界面/视觉"], "change": 12, "top_dirs": [["frontend", 1]]}, {"hash": "2a2eccf", "full": "2a2eccf47ea0ab1b3ef712d38179c543464ae75a", "date": "2026-10-30 08:52", "author": "xiaoyiii", "subject": "修复战斗节奏布局与全局背景动效", "ins": 301, "del": 52, "files": [{"p": "backend/src/battleship/domain/ai/master.py", "a": 32, "d": 15, "bin": false}, {"p": "backend/src/battleship/domain/room/models.py", "a": 3, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/ai.py", "a": 9, "d": 2, "bin": false}, {"p": "backend/src/battleship/services/magic.py", "a": 30, "d": 0, "bin": false}, {"p": "frontend/src/components/AppProfileBackground.vue", "a": 181, "d": 35, "bin": false}, {"p": "frontend/src/screens/game/PlayerCardDialog.vue", "a": 36, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/game-screen.css", "a": 10, "d": 0, "bin": false}], "dirs": {"backend": 4, "frontend": 3}, "exts": {"/py": 4, "/vue": 2, "/css": 1}, "binary": 0, "nfiles": 7, "tags": ["修复/缺陷", "界面/视觉"], "change": 353, "top_dirs": [["backend", 4], ["frontend", 3]]}, {"hash": "dd5fcef", "full": "dd5fcef32123a3fdd568515882f4935c9c1574d8", "date": "2026-10-30 08:29", "author": "xiaoyiii", "subject": "统一资料背景并增强匹配身份展示", "ins": 447, "del": 42, "files": [{"p": "docs/research/match-found-reveal-2026-10-30.md", "a": 153, "d": 0, "bin": false}, {"p": "frontend/src/App.vue", "a": 3, "d": 0, "bin": false}, {"p": "frontend/src/components/AppProfileBackground.vue", "a": 133, "d": 0, "bin": false}, {"p": "frontend/src/components/MatchFoundOverlay.vue", "a": 158, "d": 42, "bin": false}], "dirs": {"docs": 1, "frontend": 3}, "exts": {"/md": 1, "/vue": 3}, "binary": 0, "nfiles": 4, "tags": ["界面/视觉"], "change": 489, "top_dirs": [["frontend", 3], ["docs", 1]]}, {"hash": "feb0e6d", "full": "feb0e6d03f021cf089c9bf59f97b399a8c8a8520", "date": "2026-10-30 08:16", "author": "xiaoyiii", "subject": "优化全局鼠标尾迹与点击反馈", "ins": 484, "del": 46, "files": [{"p": "backend/src/battleship/domain/progression/profile_spec.py", "a": 2, "d": 2, "bin": false}, {"p": "docs/research/cursor-trail-click-feedback-2026-10-30.md", "a": 205, "d": 0, "bin": false}, {"p": "frontend/src/components/GlobalPointerEffects.vue", "a": 274, "d": 41, "bin": false}, {"p": "frontend/src/stores/cosmetics.ts", "a": 3, "d": 3, "bin": false}], "dirs": {"backend": 1, "docs": 1, "frontend": 2}, "exts": {"/py": 1, "/md": 1, "/vue": 1, "/ts": 1}, "binary": 0, "nfiles": 4, "tags": [], "change": 530, "top_dirs": [["frontend", 2], ["backend", 1], ["docs", 1]]}, {"hash": "db4cea8", "full": "db4cea80f05e4de4209eb65c8031bce888c88f4d", "date": "2026-10-30 08:07", "author": "xiaoyiii", "subject": "扩展全局个性化特效与资料背景", "ins": 1438, "del": 119, "files": [{"p": "backend/migrations/versions/0005_profile_effects.py", "a": 31, "d": 0, "bin": false}, {"p": "backend/src/battleship/domain/progression/profile_spec.py", "a": 173, "d": 0, "bin": false}, {"p": "backend/src/battleship/http/routers/profile.py", "a": 13, "d": 1, "bin": false}, {"p": "backend/src/battleship/repositories/models.py", "a": 3, "d": 0, "bin": false}, {"p": "backend/src/battleship/repositories/social.py", "a": 3, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/profile.py", "a": 43, "d": 0, "bin": false}, {"p": "docs/research/global-pointer-cosmetics-2026-10-30.md", "a": 368, "d": 0, "bin": false}, {"p": "frontend/src/App.vue", "a": 3, "d": 0, "bin": false}, {"p": "frontend/src/components/GlobalPointerEffects.vue", "a": 249, "d": 0, "bin": false}, {"p": "frontend/src/components/TitleBadge.vue", "a": 197, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/PlayerCardDialog.vue", "a": 8, "d": 1, "bin": false}, {"p": "frontend/src/screens/profile/ProfileScreen.vue", "a": 228, "d": 117, "bin": false}, {"p": "frontend/src/stores/cosmetics.ts", "a": 75, "d": 0, "bin": false}, {"p": "frontend/src/stores/settings.ts", "a": 44, "d": 0, "bin": false}], "dirs": {"backend": 6, "docs": 1, "frontend": 7}, "exts": {"/py": 6, "/md": 1, "/vue": 5, "/ts": 2}, "binary": 0, "nfiles": 14, "tags": ["新功能", "界面/视觉"], "change": 1557, "top_dirs": [["frontend", 7], ["backend", 6], ["docs", 1]]}, {"hash": "9c95403", "full": "9c9540300d5e3e4ae4eb92c878b5cbc45137e1d0", "date": "2026-10-30 07:29", "author": "xiaoyiii", "subject": "增加名片互动轨迹与高阶动态特效", "ins": 280, "del": 1, "files": [{"p": "docs/research/profile-personalization-p1-modern-effects-2026-10-30.md", "a": 132, "d": 0, "bin": false}, {"p": "frontend/src/components/AvatarStack.vue", "a": 6, "d": 0, "bin": false}, {"p": "frontend/src/screens/profile/ProfileScreen.vue", "a": 142, "d": 1, "bin": false}], "dirs": {"docs": 1, "frontend": 2}, "exts": {"/md": 1, "/vue": 2}, "binary": 0, "nfiles": 3, "tags": ["新功能", "界面/视觉", "系统/玩法"], "change": 281, "top_dirs": [["frontend", 2], ["docs", 1]]}, {"hash": "5ae97ff", "full": "5ae97ff3921efdd5c6da254cd2112ad724ad310a", "date": "2026-10-30 07:17", "author": "xiaoyiii", "subject": "落实头像个性化与独立装饰叠层", "ins": 492, "del": 109, "files": [{"p": "backend/migrations/versions/0004_avatar_metadata.py", "a": 21, "d": 0, "bin": false}, {"p": "backend/src/battleship/http/routers/profile.py", "a": 85, "d": 13, "bin": false}, {"p": "backend/src/battleship/repositories/migrations.py", "a": 1, "d": 1, "bin": false}, {"p": "backend/src/battleship/repositories/models.py", "a": 1, "d": 0, "bin": false}, {"p": "backend/src/battleship/repositories/social.py", "a": 1, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/profile.py", "a": 3, "d": 0, "bin": false}, {"p": "frontend/src/components/AvatarStack.vue", "a": 151, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/GameScreen.vue", "a": 23, "d": 2, "bin": false}, {"p": "frontend/src/screens/game/PlayerCardDialog.vue", "a": 9, "d": 13, "bin": false}, {"p": "frontend/src/screens/game/game-screen.css", "a": 8, "d": 1, "bin": false}, {"p": "frontend/src/screens/profile/ProfileScreen.vue", "a": 189, "d": 79, "bin": false}], "dirs": {"backend": 6, "frontend": 5}, "exts": {"/py": 6, "/vue": 4, "/css": 1}, "binary": 0, "nfiles": 11, "tags": ["系统/玩法"], "change": 601, "top_dirs": [["backend", 6], ["frontend", 5]]}, {"hash": "bd8c890", "full": "bd8c890d62f6917f8ef343389f5c0df44c42b5d2", "date": "2026-10-30 00:44", "author": "xiaoyiii", "subject": "完善头像上传与高级头像框展示", "ins": 465, "del": 4, "files": [{"p": "docs/research/profile-personalization-games-2026-10-30.md", "a": 273, "d": 0, "bin": false}, {"p": "frontend/src/screens/profile/ProfileScreen.vue", "a": 192, "d": 4, "bin": false}], "dirs": {"docs": 1, "frontend": 1}, "exts": {"/md": 1, "/vue": 1}, "binary": 0, "nfiles": 2, "tags": ["界面/视觉", "系统/玩法"], "change": 469, "top_dirs": [["docs", 1], ["frontend", 1]]}, {"hash": "e6564fe", "full": "e6564fe74692eebe6f1e64252ba0cd685a9704cd", "date": "2026-10-30 00:13", "author": "xiaoyiii", "subject": "实现身份头图优先的名片编辑体验", "ins": 508, "del": 43, "files": [{"p": "docs/research/profile-customization-2026-10-29.md", "a": 86, "d": 0, "bin": false}, {"p": "frontend/src/screens/profile/ProfileScreen.vue", "a": 376, "d": 43, "bin": false}, {"p": "frontend/src/stores/settings.ts", "a": 46, "d": 0, "bin": false}], "dirs": {"docs": 1, "frontend": 2}, "exts": {"/md": 1, "/vue": 1, "/ts": 1}, "binary": 0, "nfiles": 3, "tags": ["新功能", "系统/玩法"], "change": 551, "top_dirs": [["frontend", 2], ["docs", 1]]}, {"hash": "79cc42a", "full": "79cc42a2c41e99d3353a8871f5ce5f4fb23f053c", "date": "2026-10-29 20:47", "author": "xiaoyiii", "subject": "完善个人名片视觉与装扮展示", "ins": 156, "del": 7, "files": [{"p": "backend/src/battleship/domain/progression/profile_spec.py", "a": 30, "d": 0, "bin": false}, {"p": "frontend/src/screens/profile/ProfileScreen.vue", "a": 126, "d": 7, "bin": false}], "dirs": {"backend": 1, "frontend": 1}, "exts": {"/py": 1, "/vue": 1}, "binary": 0, "nfiles": 2, "tags": ["界面/视觉", "系统/玩法"], "change": 163, "top_dirs": [["backend", 1], ["frontend", 1]]}, {"hash": "81e00a1", "full": "81e00a1e4bba92508043d2529c9a6e2e016b0479", "date": "2026-10-29 18:36", "author": "xiaoyiii", "subject": "完善设置页并新增通行证详情页", "ins": 380, "del": 143, "files": [{"p": "frontend/src/App.vue", "a": 1, "d": 0, "bin": false}, {"p": "frontend/src/router/index.ts", "a": 1, "d": 0, "bin": false}, {"p": "frontend/src/screens/battle-pass/SeasonPassScreen.vue", "a": 213, "d": 0, "bin": false}, {"p": "frontend/src/screens/settings/SettingsScreen.vue", "a": 123, "d": 6, "bin": false}, {"p": "frontend/src/screens/start/BattlePassCard.vue", "a": 42, "d": 137, "bin": false}], "dirs": {"frontend": 5}, "exts": {"/vue": 4, "/ts": 1}, "binary": 0, "nfiles": 5, "tags": ["新功能", "系统/玩法"], "change": 523, "top_dirs": [["frontend", 5]]}, {"hash": "e3bf4ac", "full": "e3bf4ac18b8835315a2aa1155f4284690f287a58", "date": "2026-10-29 14:12", "author": "xiaoyiii", "subject": "修复赛季通行证前端文件尾部格式", "ins": 2, "del": 2, "files": [{"p": "frontend/src/screens/start/BattlePassCard.vue", "a": 1, "d": 1, "bin": false}, {"p": "frontend/src/stores/battlePass.ts", "a": 1, "d": 1, "bin": false}], "dirs": {"frontend": 2}, "exts": {"/vue": 1, "/ts": 1}, "binary": 0, "nfiles": 2, "tags": ["修复/缺陷", "系统/玩法"], "change": 4, "top_dirs": [["frontend", 2]]}, {"hash": "1b56a0a", "full": "1b56a0afb39aa366fab9e553b5bae98c68ec22d6", "date": "2026-10-29 13:04", "author": "xiaoyiii", "subject": "新增赛季通行证系统与奖励领取", "ins": 1768, "del": 5, "files": [{"p": "backend/migrations/versions/0003_battle_pass.py", "a": 108, "d": 0, "bin": false}, {"p": "backend/src/battleship/domain/battle_pass.py", "a": 89, "d": 0, "bin": false}, {"p": "backend/src/battleship/domain/progression/profile_spec.py", "a": 33, "d": 3, "bin": false}, {"p": "backend/src/battleship/http/routers/battle_pass.py", "a": 74, "d": 0, "bin": false}, {"p": "backend/src/battleship/main.py", "a": 8, "d": 0, "bin": false}, {"p": "backend/src/battleship/repositories/battle_pass.py", "a": 219, "d": 0, "bin": false}, {"p": "backend/src/battleship/repositories/migrations.py", "a": 1, "d": 1, "bin": false}, {"p": "backend/src/battleship/repositories/models.py", "a": 96, "d": 0, "bin": false}, {"p": "backend/src/battleship/repositories/unit_of_work.py", "a": 6, "d": 1, "bin": false}, {"p": "backend/src/battleship/services/battle_pass.py", "a": 231, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/progression.py", "a": 4, "d": 0, "bin": false}, {"p": "docs/superpowers/plans/2026-10-29-season-pass.md", "a": 408, "d": 0, "bin": false}, {"p": "docs/superpowers/specs/2026-10-29-season-pass-design.md", "a": 71, "d": 0, "bin": false}, {"p": "frontend/src/screens/start/BattlePassCard.vue", "a": 172, "d": 0, "bin": false}, {"p": "frontend/src/screens/start/StartScreen.vue", "a": 2, "d": 0, "bin": false}, {"p": "frontend/src/stores/battlePass.ts", "a": 246, "d": 0, "bin": false}], "dirs": {"backend": 11, "docs": 2, "frontend": 3}, "exts": {"/py": 11, "/md": 2, "/vue": 2, "/ts": 1}, "binary": 0, "nfiles": 16, "tags": ["新功能", "系统/玩法"], "change": 1773, "top_dirs": [["backend", 11], ["frontend", 3], ["docs", 2]]}, {"hash": "98ab788", "full": "98ab788400bf7288feb309c6c1bc70d85be415f8", "date": "2026-10-29 08:07", "author": "xiaoyiii", "subject": "接入十三张卡牌动效与分阶段结算演出", "ins": 1004, "del": 37, "files": [{"p": "backend/src/battleship/domain/magic/effects/batch_b.py", "a": 4, "d": 3, "bin": false}, {"p": "backend/src/battleship/domain/social/changelog.py", "a": 5, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/card_animation.py", "a": 67, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/magic.py", "a": 69, "d": 15, "bin": false}, {"p": "docs/superpowers/specs/2026-10-28-card-effects-design.md", "a": 12, "d": 6, "bin": false}, {"p": "frontend/src/realtime/battle.ts", "a": 17, "d": 4, "bin": false}, {"p": "frontend/src/screens/game/CardEffectOverlay.vue", "a": 47, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/GameScreen.vue", "a": 11, "d": 5, "bin": false}, {"p": "frontend/src/screens/game/MagicPlacementPanel.vue", "a": 3, "d": 1, "bin": false}, {"p": "frontend/src/screens/game/cardEffects/canvas.ts", "a": 153, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/cardEffects/elements.ts", "a": 181, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/cardEffects/recovery.ts", "a": 298, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/cardEffects/timeline.ts", "a": 53, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/cardEffects/types.ts", "a": 27, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/chainAnimation.ts", "a": 5, "d": 2, "bin": false}, {"p": "frontend/src/screens/game/chainAnimationCanvas.ts", "a": 4, "d": 1, "bin": false}, {"p": "frontend/src/screens/settings/SettingsScreen.vue", "a": 8, "d": 0, "bin": false}, {"p": "frontend/src/stores/cardEffects.ts", "a": 24, "d": 0, "bin": false}, {"p": "frontend/src/stores/game.ts", "a": 3, "d": 0, "bin": false}, {"p": "frontend/src/stores/ui.ts", "a": 13, "d": 0, "bin": false}], "dirs": {"backend": 4, "docs": 1, "frontend": 15}, "exts": {"/py": 4, "/md": 1, "/ts": 11, "/vue": 4}, "binary": 0, "nfiles": 20, "tags": ["新功能", "界面/视觉", "系统/玩法"], "change": 1041, "top_dirs": [["frontend", 15], ["backend", 4], ["docs", 1]]}, {"hash": "806e42c", "full": "806e42cb5bc854a7c9b840607502bbcc5f3eca93", "date": "2026-10-28 17:29", "author": "xiaoyiii", "subject": "更新已验收音效并补充卡牌动效方案", "ins": 119, "del": 12, "files": [{"p": "backend/src/battleship/domain/social/changelog.py", "a": 5, "d": 0, "bin": false}, {"p": "docs/superpowers/specs/2026-10-28-card-effects-design.md", "a": 81, "d": 0, "bin": false}, {"p": "frontend/src/audio/ASSET_SOURCES.md", "a": 24, "d": 7, "bin": false}, {"p": "frontend/src/audio/assets/divine_banish.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/fire.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/freeze.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/negate.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/seal.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/splash.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/time_warp.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/cardSounds.ts", "a": 2, "d": 2, "bin": false}, {"p": "frontend/src/audio/samples.ts", "a": 7, "d": 3, "bin": false}], "dirs": {"backend": 1, "docs": 1, "frontend": 10}, "exts": {"/py": 1, "/md": 2, "/wav": 7, "/ts": 2}, "binary": 7, "nfiles": 12, "tags": ["界面/视觉", "系统/玩法", "文档/方案"], "change": 131, "top_dirs": [["frontend", 10], ["backend", 1], ["docs", 1]]}, {"hash": "d371566", "full": "d3715663d3391edcb93a85863d7e0e43465db333", "date": "2026-10-28 13:57", "author": "xiaoyiii", "subject": "新增卡牌生效与胜负音效并完善播放控制", "ins": 489, "del": 26, "files": [{"p": "CLAUDE.md", "a": 1, "d": 1, "bin": false}, {"p": "backend/src/battleship/domain/magic/effects/batch_b.py", "a": 12, "d": 3, "bin": false}, {"p": "backend/src/battleship/domain/social/changelog.py", "a": 6, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/gameplay.py", "a": 3, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/magic.py", "a": 26, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/magic_audio.py", "a": 38, "d": 0, "bin": false}, {"p": "docs/superpowers/plans/2026-10-28-card-audio.md", "a": 61, "d": 0, "bin": false}, {"p": "frontend/src/App.vue", "a": 6, "d": 0, "bin": false}, {"p": "frontend/src/audio/ASSET_SOURCES.md", "a": 66, "d": 0, "bin": false}, {"p": "frontend/src/audio/GeneralUser-LICENSE.txt", "a": 47, "d": 0, "bin": false}, {"p": "frontend/src/audio/assets/bombardment.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/card_transfer.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/dark_pact.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/defeat.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/dice.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/discard.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/divine_banish.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/draw.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/electric.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/fire.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/freeze.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/gabriel.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/heal.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/holy_shield.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/recon.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/resurrect.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/steel_buff.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/summon.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/time_warp.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/assets/victory.wav", "a": 0, "d": 0, "bin": true}, {"p": "frontend/src/audio/cardSounds.ts", "a": 23, "d": 0, "bin": false}, {"p": "frontend/src/audio/engine.ts", "a": 100, "d": 16, "bin": false}, {"p": "frontend/src/audio/samples.ts", "a": 37, "d": 0, "bin": false}, {"p": "frontend/src/realtime/battle.ts", "a": 0, "d": 3, "bin": false}, {"p": "frontend/src/realtime/settlement.ts", "a": 10, "d": 1, "bin": false}, {"p": "frontend/src/screens/game-over/GameOverScreen.vue", "a": 4, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/ChainAnimationOverlay.vue", "a": 2, "d": 1, "bin": false}, {"p": "frontend/src/stores/audio.ts", "a": 47, "d": 1, "bin": false}], "dirs": {"CLAUDE.md": 1, "backend": 5, "docs": 1, "frontend": 31}, "exts": {"/md": 3, "/py": 5, "/vue": 3, "/txt": 1, "/wav": 20, "/ts": 6}, "binary": 20, "nfiles": 38, "tags": ["新功能", "系统/玩法"], "change": 515, "top_dirs": [["frontend", 31], ["backend", 5], ["CLAUDE.md", 1]]}, {"hash": "8cf28ac", "full": "8cf28ac2453a9a30e614c8f716c4ba9bb7fd2169", "date": "2026-10-28 00:54", "author": "xiaoyiii", "subject": "完善连锁逐张结算、摸牌演出和战斗交互窗口", "ins": 745, "del": 208, "files": [{"p": "backend/src/battleship/contracts/events_in.py", "a": 1, "d": 0, "bin": false}, {"p": "backend/src/battleship/contracts/events_out.py", "a": 3, "d": 0, "bin": false}, {"p": "backend/src/battleship/domain/battle.py", "a": 1, "d": 1, "bin": false}, {"p": "backend/src/battleship/domain/magic/chain.py", "a": 1, "d": 0, "bin": false}, {"p": "backend/src/battleship/domain/magic/effects/batch_a.py", "a": 8, "d": 10, "bin": false}, {"p": "backend/src/battleship/domain/magic/precheck.py", "a": 23, "d": 10, "bin": false}, {"p": "backend/src/battleship/domain/room/models.py", "a": 5, "d": 0, "bin": false}, {"p": "backend/src/battleship/domain/room/sync.py", "a": 1, "d": 0, "bin": false}, {"p": "backend/src/battleship/domain/social/changelog.py", "a": 6, "d": 0, "bin": false}, {"p": "backend/src/battleship/domain/spectate/rules.py", "a": 1, "d": 0, "bin": false}, {"p": "backend/src/battleship/realtime/handlers/magic.py", "a": 6, "d": 1, "bin": false}, {"p": "backend/src/battleship/services/ai.py", "a": 19, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/magic.py", "a": 110, "d": 9, "bin": false}, {"p": "backend/src/battleship/services/priority.py", "a": 2, "d": 0, "bin": false}, {"p": "docs/连锁逐张结算与战斗交互-20261028.md", "a": 25, "d": 0, "bin": false}, {"p": "frontend/src/components/AppOverlay.vue", "a": 27, "d": 1, "bin": false}, {"p": "frontend/src/realtime/battle.ts", "a": 39, "d": 0, "bin": false}, {"p": "frontend/src/realtime/settlement.ts", "a": 9, "d": 0, "bin": false}, {"p": "frontend/src/screens/game-over/GameOverScreen.vue", "a": 7, "d": 2, "bin": false}, {"p": "frontend/src/screens/game/CardDrawAnimation.vue", "a": 81, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/ChainAnimationOverlay.vue", "a": 2, "d": 1, "bin": false}, {"p": "frontend/src/screens/game/GameScreen.vue", "a": 62, "d": 39, "bin": false}, {"p": "frontend/src/screens/game/MagicChoicePanel.vue", "a": 26, "d": 32, "bin": false}, {"p": "frontend/src/screens/game/MagicDiscardPanel.vue", "a": 24, "d": 5, "bin": false}, {"p": "frontend/src/screens/game/MagicPlacementPanel.vue", "a": 20, "d": 12, "bin": false}, {"p": "frontend/src/screens/game/PhasePriorityPrompt.vue", "a": 49, "d": 50, "bin": false}, {"p": "frontend/src/screens/game/battle-prompt.css", "a": 73, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/chainAnimation.ts", "a": 12, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/game-screen.css", "a": 51, "d": 30, "bin": false}, {"p": "frontend/src/screens/game/useFloatingDrag.ts", "a": 5, "d": 2, "bin": false}, {"p": "frontend/src/socket/events.gen.ts", "a": 5, "d": 1, "bin": false}, {"p": "frontend/src/stores/cardDraw.ts", "a": 24, "d": 0, "bin": false}, {"p": "frontend/src/stores/chainAnimation.ts", "a": 12, "d": 2, "bin": false}, {"p": "frontend/src/stores/game.ts", "a": 3, "d": 0, "bin": false}, {"p": "frontend/src/stores/gameStateSchema.ts", "a": 2, "d": 0, "bin": false}], "dirs": {"backend": 14, "docs": 1, "frontend": 20}, "exts": {"/py": 14, "/md": 1, "/vue": 9, "/ts": 9, "/css": 2}, "binary": 0, "nfiles": 35, "tags": ["系统/玩法"], "change": 953, "top_dirs": [["frontend", 20], ["backend", 14], ["docs", 1]]}, {"hash": "92e5e68", "full": "92e5e688f9fcf1c89aa599bfec9b7e01b0bc2a61", "date": "2026-10-27 23:44", "author": "xiaoyiii", "subject": "修复困难与大师的连锁反制选牌", "ins": 77, "del": 49, "files": [{"p": "backend/src/battleship/domain/ai/master.py", "a": 3, "d": 6, "bin": false}, {"p": "backend/src/battleship/domain/ai/policies.py", "a": 4, "d": 21, "bin": false}, {"p": "backend/src/battleship/domain/magic/chain.py", "a": 29, "d": 16, "bin": false}, {"p": "backend/src/battleship/domain/social/changelog.py", "a": 4, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/magic.py", "a": 4, "d": 6, "bin": false}, {"p": "docs/AI连锁反制修复-20261027.md", "a": 33, "d": 0, "bin": false}], "dirs": {"backend": 5, "docs": 1}, "exts": {"/py": 5, "/md": 1}, "binary": 0, "nfiles": 6, "tags": ["修复/缺陷", "系统/玩法"], "change": 126, "top_dirs": [["backend", 5], ["docs", 1]]}, {"hash": "b4a403e", "full": "b4a403e22cd66410ac0548376c76daad6bb12676", "date": "2026-10-27 22:13", "author": "xiaoyiii", "subject": "修复首页卡面尺寸与桌面高度适配", "ins": 94, "del": 2, "files": [{"p": "backend/src/battleship/domain/social/changelog.py", "a": 4, "d": 0, "bin": false}, {"p": "frontend/src/screens/start/HomeProgress.vue", "a": 15, "d": 0, "bin": false}, {"p": "frontend/src/screens/start/HomeTasks.vue", "a": 14, "d": 0, "bin": false}, {"p": "frontend/src/screens/start/StartScreen.vue", "a": 61, "d": 2, "bin": false}], "dirs": {"backend": 1, "frontend": 3}, "exts": {"/py": 1, "/vue": 3}, "binary": 0, "nfiles": 4, "tags": ["修复/缺陷", "界面/视觉"], "change": 96, "top_dirs": [["frontend", 3], ["backend", 1]]}, {"hash": "c63051d", "full": "c63051d731d510ab23ba4c7dcc234aee6ea4aab9", "date": "2026-10-27 21:39", "author": "xiaoyiii", "subject": "加入双端连锁动画与完整响应计时", "ins": 492, "del": 3, "files": [{"p": "backend/src/battleship/domain/social/changelog.py", "a": 4, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/magic.py", "a": 25, "d": 2, "bin": false}, {"p": "docs/superpowers/plans/2026-10-27-chain-animation.md", "a": 62, "d": 0, "bin": false}, {"p": "docs/连锁动画验收-20261027.md", "a": 51, "d": 0, "bin": false}, {"p": "frontend/src/realtime/battle.ts", "a": 7, "d": 1, "bin": false}, {"p": "frontend/src/screens/game/ChainAnimationOverlay.vue", "a": 76, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/GameScreen.vue", "a": 6, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/chainAnimation.ts", "a": 115, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/chainAnimationCanvas.ts", "a": 117, "d": 0, "bin": false}, {"p": "frontend/src/stores/chainAnimation.ts", "a": 25, "d": 0, "bin": false}, {"p": "frontend/src/stores/game.ts", "a": 2, "d": 0, "bin": false}, {"p": "frontend/src/stores/match.ts", "a": 2, "d": 0, "bin": false}], "dirs": {"backend": 2, "docs": 2, "frontend": 8}, "exts": {"/py": 2, "/md": 2, "/ts": 6, "/vue": 2}, "binary": 0, "nfiles": 12, "tags": ["新功能", "界面/视觉", "系统/玩法"], "change": 495, "top_dirs": [["frontend", 8], ["backend", 2], ["docs", 2]]}, {"hash": "0b86f2d", "full": "0b86f2da116bf6de7013836224460454211b099e", "date": "2026-10-27 01:06", "author": "xiaoyiii", "subject": "优化五页界面与战斗布局", "ins": 1991, "del": 2956, "files": [{"p": "backend/src/battleship/domain/social/changelog.py", "a": 4, "d": 0, "bin": false}, {"p": "docs/superpowers/plans/2026-10-26-frontend-visual.md", "a": 73, "d": 0, "bin": false}, {"p": "docs/前端视觉优化方案-20261026.md", "a": 47, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/BoardCellIcon.vue", "a": 4, "d": 1, "bin": false}, {"p": "frontend/src/screens/game/BoardPanel.vue", "a": 20, "d": 14, "bin": false}, {"p": "frontend/src/screens/game/EffectMonitor.vue", "a": 20, "d": 19, "bin": false}, {"p": "frontend/src/screens/game/GameScreen.vue", "a": 3, "d": 1, "bin": false}, {"p": "frontend/src/screens/game/game-screen.css", "a": 144, "d": 24, "bin": false}, {"p": "frontend/src/screens/leaderboard/LeaderboardScreen.vue", "a": 140, "d": 358, "bin": false}, {"p": "frontend/src/screens/lobby/LobbyScreen.vue", "a": 273, "d": 1058, "bin": false}, {"p": "frontend/src/screens/settings/SettingsScreen.vue", "a": 964, "d": 415, "bin": false}, {"p": "frontend/src/screens/start/HomeProgress.vue", "a": 38, "d": 14, "bin": false}, {"p": "frontend/src/screens/start/HomeTasks.vue", "a": 26, "d": 21, "bin": false}, {"p": "frontend/src/screens/start/StartScreen.vue", "a": 192, "d": 967, "bin": false}, {"p": "frontend/src/styles/main-ui.css", "a": 13, "d": 16, "bin": false}, {"p": "frontend/src/styles/tokens.css", "a": 30, "d": 48, "bin": false}], "dirs": {"backend": 1, "docs": 2, "frontend": 13}, "exts": {"/py": 1, "/md": 2, "/vue": 10, "/css": 3}, "binary": 0, "nfiles": 16, "tags": ["界面/视觉"], "change": 4947, "top_dirs": [["frontend", 13], ["docs", 2], ["backend", 1]]}, {"hash": "89caf15", "full": "89caf1552182d460eca778c0426b3e8f0286b563", "date": "2026-10-26 19:36", "author": "xiaoyiii", "subject": "修复魔法卡全盘审计问题与前端交互", "ins": 490, "del": 195, "files": [{"p": "backend/src/battleship/contracts/events_out.py", "a": 4, "d": 0, "bin": false}, {"p": "backend/src/battleship/domain/battle.py", "a": 8, "d": 4, "bin": false}, {"p": "backend/src/battleship/domain/magic/deck.py", "a": 36, "d": 19, "bin": false}, {"p": "backend/src/battleship/domain/magic/effects/batch_a.py", "a": 28, "d": 19, "bin": false}, {"p": "backend/src/battleship/domain/magic/effects/batch_b.py", "a": 20, "d": 3, "bin": false}, {"p": "backend/src/battleship/domain/magic/effects/chain_cards.py", "a": 14, "d": 9, "bin": false}, {"p": "backend/src/battleship/domain/magic/precheck.py", "a": 9, "d": 0, "bin": false}, {"p": "backend/src/battleship/domain/magic/rules.py", "a": 26, "d": 28, "bin": false}, {"p": "backend/src/battleship/domain/room/models.py", "a": 2, "d": 0, "bin": false}, {"p": "backend/src/battleship/domain/room/sync.py", "a": 31, "d": 0, "bin": false}, {"p": "backend/src/battleship/domain/social/changelog.py", "a": 4, "d": 0, "bin": false}, {"p": "backend/src/battleship/realtime/server.py", "a": 1, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/battle.py", "a": 3, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/gameplay.py", "a": 4, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/magic.py", "a": 78, "d": 19, "bin": false}, {"p": "docs/魔法卡全盘修复-20261026.md", "a": 49, "d": 0, "bin": false}, {"p": "frontend/src/realtime/battle.ts", "a": 22, "d": 5, "bin": false}, {"p": "frontend/src/screens/game/DiceRollOverlay.vue", "a": 1, "d": 1, "bin": false}, {"p": "frontend/src/screens/game/EffectMonitor.vue", "a": 7, "d": 8, "bin": false}, {"p": "frontend/src/screens/game/GameScreen.vue", "a": 43, "d": 21, "bin": false}, {"p": "frontend/src/screens/game/MagicChoicePanel.vue", "a": 3, "d": 2, "bin": false}, {"p": "frontend/src/screens/game/MagicDiscardPanel.vue", "a": 4, "d": 2, "bin": false}, {"p": "frontend/src/screens/game/game-screen.css", "a": 7, "d": 2, "bin": false}, {"p": "frontend/src/screens/game/useHandFan.ts", "a": 7, "d": 26, "bin": false}, {"p": "frontend/src/screens/game/view.ts", "a": 49, "d": 24, "bin": false}, {"p": "frontend/src/socket/events.gen.ts", "a": 5, "d": 1, "bin": false}, {"p": "frontend/src/stores/game.ts", "a": 12, "d": 0, "bin": false}, {"p": "frontend/src/stores/gameStateSchema.ts", "a": 10, "d": 2, "bin": false}, {"p": "frontend/src/stores/match.ts", "a": 3, "d": 0, "bin": false}], "dirs": {"backend": 15, "docs": 1, "frontend": 13}, "exts": {"/py": 15, "/md": 1, "/ts": 7, "/vue": 5, "/css": 1}, "binary": 0, "nfiles": 29, "tags": ["修复/缺陷", "系统/玩法", "文档/方案"], "change": 685, "top_dirs": [["backend", 15], ["frontend", 13], ["docs", 1]]}, {"hash": "c7cf13f", "full": "c7cf13f95c267909394469c099a684c934823923", "date": "2026-10-26 12:57", "author": "xiaoyiii", "subject": "修复准备阶段判定动画漏播和大师疗愈目标丢失", "ins": 35, "del": 15, "files": [{"p": "backend/src/battleship/domain/social/changelog.py", "a": 4, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/ai.py", "a": 2, "d": 2, "bin": false}, {"p": "docs/判定动画与大师疗愈修复-20261026.md", "a": 15, "d": 0, "bin": false}, {"p": "frontend/src/App.vue", "a": 6, "d": 0, "bin": false}, {"p": "frontend/src/realtime/battle.ts", "a": 0, "d": 7, "bin": false}, {"p": "frontend/src/realtime/settlement.ts", "a": 8, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/GameScreen.vue", "a": 0, "d": 6, "bin": false}], "dirs": {"backend": 2, "docs": 1, "frontend": 4}, "exts": {"/py": 2, "/md": 1, "/vue": 2, "/ts": 2}, "binary": 0, "nfiles": 7, "tags": ["修复/缺陷", "界面/视觉", "系统/玩法"], "change": 50, "top_dirs": [["frontend", 4], ["backend", 2], ["docs", 1]]}, {"hash": "e754145", "full": "e754145eec1a4e152e3cadda7b0283aa93163fb0", "date": "2026-10-26 12:49", "author": "xiaoyiii", "subject": "新增阶段询问收起提醒并加大收起按钮", "ins": 27, "del": 4, "files": [{"p": "backend/src/battleship/domain/social/changelog.py", "a": 4, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/GameScreen.vue", "a": 15, "d": 3, "bin": false}, {"p": "frontend/src/screens/game/PhasePriorityPrompt.vue", "a": 3, "d": 1, "bin": false}, {"p": "frontend/src/screens/game/game-screen.css", "a": 5, "d": 0, "bin": false}], "dirs": {"backend": 1, "frontend": 3}, "exts": {"/py": 1, "/vue": 2, "/css": 1}, "binary": 0, "nfiles": 4, "tags": ["新功能"], "change": 31, "top_dirs": [["frontend", 3], ["backend", 1]]}, {"hash": "dc492b1", "full": "dc492b18ea4fdff5de8e1d8dbb10d280f6c3faaa", "date": "2026-10-26 12:21", "author": "xiaoyiii", "subject": "调整连锁收起提醒位置并增加倒计时闪烁", "ins": 39, "del": 20, "files": [{"p": "backend/src/battleship/domain/social/changelog.py", "a": 4, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/GameScreen.vue", "a": 16, "d": 16, "bin": false}, {"p": "frontend/src/screens/game/game-screen.css", "a": 19, "d": 4, "bin": false}], "dirs": {"backend": 1, "frontend": 2}, "exts": {"/py": 1, "/vue": 1, "/css": 1}, "binary": 0, "nfiles": 3, "tags": ["新功能", "界面/视觉", "系统/玩法"], "change": 59, "top_dirs": [["frontend", 2], ["backend", 1]]}, {"hash": "f5fa747", "full": "f5fa7474e27c424fdd0d6e1abe6e01e3efcd87f6", "date": "2026-10-26 10:37", "author": "xiaoyiii", "subject": "修复连锁响应窗口主题配色与文字对比度", "ins": 19, "del": 14, "files": [{"p": "backend/src/battleship/domain/social/changelog.py", "a": 4, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/game-screen.css", "a": 15, "d": 14, "bin": false}], "dirs": {"backend": 1, "frontend": 1}, "exts": {"/py": 1, "/css": 1}, "binary": 0, "nfiles": 2, "tags": ["修复/缺陷", "界面/视觉", "系统/玩法"], "change": 33, "top_dirs": [["backend", 1], ["frontend", 1]]}, {"hash": "8df5b77", "full": "8df5b77ee9c0757e92f750a9e263d2d1f1714164", "date": "2026-10-26 10:01", "author": "xiaoyiii", "subject": "修复疗愈选船与复活后击沉标记", "ins": 136, "del": 20, "files": [{"p": "backend/src/battleship/domain/ai/master.py", "a": 5, "d": 1, "bin": false}, {"p": "backend/src/battleship/domain/magic/deck.py", "a": 13, "d": 3, "bin": false}, {"p": "backend/src/battleship/domain/magic/effects/batch_a.py", "a": 9, "d": 7, "bin": false}, {"p": "backend/src/battleship/domain/magic/precheck.py", "a": 47, "d": 1, "bin": false}, {"p": "backend/src/battleship/domain/social/changelog.py", "a": 4, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/magic.py", "a": 4, "d": 0, "bin": false}, {"p": "docs/疗愈选舰与棋盘显示修复-20261026.md", "a": 29, "d": 0, "bin": false}, {"p": "frontend/src/realtime/battle.ts", "a": 4, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/GameScreen.vue", "a": 9, "d": 4, "bin": false}, {"p": "frontend/src/screens/game/cellPresentation.ts", "a": 1, "d": 1, "bin": false}, {"p": "frontend/src/screens/game/view.ts", "a": 4, "d": 3, "bin": false}, {"p": "frontend/src/stores/match.ts", "a": 7, "d": 0, "bin": false}], "dirs": {"backend": 6, "docs": 1, "frontend": 5}, "exts": {"/py": 6, "/md": 1, "/ts": 4, "/vue": 1}, "binary": 0, "nfiles": 12, "tags": ["修复/缺陷"], "change": 156, "top_dirs": [["backend", 6], ["frontend", 5], ["docs", 1]]}, {"hash": "f5f1592", "full": "f5f159296e973941dd80ee0cc7b686e9ef5199ee", "date": "2026-10-26 09:06", "author": "xiaoyiii", "subject": "优化阶段询问动画与卡牌预览选定交互", "ins": 164, "del": 38, "files": [{"p": "backend/src/battleship/domain/social/changelog.py", "a": 4, "d": 0, "bin": false}, {"p": "docs/阶段转换时点-20261026.md", "a": 4, "d": 0, "bin": false}, {"p": "frontend/src/components/AppOverlay.vue", "a": 33, "d": 5, "bin": false}, {"p": "frontend/src/screens/game/GameScreen.vue", "a": 2, "d": 1, "bin": false}, {"p": "frontend/src/screens/game/PhasePriorityPrompt.vue", "a": 105, "d": 16, "bin": false}, {"p": "frontend/src/screens/game/card-inspect.css", "a": 16, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/game-screen.css", "a": 0, "d": 16, "bin": false}], "dirs": {"backend": 1, "docs": 1, "frontend": 5}, "exts": {"/py": 1, "/md": 1, "/vue": 3, "/css": 2}, "binary": 0, "nfiles": 7, "tags": ["界面/视觉", "系统/玩法"], "change": 202, "top_dirs": [["frontend", 5], ["backend", 1], ["docs", 1]]}, {"hash": "e76729d", "full": "e76729d53bac1627b01eaf34de41ca52e3d19c0f", "date": "2026-10-26 08:48", "author": "xiaoyiii", "subject": "新增阶段转换响应询问与持久化开关", "ins": 655, "del": 67, "files": [{"p": "backend/src/battleship/domain/battle.py", "a": 27, "d": 8, "bin": false}, {"p": "backend/src/battleship/domain/room/sync.py", "a": 16, "d": 11, "bin": false}, {"p": "backend/src/battleship/domain/social/changelog.py", "a": 4, "d": 0, "bin": false}, {"p": "backend/src/battleship/realtime/handlers/battle.py", "a": 5, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/ai.py", "a": 10, "d": 1, "bin": false}, {"p": "backend/src/battleship/services/battle.py", "a": 4, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/gameplay.py", "a": 41, "d": 34, "bin": false}, {"p": "backend/src/battleship/services/magic.py", "a": 12, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/priority.py", "a": 256, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/rooms.py", "a": 10, "d": 3, "bin": false}, {"p": "docs/superpowers/plans/2026-10-26-phase-priority.md", "a": 47, "d": 0, "bin": false}, {"p": "docs/阶段转换时点-20261026.md", "a": 35, "d": 0, "bin": false}, {"p": "frontend/src/realtime/battle.ts", "a": 30, "d": 1, "bin": false}, {"p": "frontend/src/screens/game/GameScreen.vue", "a": 68, "d": 9, "bin": false}, {"p": "frontend/src/screens/game/PhasePriorityPrompt.vue", "a": 69, "d": 0, "bin": false}, {"p": "frontend/src/screens/settings/SettingsScreen.vue", "a": 9, "d": 0, "bin": false}, {"p": "frontend/src/stores/ui.ts", "a": 12, "d": 0, "bin": false}], "dirs": {"backend": 10, "docs": 2, "frontend": 5}, "exts": {"/py": 10, "/md": 2, "/ts": 2, "/vue": 3}, "binary": 0, "nfiles": 17, "tags": ["新功能"], "change": 722, "top_dirs": [["backend", 10], ["frontend", 5], ["docs", 2]]}, {"hash": "2da2637", "full": "2da26374520ea390caa431c2d797c9281dc5c53e", "date": "2026-10-25 16:16", "author": "xiaoyiii", "subject": "修复魔法卡触发与持续效果监视", "ins": 106, "del": 16, "files": [{"p": "backend/src/battleship/contracts/events_out.py", "a": 6, "d": 5, "bin": false}, {"p": "backend/src/battleship/domain/battle.py", "a": 1, "d": 0, "bin": false}, {"p": "backend/src/battleship/domain/magic/chain.py", "a": 4, "d": 1, "bin": false}, {"p": "backend/src/battleship/domain/magic/effects/batch_a.py", "a": 16, "d": 0, "bin": false}, {"p": "backend/src/battleship/domain/magic/rules.py", "a": 16, "d": 0, "bin": false}, {"p": "backend/src/battleship/domain/room/models.py", "a": 2, "d": 0, "bin": false}, {"p": "backend/src/battleship/services/magic.py", "a": 8, "d": 7, "bin": false}, {"p": "frontend/src/realtime/battle.ts", "a": 7, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/BoardCellIcon.vue", "a": 4, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/BoardPanel.vue", "a": 1, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/GameScreen.vue", "a": 2, "d": 1, "bin": false}, {"p": "frontend/src/screens/game/cellPresentation.ts", "a": 2, "d": 1, "bin": false}, {"p": "frontend/src/screens/game/view.ts", "a": 19, "d": 0, "bin": false}, {"p": "frontend/src/socket/events.gen.ts", "a": 2, "d": 1, "bin": false}, {"p": "frontend/src/stores/match.ts", "a": 16, "d": 0, "bin": false}], "dirs": {"backend": 7, "frontend": 8}, "exts": {"/py": 7, "/ts": 5, "/vue": 3}, "binary": 0, "nfiles": 15, "tags": ["修复/缺陷", "系统/玩法"], "change": 122, "top_dirs": [["frontend", 8], ["backend", 7]]}, {"hash": "8f64f24", "full": "8f64f246ca6d49740a06f2fe448a35a8878558b9", "date": "2026-10-25 15:51", "author": "xiaoyiii", "subject": "修复场地魔法与持续效果并列同步", "ins": 28, "del": 2, "files": [{"p": "backend/src/battleship/contracts/events_out.py", "a": 5, "d": 1, "bin": false}, {"p": "backend/src/battleship/domain/room/sync.py", "a": 6, "d": 0, "bin": false}, {"p": "frontend/src/socket/events.gen.ts", "a": 1, "d": 1, "bin": false}, {"p": "frontend/src/stores/game.ts", "a": 16, "d": 0, "bin": false}], "dirs": {"backend": 2, "frontend": 2}, "exts": {"/py": 2, "/ts": 2}, "binary": 0, "nfiles": 4, "tags": ["修复/缺陷", "系统/玩法"], "change": 30, "top_dirs": [["backend", 2], ["frontend", 2]]}, {"hash": "b97743e", "full": "b97743ee4f390e0271ba15747804b745f15eeedd", "date": "2026-10-25 15:15", "author": "xiaoyiii", "subject": "优化场地魔法悬停预览位置", "ins": 42, "del": 21, "files": [{"p": "frontend/src/screens/game/EffectMonitor.vue", "a": 42, "d": 21, "bin": false}], "dirs": {"frontend": 1}, "exts": {"/vue": 1}, "binary": 0, "nfiles": 1, "tags": ["界面/视觉", "系统/玩法"], "change": 63, "top_dirs": [["frontend", 1]]}, {"hash": "f17a41c", "full": "f17a41c891a1b0034202f757c63f4bcc43328f9b", "date": "2026-10-25 15:02", "author": "xiaoyiii", "subject": "新增判定魔法双方面骰动画", "ins": 275, "del": 2, "files": [{"p": "backend/src/battleship/domain/magic/effects/batch_b.py", "a": 7, "d": 1, "bin": false}, {"p": "backend/src/battleship/services/magic.py", "a": 2, "d": 1, "bin": false}, {"p": "frontend/src/realtime/battle.ts", "a": 7, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/DiceRollOverlay.vue", "a": 200, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/GameScreen.vue", "a": 6, "d": 0, "bin": false}, {"p": "frontend/src/stores/match.ts", "a": 53, "d": 0, "bin": false}], "dirs": {"backend": 2, "frontend": 4}, "exts": {"/py": 2, "/ts": 2, "/vue": 2}, "binary": 0, "nfiles": 6, "tags": ["新功能", "界面/视觉", "系统/玩法"], "change": 277, "top_dirs": [["frontend", 4], ["backend", 2]]}, {"hash": "c255aa7", "full": "c255aa767368db3b877dc7a74098bfc91495f79d", "date": "2026-10-25 14:59", "author": "xiaoyiii", "subject": "允许加百列之光主动解除禁忌果实", "ins": 4, "del": 3, "files": [{"p": "backend/src/battleship/domain/magic/rules.py", "a": 3, "d": 2, "bin": false}, {"p": "frontend/src/screens/game/view.ts", "a": 1, "d": 1, "bin": false}], "dirs": {"backend": 1, "frontend": 1}, "exts": {"/py": 1, "/ts": 1}, "binary": 0, "nfiles": 2, "tags": ["新功能"], "change": 7, "top_dirs": [["backend", 1], ["frontend", 1]]}, {"hash": "ef3e39f", "full": "ef3e39f5c3d5181e41a1617a20e614f1092996e6", "date": "2026-10-25 14:55", "author": "xiaoyiii", "subject": "补充禁忌果实出牌拒绝提示", "ins": 1, "del": 1, "files": [{"p": "frontend/src/screens/game/GameScreen.vue", "a": 1, "d": 1, "bin": false}], "dirs": {"frontend": 1}, "exts": {"/vue": 1}, "binary": 0, "nfiles": 1, "tags": [], "change": 2, "top_dirs": [["frontend", 1]]}, {"hash": "f1e49c1", "full": "f1e49c14bad13b8853cde100f9c1cc355f20ee52", "date": "2026-10-25 14:37", "author": "xiaoyiii", "subject": "公开对手范围卡的可见目标预览", "ins": 144, "del": 12, "files": [{"p": "backend/src/battleship/services/magic.py", "a": 16, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/GameScreen.vue", "a": 60, "d": 8, "bin": false}, {"p": "frontend/src/screens/game/view.ts", "a": 41, "d": 3, "bin": false}, {"p": "frontend/src/stores/match.ts", "a": 27, "d": 1, "bin": false}], "dirs": {"backend": 1, "frontend": 3}, "exts": {"/py": 1, "/vue": 1, "/ts": 2}, "binary": 0, "nfiles": 4, "tags": ["界面/视觉"], "change": 156, "top_dirs": [["frontend", 3], ["backend", 1]]}, {"hash": "1d134fd", "full": "1d134fd4643ca97c0129eb211272c08c1a728d41", "date": "2026-10-25 13:54", "author": "xiaoyiii", "subject": "为右栏预留手牌安全区", "ins": 8, "del": 0, "files": [{"p": "frontend/src/screens/game/game-screen.css", "a": 8, "d": 0, "bin": false}], "dirs": {"frontend": 1}, "exts": {"/css": 1}, "binary": 0, "nfiles": 1, "tags": [], "change": 8, "top_dirs": [["frontend", 1]]}, {"hash": "d4d0e9d", "full": "d4d0e9d853967591c56d3e39476fc8655debcf29", "date": "2026-10-25 13:48", "author": "xiaoyiii", "subject": "修正右栏布局并筛选全局持续效果", "ins": 72, "del": 13, "files": [{"p": "frontend/src/screens/game/EffectMonitor.vue", "a": 26, "d": 13, "bin": false}, {"p": "frontend/src/screens/game/game-screen.css", "a": 46, "d": 0, "bin": false}], "dirs": {"frontend": 2}, "exts": {"/vue": 1, "/css": 1}, "binary": 0, "nfiles": 2, "tags": ["修复/缺陷", "界面/视觉"], "change": 85, "top_dirs": [["frontend", 2]]}, {"hash": "a541570", "full": "a5415707a7d0e8294bbb322a78a3c6b50ec77471", "date": "2026-10-25 13:42", "author": "xiaoyiii", "subject": "修正匹配确认进度条的实时流速", "ins": 1, "del": 1, "files": [{"p": "frontend/src/components/MatchFoundOverlay.vue", "a": 1, "d": 1, "bin": false}], "dirs": {"frontend": 1}, "exts": {"/vue": 1}, "binary": 0, "nfiles": 1, "tags": ["修复/缺陷"], "change": 2, "top_dirs": [["frontend", 1]]}, {"hash": "0d375a3", "full": "0d375a3cf5db684e86da9a9c55a349b6d2d2707e", "date": "2026-10-25 13:39", "author": "xiaoyiii", "subject": "让匹配确认倒计时与真实时间同步", "ins": 25, "del": 18, "files": [{"p": "frontend/src/components/MatchFoundOverlay.vue", "a": 25, "d": 18, "bin": false}], "dirs": {"frontend": 1}, "exts": {"/vue": 1}, "binary": 0, "nfiles": 1, "tags": [], "change": 43, "top_dirs": [["frontend", 1]]}, {"hash": "60c8a37", "full": "60c8a378776212e1b36941d2fd0e4c841cb0a34a", "date": "2026-10-25 13:28", "author": "xiaoyiii", "subject": "下移右侧行动与计数面板", "ins": 5, "del": 1, "files": [{"p": "frontend/src/screens/game/game-screen.css", "a": 5, "d": 1, "bin": false}], "dirs": {"frontend": 1}, "exts": {"/css": 1}, "binary": 0, "nfiles": 1, "tags": [], "change": 6, "top_dirs": [["frontend", 1]]}, {"hash": "37d14ef", "full": "37d14ef7684d85d6f9e82003929082ecd5b2b90c", "date": "2026-10-25 13:25", "author": "xiaoyiii", "subject": "修复大师AI神威目标随机性并拉开连锁栏间距", "ins": 7, "del": 4, "files": [{"p": "backend/src/battleship/domain/ai/master.py", "a": 5, "d": 4, "bin": false}, {"p": "frontend/src/screens/game/game-screen.css", "a": 2, "d": 0, "bin": false}], "dirs": {"backend": 1, "frontend": 1}, "exts": {"/py": 1, "/css": 1}, "binary": 0, "nfiles": 2, "tags": ["修复/缺陷", "界面/视觉", "系统/玩法"], "change": 11, "top_dirs": [["backend", 1], ["frontend", 1]]}, {"hash": "20ecb66", "full": "20ecb66ca70259c42c9727178ccc34a3d07321f1", "date": "2026-10-25 13:22", "author": "xiaoyiii", "subject": "将先后手标签收纳到顶部状态栏", "ins": 5, "del": 0, "files": [{"p": "frontend/src/screens/game/game-screen.css", "a": 5, "d": 0, "bin": false}], "dirs": {"frontend": 1}, "exts": {"/css": 1}, "binary": 0, "nfiles": 1, "tags": [], "change": 5, "top_dirs": [["frontend", 1]]}, {"hash": "d3cbb69", "full": "d3cbb69b73a8b0b377c7f35cf5e87fa8eaf6ba9d", "date": "2026-10-25 13:18", "author": "xiaoyiii", "subject": "取消顶部状态标签滚动条", "ins": 5, "del": 2, "files": [{"p": "frontend/src/screens/game/game-screen.css", "a": 5, "d": 2, "bin": false}], "dirs": {"frontend": 1}, "exts": {"/css": 1}, "binary": 0, "nfiles": 1, "tags": [], "change": 7, "top_dirs": [["frontend", 1]]}, {"hash": "82e1e7a", "full": "82e1e7a7496a48a924f0736e581dd827b3a965aa", "date": "2026-10-25 13:16", "author": "xiaoyiii", "subject": "优化连锁结算栏间距与高度", "ins": 7, "del": 2, "files": [{"p": "frontend/src/screens/game/game-screen.css", "a": 7, "d": 2, "bin": false}], "dirs": {"frontend": 1}, "exts": {"/css": 1}, "binary": 0, "nfiles": 1, "tags": ["界面/视觉", "系统/玩法"], "change": 9, "top_dirs": [["frontend", 1]]}, {"hash": "f434ef5", "full": "f434ef540bf8d1932cddf555062d2fbdb466302d", "date": "2026-10-25 13:12", "author": "xiaoyiii", "subject": "修复日志抽屉层级并收缩更多操作菜单", "ins": 55, "del": 21, "files": [{"p": "frontend/src/screens/game/GameScreen.vue", "a": 22, "d": 18, "bin": false}, {"p": "frontend/src/screens/game/game-screen.css", "a": 33, "d": 3, "bin": false}], "dirs": {"frontend": 2}, "exts": {"/vue": 1, "/css": 1}, "binary": 0, "nfiles": 2, "tags": ["修复/缺陷"], "change": 76, "top_dirs": [["frontend", 2]]}, {"hash": "0a4939e", "full": "0a4939e0de2d893691079b63785f7c03452c84ab", "date": "2026-10-25 13:03", "author": "xiaoyiii", "subject": "修正场地栏与棋盘连锁布局", "ins": 42, "del": 0, "files": [{"p": "frontend/src/screens/game/game-screen.css", "a": 42, "d": 0, "bin": false}], "dirs": {"frontend": 1}, "exts": {"/css": 1}, "binary": 0, "nfiles": 1, "tags": ["修复/缺陷", "界面/视觉", "系统/玩法"], "change": 42, "top_dirs": [["frontend", 1]]}, {"hash": "db23571", "full": "db23571a171a36d074ec3525315417e8185fcad0", "date": "2026-10-25 02:57", "author": "xiaoyiii", "subject": "完善持续效果监视栏与魔法卡交互", "ins": 976, "del": 43, "files": [{"p": "backend/src/battleship/domain/magic/precheck.py", "a": 23, "d": 0, "bin": false}, {"p": "backend/src/battleship/domain/room/sync.py", "a": 56, "d": 3, "bin": false}, {"p": "backend/src/battleship/services/magic.py", "a": 91, "d": 3, "bin": false}, {"p": "docs/弃牌区与魔法卡交互收尾-20261025.md", "a": 66, "d": 0, "bin": false}, {"p": "docs/持续效果与场地魔法监视栏-20261025.md", "a": 66, "d": 0, "bin": false}, {"p": "frontend/src/realtime/battle.ts", "a": 5, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/EffectMonitor.vue", "a": 367, "d": 0, "bin": false}, {"p": "frontend/src/screens/game/GameScreen.vue", "a": 96, "d": 23, "bin": false}, {"p": "frontend/src/screens/game/game-screen.css", "a": 180, "d": 10, "bin": false}, {"p": "frontend/src/screens/game/view.ts", "a": 19, "d": 2, "bin": false}, {"p": "frontend/src/stores/gameStateSchema.ts", "a": 7, "d": 2, "bin": false}], "dirs": {"backend": 3, "docs": 2, "frontend": 6}, "exts": {"/py": 3, "/md": 2, "/ts": 3, "/vue": 2, "/css": 1}, "binary": 0, "nfiles": 11, "tags": ["系统/玩法"], "change": 1019, "top_dirs": [["frontend", 6], ["backend", 3], ["docs", 2]]}, {"hash": "6beca6f", "full": "6beca6ff320748882c802a5fc969564090dac5da", "date": "2026-10-25 00:54", "author": "xiaoyiii", "subject": "统一卡牌选择窗口高度并增加悬停高亮", "ins": 17, "del": 3, "files": [{"p": "frontend/src/screens/game/MagicChoicePanel.vue", "a": 17, "d": 3, "bin": false}], "dirs": {"frontend": 1}, "exts": {"/vue": 1}, "binary": 0, "nfiles": 1, "tags": ["新功能", "界面/视觉", "系统/玩法"], "change": 20, "top_dirs": [["frontend", 1]]}], "dirs": [["frontend", 216], ["backend", 116], ["docs", 25], ["CLAUDE.md", 1]], "dirSum": 358, "exts": [["/py", 116], ["/vue", 90], ["/ts", 72], ["/md", 28], ["/wav", 27], ["/css", 24], ["/txt", 1]], "extSum": 358, "hot": [["frontend/src/screens/game/game-screen.css", 20], ["frontend/src/screens/game/GameScreen.vue", 18], ["backend/src/battleship/domain/social/changelog.py", 16], ["backend/src/battleship/services/magic.py", 13], ["frontend/src/realtime/battle.ts", 11], ["frontend/src/screens/profile/ProfileScreen.vue", 6], ["frontend/src/stores/match.ts", 6], ["frontend/src/screens/game/view.ts", 6], ["frontend/src/App.vue", 5], ["frontend/src/stores/game.ts", 5], ["backend/src/battleship/domain/room/sync.py", 5], ["frontend/src/screens/game/EffectMonitor.vue", 5], ["frontend/src/screens/game/chainAnimation.ts", 4], ["backend/src/battleship/domain/ai/master.py", 4], ["backend/src/battleship/domain/room/models.py", 4]], "tags": [["系统/玩法", 29], ["界面/视觉", 24], ["修复/缺陷", 15], ["新功能", 14], ["文档/方案", 2]], "maxChange": 4947, "maxDayLines": 5664};
+const TAGCOLORS = ['#34d399','#38bdf8','#fb7185','#fbbf24','#a78bfa'];
+
+function fmt(n){return n.toLocaleString('en-US')}
+
+/* stats */
+document.getElementById('statCommits').textContent = DATA.stats.commits;
+document.getElementById('statIns').textContent = '+' + fmt(DATA.stats.ins);
+document.getElementById('statDel').textContent = '-' + fmt(DATA.stats.del);
+document.getElementById('statFiles').textContent = DATA.stats.files;
+document.getElementById('statDays').textContent = DATA.stats.days;
+document.getElementById('rangeChip').textContent = DATA.stats.first + ' → ' + DATA.stats.last;
+document.getElementById('authorChip').textContent = '作者 ' + DATA.stats.author;
+document.getElementById('headChip').textContent = 'HEAD ' + DATA.commits[0].hash;
+
+/* day chart */
+const maxDay = DATA.maxDayLines;
+const dayChart = document.getElementById('dayChart');
+DATA.days.forEach((d, i) => {
+  const el = document.createElement('div');
+  el.className = 'day fade';
+  el.style.animationDelay = (i*40)+'ms';
+  const total = d.ins + d.del;
+  const hIns = Math.max(4, Math.round(d.ins / maxDay * 150));
+  const hDel = Math.max(3, Math.round(d.del / maxDay * 150));
+  el.innerHTML = `
+    <span class="cnt">${d.commits} 次</span>
+    <div class="bars">
+      <div class="dseg d" style="height:${hDel}px" title="删除 ${fmt(d.del)} 行"></div>
+      <div class="dseg" style="height:${hIns}px" title="新增 ${fmt(d.ins)} 行"></div>
+    </div>
+    <div class="cap">${d.date.slice(5)}<br><span style="font-size:10px">+${fmt(d.ins)} / -${fmt(d.del)}</span></div>`;
+  dayChart.appendChild(el);
+});
+
+/* donut */
+let acc = 0, segs = [];
+DATA.dirs.forEach(([name, v], i) => {
+  const deg = v / DATA.dirSum * 360;
+  const color = ['#38bdf8','#a78bfa','#fbbf24','#34d399','#fb7185'][i % 5];
+  segs.push(`${color} ${acc}deg ${acc+deg}deg`);
+  acc += deg;
+});
+document.getElementById('donut').style.background = `conic-gradient(${segs.join(',')})`;
+document.getElementById('donutTotal').textContent = fmt(DATA.dirSum);
+const legend = document.getElementById('dirLegend');
+DATA.dirs.forEach(([name, v], i) => {
+  const color = ['#38bdf8','#a78bfa','#fbbf24','#34d399','#fb7185'][i % 5];
+  const pct = (v / DATA.dirSum * 100).toFixed(1);
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.innerHTML = `<span class="sw" style="background:${color}"></span><span class="nm">${name}</span><span class="pc">${pct}% · ${v}</span>`;
+  legend.appendChild(row);
+});
+
+/* ext bars */
+const extBox = document.getElementById('extBars');
+const maxExt = DATA.exts[0][1];
+DATA.exts.forEach(([name, v]) => {
+  const row = document.createElement('div');
+  row.className = 'mb';
+  row.innerHTML = `<span class="nm">${name}</span><div class="track"><div class="fill" style="width:${v/maxExt*100}%"></div></div><span class="ct">${v}</span>`;
+  extBox.appendChild(row);
+});
+
+/* tags */
+const tagBox = document.getElementById('tagList');
+DATA.tags.forEach(([name, v], i) => {
+  const el = document.createElement('button');
+  el.className = `tag t${i}`;
+  el.innerHTML = `<span class="sw" style="background:${TAGCOLORS[i]}"></span>${name}<b>${v}</b>`;
+  el.onclick = () => setFilter(name);
+  tagBox.appendChild(el);
+});
+
+/* hot files */
+const hotBox = document.getElementById('hotList');
+const maxHot = DATA.hot[0][1];
+DATA.hot.forEach(([p, v]) => {
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.innerHTML = `<span class="path" title="${p}">${p}</span><span class="ct">${v}</span><div class="track"><div class="fill" style="width:${v/maxHot*100}%"></div></div>`;
+  hotBox.appendChild(row);
+});
+
+/* timeline */
+const tl = document.getElementById('timeline');
+DATA.commits.forEach((c, i) => {
+  const item = document.createElement('div');
+  item.className = 'tl-item fade' + (c.change > 700 ? ' hot' : '');
+  item.dataset.tags = c.tags.join('|');
+  item.style.animationDelay = Math.min(i*18, 500)+'ms';
+  const total = c.change || 1;
+  const ip = Math.round(c.ins/total*100);
+  const tags = c.tags.map(t => `<span class="t">#${t}</span>`).join(' ');
+  const fileRows = c.files.map(f => {
+    const bin = f.bin ? '<span class="a">binary</span>' : `<span class="a">+${fmt(f.a)}</span> <span class="b">-${fmt(f.d)}</span>`;
+    return `<li title="${f.p}">${f.p}</li><li class="d">${bin}</li>`;
+  }).join('');
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `
+    <div class="top">
+      <span class="idx">#${String(DATA.stats.commits - i).padStart(2,'0')}</span>
+      <span class="hash">${c.hash}</span>
+      <span class="when">${c.date}</span>
+    </div>
+    <div class="subject">${c.subject}</div>
+    <div class="meta">
+      <span class="t">${c.tags.map(x=>'#'+x).join(' ') || '#其他'}</span>
+      <span>${c.nfiles} 个文件</span>
+      <span class="plus">+${fmt(c.ins)}</span><span class="minus">-${fmt(c.del)}</span>
+    </div>
+    <div class="cbar"><div class="i" style="width:${ip}%"></div><div class="r" style="width:${100-ip}%"></div></div>
+    <div class="cbar-legend"><span>新增占 ${ip}%</span><span>共 ${fmt(c.change)} 行</span></div>
+    <details><summary>查看 ${c.nfiles} 个文件</summary><ul class="files">${fileRows}</ul></details>`;
+  item.innerHTML = '<span class="node"></span>';
+  item.appendChild(card);
+  tl.appendChild(item);
+});
+
+/* filter */
+let current = '全部';
+function setFilter(tag){
+  current = tag;
+  document.querySelectorAll('.fbtn').forEach(b => b.classList.toggle('on', b.dataset.tag === tag));
+  let shown = 0;
+  document.querySelectorAll('.tl-item').forEach(it => {
+    const tags = it.dataset.tags;
+    const ok = tag === '全部' || tags.split('|').includes(tag);
+    it.style.display = ok ? '' : 'none';
+    if(ok) shown++;
+  });
+  document.getElementById('shownCount').textContent = shown;
+  document.getElementById('emptyNote').style.display = shown ? 'none' : 'block';
+}
+document.querySelectorAll('.fbtn').forEach(b => b.onclick = () => setFilter(b.dataset.tag));
+setFilter('全部');
+</script>
+</body>
+</html>

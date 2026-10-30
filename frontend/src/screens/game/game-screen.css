@@ -3610,3 +3610,15 @@ button.arena-avatar--btn {
     gap: clamp(24px, 2.4vw, 36px);
   }
 }
+
+/* 顶部状态栏与棋盘使用同一个中央舞台：旧规则只设置 left/right，
+ * 会把栏的右边延伸进右侧 rail，导致状态内容整体向右漂移。 */
+@media (min-width:1200px) and (min-height:700px) {
+  .game[data-layout='wide'] .game-hud,
+  .game[data-layout='wide'] .field-magic-area {
+    left: 50%;
+    right: auto;
+    width: calc(100% - var(--dock-left) - var(--dock-right));
+    transform: translateX(-50%);
+  }
+}

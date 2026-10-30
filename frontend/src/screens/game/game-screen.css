@@ -1,0 +1,3624 @@
+/* Game HUD (ticket #47): one main board, a status band with the server-owned
+ * turn clock, a readable hand, one target banner, one chain overlay, and
+ * drawers for log/chat/piles. Layout moves are intentional (redesign), so this
+ * file is the new geometry contract: desktop board side >= 480px, hand cards
+ * 118x165 (desktop) / 64x92 (mobile), no page scroll on the game screen. */
+
+.game {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 20px 16px;
+  min-height: 0;
+  /* The stage fits the window by design; on windows smaller than the budget can
+     serve it scrolls inside itself rather than hiding the hand or the CTA. */
+  overflow: hidden auto;
+  overscroll-behavior: contain;
+  /* One centred stage keeps the single board, the rail and the hand from
+     drifting to the far edges of a wide desktop window. */
+  --game-w: 1040px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------ status band --- */
+/* The HUD is one raised strip, like main's in-game header: a run of small pills
+   on the left and the two commanders on the right. */
+.game-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: var(--game-w);
+  margin: 0 auto;
+  padding: 10px 14px;
+  border: 1px solid var(--panel-line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(10px);
+}
+
+.game-status__chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.game-status__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.game-status__chip--turn {
+  border-color: var(--role-action);
+  background: var(--role-action-soft);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.game-status__chip--num {
+  color: var(--role-self);
+  border-color: var(--border-subtle);
+}
+
+.game-status__chip--clock {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--role-self) 55%, transparent);
+}
+
+.game-status__chip--clock.is-warning {
+  border-color: var(--role-warning);
+  background: var(--role-action-soft);
+  color: var(--role-warning);
+  animation: game-clock-pulse 900ms ease-in-out infinite;
+}
+
+.game-status__chip--clock.is-expired {
+  border-color: var(--role-enemy);
+  color: var(--role-enemy);
+  animation: none;
+}
+
+.game-status__chip--muted {
+  color: var(--text-tertiary);
+}
+
+.game-status__chip.is-online {
+  color: var(--role-success);
+}
+
+.game-status__chip.is-offline {
+  color: var(--role-warning);
+  border-color: var(--role-warning);
+}
+
+.game-status__names {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 14px;
+  border-left: 1px solid var(--border-subtle);
+  font-size: 13px;
+  color: var(--text-primary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.game-status__vs {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 20px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.game-status__ships {
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--role-action-soft);
+  color: var(--role-action);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------- field magic bar --- */
+.game-fieldbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: var(--game-w);
+  margin: 0 auto;
+  padding: 5px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.game-fieldbar__label {
+  color: var(--text-tertiary);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.game-fieldbar__value {
+  color: var(--role-action);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes game-clock-pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* ------------------------------------------------------------------ body --- */
+.game-body {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  min-height: 0;
+  align-items: stretch;
+  width: 100%;
+  max-width: var(--game-w);
+  margin: 0 auto;
+}
+
+.game-board-column {
+  position: relative;
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  /* The board is sized from the window height budget, not from a fixed cap:
+     `100dvh` minus the app bar, the HUD/field bar, this screen's hand + action
+     rows, gaps and the board's own padding + grid gaps. That keeps the hand and
+     the primary button inside a 900px-tall window without hiding anything. */
+  --game-chrome: 480px;
+  --cell: clamp(34px, min(9.4vw, calc((100dvh - var(--game-chrome)) / 6)), 92px);
+}
+
+.game-tabs {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  max-width: 480px;
+}
+
+.game-tab {
+  flex: 1;
+  min-height: 40px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-deck);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+}
+
+.game-tab[aria-selected='true'] {
+  border-color: var(--role-action);
+  color: var(--text-primary);
+  background: var(--role-action-soft);
+}
+
+.game-latest {
+  margin: 0;
+  max-width: 560px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.game-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-width: 560px;
+}
+
+.game-notice {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.game-notice--warning {
+  color: var(--role-warning);
+}
+
+.game-notice--error {
+  color: var(--role-enemy);
+}
+
+.game-receipt {
+  margin: 0;
+  padding: 5px 10px;
+  border: 1px solid var(--role-warning);
+  border-radius: var(--radius-sm);
+  background: var(--role-action-soft);
+  color: var(--role-warning);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.game-banner {
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--role-action);
+  font-size: 12px;
+}
+
+.game-banner--warning {
+  border-color: var(--role-warning);
+  color: var(--role-warning);
+}
+
+.game-empty {
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* Transient bars (receipts, timeout notes, empty states) line up with the
+   centred stage instead of stretching across the whole window. */
+.game > .game-receipt,
+.game > .game-banner,
+.game > .game-empty {
+  width: 100%;
+  max-width: var(--game-w);
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+/* ------------------------------------------------------------------ rail --- */
+.game-rail {
+  flex: 0 0 300px;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.game-map {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  min-height: 44px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--surface-chamber), var(--surface-deck));
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.game-map:hover {
+  border-color: var(--role-self);
+  box-shadow: 0 0 0 1px var(--role-self-soft), var(--shadow-panel);
+}
+
+.game-map__grid {
+  display: grid;
+  grid-template-columns: repeat(6, 18px);
+  gap: 3px;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  background: var(--board-bg);
+  box-shadow: inset 0 0 0 1px var(--board-border);
+}
+
+.game-map__cell {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  background: var(--cell-bg);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+}
+
+.game-map__cell.is-ship {
+  background: var(--ship-metal);
+}
+
+.game-map__cell.is-hit {
+  background: var(--role-enemy);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--role-enemy) 60%, transparent);
+}
+
+.game-map__cell.is-miss {
+  background: color-mix(in srgb, var(--role-self) 30%, var(--cell-bg));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--role-self) 55%, transparent);
+}
+
+.game-map__label {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+}
+
+.game-map__note {
+  color: var(--role-self);
+}
+
+.game-slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.game-slot {
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--role-self) 55%, transparent);
+  border-radius: var(--radius-pill);
+  background: var(--role-self-soft);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.game-slot.is-lost {
+  border-color: color-mix(in srgb, var(--role-enemy) 55%, transparent);
+  background: var(--role-enemy-soft);
+  color: var(--role-enemy);
+  text-decoration: line-through;
+}
+
+.game-slot.is-frozen {
+  border-color: var(--role-self);
+}
+
+.game-slot.is-shielded {
+  border-color: var(--role-action);
+  color: var(--role-action);
+}
+
+.game-rail__actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.game-mini-button {
+  flex: 1 1 auto;
+  min-height: 36px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
+}
+
+.game-mini-button:hover {
+  border-color: var(--role-action);
+  color: var(--text-primary);
+  background: var(--role-action-soft);
+}
+
+/* The empty chain slot keeps main's dashed "连锁结算" placeholder. */
+.game-chain-empty {
+  margin: 0;
+  padding: 18px 14px;
+  border: 1px dashed color-mix(in srgb, var(--gold) 42%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--gold) 5%, transparent);
+  color: var(--text-tertiary);
+  font-size: 12px;
+  text-align: center;
+}
+
+.game-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-height: 0;
+}
+
+.game-badge {
+  padding: 2px 8px;
+  border: 1px solid rgba(240, 182, 78, 0.55);
+  border-radius: var(--radius-pill);
+  background: var(--role-action-soft);
+  color: var(--role-action);
+  font-size: 11px;
+}
+
+.game-badge--opponent {
+  border-color: var(--border-strong);
+  background: var(--panel);
+  color: var(--text-tertiary);
+}
+
+/* ------------------------------------------------------------------ hand --- */
+.game-bottom {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 18px;
+  min-height: 0;
+  width: 100%;
+  max-width: var(--game-w);
+  margin: 0 auto;
+}
+
+.game-hand-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.game-hand-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.game-hand-count {
+  color: var(--text-secondary);
+}
+
+.game-hand {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 2px 6px;
+  min-height: 172px;
+}
+
+.game-hand-empty {
+  margin: 0;
+  align-self: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.card {
+  position: relative;
+  flex: 0 0 118px;
+  width: 118px;
+  height: 165px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--gold) 60%, transparent);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(170deg, #12203c, #0a1120 72%);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.4);
+  transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+/* Card semantics (spec §2, ticket #52): the type is encoded on the card
+   border, not only in the text line. */
+.card[data-type='场地'] {
+  border-style: double;
+  border-width: 3px;
+}
+
+.card[data-type='判定'] {
+  border-top: 2px dashed var(--role-action);
+}
+
+.card--art {
+  padding: 0;
+}
+
+.card__art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.card__body {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 2px;
+  height: 100%;
+  padding: 6px 7px 8px;
+  background: linear-gradient(
+    180deg,
+    rgba(6, 10, 22, 0) 0%,
+    rgba(6, 10, 22, 0.28) 34%,
+    rgba(6, 10, 22, 0.86) 56%,
+    rgba(6, 10, 22, 0.96) 100%
+  );
+}
+
+.card__name {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.85);
+}
+
+.card__gems {
+  color: var(--gold-strong);
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+.card__speed {
+  margin-left: 3px;
+  font-size: 10px;
+  letter-spacing: 0;
+  color: var(--text-secondary);
+}
+
+.card__type {
+  color: var(--gold-strong);
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.card__desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--text-primary) 78%, transparent);
+  font-size: 9.5px;
+  line-height: 1.3;
+}
+
+.card__reason {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--role-warning);
+  font-size: 9px;
+  line-height: 1.25;
+}
+
+.card:hover {
+  border-color: var(--role-action);
+  transform: translateY(-3px);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.5);
+}
+
+/* 普通手牌悬停预览原型：沿用扇形角度，把当前牌提到手牌上方并放大，
+   让卡面底部的效果文字在桌面上可读；不改变选牌或出牌状态。 */
+.game-hand > .card:hover {
+  z-index: 80;
+  transform: rotate(var(--fan-rot, 0rad)) translateY(calc(var(--fan-drop, 0px) - 52px)) scale(1.28);
+  transform-origin: center bottom;
+  box-shadow: 0 0 0 2px var(--gold-strong), 0 18px 38px rgb(0 0 0 / 52%);
+}
+.game-hand > .card:hover .card__desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 8;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@media (max-width: 719px) {
+  .game-hand > .card:hover {
+    transform: rotate(var(--fan-rot, 0rad)) translateY(calc(var(--fan-drop, 0px) - 34px)) scale(1.12);
+  }
+}
+
+.card--selected {
+  border-color: var(--gold-strong);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--gold) 55%, transparent), 0 12px 24px rgba(0, 0, 0, 0.5);
+  transform: translateY(-3px);
+}
+
+.card--disabled {
+  border-color: var(--border-subtle);
+  box-shadow: none;
+}
+
+.card--disabled .card__body {
+  background: linear-gradient(180deg, rgba(6, 10, 22, 0.55), rgba(6, 10, 22, 0.95) 62%);
+}
+
+.card--disabled .card__art {
+  filter: grayscale(0.7) brightness(0.6);
+}
+
+.card--disabled .card__name,
+.card--disabled .card__gems {
+  color: var(--role-disabled);
+}
+
+.game-card-hint {
+  margin: 0;
+  color: var(--role-warning);
+  font-size: 12px;
+}
+
+/* --------------------------------------------------------------- actions --- */
+.game-actions {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: 320px;
+  max-width: 320px;
+}
+
+.game-turn-hint {
+  margin: 0;
+  padding: 7px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: center;
+}
+
+.game-actions__row {
+  display: flex;
+  gap: 8px;
+}
+
+.game-primary {
+  flex: 1 1 auto;
+  min-height: 46px;
+  padding: 10px 18px;
+  border: 1px solid color-mix(in srgb, var(--role-action) 60%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--hero-grad);
+  color: var(--on-accent, #fff);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  box-shadow: var(--shadow-accent);
+  transition: filter 140ms ease, transform 140ms ease;
+}
+
+.game-primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.game-primary:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.game-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.game-more {
+  flex: 0 0 auto;
+  min-height: 46px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease;
+}
+
+.game-more:hover {
+  border-color: var(--role-action);
+  color: var(--text-primary);
+}
+
+.game-more-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: stretch;
+  padding: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-chamber);
+  box-shadow: var(--shadow-panel);
+}
+
+.game-more__item {
+  min-height: 40px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-deck);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.game-more__item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.game-more__item.button--danger {
+  border-color: var(--role-enemy);
+  color: var(--role-enemy);
+}
+
+.game-more__item.is-armed {
+  background: var(--role-enemy-soft);
+}
+
+.game-more__note {
+  margin: 4px 0 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.button--ghost {
+  background: var(--surface-deck);
+}
+
+.button--danger {
+  border-color: var(--role-enemy);
+  color: var(--role-enemy);
+}
+
+.game-close {
+  min-width: 40px;
+  min-height: 40px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface-deck);
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* ------------------------------------------------------------ card detail --- */
+.game-detail {
+  position: absolute;
+  z-index: 26;
+  right: 24px;
+  bottom: 214px;
+  width: min(370px, calc(100% - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--gold) 55%, transparent);
+  border-radius: var(--radius);
+  background: var(--surface-chamber);
+  box-shadow: var(--shadow-panel), 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+
+.game-detail__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.game-detail__ident {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.game-detail__art {
+  flex: 0 0 auto;
+  width: 64px;
+  height: 88px;
+  object-fit: cover;
+  border: 1px solid color-mix(in srgb, var(--gold) 55%, transparent);
+  border-radius: 6px;
+}
+
+.game-detail__ident-text {
+  min-width: 0;
+}
+
+.game-detail__name {
+  margin: 0 0 4px;
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+.game-detail__meta {
+  margin: 0;
+  color: var(--gold-strong);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.game-detail__desc {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.game-detail__reason {
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--role-warning) 55%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--role-action-soft);
+  color: var(--role-warning);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.game-detail__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.game-detail__use,
+.game-detail__actions .button {
+  flex: 1 1 auto;
+  min-height: 42px;
+  padding: 8px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.game-detail__use {
+  border-color: color-mix(in srgb, var(--role-action) 60%, transparent);
+  background: var(--hero-grad);
+  color: #fff;
+  font-weight: 700;
+  box-shadow: var(--shadow-accent);
+}
+
+.game-detail__use:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* ---------------------------------------------------------- target banner --- */
+.game-target {
+  position: fixed;
+  z-index: 80;
+  width: min(460px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+  padding: 22px;
+  transform: none;
+}
+
+.game-target__main {
+  flex: 1 1 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.game-target__title {
+  margin: 0;
+  font-size: 14px;
+  color: var(--role-action);
+}
+
+.game-target__hint,
+.game-target__selected {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.game-target__error {
+  margin: 0;
+  color: var(--role-enemy);
+  font-size: 12px;
+}
+
+.game-target__controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+}
+
+.game-target__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.game-target__option,
+.game-target__confirm,
+.game-target .button {
+  min-height: 40px;
+  padding: 6px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-deck);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.game-target__confirm {
+  border-color: var(--role-action);
+  background: var(--role-action);
+  color: #08131a;
+  font-weight: 700;
+}
+
+.game-target__confirm:disabled,
+.game-target__confirm.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.game__action--active {
+  border-color: var(--role-action);
+  color: var(--role-action);
+}
+
+/* ------------------------------------------------------------ chain overlay --- */
+.game-chain-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 64px;
+  pointer-events: none;
+}
+.game-chain-scrim--modal {
+  align-items: center;
+  padding: 12px;
+  pointer-events: auto;
+  background: var(--scrim);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+.game-chain-scrim > .game-chain-panel {
+  position:relative;
+  width:min(420px,calc(100vw - 24px));
+  max-height:calc(100dvh - 24px);
+  overflow-y:auto;
+  padding:24px;
+  border:1px solid color-mix(in srgb,var(--gold) 45%,transparent);
+  border-radius:9px;
+  background:var(--surface-chamber);
+  color:var(--text-primary);
+  box-shadow:var(--shadow-panel);
+}
+.game-chain-panel__head { display:flex; justify-content:center; align-items:center; position:relative; margin-bottom:14px; }
+.game-chain-panel__head>.game-close { position:absolute; right:0; top:0; }
+.game-chain-panel__title { margin:0; padding:2px 12px; border-radius:99px; background:var(--gold-soft); color:var(--gold-strong); font-size:13px; line-height:1.3; font-weight:500; }
+.game-chain-window { display:flex; flex-direction:column; gap:12px; }
+.game-chain-window__card { position:relative; margin:0; text-align:center; font-size:16px; line-height:1.7; font-weight:700; color:var(--role-action); }
+.game-chain-window__card > .chain-preview-anchor { position:static; }
+.game-chain-clock { position:relative; display:grid; place-items:center; width:56px; height:56px; margin:2px auto; flex:0 0 auto; }
+.game-chain-ring { position:absolute; inset:0; border-radius:50%; background:conic-gradient(var(--gold-strong) calc(var(--chain-progress,0) * 1turn),var(--gold-soft) 0); -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 6px),#000 calc(100% - 6px)); mask:radial-gradient(farthest-side,transparent calc(100% - 6px),#000 calc(100% - 6px)); }
+.game-chain-countdown { margin:0; color:var(--gold-strong); font-size:19px; line-height:1; font-weight:700; font-variant-numeric:tabular-nums; }
+.game-chain-window__hint { margin:0; color:var(--text-secondary); font-size:13px; line-height:1.7; font-weight:600; text-align:center; }
+.game-chain-options { display:grid; gap:8px; }
+.chain-preview-anchor { position:relative; min-width:0; }
+.game-chain-option { display:flex; flex-direction:column; gap:4px; width:100%; padding:11px 12px; text-align:left; color:var(--text-primary); font:inherit; border:1px solid var(--border-strong); border-radius:8px; background:var(--surface-deck); cursor:pointer; }
+.game-chain-option b { font-size:15px; color:var(--text-primary); }.game-chain-option small { font-size:12px; color:var(--text-secondary); }
+.game-chain-option__desc { display:-webkit-box; -webkit-line-clamp:2; line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; font-size:12px; line-height:1.6; color:var(--text-secondary); }
+.game-chain-option:hover,.game-chain-option:focus-visible { border-color:var(--gold-strong); background:color-mix(in srgb,var(--role-action) 8%,var(--surface-deck)); outline:2px solid var(--role-action-soft); outline-offset:1px; }
+.chain-effect-preview { position:absolute; z-index:3; bottom:calc(100% + 8px); left:0; display:flex; flex-direction:column; gap:5px; width:100%; min-width:0; padding:12px; box-sizing:border-box; border:1px solid var(--gold); border-radius:8px; background:var(--surface-chamber); color:var(--text-primary); box-shadow:var(--shadow-panel); text-align:left; font-weight:400; white-space:normal; overflow-wrap:anywhere; pointer-events:none; }
+.game-chain-window__card .chain-effect-preview { top:calc(100% + 8px); bottom:auto; left:50%; transform:translateX(-50%); width:min(340px,calc(100vw - 88px)); }
+.chain-effect-preview b { font-size:15px; color:var(--text-primary); }.chain-effect-preview small { font-size:12px; color:var(--text-secondary); }.chain-effect-preview>span { font-size:14px; line-height:1.65; color:var(--text-primary); }
+.game-chain-no-options { color:var(--text-secondary); font-size:13px; text-align:center; }
+.game-chain-window__actions { display:flex; gap:8px; justify-content:center; padding-top:2px; }
+.game-chain-window__actions .button { flex:1; min-height:42px; padding:8px 10px; font-size:15px; font-weight:700; white-space:normal; border:1px solid var(--border-strong); border-radius:4px; background:var(--surface-deck); color:var(--text-primary); }
+.game-chain-stack { margin:0; padding:0; list-style:none; display:grid; gap:6px; }.game-chain-item { padding:8px; background:var(--surface-deck); font-size:13px; }.game-chain-index { float:right; color:var(--text-tertiary); }.game-chain-item--negated { opacity:.6; text-decoration:line-through; }
+@media(max-width:430px) { .game-chain-panel { padding:18px; }.game-chain-window__actions .button { font-size:13px; }.game-chain-window__card { font-size:15px; } }
+
+/* ----------------------------------------------------------------- dialogs --- */
+.game-dialog {
+  position: absolute;
+  z-index: 40;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(420px, calc(100% - 28px));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-chamber);
+  box-shadow: var(--shadow-panel);
+}
+
+.game-dialog__title {
+  margin: 0;
+  font-size: 15px;
+}
+
+.game-dialog__hint,
+.game-dialog__error {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.game-dialog__error {
+  color: var(--role-enemy);
+}
+
+.game-dialog__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.game-dialog__actions .button,
+.game-dialog .button {
+  min-height: 40px;
+  padding: 6px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-deck);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* ------------------------------------------------------------------ drawers --- */
+.game-drawer {
+  position: fixed;
+  z-index: 45;
+  top: 8px;
+  right: 8px;
+  bottom: 8px;
+  width: min(360px, calc(100% - 16px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-chamber);
+  box-shadow: var(--shadow-panel);
+  overflow-y: auto;
+}
+
+.game-drawer__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.game-drawer__title {
+  margin: 0;
+  font-size: 14px;
+}
+
+.game-drawer__subtitle {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.game-drawer__empty {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.game-log {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.game-log__entry {
+  line-height: 1.45;
+}
+
+/* 日志抽屉位于所有右侧菜单/连锁层之上，关闭按钮不会被覆盖；字体保持可读。 */
+.game-drawer--log {
+  z-index: 150;
+  top: 72px;
+  bottom: 24px;
+  width: min(420px, calc(100% - 24px));
+}
+.game-drawer--log .game-drawer__title { font-size: 16px; }
+.game-drawer--log .game-log { font-size: 14px; line-height: 1.6; gap: 7px; }
+.game-drawer--log .game-close { position: relative; z-index: 3; }
+
+.game-chat-text {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.game-chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.game-chat-line {
+  overflow-wrap: anywhere;
+}
+
+.game-chat-line b {
+  color: var(--role-self);
+}
+
+.game-chat-line--mine b {
+  color: var(--text-primary);
+}
+
+.game-chat-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.game-chat-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 40px;
+  padding: 6px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-deck);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+}
+
+.game-chat-quick-toggle {
+  flex: none;
+  min-height: 40px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.game-chat-quick-toggle.is-open {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.game-chat-phrases {
+  max-height: 132px;
+  margin-top: 6px;
+  overflow-y: auto;
+}
+
+.game-chat-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.game-chat-item {
+  min-height: 40px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+/* 弃牌区：真实卡图网格（4 列自适应），点牌看详情，悬停复用右侧预览层。 */
+.game-discard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 2px 6px;
+  align-content: start;
+}
+
+.game-discard-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: calc(var(--radius) - 4px);
+  background: var(--surface-deck);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.game-discard-card:hover,
+.game-discard-card:focus-visible {
+  transform: translateY(-2px);
+  border-color: var(--border-strong);
+  box-shadow: 0 6px 14px color-mix(in srgb, #000 32%, transparent);
+  outline: none;
+}
+
+.game-discard-card__art {
+  width: 100%;
+  aspect-ratio: 5 / 7;
+  object-fit: cover;
+  border-radius: calc(var(--radius) - 6px);
+  display: block;
+}
+
+.game-discard-card__fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 5 / 7;
+  border-radius: calc(var(--radius) - 6px);
+  background: var(--surface-chamber);
+  font-size: 12px;
+  text-align: center;
+  padding: 4px;
+}
+
+.game-discard-card__name {
+  font-size: 11px;
+  line-height: 1.2;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 抽屉滑入/滑出：只动 transform 与 opacity，不参与布局计算。 */
+.drawer-enter-active,
+.drawer-leave-active {
+  transition:
+    transform 220ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 180ms ease;
+}
+
+.drawer-enter-from,
+.drawer-leave-to {
+  transform: translateX(24px) scale(0.98);
+  opacity: 0;
+}
+
+/* 抽屉让开顶栏（64px 导航 + 8px 间距），否则关闭按钮会被导航栏盖住点不到。 */
+.game-drawer--discard {
+  top: 72px;
+  z-index: 80;
+}
+
+.game-drawer--discard .game-close {
+  position: relative;
+  z-index: 2;
+}
+
+/* 弃牌卡效果详情：叠在抽屉之上，固定定位，不推棋盘与行动栏。 */
+.game-discard-detail {
+  position: fixed;
+  z-index: 90;
+  right: 12px;
+  bottom: 12px;
+  width: min(320px, calc(100% - 24px));
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-chamber);
+  box-shadow: var(--shadow-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.game-discard-detail__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.game-discard-detail__title {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.game-discard-detail__meta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.game-discard-detail__desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  max-height: 168px;
+  overflow-y: auto;
+}
+
+@media (max-width: 719px) {
+  .game-discard-grid {
+    grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+    gap: 6px;
+  }
+
+  .game-discard-detail {
+    right: 8px;
+    left: 8px;
+    width: auto;
+    bottom: 8px;
+  }
+}
+
+/* ------------------------------------------------------------- self zoom --- */
+.game-zoom {
+  position: absolute;
+  z-index: 50;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  background: var(--scrim);
+  --cell: clamp(48px, min(8.4vh, 9vw), 72px);
+}
+
+.game-zoom__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.game-zoom__title {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+/* --------------------------------------------------------------- responsive --- */
+
+
+
+
+/* Very short phones (<=700px of height): the board + rail + hand minimum is
+   taller than the window, so the body must keep its natural height and let the
+   stage scroll inside itself. Shrinking it (flex: 1 with min-height: 0) made the
+   board paint over the rail row and the field bar creep under the board tabs. */
+
+
+
+
+/* Narrow phones: keep the HUD on one row and let it scroll sideways instead of
+   wrapping, because every extra HUD row is board height we cannot afford. */
+
+
+/* ------------------------------------------------- landscape phones (<=480px tall) ---
+   A 6x6 board plus a hand strip, a rail and a CTA do not stack in 390px of
+   height, so the stage becomes two columns: the board keeps the full height and
+   the HUD, field bar, hand and actions stack in a side column. */
+
+
+
+/* ==========================================================================
+ * 原 main 结构布局（本块覆盖上面的旧单棋盘舞台）
+ * 依据：main d16f706 的 .game-main-container / .game-content / .boards-container
+ * / .board-wrapper / .log-container / .field-magic-area / 右列 rail 与底部手牌。
+ * 目标：桌面双棋盘常驻、左日志、右连锁与卡牌详情、底部手牌。
+ * ========================================================================== */
+
+.game {
+  padding: 10px 14px 12px;
+  gap: 8px;
+}
+
+.game-main-container {
+  display: flex;
+  align-items: stretch;
+  gap: 14px;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  max-width: 1560px;
+  margin: 0 auto;
+  padding: 0;
+}
+
+/* ---- 左列：对局日志 ------------------------------------------------------ */
+.log-container {
+  flex: 0 0 226px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-panel);
+  overflow: hidden;
+}
+
+.log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.log-header h3 {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.log-expand {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.log-expand:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.log-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 8px 10px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.log-line {
+  color: var(--text-secondary);
+  padding-bottom: 5px;
+  border-bottom: 1px dashed var(--border-subtle);
+}
+
+.log-line:last-child {
+  border-bottom: 0;
+}
+
+.log-empty {
+  margin: 0;
+  padding: 12px 10px;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+
+/* ---- 中列：HUD + 场地条 + 双棋盘 ---------------------------------------- */
+.game-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.game-hud {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 5px 12px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--panel-line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-panel);
+}
+
+.hud-round {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.hud-round__num {
+  font-size: 16px;
+  color: var(--gold-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.hud-primary-chips {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(132px, 1fr));
+  gap: 6px;
+  min-width: 290px;
+}
+
+.hud-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 4px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+}
+
+.hud-primary-chips .hud-chip { justify-content: center; }
+.hud-chip--order { color: var(--role-self); border-color: color-mix(in srgb, var(--role-self) 55%, transparent); background: color-mix(in srgb, var(--role-self) 14%, var(--surface-raised)); font-weight: 700; }
+
+@media (max-width: 719px) {
+  .hud-primary-chips { grid-template-columns: repeat(2, minmax(0, 1fr)); min-width: 0; width: 100%; }
+  .hud-primary-chips .hud-chip { min-height: 28px; padding: 3px 7px; font-size: 11px; }
+}
+
+.hud-chip b {
+  color: var(--gold-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-chip--turn {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--role-action) 55%, transparent);
+  background: var(--role-action-soft, color-mix(in srgb, var(--role-action) 18%, transparent));
+}
+
+.hud-chip--muted {
+  color: var(--text-tertiary);
+}
+
+.hud-chip.is-online {
+  color: var(--role-success);
+  border-color: color-mix(in srgb, var(--role-success) 50%, transparent);
+}
+
+.hud-chip.is-offline {
+  color: var(--role-warning);
+  border-color: color-mix(in srgb, var(--role-warning) 55%, transparent);
+}
+
+.hud-chip--clock.is-warning {
+  color: var(--role-warning);
+}
+
+.hud-chip--clock.is-expired {
+  color: var(--role-danger, var(--danger));
+}
+
+.hud-players {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.hud-name {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.hud-vs {
+  font-size: 10px;
+  letter-spacing: .08em;
+  color: var(--text-tertiary);
+}
+
+.hud-pips {
+  font-size: 11px;
+  color: var(--gold-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 场地魔法条 ---------------------------------------------------------- */
+/* 场地/持续效果监视栏自己画框，这里只留高度与宽度占位（高度预算仍按实测值算）。 */
+.field-magic-area {
+  padding: 0;
+  background: none;
+  border: 0;
+  gap: 0;
+}
+
+.field-magic-area {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 3px 12px;
+  font-size: 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+}
+
+.fm-label {
+  color: var(--text-tertiary);
+}
+
+.fm-value {
+  color: var(--gold-strong);
+  font-weight: 600;
+}
+
+/* ---- 效果胶囊条 ---------------------------------------------------------- */
+.effect-status-bar {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  color: var(--gold-strong);
+  background: color-mix(in srgb, var(--gold) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--gold) 46%, transparent);
+  border-radius: 999px;
+}
+
+.status-item--opponent {
+  color: var(--role-enemy);
+  background: color-mix(in srgb, var(--role-enemy) 12%, transparent);
+  border-color: color-mix(in srgb, var(--role-enemy) 42%, transparent);
+}
+
+/* ---- 双棋盘 -------------------------------------------------------------- */
+.boards-container {
+  position: relative;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 18px;
+  --cell: clamp(38px, min(7.2vw, 5.9vh), 62px);
+}
+
+.board-wrapper {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 8px 10px 10px;
+  text-align: center;
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-panel);
+}
+
+.board-wrapper .board {
+  min-width: 0;
+}
+
+/* ---- 右列：连锁 / 卡牌详情 / 计数 / 主行动 ------------------------------- */
+.arena-rail {
+  flex: 0 0 292px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+  /* 右栏必须收在中栏高度里：1440x900 下曾按内容长到 636px 并压到手牌行，
+     导致「查看弃牌堆 / 更多操作 / 进入战斗阶段」被手牌盖住点不到。 */
+  align-self: stretch;
+  max-height: 100%;
+}
+
+.arena-rail-panel {
+  padding: 9px 11px;
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-panel);
+}
+
+.arena-rail-head {
+  margin-bottom: 7px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--gold-strong);
+}
+
+.arena-rail-empty {
+  margin: 0;
+  padding: 14px 10px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--text-tertiary);
+  border: 1px dashed color-mix(in srgb, var(--gold) 34%, transparent);
+  border-radius: 8px;
+}
+
+.arena-rail-wide {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.arena-chain-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.arena-chain-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: 11.5px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+.arena-chain-item.is-negated {
+  opacity: .55;
+  text-decoration: line-through;
+}
+
+.arena-chain-index {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.arena-chain-negated {
+  font-size: 10px;
+  color: var(--role-enemy);
+}
+
+.arena-card-placeholder .arena-rail-empty {
+  border-style: dashed;
+  color: var(--text-tertiary);
+}
+
+.arena-counts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.arena-counts .fields {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 4px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+.arena-counts .fields span {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.arena-counts .fields b {
+  font-size: 16px;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.arena-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px 11px;
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-panel);
+}
+
+.arena-turn-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+/* ---- 底部手牌条 ---------------------------------------------------------- */
+.game-hand-wrap {
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: 1560px;
+  margin: 0 auto;
+  padding: 6px 10px 8px;
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-panel);
+}
+
+.game-hand-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  /* 纯信息行：极窄/极矮窗口里即使压到手牌也不能吃掉点击 */
+  pointer-events: none;
+}
+
+.game-hand {
+  display: flex;
+  align-items: flex-end;
+  justify-content: safe center;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.game-hand-wrap {
+  max-width: 900px;
+  margin: 0 auto;
+  width: 100%;
+  position: relative;
+  z-index: 40;
+  overflow: visible;
+}
+
+/* ---- 手机档：单棋盘 + 切换标签 + 底部操作条 ----------------------------- */
+.board-tabs {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+}
+
+.board-tab {
+  flex: 1 1 0;
+  min-height: 40px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.board-tab[aria-selected='true'] {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--role-action) 60%, transparent);
+  background: var(--role-action-soft, color-mix(in srgb, var(--role-action) 18%, transparent));
+}
+
+.game-compact-bar {
+  flex: 0 0 auto;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 12px;
+}
+
+/* 紧凑档也能一键打开日志/聊天/弃牌堆（原 main 的手机 aux-dock） */
+.game-compact-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.game-compact-top .arena-turn-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.compact-dock {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+}
+
+.compact-dock .button {
+  height: 28px;
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-family: inherit;
+}
+
+/* 详情面板现在住在右列（原 main 的待使用区），不再是浮层 */
+.arena-rail .game-detail {
+  position: static;
+  right: auto;
+  bottom: auto;
+  top: auto;
+  width: auto;
+  max-height: none;
+  box-shadow: var(--shadow-panel);
+}
+
+/* ---- 断点 ---------------------------------------------------------------- */
+@media (max-width: 1279px) {
+  .log-container {
+    flex-basis: 196px;
+  }
+
+  .arena-rail {
+    flex-basis: 268px;
+  }
+}
+
+@media (max-width: 1023px) {
+  .log-container {
+    display: none;
+  }
+
+  .game-main-container {
+    gap: 10px;
+  }
+
+  .arena-rail {
+    flex-basis: 244px;
+  }
+
+  .boards-container {
+    gap: 10px;
+    --cell: clamp(34px, min(6.4vw, 5.4vh), 54px);
+  }
+
+  .board-wrapper {
+    padding: 6px 7px 8px;
+  }
+}
+
+/* 紧凑档：与 JS 的 compact 同断点（手机竖屏 + 手机横屏） */
+/* 原 main 的判据走 data 属性，而不是媒体查询：
+ * 宽 >=1200 且高 >=700 才是宽屏，其余按 compact / tight / dense 分档。 */
+.game[data-layout="compact"] {
+    padding: 6px 8px 8px;
+    gap: 6px;
+  }
+.game[data-layout="compact"] .game-main-container {
+    /* 棋盘内容不能被压出主区域，再与下方实际卡牌重叠；超高由屏内滚动承接。 */
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: 6px;
+  }
+.game[data-layout="compact"] .game-content {
+    gap: 6px;
+  }
+.game[data-layout="compact"] .game-hud {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 5px 8px;
+  }
+.game[data-layout="compact"] .hud-chips {
+    order: 3;
+    flex: 1 1 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+/* 模式胶囊在紧凑档属于冗余信息，先让位给回合/阶段/攻击数 */
+.game[data-layout="compact"] .hud-chip--muted {
+    display: none;
+  }
+.game[data-layout="compact"] .hud-players {
+    order: 2;
+    margin-left: auto;
+  }
+.game[data-layout="compact"] .arena-rail {
+    display: none;
+  }
+/* 选目标时把目标面板放进手牌/主行动腾出的位置：棋盘一格都不能被盖住 */
+/* 紧凑档打开卡牌详情 sheet 时，手牌行让位：两者在底部重叠会把按钮盖住。 */
+.game[data-layout="compact"].is-sheet .game-hand-wrap {
+  display: none;
+}
+
+.game[data-layout="compact"].is-picking .game-hand-wrap,
+.game[data-layout="compact"].is-picking .game-compact-bar {
+    display: none;
+  }
+.game[data-layout="compact"].is-picking .game-target {
+  position: fixed;
+  transform: none;
+  width: min(460px, calc(100vw - 24px));
+  padding: 18px;
+  gap: 14px;
+}
+
+/* 选舰提示窗独立浮动，增加提示不会推移棋盘；各尺寸都可拖动。 */
+.game .game-pick-float,
+.game[data-layout="compact"].is-picking .game-pick-float {
+  position: fixed;
+  right: auto;
+  bottom: auto;
+  transform: none;
+  width: min(420px, calc(100vw - 16px));
+  overflow-y: auto;
+  z-index: 80;
+}
+.game-pick-float__handle {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.game-pick-float__handle::after {
+  content: '拖动标题可移动';
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+  font-weight: 400;
+  opacity: .65;
+}
+.game-pick-float.is-dragging .game-pick-float__handle { cursor: grabbing; }
+/* 需要时的底部面板：连锁响应 / 卡牌详情 / 待选请求都能在手机上完成 */
+.game[data-layout="compact"] .arena-rail--sheet {
+    display: flex;
+    position: fixed;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    z-index: 45;
+    max-height: min(46vh, 340px);
+    overflow-y: auto;
+    padding: 8px 10px;
+    gap: 8px;
+    flex-basis: auto;
+    background: var(--surface-chamber);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+  }
+/* 计数/占位/连锁面板在详情弹出层里属于噪音（连锁有自己的浮层） */
+.game[data-layout="compact"] .arena-rail--sheet > [data-testid='game-counts'],
+.game[data-layout="compact"] .arena-rail--sheet > [data-testid='game-chain-rail'],
+.game[data-layout="compact"] .arena-rail--sheet > .arena-card-placeholder {
+    display: none;
+  }
+.game[data-layout="compact"] .arena-rail--sheet .game-detail {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+/* 紧凑档的棋盘改成「按剩余高度取正方形」：宽高都由容器决定，
+     不再依赖 vh 预算公式（公式在 360x640 这类窗口会失准）。 */
+.game[data-layout="compact"] .boards-container {
+    flex: 1 1 auto;
+    min-height: 0;
+    gap: 0;
+  }
+.game[data-layout="compact"] .board-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 0;
+  }
+.game[data-layout="compact"] :deep(.board) {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+/* BoardPanel 是子组件，scoped 样式必须走 :deep() 才命中它的元素 */
+.game[data-layout="compact"] :deep(.board__grid) {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-rows: repeat(6, minmax(0, 1fr));
+    /* 尺寸由 useAdaptiveGameLayout 按 main 的预算算好写进 --board-size */
+    width: var(--board-size, min(100%, calc(100dvh - 500px)));
+    height: var(--board-size, min(100%, calc(100dvh - 500px)));
+    min-height: 0;
+    margin: 0 auto;
+  }
+.game[data-layout="compact"] :deep(.board__grid .cell) {
+    width: auto;
+    height: auto;
+    min-width: 0;
+    min-height: 0;
+  }
+.game[data-layout="compact"] .board-wrapper {
+    flex: 1 1 auto;
+    width: 100%;
+    padding: 4px 5px 6px;
+  }
+.game[data-layout="compact"] .game-hand-wrap {
+    padding: 5px 7px 6px;
+  }
+.game[data-layout="compact"] .game-hand {
+    gap: 7px;
+  }
+/* 手机档的手牌用 main 的 64x92 紧凑卡面，把高度让给棋盘 */
+.game[data-layout="compact"] .game-hand {
+    min-height: 0;
+  }
+.game[data-layout="compact"] .game-hand .card {
+    flex: 0 0 64px;
+    width: 64px;
+    height: 92px;
+  }
+.game[data-layout="compact"] .game-hand .card__desc {
+    display: none;
+  }
+
+
+/* ---- 手机横屏（矮视口）：棋盘在左、信息与手牌在右的两列布局 ---------------
+ * 单列在 844x390 装不下：HUD + 场地条 + 棋盘 + 手牌 + 主操作 > 视口高度。
+ * 这里用 grid 把 main 的「棋盘 / 信息 / 手牌 / 操作」四块并排摆，仍是完整可操作面。
+ */
+/* 原 main 的判据走 data 属性，而不是媒体查询：
+ * 宽 >=1200 且高 >=700 才是宽屏，其余按 compact / tight / dense 分档。 */
+.game[data-tight="true"] {
+    display: grid;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    /* 手牌行给下限：低于一张卡就会被压到操作条上（重叠） */
+    grid-template-rows: auto auto auto minmax(84px, 1fr) auto;
+    grid-template-areas:
+      'board hud'
+      'board field'
+      'board tabs'
+      'board hand'
+      'board bar';
+    gap: 6px;
+    align-items: stretch;
+  }
+.game[data-tight="true"] .game-main-container,
+.game[data-tight="true"] .game-content {
+    display: contents;
+  }
+.game[data-tight="true"] .game-hud {
+    grid-area: hud;
+    flex-wrap: wrap;
+    gap: 4px;
+    min-height: 0;
+    padding: 4px 8px;
+  }
+.game[data-tight="true"] .hud-chips {
+    /* 极矮横屏里胶囊行会被下一条压掉一半，只保留回合/双方/舰数 */
+    display: none;
+  }
+.game[data-tight="true"] .hud-players {
+    order: 0;
+    margin-left: 0;
+  }
+.game[data-tight="true"] .field-magic-area {
+    grid-area: field;
+    min-height: 26px;
+    font-size: 11px;
+  }
+.game[data-tight="true"] .board-tabs {
+    grid-area: tabs;
+  }
+.game[data-tight="true"] .board-tab {
+    min-height: 34px;
+    font-size: 12px;
+  }
+.game[data-tight="true"] .boards-container {
+    grid-area: board;
+    --cell: clamp(30px, min(9.4vw, calc((100dvh - 152px) / 6)), 74px);
+  }
+.game[data-tight="true"] :deep(.board__grid) {
+    height: var(--board-size, calc(100dvh - 140px));
+    width: var(--board-size, calc(100dvh - 140px));
+    max-width: 100%;
+  }
+.game[data-tight="true"] .board-wrapper {
+    width: 100%;
+  }
+.game[data-tight="true"] .game-hand-wrap {
+    grid-area: hand;
+    align-self: stretch;
+    /* 手牌必须能整张露出：低于一张卡的高度就会把卡面裁成不可点的窄条 */
+    min-height: 84px;
+    padding: 3px 6px 5px;
+    overflow: hidden;
+  }
+.game[data-tight="true"] .game-hand {
+    min-height: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+.game[data-tight="true"] .game-hand {
+    gap: 6px;
+  }
+.game[data-tight="true"] .game-hand .card {
+    flex: 0 0 56px;
+    width: 56px;
+    height: 78px;
+  }
+.game[data-tight="true"] .game-hand-head {
+    margin-bottom: 2px;
+    font-size: 10px;
+    display: none;
+  }
+.game[data-tight="true"] .game-hand .card__desc {
+    display: none;
+  }
+.game[data-tight="true"] .game-compact-bar {
+    grid-area: bar;
+    padding: 3px 6px;
+    gap: 4px;
+  }
+.game[data-tight="true"] .game-compact-bar .arena-turn-hint {
+    display: none;
+  }
+.game[data-tight="true"] .game-compact-bar .compact-dock {
+    justify-content: flex-end;
+  }
+.game[data-tight="true"] .game-compact-bar .compact-dock .button {
+    height: 26px;
+    min-height: 26px;
+  }
+.game[data-tight="true"] .game-compact-bar .game-actions__row {
+    display: flex;
+    gap: 6px;
+  }
+.game[data-tight="true"] .game-compact-bar .game-primary,
+.game[data-tight="true"] .game-compact-bar .game-more {
+    flex: 1 1 0;
+    height: 36px;
+    min-height: 36px;
+  }
+.game[data-tight="true"] .effect-status-bar,
+.game[data-tight="true"] .game-latest,
+.game[data-tight="true"] .game-notices,
+.game[data-tight="true"] .game-receipt {
+    display: none;
+  }
+
+
+/* ---- 很矮的手机窗口（<=700px 高）：允许屏内滚动而不是让子项互相遮挡 --------
+ * 360x640 时装不下 HUD+场地条+标签+棋盘+手牌+操作条，这里改成内容自然高度 +
+ * .game 自身滚动（任务允许「极小窗口可用的屏内滚动」），绝不用 overflow:hidden
+ * 剪掉手牌或主操作。
+ */
+/* 原 main 的判据走 data 属性，而不是媒体查询：
+ * 宽 >=1200 且高 >=700 才是宽屏，其余按 compact / tight / dense 分档。 */
+/* 屏内滚动档保留可用尺寸，不套 100dvh-500 的封顶 */
+.game[data-dense="true"] :deep(.board__grid) {
+    max-height: none;
+    height: var(--board-size, clamp(160px, 40vh, 280px));
+    width: var(--board-size, clamp(160px, 40vh, 280px));
+  }
+.game[data-dense="true"] {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+.game[data-dense="true"] .game-main-container {
+    flex: 0 0 auto;
+  }
+.game[data-dense="true"] .game-content {
+    flex: 0 0 auto;
+  }
+.game[data-dense="true"] .boards-container {
+    flex: 0 0 auto;
+    --cell: clamp(32px, min(13vw, 7.4vh), 56px);
+  }
+
+
+/* ---- 连锁面板收起后的重新打开条（请求仍在倒计时，不能丢） ---------------- */
+.game-chain-reopen {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: center;
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--gold) 55%, transparent);
+  background: color-mix(in srgb, var(--gold) 16%, var(--surface-deck));
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.game-chain-reopen:hover {
+  background: color-mix(in srgb, var(--gold) 26%, var(--surface-deck));
+}
+
+.game-chain-reopen__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--gold) 22%, transparent);
+}
+
+
+/* ---- 手牌扇形（原 main static/game.js 的 layoutHand） ---------------------
+ * 尺寸/角度由 useHandFan 算好写进 --hand-card-w/h、--fan-rot、--fan-drop，
+ * 这里只负责把变量落到卡面上：宽屏扇形微旋 + 弧顶下沉，重叠档不旋转只抬起。
+ */
+.game[data-layout="wide"] .game-hand .card {
+  flex: 0 0 var(--hand-card-w, 132px);
+  width: var(--hand-card-w, 132px);
+  height: var(--hand-card-h, 186px);
+  transform-origin: 50% 100%;
+  transform: rotate(var(--fan-rot, 0rad)) translateY(var(--fan-drop, 0px));
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.game[data-layout="wide"] .game-hand .card:hover {
+  transform: rotate(var(--fan-rot, 0rad)) translateY(calc(var(--fan-drop, 0px) - 6px));
+}
+
+.game[data-layout="wide"] .game-hand--tight .card,
+.game[data-layout="wide"] .game-hand--tight .card:hover {
+  transform: translateY(var(--fan-drop, 0px));
+}
+
+.game[data-layout="wide"] .game-hand--tight .card--selected {
+  transform: translateY(calc(var(--fan-drop, 0px) - 8px));
+}
+
+.game[data-layout="wide"] .game-hand .card__desc {
+  -webkit-line-clamp: var(--hand-desc-lines, 4);
+  line-clamp: var(--hand-desc-lines, 4);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ---- 浮动聊天窗（原 main 的 .in-game-chat-container） ---------------------
+ * 宽屏是可拖动浮窗（标题栏按住拖，边界夹在视口内且不压导航）；
+ * 紧凑档不使用 .game-float，仍是底部抽屉。
+ */
+.game-float {
+  position: fixed;
+  z-index: 60;
+  width: 300px;
+  max-height: min(46vh, 320px);
+  overflow: auto;
+  border-radius: 12px;
+  border: 1px solid var(--panel-line);
+  background: var(--surface-chamber);
+  box-shadow: var(--shadow-panel);
+}
+
+.game-float__head {
+  cursor: move;
+  touch-action: none;
+  user-select: none;
+}
+
+.hud-btn {
+  height: 26px;
+  min-height: 26px;
+  padding: 0 10px;
+  font-size: 11.5px;
+}
+
+/* 顶栏对手舰数方块（原 main 的 .arena-ships） */
+.hud-ship-dots {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.hud-ship-dots i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--role-action);
+  opacity: 0.85;
+}
+
+.hud-ship-dots i.is-lost {
+  background: var(--border-strong);
+  opacity: 0.5;
+}
+
+/* =========================================================================
+ * 原 main 视觉主体（第四批）：身份条 / 浮动聊天与日志 / 竖向连锁轨道 /
+ * 独立卡牌详情 / 手牌原画。全部按 main 的实际覆盖关系收敛，不再靠 token 近似。
+ * ====================================================================== */
+
+/* ---- 身份条：对手在顶、己方摘要成卡（原 .players-info + arena-oppbar-bg） ---- */
+.game[data-layout='wide'] .game-hud {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.hud-players {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* 宽屏把身份条做成顶栏下方的独立一行（原 main 的 arena-oppbar-bg） */
+.game[data-layout='wide'] .hud-players {
+  flex: 1 1 100%;
+  order: 3;
+  justify-content: flex-start;
+  padding-top: 5px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.arena-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 10px 4px 4px;
+  border: 1px solid var(--panel-line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-chamber) 82%, transparent);
+}
+
+.arena-player--opponent {
+  border-color: color-mix(in srgb, var(--role-enemy) 38%, transparent);
+}
+
+.arena-player--self {
+  border-color: color-mix(in srgb, var(--role-self) 38%, transparent);
+}
+
+.arena-avatar {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border-radius: 50%;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--role-action) 55%, transparent), transparent 70%), var(--surface-deck);
+  border: 1px solid var(--border-strong);
+}
+
+.arena-avatar {
+  overflow: visible;
+}
+
+.arena-avatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.arena-avatar > .avatar-stack {
+  width: 100%;
+  height: 100%;
+  flex-basis: 100%;
+  --avatar-size: 100%;
+}
+
+button.arena-avatar--btn {
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.arena-stats-btn {
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-deck);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.arena-avatar--opponent {
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--role-enemy) 55%, transparent), transparent 70%), var(--surface-deck);
+  border-color: color-mix(in srgb, var(--role-enemy) 55%, transparent);
+}
+
+.arena-avatar--self {
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--role-self) 55%, transparent), transparent 70%), var(--surface-deck);
+  border-color: color-mix(in srgb, var(--role-self) 55%, transparent);
+}
+
+.arena-player__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.arena-player__meta .hud-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.arena-player__line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+}
+
+.arena-player__pips {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.arena-player__pips i {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  background: var(--role-self);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--role-self) 60%, transparent);
+}
+
+.arena-player--opponent .arena-player__pips i {
+  background: var(--role-enemy);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--role-enemy) 55%, transparent);
+}
+
+.arena-player__pips i.is-lost {
+  background: color-mix(in srgb, var(--role-disabled) 55%, transparent);
+  box-shadow: none;
+}
+
+.arena-player__pips i.is-frozen {
+  background: var(--role-warning);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--role-warning) 60%, transparent);
+}
+
+/* ---- 浮动窗口：日志 / 聊天（原 main 的三块 fixed 浮窗之二） ---- */
+.game[data-layout='wide'] .game-main-container {
+  padding-left: 300px;
+}
+
+.log-container.game-float {
+  width: 280px;
+  max-height: 340px;
+  flex: 0 0 auto;
+  z-index: 60;
+}
+
+.log-container.game-float.is-collapsed {
+  max-height: none;
+}
+
+.log-header__actions {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.game-float .hud-btn {
+  height: 22px;
+  min-height: 22px;
+  padding: 0 7px;
+  font-size: 10.5px;
+}
+
+/* 矮屏（1440x900 这类）里连锁轨道最高 132px，保证计数面板与操作按钮
+   留在第一屏内，不需要用户滚右栏才能点到「查看弃牌堆 / 更多操作」。 */
+@media (max-height: 980px) {
+  .game[data-layout='wide'] .arena-chain-slot {
+    max-height: 132px;
+    overflow: hidden;
+  }
+
+  /* 右栏在矮屏里内容比容器高时自己滚，不要把计数面板/操作按钮顶到手牌下面。 */
+  .game[data-layout='wide'] .arena-rail {
+    overflow-y: auto;
+    align-content: start;
+  }
+}
+
+/* 场地魔法栏占用固定的顶部预算：棋盘从栏下方开始，避免栏与棋盘标题/连锁轨道重叠。 */
+@media (min-width: 1200px) and (min-height: 700px) {
+  .game[data-layout='wide'] {
+    --dock-left: clamp(210px, 15vw, 250px);
+    --dock-right: 258px;
+    --wide-hand-width: min(900px, calc(100% - var(--dock-left) - var(--dock-right)));
+  }
+
+  .game[data-layout='wide'] .game-main-container {
+    padding-top: 198px;
+  }
+  .game[data-layout='wide'] .field-magic-area {
+    top: 98px;
+    height: 56px;
+    z-index: 20;
+  }
+  .game[data-layout='wide'] .arena-rail {
+    z-index: 25;
+  }
+  .game[data-layout='wide'] .arena-chain-slot {
+    min-height: 278px;
+    height: 278px;
+    margin-top: 12px;
+    margin-bottom: 14px;
+    transform: none;
+  }
+  .game[data-layout='wide'] .arena-rail {
+    grid-template-rows: 278px auto auto;
+    row-gap: 24px;
+  }
+  .game[data-layout='wide'] .arena-rail > .arena-actions,
+  .game[data-layout='wide'] .arena-rail > [data-testid='game-counts'] {
+    transform: translateY(18px);
+  }
+  .game[data-layout='wide'] .arena-actions {
+    position: relative;
+  }
+  .game[data-layout='wide'] .arena-actions .game-more-menu {
+    position: absolute;
+    z-index: 120;
+    right: 0;
+    top: calc(100% + 6px);
+    width: min(230px, 18vw);
+    max-height: min(54vh, 520px);
+    overflow-y: auto;
+    box-sizing: border-box;
+  }
+}
+
+@media (max-width: 1199px) and (min-width: 720px) {
+  .game[data-layout='compact'] .field-magic-area {
+    min-height: 52px;
+  }
+  .game[data-layout='compact'] .game-more-menu {
+    position: absolute;
+    z-index: 120;
+    right: 0;
+    top: calc(100% + 4px);
+    max-height: 48vh;
+    overflow-y: auto;
+  }
+}
+
+/* ---- 竖向连锁轨道（原 #arena-chain-slot） ---- */
+.arena-chain-slot {
+  flex: 1 1 auto;
+  min-height: 236px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--gold) 60%, transparent);
+  background: color-mix(in srgb, var(--gold) 7%, var(--surface-chamber));
+  overflow-y: auto;
+}
+
+.arena-chain-slot .arena-rail-empty {
+  margin: auto 0;
+}
+
+.chain-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+
+.chain-stack__item {
+  width: 104px;
+  height: 156px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--gold) 55%, transparent);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-deck);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .45);
+}
+
+.chain-stack__item + .chain-stack__item {
+  margin-top: -52px;
+}
+
+.chain-stack__item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.chain-stack__item.is-spent {
+  filter: grayscale(.7) brightness(.75);
+}
+
+.chain-stack__name {
+  margin-top: 18px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+/* ---- 独立卡牌详情（原 #magic-card-preview：卡名 → 156px 卡面 → 规则） ---- */
+.arena-rail .game-detail {
+  position: static;
+  width: 100%;
+  max-height: none;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--gold) 42%, transparent);
+  background: var(--panel);
+  box-shadow: var(--shadow-panel);
+}
+
+.game-detail__face {
+  margin: 0;
+  display: flex;
+  justify-content: center;
+}
+
+.arena-rail .game-detail__face .game-detail__art {
+  width: min(100%, 156px);
+  height: auto;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--gold) 55%, transparent);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .45);
+}
+
+.arena-rail .game-detail__meta {
+  margin: 0;
+  font-size: 11px;
+  color: var(--gold-strong);
+}
+
+.arena-rail .game-detail__desc {
+  margin: 0;
+  max-height: 190px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--text-secondary);
+}
+
+/* ---- 手牌：完整卡面为主，重复文字层隐藏（原 .has-card-face） ---- */
+.game[data-layout='wide'] .card--art .card__name,
+.game[data-layout='wide'] .card--art .card__gems,
+.game[data-layout='wide'] .card--art .card__type,
+.game[data-layout='wide'] .card--art .card__desc {
+  display: none;
+}
+
+.game[data-layout='wide'] .card--art .card__art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 1;
+  border-radius: inherit;
+}
+
+.game[data-layout='wide'] .card--art {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-deck);
+}
+
+.game[data-layout='wide'] .card--art .card__body {
+  position: absolute;
+  inset: auto 0 0;
+  /* `.card__body` 原本 height:100%，会和 bottom:0 一起把内容拉回顶部 */
+  height: auto;
+  display: block;
+  padding: 0;
+  background: none;
+}
+
+/* 不可用原因保留成可读小条，不靠整层描述遮住卡面 */
+.game[data-layout='wide'] .card--art .card__reason {
+  display: block;
+  margin: 0;
+  padding: 3px 5px;
+  font-size: 9.5px;
+  line-height: 1.3;
+  color: #ffe1c2;
+  background: rgba(12, 8, 4, .82);
+  border-top: 1px solid color-mix(in srgb, var(--role-warning) 55%, transparent);
+}
+
+/* ---- 紧凑档：身份条收成一行，规则与浮窗沿用已验收的抽屉/面板 ---- */
+.game[data-layout='compact'] .arena-player {
+  padding: 2px 8px 2px 2px;
+  gap: 6px;
+}
+
+.game[data-layout='compact'] .arena-avatar {
+  width: 24px;
+  height: 24px;
+  flex-basis: 24px;
+  font-size: 11px;
+}
+
+.game[data-layout='compact'] .arena-player__line {
+  gap: 5px;
+  font-size: 9.5px;
+}
+
+.game[data-layout='compact'] .arena-player__pips i {
+  width: 8px;
+  height: 8px;
+}
+
+
+.game[data-layout='compact'] .chain-stack__item {
+  width: 76px;
+  height: 114px;
+}
+
+.game[data-layout='compact'] .chain-stack__item + .chain-stack__item {
+  margin-top: -38px;
+}
+
+/* ---- 宽屏右列拆成「竖向连锁轨道 + 操作列」（原 main 的 ops 列关系） ---- */
+.game[data-layout='wide'] .arena-rail {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    'chain detail'
+    'chain counts'
+    'chain actions';
+  align-content: stretch;
+  gap: 9px;
+  padding-right: 0;
+  overflow: hidden;
+}
+
+.game[data-layout='wide'] .arena-chain-slot {
+  grid-area: chain;
+  min-height: 0;
+  padding: 8px 6px;
+}
+
+.game[data-layout='wide'] .chain-stack__item {
+  width: 76px;
+  height: 114px;
+}
+
+.game[data-layout='wide'] .chain-stack__item + .chain-stack__item {
+  margin-top: -38px;
+}
+
+.game[data-layout='wide'] .arena-rail > .game-detail,
+.game[data-layout='wide'] .arena-rail > .arena-card-placeholder {
+  grid-area: detail;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+}
+
+/* 详情内部自己滚：卡面固定、规则可读、按钮常驻 */
+.game[data-layout='wide'] .arena-rail .game-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-height: 0;
+}
+
+.game[data-layout='wide'] .arena-rail .game-detail__face,
+.game[data-layout='wide'] .arena-rail .game-detail__head,
+.game[data-layout='wide'] .arena-rail .game-detail__meta {
+  flex: 0 0 auto;
+}
+
+.game[data-layout='wide'] .arena-rail .game-detail__desc {
+  flex: 1 1 auto;
+  min-height: 44px;
+  overflow-y: auto;
+}
+
+.game[data-layout='wide'] .arena-rail .game-detail__actions {
+  flex: 0 0 auto;
+  margin-top: 0;
+}
+
+.game[data-layout='wide'] .arena-rail > [data-testid='game-counts'] {
+  grid-area: counts;
+}
+
+.game[data-layout='wide'] .arena-rail > .arena-actions {
+  grid-area: actions;
+}
+
+.game[data-layout='wide'] .arena-rail .game-detail__desc {
+  max-height: 150px;
+}
+
+/* 详情面板：规则文本自己滚（按钮常驻可见，不吸底、不与文本重叠） */
+.game[data-layout='wide'] .arena-rail .game-detail__desc {
+  max-height: 96px;
+  min-height: 64px;
+  overflow-y: auto;
+}
+
+/* 卡面高度让位给规则文本：2:3 比例不变，只是按可用高度缩放 */
+.game[data-layout='wide'] .arena-rail .game-detail__face .game-detail__art {
+  width: auto;
+  max-width: 100%;
+  max-height: 158px;
+  aspect-ratio: 2 / 3;
+}
+
+.game[data-layout='wide'] .arena-rail .game-detail__desc {
+  min-height: 64px;
+}
+
+/* 紧凑档：身份条压成一行（两个小胶囊并排），极矮/极窄档直接让位给棋盘 */
+.game[data-layout='compact'] .hud-players {
+  flex-wrap: nowrap;
+  gap: 6px;
+  width: 100%;
+}
+
+.game[data-layout='compact'] .hud-vs {
+  display: none;
+}
+
+.game[data-layout='compact'] .arena-player {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.game[data-layout='compact'] .arena-player__meta {
+  overflow: hidden;
+}
+
+.game[data-tight='true'] .hud-players,
+.game[data-dense='true'] .hud-players {
+  display: none;
+}
+
+/* 极窄/极矮档：把非关键留白全部让给棋盘 + 主按钮（仍保留 40px 触控下限） */
+.game[data-dense='true'] {
+  gap: 2px;
+  padding: 2px 6px 3px;
+}
+
+.game[data-dense='true'] .game-hud {
+  padding: 3px 8px;
+  gap: 2px 4px;
+  min-height: 0;
+}
+
+.game[data-dense='true'] .hud-chip,
+.game[data-dense='true'] .hud-btn {
+  font-size: 9.5px;
+  padding: 1px 6px;
+  min-height: 20px;
+  height: 20px;
+}
+
+.game[data-dense='true'] .field-magic-area {
+  padding: 2px 8px;
+  font-size: 10.5px;
+}
+
+.game[data-dense='true'] .board-tab {
+  min-height: 32px;
+  font-size: 12px;
+}
+
+.game[data-dense='true'] .game-hand-wrap {
+  padding: 3px 4px 4px;
+}
+
+.game[data-dense='true'] .game-hand {
+  min-height: 0;
+}
+
+/* 紧凑档的详情 sheet 保持原本的紧凑高度：卡面靠手牌缩略图承载，这里只给文字与按钮 */
+.game[data-layout='compact'] .arena-rail--sheet .game-detail__face {
+  display: none;
+}
+
+/* 选目标时底部面板占位：棋盘按剩余高度收一档，避免压住最后一排格子 */
+.game[data-layout="compact"].is-picking .board-wrapper :deep(.board__grid) {
+  height: clamp(168px, 33dvh, 248px);
+  width: clamp(168px, 33dvh, 248px);
+  max-width: 100%;
+}
+
+.game[data-layout="compact"].is-picking .board-wrapper {
+  padding-bottom: 4px;
+}
+
+/* 用户截图验收：连锁与行动同列，详情独立；手牌脱离有边框的面板。 */
+.game[data-layout='wide'] .game-main-container { max-width:1800px; padding-left:clamp(240px,17vw,300px); padding-right:272px; position:relative; padding-top:120px; }
+.game[data-layout='wide'] .game-content { position:static; }
+.game[data-layout='wide'] .game-hud { position:absolute; top:0; left:clamp(240px,17vw,300px); right:272px; width:auto; min-height:56px; height:auto; flex-wrap:nowrap; }
+.game[data-layout='wide'] .hud-players { flex:0 1 auto; order:-1; padding:0; border:0; }
+.game[data-layout='wide'] .hud-chips { flex:1; justify-content:flex-end; }
+.game[data-layout='wide'] .hud-round { order:2; }
+.game[data-layout='wide'] .hud-vs { display:none; }
+.game[data-layout='wide'] .arena-player { border:0; background:none; padding:0; }
+.game[data-layout='wide'] .arena-player--self .arena-player__pips { display:none; }
+.game[data-layout='wide'] .field-magic-area { position:absolute; top:82px; left:clamp(240px,17vw,300px); right:272px; width:auto; }
+.game[data-layout='wide'] .boards-container { width:100%; gap:clamp(14px,3vw,64px); --cell:clamp(32px, calc((100vw - 1000px)/12),62px); }
+.game[data-layout='wide'] .board-wrapper { padding:0; background:none; border:0; box-shadow:none; }
+.game[data-layout='wide'] .arena-rail { flex:0 0 clamp(180px,12vw,220px); grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(200px,1fr) auto auto; grid-template-areas:'chain' 'actions' 'counts'; overflow:visible; margin-bottom:-220px; }
+.game[data-layout='wide'] .arena-chain-slot { padding:12px; }
+.game[data-layout='wide'] .chain-stack__item { width:104px; height:156px; }
+.game[data-layout='wide'] .arena-card-placeholder { display:none; }
+.game[data-layout='wide'] .arena-rail > .game-detail { position:fixed; right:12px; top:158px; bottom:190px; width:260px; max-height:640px; z-index:70; overflow-y:auto; }
+.game[data-layout='wide'] .arena-rail .game-detail__face .game-detail__art { max-height:234px; }
+.game[data-layout='wide'] .arena-rail .game-detail__desc { max-height:none; min-height:64px; }
+.game-hand-wrap { background:transparent; border:0; border-radius:0; box-shadow:none; pointer-events:none; }
+.game-hand-wrap .card { pointer-events:auto; }
+.game-hand-wrap .game-card-inspect { pointer-events:none; }
+.game[data-layout='wide'] .game-hand { overflow:visible; padding:24px 12px 12px; }
+.game[data-layout='wide'] .game-hand--scrollable { justify-content:flex-start; overflow-x:auto; overflow-y:hidden; overscroll-behavior-x:contain; scrollbar-width:thin; pointer-events:auto; }
+.game[data-layout='wide'] .game-hand-wrap { max-width:1000px; padding-top:0; }
+.game[data-layout='wide'] .game-hand .card--selected { transform:rotate(var(--fan-rot,0rad)) translateY(calc(var(--fan-drop,0px) - 16px)); z-index:20; }
+.game-drawer--chat.game-float { display:flex; flex-direction:column; height:260px; overflow:hidden; }
+.game-drawer--chat .game-chat-text { flex:1; min-height:0; display:flex; flex-direction:column; position:relative; }
+.game-drawer--chat .game-chat-form { margin-top:auto; flex:0 0 auto; display:flex; gap:6px; padding-top:8px; border-top:1px solid var(--panel-line); }
+.game-chat-form .button { white-space:nowrap; padding:0 10px; min-height:40px; }
+.game-chat-quick-toggle { order:-1; }
+.game-drawer--chat .game-chat-log { min-height:0; overflow-y:auto; }
+.game-drawer--chat .game-chat-phrases { position:absolute; bottom:48px; left:0; right:0; max-height:170px; overflow-y:auto; background:var(--panel); z-index:2; padding:8px; }
+@media(min-width:1800px) { .game[data-layout='wide'] .game-main-container { padding-right:280px; }.game[data-layout='wide'] .game-hud,.game[data-layout='wide'] .field-magic-area { right:280px; } }
+
+.game[data-layout='wide'] .game-hud { flex-wrap:wrap; row-gap:4px; }
+.game[data-layout='wide'] .hud-players { flex:1 1 auto; }
+.game[data-layout='wide'] .game-hand-wrap { width:calc(100% - 540px); margin-left:270px; }
+
+.game[data-layout="wide"] .game-hud [data-testid="game-turn-order"], .game[data-layout="wide"] .game-hud [data-testid="game-mode"] { display:none; }
+
+.game[data-layout='wide'] .game-drawer--chat.game-float,
+.game[data-layout='wide'] .log-container.game-float { width:clamp(210px,calc(17vw - 24px),280px); }
+@media(min-width:1200px) and (max-width:1439px) {
+  .game[data-layout='wide'] .game-main-container { padding-left:220px; padding-right:242px; }
+  .game[data-layout='wide'] .game-hud,.game[data-layout='wide'] .field-magic-area { left:220px; right:242px; }
+  .game[data-layout='wide'] .arena-rail { flex-basis:160px; }
+  .game[data-layout='wide'] .arena-rail > .game-detail { width:230px; }
+  .game[data-layout='wide'] .boards-container { gap:14px; }
+}
+
+/* 固定为两行网格，长昵称与计时不会再把身份或场地条挤出顶栏。 */
+.game[data-layout='wide'] .game-hud { display:grid; grid-template-columns:minmax(240px,1fr) minmax(220px,340px) auto; grid-template-rows:26px 26px; min-height:74px; gap:4px 10px; }
+.game[data-layout='wide'] .hud-players { grid-column:1; grid-row:1 / span 2; }
+.game[data-layout='wide'] .hud-chips { grid-column:2; grid-row:1 / span 2; }
+.game[data-layout='wide'] .hud-round { grid-column:3; grid-row:1; }
+.game[data-layout='wide'] .game-hud > .hud-btn { grid-column:3; grid-row:2; }
+.game[data-layout='wide'] .game-hud [data-testid='game-connection'].is-online { display:none; }
+
+/* 详情窗可读：规则文字 15px；宽屏窗可拖动 */
+.arena-rail .game-detail__desc,
+.game[data-layout='wide'] .arena-rail .game-detail__desc { font-size: 15px; line-height: 1.6; }
+.game[data-layout='wide'] .arena-rail .game-detail__desc { max-height: none; }
+.game[data-layout='wide'] .arena-rail .game-detail--float { width: 260px; overflow-y: auto; }
+.game-detail--float .game-detail__head { cursor: grab; touch-action: none; }
+
+/* 连锁窗口：看效果 */
+.game-chain-ref {
+  padding: 0 4px;
+  border: 0;
+  border-bottom: 1px dashed var(--role-action);
+  background: transparent;
+  color: var(--role-action);
+  background:color-mix(in srgb,var(--role-action) 12%,transparent);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.game-chain-reopen {
+  position: absolute;
+  z-index: 8;
+  right: 0;
+  top: -42px;
+  max-width: 100%;
+  white-space: nowrap;
+}
+.game-chain-reopen.is-counting { animation: chain-reminder-pulse 1s ease-in-out infinite; }
+.game-chain-reopen.is-counting .game-chain-reopen__dot { animation: chain-reminder-dot 1s ease-in-out infinite; }
+@keyframes chain-reminder-pulse {
+  0%, 100% { border-color: var(--gold); box-shadow: 0 0 0 0 transparent; }
+  50% { border-color: var(--gold-strong); box-shadow: 0 0 0 3px var(--gold-soft), 0 0 14px var(--gold-soft); }
+}
+@keyframes chain-reminder-dot { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+.game[data-layout='compact'] .board-tabs.has-chain-reminder { padding-right: 144px; }
+.game[data-layout='compact'] .game-chain-reopen { padding: 0 8px; gap: 6px; font-size: 12px; }
+@media (prefers-reduced-motion: reduce) {
+  .game-chain-reopen.is-counting, .game-chain-reopen.is-counting .game-chain-reopen__dot { animation: none; }
+}
+
+/* 舰长名片：双方分列两端，状态监视区永久占位，状态数量不改变顶栏高度。 */
+.game[data-layout] .game-hud {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(180px,.95fr) minmax(0,1fr);
+  grid-template-rows:24px 46px;
+  height:90px;
+  min-height:90px;
+  gap:2px 12px;
+  padding:8px 12px;
+  align-items:center;
+}
+.game[data-layout] .hud-players { display:contents; }
+.game[data-layout] .hud-vs { display:none; }
+.game[data-layout] .arena-player {
+  grid-row:1 / span 2;
+  display:flex;
+  gap:10px;
+  width:100%;
+  height:70px;
+  min-width:0;
+  padding:6px 9px;
+  border:1px solid var(--border-subtle);
+  border-radius:10px;
+  background:color-mix(in srgb,var(--surface-deck) 60%,transparent);
+  box-sizing:border-box;
+}
+.game[data-layout] .arena-player--self { grid-column:1; border-left:2px solid var(--role-self); }
+.game[data-layout] .arena-player--opponent { grid-column:3; flex-direction:row-reverse; border-right:2px solid var(--role-enemy); }
+.game[data-layout] .arena-player__meta { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; overflow:hidden; }
+.game[data-layout] .arena-player--opponent .arena-player__meta { text-align:right; }
+.game[data-layout] .arena-player--opponent .arena-player__line { justify-content:flex-end; }
+.game[data-layout] .arena-player--opponent :deep(.captain-effects) { justify-content:safe flex-end; }
+.game[data-layout] .arena-player--opponent :deep(.captain-effects__icon) { border-color:color-mix(in srgb,var(--role-enemy) 40%,transparent); }
+.game[data-layout] .arena-player__meta .hud-name { font-size:13px; line-height:15px; }
+.game[data-layout] .arena-avatar { width:38px; height:38px; flex:0 0 38px; }
+.game[data-layout] .arena-player__line { height:14px; min-height:14px; gap:5px; font-size:11px; white-space:nowrap; }
+.game[data-layout] .arena-player__pips { display:flex; gap:3px; }
+.game[data-layout] .arena-player__pips i { width:7px; height:10px; border-radius:0; clip-path:polygon(0 30%,40% 30%,40% 0,60% 0,60% 30%,100% 30%,80% 100%,20% 100%); }
+.game[data-layout] .hud-round { grid-column:2; grid-row:1; margin:0; justify-self:start; font-size:12px; }
+.game[data-layout] .game-hud > .hud-btn { grid-column:2; grid-row:1; justify-self:end; min-height:24px; padding:1px 8px; }
+.game[data-layout] .hud-chips { grid-column:2; grid-row:2; display:flex; flex-wrap:wrap; gap:3px; justify-content:center; max-height:44px; overflow:auto; }
+.game[data-layout] .hud-chips { max-height:none; overflow:hidden; }
+.game[data-layout] .hud-chips { display:grid; grid-template-columns:minmax(0,1fr) 54px; align-items:center; }
+.game[data-layout] .hud-primary-chips { grid-template-columns:repeat(2,minmax(0,1fr)); min-width:0; width:100%; gap:4px; }
+.game[data-layout] .hud-primary-chips { grid-column:1; }
+.game[data-layout] .hud-chip--order { grid-column:2; grid-row:1; min-width:0; padding:4px 5px; text-align:center; white-space:normal; }
+.game[data-layout] .hud-chips > .hud-chip--muted { display:none; }
+.game[data-layout] .hud-primary-chips .hud-chip { min-height:22px; padding:2px 7px; font-size:11px; line-height:16px; }
+.game[data-layout] .hud-chip { min-height:22px; padding:2px 7px; font-size:11px; line-height:16px; }
+.game[data-layout='wide'] .field-magic-area { top:98px; }
+.game[data-layout='wide'] .game-main-container { padding-top:136px; }
+@media (max-width:719px) {
+ .game[data-layout] .game-hud { grid-template-columns:minmax(0,1fr) minmax(0,1fr); grid-template-rows:64px 52px; height:128px; min-height:128px; gap:4px 6px; padding:4px 6px; }
+ .game[data-layout] .hud-chips { grid-template-columns:minmax(0,1fr) 46px; }
+ .game[data-layout] .arena-player { grid-row:1; height:64px; padding:3px 4px; gap:5px; }
+ .game[data-layout] .arena-player--opponent { grid-column:2; }
+ .game[data-layout] .arena-avatar { width:28px; height:28px; flex-basis:28px; font-size:12px; }
+ .game[data-layout] .arena-player__meta .hud-name { font-size:11px; }
+ .game[data-layout] .arena-player__pips { display:none; }
+ .game[data-layout] .arena-stats-btn { display:none; }
+ .game[data-layout] .hud-chips { grid-column:1 / -1; grid-row:2; flex-wrap:nowrap; justify-content:flex-start; max-height:22px; }
+ .game[data-layout] .hud-round,.game[data-layout] .game-hud > .hud-btn { display:none; }
+ .game[data-layout] .hud-chip { flex-shrink:0; }
+}
+@media (min-width:720px) and (max-height:520px) {
+ .game[data-layout] .game-hud { height:70px; min-height:70px; grid-template-rows:20px 36px; padding:4px 8px; gap:2px 6px; }
+ .game[data-layout] .arena-player { height:60px; padding:2px 5px; gap:5px; }
+ .game[data-layout] .arena-avatar { width:28px; height:28px; flex-basis:28px; }
+ .game[data-layout] .arena-player__meta .hud-name { font-size:11px; }
+ .game[data-layout] .arena-player__pips,.game[data-layout] .arena-stats-btn { display:none; }
+ .game[data-layout] .hud-chips { max-height:36px; }
+}
+
+@media (min-width:720px) and (max-height:520px) {
+ .game[data-layout] .game-hud { grid-template-columns:minmax(0,1fr) minmax(0,1fr); grid-template-rows:60px; height:68px; min-height:68px; }
+ .game[data-layout] .arena-player { grid-row:1; }
+ .game[data-layout] .arena-player--opponent { grid-column:2; }
+ .game[data-layout] .hud-chips,.game[data-layout] .hud-round,.game[data-layout] .game-hud > .hud-btn { display:none; }
+}
+@media (max-width:719px) and (max-height:700px) {
+ .game[data-dense='true'] :deep(.board__grid) { width:min(var(--board-size),max(168px,calc(100dvh - 448px))); height:min(var(--board-size),max(168px,calc(100dvh - 448px))); }
+}
+
+@media (max-width:719px) and (max-height:700px) {
+ .game[data-dense='true'] .game-hand .card { flex-basis:56px; width:56px; height:78px; }
+ .game[data-dense='true'] .game-compact-top { display:none; }
+ .game[data-dense='true'] .game-compact-bar { padding:4px 6px; }
+ .game[data-dense='true'] .game-actions__row > .button { height:40px; min-height:40px; padding:4px 8px; }
+}
+
+.game[data-layout='wide'] .arena-player--self .arena-player__pips { display:flex; }
+
+/* 获批视觉方案的宽屏布局：顶部固定监视区，棋盘与手牌独占中列。
+ * 右栏有独立的宽度和垂直预算，不会被手牌外壳盖住。 */
+@media (min-width: 1200px) and (min-height: 700px) {
+  .game[data-layout='wide'] .game-main-container {
+    --dock-left: clamp(210px, 15vw, 250px);
+    --dock-right: 258px;
+    --board-cell: clamp(40px, min(calc((100vw - 640px) / 12), calc((100dvh - 612px) / 6)), 62px);
+    max-width: 1560px;
+    padding: 190px var(--dock-right) 0 var(--dock-left);
+    min-height: calc(190px + var(--board-cell) * 6 + 84px);
+  }
+
+  .game[data-layout='wide'] .game-hud,
+  .game[data-layout='wide'] .field-magic-area {
+    left: var(--dock-left);
+    right: 0;
+  }
+
+  .game[data-layout='wide'] .game-hud {
+    background: var(--panel);
+    box-shadow: none;
+  }
+
+  .game[data-layout='wide'] .field-magic-area {
+    top: 104px;
+    height: 64px;
+    padding: 3px;
+    background: var(--surface-chamber);
+  }
+
+  .game[data-layout='wide'] .game-content {
+    justify-content: safe center;
+  }
+
+  .game[data-layout='wide'] .boards-container {
+    flex: 0 0 auto;
+    width: 100%;
+    max-width: 900px;
+    gap: 32px;
+    --cell: var(--board-cell);
+  }
+
+  .game[data-layout='wide'] .arena-rail {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 230px;
+    align-self: flex-start;
+    gap: 18px;
+    min-height: 0;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    margin: 0;
+    padding-right: 0;
+  }
+
+  .game[data-layout='wide'] .arena-chain-slot {
+    order: 1;
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 304px;
+    height: 304px;
+    min-height: 304px;
+    max-height: none;
+    margin: 0;
+    overflow: hidden;
+    border-color: color-mix(in srgb, var(--gold) 38%, var(--border-subtle));
+    background: color-mix(in srgb, var(--gold) 3%, var(--surface-chamber));
+    padding: 16px;
+  }
+
+  .game[data-layout='wide'] .arena-rail-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    flex: 0 0 auto;
+    font-size: 14px;
+    letter-spacing: .02em;
+    margin-bottom: 14px;
+  }
+
+  .game[data-layout='wide'] .chain-stack {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    gap: 12px;
+    padding: 5px 5px 5px 7px;
+    margin: 0;
+    align-items: stretch;
+    scrollbar-width: thin;
+  }
+
+  .game[data-layout='wide'] .chain-stack__item {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    height: auto;
+    min-height: 110px;
+    margin: 0;
+    padding: 8px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 7px;
+    background: var(--surface-deck);
+    overflow: visible;
+  }
+
+  .game[data-layout='wide'] .chain-stack__item + .chain-stack__item { margin-top:0; }
+
+  .game[data-layout='wide'] .chain-stack__item img {
+    position: static;
+    width: 63px;
+    height: 92px;
+    flex: 0 0 63px;
+    object-fit: contain;
+  }
+
+  .game[data-layout='wide'] .chain-stack__label { font-size:13px; line-height:1.6; }
+  .game[data-layout='wide'] .arena-rail-empty { flex:1; display:grid; place-items:center; border:0; background:transparent; font-size:13px; }
+  .game[data-layout='wide'] .arena-chain-slot > .button { flex:0 0 auto; margin-top:10px; }
+  .game[data-layout='wide'] .arena-chain-negated { position:absolute; right:8px; bottom:8px; font-size:11px; }
+
+  .game[data-layout='wide'] .arena-player {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .game[data-layout='wide'] .arena-rail > .arena-actions {
+    order: 2;
+    flex: 0 0 auto;
+    transform: none;
+  }
+
+  .game[data-layout='wide'] .arena-rail > [data-testid='game-counts'] {
+    order: 3;
+    flex: 0 0 auto;
+    transform: none;
+    margin-bottom: 0;
+  }
+
+  /* 右栏会自然延伸到手牌行的高度；给手牌预留右侧安全区，避免两者互相盖住。 */
+  .game[data-layout='wide'] .game-hand-wrap {
+    width: var(--wide-hand-width);
+    max-width: none;
+    margin-left: calc((100% - var(--wide-hand-width) + var(--dock-left) - var(--dock-right)) / 2);
+    margin-right: auto;
+  }
+}
+
+/* 正常桌面高度下右栏延伸到独立的安全区，不参与手牌行的高度分配。 */
+@media (min-width:1200px) and (min-height:700px) {
+  .game[data-layout='wide'] .arena-rail { position:absolute; top:190px; right:0; width:230px; }
+}
+
+@media (min-width:1200px) and (min-height:700px) and (max-height:819px) {
+  .game[data-layout='wide'] .arena-chain-slot { flex-basis:224px; min-height:224px; height:224px; }
+}
+
+@media (max-width:719px) {
+  .game[data-layout='compact'] .hud-chips { height:48px; max-height:none; overflow:visible; }
+  .game[data-layout='compact'] .field-magic-area { height:56px; min-height:56px; flex:0 0 56px; }
+}
+
+.chain-stack__item { position:relative; }
+.chain-stack__order { position:absolute; left:3px; top:3px; z-index:1; display:grid; place-items:center; width:19px; height:19px; border-radius:50%; background:var(--gold); color:var(--surface-sea); font-size:11px; border:2px solid var(--surface-chamber); }
+.chain-stack__label { display:none; }
+.game[data-layout='wide'] .chain-stack__label { display:block; }
+.arena-chain-count { color:var(--text-secondary); font-size:11px; font-weight:400; letter-spacing:0; }
+.game[data-layout] .arena-player__meta .hud-name { font-size:14px; line-height:18px; }
+.game[data-layout] .arena-player__line { color:var(--text-secondary); }
+.arena-actions,.arena-rail-panel { box-shadow:none; }
+.log-content { font-size:13px; line-height:1.7; }
+.log-line { border-bottom-style:solid; padding-bottom:8px; }
+.log-header h3 { font-size:14px; }
+.game-actions .button:disabled { color:var(--text-secondary); opacity:1; background:var(--surface-raised); border-color:var(--border-subtle); box-shadow:none; }
+.game-chain-window__actions [data-testid='game-chain-collapse'] {
+  min-height: 46px;
+  padding: 10px 14px;
+  font-size: 15px;
+}
+
+/* 决策面板：只调整提示窗，不改变海域与手牌的布局。 */
+.game .game-pick-float.battle-prompt,
+.game[data-layout="compact"].is-picking .game-pick-float.battle-prompt {
+  width:min(460px,calc(100vw - 24px));
+  padding:22px;
+  gap:15px;
+}
+.game-chain-scrim>.game-chain-panel.battle-prompt {
+  position:fixed;
+  width:min(600px,calc(100vw - 24px));
+  padding:24px;
+  border-color:#7c7050;
+  border-radius:14px;
+  background:#101f30;
+  pointer-events:auto;
+}
+.game-target.battle-prompt .button,
+.game-pick-float.battle-prompt .button,
+.game-chain-panel.battle-prompt .button {
+  min-height:46px;
+  padding:11px 16px;
+  border-radius:8px;
+  font-size:16px;
+}
+.game-target.battle-prompt .game-target__confirm,
+.game-pick-float.battle-prompt .button--primary {
+  background:#8edcec;
+  color:#09202b;
+  border-color:#8edcec;
+  font-weight:750;
+}
+@media(max-width:540px) {
+  .game .game-pick-float.battle-prompt,
+  .game[data-layout="compact"].is-picking .game-pick-float.battle-prompt,
+  .game-chain-scrim>.game-chain-panel.battle-prompt { padding:18px; }
+}
+
+/* 宽屏双棋盘的视觉中心要落在「可操作舞台」里，而不是被右侧轨道推向右边。
+ * 右侧 rail 继续保留独立宽度；这里只对棋盘组做轻量的中心校正，不改变
+ * 棋盘尺寸和点击坐标，也不影响 1200px 以下的紧凑布局。 */
+@media (min-width:1200px) and (min-height:700px) {
+  .game[data-layout='wide'] .boards-container {
+    transform: translateX(calc(-1 * clamp(18px, 2.2vw, 36px)));
+    gap: clamp(24px, 2.4vw, 36px);
+  }
+}
+
+/* 顶部状态栏与棋盘使用同一个中央舞台：旧规则只设置 left/right，
+ * 会把栏的右边延伸进右侧 rail，导致状态内容整体向右漂移。 */
+@media (min-width:1200px) and (min-height:700px) {
+  .game[data-layout='wide'] .game-hud,
+  .game[data-layout='wide'] .field-magic-area {
+    left: 50%;
+    right: auto;
+    width: calc(100% - var(--dock-left) - var(--dock-right));
+    transform: translateX(-50%);
+  }
+}

@@ -1,0 +1,73 @@
+/* 战斗决策面板共用呈现，限定到本次显式启用的面板。 */
+.battle-prompt {
+  --prompt-navy:#101f30;
+  --prompt-deck:#0c1928;
+  --prompt-cyan:#8edcec;
+  --prompt-gold:#e0be70;
+  --prompt-text:#edf3fc;
+  --prompt-muted:#b8c8dc;
+  --prompt-line:#345069;
+  box-sizing:border-box;
+  color:var(--prompt-text);
+  background:var(--prompt-navy);
+  border-radius:14px;
+  font-size:16px;
+  line-height:1.65;
+}
+.app-overlay__panel--draggable {
+  padding:0;
+  border:1px solid #45647d;
+  border-radius:14px;
+  background:#101f30;
+  box-shadow:0 24px 90px rgb(0 0 0 / 48%),0 0 0 1px rgb(142 220 236 / 4%);
+  overflow:auto;
+}
+.battle-prompt__head { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; margin:0 0 4px; padding-bottom:16px; border-bottom:1px solid var(--prompt-line); }
+.battle-prompt__head>div { min-width:0; }
+.battle-prompt .battle-prompt__head h2 { margin:4px 0 0; padding:0; border:0; border-radius:0; background:none; color:var(--prompt-text); font-size:22px; line-height:1.45; font-weight:750; }
+.battle-prompt__context { margin:0; color:var(--prompt-cyan); font-size:14px; font-weight:600; line-height:1.5; }
+.battle-prompt__drag-note { display:block; margin-top:7px; color:#93abc2; font-size:12px; line-height:1.5; }
+.battle-prompt__handle,[data-drag-handle] { cursor:grab; touch-action:none; user-select:none; }
+.is-dragging .battle-prompt__handle,.is-dragging [data-drag-handle] { cursor:grabbing; }
+.battle-prompt__card-art { width:64px; height:92px; flex:0 0 64px; object-fit:contain; filter:drop-shadow(0 5px 8px #0008); }
+.battle-prompt .button { min-height:46px; padding:11px 16px; border:1px solid var(--prompt-line); border-radius:8px; background:var(--prompt-deck); color:var(--prompt-text); font:inherit; font-size:16px; line-height:1.45; cursor:pointer; }
+.battle-prompt .button:hover,.battle-prompt .button:focus-visible { border-color:var(--prompt-cyan); outline:2px solid rgb(142 220 236 / 16%); outline-offset:2px; }
+.battle-prompt .button--primary,.battle-prompt .game-target__confirm { border-color:var(--prompt-cyan); color:#09202b; background:var(--prompt-cyan); font-weight:750; }
+.battle-prompt .button:disabled,.battle-prompt .button.is-disabled { opacity:.42; cursor:not-allowed; }
+.battle-prompt__progress,.battle-prompt .game-target__selected { margin:0; padding:9px 13px; color:var(--prompt-cyan); border:1px solid #315a70; border-radius:8px; background:rgb(142 220 236 / 6%); font-size:16px; font-weight:650; font-variant-numeric:tabular-nums; }
+.battle-prompt__status { margin:0; color:var(--prompt-muted); font-size:15px; line-height:1.65; }
+.battle-prompt__status.is-ready { color:var(--prompt-gold); }
+.battle-prompt__error,.battle-prompt .game-target__error { margin:0; color:#ff9b9f; font-size:15px; line-height:1.7; }
+.battle-prompt__deadline { margin:0; color:var(--prompt-gold); font-size:15px; }
+.battle-prompt__steps { counter-reset:prompt-step; display:flex; flex-wrap:wrap; gap:10px 16px; margin:0; padding:0; list-style:none; }
+.battle-prompt__steps li { display:flex; align-items:center; gap:8px; font-size:15px; color:var(--prompt-muted); }
+.battle-prompt__steps li::before { counter-increment:prompt-step; content:counter(prompt-step); display:grid; place-items:center; width:25px; height:25px; border:1px solid var(--prompt-line); border-radius:50%; font-size:13px; }
+.battle-prompt__steps li.is-complete,.battle-prompt__steps li.is-current { color:var(--prompt-cyan); }
+.battle-prompt__steps li.is-complete::before { content:'✓'; border-color:var(--prompt-cyan); background:rgb(142 220 236 / 9%); }
+.battle-prompt__steps li.is-current::before { border-color:var(--prompt-gold); color:var(--prompt-gold); }
+.game .game-target.battle-prompt,.game .game-pick-float.battle-prompt { border:1px solid #45647d; box-shadow:0 18px 60px rgb(0 0 0 / 40%); }
+.game-target.battle-prompt .game-target__main { display:flex; flex:0 1 auto; gap:13px; }
+.game-target.battle-prompt .game-target__hint { margin:0; color:var(--prompt-muted); font-size:16px; line-height:1.7; }
+.game-target.battle-prompt .game-target__controls { display:flex; width:100%; gap:14px; align-items:stretch; }
+.game-target.battle-prompt .game-target__row { gap:10px; }
+.game-target__choices .button { flex:1; }
+.game-target.battle-prompt .game__action--active { border-color:var(--prompt-gold); color:var(--prompt-gold); background:rgb(224 190 112 / 10%); box-shadow:inset 0 0 0 1px rgb(224 190 112 / 20%); }
+.game-target__effects { display:grid; gap:10px; }
+.battle-prompt .game-target__effect { position:relative; display:grid; gap:5px; width:100%; padding:14px 44px 14px 16px; text-align:left; }
+.game-target__effect strong { font-size:17px; }.game-target__effect>span { color:var(--prompt-muted); font-size:14px; }.game-target__effect>b { position:absolute; right:16px; top:50%; transform:translateY(-50%); color:var(--prompt-gold); font-size:23px; }
+.game-target__actions { padding-top:14px; border-top:1px solid var(--prompt-line); }.game-target__actions .game-target__confirm { flex:1; }
+.game .game-pick-float.battle-prompt { width:min(460px,calc(100vw - 24px)); padding:22px; gap:15px; }
+.game-pick-float.battle-prompt .game-dialog__hint { color:var(--prompt-muted); font-size:16px; line-height:1.7; }
+.game-pick-float.battle-prompt .game-dialog__hint.battle-prompt__progress { color:var(--prompt-cyan); }
+.game-pick-float.battle-prompt .game-dialog__actions { gap:10px; padding-top:14px; border-top:1px solid var(--prompt-line); }.game-pick-float.battle-prompt .game-dialog__actions>.button { flex:1; }
+.game-chain-scrim>.game-chain-panel.battle-prompt { position:fixed; width:min(600px,calc(100vw - 24px)); padding:24px; border:1px solid #7c7050; background:var(--prompt-navy); border-radius:14px; box-shadow:0 24px 90px rgb(0 0 0 / 48%); pointer-events:auto; }
+.game-chain-panel.battle-prompt .game-chain-panel__head { justify-content:space-between; text-align:left; margin-bottom:18px; }
+.game-chain-panel.battle-prompt .game-chain-window__hint { font-size:15px; text-align:left; font-weight:400; color:var(--prompt-muted); }
+.game-chain-panel.battle-prompt .game-chain-window__card { font-size:17px; color:var(--prompt-text); }
+.game-chain-panel.battle-prompt .game-chain-option { display:grid; grid-template-columns:68px minmax(0,1fr); grid-template-rows:auto auto 1fr; column-gap:15px; row-gap:5px; min-height:125px; padding:14px; border-color:var(--prompt-line); background:var(--prompt-deck); }
+.game-chain-option__art { grid-column:1; grid-row:1 / span 3; width:68px; height:98px; object-fit:contain; align-self:center; filter:drop-shadow(0 4px 7px #0007); }
+.game-chain-panel.battle-prompt .game-chain-option>b,.game-chain-panel.battle-prompt .game-chain-option>small,.game-chain-panel.battle-prompt .game-chain-option>.game-chain-option__desc { grid-column:2; }
+.game-chain-panel.battle-prompt .game-chain-option b { font-size:18px; }.game-chain-panel.battle-prompt .game-chain-option small { font-size:14px; color:var(--prompt-muted); }.game-chain-panel.battle-prompt .game-chain-option__desc { font-size:15px; line-height:1.65; color:var(--prompt-muted); }
+.game-chain-panel.battle-prompt .game-chain-clock { width:62px; height:62px; }.game-chain-panel.battle-prompt .game-chain-countdown { font-size:25px; }
+.game-chain-panel.battle-prompt .game-chain-window__actions { padding-top:16px; border-top:1px solid var(--prompt-line); }.game-chain-panel.battle-prompt .game-chain-window__actions .button { font-size:16px; }.game-chain-panel.battle-prompt [data-testid='game-chain-pass'] { border-color:var(--prompt-gold); color:var(--prompt-gold); }
+@media(max-width:540px) { .battle-prompt .battle-prompt__head h2 { font-size:20px; }.battle-prompt__head { gap:12px; }.battle-prompt__card-art { width:54px; height:78px; flex-basis:54px; }.game .game-pick-float.battle-prompt { padding:18px; }.game-chain-scrim>.game-chain-panel.battle-prompt { padding:18px; }.game-chain-panel.battle-prompt .game-chain-option { grid-template-columns:58px minmax(0,1fr); column-gap:12px; }.game-chain-option__art { width:58px; height:84px; } }

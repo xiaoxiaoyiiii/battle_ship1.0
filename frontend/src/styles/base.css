@@ -1,0 +1,785 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+  margin: 0;
+}
+
+html {
+  background: var(--surface-sea);
+}
+
+body {
+  background-color: var(--surface-sea);
+  background-image:
+    radial-gradient(900px 520px at 50% -12%, var(--role-self-soft), transparent 70%),
+    radial-gradient(700px 420px at 10% 108%, var(--role-action-soft), transparent 72%),
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: auto, auto, 64px 64px, 64px 64px;
+  background-repeat: no-repeat, no-repeat, repeat, repeat;
+  background-attachment: fixed;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Accessibility size switch (ticket #49). Zoom scales the px-based type the
+   earlier screens still carry, so the preference reaches every screen. */
+html[data-font-scale='large'] body {
+  zoom: 1.12;
+}
+
+html[data-font-scale='xlarge'] body {
+  zoom: 1.24;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------------------------------------------------------------- shell ---- */
+/* No z-index here on purpose: the shell must not create a stacking context that
+   would trap a fixed/teleported overlay below the root-layer archive. */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding: 0;
+  gap: 0;
+  position: relative;
+}
+
+.app-connection {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--role-warning);
+  background: var(--role-action-soft);
+  color: var(--role-warning);
+  font-size: 13px;
+}
+
+.app-connection__retry {
+  margin-left: auto;
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 1px solid var(--role-warning);
+  border-radius: var(--radius-sm);
+  background: var(--surface-deck);
+  color: var(--role-warning);
+  font: inherit;
+  font-size: 12px;
+}
+
+.app-nav {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-nav);
+  display: flex;
+  align-items: center;
+  gap: 10px 18px;
+  flex: 0 0 auto;
+  min-height: 56px;
+  padding: 6px 20px;
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--surface-deck) 88%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 0 0 auto;
+  padding-right: 6px;
+  color: var(--text-primary);
+}
+
+.app-brand__mark {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: radial-gradient(circle at 35% 25%, var(--role-self-soft), transparent 72%);
+  color: var(--role-self);
+}
+
+.app-brand__text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.app-brand__title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.app-brand__sub {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+}
+
+.app-nav__links {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  gap: 4px;
+  min-width: 0;
+}
+
+.app-nav__link,
+.app-nav__flow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease);
+}
+
+.app-nav__link:hover,
+.app-nav__flow:hover {
+  color: var(--text-primary);
+  background: var(--role-self-soft);
+}
+
+.app-nav__link[aria-current='page'],
+.app-nav__link.is-active {
+  color: var(--text-primary);
+  background: var(--role-action-soft);
+  border-color: color-mix(in srgb, var(--role-action) 45%, transparent);
+}
+
+.app-nav__flow {
+  border-color: var(--border-strong);
+}
+
+.app-nav__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.app-nav__icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.app-nav__icon:hover {
+  color: var(--text-primary);
+  border-color: var(--role-self);
+  background: var(--role-self-soft);
+}
+
+/* ------------------------------------------------------- avatar / menu ---- */
+.app-avatar {
+  position: relative;
+}
+
+.app-menu-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 24;
+  background: transparent;
+}
+
+.app-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 25;
+  display: grid;
+  gap: 12px;
+  width: min(300px, calc(100vw - 24px));
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-chamber);
+  box-shadow: var(--shadow-panel);
+}
+
+.app-menu__group {
+  display: grid;
+  gap: 4px;
+}
+
+.app-menu__title {
+  margin: 0 0 2px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+
+.app-menu__item {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-menu__item:hover {
+  border-color: var(--border-subtle);
+  background: var(--role-self-soft);
+}
+
+.app-menu__item--toggle[aria-pressed='true'] {
+  color: var(--role-action);
+  background: var(--role-action-soft);
+}
+
+.app-menu__themes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.app-menu__theme {
+  min-height: 40px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-deck);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.app-menu__theme[aria-pressed='true'] {
+  border-color: var(--role-action);
+  background: var(--role-action-soft);
+  color: var(--text-primary);
+}
+
+.app-menu__version {
+  margin: 2px 10px 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+/* ------------------------------------------------------ route loading ---- */
+/* Out of the document flow: a 2px line, never a row that pushes content. */
+.route-loading {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: calc(var(--z-nav) + 1);
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.route-loading__bar {
+  display: block;
+  width: 40%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, var(--role-self), transparent);
+  animation: route-loading-slide 900ms linear infinite;
+}
+
+@keyframes route-loading-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(350%);
+  }
+}
+
+/* ------------------------------------------------------------- overlay ---- */
+.app-overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  overflow-y: auto;
+  background: var(--scrim);
+  backdrop-filter: blur(3px);
+}
+
+.app-overlay--match-found {
+  background: radial-gradient(circle at 50% 28%, var(--role-self-soft), var(--scrim) 70%);
+}
+
+.app-overlay__panel {
+  width: min(1120px, 100%);
+  max-height: 92vh;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-deck);
+  box-shadow: var(--shadow-panel);
+  overflow: auto;
+}
+
+.app-overlay--match-found .app-overlay__panel {
+  width: min(930px, 100%);
+  background: transparent;
+  border: 0;
+  overflow: visible;
+}
+
+/* --------------------------------------------------------------- toast ---- */
+.app-toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: grid;
+  gap: 8px;
+  width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.app-toast {
+  position: relative;
+  padding: 10px 34px 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-chamber);
+  box-shadow: var(--shadow-panel);
+  pointer-events: auto;
+  animation: toast-in var(--duration-fast) var(--ease);
+}
+
+.app-toast--success {
+  border-left-color: var(--role-success);
+}
+
+.app-toast--error {
+  border-left-color: var(--role-enemy);
+}
+
+.app-toast--warning {
+  border-left-color: var(--role-warning);
+}
+
+.app-toast--info {
+  border-left-color: var(--role-self);
+}
+
+.app-toast__message {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.app-toast__next {
+  margin: 3px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.app-toast__dismiss {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.app-toast__dismiss:hover {
+  background: var(--role-self-soft);
+  color: var(--text-primary);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* -------------------------------------------------------- state surface ---- */
+.state-surface {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.state-surface__loading {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0;
+}
+
+.state-surface__skeleton {
+  display: block;
+  height: 12px;
+  width: 60%;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--border-subtle), var(--role-self-soft), var(--border-subtle));
+  background-size: 200% 100%;
+  animation: skeleton-sweep 1.4s linear infinite;
+}
+
+@keyframes skeleton-sweep {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.state-surface__label {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.state-surface__empty {
+  padding: 8px 0;
+}
+
+.state-surface__error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--role-enemy);
+  border-radius: var(--radius-sm);
+  background: var(--role-enemy-soft);
+}
+
+.state-surface__error .state-surface__label {
+  color: var(--text-primary);
+}
+
+.state-surface__retry {
+  min-height: 36px;
+}
+
+/* ------------------------------------------------------------ confirm ----- */
+.confirm {
+  padding: 22px 24px;
+}
+
+.confirm__title {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+
+.confirm__text {
+  margin: 0 0 18px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.confirm__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.screen-boundary {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* --------------------------------------------------------------- screens --- */
+.screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 18px 24px 28px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.screen__header {
+  min-width: 0;
+}
+
+.screen__eyebrow {
+  margin: 0 0 2px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.screen__title {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.2;
+}
+
+.screen__hint,
+.screen__note {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.screen__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.screen__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.screen__contract {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.screen__contract code {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+}
+
+/* --------------------------------------------------------------- buttons --- */
+.button {
+  min-height: 40px;
+  padding: 8px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-chamber);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease);
+}
+
+.button:hover {
+  border-color: var(--role-self);
+  background: var(--role-self-soft);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.button--danger {
+  border-color: var(--role-enemy);
+  color: var(--text-primary);
+  background: var(--role-enemy-soft);
+}
+
+/* ----------------------------------------------------------- error states -- */
+.screen-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 24px;
+  padding: var(--space-4);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--role-enemy-soft);
+}
+
+.screen-error__title {
+  margin: 0;
+  color: var(--danger);
+}
+
+.screen-error__hint {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+/* --------------------------------------------------------------- mobile ---- */
+@media (max-width: 760px) {
+  .app-nav {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    padding: 6px 12px;
+  }
+
+  .app-brand__sub {
+    display: none;
+  }
+
+  .app-nav__links {
+    order: 3;
+    flex-basis: 100%;
+    gap: 2px;
+    overflow-x: auto;
+  }
+
+  .app-nav__link,
+  .app-nav__flow {
+    min-height: 44px;
+    padding: 0 12px;
+    font-size: 13px;
+  }
+
+  .app-nav__icon {
+    width: 44px;
+    height: 44px;
+  }
+
+  /* Beat the global 40px touch floor in the 719px block below. */
+  .app-nav a[data-testid],
+  .app-nav button[data-testid],
+  .app-menu button[data-testid],
+  .app-menu a[data-testid] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Immersive toolbar stays one row: the match screen is height-sensitive. */
+  .app-nav--flow {
+    flex-wrap: nowrap;
+  }
+
+  .app-nav--flow .app-nav__links {
+    order: 0;
+    flex: 1 1 auto;
+    flex-basis: auto;
+    justify-content: flex-end;
+    overflow: visible;
+  }
+
+  .app-nav__meta {
+    margin-left: auto;
+  }
+
+  .app-menu {
+    position: fixed;
+    top: 62px;
+    right: 12px;
+    left: 12px;
+    width: auto;
+    max-height: calc(100vh - 80px);
+    overflow-y: auto;
+  }
+
+  .app-toasts {
+    right: 12px;
+    left: 12px;
+    bottom: 12px;
+    width: auto;
+  }
+
+  .app-overlay {
+    padding: 12px;
+  }
+
+  .screen {
+    padding: 14px;
+    gap: 12px;
+  }
+
+  .screen__title {
+    font-size: 24px;
+  }
+}
+
+/* Ticket #33 / spec user story 8: every interactive control is a >= 40px
+   touch target on mobile. Screens keep their desktop density; only the phone
+   breakpoint is floored. */
+@media (max-width: 719px) {
+  button[data-testid],
+  input[data-testid],
+  select[data-testid],
+  a[data-testid] {
+    min-width: 40px;
+    min-height: 40px;
+  }
+
+  a[data-testid] {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .settings__switch {
+    min-height: 40px;
+    align-items: center;
+  }
+}

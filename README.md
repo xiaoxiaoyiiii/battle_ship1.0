@@ -8,11 +8,11 @@
 
 <p>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white">
-  <img alt="Flask" src="https://img.shields.io/badge/Flask-3.1-000000?style=flat-square&logo=flask&logoColor=white">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-ASGI-009688?style=flat-square&logo=fastapi&logoColor=white">
   <img alt="Socket.IO" src="https://img.shields.io/badge/Socket.IO-5.x-010101?style=flat-square&logo=socketdotio&logoColor=white">
   <img alt="SQLite" src="https://img.shields.io/badge/SQLite-WAL-003B57?style=flat-square&logo=sqlite&logoColor=white">
-  <img alt="Vanilla JS" src="https://img.shields.io/badge/前端-原生_JS·零构建-F7DF1E?style=flat-square&logo=javascript&logoColor=black">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-999_passed-2ea44f?style=flat-square&logo=pytest&logoColor=white">
+  <img alt="Vue 3" src="https://img.shields.io/badge/前端-Vue_3·TS·Vite-42B883?style=flat-square&logo=vuedotjs&logoColor=white">
+  <img alt="Alembic" src="https://img.shields.io/badge/Alembic-迁移-6BA81E?style=flat-square">
 </p>
 
 <p>
@@ -85,11 +85,11 @@
 ## 🃏 魔法卡
 
 <p align="center">
-  <img src="static/card_faces/shenwei.webp" width="19%" alt="神威！">
-  <img src="static/card_faces/emo-qiyue.webp" width="19%" alt="恶魔契约">
-  <img src="static/card_faces/kesulu-zhiyan.webp" width="19%" alt="克苏鲁之眼">
-  <img src="static/card_faces/jiaohuang-zhiyi.webp" width="19%" alt="教皇旨意">
-  <img src="static/card_faces/shiling.webp" width="19%" alt="失灵！">
+  <img src="frontend/public/card_faces/shenwei.webp" width="19%" alt="神威！">
+  <img src="frontend/public/card_faces/emo-qiyue.webp" width="19%" alt="恶魔契约">
+  <img src="frontend/public/card_faces/kesulu-zhiyan.webp" width="19%" alt="克苏鲁之眼">
+  <img src="frontend/public/card_faces/jiaohuang-zhiyi.webp" width="19%" alt="教皇旨意">
+  <img src="frontend/public/card_faces/shiling.webp" width="19%" alt="失灵！">
 </p>
 
 卡池共 **50 张 / 48 种**（「失灵！」有 3 张），每一张都有独立绘制的完整卡面。
@@ -179,72 +179,81 @@
 ## 🚀 快速开始
 
 > [!IMPORTANT]
-> 需要 **Python 3.10+**，所有命令都要在**项目根目录**执行（服务端按相对路径读取卡表）。
+> 需要 **Python 3.12+**、**Node 20+** 与 **pnpm 9+**；所有命令都在**项目根目录**执行。
 
 ```bash
-git clone https://github.com/xiaoxiaoyiiii/battle_ship1.0.git
+git clone https://github.com/1w6qn/battle_ship1.0.git
 cd battle_ship1.0
 python -m venv .venv
 source .venv/bin/activate    # Windows PowerShell：.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
 
-python server.py             # 启动 Socket.IO 服务，读取 PORT 环境变量
+python ops/build.py          # pip install -e backend + pnpm install + pnpm build（含 48 张卡面）
+python ops/run_stack.py --port 5000 --db ./battleship.db
 ```
 
 打开 <http://localhost:5000>，开两个浏览器窗口就能自己和自己对战，或者直接选人机。
+`SECRET_KEY` 是唯一必填的环境变量；缺失时启动会在绑定端口前失败并点名它。
 
-### 运行测试
+### 测试与门禁
+
+测试、夹具与截图基线**不放在本仓库**（重写 spec 的测试资产策略）。仓外门禁：
 
 ```bash
-python -m pytest tests/ -q
+cd D:/develop/battleship-verify
+python -m pytest cases/30-cleanup -q          # Phase 5 收尾：单栈冷启动/路由/构建/ops/文档
+python tools/web/run_all.py --worktree <worktree>   # 22 个 data-testid 浏览器门禁
 ```
 
-截至 2026-10-08，测试结果为 **999 passed**；运行时间随环境变化。
-未设置 `BATTLESHIP_DB_PATH` 时，测试会把数据库重定向到临时目录；若已设置该变量，请先取消设置或指向专用测试库，避免写入真实数据。
-`tools/` 下另有 80 余个无头浏览器检查脚本（`*.mjs`），覆盖布局、手牌、连锁、观战、回放与跨屏完整路径。
+部署顺序、健康检查与 5 分钟回滚 runbook 见 [`ops/README.md`](ops/README.md)。
 
 ### 环境变量
 
 | 变量 | 默认 | 说明 |
 |:--|:--|:--|
-| `SECRET_KEY` | 随机 | **生产必设**，否则重启后所有登录失效 |
-| `PORT` | `5000` | 监听端口（`python server.py` 时生效） |
-| `CORS_ORIGINS` | `http://localhost:5000,http://127.0.0.1:5000` | 允许的来源，多个地址用逗号分隔；使用其他端口或生产域名时须配置对应来源 |
-| `BATTLESHIP_DB_PATH` | `data/battleship.db` | SQLite 数据库路径 |
+| `SECRET_KEY` | —（必填） | 会话签名密钥；缺失或为空启动即失败 |
+| `HOST` / `PORT` | `0.0.0.0` / `5000` | 监听地址与端口 |
+| `CORS_ORIGINS` | `http://localhost:5000,http://127.0.0.1:5000` | 允许的来源，多个地址用逗号分隔 |
+| `BATTLESHIP_DB_PATH` | `./battleship.db` | SQLite 数据库路径（WAL） |
 | `TURN_TIMEOUT_SECONDS` | `90` | 回合思考时间，`0` 关闭 |
-| `ARENA_SCREENS_MODE` | `v2` | C+ 周边屏幕样式门控；设 `off` 关闭这批样式，不等于回退全部界面源码 |
+| `CHAIN_DISPLAY_DELAY_SECONDS` | `1.2` | 连锁展示停留；测试置 0 |
+| `FRONTEND_DIST` | `frontend/dist` | 可选：覆盖前端构建产物位置 |
 | `BATTLESHIP_WALLPAPER_ALLOW_REMOTE` | — | 设 `1` 允许非本机访问时扫描壁纸库 |
-| `ENABLE_TEST_EVENTS` | — | 仅本地调试 / E2E 用，**生产切勿开启** |
+| `ENABLE_TEST_EVENTS` | `0` | 仅本地调试 / E2E 用，**生产切勿开启** |
 
 ---
 
 ## 🧱 架构
 
 ```text
- 浏览器  index.html + game.js + arena_screens.css
+ 浏览器（Vue 3 SPA，frontend/dist）
    │  ▲
    │  │  Socket.IO（实时对局 / 大厅 / 观战）      HTTP（账号 / 排行 / 回放 / 公告）
    ▼  │                                                  │
- server.py ── 房间 · 状态机 · 魔法卡结算 · 连锁引擎 ──┐   │
-   │            ▲                                     │   ▼
-   │            └──── from api import app ───────── api.py (Flask)
-   ▼                                                  │
- db.py  ─────────────── SQLite（WAL）◀────────────────┘
+ uvicorn ── FastAPI（backend/src/battleship）             │
+   ├── realtime/     Socket.IO handlers / emitter          │
+   ├── http/         REST 路由 + SPA 与头像托管             │
+   ├── services/     用例编排（结算 = 单事务）              │
+   ├── domain/       纯规则（无框架/无数据库）              │
+   └── repositories/ SQLAlchemy + Alembic ────────────────┘
+   ▼
+ SQLite（WAL）
 ```
 
-**核心规则在服务端统一实现**：段位、等级、徽章、名片解锁与观战过滤拆成独立模块；回放模块记录对局并生成时间线。前端读取服务端结果，负责展示和交互。
+**核心规则在服务端统一实现（只有一份）**：段位、等级、徽章、名片解锁、观战过滤、
+反作弊都拆在 `domain/`；前端读取服务端结果，只负责展示和交互。
 
-| 模块 | 职责 |
+| 目录 | 职责 |
 |:--|:--|
-| `server.py` | Socket.IO 事件、房间管理、游戏状态机、魔法卡结算、连锁引擎、人机 |
-| `api.py` · `db.py` | HTTP 路由 · 数据访问层（SQLite / WAL） |
-| `ai_brain.py` | 大师 AI 决策层（试算 → 评分 → 选择） |
-| `ranks.py` · `leveling.py` · `achievements.py` · `profile_spec.py` | 段位 · 等级经验 · 徽章 · 名片外观与解锁 |
-| `spectate.py` · `replay.py` | 观战事件白名单与净化 · 对局回放时间线 |
-| `anticheat.py` · `suspicion.py` · `match_guard.py` | 反作弊判据 · 嫌疑度 · 匹配规避 |
-| `presence.py` · `dm.py` · `quick_chat.py` · `changelog.py` | 在线状态 · 好友私聊 · 快捷语 · 更新公告 |
-| `wallpaper.py` | Wallpaper Engine 壁纸扫描与媒体服务 |
-| `static/` · `templates/` | 原生 JS 单页前端、样式、卡面、音效 |
+| `backend/src/battleship/contracts/` | Pydantic 模型、事件清单、JSON Schema（唯一契约来源） |
+| `backend/src/battleship/domain/` | 对局状态机、布船、魔法/连锁、AI、段位/等级/成就、反作弊、匹配 |
+| `backend/src/battleship/services/` | 用例编排与事务边界（含结算） |
+| `backend/src/battleship/repositories/` | SQLAlchemy 模型与迁移（唯一 SQL 位置） |
+| `backend/src/battleship/realtime/` · `http/` | Socket.IO 与 REST 协议适配、SPA 托管 |
+| `backend/src/battleship/infra/` | 配置、结构化日志、指标、健康检查、限流 |
+| `frontend/src/screens/` · `stores/` · `realtime/` | 11 屏 Vue 组件、Pinia 状态、typed socket 客户端 |
+| `frontend/public/card_faces/` | 48 张卡面（构建期打包为内容哈希资产） |
+| `ops/` | 构建、迁移、健康检查、5 分钟回滚、systemd 单元 |
+| `static/avatars/` | 玩家头像（唯一保留的旧 `static/` 数据，冻结 URL） |
 
 ---
 
@@ -262,13 +271,16 @@ python -m pytest tests/ -q
 
 | 文档 | 内容 |
 |:--|:--|
-| [`CLAUDE.md`](CLAUDE.md) | 面向开发者 / AI 代理的代码索引与踩坑记录 |
+| [`CLAUDE.md`](CLAUDE.md) | 面向开发者 / AI 代理的新架构索引与旧栈教训 |
+| [`docs/REWRITE_LANDING_2026_10_20.md`](docs/REWRITE_LANDING_2026_10_20.md) | 重写落地：架构、契约、门禁、回滚、残余 |
+| [`docs/adr/0001-modern-rewrite.md`](docs/adr/0001-modern-rewrite.md) | 重写决策与替代方案 |
+| [`ops/README.md`](ops/README.md) | 构建 / 迁移 / 部署 / 5 分钟回滚 runbook |
 | [`docs/CHAIN_ENGINE_SPEC.md`](docs/CHAIN_ENGINE_SPEC.md) | 连锁引擎规格 |
 | [`docs/RANKED_2026_09_17.md`](docs/RANKED_2026_09_17.md) | 段位与排位系统 |
 | [`docs/MASTER_AI_2026_09_21.md`](docs/MASTER_AI_2026_09_21.md) | 大师 AI 设计与度量 |
 | [`docs/SPECTATE_2026_09_22.md`](docs/SPECTATE_2026_09_22.md) · [`docs/REPLAY_2026_09_23.md`](docs/REPLAY_2026_09_23.md) | 观战与回放 |
 | [`docs/WALLPAPER_ENGINE.md`](docs/WALLPAPER_ENGINE.md) | 动态壁纸实现与安全模型 |
-| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | 部署说明 |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | 历史部署事故记录（旧栈）；现行步骤看 ops |
 
 ---
 

@@ -1,0 +1,5 @@
+# pnpm 12 keeps build-script approvals here (package.json "pnpm" is ignored).
+# esbuild needs its native binary postinstall; vue-demi picks the Vue 3 shim.
+allowBuilds:
+  esbuild: true
+  vue-demi: true

@@ -8,8 +8,10 @@ import {
   unlockAudio,
   setSfxPreferences,
   stopSfx,
+  preloadSfx,
 } from '../audio/engine'
 import { cardSound } from '../audio/cardSounds'
+import { UI_SOUNDS, UI_SOUND_COOLDOWN, type UiSound } from '../audio/uiSounds'
 
 /**
  * Local audio preferences (ticket #33).
@@ -22,6 +24,7 @@ import { cardSound } from '../audio/cardSounds'
 export const AUDIO_STORAGE = {
   sfxMuted: 'sfx_muted',
   sfxVolume: 'sfx_volume',
+  interfaceSfx: 'ui_sfx_enabled',
   bgmMuted: 'bgm_muted',
   bgmVolume: 'bgm_volume',
   bgmPlaying: 'bgm_playing',
@@ -63,12 +66,14 @@ function write(key: string, value: string): void {
 export const useAudioStore = defineStore('audio', () => {
   const sfxMuted = ref(readBool(AUDIO_STORAGE.sfxMuted, false))
   const sfxVolume = ref(readVolume(AUDIO_STORAGE.sfxVolume, 0.8))
+  const interfaceSfx = ref(readBool(AUDIO_STORAGE.interfaceSfx, true))
   const bgmMuted = ref(readBool(AUDIO_STORAGE.bgmMuted, false))
   const bgmVolume = ref(readVolume(AUDIO_STORAGE.bgmVolume, 0.5))
   const bgmPlaying = ref(readBool(AUDIO_STORAGE.bgmPlaying, false))
   const heardEffects = new Set<string>()
   let resultPlayedFor = ''
   let battleScene = false
+  const lastUiSound = new Map<UiSound, number>()
   setSfxPreferences(sfxVolume.value, sfxMuted.value)
 
   const sfxVolumePercent = computed(() => Math.round(sfxVolume.value * 100))
@@ -137,6 +142,22 @@ export const useAudioStore = defineStore('audio', () => {
     playSfx(name, sfxVolume.value, sfxMuted.value)
   }
 
+  function setInterfaceSfx(enabled: boolean): void {
+    interfaceSfx.value = Boolean(enabled)
+    write(AUDIO_STORAGE.interfaceSfx, String(interfaceSfx.value))
+    if (!interfaceSfx.value) stopSfx('interface')
+  }
+
+  function playUi(name: UiSound): boolean {
+    if (!interfaceSfx.value || sfxMuted.value || sfxVolume.value === 0) return false
+    const now = Date.now()
+    const previous = lastUiSound.get(name)
+    if (previous !== undefined && now - previous < UI_SOUND_COOLDOWN[name]) return false
+    const played = playSfx(UI_SOUNDS[name], sfxVolume.value, sfxMuted.value)
+    if (played) lastUiSound.set(name, now)
+    return played
+  }
+
   function playCardEffect(payload: Record<string, unknown>): void {
     const id = typeof payload.effect_id === 'string' ? payload.effect_id : ''
     const name = typeof payload.card === 'string' ? cardSound(payload.card) : null
@@ -152,11 +173,11 @@ export const useAudioStore = defineStore('audio', () => {
 
   function setBattleScene(active: boolean): void {
     battleScene = active
-    if (!active) stopSfx()
+    if (!active) stopSfx('battle')
   }
 
   function resetMatchAudio(): void {
-    stopSfx()
+    stopSfx('battle')
     heardEffects.clear()
     resultPlayedFor = ''
   }
@@ -164,11 +185,13 @@ export const useAudioStore = defineStore('audio', () => {
   function playOutcome(room: string, outcome: string): void {
     if (!room || !['win', 'lose'].includes(outcome) || resultPlayedFor === room) return
     resultPlayedFor = room
-    stopSfx()
+    stopSfx('battle')
     play(outcome)
   }
 
   if (typeof window !== 'undefined') {
+    // 先解码轻量界面素材，第一次手势只需解锁，避免按完按钮才开始下载。
+    void preloadSfx(Object.values(UI_SOUNDS))
     const unlock = (): void => {
       unlockAudio()
       if (bgmPlaying.value) startBgm(bgmVolume.value, bgmMuted.value)
@@ -183,6 +206,7 @@ export const useAudioStore = defineStore('audio', () => {
   return {
     sfxMuted,
     sfxVolume,
+    interfaceSfx,
     bgmMuted,
     bgmVolume,
     bgmPlaying,
@@ -192,6 +216,7 @@ export const useAudioStore = defineStore('audio', () => {
     setSfxMuted,
     toggleSfxMute,
     setSfxVolume,
+    setInterfaceSfx,
     previewSfx,
     setBgmPlaying,
     toggleBgmPlay,
@@ -199,6 +224,7 @@ export const useAudioStore = defineStore('audio', () => {
     toggleBgmMute,
     setBgmVolume,
     play,
+    playUi,
     playCardEffect,
     playBattle,
     setBattleScene,

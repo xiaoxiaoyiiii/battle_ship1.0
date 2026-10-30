@@ -10,7 +10,8 @@ let context: AudioContext | null = null
 let sfxBus: { master: GainNode; limiter: DynamicsCompressorNode } | null = null
 let sfxVolume = 0.8
 let sfxMuted = false
-const voices = new Set<AudioScheduledSourceNode>()
+type SfxScope = 'battle' | 'interface'
+const voices = new Map<AudioScheduledSourceNode, SfxScope>()
 const buffers = new Map<string, AudioBuffer>()
 const loading = new Map<string, Promise<void>>()
 let bgm: {
@@ -63,11 +64,12 @@ function getSfxBus(ctx: AudioContext): AudioNode {
   return sfxBus.limiter
 }
 
-export function stopSfx(): void {
-  for (const source of [...voices]) {
+export function stopSfx(scope?: SfxScope): void {
+  for (const [source, kind] of [...voices]) {
+    if (scope && kind !== scope) continue
     try { source.stop() } catch { /* 已自然结束。 */ }
+    voices.delete(source)
   }
-  voices.clear()
 }
 
 export function setSfxPreferences(volume: number, muted: boolean): void {
@@ -77,13 +79,13 @@ export function setSfxPreferences(volume: number, muted: boolean): void {
   if (muted || sfxVolume === 0) stopSfx()
 }
 
-function track(source: AudioScheduledSourceNode, nodes: AudioNode[] = []): void {
+function track(source: AudioScheduledSourceNode, nodes: AudioNode[] = [], scope: SfxScope = 'battle'): void {
   if (voices.size >= 12) {
-    const oldest = voices.values().next().value
+    const oldest = voices.keys().next().value
     try { oldest?.stop() } catch { /* 已结束。 */ }
     if (oldest) voices.delete(oldest)
   }
-  voices.add(source)
+  voices.set(source, scope)
   source.onended = () => {
     voices.delete(source)
     source.disconnect()
@@ -92,10 +94,10 @@ function track(source: AudioScheduledSourceNode, nodes: AudioNode[] = []): void 
 }
 
 /** 只准备后续事件，不在下载或解码完成后补播先前错过的声音。 */
-export async function preloadSfx(): Promise<void> {
+export async function preloadSfx(names?: readonly string[]): Promise<void> {
   const ctx = getContext()
   if (!ctx) return
-  await Promise.all(Object.entries(SAMPLE_URLS).map(([name, url]) => {
+  await Promise.all(Object.entries(SAMPLE_URLS).filter(([name]) => !names || names.includes(name)).map(([name, url]) => {
     if (buffers.has(name)) return Promise.resolve()
     const pending = loading.get(name)
     if (pending) return pending
@@ -207,7 +209,13 @@ export function playSfx(name: string, volume: number, muted: boolean): boolean {
   const sample = name === 'win' ? 'victory' : name === 'lose' ? 'defeat' : name
   if (!(sample in SAMPLE_URLS) && !(name in RECIPES)) return false
   const ctx = getContext()
-  if (!ctx || ctx.state !== 'running') return false
+  if (!ctx) return false
+  // 首次快速点击时 resume 可能还未完成；仅当前手势内的界面音可同步排入。
+  // 素材未解码、后台事件及无手势的战斗事件仍直接略过，不等待以后补播。
+  const firstGesture = sample.startsWith('ui_') && ctx.state === 'suspended'
+    && typeof navigator !== 'undefined' && navigator.userActivation?.isActive
+  if (ctx.state !== 'running' && !firstGesture) return false
+  if (firstGesture) void ctx.resume().catch(() => undefined)
   try {
     if (sample in SAMPLE_URLS) {
       const buffer = buffers.get(sample)
@@ -218,7 +226,7 @@ export function playSfx(name: string, volume: number, muted: boolean): boolean {
       source.buffer = buffer
       source.connect(gain)
       gain.connect(getSfxBus(ctx))
-      track(source, [gain])
+      track(source, [gain], sample.startsWith('ui_') ? 'interface' : 'battle')
       source.start(ctx.currentTime + 0.001)
       return true
     }

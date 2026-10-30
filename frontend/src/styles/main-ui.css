@@ -183,38 +183,42 @@ html[data-theme='journal'] body {
   padding: 8px 16px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: var(--surface-chamber);
+  background: linear-gradient(180deg, var(--control-top), transparent 48%, rgb(0 0 0 / 7%)), var(--surface-chamber);
   color: var(--text-primary);
   font-size: 14px;
   font-weight: 500;
+  box-shadow: var(--control-depth);
+  transition: border-color 130ms ease, box-shadow 130ms ease, filter 130ms ease, transform 100ms ease;
 }
 
 .button:hover:not(:disabled) {
   border-color: var(--chip-line);
-  background: var(--surface-raised);
+  background: linear-gradient(180deg, var(--control-top), transparent 52%), var(--surface-raised);
+  box-shadow: var(--control-depth-hover);
 }
 
 .button:active:not(:disabled) {
   transform: translateY(1px);
+  box-shadow: var(--control-depth-pressed);
 }
 
 .button--primary {
   border-color: var(--hero-border);
-  background: var(--hero-grad);
+  background: linear-gradient(180deg, var(--control-top), transparent 50%, rgb(0 0 0 / 12%)), var(--hero-grad);
   color: var(--on-accent);
-  box-shadow: var(--shadow-accent);
+  box-shadow: var(--control-depth), var(--shadow-accent);
   font-weight: 600;
 }
 
 .button--primary:hover:not(:disabled) {
   border-color: var(--hero-border);
-  background: var(--hero-grad);
+  background: linear-gradient(180deg, var(--control-top), transparent 50%), var(--hero-grad);
   filter: brightness(1.1);
 }
 
 .button--ghost {
   border-color: var(--chip-line);
-  background: transparent;
+  background: linear-gradient(180deg, rgb(255 255 255 / 3%), transparent 65%);
   color: var(--role-action);
 }
 

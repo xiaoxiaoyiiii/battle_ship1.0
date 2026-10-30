@@ -23,6 +23,7 @@ import { useCollectionStore } from './stores/collection'
 import { useGameStore } from './stores/game'
 import { useUiStore } from './stores/ui'
 import { useAudioStore } from './stores/audio'
+import { installInteractionAudio } from './audio/interactions'
 
 /**
  * Application shell (ticket #42).
@@ -41,6 +42,17 @@ const game = useGameStore()
 const collection = useCollectionStore()
 const ui = useUiStore()
 const audio = useAudioStore()
+let releaseInteractionAudio: (() => void) | null = null
+onMounted(() => { releaseInteractionAudio = installInteractionAudio(sound => audio.playUi(sound)) })
+onBeforeUnmount(() => releaseInteractionAudio?.())
+// 消费通知的明确语义与唯一编号，不从文案或战斗日志猜测声音。
+let lastNoticeSoundId = 0
+watch(() => ui.notices.at(-1), notice => {
+  if (!notice || notice.id <= lastNoticeSoundId) return
+  lastNoticeSoundId = notice.id
+  if (notice?.tone === 'error') audio.playUi('reject')
+  else if (notice?.tone === 'success') audio.playUi('ready')
+})
 watch(() => game.state.room_id, () => audio.resetMatchAudio())
 watch(() => route.name, name => {
   audio.setBattleScene(['game', 'placement', 'rps'].includes(String(name)))

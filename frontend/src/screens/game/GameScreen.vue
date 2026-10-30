@@ -29,6 +29,7 @@ import { useGameStore } from '../../stores/game'
 import { useMatchStore } from '../../stores/match'
 import { useResultStore } from '../../stores/result'
 import { useUiStore } from '../../stores/ui'
+import { useAudioStore } from '../../stores/audio'
 import { turnClockView } from './turnClock'
 import {
   areaFromAnchor,
@@ -1121,7 +1122,11 @@ async function fire(x: number, y: number): Promise<void> {
 
 function onCell(board: 'self' | 'opponent', x: number, y: number): void {
   if (selection.value) {
+    const before = JSON.stringify([selection.value.anchor, selection.value.picks, selection.value.board])
     pickCell(board, x, y)
+    const after = JSON.stringify([selection.value?.anchor, selection.value?.picks, selection.value?.board])
+    if (selection.value?.error) useAudioStore().playUi('reject')
+    else if (before !== after) useAudioStore().playUi('select')
     return
   }
   if (shieldOpen.value) {

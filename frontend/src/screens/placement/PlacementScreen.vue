@@ -7,6 +7,7 @@ import { BOARD_SIZE, usePlacementStore } from '../../stores/placement'
 import AppOverlay from '../../components/AppOverlay.vue'
 import { getSettlementSocket } from '../../realtime/settlement'
 import { useUiStore } from '../../stores/ui'
+import { useAudioStore } from '../../stores/audio'
 
 /**
  * Ticket #23: the opening placement screen.
@@ -26,6 +27,7 @@ const route = useRoute()
 const game = useGameStore()
 const placement = usePlacementStore()
 const ui = useUiStore()
+const audio = useAudioStore()
 const leaveOpen = ref(false)
 
 let releaseChannel: (() => void) | null = null
@@ -144,17 +146,22 @@ watch(
 )
 
 function randomize(): void {
+  const previous = JSON.stringify(placement.cells)
   placement.randomize()
+  if (JSON.stringify(placement.cells) !== previous) audio.playUi('place')
 }
 
 function clearBoard(): void {
+  const hadShips = placement.placedCount > 0
   placement.clearBoard()
   placement.clearReceipt()
+  if (hadShips && placement.placedCount === 0) audio.playUi('remove')
 }
 
 /** A refused click still answers once: the board never goes silent. */
 function toggleCell(x: number, y: number): void {
   if (!canEdit.value) {
+    audio.playUi('reject')
     placement.noteReceipt(
       placement.submitted || placement.pending
         ? '已提交 · 等对手摆好就能开始猜拳；要退出可以点「离开房间」'
@@ -163,7 +170,13 @@ function toggleCell(x: number, y: number): void {
     return
   }
   placement.clearReceipt()
+  const wasPlaced = placement.isPlaced(x, y)
   placement.toggleCell(x, y)
+  if (placement.isPlaced(x, y) !== wasPlaced) audio.playUi(wasPlaced ? 'remove' : 'place')
+  else {
+    audio.playUi('reject')
+    if (!placement.receipt) placement.noteReceipt('战舰数量已满，请先撤销一艘再调整位置。')
+  }
 }
 
 /** Leave the waiting room through the existing surrender event (no new protocol). */
@@ -217,9 +230,11 @@ async function confirm(): Promise<void> {
     })
     if (token !== submitToken || !placement.pending) return
     placement.settleSubmit(ack?.status === 'success', typeof ack?.message === 'string' ? ack.message : '')
+    audio.playUi(ack?.status === 'success' ? 'ready' : 'reject')
   } catch (error) {
     if (token !== submitToken || !placement.pending) return
     placement.settleSubmit(false, error instanceof Error ? error.message : '')
+    audio.playUi('reject')
   }
 }
 
@@ -379,6 +394,7 @@ function returnHome(): void {
             type="button"
             class="button button--ghost"
             data-testid="placement-clear"
+            data-ui-sound="none"
             :disabled="!canEdit || placement.placedCount === 0"
             @click="clearBoard"
           >
@@ -388,6 +404,7 @@ function returnHome(): void {
             type="button"
             class="button button--ghost"
             data-testid="placement-random"
+            data-ui-sound="none"
             :disabled="!canEdit"
             @click="randomize"
           >

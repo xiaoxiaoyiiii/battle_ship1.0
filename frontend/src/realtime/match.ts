@@ -5,6 +5,7 @@ import { acquireSettlementChannel, getSettlementSocket } from './settlement'
 import { usePlacementStore } from '../stores/placement'
 import { useRpsStore } from '../stores/rps'
 import { useGameStore } from '../stores/game'
+import { useAudioStore } from '../stores/audio'
 
 /**
  * Ticket #23: the wire channel shared by the placement and rps screens.
@@ -29,6 +30,7 @@ export function applyMatchEvent(
   switch (event) {
     case 'rps_result':
       useRpsStore(pinia).applyResult(payload)
+      useAudioStore(pinia).playUi('ready')
       break
     case 'reset_gameboard':
       usePlacementStore(pinia).applyReset(payload)

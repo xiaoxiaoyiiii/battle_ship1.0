@@ -541,6 +541,14 @@ onMounted(() => {
         </label>
 
         <div class="settings__control-row settings__audio-divider">
+          <div class="settings__control-copy"><h3 class="settings__block-title">界面反馈音效</h3><p class="settings__note">按钮、切换、布船与操作提示，可单独关闭。</p></div>
+          <button type="button" class="button" data-testid="settings-interface-sfx" data-ui-sound="none"
+            :aria-pressed="audio.interfaceSfx" @click="audio.setInterfaceSfx(!audio.interfaceSfx); audio.playUi('select')">
+            {{ audio.interfaceSfx ? '界面反馈：开启' : '界面反馈：关闭' }}
+          </button>
+        </div>
+
+        <div class="settings__control-row settings__audio-divider">
         <div class="settings__control-copy"><h3 class="settings__block-title">背景音乐</h3><p class="settings__note">随时播放、暂停或静音</p></div>
         <div class="settings__audio-row">
           <button

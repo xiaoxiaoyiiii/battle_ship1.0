@@ -205,6 +205,7 @@ function returnHome(): void {
         :key="choice.value"
         type="button"
         class="rps__choice"
+        data-ui-sound="select"
         :class="{ 'is-picked': rps.pendingChoice === choice.value }"
         :data-testid="'rps-choice-' + choice.value"
         :aria-pressed="rps.pendingChoice === choice.value ? 'true' : 'false'"

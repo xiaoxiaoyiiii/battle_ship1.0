@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AppOverlay from './AppOverlay.vue'
 import AvatarStack from './AvatarStack.vue'
 import TitleBadge from './TitleBadge.vue'
 import { useProfileStore, type JsonObject } from '../stores/profile'
+import { useAudioStore } from '../stores/audio'
 
 /**
  * 匹配成功身份预览：沿用冻结的五秒确认流程，只把已经存在的公开资料
@@ -21,6 +22,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{ (event: 'done'): void }>()
 const profile = useProfileStore()
+const audio = useAudioStore()
 
 function stringValue(source: JsonObject | null, key: string): string {
   const value = source?.[key]
@@ -69,6 +71,9 @@ function playerView(source: JsonObject | null, fallbackName: string, ai = false)
 
 const totalMs = Math.max(0, Math.floor(props.seconds * 1000))
 const remaining = ref(Math.ceil(totalMs / 1000))
+watch(remaining, (value, previous) => {
+  if (value !== previous && value > 0 && value <= 3) audio.playUi('countdown')
+})
 const progress = ref(1)
 const profilesLoading = ref(true)
 const selfProfile = ref<JsonObject | null>(null)
@@ -123,6 +128,7 @@ function finish(): void {
 }
 
 onMounted(() => {
+  audio.playUi('match')
   void loadIdentity()
   deadline = performance.now() + totalMs
   const tick = () => {

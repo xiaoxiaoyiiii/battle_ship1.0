@@ -307,6 +307,7 @@ async def last_chance(ctx: EffectContext) -> EffectResult:
     await ctx.clear_multiturn_effects("回光返照")
     ctx.caster.ships = []
     ctx.caster.sunken_ships = []
+    ctx.caster.permanently_destroyed_ships = []
     ctx.caster.remaining_ships = 0
     ctx.caster.needs_reset = True
     ctx.opponent.attacks = []
@@ -355,6 +356,7 @@ async def polar_reversal(ctx: EffectContext) -> EffectResult:
         player.revealed_positions = []
         player.max_ships = 6
         player.sunken_ships = []
+        player.permanently_destroyed_ships = []
         if hasattr(player, "opponent_attacks"):
             player.opponent_attacks = []
         player.magic_blocked = False

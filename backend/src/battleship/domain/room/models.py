@@ -137,6 +137,8 @@ class Player:
     revealed_positions: list[Position] = field(default_factory=list)
     max_ships: int | None = None
     sunken_ships: list[PlayerShip] = field(default_factory=list)
+    # 无残骸的永久死亡记录只用于击沉统计，不属于可复活的沉船。
+    permanently_destroyed_ships: list[PlayerShip] = field(default_factory=list)
     magic_blocked: bool = False
     # 看破只在施放所在的大回合有效，避免跨大回合残留。
     magic_blocked_round: int | None = None

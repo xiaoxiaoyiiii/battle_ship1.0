@@ -100,7 +100,24 @@ def healing_error(room: Room, player_id: str, targets: dict[str, Any]) -> str | 
         return '疗愈只能选择自己的沉船'
     if not isinstance(raw, list) or not 1 <= len(raw) <= 2:
         return '请选择一艘或两艘要原地复活的沉船'
-    if len(healing_ships(room, player_id, targets)) != len(raw):
+    picked = healing_ships(room, player_id, targets)
+    if len(picked) != len(raw):
+        # 只解释真正无效的目标；炸空格和重复选择普通沉船不能误报残骸消失。
+        valid_cells = {(p.x, p.y) for ship in picked for p in ship.positions}
+        invalid_cells = {cell_xy(cell) for cell in raw} - valid_cells
+        opponent = room.players.get(room.opponent_of(player_id))
+        attacks = opponent.attacks if opponent else []
+        sources = [
+            name for flag, name in (("is_bomb", "轰炸"), ("is_sulfur", "硫磺火焰"))
+            if any(
+                (shot.x, shot.y) in invalid_cells and shot.hit and shot.ship_sunk
+                and getattr(shot, flag, False)
+                for shot in attacks
+            )
+        ]
+        if sources:
+            cause = '、'.join(f'「{name}」' for name in sources)
+            return f'所选目标中包含被{cause}摧毁的战舰：残骸已消失，属于永久死亡，无法被疗愈或其他复活效果复活'
         return '请选择不同的己方沉船，且原位置不能被活舰占用'
     return None
 

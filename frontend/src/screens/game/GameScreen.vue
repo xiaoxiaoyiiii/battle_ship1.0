@@ -300,7 +300,7 @@ const targetHint = computed(() => {
   if (kind === 'continuous') return '选择 6 个四邻接连通格，可以转弯；再次点击可撤销'
   if (kind === 'single') return '在自己海域点击一艘还活着的战舰'
   if (kind === 'own_ships') return sel.card.name === '神之宣告' ? '在自己海域选择两艘战舰，然后选择要发出的效果' : '在自己海域选择一艘要主动牺牲的战舰，其余战舰将获得无敌'
-  if (kind === 'own_sunken') return '在自己海域选择一艘或两艘沉船原地复活；再次点击可取消选择'
+  if (kind === 'own_sunken') return '选择一艘或两艘仍有残骸的己方沉船原地复活；轰炸或硫磺火焰会摧毁残骸，使战舰永久死亡，无法复活；再次点击可取消选择'
   if (kind === 'shenwei') return '先选择作用棋盘，再点击 3×3 区域的左上角'
   return ''
 })

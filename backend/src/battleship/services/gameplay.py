@@ -877,6 +877,7 @@ class GameplayService:
             player.magic_hand = []
             player.damage_dealt_this_turn = 0
             player.sunken_ships = []
+            player.permanently_destroyed_ships = []
             player.revealed_positions = []
             player.needs_reset = True
         # #38：整对象重置统一走 reset_all（match 边界清租约 + 投影）。

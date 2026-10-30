@@ -2255,6 +2255,7 @@ class MagicService:
         for player in room.players.values():
             player.ships = []
             player.sunken_ships = []
+            player.permanently_destroyed_ships = []
             player.attacks = []
             player.remaining_ships = 0
             player.needs_reset = True
@@ -3718,6 +3719,7 @@ class MagicService:
                 ship.shield = False
                 ship.trap = False
             player.sunken_ships = []
+            player.permanently_destroyed_ships = []
             player.damage_dealt_this_turn = 0
             player.magic_hand = []
             await self._emit_hand(player)

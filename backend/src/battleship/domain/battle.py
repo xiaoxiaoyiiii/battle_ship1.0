@@ -504,16 +504,24 @@ def mark_ship_sunken(player: Player, ship: PlayerShip | None) -> bool:
     return True
 
 
-def apply_ship_sunk(room: Room, defender_id: str, ship: PlayerShip) -> bool:
+def apply_ship_sunk(
+    room: Room, defender_id: str, ship: PlayerShip, *, leave_wreck: bool = True
+) -> bool:
     """Core sink bookkeeping shared by every damage source.
 
     * remaining_ships is the authoritative count (dead ships stay in ships);
-    * the ship is registered in sunken_ships exactly once.
+    * 留下残骸的沉船只登记一次；残骸被摧毁的战舰不进入可复活列表。
     """
 
     defender = room.players[defender_id]
     defender.remaining_ships = max(0, int(defender.remaining_ships) - 1)
-    mark_ship_sunken(defender, ship)
+    if leave_wreck:
+        mark_ship_sunken(defender, ship)
+    else:
+        # 不登记残骸，仍须让击沉订阅者看到该战舰已经死亡。
+        ship.hits = list(ship.positions)
+        if not any(destroyed is ship for destroyed in defender.permanently_destroyed_ships):
+            defender.permanently_destroyed_ships.append(ship)
     return True
 
 
@@ -661,21 +669,24 @@ def player_ships_payload(player: Player) -> list[dict[str, Any]]:
 
 
 def dead_ship_count(player: Player) -> int:
-    """Legacy _dead_ship_count: union of dead-in-ships and removed-sunken."""
+    """统计棋盘沉船、移出棋盘的沉船及无残骸的永久死亡战舰，按身份去重。"""
 
     ships = player.ships or []
     dead: set[int] = set()
     for ship in ships:
         if ship is not None and not is_ship_alive(player, ship):
             dead.add(id(ship))
-    for ship in player.sunken_ships or []:
+    for ship in [*(player.sunken_ships or []), *player.permanently_destroyed_ships]:
         if ship is not None and ship not in ships:
             dead.add(id(ship))
     return len(dead)
 
 
 def took_any_damage(player: Player) -> bool:
-    return any(bool(getattr(ship, "hits", None)) for ship in (player.ships or []))
+    return any(
+        bool(ship.hits)
+        for ship in [*(player.ships or []), *player.permanently_destroyed_ships]
+    )
 
 
 def match_duration_seconds(room: Room, now: float | None = None) -> int:
@@ -738,7 +749,7 @@ def _area_sink(room: Room, defender_id: str, ship: PlayerShip, *,
     defender = room.players[defender_id]
     if remove_from_ships and ship in defender.ships:
         defender.ships.remove(ship)
-    apply_ship_sunk(room, defender_id, ship)
+    apply_ship_sunk(room, defender_id, ship, leave_wreck=not remove_from_ships)
 
 
 def _mark_area_attack(attacker: Player, x: int, y: int, hit: bool,

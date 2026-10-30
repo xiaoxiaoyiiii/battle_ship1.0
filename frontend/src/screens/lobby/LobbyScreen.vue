@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import MatchFoundOverlay from '../../components/MatchFoundOverlay.vue'
 import StateSurface from '../../components/StateSurface.vue'
 import { acquireLobbyChannel, getLobbySocket } from '../../realtime/lobby'
@@ -14,6 +14,12 @@ import {
   type LobbyMatch,
   type LobbyRoom,
 } from '../../stores/lobby'
+import {
+  buildInviteUrl,
+  inviteFeedback,
+  inviteManualPrompt,
+  readInviteRoomId,
+} from './inviteLink'
 import {
   FILTERS,
   filterMatches,
@@ -46,6 +52,7 @@ import {
  * the broadcast keys — the server cannot add is_me to a broadcast.
  */
 const router = useRouter()
+const route = useRoute()
 const lobby = useLobbyStore()
 const ui = useUiStore()
 const home = useHomeStore()
@@ -148,6 +155,123 @@ function socketOrFail() {
     return null
   }
   return socket
+}
+
+const INVITE_JOINED_PREFIX = 'battleship.lobby.inviteJoined.'
+const inviteCopyText = ref('')
+/** 邀请链接的自动加入只允许发生一次：组件实例内的布尔 + sessionStorage 双保险。 */
+let inviteJoinAttempted = false
+let inviteJoinTimer: number | null = null
+
+function inviteJoinedKey(roomId: string): string {
+  return INVITE_JOINED_PREFIX + roomId
+}
+
+function inviteAlreadyJoined(roomId: string): boolean {
+  try {
+    return window.sessionStorage.getItem(inviteJoinedKey(roomId)) === '1'
+  } catch {
+    return false
+  }
+}
+
+function rememberInviteJoined(roomId: string): void {
+  try {
+    window.sessionStorage.setItem(inviteJoinedKey(roomId), '1')
+  } catch {
+    // 存储不可用时仍靠实例内的布尔标志保证本次不重复加入。
+  }
+}
+
+function clearInviteJoinTimer(): void {
+  if (inviteJoinTimer !== null) {
+    window.clearInterval(inviteJoinTimer)
+    inviteJoinTimer = null
+  }
+}
+
+/**
+ * 等待同一个大厅 socket 连上（不注册额外监听，避免重连时反复触发）。
+ * 连接迟迟不就绪就返回 null，由调用方给出「连接尚未就绪」的反馈。
+ */
+function waitForLobbyReady(timeoutMs = 8000): Promise<ReturnType<typeof getLobbySocket>> {
+  const socket = getLobbySocket()
+  if (socket && socket.socket.connected) return Promise.resolve(socket)
+  return new Promise((resolve) => {
+    const startedAt = Date.now()
+    clearInviteJoinTimer()
+    inviteJoinTimer = window.setInterval(() => {
+      const next = getLobbySocket()
+      if (next && next.socket.connected) {
+        clearInviteJoinTimer()
+        resolve(next)
+        return
+      }
+      if (Date.now() - startedAt > timeoutMs) {
+        clearInviteJoinTimer()
+        resolve(null)
+      }
+    }, 120)
+  })
+}
+
+/** 邀请链接带入的房间号：只在合法时才值得动作。 */
+const inviteRoomId = computed(() => readInviteRoomId(route.query))
+
+function copyInviteLink(): void {
+  const roomId = lobby.ownRoomId
+  if (!roomId) {
+    inviteCopyText.value = '还没有房间，先创建房间再复制邀请链接'
+    return
+  }
+  const url = buildInviteUrl(window.location.origin, '/lobby', roomId)
+  const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined
+  if (clipboard && typeof clipboard.writeText === 'function') {
+    void clipboard
+      .writeText(url)
+      .then(() => {
+        inviteCopyText.value = inviteFeedback(true)
+      })
+      .catch(() => {
+        window.prompt(inviteManualPrompt(url), url)
+        inviteCopyText.value = inviteFeedback(false)
+      })
+    return
+  }
+  window.prompt(inviteManualPrompt(url), url)
+  inviteCopyText.value = inviteFeedback(false)
+}
+
+/** 打开 `/lobby?room=xxx` 时自动加入一次；失败保留服务端文案，不静默跳转。 */
+function tryJoinFromInvite(): void {
+  const roomId = inviteRoomId.value
+  if (!roomId || inviteJoinAttempted) return
+  inviteJoinAttempted = true
+  if (inviteAlreadyJoined(roomId)) {
+    setNotice('已在房间 ' + roomId + ' 中，无需重复加入')
+    return
+  }
+  void waitForLobbyReady().then((socket) => {
+    if (!socket) {
+      // 连接没起来不算「已加入」，允许用户刷新后再试一次。
+      inviteJoinAttempted = false
+      fail('连接尚未就绪，请稍后再试')
+      return
+    }
+    rememberInviteJoined(roomId)
+    void socket
+      .emitEvent('join_room', { room_id: roomId, player_name: lobbyPlayerName() })
+      .then((ack) => {
+        if (ack.status !== 'success') {
+          fail(ack.message || '加入房间失败')
+          return
+        }
+        setNotice('已通过邀请链接加入房间 ' + roomId + '，对局即将开始')
+      })
+      .catch((error: unknown) => {
+        fail(error instanceof Error ? error.message : String(error))
+      })
+  })
 }
 
 function ackField(ack: unknown, key: string): unknown {
@@ -452,6 +576,7 @@ onMounted(() => {
   }
   if (!home.changelogLoaded) void home.loadChangelog(1)
   releaseChannel = acquireLobbyChannel()
+  tryJoinFromInvite()
   void loadFriends()
   maybeLeaveLobbyForMatch()
 })
@@ -460,6 +585,7 @@ onBeforeUnmount(() => {
   // A late room_sync after the route change must not leave a stale "start a
   // match" flag for the next time this screen is mounted.
   lobby.takeStartedRoom()
+  clearInviteJoinTimer()
   releaseChannel?.()
   releaseChannel = null
 })
@@ -595,6 +721,15 @@ onBeforeUnmount(() => {
             <code data-testid="lobby-own-room-id">{{ lobby.ownRoomId }}</code>
             <span>{{ lobby.ownRoomPublic ? '公开' : '私密' }} · 等待玩家加入</span>
           </div>
+          <button
+            type="button"
+            class="button button--ghost button--small"
+            data-testid="lobby-copy-invite"
+            title="复制可直接加入这间房的邀请链接"
+            @click="copyInviteLink"
+          >
+            复制邀请链接
+          </button>
           <template v-if="confirmingClose">
             <p class="lobby__own-confirm" data-testid="lobby-own-room-confirm-text" role="alert">
               解散后房间立刻从大厅消失，其他人不能再加入。确定解散？
@@ -628,6 +763,9 @@ onBeforeUnmount(() => {
             解散房间
           </button>
         </div>
+        <p v-if="inviteCopyText" class="lobby__own-hint" data-testid="lobby-invite-feedback" role="status">
+          {{ inviteCopyText }}
+        </p>
 
         <div v-if="roomsVisible && filteredRooms.length" class="lobby__directory-head" aria-hidden="true">
           <span>房间</span><span>模式</span><span>人数</span><span>加入</span>
@@ -981,6 +1119,7 @@ onBeforeUnmount(() => {
 .lobby__own code, .lobby__invite code { padding: 1px 5px; border: 1px solid var(--border-subtle); border-radius: 4px; color: var(--text-primary); }
 .lobby__own-confirm { flex-basis: 100%; margin: 0; color: var(--role-warning); font-size: 13px; line-height: 1.6; }
 .lobby__own-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.lobby__own-hint { flex-basis: 100%; margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
 .lobby__panel--matches { flex: 0 0 auto; max-height: 180px; padding: 13px 20px; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; background: color-mix(in srgb, var(--surface-deck) 75%, transparent); }
 .lobby__panel--matches .lobby__panel-head { margin-bottom: 4px; }
 .lobby__panel-body { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; min-height: 0; }

@@ -37,3 +37,49 @@ export function inviteFeedback(copied: boolean): string {
 export function inviteManualPrompt(url: string): string {
   return `复制下面的邀请链接发给好友：\n${url}`
 }
+
+/** 加入邀请房间的结果：只在真正成功时才算「已加入」。 */
+export type InviteJoinResult = { ok: true } | { ok: false; message: string }
+
+const JOIN_FALLBACK_MESSAGE = '加入房间失败'
+
+/**
+ * 把 `join_room` 的 ack 归类成成功/失败。
+ * 失败一律保留服务端原文案（房间不存在/已满/已开始/无权限…），没有文案时才用兜底文案。
+ */
+export function classifyJoinAck(
+  ack: { status?: unknown; message?: unknown } | null | undefined,
+): InviteJoinResult {
+  if (!ack || ack.status !== 'success') {
+    const message = typeof ack?.message === 'string' ? ack.message : ''
+    return { ok: false, message: message || JOIN_FALLBACK_MESSAGE }
+  }
+  return { ok: true }
+}
+
+/**
+ * 是否值得为这条邀请去发 `join_room`：
+ * 没有合法房号、本次已尝试过、或该标签页已加入过同一房间时都不再发。
+ */
+export function inviteJoinStep(input: {
+  roomId: string
+  attempted: boolean
+  alreadyJoined: boolean
+}): 'skip-no-room' | 'skip-attempted' | 'skip-joined' | 'join' {
+  if (!input.roomId) return 'skip-no-room'
+  if (input.attempted) return 'skip-attempted'
+  if (input.alreadyJoined) return 'skip-joined'
+  return 'join'
+}
+
+/**
+ * 只有成功才落「已加入」标记；失败（含网络异常）不写，保证刷新后还能重试。
+ */
+export function commitInviteJoin<T>(
+  result: InviteJoinResult,
+  roomId: string,
+  markJoined: (roomId: string) => void,
+): InviteJoinResult {
+  if (result.ok) markJoined(roomId)
+  return result
+}

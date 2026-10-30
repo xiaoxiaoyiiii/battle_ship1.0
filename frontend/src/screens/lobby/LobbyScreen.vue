@@ -16,7 +16,10 @@ import {
 } from '../../stores/lobby'
 import {
   buildInviteUrl,
+  classifyJoinAck,
+  commitInviteJoin,
   inviteFeedback,
+  inviteJoinStep,
   inviteManualPrompt,
   readInviteRoomId,
 } from './inviteLink'
@@ -245,12 +248,17 @@ function copyInviteLink(): void {
 /** 打开 `/lobby?room=xxx` 时自动加入一次；失败保留服务端文案，不静默跳转。 */
 function tryJoinFromInvite(): void {
   const roomId = inviteRoomId.value
-  if (!roomId || inviteJoinAttempted) return
-  inviteJoinAttempted = true
-  if (inviteAlreadyJoined(roomId)) {
+  const step = inviteJoinStep({
+    roomId,
+    attempted: inviteJoinAttempted,
+    alreadyJoined: roomId ? inviteAlreadyJoined(roomId) : false,
+  })
+  if (step === 'skip-no-room' || step === 'skip-attempted') return
+  if (step === 'skip-joined') {
     setNotice('已在房间 ' + roomId + ' 中，无需重复加入')
     return
   }
+  inviteJoinAttempted = true
   void waitForLobbyReady().then((socket) => {
     if (!socket) {
       // 连接没起来不算「已加入」，允许用户刷新后再试一次。
@@ -258,17 +266,20 @@ function tryJoinFromInvite(): void {
       fail('连接尚未就绪，请稍后再试')
       return
     }
-    rememberInviteJoined(roomId)
     void socket
       .emitEvent('join_room', { room_id: roomId, player_name: lobbyPlayerName() })
       .then((ack) => {
-        if (ack.status !== 'success') {
-          fail(ack.message || '加入房间失败')
+        // 只有真正入房成功才写「已加入」标记：房间不存在/已满/已开始/无权限这类失败
+        // 一律不写，刷新后仍可重试，并且保留服务端原文案。
+        const result = commitInviteJoin(classifyJoinAck(ack), roomId, rememberInviteJoined)
+        if (!result.ok) {
+          fail(result.message)
           return
         }
         setNotice('已通过邀请链接加入房间 ' + roomId + '，对局即将开始')
       })
       .catch((error: unknown) => {
+        // 网络异常同样不写标记，刷新后可以再试。
         fail(error instanceof Error ? error.message : String(error))
       })
   })

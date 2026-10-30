@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import random
+import time
 from typing import Any
 
 from ..domain import placement as placement_rules
@@ -543,13 +544,19 @@ class AiService:
     async def _wait_animation(self, room: Room, player_id: str) -> bool:
         """演出等待独立于普通重试次数，长连锁也不能超额后抢跑。"""
         pending = getattr(self.magic, "chain_animation_pending", None)
-        while callable(pending) and (pending(room) or room.chain_resolving):
+        while True:
+            chain_pending = callable(pending) and (pending(room) or room.chain_resolving)
+            dice_deadline = float(getattr(room, "dice_animation_deadline", 0.0) or 0.0)
+            dice_pending = dice_deadline > time.monotonic()
+            if not chain_pending and not dice_pending:
+                if dice_deadline:
+                    room.dice_animation_deadline = 0.0
+                return True
             if (self._room(room.id) is not room
                     or _state(room) == RoomState.GAME_OVER.value
                     or room.current_attacker != player_id):
                 return False
             await asyncio.sleep(max(.01, min(.1, self.settle_poll_seconds)))
-        return True
 
     async def _wait_chain(self, room: Room, player_id: str) -> None:
         for _ in range(self.retries):

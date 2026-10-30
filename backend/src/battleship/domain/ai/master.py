@@ -517,6 +517,25 @@ def _score_cells(room: Any, ai_id: str, cells: Any, self_harm: bool = False) -> 
     return score
 
 
+def _score_shenwei_area(room: Any, ai_id: str,
+                        cells: Any, board: str) -> float:
+    """Score one 神威！ window on either legal board.
+
+    The opponent board is the offensive choice: confirmed enemy cells are
+    worth more and untouched cells remain plausible targets.  The self board
+    is only useful as a defensive hole, so heavily penalise removing our own
+    ships and otherwise leave it below a normal opponent window.  Keeping the
+    board choice in the same score comparison prevents the old hard-coded
+    ``self`` branch from selecting the AI board every time.
+    """
+
+    if board == "opponent":
+        return _score_cells(room, ai_id, cells)
+
+    mine = _my_ship_cells(room, ai_id)
+    return -20.0 * sum(1 for cell in cells if _cell_of(cell) in mine)
+
+
 def _area_cells(x: int, y: int, size: int = 3) -> list[tuple[int, int]]:
     return [
         (a, b)
@@ -543,25 +562,23 @@ def resolve_target(room: Any, ai_id: str, card: Any,
     try:
         rng = _rng(rng)
         name = str(getattr(card, "name", card) or "")
-        # 神威！ targets the *caster's own* board: it carves a 3x3 hole the
-        # opponent cannot fire into; own ships inside are temporarily excluded
-        # (which is why own cells are penalised hard below).
-        self_harm = name == "神威！"
-
         if name in AREA_CARDS:
             size = int(AREA_SIZE.get(name, DEFAULT_AREA_SIZE))
-            best, best_score = None, None
-            for x, y in _window_positions(size):
-                score = _score_cells(room, ai_id, _area_cells(x, y, size),
-                                     self_harm=self_harm)
-                if best_score is None or score > best_score or (score == best_score and rng.random() < 0.5):
-                    best, best_score = (x, y), score
-            if best is None:
+            candidates: list[tuple[float, str, int, int]] = []
+            boards = ("self", "opponent") if name == "神威！" else ("opponent",)
+            for board in boards:
+                for x, y in _window_positions(size):
+                    cells = _area_cells(x, y, size)
+                    score = _score_shenwei_area(room, ai_id, cells, board)
+                    candidates.append((score, board, x, y))
+            if not candidates:
                 return None
-            x, y = best
+            best_score = max(candidate[0] for candidate in candidates)
+            best_candidates = [candidate for candidate in candidates if candidate[0] == best_score]
+            _score, board, x, y = rng.choice(best_candidates)
             return {
                 "target_area": {"x1": x, "y1": y, "x2": x + size - 1, "y2": y + size - 1},
-                "board": "self" if self_harm else "opponent",
+                "board": board,
             }
 
         if name in LINE_CARDS:
@@ -669,7 +686,7 @@ MASTER_ENABLED_CARDS: dict[str, str] = {
     "百亿补贴": "无需目标；挂持续标记，沉船累计加攻击次数",
     "无暇圣心": "无需目标；挂两个大回合的胜利判定",
     # (2) need a target shape the decision layer can produce
-    "神威！": "3x3，打**自己**棋盘：挖掉 3x3 让对手打不进来，区域内的己方船暂时除外",
+    "神威！": "3x3，可选自己或对方棋盘；优先选择能命中对方战舰的区域",
     "冻结": "3x3，冻住对方活船，削掉对方下回合的攻击次数",
     "探测雷达": "**2x2** 侦察：显形探到的船，并把无船格记为已排除",
     "轰炸": "整行/整列，可一次击沉多艘",

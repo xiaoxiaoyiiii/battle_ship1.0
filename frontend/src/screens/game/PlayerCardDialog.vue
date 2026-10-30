@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 import type { PlayerCard } from './usePlayerCards'
 import AvatarStack from '../../components/AvatarStack.vue'
 import TitleBadge from '../../components/TitleBadge.vue'
@@ -15,6 +16,7 @@ const props = defineProps<{
   isAi: boolean
 }>()
 const emit = defineEmits<{ (event: 'close'): void }>()
+const router = useRouter()
 
 function str(key: string): string {
   const value = props.card.stats?.[key]
@@ -56,6 +58,20 @@ const emptyText = computed(() => {
   if (props.card.status === 'error') return '资料没读出来，稍后再试。'
   return props.side === 'opponent' ? '对手是游客或未注册账号，没有公开战绩。' : '游客没有账号资料，登录后才会记录战绩。'
 })
+
+/**
+ * 局内名片只负责展示公开资料；进入完整主页交给现有 profile 路由。
+ * AI 没有账号资料，避免把它导航到一个无意义的 username=AI 页面。
+ */
+const canOpenProfile = computed(() => Boolean(props.name.trim()) && !(props.side === 'opponent' && props.isAi))
+function openProfile(): void {
+  if (!canOpenProfile.value) return
+  emit('close')
+  void router.push({
+    name: 'profile',
+    query: props.side === 'opponent' ? { username: props.name.trim(), from: 'game' } : { from: 'game' },
+  })
+}
 </script>
 
 <template>
@@ -116,6 +132,14 @@ const emptyText = computed(() => {
         <p v-if="!level && !rankLabel && !showStats" class="player-card__line">这位玩家没有公开战绩。</p>
       </template>
       <p v-else class="player-card__line" data-testid="game-player-card-empty">{{ emptyText }}</p>
+      <footer v-if="canOpenProfile" class="player-card__actions">
+        <button
+          type="button"
+          class="button button--primary"
+          data-testid="game-player-card-profile"
+          @click="openProfile"
+        >进入个人主页</button>
+      </footer>
     </section>
   </div>
 </template>
@@ -196,5 +220,17 @@ const emptyText = computed(() => {
 .player-card__grid dd {
   margin: 0;
   font-weight: 700;
+}
+
+.player-card__actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 2px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.player-card__actions .button {
+  min-height: 34px;
+  padding-inline: 14px;
 }
 </style>

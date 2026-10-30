@@ -1784,6 +1784,31 @@ class MagicService:
     def pending_chain_tasks(self, room_id: str | None = None) -> int:
         return self.timers.pending(room_id)
 
+    @staticmethod
+    def _mark_dice_animation(room: Room, payload: Any) -> None:
+        """Record the client-side dice overlay window for the AI turn gate.
+
+        The dice result is authoritative as soon as the server emits it, but
+        the UI deliberately keeps the room locked for ``duration_ms``.  The
+        AI driver reads this monotonic deadline so its next action cannot race
+        the visible roll.  Keep the longest pending window when two effects
+        emit back-to-back rolls.
+        """
+
+        if not isinstance(payload, dict):
+            return
+        try:
+            duration_ms = int(payload.get("duration_ms") or 0)
+        except (TypeError, ValueError):
+            duration_ms = 0
+        if duration_ms <= 0:
+            return
+        deadline = time.monotonic() + duration_ms / 1000.0
+        room.dice_animation_deadline = max(
+            float(getattr(room, "dice_animation_deadline", 0.0) or 0.0),
+            deadline,
+        )
+
     async def stop(self) -> None:
         """Server shutdown: cancel every chain/display/AI wait."""
 
@@ -1793,6 +1818,7 @@ class MagicService:
     def _context(self, room: Room, item: ChainItem) -> EffectContext:
         opponent_id = room.opponent_of(item.player_id)
         assert opponent_id is not None
+        room_state = room
 
         async def emit(event: str, data: dict[str, Any], *, to: str | None = None,
                        room_id: str | None = None) -> None:
@@ -1850,6 +1876,8 @@ class MagicService:
                                    to: str | None = None,
                                    room: str | None = None) -> None:
             await self._publisher.emit(event, data, to=to, room=room)
+            if event == "dice_rolled":
+                self._mark_dice_animation(room_state, data)
 
         async def request_ship_pick(chooser_id: str, reason: str, message: str,
                                     allow_duplicate: bool = False,
@@ -2980,6 +3008,7 @@ class MagicService:
             },
             room=room.id,
         )
+        self._mark_dice_animation(room, {"duration_ms": 3600})
         await self._add_log(
             room,
             f"第{room.round}回合 · 【无忧梦呓】拼点："
@@ -3040,6 +3069,7 @@ class MagicService:
              "card": "兵粮寸断", "duration_ms": 3200},
             room=room.id,
         )
+        self._mark_dice_animation(room, {"duration_ms": 3200})
         await self._add_log(
             room,
             f"第{room.round}回合 · 【兵粮寸断】判定："

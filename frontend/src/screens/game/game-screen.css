@@ -3600,3 +3600,13 @@ button.arena-avatar--btn {
   .game[data-layout="compact"].is-picking .game-pick-float.battle-prompt,
   .game-chain-scrim>.game-chain-panel.battle-prompt { padding:18px; }
 }
+
+/* 宽屏双棋盘的视觉中心要落在「可操作舞台」里，而不是被右侧轨道推向右边。
+ * 右侧 rail 继续保留独立宽度；这里只对棋盘组做轻量的中心校正，不改变
+ * 棋盘尺寸和点击坐标，也不影响 1200px 以下的紧凑布局。 */
+@media (min-width:1200px) and (min-height:700px) {
+  .game[data-layout='wide'] .boards-container {
+    transform: translateX(calc(-1 * clamp(18px, 2.2vw, 36px)));
+    gap: clamp(24px, 2.4vw, 36px);
+  }
+}

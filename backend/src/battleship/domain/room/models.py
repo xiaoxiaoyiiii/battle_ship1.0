@@ -326,6 +326,9 @@ class Room:
     chain_animation_id: str | None = None
     chain_animation_players: dict[str, str] = field(default_factory=dict)
     chain_animation_deadline: float = 0.0
+    # 判定骰子的前端演出截止时间；AI 回合驱动会在该时刻前保持等待，
+    # 避免骰面仍在滚动时抢先开始下一步行动。
+    dice_animation_deadline: float = 0.0
     last_attack: Any = None
 
     game_effects: dict[str, Any] = field(default_factory=dict)

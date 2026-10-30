@@ -19,6 +19,7 @@ import {
   inviteFeedback,
   inviteManualPrompt,
   readInviteRoomId,
+  shouldRememberInviteJoin,
 } from './inviteLink'
 import {
   FILTERS,
@@ -258,14 +259,15 @@ function tryJoinFromInvite(): void {
       fail('连接尚未就绪，请稍后再试')
       return
     }
-    rememberInviteJoined(roomId)
     void socket
       .emitEvent('join_room', { room_id: roomId, player_name: lobbyPlayerName() })
       .then((ack) => {
-        if (ack.status !== 'success') {
+        if (!shouldRememberInviteJoin(ack.status)) {
           fail(ack.message || '加入房间失败')
           return
         }
+        // 只有服务端确认成功后才记忆；满房、失效或权限失败必须允许刷新重试。
+        rememberInviteJoined(roomId)
         setNotice('已通过邀请链接加入房间 ' + roomId + '，对局即将开始')
       })
       .catch((error: unknown) => {

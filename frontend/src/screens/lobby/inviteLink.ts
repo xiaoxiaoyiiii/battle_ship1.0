@@ -37,3 +37,8 @@ export function inviteFeedback(copied: boolean): string {
 export function inviteManualPrompt(url: string): string {
   return `复制下面的邀请链接发给好友：\n${url}`
 }
+
+/** 只有服务端确认成功，刷新后才应跳过同一邀请链接。 */
+export function shouldRememberInviteJoin(status: unknown): boolean {
+  return status === 'success'
+}

@@ -1,6 +1,6 @@
 // 邀请链接纯逻辑回归（TDD：先跑这支脚本看它失败，再实现 inviteLink.ts）。
 // 运行：node frontend/scripts/check-invite.mjs
-import { buildInviteUrl, readInviteRoomId, inviteFeedback, inviteManualPrompt } from '../src/screens/lobby/inviteLink.ts'
+import { buildInviteUrl, readInviteRoomId, inviteFeedback, inviteManualPrompt, shouldRememberInviteJoin } from '../src/screens/lobby/inviteLink.ts'
 
 let failed = 0
 function check(ok, name, detail = '') {
@@ -25,6 +25,8 @@ const okText = inviteFeedback(true)
 const failText = inviteFeedback(false)
 check(okText.length > 0 && failText.length > 0 && okText !== failText, '复制反馈文案成对且不同', `${okText} | ${failText}`)
 check(typeof inviteManualPrompt('https://x/lobby?room=1') === 'string' && inviteManualPrompt('https://x/lobby?room=1').includes('https://x/lobby?room=1'), '手动复制回退提示包含链接')
+check(shouldRememberInviteJoin('success') === true, '成功回执才记忆已加入')
+check(shouldRememberInviteJoin('error') === false && shouldRememberInviteJoin(undefined) === false, '失败回执不写入已加入标记')
 
 console.log(`\nRESULT: ${failed ? `FAIL (${failed})` : 'PASS'}`)
 process.exit(failed ? 1 : 0)

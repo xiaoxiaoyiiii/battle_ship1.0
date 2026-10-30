@@ -3,6 +3,8 @@ export const CHAIN_ENTRY_MS = 800
 export const CHAIN_FLIGHT_MS = 620
 export const CHAIN_SUCCESS_MS = 550
 export const CHAIN_RESOLVE_MS = 1000
+/** 单卡连锁保留结果卡面，但跳过整套 Successful Chain 标题和长停留。 */
+export const CHAIN_SINGLE_RESOLVE_MS = 520
 
 export interface ChainArtCard {
   name: string
@@ -103,11 +105,12 @@ export class ChainTimeline {
     // 结果按服务端已确定的顺序展示；缺少接链事件时从结果恢复卡面，不推断效果。
     const known = this.stack.length === results.length && results.every((item, i) => this.stack[results.length - i - 1]?.name === nameOf(item.card))
     const cards = known ? this.stack.slice() : results.slice().reverse().map((item, i) => ({ name: nameOf(item.card), caster: String(item.caster ?? ''), order: i + 1, id: '' }))
-    this.append({ kind: 'success', cards, order: cards.length }, now, CHAIN_SUCCESS_MS)
+    const singleCard = cards.length === 1
+    if (!singleCard) this.append({ kind: 'success', cards, order: cards.length }, now, CHAIN_SUCCESS_MS)
     results.forEach((item, i) => this.append({
       kind: 'resolve', cards, order: cards.length - i,
       result: { negated: Boolean(item.negated_skip), failed: item.success === false, negatedBy: String(item.negated_by ?? '') },
-    }, now, CHAIN_RESOLVE_MS))
+    }, now, singleCard ? CHAIN_SINGLE_RESOLVE_MS : CHAIN_RESOLVE_MS))
     this.stack = []; this.closed = true; this.lastResolution = signature
   }
 
@@ -116,11 +119,12 @@ export class ChainTimeline {
     const payload = record(value), cards = parseStack(payload)
     if (!cards.length) return
     this.stack = cards; this.closed = false
-    if (payload.first) this.append({ kind: 'success', cards, order: cards.length }, now, CHAIN_SUCCESS_MS)
+    const singleCard = cards.length === 1
+    if (payload.first && !singleCard) this.append({ kind: 'success', cards, order: cards.length }, now, CHAIN_SUCCESS_MS)
     this.append({ kind: 'resolve', cards, order: Number(payload.order),
       animationId: String(payload.animation_id ?? ''),
       result: { negated: payload.negated_skip === true, failed: false, negatedBy: String(payload.negated_by ?? '') },
-    }, now, CHAIN_RESOLVE_MS)
+    }, now, singleCard ? CHAIN_SINGLE_RESOLVE_MS : CHAIN_RESOLVE_MS)
   }
 
   private append(cue: Omit<ChainCue, 'start' | 'duration'>, now: number, duration: number): void {

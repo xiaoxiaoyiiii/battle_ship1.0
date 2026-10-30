@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppOverlay from './components/AppOverlay.vue'
 import AppWallpaper from './components/AppWallpaper.vue'
+import AppProfileBackground from './components/AppProfileBackground.vue'
 import OceanParticles from './components/OceanParticles.vue'
 import AuthOverlay from './components/AuthOverlay.vue'
 import AvatarMenu from './components/AvatarMenu.vue'
@@ -153,6 +154,8 @@ onBeforeUnmount(() => {
 <template>
   <!-- 全局交互装饰：覆盖首页、对局与所有弹层，但永远不拦截点击。 -->
   <GlobalPointerEffects />
+  <!-- 个人资料背景是应用级装饰，跟随已装备的 profile_bg_id 覆盖所有主界面。 -->
+  <AppProfileBackground />
   <!-- Applied wallpaper layer (spec story 2); renders nothing until applied. -->
   <AppWallpaper />
   <OceanParticles />

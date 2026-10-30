@@ -18,9 +18,9 @@ export const POINTER_EFFECTS: Array<{
 }> = [
   { id: 'none', name: '关闭', description: '不显示全局交互特效', tier: '基础' },
   { id: 'ripple', name: '潮汐点击', description: '点击与手机轻触泛起一圈潮纹', tier: '基础' },
-  { id: 'comet', name: '彗星航迹', description: '鼠标拖动时留下短暂彗尾', tier: '高级' },
-  { id: 'stardust', name: '星尘航迹', description: '点击爆发星尘，拖动留下粒子尾迹', tier: '高级' },
-  { id: 'eclipse', name: '日蚀脉冲', description: '点击产生日蚀环，拖动形成暗金脉冲', tier: '豪华' },
+  { id: 'comet', name: '彗星航迹', description: '鼠标移动时留下短暂彗尾', tier: '高级' },
+  { id: 'stardust', name: '星尘航迹', description: '移动留下星尘尾迹，点击爆发粒子', tier: '高级' },
+  { id: 'eclipse', name: '日蚀脉冲', description: '移动形成暗金脉冲，点击展开日蚀环', tier: '豪华' },
 ]
 
 const STORAGE_KEY = 'battleship.cosmetics.pointerEffect'

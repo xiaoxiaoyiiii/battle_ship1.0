@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { INVITE_PARAM, readInviteRoomId } from '../screens/lobby/inviteLink'
 
 /**
  * The eleven screens of ticket #21. Names are frozen: they are the route
@@ -34,8 +35,13 @@ const router = createRouter({
 // Loading state for both initial navigation and in-app switches. The shell
 // renders [data-testid="route-loading"] while this is true and records the
 // transitions for the external gate.
-router.beforeEach(() => {
+router.beforeEach((to) => {
   routeLoading.value = true
+  // 邀请链接可能被贴到首页：房间号合法时转到大厅，由大厅统一走既有 join_room。
+  if (to.name === 'start' && readInviteRoomId(to.query)) {
+    return { name: 'lobby', query: { [INVITE_PARAM]: readInviteRoomId(to.query) } }
+  }
+  return true
 })
 router.afterEach(() => {
   routeLoading.value = false

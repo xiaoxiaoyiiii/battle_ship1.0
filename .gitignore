@@ -9,15 +9,28 @@ __pycache__/
 1
 avatars/
 .trae/
+.trae-html-share-packages/
 *.mp3
 *.log
 .workbuddy/
 _*.txt
 _*.py
+# 上面的 _*.py 会误伤 Python 包的 __init__.py，这里放行
+!__init__.py
+!__main__.py
 
 # 本地临时目录：pytest 隔离库、无头浏览器 profile 都放这里
 # （放 C:/Windows/Temp 出现过 ACL 损坏 → Edge 起不来、调试端口连不上）
 .tmp/
 .pytest_cache/
 
-tests/e2e_magic_report.json
+
+# 新架构的依赖与构建产物不入仓
+frontend/node_modules/
+frontend/dist/
+frontend/dist-test/
+backend/.venv/
+*.egg-info/
+# 本地数据库 / 运行期数据
+.venv/
+*.db.backup-*

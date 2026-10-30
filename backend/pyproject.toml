@@ -1,0 +1,17 @@
+[project]
+name = "battleship-backend"
+version = "0.0.0"
+description = "Battle Ship 1.0 - modern rewrite backend (skeleton)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "python-socketio",
+    "pydantic>=2",
+    "pydantic-settings",
+    "sqlalchemy>=2",
+    "alembic",
+    "werkzeug",
+    "itsdangerous",
+    "python-multipart",
+]

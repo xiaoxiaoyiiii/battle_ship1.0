@@ -1,0 +1,295 @@
+/* 语义主题变量：2026-10-26 获批的深海竞技场视觉方案。
+ * 保留 chart / night / journal 三套主题及既有变量名；主色只表达操作，
+ * 青/红表示双方，金色表示连锁与场地。按钮底色随主色变化并压低亮度，
+ * 保持浅色按钮文字的对比度；浮层仍通过统一层级变量管理。
+ */
+:root {
+  color-scheme: dark;
+
+  /* ---- 面层：main 的三级深蓝面 ---------------------------------------- */
+  --surface-sea: #0b1120;
+  --surface-deck: #0f192a;
+  --surface-chamber: #111c2e;
+  --surface-raised: #17243a;
+  /* Screens still reference this older name for a slightly lifted panel. */
+  --surface-elevated: #17243a;
+  --ship-metal: #8b96c4;
+  --on-accent: #ffffff;
+
+  --bg: var(--surface-sea);
+  --bg-page: var(--surface-sea);
+  --bg-elevated: var(--surface-deck);
+  --bg-raised: var(--surface-chamber);
+  --bg-sunken: #070910;
+  --panel: rgba(17, 28, 46, 0.96);
+  --panel-line: rgba(117, 146, 180, 0.22);
+
+  /* ---- 角色色：main 的紫/青/红/金 ------------------------------------- */
+  --role-action: #a990f5;
+  --role-self: #61c7d8;
+  --role-enemy: #e88492;
+  --role-success: #45d69b;      /* 成功/恢复 */
+  --role-warning: #f0b64e;      /* 警告：main 的金 */
+  --role-disabled: #6c789e;
+  --role-action-soft: rgba(124, 92, 240, 0.18);
+  --role-self-soft: rgba(78, 200, 224, 0.14);
+  --role-enemy-soft: rgba(255, 107, 120, 0.16);
+  --role-success-soft: rgba(69, 214, 155, 0.14);
+
+  /* 旧别名（屏幕在用的 --accent / --gold 系列）。 */
+  --accent: var(--role-action);
+  --accent-strong: #c3aeff;
+  --accent-soft: var(--role-action-soft);
+  --accent-cyan: var(--role-self);
+  --gold: #debd79;
+  --gold-strong: #e6c778;
+  --gold-soft: rgba(201, 162, 76, 0.18);
+  --danger: var(--role-enemy);
+  --success: var(--role-success);
+
+  /* ---- 文本三级：main 的 --tx / --tx2 / --tx3 ------------------------- */
+  --text-primary: #e8edf6;
+  --text-secondary: #a6b6cc;
+  --text-tertiary: #8b9eb8;
+  --text: var(--text-primary);
+  --text-muted: var(--text-secondary);
+  --text-dim: var(--text-tertiary);
+
+  /* ---- 描边与装饰 ------------------------------------------------------ */
+  --border-subtle: rgba(117, 146, 180, 0.22);
+  --border-strong: #3d526e;
+  --border: var(--border-subtle);
+  --line-dash: var(--border-subtle);
+  --chip-line: rgba(169, 144, 245, 0.38);
+  --focus-ring: var(--role-action);
+  --grid-line: rgba(117, 146, 180, 0.045);
+  --scrim: rgba(4, 6, 14, 0.74);
+
+  /* ---- 几何：main 的 6/8/12 圆角，密一点的行高 ------------------------ */
+  --radius-pill: 999px;
+  --radius-lg: 12px;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
+  --space-5: 32px;
+  --space-6: 48px;
+
+  /* ---- 动效 ------------------------------------------------------------ */
+  --duration-hit: 120ms;
+  --duration-fast: 180ms;
+  --duration-slow: 320ms;
+  --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+
+  /* ---- 层序 ------------------------------------------------------------ */
+  --z-wallpaper: -1;
+  --z-shell: 1;
+  --z-nav: 20;
+  --z-overlay: 100;
+  --z-match-found: 200;
+  --z-toast: 300;
+
+  /* ---- 深度与主视觉渐变 ------------------------------------------------ */
+  --shadow-panel: 0 10px 28px rgba(0, 0, 0, 0.22);
+  --shadow-accent: 0 5px 16px rgba(124, 92, 240, 0.12);
+  --hero-grad: linear-gradient(110deg, color-mix(in srgb, var(--role-action) 55%, #10142a), color-mix(in srgb, var(--role-action) 48%, #10142a));
+  --hero-border: color-mix(in srgb, var(--role-action) 72%, #10142a);
+  --rank-grad: linear-gradient(100deg, #c9a24c, #7a5b1d);
+  --board-bg: #0f1a2b;
+  --board-border: #3a506c;
+  --cell-bg: #1e2e4a;
+  --stage-glow: radial-gradient(60% 60% at 50% 0%, rgba(97, 199, 216, 0.06), transparent 72%);
+
+  --font: 'Segoe UI', 'Segoe UI Variable Text', system-ui, -apple-system, 'Microsoft YaHei',
+    'PingFang SC', sans-serif;
+  --font-mono: 'Cascadia Mono', 'Consolas', ui-monospace, monospace;
+}
+
+/* ---------------------------------------------------------------- 夜航 ---
+ * main 的深色 Fluent：比竞技场更冷、更蓝，边框更实。 */
+html[data-theme='night'] {
+  color-scheme: dark;
+
+  --surface-sea: #0a1428;
+  --surface-deck: #0e1c33;
+  --surface-chamber: #12233f;
+  --surface-raised: #16294a;
+  --surface-elevated: #16294a;
+  --ship-metal: #8b96c4;
+  --on-accent: #ffffff;
+  --bg: var(--surface-sea);
+  --bg-page: var(--surface-sea);
+  --bg-elevated: var(--surface-deck);
+  --bg-raised: var(--surface-chamber);
+  --bg-sunken: #060f1e;
+  --panel: rgba(16, 30, 55, 0.86);
+  --panel-line: rgba(56, 163, 240, 0.22);
+
+  --role-action: #58a6ff;
+  --role-self: #38bdf8;
+  --role-enemy: #ef5350;
+  --role-success: #34d399;
+  --role-warning: #fbbf24;
+  --role-disabled: #7e93ad;
+  --role-action-soft: rgba(58, 166, 255, 0.16);
+  --role-self-soft: rgba(56, 189, 248, 0.14);
+  --role-enemy-soft: rgba(239, 83, 80, 0.16);
+  --role-success-soft: rgba(52, 211, 153, 0.14);
+
+  --accent: var(--role-action);
+  --accent-strong: #8cc4ff;
+  --accent-soft: var(--role-action-soft);
+  --accent-cyan: var(--role-self);
+  --gold: #f0b25a;
+  --gold-strong: #f7cd8b;
+  --gold-soft: rgba(240, 178, 90, 0.16);
+
+  --text-primary: #dbe7f5;
+  --text-secondary: #b7c7dc;
+  --text-tertiary: #7e93ad;
+  --text: var(--text-primary);
+  --text-muted: var(--text-secondary);
+  --text-dim: var(--text-tertiary);
+
+  --border-subtle: rgba(86, 140, 200, 0.22);
+  --border-strong: #3a5a8c;
+  --border: var(--border-subtle);
+  --line-dash: var(--border-subtle);
+  --chip-line: rgba(58, 166, 255, 0.45);
+  --focus-ring: var(--role-action);
+  --grid-line: rgba(56, 163, 240, 0.07);
+  --scrim: rgba(3, 8, 18, 0.78);
+
+  --shadow-panel: 0 14px 34px rgba(0, 0, 0, 0.55);
+  --shadow-accent: 0 12px 30px rgba(58, 166, 255, 0.26);
+  --rank-grad: linear-gradient(100deg, #c98a3a, #7a4f16);
+  --board-bg: radial-gradient(120% 120% at 50% 0%, #12294a, #0b1a30 70%);
+  --board-border: #2c4d7f;
+  --cell-bg: #14294d;
+  --stage-glow: radial-gradient(60% 60% at 50% 0%, rgba(56, 163, 240, 0.16), transparent 72%);
+}
+
+/* ------------------------------------------------------------ 航海日志 ---
+ * main 的浅色 Fluent：淡蓝海面 + 白卡片。强调色压深到 4.5:1 以上。 */
+html[data-theme='journal'] {
+  color-scheme: light;
+
+  --surface-sea: #dbeafe;
+  --surface-deck: #eff6ff;
+  --surface-chamber: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-elevated: #ffffff;
+  --ship-metal: #94a3c4;
+  --on-accent: #ffffff;
+  --bg: var(--surface-sea);
+  --bg-page: var(--surface-sea);
+  --bg-elevated: var(--surface-deck);
+  --bg-raised: var(--surface-chamber);
+  --bg-sunken: #c7ddf7;
+  --panel: #ffffff;
+  --panel-line: rgba(21, 101, 192, 0.18);
+
+  --role-action: #1565c0;
+  --role-self: #0e7490;
+  --role-enemy: #b91c1c;
+  --role-success: #15803d;
+  --role-warning: #8a5300;
+  --role-disabled: #64748b;
+  --role-action-soft: rgba(21, 101, 192, 0.1);
+  --role-self-soft: rgba(14, 116, 144, 0.1);
+  --role-enemy-soft: rgba(185, 28, 28, 0.1);
+  --role-success-soft: rgba(21, 128, 61, 0.1);
+
+  --accent: var(--role-action);
+  --accent-strong: #0d47a1;
+  --accent-soft: var(--role-action-soft);
+  --accent-cyan: var(--role-self);
+  --gold: #8a6a1f;
+  --gold-strong: #6d5216;
+  --gold-soft: rgba(138, 106, 31, 0.12);
+
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-tertiary: #5b6b82;
+  --text: var(--text-primary);
+  --text-muted: var(--text-secondary);
+  --text-dim: var(--text-tertiary);
+
+  --border-subtle: rgba(21, 101, 192, 0.22);
+  --border-strong: #64a3e8;
+  --border: var(--border-subtle);
+  --line-dash: var(--border-subtle);
+  --chip-line: rgba(21, 101, 192, 0.4);
+  --focus-ring: var(--role-action);
+  --grid-line: rgba(21, 101, 192, 0.06);
+  --scrim: rgba(15, 23, 42, 0.42);
+
+  --shadow-panel: 0 10px 26px rgba(21, 60, 120, 0.12);
+  --shadow-accent: 0 10px 24px rgba(21, 101, 192, 0.2);
+  --rank-grad: linear-gradient(100deg, #b28a3a, #7d5a20);
+  --board-bg: radial-gradient(120% 120% at 50% 0%, #eaf2fd, #d5e6fb 70%);
+  --board-border: #93c5fd;
+  --cell-bg: #dbeafe;
+  --stage-glow: radial-gradient(60% 60% at 50% 0%, rgba(21, 101, 192, 0.1), transparent 72%);
+}
+
+/* --------------------------------------------------- 字号档位 ---------- */
+:root {
+  --font-scale: 1;
+}
+
+/* --------------------------------------------------- 高对比 ------------
+ * 与三套主题正交：只加实描边与纯色文字。 */
+html[data-contrast='high'] {
+  --border-subtle: rgba(200, 214, 255, 0.5);
+  --border-strong: rgba(220, 230, 255, 0.8);
+  --border: var(--border-subtle);
+  --panel-line: var(--border-subtle);
+  --line-dash: var(--border-subtle);
+  --chip-line: var(--border-strong);
+  --text-primary: #ffffff;
+  --text-secondary: #e6ecff;
+  --text-tertiary: #c9d3ee;
+  --text: var(--text-primary);
+  --text-muted: var(--text-secondary);
+  --text-dim: var(--text-tertiary);
+  --grid-line: rgba(126, 232, 255, 0.14);
+}
+
+html[data-theme='journal'][data-contrast='high'] {
+  --border-subtle: rgba(10, 45, 95, 0.55);
+  --border-strong: rgba(10, 45, 95, 0.8);
+  --border: var(--border-subtle);
+  --panel-line: var(--border-subtle);
+  --line-dash: var(--border-subtle);
+  --chip-line: var(--border-strong);
+  --text-primary: #000000;
+  --text-secondary: #10233d;
+  --text-tertiary: #2b3f5c;
+  --text: var(--text-primary);
+  --text-muted: var(--text-secondary);
+  --text-dim: var(--text-tertiary);
+}
+
+/* --------------------------------------------------- 减少动效 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+html[data-motion='reduced'] *,
+html[data-motion='reduced'] *::before,
+html[data-motion='reduced'] *::after {
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 1ms !important;
+  scroll-behavior: auto !important;
+}

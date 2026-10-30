@@ -74,6 +74,17 @@ export function applySettlementEvent(
       break
     }
     case 'game_message': {
+      // 重摆可能发生在布船页或查看名片期间，由跨页面连接清理旧棋盘标记。
+      if (payload.type === 'board_marks_cleared' && payload.room_id === game.state.room_id
+        && Array.isArray(payload.players)) {
+        const match = useMatchStore(pinia)
+        for (const owner of payload.players) {
+          if (typeof owner !== 'string') continue
+          if (owner === game.state.player_id || game.state.attack_order.includes(owner)) {
+            match.clearBoardMarks(owner === game.state.player_id)
+          }
+        }
+      }
       if (payload.type === 'magic_sfx' && payload.room_id === game.state.room_id) {
         useAudioStore(pinia).playCardEffect(payload)
       }

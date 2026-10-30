@@ -24,7 +24,7 @@ from ..interaction import (
 )
 from ..lifecycle import clear_multiturn_effects
 from ..registry import register
-from ..rules import lanyu_requirement_reason
+from ..rules import LANYU_TARGET_SHIPS, lanyu_requirement_reason
 from .base import EffectContext, EffectResult
 
 DICE_EFFECT_TEXT = {
@@ -473,8 +473,7 @@ async def lanyu(ctx: EffectContext) -> EffectResult:
     reason = lanyu_requirement_reason(ctx.room, ctx.caster_id, ctx.card)
     if reason:
         return EffectResult(False, reason)
-    max_ships = int(getattr(ctx.caster, "max_ships", 6) or 6)
-    needed = max_ships - int(ctx.caster.remaining_ships or 0)
+    needed = LANYU_TARGET_SHIPS - int(ctx.caster.remaining_ships or 0)
     available = 36 - len(placement_blocked_cells(ctx.room, ctx.caster_id))
     count = min(needed, available)
     if count <= 0:

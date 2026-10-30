@@ -28,6 +28,9 @@ from .interaction import ship_pick_blocked_reason
 
 END_PHASE_PLAYABLE: tuple[str, ...] = ("Freezing！",)
 
+# 滥竽充数补至标准六舰，不能把本次重摆要求的船数当作补船上限。
+LANYU_TARGET_SHIPS = 6
+
 #: 兵粮寸断: one roll, <3 fails, >=3 grants two skipped draw phases.
 BINGLIANG_FAIL_BELOW = 3
 BINGLIANG_SKIP_PHASES = 2
@@ -98,9 +101,8 @@ def lanyu_requirement_reason(room: Room, player_id: str, card: MagicCard) -> str
     if card.name != "滥竽充数":
         return None
     player = room.players[player_id]
-    max_ships = int(getattr(player, "max_ships", 6) or 6)
-    if player.remaining_ships >= max_ships:
-        return f"自己的船数已满({player.remaining_ships}/{max_ships})，滥竽充数无法发动"
+    if player.remaining_ships >= LANYU_TARGET_SHIPS:
+        return f"自己的船数已满({player.remaining_ships}/{LANYU_TARGET_SHIPS})，滥竽充数无法发动"
     if len(blocked_cells(room, player_id)) >= 36:
         return "棋盘已无可放置的格子，滥竽充数无法发动"
     return None
@@ -218,6 +220,7 @@ __all__ = [
     "BINGLIANG_FAIL_BELOW",
     "BINGLIANG_SKIP_PHASES",
     "END_PHASE_PLAYABLE",
+    "LANYU_TARGET_SHIPS",
     "UNIMPLEMENTED",
     "action_wait_reason",
     "blocked_cells",

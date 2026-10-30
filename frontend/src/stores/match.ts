@@ -341,9 +341,16 @@ export const useMatchStore = defineStore('match', () => {
     }
   }
 
-  function clearShieldMarks(): void {
-    shieldBrokenSelf.value = []
-    shieldBrokenOpponent.value = []
+  /** 棋盘重摆只清该方的旧展示标记，保留另一块棋盘和对局日志。 */
+  function clearBoardMarks(mine: boolean): void {
+    if (mine) {
+      shieldBrokenSelf.value = []
+      revivedSelf.value = []
+    } else {
+      shieldBrokenOpponent.value = []
+      revivedOpponent.value = []
+      revealed.value = []
+    }
   }
 
   /** A new match starts: no log/prompt from the previous room may leak in. */
@@ -431,7 +438,7 @@ export const useMatchStore = defineStore('match', () => {
     finishDiceRoll,
     markRevealed,
     markShieldBroken,
-    clearShieldMarks,
+    clearBoardMarks,
     reset,
     snapshot,
   }

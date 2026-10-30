@@ -242,7 +242,8 @@ export function cardDisabledReason(card: CardLike, state: GameState, ctx: Playab
   const pickBlocked = shipPickBlockedReason(card.name, ctx.pendingPick)
   if (pickBlocked) return pickBlocked
   if (card.name === '卧薪尝胆' && state.remaining_ships >= state.opponent_remaining_ships) return '自己的船数不小于对方，卧薪尝胆无法发动'
-  if (card.name === '滥竽充数' && state.remaining_ships >= state.max_ships) return '自己的船数已满，滥竽充数无法发动'
+  // 与服务端一致：补满六舰，max_ships 仅表示本次重摆数量。
+  if (card.name === '滥竽充数' && state.remaining_ships >= 6) return '自己的船数已满，滥竽充数无法发动'
   if (card.name === '神之宣告' && state.remaining_ships <= 2) return '至少需要三艘存活战舰才能使用神之宣告'
   if (card.name === '钢筋铁骨' && state.remaining_ships <= 1) return '至少需要两艘存活战舰才能使用钢筋铁骨'
   return ''

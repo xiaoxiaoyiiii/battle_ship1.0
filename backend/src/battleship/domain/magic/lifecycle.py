@@ -61,6 +61,14 @@ def clear_board_effects(room: Room, player_ids: list[str], why: str = "") -> lis
     if isinstance(area, dict) and str(area.get("owner")) in ids:
         effects.pop("frozen_area", None)
         frames.append(("frozen_area", {"cleared": True}))
+    # 破盾、复活等展示标记属于旧棋盘；双方都要获知实际重摆范围。
+    # 沿用共享连接接收的 game_message，单方重摆也不会漏掉对手客户端。
+    frames.append(("game_message", {
+        "type": "board_marks_cleared",
+        "room_id": room.id,
+        "players": ids,
+        "reason": why,
+    }))
     return frames
 
 

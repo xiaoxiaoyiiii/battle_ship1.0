@@ -5,6 +5,7 @@ import { useProfileStore, type JsonObject } from '../../stores/profile'
 import { useSettingsStore } from '../../stores/settings'
 import { useUiStore } from '../../stores/ui'
 import AvatarStack from '../../components/AvatarStack.vue'
+import TitleBadge from '../../components/TitleBadge.vue'
 
 /**
  * Ticket #25: own / other player's profile card.
@@ -89,9 +90,12 @@ const displayedAvatar = computed(() => {
 const displayName = computed(() => readString(stats.value, 'username') || targetUsername.value || '玩家')
 const statusText = computed(() => readString(stats.value, 'status_text'))
 const signature = computed(() => readString(stats.value, 'signature'))
+const titleId = computed(() => readString(stats.value, 'title_id'))
+const titleFxId = computed(() => readString(stats.value, 'title_effect_id') || readString(stats.value, 'title_fx_id'))
 const titleName = computed(() => readString(stats.value, 'title_name'))
 const nameStyle = computed(() => readString(stats.value, 'name_style'))
 const cardBg = computed(() => readString(stats.value, 'card_bg_id') || 'deep')
+const profileBg = computed(() => readString(stats.value, 'profile_bg_id') || 'deep_ocean')
 const frame = computed(() => readString(stats.value, 'frame_id') || 'none')
 
 const tags = computed(() => {
@@ -172,6 +176,7 @@ const cosmeticCatalog = computed(() => {
   // loaded by /api/profile is the authoritative source for own cosmetics.
   return readObject(isSelf.value ? store.own : null, 'catalog') ?? readObject(stats.value, 'catalog')
 })
+const effectsCatalog = computed(() => readObject(isSelf.value ? store.own : null, 'effects_catalog') ?? readObject(stats.value, 'effects_catalog'))
 const equippedCosmetics = computed(() => {
   const catalog = cosmeticCatalog.value
   const source = (isSelf.value ? store.own : null) ?? stats.value
@@ -181,40 +186,52 @@ const equippedCosmetics = computed(() => {
     { key: 'frames', kind: '头像框', id: readString(source, 'frame_id') || 'none', fallback: '无' },
     { key: 'card_bgs', kind: '头图主题', id: readString(source, 'card_bg_id') || 'deep', fallback: '深海' },
   ]
-  return definitions.map(({ key, kind, id, fallback }) => {
+  const items = definitions.map(({ key, kind, id, fallback }) => {
     const row = readArray(catalog, key).find((item) => readString(item as JsonObject, 'id') === id)
     return { kind, id, name: row ? readString(row as JsonObject, 'name') : fallback }
   })
+  const effectDefs: { key: string; kind: string; id: string; fallback: string }[] = [
+    { key: 'profile_bgs', kind: '资料背景', id: readString(source, 'profile_bg_id') || 'deep_ocean', fallback: '深海全景' },
+    { key: 'pointer_effects', kind: '全局特效', id: readString(source, 'pointer_effect_id') || 'none', fallback: '关闭' },
+    { key: 'title_effects', kind: '称号动效', id: readString(source, 'title_effect_id') || 'glint', fallback: '流光' },
+  ]
+  return items.concat(effectDefs.map(({ key, kind, id, fallback }) => {
+    const row = readArray(effectsCatalog.value, key).find((item) => readString(item as JsonObject, 'id') === id)
+    return { kind, id, name: row ? readString(row as JsonObject, 'name') : fallback }
+  }))
 })
 
-type EditorTab = 'hero' | 'frame' | 'title' | 'tags' | 'status'
-type ProfileFx = { id: number; kind: 'trail' | 'burst'; x: number; y: number }
+type EditorTab = 'hero' | 'profile-bg' | 'frame' | 'title' | 'effects' | 'tags' | 'status'
 const editorOpen = ref(false)
 const editorTab = ref<EditorTab>('hero')
-const profileCardEl = ref<HTMLElement | null>(null)
-const profileFx = ref<ProfileFx[]>([])
-let profileFxId = 0
-let profileFxLastMove = 0
 const editorDraft = ref({
   title_id: '',
   tags: [] as string[],
   status_text: '',
   frame_id: 'none',
   card_bg_id: 'deep',
+  profile_bg_id: 'deep_ocean',
+  pointer_effect_id: 'none',
+  title_effect_id: 'glint',
 })
 const editorCatalog = computed(() =>
   readObject(settings.profile, 'catalog') ?? readObject(store.own, 'catalog') ?? readObject(stats.value, 'catalog'),
 )
 const editorOptions = computed(() => {
-  const key = editorTab.value === 'hero' ? 'card_bgs' : editorTab.value === 'frame' ? 'frames' : editorTab.value === 'tags' ? 'tags' : 'titles'
-  const options = readArray(editorCatalog.value, key)
+  const key = editorTab.value === 'hero' ? 'card_bgs' : editorTab.value === 'profile-bg' ? 'profile_bgs' : editorTab.value === 'frame' ? 'frames' : editorTab.value === 'tags' ? 'tags' : 'titles'
+  const source = editorTab.value === 'profile-bg' ? editorEffectsCatalog.value : editorCatalog.value
+  const options = readArray(source, key)
   if (editorTab.value === 'title') {
     return [{ id: '', name: '无称号', desc: '名片上不展示称号', unlocked: true }, ...options]
   }
   return options
 })
+const editorEffectsCatalog = computed(() => readObject(settings.profile, 'effects_catalog') ?? readObject(store.own, 'effects_catalog'))
+const pointerEffectOptions = computed(() => readArray(editorEffectsCatalog.value, 'pointer_effects'))
+const titleEffectOptions = computed(() => readArray(editorEffectsCatalog.value, 'title_effects'))
 const editorSelection = computed(() => {
   if (editorTab.value === 'hero') return editorDraft.value.card_bg_id
+  if (editorTab.value === 'profile-bg') return editorDraft.value.profile_bg_id
   if (editorTab.value === 'frame') return editorDraft.value.frame_id
   if (editorTab.value === 'title') return editorDraft.value.title_id
   return ''
@@ -225,8 +242,9 @@ const editorTitle = computed(() => {
   return row ? readString(row as JsonObject, 'name') : titleName.value || '无称号'
 })
 const editorStatus = computed(() => {
-  if (settings.cardSaving) return '保存中…'
+  if (settings.cardSaving || settings.effectsSaving) return '保存中…'
   if (settings.cardMessage) return settings.cardMessage
+  if (settings.effectsMessage) return settings.effectsMessage
   return '修改只影响名片展示，不会重置战绩或装备'
 })
 
@@ -237,6 +255,9 @@ function draftFrom(source: JsonObject): void {
     status_text: readString(source, 'status_text'),
     frame_id: readString(source, 'frame_id') || 'none',
     card_bg_id: readString(source, 'card_bg_id') || 'deep',
+    profile_bg_id: readString(source, 'profile_bg_id') || 'deep_ocean',
+    pointer_effect_id: readString(source, 'pointer_effect_id') || 'none',
+    title_effect_id: readString(source, 'title_effect_id') || 'glint',
   }
 }
 
@@ -257,7 +278,7 @@ async function openEditor(): Promise<void> {
 }
 
 function closeEditor(): void {
-  if (settings.cardSaving) return
+  if (settings.cardSaving || settings.effectsSaving) return
   editorOpen.value = false
 }
 
@@ -270,6 +291,7 @@ function chooseEditorOption(item: unknown): void {
   if (!editorItemUnlocked(item)) return
   const id = readString(row, 'id')
   if (editorTab.value === 'hero') editorDraft.value.card_bg_id = id
+  if (editorTab.value === 'profile-bg') editorDraft.value.profile_bg_id = id
   if (editorTab.value === 'frame') editorDraft.value.frame_id = id
   if (editorTab.value === 'title') editorDraft.value.title_id = id
   if (editorTab.value === 'tags') {
@@ -279,6 +301,17 @@ function chooseEditorOption(item: unknown): void {
       editorDraft.value.tags = [...editorDraft.value.tags, id]
     }
   }
+}
+
+function chooseEffectOption(kind: 'pointer' | 'title', item: unknown): void {
+  if (!editorItemUnlocked(item)) return
+  const id = editorItemId(item)
+  if (kind === 'pointer') editorDraft.value.pointer_effect_id = id
+  else editorDraft.value.title_effect_id = id
+}
+
+function effectSelection(kind: 'pointer' | 'title'): string {
+  return kind === 'pointer' ? editorDraft.value.pointer_effect_id : editorDraft.value.title_effect_id
 }
 
 function editorItemId(item: unknown): string {
@@ -302,48 +335,6 @@ function editorItemUnlocked(item: unknown): boolean {
 
 function editorTagSelected(id: string): boolean {
   return editorDraft.value.tags.includes(id)
-}
-
-function profileMotionDisabled(): boolean {
-  if (ui.motion === 'reduced') return true
-  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-    ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    : false
-}
-
-function profilePointerPosition(event: PointerEvent): { x: number; y: number } | null {
-  const target = profileCardEl.value
-  if (!target) return null
-  const rect = target.getBoundingClientRect()
-  if (!rect.width || !rect.height) return null
-  return {
-    x: Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100)),
-    y: Math.max(0, Math.min(100, ((event.clientY - rect.top) / rect.height) * 100)),
-  }
-}
-
-function addProfileFx(kind: ProfileFx['kind'], position: { x: number; y: number }, lifetime: number): void {
-  const id = ++profileFxId
-  profileFx.value = [...profileFx.value.slice(-18), { id, kind, ...position }]
-  window.setTimeout(() => {
-    profileFx.value = profileFx.value.filter((item) => item.id !== id)
-  }, lifetime)
-}
-
-function trackProfilePointer(event: PointerEvent): void {
-  if (profileMotionDisabled() || event.pointerType === 'touch') return
-  if (event.pointerType === 'mouse' && event.buttons === 0) return
-  const now = performance.now()
-  if (now - profileFxLastMove < 28) return
-  profileFxLastMove = now
-  const position = profilePointerPosition(event)
-  if (position) addProfileFx('trail', position, 520)
-}
-
-function burstProfilePointer(event: PointerEvent): void {
-  if (profileMotionDisabled()) return
-  const position = profilePointerPosition(event)
-  if (position) addProfileFx('burst', position, 760)
 }
 
 const AVATAR_MAX_BYTES = 2 * 1024 * 1024
@@ -479,7 +470,7 @@ async function removeAvatar(): Promise<void> {
 }
 
 async function saveEditor(): Promise<void> {
-  if (settings.cardSaving || !editorOpen.value || !isSelf.value) return
+  if (settings.cardSaving || settings.effectsSaving || !editorOpen.value || !isSelf.value) return
   const saved = await settings.saveCard({
     title_id: editorDraft.value.title_id,
     tags: editorDraft.value.tags,
@@ -488,7 +479,13 @@ async function saveEditor(): Promise<void> {
     card_bg_id: editorDraft.value.card_bg_id,
   })
   if (!saved) return
-  store.own = saved
+  const savedEffects = await settings.saveEffects({
+    profile_bg_id: editorDraft.value.profile_bg_id,
+    pointer_effect_id: editorDraft.value.pointer_effect_id,
+    title_effect_id: editorDraft.value.title_effect_id,
+  })
+  if (!savedEffects) return
+  store.own = savedEffects
   await store.loadPublic(store.viewerName)
   editorOpen.value = false
   ui.notify({ code: 'profile-card-saved', tone: 'success', message: '名片已保存' })
@@ -646,6 +643,7 @@ watch(targetUsername, () => {
     data-screen="profile"
     data-testid="screen-profile"
     :data-self="isSelf ? 'true' : 'false'"
+    :data-profile-bg="profileBg"
     aria-labelledby="screen-profile-title"
   >
     <header class="profile__head">
@@ -695,21 +693,10 @@ watch(targetUsername, () => {
       </nav>
 
       <article
-        ref="profileCardEl"
         class="profile__card"
         :data-bg="cardBg"
-        @pointermove="trackProfilePointer"
-        @pointerdown="burstProfilePointer"
+        :data-profile-bg="profileBg"
       >
-        <div class="profile__fx-layer" aria-hidden="true">
-          <span
-            v-for="item in profileFx"
-            :key="item.id"
-            class="profile__fx"
-            :class="'profile__fx--' + item.kind"
-            :style="{ left: item.x + '%', top: item.y + '%' }"
-          ></span>
-        </div>
         <header class="profile__hero">
           <div class="profile__avatar-wrap">
             <AvatarStack
@@ -780,7 +767,14 @@ watch(targetUsername, () => {
           <div class="profile__who">
             <h2 class="profile__name">
               <span :class="{ 'is-rainbow': nameStyle === 'rainbow' }" data-testid="profile-name">{{ displayName }}</span>
-              <span v-if="titleName" class="profile__title-chip" data-testid="profile-title">{{ titleName }}</span>
+              <TitleBadge
+                v-if="titleName"
+                class="profile__title-chip"
+                :name="titleName"
+                :title-id="titleId"
+                :title-fx-id="titleFxId"
+                data-testid="profile-title"
+              />
             </h2>
             <p v-if="statusText" class="profile__status" data-testid="profile-status">{{ statusText }}</p>
             <p v-if="signature" class="profile__signature" data-testid="profile-signature">
@@ -927,7 +921,7 @@ watch(targetUsername, () => {
           <p class="profile-editor__status" :class="{ 'is-error': settings.cardError }" role="status">{{ editorStatus }}</p>
         </header>
         <div class="profile-editor__body">
-          <div class="profile-editor__preview" :data-bg="editorDraft.card_bg_id">
+          <div class="profile-editor__preview" :data-bg="editorDraft.card_bg_id" :data-profile-bg="editorDraft.profile_bg_id">
             <div class="profile-editor__preview-label">实时预览</div>
             <div class="profile-editor__preview-cover"></div>
             <div class="profile-editor__preview-identity">
@@ -938,19 +932,24 @@ watch(targetUsername, () => {
                 :alt="avatarAlt || displayName + '的头像'"
                 size="md"
               />
-              <div><h3>{{ displayName }}</h3><span>{{ editorTitle }}</span></div>
+              <div>
+                <h3>{{ displayName }}</h3>
+                <TitleBadge :name="editorTitle" :title-id="editorDraft.title_id" :title-fx-id="editorDraft.title_effect_id" compact />
+              </div>
             </div>
             <p class="profile-editor__preview-status">{{ editorDraft.status_text || '写一句让别人记住你的航海状态' }}</p>
           </div>
           <div class="profile-editor__controls">
             <div class="profile-editor__tabs" role="tablist" aria-label="名片编辑分区">
               <button type="button" :class="{ 'is-active': editorTab === 'hero' }" @click="chooseEditorTab('hero')">头图主题</button>
+              <button type="button" :class="{ 'is-active': editorTab === 'profile-bg' }" @click="chooseEditorTab('profile-bg')">整体背景</button>
               <button type="button" :class="{ 'is-active': editorTab === 'frame' }" @click="chooseEditorTab('frame')">头像框</button>
               <button type="button" :class="{ 'is-active': editorTab === 'title' }" @click="chooseEditorTab('title')">称号</button>
+              <button type="button" :class="{ 'is-active': editorTab === 'effects' }" @click="chooseEditorTab('effects')">互动特效</button>
               <button type="button" :class="{ 'is-active': editorTab === 'tags' }" @click="chooseEditorTab('tags')">标签</button>
               <button type="button" :class="{ 'is-active': editorTab === 'status' }" @click="chooseEditorTab('status')">状态</button>
             </div>
-            <div v-if="editorTab !== 'status'" class="profile-editor__options">
+            <div v-if="editorTab !== 'status' && editorTab !== 'effects'" class="profile-editor__options">
               <button
                 v-for="item in editorOptions"
                 :key="editorItemId(item) || 'empty-title'"
@@ -966,10 +965,48 @@ watch(targetUsername, () => {
                 <em v-if="editorTab === 'tags' ? editorTagSelected(editorItemId(item)) : editorItemId(item) === editorSelection">{{ editorTab === 'tags' ? '已选择' : '已装备' }}</em>
               </button>
             </div>
+            <div v-else-if="editorTab === 'effects'" class="profile-editor__effect-groups">
+              <section class="profile-editor__effect-group">
+                <header><b>全局鼠标 / 触控</b><small>覆盖大厅、个人主页和局内战斗</small></header>
+                <div class="profile-editor__options">
+                  <button
+                    v-for="item in pointerEffectOptions"
+                    :key="'pointer-' + editorItemId(item)"
+                    type="button"
+                    class="profile-editor__option"
+                    :class="{ 'is-selected': editorItemId(item) === effectSelection('pointer'), 'is-locked': !editorItemUnlocked(item) }"
+                    :disabled="!editorItemUnlocked(item)"
+                    @click="chooseEffectOption('pointer', item)"
+                  >
+                    <span class="profile-editor__option-mark" aria-hidden="true">{{ editorItemUnlocked(item) ? '✦' : '🔒' }}</span>
+                    <b>{{ editorItemName(item) }}</b><small>{{ editorItemDescription(item) }}</small>
+                    <em v-if="editorItemId(item) === effectSelection('pointer')">已装备</em>
+                  </button>
+                </div>
+              </section>
+              <section class="profile-editor__effect-group">
+                <header><b>称号动效</b><small>文字保持清晰，动效只作用于光晕和边缘</small></header>
+                <div class="profile-editor__options">
+                  <button
+                    v-for="item in titleEffectOptions"
+                    :key="'title-fx-' + editorItemId(item)"
+                    type="button"
+                    class="profile-editor__option"
+                    :class="{ 'is-selected': editorItemId(item) === effectSelection('title'), 'is-locked': !editorItemUnlocked(item) }"
+                    :disabled="!editorItemUnlocked(item)"
+                    @click="chooseEffectOption('title', item)"
+                  >
+                    <span class="profile-editor__option-mark" aria-hidden="true">{{ editorItemUnlocked(item) ? '✦' : '🔒' }}</span>
+                    <b>{{ editorItemName(item) }}</b><small>{{ editorItemDescription(item) }}</small>
+                    <em v-if="editorItemId(item) === effectSelection('title')">已装备</em>
+                  </button>
+                </div>
+              </section>
+            </div>
             <label v-else class="profile-editor__field"><span>一句话状态</span><textarea v-model="editorDraft.status_text" maxlength="30" rows="4" placeholder="写一句让别人记住你的航海状态"></textarea><small>{{ editorDraft.status_text.length }} / 30</small></label>
           </div>
         </div>
-        <footer class="profile-editor__actions"><button type="button" class="button button--ghost" :disabled="settings.cardSaving" @click="closeEditor">取消</button><button type="button" class="button profile-editor__save" :disabled="settings.cardSaving" @click="saveEditor">{{ settings.cardSaving ? '保存中…' : '保存名片' }}</button></footer>
+        <footer class="profile-editor__actions"><button type="button" class="button button--ghost" :disabled="settings.cardSaving || settings.effectsSaving" @click="closeEditor">取消</button><button type="button" class="button profile-editor__save" :disabled="settings.cardSaving || settings.effectsSaving" @click="saveEditor">{{ settings.cardSaving || settings.effectsSaving ? '保存中…' : '保存名片' }}</button></footer>
       </div>
     </section>
   </section>
@@ -978,9 +1015,59 @@ watch(targetUsername, () => {
 <style scoped>
 /* 个人名片：把身份、装备和成就做成一张有层次的舰队档案。 */
 .profile {
+  position: relative;
+  isolation: isolate;
   align-items: center;
   gap: 0;
   padding: 0 24px 40px;
+}
+
+.profile::before,
+.profile::after {
+  position: absolute;
+  z-index: -2;
+  content: '';
+  pointer-events: none;
+}
+
+.profile::before {
+  inset: 0;
+  background: radial-gradient(900px 540px at 65% -8%, rgb(78 200 224 / 16%), transparent 68%), linear-gradient(160deg, #0b2340, #050914 78%);
+  background-size: 145% 145%;
+  animation: profile-page-drift 18s ease-in-out infinite alternate;
+}
+
+.profile::after {
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(180deg, rgb(3 9 21 / 8%), rgb(3 8 18 / 44%));
+}
+
+.profile[data-profile-bg='naval_grid']::before {
+  background-image: linear-gradient(rgb(111 224 244 / 8%) 1px, transparent 1px), linear-gradient(90deg, rgb(111 224 244 / 8%) 1px, transparent 1px), radial-gradient(circle at 20% 14%, rgb(78 200 224 / 25%), transparent 36%), linear-gradient(160deg, #0d2942, #050914 78%);
+  background-size: 54px 54px, 54px 54px, auto, auto;
+}
+
+.profile[data-profile-bg='aurora_drift']::before {
+  background-image: radial-gradient(ellipse at 12% 22%, rgb(111 255 194 / 30%), transparent 30%), radial-gradient(ellipse at 82% 12%, rgb(96 220 255 / 28%), transparent 28%), linear-gradient(160deg, #123f47, #07131d 78%);
+}
+
+.profile[data-profile-bg='nebula_wake']::before {
+  background-image: radial-gradient(circle at 18% 18%, rgb(255 255 255 / 60%) 0 1px, transparent 2px), radial-gradient(circle at 72% 30%, rgb(197 160 255 / 55%) 0 1px, transparent 2px), radial-gradient(circle at 42% 78%, rgb(111 224 244 / 42%) 0 1px, transparent 2px), linear-gradient(155deg, #29205b, #070a19 78%);
+  background-size: 170px 170px, 230px 230px, 280px 280px, auto;
+}
+
+.profile[data-profile-bg='storm_atlas']::before {
+  background-image: linear-gradient(115deg, transparent 0 46%, rgb(246 215 122 / 24%) 47% 48%, transparent 49%), radial-gradient(ellipse at 70% 12%, rgb(147 184 210 / 25%), transparent 32%), linear-gradient(160deg, #233b4b, #070d18 78%);
+}
+
+.profile[data-profile-bg='season_deep']::before {
+  background-image: radial-gradient(ellipse at 20% 12%, rgb(142 220 236 / 32%), transparent 32%), radial-gradient(ellipse at 82% 48%, rgb(43 164 198 / 24%), transparent 34%), linear-gradient(160deg, #0f4b60, #061522 78%);
+}
+
+@keyframes profile-page-drift {
+  from { background-position: 0% 0%; }
+  to { background-position: 100% 100%; }
 }
 
 .profile__head {
@@ -1047,6 +1134,7 @@ watch(targetUsername, () => {
 
 .profile__card {
   position: relative;
+  z-index: 1;
   display: grid;
   gap: 12px;
   width: 1120px;
@@ -1060,53 +1148,9 @@ watch(targetUsername, () => {
   animation: profile-card-enter 720ms cubic-bezier(.2,.72,.2,1) both;
 }
 
-.profile__fx-layer {
-  position: absolute;
-  z-index: 20;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.profile__fx {
-  position: absolute;
-  display: block;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-}
-
-.profile__fx--trail {
-  width: 7px;
-  height: 7px;
-  border: 1px solid rgb(145 236 255 / 82%);
-  border-radius: 50%;
-  background: rgb(111 224 244 / 72%);
-  box-shadow: 0 0 10px rgb(111 224 244 / 72%), 0 0 24px rgb(124 92 240 / 44%);
-  animation: profile-fx-trail 520ms ease-out both;
-}
-
-.profile__fx--burst {
-  width: 12px;
-  height: 12px;
-  border: 1px solid rgb(246 215 122 / 82%);
-  border-radius: 50%;
-  box-shadow: 0 0 0 0 rgb(246 215 122 / 38%), 0 0 18px rgb(246 215 122 / 70%);
-  animation: profile-fx-burst 760ms cubic-bezier(.1,.75,.25,1) both;
-}
-
 @keyframes profile-card-enter {
   from { opacity: 0; transform: translateY(14px) scale(.985); filter: saturate(.8); }
   to { opacity: 1; transform: none; filter: saturate(1); }
-}
-
-@keyframes profile-fx-trail {
-  0% { opacity: .9; transform: translate(-50%, -50%) scale(1); }
-  100% { opacity: 0; transform: translate(-50%, -50%) scale(.2) translateY(-10px); }
-}
-
-@keyframes profile-fx-burst {
-  0% { opacity: .95; transform: translate(-50%, -50%) scale(.35); box-shadow: 0 0 0 0 rgb(246 215 122 / 38%), 0 0 18px rgb(246 215 122 / 70%); }
-  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.2); box-shadow: 0 0 0 30px rgb(246 215 122 / 0%), 0 0 4px rgb(246 215 122 / 0%); }
 }
 
 .profile__card[data-bg='cyber'] .profile__hero::before,
@@ -1158,6 +1202,12 @@ watch(targetUsername, () => {
   background-size: 24px 24px, 24px 24px, auto;
 }
 .profile__card[data-bg='season_deep_1'] { background: radial-gradient(circle at 78% 12%, rgb(78 200 224 / 22%), transparent 26%), linear-gradient(150deg, #10334b, #07121f 70%); }
+.profile__card[data-bg='deep'] { background: linear-gradient(160deg, #152f4d, #091521 76%); }
+.profile__card[data-bg='dusk'] { background: linear-gradient(150deg, #37244d, #111426 76%); }
+.profile__card[data-bg='shoal'] { background: linear-gradient(150deg, #4a3b32, #15151b 76%); }
+.profile__card[data-bg='storm'] { background: linear-gradient(150deg, #253747, #0c121d 76%); }
+.profile__card[data-bg='abyss'] { background: linear-gradient(150deg, #121d36, #02050b 76%); }
+.profile__card[data-bg='molten_gold'] { background: linear-gradient(150deg, #443015, #120d0a 76%); }
 
 .profile__hero {
   position: relative;
@@ -1196,6 +1246,37 @@ watch(targetUsername, () => {
 .profile__card[data-bg='coral_dawn'] .profile__hero::before { background: radial-gradient(300px 120px at 22% 0%, rgb(255 181 145 / 24%), transparent 72%), linear-gradient(120deg, #a44f5e, #512c46 70%); }
 .profile__card[data-bg='abyssal_grid'] .profile__hero::before { background: repeating-linear-gradient(115deg, rgb(255 255 255 / 5%) 0 2px, transparent 2px 12px), linear-gradient(120deg, #493924, #17151c 70%); }
 .profile__card[data-bg='season_deep_1'] .profile__hero::before { background: radial-gradient(300px 120px at 22% 0%, rgb(142 220 236 / 28%), transparent 72%), linear-gradient(120deg, #1b7592, #17405f 70%); }
+.profile__card[data-bg='deep'] .profile__hero::before { background: radial-gradient(340px 140px at 20% 0%, rgb(111 224 244 / 25%), transparent 72%), linear-gradient(120deg, #235579, #102844 70%); }
+.profile__card[data-bg='graphite'] .profile__hero::before { background: radial-gradient(340px 140px at 20% 0%, rgb(226 236 245 / 17%), transparent 72%), linear-gradient(120deg, #536170, #212a34 70%); }
+.profile__card[data-bg='cyber'] .profile__hero::before { background: radial-gradient(330px 150px at 22% 0%, rgb(236 105 255 / 28%), transparent 70%), radial-gradient(260px 120px at 78% 10%, rgb(63 220 255 / 24%), transparent 72%), linear-gradient(120deg, #6637aa, #162d59 70%); }
+.profile__card[data-bg='lava'] .profile__hero::before { background: radial-gradient(340px 150px at 22% 0%, rgb(255 170 80 / 32%), transparent 70%), linear-gradient(120deg, #a9442f, #3a1718 70%); }
+.profile__card[data-bg='dusk'] .profile__hero::before { background: radial-gradient(340px 150px at 22% 0%, rgb(255 168 220 / 28%), transparent 70%), linear-gradient(120deg, #8152a0, #3c285e 70%); }
+.profile__card[data-bg='aurora'] .profile__hero::before { background: radial-gradient(340px 150px at 22% 0%, rgb(111 255 194 / 30%), transparent 70%), radial-gradient(270px 140px at 82% 2%, rgb(96 220 255 / 22%), transparent 72%), linear-gradient(120deg, #257a76, #133849 70%); }
+.profile__card[data-bg='shoal'] .profile__hero::before { background: radial-gradient(340px 150px at 22% 0%, rgb(255 224 154 / 26%), transparent 70%), linear-gradient(120deg, #9c7954, #4c392f 70%); }
+.profile__card[data-bg='storm'] .profile__hero::before { background: radial-gradient(340px 150px at 22% 0%, rgb(189 218 240 / 18%), transparent 70%), linear-gradient(120deg, #506b7e, #263343 70%); }
+.profile__card[data-bg='abyss'] .profile__hero::before { background: radial-gradient(340px 150px at 22% 0%, rgb(79 166 255 / 25%), transparent 70%), linear-gradient(120deg, #213b67, #071323 70%); }
+.profile__card[data-bg='molten_gold'] .profile__hero::before { background: radial-gradient(340px 150px at 22% 0%, rgb(255 217 113 / 32%), transparent 70%), linear-gradient(120deg, #8c6526, #3e2415 70%); }
+.profile__card[data-bg='starfield'] .profile__hero::before { background: radial-gradient(circle at 14% 25%, rgb(255 255 255 / 70%) 0 1px, transparent 2px), radial-gradient(circle at 68% 18%, rgb(111 224 244 / 62%) 0 1px, transparent 2px), radial-gradient(circle at 88% 72%, rgb(246 215 122 / 58%) 0 1px, transparent 2px), linear-gradient(120deg, #24468c, #101d4c 70%); }
+
+.profile__card[data-bg='deep'] .profile__hero::before,
+.profile__card[data-bg='graphite'] .profile__hero::before,
+.profile__card[data-bg='cyber'] .profile__hero::before,
+.profile__card[data-bg='lava'] .profile__hero::before,
+.profile__card[data-bg='dusk'] .profile__hero::before,
+.profile__card[data-bg='aurora'] .profile__hero::before,
+.profile__card[data-bg='shoal'] .profile__hero::before,
+.profile__card[data-bg='storm'] .profile__hero::before,
+.profile__card[data-bg='abyss'] .profile__hero::before,
+.profile__card[data-bg='molten_gold'] .profile__hero::before,
+.profile__card[data-bg='starfield'] .profile__hero::before,
+.profile__card[data-bg='kelp_green'] .profile__hero::before,
+.profile__card[data-bg='moonlit'] .profile__hero::before,
+.profile__card[data-bg='coral_dawn'] .profile__hero::before,
+.profile__card[data-bg='abyssal_grid'] .profile__hero::before,
+.profile__card[data-bg='season_deep_1'] .profile__hero::before {
+  background-size: 180% 180%;
+  animation: profile-hero-drift 12s ease-in-out infinite alternate;
+}
 
 .profile__avatar-wrap {
   position: relative;
@@ -1792,8 +1873,32 @@ watch(targetUsername, () => {
 .profile-editor__preview[data-bg='molten_gold'] { background: linear-gradient(150deg, #6b4b21, #18100b 80%); }
 .profile-editor__preview[data-bg='starfield'] { background: radial-gradient(circle at 70% 24%, rgb(238 201 111 / 25%), transparent 4%), radial-gradient(circle at 24% 64%, rgb(111 224 244 / 22%), transparent 5%), linear-gradient(150deg, #182b5e, #060a18 80%); }
 .profile-editor__preview[data-bg='season_deep_1'] { background: linear-gradient(150deg, #1d7691, #071522 80%); }
+	.profile-editor__preview[data-bg='deep'] { background: linear-gradient(150deg, #1d466e, #091521 80%); }
+	.profile-editor__preview[data-bg='kelp_green'] { background: linear-gradient(150deg, #205c55, #102b2f 80%); }
+	.profile-editor__preview[data-bg='abyssal_grid'] { background-color: #080d18; background-image: linear-gradient(rgb(201 162 76 / 8%) 1px, transparent 1px), linear-gradient(90deg, rgb(201 162 76 / 8%) 1px, transparent 1px), linear-gradient(150deg, #16131c, #060a12 80%); background-size: 24px 24px, 24px 24px, auto; }
 .profile-editor__preview-label { position: absolute; top: 18px; left: 20px; color: var(--cyan); font-size: 11px; letter-spacing: .16em; }
 .profile-editor__preview-cover { position: absolute; inset: 0 0 auto; height: 190px; background: linear-gradient(120deg, rgb(122 90 240 / 88%), rgb(34 151 183 / 88%)); opacity: .82; }
+	.profile-editor__preview[data-bg='deep'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(35 85 121 / 92%), rgb(16 40 68 / 92%)); }
+	.profile-editor__preview[data-bg='graphite'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(83 97 112 / 92%), rgb(33 42 52 / 92%)); }
+	.profile-editor__preview[data-bg='cyber'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(102 55 170 / 92%), rgb(22 45 89 / 92%)); }
+	.profile-editor__preview[data-bg='lava'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(169 68 47 / 92%), rgb(58 23 24 / 92%)); }
+	.profile-editor__preview[data-bg='dusk'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(129 82 160 / 92%), rgb(60 40 94 / 92%)); }
+	.profile-editor__preview[data-bg='aurora'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(37 122 118 / 92%), rgb(19 56 73 / 92%)); }
+	.profile-editor__preview[data-bg='shoal'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(156 121 84 / 92%), rgb(76 57 47 / 92%)); }
+	.profile-editor__preview[data-bg='storm'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(80 107 126 / 92%), rgb(38 51 67 / 92%)); }
+	.profile-editor__preview[data-bg='abyss'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(33 59 103 / 92%), rgb(7 19 35 / 92%)); }
+	.profile-editor__preview[data-bg='molten_gold'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(140 101 38 / 92%), rgb(62 36 21 / 92%)); }
+	.profile-editor__preview[data-bg='starfield'] .profile-editor__preview-cover { background: radial-gradient(circle at 14% 25%, rgb(255 255 255 / 70%) 0 1px, transparent 2px), radial-gradient(circle at 68% 18%, rgb(111 224 244 / 62%) 0 1px, transparent 2px), linear-gradient(120deg, rgb(36 70 140 / 92%), rgb(16 29 76 / 92%)); background-size: 100px 100px, 140px 140px, auto; }
+	.profile-editor__preview[data-bg='season_deep_1'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(27 118 146 / 92%), rgb(23 64 95 / 92%)); }
+	.profile-editor__preview[data-bg='kelp_green'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(32 92 85 / 92%), rgb(16 43 47 / 92%)); }
+	.profile-editor__preview[data-bg='moonlit'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(53 84 141 / 92%), rgb(23 41 77 / 92%)); }
+	.profile-editor__preview[data-bg='coral_dawn'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(164 79 94 / 92%), rgb(81 44 70 / 92%)); }
+	.profile-editor__preview[data-bg='abyssal_grid'] .profile-editor__preview-cover { background: repeating-linear-gradient(115deg, rgb(255 255 255 / 7%) 0 2px, transparent 2px 12px), linear-gradient(120deg, rgb(73 57 36 / 92%), rgb(23 21 28 / 92%)); }
+.profile-editor__preview[data-profile-bg='naval_grid'] { background-image: linear-gradient(rgb(111 224 244 / 9%) 1px, transparent 1px), linear-gradient(90deg, rgb(111 224 244 / 9%) 1px, transparent 1px), linear-gradient(160deg, #0d2942, #050914 78%); background-size: 34px 34px, 34px 34px, auto; }
+.profile-editor__preview[data-profile-bg='aurora_drift'] { background: radial-gradient(ellipse at 15% 16%, rgb(111 255 194 / 30%), transparent 36%), linear-gradient(160deg, #123f47, #07131d 78%); }
+.profile-editor__preview[data-profile-bg='nebula_wake'] { background: radial-gradient(circle at 20% 24%, rgb(255 255 255 / 55%) 0 1px, transparent 2px), radial-gradient(circle at 74% 32%, rgb(197 160 255 / 48%) 0 1px, transparent 2px), linear-gradient(155deg, #29205b, #070a19 78%); background-size: 90px 90px, 130px 130px, auto; }
+.profile-editor__preview[data-profile-bg='storm_atlas'] { background: linear-gradient(115deg, transparent 0 46%, rgb(246 215 122 / 24%) 47% 48%, transparent 49%), linear-gradient(160deg, #233b4b, #070d18 78%); }
+.profile-editor__preview[data-profile-bg='season_deep'] { background: radial-gradient(ellipse at 20% 12%, rgb(142 220 236 / 32%), transparent 32%), linear-gradient(160deg, #0f4b60, #061522 78%); }
 .profile-editor__preview-identity { position: absolute; left: 24px; right: 24px; bottom: 110px; display: flex; align-items: center; gap: 14px; }
 .profile-editor__preview-avatar { width: 84px; height: 84px; --avatar-size: 84px; flex-basis: 84px; }
 .profile-editor__preview-identity h3 { margin: 0; color: #fff; font-size: 25px; }
@@ -1801,10 +1906,15 @@ watch(targetUsername, () => {
 .profile-editor__preview-status { position: absolute; left: 24px; right: 24px; bottom: 32px; margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
 
 .profile-editor__controls { min-width: 0; }
-.profile-editor__tabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-bottom: 18px; }
+.profile-editor__tabs { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; margin-bottom: 18px; }
 .profile-editor__tabs button { min-height: 44px; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--surface-sea); color: var(--text-muted); font: inherit; font-size: 13px; cursor: pointer; }
 .profile-editor__tabs button.is-active { border-color: var(--role-action); background: var(--role-action-soft); color: var(--text-primary); box-shadow: inset 0 -2px var(--role-action); }
 .profile-editor__options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.profile-editor__effect-groups { display: grid; gap: 18px; }
+.profile-editor__effect-group { display: grid; gap: 10px; }
+.profile-editor__effect-group > header { display: grid; gap: 2px; }
+.profile-editor__effect-group > header b { color: var(--text-primary); font-size: 14px; }
+.profile-editor__effect-group > header small { color: var(--text-muted); font-size: 11px; }
 .profile-editor__option { position: relative; display: grid; align-content: start; gap: 7px; min-height: 128px; padding: 14px; border: 1px solid var(--border-subtle); border-radius: 12px; background: var(--surface-sea); color: var(--text-muted); text-align: left; cursor: pointer; }
 .profile-editor__option:hover:not(:disabled) { border-color: var(--role-action); transform: translateY(-1px); }
 .profile-editor__option.is-selected { border-color: var(--role-action); background: var(--role-action-soft); box-shadow: inset 0 0 0 1px var(--role-action); }
@@ -1914,6 +2024,7 @@ watch(targetUsername, () => {
   .profile__avatar { width: 104px; height: 104px; }
   .profile-editor { padding: 10px; }
   .profile-editor__body { grid-template-columns: 1fr; }
+  .profile-editor__tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .profile-editor__preview { min-height: 300px; }
   .profile-editor__options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

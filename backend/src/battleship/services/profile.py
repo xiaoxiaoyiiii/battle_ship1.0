@@ -56,6 +56,9 @@ PROFILE_DEFAULTS: dict[str, Any] = {
     "avatar_alt": "",
     "frame_id": "none",
     "card_bg_id": "deep",
+    "profile_bg_id": "deep_ocean",
+    "pointer_effect_id": "none",
+    "title_effect_id": "glint",
     "show_stats": 1,
     "show_fav_cards": 1,
     "show_history": 0,
@@ -122,6 +125,12 @@ def build_own_profile(database: Database, user_id: str) -> dict[str, Any] | None
             extra.get("frame_id"),
             extra.get("card_bg_id"),
         )
+        profile_bg_id, pointer_effect_id, title_effect_id = profile_spec.effective_effects(
+            unlock_stats,
+            extra.get("profile_bg_id"),
+            extra.get("pointer_effect_id"),
+            extra.get("title_effect_id"),
+        )
         rank = uow.users.wins_rank(user_id)
         badges, badge_count = progression.badge_view(
             uow, user_id, user=user, rank=rank
@@ -136,9 +145,13 @@ def build_own_profile(database: Database, user_id: str) -> dict[str, Any] | None
             "title_id": title_id,
             "frame_id": frame_id,
             "card_bg_id": card_bg_id,
+            "profile_bg_id": profile_bg_id,
+            "pointer_effect_id": pointer_effect_id,
+            "title_effect_id": title_effect_id,
             "rank_info": progression.rank_view_for(uow, user_id),
             "fav_cards": progression.fav_cards(uow, user_id),
             "catalog": profile_spec.catalog(unlock_stats),
+            "effects_catalog": profile_spec.effects_catalog(unlock_stats),
             "achievements": badges,
             "badge_count": badge_count,
         })
@@ -174,6 +187,12 @@ def public_stats(database: Database, user: Any, viewer_id: str | None,
             extra.get("frame_id"),
             extra.get("card_bg_id"),
         )
+        profile_bg_id, pointer_effect_id, title_effect_id = profile_spec.effective_effects(
+            unlock_stats,
+            extra.get("profile_bg_id"),
+            extra.get("pointer_effect_id"),
+            extra.get("title_effect_id"),
+        )
         stats["rank"] = uow.users.wins_rank(user_id)
         for flag in _PUBLIC_FLAG_FIELDS:
             stats[flag] = extra[flag]
@@ -185,6 +204,9 @@ def public_stats(database: Database, user: Any, viewer_id: str | None,
         stats["avatar_alt"] = extra["avatar_alt"]
         stats["frame_id"] = frame_id
         stats["card_bg_id"] = card_bg_id
+        stats["profile_bg_id"] = profile_bg_id
+        stats["pointer_effect_id"] = pointer_effect_id
+        stats["title_effect_id"] = title_effect_id
         # D13: flags are sent for the frontend to draw/hide the section, but the
         # data itself keeps flowing exactly as it did in the legacy stack.
         stats["fav_cards"] = progression.fav_cards(uow, user_id)
@@ -236,5 +258,26 @@ def save_profile_card(database: Database, user_id: str,
         stored = dict(fields)
         stored["tags"] = json.dumps(stored.get("tags") or [], ensure_ascii=False)
         uow.social.save_profile(user_id, stored, updated_at=int(time.time()))
+    profile = build_own_profile(database, user_id)
+    return 200, {"success": True, "profile": profile}
+
+
+def save_profile_effects(database: Database, user_id: str,
+                         payload: Any) -> tuple[int, dict[str, Any]]:
+    """保存独立的个人资料背景、指针特效和称号动效槽位。"""
+
+    if not isinstance(payload, dict):
+        return 400, {"success": False, "error": "请求体必须是 JSON 对象"}
+    with database.unit_of_work() as uow:
+        user = uow.users.get(user_id)
+        if user is None:
+            return 401, {"success": False, "error": "账号不存在"}
+        unlock_stats = ProgressionService(database).unlock_stats(
+            uow, user_id, user=user
+        )
+        fields, errors = profile_spec.validate_effects_payload(payload, unlock_stats)
+        if errors:
+            return 400, {"success": False, "error": "；".join(errors)}
+        uow.social.save_profile(user_id, fields, updated_at=int(time.time()))
     profile = build_own_profile(database, user_id)
     return 200, {"success": True, "profile": profile}

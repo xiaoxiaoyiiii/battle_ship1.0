@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from ...domain.social import guestbook
 from ...infra.ratelimit import client_key
 from ...services.guestbook import GuestbookService
-from ...services.profile import save_profile_card
+from ...services.profile import save_profile_card, save_profile_effects
 from ..session import read_session, session_user_id
 
 router = APIRouter(tags=["profile"])
@@ -54,6 +54,18 @@ async def save_card(request: Request):
         return JSONResponse({"success": False, "error": "未登录"}, status_code=401)
     payload = await _payload(request)
     status, body = save_profile_card(request.app.state.database, user_id, payload)
+    return JSONResponse(body, status_code=status)
+
+
+@router.post("/api/profile/effects")
+async def save_effects(request: Request):
+    """保存不影响旧名片契约的背景、指针特效和称号动效槽位。"""
+
+    user_id = session_user_id(read_session(request))
+    if not user_id:
+        return JSONResponse({"success": False, "error": "未登录"}, status_code=401)
+    payload = await _payload(request)
+    status, body = save_profile_effects(request.app.state.database, user_id, payload)
     return JSONResponse(body, status_code=status)
 
 

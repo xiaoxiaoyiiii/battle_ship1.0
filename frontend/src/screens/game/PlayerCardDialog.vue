@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { PlayerCard } from './usePlayerCards'
 import AvatarStack from '../../components/AvatarStack.vue'
+import TitleBadge from '../../components/TitleBadge.vue'
 
 /**
  * 局内查看某一方的公开名片（原 main 的 #opponent-stats-modal）。
@@ -81,7 +82,13 @@ const emptyText = computed(() => {
         />
         <div>
           <b class="player-card__name" data-testid="game-player-card-name">{{ name }}</b>
-          <p v-if="ready && str('title_name')" class="player-card__line">{{ str('title_name') }}</p>
+          <TitleBadge
+            v-if="ready && str('title_name')"
+            :name="str('title_name')"
+            :title-id="str('title_id')"
+            :title-fx-id="str('title_effect_id') || str('title_fx_id')"
+            compact
+          />
         </div>
       </div>
       <template v-if="ready">

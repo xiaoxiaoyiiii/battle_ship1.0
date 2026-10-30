@@ -163,9 +163,54 @@ CARD_BGS = [
      "requirement": "赛季通行证奖励"},
 ]
 
+# 个人资料整体背景：与名片头图分开装备，覆盖个人资料页的空白区域。
+PROFILE_BGS = [
+    {"id": "deep_ocean", "name": "深海全景", "desc": "冷蓝海流铺满资料页",
+     "requirement": "无门槛"},
+    {"id": "naval_grid", "name": "战术海图", "desc": "细密网格与航线标记",
+     "requirement": "无门槛"},
+    {"id": "aurora_drift", "name": "极光漂流", "desc": "缓慢流动的青绿极光",
+     "requirement": "胜场 ≥ 20"},
+    {"id": "nebula_wake", "name": "星云尾迹", "desc": "紫蓝星尘从页面深处掠过",
+     "requirement": "总场次 ≥ 50"},
+    {"id": "storm_atlas", "name": "风暴图册", "desc": "雷云、海图与金色航线",
+     "requirement": "段位达到 船长"},
+    {"id": "season_deep", "name": "深海远征背景", "desc": "赛季专属的远征海域",
+     "requirement": "赛季通行证奖励"},
+]
+
+# 全局鼠标/触控反馈：只在装备了该槽位的玩家本地渲染，不上传轨迹数据。
+POINTER_EFFECTS = [
+    {"id": "none", "name": "关闭", "desc": "不显示全局交互特效",
+     "requirement": "无门槛"},
+    {"id": "ripple", "name": "潮汐点击", "desc": "点击与轻触泛起潮纹",
+     "requirement": "无门槛"},
+    {"id": "comet", "name": "彗星航迹", "desc": "拖动时留下短暂金色彗尾",
+     "requirement": "总场次 ≥ 10"},
+    {"id": "stardust", "name": "星尘航迹", "desc": "点击爆发星尘，拖动留下粒子",
+     "requirement": "胜场 ≥ 20"},
+    {"id": "eclipse", "name": "日蚀脉冲", "desc": "暗金脉冲与环形爆发",
+     "requirement": "赛季通行证奖励"},
+]
+
+# 称号外观动效：基础称号轻流光，高阶称号可装备更明显的呼吸/星环效果。
+TITLE_EFFECTS = [
+    {"id": "none", "name": "静态", "desc": "保持清晰的静态称号",
+     "requirement": "无门槛"},
+    {"id": "glint", "name": "流光", "desc": "周期性高光扫过称号",
+     "requirement": "无门槛"},
+    {"id": "pulse", "name": "潮汐呼吸", "desc": "柔和亮度与光晕呼吸",
+     "requirement": "胜场 ≥ 30"},
+    {"id": "orbit", "name": "星环", "desc": "稀有称号附带环绕星点",
+     "requirement": "赛季通行证奖励"},
+]
+
 DEFAULT_TITLE_ID = ''      # 空 = 不展示称号（库里的默认值）
 DEFAULT_FRAME_ID = 'none'
 DEFAULT_CARD_BG_ID = 'deep'
+DEFAULT_PROFILE_BG_ID = 'deep_ocean'
+DEFAULT_POINTER_EFFECT_ID = 'none'
+DEFAULT_TITLE_EFFECT_ID = 'glint'
 
 # ---------------------------------------------------------------------------
 # 索引与解锁判定
@@ -175,6 +220,9 @@ _BY_ID = {
     'tags': {t['id']: t for t in TAGS},
     'frames': {f['id']: f for f in FRAMES},
     'card_bgs': {b['id']: b for b in CARD_BGS},
+    'profile_bgs': {b['id']: b for b in PROFILE_BGS},
+    'pointer_effects': {e['id']: e for e in POINTER_EFFECTS},
+    'title_effects': {e['id']: e for e in TITLE_EFFECTS},
 }
 
 
@@ -265,6 +313,30 @@ _CARD_BG_RULES = {
     'abyssal_grid': lambda c: 'card_bg:abyssal_grid' in c['battle_pass_rewards'],
 }
 
+_PROFILE_BG_RULES = {
+    'deep_ocean': lambda c: True,
+    'naval_grid': lambda c: True,
+    'aurora_drift': lambda c: c['wins'] >= 20,
+    'nebula_wake': lambda c: c['matches'] >= 50,
+    'storm_atlas': lambda c: c['rank_tier'] >= 8,
+    'season_deep': lambda c: 'profile_bg:season_deep' in c['battle_pass_rewards'],
+}
+
+_POINTER_EFFECT_RULES = {
+    'none': lambda c: True,
+    'ripple': lambda c: True,
+    'comet': lambda c: c['matches'] >= 10,
+    'stardust': lambda c: c['wins'] >= 20,
+    'eclipse': lambda c: 'pointer:eclipse' in c['battle_pass_rewards'],
+}
+
+_TITLE_EFFECT_RULES = {
+    'none': lambda c: True,
+    'glint': lambda c: True,
+    'pulse': lambda c: c['wins'] >= 30,
+    'orbit': lambda c: 'title_fx:orbit' in c['battle_pass_rewards'],
+}
+
 
 # ---------------------------------------------------------------------------
 # 段位解锁项：文案与判定都从条目里的 `rank_tier` 现算（阈值只写一遍）
@@ -337,6 +409,27 @@ def unlocked_card_bgs(stats):
     """已解锁的名片底色 id 集合。"""
     owned = _unlocked(_CARD_BG_RULES, stats)
     owned.update(_pass_owned(stats, 'card_bg', _BY_ID['card_bgs']))
+    return owned
+
+
+def unlocked_profile_bgs(stats):
+    """已解锁的个人资料整体背景 id 集合。"""
+    owned = _unlocked(_PROFILE_BG_RULES, stats)
+    owned.update(_pass_owned(stats, 'profile_bg', _BY_ID['profile_bgs']))
+    return owned
+
+
+def unlocked_pointer_effects(stats):
+    """已解锁的全局指针特效 id 集合。"""
+    owned = _unlocked(_POINTER_EFFECT_RULES, stats)
+    owned.update(_pass_owned(stats, 'pointer', _BY_ID['pointer_effects']))
+    return owned
+
+
+def unlocked_title_effects(stats):
+    """已解锁的称号动效 id 集合。"""
+    owned = _unlocked(_TITLE_EFFECT_RULES, stats)
+    owned.update(_pass_owned(stats, 'title_fx', _BY_ID['title_effects']))
     return owned
 
 
@@ -472,6 +565,43 @@ def catalog(stats):
         'frames': dump(FRAMES, frame_ok),
         'card_bgs': dump(CARD_BGS, bg_ok),
     }
+
+
+def effects_catalog(stats):
+    """个人背景、全局指针特效和称号动效的可装备目录。"""
+
+    def dump(pool, unlocked):
+        return [
+            {
+                'id': item['id'],
+                'name': item['name'],
+                'desc': item['desc'],
+                'requirement': item['requirement'],
+                'unlocked': item['id'] in unlocked,
+            }
+            for item in pool
+        ]
+
+    return {
+        'profile_bgs': dump(PROFILE_BGS, unlocked_profile_bgs(stats)),
+        'pointer_effects': dump(POINTER_EFFECTS, unlocked_pointer_effects(stats)),
+        'title_effects': dump(TITLE_EFFECTS, unlocked_title_effects(stats)),
+    }
+
+
+def effective_effects(stats, profile_bg_id='', pointer_effect_id='', title_effect_id=''):
+    """按当前解锁状态过滤新增的个性化槽位。"""
+
+    profile_bg = profile_bg_id if isinstance(profile_bg_id, str) else ''
+    if profile_bg not in unlocked_profile_bgs(stats):
+        profile_bg = DEFAULT_PROFILE_BG_ID
+    pointer = pointer_effect_id if isinstance(pointer_effect_id, str) else ''
+    if pointer not in unlocked_pointer_effects(stats):
+        pointer = DEFAULT_POINTER_EFFECT_ID
+    title = title_effect_id if isinstance(title_effect_id, str) else ''
+    if title not in unlocked_title_effects(stats):
+        title = DEFAULT_TITLE_EFFECT_ID
+    return profile_bg, pointer, title
 
 
 # ---------------------------------------------------------------------------
@@ -634,5 +764,48 @@ def validate_payload(payload, stats):
 
     if errors:
         # 拒绝整次保存：连带把已归一化的字段清空，调用方想写也写不进去
+        return {}, errors
+    return fields, []
+
+
+def validate_effects_payload(payload, stats):
+    """校验独立的背景、全局指针特效和称号动效保存请求。"""
+
+    if not isinstance(payload, dict):
+        return {}, ['请求体必须是 JSON 对象']
+    required = ('profile_bg_id', 'pointer_effect_id', 'title_effect_id')
+    missing = [key for key in required if key not in payload]
+    if missing:
+        return {}, ['缺少字段：' + '、'.join(missing)]
+
+    errors = []
+    fields = {}
+
+    def pick(value, pool, unlocked, label):
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f'{label}格式不正确')
+            return None
+        value = value.strip()
+        if value not in pool:
+            errors.append(f'未知的{label}：{value}')
+            return None
+        if value not in unlocked:
+            errors.append(f'未解锁的{label}：{pool[value]["name"]}')
+            return None
+        return value
+
+    bg = pick(payload.get('profile_bg_id'), _BY_ID['profile_bgs'],
+              unlocked_profile_bgs(stats), '个人资料背景')
+    pointer = pick(payload.get('pointer_effect_id'), _BY_ID['pointer_effects'],
+                   unlocked_pointer_effects(stats), '全局指针特效')
+    title = pick(payload.get('title_effect_id'), _BY_ID['title_effects'],
+                 unlocked_title_effects(stats), '称号动效')
+    if bg is not None:
+        fields['profile_bg_id'] = bg
+    if pointer is not None:
+        fields['pointer_effect_id'] = pointer
+    if title is not None:
+        fields['title_effect_id'] = title
+    if errors:
         return {}, errors
     return fields, []

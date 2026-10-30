@@ -99,6 +99,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const cardSaving = ref(false)
   const cardMessage = ref('')
   const cardError = ref(false)
+  const effectsSaving = ref(false)
+  const effectsMessage = ref('')
+  const effectsError = ref(false)
 
   const replay = ref<ToggleState>(emptyToggle())
   const spectate = ref<ToggleState>(emptyToggle())
@@ -263,6 +266,40 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  async function saveEffects(changes: JsonObject): Promise<JsonObject | null> {
+    if (effectsSaving.value) return null
+    if (!profile.value) {
+      effectsError.value = true
+      effectsMessage.value = '个人名片尚未加载'
+      return null
+    }
+    effectsSaving.value = true
+    effectsMessage.value = ''
+    effectsError.value = false
+    try {
+      const response = await fetch('/api/profile/effects', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify(changes),
+      })
+      const body = await readJson(response)
+      if (!response.ok || !body || body.success !== true) {
+        throw new Error(String(body?.error || '特效保存失败'))
+      }
+      const saved = body ? asObject(body.profile) : null
+      if (!saved) throw new Error('服务端没有返回已保存的特效')
+      profile.value = saved
+      effectsMessage.value = '已保存'
+      return saved
+    } catch (error) {
+      effectsError.value = true
+      effectsMessage.value = error instanceof Error ? error.message : String(error)
+      return null
+    } finally {
+      effectsSaving.value = false
+    }
+  }
+
   async function setPrivacy(key: PrivacyKey, on: boolean): Promise<boolean> {
     const row = profile.value
     if (!row || privacySaving.value) return false
@@ -369,6 +406,9 @@ export const useSettingsStore = defineStore('settings', () => {
     cardSaving.value = false
     cardMessage.value = ''
     cardError.value = false
+    effectsSaving.value = false
+    effectsMessage.value = ''
+    effectsError.value = false
     replay.value = emptyToggle()
     spectate.value = emptyToggle()
     passwordSaving.value = false
@@ -390,6 +430,9 @@ export const useSettingsStore = defineStore('settings', () => {
     cardSaving,
     cardMessage,
     cardError,
+    effectsSaving,
+    effectsMessage,
+    effectsError,
     replay,
     spectate,
     passwordSaving,
@@ -400,6 +443,7 @@ export const useSettingsStore = defineStore('settings', () => {
     loadToggle,
     setToggle,
     saveCard,
+    saveEffects,
     setPrivacy,
     changePassword,
     checkWallpapers,

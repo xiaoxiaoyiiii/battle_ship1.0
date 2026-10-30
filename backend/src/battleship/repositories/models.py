@@ -146,6 +146,9 @@ class UserProfile(Base):
     allow_spectate: Mapped[int | None] = mapped_column(sa.Integer, server_default=text("1"))
     allow_replay: Mapped[int | None] = mapped_column(sa.Integer, server_default=text("1"))
     avatar_alt: Mapped[str | None] = mapped_column(sa.Text, server_default=text("''"))
+    profile_bg_id: Mapped[str | None] = mapped_column(sa.Text, server_default=text("'deep_ocean'"))
+    pointer_effect_id: Mapped[str | None] = mapped_column(sa.Text, server_default=text("'none'"))
+    title_effect_id: Mapped[str | None] = mapped_column(sa.Text, server_default=text("'glint'"))
 
 
 class UserCardUsage(Base):

@@ -12,6 +12,7 @@ import FriendsOverlay from './components/FriendsOverlay.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
 import ScreenBoundary from './components/ScreenBoundary.vue'
 import ToastHost from './components/ToastHost.vue'
+import GlobalPointerEffects from './components/GlobalPointerEffects.vue'
 import DiceRollOverlay from './screens/game/DiceRollOverlay.vue'
 import { routeLoading } from './router'
 import { useAuthStore } from './stores/auth'
@@ -150,6 +151,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <!-- 全局交互装饰：覆盖首页、对局与所有弹层，但永远不拦截点击。 -->
+  <GlobalPointerEffects />
   <!-- Applied wallpaper layer (spec story 2); renders nothing until applied. -->
   <AppWallpaper />
   <OceanParticles />

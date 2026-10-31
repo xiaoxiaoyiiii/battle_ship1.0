@@ -13,7 +13,7 @@ import { useChainAnimationStore } from '../stores/chainAnimation'
 import { useCardEffectsStore } from '../stores/cardEffects'
 import type { InboundEvent, OutboundEvent } from '../socket/events.gen'
 import type { CardLike, Point } from '../screens/game/view'
-import { actionWaitReason, WAIT_EXEMPT_EVENTS } from '../screens/game/view'
+import { actionWaitReason, chainItems, opponentId, WAIT_EXEMPT_EVENTS } from '../screens/game/view'
 
 /**
  * The live battle wire channel (ticket #27).
@@ -213,6 +213,9 @@ export function applyBattleEvent(
       game.applyServerState({ last_attack: { attacker, x, y, hit, ship_sunk: shipSunk } })
       audio.play(shipSunk ? 'sunk' : hit ? 'hit' : 'miss')
       const mine = attacker === me
+      if (attacker && (mine || attacker === opponentId(state))) {
+        match.boardFocus = { side: mine ? 'opponent' : 'self' }
+      }
       if (hit && !shieldBlocked) match.clearRevived(!mine, [{ x, y }])
       if (mine) {
         // A shield-absorbed shot spends the attack but does not mark the cell
@@ -293,6 +296,22 @@ export function applyBattleEvent(
     }
     case 'chain_resolving': {
       if(typeof payload.room_id==='string' && payload.room_id!==state.room_id)break
+      // 聚焦独立于动画开关，只采用服务端公开的目标，不推算隐藏落点。
+      if (payload.stage === 'effect_windup') {
+        const effect = payload.effect as Record<string, unknown> | undefined
+        const target = effect?.target
+        if (me && target === me) match.boardFocus = { side: 'self' }
+        else if (target && target === opponentId(state)) match.boardFocus = { side: 'opponent' }
+      } else if (payload.stage === 'card' && !payload.negated_skip) {
+        const item = chainItems(payload)[Number(payload.order) - 1]
+        if (item?.preview && item.caster) {
+          const mine = item.caster === me || item.caster === state.player_seat
+          const otherSeat = state.player_seat === 'p1' ? 'p2' : state.player_seat === 'p2' ? 'p1' : ''
+          if (mine || item.caster === opponentId(state) || item.caster === otherSeat) {
+            match.boardFocus = { side: (item.preview.board === 'self') === mine ? 'self' : 'opponent' }
+          }
+        }
+      }
       if(payload.stage==='effect_windup'||payload.stage==='effect_tail')useCardEffectsStore(pinia).begin(payload)
       else {
         useChainAnimationStore(pinia).present(payload)

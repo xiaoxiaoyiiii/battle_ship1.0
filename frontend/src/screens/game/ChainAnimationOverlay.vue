@@ -96,12 +96,15 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="frame" class="chain-animation" data-testid="chain-animation" :data-kind="frame.cue.kind" :data-order="frame.cue.order" :data-cards="frame.cue.cards.map(card => card.name).join('|')" aria-hidden="true">
-    <canvas ref="canvas" class="chain-animation__canvas"></canvas>
-  </div>
+  <Teleport to="body">
+    <div v-if="frame" class="chain-animation" data-testid="chain-animation" :data-kind="frame.cue.kind" :data-order="frame.cue.order" :data-cards="frame.cue.cards.map(card => card.name).join('|')" aria-hidden="true">
+      <canvas ref="canvas" class="chain-animation__canvas"></canvas>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
-.chain-animation { position:fixed; inset:0; z-index:30; pointer-events:none; overflow:hidden; contain:strict; }
+/* 演出高于手牌与详情浮窗，仍允许操作层和系统提示显示在上方。 */
+.chain-animation { position:fixed; inset:0; z-index:var(--z-chain,90); pointer-events:none; overflow:hidden; contain:strict; }
 .chain-animation__canvas { display:block; width:100%; height:100%; pointer-events:none; }
 </style>

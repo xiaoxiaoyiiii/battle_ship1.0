@@ -149,6 +149,8 @@ export const useMatchStore = defineStore('match', () => {
    */
   const chainWindowCollapsed = ref(false)
   const lastAttack = ref<LastAttackLike | null>(null)
+  /** 每次公开攻击/牌效产生一个新请求；普通快照不改动用户选盘。 */
+  const boardFocus = ref<{ side: 'self' | 'opponent' } | null>(null)
   const revealed = ref<Point[]>([])
   const revivedSelf = ref<Point[]>([])
   const revivedOpponent = ref<Point[]>([])
@@ -361,6 +363,7 @@ export const useMatchStore = defineStore('match', () => {
     notices.value = []
     chainWindow.value = null
     lastAttack.value = null
+    boardFocus.value = null
     revealed.value = []
     revivedSelf.value = []
     revivedOpponent.value = []
@@ -403,6 +406,7 @@ export const useMatchStore = defineStore('match', () => {
     notices,
     chainWindow,
     lastAttack,
+    boardFocus,
     revealed,
     revivedSelf,
     revivedOpponent,

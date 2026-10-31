@@ -527,9 +527,6 @@ const targetBoard = computed(() => {
   return sel ? sel.descriptor.kind === 'own_ships' ? 'self' : sel.board ?? sel.descriptor.board ?? 'opponent' : null
 })
 const picking = computed(() => !!selection.value || !!match.pickRequest || !!match.shieldChoice)
-watch([targetBoard, compact], ([board, isCompact]) => {
-  if (board && isCompact) zoomOpen.value = board === 'self'
-}, { flush: 'sync' })
 const boardMode = layout.mode
 const tight = layout.tight
 const dense = layout.dense
@@ -637,10 +634,30 @@ const handFan = useHandFan({
 const showSelfBoard = computed(() => boardMode.value !== 'tabs' || zoomOpen.value)
 const showOpponentBoard = computed(() => !(boardMode.value === 'tabs' && zoomOpen.value))
 
-// 点船和加盾都在己方海域完成，标签档收到请求时直接展示可操作的棋盘。
-watch([() => match.pickRequest, shieldOpen, boardMode], ([pick, shield, mode]) => {
-  if (mode === 'tabs' && (pick || shield)) zoomOpen.value = true
+/** 选格/选船优先，其次跟随正在作用的海域；没有明确目标时按攻击方向展示。 */
+function focusBoard(side: 'self' | 'opponent' = myTurn.value ? 'opponent' : 'self'): void {
+  if (boardMode.value !== 'tabs') return
+  const target = targetBoard.value
+    ?? (match.pickRequest || shieldOpen.value || state.value.needs_reset ? 'self' : side)
+  zoomOpen.value = target === 'self'
+}
+
+// 首帧可能在 RPS 页就已收到攻击者；进入标签档和开始战斗阶段也要重新对准海域。
+// 只监听标量，不让普通 room_sync 抢走手动选盘。
+watch([
+  () => state.value.current_attacker,
+  () => state.value.player_id,
+  () => state.value.current_phase,
+  () => state.value.round,
+  boardMode,
+], () => {
+  if (state.value.current_attacker && state.value.player_id) focusBoard()
 }, { immediate: true })
+watch([targetBoard, () => Boolean(match.pickRequest), shieldOpen, () => state.value.needs_reset],
+  () => focusBoard(), { immediate: true, flush: 'sync' })
+watch(() => match.boardFocus, request => {
+  if (request) focusBoard(request.side)
+})
 
 watch([detailOpen, quickChatOpen, logOpen, discardOpen, moreOpen], (value, previous) => {
   if (!compact.value) return
@@ -1578,7 +1595,6 @@ watch(
   () => state.value.current_attacker,
   (attacker) => {
     if (!attacker) return
-    if (compact.value && !picking.value) zoomOpen.value = !myTurn.value
     announce(myTurn.value ? '轮到你行动' : '轮到' + opponentName.value + '行动')
   },
 )

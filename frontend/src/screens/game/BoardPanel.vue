@@ -75,6 +75,8 @@ function hintsFor(cell: BoardCell) {
 const hints = computed(() => hintedCell.value && !props.hidden ? hintsFor(hintedCell.value) : [])
 function hideHint() { hintedKey.value = null }
 async function showHint(cell: BoardCell, event: Event) {
+  // 触屏点击的目标说明已在停靠面板中显示，不再留一个浮动提示盖住海域。
+  if (window.matchMedia('(hover: none)').matches) { hideHint(); return }
   if (!hintsFor(cell).length) { hideHint(); return }
   const anchor = (event.currentTarget as HTMLElement).getBoundingClientRect()
   hintedKey.value = cell.key

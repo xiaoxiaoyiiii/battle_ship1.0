@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import BoardPanel from './BoardPanel.vue'
+import MobileCardReader from './MobileCardReader.vue'
 import StatusMonitor from './StatusMonitor.vue'
 import EffectMonitor from './EffectMonitor.vue'
 import { useAdaptiveGameLayout } from './useAdaptiveGameLayout'
@@ -458,13 +459,15 @@ function inspectChain(card: { name: string; speed?: number | string; type?: stri
   chainPreviewSource.value = source
 }
 function onChainCardClick(card: CardLike): void {
-  if (!canHover && chainTouchArmed.value !== card.name) {
+  if (compact.value || (!canHover && chainTouchArmed.value !== card.name)) {
     chainTouchArmed.value = card.name
     inspectChain(card)
     return
   }
   void respondChain(card)
 }
+const mobileChainCard = computed(() => fullCard(speed3Hand.value.find(card => card.name === chainTouchArmed.value)))
+const mobileChainRead = computed(() => chainPreviewSource.value === 'trigger' ? chainInspect.value : mobileChainCard.value)
 watch(
   () => chainWindow.value?.openedAt,
   () => {
@@ -518,39 +521,15 @@ interface QuickChatItem {
 const layout = useAdaptiveGameLayout()
 const compact = layout.compact
 
-watch(
-  () => {
-    const sel = selection.value
-    // 「选自己两艘舰」这类没有棋盘开关的目标，棋盘就在自己这边。
-    const board = !sel
-      ? null
-      : sel.descriptor.kind === 'own_ships'
-        ? 'self'
-        : sel.board ?? sel.descriptor.board ?? 'opponent'
-    // compact 也要进依赖：选目标途中把窗口缩成手机尺寸（或手机横竖屏切换）
-    // 时必须同步可见海域，否则目标在己方却只显示对方棋盘，格子点不动。
-    return { board, compact: compact.value }
-  },
-  ({ board, compact: isCompact }) => {
-    if (!board) return
-    zoomOpen.value = isCompact && board === 'self'
-  },
-)
-
-
-/**
- * 紧凑档没有常驻右列：连锁响应、卡牌详情、待选请求都必须能弹出成底部面板，
- * 否则手机上连锁/详情不可达（原 main 用 aux-dock + chain-prompt 保证可达）。
- */
+// 目标海域优先；使用标量依赖，普通 room_sync 不会把手动切换的海域抢回去。
+const targetBoard = computed(() => {
+  const sel = selection.value
+  return sel ? sel.descriptor.kind === 'own_ships' ? 'self' : sel.board ?? sel.descriptor.board ?? 'opponent' : null
+})
 const picking = computed(() => !!selection.value || !!match.pickRequest || !!match.shieldChoice)
-
-const railSheet = computed(
-  () =>
-    compact.value &&
-    // 选目标/待选期间绝不能让面板盖住棋盘：棋盘本身就是点击面。
-    !picking.value &&
-    detailOpen.value,
-)
+watch([targetBoard, compact], ([board, isCompact]) => {
+  if (board && isCompact) zoomOpen.value = board === 'self'
+}, { flush: 'sync' })
 const boardMode = layout.mode
 const tight = layout.tight
 const dense = layout.dense
@@ -654,44 +633,6 @@ const handFan = useHandFan({
   enabled: computed(() => !compact.value),
 })
 
-/**
- * 量出「棋盘以外」的垂直占用（HUD、场地条、海域标签、手牌条、主行动条 + 间距），
- * 交给布局组合算棋盘边长。这几块的高度不随棋盘变化，所以不会和棋盘互相追着改。
- */
-function measureGameChrome(): void {
-  const root = gameEl.value
-  if (!root) return
-  if (!compact.value || tight.value) {
-    layout.setChrome(0)
-    return
-  }
-  const heightOf = (selector: string): number => {
-    const node = root.querySelector<HTMLElement>(selector)
-    return node ? node.getBoundingClientRect().height : 0
-  }
-  const tabs = boardMode.value === 'tabs' ? heightOf('.board-tabs') : 0
-  const total =
-    heightOf('.game-hud') +
-    heightOf('.field-magic-area') +
-    tabs +
-    heightOf('.game-hand-wrap') +
-    heightOf('.game-compact-bar')
-  // .game 的 gap + 内边距（紧凑档 6px gap / 6-8px padding）
-  layout.setChrome(total + 40)
-}
-
-function scheduleChromeMeasure(): void {
-  if (typeof window === 'undefined') return
-  void nextTick(() => {
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(measureGameChrome)
-    })
-  })
-}
-
-watch([compact, tight, boardMode, () => state.value, () => hand.value.length], scheduleChromeMeasure, {
-  flush: 'post',
-})
 /** 标签档只显示一块棋盘；并排/叠放档两块都常驻。 */
 const showSelfBoard = computed(() => boardMode.value !== 'tabs' || zoomOpen.value)
 const showOpponentBoard = computed(() => !(boardMode.value === 'tabs' && zoomOpen.value))
@@ -700,6 +641,27 @@ const showOpponentBoard = computed(() => !(boardMode.value === 'tabs' && zoomOpe
 watch([() => match.pickRequest, shieldOpen, boardMode], ([pick, shield, mode]) => {
   if (mode === 'tabs' && (pick || shield)) zoomOpen.value = true
 }, { immediate: true })
+
+watch([detailOpen, quickChatOpen, logOpen, discardOpen, moreOpen], (value, previous) => {
+  if (!compact.value) return
+  const opened = value.findIndex((open, index) => open && !previous?.[index])
+  if (opened < 0) return
+  if (opened !== 0) clearCardSelection()
+  if (opened !== 1) quickChatOpen.value = false
+  if (opened !== 2) logOpen.value = false
+  if (opened !== 3) { discardOpen.value = false; discardDetail.value = null }
+  if (opened !== 4) moreOpen.value = false
+})
+watch(picking, active => {
+  if (!active || !compact.value) return
+  clearCardSelection()
+  quickChatOpen.value = logOpen.value = discardOpen.value = moreOpen.value = false
+})
+watch([() => match.chainWindow, priorityRequest], ([chain, priority]) => {
+  if ((!chain && !priority) || !compact.value) return
+  clearCardSelection()
+  quickChatOpen.value = logOpen.value = discardOpen.value = moreOpen.value = false
+})
 
 const shipSlots = computed(() => {
   const ships = Array.isArray(state.value.ships) ? state.value.ships : []
@@ -840,7 +802,7 @@ function onCardClick(index: number): void {
     return
   }
   const key = cardTestId(card, index, hand.value)
-  if (selectedCardIndex.value === index && selectedCardKey.value === key) {
+  if (!compact.value && selectedCardIndex.value === index && selectedCardKey.value === key) {
     void playCard(index)
     return
   }
@@ -850,7 +812,7 @@ function onCardClick(index: number): void {
   if (disabled) {
     say('game-card-disabled', disabled, '点卡片看限制条件，换个阶段或用别的卡。')
   } else {
-    announce('已选中' + card.name + '。再点一次或点「使用此卡」出牌。')
+    announce('已选中' + card.name + '。点「使用此卡」出牌。')
   }
 }
 
@@ -1602,7 +1564,7 @@ watch(
     selection.value = null
     shieldPicks.value = []
     shieldError.value = ''
-    zoomOpen.value = false
+    zoomOpen.value = !myTurn.value
     quickChatOpen.value = false
     quickPhrasesOpen.value = false
     logOpen.value = false
@@ -1616,6 +1578,7 @@ watch(
   () => state.value.current_attacker,
   (attacker) => {
     if (!attacker) return
+    if (compact.value && !picking.value) zoomOpen.value = !myTurn.value
     announce(myTurn.value ? '轮到你行动' : '轮到' + opponentName.value + '行动')
   },
 )
@@ -1653,8 +1616,6 @@ onMounted(() => {
   }, 250)
   void loadQuickChatCatalog()
   window.addEventListener('keydown', onKeydown)
-  scheduleChromeMeasure()
-  window.addEventListener('resize', scheduleChromeMeasure)
 })
 
 onBeforeUnmount(() => {
@@ -1665,7 +1626,6 @@ onBeforeUnmount(() => {
   if (ticker !== null) window.clearInterval(ticker)
   ticker = null
   window.removeEventListener('keydown', onKeydown)
-  window.removeEventListener('resize', scheduleChromeMeasure)
 })
 
 function backToLobby(): void {
@@ -1682,8 +1642,8 @@ function backToLobby(): void {
     :data-boards="boardMode"
     :data-tight="tight ? 'true' : 'false'"
     :data-dense="dense ? 'true' : 'false'"
-    :class="{ 'is-picking': picking, 'is-sheet': railSheet }"
-    :style="boardSize ? { '--board-size': boardSize + 'px' } : undefined"
+    :class="{ 'is-picking': picking }"
+    :style="boardSize ? { '--board-size': boardSize + 'px', '--mobile-rail-width': layout.mobile.value.railWidth + 'px', '--mobile-hand-height': layout.mobile.value.handHeight + 'px' } : undefined"
     aria-labelledby="screen-game-title"
     ref="gameEl"
   >
@@ -1731,7 +1691,7 @@ function backToLobby(): void {
           <h2 class="hud-round">第<span class="hud-round__num" data-testid="game-round">{{ state.round }}</span>回合</h2>
           <div class="hud-chips">
             <div class="hud-primary-chips">
-              <span class="hud-chip" data-testid="game-phase">{{ phaseText }}</span>
+              <span class="hud-chip" data-testid="game-phase"><template v-if="compact">{{ state.round }}回 · {{ phaseText.replace('阶段', '') }}</template><template v-else>{{ phaseText }}</template></span>
               <span class="hud-chip hud-chip--turn" data-testid="game-attacker">{{ turnLabel }}</span>
               <span class="hud-chip" data-testid="game-attacks">攻击 <b>×{{ state.attacks_remaining }}</b></span>
               <span
@@ -1934,7 +1894,7 @@ function backToLobby(): void {
       </div>
 
       <!-- 右列：连锁结算 / 卡牌详情 / 计数与主行动（原 main 的 .arena-rail + 详情列） -->
-      <aside class="arena-rail" :class="{ 'arena-rail--sheet': railSheet }" aria-label="连锁、卡牌与操作">
+      <aside class="arena-rail" aria-label="连锁、卡牌与操作">
         <section class="arena-rail-panel arena-chain-slot" data-testid="game-chain-rail">
           <header class="arena-rail-head"><span>连锁结算</span><span v-if="chainList.length" class="arena-chain-count">{{ chainList.length }} 重</span></header>
           <!-- 原 main 的 .chain-stack：104×156 卡面竖向叠放，相邻压住约 1/3 -->
@@ -1971,7 +1931,7 @@ function backToLobby(): void {
 
         <!-- 卡牌详情 / 待使用：选中后原位展开，未选中时给出占位（原 main 的 .magic-preview-container） -->
         <section
-          v-if="detailOpen && hand[selectedCardIndex]"
+          v-if="!compact && detailOpen && hand[selectedCardIndex]"
           ref="detailPanelEl"
           class="game-detail"
           :class="{ 'game-detail--float': !compact }"
@@ -2130,7 +2090,7 @@ function backToLobby(): void {
         </button>
       </div>
       <Transition name="card-inspect-fade">
-        <aside v-if="previewCard" class="game-card-inspect" data-testid="game-card-hover-preview" aria-live="polite" @mouseenter="showCardPreview(hoveredCardIndex)" @mouseleave="hideCardPreview()">
+        <aside v-if="!compact && previewCard" class="game-card-inspect" data-testid="game-card-hover-preview" aria-live="polite" @mouseenter="showCardPreview(hoveredCardIndex)" @mouseleave="hideCardPreview()">
           <div class="game-card-inspect__art" :class="{ 'is-empty': !cardArtUrl(previewCard.name) }">
             <img v-if="cardArtUrl(previewCard.name)" :src="cardArtUrl(previewCard.name) || ''" :alt="previewCard.name + ' 卡面预览'" />
             <span v-else>{{ previewCard.name }}</span>
@@ -2193,7 +2153,7 @@ function backToLobby(): void {
     </div>
 
     <section v-if="selection" ref="targetPanelEl" :style="targetPanelStyle" class="game-target battle-prompt" :class="{ 'is-dragging': targetDrag.state.value.dragging }" data-testid="game-target" aria-label="目标选择" role="region">
-      <header ref="targetHeadEl" class="battle-prompt__head battle-prompt__handle" @pointerdown="targetDrag.onPointerDown">
+      <header ref="targetHeadEl" class="battle-prompt__head battle-prompt__handle" @pointerdown="!compact && targetDrag.onPointerDown($event)">
         <div><p class="battle-prompt__context">卡牌目标选择</p><h2 class="game-target__title" data-testid="game-target-title">{{ targetTitle }}</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div>
         <img v-if="cardArtUrl(selection.card.name)" class="battle-prompt__card-art" :src="cardArtUrl(selection.card.name)!" alt="" draggable="false" />
       </header>
@@ -2242,15 +2202,15 @@ function backToLobby(): void {
       :aria-modal="chainWindow ? 'true' : undefined"
       aria-label="连锁"
     >
-      <header ref="chainHeadEl" class="game-chain-panel__head battle-prompt__head battle-prompt__handle" @pointerdown="chainDrag.onPointerDown">
+      <header ref="chainHeadEl" class="game-chain-panel__head battle-prompt__head battle-prompt__handle" @pointerdown="!compact && chainDrag.onPointerDown($event)">
         <div><p class="battle-prompt__context">连锁响应</p><h2 class="game-chain-panel__title">是否接续这次连锁？</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div>
       </header>
       <section v-if="chainWindow" class="game-chain-window" data-testid="game-chain-window">
         <p class="game-chain-window__card">
           {{ chainWindow.caster === state.player_id ? '你发动了魔法卡' : '对方发动了魔法卡' }}
-          <span class="chain-preview-anchor" @mouseleave="chainPreviewSource = ''">
+          <span class="chain-preview-anchor" @mouseleave="!compact && (chainPreviewSource = '')">
             <button type="button" class="game-chain-ref" data-testid="game-chain-window-card" :aria-describedby="chainPreviewSource === 'trigger' ? 'chain-trigger-preview' : undefined"
-              @mouseenter="inspectChain(chainWindow.card, 'trigger')" @focus="inspectChain(chainWindow.card, 'trigger')" @blur="chainPreviewSource = ''" @click="inspectChain(chainWindow.card, 'trigger')">【{{ chainWindow.card?.name || '魔法卡' }}】</button>
+              @mouseenter="canHover && !compact && inspectChain(chainWindow.card, 'trigger')" @focus="canHover && !compact && inspectChain(chainWindow.card, 'trigger')" @blur="!compact && (chainPreviewSource = '')" @click="inspectChain(chainWindow.card, 'trigger')">【{{ chainWindow.card?.name || '魔法卡' }}】</button>
             <span v-if="chainInspect && chainPreviewSource === 'trigger'" id="chain-trigger-preview" class="chain-effect-preview" data-testid="game-chain-inspect" role="tooltip">
               <b data-testid="game-chain-inspect-name">{{ chainInspect.name }}</b><small>速阶 {{ chainInspect.speed }}</small><span data-testid="game-chain-inspect-desc">{{ chainInspect.description || '暂无效果描述' }}</span>
             </span>
@@ -2261,17 +2221,21 @@ function backToLobby(): void {
           <div class="game-chain-ring" :style="{ '--chain-progress': String(chainProgress) }" aria-hidden="true"></div>
           <p class="game-chain-countdown" data-testid="game-chain-window-countdown" :aria-label="'剩余 ' + chainRemaining + ' 秒'">{{ chainRemaining }}</p>
         </div>
-        <p class="game-chain-window__hint" data-testid="game-chain-hint">{{ canHover ? '把鼠标移到卡上可以看效果，点一下即打出；上面的卡名也能看对方那张卡。' : '点一下卡牌先看完整效果，再点一下打出；点上面的卡名可看触发卡。' }}不响应请点「不响应」。</p>
+        <p class="game-chain-window__hint" data-testid="game-chain-hint">{{ canHover && !compact ? '把鼠标移到卡上可以看效果，点一下即打出；上面的卡名也能看对方那张卡。' : '点卡牌阅读效果，确认后点击「接续此卡」；点上面的卡名可看触发卡。' }}不响应请点「不响应」。</p>
         <div class="game-chain-options">
-          <div v-for="(card, index) in speed3Hand" :key="chainCardTestId(card, index, speed3Hand)" class="chain-preview-anchor" @mouseleave="chainPreviewSource = ''">
+          <div v-for="(card, index) in speed3Hand" :key="chainCardTestId(card, index, speed3Hand)" class="chain-preview-anchor" @mouseleave="!compact && (chainPreviewSource = '')">
             <button type="button" class="game-chain-option" :class="{ 'is-inspected': chainInspect?.name === card.name }" :data-testid="chainCardTestId(card, index, speed3Hand)"
               :aria-describedby="chainPreviewSource === 'hand-' + index ? 'chain-hand-preview-' + index : undefined"
-              @mouseenter="canHover && inspectChain(card, 'hand-' + index)" @focus="inspectChain(card, 'hand-' + index)" @blur="chainPreviewSource = ''" @click="onChainCardClick(card); if (!canHover) chainPreviewSource = 'hand-' + index">
+              @mouseenter="canHover && !compact && inspectChain(card, 'hand-' + index)" @focus="canHover && !compact && inspectChain(card, 'hand-' + index)" @blur="!compact && (chainPreviewSource = '')" @click="onChainCardClick(card); if (!canHover) chainPreviewSource = 'hand-' + index">
               <img v-if="cardArtUrl(card.name)" class="game-chain-option__art" :src="cardArtUrl(card.name)!" alt="" draggable="false" /><b>{{ card.name }}</b><small>速阶 {{ fullCard(card)?.speed }}</small><span class="game-chain-option__desc">{{ fullCard(card)?.description || '暂无效果描述' }}</span>
             </button>
             <span v-if="chainInspect && chainPreviewSource === 'hand-' + index" :id="'chain-hand-preview-' + index" class="chain-effect-preview" data-testid="game-chain-inspect" role="tooltip"><b data-testid="game-chain-inspect-name">{{ chainInspect.name }}</b><small>速阶 {{ chainInspect.speed }}</small><span data-testid="game-chain-inspect-desc">{{ chainInspect.description || '暂无效果描述' }}</span></span>
           </div>
           <p v-if="!speed3Hand.length" class="game-chain-no-options">手中没有可响应的速阶 3 魔法卡。</p>
+        </div>
+        <div v-if="compact && mobileChainRead" class="game-chain-mobile-effect" data-testid="game-chain-mobile-effect">
+          <strong>{{ mobileChainRead.name }}</strong><p>{{ mobileChainRead.description }}</p>
+          <button v-if="chainPreviewSource !== 'trigger' && mobileChainCard" type="button" class="button button--primary" data-testid="game-chain-confirm" @click="respondChain(mobileChainCard)">接续此卡</button>
         </div>
         <div class="game-chain-window__actions">
           <button type="button" class="button button--ghost" data-testid="game-chain-collapse" @click="chainPreviewSource = ''; match.collapseChainWindow()">暂时收起 · 查看棋盘</button>
@@ -2284,7 +2248,7 @@ function backToLobby(): void {
     </Transition>
 
     <section v-if="shieldOpen && !cardEffects.busy && !shieldSubmitting" ref="pickPanelEl" :style="pickPanelStyle" class="game-dialog game-shield-choice game-pick-float battle-prompt" :class="{ 'is-dragging': pickDrag.state.value.dragging }" data-testid="game-shield-choice" role="dialog" aria-label="仁王之盾选择">
-      <header ref="pickHeadEl" class="battle-prompt__head battle-prompt__handle" @pointerdown="pickDrag.onPointerDown"><div><p class="battle-prompt__context">选择保护目标</p><h2 class="game-dialog__title" data-testid="game-shield-choice-title">「仁王之盾」：请选择要保护的战舰</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div><img v-if="cardArtUrl('仁王之盾')" class="battle-prompt__card-art" :src="cardArtUrl('仁王之盾')!" alt="" draggable="false" /></header>
+      <header ref="pickHeadEl" class="battle-prompt__head battle-prompt__handle" @pointerdown="!compact && pickDrag.onPointerDown($event)"><div><p class="battle-prompt__context">选择保护目标</p><h2 class="game-dialog__title" data-testid="game-shield-choice-title">「仁王之盾」：请选择要保护的战舰</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div><img v-if="cardArtUrl('仁王之盾')" class="battle-prompt__card-art" :src="cardArtUrl('仁王之盾')!" alt="" draggable="false" /></header>
       <p class="game-dialog__hint" data-testid="game-shield-choice-hint">在自己海域点击高亮的战舰格；再点一次取消选择。</p>
       <p class="game-dialog__hint battle-prompt__progress" data-testid="game-shield-choice-count" aria-live="polite">已选 {{ shieldPicks.length }} / 3 艘</p>
       <p v-if="shieldError" class="game-dialog__error" data-testid="game-shield-choice-error">{{ shieldError }}</p>
@@ -2296,11 +2260,19 @@ function backToLobby(): void {
     </section>
 
     <section v-if="match.pickRequest && !cardEffects.busy" ref="pickPanelEl" :style="pickPanelStyle" class="game-dialog game-pick game-pick-float battle-prompt" :class="{ 'is-dragging': pickDrag.state.value.dragging }" data-testid="game-ship-pick" role="alertdialog" aria-label="选船">
-      <header ref="pickHeadEl" class="battle-prompt__head battle-prompt__handle" @pointerdown="pickDrag.onPointerDown"><div><p class="battle-prompt__context">等待你的选择</p><h2 class="game-dialog__title">请选择一艘自己的战舰</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div></header>
+      <header ref="pickHeadEl" class="battle-prompt__head battle-prompt__handle" @pointerdown="!compact && pickDrag.onPointerDown($event)"><div><p class="battle-prompt__context">等待你的选择</p><h2 class="game-dialog__title">请选择一艘自己的战舰</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div></header>
       <p class="game-dialog__hint" data-testid="game-ship-pick-message">{{ match.pickRequest.message }}</p>
       <p class="game-dialog__hint battle-prompt__status">{{ pickSubmitting ? '正在确认选择…' : '在己方海域点击高亮的战舰，即可确认选择。' }}</p>
     </section>
 
+
+    <MobileCardReader
+      v-if="compact && detailOpen && hand[selectedCardIndex] && !picking"
+      :card="fullCard(hand[selectedCardIndex])!"
+      :reason="cardDisabled(hand[selectedCardIndex])"
+      :can-discard="state.field_magic === '教皇旨意' && state.current_phase === 'battle' && myTurn && !busy && !writeWaitReason"
+      @close="cancelCardSelection" @use="useSelectedCard" @discard="discardSelectedForAttacks"
+    />
 
     <PlayerCardDialog
       v-if="playerCardSide"
@@ -2452,6 +2424,7 @@ function backToLobby(): void {
 <style scoped src="./game-screen.css"></style>
 <style src="./battle-prompt.css"></style>
 <style scoped src="./card-inspect.css"></style>
+<style scoped src="./game-mobile.css"></style>
 
 <style scoped>
 /* 只改变响应窗口的呈现，不改变连锁计时和响应状态。 */

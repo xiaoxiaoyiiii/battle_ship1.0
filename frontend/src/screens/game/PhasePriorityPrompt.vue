@@ -25,6 +25,7 @@ const action = computed(() => request.value.action === 'enter_end' ? '进入结�
 function hidePreview(): void { hoveredIndex.value = null }
 
 async function showPreview(index: number, event: MouseEvent): Promise<void> {
+  if (!window.matchMedia('(hover: hover) and (min-width: 1200px) and (min-height: 700px)').matches) return
   const anchor = (event.currentTarget as HTMLElement).getBoundingClientRect()
   hoveredIndex.value = index
   await nextTick()
@@ -52,7 +53,7 @@ function playSelected(): void {
 
 function choose(index: number): void {
   if (props.busy || remaining.value <= 0) return
-  if (selectedIndex.value === index) playSelected()
+  if (selectedIndex.value === index && window.matchMedia('(hover: hover) and (min-width: 1200px) and (min-height: 700px)').matches) playSelected()
   else selectedIndex.value = index
 }
 
@@ -73,11 +74,11 @@ onBeforeUnmount(() => window.removeEventListener('resize', hidePreview))
         <div><p class="battle-prompt__context">阶段转换时点</p><h2 id="phase-prompt-title">对方即将{{ action }}</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div>
         <span class="phase-prompt__clock" :class="{ urgent: remaining <= 3 }" data-testid="game-phase-countdown"><strong>{{ remaining }}</strong> 秒</span>
       </header>
-      <p class="phase-prompt__hint">你可以在此时打出速阶三卡牌。选择一张查看效果，再次点击或点击「打出」使用。</p>
+      <p class="phase-prompt__hint">你可以在此时打出速阶三卡牌。选择一张阅读效果，点击「打出」使用。</p>
       <div class="phase-prompt__cards" aria-label="可用速阶三卡牌">
         <button v-for="(card, index) in cards" :key="card.name + index" type="button" class="phase-prompt__card" :class="{ 'is-selected': selectedIndex === index }" :aria-pressed="selectedIndex === index" :data-testid="'game-phase-card-' + card.name" :disabled="busy || remaining <= 0" @mouseenter="showPreview(index, $event)" @mouseleave="hidePreview" @blur="hidePreview" @click="choose(index)">
           <img v-if="cardArtUrl(card.name)" :src="cardArtUrl(card.name)!" :alt="card.name + '卡面'" />
-          <span><strong>{{ card.name }}</strong><small>速阶 {{ card.speed }}</small><small class="phase-prompt__card-state">{{ selectedIndex === index ? '已选中 · 再次点击打出' : '点击查看效果' }}</small></span>
+          <span><strong>{{ card.name }}</strong><small>速阶 {{ card.speed }}</small><small class="phase-prompt__card-state">{{ selectedIndex === index ? '已选中 · 点击下方打出' : '点击查看效果' }}</small></span>
         </button>
       </div>
       <div class="phase-prompt__effect" :class="{ 'is-empty': !selected }" data-testid="game-phase-card-effect" aria-live="polite">

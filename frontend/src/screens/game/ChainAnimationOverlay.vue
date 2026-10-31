@@ -6,6 +6,7 @@ import { useUiStore } from '../../stores/ui'
 import { useAudioStore } from '../../stores/audio'
 import { cardArtUrl } from '../../cards/cardArt'
 import { drawChainFrame } from './chainAnimationCanvas'
+import { planChainStage, type ChainStageInsets } from './chainStageLayout'
 import type { ChainFrame } from './chainAnimation'
 
 const props = defineProps<{ suspended?: boolean }>()
@@ -15,6 +16,29 @@ const frame = shallowRef<ChainFrame | null>(null)
 const art = new Map<string, HTMLImageElement>()
 let raf = 0, mounted = false
 let motion: MediaQueryList | null = null
+let cachedInsets: ChainStageInsets = { top: 0, right: 0, bottom: 0, left: 0 }
+let cachedViewport = ''
+
+/** 安全区由壳层暴露的 CSS 变量提供（刘海/手势区），无则按 0 处理。 */
+function readInsets(): ChainStageInsets {
+  const key = `${window.innerWidth}x${window.innerHeight}`
+  if (key === cachedViewport) return cachedInsets
+  const shell = document.querySelector('.app-shell')
+  const style = shell ? getComputedStyle(shell) : null
+  const read = (name: string): number => {
+    const raw = style?.getPropertyValue(name) ?? ''
+    const value = Number.parseFloat(raw)
+    return Number.isFinite(value) ? Math.max(0, value) : 0
+  }
+  cachedViewport = key
+  cachedInsets = {
+    top: read('--app-safe-top'),
+    right: read('--app-safe-right'),
+    bottom: read('--app-safe-bottom'),
+    left: read('--app-safe-left'),
+  }
+  return cachedInsets
+}
 
 function lookup(name: string): HTMLImageElement | null {
   if (art.has(name)) return art.get(name) ?? null
@@ -38,7 +62,12 @@ function tick(): void {
       canvas.value.width = Math.round(width * ratio); canvas.value.height = Math.round(height * ratio)
     }
     const ctx = canvas.value.getContext('2d')
-    if (ctx) { ctx.setTransform(ratio, 0, 0, ratio, 0, 0); drawChainFrame(ctx, next, width, height, lookup) }
+    if (ctx) {
+      // 构图按可用宽高 + 安全区实时计算：旋转只影响下一帧的布局，不重挂载、不重置时间轴。
+      const plan = planChainStage({ width, height, count: next.cue.cards.length, insets: readInsets() })
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
+      drawChainFrame(ctx, next, plan, lookup)
+    }
   }
   // 绘制可能跨过截止时刻；已有画面时仍需下一帧负责移除叠层。
   if (next || Date.now() < animation.until()) raf = window.requestAnimationFrame(tick)

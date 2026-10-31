@@ -989,6 +989,13 @@
   transform: none;
 }
 
+/* 局内部署复用主盘：保留原海域状态，用亮边区分合法落点。 */
+.game.is-placing :deep(.board--self .cell--legal) {
+  border-color: var(--role-action);
+  background-color: color-mix(in srgb, var(--role-action) 12%, var(--cell-bg));
+}
+.game.is-placing :deep(.board--self .cell:not(.cell--legal)) { opacity:.38; }
+
 .game-target__main {
   flex: 1 1 280px;
   display: flex;

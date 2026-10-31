@@ -36,6 +36,39 @@ def _value(value) -> str:
     return getattr(value, "value", value)
 
 
+def has_pending_redeployment(room: Room, player_id: str) -> bool:
+    """绝处逢生、神机妙算尚未落地的部署：激活项与排队项同样有效。"""
+
+    for temp in [room.magic_temp_data, *room.magic_temps.values()]:
+        pending = temp.get("pending_placement") if isinstance(temp, dict) else None
+        if (
+            isinstance(pending, dict)
+            and pending.get("caster") == player_id
+            and pending.get("kind") in ("last_stand", "shenji_redeploy")
+            and int(pending.get("remaining") or 0) > 0
+        ):
+            return True
+    return False
+
+
+def is_zero_ship_defeat(room: Room, player_id: str) -> bool:
+    """零舰真实败局的唯一判据；清盘和指定重部署的中间态不算败局。
+
+    不以舰船列表是否为空判断：献祭和临时舰收回会移出最后一艘舰。
+    `contract_suppress` 由编排层决定何时调用本判据；效果末尾仍可在该作用域内
+    检查最终败局，献祭步骤则等待整张效果的净变化完成后再检查。
+    """
+
+    player = room.players.get(player_id)
+    return bool(
+        player is not None
+        and _value(room.state) == RoomState.ATTACKING.value
+        and player.remaining_ships <= 0
+        and not player.needs_reset
+        and not has_pending_redeployment(room, player_id)
+    )
+
+
 RPS_CHOICES: tuple[str, ...] = ("rock", "paper", "scissors")
 RPS_BEATS: dict[str, str] = {
     "rock": "scissors",

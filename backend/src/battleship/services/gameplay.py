@@ -336,6 +336,8 @@ class GameplayService:
         # Ticket #51: the opponent's placement screen learns "already placed"
         # from the same authoritative snapshot (no new event, no new field).
         await self.rooms.push_room_sync(room)
+        if self.magic is not None:
+            self.magic.resume_chain_if_ready(room)
         return {"status": "success"}
 
     @guard_phase_write

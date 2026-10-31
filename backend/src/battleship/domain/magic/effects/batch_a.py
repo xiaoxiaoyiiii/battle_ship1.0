@@ -18,6 +18,7 @@ from typing import Any, Iterable
 from ... import effects
 from ...battle import (
     SPLASH_NEEDS_HIT,
+    is_zero_ship_defeat,
     line_cells,
     mark_ship_sunken,
     resolve_area_strike,
@@ -76,8 +77,7 @@ def _unique_sunk(cells: Iterable[Any]) -> list[PlayerShip]:
 
 
 async def _finish_if_wiped(ctx: EffectContext) -> bool:
-    opponent = ctx.opponent
-    if opponent.remaining_ships <= 0:
+    if is_zero_ship_defeat(ctx.room, ctx.opponent_id):
         await ctx.finish(ctx.caster_id, ctx.opponent_id, "魔法卡清空对方棋盘")
         return True
     return False
@@ -320,10 +320,10 @@ async def shenwei(ctx: EffectContext) -> EffectResult:
         message = f"目标区域内{len(excluded)}艘战舰被暂时除外"
 
     await ctx.sync_ships()
-    if board != "self" and ctx.opponent.remaining_ships <= 0:
+    if board != "self" and is_zero_ship_defeat(ctx.room, ctx.opponent_id):
         await ctx.finish(ctx.caster_id, ctx.opponent_id, "神威！清空对方棋盘")
         return EffectResult(True, message + "，对方战舰全灭，直接获胜", game_over=True)
-    if ctx.caster.remaining_ships <= 0 and board == "self":
+    if board == "self" and is_zero_ship_defeat(ctx.room, ctx.caster_id):
         await ctx.finish(ctx.opponent_id, ctx.caster_id, "神威！清空己方棋盘")
         return EffectResult(True, message + "，己方战舰全灭，判负", game_over=True)
     return EffectResult(True, message)

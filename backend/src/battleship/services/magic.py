@@ -81,7 +81,7 @@ from ..domain.room.sync import EFFECT_BADGES, _card_unavailable_reasons, _specta
 from ..infra.logging import get_logger
 from ..infra.timers import TaskRegistry
 from .rooms import Connection, EventPublisher, NullPublisher, RoomService
-from .priority import guard_phase_write
+from .priority import guard_phase_write, room_action
 from .settlement import SettlementService
 from .magic_audio import COMPLETION_AUDIO_CARDS, PICK_AUDIO_REASONS, emit_magic_sfx
 from .card_animation import chain_card_effect, effect_description, effect_for_viewer
@@ -167,6 +167,10 @@ class MagicService:
         self.ai_place_hook: Callable[[Room, str], Awaitable[bool]] | None = None
         self.ai_choice_hook: Callable[[Room, str], Awaitable[bool]] | None = None
         self._interaction_waits: dict[str, tuple[tuple, float]] = {}
+        # 当前牌的选船/部署结束前保存连锁进度，释放房间锁等待真人回答。
+        self._chain_resolutions: dict[str, dict[str, Any]] = {}
+        self._chain_running: set[str] = set()
+        self._chain_resume_tasks: dict[str, asyncio.Task] = {}
         self.shenji_timeout_seconds = 30.0
         self._shenji_tasks: dict[tuple[str, int], asyncio.Task] = {}
         # Ticket #13 (priority) fills this; without it the chain still resolves.
@@ -612,7 +616,7 @@ class MagicService:
 
         # 二次确认发生在连锁收尾之后，必须在这里结算最后一艘献祭的败局。
         # 效果执行中的献祭仍交给原效果处理，避免把重部署的中间态判负。
-        if player.remaining_ships <= 0 and not room.game_effects.get("contract_suppress"):
+        if battle_rules.is_zero_ship_defeat(room, player_id) and not room.game_effects.get("contract_suppress"):
             opponent_id = room.opponent_of(player_id)
             if opponent_id and room.state != RoomState.GAME_OVER:
                 await self.finish(room, opponent_id, player_id, reason=f"{reason_text}献祭最后一艘战舰")
@@ -952,6 +956,10 @@ class MagicService:
             result = f"已复活并部署{placed}艘战舰" if kind == "revive" else f"已部署{placed}艘战舰"
             await self._emit_effect_notice(room, player_id, card, result, sound=not pending.get("animated_audio"))
         await self._activate_magic_temp(room)
+        if battle_rules.is_zero_ship_defeat(room, player_id):
+            opponent_id = room.opponent_of(player_id)
+            if opponent_id:
+                await self.finish(room, opponent_id, player_id, reason="部署结束后无战舰可用")
         await self._sync_each_seat(room)
 
     @staticmethod
@@ -1445,24 +1453,66 @@ class MagicService:
             await self._advance_chain_window(room, room.opponent_of(player_id))
 
     async def resolve_chain(self, room: Room) -> list[ChainResult]:
-        """Resolve once; a re-entrant call during async effects is a no-op."""
+        """逐张推进；当前效果仍有交互时返回，确认完成后从原进度续算。"""
 
-        if room.chain_resolving:
+        if room.id in self._chain_running:
             return []
+        progress = self._chain_resolutions.get(room.id)
+        if progress and self._chain_interaction_pending(room):
+            return list(progress["results"])
+        if progress is None:
+            progress = {"results": [], "stack": _spectate_chain_payload(room)}
+            self._chain_resolutions[room.id] = progress
         room.chain_resolving = True
+        self._chain_running.add(room.id)
         try:
             return await self._resolve_chain(room)
         finally:
-            room.chain_resolving = False
+            self._chain_running.discard(room.id)
+            room.chain_resolving = room.id in self._chain_resolutions
+
+    @staticmethod
+    def _chain_interaction_pending(room: Room) -> bool:
+        if room.state == RoomState.GAME_OVER:
+            return False
+        return bool(
+            magic_temps.key_of(magic_temps.active(room)) or magic_temps.queued(room)
+            or room.pending_ship_picks
+            or any(done is False for done in (room.pending_dice_discard or {}).values())
+            or any(player.needs_reset for player in room.players.values())
+        )
+
+    def resume_chain_if_ready(self, room: Room) -> None:
+        """确认回包先结束并释放写锁，再排入唯一一次续算；不持锁等用户。"""
+        if (room.id not in self._chain_resolutions or room.id in self._chain_running
+                or room.id in self._chain_resume_tasks or self._chain_interaction_pending(room)):
+            return
+
+        async def resume() -> None:
+            async with room_action(room):
+                if self.rooms.get_room(room.id) is room:
+                    await self.resolve_chain(room)
+
+        task = self.timers.spawn(room.id, resume())
+        if task is not None:
+            self._chain_resume_tasks[room.id] = task
+            def completed(done: asyncio.Task) -> None:
+                if self._chain_resume_tasks.get(room.id) is done:
+                    self._chain_resume_tasks.pop(room.id, None)
+                    # 下一位可能在本任务退出与 done 回调之间已答完，不能丢掉续算。
+                    if (not done.cancelled() and done.exception() is None
+                            and self.rooms.get_room(room.id) is room):
+                        self.resume_chain_if_ready(room)
+            task.add_done_callback(completed)
 
     async def _resolve_chain(self, room: Room) -> list[ChainResult]:
         """Resolve LIFO. Negated items are skipped (DECISIONS D2)."""
 
-        results: list[ChainResult] = []
-        presentation_stack = _spectate_chain_payload(room)
-        finished_by_chain = False
+        progress = self._chain_resolutions[room.id]
+        results: list[ChainResult] = progress["results"]
+        presentation_stack = progress["stack"]
         while room.chain:
-            if room.state == RoomState.GAME_OVER and not finished_by_chain:
+            if room.state == RoomState.GAME_OVER:
                 break
             item = room.chain.pop()
             finished_before_display = room.state == RoomState.GAME_OVER
@@ -1622,21 +1672,13 @@ class MagicService:
                     and not (effect_result.negate_target and room.chain)):
                 await emit_magic_sfx(self._publisher, room, item.player_id, item.card.name)
             if effect_result.success and not effect_result.game_over and room.state != RoomState.GAME_OVER:
-                opponent_id = room.opponent_of(item.player_id)
-                opponent = room.players.get(opponent_id) if opponent_id else None
-                if (
-                    opponent is not None
-                    and opponent.remaining_ships <= 0
-                    and room.state == RoomState.ATTACKING
-                    and not opponent.needs_reset
-                ):
-                    await self.finish(
-                        room, item.player_id, opponent_id,
-                        reason=f"{item.card.name}清空对方棋盘",
-                    )
-                    chain_result.game_over = True
-
-            finished_by_chain = finished_by_chain or chain_result.game_over
+                # 陷阱、契约等嵌套效果也可能清空施法者，必须检查双方。
+                for loser_id in room.players:
+                    winner_id = room.opponent_of(loser_id)
+                    if winner_id and battle_rules.is_zero_ship_defeat(room, loser_id):
+                        await self.finish(room, winner_id, loser_id, reason=f"{item.card.name}结算后无战舰可用")
+                        chain_result.game_over = True
+                        break
 
             # 牌面已离场，再同步该张牌造成的棋盘、手牌与效果变化。
             await self._emit_active_effects(room)
@@ -1646,6 +1688,10 @@ class MagicService:
             await self._sync_each_seat(room)
             if motion:
                 await self._present_card_effect(room, motion, "effect_tail", success=effect_result.success)
+            if self._chain_interaction_pending(room):
+                # 连演出收尾也已落地，此时允许当前牌在主棋盘上交互。
+                # 不发 chain_resolved，也不弹出下一张卡；确认最后一项后续算。
+                return list(results)
             if room.chain and room.chain_animation_clients:
                 await asyncio.sleep(0.18)
 
@@ -1655,6 +1701,8 @@ class MagicService:
         room.chain_waiting = False
         room.chain_window = None
         room.chain_passes = 0
+        self._chain_resolutions.pop(room.id, None)
+        room.chain_resolving = False
         chain_rules.clear_display(room)
         # The stolen-card ledger is merged; clear it so ids cannot be reused.
         room.game_effects.pop("stolen_cards", None)
@@ -1773,12 +1821,18 @@ class MagicService:
         """Destroy hook: cancel every background wait owned by one room."""
 
         self._interaction_waits.pop(room_id, None)
+        self._chain_resolutions.pop(room_id, None)
+        self._chain_resume_tasks.pop(room_id, None)
+        for task_room, token in list(self._shenji_tasks):
+            if task_room == room_id:
+                self._cancel_shenji_task(task_room, token)
 
         room = self.rooms.get_room(room_id)
         if room is not None:
             chain_rules.clear_display(room)
             self._clear_chain_animation(room)
             room.chain_animation_clients.clear()
+            room.chain_resolving = False
         return self.timers.cancel_room(room_id)
 
     def pending_chain_tasks(self, room_id: str | None = None) -> int:
@@ -1813,6 +1867,8 @@ class MagicService:
         """Server shutdown: cancel every chain/display/AI wait."""
 
         self._interaction_waits.clear()
+        for room_id in set(self._chain_resolutions) | {key[0] for key in self._shenji_tasks}:
+            self.cancel_room_timers(room_id)
         await self.timers.cancel_all()
 
     def _context(self, room: Room, item: ChainItem) -> EffectContext:
@@ -2028,6 +2084,7 @@ class MagicService:
             # （跑在漏斗之后，GAME_OVER 订阅者仍能看到终局事件。）
             effects.clear(room)
             effects.project_effect_flags(room)
+            self.resume_chain_if_ready(room)
 
     # --------------------------------------------------------------- target API
 
@@ -2073,6 +2130,7 @@ class MagicService:
                 ),
                 to=seat.socket_id,
             )
+        self.resume_chain_if_ready(room)
 
     async def _with_promoted_choice(self, room: Room, result: dict, confirmer: str) -> dict:
         """确认完一项后，把下一项交给**它的主人**。
@@ -2829,7 +2887,7 @@ class MagicService:
         if seconds <= 0 or not interaction_rules.pending_action_reason(room, room.current_attacker):
             self._interaction_waits.pop(room.id, None)
             return False
-        if room.disconnected or room.chain or room.chain_waiting:
+        if room.disconnected or room.chain_waiting or (room.chain and room.id not in self._chain_resolutions):
             self._interaction_waits.pop(room.id, None)
             return False
         previous = self._interaction_waits.get(room.id)
@@ -3352,6 +3410,12 @@ class MagicService:
             if returned:
                 await self.notify_treasure(room, returned)
                 await self._emit_player_ships(room, entry["player"])
+                await self._add_log(
+                    room, f"第{room.round}回合 · {self._name(room, entry['player'])} 的【神威！】"
+                    f"暂时除外战舰已归还({returned}艘)", "magic",
+                    {"player": entry["player"], "card": "神威！", "returned": returned},
+                )
+                await self._emit_effect_notice(room, entry["player"], "神威！", f"暂时除外的{returned}艘战舰已归还", sound=False)
         if not entries:
             room.game_effects.pop("excluded_ships", None)
         if due:
@@ -3409,7 +3473,7 @@ class MagicService:
             )
         for player_id in changed:
             player = room.players[player_id]
-            if player.remaining_ships <= 0 and len(player.ships) > 0:
+            if battle_rules.is_zero_ship_defeat(room, player_id):
                 opponent_id = room.opponent_of(player_id)
                 if opponent_id:
                     await self.finish(

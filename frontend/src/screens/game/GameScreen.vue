@@ -12,6 +12,7 @@ import { useFloatingDrag } from './useFloatingDrag'
 import PlayerCardDialog from './PlayerCardDialog.vue'
 import AvatarStack from '../../components/AvatarStack.vue'
 import MagicPlacementPanel from './MagicPlacementPanel.vue'
+import { useMagicPlacement } from './useMagicPlacement'
 import MagicChoicePanel from './MagicChoicePanel.vue'
 import MagicDiscardPanel from './MagicDiscardPanel.vue'
 import PhasePriorityPrompt from './PhasePriorityPrompt.vue'
@@ -89,6 +90,12 @@ const result = useResultStore()
 const ui = useUiStore()
 const chainAnimation = useChainAnimationStore()
 const cardEffects = useCardEffectsStore()
+const {
+  request: placementRequest, active: placementOpen, kind: placementKind, title: placementTitle,
+  hint: placementHint, selected: placementSelected, selectedKeys: placementSelectedKeys,
+  legalKeys: placementLegalKeys, busy: placementBusy, error: placementError,
+  choose: choosePlacement, submit: submitPlacement,
+} = useMagicPlacement()
 
 let releaseChannel: (() => void) | null = null
 let releaseMatchChannel: (() => void) | null = null
@@ -138,7 +145,7 @@ const detailOpen = computed(() => selectedCardIndex.value >= 0)
 const shieldPicks = ref<number[]>([])
 const shieldSubmitting = ref(false)
 const shieldError = ref('')
-const shieldOpen = computed(() => Boolean(match.shieldChoice) && !match.pickRequest)
+const shieldOpen = computed(() => Boolean(match.shieldChoice) && !match.pickRequest && !placementOpen.value)
 const shieldSelectedKeys = computed<string[]>(() => {
   const ships = Array.isArray(state.value.ships) ? state.value.ships : []
   const keys: string[] = []
@@ -236,6 +243,7 @@ const previewKeys = computed<string[]>(() => {
 
 /** Every cell the open target banner would accept (#47 legal-range highlight). */
 const legalKeys = computed<string[]>(() => {
+  if (placementOpen.value) return placementLegalKeys.value
   const sel = selection.value
   if (!sel) {
     return match.pickRequest || shieldOpen.value
@@ -325,6 +333,7 @@ const selectionTone = computed(() => {
 
 /** 区域类目标画整片轮廓；点船/加盾类保持逐格轻量标记。 */
 const selectionKind = computed<'area' | 'line' | 'continuous' | 'ships' | null>(() => {
+  if (placementOpen.value) return 'ships'
   const sel = selection.value
   if (!sel) {
     if (match.pickRequest || shieldOpen.value) return 'ships'
@@ -420,13 +429,15 @@ const remotePreviewTone = computed<'freeze' | 'fire' | 'divine' | 'radar' | 'def
 })
 const remotePreviewBadge = computed(() => remoteTargetPreview.value ? '对方选择 · ' + remoteTargetPreview.value.card : '')
 const boardPreviewKind = computed(() => selectionKind.value ?? remotePreviewKind.value)
-const boardPreviewTone = computed(() => selection.value ? selectionTone.value : remotePreviewTone.value)
-const boardPreviewBadge = computed(() => selection.value ? selectionBadge.value : remotePreviewBadge.value)
+const boardPreviewTone = computed(() => placementOpen.value ? 'default' : selection.value ? selectionTone.value : remotePreviewTone.value)
+const boardPreviewBadge = computed(() => placementOpen.value ? '' : selection.value ? selectionBadge.value : remotePreviewBadge.value)
 const selfBoardPreviewKeys = computed(() => {
+  if (placementOpen.value) return []
   if (selection.value) return selection.value.board === 'self' ? previewKeys.value : []
   return remoteTargetPreview.value?.board === 'self' ? remotePreviewKeys.value : []
 })
 const opponentBoardPreviewKeys = computed(() => {
+  if (placementOpen.value) return []
   if (selection.value) return selection.value.board === 'self' ? [] : previewKeys.value
   return remoteTargetPreview.value?.board === 'opponent' ? remotePreviewKeys.value : []
 })
@@ -527,10 +538,11 @@ const compact = layout.compact
 
 // 目标海域优先；使用标量依赖，普通 room_sync 不会把手动切换的海域抢回去。
 const targetBoard = computed(() => {
+  if (placementOpen.value) return 'self'
   const sel = selection.value
   return sel ? sel.descriptor.kind === 'own_ships' ? 'self' : sel.board ?? sel.descriptor.board ?? 'opponent' : null
 })
-const picking = computed(() => !!selection.value || !!match.pickRequest || !!match.shieldChoice)
+const picking = computed(() => placementOpen.value || !!selection.value || !!match.pickRequest || !!match.shieldChoice)
 const boardMode = layout.mode
 const tight = layout.tight
 const dense = layout.dense
@@ -1120,6 +1132,10 @@ async function fire(x: number, y: number): Promise<void> {
 }
 
 function onCell(board: 'self' | 'opponent', x: number, y: number): void {
+  if (placementOpen.value) {
+    choosePlacement(board, x, y)
+    return
+  }
   if (selection.value) {
     const before = JSON.stringify([selection.value.anchor, selection.value.picks, selection.value.board])
     pickCell(board, x, y)
@@ -1580,6 +1596,11 @@ watch(() => state.value.magic_temp, (temp) => {
   if (temp?.type === 'shield_choice') match.openShieldChoice({ caster: state.value.player_id })
   else match.clearShieldChoice()
 }, { immediate: true })
+watch(placementOpen, active => {
+  if (!active) return
+  selection.value = null
+  clearCardSelection()
+}, { immediate: true })
 
 function maybeGoToSettlement(): void {
   const record = result.gameOver
@@ -1606,6 +1627,7 @@ watch(
     shieldPicks.value = []
     shieldError.value = ''
     zoomOpen.value = !myTurn.value
+    focusBoard()
     quickChatOpen.value = false
     quickPhrasesOpen.value = false
     logOpen.value = false
@@ -1682,7 +1704,7 @@ function backToLobby(): void {
     :data-boards="boardMode"
     :data-tight="tight ? 'true' : 'false'"
     :data-dense="dense ? 'true' : 'false'"
-    :class="{ 'is-picking': picking }"
+    :class="{ 'is-picking': picking, 'is-placing': placementOpen }"
     :style="boardSize ? { '--board-size': boardSize + 'px', '--mobile-rail-width': layout.mobile.value.railWidth + 'px', '--mobile-hand-height': layout.mobile.value.handHeight + 'px' } : undefined"
     aria-labelledby="screen-game-title"
     ref="gameEl"
@@ -1891,17 +1913,17 @@ function backToLobby(): void {
               :title="'你的海域 · ' + selfName"
               :subtitle="'存活 ' + state.remaining_ships + ' 艘' + (frozenMine.size ? ' · 你的 3×3 区域被冻结' : '')"
               :cells="selfCells"
-              :selected="(selection?.descriptor.board === 'opponent' ? [] : selectedKeys).concat(shieldSelectedKeys)"
+              :selected="placementOpen ? placementSelectedKeys : (selection?.descriptor.board === 'opponent' ? [] : selectedKeys).concat(shieldSelectedKeys)"
               :preview="selfBoardPreviewKeys"
               :legal="legalKeys"
               :selection-board="selection ? (selection.board || selection.descriptor.board || (selection.descriptor.kind === 'own_ships' ? 'self' : null)) : 'self'"
-              :selection-label="selection?.card.name || (shieldOpen ? '仁王之盾' : '')"
-              :selection-hint="selection ? targetHint : (pendingPick?.message || '点击己方战舰选择目标。')"
+              :selection-label="placementOpen ? placementTitle : selection?.card.name || (shieldOpen ? '仁王之盾' : '')"
+              :selection-hint="placementOpen ? placementHint : selection ? targetHint : (pendingPick?.message || '点击己方战舰选择目标。')"
               :selection-kind="boardPreviewKind"
               :selection-tone="boardPreviewTone"
               :selection-badge="boardPreviewBadge"
               :hidden="!showSelfBoard"
-              :picking="!!selection || !!match.pickRequest || shieldOpen"
+              :picking="placementOpen || !!selection || !!match.pickRequest || shieldOpen"
               @hover="point => previewTarget('self', point)"
               @cell="(x: number, y: number) => onCell('self', x, y)"
             />
@@ -1924,7 +1946,7 @@ function backToLobby(): void {
               :selection-tone="boardPreviewTone"
               :selection-badge="boardPreviewBadge"
               :hidden="!showOpponentBoard"
-              :picking="!!selection"
+              :picking="placementOpen || !!selection"
               @hover="point => previewTarget('opponent', point)"
               @cell="(x: number, y: number) => onCell('opponent', x, y)"
             />
@@ -2302,7 +2324,7 @@ function backToLobby(): void {
       </div>
     </section>
 
-    <section v-if="match.pickRequest && !cardEffects.busy" ref="pickPanelEl" :style="pickPanelStyle" class="game-dialog game-pick game-pick-float battle-prompt" :class="{ 'is-dragging': pickDrag.state.value.dragging }" data-testid="game-ship-pick" role="alertdialog" aria-label="选船">
+    <section v-if="match.pickRequest && !cardEffects.busy && !placementOpen" ref="pickPanelEl" :style="pickPanelStyle" class="game-dialog game-pick game-pick-float battle-prompt" :class="{ 'is-dragging': pickDrag.state.value.dragging }" data-testid="game-ship-pick" role="alertdialog" aria-label="选船">
       <header ref="pickHeadEl" class="battle-prompt__head battle-prompt__handle" @pointerdown="!compact && pickDrag.onPointerDown($event)"><div><p class="battle-prompt__context">等待你的选择</p><h2 class="game-dialog__title">请选择一艘自己的战舰</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div></header>
       <p class="game-dialog__hint" data-testid="game-ship-pick-message">{{ match.pickRequest.message }}</p>
       <p class="game-dialog__hint battle-prompt__status">{{ pickSubmitting ? '正在确认选择…' : '在己方海域点击高亮的战舰，即可确认选择。' }}</p>
@@ -2468,9 +2490,9 @@ function backToLobby(): void {
       <p class="game-discard-detail__meta">{{ typeLabel(discardDetail) }}</p>
       <p class="game-discard-detail__desc">{{ discardDetailInfo?.description || '服务端没有下发这张卡的效果描述。' }}</p>
     </div>
-    <ChainAnimationOverlay :suspended="Boolean(selection || match.pickRequest || match.shieldChoice || state.needs_reset)" />
+    <ChainAnimationOverlay :suspended="Boolean(placementRequest || selection || match.pickRequest || match.shieldChoice || state.needs_reset)" />
     <CardEffectOverlay />
-    <MagicPlacementPanel />
+    <MagicPlacementPanel v-if="placementOpen && placementRequest" :request="placementRequest" :kind="placementKind" :title="placementTitle" :hint="placementHint" :selected="placementSelected" :busy="placementBusy" :error="placementError" :compact="compact" :tight="tight" @confirm="submitPlacement()" @cancel="submitPlacement(true)" />
     <MagicChoicePanel />
     <MagicDiscardPanel />
     <PhasePriorityPrompt :open="Boolean(priorityRequest && ui.phasePrompts && !priorityCollapsed && selection?.priorityToken === undefined)" :request="priorityRequest" :now="now" :busy="busy" :error="priorityError" @select="respondPriority" @pass="passPriority" @collapse="priorityCollapsed = true" />

@@ -191,16 +191,54 @@ export interface PlayabilityContext {
 }
 
 export const WAIT_EXEMPT_EVENTS: readonly string[] = ['quick_chat', 'chat_message', 'surrender', 'get_discard_pile', 'get_magic_temp_data', 'request_hand_sync', 'set_decline_priority']
-const INTERACTION_RESPONSE_EVENTS = new Set(['confirm_sacrifice', 'confirm_reinforcement_position', 'cancel_placement', 'confirm_magic_target', 'cancel_magic_selection', 'confirm_shenji_declare', 'dice_discard_choose'])
+
+export interface ActionWaitContext {
+  pending?: boolean
+  chainBusy?: boolean
+  chainResponding?: boolean
+  interactionReason?: string
+  pendingPick?: PendingPickLike | null
+  responseData?: Record<string, unknown>
+}
+
+/** 只有服务端当前发给自己的义务，才能作为连锁结算中的应答。 */
+function isCurrentInteractionResponse(state: GameState, event: string, ctx: ActionWaitContext): boolean {
+  const temp = state.magic_temp
+  const choice = temp?.caster === state.player_id
+    && ['taoyuan_choice', 'lingqi_choice', 'bury_choice', 'wangyang_choice', 'shield_choice'].includes(String(temp.type))
+  const shenji = temp?.pending_shenji as Record<string, unknown> | undefined
+  const ownShenji = shenji?.caster === state.player_id
+  switch (event) {
+    case 'confirm_reinforcement_position':
+    case 'cancel_placement':
+      return state.pending_placement?.caster === state.player_id && Number(state.pending_placement.remaining) > 0
+    case 'confirm_magic_target':
+      return choice && ctx.responseData?.temp_data_id === temp?.type
+    case 'cancel_magic_selection':
+      return choice || ownShenji
+    case 'confirm_shenji_declare':
+      return ownShenji
+    case 'confirm_sacrifice': {
+      const reason = String((ctx.pendingPick ?? state.pending_sacrifice)?.reason ?? '')
+      return reason !== 'shield_choice' && (SHIP_PICK_PRIORITIES[reason] ?? 0) > 0
+    }
+    case 'dice_discard_choose':
+      return state.dice_discard_pending
+    default:
+      return false
+  }
+}
 
 /** 所有对局写操作共用的等待门禁；对应的响应仍可完成当前义务。 */
-export function actionWaitReason(state: GameState, event: string, ctx: { pending?: boolean; chainBusy?: boolean; interactionReason?: string } = {}): string {
+export function actionWaitReason(state: GameState, event: string, ctx: ActionWaitContext = {}): string {
   if (WAIT_EXEMPT_EVENTS.includes(event)) return ''
   if (ctx.pending) return '正在等待操作结果，请稍候'
   if (state.priority_waiting && event !== 'priority_response') return '阶段转换询问中，请先完成阶段响应'
-  const chainBusy = ctx.chainBusy || state.chain_waiting || chainItems(state.chain).length > 0
-  if (chainBusy && event !== 'chain_response') return '连锁响应或结算中，请先完成连锁'
-  if (!INTERACTION_RESPONSE_EVENTS.has(event) && !['priority_response', 'chain_response'].includes(event)) {
+  const interactionResponse = isCurrentInteractionResponse(state, event, ctx)
+  const chainResponding = ctx.chainResponding || state.chain_waiting
+  const chainBusy = ctx.chainBusy || chainResponding || chainItems(state.chain).length > 0
+  if (chainBusy && event !== 'chain_response' && (chainResponding || !interactionResponse)) return '连锁响应或结算中，请先完成连锁'
+  if (!interactionResponse && !['priority_response', 'chain_response'].includes(event)) {
     if (ctx.interactionReason) return ctx.interactionReason
     if (state.interaction_waiting) return state.interaction_waiting
     if (state.dice_discard_pending) return '请先完成魔法弃牌'

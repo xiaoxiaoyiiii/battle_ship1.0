@@ -340,14 +340,8 @@ export function applyBattleEvent(
         } else if (String(result.message ?? '').trim() && (result.success === false || (!result.temp_data_id && !['回光返照', '败者食尘'].includes(name)))) {
           match.pushNotice(String(result.message), result.success === false ? 'warning' : 'info')
         }
-        if (String(result.temp_data_id ?? '') === 'shield_choice'
-          && String(result.caster ?? '') === me
-          && result.success !== false) {
-          match.openShieldChoice({
-            message: String(result.message ?? '仁王之盾：请选择要保护的战舰（至多 3 艘）'),
-            caster: me,
-          })
-        }
+        // result 是整链历史；选盾可能已在暂停期间完成。
+        // 面板只由当前权威 magic_temp 驱动，不能从旧结果重新制造义务。
       }
       void refreshMagicState(pinia)
       break
@@ -740,7 +734,10 @@ export function sendBattleEvent(
   const waiting = actionWaitReason(useGameStore().state, event, {
     pending: battleActionPending.value,
     chainBusy: Boolean(match.chainWindow) || useCardEffectsStore().busy,
+    chainResponding: Boolean(match.chainWindow),
     interactionReason: match.pickRequest?.message || (match.shieldChoice ? '请先完成仁王之盾的选船' : ''),
+    pendingPick: match.pickRequest,
+    responseData: data,
   })
   if (waiting) return Promise.resolve({ status: 'error', message: waiting })
   if (WAIT_EXEMPT_EVENTS.includes(event)) return socket.emitEvent(event, data)

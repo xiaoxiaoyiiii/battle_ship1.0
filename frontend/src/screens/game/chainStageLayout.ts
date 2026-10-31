@@ -109,7 +109,8 @@ export function planChainStage(input: {
         y: centerY + cardH * 0.34,
         size: cardW * 0.4,
       },
-      title: { x: centerX, y: centerY - cardH * 0.62, size: cardW * 0.3 },
+      // 标题比卡面宽，按视口限制字号，给入场放大和光晕留出两侧余量。
+      title: { x: centerX, y: centerY - cardH * 0.62, size: Math.min(cardW * 0.3, availW * 0.09) },
       entry: {
         p1: { x: centerX - availW * 0.5, y: height + cardH, w: cardW * 0.7, angle: 0.45 },
         p2: { x: centerX + availW * 0.5, y: -cardH, w: cardW * 0.7, angle: -0.5 },

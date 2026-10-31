@@ -59,8 +59,10 @@
 .game[data-layout='compact'].is-picking .game-hand-wrap {
   grid-area:hand; display:flex; flex-direction:column; width:100%; max-width:none; height:var(--mobile-hand-height); min-height:0; position:relative; margin:0; padding:0; overflow:hidden; align-self:start;
 }
-.game[data-layout='compact'] .game-hand-head { height:18px; min-height:18px; padding:0 6px; gap:8px; font-size:10px; }
-.game[data-layout='compact'] .game-hand-head :deep(.card-draw) { transform:scale(.75); transform-origin:left center; }
+.game[data-layout='compact'] .game-hand-head { display:flex; height:18px; min-height:18px; padding:0 6px; gap:8px; font-size:10px; }
+.game[data-layout='compact'] .game-hand-head :deep(.draw-deck) { height:18px; min-height:0; gap:5px; font-size:10px; line-height:14px; color:var(--text-secondary); }
+.game[data-layout='compact'] .game-hand-head :deep(.draw-deck b) { font-size:11px; margin-left:3px; color:var(--text-primary); }
+.game[data-layout='compact'] .game-hand-head :deep(.draw-deck__back) { width:11px; height:14px; margin:0; box-shadow:2px 1px 0 #536c7b; font-size:9px; }
 .game[data-layout='compact'] .game-hand {
   display:flex; align-items:start; justify-content:flex-start; gap:8px; width:100%; height:calc(var(--mobile-hand-height) - 18px); min-height:0;
   overflow-x:auto; overflow-y:hidden; padding:2px 6px; margin:0; scroll-snap-type:x proximity; touch-action:pan-x; scrollbar-width:none;
@@ -139,6 +141,7 @@
 .game[data-layout='compact'][data-tight='true'] .hud-primary-chips .hud-chip { flex:1; font-size:10px; }
 .game[data-layout='compact'][data-tight='true'] .boards-container { align-self:center; gap:10px; }
 .game[data-layout='compact'][data-tight='true'] .game-hand-wrap { height:100%; min-height:166px; }
+.game[data-layout='compact'][data-tight='true'] .game-hand-stats { display:none; }
 .game[data-layout='compact'][data-tight='true'] .game-hand { height:calc(100% - 18px); min-height:148px; }
 .game[data-layout='compact'][data-tight='true'] .game-compact-bar { height:64px; }
 .game[data-layout='compact'][data-tight='true'] .arena-turn-hint { display:none; }

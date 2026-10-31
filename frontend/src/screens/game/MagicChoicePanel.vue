@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { cardArtUrl } from '../../cards/cardArt'
 import AppOverlay from '../../components/AppOverlay.vue'
 import { useGameStore } from '../../stores/game'
 import { refreshMagicState, sendBattleEvent } from '../../realtime/battle'
+import { useAdaptiveGameLayout } from './useAdaptiveGameLayout'
 
 const game = useGameStore()
+const { compact } = useAdaptiveGameLayout()
 const temp = computed(() => game.state.magic_temp)
 const kind = computed(() => String(temp.value?.type || (temp.value?.pending_shenji ? 'shenji_declare' : '')))
 const names: Record<string, string> = { lingqi_choice:'灵气复苏', shenji_declare:'神机妙算', taoyuan_choice:'桃园结义', bury_choice:'明智埋葬', wangyang_choice:'亡羊补牢' }
@@ -14,22 +16,26 @@ const numeric = computed(() => ['lingqi_choice', 'shenji_declare'].includes(kind
 const minimum = computed(() => kind.value === 'shenji_declare' ? 0 : 1)
 const maximum = computed(() => kind.value === 'shenji_declare' ? 6 : Number(temp.value?.max_ships) || 0)
 const quantity = ref(1), chosen = ref(-1), other = ref(-1), busy = ref(false), error = ref('')
+const reading = ref(-1)
+const bodyPanel = ref<HTMLElement | null>(null)
 const cards = computed<Record<string, unknown>[]>(() => {
   const values = temp.value?.candidates ?? temp.value?.cards
   return Array.isArray(values) ? values.filter((c): c is Record<string, unknown> => !!c && typeof c === 'object') : []
 })
-watch(() => temp.value, () => { quantity.value=minimum.value; chosen.value=-1; other.value=-1; error.value='' })
+watch(() => temp.value, () => { quantity.value=minimum.value; chosen.value=-1; other.value=-1; reading.value=-1; error.value='' })
 const ready = computed(() => numeric.value
   ? Number.isInteger(quantity.value) && quantity.value >= minimum.value && quantity.value <= maximum.value
   : chosen.value >= 0 && chosen.value < cards.value.length && (kind.value !== 'taoyuan_choice' || cards.value.length < 2 || (other.value >= 0 && other.value !== chosen.value)))
 const choiceStep = computed(() => kind.value !== 'taoyuan_choice' ? (kind.value === 'bury_choice' ? '选择需要埋葬的卡牌' : '选择要取得的卡牌') : chosen.value < 0 ? '第一步：选择一张卡牌给自己' : other.value < 0 && cards.value.length > 1 ? '第二步：选择一张卡牌给对方' : '确认双方取得的卡牌')
 function chooseCard(index: number) {
   if (busy.value) return
+  reading.value = index
+  if (window.innerHeight <= 520) void nextTick(() => { if (bodyPanel.value) bodyPanel.value.scrollTop = 0 })
   if (kind.value !== 'taoyuan_choice') { chosen.value = index; return }
   if (chosen.value < 0) chosen.value = index
   else if (index !== chosen.value) other.value = index
 }
-function resetChoice() { chosen.value = -1; other.value = -1 }
+function resetChoice() { chosen.value = -1; other.value = -1; reading.value = -1 }
 async function submit(cancel = false): Promise<void> {
   if (busy.value || (!cancel && !ready.value)) return
   busy.value=true;error.value=''
@@ -51,9 +57,10 @@ async function submit(cancel = false): Promise<void> {
 </script>
 
 <template>
-  <AppOverlay draggable v-if="visible" id="magic-choice-panel" :priority="170" :close-on-backdrop="false" labelledby="magic-choice-title">
+  <AppOverlay :draggable="!compact" v-if="visible" id="magic-choice-panel" :priority="170" :close-on-backdrop="false" labelledby="magic-choice-title">
     <section class="magic-choice battle-prompt">
       <header class="battle-prompt__head" data-drag-handle><div><p class="battle-prompt__context">卡牌效果</p><h2 id="magic-choice-title">{{ names[kind] }} · 选择效果</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div><img v-if="cardArtUrl(names[kind] || '')" class="battle-prompt__card-art" :src="cardArtUrl(names[kind] || '')!" alt="" draggable="false" /></header>
+      <div ref="bodyPanel" class="magic-choice__body" :class="{ 'is-reading': reading >= 0 }">
       <template v-if="numeric">
         <p>{{ kind === 'shenji_declare' ? '宣言对方回合结束时，你的战舰将减少多少艘（0–6）。' : '选择双方调整后的船数，随后各自在原船位重新部署。' }}</p>
         <label>选择数量 <input v-model.number="quantity" data-testid="magic-choice-number" type="number" :min="minimum" :max="maximum" step="1" :disabled="busy" /></label>
@@ -71,15 +78,21 @@ async function submit(cancel = false): Promise<void> {
             <span class="magic-choice__description" tabindex="0" :aria-label="String(card.name) + '完整效果'" @click.stop @keydown.stop>{{ card.description || '暂无效果说明' }}</span>
           </button>
         </div>
-        <div v-if="kind === 'taoyuan_choice'" class="magic-choice__assignment" data-testid="magic-choice-other" aria-live="polite">
+        <article v-if="reading >= 0 && cards[reading]" class="magic-choice__reading" data-testid="magic-choice-reading" aria-live="polite">
+          <strong>{{ cards[reading].name }}</strong><p>{{ cards[reading].description || '暂无效果说明' }}</p>
+        </article>
+      </template>
+      <p v-if="error" role="alert" data-testid="magic-choice-error">{{ error }}</p>
+      </div>
+      <div class="magic-choice__bottom">
+        <div v-if="!numeric && kind === 'taoyuan_choice'" class="magic-choice__assignment" data-testid="magic-choice-other" aria-live="polite">
           <span>自己：{{ chosen < 0 ? '待选择' : cards[chosen]?.name }}</span>
           <span>对方：{{ cards.length < 2 ? '无可分配卡牌' : other < 0 ? '待选择' : cards[other]?.name }}</span>
           <button type="button" class="button button--ghost" :disabled="busy || chosen < 0" @click="resetChoice">重新选择</button>
         </div>
-      </template>
-      <p v-if="error" role="alert" data-testid="magic-choice-error">{{ error }}</p>
       <p class="battle-prompt__status" :class="{ 'is-ready': ready }" role="status">{{ ready ? '选择已就绪，请确认。' : numeric ? '请在范围内选择数量。' : choiceStep }}</p>
       <footer><button class="button button--primary" type="button" data-testid="magic-choice-confirm" :disabled="busy || !ready" @click="submit()">确认选择</button><button v-if="kind !== 'shenji_declare'" class="button button--ghost" type="button" data-testid="magic-choice-cancel" :disabled="busy" @click="submit(true)">{{ kind === 'taoyuan_choice' ? '取消 · 放回牌堆' : '取消本次选择' }}</button></footer>
+      </div>
     </section>
   </AppOverlay>
 </template>
@@ -87,6 +100,7 @@ async function submit(cancel = false): Promise<void> {
 <style src="./battle-prompt.css"></style>
 <style scoped>
 .magic-choice { padding:26px; max-height:calc(100dvh - 24px); overflow-y:auto; }
+.magic-choice__reading { display:none; }
 .magic-choice p { font-size:16px; line-height:1.7; }
 .magic-choice label { display:flex; align-items:center; gap:16px; margin:18px 0; font-size:17px; font-weight:700; }
 .magic-choice input { padding:12px; width:110px; min-height:48px; color:var(--prompt-cyan); background:var(--prompt-deck); border:1px solid var(--prompt-line); border-radius:8px; font:inherit; font-size:22px; font-variant-numeric:tabular-nums; }
@@ -107,4 +121,56 @@ async function submit(cancel = false): Promise<void> {
 .magic-choice__assignment { display:flex; flex-wrap:wrap; gap:12px 20px; align-items:center; margin-top:18px; padding:14px; border:1px solid var(--prompt-line); border-radius:8px; font-size:16px; }
 :global(.app-overlay__panel[data-testid='magic-choice-panel']) { width:min(1000px,calc(100vw - 24px)); }
 @media(max-width:540px) { .magic-choice { padding:18px; }.magic-choice__cards { grid-template-columns:repeat(2,minmax(0,1fr)); grid-auto-rows:minmax(310px,1fr); gap:10px; max-height:47dvh; }.magic-choice__card { padding:10px; min-height:310px; max-height:360px; }.magic-choice__card img { flex-basis:136px; width:94px; height:136px; }.magic-choice__card b { font-size:16px; }.magic-choice__card small { font-size:13px; }.magic-choice__card span { font-size:15px; }.magic-choice footer { flex-wrap:wrap; } }
+@media (max-width:1199px), (max-height:699px) {
+  :global(.app-overlay__panel[data-testid='magic-choice-panel']) { width:min(560px,calc(100vw - 24px)); max-height:min(80dvh,600px); overflow:hidden; }
+  .magic-choice { display:flex; flex-direction:column; max-height:min(80dvh,600px); padding:12px; overflow:hidden; }
+  .magic-choice .battle-prompt__head { flex:0 0 auto; align-items:center; gap:8px; margin:0 0 8px; padding-bottom:8px; }
+  .magic-choice .battle-prompt__head h2 { margin:2px 0 0; font-size:16px; line-height:1.4; }
+  .battle-prompt__context { font-size:11px; }
+  .battle-prompt__drag-note { display:none; }
+  .battle-prompt__card-art { width:28px; height:42px; flex-basis:28px; }
+  .magic-choice__body { min-height:0; flex:1 1 auto; overflow-y:auto; overscroll-behavior:contain; }
+  .magic-choice .magic-choice__step { margin:0 0 4px; font-size:13px; }
+  .magic-choice .magic-choice__help { margin:0 0 8px; font-size:12px; line-height:1.5; }
+  .magic-choice__cards { grid-template-columns:repeat(2,minmax(0,1fr)); grid-auto-rows:auto; gap:8px; max-height:none; padding:2px; overflow:visible; }
+  .magic-choice__card { display:grid; grid-template-columns:38px minmax(0,1fr); grid-template-rows:auto auto; align-content:center; align-items:center; gap:4px 8px; min-height:82px; max-height:none; padding:8px; border-radius:8px; }
+  .magic-choice__card img { grid-column:1; grid-row:1/3; width:38px; height:57px; margin:0; }
+  .magic-choice__card b { grid-column:2; font-size:14px; line-height:1.4; overflow-wrap:anywhere; }
+  .magic-choice__card small { grid-column:2; margin:0; font-size:10px; line-height:1.4; }
+  .magic-choice__card .magic-choice__description { display:none; }
+  .magic-choice__card .magic-choice__recipient { top:2px; left:2px; padding:1px 4px; border-radius:4px; font-size:10px; line-height:1.4; }
+  .magic-choice__reading { display:block; margin:8px 0 0; padding:9px 10px; border-left:2px solid var(--prompt-cyan); background:rgb(142 220 236 / 5%); font-size:13px; }
+  .magic-choice .magic-choice__reading p { margin:4px 0 0; font-size:14px; line-height:1.65; white-space:pre-line; }
+  .magic-choice__bottom { flex:0 0 auto; margin-top:8px; }
+  .magic-choice__assignment { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:3px 8px; margin:0 0 8px; padding:8px; font-size:12px; line-height:1.4; }
+  .magic-choice__assignment span { grid-column:1; overflow-wrap:anywhere; }
+  .magic-choice__assignment .button { grid-column:2; grid-row:1/3; min-height:44px; padding:6px 8px; font-size:12px; }
+  .magic-choice .battle-prompt__status { font-size:11px; }
+  .magic-choice footer { margin-top:6px; gap:8px; flex-wrap:nowrap; }
+  .magic-choice footer .button { min-height:44px; padding:8px 6px; font-size:13px; }
+  .magic-choice label { margin:10px 0; font-size:14px; gap:10px; }
+  .magic-choice input { min-height:44px; padding:8px; font-size:18px; }
+}
+@media (max-height:520px) {
+  :global(.app-overlay__panel[data-testid='magic-choice-panel']), .magic-choice { max-height:min(80dvh,600px,calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom))); }
+  .magic-choice { padding:10px 12px; }
+  .magic-choice .battle-prompt__head { margin-bottom:6px; padding-bottom:6px; }
+  .magic-choice__cards { grid-template-columns:repeat(4,minmax(0,1fr)); }
+  .magic-choice__card { grid-template-columns:30px minmax(0,1fr); padding:6px; gap:3px 6px; min-height:64px; }
+  .magic-choice__card img { width:30px; height:45px; }
+  .magic-choice__assignment { grid-template-columns:1fr 1fr auto; margin-bottom:4px; padding:4px 8px; }
+  .magic-choice__assignment span { grid-column:auto; }
+  .magic-choice__assignment .button { grid-column:3; grid-row:1; }
+  .magic-choice__body.is-reading { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); align-items:start; gap:10px; }
+  .magic-choice__body.is-reading .magic-choice__step,.magic-choice__body.is-reading .magic-choice__help { display:none; }
+  .magic-choice__body.is-reading .magic-choice__cards { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .magic-choice__body.is-reading .magic-choice__reading { margin:0; }
+  .magic-choice__bottom:has(.magic-choice__assignment) { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); align-items:center; gap:8px; }
+  .magic-choice__bottom:has(.magic-choice__assignment) .magic-choice__assignment { grid-template-columns:minmax(0,1fr) auto; margin:0; padding:4px 6px; font-size:11px; }
+  .magic-choice__bottom:has(.magic-choice__assignment) .magic-choice__assignment span { grid-column:1; }
+  .magic-choice__bottom:has(.magic-choice__assignment) .magic-choice__assignment .button { grid-column:2; grid-row:1/3; }
+  .magic-choice .magic-choice__bottom .battle-prompt__status { display:none; }
+  .magic-choice__bottom:has(.magic-choice__assignment) footer { margin:0; }
+  .magic-choice__bottom:has(.magic-choice__assignment) footer .button { min-width:0; font-size:12px; }
+}
 </style>

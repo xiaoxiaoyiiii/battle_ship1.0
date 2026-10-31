@@ -113,6 +113,10 @@ function identityOf(segment: Segment, event: Event) {
   return { card: segment.card, label: segment.label, tone: segment.tone, ...previewPosition(event) }
 }
 
+function showHover(segment: Segment, event: Event): void {
+  if (window.matchMedia('(hover: hover)').matches) hovered.value = identityOf(segment, event)
+}
+
 function openedIdentityOf(segment: Segment) {
   return { card: segment.card, label: segment.label, tone: segment.tone }
 }
@@ -136,11 +140,12 @@ function describe(card: MonitorCard): string {
         :class="`is-${segment.tone}`"
         :data-testid="`effect-slot-${segment.tone}-${segment.card.name}`"
         tabindex="0"
-        @mouseenter="hovered = identityOf(segment, $event)"
+        role="button"
+        @mouseenter="showHover(segment, $event)"
         @mouseleave="hovered = null"
-        @focus="hovered = identityOf(segment, $event)"
+        @focus="showHover(segment, $event)"
         @blur="hovered = null"
-        @click="opened = openedIdentityOf(segment)"
+        @click="hovered = null; opened = openedIdentityOf(segment)"
         @keydown.enter.prevent="opened = openedIdentityOf(segment)"
         @keydown.space.prevent="opened = openedIdentityOf(segment)"
       >
@@ -397,5 +402,21 @@ function describe(card: MonitorCard): string {
 
 @media (prefers-reduced-motion: reduce) {
   .monitor__slot { transition: none; }
+}
+
+@media (max-width:1199px), (max-height:699px) {
+  .monitor { padding:2px 6px; gap:6px; }
+  .monitor__caption { display:none; }
+  .monitor__list { min-height:40px; scrollbar-width:none; }
+  .monitor__list[data-slots] .monitor__slot { flex:0 0 auto; min-width:min(140px,100%); max-width:100%; min-height:40px; padding:2px 6px; gap:6px; }
+  .monitor__art { width:24px; height:36px; }
+  .monitor__name { font-size:13px; line-height:18px; }
+  .monitor__meta { gap:4px; line-height:14px; }
+  .monitor__tag,.monitor__expires { font-size:10px; }
+  .monitor-dialog__head { position:sticky; top:-14px; padding:4px 0; background:var(--surface-chamber,#101a2e); }
+  .monitor-dialog__close { min-width:44px; min-height:44px; }
+  .monitor-dialog__body { flex-direction:row; gap:10px; }
+  .monitor-dialog__art { width:64px; height:96px; }
+  .monitor-dialog__text p { font-size:14px; line-height:1.65; }
 }
 </style>

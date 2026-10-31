@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import BoardPanel from './BoardPanel.vue'
 import MobileCardReader from './MobileCardReader.vue'
+import AppOverlay from '../../components/AppOverlay.vue'
 import StatusMonitor from './StatusMonitor.vue'
 import EffectMonitor from './EffectMonitor.vue'
 import { useAdaptiveGameLayout } from './useAdaptiveGameLayout'
@@ -358,6 +359,7 @@ const fieldEffectCard = computed(() => {
   return CARDS.find((card) => card.name === name) ?? { name }
 })
 const fieldEffectOwner = computed(() => state.value.effect_badges?.field_owner ?? null)
+const canPapalDiscard = computed(() => fieldEffectCard.value?.name === '教皇旨意' && myTurn.value && state.value.current_phase === 'battle')
 const selfEffects = computed(() => effectBadgeList(state.value.effect_badges?.self))
 const opponentEffects = computed(() => effectBadgeList(state.value.effect_badges?.opponent))
 const frozenMine = computed(() =>
@@ -457,6 +459,7 @@ function fullCard(card: { name: string; speed?: number | string; type?: string; 
 function inspectChain(card: { name: string; speed?: number | string; type?: string; description?: string } | null | undefined, source = ''): void {
   chainInspect.value = fullCard(card ? { speed: '', type: '', ...card } : null)
   chainPreviewSource.value = source
+  if (window.innerHeight <= 520) void nextTick(() => { if (chainBodyEl.value) chainBodyEl.value.scrollTop = 0 })
 }
 function onChainCardClick(card: CardLike): void {
   if (compact.value || (!canHover && chainTouchArmed.value !== card.name)) {
@@ -503,6 +506,7 @@ const logOpen = ref(false)
 const moreOpen = ref(false)
 const discardOpen = ref(false)
 const zoomOpen = ref(false)
+const papalChoosing = ref(false)
 const quickChatCatalog = ref<Array<{ id: string; text: string }>>([])
 const chatDraft = ref('')
 const chatError = ref('')
@@ -565,6 +569,7 @@ const targetStatus = computed(() => {
   return '请按提示在高亮的海域中选择目标。'
 })
 const chainPanelEl = ref<HTMLElement | null>(null)
+const chainBodyEl = ref<HTMLElement | null>(null)
 const chainHeadEl = ref<HTMLElement | null>(null)
 const chainDrag = useFloatingDrag({ handle: chainHeadEl, panel: chainPanelEl, initial: { x: Math.max(12, (window.innerWidth - 600) / 2), y: Math.max(80, (window.innerHeight - 560) / 2) }, minY: 12 })
 const chainPanelStyle = computed(() => ({ left: chainDrag.state.value.x + 'px', top: chainDrag.state.value.y + 'px', maxHeight: `calc(100dvh - ${chainDrag.state.value.y + 12}px)` }))
@@ -841,7 +846,7 @@ function useSelectedCard(): void {
 }
 
 async function discardSelectedForAttacks(): Promise<void> {
-  if (selectedCardIndex.value < 0 || busy.value || writeWaitReason.value) return
+  if (!canPapalDiscard.value || selectedCardIndex.value < 0 || busy.value || writeWaitReason.value) return
   busy.value = true
   try {
     const ack = await sendBattleEvent('papal_discard', {
@@ -854,6 +859,21 @@ async function discardSelectedForAttacks(): Promise<void> {
     ui.notifyError('game-papal-discard', '连接不稳定，请稍后重试')
   } finally { busy.value = false }
 }
+
+function openPapalDiscard(): void {
+  if (!canPapalDiscard.value || busy.value || writeWaitReason.value || !hand.value.length) return
+  clearCardSelection()
+  moreOpen.value = false
+  papalChoosing.value = true
+}
+function choosePapalCard(index: number): void {
+  if (!canPapalDiscard.value || busy.value || writeWaitReason.value) return
+  papalChoosing.value = false
+  onCardClick(index)
+}
+watch([canPapalDiscard, writeWaitReason], ([allowed, reason]) => {
+  if (!allowed || reason) papalChoosing.value = false
+})
 
 function cancelCardSelection(): void {
   if (!detailOpen.value) return
@@ -1143,7 +1163,7 @@ function closeZoom(): void {
 // ---- one primary action per turn ------------------------------------------
 interface PrimaryAction {
   label: string
-  event: 'enter_battle_phase' | 'enter_end_phase' | 'end_turn'
+  event: 'enter_battle_phase' | 'enter_end_phase' | 'end_turn' | 'papal_discard'
   enabled: boolean
   reason: string
 }
@@ -1160,6 +1180,9 @@ const primaryAction = computed<PrimaryAction>(() => {
     }
   }
   if (phase === 'battle') {
+    if (canPapalDiscard.value && state.value.attacks_remaining <= 0 && hand.value.length) {
+      return { label:'弃牌换 2 次攻击', event:'papal_discard', enabled:true, reason:'' }
+    }
     return {
       label: '进入结束阶段',
       event: 'enter_end_phase',
@@ -1201,6 +1224,7 @@ function runPrimary(): void {
     return
   }
   moreOpen.value = false
+  if (action.event === 'papal_discard') { openPapalDiscard(); return }
   void turnAction(action.event)
 }
 
@@ -1983,7 +2007,7 @@ function backToLobby(): void {
             <button type="button" class="button game-detail__use" data-testid="game-card-detail-use" :disabled="!!cardDisabled(hand[selectedCardIndex])" @click="useSelectedCard">使用此卡</button>
             <button type="button" class="button button--ghost" data-testid="game-card-detail-cancel" @click="cancelCardSelection">取消选择</button>
           </div>
-          <button v-if="state.field_magic === '教皇旨意' && state.current_phase === 'battle' && isMyTurn(state)" type="button" class="button button--ghost" data-testid="game-card-papal-discard" :disabled="busy || !!writeWaitReason" @click="discardSelectedForAttacks">弃置此卡 · 获得2次攻击</button>
+          <button v-if="canPapalDiscard" type="button" class="button button--ghost" data-testid="game-card-papal-discard" :disabled="busy || !!writeWaitReason" @click="discardSelectedForAttacks">弃置此卡 · 获得2次攻击</button>
         </section>
         <section v-else class="arena-rail-panel arena-card-placeholder" data-testid="game-card-placeholder">
           <header class="arena-rail-head">卡牌详情</header>
@@ -2151,6 +2175,7 @@ function backToLobby(): void {
         >更多操作</button>
       </div>
       <div v-show="moreOpen" class="game-more-menu" data-testid="game-more-menu" role="menu" aria-label="更多操作">
+        <button v-if="canPapalDiscard" type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-papal-open" :disabled="busy || !!writeWaitReason || !hand.length" @click="openPapalDiscard">弃牌换 2 次攻击</button>
         <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-battle" :disabled="!!writeWaitReason || !myTurn || state.current_phase !== 'preparation'" @click="turnAction('enter_battle_phase')">进入战斗阶段</button>
         <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-enter-end" :disabled="!!writeWaitReason || !myTurn || state.current_phase !== 'battle'" @click="turnAction('enter_end_phase')">进入结束阶段</button>
         <button type="button" class="button button--ghost game-more__item" role="menuitem" data-testid="game-end-turn" :disabled="!!writeWaitReason || !myTurn || state.current_phase !== 'end'" @click="turnAction('end_turn')">结束回合</button>
@@ -2222,6 +2247,7 @@ function backToLobby(): void {
         <div><p class="battle-prompt__context">连锁响应</p><h2 class="game-chain-panel__title">是否接续这次连锁？</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div>
       </header>
       <section v-if="chainWindow" class="game-chain-window" data-testid="game-chain-window">
+        <div ref="chainBodyEl" class="game-chain-window__body" :class="{ 'is-reading': compact && mobileChainRead }">
         <p class="game-chain-window__card">
           {{ chainWindow.caster === state.player_id ? '你发动了魔法卡' : '对方发动了魔法卡' }}
           <span class="chain-preview-anchor" @mouseleave="!compact && (chainPreviewSource = '')">
@@ -2251,9 +2277,10 @@ function backToLobby(): void {
         </div>
         <div v-if="compact && mobileChainRead" class="game-chain-mobile-effect" data-testid="game-chain-mobile-effect">
           <strong>{{ mobileChainRead.name }}</strong><p>{{ mobileChainRead.description }}</p>
-          <button v-if="chainPreviewSource !== 'trigger' && mobileChainCard" type="button" class="button button--primary" data-testid="game-chain-confirm" @click="respondChain(mobileChainCard)">接续此卡</button>
+        </div>
         </div>
         <div class="game-chain-window__actions">
+          <button v-if="compact && chainPreviewSource !== 'trigger' && mobileChainCard" type="button" class="button button--primary" data-testid="game-chain-confirm" @click="respondChain(mobileChainCard)">接续此卡</button>
           <button type="button" class="button button--ghost" data-testid="game-chain-collapse" @click="chainPreviewSource = ''; match.collapseChainWindow()">暂时收起 · 查看棋盘</button>
           <button type="button" class="button button--ghost" data-testid="game-chain-pass" @click="passChain">不响应</button>
         </div>
@@ -2286,9 +2313,23 @@ function backToLobby(): void {
       v-if="compact && detailOpen && hand[selectedCardIndex] && !picking"
       :card="fullCard(hand[selectedCardIndex])!"
       :reason="cardDisabled(hand[selectedCardIndex])"
-      :can-discard="state.field_magic === '教皇旨意' && state.current_phase === 'battle' && myTurn && !busy && !writeWaitReason"
+      :can-discard="canPapalDiscard"
+      :discard-reason="writeWaitReason"
+      :pending="busy"
       @close="cancelCardSelection" @use="useSelectedCard" @discard="discardSelectedForAttacks"
     />
+
+    <AppOverlay v-if="papalChoosing" id="game-papal-picker" :priority="150" labelledby="game-papal-title" @close="papalChoosing = false">
+      <section class="game-papal-picker battle-prompt">
+        <header><h2 id="game-papal-title">弃牌换攻击</h2><button type="button" class="button button--ghost" data-testid="game-papal-cancel" @click="papalChoosing = false">取消</button></header>
+        <p>选择一张手牌，再确认弃置；每张可换 2 次攻击。</p>
+        <div class="game-papal-cards">
+          <button v-for="(card,index) in hand" :key="cardTestIdFor(card,index)" type="button" :data-testid="'game-papal-card-' + index" :disabled="busy || !!writeWaitReason" @click="choosePapalCard(index)">
+            <img v-if="cardArtUrl(card.name)" :src="cardArtUrl(card.name)!" alt="" /><span><strong>{{ card.name }}</strong><small>弃置后攻击 +2</small></span>
+          </button>
+        </div>
+      </section>
+    </AppOverlay>
 
     <PlayerCardDialog
       v-if="playerCardSide"

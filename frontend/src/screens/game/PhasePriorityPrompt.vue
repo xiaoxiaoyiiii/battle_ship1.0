@@ -4,15 +4,18 @@ import AppOverlay from '../../components/AppOverlay.vue'
 import { cardArtUrl } from '../../cards/cardArt'
 import { useUiStore } from '../../stores/ui'
 import type { CardLike } from './view'
+import { useAdaptiveGameLayout } from './useAdaptiveGameLayout'
 
 const props = defineProps<{ request: Record<string, unknown> | null; open: boolean; now: number; busy: boolean; error: string }>()
 const emit = defineEmits<{ select: [card: CardLike]; pass: []; collapse: [] }>()
 const ui = useUiStore()
+const { compact } = useAdaptiveGameLayout()
 // 关闭时保留最后一帧内容，避免淡出过程中标题和卡牌先被清空。
 const lastRequest = shallowRef<Record<string, unknown>>({})
 const selectedIndex = ref<number | null>(null)
 const hoveredIndex = ref<number | null>(null)
 const hoverPanel = ref<HTMLElement | null>(null)
+const bodyPanel = ref<HTMLElement | null>(null)
 const hoverPosition = ref({ left: '12px', top: '12px' })
 const request = computed(() => props.request ?? lastRequest.value)
 const cards = computed(() => Array.isArray(request.value.speed3_cards) ? request.value.speed3_cards as CardLike[] : [])
@@ -54,7 +57,10 @@ function playSelected(): void {
 function choose(index: number): void {
   if (props.busy || remaining.value <= 0) return
   if (selectedIndex.value === index && window.matchMedia('(hover: hover) and (min-width: 1200px) and (min-height: 700px)').matches) playSelected()
-  else selectedIndex.value = index
+  else {
+    selectedIndex.value = index
+    if (window.innerHeight <= 520) void nextTick(() => { if (bodyPanel.value) bodyPanel.value.scrollTop = 0 })
+  }
 }
 
 watch(() => props.request, value => {
@@ -68,13 +74,14 @@ onBeforeUnmount(() => window.removeEventListener('resize', hidePreview))
 </script>
 
 <template>
-  <AppOverlay draggable id="game-phase-prompt" :open="open" transition-name="phase-window" :priority="210" :close-on-backdrop="false" labelledby="phase-prompt-title" @close="emit('pass')">
+  <AppOverlay :draggable="!compact" id="game-phase-prompt" :open="open" transition-name="phase-window" :priority="210" :close-on-backdrop="false" labelledby="phase-prompt-title" @close="emit('pass')">
     <section class="phase-prompt battle-prompt" @scroll="hidePreview">
       <header class="battle-prompt__head" data-drag-handle>
         <div><p class="battle-prompt__context">阶段转换时点</p><h2 id="phase-prompt-title">对方即将{{ action }}</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div>
         <span class="phase-prompt__clock" :class="{ urgent: remaining <= 3 }" data-testid="game-phase-countdown"><strong>{{ remaining }}</strong> 秒</span>
       </header>
-      <p class="phase-prompt__hint">你可以在此时打出速阶三卡牌。选择一张阅读效果，点击「打出」使用。</p>
+      <div ref="bodyPanel" class="phase-prompt__body" :class="{ 'has-selection': selected }">
+      <p class="phase-prompt__hint">选择速阶 3 卡牌查看效果，确认后打出。</p>
       <div class="phase-prompt__cards" aria-label="可用速阶三卡牌">
         <button v-for="(card, index) in cards" :key="card.name + index" type="button" class="phase-prompt__card" :class="{ 'is-selected': selectedIndex === index }" :aria-pressed="selectedIndex === index" :data-testid="'game-phase-card-' + card.name" :disabled="busy || remaining <= 0" @mouseenter="showPreview(index, $event)" @mouseleave="hidePreview" @blur="hidePreview" @click="choose(index)">
           <img v-if="cardArtUrl(card.name)" :src="cardArtUrl(card.name)!" :alt="card.name + '卡面'" />
@@ -86,8 +93,9 @@ onBeforeUnmount(() => window.removeEventListener('resize', hidePreview))
         <p v-else>选择上方卡牌查看效果；不出牌可直接放行。</p>
       </div>
       <p v-if="error" class="phase-prompt__error" role="alert">{{ error }}</p>
-      <button type="button" class="button button--ghost phase-prompt__collapse" data-testid="game-phase-collapse" :disabled="busy" @click="hidePreview(); emit('collapse')">暂时收起 · 查看棋盘</button>
+      </div>
       <footer>
+        <button type="button" class="button button--ghost phase-prompt__collapse" data-testid="game-phase-collapse" :disabled="busy" @click="hidePreview(); emit('collapse')">暂时收起 · 查看棋盘</button>
         <label><input type="checkbox" data-testid="game-phase-disable" :checked="!ui.phasePrompts" @change="ui.setPhasePrompts(!(($event.target as HTMLInputElement).checked))" />以后自动放行<span>可在设置中恢复</span></label>
         <div class="phase-prompt__actions">
           <button type="button" class="button button--ghost" data-testid="game-phase-pass" :disabled="busy" @click="emit('pass')">不出牌</button>
@@ -157,4 +165,47 @@ footer label span { width:100%; padding-left:26px; color:var(--prompt-muted); fo
 .phase-prompt__hover.card-inspect-fade-enter-from,.phase-prompt__hover.card-inspect-fade-leave-to { transform:translateY(8px); }
 @media(max-width:520px) { .phase-prompt { padding:18px; }.phase-prompt__cards { grid-template-columns:1fr; }.phase-prompt__card img { width:76px; height:110px; flex-basis:76px; }.phase-prompt__clock { min-width:62px; padding:8px; }.phase-prompt__clock strong { font-size:26px; }.phase-prompt__actions { width:100%; }.phase-prompt__actions .button { flex:1; } }
 @media(prefers-reduced-motion:reduce) { :global(.phase-window-enter-active),:global(.phase-window-leave-active) { transition:none; } }
+
+/* 面板传送到 body，手机规则必须由本组件承担，不能依赖 .game 祖先。 */
+@media (max-width:1199px), (max-height:699px) {
+  :global(.app-overlay[data-overlay='game-phase-prompt'] .app-overlay__panel) { width:min(560px,calc(100vw - 24px)); max-height:min(78dvh,600px); overflow:hidden; }
+  .phase-prompt { display:flex; flex-direction:column; max-height:min(78dvh,600px); padding:12px; overflow:hidden; }
+  .phase-prompt .battle-prompt__head { flex:0 0 auto; align-items:center; gap:8px; margin:0 0 10px; padding-bottom:9px; }
+  .phase-prompt .battle-prompt__head h2 { margin:2px 0 0; font-size:16px; line-height:1.4; }
+  .battle-prompt__context { font-size:11px; }
+  .battle-prompt__drag-note { display:none; }
+  .phase-prompt__clock { min-width:48px; padding:6px 8px; gap:3px; border-radius:8px; font-size:12px; }
+  .phase-prompt__clock strong { font-size:21px; }
+  .phase-prompt__body { flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; }
+  .phase-prompt__hint { margin:0 0 8px; font-size:12px; line-height:1.5; }
+  .phase-prompt__cards { display:flex; gap:8px; padding:2px; overflow-x:auto; }
+  .phase-prompt__card { flex:0 0 156px; gap:9px; padding:8px; border-radius:8px; }
+  .phase-prompt__card img { flex:0 0 36px; width:36px; height:54px; }
+  .phase-prompt__card span { min-width:0; gap:3px; }
+  .phase-prompt__card strong { font-size:14px; overflow-wrap:anywhere; }
+  .phase-prompt__card small { font-size:11px; }
+  .phase-prompt__card-state { display:none; }
+  .phase-prompt__effect { max-height:none; margin-top:8px; padding:9px 10px; font-size:14px; line-height:1.6; overflow:visible; }
+  .phase-prompt__effect.is-empty { display:none; }
+  footer { flex:0 0 auto; display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; padding-top:8px; }
+  footer .phase-prompt__collapse { width:auto; margin:0; padding:6px 8px; min-height:44px; font-size:12px; }
+  footer label { gap:6px; font-size:12px; line-height:1.4; }
+  footer label span { padding-left:24px; font-size:10px; }
+  .phase-prompt__actions { grid-column:1/-1; width:100%; margin:0; gap:8px; }
+  .phase-prompt__actions .button { flex:1; min-height:44px; padding:8px; font-size:14px; }
+}
+@media (max-height:520px) {
+  :global(.app-overlay[data-overlay='game-phase-prompt'] .app-overlay__panel), .phase-prompt { max-height:min(78dvh,600px,calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom))); }
+  .phase-prompt { padding:10px 12px; }
+  .phase-prompt .battle-prompt__head { margin-bottom:6px; padding-bottom:6px; }
+  footer { grid-template-columns:1fr 1fr 2fr; margin-top:6px; padding-top:6px; }
+  .phase-prompt footer .phase-prompt__collapse { min-width:0; font-size:12px; line-height:1.4; }
+  footer label { min-height:44px; }
+  .phase-prompt__actions { grid-column:3; }
+  .phase-prompt__body.has-selection { display:grid; grid-template-columns:minmax(0,180px) minmax(0,1fr); align-items:start; gap:6px 10px; }
+  .phase-prompt__body.has-selection .phase-prompt__hint { grid-column:1/-1; margin:0; }
+  .phase-prompt__body.has-selection .phase-prompt__cards { grid-column:1; }
+  .phase-prompt__body.has-selection .phase-prompt__effect { grid-column:2; margin:0; }
+  .phase-prompt__body.has-selection .phase-prompt__error { grid-column:1/-1; }
+}
 </style>

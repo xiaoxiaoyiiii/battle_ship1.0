@@ -1,0 +1,313 @@
+/* ---------------------------------------------------------------- mobile shell ----
+ * 手机壳层：导航高度契约、单行工具栏、覆盖式连接提示、安全区与弹层几何。
+ *
+ * 由 App.vue 的全局样式块在 main-ui.css 之后导入，因此同特异度下覆盖 base.css
+ * 的移动端块。所有值都按「可用宽度/高度 + 安全区」决定，没有做整页缩放。
+ */
+
+/* 导航高度契约：桌面 56px；手机 flow 竖屏 44px、横屏 36px（安全区另加）。 */
+.app-shell {
+  --app-nav-h: 56px;
+  --app-safe-top: env(safe-area-inset-top, 0px);
+  --app-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --app-safe-left: env(safe-area-inset-left, 0px);
+  --app-safe-right: env(safe-area-inset-right, 0px);
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+@media (max-width: 760px) and (min-height: 521px) {
+  .app-shell {
+    --app-nav-h: 44px;
+  }
+}
+
+@media (max-height: 520px) {
+  .app-shell {
+    --app-nav-h: 36px;
+  }
+}
+
+/* ------------------------------------------------------------- 连接提示（覆盖）----
+ * 断线/异常提示固定在导航下方浮层里，不再以文档流元素撑高舞台；
+ * 多条提示纵向堆叠在同一覆盖层内，舞台高度始终等于视口。
+ */
+.app-connection-stack {
+  position: fixed;
+  z-index: calc(var(--z-nav, 40) + 1);
+  top: calc(var(--app-nav-h) + var(--app-safe-top) + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(560px, calc(100% - 24px));
+  pointer-events: none;
+}
+
+.app-connection-stack > .app-connection {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--role-warning);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface-deck) 94%, transparent);
+  box-shadow: 0 10px 26px rgb(0 0 0 / 34%);
+  backdrop-filter: blur(10px);
+}
+
+.app-connection-stack .app-connection__text {
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.app-connection-stack .app-connection__retry {
+  margin-left: 0;
+  min-height: 30px;
+  padding: 3px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------- 手机导航（永远单行）----
+ * 竖向手机与横屏手机都保持一行：链接横向滚动，品牌在窄屏只留图标，
+ * 控制按钮浮在右侧。这样 flow 工具栏不会把对局舞台挤成两行。
+ */
+@media (max-width: 760px), (max-height: 520px) {
+  .app-nav {
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 6px;
+    min-height: calc(var(--app-nav-h) + var(--app-safe-top));
+    padding: var(--app-safe-top) 10px 0;
+  }
+
+  .app-nav__links {
+    order: 0;
+    flex: 1 1 auto;
+    flex-basis: auto;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  .app-nav__links::-webkit-scrollbar {
+    display: none;
+  }
+
+  .app-nav--flow .app-nav__links {
+    justify-content: flex-end;
+  }
+
+  .app-brand {
+    gap: 6px;
+    padding-right: 0;
+  }
+
+  .app-brand__mark {
+    width: 28px;
+    height: 28px;
+    border-radius: 9px;
+  }
+
+  .app-brand__title {
+    font-size: 13px;
+  }
+
+  .app-brand__sub {
+    display: none;
+  }
+
+  .app-nav__link,
+  .app-nav__flow {
+    flex: 0 0 auto;
+    min-height: calc(var(--app-nav-h) - 8px);
+    padding: 0 10px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  .app-nav__meta {
+    flex: 0 0 auto;
+    margin-left: 0;
+    gap: 2px;
+  }
+
+  .app-nav__icon {
+    width: 38px;
+    height: 38px;
+  }
+
+  /* 40px 触控地板在这里放开宽度约束，否则一行放不下。 */
+  .app-nav a[data-testid],
+  .app-nav button[data-testid] {
+    min-width: 0;
+    min-height: calc(var(--app-nav-h) - 8px);
+  }
+
+  .app-menu {
+    position: fixed;
+    top: calc(var(--app-nav-h) + var(--app-safe-top) + 6px);
+    right: calc(8px + var(--app-safe-right));
+    left: auto;
+    width: min(320px, calc(100% - 16px));
+    max-height: calc(100dvh - var(--app-nav-h) - var(--app-safe-top) - 16px);
+    overflow-y: auto;
+  }
+}
+
+/* 横屏手机导航更矮：图标与链接一起压到 36px 契约内。 */
+@media (max-height: 520px) {
+  .app-nav {
+    padding: var(--app-safe-top) 8px 0;
+    gap: 4px;
+  }
+
+  .app-nav__icon {
+    width: 32px;
+    height: 32px;
+  }
+
+  .app-nav__link,
+  .app-nav__flow {
+    min-height: calc(var(--app-nav-h) - 10px);
+    padding: 0 8px;
+    font-size: 12.5px;
+  }
+
+  .app-brand__mark {
+    width: 26px;
+    height: 26px;
+  }
+}
+
+/* 320px 级窄屏：品牌只留图标，把宽度让给导航链接。 */
+@media (max-width: 380px) {
+  .app-brand__text {
+    display: none;
+  }
+
+  .app-nav__link,
+  .app-nav__flow {
+    padding: 0 8px;
+    font-size: 12.5px;
+  }
+}
+
+/* ---------------------------------------------------------------- 屏幕与弹层 ---- */
+@media (max-width: 760px), (max-height: 520px) {
+  .screen {
+    padding: 12px 12px calc(12px + var(--app-safe-bottom));
+  }
+
+  .screen__title {
+    font-size: 22px;
+    line-height: 1.2;
+  }
+
+  .app-overlay {
+    padding: calc(8px + var(--app-safe-top)) 8px calc(8px + var(--app-safe-bottom));
+  }
+
+  .app-toasts {
+    right: 10px;
+    left: 10px;
+    bottom: calc(10px + var(--app-safe-bottom));
+  }
+}
+
+/* 横屏手机：屏幕内容压扁，标题与小节标题一起收紧，避免一屏只剩标题。 */
+@media (max-height: 520px) {
+  .screen {
+    gap: 8px;
+    padding: 8px 10px calc(8px + var(--app-safe-bottom));
+  }
+
+  .screen__title {
+    font-size: 18px;
+  }
+
+  .screen__hint,
+  .screen__subtitle {
+    font-size: 12px;
+  }
+}
+
+
+/* ------------------------------------------------- 非对局屏幕的手机排版修正 ----
+ * 这些选择器带 .app-shell 前缀提高特异度，用来压过各屏 scoped CSS
+ * （scoped 规则带 [data-v-*]，同权重时后注入，因此必须显式加一级）。
+ */
+@media (max-width: 760px) {
+  /* 首页头部：状态胶囊独立成行，避免压住主卡片与英雄区。 */
+  .app-shell [data-screen='start'] .home-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .app-shell [data-screen='start'] .home-head__meta {
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    gap: 8px;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  .app-shell [data-screen='start'] .home-conn {
+    max-width: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .app-shell [data-screen='start'] .home-pill {
+    flex: 0 0 auto;
+  }
+
+  /* 大厅公告：最多两行 + 省略号，关闭按钮固定在右端不压文字。 */
+  .app-shell [data-screen='lobby'] .lobby__changelog {
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px 6px 10px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--surface-raised) 72%, transparent);
+    font-size: 11.5px;
+    line-height: 1.45;
+  }
+
+  .app-shell [data-screen='lobby'] .lobby__changelog-text {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+    overflow: hidden;
+  }
+
+  .app-shell [data-screen='lobby'] .lobby__changelog-close {
+    min-width: 40px;
+    min-height: 28px;
+    padding: 2px 8px;
+    font-size: 11px;
+  }
+}
+
+/* 430px 级手机：导航只留品牌图标，五个入口一屏放得下、不必横向滚动。 */
+@media (max-width: 430px) and (min-height: 521px) {
+  .app-brand__text {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-connection-stack {
+    backdrop-filter: none;
+  }
+}

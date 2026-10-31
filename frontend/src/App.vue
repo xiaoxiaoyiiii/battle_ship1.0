@@ -184,6 +184,8 @@ onBeforeUnmount(() => {
   <AdminOverlay v-if="ui.adminOpen" @close="ui.closeAdmin()" />
 
   <div class="app-shell" data-testid="app-shell" :data-route-loading="loading ? 'true' : 'false'" :data-immersive="immersive ? 'true' : 'false'">
+    <!-- 连接提示走覆盖层：多提示堆叠在导航下方，不把舞台往下推。 -->
+    <div class="app-connection-stack" data-testid="connection-stack">
     <div
       v-if="ui.connection === 'offline'"
       class="app-connection"
@@ -214,6 +216,7 @@ onBeforeUnmount(() => {
       <button type="button" class="app-connection__retry" data-testid="connection-issue-exit" @click="exitToHome">
         回首页
       </button>
+    </div>
     </div>
 
     <nav class="app-nav" :class="{ 'app-nav--flow': immersive }" data-testid="app-nav" aria-label="主屏导航">
@@ -353,3 +356,8 @@ onBeforeUnmount(() => {
     :opponent-name="game.state.opponent_name || '对手'"
   />
 </template>
+
+<style>
+/* 手机壳层（导航高度契约、单行工具栏、覆盖式连接提示、安全区）。 */
+@import './styles/mobile-shell.css';
+</style>

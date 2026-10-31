@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AppOverlay from './AppOverlay.vue'
 import { cardArtUrl } from '../cards/cardArt'
 import { CARDS, cardsBySpeed, cardsByType, type CardInfo } from '../cards/cardData'
@@ -44,6 +44,20 @@ const limit = ref(PAGE_SIZE)
 const usage = ref<Record<string, number>>({})
 const usageTotal = ref(0)
 const selected = ref<CardInfo | null>(null)
+const collectionBody = ref<HTMLElement | null>(null)
+const bodyHeight = ref(0)
+let bodyObserver: ResizeObserver | null = null
+// sticky 详情按滚动口的实际高度限制；百分比会按长列表的网格行计算，无法约束可视区。
+watch(collectionBody, element => {
+  bodyObserver?.disconnect()
+  bodyObserver = null
+  if (!element) return
+  const measure = () => { bodyHeight.value = element.clientHeight }
+  measure()
+  bodyObserver = new ResizeObserver(measure)
+  bodyObserver.observe(element)
+})
+onBeforeUnmount(() => bodyObserver?.disconnect())
 
 const matches = (card: CardInfo, needle: string): boolean => {
   if (!needle) return true
@@ -285,7 +299,7 @@ function close(): void {
         </p>
       </div>
 
-      <div class="collection__body" :class="{ 'has-detail': selected }">
+      <div ref="collectionBody" class="collection__body" :class="{ 'has-detail': selected }" :style="bodyHeight ? { '--collection-body-height': bodyHeight + 'px' } : undefined">
         <div class="collection__list">
         <p v-if="empty" class="collection__empty" data-testid="collection-empty">没有匹配的卡牌。</p>
         <section
@@ -707,7 +721,7 @@ function close(): void {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: min(100%, 560px);
+  max-height: min(var(--collection-body-height, 560px), 560px);
   overflow-y: auto;
   padding: 12px 14px;
   border: 1px solid var(--border-strong);

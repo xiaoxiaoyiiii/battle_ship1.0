@@ -1478,6 +1478,7 @@ watch(targetUsername, () => {
   margin: 0;
   color: var(--text);
   font-size: 15px;
+  overflow-wrap: anywhere;
 }
 
 .profile__signature {
@@ -1834,6 +1835,7 @@ watch(targetUsername, () => {
 .profile-editor__panel {
   position: relative;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto 1fr auto;
   width: min(1120px, 100%);
   max-height: min(820px, calc(100dvh - 48px));
@@ -1916,10 +1918,11 @@ watch(targetUsername, () => {
 .profile-editor__preview[data-profile-bg='storm_atlas'] { background: linear-gradient(115deg, transparent 0 46%, rgb(246 215 122 / 24%) 47% 48%, transparent 49%), linear-gradient(160deg, #233b4b, #070d18 78%); }
 .profile-editor__preview[data-profile-bg='season_deep'] { background: radial-gradient(ellipse at 20% 12%, rgb(142 220 236 / 32%), transparent 32%), linear-gradient(160deg, #0f4b60, #061522 78%); }
 .profile-editor__preview-identity { position: absolute; left: 24px; right: 24px; bottom: 110px; display: flex; align-items: center; gap: 14px; }
+.profile-editor__preview-identity > div { min-width: 0; }
 .profile-editor__preview-avatar { width: 84px; height: 84px; --avatar-size: 84px; flex-basis: 84px; }
-.profile-editor__preview-identity h3 { margin: 0; color: #fff; font-size: 25px; }
+.profile-editor__preview-identity h3 { margin: 0; color: #fff; font-size: 25px; overflow-wrap: anywhere; }
 .profile-editor__preview-identity span { display: inline-block; margin-top: 7px; color: var(--gold-strong); font-size: 13px; }
-.profile-editor__preview-status { position: absolute; left: 24px; right: 24px; bottom: 32px; margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.profile-editor__preview-status { position: absolute; left: 24px; right: 24px; bottom: 32px; margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
 
 .profile-editor__controls { min-width: 0; }
 .profile-editor__tabs { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; margin-bottom: 18px; }
@@ -2056,14 +2059,16 @@ watch(targetUsername, () => {
   .profile__name { font-size: 26px; }
   .profile__avatar { width: 104px; height: 104px; }
   .profile-editor { padding: 10px; }
+  .profile-editor__head { flex-wrap: wrap; align-items: flex-start; gap: 6px; padding: 14px 16px; }
+  .profile-editor__status { overflow-wrap: anywhere; }
+  .profile-editor__actions { gap: 8px; padding: 12px 16px; }
   .profile-editor__body { grid-template-columns: 1fr; }
   .profile-editor__tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .profile-editor__preview { min-height: 300px; }
   .profile-editor__options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-/* 短横屏（如 844×390 / 664×336）：编辑器面板放不下双列时改单列并在面板内滚动，
-   保证每个栏目、选项与「保存名片 / 取消」都在面板内可触达。 */
-@media (max-height: 520px) {
+/* 短横屏使用紧凑双栏；窄竖屏（包括键盘缩小后的窗口）保持原单列。 */
+@media (min-width: 600px) and (max-height: 520px) {
   .profile__hero {
     padding-top: 84px;
     min-height: 180px;
@@ -2096,7 +2101,27 @@ watch(targetUsername, () => {
 
   .profile-editor__preview {
     min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    overflow-y: auto;
   }
+
+  .profile-editor__preview-label { display: none; }
+
+  .profile-editor__preview-identity,
+  .profile-editor__preview-status {
+    position: relative;
+    inset: auto;
+    z-index: 1;
+    flex-shrink: 0;
+  }
+
+  .profile-editor__preview-identity { gap: 8px; }
+  .profile-editor__preview-identity h3 { font-size: 16px; }
+  .profile-editor__preview-avatar { width: 48px; height: 48px; --avatar-size: 48px; flex-basis: 48px; }
+  .profile-editor__preview-status { font-size: 11px; }
 
   .profile-editor__controls {
     min-width: 0;

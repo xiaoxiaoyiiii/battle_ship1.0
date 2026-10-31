@@ -381,7 +381,10 @@ function close(): void {
   display: flex;
   flex-direction: column;
   width: min(1120px, 100%);
-  max-height: 88vh;
+  /* 用 dvh 兜底：外层 .app-overlay 是居中 grid，面板一旦超过视口，
+     顶部（含关闭按钮）会被推到负坐标而不可达。 */
+  max-height: min(88vh, calc(100dvh - 32px));
+  overflow: hidden;
   padding: 18px 20px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
@@ -477,7 +480,8 @@ function close(): void {
 }
 
 .collection__body {
-  min-height: 120px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding-right: 4px;
 }
@@ -757,9 +761,24 @@ function close(): void {
   color: var(--text-secondary);
 }
 
-@media (max-width: 719px) {
+/* 紧凑详情：窄屏或短横屏都改成单列、静态详情。
+   原实现只在 <=719px 生效，844×390 仍用 sticky + 560px 高度，
+   详情比滚动容器更高，正文和收起按钮都进不了可视区。 */
+@media (max-width: 860px), (max-height: 560px) {
+  /* 极短横屏（664×336 等）里头部+筛选已占满面板，body 的 flex 高度会算成 0。
+     改成整块面板滚动、body 不再自己开滚动区，卡片与详情都能滚到。 */
+  .collection__panel {
+    overflow-y: auto;
+  }
+
+  .collection__body,
   .collection__body.has-detail {
-    grid-template-columns: minmax(0, 1fr);
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+    min-height: 0;
+    overflow: visible;
+    gap: 10px;
   }
 
   .collection__detail {
@@ -771,6 +790,14 @@ function close(): void {
 
   .collection__detail-face {
     display: none;
+  }
+
+  .collection__detail-close {
+    position: sticky;
+    top: 0;
+    align-self: flex-end;
+    background: var(--surface-chamber);
+    z-index: 1;
   }
 }
 </style>

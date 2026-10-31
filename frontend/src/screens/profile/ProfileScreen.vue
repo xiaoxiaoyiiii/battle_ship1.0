@@ -1136,6 +1136,8 @@ watch(targetUsername, () => {
   position: relative;
   z-index: 1;
   display: grid;
+  /* 单列显式绑到可用宽度：隐式列会按子项 min-content 撑开，再被 overflow:hidden 裁掉。 */
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   width: 1120px;
   max-width: 100%;
@@ -1146,6 +1148,10 @@ watch(targetUsername, () => {
   background: var(--panel);
   box-shadow: 0 24px 70px rgb(2 6 18 / 34%);
   animation: profile-card-enter 720ms cubic-bezier(.2,.72,.2,1) both;
+}
+
+.profile__card > * {
+  min-width: 0;
 }
 
 @keyframes profile-card-enter {
@@ -1212,9 +1218,11 @@ watch(targetUsername, () => {
 .profile__hero {
   position: relative;
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: 16px;
   margin-bottom: 4px;
+  min-width: 0;
   min-height: 224px;
   padding: 156px 32px 24px;
 }
@@ -1283,6 +1291,7 @@ watch(targetUsername, () => {
   display: grid;
   justify-items: center;
   gap: 6px;
+  min-width: 0;
   flex: 0 0 auto;
 }
 
@@ -1439,7 +1448,14 @@ watch(targetUsername, () => {
   align-items: center;
   gap: 8px;
   margin: 0;
+  min-width: 0;
   font-size: 32px;
+  overflow-wrap: anywhere;
+}
+
+.profile__name > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .profile__name .is-rainbow {
@@ -1977,7 +1993,24 @@ watch(targetUsername, () => {
   }
 
   .profile__hero {
-    padding: 104px 16px 8px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 104px 16px 12px;
+  }
+
+  .profile__avatar-wrap {
+    align-self: flex-start;
+    justify-items: start;
+  }
+
+  .profile__who {
+    width: 100%;
+    padding-bottom: 4px;
+  }
+
+  .profile__avatar-alt-row {
+    width: min(270px, 100%);
   }
 
   .profile__hero::before {
@@ -2027,5 +2060,65 @@ watch(targetUsername, () => {
   .profile-editor__tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .profile-editor__preview { min-height: 300px; }
   .profile-editor__options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+/* 短横屏（如 844×390 / 664×336）：编辑器面板放不下双列时改单列并在面板内滚动，
+   保证每个栏目、选项与「保存名片 / 取消」都在面板内可触达。 */
+@media (max-height: 520px) {
+  .profile__hero {
+    padding-top: 84px;
+    min-height: 180px;
+  }
+
+  .profile__hero::before {
+    height: 104px;
+  }
+
+  .profile__avatar {
+    width: 84px;
+    height: 84px;
+  }
+
+  .profile__name {
+    font-size: 24px;
+  }
+
+  .profile-editor__panel {
+    max-height: calc(100dvh - 16px);
+  }
+
+  .profile-editor__body {
+    /* 短横屏保留左右双栏，但把预览压窄并允许两侧收缩，
+       这样栏目、选项与底部按钮能同屏，不必只靠滚动。 */
+    grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
+    gap: 10px;
+    min-height: 0;
+  }
+
+  .profile-editor__preview {
+    min-height: 0;
+  }
+
+  .profile-editor__controls {
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .profile-editor__options,
+  .profile-editor__option {
+    min-width: 0;
+  }
+
+  .profile-editor__options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: none;
+  }
+
+  .profile-editor__actions {
+    position: sticky;
+    bottom: 0;
+    background: var(--surface-deck);
+    padding-top: 8px;
+  }
 }
 </style>

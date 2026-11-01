@@ -993,6 +993,11 @@ class MagicService:
         field = field_magic_name(room)
         if field == "教皇旨意":
             per_ship = 0
+        elif mutations.active(room, "A1"):
+            current = int(room.players[player_id].remaining_ships or 0)
+            delta = mutations.tidal_attack_base(current) - mutations.tidal_attack_base(current - ships_added)
+            room.attacks_remaining = max(0, int(room.attacks_remaining) + delta)
+            return
         elif field == "伊甸园":
             per_ship = -1
         else:
@@ -1005,6 +1010,9 @@ class MagicService:
     @staticmethod
     def _apply_last_stand_attacks(room: Room, player_id: str) -> None:
         if room.state != RoomState.ATTACKING or room.current_attacker != player_id:
+            return
+        if mutations.active(room, "A1"):
+            battle_rules.recalc_attacker_attacks(room)
             return
         if battle_rules.attacks_forced_zero(room):
             room.attacks_remaining = 0
@@ -1148,6 +1156,8 @@ class MagicService:
         await self._publisher.emit(
             "magic_chain_updated", _spectate_chain_payload(room), room=room.id
         )
+        if room.mutation_ids and not room.ranked:
+            await self._sync_each_seat(room)
         # The response window starts on the opponent; a card that nobody can
         # answer falls through both passes and resolves (after the display
         # delay, unless it is 0).
@@ -1472,6 +1482,8 @@ class MagicService:
             await self._publisher.emit(
                 "magic_chain_updated", _spectate_chain_payload(room), room=room.id
             )
+            if room.mutation_ids and not room.ranked:
+                await self._sync_each_seat(room)
             # A new card clears the pass count; the window goes to the opponent
             # and can come back for self-chaining.
             room.chain_passes = 0

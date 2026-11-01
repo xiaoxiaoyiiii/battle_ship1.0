@@ -220,7 +220,7 @@ def recalc_attacker_attacks(room: Room, *, include_mutation_bonus: bool = True) 
     if field == "教皇旨意":
         base = 0
     elif mutations.active(room, "A1"):
-        base = max(1, 6 - int(player.remaining_ships or 0))
+        base = mutations.tidal_attack_base(player.remaining_ships)
     elif field == "伊甸园":
         base = max(0, 6 - int(player.remaining_ships or 0))
     else:
@@ -347,7 +347,14 @@ def _turn_successor(room: Room, player_id: str, *, consume: bool = False) -> tup
     return next_index, next_attacker, skip_stages
 
 
+def _can_end_turn(room: Room, player_id: str) -> bool:
+    return (room.state == RoomState.ATTACKING and room.current_attacker == player_id
+            and _value(room.current_phase) == "end")
+
+
 def turn_wraps_round(room: Room, player_id: str) -> bool:
+    if not _can_end_turn(room, player_id):
+        return False
     successor = _turn_successor(room, player_id)
     return bool(successor and successor[0] == 0 and not successor[2])
 
@@ -362,7 +369,7 @@ def resolve_turn_end(room: Room, player_id: str) -> TurnEnd | None:
     flipping it.
     """
 
-    if room.current_attacker != player_id or _value(room.current_phase) != "end":
+    if not _can_end_turn(room, player_id):
         return None
 
     successor = _turn_successor(room, player_id, consume=True)

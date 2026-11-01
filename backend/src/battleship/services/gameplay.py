@@ -500,6 +500,10 @@ class GameplayService:
             return dict(INVALID_SEAT)
         if _state_value(room) == RoomState.GAME_OVER.value:
             return dict(FINISHED_GAME)
+        if mutations.confirmation_pending(room):
+            return {"status": "error", "message": "请先由双方确认本局完整突变词条"}
+        if room.state != RoomState.ROCK_PAPER_SCISSORS:
+            return {"status": "error", "message": "当前尚未进入猜拳阶段"}
 
         choice = data.get("choice")
         if choice not in battle_rules.RPS_CHOICES:

@@ -34,6 +34,10 @@ def battle_bonus(room) -> int:
     return (2 if active(room, "A3") else 0) + (2 if storm_active(room) else 0)
 
 
+def tidal_attack_base(ship_count: int) -> int:
+    return max(1, 6 - int(ship_count or 0))
+
+
 def preparation_key(room) -> str:
     return f"{room.round}:{room.current_attacker}:{room.mutation_preparation_seq}"
 

@@ -198,6 +198,13 @@ def evaluate_cast(room: Room, player_id: str, card: MagicCard) -> str | None:
         return mutation_error
     if not can_play_magic_card(room, player_id, card):
         return playability_reason(room, player_id, card)
+    player = room.players[player_id]
+    if player.magic_blocked and getattr(player, "magic_blocked_round", room.round) == room.round:
+        return "你的魔法卡已被看破，本回合无法使用"
+    from .precheck import availability_error
+    unavailable = availability_error(room, player_id, card.name)
+    if unavailable:
+        return unavailable
     if card.name in ("盗亦有道", "亡羊补牢") and room.players[player_id].effect_flags.no_draw:
         return "无中生有效果生效中，本回合无法获得魔法卡"
     for reason in (

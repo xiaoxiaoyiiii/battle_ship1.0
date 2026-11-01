@@ -3,6 +3,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MatchFoundOverlay from '../../components/MatchFoundOverlay.vue'
 import StateSurface from '../../components/StateSurface.vue'
+import MutationList from '../../components/MutationList.vue'
+import AppOverlay from '../../components/AppOverlay.vue'
+import { mutationSelectionError } from '../../stores/mutations'
 import { acquireLobbyChannel, getLobbySocket } from '../../realtime/lobby'
 import { useHomeStore } from '../../stores/home'
 import { useUiStore } from '../../stores/ui'
@@ -62,6 +65,13 @@ const filter = ref<LobbyFilter>('all')
 const query = ref('')
 const roomName = ref('')
 const roomPublic = ref(true)
+const mutationIds = ref<string[]>([])
+const weeklyPreviewOpen = ref(false)
+const weeklyMutations = computed(() => lobby.snapshot?.weeklyMutations ?? null)
+const mutationError = computed(() => mutationSelectionError(mutationIds.value, weeklyMutations.value))
+function mutationDisabledReason(id: string): string {
+  return mutationIds.value.includes(id) ? '' : mutationSelectionError([...mutationIds.value, id], weeklyMutations.value)
+}
 const chatDraft = ref('')
 const invitingUsername = ref('')
 const acceptingInvite = ref(false)
@@ -289,6 +299,7 @@ function refresh(): void {
 }
 
 function createRoom(): void {
+  if (mutationError.value) { fail(mutationError.value); return }
   const socket = socketOrFail()
   if (!socket) return
   const name = roomName.value.trim()
@@ -297,6 +308,7 @@ function createRoom(): void {
       name,
       public: roomPublic.value,
       player_name: lobbyPlayerName(),
+      mutation_ids: [...mutationIds.value],
     })
     .then((ack) => {
       if (ack.status !== 'success') {
@@ -659,6 +671,7 @@ onBeforeUnmount(() => {
         type="button"
         class="lobby__primary-action lobby__primary-action--room"
         data-testid="lobby-create-room"
+        :disabled="!!mutationError"
         @click="createRoom"
       >
         创建房间
@@ -681,6 +694,19 @@ onBeforeUnmount(() => {
       </div>
       </div>
     </section>
+
+    <section v-if="weeklyMutations" class="lobby__mutations" data-testid="lobby-weekly-mutations" aria-label="本周突变池">
+      <div><h2>本周突变 · {{ weeklyMutations.name }}</h2><p>{{ weeklyMutations.entries.map(entry => entry.name).join('、') }}</p></div>
+      <button type="button" class="button button--ghost" data-testid="lobby-weekly-details" @click="weeklyPreviewOpen = true">查看完整词条</button>
+    </section>
+    <AppOverlay v-if="weeklyPreviewOpen && weeklyMutations" id="lobby-weekly-preview" :priority="100" labelledby="lobby-weekly-title" @close="weeklyPreviewOpen = false">
+      <section class="lobby__mutations-dialog" data-testid="lobby-weekly-mutation-details">
+        <h2 id="lobby-weekly-title">本周突变 · {{ weeklyMutations.name }}</h2>
+        <p>{{ weeklyMutations.week_id }} · 休闲与匹配 AI 每局抽取 1 条，25% 概率抽取 2 条。排位不生效。</p>
+        <MutationList :entries="weeklyMutations.entries" />
+        <button type="button" class="button" data-testid="lobby-weekly-close" @click="weeklyPreviewOpen = false">知道了</button>
+      </section>
+    </AppOverlay>
 
     <div class="lobby__columns" :data-filter="filter">
       <div class="lobby__directory">
@@ -844,6 +870,15 @@ onBeforeUnmount(() => {
           </label>
 
           <p class="lobby__create-hint">取消勾选「公开」= 私密房，只有拿到房号的人能加入。</p>
+          <details v-if="weeklyMutations" class="lobby__mutation-picker" data-testid="lobby-mutation-picker">
+            <summary>自定义突变 · 已选 {{ mutationIds.length }} 条</summary>
+            <p>可多选；同组和冲突词条不能同时选择。不选则按普通自定义对局进行。</p>
+            <label v-for="entry in weeklyMutations.catalog" :key="entry.id" class="lobby__mutation-option" :class="{ 'is-disabled': !!mutationDisabledReason(entry.id) }">
+              <input v-model="mutationIds" type="checkbox" :value="entry.id" :data-testid="'lobby-mutation-' + entry.id" :disabled="!!mutationDisabledReason(entry.id)" :title="mutationDisabledReason(entry.id)" />
+              <span><b>{{ entry.name }}</b><small>{{ entry.description }}</small><small v-if="mutationDisabledReason(entry.id)" class="lobby__mutation-conflict">{{ mutationDisabledReason(entry.id) }}</small></span>
+            </label>
+            <p v-if="mutationError" role="alert" data-testid="lobby-mutation-error">{{ mutationError }}</p>
+          </details>
         </div>
       </section>
 
@@ -1038,6 +1073,23 @@ onBeforeUnmount(() => {
 
   </section>
 </template>
+
+<style scoped>
+.lobby__mutations { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 20px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--surface-chamber); }
+.lobby__mutations h2, .lobby__mutations-dialog h2 { margin: 0; color: var(--text-primary); font-size: 16px; }
+.lobby__mutations p { margin: 5px 0 0; }
+.lobby__mutations p, .lobby__mutations-dialog > p, .lobby__mutation-picker > p { color: var(--text-secondary); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.lobby__mutations-dialog { width: min(640px, 100%); padding: 20px; box-sizing: border-box; }
+.lobby__mutation-picker { flex-basis: 100%; min-width: 0; color: var(--text-primary); }
+.lobby__mutation-picker summary { cursor: pointer; padding: 6px 0; font-size: 13px; }
+.lobby__mutation-option { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0; font-size: 13px; }
+.lobby__mutation-option input { flex-shrink: 0; margin-top: 3px; }
+.lobby__mutation-option span { min-width: 0; }
+.lobby__mutation-option small { display: block; margin-top: 3px; color: var(--text-secondary); line-height: 1.6; overflow-wrap: anywhere; }
+.lobby__mutation-option.is-disabled { opacity: .7; }
+.lobby__mutation-option .lobby__mutation-conflict { color: var(--role-enemy); }
+:global(.app-overlay__panel[data-testid='lobby-weekly-preview']) { width: min(640px, calc(100vw - 24px)); }
+</style>
 
 <style scoped>
 .lobby {

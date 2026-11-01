@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import { normalizeWeeklyMutations, type WeeklyMutations } from './mutations'
 
 /**
  * Lobby view model (ticket #24).
@@ -92,6 +93,7 @@ export interface LobbyInvite {
 }
 
 export interface LobbySnapshot {
+  weeklyMutations: WeeklyMutations | null
   ts: number
   onlineCount: number
   lobbyCount: number
@@ -189,6 +191,7 @@ function normalizeChat(raw: JsonObject): LobbyChatItem {
 function normalizeSnapshot(raw: JsonObject): LobbySnapshot {
   const queue = asObject(raw.queue)
   return {
+    weeklyMutations: normalizeWeeklyMutations(raw.weekly_mutations),
     ts: asNumber(raw.ts),
     onlineCount: asNumber(raw.online_count),
     lobbyCount: asNumber(raw.lobby_count),

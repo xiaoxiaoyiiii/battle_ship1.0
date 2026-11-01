@@ -25,6 +25,7 @@ Nothing here imports a framework, a database or the socket layer.
 from __future__ import annotations
 
 from typing import Any, Iterable
+from .. import mutations
 
 from ...contracts.identity import is_spectate_room, spectate_room_name
 from ..room.models import (
@@ -504,7 +505,7 @@ def player_cells(player: Player | None) -> list[dict[str, Any]]:
     cells: list[dict[str, Any]] = []
     if player is None:
         return cells
-    for attack in (getattr(player, "attacks", None) or []):
+    for attack in mutations.visible_attacks(getattr(player, "attacks", None)):
         cells.append(
             {
                 "x": getattr(attack, "x", None),

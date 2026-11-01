@@ -29,6 +29,7 @@ from typing import Any, Awaitable, Callable
 
 from ..domain import battle as battle_rules
 from ..domain import effects
+from ..domain import mutations
 from ..domain import placement as placement_rules
 from ..domain import replay as replay_rules
 from ..domain.ai import policies
@@ -166,6 +167,7 @@ class MagicService:
         #: AI caster can finish a reset board inside the same stack frame.
         self.ai_place_hook: Callable[[Room, str], Awaitable[bool]] | None = None
         self.ai_choice_hook: Callable[[Room, str], Awaitable[bool]] | None = None
+        self.mutation_reveal_complete_hook: Callable[[Room], Awaitable[Any]] | None = None
         self._interaction_waits: dict[str, tuple[tuple, float]] = {}
         # 当前牌的选船/部署结束前保存连锁进度，释放房间锁等待真人回答。
         self._chain_resolutions: dict[str, dict[str, Any]] = {}
@@ -538,6 +540,23 @@ class MagicService:
             await self._dispatch_ship_pick(room, player_id)
             await self._sync_each_seat(room)
             return {"status": "success", "message": "已暴露一艘战舰的位置"}
+
+        if reason == "mutation_reveal":
+            if room.state == RoomState.GAME_OVER:
+                return dict(FINISHED_GAME)
+            interaction_rules.consume_ship_pick(room, player_id, reason)
+            mutations.reveal_ship(room, player_id, ship)
+            viewer = room.opponent_of(player_id)
+            if viewer and room.players[viewer].socket_id:
+                await self._publisher.emit("revealed_positions",
+                    {"positions": mutations.visible_reveals(room, viewer), "kind": "mutation_reveal"},
+                    to=room.players[viewer].socket_id)
+            await self._dispatch_ship_pick(room, player_id)
+            await self._sync_each_seat(room)
+            if (not any(pick.get("reason") == reason for pick in room.pending_ship_picks)
+                    and self.mutation_reveal_complete_hook is not None):
+                await self.mutation_reveal_complete_hook(room)
+            return {"status": "success", "message": "已公开一艘己方战舰的位置"}
 
         if reason == "trap_setup":
             interaction_rules.consume_ship_pick(room, player_id, "trap_setup")
@@ -974,6 +993,11 @@ class MagicService:
         field = field_magic_name(room)
         if field == "教皇旨意":
             per_ship = 0
+        elif mutations.active(room, "A1"):
+            current = int(room.players[player_id].remaining_ships or 0)
+            delta = mutations.tidal_attack_base(current) - mutations.tidal_attack_base(current - ships_added)
+            room.attacks_remaining = max(0, int(room.attacks_remaining) + delta)
+            return
         elif field == "伊甸园":
             per_ship = -1
         else:
@@ -986,6 +1010,9 @@ class MagicService:
     @staticmethod
     def _apply_last_stand_attacks(room: Room, player_id: str) -> None:
         if room.state != RoomState.ATTACKING or room.current_attacker != player_id:
+            return
+        if mutations.active(room, "A1"):
+            battle_rules.recalc_attacker_attacks(room)
             return
         if battle_rules.attacks_forced_zero(room):
             room.attacks_remaining = 0
@@ -1013,6 +1040,20 @@ class MagicService:
         ]
 
     # --------------------------------------------------------------- play card
+
+    def _mutation_cost_error(self, room: Room, player_id: str, card: MagicCard, targets: dict) -> str | None:
+        if (mutations.extra_discard_required(room, player_id) and room.is_ai_room
+                and player_id.startswith("ai-") and "mutation_discard_index" not in targets):
+            hand = room.players[player_id].magic_hand
+            declared = next((index for index, candidate in enumerate(hand)
+                             if candidate.name == card.name and candidate.speed == card.speed), -1)
+            targets["mutation_discard_index"] = next((index for index in range(len(hand)) if index != declared), -1)
+        return mutations.discard_cost_error(room, player_id, card, targets)
+
+    async def _pay_mutation_cost(self, room: Room, player_id: str, targets: dict) -> None:
+        discarded = mutations.pay_discard_cost(room, player_id, targets)
+        if discarded is not None:
+            await self._emit_card_discarded(room, player_id, discarded, "mutation_cost")
 
     @guard_phase_write
     async def use_magic_card(self, connection: Connection,
@@ -1063,6 +1104,9 @@ class MagicService:
         refusal = evaluate_cast(room, player_id, card)
         if refusal:
             return {"status": "error", "message": refusal}
+        cost_error = self._mutation_cost_error(room, player_id, card, targets)
+        if cost_error:
+            return {"status": "error", "message": cost_error}
 
         # #37：宣告通过全部闸门、扣牌之前发 CAST_BEFORE（filter 带可改写目标）。
         await hooks.emit(
@@ -1078,6 +1122,7 @@ class MagicService:
         )
         # Remove the declared copy, then push it on the chain. Non-field cards
         # go to the shared discard pile immediately (legacy).
+        await self._pay_mutation_cost(room, player_id, targets)
         for index, candidate in enumerate(player.magic_hand):
             if candidate.name == card.name and candidate.speed == card.speed:
                 player.magic_hand.pop(index)
@@ -1095,6 +1140,7 @@ class MagicService:
 
         room.chain.append(item)
         record_card_play(room, player_id, now=self.clock())
+        mutations.note_cast(room, player_id)
         # #37：支付完成、已入连锁之后发 CAST_PAID（此后失败只能按连锁规则退牌）。
         await hooks.emit(
             room,
@@ -1110,6 +1156,8 @@ class MagicService:
         await self._publisher.emit(
             "magic_chain_updated", _spectate_chain_payload(room), room=room.id
         )
+        if room.mutation_ids and not room.ranked:
+            await self._sync_each_seat(room)
         # The response window starts on the opponent; a card that nobody can
         # answer falls through both passes and resolves (after the display
         # delay, unless it is 0).
@@ -1332,7 +1380,7 @@ class MagicService:
             if target_error:
                 return {"status": "error", "message": target_error}
         else:
-            targets = raw_targets
+            targets = {}
 
         if not room.chain_waiting:
             return {"status": "error", "message": "没有待处理的连锁请求"}
@@ -1384,6 +1432,9 @@ class MagicService:
                 room.chain_window = None
                 await self._pass_after_refusal(room, str(player_id))
                 return {"status": "error", "message": refusal}
+            cost_error = self._mutation_cost_error(room, str(player_id), card, targets)
+            if cost_error:
+                return {"status": "error", "message": cost_error}
 
             room.chain_waiting = False
             room.chain_window = None
@@ -1400,6 +1451,7 @@ class MagicService:
                     "targets": targets,
                 },
             )
+            await self._pay_mutation_cost(room, str(player_id), targets)
             for index, candidate in enumerate(player.magic_hand):
                 if candidate.name == card.name and candidate.speed == card.speed:
                     player.magic_hand.pop(index)
@@ -1415,6 +1467,7 @@ class MagicService:
 
             room.chain.append(item)
             record_card_play(room, str(player_id), now=self.clock())
+            mutations.note_cast(room, str(player_id))
             await hooks.emit(
                 room,
                 hooks.CAST_PAID,
@@ -1429,6 +1482,8 @@ class MagicService:
             await self._publisher.emit(
                 "magic_chain_updated", _spectate_chain_payload(room), room=room.id
             )
+            if room.mutation_ids and not room.ranked:
+                await self._sync_each_seat(room)
             # A new card clears the pass count; the window goes to the opponent
             # and can come back for self-chaining.
             room.chain_passes = 0
@@ -3692,7 +3747,7 @@ class MagicService:
                 return [
                     {"x": a.x, "y": a.y, "hit": bool(a.hit),
                      "ship_sunk": bool(getattr(a, "ship_sunk", False))}
-                    for a in (owner.attacks or [])
+                    for a in mutations.visible_attacks(owner.attacks)
                 ]
 
             if player.socket_id:

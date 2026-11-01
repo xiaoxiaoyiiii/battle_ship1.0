@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import BoardPanel from './BoardPanel.vue'
 import MobileCardReader from './MobileCardReader.vue'
 import AppOverlay from '../../components/AppOverlay.vue'
+import MutationList from '../../components/MutationList.vue'
 import StatusMonitor from './StatusMonitor.vue'
 import EffectMonitor from './EffectMonitor.vue'
 import { useAdaptiveGameLayout } from './useAdaptiveGameLayout'
@@ -174,6 +175,22 @@ interface SelectionState {
 }
 
 const selection = ref<SelectionState | null>(null)
+const mutationDiscard = ref<{ card: CardLike; targets: Record<string, unknown>; isChain: boolean; priorityToken?: number; castIndex: number } | null>(null)
+const mutationInfoOpen = ref<'entries' | 'hand' | null>(null)
+const mutationHandSignature = computed(() => JSON.stringify(state.value.hand))
+watch([mutationHandSignature, () => state.value.room_id, () => state.value.mutations?.extra_discard_required], () => { mutationDiscard.value = null })
+watch([() => match.chainWindow?.openedAt, () => state.value.priority_waiting?.token, () => state.value.current_phase], () => {
+  const pending = mutationDiscard.value
+  if (pending?.isChain || pending?.priorityToken !== undefined || (pending && state.value.current_phase !== 'preparation')) mutationDiscard.value = null
+})
+
+function cancelMutationDiscard(): void { mutationDiscard.value = null }
+async function chooseMutationDiscard(index: number): Promise<void> {
+  const pending = mutationDiscard.value
+  if (!pending || index === pending.castIndex || !state.value.hand[index] || busy.value) return
+  mutationDiscard.value = null
+  await dispatchCard(pending.card, { ...pending.targets, mutation_discard_index: index }, pending.isChain, pending.priorityToken)
+}
 const priorityError = ref('')
 const priorityCollapsed = ref(false)
 const priorityRequest = computed(() =>
@@ -941,6 +958,13 @@ async function dispatchCard(card: CardLike, targets: Record<string, unknown>, is
   const event = priorityToken !== undefined ? 'priority_response' : isChain ? 'chain_response' : 'use_magic_card'
   const refusal = cardDisabledReason(card, state.value, { ...playCtx.value, event })
   if (refusal) { setSelectionError(refusal); say('game-card-refused', refusal); return }
+  if (state.value.mutations?.extra_discard_required && !Number.isInteger(targets.mutation_discard_index)) {
+    // 服务端以首张同名同速手牌定位发动副本，额外成本不能选中该副本。
+    const castIndex = state.value.hand.findIndex(item => item.name === card.name && String(item.speed) === String(card.speed))
+    if (castIndex < 0 || state.value.hand.length < 2) { say('game-card-refused', '弃潮祭：至少需要 2 张手牌，才能额外弃置 1 张发动。'); return }
+    mutationDiscard.value = { card, targets: { ...targets }, isChain, priorityToken, castIndex }
+    return
+  }
   // 服务端可能在本次回执前就交回响应权，只能关闭这次实际回答的窗口。
   const answeredWindow = isChain ? match.chainWindow : null
   busy.value = true
@@ -1422,6 +1446,8 @@ watch([priorityRequest, () => ui.phasePrompts], ([request, enabled]) => {
 }, { immediate: true })
 
 async function respondChain(card: CardLike): Promise<void> {
+  const refusal = chainResponseReason(card)
+  if (refusal) { say('game-card-refused', refusal); return }
   const descriptor = targetDescriptor(card.name)
   if (descriptor) {
     selection.value = { isChain:true, card, index:hand.value.findIndex(c => c.name === card.name), descriptor, board:descriptor.board ?? null, anchor:null, lineDir:'row', picks:[], effectChoice:null, error:'' }
@@ -1429,6 +1455,10 @@ async function respondChain(card: CardLike): Promise<void> {
     return
   }
   await dispatchCard(card, {}, true)
+}
+
+function chainResponseReason(card: CardLike): string {
+  return cardDisabledReason(card, state.value, { ...playCtx.value, event: 'chain_response' })
 }
 
 async function passChain(): Promise<void> {
@@ -1870,6 +1900,10 @@ function backToLobby(): void {
             :self-effects="selfEffects"
             :opponent-effects="opponentEffects"
           />
+          <button v-if="state.mutations?.entries.length" type="button" class="game-mutations" data-testid="game-mutations" :title="state.mutations.entries.map(entry => entry.name).join('、')" @click="mutationInfoOpen = 'entries'">
+            <b>本局突变 {{ state.mutations.entries.length }}<span v-if="state.mutations.storm_active"> · 暴雨</span></b><span>{{ state.mutations.entries.map(entry => entry.name).join('、') }}</span>
+          </button>
+          <button v-if="state.mutations?.ids.includes('E2')" type="button" class="game-mutations game-mutations--hand" data-testid="game-opponent-hand-names" aria-label="查看对手公开手牌牌名" @click="mutationInfoOpen = 'hand'"><b>公开手牌</b><span>{{ state.opponent_hand_names.length }} 张</span></button>
         </div>
 
         <!-- 手机档：单块棋盘 + 海域切换标签（标题与提交的棋盘同源） -->
@@ -2303,6 +2337,7 @@ function backToLobby(): void {
         <div class="game-chain-options">
           <div v-for="(card, index) in speed3Hand" :key="chainCardTestId(card, index, speed3Hand)" class="chain-preview-anchor" @mouseleave="!compact && (chainPreviewSource = '')">
             <button type="button" class="game-chain-option" :class="{ 'is-inspected': chainInspect?.name === card.name }" :data-testid="chainCardTestId(card, index, speed3Hand)"
+              :disabled="!!chainResponseReason(card)" :title="chainResponseReason(card)"
               :aria-describedby="chainPreviewSource === 'hand-' + index ? 'chain-hand-preview-' + index : undefined"
               @mouseenter="canHover && !compact && inspectChain(card, 'hand-' + index)" @focus="canHover && !compact && inspectChain(card, 'hand-' + index)" @blur="!compact && (chainPreviewSource = '')" @click="onChainCardClick(card); if (!canHover) chainPreviewSource = 'hand-' + index">
               <img v-if="cardArtUrl(card.name)" class="game-chain-option__art" :src="cardArtUrl(card.name)!" alt="" draggable="false" /><b>{{ card.name }}</b><small>速阶 {{ fullCard(card)?.speed }}</small><span class="game-chain-option__desc">{{ fullCard(card)?.description || '暂无效果描述' }}</span>
@@ -2316,7 +2351,7 @@ function backToLobby(): void {
         </div>
         </div>
         <div class="game-chain-window__actions">
-          <button v-if="compact && chainPreviewSource !== 'trigger' && mobileChainCard" type="button" class="button button--primary" data-testid="game-chain-confirm" @click="respondChain(mobileChainCard)">接续此卡</button>
+          <button v-if="compact && chainPreviewSource !== 'trigger' && mobileChainCard" type="button" class="button button--primary" data-testid="game-chain-confirm" :disabled="!!chainResponseReason(mobileChainCard)" :title="chainResponseReason(mobileChainCard)" @click="respondChain(mobileChainCard)">接续此卡</button>
           <button type="button" class="button button--ghost" data-testid="game-chain-collapse" @click="chainPreviewSource = ''; match.collapseChainWindow()">暂时收起 · 查看棋盘</button>
           <button type="button" class="button button--ghost" data-testid="game-chain-pass" @click="passChain">不响应</button>
         </div>
@@ -2354,6 +2389,27 @@ function backToLobby(): void {
       :pending="busy"
       @close="cancelCardSelection" @use="useSelectedCard" @discard="discardSelectedForAttacks"
     />
+
+    <AppOverlay v-if="mutationInfoOpen && state.mutations" id="game-mutation-info" :priority="120" labelledby="game-mutation-info-title" @close="mutationInfoOpen = null">
+      <section class="game-mutation-info" data-testid="game-mutation-info-content">
+        <h2 id="game-mutation-info-title">{{ mutationInfoOpen === 'entries' ? '本局生效突变' : '对手公开手牌' }}</h2>
+        <MutationList v-if="mutationInfoOpen === 'entries'" :entries="state.mutations.entries" />
+        <p v-else data-testid="game-opponent-hand-list">{{ state.opponent_hand_names.join('、') || '对手当前没有手牌' }}</p>
+        <button type="button" class="button button--ghost" data-testid="game-mutation-info-close" @click="mutationInfoOpen = null">关闭</button>
+      </section>
+    </AppOverlay>
+
+    <AppOverlay v-if="mutationDiscard" id="game-mutation-discard" :priority="160" labelledby="game-mutation-discard-title" @close="cancelMutationDiscard">
+      <section class="game-papal-picker battle-prompt">
+        <header><h2 id="game-mutation-discard-title">弃潮祭 · 选择额外弃牌</h2><button type="button" class="button button--ghost" data-testid="game-mutation-discard-cancel" @click="cancelMutationDiscard">取消出牌</button></header>
+        <p>发动「{{ mutationDiscard.card.name }}」需要额外弃置另一张手牌。点击下方手牌后才会发送出牌；取消不会弃牌。</p>
+        <div class="game-papal-cards">
+          <button v-for="(card,index) in state.hand" :key="index" type="button" :data-testid="'game-mutation-discard-card-' + index" :disabled="index === mutationDiscard.castIndex || busy" @click="chooseMutationDiscard(index)">
+            <img v-if="cardArtUrl(String(card.name))" :src="cardArtUrl(String(card.name))!" alt="" /><span><strong>{{ card.name }}</strong><small>{{ index === mutationDiscard.castIndex ? '本次发动的牌，不能额外弃置' : '弃置此牌并发动' }}</small></span>
+          </button>
+        </div>
+      </section>
+    </AppOverlay>
 
     <AppOverlay v-if="papalChoosing" id="game-papal-picker" :priority="150" labelledby="game-papal-title" @close="papalChoosing = false">
       <section class="game-papal-picker battle-prompt">
@@ -2508,6 +2564,18 @@ function backToLobby(): void {
 
   </section>
 </template>
+
+<style scoped>
+.game-mutations { display: flex; flex-direction: column; justify-content: center; flex: 0 1 180px; min-width: 70px; height: 100%; box-sizing: border-box; overflow: hidden; border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--surface-chamber); padding: 2px 6px; color: var(--text-primary); font-size: 11px; cursor: pointer; text-align: left; line-height: 1.25; }
+.game-mutations > b, .game-mutations > span { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.game-mutations > span { color: var(--text-secondary); }
+.game-mutations--hand { flex-basis: 100px; white-space: nowrap; }
+.game-mutation-info { padding: 20px; }
+.game-mutation-info h2 { color: var(--text-primary); font-size: 18px; margin: 0 0 12px; }
+.game-mutation-info > p { color: var(--text-secondary); line-height: 1.7; overflow-wrap: anywhere; }
+:global(.app-overlay__panel[data-testid='game-mutation-info']) { width: min(640px, calc(100vw - 24px)); }
+:global(.app-overlay__panel[data-testid='game-mutation-discard']) { width: min(560px, calc(100vw - 24px)); padding: 0; overflow: hidden; }
+</style>
 
 <style scoped src="./game-screen.css"></style>
 <style src="./battle-prompt.css"></style>

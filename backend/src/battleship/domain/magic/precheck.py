@@ -43,8 +43,9 @@ def divine_decree_error(room: Room, player_id: str, targets: dict[str, Any]) -> 
     player = room.players.get(player_id)
     if player is None:
         return "房间人数不足"
-    if int(player.remaining_ships or 0) <= 2:
-        return "您的船数不足，无法使用神之宣告"
+    unavailable = availability_error(room, player_id, "神之宣告")
+    if unavailable:
+        return unavailable
     picked = _selected_ships(room, player_id, targets)
     if len(picked) != DIVINE_DECREE_SHIPS:
         return "请先选中自己两艘要牺牲的战舰"
@@ -150,20 +151,33 @@ def steal_error(room: Room, player_id: str) -> str | None:
     return None if steal_candidate(room, player_id) else "对方还没有使用过魔法卡，盗亦有道无法发动"
 
 
+def availability_error(room: Room, player_id: str, card_name: str) -> str | None:
+    """尚未选目标时判断是否存在合法对象，供实际发动与阶段放行共用。"""
+    player = room.players[player_id]
+    if card_name == '钢筋铁骨' and len(alive_ships(player)) < 2:
+        return '需要至少两艘活舰才能发动钢筋铁骨'
+    if card_name == '神之宣告' and (player.remaining_ships <= 2 or len(alive_ships(player)) < DIVINE_DECREE_SHIPS):
+        return '您的船数不足，无法使用神之宣告'
+    if card_name == STEAL_CARD:
+        return steal_error(room, player_id)
+    if card_name == '疗愈' and not healing_candidates(player):
+        return '没有原位置可复活的己方沉船'
+    return None
+
+
 def precheck(room: Room, player_id: str, card_name: str, targets: dict[str, Any]) -> str | None:
     """扣牌前的状态级校验入口；None 表示放行。"""
 
+    unavailable = availability_error(room, player_id, card_name)
+    if unavailable:
+        return unavailable
     if card_name == '钢筋铁骨':
-        if len(alive_ships(room.players[player_id])) < 2:
-            return '需要至少两艘活舰才能发动钢筋铁骨'
         raw = targets.get('selected_cells')
         if targets.get('board', 'self') != 'self' or not isinstance(raw, list) or len(raw) != 1 or len(_selected_ships(room, player_id, targets)) != 1:
             return '请选择一艘自己的存活战舰作为钢筋铁骨的牺牲目标'
         return None
     if card_name == "神之宣告":
         return divine_decree_error(room, player_id, targets)
-    if card_name == STEAL_CARD:
-        return steal_error(room, player_id)
     if card_name == '疗愈':
         return healing_error(room, player_id, targets)
     return None
@@ -193,6 +207,7 @@ def resolution_error(
 
 
 __all__ = [
+    "availability_error",
     "DIVINE_DECREE_SHIPS",
     "STEAL_CARD",
     "steal_error",

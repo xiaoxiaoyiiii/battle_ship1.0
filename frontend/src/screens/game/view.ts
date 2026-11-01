@@ -220,7 +220,7 @@ function isCurrentInteractionResponse(state: GameState, event: string, ctx: Acti
       return ownShenji
     case 'confirm_sacrifice': {
       const reason = String((ctx.pendingPick ?? state.pending_sacrifice)?.reason ?? '')
-      return reason !== 'shield_choice' && (SHIP_PICK_PRIORITIES[reason] ?? 0) > 0
+      return reason === 'mutation_reveal' || (reason !== 'shield_choice' && (SHIP_PICK_PRIORITIES[reason] ?? 0) > 0)
     }
     case 'dice_discard_choose':
       return state.dice_discard_pending

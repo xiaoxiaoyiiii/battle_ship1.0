@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from ...contracts.identity import RoomKind
+from .. import mutations as mutation_rules
 from ..magic import interaction as interaction_rules
 from .models import (
     PUBLIC_EFFECT_FLAGS,
@@ -349,11 +350,11 @@ def build_room_sync(
         "deck_count": len(room.magic_deck),
         "attacks": [
             {"x": attack.x, "y": attack.y, "hit": attack.hit}
-            for attack in (player.attacks or [])
+            for attack in mutation_rules.visible_attacks(player.attacks)
         ],
         "opponent_attacks": [
             {"x": attack.x, "y": attack.y, "hit": attack.hit}
-            for attack in ((opponent.attacks if opponent else []) or [])
+            for attack in mutation_rules.visible_attacks(opponent.attacks if opponent else [])
         ],
         "opponent_remaining_ships": opponent.remaining_ships if opponent else 0,
         "shenwei_holes": list(room.game_effects.get("shenwei_holes") or []),
@@ -425,8 +426,11 @@ def build_room_sync(
             if (room.pending_dice_discard or {}).get(player_id) is False else None
         ),
         "last_attack": dict(room.last_attack) if room.last_attack and room.last_attack.get('attacker') == player_id else None,
-        "revealed_positions": [{'x': pos.x, 'y': pos.y} for pos in player.revealed_positions],
+        "revealed_positions": mutation_rules.visible_reveals(room, player_id),
         "card_unavailable_reasons": _card_unavailable_reasons(room, player_id),
+        "mutations": mutation_rules.payload(room, player_id),
+        "opponent_hand_names": ([card.name for card in opponent.magic_hand]
+                                if opponent and mutation_rules.active(room, "E2") else []),
     }
     # Validation is the freeze: adding/removing a key without updating the
     # contract model fails here instead of silently drifting the wire shape.

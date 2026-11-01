@@ -211,6 +211,9 @@ class RoomSync(BaseModel):
     last_attack: dict[str, Any] | None
     revealed_positions: list[dict[str, int]]
     card_unavailable_reasons: dict[str, str]
+    # 每局公开词条与本座位确认状态；E2只公开对手牌名。
+    mutations: dict[str, Any] | None = None
+    opponent_hand_names: list[str] = Field(default_factory=list)
 
 
 #: Authoritative key order/count for the reconnect snapshot.

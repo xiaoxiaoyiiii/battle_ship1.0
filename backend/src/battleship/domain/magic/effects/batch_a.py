@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 from ... import effects
+from ... import mutations as mutation_rules
 from ...battle import (
     SPLASH_NEEDS_HIT,
     is_zero_ship_defeat,
@@ -104,7 +105,8 @@ def _record_reveal_misses(
         )
         if not hit:
             ctx.caster.attacks.append(
-                Position(x=x, y=y, hit=False, ship_sunk=False, is_splash=True)
+                Position(x=x, y=y, hit=False, ship_sunk=False, is_splash=True,
+                         fog_miss=mutation_rules.active(ctx.room, "E1"))
             )
         affected.append(cell)
     return affected

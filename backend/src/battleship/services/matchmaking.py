@@ -22,6 +22,7 @@ from typing import Any
 
 from ..contracts import errors as socket_errors
 from ..domain.anticheat import suspicion
+from ..domain import mutations
 from ..domain.matchmaking import guard
 from ..domain.room import (
     Player,
@@ -223,6 +224,9 @@ class MatchmakingService:
             )
         for seat_id in room.players:
             room.init_player_magic(seat_id)
+        mutations.configure_room(room, "ranked" if room.ranked else "casual",
+                                 rng=self.rooms.mutation_rng, now=self.rooms.mutation_clock())
+        mutations.prepare_start(room, self.rooms.mutation_rng)
         room.transition(RoomState.PLACING_SHIPS)
         self.rooms.rooms[room.id] = room
         return room, first, second
@@ -243,6 +247,8 @@ class MatchmakingService:
                         "player_seat": seat_label(room, str(me["sid"])),
                         "player_name": me.get("name"),
                         "opponent_name": opponent.get("name"),
+                        "mutations": mutations.payload(room, str(me["sid"])),
+                        "max_ships": room.players[str(me["sid"])].max_ships,
                         # Ticket #51: additive per-seat wait state; each side
                         # sees its own opponent, so this cannot be a broadcast.
                         **opponent_seat_state(room, str(me["sid"])),

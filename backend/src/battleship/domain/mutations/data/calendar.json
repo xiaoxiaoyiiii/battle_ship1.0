@@ -1,0 +1,45 @@
+{
+  "anchor_week": "2026-W44",
+  "rotation": [
+    "tide-short",
+    "hand-party",
+    "storm-fog"
+  ],
+  "weeks": {},
+  "packs": [
+    {
+      "id": "tide-short",
+      "name": "潮汐简战",
+      "entries": [
+        "A1",
+        "A4",
+        "B1",
+        "C2",
+        "D1"
+      ]
+    },
+    {
+      "id": "hand-party",
+      "name": "手牌狂欢",
+      "entries": [
+        "A3",
+        "B3",
+        "C1",
+        "C3",
+        "E2"
+      ]
+    },
+    {
+      "id": "storm-fog",
+      "name": "加时迷雾",
+      "entries": [
+        "A1",
+        "B2",
+        "D2",
+        "E1",
+        "C1",
+        "E3"
+      ]
+    }
+  ]
+}

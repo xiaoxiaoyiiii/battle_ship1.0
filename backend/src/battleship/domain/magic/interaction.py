@@ -25,6 +25,7 @@ SHIP_PICK_PRIORITY: dict[str, int] = {
 }
 
 SHIP_PICK_LABELS: dict[str, str] = {
+    "mutation_reveal": "点名亮舰",
     "demon_contract": "恶魔契约",
     "divine_decree": "神之宣告",
     "kraken_eye": "克苏鲁之眼",

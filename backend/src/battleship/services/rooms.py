@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+import random
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
@@ -31,6 +32,7 @@ from ..contracts.identity import (
     verify_identity,
 )
 from ..domain.anticheat import suspicion
+from ..domain import mutations
 from ..infra.logging import get_logger
 from ..domain.room import (
     AI_DIFFICULTIES,
@@ -117,9 +119,13 @@ class RoomService:
         presence: PresenceService | None = None,
         capability_gate: Callable[[str | None, str], str] | None = None,
         turn_timeout_seconds: int | None = None,
+        mutation_rng: Any | None = None,
+        mutation_clock: Callable[[], float] | None = None,
     ) -> None:
         self.rooms: dict[str, Room] = {}
         self.match_queue: list[dict[str, Any]] = []
+        self.mutation_rng = mutation_rng or random
+        self.mutation_clock = mutation_clock or time.time
         # One online table for the whole backend (CLAUDE #17). The room service
         # only writes the "seated in a room" flag and the name/uid of a seat;
         # the lobby and the friends service read the same instance.
@@ -286,6 +292,10 @@ class RoomService:
 
     async def create_room(self, connection: Connection, data: dict[str, Any] | None) -> dict:
         data = data if isinstance(data, dict) else {}
+        selected_mutations = data.get("mutation_ids", [])
+        mutation_error = mutations.validate_selection(selected_mutations)
+        if mutation_error:
+            return {"status": "error", "message": mutation_error}
         # Gate before ANY side effect: a refused create must not leave a room in
         # the lobby that the player can never enter (legacy ordering).
         refused = await self._refuse_capability(connection, suspicion.CAP_ROOM)
@@ -298,6 +308,8 @@ class RoomService:
 
         room = Room(id=new_room_id())
         room.name = str(data.get("name") or "").strip()[:LOBBY_ROOM_NAME_MAX_LEN]
+        mutations.configure_room(room, "custom", ids=selected_mutations,
+                                 rng=self.mutation_rng, now=self.mutation_clock())
         room.public = bool(data.get("public", True))
         room.players[player_id] = Player(
             name=self._player_name(connection, data),
@@ -320,6 +332,7 @@ class RoomService:
         room.ai_difficulty = _normalize_difficulty(data.get("difficulty") or "normal")
         room.ai_difficulty_by_player = {}
         room.ranked = False
+        mutations.configure_room(room, "ai", rng=self.mutation_rng, now=self.mutation_clock())
         ai_id = ai_player_id(room.id)
         room.players[ai_id] = Player(
             name="AI",
@@ -412,6 +425,7 @@ class RoomService:
             room.transition(RoomState.PLACING_SHIPS)
             for seat_id in room.players:
                 room.init_player_magic(seat_id)
+            mutations.prepare_start(room, self.mutation_rng)
             for seat_id, seat in room.players.items():
                 opponent_id = opponent_of(room, seat_id)
                 opponent = room.players.get(opponent_id) if opponent_id else None
@@ -427,6 +441,8 @@ class RoomService:
                         "player_seat": seat_label(room, seat_id),
                         "player_name": seat.name,
                         "opponent_name": opponent.name if opponent else None,
+                        "mutations": mutations.payload(room, seat_id),
+                        "max_ships": room.players[seat_id].max_ships,
                         # Ticket #51: additive per-seat wait state (the room
                         # broadcast game_state cannot carry it: the two seats'
                         # "opponent" differ).

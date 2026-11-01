@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal, Sequence
 
-from . import effects
+from . import effects, mutations
 from .room import (
     BOARD_SIZE,
     Player,
@@ -195,7 +195,7 @@ def attacks_forced_zero(room: Room) -> bool:
     return False
 
 
-def recalc_attacker_attacks(room: Room) -> int:
+def recalc_attacker_attacks(room: Room, *, include_mutation_bonus: bool = True) -> int:
     """Recompute the current attacker's budget under the active field rules.
 
     Single implementation of the attack-count formula (ticket #11 added the
@@ -219,11 +219,15 @@ def recalc_attacker_attacks(room: Room) -> int:
     bonus = int(getattr(player.effect_flags, "subsidy_bonus", 0) or 0)
     if field == "教皇旨意":
         base = 0
+    elif mutations.active(room, "A1"):
+        base = max(1, 6 - int(player.remaining_ships or 0))
     elif field == "伊甸园":
         base = max(0, 6 - int(player.remaining_ships or 0))
     else:
         base = max(0, int(player.remaining_ships or 0) - frozen_ship_count(player))
     room.attacks_remaining = max(0, base + bonus)
+    if include_mutation_bonus and _value(room.current_phase) == "battle" and field != "教皇旨意":
+        room.attacks_remaining += mutations.battle_bonus(room)
     return room.attacks_remaining
 
 
@@ -251,7 +255,7 @@ def grant_extra_attacks(room: Room, player_id: str, n: int = 1) -> int:
 def attackable_cells(player: Player) -> list[tuple[int, int]]:
     """Cells this player has not fired at yet (the legacy `_attackable_cells`)."""
 
-    attacked = {(attack.x, attack.y) for attack in (player.attacks or [])}
+    attacked = {(attack.x, attack.y) for attack in mutations.visible_attacks(player.attacks)}
     return [
         (x, y)
         for x in range(BOARD_SIZE)
@@ -272,6 +276,9 @@ def phase_transition_error(room: Room, player_id: str, action: str) -> str | Non
     if action == 'enter_battle':
         if room.current_attacker != player_id or _value(room.current_phase) != 'preparation':
             return ENTER_BATTLE_ERROR
+        mutation_error = mutations.enter_battle_error(room, player_id)
+        if mutation_error:
+            return mutation_error
     else:
         if room.current_attacker != player_id or _value(room.current_phase) != 'battle':
             return ENTER_END_ERROR
@@ -288,12 +295,16 @@ def enter_battle(room: Room, player_id: str) -> str | None:
         return error
     room.current_phase = RoomPhase.BATTLE
     player = room.players[player_id]
-    recalc_attacker_attacks(room)
+    recalc_attacker_attacks(room, include_mutation_bonus=False)
     if player.effect_flags.double_attacks:
         # 火力全开 doubles the budget that already exists (not a recount).
         room.attacks_remaining = max(0, room.attacks_remaining) * 2
         # #38：翻倍即消费租约（旧实现是直接把自己置回 False）。
         effects.consume_flag(room, player_id, "double_attacks")
+    # 火力全开先翻倍；突变加成最后追加，卡面锁零仍优先。
+    from .magic.rules import field_magic_name
+    if not attacks_forced_zero(room) and field_magic_name(room) != "教皇旨意":
+        room.attacks_remaining += mutations.battle_bonus(room)
     return None
 
 
@@ -314,6 +325,33 @@ def enter_end(room: Room, player_id: str) -> str | None:
     return None
 
 
+def _turn_successor(room: Room, player_id: str, *, consume: bool = False) -> tuple[int, str, bool] | None:
+    """预览与实际换人共用跳过规则；预览不消费任何卡牌标记。"""
+    order = list(room.attack_order or room.players)
+    if player_id not in order:
+        return None
+    next_index = (order.index(player_id) + 1) % len(order)
+    next_attacker = order[next_index]
+    for marker in ("skip_opponent_turn", "skip_next_turn"):
+        if getattr(room, marker) == next_attacker:
+            if consume:
+                setattr(room, marker, None)
+            next_index = (next_index + 1) % len(order)
+            next_attacker = order[next_index]
+    skip_stages = room.skip_opponent_stages == next_attacker
+    if skip_stages:
+        if consume:
+            room.skip_opponent_stages = None
+        next_index = (next_index + 1) % len(order)
+        next_attacker = order[next_index]
+    return next_index, next_attacker, skip_stages
+
+
+def turn_wraps_round(room: Room, player_id: str) -> bool:
+    successor = _turn_successor(room, player_id)
+    return bool(successor and successor[0] == 0 and not successor[2])
+
+
 def resolve_turn_end(room: Room, player_id: str) -> TurnEnd | None:
     """end -> opponent preparation, or a new big round back to RPS.
 
@@ -327,28 +365,10 @@ def resolve_turn_end(room: Room, player_id: str) -> TurnEnd | None:
     if room.current_attacker != player_id or _value(room.current_phase) != "end":
         return None
 
-    order = list(room.attack_order or room.players)
-    if player_id not in order:
+    successor = _turn_successor(room, player_id, consume=True)
+    if successor is None:
         return None
-    current_index = order.index(player_id)
-    next_index = (current_index + 1) % len(order)
-    next_attacker = order[next_index]
-
-    if room.skip_opponent_turn and room.skip_opponent_turn == next_attacker:
-        room.skip_opponent_turn = None
-        next_index = (next_index + 1) % len(order)
-        next_attacker = order[next_index]
-    if room.skip_next_turn and room.skip_next_turn == next_attacker:
-        room.skip_next_turn = None
-        next_index = (next_index + 1) % len(order)
-        next_attacker = order[next_index]
-
-    skip_stages = False
-    if room.skip_opponent_stages and room.skip_opponent_stages == next_attacker:
-        room.skip_opponent_stages = None
-        skip_stages = True
-        next_index = (next_index + 1) % len(order)
-        next_attacker = order[next_index]
+    next_index, next_attacker, skip_stages = successor
 
     if next_index == 0:
         if skip_stages:
@@ -516,7 +536,7 @@ def attack_error(room: Room, attacker_id: str, x: Any, y: Any) -> str | None:
     if room.attacks_remaining <= 0:
         return ATTACK_NO_ATTACKS
     player = room.players[attacker_id]
-    if any(cell.x == ix and cell.y == iy for cell in (player.attacks or [])):
+    if any(cell.x == ix and cell.y == iy for cell in mutations.visible_attacks(player.attacks)):
         return ATTACK_CELL_USED
     defender_id = opponent_of(room, attacker_id)
     if defender_id and cell_in_shenwei_hole(room, defender_id, ix, iy):
@@ -642,7 +662,8 @@ def resolve_attack(room: Room, attacker_id: str, x: int, y: int) -> AttackOutcom
         }
         room.attacks_remaining = max(0, room.attacks_remaining - 1)
         if not shield_blocked:
-            attacker.attacks.append(Position(x=x, y=y, hit=hit, ship_sunk=False))
+            attacker.attacks.append(Position(x=x, y=y, hit=hit, ship_sunk=False,
+                                             fog_miss=mutations.active(room, "E1") and not hit))
         outcome.remaining_attacks = room.attacks_remaining
         return outcome
 
@@ -785,9 +806,10 @@ def _area_sink(room: Room, defender_id: str, ship: PlayerShip, *,
     apply_ship_sunk(room, defender_id, ship, leave_wreck=not remove_from_ships)
 
 
-def _mark_area_attack(attacker: Player, x: int, y: int, hit: bool,
+def _mark_area_attack(room: Room, attacker: Player, x: int, y: int, hit: bool,
                       ship_sunk: bool, flag: str) -> Position:
-    position = Position(x=x, y=y, hit=hit, ship_sunk=ship_sunk)
+    position = Position(x=x, y=y, hit=hit, ship_sunk=ship_sunk,
+                        fog_miss=mutations.active(room, "E1") and not hit)
     setattr(position, flag, True)
     attacker.attacks.append(position)
     return position
@@ -821,7 +843,7 @@ def resolve_splash(room: Room, caster_id: str) -> AreaStrikeResult:
                 if "holy_heart" in room.game_effects:
                     room.game_effects["holy_heart"]["no_damage"] = False
                 break
-        _mark_area_attack(caster, x, y, hit, sunk_ship is not None, "is_splash")
+        _mark_area_attack(room, caster, x, y, hit, sunk_ship is not None, "is_splash")
         result.cells.append(
             AreaCellOutcome(x=x, y=y, hit=hit, ship_sunk=sunk_ship is not None,
                             sunk_ship=sunk_ship)
@@ -888,7 +910,7 @@ def resolve_area_strike(room: Room, caster_id: str,
             room.game_effects["holy_heart"]["no_damage"] = False
         for pos in ship.positions or []:
             removed_positions.add((pos.x, pos.y))
-            _mark_area_attack(caster, pos.x, pos.y, True, True, flag)
+            _mark_area_attack(room, caster, pos.x, pos.y, True, True, flag)
             result.cells.append(
                 AreaCellOutcome(x=pos.x, y=pos.y, hit=True, ship_sunk=True,
                                 sunk_ship=ship)
@@ -897,7 +919,7 @@ def resolve_area_strike(room: Room, caster_id: str,
     for x, y in normalized:
         if (x, y) in removed_positions:
             continue
-        _mark_area_attack(caster, x, y, False, False, flag)
+        _mark_area_attack(room, caster, x, y, False, False, flag)
         result.cells.append(
             AreaCellOutcome(x=x, y=y, hit=False, ship_sunk=False)
         )

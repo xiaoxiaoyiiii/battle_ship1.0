@@ -32,9 +32,11 @@ from typing import Any, Callable
 from ..contracts.identity import ai_player_id
 from ..domain import battle as battle_rules
 from ..domain import effects
+from ..domain import mutations
 from ..domain import placement as placement_rules
 from ..domain import replay as replay_rules
 from ..domain.magic import hooks
+from ..domain.magic import interaction as interaction_rules
 from ..domain.magic import temps as magic_temps
 from .magic_audio import emit_reset_sfx
 from ..domain.magic.interaction import pending_action_reason
@@ -43,6 +45,7 @@ from ..domain.room import (
     Room,
     RoomPhase,
     RoomState,
+    alive_ships,
     card_payload,
     rank_payload,
     turn_timing,
@@ -259,6 +262,12 @@ class GameplayService:
             return await self._maybe_await(method(player_id))
         return None
 
+    async def _draw_mutation_supply(self, room: Room, player_id: str) -> None:
+        if room.mutation_prepare_skips.pop(player_id, None) == room.round:
+            return
+        for _ in range(mutations.prepare_supply_count(room)):
+            await self._draw(room, player_id)
+
     async def _emit_message(self, room: Room, player_id: str, note: str) -> None:
         player = room.players.get(player_id)
         if player is not None and player.socket_id:
@@ -278,6 +287,22 @@ class GameplayService:
             return dict(INVALID_SEAT)
         if _state_value(room) == RoomState.GAME_OVER.value:
             return dict(FINISHED_GAME)
+
+        if "mutation_ack" in data:
+            if room.state != RoomState.PLACING_SHIPS or len(room.players) != 2:
+                return {"status": "error", "message": "当前不在赛前突变确认阶段"}
+            error = mutations.confirm(room, player_id, data.get("mutation_ack"))
+            if error:
+                return {"status": "error", "message": error}
+            if not mutations.confirmation_pending(room) and not room.mutation_opening_drawn:
+                room.mutation_opening_drawn = True
+                if mutations.active(room, "B2"):
+                    for pid in room.players:
+                        await self._draw(room, pid)
+            await self.rooms.push_room_sync(room)
+            return {"status": "success", "mutations_ready": not mutations.confirmation_pending(room)}
+        if mutations.confirmation_pending(room):
+            return {"status": "error", "message": "请先由双方确认本局完整突变文案"}
 
         player = room.players[player_id]
         # 只有「开局布船」和「自己确实欠着重布」时才允许提交棋盘。战斗进行中随手上交
@@ -514,6 +539,7 @@ class GameplayService:
             room.attack_order = list(outcome.order)
             winner, loser = outcome.order[0], outcome.order[1]
             room.current_attacker = winner
+            mutations.begin_preparation(room)
             battle_rules.recalc_attacker_attacks(room)
 
             if self.turn_start_hook is not None:
@@ -535,16 +561,20 @@ class GameplayService:
             skip_winner = False
             if self.draw_skip_hook is not None:
                 skip_winner = bool(await self._maybe_await(self.draw_skip_hook(room, winner)))
-            winner_card = None if skip_winner else await self._draw(room, winner)
+            winner_cards = []
+            if not skip_winner:
+                for _ in range(mutations.prepare_draw_count(room, first=True)):
+                    winner_cards.append(await self._draw(room, winner))
+            winner_card = next(iter(winner_cards), None)
             skip_loser = False
             if self.draw_skip_hook is not None:
                 skip_loser = bool(await self._maybe_await(self.draw_skip_hook(room, loser)))
+            loser_cards = []
             if skip_loser:
-                loser_card1 = None
-                loser_card2 = None
+                room.mutation_prepare_skips[loser] = room.round
             else:
-                loser_card1 = await self._draw(room, loser)
-                loser_card2 = await self._draw(room, loser)
+                for _ in range(mutations.prepare_draw_count(room, first=False, include_supply=False)):
+                    loser_cards.append(await self._draw(room, loser))
             if self.after_draw_hook is not None:
                 await self._maybe_await(self.after_draw_hook(room, winner))
 
@@ -554,25 +584,25 @@ class GameplayService:
             room.current_phase = RoomPhase.PREPARATION
             self._start_timer(room)
 
-            await self._publisher.emit(
-                "game_state",
-                {
+            for pid, seat in room.players.items():
+                if not seat.socket_id:
+                    continue
+                await self._publisher.emit("game_state", {
                     "state": RoomState.ATTACKING.value,
                     "current_attacker": winner,
                     "current_phase": RoomPhase.PREPARATION.value,
                     "attacks_remaining": room.attacks_remaining,
-                    "winner_card": card_payload(winner_card) if winner_card else None,
+                    "winner_card": card_payload(winner_card) if winner_card and pid == winner else None,
                     "loser_cards": [
                         card_payload(card) if card else None
-                        for card in (loser_card1, loser_card2)
+                        for card in (loser_cards if pid == loser else [])
                     ],
                     "round": room.round,
                     "attack_order": list(room.attack_order),
                     **rank_payload(room),
                     **self._turn_timing(room),
-                },
-                room=room.id,
-            )
+                    "mutations": mutations.payload(room, pid),
+                }, to=seat.socket_id)
             actor = self._name(room, winner)
             replay_rules.note_action(
                 room,
@@ -682,10 +712,54 @@ class GameplayService:
         self._touch_turn(room, player_id)
         return {"status": "success", "message": "已进入结束阶段"}
 
+    async def _begin_mutation_reveal(self, room: Room, player_id: str) -> dict:
+        if self.magic is None:
+            return {"status": "error", "message": "点名亮舰交互服务尚未就绪"}
+        if any(player.needs_reset or battle_rules.has_pending_redeployment(room, pid)
+               for pid, player in room.players.items()):
+            return {"status": "error", "message": "请先完成战舰重摆或重新部署"}
+        for pid in room.players:
+            if battle_rules.is_zero_ship_defeat(room, pid):
+                await self.magic.finish(room, room.opponent_of(pid), pid, reason="大回合结束时无战舰可用")
+                return {"status": "success", "game_over": True}
+            if not alive_ships(room.players[pid]):
+                return {"status": "error", "message": "请先完成当前战舰流程"}
+        room.mutation_reveal_round = room.round
+        room.mutation_end_actor = player_id
+        self.magic.mutation_reveal_complete_hook = self._resume_mutation_round
+        for pid in room.players:
+            interaction_rules.register_ship_pick(room, pid, "mutation_reveal", "点名亮舰：请选择一艘己方存活战舰，其位置将永久公开")
+        # 两方待办先全部建立，再发送请求或同步消费 AI，不能在第一方答完时提前换轮。
+        for entry in list(room.pending_ship_picks):
+            if entry.get("reason") == "mutation_reveal":
+                await self.magic._emit_ship_pick_request(room, entry)
+        for pid, player in room.players.items():
+            if room.is_ai_room and pid.startswith("ai-"):
+                picked = await self.magic.request_ship_pick(room, pid, "mutation_reveal", "点名亮舰", silent=True)
+                if picked is not None:
+                    point = picked.positions[0]
+                    await self.magic.confirm_sacrifice(Connection(sid=player.socket_id or pid, user_id=player.user_id),
+                        {"room_id": room.id, "player_id": pid, "position": {"x": point.x, "y": point.y}})
+        await self.rooms.push_room_sync(room)
+        return {"status": "success", "waiting_mutation_reveal": bool(room.mutation_end_actor)}
+
+    async def _resume_mutation_round(self, room: Room) -> None:
+        player_id = room.mutation_end_actor
+        if (not player_id or self.rooms.get_room(room.id) is not room
+                or room.state != RoomState.ATTACKING or _phase_value(room) != "end"):
+            return
+        room.mutation_end_actor = None
+        await self._apply_turn_end(room, player_id)
+
     async def _apply_turn_end(self, room: Room, player_id: str) -> dict | None:
+        if (mutations.active(room, "E3") and battle_rules.turn_wraps_round(room, player_id)
+                and room.mutation_reveal_round != room.round):
+            return await self._begin_mutation_reveal(room, player_id)
         result = battle_rules.resolve_turn_end(room, player_id)
         if result is None:
             return None
+        if result.kind != "new_round":
+            mutations.begin_preparation(room)
         # Same single recording point as legacy's try/finally: all success
         # branches (new round / next player / skipped) record exactly once.
         self._note_end_turn(room, player_id)
@@ -705,6 +779,7 @@ class GameplayService:
         if result.kind == "skip_stages":
             # 神之宣告 skips the opponent inside the same big round; legacy does
             # not prune per-turn flags here (the skipped seat never acted).
+            await self._draw_mutation_supply(room, room.current_attacker)
             await self._emit_phase(room)
             await self._publisher.emit(
                 "turn_skipped",
@@ -754,6 +829,7 @@ class GameplayService:
 
         if self.turn_start_hook is not None:
             await self._maybe_await(self.turn_start_hook(room, room.current_attacker))
+        await self._draw_mutation_supply(room, room.current_attacker)
         if self.after_draw_hook is not None:
             await self._maybe_await(self.after_draw_hook(room, room.current_attacker))
         if self.magic is not None:

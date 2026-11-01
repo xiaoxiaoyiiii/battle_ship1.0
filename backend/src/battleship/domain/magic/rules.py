@@ -192,6 +192,10 @@ def evaluate_cast(room: Room, player_id: str, card: MagicCard) -> str | None:
     ship-pick obligation -> registry. Neither service may re-list these checks.
     """
 
+    from .. import mutations
+    mutation_error = mutations.cast_error(room, player_id, card)
+    if mutation_error:
+        return mutation_error
     if not can_play_magic_card(room, player_id, card):
         return playability_reason(room, player_id, card)
     if card.name in ("盗亦有道", "亡羊补牢") and room.players[player_id].effect_flags.no_draw:

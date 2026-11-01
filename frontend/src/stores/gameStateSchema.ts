@@ -1,4 +1,5 @@
 import { ROOM_SYNC_FIELDS, type RoomSyncField } from '../socket/events.gen'
+import type { MutationState } from './mutations'
 
 /**
  * Explicit mirror of the server game state (ticket #21).
@@ -43,6 +44,8 @@ export interface CellAttack {
 }
 
 export interface GameState {
+  mutations: MutationState | null
+  opponent_hand_names: string[]
   room_id: string
   state: string
   current_phase: string | null
@@ -133,6 +136,8 @@ const parity: [MissingContractField, UnexpectedExtraField] extends [never, never
 void parity
 
 const FIELD_SPECS = {
+  mutations: { type: 'object', nullable: true, default: null, note: '服务端本局词条、确认门禁、骰子与发动状态' },
+  opponent_hand_names: { type: 'array', nullable: false, default: [], note: '公开手牌词条仅展示对手牌名' },
   room_id: { type: 'string', nullable: false, default: '', note: '当前房间号；首页为空串' },
   state: { type: 'string', nullable: false, default: 'waiting', note: 'waiting/placing_ships/rock_paper_scissors/attacking/game_over' },
   current_phase: { type: 'string', nullable: true, default: null, note: 'preparation/battle/end' },

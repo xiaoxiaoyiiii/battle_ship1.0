@@ -74,6 +74,7 @@ class Position:
     is_sulfur: bool = False
     is_bomb: bool = False
     is_splash: bool = False
+    fog_miss: bool = False
     round: int | None = None
 
     def __eq__(self, other: object) -> bool:
@@ -283,6 +284,23 @@ class Room:
     ranked: bool = False
     matchmade: bool = False
     is_ai_room: bool = False
+    # 每局冻结的突变规则与独立确认；卡牌整盘重摆不会重置这些赛前事实。
+    mutation_ids: list[str] = field(default_factory=list)
+    mutation_week_id: str = ""
+    mutation_entries: list[dict[str, Any]] = field(default_factory=list)
+    mutation_token: str = ""
+    mutation_confirmed: set[str] = field(default_factory=set)
+    starting_ship_cap: int = DEFAULT_MAX_SHIPS
+    mutation_dice_rolls: dict[str, int] = field(default_factory=dict)
+    mutation_opening_drawn: bool = False
+    mutation_storm_active: bool = False
+    mutation_casts: dict[str, dict[str, int]] = field(default_factory=dict)
+    mutation_preparation_casts: dict[str, str] = field(default_factory=dict)
+    mutation_preparation_seq: int = 0
+    mutation_prepare_skips: dict[str, int] = field(default_factory=dict)
+    mutation_revealed: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
+    mutation_reveal_round: int | None = None
+    mutation_end_actor: str | None = None
     ai_difficulty: str = "normal"
     ai_difficulty_by_player: dict[str, str] = field(default_factory=dict)
 

@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..contracts import errors as socket_errors
+from ..domain import mutations
 from ..domain.lobby.rules import (
     LOBBY_CHAT_BACKLOG,
     LOBBY_CHAT_MIN_INTERVAL,
@@ -176,6 +177,7 @@ class LobbyService:
             "player_name": self.subscriber_name(connection, data),
             "name": data.get("name"),
             "public": data.get("public", True),
+            "mutation_ids": data.get("mutation_ids", []),
         }
         result = await self._rooms.create_room(connection, payload)
         if not isinstance(result, dict) or result.get("status") != "success":
@@ -277,6 +279,7 @@ class LobbyService:
         )
         return {
             "ts": int(now),
+            "weekly_mutations": mutations.weekly_pack(self._rooms.mutation_clock()),
             "online_count": counters.online_count,
             "lobby_count": len(members),
             "queue": counters.queue,

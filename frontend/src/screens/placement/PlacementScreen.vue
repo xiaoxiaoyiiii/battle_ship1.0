@@ -5,6 +5,7 @@ import { acquireMatchChannel, emitMatchEvent, matchSocket } from '../../realtime
 import { useGameStore } from '../../stores/game'
 import { BOARD_SIZE, usePlacementStore } from '../../stores/placement'
 import AppOverlay from '../../components/AppOverlay.vue'
+import MutationList from '../../components/MutationList.vue'
 import { getSettlementSocket } from '../../realtime/settlement'
 import { useUiStore } from '../../stores/ui'
 import { useAudioStore } from '../../stores/audio'
@@ -29,6 +30,10 @@ const placement = usePlacementStore()
 const ui = useUiStore()
 const audio = useAudioStore()
 const leaveOpen = ref(false)
+const mutationAckPending = ref(false)
+const mutationAckError = ref('')
+const mutations = computed(() => game.state.mutations)
+const mutationBlocked = computed(() => Boolean(mutations.value?.confirmation_required && (!mutations.value.confirmed || mutations.value.waiting_for > 0)))
 
 let releaseChannel: (() => void) | null = null
 let offError: (() => void) | null = null
@@ -40,7 +45,7 @@ const hasRoom = computed(() => Boolean(game.state.room_id))
 const selfName = computed(() => game.state.player_name || '你')
 const opponentName = computed(() => game.state.opponent_name || '对手')
 const seatLabel = computed(() => game.state.player_seat || '—')
-const canEdit = computed(() => hasRoom.value && !placement.locked)
+const canEdit = computed(() => hasRoom.value && !placement.locked && !mutationBlocked.value)
 
 /** Player-language opponent status. Never guesses "offline" without a frame. */
 const opponentStatus = computed(() => {
@@ -82,6 +87,7 @@ function readText(payload: Record<string, unknown>, key: string): string {
 
 function routeForState(state: string): void {
   if (route.name !== 'placement') return
+  if (mutationBlocked.value) return
   if (state === 'rock_paper_scissors') {
     void router.push({ name: 'rps' })
   } else if (state === 'attacking') {
@@ -134,24 +140,26 @@ watch(
 watch(() => [game.state.needs_reset, game.state.max_ships], () => {
   if (game.state.needs_reset && !placement.pending) {
     placement.applyReset({ new_max_ships: game.state.max_ships, message: '请按当前数量重新部署战舰' })
-  }
+  } else if (!game.state.needs_reset && !placement.pending) placement.maxShips = game.state.max_ships || 6
 })
 watch(() => game.state.reset_allowed_cells, cells => placement.setAllowed(cells), { deep:true })
 
 watch(
   // 重摆完成的状态帧可能早于提交回执；回执解除重摆锁后也必须重新检查跳转。
-  () => [game.state.state, placement.resetPhase] as const,
+  () => [game.state.state, placement.resetPhase, mutationBlocked.value] as const,
   ([state]) => routeForState(state),
   { immediate: true },
 )
 
 function randomize(): void {
+  if (!canEdit.value) return
   const previous = JSON.stringify(placement.cells)
   placement.randomize()
   if (JSON.stringify(placement.cells) !== previous) audio.playUi('place')
 }
 
 function clearBoard(): void {
+  if (!canEdit.value) return
   const hadShips = placement.placedCount > 0
   placement.clearBoard()
   placement.clearReceipt()
@@ -238,6 +246,26 @@ async function confirm(): Promise<void> {
   }
 }
 
+async function confirmMutations(): Promise<void> {
+  const current = mutations.value
+  const socket = matchSocket()
+  if (!current || current.confirmed || mutationAckPending.value) return
+  if (!socket?.socket.connected || !game.state.room_id || !game.state.player_id || !current.ack_token) {
+    mutationAckError.value = '连接或词条确认信息尚未就绪，请等待房间同步后重试。'
+    return
+  }
+  mutationAckPending.value = true
+  mutationAckError.value = ''
+  try {
+    const ack = await emitMatchEvent(socket, 'place_ships', {
+      room_id: game.state.room_id, player_id: game.state.player_id, mutation_ack: current.ack_token,
+    })
+    if (ack.status !== 'success') mutationAckError.value = ack.message || '确认失败，请重试。'
+  } catch (error) {
+    mutationAckError.value = error instanceof Error ? error.message : '确认失败，请重试。'
+  } finally { mutationAckPending.value = false }
+}
+
 function returnHome(): void {
   void router.push({ name: 'start' })
 }
@@ -255,7 +283,7 @@ function returnHome(): void {
       <h1 id="screen-placement-title" class="placement__title" data-testid="placement-heading">
         放置你的战舰
       </h1>
-      <p class="placement__lead">6×6 棋盘各放 1 格，共 6 格 · 再点一次可取消</p>
+      <p class="placement__lead">6×6 棋盘各放 1 格，共 {{ placement.maxShips }} 格 · 再点一次可取消</p>
     </header>
 
     <div class="placement__players">
@@ -281,7 +309,20 @@ function returnHome(): void {
       还没进入房间，先创建或加入房间再布船。
     </p>
 
-    <div class="placement__layout">
+    <section v-if="mutationBlocked && mutations" class="placement__mutation-confirmation" data-testid="mutation-confirmation" aria-labelledby="mutation-confirmation-title">
+      <h2 id="mutation-confirmation-title">确认本局突变</h2>
+      <p>请阅读本局全部词条。双方确认后开始布船。</p>
+      <MutationList :entries="mutations.entries" />
+      <p v-if="Object.keys(mutations.dice_rolls).length" data-testid="mutation-dice-results">骰子定编：你掷出 {{ mutations.dice_rolls[game.state.player_id] }}，对手掷出 {{ Object.entries(mutations.dice_rolls).find(([id]) => id !== game.state.player_id)?.[1] }}；双方本局各 {{ mutations.starting_ship_cap }} 艘。</p>
+      <p v-if="mutations.confirmed" role="status" data-testid="mutation-waiting">你已确认，等待其余 {{ mutations.waiting_for }} 位玩家确认…</p>
+      <p v-if="mutationAckError" role="alert" class="placement__error">{{ mutationAckError }}</p>
+      <div class="placement__confirm-actions">
+        <button v-if="!mutations.confirmed" type="button" class="button" data-testid="mutation-confirm" :disabled="mutationAckPending" @click="confirmMutations">{{ mutationAckPending ? '正在确认…' : '已阅读全部词条，确认' }}</button>
+        <button type="button" class="button button--ghost" @click="leaveOpen = true">离开房间</button>
+      </div>
+    </section>
+
+    <div v-else class="placement__layout">
       <div class="placement__board-wrap">
         <div
           class="placement__board"
@@ -465,6 +506,14 @@ function returnHome(): void {
     </AppOverlay>
   </section>
 </template>
+
+<style scoped>
+.placement__mutation-confirmation { width: min(100%, 680px); margin: 20px auto; padding: 20px; box-sizing: border-box; background: var(--surface-chamber); border: 1px solid var(--border-strong); border-radius: 10px; }
+.placement__mutation-confirmation h2 { margin: 0 0 12px; color: var(--text-primary); font-size: 20px; }
+.placement__mutation-confirmation > p { color: var(--text-secondary); font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.placement__mutation-confirmation .placement__confirm-actions { flex-wrap: wrap; }
+@media (max-width: 480px) { .placement__mutation-confirmation { padding: 16px; margin-top: 12px; } .placement__mutation-confirmation .button { width: 100%; } }
+</style>
 
 <style scoped>
 .placement {

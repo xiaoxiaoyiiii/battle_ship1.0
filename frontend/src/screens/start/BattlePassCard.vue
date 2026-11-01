@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, watch } from 'vue'
+import TideAshBadge from '../../components/TideAshBadge.vue'
 import { useAuthStore } from '../../stores/auth'
-import { useBattlePassStore } from '../../stores/battlePass'
+import { formatRewardLabel, useBattlePassStore } from '../../stores/battlePass'
 
 const auth = useAuthStore()
 const store = useBattlePassStore()
@@ -16,9 +17,8 @@ const nextReward = computed(() => store.levels.find((row) => row.level > progres
 function rewardText(row: typeof nextReward.value): string {
   if (!row) return '完成任务获得赛季经验'
   const id = row.freeRewardId || row.premiumRewardId
-  const kind = row.freeKind || row.premiumKind
-  const label = kind === 'title' ? '称号' : kind === 'frame' ? '头像框' : '名片底色'
-  return `Lv.${row.level} · ${label} · ${id?.replaceAll('_', ' ') || '奖励'}`
+  const kind = row.freeRewardId ? row.freeKind : row.premiumKind
+  return `Lv.${row.level} · ${formatRewardLabel(kind, id)}`
 }
 
 onMounted(() => { void store.load() })
@@ -32,7 +32,10 @@ watch(() => auth.isGuest, () => { store.reset(); void store.load() })
         <p class="battle-pass-mini__eyebrow">航海季</p>
         <h2 id="battle-pass-title" class="home-kicker">赛季通行证</h2>
       </div>
-      <router-link class="battle-pass-mini__open" :to="{ name: 'battle-pass' }" data-testid="battle-pass-open">查看全部</router-link>
+      <div class="battle-pass-mini__actions">
+        <router-link class="battle-pass-mini__open" :to="{ name: 'shop' }" data-testid="battle-pass-shop">商店</router-link>
+        <router-link class="battle-pass-mini__open" :to="{ name: 'battle-pass' }" data-testid="battle-pass-open">查看全部</router-link>
+      </div>
     </div>
 
     <p v-if="store.status === 'loading'" class="battle-pass-mini__note" role="status">读取赛季进度…</p>
@@ -45,7 +48,8 @@ watch(() => auth.isGuest, () => { store.reset(); void store.load() })
     <template v-else>
       <div class="battle-pass-mini__summary">
         <strong>Lv.{{ progress.level }}</strong>
-        <span>{{ progress.xp.toLocaleString() }} / {{ season.totalXp.toLocaleString() }} XP</span>
+        <TideAshBadge :linked="false" />
+        <span data-testid="battle-pass-xp-total">{{ progress.xp.toLocaleString() }} / {{ season.totalXp.toLocaleString() }} XP</span>
       </div>
       <div class="battle-pass-mini__bar" role="progressbar" :aria-valuenow="progress.xp" :aria-valuemax="season.totalXp" aria-label="赛季经验进度">
         <i :style="{ width: xpPercent + '%' }"></i>
@@ -61,6 +65,10 @@ watch(() => auth.isGuest, () => { store.reset(); void store.load() })
 <style scoped>
 .battle-pass-mini { min-width:0; padding:16px 18px; }
 .battle-pass-mini__head,.battle-pass-mini__summary,.battle-pass-mini__foot { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.battle-pass-mini__head { align-items:flex-start; }
+.battle-pass-mini__head h2 { white-space:nowrap; }
+.battle-pass-mini__actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
+.battle-pass-mini__summary { flex-wrap:wrap; }
 .battle-pass-mini__eyebrow { margin:0 0 2px; color:var(--role-action); font-size:10px; letter-spacing:.14em; }
 .battle-pass-mini__open { color:var(--role-action); font-size:11px; text-decoration:none; }
 .battle-pass-mini__open:hover { text-decoration:underline; }

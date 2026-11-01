@@ -1248,4 +1248,59 @@ onBeforeUnmount(() => {
   .lobby__panel--friends .lobby__list { grid-template-columns: minmax(0, 1fr); }
   .lobby .button, .lobby__fold, .lobby__changelog-close, .lobby__dismiss { min-height: 44px; }
 }
+
+/* 桌面双栏贴齐视口：目录和社交区在内部滚动，返回首页留在第一屏。 */
+@media (min-width: 980px) and (min-height: 560px) {
+  .lobby {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .lobby__head,
+  .lobby__changelog,
+  .lobby__notice,
+  .lobby__error,
+  .lobby__primary,
+  .lobby__panel--friends,
+  .lobby__footer {
+    flex: 0 0 auto;
+  }
+  .lobby__columns {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .lobby__directory,
+  .lobby__social {
+    min-height: 0;
+    height: auto;
+    overflow: hidden;
+  }
+  .lobby__panel--rooms {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .lobby__room-results {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+  }
+  .lobby__panel--matches {
+    flex: 0 1 auto;
+    min-height: 0;
+    max-height: 132px;
+    overflow: auto;
+  }
+  .lobby__panel--players,
+  .lobby__panel--chat {
+    flex: 1 1 0;
+    min-height: 0;
+    max-height: none;
+    overflow: hidden;
+  }
+  .lobby__panel--friends[open] .lobby__list {
+    max-height: 160px;
+  }
+}
 </style>

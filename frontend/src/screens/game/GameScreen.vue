@@ -33,6 +33,7 @@ import { useMatchStore } from '../../stores/match'
 import { useResultStore } from '../../stores/result'
 import { useUiStore } from '../../stores/ui'
 import { useAudioStore } from '../../stores/audio'
+import { mergeChatTimeline } from './chatTimeline'
 import { turnClockView } from './turnClock'
 import {
   areaFromAnchor,
@@ -504,8 +505,11 @@ const logs = computed(() => match.logs.slice().reverse())
 const gameLogLines = computed(() => match.logs.slice(-14))
 
 const discardCountText = computed(() => (discardCards.value.length ? String(discardCards.value.length) : '—'))
-const quickChatMessages = computed(() => match.quickChat.slice(-8).reverse())
-const chatMessages = computed(() => match.chat.slice(-30))
+const chatLogEl = ref<HTMLOListElement | null>(null)
+/** 手打与快捷语合成一条时间线；两路仍分别入库，这里只负责展示。 */
+const chatTimeline = computed(() =>
+  mergeChatTimeline(match.chat, match.quickChat, selfName.value, state.value.player_id || ''),
+)
 
 // ---- drawers and overlays --------------------------------------------------
 const quickChatOpen = ref(false)
@@ -535,6 +539,16 @@ interface QuickChatItem {
 // 布局判据移植自原 main 的 static/adaptive_layout.js（宽 >=1200 且高 >=700 才算宽屏）。
 const layout = useAdaptiveGameLayout()
 const compact = layout.compact
+
+watch(
+  () => [chatTimeline.value.length, quickChatOpen.value, chatDismissed.value, compact.value],
+  () => {
+    void nextTick(() => {
+      const node = chatLogEl.value
+      if (node) node.scrollTop = node.scrollHeight
+    })
+  },
+)
 
 // 目标海域优先；使用标量依赖，普通 room_sync 不会把手动切换的海域抢回去。
 const targetBoard = computed(() => {
@@ -2399,24 +2413,19 @@ function backToLobby(): void {
         >×</button>
       </header>
       <section class="game-chat-text" data-testid="game-chat" aria-label="文字聊天">
-        <ol class="game-chat-log" data-testid="game-chat-messages" aria-live="polite">
+        <ol ref="chatLogEl" class="game-chat-log" data-testid="game-chat-messages" aria-live="polite">
           <li
-            v-for="(message, index) in chatMessages"
-            :key="'chat-' + index"
+            v-for="(message, index) in chatTimeline"
+            :key="message.key"
             class="game-chat-line"
-            :class="{ 'game-chat-line--mine': message.username === selfName }"
+            :class="{ 'game-chat-line--mine': message.mine }"
             :data-testid="'game-chat-message-' + index"
           >
-            <b>{{ message.username }}</b>：{{ message.message }}
+            <b>{{ message.name }}</b>：{{ message.text }}
           </li>
         </ol>
-        <p v-if="!chatMessages.length" class="game-drawer__empty" data-testid="game-chat-empty">还没有人说话</p>
+        <p v-if="!chatTimeline.length" class="game-drawer__empty" data-testid="game-chat-empty">还没有人说话</p>
         <p v-if="chatError" class="game-dialog__error" data-testid="game-chat-error">{{ chatError }}</p>
-      <ol class="game-chat-log" data-testid="game-quick-chat-messages">
-        <li v-for="(message, index) in quickChatMessages" :key="'qc-' + index" class="game-chat-line" :data-testid="'game-quick-chat-message-' + index">
-          <b>{{ message.name }}</b>：{{ message.text }}
-        </li>
-      </ol>
         <div class="game-chat-form">
           <input
             v-model="chatDraft"

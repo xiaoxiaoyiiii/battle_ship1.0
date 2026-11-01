@@ -3630,17 +3630,17 @@ button.arena-avatar--btn {
   }
 }
 
-/* 宽屏对局贴齐视口：棋盘按剩余高度收缩，手牌和右侧主行动留在第一屏。 */
+/* 宽屏先给完整卡面和标头留出高度；预算不足时允许屏内滚动。 */
 @media (min-width: 1200px) and (min-height: 700px) {
   .game[data-layout='wide'] {
-    overflow: hidden;
+    overflow: hidden auto;
   }
 
   .game[data-layout='wide'] .game-main-container {
-    flex: 1 1 auto;
+    flex: 1 0 auto;
     min-height: 0;
-    padding-top: clamp(168px, 18dvh, 190px);
-    --board-cell: clamp(28px, min(calc((100vw - 640px) / 12), calc((100dvh - 520px) / 6)), 62px);
+    padding-top: clamp(148px, 16dvh, 170px);
+    --board-cell: clamp(28px, min(calc((100vw - 640px) / 12), calc((100dvh - 580px) / 6)), 62px);
   }
 
   .game[data-layout='wide'] .game-content {
@@ -3649,7 +3649,7 @@ button.arena-avatar--btn {
   }
 
   .game[data-layout='wide'] .boards-container {
-    flex: 1 1 auto;
+    flex: 0 0 auto;
     min-height: 0;
     align-items: center;
   }
@@ -3660,12 +3660,33 @@ button.arena-avatar--btn {
   }
 
   .game[data-layout='wide'] .game-hand {
-    padding: clamp(8px, 2dvh, 24px) 12px clamp(6px, 1dvh, 12px);
+    min-height: 0;
+    padding: clamp(8px, 2dvh, 24px) 12px 12px;
+  }
+
+  .game[data-layout='wide'] .game-hand--scrollable {
+    padding-top: max(18px, 2dvh);
+  }
+
+  .game[data-layout='wide'] .game-hand-head {
+    margin-bottom: 0;
+  }
+
+  .game[data-layout='wide'] .game-hand-head :deep(.draw-deck__back) {
+    width: 18px;
+    height: 26px;
+    margin: 0;
   }
 
   .game[data-layout='wide'] .game-hand .card {
-    height: clamp(112px, 16dvh, 186px);
-    width: calc(clamp(112px, 16dvh, 186px) * var(--hand-card-w, 132px) / var(--hand-card-h, 186px));
+    --wide-card-width: min(var(--hand-card-w, 132px), calc(clamp(136px, 20dvh, 186px) * 2 / 3));
+    flex-basis: var(--wide-card-width);
+    width: var(--wide-card-width);
+    height: calc(var(--wide-card-width) * 3 / 2);
+  }
+
+  .game[data-layout='wide'] .card--art .card__art {
+    object-fit: contain;
   }
 
   .game[data-layout='wide'] .arena-rail {

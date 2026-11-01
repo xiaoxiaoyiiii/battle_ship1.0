@@ -791,7 +791,7 @@ class AiService:
                 }
             )
             if not (ack and ack.get("status") == "success"):
-                magic_temps.finish(room, kind, owner=seat)
+                magic_temps.finish(room, kind, owner=player_id)
                 await self._log(
                     room, f"AI 的桃园结义选择失败（{ack}），已清理待办", "system"
                 )
@@ -800,7 +800,7 @@ class AiService:
         if kind == "wangyang_choice":
             cards = list(temp.get("cards") or [])
             if not cards:
-                magic_temps.finish(room, kind, owner=seat)
+                magic_temps.finish(room, kind, owner=player_id)
                 return True
             pick = policies.resolve_choice(
                 room, player_id, kind, cards, rng=self.rng
@@ -817,7 +817,7 @@ class AiService:
                 }
             )
             if not (ack and ack.get("status") == "success"):
-                magic_temps.finish(room, kind, owner=seat)
+                magic_temps.finish(room, kind, owner=player_id)
                 await self._log(
                     room, f"AI 的亡羊补牢选择失败（{ack}），已清理待办", "system"
                 )
@@ -826,7 +826,7 @@ class AiService:
         if kind == "bury_choice":
             candidates = list(temp.get("candidates") or [])
             if not candidates:
-                magic_temps.finish(room, kind, owner=seat)
+                magic_temps.finish(room, kind, owner=player_id)
                 return True
             # Burying a card in the opponent's hand is pure profit (the caster
             # also draws one); burying from the deck is a net wash.
@@ -851,7 +851,7 @@ class AiService:
                 }
             )
             if not (ack and ack.get("status") == "success"):
-                magic_temps.finish(room, kind, owner=seat)
+                magic_temps.finish(room, kind, owner=player_id)
                 await self._log(
                     room, f"AI 的明智埋葬选择失败（{ack}），已清理待办", "system"
                 )
@@ -881,7 +881,7 @@ class AiService:
                 }
             )
             if not (ack and ack.get("status") == "success"):
-                magic_temps.finish(room, kind, owner=seat)
+                magic_temps.finish(room, kind, owner=player_id)
                 await self._log(
                     room, f"AI 的灵气复苏选择失败（{ack}），已清理待办", "system"
                 )
@@ -900,7 +900,7 @@ class AiService:
                 else []
             )
             if not alive_indices:
-                magic_temps.finish(room, kind, owner=seat)
+                magic_temps.finish(room, kind, owner=player_id)
                 return True
             indices = alive_indices[:3]
             ack = await self.magic.confirm_magic_target(
@@ -912,7 +912,7 @@ class AiService:
                 }
             )
             if not (ack and ack.get("status") == "success"):
-                magic_temps.finish(room, kind, owner=seat)
+                magic_temps.finish(room, kind, owner=player_id)
                 await self._log(
                     room, f"AI 的仁王之盾选择失败（{ack}），已清理待办", "system"
                 )

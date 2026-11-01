@@ -5,6 +5,10 @@ from typing import Literal
 
 SeasonState = Literal['upcoming', 'active', 'claim_only', 'closed']
 
+MATCH_COMPLETION_XP = 25
+MATCH_WIN_XP = 15
+WEEKLY_MATCH_XP_CAP = 800
+
 @dataclass(frozen=True)
 class SeasonConfig:
     id: str
@@ -86,4 +90,5 @@ def season_challenges(season_id: str) -> list[dict[str, int | str]]:
     ]
 
 __all__ = ['SeasonConfig', 'current_level', 'level_xp', 'pass_segments', 'season_state',
-           'task_reward_xp', 'season_challenges']
+           'task_reward_xp', 'season_challenges', 'MATCH_COMPLETION_XP',
+           'MATCH_WIN_XP', 'WEEKLY_MATCH_XP_CAP']

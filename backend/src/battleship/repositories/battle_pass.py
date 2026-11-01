@@ -4,7 +4,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -84,6 +84,16 @@ class BattlePassRepository:
             return None
         return {column.name: getattr(row, column.name) for column in row.__table__.columns}
 
+    def closed_seasons_for_user(self, user_id: str, now: int) -> list[dict[str, Any]]:
+        """读取已参加且领取期结束的历史赛季，不向新用户赠送所有历史奖励。"""
+        rows = self.session.scalars(select(BattlePassSeason).join(
+            UserBattlePass, UserBattlePass.season_id == BattlePassSeason.id,
+        ).where(
+            UserBattlePass.user_id == user_id, BattlePassSeason.claim_ends_at <= int(now),
+        ).order_by(BattlePassSeason.starts_at, BattlePassSeason.id))
+        return [{column.name: getattr(row, column.name) for column in row.__table__.columns}
+                for row in rows]
+
     def levels(self, season_id: str) -> list[dict[str, Any]]:
         rows = self.session.execute(
             select(BattlePassLevel).where(BattlePassLevel.season_id == season_id)
@@ -144,9 +154,16 @@ class BattlePassRepository:
         self.session.flush()
         return True
 
+    def match_xp_total(self, user_id: str, start: int, end: int) -> int:
+        """同一用户跨季汇总本周对局经验，不包含任务和挑战经验。"""
+        return int(self.session.scalar(select(func.coalesce(func.sum(BattlePassEvent.xp_delta), 0)).where(
+            BattlePassEvent.user_id == user_id, BattlePassEvent.source_kind == 'match_xp',
+            BattlePassEvent.created_at >= int(start), BattlePassEvent.created_at < int(end),
+        )) or 0)
+
     def claim_once(self, user_id: str, season_id: str, level: int, track: str,
                    reward_kind: str, reward_id: str, grant_key: str,
-                   *, now: int | None = None) -> bool:
+                   *, now: int | None = None, grant_cosmetic: bool = True) -> bool:
         now = int(time.time()) if now is None else int(now)
         statement = sqlite_insert(BattlePassClaim).values(
             user_id=user_id, season_id=season_id, level=int(level), track=track,
@@ -158,6 +175,8 @@ class BattlePassRepository:
         result = self.session.execute(statement)
         if not result.rowcount:
             return False
+        if not grant_cosmetic:
+            return True
         reward = sqlite_insert(UserCosmeticReward).values(
             user_id=user_id, kind=reward_kind, reward_id=reward_id,
             source_season_id=season_id, source_level=int(level),

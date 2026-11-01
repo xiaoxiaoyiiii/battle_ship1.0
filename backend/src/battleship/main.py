@@ -27,6 +27,7 @@ from . import __version__
 from .config import Settings, load_settings
 from .http.routers import admin as admin_router
 from .http.routers import battle_pass as battle_pass_router
+from .http.routers import shop as shop_router
 from .http.routers import auth as auth_router
 from .http.routers import chat as chat_router
 from .http.routers import contracts as contracts_router
@@ -277,6 +278,7 @@ def create_application(settings: Settings | None = None,
     fastapi_app.include_router(spectate_router.router)
     fastapi_app.include_router(admin_router.router)
     fastapi_app.include_router(battle_pass_router.router)
+    fastapi_app.include_router(shop_router.router)
 
     # User-uploaded avatars are the only surviving piece of `static/`; they keep
     # the frozen /static/avatars/... URL so existing profile rows still resolve.

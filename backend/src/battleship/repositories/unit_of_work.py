@@ -27,6 +27,8 @@ from .stats import StatsRepository
 from .tasks import TaskRepository
 from .users import UserRepository
 from .battle_pass import BattlePassRepository
+from .tide_ash import TideAshRepository
+from .shop import ShopRepository
 
 
 class UnitOfWork:
@@ -93,6 +95,14 @@ class UnitOfWork:
     @property
     def battle_pass(self) -> BattlePassRepository:
         return self._repository("battle_pass", BattlePassRepository)
+
+    @property
+    def tide_ash(self) -> TideAshRepository:
+        return self._repository("tide_ash", TideAshRepository)
+
+    @property
+    def shop(self) -> ShopRepository:
+        return self._repository("shop", ShopRepository)
 
     def flush(self) -> None:
         self._require_session().flush()

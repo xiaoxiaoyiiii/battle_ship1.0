@@ -1468,8 +1468,21 @@ class MagicService:
         try:
             return await self._resolve_chain(room)
         finally:
-            self._chain_running.discard(room.id)
-            room.chain_resolving = room.id in self._chain_resolutions
+            # 选牌类效果（桃园结义 / 灵气复苏等）在连锁里只把待办存下来就返回。
+            # AI 的答复只从 _activate_magic_temp 进入；这里不叫醒的话，回合任务
+            # 会一直停在 chain_resolving 上，直到思考超时才代选。
+            # 答复期间仍占着 _chain_running，确认回包里的续算会让路；
+            # 放开之后再排一次，当场答完的选择才能接着结算。
+            try:
+                if (self.rooms.get_room(room.id) is room
+                        and room.id in self._chain_resolutions
+                        and self._chain_interaction_pending(room)):
+                    await self._activate_magic_temp(room)
+            finally:
+                self._chain_running.discard(room.id)
+                room.chain_resolving = room.id in self._chain_resolutions
+                if self.rooms.get_room(room.id) is room:
+                    self.resume_chain_if_ready(room)
 
     @staticmethod
     def _chain_interaction_pending(room: Room) -> bool:

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppOverlay from './components/AppOverlay.vue'
 import AppWallpaper from './components/AppWallpaper.vue'
@@ -13,6 +13,7 @@ import FriendsOverlay from './components/FriendsOverlay.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
 import ScreenBoundary from './components/ScreenBoundary.vue'
 import ToastHost from './components/ToastHost.vue'
+import TideAshBadge from './components/TideAshBadge.vue'
 import GlobalPointerEffects from './components/GlobalPointerEffects.vue'
 import DiceRollOverlay from './screens/game/DiceRollOverlay.vue'
 import { routeLoading } from './router'
@@ -23,6 +24,7 @@ import { useCollectionStore } from './stores/collection'
 import { useGameStore } from './stores/game'
 import { useUiStore } from './stores/ui'
 import { useAudioStore } from './stores/audio'
+import { useShopStore } from './stores/shop'
 import { installInteractionAudio } from './audio/interactions'
 
 /**
@@ -70,8 +72,18 @@ const destinations = [
   { name: 'start', label: '开战' },
   { name: 'lobby', label: '大厅' },
   { name: 'battle-pass', label: '通行证' },
+  { name: 'shop', label: '商店' },
   { name: 'leaderboard', label: '排行' },
 ]
+const shop = useShopStore()
+watch(() => auth.isGuest, (guest) => {
+  if (guest) shop.reset()
+  else void shop.load(true)
+}, { immediate: true })
+watch(() => route.fullPath, async () => {
+  await nextTick()
+  document.querySelector<HTMLElement>('.app-nav__link[aria-current="page"]')?.scrollIntoView({ inline: 'nearest', block: 'nearest' })
+})
 
 const loading = computed(() => routeLoading.value)
 
@@ -278,6 +290,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="app-nav__meta">
+          <TideAshBadge />
           <button
             type="button"
             class="app-nav__icon"

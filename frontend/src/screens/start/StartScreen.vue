@@ -12,6 +12,7 @@ import { useAuthStore } from '../../stores/auth'
 import { useCollectionStore } from '../../stores/collection'
 import { useGameStore } from '../../stores/game'
 import { useHomeStore } from '../../stores/home'
+import { useShopStore } from '../../stores/shop'
 import { useUiStore } from '../../stores/ui'
 import { AI_DIFFICULTY_KEY, aiDifficulty } from '../game-over/view'
 import {
@@ -46,6 +47,7 @@ import {
 const router = useRouter()
 const auth = useAuthStore()
 const home = useHomeStore()
+const shop = useShopStore()
 const game = useGameStore()
 const collection = useCollectionStore()
 const ui = useUiStore()
@@ -94,6 +96,7 @@ onMounted(() => {
   void home.loadStats()
   void home.loadProfile()
   void home.loadChangelog()
+  if (!auth.isGuest) void shop.load(true)
   maybeAdvance()
 })
 

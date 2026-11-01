@@ -1689,9 +1689,11 @@ class MagicService:
             if motion:
                 await self._present_card_effect(room, motion, "effect_tail", success=effect_result.success)
             if self._chain_interaction_pending(room):
-                # 连演出收尾也已落地，此时允许当前牌在主棋盘上交互。
-                # 不发 chain_resolved，也不弹出下一张卡；确认最后一项后续算。
-                return list(results)
+                # 演出收尾后先激活当前义务，让 AI 就地答复，避免与等待整链结束的协程互等。
+                await self._activate_magic_temp(room)
+                if self._chain_interaction_pending(room):
+                    # 真人尚未确认时保留当前进度；AI 已答完则继续结算下层卡牌。
+                    return list(results)
             if room.chain and room.chain_animation_clients:
                 await asyncio.sleep(0.18)
 

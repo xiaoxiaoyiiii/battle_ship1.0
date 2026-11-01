@@ -3629,3 +3629,57 @@ button.arena-avatar--btn {
     transform: translateX(-50%);
   }
 }
+
+/* 宽屏对局贴齐视口：棋盘按剩余高度收缩，手牌和右侧主行动留在第一屏。 */
+@media (min-width: 1200px) and (min-height: 700px) {
+  .game[data-layout='wide'] {
+    overflow: hidden;
+  }
+
+  .game[data-layout='wide'] .game-main-container {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding-top: clamp(168px, 18dvh, 190px);
+    --board-cell: clamp(28px, min(calc((100vw - 640px) / 12), calc((100dvh - 520px) / 6)), 62px);
+  }
+
+  .game[data-layout='wide'] .game-content {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .game[data-layout='wide'] .boards-container {
+    flex: 1 1 auto;
+    min-height: 0;
+    align-items: center;
+  }
+
+  .game[data-layout='wide'] .field-magic-area {
+    top: 100px;
+    height: clamp(40px, 5dvh, 56px);
+  }
+
+  .game[data-layout='wide'] .game-hand {
+    padding: clamp(8px, 2dvh, 24px) 12px clamp(6px, 1dvh, 12px);
+  }
+
+  .game[data-layout='wide'] .game-hand .card {
+    height: clamp(112px, 16dvh, 186px);
+    width: calc(clamp(112px, 16dvh, 186px) * var(--hand-card-w, 132px) / var(--hand-card-h, 186px));
+  }
+
+  .game[data-layout='wide'] .arena-rail {
+    top: clamp(168px, 18dvh, 190px);
+    bottom: 8px;
+    height: auto;
+    max-height: none;
+    overflow: hidden;
+  }
+
+  .game[data-layout='wide'] .arena-chain-slot {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 88px;
+    max-height: 304px;
+  }
+}

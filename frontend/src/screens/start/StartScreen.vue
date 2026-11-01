@@ -776,13 +776,14 @@ async function startAi(): Promise<void> {
   .home-card__head .home-kicker { font-size:15px; }
   .home-stat { min-height:24px; }
 }
-/* 桌面三栏共用可用高度，长公告与成就只在各自面板内滚动。 */
-@media (min-width:1024px) and (min-height:700px) {
-  .home-screen { flex:0 0 auto; height:calc(100dvh - 64px); min-height:0; padding:14px 24px 16px; gap:14px; }
+/* 桌面三栏贴齐导航下的剩余高度。门槛低于 700，带标签栏的常见窗口也走这套，
+   长公告只在侧栏里滚，不再把整页撑到将近一千像素。 */
+@media (min-width:1024px) and (min-height:520px) {
+  .home-screen { flex:1 1 auto; height:auto; min-height:0; overflow:hidden; padding:14px 24px 16px; gap:14px; }
   .home-head { flex-shrink:0; }
   .home-head__title { font-size:26px; }
-  .home-grid { flex:1; min-height:0; align-items:stretch; gap:18px; }
-  .home-left,.home-main,.home-side { min-height:0; gap:12px; }
+  .home-grid { flex:1; min-height:0; align-items:stretch; gap:18px; overflow:hidden; }
+  .home-left,.home-main,.home-side { min-height:0; gap:12px; overflow:auto; }
   .home-card { padding:14px 16px; }
   .home-card__head { margin-bottom:10px; }
   .home-player { flex-shrink:0; }
@@ -806,7 +807,7 @@ async function startAi(): Promise<void> {
   .home-changelog > .state-surface { flex:1; min-height:0; }
   .home-changelog__list { max-height:none; min-height:0; }
 }
-@media (min-width:1024px) and (min-height:700px) and (max-height:820px) {
+@media (min-width:1024px) and (min-height:520px) and (max-height:900px) {
   .home-screen { padding-top:10px; padding-bottom:12px; gap:10px; }
   .home-head__title { font-size:22px; }
   .home-head__subtitle { font-size:12px; }

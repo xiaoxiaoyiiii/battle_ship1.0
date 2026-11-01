@@ -46,13 +46,19 @@ export interface QuickChatMessage {
   playerId: string
   name: string
   text: string
+  /** Unix seconds. Server quick_chat frames include this. */
   ts: number
+  /** Arrival order shared with free-text lines, for same-second ties. */
+  order: number
 }
 
 export interface ChatMessage {
   username: string
   message: string
+  /** Unix seconds. Live chat_message frames omit ts; the store stamps receive time. */
   ts: number
+  /** Arrival order shared with quick-chat lines, for same-second ties. */
+  order: number
 }
 
 export interface PickRequest extends PendingPickLike {
@@ -79,6 +85,26 @@ const LOG_LIMIT = 200
 const NOTICE_LIMIT = 12
 const QUICK_CHAT_LIMIT = 30
 const CHAT_LIMIT = 50
+/** Shared across both chat streams so a same-second pair stays in arrival order. */
+let chatArrival = 0
+
+function nextChatOrder(): number {
+  chatArrival += 1
+  return chatArrival
+}
+
+/**
+ * quick_chat sends unix seconds. chat_message does not send ts at all.
+ * Missing or unusable values become the local receive time in the same unit,
+ * so the two streams can share one timeline.
+ */
+function chatTimestamp(raw: unknown): number {
+  const value = Number(raw)
+  if (Number.isFinite(value) && value > 0) {
+    return value > 1e12 ? Math.floor(value / 1000) : value
+  }
+  return Math.floor(Date.now() / 1000)
+}
 const DICE_DEFAULT_DURATION_MS = 3200
 
 function asCard(value: unknown): CardLike | null {
@@ -242,7 +268,8 @@ export const useMatchStore = defineStore('match', () => {
       playerId: String(payload.player_id ?? ''),
       name: String(payload.name ?? ''),
       text,
-      ts: Number(payload.ts ?? 0) || 0,
+      ts: chatTimestamp(payload.ts),
+      order: nextChatOrder(),
     })
     if (quickChat.value.length > QUICK_CHAT_LIMIT) {
       quickChat.value.splice(0, quickChat.value.length - QUICK_CHAT_LIMIT)
@@ -255,7 +282,8 @@ export const useMatchStore = defineStore('match', () => {
     chat.value.push({
       username: String(payload.username ?? '') || '玩家',
       message,
-      ts: Number(payload.ts ?? 0) || 0,
+      ts: chatTimestamp(payload.ts),
+      order: nextChatOrder(),
     })
     if (chat.value.length > CHAT_LIMIT) {
       chat.value.splice(0, chat.value.length - CHAT_LIMIT)

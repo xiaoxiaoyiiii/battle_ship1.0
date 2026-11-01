@@ -451,23 +451,48 @@ input[type='radio'] {
   font-weight: 600;
 }
 
-/* ---------------------------------------------------------- battle screen --- */
-/* The battle screen owns the window: it fits the viewport instead of pushing
-   the page down, so the hand and the primary action stay reachable. Cells and
-   cards scale from the height budget in game-screen.css; nothing is clipped. */
+/* ---------------------------------------------------------- viewport fit --- */
+/* Battle always owns the window: the stage scrolls inside itself on short
+   phones, and the wide layout below shrinks the board so the hand stays put.
+   Home and lobby only lock on desktop heights, so a phone can still scroll. */
 body:has([data-testid='screen-game']) .app-shell {
   height: 100dvh;
+  max-height: 100dvh;
   min-height: 0;
+  overflow: hidden;
 }
 
-body:has([data-testid='screen-game']) .screen {
-  min-height: 0;
-}
-
-/* The routed screen sits in a `.screen-boundary` flex wrapper whose automatic
-   minimum would otherwise let the battle stage push the shell past the window. */
+body:has([data-testid='screen-game']) .screen,
 body:has([data-testid='screen-game']) .screen-boundary {
   min-height: 0;
+}
+
+@media (min-width: 1024px) and (min-height: 520px) {
+  body:has([data-testid='screen-start']) .app-shell {
+    height: 100dvh;
+    max-height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  body:has([data-testid='screen-start']) .screen,
+  body:has([data-testid='screen-start']) .screen-boundary {
+    min-height: 0;
+  }
+}
+
+@media (min-width: 980px) and (min-height: 560px) {
+  body:has([data-testid='screen-lobby']) .app-shell {
+    height: 100dvh;
+    max-height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  body:has([data-testid='screen-lobby']) .screen,
+  body:has([data-testid='screen-lobby']) .screen-boundary {
+    min-height: 0;
+  }
 }
 
 /* 淡入淡出不参与页面布局，不显示倒计时进度条。 */

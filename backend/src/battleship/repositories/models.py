@@ -293,6 +293,32 @@ class UserCosmeticReward(Base):
     granted_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
 
 
+class TideAshWallet(Base):
+    """徽记余额；不与账号经验或通行证经验混用。"""
+
+    __tablename__ = "tide_ash_wallets"
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    balance: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text("0"))
+    updated_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    __table_args__ = (sa.CheckConstraint("balance >= 0", name="ck_tide_ash_balance"),)
+
+
+class TideAshLedger(Base):
+    """来源唯一流水，购买以负数记录。"""
+
+    __tablename__ = "tide_ash_ledger"
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    source_kind: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    source_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    delta: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    created_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    __table_args__ = (
+        sa.UniqueConstraint("user_id", "source_kind", "source_id", name="uq_tide_ash_source"),
+        Index("idx_tide_ash_user_source_time", "user_id", "source_kind", "created_at"),
+    )
+
+
 class ProfileLike(Base):
     __tablename__ = "profile_likes"
 

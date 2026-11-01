@@ -12,7 +12,8 @@ router = APIRouter(tags=["battle-pass"])
 
 @router.get("/api/battle-pass")
 def get_battle_pass(request: Request, user_id: str = Depends(require_user)):
-    return JSONResponse(BattlePassService(request.app.state.database).view(user_id))
+    result = BattlePassService(request.app.state.database).view(user_id)
+    return JSONResponse(result, status_code=401 if result.get("reason") == "unauthorized" else 200)
 
 
 @router.post("/api/battle-pass/claim")
@@ -27,12 +28,14 @@ async def claim_battle_pass(request: Request, user_id: str = Depends(require_use
         level = int(payload.get("level"))
     except (TypeError, ValueError):
         return JSONResponse({"error": "level_invalid"}, status_code=400)
-    ok, reason = BattlePassService(request.app.state.database).claim(
+    result = BattlePassService(request.app.state.database).claim_with_details(
         user_id, level, str(payload.get("track") or "free"),
         season_id=str(payload.get("season_id") or "") or None,
     )
-    status = 200 if ok else (400 if reason in {"track_invalid", "level_invalid"} else 409)
-    body = {"ok": ok, "reason": reason}
+    ok, reason = result["ok"], result["reason"]
+    status = 200 if ok else (401 if reason == "unauthorized" else
+                            400 if reason in {"track_invalid", "level_invalid"} else 409)
+    body = result
     if ok:
         body["battle_pass"] = BattlePassService(request.app.state.database).view(user_id)
     return JSONResponse(body, status_code=status)
@@ -67,7 +70,12 @@ async def seed_battle_pass(request: Request, admin_id: str = Depends(require_adm
         starts_at = int(payload.get("starts_at") or time.time())
     except (TypeError, ValueError):
         return JSONResponse({"ok": False, "reason": "starts_at_invalid"}, status_code=400)
-    result = BattlePassService(request.app.state.database).seed_default(season_id, starts_at)
+    try:
+        result = BattlePassService(request.app.state.database).seed_default(season_id, starts_at)
+    except ValueError as exc:
+        if str(exc) != "season_rules_conflict":
+            raise
+        return JSONResponse({"ok": False, "reason": "season_rules_conflict"}, status_code=409)
     return JSONResponse({"ok": True, "admin_id": admin_id, **result})
 
 

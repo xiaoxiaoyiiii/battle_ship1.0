@@ -214,6 +214,6 @@ watch(() => store.items, (items) => {
   .shop__hero h1 { font-size: 27px; }
   .shop__layout { grid-template-columns: 1fr; }
   .shop__grid { grid-template-columns: 1fr; }
-  .shop__preview { position: static; order: 2; }
+  .shop-preview { position: static; order: 2; }
 }
 </style>

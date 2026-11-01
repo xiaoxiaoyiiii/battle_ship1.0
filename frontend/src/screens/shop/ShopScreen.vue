@@ -1,15 +1,27 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import TideAshBadge from '../../components/TideAshBadge.vue'
 import { useAuthStore } from '../../stores/auth'
 import { shopKindLabel, useShopStore, type ShopItem } from '../../stores/shop'
 import { useUiStore } from '../../stores/ui'
+import ShopItemPreview from './ShopItemPreview.vue'
 
 const auth = useAuthStore()
 const store = useShopStore()
 const ui = useUiStore()
 const feedback = ref('')
 const feedbackOk = ref(false)
+const pinnedId = ref<string | null>(null)
+const hoverId = ref<string | null>(null)
+const previewRoot = ref<HTMLElement | null>(null)
+const fineHover = ref(false)
+let hoverMedia: MediaQueryList | null = null
+
+const previewItem = computed(() => {
+  const id = pinnedId.value || hoverId.value
+  if (!id) return null
+  return store.items.find((item) => item.id === id) ?? null
+})
 
 function shortOf(item: ShopItem): boolean {
   return !item.owned && item.purchasable && store.balance !== null && item.price > store.balance
@@ -38,10 +50,48 @@ async function buy(item: ShopItem): Promise<void> {
 }
 function load(): void { feedback.value = ''; void store.load(true) }
 
-onMounted(() => { void store.load(true) })
-watch(() => auth.isGuest, (guest) => {
-  if (guest) store.reset()
+function syncHoverMedia(): void {
+  fineHover.value = Boolean(hoverMedia?.matches)
+}
+function toggle(item: ShopItem): void {
+  const next = pinnedId.value === item.id ? null : item.id
+  pinnedId.value = next
+  if (!next || !window.matchMedia('(max-width: 720px)').matches) return
+  void nextTick(() => {
+    previewRoot.value?.scrollIntoView({
+      block: 'start',
+      behavior: ui.motion === 'reduced' ? 'auto' : 'smooth',
+    })
+  })
+}
+function previewHover(item: ShopItem): void {
+  if (!fineHover.value) return
+  hoverId.value = item.id
+}
+function clearHover(item: ShopItem): void {
+  if (hoverId.value === item.id) hoverId.value = null
+}
+
+onMounted(() => {
+  hoverMedia = window.matchMedia('(hover: hover) and (pointer: fine)')
+  syncHoverMedia()
+  hoverMedia.addEventListener('change', syncHoverMedia)
   void store.load(true)
+})
+onBeforeUnmount(() => {
+  hoverMedia?.removeEventListener('change', syncHoverMedia)
+})
+watch(() => auth.isGuest, (guest) => {
+  if (guest) {
+    pinnedId.value = null
+    hoverId.value = null
+    store.reset()
+  }
+  void store.load(true)
+})
+watch(() => store.items, (items) => {
+  if (pinnedId.value && !items.some((item) => item.id === pinnedId.value)) pinnedId.value = null
+  if (hoverId.value && !items.some((item) => item.id === hoverId.value)) hoverId.value = null
 })
 </script>
 
@@ -72,26 +122,50 @@ watch(() => auth.isGuest, (guest) => {
       <div v-else-if="!store.items.length" class="shop__state">货架暂时是空的。</div>
       <template v-else>
         <p v-if="feedback" class="shop__feedback" :class="{ 'is-error': !feedbackOk }" data-testid="shop-feedback" role="status">{{ feedback }}</p>
-        <div class="shop__grid">
-          <article
-            v-for="item in store.items"
-            :key="item.id"
-            class="shop-card"
-            :class="{ 'is-owned': item.owned }"
-            :data-testid="'shop-item-' + item.id"
-          >
-            <p class="shop-card__kind">{{ shopKindLabel(item.kind) }}</p>
-            <h2>{{ item.name }}</h2>
-            <p class="shop-card__price">{{ item.price.toLocaleString() }} 潮汐徽记</p>
-            <button
-              type="button"
-              class="shop-card__buy"
-              :class="{ 'is-short': shortOf(item), 'is-owned': item.owned }"
-              :data-testid="'shop-buy-' + item.id"
-              :disabled="buyDisabled(item)"
-              @click="buy(item)"
-            >{{ buyLabel(item) }}</button>
-          </article>
+        <div class="shop__layout">
+          <div class="shop__grid">
+            <article
+              v-for="item in store.items"
+              :key="item.id"
+              class="shop-card"
+              :class="{ 'is-owned': item.owned, 'is-selected': pinnedId === item.id, 'is-previewing': previewItem?.id === item.id && pinnedId !== item.id }"
+              :data-testid="'shop-item-' + item.id"
+              @pointerenter="previewHover(item)"
+              @pointerleave="clearHover(item)"
+            >
+              <button
+                type="button"
+                class="shop-card__select"
+                :aria-pressed="pinnedId === item.id"
+                :data-testid="'shop-select-' + item.id"
+                @click="toggle(item)"
+              >
+                <p class="shop-card__kind">{{ shopKindLabel(item.kind) }}</p>
+                <h2>{{ item.name }}</h2>
+                <p class="shop-card__price">{{ item.price.toLocaleString() }} 潮汐徽记</p>
+              </button>
+              <button
+                type="button"
+                class="shop-card__buy"
+                :class="{ 'is-short': shortOf(item), 'is-owned': item.owned }"
+                :data-testid="'shop-buy-' + item.id"
+                :disabled="buyDisabled(item)"
+                @click.stop="buy(item)"
+              >{{ buyLabel(item) }}</button>
+            </article>
+          </div>
+          <aside ref="previewRoot" class="shop-preview" data-testid="shop-preview" aria-live="polite" aria-label="效果预览">
+            <p class="shop-preview__eyebrow">效果预览</p>
+            <template v-if="previewItem">
+              <p class="shop-preview__kind">{{ shopKindLabel(previewItem.kind) }}</p>
+              <h2>{{ previewItem.name }}</h2>
+              <ShopItemPreview :item="previewItem" />
+              <p class="shop-preview__hint" data-testid="shop-preview-hint">
+                {{ pinnedId === previewItem.id ? '已选中，再点一次取消' : '悬停预览，点一下选中' }}
+              </p>
+            </template>
+            <p v-else class="shop-preview__empty" data-testid="shop-preview-empty">点一张商品，这里会显示它的效果。鼠标悬停也能先看一眼。</p>
+          </aside>
         </div>
       </template>
     </div>
@@ -111,8 +185,19 @@ watch(() => auth.isGuest, (guest) => {
 .shop__state--error { color: var(--role-warning); }
 .shop__feedback { margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; color: var(--role-success); background: var(--role-success-soft); font-size: 13px; }
 .shop__feedback.is-error { color: var(--role-warning); background: var(--gold-soft); }
-.shop__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+.shop__layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 300px); gap: 16px; align-items: start; }
+.shop__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; align-content: start; }
+.shop-preview { position: sticky; top: 16px; display: grid; align-content: start; gap: 8px; min-height: 220px; padding: 16px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface-deck); scroll-margin-top: 12px; }
+.shop-preview h2 { margin: 0; color: var(--text-primary); font-size: 18px; }
+.shop-preview__eyebrow { margin: 0; color: var(--gold-strong); font-size: 10px; letter-spacing: 0.16em; }
+.shop-preview__kind { margin: 0; color: var(--role-action); font-size: 11px; letter-spacing: 0.08em; }
+.shop-preview__hint, .shop-preview__empty { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
 .shop-card { display: grid; align-content: start; gap: 8px; min-width: 0; padding: 16px; border: 1px solid var(--border-subtle); border-radius: 12px; background: var(--surface-sea); }
+.shop-card.is-previewing { border-color: color-mix(in srgb, var(--role-action) 55%, var(--border-subtle)); }
+.shop-card.is-selected { border-color: var(--role-action); box-shadow: inset 0 0 0 1px var(--role-action); }
+.shop-card.is-owned.is-selected { opacity: 0.92; filter: none; }
+.shop-card__select { display: grid; gap: 8px; width: 100%; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.shop-card__select:focus-visible { outline: 2px solid var(--role-action); outline-offset: 3px; border-radius: 4px; }
 .shop-card h2 { margin: 0; color: var(--text-primary); font-size: 18px; }
 .shop-card__kind { margin: 0; color: var(--role-action); font-size: 11px; letter-spacing: 0.08em; }
 .shop-card__price { margin: 0; color: var(--gold-strong); font-size: 14px; font-variant-numeric: tabular-nums; }
@@ -127,6 +212,8 @@ watch(() => auth.isGuest, (guest) => {
   .shop { padding: 18px 14px 28px; }
   .shop__hero { align-items: flex-start; flex-direction: column; }
   .shop__hero h1 { font-size: 27px; }
+  .shop__layout { grid-template-columns: 1fr; }
   .shop__grid { grid-template-columns: 1fr; }
+  .shop__preview { position: static; order: 2; }
 }
 </style>

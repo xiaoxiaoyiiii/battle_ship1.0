@@ -3,16 +3,26 @@ import { computed, onMounted, watch } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { useProfileStore } from '../stores/profile'
 
+const props = withDefaults(defineProps<{
+  /** 非空时在父级里预览这个资料背景，不改已装备的背景。 */
+  previewId?: string
+}>(), {
+  previewId: '',
+})
+
 const auth = useAuthStore()
 const profile = useProfileStore()
+const contained = computed(() => props.previewId.trim() !== '')
 
 const backgroundId = computed(() => {
+  if (contained.value) return props.previewId.trim()
   const value = profile.own?.profile_bg_id
   return typeof value === 'string' && value ? value : 'deep_ocean'
 })
 
 async function ensureProfile(): Promise<void> {
-  if (!auth.isGuest) await profile.loadOwn()
+  if (contained.value || auth.isGuest) return
+  await profile.loadOwn()
 }
 
 onMounted(() => { void ensureProfile() })
@@ -22,8 +32,9 @@ watch(() => auth.isGuest, () => { void ensureProfile() })
 <template>
   <div
     class="app-profile-background"
+    :class="{ 'app-profile-background--contained': contained }"
     :data-bg="backgroundId"
-    data-testid="app-profile-background"
+    :data-testid="contained ? undefined : 'app-profile-background'"
     aria-hidden="true"
   >
     <span class="app-profile-background__aurora"></span>
@@ -50,6 +61,12 @@ watch(() => auth.isGuest, () => { void ensureProfile() })
     radial-gradient(980px 620px at 52% -20%, rgb(57 152 183 / 22%), transparent 70%),
     linear-gradient(160deg, #07101f 0%, #071b2d 54%, #050914 100%);
   isolation: isolate;
+}
+
+.app-profile-background.app-profile-background--contained {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
 }
 
 .app-profile-background::before,

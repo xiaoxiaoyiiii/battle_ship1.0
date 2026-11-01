@@ -9,12 +9,14 @@ import { useWalletStore, type WalletSource } from './wallet'
  * Live `GET /api/shop` and `POST /api/shop/purchase` win whenever they answer
  * with JSON. The fixture below is only a session stand-in for the same JSON
  * shape while that route is absent (404, or a non-JSON gateway failure).
- * Set `ALLOW_TIDE_FIXTURE` to false to surface the error instead.
  *
  * Prices and the opening balance live only in the fixture. They are not a
  * second economy: a live catalog replaces them wholesale.
  */
-export const ALLOW_TIDE_FIXTURE = true
+// Local mock 联调 only. Default false so a live API is required.
+// Merging with the fixture enabled risks showing a fake balance and catalog.
+// Enable with VITE_ALLOW_TIDE_FIXTURE=true (dev server or build env).
+export const ALLOW_TIDE_FIXTURE = import.meta.env.VITE_ALLOW_TIDE_FIXTURE === 'true'
 
 export type ShopStatus = 'idle' | 'loading' | 'ready' | 'empty' | 'error' | 'anonymous'
 export type ShopReason =

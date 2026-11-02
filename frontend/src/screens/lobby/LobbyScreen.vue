@@ -5,6 +5,10 @@ import MatchFoundOverlay from '../../components/MatchFoundOverlay.vue'
 import StateSurface from '../../components/StateSurface.vue'
 import MutationList from '../../components/MutationList.vue'
 import AppOverlay from '../../components/AppOverlay.vue'
+import BanPreselection from '../../components/BanPreselection.vue'
+import { useCardBansStore } from '../../stores/cardBans'
+import { useGameStore } from '../../stores/game'
+import { useAuthStore } from '../../stores/auth'
 import { mutationSelectionError } from '../../stores/mutations'
 import { acquireLobbyChannel, getLobbySocket } from '../../realtime/lobby'
 import { useHomeStore } from '../../stores/home'
@@ -60,11 +64,17 @@ const route = useRoute()
 const lobby = useLobbyStore()
 const ui = useUiStore()
 const home = useHomeStore()
+const bans = useCardBansStore()
+const game = useGameStore()
+const auth = useAuthStore()
 
 const filter = ref<LobbyFilter>('all')
 const query = ref('')
 const roomName = ref('')
 const roomPublic = ref(true)
+const banEnabled = ref(false)
+const banQuota = ref(1)
+const banConfigError = computed(() => banEnabled.value && (!Number.isInteger(banQuota.value) || banQuota.value < 1 || banQuota.value > 10) ? '每人 Ban 名额须为 1～10。' : '')
 const mutationIds = ref<string[]>([])
 const weeklyPreviewOpen = ref(false)
 const weeklyMutations = computed(() => lobby.snapshot?.weeklyMutations ?? null)
@@ -300,6 +310,7 @@ function refresh(): void {
 
 function createRoom(): void {
   if (mutationError.value) { fail(mutationError.value); return }
+  if (banConfigError.value) { fail(banConfigError.value); return }
   const socket = socketOrFail()
   if (!socket) return
   const name = roomName.value.trim()
@@ -309,6 +320,8 @@ function createRoom(): void {
       public: roomPublic.value,
       player_name: lobbyPlayerName(),
       mutation_ids: [...mutationIds.value],
+      ban_enabled: banEnabled.value,
+      ban_quota: banEnabled.value ? banQuota.value : 1,
     })
     .then((ack) => {
       if (ack.status !== 'success') {
@@ -392,10 +405,12 @@ function toggleFold(panel: 'players' | 'chat' | 'matches'): void {
 }
 
 function startMatch(mode: 'casual' | 'ranked'): void {
+  if (mode === 'ranked' && auth.isGuest) { auth.open('login', '排位对战需要先登录。'); return }
+  if (mode === 'ranked' && bans.selectionError) { fail(bans.selectionError); return }
   const socket = socketOrFail()
   if (!socket) return
   void socket
-    .emitEvent('find_match', { player_name: lobbyPlayerName(), mode })
+    .emitEvent('find_match', { player_name: auth.displayName, mode, ...(mode === 'ranked' ? { ban_preselection: [...bans.preselection] } : {}) })
     .then((ack) => {
       if (ack.status === 'error') fail(ack.message || '匹配失败')
     })
@@ -539,7 +554,8 @@ function backHome(): void {
 // second countdown); only non-matchmaking room starts navigate immediately.
 function maybeLeaveLobbyForMatch(): void {
   if (!lobby.startedRoomId) return
-  if (lobby.matchFound) return
+  if (lobby.matchFound && !game.state.card_bans?.enabled) return
+  lobby.clearMatchFound()
   const roomId = lobby.takeStartedRoom()
   if (roomId) void router.push({ name: 'placement' })
 }
@@ -607,7 +623,7 @@ onBeforeUnmount(() => {
 
 <template>
   <MatchFoundOverlay
-    v-if="lobby.matchFound"
+    v-if="lobby.matchFound && !game.state.card_bans?.enabled"
     :self-name="lobby.matchFound.playerName"
     :opponent-name="lobby.matchFound.opponentName"
     :mode="lobby.matchFound.mode"
@@ -671,7 +687,7 @@ onBeforeUnmount(() => {
         type="button"
         class="lobby__primary-action lobby__primary-action--room"
         data-testid="lobby-create-room"
-        :disabled="!!mutationError"
+        :disabled="!!mutationError || !!banConfigError"
         @click="createRoom"
       >
         创建房间
@@ -695,6 +711,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
+    <BanPreselection />
     <section v-if="weeklyMutations" class="lobby__mutations" data-testid="lobby-weekly-mutations" aria-label="本周突变池">
       <div><h2>本周突变 · {{ weeklyMutations.name }}</h2><p>{{ weeklyMutations.entries.map(entry => entry.name).join('、') }}</p></div>
       <button type="button" class="button button--ghost" data-testid="lobby-weekly-details" @click="weeklyPreviewOpen = true">查看完整词条</button>
@@ -870,6 +887,12 @@ onBeforeUnmount(() => {
           </label>
 
           <p class="lobby__create-hint">取消勾选「公开」= 私密房，只有拿到房号的人能加入。</p>
+          <div class="lobby__ban-config">
+            <label class="lobby__checkbox"><input v-model="banEnabled" type="checkbox" data-testid="lobby-ban-enabled" />Ban 卡</label>
+            <label v-if="banEnabled">每人 <select v-model.number="banQuota" data-testid="lobby-ban-quota" aria-label="每人 Ban 名额"><option v-for="quota in 10" :key="quota" :value="quota">{{ quota }}</option></select> 张</label>
+            <p v-if="banConfigError" role="alert">{{ banConfigError }}</p>
+            <p v-else class="lobby__create-hint">默认关闭；开启后先暗 Ban，再确认突变与布船。退出自定义房不罚逃跑。</p>
+          </div>
           <details v-if="weeklyMutations" class="lobby__mutation-picker" data-testid="lobby-mutation-picker">
             <summary>自定义突变 · 已选 {{ mutationIds.length }} 条</summary>
             <p>可多选；同组和冲突词条不能同时选择。不选则按普通自定义对局进行。</p>
@@ -1075,6 +1098,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.lobby__ban-config { flex-basis: 100%; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; color: var(--text); font-size: 13px; }
+.lobby__ban-config select { padding: 5px 8px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface-deck); color: var(--text); }
 .lobby__mutations { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 20px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--surface-chamber); }
 .lobby__mutations h2, .lobby__mutations-dialog h2 { margin: 0; color: var(--text-primary); font-size: 16px; }
 .lobby__mutations p { margin: 5px 0 0; }

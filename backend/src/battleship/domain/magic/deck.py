@@ -13,6 +13,7 @@ from typing import Any, Iterable
 
 from .cards import DECK_CARDS, HIDDEN_CARD_NAMES, MagicCard, card_by_name
 from ..room import PlayerShip, Position, Room
+from .. import bans
 
 
 @dataclass(frozen=True)
@@ -41,12 +42,13 @@ def init_shared_deck(
     the card table / effect registry / front-end codex).
     """
 
-    if room.magic_deck:
+    if room.magic_deck or (room.ban_enabled and room.magic_deck_initialized):
         return
     source = list(cards if cards is not None else DECK_CARDS)
-    deck = [card for card in source if card.name not in HIDDEN_CARD_NAMES]
+    deck = [card for card in bans.filter_cards(room, source) if card.name not in HIDDEN_CARD_NAMES]
     (rng or random).shuffle(deck)
     room.magic_deck = deck
+    room.magic_deck_initialized = True
 
 
 def draw_card(room: Room, player_id: str, *, rng: Any | None = None) -> DrawResult:
@@ -61,6 +63,7 @@ def draw_card(room: Room, player_id: str, *, rng: Any | None = None) -> DrawResu
         return DrawResult(card=None, empty=True)
     if getattr(player.effect_flags, "no_draw", False):
         return DrawResult(card=None, no_draw=True)
+    bans.prune_piles(room)
     if not room.magic_deck:
         return DrawResult(card=None, empty=True)
 

@@ -1,5 +1,6 @@
 import { ROOM_SYNC_FIELDS, type RoomSyncField } from '../socket/events.gen'
 import type { MutationState } from './mutations'
+import type { CardBanState } from './cardBans'
 
 /**
  * Explicit mirror of the server game state (ticket #21).
@@ -44,6 +45,7 @@ export interface CellAttack {
 }
 
 export interface GameState {
+  card_bans: CardBanState | null
   mutations: MutationState | null
   opponent_hand_names: string[]
   room_id: string
@@ -136,6 +138,7 @@ const parity: [MissingContractField, UnexpectedExtraField] extends [never, never
 void parity
 
 const FIELD_SPECS = {
+  card_bans: { type: 'object', nullable: true, default: null, note: '服务端逐座位暗 Ban 与同时亮牌快照' },
   mutations: { type: 'object', nullable: true, default: null, note: '服务端本局词条、确认门禁、骰子与发动状态' },
   opponent_hand_names: { type: 'array', nullable: false, default: [], note: '公开手牌词条仅展示对手牌名' },
   room_id: { type: 'string', nullable: false, default: '', note: '当前房间号；首页为空串' },

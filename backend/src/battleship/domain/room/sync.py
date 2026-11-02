@@ -18,6 +18,7 @@ from typing import Any
 
 from ...contracts.identity import RoomKind
 from .. import mutations as mutation_rules
+from .. import bans as ban_rules
 from ..magic import interaction as interaction_rules
 from .models import (
     PUBLIC_EFFECT_FLAGS,
@@ -429,6 +430,7 @@ def build_room_sync(
         "revealed_positions": mutation_rules.visible_reveals(room, player_id),
         "card_unavailable_reasons": _card_unavailable_reasons(room, player_id),
         "mutations": mutation_rules.payload(room, player_id),
+        "card_bans": ban_rules.payload(room, player_id),
         "opponent_hand_names": ([card.name for card in opponent.magic_hand]
                                 if opponent and mutation_rules.active(room, "E2") else []),
     }

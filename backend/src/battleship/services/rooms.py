@@ -32,7 +32,7 @@ from ..contracts.identity import (
     verify_identity,
 )
 from ..domain.anticheat import suspicion
-from ..domain import mutations
+from ..domain import mutations, bans
 from ..infra.logging import get_logger
 from ..domain.room import (
     AI_DIFFICULTIES,
@@ -163,6 +163,8 @@ class RoomService:
         # seat receives the chat lines that were broadcast while it was offline
         # (only those; the per-seat watermark prevents duplicates).
         self.rejoin_hook: Any = None
+        from .card_bans import CardBanService
+        self.bans = CardBanService(self)
 
     # ------------------------------------------------------------------ wiring
 
@@ -296,6 +298,9 @@ class RoomService:
         mutation_error = mutations.validate_selection(selected_mutations)
         if mutation_error:
             return {"status": "error", "message": mutation_error}
+        ban_error = bans.custom_error(data.get('ban_enabled', False), data.get('ban_quota', 1))
+        if ban_error:
+            return {'status': 'error', 'message': ban_error}
         # Gate before ANY side effect: a refused create must not leave a room in
         # the lobby that the player can never enter (legacy ordering).
         refused = await self._refuse_capability(connection, suspicion.CAP_ROOM)
@@ -308,6 +313,8 @@ class RoomService:
 
         room = Room(id=new_room_id())
         room.name = str(data.get("name") or "").strip()[:LOBBY_ROOM_NAME_MAX_LEN]
+        room.ban_enabled = data.get('ban_enabled', False)
+        room.ban_quota = data.get('ban_quota', 1) if room.ban_enabled else 0
         mutations.configure_room(room, "custom", ids=selected_mutations,
                                  rng=self.mutation_rng, now=self.mutation_clock())
         room.public = bool(data.get("public", True))
@@ -426,6 +433,7 @@ class RoomService:
             for seat_id in room.players:
                 room.init_player_magic(seat_id)
             mutations.prepare_start(room, self.mutation_rng)
+            self.bans.start(room)
             for seat_id, seat in room.players.items():
                 opponent_id = opponent_of(room, seat_id)
                 opponent = room.players.get(opponent_id) if opponent_id else None
@@ -442,6 +450,7 @@ class RoomService:
                         "player_name": seat.name,
                         "opponent_name": opponent.name if opponent else None,
                         "mutations": mutations.payload(room, seat_id),
+                        "card_bans": bans.payload(room, seat_id),
                         "max_ships": room.players[seat_id].max_ships,
                         # Ticket #51: additive per-seat wait state (the room
                         # broadcast game_state cannot carry it: the two seats'
@@ -754,6 +763,19 @@ class RoomService:
         entry = room.disconnected.get(player_id)
         if not entry or entry.get("token") != token:
             return
+        if self.bans.departure_hook is not None:
+            from .priority import room_action
+            async with room_action(room):
+                if self.get_room(room_id) is not room:
+                    return
+                current = room.disconnected.get(player_id)
+                if not current or current.get('token') != token:
+                    return
+                result = await self.bans.departure_hook(room, player_id)
+                if result is not None:
+                    if result.get('status') == 'error':
+                        self.bans.retry_disconnect(room, player_id, token)
+                    return
         room.disconnected.pop(player_id, None)
 
         other_id = opponent_of(room, player_id)

@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..contracts import errors as socket_errors
-from ..domain import mutations
+from ..domain import mutations, bans
 from ..domain.lobby.rules import (
     LOBBY_CHAT_BACKLOG,
     LOBBY_CHAT_MIN_INTERVAL,
@@ -39,6 +39,7 @@ from ..domain.room.sync import room_match_mode
 from ..infra.logging import get_logger
 from .presence import PresenceService
 from .rooms import Connection, EventPublisher, NullPublisher, RoomService
+from .card_bans import points_for_user
 
 logger = get_logger("lobby")
 
@@ -150,7 +151,7 @@ class LobbyService:
             {"messages": self.recent_chat()},
             to=connection.sid,
         )
-        await self._publisher.emit("lobby_state", self.build_state(), to=connection.sid)
+        await self._publisher.emit("lobby_state", self.build_state(sid=connection.sid), to=connection.sid)
         # Tell the other members that the player list / lobby count changed.
         await self.broadcast()
         return {"status": "success", "key": connection.sid}
@@ -167,7 +168,7 @@ class LobbyService:
         if not self.is_member(connection.sid):
             # The refresh button must not kick the player out of the lobby.
             return await self.subscribe(connection, data)
-        await self._publisher.emit("lobby_state", self.build_state(), to=connection.sid)
+        await self._publisher.emit("lobby_state", self.build_state(sid=connection.sid), to=connection.sid)
         return {"status": "success"}
 
     async def create_room(self, connection: Connection,
@@ -178,6 +179,8 @@ class LobbyService:
             "name": data.get("name"),
             "public": data.get("public", True),
             "mutation_ids": data.get("mutation_ids", []),
+            "ban_enabled": data.get('ban_enabled', False),
+            "ban_quota": data.get('ban_quota', 1),
         }
         result = await self._rooms.create_room(connection, payload)
         if not isinstance(result, dict) or result.get("status") != "success":
@@ -233,10 +236,20 @@ class LobbyService:
     async def broadcast(self) -> int:
         if not self._members:
             return 0
-        await self._publisher.emit("lobby_state", self.build_state(), room=LOBBY_ROOM)
+        base = self.build_state()
+        for sid in list(self._members):
+            await self._publisher.emit('lobby_state', {**base, 'ban_rules': self._ban_rules(sid)}, to=sid)
         return len(self._members)
 
-    def build_state(self) -> dict[str, Any]:
+    def _ban_rules(self, sid: str | None) -> dict:
+        record = self._presence.get(sid) if sid else None
+        uid = record.user_id if record else None
+        return {'pool': bans.ban_pool(), 'own_quota': bans.quota_for_points(points_for_user(self._database, uid)),
+                'defaults': list(bans.configuration()['timeout_defaults']),
+                'countdown_seconds': bans.configuration()['countdown_seconds'],
+                'selection_seconds': bans.configuration()['selection_seconds']}
+
+    def build_state(self, *, sid: str | None = None) -> dict[str, Any]:
         now = time.time()
         presence = self._presence.snapshot()
         members = set(self._members)
@@ -280,6 +293,7 @@ class LobbyService:
         return {
             "ts": int(now),
             "weekly_mutations": mutations.weekly_pack(self._rooms.mutation_clock()),
+            "ban_rules": self._ban_rules(sid),
             "online_count": counters.online_count,
             "lobby_count": len(members),
             "queue": counters.queue,

@@ -21,6 +21,7 @@ import time
 from typing import Any, Awaitable, Callable
 
 from ..domain import battle as battle_rules
+from ..domain import bans
 from ..domain import effects
 from ..domain import placement as placement_rules
 from ..domain import replay as replay_rules
@@ -32,8 +33,9 @@ from ..domain.room import Player, PlayerShip, Position, Room, RoomState
 from ..domain.room.models import field_magic_name
 from ..infra.logging import get_logger
 from .rooms import Connection, EventPublisher, NullPublisher, RoomService
-from .priority import guard_phase_write
+from .priority import guard_phase_write, room_action
 from .settlement import SettlementResult, SettlementService
+from .ban_escape import BanEscapeService
 
 logger = get_logger("battle")
 
@@ -57,6 +59,8 @@ class BattleService:
     ) -> None:
         self.rooms = rooms
         self.settlement = settlement or SettlementService(None)
+        self.ban_escape = BanEscapeService(self.settlement.database)
+        self.rooms.bans.departure_hook = self.handle_ban_departure
         self.clock = clock or time.time
         self.touch_turn = touch_turn
         # Debug boards / random attacks follow random.seed(...) by default so
@@ -453,6 +457,70 @@ class BattleService:
             payload["match_id"] = result.match_id
         await self._publisher.emit("game_over", payload, room=room.id)
 
+    async def handle_ban_departure(self, room: Room, leaver_id: str) -> dict | None:
+        """投降和掉线共用初始布船离开入口，锁内只认领和处理一次。"""
+        async with room_action(room):
+            if room.ban_escape_settled:
+                return {"status": "success"}
+            if (
+                not room.ban_enabled
+                or room.state != RoomState.PLACING_SHIPS
+                or room.ban_initial_placement_complete
+            ):
+                return None
+            if self.rooms.get_room(room.id) is not room or leaver_id not in room.players:
+                return dict(INVALID_SEAT)
+            survivor_id = room.opponent_of(leaver_id)
+            if survivor_id is None:
+                return dict(INVALID_SEAT)
+            requeue = self.rooms.bans.requeue_hook
+            if room.ranked and requeue is None:
+                return {"status": "error", "message": "匹配服务暂不可用，请重试"}
+
+            result = SettlementResult(ok=True, skipped=True)
+            canceled_request = None
+            if bans.escape_eligible(room):
+                transaction = asyncio.create_task(asyncio.to_thread(
+                    self.ban_escape.settle, room, leaver_id,
+                ))
+                try:
+                    result = await asyncio.shield(transaction)
+                except asyncio.CancelledError as error:
+                    # 取消请求不会取消 SQLite 线程，须等提交并收尾后才能释放房锁。
+                    canceled_request = error
+                    result = await transaction
+                if not result.ok:
+                    if canceled_request is not None:
+                        raise canceled_request
+                    return {"status": "error", "message": "逃跑结算失败，请重试"}
+            room.ban_escape_settled = True
+            room.settled = True
+            room.state = RoomState.GAME_OVER
+            room.winner = ""
+            reason = 'ranked_ban_escape' if room.ranked else 'ban_canceled'
+            message = (
+                'Ban 亮牌后布船阶段退出，已按排位败局扣分'
+                if not result.skipped else '对局已取消'
+            )
+            self.rooms._drop_room(room.id, message)
+            # 幸存排位座位由回队列回调单独通知，避免重复取消事件。
+            canceled_ids = (leaver_id,) if room.ranked else tuple(room.players)
+            for player_id in canceled_ids:
+                socket_id = room.players[player_id].socket_id
+                if not socket_id:
+                    continue
+                await self._publisher.leave_room(socket_id, room.id)
+                await self._publisher.emit('game_canceled', {
+                    'reason': reason, 'room_id': room.id,
+                    'message': message, 'requeue': False,
+                }, to=socket_id)
+            await self._emit_settlement_events(room, result, 'after')
+            if room.ranked:
+                await requeue(room, survivor_id)
+            if canceled_request is not None:
+                raise canceled_request
+            return {"status": "success"}
+
     async def settle_forfeit(self, room: Room, winner_id: str, loser_id: str,
                              reason: str) -> SettlementResult:
         """Disconnect-timeout hook: room state is already set by RoomService.
@@ -482,6 +550,9 @@ class BattleService:
             return {"status": "error", "message": "你不在这个房间"}
         if room.state == RoomState.GAME_OVER:
             return dict(FINISHED_GAME)
+        ban_departure = await self.handle_ban_departure(room, player_id)
+        if ban_departure is not None:
+            return ban_departure
         opponent_id = room.opponent_of(player_id)
         if not opponent_id:
             return {"status": "error", "message": "你不在这个房间"}

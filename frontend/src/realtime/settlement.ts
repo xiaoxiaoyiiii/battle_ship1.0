@@ -2,11 +2,15 @@ import type { Pinia } from 'pinia'
 import { createTypedSocket, type TypedSocket } from '../socket/client'
 import { useGameStore } from '../stores/game'
 import { useUiStore } from '../stores/ui'
-import { rememberSeat, restoreSeat } from './reconnect'
+import { forgetSeat, rememberSeat, restoreSeat } from './reconnect'
 import { useResultStore } from '../stores/result'
 import { useMatchStore } from '../stores/match'
 import { useCardDrawStore } from '../stores/cardDraw'
 import { useAudioStore } from '../stores/audio'
+import { usePlacementStore } from '../stores/placement'
+import { useLobbyStore } from '../stores/lobby'
+import { useHomeStore } from '../stores/home'
+import router from '../router'
 
 /**
  * The settlement wire channel (ticket #22).
@@ -18,6 +22,9 @@ import { useAudioStore } from '../stores/audio'
  * frozen payload without bypassing production logic.
  */
 export type SettlementEventName =
+  | 'game_canceled'
+  | 'match_queued'
+  | 'match_canceled'
   | 'dice_rolled'
   | 'game_over'
   | 'game_state'
@@ -33,6 +40,9 @@ export type SettlementEventName =
 // Typed listeners: only the frames that exist in the generated outbound union.
 // recent_opponent is absent there (see the raw listener below).
 const SETTLEMENT_EVENTS = [
+  'game_canceled',
+  'match_queued',
+  'match_canceled',
   'dice_rolled',
   'game_over',
   'game_state',
@@ -44,6 +54,27 @@ const SETTLEMENT_EVENTS = [
   'ships_updated',
   'card_drawn',
 ] as const
+
+// 取消与重新配对可能在大厅挂载前连续抵达，由持久连接接住这次交接。
+let banRequeuePending = false
+let banEscapeAwaitingRank = false
+let banRankBeforeCancellation: { roomId: string; delta: unknown } | null = null
+
+function notifyBanEscapeRank(delta: unknown, pinia?: Pinia): void {
+  const score = typeof delta === 'number' ? '，段位分 ' + (delta > 0 ? '+' : '') + delta : ''
+  useUiStore(pinia).notify({ code: 'card-ban-escape-rank', message: '排位逃跑：本局判负' + score, tone: 'warning' })
+}
+
+function adoptBanRequeue(payload: Record<string, unknown>, pinia?: Pinia): void {
+  if (!banRequeuePending || payload.state !== 'placing_ships') return
+  banRequeuePending = false
+  const lobby = useLobbyStore(pinia)
+  lobby.recordGameFrame(payload)
+  lobby.takeStartedRoom()
+  lobby.clearMatchFound()
+  useHomeStore(pinia).placementHandled()
+  void router.replace({ name: 'placement' })
+}
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : ''
@@ -60,6 +91,49 @@ export function applySettlementEvent(
   const result = useResultStore(pinia)
 
   switch (event) {
+    case 'game_canceled': {
+      const reason = asString(payload.reason)
+      const roomId = asString(payload.room_id)
+      if (!['ranked_ban_escape', 'ban_canceled'].includes(reason) || !roomId || roomId !== game.state.room_id || router.currentRoute.value.name === 'spectate') break
+      const lobby = useLobbyStore(pinia)
+      const home = useHomeStore(pinia)
+      banRequeuePending = payload.requeue === true
+      banEscapeAwaitingRank = reason === 'ranked_ban_escape' && !banRequeuePending
+      if (banEscapeAwaitingRank && banRankBeforeCancellation?.roomId === roomId) {
+        notifyBanEscapeRank(banRankBeforeCancellation.delta, pinia)
+        banEscapeAwaitingRank = false
+      }
+      banRankBeforeCancellation = null
+      forgetSeat()
+      game.reset()
+      usePlacementStore(pinia).reset()
+      lobby.clearOwnRoom()
+      lobby.clearMatchFound()
+      home.clearMatchFound()
+      home.applyMatchCanceled()
+      if (banRequeuePending) {
+        lobby.recordQueued({ mode: 'ranked' })
+        home.applyMatchQueued({ mode: 'ranked' })
+      } else lobby.recordCanceled()
+      const text = asString(payload.message) || (banRequeuePending ? '对手已离开，已返回排位队列。' : '本局已取消。')
+      lobby.setNotice(text)
+      useUiStore(pinia).notify({ code: 'card-ban-canceled', message: text, tone: banRequeuePending ? 'info' : 'warning' })
+      void router.replace({ name: 'lobby' })
+      break
+    }
+    case 'match_queued':
+      if (banRequeuePending) {
+        useLobbyStore(pinia).recordQueued(payload)
+        useHomeStore(pinia).applyMatchQueued(payload)
+      }
+      break
+    case 'match_canceled':
+      if (banRequeuePending) {
+        banRequeuePending = false
+        useLobbyStore(pinia).recordCanceled(payload)
+        useHomeStore(pinia).applyMatchCanceled()
+      }
+      break
     case 'card_drawn': {
       if (payload.room_id !== game.state.room_id) break
       game.applyServerState({ deck_count: payload.deck_count })
@@ -107,6 +181,7 @@ export function applySettlementEvent(
     }
     case 'game_state': {
       game.applyServerState(payload)
+      adoptBanRequeue(payload, pinia)
       if (payload.state === 'game_over') result.recordGameOver(payload)
       else if (payload.state === 'placing_ships') {
         if (result.gameOver) useAudioStore(pinia).resetMatchAudio()
@@ -116,6 +191,7 @@ export function applySettlementEvent(
     }
     case 'room_sync': {
       game.applyServerState(payload)
+      adoptBanRequeue(payload, pinia)
       if (payload.state === 'game_over') {
         result.recordGameOver({
           winner: payload.winner,
@@ -129,6 +205,12 @@ export function applySettlementEvent(
       break
     case 'rank_changed':
       result.recordRank(payload)
+      if (banEscapeAwaitingRank) {
+        banEscapeAwaitingRank = false
+        notifyBanEscapeRank(payload.delta, pinia)
+      } else if (game.state.state === 'placing_ships' && game.state.card_bans?.ranked && game.state.card_bans.phase === 'revealed') {
+        banRankBeforeCancellation = { roomId: game.state.room_id, delta: payload.delta }
+      }
       break
     case 'achievements_unlocked':
       result.recordAchievements(payload)

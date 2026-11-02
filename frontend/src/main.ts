@@ -33,7 +33,9 @@ app.config.errorHandler = (error, _instance, info) => {
 // A route switch closes every overlay: nothing is left stacked on the next
 // screen (spec story 21, ticket #42).
 const ui = useUiStore(pinia)
-router.afterEach(() => {
+router.afterEach((_to, _from, failure) => {
+  // 被赛前退出守卫拦下时仍停在原页面，必须保留刚打开的确认框。
+  if (failure) return
   ui.closeAllDialogs()
   ui.cancelExit()
 })

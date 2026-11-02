@@ -17,11 +17,14 @@ import TideAshBadge from './components/TideAshBadge.vue'
 import GlobalPointerEffects from './components/GlobalPointerEffects.vue'
 import DiceRollOverlay from './screens/game/DiceRollOverlay.vue'
 import { routeLoading } from './router'
+import { getSettlementSocket } from './realtime/settlement'
+import { forgetSeat } from './realtime/reconnect'
 import { useAuthStore } from './stores/auth'
 import { useDmStore } from './stores/dm'
 import { acquireFriendsChannel } from './realtime/friends'
 import { useCollectionStore } from './stores/collection'
 import { useGameStore } from './stores/game'
+import { isInitialBanPlacement } from './stores/cardBans'
 import { useUiStore } from './stores/ui'
 import { useAudioStore } from './stores/audio'
 import { useShopStore } from './stores/shop'
@@ -43,6 +46,22 @@ const auth = useAuthStore()
 const game = useGameStore()
 const collection = useCollectionStore()
 const ui = useUiStore()
+let exitDestination = '/lobby'
+const removeBanLeaveGuard = router.beforeEach(to => {
+  if (isInitialBanPlacement(game.state) && !['placement', 'settings'].includes(String(to.name))) {
+    exitDestination = to.fullPath
+    ui.requestExit()
+    return false
+  }
+  return true
+})
+onBeforeUnmount(removeBanLeaveGuard)
+
+function cancelExit(): void {
+  ui.cancelExit()
+  exitDestination = '/lobby'
+  if (isInitialBanPlacement(game.state) && route.name === 'settings') void router.push({ name: 'placement' })
+}
 const audio = useAudioStore()
 let releaseInteractionAudio: (() => void) | null = null
 onMounted(() => { releaseInteractionAudio = installInteractionAudio(sound => audio.playUi(sound)) })
@@ -108,9 +127,15 @@ function openCollection(): void {
 }
 
 /** What leaving costs, in the same words the settlement would use. */
-const immersivePenalty = computed(() =>
-  game.state.ranked ? '本局按判负结算并扣段位分。' : '本局按判负结算（休闲/人机不计段位分）。',
-)
+const immersivePenalty = computed(() => {
+  if (isInitialBanPlacement(game.state)) {
+    if (game.state.mode === 'custom') return '退出自定义房不算逃跑，不会扣排位分。'
+    return game.state.card_bans?.phase === 'revealed'
+      ? '双方已亮牌，整个布船阶段退出均按逃跑判负扣分；对手无结算收益并返回排位队列。'
+      : '尚未亮牌，退出不会触发亮牌后的排位逃跑处罚。'
+  }
+  return game.state.ranked ? '本局按判负结算并扣段位分。' : '本局按判负结算（休闲/人机不计段位分）。'
+})
 
 function retryConnection(): void {
   window.location.reload()
@@ -122,9 +147,33 @@ function exitToHome(): void {
   void router.push({ name: 'start' })
 }
 
-function exitMatch(): void {
+const exitPending = ref(false)
+async function exitMatch(): Promise<void> {
+  if (exitPending.value) return
+  if (game.state.card_bans && game.state.state === 'placing_ships') {
+    const socket = getSettlementSocket()
+    if (!socket?.socket.connected || !game.state.room_id || !game.state.player_id) {
+      ui.notify({ code: 'card-ban-exit-disconnected', message: '连接未就绪，请重连后再退出。', tone: 'error' })
+      return
+    }
+    exitPending.value = true
+    try {
+      const ack = await socket.emitEvent('surrender', { room_id: game.state.room_id, player_id: game.state.player_id })
+      if (ack.status !== 'success') {
+        ui.notify({ code: 'card-ban-exit-rejected', message: ack.message || '退出未成功，请重试。', tone: 'error' })
+        return
+      }
+      forgetSeat()
+      game.reset()
+    } catch {
+      ui.notify({ code: 'card-ban-exit-failed', message: '退出未确认，请检查连接后重试。', tone: 'error' })
+      return
+    } finally { exitPending.value = false }
+  }
   ui.cancelExit()
-  void router.push({ name: 'lobby' })
+  const destination = exitDestination
+  exitDestination = '/lobby'
+  void router.push(destination)
 }
 
 /**
@@ -350,14 +399,14 @@ onBeforeUnmount(() => {
     id="exit-confirm"
     :priority="250"
     labelledby="exit-confirm-title"
-    @close="ui.cancelExit()"
+    @close="cancelExit()"
   >
     <div class="confirm">
       <h2 id="exit-confirm-title" class="confirm__title">退出这一局？</h2>
       <p class="confirm__text">退出会中断当前对局，已经打出的进度不会保留；{{ immersivePenalty }}</p>
       <div class="confirm__actions">
-        <button type="button" class="button" data-testid="exit-confirm-cancel" @click="ui.cancelExit()">继续对局</button>
-        <button type="button" class="button button--danger" data-testid="exit-confirm-ok" @click="exitMatch">确认退出</button>
+        <button type="button" class="button" data-testid="exit-confirm-cancel" @click="cancelExit()">继续对局</button>
+        <button type="button" class="button button--danger" data-testid="exit-confirm-ok" :disabled="exitPending" @click="exitMatch">{{ exitPending ? '正在退出…' : '确认退出' }}</button>
       </div>
     </div>
   </AppOverlay>

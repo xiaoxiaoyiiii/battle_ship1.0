@@ -1,0 +1,11 @@
+{
+  "protected_names": [
+    "失灵！"
+  ],
+  "timeout_defaults": [
+    "硫磺火焰",
+    "绝处逢生"
+  ],
+  "countdown_seconds": 5,
+  "selection_seconds": 20
+}

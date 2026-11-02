@@ -29,7 +29,7 @@ from typing import Any, Awaitable, Callable
 
 from ..domain import battle as battle_rules
 from ..domain import effects
-from ..domain import mutations
+from ..domain import mutations, bans
 from ..domain import placement as placement_rules
 from ..domain import replay as replay_rules
 from ..domain.ai import policies
@@ -2630,7 +2630,7 @@ class MagicService:
         room, _player_id = self._seat(connection, data)
         if room is None:
             return dict(INVALID_SEAT)
-        cards = deck_rules.unique_discard_pile(room.magic_discard)
+        cards = deck_rules.unique_discard_pile(bans.filter_cards(room, room.magic_discard))
         return {
             "status": "success",
             "discard_pile": [card_payload(card) for card in cards],

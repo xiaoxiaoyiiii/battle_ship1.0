@@ -3,6 +3,7 @@ import type { AckResponse } from '../socket/events.gen'
 import type { TypedSocket } from '../socket/client'
 import { acquireSettlementChannel, getSettlementSocket } from './settlement'
 import { useHomeStore } from '../stores/home'
+import { useCardBansStore } from '../stores/cardBans'
 
 /**
  * The home-screen wire channel (ticket #26).
@@ -16,9 +17,10 @@ import { useHomeStore } from '../stores/home'
  * match_queued / match_canceled / error. game_state is already applied to the
  * game store by the settlement listeners on the same socket.
  */
-export type HomeEventName = 'match_queued' | 'match_canceled' | 'error' | 'game_state'
+export type HomeEventName = 'match_queued' | 'match_canceled' | 'error' | 'game_state' | 'lobby_state'
 
 export const HOME_EVENTS: readonly HomeEventName[] = [
+  'lobby_state',
   'match_queued',
   'match_canceled',
   'error',
@@ -34,6 +36,9 @@ export function applyHomeEvent(
   if (!payload || typeof payload !== 'object') return
   const home = useHomeStore(pinia)
   switch (event) {
+    case 'lobby_state':
+      useCardBansStore(pinia).recordRules(payload.ban_rules)
+      break
     case 'match_queued':
       home.applyMatchQueued(payload)
       break
@@ -97,6 +102,7 @@ export function acquireHomeChannel(pinia?: Pinia, options: HomeChannelOptions = 
     const raw = socket.socket
     const onConnect = () => {
       store.setSocketConnected(true)
+      void socket.emitEvent('lobby_subscribe', {})
       options.onConnect?.()
     }
     const onDisconnect = () => store.setSocketConnected(false)
@@ -106,6 +112,7 @@ export function acquireHomeChannel(pinia?: Pinia, options: HomeChannelOptions = 
     active = {
       socket,
       stop: () => {
+        if (raw.connected) raw.emit('lobby_unsubscribe', {})
         stopListeners()
         raw.off('connect', onConnect)
         raw.off('disconnect', onDisconnect)
@@ -139,9 +146,12 @@ export async function emitFindMatch(
   playerName: string,
   mode: 'casual' | 'ranked',
 ): Promise<Ack> {
+  const bans = useCardBansStore()
+  if (mode === 'ranked' && bans.selectionError) throw new Error(bans.selectionError)
   return (await socket.emitEvent('find_match', {
     player_name: playerName,
     mode,
+    ...(mode === 'ranked' ? { ban_preselection: [...bans.preselection] } : {}),
   })) as Ack
 }
 

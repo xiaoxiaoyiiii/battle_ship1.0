@@ -208,8 +208,17 @@ class ProgressionService:
                 "data": {"items": items, "count": len(items)},
             })
 
+    def apply_ban_escape(self, room: Room, uow: UnitOfWork,
+                         context: SettlementContext) -> None:
+        """初始布船逃跑只结算败方段位，不触发经验、徽章或对手收益。"""
+        self._settle_rank(
+            uow, context, room, context.facts,
+            player_ids=(context.facts.loser_id,),
+        )
+
     def _settle_rank(self, uow: UnitOfWork, context: SettlementContext, room: Room,
-                     facts: SettlementFacts) -> None:
+                     facts: SettlementFacts, *,
+                     player_ids: tuple[str, ...] | None = None) -> None:
         pre = context.pre or {}
         seconds = int(pre.get("seconds", facts.duration_seconds) or 0)
         rounds = max(0, int(pre.get("rounds", getattr(room, "round", 0)) or 0))
@@ -220,6 +229,8 @@ class ProgressionService:
 
         rows: list[dict[str, Any]] = []
         for player_id, is_winner in ((facts.winner_id, True), (facts.loser_id, False)):
+            if player_ids is not None and player_id not in player_ids:
+                continue
             player = room.players.get(player_id)
             user_id = getattr(player, "user_id", None) if player else None
             if not user_id:

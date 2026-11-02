@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import HomeProgress from './HomeProgress.vue'
+import BanPreselection from '../../components/BanPreselection.vue'
+import { useCardBansStore } from '../../stores/cardBans'
 import HomeTasks from './HomeTasks.vue'
 import BattlePassCard from './BattlePassCard.vue'
 import MatchFoundOverlay from '../../components/MatchFoundOverlay.vue'
@@ -51,6 +53,7 @@ const shop = useShopStore()
 const game = useGameStore()
 const collection = useCollectionStore()
 const ui = useUiStore()
+const bans = useCardBansStore()
 
 const difficulty = ref<string>(aiDifficulty())
 const difficultyOptions = DIFFICULTY_OPTIONS
@@ -199,7 +202,7 @@ function onMatchFoundDone(): void {
 function maybeAdvance(): void {
   if (navigating || !home.awaitingPlacement) return
   if (game.state.state !== 'placing_ships') return
-  if (home.matchFound) return
+  if (home.matchFound && !game.state.card_bans?.enabled) return
   advanceToPlacement()
 }
 
@@ -227,6 +230,7 @@ async function startMatch(mode: 'casual' | 'ranked'): Promise<void> {
   }
   const socket = currentSocket()
   if (!socket) return
+  if (mode === 'ranked' && bans.selectionError) { home.notifyMessage(bans.selectionError); return }
   home.clearNotice()
   home.beginAction(mode)
   try {
@@ -288,7 +292,7 @@ async function startAi(): Promise<void> {
 
 <template>
   <MatchFoundOverlay
-    v-if="home.matchFound"
+    v-if="home.matchFound && !game.state.card_bans?.enabled"
     :self-name="home.matchFound.playerName"
     :opponent-name="home.matchFound.opponentName"
     :mode="home.matchFound.mode"
@@ -452,6 +456,7 @@ async function startAi(): Promise<void> {
           </span>
         </button>
         </div>
+        <BanPreselection />
         <p class="home-launch__note">休闲不计段位分 · 排位对战影响段位</p>
         <div v-if="home.queuePending" class="home-queue" role="status">
           <p class="home-queue__text" data-testid="start-queue-status">

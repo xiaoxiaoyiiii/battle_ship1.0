@@ -3375,20 +3375,32 @@ class MagicService:
         player = room.players[player_id]
         if not player.magic_hand:
             return {"status": "error", "message": "没有可弃置的魔法卡"}
-        raw_index = data.get("discard_card_index")
-        if raw_index is None:
-            index = 0
+        if "discard_card_indices" in data:
+            indices = data["discard_card_indices"]
+            if (not isinstance(indices, list) or not indices
+                    or any(type(index) is not int for index in indices)
+                    or len(set(indices)) != len(indices)
+                    or any(index < 0 or index >= len(player.magic_hand) for index in indices)):
+                return {"status": "error", "message": "无效的弃卡选择，请重新选择手牌"}
+            indices = sorted(indices)
         else:
+            raw_index = data.get("discard_card_index")
             try:
-                index = int(raw_index)
+                index = 0 if raw_index is None else int(raw_index)
             except (TypeError, ValueError):
                 return {"status": "error", "message": "无效的弃卡位置"}
             if not (0 <= index < len(player.magic_hand)):
                 return {"status": "error", "message": "无效的弃卡位置"}
-        discarded = player.magic_hand.pop(index)
-        room.magic_discard.append(discarded)
-        await self._emit_card_discarded(room, player_id, discarded, "papal")
-        room.attacks_remaining += 2
+            indices = [index]
+        # 整体校验后再修改；倒序移除，避免多选时索引前移而弃错牌。
+        discarded = [player.magic_hand[index] for index in indices]
+        for index in reversed(indices):
+            player.magic_hand.pop(index)
+        room.magic_discard.extend(discarded)
+        gained = 2 * len(discarded)
+        room.attacks_remaining += gained
+        for card in discarded:
+            await self._emit_card_discarded(room, player_id, card, "papal")
         await self._emit_hand(player)
         await self._publisher.emit(
             "attacks_updated",
@@ -3396,24 +3408,29 @@ class MagicService:
              "attacks_remaining": room.attacks_remaining},
             room=room.id,
         )
-        await self._add_log(
-            room,
-            f"第{room.round}回合 · {self._name(room, player_id)} 教皇旨意弃置"
-            f"「{discarded.name}」，攻击次数 +2",
-            "magic",
-            {"player": player_id, "card": discarded.name},
-        )
+        for card in discarded:
+            await self._add_log(
+                room,
+                f"第{room.round}回合 · {self._name(room, player_id)} 教皇旨意弃置"
+                f"「{card.name}」，攻击次数 +2",
+                "magic",
+                {"player": player_id, "card": card.name},
+            )
+        names = "、".join(f"「{card.name}」" for card in discarded)
+        message = f"已弃置{names}，攻击次数 +{gained}"
         if player.socket_id:
             await self._publisher.emit(
                 "message",
-                {"text": f"已弃置「{discarded.name}」：攻击次数 +2，现在可以正常攻击了"},
+                {"text": message + "，现在可以正常攻击了"},
                 to=player.socket_id,
             )
         return {
             "status": "success",
-            "discarded": discarded.name,
+            "discarded": discarded[0].name,
+            "discarded_cards": [card.name for card in discarded],
+            "discarded_count": len(discarded),
             "attacks_remaining": room.attacks_remaining,
-            "message": f"已弃置「{discarded.name}」，攻击次数 +2",
+            "message": message,
         }
 
     @guard_phase_write

@@ -165,6 +165,8 @@ class RoomService:
         self.rejoin_hook: Any = None
         from .card_bans import CardBanService
         self.bans = CardBanService(self)
+        from .viewing import ViewingService
+        self.viewing = ViewingService(self)
 
     # ------------------------------------------------------------------ wiring
 

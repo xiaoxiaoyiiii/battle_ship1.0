@@ -366,6 +366,10 @@ class Room:
     game_effects: dict[str, Any] = field(default_factory=dict)
     game_logs: list[dict[str, Any]] = field(default_factory=list)
     replay: dict[str, Any] | None = None
+    _viewing_recording: dict[str, Any] | None = None
+    _viewing_public_frame: dict[str, Any] | None = None
+    _viewing_commit_hook: Any = None
+    viewing_sequence: int = 0
 
     skip_opponent_turn: Any = None
     skip_next_turn: Any = None

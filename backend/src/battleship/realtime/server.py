@@ -218,6 +218,7 @@ def create_socket_server(
     rooms.bind(publisher)
     lobby.bind(publisher)
     spectators.bind(publisher)
+    rooms.viewing.bind(spectators)
     gameplay.bind(publisher)
     battle.bind(publisher)
     magic.bind(publisher)

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 
-REPLAY_VERSION = 1
+REPLAY_VERSION = 2
 MAX_STEPS = 2000
 MAX_REPLAY_BYTES = 512 * 1024
 _MAX_STEPS = MAX_STEPS
@@ -100,6 +100,7 @@ def reset(room) -> None:
         return
     try:
         setattr(room, _ROOM_ATTR, None)
+        room._viewing_recording = None
     except Exception:  # noqa: BLE001
         pass
 
@@ -714,6 +715,8 @@ def _append(room, kind, text, detail=None, actor=None):
     st["steps"].append(entry)
     _record_snapshot(room, st, step)
     _node_from_step(st, step, entry)
+    from .replay_v2 import record_state
+    record_state(room, step=step, cause=str(kind))
     return entry
 
 
@@ -851,7 +854,7 @@ def build(room):
             started_at = 0
 
     payload = {
-        "version": REPLAY_VERSION,
+        "version": 1,
         "p1_name": names.get("p1", ""),
         "p2_name": names.get("p2", ""),
         "seats": _seats_payload(room),
@@ -928,6 +931,11 @@ def finalize(room):
     if step_count(room) <= 0:
         return None
     payload = build(room)
+    from .replay_v2 import record_state, finalize_v2
+    record_state(room, step=max(0, step_count(room) - 1), cause='final')
+    modern = finalize_v2(room, metadata=payload)
+    if getattr(room, '_viewing_recording', None) is not None:
+        return modern
     if _blob_bytes(payload) > MAX_REPLAY_BYTES:
         payload = _shrink(payload)
     return payload

@@ -556,6 +556,7 @@ def build_board_frame(room: Room) -> dict[str, Any]:
 #: source; a missing key blanks part of the spectator screen, an extra key is
 #: contract drift.
 SPECTATE_SNAPSHOT_KEYS: tuple[str, ...] = (
+    "viewing_frame",
     "room_id",
     "state",
     "current_phase",
@@ -614,6 +615,8 @@ def _state_value(value: Any) -> Any:
 def build_spectate_snapshot(room: Room) -> dict[str, Any]:
     """The one-shot spectate_sync payload for a spectator joining mid-game."""
 
+    from ..viewing import build_view_frame
+
     seat_ids = seat_order(room)
     labels = {pid: seat_label(room, pid) for pid in seat_ids}
 
@@ -638,6 +641,11 @@ def build_spectate_snapshot(room: Room) -> dict[str, Any]:
     spectators = room.spectators or {}
     snapshot = {
         "room_id": room.id,
+        "viewing_frame": {
+            'version': 2, 'room_id': room.id, 'seq': room.viewing_sequence,
+            'frame': build_view_frame(room, audience='spectator'),
+            'cues': [],
+        },
         "state": _state_value(room.state),
         "current_phase": _state_value(getattr(room, "current_phase", None)),
         "current_attacker": room.current_attacker,

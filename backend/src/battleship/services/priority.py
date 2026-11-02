@@ -31,7 +31,15 @@ async def room_action(room: Room):
     async with gate['lock']:
         gate['owner'] = task
         try:
+            from ..domain.replay_v2 import record_state
+            from ..domain.replay import step_count
+            if not room.settled:
+                record_state(room, step=max(0, step_count(room) - 1), cause='before')
             yield
+            if not room.settled:
+                record_state(room, step=max(0, step_count(room) - 1), cause='commit')
+            if room._viewing_commit_hook is not None:
+                await room._viewing_commit_hook(room)
         finally:
             gate['owner'] = None
 
@@ -48,6 +56,7 @@ def guard_phase_write(method=None, *, allow_priority=False):
         room = connection if isinstance(connection, Room) else self.rooms.get_room(payload.get('room_id'))
         if room is None:
             return await method(self, *args, **kwargs)
+        room._viewing_commit_hook = self.rooms.viewing.commit
         async with room_action(room):
             if room.priority_pending and not allow_priority:
                 return {'status': 'error', 'message': '阶段转换询问中，请先完成响应或等待对方回答'}

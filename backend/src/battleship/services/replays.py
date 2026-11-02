@@ -179,7 +179,7 @@ def read_replay(database: Database, match_id: str, viewer_uid: str | None) -> Re
                 version = int(payload.get("version") or 0)
             except (TypeError, ValueError):
                 version = 0
-            if version != REPLAY_VERSION:
+            if version not in (1, REPLAY_VERSION):
                 logger.error(
                     "unsupported replay version",
                     extra={"match_id": match_id, "version": payload.get("version")},

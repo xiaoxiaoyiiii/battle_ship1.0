@@ -459,6 +459,13 @@ class SpectatorService:
             "spectate_board", clean, room=spectate.spectate_room_name(room.id)
         )
 
+    async def publish_view_frame(self, room: Any, frame: dict, *, seq: int, cues: list[dict]) -> None:
+        if frame.get('audience') != 'spectator':
+            raise ValueError('观战频道只允许公开观看帧')
+        await self._publisher.emit('spectate_frame', {
+            'version': 2, 'room_id': room.id, 'seq': seq, 'frame': frame, 'cues': cues,
+        }, room=spectate.spectate_room_name(room.id))
+
     async def mark_board_dirty(self, room: Any) -> None:
         """Declare "the visible board changed" (cards that clear/rebuild a board).
 

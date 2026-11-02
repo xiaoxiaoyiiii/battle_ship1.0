@@ -1525,6 +1525,7 @@ class MagicService:
         finally:
             self._chain_running.discard(room.id)
             room.chain_resolving = room.id in self._chain_resolutions
+            await self.rooms.viewing.commit(room, cause='chain_complete')
 
     @staticmethod
     def _chain_interaction_pending(room: Room) -> bool:
@@ -1826,6 +1827,7 @@ class MagicService:
         }
         room.chain_animation_deadline = time.monotonic() + 6.0
         common = {**payload, "room_id": room.id, "animation_id": room.chain_animation_id}
+        await self.rooms.viewing.present(room, {**payload, **({'effect': effect} if effect else {})})
         if effect:
             for pid, player in room.players.items():
                 if player.socket_id:

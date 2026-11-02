@@ -59,6 +59,18 @@ export interface LobbyRoom {
   public: boolean
 }
 
+export interface OwnWaitingRoom {
+  roomId: string
+  hostName: string
+  playerId: string
+  seatConnected: boolean
+  canRestore: boolean
+  banEnabled: boolean
+  banQuota: number
+  mutationIds: string[]
+  mutationEntries: import('./mutations').MutationEntry[]
+}
+
 export interface LobbyMatch {
   roomId: string
   names: string[]
@@ -262,6 +274,7 @@ export const useLobbyStore = defineStore('lobby', () => {
   const ownRoomId = ref('')
   const ownRoomName = ref('')
   const ownRoomPublic = ref(true)
+  const ownRoom = ref<OwnWaitingRoom | null>(null)
   const activeInvite = ref<LobbyInvite | null>(null)
   const friends = ref<LobbyFriend[]>([])
   const friendsLoaded = ref(false)
@@ -299,6 +312,8 @@ export const useLobbyStore = defineStore('lobby', () => {
     if (!payload) return
     useCardBansStore().recordRules(payload.ban_rules)
     snapshot.value = normalizeSnapshot(payload)
+    // 旧帧可省略；新服务端的明确null表示等待房已失效，不能保留幽灵入口。
+    if (Object.prototype.hasOwnProperty.call(payload, 'own_room')) recordOwnRoom(payload.own_room)
     subscribed.value = true
   }
 
@@ -370,10 +385,26 @@ export const useLobbyStore = defineStore('lobby', () => {
     ownRoomPublic.value = isPublic
   }
 
+  function recordOwnRoom(raw: unknown): void {
+    const value = asObject(raw)
+    const roomId = asString(value?.room_id)
+    if (!value || !roomId) { clearOwnRoom(); return }
+    setOwnRoom(roomId, asString(value.name), value.public !== false)
+    ownRoom.value = {
+      roomId, hostName: asString(value.host_name), playerId: asString(value.player_id),
+      seatConnected: value.seat_connected !== false,
+      canRestore: value.can_restore === true,
+      banEnabled: value.ban_enabled === true, banQuota: asNumber(value.ban_quota),
+      mutationIds: Array.isArray(value.mutation_ids) ? value.mutation_ids.filter((id): id is string => typeof id === 'string') : [],
+      mutationEntries: Array.isArray(value.mutation_entries) ? value.mutation_entries.filter((entry): entry is import('./mutations').MutationEntry => Boolean(entry && typeof entry === 'object' && typeof entry.id === 'string' && typeof entry.name === 'string' && typeof entry.description === 'string')) : [],
+    }
+  }
+
   function clearOwnRoom(): void {
     ownRoomId.value = ''
     ownRoomName.value = ''
     ownRoomPublic.value = true
+    ownRoom.value = null
   }
 
   function clearInvite(): void {
@@ -405,8 +436,7 @@ export const useLobbyStore = defineStore('lobby', () => {
     queueMode.value = null
     if (roomId && roomId === ownRoomId.value) {
       // The room became a real match; the "waiting room" card is done.
-      ownRoomId.value = ''
-      ownRoomName.value = ''
+      clearOwnRoom()
     }
   }
 
@@ -450,6 +480,7 @@ export const useLobbyStore = defineStore('lobby', () => {
     queueMode.value = null
     ownRoomId.value = ''
     ownRoomName.value = ''
+    ownRoom.value = null
     activeInvite.value = null
     friends.value = []
     friendsLoaded.value = false
@@ -471,6 +502,7 @@ export const useLobbyStore = defineStore('lobby', () => {
     ownRoomId,
     ownRoomName,
     ownRoomPublic,
+    ownRoom,
     activeInvite,
     friends,
     friendsLoaded,
@@ -500,6 +532,7 @@ export const useLobbyStore = defineStore('lobby', () => {
     recordFriendsGuest,
     recordFriendsError,
     setOwnRoom,
+    recordOwnRoom,
     clearOwnRoom,
     clearInvite,
     clearChat,

@@ -36,6 +36,7 @@ from ..domain.lobby.rules import (
     rooms_by_socket,
 )
 from ..domain.room.sync import room_match_mode
+from ..domain.room import RoomState
 from ..infra.logging import get_logger
 from .presence import PresenceService
 from .rooms import Connection, EventPublisher, NullPublisher, RoomService
@@ -194,6 +195,7 @@ class LobbyService:
             "room_id": result.get("room_id"),
             "name": str(getattr(room, "name", "") or ""),
             "public": bool(getattr(room, "public", True)),
+            "own_room": self._own_waiting_room(connection.sid),
         }
 
     async def chat_send(self, connection: Connection,
@@ -238,7 +240,10 @@ class LobbyService:
             return 0
         base = self.build_state()
         for sid in list(self._members):
-            await self._publisher.emit('lobby_state', {**base, 'ban_rules': self._ban_rules(sid)}, to=sid)
+            await self._publisher.emit('lobby_state', {
+                **base, 'ban_rules': self._ban_rules(sid),
+                'own_room': self._own_waiting_room(sid),
+            }, to=sid)
         return len(self._members)
 
     def _ban_rules(self, sid: str | None) -> dict:
@@ -248,6 +253,28 @@ class LobbyService:
                 'defaults': list(bans.configuration()['timeout_defaults']),
                 'countdown_seconds': bans.configuration()['countdown_seconds'],
                 'selection_seconds': bans.configuration()['selection_seconds']}
+
+    def _own_waiting_room(self, sid: str | None) -> dict | None:
+        """仅投给房主本人的等待房；私密房不进入公共目录。"""
+        record = self._presence.get(sid) if sid else None
+        if record is None:
+            return None
+        for room in self._rooms.get_all_rooms().values():
+            if room.state != RoomState.WAITING or not room.players:
+                continue
+            player_id, host = next(iter(room.players.items()))
+            if not (host.socket_id == sid or (record.user_id and host.registered and host.user_id == record.user_id)):
+                continue
+            return {
+                'room_id': room.id, 'name': room.name, 'public': room.public,
+                'player_id': player_id, 'host_name': host.name,
+                'seat_connected': host.socket_id == sid,
+                'can_restore': self._presence.get(host.socket_id) is None or player_id in room.disconnected,
+                'ban_enabled': room.ban_enabled, 'ban_quota': room.ban_quota,
+                'mutation_ids': list(room.mutation_ids),
+                'mutation_entries': list(room.mutation_entries),
+            }
+        return None
 
     def build_state(self, *, sid: str | None = None) -> dict[str, Any]:
         now = time.time()
@@ -267,17 +294,17 @@ class LobbyService:
         ])
 
         players: list[dict[str, Any]] = []
-        for sid, row in ordered:
+        for player_sid, row in ordered:
             uid = str(row.get("user_id") or "")
             profile = profiles.get(uid, {}) if uid else {}
             players.append(
                 {
-                    "key": sid,
+                    "key": player_sid,
                     "name": row.get("name") or "游客",
                     "guest": not bool(uid),
-                    "in_lobby": sid in members,
+                    "in_lobby": player_sid in members,
                     "status": player_status(
-                        sid, in_game=in_game, in_room=in_room, queued=queued
+                        player_sid, in_game=in_game, in_room=in_room, queued=queued
                     ),
                     "avatar": profile.get("avatar", ""),
                     "level": 1,
@@ -294,6 +321,7 @@ class LobbyService:
             "ts": int(now),
             "weekly_mutations": mutations.weekly_pack(self._rooms.mutation_clock()),
             "ban_rules": self._ban_rules(sid),
+            "own_room": self._own_waiting_room(sid),
             "online_count": counters.online_count,
             "lobby_count": len(members),
             "queue": counters.queue,

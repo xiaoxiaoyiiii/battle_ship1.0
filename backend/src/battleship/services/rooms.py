@@ -395,6 +395,7 @@ class RoomService:
             # reuse the seat and move its connection. Adding a second seat with
             # the same key would keep len(players) at 1 forever (legacy bug).
             seated.socket_id = connection.sid
+            room.disconnected.pop(player_id, None)
             seated.registered = bool(connection.user_id)
             if player_name:
                 seated.name = player_name

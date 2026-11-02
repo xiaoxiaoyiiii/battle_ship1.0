@@ -20,6 +20,7 @@ import time
 from typing import Any
 
 from ..domain.social import messages as dm
+from ..domain.room import RoomState
 from ..infra.logging import get_logger
 from .presence import PresenceService
 from .rooms import EventPublisher, NullPublisher, RoomService
@@ -359,19 +360,37 @@ class FriendsService:
                 return error
             assert target is not None
             other = str(target.id)
+            relation = uow.social.get_friend_relation(user_id, other) if 'room_id' in payload else None
             me = uow.users.get(user_id)
             identity = self._identity(me) if me is not None else {"username": "", "avatar": ""}
         if other == str(user_id):
             return 400, {"status": "error", "error": "不能邀请自己"}
         # The inviter also enters the new room (the client calls join_room after
         # the invite succeeds), so an account already in a game is refused here.
-        if self._presence.is_in_game(user_id):
+        existing_room = None
+        if 'room_id' in payload:
+            room_id = payload['room_id']
+            if not isinstance(room_id, str) or not room_id.strip():
+                return 400, {'status': 'error', 'error': '房号无效'}
+            existing_room = self._rooms.get_room(room_id)
+            if existing_room is None:
+                return 404, {'status': 'error', 'error': '房间已不存在'}
+            host = next(iter(existing_room.players.values()), None)
+            if not host or not host.registered or host.user_id != str(user_id):
+                return 403, {'status': 'error', 'error': '只有房主可以邀请好友进入该房间'}
+            if existing_room.state != RoomState.WAITING or len(existing_room.players) != 1:
+                return 409, {'status': 'error', 'error': '房间已开始或已满，无法继续邀请'}
+            if relation != 'friends':
+                return 403, {'status': 'error', 'error': '只能邀请已添加的好友'}
+            if self._presence.is_in_game(other):
+                return 409, {'status': 'error', 'error': '对方正在房间或对局中'}
+        elif self._presence.is_in_game(user_id):
             return 409, {"status": "error", "error": "你正在对局中，结束这局再邀战"}
         # Check online before creating the room; otherwise offline friends leave
         # a zombie waiting room behind.
         if not self._presence.is_online(other):
             return 200, {"status": "error", "error": "对方不在线"}
-        room_id = self._rooms.create_invite_room()
+        room_id = existing_room.id if existing_room is not None else self._rooms.create_invite_room()
         if not room_id:
             return 200, {"status": "error", "error": "建房失败，请稍后再试"}
         delivered = await self.push(

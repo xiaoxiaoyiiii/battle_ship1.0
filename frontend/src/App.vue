@@ -312,6 +312,7 @@ onBeforeUnmount(() => {
             :key="item.name"
             :to="{ name: item.name }"
             class="app-nav__link"
+            :class="{ 'is-active': item.name === 'lobby' && String(route.name).startsWith('lobby') }"
             :data-testid="'nav-' + item.name"
           >
             {{ item.label }}
@@ -386,7 +387,7 @@ onBeforeUnmount(() => {
 
     <ScreenBoundary @error="screenFailed = true" @recovered="screenFailed = false">
       <router-view v-slot="{ Component, route: viewRoute }">
-        <component :is="Component" v-if="Component" :key="viewRoute.path" />
+        <component :is="Component" v-if="Component" :key="viewRoute.matched[0]?.path || viewRoute.path" />
       </router-view>
       <slot name="screen-extra" />
     </ScreenBoundary>

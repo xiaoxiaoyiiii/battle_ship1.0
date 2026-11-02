@@ -136,10 +136,8 @@ export function acquireLobbyChannel(pinia?: Pinia): () => void {
   if (!active) {
     // Ticket #33: the home screen already keeps the one shared socket alive
     // (a seat is bound to its sid). Opening a second connection here made the
-    // same account appear twice in presence. Reuse it when present; a direct
-    // /lobby visit still owns a socket and closes it on release.
-    const reuse = getSettlementSocket() !== null
-    const releaseSettlement = acquireSettlementChannel(pinia, reuse ? { keepAlive: true } : {})
+    // 同账号不能重复连接；直接访问大厅也保留共享连接，以便跨页面保留房间座位。
+    const releaseSettlement = acquireSettlementChannel(pinia, { keepAlive: true })
     const socket = getSettlementSocket()
     if (!socket) {
       releaseSettlement()

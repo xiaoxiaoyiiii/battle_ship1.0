@@ -16,7 +16,7 @@ import type { BoardCell } from './view'
  * Enter can fire (the grid keeps one tab stop, cells stay programmatic
  * buttons for the gates) and a `legal` highlight set for the target banner.
  */
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   board: 'self' | 'opponent'
   boardTestid: string
   titleTestid: string
@@ -39,7 +39,10 @@ const props = defineProps<{
   picking?: boolean
   interactive?: boolean
   cellPrefix?: string
-}>()
+}>(), {
+  // 实战调用方省略此属性；观看页显式传 false，避免布尔属性缺省禁用实战。
+  interactive: true,
+})
 
 const emit = defineEmits<{ (event: 'cell', x: number, y: number): void; (event: 'hover', point: { x: number; y: number } | null): void }>()
 

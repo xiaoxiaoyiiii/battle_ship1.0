@@ -5,6 +5,7 @@ import BanCardPicker from './BanCardPicker.vue'
 import { banSelectionError, useCardBansStore } from '../stores/cardBans'
 import { useAuthStore } from '../stores/auth'
 const bans = useCardBansStore()
+defineProps<{ compact?: boolean }>()
 const auth = useAuthStore()
 const open = ref(false)
 const draft = ref<string[]>([])
@@ -21,7 +22,7 @@ function save(): void {
 watch(() => bans.accountId, () => { open.value = false })
 </script>
 <template>
-  <button type="button" class="button button--ghost" data-testid="ban-preselect-open" @click="show">Ban 位预选<span v-if="bans.rules"> · {{ bans.preselection.length }}/{{ bans.rules.own_quota }}</span></button>
+  <button type="button" class="button button--ghost" data-testid="ban-preselect-open" aria-label="排位 Ban 位预选" @click="show">{{ compact ? '禁牌' : 'Ban 位预选' }}<span v-if="bans.rules && !compact"> · {{ bans.preselection.length }}/{{ bans.rules.own_quota }}</span></button>
   <AppOverlay v-if="open" id="ban-preselect-overlay" labelledby="ban-preselect-title" @close="open = false">
     <section class="ban-preselect" data-testid="ban-preselection">
       <h2 id="ban-preselect-title">排位 Ban 位预选</h2>

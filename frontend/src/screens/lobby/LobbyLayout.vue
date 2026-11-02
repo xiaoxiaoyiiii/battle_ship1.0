@@ -9,6 +9,7 @@ import { readInviteRoomId } from './inviteLink'
 import MatchFoundOverlay from '../../components/MatchFoundOverlay.vue'
 import AppOverlay from '../../components/AppOverlay.vue'
 import './lobby-pages.css'
+import './lobby-dashboard.css'
 
 const route = useRoute()
 const router = useRouter()
@@ -68,10 +69,10 @@ onBeforeUnmount(() => { release?.(); lobby.takeStartedRoom() })
 
 <template>
   <MatchFoundOverlay v-if="lobby.matchFound && !game.state.card_bans?.enabled" :self-name="lobby.matchFound.playerName" :opponent-name="lobby.matchFound.opponentName" :mode="lobby.matchFound.mode" @done="matchCountdownDone" />
-  <div class="lobby-pages">
-    <p v-if="lobby.error" class="lp-feedback lp-feedback--error" role="alert" data-testid="lobby-error">{{ lobby.error }}<button class="lp-link" @click="lobby.clearError()">关闭</button></p>
-    <p v-if="lobby.notice" class="lp-feedback" role="status" data-testid="lobby-notice">{{ lobby.notice }}</p>
-    <p v-if="lobby.activeInvite" class="lp-feedback" data-testid="lobby-invite-banner"><span>{{ lobby.activeInvite.fromUsername }} 邀请你进入房间 {{ lobby.activeInvite.roomId }}</span><button class="button" data-testid="lobby-invite-accept" :disabled="actions.acceptingInvite.value" @click="actions.acceptInvite()">接受邀请</button><button class="lp-link" data-testid="lobby-invite-dismiss" @click="lobby.clearInvite()">忽略</button></p>
+  <div class="lobby-pages" :class="{ 'lp-dashboard-shell': route.name === 'lobby' }">
+    <p v-if="lobby.error" class="lp-feedback lp-feedback--error" role="alert" data-testid="lobby-error"><span :title="lobby.error">{{ lobby.error }}</span><button class="lp-link" @click="lobby.clearError()">关闭</button></p>
+    <p v-else-if="lobby.activeInvite" class="lp-feedback" data-testid="lobby-invite-banner"><span>{{ lobby.activeInvite.fromUsername }} 邀请你进入房间 {{ lobby.activeInvite.roomId }}</span><button class="button" data-testid="lobby-invite-accept" :disabled="actions.acceptingInvite.value" @click="actions.acceptInvite()">接受邀请</button><button class="lp-link" data-testid="lobby-invite-dismiss" @click="lobby.clearInvite()">忽略</button></p>
+    <p v-else-if="lobby.notice" class="lp-feedback" role="status" data-testid="lobby-notice"><span :title="lobby.notice">{{ lobby.notice }}</span></p>
     <router-view />
     <footer class="lp-footer"><button class="lp-link" data-testid="lobby-join-number" @click="joinOpen = true">凭房号加入</button><router-link :to="{ name: 'lobby' }">游戏大厅</router-link><router-link :to="{ name: 'start' }" data-testid="lobby-back-home">返回首页</router-link></footer>
   </div>

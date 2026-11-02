@@ -2193,6 +2193,8 @@ class MagicService:
             )
         self.resume_chain_if_ready(room)
 
+        await self.rooms.viewing.commit(room, cause='seat_sync')
+
     async def _with_promoted_choice(self, room: Room, result: dict, confirmer: str) -> dict:
         """确认完一项后，把下一项交给**它的主人**。
 

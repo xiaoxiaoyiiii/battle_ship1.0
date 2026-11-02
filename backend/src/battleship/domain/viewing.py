@@ -123,7 +123,7 @@ def build_view_frame(room: Room, *, audience: Literal['replay', 'spectator']) ->
             'attacks_remaining': room.attacks_remaining, 'field_magic': field_magic_name(room),
             'winner': side_of(room, room.winner), 'reason': getattr(room, 'game_over_reason', None),
             'needs_reset': [side for pid, side in seats.items() if room.players[pid].needs_reset],
-            'storm_active': mutations.storm_active(room),
+            'storm_active': bool(room.mutation_storm_active),
             'cast_counts': {side: mutations.round_casts(room, pid) for pid, side in seats.items()},
             'preparation_cast': {side: mutations.preparation_cast(room, pid) for pid, side in seats.items()},
             'extra_discard_required': {side: mutations.extra_discard_required(room, pid) for pid, side in seats.items()},
@@ -158,6 +158,12 @@ def public_cue(cue: dict[str, Any], room: Room) -> dict[str, Any] | None:
         if point(effect.get('origin')) is not None:
             visible['origin'] = point(effect['origin'])
         out['effect'] = visible
+    if cue.get('stage') in ('attack_windup', 'attack_tail') and point(cue.get('cell')) is not None:
+        out['attacker'] = side_of(room, cue.get('attacker'))
+        out['target'] = side_of(room, cue.get('target'))
+        out['cell'] = point(cue['cell'])
+        result = cue.get('result') or {}
+        out['result'] = {key: bool(result.get(key)) for key in ('hit', 'sunk', 'shield_blocked', 'invincible')}
     return out or None
 
 

@@ -16,6 +16,10 @@ export function normalizeViewFrame(raw: unknown): ViewFrame | null {
     if (!object(p) || !object(b) || typeof p.name !== 'string' || !Number.isInteger(p.hand_count) || !Number.isInteger(p.remaining_ships)) return null
     if (!['fleet', 'marks', 'shots', 'reveals', 'holes', 'last_stand'].every(key => Array.isArray(b[key]))) return null
     if (p.cards !== null && !Array.isArray(p.cards)) return null
+    if (Array.isArray(p.cards) && !p.cards.every(c => object(c) && typeof c.name === 'string')) return null
+    for (const key of ['fleet', 'marks', 'shots', 'reveals', 'last_stand']) {
+      if (!(b[key] as unknown[]).every(c => object(c) && Number.isInteger(c.x) && Number.isInteger(c.y) && Number(c.x) >= 0 && Number(c.x) < 6 && Number(c.y) >= 0 && Number(c.y) < 6)) return null
+    }
   }
   return copy(raw) as unknown as ViewFrame
 }
@@ -24,7 +28,7 @@ function legacyFrame(payload: ReplayPayload, k: number): ViewFrame {
   const old = computeFrame(payload, k)
   const frame: ViewFrame = { version: 2, audience: 'replay',
     context: { phase: old.phase, round: old.round, current_side: null, attacks_remaining: null },
-    rules: { ids: [], entries: [] }, players: {} as ViewFrame['players'], boards: {} as ViewFrame['boards'],
+    rules: { known: false, ids: [], entries: [] }, players: {} as ViewFrame['players'], boards: {} as ViewFrame['boards'],
     chain: { chain: old.chain.map(c => ({ card: c.card, seat: c.side, negated: c.negated })) },
   }
   for (const side of sides) {
@@ -53,10 +57,16 @@ export function decodeRecording(raw: unknown): Recording | null {
   if (!initial || !Array.isArray(raw.events) || !Array.isArray(raw.checkpoints)) return null
   let lastSeq = 0, lastStep = 0
   const events: ViewEvent[] = []
+  let validated = copy(initial)
   for (const e of raw.events) {
     if (!object(e) || !Number.isInteger(e.seq) || Number(e.seq) <= lastSeq || !Number.isInteger(e.step) || Number(e.step) < lastStep) return null
     if (e.type !== 'state' && e.type !== 'presentation') return null
     if (e.type === 'state' && (!object(e.patch) || Object.keys(e.patch).some(key => !['context', 'rules', 'players', 'boards', 'chain'].includes(key)))) return null
+    if (e.type === 'state') {
+      const next = normalizeViewFrame({ ...validated, ...e.patch as Json })
+      if (!next) return null
+      validated = next
+    }
     lastSeq = Number(e.seq); lastStep = Number(e.step); events.push(copy(e) as unknown as ViewEvent)
   }
   const checkpoints: Recording['checkpoints'] = []

@@ -141,7 +141,8 @@ export const useSpectateStore = defineStore('spectate', () => {
   function applySnapshot(payload: Record<string, unknown> | null | undefined): void {
     if (!isObject(payload)) return
     // 重连权威基线允许覆盖原序号；后续增量仍严格单调。
-    if (isObject(payload.viewing_frame)) {
+    if (roomId.value && payload.room_id && payload.room_id !== roomId.value) return
+    if (isObject(payload.viewing_frame) && (!viewFrame.value || Number(payload.viewing_frame.seq) >= viewSeq.value)) {
       viewSeq.value = -1
       applyViewingFrame({ ...payload.viewing_frame, baseline: true })
     }

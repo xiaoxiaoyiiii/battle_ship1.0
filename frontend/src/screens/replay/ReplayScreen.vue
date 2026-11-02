@@ -22,9 +22,9 @@ const playback = useViewingPlayback(snapshot => {
 const frame = computed(() => playback.snapshot.value.frame ?? store.viewFrame)
 const current = computed(() => store.recording?.steps[store.k])
 const matchId = computed(() => String(route.query.match_id ?? ''))
-const chain = computed(() => Array.isArray(frame.value?.chain.chain) ? frame.value!.chain.chain as Json[] : [])
+const chain = computed(() => frame.value?.context.state !== 'game_over' && Array.isArray(frame.value?.chain.chain) ? frame.value!.chain.chain as Json[] : [])
 watch(matchId, id => void store.load(id), { immediate: true })
-watch(() => store.recording, recording => { if (recording) { playback.player.load(recording); playback.sync() } }, { immediate: true })
+watch(() => store.recording, recording => { if (recording) playback.player.load(recording); else playback.player.dispose(); playback.sync() }, { immediate: true })
 watch(() => store.k, k => { if (!internal) { playback.player.seek(k); playback.sync() } }, { flush: 'sync' })
 watch(() => store.playing, playing => { if (!internal) { if (playing) playback.player.play(); else playback.player.pause(); playback.sync() } }, { flush: 'sync' })
 watch(() => store.speed, speed => playback.player.setSpeed(speed), { immediate: true })
@@ -39,8 +39,9 @@ function exit(): void { void router.push('/lobby') }
     <div v-else-if="store.status === 'error'" class="viewing__error" role="alert" data-testid="replay-error"><p>{{ store.error }}</p><button class="button" @click="store.load(matchId)">重新加载</button></div>
     <template v-else-if="frame && store.recording">
       <div class="viewing__status">
+        <strong v-if="frame.context.state === 'game_over'" data-testid="replay-ended">对局结束<span v-if="frame.context.winner"> · {{ frame.players[frame.context.winner as 'p1' | 'p2']?.name }} 获胜</span></strong>
         <span>第 <b>{{ frame.context.round ?? '—' }}</b> 回合</span><span>{{ phaseText(String(frame.context.phase ?? '')) }}</span>
-        <span v-if="frame.context.current_side">{{ frame.players[frame.context.current_side as 'p1' | 'p2']?.name }} 行动</span>
+        <span v-if="frame.context.current_side && frame.context.state !== 'game_over'">{{ frame.players[frame.context.current_side as 'p1' | 'p2']?.name }} 行动</span>
         <span v-if="frame.context.attacks_remaining !== null">剩余额度 <b>{{ frame.context.attacks_remaining }}</b></span>
         <ViewingRules :frame="frame" />
       </div>

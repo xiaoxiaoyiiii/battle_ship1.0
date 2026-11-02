@@ -6,8 +6,10 @@ interface Job { step: number; duration: number; cue?: Json; patch?: Partial<View
 export interface PlaybackSnapshot { frame: ViewFrame | null; step: number; cue: Json | null; progress: number; playing: boolean }
 
 function duration(cue: Json): number {
+  if (cue.stage === 'attack_windup') return 220
+  if (cue.stage === 'attack_tail') return 380
   if (cue.stage === 'join') return 800
-  if (cue.stage === 'card' || cue.stage === 'card_face') return cue.first ? 1050 : 650
+  if (cue.stage === 'card' || cue.stage === 'card_face') return cue.first && Array.isArray(cue.chain) && cue.chain.length > 1 ? 1550 : 650
   const effect = cue.effect as Json | undefined
   const total = Number(effect?.duration_ms) || 1250, impact = Number(effect?.impact) || .45
   if (cue.stage === 'effect_windup') return total * impact
@@ -42,14 +44,30 @@ export class ViewingPlayback {
     const r = this.recording, index = Math.max(0, Math.min(r.steps.length - 1, Math.trunc(step)))
     this.snapshot.frame = frameAt(r, index); this.snapshot.step = index; this.snapshot.cue = null; this.snapshot.progress = 0
     this.jobs = []; this.cursor = 0; this.elapsed = 0; this.entered = false; this.lastTime = null
+    let pendingEffect: Json | null = null
     for (let i = index + 1; i < r.steps.length; i++) {
       const events = r.events.filter(e => e.step === r.steps[i].i)
       if (r.version === 1) {
         this.jobs.push({ step: i, frame: frameAt(r, i), duration: 600 })
       } else {
         for (const e of events) {
-          if (e.type === 'state') this.jobs.push({ step: i, patch: e.patch, duration: 0 })
-          else if (e.cue) this.jobs.push({ step: i, cue: e.cue, duration: duration(e.cue) })
+          if (e.type === 'state') {
+            this.jobs.push({ step: i, patch: e.patch, duration: 0 })
+            // 终局事务可能先保存录像再发实战尾声；只完成已经记录了目标的演出。
+            if (e.patch?.context?.state === 'game_over' && pendingEffect) {
+              const id = (pendingEffect.effect as Json)?.effect_id
+              const hasTail = r.events.some(next => next.seq > e.seq && next.cue?.stage === 'effect_tail' && (next.cue.effect as Json)?.effect_id === id)
+              if (!hasTail) {
+                const tail = { ...pendingEffect, stage: 'effect_tail' }
+                this.jobs.push({ step: i, cue: tail, duration: duration(tail) })
+                pendingEffect = null
+              }
+            }
+          } else if (e.cue) {
+            this.jobs.push({ step: i, cue: e.cue, duration: duration(e.cue) })
+            if (e.cue.stage === 'effect_windup') pendingEffect = e.cue
+            if (e.cue.stage === 'effect_tail') pendingEffect = null
+          }
         }
         this.jobs.push({ step: i, duration: events.some(e => e.type === 'presentation') ? 150 : 450 })
       }

@@ -775,6 +775,7 @@ SPECTATE_EVENTS: dict[str, Any] = {
 
 #: Explicitly denied, with a reason. An empty reason is a configuration error.
 NOT_FOR_SPECTATORS: dict[str, str] = {
+    "spectate_frame": "观战专用权威帧由 ViewingService 发布，不从对局频道镜像",
     "game_state": "整份局面快照，含 ships[].positions 与对方攻击记录 —— 给了就是透视",
     "room_sync": "重连快照，45 个顶层键含 ships[].positions + hand（最毒的一处）",
     "hand_updated": "手牌**内容**。观众只能看张数，不能看牌面",

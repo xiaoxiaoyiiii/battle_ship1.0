@@ -13,10 +13,10 @@ const selected = ref<ViewCard | null>(null)
 <template>
   <section class="view-battle" data-testid="viewing-battle-stage" :data-view-mode="mode" aria-label="双方战斗海域">
     <div class="view-battle__sea">
-      <div v-for="side in sides" :key="side" class="view-battle__half" :data-owner="side" :class="{ 'is-turn': frame.context.current_side === side }">
+      <div v-for="side in sides" :key="side" class="view-battle__half" :data-owner="side" :class="{ 'is-turn': frame.context.state !== 'game_over' && frame.context.current_side === side }">
         <header class="view-player" :data-testid="mode + '-player-' + side">
           <span class="view-player__flag">{{ side === 'p1' ? 'Ⅰ' : 'Ⅱ' }}</span>
-          <div><strong>{{ frame.players[side].name }}</strong><small>{{ frame.context.current_side === side ? '正在行动' : '舰队待命' }}</small></div>
+          <div><strong>{{ frame.players[side].name }}</strong><small>{{ frame.context.state === 'game_over' ? frame.context.winner === side ? '本局获胜' : '对局结束' : frame.context.current_side === side ? '正在行动' : '舰队待命' }}</small></div>
           <b>{{ frame.players[side].remaining_ships }}<small> 艘</small></b>
         </header>
         <BoardPanel :board="side === 'p1' ? 'self' : 'opponent'" :board-testid="mode + '-board-' + side"

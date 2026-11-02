@@ -1089,6 +1089,7 @@ class GameplayService:
             self._start_timer(room, now)
         return True
 
+    @guard_phase_write(allow_priority=True)
     async def _timeout_action(self, room: Room, player_id: str, now: float) -> bool:
         if battle_rules.action_wait_reason(room, player_id) or pending_action_reason(room, player_id):
             return False

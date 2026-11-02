@@ -15,13 +15,13 @@ const route = useRoute(), router = useRouter(), store = useSpectateStore()
 const roomId = computed(() => String(route.query.room_id ?? ''))
 const playback = useViewingPlayback()
 const frame = computed(() => playback.snapshot.value.frame ?? store.viewFrame)
-const chain = computed(() => Array.isArray(frame.value?.chain.chain) ? frame.value!.chain.chain as Json[] : [])
+const chain = computed(() => frame.value?.context.state !== 'game_over' && Array.isArray(frame.value?.chain.chain) ? frame.value!.chain.chain as Json[] : [])
 const draft = ref(''), wide = ref(innerWidth > 800)
 let release: (() => void) | null = null
 watch(() => store.viewPacket, packet => {
   if (!packet) return
-  if (packet.baseline) playback.player.dispose()
-  playback.player.enqueue(packet); playback.sync()
+  if (packet.baseline) { playback.player.dispose(); playback.sync() }
+  playback.player.enqueue(packet); playback.sync(false)
 }, { flush: 'sync' })
 onMounted(() => { release = acquireSpectateChannel(); void joinSpectate(roomId.value) })
 watch(roomId, async (id, old) => { if (id !== old) { await leaveSpectate(); playback.player.dispose(); await joinSpectate(id) } })

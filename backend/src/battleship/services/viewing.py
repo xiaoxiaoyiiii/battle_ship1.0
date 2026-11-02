@@ -30,8 +30,23 @@ class ViewingService:
         clean = public_cue(cue, room)
         await self._publish(room, [clean] if clean else [])
 
-    async def _publish(self, room, cues: list[dict]) -> None:
-        frame = build_view_frame(room, audience='spectator')
+    async def attack(self, room, outcome) -> None:
+        """前导、实际落点、尾声有序保存；观战先展示上一权威帧。"""
+        step = replay.step_count(room)
+        cue = {'stage': 'attack_windup', 'attacker': outcome.attacker, 'target': outcome.defender,
+               'cell': {'x': outcome.x, 'y': outcome.y},
+               'result': {'hit': outcome.hit, 'sunk': outcome.ship_sunk,
+                          'shield_blocked': outcome.shield_blocked, 'invincible': outcome.invincible}}
+        clean = public_cue(cue, room)
+        record_presentation(room, clean, step=step)
+        await self._publish(room, [clean], frame=room._viewing_public_frame)
+        record_state(room, step=step, cause='attack_impact')
+        tail = {**clean, 'stage': 'attack_tail'}
+        record_presentation(room, tail, step=step)
+        await self._publish(room, [tail])
+
+    async def _publish(self, room, cues: list[dict], *, frame=None) -> None:
+        frame = frame if frame is not None else build_view_frame(room, audience='spectator')
         if not cues and frame == room._viewing_public_frame:
             return
         room._viewing_public_frame = frame

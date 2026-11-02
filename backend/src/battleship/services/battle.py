@@ -208,6 +208,7 @@ class BattleService:
 
         outcome = battle_rules.resolve_attack(room, player_id, x, y)
         defender_id = outcome.defender
+        await self.rooms.viewing.attack(room, outcome)
         # Ticket #37: 命中/未命中都在这里广播一次（状态已落定）；总线只供
         # 卡牌与测试订阅，不产生任何出站帧，也不改变下面既有帧的顺序。
         await hooks.emit(

@@ -3,11 +3,9 @@ import { computed, ref } from 'vue'
 import { decodeRecording, frameAt } from '../screens/viewing/frame'
 import type { Recording } from '../screens/viewing/types'
 import {
-  computeFrame,
   errorTextForStatus,
   isObject,
   normalizePayload,
-  type ReplayFrame,
   type ReplayPayload,
 } from '../screens/replay/model'
 
@@ -38,9 +36,7 @@ export const useReplayStore = defineStore('replay', () => {
   const recording = ref<Recording | null>(null)
   const viewFrame = computed(() => recording.value ? frameAt(recording.value, k.value) : null)
 
-  const frame = computed<ReplayFrame | null>(() =>
-    payload.value ? computeFrame(payload.value, k.value) : null,
-  )
+  const frame = viewFrame
   const stepCount = computed(() => payload.value?.steps.length ?? 0)
   const currentStep = computed(() => payload.value?.steps[k.value] ?? null)
 

@@ -35,6 +35,25 @@ function draw(): void {
   const ctx = c.getContext('2d'); if (!ctx) return
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
   const progress = props.progress
+  if (cue.stage === 'attack_windup' || cue.stage === 'attack_tail') {
+    const point = cue.cell as Json, result = cue.result as Json
+    const target = points([point], String(cue.target))[0], source = board(String(cue.attacker))
+    if (!target || !source) return
+    const x = target.cx, y = target.cy, radius = Math.max(10, target.w * .6)
+    const color = result.shield_blocked ? '#f0c36d' : result.hit ? '#ff8a91' : '#83dcea'
+    ctx.strokeStyle = color; ctx.fillStyle = color
+    if (cue.stage === 'attack_windup') {
+      const fromX = source.x + source.w / 2, fromY = source.y + source.h / 2
+      ctx.globalAlpha = .8; ctx.lineWidth = 2
+      ctx.beginPath(); ctx.moveTo(fromX, fromY); ctx.lineTo(fromX + (x - fromX) * progress, fromY + (y - fromY) * progress); ctx.stroke()
+    } else {
+      ctx.globalAlpha = 1 - progress; ctx.lineWidth = 2.5
+      ctx.beginPath(); ctx.arc(x, y, radius * (.5 + progress), 0, Math.PI * 2); ctx.stroke()
+      ctx.font = '600 14px "Microsoft YaHei",sans-serif'; ctx.textAlign = 'center'
+      ctx.fillText(result.shield_blocked ? '护盾挡下' : result.invincible ? '无敌保护' : result.sunk ? '击沉' : result.hit ? '命中' : '未命中', x, y - radius - 8)
+    }
+    return
+  }
   const effect = cue.effect as Json | undefined
   if (effect) {
     const one = board('p1'), two = board('p2'); if (!one || !two) return
@@ -42,16 +61,19 @@ function draw(): void {
     const union = { x: Math.min(one.x, two.x), y: Math.min(one.y, two.y), w: Math.max(one.x + one.w, two.x + two.w) - Math.min(one.x, two.x), h: Math.max(one.y + one.h, two.y + two.h) - Math.min(one.y, two.y) }
     const impact = Number(effect.impact) || .45, tail = cue.stage === 'effect_tail', success = cue.success !== false
     const p = tail ? success ? impact + (1 - impact) * progress : impact * (1 - progress) : impact * progress
+    const origin = points([effect.origin].filter(Boolean), side)[0]
     if (effect.kind === 'negate' || effect.kind === 'gabriel') drawCounterEffect(ctx, effect.kind, p, target)
     else drawCardEffect(ctx, { kind: effect.kind as CardEffectKind, progress: p, privateTargets: Array.isArray(effect._private_cells) },
       { sourceBoard: effect.caster === 'p1' ? one : two, targetBoard: target, boardsUnion: union,
-        cells: points(effect.cells, side), privateCells: points(effect._private_cells, side) })
+        cells: points(effect.cells, side), privateCells: points(effect._private_cells, side), origin: origin ? [origin.cx, origin.cy] : undefined })
     return
   }
   const source = Array.isArray(cue.chain) ? cue.chain as Json[] : []
   const cards = source.map((row, i) => ({ name: typeof row.card === 'string' ? row.card : String((row.card as Json)?.name ?? ''), caster: String(row.seat ?? ''), order: i + 1, id: '' }))
   if (!cards.length) return
-  const frame: ChainFrame = { progress, cue: { kind: cue.stage === 'join' ? 'join' : 'resolve', cards, order: Number(cue.order) || cards.length,
+  const intro = cue.stage !== 'join' && cue.first === true && cards.length > 1
+  const success = intro && progress < .35
+  const frame: ChainFrame = { progress: intro ? success ? progress / .35 : (progress - .35) / .65 : progress, cue: { kind: cue.stage === 'join' ? 'join' : success ? 'success' : 'resolve', cards, order: Number(cue.order) || cards.length,
     result: { negated: cue.negated_skip === true, failed: cue.success === false }, start: 0, duration: 1 } }
   drawChainFrame(ctx, frame, planChainStage({ width, height, count: cards.length, insets: { top: 0, right: 0, bottom: 0, left: 0 } }), image)
 }

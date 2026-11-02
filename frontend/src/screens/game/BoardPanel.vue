@@ -181,6 +181,7 @@ function onCellFocus(index: number): void {
       ref="grid"
       class="board__grid"
       role="grid"
+      :aria-readonly="interactive === false ? true : undefined"
       tabindex="0"
       :aria-label="title + (interactive === false ? '，只读棋盘，方向键查看' : '，方向键移动，Enter 开炮')"
       @keydown="onKeydown"

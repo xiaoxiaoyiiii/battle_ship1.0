@@ -17,6 +17,7 @@ import { asObject, asString, type JsonObject } from '../screens/spectate/view'
  * hole the allowlist exists to close.
  */
 export type SpectateEventName =
+  | 'spectate_frame'
   | 'spectate_sync'
   | 'spectate_you'
   | 'spectate_roster'
@@ -37,6 +38,7 @@ export type SpectateEventName =
   | 'game_canceled'
 
 export const SPECTATE_EVENTS: readonly SpectateEventName[] = [
+  'spectate_frame',
   'spectate_sync',
   'spectate_you',
   'spectate_roster',
@@ -66,6 +68,9 @@ export function applySpectateEvent(
   const store = useSpectateStore(pinia)
   if (!payload || typeof payload !== 'object') return
   switch (event) {
+    case 'spectate_frame':
+      store.applyViewingFrame(payload)
+      break
     case 'spectate_sync':
       store.applySnapshot(payload)
       break
@@ -145,7 +150,13 @@ export function acquireSpectateChannel(pinia?: Pinia): () => void {
     const stopListeners = installSpectateListeners(socket, pinia)
     // Spectating owns its own socket, so it reports the shell connection too.
     const ui = useUiStore(pinia)
-    const onConnect = (): void => ui.setConnection(true)
+    let hasConnected = false
+    const onConnect = (): void => {
+      ui.setConnection(true)
+      const store = useSpectateStore(pinia)
+      if (hasConnected && store.roomId && store.phase === 'joined') void joinSpectate(store.roomId, pinia)
+      hasConnected = true
+    }
     const onDisconnect = (): void => ui.setConnection(false)
     socket.socket.on('connect', onConnect)
     socket.socket.on('disconnect', onDisconnect)

@@ -212,6 +212,9 @@ function normalizeSteps(value: unknown): ReplayStep[] {
       actor: asString(raw.actor) || null,
       text: asString(raw.text),
       detail: isObject(raw.detail) ? raw.detail : {},
+      phase: asString(raw.phase),
+      round: typeof raw.round === 'number' ? raw.round : undefined,
+      chain: Array.isArray(raw.chain) ? normalizeChain(raw.chain) : undefined,
     })
   }
   return out
@@ -403,7 +406,8 @@ export function computeFrame(payload: ReplayPayload | null, k: number): ReplayFr
     for (const side of SIDES) {
       const cells = row[side]
       if (!Array.isArray(cells)) continue
-      for (const cell of cells) if (isObject(cell)) hits[side].push({ step, cell })
+      const defender: Side = side === 'p1' ? 'p2' : 'p1'
+      for (const cell of cells) if (isObject(cell)) hits[defender].push({ step, cell })
     }
   }
   frame.phase = foldContextText(payload, 'phases', 'phase', target)

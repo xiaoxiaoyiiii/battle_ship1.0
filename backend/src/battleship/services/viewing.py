@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from ..domain import replay
 from ..domain.replay_v2 import record_state, record_presentation
-from ..domain.viewing import build_view_frame, public_cue
+from ..domain.viewing import build_view_frame, public_cue, replay_cue
 from ..infra.logging import get_logger
 
 logger = get_logger('viewing')
@@ -24,7 +24,9 @@ class ViewingService:
 
     async def present(self, room, cue: dict) -> None:
         record_state(room, step=max(0, replay.step_count(room) - 1), cause='presentation')
-        record_presentation(room, cue, step=max(0, replay.step_count(room) - 1))
+        recorded = replay_cue(cue, room)
+        if recorded:
+            record_presentation(room, recorded, step=max(0, replay.step_count(room) - 1))
         clean = public_cue(cue, room)
         await self._publish(room, [clean] if clean else [])
 

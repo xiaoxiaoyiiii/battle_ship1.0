@@ -38,6 +38,7 @@ const props = defineProps<{
   selectionHint?: string
   picking?: boolean
   interactive?: boolean
+  cellPrefix?: string
 }>()
 
 const emit = defineEmits<{ (event: 'cell', x: number, y: number): void; (event: 'hover', point: { x: number; y: number } | null): void }>()
@@ -130,6 +131,7 @@ function cellLabel(cell: BoardCell): string {
 }
 
 function onCell(cell: BoardCell): void {
+  if (props.interactive === false) return
   emit('cell', cell.x, cell.y)
 }
 
@@ -152,6 +154,7 @@ function onKeydown(event: KeyboardEvent): void {
   }
   if (event.key === 'Enter' || event.key === ' ') {
     event.preventDefault()
+    if (props.interactive === false) return
     emit('cell', current.x, current.y)
   }
 }
@@ -179,7 +182,7 @@ function onCellFocus(index: number): void {
       class="board__grid"
       role="grid"
       tabindex="0"
-      :aria-label="title + '，方向键移动，Enter 开炮'"
+      :aria-label="title + (interactive === false ? '，只读棋盘，方向键查看' : '，方向键移动，Enter 开炮')"
       @keydown="onKeydown"
     >
       <div class="board__axis board__axis--columns" aria-hidden="true">
@@ -221,11 +224,13 @@ function onCellFocus(index: number): void {
             'cell--selected': selectedSet.has(cell.key) || previewSet.has(cell.key),
             'cell--trap': cell.trap,
             'cell--preview': previewSet.has(cell.key),
-            'cell--cursor': cursor === index,
+            'cell--cursor': interactive !== false && cursor === index,
           },
         ]"
-        :data-testid="'game-cell-' + board + '-' + cell.x + '-' + cell.y"
+        :data-testid="(cellPrefix ?? 'game-cell-' + board) + '-' + cell.x + '-' + cell.y"
         :data-cell="cellState(cell)"
+        :data-x="cell.x"
+        :data-y="cell.y"
         :data-visual-state="cellVisualState(cell)"
         :aria-describedby="hintedKey === cell.key && hints.length ? hintId : undefined"
         :data-attackable="cell.attackable ? 'true' : 'false'"

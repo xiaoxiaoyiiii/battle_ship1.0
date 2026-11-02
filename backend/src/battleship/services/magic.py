@@ -1153,6 +1153,7 @@ class MagicService:
                 "chain_size": len(room.chain),
             },
         )
+        await self.rooms.viewing.present(room, {'stage': 'join', **_spectate_chain_payload(room)})
         await self._publisher.emit(
             "magic_chain_updated", _spectate_chain_payload(room), room=room.id
         )
@@ -1479,6 +1480,7 @@ class MagicService:
                     "chain_size": len(room.chain),
                 },
             )
+            await self.rooms.viewing.present(room, {'stage': 'join', **_spectate_chain_payload(room)})
             await self._publisher.emit(
                 "magic_chain_updated", _spectate_chain_payload(room), room=room.id
             )

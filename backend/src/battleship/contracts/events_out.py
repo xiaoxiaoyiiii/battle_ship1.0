@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 # 旧栈服务端 -> 客户端事件（从 server.py 的 emit('...') 字面量冻结而来）。
 OUTBOUND_EVENTS: tuple[str, ...] = (
+    "spectate_frame",
     "achievements_unlocked",
     "active_effects",
     "attack_result",

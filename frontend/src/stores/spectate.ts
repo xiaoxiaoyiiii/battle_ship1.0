@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { normalizeViewFrame } from '../screens/viewing/frame'
+import type { ViewFrame, ViewPacket } from '../screens/viewing/types'
 import {
   asArray,
   asInt,
@@ -62,6 +64,19 @@ export const useSpectateStore = defineStore('spectate', () => {
   const chat = ref<SpectateChatLine[]>([])
 
   let chatSeq = 0
+  const viewFrame = ref<ViewFrame | null>(null)
+  const viewPacket = ref<ViewPacket | null>(null)
+  const viewSeq = ref(-1)
+
+  function applyViewingFrame(payload: unknown): boolean {
+    if (!isObject(payload) || payload.version !== 2 || payload.room_id !== roomId.value || !Number.isInteger(payload.seq) || Number(payload.seq) <= viewSeq.value) return false
+    const frame = normalizeViewFrame(payload.frame)
+    if (!frame || frame.audience !== 'spectator') return false
+    viewFrame.value = frame
+    viewSeq.value = Number(payload.seq)
+    viewPacket.value = { version: 2, room_id: roomId.value, seq: viewSeq.value, frame, cues: Array.isArray(payload.cues) ? payload.cues.filter(isObject) : [], baseline: payload.baseline === true }
+    return true
+  }
 
   function pushChat(kind: ChatKind, name: string, text: string): void {
     const value = String(text ?? '').trim()
@@ -72,6 +87,7 @@ export const useSpectateStore = defineStore('spectate', () => {
   }
 
   function beginJoin(id: string): void {
+    viewFrame.value = null; viewPacket.value = null; viewSeq.value = -1
     phase.value = 'joining'
     error.value = ''
     roomId.value = id
@@ -124,6 +140,11 @@ export const useSpectateStore = defineStore('spectate', () => {
 
   function applySnapshot(payload: Record<string, unknown> | null | undefined): void {
     if (!isObject(payload)) return
+    // 重连权威基线允许覆盖原序号；后续增量仍严格单调。
+    if (isObject(payload.viewing_frame)) {
+      viewSeq.value = -1
+      applyViewingFrame({ ...payload.viewing_frame, baseline: true })
+    }
     roomId.value = asString(payload.room_id) || roomId.value
     stateValue.value = asString(payload.state)
     currentPhase.value = asString(payload.current_phase)
@@ -353,6 +374,7 @@ export const useSpectateStore = defineStore('spectate', () => {
   }
 
   function reset(): void {
+    viewFrame.value = null; viewPacket.value = null; viewSeq.value = -1
     phase.value = 'idle'
     error.value = ''
     roomId.value = ''
@@ -379,6 +401,7 @@ export const useSpectateStore = defineStore('spectate', () => {
   }
 
   return {
+    viewFrame, viewPacket, viewSeq, applyViewingFrame,
     phase,
     error,
     roomId,

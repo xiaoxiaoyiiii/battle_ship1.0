@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import { decodeRecording, frameAt } from '../screens/viewing/frame'
+import type { Recording } from '../screens/viewing/types'
 import {
   computeFrame,
   errorTextForStatus,
@@ -33,6 +35,8 @@ export const useReplayStore = defineStore('replay', () => {
   const k = ref(0)
   const playing = ref(false)
   const speed = ref(1)
+  const recording = ref<Recording | null>(null)
+  const viewFrame = computed(() => recording.value ? frameAt(recording.value, k.value) : null)
 
   const frame = computed<ReplayFrame | null>(() =>
     payload.value ? computeFrame(payload.value, k.value) : null,
@@ -46,6 +50,7 @@ export const useReplayStore = defineStore('replay', () => {
     const token = ++loadToken
     matchId.value = id
     payload.value = null
+    recording.value = null
     youAre.value = null
     k.value = 0
     playing.value = false
@@ -77,6 +82,8 @@ export const useReplayStore = defineStore('replay', () => {
         return
       }
       payload.value = normalised
+      recording.value = record ? decodeRecording(record.replay) : null
+      if (!recording.value) { status.value = 'error'; error.value = '录像数据不完整，无法播放。'; payload.value = null; return }
       youAre.value = record?.you_are === 'p1' || record?.you_are === 'p2' ? record.you_are : null
       k.value = 0
       status.value = 'ready'
@@ -93,6 +100,7 @@ export const useReplayStore = defineStore('replay', () => {
     error.value = ''
     matchId.value = ''
     payload.value = null
+    recording.value = null
     youAre.value = null
     k.value = 0
     playing.value = false
@@ -115,6 +123,7 @@ export const useReplayStore = defineStore('replay', () => {
   }
 
   return {
+    recording, viewFrame,
     status,
     error,
     matchId,

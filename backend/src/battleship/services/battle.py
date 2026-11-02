@@ -408,6 +408,7 @@ class BattleService:
                 "result",
                 log_detail or {"winner": winner_id, "loser": loser_id},
             )
+        await self.rooms.viewing.commit(room, cause='game_over')
         result = await asyncio.to_thread(
             self.settlement.settle, room, winner_id, loser_id
         )

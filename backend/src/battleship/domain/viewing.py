@@ -159,3 +159,13 @@ def public_cue(cue: dict[str, Any], room: Room) -> dict[str, Any] | None:
             visible['origin'] = point(effect['origin'])
         out['effect'] = visible
     return out or None
+
+
+def replay_cue(cue: dict[str, Any], room: Room) -> dict[str, Any] | None:
+    """赛后演出也统一座位方向；授权落点只进入完整录像。"""
+    out = public_cue(cue, room)
+    if out and isinstance(cue.get('effect'), dict) and 'effect' in out:
+        private = cue['effect'].get('_private_cells') or cue['effect'].get('private_cells')
+        if private:
+            out['effect']['_private_cells'] = _points(private)
+    return out

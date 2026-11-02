@@ -6,6 +6,7 @@ import { useGameStore } from '../../stores/game'
 import { BOARD_SIZE, usePlacementStore } from '../../stores/placement'
 import AppOverlay from '../../components/AppOverlay.vue'
 import MutationList from '../../components/MutationList.vue'
+import CardBanStage from '../../components/CardBanStage.vue'
 import { getSettlementSocket } from '../../realtime/settlement'
 import { useUiStore } from '../../stores/ui'
 import { useAudioStore } from '../../stores/audio'
@@ -29,6 +30,12 @@ const game = useGameStore()
 const placement = usePlacementStore()
 const ui = useUiStore()
 const audio = useAudioStore()
+const bans = computed(() => game.state.card_bans)
+const revealReviewed = ref(false)
+const banBlocked = computed(() => Boolean(bans.value?.enabled && (bans.value.phase !== 'revealed' || (bans.value.quota > 0 && !revealReviewed.value))))
+const rankedEscape = computed(() => Boolean(bans.value?.ranked && bans.value.phase === 'revealed'))
+const customRoom = computed(() => game.state.mode === 'custom')
+watch([() => game.state.room_id, () => bans.value?.phase], () => { revealReviewed.value = false })
 const leaveOpen = ref(false)
 const mutationAckPending = ref(false)
 const mutationAckError = ref('')
@@ -45,7 +52,7 @@ const hasRoom = computed(() => Boolean(game.state.room_id))
 const selfName = computed(() => game.state.player_name || '你')
 const opponentName = computed(() => game.state.opponent_name || '对手')
 const seatLabel = computed(() => game.state.player_seat || '—')
-const canEdit = computed(() => hasRoom.value && !placement.locked && !mutationBlocked.value)
+const canEdit = computed(() => hasRoom.value && !placement.locked && !mutationBlocked.value && !banBlocked.value)
 
 /** Player-language opponent status. Never guesses "offline" without a frame. */
 const opponentStatus = computed(() => {
@@ -87,7 +94,7 @@ function readText(payload: Record<string, unknown>, key: string): string {
 
 function routeForState(state: string): void {
   if (route.name !== 'placement') return
-  if (mutationBlocked.value) return
+  if (mutationBlocked.value || banBlocked.value) return
   if (state === 'rock_paper_scissors') {
     void router.push({ name: 'rps' })
   } else if (state === 'attacking') {
@@ -146,7 +153,7 @@ watch(() => game.state.reset_allowed_cells, cells => placement.setAllowed(cells)
 
 watch(
   // 重摆完成的状态帧可能早于提交回执；回执解除重摆锁后也必须重新检查跳转。
-  () => [game.state.state, placement.resetPhase, mutationBlocked.value] as const,
+  () => [game.state.state, placement.resetPhase, mutationBlocked.value, banBlocked.value] as const,
   ([state]) => routeForState(state),
   { immediate: true },
 )
@@ -249,7 +256,7 @@ async function confirm(): Promise<void> {
 async function confirmMutations(): Promise<void> {
   const current = mutations.value
   const socket = matchSocket()
-  if (!current || current.confirmed || mutationAckPending.value) return
+  if (banBlocked.value || !current || current.confirmed || mutationAckPending.value) return
   if (!socket?.socket.connected || !game.state.room_id || !game.state.player_id || !current.ack_token) {
     mutationAckError.value = '连接或词条确认信息尚未就绪，请等待房间同步后重试。'
     return
@@ -278,7 +285,7 @@ function returnHome(): void {
     data-testid="screen-placement"
     aria-labelledby="screen-placement-title"
   >
-    <header class="placement__head">
+    <header v-if="!banBlocked" class="placement__head">
       <p class="placement__eyebrow">开局 · 布船</p>
       <h1 id="screen-placement-title" class="placement__title" data-testid="placement-heading">
         放置你的战舰
@@ -286,7 +293,7 @@ function returnHome(): void {
       <p class="placement__lead">6×6 棋盘各放 1 格，共 {{ placement.maxShips }} 格 · 再点一次可取消</p>
     </header>
 
-    <div class="placement__players">
+    <div v-if="!banBlocked" class="placement__players">
       <span class="placement__player">你 <b data-testid="placement-self">{{ selfName }}</b></span>
       <span class="placement__seat" aria-label="座位">{{ seatLabel }}</span>
       <span class="placement__vs" aria-hidden="true">VS</span>
@@ -296,6 +303,7 @@ function returnHome(): void {
     </div>
 
     <p
+      v-if="!banBlocked"
       class="placement__opponent-state"
       data-testid="placement-opponent-status"
       :data-state="opponentStatus.state"
@@ -309,7 +317,9 @@ function returnHome(): void {
       还没进入房间，先创建或加入房间再布船。
     </p>
 
-    <section v-if="mutationBlocked && mutations" class="placement__mutation-confirmation" data-testid="mutation-confirmation" aria-labelledby="mutation-confirmation-title">
+    <button v-if="bans?.phase === 'revealed' && bans.quota > 0 && revealReviewed" type="button" class="button button--ghost" data-testid="ban-review-open" @click="revealReviewed = false">查看本局双方 Ban</button>
+    <CardBanStage v-if="banBlocked" @continue="revealReviewed = true" @leave="leaveOpen = true" />
+    <section v-else-if="mutationBlocked && mutations" class="placement__mutation-confirmation" data-testid="mutation-confirmation" aria-labelledby="mutation-confirmation-title">
       <h2 id="mutation-confirmation-title">确认本局突变</h2>
       <p>请阅读本局全部词条。双方确认后开始布船。</p>
       <MutationList :entries="mutations.entries" />
@@ -492,14 +502,14 @@ function returnHome(): void {
       <section class="placement__confirm" data-testid="placement-leave-confirm">
         <h2 class="placement__confirm-title">离开房间？</h2>
         <p class="placement__confirm-text">
-          布船阶段离开会按认输处理：本局判负并结算{{ game.state.ranked ? '，排位会扣分' : '' }}。留在房间里可以等对手。
+          {{ customRoom ? '退出自定义房不算逃跑，不会扣排位分。' : rankedEscape ? '双方已亮牌，整个布船阶段离开均按逃跑判负扣分；对手无结算收益并回到排位队列。' : bans?.ranked ? '尚未亮牌，离开不会触发亮牌后的排位逃跑处罚。' : '布船阶段离开会按认输处理，本局判负并结算。留在房间里可以等对手。' }}
         </p>
         <div class="placement__confirm-actions">
           <button type="button" class="button button--ghost" data-testid="placement-leave-cancel" @click="leaveOpen = false">
             继续等待
           </button>
           <button type="button" class="button" data-testid="placement-leave-confirm-ok" @click="leaveRoom">
-            确认离开（判负）
+            {{ rankedEscape || (!customRoom && !bans?.ranked) ? '确认离开（判负）' : '确认离开' }}
           </button>
         </div>
       </section>

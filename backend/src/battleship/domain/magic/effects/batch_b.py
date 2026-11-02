@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ... import effects
+from ... import effects, bans
 from ... import replay as replay_rules
 from ...room import PlayerShip, alive_ships, card_payload
 from ..cards import MagicCard
@@ -39,6 +39,7 @@ DICE_EFFECT_TEXT = {
 
 @register("桃园结义")
 async def taoyuan(ctx: EffectContext) -> EffectResult:
+    bans.prune_piles(ctx.room)
     if ctx.caster.effect_flags.no_draw or ctx.opponent.effect_flags.no_draw:
         return EffectResult(False, "无中生有生效期间，双方无法获得魔法卡")
     count = int(ctx.caster.remaining_ships or 0)
@@ -68,6 +69,7 @@ async def taoyuan(ctx: EffectContext) -> EffectResult:
 
 @register("亡羊补牢")
 async def wangyang(ctx: EffectContext) -> EffectResult:
+    bans.prune_piles(ctx.room)
     if ctx.caster.effect_flags.no_draw:
         return EffectResult(False, "无中生有生效期间，无法获得魔法卡")
     own_card = ctx.room.magic_discard.pop() if ctx.room.magic_discard else None
@@ -117,6 +119,7 @@ async def lingqi(ctx: EffectContext) -> EffectResult:
 
 @register("明智埋葬")
 async def bury(ctx: EffectContext) -> EffectResult:
+    bans.prune_piles(ctx.room)
     deck = ctx.room.magic_deck or []
     hand = ctx.opponent.magic_hand or []
     if not deck and not hand:

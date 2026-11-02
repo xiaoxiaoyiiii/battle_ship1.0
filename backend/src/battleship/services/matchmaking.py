@@ -22,7 +22,7 @@ from typing import Any
 
 from ..contracts import errors as socket_errors
 from ..domain.anticheat import suspicion
-from ..domain import mutations
+from ..domain import mutations, bans
 from ..domain.matchmaking import guard
 from ..domain.room import (
     Player,
@@ -36,6 +36,7 @@ from ..domain.room import (
 from ..infra.logging import get_logger
 from ..repositories import Database
 from .rooms import Connection, EventPublisher, NullPublisher, RoomService
+from .card_bans import points_for_user
 
 logger = get_logger("matchmaking")
 
@@ -68,6 +69,7 @@ class MatchmakingService:
         self.auth = auth
         self.lobby = lobby
         self._publisher: EventPublisher = NullPublisher()
+        self.rooms.bans.requeue_hook = self.requeue_after_escape
 
     # --------------------------------------------------------------- wiring
 
@@ -141,6 +143,11 @@ class MatchmakingService:
 
         if mode == MATCH_MODE_RANKED and not connection.user_id:
             return await self._deny(connection.sid, "排位模式需要先登录")
+        preselection = data.get('ban_preselection', []) if mode == MATCH_MODE_RANKED else []
+        if mode == MATCH_MODE_RANKED:
+            error = bans.validate_selection(preselection, bans.quota_for_points(points_for_user(self.database, connection.user_id)))
+            if error:
+                return await self._deny(connection.sid, error)
 
         capability = (
             suspicion.CAP_RANKED if mode == MATCH_MODE_RANKED else suspicion.CAP_MATCH
@@ -164,6 +171,7 @@ class MatchmakingService:
             "mode": mode,
             "enqueued_at": time.time(),
             "ip": connection.ip,
+            "ban_preselection": list(preselection),
         })
         await self._publisher.emit(
             "match_queued",
@@ -213,6 +221,12 @@ class MatchmakingService:
     def _create_room(self, first: dict, second: dict) -> tuple[Room, dict, dict]:
         room = Room(id=new_room_id())
         room.ranked = first.get("mode") == MATCH_MODE_RANKED
+        room.ban_enabled = room.ranked
+        if room.ranked:
+            room.ban_quota = bans.match_quota(points_for_user(self.database, first.get('user_id')),
+                                             points_for_user(self.database, second.get('user_id')))
+            room.ban_selections = {entry['sid']: list(entry.get('ban_preselection') or []) for entry in (first, second)}
+            room.ban_preselections = {pid: list(names) for pid, names in room.ban_selections.items()}
         room.matchmade = True
         for entry in (first, second):
             seat_id = str(entry.get("sid") or "")
@@ -229,6 +243,7 @@ class MatchmakingService:
         mutations.prepare_start(room, self.rooms.mutation_rng)
         room.transition(RoomState.PLACING_SHIPS)
         self.rooms.rooms[room.id] = room
+        self.rooms.bans.start(room)
         return room, first, second
 
     async def _announce(self, matched: list[tuple[Room, dict, dict]]) -> None:
@@ -248,6 +263,7 @@ class MatchmakingService:
                         "player_name": me.get("name"),
                         "opponent_name": opponent.get("name"),
                         "mutations": mutations.payload(room, str(me["sid"])),
+                        "card_bans": bans.payload(room, str(me['sid'])),
                         "max_ships": room.players[str(me["sid"])].max_ships,
                         # Ticket #51: additive per-seat wait state; each side
                         # sees its own opponent, so this cannot be a broadcast.
@@ -259,6 +275,24 @@ class MatchmakingService:
             # And the snapshot the placement screen already consumes, so the
             # wait starts with known ready/online values instead of "unknown".
             await self.rooms.push_room_sync(room)
+
+    async def requeue_after_escape(self, room: Room, survivor_id: str) -> None:
+        survivor = room.players.get(survivor_id)
+        sid = survivor.socket_id if survivor else None
+        record = self.rooms.presence.get(sid) if sid else None
+        if not survivor or not record or survivor_id in room.disconnected:
+            return
+        await self._publisher.leave_room(sid, room.id)
+        await self._publisher.emit('game_canceled', {
+            'reason': 'ranked_ban_escape', 'room_id': room.id, 'requeue': True,
+            'message': '对手已离开，正在为你重新排位匹配。',
+        }, to=sid)
+        result = await self.find_match(Connection(sid=sid, user_id=survivor.user_id, username=survivor.name), {
+            'mode': 'ranked', 'player_name': survivor.name,
+            'ban_preselection': list(room.ban_preselections.get(survivor_id, [])),
+        })
+        if result.get('status') != 'success':
+            await self._publisher.emit('match_canceled', {'status': 'error', 'message': result.get('message'), 'mode': 'ranked'}, to=sid)
 
     def _bind_presence_game(self, room: Room) -> None:
         for player in room.players.values():

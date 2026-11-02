@@ -285,6 +285,17 @@ class Room:
     matchmade: bool = False
     is_ai_room: bool = False
     # 每局冻结的突变规则与独立确认；卡牌整盘重摆不会重置这些赛前事实。
+    ban_enabled: bool = False
+    ban_quota: int = 0
+    ban_phase: str = 'off'
+    ban_countdown_deadline: int | None = None
+    ban_selection_deadline: int | None = None
+    ban_selections: dict[str, list[str]] = field(default_factory=dict)
+    ban_confirmed: set[str] = field(default_factory=set)
+    banned_names: set[str] = field(default_factory=set)
+    ban_escape_settled: bool = False
+    ban_initial_placement_complete: bool = False
+    ban_preselections: dict[str, list[str]] = field(default_factory=dict)
     mutation_ids: list[str] = field(default_factory=list)
     mutation_week_id: str = ""
     mutation_entries: list[dict[str, Any]] = field(default_factory=list)
@@ -330,6 +341,7 @@ class Room:
     magic_promoted: dict[str, Any] | None = None
     magic_discard: list[Any] = field(default_factory=list)
     magic_deck: list[Any] = field(default_factory=list)
+    magic_deck_initialized: bool = False
 
     chain: list[Any] = field(default_factory=list)
     #: A resolution is in flight (async card effects yield to the event loop, so

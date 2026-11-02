@@ -32,7 +32,7 @@ from typing import Any, Callable
 from ..contracts.identity import ai_player_id
 from ..domain import battle as battle_rules
 from ..domain import effects
-from ..domain import mutations
+from ..domain import mutations, bans
 from ..domain import placement as placement_rules
 from ..domain import replay as replay_rules
 from ..domain.magic import hooks
@@ -288,6 +288,10 @@ class GameplayService:
         if _state_value(room) == RoomState.GAME_OVER.value:
             return dict(FINISHED_GAME)
 
+        if 'ban_selection' in data or 'ban_confirm' in data:
+            return await self.rooms.bans.submit(room, player_id, data)
+        if bans.pending(room):
+            return {'status': 'error', 'message': '请先完成本局Ban卡阶段'}
         if "mutation_ack" in data:
             if room.state != RoomState.PLACING_SHIPS or len(room.players) != 2:
                 return {"status": "error", "message": "当前不在赛前突变确认阶段"}
@@ -336,6 +340,7 @@ class GameplayService:
                 placement_rules.auto_place_ai(room, seat_id, self.rng)
 
         if placement_rules.all_players_placed(room):
+            room.ban_initial_placement_complete = True
             handled = await self._complete_reset_placement(room, player_id)
             if not handled:
                 # Deliberate direct assignment (DECISIONS D1): the legacy handler
@@ -500,6 +505,8 @@ class GameplayService:
             return dict(INVALID_SEAT)
         if _state_value(room) == RoomState.GAME_OVER.value:
             return dict(FINISHED_GAME)
+        if bans.pending(room):
+            return {'status': 'error', 'message': '请先完成本局Ban卡阶段'}
         if mutations.confirmation_pending(room):
             return {"status": "error", "message": "请先由双方确认本局完整突变词条"}
         if room.state != RoomState.ROCK_PAPER_SCISSORS:

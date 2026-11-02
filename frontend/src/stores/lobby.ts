@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { normalizeWeeklyMutations, type WeeklyMutations } from './mutations'
+import { useCardBansStore } from './cardBans'
 
 /**
  * Lobby view model (ticket #24).
@@ -296,6 +297,7 @@ export const useLobbyStore = defineStore('lobby', () => {
 
   function recordSnapshot(payload: JsonObject | null | undefined): void {
     if (!payload) return
+    useCardBansStore().recordRules(payload.ban_rules)
     snapshot.value = normalizeSnapshot(payload)
     subscribed.value = true
   }

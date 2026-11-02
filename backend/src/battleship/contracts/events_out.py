@@ -213,6 +213,7 @@ class RoomSync(BaseModel):
     card_unavailable_reasons: dict[str, str]
     # 每局公开词条与本座位确认状态；E2只公开对手牌名。
     mutations: dict[str, Any] | None = None
+    card_bans: dict[str, Any] | None = None
     opponent_hand_names: list[str] = Field(default_factory=list)
 
 

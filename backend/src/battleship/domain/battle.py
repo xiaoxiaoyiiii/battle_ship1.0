@@ -30,6 +30,17 @@ from .room import (
 )
 
 
+def last_chance_active(room: Room, player_id: str) -> bool:
+    """回光返照的受伤判负窗口；调用方仍需确认本次确实造成伤害。"""
+    effect = room.game_effects.get("last_chance")
+    return (
+        isinstance(effect, dict)
+        and bool(effect.get("active", True))
+        and effect.get("caster") == player_id
+        and effect.get("round", room.round) == room.round
+    )
+
+
 def _value(value) -> str:
     """Accept both the enum and the legacy plain string stored by old flows."""
 
@@ -676,12 +687,7 @@ def resolve_attack(room: Room, attacker_id: str, x: int, y: int) -> AttackOutcom
 
     # 回光返照: damaging that caster's ships loses immediately. Legacy returns
     # before recording the shot / spending the attack / emitting attack_result.
-    last_chance = room.game_effects.get("last_chance")
-    if (
-        isinstance(last_chance, dict)
-        and last_chance.get("caster") == defender_id
-        and last_chance.get("round", room.round) == room.round
-    ):
+    if last_chance_active(room, defender_id):
         outcome.last_chance = True
         return outcome
 
@@ -856,12 +862,7 @@ def resolve_splash(room: Room, caster_id: str) -> AreaStrikeResult:
                             sunk_ship=sunk_ship)
         )
         if hit:
-            last_chance = room.game_effects.get("last_chance")
-            if (
-                isinstance(last_chance, dict)
-                and last_chance.get("caster") == defender_id
-                and last_chance.get("round", room.round) == room.round
-            ):
+            if last_chance_active(room, defender_id):
                 result.last_chance = True
                 break
     return result

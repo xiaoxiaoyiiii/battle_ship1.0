@@ -21,6 +21,7 @@ from ...battle import (
     SPLASH_NEEDS_HIT,
     is_zero_ship_defeat,
     line_cells,
+    last_chance_active,
     mark_ship_sunken,
     resolve_area_strike,
     resolve_splash,
@@ -77,11 +78,15 @@ def _unique_sunk(cells: Iterable[Any]) -> list[PlayerShip]:
     return result
 
 
-async def _finish_if_wiped(ctx: EffectContext) -> bool:
+async def _finish_after_damage(ctx: EffectContext, *, damaged: bool,
+                               wipe_reason: str = "魔法卡清空对方棋盘") -> str | None:
+    if damaged and last_chance_active(ctx.room, ctx.opponent_id):
+        await ctx.finish(ctx.caster_id, ctx.opponent_id, "回光返照失败")
+        return "命中回光返照目标，直接获胜"
     if is_zero_ship_defeat(ctx.room, ctx.opponent_id):
-        await ctx.finish(ctx.caster_id, ctx.opponent_id, "魔法卡清空对方棋盘")
-        return True
-    return False
+        await ctx.finish(ctx.caster_id, ctx.opponent_id, wipe_reason)
+        return "对方战舰全灭"
+    return None
 
 
 def _in_area(area: dict[str, int], position: Position) -> bool:
@@ -217,12 +222,9 @@ async def splash(ctx: EffectContext) -> EffectResult:
         await ctx.on_ship_sunk(ctx.opponent_id, ship)
     if result.ships_sunk:
         await ctx.sync_ships()
-    if result.last_chance:
-        await ctx.finish(ctx.caster_id, ctx.opponent_id, "回光返照失败")
-        return EffectResult(True, "溅射命中回光返照目标，直接获胜", game_over=True,
-                            affected_positions=affected)
-    if await _finish_if_wiped(ctx):
-        return EffectResult(True, f"溅射攻击命中{result.hit_count}个目标，对方战舰全灭",
+    victory = await _finish_after_damage(ctx, damaged=result.hit_count > 0)
+    if victory:
+        return EffectResult(True, f"溅射攻击命中{result.hit_count}个目标，{victory}",
                             game_over=True, affected_positions=affected)
     return EffectResult(True, f"溅射攻击命中{result.hit_count}个目标",
                         affected_positions=affected)
@@ -322,9 +324,11 @@ async def shenwei(ctx: EffectContext) -> EffectResult:
         message = f"目标区域内{len(excluded)}艘战舰被暂时除外"
 
     await ctx.sync_ships()
-    if board != "self" and is_zero_ship_defeat(ctx.room, ctx.opponent_id):
-        await ctx.finish(ctx.caster_id, ctx.opponent_id, "神威！清空对方棋盘")
-        return EffectResult(True, message + "，对方战舰全灭，直接获胜", game_over=True)
+    if board != "self":
+        victory = await _finish_after_damage(ctx, damaged=len(excluded) == 1,
+                                             wipe_reason="神威！清空对方棋盘")
+        if victory:
+            return EffectResult(True, message + "，" + victory, game_over=True)
     if board == "self" and is_zero_ship_defeat(ctx.room, ctx.caster_id):
         await ctx.finish(ctx.opponent_id, ctx.caster_id, "神威！清空己方棋盘")
         return EffectResult(True, message + "，己方战舰全灭，判负", game_over=True)
@@ -370,8 +374,9 @@ async def bomb(ctx: EffectContext) -> EffectResult:
     if result.ships_sunk:
         await ctx.sync_ships()
     message = f"轰炸成功击沉{result.ships_sunk}艘战舰"
-    if await _finish_if_wiped(ctx):
-        return EffectResult(True, message + "，对方战舰全灭", game_over=True,
+    victory = await _finish_after_damage(ctx, damaged=result.ships_sunk > 0)
+    if victory:
+        return EffectResult(True, message + "，" + victory, game_over=True,
                             affected_positions=affected)
     return EffectResult(True, message, affected_positions=affected)
 
@@ -388,8 +393,9 @@ async def sulfur(ctx: EffectContext) -> EffectResult:
     if result.ships_sunk:
         await ctx.sync_ships()
     message = f"硫磺火焰成功击杀{result.ships_sunk}艘战舰"
-    if await _finish_if_wiped(ctx):
-        return EffectResult(True, message + "，对方战舰全灭", game_over=True,
+    victory = await _finish_after_damage(ctx, damaged=result.ships_sunk > 0)
+    if victory:
+        return EffectResult(True, message + "，" + victory, game_over=True,
                             affected_positions=affected)
     return EffectResult(True, message, affected_positions=affected)
 

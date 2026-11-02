@@ -69,6 +69,7 @@ class MatchmakingService:
         self.auth = auth
         self.lobby = lobby
         self._publisher: EventPublisher = NullPublisher()
+        self._queue_versions: dict[str, int] = {}
         self.rooms.bans.requeue_hook = self.requeue_after_escape
 
     # --------------------------------------------------------------- wiring
@@ -143,6 +144,15 @@ class MatchmakingService:
 
         if mode == MATCH_MODE_RANKED and not connection.user_id:
             return await self._deny(connection.sid, "排位模式需要先登录")
+        # 同一账号的新连接也不能绕过尚未退出的对局。
+        if any(
+            room.state not in (RoomState.WAITING, RoomState.GAME_OVER)
+            and any(player.socket_id == connection.sid
+                    or bool(connection.user_id and player.user_id == connection.user_id)
+                    for player in room.players.values())
+            for room in self.rooms.rooms.values()
+        ):
+            return await self._deny(connection.sid, '请先退出当前对局，再开始匹配')
         preselection = data.get('ban_preselection', []) if mode == MATCH_MODE_RANKED else []
         if mode == MATCH_MODE_RANKED:
             error = bans.validate_selection(preselection, bans.quota_for_points(points_for_user(self.database, connection.user_id)))
@@ -186,6 +196,8 @@ class MatchmakingService:
 
     async def cancel_match(self, connection: Connection,
                            data: dict[str, Any] | None = None) -> dict[str, Any]:
+        # 同时撤销尚在发送取消房间通知、还未落入队列的自动回流意图。
+        self._queue_versions[connection.sid] = self._queue_versions.get(connection.sid, 0) + 1
         self.rooms.remove_from_match_queue(connection.sid)
         payload = {"status": "success", "message": "已取消匹配"}
         await self._publisher.emit("match_canceled", payload, to=connection.sid)
@@ -282,11 +294,14 @@ class MatchmakingService:
         record = self.rooms.presence.get(sid) if sid else None
         if not survivor or not record or survivor_id in room.disconnected:
             return
+        version = self._queue_versions.get(sid, 0)
         await self._publisher.leave_room(sid, room.id)
         await self._publisher.emit('game_canceled', {
             'reason': 'ranked_ban_escape', 'room_id': room.id, 'requeue': True,
             'message': '对手已离开，正在为你重新排位匹配。',
         }, to=sid)
+        if self._queue_versions.get(sid, 0) != version or self.rooms.presence.get(sid) is not record:
+            return
         result = await self.find_match(Connection(sid=sid, user_id=survivor.user_id, username=survivor.name), {
             'mode': 'ranked', 'player_name': survivor.name,
             'ban_preselection': list(room.ban_preselections.get(survivor_id, [])),

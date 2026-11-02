@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useGameStore } from '../stores/game'
-import { banSelectionError } from '../stores/cardBans'
+import { banSelectionError, isInitialBanPlacement } from '../stores/cardBans'
 import { useUiStore } from '../stores/ui'
 import { emitMatchEvent, matchSocket } from '../realtime/match'
 import BanCardPicker from './BanCardPicker.vue'
@@ -118,7 +118,7 @@ async function confirm(): Promise<void> {
     <template v-else>
       <div class="ban-stage__revealed" data-testid="ban-revealed"><section v-for="list in revealedLists" :key="list.id"><h3>{{ list.own ? '你的 Ban' : '对手的 Ban' }}</h3><ul v-if="list.names.length"><li v-for="name in list.names" :key="name">{{ name }}</li></ul><p v-else>未 Ban 卡牌</p></section></div>
       <p>本局共享牌堆已移除：{{ bans.banned_names.join('、') || '无' }}。双方同 Ban 不顺延。</p>
-      <p v-if="bans.ranked" class="ban-stage__hint">从现在起，整个布船阶段离开或掉线均按逃跑判负扣分；对手不获得收益。</p>
+      <p v-if="bans.ranked && isInitialBanPlacement(game.state)" class="ban-stage__hint">从现在起，整个布船阶段离开或掉线均按逃跑判负扣分；对手不获得收益。</p>
       <button type="button" class="button" data-testid="ban-continue" @click="emit('continue')">{{ game.state.mutations?.confirmation_required ? '继续确认本局突变' : '继续布船' }}</button>
     </template>
     <button type="button" class="button button--ghost" data-testid="ban-leave" @click="emit('leave')">离开房间</button>

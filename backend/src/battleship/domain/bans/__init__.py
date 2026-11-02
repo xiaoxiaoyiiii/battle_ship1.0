@@ -81,6 +81,7 @@ def payload(room, player_id: str) -> dict | None:
     public = room.ban_phase == 'revealed'
     return {
         'enabled': True, 'quota': room.ban_quota, 'phase': room.ban_phase,
+        'initial_placement_complete': room.ban_initial_placement_complete,
         'countdown_deadline': room.ban_countdown_deadline,
         'selection_deadline': room.ban_selection_deadline,
         'own_selection': list(room.ban_selections.get(player_id, [])),

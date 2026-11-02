@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { acquireMatchChannel, emitMatchEvent, matchSocket } from '../../realtime/match'
 import { useGameStore } from '../../stores/game'
+import { isInitialBanPlacement } from '../../stores/cardBans'
 import { BOARD_SIZE, usePlacementStore } from '../../stores/placement'
 import AppOverlay from '../../components/AppOverlay.vue'
 import MutationList from '../../components/MutationList.vue'
@@ -32,10 +33,12 @@ const ui = useUiStore()
 const audio = useAudioStore()
 const bans = computed(() => game.state.card_bans)
 const revealReviewed = ref(false)
-const banBlocked = computed(() => Boolean(bans.value?.enabled && (bans.value.phase !== 'revealed' || (bans.value.quota > 0 && !revealReviewed.value))))
-const rankedEscape = computed(() => Boolean(bans.value?.ranked && bans.value.phase === 'revealed'))
+const reviewingBans = ref(false)
+const initialBanPlacement = computed(() => isInitialBanPlacement(game.state))
+const banBlocked = computed(() => reviewingBans.value || Boolean(initialBanPlacement.value && bans.value && (bans.value.phase !== 'revealed' || (bans.value.quota > 0 && !revealReviewed.value))))
+const rankedEscape = computed(() => Boolean(initialBanPlacement.value && bans.value?.ranked && bans.value.phase === 'revealed'))
 const customRoom = computed(() => game.state.mode === 'custom')
-watch([() => game.state.room_id, () => bans.value?.phase], () => { revealReviewed.value = false })
+watch([() => game.state.room_id, () => bans.value?.phase], () => { revealReviewed.value = false; reviewingBans.value = false })
 const leaveOpen = ref(false)
 const mutationAckPending = ref(false)
 const mutationAckError = ref('')
@@ -317,8 +320,8 @@ function returnHome(): void {
       还没进入房间，先创建或加入房间再布船。
     </p>
 
-    <button v-if="bans?.phase === 'revealed' && bans.quota > 0 && revealReviewed" type="button" class="button button--ghost" data-testid="ban-review-open" @click="revealReviewed = false">查看本局双方 Ban</button>
-    <CardBanStage v-if="banBlocked" @continue="revealReviewed = true" @leave="leaveOpen = true" />
+    <button v-if="bans?.phase === 'revealed' && bans.quota > 0 && !banBlocked" type="button" class="button button--ghost" data-testid="ban-review-open" @click="reviewingBans = true">查看本局双方 Ban</button>
+    <CardBanStage v-if="banBlocked" @continue="revealReviewed = true; reviewingBans = false" @leave="leaveOpen = true" />
     <section v-else-if="mutationBlocked && mutations" class="placement__mutation-confirmation" data-testid="mutation-confirmation" aria-labelledby="mutation-confirmation-title">
       <h2 id="mutation-confirmation-title">确认本局突变</h2>
       <p>请阅读本局全部词条。双方确认后开始布船。</p>
@@ -502,7 +505,7 @@ function returnHome(): void {
       <section class="placement__confirm" data-testid="placement-leave-confirm">
         <h2 class="placement__confirm-title">离开房间？</h2>
         <p class="placement__confirm-text">
-          {{ customRoom ? '退出自定义房不算逃跑，不会扣排位分。' : rankedEscape ? '双方已亮牌，整个布船阶段离开均按逃跑判负扣分；对手无结算收益并回到排位队列。' : bans?.ranked ? '尚未亮牌，离开不会触发亮牌后的排位逃跑处罚。' : '布船阶段离开会按认输处理，本局判负并结算。留在房间里可以等对手。' }}
+          {{ customRoom && initialBanPlacement ? '退出自定义房不算逃跑，不会扣排位分。' : rankedEscape ? '双方已亮牌，整个布船阶段离开均按逃跑判负扣分；对手无结算收益并回到排位队列。' : initialBanPlacement && bans?.ranked ? '尚未亮牌，离开不会触发亮牌后的排位逃跑处罚。' : '布船阶段离开会按认输处理，本局判负并结算。留在房间里可以等对手。' }}
         </p>
         <div class="placement__confirm-actions">
           <button type="button" class="button button--ghost" data-testid="placement-leave-cancel" @click="leaveOpen = false">

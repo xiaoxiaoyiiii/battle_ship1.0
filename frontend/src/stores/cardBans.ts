@@ -15,6 +15,13 @@ export interface CardBanState {
   banned_names: string[]
   pool: string[]
   ranked: boolean
+  initial_placement_complete?: boolean
+}
+
+/** 初始布船完成后，即使卡牌要求重摆也沿用普通对局结算。 */
+export function isInitialBanPlacement(state: { state: string; card_bans: CardBanState | null; needs_reset?: boolean }): boolean {
+  return state.state === 'placing_ships' && Boolean(state.card_bans?.enabled)
+    && !state.card_bans?.initial_placement_complete && !state.needs_reset
 }
 
 export interface BanRules {

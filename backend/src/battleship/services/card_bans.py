@@ -24,6 +24,7 @@ class CardBanService:
         self.rooms = rooms
         self.clock = time.time
         self.tasks: dict[str, asyncio.Task] = {}
+        self.disconnect_retries: dict[tuple[str, str], asyncio.Task] = {}
         self.requeue_hook = None
         self.departure_hook = None
         self.rooms.destroy_hooks.append(self.cancel)
@@ -58,6 +59,36 @@ class CardBanService:
         task = self.tasks.pop(room_id, None)
         if task is not None and task is not asyncio.current_task():
             task.cancel()
+        for key, retry in list(self.disconnect_retries.items()):
+            if key[0] == room_id:
+                self.disconnect_retries.pop(key, None)
+                if retry is not asyncio.current_task():
+                    retry.cancel()
+
+    def retry_disconnect(self, room, player_id, token):
+        """结算事务暂时失败后重试；原掉线令牌在重连或销房后自然失效。"""
+        key = (room.id, player_id)
+        previous = self.disconnect_retries.get(key)
+        if previous is not None and previous is not asyncio.current_task() and not previous.done():
+            return
+
+        async def retry():
+            await asyncio.sleep(1)
+            if self.rooms.get_room(room.id) is room:
+                await self.rooms._disconnect_timeout(room.id, player_id, token)
+
+        task = asyncio.create_task(retry())
+        self.disconnect_retries[key] = task
+        self.rooms._tasks.add(task)
+
+        def finished(done):
+            self.rooms._tasks.discard(done)
+            if self.disconnect_retries.get(key) is done:
+                self.disconnect_retries.pop(key, None)
+            if not done.cancelled() and done.exception() is not None:
+                logger.error('Ban掉线结算重试失败', exc_info=done.exception(), extra={'room_id': room.id})
+
+        task.add_done_callback(finished)
 
     async def _drive(self, room):
         while self.rooms.get_room(room.id) is room and bans.pending(room) and room.state == RoomState.PLACING_SHIPS:

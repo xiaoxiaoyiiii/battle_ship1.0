@@ -773,6 +773,8 @@ class RoomService:
                     return
                 result = await self.bans.departure_hook(room, player_id)
                 if result is not None:
+                    if result.get('status') == 'error':
+                        self.bans.retry_disconnect(room, player_id, token)
                     return
         room.disconnected.pop(player_id, None)
 

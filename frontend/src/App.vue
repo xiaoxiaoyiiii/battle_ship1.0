@@ -24,6 +24,7 @@ import { useDmStore } from './stores/dm'
 import { acquireFriendsChannel } from './realtime/friends'
 import { useCollectionStore } from './stores/collection'
 import { useGameStore } from './stores/game'
+import { isInitialBanPlacement } from './stores/cardBans'
 import { useUiStore } from './stores/ui'
 import { useAudioStore } from './stores/audio'
 import { useShopStore } from './stores/shop'
@@ -45,6 +46,22 @@ const auth = useAuthStore()
 const game = useGameStore()
 const collection = useCollectionStore()
 const ui = useUiStore()
+let exitDestination = '/lobby'
+const removeBanLeaveGuard = router.beforeEach(to => {
+  if (isInitialBanPlacement(game.state) && !['placement', 'settings'].includes(String(to.name))) {
+    exitDestination = to.fullPath
+    ui.requestExit()
+    return false
+  }
+  return true
+})
+onBeforeUnmount(removeBanLeaveGuard)
+
+function cancelExit(): void {
+  ui.cancelExit()
+  exitDestination = '/lobby'
+  if (isInitialBanPlacement(game.state) && route.name === 'settings') void router.push({ name: 'placement' })
+}
 const audio = useAudioStore()
 let releaseInteractionAudio: (() => void) | null = null
 onMounted(() => { releaseInteractionAudio = installInteractionAudio(sound => audio.playUi(sound)) })
@@ -111,9 +128,9 @@ function openCollection(): void {
 
 /** What leaving costs, in the same words the settlement would use. */
 const immersivePenalty = computed(() => {
-  if (game.state.card_bans && game.state.state === 'placing_ships') {
+  if (isInitialBanPlacement(game.state)) {
     if (game.state.mode === 'custom') return '退出自定义房不算逃跑，不会扣排位分。'
-    return game.state.card_bans.phase === 'revealed'
+    return game.state.card_bans?.phase === 'revealed'
       ? '双方已亮牌，整个布船阶段退出均按逃跑判负扣分；对手无结算收益并返回排位队列。'
       : '尚未亮牌，退出不会触发亮牌后的排位逃跑处罚。'
   }
@@ -154,7 +171,9 @@ async function exitMatch(): Promise<void> {
     } finally { exitPending.value = false }
   }
   ui.cancelExit()
-  void router.push({ name: 'lobby' })
+  const destination = exitDestination
+  exitDestination = '/lobby'
+  void router.push(destination)
 }
 
 /**
@@ -380,13 +399,13 @@ onBeforeUnmount(() => {
     id="exit-confirm"
     :priority="250"
     labelledby="exit-confirm-title"
-    @close="ui.cancelExit()"
+    @close="cancelExit()"
   >
     <div class="confirm">
       <h2 id="exit-confirm-title" class="confirm__title">退出这一局？</h2>
       <p class="confirm__text">退出会中断当前对局，已经打出的进度不会保留；{{ immersivePenalty }}</p>
       <div class="confirm__actions">
-        <button type="button" class="button" data-testid="exit-confirm-cancel" @click="ui.cancelExit()">继续对局</button>
+        <button type="button" class="button" data-testid="exit-confirm-cancel" @click="cancelExit()">继续对局</button>
         <button type="button" class="button button--danger" data-testid="exit-confirm-ok" :disabled="exitPending" @click="exitMatch">{{ exitPending ? '正在退出…' : '确认退出' }}</button>
       </div>
     </div>

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSpectateStore } from '../../stores/spectate'
+import { useAudioStore } from '../../stores/audio'
 import { acquireSpectateChannel, joinSpectate, leaveSpectate, sendSpectateChat } from '../../realtime/spectate'
 import BattleStage from '../viewing/BattleStage.vue'
 import ViewingRules from '../viewing/ViewingRules.vue'
@@ -12,6 +13,7 @@ import type { Json } from '../viewing/types'
 import '../viewing/viewing.css'
 
 const route = useRoute(), router = useRouter(), store = useSpectateStore()
+const audio = useAudioStore()
 const roomId = computed(() => String(route.query.room_id ?? ''))
 const playback = useViewingPlayback()
 const frame = computed(() => playback.snapshot.value.frame ?? store.viewFrame)
@@ -35,7 +37,7 @@ async function chat(): Promise<void> { if ((await sendSpectateChat(draft.value))
     <header class="viewing__header"><h1 id="spectate-title">实时观战</h1><small>{{ store.count }}/{{ store.limit || 20 }} 位观众</small><button type="button" class="button button--ghost" data-testid="spectate-exit" @click="exit">退出观战</button></header>
     <div v-if="store.error" class="viewing__error" role="alert" data-testid="spectate-error"><p>{{ store.error }}</p><button class="button" @click="joinSpectate(roomId)">重新加入</button></div>
     <template v-else-if="frame">
-      <div class="viewing__status"><span>第 <b>{{ frame.context.round }}</b> 回合</span><span>{{ phaseText(String(frame.context.phase ?? '')) }}</span><span>剩余额度 <b>{{ frame.context.attacks_remaining }}</b></span><span v-if="frame.context.field_magic">场地 {{ frame.context.field_magic }}</span><ViewingRules :frame="frame" /></div>
+      <div class="viewing__status"><span>第 <b>{{ frame.context.round }}</b> 回合</span><span>{{ phaseText(String(frame.context.phase ?? '')) }}</span><span>剩余额度 <b>{{ frame.context.attacks_remaining }}</b></span><span v-if="frame.context.field_magic">场地 {{ frame.context.field_magic }}</span><button type="button" class="button button--ghost" data-testid="viewing-sound" :aria-pressed="!audio.sfxMuted" @click="audio.toggleSfxMute()">音效{{ audio.sfxMuted ? '关' : '开' }}</button><ViewingRules :frame="frame" /></div>
       <p v-if="store.phase === 'ended'" class="viewing__notice" data-testid="spectate-ended">对局已结束{{ store.winnerLabel ? '，获胜方：' + store.winnerLabel : '' }}{{ store.endedReason ? ' · ' + store.endedReason : '' }}</p>
       <div class="viewing__layout">
         <main class="viewing__main"><BattleStage :frame="frame" mode="spectate" /><p class="viewing__notice">只显示本局允许公开的信息。词条公开的手牌和舰位也会在这里显示。</p></main>

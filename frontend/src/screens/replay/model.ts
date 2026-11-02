@@ -471,14 +471,15 @@ function foldContextRound(payload: ReplayPayload, k: number): number | null {
 
 function foldContextChain(payload: ReplayPayload, k: number): ReplayChainItem[] {
   let value: ReplayChainItem[] = []
+  let recordedAt = -1
   for (const row of payload.chains) {
     if (asInt(row.step, -1) > k) break
     value = normalizeChain(row.items)
+    recordedAt = asInt(row.step, -1)
   }
-  if (value.length) return value
   for (const step of payload.steps) {
     if (step.i > k) break
-    if (Array.isArray(step.chain) && step.chain.length) value = step.chain
+    if (step.i >= recordedAt && Array.isArray(step.chain)) { value = step.chain; recordedAt = step.i }
   }
   return value
 }

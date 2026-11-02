@@ -4,7 +4,7 @@ import { drawChainFrame } from '../game/chainAnimationCanvas'
 import { planChainStage } from '../game/chainStageLayout'
 import { drawCardEffect, drawCounterEffect, warmCardEffectCaches, clearCardEffectCaches } from '../game/cardEffects/canvas'
 import type { CardEffectKind, EffectCell, EffectRect } from '../game/cardEffects/types'
-import type { ChainFrame } from '../game/chainAnimation'
+import { chainFrame } from './presentation'
 import { cardArtUrl } from '../../cards/cardArt'
 import type { Json } from './types'
 
@@ -68,17 +68,12 @@ function draw(): void {
         cells: points(effect.cells, side), privateCells: points(effect._private_cells, side), origin: origin ? [origin.cx, origin.cy] : undefined })
     return
   }
-  const source = Array.isArray(cue.chain) ? cue.chain as Json[] : []
-  const cards = source.map((row, i) => ({ name: typeof row.card === 'string' ? row.card : String((row.card as Json)?.name ?? ''), caster: String(row.seat ?? ''), order: i + 1, id: '' }))
-  if (!cards.length) return
-  const intro = cue.stage !== 'join' && cue.first === true && cards.length > 1
-  const success = intro && progress < .35
-  const frame: ChainFrame = { progress: intro ? success ? progress / .35 : (progress - .35) / .65 : progress, cue: { kind: cue.stage === 'join' ? 'join' : success ? 'success' : 'resolve', cards, order: Number(cue.order) || cards.length,
-    result: { negated: cue.negated_skip === true, failed: cue.success === false }, start: 0, duration: 1 } }
-  drawChainFrame(ctx, frame, planChainStage({ width, height, count: cards.length, insets: { top: 0, right: 0, bottom: 0, left: 0 } }), image)
+  const frame = chainFrame(cue, progress)
+  if (!frame) return
+  drawChainFrame(ctx, frame, planChainStage({ width, height, count: frame.cue.cards.length, insets: { top: 0, right: 0, bottom: 0, left: 0 } }), image)
 }
 watch(() => [props.cue, props.progress], () => void nextTick(draw), { flush: 'post' })
 onMounted(warmCardEffectCaches)
 onBeforeUnmount(() => { clearCardEffectCaches(); art.clear() })
 </script>
-<template><Teleport to="body"><div v-if="cue" class="view-animation" data-testid="viewing-animation" :data-stage="cue.stage" aria-hidden="true"><canvas ref="canvas"></canvas></div></Teleport></template>
+<template><Teleport to="body"><div v-if="cue" class="view-animation" data-testid="viewing-animation" :data-stage="cue.stage" :data-order="cue.order" :data-negated="cue.negated_skip === true" aria-hidden="true"><canvas ref="canvas"></canvas></div></Teleport></template>

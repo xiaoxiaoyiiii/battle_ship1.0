@@ -1,21 +1,11 @@
 /** 本地观看时钟。状态只来自录像或观战帧，动画完成不发送玩家 ACK。 */
 import { copy, frameAt } from './frame'
 import type { Json, Recording, ViewFrame, ViewPacket } from './types'
+import { legacyPresentation } from './legacyPresentation'
+import { presentationCues, presentationDuration as duration } from './presentation'
 
 interface Job { step: number; duration: number; cue?: Json; patch?: Partial<ViewFrame>; frame?: ViewFrame }
 export interface PlaybackSnapshot { frame: ViewFrame | null; step: number; cue: Json | null; progress: number; playing: boolean }
-
-function duration(cue: Json): number {
-  if (cue.stage === 'attack_windup') return 220
-  if (cue.stage === 'attack_tail') return 380
-  if (cue.stage === 'join') return 800
-  if (cue.stage === 'card' || cue.stage === 'card_face') return cue.first && Array.isArray(cue.chain) && cue.chain.length > 1 ? 1550 : 650
-  const effect = cue.effect as Json | undefined
-  const total = Number(effect?.duration_ms) || 1250, impact = Number(effect?.impact) || .45
-  if (cue.stage === 'effect_windup') return total * impact
-  if (cue.stage === 'effect_tail') return total * (1 - impact)
-  return 350
-}
 
 export class ViewingPlayback {
   snapshot: PlaybackSnapshot = { frame: null, step: 0, cue: null, progress: 0, playing: false }
@@ -28,7 +18,13 @@ export class ViewingPlayback {
   private speed = 1
   private live = false
   private reduced = false
+  private startedCues: Json[] = []
   get pending(): number { return this.jobs.length - this.cursor }
+  drainCues(): Json[] { return this.startedCues.splice(0) }
+
+  private present(step: number, cue: Json): void {
+    for (const item of presentationCues(cue)) this.jobs.push({ step, cue: item, duration: duration(item) })
+  }
 
   load(recording: Recording): void { this.dispose(); this.recording = recording; this.live = false; this.seek(0) }
   play(): void {
@@ -43,12 +39,16 @@ export class ViewingPlayback {
     if (!this.recording) return
     const r = this.recording, index = Math.max(0, Math.min(r.steps.length - 1, Math.trunc(step)))
     this.snapshot.frame = frameAt(r, index); this.snapshot.step = index; this.snapshot.cue = null; this.snapshot.progress = 0
-    this.jobs = []; this.cursor = 0; this.elapsed = 0; this.entered = false; this.lastTime = null
+    this.jobs = []; this.cursor = 0; this.elapsed = 0; this.entered = false; this.lastTime = null; this.startedCues = []
     let pendingEffect: Json | null = null
     for (let i = index + 1; i < r.steps.length; i++) {
       const events = r.events.filter(e => e.step === r.steps[i].i)
       if (r.version === 1) {
-        this.jobs.push({ step: i, frame: frameAt(r, i), duration: 600 })
+        const cues = legacyPresentation(r, i)
+        for (const cue of cues.before) this.present(i, cue)
+        this.jobs.push({ step: i, frame: frameAt(r, i), duration: 0 })
+        for (const cue of cues.after) this.present(i, cue)
+        this.jobs.push({ step: i, duration: cues.before.length || cues.after.length ? 150 : 450 })
       } else {
         for (const e of events) {
           if (e.type === 'state') {
@@ -64,7 +64,7 @@ export class ViewingPlayback {
               }
             }
           } else if (e.cue) {
-            this.jobs.push({ step: i, cue: e.cue, duration: duration(e.cue) })
+            this.present(i, e.cue)
             if (e.cue.stage === 'effect_windup') pendingEffect = e.cue
             if (e.cue.stage === 'effect_tail') pendingEffect = null
           }
@@ -78,7 +78,7 @@ export class ViewingPlayback {
     if (!this.live) { this.dispose(); this.live = true; this.snapshot.frame = copy(packet.frame); this.snapshot.playing = true }
     if (this.cursor > 0) { this.jobs = this.jobs.slice(this.cursor); this.cursor = 0 }
     this.jobs.push({ step: 0, frame: copy(packet.frame), duration: 0 })
-    for (const cue of packet.cues) this.jobs.push({ step: 0, cue: copy(cue), duration: duration(cue) })
+    for (const cue of packet.cues) this.present(0, copy(cue))
     if (this.pending > 32 || this.jobs.reduce((n, j) => n + j.duration, 0) > 8000) {
       this.jobs = []; this.cursor = 0; this.elapsed = 0; this.entered = false
       this.snapshot.frame = copy(packet.frame); this.snapshot.cue = null; this.snapshot.progress = 0
@@ -95,6 +95,8 @@ export class ViewingPlayback {
         this.snapshot.step = job.step
         if (job.frame) this.snapshot.frame = copy(job.frame)
         if (job.patch && this.snapshot.frame) this.snapshot.frame = { ...this.snapshot.frame, ...copy(job.patch) }
+        // 即使倍速跨过短演出或开启减弱动态，音效也消费每个真实进入的事件。
+        if (job.cue) this.startedCues.push(job.cue)
         this.snapshot.cue = this.reduced ? null : job.cue ?? null
         this.snapshot.progress = 0; this.entered = true
       }
@@ -111,6 +113,7 @@ export class ViewingPlayback {
   dispose(): void {
     this.recording = null; this.jobs = []; this.cursor = 0; this.elapsed = 0; this.entered = false
     this.lastTime = null; this.live = false
+    this.startedCues = []
     this.snapshot = { frame: null, step: 0, cue: null, progress: 0, playing: false }
   }
 }

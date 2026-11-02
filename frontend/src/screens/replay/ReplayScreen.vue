@@ -5,12 +5,15 @@ import { useReplayStore } from '../../stores/replay'
 import BattleStage from '../viewing/BattleStage.vue'
 import ViewingRules from '../viewing/ViewingRules.vue'
 import ViewingAnimationLayer from '../viewing/ViewingAnimationLayer.vue'
+import ReplayTimeline from './ReplayTimeline.vue'
+import { useAudioStore } from '../../stores/audio'
 import { useViewingPlayback } from '../viewing/useViewingPlayback'
 import { phaseText } from './model'
 import type { Json } from '../viewing/types'
 import '../viewing/viewing.css'
 
 const route = useRoute(), router = useRouter(), store = useReplayStore()
+const audio = useAudioStore()
 const wide = ref(innerWidth > 800)
 let internal = false
 const playback = useViewingPlayback(snapshot => {
@@ -54,10 +57,11 @@ function exit(): void { void router.push('/lobby') }
             <button type="button" class="button button--ghost" data-testid="replay-prev" :disabled="store.k <= 0" @click="store.setK(store.k - 1)">上一步</button>
             <button type="button" class="button" data-testid="replay-play" :aria-pressed="store.playing" @click="store.setPlaying(!store.playing)">{{ store.playing ? '暂停' : '播放' }}</button>
             <button type="button" class="button button--ghost" data-testid="replay-next" :disabled="store.k >= store.stepCount - 1" @click="store.setK(store.k + 1)">下一步</button>
-            <input type="range" min="0" :max="Math.max(0, store.stepCount - 1)" :value="store.k" aria-label="回放进度" data-testid="replay-progress" @input="store.setK(Number(($event.target as HTMLInputElement).value))" />
             <span>{{ store.k + 1 }}/{{ store.stepCount }}</span>
             <div class="viewing__speed"><button v-for="speed in [1,2,4]" :key="speed" :class="{ 'is-active': store.speed === speed }" @click="store.setSpeed(speed)">{{ speed }}×</button></div>
+            <button type="button" class="button button--ghost" data-testid="viewing-sound" :aria-pressed="!audio.sfxMuted" @click="audio.toggleSfxMute()">音效{{ audio.sfxMuted ? '关' : '开' }}</button>
           </div>
+          <ReplayTimeline :nodes="store.recording.nodes" :count="store.stepCount" :step="store.k" @seek="store.setK" />
           <p class="viewing__notice" data-testid="replay-step-text">第 {{ store.k + 1 }} 步 · {{ current?.text }}</p>
         </main>
         <aside class="viewing__aside">

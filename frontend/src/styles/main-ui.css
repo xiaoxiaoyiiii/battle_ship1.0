@@ -454,7 +454,7 @@ input[type='radio'] {
 /* ---------------------------------------------------------- viewport fit --- */
 /* Battle always owns the window: the stage scrolls inside itself on short
    phones, and the wide layout below shrinks the board so the hand stays put.
-   Home and lobby only lock on desktop heights, so a phone can still scroll. */
+   首页只在桌面高度锁定，大厅使用整页滚动。 */
 body:has([data-testid='screen-game']) .app-shell {
   height: 100dvh;
   max-height: 100dvh;
@@ -477,20 +477,6 @@ body:has([data-testid='screen-game']) .screen-boundary {
 
   body:has([data-testid='screen-start']) .screen,
   body:has([data-testid='screen-start']) .screen-boundary {
-    min-height: 0;
-  }
-}
-
-@media (min-width: 980px) and (min-height: 560px) {
-  body:has([data-testid='screen-lobby']) .app-shell {
-    height: 100dvh;
-    max-height: 100dvh;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  body:has([data-testid='screen-lobby']) .screen,
-  body:has([data-testid='screen-lobby']) .screen-boundary {
     min-height: 0;
   }
 }

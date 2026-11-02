@@ -1,5 +1,5 @@
 /* 大厅总览、目录、创建与等待页共用的布局；颜色沿用三套主题。 */
-.lobby-pages{max-width:1304px;margin:0 auto;padding:28px 32px 36px;color:var(--text-primary);font-size:14px;line-height:1.6;background:var(--surface-sea);border-radius:12px}
+.lobby-pages{width:100%;max-width:1304px;margin:0 auto;padding:28px 32px 36px;color:var(--text-primary);font-size:14px;line-height:1.6;background:var(--surface-sea);border-radius:12px}
 .lobby-pages *, .lp-picker *{box-sizing:border-box}
 .lp-page{min-width:0}.lp-page h1,.lp-page h2,.lp-page h3,.lp-page p,.lp-picker h2,.lp-picker p{margin:0}
 .lp-page h1{font-size:30px;font-weight:680;line-height:1.35}.lp-page h2,.lp-picker h2{font-size:18px;line-height:1.5}.lp-page h3{font-size:15px}

@@ -4,8 +4,8 @@
 Deployment order (ops/README.md):
 
     ops/build.py      # this script: pip install -e backend, pnpm install/build
-    ops/migrate.py    # Alembic upgrade + pre-migration backup
-    systemctl restart battleship
+    systemctl stop battleship  # 成功后才能继续；停止所有其他写入方
+    systemctl start battleship # ExecStartPre 核验停服，再备份、迁移和校验
     ops/healthcheck.py
 
 The script verifies the build output as well: `frontend/dist/index.html`, the

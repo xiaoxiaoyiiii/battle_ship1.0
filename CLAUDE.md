@@ -113,8 +113,7 @@ backend/src/battleship/
 
 ## 5. 部署、迁移、回滚
 
-- 顺序：`ops/build.py` → `ops/migrate.py`（Alembic + 备份 + 校验）→
-  `systemctl restart battleship` → `ops/healthcheck.py`。
+- 顺序：独立 release 构建 → 确认全部写入方停服 → 启动服务（`ExecStartPre` 核验停服并迁移）→ 健康检查；现用目录原地更新须先停服，详见 `ops/README.md`。
 - systemd 单元：`ops/systemd/battleship.service`（uvicorn，`EnvironmentFile`）；
   环境变量模板：`ops/deploy.env.example`。
 - 回滚：`ops/rollback.py`（校验备份与目标 → 停服 → 安全副本 → 恢复备份 →

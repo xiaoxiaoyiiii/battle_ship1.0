@@ -282,7 +282,7 @@ def migrate_database(
     backup: bool = True,
     verify: bool = True,
 ) -> MigrationResult:
-    """Upgrade to head with a pre-migration backup and fail-closed verification."""
+    """仅供离线库升级；调用方必须先停止全部写入方，生产入口由 ops/migrate.py 核验。"""
     path = Path(database_path)
     path.parent.mkdir(parents=True, exist_ok=True)
 

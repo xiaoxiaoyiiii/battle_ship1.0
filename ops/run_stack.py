@@ -47,7 +47,7 @@ def _resolve_dist(explicit: str | None) -> Path:
 
 def _migrate(database: Path) -> int:
     result = subprocess.run(
-        [sys.executable, str(ROOT / "ops" / "migrate.py"), "--database", str(database)],
+        [sys.executable, str(ROOT / "ops" / "migrate.py"), "--offline", "--database", str(database)],
         cwd=str(ROOT),
     )
     return result.returncode

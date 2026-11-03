@@ -44,6 +44,8 @@ ROOT = Path(__file__).resolve().parents[1]
 BACKEND_SRC = ROOT / "backend" / "src"
 if str(BACKEND_SRC) not in sys.path:
     sys.path.insert(0, str(BACKEND_SRC))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 ROLLBACK_BUDGET_SECONDS = 300
 
 
@@ -97,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", default=str(ROOT))
     parser.add_argument("--stop-command", default="systemctl stop battleship")
     parser.add_argument("--start-command", default="systemctl restart battleship")
+    parser.add_argument("--service", default="battleship", help="恢复数据库前核验已停止的 systemd 服务")
     parser.add_argument("--health-url", default="http://127.0.0.1:5000/health")
     parser.add_argument("--health-timeout", type=float, default=120.0)
     parser.add_argument("--no-build", action="store_true")
@@ -146,7 +149,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[rollback] commit:   {previous_commit} -> {target_commit}")
 
     # 2. stop, 3. safety copy, 4. restore.
-    _run(args.stop_command, dry_run=args.dry_run)
+    if _run(args.stop_command, dry_run=args.dry_run) != 0:
+        print("回滚中止: 停止服务失败，数据库未修改", file=sys.stderr)
+        return 2
+    if not args.dry_run:
+        from ops.service_state import ServiceStateError, require_stopped
+
+        try:
+            require_stopped(args.service)
+        except ServiceStateError as error:
+            print(f"回滚中止，数据库未修改: {error}", file=sys.stderr)
+            return 2
     safety = database.with_name(f"{database.name}.pre-rollback-{_stamp()}.db")
     print(("would copy: " if args.dry_run else "copy: ") + f"{database} -> {safety}")
     if args.dry_run:
@@ -203,7 +216,9 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     # 7. start + health.
-    _run(args.start_command, dry_run=args.dry_run)
+    if _run(args.start_command, dry_run=args.dry_run) != 0:
+        print("回滚中止: 启动服务失败，请保留当前数据库与安全副本进行恢复", file=sys.stderr)
+        return 3
     healthy = False
     if not args.dry_run:
         import urllib.request

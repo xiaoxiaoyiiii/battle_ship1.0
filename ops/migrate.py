@@ -23,6 +23,8 @@ ROOT = Path(__file__).resolve().parents[1]
 BACKEND_SRC = ROOT / "backend" / "src"
 if str(BACKEND_SRC) not in sys.path:
     sys.path.insert(0, str(BACKEND_SRC))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 def _revision(database: Path) -> str | None:
@@ -54,6 +56,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--no-backup", action="store_true")
     parser.add_argument("--verify-only", action="store_true")
+    parser.add_argument("--service", default="battleship", help="迁移前检查已停止的 systemd 服务")
+    parser.add_argument("--offline", action="store_true", help="仅供已停止全部写入方的本地或隔离数据库")
     args = parser.parse_args(argv)
 
     if not args.database:
@@ -82,6 +86,14 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  - {problem}")
             return 0 if not problems else 1
 
+        if not args.offline:
+            from ops.service_state import ServiceStateError, require_stopped
+
+            try:
+                require_stopped(args.service, start_pre=True)
+            except ServiceStateError as exc:
+                print(f"迁移中止，数据库未修改: {exc}", file=sys.stderr)
+                return 2
         result = migrate_database(database, backup=not args.no_backup)
     except MigrationError as exc:
         print(f"migration FAILED: {exc}", file=sys.stderr)

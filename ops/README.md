@@ -25,16 +25,19 @@ the variable, because the legacy frontend no longer exists.
 ## Deploy order (production)
 
 ```
-ops/build.py        # 1. pip install -e backend; pnpm install/build; verify dist
-ops/migrate.py      # 2. Alembic upgrade + pre-migration backup + verification
-systemctl restart battleship
-ops/healthcheck.py  # 3. require {"status":"ok"}
+ops/build.py        # 1. 在独立 release 中准备依赖和前端
+systemctl stop battleship  # 2. 必须成功；同时停止其他读写此库的进程
+systemctl start battleship # 3. ExecStartPre 核验服务状态，再备份、迁移和校验
+ops/healthcheck.py  # 4. require {"status":"ok"}
 ```
 
 `systemctl` runs the unit in [systemd/battleship.service](systemd/battleship.service):
 `ExecStartPre` is the migration, `ExecStart` is uvicorn, and every value comes
 from `/etc/battleship/battleship.env` (template: [deploy.env.example](deploy.env.example)).
 `SECRET_KEY` is required: a missing/blank value aborts before the port binds.
+
+每一步成功后才能继续。生产数据库迁移和恢复均要求全部写入方停止，禁止在旧服务仍运行时手动迁移。
+若直接更新正在运行的同一目录，应先停服再更新依赖与代码。旧 Flask 栈首次切换还须准备 Python 3.12、新服务入口和真实旧库路径，不能只拉取代码后重启。
 
 ### ops/build.py
 
@@ -52,7 +55,9 @@ faces (bundled from `frontend/public/card_faces` by Vite).
 
 ```powershell
 python ops/migrate.py --dry-run --database <db>   # revision plan, no writes
-python ops/migrate.py --database <db>             # backup -> upgrade -> verify
+python ops/migrate.py --database <db>             # 核验 battleship 停服后再迁移
+python ops/migrate.py --service <name> --database <db>
+python ops/migrate.py --offline --database <local-db> # 本地隔离库，操作者确认全部写入方停止
 python ops/migrate.py --verify-only --database <db>
 ```
 
@@ -60,6 +65,11 @@ Backup is a SQLite online copy next to the database
 (`<db>.backup-<UTC stamp>-<pid>-<ns>.db`); a failed upgrade restores it and
 exits 2. A first-time migration on a missing file creates the schema (and removes
 a half-built file on failure).
+
+默认通过 systemd 检查服务已停止，无法查询、仍有主进程或正在退出时均拒绝迁移。
+服务自身的 `ExecStartPre` 仅在旧进程已退出且 ControlPID 为本迁移进程时允许执行。
+`--offline` 不提供生产在线迁移能力，也不能与另一个使用相同库的本地服务并行。
+仓储层 `migrate_database()` 是离线操作原语，其他工具调用前也必须停止全部写入方。
 
 ### Health
 
@@ -86,9 +96,11 @@ python ops/rollback.py --dry-run `
     --to       <previous commit or tag>
 
 # real: systemd deployment (defaults: systemctl stop/restart battleship)
-sudo -u battleship /opt/battleship/.venv/bin/python /opt/battleship/ops/rollback.py `
+sudo /opt/battleship/.venv/bin/python /opt/battleship/ops/rollback.py `
     --database /var/lib/battleship/battleship.db --backup <backup> --to <commit>
 ```
+
+停服命令失败或 systemd 仍报告运行中时，回滚立即退出且不改数据库。`--service` 可指定实际服务名；自定义停止命令也必须停止该服务。启动命令失败同样返回失败，不以旧健康响应掩盖错误。
 
 | 分钟 | 动作 |
 | --- | --- |

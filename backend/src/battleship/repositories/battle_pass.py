@@ -24,7 +24,7 @@ class BattlePassRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def upsert_season(self, config: SeasonConfig, *, status: str = 'active', now: int | None = None) -> None:
+    def create_season_once(self, config: SeasonConfig, *, status: str = 'active', now: int | None = None) -> None:
         now = int(time.time()) if now is None else int(now)
         statement = sqlite_insert(BattlePassSeason).values(
             id=config.id, starts_at=config.starts_at, ends_at=config.ends_at,
@@ -32,15 +32,7 @@ class BattlePassRepository:
             total_xp=config.total_xp, rules_version=config.rules_version,
             status=status, created_at=now, updated_at=now,
         )
-        statement = statement.on_conflict_do_update(
-            index_elements=['id'],
-            set_={
-                'starts_at': config.starts_at, 'ends_at': config.ends_at,
-                'claim_ends_at': config.claim_ends_at, 'level_cap': config.level_cap,
-                'total_xp': config.total_xp, 'rules_version': config.rules_version,
-                'status': status, 'updated_at': now,
-            },
-        )
+        statement = statement.on_conflict_do_nothing(index_elements=['id'])
         self.session.execute(statement)
 
     def seed_level(self, season_id: str, level: int, xp_at: int,
@@ -91,6 +83,18 @@ class BattlePassRepository:
         ).where(
             UserBattlePass.user_id == user_id, BattlePassSeason.claim_ends_at <= int(now),
         ).order_by(BattlePassSeason.starts_at, BattlePassSeason.id))
+        return [{column.name: getattr(row, column.name) for column in row.__table__.columns}
+                for row in rows]
+
+    def claiming_seasons_for_user(self, user_id: str, now: int) -> list[dict[str, Any]]:
+        """只列出该玩家已参加且仍在领奖期的旧赛季。"""
+        rows = self.session.scalars(select(BattlePassSeason).join(
+            UserBattlePass, UserBattlePass.season_id == BattlePassSeason.id,
+        ).where(
+            UserBattlePass.user_id == user_id,
+            BattlePassSeason.ends_at <= int(now),
+            BattlePassSeason.claim_ends_at > int(now),
+        ).order_by(BattlePassSeason.starts_at.desc(), BattlePassSeason.id))
         return [{column.name: getattr(row, column.name) for column in row.__table__.columns}
                 for row in rows]
 

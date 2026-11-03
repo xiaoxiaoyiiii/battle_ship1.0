@@ -135,6 +135,32 @@ html[data-theme='journal'] body {
   background: rgba(124, 92, 240, 0.12);
 }
 
+.app-nav .app-nav__settings {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: auto;
+  padding: 0 10px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.app-nav__settings[aria-current='page'] {
+  color: var(--role-action);
+  border-color: var(--chip-line);
+  background: var(--role-action-soft);
+}
+
+@media (max-width: 760px), (max-height: 520px) {
+  .app-nav .app-nav__settings {
+    width: 38px;
+    padding: 0;
+    flex: 0 0 auto;
+  }
+  .app-nav__settings span { display: none; }
+}
+
 /* ------------------------------------------------------------ 头像菜单 --- */
 .app-menu {
   gap: 10px;

@@ -12,8 +12,11 @@ router = APIRouter(tags=["battle-pass"])
 
 @router.get("/api/battle-pass")
 def get_battle_pass(request: Request, user_id: str = Depends(require_user)):
-    result = BattlePassService(request.app.state.database).view(user_id)
-    return JSONResponse(result, status_code=401 if result.get("reason") == "unauthorized" else 200)
+    result = BattlePassService(request.app.state.database).view(
+        user_id, season_id=request.query_params.get("season_id") or None,
+    )
+    status = {"unauthorized": 401, "season_unavailable": 404}.get(result.get("reason"), 200)
+    return JSONResponse(result, status_code=status)
 
 
 @router.post("/api/battle-pass/claim")
@@ -37,7 +40,9 @@ async def claim_battle_pass(request: Request, user_id: str = Depends(require_use
                             400 if reason in {"track_invalid", "level_invalid"} else 409)
     body = result
     if ok:
-        body["battle_pass"] = BattlePassService(request.app.state.database).view(user_id)
+        body["battle_pass"] = BattlePassService(request.app.state.database).view(
+            user_id, season_id=str(payload.get("season_id") or "") or None,
+        )
     return JSONResponse(body, status_code=status)
 
 

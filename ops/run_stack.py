@@ -91,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"root: {ROOT}")
         print(f"dist: {dist}")
         print(f"database: {database}")
-        print(f"migrate: {'skipped' if args.skip_migrate else 'python ops/migrate.py --database ' + str(database)}")
+        print(f"migrate: {'skipped' if args.skip_migrate else 'python ops/migrate.py --offline --database ' + str(database)}")
         print(f"serve: uvicorn battleship.main:app --host {args.host} --port {args.port}")
         print(f"open: http://{args.host}:{args.port}/health")
         print("dry-run: nothing was started")

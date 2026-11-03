@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import TideAshBadge from '../../components/TideAshBadge.vue'
 import { useAuthStore } from '../../stores/auth'
-import { formatRewardLabel, isTideAshKind, useBattlePassStore, type BattlePassLevel, type BattlePassTrack } from '../../stores/battlePass'
+import { formatRewardLabel, isTideAshKind, useBattlePassStore, type BattlePassLevel, type BattlePassSeason, type BattlePassTrack } from '../../stores/battlePass'
 import { useUiStore } from '../../stores/ui'
 
 interface TaskRow { id: string; title: string; description: string; current: number; target: number; completed: boolean }
@@ -20,6 +20,7 @@ const track = ref<HTMLElement | null>(null)
 
 const season = computed(() => store.season)
 const progress = computed(() => store.progress)
+const phaseLabels: Record<string, string> = { upcoming: '未开始', active: '进行中', claim_only: '领取期', closed: '已结束' }
 const xpPercent = computed(() => {
   const total = season.value?.totalXp || 0
   return total ? Math.min(100, Math.round(progress.value.xp / total * 100)) : 0
@@ -28,9 +29,7 @@ const claimKeys = computed(() => new Set(store.claims.map((item) => `${item.leve
 
 function isClaimed(level: number, kind: BattlePassTrack): boolean { return claimKeys.value.has(`${level}:${kind}`) }
 function canClaim(row: BattlePassLevel, kind: BattlePassTrack): boolean {
-  if (progress.value.level < row.level || isClaimed(row.level, kind)) return false
-  if (kind === 'premium' && !progress.value.premiumUnlocked) return false
-  return kind === 'free' ? Boolean(row.freeRewardId) : Boolean(row.premiumRewardId)
+  return store.canClaim(row.level, kind)
 }
 function rewardLabel(row: BattlePassLevel, kind: BattlePassTrack): string {
   const type = kind === 'free' ? row.freeKind : row.premiumKind
@@ -51,6 +50,8 @@ function levelState(row: BattlePassLevel): string {
 }
 function claimLabel(row: BattlePassLevel, kind: BattlePassTrack): string {
   if (isClaimed(row.level, kind)) return '已领取'
+  if (season.value?.state === 'upcoming') return '未开始'
+  if (season.value?.state === 'closed') return '已结束'
   if (kind === 'premium' && !progress.value.premiumUnlocked) return '豪华轨'
   if (canClaim(row, kind)) return store.claiming === `${row.level}:${kind}` ? '领取中…' : '领取'
   return '未解锁'
@@ -91,6 +92,16 @@ async function load(): Promise<void> {
 }
 
 onMounted(() => { void load() })
+function seasonLabel(item: BattlePassSeason): string {
+  const date = item.startsAt ? new Date(item.startsAt * 1000).toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' }) : item.id
+  return `${item.name} · ${date} · ${phaseLabels[item.state] || '状态未知'}`
+}
+async function selectSeason(event: Event): Promise<void> {
+  claimNote.value = ''
+  await store.load(true, (event.target as HTMLSelectElement).value)
+  await nextTick()
+  track.value?.querySelector<HTMLElement>('[data-current="true"]')?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+}
 watch(() => auth.isGuest, () => { store.reset(); void load() })
 </script>
 
@@ -106,7 +117,7 @@ watch(() => auth.isGuest, () => { store.reset(); void load() })
         <div class="season-pass__hero-side">
           <TideAshBadge />
           <div v-if="season" class="season-pass__hero-state">
-            <span>{{ season.state === 'claim_only' ? '领取期' : season.state === 'closed' ? '已结束' : '进行中' }}</span>
+            <span>{{ phaseLabels[season.state] || '状态未知' }}</span>
             <strong>Lv.{{ progress.level }} / {{ season.levelCap }}</strong>
           </div>
         </div>
@@ -121,6 +132,12 @@ watch(() => auth.isGuest, () => { store.reset(); void load() })
       <div v-else-if="store.status === 'error'" class="season-pass__state season-pass__state--error">{{ store.error || '赛季数据暂时无法读取。' }} <button type="button" class="button button--ghost" @click="load">重试</button></div>
       <div v-else-if="!season" class="season-pass__state">当前没有开放的赛季。</div>
       <template v-else>
+        <label v-if="store.seasons.length > 1" class="season-pass__season-picker">
+          <span>切换赛季</span>
+          <select :value="season?.id" :disabled="store.claiming !== null" data-testid="pass-season-picker" @change="selectSeason">
+            <option v-for="item in store.seasons" :key="item.id" :value="item.id">{{ seasonLabel(item) }}</option>
+          </select>
+        </label>
         <section class="season-pass__summary" aria-label="赛季进度">
           <div class="season-pass__level-badge"><span>当前等级</span><strong>Lv.{{ progress.level }}</strong></div>
           <div class="season-pass__progress-main">
@@ -164,6 +181,8 @@ watch(() => auth.isGuest, () => { store.reset(); void load() })
 </template>
 
 <style scoped>
+.season-pass__season-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 16px; }
+.season-pass__season-picker select { max-width: 100%; min-height: 40px; padding: 8px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-deck); color: var(--text-primary); font: inherit; }
 .daily-task-note { margin:0 0 16px; font-size:12px; line-height:1.8; color:var(--text-secondary); }
 .daily-task-note a { color:var(--role-action); }
 .season-pass { padding:28px clamp(18px, 5vw, 72px) 42px; align-items:stretch; }

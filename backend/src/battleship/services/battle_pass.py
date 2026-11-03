@@ -66,13 +66,13 @@ class BattlePassService:
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    def view(self, user_id: str, *, now: int | None = None) -> dict[str, Any]:
+    def view(self, user_id: str, *, season_id: str | None = None, now: int | None = None) -> dict[str, Any]:
         now = int(time.time()) if now is None else int(now)
         with self.database.unit_of_work() as uow:
             if not user_id or not uow.users.get(user_id):
                 return {"ok": False, "reason": "unauthorized", "season": None,
                         "state": "closed", "levels": [], "progress": None,
-                        "challenges": [], "claims": [],
+                        "challenges": [], "claims": [], "seasons": [],
                         "wallet": {"currency": CURRENCY, "balance": 0,
                                    "daily_match_granted": 0, "daily_cap": DAILY_MATCH_CAP}}
             from .daily_challenge import release_pending_xp
@@ -94,9 +94,16 @@ class BattlePassService:
                 ), "daily_cap": DAILY_MATCH_CAP,
             }
             season = uow.battle_pass.current_season(now) or uow.battle_pass.latest_season()
+            choices = {row['id']: row for row in uow.battle_pass.claiming_seasons_for_user(user_id, now)}
+            if season is not None:
+                choices[season['id']] = season
+            if season_id:
+                season = choices.get(season_id)
+                if season is None:
+                    return {"ok": False, "reason": "season_unavailable", "seasons": []}
             if season is None:
                 return {"season": None, "state": "closed", "levels": [],
-                        "progress": None, "challenges": [], "claims": [], "wallet": wallet}
+                        "progress": None, "challenges": [], "claims": [], "wallet": wallet, "seasons": []}
             config = _config(season)
             state = season_state(now, config)
             progress = uow.battle_pass.progress(user_id, config.id, now=now)
@@ -113,6 +120,8 @@ class BattlePassService:
             return {
                 "season": season,
                 "state": state,
+                "seasons": [row | {"state": season_state(now, _config(row))}
+                            for row in sorted(choices.values(), key=lambda row: row['starts_at'], reverse=True)],
                 "levels": levels,
                 "progress": progress | {
                     "level": current_level(progress["xp"], config),
@@ -190,10 +199,12 @@ class BattlePassService:
         claim_ends_at = ends_at + 14 * 24 * 3600
         config = SeasonConfig(season_id, starts_at, ends_at, claim_ends_at, 50, 18_000, 2)
         with self.database.unit_of_work() as uow:
+            # 唯一键保证并行重试也不能覆盖已公布的赛季日期。
+            uow.battle_pass.create_season_once(config, status="active", now=now)
             existing = uow.battle_pass.get_season(season_id)
-            if existing and int(existing["rules_version"]) != config.rules_version:
+            if int(existing["rules_version"]) != config.rules_version:
                 raise ValueError("season_rules_conflict")
-            uow.battle_pass.upsert_season(config, status="active", now=now)
+            config = _config(existing)
             for level in range(1, config.level_cap + 1):
                 free = DEFAULT_REWARDS.get((level, "free"))
                 premium = DEFAULT_REWARDS.get((level, "premium"))
@@ -202,8 +213,8 @@ class BattlePassService:
                     free[0] if free else None, free[1] if free else None,
                     premium[0] if premium else None, premium[1] if premium else None,
                 )
-        return {"season_id": config.id, "starts_at": starts_at,
-                "ends_at": ends_at, "claim_ends_at": claim_ends_at,
+        return {"season_id": config.id, "starts_at": config.starts_at,
+                "ends_at": config.ends_at, "claim_ends_at": config.claim_ends_at,
                 "levels": config.level_cap, "total_xp": config.total_xp,
                 "rules_version": config.rules_version}
 

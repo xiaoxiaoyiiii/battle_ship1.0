@@ -11,9 +11,11 @@ This module is the replacement operational contract:
 * any failure restores the backup atomically (database + `-wal`/`-shm`) and raises
   :class:`MigrationError`; a failed first-time migration removes the half-built file.
 
-Run it with::
+生产入口会先核验服务已经停止::
 
-    python -m battleship.repositories.migrations --database path/to/battleship.db
+    python ops/migrate.py --database path/to/battleship.db
+
+直接调用本模块或 migrate_database() 只适用于已停止全部写入方的离线库。
 
 Raw SQL stays in this module (the repositories layer); business code never builds SQL.
 """
@@ -348,6 +350,7 @@ def main(argv: list[str] | None = None) -> int:
         "--verify-only", action="store_true", help="verify schema/row counts, do not migrate"
     )
     parser.add_argument("--json", action="store_true", help="machine-readable output")
+    parser.add_argument("--offline", action="store_true", help="明确确认目标库没有运行中的写入方")
     arguments = parser.parse_args(argv)
     database = arguments.database or _default_database_path()
 
@@ -363,6 +366,9 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"  - {problem}")
             return 0 if not problems else 1
 
+        if not arguments.offline:
+            print("迁移中止: 生产迁移请使用 ops/migrate.py；离线库须显式加 --offline", file=sys.stderr)
+            return 2
         result = migrate_database(
             database,
             backup=not arguments.no_backup,

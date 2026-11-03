@@ -55,6 +55,7 @@ export interface BattlePassClaim {
 
 export interface BattlePassView {
   season: BattlePassSeason | null
+  seasons: BattlePassSeason[]
   progress: BattlePassProgress
   levels: BattlePassLevel[]
   challenges: BattlePassChallenge[]
@@ -84,7 +85,7 @@ function positiveXp(value: unknown, fallback: number): number {
   const n = typeof value === 'number' ? value : Number(value)
   return Number.isFinite(n) && n > 0 ? n : fallback
 }
-function parseSeason(value: unknown, progress?: unknown): BattlePassSeason | null {
+function parseSeason(value: unknown, progress?: unknown, state?: unknown): BattlePassSeason | null {
   const row = object(value)
   if (!row || !string(row.id)) return null
   return {
@@ -93,7 +94,7 @@ function parseSeason(value: unknown, progress?: unknown): BattlePassSeason | nul
     startsAt: numberOrNull(row.starts_at ?? row.startsAt),
     endsAt: numberOrNull(row.ends_at ?? row.endsAt),
     claimEndsAt: numberOrNull(row.claim_ends_at ?? row.claimEndsAt),
-    state: string(row.state || row.status, 'active'),
+    state: string(state || row.state || row.status, 'closed'),
     levelCap: Math.max(1, number(row.level_cap ?? row.levelCap, 50)),
     totalXp: positiveXp(row.total_xp ?? row.totalXp ?? object(progress)?.total_xp ?? object(progress)?.totalXp, 18000),
   }
@@ -221,7 +222,7 @@ function convertedAmount(body: JsonObject, payload: JsonObject): number {
 }
 
 function emptyView(): BattlePassView {
-  return { season: null, progress: { xp: 0, level: 1, premiumUnlocked: false, version: 0 }, levels: [], challenges: [], claims: [], authenticated: false, serverTime: null }
+  return { season: null, seasons: [], progress: { xp: 0, level: 1, premiumUnlocked: false, version: 0 }, levels: [], challenges: [], claims: [], authenticated: false, serverTime: null }
 }
 
 export interface BattlePassClaimResult {
@@ -238,6 +239,7 @@ export const useBattlePassStore = defineStore('battle-pass', () => {
   let requestToken = 0
 
   const season = computed(() => view.value.season)
+  const seasons = computed(() => view.value.seasons)
   const progress = computed(() => view.value.progress)
   const levels = computed(() => view.value.levels)
   const challenges = computed(() => view.value.challenges)
@@ -246,6 +248,7 @@ export const useBattlePassStore = defineStore('battle-pass', () => {
 
   function isClaimed(level: number, track: BattlePassTrack): boolean { return claimKeys.value.has(`${level}:${track}`) }
   function canClaim(level: number, track: BattlePassTrack): boolean {
+    if (status.value !== 'ready' || !['active', 'claim_only'].includes(season.value?.state || '')) return false
     if (!season.value || progress.value.level < level || isClaimed(level, track)) return false
     if (track === 'premium' && !progress.value.premiumUnlocked) return false
     const row = levels.value.find((item) => item.level === level)
@@ -256,9 +259,12 @@ export const useBattlePassStore = defineStore('battle-pass', () => {
     const data = object(body)
     if (!data) throw new Error('通行证数据格式无效')
     const payload = firstObject(data)
-    const nextSeason = parseSeason(payload.season, payload.progress)
+    const nextSeason = parseSeason(payload.season, payload.progress, payload.state)
     view.value = {
       season: nextSeason,
+      seasons: Array.isArray(payload.seasons)
+        ? payload.seasons.map(item => parseSeason(item)).filter((item): item is BattlePassSeason => item !== null)
+        : nextSeason ? [nextSeason] : [],
       progress: parseProgress(payload.progress, nextSeason),
       levels: parseLevels(payload.levels ?? payload.rewards),
       challenges: parseChallenges(payload.challenges),
@@ -286,7 +292,7 @@ export const useBattlePassStore = defineStore('battle-pass', () => {
     status.value = view.value.season ? 'ready' : 'empty'
   }
 
-  async function load(force = false): Promise<void> {
+  async function load(force = false, seasonId?: string): Promise<void> {
     const auth = useAuthStore()
     if (auth.isGuest) {
       requestToken += 1
@@ -300,7 +306,8 @@ export const useBattlePassStore = defineStore('battle-pass', () => {
     const token = ++requestToken
     status.value = 'loading'; error.value = ''
     try {
-      const response = await fetch('/api/battle-pass', { credentials: 'same-origin', headers: { accept: 'application/json' }, cache: 'no-store' })
+      const url = seasonId ? `/api/battle-pass?season_id=${encodeURIComponent(seasonId)}` : '/api/battle-pass'
+      const response = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' }, cache: 'no-store' })
       const parsed = await readResponse(response)
       if (token !== requestToken) return
       if (response.status === 401) {
@@ -346,7 +353,7 @@ export const useBattlePassStore = defineStore('battle-pass', () => {
         return { ok: true, convertedToTideAsh: apply(bodyObject, 'api') }
       }
       const converted = bodyObject ? convertedAmount(bodyObject, bodyObject) : 0
-      await load(true)
+      await load(true, season.value?.id)
       if (converted > 0 && !parseWallet(bodyObject?.wallet) && useWalletStore().balance !== null) {
         const wallet = useWalletStore()
         wallet.apply({
@@ -364,5 +371,5 @@ export const useBattlePassStore = defineStore('battle-pass', () => {
 
   function reset(): void { status.value = 'idle'; error.value = ''; view.value = emptyView(); claiming.value = null; usingFixture.value = false; requestToken += 1 }
 
-  return { status, error, view, season, progress, levels, challenges, claims, claiming, usingFixture, load, claim, isClaimed, canClaim, reset }
+  return { status, error, view, season, seasons, progress, levels, challenges, claims, claiming, usingFixture, load, claim, isClaimed, canClaim, reset }
 })

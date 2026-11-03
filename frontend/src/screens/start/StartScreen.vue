@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import HomeProgress from './HomeProgress.vue'
 import BanPreselection from '../../components/BanPreselection.vue'
 import { useCardBansStore } from '../../stores/cardBans'
@@ -47,6 +47,7 @@ import {
  * disconnect the connection the seat is bound to.
  */
 const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
 const home = useHomeStore()
 const shop = useShopStore()
@@ -55,7 +56,7 @@ const collection = useCollectionStore()
 const ui = useUiStore()
 const bans = useCardBansStore()
 
-const difficulty = ref<string>(aiDifficulty())
+const difficulty = ref<string>(route.query.first_battle === '1' ? 'easy' : aiDifficulty())
 const difficultyOptions = DIFFICULTY_OPTIONS
 let releaseChannel: (() => void) | null = null
 let navigating = false
@@ -308,7 +309,7 @@ async function startAi(): Promise<void> {
     <header class="home-head">
       <div class="home-head__main">
         <h1 id="screen-start-title" class="home-head__title" data-testid="start-heading">准备出航</h1>
-        <p class="home-head__subtitle">一片海域，一手魔法。下一场胜负由你决定。</p>
+        <p class="home-head__subtitle" :data-testid="route.query.first_battle === '1' ? 'first-battle-guide' : undefined">{{ route.query.first_battle === '1' ? '已选好简单电脑，点击「开始人机对战」练习布船与炮击。' : '一片海域，一手魔法。下一场胜负由你决定。' }}</p>
       </div>
       <div class="home-head__meta">
         <span class="home-pill" title="在线玩家">

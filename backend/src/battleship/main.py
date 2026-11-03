@@ -28,6 +28,7 @@ from .config import Settings, load_settings
 from .http.routers import admin as admin_router
 from .http.routers import battle_pass as battle_pass_router
 from .http.routers import shop as shop_router
+from .http.routers import mailbox as mailbox_router
 from .http.routers import auth as auth_router
 from .http.routers import chat as chat_router
 from .http.routers import contracts as contracts_router
@@ -47,6 +48,7 @@ from .http.routers import wallpapers as wallpapers_router
 from .infra.assets import AssetPaths
 from .infra.health import HealthService
 from .infra.logging import configure_logging, get_logger, log_context
+from .infra.backup import Maintenance
 from .infra.metrics import MetricsRegistry
 from .infra.ratelimit import RateLimiter
 from .realtime.server import create_socket_server
@@ -64,6 +66,7 @@ from .services.magic import MagicService
 from .services.matchmaking import MatchmakingService
 from .services.presence import PresenceService
 from .services.progression import ProgressionService
+from .services.ranked_seasons import RankedSeasonService
 from .services.replays import allowed_for_match, build_replay
 from .services.rooms import RoomService
 from .services.settlement import SettlementService
@@ -120,10 +123,15 @@ async def _lifespan(_app: FastAPI):
     gameplay = getattr(_app.state, "gameplay", None)
     if gameplay is not None:
         gameplay.start()
+    maintenance = getattr(_app.state, 'maintenance', None)
+    if maintenance is not None:
+        maintenance.start()
     magic = getattr(_app.state, "magic", None)
     try:
         yield
     finally:
+        if maintenance is not None:
+            await maintenance.stop()
         if gameplay is not None:
             await gameplay.stop()
         if magic is not None:
@@ -187,7 +195,7 @@ def _seed_game_rng(seed: int) -> None:
 def create_application(settings: Settings | None = None,
                        database: Database | None = None) -> Application:
     settings = settings or load_settings()
-    configure_logging(level=settings.log_level, json_output=settings.log_json)
+    configure_logging(level=settings.log_level, json_output=settings.log_json, error_log_path=settings.error_log_path)
     if settings.seed is not None:
         _seed_game_rng(settings.seed)
 
@@ -212,6 +220,7 @@ def create_application(settings: Settings | None = None,
     progression.register(settlement)
     battle_pass = BattlePassService(database)
     settlement.add_hook(battle_pass.settlement_hook)
+    ranked_seasons = RankedSeasonService(database)
 
     fastapi_app = FastAPI(
         title="Battleship 1.0 backend",
@@ -237,6 +246,8 @@ def create_application(settings: Settings | None = None,
         started = time.perf_counter()
         with log_context(request_id=request_id, method=request.method, path=request.url.path):
             try:
+                if request.url.path.startswith('/api/'):
+                    ranked_seasons.current()
                 response = await call_next(request)
             except Exception:
                 duration_ms = (time.perf_counter() - started) * 1000
@@ -248,6 +259,10 @@ def create_application(settings: Settings | None = None,
                 raise
 
             duration_ms = (time.perf_counter() - started) * 1000
+            if response.status_code >= 400 and request.url.path in ('/login', '/api/login'):
+                logger.warning('登录失败', extra={'status': response.status_code})
+            elif response.status_code >= 400 and request.url.path.startswith(('/api/mailbox/', '/api/admin/mailbox/')):
+                logger.warning('邮件操作失败', extra={'status': response.status_code})
             metrics.record_http(response.status_code, duration_ms)
             response.headers["X-Request-ID"] = request_id
             logger.info(
@@ -281,6 +296,7 @@ def create_application(settings: Settings | None = None,
     fastapi_app.include_router(admin_router.router)
     fastapi_app.include_router(battle_pass_router.router)
     fastapi_app.include_router(shop_router.router)
+    fastapi_app.include_router(mailbox_router.router)
 
     # User-uploaded avatars are the only surviving piece of `static/`; they keep
     # the frozen /static/avatars/... URL so existing profile rows still resolve.
@@ -376,6 +392,8 @@ def create_application(settings: Settings | None = None,
     fastapi_app.state.settlement = settlement
     fastapi_app.state.progression = progression
     fastapi_app.state.battle_pass = battle_pass
+    fastapi_app.state.ranked_seasons = ranked_seasons
+    fastapi_app.state.maintenance = Maintenance(database, ranked_seasons, settings.backup_directory)
     fastapi_app.state.anticheat = anticheat
     fastapi_app.state.auth = auth
     fastapi_app.state.matchmaking = matchmaking

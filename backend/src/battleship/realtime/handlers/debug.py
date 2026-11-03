@@ -42,8 +42,8 @@ async def debug_actor_allowed(
     settings: "Settings",
 ) -> bool:
     whitelist = settings.debug_admin_user_ids
-    if not whitelist:
-        return True  # 未配白名单：与旧行为一致（仅本地/自建环境应打开开关）
+    if len(whitelist) != 1:
+        return False
     try:
         session = await sio.get_session(sid)
     except Exception:

@@ -10,6 +10,8 @@ from __future__ import annotations
 import contextvars
 import json
 import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -100,6 +102,7 @@ def configure_logging(
     json_output: bool = True,
     stream: TextIO | None = None,
     force: bool = False,
+    error_log_path: Path | None = None,
 ) -> None:
     """配置根 logger。
 
@@ -109,17 +112,26 @@ def configure_logging(
 
     root = logging.getLogger()
     if force:
+        for previous in root.handlers:
+            previous.close()
         root.handlers.clear()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
 
     already = any(getattr(handler, "_battleship_structured", False) for handler in root.handlers)
-    if already and not force:
-        return
-
-    handler = logging.StreamHandler(stream or sys.stdout)
-    handler.setFormatter(StructuredJsonFormatter() if json_output else HumanFormatter())
-    handler._battleship_structured = True  # type: ignore[attr-defined]
-    root.addHandler(handler)
+    if not already:
+        handler = logging.StreamHandler(stream or sys.stdout)
+        handler.setFormatter(StructuredJsonFormatter() if json_output else HumanFormatter())
+        handler._battleship_structured = True  # type: ignore[attr-defined]
+        root.addHandler(handler)
+    if error_log_path is not None:
+        path = Path(error_log_path).resolve()
+        if not any(getattr(h, '_battleship_error_path', None) == str(path) for h in root.handlers):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            file_handler = RotatingFileHandler(path, maxBytes=5*1024*1024, backupCount=4, encoding='utf-8')
+            file_handler.setLevel(logging.WARNING)
+            file_handler.setFormatter(StructuredJsonFormatter())
+            file_handler._battleship_error_path = str(path)
+            root.addHandler(file_handler)
 
 
 def get_logger(name: str) -> logging.Logger:

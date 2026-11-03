@@ -236,6 +236,7 @@ export const useBattlePassStore = defineStore('battle-pass', () => {
   const view = ref<BattlePassView>(emptyView())
   const claiming = ref<string | null>(null)
   const usingFixture = ref(false)
+  const purchasing = ref(false)
   let requestToken = 0
 
   const season = computed(() => view.value.season)
@@ -369,7 +370,25 @@ export const useBattlePassStore = defineStore('battle-pass', () => {
     } finally { claiming.value = null }
   }
 
-  function reset(): void { status.value = 'idle'; error.value = ''; view.value = emptyView(); claiming.value = null; usingFixture.value = false; requestToken += 1 }
+  async function purchasePremium(): Promise<boolean> {
+    if (purchasing.value || season.value?.state !== 'active' || progress.value.premiumUnlocked) return false
+    purchasing.value = true; error.value = ''
+    const sid = season.value.id
+    try {
+      const response = await fetch('/api/battle-pass/purchase-premium', {
+        method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ season_id: sid }),
+      })
+      const body = await response.json()
+      if (!response.ok || !body.ok) throw new Error(body.reason || '豪华轨开通失败')
+      if (typeof body.balance === 'number') useWalletStore().apply({ balance: body.balance }, 'api')
+      await load(true, sid)
+      return true
+    } catch (cause) { error.value = cause instanceof Error ? cause.message : '购买失败'; return false }
+    finally { purchasing.value = false }
+  }
 
-  return { status, error, view, season, seasons, progress, levels, challenges, claims, claiming, usingFixture, load, claim, isClaimed, canClaim, reset }
+  function reset(): void { status.value = 'idle'; error.value = ''; view.value = emptyView(); claiming.value = null; usingFixture.value = false; purchasing.value = false; requestToken += 1 }
+
+  return { status, error, view, season, seasons, progress, levels, challenges, claims, claiming, purchasing, usingFixture, load, claim, purchasePremium, isClaimed, canClaim, reset }
 })

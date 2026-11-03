@@ -17,6 +17,9 @@ import socketio
 from ..identity import connection_from_sio
 from ...services.lobby import LobbyService
 from ...services.rooms import RoomService
+from ...infra.logging import get_logger
+
+logger = get_logger('room')
 
 
 async def _broadcast_lobby(lobby: LobbyService | None) -> None:
@@ -36,6 +39,8 @@ def register_room_handlers(sio: socketio.AsyncServer, rooms: RoomService,
         result = await rooms.create_room(connection, data)
         if result.get("status") == "success":
             await _broadcast_lobby(lobby)
+        else:
+            logger.warning('对局创建失败', extra={'user_id':connection.user_id,'reason':result.get('message')})
         return result
 
     @sio.on("join_room")

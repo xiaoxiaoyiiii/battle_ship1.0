@@ -132,11 +132,31 @@ html[data-theme='journal'] .app-theme-scrim {
 }
 
 .app-nav__icon {
+  position: relative;
   width: 34px;
   height: 34px;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   color: var(--text-secondary);
+}
+
+.app-nav__badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--role-enemy);
+  color: var(--surface-sea);
+  border: 1px solid var(--surface-deck);
+  font-size: 10px;
+  line-height: 1;
+  box-sizing: border-box;
+  pointer-events: none;
 }
 
 .app-nav__icon:hover {

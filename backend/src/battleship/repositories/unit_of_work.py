@@ -30,6 +30,8 @@ from .battle_pass import BattlePassRepository
 from .tide_ash import TideAshRepository
 from .shop import ShopRepository
 from .daily_challenge import DailyChallengeRepository
+from .ranked_seasons import RankedSeasonRepository
+from .mailbox import MailboxRepository
 
 
 class UnitOfWork:
@@ -108,6 +110,14 @@ class UnitOfWork:
     @property
     def shop(self) -> ShopRepository:
         return self._repository("shop", ShopRepository)
+
+    @property
+    def ranked_seasons(self) -> RankedSeasonRepository:
+        return self._repository('ranked_seasons', RankedSeasonRepository)
+
+    @property
+    def mailbox(self) -> MailboxRepository:
+        return self._repository('mailbox', MailboxRepository)
 
     def flush(self) -> None:
         self._require_session().flush()

@@ -205,7 +205,8 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const result = await postAuth(tab.value, name, password)
       if (result.status === 200) {
-        window.location.reload()
+        if (tab.value === 'register') window.location.assign('/welcome')
+        else window.location.reload()
         return
       }
       error.value = failureText(result.status, result.body)

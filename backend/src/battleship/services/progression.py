@@ -17,6 +17,7 @@ Settlement wiring is deliberately two hooks:
 from __future__ import annotations
 
 import json
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -48,8 +49,9 @@ def card_speeds() -> dict[str, int]:
 
 
 class ProgressionService:
-    def __init__(self, database: Database | None = None) -> None:
+    def __init__(self, database: Database | None = None, *, clock=None) -> None:
         self.database = database
+        self.clock = clock or time.time
 
     # --------------------------------------------------------------- wiring
 
@@ -74,6 +76,8 @@ class ProgressionService:
         if self.database is None or not facts.count_stats:
             return ctx
         with self.database.unit_of_work() as uow:
+            from .ranked_seasons import RankedSeasonService
+            RankedSeasonService(self.database).sync(uow)
             winner = uow.users.get(facts.winner_user_id)
             if winner is not None:
                 ctx["win_streak_before"] = max(0, int(winner.current_streak or 0))
@@ -219,6 +223,16 @@ class ProgressionService:
     def _settle_rank(self, uow: UnitOfWork, context: SettlementContext, room: Room,
                      facts: SettlementFacts, *,
                      player_ids: tuple[str, ...] | None = None) -> None:
+        from .ranked_seasons import RankedSeasonService
+        seasons = RankedSeasonService(self.database)
+        # 事务取得写入权后重新核对边界，不能用 pre-hook 前冻结的旧时间重开锁榜。
+        settled_at = max(context.timestamp, int(self.clock()))
+        current = seasons.sync(uow, now=settled_at)
+        sid = room.ranked_season_id
+        if sid is None and current and current['starts_at'] <= room.created_at < current['ends_at']:
+            sid = current['id']
+        if current is None or sid != current['id']:
+            return
         pre = context.pre or {}
         seconds = int(pre.get("seconds", facts.duration_seconds) or 0)
         rounds = max(0, int(pre.get("rounds", getattr(room, "round", 0)) or 0))
@@ -259,7 +273,7 @@ class ProgressionService:
             before_row = uow.stats.get_rank(user_id)
             before_points = int(before_row.get("points") or 0)
             _predicted, clamped = ranks.apply_delta(before_points, int(total))
-            uow.stats.add_rank_points(user_id, int(total), now=context.timestamp)
+            uow.stats.add_rank_points(user_id, int(total), now=settled_at)
             # Legacy reads the "before" server rank *after* this seat's write
             # (server.py:5229 then :5237), so the first ranked match shows 1/2
             # instead of 0/0. Keep the same order; before_points is still the
@@ -300,14 +314,18 @@ class ProgressionService:
             admiral_demoted = bool(row["before_admiral"]) and not ok
             if ok:
                 uow.stats.add_rank_points(uid, 0, is_admiral=True,
-                                          now=context.timestamp)
+                                          now=settled_at)
             elif row["before_admiral"] and not ranks.ADMIRAL_STICKY:
                 uow.stats.add_rank_points(uid, 0, is_admiral=False,
-                                          now=context.timestamp)
+                                          now=settled_at)
 
             final_row = uow.stats.get_rank(uid)
             after_points = int(final_row.get("points") or 0)
             after_admiral = bool(final_row.get("is_admiral"))
+            seasons.record_result(uow, sid, uid, row['is_winner'], now=settled_at,
+                match_id=context.match_id,
+                refresh=False,
+                before_tier=8 if row['before_admiral'] else ranks.points_tier_index(row['before_points']))
             server_rank = uow.stats.rank_position(uid)
             summary = ranks.solve_delta(row["before_points"], after_points)
             before_view = ranks.rank_view(
@@ -349,6 +367,8 @@ class ProgressionService:
                     ),
                 },
             })
+
+        seasons.refresh_admirals(uow,sid)
 
     # ------------------------------------------------------------- projections
 

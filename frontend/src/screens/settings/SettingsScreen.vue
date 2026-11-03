@@ -727,6 +727,8 @@ onMounted(() => {
       </section>
 
       <footer class="settings__actions">
+        <router-link class="button button--ghost" :to="{ name: 'terms' }" data-testid="settings-terms">用户协议</router-link>
+        <router-link class="button button--ghost" :to="{ name: 'privacy' }" data-testid="settings-privacy-policy">隐私政策</router-link>
         <button type="button" class="button button--ghost" data-testid="settings-back" @click="router.push({ name: 'start' })">
           返回首页
         </button>

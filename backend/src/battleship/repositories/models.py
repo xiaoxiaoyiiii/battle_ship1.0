@@ -233,6 +233,60 @@ class BattlePassSeason(Base):
     updated_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
 
 
+class RankedSeasonState(Base):
+    __tablename__ = 'ranked_season_states'
+    season_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    opened_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    locked_at: Mapped[int | None] = mapped_column(sa.Integer)
+
+
+class RankedSeasonAccount(Base):
+    __tablename__ = 'ranked_season_accounts'
+    season_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    points: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    is_admiral: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    ranked_wins: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    ranked_losses: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    peak_tier: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    updated_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+
+
+class RankedSeasonResult(Base):
+    __tablename__ = 'ranked_season_results'
+    match_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    season_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+
+
+class MailDispatch(Base):
+    __tablename__ = 'mail_dispatches'
+    source_key: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    actor: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    payload_hash: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    created_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+
+
+class PlayerMail(Base):
+    __tablename__ = 'player_mail'
+    id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    user_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    source_key: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    title: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    body: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    attachments: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    created_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    expires_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    attachment_expires_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    read_at: Mapped[int | None] = mapped_column(sa.Integer)
+    claimed_at: Mapped[int | None] = mapped_column(sa.Integer)
+    deleted_at: Mapped[int | None] = mapped_column(sa.Integer)
+    __table_args__ = (
+        sa.UniqueConstraint('user_id', 'source_key', name='uq_player_mail_source'),
+        Index('idx_player_mail_user_time', 'user_id', 'created_at'),
+    )
+
+
 class BattlePassLevel(Base):
     __tablename__ = "battle_pass_levels"
 

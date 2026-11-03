@@ -5,6 +5,7 @@ import { useLobbyStore, type LobbyMatch } from '../../stores/lobby'
 import { useHomeStore } from '../../stores/home'
 import { useLobbyActions } from './useLobbyActions'
 import AppOverlay from '../../components/AppOverlay.vue'
+import ActivityCalendar from '../../components/ActivityCalendar.vue'
 import MutationList from '../../components/MutationList.vue'
 import BanPreselection from '../../components/BanPreselection.vue'
 import LobbyPreviewCard from './LobbyPreviewCard.vue'
@@ -23,6 +24,7 @@ const socialOpen = ref(false)
 const socialView = ref<'players' | 'chat' | 'friends'>('players')
 const weeklyOpen = ref(false)
 const announcementOpen = ref(false)
+const calendarOpen = ref(false)
 const activePreview = ref<'rooms' | 'matches'>('rooms')
 const paged = computed(() => size.value.height < 550 && size.value.width < 500)
 const compact = computed(() => size.value.width < 1000 || size.value.height < 520)
@@ -53,7 +55,7 @@ onBeforeUnmount(() => observer?.disconnect())
 
 <template>
   <section ref="root" class="lp-page ld-dashboard" :class="{ 'ld-dashboard--compact': compact, 'ld-dashboard--paged': paged, 'ld-dashboard--short': size.height < 550, 'ld-dashboard--sideways': sideways }" data-screen="lobby" data-testid="screen-lobby" aria-labelledby="lobby-title" :style="{ '--ld-slots': previewCount }">
-    <header class="ld-heading"><div><h1 id="lobby-title" data-testid="lobby-heading">游戏大厅</h1><p>选择一位对手，开始下一场较量。</p></div><div class="ld-heading-actions"><div v-if="lobby.ownRoomId && paged" data-testid="lobby-own-room"><router-link class="button button--ghost" data-testid="lobby-own-room-return" :to="{ name: 'lobby-room' }" :title="actions.ownRoomName.value">返回房间</router-link><span class="sr-only" data-testid="lobby-own-room-id">{{ lobby.ownRoomId }}</span></div><button v-if="changelog" class="lp-link" data-testid="lobby-changelog" @click="announcementOpen = true">公告</button><button class="button button--ghost" data-testid="lobby-refresh" @click="actions.refresh()">刷新</button></div></header>
+    <header class="ld-heading"><div><h1 id="lobby-title" data-testid="lobby-heading">游戏大厅</h1><p>选择一位对手，开始下一场较量。</p></div><div class="ld-heading-actions"><button class="lp-link" data-testid="lobby-calendar" @click="calendarOpen = true">活动日历</button><div v-if="lobby.ownRoomId && paged" data-testid="lobby-own-room"><router-link class="button button--ghost" data-testid="lobby-own-room-return" :to="{ name: 'lobby-room' }" :title="actions.ownRoomName.value">返回房间</router-link><span class="sr-only" data-testid="lobby-own-room-id">{{ lobby.ownRoomId }}</span></div><button v-if="changelog" class="lp-link" data-testid="lobby-changelog" @click="announcementOpen = true">公告</button><button class="button button--ghost" data-testid="lobby-refresh" @click="actions.refresh()">刷新</button></div></header>
     <section v-if="lobby.ownRoomId && !paged" class="ld-own-room" data-testid="lobby-own-room"><div><b :title="actions.ownRoomName.value">{{ actions.ownRoomName.value }}</b><small>我的房间 · <span data-testid="lobby-own-room-id">{{ lobby.ownRoomId }}</span> · {{ lobby.ownRoomPublic ? '公开' : '私密' }}</small></div><router-link class="button button--ghost" :to="{ name: 'lobby-room' }" data-testid="lobby-own-room-return">返回房间</router-link></section>
     <nav class="ld-actions" aria-label="大厅主行动"><button class="button lp-primary" data-testid="lobby-match-casual" :disabled="!!lobby.queueMode || !!lobby.ownRoomId" @click="actions.startMatch('casual')">快速匹配</button><router-link class="button" data-testid="lobby-create-room" :to="{ name: lobby.ownRoomId ? 'lobby-room' : 'lobby-create' }">{{ lobby.ownRoomId ? '我的房间' : '创建房间' }}</router-link><button v-if="!lobby.queueMode" class="button button--ghost" data-testid="lobby-match-ranked" :disabled="!!lobby.ownRoomId" @click="actions.startMatch('ranked')">排位匹配</button><button v-else class="button button--danger" data-testid="lobby-match-cancel" @click="actions.cancelMatch()">取消匹配</button><span v-if="lobby.queueMode" class="ld-queue" data-testid="lobby-queue-state" role="status">{{ lobby.queueMode === 'ranked' ? '排位' : '休闲' }}匹配中…</span><span v-else class="ld-actions-hint">1v1 海战 · 自定义房不计排位分</span></nav>
     <div class="ld-main"><div class="ld-previews">
@@ -67,4 +69,5 @@ onBeforeUnmount(() => observer?.disconnect())
     <AppOverlay v-if="announcementOpen" id="lobby-announcement" label="更新公告" @close="announcementOpen = false"><section class="lp-dialog-small ld-detail-dialog"><h2>更新公告</h2><p>{{ changelog }}</p><button class="button" data-testid="lobby-changelog-close" @click="announcementOpen = false">知道了</button></section></AppOverlay>
     <AppOverlay v-if="daily.open.value" id="daily-challenge-dialog" label="每日挑战" @close="daily.open.value = false"><DailyChallengePanel :view="daily.view.value" :busy="daily.busy.value" :error="daily.error.value" @start="daily.start" @refresh="daily.load" /></AppOverlay>
   </section>
+  <ActivityCalendar v-if="calendarOpen" @close="calendarOpen = false" />
 </template>

@@ -139,6 +139,7 @@ watch(
       </div>
 
       <footer class="auth-actions">
+        <p class="auth-card__guest"><router-link :to="{ name: 'terms' }" @click="auth.close()">用户协议</router-link> · <router-link :to="{ name: 'privacy' }" @click="auth.close()">隐私政策</router-link></p>
         <button
           type="submit"
           class="button auth-submit"

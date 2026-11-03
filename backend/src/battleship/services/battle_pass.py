@@ -192,6 +192,26 @@ class BattlePassService:
                 return False
             return uow.battle_pass.unlock_premium(user_id, str(season["id"]), now=now)
 
+    def purchase_premium(self, user_id: str, season_id: str | None = None,
+                         *, now: int | None = None) -> dict[str, Any]:
+        """过渡期豪华轨用徽记购买；扣款与开通共用写锁及事务。"""
+        now = int(time.time()) if now is None else int(now)
+        with self.database.unit_of_work() as uow:
+            if not uow.users.get(user_id):
+                return {'ok': False, 'reason': '账号不存在'}
+            uow.tide_ash.lock(user_id, now=now)
+            season = uow.battle_pass.get_season(season_id) if season_id else uow.battle_pass.current_season(now)
+            if season is None or season_state(now, _config(season)) != 'active':
+                return {'ok': False, 'reason': '只能在赛季进行中购买豪华轨'}
+            sid = str(season['id'])
+            if uow.battle_pass.progress(user_id, sid)['premium_unlocked']:
+                return {'ok': True, 'already_unlocked': True, 'balance': uow.tide_ash.balance(user_id)}
+            if not uow.tide_ash.apply_once(user_id, 'premium_purchase', sid, -3000, now=now):
+                return {'ok': False, 'reason': '潮汐徽记不足，需要 3000 枚'}
+            if not uow.battle_pass.unlock_premium(user_id, sid, now=now):
+                raise RuntimeError('豪华轨开通失败，扣款已回滚')
+            return {'ok': True, 'already_unlocked': False, 'balance': uow.tide_ash.balance(user_id)}
+
     def seed_default(self, season_id: str, starts_at: int, *, now: int | None = None) -> dict[str, Any]:
         """由受控运维入口创建一套 8 周、50 级的首季目录。"""
         starts_at = int(starts_at)
@@ -199,6 +219,12 @@ class BattlePassService:
         claim_ends_at = ends_at + 14 * 24 * 3600
         config = SeasonConfig(season_id, starts_at, ends_at, claim_ends_at, 50, 18_000, 2)
         with self.database.unit_of_work() as uow:
+            uow.ranked_seasons.lock()
+            if uow.battle_pass.get_season(season_id) is None and any(
+                row['starts_at'] < ends_at and row['ends_at'] > starts_at
+                for row in uow.ranked_seasons.seasons()
+            ):
+                raise ValueError('season_overlap')
             # 唯一键保证并行重试也不能覆盖已公布的赛季日期。
             uow.battle_pass.create_season_once(config, status="active", now=now)
             existing = uow.battle_pass.get_season(season_id)

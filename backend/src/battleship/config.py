@@ -35,6 +35,8 @@ ENV_NAME_BY_FIELD: dict[str, str] = {
     "log_level": "LOG_LEVEL",
     "log_json": "LOG_JSON",
     "daily_puzzles_path": "DAILY_PUZZLES_PATH",
+    "error_log_path": "ERROR_LOG_PATH",
+    "backup_directory": "BACKUP_DIRECTORY",
 }
 
 DEFAULT_CORS_ORIGINS = "http://localhost:5000,http://127.0.0.1:5000"
@@ -62,6 +64,8 @@ class Settings(BaseSettings):
 
     database_path: Path = Path("./battleship.db")
     daily_puzzles_path: Path = Path('./config/daily_puzzles.json')
+    error_log_path: Path = Path('.tmp/logs/errors.log')
+    backup_directory: Path | None = None
     turn_timeout_seconds: int = Field(default=90, ge=0)
     chain_display_delay_seconds: float = Field(default=1.2, ge=0)
     enable_test_events: bool = False

@@ -16,6 +16,7 @@ import socketio
 
 from ..identity import connection_from_sio
 from ...services.lobby import LobbyService
+from ...infra.logging import get_logger
 
 
 def register_lobby_handlers(sio: socketio.AsyncServer, lobby: LobbyService) -> None:
@@ -37,7 +38,10 @@ def register_lobby_handlers(sio: socketio.AsyncServer, lobby: LobbyService) -> N
     @sio.on("lobby_create_room")
     async def lobby_create_room(sid: str, data: dict[str, Any] | None = None) -> dict:
         connection = await connection_from_sio(sio, sid)
-        return await lobby.create_room(connection, data)
+        result = await lobby.create_room(connection, data)
+        if result.get('status') != 'success':
+            get_logger('lobby').warning('对局创建失败',extra={'user_id':connection.user_id,'reason':result.get('message')})
+        return result
 
     @sio.on("lobby_chat_send")
     async def lobby_chat_send(sid: str, data: dict[str, Any] | None = None) -> dict:

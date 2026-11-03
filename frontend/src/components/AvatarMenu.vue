@@ -107,6 +107,7 @@ function logout(): void {
       <router-link class="app-menu__item" :to="{ name: 'profile' }" data-testid="avatar-item-profile" @click="close">
         名片与战绩
       </router-link>
+      <router-link class="app-menu__item" :to="{ name: 'mailbox' }" @click="close">玩家邮箱</router-link>
       <button type="button" class="app-menu__item" data-testid="avatar-item-collection" @click="openCollection">
         收藏（图鉴）
       </button>
@@ -144,6 +145,7 @@ function logout(): void {
 
     <section class="app-menu__group" data-testid="avatar-group-about" aria-labelledby="avatar-group-about-title">
       <h2 id="avatar-group-about-title" class="app-menu__title">帮助与关于</h2>
+      <router-link v-if="isAdmin" class="app-menu__item" :to="{ name: 'admin-mailbox' }" data-testid="admin-mail-entry" @click="close">运营发信</router-link>
       <button
         type="button"
         class="app-menu__item"

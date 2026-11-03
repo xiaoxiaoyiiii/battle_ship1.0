@@ -40,6 +40,9 @@ VETERAN_SECONDS = VETERAN_DAYS * 24 * 3600
 # ---------------------------------------------------------------------------
 # 7 个称号（设计稿 §5.1）
 TITLES = [
+    {"id": "ranked_voyager", "name": "赛季启航者", "desc": "以坚持写下这一季的航迹", "requirement": "排位赛季下三段结算奖励"},
+    {"id": "ranked_navigator", "name": "赛季领航者", "desc": "在风浪中找到自己的航道", "requirement": "排位赛季中三段结算奖励"},
+    {"id": "ranked_overlord", "name": "赛季镇海者", "desc": "这一季的海域记住了你的名字", "requirement": "排位赛季上三段结算奖励"},
     {"id": "rookie", "name": "新兵", "desc": "刚登上甲板的新面孔",
      "requirement": "无门槛"},
     {"id": "sailor", "name": "老水手", "desc": "风浪见得多，甲板踩得熟",
@@ -152,7 +155,7 @@ CARD_BGS = [
     {"id": "starfield", "name": "星海", "desc": "整片星海泡在海里",
      "rank_tier": 8},
     {"id": "season_deep_1", "name": "深海远征", "desc": "深海远征赛季专属名片底色",
-     "requirement": "赛季通行证奖励"},
+     "requirement": "排位赛季下三段结算奖励"},
     {"id": "kelp_green", "name": "深海藻绿", "desc": "低饱和青绿，像沉船旁的海水",
      "requirement": "累计出牌 ≥ 60"},
     {"id": "moonlit", "name": "月下潮痕", "desc": "深蓝里浮着银白航迹",
@@ -160,7 +163,7 @@ CARD_BGS = [
     {"id": "coral_dawn", "name": "珊瑚晨曦", "desc": "温暖但不喧闹的海面颜色",
      "requirement": "最高连胜 ≥ 12"},
     {"id": "abyssal_grid", "name": "深渊网格", "desc": "黑金网格标记未知海沟",
-     "requirement": "赛季通行证奖励"},
+     "requirement": "排位赛季中三段结算奖励"},
 ]
 
 # 个人资料整体背景：与名片头图分开装备，覆盖个人资料页的空白区域。
@@ -190,7 +193,7 @@ POINTER_EFFECTS = [
     {"id": "stardust", "name": "星尘航迹", "desc": "移动留下星尘尾迹，点击爆发粒子",
      "requirement": "胜场 ≥ 20"},
     {"id": "eclipse", "name": "日蚀脉冲", "desc": "暗金脉冲与环形爆发",
-     "requirement": "赛季通行证奖励"},
+     "requirement": "排位赛季上三段结算奖励"},
 ]
 
 # 称号外观动效：基础称号轻流光，高阶称号可装备更明显的呼吸/星环效果。

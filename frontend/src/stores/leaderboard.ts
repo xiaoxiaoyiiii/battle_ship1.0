@@ -48,6 +48,8 @@ export const useLeaderboardStore = defineStore('leaderboard', () => {
   const activeTab = ref<BoardTab>('record')
   const record = ref<BoardState>(emptyBoard())
   const ranked = ref<BoardState>(emptyBoard())
+  const seasons = ref<JsonObject[]>([])
+  const season = ref<JsonObject | null>(null)
 
   let recordToken = 0
   let rankedToken = 0
@@ -72,16 +74,18 @@ export const useLeaderboardStore = defineStore('leaderboard', () => {
     }
   }
 
-  async function loadRanked(): Promise<void> {
+  async function loadRanked(seasonId = ''): Promise<void> {
     const token = ++rankedToken
     ranked.value = { status: 'loading', rows: ranked.value.rows, error: '', total: ranked.value.total, myRank: null }
     try {
-      const data = await getJson('/api/ranked_leaderboard?limit=100&offset=0')
+      const data = await getJson('/api/ranked_leaderboard?limit=100&offset=0' + (seasonId ? `&season_id=${encodeURIComponent(seasonId)}` : ''))
       if (token !== rankedToken) return
       const body = asObject(data)
       const rows = body ? body.leaderboard : null
       if (!Array.isArray(rows)) throw new Error('段位榜数据异常')
       const myRank = Number(body ? body.my_rank : NaN)
+      season.value = asObject(body?.season)
+      seasons.value = asObjects(body?.seasons)
       ranked.value = {
         status: 'ready',
         rows: asObjects(rows),
@@ -116,7 +120,8 @@ export const useLeaderboardStore = defineStore('leaderboard', () => {
     activeTab.value = 'record'
     record.value = emptyBoard()
     ranked.value = emptyBoard()
+    season.value = null; seasons.value = []
   }
 
-  return { activeTab, record, ranked, active, loadRecord, loadRanked, setTab, reset }
+  return { activeTab, record, ranked, active, season, seasons, loadRecord, loadRanked, setTab, reset }
 })

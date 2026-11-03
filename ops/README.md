@@ -151,6 +151,10 @@ and `ARENA_SCREEN_LIST` belonged to the migration window and are rejected.
 
 ## Contract artifact
 
+赛季与邮箱运营补充：`DEBUG_ADMIN_USER_IDS` 仅保留用户本人原有账号，不能填多个账号；测试事件在生产仍保持关闭。`ERROR_LOG_PATH` 保存登录、建房、结算、邮件等失败，默认 `.tmp/logs/errors.log`，生产示例使用 `/var/lib/battleship/logs/errors.log`。每周备份随服务启动，不另装定时器；`BACKUP_DIRECTORY` 默认是数据库同目录的 `backups/`，每 7 天生成 SQLite 一致性快照，保留最近四份，失败记日志后重试。服务账号须能写入日志和备份目录。
+
+首季仍在正式开服时初始化，排位与通行证共用同一配置；下一季须由原受控赛季入口安排不重叠日期。本包不自动提前创建正式赛季。邮箱运营入口为账号菜单的「运营发信」，具体时效与软重置表见 [赛季邮箱运营说明](../docs/SEASON_MAILBOX_V1.md)。
+
 ```powershell
 $env:PYTHONPATH="backend/src"
 python -m battleship.contracts.export_schema --out ..\contracts.schema.json

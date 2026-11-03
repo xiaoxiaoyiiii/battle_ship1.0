@@ -143,6 +143,12 @@ function backHome(): void {
     </div>
     </header>
 
+    <div v-if="activeTab === 'ranked'" class="leaderboard__season" data-testid="ranked-season-selector">
+      <label>排位赛季 <select :value="text(board.season, 'id')" :disabled="activeBoard.status === 'loading'" @change="board.loadRanked(($event.target as HTMLSelectElement).value)"><option v-if="!board.seasons.length" value="">暂无赛季</option><option v-for="item in board.seasons" :key="text(item, 'id')" :value="text(item, 'id')">{{ text(item, 'id') }}</option></select></label>
+      <span>{{ board.season?.locked ? '赛季已结束，榜单已锁定' : board.season ? '本季战绩，结季后锁榜' : '首季日期将在开服后公布' }}</span>
+      <router-link :to="{ name: 'mailbox' }">领取季末嘉奖</router-link>
+    </div>
+
     <p v-if="activeTab === 'ranked' && activeBoard.status === 'loading' && activeBoard.rows.length === 0"
        class="leaderboard__state" data-testid="leaderboard-ranked-loading" role="status">
       正在加载段位榜…
@@ -332,6 +338,8 @@ function backHome(): void {
 </template>
 
 <style scoped>
+.leaderboard__season { display:flex; align-items:center; flex-wrap:wrap; gap:12px 20px; color:var(--text-secondary); font-size:13px; }
+.leaderboard__season select { max-width:100%; padding:8px; border:1px solid var(--border-subtle); border-radius:6px; background:var(--surface-deck); color:var(--text-primary); font:inherit; }
 .leaderboard { width: min(1490px, 100%); margin: 0 auto; gap: 20px; padding: 24px 28px 28px; }
 .leaderboard__head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 18px 24px; }
 .leaderboard__title { margin: 0; color: var(--text-primary); font-size: 30px; line-height: 1.25; }

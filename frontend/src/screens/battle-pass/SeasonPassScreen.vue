@@ -143,7 +143,9 @@ watch(() => auth.isGuest, () => { store.reset(); void load() })
           <div class="season-pass__progress-main">
             <div class="season-pass__progress-copy"><b>{{ progress.xp.toLocaleString() }} XP</b><span data-testid="season-xp-total">{{ season.totalXp.toLocaleString() }} XP</span></div>
             <div class="season-pass__progress-bar" role="progressbar" :aria-valuenow="progress.xp" :aria-valuemax="season.totalXp" aria-label="赛季经验"><i :style="{ width: xpPercent + '%' }"></i></div>
-            <p>经验自动入账；奖励达到等级后手动领取。{{ progress.premiumUnlocked ? '豪华轨道已解锁。' : '豪华轨道由管理员授予。' }}</p>
+            <p>经验自动入账；奖励达到等级后手动领取。{{ progress.premiumUnlocked ? '豪华轨道已解锁。' : '当前可用 3000 潮汐徽记开通本季豪华轨，无需充值。' }}</p>
+            <button v-if="!progress.premiumUnlocked && season?.state === 'active'" class="button button--primary" data-testid="premium-purchase" :disabled="store.purchasing || store.status !== 'ready'" @click="store.purchasePremium()">{{ store.purchasing ? '开通中…' : '3000 徽记 · 开通本季豪华轨' }}</button>
+            <p><router-link :to="{ name: 'mailbox' }">排位季末奖励请前往邮箱领取</router-link></p>
             <p class="season-pass__rules">仅真人排位与休闲计入。对局经验：完赛 +25，胜利 +15，每周上限 800。潮汐徽记：完赛 +8，胜利 +4，每日上限 60。</p>
           </div>
           <div class="season-pass__summary-stat"><span>赛季挑战</span><strong>{{ store.challenges.filter((item) => item.completed).length }} / {{ store.challenges.length }}</strong></div>

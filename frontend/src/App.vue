@@ -28,6 +28,7 @@ import { isInitialBanPlacement } from './stores/cardBans'
 import { useUiStore } from './stores/ui'
 import { useAudioStore } from './stores/audio'
 import { useShopStore } from './stores/shop'
+import { useMailboxStore } from './stores/mailbox'
 import { installInteractionAudio } from './audio/interactions'
 
 /**
@@ -95,6 +96,21 @@ const destinations = [
   { name: 'leaderboard', label: '排行' },
 ]
 const shop = useShopStore()
+const mailbox = useMailboxStore()
+let mailPoll: number | null = null
+function refreshMailbox(): void {
+  if (!auth.isGuest && !immersive.value && !document.hidden) void mailbox.load()
+}
+onMounted(() => {
+  refreshMailbox()
+  mailPoll = window.setInterval(refreshMailbox, 60000)
+  document.addEventListener('visibilitychange', refreshMailbox)
+})
+onBeforeUnmount(() => {
+  if (mailPoll !== null) window.clearInterval(mailPoll)
+  document.removeEventListener('visibilitychange', refreshMailbox)
+})
+watch(() => auth.isGuest, guest => { if (guest) mailbox.reset(); else refreshMailbox() })
 watch(() => auth.isGuest, (guest) => {
   if (guest) shop.reset()
   else void shop.load(true)
@@ -342,6 +358,10 @@ onBeforeUnmount(() => {
 
         <div class="app-nav__meta">
           <TideAshBadge />
+          <router-link class="app-nav__icon" :to="{ name: 'mailbox' }" data-testid="nav-mailbox" :aria-label="mailbox.unclaimedCount ? `邮箱（${mailbox.unclaimedCount} 封待领附件）` : '邮箱'" title="邮箱">
+            <span v-if="mailbox.unclaimedCount" class="app-nav__badge" data-testid="nav-mailbox-badge">{{ mailbox.unclaimedCount }}</span>
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 6 9 7 9-7"/></svg>
+          </router-link>
           <button
             type="button"
             class="app-nav__icon"

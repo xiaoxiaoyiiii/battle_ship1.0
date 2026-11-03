@@ -156,7 +156,11 @@ class AuthService:
         """DEBUG_ADMIN_USER_IDS semantics: empty means nobody is an admin."""
         if not user_id:
             return False
-        return str(user_id) in self.settings.debug_admin_user_ids
+        whitelist = self.settings.debug_admin_user_ids
+        if len(whitelist) != 1 or str(user_id) not in whitelist:
+            return False
+        with self.database.unit_of_work() as uow:
+            return uow.users.get(str(user_id)) is not None
 
     # ------------------------------------------------------------------- bans
 

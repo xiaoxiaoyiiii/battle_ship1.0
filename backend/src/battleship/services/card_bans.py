@@ -16,6 +16,8 @@ def points_for_user(database, user_id) -> int:
     if database is None or not user_id:
         return 0
     with database.unit_of_work() as uow:
+        from .ranked_seasons import RankedSeasonService
+        RankedSeasonService(database).sync(uow)
         return int(uow.stats.get_rank(user_id).get('points') or 0)
 
 

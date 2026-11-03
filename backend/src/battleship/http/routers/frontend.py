@@ -257,6 +257,11 @@ def install(app: FastAPI, dist: str | Path) -> str:
     def spa_index(request: Request) -> HTMLResponse:
         return _index_response(dist, build_id, request)
 
+    @router.get('/admin/mailbox')
+    def admin_mail_shell(request: Request) -> HTMLResponse:
+        # 仅注册这条客户端页面；所有管理数据与动作仍由各自 API 校验身份。
+        return _index_response(dist, build_id, request)
+
     @router.get("/{spa_path:path}")
     def spa_fallback(spa_path: str, request: Request) -> HTMLResponse:
         first = spa_path.split("/", 1)[0]

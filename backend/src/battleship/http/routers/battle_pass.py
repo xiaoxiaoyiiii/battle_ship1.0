@@ -61,6 +61,19 @@ async def unlock_battle_pass(request: Request, admin_id: str = Depends(require_a
     return JSONResponse({"ok": ok, "user_id": target}, status_code=200 if ok else 404)
 
 
+@router.post('/api/battle-pass/purchase-premium')
+async def purchase_premium(request: Request, user_id: str = Depends(require_user)):
+    try:
+        payload = await request.json()
+    except ValueError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    result = BattlePassService(request.app.state.database).purchase_premium(
+        user_id, str(payload.get('season_id') or '') or None)
+    return JSONResponse(result, status_code=200 if result['ok'] else 409)
+
+
 @router.post("/api/admin/battle-pass/seed")
 async def seed_battle_pass(request: Request, admin_id: str = Depends(require_admin)):
     try:
@@ -78,9 +91,9 @@ async def seed_battle_pass(request: Request, admin_id: str = Depends(require_adm
     try:
         result = BattlePassService(request.app.state.database).seed_default(season_id, starts_at)
     except ValueError as exc:
-        if str(exc) != "season_rules_conflict":
+        if str(exc) not in {"season_rules_conflict", "season_overlap"}:
             raise
-        return JSONResponse({"ok": False, "reason": "season_rules_conflict"}, status_code=409)
+        return JSONResponse({"ok": False, "reason": str(exc)}, status_code=409)
     return JSONResponse({"ok": True, "admin_id": admin_id, **result})
 
 

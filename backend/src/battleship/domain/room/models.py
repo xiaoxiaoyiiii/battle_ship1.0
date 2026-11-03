@@ -282,6 +282,7 @@ class Room:
     name: str = ""
     public: bool = True
     ranked: bool = False
+    ranked_season_id: str | None = None
     matchmade: bool = False
     is_ai_room: bool = False
     # 每局冻结的突变规则与独立确认；卡牌整盘重摆不会重置这些赛前事实。

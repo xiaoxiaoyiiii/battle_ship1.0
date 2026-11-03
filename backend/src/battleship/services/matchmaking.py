@@ -144,6 +144,16 @@ class MatchmakingService:
 
         if mode == MATCH_MODE_RANKED and not connection.user_id:
             return await self._deny(connection.sid, "排位模式需要先登录")
+        season = None
+        if mode == MATCH_MODE_RANKED and self.database is not None:
+            from .ranked_seasons import RankedSeasonService
+            season = RankedSeasonService(self.database).current()
+            if season is None:
+                return await self._deny(connection.sid, '当前没有正在进行的排位赛季')
+            for entry in list(self.rooms.match_queue):
+                if entry.get('mode') == MATCH_MODE_RANKED and entry.get('ranked_season_id') != season['id']:
+                    self.rooms.remove_from_match_queue(entry['sid'])
+                    await self._publisher.emit('match_canceled', {'status':'success','message':'赛季已切换，请重新加入排位匹配'},to=entry['sid'])
         # 同一账号的新连接也不能绕过尚未退出的对局。
         if any(
             room.state not in (RoomState.WAITING, RoomState.GAME_OVER)
@@ -182,6 +192,7 @@ class MatchmakingService:
             "enqueued_at": time.time(),
             "ip": connection.ip,
             "ban_preselection": list(preselection),
+            "ranked_season_id": season['id'] if season else None,
         })
         await self._publisher.emit(
             "match_queued",
@@ -233,6 +244,7 @@ class MatchmakingService:
     def _create_room(self, first: dict, second: dict) -> tuple[Room, dict, dict]:
         room = Room(id=new_room_id())
         room.ranked = first.get("mode") == MATCH_MODE_RANKED
+        room.ranked_season_id = first.get('ranked_season_id') if room.ranked else None
         room.ban_enabled = room.ranked
         if room.ranked:
             room.ban_quota = bans.match_quota(points_for_user(self.database, first.get('user_id')),

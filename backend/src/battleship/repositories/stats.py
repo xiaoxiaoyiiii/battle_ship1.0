@@ -31,6 +31,7 @@ from .models import (
 
 COUNTER_ADD_FIELDS = ("sunk_total", "matches_played", "flawless_wins")
 COUNTER_FIELDS = ("sunk_total", "matches_played", "flawless_wins", "fastest_win_sec")
+RANKED_PLAYED = UserRank.ranked_wins + UserRank.ranked_losses > 0
 
 
 def _limit(value: int, maximum: int = 100) -> int:
@@ -342,6 +343,7 @@ class StatsRepository:
                 UserRank.ranked_losses,
                 UserRank.updated_at,
             )
+            .where(RANKED_PLAYED)
             .order_by(
                 UserRank.points.desc(),
                 func.coalesce(UserRank.updated_at, 0),
@@ -354,7 +356,7 @@ class StatsRepository:
 
     def count_rank_at_least(self, points: int) -> int:
         statement = select(func.count()).select_from(UserRank).where(
-            UserRank.points >= max(0, int(points))
+            UserRank.points >= max(0, int(points)), RANKED_PLAYED
         )
         return int(self.session.scalar(statement) or 0)
 
@@ -371,7 +373,7 @@ class StatsRepository:
                 UserRank.ranked_losses,
                 UserRank.updated_at,
             )
-            .where(UserRank.points >= int(CAPTAIN_FLOOR))
+            .where(UserRank.points >= int(CAPTAIN_FLOOR), RANKED_PLAYED)
             .order_by(
                 UserRank.points.desc(),
                 func.coalesce(UserRank.updated_at, 0),
@@ -389,7 +391,7 @@ class StatsRepository:
 
         row = self.session.execute(
             select(UserRank.points, UserRank.updated_at, UserRank.user_id).where(
-                UserRank.user_id == user_id
+                UserRank.user_id == user_id, RANKED_PLAYED
             )
         ).first()
         if row is None:
@@ -398,6 +400,7 @@ class StatsRepository:
         ahead = self.session.scalar(
             select(func.count())
             .select_from(UserRank)
+            .where(RANKED_PLAYED)
             .where(
                 (UserRank.points > points)
                 | (

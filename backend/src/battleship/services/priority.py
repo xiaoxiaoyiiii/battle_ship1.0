@@ -31,6 +31,8 @@ async def room_action(room: Room):
     async with gate['lock']:
         gate['owner'] = task
         try:
+            from ..domain.daily_challenge import record_action_point
+            record_action_point(room)
             from ..domain.replay_v2 import record_state
             from ..domain.replay import step_count
             if not room.settled:
@@ -58,6 +60,9 @@ def guard_phase_write(method=None, *, allow_priority=False):
             return await method(self, *args, **kwargs)
         room._viewing_commit_hook = self.rooms.viewing.commit
         async with room_action(room):
+            daily = getattr(self.rooms, 'daily_challenges', None)
+            if daily and await daily.expire(room):
+                return {'status': 'error', 'message': '昨日挑战已结束，不能补打'}
             if room.priority_pending and not allow_priority:
                 return {'status': 'error', 'message': '阶段转换询问中，请先完成响应或等待对方回答'}
             return await method(self, *args, **kwargs)

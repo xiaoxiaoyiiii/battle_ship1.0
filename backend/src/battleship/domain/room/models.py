@@ -366,6 +366,13 @@ class Room:
     game_effects: dict[str, Any] = field(default_factory=dict)
     game_logs: list[dict[str, Any]] = field(default_factory=list)
     replay: dict[str, Any] | None = None
+    daily_challenge: dict[str, Any] | None = None
+    daily_candidate_snapshots: list[dict[str, Any]] = field(default_factory=list, repr=False)
+    # 重摆流程与选择项序号也是引擎态，不能只以动态属性存在而漏出快照。
+    lingqi_resurgence_applied: bool = False
+    lingqi_saved_state: dict[str, Any] | None = None
+    polar_reversal_applied: bool = False
+    magic_temp_seq: int = 0
     _viewing_recording: dict[str, Any] | None = None
     _viewing_public_frame: dict[str, Any] | None = None
     _viewing_commit_hook: Any = None

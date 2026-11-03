@@ -23,6 +23,7 @@ export interface GameOverRecord {
   /** Authoritative match id only when the server really persisted a replay. */
   matchId: string | null
   receivedAt: number
+  challenge?: JsonObject | null
 }
 
 function asObject(value: unknown): JsonObject | null {
@@ -52,6 +53,7 @@ export const useResultStore = defineStore('result', () => {
       reason: asString(payload.reason) || asString(payload.game_over_reason),
       matchId: asString(rawMatchId) || null,
       receivedAt: Date.now(),
+      challenge: 'daily_challenge' in payload ? asObject(payload.daily_challenge) : gameOver.value?.challenge ?? null,
     }
   }
 

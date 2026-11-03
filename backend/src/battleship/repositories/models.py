@@ -33,6 +33,27 @@ class Base(DeclarativeBase):
     """Declarative base shared by every repository model."""
 
 
+class DailyChallengeAttempt(Base):
+    __tablename__ = 'daily_challenge_attempts'
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    day: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    puzzle_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    snapshot_hash: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    room_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    status: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    started_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    finished_at: Mapped[int | None] = mapped_column(sa.Integer)
+    xp_granted: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text('0'))
+
+
+class DailyChallengeSource(Base):
+    __tablename__ = 'daily_challenge_sources'
+    match_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    user_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    created_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    snapshots: Mapped[str] = mapped_column(sa.Text, nullable=False)
+
+
 class User(Base):
     __tablename__ = "users"
 

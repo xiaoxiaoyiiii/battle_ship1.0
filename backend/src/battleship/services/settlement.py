@@ -97,6 +97,7 @@ class SettlementService:
         self.hooks: list[SettlementHook] = list(hooks or ())
         self.pre_hooks: list[SettlementPreHook] = []
         self._lock = threading.Lock()
+        self.daily_challenges = None
 
     def add_hook(self, hook: SettlementHook) -> None:
         self.hooks.append(hook)
@@ -115,6 +116,11 @@ class SettlementService:
                     match_id=getattr(cached, "match_id", None),
                     skipped=True,
                 )
+
+            if room.daily_challenge:
+                if self.daily_challenges is None:
+                    return SettlementResult(ok=False, error='每日挑战结算服务未接线')
+                return self.daily_challenges.settle_room(room, winner_id)
 
             try:
                 facts = settlement_facts(room, winner_id, loser_id)
@@ -156,6 +162,11 @@ class SettlementService:
                 )
                 with self.database.unit_of_work() as uow:
                     self._write_match(uow, room, context)
+                    if (context.replay_saved and room.is_ai_room and room.ai_difficulty == 'master'
+                            and winner_id.startswith('ai-') and facts.loser_user_id
+                            and room.daily_candidate_snapshots):
+                        uow.daily_challenges.save_source(match_id, facts.loser_user_id,
+                            timestamp, room.daily_candidate_snapshots)
                     if facts.count_stats:
                         self._write_user_stats(uow, facts)
                     settle_tasks(room, uow, context)

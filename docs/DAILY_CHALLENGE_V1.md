@@ -26,6 +26,21 @@ python -m battleship.services.daily_candidates --db "D:/Codex workspace/battle-s
 
 同一玩家同一源局每周最多选1个点；不足7关就留缺天。产物 `candidate-report.json` 含样本数、过滤理由、局面摘要、可解动作轨迹和随机结果，`daily_puzzles.json` 仅含通过自动门槛的候选，仍标记 `reviewed:false`，由用户人工微调、盲玩验收。
 
+## 模拟对局补充来源（用户于2026-11-03授权）
+
+旧录像无法恢复时，可用真实引擎从正常布船、猜拳开始模拟对阵大师AI。此来源标记 `source.simulated=true`，与用户真实败局分别统计，不写入用户数据库。人类一侧随机选择合法动作，后续选牌/数字由现有合法选择器回答；对手使用生产master执行器与连锁决策。离线省去思考和连锁展示等待，骰子、伤害、复活、重摆和胜负仍走正式规则。
+
+```powershell
+$env:PYTHONPATH='backend/src'
+python -m battleship.services.daily_generate --out "D:/Codex workspace/bridge/daily-challenge-v1-20261103/simulated-run" --start-date 2026-11-03 --matches 128 --workers 8 --search-seeds 8
+```
+
+每批使用新的私有输出目录。最多8个独立进程，各自独占随机状态；遇到7个不同源局通过门槛后停止新增批次。`sources/` 保存完整模拟源局和末尾5个稳定行动点，`quality/` 保存逐候选的实际质量结果，`reports/` 保存各源过滤原因，`candidate-report.json` 记录样本数和后端源码摘要。任何未终局、超时或动作被规则拒绝的模拟均不能充当失败局。
+
+出现未完成模拟，或胜局数已超过整批50局允许的5胜时，生成器会提前淘汰该候选并记录实际次数，继续筛选下一候选；只有实际完成至少50局、零未完成且胜率不超过10%的关卡能发布。
+
+`release/daily_puzzles.json` 从指定首日连续排7天，按可用数量输出，**不补造缺关**。每关旁的 `*-proof.json` 保存可复跑的胜利轨迹与50局随机统计；轨迹中的随机状态只服务离线复现，不限制正式挑战中AI的正常分支。清单只保留质量摘要，人工审核仍为 `reviewed=false`。将本机 `DAILY_PUZZLES_PATH` 指向此私有清单即可热更，不需要提交关卡、隐藏局面或测试资产。
+
 ## 数据与验收
 
 迁移 `0007_daily_challenge` 仅新增尝试表和来源表；原有比赛、录像与通行证流水不重建、不清空。更新试玩服务前使用原有迁移程序的在线备份与行数校验。测试资产统一位于仓外 `D:/develop/battleship-verify/cases/daily-challenge-v1`；隔离库的演示残局不是正式关卡来源。

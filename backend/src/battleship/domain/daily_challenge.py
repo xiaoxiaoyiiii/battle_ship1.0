@@ -92,7 +92,7 @@ def snapshot_rejection(room: Room, human: str) -> str | None:
         return '交互或效果总线尚未稳定'
     if any(not lease.key.startswith('flag:') for lease in room.effects.leases.values()):
         return '未支持的效果租约'
-    if room.chain_animation_deadline > time.time() or room.dice_animation_deadline > time.time():
+    if room.chain_animation_deadline > time.monotonic() or room.dice_animation_deadline > time.monotonic():
         return '演出进行中'
     return None
 

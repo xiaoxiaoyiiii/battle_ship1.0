@@ -24,6 +24,14 @@ from .magic import MagicService
 from .ai import AiService
 
 
+class _HeadlessMagic(MagicService):
+    @staticmethod
+    def _mark_dice_animation(room, payload):
+        # 骰子结果已经由生产效果结算；离线没有覆盖层，只省去客户端展示等待。
+        # 选牌、选船、连锁和重摆待办仍由原用例处理，不能直接清除。
+        pass
+
+
 async def run_trial(snapshot: dict | None, seed: int, *, actions: list | None = None, policy='random', max_actions=1500) -> dict:
     saved = random.getstate()
     random.seed(seed)
@@ -45,7 +53,7 @@ async def run_trial(snapshot: dict | None, seed: int, *, actions: list | None = 
     gameplay = GameplayService(rooms, turn_timeout_seconds=0, ai_delay_seconds=0, rng=rng)
     gameplay.priority.seconds = 0
     battle = BattleService(rooms, touch_turn=gameplay.touch_turn, rng=rng)
-    magic = MagicService(rooms, rng=rng, touch_turn=gameplay.touch_turn, chain_entry_delay_seconds=0,
+    magic = _HeadlessMagic(rooms, rng=rng, touch_turn=gameplay.touch_turn, chain_entry_delay_seconds=0,
                          chain_display_delay_seconds=0, chain_response_seconds=10, ai_chain_delay_seconds=0)
     ai = AiService(rooms, gameplay, battle, magic, rng=rng, pacing_seconds=0, settle_poll_seconds=.001,
                    retry_pause_seconds=.001, timers=magic.timers)

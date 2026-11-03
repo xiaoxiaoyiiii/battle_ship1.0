@@ -169,6 +169,8 @@ class SpectatorService:
     def spectate_allowed(self, room: Any) -> bool:
         """Both seats must allow it. Read once, at the moment of joining."""
 
+        if room.daily_challenge:
+            return False
         seats = list(room.players.values())
         if len(seats) != 2:
             return False

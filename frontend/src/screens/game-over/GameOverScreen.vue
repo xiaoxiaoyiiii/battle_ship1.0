@@ -78,6 +78,7 @@ onBeforeUnmount(() => {
 })
 
 const gameOver = computed(() => result.gameOver)
+const challenge = computed(() => gameOver.value?.challenge)
 const hasResult = computed(() => gameOver.value !== null)
 const matchId = computed(() => result.gameOverMatchId)
 const outcome = computed<Outcome>(() => outcomeOf(gameOver.value, game.state.player_id))
@@ -86,6 +87,9 @@ watch([hasResult, outcome], () => {
 }, { immediate: true })
 const verdict = computed(() => verdictText(outcome.value))
 const summary = computed(() => {
+  if (challenge.value) return challenge.value.status === 'completed'
+    ? '每日挑战完成 · 潮汐徽记 +30 · 通行证 XP +40'
+    : '今日挑战已结束，明日再来挑战。'
   const record = gameOver.value
   if (!record) return ''
   return summaryText(record, outcome.value, game.state.round)
@@ -99,7 +103,7 @@ const seatLabel = computed(() => game.state.player_seat || '')
 const modeKey = computed<MatchMode>(() =>
   matchModeOf(game.state.ranked, game.state.mode, game.state.is_ai_room),
 )
-const modeLabel = computed(() => matchModeLabel(modeKey.value))
+const modeLabel = computed(() => challenge.value ? '每日挑战 · 大师 AI' : matchModeLabel(modeKey.value))
 
 const attacks = computed(() => (Array.isArray(game.state.attacks) ? game.state.attacks : []))
 const hits = computed(() => attacks.value.filter((cell) => cell && cell.hit).length)
@@ -527,7 +531,7 @@ function openReplay(): void {
         <button
           type="button"
           class="button"
-          data-testid="game-over-play-again"
+          v-if="!challenge" data-testid="game-over-play-again"
           :disabled="busy"
           @click="playAgain"
         >

@@ -15,6 +15,7 @@ const claimNote = ref('')
 const taskState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
 const daily = ref<TaskPeriod | null>(null)
 const weekly = ref<TaskPeriod | null>(null)
+const challenge = ref<{ title: string; status: string; completed: boolean } | null>(null)
 const track = ref<HTMLElement | null>(null)
 
 const season = computed(() => store.season)
@@ -76,7 +77,8 @@ async function loadTasks(): Promise<void> {
     const response = await fetch('/api/tasks', { credentials: 'same-origin', headers: { accept: 'application/json' }, cache: 'no-store' })
     if (response.status === 401) { taskState.value = 'ready'; return }
     if (!response.ok) throw new Error('任务读取失败')
-    const body = await response.json() as { daily?: TaskPeriod; weekly?: TaskPeriod }
+    const body = await response.json() as { daily?: TaskPeriod; weekly?: TaskPeriod; challenge?: { title: string; status: string; completed: boolean } }
+    challenge.value = body.challenge || null
     daily.value = body.daily || null
     weekly.value = body.weekly || null
     taskState.value = 'ready'
@@ -145,7 +147,7 @@ watch(() => auth.isGuest, () => { store.reset(); void load() })
         <div class="season-pass__columns">
           <section class="season-pass__panel" aria-labelledby="season-pass-tasks-title">
             <div class="season-pass__panel-head"><div><p class="season-pass__eyebrow">ROUTINE</p><h2 id="season-pass-tasks-title">任务进度</h2></div><span v-if="taskState === 'error'">读取失败</span></div>
-            <div class="season-pass__task-grid">
+            <p v-if="challenge" class="daily-task-note" data-testid="pass-daily-challenge"><router-link :to="{ name: 'lobby', query: { challenge: '1' } }">{{ challenge.title }}</router-link> · {{ challenge.completed ? '已完成' : challenge.status === 'failed' ? '今日已失败' : challenge.status === 'in_progress' ? '进行中' : '前往大厅查看' }}<br>通关徽记 +30 · 通行证 XP +40，独立结算，不计入下列普通任务。</p><div class="season-pass__task-grid">
               <div class="season-pass__task-period"><header><strong>今日任务</strong><span>{{ taskCount(daily) }}</span></header><ul><li v-for="task in daily?.tasks || []" :key="task.id" :class="{ 'is-complete': task.completed }"><div><b>{{ task.title }}</b><small>{{ task.description }}</small></div><span>{{ task.current }}/{{ task.target }}</span><i><em :style="{ width: percent(task.current, task.target) + '%' }"></em></i></li></ul><p>完成任意 2 个，获得 200 XP · 潮汐徽记 +20</p></div>
               <div class="season-pass__task-period"><header><strong>本周任务</strong><span>{{ taskCount(weekly) }}</span></header><ul><li v-for="task in weekly?.tasks || []" :key="task.id" :class="{ 'is-complete': task.completed }"><div><b>{{ task.title }}</b><small>{{ task.description }}</small></div><span>{{ task.current }}/{{ task.target }}</span><i><em :style="{ width: percent(task.current, task.target) + '%' }"></em></i></li></ul><p>完成任意 2 个，获得 800 XP · 潮汐徽记 +80</p></div>
             </div>
@@ -162,6 +164,8 @@ watch(() => auth.isGuest, () => { store.reset(); void load() })
 </template>
 
 <style scoped>
+.daily-task-note { margin:0 0 16px; font-size:12px; line-height:1.8; color:var(--text-secondary); }
+.daily-task-note a { color:var(--role-action); }
 .season-pass { padding:28px clamp(18px, 5vw, 72px) 42px; align-items:stretch; }
 .season-pass__shell { width:min(1480px,100%); margin:0 auto; }
 .season-pass__hero { display:flex; align-items:end; justify-content:space-between; gap:24px; padding-bottom:24px; }

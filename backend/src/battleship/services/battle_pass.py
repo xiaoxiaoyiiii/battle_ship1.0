@@ -75,6 +75,8 @@ class BattlePassService:
                         "challenges": [], "claims": [],
                         "wallet": {"currency": CURRENCY, "balance": 0,
                                    "daily_match_granted": 0, "daily_cap": DAILY_MATCH_CAP}}
+            from .daily_challenge import release_pending_xp
+            release_pending_xp(uow, user_id, now)
             # 补发与当前展示季分开，避免新季开启后旧季奖励失去领取入口。
             auto_granted = set()
             for closed in uow.battle_pass.closed_seasons_for_user(user_id, now):

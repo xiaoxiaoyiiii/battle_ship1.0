@@ -14,6 +14,10 @@ def task_view(database: Database, user_id: str | None, *, now: float | None = No
     with database.unit_of_work() as uow:
         authenticated = bool(user_id and uow.users.get(user_id))
         result = {'authenticated': authenticated, 'timezone': 'Asia/Shanghai', 'server_time': int(timestamp)}
+        attempt = uow.daily_challenges.get(user_id, windows['daily']['start']) if authenticated else None
+        result['challenge'] = {'id': 'daily_challenge', 'title': '战术残局 · 每日挑战',
+            'status': attempt.status if attempt else 'not_started', 'completed': bool(attempt and attempt.status == 'completed'),
+            'rewards': {'tide': 30, 'xp': 40}, 'description': '独立挑战奖励，不计入普通对局任务或对局XP周帽'}
         for period, window in windows.items():
             totals = uow.tasks.totals(user_id, window['start'], window['end']) if authenticated else {}
             result[period] = {

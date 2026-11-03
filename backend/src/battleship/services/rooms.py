@@ -123,6 +123,7 @@ class RoomService:
         mutation_clock: Callable[[], float] | None = None,
     ) -> None:
         self.rooms: dict[str, Room] = {}
+        self.daily_challenges = None
         self.match_queue: list[dict[str, Any]] = []
         self.mutation_rng = mutation_rng or random
         self.mutation_clock = mutation_clock or time.time
@@ -336,6 +337,10 @@ class RoomService:
 
     async def create_ai_room(self, connection: Connection, data: dict[str, Any] | None) -> dict:
         data = data if isinstance(data, dict) else {}
+        if data.get('daily_challenge') is True:
+            if self.daily_challenges is None:
+                return {'status': 'error', 'message': '每日挑战暂不可用'}
+            return await self.daily_challenges.start(connection)
         room = Room(id=new_room_id())
         room.is_ai_room = True
         room.ai_difficulty = _normalize_difficulty(data.get("difficulty") or "normal")
@@ -784,8 +789,8 @@ class RoomService:
         other_id = opponent_of(room, player_id)
         pre_battle = room.state in (RoomState.PLACING_SHIPS, RoomState.ROCK_PAPER_SCISSORS)
         if (
-            room.is_ai_room
-            or pre_battle
+            (room.is_ai_room and not room.daily_challenge)
+            or (pre_battle and not room.daily_challenge)
             or other_id is None
             or other_id in room.disconnected
             or room.state == RoomState.GAME_OVER

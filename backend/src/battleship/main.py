@@ -42,6 +42,7 @@ from .http.routers import replay as replay_router
 from .http.routers import spectate as spectate_router
 from .http.routers import stats as stats_router
 from .http.routers import tasks as tasks_router
+from .http.routers import daily_challenge as daily_challenge_router
 from .http.routers import wallpapers as wallpapers_router
 from .infra.assets import AssetPaths
 from .infra.health import HealthService
@@ -270,6 +271,7 @@ def create_application(settings: Settings | None = None,
     fastapi_app.include_router(wallpapers_router.router)
     fastapi_app.include_router(stats_router.router)
     fastapi_app.include_router(tasks_router.router)
+    fastapi_app.include_router(daily_challenge_router.router)
     fastapi_app.include_router(leaderboard_router.router)
     fastapi_app.include_router(replay_router.router)
     fastapi_app.include_router(lobby_router.router)
@@ -315,6 +317,11 @@ def create_application(settings: Settings | None = None,
         rooms, turn_timeout_seconds=settings.turn_timeout_seconds
     )
     battle = BattleService(rooms, settlement, touch_turn=gameplay.touch_turn)
+    from .services.daily_challenge import DailyChallengeService
+    daily_challenges = DailyChallengeService(database, rooms, settings.daily_puzzles_path)
+    daily_challenges.battle = battle
+    rooms.daily_challenges = settlement.daily_challenges = daily_challenges
+    fastapi_app.state.daily_challenges = daily_challenges
     magic = MagicService(
         rooms,
         settlement,

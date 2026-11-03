@@ -451,6 +451,10 @@ class BattleService:
                               reason: str | None,
                               result: SettlementResult) -> None:
         payload: dict[str, Any] = {"winner": winner_id}
+        daily = room.daily_challenge
+        payload['daily_challenge'] = ({'name': room.name, 'status': daily.get('status', 'failed'),
+            'tide': 30 if daily.get('status') == 'completed' else 0,
+            'xp': 40 if daily.get('status') == 'completed' else 0} if daily else None)
         if reason:
             payload["reason"] = reason
         # match_id is only present when it really was persisted; the client uses

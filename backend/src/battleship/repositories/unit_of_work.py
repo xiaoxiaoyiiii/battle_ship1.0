@@ -29,6 +29,7 @@ from .users import UserRepository
 from .battle_pass import BattlePassRepository
 from .tide_ash import TideAshRepository
 from .shop import ShopRepository
+from .daily_challenge import DailyChallengeRepository
 
 
 class UnitOfWork:
@@ -71,6 +72,10 @@ class UnitOfWork:
     @property
     def users(self) -> UserRepository:
         return self._repository("users", UserRepository)  # type: ignore[return-value]
+
+    @property
+    def daily_challenges(self) -> DailyChallengeRepository:
+        return self._repository('daily_challenges', DailyChallengeRepository)
 
     @property
     def matches(self) -> MatchRepository:

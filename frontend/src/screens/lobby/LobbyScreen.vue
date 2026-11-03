@@ -9,11 +9,14 @@ import MutationList from '../../components/MutationList.vue'
 import BanPreselection from '../../components/BanPreselection.vue'
 import LobbyPreviewCard from './LobbyPreviewCard.vue'
 import LobbySocial from './LobbySocial.vue'
+import DailyChallengePanel from './DailyChallengePanel.vue'
+import { useDailyChallenge } from './useDailyChallenge'
 
 const lobby = useLobbyStore()
 const home = useHomeStore()
 const router = useRouter()
 const actions = useLobbyActions()
+const daily = useDailyChallenge()
 const root = ref<HTMLElement | null>(null)
 const size = ref({ width: 1200, height: 700 })
 const socialOpen = ref(false)
@@ -58,9 +61,10 @@ onBeforeUnmount(() => observer?.disconnect())
       <section class="lp-panel ld-preview-panel" :class="{ 'is-collapsed': paged && activePreview !== 'matches' }"><header class="lp-panelhead"><h2><button class="ld-group-toggle" data-testid="lobby-matches-toggle" :aria-expanded="!paged || activePreview === 'matches'" @click="activePreview = 'matches'">进行中的对局</button> <small>{{ count(lobby.matches.length) }} 局</small></h2><router-link class="lp-link" :to="{ name: 'lobby-matches' }" data-testid="lobby-all-matches">查看所有</router-link></header><ul class="ld-card-strip" data-testid="lobby-matches"><li v-for="n in previewCount" :key="n" :aria-hidden="!matches[n-1] && n > 1"><LobbyPreviewCard v-if="matches[n-1] || n === 1" kind="match" :match="matches[n-1]" :first="n === 1" :loading="!lobby.hasSnapshot" @watch="spectate" /></li></ul></section>
     </div><aside v-if="!compact" class="ld-sidebar"><LobbySocial view="all" /></aside></div>
     <div class="ld-stats"><span>在线 <b data-testid="lobby-online-count">{{ count(lobby.onlineCount) }}</b></span><span>大厅 <b data-testid="lobby-lobby-count">{{ count(lobby.lobbyCount) }}</b></span><span>休闲队列 <b data-testid="lobby-queue-casual">{{ count(lobby.queueCasual) }}</b></span><span>排位队列 <b data-testid="lobby-queue-ranked">{{ count(lobby.queueRanked) }}</b></span></div>
-    <nav class="ld-tools" aria-label="大厅工具"><BanPreselection :compact="paged" /><button v-if="weekly" class="button button--ghost" data-testid="lobby-weekly-details" :title="weekly.entries.map(e => e.name).join('、')" @click="weeklyOpen = true">{{ paged ? '突变' : '本周突变' }}</button><button class="button button--ghost" data-testid="lobby-fold-friends" @click="openSocial('friends')">{{ paged ? '好友' : '好友邀战' }}</button><button v-if="compact" class="button button--ghost" data-testid="lobby-social-open" @click="openSocial('players')">{{ paged ? '公屏' : '玩家 / 公屏' }}</button></nav>
+    <nav class="ld-tools" aria-label="大厅工具"><button class="button button--ghost ld-daily-entry" data-testid="lobby-daily-challenge" :title="`${daily.view.value?.puzzle?.name || '每日挑战'} · ${daily.label.value}`" @click="daily.show()">{{ paged ? '挑战' : '每日挑战' }}<small v-if="!paged"> · {{ daily.label.value }}</small></button><BanPreselection :compact="paged" /><button v-if="weekly" class="button button--ghost" data-testid="lobby-weekly-details" :title="weekly.entries.map(e => e.name).join('、')" @click="weeklyOpen = true">{{ paged ? '突变' : '本周突变' }}</button><button class="button button--ghost" data-testid="lobby-fold-friends" @click="openSocial('friends')">{{ paged ? '好友' : '好友邀战' }}</button><button v-if="compact" class="button button--ghost" data-testid="lobby-social-open" @click="openSocial('players')">{{ paged ? '公屏' : '玩家 / 公屏' }}</button></nav>
     <AppOverlay v-if="socialOpen" id="lobby-social-dialog" label="大厅社交" @close="socialOpen = false"><div class="ld-social-dialog"><header><nav class="lp-segments" aria-label="社交内容"><button v-for="item in [{id:'players' as const,label:'在线玩家'},{id:'chat' as const,label:'大厅公屏'},{id:'friends' as const,label:'好友邀战'}]" :key="item.id" :class="{ 'is-selected': socialView === item.id }" @click="socialView = item.id">{{ item.label }}</button></nav><button class="lp-link" data-testid="lobby-social-close" @click="socialOpen = false">关闭</button></header><LobbySocial :view="socialView" /></div></AppOverlay>
     <AppOverlay v-if="weeklyOpen && weekly" id="lobby-weekly-preview" labelledby="lobby-weekly-title" @close="weeklyOpen = false"><section class="lp-dialog-small ld-detail-dialog"><h2 id="lobby-weekly-title">本周突变 · {{ weekly.name }}</h2><p>休闲每局随机遇见词条，自定义可自由配置；排位不生效。</p><MutationList :entries="weekly.entries" /><button class="button" data-testid="lobby-weekly-close" @click="weeklyOpen = false">知道了</button></section></AppOverlay>
     <AppOverlay v-if="announcementOpen" id="lobby-announcement" label="更新公告" @close="announcementOpen = false"><section class="lp-dialog-small ld-detail-dialog"><h2>更新公告</h2><p>{{ changelog }}</p><button class="button" data-testid="lobby-changelog-close" @click="announcementOpen = false">知道了</button></section></AppOverlay>
+    <AppOverlay v-if="daily.open.value" id="daily-challenge-dialog" label="每日挑战" @close="daily.open.value = false"><DailyChallengePanel :view="daily.view.value" :busy="daily.busy.value" :error="daily.error.value" @start="daily.start" @refresh="daily.load" /></AppOverlay>
   </section>
 </template>

@@ -232,6 +232,7 @@ onBeforeUnmount(() => {
   <!-- Applied wallpaper layer (spec story 2); renders nothing until applied. -->
   <AppWallpaper />
   <OceanParticles />
+  <div class="app-theme-scrim" aria-hidden="true"></div>
 
   <!-- Single-overlay root: the card archive opens above the shell. -->
   <CardCollectionOverlay

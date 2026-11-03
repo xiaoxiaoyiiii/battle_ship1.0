@@ -30,6 +30,16 @@ html[data-theme='journal'] body {
   background-size: auto, 48px 48px, 48px 48px;
 }
 
+/* 浅色主题统一提亮全局装饰底层，资料背景与壁纸仍保留纹理。 */
+.app-theme-scrim { display: none; pointer-events: none; }
+html[data-theme='journal'] .app-theme-scrim {
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background: color-mix(in srgb, var(--surface-deck) 94%, transparent);
+}
+
 ::selection {
   background: rgba(124, 92, 240, 0.35);
   color: var(--text-primary);

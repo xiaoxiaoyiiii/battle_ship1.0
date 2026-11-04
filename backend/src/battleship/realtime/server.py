@@ -208,6 +208,17 @@ def create_socket_server(
 
     @sio.on("debug_status")
     async def debug_status(sid: str, data=None) -> dict:
+        # L4 收敛：调试配置只回答给服务端验证的管理员连接；其余连接只得到
+        # “未开启”的空态，不暴露测试事件开关与白名单配置。
+        session = await sio.get_session(sid)
+        user_id = str(session.get("user_id") or "")
+        whitelist = settings.debug_admin_user_ids
+        is_admin = False
+        if user_id and len(whitelist) == 1 and user_id in whitelist:
+            with database.unit_of_work() as uow:
+                is_admin = uow.users.get(user_id) is not None
+        if not is_admin:
+            return {"status": "success", "enabled": False, "whitelist_configured": False}
         return {
             "status": "success",
             "enabled": bool(settings.enable_test_events),

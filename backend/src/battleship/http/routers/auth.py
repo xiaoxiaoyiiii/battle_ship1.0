@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import html
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -198,6 +199,12 @@ async def register(request: Request, service: AuthService = Depends(get_auth_ser
 
 @router.get("/logout")
 def logout(request: Request) -> Response:
+    # L8（issue #32）：真正的退出是下面的 POST 写操作。跨站导航（外站 <a>/
+    # <img> 打到 /logout）只回首页、不吊销会话；本站链接与地址栏直达保持
+    # 原 GET 行为，旧链接不破坏。
+    fetch_site = (request.headers.get("sec-fetch-site") or "").strip().lower()
+    if fetch_site == "cross-site" or _cross_origin(request):
+        return RedirectResponse("/", status_code=302)
     data = read_session(request)
     revoke_session(data, request.app.state.database)
     data.pop(SESSION_ID, None)
@@ -205,6 +212,31 @@ def logout(request: Request) -> Response:
     data.pop(SESSION_USERNAME, None)
     flash(data, "已退出登录")
     return _redirect_with_session("/", request, data)
+
+
+@router.post("/logout")
+async def logout_submit(request: Request) -> JSONResponse:
+    """L8：SPA 通过本写操作退出；服务端吊销会话并清除登录 Cookie。"""
+    data = read_session(request)
+    revoke_session(data, request.app.state.database)
+    data.pop(SESSION_ID, None)
+    data.pop(SESSION_USER_ID, None)
+    data.pop(SESSION_USERNAME, None)
+    flash(data, "已退出登录")
+    return _json_with_session({"success": True, "redirect": "/"}, request, data)
+
+
+def _cross_origin(request: Request) -> bool:
+    """Origin 头存在且主机与当前请求不一致时视为跨站（无 Origin 不误伤）。"""
+    origin = (request.headers.get("origin") or "").strip()
+    if not origin:
+        return False
+    try:
+        host = (urlparse(origin).netloc or "").lower()
+    except ValueError:
+        return True
+    request_host = (request.headers.get("host") or "").lower()
+    return bool(host) and host != request_host
 
 
 # ------------------------------------------------------------------------- JSON API

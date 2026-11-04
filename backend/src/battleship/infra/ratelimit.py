@@ -22,12 +22,21 @@ class RateLimiter:
         self.window = max(0.001, float(window_seconds))
         self._events: dict[tuple[str, str], list[float]] = defaultdict(list)
         self._lock = threading.Lock()
+        self._last_sweep = 0.0
 
     def hit(self, scope: str, key: str) -> bool:
         """Record a request; return True when the caller is over the limit."""
         now = time.monotonic()
         bucket_key = (scope, key)
         with self._lock:
+            # L12（issue #32）：桶过去没有整项淘汰，长期运行会按 (scope, 客户端)
+            # 无限增长。每个窗口做一次全量清扫，淘汰整个已过期的桶。
+            if now - self._last_sweep >= self.window:
+                cutoff = now - self.window
+                for stale in [k for k, stamps in self._events.items()
+                              if not stamps or stamps[-1] <= cutoff]:
+                    self._events.pop(stale, None)
+                self._last_sweep = now
             bucket = self._events[bucket_key]
             cutoff = now - self.window
             if bucket and bucket[0] <= cutoff:

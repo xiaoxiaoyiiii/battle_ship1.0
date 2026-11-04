@@ -31,6 +31,8 @@ AVATAR_MAGIC_TYPES = (
 )
 MAX_AVATAR_SIZE = 2 * 1024 * 1024
 MAX_AVATAR_ALT_LENGTH = 160
+# L3（issue #32）：签名入库与服务端校验的统一上限；与头像描述文字同一量级。
+MAX_SIGNATURE_LENGTH = 160
 
 
 async def _payload(request: Request) -> Any:
@@ -108,6 +110,10 @@ async def update_signature(request: Request):
     # Legacy contract: form field only. A JSON body reads as "clear signature".
     form = await request.form()
     signature = str(form.get("signature") or "")
+    if len(signature) > MAX_SIGNATURE_LENGTH:
+        return JSONResponse(
+            {"error": f"签名不能超过 {MAX_SIGNATURE_LENGTH} 字"}, status_code=400
+        )
     with request.app.state.database.unit_of_work() as uow:
         ok = uow.users.update(user_id, signature=signature)
     return JSONResponse({"success": bool(ok)})

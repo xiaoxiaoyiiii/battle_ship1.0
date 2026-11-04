@@ -215,9 +215,16 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  /** Logout stays on the existing /logout redirect (frozen route, spec section 3). */
-  function requestLogout(): void {
-    window.location.assign('/logout')
+  /** Logout is a server-side write operation (POST /logout, issue #32 L8):
+   * revoke the session first, then go home. The GET route stays for same-site
+   * manual navigation only. */
+  async function requestLogout(): Promise<void> {
+    try {
+      await fetch('/logout', { method: 'POST', credentials: 'same-origin' })
+    } catch {
+      // 网络异常也照常回首页；整页刷新会重置本地登录态。
+    }
+    window.location.assign('/')
   }
 
   return {

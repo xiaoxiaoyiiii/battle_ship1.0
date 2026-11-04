@@ -242,10 +242,50 @@ def create_application(settings: Settings | None = None,
             allow_headers=["*"],
         )
 
+    def _apply_security_headers(response) -> None:
+        # L5（issue #32）：确定无副作用的基础防护头。完整 CSP 需先验证字体/
+        # 样式/卡图/实时连接，随 HTTPS 批次落地；这里只收紧嵌框与嗅探。
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+
+    # L11（issue #32）：按内容类型预检 Content-Length。头像走 multipart（端点内
+    # 另有 2MB 图片内容上限，这里放行表单开销），JSON/表单按宽松业务上限拒绝。
+    _BODY_LIMITS: tuple[tuple[str, int], ...] = (
+        ("multipart/form-data", 8 * 1024 * 1024),
+        ("application/json", 256 * 1024),
+        ("application/x-www-form-urlencoded", 256 * 1024),
+    )
+    _DEFAULT_BODY_LIMIT = 256 * 1024
+
+    def _body_limit(content_type: str) -> int:
+        for prefix, cap in _BODY_LIMITS:
+            if content_type == prefix or content_type.startswith(prefix + ";"):
+                return cap
+        return _DEFAULT_BODY_LIMIT
+
     @fastapi_app.middleware("http")
     async def _request_context(request: Request, call_next):
         request_id = (request.headers.get("x-request-id") or "").strip() or uuid.uuid4().hex
         started = time.perf_counter()
+        if request.method in ("POST", "PUT", "PATCH"):
+            declared = request.headers.get("content-length") or ""
+            if declared.isdigit() and int(declared) > _body_limit(
+                (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+            ):
+                # 先耗尽已声明的请求体（有界），让客户端拿到干净的 413，
+                # 而不是发送途中被重置连接；超出的字节不进入任何业务处理。
+                drained = 0
+                async for _chunk in request.stream():
+                    drained += len(_chunk)
+                    if drained > 64 * 1024 * 1024:
+                        break
+                metrics.record_http(413, 0.0)
+                response = JSONResponse({"error": "请求体过大"}, status_code=413)
+                response.headers["X-Request-ID"] = request_id
+                _apply_security_headers(response)
+                return response
         with log_context(request_id=request_id, method=request.method, path=request.url.path):
             try:
                 if request.url.path.startswith('/api/'):
@@ -267,6 +307,7 @@ def create_application(settings: Settings | None = None,
                 logger.warning('邮件操作失败', extra={'status': response.status_code})
             metrics.record_http(response.status_code, duration_ms)
             response.headers["X-Request-ID"] = request_id
+            _apply_security_headers(response)
             logger.info(
                 "http request",
                 extra={"status": response.status_code, "duration_ms": round(duration_ms, 3)},

@@ -48,16 +48,20 @@ def create_engine_for(settings: Settings) -> Engine:
 
 
 def check_database(settings: Settings) -> tuple[bool, str]:
-    """返回 (ok, detail)。供 /healthz 使用，不抛异常。"""
+    """返回 (ok, detail)。供 /healthz 使用，不抛异常。
+
+    detail 是公开响应的一部分（L4 收敛）：只给状态词与异常类名，不携带
+    数据库路径或异常消息，运维排错看服务日志。
+    """
 
     engine: Engine | None = None
     try:
         engine = create_engine_for(settings)
         with engine.connect() as connection:
             connection.execute(select(literal(1)))
-        return True, str(settings.database_path)
+        return True, "数据库已连接"
     except Exception as exc:  # 健康检查必须能报告失败，而不是把 500 抛给探针
-        return False, f"{type(exc).__name__}: {exc}"
+        return False, f"{type(exc).__name__}"
     finally:
         if engine is not None:
             engine.dispose()

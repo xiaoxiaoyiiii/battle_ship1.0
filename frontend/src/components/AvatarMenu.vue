@@ -76,7 +76,7 @@ function openLogin(): void {
   auth.open('login')
 }
 
-/** Logged-in exit: the existing frozen /logout redirect (spec section 3). */
+/** Logged-in exit: POST /logout write operation (issue #32 L8). */
 function logout(): void {
   emit('close')
   auth.requestLogout()

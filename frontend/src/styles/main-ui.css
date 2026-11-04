@@ -354,6 +354,12 @@ body:has(.screen.game) .app-toast__dismiss {
   box-shadow: var(--shadow-panel);
 }
 
+/* 控制台使用自身的双栏宽度，避免沿用整屏弹层留下大块空白。 */
+.app-overlay[data-overlay='admin-console'] .app-overlay__panel {
+  width: min(820px, calc(100vw - 28px));
+  max-height: calc(100dvh - 28px);
+}
+
 /* ------------------------------------------------------------ 滚动条 --- */
 * {
   scrollbar-width: thin;
@@ -542,3 +548,7 @@ body:has([data-testid='screen-game']) .screen-boundary {
 .toast-enter-active,.toast-leave-active { transition: opacity 160ms ease, transform 160ms ease; }
 .toast-enter-from,.toast-leave-to { opacity: 0; transform: translateY(-4px); }
 .toast-leave-active { position: relative; }
+/* 管理员测试标记固定显示，不挤压大厅或棋盘的布局。 */
+.admin-test-banner { position:fixed; z-index:80; top:8px; left:50%; transform:translateX(-50%); max-width:calc(100vw - 24px); padding:5px 12px; border:1px solid var(--role-warning); border-radius:6px; background:var(--surface-sea); color:var(--text-primary); font-size:12px; line-height:1.5; pointer-events:none; }
+.auth-consent { display:flex; gap:8px; align-items:flex-start; font-size:12px; line-height:1.6; color:var(--text-muted); }
+.auth-consent input { margin-top:3px; flex-shrink:0; }

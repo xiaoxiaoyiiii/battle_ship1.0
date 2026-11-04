@@ -20,6 +20,7 @@ const emit = defineEmits<{ (event: 'close'): void }>()
 const auth = useAuthStore()
 const username = ref('')
 const password = ref('')
+const acceptedTerms = ref(false)
 const usernameInput = ref<HTMLInputElement | null>(null)
 
 const isRegister = computed(() => auth.tab === 'register')
@@ -43,6 +44,7 @@ function choose(tab: AuthTab): void {
 }
 
 function onSubmit(): void {
+  if (isRegister.value && !acceptedTerms.value) return
   void auth.submit(username.value, password.value)
 }
 
@@ -139,12 +141,13 @@ watch(
       </div>
 
       <footer class="auth-actions">
+        <label v-if="isRegister" class="auth-consent"><input v-model="acceptedTerms" type="checkbox" data-testid="auth-consent" />我已阅读并同意下方用户协议与隐私政策</label>
         <p class="auth-card__guest"><router-link :to="{ name: 'terms' }" @click="auth.close()">用户协议</router-link> · <router-link :to="{ name: 'privacy' }" @click="auth.close()">隐私政策</router-link></p>
         <button
           type="submit"
           class="button auth-submit"
           data-testid="auth-submit"
-          :disabled="auth.busy"
+          :disabled="auth.busy || (isRegister && !acceptedTerms)"
         >
           {{ submitLabel }}
         </button>

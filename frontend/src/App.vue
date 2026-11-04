@@ -9,6 +9,7 @@ import AuthOverlay from './components/AuthOverlay.vue'
 import AvatarMenu from './components/AvatarMenu.vue'
 import CardCollectionOverlay from './components/CardCollectionOverlay.vue'
 import AdminOverlay from './components/AdminOverlay.vue'
+import AdminConsole from './components/AdminConsole.vue'
 import FriendsOverlay from './components/FriendsOverlay.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
 import ScreenBoundary from './components/ScreenBoundary.vue'
@@ -123,6 +124,19 @@ watch(() => route.fullPath, async () => {
 const loading = computed(() => routeLoading.value)
 
 const menuOpen = ref(false)
+const consoleOpen = ref(false)
+async function consoleHotkey(event: KeyboardEvent): Promise<void> {
+  if (event.key !== 'F8' || event.repeat || auth.isGuest) return
+  event.preventDefault()
+  if (consoleOpen.value) { consoleOpen.value = false; return }
+  try {
+    const response = await fetch('/api/admin/me')
+    if (response.ok && (await response.json()).is_admin === true) consoleOpen.value = true
+  } catch { /* 网络中断时保持关闭；服务端仍独立校验权限。 */ }
+}
+onMounted(() => window.addEventListener('keydown', consoleHotkey))
+onBeforeUnmount(() => window.removeEventListener('keydown', consoleHotkey))
+watch(() => auth.isGuest, guest => { if (guest) consoleOpen.value = false })
 const avatarButton = ref<HTMLButtonElement | null>(null)
 const collectionButton = ref<HTMLButtonElement | null>(null)
 
@@ -260,6 +274,8 @@ onBeforeUnmount(() => {
   <HelpOverlay v-if="ui.helpOpen" @close="ui.closeHelp()" />
   <FriendsOverlay v-if="ui.friendsOpen" @close="ui.closeFriends()" />
   <AdminOverlay v-if="ui.adminOpen" @close="ui.closeAdmin()" />
+  <AdminConsole v-if="consoleOpen" @close="consoleOpen = false" />
+  <div v-if="game.state.admin_test && game.state.room_id" class="admin-test-banner" role="status">管理员测试局 · 不计战绩与奖励</div>
 
   <div class="app-shell" data-testid="app-shell" :data-route-loading="loading ? 'true' : 'false'" :data-immersive="immersive ? 'true' : 'false'">
     <!-- 连接提示走覆盖层：多提示堆叠在导航下方，不把舞台往下推。 -->

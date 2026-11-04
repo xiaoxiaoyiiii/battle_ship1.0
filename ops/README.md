@@ -153,7 +153,11 @@ and `ARENA_SCREEN_LIST` belonged to the migration window and are rejected.
 
 赛季与邮箱运营补充：`DEBUG_ADMIN_USER_IDS` 仅保留用户本人原有账号，不能填多个账号；测试事件在生产仍保持关闭。`ERROR_LOG_PATH` 保存登录、建房、结算、邮件等失败，默认 `.tmp/logs/errors.log`，生产示例使用 `/var/lib/battleship/logs/errors.log`。每周备份随服务启动，不另装定时器；`BACKUP_DIRECTORY` 默认是数据库同目录的 `backups/`，每 7 天生成 SQLite 一致性快照，保留最近四份，失败记日志后重试。服务账号须能写入日志和备份目录。
 
-首季仍在正式开服时初始化，排位与通行证共用同一配置；下一季须由原受控赛季入口安排不重叠日期。本包不自动提前创建正式赛季。邮箱运营入口为账号菜单的「运营发信」，具体时效与软重置表见 [赛季邮箱运营说明](../docs/SEASON_MAILBOX_V1.md)。
+排位与通行证共用同一赛季配置；下一季须由原受控赛季入口安排不重叠日期。可提前幂等预置已批准的未来开季时间，实际开放仍严格按开始时刻判断。邮箱运营入口为账号菜单的「运营发信」，具体时效与软重置表见 [赛季邮箱运营说明](../docs/SEASON_MAILBOX_V1.md)。
+
+2026-11-04 首季已批准固定为北京时间 10:00 开始，参数在 `ops/launch-20261104.json`。可在停服迁移核验后运行 `python ops/prepare_launch.py --database <真实库> --admin-user-id <原唯一白名单ID>`，幂等预置未来开季时间及该账号的装扮特权；隔离库才使用 `--offline`。不得以本机测试账号替代云端账号。
+
+唯一管理员登录后按 F8 打开测试控制台，旧 `ENABLE_TEST_EVENTS` 在正式服务仍应为 0。新控制台独立校验登录与唯一白名单，只能操作本人参与的房间；查看完整局面或执行测试命令即将本局标为测试局，重置不解除，不计任何战绩、排位、任务或奖励。测试结果不替代正常玩法验收。协议/隐私及运营联系说明见 [首版政策](../docs/LEGAL_POLICY.md)。旧库的 `anticheat_actions` 审计表保留为历史档案，不因新模型没有使用它而删除。
 
 ```powershell
 $env:PYTHONPATH="backend/src"

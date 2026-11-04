@@ -97,6 +97,11 @@ function readText(payload: Record<string, unknown>, key: string): string {
 
 function routeForState(state: string): void {
   if (route.name !== 'placement') return
+  // 终局由服务器决定，测试判胜等终局不能被尚未确认的赛前规则挡住。
+  if (state === 'game_over') {
+    void router.push({ name: 'game-over' })
+    return
+  }
   if (mutationBlocked.value || banBlocked.value) return
   if (state === 'rock_paper_scissors') {
     void router.push({ name: 'rps' })
@@ -105,8 +110,6 @@ function routeForState(state: string): void {
     // to placing_ships while the client may still see attacking; resetPhase
     // keeps this screen mounted until the server accepts the new board.
     if (!placement.resetPhase) void router.push({ name: 'game' })
-  } else if (state === 'game_over') {
-    void router.push({ name: 'game-over' })
   }
 }
 

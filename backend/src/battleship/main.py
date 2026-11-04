@@ -44,6 +44,7 @@ from .http.routers import spectate as spectate_router
 from .http.routers import stats as stats_router
 from .http.routers import tasks as tasks_router
 from .http.routers import daily_challenge as daily_challenge_router
+from .http.routers import admin_console as admin_console_router
 from .http.routers import wallpapers as wallpapers_router
 from .infra.assets import AssetPaths
 from .infra.health import HealthService
@@ -297,6 +298,7 @@ def create_application(settings: Settings | None = None,
     fastapi_app.include_router(battle_pass_router.router)
     fastapi_app.include_router(shop_router.router)
     fastapi_app.include_router(mailbox_router.router)
+    fastapi_app.include_router(admin_console_router.router)
 
     # User-uploaded avatars are the only surviving piece of `static/`; they keep
     # the frozen /static/avatars/... URL so existing profile rows still resolve.
@@ -324,6 +326,7 @@ def create_application(settings: Settings | None = None,
     # service (CLAUDE #17: the online table must exist exactly once).
     presence = PresenceService()
     auth = AuthService(database, settings)
+    auth.provision_admin_cosmetics()
     rooms = RoomService(
         presence=presence,
         capability_gate=auth.capability_denied,
@@ -396,6 +399,8 @@ def create_application(settings: Settings | None = None,
     fastapi_app.state.maintenance = Maintenance(database, ranked_seasons, settings.backup_directory)
     fastapi_app.state.anticheat = anticheat
     fastapi_app.state.auth = auth
+    from .services.admin_console import AdminConsole
+    fastapi_app.state.admin_console = AdminConsole(auth, rooms, battle, magic, gameplay)
     fastapi_app.state.matchmaking = matchmaking
     fastapi_app.state.lobby = lobby
     fastapi_app.state.presence = presence

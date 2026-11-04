@@ -130,7 +130,7 @@ class DailyChallengeService:
         info = room.daily_challenge
         uid, day = info['user_id'], info['day']
         now = int(self.clock())
-        won = winner_id == uid and now < info['expires_at']
+        won = winner_id == uid and now < info['expires_at'] and not room.admin_test
         with self.database.unit_of_work() as uow:
             changed = uow.daily_challenges.finish(uid, day, room.id, 'completed' if won else 'failed', now)
             if changed and won:

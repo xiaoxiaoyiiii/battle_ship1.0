@@ -117,6 +117,11 @@ class SettlementService:
                     skipped=True,
                 )
 
+            if room.admin_test and not room.daily_challenge:
+                result = SettlementResult(ok=True, skipped=True)
+                room.settled, room.settlement_result = True, result
+                return result
+
             if room.daily_challenge:
                 if self.daily_challenges is None:
                     return SettlementResult(ok=False, error='每日挑战结算服务未接线')

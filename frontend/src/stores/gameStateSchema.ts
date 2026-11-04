@@ -61,6 +61,7 @@ export interface GameState {
   opponent_name: string | null
   is_ai_room: boolean
   ranked: boolean
+  admin_test: boolean
   mode: string
   winner: string
   game_over_reason: string | null
@@ -154,6 +155,7 @@ const FIELD_SPECS = {
   opponent_name: { type: 'string', nullable: true, default: null, note: '对手昵称' },
   is_ai_room: { type: 'boolean', nullable: false, default: false, note: '人机房' },
   ranked: { type: 'boolean', nullable: false, default: false, note: '是否计排位分' },
+  admin_test: { type: 'boolean', nullable: false, default: false, note: '管理员测试局不计战绩与奖励' },
   mode: { type: 'string', nullable: false, default: 'casual', note: 'ranked/casual/ai/custom' },
   winner: { type: 'string', nullable: false, default: '', note: '胜者 player_id；未结束为空串' },
   game_over_reason: { type: 'string', nullable: true, default: null, note: '结束原因文案' },

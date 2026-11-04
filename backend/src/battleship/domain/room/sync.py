@@ -433,6 +433,7 @@ def build_room_sync(
         "card_bans": ban_rules.payload(room, player_id),
         "opponent_hand_names": ([card.name for card in opponent.magic_hand]
                                 if opponent and mutation_rules.active(room, "E2") else []),
+        "admin_test": bool(room.admin_test),
     }
     # Validation is the freeze: adding/removing a key without updating the
     # contract model fails here instead of silently drifting the wire shape.

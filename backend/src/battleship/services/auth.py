@@ -164,6 +164,20 @@ class AuthService:
 
     # ------------------------------------------------------------------- bans
 
+    def provision_admin_cosmetics(self) -> None:
+        """只为已存在的唯一白名单账号补全外观特权，不改变段位或等级。"""
+        from ..domain.progression.profile_spec import PERK_UNLOCK_ALL, PERK_RAINBOW_NAME
+        import time
+        whitelist = self.settings.debug_admin_user_ids
+        if len(whitelist) != 1:
+            return
+        uid = next(iter(whitelist))
+        with self.database.unit_of_work() as uow:
+            if uow.users.get(uid) is None:
+                return
+            for perk in (PERK_UNLOCK_ALL, PERK_RAINBOW_NAME):
+                uow.stats.grant_perk(uid, perk, granted_at=int(time.time()))
+
     def suspicion_matches(self, user_id: str) -> list[dict[str, Any]]:
         with self.database.unit_of_work() as uow:
             rows = uow.stats.list_suspicions(user_id, limit=500)

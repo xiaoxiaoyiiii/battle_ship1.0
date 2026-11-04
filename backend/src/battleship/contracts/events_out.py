@@ -216,6 +216,7 @@ class RoomSync(BaseModel):
     mutations: dict[str, Any] | None = None
     card_bans: dict[str, Any] | None = None
     opponent_hand_names: list[str] = Field(default_factory=list)
+    admin_test: bool = False
 
 
 #: Authoritative key order/count for the reconnect snapshot.

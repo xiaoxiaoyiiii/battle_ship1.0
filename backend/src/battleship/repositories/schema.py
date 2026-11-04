@@ -165,7 +165,9 @@ def diff_schemas(expected: dict[str, Any], actual: dict[str, Any]) -> list[str]:
 
     for name in sorted(set(expected_tables) - set(actual_tables)):
         diffs.append(f"missing table: {name}")
-    for name in sorted(set(actual_tables) - set(expected_tables)):
+    # 旧线上反作弊申诉审计保留为只读历史，不属于新业务表，也不得迁移时删除。
+    legacy_audit_tables = {'anticheat_actions'}
+    for name in sorted(set(actual_tables) - set(expected_tables) - legacy_audit_tables):
         diffs.append(f"unexpected table: {name}")
 
     for name in sorted(set(expected_tables) & set(actual_tables)):

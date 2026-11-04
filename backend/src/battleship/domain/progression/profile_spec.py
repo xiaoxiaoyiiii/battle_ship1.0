@@ -438,6 +438,8 @@ def unlocked_title_effects(stats):
 
 def _pass_owned(stats, kind, catalog):
     """把已领取的赛季外观并入现有解锁集合。"""
+    if has_unlock_all(stats):
+        return set(catalog)
     rewards = unlock_context(stats).get('battle_pass_rewards', set())
     prefix = f'{kind}:'
     return {

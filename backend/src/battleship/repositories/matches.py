@@ -66,8 +66,15 @@ class MatchRepository:
             select(MatchLog.logs).where(MatchLog.match_id == match_id)
         )
 
-    def history_for_user(self, user_id: str, limit: int = 20) -> list[dict[str, Any]]:
-        """Same shape as the old /user_stats history rows (without replay blobs)."""
+    def history_for_user(self, user_id: str, limit: int = 20,
+                         include_logs: bool = False) -> list[dict[str, Any]]:
+        """History rows for /user_stats (never the replay blobs).
+
+        ``include_logs`` is the owner read: step-by-step match logs only leave
+        the server for the profile owner (privacy ruling 2026-11-04). Other
+        viewers get summary rows without the ``logs`` key, and the match_logs
+        join is skipped entirely.
+        """
         if not user_id:
             return []
         safe_limit = min(max(1, int(limit)), 100)
@@ -87,21 +94,24 @@ class MatchRepository:
                 Match.mode,
                 winner.username.label("winner_name"),
                 loser.username.label("loser_name"),
-                MatchLog.logs,
                 has_replay.label("has_replay"),
             )
             .select_from(Match)
             .outerjoin(winner, Match.winner_id == winner.id)
             .outerjoin(loser, Match.loser_id == loser.id)
-            .outerjoin(MatchLog, MatchLog.match_id == Match.id)
             .where(or_(Match.winner_id == user_id, Match.loser_id == user_id))
             .order_by(Match.timestamp.desc())
             .limit(safe_limit)
         )
+        if include_logs:
+            statement = statement.add_columns(MatchLog.logs).outerjoin(
+                MatchLog, MatchLog.match_id == Match.id
+            )
         history: list[dict[str, Any]] = []
         for row in self.session.execute(statement):
             item = row_dict(row)
-            item["logs"] = _load_logs(item["logs"])
+            if include_logs:
+                item["logs"] = _load_logs(item["logs"])
             item["has_replay"] = bool(item["has_replay"])
             history.append(item)
         return history

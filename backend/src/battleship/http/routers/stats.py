@@ -1,9 +1,10 @@
 """Public player stats (/user_stats), scoped to the privacy contract.
 
 Ticket #6 owns the privacy semantics exercised here. Rank/level/badge projections
-are ticket #15's job; this route already returns the legacy field names and the
-server-side history filter so "another user reads the endpoint directly" can be
-verified without trusting the frontend.
+are ticket #15's job; this route returns the legacy field names with the
+server-side privacy filters (stats numbers, favourite cards, history summaries,
+rank_info) so "another user reads the endpoint directly" can be verified
+without trusting the frontend.
 """
 
 from __future__ import annotations

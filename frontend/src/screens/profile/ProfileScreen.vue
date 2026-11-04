@@ -11,9 +11,10 @@ import TitleBadge from '../../components/TitleBadge.vue'
  * Ticket #25: own / other player's profile card.
  *
  * Every number, badge, tier label and history row comes from the server. The
- * privacy flags are rendered, not enforced here: show_history / show_rank /
- * show_guestbook were already applied by the server, while show_stats /
- * show_fav_cards remain legacy frontend-only hides (DECISIONS D13).
+ * privacy flags are rendered, not enforced here: show_stats / show_fav_cards /
+ * show_history / show_rank / show_guestbook are all applied server-side
+ * (DECISIONS D13, revised 2026-11-04); history rows for other players are
+ * summaries without step-by-step logs.
  */
 const route = useRoute()
 const router = useRouter()

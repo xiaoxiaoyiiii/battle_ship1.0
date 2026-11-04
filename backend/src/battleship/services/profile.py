@@ -1,17 +1,22 @@
 """Profile reads and card writes (ticket #6 privacy + ticket #15 projections).
 
-The privacy contract from DECISIONS D13 is unchanged:
+The privacy contract (DECISIONS D13, revised 2026-11-04) is enforced on the
+server for every viewer other than the profile owner:
 
-* show_stats / show_fav_cards are only flags -- the stats and favourite-card
-  data are still sent, exactly like the legacy /user_stats;
-* show_history really does filter the history payload (the legacy endpoint did
-  that, and only the server can enforce it);
+* show_stats=0 nulls wins/losses/streaks; show_fav_cards=0 sends no favourite
+  cards (these used to be frontend-only hides -- the data no longer leaves the
+  server);
+* show_history=0 returns no history; show_history=1 sends history *summary*
+  rows (time/opponent/result/replay flag). Step-by-step match logs only ever
+  leave the server to the owner themselves;
 * show_rank nulls rank_info for other users, but never hides it from oneself;
-* missing profile rows fall back to the legacy defaults without writing a row.
+* leaderboard projections (wins rank etc.) and switch-less card fields stay
+  public; missing profile rows fall back to the legacy defaults without
+  writing a row.
 
 Ticket #15 adds the projections the legacy API built from ranks / leveling /
 achievements / profile_spec. Rules stay in domain/progression; this module only
-assembles facts and applies the read-path cosmetic filter.
+assembles facts and applies the read-path privacy filter.
 """
 
 from __future__ import annotations
@@ -207,9 +212,20 @@ def public_stats(database: Database, user: Any, viewer_id: str | None,
         stats["profile_bg_id"] = profile_bg_id
         stats["pointer_effect_id"] = pointer_effect_id
         stats["title_effect_id"] = title_effect_id
-        # D13: flags are sent for the frontend to draw/hide the section, but the
-        # data itself keeps flowing exactly as it did in the legacy stack.
-        stats["fav_cards"] = progression.fav_cards(uow, user_id)
+        # D13 revised: show_fav_cards=0 hides the favourite-card list from other
+        # viewers on the server; the owner always gets their own list.
+        stats["fav_cards"] = (
+            progression.fav_cards(uow, user_id)
+            if (is_self or stats["show_fav_cards"])
+            else []
+        )
+        # D13 revised: show_stats=0 strips the record numbers for other viewers
+        # (the owner is unaffected). The wins-board `rank` above stays public.
+        if not is_self and not stats["show_stats"]:
+            stats["wins"] = None
+            stats["losses"] = None
+            stats["current_streak"] = None
+            stats["longest_streak"] = None
         counts = uow.social.reaction_counts(user_id)
         stats["counts"] = {
             "like": int(counts.get("like") or 0),
@@ -233,7 +249,10 @@ def public_stats(database: Database, user: Any, viewer_id: str | None,
         stats["achievements"] = badges
         stats["badge_count"] = badge_count
         if is_self or stats["show_history"]:
-            history = uow.matches.history_for_user(user_id, limit)
+            # Logs are the owner's read; other viewers get summary rows only.
+            history = uow.matches.history_for_user(
+                user_id, limit, include_logs=is_self
+            )
         else:
             history = []
     return stats, history

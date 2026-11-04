@@ -40,6 +40,8 @@ VETERAN_SECONDS = VETERAN_DAYS * 24 * 3600
 # ---------------------------------------------------------------------------
 # 7 个称号（设计稿 §5.1）
 TITLES = [
+    {"id": "beta_tester", "name": "内测玩家", "desc": "曾与我们一同驶过最初的风浪",
+     "requirement": "内测感谢信专属奖励"},
     {"id": "ranked_voyager", "name": "赛季启航者", "desc": "以坚持写下这一季的航迹", "requirement": "排位赛季下三段结算奖励"},
     {"id": "ranked_navigator", "name": "赛季领航者", "desc": "在风浪中找到自己的航道", "requirement": "排位赛季中三段结算奖励"},
     {"id": "ranked_overlord", "name": "赛季镇海者", "desc": "这一季的海域记住了你的名字", "requirement": "排位赛季上三段结算奖励"},

@@ -9,11 +9,20 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT/'backend/src'), str(ROOT)]
 
 
+def resolve_start(config, starts_at=None):
+    """切换时显式传入实际开服时间，避免预演或重跑悄悄打开赛季。"""
+    value = starts_at if starts_at is not None else config.get('starts_at')
+    if type(value) is not int or value <= 0:
+        raise ValueError('本季按实际开服时刻起算，须用 --starts-at 显式指定 Unix 秒')
+    return value
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--database', required=True)
     parser.add_argument('--config', default=str(ROOT/'ops/launch-20261104.json'))
     parser.add_argument('--admin-user-id', required=True)
+    parser.add_argument('--starts-at', type=int, help='实际开服时刻的 Unix 秒；只用于首次预置，不覆盖已有季')
     parser.add_argument('--service', default='battleship')
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--dry-run', action='store_true')
@@ -22,6 +31,7 @@ def main(argv=None):
     if args.dry_run:
         print(json.dumps({'database':str(Path(args.database).resolve()),'season':config,'writes':False},ensure_ascii=False))
         return 0
+    starts_at = resolve_start(config, args.starts_at)
     if not args.offline:
         from ops.service_state import require_stopped
         require_stopped(args.service)
@@ -40,7 +50,7 @@ def main(argv=None):
             if uow.users.get(args.admin_user_id) is None:
                 raise ValueError('指定的云端管理员账号不存在，不创建替代账号')
         backup = backup_database(path)
-        season = BattlePassService(database).seed_default(config['season_id'], config['starts_at'])
+        season = BattlePassService(database).seed_default(config['season_id'], starts_at)
         auth = AuthService(database, Settings(secret_key='仅用于离线权限配置，不用于运行服务',
                             debug_admin_user_ids_raw=args.admin_user_id))
         auth.provision_admin_cosmetics()

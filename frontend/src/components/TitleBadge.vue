@@ -18,7 +18,7 @@ const props = withDefaults(defineProps<{
  * 赛季/高段位称号使用更明显的金色棱镜，但仍不改变文字本身的可读性。
  */
 const tier = computed<'plain' | 'rare' | 'epic'>(() => {
-  if (['season_deep_1', 'sea_emperor', 'unsinkable', 'immortal', 'deep_navigator', 'iron_soul'].includes(props.titleId)) return 'epic'
+  if (['beta_tester', 'season_deep_1', 'sea_emperor', 'unsinkable', 'immortal', 'deep_navigator', 'iron_soul'].includes(props.titleId)) return 'epic'
   if (['hunter', 'streak10', 'veteran', 'cardmaster', 'storm_helmsman', 'tide_watcher', 'storm_cartographer'].includes(props.titleId)) return 'rare'
   return 'plain'
 })

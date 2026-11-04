@@ -150,6 +150,9 @@ class RoomService:
         # 来源地址限频（与 auth 入口同一默认 10 次 / 60 秒）。ip 为空的进程内
         # 调用方退回按 sid 计（每次连接独立键，测试与模拟不受影响）。
         self._join_limiter = RateLimiter()
+        # L9 收尾（issue #32）：游客（无账号）建房另设更紧的限频，堵“匿名免
+        # 登录无限建房污染大厅”；注册用户建房是正常玩法，不在此限。
+        self._guest_create_limiter = RateLimiter(limit=3, window_seconds=60.0)
         self.turn_timeout_seconds: int | None = (
             None if turn_timeout_seconds is None else max(0, int(turn_timeout_seconds))
         )
@@ -367,6 +370,10 @@ class RoomService:
         refused = await self._refuse_capability(connection, suspicion.CAP_ROOM)
         if refused is not None:
             return refused
+        if not connection.user_id and self._guest_create_limiter.hit(
+            "room-create-guest", connection.ip or connection.sid
+        ):
+            return {'status': 'error', 'message': '操作过于频繁，请稍后再试'}
         player_id = connection.user_id or connection.sid
         error = self.prepare_seating(connection)
         if error:

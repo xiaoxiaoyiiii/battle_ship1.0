@@ -14,6 +14,7 @@ and its repositories.
 
 from __future__ import annotations
 
+import functools
 import time
 import uuid
 from typing import Any
@@ -28,6 +29,24 @@ from ..repositories import Database
 USERNAME_MIN_LENGTH = 3
 PASSWORD_MIN_LENGTH = 6
 _USERNAME_ALLOWED_EXTRA = "._-"
+
+
+@functools.lru_cache(maxsize=1)
+def _dummy_password_hash() -> str:
+    """L2（issue #32）：账号枚举侧信道的均衡垫片。
+
+    “账号不存在”与“密码错误”必须消耗同量级的哈希时间：前者对一份惰性生成的
+    常量哑哈希跑一次完整校验（首次调用生成约零点几秒，之后进程内复用），
+    让外部只能靠限流维度而不是响应时延猜测用户名。
+    """
+    return generate_password_hash("enum-padding-dummy-credentials")
+
+
+def _equalize_missing_user_cost(password: str) -> None:
+    try:
+        check_password_hash(_dummy_password_hash(), str(password))
+    except (ValueError, TypeError):
+        pass
 
 
 class AuthError(Exception):
@@ -105,6 +124,8 @@ class AuthService:
         with self.database.unit_of_work() as uow:
             user = uow.users.get_by_username(name)
             if user is None or not user.password_hash:
+                # L2：与“密码错误”同量级的耗时，抹平账号枚举侧信道。
+                _equalize_missing_user_cost(str(password))
                 return None
             try:
                 matches = check_password_hash(user.password_hash, str(password))
@@ -126,6 +147,8 @@ class AuthService:
         with self.database.unit_of_work() as uow:
             user = uow.users.get_by_username(name)
             if user is None or not user.password_hash:
+                # L2：与 /login 同一把均衡垫片，旧 token 接口同样不泄露账号存在性。
+                _equalize_missing_user_cost(str(password))
                 raise AuthError(401, "invalid_credentials", "用户名或密码错误")
             password_hash = user.password_hash
             try:

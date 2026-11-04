@@ -1,21 +1,29 @@
 /**
  * 房间邀请链接的纯逻辑（不碰 DOM、不碰 socket，便于回归）。
  *
- * 设计边界（任务约定）：
- * - URL 只携带房间标识 room=XXXX，不带 token / 密码 / 用户名等隐私字段；
+ * 私密房链接携带服务端签发的入场凭据；持有完整链接即可入场，请仅分享给受邀者。
  * - 房间号只允许字母数字与下划线，长度 <= 32，避免把任意输入塞进既有的 join_room；
  * - 文案集中在这里，复制成功/失败两条反馈与手动复制兜底提示保持一对一。
  */
 
 export const INVITE_PARAM = 'room'
+export const INVITE_TOKEN_PARAM = 'invite'
 
 const ROOM_ID_PATTERN = /^[A-Za-z0-9_]{1,32}$/
 
 /** 生成 `<origin><pathname>?room=<id>`；origin/path 的末尾斜杠只保留一个。 */
-export function buildInviteUrl(origin: string, pathname: string, roomId: string): string {
+export function buildInviteUrl(origin: string, pathname: string, roomId: string, token = ''): string {
   const base = String(origin || '').replace(/\/+$/, '')
   const path = String(pathname || '/').startsWith('/') ? String(pathname || '/') : '/' + String(pathname)
-  return `${base}${path}?${INVITE_PARAM}=${encodeURIComponent(String(roomId).trim())}`
+  const credential = token ? `&${INVITE_TOKEN_PARAM}=${encodeURIComponent(token)}` : ''
+  return `${base}${path}?${INVITE_PARAM}=${encodeURIComponent(String(roomId).trim())}${credential}`
+}
+
+/** 只接受安全随机凭据的 URL 字符集，重复参数不猜测。 */
+export function readInviteToken(query: unknown): string {
+  if (!query || typeof query !== 'object') return ''
+  const raw = (query as Record<string, unknown>)[INVITE_TOKEN_PARAM]
+  return typeof raw === 'string' && /^[A-Za-z0-9_-]{32,128}$/.test(raw) ? raw : ''
 }
 
 /** 从路由 query 里取出房间号；非法或缺省一律返回空串（调用方据此不做任何动作）。 */

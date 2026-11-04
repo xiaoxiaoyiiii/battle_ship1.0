@@ -19,6 +19,7 @@ import uuid
 from typing import Any
 
 from werkzeug.security import check_password_hash, generate_password_hash
+from .auth_sessions import SESSION_ID, issue_session
 
 from ..config import Settings
 from ..domain.anticheat import suspicion
@@ -71,7 +72,7 @@ class AuthService:
 
     # ---------------------------------------------------------------- accounts
 
-    def register(self, username: Any, password: Any) -> dict[str, str]:
+    def register(self, username: Any, password: Any, *, issue_login_session: bool = False) -> dict[str, str]:
         name = normalize_username(username)
         validate_username(name)
         raw_password = str(password or "")
@@ -79,6 +80,7 @@ class AuthService:
 
         password_hash = generate_password_hash(raw_password)
         user_id = str(uuid.uuid4())
+        identity = {"id": user_id, "username": name}
         with self.database.unit_of_work() as uow:
             if uow.users.get_by_username(name) is not None:
                 raise AuthError(409, "username_taken", "用户名已存在", "username")
@@ -92,9 +94,11 @@ class AuthService:
                 if "UNIQUE" in str(exc).upper():
                     raise AuthError(409, "username_taken", "用户名已存在", "username") from exc
                 raise
-        return {"id": user.id, "username": user.username}
+            if issue_login_session:
+                identity[SESSION_ID] = issue_session(uow, user.id, user.password_hash)
+        return identity
 
-    def authenticate(self, username: Any, password: Any) -> dict[str, str] | None:
+    def authenticate(self, username: Any, password: Any, *, issue_login_session: bool = False) -> dict[str, str] | None:
         name = normalize_username(username)
         if not name or not password:
             return None
@@ -108,18 +112,30 @@ class AuthService:
                 return None
             if not matches:
                 return None
-            return {"id": str(user.id), "username": str(user.username or name)}
+            identity = {"id": str(user.id), "username": str(user.username or name)}
+            if issue_login_session:
+                identity[SESSION_ID] = issue_session(uow, user.id, user.password_hash)
+            return identity
 
     def issue_token(self, username: Any, password: Any) -> str:
-        """Frozen POST /api/login: verify, then rotate the legacy users.token."""
-        identity = self.authenticate(username, password)
-        if identity is None:
+        """旧版接口保持响应形状；密码验证与条件写入使用同一事务。"""
+        name = normalize_username(username)
+        if not name or not password:
             raise AuthError(401, "invalid_credentials", "用户名或密码错误")
         token = str(uuid.uuid4())
         with self.database.unit_of_work() as uow:
-            updated = uow.users.update(identity["id"], token=token)
-        if not updated:
-            raise AuthError(500, "token_issue_failed", "登录失败")
+            user = uow.users.get_by_username(name)
+            if user is None or not user.password_hash:
+                raise AuthError(401, "invalid_credentials", "用户名或密码错误")
+            password_hash = user.password_hash
+            try:
+                matches = check_password_hash(password_hash, str(password))
+            except (ValueError, TypeError):
+                matches = False
+            if not matches or not uow.auth_sessions.rotate_legacy_token(
+                user.id, password_hash=password_hash, token=token
+            ):
+                raise AuthError(401, "invalid_credentials", "用户名或密码错误")
         return token
 
     def change_password(self, user_id: str | None, old_password: Any,
@@ -146,9 +162,10 @@ class AuthService:
             if len(new) < PASSWORD_MIN_LENGTH:
                 raise AuthError(400, "validation_error",
                                 f"新密码长度至少{PASSWORD_MIN_LENGTH}位", "new_password")
-            updated = uow.users.update(user_id, password_hash=generate_password_hash(new))
+            updated = uow.users.update(user_id, password_hash=generate_password_hash(new), token="")
             if not updated:
                 raise AuthError(500, "password_update_failed", "修改失败")
+            uow.auth_sessions.revoke_user(user_id, revoked_at=int(time.time()))
 
     # ------------------------------------------------------------------ admin
 

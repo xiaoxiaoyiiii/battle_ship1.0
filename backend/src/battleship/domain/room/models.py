@@ -281,6 +281,9 @@ class Room:
     state: RoomState = RoomState.WAITING
     name: str = ""
     public: bool = True
+    # 只通过房主投影和定向邀请传递，不能进入公开列表或对局快照。
+    invite_token: str = ""
+    invite_targets: dict[str, str] = field(default_factory=dict)
     ranked: bool = False
     ranked_season_id: str | None = None
     admin_test: bool = False

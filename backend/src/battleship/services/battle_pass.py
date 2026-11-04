@@ -294,7 +294,8 @@ class BattlePassService:
         facts = context.facts
         users = [facts.winner_user_id, facts.loser_user_id]
         seats = [facts.winner_id, facts.loser_id]
-        if (facts.mode not in {"ranked", "casual"} or room.is_ai_room
+        if (not facts.rewards_eligible
+                or facts.mode not in {"ranked", "casual"} or room.is_ai_room
                 or not context.match_id or not all(users) or len(set(users)) != 2
                 or any(not uow.users.get(uid) for uid in users)
                 or any(seat.startswith("ai-") or seat not in room.players

@@ -28,6 +28,7 @@ from .config import Settings, load_settings
 from .http.routers import admin as admin_router
 from .http.routers import battle_pass as battle_pass_router
 from .http.routers import shop as shop_router
+from .http.routers import support as support_router
 from .http.routers import mailbox as mailbox_router
 from .http.routers import auth as auth_router
 from .http.routers import chat as chat_router
@@ -297,6 +298,7 @@ def create_application(settings: Settings | None = None,
     fastapi_app.include_router(admin_router.router)
     fastapi_app.include_router(battle_pass_router.router)
     fastapi_app.include_router(shop_router.router)
+    fastapi_app.include_router(support_router.router)
     fastapi_app.include_router(mailbox_router.router)
     fastapi_app.include_router(admin_console_router.router)
 
@@ -378,6 +380,7 @@ def create_application(settings: Settings | None = None,
     sio = create_socket_server(
         settings, metrics, rooms, gameplay, battle, magic, lobby, presence, friends,
         chat, matchmaking, spectators, ai,
+        database=database,
     )
     health = HealthService(settings, metrics, version=__version__, socketio_ready=True)
 

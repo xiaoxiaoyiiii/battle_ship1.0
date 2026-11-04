@@ -55,12 +55,13 @@ export interface LobbyRoom {
   createdAt: number
   /** Ticket #43 additive fields: 'casual' | 'ranked' | 'custom' (or '' if absent). */
   mode: string
-  /** Ticket #43: false = private room (join by room id only). */
+  /** 私密房须使用服务端验证的邀请凭据。 */
   public: boolean
 }
 
 export interface OwnWaitingRoom {
   roomId: string
+  inviteToken: string
   hostName: string
   playerId: string
   seatConnected: boolean
@@ -101,6 +102,7 @@ export interface LobbyFriend {
 
 export interface LobbyInvite {
   roomId: string
+  inviteToken: string
   fromUserId: string
   fromUsername: string
 }
@@ -345,6 +347,7 @@ export const useLobbyStore = defineStore('lobby', () => {
     if (!roomId) return
     activeInvite.value = {
       roomId,
+      inviteToken: asString(payload.invite_token),
       fromUserId: asString(payload.from_user_id),
       fromUsername: asString(payload.from_username) || '好友',
     }
@@ -392,6 +395,7 @@ export const useLobbyStore = defineStore('lobby', () => {
     setOwnRoom(roomId, asString(value.name), value.public !== false)
     ownRoom.value = {
       roomId, hostName: asString(value.host_name), playerId: asString(value.player_id),
+      inviteToken: asString(value.invite_token),
       seatConnected: value.seat_connected !== false,
       canRestore: value.can_restore === true,
       banEnabled: value.ban_enabled === true, banQuota: asNumber(value.ban_quota),

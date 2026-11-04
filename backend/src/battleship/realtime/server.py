@@ -14,7 +14,10 @@ from typing import TYPE_CHECKING
 import socketio
 
 from ..contracts.events_in import is_debug_event
-from ..http.session import session_from_cookie_header, session_user_id, session_username
+from ..http.session import (
+    SESSION_COOKIE_NAME, SessionCodec, parse_cookie_header,
+    session_from_cookie_header, session_user_id, session_username,
+)
 from ..infra.logging import get_logger, log_context
 from ..services.ai import AiService
 from ..services.battle import BattleService
@@ -26,6 +29,7 @@ from ..services.magic import MagicService
 from ..services.matchmaking import MatchmakingService
 from ..services.presence import PresenceService
 from ..services.rooms import Connection, RoomService
+from ..services.auth_sessions import SESSION_ID, has_login_identity, valid_session
 from ..services.spectators import SpectatorService
 from .emitter import SocketIoPublisher
 from .handlers.battle import register_battle_handlers
@@ -42,10 +46,12 @@ from .handlers.matchmaking import register_matchmaking_handlers
 from .handlers.reconnect import register_reconnect_handlers
 from .handlers.room import register_room_handlers
 from .handlers.spectate import register_spectate_handlers
+from .session_guard import install_session_guard
 
 if TYPE_CHECKING:
     from ..config import Settings
     from ..infra.metrics import MetricsRegistry
+    from ..repositories import Database
 
 logger = get_logger("realtime")
 
@@ -64,6 +70,8 @@ def create_socket_server(
     matchmaking: MatchmakingService | None = None,
     spectators: SpectatorService | None = None,
     ai: AiService | None = None,
+    *,
+    database: "Database | None" = None,
 ) -> socketio.AsyncServer:
     presence = presence or (rooms.presence if rooms is not None else None)
     presence = presence or PresenceService()
@@ -124,13 +132,21 @@ def create_socket_server(
 
     @sio.event
     async def connect(sid: str, environ: dict, auth=None) -> bool:
-        metrics.connection_opened()
         # Carry the signed-cookie identity onto the socket. ticket #7 reads this
         # instead of trusting a client-supplied user_id/player_id claim.
         cookie_header = (environ or {}).get("HTTP_COOKIE") or (environ or {}).get("COOKIE")
+        cookies = parse_cookie_header(cookie_header)
+        if SESSION_COOKIE_NAME in cookies and not SessionCodec(
+            settings.secret_key.get_secret_value()
+        ).is_valid(cookies[SESSION_COOKIE_NAME]):
+            # 已携带的失效 Cookie 必须重新登录，不能降为匿名连接继续操作。
+            return False
         session = session_from_cookie_header(
             settings.secret_key.get_secret_value(), cookie_header
         )
+        if has_login_identity(session) and not valid_session(session, database):
+            return False
+        metrics.connection_opened()
         # REMOTE_ADDR is the only trustworthy peer address (legacy _client_ip;
         # no reverse proxy in front of the app). Matchmaking normalises private
         # and loopback addresses to "not judged".
@@ -140,6 +156,7 @@ def create_socket_server(
             {
                 "user_id": session_user_id(session),
                 "username": session_username(session),
+                SESSION_ID: session.get(SESSION_ID),
                 "ip": remote_ip,
             },
         )
@@ -242,4 +259,5 @@ def create_socket_server(
     register_spectate_handlers(sio, spectators)
     register_debug_implementations(battle, magic, rooms, gameplay)
     register_debug_handlers(sio, settings, metrics)
+    install_session_guard(sio, database)
     return sio

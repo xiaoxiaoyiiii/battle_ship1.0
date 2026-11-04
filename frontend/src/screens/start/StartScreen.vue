@@ -8,6 +8,7 @@ import HomeTasks from './HomeTasks.vue'
 import BattlePassCard from './BattlePassCard.vue'
 import MatchFoundOverlay from '../../components/MatchFoundOverlay.vue'
 import StateSurface from '../../components/StateSurface.vue'
+import SupportAuthorLink from '../../components/SupportAuthorLink.vue'
 import { cardArtUrl } from '../../cards/cardArt'
 import { CARDS, UNIQUE_CARD_NAMES } from '../../cards/cardData'
 import { useAuthStore } from '../../stores/auth'
@@ -614,6 +615,7 @@ async function startAi(): Promise<void> {
             </template>
           </StateSurface>
         </section>
+        <SupportAuthorLink compact test-id="start-support-author" />
       </aside>
 
     </div>

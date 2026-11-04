@@ -26,12 +26,14 @@ from .social import SocialRepository
 from .stats import StatsRepository
 from .tasks import TaskRepository
 from .users import UserRepository
+from .auth_sessions import AuthSessionRepository
 from .battle_pass import BattlePassRepository
 from .tide_ash import TideAshRepository
 from .shop import ShopRepository
 from .daily_challenge import DailyChallengeRepository
 from .ranked_seasons import RankedSeasonRepository
 from .mailbox import MailboxRepository
+from .support import SupportRepository
 
 
 class UnitOfWork:
@@ -76,6 +78,10 @@ class UnitOfWork:
         return self._repository("users", UserRepository)  # type: ignore[return-value]
 
     @property
+    def auth_sessions(self) -> AuthSessionRepository:
+        return self._repository("auth_sessions", AuthSessionRepository)
+
+    @property
     def daily_challenges(self) -> DailyChallengeRepository:
         return self._repository('daily_challenges', DailyChallengeRepository)
 
@@ -118,6 +124,10 @@ class UnitOfWork:
     @property
     def mailbox(self) -> MailboxRepository:
         return self._repository('mailbox', MailboxRepository)
+
+    @property
+    def support(self) -> SupportRepository:
+        return self._repository('support', SupportRepository)
 
     def flush(self) -> None:
         self._require_session().flush()

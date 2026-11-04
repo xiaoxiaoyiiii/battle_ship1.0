@@ -20,6 +20,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 
 from ...infra.ratelimit import client_key
 from ...services.auth import AuthError, AuthService
+from ...services.auth_sessions import SESSION_ID, revoke_session
 from ..deps import get_auth_service, require_user
 from ..errors import api_error, from_auth_error
 from ..session import (
@@ -63,7 +64,12 @@ async def _read_payload(request: Request) -> tuple[dict[str, Any], bool, bool]:
 
 
 def _session_payload(identity: dict[str, str]) -> dict[str, str]:
-    return {SESSION_USER_ID: str(identity["id"]), SESSION_USERNAME: str(identity["username"])}
+    return {SESSION_USER_ID: str(identity["id"]), SESSION_USERNAME: str(identity["username"]),
+            SESSION_ID: identity[SESSION_ID]}
+
+
+def _public_identity(identity: dict[str, str]) -> dict[str, str]:
+    return {"id": identity["id"], "username": identity["username"]}
 
 
 def _json_with_session(content: Any, request: Request, data: dict[str, Any],
@@ -136,17 +142,17 @@ async def login(request: Request, service: AuthService = Depends(get_auth_servic
     password = payload.get("password")
     if is_json:
         _guard_login_fields(username, password)
-        identity = service.authenticate(username, password)
+        identity = service.authenticate(username, password, issue_login_session=True)
         if identity is None:
             raise api_error(401, "invalid_credentials", "用户名或密码错误")
         data = _session_payload(identity)
-        return _json_with_session({"success": True, "user": identity}, request, data)
+        return _json_with_session({"success": True, "user": _public_identity(identity)}, request, data)
 
     if not str(username or "").strip() or not str(password or ""):
         data = read_session(request)
         flash(data, "用户名和密码不能为空")
         return _redirect_with_session("/login", request, data)
-    identity = service.authenticate(username, password)
+    identity = service.authenticate(username, password, issue_login_session=True)
     if identity is None:
         data = read_session(request)
         flash(data, "用户名或密码错误")
@@ -173,14 +179,14 @@ async def register(request: Request, service: AuthService = Depends(get_auth_ser
 
     if is_json:
         try:
-            identity = service.register(username, password)
+            identity = service.register(username, password, issue_login_session=True)
         except AuthError as exc:
             raise from_auth_error(exc) from exc
         data = _session_payload(identity)
-        return _json_with_session({"success": True, "user": identity}, request, data)
+        return _json_with_session({"success": True, "user": _public_identity(identity)}, request, data)
 
     try:
-        identity = service.register(username, password)
+        identity = service.register(username, password, issue_login_session=True)
     except AuthError as exc:
         data = read_session(request)
         flash(data, exc.message)
@@ -193,6 +199,8 @@ async def register(request: Request, service: AuthService = Depends(get_auth_ser
 @router.get("/logout")
 def logout(request: Request) -> Response:
     data = read_session(request)
+    revoke_session(data, request.app.state.database)
+    data.pop(SESSION_ID, None)
     data.pop(SESSION_USER_ID, None)
     data.pop(SESSION_USERNAME, None)
     flash(data, "已退出登录")

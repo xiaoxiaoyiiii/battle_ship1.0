@@ -1,5 +1,7 @@
 # ops/ — build, migrate, deploy, roll back
 
+HTTPS 入口的待审阅配置与独立 release 切换边界见 [HTTPS 切换准备](https/README.md)。该文件仅准备方案，不代表生产已启用 HTTPS。
+
 Phase 5 has a single stack: **FastAPI + python-socketio + SQLAlchemy/Alembic**,
 serving the **Vue 3 build** from `frontend/dist` on the same ASGI app. There is
 no legacy stack, no `/legacy` and no `BACKEND_STACK` switch; a leftover value

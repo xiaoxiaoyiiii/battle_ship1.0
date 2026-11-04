@@ -383,6 +383,9 @@ class BattleService:
 
         room.state = RoomState.GAME_OVER
         room.winner = winner_id
+        # 先保存权威终局原因，供结算、反作弊、回放和事件读取同一事实。
+        room.game_over_reason = reason or room.game_over_reason or "attacks"
+        reason = room.game_over_reason
         # Clear every pending magic interaction in the same ending funnel.
         interaction_rules.clear_ship_picks(room)
         room.pending_dice_discard = {}

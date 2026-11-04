@@ -154,15 +154,6 @@ class MatchmakingService:
                 if entry.get('mode') == MATCH_MODE_RANKED and entry.get('ranked_season_id') != season['id']:
                     self.rooms.remove_from_match_queue(entry['sid'])
                     await self._publisher.emit('match_canceled', {'status':'success','message':'赛季已切换，请重新加入排位匹配'},to=entry['sid'])
-        # 同一账号的新连接也不能绕过尚未退出的对局。
-        if any(
-            room.state not in (RoomState.WAITING, RoomState.GAME_OVER)
-            and any(player.socket_id == connection.sid
-                    or bool(connection.user_id and player.user_id == connection.user_id)
-                    for player in room.players.values())
-            for room in self.rooms.rooms.values()
-        ):
-            return await self._deny(connection.sid, '请先退出当前对局，再开始匹配')
         preselection = data.get('ban_preselection', []) if mode == MATCH_MODE_RANKED else []
         if mode == MATCH_MODE_RANKED:
             error = bans.validate_selection(preselection, bans.quota_for_points(points_for_user(self.database, connection.user_id)))
@@ -178,6 +169,9 @@ class MatchmakingService:
 
         if any(entry.get("sid") == connection.sid for entry in self.rooms.match_queue):
             return {"status": "error", "message": "你已经在匹配队列中"}
+        error = self.rooms.prepare_seating(connection)
+        if error:
+            return await self._deny(connection.sid, error)
 
         self.rooms.match_queue.append({
             "sid": connection.sid,
@@ -194,13 +188,14 @@ class MatchmakingService:
             "ban_preselection": list(preselection),
             "ranked_season_id": season['id'] if season else None,
         })
+        # 入队到配对不能跨 await，避免同时改走建房入口后仍被旧队列配对。
+        matched = self._pair()
         await self._publisher.emit(
             "match_queued",
             {"status": "success", "message": "已加入匹配队列", "mode": mode},
             to=connection.sid,
         )
 
-        matched = self._pair()
         await self._announce(matched)
         await self._broadcast_lobby()
         return {"status": "success", "message": "开始寻找匹配"}

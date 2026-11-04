@@ -23,7 +23,7 @@ from ..domain.social import messages as dm
 from ..domain.room import RoomState
 from ..infra.logging import get_logger
 from .presence import PresenceService
-from .rooms import EventPublisher, NullPublisher, RoomService
+from .rooms import Connection, EventPublisher, NullPublisher, RoomService
 
 logger = get_logger("friends")
 
@@ -360,11 +360,17 @@ class FriendsService:
                 return error
             assert target is not None
             other = str(target.id)
-            relation = uow.social.get_friend_relation(user_id, other) if 'room_id' in payload else None
+            relation = uow.social.get_friend_relation(user_id, other)
             me = uow.users.get(user_id)
             identity = self._identity(me) if me is not None else {"username": "", "avatar": ""}
         if other == str(user_id):
             return 400, {"status": "error", "error": "不能邀请自己"}
+        if relation != 'friends':
+            return 403, {'status': 'error', 'error': '只能邀请已添加的好友'}
+        inviter_sids = self._presence.sids_of(user_id)
+        if not inviter_sids:
+            return 409, {'status': 'error', 'error': '请先连接游戏大厅'}
+        connection = Connection(sid=inviter_sids[0], user_id=str(user_id), username=identity['username'])
         # The inviter also enters the new room (the client calls join_room after
         # the invite succeeds), so an account already in a game is refused here.
         existing_room = None
@@ -390,21 +396,39 @@ class FriendsService:
         # a zombie waiting room behind.
         if not self._presence.is_online(other):
             return 200, {"status": "error", "error": "对方不在线"}
-        room_id = existing_room.id if existing_room is not None else self._rooms.create_invite_room()
-        if not room_id:
-            return 200, {"status": "error", "error": "建房失败，请稍后再试"}
+        if any(room.state != RoomState.GAME_OVER and any(
+                player.registered and player.user_id == other for player in room.players.values())
+                for room in self._rooms.rooms.values()):
+            return 409, {'status': 'error', 'error': '对方正在房间或对局中'}
+        if existing_room is None:
+            created = await self._rooms.create_room(connection, {'public': False, 'name': '好友邀战'})
+            if created.get('status') != 'success':
+                return 409, {'status': 'error', 'error': created.get('message', '建房失败，请稍后再试')}
+            existing_room = self._rooms.get_room(created['room_id'])
+            if existing_room is None:
+                return 409, {'status': 'error', 'error': '房间已取消或被替换，请重新邀请'}
+        else:
+            error = self._rooms.seating_error(connection, existing_room.id)
+            if error:
+                return 409, {'status': 'error', 'error': error}
+        room_id = existing_room.id
+        token = self._rooms.issue_friend_invite(existing_room, other)
         delivered = await self.push(
             other,
             "friend_invite",
             {
                 "room_id": room_id,
+                'invite_token': token,
                 "from_user_id": str(user_id),
                 "from_username": identity["username"],
             },
         )
         if not delivered:
             return 200, {"status": "error", "error": "推送失败，请稍后再试"}
-        return 200, {"status": "ok", "room_id": room_id}
+        if self._rooms.get_room(room_id) is not existing_room:
+            return 409, {'status': 'error', 'error': '房间已取消或被替换，请重新邀请'}
+        return 200, {"status": "ok", "room_id": room_id, 'public': existing_room.public,
+                     'invite_token': existing_room.invite_token}
 
     # -------------------------------------------------------- direct messages
 

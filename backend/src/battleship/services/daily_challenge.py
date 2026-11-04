@@ -77,14 +77,13 @@ class DailyChallengeService:
             return fail(denied)
         # 先结束该账号昨天的挑战；同日重复启动始终拒绝，继续入口走签名身份rejoin。
         for room in list(self.rooms.rooms.values()):
-            if uid not in room.players or room.state == RoomState.GAME_OVER:
+            if not any(self.rooms.owns_seat(connection, player) for player in room.players.values()) or room.state == RoomState.GAME_OVER:
                 continue
             if room.daily_challenge and now >= room.daily_challenge['expires_at']:
                 await self.expire(room)
-            else:
-                return fail('你已有未结束的对局，请先继续或结束该对局')
-        if any(entry.get('user_id') == uid for entry in self.rooms.match_queue):
-            return fail('请先退出匹配队列')
+        error = self.rooms.seating_error(connection)
+        if error:
+            return fail(error)
         try:
             puzzle = self.catalog.today(window['start'])
             if puzzle is None:
@@ -105,6 +104,8 @@ class DailyChallengeService:
                 if not uow.daily_challenges.reserve(uid, window['start'], puzzle['puzzle_id'],
                                                    puzzle['sha256'], room.id, now):
                     return fail('今日挑战次数已使用，不能重开')
+            # 校验、预留次数和占座之间没有 await；成功预留后才回收旧等待房。
+            self.rooms.prepare_seating(connection)
             self.rooms.rooms[room.id] = room
         finally:
             self._launching.discard(room.id)

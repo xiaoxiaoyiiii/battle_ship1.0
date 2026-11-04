@@ -57,6 +57,7 @@ function createActions() {
       if (ack.status !== 'success' || !result.room_id) { fail(ack.message || '创建失败，请重试。'); return }
       lobby.recordOwnRoom(result.own_room ?? {
         room_id: result.room_id, name: result.name ?? draft.name, public: result.public ?? draft.isPublic,
+        invite_token: result.invite_token,
         host_name: auth.displayName, ban_enabled: draft.banEnabled, ban_quota: draft.banQuota,
         mutation_ids: [...draft.mutationIds], mutation_entries: lobby.snapshot?.weeklyMutations?.catalog.filter(e => draft.mutationIds.includes(e.id)) ?? [],
       })
@@ -71,11 +72,12 @@ function createActions() {
     if (room.roomId === lobby.ownRoomId) { await router.push({ name: 'lobby-room' }); return }
     await joinById(room.roomId)
   }
-  async function joinById(roomId: string): Promise<boolean> {
+  async function joinById(roomId: string, inviteToken = ''): Promise<boolean> {
     const current = socket()
     if (!current || !roomId.trim()) return false
     try {
-      const ack = await current.emitEvent('join_room', { room_id: roomId.trim(), player_name: lobbyPlayerName() })
+      const ack = await current.emitEvent('join_room', { room_id: roomId.trim(), player_name: lobbyPlayerName(),
+        ...(inviteToken ? { invite_token: inviteToken } : {}) })
       if (ack.status !== 'success') { fail(ack.message || '加入失败，请重试。'); return false }
       notice('已加入房间，等待对局开始。')
       return true
@@ -97,7 +99,9 @@ function createActions() {
   }
   function copyInviteLink(): void {
     if (!lobby.ownRoomId) return
-    const url = buildInviteUrl(location.origin, '/lobby', lobby.ownRoomId)
+    const token = lobby.ownRoom?.inviteToken || ''
+    if (!lobby.ownRoomPublic && !token) { fail('邀请链接暂未就绪，请刷新房间后再复制。'); return }
+    const url = buildInviteUrl(location.origin, '/lobby', lobby.ownRoomId, token)
     const fallback = () => { window.prompt(inviteManualPrompt(url), url); inviteCopyText.value = inviteFeedback(false) }
     if (!navigator.clipboard?.writeText) { fallback(); return }
     void navigator.clipboard.writeText(url).then(() => { inviteCopyText.value = inviteFeedback(true) }).catch(fallback)
@@ -129,8 +133,9 @@ function createActions() {
       const body = await response.json()
       if (!response.ok || body.status !== 'ok' || !body.room_id) { fail(typeof body.error === 'string' ? body.error : '邀请失败，请重试。'); return }
       if (!roomId) {
-        if (!await joinById(String(body.room_id))) return
-        lobby.setOwnRoom(String(body.room_id), '好友邀战', true)
+        if (!await joinById(String(body.room_id), String(body.invite_token || ''))) return
+        lobby.recordOwnRoom({ room_id: String(body.room_id), name: '好友邀战', public: body.public,
+          invite_token: body.invite_token })
         await refresh()
         await router.push({ name: 'lobby-room' })
       }
@@ -141,7 +146,7 @@ function createActions() {
   async function acceptInvite(): Promise<void> {
     if (!lobby.activeInvite || acceptingInvite.value) return
     acceptingInvite.value = true
-    try { if (await joinById(lobby.activeInvite.roomId)) lobby.clearInvite() }
+    try { if (await joinById(lobby.activeInvite.roomId, lobby.activeInvite.inviteToken)) lobby.clearInvite() }
     finally { acceptingInvite.value = false }
   }
   async function startMatch(mode: 'casual' | 'ranked'): Promise<void> {

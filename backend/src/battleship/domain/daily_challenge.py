@@ -21,7 +21,7 @@ TYPES = {t.__name__: t for t in (Player, PlayerShip, Position, EffectFlags, Magi
 # 连接、日志、计时器、录制器和数据库结算身份由新房间建立，不能带到挑战房。
 ROOM_RUNTIME = frozenset('id created_at players name public ranked matchmade is_ai_room ai_difficulty ai_difficulty_by_player match_started_at turn_started_at turn_timer_attacker replay _viewing_recording _viewing_public_frame _viewing_commit_hook viewing_sequence game_logs disconnected disconnect_seq reconnect_tokens match_id task_card_uses settled settlement_result quick_chat_recent quick_chat_last chat_seq chat_history chat_delivered chat_recent chat_last spectators spectate_chat_recent spectate_chat_last effects chain_animation_clients chain_animation_id chain_animation_players chain_animation_deadline chain_display_token chain_display_deadline dice_animation_deadline daily_challenge daily_candidate_snapshots'.split())
 # 赛季归属与管理员测试身份属于新局运行态，不能使已发布的首周快照失效。
-ROOM_RUNTIME |= frozenset(('admin_test', 'ranked_season_id'))
+ROOM_RUNTIME |= frozenset(('admin_test', 'ranked_season_id', 'invite_token', 'invite_targets'))
 PLAYER_RUNTIME = frozenset(('name', 'user_id', 'socket_id', 'registered'))
 
 

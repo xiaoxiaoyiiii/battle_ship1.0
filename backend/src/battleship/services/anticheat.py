@@ -18,14 +18,18 @@ the latest admin override on every read (CLAUDE #27).
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
+from collections import Counter
 from typing import Any
 
 from ..domain.anticheat import rules, suspicion
-from ..domain.battle import match_duration_seconds
+from ..domain.battle import dead_ship_count, match_duration_seconds
 from ..domain.room import Room
 from ..infra.logging import get_logger
 from ..repositories import Database, UnitOfWork
+from ..repositories.anticheat_history import AnticheatHistoryRepository
 from .settlement import SettlementContext, SettlementFacts, SettlementService
 
 logger = get_logger("anticheat")
@@ -37,6 +41,98 @@ CLEAN_RESULT: dict[str, Any] = {
     "rules": [],
     "blocked": False,
 }
+
+
+def _position_signature(cells: Any) -> str | None:
+    """仅在内存比较布局指纹；审计、日志和客户端不获得坐标。"""
+    if not isinstance(cells, list) or not cells:
+        return None
+    points = []
+    for cell in cells:
+        if not isinstance(cell, dict):
+            return None
+        x, y = cell.get("x"), cell.get("y")
+        if type(x) is not int or type(y) is not int or not (0 <= x < 6 and 0 <= y < 6):
+            return None
+        points.append((x, y))
+    return hashlib.sha256(json.dumps(sorted(set(points))).encode("utf-8")).hexdigest()
+
+
+def _initial_layout(payload: dict[str, Any], side: str) -> str | None:
+    """读取首次完整布船；末局、截断前未记录或未知格式不猜测。"""
+    if payload.get("version") == 2 or "initial_state" in payload:
+        frame = payload.get("initial_state") or {}
+        frames = [frame]
+        for event in (payload.get("events") or [])[:16000]:
+            if isinstance(event, dict) and event.get("type") == "state":
+                frame = {**frame, **(event.get("patch") or {})}
+                frames.append(frame)
+        for frame in frames:
+            if frame.get("context", {}).get("state") not in ("rock_paper_scissors", "attacking"):
+                continue
+            boards = frame.get("boards") or {}
+            if all((boards.get(label) or {}).get("fleet") for label in ("p1", "p2")):
+                return _position_signature(boards[side]["fleet"])
+        return None
+    if payload.get("version") == 1:
+        fleets: dict[str, Any] = {}
+        for row in (payload.get("ships") or [])[:2000]:
+            if not isinstance(row, dict):
+                continue
+            fleets.update({key: row[key] for key in ("p1", "p2") if key in row})
+            if fleets.get("p1") and fleets.get("p2"):
+                return _position_signature(fleets[side])
+    return None
+
+
+def _recorded_attacks(room: Room) -> tuple[dict[str, int], set[str]] | None:
+    """有界读取已录下的出手增量；重置前命中只能作已证实的下界。"""
+    state = getattr(room, "_viewing_recording", None)
+    if not isinstance(state, dict) or state.get("truncated"):
+        return None
+    events = state.get("events") or []
+    if len(events) > 16000:
+        return None
+    frame = state.get("initial_state")
+    if not isinstance(frame, dict):
+        return None
+    order = list(room.players)
+    totals = {pid: 0 for pid in order}
+    shooters: set[str] = set()
+    previous: dict[str, Counter] = {pid: Counter() for pid in order}
+
+    def capture(boards: dict[str, Any]) -> None:
+        for index, pid in enumerate(order[:2]):
+            # 回放棋盘存入射炮击，必须反向映射为对手打出的真实座位。
+            board = boards.get(f"p{2-index}") or {}
+            shots = board.get("shots")
+            if not isinstance(shots, list) or len(shots) > 2000:
+                raise ValueError("出手记录不完整")
+            current = Counter((cell["x"], cell["y"], bool(cell.get("hit"))) for cell in shots)
+            additions = current - previous[pid]
+            totals[pid] += sum(count for (_, _, hit), count in additions.items() if hit)
+            if current:
+                shooters.add(pid)
+            previous[pid] = current
+
+    try:
+        capture(frame.get("boards") or {})
+        for event in events:
+            if event.get("type") != "state":
+                continue
+            frame = {**frame, **(event.get("patch") or {})}
+            capture(frame.get("boards") or {})
+        # 当前动作可能尚未提交观看帧，收上最后一份服务端标记。
+        boards = {}
+        for index, pid in enumerate(order[:2]):
+            boards[f"p{2-index}"] = {"shots": [
+                {"x": attack.x, "y": attack.y, "hit": attack.hit}
+                for attack in room.players[pid].attacks
+            ]}
+        capture(boards)
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+    return totals, shooters
 
 
 class AnticheatService:
@@ -65,40 +161,139 @@ class AnticheatService:
             winner = room.players.get(winner_id)
             loser = room.players.get(loser_id)
 
-            def hits(player: Any) -> int:
-                if player is None:
-                    return 0
-                total = 0
-                for ship in getattr(player, "ships", None) or ():
-                    total += len(getattr(ship, "hits", None) or ())
-                return total
+            logged = {pid: [] for pid in room.players}
+            for entry in room.game_logs:
+                detail = entry.get("detail") or {}
+                pid = detail.get("attacker")
+                if entry.get("type") == "attack" and pid in logged:
+                    logged[pid].append(detail)
 
-            winner_hits, loser_hits = hits(winner), hits(loser)
-            facts["rounds"] = max(0, int(getattr(room, "round", 0) or 0))
+            def hits(pid: str, player: Any) -> int:
+                # 重部署会清棋盘标记；完整炮击日志保存此前的实际出手。
+                rows = logged.get(pid, [])
+                targets = {(row.get("target", {}).get("x"), row.get("target", {}).get("y"), bool(row.get("hit")))
+                           for row in rows}
+                return sum(bool(row.get("hit")) for row in rows) + sum(
+                    bool(attack.hit) for attack in (getattr(player, "attacks", None) or ())
+                    if (attack.x, attack.y, bool(attack.hit)) not in targets
+                )
+
+            winner_hits, loser_hits = hits(winner_id, winner), hits(loser_id, loser)
+            recording = getattr(room, "_viewing_recording", None)
+            reconstructed = _recorded_attacks(room)
+            reset = bool((room.replay or {}).get("board_resets") or room.polar_reversal_applied)
+            truncated = bool(isinstance(recording, dict) and recording.get("truncated"))
+            shooters = {pid for pid, player in room.players.items() if player.attacks or logged[pid]}
+            if reconstructed is not None:
+                recovered, recorded_shooters = reconstructed
+                winner_hits = max(winner_hits, recovered.get(winner_id, 0))
+                loser_hits = max(loser_hits, recovered.get(loser_id, 0))
+                shooters.update(recorded_shooters)
+            # 清盘前没有完整证据，零只能表示未知；已见命中保留为下界。
+            if truncated or (reset and reconstructed is None):
+                winner_hits = loser_hits = None
+            elif reset or reconstructed is None:
+                winner_hits = winner_hits or None
+                loser_hits = loser_hits or None
+            facts["attack_history_complete"] = reconstructed is not None and not reset and not truncated
+            facts["hits_are_lower_bounds"] = reset or reconstructed is None
+            raw_round = getattr(room, "round", None)
+            facts["rounds"] = int(raw_round) if raw_round is not None else -1
             facts["attacker_total_hits"] = winner_hits
             facts["defender_total_hits"] = loser_hits
             facts["loser_total_hits"] = loser_hits
 
-            # Shape feature, independent of id alignment: how many sides landed
-            # a hit, and the largest single-side hit count.
-            shooters = (1 if winner_hits > 0 else 0) + (1 if loser_hits > 0 else 0)
-            facts["attackers"] = ["a"] * shooters if shooters else []
-            facts["max_hits"] = max(winner_hits, loser_hits)
+            # 出手包含未命中；身份保持房间座位键，不与账号或Socket混用。
+            facts["attackers"] = [pid for pid in room.players if pid in shooters]
+            facts["max_hits"] = max((value for value in (winner_hits, loser_hits) if value is not None), default=None)
 
             winner_ships = len(getattr(winner, "ships", None) or ()) if winner else 0
             loser_ships = len(getattr(loser, "ships", None) or ()) if loser else 0
             facts["foe_ships"] = loser_ships
             facts["total_ships"] = winner_ships + loser_ships
+            facts["sunk"] = dead_ship_count(loser) if loser else None
+            facts["battle_started"] = bool(room.match_started_at and winner_ships and loser_ships)
             facts["duration_sec"] = match_duration_seconds(room)
-            facts["ended_by"] = getattr(room, "game_over_reason", None) or "attacks"
+            facts["ended_by"] = getattr(room, "game_over_reason", None)
+            facts.update(foe_position_signature=None, past_signatures=None,
+                         opponent_gaps_sec=None, opponent_total_games=None,
+                         opponent_wins=None, opponent_losses=None,
+                         since_last_match_sec=None, ranked_win_streak=None)
+            order = list(room.players)
+            if loser_id in order:
+                side = f"p{order.index(loser_id) + 1}"
+                if isinstance(recording, dict):
+                    facts["foe_position_signature"] = _initial_layout(recording, side)
         except Exception:
             pass
         return facts
 
+    def _history_facts(self, room: Room, winner_id: str, loser_id: str) -> dict[str, Any]:
+        winner, loser = room.players.get(winner_id), room.players.get(loser_id)
+        uid = getattr(winner, "user_id", None)
+        foe = getattr(loser, "user_id", None)
+        if not self.database or not uid:
+            return {}
+        now = int(time.time())
+        with self.database.unit_of_work() as uow:
+            history = AnticheatHistoryRepository(uow.session)
+            recent = history.recent(uid, before=now, exclude_match_id=room.match_id)
+            rows = []
+            for row in recent:
+                # 取消局不参与；未知旧局截断连续历史，不能越过未知败局推断。
+                if row["rewards_eligible"] is None:
+                    break
+                if row["rewards_eligible"] is True:
+                    rows.append(row)
+            recordings = history.replays([row["id"] for row in rows])
+        result: dict[str, Any] = {}
+        if rows and room.match_started_at:
+            gap = int(room.match_started_at) - int(rows[0]["timestamp"])
+            result["since_last_match_sec"] = gap if gap >= 0 else None
+        if foe and foe != uid:
+            pairs = [row for row in rows if {row["winner_id"], row["loser_id"]} == {uid, foe}]
+            times = [now, *[int(row["timestamp"]) for row in pairs]]
+            if pairs:
+                result.update(
+                    opponent_gaps_sec=[a-b for a, b in zip(times, times[1:]) if a >= b],
+                    opponent_total_games=len(pairs)+1,
+                    opponent_wins=sum(row["winner_id"] == uid for row in pairs)+1,
+                    opponent_losses=sum(row["loser_id"] == uid for row in pairs),
+                )
+        if room.ranked and rows:
+            streak = 1
+            for row in rows:
+                if row["mode"] is None:
+                    # 旧数据的模式未知，不能越过它声称连续排位获胜。
+                    break
+                if row["mode"] != "ranked":
+                    continue
+                if row["winner_id"] != uid:
+                    break
+                streak += 1
+            result["ranked_win_streak"] = streak
+        signatures = []
+        by_id = {row["id"]: row for row in rows}
+        for match_id, payload in recordings:
+            row = by_id[match_id]
+            opponent = row["loser_id"] if row["winner_id"] == uid else row["winner_id"]
+            side = (payload.get("seats") or {}).get(opponent)
+            if side in ("p1", "p2"):
+                signature = _initial_layout(payload, side)
+                if signature:
+                    signatures.append(signature)
+        result["past_signatures"] = signatures or None
+        return result
+
     def evaluate_room(self, room: Room, winner_id: str, loser_id: str) -> dict[str, Any]:
         """Evaluate one finished match. Fails open, but always logs the failure."""
         try:
-            return rules.evaluate(self.facts_from_room(room, winner_id, loser_id))
+            facts = self.facts_from_room(room, winner_id, loser_id)
+            try:
+                facts.update(self._history_facts(room, winner_id, loser_id))
+            except Exception as error:
+                logger.warning("反作弊历史暂不可读，仅使用本局事实", exc_info=error)
+            return rules.evaluate(facts)
         except Exception as error:  # noqa: BLE001 - settlement must never break
             logger.error(
                 "anti-cheat evaluation failed; treating match as clean",

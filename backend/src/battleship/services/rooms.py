@@ -295,6 +295,59 @@ class RoomService:
         )
         return {"status": "error", "message": denied}
 
+    @staticmethod
+    def owns_seat(connection: Connection, player: Player) -> bool:
+        """账号按可信身份认座，游客仅能复用当前连接的座位。"""
+        return bool(
+            player.registered and connection.user_id
+            and player.user_id == connection.user_id
+        ) or bool(not player.registered and player.socket_id == connection.sid)
+
+    def seating_error(self, connection: Connection, keep_room_id: str | None = None) -> str:
+        for room in self.rooms.values():
+            if room.id == keep_room_id or room.state == RoomState.GAME_OVER:
+                continue
+            if any(self.owns_seat(connection, player) or player.socket_id == connection.sid
+                   for player in room.players.values()):
+                if room.state != RoomState.WAITING or len(room.players) != 1:
+                    return '请先退出当前对局，再进入其他房间'
+        return ''
+
+    def prepare_seating(self, connection: Connection, keep_room_id: str | None = None) -> str:
+        """先校验全部座位再清理；调用方须在下次 await 前完成占座或入队。"""
+        error = self.seating_error(connection, keep_room_id)
+        if error:
+            return error
+        for room in list(self.rooms.values()):
+            if room.id == keep_room_id or room.state == RoomState.GAME_OVER:
+                continue
+            if any(self.owns_seat(connection, player) or player.socket_id == connection.sid
+                   for player in room.players.values()):
+                self._drop_room(room.id, '等待房已回收')
+        self.match_queue[:] = [entry for entry in self.match_queue if not (
+            entry.get('sid') == connection.sid
+            or (connection.user_id and entry.get('user_id') == connection.user_id)
+        )]
+        return ''
+
+    def issue_friend_invite(self, room: Room, user_id: str) -> str:
+        """每位受邀账号一份凭据；同一目标重复邀请复用，随房间销毁。"""
+        for token, target in room.invite_targets.items():
+            if target == user_id:
+                return token
+        token = secrets.token_urlsafe(32)
+        room.invite_targets[token] = user_id
+        return token
+
+    @staticmethod
+    def _invitation_ok(room: Room, connection: Connection, token: Any) -> bool:
+        if not isinstance(token, str) or not token or not token.isascii():
+            return False
+        if room.invite_token and secrets.compare_digest(room.invite_token, token):
+            return True
+        return any(secrets.compare_digest(credential, token) and target == connection.user_id
+                   for credential, target in room.invite_targets.items())
+
     async def create_room(self, connection: Connection, data: dict[str, Any] | None) -> dict:
         data = data if isinstance(data, dict) else {}
         selected_mutations = data.get("mutation_ids", [])
@@ -310,9 +363,9 @@ class RoomService:
         if refused is not None:
             return refused
         player_id = connection.user_id or connection.sid
-        # One player may host at most one waiting room; otherwise every click
-        # leaks another "same name" room into the lobby (legacy fix retained).
-        self._recycle_host_waiting_rooms(player_id)
+        error = self.prepare_seating(connection)
+        if error:
+            return {'status': 'error', 'message': error}
 
         room = Room(id=new_room_id())
         room.name = str(data.get("name") or "").strip()[:LOBBY_ROOM_NAME_MAX_LEN]
@@ -321,6 +374,8 @@ class RoomService:
         mutations.configure_room(room, "custom", ids=selected_mutations,
                                  rng=self.mutation_rng, now=self.mutation_clock())
         room.public = bool(data.get("public", True))
+        if not room.public:
+            room.invite_token = secrets.token_urlsafe(32)
         room.players[player_id] = Player(
             name=self._player_name(connection, data),
             user_id=player_id,
@@ -328,12 +383,16 @@ class RoomService:
             registered=bool(connection.user_id),
         )
         self.rooms[room.id] = room
-        await self._publisher.enter_room(connection.sid, room.id)
         self.presence.update_identity(
             connection.sid, name=room.players[player_id].name, user_id=connection.user_id
         )
         self._bind_presence_game(room)
-        return {"status": "success", "room_id": room.id}
+        await self._publisher.enter_room(connection.sid, room.id)
+        # 建房通知期间允许本人改选其它等待房；旧请求不能再返回失效房号。
+        if self.get_room(room.id) is not room:
+            await self._publisher.leave_room(connection.sid, room.id)
+            return {'status': 'error', 'message': '房间已取消或被替换，请重新选择房间'}
+        return {"status": "success", "room_id": room.id, 'invite_token': room.invite_token}
 
     async def create_ai_room(self, connection: Connection, data: dict[str, Any] | None) -> dict:
         data = data if isinstance(data, dict) else {}
@@ -341,8 +400,20 @@ class RoomService:
             if self.daily_challenges is None:
                 return {'status': 'error', 'message': '每日挑战暂不可用'}
             return await self.daily_challenges.start(connection)
+        refused = await self._refuse_capability(connection, suspicion.CAP_ROOM)
+        if refused is not None:
+            return refused
+        error = self.prepare_seating(connection)
+        if error:
+            return {'status': 'error', 'message': error}
         room = Room(id=new_room_id())
         room.is_ai_room = True
+        room.public = False
+        player_id = connection.user_id or connection.sid
+        room.players[player_id] = Player(
+            name=self._player_name(connection, data), user_id=player_id,
+            socket_id=connection.sid, registered=bool(connection.user_id),
+        )
         room.ai_difficulty = _normalize_difficulty(data.get("difficulty") or "normal")
         room.ai_difficulty_by_player = {}
         room.ranked = False
@@ -356,25 +427,18 @@ class RoomService:
         )
         room.init_player_magic(ai_id)
         self.rooms[room.id] = room
-        await self._publisher.enter_room(connection.sid, room.id)
+        self.presence.update_identity(connection.sid, name=room.players[player_id].name,
+                                      user_id=connection.user_id)
         self._bind_presence_game(room)
+        await self._publisher.enter_room(connection.sid, room.id)
+        if self.get_room(room.id) is not room:
+            await self._publisher.leave_room(connection.sid, room.id)
+            return {'status': 'error', 'message': '房间已取消，请重新创建'}
         return {
             "status": "success",
             "room_id": room.id,
             "message": "人机对战房间创建成功",
         }
-
-    def create_invite_room(self) -> str:
-        """Empty custom room for friend invitations (friend invite HTTP route).
-
-        The inviter and the invitee seat themselves through join_room, exactly
-        like a room shared by id. No player is written here (the legacy
-        create_custom_room_for_invite only allocated the room).
-        """
-        room = Room(id=new_room_id())
-        room.public = True
-        self.rooms[room.id] = room
-        return room.id
 
     async def join_room(self, connection: Connection, data: dict[str, Any] | None) -> dict:
         data = data if isinstance(data, dict) else {}
@@ -394,19 +458,41 @@ class RoomService:
             )
             return {"status": "error", "message": "房间不存在"}
 
-        self._drop_my_other_waiting_rooms(player_id, room.id)
+        own_entry = next(((pid, player) for pid, player in room.players.items()
+                          if self.owns_seat(connection, player)), None)
+        if own_entry is not None and room.state != RoomState.WAITING:
+            return await self.rejoin_room(connection, {'room_id': room.id, 'player_id': own_entry[0]})
+        seated = own_entry[1] if own_entry else None
+        if seated is None:
+            if room.state != RoomState.WAITING:
+                return {'status': 'error', 'message': '对局已开始，不能加入新玩家'}
+            if room.is_ai_room or room.matchmade:
+                return {'status': 'error', 'message': '该房间已保留座位'}
+            if not room.public and not self._invitation_ok(room, connection, data.get('invite_token')):
+                return {'status': 'error', 'message': '私密房间需要有效邀请链接或好友邀请'}
+            if len(room.players) >= 2:
+                return {'status': 'error', 'message': '房间已满'}
+        error = self.prepare_seating(connection, room.id)
+        if error:
+            return {'status': 'error', 'message': error}
 
-        seated = room.players.get(player_id)
-        if seated is not None and room.state == RoomState.WAITING:
+        if seated is not None and len(room.players) == 1:
             # Same identity re-entering a waiting room (new tab / refresh):
             # reuse the seat and move its connection. Adding a second seat with
             # the same key would keep len(players) at 1 forever (legacy bug).
+            player_id = own_entry[0]
+            old_sid = seated.socket_id
             seated.socket_id = connection.sid
             room.disconnected.pop(player_id, None)
             seated.registered = bool(connection.user_id)
             if player_name:
                 seated.name = player_name
+            if old_sid and old_sid != connection.sid:
+                await self._publisher.leave_room(old_sid, room.id)
             await self._publisher.enter_room(connection.sid, room.id)
+            if self.get_room(room.id) is not room:
+                await self._publisher.leave_room(connection.sid, room.id)
+                return {'status': 'error', 'message': '房间已取消或被替换，请重新选择房间'}
             self.presence.update_identity(
                 connection.sid, name=seated.name, user_id=connection.user_id
             )
@@ -416,23 +502,19 @@ class RoomService:
                 "player_id": player_id,
                 "seat": "reused",
                 "player_seat": seat_label(room, player_id),
+                'invite_token': room.invite_token,
             }
 
-        if len(room.players) >= 2:
-            await self._publisher.emit(
-                "error",
-                socket_errors.error_detail(socket_errors.ROOM_FULL, "房间已满"),
-                to=connection.sid,
+        if seated is None:
+            room.players[player_id] = Player(
+                name=player_name, user_id=player_id, socket_id=connection.sid,
+                registered=bool(connection.user_id),
             )
-            return {"status": "error", "message": "房间已满"}
-
-        room.players[player_id] = Player(
-            name=player_name,
-            user_id=player_id,
-            socket_id=connection.sid,
-            registered=bool(connection.user_id),
-        )
-        await self._publisher.enter_room(connection.sid, room.id)
+        else:
+            # 人机旧客户端仍先创建再加入；创建时已保留人类座位。
+            player_id = own_entry[0]
+            seated.socket_id = connection.sid
+            room.disconnected.pop(player_id, None)
 
         if len(room.players) == 2:
             # Skeleton: a full room enters placement. Placement legality / RPS /
@@ -442,6 +524,8 @@ class RoomService:
                 room.init_player_magic(seat_id)
             mutations.prepare_start(room, self.mutation_rng)
             self.bans.start(room)
+            # 先完成占座和状态转换，再让出事件循环，避免并发最后一座重复开局。
+            await self._publisher.enter_room(connection.sid, room.id)
             for seat_id, seat in room.players.items():
                 opponent_id = opponent_of(room, seat_id)
                 opponent = room.players.get(opponent_id) if opponent_id else None
@@ -565,10 +649,10 @@ class RoomService:
         if not ok:
             # Legacy fallback: the signed session itself is proof for a logged-in
             # owner (guest keys are sids, which a session can never equal).
-            ok = bool(connection.user_id) and str(connection.user_id) == str(player_id)
+            seat = room.players[str(player_id)]
+            ok = self.owns_seat(connection, seat)
         if not ok:
             return {"status": "error", "message": "身份校验失败"}
-
         if room.state == RoomState.GAME_OVER:
             if room.game_over_reason == "opponent_disconnected" and room.winner != player_id:
                 await self._publisher.emit(
@@ -584,9 +668,17 @@ class RoomService:
                 await self._publisher.emit("error", payload, to=connection.sid)
             return {"status": "success"}
 
+        error = self.prepare_seating(connection, room.id)
+        if error:
+            return {'status': 'error', 'message': error}
         seat = room.players[str(player_id)]
+        old_sid = seat.socket_id
         seat.socket_id = connection.sid
+        if old_sid and old_sid != connection.sid:
+            await self._publisher.leave_room(old_sid, room.id)
         await self._publisher.enter_room(connection.sid, room.id)
+        self.presence.update_identity(connection.sid, name=seat.name, user_id=connection.user_id)
+        self._bind_presence_game(room)
 
         was_reconnect = str(player_id) in room.disconnected
         room.disconnected.pop(str(player_id), None)

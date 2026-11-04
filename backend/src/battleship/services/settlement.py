@@ -257,6 +257,7 @@ class SettlementService:
             loser_id=facts.loser_user_id or facts.loser_id,
             timestamp=context.timestamp,
             mode=facts.mode,
+            rewards_eligible=facts.rewards_eligible,
         )
         uow.matches.add_log(
             context.match_id,

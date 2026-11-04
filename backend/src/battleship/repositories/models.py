@@ -54,6 +54,15 @@ class DailyChallengeSource(Base):
     snapshots: Mapped[str] = mapped_column(sa.Text, nullable=False)
 
 
+class UserSupportPrompt(Base):
+    """每个账号只保存最近一次推广提醒的北京时间日期。"""
+
+    __tablename__ = 'user_support_prompts'
+
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    day_key: Mapped[str] = mapped_column(sa.Text, nullable=False)
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -72,6 +81,21 @@ class User(Base):
     __table_args__ = (Index("idx_users_token", "token"),)
 
 
+class AuthSession(Base):
+    """每次登录独立记录；凭据指纹使改密前的并发登录也立即失效。"""
+
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    user_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    credential_fingerprint: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    created_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    expires_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    revoked_at: Mapped[int | None] = mapped_column(sa.Integer)
+
+    __table_args__ = (Index("idx_auth_sessions_user", "user_id"),)
+
+
 class Match(Base):
     __tablename__ = "matches"
 
@@ -81,6 +105,8 @@ class Match(Base):
     timestamp: Mapped[int | None] = mapped_column(sa.Integer)
     # NULL means "legacy match, mode unknown" -- never backfill to 'casual'.
     mode: Mapped[str | None] = mapped_column(sa.Text)
+    # NULL 表示历史未知；只有正式开战的结算才显式写入 True。
+    rewards_eligible: Mapped[bool | None] = mapped_column(sa.Boolean, nullable=True)
 
     __table_args__ = (
         Index("idx_matches_winner", "winner_id"),

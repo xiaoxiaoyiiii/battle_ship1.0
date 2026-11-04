@@ -76,21 +76,27 @@ def rule_sweep_perfect_win(facts: dict) -> list[dict]:
     try:
         rounds = int(facts.get("rounds", -1))
         attackers = facts.get("attackers") or []
-        max_hits = _int(facts.get("max_hits"))
+        sunk = _int(facts.get("sunk"))
         foe_ships = _int(facts.get("foe_ships"))
         only_one_shooter = len(set(attackers)) <= 1
 
         if (
-            only_one_shooter
+            facts.get("battle_started") is True
+            and facts.get("attack_history_complete") is not False
+            and facts.get("attacker_total_hits") is not None
+            and facts.get("defender_total_hits") is not None
+            and facts.get("ended_by") not in ("surrender", "disconnect_timeout")
+            and bool(attackers)
+            and only_one_shooter
             and foe_ships > 0
-            and max_hits >= foe_ships
+            and sunk >= foe_ships
             and 0 <= rounds <= 1
         ):
             out.append({
                 "rule": "sweep_perfect_win",
                 "weight": W["sweep_perfect_win"],
                 "detail": (
-                    f"第 {rounds} 回合内单方连续击沉全部 {max_hits} 艘，"
+                    f"第 {rounds} 回合内单方连续击沉全部 {sunk} 艘，"
                     f"另一方全程一枪未发 —— 船位可预测（人肉靶子）"
                 ),
             })
@@ -126,10 +132,14 @@ def rule_instant_surrender(facts: dict) -> list[dict]:
     try:
         if facts.get("ended_by") != "surrender":
             return out
-        rounds = _int(facts.get("rounds"))
+        if facts.get("battle_started") is not True:
+            return out
+        if facts.get("attacker_total_hits") is None or facts.get("defender_total_hits") is None:
+            return out
+        rounds = _int(facts.get("rounds"), -1)
         attacker_hits = _int(facts.get("attacker_total_hits"))
         defender_hits = _int(facts.get("defender_total_hits"))
-        if rounds <= 1 and attacker_hits == 0 and defender_hits == 0:
+        if 0 <= rounds <= 1 and attacker_hits == 0 and defender_hits == 0:
             out.append({
                 "rule": "instant_surrender",
                 "weight": W["instant_surrender"],
@@ -151,6 +161,8 @@ def rule_zero_engagement_loss(facts: dict) -> list[dict]:
     out: list[dict] = []
     try:
         if facts.get("ended_by") == "surrender":
+            return out
+        if facts.get("battle_started") is not True or facts.get("loser_total_hits") is None:
             return out
         loser_hits = _int(facts.get("loser_total_hits"))
         rounds = _int(facts.get("rounds"))

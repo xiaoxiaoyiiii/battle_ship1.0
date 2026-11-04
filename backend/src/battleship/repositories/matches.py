@@ -35,6 +35,7 @@ class MatchRepository:
         loser_id: str | None,
         timestamp: int | None,
         mode: str | None = None,
+        rewards_eligible: bool | None = None,
     ) -> Match:
         match = Match(
             id=match_id,
@@ -42,6 +43,7 @@ class MatchRepository:
             loser_id=loser_id,
             timestamp=timestamp,
             mode=mode,
+            rewards_eligible=rewards_eligible,
         )
         self.session.add(match)
         self.session.flush()

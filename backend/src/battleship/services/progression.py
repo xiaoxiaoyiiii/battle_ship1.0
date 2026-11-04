@@ -22,6 +22,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from ..domain import bans
 from ..domain.progression import achievements, leveling, profile_spec, ranks
 from ..domain.room import Room
 from ..repositories import Database, UnitOfWork
@@ -73,7 +74,8 @@ class ProgressionService:
             "seconds": int(facts.duration_seconds or 0),
             "rounds": max(0, int(getattr(room, "round", 0) or 0)),
         }
-        if self.database is None or not facts.count_stats:
+        # Ban 初始布船逃跑沿用单方扣分；它需要赛前段位和连败事实，但不发普通收益。
+        if self.database is None or (not facts.count_stats and not bans.escape_eligible(room)):
             return ctx
         with self.database.unit_of_work() as uow:
             from .ranked_seasons import RankedSeasonService

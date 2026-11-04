@@ -5,7 +5,7 @@ import { acquireLobbyChannel, getLobbySocket } from '../../realtime/lobby'
 import { useLobbyStore } from '../../stores/lobby'
 import { useGameStore } from '../../stores/game'
 import { provideLobbyActions } from './useLobbyActions'
-import { readInviteRoomId } from './inviteLink'
+import { readInviteRoomId, readInviteToken } from './inviteLink'
 import MatchFoundOverlay from '../../components/MatchFoundOverlay.vue'
 import AppOverlay from '../../components/AppOverlay.vue'
 import './lobby-pages.css'
@@ -33,13 +33,15 @@ function matchCountdownDone(): void {
   enterMatch()
 }
 watch([() => lobby.startedRoomId, () => lobby.matchFound], enterMatch)
-watch([() => lobby.connected, () => route.query.room], async () => {
+watch([() => lobby.connected, () => route.query.room, () => route.query.invite], async () => {
   const id = readInviteRoomId(route.query)
-  if (!lobby.connected || !id || inviteAttempt === id) return
-  inviteAttempt = id
+  const token = readInviteToken(route.query)
+  const attempt = id + ':' + token
+  if (!lobby.connected || !id || inviteAttempt === attempt) return
+  inviteAttempt = attempt
   const storageKey = 'battleship.lobby.inviteJoined.' + id
   try { if (sessionStorage.getItem(storageKey) === '1') return } catch { /* 本次实例仍防重入。 */ }
-  if (await actions.joinById(id)) {
+  if (await actions.joinById(id, token)) {
     try { sessionStorage.setItem(storageKey, '1') } catch { /* 邀请仍已成功。 */ }
   } else inviteAttempt = ''
 })

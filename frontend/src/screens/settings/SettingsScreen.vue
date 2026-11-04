@@ -7,6 +7,7 @@ import { useCollectionStore } from '../../stores/collection'
 import { useHomeStore } from '../../stores/home'
 import { THEME_LABELS, useUiStore, type FontScale, type ThemeName } from '../../stores/ui'
 import { useWallpaperStore } from '../../stores/wallpaper'
+import SupportAuthorLink from '../../components/SupportAuthorLink.vue'
 
 /**
  * Ticket #25: settings.
@@ -725,6 +726,8 @@ onMounted(() => {
           <p class="settings__note">战舰棋 · 深海作战室（新前端）· 公告与玩法说明都可以在这里回看。</p>
         </section>
       </section>
+
+      <SupportAuthorLink test-id="settings-support-author" />
 
       <footer class="settings__actions">
         <router-link class="button button--ghost" :to="{ name: 'terms' }" data-testid="settings-terms">用户协议</router-link>

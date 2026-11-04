@@ -10,8 +10,7 @@ Security contract (DECISIONS D13):
 * SameSite=Lax is the CSRF mitigation -- there is deliberately NO token based
   CSRF, because the legacy frontend has no token and must keep working during
   Phase 2;
-* Secure is added only when the request itself arrived over HTTPS (or a trusted
-  reverse proxy says so through X-Forwarded-Proto).
+* Secure 根据请求协议设置；受信代理在 ASGI 入口改写协议，客户端请求头不获信任。
 
 The value is a URL-safe timed signature. A tampered or expired cookie loads as an
 empty session; callers never see an exception.
@@ -24,6 +23,8 @@ from typing import Any, Mapping
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from starlette.requests import Request
 from starlette.responses import Response
+
+from ..services.auth_sessions import SESSION_ID, has_login_identity, valid_session
 
 SESSION_COOKIE_NAME = "session"
 SESSION_USER_ID = "user_id"
@@ -59,10 +60,10 @@ class SessionCodec:
         if not raw:
             return False
         try:
-            self._serializer.loads(raw, max_age=self.max_age)
+            data = self._serializer.loads(raw, max_age=self.max_age)
         except (BadSignature, SignatureExpired, ValueError, TypeError):
             return False
-        return True
+        return isinstance(data, dict)
 
     def dumps(self, data: Mapping[str, Any]) -> str:
         return self._serializer.dumps(dict(data))
@@ -90,7 +91,12 @@ def raw_session_cookie(request: Request) -> str | None:
 
 
 def read_session(request: Request) -> dict[str, Any]:
-    return _codec(request).loads(raw_session_cookie(request))
+    data = _codec(request).loads(raw_session_cookie(request))
+    if not valid_session(data, getattr(request.app.state, "database", None)):
+        # 旧版无服务器会话标识的 Cookie 发布后必须重新登录。
+        for key in (SESSION_USER_ID, SESSION_USERNAME, SESSION_ID):
+            data.pop(key, None)
+    return data
 
 
 def session_cookie_invalid(request: Request) -> bool:
@@ -101,7 +107,13 @@ def session_cookie_invalid(request: Request) -> bool:
     silently rendering an anonymous screen.
     """
     raw = raw_session_cookie(request)
-    return bool(raw) and not _codec(request).is_valid(raw)
+    if not raw:
+        return False
+    codec = _codec(request)
+    data = codec.loads(raw)
+    return not codec.is_valid(raw) or (
+        has_login_identity(data) and not valid_session(data, getattr(request.app.state, "database", None))
+    )
 
 
 def session_from_cookie_header(secret_key: str, raw_cookie_header: str | None) -> dict[str, Any]:
@@ -112,10 +124,7 @@ def session_from_cookie_header(secret_key: str, raw_cookie_header: str | None) -
 
 
 def is_secure_request(request: Request) -> bool:
-    if request.url.scheme == "https":
-        return True
-    forwarded = (request.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip().lower()
-    return forwarded == "https"
+    return request.url.scheme == "https"
 
 
 def write_session(response: Response, request: Request, data: Mapping[str, Any]) -> None:

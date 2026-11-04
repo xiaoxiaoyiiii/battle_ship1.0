@@ -1,0 +1,12 @@
+# 将环境变量 BATTLESHIP_DOMAIN 设置为正式游戏域名后再验证。
+# 本配置不接触 release、数据库或头像目录，全部请求代理到原应用。
+{$BATTLESHIP_DOMAIN} {
+    header {
+        Strict-Transport-Security "max-age=86400"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+    # 同时代理普通 HTTP 与 Socket.IO 的 WebSocket 升级。
+    reverse_proxy 127.0.0.1:5000
+}

@@ -9,6 +9,8 @@ import { usePlacementStore } from '../../stores/placement'
 import { useResultStore } from '../../stores/result'
 import { useUiStore } from '../../stores/ui'
 import { useAudioStore } from '../../stores/audio'
+import SupportAuthorPrompt from '../../components/SupportAuthorPrompt.vue'
+import SupportAuthorLink from '../../components/SupportAuthorLink.vue'
 import {
   aiDifficulty,
   matchModeLabel,
@@ -554,6 +556,9 @@ function openReplay(): void {
         本局没有可回放的权威记录。
       </p>
     </footer>
+    <SupportAuthorLink v-if="hasResult" compact test-id="game-over-support-author" />
+    <SupportAuthorPrompt v-if="hasResult && !game.state.admin_test && game.state.player_id"
+      :match-key="game.state.room_id || matchId" />
   </section>
 </template>
 

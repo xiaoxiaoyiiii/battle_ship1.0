@@ -190,11 +190,14 @@ class LobbyService:
             }
         await self.broadcast()
         room = self._rooms.get_room(result.get("room_id"))
+        if room is None:
+            return {'status': 'error', 'message': '房间已取消或被替换，请重新选择房间'}
         return {
             "status": "success",
             "room_id": result.get("room_id"),
             "name": str(getattr(room, "name", "") or ""),
             "public": bool(getattr(room, "public", True)),
+            'invite_token': result.get('invite_token', ''),
             "own_room": self._own_waiting_room(connection.sid),
         }
 
@@ -267,6 +270,7 @@ class LobbyService:
                 continue
             return {
                 'room_id': room.id, 'name': room.name, 'public': room.public,
+                'invite_token': room.invite_token,
                 'player_id': player_id, 'host_name': host.name,
                 'seat_connected': host.socket_id == sid,
                 'can_restore': self._presence.get(host.socket_id) is None or player_id in room.disconnected,

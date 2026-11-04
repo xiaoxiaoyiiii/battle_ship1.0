@@ -166,9 +166,8 @@ export interface AiRoomResult {
 }
 
 /**
- * Create the AI room and seat ourselves in it (legacy aiMatch: create_ai_room
- * then join_room). create_ai_room alone leaves the room with the AI seat only,
- * so the server would never transition it to placement.
+ * 服务端创建时已绑定人类座位；保留 create_ai_room → join_room 两步握手，
+ * 后一步确认进入布船，重复调用复用本人座位。
  */
 export async function createAiRoom(
   socket: TypedSocket,

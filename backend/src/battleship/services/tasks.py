@@ -31,6 +31,8 @@ def task_view(database: Database, user_id: str | None, *, now: float | None = No
 
 def settle_tasks(room: Room, uow: UnitOfWork, context: SettlementContext) -> None:
     """与比赛记录同事务；room.settled 防止重复结算，异常时一并回滚。"""
+    if not context.facts.rewards_eligible:
+        return
     day = periods(context.timestamp)['daily']['start']
     for seat, player in room.players.items():
         uid = player.user_id

@@ -22,6 +22,8 @@ NORMAL_ACTIONS = {
     'dice_discard_choose': ('magic', '骰子弃牌选择'), 'confirm_shenji_declare': ('magic', '确认神迹宣告'),
     'remove_field_magic': ('magic', '移除场地魔法'), 'papal_discard': ('magic', '教皇弃牌换攻击'),
     'chain_animation_complete': ('magic', '完成连锁演出'),
+    'chain_response': ('magic', '响应连锁'), 'papal_attack': ('magic', '教皇攻击旧入口'),
+    'set_decline_priority': ('rooms', '设置自动放弃阶段响应'),
 }
 TOOLS = {
     'inspect': '读取双方船位 / 手牌 / 连锁状态', 'draw_card': '获得指定卡牌',
@@ -81,7 +83,7 @@ class AdminConsole:
     async def _run(self, room, seat, connection, action, params):
         if action in NORMAL_ACTIONS:
             owner = getattr(self, NORMAL_ACTIONS[action][0])
-            return await getattr(owner, action)(connection, params)
+            return await getattr(owner, 'papal_discard' if action == 'papal_attack' else action)(connection, params)
         if action == 'priority_response':
             return await self.gameplay.priority.response(connection, params)
         if action == 'inspect':
@@ -140,7 +142,7 @@ class AdminConsole:
         elif action == 'set_attacks':
             room.attacks_remaining = integer(params.get('count'), 0, 100)
         elif action == 'reset':
-            self.magic.timers.cancel_room(room.id)
+            self.magic.cancel_room_timers(room.id)
             await self.gameplay.debug_reset_game(room.id)
             room.settled, room.settlement_result = False, None
         elif action == 'ai_rps':

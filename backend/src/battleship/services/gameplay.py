@@ -956,6 +956,12 @@ class GameplayService:
         room.pending_dice_discard_label = {}
         room.pending_ship_picks = []
         room.priority_pending = None
+        room.priority_continue = None
+        room.priority_token += 1
+        room.huiguang_awaiting_placement = False
+        room.lingqi_resurgence_applied = False
+        room.lingqi_saved_state = None
+        room.polar_reversal_applied = False
         room.decline_priority = {}
         room.turn_started_at = None
         room.turn_timer_attacker = None

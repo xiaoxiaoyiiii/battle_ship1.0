@@ -233,6 +233,9 @@ class PhasePriority:
         return ack
 
     async def continue_after_chain(self, room: Room, continuation: dict):
+        # 重置后迟到的连锁回调不能重新挂回旧局的阶段转换。
+        if continuation.get('token') != room.priority_token:
+            return
         room.priority_continue = {**continuation, 'ready': True}
         await self._resume(room)
         if room.priority_continue and room.id not in self._resuming:

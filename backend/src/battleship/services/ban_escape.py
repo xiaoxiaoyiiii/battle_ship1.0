@@ -27,6 +27,12 @@ class BanEscapeService:
         with self._lock:
             if room.ban_escape_settled:
                 return SettlementResult(ok=True, skipped=True)
+            # 赛前逃跑不经过普通 SettlementService，也必须尊重测试局的无结算边界。
+            if room.admin_test:
+                result = SettlementResult(ok=True, skipped=True)
+                room.ban_escape_settled = room.settled = True
+                room.settlement_result = result
+                return result
             if self.database is None:
                 return SettlementResult(ok=False, error='段位数据库不可用')
             survivor_id = room.opponent_of(leaver_id)

@@ -1,7 +1,7 @@
 /** 与当前网页功能一致的首版条款；运营联系通过页面表单投递。 */
 export interface LegalSection { id: string; title: string; paragraphs: string[]; bullets?: string[] }
 export const LEGAL_VERSION = '2026-11-04'
-export const EFFECTIVE_AT = '2026 年 11 月 4 日 10:00（北京时间）'
+export const EFFECTIVE_AT = '2026 年 11 月 4 日 12:00（北京时间）'
 export const TERMS: LegalSection[] = [
   { id:'operator', title:'一、服务提供者与联系', paragraphs:[
     '《战舰棋》网页版由战舰棋项目开发与运营者提供，站内运营账号为“小小弈11”（以下称“我们”）。本协议适用于本网站的账号、对局、社区与虚拟奖励功能。',

@@ -242,13 +242,22 @@ def create_application(settings: Settings | None = None,
             allow_headers=["*"],
         )
 
-    def _apply_security_headers(response) -> None:
-        # L5（issue #32）：确定无副作用的基础防护头。完整 CSP 需先验证字体/
-        # 样式/卡图/实时连接，随 HTTPS 批次落地；这里只收紧嵌框与嗅探。
+    # L5（issue #32）完整 CSP：前端全部资源同源（构建产物、卡图、头像、音效、
+    # Socket 同源连接），无外部字体/脚本；Vue 动态样式需要内联样式放行；头像
+    # 本地预览经 blob: URL。/api/docs（Swagger）依赖 CDN 资源，不套全量 CSP，
+    # 其嵌框防护由 X-Frame-Options 覆盖。HSTS 随 HTTPS 批次落地。
+    _CSP_POLICY = (
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' blob:; connect-src 'self'; media-src 'self'; "
+        "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+    )
+
+    def _apply_security_headers(response, path: str = "") -> None:
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
-        response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        if not path.startswith("/api/docs"):
+            response.headers.setdefault("Content-Security-Policy", _CSP_POLICY)
 
     # L11（issue #32）：按内容类型预检 Content-Length。头像走 multipart（端点内
     # 另有 2MB 图片内容上限，这里放行表单开销），JSON/表单按宽松业务上限拒绝。
@@ -284,7 +293,7 @@ def create_application(settings: Settings | None = None,
                 metrics.record_http(413, 0.0)
                 response = JSONResponse({"error": "请求体过大"}, status_code=413)
                 response.headers["X-Request-ID"] = request_id
-                _apply_security_headers(response)
+                _apply_security_headers(response, request.url.path)
                 return response
         with log_context(request_id=request_id, method=request.method, path=request.url.path):
             try:
@@ -307,7 +316,7 @@ def create_application(settings: Settings | None = None,
                 logger.warning('邮件操作失败', extra={'status': response.status_code})
             metrics.record_http(response.status_code, duration_ms)
             response.headers["X-Request-ID"] = request_id
-            _apply_security_headers(response)
+            _apply_security_headers(response, request.url.path)
             logger.info(
                 "http request",
                 extra={"status": response.status_code, "duration_ms": round(duration_ms, 3)},

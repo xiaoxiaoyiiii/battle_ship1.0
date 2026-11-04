@@ -34,6 +34,7 @@ from ..contracts.identity import (
 from ..domain.anticheat import suspicion
 from ..domain import mutations, bans
 from ..infra.logging import get_logger
+from ..infra.ratelimit import RateLimiter
 from ..domain.room import (
     AI_DIFFICULTIES,
     LOBBY_ROOM_NAME_MAX_LEN,
@@ -145,6 +146,10 @@ class RoomService:
         # server); None means "this instance has no watchdog" for unit-style
         # callers, and the snapshot then reports no deadline instead of a
         # second, implicit zero.
+        # M1 收尾（issue #32）：join 是唯一无凭证即可触达的房间动作，对同一
+        # 来源地址限频（与 auth 入口同一默认 10 次 / 60 秒）。ip 为空的进程内
+        # 调用方退回按 sid 计（每次连接独立键，测试与模拟不受影响）。
+        self._join_limiter = RateLimiter()
         self.turn_timeout_seconds: int | None = (
             None if turn_timeout_seconds is None else max(0, int(turn_timeout_seconds))
         )
@@ -442,6 +447,8 @@ class RoomService:
 
     async def join_room(self, connection: Connection, data: dict[str, Any] | None) -> dict:
         data = data if isinstance(data, dict) else {}
+        if self._join_limiter.hit("room-join", connection.ip or connection.sid):
+            return {'status': 'error', 'message': '操作过于频繁，请稍后再试'}
         refused = await self._refuse_capability(connection, suspicion.CAP_ROOM)
         if refused is not None:
             return refused

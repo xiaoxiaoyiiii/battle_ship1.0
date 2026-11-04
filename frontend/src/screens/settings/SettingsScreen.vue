@@ -8,6 +8,7 @@ import { useHomeStore } from '../../stores/home'
 import { THEME_LABELS, useUiStore, type FontScale, type ThemeName } from '../../stores/ui'
 import { useWallpaperStore } from '../../stores/wallpaper'
 import SupportAuthorLink from '../../components/SupportAuthorLink.vue'
+import ClientDownloadLink from '../../components/ClientDownloadLink.vue'
 
 /**
  * Ticket #25: settings.
@@ -728,6 +729,8 @@ onMounted(() => {
       </section>
 
       <SupportAuthorLink test-id="settings-support-author" />
+
+      <ClientDownloadLink test-id="settings-client-download" />
 
       <footer class="settings__actions">
         <router-link class="button button--ghost" :to="{ name: 'terms' }" data-testid="settings-terms">用户协议</router-link>

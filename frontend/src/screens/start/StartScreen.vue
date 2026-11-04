@@ -9,6 +9,8 @@ import BattlePassCard from './BattlePassCard.vue'
 import MatchFoundOverlay from '../../components/MatchFoundOverlay.vue'
 import StateSurface from '../../components/StateSurface.vue'
 import SupportAuthorLink from '../../components/SupportAuthorLink.vue'
+import ClientDownloadLink from '../../components/ClientDownloadLink.vue'
+import ClientPromoPrompt from '../../components/ClientPromoPrompt.vue'
 import { cardArtUrl } from '../../cards/cardArt'
 import { CARDS, UNIQUE_CARD_NAMES } from '../../cards/cardData'
 import { useAuthStore } from '../../stores/auth'
@@ -616,7 +618,9 @@ async function startAi(): Promise<void> {
           </StateSurface>
         </section>
         <SupportAuthorLink compact test-id="start-support-author" />
+        <ClientDownloadLink compact test-id="start-client-download" />
       </aside>
+      <ClientPromoPrompt />
 
     </div>
   </section>

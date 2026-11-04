@@ -22,6 +22,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from ...infra.ratelimit import client_key
 from ...services.auth import AuthError, AuthService
 from ...services.auth_sessions import SESSION_ID, revoke_session
+from ...services.client_promo import ClientPromoService
 from ..deps import get_auth_service, require_user
 from ..errors import api_error, from_auth_error
 from ..session import (
@@ -146,6 +147,10 @@ async def login(request: Request, service: AuthService = Depends(get_auth_servic
         identity = service.authenticate(username, password, issue_login_session=True)
         if identity is None:
             raise api_error(401, "invalid_credentials", "用户名或密码错误")
+        # 客户端壳登录标记（首次触发奖励邮件投递），非客户端 UA 幂等无害。
+        ClientPromoService(request.app.state.database).record_client_login(
+            identity["id"], request.headers.get("user-agent")
+        )
         data = _session_payload(identity)
         return _json_with_session({"success": True, "user": _public_identity(identity)}, request, data)
 
@@ -183,6 +188,9 @@ async def register(request: Request, service: AuthService = Depends(get_auth_ser
             identity = service.register(username, password, issue_login_session=True)
         except AuthError as exc:
             raise from_auth_error(exc) from exc
+        ClientPromoService(request.app.state.database).record_client_login(
+            identity["id"], request.headers.get("user-agent")
+        )
         data = _session_payload(identity)
         return _json_with_session({"success": True, "user": _public_identity(identity)}, request, data)
 

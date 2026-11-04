@@ -25,6 +25,13 @@ fn entry_url() -> String {
         .unwrap_or_else(|| "http://8.133.180.159:5000/lobby".to_string())
 }
 
+/// 客户端壳浏览器标识：服务端据此记录“客户端登录过”并发放奖励，
+/// 前端据此不再弹下载提示。保留平台关键字供服务端分流。
+#[cfg(target_os = "android")]
+pub const SHELL_USER_AGENT: &str = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/124.0.0.0 Mobile Safari/537.36 BattleshipClient/android";
+#[cfg(not(target_os = "android"))]
+pub const SHELL_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 BattleshipClient/desktop";
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let entry = entry_url();
@@ -43,6 +50,7 @@ pub fn run() {
                 tauri::WebviewUrl::External(parsed),
             )
             .title("战舰棋")
+            .user_agent(SHELL_USER_AGENT)
             .inner_size(1280.0, 820.0)
             .min_inner_size(1024.0, 640.0)
             // 站内导航放行；站外链接转交系统浏览器并阻止窗口内跳转。

@@ -129,6 +129,9 @@ FRAMES = [
      "requirement": "最高连胜 ≥ 12"},
     {"id": "star_compass", "name": "星海罗盘", "desc": "指向最远的那片海",
      "requirement": "赛季通行证奖励"},
+    # ---- 客户端专属（客户端奖励邮件领取）----
+    {"id": "client_voyage", "name": "远航之环", "desc": "那些勇敢的舰长，总是会不断向更远的航线进发",
+     "requirement": "客户端专属奖励"},
 ]
 
 # 6 个名片底色（设计稿 §5.4）
@@ -302,6 +305,8 @@ _FRAME_RULES = {
     'tideglass': lambda c: c['matches'] >= 80,
     'ember_wake': lambda c: c['longest_streak'] >= 12,
     'star_compass': lambda c: 'frame:star_compass' in c['battle_pass_rewards'],
+    # 客户端奖励邮件领取后走同一张外观奖励表（mail 轨），判据与通行证同构。
+    'client_voyage': lambda c: 'frame:client_voyage' in c['battle_pass_rewards'],
 }
 
 _CARD_BG_RULES = {

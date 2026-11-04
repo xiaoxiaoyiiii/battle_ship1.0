@@ -34,6 +34,7 @@ from .daily_challenge import DailyChallengeRepository
 from .ranked_seasons import RankedSeasonRepository
 from .mailbox import MailboxRepository
 from .support import SupportRepository
+from .client_promo import ClientPromoRepository
 
 
 class UnitOfWork:
@@ -128,6 +129,10 @@ class UnitOfWork:
     @property
     def support(self) -> SupportRepository:
         return self._repository('support', SupportRepository)
+
+    @property
+    def client_promo(self) -> ClientPromoRepository:
+        return self._repository('client_promo', ClientPromoRepository)
 
     def flush(self) -> None:
         self._require_session().flush()

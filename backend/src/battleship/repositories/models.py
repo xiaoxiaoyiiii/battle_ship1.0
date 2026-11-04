@@ -162,6 +162,23 @@ class MatchReplay(Base):
     )
 
 
+class ClientLogin(Base):
+    """客户端（桌面/移动壳）登录过的账号；首次登录触发奖励邮件投递。"""
+    __tablename__ = "client_logins"
+
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    platform: Mapped[str] = mapped_column(sa.Text)
+    logged_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+
+
+class ClientPromoDay(Base):
+    """下载提示弹窗的账号维度每日去重（游客由浏览器本地去重）。"""
+    __tablename__ = "client_promo_days"
+
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    day_key: Mapped[str] = mapped_column(sa.Text, nullable=False)
+
+
 class CardUsage(Base):
     __tablename__ = "card_usage"
 

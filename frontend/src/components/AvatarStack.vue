@@ -21,7 +21,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{ (event: 'error', error: Event): void }>()
 const frameId = computed(() => props.frame || 'none')
-const hasAnimatedFrame = computed(() => ['aurora', 'golden_wheel', 'mithril_ring', 'king_aura', 'season_tide_ring', 'abyssal_glow', 'tideglass', 'ember_wake', 'star_compass'].includes(frameId.value))
+const hasAnimatedFrame = computed(() => ['aurora', 'golden_wheel', 'mithril_ring', 'king_aura', 'season_tide_ring', 'abyssal_glow', 'tideglass', 'ember_wake', 'star_compass', 'client_voyage'].includes(frameId.value))
 </script>
 
 <template>
@@ -140,6 +140,11 @@ const hasAnimatedFrame = computed(() => ['aurora', 'golden_wheel', 'mithril_ring
 .avatar-stack[data-frame='star_compass'] { --avatar-ring: #e7c36a; --avatar-glow: rgb(231 195 106 / 52%); }
 .avatar-stack[data-frame='star_compass']::before { border-width: 3px; border-style: dashed; animation: avatar-stack-wheel 9s linear infinite; }
 .avatar-stack[data-frame='star_compass'] .avatar-stack__halo { opacity: .62; inset: -9px; border: 1px solid rgb(231 195 106 / 40%); animation: avatar-stack-halo 4s ease-in-out infinite; }
+/* 远航之环：客户端专属纪念——指向远方的航线，星点沿环缓行。 */
+.avatar-stack[data-frame='client_voyage'] { --avatar-ring: #7fd0e8; --avatar-glow: rgb(127 208 232 / 55%); }
+.avatar-stack[data-frame='client_voyage']::before { border-width: 3px; border-style: double; animation: avatar-stack-pulse 3.4s ease-in-out infinite; }
+.avatar-stack[data-frame='client_voyage'] .avatar-stack__ornament { inset: -5px; opacity: .78; border: 1px dotted rgb(127 208 232 / 70%); animation: avatar-stack-wheel-reverse 11s linear infinite; }
+.avatar-stack[data-frame='client_voyage'] .avatar-stack__halo { opacity: .66; inset: -8px; background: radial-gradient(circle, rgb(127 208 232 / 26%), transparent 60%); animation: avatar-stack-halo 3.4s ease-in-out infinite; }
 
 @keyframes avatar-stack-wheel { to { transform: rotate(360deg); } }
 @keyframes avatar-stack-wheel-reverse { to { transform: rotate(-360deg); } }

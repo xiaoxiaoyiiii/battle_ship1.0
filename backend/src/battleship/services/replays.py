@@ -5,9 +5,10 @@
 * 本模块只做用例编排：用 #5 的 UnitOfWork / 仓储读写，不写裸 SQL；
 * HTTP 路由只做请求解析与响应形状（见 http/routers/replay.py）。
 
-隐私与失败方向（旧栈契约 + DECISIONS D13）：
-* 读回放要求登录；能看 = 本人是参与者，或任一真实参与者 show_history=1；
-* allow_replay 读库失败一律按**不记录**（fail-closed），并打日志；
+隐私与失败方向（旧栈契约 + DECISIONS D13 + 2026-11-05 L13 裁定）：
+* 读回放要求登录；能看 = 本人是参与者，或**双方 allow_replay 均为开**
+  （原“任一参与者 show_history=1”规则已废止——防止打法被对手随意学习）；
+* allow_replay 读库失败一律按**不记录/不允许**（fail-closed），并打日志；
 * 设置读失败返回 None（接口 503 "不知道"），绝不谎报成允许；
 * 响应里剥掉 seats（uid -> p1/p2 只在服务端算 you_are）。
 """
@@ -106,14 +107,23 @@ def _participants(row: dict[str, Any]) -> list[str]:
     return [uid for uid in (row.get("winner_user_id"), row.get("loser_user_id")) if uid]
 
 
-def _show_history(uow, user_id: str) -> bool:
-    """Fail closed: any read error means "not published"."""
+def _both_allow_replay(uow, participants: list[str]) -> bool:
+    """L13（2026-11-05 裁定）：非参与者观看回放需**双方同意**。
+
+    双方 allow_replay 均为开（未设置按旧默认开）才允许；任一方显式关闭、
+    没有可确认的参与者，或读取设置失败（fail-closed，同意无法证明即拒绝）
+    都不可观看。原“任一参与者 show_history=1”规则废止。
+    """
+    if not participants:
+        return False
     try:
-        profile = uow.social.get_profile(user_id)
-        if not profile:
-            return False
-        return bool(int(profile.get("show_history") or 0))
-    except Exception:  # noqa: BLE001
+        return all(_allow_replay_for(uow, uid) for uid in participants)
+    except Exception as error:  # noqa: BLE001 - fail closed: consent unproven
+        logger.error(
+            "read allow_replay for viewer failed; denying replay",
+            extra={"error_type": type(error).__name__},
+            exc_info=error,
+        )
         return False
 
 
@@ -135,9 +145,11 @@ def read_replay(database: Database, match_id: str, viewer_uid: str | None) -> Re
             participants = _participants(row)
             allowed = str(viewer_uid) in {str(uid) for uid in participants}
             if not allowed:
-                allowed = any(_show_history(uow, uid) for uid in participants)
+                # L13（2026-11-05 裁定）：观看他人的回放需双方同意——
+                # 双方 allow_replay 均为开；防止自己的打法被对手随意学习。
+                allowed = _both_allow_replay(uow, participants)
             if not allowed:
-                return _error(403, "你没有权限查看这一局的回放")
+                return _error(403, "双方开启「允许保留我的对局回放」后才能观看这一局的回放")
 
             try:
                 size = int(row.get("bytes") or 0)

@@ -618,7 +618,7 @@ onMounted(() => {
             :disabled="settings.replay.status !== 'ready' || settings.replay.saving"
             @change="onReplayChange"
           />
-          <span>允许保留我的对局回放<small class="settings__switch-hint">任一方关闭，这一局就不会留下回放。</small></span>
+          <span>允许保留我的对局回放<small class="settings__switch-hint">双方都开启才会保留回放；之后任一方关闭，他人就无法再观看。</small></span>
         </label>
         <p class="settings__note" data-testid="settings-replay-status" role="status">
           {{ toggleStatus('replay') }}

@@ -36,3 +36,8 @@ backend/.venv/
 *.db.backup-*
 # 本地环境文件不入仓（issue #32 I1）
 backend/.env
+
+# 桌面壳构建产物（Tauri）
+desktop/node_modules/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/

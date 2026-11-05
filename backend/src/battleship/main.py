@@ -362,6 +362,13 @@ def create_application(settings: Settings | None = None,
         StaticFiles(directory=str(assets.avatars_dir)),
         name="static-avatars",
     )
+    # 客户端安装包与版本清单（latest.json）；目录为空时壳的更新检查静默跳过。
+    assets.clients_dir.mkdir(parents=True, exist_ok=True)
+    fastapi_app.mount(
+        "/static/clients",
+        StaticFiles(directory=str(assets.clients_dir)),
+        name="static-clients",
+    )
 
     # Phase 5: exactly one frontend. The built Vue shell is mounted on the same
     # ASGI app; a missing build aborts startup inside install() instead of

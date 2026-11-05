@@ -27,6 +27,7 @@ def _looks_like_repo_root(path: Path) -> bool:
 class AssetPaths:
     root: Path
     avatars_dir: Path
+    clients_dir: Path
     frontend_dist: Path
 
     @classmethod
@@ -55,6 +56,8 @@ class AssetPaths:
         return cls(
             root=root,
             avatars_dir=root / "static" / "avatars",
+            # 客户端安装包与版本清单（/static/clients/latest.json）；目录可暂时为空。
+            clients_dir=root / "static" / "clients",
             frontend_dist=root / "frontend" / "dist",
         )
 

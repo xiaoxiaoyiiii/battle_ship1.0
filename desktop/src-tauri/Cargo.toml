@@ -1,6 +1,6 @@
 [package]
 name = "battleship-desktop"
-version = "1.0.0"
+version = "1.0.1"
 description = "战舰棋桌面壳：加载官方线上地址的原生窗口"
 edition = "2021"
 

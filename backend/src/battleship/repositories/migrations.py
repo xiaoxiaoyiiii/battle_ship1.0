@@ -41,7 +41,7 @@ from alembic.config import Config
 from .models import Base
 from .schema import verify_schema
 
-HEAD_REVISION = "0011_match_eligibility"
+HEAD_REVISION = "0012_client_promo"
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
 INTERNAL_TABLES = frozenset({"sqlite_sequence", "alembic_version"})
 

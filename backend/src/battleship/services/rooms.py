@@ -201,6 +201,11 @@ class RoomService:
         task.add_done_callback(_finished)
 
     def get_room(self, room_id: str | None) -> Room | None:
+        # L14（issue #32）A 类：room_id 被发成 dict/list 等不可哈希值时，
+        # dict.get 会抛 TypeError 且异常滞留 socketio task 内（无 ack）。
+        # 一律按“房间不存在”处理，与缺失/未知房号同语义。
+        if not isinstance(room_id, str):
+            return None
         return self.rooms.get(room_id) if room_id else None
 
     def get_all_rooms(self) -> dict[str, Room]:

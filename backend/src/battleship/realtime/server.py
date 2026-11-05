@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import time
 from typing import TYPE_CHECKING
 
@@ -129,6 +130,42 @@ def create_socket_server(
         logger=False,
         engineio_logger=False,
     )
+
+    def _safe_socket_handler(name: str, handler):
+        """L14（issue #32）B 类收口：handler 形参不符或未预期异常不再静默
+        滞留在 asyncio task 里（客户端收不到 ack），统一记日志、记指标并
+        返回 error ack——日志、指标、客户端可见错误三者齐，不吞异常。"""
+
+        @functools.wraps(handler)
+        async def wrapper(*args, **kwargs):
+            started = time.perf_counter()
+            try:
+                return await handler(*args, **kwargs)
+            except Exception as error:
+                metrics.record_socket_event(
+                    name, (time.perf_counter() - started) * 1000, error=True
+                )
+                with log_context(event=name):
+                    logger.exception(
+                        "socket handler failed",
+                        extra={"event": name, "error_type": type(error).__name__},
+                    )
+                return {"status": "error", "message": "请求处理失败"}
+        return wrapper
+
+    _original_sio_on = sio.on
+
+    def _safe_on(event, handler=None, *args, **kwargs):
+        if handler is not None:
+            return _original_sio_on(event, _safe_socket_handler(event, handler),
+                                    *args, **kwargs)
+
+        def decorator(fn):
+            return _original_sio_on(event, _safe_socket_handler(event, fn),
+                                    *args, **kwargs)
+        return decorator
+
+    sio.on = _safe_on
 
     @sio.event
     async def connect(sid: str, environ: dict, auth=None) -> bool:

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping
@@ -179,32 +180,33 @@ def boot_payload(request: Request) -> dict[str, Any]:
     return payload
 
 
-def _boot_script(payload: Mapping[str, Any]) -> str:
+def _boot_script(payload: Mapping[str, Any], nonce: str | None = None) -> str:
     data = json.dumps(
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
     # A literal "</" would close the surrounding <script>; the escaped form is
     # still valid JSON and parses back to the same string.
     data = data.replace("</", "<\\/")
-    return f"<script>{BOOT_MARKER}={data};</script>"
+    nonce_attribute = f' nonce="{nonce}"' if nonce else ""
+    return f"<script{nonce_attribute}>{BOOT_MARKER}={data};</script>"
 
 
-def _inject_boot(html: str, payload: Mapping[str, Any]) -> str:
+def _inject_boot(html: str, payload: Mapping[str, Any], nonce: str | None = None) -> str:
     """Put the boot JSON before the app script; never inject it twice."""
 
     if BOOT_MARKER in html:
         return html
-    script = _boot_script(payload)
+    script = _boot_script(payload, nonce)
     for marker in ("<head>", "<body>"):
         if marker in html:
             return html.replace(marker, marker + script, 1)
     return script + html
 
 
-def _index_body(dist: Path, request: Request) -> tuple[str, bool]:
+def _index_body(dist: Path, request: Request, nonce: str | None = None) -> tuple[str, bool]:
     """Return (HTML, replaced_stale_cookie)."""
 
-    html = _inject_boot(_index_template(dist), boot_payload(request))
+    html = _inject_boot(_index_template(dist), boot_payload(request), nonce)
     if not session_cookie_invalid(request):
         return html, False
 
@@ -217,7 +219,10 @@ def _index_body(dist: Path, request: Request) -> tuple[str, bool]:
 
 
 def _index_response(dist: Path, build_id: str, request: Request) -> HTMLResponse:
-    body, stale_cookie = _index_body(dist, request)
+    # 每次响应独立生成，仅放行本页启动数据，不开放任意内联脚本。
+    nonce = secrets.token_urlsafe(24)
+    request.state.csp_script_nonce = nonce
+    body, stale_cookie = _index_body(dist, request, nonce)
     headers = {"cache-control": INDEX_CACHE}
     if build_id:
         headers[BUILD_ID_HEADER] = build_id

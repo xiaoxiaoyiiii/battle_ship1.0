@@ -253,12 +253,15 @@ def create_application(settings: Settings | None = None,
         "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
     )
 
-    def _apply_security_headers(response, path: str = "") -> None:
+    def _apply_security_headers(response, path: str = "", script_nonce: str | None = None) -> None:
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         if not path.startswith("/api/docs"):
-            response.headers.setdefault("Content-Security-Policy", _CSP_POLICY)
+            policy = _CSP_POLICY
+            if script_nonce:
+                policy = policy.replace("script-src 'self';", f"script-src 'self' 'nonce-{script_nonce}';", 1)
+            response.headers.setdefault("Content-Security-Policy", policy)
 
     # L11（issue #32）：按内容类型预检 Content-Length。头像走 multipart（端点内
     # 另有 2MB 图片内容上限，这里放行表单开销），JSON/表单按宽松业务上限拒绝。
@@ -317,7 +320,7 @@ def create_application(settings: Settings | None = None,
                 logger.warning('邮件操作失败', extra={'status': response.status_code})
             metrics.record_http(response.status_code, duration_ms)
             response.headers["X-Request-ID"] = request_id
-            _apply_security_headers(response, request.url.path)
+            _apply_security_headers(response, request.url.path, getattr(request.state, "csp_script_nonce", None))
             logger.info(
                 "http request",
                 extra={"status": response.status_code, "duration_ms": round(duration_ms, 3)},

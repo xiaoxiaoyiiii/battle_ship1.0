@@ -68,12 +68,10 @@ class MatchRepository:
 
     def history_for_user(self, user_id: str, limit: int = 20,
                          include_logs: bool = False) -> list[dict[str, Any]]:
-        """History rows for /user_stats (never the replay blobs).
+        """供 /user_stats 读取的历史摘要，不包含回放内容。
 
-        ``include_logs`` is the owner read: step-by-step match logs only leave
-        the server for the profile owner (privacy ruling 2026-11-04). Other
-        viewers get summary rows without the ``logs`` key, and the match_logs
-        join is skipped entirely.
+        根据 2026-11-04 隐私裁定，仅本人读取时开启 ``include_logs``。
+        他人只能获取不含 ``logs`` 键的摘要，也不会联表查询 match_logs。
         """
         if not user_id:
             return []

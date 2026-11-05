@@ -8,20 +8,21 @@ const props = withDefaults(defineProps<{ compact?: boolean; testId?: string }>()
 
 // 客户端壳内不显示下载入口（已经在客户端里了）。
 const downloadUrl = computed(() => promoPlatform() === 'android'
-  ? CLIENT_DOWNLOAD_URLS.android : CLIENT_DOWNLOAD_URLS.windows)
-const platformLabel = computed(() => promoPlatform() === 'android' ? '手机版' : '电脑版')
+  ? CLIENT_DOWNLOAD_URLS.android : promoPlatform() === 'windows' ? CLIENT_DOWNLOAD_URLS.windows : null)
+const platformLabel = computed(() => downloadUrl.value
+  ? (promoPlatform() === 'android' ? '手机版下载' : '电脑版下载') : '暂未支持')
 const inClient = isBattleshipClient()
 </script>
 
 <template>
-  <a v-if="!inClient" :href="downloadUrl" class="client-download"
+  <component :is="downloadUrl ? 'a' : 'div'" v-if="!inClient" :href="downloadUrl || undefined" class="client-download"
     :class="{ 'client-download--compact': props.compact }" :data-testid="testId">
     <svg class="client-download__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M12 4v12M8 7h8M5 13a7 7 0 0 0 14 0M5 13H3m2 0a2 2 0 1 0 4 0m10 0a2 2 0 1 0-4 0m4 0h2" />
     </svg>
-    <span class="client-download__copy"><strong>下载客户端</strong><span>登录领 500 徽记和专属头像框</span></span>
-    <span class="client-download__action">{{ platformLabel }}下载</span>
-  </a>
+    <span class="client-download__copy"><strong>下载客户端</strong><span>{{ downloadUrl ? '登录领 500 徽记和专属头像框' : '当前系统暂无安装包，可继续使用网页版' }}</span></span>
+    <span class="client-download__action">{{ platformLabel }}</span>
+  </component>
 </template>
 
 <style scoped>

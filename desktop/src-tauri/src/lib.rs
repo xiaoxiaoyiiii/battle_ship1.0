@@ -11,6 +11,9 @@
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
+mod version;
+use version::is_newer_release;
+
 /// 窗口内允许停留的站点：生产地址与本地调试栈。
 /// 其余一律转交系统浏览器打开（比如“支持作者”的 GitHub 页）。
 fn is_own_host(url: &tauri::Url) -> bool {
@@ -47,30 +50,6 @@ struct LatestRelease {
     win: String,
     #[serde(default)]
     apk: String,
-}
-
-/// 解析三段版本号；缺段按 0，非法字符整体视为无效（None = 不提示更新）。
-fn parse_version(version: &str) -> Option<(u64, u64, u64)> {
-    let parts: Vec<&str> = version.trim().split('.').collect();
-    if parts.is_empty() || parts.len() > 3 {
-        return None;
-    }
-    let mut numbers = [0u64; 3];
-    for (index, part) in parts.iter().enumerate() {
-        if part.is_empty() || !part.chars().all(|c| c.is_ascii_digit()) {
-            return None;
-        }
-        numbers[index] = part.parse().ok()?;
-    }
-    Some((numbers[0], numbers[1], numbers[2]))
-}
-
-/// 清单版本比壳自身版本新才提示；任何解析失败都视为“无需更新”。
-fn is_newer_release(latest: &str, current: &str) -> bool {
-    match (parse_version(latest), parse_version(current)) {
-        (Some(latest), Some(current)) => latest > current,
-        _ => false,
-    }
 }
 
 fn current_version() -> String {
@@ -185,38 +164,4 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running battleship desktop shell");
-}
-
-#[cfg(all(test, desktop))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_version_accepts_three_segments() {
-        assert_eq!(parse_version("1.2.3"), Some((1, 2, 3)));
-        assert_eq!(parse_version(" 1.0.0 "), Some((1, 0, 0)));
-    }
-
-    #[test]
-    fn parse_version_fills_missing_segments() {
-        assert_eq!(parse_version("1.2"), Some((1, 2, 0)));
-        assert_eq!(parse_version("2"), Some((2, 0, 0)));
-    }
-
-    #[test]
-    fn parse_version_rejects_garbage() {
-        assert_eq!(parse_version("abc"), None);
-        assert_eq!(parse_version("1.x.3"), None);
-        assert_eq!(parse_version(""), None);
-        assert_eq!(parse_version("1.2.3.4"), None);
-    }
-
-    #[test]
-    fn is_newer_only_for_strictly_greater() {
-        assert!(is_newer_release("1.0.1", "1.0.0"));
-        assert!(is_newer_release("2.0", "1.9.9"));
-        assert!(!is_newer_release("1.0.0", "1.0.0"));
-        assert!(!is_newer_release("0.9.9", "1.0.0"));
-        assert!(!is_newer_release("not-a-version", "1.0.0"));
-    }
 }

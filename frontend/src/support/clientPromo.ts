@@ -1,4 +1,5 @@
 /** 客户端下载弹窗：平台分流、浏览器本地每日去重与客户端壳识别。 */
+import { supportDay } from './githubSupport'
 
 export const CLIENT_UA_MARKER = 'BattleshipClient/'
 
@@ -55,9 +56,4 @@ export function markClientPromoShown(owner: string, storage: StoragePort = safeS
 
 function safeStorage(): StoragePort {
   try { return localStorage } catch { return null }
-}
-
-/** 北京时间天界（支持作者提醒同款）。 */
-function supportDay(now: number = Date.now()): string {
-  return new Date(now + 8 * 60 * 60 * 1000).toISOString().slice(0, 10)
 }

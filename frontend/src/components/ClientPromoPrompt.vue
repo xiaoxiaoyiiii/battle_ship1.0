@@ -17,6 +17,8 @@ let delay: ReturnType<typeof setTimeout> | null = null
 let timeout: ReturnType<typeof setTimeout> | null = null
 let countdown: ReturnType<typeof setInterval> | null = null
 let pendingOwner: string | null = null
+let ready = false
+let requested = false
 
 const platform = computed<PromoPlatform>(() => promoPlatform())
 const downloadUrl = computed(() => platform.value === 'android'
@@ -41,7 +43,8 @@ function showWhenAvailable(): void {
 }
 
 async function tryShow(): Promise<void> {
-  if (!alive || ui.activeDialog) return
+  if (!ready || !alive || ui.activeDialog || requested) return
+  requested = true
   // 客户端壳内不弹（读 UA 标识）。
   if (isBattleshipClient()) return
   const owner = auth.user?.id || 'guest'
@@ -62,10 +65,13 @@ async function tryShow(): Promise<void> {
   showWhenAvailable()
 }
 
-watch(() => ui.activeDialog, showWhenAvailable)
+watch(() => ui.activeDialog, () => {
+  showWhenAvailable()
+  void tryShow()
+})
 onMounted(() => {
   // 让首屏先完成渲染，提示不与其它弹窗抢占。
-  delay = setTimeout(() => { void tryShow() }, 1400)
+  delay = setTimeout(() => { ready = true; void tryShow() }, 1400)
 })
 onBeforeUnmount(() => { alive = false; close() })
 </script>

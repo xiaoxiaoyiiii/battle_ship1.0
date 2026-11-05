@@ -132,9 +132,9 @@ def create_socket_server(
     )
 
     def _safe_socket_handler(name: str, handler):
-        """L14（issue #32）B 类收口：handler 形参不符或未预期异常不再静默
-        滞留在 asyncio task 里（客户端收不到 ack），统一记日志、记指标并
-        返回 error ack——日志、指标、客户端可见错误三者齐，不吞异常。"""
+        """业务异常返回错误 ack，连接初始化异常拒绝握手，断连保留清理语义。"""
+        if name == "disconnect":
+            return handler
 
         @functools.wraps(handler)
         async def wrapper(*args, **kwargs):
@@ -147,9 +147,12 @@ def create_socket_server(
                 )
                 with log_context(event=name):
                     logger.exception(
-                        "socket handler failed",
+                        "Socket 事件处理失败",
                         extra={"event": name, "error_type": type(error).__name__},
                     )
+                # Socket.IO 仅把 False 视为握手拒绝，错误字典会被当作成功。
+                if name == "connect":
+                    return False
                 return {"status": "error", "message": "请求处理失败"}
         return wrapper
 

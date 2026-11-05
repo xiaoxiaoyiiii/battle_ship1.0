@@ -8,13 +8,10 @@ import AvatarStack from '../../components/AvatarStack.vue'
 import TitleBadge from '../../components/TitleBadge.vue'
 
 /**
- * Ticket #25: own / other player's profile card.
- *
- * Every number, badge, tier label and history row comes from the server. The
- * privacy flags are rendered, not enforced here: show_stats / show_fav_cards /
- * show_history / show_rank / show_guestbook are all applied server-side
- * (DECISIONS D13, revised 2026-11-04); history rows for other players are
- * summaries without step-by-step logs.
+ * 本人和其他玩家的名片展示。
+ * 所有数值、徽章、段位和历史均来自服务端。show_stats、show_fav_cards、
+ * show_history、show_rank、show_guestbook 已由服务端执行隐私过滤
+ * （D13，2026-11-04 修订）；他人的历史仅包含摘要，不含逐步日志。
  */
 const route = useRoute()
 const router = useRouter()

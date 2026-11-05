@@ -3,8 +3,8 @@
 约定（2026-11-05 与用户裁定）：
 * 壳与 APK 的浏览器标识追加 ``BattleshipClient/``（platform 后缀），
   服务端在登录成功时读到该标记即记录“该账号客户端登录过”；
-* 首次记录投递一封奖励邮件（500 潮汐徽记 + 专属头像框「远航之环」），
-  每账号仅一次：client_logins 幂等 + 邮件 source_key 幂等双保险；
+* 客户端登录时尝试投递奖励邮件（500 潮汐徽记 + 专属头像框「远航之环」），
+  每账号仅一次：邮件 source_key 防重复，投递失败可在下次登录时补投；
 * 下载提示弹窗：游客按浏览器本地去重（前端），登录账号按账号每日一次
   （本模块 claim_promo_day），北京时间按天；
 * 永久常驻活动，无截止日期。
@@ -53,7 +53,7 @@ class ClientPromoService:
 
     def record_client_login(self, user_id: str, ua: str | None, *,
                             now: int | None = None) -> bool:
-        """登录成功后调用：标记客户端登录，首次记录时投递奖励邮件。
+        """登录成功后标记客户端登录，幂等投递奖励，失败后下次登录补投。
 
         返回是否为首次记录（仅供日志/测试，重复调用幂等安全）。
         """
@@ -65,8 +65,8 @@ class ClientPromoService:
             if uow.users.get(user_id) is None:
                 return False
             first = uow.client_promo.record_client_login(user_id, platform, now=now)
-        if first:
-            self._deliver_reward_mail(user_id)
+        # 登录记录不代表邮件已成功投递；沿用邮件幂等编号安全补投。
+        self._deliver_reward_mail(user_id)
         logger.info("客户端登录记录", extra={"user_id": user_id,
                                           "platform": platform, "first": first})
         return first

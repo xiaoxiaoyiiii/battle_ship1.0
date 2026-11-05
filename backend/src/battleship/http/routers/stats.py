@@ -1,10 +1,8 @@
-"""Public player stats (/user_stats), scoped to the privacy contract.
+"""公开玩家资料入口 /user_stats，服务端按隐私约定裁剪。
 
-Ticket #6 owns the privacy semantics exercised here. Rank/level/badge projections
-are ticket #15's job; this route returns the legacy field names with the
-server-side privacy filters (stats numbers, favourite cards, history summaries,
-rank_info) so "another user reads the endpoint directly" can be verified
-without trusting the frontend.
+资料保留兼容字段名；战绩、常用卡、历史摘要与 rank_info 的权限过滤
+均在服务端执行，直接请求接口也不能绕过前端隐藏设置。
+段位、等级和徽章等投影由成长服务提供。
 """
 
 from __future__ import annotations

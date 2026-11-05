@@ -1,22 +1,15 @@
-"""Profile reads and card writes (ticket #6 privacy + ticket #15 projections).
+"""资料读取和名片写入，服务端落实 2026-11-04 修订的 D13 隐私约定。
 
-The privacy contract (DECISIONS D13, revised 2026-11-04) is enforced on the
-server for every viewer other than the profile owner:
+对本人以外的访问者：
+* show_stats=0 时胜负与连胜数据为 null；show_fav_cards=0 时常用卡为空。
+* show_history=0 时不返回历史；开启时也只返回时间、对手、结果和回放标记。
+  逐步对局日志仅向本人提供。
+* show_rank 关闭时隐藏 rank_info；本人始终能够查看自己的完整资料。
+* 排行榜投影与没有开关的名片字段保持公开；无资料记录时使用旧默认值，
+  不因此写入新记录。
 
-* show_stats=0 nulls wins/losses/streaks; show_fav_cards=0 sends no favourite
-  cards (these used to be frontend-only hides -- the data no longer leaves the
-  server);
-* show_history=0 returns no history; show_history=1 sends history *summary*
-  rows (time/opponent/result/replay flag). Step-by-step match logs only ever
-  leave the server to the owner themselves;
-* show_rank nulls rank_info for other users, but never hides it from oneself;
-* leaderboard projections (wins rank etc.) and switch-less card fields stay
-  public; missing profile rows fall back to the legacy defaults without
-  writing a row.
-
-Ticket #15 adds the projections the legacy API built from ranks / leveling /
-achievements / profile_spec. Rules stay in domain/progression; this module only
-assembles facts and applies the read-path privacy filter.
+段位、等级、成就与外观规则保留在 domain/progression，本模块仅组装
+服务端事实，并执行读取时的隐私过滤。
 """
 
 from __future__ import annotations
@@ -212,15 +205,13 @@ def public_stats(database: Database, user: Any, viewer_id: str | None,
         stats["profile_bg_id"] = profile_bg_id
         stats["pointer_effect_id"] = pointer_effect_id
         stats["title_effect_id"] = title_effect_id
-        # D13 revised: show_fav_cards=0 hides the favourite-card list from other
-        # viewers on the server; the owner always gets their own list.
+        # D13 修订：关闭常用卡展示时由服务端隐藏，本人仍获得完整列表。
         stats["fav_cards"] = (
             progression.fav_cards(uow, user_id)
             if (is_self or stats["show_fav_cards"])
             else []
         )
-        # D13 revised: show_stats=0 strips the record numbers for other viewers
-        # (the owner is unaffected). The wins-board `rank` above stays public.
+        # D13 修订：对他人裁剪关闭展示的战绩数据，胜场榜 rank 保持公开。
         if not is_self and not stats["show_stats"]:
             stats["wins"] = None
             stats["losses"] = None
@@ -249,7 +240,7 @@ def public_stats(database: Database, user: Any, viewer_id: str | None,
         stats["achievements"] = badges
         stats["badge_count"] = badge_count
         if is_self or stats["show_history"]:
-            # Logs are the owner's read; other viewers get summary rows only.
+            # 逐步日志仅向本人提供，他人只能读取摘要。
             history = uow.matches.history_for_user(
                 user_id, limit, include_logs=is_self
             )

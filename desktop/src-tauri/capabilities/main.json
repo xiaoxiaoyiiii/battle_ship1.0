@@ -1,0 +1,25 @@
+{
+  "identifier": "official-web-links",
+  "description": "仅允许官方网页和本地调试网页在主窗口打开 HTTP(S) 外链。",
+  "local": false,
+  "remote": {
+    "urls": [
+      "http://8.133.180.159:*/*",
+      "https://8.133.180.159:*/*",
+      "http://127.0.0.1:*/*",
+      "https://127.0.0.1:*/*",
+      "http://localhost:*/*",
+      "https://localhost:*/*"
+    ]
+  },
+  "windows": ["main"],
+  "permissions": [
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        {"url": "http://*"},
+        {"url": "https://*"}
+      ]
+    }
+  ]
+}

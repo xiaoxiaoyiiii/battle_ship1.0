@@ -215,9 +215,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  /** Logout is a server-side write operation (POST /logout, issue #32 L8):
-   * revoke the session first, then go home. The GET route stays for same-site
-   * manual navigation only. */
+  /** 退出通过 POST /logout 先吊销会话，再返回首页；GET 仅兼容同站手动导航。 */
   async function requestLogout(): Promise<void> {
     try {
       await fetch('/logout', { method: 'POST', credentials: 'same-origin' })

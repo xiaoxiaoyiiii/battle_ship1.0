@@ -290,24 +290,28 @@ class BattlePassService:
     # ------------------------------------------------------------------ settlement
 
     def settlement_hook(self, room: Room, uow: UnitOfWork, context: Any) -> None:
-        """在同一结算事务写入真人排位/休闲的赛季经验。"""
+        """在同一结算事务写入任务奖励及真人对局经验。"""
         facts = context.facts
         users = [facts.winner_user_id, facts.loser_user_id]
         seats = [facts.winner_id, facts.loser_id]
-        if (not facts.rewards_eligible
-                or facts.mode not in {"ranked", "casual"} or room.is_ai_room
-                or not context.match_id or not all(users) or len(set(users)) != 2
-                or any(not uow.users.get(uid) for uid in users)
-                or any(seat.startswith("ai-") or seat not in room.players
-                       or not room.players[seat].registered
-                       or room.players[seat].user_id != uid for seat, uid in zip(seats, users))):
+        if not facts.rewards_eligible or not context.match_id:
             return
         now = int(context.timestamp)
         season = uow.battle_pass.current_season(now)
         config = _config(season) if season else None
         active = config is not None and season_state(now, config) == "active"
         windows = periods(now)
-        for uid in users:
+
+        # 普通任务的定义明确允许人机推进。人机座位没有账号，但人类座位
+        # 仍应在同一结算事务中领取“完成两个任务”的赛季 XP 和潮汐徽记。
+        task_users = [
+            uid for seat, uid in zip(seats, users)
+            if uid and seat in room.players and not seat.startswith("ai-")
+            and room.players[seat].registered and room.players[seat].user_id == uid
+            and uow.users.get(uid)
+            and (room.is_ai_room or facts.mode in {"ranked", "casual"})
+        ]
+        for uid in task_users:
             uow.tide_ash.lock(uid, now=now)
             for period, window in windows.items() if active else ():
                 totals = uow.tasks.totals(uid, window["start"], window["end"])
@@ -325,6 +329,17 @@ class BattlePassService:
                         uow.tide_ash.apply_once(uid, f"{period}_task_tide", window["start"],
                                                 TASK_TIDE[period], now=now)
 
+        # 对局 XP、对局徽记和赛季挑战仍只属于双方均为注册账号的真人排位/休闲局；
+        # 这保持人机不刷对局 XP，同时不再吞掉已完成的普通任务奖励。
+        if (facts.mode not in {"ranked", "casual"} or room.is_ai_room
+                or not all(users) or len(set(users)) != 2
+                or any(not uow.users.get(uid) for uid in users)
+                or any(seat.startswith("ai-") or seat not in room.players
+                       or not room.players[seat].registered
+                       or room.players[seat].user_id != uid for seat, uid in zip(seats, users))):
+            return
+
+        for uid in users:
             is_win = uid == facts.winner_user_id
             new_match = False
             if active:

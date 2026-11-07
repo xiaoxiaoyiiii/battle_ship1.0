@@ -188,16 +188,87 @@
   }
 }
 
-/* 320px 级窄屏：品牌只留图标，把宽度让给导航链接。 */
-@media (max-width: 380px) {
+/* 手机主屏：频道名独占一行、完整显示；图标留在上一行，不再靠横滑找「通行证」。
+   对局沉浸栏仍是单行（退出对局 + 设置），不套这套换行。 */
+@media (max-width: 760px) {
+  .app-shell:not(:has(.app-nav--flow)) {
+    --app-nav-h: 96px;
+  }
+
   .app-brand__text {
     display: none;
   }
 
-  .app-nav__link,
-  .app-nav__flow {
+  .app-nav:not(.app-nav--flow) {
+    flex-wrap: wrap;
+    align-items: center;
+    row-gap: 2px;
+    column-gap: 6px;
+    height: auto;
+    min-height: calc(var(--app-nav-h) + var(--app-safe-top));
+    padding: var(--app-safe-top) 8px 6px;
+  }
+
+  .app-nav:not(.app-nav--flow) .app-nav__links {
+    order: 3;
+    flex: 1 0 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 4px;
+    overflow: visible;
+  }
+
+  .app-nav:not(.app-nav--flow) .app-nav__link {
+    flex: 1 1 auto;
+    min-width: max-content;
     padding: 0 8px;
-    font-size: 12.5px;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  .app-nav:not(.app-nav--flow) .app-nav__meta {
+    flex: 1 1 auto;
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+    gap: 4px;
+    min-width: 0;
+    margin-left: auto;
+  }
+
+  .app-nav:not(.app-nav--flow) .app-nav__meta .app-nav__icon,
+  .app-nav:not(.app-nav--flow) .app-nav__meta .tide-badge {
+    flex: 0 0 auto;
+  }
+
+  .app-nav:not(.app-nav--flow) .app-nav__icon {
+    width: 36px;
+    height: 36px;
+  }
+
+  .app-nav:not(.app-nav--flow) .app-nav__meta :is(a, button)[data-testid] {
+    min-width: 36px;
+  }
+
+  .app-nav:not(.app-nav--flow) .tide-badge {
+    min-height: 32px;
+    padding: 0 8px 0 4px;
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 760px) and (max-height: 520px) {
+  .app-shell:not(:has(.app-nav--flow)) {
+    --app-nav-h: 80px;
+  }
+}
+
+/* 320px 级窄屏：链接内边距再收一点，长名字仍整词换行，不裁字。 */
+@media (max-width: 380px) {
+  .app-nav:not(.app-nav--flow) .app-nav__link,
+  .app-nav--flow .app-nav__flow {
+    padding: 0 6px;
+    font-size: 13px;
   }
 }
 

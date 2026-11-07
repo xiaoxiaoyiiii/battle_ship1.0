@@ -324,10 +324,12 @@ function grantSummary(body: Record<string, unknown>): { gained: number | null; t
   return { gained, titleName: titleName || null }
 }
 
-async function publishBalance(balance: number | null): Promise<void> {
+async function publishBalance(balance: number | null, stillCurrent: () => boolean): Promise<void> {
+  if (!stillCurrent()) return
   const wallet = useWalletStore()
   if (balance !== null) wallet.apply({ balance }, 'api')
   await useShopStore().load(true)
+  if (!stillCurrent()) return
   // 商店刷新若带回旧余额，仍以这次签到返回的余额为准。
   if (balance !== null) wallet.apply({ balance }, 'api')
 }
@@ -338,6 +340,8 @@ export const useCheckinStore = defineStore('checkin', () => {
   const claiming = ref(false)
   const error = ref('')
   let generation = 0
+  // 只在 reset（登出 / 换号）时递增。load 的请求序号不能取消同账号正在进行的签到。
+  let session = 0
 
   const today = computed(() => status.value?.today ?? '')
   const todayChecked = computed(() => status.value?.todayChecked === true)
@@ -345,6 +349,7 @@ export const useCheckinStore = defineStore('checkin', () => {
 
   function reset(): void {
     generation += 1
+    session += 1
     status.value = null
     error.value = ''
     loading.value = false
@@ -380,8 +385,10 @@ export const useCheckinStore = defineStore('checkin', () => {
   }
 
   async function claim(): Promise<CheckinClaimResult> {
-    if (claiming.value) return { ok: false, alreadyChecked: false, needsLogin: false, gained: null, titleName: null }
+    const dropped: CheckinClaimResult = { ok: false, alreadyChecked: false, needsLogin: false, gained: null, titleName: null }
+    if (claiming.value) return dropped
     if (status.value?.todayChecked) return { ok: true, alreadyChecked: true, needsLogin: false, gained: null, titleName: null }
+    const token = session
     claiming.value = true
     error.value = ''
     try {
@@ -391,6 +398,7 @@ export const useCheckinStore = defineStore('checkin', () => {
         headers: { accept: 'application/json' },
       })
       const body: unknown = await response.json().catch(() => null)
+      if (token !== session) return dropped
       const row = asRecord(body) ?? {}
       if (response.status === 401) {
         reset()
@@ -401,10 +409,14 @@ export const useCheckinStore = defineStore('checkin', () => {
         error.value = messageFrom(body) || '签到没有成功，请稍后再试。'
         return { ok: false, alreadyChecked: false, needsLogin: false, gained: null, titleName: null }
       }
+      if (token !== session) return dropped
       const next = parseCheckinPayload(body, status.value, 'post')
+      if (token !== session) return dropped
       if (next) status.value = next
       const balance = typeof row.balance === 'number' && Number.isFinite(row.balance) ? row.balance : null
-      await publishBalance(balance)
+      await publishBalance(balance, () => token === session)
+      if (token !== session) return dropped
+      claiming.value = false
       void load()
       const summary = already ? { gained: null, titleName: null } : grantSummary(row)
       return {
@@ -415,10 +427,11 @@ export const useCheckinStore = defineStore('checkin', () => {
         titleName: summary.titleName,
       }
     } catch (cause) {
+      if (token !== session) return dropped
       error.value = cause instanceof Error ? cause.message : '签到没有成功，请稍后再试。'
       return { ok: false, alreadyChecked: false, needsLogin: false, gained: null, titleName: null }
     } finally {
-      claiming.value = false
+      if (token === session) claiming.value = false
     }
   }
 

@@ -116,9 +116,13 @@ function rememberCheckinPrompt(): void {
   writeCheckinAutoShown(userId, today)
 }
 function closeCheckin(): void {
-  const wasOpen = checkinOpen.value
   checkinOpen.value = false
-  if (wasOpen) rememberCheckinPrompt()
+}
+async function noteCheckinShown(): Promise<void> {
+  await nextTick()
+  // 导航收尾若已把弹层关掉，这里不能记成「今天提示过」。
+  if (!checkinRouterReady || !checkinOpen.value || immersive.value || auth.isGuest) return
+  rememberCheckinPrompt()
 }
 function openCheckin(): void {
   if (auth.isGuest) {
@@ -128,7 +132,8 @@ function openCheckin(): void {
   checkinOpen.value = true
 }
 function maybeAutoOpenCheckin(): void {
-  // 首屏导航结束前打开会被 afterEach 立刻关掉，并被记成「今天已经提示过」。
+  // 首屏导航结束前不要打开：afterEach 会立刻关掉弹层。
+  // 「已提示」只在弹层真正留在屏幕上之后再记，不能记在这次被关掉的瞬间。
   if (!checkinRouterReady) return
   if (auth.isGuest || immersive.value || checkinOpen.value || document.hidden) return
   if (ui.activeDialog) return
@@ -156,6 +161,7 @@ onMounted(() => {
   refreshMailbox()
   void router.isReady().then(() => {
     checkinRouterReady = true
+    if (checkinOpen.value) void noteCheckinShown()
     return refreshCheckin()
   })
   mailPoll = window.setInterval(refreshMailbox, 60000)
@@ -170,11 +176,12 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', onCheckinVisibility)
 })
 watch(() => auth.isGuest, guest => { if (guest) mailbox.reset(); else refreshMailbox() })
-watch(() => auth.isGuest, (guest) => {
-  if (guest) {
-    checkin.reset()
-    checkinOpen.value = false
-  } else void refreshCheckin()
+watch(checkinOpen, (open) => { if (open) void noteCheckinShown() })
+watch(() => auth.user?.id ?? '', (id, previous) => {
+  if (id === previous) return
+  checkin.reset()
+  checkinOpen.value = false
+  if (id) void refreshCheckin()
 })
 watch(immersive, (value, previous) => {
   if (value && checkinOpen.value) closeCheckin()
@@ -190,7 +197,10 @@ watch(() => auth.isGuest, (guest) => {
 }, { immediate: true })
 watch(() => route.fullPath, async () => {
   await nextTick()
-  document.querySelector<HTMLElement>('.app-nav__link[aria-current="page"]')?.scrollIntoView({ inline: 'nearest', block: 'nearest' })
+  const link = document.querySelector<HTMLElement>('.app-nav__link[aria-current="page"]')
+  const scroller = link?.parentElement
+  if (!link || !scroller || scroller.scrollWidth <= scroller.clientWidth + 1) return
+  link.scrollIntoView({ inline: 'nearest', block: 'nearest' })
 })
 
 const loading = computed(() => routeLoading.value)

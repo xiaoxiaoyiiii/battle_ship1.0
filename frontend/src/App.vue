@@ -10,6 +10,7 @@ import AvatarMenu from './components/AvatarMenu.vue'
 import CardCollectionOverlay from './components/CardCollectionOverlay.vue'
 import AdminOverlay from './components/AdminOverlay.vue'
 import AdminConsole from './components/AdminConsole.vue'
+import CheckinDialog from './components/CheckinDialog.vue'
 import FriendsOverlay from './components/FriendsOverlay.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
 import ScreenBoundary from './components/ScreenBoundary.vue'
@@ -30,6 +31,7 @@ import { useUiStore } from './stores/ui'
 import { useAudioStore } from './stores/audio'
 import { useShopStore } from './stores/shop'
 import { useMailboxStore } from './stores/mailbox'
+import { readCheckinAutoShown, useCheckinStore, writeCheckinAutoShown } from './stores/checkin'
 import { installInteractionAudio } from './audio/interactions'
 
 /**
@@ -98,20 +100,90 @@ const destinations = [
 ]
 const shop = useShopStore()
 const mailbox = useMailboxStore()
+const checkin = useCheckinStore()
+const checkinOpen = ref(false)
+const checkinButton = ref<HTMLButtonElement | null>(null)
+let checkinRouterReady = false
 let mailPoll: number | null = null
+let checkinPoll: number | null = null
 function refreshMailbox(): void {
   if (!auth.isGuest && !immersive.value && !document.hidden) void mailbox.load()
 }
+function rememberCheckinPrompt(): void {
+  const today = checkin.today
+  const userId = auth.user?.id
+  if (!today || !userId) return
+  writeCheckinAutoShown(userId, today)
+}
+function closeCheckin(): void {
+  const wasOpen = checkinOpen.value
+  checkinOpen.value = false
+  if (wasOpen) rememberCheckinPrompt()
+}
+function openCheckin(): void {
+  if (auth.isGuest) {
+    ui.requestLogin('login', '登录后即可每日签到。')
+    return
+  }
+  checkinOpen.value = true
+}
+function maybeAutoOpenCheckin(): void {
+  // 首屏导航结束前打开会被 afterEach 立刻关掉，并被记成「今天已经提示过」。
+  if (!checkinRouterReady) return
+  if (auth.isGuest || immersive.value || checkinOpen.value || document.hidden) return
+  if (ui.activeDialog) return
+  if (!checkin.showRedDot || checkin.todayChecked) return
+  const today = checkin.today
+  const userId = auth.user?.id
+  if (!today || !userId) return
+  if (readCheckinAutoShown(userId, today)) return
+  checkinOpen.value = true
+}
+async function refreshCheckin(): Promise<void> {
+  if (auth.isGuest) {
+    checkin.reset()
+    checkinOpen.value = false
+    return
+  }
+  if (immersive.value || document.hidden) return
+  await checkin.load()
+  maybeAutoOpenCheckin()
+}
+function onCheckinVisibility(): void {
+  void refreshCheckin()
+}
 onMounted(() => {
   refreshMailbox()
+  void router.isReady().then(() => {
+    checkinRouterReady = true
+    return refreshCheckin()
+  })
   mailPoll = window.setInterval(refreshMailbox, 60000)
+  checkinPoll = window.setInterval(onCheckinVisibility, 60000)
   document.addEventListener('visibilitychange', refreshMailbox)
+  document.addEventListener('visibilitychange', onCheckinVisibility)
 })
 onBeforeUnmount(() => {
   if (mailPoll !== null) window.clearInterval(mailPoll)
+  if (checkinPoll !== null) window.clearInterval(checkinPoll)
   document.removeEventListener('visibilitychange', refreshMailbox)
+  document.removeEventListener('visibilitychange', onCheckinVisibility)
 })
 watch(() => auth.isGuest, guest => { if (guest) mailbox.reset(); else refreshMailbox() })
+watch(() => auth.isGuest, (guest) => {
+  if (guest) {
+    checkin.reset()
+    checkinOpen.value = false
+  } else void refreshCheckin()
+})
+watch(immersive, (value, previous) => {
+  if (value && checkinOpen.value) closeCheckin()
+  if (previous && !value) void refreshCheckin()
+})
+watch(() => checkin.todayChecked, (checked) => { if (checked) rememberCheckinPrompt() })
+watch(() => ui.activeDialog?.id ?? null, (id, previous) => {
+  if (previous && !id) maybeAutoOpenCheckin()
+})
 watch(() => auth.isGuest, (guest) => {
   if (guest) shop.reset()
   else void shop.load(true)
@@ -273,6 +345,7 @@ onBeforeUnmount(() => {
 
   <HelpOverlay v-if="ui.helpOpen" @close="ui.closeHelp()" />
   <FriendsOverlay v-if="ui.friendsOpen" @close="ui.closeFriends()" />
+  <CheckinDialog v-if="checkinOpen && !immersive" :return-focus="() => checkinButton" @close="closeCheckin" />
   <AdminOverlay v-if="ui.adminOpen" @close="ui.closeAdmin()" />
   <AdminConsole v-if="consoleOpen" @close="consoleOpen = false" />
   <div v-if="game.state.admin_test && game.state.room_id" class="admin-test-banner" role="status">管理员测试局 · 不计战绩与奖励</div>
@@ -374,6 +447,29 @@ onBeforeUnmount(() => {
 
         <div class="app-nav__meta">
           <TideAshBadge />
+          <button
+            ref="checkinButton"
+            type="button"
+            class="app-nav__icon"
+            data-testid="nav-checkin"
+            :aria-expanded="checkinOpen"
+            aria-haspopup="dialog"
+            :aria-label="!auth.isGuest && checkin.showRedDot ? '每日签到（今日未签）' : '每日签到'"
+            title="每日签到"
+            @click="openCheckin"
+          >
+            <span
+              v-if="!auth.isGuest && checkin.showRedDot"
+              class="app-nav__badge app-nav__badge--dot"
+              data-testid="nav-checkin-dot"
+              aria-hidden="true"
+            ></span>
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+              <rect x="4" y="5" width="16" height="15" rx="2" />
+              <path d="M8 3.5v3M16 3.5v3M4 9.5h16" />
+              <path d="m8.5 14.2 2.1 2.1 4.6-4.8" />
+            </svg>
+          </button>
           <router-link class="app-nav__icon" :to="{ name: 'mailbox' }" data-testid="nav-mailbox" :aria-label="mailbox.unclaimedCount ? `邮箱（${mailbox.unclaimedCount} 封待领附件）` : '邮箱'" title="邮箱">
             <span v-if="mailbox.unclaimedCount" class="app-nav__badge" data-testid="nav-mailbox-badge">{{ mailbox.unclaimedCount }}</span>
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 6 9 7 9-7"/></svg>

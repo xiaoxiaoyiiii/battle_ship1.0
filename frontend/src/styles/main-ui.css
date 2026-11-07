@@ -159,6 +159,17 @@ html[data-theme='journal'] .app-theme-scrim {
   pointer-events: none;
 }
 
+.app-nav__badge.app-nav__badge--dot {
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  min-width: 8px;
+  height: 8px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 0;
+}
+
 .app-nav__icon:hover {
   border-color: var(--chip-line);
   color: var(--text-primary);

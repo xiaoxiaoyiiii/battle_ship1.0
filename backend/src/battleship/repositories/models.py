@@ -54,6 +54,15 @@ class DailyChallengeSource(Base):
     snapshots: Mapped[str] = mapped_column(sa.Text, nullable=False)
 
 
+class DailyCheckin(Base):
+    """沪时自然日签到记录。累计天数从这里数，不另存计数器。"""
+
+    __tablename__ = 'daily_checkins'
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    day: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    created_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+
+
 class UserSupportPrompt(Base):
     """每个账号只保存最近一次推广提醒的北京时间日期。"""
 

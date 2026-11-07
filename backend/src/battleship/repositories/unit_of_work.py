@@ -31,6 +31,7 @@ from .battle_pass import BattlePassRepository
 from .tide_ash import TideAshRepository
 from .shop import ShopRepository
 from .daily_challenge import DailyChallengeRepository
+from .checkin import CheckinRepository
 from .ranked_seasons import RankedSeasonRepository
 from .mailbox import MailboxRepository
 from .support import SupportRepository
@@ -85,6 +86,10 @@ class UnitOfWork:
     @property
     def daily_challenges(self) -> DailyChallengeRepository:
         return self._repository('daily_challenges', DailyChallengeRepository)
+
+    @property
+    def checkins(self) -> CheckinRepository:
+        return self._repository('checkins', CheckinRepository)
 
     @property
     def matches(self) -> MatchRepository:

@@ -46,6 +46,7 @@ from .http.routers import spectate as spectate_router
 from .http.routers import stats as stats_router
 from .http.routers import tasks as tasks_router
 from .http.routers import daily_challenge as daily_challenge_router
+from .http.routers import checkin as checkin_router
 from .http.routers import admin_console as admin_console_router
 from .http.routers import wallpapers as wallpapers_router
 from .infra.assets import AssetPaths
@@ -60,6 +61,7 @@ from .services.ai import AiService
 from .services.anticheat import AnticheatService
 from .services.auth import AuthService
 from .services.battle_pass import BattlePassService
+from .services.checkin import CheckinService
 from .services.battle import BattleService
 from .services.chat import ChatService
 from .services.friends import FriendsService
@@ -343,6 +345,7 @@ def create_application(settings: Settings | None = None,
     fastapi_app.include_router(stats_router.router)
     fastapi_app.include_router(tasks_router.router)
     fastapi_app.include_router(daily_challenge_router.router)
+    fastapi_app.include_router(checkin_router.router)
     fastapi_app.include_router(leaderboard_router.router)
     fastapi_app.include_router(replay_router.router)
     fastapi_app.include_router(lobby_router.router)
@@ -452,6 +455,7 @@ def create_application(settings: Settings | None = None,
     fastapi_app.state.assets = assets
     fastapi_app.state.sio = sio
     fastapi_app.state.database = database
+    fastapi_app.state.checkin = CheckinService(database)
     fastapi_app.state.rate_limiter = rate_limiter
     fastapi_app.state.rooms = rooms
     fastapi_app.state.gameplay = gameplay

@@ -397,6 +397,8 @@ class ProgressionService:
         }
         if profile_spec.PERK_UNLOCK_ALL in uow.stats.list_perks(user_id):
             stats[profile_spec.UNLOCK_ALL_FLAG] = True
+        from .checkin import sync_checkin_catalog
+        sync_checkin_catalog(uow, time.time())
         return stats
 
     def achievement_stats(self, uow: UnitOfWork, user_id: str,

@@ -25,6 +25,16 @@ class TideAshRepository:
             TideAshWallet.user_id == user_id,
         )) or 0)
 
+    def source_ids_present(self, user_id: str, source_kind: str, source_ids: list[str]) -> set[str]:
+        if not source_ids:
+            return set()
+        rows = self.session.scalars(select(TideAshLedger.source_id).where(
+            TideAshLedger.user_id == user_id,
+            TideAshLedger.source_kind == source_kind,
+            TideAshLedger.source_id.in_(list(source_ids)),
+        ))
+        return {str(item) for item in rows}
+
     def granted_between(self, user_id: str, source_kind: str, start: int, end: int) -> int:
         return int(self.session.scalar(select(func.coalesce(func.sum(TideAshLedger.delta), 0)).where(
             TideAshLedger.user_id == user_id, TideAshLedger.source_kind == source_kind,

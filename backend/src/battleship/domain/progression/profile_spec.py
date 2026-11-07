@@ -26,6 +26,7 @@
 （= `ranks` 里的段位下标），`requirement` 文案与判定函数都由它**现算**。
 阈值只写一遍，所以"写着船长、判定按大副"这种漂移在结构上不可能发生。
 """
+import threading
 import time
 
 from . import ranks         # 纯模块（只依赖 stdlib），阈值都从它取
@@ -232,6 +233,38 @@ _BY_ID = {
     'pointer_effects': {e['id']: e for e in POINTER_EFFECTS},
     'title_effects': {e['id']: e for e in TITLE_EFFECTS},
 }
+_CHECKIN_TITLE_LOCK = threading.Lock()
+
+
+def ensure_checkin_month(year: int, month: int) -> dict:
+    """把某月签到称号注入称号池。未注入时通行证外观判据会把它当成池外 id。"""
+
+    from ..checkin import title_identity
+
+    identity = title_identity(year, month)
+    entry = {
+        'id': identity['id'],
+        'name': identity['name'],
+        'desc': '当月签到满勤的纪念',
+        'requirement': '当月累计签到满 30 天',
+    }
+    with _CHECKIN_TITLE_LOCK:
+        current = _BY_ID['titles'].get(entry['id'])
+        if current is not None:
+            return current
+        TITLES.append(entry)
+        _BY_ID['titles'][entry['id']] = entry
+        return entry
+
+
+def ensure_checkin_reward(reward_id: str) -> None:
+    """已发放的历史月称号也留在图鉴里，方便之后装备。"""
+
+    from ..checkin import parse_title_id
+
+    parsed = parse_title_id(reward_id)
+    if parsed is not None:
+        ensure_checkin_month(*parsed)
 
 
 def _as_int(value, default=0):

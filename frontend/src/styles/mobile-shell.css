@@ -192,7 +192,8 @@
    对局沉浸栏仍是单行（退出对局 + 设置），不套这套换行。 */
 @media (max-width: 760px) {
   .app-shell:not(:has(.app-nav--flow)) {
-    --app-nav-h: 96px;
+    /* 整条顶栏的占位，不是单行控件的高度。控件另写 36px，避免被这个变量撑高。 */
+    --app-nav-h: 84px;
   }
 
   .app-brand__text {
@@ -222,6 +223,8 @@
   .app-nav:not(.app-nav--flow) .app-nav__link {
     flex: 1 1 auto;
     min-width: max-content;
+    min-height: 36px;
+    height: 36px;
     padding: 0 8px;
     overflow: visible;
     text-overflow: clip;
@@ -244,10 +247,14 @@
   .app-nav:not(.app-nav--flow) .app-nav__icon {
     width: 36px;
     height: 36px;
+    min-height: 36px;
+    max-height: 36px;
   }
 
   .app-nav:not(.app-nav--flow) .app-nav__meta :is(a, button)[data-testid] {
     min-width: 36px;
+    min-height: 36px;
+    max-height: 36px;
   }
 
   .app-nav:not(.app-nav--flow) .tide-badge {
@@ -259,7 +266,15 @@
 
 @media (max-width: 760px) and (max-height: 520px) {
   .app-shell:not(:has(.app-nav--flow)) {
-    --app-nav-h: 80px;
+    --app-nav-h: 76px;
+  }
+
+  .app-nav:not(.app-nav--flow) .app-nav__link,
+  .app-nav:not(.app-nav--flow) .app-nav__icon,
+  .app-nav:not(.app-nav--flow) .app-nav__meta :is(a, button)[data-testid] {
+    min-height: 32px;
+    height: 32px;
+    max-height: 32px;
   }
 }
 

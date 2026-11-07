@@ -181,7 +181,9 @@ watch(() => auth.user?.id ?? '', (id, previous) => {
   if (id === previous) return
   checkin.reset()
   checkinOpen.value = false
-  if (id) void refreshCheckin()
+  if (!id) return
+  void refreshCheckin()
+  void shop.load(true)
 })
 watch(immersive, (value, previous) => {
   if (value && checkinOpen.value) closeCheckin()

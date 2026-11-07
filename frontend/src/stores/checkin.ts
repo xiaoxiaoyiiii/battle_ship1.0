@@ -354,6 +354,8 @@ export const useCheckinStore = defineStore('checkin', () => {
     error.value = ''
     loading.value = false
     claiming.value = false
+    // 签到之后的商店刷新还在飞。不抬商店的请求序号，旧账号的余额会在换号后写进来。
+    useShopStore().reset()
   }
 
   async function load(): Promise<void> {

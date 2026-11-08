@@ -33,6 +33,8 @@ import { useShopStore } from './stores/shop'
 import { useMailboxStore } from './stores/mailbox'
 import { readCheckinAutoShown, useCheckinStore, writeCheckinAutoShown } from './stores/checkin'
 import { installInteractionAudio } from './audio/interactions'
+import SplashScreen from './splash/SplashScreen.vue'
+import { ASSEMBLE_MS, decideSplash, hasReconnectSeat, processSplashGate } from './splash/splashPolicy'
 
 /**
  * Application shell (ticket #42).
@@ -106,6 +108,74 @@ const checkinButton = ref<HTMLButtonElement | null>(null)
 let checkinRouterReady = false
 let mailPoll: number | null = null
 let checkinPoll: number | null = null
+
+/* ---- 开屏：Logo 段（可跳过）→ 开战页模块拼接 ----------------------------
+ * 触发策略全在 `src/splash/splashPolicy.ts` 里（有单测）。这里只负责状态与
+ * 时序：等路由就绪后决定播不播、播完再放签到弹窗出去。
+ */
+type SplashPhase = 'pending' | 'logo' | 'assemble' | 'idle'
+const splashPhase = ref<SplashPhase>('pending')
+const splashReducedMotion = ref(false)
+let splashAssembleTimer: number | null = null
+let splashFallbackTimer: number | null = null
+let splashDecided = false
+let splashPendingAssembly = false
+
+/** 开屏（含「等路由就绪」这一段）期间，签到弹窗一律等待。 */
+const splashActive = computed(() => splashPhase.value !== 'idle')
+
+function splashStorage(): Storage | null {
+  try {
+    return typeof window === 'undefined' ? null : window.sessionStorage
+  } catch {
+    return null
+  }
+}
+
+function startSplashDecision(): void {
+  if (splashDecided) return
+  splashDecided = true
+  if (splashFallbackTimer !== null) {
+    window.clearTimeout(splashFallbackTimer)
+    splashFallbackTimer = null
+  }
+  if (splashPhase.value !== 'pending') return
+  const decision = decideSplash({
+    alreadyPlayed: !processSplashGate.shouldPlay(),
+    routeName: router.currentRoute.value.name ? String(router.currentRoute.value.name) : null,
+    hasSeat: hasReconnectSeat(splashStorage()),
+  })
+  splashPendingAssembly = decision.assemble
+  if (!decision.logo) {
+    finishSplash()
+    return
+  }
+  splashReducedMotion.value = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  splashPhase.value = 'logo'
+}
+
+function onSplashLogoDone(): void {
+  // 跳过 Logo 不跳过拼接：只要这次冷启动落在开战页，拼接仍然要看完。
+  if (splashPendingAssembly && router.currentRoute.value.name === 'start') {
+    splashPhase.value = 'assemble'
+    splashAssembleTimer = window.setTimeout(() => finishSplash(), ASSEMBLE_MS + 80)
+    return
+  }
+  finishSplash()
+}
+
+function finishSplash(): void {
+  if (splashAssembleTimer !== null) {
+    window.clearTimeout(splashAssembleTimer)
+    splashAssembleTimer = null
+  }
+  splashPendingAssembly = false
+  splashPhase.value = 'idle'
+  processSplashGate.markPlayed()
+  // 开屏整段结束后，才按既有规则决定要不要弹签到。
+  void refreshCheckin()
+}
+
 function refreshMailbox(): void {
   if (!auth.isGuest && !immersive.value && !document.hidden) void mailbox.load()
 }
@@ -135,6 +205,8 @@ function maybeAutoOpenCheckin(): void {
   // 首屏导航结束前不要打开：afterEach 会立刻关掉弹层。
   // 「已提示」只在弹层真正留在屏幕上之后再记，不能记在这次被关掉的瞬间。
   if (!checkinRouterReady) return
+  // 开屏（Logo / 拼接）还在进行时先让路：两层不能叠在一起。
+  if (splashActive.value) return
   if (auth.isGuest || immersive.value || checkinOpen.value || document.hidden) return
   if (ui.activeDialog) return
   if (!checkin.showRedDot || checkin.todayChecked) return
@@ -159,9 +231,18 @@ function onCheckinVisibility(): void {
 }
 onMounted(() => {
   refreshMailbox()
+  // 路由就绪后再决定开屏：邀请链接这类 beforeEach 重定向已经落定，
+  // 否则会把「目标是大厅」误判成「目标是开战」。
+  splashFallbackTimer = window.setTimeout(() => {
+    splashFallbackTimer = null
+    if (splashPhase.value === 'pending') finishSplash()
+  }, 2000)
   void router.isReady().then(() => {
     checkinRouterReady = true
+    startSplashDecision()
     if (checkinOpen.value) void noteCheckinShown()
+    // 开屏期间先不拉签到；finishSplash() 会补一次。
+    if (splashActive.value) return
     return refreshCheckin()
   })
   mailPoll = window.setInterval(refreshMailbox, 60000)
@@ -172,6 +253,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (mailPoll !== null) window.clearInterval(mailPoll)
   if (checkinPoll !== null) window.clearInterval(checkinPoll)
+  if (splashAssembleTimer !== null) window.clearTimeout(splashAssembleTimer)
+  if (splashFallbackTimer !== null) window.clearTimeout(splashFallbackTimer)
   document.removeEventListener('visibilitychange', refreshMailbox)
   document.removeEventListener('visibilitychange', onCheckinVisibility)
 })
@@ -348,6 +431,13 @@ onBeforeUnmount(() => {
   <OceanParticles />
   <div class="app-theme-scrim" aria-hidden="true"></div>
 
+  <!-- 冷启动的 Logo 亮相层：只在本次进程第一次打开、且不是回到对局时出现。 -->
+  <SplashScreen
+    v-if="splashPhase === 'logo'"
+    :reduced-motion="splashReducedMotion"
+    @done="onSplashLogoDone"
+  />
+
   <!-- Single-overlay root: the card archive opens above the shell. -->
   <CardCollectionOverlay
     v-if="collection.isOpen"
@@ -362,7 +452,7 @@ onBeforeUnmount(() => {
   <AdminConsole v-if="consoleOpen" @close="consoleOpen = false" />
   <div v-if="game.state.admin_test && game.state.room_id" class="admin-test-banner" role="status">管理员测试局 · 不计战绩与奖励</div>
 
-  <div class="app-shell" data-testid="app-shell" :data-route-loading="loading ? 'true' : 'false'" :data-immersive="immersive ? 'true' : 'false'">
+  <div class="app-shell" data-testid="app-shell" :data-route-loading="loading ? 'true' : 'false'" :data-immersive="immersive ? 'true' : 'false'" :data-splash-phase="splashPhase">
     <!-- 连接提示走覆盖层：多提示堆叠在导航下方，不把舞台往下推。 -->
     <div class="app-connection-stack" data-testid="connection-stack">
     <div
@@ -580,4 +670,6 @@ onBeforeUnmount(() => {
 <style>
 /* 手机壳层（导航高度契约、单行工具栏、覆盖式连接提示、安全区）。 */
 @import './styles/mobile-shell.css';
+/* 开屏：Logo 层与开战页模块拼接（状态由 data-splash-phase 驱动）。 */
+@import './styles/splash.css';
 </style>

@@ -1,8 +1,10 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
+import { bgmBedForRoute, endgameLayerForBattle } from '../audio/bgmScene'
 import {
   isBgmRunning,
   playSfx,
+  setBgmScene,
   startBgm,
   stopBgm,
   unlockAudio,
@@ -69,7 +71,8 @@ export const useAudioStore = defineStore('audio', () => {
   const interfaceSfx = ref(readBool(AUDIO_STORAGE.interfaceSfx, true))
   const bgmMuted = ref(readBool(AUDIO_STORAGE.bgmMuted, false))
   const bgmVolume = ref(readVolume(AUDIO_STORAGE.bgmVolume, 0.5))
-  const bgmPlaying = ref(readBool(AUDIO_STORAGE.bgmPlaying, false))
+  // 没有本地记录时默认播放。已经保存的 false 保持关闭，这里不回写、也不迁移旧数据。
+  const bgmPlaying = ref(readBool(AUDIO_STORAGE.bgmPlaying, true))
   const heardEffects = new Set<string>()
   let resultPlayedFor = ''
   let battleScene = false
@@ -107,6 +110,22 @@ export const useAudioStore = defineStore('audio', () => {
   function applyBgm(): void {
     if (bgmPlaying.value) startBgm(bgmVolume.value, bgmMuted.value)
     else stopBgm()
+  }
+
+  /**
+   * 页面和舰数决定曲子。签到、好友等浮层不在这里，避免把循环打断。
+   * 胜负页是 hold：引擎保持当前曲子和已经叠上的终局层。
+   */
+  function syncBgmScene(input: {
+    routeName: string | null
+    splashActive: boolean
+    roomState: string
+    selfShips: number
+    opponentShips: number
+  }): void {
+    const bed = bgmBedForRoute(input.routeName, input.splashActive)
+    const endgame = endgameLayerForBattle(bed, input.roomState, input.selfShips, input.opponentShips)
+    setBgmScene(bed, endgame)
   }
 
   function setBgmPlaying(value: boolean): void {
@@ -223,6 +242,7 @@ export const useAudioStore = defineStore('audio', () => {
     setBgmMuted,
     toggleBgmMute,
     setBgmVolume,
+    syncBgmScene,
     play,
     playUi,
     playCardEffect,

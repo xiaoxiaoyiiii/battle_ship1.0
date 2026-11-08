@@ -1,6 +1,14 @@
 import { SAMPLE_GAINS, SAMPLE_URLS } from './samples'
+import {
+  BGM_CROSSFADE_SECONDS,
+  loopDistanceSeconds,
+  loopOffsetSeconds,
+  trimFrameCount,
+  type BgmBed,
+} from './bgmScene'
+import { BGM_TRACK_URLS, type BgmTrackName } from './tracks'
 
-/** 音效统一走可调音量的总线；采样素材缓存解码，BGM 保持独立。 */
+/** 音效统一走可调音量的总线；采样素材缓存解码。背景音乐走另一条总线，不用振荡器垫乐。 */
 
 type SfxName =
   | 'hit' | 'miss' | 'sunk' | 'draw' | 'play_card'
@@ -14,14 +22,41 @@ type SfxScope = 'battle' | 'interface'
 const voices = new Map<AudioScheduledSourceNode, SfxScope>()
 const buffers = new Map<string, AudioBuffer>()
 const loading = new Map<string, Promise<void>>()
-let bgm: {
-  master: GainNode
-  filter: BiquadFilterNode
-  oscillators: OscillatorNode[]
-  lfo: OscillatorNode
-} | null = null
+type BgmVoiceName = BgmTrackName
+
+interface BgmRamp {
+  from: number
+  to: number
+  start: number
+  end: number
+}
+
+interface BgmVoice {
+  id: number
+  source: AudioBufferSourceNode
+  startedAt: number
+  buffer: AudioBuffer
+}
+
+let bgmBus: { master: GainNode; gains: Record<BgmVoiceName, GainNode> } | null = null
 let bgmVolume = 0.5
 let bgmMuted = false
+let bgmEnabled = false
+let bgmToken = 0
+let bgmRetryTimer: number | null = null
+let bgmRetries = 0
+let nextVoiceId = 1
+const desiredBed: { bed: Exclude<BgmBed, 'hold'>; endgame: boolean } = { bed: 'silent', endgame: false }
+const bgmVoices: Record<BgmVoiceName, BgmVoice | null> = { standby: null, match: null, endgame: null }
+const bgmRamps: Record<BgmVoiceName, BgmRamp> = {
+  standby: { from: 0, to: 0, start: 0, end: 0 },
+  match: { from: 0, to: 0, start: 0, end: 0 },
+  endgame: { from: 0, to: 0, start: 0, end: 0 },
+}
+const bgmReleaseTokens: Record<BgmVoiceName, number> = { standby: 0, match: 0, endgame: 0 }
+const bgmReleasePending: Record<BgmVoiceName, boolean> = { standby: false, match: false, endgame: false }
+const bgmBuffers = new Map<BgmVoiceName, AudioBuffer>()
+const bgmLoading = new Map<BgmVoiceName, Promise<AudioBuffer | null>>()
 
 function getContext(): AudioContext | null {
   if (context) {
@@ -44,7 +79,7 @@ export function unlockAudio(): void {
   if (ctx && ctx.state === 'suspended' && ctx.resume) {
     void ctx.resume().catch(() => undefined)
   }
-  if (bgm && ctx) applyBgm(bgmVolume, bgmMuted)
+  if (bgmBus && ctx) applyBgmLevel()
   void preloadSfx()
 }
 
@@ -237,78 +272,311 @@ export function playSfx(name: string, volume: number, muted: boolean): boolean {
   }
 }
 
-function applyBgm(volume: number, muted: boolean): void {
-  bgmVolume = volume
-  bgmMuted = muted
-  if (!bgm) return
+const BGM_VOICES: readonly BgmVoiceName[] = ['standby', 'match', 'endgame']
+
+function clampUnit(volume: number): number {
+  return Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 0
+}
+
+function applyBgmLevel(): void {
+  if (!bgmBus) return
   try {
-    bgm.master.gain.value = muted ? 0 : Math.max(0, Math.min(1, volume)) * 0.2
+    bgmBus.master.gain.value = !bgmEnabled || bgmMuted ? 0 : bgmVolume
     if (context && context.state === 'suspended' && context.resume) {
       void context.resume().catch(() => undefined)
     }
   } catch {
-    // A closed context is not a user-visible failure; the next start recreates it.
+    // 上下文已关闭时，下一次播放会重新建立总线。
   }
 }
 
-export function startBgm(volume: number, muted: boolean): boolean {
-  if (bgm) {
-    applyBgm(volume, muted)
-    return true
+function ensureBgmBus(ctx: AudioContext): void {
+  if (bgmBus) return
+  const master = ctx.createGain()
+  master.gain.value = 0
+  master.connect(ctx.destination)
+  const gains = {} as Record<BgmVoiceName, GainNode>
+  for (const name of BGM_VOICES) {
+    const gain = ctx.createGain()
+    gain.gain.value = 0
+    gain.connect(master)
+    gains[name] = gain
   }
+  bgmBus = { master, gains }
+}
+
+function rampValue(ramp: BgmRamp, time: number): number {
+  if (time <= ramp.start || ramp.end <= ramp.start) return time <= ramp.start ? ramp.from : ramp.to
+  if (time >= ramp.end) return ramp.to
+  const t = (time - ramp.start) / (ramp.end - ramp.start)
+  return ramp.from + (ramp.to - ramp.from) * t
+}
+
+function fadeBgmGain(ctx: AudioContext, name: BgmVoiceName, target: number): void {
+  const ramp = bgmRamps[name]
+  if (ramp.to === target) return
+  const gain = bgmBus?.gains[name]
+  if (!gain) return
+  const now = ctx.currentTime
+  const from = rampValue(ramp, now)
+  gain.gain.cancelScheduledValues(now)
+  gain.gain.setValueAtTime(from, now)
+  if (Math.abs(target - from) < 0.0001) {
+    gain.gain.setValueAtTime(target, now)
+    bgmRamps[name] = { from: target, to: target, start: now, end: now }
+    return
+  }
+  const end = now + BGM_CROSSFADE_SECONDS
+  gain.gain.linearRampToValueAtTime(target, end)
+  bgmRamps[name] = { from, to: target, start: now, end }
+}
+
+function keepBgmVoice(name: BgmVoiceName): void {
+  bgmReleasePending[name] = false
+  bgmReleaseTokens[name] += 1
+}
+
+function stopBgmVoice(name: BgmVoiceName): void {
+  const voice = bgmVoices[name]
+  bgmVoices[name] = null
+  if (!voice) return
+  try { voice.source.stop() } catch { /* 已经停过。 */ }
+  try { voice.source.disconnect() } catch { /* 上下文已关闭。 */ }
+}
+
+function releaseBgmVoice(name: BgmVoiceName): void {
+  if (!bgmVoices[name] || bgmReleasePending[name] || typeof window === 'undefined') return
+  bgmReleasePending[name] = true
+  const token = ++bgmReleaseTokens[name]
+  window.setTimeout(() => {
+    if (bgmReleaseTokens[name] !== token) return
+    bgmReleasePending[name] = false
+    if (bgmRamps[name].to > 0.001) return
+    stopBgmVoice(name)
+  }, Math.ceil(BGM_CROSSFADE_SECONDS * 1000) + 80)
+}
+
+function stopAllBgmVoices(): void {
+  if (bgmRetryTimer !== null && typeof window !== 'undefined') {
+    window.clearTimeout(bgmRetryTimer)
+    bgmRetryTimer = null
+  }
+  for (const name of BGM_VOICES) {
+    keepBgmVoice(name)
+    stopBgmVoice(name)
+    const gain = bgmBus?.gains[name]
+    if (gain && context) {
+      const now = context.currentTime
+      try {
+        gain.gain.cancelScheduledValues(now)
+        gain.gain.setValueAtTime(0, now)
+      } catch { /* 上下文已关闭。 */ }
+    }
+    bgmRamps[name] = { from: 0, to: 0, start: 0, end: 0 }
+  }
+}
+
+function scheduleBgmRetry(): void {
+  if (bgmRetryTimer !== null || typeof window === 'undefined' || bgmRetries >= 4) return
+  bgmRetries += 1
+  bgmRetryTimer = window.setTimeout(() => {
+    bgmRetryTimer = null
+    if (bgmEnabled) void runBgmTransport(++bgmToken)
+  }, 700)
+}
+
+function trimBgmBuffer(ctx: AudioContext, buffer: AudioBuffer): AudioBuffer {
+  const frames = trimFrameCount(buffer.length, buffer.sampleRate)
+  if (frames <= 0 || frames === buffer.length) return buffer
+  const trimmed = ctx.createBuffer(buffer.numberOfChannels, frames, buffer.sampleRate)
+  for (let channel = 0; channel < buffer.numberOfChannels; channel += 1) {
+    trimmed.copyToChannel(buffer.getChannelData(channel).subarray(0, frames), channel)
+  }
+  return trimmed
+}
+
+function loadBgmTrack(name: BgmVoiceName): Promise<AudioBuffer | null> {
+  const cached = bgmBuffers.get(name)
+  if (cached) return Promise.resolve(cached)
+  const pending = bgmLoading.get(name)
+  if (pending) return pending
+  const task = (async () => {
+    const ctx = getContext()
+    if (!ctx) return null
+    const response = await fetch(BGM_TRACK_URLS[name])
+    if (!response.ok) throw new Error(`背景音乐加载失败：${name}`)
+    const encoded = await response.arrayBuffer()
+    const decoded = await ctx.decodeAudioData(encoded.slice(0))
+    const trimmed = trimBgmBuffer(ctx, decoded)
+    bgmBuffers.set(name, trimmed)
+    bgmRetries = 0
+    return trimmed
+  })().catch(error => {
+    console.warn(`背景音乐暂不可用：${name}`, error)
+    return null
+  }).finally(() => { bgmLoading.delete(name) })
+  bgmLoading.set(name, task)
+  return task
+}
+
+function preloadBgm(): void {
+  for (const name of BGM_VOICES) void loadBgmTrack(name)
+}
+
+function ensureBgmVoice(name: BgmVoiceName, buffer: AudioBuffer, offset: number, when: number): BgmVoice {
+  const existing = bgmVoices[name]
+  if (existing) return existing
+  const ctx = getContext()
+  if (!ctx || !bgmBus) throw new Error('背景音乐总线还没建立')
+  const source = ctx.createBufferSource()
+  source.buffer = buffer
+  source.loop = true
+  source.connect(bgmBus.gains[name])
+  const startOffset = loopOffsetSeconds(offset, buffer.duration)
+  source.start(when, startOffset)
+  const voice = { id: nextVoiceId, source, startedAt: when - startOffset, buffer }
+  nextVoiceId += 1
+  bgmVoices[name] = voice
+  return voice
+}
+
+function desiredMix(): Record<BgmVoiceName, number> {
+  if (!bgmEnabled || desiredBed.bed === 'silent') return { standby: 0, match: 0, endgame: 0 }
+  if (desiredBed.bed === 'standby') return { standby: 1, match: 0, endgame: 0 }
+  return { standby: 0, match: 1, endgame: desiredBed.endgame ? 1 : 0 }
+}
+
+function applyBgmMix(ctx: AudioContext): void {
+  const mix = desiredMix()
+  for (const name of BGM_VOICES) {
+    if (mix[name] > 0 && !bgmVoices[name]) mix[name] = 0
+    if (mix[name] > 0) keepBgmVoice(name)
+    fadeBgmGain(ctx, name, mix[name])
+    if (mix[name] <= 0) releaseBgmVoice(name)
+  }
+}
+
+function freshBgm(token: number): boolean {
+  return bgmEnabled && token === bgmToken
+}
+
+async function runBgmTransport(token: number): Promise<void> {
+  if (!freshBgm(token)) return
+  const ctx = getContext()
+  if (!ctx) return
+  try {
+    ensureBgmBus(ctx)
+  } catch {
+    return
+  }
+  if (desiredBed.bed === 'standby') {
+    const buffer = await loadBgmTrack('standby')
+    if (!freshBgm(token) || desiredBed.bed !== 'standby') return
+    if (!buffer) { scheduleBgmRetry(); return }
+    ensureBgmVoice('standby', buffer, 0, ctx.currentTime)
+  } else if (desiredBed.bed === 'match') {
+    const matchBuffer = await loadBgmTrack('match')
+    if (!freshBgm(token) || desiredBed.bed !== 'match') return
+    if (!matchBuffer) { scheduleBgmRetry(); return }
+    const matchVoice = ensureBgmVoice('match', matchBuffer, 0, ctx.currentTime)
+    if (desiredBed.endgame) {
+      const endBuffer = await loadBgmTrack('endgame')
+      if (!freshBgm(token) || desiredBed.bed !== 'match') return
+      if (endBuffer && desiredBed.endgame) {
+        const startAt = ctx.currentTime
+        const offset = loopOffsetSeconds(startAt - matchVoice.startedAt, matchVoice.buffer.duration)
+        ensureBgmVoice('endgame', endBuffer, offset, startAt)
+      } else if (!endBuffer) {
+        scheduleBgmRetry()
+      }
+    }
+  }
+  if (!freshBgm(token)) return
+  applyBgmMix(ctx)
+}
+
+/**
+ * 胜负页传入 hold：不改床，也不改终局层。
+ * endgame 为 null 时保留当前层的开关（开屏同样如此）。
+ */
+export function setBgmScene(bed: BgmBed, endgame: boolean | null): void {
+  if (bed === 'hold') return
+  const nextEndgame = endgame === null ? desiredBed.endgame : endgame
+  if (bed === desiredBed.bed && nextEndgame === desiredBed.endgame) return
+  desiredBed.bed = bed
+  desiredBed.endgame = nextEndgame
+  if (bgmEnabled) void runBgmTransport(++bgmToken)
+}
+
+export function startBgm(volume: number, muted: boolean): boolean {
+  bgmVolume = clampUnit(volume)
+  bgmMuted = muted
   const ctx = getContext()
   if (!ctx) return false
   try {
-    const master = ctx.createGain()
-    master.gain.value = muted ? 0 : Math.max(0, Math.min(1, volume)) * 0.2
-    master.connect(ctx.destination)
-
-    const filter = ctx.createBiquadFilter()
-    filter.type = 'lowpass'
-    filter.frequency.value = 800
-    filter.connect(master)
-
-    const oscillators = [110, 164.81, 220].map((freq, index) => {
-      const oscillator = ctx.createOscillator()
-      oscillator.type = index === 2 ? 'triangle' : 'sine'
-      oscillator.frequency.value = freq
-      const gain = ctx.createGain()
-      gain.gain.value = 0.3
-      oscillator.connect(gain)
-      gain.connect(filter)
-      oscillator.start()
-      return oscillator
-    })
-
-    const lfo = ctx.createOscillator()
-    lfo.frequency.value = 0.06
-    const lfoGain = ctx.createGain()
-    lfoGain.gain.value = 200
-    lfo.connect(lfoGain)
-    lfoGain.connect(filter.frequency)
-    lfo.start()
-
-    bgm = { master, filter, oscillators, lfo }
-    applyBgm(volume, muted)
+    ensureBgmBus(ctx)
+    const cold = !bgmEnabled
+    bgmEnabled = true
+    applyBgmLevel()
+    if (cold) {
+      bgmRetries = 0
+      preloadBgm()
+      void runBgmTransport(++bgmToken)
+    }
     return true
   } catch {
-    bgm = null
     return false
   }
 }
 
 export function stopBgm(): void {
-  if (!bgm) return
-  try {
-    for (const oscillator of bgm.oscillators) oscillator.stop()
-    bgm.lfo.stop()
-    bgm.master.disconnect()
-  } catch {
-    // Already stopped/closed.
-  }
-  bgm = null
+  bgmEnabled = false
+  bgmToken += 1
+  // 先把总线拉到 0，再停源，避免停掉时还挂着振荡器垫乐或尾巴。
+  applyBgmLevel()
+  stopAllBgmVoices()
 }
 
 export function isBgmRunning(): boolean {
-  return bgm !== null
+  return bgmEnabled && BGM_VOICES.some(name => bgmVoices[name] !== null)
+}
+
+export interface BgmInspection {
+  enabled: boolean
+  bed: Exclude<BgmBed, 'hold'>
+  endgameWanted: boolean
+  voiceIds: Record<BgmVoiceName, number | null>
+  positions: Record<BgmVoiceName, number | null>
+  matchEndgameDistance: number | null
+  bufferSeconds: Record<BgmVoiceName, number | null>
+  rampTargets: Record<BgmVoiceName, number>
+  masterGain: number
+}
+
+/** 给自测读取传输状态。不会启动振荡器，也不会改播放。 */
+export function inspectBgm(): BgmInspection {
+  const now = context?.currentTime ?? 0
+  const positions = { standby: null, match: null, endgame: null } as Record<BgmVoiceName, number | null>
+  const voiceIds = { standby: null, match: null, endgame: null } as Record<BgmVoiceName, number | null>
+  const bufferSeconds = { standby: null, match: null, endgame: null } as Record<BgmVoiceName, number | null>
+  for (const name of BGM_VOICES) {
+    const voice = bgmVoices[name]
+    voiceIds[name] = voice?.id ?? null
+    bufferSeconds[name] = voice?.buffer.duration ?? bgmBuffers.get(name)?.duration ?? null
+    positions[name] = voice ? loopOffsetSeconds(now - voice.startedAt, voice.buffer.duration) : null
+  }
+  const matchEndgameDistance = positions.match !== null && positions.endgame !== null
+    ? loopDistanceSeconds(positions.match, positions.endgame, bgmVoices.match?.buffer.duration ?? BGM_CROSSFADE_SECONDS)
+    : null
+  return {
+    enabled: bgmEnabled,
+    bed: desiredBed.bed,
+    endgameWanted: desiredBed.endgame,
+    voiceIds,
+    positions,
+    matchEndgameDistance,
+    bufferSeconds,
+    rampTargets: { standby: bgmRamps.standby.to, match: bgmRamps.match.to, endgame: bgmRamps.endgame.to },
+    masterGain: bgmBus?.master.gain.value ?? 0,
+  }
 }

@@ -246,7 +246,7 @@ def ensure_checkin_month(year: int, month: int) -> dict:
         'id': identity['id'],
         'name': identity['name'],
         'desc': '当月签到满勤的纪念',
-        'requirement': '当月累计签到满 30 天',
+        'requirement': '当月签到满勤',
     }
     with _CHECKIN_TITLE_LOCK:
         current = _BY_ID['titles'].get(entry['id'])

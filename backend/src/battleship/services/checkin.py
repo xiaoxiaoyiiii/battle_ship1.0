@@ -5,9 +5,9 @@ import time
 from typing import Any
 
 from ..domain.checkin import (
-    DAILY_TIDE, MILESTONES, SOURCE_KIND, TITLE_MILESTONE_DAYS, build_state,
-    civil_date, daily_source_id, milestone_source_id, now_seconds,
-    pending_milestones, title_identity,
+    DAILY_TIDE, SOURCE_KIND, build_state, civil_date, daily_source_id,
+    milestone_source_id, milestones_for, now_seconds, pending_milestones,
+    title_identity,
 )
 from ..domain.progression import profile_spec
 from ..repositories import Database
@@ -24,7 +24,7 @@ def sync_checkin_catalog(uow, now: float) -> None:
 def _claimed_days(uow, user_id: str, year: int, month: int) -> set[int]:
     mapping = {
         item["days"]: milestone_source_id(year, month, item["days"])
-        for item in MILESTONES
+        for item in milestones_for(year, month)
     }
     present = uow.tide_ash.source_ids_present(user_id, SOURCE_KIND, list(mapping.values()))
     return {days for days, source_id in mapping.items() if source_id in present}
@@ -65,7 +65,8 @@ class CheckinService:
                 granted["daily_tide"] = DAILY_TIDE
                 claimed = _claimed_days(uow, user_id, today.year, today.month)
                 count = len(uow.checkins.month_days(user_id, today.year, today.month))
-                for item in pending_milestones(count, claimed):
+                full_days = milestones_for(today.year, today.month)[-1]["days"]
+                for item in pending_milestones(today.year, today.month, count, claimed):
                     source_id = milestone_source_id(today.year, today.month, item["days"])
                     if not uow.tide_ash.apply_once(
                         user_id, SOURCE_KIND, source_id, item["tide"], now=now,
@@ -73,7 +74,7 @@ class CheckinService:
                         raise RuntimeError("签到里程碑入账失败")
                     granted["milestones_triggered"].append(item["days"])
                     granted["milestone_tide"] += item["tide"]
-                    if item["days"] == TITLE_MILESTONE_DAYS:
+                    if item["days"] == full_days:
                         identity = title_identity(today.year, today.month)
                         uow.checkins.grant_title(user_id, identity["id"], now)
                         profile_spec.ensure_checkin_month(today.year, today.month)

@@ -124,6 +124,27 @@ let splashPendingAssembly = false
 /** 开屏（含「等路由就绪」这一段）期间，签到弹窗一律等待。 */
 const splashActive = computed(() => splashPhase.value !== 'idle')
 
+// 开屏不播曲。待命页之间不换曲；胜负页不换曲；对局和终局层看路由和双方未沉舰数。
+watch(
+  () => [
+    typeof route.name === 'string' ? route.name : '',
+    splashActive.value,
+    game.state.state,
+    game.state.remaining_ships,
+    game.state.opponent_remaining_ships,
+  ] as const,
+  ([routeName, splash, roomState, selfShips, opponentShips]) => {
+    audio.syncBgmScene({
+      routeName: routeName || null,
+      splashActive: splash,
+      roomState,
+      selfShips,
+      opponentShips,
+    })
+  },
+  { immediate: true },
+)
+
 function splashStorage(): Storage | null {
   try {
     return typeof window === 'undefined' ? null : window.sessionStorage

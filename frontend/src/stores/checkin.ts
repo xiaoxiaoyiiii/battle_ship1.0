@@ -13,8 +13,8 @@ import { useWalletStore } from './wallet'
 
 export const CHECKIN_AUTO_SHOWN_PREFIX = 'battleship.checkin.autoShown'
 const DEFAULT_DAILY = 15
-const DEFAULT_MILESTONES: Record<number, number> = { 7: 80, 14: 150, 30: 300 }
-const MILESTONE_DAYS = [7, 14, 30]
+const FIXED_MILESTONE_AMOUNTS: Record<number, number> = { 7: 80, 14: 150 }
+const FULL_ATTENDANCE_AMOUNT = 300
 
 export type CheckinCellState = 'checked' | 'today' | 'unchecked'
 
@@ -221,22 +221,72 @@ function fallbackTitle(parsed: { year: number; month: number } | null, previous:
   return `潮汐签到·${parsed.year}年${parsed.month}月`
 }
 
+function defaultMilestoneAmount(days: number, daysInMonth: number): number {
+  if (FIXED_MILESTONE_AMOUNTS[days] !== undefined) return FIXED_MILESTONE_AMOUNTS[days]
+  if (days === daysInMonth) return FULL_ATTENDANCE_AMOUNT
+  return 0
+}
+
+/** 带称号、或天数等于本月长度的那一档，是当月满勤。不把 30 写死成满勤。 */
+function fullAttendanceDay(map: Map<number, MilestoneBits>, daysInMonth: number): number | null {
+  for (const [days, bits] of map) {
+    if (bits.title) return days
+  }
+  if (map.has(daysInMonth) && daysInMonth >= 28) return daysInMonth
+  let largest: number | null = null
+  for (const days of map.keys()) {
+    if (days >= 28 && (largest === null || days > largest)) largest = days
+  }
+  return largest
+}
+
+function milestoneFrom(
+  days: number,
+  bits: MilestoneBits | undefined,
+  monthCount: number,
+  title: string,
+  daysInMonth: number,
+  full: boolean,
+): CheckinMilestone {
+  return {
+    days,
+    amount: bits?.amount ?? defaultMilestoneAmount(days, daysInMonth),
+    title: full ? (bits?.title || title) : (bits?.title || ''),
+    reached: bits?.reached ?? monthCount >= days,
+    claimed: bits?.claimed ?? false,
+  }
+}
+
 function buildMilestones(
   map: Map<number, MilestoneBits>,
   monthCount: number,
   title: string,
+  daysInMonth: number,
 ): CheckinMilestone[] {
-  const days = new Set<number>([...MILESTONE_DAYS, ...map.keys()])
-  return [...days].sort((a, b) => a - b).map((day) => {
-    const found = map.get(day)
-    return {
-      days: day,
-      amount: found?.amount ?? DEFAULT_MILESTONES[day] ?? 0,
-      title: day === 30 ? (title || found?.title || '') : (found?.title || ''),
-      reached: found?.reached ?? monthCount >= day,
-      claimed: found?.claimed ?? false,
-    }
-  })
+  if (map.size === 0) {
+    return [
+      milestoneFrom(7, undefined, monthCount, title, daysInMonth, false),
+      milestoneFrom(14, undefined, monthCount, title, daysInMonth, false),
+      milestoneFrom(daysInMonth, undefined, monthCount, title, daysInMonth, true),
+    ]
+  }
+  const fullDay = fullAttendanceDay(map, daysInMonth)
+  return [...map.keys()].sort((a, b) => a - b).map((days) => milestoneFrom(
+    days,
+    map.get(days),
+    monthCount,
+    title,
+    daysInMonth,
+    fullDay !== null && days === fullDay,
+  ))
+}
+
+function milestoneTitle(map: Map<number, MilestoneBits> | null, daysInMonth: number): string {
+  if (!map) return ''
+  for (const bits of map.values()) {
+    if (bits.title) return bits.title
+  }
+  return map.get(daysInMonth)?.title ?? ''
 }
 
 export function parseCheckinPayload(body: unknown, previous: CheckinView | null, source: 'get' | 'post'): CheckinView | null {
@@ -281,7 +331,7 @@ export function parseCheckinPayload(body: unknown, previous: CheckinView | null,
   const dailyAmount = keepRewards ? previous.dailyAmount : parseDaily(rewardPayload, previous?.dailyAmount ?? null)
   const rewardMap = keepRewards ? null : parseMilestoneMap(rewardPayload)
   const explicitTitle = titleText(row.title)
-  const rewardTitle = rewardMap?.get(30)?.title ?? ''
+  const rewardTitle = milestoneTitle(rewardMap, daysInMonth)
   const year = asInt(row.year) ?? parsed?.year ?? null
   const serverMonth = asInt(row.month)
   const month = serverMonth !== null && serverMonth >= 1 && serverMonth <= 12 ? serverMonth : (parsed?.month ?? null)
@@ -290,12 +340,15 @@ export function parseCheckinPayload(body: unknown, previous: CheckinView | null,
     : null
   const title = explicitTitle || rewardTitle || previous?.title || fallbackTitle(year !== null && month !== null ? { year, month } : null, '')
   const milestones = keepRewards
-    ? previous.milestones.map((item) => ({
-      ...item,
-      reached: monthCount >= item.days,
-      title: item.days === 30 ? title : item.title,
-    }))
-    : buildMilestones(rewardMap ?? new Map(), monthCount, title)
+    ? previous.milestones.map((item) => {
+      const full = Boolean(item.title) || (item.days === daysInMonth && item.days >= 28)
+      return {
+        ...item,
+        reached: monthCount >= item.days,
+        title: full ? (title || item.title) : item.title,
+      }
+    })
+    : buildMilestones(rewardMap ?? new Map(), monthCount, title, daysInMonth)
   const balance = typeof row.balance === 'number' && Number.isFinite(row.balance) ? row.balance : (previous?.balance ?? null)
   return {
     today,

@@ -114,7 +114,7 @@ def assert_contract(payload: dict, *, post: bool) -> None:
     assert payload["show_red_dot"] is (not payload["today_checked"])
     assert payload["rewards"]["daily"] == 15
     milestones = payload["rewards"]["milestones"]
-    assert [item["days"] for item in milestones] == [7, 14, payload["days_in_month"]]
+    assert [item["days"] for item in milestones] == [7, 14, min(30, payload["days_in_month"])]
     assert [item["tide"] for item in milestones] == [80, 150, 300]
     for item in milestones[:2]:
         assert set(item) == {"days", "tide", "reached", "claimed"}
@@ -274,7 +274,7 @@ def test_midnight_skip_and_month_reset(stack):
     }
     assert december["rewards"]["milestones"][0]["reached"] is False
     assert december["rewards"]["milestones"][0]["claimed"] is False
-    assert december["rewards"]["milestones"][2]["days"] == 31
+    assert december["rewards"]["milestones"][2]["days"] == 30
     assert december["rewards"]["milestones"][2]["tide"] == 300
     assert december["rewards"]["milestones"][2]["reached"] is False
     assert december["rewards"]["milestones"][2]["claimed"] is False
@@ -290,14 +290,15 @@ def test_milestones_grant_once_and_title_is_equippable(stack):
     assert client.post("/api/profile/card", json=equipped).status_code == 200
     balances = {}
     grants = {}
-    for day in range(1, 31):
+    for day in range(1, 32):
         set_clock(app, 2026, 1, day, 10)
         body = post_checkin(client).json()
         balances[day] = body["balance"]
         grants[day] = body["granted"]
         assert body["already_checked"] is False
         assert body["granted"]["daily_tide"] == 15
-        assert body["rewards"]["milestones"][2]["days"] == 31
+        assert body["days_in_month"] == 31
+        assert body["rewards"]["milestones"][2]["days"] == 30
         repeat = post_checkin(client).json()
         assert repeat["already_checked"] is True
         assert repeat["granted"]["daily_tide"] == 0
@@ -311,41 +312,22 @@ def test_milestones_grant_once_and_title_is_equippable(stack):
         "daily_tide": 15, "milestone_tide": 150, "milestones_triggered": [14], "title": None,
     }
     assert grants[30] == {
+        "daily_tide": 15, "milestone_tide": 300, "milestones_triggered": [30],
+        "title": {"id": "checkin_2026_01", "name": "潮汐签到·2026年1月"},
+    }
+    assert grants[31] == {
         "daily_tide": 15, "milestone_tide": 0, "milestones_triggered": [], "title": None,
     }
     assert balances[7] - balances[6] == 15 + 80
     assert balances[14] - balances[13] == 15 + 150
-    assert balances[30] - balances[29] == 15
-    assert balances[30] == 30 * 15 + 80 + 150
-
-    set_clock(app, 2026, 1, 30, 10)
-    before_full = client.get("/api/checkin").json()
-    assert before_full["rewards"]["milestones"][2]["days"] == 31
-    assert before_full["rewards"]["milestones"][2]["tide"] == 300
-    assert before_full["rewards"]["milestones"][2]["reached"] is False
-    assert before_full["rewards"]["milestones"][2]["claimed"] is False
-    assert before_full["title"]["owned"] is False
-    assert client.get("/api/profile").json()["profile"]["title_id"] == "rookie"
-
-    set_clock(app, 2026, 1, 31, 10)
-    body = post_checkin(client).json()
-    assert body["already_checked"] is False
-    assert body["rewards"]["milestones"][2]["days"] == 31
-    assert body["granted"] == {
-        "daily_tide": 15, "milestone_tide": 300, "milestones_triggered": [31],
-        "title": {"id": "checkin_2026_01", "name": "潮汐签到·2026年1月"},
-    }
-    assert body["balance"] == 31 * 15 + 80 + 150 + 300
-    repeat = post_checkin(client).json()
-    assert repeat["already_checked"] is True
-    assert repeat["granted"]["milestone_tide"] == 0
-    assert repeat["granted"]["title"] is None
-    assert repeat["balance"] == body["balance"]
+    assert balances[30] - balances[29] == 15 + 300
+    assert balances[31] - balances[30] == 15
+    assert balances[30] == 30 * 15 + 80 + 150 + 300
 
     current = client.get("/api/checkin").json()
     assert current["rewards"]["milestones"][0]["claimed"] is True
     assert current["rewards"]["milestones"][1]["claimed"] is True
-    assert current["rewards"]["milestones"][2]["days"] == 31
+    assert current["rewards"]["milestones"][2]["days"] == 30
     assert current["rewards"]["milestones"][2]["reached"] is True
     assert current["rewards"]["milestones"][2]["claimed"] is True
     assert current["rewards"]["milestones"][2]["title"] == {
@@ -371,7 +353,7 @@ def test_milestones_grant_once_and_title_is_equippable(stack):
             TideAshLedger.source_kind == "checkin",
             TideAshLedger.source_id.like("milestone:2026-01:%"),
         )))
-        assert sorted(sources) == ["milestone:2026-01:14", "milestone:2026-01:31", "milestone:2026-01:7"]
+        assert sorted(sources) == ["milestone:2026-01:14", "milestone:2026-01:30", "milestone:2026-01:7"]
         owned = uow.session.get(UserCosmeticReward, (user["id"], "title", "checkin_2026_01"))
         assert owned is not None
 

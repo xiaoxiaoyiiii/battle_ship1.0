@@ -6,8 +6,8 @@ from typing import Any
 
 from ..domain.checkin import (
     DAILY_TIDE, SOURCE_KIND, build_state, civil_date, daily_source_id,
-    milestone_source_id, milestones_for, now_seconds, pending_milestones,
-    title_identity,
+    full_attendance_days, milestone_source_id, milestones_for, now_seconds,
+    pending_milestones, title_identity,
 )
 from ..domain.progression import profile_spec
 from ..repositories import Database
@@ -65,7 +65,7 @@ class CheckinService:
                 granted["daily_tide"] = DAILY_TIDE
                 claimed = _claimed_days(uow, user_id, today.year, today.month)
                 count = len(uow.checkins.month_days(user_id, today.year, today.month))
-                full_days = milestones_for(today.year, today.month)[-1]["days"]
+                full_days = full_attendance_days(today.year, today.month)
                 for item in pending_milestones(today.year, today.month, count, claimed):
                     source_id = milestone_source_id(today.year, today.month, item["days"])
                     if not uow.tide_ash.apply_once(

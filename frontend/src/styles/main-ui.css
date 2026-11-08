@@ -138,6 +138,18 @@ html[data-theme='journal'] .app-theme-scrim {
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   color: var(--text-secondary);
+  line-height: normal;
+  text-decoration: none;
+}
+
+a.app-nav__icon:hover {
+  text-decoration: none;
+}
+
+.app-nav__icon[aria-current='page'] {
+  color: var(--role-action);
+  border-color: var(--chip-line);
+  background: var(--role-action-soft);
 }
 
 .app-nav__badge {
@@ -174,32 +186,6 @@ html[data-theme='journal'] .app-theme-scrim {
   border-color: var(--chip-line);
   color: var(--text-primary);
   background: rgba(124, 92, 240, 0.12);
-}
-
-.app-nav .app-nav__settings {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  width: auto;
-  padding: 0 10px;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.app-nav__settings[aria-current='page'] {
-  color: var(--role-action);
-  border-color: var(--chip-line);
-  background: var(--role-action-soft);
-}
-
-@media (max-width: 760px), (max-height: 520px) {
-  .app-nav .app-nav__settings {
-    width: 38px;
-    padding: 0;
-    flex: 0 0 auto;
-  }
-  .app-nav__settings span { display: none; }
 }
 
 /* ------------------------------------------------------------ 头像菜单 --- */

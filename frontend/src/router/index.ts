@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { INVITE_PARAM, INVITE_TOKEN_PARAM, readInviteRoomId, readInviteToken } from '../screens/lobby/inviteLink'
+import { hasReconnectSeat, shouldRedirectLobbyToStart } from '../splash/splashPolicy'
 
 /**
  * The eleven screens of ticket #21. Names are frozen: they are the route
@@ -44,15 +45,39 @@ const router = createRouter({
   scrollBehavior: () => ({ top: 0 }),
 })
 
+// 冷启动只看第一次导航：之后用户点「大厅」不能被弹回开战页。
+let initialNavigationDone = false
+
+function splashSessionStorage(): Storage | null {
+  try {
+    return typeof window === 'undefined' ? null : window.sessionStorage
+  } catch {
+    return null
+  }
+}
+
 // Loading state for both initial navigation and in-app switches. The shell
 // renders [data-testid="route-loading"] while this is true and records the
 // transitions for the external gate.
 router.beforeEach((to) => {
   routeLoading.value = true
+  const isInitialNavigation = !initialNavigationDone
+  initialNavigationDone = true
   // 邀请链接可能被贴到首页：房间号合法时转到大厅，由大厅统一走既有 join_room。
   if (to.name === 'start' && readInviteRoomId(to.query)) {
     return { name: 'lobby', query: { [INVITE_PARAM]: readInviteRoomId(to.query),
       ...(readInviteToken(to.query) ? { [INVITE_TOKEN_PARAM]: readInviteToken(to.query) } : {}) } }
+  }
+  // 桌面壳 1.0.1 写死打开 /lobby：首次冷启动且没有邀请、没有可重连座位时改回开战页，
+  // 这样开屏决策看到的落点就是 start，Logo 之后的拼接段才会播。必须用 replace，
+  // 否则用户按返回会回到大厅又触发一次重定向。
+  if (shouldRedirectLobbyToStart({
+    routeName: typeof to.name === 'string' ? to.name : null,
+    hasInvite: Boolean(readInviteRoomId(to.query)),
+    hasSeat: hasReconnectSeat(splashSessionStorage()),
+    isInitialNavigation,
+  })) {
+    return { name: 'start', replace: true }
   }
   return true
 })

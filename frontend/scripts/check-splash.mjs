@@ -22,6 +22,7 @@ import {
   hasReconnectSeat,
   isMatchRoute,
   logoDurationMs,
+  shouldRedirectLobbyToStart,
 } from '../src/splash/splashPolicy.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -132,6 +133,50 @@ check(
   reconnectSource.includes(`'${RECONNECT_SEAT_KEY}'`),
   RECONNECT_SEAT_KEY,
 )
+
+// ---- 7. 冷启动落在大厅是否改写到开战 --------------------------------
+// 现状：桌面壳 1.0.1 写死打开 /lobby，所以进程第一次导航落在大厅时，
+// 只要没有邀请、没有重连座位，就 replace 到开战页，好让拼接能播。
+const redirectCase = (input) => shouldRedirectLobbyToStart(input)
+
+check(
+  '初次落在大厅、无邀请无座位 → 改写',
+  redirectCase({ routeName: 'lobby', hasInvite: false, hasSeat: false, isInitialNavigation: true }) === true,
+)
+check(
+  '初次落在开战 → 不改写',
+  redirectCase({ routeName: 'start', hasInvite: false, hasSeat: false, isInitialNavigation: true }) === false,
+)
+check(
+  '初次落在大厅但有邀请 → 不改写（邀请优先）',
+  redirectCase({ routeName: 'lobby', hasInvite: true, hasSeat: false, isInitialNavigation: true }) === false,
+)
+check(
+  '初次落在大厅但有重连座位 → 不改写',
+  redirectCase({ routeName: 'lobby', hasInvite: false, hasSeat: true, isInitialNavigation: true }) === false,
+)
+check(
+  '同进程后进大厅（非初次导航）→ 不改写',
+  redirectCase({ routeName: 'lobby', hasInvite: false, hasSeat: false, isInitialNavigation: false }) === false,
+)
+check(
+  '非大厅的其它页面（设置/邮箱等）→ 不改写',
+  ['settings', 'mailbox', 'shop', 'battle-pass', 'leaderboard'].every(
+    (routeName) =>
+      redirectCase({ routeName, hasInvite: false, hasSeat: false, isInitialNavigation: true }) === false,
+  ),
+)
+const afterRedirect = decideSplash({ alreadyPlayed: false, routeName: 'start', hasSeat: false })
+check(
+  '改写后的路由能拿到 Logo + 拼接',
+  afterRedirect.logo === true && afterRedirect.assemble === true,
+  JSON.stringify(afterRedirect),
+)
+
+// 接线检查：真跳转必须发生在路由守卫里，否则 App.vue 早就按 lobby 决策完了。
+const routerSource = readFileSync(join(here, '..', 'src', 'router', 'index.ts'), 'utf8')
+check('router 守卫里调用了改写判断', routerSource.includes('shouldRedirectLobbyToStart'))
+check('改写用 replace，不是 push', /replace:\s*true/.test(routerSource))
 
 console.log(`\nRESULT: ${total - failures}/${total} PASS`)
 process.exit(failures === 0 ? 0 : 1)

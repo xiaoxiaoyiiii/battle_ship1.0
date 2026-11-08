@@ -221,23 +221,53 @@ function fallbackTitle(parsed: { year: number; month: number } | null, previous:
   return `潮汐签到·${parsed.year}年${parsed.month}月`
 }
 
+/** 满勤上限：二月 28/29，三十天月份 30，三十一天月份仍是 30。 */
+function attendanceCap(daysInMonth: number): number {
+  return Math.min(30, daysInMonth)
+}
+
+function clampMilestoneDay(days: number, daysInMonth: number): number {
+  if (days < 28) return days
+  return Math.min(days, attendanceCap(daysInMonth))
+}
+
 function defaultMilestoneAmount(days: number, daysInMonth: number): number {
   if (FIXED_MILESTONE_AMOUNTS[days] !== undefined) return FIXED_MILESTONE_AMOUNTS[days]
-  if (days === daysInMonth) return FULL_ATTENDANCE_AMOUNT
+  if (days === attendanceCap(daysInMonth)) return FULL_ATTENDANCE_AMOUNT
   return 0
 }
 
-/** 带称号、或天数等于本月长度的那一档，是当月满勤。不把 30 写死成满勤。 */
+/** 带称号的那一档，或天数等于 min(30, 本月天数)。三十一天的月份不是 31。 */
 function fullAttendanceDay(map: Map<number, MilestoneBits>, daysInMonth: number): number | null {
+  const cap = attendanceCap(daysInMonth)
   for (const [days, bits] of map) {
     if (bits.title) return days
   }
-  if (map.has(daysInMonth) && daysInMonth >= 28) return daysInMonth
+  if (map.has(cap)) return cap
   let largest: number | null = null
   for (const days of map.keys()) {
     if (days >= 28 && (largest === null || days > largest)) largest = days
   }
   return largest
+}
+
+function normalizeMilestoneMap(map: Map<number, MilestoneBits>, daysInMonth: number): Map<number, MilestoneBits> {
+  const next = new Map<number, MilestoneBits>()
+  for (const [days, bits] of map) {
+    const key = clampMilestoneDay(days, daysInMonth)
+    const prev = next.get(key)
+    if (!prev) {
+      next.set(key, bits)
+      continue
+    }
+    next.set(key, {
+      amount: bits.amount ?? prev.amount,
+      title: bits.title || prev.title,
+      reached: bits.reached ?? prev.reached,
+      claimed: bits.claimed ?? prev.claimed,
+    })
+  }
+  return next
 }
 
 function milestoneFrom(
@@ -263,17 +293,19 @@ function buildMilestones(
   title: string,
   daysInMonth: number,
 ): CheckinMilestone[] {
+  const cap = attendanceCap(daysInMonth)
   if (map.size === 0) {
     return [
       milestoneFrom(7, undefined, monthCount, title, daysInMonth, false),
       milestoneFrom(14, undefined, monthCount, title, daysInMonth, false),
-      milestoneFrom(daysInMonth, undefined, monthCount, title, daysInMonth, true),
+      milestoneFrom(cap, undefined, monthCount, title, daysInMonth, true),
     ]
   }
-  const fullDay = fullAttendanceDay(map, daysInMonth)
-  return [...map.keys()].sort((a, b) => a - b).map((days) => milestoneFrom(
+  const normalized = normalizeMilestoneMap(map, daysInMonth)
+  const fullDay = fullAttendanceDay(normalized, daysInMonth)
+  return [...normalized.keys()].sort((a, b) => a - b).map((days) => milestoneFrom(
     days,
-    map.get(days),
+    normalized.get(days),
     monthCount,
     title,
     daysInMonth,
@@ -286,7 +318,7 @@ function milestoneTitle(map: Map<number, MilestoneBits> | null, daysInMonth: num
   for (const bits of map.values()) {
     if (bits.title) return bits.title
   }
-  return map.get(daysInMonth)?.title ?? ''
+  return map.get(attendanceCap(daysInMonth))?.title ?? ''
 }
 
 export function parseCheckinPayload(body: unknown, previous: CheckinView | null, source: 'get' | 'post'): CheckinView | null {
@@ -341,10 +373,12 @@ export function parseCheckinPayload(body: unknown, previous: CheckinView | null,
   const title = explicitTitle || rewardTitle || previous?.title || fallbackTitle(year !== null && month !== null ? { year, month } : null, '')
   const milestones = keepRewards
     ? previous.milestones.map((item) => {
-      const full = Boolean(item.title) || (item.days === daysInMonth && item.days >= 28)
+      const days = clampMilestoneDay(item.days, daysInMonth)
+      const full = Boolean(item.title) || days === attendanceCap(daysInMonth)
       return {
         ...item,
-        reached: monthCount >= item.days,
+        days,
+        reached: monthCount >= days,
         title: full ? (title || item.title) : item.title,
       }
     })

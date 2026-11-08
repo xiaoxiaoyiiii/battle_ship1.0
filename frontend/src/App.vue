@@ -520,7 +520,7 @@ onBeforeUnmount(() => {
             <AvatarMenu v-if="menuOpen" @close="closeMenu" />
           </div>
           <router-link
-            class="app-nav__icon app-nav__settings"
+            class="app-nav__icon"
             :to="{ name: 'settings' }"
             data-testid="nav-settings"
             aria-label="设置"
@@ -530,7 +530,6 @@ onBeforeUnmount(() => {
               <path d="m9.5 3-.6 2.3-1.7 1-2.3-.6-2.5 4.3 1.7 1.7v2l-1.7 1.7 2.5 4.3 2.3-.6 1.7 1 .6 2.3h5l.6-2.3 1.7-1 2.3.6 2.5-4.3-1.7-1.7v-2l1.7-1.7-2.5-4.3-2.3.6-1.7-1-.6-2.3z" />
               <circle cx="12" cy="12.7" r="3" />
             </svg>
-            <span>设置</span>
           </router-link>
         </div>
       </template>

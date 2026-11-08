@@ -28,11 +28,21 @@ const monthLabel = computed(() => {
   if (current.year !== null && current.month !== null) return `${current.year}年${current.month}月`
   return current.today
 })
-const trackScale = computed(() => Math.max(30, ...(view.value?.milestones.map((item) => item.days) ?? [30])))
+const trackScale = computed(() => {
+  const monthLength = view.value?.daysInMonth ?? 0
+  const marks = view.value?.milestones.map((item) => item.days) ?? []
+  return Math.max(monthLength, ...marks, 1)
+})
 const trackWidth = computed(() => {
   const count = view.value?.monthCount ?? 0
   return `${Math.max(0, Math.min(100, (count / trackScale.value) * 100))}%`
 })
+
+function fullAttendance(item: { days: number; title: string }): boolean {
+  if (item.title) return true
+  const monthLength = view.value?.daysInMonth
+  return monthLength != null && item.days === monthLength && item.days >= 28
+}
 
 function stateOf(day: number): CheckinCellState {
   const current = view.value
@@ -124,7 +134,7 @@ async function onClaim(): Promise<void> {
           <li><i class="is-unchecked"></i>未签</li>
         </ul>
 
-        <div class="checkin__track" data-testid="checkin-progress">
+        <div class="checkin__track" data-testid="checkin-progress" :data-scale="trackScale">
           <span class="checkin__track-fill" :style="{ width: trackWidth }"></span>
           <span
             v-for="item in view.milestones"
@@ -146,9 +156,9 @@ async function onClaim(): Promise<void> {
             :data-testid="'checkin-milestone-' + item.days"
             :class="{ 'is-reached': item.reached }"
           >
-            <span>满 {{ item.days }} 天</span>
+            <span :data-testid="fullAttendance(item) ? 'checkin-full-label' : undefined">{{ fullAttendance(item) ? '当月满勤' : `满 ${item.days} 天` }}</span>
             <b>+{{ item.amount }}</b>
-            <small v-if="item.days === 30 && view.title" data-testid="checkin-title">{{ view.title }}</small>
+            <small v-if="fullAttendance(item) && (item.title || view.title)" data-testid="checkin-title">{{ item.title || view.title }}</small>
             <small v-if="item.claimed">已领取</small>
             <small v-else-if="item.reached">已达成</small>
             <small v-else>还差 {{ item.days - view.monthCount }} 天</small>

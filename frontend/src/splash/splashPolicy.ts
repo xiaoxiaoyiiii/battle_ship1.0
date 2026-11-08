@@ -82,8 +82,35 @@ export function decideSplash(input: SplashInput): SplashDecision {
   return { logo: true, assemble: input.routeName === 'start', reason: '' }
 }
 
-/** Logo 段时长；减少动效时缩短。 */
-export function logoDurationMs(reducedMotion: boolean): number {
+/**
+ * 进程第一次导航落在**大厅**时，是否改写到开战页。
+ *
+ * 背景：桌面壳 1.0.1 把入口地址写死成 `/lobby`。用户要求「打开就该看到开战页」，
+ * 而安装包不会随前端更新，所以只能在页面侧把这次冷启动改回 `/`——否则拼接段
+ * 按 `start` 判定就永远不播。
+ *
+ * 只在最初那一次导航动手：同进程里用户自己点「大厅」、从对局回大厅都不改，
+ * 也不碰邀请（有邀请要继续走大厅的 join_room）和有重连座位的冷启动。
+ */
+export interface LobbyLandingInput {
+  routeName?: string | null
+  /** 目标路由带邀请房间号。 */
+  hasInvite: boolean
+  /** sessionStorage 里有可恢复座位。 */
+  hasSeat: boolean
+  /** 是不是本进程的第一次导航。 */
+  isInitialNavigation: boolean
+}
+
+export function shouldRedirectLobbyToStart(input: LobbyLandingInput): boolean {
+  if (!input.isInitialNavigation) return false
+  if (input.routeName !== 'lobby') return false
+  if (input.hasInvite) return false
+  if (input.hasSeat) return false
+  return true
+}
+
+/** Logo 段时长；减少动效时缩短。 */export function logoDurationMs(reducedMotion: boolean): number {
   return reducedMotion ? LOGO_REDUCED_MS : LOGO_MS
 }
 

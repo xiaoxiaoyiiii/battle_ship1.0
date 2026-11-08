@@ -129,9 +129,12 @@ def is_secure_request(request: Request) -> bool:
 
 def write_session(response: Response, request: Request, data: Mapping[str, Any]) -> None:
     cookie = _codec(request).dumps(data)
+    # 带 Max-Age 才活得比进程久：Tauri/WebView2 关窗会丢掉会话 cookie，
+    # 桌面版因此每次都要重新登录。签名本身的有效期也是 31 天，两者保持一致。
     response.set_cookie(
         SESSION_COOKIE_NAME,
         cookie,
+        max_age=SESSION_MAX_AGE_SECONDS,
         path="/",
         httponly=True,
         samesite="lax",

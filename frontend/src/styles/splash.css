@@ -1,0 +1,175 @@
+/* ==========================================================================
+ * 开屏动画：Logo 亮相层 + 开战页模块拼接。
+ *
+ * 状态由 `App.vue` 写在 `.app-shell[data-splash-phase]` 上：
+ *   pending  —— 还在等路由就绪，先别闪出内容
+ *   logo     —— Logo 段进行中（覆盖层由 SplashScreen.vue 负责）
+ *   assemble —— 开战页各模块同时滑入，拼成完整界面
+ *   idle     —— 正常状态，没有任何开屏痕迹
+ *
+ * 时长与 `src/splash/splashPolicy.ts` 的 ASSEMBLE_MS 保持一致；
+ * 那里改了这里要一起改（测试里有断言守着区间）。
+ * ========================================================================== */
+
+:root {
+  --splash-assemble: 760ms;
+  /* 模块从自己外侧滑进来的距离：只够看出「拼接」，不做大位移。 */
+  --splash-shift: 30px;
+  --splash-ease: cubic-bezier(0.22, 0.8, 0.28, 1);
+}
+
+/* ---- 1. 等待决策：先不显示壳层 ------------------------------------------ */
+.app-shell[data-splash-phase='pending'],
+.app-shell[data-splash-phase='logo'] {
+  visibility: hidden;
+}
+
+/* ---- 2. Logo 层 -------------------------------------------------------- */
+.splash {
+  position: fixed;
+  inset: 0;
+  /* 盖住导航与弹层，但让提示条（toast）仍然在最上面。 */
+  z-index: 250;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  /* 品牌亮相固定用深海深色，不跟随主题：浅色主题下也要先「黑下来」再开战。 */
+  background:
+    radial-gradient(120% 90% at 50% 42%, rgba(38, 66, 108, 0.55) 0%, transparent 62%),
+    #070c16;
+  color: #e8edf6;
+  cursor: pointer;
+  /* 底色从第一帧就不透明：冷启动的第一次绘制必须是深色，不能闪一下浅色首页。 */
+}
+
+.splash__inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  animation: splash-rise 620ms var(--splash-ease) both;
+}
+
+.splash__mark {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  color: #debd79;
+  filter: drop-shadow(0 6px 20px rgba(222, 189, 121, 0.3));
+}
+
+.splash__mark svg {
+  width: 100%;
+  height: 100%;
+}
+
+.splash__title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: #eef3fb;
+}
+
+.splash__hint {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: #7f92ac;
+  animation: splash-hint 900ms ease-out 420ms both;
+}
+
+/* 减少动效：不位移，只做一次静态淡入。 */
+.splash--still,
+.splash--still .splash__inner,
+.splash--still .splash__hint {
+  animation: splash-static 200ms linear both;
+}
+
+@keyframes splash-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes splash-hint {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes splash-static {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ---- 3. 开战页拼接：所有模块同时开始、同时落地 ------------------------- */
+/* 滑入是 transform（不改变布局），但手机上会短暂把 scrollWidth 撑大 1–2px；
+   clip 只裁掉越界像素，不产生滚动容器。 */
+.app-shell[data-splash-phase='assemble'] {
+  overflow-x: clip;
+}
+
+.app-shell[data-splash-phase='assemble'] .app-nav {
+  animation: splash-drop var(--splash-assemble) var(--splash-ease) both;
+}
+
+.app-shell[data-splash-phase='assemble'] [data-screen='start'] .home-head {
+  animation: splash-from-left var(--splash-assemble) var(--splash-ease) both;
+}
+
+.app-shell[data-splash-phase='assemble'] [data-screen='start'] .home-left {
+  animation: splash-from-left var(--splash-assemble) var(--splash-ease) both;
+}
+
+.app-shell[data-splash-phase='assemble'] [data-screen='start'] .home-main {
+  animation: splash-from-right var(--splash-assemble) var(--splash-ease) both;
+}
+
+.app-shell[data-splash-phase='assemble'] [data-screen='start'] .home-side {
+  animation: splash-from-right var(--splash-assemble) var(--splash-ease) both;
+}
+
+@keyframes splash-drop {
+  from { opacity: 0; transform: translateY(calc(var(--splash-shift) * -0.5)); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes splash-from-left {
+  from { opacity: 0; transform: translateX(calc(var(--splash-shift) * -1)); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes splash-from-right {
+  from { opacity: 0; transform: translateX(var(--splash-shift)); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* 减少动效：同时淡入，不做位移。 */
+@media (prefers-reduced-motion: reduce) {
+  .app-shell[data-splash-phase='assemble'] .app-nav,
+  .app-shell[data-splash-phase='assemble'] [data-screen='start'] .home-head,
+  .app-shell[data-splash-phase='assemble'] [data-screen='start'] .home-left,
+  .app-shell[data-splash-phase='assemble'] [data-screen='start'] .home-main,
+  .app-shell[data-splash-phase='assemble'] [data-screen='start'] .home-side {
+    animation: splash-static 240ms linear both;
+  }
+}
+
+/* 手机：位移小一点，避免横向抖动；标题字号收一档。 */
+@media (max-width: 760px) {
+  :root {
+    --splash-shift: 18px;
+  }
+
+  .splash__title {
+    font-size: 19px;
+    letter-spacing: 0.12em;
+  }
+
+  .splash__mark {
+    width: 54px;
+    height: 54px;
+  }
+}

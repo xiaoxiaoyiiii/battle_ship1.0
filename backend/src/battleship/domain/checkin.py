@@ -11,6 +11,7 @@ TIMEZONE = "Asia/Shanghai"
 DAILY_TIDE = 15
 SOURCE_KIND = "checkin"
 FULL_ATTENDANCE_TIDE = 300
+FULL_ATTENDANCE_CAP = 30
 
 
 def now_seconds(now: float | None = None) -> int:
@@ -55,13 +56,16 @@ def milestone_source_id(year: int, month: int, days: int) -> str:
     return f"milestone:{int(year):04d}-{int(month):02d}:{int(days)}"
 
 
+def full_attendance_days(year: int, month: int) -> int:
+    """不足 30 天的月份签满即可；30 天和 31 天的月份都在第 30 天发放。"""
+    return min(FULL_ATTENDANCE_CAP, monthrange(int(year), int(month))[1])
+
+
 def milestones_for(year: int, month: int) -> tuple[dict[str, int], ...]:
-    """7 天、14 天固定；第三档是该月日历天数，平年二月 28，闰年 29。"""
-    length = monthrange(int(year), int(month))[1]
     return (
         {"days": 7, "tide": 80},
         {"days": 14, "tide": 150},
-        {"days": length, "tide": FULL_ATTENDANCE_TIDE},
+        {"days": full_attendance_days(year, month), "tide": FULL_ATTENDANCE_TIDE},
     )
 
 
@@ -78,6 +82,7 @@ def build_state(*, now: int, checked_days: list[int], claimed: set[int],
     today = civil_date(now)
     title = title_identity(today.year, today.month)
     days_in_month = monthrange(today.year, today.month)[1]
+    threshold = full_attendance_days(today.year, today.month)
     count = len(checked_days)
     milestones = []
     for item in milestones_for(today.year, today.month):
@@ -87,7 +92,7 @@ def build_state(*, now: int, checked_days: list[int], claimed: set[int],
             "reached": count >= item["days"],
             "claimed": item["days"] in claimed,
         }
-        if item["days"] == days_in_month:
+        if item["days"] == threshold:
             row["title"] = {"id": title["id"], "name": title["name"]}
         milestones.append(row)
     today_checked = today.day in checked_days

@@ -10,12 +10,7 @@ from .tasks import BEIJING
 TIMEZONE = "Asia/Shanghai"
 DAILY_TIDE = 15
 SOURCE_KIND = "checkin"
-MILESTONES = (
-    {"days": 7, "tide": 80},
-    {"days": 14, "tide": 150},
-    {"days": 30, "tide": 300},
-)
-TITLE_MILESTONE_DAYS = 30
+FULL_ATTENDANCE_TIDE = 300
 
 
 def now_seconds(now: float | None = None) -> int:
@@ -60,9 +55,20 @@ def milestone_source_id(year: int, month: int, days: int) -> str:
     return f"milestone:{int(year):04d}-{int(month):02d}:{int(days)}"
 
 
-def pending_milestones(month_count: int, claimed: set[int]) -> list[dict[str, int]]:
+def milestones_for(year: int, month: int) -> tuple[dict[str, int], ...]:
+    """7 天、14 天固定；第三档是该月日历天数，平年二月 28，闰年 29。"""
+    length = monthrange(int(year), int(month))[1]
+    return (
+        {"days": 7, "tide": 80},
+        {"days": 14, "tide": 150},
+        {"days": length, "tide": FULL_ATTENDANCE_TIDE},
+    )
+
+
+def pending_milestones(year: int, month: int, month_count: int,
+                       claimed: set[int]) -> list[dict[str, int]]:
     return [
-        dict(item) for item in MILESTONES
+        dict(item) for item in milestones_for(year, month)
         if month_count >= item["days"] and item["days"] not in claimed
     ]
 
@@ -71,16 +77,17 @@ def build_state(*, now: int, checked_days: list[int], claimed: set[int],
                 balance: int, owned: bool) -> dict:
     today = civil_date(now)
     title = title_identity(today.year, today.month)
+    days_in_month = monthrange(today.year, today.month)[1]
     count = len(checked_days)
     milestones = []
-    for item in MILESTONES:
+    for item in milestones_for(today.year, today.month):
         row = {
             "days": item["days"],
             "tide": item["tide"],
             "reached": count >= item["days"],
             "claimed": item["days"] in claimed,
         }
-        if item["days"] == TITLE_MILESTONE_DAYS:
+        if item["days"] == days_in_month:
             row["title"] = {"id": title["id"], "name": title["name"]}
         milestones.append(row)
     today_checked = today.day in checked_days
@@ -93,7 +100,7 @@ def build_state(*, now: int, checked_days: list[int], claimed: set[int],
         "today_checked": today_checked,
         "month_count": count,
         "checked_days": list(checked_days),
-        "days_in_month": monthrange(today.year, today.month)[1],
+        "days_in_month": days_in_month,
         "rewards": {"daily": DAILY_TIDE, "milestones": milestones},
         "title": {"id": title["id"], "name": title["name"], "owned": bool(owned)},
         "balance": int(balance),

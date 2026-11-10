@@ -188,8 +188,7 @@ class SettlementService:
                     },
                     exc_info=error,
                 )
-                # Same memory discipline as legacy: a failed write must not
-                # leave a 512 KB recording hanging on a finished room.
+                # 写入失败也释放终局录像，避免房间继续持有整场录制数据。
                 replay_rules.reset(room)
                 return SettlementResult(ok=False, error=str(error))
 

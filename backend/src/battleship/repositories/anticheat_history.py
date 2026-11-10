@@ -2,16 +2,17 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from typing import Any
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from ..domain.replay import MAX_REPLAY_BYTES
 from .models import Match, MatchReplay
 
 HISTORY_LIMIT = 100
 LAYOUT_LIMIT = 20
-MAX_REPLAY_BYTES = 512 * 1024
 
 
 class AnticheatHistoryRepository:
@@ -32,19 +33,19 @@ class AnticheatHistoryRepository:
             statement = statement.where(Match.id != exclude_match_id)
         return [dict(row._mapping) for row in self.session.execute(statement)]
 
-    def replays(self, match_ids: list[str]) -> list[tuple[str, dict[str, Any]]]:
+    def replays(self, match_ids: list[str]) -> Iterator[tuple[str, dict[str, Any]]]:
+        """逐条解码，调用方提取布局后即可释放，不同时保留多场完整录像。"""
         if not match_ids:
-            return []
+            return
         statement = select(MatchReplay.match_id, MatchReplay.replay).where(
             MatchReplay.match_id.in_(match_ids[:HISTORY_LIMIT]),
             MatchReplay.bytes <= MAX_REPLAY_BYTES,
-        ).order_by(MatchReplay.created_at.desc()).limit(LAYOUT_LIMIT)
-        result = []
+        ).order_by(MatchReplay.created_at.desc()).limit(LAYOUT_LIMIT).execution_options(yield_per=1)
         for match_id, raw in self.session.execute(statement):
             try:
                 payload = json.loads(raw)
             except (TypeError, ValueError):
                 continue
             if isinstance(payload, dict):
-                result.append((match_id, payload))
-        return result
+                yield match_id, payload
+            del payload

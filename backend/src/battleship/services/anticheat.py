@@ -61,13 +61,15 @@ def _position_signature(cells: Any) -> str | None:
 def _initial_layout(payload: dict[str, Any], side: str) -> str | None:
     """读取首次完整布船；末局、截断前未记录或未知格式不猜测。"""
     if payload.get("version") == 2 or "initial_state" in payload:
-        frame = payload.get("initial_state") or {}
-        frames = [frame]
-        for event in (payload.get("events") or [])[:16000]:
-            if isinstance(event, dict) and event.get("type") == "state":
-                frame = {**frame, **(event.get("patch") or {})}
-                frames.append(frame)
-        for frame in frames:
+        def frames():
+            frame = payload.get("initial_state") or {}
+            yield frame
+            for event in (payload.get("events") or [])[:16000]:
+                if isinstance(event, dict) and event.get("type") == "state":
+                    frame = {**frame, **(event.get("patch") or {})}
+                    yield frame
+
+        for frame in frames():
             if frame.get("context", {}).get("state") not in ("rock_paper_scissors", "attacking"):
                 continue
             boards = frame.get("boards") or {}
@@ -245,7 +247,18 @@ class AnticheatService:
                     break
                 if row["rewards_eligible"] is True:
                     rows.append(row)
-            recordings = history.replays([row["id"] for row in rows])
+            # 历史录像可能接近整局容量上限，只在事务内逐条消费并保留小指纹。
+            signatures = []
+            by_id = {row["id"]: row for row in rows}
+            for match_id, payload in history.replays([row["id"] for row in rows]):
+                row = by_id[match_id]
+                opponent = row["loser_id"] if row["winner_id"] == uid else row["winner_id"]
+                side = (payload.get("seats") or {}).get(opponent)
+                if side in ("p1", "p2"):
+                    signature = _initial_layout(payload, side)
+                    if signature:
+                        signatures.append(signature)
+                del payload
         result: dict[str, Any] = {}
         if rows and room.match_started_at:
             gap = int(room.match_started_at) - int(rows[0]["timestamp"])
@@ -272,16 +285,6 @@ class AnticheatService:
                     break
                 streak += 1
             result["ranked_win_streak"] = streak
-        signatures = []
-        by_id = {row["id"]: row for row in rows}
-        for match_id, payload in recordings:
-            row = by_id[match_id]
-            opponent = row["loser_id"] if row["winner_id"] == uid else row["winner_id"]
-            side = (payload.get("seats") or {}).get(opponent)
-            if side in ("p1", "p2"):
-                signature = _initial_layout(payload, side)
-                if signature:
-                    signatures.append(signature)
         result["past_signatures"] = signatures or None
         return result
 

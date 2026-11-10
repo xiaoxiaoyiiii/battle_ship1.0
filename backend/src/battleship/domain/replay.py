@@ -24,7 +24,9 @@ import json
 
 REPLAY_VERSION = 2
 MAX_STEPS = 2000
-MAX_REPLAY_BYTES = 512 * 1024
+# v2 同一步会记录多次完整板块变化，旧版 512 KiB 连普通长局也装不下。
+# 录制与读取共用上限，避免保存后的录像被读接口或反作弊历史静默拒绝。
+MAX_REPLAY_BYTES = 16 * 1024 * 1024
 _MAX_STEPS = MAX_STEPS
 TRUNCATED_TEXT = "此回放被截断"
 _ROOM_ATTR = "replay"

@@ -5,11 +5,14 @@ from copy import deepcopy
 import json
 from typing import Any
 
+from .replay import MAX_REPLAY_BYTES
 from .viewing import build_view_frame
 
 CHECKPOINT_INTERVAL = 32
 MAX_STEPS = 2000
-MAX_BYTES = 512 * 1024
+MAX_BYTES = MAX_REPLAY_BYTES
+# 初始状态只有一帧，不应因为放宽整局容量而接受异常巨大的起始局面。
+MAX_INITIAL_BYTES = 512 * 1024
 
 
 def _state(room):
@@ -73,16 +76,35 @@ def finalize_v2(room, *, metadata: dict | None = None, max_bytes: int = MAX_BYTE
         'version': 2, 'initial_state': state['initial_state'], 'events': state['events'],
         'checkpoints': state['checkpoints'], 'truncated': state['truncated'] or meta.get('truncated') or '',
     })
-    while _size(payload) > max_bytes and payload['events']:
-        payload['truncated'] = '此回放被截断（超过大小上限）'
-        events = payload['events']
-        cut_step = events[len(events) // 2]['step']
-        kept = [event for event in events if event['step'] < cut_step]
-        payload['events'] = kept
+    if _size(payload['initial_state']) > min(max_bytes, MAX_INITIAL_BYTES):
+        return None
+    if _size(payload) <= max_bytes:
+        return payload
+
+    def prefix(last_step: int) -> dict:
+        kept = [event for event in payload['events'] if event['step'] <= last_step]
         last_seq = kept[-1]['seq'] if kept else 0
-        last_step = kept[-1]['step'] if kept else 0
-        payload['checkpoints'] = [c for c in payload['checkpoints'] if c['seq'] <= last_seq]
-        payload['steps'] = [s for s in payload.get('steps', []) if s['i'] <= last_step]
-        payload['nodes'] = [n for n in payload.get('nodes', []) if n['step'] <= last_step]
-    # 初始局面本身超限时不保存损坏或空壳录像。
-    return payload if _size(payload) <= max_bytes else None
+        return {
+            **payload, 'truncated': '此回放被截断（超过大小上限）', 'events': kept,
+            'checkpoints': [c for c in payload['checkpoints'] if c['seq'] <= last_seq],
+            'steps': [s for s in payload.get('steps', []) if s['i'] <= last_step],
+            'nodes': [n for n in payload.get('nodes', []) if n['step'] <= last_step],
+        }
+
+    # 按完整步骤二分寻找最长前缀，同一步的状态与演出不能拆开。
+    # 无状态变化的日志步同样参与容量计算，不因最后一个事件较早而丢失。
+    boundaries = sorted({e['step'] for e in payload['events']}
+                        | {s['i'] for s in payload.get('steps', [])})
+    best = prefix(-1)
+    if _size(best) > max_bytes:
+        return None
+    lo, hi = 0, len(boundaries) - 1
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        candidate = prefix(boundaries[mid])
+        if _size(candidate) <= max_bytes:
+            best = candidate
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best

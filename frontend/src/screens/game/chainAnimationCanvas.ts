@@ -1,6 +1,7 @@
 import { CHAIN_FLIGHT_MS, CHAIN_ENTRY_MS, type ChainArtCard, type ChainFrame } from './chainAnimation'
 import { drawCounterEffect } from './cardEffects/canvas'
 import type { ChainStageCard, ChainStagePlan } from './chainStageLayout'
+import { masteryTier } from '../collection/model'
 
 type ArtLookup = (name: string) => HTMLImageElement | null
 const clamp = (n: number): number => Math.max(0, Math.min(1, n))
@@ -34,6 +35,27 @@ function card(ctx: CanvasRenderingContext2D, item: ChainArtCard, art: ArtLookup,
   const height = width * 1.5
   const radius = Math.max(5, width * 0.05)
   ctx.save(); ctx.translate(x, y); ctx.rotate(angle)
+  const tier = masteryTier(item.masteryTier)
+  if (tier) {
+    const colors = ['','#6de0ec','#ba96ff','#f3c467','#9beff7']
+    ctx.save(); ctx.shadowColor=colors[tier]; ctx.shadowBlur=12+tier*8
+    ctx.strokeStyle=colors[tier]; ctx.lineWidth=1+tier
+    if (tier===4) {
+      const rainbow=ctx.createLinearGradient(-width/2,-height/2,width/2,height/2)
+      ;['#72e5e7','#bb98ff','#f6ce7a','#89f0df'].forEach((c,i)=>rainbow.addColorStop(i/3,c))
+      ctx.strokeStyle=rainbow
+    }
+    ctx.beginPath();ctx.roundRect(-width/2-6,-height/2-6,width+12,height+12,radius+4);ctx.stroke()
+    if (tier>=2) {ctx.lineWidth=1;ctx.beginPath();ctx.roundRect(-width/2-10,-height/2-10,width+20,height+20,radius+6);ctx.stroke()}
+    if (tier>=3) {
+      ctx.fillStyle=colors[tier]
+      for (const sx of [-1,1]) for (const sy of [-1,1]) {
+        const px=sx*(width/2+8),py=sy*(height/2+8)
+        ctx.beginPath();ctx.moveTo(px,py-6);ctx.lineTo(px+3,py);ctx.lineTo(px,py+6);ctx.lineTo(px-3,py);ctx.closePath();ctx.fill()
+      }
+    }
+    ctx.restore()
+  }
   ctx.shadowColor = '#82c9e877'; ctx.shadowBlur = 19; ctx.fillStyle = '#122033'
   ctx.beginPath(); ctx.roundRect(-width / 2 - 3, -height / 2 - 3, width + 6, height + 6, radius + 2); ctx.fill(); ctx.shadowBlur = 0
   ctx.save(); ctx.beginPath(); ctx.roundRect(-width / 2, -height / 2, width, height, radius); ctx.clip()

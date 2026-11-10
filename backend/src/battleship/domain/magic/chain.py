@@ -36,6 +36,8 @@ class ChainItem:
     negated: bool = False
     negated_by: str | None = None
     stolen: bool = False
+    # 只在出牌成为公开事实后附带，绝不进入对手手牌快照。
+    mastery_tier: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -45,6 +47,7 @@ class ChainItem:
             "timestamp": self.timestamp,
             "negated": self.negated,
             "negated_by": self.negated_by,
+            **({'mastery_tier':self.mastery_tier} if self.mastery_tier else {}),
         }
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 from ..domain import replay
 from ..domain.replay_v2 import record_state, record_presentation
 from ..domain.viewing import build_view_frame, public_cue, replay_cue
+from ..domain.collection import observe
 from ..infra.logging import get_logger
 
 logger = get_logger('viewing')
@@ -18,11 +19,13 @@ class ViewingService:
         self.spectators = spectators
 
     async def commit(self, room, *, cause: str = 'state') -> None:
+        observe(room)
         if not room.settled:
             record_state(room, step=max(0, replay.step_count(room) - 1), cause=cause)
         await self._publish(room, [])
 
     async def present(self, room, cue: dict) -> None:
+        observe(room)
         record_state(room, step=max(0, replay.step_count(room) - 1), cause='presentation')
         recorded = replay_cue(cue, room)
         if recorded:
@@ -32,6 +35,7 @@ class ViewingService:
 
     async def attack(self, room, outcome) -> None:
         """前导、实际落点、尾声有序保存；观战先展示上一权威帧。"""
+        observe(room)
         step = replay.step_count(room)
         cue = {'stage': 'attack_windup', 'attacker': outcome.attacker, 'target': outcome.defender,
                'cell': {'x': outcome.x, 'y': outcome.y},

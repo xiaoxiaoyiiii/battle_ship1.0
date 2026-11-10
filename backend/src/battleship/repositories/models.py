@@ -33,6 +33,28 @@ class Base(DeclarativeBase):
     """Declarative base shared by every repository model."""
 
 
+class CollectionCard(Base):
+    __tablename__ = 'collection_cards'
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    card_name: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    lit: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text('0'))
+    uses: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text('0'))
+    wins: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text('0'))
+    selected_tier: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text('0'))
+
+
+class CollectionProgress(Base):
+    __tablename__ = 'collection_progress'
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    state: Mapped[str] = mapped_column(sa.Text, nullable=False, server_default=text("'{}'"))
+
+
+class CollectionSettlement(Base):
+    __tablename__ = 'collection_settlements'
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    source_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+
+
 class DailyChallengeAttempt(Base):
     __tablename__ = 'daily_challenge_attempts'
     user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)

@@ -2,6 +2,7 @@
 import { CHAIN_ENTRY_MS, CHAIN_SUCCESS_MS, CHAIN_RESOLVE_MS, CHAIN_SINGLE_RESOLVE_MS, type ChainFrame } from '../game/chainAnimation'
 import { cardSound } from '../../audio/cardSounds'
 import type { Json } from './types'
+import { masteryTier } from '../collection/model'
 
 export function presentationDuration(cue: Json): number {
   if (cue.stage === 'attack_windup') return 220
@@ -26,7 +27,8 @@ export function presentationCues(cue: Json): Json[] {
 export function chainFrame(cue: Json, progress: number): ChainFrame | null {
   if (!['join', 'chain_success', 'card', 'card_face'].includes(String(cue.stage))) return null
   const source = Array.isArray(cue.chain) ? cue.chain as Json[] : []
-  const cards = source.map((row, i) => ({ name: typeof row.card === 'string' ? row.card : String((row.card as Json)?.name ?? ''), caster: String(row.seat ?? ''), order: i + 1, id: '' }))
+  const cards = source.map((row, i) => ({ name: typeof row.card === 'string' ? row.card : String((row.card as Json)?.name ?? ''), caster: String(row.seat ?? ''), order: i + 1, id: '',
+    masteryTier:masteryTier(row.mastery_tier) }))
   if (!cards.length) return null
   return { progress, cue: { kind: cue.stage === 'join' ? 'join' : cue.stage === 'chain_success' ? 'success' : 'resolve', cards,
     order: Number(cue.order) || cards.length, start: 0, duration: presentationDuration(cue),

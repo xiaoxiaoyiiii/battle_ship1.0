@@ -36,6 +36,7 @@ from .ranked_seasons import RankedSeasonRepository
 from .mailbox import MailboxRepository
 from .support import SupportRepository
 from .client_promo import ClientPromoRepository
+from .collection import CollectionRepository
 
 
 class UnitOfWork:
@@ -78,6 +79,10 @@ class UnitOfWork:
     @property
     def users(self) -> UserRepository:
         return self._repository("users", UserRepository)  # type: ignore[return-value]
+
+    @property
+    def collection(self) -> CollectionRepository:
+        return self._repository('collection', CollectionRepository)
 
     @property
     def auth_sessions(self) -> AuthSessionRepository:

@@ -1,0 +1,8 @@
+/* 只修饰已经可见的卡面；四档随本人选择显示，背面不挂载此类。 */
+.mastery-glow { --mastery-color:#66dce9; box-shadow:0 0 0 1px var(--mastery-color),0 0 15px color-mix(in srgb,var(--mastery-color) 45%,transparent); }
+.mastery-glow--2 { --mastery-color:#bc92ff; box-shadow:0 0 0 2px var(--mastery-color),0 0 20px #9b6be888,inset 0 0 9px #b48dff55; }
+.mastery-glow--3 { --mastery-color:#f6cb70; box-shadow:0 0 0 2px #efc36b,0 0 24px #e8b04899,0 0 7px 4px #fff0b933; }
+.mastery-glow--4 { --mastery-color:#9cecff; box-shadow:2px 0 0 2px #c393ff,-2px 0 0 2px #6de7ed,0 0 27px #77e0ecaa,0 0 42px #b57eff55; animation:mastery-tide 3s ease-in-out infinite alternate; }
+@keyframes mastery-tide { to { box-shadow:-2px 0 0 2px #d49cf3,2px 0 0 2px #f4cf80,0 0 32px #af8becaa,0 0 44px #74e5cf66; } }
+@media(prefers-reduced-motion:reduce) { .mastery-glow--4 { animation:none; } }
+html[data-motion="reduced"] .mastery-glow--4 { animation:none; }

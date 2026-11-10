@@ -147,7 +147,8 @@ def public_cue(cue: dict[str, Any], room: Room) -> dict[str, Any] | None:
     out = {key: deepcopy(cue[key]) for key in ('stage', 'order', 'first', 'negated_skip', 'negated_by', 'success', 'duration_ms') if key in cue}
     chain = cue.get('chain')
     if isinstance(chain, list):
-        out['chain'] = [{'card': row.get('card'), 'seat': row.get('seat') if row.get('seat') in ('p1', 'p2') else side_of(room, row.get('player_id')), 'negated': bool(row.get('negated'))} for row in chain if isinstance(row, dict)]
+        out['chain'] = [{'card': row.get('card'), 'seat': row.get('seat') if row.get('seat') in ('p1', 'p2') else side_of(room, row.get('player_id')), 'negated': bool(row.get('negated')),
+                         **({'mastery_tier':row['mastery_tier']} if type(row.get('mastery_tier')) is int and 1<=row['mastery_tier']<=4 else {})} for row in chain if isinstance(row, dict)]
     effect = cue.get('effect')
     if isinstance(effect, dict):
         visible = {key: deepcopy(effect[key]) for key in ('effect_id', 'kind', 'card', 'duration_ms', 'impact') if key in effect}

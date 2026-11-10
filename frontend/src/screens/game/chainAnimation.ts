@@ -1,4 +1,5 @@
 /** 连锁演出的纯时间轴；只消费公开卡面和服务端结果，不计算牌效。 */
+import { masteryTier } from '../collection/model'
 export const CHAIN_ENTRY_MS = 800
 export const CHAIN_FLIGHT_MS = 620
 export const CHAIN_SUCCESS_MS = 550
@@ -11,6 +12,7 @@ export interface ChainArtCard {
   caster: string
   order: number
   id: string
+  masteryTier?: number
 }
 export interface ChainOutcome {
   negated: boolean
@@ -39,7 +41,7 @@ function parseStack(value: unknown): ChainArtCard[] {
   if (!Array.isArray(source)) return []
   return source.flatMap((raw, index) => {
     const item = record(raw), name = nameOf(item.card)
-    return name ? [{ name, caster: String(item.seat ?? item.player_id ?? ''), order: index + 1, id: String(item.id ?? '') }] : []
+    return name ? [{ name, caster: String(item.seat ?? item.player_id ?? ''), order: index + 1, id: String(item.id ?? ''), masteryTier: masteryTier(item.mastery_tier) }] : []
   })
 }
 function same(a: ChainArtCard, b: ChainArtCard): boolean {
@@ -104,7 +106,7 @@ export class ChainTimeline {
     if (this.closed && signature === this.lastResolution) return
     // 结果按服务端已确定的顺序展示；缺少接链事件时从结果恢复卡面，不推断效果。
     const known = this.stack.length === results.length && results.every((item, i) => this.stack[results.length - i - 1]?.name === nameOf(item.card))
-    const cards = known ? this.stack.slice() : results.slice().reverse().map((item, i) => ({ name: nameOf(item.card), caster: String(item.caster ?? ''), order: i + 1, id: '' }))
+    const cards = known ? this.stack.slice() : results.slice().reverse().map((item, i) => ({ name: nameOf(item.card), caster: String(item.caster ?? ''), order: i + 1, id: '', masteryTier:masteryTier(item.mastery_tier) }))
     const singleCard = cards.length === 1
     if (!singleCard) this.append({ kind: 'success', cards, order: cards.length }, now, CHAIN_SUCCESS_MS)
     results.forEach((item, i) => this.append({

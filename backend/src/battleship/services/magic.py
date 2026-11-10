@@ -18,6 +18,7 @@ battleship.domain.magic.effects and registered in battleship.domain.magic.regist
 from __future__ import annotations
 
 from ..domain.tasks import record_card_play
+from ..domain import collection as collection_rules
 
 import asyncio
 import inspect
@@ -1135,10 +1136,14 @@ class MagicService:
         # The step also carries the stack *including* this card (note_chain),
         # so the replay top bar can show the chain of every play.
         item = ChainItem(player_id, card, targets, self.clock())
+        collection = getattr(self.rooms,'collection',None)
+        if collection:
+            item.mastery_tier = collection.selected_tier(player.user_id,card.name)
         replay_rules.note_chain(room, list(room.chain) + [item])
         replay_rules.note_card_played(room, player_id, card)
 
         room.chain.append(item)
+        collection_rules.note_play(room,player_id,card.name)
         record_card_play(room, player_id, now=self.clock())
         mutations.note_cast(room, player_id)
         # #37：支付完成、已入连锁之后发 CAST_PAID（此后失败只能按连锁规则退牌）。
@@ -1463,10 +1468,14 @@ class MagicService:
             # Replay: chained play is a play, recorded at the same moment; the
             # step carries the stack after this play (same single seam).
             item = ChainItem(str(player_id), card, targets, self.clock())
+            collection = getattr(self.rooms,'collection',None)
+            if collection:
+                item.mastery_tier = collection.selected_tier(player.user_id,card.name)
             replay_rules.note_chain(room, list(room.chain) + [item])
             replay_rules.note_card_played(room, str(player_id), card, chained=True)
 
             room.chain.append(item)
+            collection_rules.note_play(room,str(player_id),card.name)
             record_card_play(room, str(player_id), now=self.clock())
             mutations.note_cast(room, str(player_id))
             await hooks.emit(
@@ -1669,9 +1678,13 @@ class MagicService:
                     )
 
             extra = dict(effect_result.extra or {})
+            if item.mastery_tier:
+                extra['mastery_tier'] = item.mastery_tier
             if effect_result.temp_data_id:
                 extra.setdefault("temp_data_id", effect_result.temp_data_id)
             if effect_result.negate_target and room.chain:
+                if effect_result.success and item.card.name == '失灵！':
+                    collection_rules.note_negation(room,item.player_id)
                 room.chain[-1].negated = True
                 room.chain[-1].negated_by = item.card.name
             chain_result = ChainResult(

@@ -185,7 +185,7 @@ AREA_TARGET_BOARD_VALUES = BOARD_SIDES + ("choice",)
 PREVIEW_SHAPES = ("area", "line", "cells", "single")
 
 #: Public preview keys (whitelist). Must stay disjoint from both forbidden tables.
-PREVIEW_KEYS = ("id", "card", "seat", "negated", "preview")
+PREVIEW_KEYS = ("id", "card", "seat", "negated", "preview", "mastery_tier")
 PREVIEW_FIELDS = ("board", "shape", "cells")
 
 
@@ -346,6 +346,7 @@ def sanitize_preview_item(item: Any, room: Any = None) -> dict[str, Any] | None:
         "seat": seat,
         "negated": bool(item.get("negated")),
         "preview": node,
+        **({'mastery_tier':item['mastery_tier']} if type(item.get('mastery_tier')) is int and 1<=item['mastery_tier']<=4 else {}),
     }
 
 

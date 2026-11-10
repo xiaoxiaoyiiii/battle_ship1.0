@@ -134,6 +134,9 @@ class DailyChallengeService:
         won = winner_id == uid and now < info['expires_at'] and not room.admin_test
         with self.database.unit_of_work() as uow:
             changed = uow.daily_challenges.finish(uid, day, room.id, 'completed' if won else 'failed', now)
+            if changed:
+                from .collection import CollectionService
+                CollectionService(self.database).settle_challenge(room,uow,now=now)
             if changed and won:
                 uow.tide_ash.apply_once(uid, 'daily_challenge', day, REWARD_TIDE, now=now)
                 uow.tasks.increment(uid, day, 'daily_challenge')

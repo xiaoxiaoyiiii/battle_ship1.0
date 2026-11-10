@@ -1,4 +1,5 @@
 import type { CellAttack, GameState, ShipSnapshot } from '../../stores/gameStateSchema'
+import { masteryTier } from '../collection/model'
 
 /**
  * Pure view model for the game screen (ticket #27).
@@ -624,6 +625,7 @@ export interface PublicChainPreview {
 
 export interface ChainItemView {
   name: string
+  masteryTier: number
   caster: string
   negated: boolean
   negatedBy: string
@@ -663,6 +665,7 @@ export function chainItems(source: unknown): ChainItemView[] {
         : null
       return {
         name,
+        masteryTier: masteryTier(entry.mastery_tier),
         caster: String(entry.player_id ?? entry.seat ?? ''),
         negated: Boolean(entry.negated),
         negatedBy: entry.negated_by ? String(entry.negated_by) : '',

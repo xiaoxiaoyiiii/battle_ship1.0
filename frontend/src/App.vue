@@ -7,7 +7,7 @@ import AppProfileBackground from './components/AppProfileBackground.vue'
 import OceanParticles from './components/OceanParticles.vue'
 import AuthOverlay from './components/AuthOverlay.vue'
 import AvatarMenu from './components/AvatarMenu.vue'
-import CardCollectionOverlay from './components/CardCollectionOverlay.vue'
+import './cards/mastery.css'
 import AdminOverlay from './components/AdminOverlay.vue'
 import AdminConsole from './components/AdminConsole.vue'
 import CheckinDialog from './components/CheckinDialog.vue'
@@ -51,6 +51,10 @@ const router = useRouter()
 const auth = useAuthStore()
 const game = useGameStore()
 const collection = useCollectionStore()
+watch(() => collection.isOpen, open => {
+  if (open) { collection.close(); void router.push('/collection') }
+})
+watch(() => auth.user?.id ?? '', () => collection.reset())
 const ui = useUiStore()
 let exitDestination = '/lobby'
 const removeBanLeaveGuard = router.beforeEach(to => {
@@ -459,12 +463,7 @@ onBeforeUnmount(() => {
     @done="onSplashLogoDone"
   />
 
-  <!-- Single-overlay root: the card archive opens above the shell. -->
-  <CardCollectionOverlay
-    v-if="collection.isOpen"
-    :return-focus="() => collectionButton"
-    @close="collection.close()"
-  />
+  <!-- 图鉴使用独立路由，其余全局浮层仍由壳层统一挂载。 -->
 
   <HelpOverlay v-if="ui.helpOpen" @close="ui.closeHelp()" />
   <FriendsOverlay v-if="ui.friendsOpen" @close="ui.closeFriends()" />
@@ -550,8 +549,8 @@ onBeforeUnmount(() => {
             ref="collectionButton"
             type="button"
             class="app-nav__link"
-            :class="{ 'is-active': collection.isOpen }"
-            :aria-pressed="collection.isOpen"
+            :class="{ 'is-active': route.name === 'collection' }"
+            :aria-pressed="route.name === 'collection'"
             data-testid="nav-collection"
             @click="openCollection"
           >

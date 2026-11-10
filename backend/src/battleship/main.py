@@ -61,6 +61,8 @@ from .services.ai import AiService
 from .services.anticheat import AnticheatService
 from .services.auth import AuthService
 from .services.battle_pass import BattlePassService
+from .services.collection import CollectionService
+from .http.routers import collection as collection_router
 from .services.checkin import CheckinService
 from .services.battle import BattleService
 from .services.chat import ChatService
@@ -225,6 +227,8 @@ def create_application(settings: Settings | None = None,
     progression.register(settlement)
     battle_pass = BattlePassService(database)
     settlement.add_hook(battle_pass.settlement_hook)
+    collection = CollectionService(database)
+    settlement.add_hook(collection.settlement_hook)
     ranked_seasons = RankedSeasonService(database)
 
     fastapi_app = FastAPI(
@@ -346,6 +350,7 @@ def create_application(settings: Settings | None = None,
     fastapi_app.include_router(tasks_router.router)
     fastapi_app.include_router(daily_challenge_router.router)
     fastapi_app.include_router(checkin_router.router)
+    fastapi_app.include_router(collection_router.router)
     fastapi_app.include_router(leaderboard_router.router)
     fastapi_app.include_router(replay_router.router)
     fastapi_app.include_router(lobby_router.router)
@@ -406,6 +411,7 @@ def create_application(settings: Settings | None = None,
     from .services.daily_challenge import DailyChallengeService
     daily_challenges = DailyChallengeService(database, rooms, settings.daily_puzzles_path)
     daily_challenges.battle = battle
+    rooms.collection = collection
     rooms.daily_challenges = settlement.daily_challenges = daily_challenges
     fastapi_app.state.daily_challenges = daily_challenges
     magic = MagicService(
@@ -464,6 +470,7 @@ def create_application(settings: Settings | None = None,
     fastapi_app.state.settlement = settlement
     fastapi_app.state.progression = progression
     fastapi_app.state.battle_pass = battle_pass
+    fastapi_app.state.collection = collection
     fastapi_app.state.ranked_seasons = ranked_seasons
     fastapi_app.state.maintenance = Maintenance(database, ranked_seasons, settings.backup_directory)
     fastapi_app.state.anticheat = anticheat

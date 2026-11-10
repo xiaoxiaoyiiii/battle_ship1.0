@@ -30,6 +30,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/privacy', name: 'privacy', component: () => import('../screens/legal/LegalScreen.vue'), props: { kind: 'privacy' } },
   { path: '/battle-pass', name: 'battle-pass', component: () => import('../screens/battle-pass/SeasonPassScreen.vue') },
   { path: '/shop', name: 'shop', component: () => import('../screens/shop/ShopScreen.vue') },
+  { path: '/collection', name: 'collection', component: () => import('../screens/collection/CollectionScreen.vue') },
   { path: '/replay', name: 'replay', component: () => import('../screens/replay/ReplayScreen.vue') },
   { path: '/spectate', name: 'spectate', component: () => import('../screens/spectate/SpectateScreen.vue') },
   { path: '/game-over', name: 'game-over', component: () => import('../screens/game-over/GameOverScreen.vue') },

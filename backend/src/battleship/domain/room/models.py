@@ -407,6 +407,9 @@ class Room:
     # once (surrender vs disconnect races must not double-count a match).
     # 任务出牌按北京时间日期累计，随对局结算一次入库。
     task_card_uses: dict[str, dict[str, int]] = field(default_factory=dict)
+    # 本任务独立计数，仅由服务端真实出牌与状态提交填充，结算后一次落库。
+    collection_facts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    collection_chain_id: int = 0
     settled: bool = False
     settlement_result: Any = None
 

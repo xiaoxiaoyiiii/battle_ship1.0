@@ -29,6 +29,12 @@ import { usePlayerCards } from './usePlayerCards'
 import { acquireBattleChannel, battleActionPending, getBattleSocket, refreshMagicState, sendBattleEvent, syncHand } from '../../realtime/battle'
 import { acquireMatchChannel } from '../../realtime/match'
 import { cardArtUrl } from '../../cards/cardArt'
+import { useCollectionStore } from '../../stores/collection'
+import { masteryClass } from '../collection/model'
+
+const cardCollection = useCollectionStore()
+onMounted(() => { void cardCollection.load() })
+const ownMastery = (name:string):string => masteryClass(cardCollection.data?.cards.find(c=>c.name===name)?.selected_tier)
 import { useAuthStore } from '../../stores/auth'
 import { useGameStore } from '../../stores/game'
 import { useMatchStore } from '../../stores/match'
@@ -2017,7 +2023,7 @@ function backToLobby(): void {
               v-for="(item, index) in chainList"
               :key="'chain-rail-' + index"
               class="chain-stack__item"
-              :class="{ 'is-spent': item.negated }"
+              :class="[{ 'is-spent': item.negated }, masteryClass(item.masteryTier)]"
               :data-testid="'game-chain-item-' + index"
               :title="item.name"
             >
@@ -2161,11 +2167,12 @@ function backToLobby(): void {
           :key="cardTestIdFor(card, index)"
           type="button"
           class="card"
-          :class="{
+          :data-mastery-tier="cardCollection.data?.cards.find(c=>c.name===card.name)?.selected_tier ?? 0"
+          :class="[ownMastery(card.name), {
             'card--selected': selectedCardIndex === index,
             'card--disabled': !!cardDisabled(card),
             'card--art': !!cardArtUrl(card.name),
-          }"
+          }]"
           :data-testid="cardTestIdFor(card, index)"
           :data-card-name="card.name"
           :data-card-speed="String(card.speed)"

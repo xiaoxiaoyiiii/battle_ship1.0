@@ -221,6 +221,10 @@ DEFAULT_PROFILE_BG_ID = 'deep_ocean'
 DEFAULT_POINTER_EFFECT_ID = 'none'
 DEFAULT_TITLE_EFFECT_ID = 'glint'
 
+# 收藏称号沿用已有外观持有表，不复用旧徽章判据或绕过达标条件。
+from ..collection import title_entries
+TITLES.extend(title_entries())
+
 # ---------------------------------------------------------------------------
 # 索引与解锁判定
 # ---------------------------------------------------------------------------

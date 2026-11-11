@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { useProfileStore } from '../stores/profile'
+import { useUiStore } from '../stores/ui'
+import { createProfileBackgroundRenderer } from './profileBackgroundRenderer'
 
 const props = withDefaults(defineProps<{
   /** 非空时在父级里预览这个资料背景，不改已装备的背景。 */
@@ -12,6 +14,10 @@ const props = withDefaults(defineProps<{
 
 const auth = useAuthStore()
 const profile = useProfileStore()
+const ui = useUiStore()
+const host = ref<HTMLElement>()
+const canvas = ref<HTMLCanvasElement>()
+let renderer: ReturnType<typeof createProfileBackgroundRenderer> | undefined
 const contained = computed(() => props.previewId.trim() !== '')
 
 const backgroundId = computed(() => {
@@ -25,15 +31,29 @@ async function ensureProfile(): Promise<void> {
   await profile.loadOwn()
 }
 
-onMounted(() => { void ensureProfile() })
+onMounted(() => {
+  void ensureProfile()
+  if (host.value && canvas.value) {
+    renderer = createProfileBackgroundRenderer(host.value, canvas.value, {
+      enabled: () => !contained.value,
+      reduced: () => ui.motion === 'reduced',
+    })
+  }
+})
 watch(() => auth.isGuest, () => { void ensureProfile() })
+watch([backgroundId, contained], () => renderer?.refresh(), { flush: 'post' })
+watch(() => ui.motion, () => renderer?.syncMotion(), { flush: 'post' })
+onBeforeUnmount(() => renderer?.destroy())
 </script>
 
 <template>
   <div
+    ref="host"
     class="app-profile-background"
     :class="{ 'app-profile-background--contained': contained }"
     :data-bg="backgroundId"
+    :data-motion="ui.motion"
+    data-renderer="css"
     :data-testid="contained ? undefined : 'app-profile-background'"
     aria-hidden="true"
   >
@@ -42,6 +62,7 @@ watch(() => auth.isGuest, () => { void ensureProfile() })
     <span class="app-profile-background__stars"></span>
     <span class="app-profile-background__current"></span>
     <span class="app-profile-background__rings"></span>
+    <canvas ref="canvas" class="app-profile-background__cache" hidden></canvas>
   </div>
 </template>
 
@@ -68,6 +89,20 @@ watch(() => auth.isGuest, () => { void ensureProfile() })
   z-index: 0;
   inset: 0;
 }
+
+.app-profile-background__cache {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  width: 100%;
+  height: 100%;
+}
+.app-profile-background__cache[hidden] { display: none; }
+.app-profile-background[data-renderer='cached'][data-bg] { background-image: none; }
+.app-profile-background[data-renderer='cached'] > span,
+.app-profile-background[data-renderer='cached']::before,
+.app-profile-background[data-renderer='cached']::after { visibility: hidden; }
+.app-profile-background[data-motion='reduced'][data-bg] > span { animation: none; }
 
 .app-profile-background::before,
 .app-profile-background::after,

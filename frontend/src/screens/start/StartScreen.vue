@@ -808,12 +808,8 @@ async function startAi(): Promise<void> {
   .home-launch__actions { margin-top:18px; }
   .home-ai { gap:10px; }
   .home-link--tile { min-height:58px; padding:9px 12px; }
-  .home-showcase { flex:1; min-height:0; display:flex; flex-direction:column; }
-  .home-showcase__row { flex:1; min-height:0; }
-  .home-showcase__row li { min-height:0; }
-  .home-cardface { height:100%; min-height:0; }
-  .home-cardface__art { flex:1; min-height:0; height:0; aspect-ratio:auto; }
-  .home-cardface__name { flex-shrink:0; }
+  /* 卡面沿用 2:3 比例；矮窗口由主栏滚动，不拉伸或压扁图片。 */
+  .home-showcase { flex:0 0 auto; }
   .home-side > [data-testid='start-online'] { flex-shrink:0; }
   .home-changelog { flex:1; display:flex; flex-direction:column; }
   .home-changelog > .state-surface { flex:1; min-height:0; }

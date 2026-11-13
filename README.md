@@ -29,7 +29,7 @@
 <br>
 
 <p align="center">
-  <img src="docs/readme/01-home-live.png" alt="竞技场首页与完整卡面" width="92%">
+  <img src="docs/readme/08-game-cards-live.png" alt="人机实战中的双方海域、手牌与加百列之光卡牌预览" width="92%">
 </p>
 
 ---
@@ -63,20 +63,23 @@
 
 ## 📸 游戏画面
 
-以下保留现有实机截图，展示对战、大厅、结算与回放。开战页、航海图鉴等新界面的截图正在补充。
+以下为 2026 年 11 月的线上实机截图，展示人机实战、连锁演出、图鉴、成就与通行证。回放图单独标注；图鉴光效展示使用作者账号已有的解锁状态。
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/readme/04-game-live.png" alt="人机对局"><p align="center"><sub><b>对局</b> · 双方海域 / 游戏日志 / 手牌与完整卡面</sub></p></td>
-    <td width="50%"><img src="docs/readme/05-result-live.png" alt="对局结算"><p align="center"><sub><b>结算</b> · 胜负判定 / 本局数据 / 再来一局 / 回放入口</sub></p></td>
+    <td width="50%"><img src="docs/readme/06-chain-animation-live.png" alt="硫磺火焰与加百列之光的二重连锁动画"><p align="center"><sub><b>连锁演出</b> · 完整卡面 / 锁链与顺序 / 二重连锁</sub></p></td>
+    <td width="50%"><img src="docs/readme/02-collection-live.jpg" alt="航海图鉴总览与卡牌熟练光效"><p align="center"><sub><b>航海图鉴</b> · 点亮进度 / 卡牌筛选 / 熟练光效</sub></p></td>
   </tr>
   <tr>
-    <td><img src="docs/readme/02-lobby-live.png" alt="游戏大厅"><p align="center"><sub><b>游戏大厅</b> · 房间列表 / 在线玩家 / 大厅公屏</sub></p></td>
-    <td><img src="docs/readme/03-match-found-live.png" alt="匹配成功"><p align="center"><sub><b>匹配成功</b> · 双方舰队 / 段位信息 / 开局倒计时</sub></p></td>
+    <td><img src="docs/readme/03-card-detail-live.jpg" alt="越战越勇的完整卡面、效果说明与熟练光效"><p align="center"><sub><b>卡牌详情</b> · 完整卡图 / 效果说明 / 当前光效</sub></p></td>
+    <td><img src="docs/readme/04-achievements-live.jpg" alt="航海成就页面与实际完成进度"><p align="center"><sub><b>航海成就</b> · 目标进度 / 奖励 / 个人记录</sub></p></td>
   </tr>
   <tr>
-    <td><img src="docs/readme/06-replay-live.png" alt="对局回放"><p align="center"><sub><b>对局回放</b> · 逐步回看 / 倍速控制 / 关键节点</sub></p></td>
-    <td><img src="docs/readme/07-game-cards-live.png" alt="对局中的完整卡面"><p align="center"><sub><b>卡面适配</b> · 手牌完整卡面 / 目标卡详情 / 游戏日志</sub></p></td>
+    <td><img src="docs/readme/05-season-pass-live.jpg" alt="赛季通行证的奖励轨道、任务和当前等级"><p align="center"><sub><b>赛季通行证</b> · 奖励轨道 / 航海任务 / 赛季挑战</sub></p></td>
+    <td><img src="docs/readme/01-home-live.jpg" alt="开战首页的对局入口、航海任务与全服热门卡"><p align="center"><sub><b>准备出航</b> · 对局入口 / 航海任务 / 全服热门卡</sub></p></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/readme/07-replay-live.jpg" alt="已结束的人机对局回放，第36步"><p align="center"><sub><b>已结束对局回放</b> · 双方海域 / 当前连锁 / 节点时间线</sub></p></td>
   </tr>
 </table>
 

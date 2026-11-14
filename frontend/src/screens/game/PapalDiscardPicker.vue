@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ownCardArtUrl } from '../../cards/ownCardArt'
+import { ownCardArtUrl, ownSkinEffectClass } from '../../cards/ownCardArt'
 import type { CardLike } from './view'
 
 const props = defineProps<{ cards: CardLike[]; attacks: number; pending: boolean; error: string }>()
@@ -22,7 +22,7 @@ watch(() => props.cards.map(card => card.name).join('\0'), () => {
     <div class="game-papal-picker__tools"><span>手牌 {{ cards.length }} 张</span><button type="button" class="button button--ghost" :disabled="pending || !cards.length" @click="selected = selected.length === cards.length ? [] : cards.map((_,i) => i)">{{ selected.length === cards.length && cards.length ? '取消全选' : '全选' }}</button></div>
     <div class="game-papal-cards">
       <button v-for="(card,index) in cards" :key="index" type="button" :data-testid="'game-papal-card-' + index" :disabled="pending" :aria-pressed="selected.includes(index)" :class="{ 'is-selected': selected.includes(index) }" @click="toggle(index)">
-        <img v-if="ownCardArtUrl(card.name)" :src="ownCardArtUrl(card.name)!" alt="" /><span><strong>{{ card.name }}</strong><small>速阶 {{ card.speed }} · {{ card.type }}</small><small>{{ selected.includes(index) ? '已选择 · 攻击 +2' : '点击选择' }}</small></span><b class="game-papal-check" aria-hidden="true">{{ selected.includes(index) ? '✓' : '+' }}</b>
+        <span v-if="ownCardArtUrl(card.name)" :class="ownSkinEffectClass(card.name)" style="display:inline-flex;position:relative"><img :src="ownCardArtUrl(card.name)!" alt="" /></span><span><strong>{{ card.name }}</strong><small>速阶 {{ card.speed }} · {{ card.type }}</small><small>{{ selected.includes(index) ? '已选择 · 攻击 +2' : '点击选择' }}</small></span><b class="game-papal-check" aria-hidden="true">{{ selected.includes(index) ? '✓' : '+' }}</b>
       </button>
     </div>
     <p v-if="error" role="alert">{{ error }}</p><p v-else-if="changed" role="status">手牌已更新，请重新选择。</p>

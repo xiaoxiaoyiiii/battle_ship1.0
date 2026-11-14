@@ -3,17 +3,19 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useCardDrawStore, type DrawFlight } from '../../stores/cardDraw'
 import { useGameStore } from '../../stores/game'
 import { useUiStore } from '../../stores/ui'
-import { ownCardArtUrl } from '../../cards/ownCardArt'
+import { ownCardArtUrl, ownSkinEffectClass } from '../../cards/ownCardArt'
 
 const draws = useCardDrawStore(), game = useGameStore(), ui = useUiStore()
 const deck = ref<HTMLElement | null>(null)
 const active = ref<DrawFlight | null>(null)
 const style = ref<Record<string, string>>({})
-const face = computed(() => {
+const faceName = computed(() => {
   const flight = active.value
-  if (!flight || flight.discard || flight.player !== game.state.player_id) return null
-  return ownCardArtUrl(String(game.state.hand[flight.index]?.name ?? ''))
+  if (!flight || flight.discard || flight.player !== game.state.player_id) return ''
+  return String(game.state.hand[flight.index]?.name ?? '')
 })
+const face = computed(() => faceName.value ? ownCardArtUrl(faceName.value) : null)
+const faceSkinClass = computed(() => faceName.value ? ownSkinEffectClass(faceName.value) : '')
 let raf = 0, mounted = false
 let media: MediaQueryList | null = null
 function enabled(): boolean { return !document.hidden && ui.motion !== 'reduced' && !media?.matches }
@@ -63,7 +65,7 @@ onBeforeUnmount(() => {
     <span>共享牌堆 <b data-testid="game-deck-count">{{ game.state.deck_count }}</b></span>
   </div>
   <Teleport to="body">
-    <div v-if="active" class="draw-flight" data-testid="draw-animation" :data-flight="active.id" :data-owner="active.player === game.state.player_id ? 'self' : 'opponent'" :style="style" aria-hidden="true">
+    <div v-if="active" class="draw-flight" :class="faceSkinClass" data-testid="draw-animation" :data-flight="active.id" :data-owner="active.player === game.state.player_id ? 'self' : 'opponent'" :style="style" aria-hidden="true">
       <img v-if="face" :src="face" alt="" />
       <span v-else>⚓</span>
     </div>

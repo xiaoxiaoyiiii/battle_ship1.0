@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { cardArtUrl } from '../../cards/cardArt'
-import { ownCardArtUrl } from '../../cards/ownCardArt'
+import { ownCardArtUrl, ownSkinEffectClass } from '../../cards/ownCardArt'
 import AppOverlay from '../../components/AppOverlay.vue'
 import { useGameStore } from '../../stores/game'
 import { refreshMagicState, sendBattleEvent } from '../../realtime/battle'
@@ -60,7 +60,7 @@ async function submit(cancel = false): Promise<void> {
 <template>
   <AppOverlay :draggable="!compact" v-if="visible" id="magic-choice-panel" :priority="170" :close-on-backdrop="false" labelledby="magic-choice-title">
     <section class="magic-choice battle-prompt">
-      <header class="battle-prompt__head" data-drag-handle><div><p class="battle-prompt__context">卡牌效果</p><h2 id="magic-choice-title">{{ names[kind] }} · 选择效果</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div><img v-if="ownCardArtUrl(names[kind] || '')" class="battle-prompt__card-art" :src="ownCardArtUrl(names[kind] || '')!" alt="" draggable="false" /></header>
+      <header class="battle-prompt__head" data-drag-handle><div><p class="battle-prompt__context">卡牌效果</p><h2 id="magic-choice-title">{{ names[kind] }} · 选择效果</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div><span v-if="ownCardArtUrl(names[kind] || '')" class="battle-prompt__card-art" :class="ownSkinEffectClass(names[kind] || '')"><img :src="ownCardArtUrl(names[kind] || '')!" alt="" draggable="false" /></span></header>
       <div ref="bodyPanel" class="magic-choice__body" :class="{ 'is-reading': reading >= 0 }">
       <template v-if="numeric">
         <p>{{ kind === 'shenji_declare' ? '宣言对方回合结束时，你的战舰将减少多少艘（0–6）。' : '选择双方调整后的船数，随后各自在原船位重新部署。' }}</p>

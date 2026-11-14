@@ -220,6 +220,10 @@ export const useGachaStore = defineStore('gacha', () => {
     }
   }
 
+  function clearLastPull(): void {
+    lastPull.value = null
+  }
+
   function reset(): void {
     requestToken += 1
     status.value = 'idle'
@@ -246,6 +250,7 @@ export const useGachaStore = defineStore('gacha', () => {
     load,
     pull,
     exchange,
+    clearLastPull,
     reset,
   }
 })

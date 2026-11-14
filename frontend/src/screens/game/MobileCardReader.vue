@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import AppOverlay from '../../components/AppOverlay.vue'
-import { ownCardArtUrl } from '../../cards/ownCardArt'
+import { ownCardArtUrl, ownSkinEffectClass } from '../../cards/ownCardArt'
 import type { CardLike } from './view'
 withDefaults(defineProps<{ card: CardLike; reason: string; canDiscard: boolean; discardReason?: string; pending?: boolean }>(), { discardReason: '', pending: false })
 const emit = defineEmits<{ close: []; use: []; discard: [] }>()
@@ -15,7 +15,7 @@ const emit = defineEmits<{ close: []; use: []; discard: [] }>()
       </header>
       <div class="mobile-card-reader__body">
       <div class="mobile-card-reader__content">
-        <img v-if="ownCardArtUrl(card.name)" :src="ownCardArtUrl(card.name)!" :alt="card.name + '完整卡面'" />
+        <span v-if="ownCardArtUrl(card.name)" :class="ownSkinEffectClass(card.name)" style="display:inline-flex;position:relative"><img :src="ownCardArtUrl(card.name)!" :alt="card.name + '完整卡面'" /></span>
         <article><span class="mobile-card-reader__type">{{ card.type }}</span><h3>效果说明</h3><p>{{ card.description || '暂无效果说明' }}</p></article>
       </div>
       <p v-if="reason" class="mobile-card-reader__reason" data-testid="game-card-detail-reason">{{ reason }}</p>

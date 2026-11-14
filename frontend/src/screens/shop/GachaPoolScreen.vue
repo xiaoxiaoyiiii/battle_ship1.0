@@ -3,14 +3,15 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useAuthStore } from '../../stores/auth'
 import { useGachaStore } from '../../stores/gacha'
 import { useUiStore } from '../../stores/ui'
-import type { GachaPoolSkin, GachaPull } from '../../stores/gachaTypes'
-import GachaRevealPlaceholder from './GachaRevealPlaceholder.vue'
+import type { GachaPoolSkin } from '../../stores/gachaTypes'
+import GachaReveal from './gacha/GachaReveal.vue'
 
 const auth = useAuthStore()
 const store = useGachaStore()
 const ui = useUiStore()
 const confirmSkin = ref<GachaPoolSkin | null>(null)
-const revealResults = ref<GachaPull[] | null>(null)
+const shardBar = ref<HTMLElement | null>(null)
+const reduceMotion = computed(() => ui.motion === 'reduced')
 
 const rates = computed(() => store.pool?.ratesDisplay ?? [])
 const progress = computed(() => store.pool?.progress ?? { owned: 0, total: 12, complete: false })
@@ -54,14 +55,17 @@ async function pull(count: 1 | 10): Promise<void> {
     ui.notify({ code: `gacha-pull-${count}-fail`, tone: 'warning', message: result.message || '抽卡没有完成', ttl: 2600 })
     return
   }
-  revealResults.value = result.result.results
   if (result.replayed) {
     ui.notify({ code: 'gacha-pull-replayed', tone: 'success', message: '已展示上次同一请求的抽卡结果', ttl: 2600 })
   }
 }
 
+function onRevealSkip(): void {
+  // skip 只表示一键翻完，结算总览仍留在本组件上。
+}
+
 function closeReveal(): void {
-  revealResults.value = null
+  store.clearLastPull()
 }
 
 async function confirmExchange(skin: GachaPoolSkin): Promise<void> {
@@ -87,7 +91,6 @@ onMounted(load)
 watch(() => auth.isGuest, (guest) => {
   if (guest) {
     confirmSkin.value = null
-    revealResults.value = null
     store.reset()
   }
   load()
@@ -133,7 +136,7 @@ watch(() => auth.isGuest, (guest) => {
           集齐进度 <b>{{ progress.owned }}</b> / {{ progress.total }}
           <span v-if="progress.complete">已集齐</span>
         </p>
-        <p class="gacha-pool__shards" data-testid="gacha-shards">潮汐碎片 <b>{{ shards }}</b></p>
+        <p ref="shardBar" class="gacha-pool__shards" data-testid="gacha-shards">潮汐碎片 <b>{{ shards }}</b></p>
       </section>
 
       <div class="gacha-pool__actions">
@@ -156,15 +159,16 @@ watch(() => auth.isGuest, (guest) => {
       </div>
       <p v-if="store.error" class="gacha-pool__error" data-testid="gacha-feedback" role="alert">{{ store.error }}</p>
 
-      <!--
-        Pull-reveal mount point.
-        Today this wrapper renders GachaRevealPlaceholder (same public contract:
-        props.results: GachaPull[] in camelCase; emit done / skip).
-        After Codex lands, swap only the inner component to `./gacha/GachaReveal.vue`.
-        Do not statically import ./gacha/GachaReveal.vue until that file exists.
-      -->
-      <div v-if="revealResults" class="gacha-pool__reveal" data-testid="gacha-reveal-mount">
-        <GachaRevealPlaceholder :results="revealResults" @done="closeReveal" @skip="closeReveal" />
+      <div v-if="store.lastPull" class="gacha-pool__reveal" data-testid="gacha-reveal-mount">
+        <GachaReveal
+          :key="store.lastPull.requestId"
+          :results="store.lastPull.results"
+          :shard-balance="store.lastPull.shards"
+          :shard-target="shardBar"
+          :reduced-motion="reduceMotion"
+          @skip="onRevealSkip"
+          @done="closeReveal"
+        />
       </div>
 
       <section class="gacha-pool__exchange" data-testid="gacha-exchange" aria-label="碎片兑换">

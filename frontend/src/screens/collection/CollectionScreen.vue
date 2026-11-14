@@ -4,7 +4,7 @@ import { useCollectionStore } from '../../stores/collection'
 import { useAuthStore } from '../../stores/auth'
 import { useUiStore } from '../../stores/ui'
 import { CARDS } from '../../cards/cardData'
-import { resolveCardArtUrl } from '../../cards/skinArt'
+import { resolveCardArtUrl, skinEffectClass } from '../../cards/skinArt'
 import { filteredCards, masteryClass, MASTERY_NAMES, ownedSkinIds, selectedSkinId, type CollectionCard } from './model'
 import './collection.css'
 
@@ -72,13 +72,13 @@ onMounted(load)
         <div><p class="archive__count">{{ visible.length }} 张卡牌 · 熟练与胜场仅计有效匹配和排位</p>
           <p v-if="!visible.length" class="archive__notice">没有找到卡牌，试试更换关键词或筛选条件。</p>
           <ul class="archive__grid"><li v-for="c in visible" :key="c.name"><button class="archive-card" :class="[masteryClass(c.selected_tier),{'is-unlit':!c.lit,'is-selected':current?.name===c.name}]" :aria-pressed="current?.name===c.name" :aria-label="c.name+'，'+(c.lit?'已点亮':'未点亮')" data-testid="collection-card" :data-card="c.name" @click="pick(c.name)">
-            <div class="archive-card__art"><img :src="cardFace(c)" :alt="c.name+' 卡面'" loading="lazy" /><span>{{ c.lit ? '已点亮' : '未点亮' }}</span></div>
+            <div class="archive-card__art" :class="skinEffectClass(c.name, selectedSkinId(c))"><img :src="cardFace(c)" :alt="c.name+' 卡面'" loading="lazy" /><span>{{ c.lit ? '已点亮' : '未点亮' }}</span></div>
             <div class="archive-card__caption"><strong>{{ c.name }}</strong><span>速阶 {{ c.speed }} · {{ c.type }}</span><small>{{ c.uses }} 次出牌 · {{ c.wins }} 胜</small></div>
           </button></li></ul>
         </div>
         <aside v-if="current" ref="detail" class="archive__detail" data-testid="collection-card-detail" tabindex="-1" :aria-label="current.name+' 详情'">
           <button class="archive__detail-close" aria-label="关闭卡牌详情" @click="selected=''">×</button>
-          <div class="archive__detail-art" :class="masteryClass(current.selected_tier)" :data-skin-id="selectedSkinId(current)"><img :src="cardFace(current)" :alt="current.name+' 卡面预览'" /></div>
+          <div class="archive__detail-art" :class="[masteryClass(current.selected_tier), skinEffectClass(current.name, selectedSkinId(current))]" :data-skin-id="selectedSkinId(current)"><img :src="cardFace(current)" :alt="current.name+' 卡面预览'" /></div>
           <h2>{{ current.name }}</h2><p class="archive__card-kind">速阶 {{ current.speed }} · {{ current.type }} · {{ current.lit?'已点亮':'尚未点亮' }}</p>
           <p class="archive__description">{{ current.description }}</p><p class="archive__chain">{{ current.chain_description }}</p>
           <dl class="archive__card-stats"><div><dt>打出次数</dt><dd>{{ current.uses }}</dd></div><div><dt>胜场</dt><dd>{{ current.wins }}</dd></div></dl>

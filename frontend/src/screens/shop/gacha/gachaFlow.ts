@@ -12,7 +12,7 @@ export interface GachaPull {
 export type GachaResult = GachaPull
 
 export type GachaStage = 'scanning' | 'rising' | 'ready' | 'summary'
-export type GachaCardPhase = 'hidden' | 'turning' | 'open'
+export type GachaCardPhase = 'hidden' | 'charging' | 'turning' | 'open'
 
 export interface GachaCardState {
   readonly phase: GachaCardPhase
@@ -37,6 +37,9 @@ export interface GachaRevealOptions {
 export interface GachaRevealFlow {
   readonly snapshot: GachaRevealSnapshot
   reveal(index: number): boolean
+  press(index: number): boolean
+  release(index: number): boolean
+  cancel(index: number): boolean
   skip(): boolean
   finish(): boolean
   reset(results: readonly GachaResult[]): void
@@ -80,6 +83,7 @@ export function createGachaRevealFlow(
   let skipped = false
   let generation = 0
   const timers = new Set<ReturnType<typeof setTimeout>>()
+  const charges = new Map<number, { held: boolean; ready: boolean }>()
 
   function initialSnapshot(): GachaRevealSnapshot {
     return {
@@ -103,6 +107,7 @@ export function createGachaRevealFlow(
     generation += 1
     timers.forEach((timer) => clearTimeout(timer))
     timers.clear()
+    charges.clear()
   }
 
   function after(delay: number, callback: () => void) {
@@ -116,13 +121,48 @@ export function createGachaRevealFlow(
 
   function begin() {
     if (snapshot.stage !== 'scanning') return
-    after(1000, () => publish({ stage: 'rising' }))
-    after(1600, () => publish({ stage: 'ready' }))
+    after(1000, () => { if (!reducedMotion && snapshot.stage === 'scanning') publish({ stage: 'rising' }) })
+    after(1600, () => { if (snapshot.stage === 'rising') publish({ stage: 'ready' }) })
   }
 
   function changeCard(index: number, state: GachaCardState) {
     const cards = snapshot.cards.map((card, current) => current === index ? state : card)
     publish({ cards, stage: cards.every((card) => card.phase === 'open') ? 'summary' : 'ready' })
+  }
+
+  function turn(index: number) {
+    charges.delete(index)
+    if (reducedMotion) {
+      changeCard(index, { phase: 'open', exposed: true })
+      return
+    }
+    changeCard(index, { phase: 'turning', exposed: false })
+    after(450, () => {
+      if (snapshot.cards[index]?.phase !== 'turning') return
+      changeCard(index, { phase: 'turning', exposed: true })
+      if (results[index].kind === 'limited' && !flashSeen && !reducedMotion) {
+        flashSeen = true
+        publish({ flash: true })
+        after(260, () => publish({ flash: false }))
+      }
+    })
+    after(900, () => {
+      if (snapshot.cards[index]?.phase === 'turning') changeCard(index, { phase: 'open', exposed: true })
+    })
+  }
+
+  function charge(index: number, held: boolean) {
+    if (disposed || snapshot.completed || snapshot.stage !== 'ready' || !Number.isInteger(index)) return false
+    if (snapshot.cards[index]?.phase !== 'hidden') return false
+    const pending = { held, ready: false }
+    charges.set(index, pending)
+    changeCard(index, { phase: 'charging', exposed: false })
+    after(results[index].kind === 'shard' ? 300 : 450, () => {
+      if (charges.get(index) !== pending) return
+      pending.ready = true
+      if (!pending.held) turn(index)
+    })
+    return true
   }
 
   begin()
@@ -131,22 +171,23 @@ export function createGachaRevealFlow(
     get snapshot() { return snapshot },
 
     reveal(index) {
-      if (disposed || snapshot.completed || snapshot.stage !== 'ready' || !Number.isInteger(index)) return false
-      if (snapshot.cards[index]?.phase !== 'hidden') return false
-      if (reducedMotion) {
-        changeCard(index, { phase: 'open', exposed: true })
-        return true
-      }
-      changeCard(index, { phase: 'turning', exposed: false })
-      after(450, () => {
-        changeCard(index, { phase: 'turning', exposed: true })
-        if (results[index].kind === 'limited' && !flashSeen) {
-          flashSeen = true
-          publish({ flash: true })
-          after(260, () => publish({ flash: false }))
-        }
-      })
-      after(900, () => changeCard(index, { phase: 'open', exposed: true }))
+      return charge(index, false)
+    },
+
+    press(index) { return charge(index, true) },
+
+    release(index) {
+      if (disposed) return false
+      const pending = charges.get(index)
+      if (!pending || !pending.held) return false
+      pending.held = false
+      if (pending.ready) turn(index)
+      return true
+    },
+
+    cancel(index) {
+      if (disposed || !charges.delete(index)) return false
+      changeCard(index, { phase: 'hidden', exposed: false })
       return true
     },
 
@@ -190,7 +231,6 @@ export function createGachaRevealFlow(
         publish({ reducedMotion: false })
         return
       }
-      clearTimers()
       const cards = snapshot.cards.map((card) => card.phase === 'turning'
         ? { phase: 'open', exposed: true } as const
         : card)

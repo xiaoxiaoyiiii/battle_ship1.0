@@ -9,6 +9,7 @@ import {
   summarizeGachaResults,
 } from './gachaFlow'
 import type { GachaPull } from './gachaFlow'
+import { createGachaAudio } from './gachaAudio'
 import './gacha-reveal.css'
 
 const props = defineProps<{
@@ -34,6 +35,11 @@ let disposed = false
 let batch = 0
 let flightId = 0
 const uiTimers = new Set<ReturnType<typeof setTimeout>>()
+const audio = createGachaAudio()
+const chargeSounds = new Map<number, () => void>()
+const pointers = new Map<number, { index: number; x: number; y: number; touch: boolean }>()
+const keyboardCards = new Set<number>()
+let silentReveal = false
 
 function systemReducedMotion() {
   return typeof window !== 'undefined'
@@ -76,9 +82,11 @@ const cards = computed(() => state.value.cards.map((card, index) => {
     isNew,
     duplicate,
     gained,
+    particles: card.exposed && card.phase === 'turning' && !state.value.reducedMotion
+      ? (result.kind === 'shard' ? 5 : result.kind === 'limited' ? 42 : 18) : 0,
     ariaLabel: card.exposed
       ? `第 ${index + 1} 张，${resultLabel}`
-      : `第 ${index + 1} 张卡，${appearance.label}，${card.phase === 'turning' ? '正在翻开' : '点击翻开'}`,
+      : `第 ${index + 1} 张卡，${appearance.label}，${card.phase === 'charging' ? '正在蓄力，松开翻牌' : card.phase === 'turning' ? '正在翻开' : '点击或按住翻开'}`,
   }
 }))
 
@@ -145,6 +153,103 @@ function setCardElement(index: number, element: Element | ComponentPublicInstanc
   cardElements[index] = element instanceof HTMLElement ? element : null
 }
 
+function particleStyle(particle: number, count: number): CSSProperties {
+  const angle = particle / count * Math.PI * 2
+  const reach = 52 + (particle % 5) * 14
+  return {
+    '--gacha-particle-x': `${Math.cos(angle) * reach}px`,
+    '--gacha-particle-y': `${Math.sin(angle) * reach}px`,
+    '--gacha-particle-angle': `${particle * 47}deg`,
+    animationDelay: `${particle % 4 * 18}ms`,
+  }
+}
+
+function clearInteraction() {
+  pointers.clear()
+  keyboardCards.clear()
+  chargeSounds.forEach((stop) => stop())
+  chargeSounds.clear()
+  audio.stopAll()
+}
+
+function skip() {
+  clearInteraction()
+  silentReveal = true
+  flow.skip()
+  silentReveal = false
+}
+
+function onCardClick(index: number, event?: MouseEvent) {
+  // pointer 手势已在 down/up 处理；原生 click 只作为读屏/程序激活入口。
+  if (!event || event.detail === 0) flow.reveal(index)
+}
+
+function onPointerDown(index: number, event: PointerEvent) {
+  if (event.button !== 0 || !flow.press(index)) return
+  pointers.set(event.pointerId, { index, x: event.clientX, y: event.clientY, touch: event.pointerType === 'touch' })
+  ;(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
+}
+
+function onPointerCancel(event: PointerEvent) {
+  const pointer = pointers.get(event.pointerId)
+  if (!pointer) return
+  pointers.delete(event.pointerId)
+  flow.cancel(pointer.index)
+}
+
+function onPointerMove(event: PointerEvent) {
+  const pointer = pointers.get(event.pointerId)
+  if (pointer?.touch && Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 12) onPointerCancel(event)
+}
+
+function onPointerUp(event: PointerEvent) {
+  const pointer = pointers.get(event.pointerId)
+  if (!pointer) return
+  pointers.delete(event.pointerId)
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  const inside = event.clientX >= rect.left && event.clientX <= rect.left + rect.width
+    && event.clientY >= rect.top && event.clientY <= rect.top + rect.height
+  if (inside) flow.release(pointer.index)
+  else flow.cancel(pointer.index)
+}
+
+function onCardKeyDown(index: number, event: KeyboardEvent) {
+  if (event.key !== ' ' && event.key !== 'Enter') return
+  event.preventDefault()
+  if (!event.repeat && flow.press(index)) keyboardCards.add(index)
+}
+
+function onCardKeyUp(index: number, event: KeyboardEvent) {
+  if (event.key !== ' ' && event.key !== 'Enter') return
+  event.preventDefault()
+  if (keyboardCards.delete(index)) flow.release(index)
+}
+
+function onCardBlur(index: number) {
+  if (keyboardCards.delete(index)) flow.cancel(index)
+}
+
+watch(() => state.value.cards, (next, previous) => {
+  next.forEach((card, index) => {
+    const before = previous[index]
+    if (card.phase !== 'charging') {
+      chargeSounds.get(index)?.()
+      chargeSounds.delete(index)
+    }
+    if (silentReveal) return
+    const shard = props.results[index]?.kind === 'shard'
+    if (card.phase === 'charging' && before?.phase !== 'charging') {
+      chargeSounds.set(index, audio.play('charge', { loop: true, level: shard ? 0.2 : 0.52, rate: shard ? 1.5 : 1 }))
+    }
+    if ((card.phase === 'turning' || card.phase === 'open') && before?.phase === 'charging') {
+      audio.play('flip', { level: shard ? 0.23 : 0.72 })
+    }
+    if (card.exposed && !before?.exposed && !shard) {
+      audio.play(props.results[index].kind === 'limited' ? 'limited' : 'legendary', { level: 0.85 })
+    }
+  })
+}, { flush: 'sync' })
+
 watch(() => state.value.cards, (next, previous) => {
   next.forEach((card, index) => {
     if (card.exposed && !previous[index]?.exposed) announcement.value = cards.value[index].ariaLabel
@@ -167,6 +272,7 @@ watch(() => state.value.stage, async (stage) => {
 })
 
 watch(() => props.results, () => {
+  clearInteraction()
   clearUiTimers()
   announcement.value = ''
   flow.reset(props.results)
@@ -182,7 +288,7 @@ watch(() => props.reducedMotion, updateMotion)
 function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape' && state.value.stage !== 'summary') {
     event.preventDefault()
-    flow.skip()
+    skip()
     return
   }
   if (event.key !== 'Tab' || !panel.value) return
@@ -217,6 +323,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   const shouldRestoreFocus = panel.value?.contains(document.activeElement) || document.activeElement === document.body
   disposed = true
+  clearInteraction()
+  audio.dispose()
   flow.dispose()
   clearUiTimers()
   media?.removeEventListener('change', updateMotion)
@@ -244,14 +352,14 @@ onBeforeUnmount(() => {
         <span class="gacha-reveal__shard-symbol" aria-hidden="true"></span>
         <span>{{ balanceLabel }}<strong>{{ displayBalance }}</strong></span>
       </div>
-      <button v-if="state.stage !== 'summary'" class="gacha-reveal__skip" type="button" @click="flow.skip()">跳过动画</button>
+      <button v-if="state.stage !== 'summary'" class="gacha-reveal__skip" type="button" @click="skip()">跳过动画</button>
     </header>
 
     <main class="gacha-reveal__content">
       <div class="gacha-reveal__heading">
         <span class="gacha-reveal__heading-line" aria-hidden="true"></span>
         <h1>{{ title }}</h1>
-        <p v-if="state.stage === 'ready'">{{ exposedCount }} / {{ results.length }}<span>点击卡牌，揭晓回响</span></p>
+        <p v-if="state.stage === 'ready'">{{ exposedCount }} / {{ results.length }}<span>任选一张 · 点击或按住蓄力</span></p>
         <p v-else-if="state.stage === 'summary' && results.length">霓虹赛博<span>{{ summary.totalCount }} 次回响</span></p>
         <p v-else-if="results.length">潮汐深处，光正在靠近</p>
         <p v-else>返回卡池后再次抽取。</p>
@@ -269,9 +377,22 @@ onBeforeUnmount(() => {
             :aria-disabled="state.stage !== 'ready' || card.phase !== 'hidden'"
             :tabindex="state.stage === 'ready' && card.phase === 'hidden' ? 0 : -1"
             :aria-label="card.ariaLabel"
-            @click="flow.reveal(card.index)"
+            @click="onCardClick(card.index, $event)"
+            @pointerdown="onPointerDown(card.index, $event)"
+            @pointermove="onPointerMove"
+            @pointerup="onPointerUp"
+            @pointercancel="onPointerCancel"
+            @lostpointercapture="onPointerCancel"
+            @keydown="onCardKeyDown(card.index, $event)"
+            @keyup="onCardKeyUp(card.index, $event)"
+            @blur="onCardBlur(card.index)"
           >
             <span class="gacha-card__edge" aria-hidden="true"></span>
+            <span v-if="card.particles" class="gacha-card__burst" :class="`gacha-card__burst--${card.tone}`" aria-hidden="true">
+              <i class="gacha-card__burst-core"></i>
+              <i v-for="ring in (card.tone === 'limited' ? 3 : 1)" :key="`ring-${ring}`" class="gacha-card__burst-ring" :style="{ '--gacha-ring-order': ring - 1 }"></i>
+              <i v-for="particle in card.particles" :key="particle" class="gacha-card__particle" :style="particleStyle(particle, card.particles)"></i>
+            </span>
             <span class="gacha-card__turn" aria-hidden="true">
               <span class="gacha-card__face gacha-card__back">
                 <span class="gacha-card__back-orbit"></span>
@@ -283,18 +404,17 @@ onBeforeUnmount(() => {
                 <img v-if="card.imageUrl" class="gacha-card__art" :src="card.imageUrl" alt="" draggable="false" />
                 <span v-else-if="card.tone === 'shard'" class="gacha-card__shard-art"><i></i><b>×{{ card.gained }}</b></span>
                 <span v-else class="gacha-card__missing-art"><i></i></span>
-                <span class="gacha-card__front-shade"></span>
-                <span v-if="card.isNew" class="gacha-card__new">NEW</span>
-                <span class="gacha-card__info">
-                  <small>{{ card.label }}</small>
-                  <strong>{{ card.tone === 'shard' ? '潮汐碎片' : card.name }}</strong>
-                  <em v-if="card.duplicate">已拥有 · 碎片 +{{ card.gained }}</em>
-                  <em v-else-if="card.isNew">首次获得</em>
-                  <em v-else>碎片 +{{ card.gained }}</em>
-                </span>
+                <span v-if="card.tone === 'shard'" class="gacha-card__shard-label">潮汐碎片</span>
               </span>
             </span>
           </button>
+          <div class="gacha-card__caption" :class="{ 'gacha-card__caption--visible': card.exposed }" aria-hidden="true">
+            <span v-if="card.isNew" class="gacha-card__new">NEW</span>
+            <small>{{ card.exposed ? card.label : '\u00a0' }}</small>
+            <em v-if="card.duplicate">已拥有 · 碎片 +{{ card.gained }}</em>
+            <em v-else-if="card.isNew">首次获得</em>
+            <em v-else-if="card.exposed">碎片 +{{ card.gained }}</em>
+          </div>
         </li>
       </ol>
 
@@ -305,7 +425,7 @@ onBeforeUnmount(() => {
             <span v-if="summary.duplicateSkinCount">重复皮肤 <strong>{{ summary.duplicateSkinCount }}</strong></span>
             <span>潮汐碎片 <strong>+{{ summary.shardsGained }}</strong></span>
           </p>
-          <button ref="doneButton" class="gacha-reveal__done" type="button" :disabled="state.completed" @click="flow.finish()">{{ results.length ? '收下回响' : '完成' }}</button>
+          <button ref="doneButton" class="gacha-reveal__done" type="button" :disabled="state.completed" @click="audio.stopAll(); flow.finish()">{{ results.length ? '收下回响' : '完成' }}</button>
         </template>
         <p v-else class="gacha-reveal__hint">{{ state.stage === 'ready' ? '每一道回响，都由你亲手唤醒。' : '正在寻找属于你的回响…' }}</p>
       </footer>

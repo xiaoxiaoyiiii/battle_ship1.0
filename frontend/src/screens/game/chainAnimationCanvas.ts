@@ -3,7 +3,7 @@ import { drawCounterEffect } from './cardEffects/canvas'
 import type { ChainStageCard, ChainStagePlan } from './chainStageLayout'
 import { masteryTier } from '../collection/model'
 
-type ArtLookup = (name: string) => HTMLImageElement | null
+type ArtLookup = (name: string, skinId?: string | null) => HTMLImageElement | null
 const clamp = (n: number): number => Math.max(0, Math.min(1, n))
 const ease = (n: number): number => 1 - (1 - clamp(n)) ** 3
 const mix = (a: number, b: number, p: number): number => a + (b - a) * p
@@ -59,7 +59,7 @@ function card(ctx: CanvasRenderingContext2D, item: ChainArtCard, art: ArtLookup,
   ctx.shadowColor = '#82c9e877'; ctx.shadowBlur = 19; ctx.fillStyle = '#122033'
   ctx.beginPath(); ctx.roundRect(-width / 2 - 3, -height / 2 - 3, width + 6, height + 6, radius + 2); ctx.fill(); ctx.shadowBlur = 0
   ctx.save(); ctx.beginPath(); ctx.roundRect(-width / 2, -height / 2, width, height, radius); ctx.clip()
-  const image = art(item.name)
+  const image = art(item.name, item.skinId)
   if (image?.complete && image.naturalWidth) {
     if (grey) ctx.filter = 'grayscale(1) brightness(.65)'
     ctx.drawImage(image, -width / 2, -height / 2, width, height)

@@ -5,6 +5,9 @@ import { useAuthStore } from '../../stores/auth'
 import { shopKindLabel, useShopStore, type ShopItem } from '../../stores/shop'
 import { useUiStore } from '../../stores/ui'
 import ShopItemPreview from './ShopItemPreview.vue'
+import GachaPoolScreen from './GachaPoolScreen.vue'
+
+type ShopTab = 'catalog' | 'gacha'
 
 const auth = useAuthStore()
 const store = useShopStore()
@@ -15,6 +18,7 @@ const pinnedId = ref<string | null>(null)
 const hoverId = ref<string | null>(null)
 const previewRoot = ref<HTMLElement | null>(null)
 const fineHover = ref(false)
+const tab = ref<ShopTab>('catalog')
 let hoverMedia: MediaQueryList | null = null
 
 const previewItem = computed(() => {
@@ -89,6 +93,7 @@ watch(() => auth.isGuest, (guest) => {
   }
   void store.load(true)
 })
+
 watch(() => store.items, (items) => {
   if (pinnedId.value && !items.some((item) => item.id === pinnedId.value)) pinnedId.value = null
   if (hoverId.value && !items.some((item) => item.id === hoverId.value)) hoverId.value = null
@@ -109,11 +114,17 @@ watch(() => store.items, (items) => {
         </div>
       </header>
 
+      <nav class="shop__tabs" data-testid="shop-tabs" aria-label="商店分区">
+        <button type="button" :aria-pressed="tab === 'catalog'" data-testid="shop-tab-catalog" @click="tab = 'catalog'">装饰</button>
+        <button type="button" :aria-pressed="tab === 'gacha'" data-testid="shop-tab-gacha" @click="tab = 'gacha'">卡池</button>
+      </nav>
+
       <div v-if="auth.isGuest || store.status === 'anonymous'" class="shop__login" data-testid="shop-login">
         <h2>登录后使用潮汐徽记</h2>
         <p>商店与徽记余额都绑定账号。</p>
         <button type="button" class="button button--primary" @click="auth.open('login', '登录后查看商店')">登录 / 注册</button>
       </div>
+      <GachaPoolScreen v-else-if="tab === 'gacha'" />
       <div v-else-if="store.status === 'loading'" class="shop__state" role="status">正在读取商店…</div>
       <div v-else-if="store.status === 'error'" class="shop__state shop__state--error" role="alert">
         {{ store.error || '商店暂时无法读取。' }}
@@ -208,6 +219,10 @@ watch(() => store.items, (items) => {
 .shop-card__buy.is-short { color: var(--role-warning); border-color: color-mix(in srgb, var(--role-warning) 55%, var(--border-subtle)); }
 .shop-card.is-owned { opacity: 0.58; filter: grayscale(0.45); }
 .shop-card.is-owned .shop-card__buy { color: var(--text-secondary); }
+.shop__tabs { display: flex; gap: 22px; margin: 0 0 18px; border-bottom: 1px solid var(--border-strong); }
+.shop__tabs button { padding: 10px 2px 12px; border: 0; border-bottom: 3px solid transparent; background: transparent; color: var(--text-secondary); font: inherit; font-size: 16px; font-weight: 700; cursor: pointer; }
+.shop__tabs button[aria-pressed='true'] { color: var(--text-primary); border-bottom-color: var(--role-action); }
+.shop__tabs button:focus-visible { outline: 2px solid var(--role-action); outline-offset: 3px; }
 @media (max-width: 720px) {
   .shop { padding: 18px 14px 28px; }
   .shop__hero { align-items: flex-start; flex-direction: column; }

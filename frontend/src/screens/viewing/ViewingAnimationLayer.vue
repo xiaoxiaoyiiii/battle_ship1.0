@@ -5,14 +5,15 @@ import { planChainStage } from '../game/chainStageLayout'
 import { drawCardEffect, drawCounterEffect, warmCardEffectCaches, clearCardEffectCaches } from '../game/cardEffects/canvas'
 import type { CardEffectKind, EffectCell, EffectRect } from '../game/cardEffects/types'
 import { chainFrame } from './presentation'
-import { cardArtUrl } from '../../cards/cardArt'
+import { resolveCardArtUrl } from '../../cards/skinArt'
 import type { Json } from './types'
 
 const props = defineProps<{ cue: Json | null; progress: number }>()
 const canvas = ref<HTMLCanvasElement | null>(null), art = new Map<string, HTMLImageElement>()
-function image(name: string): HTMLImageElement | null {
-  let img = art.get(name)
-  if (!img) { const url = cardArtUrl(name); if (!url) return null; img = new Image(); img.src = url; art.set(name, img) }
+function image(name: string, skinId?: string | null): HTMLImageElement | null {
+  const key = name + '::' + (skinId || 'default')
+  let img = art.get(key)
+  if (!img) { const url = resolveCardArtUrl(name, skinId); if (!url) return null; img = new Image(); img.src = url; art.set(key, img) }
   return img.complete && img.naturalWidth ? img : null
 }
 function rect(selector: string): EffectRect | null {

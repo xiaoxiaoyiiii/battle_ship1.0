@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useCardDrawStore, type DrawFlight } from '../../stores/cardDraw'
 import { useGameStore } from '../../stores/game'
 import { useUiStore } from '../../stores/ui'
-import { cardArtUrl } from '../../cards/cardArt'
+import { ownCardArtUrl } from '../../cards/ownCardArt'
 
 const draws = useCardDrawStore(), game = useGameStore(), ui = useUiStore()
 const deck = ref<HTMLElement | null>(null)
@@ -12,7 +12,7 @@ const style = ref<Record<string, string>>({})
 const face = computed(() => {
   const flight = active.value
   if (!flight || flight.discard || flight.player !== game.state.player_id) return null
-  return cardArtUrl(String(game.state.hand[flight.index]?.name ?? ''))
+  return ownCardArtUrl(String(game.state.hand[flight.index]?.name ?? ''))
 })
 let raf = 0, mounted = false
 let media: MediaQueryList | null = null

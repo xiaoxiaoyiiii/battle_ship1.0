@@ -29,12 +29,16 @@ import { usePlayerCards } from './usePlayerCards'
 import { acquireBattleChannel, battleActionPending, getBattleSocket, refreshMagicState, sendBattleEvent, syncHand } from '../../realtime/battle'
 import { acquireMatchChannel } from '../../realtime/match'
 import { cardArtUrl } from '../../cards/cardArt'
+import { normalizeSkinId, resolveCardArtUrl } from '../../cards/skinArt'
 import { useCollectionStore } from '../../stores/collection'
 import { masteryClass } from '../collection/model'
 
 const cardCollection = useCollectionStore()
 onMounted(() => { void cardCollection.load() })
 const ownMastery = (name:string):string => masteryClass(cardCollection.data?.cards.find(c=>c.name===name)?.selected_tier)
+const ownSkinId = (name:string):string | null => normalizeSkinId(cardCollection.data?.cards.find(c=>c.name===name)?.selected_skin)
+const ownCardArt = (name:string):string | null => resolveCardArtUrl(name, ownSkinId(name))
+const chainArt = (item:{ name: string; skinId?: string | null }):string | null => resolveCardArtUrl(item.name, item.skinId)
 import { useAuthStore } from '../../stores/auth'
 import { useGameStore } from '../../stores/game'
 import { useMatchStore } from '../../stores/match'
@@ -2025,17 +2029,18 @@ function backToLobby(): void {
               class="chain-stack__item"
               :class="[{ 'is-spent': item.negated }, masteryClass(item.masteryTier)]"
               :data-testid="'game-chain-item-' + index"
+              :data-skin-id="item.skinId || undefined"
               :title="item.name"
             >
               <span class="chain-stack__order" aria-hidden="true">{{ index + 1 }}</span>
               <img
-                v-if="cardArtUrl(item.name)"
-                :src="cardArtUrl(item.name) || ''"
+                v-if="chainArt(item)"
+                :src="chainArt(item) || ''"
                 :alt="item.name + ' 卡面'"
                 loading="lazy"
               />
               <span v-else class="chain-stack__name" :data-testid="'game-chain-item-' + index + '-name'">{{ item.name }}</span>
-              <span v-if="cardArtUrl(item.name)" class="chain-stack__label">{{ item.name }}</span>
+              <span v-if="chainArt(item)" class="chain-stack__label">{{ item.name }}</span>
               <span v-if="item.negated" class="arena-chain-negated">已无效</span>
             </li>
           </ol>
@@ -2070,10 +2075,10 @@ function backToLobby(): void {
             <button type="button" class="game-close" data-testid="game-card-detail-close" aria-label="关闭卡牌详情" @click="cancelCardSelection">×</button>
           </header>
           <!-- 原 main 的三段式：卡名 → 完整卡面（156px 宽、2:3）→ 可读规则 -->
-          <figure v-if="cardArtUrl(hand[selectedCardIndex].name)" class="game-detail__face">
+          <figure v-if="ownCardArt(hand[selectedCardIndex].name)" class="game-detail__face" :data-skin-id="ownSkinId(hand[selectedCardIndex].name) || undefined">
             <img
               class="game-detail__art"
-              :src="cardArtUrl(hand[selectedCardIndex].name) || ''"
+              :src="ownCardArt(hand[selectedCardIndex].name) || ''"
               :alt="hand[selectedCardIndex].name + ' 卡面'"
               loading="eager"
             />
@@ -2168,10 +2173,11 @@ function backToLobby(): void {
           type="button"
           class="card"
           :data-mastery-tier="cardCollection.data?.cards.find(c=>c.name===card.name)?.selected_tier ?? 0"
+          :data-skin-id="ownSkinId(card.name) || undefined"
           :class="[ownMastery(card.name), {
             'card--selected': selectedCardIndex === index,
             'card--disabled': !!cardDisabled(card),
-            'card--art': !!cardArtUrl(card.name),
+            'card--art': !!ownCardArt(card.name),
           }]"
           :data-testid="cardTestIdFor(card, index)"
           :data-card-name="card.name"
@@ -2192,9 +2198,9 @@ function backToLobby(): void {
           @blur="hideCardPreview()"
         >
           <img
-            v-if="cardArtUrl(card.name)"
+            v-if="ownCardArt(card.name)"
             class="card__art"
-            :src="cardArtUrl(card.name) || ''"
+            :src="ownCardArt(card.name) || ''"
             alt=""
             aria-hidden="true"
             loading="eager"
@@ -2213,8 +2219,8 @@ function backToLobby(): void {
       </div>
       <Transition name="card-inspect-fade">
         <aside v-if="!compact && previewCard" class="game-card-inspect" data-testid="game-card-hover-preview" aria-live="polite" @mouseenter="showCardPreview(hoveredCardIndex)" @mouseleave="hideCardPreview()">
-          <div class="game-card-inspect__art" :class="{ 'is-empty': !cardArtUrl(previewCard.name) }">
-            <img v-if="cardArtUrl(previewCard.name)" :src="cardArtUrl(previewCard.name) || ''" :alt="previewCard.name + ' 卡面预览'" />
+          <div class="game-card-inspect__art" :class="{ 'is-empty': !ownCardArt(previewCard.name) }" :data-skin-id="ownSkinId(previewCard.name) || undefined">
+            <img v-if="ownCardArt(previewCard.name)" :src="ownCardArt(previewCard.name) || ''" :alt="previewCard.name + ' 卡面预览'" />
             <span v-else>{{ previewCard.name }}</span>
           </div>
           <div class="game-card-inspect__body">
@@ -2278,7 +2284,7 @@ function backToLobby(): void {
     <section v-if="selection" ref="targetPanelEl" :style="targetPanelStyle" class="game-target battle-prompt" :class="{ 'is-dragging': targetDrag.state.value.dragging }" data-testid="game-target" aria-label="目标选择" role="region">
       <header ref="targetHeadEl" class="battle-prompt__head battle-prompt__handle" @pointerdown="!compact && targetDrag.onPointerDown($event)">
         <div><p class="battle-prompt__context">卡牌目标选择</p><h2 class="game-target__title" data-testid="game-target-title">{{ targetTitle }}</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div>
-        <img v-if="cardArtUrl(selection.card.name)" class="battle-prompt__card-art" :src="cardArtUrl(selection.card.name)!" alt="" draggable="false" />
+        <img v-if="ownCardArt(selection.card.name)" class="battle-prompt__card-art" :src="ownCardArt(selection.card.name)!" alt="" draggable="false" />
       </header>
       <div class="game-target__main">
         <ol v-if="selection.card.name === '神之宣告'" class="battle-prompt__steps" aria-label="施放步骤"><li :class="{ 'is-complete': selection.picks.length === 2 }">选两艘己方战舰</li><li :class="{ 'is-current': selection.picks.length === 2, 'is-complete': selection.effectChoice !== null }">选择一种效果</li></ol>
@@ -2352,7 +2358,7 @@ function backToLobby(): void {
               :disabled="!!chainResponseReason(card)" :title="chainResponseReason(card)"
               :aria-describedby="chainPreviewSource === 'hand-' + index ? 'chain-hand-preview-' + index : undefined"
               @mouseenter="canHover && !compact && inspectChain(card, 'hand-' + index)" @focus="canHover && !compact && inspectChain(card, 'hand-' + index)" @blur="!compact && (chainPreviewSource = '')" @click="onChainCardClick(card); if (!canHover) chainPreviewSource = 'hand-' + index">
-              <img v-if="cardArtUrl(card.name)" class="game-chain-option__art" :src="cardArtUrl(card.name)!" alt="" draggable="false" /><b>{{ card.name }}</b><small>速阶 {{ fullCard(card)?.speed }}</small><span class="game-chain-option__desc">{{ fullCard(card)?.description || '暂无效果描述' }}</span>
+              <img v-if="ownCardArt(card.name)" class="game-chain-option__art" :src="ownCardArt(card.name)!" alt="" draggable="false" /><b>{{ card.name }}</b><small>速阶 {{ fullCard(card)?.speed }}</small><span class="game-chain-option__desc">{{ fullCard(card)?.description || '暂无效果描述' }}</span>
             </button>
             <span v-if="chainInspect && chainPreviewSource === 'hand-' + index" :id="'chain-hand-preview-' + index" class="chain-effect-preview" data-testid="game-chain-inspect" role="tooltip"><b data-testid="game-chain-inspect-name">{{ chainInspect.name }}</b><small>速阶 {{ chainInspect.speed }}</small><span data-testid="game-chain-inspect-desc">{{ chainInspect.description || '暂无效果描述' }}</span></span>
           </div>
@@ -2374,7 +2380,7 @@ function backToLobby(): void {
     </Transition>
 
     <section v-if="shieldOpen && !cardEffects.busy && !shieldSubmitting" ref="pickPanelEl" :style="pickPanelStyle" class="game-dialog game-shield-choice game-pick-float battle-prompt" :class="{ 'is-dragging': pickDrag.state.value.dragging }" data-testid="game-shield-choice" role="dialog" aria-label="仁王之盾选择">
-      <header ref="pickHeadEl" class="battle-prompt__head battle-prompt__handle" @pointerdown="!compact && pickDrag.onPointerDown($event)"><div><p class="battle-prompt__context">选择保护目标</p><h2 class="game-dialog__title" data-testid="game-shield-choice-title">「仁王之盾」：请选择要保护的战舰</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div><img v-if="cardArtUrl('仁王之盾')" class="battle-prompt__card-art" :src="cardArtUrl('仁王之盾')!" alt="" draggable="false" /></header>
+      <header ref="pickHeadEl" class="battle-prompt__head battle-prompt__handle" @pointerdown="!compact && pickDrag.onPointerDown($event)"><div><p class="battle-prompt__context">选择保护目标</p><h2 class="game-dialog__title" data-testid="game-shield-choice-title">「仁王之盾」：请选择要保护的战舰</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div><img v-if="ownCardArt('仁王之盾')" class="battle-prompt__card-art" :src="ownCardArt('仁王之盾')!" alt="" draggable="false" /></header>
       <p class="game-dialog__hint" data-testid="game-shield-choice-hint">在自己海域点击高亮的战舰格；再点一次取消选择。</p>
       <p class="game-dialog__hint battle-prompt__progress" data-testid="game-shield-choice-count" aria-live="polite">已选 {{ shieldPicks.length }} / 3 艘</p>
       <p v-if="shieldError" class="game-dialog__error" data-testid="game-shield-choice-error">{{ shieldError }}</p>
@@ -2417,7 +2423,7 @@ function backToLobby(): void {
         <p>发动「{{ mutationDiscard.card.name }}」需要额外弃置另一张手牌。点击下方手牌后才会发送出牌；取消不会弃牌。</p>
         <div class="game-papal-cards">
           <button v-for="(card,index) in state.hand" :key="index" type="button" :data-testid="'game-mutation-discard-card-' + index" :disabled="index === mutationDiscard.castIndex || busy" @click="chooseMutationDiscard(index)">
-            <img v-if="cardArtUrl(String(card.name))" :src="cardArtUrl(String(card.name))!" alt="" /><span><strong>{{ card.name }}</strong><small>{{ index === mutationDiscard.castIndex ? '本次发动的牌，不能额外弃置' : '弃置此牌并发动' }}</small></span>
+            <img v-if="ownCardArt(String(card.name))" :src="ownCardArt(String(card.name))!" alt="" /><span><strong>{{ card.name }}</strong><small>{{ index === mutationDiscard.castIndex ? '本次发动的牌，不能额外弃置' : '弃置此牌并发动' }}</small></span>
           </button>
         </div>
       </section>

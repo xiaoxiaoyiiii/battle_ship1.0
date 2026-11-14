@@ -42,3 +42,12 @@
 @media(max-width:1000px) { .archive__body.has-selection { grid-template-columns:minmax(0,1fr) 280px; }.archive__rewards { grid-template-columns:1fr; }.archive__grid { grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:18px 12px; } }
 @media(max-width:760px) { .archive { padding:18px 14px; }.archive__mast { flex-direction:column; align-items:flex-start; gap:4px; }.archive__totals { gap:24px; }.archive__totals b { font-size:24px; }.archive__rewards { gap:14px; }.archive__rewards ol { gap:5px; }.archive__rewards li { padding-left:6px; font-size:11px; }.archive__rewards small { font-size:10px; }.archive__body.has-selection { display:flex; flex-direction:column-reverse; }.archive__detail { position:relative; top:auto; width:100%; box-sizing:border-box; }.archive__detail-art { width:120px; }.archive__grid { grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px 10px; }.archive__filters { gap:10px; }.archive__search { flex-basis:100%; }.archive__filters select { max-width:calc((100vw - 62px)/3); font-size:12px; }.archive__achievements ol { grid-template-columns:1fr; }.archive-card__caption strong { font-size:13px; } }
 @media(max-width:360px) { .archive__grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+
+.archive__skins { margin: 18px 0 0; padding-top: 16px; border-top: 1px solid var(--border-soft,#344357); }
+.archive__skins h3 { margin: 0 0 10px; font-size: 16px; }
+.archive__skin-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 0 0 10px; }
+.archive__skin-options button { min-height: 44px; padding: 8px 6px; border: 1px solid var(--border-soft,#344357); background: var(--surface-deck); border-radius: 6px; color: var(--text-primary); font: inherit; font-size: 13px; }
+.archive__skin-options button[aria-pressed=true] { border-color: #74c9d2; color: #74c9d2; }
+.archive__skin-options button:disabled { opacity: .42; cursor: not-allowed; }
+.archive__skins p { font-size: 12px; line-height: 1.7; color: var(--text-secondary); }
+@media (max-width: 360px) { .archive__skin-options { grid-template-columns: 1fr; } }

@@ -4,8 +4,8 @@ import { useCollectionStore } from '../../stores/collection'
 import { useAuthStore } from '../../stores/auth'
 import { useUiStore } from '../../stores/ui'
 import { CARDS } from '../../cards/cardData'
-import { cardArtUrl } from '../../cards/cardArt'
-import { filteredCards, masteryClass, MASTERY_NAMES, type CollectionCard } from './model'
+import { resolveCardArtUrl } from '../../cards/skinArt'
+import { filteredCards, masteryClass, MASTERY_NAMES, ownedSkinIds, selectedSkinId, type CollectionCard } from './model'
 import './collection.css'
 
 const store = useCollectionStore(), auth = useAuthStore(), ui = useUiStore()
@@ -28,6 +28,20 @@ async function choose(tier:number):Promise<void> {
   if (!current.value) return
   const ok = await store.select(current.value.name,tier)
   if (ok) ui.notify({code:'collection-mastery-saved',message:'光效已保存，下一次出牌展示时生效。',tone:'success',ttl:2400})
+}
+async function chooseSkin(skin:string):Promise<void> {
+  if (!current.value || auth.isGuest) return
+  const ok = await store.selectSkin(current.value.name, skin)
+  if (ok) ui.notify({code:'collection-skin-saved',message:'卡面已保存，下一次出牌展示时生效。',tone:'success',ttl:2400})
+}
+function cardFace(card:CollectionCard):string {
+  return resolveCardArtUrl(card.name, selectedSkinId(card)) || ''
+}
+function skinLabel(card:CollectionCard, skinId:string):string {
+  const entry = card.skins?.find(s => s.skin_id === skinId)
+  if (entry?.tier === 'limited') return '限定皮肤'
+  if (entry?.tier === 'legendary') return '传说皮肤'
+  return '皮肤'
 }
 function load():void { if (!auth.isGuest) void store.load() }
 onMounted(load)
@@ -58,16 +72,26 @@ onMounted(load)
         <div><p class="archive__count">{{ visible.length }} 张卡牌 · 熟练与胜场仅计有效匹配和排位</p>
           <p v-if="!visible.length" class="archive__notice">没有找到卡牌，试试更换关键词或筛选条件。</p>
           <ul class="archive__grid"><li v-for="c in visible" :key="c.name"><button class="archive-card" :class="[masteryClass(c.selected_tier),{'is-unlit':!c.lit,'is-selected':current?.name===c.name}]" :aria-pressed="current?.name===c.name" :aria-label="c.name+'，'+(c.lit?'已点亮':'未点亮')" data-testid="collection-card" :data-card="c.name" @click="pick(c.name)">
-            <div class="archive-card__art"><img :src="cardArtUrl(c.name) || ''" :alt="c.name+' 卡面'" loading="lazy" /><span>{{ c.lit ? '已点亮' : '未点亮' }}</span></div>
+            <div class="archive-card__art"><img :src="cardFace(c)" :alt="c.name+' 卡面'" loading="lazy" /><span>{{ c.lit ? '已点亮' : '未点亮' }}</span></div>
             <div class="archive-card__caption"><strong>{{ c.name }}</strong><span>速阶 {{ c.speed }} · {{ c.type }}</span><small>{{ c.uses }} 次出牌 · {{ c.wins }} 胜</small></div>
           </button></li></ul>
         </div>
         <aside v-if="current" ref="detail" class="archive__detail" data-testid="collection-card-detail" tabindex="-1" :aria-label="current.name+' 详情'">
           <button class="archive__detail-close" aria-label="关闭卡牌详情" @click="selected=''">×</button>
-          <div class="archive__detail-art" :class="masteryClass(current.selected_tier)"><img :src="cardArtUrl(current.name) || ''" :alt="current.name+' 卡面预览'" /></div>
+          <div class="archive__detail-art" :class="masteryClass(current.selected_tier)" :data-skin-id="selectedSkinId(current)"><img :src="cardFace(current)" :alt="current.name+' 卡面预览'" /></div>
           <h2>{{ current.name }}</h2><p class="archive__card-kind">速阶 {{ current.speed }} · {{ current.type }} · {{ current.lit?'已点亮':'尚未点亮' }}</p>
           <p class="archive__description">{{ current.description }}</p><p class="archive__chain">{{ current.chain_description }}</p>
           <dl class="archive__card-stats"><div><dt>打出次数</dt><dd>{{ current.uses }}</dd></div><div><dt>胜场</dt><dd>{{ current.wins }}</dd></div></dl>
+
+          <section v-if="ownedSkinIds(current).length" class="archive__skins" data-testid="collection-skin-switch">
+            <h3>卡面皮肤</h3>
+            <div class="archive__skin-options">
+              <button type="button" :disabled="auth.isGuest || !!store.saving" :aria-pressed="selectedSkinId(current)==='default'" data-testid="collection-skin-default" @click="chooseSkin('default')">默认卡面</button>
+              <button v-for="skinId in ownedSkinIds(current)" :key="skinId" type="button" :disabled="auth.isGuest || !!store.saving" :aria-pressed="selectedSkinId(current)===skinId" :data-testid="'collection-skin-'+skinId" @click="chooseSkin(skinId)">{{ skinLabel(current, skinId) }}</button>
+            </div>
+            <p v-if="auth.isGuest">登录后即可保存卡面选用。未点亮的卡只要已拥有皮肤也可以选用。</p>
+            <p v-else>皮肤拥有与图鉴点亮相互独立。已选卡面会在自己的手牌和随后的出牌展示中生效。</p>
+          </section>
           <section class="archive__mastery"><h3>卡牌光效 <span>{{ MASTERY_NAMES[current.selected_tier] }}</span></h3>
             <p v-if="current.next_target">距下一档还需 {{ current.remaining }} 次出牌 · {{ current.uses }}/{{ current.next_target }}</p><p v-else>已达最高档 · 已获得该卡专属称号</p>
             <progress :value="current.uses" :max="current.next_target || 500" :aria-label="current.name+' 熟练进度'" />

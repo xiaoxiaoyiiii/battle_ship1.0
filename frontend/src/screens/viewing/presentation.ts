@@ -3,6 +3,7 @@ import { CHAIN_ENTRY_MS, CHAIN_SUCCESS_MS, CHAIN_RESOLVE_MS, CHAIN_SINGLE_RESOLV
 import { cardSound } from '../../audio/cardSounds'
 import type { Json } from './types'
 import { masteryTier } from '../collection/model'
+import { normalizeSkinId } from '../../cards/skinArt'
 
 export function presentationDuration(cue: Json): number {
   if (cue.stage === 'attack_windup') return 220
@@ -28,7 +29,7 @@ export function chainFrame(cue: Json, progress: number): ChainFrame | null {
   if (!['join', 'chain_success', 'card', 'card_face'].includes(String(cue.stage))) return null
   const source = Array.isArray(cue.chain) ? cue.chain as Json[] : []
   const cards = source.map((row, i) => ({ name: typeof row.card === 'string' ? row.card : String((row.card as Json)?.name ?? ''), caster: String(row.seat ?? ''), order: i + 1, id: '',
-    masteryTier:masteryTier(row.mastery_tier) }))
+    masteryTier:masteryTier(row.mastery_tier), skinId: normalizeSkinId(row.skin_id) }))
   if (!cards.length) return null
   return { progress, cue: { kind: cue.stage === 'join' ? 'join' : cue.stage === 'chain_success' ? 'success' : 'resolve', cards,
     order: Number(cue.order) || cards.length, start: 0, duration: presentationDuration(cue),

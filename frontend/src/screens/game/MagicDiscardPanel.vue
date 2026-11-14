@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import AppOverlay from '../../components/AppOverlay.vue'
-import { cardArtUrl } from '../../cards/cardArt'
+import { ownCardArtUrl } from '../../cards/ownCardArt'
 import { useGameStore } from '../../stores/game'
 import { useMatchStore } from '../../stores/match'
 import { sendBattleEvent } from '../../realtime/battle'
@@ -26,7 +26,7 @@ async function confirm(): Promise<void> {
       <p class="magic-discard__hint">{{ match.diceDiscardMessage || '请选择要弃置的卡牌；确认后才会移入弃牌堆。' }}</p>
       <div class="magic-discard__cards">
         <button v-for="(card,index) in game.state.hand" :key="index" type="button" :data-testid="'magic-discard-card-' + index" :aria-pressed="selected===index" :disabled="busy" @click="selected=index">
-          <img v-if="cardArtUrl(String(card.name))" :src="cardArtUrl(String(card.name))!" :alt="card.name + '卡面'" draggable="false" />
+          <img v-if="ownCardArtUrl(String(card.name))" :src="ownCardArtUrl(String(card.name))!" :alt="card.name + '卡面'" draggable="false" />
           <span class="magic-discard__copy"><b>{{ card.name }}</b><small>{{ selected === index ? '已选中 · 确认后弃置' : '点击选择这张手牌' }}</small><span>{{ card.description }}</span></span>
         </button>
       </div>

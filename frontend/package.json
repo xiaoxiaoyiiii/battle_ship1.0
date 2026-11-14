@@ -9,7 +9,9 @@
     "build:test": "node scripts/sync-card-data.mjs && node scripts/check-contract.mjs && vite build --mode test",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
-    "check:contract": "node scripts/check-contract.mjs"
+    "check:contract": "node scripts/check-contract.mjs",
+    "check:gacha": "node scripts/check-gacha.mjs",
+    "test": "node scripts/check-gacha.mjs"
   },
   "dependencies": {
     "pinia": "^2.2.0",

@@ -4,7 +4,7 @@ import { useChainAnimationStore } from '../../stores/chainAnimation'
 import { useGameStore } from '../../stores/game'
 import { useUiStore } from '../../stores/ui'
 import { useAudioStore } from '../../stores/audio'
-import { cardArtUrl } from '../../cards/cardArt'
+import { resolveCardArtUrl } from '../../cards/skinArt'
 import { drawChainFrame } from './chainAnimationCanvas'
 import { planChainStage, type ChainStageInsets } from './chainStageLayout'
 import type { ChainFrame } from './chainAnimation'
@@ -40,11 +40,12 @@ function readInsets(): ChainStageInsets {
   return cachedInsets
 }
 
-function lookup(name: string): HTMLImageElement | null {
-  if (art.has(name)) return art.get(name) ?? null
-  const url = cardArtUrl(name)
+function lookup(name: string, skinId?: string | null): HTMLImageElement | null {
+  const key = name + '::' + (skinId || 'default')
+  if (art.has(key)) return art.get(key) ?? null
+  const url = resolveCardArtUrl(name, skinId)
   if (!url) return null
-  const image = new Image(); image.src = url; art.set(name, image)
+  const image = new Image(); image.src = url; art.set(key, image)
   return image
 }
 function tick(): void {

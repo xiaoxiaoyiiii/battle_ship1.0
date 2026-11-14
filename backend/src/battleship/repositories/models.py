@@ -55,6 +55,66 @@ class CollectionSettlement(Base):
     source_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
 
 
+class CardSkinOwned(Base):
+    """玩家拥有的卡面皮肤；与资料外观表解耦。"""
+
+    __tablename__ = "card_skins_owned"
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    skin_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    source: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    source_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    granted_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+
+
+class CardSkinShardWallet(Base):
+    """潮汐碎片余额，不与徽记钱包混用。"""
+
+    __tablename__ = "card_skin_shard_wallets"
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    balance: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text("0"))
+    updated_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    __table_args__ = (sa.CheckConstraint("balance >= 0", name="ck_card_skin_shard_balance"),)
+
+
+class CardSkinShardLedger(Base):
+    """碎片来源唯一流水；抽卡合计正数，兑换为负数。"""
+
+    __tablename__ = "card_skin_shard_ledger"
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    source_kind: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    source_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    delta: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    created_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    __table_args__ = (
+        sa.UniqueConstraint("user_id", "source_kind", "source_id", name="uq_card_skin_shard_source"),
+        Index("idx_card_skin_shard_user_source_time", "user_id", "source_kind", "created_at"),
+    )
+
+
+class CardSkinSelection(Base):
+    """每卡选用的皮肤；无行表示默认卡面。"""
+
+    __tablename__ = "card_skin_selections"
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    card_name: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    skin_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    updated_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+
+
+class GachaRequest(Base):
+    """抽卡幂等与首次成功响应快照。"""
+
+    __tablename__ = "gacha_requests"
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    request_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    pool_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    count: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    cost: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    response: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    created_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+
+
 class DailyChallengeAttempt(Base):
     __tablename__ = 'daily_challenge_attempts'
     user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)

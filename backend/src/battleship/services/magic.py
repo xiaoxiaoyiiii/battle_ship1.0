@@ -1139,6 +1139,7 @@ class MagicService:
         collection = getattr(self.rooms,'collection',None)
         if collection:
             item.mastery_tier = collection.selected_tier(player.user_id,card.name)
+            item.skin_id = collection.selected_skin(player.user_id,card.name)
         replay_rules.note_chain(room, list(room.chain) + [item])
         replay_rules.note_card_played(room, player_id, card)
 
@@ -1471,6 +1472,7 @@ class MagicService:
             collection = getattr(self.rooms,'collection',None)
             if collection:
                 item.mastery_tier = collection.selected_tier(player.user_id,card.name)
+                item.skin_id = collection.selected_skin(player.user_id,card.name)
             replay_rules.note_chain(room, list(room.chain) + [item])
             replay_rules.note_card_played(room, str(player_id), card, chained=True)
 
@@ -1680,6 +1682,8 @@ class MagicService:
             extra = dict(effect_result.extra or {})
             if item.mastery_tier:
                 extra['mastery_tier'] = item.mastery_tier
+            if item.skin_id:
+                extra['skin_id'] = item.skin_id
             if effect_result.temp_data_id:
                 extra.setdefault("temp_data_id", effect_result.temp_data_id)
             if effect_result.negate_target and room.chain:

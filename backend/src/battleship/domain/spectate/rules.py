@@ -24,6 +24,8 @@ Nothing here imports a framework, a database or the socket layer.
 
 from __future__ import annotations
 
+from ..skins import card_name_of, public_skin_id
+
 from typing import Any, Iterable
 from .. import mutations
 
@@ -185,7 +187,7 @@ AREA_TARGET_BOARD_VALUES = BOARD_SIDES + ("choice",)
 PREVIEW_SHAPES = ("area", "line", "cells", "single")
 
 #: Public preview keys (whitelist). Must stay disjoint from both forbidden tables.
-PREVIEW_KEYS = ("id", "card", "seat", "negated", "preview", "mastery_tier")
+PREVIEW_KEYS = ("id", "card", "seat", "negated", "preview", "mastery_tier", "skin_id")
 PREVIEW_FIELDS = ("board", "shape", "cells")
 
 
@@ -347,6 +349,7 @@ def sanitize_preview_item(item: Any, room: Any = None) -> dict[str, Any] | None:
         "negated": bool(item.get("negated")),
         "preview": node,
         **({'mastery_tier':item['mastery_tier']} if type(item.get('mastery_tier')) is int and 1<=item['mastery_tier']<=4 else {}),
+        **({'skin_id': sid} if (sid := public_skin_id(item.get('skin_id'), card_name_of(item) or card_name)) else {}),
     }
 
 

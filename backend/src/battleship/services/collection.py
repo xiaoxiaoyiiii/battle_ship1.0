@@ -1,5 +1,8 @@
 """收藏进度、自动奖励与所选光效；账号身份不从客户端参数取得。"""
 from ..domain import collection as rules
+from ..domain.skins import SKINS, SKINS_BY_ID, public_skin_id
+from .gacha import SkinHttpError
+import time
 
 
 class CollectionService:
@@ -11,19 +14,32 @@ class CollectionService:
             if not user_id or not u.users.get(user_id):
                 return None
             saved=u.collection.cards(user_id)
+            owned_skins=u.skins.owned_ids(user_id)
+            selections=u.skins.selections(user_id)
             rows=[]
             for card in rules.cards():
                 progress=saved.get(card['name'],{'lit':False,'uses':0,'wins':0,'selected_tier':0})
                 tier=rules.unlocked_tier(progress['uses'])
                 next_target=rules.THRESHOLDS[tier] if tier<len(rules.THRESHOLDS) else None
+                catalog=[s for s in SKINS if s.card_name==card['name']]
+                card_owned=[s.skin_id for s in catalog if s.skin_id in owned_skins]
+                selected=selections.get(card['name'])
+                if public_skin_id(selected, card['name']) not in owned_skins:
+                    selected='default'
+                else:
+                    selected=public_skin_id(selected, card['name'])
                 rows.append({**card,**progress,'unlocked_tier':tier,
                     'selected_tier':min(tier,progress['selected_tier']),
                     'next_target':next_target,'remaining':max(0,next_target-progress['uses']) if next_target else 0,
                     'chain_description':('可在合法连锁窗口用来响应；仍须满足卡面时点、场地和封锁条件。'
-                        if card.get('speed')==3 else '不能作为连锁响应牌；主动发动后，对手可用合法的速阶 3 卡响应。发动时点以卡面为准。')})
+                        if card.get('speed')==3 else '不能作为连锁响应牌；主动发动后，对手可用合法的速阶 3 卡响应。发动时点以卡面为准。'),
+                    'skins':[{'skin_id':s.skin_id,'card_key':s.card_key,'tier':s.tier,'owned':s.skin_id in owned_skins} for s in catalog],
+                    'owned_skins':card_owned,
+                    'selected_skin':selected or 'default'})
             lit=sum(c['lit'] for c in rows)
             milestones=u.collection.claimed(user_id,'collection_milestone')
             return {'cards':rows,'lit_count':lit,'total':len(rows),'balance':u.tide_ash.balance(user_id),
+                'shards':u.skins.shard_balance(user_id),
                 'thresholds':list(rules.THRESHOLDS),
                 'milestones':[{'target':n,'tide':t,'claimed':str(n) in milestones} for n,t in rules.MILESTONES],
                 'achievements':rules.achievement_view(u.collection.state(user_id),rows,
@@ -35,6 +51,38 @@ class CollectionService:
         with self.database.unit_of_work() as u:
             card=u.collection.cards(user_id).get(name,{})
             return min(int(card.get('selected_tier',0)),rules.unlocked_tier(card.get('uses',0)))
+
+    def selected_skin(self,user_id,name):
+        if not user_id:
+            return None
+        with self.database.unit_of_work() as u:
+            if not u.users.get(user_id):
+                return None
+            skin_id=u.skins.selected_skin(user_id,name)
+            if public_skin_id(skin_id, name) and skin_id in u.skins.owned_ids(user_id):
+                return skin_id
+            return None
+
+    def select_skin(self,user_id,name,skin, *, now=None):
+        now = int(time.time()) if now is None else int(now)
+        if not isinstance(name,str) or name not in {c['name'] for c in rules.cards()}:
+            raise SkinHttpError(400,'unknown_card','未知的卡牌','card_name')
+        if not isinstance(skin,str):
+            raise SkinHttpError(400,'unknown_skin','请选择默认卡面或已拥有的皮肤','skin')
+        if skin != 'default' and skin not in SKINS_BY_ID:
+            raise SkinHttpError(400,'unknown_skin','未知的皮肤','skin')
+        if skin != 'default' and SKINS_BY_ID[skin].card_name != name:
+            raise SkinHttpError(400,'skin_card_mismatch','这件皮肤不属于这张卡','skin')
+        with self.database.unit_of_work() as u:
+            if not user_id or not u.users.get(user_id):
+                raise SkinHttpError(401,'unauthorized','未登录','session')
+            if skin == 'default':
+                u.skins.clear_selection(user_id,name)
+                return {'ok':True,'card_name':name,'selected_skin':'default'}
+            if skin not in u.skins.owned_ids(user_id):
+                raise SkinHttpError(409,'skin_not_owned','尚未拥有这件皮肤','skin')
+            u.skins.set_selection(user_id,name,skin,now=now)
+            return {'ok':True,'card_name':name,'selected_skin':skin}
 
     def select(self,user_id,name,tier):
         if type(tier) is not int or tier not in range(5) or not isinstance(name,str) or name not in {c['name'] for c in rules.cards()}:

@@ -38,6 +38,7 @@ class ChainItem:
     stolen: bool = False
     # 只在出牌成为公开事实后附带，绝不进入对手手牌快照。
     mastery_tier: int = 0
+    skin_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -48,6 +49,7 @@ class ChainItem:
             "negated": self.negated,
             "negated_by": self.negated_by,
             **({'mastery_tier':self.mastery_tier} if self.mastery_tier else {}),
+            **({'skin_id':self.skin_id} if self.skin_id else {}),
         }
 
 

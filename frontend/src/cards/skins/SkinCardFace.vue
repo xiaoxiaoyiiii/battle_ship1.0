@@ -29,13 +29,15 @@ let resize: ResizeObserver | undefined
 let source: SkinFrameSource | null = null
 let sourceReady = false
 let motionRequested = false
+let pixelRatio = 0
 
 function resizeCanvas() {
   if (!canvas.value || !host.value) return
-  const bounds = host.value.getBoundingClientRect()
-  const ratio = Math.min(window.devicePixelRatio || 1, 1.5)
-  const width = Math.min(768, Math.max(1, Math.round(bounds.width * ratio)))
-  const height = Math.round(width * 1.5)
+  // 翻牌侧面挂载时投影宽度接近零；使用不受祖先 3D 旋转影响的布局尺寸。
+  const style = window.getComputedStyle(host.value)
+  pixelRatio = window.devicePixelRatio || 1
+  const width = Math.max(1, Math.ceil((style.width?.endsWith('px') ? parseFloat(style.width) : host.value.clientWidth) * pixelRatio))
+  const height = Math.max(1, Math.ceil((style.height?.endsWith('px') ? parseFloat(style.height) : host.value.clientHeight) * pixelRatio))
   if (canvas.value.width !== width || canvas.value.height !== height) {
     canvas.value.width = width; canvas.value.height = height
     painted.value = false
@@ -52,9 +54,15 @@ function start() {
   animation = registerSkinAnimation({
     element: host.value, tier: skin.value.tier, context: props.context,
     reducedMotion: !props.motion || props.reducedMotion,
-    onLevelChange(next) { level.value = next; if (next === 'static') painted.value = false },
+    onLevelChange(next) {
+      level.value = next
+      if (next === 'static') painted.value = false
+      else resizeCanvas()
+    },
     onFrame(time, quality) {
       if (current !== generation || quality === 'static' || !canvas.value) return
+      // 切到不同像素密度的屏幕时，布局可能不变，ResizeObserver 不一定触发。
+      if (pixelRatio !== (window.devicePixelRatio || 1)) resizeCanvas()
       if (!source) {
         source = createSkinFrameSource(props.skinId)
         const loading = source

@@ -2,6 +2,7 @@ import { CHAIN_FLIGHT_MS, CHAIN_ENTRY_MS, type ChainArtCard, type ChainFrame } f
 import { drawCounterEffect } from './cardEffects/canvas'
 import type { ChainStageCard, ChainStagePlan } from './chainStageLayout'
 import { masteryTier } from '../collection/model'
+import type { SkinFaceLookup } from './chainSkinFaces'
 
 type ArtLookup = (name: string, skinId?: string | null) => HTMLImageElement | null
 const clamp = (n: number): number => Math.max(0, Math.min(1, n))
@@ -31,7 +32,7 @@ function chain(ctx: CanvasRenderingContext2D, x: number, y: number, endX: number
   ctx.restore()
 }
 
-function card(ctx: CanvasRenderingContext2D, item: ChainArtCard, art: ArtLookup, x: number, y: number, width: number, angle = 0, grey = false): void {
+function card(ctx: CanvasRenderingContext2D, item: ChainArtCard, art: ArtLookup, x: number, y: number, width: number, angle = 0, grey = false, face?: SkinFaceLookup): void {
   const height = width * 1.5
   const radius = Math.max(5, width * 0.05)
   ctx.save(); ctx.translate(x, y); ctx.rotate(angle)
@@ -59,8 +60,18 @@ function card(ctx: CanvasRenderingContext2D, item: ChainArtCard, art: ArtLookup,
   ctx.shadowColor = '#82c9e877'; ctx.shadowBlur = 19; ctx.fillStyle = '#122033'
   ctx.beginPath(); ctx.roundRect(-width / 2 - 3, -height / 2 - 3, width + 6, height + 6, radius + 2); ctx.fill(); ctx.shadowBlur = 0
   ctx.save(); ctx.beginPath(); ctx.roundRect(-width / 2, -height / 2, width, height, radius); ctx.clip()
-  const image = art(item.name, item.skinId)
-  if (image?.complete && image.naturalWidth) {
+  // 动态皮肤卡面：只用公开载荷 skinId；未就绪或返回 false 时沿用下面的旧静态绘制。
+  const painter = face?.(item.name, item.skinId)
+  let painted = false
+  if (painter) {
+    if (grey) ctx.filter = 'grayscale(1) brightness(.65)'
+    painted = painter(ctx, { x: -width / 2, y: -height / 2, width, height })
+    if (!painted) ctx.filter = 'none'
+  }
+  const image = painted ? null : art(item.name, item.skinId)
+  if (painted) {
+    // 已由 drawSkinFace 在当前变换/裁剪/透明度下画完。
+  } else if (image?.complete && image.naturalWidth) {
     if (grey) ctx.filter = 'grayscale(1) brightness(.65)'
     ctx.drawImage(image, -width / 2, -height / 2, width, height)
   } else {
@@ -95,7 +106,7 @@ function placed(pos: ChainStageCard, item: ChainArtCard, plan: ChainStagePlan, f
 }
 
 /** 绘制通用连锁演出，绝不在棋盘上模拟某张卡的攻击或冻结效果。 */
-export function drawChainFrame(ctx: CanvasRenderingContext2D, frame: ChainFrame, plan: ChainStagePlan, art: ArtLookup): void {
+export function drawChainFrame(ctx: CanvasRenderingContext2D, frame: ChainFrame, plan: ChainStagePlan, art: ArtLookup, face?: SkinFaceLookup): void {
   const { cue, progress } = frame
   const fade = Math.min(1, progress * 12, (1 - progress) * 9)
   const scale = Math.max(.55, plan.scale)
@@ -112,12 +123,12 @@ export function drawChainFrame(ctx: CanvasRenderingContext2D, frame: ChainFrame,
         const companion = plan.companions[index] ?? plan.companions[0]
         if (!companion) return
         ctx.save(); ctx.globalAlpha *= .25
-        card(ctx, item, art, companion.x, companion.y, companion.w)
+        card(ctx, item, art, companion.x, companion.y, companion.w, 0, false, face)
         ctx.restore()
       })
       const counter = cue.result?.negatedBy === '失灵！' ? 'negate' : cue.result?.negatedBy === '加百列之光' ? 'gabriel' : null
       const grey = Boolean(cue.result?.failed || (cue.result?.negated && (!counter || progress >= (counter === 'gabriel' ? .50 : .33))))
-      card(ctx, active, art, current.x, current.y, current.w, current.angle, grey)
+      card(ctx, active, art, current.x, current.y, current.w, current.angle, grey, face)
       number(ctx, active.order, plan.number.x, plan.number.y, plan.number.size)
       if (grey) {
         const w = current.w * .58
@@ -159,7 +170,7 @@ export function drawChainFrame(ctx: CanvasRenderingContext2D, frame: ChainFrame,
       const incoming = cue.kind === 'join' && item.order === cue.order
       const flight = incoming ? ease(progress * CHAIN_ENTRY_MS / CHAIN_FLIGHT_MS) : 1
       const at = placed(pos, item, plan, flight)
-      card(ctx, item, art, at.x, at.y, pos.w, at.angle)
+      card(ctx, item, art, at.x, at.y, pos.w, at.angle, false, face)
       if (flight > .96) {
         chain(ctx, pos.x - pos.w * .2, pos.y - pos.w * .78, pos.x - pos.w * .56, pos.y - pos.w * .40, scale)
         chain(ctx, pos.x + pos.w * .20, pos.y + pos.w * .78, pos.x + pos.w * .56, pos.y + pos.w * .41, scale)

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ownCardArtUrl, ownSkinEffectClass } from '../../cards/ownCardArt'
+import { ownCardArtUrl, ownSkinId } from '../../cards/ownCardArt'
+import CardFaceArt from '../../cards/CardFaceArt.vue'
 import type { CardLike } from './view'
 
 const props = defineProps<{ cards: CardLike[]; attacks: number; pending: boolean; error: string }>()
@@ -22,7 +23,7 @@ watch(() => props.cards.map(card => card.name).join('\0'), () => {
     <div class="game-papal-picker__tools"><span>手牌 {{ cards.length }} 张</span><button type="button" class="button button--ghost" :disabled="pending || !cards.length" @click="selected = selected.length === cards.length ? [] : cards.map((_,i) => i)">{{ selected.length === cards.length && cards.length ? '取消全选' : '全选' }}</button></div>
     <div class="game-papal-cards">
       <button v-for="(card,index) in cards" :key="index" type="button" :data-testid="'game-papal-card-' + index" :disabled="pending" :aria-pressed="selected.includes(index)" :class="{ 'is-selected': selected.includes(index) }" @click="toggle(index)">
-        <span v-if="ownCardArtUrl(card.name)" :class="ownSkinEffectClass(card.name)" style="display:inline-flex;position:relative"><img :src="ownCardArtUrl(card.name)!" alt="" /></span><span><strong>{{ card.name }}</strong><small>速阶 {{ card.speed }} · {{ card.type }}</small><small>{{ selected.includes(index) ? '已选择 · 攻击 +2' : '点击选择' }}</small></span><b class="game-papal-check" aria-hidden="true">{{ selected.includes(index) ? '✓' : '+' }}</b>
+        <CardFaceArt v-if="ownCardArtUrl(card.name)" :name="card.name" :skin-id="ownSkinId(card.name)" context="hand" alt="" /><span><strong>{{ card.name }}</strong><small>速阶 {{ card.speed }} · {{ card.type }}</small><small>{{ selected.includes(index) ? '已选择 · 攻击 +2' : '点击选择' }}</small></span><b class="game-papal-check" aria-hidden="true">{{ selected.includes(index) ? '✓' : '+' }}</b>
       </button>
     </div>
     <p v-if="error" role="alert">{{ error }}</p><p v-else-if="changed" role="status">手牌已更新，请重新选择。</p>
@@ -43,7 +44,7 @@ p { margin:10px 0; font-size:13px; line-height:1.5; }
 .game-papal-cards>button { position:relative; display:flex; align-items:center; gap:8px; min-width:0; padding:8px; border:1px solid var(--prompt-line); border-radius:8px; background:var(--prompt-deck); color:var(--prompt-text); text-align:left; cursor:pointer; }
 .game-papal-cards>button:hover,.game-papal-cards>button:focus-visible { border-color:var(--prompt-cyan); }
 .game-papal-cards>button.is-selected { border-color:var(--prompt-cyan); box-shadow:inset 0 0 0 1px var(--prompt-cyan); background:color-mix(in srgb,var(--prompt-cyan) 12%,var(--prompt-deck)); }
-.game-papal-cards img { flex:0 0 40px; width:40px; height:60px; object-fit:contain; }
+.game-papal-cards img,.game-papal-cards .card-face-art--skin { flex:0 0 40px; width:40px; height:60px; object-fit:contain; }
 .game-papal-cards span { display:grid; flex:1; gap:4px; min-width:0; }
 .game-papal-cards strong { font-size:14px; overflow-wrap:anywhere; }
 .game-papal-cards small { font-size:11px; color:var(--prompt-gold); }
@@ -51,5 +52,5 @@ p { margin:10px 0; font-size:13px; line-height:1.5; }
 .game-papal-picker__footer { flex-shrink:0; margin-top:12px; padding-top:4px; border-top:1px solid var(--prompt-line); }
 .game-papal-picker__footer b { color:var(--prompt-cyan); }
 .game-papal-picker__footer .button { width:100%; min-height:44px; }
-@media(max-width:430px) { .game-papal-picker { padding:12px; max-height:82dvh; }.game-papal-cards>button { gap:6px; padding:6px; }.game-papal-cards img { flex-basis:32px; width:32px; height:48px; }.game-papal-cards strong { font-size:13px; }.game-papal-cards small { font-size:10px; } }
+@media(max-width:430px) { .game-papal-picker { padding:12px; max-height:82dvh; }.game-papal-cards>button { gap:6px; padding:6px; }.game-papal-cards img,.game-papal-cards .card-face-art--skin { flex-basis:32px; width:32px; height:48px; }.game-papal-cards strong { font-size:13px; }.game-papal-cards small { font-size:10px; } }
 </style>

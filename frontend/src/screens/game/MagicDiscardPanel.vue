@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import AppOverlay from '../../components/AppOverlay.vue'
-import { ownCardArtUrl, ownSkinEffectClass } from '../../cards/ownCardArt'
+import { ownCardArtUrl, ownSkinId } from '../../cards/ownCardArt'
+import CardFaceArt from '../../cards/CardFaceArt.vue'
 import { useGameStore } from '../../stores/game'
 import { useMatchStore } from '../../stores/match'
 import { sendBattleEvent } from '../../realtime/battle'
@@ -26,7 +27,7 @@ async function confirm(): Promise<void> {
       <p class="magic-discard__hint">{{ match.diceDiscardMessage || '请选择要弃置的卡牌；确认后才会移入弃牌堆。' }}</p>
       <div class="magic-discard__cards">
         <button v-for="(card,index) in game.state.hand" :key="index" type="button" :data-testid="'magic-discard-card-' + index" :aria-pressed="selected===index" :disabled="busy" @click="selected=index">
-          <span v-if="ownCardArtUrl(String(card.name))" :class="ownSkinEffectClass(String(card.name))" style="display:inline-flex;position:relative"><img :src="ownCardArtUrl(String(card.name))!" :alt="card.name + '卡面'" draggable="false" /></span>
+          <CardFaceArt v-if="ownCardArtUrl(String(card.name))" :name="String(card.name)" :skin-id="ownSkinId(String(card.name))" context="hand" :alt="card.name + '卡面'" draggable="false" />
           <span class="magic-discard__copy"><b>{{ card.name }}</b><small>{{ selected === index ? '已选中 · 确认后弃置' : '点击选择这张手牌' }}</small><span>{{ card.description }}</span></span>
         </button>
       </div>
@@ -43,8 +44,8 @@ async function confirm(): Promise<void> {
 .magic-discard__cards { display:grid; gap:12px; max-height:50dvh; overflow:auto; margin:18px 0; padding:3px; }
 .magic-discard__cards button { display:flex; align-items:flex-start; gap:18px; padding:14px; text-align:left; color:var(--prompt-text); background:var(--prompt-deck); border:1px solid var(--prompt-line); border-radius:10px; cursor:pointer; }
 .magic-discard__cards button:hover,.magic-discard__cards button:focus-visible { border-color:var(--prompt-cyan); outline:2px solid rgb(116 215 233 / 18%); outline-offset:1px; }.magic-discard__cards button[aria-pressed='true'] { border-color:var(--prompt-gold); background:rgb(224 190 112 / 8%); }
-.magic-discard__cards img { flex:0 0 82px; width:82px; height:120px; object-fit:contain; filter:drop-shadow(0 5px 8px #0007); }.magic-discard__copy { display:grid; gap:8px; min-width:0; }.magic-discard__copy b { font-size:18px; }.magic-discard__copy small { font-size:14px; color:var(--prompt-cyan); }.magic-discard__copy>span { font-size:15px; line-height:1.75; color:var(--prompt-muted); }.magic-discard__cards button[aria-pressed='true'] small { color:var(--prompt-gold); }
+.magic-discard__cards img,.magic-discard__cards .card-face-art--skin { flex:0 0 82px; width:82px; height:120px; object-fit:contain; filter:drop-shadow(0 5px 8px #0007); }.magic-discard__copy { display:grid; gap:8px; min-width:0; }.magic-discard__copy b { font-size:18px; }.magic-discard__copy small { font-size:14px; color:var(--prompt-cyan); }.magic-discard__copy>span { font-size:15px; line-height:1.75; color:var(--prompt-muted); }.magic-discard__cards button[aria-pressed='true'] small { color:var(--prompt-gold); }
 .magic-discard>.button { width:100%; margin-top:16px; }
 :global(.app-overlay__panel[data-testid='magic-discard-panel']) { width:min(700px,calc(100vw - 24px)); }
-@media(max-width:540px) { .magic-discard { padding:18px; }.magic-discard__cards button { padding:12px; gap:12px; }.magic-discard__cards img { width:68px; height:98px; flex-basis:68px; } }
+@media(max-width:540px) { .magic-discard { padding:18px; }.magic-discard__cards button { padding:12px; gap:12px; }.magic-discard__cards img,.magic-discard__cards .card-face-art--skin { width:68px; height:98px; flex-basis:68px; } }
 </style>

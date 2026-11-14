@@ -48,7 +48,7 @@ async function chat(): Promise<void> { if ((await sendSpectateChat(draft.value))
           <details class="viewing__panel" :open="wide"><summary>对局记录</summary><ol class="viewing__logs"><li v-for="(log,i) in store.logs" :key="i">{{ log.text }}</li></ol></details>
         </aside>
       </div>
-      <ViewingAnimationLayer :cue="playback.snapshot.value.cue" :progress="playback.snapshot.value.progress" />
+      <ViewingAnimationLayer :cue="playback.snapshot.value.cue" :progress="playback.snapshot.value.progress" context="spectate" />
     </template>
     <p v-else class="viewing__error" role="status">{{ store.phase === 'ended' ? '本场对局已结束。' : '正在连接观战席…' }}</p>
   </section>

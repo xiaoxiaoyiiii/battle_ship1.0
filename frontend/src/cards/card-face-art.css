@@ -1,0 +1,40 @@
+/* 皮肤卡面宿主：尺寸由调用处原 <img> 的规则给出（同类名或 .card-face-art--skin 选择器）。
+   内部 2:3 卡面按 contain / cover 放在宿主中心，不改宿主盒模型、熟练光效阴影或动画。 */
+.card-face-art--skin {
+  display: inline-block;
+  position: relative;
+  overflow: hidden;
+  container-type: size;
+  vertical-align: middle;
+}
+.card-face-art--skin > .skin-card-face {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  width: min(100cqw, 100cqh * 2 / 3);
+  height: auto;
+  border-radius: inherit;
+}
+.card-face-art--cover > .skin-card-face { width: max(100cqw, 100cqh * 2 / 3); }
+/* 调用处常有 `.xxx img { width/height/flex/... }`，会命中卡面内部静态图；这里锁回铺满。 */
+.card-face-art--skin > .skin-card-face > img.skin-card-face__static {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  flex: none !important;
+  object-fit: contain !important;
+  transform: none !important;
+  translate: none !important;
+  filter: none !important;
+  border: 0 !important;
+  border-radius: inherit !important;
+  box-shadow: none !important;
+}

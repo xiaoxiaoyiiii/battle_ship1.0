@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { cardArtUrl } from '../../cards/cardArt'
-import { ownCardArtUrl, ownSkinEffectClass } from '../../cards/ownCardArt'
+import { ownCardArtUrl, ownSkinId } from '../../cards/ownCardArt'
+import CardFaceArt from '../../cards/CardFaceArt.vue'
 import AppOverlay from '../../components/AppOverlay.vue'
 import { useGameStore } from '../../stores/game'
 import { refreshMagicState, sendBattleEvent } from '../../realtime/battle'
@@ -36,6 +37,11 @@ function chooseCard(index: number) {
   if (chosen.value < 0) chosen.value = index
   else if (index !== chosen.value) other.value = index
 }
+/** 候选牌是自己将要取得/处理的牌：载荷带 skin_id 时用载荷，否则用自己的图鉴选用；来自对方手牌的不套任何皮肤。 */
+function candidateSkin(card: Record<string, unknown>): string | null {
+  if (typeof card.skin_id === 'string' && card.skin_id) return card.skin_id
+  return card.source === 'opponent_hand' ? null : ownSkinId(String(card.name ?? ''))
+}
 function resetChoice() { chosen.value = -1; other.value = -1; reading.value = -1 }
 async function submit(cancel = false): Promise<void> {
   if (busy.value || (!cancel && !ready.value)) return
@@ -60,7 +66,7 @@ async function submit(cancel = false): Promise<void> {
 <template>
   <AppOverlay :draggable="!compact" v-if="visible" id="magic-choice-panel" :priority="170" :close-on-backdrop="false" labelledby="magic-choice-title">
     <section class="magic-choice battle-prompt">
-      <header class="battle-prompt__head" data-drag-handle><div><p class="battle-prompt__context">卡牌效果</p><h2 id="magic-choice-title">{{ names[kind] }} · 选择效果</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div><span v-if="ownCardArtUrl(names[kind] || '')" class="battle-prompt__card-art" :class="ownSkinEffectClass(names[kind] || '')"><img :src="ownCardArtUrl(names[kind] || '')!" alt="" draggable="false" /></span></header>
+      <header class="battle-prompt__head" data-drag-handle><div><p class="battle-prompt__context">卡牌效果</p><h2 id="magic-choice-title">{{ names[kind] }} · 选择效果</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div><CardFaceArt v-if="ownCardArtUrl(names[kind] || '')" class="battle-prompt__card-art" :name="names[kind] || ''" :skin-id="ownSkinId(names[kind] || '')" context="hand" alt="" draggable="false" /></header>
       <div ref="bodyPanel" class="magic-choice__body" :class="{ 'is-reading': reading >= 0 }">
       <template v-if="numeric">
         <p>{{ kind === 'shenji_declare' ? '宣言对方回合结束时，你的战舰将减少多少艘（0–6）。' : '选择双方调整后的船数，随后各自在原船位重新部署。' }}</p>
@@ -73,7 +79,7 @@ async function submit(cancel = false): Promise<void> {
         <div class="magic-choice__cards">
           <button v-for="(card,index) in cards" :key="index" class="magic-choice__card" :class="{ 'is-mine': chosen === index, 'is-other': other === index }" type="button" :data-testid="'magic-choice-card-' + index" :aria-pressed="chosen === index || other === index" :disabled="busy" @click="chooseCard(index)">
             <span v-if="kind === 'taoyuan_choice' && (chosen === index || other === index)" class="magic-choice__recipient">{{ chosen === index ? '给自己' : '给对方' }}</span>
-            <img v-if="cardArtUrl(String(card.name))" :src="cardArtUrl(String(card.name))!" alt="" />
+            <CardFaceArt v-if="cardArtUrl(String(card.name))" :name="String(card.name)" :skin-id="candidateSkin(card)" context="hand" alt="" />
             <b>{{ card.name }}</b>
             <small>{{ card.type || '魔法卡' }} · 速阶 {{ card.speed ?? '—' }}<template v-if="kind === 'bury_choice'"> · {{ card.source === 'opponent_hand' ? '对方手牌' : '牌堆' }}</template></small>
             <span class="magic-choice__description" tabindex="0" :aria-label="String(card.name) + '完整效果'" @click.stop @keydown.stop>{{ card.description || '暂无效果说明' }}</span>
@@ -110,7 +116,7 @@ async function submit(cancel = false): Promise<void> {
 .magic-choice__cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); grid-auto-rows:minmax(360px,1fr); gap:14px; max-height:56dvh; overflow:auto; padding:4px; align-items:stretch; }
 .magic-choice__card { position:relative; display:flex; flex-direction:column; min-width:0; min-height:360px; max-height:430px; overflow:hidden; text-align:left; padding:14px; color:var(--prompt-text); background:var(--prompt-deck); border:1px solid var(--prompt-line); border-radius:10px; cursor:pointer; }
 .magic-choice__card:hover,.magic-choice__card:focus-visible { border-color:var(--prompt-cyan); outline:2px solid rgb(116 215 233 / 18%); outline-offset:1px; }
-.magic-choice__card img { display:block; flex:0 0 178px; width:124px; height:178px; object-fit:contain; margin:0 auto 12px; filter:drop-shadow(0 5px 9px #0006); }
+.magic-choice__card img,.magic-choice__card .card-face-art--skin { display:block; flex:0 0 178px; width:124px; height:178px; object-fit:contain; margin:0 auto 12px; filter:drop-shadow(0 5px 9px #0006); }
 .magic-choice__card b { font-size:18px; }.magic-choice__card small { margin-top:7px; font-size:14px; color:var(--prompt-muted); }
 .magic-choice__card span { display:block; margin-top:8px; font-size:15px; line-height:1.75; }
 .magic-choice__description { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; scrollbar-width:thin; }
@@ -121,7 +127,7 @@ async function submit(cancel = false): Promise<void> {
 .magic-choice__card .magic-choice__recipient { position:absolute; top:10px; left:10px; margin:0; padding:5px 9px; border-radius:6px; background:#102231; color:var(--prompt-text); font-size:14px; font-weight:700; }
 .magic-choice__assignment { display:flex; flex-wrap:wrap; gap:12px 20px; align-items:center; margin-top:18px; padding:14px; border:1px solid var(--prompt-line); border-radius:8px; font-size:16px; }
 :global(.app-overlay__panel[data-testid='magic-choice-panel']) { width:min(1000px,calc(100vw - 24px)); }
-@media(max-width:540px) { .magic-choice { padding:18px; }.magic-choice__cards { grid-template-columns:repeat(2,minmax(0,1fr)); grid-auto-rows:minmax(310px,1fr); gap:10px; max-height:47dvh; }.magic-choice__card { padding:10px; min-height:310px; max-height:360px; }.magic-choice__card img { flex-basis:136px; width:94px; height:136px; }.magic-choice__card b { font-size:16px; }.magic-choice__card small { font-size:13px; }.magic-choice__card span { font-size:15px; }.magic-choice footer { flex-wrap:wrap; } }
+@media(max-width:540px) { .magic-choice { padding:18px; }.magic-choice__cards { grid-template-columns:repeat(2,minmax(0,1fr)); grid-auto-rows:minmax(310px,1fr); gap:10px; max-height:47dvh; }.magic-choice__card { padding:10px; min-height:310px; max-height:360px; }.magic-choice__card img,.magic-choice__card .card-face-art--skin { flex-basis:136px; width:94px; height:136px; }.magic-choice__card b { font-size:16px; }.magic-choice__card small { font-size:13px; }.magic-choice__card span { font-size:15px; }.magic-choice footer { flex-wrap:wrap; } }
 @media (max-width:1199px), (max-height:699px) {
   :global(.app-overlay__panel[data-testid='magic-choice-panel']) { width:min(560px,calc(100vw - 24px)); max-height:min(80dvh,600px); overflow:hidden; }
   .magic-choice { display:flex; flex-direction:column; max-height:min(80dvh,600px); padding:12px; overflow:hidden; }
@@ -135,7 +141,7 @@ async function submit(cancel = false): Promise<void> {
   .magic-choice .magic-choice__help { margin:0 0 8px; font-size:12px; line-height:1.5; }
   .magic-choice__cards { grid-template-columns:repeat(2,minmax(0,1fr)); grid-auto-rows:auto; gap:8px; max-height:none; padding:2px; overflow:visible; }
   .magic-choice__card { display:grid; grid-template-columns:38px minmax(0,1fr); grid-template-rows:auto auto; align-content:center; align-items:center; gap:4px 8px; min-height:82px; max-height:none; padding:8px; border-radius:8px; }
-  .magic-choice__card img { grid-column:1; grid-row:1/3; width:38px; height:57px; margin:0; }
+  .magic-choice__card img,.magic-choice__card .card-face-art--skin { grid-column:1; grid-row:1/3; width:38px; height:57px; margin:0; }
   .magic-choice__card b { grid-column:2; font-size:14px; line-height:1.4; overflow-wrap:anywhere; }
   .magic-choice__card small { grid-column:2; margin:0; font-size:10px; line-height:1.4; }
   .magic-choice__card .magic-choice__description { display:none; }
@@ -158,7 +164,7 @@ async function submit(cancel = false): Promise<void> {
   .magic-choice .battle-prompt__head { margin-bottom:6px; padding-bottom:6px; }
   .magic-choice__cards { grid-template-columns:repeat(4,minmax(0,1fr)); }
   .magic-choice__card { grid-template-columns:30px minmax(0,1fr); padding:6px; gap:3px 6px; min-height:64px; }
-  .magic-choice__card img { width:30px; height:45px; }
+  .magic-choice__card img,.magic-choice__card .card-face-art--skin { width:30px; height:45px; }
   .magic-choice__assignment { grid-template-columns:1fr 1fr auto; margin-bottom:4px; padding:4px 8px; }
   .magic-choice__assignment span { grid-column:auto; }
   .magic-choice__assignment .button { grid-column:3; grid-row:1; }

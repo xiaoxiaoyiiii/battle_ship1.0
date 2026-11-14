@@ -2880,7 +2880,8 @@ button.arena-avatar--btn {
   margin-top: -52px;
 }
 
-.chain-stack__item img {
+.chain-stack__item img,
+.chain-stack__item .card-face-art--skin {
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -3504,6 +3505,13 @@ button.arena-avatar--btn {
     height: 92px;
     flex: 0 0 63px;
     object-fit: contain;
+  }
+
+  /* 皮肤卡面宿主要保留定位上下文给内部 2:3 卡面，故不跟随 img 的 position:static。 */
+  .game[data-layout='wide'] .chain-stack__item .card-face-art--skin {
+    width: 63px;
+    height: 92px;
+    flex: 0 0 63px;
   }
 
   .game[data-layout='wide'] .chain-stack__label { font-size:13px; line-height:1.6; }

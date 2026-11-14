@@ -6,9 +6,10 @@ import { drawCardEffect, drawCounterEffect, warmCardEffectCaches, clearCardEffec
 import type { CardEffectKind, EffectCell, EffectRect } from '../game/cardEffects/types'
 import { chainFrame } from './presentation'
 import { resolveCardArtUrl } from '../../cards/skinArt'
+import { createChainSkinFaces } from '../game/chainSkinFaces'
 import type { Json } from './types'
 
-const props = defineProps<{ cue: Json | null; progress: number }>()
+const props = withDefaults(defineProps<{ cue: Json | null; progress: number; context?: 'spectate' | 'replay' }>(), { context: 'spectate' })
 const canvas = ref<HTMLCanvasElement | null>(null), art = new Map<string, HTMLImageElement>()
 function image(name: string, skinId?: string | null): HTMLImageElement | null {
   const key = name + '::' + (skinId || 'default')
@@ -16,6 +17,13 @@ function image(name: string, skinId?: string | null): HTMLImageElement | null {
   if (!img) { const url = resolveCardArtUrl(name, skinId); if (!url) return null; img = new Image(); img.src = url; art.set(key, img) }
   return img.complete && img.naturalWidth ? img : null
 }
+// 公开连锁牌的动态皮肤（只认 cue 里的 skin_id）。播放进度驱动重绘；暂停时由皮肤时钟合并请求一次重绘。
+let pendingDraw = 0
+function requestDraw(): void {
+  if (pendingDraw || typeof requestAnimationFrame === 'undefined') return
+  pendingDraw = requestAnimationFrame(() => { pendingDraw = 0; draw() })
+}
+const skinFaces = createChainSkinFaces(props.context, requestDraw)
 function rect(selector: string): EffectRect | null {
   const r = document.querySelector(selector)?.getBoundingClientRect()
   return r && r.width && r.height ? { x: r.x, y: r.y, w: r.width, h: r.height } : null
@@ -30,7 +38,11 @@ function points(values: unknown, side: string): EffectCell[] {
 }
 function draw(): void {
   const c = canvas.value, cue = props.cue
-  if (!c || !cue) return
+  if (!c || !cue) { skinFaces.clear(); return }
+  skinFaces.beginFrame()
+  try { paint(c, cue) } finally { skinFaces.endFrame() }
+}
+function paint(c: HTMLCanvasElement, cue: Json): void {
   const ratio = Math.min(2, devicePixelRatio || 1), width = innerWidth, height = innerHeight
   c.width = width * ratio; c.height = height * ratio
   const ctx = c.getContext('2d'); if (!ctx) return
@@ -71,10 +83,13 @@ function draw(): void {
   }
   const frame = chainFrame(cue, progress)
   if (!frame) return
-  drawChainFrame(ctx, frame, planChainStage({ width, height, count: frame.cue.cards.length, insets: { top: 0, right: 0, bottom: 0, left: 0 } }), image)
+  drawChainFrame(ctx, frame, planChainStage({ width, height, count: frame.cue.cards.length, insets: { top: 0, right: 0, bottom: 0, left: 0 } }), image, skinFaces.lookup)
 }
 watch(() => [props.cue, props.progress], () => void nextTick(draw), { flush: 'post' })
 onMounted(warmCardEffectCaches)
-onBeforeUnmount(() => { clearCardEffectCaches(); art.clear() })
+onBeforeUnmount(() => {
+  clearCardEffectCaches(); art.clear(); skinFaces.dispose()
+  if (pendingDraw) cancelAnimationFrame(pendingDraw)
+})
 </script>
 <template><Teleport to="body"><div v-if="cue" class="view-animation" data-testid="viewing-animation" :data-stage="cue.stage" :data-order="cue.order" :data-negated="cue.negated_skip === true" aria-hidden="true"><canvas ref="canvas"></canvas></div></Teleport></template>

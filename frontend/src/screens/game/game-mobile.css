@@ -195,7 +195,7 @@
 .game-papal-cards { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); min-height:0; gap:8px; overflow-y:auto; }
 .game-papal-cards > button { display:flex; align-items:center; gap:8px; padding:8px; border:1px solid var(--prompt-line); border-radius:8px; background:var(--prompt-deck); color:var(--prompt-text); text-align:left; cursor:pointer; }
 .game-papal-cards > button:hover,.game-papal-cards > button:focus-visible { border-color:var(--prompt-cyan); }
-.game-papal-cards img { width:40px; height:60px; object-fit:contain; }
+.game-papal-cards img,.game-papal-cards .card-face-art--skin { width:40px; height:60px; object-fit:contain; }
 .game-papal-cards span { display:grid; gap:4px; min-width:0; }
 .game-papal-cards strong { font-size:14px; overflow-wrap:anywhere; }
 .game-papal-cards small { font-size:11px; color:var(--prompt-gold); }

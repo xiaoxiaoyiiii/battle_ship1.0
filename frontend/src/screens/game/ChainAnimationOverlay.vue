@@ -6,6 +6,7 @@ import { useUiStore } from '../../stores/ui'
 import { useAudioStore } from '../../stores/audio'
 import { resolveCardArtUrl } from '../../cards/skinArt'
 import { drawChainFrame } from './chainAnimationCanvas'
+import { createChainSkinFaces } from './chainSkinFaces'
 import { planChainStage, type ChainStageInsets } from './chainStageLayout'
 import type { ChainFrame } from './chainAnimation'
 
@@ -15,6 +16,8 @@ const canvas = ref<HTMLCanvasElement | null>(null)
 const frame = shallowRef<ChainFrame | null>(null)
 const art = new Map<string, HTMLImageElement>()
 let raf = 0, mounted = false
+// 公开连锁牌的动态皮肤：本叠层自己的 RAF 在演出期间连续重绘，回调只需确保 RAF 在跑。
+const skinFaces = createChainSkinFaces('chain', () => start())
 let motion: MediaQueryList | null = null
 let cachedInsets: ChainStageInsets = { top: 0, right: 0, bottom: 0, left: 0 }
 let cachedViewport = ''
@@ -67,9 +70,12 @@ function tick(): void {
       // 构图按可用宽高 + 安全区实时计算：旋转只影响下一帧的布局，不重挂载、不重置时间轴。
       const plan = planChainStage({ width, height, count: next.cue.cards.length, insets: readInsets() })
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
-      drawChainFrame(ctx, next, plan, lookup)
+      skinFaces.beginFrame()
+      drawChainFrame(ctx, next, plan, lookup, skinFaces.lookup)
+      skinFaces.endFrame()
     }
   }
+  if (!next) skinFaces.clear()
   // 绘制可能跨过截止时刻；已有画面时仍需下一帧负责移除叠层。
   if (next || Date.now() < animation.until()) raf = window.requestAnimationFrame(tick)
   else void nextTick(() => animation.finish())
@@ -92,7 +98,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   mounted = false; window.cancelAnimationFrame(raf); animation.reset()
   document.removeEventListener('visibilitychange', syncMotion); motion?.removeEventListener('change', syncMotion)
-  art.clear()
+  art.clear(); skinFaces.dispose()
 })
 </script>
 

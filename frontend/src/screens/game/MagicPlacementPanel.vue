@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { cardArtUrl } from '../../cards/cardArt'
+import { ownSkinId } from '../../cards/ownCardArt'
+import CardFaceArt from '../../cards/CardFaceArt.vue'
 import type { Point } from './view'
 
 defineProps<{
@@ -20,7 +22,7 @@ const emit = defineEmits<{ (event: 'confirm'): void; (event: 'cancel'): void }>(
   <section class="game-target game-placement battle-prompt" :class="{ 'is-compact': compact, 'is-tight': tight }" data-testid="game-placement" aria-labelledby="magic-placement-title" role="region">
     <header class="battle-prompt__head">
       <div><p class="battle-prompt__context">部署战舰</p><h2 id="magic-placement-title">{{ title }} · 选择部署位置</h2></div>
-      <img v-if="cardArtUrl(title)" class="battle-prompt__card-art" :src="cardArtUrl(title)!" alt="" draggable="false" />
+      <CardFaceArt v-if="cardArtUrl(title)" class="battle-prompt__card-art" :name="title" :skin-id="ownSkinId(title)" context="hand" alt="" draggable="false" />
     </header>
     <div class="game-target__main">
       <p class="game-target__hint">{{ hint }}</p>

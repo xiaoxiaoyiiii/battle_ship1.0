@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import AppOverlay from '../../components/AppOverlay.vue'
-import { ownCardArtUrl, ownSkinEffectClass } from '../../cards/ownCardArt'
+import { ownCardArtUrl, ownSkinId } from '../../cards/ownCardArt'
+import CardFaceArt from '../../cards/CardFaceArt.vue'
 import type { CardLike } from './view'
 withDefaults(defineProps<{ card: CardLike; reason: string; canDiscard: boolean; discardReason?: string; pending?: boolean }>(), { discardReason: '', pending: false })
 const emit = defineEmits<{ close: []; use: []; discard: [] }>()
@@ -15,7 +16,7 @@ const emit = defineEmits<{ close: []; use: []; discard: [] }>()
       </header>
       <div class="mobile-card-reader__body">
       <div class="mobile-card-reader__content">
-        <span v-if="ownCardArtUrl(card.name)" :class="ownSkinEffectClass(card.name)" style="display:inline-flex;position:relative"><img :src="ownCardArtUrl(card.name)!" :alt="card.name + '完整卡面'" /></span>
+        <CardFaceArt v-if="ownCardArtUrl(card.name)" :key="card.name" :name="card.name" :skin-id="ownSkinId(card.name)" context="hand" :alt="card.name + '完整卡面'" />
         <article><span class="mobile-card-reader__type">{{ card.type }}</span><h3>效果说明</h3><p>{{ card.description || '暂无效果说明' }}</p></article>
       </div>
       <p v-if="reason" class="mobile-card-reader__reason" data-testid="game-card-detail-reason">{{ reason }}</p>
@@ -38,7 +39,8 @@ header h2 { margin:4px 0 0; font-size:25px; }
 header button { width:44px; height:44px; font-size:24px; }
 .mobile-card-reader__body { flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; }
 .mobile-card-reader__content { display:grid; grid-template-columns:1fr; gap:18px; margin-top:16px; }
-.mobile-card-reader__content img { display:block; width:min(62vw,240px); max-height:36dvh; object-fit:contain; margin:auto; filter:drop-shadow(0 12px 18px #0008); }
+.mobile-card-reader__content .card-face-art--skin { aspect-ratio:2/3; height:auto; }
+.mobile-card-reader__content img,.mobile-card-reader__content .card-face-art--skin { display:block; width:min(62vw,240px); max-height:36dvh; object-fit:contain; margin:auto; filter:drop-shadow(0 12px 18px #0008); }
 article { padding:14px; border:1px solid #b49bec30; border-radius:12px; background:#080e1a66; }
 article h3 { margin:8px 0; font-size:14px; color:#a9c7df; }
 article p { margin:0; white-space:pre-line; line-height:1.75; font-size:16px; }
@@ -46,5 +48,5 @@ article p { margin:0; white-space:pre-line; line-height:1.75; font-size:16px; }
 .mobile-card-reader__discard-hint { color:#e4ca91; font-size:13px; line-height:1.5; }
 footer { display:flex; flex:0 0 auto; gap:10px; padding-top:10px; background:#0c1526; margin-top:8px; }
 footer .button { flex:1; min-width:0; min-height:46px; padding:8px; font-size:14px; }
-@media(orientation:landscape) { .mobile-card-reader__content { grid-template-columns:minmax(120px,180px) 1fr; align-items:start; }.mobile-card-reader__content img { width:100%; max-height:54dvh; } }
+@media(orientation:landscape) { .mobile-card-reader__content { grid-template-columns:minmax(120px,180px) 1fr; align-items:start; }.mobile-card-reader__content img,.mobile-card-reader__content .card-face-art--skin { width:100%; max-height:54dvh; } }
 </style>

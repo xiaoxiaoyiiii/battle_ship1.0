@@ -70,7 +70,7 @@ function exit(): void { void router.push('/lobby') }
           <details class="viewing__panel" :open="wide"><summary>对局记录</summary><ol class="viewing__logs"><li v-for="(step, i) in store.recording.steps" :key="i" :class="{ 'is-current': i === store.k }"><button class="view-log-button" @click="store.setK(i)">{{ step.text }}</button></li></ol></details>
         </aside>
       </div>
-      <ViewingAnimationLayer :cue="playback.snapshot.value.cue" :progress="playback.snapshot.value.progress" />
+      <ViewingAnimationLayer :cue="playback.snapshot.value.cue" :progress="playback.snapshot.value.progress" context="replay" />
     </template>
     <p v-else class="viewing__error">请从对局记录选择一场录像。</p>
   </section>

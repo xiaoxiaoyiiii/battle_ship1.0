@@ -3,7 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useCardDrawStore, type DrawFlight } from '../../stores/cardDraw'
 import { useGameStore } from '../../stores/game'
 import { useUiStore } from '../../stores/ui'
-import { ownCardArtUrl, ownSkinEffectClass } from '../../cards/ownCardArt'
+import { ownCardArtUrl, ownSkinId } from '../../cards/ownCardArt'
+import CardFaceArt from '../../cards/CardFaceArt.vue'
 
 const draws = useCardDrawStore(), game = useGameStore(), ui = useUiStore()
 const deck = ref<HTMLElement | null>(null)
@@ -15,7 +16,6 @@ const faceName = computed(() => {
   return String(game.state.hand[flight.index]?.name ?? '')
 })
 const face = computed(() => faceName.value ? ownCardArtUrl(faceName.value) : null)
-const faceSkinClass = computed(() => faceName.value ? ownSkinEffectClass(faceName.value) : '')
 let raf = 0, mounted = false
 let media: MediaQueryList | null = null
 function enabled(): boolean { return !document.hidden && ui.motion !== 'reduced' && !media?.matches }
@@ -65,8 +65,9 @@ onBeforeUnmount(() => {
     <span>共享牌堆 <b data-testid="game-deck-count">{{ game.state.deck_count }}</b></span>
   </div>
   <Teleport to="body">
-    <div v-if="active" class="draw-flight" :class="faceSkinClass" data-testid="draw-animation" :data-flight="active.id" :data-owner="active.player === game.state.player_id ? 'self' : 'opponent'" :style="style" aria-hidden="true">
-      <img v-if="face" :src="face" alt="" />
+    <div v-if="active" class="draw-flight" data-testid="draw-animation" :data-flight="active.id" :data-owner="active.player === game.state.player_id ? 'self' : 'opponent'" :style="style" aria-hidden="true">
+      <!-- 只有自己抽到的牌才有 faceName；对手抽牌保持牌背，不挂皮肤。 -->
+      <CardFaceArt v-if="face" :name="faceName" :skin-id="ownSkinId(faceName)" context="hand" alt="" />
       <span v-else>⚓</span>
     </div>
   </Teleport>
@@ -78,6 +79,6 @@ onBeforeUnmount(() => {
 .draw-deck__back,.draw-flight { display:grid; place-items:center; color:#95d9e8; border:1px solid #8bafbf; border-radius:5px; background:repeating-linear-gradient(45deg,#102c42 0 5px,#15364d 5px 6px); box-shadow:inset 0 0 0 3px #0b1b2c,inset 0 0 0 4px #536c7b; }
 .draw-deck__back { width:32px; height:44px; margin:3px 0 5px; box-shadow:3px 3px 0 #1c3448,5px 5px 0 #5a7280,inset 0 0 0 3px #0b1b2c; }
 .draw-flight { position:fixed; left:0; top:0; width:72px; height:102px; z-index:9100; pointer-events:none; will-change:transform,opacity; font-size:32px; box-shadow:0 0 22px #69d6ed55; }
-.draw-flight img { width:100%; height:100%; object-fit:fill; border-radius:4px; }
+.draw-flight img,.draw-flight .card-face-art--skin { width:100%; height:100%; object-fit:fill; border-radius:4px; }
 @media(max-width:600px) { .draw-deck { gap:8px; font-size:11px; } .draw-deck__back { width:25px; height:35px; } }
 </style>

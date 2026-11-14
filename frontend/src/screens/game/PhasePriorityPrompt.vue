@@ -2,6 +2,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import AppOverlay from '../../components/AppOverlay.vue'
 import { cardArtUrl } from '../../cards/cardArt'
+import { ownSkinId } from '../../cards/ownCardArt'
+import CardFaceArt from '../../cards/CardFaceArt.vue'
 import { useUiStore } from '../../stores/ui'
 import type { CardLike } from './view'
 import { useAdaptiveGameLayout } from './useAdaptiveGameLayout'
@@ -84,7 +86,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', hidePreview))
       <p class="phase-prompt__hint">选择速阶 3 卡牌查看效果，确认后打出。</p>
       <div class="phase-prompt__cards" aria-label="可用速阶三卡牌">
         <button v-for="(card, index) in cards" :key="card.name + index" type="button" class="phase-prompt__card" :class="{ 'is-selected': selectedIndex === index }" :aria-pressed="selectedIndex === index" :data-testid="'game-phase-card-' + card.name" :disabled="busy || remaining <= 0" @mouseenter="showPreview(index, $event)" @mouseleave="hidePreview" @blur="hidePreview" @click="choose(index)">
-          <img v-if="cardArtUrl(card.name)" :src="cardArtUrl(card.name)!" :alt="card.name + '卡面'" />
+          <CardFaceArt v-if="cardArtUrl(card.name)" :name="card.name" :skin-id="ownSkinId(card.name)" context="hand" :alt="card.name + '卡面'" />
           <span><strong>{{ card.name }}</strong><small>速阶 {{ card.speed }}</small><small class="phase-prompt__card-state">{{ selectedIndex === index ? '已选中 · 点击下方打出' : '点击查看效果' }}</small></span>
         </button>
       </div>
@@ -109,7 +111,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', hidePreview))
     <Transition name="card-inspect-fade">
       <aside v-if="open && hovered" ref="hoverPanel" class="game-card-inspect phase-prompt__hover" :style="hoverPosition" data-testid="game-phase-card-hover-preview" role="tooltip">
         <div class="game-card-inspect__art" :class="{ 'is-empty': !cardArtUrl(hovered.name) }">
-          <img v-if="cardArtUrl(hovered.name)" :src="cardArtUrl(hovered.name)!" :alt="hovered.name + '卡面预览'" />
+          <CardFaceArt v-if="cardArtUrl(hovered.name)" :key="hovered.name" :name="hovered.name" :skin-id="ownSkinId(hovered.name)" context="hand" fit="cover" :alt="hovered.name + '卡面预览'" />
           <span v-else>{{ hovered.name }}</span>
         </div>
         <div class="game-card-inspect__body">
@@ -141,7 +143,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', hidePreview))
 .phase-prompt__card { display:flex; align-items:center; gap:18px; padding:14px; min-width:0; border:1px solid var(--prompt-line); border-radius:12px; background:var(--prompt-deck); color:var(--prompt-text); text-align:left; cursor:pointer; }
 .phase-prompt__card:hover,.phase-prompt__card:focus-visible { border-color:var(--prompt-cyan); outline:2px solid rgb(116 215 233 / 18%); outline-offset:2px; }
 .phase-prompt__card.is-selected { border-color:var(--prompt-gold); background:rgb(224 190 112 / 9%); box-shadow:inset 0 0 0 1px rgb(224 190 112 / 25%); }
-.phase-prompt__card img { width:90px; height:130px; object-fit:contain; flex:0 0 90px; filter:drop-shadow(0 5px 9px #0008); }
+.phase-prompt__card img,.phase-prompt__card .card-face-art--skin { width:90px; height:130px; object-fit:contain; flex:0 0 90px; filter:drop-shadow(0 5px 9px #0008); }
 .phase-prompt__card span { display:grid; gap:9px; }
 .phase-prompt__card strong { font-size:19px; }
 .phase-prompt__card small { font-size:14px; color:var(--prompt-muted); }
@@ -163,7 +165,7 @@ footer label span { width:100%; padding-left:26px; color:var(--prompt-muted); fo
 .phase-prompt__sr { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
 .phase-prompt__hover { position:fixed; z-index:9600; bottom:auto; box-sizing:border-box; max-height:calc(100dvh - 24px); overflow:hidden; transform:none; pointer-events:none; }
 .phase-prompt__hover.card-inspect-fade-enter-from,.phase-prompt__hover.card-inspect-fade-leave-to { transform:translateY(8px); }
-@media(max-width:520px) { .phase-prompt { padding:18px; }.phase-prompt__cards { grid-template-columns:1fr; }.phase-prompt__card img { width:76px; height:110px; flex-basis:76px; }.phase-prompt__clock { min-width:62px; padding:8px; }.phase-prompt__clock strong { font-size:26px; }.phase-prompt__actions { width:100%; }.phase-prompt__actions .button { flex:1; } }
+@media(max-width:520px) { .phase-prompt { padding:18px; }.phase-prompt__cards { grid-template-columns:1fr; }.phase-prompt__card img,.phase-prompt__card .card-face-art--skin { width:76px; height:110px; flex-basis:76px; }.phase-prompt__clock { min-width:62px; padding:8px; }.phase-prompt__clock strong { font-size:26px; }.phase-prompt__actions { width:100%; }.phase-prompt__actions .button { flex:1; } }
 @media(prefers-reduced-motion:reduce) { :global(.phase-window-enter-active),:global(.phase-window-leave-active) { transition:none; } }
 
 /* 面板传送到 body，手机规则必须由本组件承担，不能依赖 .game 祖先。 */
@@ -180,7 +182,7 @@ footer label span { width:100%; padding-left:26px; color:var(--prompt-muted); fo
   .phase-prompt__hint { margin:0 0 8px; font-size:12px; line-height:1.5; }
   .phase-prompt__cards { display:flex; gap:8px; padding:2px; overflow-x:auto; }
   .phase-prompt__card { flex:0 0 156px; gap:9px; padding:8px; border-radius:8px; }
-  .phase-prompt__card img { flex:0 0 36px; width:36px; height:54px; }
+  .phase-prompt__card img,.phase-prompt__card .card-face-art--skin { flex:0 0 36px; width:36px; height:54px; }
   .phase-prompt__card span { min-width:0; gap:3px; }
   .phase-prompt__card strong { font-size:14px; overflow-wrap:anywhere; }
   .phase-prompt__card small { font-size:11px; }

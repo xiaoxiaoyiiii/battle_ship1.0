@@ -8,6 +8,8 @@
  */
 import { computed, ref } from 'vue'
 import { cardArtUrl } from '../../cards/cardArt'
+import { ownSkinId } from '../../cards/ownCardArt'
+import CardFaceArt from '../../cards/CardFaceArt.vue'
 import AppOverlay from '../../components/AppOverlay.vue'
 
 export interface MonitorCard {
@@ -15,6 +17,8 @@ export interface MonitorCard {
   speed?: number | null
   type?: string | null
   description?: string
+  /** 公开载荷已给出的皮肤；没有就只对自己施放的牌用自己的图鉴选用。 */
+  skinId?: string | null
 }
 
 export interface MonitorBadge {
@@ -29,10 +33,12 @@ const props = withDefaults(
   defineProps<{
     field?: MonitorCard | null
     fieldOwner?: string | null
+    /** 场地魔法是否由自己施放；只有自己的场地牌才套自己的图鉴皮肤。 */
+    fieldMine?: boolean
     selfEffects?: MonitorBadge[]
     opponentEffects?: MonitorBadge[]
   }>(),
-  { field: null, fieldOwner: null, selfEffects: () => [], opponentEffects: () => [] },
+  { field: null, fieldOwner: null, fieldMine: false, selfEffects: () => [], opponentEffects: () => [] },
 )
 
 const hovered = ref<{ card: MonitorCard; label: string; tone: string; left: number; top: number } | null>(null)
@@ -92,6 +98,11 @@ const segments = computed<Segment[]>(() => {
 })
 
 const art = (card: MonitorCard): string | null => cardArtUrl(card.name)
+// 对手的场地/全局效果只认载荷 skin_id，不拿自己的图鉴去猜。
+function skinFor(card: MonitorCard, tone: string): string | null {
+  if (card.skinId) return card.skinId
+  return tone === 'self' || (tone === 'field' && props.fieldMine) ? ownSkinId(card.name) : null
+}
 const hasAny = computed(() => segments.value.length > 0)
 
 function previewPosition(event: Event): { left: number; top: number } {
@@ -149,7 +160,7 @@ function describe(card: MonitorCard): string {
         @keydown.enter.prevent="opened = openedIdentityOf(segment)"
         @keydown.space.prevent="opened = openedIdentityOf(segment)"
       >
-        <img v-if="art(segment.card)" class="monitor__art" :src="art(segment.card)!" :alt="`${segment.card.name} 卡面`" />
+        <CardFaceArt v-if="art(segment.card)" class="monitor__art" :name="segment.card.name" :skin-id="skinFor(segment.card, segment.tone)" context="hand" fit="cover" :alt="`${segment.card.name} 卡面`" />
         <span v-else class="monitor__art monitor__art--none" aria-hidden="true">{{ segment.card.name.slice(0, 1) }}</span>
         <span class="monitor__body">
           <span class="monitor__name">{{ segment.card.name }}</span>
@@ -171,7 +182,7 @@ function describe(card: MonitorCard): string {
         role="tooltip"
         data-testid="effect-monitor-preview"
       >
-        <img v-if="art(hovered.card)" class="monitor-preview__art" :src="art(hovered.card)!" :alt="`${hovered.card.name} 卡面`" />
+        <CardFaceArt v-if="art(hovered.card)" :key="hovered.card.name" class="monitor-preview__art" :name="hovered.card.name" :skin-id="skinFor(hovered.card, hovered.tone)" context="hand" fit="cover" :alt="`${hovered.card.name} 卡面`" />
         <div class="monitor-preview__body">
           <strong class="monitor-preview__name">{{ hovered.card.name }}</strong>
           <span class="monitor-preview__meta">
@@ -192,10 +203,13 @@ function describe(card: MonitorCard): string {
             </button>
           </header>
           <div class="monitor-dialog__body">
-            <img
+            <CardFaceArt
               v-if="art(opened.card)"
               class="monitor-dialog__art"
-              :src="art(opened.card)!"
+              :name="opened.card.name"
+              :skin-id="skinFor(opened.card, opened.tone)"
+              context="hand"
+              fit="cover"
               :alt="`${opened.card.name} 卡面`"
             />
             <div class="monitor-dialog__text">

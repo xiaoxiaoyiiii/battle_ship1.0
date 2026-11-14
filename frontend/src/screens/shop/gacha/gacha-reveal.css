@@ -150,7 +150,6 @@
 .gacha-card--limited.gacha-card--turning.gacha-card--exposed { animation: gacha-impact .38s linear both; }
 .gacha-card--legendary.gacha-card--open .gacha-card__edge { animation: gacha-neon-breath 2.8s ease-in-out infinite; }
 .gacha-card--limited.gacha-card--open .gacha-card__edge { animation: gacha-gold-flow 2.6s ease-in-out infinite; }
-.gacha-card--limited.gacha-card--open .gacha-card__front::after { content: ""; position: absolute; z-index: 3; inset: 0; pointer-events: none; background: linear-gradient(120deg, transparent 35%, #ffeac330 46%, #fff8e455 50%, #ff94b326 54%, transparent 65%); background-size: 250% 100%; animation: gacha-card-sheen 4s ease-in-out infinite; mix-blend-mode: screen; }
 .gacha-reveal__footer { display: grid; justify-items: center; align-content: center; gap: 16px; width: 100%; min-height: 90px; text-align: center; }
 .gacha-reveal__hint { margin: 0; color: #afa2c9; font-size: 12px; letter-spacing: .06em; }
 .gacha-reveal__summary { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 24px; margin: 0; color: #c5b9d9; font-size: 12px; }

@@ -1,0 +1,99 @@
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { getSkin } from './skinManifest'
+import { createSkinFrameSource } from './skinMotion'
+import type { SkinFaceContext, SkinFrameSource, SkinMotionLevel } from './skinMotion'
+import { registerSkinAnimation } from './skinAnimationRuntime'
+import './skin-card-face.css'
+
+const props = withDefaults(defineProps<{
+  skinId: string | null
+  context?: SkinFaceContext
+  width?: number
+  motion?: boolean
+  reducedMotion?: boolean
+  alt?: string
+}>(), { context: 'collection', motion: true, reducedMotion: false })
+
+const host = ref<HTMLElement | null>(null)
+const canvas = ref<HTMLCanvasElement | null>(null)
+const skin = computed(() => getSkin(props.skinId))
+const level = ref<SkinMotionLevel>('static')
+const painted = ref(false)
+const label = computed(() => props.alt ?? skin.value?.cardName ?? '未选择皮肤')
+const sizeStyle = computed(() => props.width && props.width > 0 ? { width: `${props.width}px` } : undefined)
+let mounted = false
+let generation = 0
+let animation: ReturnType<typeof registerSkinAnimation> | undefined
+let resize: ResizeObserver | undefined
+let source: SkinFrameSource | null = null
+let sourceReady = false
+let motionRequested = false
+
+function resizeCanvas() {
+  if (!canvas.value || !host.value) return
+  const bounds = host.value.getBoundingClientRect()
+  const ratio = Math.min(window.devicePixelRatio || 1, 1.5)
+  const width = Math.min(768, Math.max(1, Math.round(bounds.width * ratio)))
+  const height = Math.round(width * 1.5)
+  if (canvas.value.width !== width || canvas.value.height !== height) {
+    canvas.value.width = width; canvas.value.height = height
+    painted.value = false
+  }
+}
+
+function start() {
+  generation += 1
+  const current = generation
+  animation?.dispose(); animation = undefined
+  source = null; sourceReady = false; motionRequested = false; painted.value = false; level.value = 'static'
+  if (!mounted || !host.value || !skin.value) return
+  resizeCanvas()
+  animation = registerSkinAnimation({
+    element: host.value, tier: skin.value.tier, context: props.context,
+    reducedMotion: !props.motion || props.reducedMotion,
+    onLevelChange(next) { level.value = next; if (next === 'static') painted.value = false },
+    onFrame(time, quality) {
+      if (current !== generation || quality === 'static' || !canvas.value) return
+      if (!source) {
+        source = createSkinFrameSource(props.skinId)
+        const loading = source
+        void loading?.ready.then((ready) => { if (generation === current) sourceReady = ready })
+      }
+      if (!source || !sourceReady) return
+      if (quality === 'full' && !motionRequested) {
+        motionRequested = true
+        void source.prepareMotion()
+      }
+      const ctx = canvas.value.getContext('2d', { alpha: false })
+      if (!ctx) return
+      painted.value = source.draw(ctx, { x: 0, y: 0, width: canvas.value.width, height: canvas.value.height }, time, quality)
+    },
+  })
+}
+
+watch(() => props.skinId, start, { flush: 'post' })
+watch(() => [props.context, props.motion, props.reducedMotion], () => {
+  animation?.update({ context: props.context, reducedMotion: !props.motion || props.reducedMotion })
+})
+watch(() => props.width, resizeCanvas, { flush: 'post' })
+onMounted(() => {
+  mounted = true
+  if (typeof ResizeObserver !== 'undefined' && host.value) {
+    resize = new ResizeObserver(resizeCanvas); resize.observe(host.value)
+  }
+  start()
+})
+onBeforeUnmount(() => {
+  mounted = false; generation += 1
+  animation?.dispose(); resize?.disconnect(); source = null
+})
+</script>
+
+<template>
+  <span ref="host" class="skin-card-face" :style="sizeStyle" :data-motion-level="level" :data-skin-id="skin?.skinId" :data-context="context">
+    <img v-if="skin" class="skin-card-face__static" :src="skin.imageUrl" :alt="label" loading="lazy" decoding="async" draggable="false" />
+    <span v-else class="skin-card-face__empty" role="img" :aria-label="label"></span>
+    <canvas v-if="skin" ref="canvas" class="skin-card-face__motion" :class="{ 'skin-card-face__motion--ready': painted && level !== 'static' }" aria-hidden="true"></canvas>
+  </span>
+</template>

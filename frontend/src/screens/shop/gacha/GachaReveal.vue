@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import type { ComponentPublicInstance, CSSProperties } from 'vue'
 import { getSkin, getSkinForCard } from '../../../cards/skins/skinManifest'
+import SkinCardFace from '../../../cards/skins/SkinCardFace.vue'
 import '../../../cards/skins/skin-effects.css'
 import {
   createGachaRevealFlow,
@@ -30,6 +31,7 @@ const doneButton = ref<HTMLButtonElement | null>(null)
 const cardElements: Array<HTMLElement | null> = []
 const announcement = ref('')
 let media: MediaQueryList | undefined
+let motionRootObserver: MutationObserver | undefined
 let previousFocus: HTMLElement | null = null
 let disposed = false
 let batch = 0
@@ -42,7 +44,8 @@ const keyboardCards = new Set<number>()
 let silentReveal = false
 
 function systemReducedMotion() {
-  return typeof window !== 'undefined'
+  return (typeof document !== 'undefined' && document.documentElement?.dataset.motion === 'reduced')
+    || typeof window !== 'undefined'
     && typeof window.matchMedia === 'function'
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
@@ -78,6 +81,7 @@ const cards = computed(() => state.value.cards.map((card, index) => {
     label: appearance.label,
     name,
     imageUrl: skin?.imageUrl,
+    skinId: skin?.skinId,
     effectClass: skin?.effectClass,
     isNew,
     duplicate,
@@ -280,7 +284,7 @@ watch(() => props.results, () => {
 }, { deep: true, flush: 'sync' })
 
 function updateMotion() {
-  flow.setReducedMotion(props.reducedMotion === true || (media?.matches ?? systemReducedMotion()))
+  flow.setReducedMotion(props.reducedMotion === true || systemReducedMotion())
   if (flow.snapshot.reducedMotion) clearUiTimers()
 }
 watch(() => props.reducedMotion, updateMotion)
@@ -316,6 +320,10 @@ onMounted(() => {
   previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
   media = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-reduced-motion: reduce)') : undefined
   media?.addEventListener('change', updateMotion)
+  if (typeof MutationObserver !== 'undefined' && document.documentElement) {
+    motionRootObserver = new MutationObserver(updateMotion)
+    motionRootObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-motion'] })
+  }
   if (state.value.stage === 'summary') doneButton.value?.focus()
   else panel.value?.focus()
 })
@@ -328,6 +336,7 @@ onBeforeUnmount(() => {
   flow.dispose()
   clearUiTimers()
   media?.removeEventListener('change', updateMotion)
+  motionRootObserver?.disconnect()
   if (shouldRestoreFocus && previousFocus?.isConnected) previousFocus.focus()
 })
 </script>
@@ -400,8 +409,8 @@ onBeforeUnmount(() => {
                 <span class="gacha-card__back-name">潮汐回响</span>
                 <span class="gacha-card__back-tide"></span>
               </span>
-              <span v-if="card.exposed" class="gacha-card__face gacha-card__front" :class="card.effectClass">
-                <img v-if="card.imageUrl" class="gacha-card__art" :src="card.imageUrl" alt="" draggable="false" />
+              <span v-if="card.exposed" class="gacha-card__face gacha-card__front">
+                <SkinCardFace v-if="card.skinId" class="gacha-card__art" :skin-id="card.skinId" context="reveal" :reduced-motion="state.reducedMotion" alt="" />
                 <span v-else-if="card.tone === 'shard'" class="gacha-card__shard-art"><i></i><b>×{{ card.gained }}</b></span>
                 <span v-else class="gacha-card__missing-art"><i></i></span>
                 <span v-if="card.tone === 'shard'" class="gacha-card__shard-label">潮汐碎片</span>

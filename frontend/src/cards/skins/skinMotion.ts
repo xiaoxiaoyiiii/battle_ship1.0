@@ -154,6 +154,26 @@ function sweep(ctx: CanvasRenderingContext2D, p: number) {
   }
 }
 
+/** 传说的双束流光只穿过插画，沿六秒周期绕回，文字区保持静止。 */
+function legendaryFlow(ctx: CanvasRenderingContext2D, p: number) {
+  const opacity = ctx.globalAlpha
+  for (let beam = 0; beam < 2; beam += 1) {
+    const travel = (p + beam * .5) % 1
+    const x = ART.x - 280 + travel * (ART.width + 560)
+    const gradient = ctx.createLinearGradient(x - 100, ART.y, x + 130, ART.y + ART.height)
+    gradient.addColorStop(0, 'transparent')
+    gradient.addColorStop(.35, beam ? '#aa82ff00' : '#76fff000')
+    gradient.addColorStop(.48, beam ? '#c4a2ff' : '#a4fff1')
+    gradient.addColorStop(.52, '#ffffff')
+    gradient.addColorStop(.65, beam ? '#aa82ff00' : '#76fff000')
+    gradient.addColorStop(1, 'transparent')
+    ctx.globalAlpha = opacity * Math.sin(Math.PI * travel) ** 2 * .23
+    ctx.fillStyle = gradient
+    ctx.fillRect(ART.x, ART.y, ART.width, ART.height)
+  }
+  ctx.globalAlpha = opacity
+}
+
 function frameGlow(ctx: CanvasRenderingContext2D, p: number, full: boolean) {
   const opacity = ctx.globalAlpha
   ctx.globalAlpha = opacity * (full ? .65 : .12 + Math.sin(p * TAU) * .06)
@@ -219,6 +239,7 @@ export function createSkinFrameSource(skinId: string | null | undefined): SkinFr
         } else {
           ctx.save(); ctx.globalCompositeOperation = 'screen'
           glow(ctx, 384, 440, 300, '#7b64d5', .025 + .015 * Math.sin(phase))
+          if (skin.tier === 'legendary') legendaryFlow(ctx, p)
           motes(ctx, p, false, seed); ctx.restore()
         }
         ctx.restore(); frameGlow(ctx, p, full)

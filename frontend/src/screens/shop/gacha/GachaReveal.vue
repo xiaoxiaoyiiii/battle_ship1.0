@@ -290,9 +290,10 @@ function updateMotion() {
 watch(() => props.reducedMotion, updateMotion)
 
 function onKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape' && state.value.stage !== 'summary') {
+  if (event.key === 'Escape') {
     event.preventDefault()
-    skip()
+    if (state.value.stage === 'summary') { audio.stopAll(); flow.finish() }
+    else skip()
     return
   }
   if (event.key !== 'Tab' || !panel.value) return
@@ -342,6 +343,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <Teleport to="body">
   <section
     ref="panel"
     class="gacha-reveal"
@@ -361,7 +363,8 @@ onBeforeUnmount(() => {
         <span class="gacha-reveal__shard-symbol" aria-hidden="true"></span>
         <span>{{ balanceLabel }}<strong>{{ displayBalance }}</strong></span>
       </div>
-      <button v-if="state.stage !== 'summary'" class="gacha-reveal__skip" type="button" @click="skip()">跳过动画</button>
+      <button v-if="state.stage !== 'summary'" class="gacha-reveal__skip" type="button" @click="skip()">跳过动画<kbd>Esc</kbd></button>
+      <button v-else class="gacha-reveal__skip" type="button" @click="audio.stopAll(); flow.finish()">关闭结果<kbd>Esc</kbd></button>
     </header>
 
     <main class="gacha-reveal__content">
@@ -446,4 +449,5 @@ onBeforeUnmount(() => {
       </div>
     </Teleport>
   </section>
+  </Teleport>
 </template>

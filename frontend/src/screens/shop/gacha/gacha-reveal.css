@@ -55,7 +55,8 @@
 .gacha-reveal__wallet > span:last-child { display: grid; gap: 1px; }
 .gacha-reveal__wallet strong { color: #d9eafa; font-size: 21px; line-height: 1.2; font-weight: 500; font-variant-numeric: tabular-nums; }
 .gacha-reveal__shard-symbol { width: 16px; height: 23px; background: linear-gradient(130deg, #ddf6ff, #6d9cc9 52%, #2a426b 53%, #91a5e2); clip-path: polygon(50% 0, 100% 45%, 50% 100%, 0 45%); filter: drop-shadow(0 0 7px #a5dbff66); }
-.gacha-reveal__skip { padding: 10px 0 10px 14px; border: 0; color: #c6bddb; background: transparent; font-size: 13px; cursor: pointer; }
+.gacha-reveal__skip { display:flex; align-items:center; gap:10px; min-height:44px; padding:10px 14px; border:1px solid #a58aff66; border-radius:6px; color:#eee5ff; background:#211735ee; font-size:13px; cursor:pointer; box-shadow:0 4px 18px #0005; }
+.gacha-reveal__skip kbd { padding:2px 5px; border:1px solid #a58aff55; border-radius:3px; font:inherit; font-size:10px; color:#b9aacc; }
 .gacha-reveal__skip:hover { color: #fff; }
 .gacha-reveal__content { position: relative; z-index: 2; display: flex; flex: 1 0 auto; flex-direction: column; justify-content: center; align-items: center; gap: 26px; width: 100%; padding: 20px 32px max(26px, env(safe-area-inset-bottom)); margin: auto; }
 .gacha-reveal__heading { position: relative; text-align: center; min-height: 84px; }
@@ -90,6 +91,18 @@
 .gacha-card--shard { --gacha-edge: #819bbb; --gacha-glow: #47698b28; }
 .gacha-card--legendary { --gacha-edge: #83f9ed; --gacha-glow: #9b71ff66; }
 .gacha-card--limited { --gacha-edge: #f6c980; --gacha-glow: #ff91ad60; }
+/* 翻面前只有共同的高级提示，传说和限定使用完全相同的青紫能量。 */
+.gacha-card--charged { --gacha-edge:#c2a2ff; --gacha-glow:#a466ff99; }
+.gacha-card--charged .gacha-card__edge { border-width:2px; opacity:1; animation:gacha-charged-aura 2.4s ease-in-out infinite; }
+.gacha-card--charged .gacha-card__back { background:radial-gradient(ellipse at 50% 40%,#493079,#19112e 72%); }
+.gacha-card--charged .gacha-card__back::after { inset:-45%; background:conic-gradient(from 0deg,transparent 0 26%,#d9bdff66 29%,transparent 33% 71%,#75fff077 75%,transparent 80%); animation:gacha-charged-stream 5s linear infinite; }
+.gacha-card--charged .gacha-card__back-orbit { z-index:1; border:2px solid #c8a7ff; box-shadow:0 0 22px #b376ff99,inset 0 0 26px #a071ff55; animation:gacha-charged-orbit 4s linear infinite; }
+.gacha-card--charged .gacha-card__back-orbit::after { border-color:#8ffff0bb; box-shadow:0 0 12px #78ffe755; }
+.gacha-card--charged .gacha-card__back-mark { z-index:2; filter:drop-shadow(0 0 12px #b891ff); }
+.gacha-card--charged .gacha-card__back-tide { height:2px; box-shadow:0 0 12px 3px #ad82ff; }
+@keyframes gacha-charged-aura { 0%,100% { box-shadow:0 0 12px #bc8affaa,0 0 26px #985cff66,inset 0 0 14px #9e71ff44; } 50% { box-shadow:0 0 22px #cb9cffff,0 0 45px #995dff99,inset 0 0 22px #a884ff66; } }
+@keyframes gacha-charged-stream { to { rotate:360deg; } }
+@keyframes gacha-charged-orbit { to { rotate:-360deg; } }
 .gacha-card__edge { position: absolute; z-index: 4; inset: -2px; border: 1px solid var(--gacha-edge); border-radius: 11px; opacity: .7; pointer-events: none; transition: border-color .15s, box-shadow .15s; }
 .gacha-card--hidden .gacha-card__edge::before { content: ""; position: absolute; inset: -1px; border: 1px solid #61f4e8; border-radius: inherit; clip-path: inset(0 100% 0 0); }
 .gacha-reveal--rising .gacha-card__edge::before { animation: gacha-trace .6s ease-out both; }
@@ -219,6 +232,7 @@
 .gacha-reveal--reduced .skin-neon::before, .gacha-reveal--reduced .skin-neon::after { animation: none; }
 .gacha-reveal--reduced .gacha-card, .gacha-reveal--reduced .gacha-card__back-orbit, .gacha-reveal--reduced .gacha-card__front::after { animation: none !important; }
 .gacha-reveal--reduced .gacha-card__edge { animation: none !important; }
+.gacha-reveal--reduced .gacha-card__back::after { animation:none; }
 .gacha-reveal--reduced .gacha-card__front::after, .gacha-reveal--reduced .gacha-card__burst { display: none; }
 .gacha-reveal--reduced .gacha-card--charging .gacha-card__turn { transform: none; }
 @media (prefers-reduced-motion: reduce) {

@@ -21,9 +21,8 @@ const types = computed(()=>[...new Set(cards.value.map(c=>c.type))])
 const unlocked = computed(()=>store.data?.achievements.filter(a=>a.unlocked).length ?? 0)
 async function pick(name:string):Promise<void> {
   selected.value = name
-  if (window.matchMedia('(max-width: 760px)').matches) {
-    await nextTick(); detail.value?.scrollIntoView({block:'start',behavior:ui.motion==='reduced'?'auto':'smooth'})
-  }
+  await nextTick()
+  if (detail.value) { detail.value.scrollTop = 0; detail.value.focus({preventScroll:true}) }
 }
 async function choose(tier:number):Promise<void> {
   if (!current.value) return

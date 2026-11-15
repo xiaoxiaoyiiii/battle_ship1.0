@@ -788,9 +788,8 @@ async function startAi(): Promise<void> {
   .home-card__head .home-kicker { font-size:15px; }
   .home-stat { min-height:24px; }
 }
-/* 桌面三栏贴齐导航下的剩余高度。门槛低于 700，带标签栏的常见窗口也走这套，
-   长公告只在侧栏里滚，不再把整页撑到将近一千像素。 */
-@media (min-width:1024px) and (min-height:520px) {
+/* 常见桌面高度内三栏贴齐导航下方；矮窗口沿用整页滚动，保持操作和完整卡图可见。 */
+@media (min-width:1024px) and (min-height:730px) {
   .home-screen { flex:1 1 auto; height:auto; min-height:0; overflow:hidden; padding:14px 24px 16px; gap:14px; }
   .home-head { flex-shrink:0; }
   .home-head__title { font-size:26px; }
@@ -808,14 +807,20 @@ async function startAi(): Promise<void> {
   .home-launch__actions { margin-top:18px; }
   .home-ai { gap:10px; }
   .home-link--tile { min-height:58px; padding:9px 12px; }
-  /* 卡面沿用 2:3 比例；矮窗口由主栏滚动，不拉伸或压扁图片。 */
-  .home-showcase { flex:0 0 auto; }
+  /* 展示条使用操作区剩余高度，完整卡图按原比例缩放，不制造第二层滚动。 */
+  .home-main { overflow:visible; }
+  .home-showcase { flex:1 1 0; min-height:0; display:flex; flex-direction:column; }
+  .home-showcase .home-card__head { flex-shrink:0; }
+  .home-showcase__row { flex:1; min-height:0; }
+  .home-showcase__row li,.home-cardface { height:100%; min-height:0; }
+  .home-cardface__art { flex:1 1 0; min-height:0; height:0; object-fit:contain; background:transparent; box-shadow:none; }
+  .home-cardface__name { flex-shrink:0; }
   .home-side > [data-testid='start-online'] { flex-shrink:0; }
   .home-changelog { flex:1; display:flex; flex-direction:column; }
   .home-changelog > .state-surface { flex:1; min-height:0; }
   .home-changelog__list { max-height:none; min-height:0; }
 }
-@media (min-width:1024px) and (min-height:520px) and (max-height:900px) {
+@media (min-width:1024px) and (min-height:730px) and (max-height:900px) {
   .home-screen { padding-top:10px; padding-bottom:12px; gap:10px; }
   .home-head__title { font-size:22px; }
   .home-head__subtitle { font-size:12px; }

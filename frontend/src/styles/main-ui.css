@@ -526,7 +526,7 @@ body:has([data-testid='screen-game']) .screen-boundary {
   min-height: 0;
 }
 
-@media (min-width: 1024px) and (min-height: 520px) {
+@media (min-width: 1024px) and (min-height: 730px) {
   body:has([data-testid='screen-start']) .app-shell {
     height: 100dvh;
     max-height: 100dvh;

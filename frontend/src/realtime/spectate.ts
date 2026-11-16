@@ -1,6 +1,7 @@
 import type { Pinia } from 'pinia'
 import { createTypedSocket, type TypedSocket } from '../socket/client'
 import { useSpectateStore } from '../stores/spectate'
+import { applyMysteryTechEvent } from './mysteryTech'
 import { useUiStore } from '../stores/ui'
 import { asObject, asString, type JsonObject } from '../screens/spectate/view'
 
@@ -36,6 +37,7 @@ export type SpectateEventName =
   | 'chat_message'
   | 'game_over'
   | 'game_canceled'
+  | 'mystery_tech_public'
 
 export const SPECTATE_EVENTS: readonly SpectateEventName[] = [
   'spectate_frame',
@@ -57,6 +59,7 @@ export const SPECTATE_EVENTS: readonly SpectateEventName[] = [
   'chat_message',
   'game_over',
   'game_canceled',
+  'mystery_tech_public',
 ]
 
 /** The single implementation the wire and the test hook share. */
@@ -123,6 +126,9 @@ export function applySpectateEvent(
       break
     case 'game_canceled':
       store.applyEnded({ reason: asString(payload.reason) || asString(payload.message) })
+      break
+    case 'mystery_tech_public':
+      applyMysteryTechEvent('mystery_tech_public', payload, pinia)
       break
   }
 }

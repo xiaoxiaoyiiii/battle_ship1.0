@@ -70,7 +70,7 @@ function routeForState(state: string): void {
   if (route.name !== 'rps') return
   if (state === 'placing_ships') {
     void router.push({ name: 'placement' })
-  } else if (state === 'attacking') {
+  } else if (state === 'attacking' || state === 'mystery_tech_resolution') {
     void router.push({ name: 'game' })
   } else if (state === 'game_over') {
     void router.push({ name: 'game-over' })

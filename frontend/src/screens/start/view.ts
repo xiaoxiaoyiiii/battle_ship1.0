@@ -103,6 +103,7 @@ export function playerView(profile: JsonObject | null): PlayerView {
 
 export function queueStatusText(mode: HomeMode | null): string {
   if (mode === 'ranked') return '正在寻找排位对手…'
+  if (mode === 'mystery_tech') return '正在寻找神秘科技大乱斗对手…'
   if (mode === 'casual') return '正在寻找休闲对手…'
   return ''
 }
@@ -134,6 +135,7 @@ export interface StatsText {
   online: string
   casual: string
   ranked: string
+  mysteryTech: string
   rooms: string
 }
 
@@ -142,6 +144,7 @@ export function statsText(stats: HomeStats): StatsText {
     online: numberText(stats.onlineCount),
     casual: numberText(stats.queueCasual),
     ranked: numberText(stats.queueRanked),
+    mysteryTech: numberText(stats.queueMysteryTech),
     rooms: numberText(stats.lobbyRooms),
   }
 }

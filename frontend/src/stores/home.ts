@@ -23,6 +23,7 @@ export interface HomeStats {
   onlineCount: number | null
   queueCasual: number | null
   queueRanked: number | null
+  queueMysteryTech: number | null
   lobbyRooms: number | null
 }
 
@@ -32,7 +33,7 @@ export interface ChangelogEntry {
   items: string[]
 }
 
-export type HomeMode = 'casual' | 'ranked'
+export type HomeMode = 'casual' | 'ranked' | 'mystery_tech'
 
 /** A real match the server has already seated us into (匹配成功 overlay). */
 export interface MatchFoundInfo {
@@ -63,7 +64,7 @@ function asString(value: unknown): string {
 }
 
 function emptyStats(): HomeStats {
-  return { onlineCount: null, queueCasual: null, queueRanked: null, lobbyRooms: null }
+  return { onlineCount: null, queueCasual: null, queueRanked: null, queueMysteryTech: null, lobbyRooms: null }
 }
 
 async function getJson(url: string): Promise<HomeFetchResult> {
@@ -101,7 +102,7 @@ export const useHomeStore = defineStore('home', () => {
   /** Epoch ms when the server confirmed the queue entry (waited-seconds label). */
   const queueStartedAt = ref(0)
   /** A find_match/create_ai_room hand-off is being prepared (client guard). */
-  const pendingAction = ref<'casual' | 'ranked' | 'ai' | null>(null)
+  const pendingAction = ref<'casual' | 'ranked' | 'mystery_tech' | 'ai' | null>(null)
   /** Last user-facing server refusal (`error` frame or an error ack). */
   const notice = ref('')
   /** True once a match/room hand-off is expected to move us to placement. */
@@ -133,6 +134,7 @@ export const useHomeStore = defineStore('home', () => {
       onlineCount: asNumber(data.online_count),
       queueCasual: asNumber(queue?.casual),
       queueRanked: asNumber(queue?.ranked),
+      queueMysteryTech: asNumber(queue?.mystery_tech),
       lobbyRooms: asNumber(data.lobby_rooms),
     }
     statsLoaded.value = true
@@ -190,7 +192,7 @@ export const useHomeStore = defineStore('home', () => {
 
   function applyMatchQueued(payload: JsonObject | null | undefined): void {
     const data = asObject(payload)
-    queueMode.value = data?.mode === 'ranked' ? 'ranked' : 'casual'
+    queueMode.value = data?.mode === 'ranked' || data?.mode === 'mystery_tech' ? data.mode : 'casual'
     queueStartedAt.value = Date.now()
     pendingAction.value = null
     // A pair may be announced at any moment while we wait in the queue, so the
@@ -205,7 +207,7 @@ export const useHomeStore = defineStore('home', () => {
     awaitingPlacement.value = false
   }
 
-  function beginAction(action: 'casual' | 'ranked' | 'ai'): void {
+  function beginAction(action: 'casual' | 'ranked' | 'mystery_tech' | 'ai'): void {
     pendingAction.value = action
     notice.value = ''
   }

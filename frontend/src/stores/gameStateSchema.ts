@@ -121,6 +121,8 @@ export interface GameState {
   last_attack: { attacker: string; x: number; y: number; hit: boolean; ship_sunk: boolean } | null
   revealed_positions: Array<{ x: number; y: number }>
   card_unavailable_reasons: Record<string, string>
+  mystery_tech: boolean
+  mystery_tech_state: Record<string, unknown> | null
   // game_state-only payload keys (never part of room_sync).
   winner_card: Record<string, unknown> | null
   loser_cards: Array<Record<string, unknown> | null>
@@ -143,7 +145,7 @@ const FIELD_SPECS = {
   mutations: { type: 'object', nullable: true, default: null, note: '服务端本局词条、确认门禁、骰子与发动状态' },
   opponent_hand_names: { type: 'array', nullable: false, default: [], note: '公开手牌词条仅展示对手牌名' },
   room_id: { type: 'string', nullable: false, default: '', note: '当前房间号；首页为空串' },
-  state: { type: 'string', nullable: false, default: 'waiting', note: 'waiting/placing_ships/rock_paper_scissors/attacking/game_over' },
+  state: { type: 'string', nullable: false, default: 'waiting', note: 'waiting/placing_ships/mystery_tech_selection/mystery_tech_resolution/rock_paper_scissors/attacking/game_over' },
   current_phase: { type: 'string', nullable: true, default: null, note: 'preparation/battle/end' },
   current_attacker: { type: 'string', nullable: false, default: '', note: '服务端下发的 player_id，不是客户端 sid' },
   attacks_remaining: { type: 'number', nullable: false, default: 0, note: '本回合剩余攻击次数' },
@@ -156,7 +158,7 @@ const FIELD_SPECS = {
   is_ai_room: { type: 'boolean', nullable: false, default: false, note: '人机房' },
   ranked: { type: 'boolean', nullable: false, default: false, note: '是否计排位分' },
   admin_test: { type: 'boolean', nullable: false, default: false, note: '管理员测试局不计战绩与奖励' },
-  mode: { type: 'string', nullable: false, default: 'casual', note: 'ranked/casual/ai/custom' },
+  mode: { type: 'string', nullable: false, default: 'casual', note: 'ranked/casual/ai/custom/mystery_tech' },
   winner: { type: 'string', nullable: false, default: '', note: '胜者 player_id；未结束为空串' },
   game_over_reason: { type: 'string', nullable: true, default: null, note: '结束原因文案' },
   field_magic: { type: 'string', nullable: false, default: '', note: '当前场地魔法名' },
@@ -204,6 +206,8 @@ const FIELD_SPECS = {
   last_attack: { type: 'object', nullable: true, default: null, note: '服务端上一炮的命中、击沉和攻击者，供重连恢复' },
   revealed_positions: { type: 'array', nullable: false, default: [], note: '仅本人视角已经探明的敌方位置' },
   card_unavailable_reasons: { type: 'object', nullable: false, default: {}, note: '服务端确定的卡牌状态限制，用于统一置灰' },
+  mystery_tech: { type: 'boolean', nullable: false, default: false, note: '本局是否为神秘科技大乱斗' },
+  mystery_tech_state: { type: 'object', nullable: true, default: null, note: '本人私有神秘科技状态；对手视角为公开投影或 null' },
   winner_card: { type: 'object', nullable: true, default: null, note: '猜拳胜者抽到的卡' },
   loser_cards: { type: 'array', nullable: false, default: [], note: '猜拳败者抽到的卡' },
 } as const satisfies Record<SchemaField, GameStateFieldSpec>

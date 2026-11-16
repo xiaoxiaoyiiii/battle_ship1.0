@@ -75,6 +75,7 @@ export function matchSpectateText(match: LobbyMatch): string {
 
 export function queueModeText(mode: LobbyQueueMode): string {
   if (mode === 'ranked') return '排位匹配中'
+  if (mode === 'mystery_tech') return '神秘科技大乱斗匹配中'
   if (mode === 'casual') return '休闲匹配中'
   return ''
 }

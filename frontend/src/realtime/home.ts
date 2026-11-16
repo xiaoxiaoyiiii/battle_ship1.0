@@ -144,7 +144,7 @@ type Ack = AckResponse & Record<string, unknown>
 export async function emitFindMatch(
   socket: TypedSocket,
   playerName: string,
-  mode: 'casual' | 'ranked',
+  mode: 'casual' | 'ranked' | 'mystery_tech',
 ): Promise<Ack> {
   const bans = useCardBansStore()
   if (mode === 'ranked' && bans.selectionError) throw new Error(bans.selectionError)

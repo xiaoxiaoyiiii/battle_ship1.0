@@ -1,9 +1,12 @@
 // GENERATED from backend contracts (JSON Schema). Do not edit by hand.
 // Regenerate: python -m battleship.contracts.export_schema --format ts --out frontend/src/socket/events.gen.ts
 export const CONTRACT_SCHEMA_VERSION = 1
-export const CONTRACT_SCHEMA_HASH = '721b304c3b97e67bdb834247c6f8e44fc603e200e539300bccf9c14eda2f6c0d'
+export const CONTRACT_SCHEMA_HASH = 'a76b48b4581d6f5cedd400441e905b3691c7f83013b0e231496824bcb5b74551'
 
 export const INBOUND_EVENTS = [
+  'mystery_tech_refresh',
+  'mystery_tech_choose',
+  'mystery_tech_target',
   'connect',
   'disconnect',
   'debug_status',
@@ -69,6 +72,8 @@ export const INBOUND_EVENTS = [
 ] as const
 
 export const OUTBOUND_EVENTS = [
+  'mystery_tech_state',
+  'mystery_tech_public',
   'spectate_frame',
   'achievements_unlocked',
   'active_effects',
@@ -265,6 +270,8 @@ export const ROOM_SYNC_FIELDS = [
   'card_bans',
   'opponent_hand_names',
   'admin_test',
+  'mystery_tech',
+  'mystery_tech_state',
 ] as const
 
 export type RoomSyncField = (typeof ROOM_SYNC_FIELDS)[number]

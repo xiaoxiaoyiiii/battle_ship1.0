@@ -7,6 +7,7 @@ import AppOverlay from '../../components/AppOverlay.vue'
 import MutationList from '../../components/MutationList.vue'
 import StatusMonitor from './StatusMonitor.vue'
 import EffectMonitor from './EffectMonitor.vue'
+import MysteryTechBadges from './MysteryTechBadges.vue'
 import { useAdaptiveGameLayout } from './useAdaptiveGameLayout'
 import { useHandFan } from './useHandFan'
 import { useFloatingDrag } from './useFloatingDrag'
@@ -399,8 +400,10 @@ const fieldEffectCard = computed(() => {
 })
 const fieldEffectOwner = computed(() => state.value.effect_badges?.field_owner ?? null)
 const canPapalDiscard = computed(() => fieldEffectCard.value?.name === '教皇旨意' && myTurn.value && state.value.current_phase === 'battle')
-const selfEffects = computed(() => effectBadgeList(state.value.effect_badges?.self))
-const opponentEffects = computed(() => effectBadgeList(state.value.effect_badges?.opponent))
+const selfEffects = computed(() => effectBadgeList(state.value.effect_badges?.self).filter((item) => !item.key.startsWith('mystery_tech:')))
+const opponentEffects = computed(() => effectBadgeList(state.value.effect_badges?.opponent).filter((item) => !item.key.startsWith('mystery_tech:')))
+const selfMysteryTechs = computed(() => state.value.effect_badges?.self ?? [])
+const opponentMysteryTechs = computed(() => state.value.effect_badges?.opponent ?? [])
 const frozenMine = computed(() =>
   frozenAreaCells(state.value.frozen_area as unknown as FrozenAreaLike | null, state.value.player_id),
 )
@@ -1870,6 +1873,7 @@ function backToLobby(): void {
                 </span>
               </span>
               <StatusMonitor side="opponent" :badges="opponentEffects" />
+              <MysteryTechBadges side="opponent" :effects="opponentMysteryTechs" />
             </div>
           </div>
 
@@ -1902,10 +1906,16 @@ function backToLobby(): void {
                 </span>
               </span>
               <StatusMonitor side="self" :badges="selfEffects" />
+              <MysteryTechBadges side="self" :effects="selfMysteryTechs" />
             </div>
           </div>
         </div>
         </header>
+
+        <div class="mt-tech-hud-row" data-testid="mystery-tech-badges-row">
+          <MysteryTechBadges side="self" :effects="selfMysteryTechs" />
+          <MysteryTechBadges side="opponent" :effects="opponentMysteryTechs" />
+        </div>
 
         <!-- 全宽场地魔法条（原 main 的 .field-magic-area） -->
         <div class="field-magic-area">

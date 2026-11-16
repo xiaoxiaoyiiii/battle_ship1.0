@@ -18,6 +18,7 @@ export interface BootUser {
 export interface BootQueue {
   casual: number | null
   ranked: number | null
+  mystery_tech: number | null
 }
 
 export interface BootHomeStats {
@@ -79,6 +80,7 @@ export function readBoot(): BootPayload | null {
             ? {
                 casual: asNumberOrNull(stats.queue.casual),
                 ranked: asNumberOrNull(stats.queue.ranked),
+                mystery_tech: asNumberOrNull(stats.queue.mystery_tech),
               }
             : null,
           lobby_rooms: asNumberOrNull(stats.lobby_rooms),

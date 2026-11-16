@@ -105,7 +105,7 @@ function routeForState(state: string): void {
   if (mutationBlocked.value || banBlocked.value) return
   if (state === 'rock_paper_scissors') {
     void router.push({ name: 'rps' })
-  } else if (state === 'attacking') {
+  } else if (state === 'attacking' || state === 'mystery_tech_resolution') {
     // A mid-game redeploy (回光返照 / 灵气复苏 / 败者食尘) sets room.state back
     // to placing_ships while the client may still see attacking; resetPhase
     // keeps this screen mounted until the server accepts the new board.

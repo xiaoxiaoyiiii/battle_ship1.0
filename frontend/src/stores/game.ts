@@ -4,6 +4,7 @@ import { useMatchStore } from './match'
 import { useChainAnimationStore } from './chainAnimation'
 import { useCardDrawStore } from './cardDraw'
 import { useCardEffectsStore } from './cardEffects'
+import { useMysteryTechStore } from './mysteryTech'
 import {
   GAME_STATE_SCHEMA,
   defaultGameState,
@@ -44,6 +45,7 @@ export const useGameStore = defineStore('game', () => {
       useMatchStore().reset()
       useCardDrawStore().reset()
       useCardEffectsStore().reset(true)
+      useMysteryTechStore().reset()
       state.value = defaultGameState()
     }
     if ('opponent_name' in next && !('opponent_registered' in next)) next.opponent_registered = false
@@ -77,6 +79,9 @@ export const useGameStore = defineStore('game', () => {
       } : null
     }
     if ('revealed_positions' in next) match.revealed = state.value.revealed_positions.map(point => ({ ...point }))
+    if ('mystery_tech_state' in next || 'mystery_tech' in next) {
+      useMysteryTechStore().hydrateFromSync(next.mystery_tech_state, next.mystery_tech)
+    }
     unknownFields.value = unknown
     revision.value += 1
     if (unknown.length && import.meta.env.DEV) {
@@ -89,6 +94,7 @@ export const useGameStore = defineStore('game', () => {
     useMatchStore().reset()
     useCardDrawStore().reset()
     useCardEffectsStore().reset(true)
+    useMysteryTechStore().reset()
     state.value = defaultGameState()
     unknownFields.value = []
     revision.value += 1

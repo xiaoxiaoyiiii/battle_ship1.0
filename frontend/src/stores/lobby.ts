@@ -16,13 +16,13 @@ import { useCardBansStore } from './cardBans'
  */
 export type JsonObject = Record<string, unknown>
 export type LobbyFilter = 'all' | 'joinable' | 'watchable' | 'full'
-export type LobbyQueueMode = 'casual' | 'ranked' | null
+export type LobbyQueueMode = 'casual' | 'ranked' | 'mystery_tech' | null
 
 /** A real matchmaking pair the server already seated us into. */
 export interface MatchFoundInfo {
   playerName: string
   opponentName: string
-  mode: 'casual' | 'ranked'
+  mode: 'casual' | 'ranked' | 'mystery_tech'
   roomId: string
 }
 
@@ -114,6 +114,7 @@ export interface LobbySnapshot {
   lobbyCount: number
   queueCasual: number
   queueRanked: number
+  queueMysteryTech: number
   players: LobbyPlayer[]
   rooms: LobbyRoom[]
   matches: LobbyMatch[]
@@ -212,6 +213,7 @@ function normalizeSnapshot(raw: JsonObject): LobbySnapshot {
     lobbyCount: asNumber(raw.lobby_count),
     queueCasual: queue ? asNumber(queue.casual) : 0,
     queueRanked: queue ? asNumber(queue.ranked) : 0,
+    queueMysteryTech: queue ? asNumber(queue.mystery_tech) : 0,
     players: toObjects(raw.players).map(normalizePlayer).filter((player) => player.key),
     rooms: toObjects(raw.rooms).map(normalizeRoom).filter((room) => room.roomId),
     matches: toObjects(raw.matches).map(normalizeMatch).filter((match) => match.roomId),
@@ -292,6 +294,7 @@ export const useLobbyStore = defineStore('lobby', () => {
   const lobbyCount = computed(() => snapshot.value?.lobbyCount ?? 0)
   const queueCasual = computed(() => snapshot.value?.queueCasual ?? 0)
   const queueRanked = computed(() => snapshot.value?.queueRanked ?? 0)
+  const queueMysteryTech = computed(() => snapshot.value?.queueMysteryTech ?? 0)
   const players = computed(() => snapshot.value?.players ?? [])
   const rooms = computed(() => snapshot.value?.rooms ?? [])
   const matches = computed(() => snapshot.value?.matches ?? [])
@@ -332,8 +335,8 @@ export const useLobbyStore = defineStore('lobby', () => {
 
   function recordQueued(payload: JsonObject | null | undefined): void {
     const mode = asString(payload?.mode)
-    queueMode.value = mode === 'ranked' ? 'ranked' : 'casual'
-    notice.value = queueMode.value === 'ranked' ? '已加入排位匹配队列' : '已加入休闲匹配队列'
+    queueMode.value = mode === 'ranked' || mode === 'mystery_tech' ? mode : 'casual'
+    notice.value = queueMode.value === 'ranked' ? '已加入排位匹配队列' : queueMode.value === 'mystery_tech' ? '已加入神秘科技大乱斗队列' : '已加入休闲匹配队列'
   }
 
   function recordCanceled(_payload?: JsonObject | null): void {
@@ -520,6 +523,7 @@ export const useLobbyStore = defineStore('lobby', () => {
     lobbyCount,
     queueCasual,
     queueRanked,
+    queueMysteryTech,
     players,
     rooms,
     matches,

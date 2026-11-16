@@ -36,6 +36,8 @@ import {
   statsText,
   waitedSeconds,
 } from './view'
+import { flowRouteForRoomState } from '../game/mysteryTechView'
+import type { HomeMode } from '../../stores/home'
 
 /**
  * Ticket #26: the three-column home screen.
@@ -136,7 +138,7 @@ const statsState = computed<'loading' | 'ready' | 'empty' | 'error'>(() => {
   if (home.statsFailed) return 'error'
   if (!home.statsLoaded) return 'loading'
   const counters = home.stats
-  const allMissing = [counters.onlineCount, counters.queueCasual, counters.queueRanked, counters.lobbyRooms]
+  const allMissing = [counters.onlineCount, counters.queueCasual, counters.queueRanked, counters.queueMysteryTech, counters.lobbyRooms]
     .every((value) => value === null)
   return allMissing ? 'empty' : 'ready'
 })
@@ -210,7 +212,14 @@ function maybeAdvance(): void {
   advanceToPlacement()
 }
 
-watch(() => game.state.state, maybeAdvance)
+watch(() => game.state.state, (state) => {
+  maybeAdvance()
+  if (route.name !== 'start' || home.queuePending || home.awaitingPlacement) return
+  if (state === 'mystery_tech_selection' || state === 'mystery_tech_resolution' || state === 'rock_paper_scissors' || state === 'attacking') {
+    const dest = flowRouteForRoomState(state)
+    if (dest && game.state.room_id) void router.replace({ name: dest })
+  }
+})
 // A second match starts from an already-placing_ships store, so the state
 // watcher alone would never fire: each placing frame ticks this counter.
 watch(() => home.placementSignal, maybeAdvance)
@@ -224,7 +233,7 @@ function currentSocket() {
   return socket
 }
 
-async function startMatch(mode: 'casual' | 'ranked'): Promise<void> {
+async function startMatch(mode: HomeMode): Promise<void> {
   // A guest cannot rank (server refuses it); open the login overlay instead of
   // spending the click on a refusal the player cannot act on (spec story 31).
   if (mode === 'ranked' && auth.isGuest) {
@@ -459,9 +468,28 @@ async function startAi(): Promise<void> {
             <span class="home-play__desc" data-testid="start-ranked-desc">{{ rankedDesc }}</span>
           </span>
         </button>
+        <button
+          type="button"
+          class="home-play home-play--mystery"
+          data-testid="start-mystery-tech-action"
+          :disabled="actionsDisabled"
+          @click="startMatch('mystery_tech')"
+        >
+          <span class="home-play__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6">
+              <path d="M5 19l7-14 7 14" />
+              <path d="M8.5 13h7" />
+              <circle cx="12" cy="19" r="1.2" fill="currentColor" stroke="none" />
+            </svg>
+          </span>
+          <span class="home-play__copy">
+            <span class="home-play__title">神秘科技大乱斗</span>
+            <span class="home-play__desc">娱乐匹配 · 开局三选一科技 · 不计段位分</span>
+          </span>
+        </button>
         </div>
         <BanPreselection />
-        <p class="home-launch__note">休闲不计段位分 · 排位对战影响段位</p>
+        <p class="home-launch__note">休闲不计段位分 · 排位对战影响段位 · 神秘科技为大乱斗娱乐局</p>
         <div v-if="home.queuePending" class="home-queue" role="status">
           <p class="home-queue__text" data-testid="start-queue-status">
             {{ queueText }} · 已等待 <b data-testid="start-queue-waited">{{ queueSeconds }}</b> 秒
@@ -577,6 +605,10 @@ async function startAi(): Promise<void> {
                 <dd><b data-testid="start-queue-ranked">{{ stats.ranked }}</b><span class="home-stat__unit">人</span></dd>
               </div>
               <div class="home-stat">
+                <dt>神秘科技队列</dt>
+                <dd><b data-testid="start-queue-mystery-tech">{{ stats.mysteryTech }}</b><span class="home-stat__unit">人</span></dd>
+              </div>
+              <div class="home-stat">
                 <dt>大厅房间</dt>
                 <dd><b data-testid="start-lobby-rooms">{{ stats.rooms }}</b><span class="home-stat__unit">间</span></dd>
               </div>
@@ -686,6 +718,7 @@ async function startAi(): Promise<void> {
 .home-play { display:flex; align-items:center; justify-content:center; gap:9px; position:relative; min-height:42px; padding:10px 15px; border:1px solid transparent; border-radius:7px; font:inherit; cursor:pointer; text-align:left; transition:background .16s,border-color .16s; }
 .home-play--casual { color:var(--on-accent,#fff); background:var(--hero-grad); border-color:var(--hero-border); }
 .home-play--ranked { color:var(--gold-strong); background:color-mix(in srgb,var(--gold) 12%,var(--surface-sea)); border-color:color-mix(in srgb,var(--gold) 45%,var(--panel-line)); }
+.home-play--mystery { color:#f3dcff; background:color-mix(in srgb,#8a4cc8 22%,var(--surface-sea)); border-color:color-mix(in srgb,#d48cff 45%,var(--panel-line)); }
 .home-play:hover:not(:disabled) { filter:brightness(1.08); }
 .home-play__icon { display:flex; }
 .home-play__copy { display:flex; flex-direction:column; min-width:0; }

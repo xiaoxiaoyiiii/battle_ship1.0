@@ -10,6 +10,7 @@ import { useAudioStore } from '../stores/audio'
 import { usePlacementStore } from '../stores/placement'
 import { useLobbyStore } from '../stores/lobby'
 import { useHomeStore } from '../stores/home'
+import { applyMysteryTechEvent, hydrateMysteryTechFromSync, type MysteryTechEventName } from './mysteryTech'
 import router from '../router'
 
 /**
@@ -36,6 +37,8 @@ export type SettlementEventName =
   | 'ships_updated'
   | 'recent_opponent'
   | 'card_drawn'
+  | 'mystery_tech_state'
+  | 'mystery_tech_public'
 
 // Typed listeners: only the frames that exist in the generated outbound union.
 // recent_opponent is absent there (see the raw listener below).
@@ -53,6 +56,8 @@ const SETTLEMENT_EVENTS = [
   'achievements_unlocked',
   'ships_updated',
   'card_drawn',
+  'mystery_tech_state',
+  'mystery_tech_public',
 ] as const
 
 // 取消与重新配对可能在大厅挂载前连续抵达，由持久连接接住这次交接。
@@ -179,6 +184,10 @@ export function applySettlementEvent(
       result.recordGameOver(payload)
       break
     }
+    case 'mystery_tech_state':
+    case 'mystery_tech_public':
+      applyMysteryTechEvent(event as MysteryTechEventName, payload, pinia)
+      break
     case 'game_state': {
       game.applyServerState(payload)
       adoptBanRequeue(payload, pinia)

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { normalizeViewFrame } from '../screens/viewing/frame'
+import { useMysteryTechStore } from './mysteryTech'
 import type { ViewFrame, ViewPacket } from '../screens/viewing/types'
 import {
   asArray,
@@ -161,6 +162,9 @@ export const useSpectateStore = defineStore('spectate', () => {
     round.value = asInt(payload.round, 0)
     ranked.value = payload.ranked === true
     fieldMagic.value = asString(payload.field_magic)
+    if (payload.mystery_tech !== undefined) {
+      useMysteryTechStore().hydrateFromSync(payload.mystery_tech, Boolean(payload.mystery_tech))
+    }
 
     const labels: Record<string, string> = {}
     const rawLabels = asObject(payload.seat_labels)

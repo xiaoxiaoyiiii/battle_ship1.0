@@ -5,6 +5,7 @@ import CardFaceArt from '../../cards/CardFaceArt.vue'
 import { resolveCardArtUrl } from '../../cards/skinArt'
 import { CARDS } from '../../cards/cardData'
 import '../game/card-inspect.css'
+import MysteryTechBadges from '../game/MysteryTechBadges.vue'
 import { boardCells, sides } from './frame'
 import type { Side, ViewCard, ViewFrame } from './types'
 
@@ -14,6 +15,9 @@ const selected = ref<ViewCard | null>(null)
 const preview = ref<ViewCard | null>(null), tooltip = ref<HTMLElement | null>(null)
 const previewPosition = ref({ left: '0px', top: '0px', visibility: 'hidden' as 'hidden' | 'visible' })
 const describe = (card: ViewCard): ViewCard => ({ ...CARDS.find(known => known.name === card.name), ...card })
+function otherEffects(effects: ViewFrame['players'][typeof sides[number]]['effects']) {
+  return effects.filter((effect) => !String((effect as { key?: string }).key || '').startsWith('mystery_tech:'))
+}
 watch(() => props.frame, frame => {
   const visible = Object.values(frame.players).flatMap(player => player.cards ?? [])
   const refresh = (card: ViewCard | null): ViewCard | null => {
@@ -50,7 +54,10 @@ async function showPreview(card: ViewCard, event: Event): Promise<void> {
         <BoardPanel :board="side === 'p1' ? 'self' : 'opponent'" :board-testid="mode + '-board-' + side"
           :title-testid="mode + '-board-title-' + side" :title="frame.players[side].name + ' 的海域'"
           :cells="cells[side]" :interactive="false" :cell-prefix="mode + '-cell-' + side" />
-        <div class="view-fleet-effects"><span v-for="(effect, i) in frame.players[side].effects" :key="i">{{ effect.label || effect.name }}</span></div>
+        <div class="view-fleet-effects">
+          <MysteryTechBadges :effects="frame.players[side].effects" :side="side" :testid="mode + '-mystery-tech-' + side" />
+          <span v-for="(effect, i) in otherEffects(frame.players[side].effects)" :key="i">{{ effect.label || effect.name }}</span>
+        </div>
       </div>
       <div class="view-battle__divider" aria-hidden="true"><span>交战海域</span></div>
     </div>

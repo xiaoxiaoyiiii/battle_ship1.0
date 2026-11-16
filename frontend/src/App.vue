@@ -18,6 +18,7 @@ import ToastHost from './components/ToastHost.vue'
 import TideAshBadge from './components/TideAshBadge.vue'
 import GlobalPointerEffects from './components/GlobalPointerEffects.vue'
 import DiceRollOverlay from './screens/game/DiceRollOverlay.vue'
+import MysteryTechOverlay from './screens/game/MysteryTechOverlay.vue'
 import { routeLoading } from './router'
 import { getSettlementSocket } from './realtime/settlement'
 import { forgetSeat } from './realtime/reconnect'
@@ -680,6 +681,7 @@ onBeforeUnmount(() => {
   </AppOverlay>
 
   <ToastHost />
+  <MysteryTechOverlay />
   <DiceRollOverlay
     :self-id="game.state.player_id"
     :self-name="game.state.player_name || '你'"

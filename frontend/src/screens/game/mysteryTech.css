@@ -1,0 +1,301 @@
+/* 神秘科技选择 / 瞄准层。窄屏 390 单列可滚动；尊重 reduced-motion。 */
+
+.mt-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 8200;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 16px 12px;
+  background: color-mix(in srgb, var(--surface-void, #061018) 72%, transparent);
+  color: var(--text-primary);
+  overflow: auto;
+}
+
+.mt-panel {
+  width: min(1080px, 100%);
+  margin: auto;
+  padding: 20px 22px 22px;
+  border: 1px solid var(--panel-line, rgba(255,255,255,.14));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface-chamber, #10202b) 92%, #000);
+  box-shadow: var(--shadow-panel, 0 18px 40px rgba(0,0,0,.35));
+}
+
+.mt-panel__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.mt-panel__context { margin: 0 0 4px; color: var(--text-secondary); font-size: 12px; letter-spacing: .06em; }
+.mt-panel__title { margin: 0; font-size: 22px; font-weight: 650; }
+.mt-panel__lead { margin: 6px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.55; }
+
+.mt-countdown {
+  min-width: 88px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--gold, #e4c36b) 45%, transparent);
+  background: color-mix(in srgb, var(--gold, #e4c36b) 10%, transparent);
+  text-align: center;
+}
+.mt-countdown b {
+  display: block;
+  font-size: 28px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--gold-strong, #f0d58a);
+}
+.mt-countdown span { color: var(--text-secondary); font-size: 11px; }
+.mt-countdown.is-urgent {
+  border-color: color-mix(in srgb, #ee8d99 60%, transparent);
+  background: color-mix(in srgb, #ee8d99 14%, transparent);
+}
+.mt-countdown.is-urgent b { color: #ffc1c8; }
+
+.mt-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.mt-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 220px;
+  padding: 14px 14px 12px;
+  border: 1px solid var(--panel-line, rgba(255,255,255,.14));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-deck, #16303c) 88%, #000);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+.mt-card:disabled { cursor: default; }
+.mt-card.is-picked {
+  outline: 2px solid var(--gold-strong, #f0d58a);
+  outline-offset: 1px;
+}
+.mt-card.is-locked { opacity: .72; }
+
+.mt-card__tier {
+  align-self: flex-start;
+  margin: 0 0 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: .04em;
+}
+.mt-card__name { margin: 0 0 6px; font-size: 18px; font-weight: 650; }
+.mt-card__timing { margin: 0 0 8px; color: var(--text-secondary); font-size: 12px; }
+.mt-card__desc { margin: 0; flex: 1; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+
+.mt-card.is-quality { box-shadow: 0 0 0 1px color-mix(in srgb, #7ec8e8 35%, transparent), 0 0 18px color-mix(in srgb, #7ec8e8 22%, transparent); }
+.mt-card.is-quality .mt-card__tier { color: #d7f3ff; background: color-mix(in srgb, #7ec8e8 22%, transparent); }
+.mt-card.is-legendary .mt-card__tier { color: #fff4d0; background: color-mix(in srgb, #e4c36b 26%, transparent); }
+.mt-card.is-mythic .mt-card__tier { color: #ffe8ff; background: color-mix(in srgb, #d48cff 28%, transparent); }
+
+.mt-card.is-legendary {
+  background:
+    linear-gradient(color-mix(in srgb, var(--surface-deck, #16303c) 88%, #000), color-mix(in srgb, var(--surface-deck, #16303c) 88%, #000)) padding-box,
+    linear-gradient(120deg, #8a6a20, #f2e1a0, #8a6a20, #f8ecc0, #8a6a20) border-box;
+  border: 1px solid transparent;
+  box-shadow: 0 0 22px color-mix(in srgb, #e4c36b 28%, transparent);
+}
+.mt-card.is-legendary:not(.is-static) {
+  background:
+    linear-gradient(color-mix(in srgb, var(--surface-deck, #16303c) 88%, #000), color-mix(in srgb, var(--surface-deck, #16303c) 88%, #000)) padding-box,
+    linear-gradient(var(--mt-flow, 120deg), #8a6a20, #f2e1a0, #8a6a20, #f8ecc0, #8a6a20) border-box;
+  animation: mt-flow 3.2s linear infinite;
+}
+.mt-card.is-mythic {
+  box-shadow: 0 0 0 1px color-mix(in srgb, #d48cff 50%, transparent), 0 0 28px color-mix(in srgb, #d48cff 36%, transparent);
+}
+
+@keyframes mt-flow {
+  from { --mt-flow: 120deg; }
+  to { --mt-flow: 480deg; }
+}
+
+/* conic flowing border fallback using background-position */
+.mt-card.is-legendary:not(.is-static)::after {
+  content: '';
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,236,170,.65), transparent);
+  background-size: 200% 100%;
+  animation: mt-shimmer 2.4s linear infinite;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+}
+@keyframes mt-shimmer {
+  from { background-position: 0 0; }
+  to { background-position: 200% 0; }
+}
+
+.mt-refresh {
+  margin-top: 12px;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--panel-line, rgba(255,255,255,.14));
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.mt-refresh:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+  color: var(--text-tertiary, #8aa);
+}
+
+.mt-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+.mt-status { margin: 0; color: var(--text-secondary); font-size: 13px; }
+.mt-status.is-peer { color: var(--gold-strong, #f0d58a); }
+.mt-error { margin: 8px 0 0; color: #ffb4bc; font-size: 13px; }
+.mt-lock {
+  min-height: 40px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--hero-grad, linear-gradient(90deg,#1c8eae,#2dc7e7));
+  color: var(--on-accent, #fff);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+.mt-lock:disabled { opacity: .55; cursor: not-allowed; }
+
+.mt-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 8300;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 40%, rgba(255,230,255,.72), rgba(180,80,220,.18) 42%, transparent 70%);
+  animation: mt-flash 0.7s ease-out forwards;
+}
+@keyframes mt-flash {
+  0% { opacity: 0; }
+  18% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.mt-banner {
+  position: fixed;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  z-index: 8150;
+  max-width: min(520px, calc(100vw - 24px));
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-line, rgba(255,255,255,.14));
+  background: color-mix(in srgb, var(--surface-chamber, #10202b) 92%, #000);
+  color: var(--text-primary);
+  font-size: 13px;
+  box-shadow: var(--shadow-panel, 0 10px 24px rgba(0,0,0,.3));
+}
+
+.mt-target__body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 280px); gap: 16px; align-items: start; }
+.mt-ships { display: grid; gap: 8px; }
+.mt-ship {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--panel-line, rgba(255,255,255,.14));
+  background: color-mix(in srgb, var(--surface-deck, #16303c) 88%, #000);
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.mt-ship.is-picked { outline: 2px solid var(--gold-strong, #f0d58a); }
+.mt-ship:disabled { opacity: .5; cursor: not-allowed; }
+.mt-board { min-width: 0; }
+
+.mt-tech-rack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.mt-tech-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, #7ec8e8 40%, transparent);
+  background: color-mix(in srgb, #7ec8e8 12%, transparent);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.mt-tech-chip.is-legendary { border-color: color-mix(in srgb, #e4c36b 50%, transparent); background: color-mix(in srgb, #e4c36b 14%, transparent); }
+.mt-tech-chip.is-mythic { border-color: color-mix(in srgb, #d48cff 50%, transparent); background: color-mix(in srgb, #d48cff 16%, transparent); }
+
+.view-fleet-effects .mt-tech-chip { margin: 0; }
+
+@media (max-width: 720px) {
+  .mt-overlay { padding: 8px; align-items: flex-start; }
+  .mt-panel { padding: 14px 12px 16px; border-radius: 12px; }
+  .mt-panel__title { font-size: 18px; }
+  .mt-cards { grid-template-columns: 1fr; }
+  .mt-card { min-height: 0; }
+  .mt-target__body { grid-template-columns: 1fr; }
+  .mt-countdown { min-width: 72px; }
+  .mt-countdown b { font-size: 22px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mt-card.is-legendary:not(.is-static),
+  .mt-card.is-legendary:not(.is-static)::after,
+  .mt-flash { animation: none !important; }
+  .mt-flash { display: none; }
+}
+
+html[data-motion='reduced'] .mt-card.is-legendary:not(.is-static),
+html[data-motion='reduced'] .mt-card.is-legendary:not(.is-static)::after,
+html[data-motion='reduced'] .mt-flash { animation: none !important; }
+html[data-motion='reduced'] .mt-flash { display: none; }
+
+/* 宽屏徽章跟在玩家卡片里；窄屏 HUD 高度固定，改放到标题栏下方整行，避免重叠。 */
+.mt-tech-hud-row { display: none; }
+.game[data-layout='compact'] .arena-player .mt-tech-rack { display: none; }
+.game[data-layout='compact'] .mt-tech-hud-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 2px 8px 8px;
+  min-height: 0;
+}
+.game[data-layout='compact'] .mt-tech-hud-row .mt-tech-rack { margin-top: 0; }
+.game[data-layout='compact'] .mt-tech-chip { font-size: 10px; padding: 1px 6px; }
+
+@media (max-width: 720px) {
+  .mt-banner {
+    top: 56px;
+    left: 10px;
+    right: 10px;
+    transform: none;
+    width: auto;
+    max-width: none;
+    border-radius: 12px;
+  }
+}

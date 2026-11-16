@@ -169,6 +169,8 @@ export function statusText(input: StatusInput): string {
   if (input.ranked) parts.push('排位局')
   if (input.stateValue === 'placing_ships') parts.push('双方正在布置战舰')
   else if (input.stateValue === 'rock_paper_scissors') parts.push('猜拳定先手')
+  else if (input.stateValue === 'mystery_tech_selection') parts.push('双方正在选择神秘科技')
+  else if (input.stateValue === 'mystery_tech_resolution') parts.push('正在结算神秘科技')
   parts.push('画面随每一步动作实时更新')
   return parts.join(' · ')
 }

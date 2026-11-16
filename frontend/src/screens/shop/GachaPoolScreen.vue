@@ -78,7 +78,7 @@ async function confirmExchange(skin: GachaPoolSkin): Promise<void> {
   ui.notify({
     code: `gacha-exchange-${skin.skinId}`,
     tone: 'success',
-    message: result.alreadyOwned ? `已经拥有「${skin.cardName}」` : `已兑换「${skin.cardName}」`,
+    message: result.alreadyOwned ? `已经拥有「${skin.cardName}」` : `已兑换并装备「${skin.cardName}」`,
     ttl: 2600,
   })
 }
@@ -103,6 +103,7 @@ watch(() => auth.isGuest, (guest) => {
       <div>
         <h2 id="gacha-pool-title">霓虹赛博卡池</h2>
         <p>用潮汐徽记抽取 12 款卡面皮肤。皮肤不在常驻货架出售，只能抽取或用碎片兑换。</p>
+        <p>首次抽中或兑换皮肤后会自动装备，可在图鉴切回默认卡面。</p>
       </div>
     </header>
 

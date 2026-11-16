@@ -11,7 +11,7 @@ import './collection.css'
 
 const store = useCollectionStore(), auth = useAuthStore(), ui = useUiStore()
 const tab = ref('cards'), selected = ref(''), detail = ref<HTMLElement | null>(null)
-const filter = reactive({ query:'', status:'all', speed:'all', type:'all', sort:'default' })
+const filter = reactive({ query:'', status:'all', speed:'all', type:'all', sort:'default', skin:'all' })
 const guests = CARDS.filter((c,i)=>CARDS.findIndex(row=>row.name===c.name)===i).map(c=>({...c,lit:false,uses:0,wins:0,selected_tier:0,unlocked_tier:0,next_target:10,
   remaining:10,chain_description:`速阶 ${c.speed}，连锁响应仍按当前时段与速阶规则判定。`})) as CollectionCard[]
 const cards = computed(()=>store.data?.cards ?? guests)
@@ -64,6 +64,7 @@ onMounted(load)
     <template v-if="tab==='cards'">
       <div class="archive__filters"><label class="archive__search">查找卡牌<input v-model="filter.query" placeholder="卡名或效果文案" data-testid="collection-search" /></label>
         <label>点亮<select v-model="filter.status"><option value="all">全部状态</option><option value="lit">已点亮</option><option value="unlit">未点亮</option></select></label>
+        <label>皮肤<select v-model="filter.skin" data-testid="collection-skin-filter"><option value="all">全部卡牌</option><option value="owned">已拥有皮肤</option></select></label>
         <label>速阶<select v-model="filter.speed"><option value="all">全部速阶</option><option v-for="n in [1,2,3]" :key="n" :value="String(n)">速阶 {{ n }}</option></select></label>
         <label>类型<select v-model="filter.type"><option value="all">全部类型</option><option v-for="t in types" :key="t">{{ t }}</option></select></label>
         <label>排序<select v-model="filter.sort"><option value="default">卡表顺序</option><option value="uses">熟练次数</option><option value="name">卡牌名称</option></select></label>

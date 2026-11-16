@@ -94,7 +94,9 @@ class GachaService:
             summary = rules.summarize(results)
             for row in results:
                 if row["is_new"] and row["skin_id"]:
-                    uow.skins.grant_once(user_id, row["skin_id"], "gacha", request_id, now=now)
+                    if uow.skins.grant_once(user_id, row["skin_id"], "gacha", request_id, now=now):
+                        skin = SKINS_BY_ID[row["skin_id"]]
+                        uow.skins.set_selection(user_id, skin.card_name, skin.skin_id, now=now)
             shards_gained = int(summary["shards_gained"])
             if shards_gained and not uow.skins.apply_shards_once(
                     user_id, "skin_gacha", request_id, shards_gained, now=now):
@@ -140,6 +142,7 @@ class GachaService:
                 raise SkinHttpError(409, "insufficient_shards", "潮汐碎片不足", "skin_id")
             if not uow.skins.grant_once(user_id, skin_id, "exchange", skin_id, now=now):
                 raise SkinHttpError(409, "skin_already_owned", "已经拥有这件皮肤", "skin_id")
+            uow.skins.set_selection(user_id, skin.card_name, skin_id, now=now)
             owned.add(skin_id)
             return {
                 "ok": True,

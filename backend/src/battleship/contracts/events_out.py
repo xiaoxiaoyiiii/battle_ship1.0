@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field
 
 # 旧栈服务端 -> 客户端事件（从 server.py 的 emit('...') 字面量冻结而来）。
 OUTBOUND_EVENTS: tuple[str, ...] = (
+    'mystery_tech_state',
+    'mystery_tech_public',
     "spectate_frame",
     "achievements_unlocked",
     "active_effects",
@@ -217,6 +219,8 @@ class RoomSync(BaseModel):
     card_bans: dict[str, Any] | None = None
     opponent_hand_names: list[str] = Field(default_factory=list)
     admin_test: bool = False
+    mystery_tech: bool = False
+    mystery_tech_state: dict[str, Any] | None = None
 
 
 #: Authoritative key order/count for the reconnect snapshot.

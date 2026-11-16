@@ -171,6 +171,8 @@ def revive_sunken_ships(
         if reveal_to:
             _reveal(room, reveal_to, ship.positions, kind="heal")
         player.remaining_ships += 1
+        from ..mystery_tech.effects import protect_new_ship
+        protect_new_ship(room, owner_id, ship)
         revived += 1
     return revived
 

@@ -130,6 +130,8 @@ def can_play_magic_card(room: Room, player_id: str, card: MagicCard) -> bool:
     player = room.players.get(player_id)
     if player is None:
         return False
+    if room.mystery_tech and value(room.state) != 'attacking':
+        return False
     if getattr(player.effect_flags, "last_stand", False):
         return False
     if field_magic_name(room) == _FIELD_NAME:
@@ -144,6 +146,9 @@ def can_play_magic_card(room: Room, player_id: str, card: MagicCard) -> bool:
         return own_turn or value(room.current_phase) == RoomPhase.PREPARATION.value
     if card.name == "五险一金" and field_magic_name(room) == "教皇旨意":
         return False
+    from ..mystery_tech.effects import has
+    if has(room, player_id, 'double_command'):
+        return True
     speed = int(card.speed)
     if speed == 3:
         return True
@@ -193,6 +198,11 @@ def evaluate_cast(room: Room, player_id: str, card: MagicCard) -> str | None:
     """
 
     from .. import mutations
+    from ..mystery_tech.effects import magic_blocked
+    if room.mystery_tech and value(room.state) != 'attacking':
+        return '请先完成神秘科技选择、猜拳与科技结算'
+    if magic_blocked(room, player_id):
+        return '寂静领域生效中，本大回合无法打出魔法卡'
     mutation_error = mutations.cast_error(room, player_id, card)
     if mutation_error:
         return mutation_error

@@ -125,6 +125,8 @@ class GameplayService:
         self.after_draw_hook: Callable[[Room, str], Any] | None = None
         self.round_end_hook: Callable[[Room], Any] | None = None
         self.priority = PhasePriority(self)
+        from ..domain.mystery_tech.flow import MysteryTechFlow
+        self.mystery_tech = MysteryTechFlow(self)
         self.rooms.priority_decline_hook = self.priority.decline
 
     # ------------------------------------------------------------------ wiring
@@ -268,6 +270,45 @@ class GameplayService:
         for _ in range(mutations.prepare_supply_count(room)):
             await self._draw(room, player_id)
 
+    @staticmethod
+    def _tech_prepare_count(room: Room, player_id: str, base: int) -> int:
+        from ..domain.mystery_tech.effects import prepare_draw_count
+        return prepare_draw_count(room, player_id, base)
+
+    @guard_phase_write
+    async def mystery_tech_refresh(self, connection: Connection, data=None) -> dict:
+        from ..domain.mystery_tech import draft
+        data = data if isinstance(data, dict) else {}
+        room, pid = self._seat(connection, data)
+        if room is None:
+            return dict(INVALID_SEAT)
+        await self.mystery_tech.sweep(room, self.clock())
+        error = draft.refresh(room, pid, data.get('slot'), self.rng, now=self.clock())
+        await self.mystery_tech.publish(room)
+        return {'status': 'error', 'message': error} if error else {'status': 'success'}
+
+    @guard_phase_write
+    async def mystery_tech_choose(self, connection: Connection, data=None) -> dict:
+        from ..domain.mystery_tech import draft
+        data = data if isinstance(data, dict) else {}
+        room, pid = self._seat(connection, data)
+        if room is None:
+            return dict(INVALID_SEAT)
+        await self.mystery_tech.sweep(room, self.clock())
+        error = draft.lock(room, pid, data.get('tech_id'), self.rng, now=self.clock())
+        await self.mystery_tech.publish(room)
+        return {'status': 'error', 'message': error} if error else {'status': 'success'}
+
+    @guard_phase_write
+    async def mystery_tech_target(self, connection: Connection, data=None) -> dict:
+        data = data if isinstance(data, dict) else {}
+        room, pid = self._seat(connection, data)
+        if room is None:
+            return dict(INVALID_SEAT)
+        await self.mystery_tech.sweep(room, self.clock())
+        error = await self.mystery_tech.target(room, pid, data)
+        return {'status': 'error', 'message': error} if error else {'status': 'success'}
+
     async def _emit_message(self, room: Room, player_id: str, note: str) -> None:
         player = room.players.get(player_id)
         if player is not None and player.socket_id:
@@ -287,6 +328,10 @@ class GameplayService:
             return dict(INVALID_SEAT)
         if _state_value(room) == RoomState.GAME_OVER.value:
             return dict(FINISHED_GAME)
+
+        if room.mystery_tech:
+            from ..domain.mystery_tech.draft import enforce_mode
+            enforce_mode(room)
 
         if 'ban_selection' in data or 'ban_confirm' in data:
             return await self.rooms.bans.submit(room, player_id, data)
@@ -348,9 +393,10 @@ class GameplayService:
                 room.state = RoomState.ROCK_PAPER_SCISSORS
                 room.rps_choices = {}
                 room.rps_processed = False
+                await self.mystery_tech.begin(room)
                 await self._publisher.emit(
                     "game_state",
-                    {"state": RoomState.ROCK_PAPER_SCISSORS.value, **rank_payload(room)},
+                    {"state": _state_value(room), **rank_payload(room)},
                     room=room.id,
                 )
 
@@ -505,6 +551,12 @@ class GameplayService:
             return dict(INVALID_SEAT)
         if _state_value(room) == RoomState.GAME_OVER.value:
             return dict(FINISHED_GAME)
+        if room.mystery_tech:
+            from ..domain.mystery_tech.draft import enforce_mode
+            enforce_mode(room)
+            if room.state == RoomState.ROCK_PAPER_SCISSORS:
+                await self.mystery_tech.begin(room)
+            await self.mystery_tech.sweep(room, self.clock())
         if bans.pending(room):
             return {'status': 'error', 'message': '请先完成本局Ban卡阶段'}
         if mutations.confirmation_pending(room):
@@ -550,82 +602,89 @@ class GameplayService:
             room.attack_order = list(outcome.order)
             winner, loser = outcome.order[0], outcome.order[1]
             room.current_attacker = winner
-            mutations.begin_preparation(room)
-            battle_rules.recalc_attacker_attacks(room)
-
-            if self.turn_start_hook is not None:
-                await self._maybe_await(self.turn_start_hook(room, winner))
-            # #37：猜拳定先手后的小回合开始；与旧 hook 同位，状态已落定。
-            await hooks.emit(
-                room,
-                hooks.TURN_START,
-                {
-                    "room_id": room.id,
-                    "player_id": winner,
-                    "round": room.round,
-                },
-            )
-
-            # Frozen draw contract: first player 1 card, second player 2 cards.
-            # 兵粮寸断 only skips this preparation-phase handout, not any other
-            # draw source (the card text is explicit).
-            skip_winner = False
-            if self.draw_skip_hook is not None:
-                skip_winner = bool(await self._maybe_await(self.draw_skip_hook(room, winner)))
-            winner_cards = []
-            if not skip_winner:
-                for _ in range(mutations.prepare_draw_count(room, first=True)):
-                    winner_cards.append(await self._draw(room, winner))
-            winner_card = next(iter(winner_cards), None)
-            skip_loser = False
-            if self.draw_skip_hook is not None:
-                skip_loser = bool(await self._maybe_await(self.draw_skip_hook(room, loser)))
-            loser_cards = []
-            if skip_loser:
-                room.mutation_prepare_skips[loser] = room.round
-            else:
-                for _ in range(mutations.prepare_draw_count(room, first=False, include_supply=False)):
-                    loser_cards.append(await self._draw(room, loser))
-            if self.after_draw_hook is not None:
-                await self._maybe_await(self.after_draw_hook(room, winner))
-
-            room.state = RoomState.ATTACKING
-            if not room.match_started_at:
-                room.match_started_at = self.clock()
-            room.current_phase = RoomPhase.PREPARATION
-            self._start_timer(room)
-
-            for pid, seat in room.players.items():
-                if not seat.socket_id:
-                    continue
-                await self._publisher.emit("game_state", {
-                    "state": RoomState.ATTACKING.value,
-                    "current_attacker": winner,
-                    "current_phase": RoomPhase.PREPARATION.value,
-                    "attacks_remaining": room.attacks_remaining,
-                    "winner_card": card_payload(winner_card) if winner_card and pid == winner else None,
-                    "loser_cards": [
-                        card_payload(card) if card else None
-                        for card in (loser_cards if pid == loser else [])
-                    ],
-                    "round": room.round,
-                    "attack_order": list(room.attack_order),
-                    **rank_payload(room),
-                    **self._turn_timing(room),
-                    "mutations": mutations.payload(room, pid),
-                }, to=seat.socket_id)
-            actor = self._name(room, winner)
-            replay_rules.note_action(
-                room,
-                "rps_choice",
-                f"{actor} 猜拳取胜，先手",
-                {"first": winner, "round": room.round},
-                actor,
-            )
+            if not await self.mystery_tech.start_resolution(room):
+                await self._complete_rps_turn(room)
 
         if room.state == RoomState.ATTACKING and self.magic is not None:
             await self.magic._sync_each_seat(room)
         return {"status": "success"}
+
+    async def _complete_rps_turn(self, room: Room) -> None:
+        """科技义务全部完成后，继续原有猜拳后的准备阶段。"""
+        winner, loser = room.attack_order[:2]
+        mutations.begin_preparation(room)
+        battle_rules.recalc_attacker_attacks(room)
+
+        if self.turn_start_hook is not None:
+            await self._maybe_await(self.turn_start_hook(room, winner))
+        # #37：猜拳定先手后的小回合开始；与旧 hook 同位，状态已落定。
+        await hooks.emit(
+            room,
+            hooks.TURN_START,
+            {
+                "room_id": room.id,
+                "player_id": winner,
+                "round": room.round,
+            },
+        )
+
+        # Frozen draw contract: first player 1 card, second player 2 cards.
+        # 兵粮寸断 only skips this preparation-phase handout, not any other
+        # draw source (the card text is explicit).
+        skip_winner = False
+        if self.draw_skip_hook is not None:
+            skip_winner = bool(await self._maybe_await(self.draw_skip_hook(room, winner)))
+        winner_cards = []
+        if not skip_winner:
+            for _ in range(self._tech_prepare_count(room, winner, mutations.prepare_draw_count(room, first=True))):
+                winner_cards.append(await self._draw(room, winner))
+        winner_card = next(iter(winner_cards), None)
+        skip_loser = False
+        if self.draw_skip_hook is not None:
+            skip_loser = bool(await self._maybe_await(self.draw_skip_hook(room, loser)))
+        loser_cards = []
+        if skip_loser:
+            room.mutation_prepare_skips[loser] = room.round
+        else:
+            for _ in range(self._tech_prepare_count(room, loser, mutations.prepare_draw_count(room, first=False, include_supply=False))):
+                loser_cards.append(await self._draw(room, loser))
+        if self.after_draw_hook is not None:
+            await self._maybe_await(self.after_draw_hook(room, winner))
+
+        room.state = RoomState.ATTACKING
+        if not room.match_started_at:
+            room.match_started_at = self.clock()
+        room.current_phase = RoomPhase.PREPARATION
+        self._start_timer(room)
+
+        for pid, seat in room.players.items():
+            if not seat.socket_id:
+                continue
+            await self._publisher.emit("game_state", {
+                "state": RoomState.ATTACKING.value,
+                "current_attacker": winner,
+                "current_phase": RoomPhase.PREPARATION.value,
+                "attacks_remaining": room.attacks_remaining,
+                "winner_card": card_payload(winner_card) if winner_card and pid == winner else None,
+                "loser_cards": [
+                    card_payload(card) if card else None
+                    for card in (loser_cards if pid == loser else [])
+                ],
+                "round": room.round,
+                "attack_order": list(room.attack_order),
+                **rank_payload(room),
+                **self._turn_timing(room),
+                "mutations": mutations.payload(room, pid),
+            }, to=seat.socket_id)
+        actor = self._name(room, winner)
+        replay_rules.note_action(
+            room,
+            "rps_choice",
+            f"{actor} 猜拳取胜，先手",
+            {"first": winner, "round": room.round},
+            actor,
+        )
+
 
     # ---------------------------------------------------------------- phases
 
@@ -826,10 +885,11 @@ class GameplayService:
                 hooks.ROUND_START,
                 {"room_id": room.id, "round": room.round},
             )
+            await self.mystery_tech.begin(room)
             await self._publisher.emit(
                 "game_state",
                 {
-                    "state": RoomState.ROCK_PAPER_SCISSORS.value,
+                    "state": _state_value(room),
                     "round": room.round,
                     **rank_payload(room),
                     **self._turn_timing(room),
@@ -987,6 +1047,12 @@ class GameplayService:
         now = self.clock() if now is None else now
         acted: list[str] = []
         for room in list(self.rooms.get_all_rooms().values()):
+            if room.mystery_tech:
+                from .priority import room_action
+                async with room_action(room):
+                    if await self.mystery_tech.sweep(room, now):
+                        acted.append(room.id)
+                        continue
             if _state_value(room) != RoomState.ATTACKING.value:
                 continue
             if self.magic is not None and await self.magic.settle_interaction_timeout(room, now, self.turn_timeout_seconds):

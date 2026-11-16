@@ -259,6 +259,8 @@ class MagicService:
         )
 
     async def _emit_ships_updated(self, room: Room) -> None:
+        from ..domain.mystery_tech.effects import maintain_fleet
+        maintain_fleet(room)
         for pid, player in room.players.items():
             opponent_id = room.opponent_of(pid)
             opponent = room.players.get(opponent_id) if opponent_id else None
@@ -625,7 +627,7 @@ class MagicService:
             {"player": player_id, "positions": positions, "reason": reason},
             room=room.id,
         )
-        await self.on_ship_destroyed(room, player_id, ship)
+        await self.on_ship_destroyed(room, player_id, ship, attacker_id=source_id or player_id)
         await self._emit_ships_updated(room)
         await self._emit_player_ships(room, player_id)
 
@@ -1424,7 +1426,8 @@ class MagicService:
             if hand_card is None:
                 return {"status": "error", "message": "你没有这张魔法卡"}
             card = hand_card
-            if int(card.speed) != 3:
+            from ..domain.mystery_tech.effects import has
+            if int(card.speed) != 3 and not has(room, str(player_id), 'double_command'):
                 return {"status": "error", "message": "只能使用速阶3的卡牌进行连锁"}
 
             selection_error = magic_precheck.precheck(room, str(player_id), card.name, targets if isinstance(targets, dict) else {})
@@ -1797,6 +1800,13 @@ class MagicService:
                 "results": [result.to_dict() for result in results],
             },
         )
+
+        if room.state != RoomState.GAME_OVER:
+            from ..domain.mystery_tech.effects import chain_draw_count
+            participants = {result.caster for result in results}
+            for pid in room.players:
+                for _ in range(chain_draw_count(room, pid, len(results), participants)):
+                    await self.draw(room, pid)
 
         await self._emit_active_effects(room)
         for player in room.players.values():
@@ -2806,6 +2816,11 @@ class MagicService:
         defender = room.players.get(defender_id)
         if defender is None:
             return
+        from ..domain.mystery_tech.effects import maintain_fleet, on_sink
+        maintain_fleet(room)
+        source = attacker_id or self._last_attacker(room)
+        for _ in range(on_sink(room, source, defender_id)):
+            await self.draw(room, source)
         # 单一漏斗：炮击（battle.sink_hooks）与效果（ctx.on_ship_sunk）都到这里。
         # SHIP_SUNK 全项目只在这里发一次（battle 层不再补发第二帧）。
         await hooks.emit(
@@ -2846,6 +2861,11 @@ class MagicService:
         owner = room.players.get(owner_id)
         if owner is None:
             return
+        from ..domain.mystery_tech.effects import maintain_fleet, on_sink
+        maintain_fleet(room)
+        source = attacker_id or self._last_attacker(room)
+        for _ in range(on_sink(room, source, owner_id)):
+            await self.draw(room, source)
         # 效果摧毁的唯一发射点（百亿补贴等订阅者在这里看到 owner_id）。
         await hooks.emit(
             room,

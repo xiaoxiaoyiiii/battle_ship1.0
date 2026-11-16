@@ -20,6 +20,18 @@ def register_battle_handlers(
     gameplay: GameplayService,
     battle: BattleService | None = None,
 ) -> None:
+    @sio.on('mystery_tech_refresh')
+    async def mystery_tech_refresh(sid: str, data: dict[str, Any] | None = None) -> dict:
+        return await gameplay.mystery_tech_refresh(await connection_from_sio(sio, sid), data)
+
+    @sio.on('mystery_tech_choose')
+    async def mystery_tech_choose(sid: str, data: dict[str, Any] | None = None) -> dict:
+        return await gameplay.mystery_tech_choose(await connection_from_sio(sio, sid), data)
+
+    @sio.on('mystery_tech_target')
+    async def mystery_tech_target(sid: str, data: dict[str, Any] | None = None) -> dict:
+        return await gameplay.mystery_tech_target(await connection_from_sio(sio, sid), data)
+
     @sio.on("place_ships")
     async def place_ships(sid: str, data: dict[str, Any] | None = None) -> dict:
         connection = await connection_from_sio(sio, sid)

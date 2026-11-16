@@ -52,7 +52,8 @@ CHAT_EMPTY = "说点什么再发送吧"
 ALLOW_CACHE_TTL_SECONDS = 5.0
 
 #: Only these room states count as a watchable match in the lobby list.
-LIVE_MATCH_STATES = ("placing_ships", "rock_paper_scissors", "attacking")
+LIVE_MATCH_STATES = ("placing_ships", "rock_paper_scissors", "attacking",
+                     "mystery_tech_selection", "mystery_tech_resolution")
 
 
 def _state_value(value: Any) -> Any:

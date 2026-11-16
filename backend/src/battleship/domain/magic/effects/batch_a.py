@@ -222,7 +222,7 @@ async def splash(ctx: EffectContext) -> EffectResult:
         await ctx.on_ship_sunk(ctx.opponent_id, ship)
     if result.ships_sunk:
         await ctx.sync_ships()
-    victory = await _finish_after_damage(ctx, damaged=result.hit_count > 0)
+    victory = await _finish_after_damage(ctx, damaged=result.ships_sunk > 0)
     if victory:
         return EffectResult(True, f"溅射攻击命中{result.hit_count}个目标，{victory}",
                             game_over=True, affected_positions=affected)

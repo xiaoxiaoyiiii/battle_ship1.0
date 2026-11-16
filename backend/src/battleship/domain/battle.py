@@ -239,6 +239,9 @@ def recalc_attacker_attacks(room: Room, *, include_mutation_bonus: bool = True) 
     room.attacks_remaining = max(0, base + bonus)
     if include_mutation_bonus and _value(room.current_phase) == "battle" and field != "教皇旨意":
         room.attacks_remaining += mutations.battle_bonus(room)
+    if room.mystery_tech and field != "教皇旨意":
+        from .mystery_tech.effects import attack_budget
+        room.attacks_remaining = attack_budget(room, player_id, room.attacks_remaining)
     return room.attacks_remaining
 
 
@@ -306,6 +309,8 @@ def enter_battle(room: Room, player_id: str) -> str | None:
         return error
     room.current_phase = RoomPhase.BATTLE
     player = room.players[player_id]
+    from .mystery_tech.effects import activate_attack_credits
+    activate_attack_credits(room, player_id)
     recalc_attacker_attacks(room, include_mutation_bonus=False)
     if player.effect_flags.double_attacks:
         # 火力全开 doubles the budget that already exists (not a recount).
@@ -522,6 +527,9 @@ def priority_wait_reason(room: Room, player_id: str) -> str | None:
 def action_wait_reason(room: Room, player_id: str) -> str | None:
     """Legacy _action_wait_reason: shenji declaration > dice discard > priority."""
 
+    if room.mystery_tech and room.state not in (RoomState.ATTACKING, RoomState.GAME_OVER):
+        return '请先完成神秘科技选择、猜拳与科技结算'
+
     pending = (room.magic_temp_data or {}).get("pending_shenji") or {}
     caster = pending.get("caster") if isinstance(pending, dict) else None
     if caster and caster != player_id:
@@ -625,7 +633,10 @@ def resolve_attack(room: Room, attacker_id: str, x: int, y: int) -> AttackOutcom
     target = _find_hit_ship(defender, x, y)
     if target is not None:
         hit = True
-        if forced_kill:
+        from .mystery_tech.effects import absorb_armor
+        if absorb_armor(room, defender_id, target):
+            shield_blocked = True
+        elif forced_kill:
             target.hits = list(target.hits or []) + [Position(x=x, y=y)]
             ship_sunk = True
             sunk_ship = target
@@ -847,6 +858,9 @@ def resolve_splash(room: Room, caster_id: str) -> AreaStrikeResult:
                 continue
             if cell in (ship.positions or []) and cell not in (ship.hits or []):
                 hit = True
+                from .mystery_tech.effects import absorb_armor
+                if absorb_armor(room, defender_id, ship):
+                    break
                 ship.shield = False
                 ship.hits = list(ship.hits or []) + [Position(x=x, y=y)]
                 _area_sink(room, defender_id, ship, remove_from_ships=False)
@@ -856,7 +870,8 @@ def resolve_splash(room: Room, caster_id: str) -> AreaStrikeResult:
                 if "holy_heart" in room.game_effects:
                     room.game_effects["holy_heart"]["no_damage"] = False
                 break
-        _mark_area_attack(room, caster, x, y, hit, sunk_ship is not None, "is_splash")
+        if not hit or sunk_ship is not None:
+            _mark_area_attack(room, caster, x, y, hit, sunk_ship is not None, "is_splash")
         result.cells.append(
             AreaCellOutcome(x=x, y=y, hit=hit, ship_sunk=sunk_ship is not None,
                             sunk_ship=sunk_ship)
@@ -910,7 +925,15 @@ def resolve_area_strike(room: Room, caster_id: str,
             doomed.append(ship)
 
     removed_positions: set[tuple[int, int]] = set()
+    protected_positions: set[tuple[int, int]] = set()
     for ship in doomed:
+        from .mystery_tech.effects import absorb_armor
+        if absorb_armor(room, defender_id, ship):
+            for pos in ship.positions:
+                if pos in chosen:
+                    protected_positions.add((pos.x, pos.y))
+                    result.cells.append(AreaCellOutcome(x=pos.x, y=pos.y, hit=True, ship_sunk=False))
+            continue
         _area_sink(room, defender_id, ship, remove_from_ships=True)
         caster.damage_dealt_this_turn += 1
         result.ships_sunk += 1
@@ -925,7 +948,7 @@ def resolve_area_strike(room: Room, caster_id: str,
             )
 
     for x, y in normalized:
-        if (x, y) in removed_positions:
+        if (x, y) in removed_positions | protected_positions:
             continue
         _mark_area_attack(room, caster, x, y, False, False, flag)
         result.cells.append(

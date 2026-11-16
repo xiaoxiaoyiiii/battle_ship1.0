@@ -560,6 +560,7 @@ def build_board_frame(room: Room) -> dict[str, Any]:
 #: source; a missing key blanks part of the spectator screen, an extra key is
 #: contract drift.
 SPECTATE_SNAPSHOT_KEYS: tuple[str, ...] = (
+    'mystery_tech',
     "viewing_frame",
     "room_id",
     "state",
@@ -616,6 +617,11 @@ def _state_value(value: Any) -> Any:
     return getattr(value, "value", value)
 
 
+def _tech_public(room: Room | None):
+    from ..mystery_tech.draft import snapshot
+    return snapshot(room) if room is not None else None
+
+
 def build_spectate_snapshot(room: Room) -> dict[str, Any]:
     """The one-shot spectate_sync payload for a spectator joining mid-game."""
 
@@ -644,6 +650,7 @@ def build_spectate_snapshot(room: Room) -> dict[str, Any]:
 
     spectators = room.spectators or {}
     snapshot = {
+        'mystery_tech': _tech_public(room),
         "room_id": room.id,
         "viewing_frame": {
             'version': 2, 'room_id': room.id, 'seq': room.viewing_sequence,
@@ -718,6 +725,7 @@ def validate_snapshot(snapshot: Any) -> None:
 #: Allowed -> sanitiser (None = pass through; the payload carries no secret).
 #: Default deny: an event not listed here never reaches a spectator.
 SPECTATE_EVENTS: dict[str, Any] = {
+    'mystery_tech_public': lambda data, room=None: _tech_public(room),
     # Core actions and their results (the targeted cell is public by definition).
     "attack_result": None,
     "turn_change": None,
@@ -779,6 +787,7 @@ SPECTATE_EVENTS: dict[str, Any] = {
 
 #: Explicitly denied, with a reason. An empty reason is a configuration error.
 NOT_FOR_SPECTATORS: dict[str, str] = {
+    'mystery_tech_state': '科技选项、锁定结果与目标候选只属于本人，双方锁定后另发公开投影',
     "spectate_frame": "观战专用权威帧由 ViewingService 发布，不从对局频道镜像",
     "game_state": "整份局面快照，含 ships[].positions 与对方攻击记录 —— 给了就是透视",
     "room_sync": "重连快照，45 个顶层键含 ships[].positions + hand（最毒的一处）",

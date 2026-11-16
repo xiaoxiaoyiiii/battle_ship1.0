@@ -32,6 +32,9 @@ DEBUG_EVENTS: tuple[str, ...] = (
 
 # 旧栈 server.py 注册的全部入站事件（含调试事件与连接生命周期）。
 INBOUND_EVENTS: tuple[str, ...] = (
+    'mystery_tech_refresh',
+    'mystery_tech_choose',
+    'mystery_tech_target',
     "connect",
     "disconnect",
     "debug_status",

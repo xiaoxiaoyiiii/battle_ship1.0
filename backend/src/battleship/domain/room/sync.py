@@ -177,6 +177,15 @@ def _effect_badges(room: Room | None, player_id: str | None,
                     "card": _card_badge(label),
                 }
             )
+    if room is not None and room.mystery_tech and player_id:
+        from ..mystery_tech.catalog import BY_ID
+        for selected in room.mystery_tech_state.get('history', []):
+            if selected['player_id'] == player_id:
+                tech = BY_ID[selected['tech_id']]
+                badges.append({'key': 'mystery_tech:' + tech.id, 'tech_id': tech.id,
+                    'name': tech.name, 'label': tech.name, 'description': tech.description,
+                    'tier': tech.tier, 'timing': tech.timing, 'selected_round': selected['round'],
+                    'expires': '本局有效' if tech.timing == 'persistent' else '已选即时科技'})
     return badges
 
 
@@ -304,6 +313,7 @@ def build_room_sync(
     """
 
     from ...contracts.events_out import RoomSync
+    from ..mystery_tech.draft import snapshot as tech_snapshot
     from ..magic.interaction import pending_action_reason
 
     player = room.players[player_id]
@@ -434,6 +444,8 @@ def build_room_sync(
         "opponent_hand_names": ([card.name for card in opponent.magic_hand]
                                 if opponent and mutation_rules.active(room, "E2") else []),
         "admin_test": bool(room.admin_test),
+        "mystery_tech": bool(room.mystery_tech),
+        "mystery_tech_state": tech_snapshot(room, player_id),
     }
     # Validation is the freeze: adding/removing a key without updating the
     # contract model fails here instead of silently drifting the wire shape.

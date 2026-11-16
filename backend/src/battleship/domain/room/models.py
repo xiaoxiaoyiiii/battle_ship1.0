@@ -34,6 +34,8 @@ class RoomState(str, Enum):
     WAITING = "waiting"
     PLACING_SHIPS = "placing_ships"
     ROCK_PAPER_SCISSORS = "rock_paper_scissors"
+    MYSTERY_TECH_SELECTION = "mystery_tech_selection"
+    MYSTERY_TECH_RESOLUTION = "mystery_tech_resolution"
     ATTACKING = "attacking"
     GAME_OVER = "game_over"
 
@@ -51,13 +53,16 @@ class RoomPhase(str, Enum):
 ROOM_STATE_TRANSITIONS: dict[RoomState, frozenset[RoomState]] = {
     RoomState.WAITING: frozenset({RoomState.PLACING_SHIPS, RoomState.GAME_OVER}),
     RoomState.PLACING_SHIPS: frozenset(
-        {RoomState.ROCK_PAPER_SCISSORS, RoomState.GAME_OVER}
+        {RoomState.ROCK_PAPER_SCISSORS, RoomState.MYSTERY_TECH_SELECTION, RoomState.GAME_OVER}
     ),
     RoomState.ROCK_PAPER_SCISSORS: frozenset(
-        {RoomState.ATTACKING, RoomState.PLACING_SHIPS, RoomState.GAME_OVER}
+        {RoomState.ATTACKING, RoomState.PLACING_SHIPS, RoomState.GAME_OVER,
+         RoomState.MYSTERY_TECH_SELECTION, RoomState.MYSTERY_TECH_RESOLUTION}
     ),
+    RoomState.MYSTERY_TECH_SELECTION: frozenset({RoomState.ROCK_PAPER_SCISSORS, RoomState.GAME_OVER}),
+    RoomState.MYSTERY_TECH_RESOLUTION: frozenset({RoomState.ATTACKING, RoomState.GAME_OVER}),
     RoomState.ATTACKING: frozenset(
-        {RoomState.GAME_OVER, RoomState.ROCK_PAPER_SCISSORS, RoomState.PLACING_SHIPS}
+        {RoomState.GAME_OVER, RoomState.ROCK_PAPER_SCISSORS, RoomState.PLACING_SHIPS, RoomState.MYSTERY_TECH_SELECTION}
     ),
     RoomState.GAME_OVER: frozenset(),
 }
@@ -183,6 +188,8 @@ def opponent_of(room: "Room", player_id: str) -> str | None:
 
 
 def room_match_mode(room: "Room") -> str:
+    if room.mystery_tech:
+        return 'mystery_tech'
     return "ranked" if bool(getattr(room, "ranked", False)) else "casual"
 
 
@@ -285,6 +292,8 @@ class Room:
     invite_token: str = ""
     invite_targets: dict[str, str] = field(default_factory=dict)
     ranked: bool = False
+    mystery_tech: bool = False
+    mystery_tech_state: dict[str, Any] = field(default_factory=dict)
     ranked_season_id: str | None = None
     admin_test: bool = False
     matchmade: bool = False

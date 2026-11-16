@@ -308,6 +308,7 @@ class BattleService:
                 "shield_blocked": outcome.shield_blocked,
             },
         )
+        outcome.remaining_attacks = room.attacks_remaining
         await self._publisher.emit("attack_result", outcome.to_payload(), room=room.id)
 
         if outcome.defender_wiped_out:
@@ -383,6 +384,10 @@ class BattleService:
 
         room.state = RoomState.GAME_OVER
         room.winner = winner_id
+        if room.mystery_tech:
+            from ..domain.mystery_tech.draft import enforce_mode
+            enforce_mode(room)
+            room.mystery_tech_state.update(stage='ended', target=None)
         # 先保存权威终局原因，供结算、反作弊、回放和事件读取同一事实。
         room.game_over_reason = reason or room.game_over_reason or "attacks"
         reason = room.game_over_reason
@@ -469,6 +474,13 @@ class BattleService:
     async def handle_ban_departure(self, room: Room, leaver_id: str) -> dict | None:
         """投降和掉线共用初始布船离开入口，锁内只认领和处理一次。"""
         async with room_action(room):
+            if room.mystery_tech and len(room.players) == 2:
+                if leaver_id not in room.players:
+                    return dict(INVALID_SEAT)
+                if room.state != RoomState.GAME_OVER:
+                    reason = 'opponent_disconnected' if leaver_id in room.disconnected else 'surrender'
+                    await self._finish_game(room, room.opponent_of(leaver_id), leaver_id, reason=reason)
+                return {'status': 'success'}
             if room.ban_escape_settled:
                 return {"status": "success"}
             if (

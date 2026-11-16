@@ -139,8 +139,13 @@ def usable_speed3_cards(room: Room, player_id: str | None) -> list[MagicCard]:
     return [
         card
         for card in player.magic_hand
-        if int(card.speed) == 3 and evaluate_cast(room, str(player_id), card) is None
+        if (int(card.speed) == 3 or _double_command(room, str(player_id))) and evaluate_cast(room, str(player_id), card) is None
     ]
+
+
+def _double_command(room: Room, player_id: str) -> bool:
+    from ..mystery_tech.effects import has
+    return has(room, player_id, 'double_command')
 
 
 def ai_can_negate_chain_top(room: Room, ai_id: str) -> bool:

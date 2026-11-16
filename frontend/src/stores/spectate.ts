@@ -32,7 +32,7 @@ import {
  * Chat lines get a monotonic sequence id: it is stable across re-renders and
  * unique, which array indices are not (and the selector contract forbids them).
  */
-export type SpectatePhaseState = 'idle' | 'joining' | 'joined' | 'error' | 'ended'
+export type SpectatePhaseState = 'idle' | 'joining' | 'joined' | 'reconnecting' | 'error' | 'ended'
 
 const LOG_LIMIT = 200
 const CHAT_LIMIT = 200
@@ -86,7 +86,14 @@ export const useSpectateStore = defineStore('spectate', () => {
     if (chat.value.length > CHAT_LIMIT) chat.value = chat.value.slice(-CHAT_LIMIT)
   }
 
-  function beginJoin(id: string): void {
+  function markDisconnected(): void {
+    if (phase.value === 'joining' || phase.value === 'joined') phase.value = 'reconnecting'
+  }
+
+  function beginJoin(id: string, resuming = false): void {
+    if (resuming && roomId.value === id) {
+      phase.value = 'reconnecting'; error.value = ''; return
+    }
     viewFrame.value = null; viewPacket.value = null; viewSeq.value = -1
     phase.value = 'joining'
     error.value = ''
@@ -426,6 +433,7 @@ export const useSpectateStore = defineStore('spectate', () => {
     me,
     chat,
     beginJoin,
+    markDisconnected,
     markJoined,
     failJoin,
     applySnapshot,

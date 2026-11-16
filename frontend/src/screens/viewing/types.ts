@@ -5,7 +5,7 @@ export interface Point { x: number; y: number }
 export interface Shot extends Point { hit?: boolean; sunk?: boolean; area?: boolean; fog_miss?: boolean }
 export interface FleetCell extends Shot { shielded?: boolean; frozen?: boolean; invincible?: boolean; trap?: boolean }
 export interface Area { x1: number; y1: number; x2: number; y2: number }
-export interface ViewCard { name: string; speed?: number; type?: string; description?: string }
+export interface ViewCard { name: string; speed?: number; type?: string; description?: string; skin_id?: string }
 export interface ViewPlayer { name: string; remaining_ships: number; hand_count: number; cards: ViewCard[] | null; effects: Json[] }
 export interface ViewBoard { fleet: FleetCell[]; marks: Shot[]; shots: Shot[]; reveals: Point[]; holes: Area[]; frozen_area: Area | null; last_stand: Point[] }
 export interface ViewFrame {

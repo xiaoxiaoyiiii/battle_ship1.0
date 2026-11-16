@@ -63,6 +63,15 @@ class CollectionService:
                 return skin_id
             return None
 
+    def selected_skins(self,user_id):
+        """观看快照用的已拥有皮肤；不把未拥有或错配的记录送入房间。"""
+        if not user_id:
+            return {}
+        with self.database.unit_of_work() as u:
+            owned=u.skins.owned_ids(user_id)
+            return {name:sid for name,sid in u.skins.selections(user_id).items()
+                if sid in owned and public_skin_id(sid,name)}
+
     def select_skin(self,user_id,name,skin, *, now=None):
         now = int(time.time()) if now is None else int(now)
         if not isinstance(name,str) or name not in {c['name'] for c in rules.cards()}:

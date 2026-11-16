@@ -110,6 +110,14 @@ def _board(room: Room, pid: str, *, full: bool) -> dict[str, Any]:
     }
 
 
+def _view_card(room: Room, pid: str, card) -> dict[str, Any]:
+    payload = card_payload(card)
+    selected = room._viewing_card_skins.get(pid, {}).get(card.name)
+    if skin_id := public_skin_id(selected, card.name):
+        payload['skin_id'] = skin_id
+    return payload
+
+
 def build_view_frame(room: Room, *, audience: Literal['replay', 'spectator']) -> dict[str, Any]:
     if audience not in ('replay', 'spectator'):
         raise ValueError('未知观看范围')
@@ -134,7 +142,7 @@ def build_view_frame(room: Room, *, audience: Literal['replay', 'spectator']) ->
         'players': {side: {
             'name': player.name or side, 'remaining_ships': player.remaining_ships,
             'hand_count': len(player.magic_hand),
-            'cards': [card_payload(card) for card in player.magic_hand] if full or mutations.active(room, 'E2') else None,
+            'cards': [_view_card(room, pid, card) for card in player.magic_hand] if full or mutations.active(room, 'E2') else None,
             'effects': _effect_badges(room, pid, player),
         } for pid, side in seats.items() for player in [room.players[pid]]},
         'boards': {side: _board(room, pid, full=full) for pid, side in seats.items()},

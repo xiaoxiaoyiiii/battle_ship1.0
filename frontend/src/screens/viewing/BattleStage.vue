@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import BoardPanel from '../game/BoardPanel.vue'
-import { cardArtUrl } from '../../cards/cardArt'
+import CardFaceArt from '../../cards/CardFaceArt.vue'
+import { resolveCardArtUrl } from '../../cards/skinArt'
 import { CARDS } from '../../cards/cardData'
 import '../game/card-inspect.css'
 import { boardCells, sides } from './frame'
@@ -13,6 +14,16 @@ const selected = ref<ViewCard | null>(null)
 const preview = ref<ViewCard | null>(null), tooltip = ref<HTMLElement | null>(null)
 const previewPosition = ref({ left: '0px', top: '0px', visibility: 'hidden' as 'hidden' | 'visible' })
 const describe = (card: ViewCard): ViewCard => ({ ...CARDS.find(known => known.name === card.name), ...card })
+watch(() => props.frame, frame => {
+  const visible = Object.values(frame.players).flatMap(player => player.cards ?? [])
+  const refresh = (card: ViewCard | null): ViewCard | null => {
+    if (!card) return null
+    const found = visible.find(item => item.name === card.name && item.skin_id === card.skin_id)
+    return found ? describe(found) : null
+  }
+  selected.value = refresh(selected.value)
+  preview.value = refresh(preview.value)
+})
 async function showPreview(card: ViewCard, event: Event): Promise<void> {
   if (matchMedia('(hover: none)').matches) return
   const anchor = (event.currentTarget as HTMLElement).getBoundingClientRect()
@@ -50,7 +61,7 @@ async function showPreview(card: ViewCard, event: Event): Promise<void> {
           <button v-for="(card, i) in frame.players[side].cards" :key="i" type="button" class="view-card" :aria-label="'查看 ' + card.name" :aria-describedby="preview?.name === card.name ? mode + '-card-preview' : undefined"
             @mouseenter="showPreview(card,$event)" @focus="showPreview(card,$event)" @mouseleave="preview = null" @blur="preview = null"
             @click="preview = null; selected = describe(card)">
-            <img v-if="cardArtUrl(card.name)" :src="cardArtUrl(card.name)!" :alt="card.name" /><span class="view-card__name">{{ card.name }}</span>
+            <CardFaceArt class="view-card__art" :name="card.name" :skin-id="card.skin_id" :context="mode" fit="cover" :alt="card.name" /><span class="view-card__name">{{ card.name }}</span>
           </button>
           <small v-if="!frame.players[side].cards?.length" class="view-empty">暂无手牌</small>
         </div>
@@ -59,11 +70,11 @@ async function showPreview(card: ViewCard, event: Event): Promise<void> {
     </div>
     <Teleport to="body">
       <aside v-if="preview" :id="mode + '-card-preview'" ref="tooltip" class="game-card-inspect view-card-preview" data-testid="viewing-card-hover-preview" role="tooltip" :style="previewPosition">
-        <div class="game-card-inspect__art" :class="{ 'is-empty': !cardArtUrl(preview.name) }"><img v-if="cardArtUrl(preview.name)" :src="cardArtUrl(preview.name)!" :alt="preview.name + ' 卡面预览'" /><span v-else>{{ preview.name }}</span></div>
+        <div class="game-card-inspect__art" :class="{ 'is-empty': !resolveCardArtUrl(preview.name, preview.skin_id) }"><CardFaceArt v-if="resolveCardArtUrl(preview.name, preview.skin_id)" :name="preview.name" :skin-id="preview.skin_id" :context="mode" :alt="preview.name + ' 卡面预览'" /><span v-else>{{ preview.name }}</span></div>
         <div class="game-card-inspect__body"><div class="game-card-inspect__head"><strong>{{ preview.name }}</strong><span>速阶 {{ preview.speed }} · {{ preview.type }}</span></div><p>{{ preview.description || '这张牌没有记录效果说明。' }}</p><small class="game-card-inspect__hint">点击查看完整卡牌</small></div>
       </aside>
       <div v-if="selected" class="view-card-dialog" role="dialog" aria-modal="true" :aria-label="selected.name" @click.self="selected = null" @keydown.esc="selected = null">
-        <section><button type="button" autofocus @click="selected = null">关闭</button><img v-if="cardArtUrl(selected.name)" :src="cardArtUrl(selected.name)!" :alt="selected.name" /><h2>{{ selected.name }}</h2><small>速阶 {{ selected.speed }} · {{ selected.type }}</small><p>{{ selected.description }}</p></section>
+        <section><button type="button" autofocus @click="selected = null">关闭</button><CardFaceArt class="view-card-dialog__art" :name="selected.name" :skin-id="selected.skin_id" :context="mode" :alt="selected.name" /><h2>{{ selected.name }}</h2><small>速阶 {{ selected.speed }} · {{ selected.type }}</small><p>{{ selected.description }}</p></section>
       </div>
     </Teleport>
   </section>

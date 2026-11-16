@@ -286,6 +286,7 @@ class SpectatorService:
         await self._publisher.emit(
             "spectate_you", {"name": room.spectators[sid]["name"]}, to=sid
         )
+        self._rooms.viewing.refresh_card_skins(room)
         await self._publisher.emit(
             "spectate_sync", spectate.build_spectate_snapshot(room), to=sid
         )

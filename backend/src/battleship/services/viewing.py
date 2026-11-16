@@ -18,14 +18,24 @@ class ViewingService:
     def bind(self, spectators) -> None:
         self.spectators = spectators
 
+    def refresh_card_skins(self, room) -> None:
+        """服务层读取装备；纯投影只在牌面获准公开时复制对应皮肤。"""
+        collection = getattr(self.rooms, 'collection', None)
+        room._viewing_card_skins = {
+            pid: collection.selected_skins(player.user_id)
+            for pid, player in room.players.items()
+        } if collection else {}
+
     async def commit(self, room, *, cause: str = 'state') -> None:
         observe(room)
+        self.refresh_card_skins(room)
         if not room.settled:
             record_state(room, step=max(0, replay.step_count(room) - 1), cause=cause)
         await self._publish(room, [])
 
     async def present(self, room, cue: dict) -> None:
         observe(room)
+        self.refresh_card_skins(room)
         record_state(room, step=max(0, replay.step_count(room) - 1), cause='presentation')
         recorded = replay_cue(cue, room)
         if recorded:
@@ -36,6 +46,7 @@ class ViewingService:
     async def attack(self, room, outcome) -> None:
         """前导、实际落点、尾声有序保存；观战先展示上一权威帧。"""
         observe(room)
+        self.refresh_card_skins(room)
         step = replay.step_count(room)
         cue = {'stage': 'attack_windup', 'attacker': outcome.attacker, 'target': outcome.defender,
                'cell': {'x': outcome.x, 'y': outcome.y},

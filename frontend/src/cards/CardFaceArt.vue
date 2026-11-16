@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 已授权皮肤用 Codex 的 SkinCardFace 动态卡面，否则回退默认卡图 <img>。
- * skinId 只能来自己方图鉴 selected_skin 或公开载荷 skin_id；对手未出的牌不要挂本组件。
+ * skinId 只能来自己方图鉴 selected_skin 或权威载荷 skin_id；观看端仅为已公开手牌使用。
  * 无皮肤时根元素就是原来的 <img>，class/style/aria 等原样透传，既有布局不变。
  */
 import { computed } from 'vue'

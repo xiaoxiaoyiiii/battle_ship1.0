@@ -67,6 +67,7 @@ export function applySpectateEvent(
 ): void {
   const store = useSpectateStore(pinia)
   if (!payload || typeof payload !== 'object') return
+  if (!store.roomId || (payload.room_id && payload.room_id !== store.roomId)) return
   switch (event) {
     case 'spectate_frame':
       store.applyViewingFrame(payload)
@@ -142,6 +143,7 @@ interface ActiveChannel {
 }
 
 let active: ActiveChannel | null = null
+let joinVersion = 0
 
 /** Acquire the shared channel; the last screen to release closes the socket. */
 export function acquireSpectateChannel(pinia?: Pinia): () => void {
@@ -154,10 +156,14 @@ export function acquireSpectateChannel(pinia?: Pinia): () => void {
     const onConnect = (): void => {
       ui.setConnection(true)
       const store = useSpectateStore(pinia)
-      if (hasConnected && store.roomId && store.phase === 'joined') void joinSpectate(store.roomId, pinia)
+      if ((hasConnected || store.phase === 'reconnecting') && store.roomId && ['joining', 'joined', 'reconnecting'].includes(store.phase)) void joinSpectate(store.roomId, pinia)
       hasConnected = true
     }
-    const onDisconnect = (): void => ui.setConnection(false)
+    const onDisconnect = (): void => {
+      joinVersion++
+      useSpectateStore(pinia).markDisconnected()
+      ui.setConnection(false)
+    }
     socket.socket.on('connect', onConnect)
     socket.socket.on('disconnect', onDisconnect)
     socket.connect()
@@ -217,10 +223,13 @@ export async function joinSpectate(roomId: string, pinia?: Pinia): Promise<Spect
     store.failJoin(message)
     return { ok: false, message }
   }
-  store.beginJoin(roomId)
+  const request = ++joinVersion
+  const current = (): boolean => request === joinVersion && store.roomId === roomId
+  store.beginJoin(roomId, store.phase === 'reconnecting' && store.roomId === roomId)
   try {
     const ack = await socket.emitEvent('spectate_join', { room_id: roomId })
     const record = ackRecord(ack)
+    if (!current()) return { ok: false, message: '' }
     if (record.status !== 'success') {
       const message = asString(record.message) || '进入观战失败'
       store.failJoin(message)
@@ -229,7 +238,12 @@ export async function joinSpectate(roomId: string, pinia?: Pinia): Promise<Spect
     store.markJoined(record)
     return { ok: true, message: '' }
   } catch (error) {
+    if (!current()) return { ok: false, message: '' }
     const message = '进入观战失败（网络），请稍后重试。'
+    if (!socket.socket.connected) {
+      store.markDisconnected()
+      return { ok: false, message }
+    }
     store.failJoin(message)
     return { ok: false, message }
   }
@@ -237,12 +251,12 @@ export async function joinSpectate(roomId: string, pinia?: Pinia): Promise<Spect
 
 /** Leave the spectator seat (idempotent: a refusal is not an error here). */
 export async function leaveSpectate(pinia?: Pinia): Promise<void> {
+  joinVersion++
   const store = useSpectateStore(pinia)
   const socket = getSpectateSocket()
   const roomId = store.roomId
-  const seated = store.phase === 'joined' || store.phase === 'ended'
   store.reset()
-  if (!socket || !roomId || !seated) return
+  if (!socket || !roomId || !socket.socket.connected) return
   try {
     await socket.emitEvent('spectate_leave', { room_id: roomId })
   } catch {

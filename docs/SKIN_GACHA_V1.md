@@ -53,4 +53,6 @@
 - 观战演出：`domain/viewing.py` 的 `public_cue`；观战帧的 `chain` 走 `public_chain`。
 - 录像 v2 随上述冻结帧和 cue 写入，回放不再查当前选用。
 
-手牌、`card_payload`、观战/录像里的 `players.cards` 不带皮肤。旧版录像 v1 的 `_chain_items` 与 `chain_resolving` 的 effect、整局结算载荷均不加 `skin_id`。自定义房、匹配、排位、人机、每日挑战同样适用。
+实战 `card_payload` 不带皮肤。观看帧的 `players.cards` 在获准展示牌面时附带已装备且匹配该卡的 `skin_id`：观战仅限当局公开手牌，录像 v2 随状态快照冻结；隐藏手牌仍为 `null`，不附带皮肤目录。观看手牌、悬浮预览及详情共用动态卡面；旧快照没有皮肤时回退默认卡面，不按当前装备补造历史。
+
+被无效牌的结算结果同样保留出牌时冻结的 `skin_id` 与熟练光效。观战断线时保留画面并暂停本地演出，恢复连接后重新申请权威基线，迟到的加入响应不覆盖退出或换房状态。旧版录像 v1 的 `_chain_items` 与 `chain_resolving` 的 effect、整局结算载荷均不加 `skin_id`。自定义房、匹配、排位、人机、每日挑战同样适用。

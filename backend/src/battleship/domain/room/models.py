@@ -380,6 +380,7 @@ class Room:
     magic_temp_seq: int = 0
     _viewing_recording: dict[str, Any] | None = None
     _viewing_public_frame: dict[str, Any] | None = None
+    _viewing_card_skins: dict[str, dict[str, str]] = field(default_factory=dict, repr=False, compare=False)
     _viewing_commit_hook: Any = None
     viewing_sequence: int = 0
 

@@ -1605,6 +1605,8 @@ class MagicService:
                     message=detail,
                     negated_skip=True,
                     negated_by=by,
+                    extra={**({'mastery_tier': item.mastery_tier} if item.mastery_tier else {}),
+                           **({'skin_id': item.skin_id} if item.skin_id else {})},
                 )
                 # A negated field card only goes to the discard pile; it must
                 # never replace or tear down the field already in play.

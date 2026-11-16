@@ -103,6 +103,7 @@ def reset(room) -> None:
     try:
         setattr(room, _ROOM_ATTR, None)
         room._viewing_recording = None
+        room._viewing_card_skins = {}
     except Exception:  # noqa: BLE001
         pass
 

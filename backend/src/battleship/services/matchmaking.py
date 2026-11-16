@@ -2,11 +2,11 @@
 
 The socket adapter only translates frames; every rule lives here:
 
-* mode is the literal `ranked` or `casual` (anything else is casual);
+* mode is the literal `ranked`, `casual`, or `mystery_tech` (anything else is casual);
 * ranked requires an account (guest ranked rooms could never be persisted);
 * the cumulative ban gate uses CAP_RANKED for ranked and CAP_MATCH for casual
-  (one capability for both would either disable casual at level 1 or let a
-  level-2 account keep queueing);
+  and mystery_tech (one capability for both would either disable casual at level 1
+  or let a level-2 account keep queueing);
 * seats in a matchmaking room are keyed by the **sid captured at enqueue time**
   (the frozen identity contract); the account id lives only on Player.user_id;
 * `room.ranked` is decided by the mode alone. Pairing preference
@@ -42,17 +42,23 @@ logger = get_logger("matchmaking")
 
 MATCH_MODE_CASUAL = "casual"
 MATCH_MODE_RANKED = "ranked"
-MATCH_MODES = (MATCH_MODE_CASUAL, MATCH_MODE_RANKED)
+MATCH_MODE_MYSTERY_TECH = "mystery_tech"
+MATCH_MODES = (MATCH_MODE_CASUAL, MATCH_MODE_RANKED, MATCH_MODE_MYSTERY_TECH)
 
 
 def normalize_match_mode(value: Any) -> str:
-    """Only the literal string 'ranked' opens ranked; everything else is casual.
+    """Only the literals 'ranked' and 'mystery_tech' open those queues; everything else is casual.
 
     Deliberately not case-insensitive: a typo must not put a guest into the
-    ranked pool (where the match can never be persisted), and guessing what the
+    ranked pool (where the match can never be persisted), and must not mix a
+    typo into the independent mystery_tech pool either. Guessing what the
     client meant is how two behaviours drift apart.
     """
-    return MATCH_MODE_RANKED if value == MATCH_MODE_RANKED else MATCH_MODE_CASUAL
+    if value == MATCH_MODE_RANKED:
+        return MATCH_MODE_RANKED
+    if value == MATCH_MODE_MYSTERY_TECH:
+        return MATCH_MODE_MYSTERY_TECH
+    return MATCH_MODE_CASUAL
 
 
 class MatchmakingService:
@@ -238,7 +244,9 @@ class MatchmakingService:
 
     def _create_room(self, first: dict, second: dict) -> tuple[Room, dict, dict]:
         room = Room(id=new_room_id())
-        room.ranked = first.get("mode") == MATCH_MODE_RANKED
+        mode = first.get("mode")
+        room.ranked = mode == MATCH_MODE_RANKED
+        room.mystery_tech = mode == MATCH_MODE_MYSTERY_TECH
         room.ranked_season_id = first.get('ranked_season_id') if room.ranked else None
         room.ban_enabled = room.ranked
         if room.ranked:
@@ -257,7 +265,8 @@ class MatchmakingService:
             )
         for seat_id in room.players:
             room.init_player_magic(seat_id)
-        mutations.configure_room(room, "ranked" if room.ranked else "casual",
+        mutation_mode = mode if mode in MATCH_MODES else MATCH_MODE_CASUAL
+        mutations.configure_room(room, mutation_mode,
                                  rng=self.rooms.mutation_rng, now=self.rooms.mutation_clock())
         mutations.prepare_start(room, self.rooms.mutation_rng)
         room.transition(RoomState.PLACING_SHIPS)

@@ -119,9 +119,14 @@ def lobby_counters(
 
     entries = list(queue)
     ranked = sum(1 for entry in entries if entry.get("mode") == "ranked")
+    mystery_tech = sum(1 for entry in entries if entry.get("mode") == "mystery_tech")
     return LobbyCounters(
         online_count=len(presence_rows),
-        queue={"casual": len(entries) - ranked, "ranked": ranked},
+        queue={
+            "casual": len(entries) - ranked - mystery_tech,
+            "ranked": ranked,
+            "mystery_tech": mystery_tech,
+        },
         joinable_rooms=visible_rooms(rooms, set(presence_rows)),
     )
 

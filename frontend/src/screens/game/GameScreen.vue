@@ -16,6 +16,7 @@ import PapalDiscardPicker from './PapalDiscardPicker.vue'
 import AvatarStack from '../../components/AvatarStack.vue'
 import MagicPlacementPanel from './MagicPlacementPanel.vue'
 import { useMagicPlacement } from './useMagicPlacement'
+import { useMysteryTechTargeting } from './useMysteryTechTargeting'
 import MagicChoicePanel from './MagicChoicePanel.vue'
 import MagicDiscardPanel from './MagicDiscardPanel.vue'
 import PhasePriorityPrompt from './PhasePriorityPrompt.vue'
@@ -111,6 +112,16 @@ const {
   legalKeys: placementLegalKeys, busy: placementBusy, error: placementError,
   choose: choosePlacement, submit: submitPlacement,
 } = useMagicPlacement()
+
+// 神秘科技结算瞄准：直接在下方真实战斗棋盘上点格 / 选舰，与魔法卡共用 BoardPanel 点击通路。
+const mysteryTarget = useMysteryTechTargeting()
+const {
+  active: mtActive, board: mtBoard, title: mtTitle, hint: mtHint, progress: mtProgress,
+  legalKeys: mtLegalKeys, selectedKeys: mtSelectedKeys, previewKeys: mtPreviewKeys,
+  selectionKind: mtSelectionKind, selectionTone: mtSelectionTone, ships: mtShips,
+  canConfirm: mtCanConfirm, submitting: mtSubmitting, error: mtError, seconds: mtSeconds, urgent: mtUrgent,
+  techName: mtTechName,
+} = mysteryTarget
 
 let releaseChannel: (() => void) | null = null
 let releaseMatchChannel: (() => void) | null = null
@@ -238,12 +249,12 @@ const selfCells = computed(() =>
   buildSelfBoard(state.value, { shieldBroken: match.shieldBrokenSelf, revived: match.revivedSelf }),
 )
 const opponentCells = computed(() =>
-  buildOpponentBoard(state.value, {
+  mysteryTarget.decorate('opponent', buildOpponentBoard(state.value, {
     revealed: match.revealed,
     shieldBroken: match.shieldBrokenOpponent,
     revived: match.revivedOpponent,
     actionPending: Boolean(writeWaitReason.value),
-  }),
+  })),
 )
 
 /**
@@ -252,6 +263,7 @@ const opponentCells = computed(() =>
  */
 const hoveredTarget = ref<{ x: number; y: number } | null>(null)
 function previewTarget(board: 'self' | 'opponent', point: { x: number; y: number } | null) {
+  if (mtActive.value) { mysteryTarget.onHover(board, point); return }
   const sel = selection.value
   const expected = sel?.descriptor.kind === 'shenwei' ? sel.board : sel?.descriptor.board ?? 'opponent'
   hoveredTarget.value = sel && board === expected ? point : null
@@ -274,6 +286,7 @@ const previewKeys = computed<string[]>(() => {
 
 /** Every cell the open target banner would accept (#47 legal-range highlight). */
 const legalKeys = computed<string[]>(() => {
+  if (mtActive.value) return mtLegalKeys.value
   if (placementOpen.value) return placementLegalKeys.value
   const sel = selection.value
   if (!sel) {
@@ -461,15 +474,27 @@ const remotePreviewTone = computed<'freeze' | 'fire' | 'divine' | 'radar' | 'def
   return 'default'
 })
 const remotePreviewBadge = computed(() => remoteTargetPreview.value ? '对方选择 · ' + remoteTargetPreview.value.card : '')
-const boardPreviewKind = computed(() => selectionKind.value ?? remotePreviewKind.value)
-const boardPreviewTone = computed(() => placementOpen.value ? 'default' : selection.value ? selectionTone.value : remotePreviewTone.value)
-const boardPreviewBadge = computed(() => placementOpen.value ? '' : selection.value ? selectionBadge.value : remotePreviewBadge.value)
+const boardPreviewKind = computed(() => mtActive.value ? mtSelectionKind.value : selectionKind.value ?? remotePreviewKind.value)
+const boardPreviewTone = computed(() => mtActive.value ? mtSelectionTone.value : placementOpen.value ? 'default' : selection.value ? selectionTone.value : remotePreviewTone.value)
+const boardPreviewBadge = computed(() => mtActive.value ? (mtSelectionKind.value === 'area' ? '神秘科技 · ' + mtTechName.value : '') : placementOpen.value ? '' : selection.value ? selectionBadge.value : remotePreviewBadge.value)
+/** 两块海域各自的「已选」与选择所属海域；神秘科技瞄准优先，其余沿用魔法卡逻辑。 */
+const boardSelectionSide = computed(() => mtActive.value ? mtBoard.value : selection.value ? (selection.value.board || selection.value.descriptor.board || (selection.value.descriptor.kind === 'own_ships' ? 'self' : null)) : 'self')
+const selfSelectedKeys = computed(() => {
+  if (mtActive.value) return mtBoard.value === 'self' ? mtSelectedKeys.value : []
+  return placementOpen.value ? placementSelectedKeys.value : (selection.value?.descriptor.board === 'opponent' ? [] : selectedKeys.value).concat(shieldSelectedKeys.value)
+})
+const opponentSelectedKeys = computed(() => {
+  if (mtActive.value) return mtBoard.value === 'opponent' ? mtSelectedKeys.value : []
+  return selection.value?.descriptor.board === 'self' ? [] : selectedKeys.value
+})
 const selfBoardPreviewKeys = computed(() => {
+  if (mtActive.value) return mtBoard.value === 'self' ? mtPreviewKeys.value : []
   if (placementOpen.value) return []
   if (selection.value) return selection.value.board === 'self' ? previewKeys.value : []
   return remoteTargetPreview.value?.board === 'self' ? remotePreviewKeys.value : []
 })
 const opponentBoardPreviewKeys = computed(() => {
+  if (mtActive.value) return mtBoard.value === 'opponent' ? mtPreviewKeys.value : []
   if (placementOpen.value) return []
   if (selection.value) return selection.value.board === 'self' ? [] : previewKeys.value
   return remoteTargetPreview.value?.board === 'opponent' ? remotePreviewKeys.value : []
@@ -585,11 +610,12 @@ watch(
 
 // 目标海域优先；使用标量依赖，普通 room_sync 不会把手动切换的海域抢回去。
 const targetBoard = computed(() => {
+  if (mtActive.value) return mtBoard.value
   if (placementOpen.value) return 'self'
   const sel = selection.value
   return sel ? sel.descriptor.kind === 'own_ships' ? 'self' : sel.board ?? sel.descriptor.board ?? 'opponent' : null
 })
-const picking = computed(() => placementOpen.value || !!selection.value || !!match.pickRequest || !!match.shieldChoice)
+const picking = computed(() => mtActive.value || placementOpen.value || !!selection.value || !!match.pickRequest || !!match.shieldChoice)
 const boardMode = layout.mode
 const tight = layout.tight
 const dense = layout.dense
@@ -622,6 +648,22 @@ const detailDrag = useFloatingDrag({
 const targetPanelEl = ref<HTMLElement | null>(null)
 const targetHeadEl = ref<HTMLElement | null>(null)
 const targetDrag = useFloatingDrag({ handle: targetHeadEl, panel: targetPanelEl, initial: { x: 16, y: 104 }, minY: 80 })
+const mtPanelEl = ref<HTMLElement | null>(null)
+const mtHeadEl = ref<HTMLElement | null>(null)
+const mtDrag = useFloatingDrag({ handle: mtHeadEl, panel: mtPanelEl, initial: { x: 16, y: 104 }, minY: 80 })
+const mtPanelStyle = computed(() => ({ left: mtDrag.state.value.x + 'px', top: mtDrag.state.value.y + 'px', maxHeight: compact.value ? undefined : `calc(100dvh - ${mtDrag.state.value.y + 12}px)` }))
+// 进入神秘科技瞄准时收起可能残留的魔法卡选格，棋盘只服务一个选择。
+watch(mtActive, (on) => { if (on && selection.value) cancelSelection() })
+// 宽屏双棋盘：提示条居中盖在「非目标」那块海域上，不遮挡要点的海域；紧凑档停靠在手牌区，不用摆位。
+watch([mtActive, mtBoard, compact], async ([on, side, isCompact]) => {
+  if (!on || isCompact) return
+  await nextTick()
+  const other = gameEl.value?.querySelector<HTMLElement>(side === 'self' ? '[data-testid="game-board-opponent"]' : '[data-testid="game-board-self"]')
+  const rect = other?.getBoundingClientRect()
+  if (!rect || !rect.width) { mtDrag.reset(); return }
+  const width = mtPanelEl.value?.offsetWidth ?? 460
+  mtDrag.reset({ x: Math.round(rect.left + rect.width / 2 - width / 2), y: 104 })
+})
 const targetPanelStyle = computed(() => ({ left: targetDrag.state.value.x + 'px', top: targetDrag.state.value.y + 'px', maxHeight: compact.value ? `min(44dvh, calc(100dvh - ${targetDrag.state.value.y + 12}px))` : `calc(100dvh - ${targetDrag.state.value.y + 12}px)` }))
 const targetStatus = computed(() => {
   if (canConfirm.value) return '目标已就绪，可以确认使用。'
@@ -718,7 +760,8 @@ watch([
 ], () => {
   if (state.value.current_attacker && state.value.player_id) focusBoard()
 }, { immediate: true })
-watch([targetBoard, () => Boolean(match.pickRequest), shieldOpen, () => state.value.needs_reset],
+// boardMode 也要监听：瞄准开始于宽屏、随后缩到标签档时，仍要切到目标海域。
+watch([targetBoard, () => Boolean(match.pickRequest), shieldOpen, () => state.value.needs_reset, boardMode],
   () => focusBoard(), { immediate: true, flush: 'sync' })
 watch(() => match.boardFocus, request => {
   if (request) focusBoard(request.side)
@@ -1190,6 +1233,13 @@ async function fire(x: number, y: number): Promise<void> {
 }
 
 function onCell(board: 'self' | 'opponent', x: number, y: number): void {
+  if (mtActive.value) {
+    const before = mtSelectedKeys.value.join(',')
+    mysteryTarget.onCell(board, x, y)
+    if (mtError.value) useAudioStore().playUi('reject')
+    else if (before !== mtSelectedKeys.value.join(',')) useAudioStore().playUi('select')
+    return
+  }
   if (placementOpen.value) {
     choosePlacement(board, x, y)
     return
@@ -1766,7 +1816,8 @@ function backToLobby(): void {
     :data-boards="boardMode"
     :data-tight="tight ? 'true' : 'false'"
     :data-dense="dense ? 'true' : 'false'"
-    :class="{ 'is-picking': picking, 'is-placing': placementOpen }"
+    :class="{ 'is-picking': picking, 'is-placing': placementOpen, 'is-mt-targeting': mtActive }"
+    :data-mt-board="mtActive ? mtBoard : undefined"
     :style="boardSize ? { '--board-size': boardSize + 'px', '--mobile-rail-width': layout.mobile.value.railWidth + 'px', '--mobile-hand-height': layout.mobile.value.handHeight + 'px' } : undefined"
     aria-labelledby="screen-game-title"
     ref="gameEl"
@@ -1987,17 +2038,17 @@ function backToLobby(): void {
               :title="'你的海域 · ' + selfName"
               :subtitle="'存活 ' + state.remaining_ships + ' 艘' + (frozenMine.size ? ' · 你的 3×3 区域被冻结' : '')"
               :cells="selfCells"
-              :selected="placementOpen ? placementSelectedKeys : (selection?.descriptor.board === 'opponent' ? [] : selectedKeys).concat(shieldSelectedKeys)"
+              :selected="selfSelectedKeys"
               :preview="selfBoardPreviewKeys"
               :legal="legalKeys"
-              :selection-board="selection ? (selection.board || selection.descriptor.board || (selection.descriptor.kind === 'own_ships' ? 'self' : null)) : 'self'"
-              :selection-label="placementOpen ? placementTitle : selection?.card.name || (shieldOpen ? '仁王之盾' : '')"
-              :selection-hint="placementOpen ? placementHint : selection ? targetHint : (pendingPick?.message || '点击己方战舰选择目标。')"
+              :selection-board="boardSelectionSide"
+              :selection-label="mtActive ? mtTechName : placementOpen ? placementTitle : selection?.card.name || (shieldOpen ? '仁王之盾' : '')"
+              :selection-hint="mtActive ? mtHint : placementOpen ? placementHint : selection ? targetHint : (pendingPick?.message || '点击己方战舰选择目标。')"
               :selection-kind="boardPreviewKind"
               :selection-tone="boardPreviewTone"
               :selection-badge="boardPreviewBadge"
               :hidden="!showSelfBoard"
-              :picking="placementOpen || !!selection || !!match.pickRequest || shieldOpen"
+              :picking="mtActive || placementOpen || !!selection || !!match.pickRequest || shieldOpen"
               @hover="point => previewTarget('self', point)"
               @cell="(x: number, y: number) => onCell('self', x, y)"
             />
@@ -2011,16 +2062,16 @@ function backToLobby(): void {
               :subtitle="'已探明 ' + shots + ' / 36 格 · 命中 ' + hits + (frozenTheirs.size ? ' · 对方 3×3 区域被冻结' : '')"
               :cells="opponentCells"
               :preview="opponentBoardPreviewKeys"
-              :selected="selection?.descriptor.board === 'self' ? [] : selectedKeys"
+              :selected="opponentSelectedKeys"
               :legal="legalKeys"
-              :selection-board="selection ? (selection.board || selection.descriptor.board || (selection.descriptor.kind === 'own_ships' ? 'self' : null)) : 'self'"
-              :selection-label="selection?.card.name || (shieldOpen ? '仁王之盾' : '')"
-              :selection-hint="selection ? targetHint : (pendingPick?.message || '点击己方战舰选择目标。')"
+              :selection-board="boardSelectionSide"
+              :selection-label="mtActive ? mtTechName : selection?.card.name || (shieldOpen ? '仁王之盾' : '')"
+              :selection-hint="mtActive ? mtHint : selection ? targetHint : (pendingPick?.message || '点击己方战舰选择目标。')"
               :selection-kind="boardPreviewKind"
               :selection-tone="boardPreviewTone"
               :selection-badge="boardPreviewBadge"
               :hidden="!showOpponentBoard"
-              :picking="placementOpen || !!selection"
+              :picking="mtActive || placementOpen || !!selection"
               @hover="point => previewTarget('opponent', point)"
               @cell="(x: number, y: number) => onCell('opponent', x, y)"
             />
@@ -2301,6 +2352,54 @@ function backToLobby(): void {
         <p class="game-more__note" data-testid="game-surrender-consequence">{{ surrenderConsequence }}</p>
       </div>
     </div>
+
+    <section
+      v-if="mtActive"
+      ref="mtPanelEl"
+      :style="mtPanelStyle"
+      class="game-target battle-prompt game-mt-target"
+      :class="{ 'is-dragging': mtDrag.state.value.dragging }"
+      data-testid="mystery-tech-target"
+      :data-kind="mysteryTarget.target.value?.kind"
+      aria-label="神秘科技瞄准"
+      role="region"
+    >
+      <header ref="mtHeadEl" class="battle-prompt__head battle-prompt__handle" @pointerdown="!compact && mtDrag.onPointerDown($event)">
+        <div>
+          <p class="battle-prompt__context">神秘科技结算 · {{ mtBoard === 'self' ? '你的海域' : '对手海域' }}</p>
+          <h2 class="game-target__title" data-testid="mystery-tech-target-title">{{ mtTitle }}</h2>
+          <span class="battle-prompt__drag-note">拖动标题可移动</span>
+        </div>
+        <div class="game-mt-target__clock" :class="{ 'is-urgent': mtUrgent }" data-testid="mystery-tech-target-countdown" role="timer" :aria-label="'剩余 ' + mtSeconds + ' 秒'">
+          <b>{{ mtSeconds }}</b><span>秒</span>
+        </div>
+      </header>
+      <div class="game-target__main">
+        <p class="game-target__hint" data-testid="mystery-tech-target-hint">{{ mtHint }}</p>
+        <div v-if="mtShips.length" class="game-target__row game-target__choices game-mt-target__ships" :aria-label="mysteryTarget.target.value?.kind === 'revive' ? '选择残骸' : '选择目标舰'">
+          <button
+            v-for="ship in mtShips"
+            :key="ship.shipIndex"
+            type="button"
+            class="button game-target__option"
+            :class="{ 'game__action--active': ship.picked }"
+            :aria-pressed="ship.picked"
+            :disabled="mtSubmitting"
+            :data-testid="'mystery-tech-ship-' + ship.shipIndex"
+            @click="mysteryTarget.pickShip(ship.shipIndex)"
+          >{{ ship.label }}</button>
+        </div>
+        <p class="game-target__selected battle-prompt__progress" data-testid="mystery-tech-target-selected" aria-live="polite">{{ mtProgress }}</p>
+        <p v-if="mtError" class="game-target__error battle-prompt__error" data-testid="mystery-tech-error" role="alert">{{ mtError }}</p>
+      </div>
+      <div class="game-target__controls">
+        <p class="battle-prompt__status" :class="{ 'is-ready': mtCanConfirm }" role="status">{{ mtSubmitting ? '正在提交…' : mtCanConfirm ? '目标已就绪，确认后立即结算。' : '超时由服务器按规则处理。' }}</p>
+        <div class="game-target__row game-target__actions">
+          <button type="button" class="button game-target__confirm" :class="{ 'is-disabled': !mtCanConfirm }" data-testid="mystery-tech-target-confirm" :aria-disabled="!mtCanConfirm" @click="mysteryTarget.confirm()">{{ mtSubmitting ? '提交中…' : '确认' }}</button>
+          <button type="button" class="button button--ghost" data-testid="mystery-tech-target-clear" :disabled="mtSubmitting" @click="mysteryTarget.clearDraft()">重选</button>
+        </div>
+      </div>
+    </section>
 
     <section v-if="selection" ref="targetPanelEl" :style="targetPanelStyle" class="game-target battle-prompt" :class="{ 'is-dragging': targetDrag.state.value.dragging }" data-testid="game-target" aria-label="目标选择" role="region">
       <header ref="targetHeadEl" class="battle-prompt__head battle-prompt__handle" @pointerdown="!compact && targetDrag.onPointerDown($event)">

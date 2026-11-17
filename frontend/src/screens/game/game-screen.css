@@ -996,6 +996,45 @@
 }
 .game.is-placing :deep(.board--self .cell:not(.cell--legal)) { opacity:.38; }
 
+/* 神秘科技瞄准复用主盘：目标海域只亮服务器给的合法格，其余压暗且不可选（静态，无动效）。 */
+.game.is-mt-targeting[data-mt-board='self'] :deep(.board--self .cell--legal),
+.game.is-mt-targeting[data-mt-board='opponent'] :deep(.board--opponent .cell--legal) {
+  border-color: #8edcec;
+  background-color: color-mix(in srgb, #8edcec 16%, var(--cell-bg));
+  box-shadow: inset 0 0 0 1px rgb(142 220 236 / 55%);
+}
+.game.is-mt-targeting[data-mt-board='self'] :deep(.board--self .cell:not(.cell--legal):not(.cell--selected)),
+.game.is-mt-targeting[data-mt-board='opponent'] :deep(.board--opponent .cell:not(.cell--legal):not(.cell--selected)) { opacity:.4; cursor:not-allowed; }
+.game.is-mt-targeting :deep(.board .cell--selected) { opacity:1; }
+.game.is-mt-targeting :deep(.board:not(.board--area) .cell--selected) {
+  border-color: #f0d58a;
+  box-shadow: inset 0 0 0 2px #f0d58a, 0 0 0 1px rgb(240 213 138 / 45%);
+}
+.game.is-mt-targeting :deep(.board:not(.board--area) .cell--selected:not(.cell--ship):not(.cell--hit)) {
+  background-color: color-mix(in srgb, #f0d58a 30%, var(--cell-bg));
+}
+.game-mt-target .battle-prompt__head { display:flex; align-items:flex-start; justify-content:space-between; }
+.game-mt-target__clock {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 58px;
+  padding: 4px 10px;
+  border: 1px solid rgb(142 220 236 / 45%);
+  border-radius: 10px;
+  background: rgb(142 220 236 / 8%);
+}
+.game-mt-target__clock b { font-size: 26px; line-height: 1.1; color: #8edcec; font-variant-numeric: tabular-nums; }
+.game-mt-target__clock span { font-size: 11px; color: var(--text-secondary); }
+.game-mt-target__clock.is-urgent { border-color: rgb(255 156 136 / 70%); background: rgb(255 156 136 / 10%); }
+.game-mt-target__clock.is-urgent b { color: #ff9c88; }
+.game-mt-target__ships { flex-wrap: wrap; }
+.game[data-layout='compact'] .game-mt-target__clock { min-width: 46px; padding: 2px 8px; }
+.game[data-layout='compact'] .game-mt-target__clock b { font-size: 18px; }
+.game[data-layout='compact'] .game-mt-target__clock span { font-size: 10px; }
+.game[data-layout='compact'] .game-mt-target__ships .button { min-height: 32px; padding: 4px 8px; font-size: 11px; }
+
 .game-target__main {
   flex: 1 1 280px;
   display: flex;

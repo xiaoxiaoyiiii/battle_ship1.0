@@ -1,4 +1,4 @@
-/* 神秘科技选择 / 瞄准层。窄屏 390 单列可滚动；尊重 reduced-motion。 */
+/* 神秘科技选择层（瞄准已移到真实战斗棋盘）。窄屏 390 单列可滚动；尊重 reduced-motion。 */
 
 .mt-overlay {
   position: fixed;
@@ -235,22 +235,6 @@
   box-shadow: var(--shadow-panel, 0 10px 24px rgba(0,0,0,.3));
 }
 
-.mt-target__body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 280px); gap: 16px; align-items: start; }
-.mt-ships { display: grid; gap: 8px; }
-.mt-ship {
-  width: 100%;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--panel-line, rgba(255,255,255,.14));
-  background: color-mix(in srgb, var(--surface-deck, #16303c) 88%, #000);
-  color: inherit;
-  text-align: left;
-  font: inherit;
-  cursor: pointer;
-}
-.mt-ship.is-picked { outline: 2px solid var(--gold-strong, #f0d58a); }
-.mt-ship:disabled { opacity: .5; cursor: not-allowed; }
-.mt-board { min-width: 0; }
 
 .mt-tech-rack {
   display: flex;
@@ -286,7 +270,6 @@
   .mt-card__orbit { top: -23px; }
   .mt-card.is-mythic .mt-card__orbit { top: -22px; }
   .mt-card.is-mythic .mt-card__orbit--outer { top: -40px; }
-  .mt-target__body { grid-template-columns: 1fr; }
   .mt-countdown { min-width: 72px; }
   .mt-countdown b { font-size: 22px; }
 }

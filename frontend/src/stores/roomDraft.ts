@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 
 /** 创建页草稿跨大厅子页面保留；不写账号或浏览器持久存储。 */
 export const useRoomDraftStore = defineStore('room-draft', () => {
@@ -8,12 +8,20 @@ export const useRoomDraftStore = defineStore('room-draft', () => {
   const banEnabled = ref(false)
   const banQuota = ref(1)
   const mutationIds = ref<string[]>([])
+  const mysteryTech = ref(false)
+  watch(mysteryTech, (enabled) => {
+    if (enabled) {
+      banEnabled.value = false
+      mutationIds.value = []
+    }
+  }, { flush: 'sync' })
   function reset(): void {
     name.value = ''
     isPublic.value = true
     banEnabled.value = false
     banQuota.value = 1
     mutationIds.value = []
+    mysteryTech.value = false
   }
-  return { name, isPublic, banEnabled, banQuota, mutationIds, reset }
+  return { name, isPublic, banEnabled, banQuota, mutationIds, mysteryTech, reset }
 })

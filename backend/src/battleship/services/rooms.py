@@ -363,11 +363,15 @@ class RoomService:
 
     async def create_room(self, connection: Connection, data: dict[str, Any] | None) -> dict:
         data = data if isinstance(data, dict) else {}
-        selected_mutations = data.get("mutation_ids", [])
+        mystery_tech = data.get('mystery_tech', False)
+        if type(mystery_tech) is not bool:
+            return {'status': 'error', 'message': '神秘科技模式须为开启或关闭'}
+        selected_mutations = [] if mystery_tech else data.get("mutation_ids", [])
         mutation_error = mutations.validate_selection(selected_mutations)
         if mutation_error:
             return {"status": "error", "message": mutation_error}
-        ban_error = bans.custom_error(data.get('ban_enabled', False), data.get('ban_quota', 1))
+        ban_enabled = False if mystery_tech else data.get('ban_enabled', False)
+        ban_error = bans.custom_error(ban_enabled, 1 if mystery_tech else data.get('ban_quota', 1))
         if ban_error:
             return {'status': 'error', 'message': ban_error}
         # Gate before ANY side effect: a refused create must not leave a room in
@@ -386,10 +390,15 @@ class RoomService:
 
         room = Room(id=new_room_id())
         room.name = str(data.get("name") or "").strip()[:LOBBY_ROOM_NAME_MAX_LEN]
-        room.ban_enabled = data.get('ban_enabled', False)
+        room.mystery_tech = mystery_tech
+        room.ban_enabled = ban_enabled
         room.ban_quota = data.get('ban_quota', 1) if room.ban_enabled else 0
-        mutations.configure_room(room, "custom", ids=selected_mutations,
-                                 rng=self.mutation_rng, now=self.mutation_clock())
+        if mystery_tech:
+            from ..domain.mystery_tech.draft import enforce_mode
+            enforce_mode(room)
+        else:
+            mutations.configure_room(room, "custom", ids=selected_mutations,
+                                     rng=self.mutation_rng, now=self.mutation_clock())
         room.public = bool(data.get("public", True))
         if not room.public:
             room.invite_token = secrets.token_urlsafe(32)
@@ -413,6 +422,11 @@ class RoomService:
 
     async def create_ai_room(self, connection: Connection, data: dict[str, Any] | None) -> dict:
         data = data if isinstance(data, dict) else {}
+        mystery_tech = data.get('mystery_tech', False)
+        if type(mystery_tech) is not bool:
+            return {'status': 'error', 'message': '神秘科技模式须为开启或关闭'}
+        if mystery_tech and data.get('daily_challenge') is True:
+            return {'status': 'error', 'message': '每日挑战使用固定规则，不能开启神秘科技'}
         if data.get('daily_challenge') is True:
             if self.daily_challenges is None:
                 return {'status': 'error', 'message': '每日挑战暂不可用'}
@@ -425,6 +439,7 @@ class RoomService:
             return {'status': 'error', 'message': error}
         room = Room(id=new_room_id())
         room.is_ai_room = True
+        room.mystery_tech = mystery_tech
         room.public = False
         player_id = connection.user_id or connection.sid
         room.players[player_id] = Player(
@@ -434,7 +449,11 @@ class RoomService:
         room.ai_difficulty = _normalize_difficulty(data.get("difficulty") or "normal")
         room.ai_difficulty_by_player = {}
         room.ranked = False
-        mutations.configure_room(room, "ai", rng=self.mutation_rng, now=self.mutation_clock())
+        if mystery_tech:
+            from ..domain.mystery_tech.draft import enforce_mode
+            enforce_mode(room)
+        else:
+            mutations.configure_room(room, "ai", rng=self.mutation_rng, now=self.mutation_clock())
         ai_id = ai_player_id(room.id)
         room.players[ai_id] = Player(
             name="AI",

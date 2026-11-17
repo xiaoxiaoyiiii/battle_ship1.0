@@ -182,6 +182,7 @@ class LobbyService:
             "mutation_ids": data.get("mutation_ids", []),
             "ban_enabled": data.get('ban_enabled', False),
             "ban_quota": data.get('ban_quota', 1),
+            'mystery_tech': data.get('mystery_tech', False),
         }
         result = await self._rooms.create_room(connection, payload)
         if not isinstance(result, dict) or result.get("status") != "success":
@@ -275,6 +276,7 @@ class LobbyService:
                 'seat_connected': host.socket_id == sid,
                 'can_restore': self._presence.get(host.socket_id) is None or player_id in room.disconnected,
                 'ban_enabled': room.ban_enabled, 'ban_quota': room.ban_quota,
+                'mystery_tech': room.mystery_tech,
                 'mutation_ids': list(room.mutation_ids),
                 'mutation_entries': list(room.mutation_entries),
             }

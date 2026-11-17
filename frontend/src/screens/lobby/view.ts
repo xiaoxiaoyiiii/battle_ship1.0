@@ -55,6 +55,7 @@ export function roomSeatsText(room: LobbyRoom): string {
 
 /** Ticket #43 fields, shown on the room card so a player can judge the table. */
 export function roomModeText(room: LobbyRoom): string {
+  if (room.mode === 'mystery_tech') return '神秘科技大乱斗'
   if (room.mode === 'ranked') return '排位'
   if (room.mode === 'custom') return '自定义'
   return '休闲'

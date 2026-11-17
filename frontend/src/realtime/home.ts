@@ -173,10 +173,12 @@ export async function createAiRoom(
   socket: TypedSocket,
   playerName: string,
   difficulty: string,
+  mysteryTech = false,
 ): Promise<AiRoomResult> {
   const created = (await socket.emitEvent('create_ai_room', {
     player_name: playerName,
     difficulty,
+    mystery_tech: mysteryTech,
   })) as Ack
   if (created.status !== 'success') {
     return { ok: false, message: created.message || '创建人机房间失败' }

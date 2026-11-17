@@ -1,7 +1,8 @@
 """顺序结算编排；依赖注入的宿主提供通知、摸牌与开回合能力。"""
 from . import draft, effects
-from .catalog import BY_ID
-from ..room.models import RoomState
+from ..room.models import RoomState, rank_payload
+from ..ai.difficulty import is_ai_seat
+from ..ai.mystery_tech import choose_technology, target_payload
 
 
 class MysteryTechFlow:
@@ -27,11 +28,28 @@ class MysteryTechFlow:
                     {'room_id': room.id, **draft.snapshot(room, pid, now=now)}, to=player.socket_id)
         await self.host._publisher.emit('mystery_tech_public',
             {'room_id': room.id, **draft.snapshot(room, now=now)}, room=room.id)
+        room_state = getattr(room.state, 'value', room.state)
+        if (room.state in (RoomState.MYSTERY_TECH_SELECTION, RoomState.ROCK_PAPER_SCISSORS,
+                           RoomState.MYSTERY_TECH_RESOLUTION)
+                and s.get('published_room_state') != room_state):
+            s['published_room_state'] = room_state
+            await self.host._publisher.emit('game_state',
+                {'state': room_state, 'round': room.round, **rank_payload(room)}, room=room.id)
         await self.host.rooms.viewing.commit(room, cause='mystery_tech')
 
     async def begin(self, room):
         started = draft.begin(room, self.host.rng, now=self.host.clock())
         if started:
+            if room.is_ai_room:
+                for pid in room.players:
+                    options = draft.state(room)['offers'][pid]
+                    if is_ai_seat(pid) and options:
+                        draft.lock(room, pid, choose_technology(options, self.host.rng),
+                                   self.host.rng, now=self.host.clock())
+                # 在首次出示前补换电脑已取走的同名项，不消耗玩家的刷新机会。
+                for pid in room.players:
+                    if not is_ai_seat(pid):
+                        draft._repair_options(room, pid, self.host.rng)
             await self.publish(room)
         return started
 
@@ -76,7 +94,7 @@ class MysteryTechFlow:
                 request = effects.target_request(room, pid, tech_id, now=self.host.clock())
                 if effects.actionable(request):
                     s.update(stage='targeting', target=request)
-                    await self.publish(room)
+                    await self._present_target(room, request)
                     return
             else:
                 result = effects.apply(room, pid, tech_id, self.host.rng)
@@ -92,6 +110,18 @@ class MysteryTechFlow:
             s.update(stage='idle', target=None)
             await self.host._complete_rps_turn(room)
         await self.publish(room)
+
+    async def _present_target(self, room, request):
+        await self.publish(room)
+        pid = request['player_id']
+        if room.is_ai_room and is_ai_seat(pid):
+            payload = target_payload(request, self.host.rng)
+            if payload is not None:
+                await self.target(room, pid, payload)
+            else:
+                s = draft.state(room)
+                s.update(stage='resolving', target=None, cursor=s['cursor'] + 1)
+                await self.advance(room)
 
     async def target(self, room, pid, data, *, timed_out=False):
         s = draft.state(room)
@@ -117,7 +147,7 @@ class MysteryTechFlow:
             next_request['deadline'] = request['deadline']
             if effects.actionable(next_request):
                 s['target'] = next_request
-                await self.publish(room)
+                await self._present_target(room, next_request)
                 return None
         s.update(stage='resolving', target=None, cursor=s['cursor'] + 1)
         if self.host.magic is not None and self.host.magic._chain_interaction_pending(room):

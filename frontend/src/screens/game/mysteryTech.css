@@ -65,9 +65,10 @@
 }
 
 .mt-card {
+  --mt-energy: #7ec8e8;
   display: flex;
   flex-direction: column;
-  min-height: 220px;
+  min-height: 300px;
   padding: 14px 14px 12px;
   border: 1px solid var(--panel-line, rgba(255,255,255,.14));
   border-radius: 14px;
@@ -77,7 +78,17 @@
   cursor: pointer;
   position: relative;
   overflow: hidden;
+  isolation: isolate;
 }
+.mt-card__pick { display: flex; flex: 1; flex-direction: column; align-items: flex-start; position: relative; z-index: 1; min-width: 0; width: 100%; padding: 0; border: 0; background: none; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.mt-card__pick:focus-visible { outline: 2px solid var(--mt-energy); outline-offset: 4px; border-radius: 5px; }
+.mt-card__pick:disabled { cursor: default; }
+.mt-card__crest { display: grid; place-items: center; height: 62px; width: 100%; margin-bottom: 12px; font-size: 36px; line-height: 1; color: var(--mt-energy); }
+.mt-card__tier { position: relative; z-index: 1; }
+.mt-card__fx { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+.mt-card__fx::before { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 0, color-mix(in srgb, var(--mt-energy) 18%, transparent), transparent 68%); }
+.mt-card__orbit { display: none; position: absolute; width: 110px; height: 110px; left: calc(50% - 55px); top: -10px; border: 1px solid color-mix(in srgb, var(--mt-energy) 55%, transparent); border-radius: 50%; border-top: 3px solid var(--mt-energy); border-bottom: 2px solid transparent; transform: rotate(25deg); }
+.mt-card__spark { position: absolute; left: var(--spark-x); top: var(--spark-y); width: var(--spark-size); height: var(--spark-size); background: var(--mt-energy); box-shadow: 0 0 7px var(--mt-energy), 0 0 14px var(--mt-energy); border-radius: 1px; opacity: .7; animation: mt-spark 3s ease-in-out var(--spark-delay) infinite; }
 .mt-card:disabled { cursor: default; }
 .mt-card.is-picked {
   outline: 2px solid var(--gold-strong, #f0d58a);
@@ -98,54 +109,68 @@
 .mt-card__desc { margin: 0; flex: 1; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
 
 .mt-card.is-quality { box-shadow: 0 0 0 1px color-mix(in srgb, #7ec8e8 35%, transparent), 0 0 18px color-mix(in srgb, #7ec8e8 22%, transparent); }
-.mt-card.is-quality .mt-card__tier { color: #d7f3ff; background: color-mix(in srgb, #7ec8e8 22%, transparent); }
-.mt-card.is-legendary .mt-card__tier { color: #fff4d0; background: color-mix(in srgb, #e4c36b 26%, transparent); }
+.mt-card.is-quality .mt-card__tier { color: #e2f8ff; background: #19546a; }
+.mt-card.is-legendary .mt-card__tier { color: #fff4d0; background: #805515; }
 .mt-card.is-mythic .mt-card__tier { color: #ffe8ff; background: color-mix(in srgb, #d48cff 28%, transparent); }
 
 .mt-card.is-legendary {
+  --mt-energy: #ffd56c;
   background:
     linear-gradient(color-mix(in srgb, var(--surface-deck, #16303c) 88%, #000), color-mix(in srgb, var(--surface-deck, #16303c) 88%, #000)) padding-box,
     linear-gradient(120deg, #8a6a20, #f2e1a0, #8a6a20, #f8ecc0, #8a6a20) border-box;
   border: 1px solid transparent;
-  box-shadow: 0 0 22px color-mix(in srgb, #e4c36b 28%, transparent);
-}
-.mt-card.is-legendary:not(.is-static) {
-  background:
-    linear-gradient(color-mix(in srgb, var(--surface-deck, #16303c) 88%, #000), color-mix(in srgb, var(--surface-deck, #16303c) 88%, #000)) padding-box,
-    linear-gradient(var(--mt-flow, 120deg), #8a6a20, #f2e1a0, #8a6a20, #f8ecc0, #8a6a20) border-box;
-  animation: mt-flow 3.2s linear infinite;
+  box-shadow: inset 0 0 28px #d6942024, 0 0 0 1px #edc46375, 0 0 26px #e9ae3c45;
 }
 .mt-card.is-mythic {
-  box-shadow: 0 0 0 1px color-mix(in srgb, #d48cff 50%, transparent), 0 0 28px color-mix(in srgb, #d48cff 36%, transparent);
+  --mt-energy: #f3b7ff;
+  color: #fbf0ff;
+  border: 2px solid #edc4ff;
+  background: linear-gradient(150deg, #33214b, #171d35 62%, #37204b);
+  box-shadow: inset 0 0 38px #d582ff36, 0 0 0 2px #a96cf75c, 0 0 24px #d08aff99, 0 0 52px #b364f74d;
 }
+.mt-card.is-mythic .mt-card__timing,
+.mt-card.is-mythic .mt-card__desc { color: #ecdcf4; }
+.mt-card.is-mythic .mt-refresh { color: #f8edff; border-color: #c59be87a; background: #f1caff0a; }
+.mt-card.is-legendary .mt-card__orbit,
+.mt-card.is-mythic .mt-card__orbit { display: block; animation: mt-orbit 6s linear infinite; }
+.mt-card.is-legendary .mt-card__crest { font-size: 42px; text-shadow: 0 0 16px #ffd56cb3; }
+.mt-card.is-mythic .mt-card__crest { font-size: 56px; color: #fff0ff; text-shadow: 0 0 8px #fff, 0 0 24px #dd8cff, 0 0 40px #c06bff; animation: mt-crown 2.8s ease-in-out infinite; }
+.mt-card.is-mythic .mt-card__orbit { width: 104px; height: 104px; left: calc(50% - 52px); top: -8px; border-style: dashed; border-top: 3px solid #fff1ff; box-shadow: 0 0 15px #e5afff66; animation-duration: 4s; }
+.mt-card.is-mythic .mt-card__orbit--outer { width: 142px; height: 142px; left: calc(50% - 71px); top: -27px; border-style: solid; border-color: #d78bff80; border-left: 3px solid #fff; animation-direction: reverse; animation-duration: 9s; }
+.mt-card.is-mythic .mt-card__fx::before { background: repeating-conic-gradient(from 0deg at 50% 35px, transparent 0deg 18deg, #e9b5ff12 19deg 21deg, transparent 22deg 40deg), radial-gradient(ellipse at 50% 0, #df98ff40, transparent 70%); }
+.mt-card.is-mythic .mt-card__tier { font-weight: 800; color: #ffe1ff; text-shadow: 0 0 14px #ee8aff; }
+.mt-card.is-mythic .mt-card__spark { border-radius: 0; animation-duration: 1.9s; }
+.mt-card.is-mythic .mt-card__spark:nth-child(3n)::before { content: ''; position: absolute; inset: -4px 1px; background: #fff0ff; box-shadow: 0 0 8px #fff; }
+.mt-card.is-mythic .mt-card__spark:nth-child(3n)::after { content: ''; position: absolute; inset: 1px -4px; background: #fff0ff; }
 
-@keyframes mt-flow {
-  from { --mt-flow: 120deg; }
-  to { --mt-flow: 480deg; }
-}
-
-/* conic flowing border fallback using background-position */
-.mt-card.is-legendary:not(.is-static)::after {
+.mt-card.is-legendary::after,
+.mt-card.is-mythic::after {
   content: '';
   pointer-events: none;
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255,236,170,.65), transparent);
-  background-size: 200% 100%;
-  animation: mt-shimmer 2.4s linear infinite;
+  z-index: 2;
+  padding: 2px;
+  background: linear-gradient(115deg, transparent 15%, var(--mt-energy) 30%, #fff 33%, transparent 46%, var(--mt-energy) 64%, #fff 67%, transparent 82%);
+  background-size: 300% 100%;
+  animation: mt-shimmer 2.2s linear infinite;
   mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   mask-composite: exclude;
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
 }
 @keyframes mt-shimmer {
-  from { background-position: 0 0; }
-  to { background-position: 200% 0; }
+  from { background-position: 300% 0; }
+  to { background-position: 0 0; }
 }
+@keyframes mt-orbit { to { transform: rotate(385deg); } }
+@keyframes mt-spark { 0%, 100% { opacity: .12; transform: translateY(14px) scale(.45) rotate(0); } 45% { opacity: .9; } 70% { opacity: .55; transform: translateY(-16px) scale(1.1) rotate(90deg); } }
+@keyframes mt-crown { 0%, 100% { transform: scale(.97); } 50% { transform: scale(1.07); } }
 
 .mt-refresh {
+  position: relative;
+  z-index: 3;
   margin-top: 12px;
   min-height: 34px;
   padding: 0 10px;
@@ -185,7 +210,7 @@
   inset: 0;
   z-index: 8300;
   pointer-events: none;
-  background: radial-gradient(circle at 50% 40%, rgba(255,230,255,.72), rgba(180,80,220,.18) 42%, transparent 70%);
+  background: radial-gradient(circle at 50% 40%, rgba(255,243,255,.9), rgba(203,127,255,.35) 36%, transparent 72%);
   animation: mt-flash 0.7s ease-out forwards;
 }
 @keyframes mt-flash {
@@ -257,6 +282,10 @@
   .mt-panel__title { font-size: 18px; }
   .mt-cards { grid-template-columns: 1fr; }
   .mt-card { min-height: 0; }
+  .mt-card__crest { height: 48px; }
+  .mt-card__orbit { top: -23px; }
+  .mt-card.is-mythic .mt-card__orbit { top: -22px; }
+  .mt-card.is-mythic .mt-card__orbit--outer { top: -40px; }
   .mt-target__body { grid-template-columns: 1fr; }
   .mt-countdown { min-width: 72px; }
   .mt-countdown b { font-size: 22px; }
@@ -273,6 +302,16 @@ html[data-motion='reduced'] .mt-card.is-legendary:not(.is-static),
 html[data-motion='reduced'] .mt-card.is-legendary:not(.is-static)::after,
 html[data-motion='reduced'] .mt-flash { animation: none !important; }
 html[data-motion='reduced'] .mt-flash { display: none; }
+
+.mt-card.is-static::after,
+.mt-card.is-static .mt-card__fx *,
+.mt-card.is-static .mt-card__crest { animation: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .mt-card::after, .mt-card__fx *, .mt-card__crest { animation: none !important; }
+}
+html[data-motion='reduced'] .mt-card::after,
+html[data-motion='reduced'] .mt-card__fx *,
+html[data-motion='reduced'] .mt-card__crest { animation: none !important; }
 
 /* 宽屏徽章跟在玩家卡片里；窄屏 HUD 高度固定，改放到标题栏下方整行，避免重叠。 */
 .mt-tech-hud-row { display: none; }

@@ -60,8 +60,10 @@ const enabled = computed(() => tech.enabled || game.state.mystery_tech === true 
 const selectionOpen = computed(() => {
   if (!seated.value || !enabled.value) return false
   const stage = snapshot.value.stage
-  const inSelection = roomState.value === 'mystery_tech_selection' || stage === 'selecting' || stage === 'locked'
-  return inSelection && (snapshot.value.options.length > 0 || Boolean(snapshot.value.locked_tech_id) || stage === 'selecting' || stage === 'locked')
+  // locked表示双方均已锁定，后台已进入猜拳；本人先锁时仍为selecting。
+  if (stage === 'locked') return false
+  const inSelection = roomState.value === 'mystery_tech_selection' || stage === 'selecting'
+  return inSelection && (snapshot.value.options.length > 0 || Boolean(snapshot.value.locked_tech_id) || stage === 'selecting')
 })
 
 const hasPrivateChoice = computed(() => snapshot.value.options.length > 0 || Boolean(snapshot.value.locked_tech_id))
@@ -285,7 +287,7 @@ function onTargetHover(point: { x: number; y: number } | null): void {
         <header class="mt-panel__head">
           <div>
             <p class="mt-panel__context">神秘科技大乱斗</p>
-            <h2 id="mystery-tech-selection-title" class="mt-panel__title">三选一 · 第 {{ snapshot.selection_round || 1 }} 次选择</h2>
+            <h2 id="mystery-tech-selection-title" class="mt-panel__title">三选一 · 第 {{ snapshot.selection_round || 1 }} 大回合</h2>
             <p class="mt-panel__lead">
               {{ alreadyLocked ? '已锁定，等待对方确认。超时由服务器从当前选项中随机锁定。' : '限时内选择一项锁定。每张只能刷新一次，刷新不延长倒计时。' }}
             </p>
@@ -308,7 +310,15 @@ function onTargetHover(point: { x: number; y: number } | null): void {
             :data-testid="`mystery-tech-card-${option.tech_id}`"
             :data-tier="option.technology.tier"
           >
-            <button type="button" class="mt-card" style="all:unset;display:flex;flex-direction:column;flex:1;cursor:inherit" :disabled="alreadyLocked" @click="pickCard(option.tech_id)">
+            <div class="mt-card__fx" aria-hidden="true">
+              <span class="mt-card__orbit"></span>
+              <span v-if="option.technology.tier === 'mythic'" class="mt-card__orbit mt-card__orbit--outer"></span>
+              <i v-for="n in (option.technology.tier === 'mythic' ? 18 : option.technology.tier === 'legendary' ? 7 : 0)"
+                :key="n" class="mt-card__spark"
+                :style="{ '--spark-x': `${(n * 37) % 96}%`, '--spark-y': `${(n * 23) % 88}%`, '--spark-delay': `${-n * .29}s`, '--spark-size': `${n % 3 + 2}px` }"></i>
+            </div>
+            <button type="button" class="mt-card__pick" :disabled="alreadyLocked" :aria-pressed="pickedId === option.tech_id" @click="pickCard(option.tech_id)">
+              <span class="mt-card__crest" aria-hidden="true">{{ option.technology.tier === 'mythic' ? '✺' : option.technology.tier === 'legendary' ? '✦' : '◇' }}</span>
               <p class="mt-card__tier">{{ tierLabel(option.technology.tier) }}</p>
               <h3 class="mt-card__name">{{ option.technology.name }}</h3>
               <p class="mt-card__timing">{{ timingLabel(option.technology.timing) }}</p>

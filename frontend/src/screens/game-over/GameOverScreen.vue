@@ -329,7 +329,7 @@ async function playAgain(): Promise<void> {
   busy.value = true
   try {
     if (key === 'ai') {
-      const created = await createAiRoom(live, playerName, aiDifficulty())
+      const created = await createAiRoom(live, playerName, aiDifficulty(), game.state.mystery_tech)
       if (!created.ok) {
         ui.notify({
           code: 'settlement-requeue',

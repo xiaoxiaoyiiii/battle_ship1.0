@@ -23,7 +23,7 @@ function createActions() {
   const invitingUsername = ref('')
   const acceptingInvite = ref(false)
   const inviteCopyText = ref('')
-  const creationError = computed(() => mutationSelectionError(draft.mutationIds, lobby.snapshot?.weeklyMutations ?? null)
+  const creationError = computed(() => draft.mysteryTech ? '' : mutationSelectionError(draft.mutationIds, lobby.snapshot?.weeklyMutations ?? null)
     || (draft.banEnabled && (!Number.isInteger(draft.banQuota) || draft.banQuota < 1 || draft.banQuota > 10) ? '每人 Ban 名额须为 1～10。' : ''))
   const ownRoomName = computed(() => lobby.ownRoomName || `${lobby.ownRoom?.hostName || auth.displayName}的房间`)
 
@@ -52,6 +52,7 @@ function createActions() {
         name: draft.name.trim(), public: draft.isPublic, player_name: lobbyPlayerName(),
         mutation_ids: [...draft.mutationIds], ban_enabled: draft.banEnabled,
         ban_quota: draft.banEnabled ? draft.banQuota : 1,
+        mystery_tech: draft.mysteryTech,
       })
       const result = ack as unknown as Record<string, unknown>
       if (ack.status !== 'success' || !result.room_id) { fail(ack.message || '创建失败，请重试。'); return }
@@ -59,6 +60,7 @@ function createActions() {
         room_id: result.room_id, name: result.name ?? draft.name, public: result.public ?? draft.isPublic,
         invite_token: result.invite_token,
         host_name: auth.displayName, ban_enabled: draft.banEnabled, ban_quota: draft.banQuota,
+        mystery_tech: draft.mysteryTech,
         mutation_ids: [...draft.mutationIds], mutation_entries: lobby.snapshot?.weeklyMutations?.catalog.filter(e => draft.mutationIds.includes(e.id)) ?? [],
       })
       draft.reset()

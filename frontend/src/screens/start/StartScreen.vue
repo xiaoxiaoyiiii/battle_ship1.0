@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import HomeProgress from './HomeProgress.vue'
 import BanPreselection from '../../components/BanPreselection.vue'
+import MysteryTechToggle from '../../components/MysteryTechToggle.vue'
 import { useCardBansStore } from '../../stores/cardBans'
 import HomeTasks from './HomeTasks.vue'
 import BattlePassCard from './BattlePassCard.vue'
@@ -62,6 +63,7 @@ const ui = useUiStore()
 const bans = useCardBansStore()
 
 const difficulty = ref<string>(route.query.first_battle === '1' ? 'easy' : aiDifficulty())
+const aiMysteryTech = ref(false)
 const difficultyOptions = DIFFICULTY_OPTIONS
 let releaseChannel: (() => void) | null = null
 let navigating = false
@@ -287,7 +289,7 @@ async function startAi(): Promise<void> {
   }
   home.beginAction('ai')
   try {
-    const result = await createAiRoom(socket, playerName.value, difficulty.value)
+    const result = await createAiRoom(socket, playerName.value, difficulty.value, aiMysteryTech.value)
     if (!result.ok) {
       home.notifyMessage(result.message || '人机对战暂时不可用')
       return
@@ -500,12 +502,12 @@ async function startAi(): Promise<void> {
         </div>
         </section>
 
-        <div class="home-ai home-card" data-testid="start-ai-difficulty" role="radiogroup" aria-label="电脑难度">
+        <div class="home-ai home-card" data-testid="start-ai-difficulty">
           <div class="home-ai__head">
             <span class="home-ai__title">人机对战</span>
             <span class="home-ai__hint">练习规则与连锁，不结算段位分。</span>
           </div>
-          <div class="home-ai__caps">
+          <div class="home-ai__caps" role="radiogroup" aria-label="电脑难度">
             <button
               v-for="option in difficultyOptions"
               :key="option.value"
@@ -523,6 +525,7 @@ async function startAi(): Promise<void> {
               <small>{{ option.hint }}</small>
             </button>
           </div>
+          <MysteryTechToggle v-model="aiMysteryTech" testid="start-ai-mystery-tech" :disabled="actionsDisabled" />
           <div class="home-ai__foot">
           <p class="home-ai__current">{{ difficultyOptions.find((o) => o.value === difficulty)?.label }} · {{ difficultyOptions.find((o) => o.value === difficulty)?.hint }}</p>
           <button

@@ -67,6 +67,7 @@ export interface OwnWaitingRoom {
   seatConnected: boolean
   canRestore: boolean
   banEnabled: boolean
+  mysteryTech: boolean
   banQuota: number
   mutationIds: string[]
   mutationEntries: import('./mutations').MutationEntry[]
@@ -402,6 +403,7 @@ export const useLobbyStore = defineStore('lobby', () => {
       seatConnected: value.seat_connected !== false,
       canRestore: value.can_restore === true,
       banEnabled: value.ban_enabled === true, banQuota: asNumber(value.ban_quota),
+      mysteryTech: value.mystery_tech === true,
       mutationIds: Array.isArray(value.mutation_ids) ? value.mutation_ids.filter((id): id is string => typeof id === 'string') : [],
       mutationEntries: Array.isArray(value.mutation_entries) ? value.mutation_entries.filter((entry): entry is import('./mutations').MutationEntry => Boolean(entry && typeof entry === 'object' && typeof entry.id === 'string' && typeof entry.name === 'string' && typeof entry.description === 'string')) : [],
     }

@@ -346,7 +346,7 @@ async function playAgain(): Promise<void> {
       void router.push({ name: 'placement' })
       return
     }
-    const mode: 'casual' | 'ranked' = key === 'ranked' ? 'ranked' : 'casual'
+    const mode = key
     home.expectPlacement()
     resetSettlement()
     await router.push({ name: 'start', query: { requeued: mode } })

@@ -66,10 +66,11 @@ export function modeText(ranked: boolean, mode: string): string {
   if (ranked || mode === 'ranked') return '排位赛'
   if (mode === 'ai') return '人机对战'
   if (mode === 'custom') return '自定义房'
+  if (mode === 'mystery_tech') return '神秘科技大乱斗'
   return '休闲赛'
 }
 
-export type MatchMode = 'ranked' | 'casual' | 'ai' | 'custom'
+export type MatchMode = 'ranked' | 'casual' | 'ai' | 'custom' | 'mystery_tech'
 
 /**
  * The mode "再来一局" must replay. The game store already carries the three
@@ -80,6 +81,7 @@ export function matchModeOf(ranked: boolean, mode: string, isAiRoom: boolean): M
   if (isAiRoom || mode === 'ai') return 'ai'
   if (ranked || mode === 'ranked') return 'ranked'
   if (mode === 'custom') return 'custom'
+  if (mode === 'mystery_tech') return 'mystery_tech'
   return 'casual'
 }
 
@@ -91,6 +93,8 @@ export function matchModeLabel(mode: MatchMode): string {
       return '人机对战'
     case 'custom':
       return '自定义房'
+    case 'mystery_tech':
+      return '神秘科技大乱斗'
     default:
       return '休闲赛'
   }

@@ -154,6 +154,9 @@ export function canPlayCard(card: CardLike, state: GameState): boolean {
   if (END_PHASE_PLAYABLE_CARDS.includes(card.name)) {
     return isFirstPlayer(state) && state.current_phase === 'end' && isMyTurn(state)
   }
+  if (card.name === '八方来财') return state.current_phase === 'preparation'
+  // 双重指令只放开通用速阶限制，卡面时点和其他出牌条件仍优先校验。
+  if (state.mystery_tech && state.effect_badges?.self?.some(badge => badge.tech_id === 'double_command')) return true
   const speed = cardSpeed(card)
   if (speed === 1) return state.current_phase === 'preparation' && isMyTurn(state)
   if (speed === 2) {

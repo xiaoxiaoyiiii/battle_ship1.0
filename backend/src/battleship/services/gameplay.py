@@ -605,8 +605,6 @@ class GameplayService:
             if not await self.mystery_tech.start_resolution(room):
                 await self._complete_rps_turn(room)
 
-        if room.state == RoomState.ATTACKING and self.magic is not None:
-            await self.magic._sync_each_seat(room)
         return {"status": "success"}
 
     async def _complete_rps_turn(self, room: Room) -> None:
@@ -684,6 +682,9 @@ class GameplayService:
             {"first": winner, "round": room.round},
             actor,
         )
+        # 同步时点放在最终进入准备阶段处，覆盖异步科技瞄准和超时完成。
+        if self.magic is not None:
+            await self.magic._sync_each_seat(room)
 
 
     # ---------------------------------------------------------------- phases

@@ -782,13 +782,14 @@ async function startAi(): Promise<void> {
   .home-card__head .home-kicker { font-size:15px; }
   .home-stat { min-height:24px; }
 }
-/* 桌面三栏贴齐导航；空间不足时允许栏内滚动，公告保留可读高度。 */
+/* 桌面中栏按剩余高度展示公告，只让公告正文滚动。 */
 @media (min-width:1024px) and (min-height:730px) {
   .home-screen { flex:1 1 auto; height:auto; min-height:0; overflow:hidden; padding:14px 24px 16px; gap:14px; }
   .home-head { flex-shrink:0; }
   .home-head__title { font-size:26px; }
   .home-grid { flex:1; min-height:0; align-items:stretch; gap:18px; overflow:hidden; }
   .home-left,.home-main,.home-side { min-height:0; gap:12px; overflow:auto; }
+  .home-main { overflow:visible; }
   .home-card { padding:14px 16px; }
   .home-card__head { margin-bottom:10px; }
   .home-player { flex-shrink:0; }
@@ -802,10 +803,14 @@ async function startAi(): Promise<void> {
   .home-ai { gap:10px; }
   .home-link--tile { min-height:58px; padding:9px 12px; }
   .home-side > [data-testid='start-online'] { flex-shrink:0; }
-  .home-changelog { flex:1 0 170px; display:flex; flex-direction:column; }
+  .home-changelog { flex:1 1 0; min-height:0; display:flex; flex-direction:column; }
   .home-changelog > .home-card__head { flex-shrink:0; }
   .home-changelog > .state-surface { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; scrollbar-width:thin; }
   .home-changelog__list { max-height:none; overflow:visible; }
+}
+@media (min-width:1024px) and (max-width:1240px) and (min-height:730px) {
+  .home-links { grid-template-columns:repeat(4,minmax(0,1fr)); }
+  .home-link--tile small { display:none; }
 }
 @media (min-width:1024px) and (min-height:730px) and (max-height:900px) {
   .home-screen { padding-top:10px; padding-bottom:12px; gap:10px; }

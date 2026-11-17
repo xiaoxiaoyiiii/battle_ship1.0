@@ -52,15 +52,13 @@ def test_removed_but_reviveable_wreck_is_selectable_and_restored():
 def test_fold_waits_for_trap_sacrifices_before_second_tech_window():
     async def run():
         r,rooms,g,magic,battle,pub,clock=stack()
-        r.round=5;r.players['b'].ships[0].trap=True
+        r.round=5
+        for ship in r.players['b'].ships: ship.trap=True
         await g.mystery_tech.begin(r)
         s=r.mystery_tech_state;s.update(stage='locked',locked={'a':'spacetime_fold','b':'sonar_pulse'})
         r.attack_order=['a','b'];r.current_attacker='a'
         await g.mystery_tech.start_resolution(r)
-        request=s['target']['request_id']
-        result=await g.mystery_tech_target(Connection(sid='a',user_id='a'),
-            {'room_id':r.id,'player_id':'a','request_id':request,'ship_index':0})
-        assert result['status']=='success' and r.pending_ship_picks
+        assert r.pending_ship_picks
         assert s['stage']=='effect_waiting' and s['target'] is None
         for _ in range(2):
             ship=alive_ships(r.players['a'])[0];pos=ship.positions[0]
@@ -80,13 +78,12 @@ def test_tech_derived_obligations_use_existing_timeout_executor():
         from battleship.services.ai import AiService
         r,rooms,g,magic,battle,pub,clock=stack()
         AiService(rooms,g,battle,magic,rng=g.rng,pacing_seconds=0)
-        r.round=5;r.players['b'].ships[0].trap=True
+        r.round=5
+        for ship in r.players['b'].ships: ship.trap=True
         await g.mystery_tech.begin(r)
         s=r.mystery_tech_state;s.update(stage='locked',locked={'a':'spacetime_fold','b':'sonar_pulse'})
         r.attack_order=['a','b'];r.current_attacker='a'
         await g.mystery_tech.start_resolution(r)
-        await g.mystery_tech_target(Connection(sid='a',user_id='a'),{'room_id':r.id,'player_id':'a',
-            'request_id':s['target']['request_id'],'ship_index':0})
         await g.sweep_timeouts()
         clock[0]=191
         await g.sweep_timeouts()

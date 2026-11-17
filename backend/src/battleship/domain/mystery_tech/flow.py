@@ -75,6 +75,7 @@ class MysteryTechFlow:
                 if player.socket_id:
                     await self.host._publisher.emit('revealed_positions', {'positions': [
                         {'x': pos.x, 'y': pos.y} for pos in player.revealed_positions]}, to=player.socket_id)
+            await magic._sync_each_seat(room)
 
     async def _defeat(self, room):
         from ..battle import is_zero_ship_defeat
@@ -100,10 +101,17 @@ class MysteryTechFlow:
                 result = effects.apply(room, pid, tech_id, self.host.rng)
                 for _ in range(result['draw']):
                     await self.host._draw(room, pid)
+                if ship := result.get('sunk_ship'):
+                    if self.host.magic is not None:
+                        await self.host.magic.on_ship_sunk(room, room.opponent_of(pid), ship, magic=True, attacker_id=pid)
             s['cursor'] += 1
             await self._sync_effects(room)
             if await self._defeat(room):
                 break
+            if self.host.magic is not None and self.host.magic._chain_interaction_pending(room):
+                s.update(stage='effect_waiting', target=None, waiting_player=pid)
+                await self.publish(room)
+                return
         if room.state == RoomState.GAME_OVER:
             s.update(stage='ended', target=None)
         else:
@@ -133,9 +141,6 @@ class MysteryTechFlow:
             return '科技瞄准已超时'
         if error := effects.answer(room, request, data):
             return error
-        if ship := request.pop('sunk_ship', None):
-            if self.host.magic is not None:
-                await self.host.magic.on_ship_sunk(room, room.opponent_of(pid), ship, magic=True, attacker_id=pid)
         await self._sync_effects(room)
         if await self._defeat(room):
             s.update(stage='ended', target=None)

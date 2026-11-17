@@ -46,13 +46,16 @@ def test_sonar_scan_and_fold():
     assert e.answer(r,request,{'x':0,'y':0}) is None
     assert Position(0,0) in r.players['a'].revealed_positions
     assert Position(1,0) in r.players['a'].revealed_positions
-    assert len(r.players['a'].revealed_positions)==4
+    assert len(r.players['a'].revealed_positions)==2
+    assert {(p.x,p.y) for p in r.players['a'].attacks}=={(0,1),(1,1)}
     e.apply(r,'a','global_scan',rng)
     assert Position(2,0) in r.players['a'].revealed_positions
-    request=e.target_request(r,'a','spacetime_fold',now=1)
-    assert e.answer(r,request,{'ship_index':0}) is None
+    result=e.apply(r,'a','spacetime_fold',rng)
+    with pytest.raises(ValueError):
+        e.target_request(r,'a','spacetime_fold',now=1)
     assert r.players['b'].remaining_ships==2
-    assert r.players['b'].sunken_ships[0] is r.players['b'].ships[0]
+    assert r.players['b'].sunken_ships[0] is result['sunk_ship']
+    assert e.attack_budget(r,'b',2)==1
     assert not r.players['b'].permanently_destroyed_ships
 
 
@@ -100,12 +103,11 @@ def test_silence_and_double_command_obey_real_cast_gate():
     assert can_play_magic_card(r,'a',card)
     assert card in usable_speed3_cards(r,'a')
     e.apply(r,'b','silent_domain',rng)
-    assert not e.magic_blocked(r,'a')
-    for turn in (2,3):
+    for turn in (1,2):
         r.round=turn
         assert e.magic_blocked(r,'a') and evaluate_cast(r,'a',card)
         assert not usable_speed3_cards(r,'a')
-    r.round=4
+    r.round=3
     assert not e.magic_blocked(r,'a')
 
 

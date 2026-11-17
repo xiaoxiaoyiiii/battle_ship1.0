@@ -109,7 +109,7 @@ function cellState(cell: BoardCell): string {
   if (cell.hit) return 'hit'
   if (cell.miss) return 'miss'
   if (cell.shielded) return 'ship-shielded'
-  if (cell.ship) return 'ship'
+  if (cell.ship || cell.revealed) return 'ship'
   return 'empty'
 }
 

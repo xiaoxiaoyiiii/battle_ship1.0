@@ -11,7 +11,7 @@ export type MysteryTechStage =
   | 'effect_waiting'
   | 'ended'
 
-export type MysteryTechTargetKind = 'revive' | 'fleet_rebirth' | 'sonar_pulse' | 'spacetime_fold'
+export type MysteryTechTargetKind = 'revive' | 'fleet_rebirth' | 'sonar_pulse'
 
 export interface MysteryTechInfo {
   id: string

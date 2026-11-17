@@ -51,11 +51,6 @@ from ..domain.magic.chain import CHAIN_RESPONSE_SECONDS, ChainItem, ChainResult
 from ..domain.magic.effects.base import EffectContext, EffectResult
 from ..domain.spectate.rules import AREA_TARGET_BOARDS
 
-#: 多回合持续效果：`room.game_effects` 键 → 卡名（监视栏要显示成同一排区块）。
-LONG_EFFECT_BADGES: tuple[tuple[str, str], ...] = (
-    ("holy_heart", "无暇圣心"),
-    ("reinforcement_check", "极限增援"),
-)
 from ..domain.magic import contract as contract_rules
 from ..domain.magic import precheck as magic_precheck
 from ..domain.magic import targets as target_rules
@@ -79,7 +74,7 @@ from ..domain.room import (
     build_room_sync,
     is_ship_alive,
 )
-from ..domain.room.sync import EFFECT_BADGES, _card_unavailable_reasons, _spectate_chain_payload, card_payload
+from ..domain.room.sync import _effect_badges, _card_unavailable_reasons, _spectate_chain_payload, card_payload
 from ..infra.logging import get_logger
 from ..infra.timers import TaskRegistry
 from .rooms import Connection, EventPublisher, NullPublisher, RoomService
@@ -310,47 +305,8 @@ class MagicService:
 
     @staticmethod
     def _badges(room: Room, player_id: str, player: Player | None) -> list[dict[str, Any]]:
-        """本局的持续效果：一次性 flags + 多回合 game_effects 两类合并。
-
-        多回合效果（极限增援、无暇圣心）存在 `room.game_effects` 里而不是
-        `player.effect_flags`，旧实现完全看不到它们，监视栏自然缺块。
-        """
-
-        if player is None:
-            return []
-        badges: list[dict[str, Any]] = []
-        flags = player.effect_flags
-        for attr, label, expiry, suffix in EFFECT_BADGES:
-            if not getattr(flags, attr, None):
-                continue
-            badges.append({
-                "name": label,
-                "key": attr,
-                "label": f"{label}·{suffix}" if suffix else label,
-                "description": CARD_DESCRIPTIONS.get(label, ""),
-                "expires": expiry,
-                "card": MagicService._card_info(label),
-            })
-
-        game_effects = room.game_effects if isinstance(room.game_effects, dict) else {}
-        for key, label in LONG_EFFECT_BADGES:
-            info = game_effects.get(key)
-            if not isinstance(info, dict) or info.get("caster") != player_id:
-                continue
-            remaining = info.get("remaining_turns")
-            try:
-                remaining_value = int(remaining) if remaining is not None else None
-            except (TypeError, ValueError):
-                remaining_value = None
-            badges.append({
-                "name": label,
-                "key": key,
-                "label": f"{label}·剩余{remaining_value}回合" if remaining_value else label,
-                "description": CARD_DESCRIPTIONS.get(label, ""),
-                "expires": f"剩余{remaining_value}回合" if remaining_value else "本大回合结束（重新猜拳）时失效",
-                "card": MagicService._card_info(label),
-            })
-        return badges
+        """实时事件与重连快照共用徽章，换轮不能抹掉仍生效的科技。"""
+        return _effect_badges(room, player_id, player)
 
     async def _emit_active_effects(self, room: Room) -> None:
         field_name = field_magic_name(room)

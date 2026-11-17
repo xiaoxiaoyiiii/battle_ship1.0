@@ -60,7 +60,8 @@ def test_ordered_resolution_reconnect_and_private_recording():
         assert ack['status']=='error'
         ack=await g.mystery_tech_target(Connection(sid='a',user_id='a'),{'room_id':r.id,'player_id':'a','request_id':request,'x':0,'y':0})
         assert ack['status']=='success' and r.state==RoomState.ATTACKING
-        assert len(r.players['a'].revealed_positions)==4
+        assert len(r.players['a'].revealed_positions)==2
+        assert {(p.x,p.y) for p in r.players['a'].attacks}=={(0,1),(1,1)}
         assert len(r.players['b'].magic_hand)==4
         recording=finalize_v2(r)
         text=json.dumps(recording,ensure_ascii=False)
@@ -183,7 +184,7 @@ def test_both_targets_stay_sequential_and_second_deadline_starts_later():
     async def run():
         r,rooms,g,magic,battle,pub,clock=stack()
         await g.mystery_tech.begin(r)
-        s=r.mystery_tech_state;s.update(stage='locked',locked={'a':'sonar_pulse','b':'spacetime_fold'})
+        s=r.mystery_tech_state;s.update(stage='locked',locked={'a':'sonar_pulse','b':'fleet_rebirth'})
         r.attack_order=['a','b'];r.current_attacker='a'
         await g.mystery_tech.start_resolution(r)
         first=s['target'];assert first['player_id']=='a'
@@ -193,7 +194,8 @@ def test_both_targets_stay_sequential_and_second_deadline_starts_later():
         assert r.players['a'].remaining_ships==3
         clock[0]=125
         await g.sweep_timeouts()
-        assert r.players['a'].remaining_ships==2 and r.state==RoomState.ATTACKING
+        assert r.players['a'].remaining_ships==3 and r.players['b'].remaining_ships==3
+        assert r.state==RoomState.ATTACKING
     asyncio.run(run())
 
 

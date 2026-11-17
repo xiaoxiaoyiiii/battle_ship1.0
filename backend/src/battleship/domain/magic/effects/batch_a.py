@@ -34,6 +34,7 @@ from ..deck import revive_sunken_ships
 from ..hooks import SHIP_DESTROYED, SHIP_SUNK
 from ..interaction import cell_xy, find_ship_at
 from ..registry import register
+from ..recon import record_reveal_misses
 from .base import EffectContext, EffectResult
 
 
@@ -99,22 +100,8 @@ def _in_area(area: dict[str, int], position: Position) -> bool:
 def _record_reveal_misses(
     ctx: EffectContext, positions: Iterable[tuple[int, int]]
 ) -> list[Position]:
-    """Record misses exactly like the legacy scan cards: hits are not recorded."""
-
-    affected: list[Position] = []
-    for x, y in positions:
-        cell = Position(x=x, y=y)
-        hit = any(
-            is_ship_alive(ctx.opponent, ship) and cell in (ship.positions or [])
-            for ship in ctx.opponent.ships or []
-        )
-        if not hit:
-            ctx.caster.attacks.append(
-                Position(x=x, y=y, hit=False, ship_sunk=False, is_splash=True,
-                         fog_miss=mutation_rules.active(ctx.room, "E1"))
-            )
-        affected.append(cell)
-    return affected
+    """沿用雷达的侦察规则：只记录空格，不伤害活舰。"""
+    return record_reveal_misses(ctx.room, ctx.caster_id, positions)
 
 
 # ------------------------------------------------------------------ speed 1

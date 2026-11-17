@@ -5,7 +5,7 @@ from .catalog import BY_ID
 from .draft import TARGET_SECONDS, state
 from ..room.models import BOARD_SIZE, PlayerShip, Position, alive_ships, is_ship_alive
 
-TARGETED = {'emergency_repair', 'battlefield_recall', 'fleet_rebirth', 'sonar_pulse', 'spacetime_fold'}
+TARGETED = {'emergency_repair', 'battlefield_recall', 'fleet_rebirth', 'sonar_pulse'}
 
 
 def has(room, pid, tech_id):
@@ -59,7 +59,8 @@ def attack_budget(room, pid, base):
     credit = state(room).get('extra_attacks', {}).get(pid, {})
     from ..room.models import RoomPhase
     active = credit.get('count', 0) if credit.get('round') == room.round and room.current_phase == RoomPhase.BATTLE else 0
-    return amount + active + credit.get('pending', 0)
+    penalty = state(room).get('attack_penalties', {}).get(pid, 0)
+    return max(0, amount + active + credit.get('pending', 0) - penalty)
 
 
 def activate_attack_credits(room, pid):
@@ -123,7 +124,18 @@ def apply(room, pid, tech_id, rng):
     elif tech_id == 'firepower_overload':
         s.setdefault('overload_round', {})[pid] = room.round
     elif tech_id == 'silent_domain':
-        s.setdefault('silence', {})[room.opponent_of(pid)] = [room.round + 1, room.round + 2]
+        s.setdefault('silence', {})[room.opponent_of(pid)] = [room.round, room.round + 1]
+    elif tech_id == 'spacetime_fold':
+        from ..battle import apply_ship_sunk
+        other = room.opponent_of(pid)
+        penalties = s.setdefault('attack_penalties', {})
+        penalties[other] = penalties.get(other, 0) + 1
+        candidates = alive_ships(room.players[other])
+        if candidates:
+            ship = rng.choice(candidates)
+            ship.hits = list(ship.positions)
+            apply_ship_sunk(room, other, ship)
+            result['sunk_ship'] = ship
     elif tech_id == 'global_scan':
         viewer = room.players[pid]
         choices = [ship for ship in alive_ships(room.players[room.opponent_of(pid)])
@@ -153,15 +165,13 @@ def legal_cells(room, owner):
 
 
 def target_request(room, pid, tech_id, *, now, remaining=None, request_id=None):
+    if tech_id not in TARGETED:
+        raise ValueError('这个科技不需要手动选择目标')
     player = room.players[pid]
-    other = room.opponent_of(pid)
     kind = 'revive' if tech_id in ('emergency_repair', 'battlefield_recall') else tech_id
     wrecks = _wrecks(player) if kind == 'revive' else []
     indices = list(range(len(wrecks)))
     cells = legal_cells(room, pid) if kind in ('revive', 'fleet_rebirth') else []
-    if tech_id == 'spacetime_fold':
-        target = room.players[other]
-        indices = [i for i, ship in enumerate(target.ships) if is_ship_alive(target, ship)]
     if tech_id == 'sonar_pulse':
         cells = [{'x': x, 'y': y} for x in range(5) for y in range(5)]
     count = min(len(indices), 1 if tech_id == 'emergency_repair' else 2) if kind == 'revive' else 1
@@ -171,48 +181,39 @@ def target_request(room, pid, tech_id, *, now, remaining=None, request_id=None):
             'kind': kind, 'deadline': int((now + TARGET_SECONDS) * 1000),
             'remaining': count if remaining is None else remaining,
             'legal_cells': cells, 'ship_indices': indices,
-            # 时空折叠的可选活舰为该科技的授权瞄准信息，只给施放者。
-            'ships': [{'ship_index': i, 'positions': [{'x': pos.x, 'y': pos.y} for pos in room.players[other].ships[i].positions]}
-                      for i in indices] if tech_id == 'spacetime_fold' else [
-                          {'ship_index': i, 'positions': [{'x': pos.x, 'y': pos.y} for pos in ship.positions]}
-                          for i, ship in enumerate(wrecks)]}
+            'ships': [{'ship_index': i, 'positions': [{'x': pos.x, 'y': pos.y} for pos in ship.positions]}
+                      for i, ship in enumerate(wrecks)]}
 
 
 def actionable(request):
     if request['remaining'] <= 0:
         return False
-    if request['kind'] in ('revive', 'spacetime_fold') and not request['ship_indices']:
+    if request['kind'] == 'revive' and not request['ship_indices']:
         return False
-    if request['kind'] != 'spacetime_fold' and not request['legal_cells']:
+    if not request['legal_cells']:
         return False
     return True
 
 
 def answer(room, request, data):
     pid = request['player_id']; kind = request['kind']
+    if kind not in ('revive', 'fleet_rebirth', 'sonar_pulse'):
+        return '这个科技不需要手动选择目标'
     player = room.players[pid]
-    other = room.opponent_of(pid)
-    if kind in ('revive', 'spacetime_fold'):
+    if kind == 'revive':
         index = data.get('ship_index')
         if type(index) is not int or index not in request['ship_indices']:
             return '请选择合法的战舰'
-    if kind == 'spacetime_fold':
-        from ..battle import apply_ship_sunk
-        target = room.players[other]
-        ship = target.ships[index]
-        if not is_ship_alive(target, ship):
-            return '目标战舰已不存活'
-        ship.hits = list(ship.positions)
-        apply_ship_sunk(room, other, ship)
-        request['sunk_ship'] = ship
-        return None
     x, y = data.get('x'), data.get('y')
     if type(x) is not int or type(y) is not int:
         return '请选择合法的格子'
     if kind == 'sonar_pulse':
         if not (0 <= x < 5 and 0 <= y < 5):
             return '请选择棋盘内的2×2区域左上角'
-        reveal(room, pid, [Position(x+dx, y+dy) for dx in range(2) for dy in range(2)])
+        from ..magic.recon import record_reveal_misses
+        positions = record_reveal_misses(room, pid, [(x+dx, y+dy) for dx in range(2) for dy in range(2)])
+        ships = alive_ships(room.players[room.opponent_of(pid)])
+        reveal(room, pid, [pos for pos in positions if any(pos in ship.positions for ship in ships)])
         return None
     allowed = {(p['x'], p['y']) for p in legal_cells(room, pid)}
     if (x, y) not in allowed:

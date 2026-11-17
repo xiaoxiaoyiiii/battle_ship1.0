@@ -4,7 +4,6 @@ import { useMysteryTechStore } from '../../stores/mysteryTech'
 import { getSettlementSocket } from '../../realtime/settlement'
 import { emitMysteryTechTarget } from '../../realtime/mysteryTech'
 import type { MysteryTechCell } from '../../stores/mysteryTechTypes'
-import type { BoardCell } from './view'
 import {
   EMPTY_TARGET_DRAFT,
   applyMysteryTechTargetClick,
@@ -76,18 +75,17 @@ export function useMysteryTechTargeting() {
   const selectionKind = computed<'area' | 'ships' | null>(() => {
     const kind = target.value?.kind
     if (kind === 'sonar_pulse') return 'area'
-    if (kind === 'spacetime_fold' || kind === 'revive') return 'ships'
+    if (kind === 'revive') return 'ships'
     return null
   })
-  const selectionTone = computed<'radar' | 'divine' | 'default'>(() => {
+  const selectionTone = computed<'radar' | 'default'>(() => {
     const kind = target.value?.kind
     if (kind === 'sonar_pulse') return 'radar'
-    if (kind === 'spacetime_fold') return 'divine'
     return 'default'
   })
   const ships = computed(() => {
     const current = target.value
-    if (!current || (current.kind !== 'revive' && current.kind !== 'spacetime_fold')) return []
+    if (!current || current.kind !== 'revive') return []
     return current.ships.map((ship, index) => ({
       shipIndex: ship.ship_index,
       label: mysteryTechShipLabel(current, ship, index),
@@ -142,7 +140,7 @@ export function useMysteryTechTargeting() {
     const current = target.value
     if (!current || submitting.value) return
     if (!current.ships.some((ship) => ship.ship_index === shipIndex)) return
-    draft.value = current.kind === 'spacetime_fold' ? { shipIndex, cell: null } : { ...draft.value, shipIndex }
+    draft.value = { ...draft.value, shipIndex }
     localError.value = ''
     tech.setError('')
   }
@@ -172,15 +170,6 @@ export function useMysteryTechTargeting() {
     await emitMysteryTechTarget(socket, current.request_id, payload)
   }
 
-  /** 时空折叠需要把服务器下发的对方活船位置画在对手海域上（仅本人瞄准时）。 */
-  function decorate(side: MysteryTechBoardSide, cells: BoardCell[]): BoardCell[] {
-    const current = target.value
-    if (!current || current.kind !== 'spacetime_fold' || side !== 'opponent') return cells
-    const marked = new Set(current.ships.flatMap((ship) => ship.positions.map((cell) => `${cell.x}-${cell.y}`)))
-    if (!marked.size) return cells
-    return cells.map((cell) => (marked.has(cell.key) ? { ...cell, ship: true, revealed: true } : cell))
-  }
-
   return {
     target,
     active,
@@ -205,6 +194,5 @@ export function useMysteryTechTargeting() {
     pickShip,
     clearDraft,
     confirm,
-    decorate,
   }
 }

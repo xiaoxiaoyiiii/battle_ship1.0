@@ -61,7 +61,7 @@ function parseStage(value: unknown): MysteryTechStage {
 }
 
 function parseKind(value: unknown): MysteryTechTargetKind | null {
-  if (value === 'revive' || value === 'fleet_rebirth' || value === 'sonar_pulse' || value === 'spacetime_fold') return value
+  if (value === 'revive' || value === 'fleet_rebirth' || value === 'sonar_pulse') return value
   return null
 }
 
@@ -244,7 +244,7 @@ export function targetKindTitle(kind: MysteryTechTargetKind, techName?: string):
   if (kind === 'revive') return `${name}：选择沉船与落点`
   if (kind === 'fleet_rebirth') return `${name}：选择落点`
   if (kind === 'sonar_pulse') return `${name}：选择 2×2 左上角`
-  return `${name}：选择对方一艘仍存活的船`
+  return `${name}：选择目标`
 }
 
 export function targetKindHint(kind: MysteryTechTargetKind, remaining: number): string {
@@ -255,7 +255,7 @@ export function targetKindHint(kind: MysteryTechTargetKind, remaining: number): 
       : '在你的海域点高亮空格后确认。'
   }
   if (kind === 'sonar_pulse') return '在对手海域点高亮格子作为 2×2 区域的左上角，确认后显形该区域。'
-  return '在对手海域点高亮的对方船只，确认后它立即死亡；不是永久击沉，之后仍可用疗愈救回。'
+  return '请在棋盘上选择合法目标。'
 }
 
 export function waitingText(stage: MysteryTechStage, isSelfResolving: boolean): string {
@@ -328,9 +328,9 @@ export interface MysteryTechTargetDraft {
 
 export const EMPTY_TARGET_DRAFT: MysteryTechTargetDraft = { shipIndex: null, cell: null }
 
-/** 声呐 / 时空折叠作用在对手海域；复活类与舰队重生落在自己海域。 */
+/** 声呐作用在对手海域；复活类与舰队重生落在自己海域。 */
 export function mysteryTechTargetBoard(kind: MysteryTechTargetKind): MysteryTechBoardSide {
-  return kind === 'sonar_pulse' || kind === 'spacetime_fold' ? 'opponent' : 'self'
+  return kind === 'sonar_pulse' ? 'opponent' : 'self'
 }
 
 function keyOf(x: number, y: number): string {
@@ -343,14 +343,10 @@ export function mysteryTechShipKeys(target: MysteryTechTarget | null, shipIndex:
   return (ship?.positions ?? []).map((cell) => keyOf(cell.x, cell.y))
 }
 
-/** 只有服务器给的格子可点：legal_cells；复活还可点残骸选船，折叠只可点目标船的格子。 */
+/** 只有服务器给的格子可点：legal_cells；复活还可点己方残骸选船。 */
 export function mysteryTechTargetLegalKeys(target: MysteryTechTarget | null): string[] {
   if (!target) return []
   const keys = new Set<string>()
-  if (target.kind === 'spacetime_fold') {
-    for (const ship of target.ships) for (const cell of ship.positions) keys.add(keyOf(cell.x, cell.y))
-    return [...keys]
-  }
   for (const cell of target.legal_cells) keys.add(keyOf(cell.x, cell.y))
   if (target.kind === 'revive') {
     for (const ship of target.ships) for (const cell of ship.positions) keys.add(keyOf(cell.x, cell.y))
@@ -374,11 +370,6 @@ export function applyMysteryTechTargetClick(
   if (board !== expected) {
     return { draft, error: expected === 'self' ? '这个科技要在你的海域里选择。' : '这个科技要在对手海域里选择。' }
   }
-  if (target.kind === 'spacetime_fold') {
-    const ship = shipByCell(target.ships, x, y)
-    if (!ship) return { draft, error: '请点高亮的对方船只。' }
-    return { draft: { shipIndex: ship.ship_index, cell: null }, error: '' }
-  }
   if (target.kind === 'revive') {
     const wreck = shipByCell(target.ships, x, y)
     if (wreck && !isLegalCell(target, x, y)) return { draft: { ...draft, shipIndex: wreck.ship_index }, error: '' }
@@ -395,11 +386,6 @@ export function mysteryTechTargetFields(
   draft: MysteryTechTargetDraft,
 ): Record<string, number> | null {
   if (!target) return null
-  if (target.kind === 'spacetime_fold') {
-    return draft.shipIndex != null && target.ships.some((ship) => ship.ship_index === draft.shipIndex)
-      ? { ship_index: draft.shipIndex }
-      : null
-  }
   if (!draft.cell || !isLegalCell(target, draft.cell.x, draft.cell.y)) return null
   if (target.kind === 'revive') {
     if (draft.shipIndex == null || !target.ships.some((ship) => ship.ship_index === draft.shipIndex)) return null
@@ -431,10 +417,7 @@ function cellName(cell: MysteryTechCell): string {
   return `${'ABCDEF'[cell.x] ?? cell.x + 1}${cell.y + 1}`
 }
 
-export function mysteryTechShipLabel(target: MysteryTechTarget, ship: MysteryTechTargetShip, index: number): string {
-  if (target.kind === 'spacetime_fold') {
-    return ship.positions.length ? `目标舰 ${index + 1}（${ship.positions.map(cellName).join(' ')}）` : `目标舰 ${index + 1}`
-  }
+export function mysteryTechShipLabel(_target: MysteryTechTarget, ship: MysteryTechTargetShip, index: number): string {
   return ship.positions.length ? `残骸 ${index + 1}（${ship.positions.map(cellName).join(' ')}）` : `残骸 ${index + 1}（已离开棋盘）`
 }
 
@@ -442,9 +425,6 @@ export function mysteryTechShipLabel(target: MysteryTechTarget, ship: MysteryTec
 export function mysteryTechTargetProgress(target: MysteryTechTarget | null, draft: MysteryTechTargetDraft): string {
   if (!target) return ''
   const shipIdx = target.ships.findIndex((ship) => ship.ship_index === draft.shipIndex)
-  if (target.kind === 'spacetime_fold') {
-    return shipIdx >= 0 ? `已选：目标舰 ${shipIdx + 1}` : '尚未选中目标舰'
-  }
   if (target.kind === 'revive') {
     const ship = shipIdx >= 0 ? `残骸 ${shipIdx + 1}` : '未选残骸'
     const cell = draft.cell ? `落点 ${cellName(draft.cell)}` : '未选落点'

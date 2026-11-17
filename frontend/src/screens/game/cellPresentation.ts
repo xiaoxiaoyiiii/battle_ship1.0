@@ -12,7 +12,7 @@ export function cellVisualState(cell: BoardCell): CellVisual {
   if (cell.shieldBroken) return 'shield-blocked'
   if (cell.trap) return 'trap'
   if (cell.miss) return 'miss'
-  return cell.ship ? 'ship' : 'empty'
+  return cell.ship || cell.revealed ? 'ship' : 'empty'
 }
 
 /** 普通舰船、命中与落空不弹提示；只解释特殊状态和当前可选目标。 */

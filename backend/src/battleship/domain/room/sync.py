@@ -186,6 +186,19 @@ def _effect_badges(room: Room | None, player_id: str | None,
                     'name': tech.name, 'label': tech.name, 'description': tech.description,
                     'tier': tech.tier, 'timing': tech.timing, 'selected_round': selected['round'],
                     'expires': '本局有效' if tech.timing == 'persistent' else '已选即时科技'})
+        penalty = room.mystery_tech_state.get('attack_penalties', {}).get(player_id, 0)
+        if penalty:
+            badges.append({'key': 'mystery_tech:spacetime_fold_penalty', 'name': '时空压制',
+                           'tier': BY_ID['spacetime_fold'].tier,
+                           'label': f'攻击次数 -{penalty}', 'description': f'时空折叠使本局每个战斗阶段的攻击次数减少{penalty}次，最低为0。',
+                           'expires': '本局有效'})
+        from ..mystery_tech.effects import magic_blocked
+        if magic_blocked(room, player_id):
+            last_round = room.mystery_tech_state['silence'][player_id][1]
+            badges.append({'key': 'mystery_tech:silent_domain_block', 'name': '寂静领域',
+                           'tier': BY_ID['silent_domain'].tier,
+                           'label': '寂静领域·禁魔', 'description': '寂静领域生效中，无法打出魔法卡。',
+                           'expires': f'第{last_round}大回合结束时失效'})
     return badges
 
 

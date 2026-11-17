@@ -187,5 +187,6 @@ def snapshot(room, viewer=None, *, now=None):
                           for slot in s.get('offers', {}).get(viewer, [])] if s.get('stage') == 'selecting' else []
         out['locked_tech_id'] = s.get('locked', {}).get(viewer)
         target = s.get('target')
-        out['target'] = deepcopy(target) if target and target['player_id'] == viewer else None
+        from .effects import TARGETED
+        out['target'] = deepcopy(target) if target and target['player_id'] == viewer and target.get('tech_id') in TARGETED else None
     return out

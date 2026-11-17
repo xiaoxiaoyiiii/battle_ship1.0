@@ -249,12 +249,12 @@ const selfCells = computed(() =>
   buildSelfBoard(state.value, { shieldBroken: match.shieldBrokenSelf, revived: match.revivedSelf }),
 )
 const opponentCells = computed(() =>
-  mysteryTarget.decorate('opponent', buildOpponentBoard(state.value, {
+  buildOpponentBoard(state.value, {
     revealed: match.revealed,
     shieldBroken: match.shieldBrokenOpponent,
     revived: match.revivedOpponent,
     actionPending: Boolean(writeWaitReason.value),
-  })),
+  }),
 )
 
 /**

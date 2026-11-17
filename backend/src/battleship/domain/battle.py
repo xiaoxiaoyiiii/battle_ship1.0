@@ -73,7 +73,7 @@ def is_zero_ship_defeat(room: Room, player_id: str) -> bool:
     player = room.players.get(player_id)
     return bool(
         player is not None
-        and _value(room.state) == RoomState.ATTACKING.value
+        and _value(room.state) in (RoomState.ATTACKING.value, RoomState.MYSTERY_TECH_RESOLUTION.value)
         and player.remaining_ships <= 0
         and not player.needs_reset
         and not has_pending_redeployment(room, player_id)

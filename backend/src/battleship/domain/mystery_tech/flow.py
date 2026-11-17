@@ -94,7 +94,7 @@ class MysteryTechFlow:
             if tech_id in effects.TARGETED:
                 request = effects.target_request(room, pid, tech_id, now=self.host.clock())
                 if effects.actionable(request):
-                    s.update(stage='targeting', target=request)
+                    s.update(stage='targeting', target=request, target_gain=0)
                     await self._present_target(room, request)
                     return
             else:
@@ -103,6 +103,10 @@ class MysteryTechFlow:
                     await self.host._draw(room, pid)
                 if ship := result.get('sunk_ship'):
                     if self.host.magic is not None:
+                        from .. import replay
+                        positions = [{'x': pos.x, 'y': pos.y} for pos in ship.positions]
+                        await self.host.magic._publish_sunken_cells(room, room.opponent_of(pid), positions)
+                        replay.note_ship_lost(room, room.opponent_of(pid), positions)
                         await self.host.magic.on_ship_sunk(room, room.opponent_of(pid), ship, magic=True, attacker_id=pid)
             s['cursor'] += 1
             await self._sync_effects(room)
@@ -127,9 +131,22 @@ class MysteryTechFlow:
             if payload is not None:
                 await self.target(room, pid, payload)
             else:
-                s = draft.state(room)
-                s.update(stage='resolving', target=None, cursor=s['cursor'] + 1)
-                await self.advance(room)
+                await self._finish_target(room, pid)
+
+    async def _finish_target(self, room, pid):
+        """整项科技的实际增舰统一联动契约，部分补船超时也不能漏算。"""
+        s = draft.state(room)
+        gained = s.pop('target_gain', 0)
+        s.update(stage='resolving', target=None, cursor=s['cursor'] + 1)
+        if self.host.magic is not None:
+            if gained:
+                await self.host.magic._mirror_contract_gain(room, pid, gained)
+                await self._sync_effects(room)
+            if self.host.magic._chain_interaction_pending(room):
+                s.update(stage='effect_waiting', waiting_player=pid)
+                await self.publish(room)
+                return
+        await self.advance(room)
 
     async def target(self, room, pid, data, *, timed_out=False):
         s = draft.state(room)
@@ -139,8 +156,10 @@ class MysteryTechFlow:
             return '没有属于你的科技瞄准窗口，或请求已过期'
         if not timed_out and self.host.clock() * 1000 >= request['deadline']:
             return '科技瞄准已超时'
+        before = room.players[pid].remaining_ships
         if error := effects.answer(room, request, data):
             return error
+        s['target_gain'] = s.get('target_gain', 0) + max(0, room.players[pid].remaining_ships - before)
         await self._sync_effects(room)
         if await self._defeat(room):
             s.update(stage='ended', target=None)
@@ -154,12 +173,7 @@ class MysteryTechFlow:
                 s['target'] = next_request
                 await self._present_target(room, next_request)
                 return None
-        s.update(stage='resolving', target=None, cursor=s['cursor'] + 1)
-        if self.host.magic is not None and self.host.magic._chain_interaction_pending(room):
-            s.update(stage='effect_waiting', waiting_player=pid)
-            await self.publish(room)
-            return None
-        await self.advance(room)
+        await self._finish_target(room, pid)
         return None
 
     async def sweep(self, room, now):
@@ -187,8 +201,7 @@ class MysteryTechFlow:
             return False
         # 舰队重生的专门默认：15秒超时即停止；其余义务随机补齐。
         if request['tech_id'] == 'fleet_rebirth':
-            s.update(stage='resolving', target=None, cursor=s['cursor'] + 1)
-            await self.advance(room)
+            await self._finish_target(room, request['player_id'])
             return True
         while s.get('target') and s['target']['deadline'] <= now * 1000:
             request = s['target']
@@ -200,7 +213,6 @@ class MysteryTechFlow:
             error = await self.target(room, request['player_id'], payload, timed_out=True)
             if error:
                 # 目标失效或无法放下整船时结束本项，不能让看门狗无限循环。
-                s.update(stage='resolving', target=None, cursor=s['cursor'] + 1)
-                await self.advance(room)
+                await self._finish_target(room, request['player_id'])
                 break
         return True

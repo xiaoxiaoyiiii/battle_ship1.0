@@ -985,6 +985,9 @@ class MagicService:
             base = 1
         bonus = int(getattr(room.players[player_id].effect_flags, "subsidy_bonus", 0) or 0)
         room.attacks_remaining = max(0, base + bonus)
+        if room.mystery_tech and field != "教皇旨意":
+            from ..domain.mystery_tech.effects import attack_budget
+            room.attacks_remaining = attack_budget(room, player_id, room.attacks_remaining)
 
     @staticmethod
     def _clear_attacks_on_cells(room: Room, board_owner_id: str,
@@ -2016,7 +2019,7 @@ class MagicService:
             await self.apply_shenji(room, player_id, value)
 
         async def place_field(card: MagicCard) -> None:
-            await self.place_field(room, card)
+            await self.place_field(room, card, caster_id=item.player_id)
 
         async def tear_down_field():
             return await self.tear_down_field(room, item.player_id)
@@ -3694,19 +3697,22 @@ class MagicService:
         await self._start_placement(room, player_id, "shenji_redeploy", n)
         return n
 
-    async def place_field(self, room: Room, card: MagicCard) -> None:
-        old = field_rules.place_field_magic(room, room.current_attacker or "", card)
+    async def place_field(self, room: Room, card: MagicCard, *, caster_id: str | None = None) -> None:
+        old_owner = room.field_magic_owner
+        old = field_rules.place_field_magic(room, caster_id or room.current_attacker or "", card)
         await self._publisher.emit(
             "field_magic_updated",
             {"player_id": room.field_magic_owner, "card": card_payload(card)},
             room=room.id,
         )
         if old is not None and getattr(old, "name", None) != card.name:
-            await self._recalc_attacks(room)
+            # 只有改变攻击公式的场地才重算；普通换场不能补回已打完的炮。
+            if old.name in ("伊甸园", "教皇旨意") or card.name in ("伊甸园", "教皇旨意"):
+                await self._recalc_attacks(room)
             # field.place_field_magic 把旧场地塞进弃牌堆（domain 里不发事件）：
             # 弃牌事件统一由拥有这次调用的服务层补，且每张牌只发一次。
             await self._emit_card_discarded(
-                room, room.field_magic_owner, old, "field_replaced"
+                room, old_owner, old, "field_replaced"
             )
         # #37：场地已落位（顶替旧场地也已清掉其标记），此时才发 FIELD_ENTERED。
         await hooks.emit(
@@ -3723,7 +3729,8 @@ class MagicService:
     async def tear_down_field(self, room: Room, caster_id: str) -> Any:
         torn = field_rules.tear_down_field_magic(room, caster_id)
         if torn is not None:
-            await self._recalc_attacks(room)
+            if torn.name in ("伊甸园", "教皇旨意"):
+                await self._recalc_attacks(room)
             await self._publisher.emit(
                 "field_magic_updated", {"player_id": caster_id, "card": None},
                 room=room.id,

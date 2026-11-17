@@ -190,9 +190,9 @@ async def full_power(ctx: EffectContext) -> EffectResult:
         )
         return EffectResult(True, f"本回合攻击次数翻倍，当前攻击次数为{ctx.room.attacks_remaining}")
     effects.grant_flag(
-        ctx.room, ctx.caster_id, "double_attacks", boundary=effects.BOUNDARY_TURN
+        ctx.room, ctx.caster_id, "double_attacks", boundary=effects.BOUNDARY_ROUND
     )
-    return EffectResult(True, "本回合攻击次数翻倍")
+    return EffectResult(True, "本大回合自己的攻击阶段，攻击次数翻倍")
 
 
 # ------------------------------------------------------------------ speed 2

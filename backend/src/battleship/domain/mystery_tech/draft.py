@@ -80,6 +80,10 @@ def begin(room, rng, *, now=None):
         room.match_started_at = now
     room.rps_choices = {}
     room.rps_processed = False
+    for pid, slots in s['offers'].items():
+        if not slots:
+            s['locked'][pid] = None
+    _publish_if_ready(room)
     return True
 
 

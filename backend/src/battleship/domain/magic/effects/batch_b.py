@@ -561,7 +561,6 @@ async def eden(ctx: EffectContext) -> EffectResult:
     await ctx.place_field(ctx.card)
     if (
         getattr(ctx.room.state, "value", ctx.room.state) == "attacking"
-        and ctx.phase == "preparation"
         and ctx.room.current_attacker in ctx.room.players
     ):
         await ctx.recalc_attacks()

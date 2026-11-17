@@ -42,7 +42,7 @@ EFFECT_BADGES: tuple[tuple[str, str, str, str], ...] = (
     ("vampire", "饮血", "本回合结束时失效", ""),
     ("treasure_hunter", "八方来财", "本回合结束时失效", ""),
     ("prediction", "神机妙算", "本大回合结束（重新猜拳）时失效", ""),
-    ("double_attacks", "火力全开", "本回合结束时失效", ""),
+    ("double_attacks", "火力全开", "本大回合自己的攻击阶段生效，未使用则大回合结束时失效", ""),
     ("battle_spirit", "越战越勇", "本回合结束时失效", ""),
     ("last_stand", "绝处逢生", "本回合结束时失效", "锁卡"),
     ("last_stand_win", "绝处逢生", "本局一直有效", "击杀即胜"),

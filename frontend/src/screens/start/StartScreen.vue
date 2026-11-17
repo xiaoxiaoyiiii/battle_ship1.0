@@ -13,7 +13,6 @@ import SupportAuthorLink from '../../components/SupportAuthorLink.vue'
 import ClientDownloadLink from '../../components/ClientDownloadLink.vue'
 import ClientPromoPrompt from '../../components/ClientPromoPrompt.vue'
 import { cardArtUrl } from '../../cards/cardArt'
-import { CARDS, UNIQUE_CARD_NAMES } from '../../cards/cardData'
 import { useAuthStore } from '../../stores/auth'
 import { useCollectionStore } from '../../stores/collection'
 import { useGameStore } from '../../stores/game'
@@ -175,20 +174,8 @@ watch(
   },
 )
 const actionsDisabled = computed(() => home.busy || home.awaitingPlacement)
-/** 展示原 main 首页的五张完整卡面，计数仍取真实卡表。 */
-const showcase = ref(['余音绕梁', '溅射', '失灵！', '禁忌果实', '雷达子弹'])
-const hasUsage = ref(false)
-onMounted(async () => {
-  try {
-    const response = await fetch('/api/card_usage')
-    if (!response.ok) return
-    const body = await response.json() as { usage?: Record<string, number> }
-    const ranked = Object.entries(body.usage ?? {}).filter(([name,count]) => UNIQUE_CARD_NAMES.includes(name) && count > 0).sort((a,b) => b[1]-a[1]).map(([name])=>name)
-    if (ranked.length) { showcase.value = [...new Set([...ranked,...showcase.value])].slice(0,5); hasUsage.value = true }
-  } catch { /* 暂无使用统计时展示原版精选卡面。 */ }
-})
-const cardCount = UNIQUE_CARD_NAMES.length
-const fieldCount = CARDS.filter((card) => card.type === '场地').length
+/** 出航区的装饰卡图，不占用公告区域。 */
+const launchArtCards = ['余音绕梁', '溅射', '失灵！']
 
 /**
  * Hand-off to placement. A real matchmaking pair first shows the 匹配成功
@@ -424,7 +411,7 @@ async function startAi(): Promise<void> {
       <section class="home-main" data-testid="start-actions" aria-labelledby="home-actions-title">
         <section class="home-launch">
         <div class="home-launch__art" aria-hidden="true">
-          <img v-for="card in showcase.slice(0, 3)" :key="card" :src="cardArtUrl(card) || ''" alt="" />
+          <img v-for="card in launchArtCards" :key="card" :src="cardArtUrl(card) || ''" alt="" />
         </div>
         <div class="home-main__head">
           <h2 id="home-actions-title" class="home-main__title">选择你的下一场海战</h2>
@@ -559,25 +546,43 @@ async function startAi(): Promise<void> {
           </button>
         </nav>
 
-        <!-- 卡牌展示条：main 首页中间栏底部那排卡面（图鉴入口的展示，不宣称热度数据）。 -->
-        <section class="home-card home-showcase" aria-labelledby="home-showcase-title">
-        <div class="home-card__head">
-          <h2 id="home-showcase-title" class="home-kicker">{{ hasUsage ? '全服热门卡' : '魔法卡精选' }}</h2>
-          <span class="home-showcase__meta">{{ cardCount }} 张魔法卡 · 场地 {{ fieldCount }} 张</span>
-        </div>
-        <ul class="home-showcase__row">
-          <li v-for="card in showcase" :key="card">
-            <button type="button" class="home-cardface" :title="card" @click="collection.open()">
-              <img v-if="cardArtUrl(card)" class="home-cardface__art" :src="cardArtUrl(card) || ''" :alt="card" loading="lazy" />
-              <span v-else class="home-cardface__art home-cardface__art--none" aria-hidden="true">舰</span>
-              <span class="home-cardface__name">{{ card }}</span>
-            </button>
-          </li>
-        </ul>
-      </section>
+        <!-- 公告放在对战入口下方，沿用服务端最新公告与重试流程。 -->
+        <section class="home-card home-changelog" data-testid="start-changelog" aria-labelledby="home-changelog-title">
+          <div class="home-card__head">
+            <h2 id="home-changelog-title" class="home-kicker">更新公告</h2>
+            <span class="home-changelog__latest" data-testid="start-changelog-latest">{{ latestText }}</span>
+          </div>
+          <StateSurface
+            :state="changelogState"
+            loading-text="公告载入中…"
+            @retry="home.loadChangelog()"
+          >
+            <ul class="home-changelog__list">
+              <li
+                v-for="entry in entries"
+                :key="entry.key"
+                class="home-changelog__entry"
+                :data-testid="'start-changelog-entry-' + entry.key"
+              >
+                <p class="home-changelog__date">{{ entry.date }}</p>
+                <ul class="home-changelog__items">
+                  <li v-for="(item, index) in entry.items" :key="index">{{ item }}</li>
+                </ul>
+              </li>
+            </ul>
+            <template #empty>
+              <p class="home-card__note" data-testid="start-changelog-empty">暂时没有公告。</p>
+            </template>
+            <template #error>
+              <p class="home-card__note" data-testid="start-changelog-empty">
+                暂时没有公告（载入失败），可以重试。
+              </p>
+            </template>
+          </StateSurface>
+        </section>
       </section>
 
-      <!-- 在线与公告。 -->
+      <!-- 航海任务、通行证与在线情况。 -->
       <aside class="home-side">
         <HomeTasks />
         <BattlePassCard />
@@ -616,40 +621,6 @@ async function startAi(): Promise<void> {
                 <dd><b data-testid="start-lobby-rooms">{{ stats.rooms }}</b><span class="home-stat__unit">间</span></dd>
               </div>
             </dl>
-          </StateSurface>
-        </section>
-
-        <section class="home-card home-changelog" data-testid="start-changelog" aria-labelledby="home-changelog-title">
-          <div class="home-card__head">
-            <h2 id="home-changelog-title" class="home-kicker">最近公告</h2>
-            <span class="home-changelog__latest" data-testid="start-changelog-latest">{{ latestText }}</span>
-          </div>
-          <StateSurface
-            :state="changelogState"
-            loading-text="公告载入中…"
-            @retry="home.loadChangelog()"
-          >
-            <ul class="home-changelog__list">
-              <li
-                v-for="entry in entries"
-                :key="entry.key"
-                class="home-changelog__entry"
-                :data-testid="'start-changelog-entry-' + entry.key"
-              >
-                <p class="home-changelog__date">{{ entry.date }}</p>
-                <ul class="home-changelog__items">
-                  <li v-for="(item, index) in entry.items" :key="index">{{ item }}</li>
-                </ul>
-              </li>
-            </ul>
-            <template #empty>
-              <p class="home-card__note" data-testid="start-changelog-empty">暂时没有公告。</p>
-            </template>
-            <template #error>
-              <p class="home-card__note" data-testid="start-changelog-empty">
-                暂时没有公告（载入失败），可以重试。
-              </p>
-            </template>
           </StateSurface>
         </section>
         <SupportAuthorLink compact test-id="start-support-author" />
@@ -751,22 +722,13 @@ async function startAi(): Promise<void> {
 .home-link--tile:hover { border-color:var(--role-self); background:var(--surface-raised); }
 .home-link--tile b { color:var(--text-primary); font-size:13px; font-weight:650; }
 .home-link--tile small { margin-top:4px; color:var(--text-secondary); font-size:12px; line-height:1.35; }
-.home-showcase { padding:18px 20px 14px; }
-.home-showcase__meta { color:var(--text-secondary); font-size:12px; }
-.home-showcase__row { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:14px; margin:0; padding:0; list-style:none; }
-.home-showcase__row li { min-width:0; }
-.home-cardface { display:flex; flex-direction:column; align-items:center; width:100%; gap:7px; border:0; padding:0; color:var(--text-primary); background:none; font:inherit; cursor:pointer; }
-.home-cardface__art { display:block; width:100%; aspect-ratio:2 / 3; object-fit:contain; border-radius:5px; background:var(--surface-chamber); box-shadow:0 5px 12px #0003; transition:transform .16s; }
-.home-cardface:hover .home-cardface__art { transform:translateY(-4px); }
-.home-cardface__art--none { display:grid; place-items:center; color:var(--gold); font-size:24px; }
-.home-cardface__name { max-width:100%; color:var(--text-secondary); font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
 .home-stats { display:grid; gap:10px; margin:0; }
 .home-stat { display:flex; align-items:center; justify-content:space-between; gap:10px; }
 .home-stat dt { color:var(--text-secondary); font-size:13px; }
 .home-stat dd { margin:0; color:var(--text-primary); font-size:14px; font-variant-numeric:tabular-nums; }
 .home-stat dd b { font-weight:500; }
 .home-stat__unit { margin-left:4px; font-size:12px; }
-.home-changelog { min-height:0; }
+.home-changelog { min-height:170px; }
 .home-changelog__latest { color:var(--text-secondary); font-size:12px; white-space:nowrap; }
 .home-changelog__list { max-height:210px; overflow-y:auto; overscroll-behavior:contain; margin:0; padding:0 5px 0 0; list-style:none; scrollbar-width:thin; }
 .home-changelog__entry + .home-changelog__entry { margin-top:16px; padding-top:14px; border-top:1px solid var(--panel-line); }
@@ -781,7 +743,6 @@ async function startAi(): Promise<void> {
   .home-main__title { font-size:23px; }
   .home-links { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .home-link--tile { min-height:58px; padding:10px 12px; }
-  .home-showcase__row { gap:7px; }
 }
 @media (max-width:1023px) {
   .home-screen { padding:22px 20px 30px; }
@@ -817,14 +778,11 @@ async function startAi(): Promise<void> {
   .home-ai__foot { flex-wrap:wrap; }
   .home-ai__current { flex:1 1 140px; }
   .home-card { padding:18px; }
-  .home-showcase { padding:18px 14px; }
-  .home-showcase__row { gap:10px; overflow-x:auto; grid-template-columns:repeat(5,minmax(78px,1fr)); padding-bottom:5px; scrollbar-width:thin; }
-  .home-showcase__meta { font-size:12px; }
   .home-card__head { gap:8px; align-items:baseline; }
   .home-card__head .home-kicker { font-size:15px; }
   .home-stat { min-height:24px; }
 }
-/* 常见桌面高度内三栏贴齐导航下方；矮窗口沿用整页滚动，保持操作和完整卡图可见。 */
+/* 桌面三栏贴齐导航；空间不足时允许栏内滚动，公告保留可读高度。 */
 @media (min-width:1024px) and (min-height:730px) {
   .home-screen { flex:1 1 auto; height:auto; min-height:0; overflow:hidden; padding:14px 24px 16px; gap:14px; }
   .home-head { flex-shrink:0; }
@@ -843,18 +801,11 @@ async function startAi(): Promise<void> {
   .home-launch__actions { margin-top:18px; }
   .home-ai { gap:10px; }
   .home-link--tile { min-height:58px; padding:9px 12px; }
-  /* 展示条使用操作区剩余高度，完整卡图按原比例缩放，不制造第二层滚动。 */
-  .home-main { overflow:visible; }
-  .home-showcase { flex:1 1 0; min-height:0; display:flex; flex-direction:column; }
-  .home-showcase .home-card__head { flex-shrink:0; }
-  .home-showcase__row { flex:1; min-height:0; }
-  .home-showcase__row li,.home-cardface { height:100%; min-height:0; }
-  .home-cardface__art { flex:1 1 0; min-height:0; height:0; object-fit:contain; background:transparent; box-shadow:none; }
-  .home-cardface__name { flex-shrink:0; }
   .home-side > [data-testid='start-online'] { flex-shrink:0; }
-  .home-changelog { flex:1; display:flex; flex-direction:column; }
-  .home-changelog > .state-surface { flex:1; min-height:0; }
-  .home-changelog__list { max-height:none; min-height:0; }
+  .home-changelog { flex:1 0 170px; display:flex; flex-direction:column; }
+  .home-changelog > .home-card__head { flex-shrink:0; }
+  .home-changelog > .state-surface { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; scrollbar-width:thin; }
+  .home-changelog__list { max-height:none; overflow:visible; }
 }
 @media (min-width:1024px) and (min-height:730px) and (max-height:900px) {
   .home-screen { padding-top:10px; padding-bottom:12px; gap:10px; }
@@ -886,7 +837,6 @@ async function startAi(): Promise<void> {
   .home-stats { gap:4px; }
 }
 @media (prefers-reduced-motion:reduce) {
-  .home-play,.home-cardface__art { transition:none; }
-  .home-cardface:hover .home-cardface__art { transform:none; }
+  .home-play { transition:none; }
 }
 </style>

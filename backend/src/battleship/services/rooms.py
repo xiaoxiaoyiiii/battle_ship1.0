@@ -898,62 +898,66 @@ class RoomService:
         room = self.rooms.get(room_id)
         if room is None:
             return
-        entry = room.disconnected.get(player_id)
-        if not entry or entry.get("token") != token:
-            return
-        if self.bans.departure_hook is not None:
-            from .priority import room_action
-            async with room_action(room):
-                if self.get_room(room_id) is not room:
-                    return
-                current = room.disconnected.get(player_id)
-                if not current or current.get('token') != token:
-                    return
+        # 与投降一样持同一把房间锁：先完成进行中的攻击/连锁，再决定判负或退出。
+        from .priority import room_action
+        async with room_action(room):
+            if self.get_room(room_id) is not room:
+                return
+            entry = room.disconnected.get(player_id)
+            if not entry or entry.get("token") != token:
+                return
+            if self.bans.departure_hook is not None:
                 result = await self.bans.departure_hook(room, player_id)
                 if result is not None:
-                    if result.get('status') == 'error':
+                    if result.get("status") == "error":
                         self.bans.retry_disconnect(room, player_id, token)
                     return
-        room.disconnected.pop(player_id, None)
+            # hook 可能 await；重连或更新宽限期后必须再次核对 token。
+            current = room.disconnected.get(player_id)
+            if not current or current.get("token") != token:
+                return
+            if room.state == RoomState.GAME_OVER:
+                room.disconnected.pop(player_id, None)
+                return
+            room.disconnected.pop(player_id, None)
 
-        other_id = opponent_of(room, player_id)
-        pre_battle = room.state in (RoomState.PLACING_SHIPS, RoomState.ROCK_PAPER_SCISSORS)
-        if (
-            (room.is_ai_room and not room.daily_challenge)
-            or (pre_battle and not room.daily_challenge)
-            or other_id is None
-            or other_id in room.disconnected
-            or room.state == RoomState.GAME_OVER
-        ):
-            await self._publisher.emit(
-                "game_canceled",
-                {
-                    "reason": "opponent_disconnected",
-                    "message": "对局已取消（对手掉线）",
-                    "room_id": room_id,
-                },
-                room=room_id,
-            )
-            self._drop_room(room_id, "对局已取消（对手掉线）")
-            return
+            other_id = opponent_of(room, player_id)
+            pre_battle = room.state in (RoomState.PLACING_SHIPS, RoomState.ROCK_PAPER_SCISSORS)
+            if (
+                (room.is_ai_room and not room.daily_challenge)
+                or (pre_battle and not room.daily_challenge)
+                or other_id is None
+                or other_id in room.disconnected
+            ):
+                await self._publisher.emit(
+                    "game_canceled",
+                    {
+                        "reason": "opponent_disconnected",
+                        "message": "对局已取消（对手掉线）",
+                        "room_id": room_id,
+                    },
+                    room=room_id,
+                )
+                self._drop_room(room_id, "对局已取消（对手掉线）")
+                return
 
-        room.state = RoomState.GAME_OVER
-        room.winner = other_id
-        room.game_over_reason = "opponent_disconnected"
-        # One ending funnel (ticket #9): the hook performs the real settlement
-        # and emits game_over; the fallback keeps #7's state-only behaviour for
-        # callers that did not wire a battle service.
-        if self.forfeit_hook is not None:
-            await self.forfeit_hook(
-                room, other_id, player_id, "opponent_disconnected"
-            )
-        else:
-            await self._publisher.emit(
-                "game_over",
-                {"winner": other_id, "reason": "opponent_disconnected"},
-                room=room_id,
-            )
-        self._spawn(self._cleanup_room_after(room_id, self.ended_room_retention_seconds))
+            room.state = RoomState.GAME_OVER
+            room.winner = other_id
+            room.game_over_reason = "opponent_disconnected"
+            # One ending funnel (ticket #9): the hook performs the real settlement
+            # and emits game_over; the fallback keeps #7's state-only behaviour for
+            # callers that did not wire a battle service.
+            if self.forfeit_hook is not None:
+                await self.forfeit_hook(
+                    room, other_id, player_id, "opponent_disconnected"
+                )
+            else:
+                await self._publisher.emit(
+                    "game_over",
+                    {"winner": other_id, "reason": "opponent_disconnected"},
+                    room=room_id,
+                )
+            self._spawn(self._cleanup_room_after(room_id, self.ended_room_retention_seconds))
 
     async def _cleanup_room_after(self, room_id: str, delay: float,
                                   reason: str = "对局已结束") -> None:

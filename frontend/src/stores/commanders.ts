@@ -179,6 +179,57 @@ export function commanderVoiceUrl(commanderId: string, voiceKey: string): string
   return COMMANDER_OGG_MODULES[path] ?? `/commanders/${safeId}/${safeKey}.ogg`
 }
 
+export type CommanderPortraitVariant = 'base' | 'ascended' | 'alt' | 'ultimate'
+export type CommanderIntroTier = 'base' | 'enhanced' | 'ultimate'
+export type CommanderSkillVfxTier = 'base' | 'exclusive'
+export type CommanderVictoryMotionTier = 'base' | 'exclusive'
+export type CommanderEquippedLike = CommanderEquipped | Record<string, unknown>
+
+export interface CommanderPalette {
+  primary: string
+  secondary: string
+  accent: string
+  glow: string
+}
+
+const COMMANDER_PALETTES: Record<string, CommanderPalette> = {
+  chichao: {
+    primary: '#e84855',
+    secondary: '#1d141b',
+    accent: '#ff9e7d',
+    glow: 'rgba(232, 72, 85, 0.42)',
+  },
+  qingtong: {
+    primary: '#4ea8de',
+    secondary: '#14202e',
+    accent: '#9be7ff',
+    glow: 'rgba(78, 168, 222, 0.42)',
+  },
+  tieanchor: {
+    primary: '#3b76f6',
+    secondary: '#0f172a',
+    accent: '#7dd3fc',
+    glow: 'rgba(59, 118, 246, 0.42)',
+  },
+  guihang: {
+    primary: '#eab354',
+    secondary: '#191f2c',
+    accent: '#fef08a',
+    glow: 'rgba(234, 179, 84, 0.42)',
+  },
+}
+
+const COMMANDER_FACE_FOCUS: Record<string, Record<CommanderPortraitVariant, string>> = {
+  chichao: { base: '50% 29%', ascended: '50% 29%', alt: '50% 29%', ultimate: '50% 49%' },
+  qingtong: { base: '50% 25%', ascended: '50% 25%', alt: '50% 25%', ultimate: '50% 25%' },
+  tieanchor: { base: '50% 35%', ascended: '50% 35%', alt: '50% 35%', ultimate: '50% 35%' },
+  guihang: { base: '50% 28%', ascended: '50% 28%', alt: '50% 28%', ultimate: '50% 27%' },
+}
+
+export function commanderPalette(commanderId: string): CommanderPalette {
+  return COMMANDER_PALETTES[commanderId] ?? COMMANDER_PALETTES.chichao
+}
+
 export function commanderTierOf(level: number): 0 | 1 | 2 | 3 | 4 {
   if (level >= 20) return 4
   if (level >= 15) return 3
@@ -191,18 +242,73 @@ export function commanderTierLabel(tier: number): string {
   return ['初任列舰', '伍级校尉', '拾级王牌', '拾伍统帅', '满阶海皇'][Math.max(0, Math.min(4, tier))] ?? '初任列舰'
 }
 
+export function portraitVariantFor(
+  level: number,
+  equipped?: { portrait?: string } | Record<string, unknown> | null,
+): CommanderPortraitVariant {
+  const chosen = typeof equipped?.portrait === 'string' ? equipped.portrait : ''
+  if (chosen === 'base' || chosen === 'ascended' || chosen === 'alt' || chosen === 'ultimate') {
+    return chosen
+  }
+  if (level >= 20) return 'ultimate'
+  if (level >= 10) return 'ascended'
+  return 'base'
+}
+
 export function portraitForLevelAndEquipped(
   commanderId: string,
   level: number,
   equipped?: { portrait?: string } | Record<string, unknown> | null,
 ): string {
-  const chosen = typeof equipped?.portrait === 'string' ? equipped.portrait : ''
-  if (chosen && ['base', 'ascended', 'alt', 'ultimate'].includes(chosen)) {
-    return commanderPortraitUrl(commanderId, chosen)
+  return commanderPortraitUrl(commanderId, portraitVariantFor(level, equipped))
+}
+
+export function commanderFaceFocus(
+  commanderId: string,
+  levelOrVariant: number | CommanderPortraitVariant = 'base',
+  equipped?: { portrait?: string } | Record<string, unknown> | null,
+): string {
+  const variant =
+    typeof levelOrVariant === 'string'
+      ? levelOrVariant
+      : portraitVariantFor(levelOrVariant, equipped)
+  const map = COMMANDER_FACE_FOCUS[commanderId] ?? COMMANDER_FACE_FOCUS.chichao
+  return map[variant] ?? map.base
+}
+
+export function commanderIntroForEquipped(
+  level: number,
+  equipped?: { intro?: string } | Record<string, unknown> | null,
+): CommanderIntroTier {
+  const chosen = typeof equipped?.intro === 'string' ? equipped.intro : ''
+  if (chosen === 'base' || chosen === 'enhanced' || chosen === 'ultimate') {
+    return chosen
   }
-  if (level >= 20) return commanderPortraitUrl(commanderId, 'ultimate')
-  if (level >= 10) return commanderPortraitUrl(commanderId, 'ascended')
-  return commanderPortraitUrl(commanderId, 'base')
+  if (level >= 20) return 'ultimate'
+  if (level >= 15) return 'enhanced'
+  return 'base'
+}
+
+export function commanderSkillVfxForEquipped(
+  level: number,
+  equipped?: { skill_vfx?: string } | Record<string, unknown> | null,
+): CommanderSkillVfxTier {
+  const chosen = typeof equipped?.skill_vfx === 'string' ? equipped.skill_vfx : ''
+  if (chosen === 'base' || chosen === 'exclusive') {
+    return chosen
+  }
+  return level >= 15 ? 'exclusive' : 'base'
+}
+
+export function commanderVictoryMotionForEquipped(
+  level: number,
+  equipped?: { victory_motion?: string } | Record<string, unknown> | null,
+): CommanderVictoryMotionTier {
+  const chosen = typeof equipped?.victory_motion === 'string' ? equipped.victory_motion : ''
+  if (chosen === 'base' || chosen === 'exclusive') {
+    return chosen
+  }
+  return level >= 13 ? 'exclusive' : 'base'
 }
 
 function readGuestSelected(): string {
@@ -232,6 +338,7 @@ export const useCommandersStore = defineStore('commanders', () => {
   const voiceCaption = ref<{ commanderId: string; name: string; line: string; ts: number } | null>(null)
   const lastSkillEvent = ref<CommanderSkillCastEvent | null>(null)
   const lastXpSettled = ref<CommanderXpSettledPayload | null>(null)
+  const consumedSkillEventIds = new Set<string>()
   let currentAudio: HTMLAudioElement | null = null
   let captionTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -475,9 +582,30 @@ export const useCommandersStore = defineStore('commanders', () => {
     void load(true)
   }
 
+  function isSkillEventFresh(ev: CommanderSkillCastEvent | null, maxAgeMs = 1500): boolean {
+    if (!ev) return false
+    if (consumedSkillEventIds.has(ev.id)) return false
+    return Date.now() - ev.ts <= maxAgeMs
+  }
+
+  function consumeSkillEvent(id: string): boolean {
+    if (!id || consumedSkillEventIds.has(id)) return false
+    consumedSkillEventIds.add(id)
+    if (consumedSkillEventIds.size > 80) {
+      const first = consumedSkillEventIds.values().next().value
+      if (first) consumedSkillEventIds.delete(first)
+    }
+    return true
+  }
+
+  function clearSkillEvents(): void {
+    if (lastSkillEvent.value?.id) consumedSkillEventIds.add(lastSkillEvent.value.id)
+    lastSkillEvent.value = null
+  }
+
   function clearMatchSettlement(): void {
     lastXpSettled.value = null
-    lastSkillEvent.value = null
+    clearSkillEvents()
   }
 
   return {
@@ -503,6 +631,9 @@ export const useCommandersStore = defineStore('commanders', () => {
     recordSkillUsed,
     recordInteract,
     recordXpSettled,
+    isSkillEventFresh,
+    consumeSkillEvent,
+    clearSkillEvents,
     clearMatchSettlement,
   }
 })

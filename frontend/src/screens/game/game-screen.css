@@ -3262,7 +3262,8 @@ button.arena-avatar--btn {
 .game[data-layout='wide'] .game-hand--scrollable { justify-content:flex-start; overflow-x:auto; overflow-y:hidden; overscroll-behavior-x:contain; scrollbar-width:thin; pointer-events:auto; }
 .game[data-layout='wide'] .game-hand-wrap { max-width:1000px; padding-top:0; }
 .game[data-layout='wide'] .game-hand .card--selected { transform:rotate(var(--fan-rot,0rad)) translateY(calc(var(--fan-drop,0px) - 16px)); z-index:20; }
-.game-drawer--chat.game-float { display:flex; flex-direction:column; height:260px; overflow:hidden; }
+.game-drawer--chat.game-float { display:flex; flex-direction:column; height:clamp(196px, 24dvh, 260px); overflow:hidden; }
+.game[data-layout='wide'] .log-container.game-float { max-height:clamp(180px, 28dvh, 300px); }
 .game-drawer--chat .game-chat-text { flex:1; min-height:0; display:flex; flex-direction:column; position:relative; }
 .game-drawer--chat .game-chat-form { margin-top:auto; flex:0 0 auto; display:flex; gap:6px; padding-top:8px; border-top:1px solid var(--panel-line); }
 .game-chat-form .button { white-space:nowrap; padding:0 10px; min-height:40px; }
@@ -3738,16 +3739,17 @@ button.arena-avatar--btn {
 
   .game[data-layout='wide'] .arena-rail {
     top: clamp(168px, 18dvh, 190px);
-    bottom: 8px;
+    bottom: auto;
     height: auto;
-    max-height: none;
-    overflow: hidden;
+    max-height: calc(100dvh - 252px);
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 
   .game[data-layout='wide'] .arena-chain-slot {
-    flex: 1 1 auto;
+    flex: 0 1 auto;
     height: auto;
     min-height: 88px;
-    max-height: 304px;
+    max-height: clamp(180px, calc(100dvh - 590px), 304px);
   }
 }

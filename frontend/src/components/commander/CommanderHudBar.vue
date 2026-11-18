@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   commanderAvatarUrl,
   commanderEmojiUrl,
+  commanderPalette,
   commanderTierOf,
   useCommandersStore,
 } from '../../stores/commanders'
+import CommanderPortraitStage from './CommanderPortraitStage.vue'
+import CommanderSkillOverlay from './CommanderSkillOverlay.vue'
 
 interface SeatCmd {
   player_id: string
@@ -40,12 +43,18 @@ interface DelayedLockRow {
   cells: Array<{ x: number; y: number }>
 }
 
-const props = defineProps<{
-  commanderState: Record<string, unknown> | null
-  playerId: string
-  ships: Array<{ positions: Array<{ x: number; y: number }>; alive: boolean }>
-  busy: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    commanderState: Record<string, unknown> | null
+    playerId: string
+    ships: Array<{ positions: Array<{ x: number; y: number }>; alive: boolean }>
+    busy: boolean
+    compact?: boolean
+  }>(),
+  {
+    compact: false,
+  },
+)
 
 const emit = defineEmits<{
   (event: 'activate', selectedCells?: Array<{ x: number; y: number }>): void
@@ -87,8 +96,14 @@ const unlockedEmojis = computed(() => {
   return Array.isArray(raw) ? raw.map(String) : []
 })
 
+function isActiveEffect(seat: SeatCmd | null): boolean {
+  if (!seat) return false
+  return Boolean(seat.firepower_control_active || seat.dauntless_active)
+}
+
 function statusLabel(seat: SeatCmd | null): string {
   if (!seat) return ''
+  if (!enabled.value) return '每日挑战禁用'
   if (seat.firepower_control_active) {
     const left = Math.max(0, 6 - Number(seat.shots_used_this_round || 0))
     return `火力统制中 · 剩 ${left}/6`
@@ -101,6 +116,32 @@ function statusLabel(seat: SeatCmd | null): string {
     return '限定技已使用'
   }
   return '技能就绪'
+}
+
+function primaryBtnLabel(seat: SeatCmd | null): string {
+  if (!seat) return '指挥官技能'
+  const skillName = seat.skill?.name || '指挥官技能'
+  if (!enabled.value) return '每日挑战禁用'
+  if (seat.firepower_control_active) return `${skillName}已展开`
+  if (seat.dauntless_active) return `${skillName}展开中`
+  if (canUseSkill.value) return `发动 ${skillName}`
+  if (seat.skill?.kind === 'cooldown' && Number(seat.cooldown_remaining || 0) > 0) {
+    return `冷却 ${seat.cooldown_remaining} 回合`
+  }
+  if (seat.skill?.kind === 'limited' && Number(seat.skill_used_count || 0) >= 1) {
+    return `${skillName}已耗尽`
+  }
+  return skillName
+}
+
+function seatStyleVars(seat: SeatCmd | null): Record<string, string> {
+  const pal = commanderPalette(seat?.commander_id || 'chichao')
+  return {
+    '--cmd-pri': pal.primary,
+    '--cmd-acc': pal.accent,
+    '--cmd-sec': pal.secondary,
+    '--cmd-glow': pal.glow,
+  }
 }
 
 function handleSkillClick(): void {
@@ -127,99 +168,278 @@ function interact(): void {
   }
   emit('interact')
 }
+
+function onEscapeKey(event: KeyboardEvent): void {
+  if (event.key !== 'Escape') return
+  if (pickModalOpen.value) {
+    pickModalOpen.value = false
+    event.preventDefault()
+    event.stopPropagation()
+    return
+  }
+  if (emojiOpen.value) {
+    emojiOpen.value = false
+    event.preventDefault()
+    event.stopPropagation()
+    return
+  }
+  if (detailOpen.value) {
+    detailOpen.value = false
+    event.preventDefault()
+    event.stopPropagation()
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', onEscapeKey))
+onBeforeUnmount(() => window.removeEventListener('keydown', onEscapeKey))
 </script>
 
 <template>
   <section
     v-if="commanderState && (selfSeat || oppSeat)"
     class="cmd-hud"
+    :class="props.compact ? 'cmd-hud--compact' : 'cmd-hud--wide'"
     data-testid="game-commander-hud"
     aria-label="指挥官角色信息"
   >
-    <div v-if="oppSeat" class="cmd-hud__side cmd-hud__side--opp" data-testid="commander-hud-opponent">
-      <img
-        class="cmd-hud__avatar"
-        :class="'cmd-hud__tier-' + commanderTierOf(oppSeat.commander_level || 1)"
-        :src="commanderAvatarUrl(oppSeat.commander_id)"
-        :alt="oppSeat.commander_name"
-      />
-      <div class="cmd-hud__meta">
-        <div class="cmd-hud__name">
-          <b>{{ oppSeat.commander_name }}</b>
-          <small>Lv.{{ oppSeat.commander_level || 1 }}</small>
+    <!-- 宽屏：左右上角留白独立立绘窗（严禁压迫中央棋盘/手牌与顶部席位条） -->
+    <template v-if="!props.compact">
+      <div v-if="selfSeat" class="cmd-corner-wrap cmd-corner-wrap--self">
+        <article
+          class="cmd-corner-card cmd-corner-card--self"
+          :class="{ 'is-active': isActiveEffect(selfSeat), 'is-ready': enabled && canUseSkill }"
+          :style="seatStyleVars(selfSeat)"
+          data-testid="commander-hud-self"
+        >
+          <div class="cmd-corner__portrait">
+            <CommanderPortraitStage
+              class="cmd-corner__stage"
+              :commander-id="selfSeat.commander_id"
+              :commander-name="selfSeat.commander_name"
+              :level="selfSeat.commander_level || 1"
+              :equipped="selfSeat.cosmetics"
+              mode="bust"
+              :active="isActiveEffect(selfSeat)"
+            >
+              <CommanderSkillOverlay
+                side="self"
+                :player-id="selfSeat.player_id || props.playerId"
+                :commander-level="selfSeat.commander_level || 1"
+                :cosmetics="selfSeat.cosmetics"
+              />
+            </CommanderPortraitStage>
+          </div>
+
+          <div class="cmd-corner__body">
+            <div class="cmd-corner__top">
+              <span class="cmd-corner__eyebrow">
+                {{ isActiveEffect(selfSeat) ? '本回合技能已发动' : '己方指挥官' }}
+              </span>
+              <span class="cmd-corner__lvl">Lv.{{ selfSeat.commander_level || 1 }}</span>
+            </div>
+            <strong class="cmd-corner__name">{{ selfSeat.commander_name }}</strong>
+            <button
+              type="button"
+              class="cmd-corner__skill-btn"
+              :class="{
+                'is-ready': enabled && canUseSkill && !busy,
+                'is-active-fx': isActiveEffect(selfSeat),
+              }"
+              :disabled="!enabled || !canUseSkill || busy"
+              :title="unavailableReason || selfSeat.skill?.description || ''"
+              data-testid="commander-use-skill-btn"
+              @click="handleSkillClick"
+            >
+              {{ primaryBtnLabel(selfSeat) }}
+            </button>
+            <div class="cmd-corner__foot">
+              <span class="cmd-corner__status-pill" :class="{ 'is-ready': enabled && canUseSkill }">
+                {{ statusLabel(selfSeat) }}
+              </span>
+              <div class="cmd-corner__links">
+                <button
+                  type="button"
+                  class="cmd-hud__mini-btn"
+                  data-testid="commander-skill-info-btn"
+                  @click="detailOpen = !detailOpen; emojiOpen = false"
+                >{{ detailOpen ? '收起' : '技能详情' }}</button>
+                <button
+                  type="button"
+                  class="cmd-hud__mini-btn"
+                  title="点击触发指挥官语音互动"
+                  data-testid="commander-interact-btn"
+                  @click="interact"
+                >语音</button>
+                <button
+                  v-if="unlockedEmojis.length"
+                  type="button"
+                  class="cmd-hud__mini-btn"
+                  data-testid="commander-emoji-toggle"
+                  @click="emojiOpen = !emojiOpen; detailOpen = false"
+                >表情</button>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <div
+          v-if="myLockedIncoming.length"
+          class="cmd-hud__lock-pill cmd-hud__lock-pill--danger"
+          data-testid="commander-delayed-lock-incoming"
+        >
+          ⚠ 己方 {{ myLockedIncoming.length }} 艘战舰已被青瞳「延迟锁定」<template v-if="myLockedIncoming[0].cells.length">（{{ myLockedIncoming[0].cells.map(c => `(${c.x},${c.y})`).join('、') }} · 第 {{ myLockedIncoming[0].reveal_after_round }} 回合末揭晓）</template>
         </div>
-        <span class="cmd-hud__status">{{ enabled ? statusLabel(oppSeat) : '技能已禁用（每日挑战）' }}</span>
-      </div>
-    </div>
-
-    <div v-if="selfSeat" class="cmd-hud__center">
-      <button
-        type="button"
-        class="cmd-hud__skill-btn"
-        :class="{ 'is-ready': enabled && canUseSkill && !busy }"
-        :disabled="!enabled || !canUseSkill || busy"
-        :title="unavailableReason || selfSeat.skill?.description || ''"
-        data-testid="commander-use-skill-btn"
-        @click="handleSkillClick"
-      >
-        <b>【{{ selfSeat.skill?.name || '指挥官技能' }}】</b>
-        <small v-if="!enabled">每日挑战禁用技能</small>
-        <small v-else-if="canUseSkill">点击发动 · {{ selfSeat.skill?.enters_chain ? '速阶3入链' : '主动不入链' }}</small>
-        <small v-else>{{ unavailableReason || statusLabel(selfSeat) }}</small>
-      </button>
-      <div class="cmd-hud__subactions">
-        <button
-          type="button"
-          class="cmd-hud__mini-btn"
-          data-testid="commander-skill-info-btn"
-          @click="detailOpen = !detailOpen"
-        >{{ detailOpen ? '收起说明' : '技能详情' }}</button>
-        <button
-          v-if="unlockedEmojis.length"
-          type="button"
-          class="cmd-hud__mini-btn"
-          data-testid="commander-emoji-toggle"
-          @click="emojiOpen = !emojiOpen"
-        >角色表情</button>
-      </div>
-      <div v-if="myLockedIncoming.length" class="cmd-hud__lock-pill cmd-hud__lock-pill--danger" data-testid="commander-delayed-lock-incoming">
-        ⚠ 己方 {{ myLockedIncoming.length }} 艘战舰已被青瞳「延迟锁定」<template v-if="myLockedIncoming[0].cells.length">（{{ myLockedIncoming[0].cells.map(c => `(${c.x},${c.y})`).join('、') }} · 第 {{ myLockedIncoming[0].reveal_after_round }} 回合末揭晓）</template>
-      </div>
-      <div v-else-if="myOutgoingLocks.length" class="cmd-hud__lock-pill cmd-hud__lock-pill--intel" data-testid="commander-delayed-lock-outgoing">
-        ◈ 延迟锁定追踪中：将于第 {{ myOutgoingLocks[0].reveal_after_round }} 回合末揭晓目标坐标
-      </div>
-    </div>
-
-    <div v-if="selfSeat" class="cmd-hud__side cmd-hud__side--self" data-testid="commander-hud-self">
-      <div class="cmd-hud__meta cmd-hud__meta--right">
-        <div class="cmd-hud__name">
-          <small>Lv.{{ selfSeat.commander_level || 1 }}</small>
-          <b>{{ selfSeat.commander_name }}</b>
+        <div
+          v-else-if="myOutgoingLocks.length"
+          class="cmd-hud__lock-pill cmd-hud__lock-pill--intel"
+          data-testid="commander-delayed-lock-outgoing"
+        >
+          ◈ 延迟锁定追踪中 · 第 {{ myOutgoingLocks[0].reveal_after_round }} 回合末揭晓目标
         </div>
-        <span class="cmd-hud__status">{{ enabled ? statusLabel(selfSeat) : '技能已禁用' }}</span>
       </div>
-      <button
-        type="button"
-        class="cmd-hud__avatar-btn"
-        title="点击触发指挥官语音互动"
-        data-testid="commander-interact-btn"
-        @click="interact"
-      >
-        <img
-          class="cmd-hud__avatar"
-          :class="'cmd-hud__tier-' + commanderTierOf(selfSeat.commander_level || 1)"
-          :src="commanderAvatarUrl(selfSeat.commander_id)"
-          :alt="selfSeat.commander_name"
-        />
-      </button>
-    </div>
 
+      <div v-if="oppSeat" class="cmd-corner-wrap cmd-corner-wrap--opp">
+        <article
+          class="cmd-corner-card cmd-corner-card--opp"
+          :class="{ 'is-active': isActiveEffect(oppSeat) }"
+          :style="seatStyleVars(oppSeat)"
+          data-testid="commander-hud-opponent"
+        >
+          <div class="cmd-corner__body cmd-corner__body--opp">
+            <div class="cmd-corner__top">
+              <span class="cmd-corner__eyebrow">
+                {{ isActiveEffect(oppSeat) ? '技能生效中' : '对方指挥官' }}
+              </span>
+              <span class="cmd-corner__lvl">Lv.{{ oppSeat.commander_level || 1 }}</span>
+            </div>
+            <strong class="cmd-corner__name">{{ oppSeat.commander_name }}</strong>
+            <span class="cmd-corner__opp-skill">{{ oppSeat.skill?.name || '未知技能' }}</span>
+            <span class="cmd-corner__status-pill" :class="{ 'is-ready': statusLabel(oppSeat) === '技能就绪' }">
+              {{ statusLabel(oppSeat) }}
+            </span>
+          </div>
+          <div class="cmd-corner__portrait">
+            <CommanderPortraitStage
+              class="cmd-corner__stage"
+              :commander-id="oppSeat.commander_id"
+              :commander-name="oppSeat.commander_name"
+              :level="oppSeat.commander_level || 1"
+              :equipped="oppSeat.cosmetics"
+              mode="bust"
+              :active="isActiveEffect(oppSeat)"
+            >
+              <CommanderSkillOverlay
+                side="opponent"
+                :player-id="oppSeat.player_id"
+                :commander-level="oppSeat.commander_level || 1"
+                :cosmetics="oppSeat.cosmetics"
+              />
+            </CommanderPortraitStage>
+          </div>
+        </article>
+      </div>
+    </template>
+
+    <!-- 窄屏 / 无角落余量降级：收拢为紧贴席位条的独立按钮与小徽章，优先保住棋盘与手牌 -->
+    <template v-else>
+      <div class="cmd-compact-strip" :style="seatStyleVars(selfSeat)">
+        <div v-if="selfSeat" class="cmd-compact-side cmd-compact-side--self" data-testid="commander-hud-self">
+          <button
+            type="button"
+            class="cmd-compact__avatar-btn"
+            title="点击触发指挥官语音互动"
+            data-testid="commander-interact-btn"
+            @click="interact"
+          >
+            <img
+              class="cmd-compact__avatar"
+              :class="'cmd-hud__tier-' + commanderTierOf(selfSeat.commander_level || 1)"
+              :src="commanderAvatarUrl(selfSeat.commander_id)"
+              :alt="selfSeat.commander_name"
+            />
+            <CommanderSkillOverlay
+              side="self"
+              :player-id="selfSeat.player_id || props.playerId"
+              :commander-level="selfSeat.commander_level || 1"
+              :cosmetics="selfSeat.cosmetics"
+            />
+          </button>
+          <span class="cmd-compact__meta">
+            <b>{{ selfSeat.commander_name }}</b>
+            <small>Lv.{{ selfSeat.commander_level || 1 }}</small>
+          </span>
+          <button
+            type="button"
+            class="cmd-compact__skill-btn"
+            :class="{ 'is-ready': enabled && canUseSkill && !busy }"
+            :disabled="!enabled || !canUseSkill || busy"
+            :title="unavailableReason || selfSeat.skill?.description || ''"
+            data-testid="commander-use-skill-btn"
+            @click="handleSkillClick"
+          >
+            {{ primaryBtnLabel(selfSeat) }}
+          </button>
+          <button
+            type="button"
+            class="cmd-hud__mini-btn"
+            data-testid="commander-skill-info-btn"
+            @click="detailOpen = !detailOpen; emojiOpen = false"
+          >详情</button>
+          <button
+            v-if="unlockedEmojis.length"
+            type="button"
+            class="cmd-hud__mini-btn"
+            data-testid="commander-emoji-toggle"
+            @click="emojiOpen = !emojiOpen; detailOpen = false"
+          >表情</button>
+        </div>
+
+        <div v-if="oppSeat" class="cmd-compact-side cmd-compact-side--opp" data-testid="commander-hud-opponent">
+          <span class="cmd-compact__opp-status">{{ oppSeat.commander_name }} · {{ statusLabel(oppSeat) }}</span>
+          <span class="cmd-compact__avatar-wrap">
+            <img
+              class="cmd-compact__avatar"
+              :class="'cmd-hud__tier-' + commanderTierOf(oppSeat.commander_level || 1)"
+              :src="commanderAvatarUrl(oppSeat.commander_id)"
+              :alt="oppSeat.commander_name"
+            />
+            <CommanderSkillOverlay
+              side="opponent"
+              :player-id="oppSeat.player_id"
+              :commander-level="oppSeat.commander_level || 1"
+              :cosmetics="oppSeat.cosmetics"
+            />
+          </span>
+        </div>
+      </div>
+
+      <div
+        v-if="myLockedIncoming.length"
+        class="cmd-hud__lock-pill cmd-hud__lock-pill--danger"
+        data-testid="commander-delayed-lock-incoming"
+      >
+        ⚠ 被青瞳「延迟锁定」<template v-if="myLockedIncoming[0].cells.length">（第 {{ myLockedIncoming[0].reveal_after_round }} 回合末揭晓）</template>
+      </div>
+      <div
+        v-else-if="myOutgoingLocks.length"
+        class="cmd-hud__lock-pill cmd-hud__lock-pill--intel"
+        data-testid="commander-delayed-lock-outgoing"
+      >
+        ◈ 延迟锁定追踪中 · 第 {{ myOutgoingLocks[0].reveal_after_round }} 回合末揭晓
+      </div>
+    </template>
+
+    <!-- 按需展开技能详情浮层 -->
     <div v-if="detailOpen && selfSeat?.skill" class="cmd-hud__popover" data-testid="commander-hud-skill-popover">
-      <b>{{ selfSeat.commander_name }} · 【{{ selfSeat.skill.name }}】</b>
+      <div class="cmd-hud__popover-head">
+        <b>{{ selfSeat.commander_name }} · 【{{ selfSeat.skill.name }}】</b>
+        <button type="button" class="cmd-hud__close-x" aria-label="关闭技能详情" @click="detailOpen = false">×</button>
+      </div>
       <small>{{ selfSeat.skill.timing_label }} · {{ selfSeat.skill.limit_label }}</small>
       <p>{{ selfSeat.skill.description }}</p>
     </div>
 
+    <!-- 按需展开角色表情包浮层 -->
     <div v-if="emojiOpen && selfSeat" class="cmd-hud__emojis" data-testid="commander-hud-emojis">
       <button
         v-for="ekey in unlockedEmojis"
@@ -232,6 +452,7 @@ function interact(): void {
       </button>
     </div>
 
+    <!-- 归航「弃舰筹谋」选船弹窗 -->
     <div v-if="pickModalOpen" class="cmd-hud__modal-backdrop" @click.self="pickModalOpen = false">
       <section class="cmd-hud__modal" data-testid="commander-sacrifice-picker" role="dialog" aria-label="弃舰筹谋选择牺牲战舰">
         <h3>「弃舰筹谋」· 选择 1 艘己方存活战舰牺牲</h3>
@@ -266,206 +487,412 @@ function interact(): void {
 </template>
 
 <style scoped>
-.cmd-hud {
-  position: relative;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 12px;
-  margin-bottom: 8px;
-  border-radius: 14px;
-  border: 1px solid rgb(125 211 252 / 26%);
-  background: linear-gradient(120deg, rgb(8 20 36 / 90%), rgb(13 24 44 / 90%));
-}
-@media (max-width: 720px) {
-  .cmd-hud {
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-    padding: 7px 9px;
-  }
-  .cmd-hud__center {
-    grid-column: 1 / -1;
-    order: 3;
-  }
-}
-.cmd-hud__side {
+/* 宽屏角落容器：依托父舞台两侧上角留白，绝对不侵入中央棋盘与手牌区域 */
+.cmd-hud--wide {
+  position: absolute;
+  top: 10px;
+  left: 18px;
+  right: 18px;
+  z-index: 32;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  pointer-events: none;
 }
-.cmd-hud__side--self {
-  justify-content: flex-end;
-}
-.cmd-hud__avatar-btn {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  border-radius: 50%;
-}
-.cmd-hud__avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  border: 2px solid #60a5fa;
-  object-fit: cover;
-}
-.cmd-hud__tier-2 {
-  border-color: #38bdf8;
-  box-shadow: 0 0 10px rgb(56 189 248 / 45%);
-}
-.cmd-hud__tier-3 {
-  border-color: #f59e0b;
-  box-shadow: 0 0 14px rgb(245 158 11 / 52%);
-}
-.cmd-hud__tier-4 {
-  border-color: #fde047;
-  box-shadow: 0 0 16px rgb(253 224 71 / 72%);
-}
-.cmd-hud__meta {
+.cmd-corner-wrap {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 5px;
+  pointer-events: auto;
+  width: clamp(214px, calc((100vw - (min(1560px, 100vw - 40px) - var(--dock-left, 240px) - var(--dock-right, 258px))) / 2 - 28px), 390px);
+  max-width: 390px;
 }
-.cmd-hud__meta--right {
-  text-align: right;
+.cmd-corner-wrap--opp {
+  align-items: flex-end;
 }
-.cmd-hud__name {
+.cmd-corner-card {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  width: 100%;
+  height: clamp(134px, calc(clamp(168px, 18dvh, 190px) - 24px), 156px);
+  padding: 8px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--cmd-pri) 42%, rgb(125 211 252 / 24%));
+  background: linear-gradient(
+    130deg,
+    rgb(10 20 36 / 94%),
+    color-mix(in srgb, var(--cmd-pri) 14%, rgb(11 21 38 / 96%))
+  );
+  box-shadow: 0 10px 28px rgb(0 0 0 / 38%);
+  overflow: hidden;
+}
+.cmd-corner-card.is-active {
+  border-color: var(--cmd-acc);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--cmd-pri) 36%, transparent), 0 10px 28px rgb(0 0 0 / 42%);
+}
+.cmd-corner-card--opp {
+  justify-content: space-between;
+}
+.cmd-corner__portrait {
+  position: relative;
+  flex: 0 0 112px;
+  height: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.cmd-corner__stage {
+  width: 100%;
+  height: 100%;
+  border-radius: 10px;
+}
+.cmd-corner__body {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  justify-content: center;
+}
+.cmd-corner__body--opp {
+  align-items: flex-start;
+}
+.cmd-corner__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+}
+.cmd-corner__eyebrow {
+  font-size: 11px;
+  color: #a9c6e0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cmd-corner__lvl {
+  padding: 1px 6px;
+  border-radius: 5px;
+  border: 1px solid color-mix(in srgb, var(--cmd-acc) 55%, transparent);
+  background: rgb(11 22 40 / 85%);
+  color: var(--cmd-acc);
+  font-size: 10.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.cmd-corner__name {
+  font-size: 20px;
+  line-height: 1.1;
+  color: #ffffff;
+  font-weight: 800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cmd-corner__opp-skill {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--cmd-acc);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cmd-corner__skill-btn {
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid rgb(148 163 184 / 32%);
+  background: rgb(15 29 52 / 86%);
+  color: #dbeafe;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+}
+.cmd-corner__skill-btn.is-ready {
+  border-color: var(--cmd-acc);
+  background: linear-gradient(95deg, color-mix(in srgb, var(--cmd-pri) 26%, #13223a), rgb(16 30 52 / 96%));
+  color: #ffffff;
+  box-shadow: 0 0 14px color-mix(in srgb, var(--cmd-pri) 28%, transparent);
+}
+.cmd-corner__skill-btn.is-ready:hover {
+  border-color: #fde68a;
+  box-shadow: 0 0 18px color-mix(in srgb, var(--cmd-acc) 40%, transparent);
+}
+.cmd-corner__skill-btn.is-active-fx {
+  border-color: var(--cmd-acc);
+  background: color-mix(in srgb, var(--cmd-pri) 20%, #0f1b2e);
+  color: var(--cmd-acc);
+}
+.cmd-corner__skill-btn:disabled {
+  opacity: 0.72;
+  cursor: not-allowed;
+}
+.cmd-corner__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.cmd-corner__status-pill {
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid rgb(148 163 184 / 24%);
+  background: rgb(9 19 34 / 78%);
+  color: #9bb8d3;
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.cmd-corner__status-pill.is-ready {
+  color: #86efac;
+  border-color: rgb(34 197 94 / 45%);
+  background: rgb(20 83 45 / 32%);
+}
+.cmd-corner__links {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@media (max-width: 1680px) {
+  .cmd-corner-card {
+    padding: 6px 7px;
+    gap: 7px;
+  }
+  .cmd-corner__portrait {
+    flex-basis: 78px;
+  }
+  .cmd-corner__name {
+    font-size: 16px;
+  }
+  .cmd-corner__skill-btn {
+    min-height: 27px;
+    font-size: 11px;
+  }
+  .cmd-corner__eyebrow {
+    font-size: 10px;
+  }
+}
+
+/* 窄屏 / 无角落余量：收成席位外侧单条紧凑条 */
+.cmd-hud--compact {
+  position: relative;
+  grid-area: cmd;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 30;
+}
+.cmd-compact-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 3px 6px;
+  min-height: 36px;
+  border-radius: 9px;
+  border: 1px solid rgb(125 211 252 / 24%);
+  background: rgb(10 22 39 / 90%);
+  overflow: hidden;
+}
+.cmd-compact-side {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
-  color: #f0f9ff;
+  min-width: 0;
 }
-.cmd-hud__name small {
-  color: #93c5fd;
-  font-size: 10px;
+.cmd-compact-side--self {
+  flex: 1 1 auto;
 }
-.cmd-hud__status {
-  font-size: 10px;
-  color: #a5c4dd;
+.cmd-compact-side--opp {
+  flex: 0 1 auto;
 }
-.cmd-hud__center {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-}
-.cmd-hud__skill-btn {
-  width: 100%;
-  max-width: 360px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1px;
-  padding: 5px 12px;
-  border-radius: 10px;
-  border: 1px solid rgb(148 163 184 / 34%);
-  background: rgb(15 28 48 / 82%);
-  color: #cbd5e1;
-  cursor: not-allowed;
-}
-.cmd-hud__skill-btn.is-ready {
-  border-color: #fbbf24;
-  background: linear-gradient(135deg, rgb(234 179 84 / 24%), rgb(19 42 74 / 92%));
-  color: #fffbeb;
-  cursor: pointer;
-  box-shadow: 0 0 14px rgb(251 191 36 / 26%);
-}
-.cmd-hud__skill-btn b {
-  font-size: 12px;
-}
-.cmd-hud__skill-btn small {
-  font-size: 10px;
-  opacity: 0.9;
-}
-.cmd-hud__subactions {
-  display: flex;
-  gap: 10px;
-}
-.cmd-hud__mini-btn {
+.cmd-compact__avatar-btn,
+.cmd-compact__avatar-wrap {
+  position: relative;
+  display: inline-flex;
+  padding: 0;
   border: 0;
   background: transparent;
-  color: #7dd3fc;
-  font-size: 11px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
   cursor: pointer;
-  padding: 0;
 }
-.cmd-hud__lock-pill {
-  padding: 2px 10px;
-  border-radius: 999px;
+.cmd-compact__avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1.5px solid #60a5fa;
+  object-fit: cover;
+  display: block;
+}
+.cmd-hud__tier-2 { border-color: #38bdf8; box-shadow: 0 0 8px rgb(56 189 248 / 45%); }
+.cmd-hud__tier-3 { border-color: #f59e0b; box-shadow: 0 0 10px rgb(245 158 11 / 52%); }
+.cmd-hud__tier-4 { border-color: #fde047; box-shadow: 0 0 12px rgb(253 224 71 / 72%); }
+.cmd-compact__meta {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
   font-size: 11px;
-  text-align: center;
+  color: #f0f9ff;
+  white-space: nowrap;
+}
+.cmd-compact__meta small {
+  font-size: 9.5px;
+  color: #93c5fd;
+}
+.cmd-compact__skill-btn {
+  padding: 3px 8px;
+  min-height: 26px;
+  border-radius: 6px;
+  border: 1px solid rgb(148 163 184 / 30%);
+  background: rgb(16 32 56 / 86%);
+  color: #dbeafe;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.cmd-compact__skill-btn.is-ready {
+  border-color: var(--cmd-acc, #facc15);
+  color: #fff;
+  background: color-mix(in srgb, var(--cmd-pri, #eab354) 30%, #10243d);
+}
+.cmd-compact__skill-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+.cmd-compact__opp-status {
+  font-size: 10px;
+  color: #9bb8d3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 116px;
+}
+
+.cmd-hud__mini-btn {
+  padding: 2px 5px;
+  border-radius: 5px;
+  border: 1px solid rgb(148 163 184 / 26%);
+  background: rgb(15 28 48 / 85%);
+  color: #bae6fd;
+  font-size: 10.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cmd-hud__mini-btn:hover {
+  border-color: #7dd3fc;
+  color: #fff;
+}
+
+.cmd-hud__lock-pill {
+  padding: 3px 9px;
+  border-radius: 8px;
+  font-size: 10.5px;
+  line-height: 1.35;
 }
 .cmd-hud__lock-pill--danger {
-  background: rgb(239 68 68 / 20%);
-  border: 1px solid rgb(248 113 113 / 50%);
+  background: rgb(127 29 29 / 86%);
+  border: 1px solid rgb(248 113 113 / 65%);
   color: #fecaca;
 }
 .cmd-hud__lock-pill--intel {
-  background: rgb(56 189 248 / 18%);
-  border: 1px solid rgb(125 211 252 / 45%);
+  background: rgb(12 74 110 / 82%);
+  border: 1px solid rgb(56 189 248 / 60%);
   color: #bae6fd;
 }
-.cmd-hud__popover {
-  grid-column: 1 / -1;
-  padding: 8px 12px;
-  border-radius: 10px;
-  background: rgb(7 15 28 / 96%);
-  border: 1px solid rgb(125 211 252 / 35%);
+
+.cmd-hud__popover,
+.cmd-hud__emojis {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 90;
+  width: min(360px, calc(100vw - 24px));
+  padding: 11px 13px;
+  border-radius: 12px;
+  border: 1px solid rgb(125 211 252 / 42%);
+  background: rgb(8 19 36 / 96%);
+  box-shadow: 0 16px 36px rgb(0 0 0 / 56%);
+  pointer-events: auto;
+}
+.cmd-hud__popover-head {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 .cmd-hud__popover b {
   font-size: 13px;
   color: #fde68a;
 }
+.cmd-hud__close-x {
+  border: 0;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 17px;
+  cursor: pointer;
+}
 .cmd-hud__popover small {
-  font-size: 11px;
+  display: block;
+  margin-top: 2px;
+  font-size: 10.5px;
   color: #7dd3fc;
 }
 .cmd-hud__popover p {
-  margin: 0;
+  margin: 6px 0 0;
   font-size: 12px;
-  color: #dce9f5;
-  line-height: 1.45;
+  line-height: 1.5;
+  color: #e2e8f0;
 }
 .cmd-hud__emojis {
-  grid-column: 1 / -1;
+  width: auto;
+  max-width: min(340px, calc(100vw - 24px));
   display: flex;
   gap: 8px;
-  justify-content: center;
-  padding-top: 4px;
+  flex-wrap: wrap;
 }
 .cmd-hud__emoji-btn {
-  padding: 3px;
+  padding: 4px;
   border-radius: 10px;
-  border: 1px solid rgb(148 163 184 / 30%);
-  background: rgb(11 22 40 / 90%);
+  border: 1px solid rgb(148 163 184 / 28%);
+  background: rgb(15 29 52 / 90%);
   cursor: pointer;
 }
 .cmd-hud__emoji-btn img {
-  width: 44px;
-  height: 44px;
+  width: 52px;
+  height: 52px;
   display: block;
 }
+
 .cmd-hud__modal-backdrop {
   position: fixed;
   inset: 0;
   z-index: 360;
-  background: rgb(3 8 18 / 72%);
+  background: rgb(2 8 20 / 72%);
   display: grid;
   place-items: center;
   padding: 16px;
+  pointer-events: auto;
 }
 .cmd-hud__modal {
-  width: min(440px, 100%);
+  width: min(460px, 100%);
   padding: 18px;
   border-radius: 16px;
-  border: 1px solid rgb(234 179 84 / 52%);
-  background: linear-gradient(145deg, #0b192e, #121829);
+  border: 1px solid #facc15;
+  background: #0d1a2d;
+  color: #e2e8f0;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -479,32 +906,32 @@ function interact(): void {
   margin: 0;
   font-size: 12px;
   color: #cbd5e1;
-  line-height: 1.5;
 }
 .cmd-hud__ship-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 .cmd-hud__ship-opt {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 12px;
+  padding: 8px;
   border-radius: 10px;
-  border: 1px solid rgb(148 163 184 / 30%);
-  background: rgb(14 28 48 / 86%);
+  border: 1px solid rgb(148 163 184 / 28%);
+  background: rgb(14 27 46 / 90%);
   color: #e2e8f0;
   text-align: left;
   cursor: pointer;
 }
 .cmd-hud__ship-opt.is-picked {
-  border-color: #fbbf24;
+  border-color: #facc15;
   background: rgb(234 179 84 / 18%);
 }
+.cmd-hud__ship-opt b {
+  display: block;
+  font-size: 12px;
+}
 .cmd-hud__ship-opt small {
+  font-size: 10px;
   color: #93c5fd;
-  font-size: 11px;
 }
 .cmd-hud__modal-actions {
   display: flex;

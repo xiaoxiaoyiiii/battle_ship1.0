@@ -6,7 +6,13 @@ import TitleBadge from './TitleBadge.vue'
 import { useProfileStore, type JsonObject } from '../stores/profile'
 import { useAudioStore } from '../stores/audio'
 import { useGameStore } from '../stores/game'
-import { commanderAvatarUrl, commanderTierOf, useCommandersStore } from '../stores/commanders'
+import {
+  commanderIntroForEquipped,
+  commanderPalette,
+  commanderTierOf,
+  useCommandersStore,
+} from '../stores/commanders'
+import CommanderPortraitStage from './commander/CommanderPortraitStage.vue'
 
 /**
  * 匹配成功身份预览：沿用冻结的五秒确认流程，只把已经存在的公开资料
@@ -32,11 +38,29 @@ interface MatchCmdSide {
   commander_id?: string
   commander_name?: string
   commander_level?: number
+  cosmetics?: Record<string, unknown> | null
   skill?: { name?: string } | null
 }
 const cmdState = computed(() => game.state.commander_state as { self?: MatchCmdSide | null; opponent?: MatchCmdSide | null } | null)
 const selfCmd = computed(() => cmdState.value?.self ?? null)
 const oppCmd = computed(() => cmdState.value?.opponent ?? null)
+
+function introScale(side: MatchCmdSide | null): number {
+  if (!side) return 0
+  const lvl = side.commander_level || 1
+  const mode = commanderIntroForEquipped(lvl, side.cosmetics)
+  if (mode === 'ultimate') return 4
+  if (mode === 'enhanced') return 3
+  return Math.min(2, commanderTierOf(lvl))
+}
+
+function introBadgeText(side: MatchCmdSide | null): string {
+  if (!side) return ''
+  const mode = commanderIntroForEquipped(side.commander_level || 1, side.cosmetics)
+  if (mode === 'ultimate') return '终阶登场'
+  if (mode === 'enhanced') return '强化登场'
+  return ''
+}
 
 watch(selfCmd, (side) => {
   if (side?.commander_id) commanders.playVoice(side.commander_id, 'voice_sortie')
@@ -192,9 +216,31 @@ onBeforeUnmount(stop)
               <span data-testid="match-found-self-rank">{{ selfView.rank }}</span>
               <span data-testid="match-found-self-level">{{ selfView.level }}</span>
             </div>
-            <div v-if="selfCmd?.commander_name" class="match-found__commander" :class="'cmd-scale-' + commanderTierOf(selfCmd.commander_level || 1)" data-testid="match-found-self-commander">
-              <img :src="commanderAvatarUrl(selfCmd.commander_id || 'chichao')" :alt="selfCmd.commander_name" />
-              <span>{{ selfCmd.commander_name }} · Lv.{{ selfCmd.commander_level || 1 }} · {{ selfCmd.skill?.name }}</span>
+            <div
+              v-if="selfCmd?.commander_name"
+              class="match-found__commander"
+              :class="'cmd-scale-' + introScale(selfCmd)"
+              :style="{
+                '--cmd-pri': commanderPalette(selfCmd.commander_id || 'chichao').primary,
+                '--cmd-acc': commanderPalette(selfCmd.commander_id || 'chichao').accent,
+              }"
+              :data-intro-tier="commanderIntroForEquipped(selfCmd.commander_level || 1, selfCmd.cosmetics)"
+              data-testid="match-found-self-commander"
+            >
+              <CommanderPortraitStage
+                class="match-found__cmd-portrait"
+                :commander-id="selfCmd.commander_id || 'chichao'"
+                :commander-name="selfCmd.commander_name"
+                :level="selfCmd.commander_level || 1"
+                :equipped="selfCmd.cosmetics"
+                mode="strip"
+                preview-stage="intro"
+                :preview-tier="introScale(selfCmd)"
+              />
+              <div class="match-found__cmd-copy">
+                <b>{{ selfCmd.commander_name }} · Lv.{{ selfCmd.commander_level || 1 }}</b>
+                <small>{{ selfCmd.skill?.name }}<template v-if="introBadgeText(selfCmd)"> · {{ introBadgeText(selfCmd) }}</template></small>
+              </div>
             </div>
           </div>
         </article>
@@ -215,9 +261,31 @@ onBeforeUnmount(stop)
               <span data-testid="match-found-opponent-rank">{{ opponentView.rank }}</span>
               <span data-testid="match-found-opponent-level">{{ opponentView.level }}</span>
             </div>
-            <div v-if="oppCmd?.commander_name" class="match-found__commander" :class="'cmd-scale-' + commanderTierOf(oppCmd.commander_level || 1)" data-testid="match-found-opponent-commander">
-              <img :src="commanderAvatarUrl(oppCmd.commander_id || 'chichao')" :alt="oppCmd.commander_name" />
-              <span>{{ oppCmd.commander_name }} · Lv.{{ oppCmd.commander_level || 1 }} · {{ oppCmd.skill?.name }}</span>
+            <div
+              v-if="oppCmd?.commander_name"
+              class="match-found__commander"
+              :class="'cmd-scale-' + introScale(oppCmd)"
+              :style="{
+                '--cmd-pri': commanderPalette(oppCmd.commander_id || 'chichao').primary,
+                '--cmd-acc': commanderPalette(oppCmd.commander_id || 'chichao').accent,
+              }"
+              :data-intro-tier="commanderIntroForEquipped(oppCmd.commander_level || 1, oppCmd.cosmetics)"
+              data-testid="match-found-opponent-commander"
+            >
+              <CommanderPortraitStage
+                class="match-found__cmd-portrait"
+                :commander-id="oppCmd.commander_id || 'chichao'"
+                :commander-name="oppCmd.commander_name"
+                :level="oppCmd.commander_level || 1"
+                :equipped="oppCmd.cosmetics"
+                mode="strip"
+                preview-stage="intro"
+                :preview-tier="introScale(oppCmd)"
+              />
+              <div class="match-found__cmd-copy">
+                <b>{{ oppCmd.commander_name }} · Lv.{{ oppCmd.commander_level || 1 }}</b>
+                <small>{{ oppCmd.skill?.name }}<template v-if="introBadgeText(oppCmd)"> · {{ introBadgeText(oppCmd) }}</template></small>
+              </div>
             </div>
           </div>
         </article>
@@ -255,11 +323,15 @@ onBeforeUnmount(stop)
 .match-found__chips { display:flex; flex-wrap:wrap; justify-content:center; gap:6px; margin-top:2px; }
 .match-found__chips span { min-height:24px; padding:4px 9px; border:1px solid color-mix(in srgb,currentColor 44%,transparent); border-radius:999px; background:rgb(4 13 25 / 42%); color:#c9e9f2; font-size:11px; line-height:1.2; }
 .match-found__side--rival .match-found__chips span { color:#f6d7a0; }
-.match-found__commander { display:inline-flex; align-items:center; gap:6px; margin-top:4px; padding:4px 10px; border-radius:999px; border:1px solid rgb(125 211 252 / 46%); background:rgb(6 17 32 / 72%); font-size:11px; color:#e0f2fe; }
-.match-found__commander img { width:20px; height:20px; border-radius:50%; object-fit:cover; }
+.match-found__commander { display:inline-flex; align-items:center; gap:9px; margin-top:4px; padding:4px 12px 4px 5px; border-radius:12px; border:1px solid color-mix(in srgb,var(--cmd-pri,#38bdf8) 48%,rgb(125 211 252 / 40%)); background:rgb(6 17 32 / 82%); font-size:11px; color:#e0f2fe; text-align:left; }
+.match-found__cmd-portrait { width:44px; height:44px; border-radius:8px; flex-shrink:0; }
+.match-found__cmd-portrait :deep(.cmd-vfx__pill) { display:none; }
+.match-found__cmd-copy { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.match-found__cmd-copy b { font-size:12px; color:#f8fafc; line-height:1.15; }
+.match-found__cmd-copy small { font-size:10.5px; color:var(--cmd-acc,#bae6fd); line-height:1.15; }
 .match-found__commander.cmd-scale-2 { border-color:#38bdf8; box-shadow:0 0 12px rgb(56 189 248 / 38%); }
-.match-found__commander.cmd-scale-3 { border-color:#f59e0b; box-shadow:0 0 16px rgb(245 158 11 / 48%); color:#fef08a; }
-.match-found__commander.cmd-scale-4 { border-color:#fde047; box-shadow:0 0 22px rgb(253 224 71 / 64%); color:#fffbeb; font-weight:700; }
+.match-found__commander.cmd-scale-3 { border-color:#f59e0b; box-shadow:0 0 18px color-mix(in srgb,var(--cmd-pri,#f59e0b) 48%,transparent); }
+.match-found__commander.cmd-scale-4 { border-color:#fde047; box-shadow:0 0 24px rgb(253 224 71 / 64%), inset 0 0 12px rgb(253 224 71 / 18%); font-weight:700; }
 .match-found__versus-wrap { position:relative; display:grid; place-items:center; width:110px; height:110px; }
 .match-found__versus-pulse { position:absolute; inset:0; border:1px solid rgb(117 213 241 / 45%); border-radius:50%; box-shadow:0 0 30px rgb(78 200 224 / 30%); animation:versus-pulse 1.8s ease-out infinite; }
 .match-found__versus { position:relative; display:grid; place-items:center; width:88px; height:88px; border:3px double #397591; border-radius:50%; color:var(--gold); font-size:29px; font-weight:800; background:rgb(5 15 29 / 82%); box-shadow:0 0 35px #4ec8e066,inset 0 0 18px rgb(78 200 224 / 12%); animation:versus-lock .8s .22s cubic-bezier(.16,.8,.25,1) both; }

@@ -24,7 +24,6 @@ import ChainAnimationOverlay from './ChainAnimationOverlay.vue'
 import CardDrawAnimation from './CardDrawAnimation.vue'
 import CardEffectOverlay from './CardEffectOverlay.vue'
 import CommanderHudBar from '../../components/commander/CommanderHudBar.vue'
-import CommanderSkillOverlay from '../../components/commander/CommanderSkillOverlay.vue'
 import { useCommandersStore } from '../../stores/commanders'
 import { useCardEffectsStore } from '../../stores/cardEffects'
 import { useCardDrawStore } from '../../stores/cardDraw'
@@ -633,7 +632,8 @@ const chatHeadEl = ref<HTMLElement | null>(null)
 const chatDrag = useFloatingDrag({
   handle: chatHeadEl,
   panel: chatPanelEl,
-  initial: { x: 20, y: 96 },
+  initial: { x: 20, y: Math.max(256, Math.round(window.innerHeight * 0.27)) },
+  minY: 252,
   storageKey: 'in_game_chat_pos',
 })
 
@@ -643,18 +643,18 @@ const detailHeadEl = ref<HTMLElement | null>(null)
 const detailDrag = useFloatingDrag({
   handle: detailHeadEl,
   panel: detailPanelEl,
-  // 放在左侧聊天/日志栏旁，避开右侧阶段操作，也不压住左侧常驻浮窗。
-  initial: { x: Math.max(260, Math.min(320, window.innerWidth * .17 + 16)), y: 158 },
+  // 放在左侧聊天/日志栏旁，避开右侧阶段操作，也不压住左侧左上角指挥官窗。
+  initial: { x: Math.max(260, Math.min(320, window.innerWidth * .17 + 16)), y: 244 },
   minY: 72,
 })
 
 // 目标面板不占棋盘布局空间，标题可拖动；各类目标复用同一交互。
 const targetPanelEl = ref<HTMLElement | null>(null)
 const targetHeadEl = ref<HTMLElement | null>(null)
-const targetDrag = useFloatingDrag({ handle: targetHeadEl, panel: targetPanelEl, initial: { x: 16, y: 104 }, minY: 80 })
+const targetDrag = useFloatingDrag({ handle: targetHeadEl, panel: targetPanelEl, initial: { x: 20, y: 252 }, minY: 80 })
 const mtPanelEl = ref<HTMLElement | null>(null)
 const mtHeadEl = ref<HTMLElement | null>(null)
-const mtDrag = useFloatingDrag({ handle: mtHeadEl, panel: mtPanelEl, initial: { x: 16, y: 104 }, minY: 80 })
+const mtDrag = useFloatingDrag({ handle: mtHeadEl, panel: mtPanelEl, initial: { x: 20, y: 252 }, minY: 80 })
 const mtPanelStyle = computed(() => ({ left: mtDrag.state.value.x + 'px', top: mtDrag.state.value.y + 'px', maxHeight: compact.value ? undefined : `calc(100dvh - ${mtDrag.state.value.y + 12}px)` }))
 // 进入神秘科技瞄准时收起可能残留的魔法卡选格，棋盘只服务一个选择。
 watch(mtActive, (on) => { if (on && selection.value) cancelSelection() })
@@ -686,7 +686,7 @@ const pickHeadEl = ref<HTMLElement | null>(null)
 const pickDrag = useFloatingDrag({
   handle: pickHeadEl,
   panel: pickPanelEl,
-  initial: { x: 16, y: 104 },
+  initial: { x: 20, y: 252 },
   minY: 72,
 })
 const pickPanelStyle = computed(() => ({
@@ -701,7 +701,8 @@ const logCollapsed = ref(false)
 const logDrag = useFloatingDrag({
   handle: logHeadEl,
   panel: logPanelEl,
-  initial: { x: 20, y: 432 },
+  initial: { x: 20, y: Math.max(520, Math.round(window.innerHeight * 0.56)) },
+  minY: 252,
   storageKey: 'game_log_pos',
 })
 
@@ -1853,6 +1854,7 @@ watch(
   (room) => {
     if (!room || room === seenRoom) return
     seenRoom = room
+    commanders.clearSkillEvents()
     // 对局数据由 game store 在接收新房间首帧时清空。
     selection.value = null
     shieldPicks.value = []
@@ -1919,6 +1921,7 @@ onBeforeUnmount(() => {
   if (ticker !== null) window.clearInterval(ticker)
   ticker = null
   window.removeEventListener('keydown', onKeydown)
+  commanders.clearSkillEvents()
 })
 
 function backToLobby(): void {
@@ -1948,6 +1951,17 @@ function backToLobby(): void {
     <p v-if="!hasRoom" class="game-empty" data-testid="game-empty">
       还没有收到对局数据。进对局时会自动显示双方海域、手牌与本回合状态；刷新后请从大厅或布船重新进入。
     </p>
+
+    <CommanderHudBar
+      :commander-state="state.commander_state"
+      :player-id="state.player_id"
+      :ships="state.ships"
+      :busy="busy"
+      :compact="compact"
+      @activate="activateCommanderSkill"
+      @interact="interactCommander"
+      @send-emoji="sendCommanderEmoji"
+    />
 
     <div class="game-main-container">
       <!-- 左列：对局日志（原 main 的浮动日志窗，常驻在左列；手机上收进日志抽屉） -->
@@ -2103,15 +2117,6 @@ function backToLobby(): void {
         </div>
 
         <!-- 手机档：单块棋盘 + 海域切换标签（标题与提交的棋盘同源） -->
-        <CommanderHudBar
-          :commander-state="state.commander_state"
-          :player-id="state.player_id"
-          :ships="state.ships"
-          :busy="busy"
-          @activate="activateCommanderSkill"
-          @interact="interactCommander"
-          @send-emoji="sendCommanderEmoji"
-        />
         <div v-if="boardMode === 'tabs' && !selection" class="board-tabs" :class="{ 'has-chain-reminder': (priorityCollapsed && priorityRequest) || (chainCollapsed && chainHasContent) }" role="tablist" aria-label="切换棋盘">
           <button
             type="button"
@@ -2843,7 +2848,6 @@ function backToLobby(): void {
     </div>
     <ChainAnimationOverlay :suspended="Boolean(placementRequest || selection || match.pickRequest || match.shieldChoice || state.needs_reset)" />
     <CardEffectOverlay />
-    <CommanderSkillOverlay />
     <MagicPlacementPanel v-if="placementOpen && placementRequest" :request="placementRequest" :kind="placementKind" :title="placementTitle" :hint="placementHint" :selected="placementSelected" :busy="placementBusy" :error="placementError" :compact="compact" :tight="tight" @confirm="submitPlacement()" @cancel="submitPlacement(true)" />
     <MagicChoicePanel />
     <MagicDiscardPanel />

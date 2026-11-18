@@ -1,32 +1,56 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import {
-  commanderPortraitUrl,
+  commanderPalette,
+  commanderSkillVfxForEquipped,
   commanderTierOf,
   useCommandersStore,
+  type CommanderEquippedLike,
   type CommanderSkillCastEvent,
 } from '../../stores/commanders'
+import CommanderVfxLayer, { type CommanderVfxStage } from './CommanderVfxLayer.vue'
+
+const props = withDefaults(
+  defineProps<{
+    side?: 'self' | 'opponent'
+    playerId?: string
+    cosmetics?: CommanderEquippedLike | null
+    commanderLevel?: number
+  }>(),
+  {
+    side: 'self',
+    playerId: '',
+    cosmetics: null,
+    commanderLevel: 1,
+  },
+)
 
 const store = useCommandersStore()
 const activeCutin = ref<CommanderSkillCastEvent | null>(null)
+const activeSeq = ref(0)
 let timer: ReturnType<typeof setTimeout> | null = null
 
-const PALETTE: Record<string, { pri: string; acc: string }> = {
-  chichao: { pri: '#e84855', acc: '#ff9e7d' },
-  qingtong: { pri: '#4ea8de', acc: '#9be7ff' },
-  tieanchor: { pri: '#3b76f6', acc: '#7dd3fc' },
-  guihang: { pri: '#eab354', acc: '#fef08a' },
+function matchesSide(ev: CommanderSkillCastEvent): boolean {
+  if (!props.playerId) return props.side === 'self'
+  if (ev.player_id) return ev.player_id === props.playerId
+  return props.side === 'self'
 }
 
 watch(
   () => store.lastSkillEvent,
   (ev) => {
-    if (!ev) return
+    if (!ev || !matchesSide(ev)) return
+    if (!store.isSkillEventFresh(ev)) return
+    store.consumeSkillEvent(ev.id)
+
     activeCutin.value = ev
+    activeSeq.value += 1
     if (timer !== null) clearTimeout(timer)
+    const durationMs =
+      ev.negated || ev.stage === 'negated' || ev.stage === 'chain_enter' ? 440 : 820
     timer = setTimeout(() => {
       activeCutin.value = null
-    }, 2000)
+    }, durationMs)
   },
 )
 
@@ -34,111 +58,76 @@ onBeforeUnmount(() => {
   if (timer !== null) clearTimeout(timer)
 })
 
-function stageText(ev: CommanderSkillCastEvent): string {
-  if (ev.stage === 'negated') return `被 ${ev.negated_by || '对手'} 无效化`
-  if (ev.stage === 'reveal') return '延迟锁定坐标揭晓！'
-  if (ev.stage === 'chain_enter') return '速阶三连锁响应 · 发动！'
-  return '指挥官技能 · 展开！'
-}
+const effectiveStage = computed<CommanderVfxStage>(() => {
+  const ev = activeCutin.value
+  if (!ev) return ''
+  if (ev.negated || ev.stage === 'negated') return 'negated'
+  return ev.stage
+})
+
+const isExclusive = computed(() => {
+  const ev = activeCutin.value
+  if (!ev) return false
+  const lvl = ev.commander_level || props.commanderLevel || 1
+  return commanderSkillVfxForEquipped(lvl, props.cosmetics) === 'exclusive'
+})
+
+const palette = computed(() =>
+  commanderPalette(activeCutin.value?.commander_id || 'chichao'),
+)
 </script>
 
 <template>
-  <Transition name="cmd-cutin">
-    <div
-      v-if="activeCutin"
-      class="cmd-cutin"
-      :class="[
-        'cmd-cutin--tier-' + commanderTierOf(activeCutin.commander_level),
-        { 'is-negated': activeCutin.negated },
-      ]"
-      :style="{
-        '--cmd-pri': (PALETTE[activeCutin.commander_id] || PALETTE.chichao).pri,
-        '--cmd-acc': (PALETTE[activeCutin.commander_id] || PALETTE.chichao).acc,
-      }"
-      data-testid="commander-skill-cutin"
-      role="status"
-      aria-live="polite"
-    >
-      <div class="cmd-cutin__banner">
-        <img
-          class="cmd-cutin__portrait"
-          :src="commanderPortraitUrl(activeCutin.commander_id, activeCutin.commander_level >= 15 ? 'ultimate' : activeCutin.commander_level >= 10 ? 'ascended' : 'base')"
-          :alt="activeCutin.commander_name"
-        />
-        <div class="cmd-cutin__copy">
-          <small class="cmd-cutin__eyebrow">{{ activeCutin.commander_name }} · Lv.{{ activeCutin.commander_level }}</small>
-          <strong class="cmd-cutin__skill">【{{ activeCutin.skill_name }}】</strong>
-          <span class="cmd-cutin__stage">{{ stageText(activeCutin) }}</span>
-        </div>
-      </div>
-    </div>
-  </Transition>
+  <div
+    v-if="activeCutin && effectiveStage"
+    :key="activeCutin.id + '-' + activeSeq"
+    class="cmd-corner-cutin"
+    :class="[
+      `cmd-corner-cutin--${props.side}`,
+      `cmd-corner-cutin--stage-${effectiveStage}`,
+      { 'is-negated': activeCutin.negated || effectiveStage === 'negated' },
+    ]"
+    :style="{
+      '--cmd-pri': palette.primary,
+      '--cmd-acc': palette.accent,
+      '--cmd-glow': palette.glow,
+    }"
+    data-testid="commander-skill-cutin"
+    :data-side="props.side"
+    :data-commander="activeCutin.commander_id"
+    :data-stage="effectiveStage"
+    role="status"
+    aria-live="polite"
+  >
+    <CommanderVfxLayer
+      :commander-id="activeCutin.commander_id"
+      :stage="effectiveStage"
+      :exclusive="isExclusive"
+      :negated-by="activeCutin.negated_by"
+      :tier="commanderTierOf(activeCutin.commander_level || 1)"
+    />
+    <span class="sr-only">
+      {{ activeCutin.commander_name }} 【{{ activeCutin.skill_name }}】
+      {{ effectiveStage === 'negated' ? `被 ${activeCutin.negated_by || '对手'} 无效化` : effectiveStage === 'chain_enter' ? '入链响应' : effectiveStage === 'reveal' ? '揭晓坐标' : '发动成功' }}
+    </span>
+  </div>
 </template>
 
 <style scoped>
-.cmd-cutin {
-  position: fixed;
-  inset: 76px 0 auto 0;
-  z-index: 330;
-  display: flex;
-  justify-content: center;
+.cmd-corner-cutin {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  overflow: hidden;
+  border-radius: inherit;
   pointer-events: none;
-  padding: 0 16px;
 }
-.cmd-cutin__banner {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 10px 22px 10px 12px;
-  border-radius: 18px;
-  border: 1.5px solid var(--cmd-acc);
-  background: linear-gradient(120deg, color-mix(in srgb, var(--cmd-pri) 26%, #091324), rgb(7 14 26 / 94%));
-  box-shadow: 0 14px 38px rgb(0 0 0 / 50%), 0 0 28px color-mix(in srgb, var(--cmd-pri) 36%, transparent);
-}
-.cmd-cutin--tier-3 .cmd-cutin__banner,
-.cmd-cutin--tier-4 .cmd-cutin__banner {
-  border-width: 2px;
-  box-shadow: 0 16px 46px rgb(0 0 0 / 55%), 0 0 42px color-mix(in srgb, var(--cmd-acc) 48%, transparent);
-}
-.cmd-cutin.is-negated .cmd-cutin__banner {
-  filter: grayscale(0.45);
-  border-color: #f87171;
-}
-.cmd-cutin__portrait {
-  width: 56px;
-  height: 72px;
-  border-radius: 10px;
-  border: 1px solid var(--cmd-acc);
-  object-fit: cover;
-}
-.cmd-cutin__copy {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.cmd-cutin__eyebrow {
-  font-size: 11px;
-  color: var(--cmd-acc);
-  letter-spacing: 0.08em;
-}
-.cmd-cutin__skill {
-  font-size: 18px;
-  color: #ffffff;
-}
-.cmd-cutin__stage {
-  font-size: 12px;
-  color: #dcebf7;
-}
-.cmd-cutin-enter-active,
-.cmd-cutin-leave-active {
-  transition: opacity 0.28s ease, transform 0.28s ease;
-}
-.cmd-cutin-enter-from {
-  opacity: 0;
-  transform: translateY(-14px) scale(0.95);
-}
-.cmd-cutin-leave-to {
-  opacity: 0;
-  transform: translateY(-8px) scale(0.98);
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 </style>

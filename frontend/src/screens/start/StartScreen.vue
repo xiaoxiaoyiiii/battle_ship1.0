@@ -313,6 +313,9 @@ async function startAi(): Promise<void> {
         <h1 id="screen-start-title" class="home-head__title" data-testid="start-heading">准备出航</h1>
         <p class="home-head__subtitle" :data-testid="route.query.first_battle === '1' ? 'first-battle-guide' : undefined">{{ route.query.first_battle === '1' ? '已选好简单电脑，点击「开始人机对战」练习布船与炮击。' : '一片海域，一手魔法。下一场胜负由你决定。' }}</p>
       </div>
+      <div class="home-head__commander">
+        <CommanderSelectorStrip header-slot title="出战指挥官" />
+      </div>
       <div class="home-head__meta">
         <span class="home-pill" title="在线玩家">
           <i class="home-pill__dot" aria-hidden="true"></i>
@@ -418,7 +421,6 @@ async function startAi(): Promise<void> {
           <h2 id="home-actions-title" class="home-main__title">选择你的下一场海战</h2>
           <p class="home-main__lead">落子、施法，在连锁中扭转战局。</p>
         </div>
-        <CommanderSelectorStrip title="出战指挥官配置" />
         <div class="home-launch__actions">
         <button
           type="button"
@@ -636,19 +638,20 @@ async function startAi(): Promise<void> {
 
 <style scoped>
 /* 三栏出航台：身份、对局入口和实时信息各有稳定层级。 */
-.home-screen { width:100%; max-width:1480px; margin:0 auto; padding:24px 24px 28px; display:flex; flex-direction:column; gap:22px; }
-.home-head { display:flex; align-items:center; justify-content:space-between; gap:20px; }
+.home-screen { --home-col-left:226px; --home-col-right:286px; --home-col-gap:22px; width:100%; max-width:1480px; margin:0 auto; padding:24px 24px 28px; display:flex; flex-direction:column; gap:22px; }
+.home-head { display:grid; grid-template-columns:var(--home-col-left) minmax(0,1fr) var(--home-col-right); gap:var(--home-col-gap); align-items:center; }
 .home-head__main { min-width:0; }
+.home-head__commander { min-width:0; }
 .home-head__title { margin:0; color:var(--text-primary); font-size:30px; font-weight:750; letter-spacing:.02em; line-height:1.3; }
-.home-head__subtitle { margin:5px 0 0; color:var(--text-secondary); font-size:14px; }
-.home-head__meta { display:flex; align-items:center; flex-wrap:wrap; justify-content:flex-end; gap:12px; }
+.home-head__subtitle { margin:5px 0 0; color:var(--text-secondary); font-size:14px; line-height:1.45; }
+.home-head__meta { display:flex; align-items:center; flex-wrap:wrap; justify-content:flex-end; gap:12px; min-width:0; }
 .home-pill { display:inline-flex; align-items:center; gap:5px; padding:5px 10px; border:1px solid color-mix(in srgb,var(--role-success) 30%,transparent); border-radius:5px; background:color-mix(in srgb,var(--role-success) 10%,var(--panel)); color:var(--role-success); font-size:13px; white-space:nowrap; }
 .home-pill__dot { width:6px; height:6px; background:currentColor; border-radius:50%; }
 .home-pill__value { font-variant-numeric:tabular-nums; }
 .home-conn { display:flex; align-items:center; gap:6px; color:var(--text-secondary); font-size:12px; }
 .home-conn::before { content:''; width:5px; height:5px; border-radius:50%; background:var(--role-success); }
 .home-conn[data-connected='false']::before { background:var(--role-warning); }
-.home-grid { display:grid; grid-template-columns:226px minmax(0,1fr) 286px; gap:22px; align-items:start; }
+.home-grid { display:grid; grid-template-columns:var(--home-col-left) minmax(0,1fr) var(--home-col-right); gap:var(--home-col-gap); align-items:start; }
 .home-left,.home-main,.home-side { min-width:0; display:flex; flex-direction:column; gap:16px; }
 .home-card { min-width:0; padding:18px 20px; border:1px solid var(--panel-line); border-radius:12px; background:var(--panel); }
 .home-card__head { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:14px; }
@@ -738,7 +741,7 @@ async function startAi(): Promise<void> {
 .home-changelog__items { display:grid; gap:7px; margin:0; padding:0; list-style:none; color:var(--text-secondary); font-size:13px; line-height:1.65; }
 .home-screen :is(button,a):focus-visible { outline:2px solid var(--focus-ring); outline-offset:3px; }
 @media (max-width:1240px) and (min-width:1024px) {
-  .home-grid { grid-template-columns:210px minmax(0,1fr) 262px; gap:16px; }
+  .home-screen { --home-col-left:210px; --home-col-right:262px; --home-col-gap:16px; }
   .home-launch { padding:22px; }
   .home-launch__art { width:120px; opacity:.32; }
   .home-main__head,.home-launch__actions { max-width:100%; }
@@ -748,6 +751,10 @@ async function startAi(): Promise<void> {
 }
 @media (max-width:1023px) {
   .home-screen { padding:22px 20px 30px; }
+  .home-head { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px 16px; }
+  .home-head__main { order:1; flex:1 1 auto; }
+  .home-head__meta { order:2; }
+  .home-head__commander { order:3; flex:1 0 100%; }
   .home-grid { grid-template-columns:minmax(0,1fr) 280px; gap:18px; }
   .home-main { grid-column:1; grid-row:1; }
   .home-side { grid-column:2; grid-row:1 / 3; }
@@ -789,7 +796,7 @@ async function startAi(): Promise<void> {
   .home-screen { flex:1 1 auto; height:auto; min-height:0; overflow:hidden; padding:14px 24px 16px; gap:14px; }
   .home-head { flex-shrink:0; }
   .home-head__title { font-size:26px; }
-  .home-grid { flex:1; min-height:0; align-items:stretch; gap:18px; overflow:hidden; }
+  .home-grid { flex:1; min-height:0; align-items:stretch; overflow:hidden; }
   .home-left,.home-main,.home-side { min-height:0; gap:12px; overflow:auto; }
   .home-main { overflow:visible; }
   .home-card { padding:14px 16px; }

@@ -1,17 +1,21 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   commanderAvatarUrl,
   commanderEmojiUrl,
+  commanderFaceFocus,
   commanderPortraitUrl,
   commanderTierLabel,
   commanderTierOf,
   portraitForLevelAndEquipped,
+  portraitVariantFor,
   useCommandersStore,
   type CommanderSpecView,
 } from '../../stores/commanders'
 import { useAuthStore } from '../../stores/auth'
 import { useUiStore } from '../../stores/ui'
+import CommanderPortraitStage from '../../components/commander/CommanderPortraitStage.vue'
+import type { CommanderVfxStage } from '../../components/commander/CommanderVfxLayer.vue'
 
 const auth = useAuthStore()
 const ui = useUiStore()
@@ -19,6 +23,9 @@ const store = useCommandersStore()
 
 const inspectedId = ref<string>('chichao')
 const previewPortrait = ref<string>('')
+const previewTierOverride = ref<number | null>(null)
+const previewMotionStage = ref<CommanderVfxStage>('')
+let motionTimer: ReturnType<typeof setTimeout> | null = null
 const activeTab = ref<'rewards' | 'loadout'>('rewards')
 const feedback = ref('')
 
@@ -27,16 +34,58 @@ onMounted(async () => {
   if (store.selectedCommanderId) inspectedId.value = store.selectedCommanderId
 })
 
+onBeforeUnmount(() => {
+  if (motionTimer !== null) clearTimeout(motionTimer)
+})
+
 const roster = computed(() => store.commanders)
 const inspected = computed<CommanderSpecView | null>(
   () => roster.value.find((c) => c.id === inspectedId.value) ?? roster.value[0] ?? null,
 )
-const activePortraitUrl = computed(() => {
+const activeVariant = computed(() => {
   const c = inspected.value
-  if (!c) return ''
-  if (previewPortrait.value) return commanderPortraitUrl(c.id, previewPortrait.value)
-  return portraitForLevelAndEquipped(c.id, c.progress.level, c.equipped)
+  if (!c) return 'base'
+  return previewPortrait.value || portraitVariantFor(c.progress.level, c.equipped)
 })
+const effectivePreviewTier = computed(() => {
+  if (previewTierOverride.value !== null) return previewTierOverride.value
+  return commanderTierOf(inspected.value?.progress.level || 1)
+})
+
+const PORTRAIT_FORMS: ReadonlyArray<{ id: 'base' | 'ascended' | 'alt' | 'ultimate'; label: string; reqLevel: number }> = [
+  { id: 'base', label: '初始形态', reqLevel: 1 },
+  { id: 'ascended', label: '进阶武装', reqLevel: 10 },
+  { id: 'alt', label: '异色涂装', reqLevel: 17 },
+  { id: 'ultimate', label: '终阶动态', reqLevel: 20 },
+]
+
+function formStatusLabel(c: CommanderSpecView, variant: 'base' | 'ascended' | 'alt' | 'ultimate', reqLevel: number): string {
+  if (!c.owned || auth.isGuest) return '可预览'
+  if (c.equipped.portrait === variant) return '已装备'
+  if (c.unlocked_options.portraits.includes(variant)) return '已领取'
+  if (c.progress.level >= reqLevel) return '可领取'
+  return '可预览'
+}
+
+function formStatusTone(c: CommanderSpecView, variant: 'base' | 'ascended' | 'alt' | 'ultimate', reqLevel: number): string {
+  if (!c.owned || auth.isGuest) return 'preview'
+  if (c.equipped.portrait === variant) return 'equipped'
+  if (c.unlocked_options.portraits.includes(variant)) return 'claimed'
+  if (c.progress.level >= reqLevel) return 'claimable'
+  return 'preview'
+}
+
+function triggerStageMotion(stage: CommanderVfxStage): void {
+  if (motionTimer !== null) clearTimeout(motionTimer)
+  previewMotionStage.value = ''
+  window.setTimeout(() => {
+    previewMotionStage.value = stage
+  }, 16)
+  const dur = stage === 'chain_enter' || stage === 'negated' ? 480 : stage === 'intro' ? 1020 : stage === 'victory' ? 1120 : 860
+  motionTimer = setTimeout(() => {
+    previewMotionStage.value = ''
+  }, dur)
+}
 
 const voiceMeta: Array<{ key: string; label: string }> = [
   { key: 'voice_greet', label: '问候语音' },
@@ -51,6 +100,8 @@ const voiceMeta: Array<{ key: string; label: string }> = [
 function pickInspect(c: CommanderSpecView): void {
   inspectedId.value = c.id
   previewPortrait.value = ''
+  previewTierOverride.value = null
+  previewMotionStage.value = ''
   feedback.value = ''
 }
 
@@ -155,7 +206,12 @@ function portraitLabel(v: string): string {
         :data-testid="'commander-card-' + c.id"
         @click="pickInspect(c)"
       >
-        <img class="cmd-card__thumb" :src="portraitForLevelAndEquipped(c.id, c.progress.level, c.equipped)" :alt="c.name" />
+        <img
+          class="cmd-card__thumb"
+          :src="portraitForLevelAndEquipped(c.id, c.progress.level, c.equipped)"
+          :style="{ objectPosition: commanderFaceFocus(c.id, c.progress.level, c.equipped) }"
+          :alt="c.name"
+        />
         <div class="cmd-card__info">
           <div class="cmd-card__top">
             <b>{{ c.name }}</b>
@@ -178,23 +234,100 @@ function portraitLabel(v: string): string {
 
     <div v-if="inspected" class="cmd-stage" :style="{ '--cmd-pri': inspected.palette.primary, '--cmd-acc': inspected.palette.accent }">
       <aside class="cmd-stage__art">
-        <div class="cmd-stage__portrait-box" :class="'tier-' + commanderTierOf(inspected.progress.level)" @click="auditionVoice('voice_interact')">
-          <img :src="activePortraitUrl" :alt="inspected.name + ' 立绘'" />
+        <div
+          class="cmd-stage__portrait-box"
+          :class="'tier-' + effectivePreviewTier"
+          @click="auditionVoice('voice_interact')"
+        >
+          <CommanderPortraitStage
+            class="cmd-stage__portrait-stage"
+            :commander-id="inspected.id"
+            :commander-name="inspected.name"
+            :level="inspected.progress.level"
+            :equipped="inspected.equipped"
+            :portrait-override="previewPortrait"
+            :preview-stage="previewMotionStage"
+            :preview-tier="effectivePreviewTier"
+            mode="full"
+            :active="effectivePreviewTier >= 1"
+          />
           <span class="cmd-stage__tier-tag">
-            Lv.{{ inspected.progress.level }} · {{ commanderTierLabel(commanderTierOf(inspected.progress.level)) }}
+            Lv.{{ inspected.progress.level }} · {{ commanderTierLabel(effectivePreviewTier) }}
           </span>
           <span class="cmd-stage__tap-hint">点击立绘试听互动台词</span>
         </div>
-        <div class="cmd-stage__variants">
+
+        <!-- 四形态进化对照（标注等级与已装备/已领取/可领取/可预览状态） -->
+        <div class="cmd-forms-grid" data-testid="commander-forms-comparison" role="group" aria-label="四形态进化对照">
           <button
-            v-for="v in ['base', 'ascended', 'alt', 'ultimate']"
-            :key="v"
+            v-for="form in PORTRAIT_FORMS"
+            :key="form.id"
             type="button"
-            class="cmd-var-btn"
-            :class="{ 'is-current': (previewPortrait || inspected.equipped.portrait) === v }"
-            :data-testid="'commander-portrait-tab-' + v"
-            @click="previewPortrait = v"
-          >{{ portraitLabel(v) }}</button>
+            class="cmd-form-card"
+            :class="[
+              'is-tone-' + formStatusTone(inspected, form.id, form.reqLevel),
+              { 'is-current': activeVariant === form.id },
+            ]"
+            :data-testid="'commander-portrait-tab-' + form.id"
+            @click="previewPortrait = form.id; previewTierOverride = commanderTierOf(form.reqLevel)"
+          >
+            <img
+              class="cmd-form-card__img"
+              :src="commanderPortraitUrl(inspected.id, form.id)"
+              :style="{ objectPosition: commanderFaceFocus(inspected.id, form.id) }"
+              :alt="inspected.name + form.label"
+            />
+            <div class="cmd-form-card__meta">
+              <b>Lv.{{ form.reqLevel }} · {{ form.label }}</b>
+              <span class="cmd-form-card__badge">{{ formStatusLabel(inspected, form.id, form.reqLevel) }}</span>
+            </div>
+          </button>
+        </div>
+
+        <!-- 阶位光效与动作预览控件 -->
+        <div class="cmd-motion-preview" data-testid="commander-motion-preview">
+          <div class="cmd-motion-preview__tiers">
+            <span>阶位预览：</span>
+            <button
+              v-for="t in [
+                { val: null, label: '当前' },
+                { val: 0, label: 'Lv.1' },
+                { val: 1, label: 'Lv.5' },
+                { val: 2, label: 'Lv.10' },
+                { val: 3, label: 'Lv.15' },
+                { val: 4, label: 'Lv.20' },
+              ]"
+              :key="String(t.val)"
+              type="button"
+              class="cmd-var-btn"
+              :class="{ 'is-current': previewTierOverride === t.val }"
+              @click="previewTierOverride = t.val"
+            >{{ t.label }}</button>
+          </div>
+          <div class="cmd-motion-preview__actions">
+            <button type="button" class="cmd-var-btn" @click="triggerStageMotion('intro')">预览登场</button>
+            <button type="button" class="cmd-var-btn" @click="triggerStageMotion('resolve')">预览技能</button>
+            <button
+              v-if="inspected.id === 'qingtong'"
+              type="button"
+              class="cmd-var-btn"
+              @click="triggerStageMotion('reveal')"
+            >延迟揭晓</button>
+            <button
+              v-if="inspected.skill.enters_chain"
+              type="button"
+              class="cmd-var-btn"
+              @click="triggerStageMotion('chain_enter')"
+            >入链示意</button>
+            <button
+              v-if="inspected.skill.enters_chain"
+              type="button"
+              class="cmd-var-btn"
+              @click="triggerStageMotion('negated')"
+            >无效退场</button>
+            <button type="button" class="cmd-var-btn" @click="triggerStageMotion('victory')">预览胜利</button>
+          </div>
+          <small class="cmd-motion-preview__hint">预览不改动已装备外观，实战严格按各自装备槽生效。</small>
         </div>
       </aside>
 
@@ -606,11 +739,99 @@ function portraitLabel(v: string): string {
   border: 1.5px solid var(--cmd-acc);
   cursor: pointer;
 }
-.cmd-stage__portrait-box img {
+.cmd-stage__portrait-stage {
   display: block;
   width: 100%;
   aspect-ratio: 3 / 4;
+}
+.cmd-forms-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.cmd-form-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid rgb(148 163 184 / 24%);
+  background: rgb(11 23 40 / 84%);
+  color: #cbd5e1;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+.cmd-form-card.is-current {
+  border-color: var(--cmd-acc);
+  background: color-mix(in srgb, var(--cmd-pri) 22%, #0c1b2e);
+}
+.cmd-form-card__img {
+  width: 36px;
+  height: 48px;
+  border-radius: 6px;
   object-fit: cover;
+  flex-shrink: 0;
+  border: 1px solid rgb(148 163 184 / 30%);
+}
+.cmd-form-card__meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.cmd-form-card__meta b {
+  font-size: 11px;
+  color: #f1f5f9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cmd-form-card__badge {
+  display: inline-block;
+  align-self: flex-start;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  background: rgb(148 163 184 / 20%);
+  color: #cbd5e1;
+}
+.cmd-form-card.is-tone-equipped .cmd-form-card__badge {
+  background: linear-gradient(90deg, #facc15, #f59e0b);
+  color: #161005;
+  font-weight: 700;
+}
+.cmd-form-card.is-tone-claimed .cmd-form-card__badge {
+  background: rgb(34 197 94 / 22%);
+  color: #86efac;
+}
+.cmd-form-card.is-tone-claimable .cmd-form-card__badge {
+  background: rgb(56 189 248 / 24%);
+  color: #bae6fd;
+}
+.cmd-motion-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: 1px solid rgb(148 163 184 / 20%);
+  background: rgb(9 20 35 / 80%);
+}
+.cmd-motion-preview__tiers,
+.cmd-motion-preview__actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.cmd-motion-preview__tiers span {
+  font-size: 11px;
+  color: #93b5d1;
+}
+.cmd-motion-preview__hint {
+  font-size: 10.5px;
+  color: #7da1c4;
 }
 .cmd-stage__tier-tag {
   position: absolute;

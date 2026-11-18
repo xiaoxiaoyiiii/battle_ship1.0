@@ -1,8 +1,8 @@
 /* 竖屏 A：区域尺寸固定，覆盖层不挤动海域；小屏允许在本屏内滚动。 */
 .game[data-layout='compact'] {
   display:grid; grid-template-columns:minmax(0,1fr);
-  grid-template-rows:60px 44px 28px calc(var(--board-size) + 20px) var(--mobile-hand-height) 60px;
-  grid-template-areas:'hud' 'field' 'tabs' 'board' 'hand' 'bar';
+  grid-template-rows:60px auto 44px 28px calc(var(--board-size) + 20px) var(--mobile-hand-height) 60px;
+  grid-template-areas:'hud' 'cmd' 'field' 'tabs' 'board' 'hand' 'bar';
   align-content:start; align-items:stretch; gap:4px;
   width:100%; max-width:none; height:100%; min-height:0; margin:0; padding:6px 6px max(6px,env(safe-area-inset-bottom));
   overflow-x:hidden; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable;
@@ -93,7 +93,7 @@
 .game[data-layout='compact'].is-picking .game-compact-bar { visibility:hidden; pointer-events:none; }
 .game[data-layout='compact'].is-picking .game-target,
 .game[data-layout='compact'].is-picking .game-pick-float.battle-prompt {
-  position:relative; grid-column:1; grid-row:5/7; align-self:stretch; left:auto!important; top:auto!important; right:auto; bottom:auto; width:100%; height:auto; max-height:none!important; padding:10px 12px; gap:6px; margin:0; overflow:auto; transform:none; z-index:40;
+  position:relative; grid-column:1; grid-row:6/8; align-self:stretch; left:auto!important; top:auto!important; right:auto; bottom:auto; width:100%; height:auto; max-height:none!important; padding:10px 12px; gap:6px; margin:0; overflow:auto; transform:none; z-index:40;
 }
 .game[data-layout='compact'] .battle-prompt__head { padding:0; margin:0; gap:8px; }
 .game[data-layout='compact'] .battle-prompt__context { margin:0; font-size:10px; }
@@ -147,8 +147,8 @@
 /* 横屏 C：双盘常驻左侧，右侧手牌、场地和操作；旋转不会重挂载对局。 */
 .game[data-layout='compact'][data-tight='true'] {
   grid-template-columns:minmax(0,1fr) var(--mobile-rail-width);
-  grid-template-rows:38px 44px minmax(166px,1fr) 64px;
-  grid-template-areas:'hud hud' 'board field' 'board hand' 'board bar';
+  grid-template-rows:38px auto 44px minmax(120px,1fr) 56px;
+  grid-template-areas:'hud hud' 'board cmd' 'board field' 'board hand' 'board bar';
   gap:4px 8px; align-content:stretch;
 }
 .game[data-layout='compact'][data-tight='true'] .game-hud { height:38px; min-height:38px; grid-template-columns:minmax(0,1fr) minmax(240px,1.2fr) minmax(0,1fr); grid-template-rows:32px; padding:2px 6px; }
@@ -166,7 +166,7 @@
 .game[data-layout='compact'][data-tight='true'] .compact-dock .button { flex:1; }
 .game[data-layout='compact'][data-tight='true'] .game-actions__row .button { min-width:0; padding:4px 6px; font-size:11px; }
 .game[data-layout='compact'][data-tight='true'].is-picking .game-target,
-.game[data-layout='compact'][data-tight='true'].is-picking .game-pick-float.battle-prompt { grid-column:2; grid-row:2/5; padding:8px; }
+.game[data-layout='compact'][data-tight='true'].is-picking .game-pick-float.battle-prompt { grid-column:2; grid-row:4/6; padding:8px; }
 .game[data-layout='compact'][data-tight='true'] .game-target__choices,.game[data-layout='compact'][data-tight='true'] .game-target__effects { flex-direction:column; }
 
 @media (max-height:520px) {

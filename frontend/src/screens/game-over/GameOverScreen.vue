@@ -9,7 +9,12 @@ import { usePlacementStore } from '../../stores/placement'
 import { useResultStore } from '../../stores/result'
 import { useUiStore } from '../../stores/ui'
 import { useAudioStore } from '../../stores/audio'
-import { useCommandersStore, portraitForLevelAndEquipped, commanderTierOf } from '../../stores/commanders'
+import {
+  commanderTierOf,
+  commanderVictoryMotionForEquipped,
+  useCommandersStore,
+} from '../../stores/commanders'
+import CommanderPortraitStage from '../../components/commander/CommanderPortraitStage.vue'
 import SupportAuthorPrompt from '../../components/SupportAuthorPrompt.vue'
 import SupportAuthorLink from '../../components/SupportAuthorLink.vue'
 import {
@@ -116,9 +121,27 @@ function commanderReasonLabel(reason: string | undefined): string {
 }
 const cmdVictoryMotion = computed(() => {
   if (outcome.value !== 'win' || !cmdSelf.value) return 'none'
-  const equipped = cmdSelf.value.cosmetics as Record<string, unknown> | undefined
-  if (equipped?.victory_motion === 'exclusive' || Number(cmdSelf.value.commander_level || 1) >= 13) return 'exclusive'
-  return 'base'
+  const lvl = Number(cmdSettled.value?.after_level || cmdSelf.value.commander_level || 1)
+  return commanderVictoryMotionForEquipped(lvl, cmdSelf.value.cosmetics)
+})
+const cmdVictoryLevel = computed(() =>
+  Number(cmdSettled.value?.after_level || cmdSelf.value?.commander_level || 1),
+)
+const cmdVictoryTier = computed(() => {
+  const baseTier = commanderTierOf(cmdVictoryLevel.value)
+  if (cmdVictoryMotion.value === 'exclusive') return Math.max(3, baseTier)
+  return Math.min(2, baseTier)
+})
+const VICTORY_MOTION_DESC: Record<string, string> = {
+  chichao: '凌空收剑敬礼 · 披风掠过',
+  qingtong: '罗盘合拢 · 潮汐星轨收束',
+  tieanchor: '重锚下沉 · 水花与盾纹散开',
+  guihang: '提督转身 · 金色星盘回转',
+}
+const cmdVictoryDesc = computed(() => {
+  if (cmdVictoryMotion.value !== 'exclusive') return ''
+  const cid = cmdSettled.value?.commander_id || cmdSelf.value?.commander_id || 'chichao'
+  return VICTORY_MOTION_DESC[cid] || '专属胜利动作展示'
 })
 
 watch([hasResult, outcome], () => {
@@ -556,37 +579,46 @@ function openReplay(): void {
         <section
           v-if="cmdSelf || cmdSettled"
           class="game-over__xp game-over__commander"
-          :class="{ 'is-exclusive-motion': cmdVictoryMotion === 'exclusive' }"
+          :class="[
+            { 'is-exclusive-motion': cmdVictoryMotion === 'exclusive' },
+            'is-victory-tier-' + cmdVictoryTier,
+          ]"
+          :data-victory-motion="cmdVictoryMotion"
           data-testid="game-over-commander-xp"
           aria-label="指挥官战果与经验"
         >
           <h2 class="game-over__section-title">指 挥 官</h2>
           <div style="display:flex;align-items:center;gap:12px;">
-            <img
+            <CommanderPortraitStage
               v-if="cmdSelf?.commander_id || cmdSettled?.commander_id"
-              :src="portraitForLevelAndEquipped(cmdSettled?.commander_id || cmdSelf?.commander_id || 'chichao', cmdSettled?.after_level || cmdSelf?.commander_level || 1, cmdSelf?.cosmetics)"
-              :alt="cmdSettled?.commander_name || cmdSelf?.commander_name || '指挥官'"
-              style="width:54px;height:72px;border-radius:10px;object-fit:cover;border:1px solid #fbbf24;"
-              :class="'cmd-tier-' + commanderTierOf(cmdSettled?.after_level || cmdSelf?.commander_level || 1)"
+              style="width:58px;height:76px;border-radius:10px;flex-shrink:0;"
+              :commander-id="cmdSettled?.commander_id || cmdSelf?.commander_id || 'chichao'"
+              :commander-name="cmdSettled?.commander_name || cmdSelf?.commander_name || '指挥官'"
+              :level="cmdVictoryLevel"
+              :equipped="cmdSelf?.cosmetics"
+              mode="bust"
+              :preview-stage="outcome === 'win' ? 'victory' : ''"
+              :preview-tier="cmdVictoryTier"
+              :active="cmdVictoryMotion === 'exclusive'"
             />
             <div style="flex:1;min-width:0;">
-              <p style="margin:0;font-weight:700;color:#0f172a;font-size:15px;">
-                {{ cmdSettled?.commander_name || cmdSelf?.commander_name }} · Lv.{{ cmdSettled?.after_level || cmdSelf?.commander_level || 1 }}
-                <small v-if="cmdVictoryMotion === 'exclusive'" style="color:#b45309;margin-left:6px;">✦ 专属胜利动作展示</small>
+              <p style="margin:0;font-weight:700;color:var(--text-primary, #0f172a);font-size:15px;">
+                {{ cmdSettled?.commander_name || cmdSelf?.commander_name }} · Lv.{{ cmdVictoryLevel }}
+                <small v-if="cmdVictoryMotion === 'exclusive'" style="color:var(--gold-strong, #b45309);margin-left:6px;">✦ {{ cmdVictoryDesc }}</small>
               </p>
               <template v-if="cmdSettled">
-                <p style="margin:4px 0 0;font-size:13px;color:#0369a1;">
-                  指挥官经验 <b data-testid="game-over-commander-xp-delta" style="color:#0284c7;">{{ cmdSettled.delta >= 0 ? '+' + cmdSettled.delta : cmdSettled.delta }} XP</b>
-                  <small v-if="commanderReasonLabel(cmdSettled.reason)" style="color:#475569;margin-left:6px;">（{{ commanderReasonLabel(cmdSettled.reason) }}）</small>
+                <p style="margin:4px 0 0;font-size:13px;color:var(--role-self, #0369a1);">
+                  指挥官经验 <b data-testid="game-over-commander-xp-delta" style="color:var(--role-self, #0284c7);">{{ cmdSettled.delta >= 0 ? '+' + cmdSettled.delta : cmdSettled.delta }} XP</b>
+                  <small v-if="commanderReasonLabel(cmdSettled.reason)" style="color:var(--text-secondary, #475569);margin-left:6px;">（{{ commanderReasonLabel(cmdSettled.reason) }}）</small>
                 </p>
-                <p v-if="cmdSettled.is_ai && cmdSettled.ai_daily_xp_cap" style="margin:2px 0 0;font-size:12px;color:#475569;">
+                <p v-if="cmdSettled.is_ai && cmdSettled.ai_daily_xp_cap" style="margin:2px 0 0;font-size:12px;color:var(--text-secondary, #475569);">
                   今日人机经验额度：{{ cmdSettled.ai_daily_xp_used }} / {{ cmdSettled.ai_daily_xp_cap }}
                 </p>
-                <p v-if="cmdSettled.new_claimable_levels.length" style="margin:4px 0 0;font-size:12px;color:#b45309;">
-                  已解锁新奖励（Lv.{{ cmdSettled.new_claimable_levels.join(', ') }}），前往 <router-link to="/commanders" style="color:#b45309;font-weight:600;text-decoration:underline;">指挥官殿堂领取</router-link>
+                <p v-if="cmdSettled.new_claimable_levels.length" style="margin:4px 0 0;font-size:12px;color:var(--gold-strong, #b45309);">
+                  已解锁新奖励（Lv.{{ cmdSettled.new_claimable_levels.join(', ') }}），前往 <router-link to="/commanders" style="color:var(--gold-strong, #b45309);font-weight:600;text-decoration:underline;">指挥官殿堂领取</router-link>
                 </p>
               </template>
-              <p v-else style="margin:4px 0 0;font-size:12px;color:#475569;">
+              <p v-else style="margin:4px 0 0;font-size:12px;color:var(--text-secondary, #475569);">
                 {{ modeKey === 'custom' || challenge ? '当前模式不计入指挥官成长经验' : '出战完成本场较量' }}
               </p>
             </div>

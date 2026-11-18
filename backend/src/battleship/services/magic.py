@@ -1552,6 +1552,11 @@ class MagicService:
                 return results
             if not finished_before_display and room.state == RoomState.GAME_OVER:
                 # 等待离场期间主动投降等外部终局，不能再执行尚未生效的卡。
+                # 已弹出的卡退回手牌（与效果失败退卡同语义），不许静默吞卡。
+                if not getattr(item, "stolen", False):
+                    await self._refund(
+                        room, item.player_id, item.card, "对局已结束，卡牌退回"
+                    )
                 break
             if getattr(item, "negated", False):
                 by = getattr(item, "negated_by", None)
@@ -1738,6 +1743,13 @@ class MagicService:
 
         resolved_payload = {"results": [result.to_dict() for result in results], "presented": True}
         await self._publisher.emit("chain_resolved", resolved_payload, room=room.id)
+        # 终局中断后残留的连锁项统一退回手牌，避免既不结算也不退牌的吞卡。
+        while room.chain:
+            leftover = room.chain.pop()
+            if not getattr(leftover, "stolen", False):
+                await self._refund(
+                    room, leftover.player_id, leftover.card, "对局已结束，卡牌退回"
+                )
         room.chain = []
         room.chain_waiting = False
         room.chain_window = None

@@ -178,6 +178,9 @@ async def full_power(ctx: EffectContext) -> EffectResult:
         and ctx.room.current_attacker == ctx.caster_id
     )
     if in_battle and not flags.double_attacks:
+        from ...commanders.rules import firepower_control_active
+        if firepower_control_active(ctx.room, ctx.caster_id):
+            return EffectResult(True, "火力统制生效中，本大回合总开火额度固定为6次，不受火力全开加成")
         ctx.room.attacks_remaining = max(0, ctx.room.attacks_remaining) * 2
         effects.consume_flag(ctx.room, ctx.caster_id, "double_attacks")
         await ctx.emit(
@@ -299,6 +302,8 @@ async def shenwei(ctx: EffectContext) -> EffectResult:
         ship = excluded[0]
         ship.hits = list(ship.positions)
         mark_ship_sunken(target, ship)
+        from ...commanders.rules import clear_delayed_locks_for_ship
+        clear_delayed_locks_for_ship(ctx.room, target_id, ship)
         ctx.caster.damage_dealt_this_turn += 1
         await ctx.on_ship_sunk(ctx.opponent_id, ship)
         message = "目标区域内1艘战舰被击沉"

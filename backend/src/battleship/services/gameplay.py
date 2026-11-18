@@ -35,6 +35,7 @@ from ..domain import effects
 from ..domain import mutations, bans
 from ..domain import placement as placement_rules
 from ..domain import replay as replay_rules
+from ..domain.commanders import commander_room_state
 from ..domain.magic import hooks
 from ..domain.magic import interaction as interaction_rules
 from ..domain.magic import temps as magic_temps
@@ -673,6 +674,7 @@ class GameplayService:
                 **rank_payload(room),
                 **self._turn_timing(room),
                 "mutations": mutations.payload(room, pid),
+                "commander_state": commander_room_state(room, pid),
             }, to=seat.socket_id)
         actor = self._name(room, winner)
         replay_rules.note_action(
@@ -887,6 +889,8 @@ class GameplayService:
                 {"room_id": room.id, "round": room.round},
             )
             await self.mystery_tech.begin(room)
+            if self.magic is not None:
+                await self.magic._emit_commander_state(room)
             await self._publisher.emit(
                 "game_state",
                 {
@@ -1026,6 +1030,10 @@ class GameplayService:
         room.decline_priority = {}
         room.turn_started_at = None
         room.turn_timer_attacker = None
+        room.firepower_control_round = {}
+        room.dauntless_round = {}
+        room.delayed_locks = []
+        room.commander_chain_uses = {}
         for player in room.players.values():
             player.ships = []
             player.remaining_ships = 0
@@ -1036,6 +1044,10 @@ class GameplayService:
             player.permanently_destroyed_ships = []
             player.revealed_positions = []
             player.needs_reset = True
+            player.commander_skill_used_count = 0
+            player.commander_last_used_round = None
+            player.commander_next_available_round = 1
+            player.commander_shots_used_this_round = 0
         # #38：整对象重置统一走 reset_all（match 边界清租约 + 投影）。
         effects.reset_all(room)
         return {"status": "success", "message": "游戏状态已重置"}

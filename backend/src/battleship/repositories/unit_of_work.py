@@ -37,6 +37,7 @@ from .mailbox import MailboxRepository
 from .support import SupportRepository
 from .client_promo import ClientPromoRepository
 from .collection import CollectionRepository
+from .commanders import CommanderRepository
 from .skins import SkinRepository
 
 
@@ -84,6 +85,10 @@ class UnitOfWork:
     @property
     def collection(self) -> CollectionRepository:
         return self._repository('collection', CollectionRepository)
+
+    @property
+    def commanders(self) -> CommanderRepository:
+        return self._repository("commanders", CommanderRepository)
 
     @property
     def skins(self) -> SkinRepository:

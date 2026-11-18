@@ -1212,6 +1212,14 @@ watch(targetUsername, () => {
 .profile__card[data-bg='storm'] { background: linear-gradient(150deg, #253747, #0c121d 76%); }
 .profile__card[data-bg='abyss'] { background: linear-gradient(150deg, #121d36, #02050b 76%); }
 .profile__card[data-bg='molten_gold'] { background: linear-gradient(150deg, #443015, #120d0a 76%); }
+.profile__card[data-bg='cmd_chichao_bg_1'] { background: linear-gradient(150deg, #401420, #160c14 76%); }
+.profile__card[data-bg='cmd_chichao_bg_2'] { background: radial-gradient(circle at 82% 16%, rgb(232 72 85 / 26%), transparent 34%), linear-gradient(150deg, #521325, #180b13 76%); }
+.profile__card[data-bg='cmd_qingtong_bg_1'] { background: linear-gradient(150deg, #132a42, #091320 76%); }
+.profile__card[data-bg='cmd_qingtong_bg_2'] { background: radial-gradient(circle at 82% 16%, rgb(78 168 222 / 26%), transparent 34%), linear-gradient(150deg, #113a59, #081524 76%); }
+.profile__card[data-bg='cmd_tieanchor_bg_1'] { background: linear-gradient(150deg, #122147, #080f22 76%); }
+.profile__card[data-bg='cmd_tieanchor_bg_2'] { background: radial-gradient(circle at 82% 16%, rgb(59 118 246 / 28%), transparent 34%), linear-gradient(150deg, #173472, #081024 76%); }
+.profile__card[data-bg='cmd_guihang_bg_1'] { background: linear-gradient(150deg, #332a1d, #111524 76%); }
+.profile__card[data-bg='cmd_guihang_bg_2'] { background: radial-gradient(circle at 82% 16%, rgb(234 179 84 / 28%), transparent 34%), linear-gradient(150deg, #4f3a1c, #121728 76%); }
 
 .profile__hero {
   position: relative;
@@ -1279,10 +1287,22 @@ watch(targetUsername, () => {
 .profile__card[data-bg='moonlit'] .profile__hero::before,
 .profile__card[data-bg='coral_dawn'] .profile__hero::before,
 .profile__card[data-bg='abyssal_grid'] .profile__hero::before,
-.profile__card[data-bg='season_deep_1'] .profile__hero::before {
+.profile__card[data-bg='season_deep_1'] .profile__hero::before,
+.profile__card[data-bg='cmd_chichao_bg_2'] .profile__hero::before,
+.profile__card[data-bg='cmd_qingtong_bg_2'] .profile__hero::before,
+.profile__card[data-bg='cmd_tieanchor_bg_2'] .profile__hero::before,
+.profile__card[data-bg='cmd_guihang_bg_2'] .profile__hero::before {
   background-size: 180% 180%;
   animation: profile-hero-drift 12s ease-in-out infinite alternate;
 }
+.profile__card[data-bg='cmd_chichao_bg_1'] .profile__hero::before { background: linear-gradient(120deg, #7f1d32, #25111c 72%); }
+.profile__card[data-bg='cmd_chichao_bg_2'] .profile__hero::before { background: radial-gradient(300px 140px at 24% 0%, rgb(255 126 112 / 30%), transparent 70%), linear-gradient(120deg, #9f1f3b, #2b101b 72%); }
+.profile__card[data-bg='cmd_qingtong_bg_1'] .profile__hero::before { background: linear-gradient(120deg, #1e4b6e, #0d1d2e 72%); }
+.profile__card[data-bg='cmd_qingtong_bg_2'] .profile__hero::before { background: radial-gradient(300px 140px at 24% 0%, rgb(155 231 255 / 28%), transparent 70%), linear-gradient(120deg, #1d648f, #0d2238 72%); }
+.profile__card[data-bg='cmd_tieanchor_bg_1'] .profile__hero::before { background: linear-gradient(120deg, #1e3a8a, #0b1633 72%); }
+.profile__card[data-bg='cmd_tieanchor_bg_2'] .profile__hero::before { background: radial-gradient(300px 140px at 24% 0%, rgb(125 211 252 / 28%), transparent 70%), linear-gradient(120deg, #2563eb, #0c1738 72%); }
+.profile__card[data-bg='cmd_guihang_bg_1'] .profile__hero::before { background: linear-gradient(120deg, #695027, #1d2236 72%); }
+.profile__card[data-bg='cmd_guihang_bg_2'] .profile__hero::before { background: radial-gradient(300px 140px at 24% 0%, rgb(254 240 138 / 30%), transparent 70%), linear-gradient(120deg, #b47a27, #1c2238 72%); }
 
 .profile__avatar-wrap {
   position: relative;
@@ -1910,6 +1930,14 @@ watch(targetUsername, () => {
 	.profile-editor__preview[data-bg='moonlit'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(53 84 141 / 92%), rgb(23 41 77 / 92%)); }
 	.profile-editor__preview[data-bg='coral_dawn'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(164 79 94 / 92%), rgb(81 44 70 / 92%)); }
 	.profile-editor__preview[data-bg='abyssal_grid'] .profile-editor__preview-cover { background: repeating-linear-gradient(115deg, rgb(255 255 255 / 7%) 0 2px, transparent 2px 12px), linear-gradient(120deg, rgb(73 57 36 / 92%), rgb(23 21 28 / 92%)); }
+	.profile-editor__preview[data-bg='cmd_chichao_bg_1'] .profile-editor__preview-cover,
+	.profile-editor__preview[data-bg='cmd_chichao_bg_2'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(159 31 59 / 92%), rgb(43 16 27 / 92%)); }
+	.profile-editor__preview[data-bg='cmd_qingtong_bg_1'] .profile-editor__preview-cover,
+	.profile-editor__preview[data-bg='cmd_qingtong_bg_2'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(29 100 143 / 92%), rgb(13 34 56 / 92%)); }
+	.profile-editor__preview[data-bg='cmd_tieanchor_bg_1'] .profile-editor__preview-cover,
+	.profile-editor__preview[data-bg='cmd_tieanchor_bg_2'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(37 99 235 / 92%), rgb(12 23 56 / 92%)); }
+	.profile-editor__preview[data-bg='cmd_guihang_bg_1'] .profile-editor__preview-cover,
+	.profile-editor__preview[data-bg='cmd_guihang_bg_2'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(180 122 39 / 92%), rgb(28 34 56 / 92%)); }
 .profile-editor__preview[data-profile-bg='naval_grid'] { background-image: linear-gradient(rgb(111 224 244 / 9%) 1px, transparent 1px), linear-gradient(90deg, rgb(111 224 244 / 9%) 1px, transparent 1px), linear-gradient(160deg, #0d2942, #050914 78%); background-size: 34px 34px, 34px 34px, auto; }
 .profile-editor__preview[data-profile-bg='aurora_drift'] { background: radial-gradient(ellipse at 15% 16%, rgb(111 255 194 / 30%), transparent 36%), linear-gradient(160deg, #123f47, #07131d 78%); }
 .profile-editor__preview[data-profile-bg='nebula_wake'] { background: radial-gradient(circle at 20% 24%, rgb(255 255 255 / 55%) 0 1px, transparent 2px), radial-gradient(circle at 74% 32%, rgb(197 160 255 / 48%) 0 1px, transparent 2px), linear-gradient(155deg, #29205b, #070a19 78%); background-size: 90px 90px, 130px 130px, auto; }

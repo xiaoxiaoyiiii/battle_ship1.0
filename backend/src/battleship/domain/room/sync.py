@@ -235,6 +235,7 @@ def priority_payload(room: Room, player_id: str) -> dict[str, Any] | None:
     payload['action_text'] = PRIORITY_ACTION_TEXT.get(pending.get('action'), '阶段转换')
     if responder:
         payload['speed3_cards'] = pending.get('speed3_cards', [])
+        payload['commander_skill'] = pending.get('commander_skill')
     return payload
 
 
@@ -326,6 +327,7 @@ def build_room_sync(
     """
 
     from ...contracts.events_out import RoomSync
+    from ..commanders import commander_room_state
     from ..mystery_tech.draft import snapshot as tech_snapshot
     from ..magic.interaction import pending_action_reason
 
@@ -459,6 +461,7 @@ def build_room_sync(
         "admin_test": bool(room.admin_test),
         "mystery_tech": bool(room.mystery_tech),
         "mystery_tech_state": tech_snapshot(room, player_id),
+        "commander_state": commander_room_state(room, player_id),
     }
     # Validation is the freeze: adding/removing a key without updating the
     # contract model fails here instead of silently drifting the wire shape.

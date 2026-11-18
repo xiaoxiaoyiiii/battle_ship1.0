@@ -7,6 +7,7 @@ import { lobbyPlayerName, useLobbyStore, type LobbyFriend, type LobbyRoom } from
 import { useRoomDraftStore } from '../../stores/roomDraft'
 import { mutationSelectionError } from '../../stores/mutations'
 import { useCardBansStore } from '../../stores/cardBans'
+import { useCommandersStore } from '../../stores/commanders'
 import { inviteDisabledReason, roomJoinable } from './view'
 import { buildInviteUrl, inviteFeedback, inviteManualPrompt } from './inviteLink'
 
@@ -17,6 +18,7 @@ function createActions() {
   const ui = useUiStore()
   const draft = useRoomDraftStore()
   const bans = useCardBansStore()
+  const commanders = useCommandersStore()
   const createPending = ref(false)
   const closePending = ref(false)
   const friendsBusy = ref(false)
@@ -53,6 +55,7 @@ function createActions() {
         mutation_ids: [...draft.mutationIds], ban_enabled: draft.banEnabled,
         ban_quota: draft.banEnabled ? draft.banQuota : 1,
         mystery_tech: draft.mysteryTech,
+        commander_id: commanders.selectedCommanderId,
       })
       const result = ack as unknown as Record<string, unknown>
       if (ack.status !== 'success' || !result.room_id) { fail(ack.message || '创建失败，请重试。'); return }
@@ -79,6 +82,7 @@ function createActions() {
     if (!current || !roomId.trim()) return false
     try {
       const ack = await current.emitEvent('join_room', { room_id: roomId.trim(), player_name: lobbyPlayerName(),
+        commander_id: commanders.selectedCommanderId,
         ...(inviteToken ? { invite_token: inviteToken } : {}) })
       if (ack.status !== 'success') { fail(ack.message || '加入失败，请重试。'); return false }
       notice('已加入房间，等待对局开始。')

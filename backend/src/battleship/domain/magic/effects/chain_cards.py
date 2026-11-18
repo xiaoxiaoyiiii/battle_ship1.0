@@ -40,7 +40,11 @@ def _tear_down_field_magic(room: Any, caster_id: str | None = None) -> tuple[Mag
     current_base = recalc_attacker_attacks(room)
     if in_battle:
         from ...battle import attacks_forced_zero
-        room.attacks_remaining = 0 if attacks_forced_zero(room) else max(0, before + current_base - previous_base)
+        from ...commanders.rules import firepower_control_active, firepower_control_remaining
+        if firepower_control_active(room, room.current_attacker):
+            room.attacks_remaining = firepower_control_remaining(room, room.current_attacker)
+        else:
+            room.attacks_remaining = 0 if attacks_forced_zero(room) else max(0, before + current_base - previous_base)
     return torn, int(room.attacks_remaining or 0) != before
 
 

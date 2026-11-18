@@ -28,6 +28,7 @@ export default defineConfig(({ mode }) => {
       emptyOutDir: true,
       manifest: true,
       sourcemap: false,
+      assetsInlineLimit: 0,
       rollupOptions: {
         output: {
           entryFileNames: 'assets/[name]-[hash].js',

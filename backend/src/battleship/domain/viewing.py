@@ -7,6 +7,7 @@ from copy import deepcopy
 from typing import Any, Literal
 
 from . import mutations
+from .commanders.rules import commander_spectate_state
 from .room import Room, card_payload, is_ship_alive, seat_order
 from .room.sync import _effect_badges
 from .magic.rules import field_magic_name
@@ -147,6 +148,7 @@ def build_view_frame(room: Room, *, audience: Literal['replay', 'spectator']) ->
         } for pid, side in seats.items() for player in [room.players[pid]]},
         'boards': {side: _board(room, pid, full=full) for pid, side in seats.items()},
         'chain': public_chain(room),
+        'commanders': commander_spectate_state(room),
     })
 
 

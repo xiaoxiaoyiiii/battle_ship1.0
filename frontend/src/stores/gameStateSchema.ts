@@ -123,6 +123,7 @@ export interface GameState {
   card_unavailable_reasons: Record<string, string>
   mystery_tech: boolean
   mystery_tech_state: Record<string, unknown> | null
+  commander_state: Record<string, unknown> | null
   // game_state-only payload keys (never part of room_sync).
   winner_card: Record<string, unknown> | null
   loser_cards: Array<Record<string, unknown> | null>
@@ -208,6 +209,7 @@ const FIELD_SPECS = {
   card_unavailable_reasons: { type: 'object', nullable: false, default: {}, note: '服务端确定的卡牌状态限制，用于统一置灰' },
   mystery_tech: { type: 'boolean', nullable: false, default: false, note: '本局是否为神秘科技大乱斗' },
   mystery_tech_state: { type: 'object', nullable: true, default: null, note: '本人私有神秘科技状态；对手视角为公开投影或 null' },
+  commander_state: { type: 'object', nullable: true, default: null, note: '本局指挥官双方身份、技能状态与脱敏后的延迟锁定视角' },
   winner_card: { type: 'object', nullable: true, default: null, note: '猜拳胜者抽到的卡' },
   loser_cards: { type: 'array', nullable: false, default: [], note: '猜拳败者抽到的卡' },
 } as const satisfies Record<SchemaField, GameStateFieldSpec>

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect width="256" height="256" rx="42" fill="#3d3124"/>
+  <circle cx="128" cy="122" r="92" fill="#f59e0b" opacity="0.22"/>
+  
+  <path d="M68 118 C68 172 95 196 128 198 C161 196 188 172 188 118 C188 64 68 64 68 118 Z" fill="#fdede4" stroke="#221922" stroke-width="2.5"/>
+  <ellipse cx="102" cy="134" rx="13" ry="13" fill="#fff"/>
+  <circle cx="102" cy="134" r="9" fill="#fbbf24"/>
+  <circle cx="105" cy="130" r="3" fill="#fff"/>
+  <ellipse cx="154" cy="134" rx="13" ry="13" fill="#fff"/>
+  <circle cx="154" cy="134" r="9" fill="#fbbf24"/>
+  <circle cx="157" cy="130" r="3" fill="#fff"/>
+  <path d="M106 160 Q128 178 150 160 Z" fill="#ff9e9e" stroke="#9a4e52" stroke-width="2.4"/>
+  <path d="M62 114 C68 48 190 48 194 114 C178 86 156 90 144 116 C132 88 118 88 106 116 C92 88 74 90 62 114 Z" fill="#efe3c8" stroke="#16161e" stroke-width="2.4"/>
+  <rect x="30" y="206" width="196" height="34" rx="17" fill="#161d2b" stroke="#fde68a" stroke-width="2"/>
+  <text x="128" y="229" text-anchor="middle" font-family="'Microsoft YaHei', sans-serif" font-size="16" font-weight="700" fill="#fde68a">优雅落子</text>
+</svg>

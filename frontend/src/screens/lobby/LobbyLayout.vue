@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { acquireLobbyChannel, getLobbySocket } from '../../realtime/lobby'
 import { useLobbyStore } from '../../stores/lobby'
 import { useGameStore } from '../../stores/game'
+import { useCommandersStore } from '../../stores/commanders'
 import { provideLobbyActions } from './useLobbyActions'
 import { readInviteRoomId, readInviteToken } from './inviteLink'
 import MatchFoundOverlay from '../../components/MatchFoundOverlay.vue'
@@ -52,7 +53,10 @@ watch([() => lobby.connected, () => lobby.ownRoom], async () => {
   if (!current) return
   restoring = own.roomId
   try {
-    const ack = await current.emitEvent('join_room', { room_id: own.roomId })
+    const ack = await current.emitEvent('join_room', {
+      room_id: own.roomId,
+      commander_id: useCommandersStore().selectedCommanderId,
+    })
     if (ack.status !== 'success') actions.fail(ack.message || '等待房间恢复失败，请刷新重试。')
     await actions.refresh()
   } catch (e) { actions.fail(e instanceof Error ? e.message : '等待房间恢复失败。') }

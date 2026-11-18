@@ -23,6 +23,11 @@ from typing import Any
 from ..contracts import errors as socket_errors
 from ..domain.anticheat import suspicion
 from ..domain import mutations, bans
+from ..domain.commanders import (
+    COMMANDER_IDS,
+    DEFAULT_COMMANDER_ID,
+    commander_room_state,
+)
 from ..domain.matchmaking import guard
 from ..domain.room import (
     Player,
@@ -69,11 +74,15 @@ class MatchmakingService:
         database: Database | None = None,
         auth: Any | None = None,
         lobby: Any | None = None,
+        commanders: Any | None = None,
     ) -> None:
         self.rooms = rooms
         self.database = database
         self.auth = auth
         self.lobby = lobby
+        self.commanders = commanders
+        if commanders is not None and getattr(self.rooms, "commanders", None) is None:
+            self.rooms.commanders = commanders
         self._publisher: EventPublisher = NullPublisher()
         self._queue_versions: dict[str, int] = {}
         self.rooms.bans.requeue_hook = self.requeue_after_escape
@@ -193,6 +202,7 @@ class MatchmakingService:
             "ip": connection.ip,
             "ban_preselection": list(preselection),
             "ranked_season_id": season['id'] if season else None,
+            "commander_id": data.get("commander_id"),
         })
         # 入队到配对不能跨 await，避免同时改走建房入口后仍被旧队列配对。
         matched = self._pair()
@@ -263,6 +273,14 @@ class MatchmakingService:
                 socket_id=seat_id,
                 registered=bool(entry.get("registered")),
             )
+            if self.commanders is not None and getattr(self.rooms, "commanders", None) is None:
+                self.rooms.commanders = self.commanders
+            self.rooms._apply_commander(
+                room,
+                seat_id,
+                requested_commander_id=entry.get("commander_id"),
+                is_ai=False,
+            )
         for seat_id in room.players:
             room.init_player_magic(seat_id)
         mutation_mode = mode if mode in MATCH_MODES else MATCH_MODE_CASUAL
@@ -293,6 +311,7 @@ class MatchmakingService:
                         "mutations": mutations.payload(room, str(me["sid"])),
                         "card_bans": bans.payload(room, str(me['sid'])),
                         "max_ships": room.players[str(me["sid"])].max_ships,
+                        "commander_state": commander_room_state(room, str(me["sid"])),
                         # Ticket #51: additive per-seat wait state; each side
                         # sees its own opponent, so this cannot be a broadcast.
                         **opponent_seat_state(room, str(me["sid"])),

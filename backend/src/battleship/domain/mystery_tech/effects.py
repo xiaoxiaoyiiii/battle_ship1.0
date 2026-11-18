@@ -51,6 +51,9 @@ def absorb_armor(room, owner, ship):
 
 
 def attack_budget(room, pid, base):
+    from ..commanders.rules import firepower_control_active, firepower_control_remaining
+    if firepower_control_active(room, pid):
+        return firepower_control_remaining(room, pid)
     if not room.mystery_tech:
         return base
     amount = base + int(has(room, pid, 'accelerated_loading'))
@@ -91,6 +94,10 @@ def magic_blocked(room, pid):
 def on_sink(room, attacker, defender):
     if attacker == defender or not has(room, attacker, 'overload_reaction'):
         return 0
+    from ..commanders.rules import firepower_control_active
+    if firepower_control_active(room, attacker):
+        # 赤潮「火力统制」生效时压住额外攻击，击沉摸牌照常返回 1。
+        return 1
     from ..battle import grant_extra_attacks
     from ..room.models import RoomPhase
     credit = state(room).setdefault('extra_attacks', {}).setdefault(attacker, {})

@@ -7,6 +7,8 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any
 
+from ..domain.commanders import get_commander
+from ..domain.commanders.rules import can_use_commander_skill_in_chain
 from ..domain.magic.chain import usable_speed3_cards
 from ..domain.magic.precheck import steal_error
 from ..domain.magic.interaction import pending_action_reason, placement_blocked_cells
@@ -129,23 +131,34 @@ class PhasePriority:
                 or pending_action_reason(room, actor)):
             return False
         player = room.players[responder]
-        if player.magic_blocked:
+        cards = [] if player.magic_blocked else self.cards(room, responder)
+        cmd_ok = can_use_commander_skill_in_chain(room, responder)
+        if not cards and not cmd_ok:
             return False
-        cards = self.cards(room, responder)
-        if not cards:
-            return False
+        cmd_spec = get_commander(getattr(player, "commander_id", None))
+        cmd_skill_payload = (
+            {
+                "commander_id": cmd_spec.id,
+                "commander_name": cmd_spec.name,
+                **cmd_spec.skill.to_dict(),
+            }
+            if (cmd_ok and cmd_spec is not None)
+            else None
+        )
         room.priority_token += 1
         token = room.priority_token
         room.priority_pending = {
             'token': token, 'actor': actor, 'responder': responder, 'action': action,
             'round': room.round, 'phase': getattr(room.current_phase, 'value', room.current_phase),
             'speed3_cards': [card_payload(card) for card in cards],
+            'commander_skill': cmd_skill_payload,
             'countdown': self.seconds, 'deadline': int((time.time() + self.seconds) * 1000),
         }
         magic.priority_continue_hook = self.continue_after_chain
         # 状态在第一个 await 前建立，第二个转换请求不能插队或推进阶段。
         await self._emit('priority_request', priority_payload(room, responder), to=player.socket_id)
         await self._emit('priority_waiting', priority_payload(room, actor), to=room.players[actor].socket_id)
+        await magic._emit_commander_state(room)
         magic.timers.spawn(room.id, self._timeout(room, token))
         return True
 
@@ -163,6 +176,8 @@ class PhasePriority:
         for pid in (pending['actor'], pending['responder']):
             if pid in room.players and room.players[pid].socket_id:
                 await self._emit('priority_waiting_end', {'token': pending['token']}, to=room.players[pid].socket_id)
+        if self.gameplay.magic is not None:
+            await self.gameplay.magic._emit_commander_state(room)
 
     async def _pass(self, room: Room):
         pending = room.priority_pending
@@ -202,6 +217,33 @@ class PhasePriority:
         if not data.get('respond'):
             await self._pass(room)
             return {'status': 'success'}
+        if data.get('use_commander_skill'):
+            if not pending.get('commander_skill'):
+                return {'status': 'error', 'message': '当前询问中没有可用的速阶三指挥官技能'}
+            room.priority_pending = None
+            room.priority_continue = {**pending, 'ready': False}
+            try:
+                ack = await self.gameplay.magic.use_commander_skill(connection, {
+                    'room_id': room.id, 'player_id': player_id,
+                    'selected_cells': data.get('selected_cells', []),
+                    'targets': data.get('targets', {}),
+                })
+            except Exception:
+                room.priority_continue = None
+                room.priority_pending = pending
+                if time.time() * 1000 >= pending['deadline']:
+                    await self._pass(room)
+                raise
+            if ack.get('status') != 'success':
+                room.priority_continue = None
+                room.priority_pending = pending
+                if time.time() * 1000 >= pending['deadline']:
+                    await self._pass(room)
+                return ack
+            await self._end_window(room, pending)
+            if room.priority_continue and not (room.chain or room.chain_waiting or room.chain_resolving):
+                await self.continue_after_chain(room, room.priority_continue)
+            return ack
         raw = data.get('card')
         card = raw if isinstance(raw, dict) else {}
         # 只能选择此时点公开给响应者的牌；卡表、手牌与目标仍由正式出牌入口复检。

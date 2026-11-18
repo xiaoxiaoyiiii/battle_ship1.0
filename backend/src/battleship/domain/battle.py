@@ -221,6 +221,10 @@ def recalc_attacker_attacks(room: Room, *, include_mutation_bonus: bool = True) 
     player = room.players.get(player_id) if player_id else None
     if player is None:
         return int(room.attacks_remaining or 0)
+    from .commanders.rules import firepower_control_active, firepower_control_remaining
+    if firepower_control_active(room, player_id):
+        room.attacks_remaining = firepower_control_remaining(room, player_id)
+        return room.attacks_remaining
     if attacks_forced_zero(room):
         room.attacks_remaining = 0
         return 0
@@ -255,6 +259,9 @@ def grant_extra_attacks(room: Room, player_id: str, n: int = 1) -> int:
     if int(n) <= 0 or room.state != RoomState.ATTACKING:
         return 0
     if room.current_attacker != player_id:
+        return 0
+    from .commanders.rules import firepower_control_active
+    if firepower_control_active(room, player_id):
         return 0
     from .magic.rules import field_magic_name
 
@@ -312,6 +319,12 @@ def enter_battle(room: Room, player_id: str) -> str | None:
     from .mystery_tech.effects import activate_attack_credits
     activate_attack_credits(room, player_id)
     recalc_attacker_attacks(room, include_mutation_bonus=False)
+    from .commanders.rules import firepower_control_active, firepower_control_remaining
+    if firepower_control_active(room, player_id):
+        if player.effect_flags.double_attacks:
+            effects.consume_flag(room, player_id, "double_attacks")
+        room.attacks_remaining = firepower_control_remaining(room, player_id)
+        return None
     if player.effect_flags.double_attacks:
         # 火力全开 doubles the budget that already exists (not a recount).
         room.attacks_remaining = max(0, room.attacks_remaining) * 2
@@ -413,6 +426,7 @@ def resolve_turn_end(room: Room, player_id: str) -> TurnEnd | None:
             seat.magic_blocked_round = None
             seat.damage_dealt_this_turn = 0
             seat.ship_reductions_this_turn = 0
+            seat.commander_shots_used_this_round = 0
         return TurnEnd("new_round", room.current_attacker, room.round)
 
     room.current_attacker = next_attacker
@@ -463,6 +477,8 @@ class AttackOutcome:
     last_chance: bool = False
     last_stand_win: bool = False
     defender_wiped_out: bool = False
+    dauntless_blocked: bool = False
+    revealed_ship_positions: list[tuple[int, int]] = field(default_factory=list)
 
     def to_payload(self) -> dict:
         """Frozen attack_result shape (server.py AttackResult.to_dict)."""
@@ -477,6 +493,7 @@ class AttackOutcome:
             "attacker_remaining_ships": self.attacker_remaining_ships,
             "defender_remaining_ships": self.defender_remaining_ships,
             "shield_blocked": self.shield_blocked,
+            **({"dauntless_blocked": True} if self.dauntless_blocked else {}),
         }
 
 
@@ -601,6 +618,8 @@ def apply_ship_sunk(
         ship.hits = list(ship.positions)
         if not any(destroyed is ship for destroyed in defender.permanently_destroyed_ships):
             defender.permanently_destroyed_ships.append(ship)
+    from .commanders.rules import clear_delayed_locks_for_ship
+    clear_delayed_locks_for_ship(room, defender_id, ship)
     return True
 
 
@@ -631,10 +650,19 @@ def resolve_attack(room: Room, attacker_id: str, x: int, y: int) -> AttackOutcom
     sunk_ship: PlayerShip | None = None
 
     target = _find_hit_ship(defender, x, y)
+    dauntless_blocked = False
+    revealed_ship_positions: list[tuple[int, int]] = []
     if target is not None:
         hit = True
+        from .commanders.rules import dauntless_active
         from .mystery_tech.effects import absorb_armor
-        if absorb_armor(room, defender_id, target):
+        if dauntless_active(room, defender_id):
+            dauntless_blocked = True
+            for pos in target.positions:
+                revealed_ship_positions.append((pos.x, pos.y))
+                if not any(p.x == pos.x and p.y == pos.y for p in attacker.revealed_positions):
+                    attacker.revealed_positions.append(Position(x=pos.x, y=pos.y))
+        elif absorb_armor(room, defender_id, target):
             shield_blocked = True
         elif forced_kill:
             target.hits = list(target.hits or []) + [Position(x=x, y=y)]
@@ -675,12 +703,14 @@ def resolve_attack(room: Room, attacker_id: str, x: int, y: int) -> AttackOutcom
         remaining_attacks=room.attacks_remaining,
         attacker_remaining_ships=attacker.remaining_ships,
         defender_remaining_ships=defender.remaining_ships,
+        dauntless_blocked=dauntless_blocked,
+        revealed_ship_positions=revealed_ship_positions,
     )
 
     if not damage_dealt:
-        # A shield / invincible hit is still a shot: spend one attack. The
-        # legacy quirk is the opposite for shields: the *cell* is not recorded
-        # (so it can be re-shot), but the attack is still spent.
+        # A shield / invincible / dauntless hit is still a shot: spend one attack. The
+        # legacy quirk is the opposite for shields & dauntless: the *cell* is not recorded
+        # (so it can be re-shot once protection expires), but the attack is still spent.
         room.last_attack = {
             "attacker": attacker_id,
             "x": x,
@@ -690,7 +720,8 @@ def resolve_attack(room: Room, attacker_id: str, x: int, y: int) -> AttackOutcom
             "round": room.round,
         }
         room.attacks_remaining = max(0, room.attacks_remaining - 1)
-        if not shield_blocked:
+        attacker.commander_shots_used_this_round = int(getattr(attacker, "commander_shots_used_this_round", 0) or 0) + 1
+        if not shield_blocked and not dauntless_blocked:
             attacker.attacks.append(Position(x=x, y=y, hit=hit, ship_sunk=False,
                                              fog_miss=mutations.active(room, "E1") and not hit))
         outcome.remaining_attacks = room.attacks_remaining
@@ -712,6 +743,7 @@ def resolve_attack(room: Room, attacker_id: str, x: int, y: int) -> AttackOutcom
         "round": room.round,
     }
     room.attacks_remaining = max(0, room.attacks_remaining - 1)
+    attacker.commander_shots_used_this_round = int(getattr(attacker, "commander_shots_used_this_round", 0) or 0) + 1
     attacker.attacks.append(Position(x=x, y=y, hit=hit, ship_sunk=ship_sunk))
 
     # 绝处逢生: a real kill wins immediately (legacy returns before

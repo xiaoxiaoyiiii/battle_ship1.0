@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import { useCommandersStore } from './commanders'
 
 /**
  * Settlement view model (ticket #22).
@@ -85,6 +86,7 @@ export const useResultStore = defineStore('result', () => {
     rank.value = null
     achievements.value = []
     recentOpponent.value = null
+    useCommandersStore().clearMatchSettlement()
   }
 
   return {

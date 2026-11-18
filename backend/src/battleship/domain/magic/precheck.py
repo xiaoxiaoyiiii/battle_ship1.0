@@ -138,6 +138,8 @@ def steal_candidate(room: Room, player_id: str) -> tuple[MagicCard, Any] | None:
     for index, item in enumerate(room.chain):
         if item.player_id == player_id or getattr(item, "stolen", False):
             continue
+        if getattr(item, "item_kind", "magic_card") != "magic_card":
+            continue
         candidates.append((float(item.timestamp), offset + index, item.card, item))
     if not candidates:
         return None

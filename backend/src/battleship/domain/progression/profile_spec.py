@@ -223,7 +223,13 @@ DEFAULT_TITLE_EFFECT_ID = 'glint'
 
 # 收藏称号沿用已有外观持有表，不复用旧徽章判据或绕过达标条件。
 from ..collection import title_entries
+from ..commanders.catalog import profile_cosmetics_entries
+
 TITLES.extend(title_entries())
+_CMD_TITLES, _CMD_FRAMES, _CMD_CARD_BGS = profile_cosmetics_entries()
+TITLES.extend(_CMD_TITLES)
+FRAMES.extend(_CMD_FRAMES)
+CARD_BGS.extend(_CMD_CARD_BGS)
 
 # ---------------------------------------------------------------------------
 # 索引与解锁判定

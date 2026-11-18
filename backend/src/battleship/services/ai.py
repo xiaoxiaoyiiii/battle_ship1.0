@@ -38,6 +38,12 @@ from ..domain import placement as placement_rules
 from ..domain.ai import master as master_rules
 from ..domain.ai import policies
 from ..domain.ai.difficulty import ai_seat_id, is_ai_seat
+from ..domain.commanders import (
+    DEFAULT_COMMANDER_ID,
+    commander_skill_error,
+    dauntless_active,
+    get_commander,
+)
 from ..domain.magic import interaction as interaction_rules
 from ..domain.magic import temps as magic_temps
 from ..domain.magic.rules import can_play_magic_card
@@ -233,6 +239,8 @@ class AiService:
     async def _standard_turn(self, room: Room, player_id: str) -> None:
         """easy/normal/hard: one card, then fire, then end the turn."""
 
+        if await self._maybe_use_ai_commander_skill(room, player_id):
+            await self._wait_chain(room, player_id)
         if _phase(room) == "preparation":
             if not await self._enter_battle(room, player_id):
                 return
@@ -268,6 +276,11 @@ class AiService:
 
         played = 0
         budget = int(master_rules.CARDS_PER_TURN)
+
+        if await self._maybe_use_ai_commander_skill(room, player_id):
+            room, ok = await self.settle(room, player_id)
+            if not ok:
+                return
 
         # Preparation-phase window: 余音绕梁 can only be played here, and every
         # speed-1/2 card may be played before the phase flips.
@@ -477,6 +490,70 @@ class AiService:
             return False
         await self.consume_pending(room, player_id)
         return True
+
+    async def _maybe_use_ai_commander_skill(self, room: Room, player_id: str) -> bool:
+        """人机按角色战术策略主动使用指挥官专属技能（所有难度均合法可触发）。"""
+        if self.magic is None:
+            return False
+        if commander_skill_error(room, player_id) is not None:
+            return False
+        player = room.players.get(player_id)
+        if player is None:
+            return False
+        cid = getattr(player, "commander_id", None) or DEFAULT_COMMANDER_ID
+        cmd = get_commander(cid)
+        if cmd is None:
+            return False
+
+        selected_cells: list[dict[str, int]] = []
+        if cid == "chichao":
+            # 赤潮：当己方船数 <= 5 或场地限制导致正常攻击数不足 6 时主动统制火力。
+            if int(player.remaining_ships or 0) > 5 and int(room.round or 1) < 2:
+                return False
+        elif cid == "qingtong":
+            # 青瞳：冷却就绪即随机延迟锁定敌方存活战舰。
+            opp_id = room.opponent_of(player_id)
+            if not opp_id or not alive_ships(room.players[opp_id]):
+                return False
+        elif cid == "tieanchor":
+            # 铁锚：残血护航时主动开启无畏舰队，满编时也可留作连锁响应反制。
+            alive = alive_ships(player)
+            if dauntless_active(room, player_id) or (len(alive) > 3 and int(room.round or 1) < 2):
+                return False
+        elif cid == "guihang":
+            # 归航：手牌偏少且舰队尚充裕时牺牲一艘己方活舰补牌 2 张。
+            alive = alive_ships(player)
+            if len(alive) <= 1:
+                return False
+            if len(alive) < 3 and len(player.magic_hand) > 1:
+                return False
+            if len(player.magic_hand) > 2:
+                return False
+            opp_id = room.opponent_of(player_id)
+            revealed = set()
+            if opp_id and opp_id in room.players:
+                revealed = {(p.x, p.y) for p in (room.players[opp_id].revealed_positions or [])}
+            picked = min(
+                alive,
+                key=lambda ship: (
+                    0 if any((p.x, p.y) in revealed for p in ship.positions) else 1,
+                    len(ship.positions),
+                ),
+            )
+            pos = picked.positions[0]
+            selected_cells = [{"x": pos.x, "y": pos.y}]
+        else:
+            return False
+
+        ack = await self.magic.use_commander_skill(
+            None,
+            {
+                "room_id": room.id,
+                "player_id": player_id,
+                "selected_cells": selected_cells,
+            },
+        )
+        return bool(ack and ack.get("status") == "success")
 
     def master_pick(self, room: Room, player_id: str,
                     cards_played: int = 0) -> tuple[int | None, dict[str, Any]]:

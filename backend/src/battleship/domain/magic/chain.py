@@ -39,6 +39,9 @@ class ChainItem:
     # 只在出牌成为公开事实后附带，绝不进入对手手牌快照。
     mastery_tier: int = 0
     skin_id: str | None = None
+    item_kind: str = "magic_card"
+    commander_id: str | None = None
+    skill_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -50,6 +53,9 @@ class ChainItem:
             "negated_by": self.negated_by,
             **({'mastery_tier':self.mastery_tier} if self.mastery_tier else {}),
             **({'skin_id':self.skin_id} if self.skin_id else {}),
+            **({'item_kind': self.item_kind} if self.item_kind != "magic_card" else {}),
+            **({'commander_id': self.commander_id} if self.commander_id else {}),
+            **({'skill_id': self.skill_id} if self.skill_id else {}),
         }
 
 
@@ -188,23 +194,68 @@ def choose_ai_response_card(room: Room, player_id: str) -> MagicCard | None:
     return None
 
 
+def choose_ai_commander_response(room: Room, player_id: str) -> dict[str, Any] | None:
+    """AI 在连锁响应窗口中使用铁锚/归航速阶三指挥官技能的共用决策。"""
+    from ..commanders.rules import can_use_commander_skill_in_chain
+
+    player = room.players.get(player_id)
+    if player is None or not room.chain:
+        return None
+    if not can_use_commander_skill_in_chain(room, player_id):
+        return None
+    top = room.chain[-1]
+    if getattr(top, "player_id", None) == player_id:
+        return None
+
+    cid = getattr(player, "commander_id", "chichao")
+    if cid == "tieanchor":
+        return {"use_commander_skill": True, "selected_cells": []}
+    if cid == "guihang":
+        alive = alive_ships(player)
+        if len(alive) > 1 and (len(player.magic_hand) <= 2 or len(alive) >= 3):
+            opp_id = opponent_of(room, player_id)
+            revealed = set()
+            if opp_id and opp_id in room.players:
+                revealed = {(p.x, p.y) for p in (room.players[opp_id].revealed_positions or [])}
+            # 优先牺牲已暴露的较小存活舰船以换取 2 张魔法卡
+            picked = min(
+                alive,
+                key=lambda ship: (
+                    0 if any((p.x, p.y) in revealed for p in ship.positions) else 1,
+                    len(ship.positions),
+                ),
+            )
+            pos = picked.positions[0]
+            return {"use_commander_skill": True, "selected_cells": [{"x": pos.x, "y": pos.y}]}
+    return None
+
+
 def can_respond(room: Room, player_id: str | None) -> bool:
-    """Whether this player may respond with a speed-3 card right now."""
+    """Whether this player may respond with a speed-3 card or speed-3 commander skill right now."""
 
     if not player_id:
         return False
     player = room.players.get(player_id)
-    if player is None or (
-        player.magic_blocked
-        and getattr(player, "magic_blocked_round", room.round) == room.round
-    ):
+    if player is None:
         return False
-    # 绝处逢生 locks every other magic card for the turn, chained responses included.
-    if getattr(player.effect_flags, "last_stand", False):
-        return False
+
+    from ..commanders.rules import can_use_commander_skill_in_chain
     if player_id.startswith("ai-"):
-        return choose_ai_response_card(room, player_id) is not None
-    return bool(usable_speed3_cards(room, player_id))
+        commander_ok = choose_ai_commander_response(room, player_id) is not None
+    else:
+        commander_ok = can_use_commander_skill_in_chain(room, player_id)
+
+    magic_blocked_by_status = (
+        (player.magic_blocked and getattr(player, "magic_blocked_round", room.round) == room.round)
+        or getattr(player.effect_flags, "last_stand", False)
+    )
+    if magic_blocked_by_status:
+        magic_ok = False
+    elif player_id.startswith("ai-"):
+        magic_ok = choose_ai_response_card(room, player_id) is not None
+    else:
+        magic_ok = bool(usable_speed3_cards(room, player_id))
+    return bool(magic_ok or commander_ok)
 
 
 def clear_display(room: Room) -> None:
@@ -379,6 +430,9 @@ EQUAL_TREATY_NOT_NEGOTIABLE: dict[str, str] = {
 def equal_treaty_verdict(room: Room, target_item: ChainItem) -> tuple[bool, str]:
     """The only consumer of the treaty table: (would change, readable reason)."""
 
+    if getattr(target_item, "item_kind", "magic_card") == "commander_skill":
+        name = getattr(getattr(target_item, "card", None), "name", "指挥官技能")
+        return False, f"「{name}」是指挥官角色技能，不会被平等条约无效化"
     name = getattr(getattr(target_item, "card", None), "name", None)
     row = EQUAL_TREATY_SHIP_CHANGE_RULES.get(name)
     if row is None:
@@ -398,6 +452,7 @@ __all__ = [
     "EQUAL_TREATY_SHIP_CHANGE_RULES",
     "ai_can_negate_chain_top",
     "can_respond",
+    "choose_ai_commander_response",
     "choose_ai_response_card",
     "clear_display",
     "display_still_current",

@@ -606,6 +606,7 @@ SNAPSHOT_FORBIDDEN_KEYS = (
     "opponent_attacks",
     "sunk_ships",
     "max_ships",
+    "ship_id",
 )
 
 
@@ -743,6 +744,8 @@ SPECTATE_EVENTS: dict[str, Any] = {
     "message": None,
     "rps_result": None,
     "chat_message": None,
+    "commander_interact": None,
+    "commander_skill_used": _pub_summary_line,
     # Public board markers (announced by the card itself to both players).
     "shenwei_hole": None,
     "shenwei_hole_restored": None,
@@ -815,6 +818,8 @@ NOT_FOR_SPECTATORS: dict[str, str] = {
     "taoyuan_waiting": "桃园结义的等待态（发给对方）",
     "shenji_waiting": "神机妙算宣言窗口（发给对方）",
     "shenji_waiting_end": "神机妙算宣言窗口结束（发给对方）",
+    "commander_state_updated": "按座位逐端下发，船主视角包含未揭晓延迟锁定格坐标",
+    "commander_xp_settled": "账号级经验结算结果，仅推送给当事玩家本人",
     "match_queued": "匹配队列回执（发给入队者本人）",
     "match_canceled": "取消匹配回执（发给本人）",
     "quick_chat": "局内快捷语（产品需求只要求观众看得到玩家之间的聊天）",

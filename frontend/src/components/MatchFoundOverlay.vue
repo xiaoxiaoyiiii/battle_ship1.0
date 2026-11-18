@@ -5,6 +5,8 @@ import AvatarStack from './AvatarStack.vue'
 import TitleBadge from './TitleBadge.vue'
 import { useProfileStore, type JsonObject } from '../stores/profile'
 import { useAudioStore } from '../stores/audio'
+import { useGameStore } from '../stores/game'
+import { commanderAvatarUrl, commanderTierOf, useCommandersStore } from '../stores/commanders'
 
 /**
  * 匹配成功身份预览：沿用冻结的五秒确认流程，只把已经存在的公开资料
@@ -23,6 +25,22 @@ const props = withDefaults(
 const emit = defineEmits<{ (event: 'done'): void }>()
 const profile = useProfileStore()
 const audio = useAudioStore()
+const game = useGameStore()
+const commanders = useCommandersStore()
+
+interface MatchCmdSide {
+  commander_id?: string
+  commander_name?: string
+  commander_level?: number
+  skill?: { name?: string } | null
+}
+const cmdState = computed(() => game.state.commander_state as { self?: MatchCmdSide | null; opponent?: MatchCmdSide | null } | null)
+const selfCmd = computed(() => cmdState.value?.self ?? null)
+const oppCmd = computed(() => cmdState.value?.opponent ?? null)
+
+watch(selfCmd, (side) => {
+  if (side?.commander_id) commanders.playVoice(side.commander_id, 'voice_sortie')
+}, { immediate: true })
 
 function stringValue(source: JsonObject | null, key: string): string {
   const value = source?.[key]
@@ -174,6 +192,10 @@ onBeforeUnmount(stop)
               <span data-testid="match-found-self-rank">{{ selfView.rank }}</span>
               <span data-testid="match-found-self-level">{{ selfView.level }}</span>
             </div>
+            <div v-if="selfCmd?.commander_name" class="match-found__commander" :class="'cmd-scale-' + commanderTierOf(selfCmd.commander_level || 1)" data-testid="match-found-self-commander">
+              <img :src="commanderAvatarUrl(selfCmd.commander_id || 'chichao')" :alt="selfCmd.commander_name" />
+              <span>{{ selfCmd.commander_name }} · Lv.{{ selfCmd.commander_level || 1 }} · {{ selfCmd.skill?.name }}</span>
+            </div>
           </div>
         </article>
 
@@ -192,6 +214,10 @@ onBeforeUnmount(stop)
             <div class="match-found__chips">
               <span data-testid="match-found-opponent-rank">{{ opponentView.rank }}</span>
               <span data-testid="match-found-opponent-level">{{ opponentView.level }}</span>
+            </div>
+            <div v-if="oppCmd?.commander_name" class="match-found__commander" :class="'cmd-scale-' + commanderTierOf(oppCmd.commander_level || 1)" data-testid="match-found-opponent-commander">
+              <img :src="commanderAvatarUrl(oppCmd.commander_id || 'chichao')" :alt="oppCmd.commander_name" />
+              <span>{{ oppCmd.commander_name }} · Lv.{{ oppCmd.commander_level || 1 }} · {{ oppCmd.skill?.name }}</span>
             </div>
           </div>
         </article>
@@ -229,6 +255,11 @@ onBeforeUnmount(stop)
 .match-found__chips { display:flex; flex-wrap:wrap; justify-content:center; gap:6px; margin-top:2px; }
 .match-found__chips span { min-height:24px; padding:4px 9px; border:1px solid color-mix(in srgb,currentColor 44%,transparent); border-radius:999px; background:rgb(4 13 25 / 42%); color:#c9e9f2; font-size:11px; line-height:1.2; }
 .match-found__side--rival .match-found__chips span { color:#f6d7a0; }
+.match-found__commander { display:inline-flex; align-items:center; gap:6px; margin-top:4px; padding:4px 10px; border-radius:999px; border:1px solid rgb(125 211 252 / 46%); background:rgb(6 17 32 / 72%); font-size:11px; color:#e0f2fe; }
+.match-found__commander img { width:20px; height:20px; border-radius:50%; object-fit:cover; }
+.match-found__commander.cmd-scale-2 { border-color:#38bdf8; box-shadow:0 0 12px rgb(56 189 248 / 38%); }
+.match-found__commander.cmd-scale-3 { border-color:#f59e0b; box-shadow:0 0 16px rgb(245 158 11 / 48%); color:#fef08a; }
+.match-found__commander.cmd-scale-4 { border-color:#fde047; box-shadow:0 0 22px rgb(253 224 71 / 64%); color:#fffbeb; font-weight:700; }
 .match-found__versus-wrap { position:relative; display:grid; place-items:center; width:110px; height:110px; }
 .match-found__versus-pulse { position:absolute; inset:0; border:1px solid rgb(117 213 241 / 45%); border-radius:50%; box-shadow:0 0 30px rgb(78 200 224 / 30%); animation:versus-pulse 1.8s ease-out infinite; }
 .match-found__versus { position:relative; display:grid; place-items:center; width:88px; height:88px; border:3px double #397591; border-radius:50%; color:var(--gold); font-size:29px; font-weight:800; background:rgb(5 15 29 / 82%); box-shadow:0 0 35px #4ec8e066,inset 0 0 18px rgb(78 200 224 / 12%); animation:versus-lock .8s .22s cubic-bezier(.16,.8,.25,1) both; }

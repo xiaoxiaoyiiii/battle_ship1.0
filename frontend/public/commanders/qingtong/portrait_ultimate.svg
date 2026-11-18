@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 640" width="480" height="640">
+  <defs>
+    <linearGradient id="gradBg" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0%" stop-color="#061529"/>
+      <stop offset="100%" stop-color="#0e4369"/>
+    </linearGradient>
+    <radialGradient id="gradGlow" cx="50%" cy="38%" r="55%">
+      <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.52"/>
+      <stop offset="100%" stop-color="#0e4369" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="gradAcc" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#a5f3fc"/>
+      <stop offset="100%" stop-color="#22d3ee"/>
+    </linearGradient>
+  </defs>
+  
+    <rect width="480" height="640" rx="28" fill="url(#gradBg)"/>
+    <rect width="480" height="640" rx="28" fill="url(#gradGlow)" opacity="0.68"/>
+    <path d="M0 540 Q120 500 240 535 T480 520 L480 640 L0 640 Z" fill="#22d3ee" opacity="0.16"/>
+    <path d="M0 570 Q160 535 300 565 T480 555 L480 640 L0 640 Z" fill="#a5f3fc" opacity="0.12"/>
+    
+        <g opacity="0.45">
+          <circle cx="240" cy="240" r="140" fill="none" stroke="#a5f3fc" stroke-width="1" stroke-dasharray="3 6"/>
+          <circle cx="240" cy="240" r="100" fill="none" stroke="#22d3ee" stroke-width="1"/>
+          <path d="M240 240 L370 140 A160 160 0 0 1 395 245 Z" fill="#22d3ee" opacity="0.16"/>
+          <path d="M40 490 Q140 455 240 480 T440 465" fill="none" stroke="#a5f3fc" stroke-width="2"/>
+          <path d="M55 520 Q155 488 255 510 T430 495" fill="none" stroke="#22d3ee" stroke-width="1.4"/>
+        </g>
+        
+    
+        <g opacity="0.82">
+          <circle cx="240" cy="240" r="210" fill="none" stroke="url(#gradAcc)" stroke-width="2.6" stroke-dasharray="18 6 4 6">
+            <animateTransform attributeName="transform" type="rotate" from="0 240 240" to="360 240 240" dur="18s" repeatCount="indefinite"/>
+          </circle>
+          <circle cx="240" cy="240" r="176" fill="none" stroke="#22d3ee" stroke-width="1.8" stroke-dasharray="6 10">
+            <animateTransform attributeName="transform" type="rotate" from="360 240 240" to="0 240 240" dur="14s" repeatCount="indefinite"/>
+          </circle>
+          <polygon points="240,26 250,48 274,48 255,62 262,84 240,70 218,84 225,62 206,48 230,48" fill="#a5f3fc" opacity="0.45"/>
+        </g>
+        
+    
+  
+        <!-- 后发轮廓 -->
+        <path d="M174 170 C162 215 168 265 182 285 L298 285 C312 265 318 215 306 170 Z" fill="#253e56" stroke="#0c1520" stroke-width="2"/>
+        <!-- 蓝灰立领长风衣 -->
+        <path d="M118 355 L88 615 L392 615 L362 355 L302 322 L240 356 L178 322 Z" fill="#0b1624" stroke="#22d3ee" stroke-width="3.4"/>
+        <path d="M176 322 L205 288 L224 360 L195 385 Z" fill="#1e2d40" stroke="#a5f3fc" stroke-width="1.8"/>
+        <path d="M304 322 L275 288 L256 360 L285 385 Z" fill="#1e2d40" stroke="#a5f3fc" stroke-width="1.8"/>
+        <path d="M214 345 L240 595 L266 345 Z" fill="#0f1924"/>
+        <rect x="234" y="346" width="12" height="108" rx="4" fill="#22d3ee" opacity="0.88"/>
+        <!-- 潮汐银蓝饰带 -->
+        <path d="M150 385 H330" stroke="#22d3ee" stroke-width="2.5" opacity="0.45"/>
+        <!-- 颈与俊朗轮廓 -->
+        <path d="M222 290 V338 L240 352 L258 338 V290 Z" fill="#f8f0eb"/>
+        <path d="M182 182 C182 256 206 298 240 302 C274 298 298 256 298 182 C298 134 182 134 182 182 Z" fill="#f8f0eb" stroke="#1b2c3d" stroke-width="2"/>
+
+        <!-- 冷静青瞳双眸 -->
+        <ellipse cx="212" cy="233" rx="13" ry="12" fill="#fff"/>
+        <circle cx="213" cy="234" r="8" fill="#a5f3fc"/>
+        <circle cx="213" cy="234" r="3.8" fill="#09131d"/>
+        <circle cx="217" cy="229" r="2.5" fill="#fff"/>
+        <ellipse cx="268" cy="233" rx="13" ry="12" fill="#fff"/>
+        <circle cx="267" cy="234" r="8" fill="#a5f3fc"/>
+        <circle cx="267" cy="234" r="3.8" fill="#09131d"/>
+        <circle cx="271" cy="229" r="2.5" fill="#fff"/>
+        <path d="M196 218 L226 221 M284 218 L254 221" stroke="#243b53" stroke-width="2.3" stroke-linecap="round"/>
+        <line x1="230" y1="270" x2="250" y2="269" stroke="#7d6460" stroke-width="2" stroke-linecap="round"/>
+
+        <!-- 不对称偏分碎发 -->
+        <path d="M170 198 C176 122 308 120 310 196 C296 168 278 175 266 220 C256 178 238 174 226 208 C210 174 190 182 178 214 Z" fill="#253e56" stroke="#0c1520" stroke-width="2"/>
+        <path d="M206 148 Q245 140 282 162" fill="none" stroke="#67e8f9" stroke-width="3.2" stroke-linecap="round"/>
+
+        <!-- 声呐单镜（右眼） -->
+        <circle cx="268" cy="233" r="18" fill="#22d3ee" fill-opacity="0.22" stroke="#a5f3fc" stroke-width="2.2"/>
+        <line x1="286" y1="233" x2="306" y2="226" stroke="#a5f3fc" stroke-width="2"/>
+        <!-- 手持青蓝罗盘仪器 -->
+        <g transform="translate(310, 445)">
+          <circle cx="0" cy="0" r="34" fill="#0d1b2a" stroke="#a5f3fc" stroke-width="2.5"/>
+          <circle cx="0" cy="0" r="23" fill="none" stroke="#22d3ee" stroke-width="1.5" stroke-dasharray="4 4"/>
+          <polygon points="0,-24 6,0 0,24 -6,0" fill="#a5f3fc"/>
+        </g>
+        
+</svg>

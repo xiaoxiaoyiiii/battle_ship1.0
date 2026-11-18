@@ -21,6 +21,10 @@ OUTBOUND_EVENTS: tuple[str, ...] = (
     "chain_resolving",
     "card_drawn",
     "chat_message",
+    "commander_interact",
+    "commander_skill_used",
+    "commander_state_updated",
+    "commander_xp_settled",
     "dice_discard_complete",
     "dice_discard_request",
     "dice_rolled",
@@ -221,6 +225,7 @@ class RoomSync(BaseModel):
     admin_test: bool = False
     mystery_tech: bool = False
     mystery_tech_state: dict[str, Any] | None = None
+    commander_state: dict[str, Any] | None = None
 
 
 #: Authoritative key order/count for the reconnect snapshot.

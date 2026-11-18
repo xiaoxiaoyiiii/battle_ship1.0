@@ -34,6 +34,20 @@ from ..domain import mutations, bans
 from ..domain import placement as placement_rules
 from ..domain import replay as replay_rules
 from ..domain.ai import policies
+from ..domain.commanders import (
+    DEFAULT_COMMANDER_ID,
+    QINGTONG_COOLDOWN_ROUNDS,
+    can_use_commander_skill_in_chain,
+    clear_delayed_locks_for_player,
+    clear_delayed_locks_for_ship,
+    commander_room_state,
+    commander_skill_error,
+    commander_spectate_state,
+    firepower_control_active,
+    firepower_control_remaining,
+    get_commander,
+    ship_id_key,
+)
 from ..domain.magic import deck as deck_rules
 from ..domain.magic import field as field_rules
 from ..domain.magic import hooks
@@ -328,6 +342,86 @@ class MagicService:
                 to=player.socket_id,
             )
 
+    async def _emit_commander_state(self, room: Room) -> None:
+        """按座位逐端发送脱敏后的指挥官状态快照。"""
+        for pid, player in room.players.items():
+            if not player.socket_id:
+                continue
+            await self._publisher.emit(
+                "commander_state_updated",
+                commander_room_state(room, str(pid)),
+                to=player.socket_id,
+            )
+
+    async def _settle_due_delayed_locks(self, room: Room) -> None:
+        """在其它大回合末效应全数结算后再揭晓到期的青瞳「延迟锁定」。"""
+        locks = getattr(room, "delayed_locks", None)
+        if not locks:
+            return
+        current_round = int(room.round or 1)
+        remaining: list[dict[str, Any]] = []
+        changed = False
+        for entry in list(locks):
+            target_pid = entry.get("target_player_id")
+            caster_id = entry.get("caster_id")
+            target_player = room.players.get(target_pid) if target_pid else None
+            ship_obj = entry.get("ship_obj")
+            alive = bool(
+                target_player is not None
+                and ship_obj is not None
+                and ship_obj in target_player.ships
+                and is_ship_alive(target_player, ship_obj)
+            )
+            if not alive:
+                changed = True
+                continue
+            if current_round <= int(entry.get("reveal_after_round") or 0):
+                remaining.append(entry)
+                continue
+            changed = True
+            positions = list(getattr(ship_obj, "positions", None) or [])
+            if not positions:
+                continue
+            cells_payload = [{"x": int(p.x), "y": int(p.y)} for p in positions]
+            if caster_id and caster_id in room.players:
+                await self._reveal_to(room, str(caster_id), positions, kind="delayed_lock")
+            revealed_list = room.game_effects.setdefault("delayed_lock_revealed", [])
+            revealed_list.append({
+                "id": entry.get("id"),
+                "caster_id": caster_id,
+                "target_player_id": target_pid,
+                "revealed_round": current_round - 1,
+                "cells": cells_payload,
+            })
+            coords_text = "、".join(f"({c['x']},{c['y']})" for c in cells_payload)
+            await self._add_log(
+                room,
+                f"第{max(1, current_round - 1)}回合末 · {self._name(room, str(caster_id))} 的"
+                f"【延迟锁定】揭晓：目标战舰位于 {coords_text}",
+                "magic",
+                {"caster": caster_id, "target": target_pid, "commander_id": "qingtong", "skill_id": "delayed_lock"},
+            )
+            caster_player = room.players.get(str(caster_id))
+            await self._publisher.emit(
+                "commander_skill_used",
+                {
+                    "player_id": str(caster_id),
+                    "commander_id": "qingtong",
+                    "commander_name": "青瞳",
+                    "commander_level": int(getattr(caster_player, "commander_level", 1) or 1) if caster_player else 1,
+                    "skill_id": "delayed_lock",
+                    "skill_name": "延迟锁定",
+                    "stage": "reveal",
+                    "target_player_id": target_pid,
+                    "cells": cells_payload,
+                },
+                room=room.id,
+            )
+        room.delayed_locks = remaining
+        if changed:
+            await self._emit_commander_state(room)
+            await self._sync_each_seat(room)
+
     async def _emit_card_discarded(self, room: Room, player_id: str | None,
                                    card: Any, reason: str) -> None:
         """#37：牌真正进入弃牌堆之后广播 CARD_DISCARDED（每张一次）。"""
@@ -559,6 +653,7 @@ class MagicService:
             return
         interaction_rules.consume_ship_pick(room, player_id, reason)
         player.ships.remove(ship)
+        clear_delayed_locks_for_ship(room, player_id, ship)
         battle_rules.mark_ship_sunken(player, ship)
         player.remaining_ships = max(0, int(player.remaining_ships) - 1)
         if not room.chain_resolving and source_id == room.current_attacker and source_id != player_id:
@@ -571,6 +666,7 @@ class MagicService:
             "dice_sacrifice": "命运骰子",
             "trap_sacrifice": "守株待兔",
             "iron_bones": "钢筋铁骨",
+            "sacrifice_gambit": "弃舰筹谋",
         }.get(reason, "恶魔契约")
         await self._add_log(
             room,
@@ -947,6 +1043,9 @@ class MagicService:
             return
         if room.current_attacker != player_id or ships_added <= 0:
             return
+        if firepower_control_active(room, player_id):
+            room.attacks_remaining = firepower_control_remaining(room, player_id)
+            return
         if battle_rules.attacks_forced_zero(room):
             return
         field = field_magic_name(room)
@@ -969,6 +1068,9 @@ class MagicService:
     @staticmethod
     def _apply_last_stand_attacks(room: Room, player_id: str) -> None:
         if room.state != RoomState.ATTACKING or room.current_attacker != player_id:
+            return
+        if firepower_control_active(room, player_id):
+            room.attacks_remaining = firepower_control_remaining(room, player_id)
             return
         if mutations.active(room, "A1"):
             battle_rules.recalc_attacker_attacks(room)
@@ -1132,6 +1234,269 @@ class MagicService:
         await self._open_chain_window(room, player_id)
         return {"status": "success", "message": f"魔法卡{card.name}已加入连锁"}
 
+    @staticmethod
+    def _resolve_guihang_sacrifice_ship(
+        room: Room, player_id: str, data: dict[str, Any]
+    ) -> tuple[PlayerShip | None, str | None]:
+        """校验归航「弃舰筹谋」发动时所点选的己方存活战舰。"""
+        player = room.players.get(player_id)
+        if player is None:
+            return None, "无效的玩家"
+        raw_cells = data.get("selected_cells")
+        if raw_cells is None and isinstance(data.get("targets"), dict):
+            raw_cells = data["targets"].get("selected_cells")
+        if not isinstance(raw_cells, list) or not raw_cells:
+            return None, "请选择一艘自己当前存活的战舰作为「弃舰筹谋」的牺牲代价"
+        first = raw_cells[0] if isinstance(raw_cells[0], dict) else None
+        if first is None:
+            return None, "所选战舰坐标格式无效"
+        try:
+            pos = (int(first["x"]), int(first["y"]))
+        except (KeyError, TypeError, ValueError):
+            return None, "所选战舰坐标非法"
+        ship = interaction_rules.find_ship_at(player, pos, alive_only=True)
+        if ship is None:
+            return None, "只能选择己方当前仍然存活的战舰"
+        return ship, None
+
+    async def _activate_commander_skill_inner(
+        self,
+        room: Room,
+        player_id: str,
+        data: dict[str, Any],
+        *,
+        in_chain_window: bool,
+    ) -> dict[str, Any]:
+        err = commander_skill_error(room, player_id, in_chain_window=in_chain_window)
+        if err:
+            return {"status": "error", "message": err}
+        player = room.players[player_id]
+        cmd = get_commander(getattr(player, "commander_id", None) or DEFAULT_COMMANDER_ID)
+        if cmd is None:
+            return {"status": "error", "message": "未知的指挥官角色"}
+        skill = cmd.skill
+        opponent_id = room.opponent_of(player_id)
+
+        # 不入链主动技能：赤潮「火力统制」、青瞳「延迟锁定」
+        if not skill.enters_chain:
+            player.commander_skill_used_count = int(getattr(player, "commander_skill_used_count", 0) or 0) + 1
+            player.commander_last_used_round = int(room.round)
+            if skill.id == "firepower_control":
+                room.firepower_control_round[player_id] = int(room.round)
+                if room.current_attacker == player_id:
+                    if self._phase(room) == "battle":
+                        room.attacks_remaining = firepower_control_remaining(room, player_id)
+                    await self._publisher.emit(
+                        "attacks_updated",
+                        {
+                            "current_attacker": room.current_attacker,
+                            "attacks_remaining": room.attacks_remaining,
+                        },
+                        room=room.id,
+                    )
+                await self._add_log(
+                    room,
+                    f"第{room.round}回合 · {self._name(room, player_id)} 发动指挥官技能"
+                    f"【{skill.name}】，本大回合总攻击次数固定为 6 次",
+                    "magic",
+                    {"caster": player_id, "commander_id": cmd.id, "skill_id": skill.id},
+                )
+                await self._publisher.emit(
+                    "commander_skill_used",
+                    {
+                        "player_id": player_id,
+                        "commander_id": cmd.id,
+                        "commander_name": cmd.name,
+                        "commander_level": int(getattr(player, "commander_level", 1) or 1),
+                        "skill_id": skill.id,
+                        "skill_name": skill.name,
+                        "stage": "resolve",
+                    },
+                    room=room.id,
+                )
+            elif skill.id == "delayed_lock":
+                if not opponent_id or opponent_id not in room.players:
+                    return {"status": "error", "message": "对手尚未就位"}
+                opp_player = room.players[opponent_id]
+                alive = alive_ships(opp_player)
+                if not alive:
+                    return {"status": "error", "message": "对方当前没有存活战舰"}
+                player.commander_next_available_round = int(room.round) + QINGTONG_COOLDOWN_ROUNDS + 1
+                target_ship = self.rng.choice(alive)
+                room.delayed_locks.append({
+                    "id": uuid.uuid4().hex,
+                    "caster_id": player_id,
+                    "target_player_id": opponent_id,
+                    "ship_id": ship_id_key(target_ship),
+                    "ship_obj": target_ship,
+                    "used_round": int(room.round),
+                    "reveal_after_round": int(room.round) + 1,
+                })
+                await self._add_log(
+                    room,
+                    f"第{room.round}回合 · {self._name(room, player_id)} 发动指挥官技能"
+                    f"【{skill.name}】，对敌方一艘存活战舰施加了延迟锁定（将于第 {int(room.round) + 1} 回合末揭晓）",
+                    "magic",
+                    {"caster": player_id, "commander_id": cmd.id, "skill_id": skill.id},
+                )
+                await self._publisher.emit(
+                    "commander_skill_used",
+                    {
+                        "player_id": player_id,
+                        "commander_id": cmd.id,
+                        "commander_name": cmd.name,
+                        "commander_level": int(getattr(player, "commander_level", 1) or 1),
+                        "skill_id": skill.id,
+                        "skill_name": skill.name,
+                        "stage": "resolve",
+                    },
+                    room=room.id,
+                )
+            await self._emit_commander_state(room)
+            await self._sync_each_seat(room)
+            if self.touch_turn is not None:
+                self.touch_turn(room, player_id)
+            return {
+                "status": "success",
+                "message": f"已发动指挥官技能「{skill.name}」",
+                "commander_id": cmd.id,
+                "skill_id": skill.id,
+            }
+
+        # 入链主动技能（速阶三）：铁锚「无畏舰队」、归航「弃舰筹谋」
+        chosen_ship: PlayerShip | None = None
+        if skill.id == "sacrifice_gambit":
+            chosen_ship, pick_error = self._resolve_guihang_sacrifice_ship(room, player_id, data)
+            if pick_error:
+                return {"status": "error", "message": pick_error}
+
+        # 校验完全通过后再关窗并立即支付发动代价（被无效亦不退还）。
+        if room.chain_waiting:
+            room.chain_waiting = False
+            room.chain_window = None
+        room.commander_chain_uses.setdefault(player_id, set()).add(skill.id)
+        player.commander_skill_used_count = int(getattr(player, "commander_skill_used_count", 0) or 0) + 1
+        player.commander_last_used_round = int(room.round)
+        if skill.id == "sacrifice_gambit" and chosen_ship is not None:
+            await self._sacrifice_ship(room, player_id, chosen_ship, "sacrifice_gambit", source_id=player_id)
+
+        cmd_card = MagicCard(
+            name=skill.name,
+            speed=int(skill.speed),
+            type="普通",
+            description=skill.description,
+        )
+        item = ChainItem(
+            player_id,
+            cmd_card,
+            {},
+            self.clock(),
+            item_kind="commander_skill",
+            commander_id=cmd.id,
+            skill_id=skill.id,
+        )
+        room.chain.append(item)
+        replay_rules.note_chain(room, list(room.chain))
+        await self._add_log(
+            room,
+            f"第{room.round}回合 · {self._name(room, player_id)} 连锁发动指挥官技能【{skill.name}】",
+            "magic",
+            {"caster": player_id, "commander_id": cmd.id, "skill_id": skill.id},
+        )
+        await self._publisher.emit(
+            "commander_skill_used",
+            {
+                "player_id": player_id,
+                "commander_id": cmd.id,
+                "commander_name": cmd.name,
+                "commander_level": int(getattr(player, "commander_level", 1) or 1),
+                "skill_id": skill.id,
+                "skill_name": skill.name,
+                "stage": "chain_enter",
+            },
+            room=room.id,
+        )
+        await self.rooms.viewing.present(room, {"stage": "join", **_spectate_chain_payload(room)})
+        await self._publisher.emit(
+            "magic_chain_updated", _spectate_chain_payload(room), room=room.id
+        )
+        await self._emit_commander_state(room)
+        await self._sync_each_seat(room)
+        room.chain_passes = 0
+        await self._open_chain_window(room, player_id)
+        if self.touch_turn is not None:
+            self.touch_turn(room, player_id)
+        return {
+            "status": "success",
+            "message": f"指挥官技能「{skill.name}」已加入连锁",
+            "commander_id": cmd.id,
+            "skill_id": skill.id,
+        }
+
+    @guard_phase_write
+    async def use_commander_skill(
+        self, connection: Connection | None, data: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """主动或连锁/优先权窗口内发动当前指挥官的专属技能。"""
+        data = data if isinstance(data, dict) else {}
+        room = self.rooms.get_room(data.get("room_id"))
+        player_id = data.get("player_id")
+        if (
+            room is None
+            or not player_id
+            or player_id not in room.players
+            or (
+                connection is not None
+                and not self.rooms.identity_ok(room, str(player_id), connection)
+            )
+        ):
+            return dict(INVALID_SEAT)
+        pid = str(player_id)
+        if room.chain_waiting:
+            if room.chain_window != pid:
+                return {"status": "error", "message": "当前不是你的连锁响应窗口"}
+            return await self._activate_commander_skill_inner(room, pid, data, in_chain_window=True)
+        in_priority = bool(room.priority_continue and room.priority_continue.get("responder") == pid)
+        return await self._activate_commander_skill_inner(room, pid, data, in_chain_window=in_priority)
+
+    async def _resolve_commander_skill(self, room: Room, item: ChainItem) -> EffectResult:
+        """结算入链指挥官技能（铁锚「无畏舰队」/ 归航「弃舰筹谋」）。"""
+        if item.skill_id == "dauntless_fleet":
+            room.dauntless_round[item.player_id] = int(room.round)
+            return EffectResult(
+                True,
+                "无畏舰队展开：本大回合己方战舰免疫普通炮击伤害且不会因此沉没（被击中隐身格将显形）",
+            )
+        if item.skill_id == "sacrifice_gambit":
+            drawn: list[str] = []
+            for _ in range(2):
+                card = await self.draw(room, item.player_id)
+                if card is not None:
+                    drawn.append(card.name)
+            msg = f"从公共魔法牌堆抽取了 {len(drawn)} 张魔法卡" if drawn else "牌堆已空或抽到重复卡牌，本次抽牌未能留存手牌"
+            return EffectResult(True, msg)
+        return EffectResult(False, f"未知指挥官技能: {item.skill_id}")
+
+    async def commander_interact(
+        self, connection: Connection, data: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """对局内点击指挥官头像触发角色语音台词与轻量互动反馈。"""
+        data = data if isinstance(data, dict) else {}
+        room, player_id = self._seat(connection, data)
+        if room is None:
+            return dict(INVALID_SEAT)
+        player = room.players[player_id]
+        cmd = get_commander(getattr(player, "commander_id", None) or DEFAULT_COMMANDER_ID)
+        payload = {
+            "room_id": room.id,
+            "player_id": player_id,
+            "commander_id": cmd.id if cmd else DEFAULT_COMMANDER_ID,
+            "commander_name": cmd.name if cmd else "赤潮",
+            "line": cmd.voice_lines.get("interact", "") if cmd else "",
+        }
+        await self._publisher.emit("commander_interact", payload, room=room.id)
+        return {"status": "success", **payload}
+
     # ------------------------------------------------------------ chain engine
 
     async def _open_chain_window(self, room: Room, caster_id: str) -> None:
@@ -1180,6 +1545,17 @@ class MagicService:
                 token = room.chain_timer
                 top = room.chain[-1]
                 player = room.players[player_id]
+                cmd_ok = can_use_commander_skill_in_chain(room, player_id)
+                cmd_spec = get_commander(getattr(player, "commander_id", None))
+                cmd_skill_payload = (
+                    {
+                        "commander_id": cmd_spec.id,
+                        "commander_name": cmd_spec.name,
+                        **cmd_spec.skill.to_dict(),
+                    }
+                    if (cmd_ok and cmd_spec is not None)
+                    else None
+                )
                 target_preview = None
                 # 目标已经在入链时由服务端校验过。响应者只需要知道对手
                 # 选中了自己棋盘的范围，才能决定是否用失灵；神威！是唯一
@@ -1211,6 +1587,7 @@ class MagicService:
                             card_payload(card)
                             for card in chain_rules.usable_speed3_cards(room, player_id)
                         ],
+                        "commander_skill": cmd_skill_payload,
                         "target_preview": target_preview,
                         "countdown": CHAIN_RESPONSE_SECONDS,
                     },
@@ -1361,6 +1738,11 @@ class MagicService:
         # window open for the same player: closing it there left `chain_waiting`
         # false with no window and no timer, i.e. a chain that never resolved
         # (the 10s timeout also returns early once `chain_waiting` is false).
+        if chain and data.get("use_commander_skill"):
+            return await self._activate_commander_skill_inner(
+                room, str(player_id), data, in_chain_window=True
+            )
+
         if chain and card_payload_data:
             try:
                 card = card_from_payload(card_payload_data)
@@ -1560,6 +1942,7 @@ class MagicService:
                     if by
                     else f"{item.card.name}被无效化"
                 )
+                is_cmd = getattr(item, "item_kind", "magic_card") == "commander_skill"
                 result = ChainResult(
                     card=item.card,
                     caster=item.player_id,
@@ -1567,26 +1950,111 @@ class MagicService:
                     message=detail,
                     negated_skip=True,
                     negated_by=by,
-                    extra={**({'mastery_tier': item.mastery_tier} if item.mastery_tier else {}),
-                           **({'skin_id': item.skin_id} if item.skin_id else {})},
+                    extra={
+                        **({'mastery_tier': item.mastery_tier} if item.mastery_tier else {}),
+                        **({'skin_id': item.skin_id} if item.skin_id else {}),
+                        **({'item_kind': 'commander_skill', 'commander_id': item.commander_id, 'skill_id': item.skill_id} if is_cmd else {}),
+                    },
                 )
                 # A negated field card only goes to the discard pile; it must
                 # never replace or tear down the field already in play.
-                if item.card.type == "场地" and room.field_magic is not item.card:
+                if not is_cmd and item.card.type == "场地" and room.field_magic is not item.card:
                     room.magic_discard.append(item.card)
                     await self._emit_card_discarded(
                         room, item.player_id, item.card, "negated"
                     )
                 suffix = f"但被{by}无效化" if by else "但被无效化"
-                await self._add_log(
-                    room,
-                    f"第{room.round}回合 · {self._name(room, item.player_id)} 使用了"
-                    f"【{item.card.name}】{suffix}",
-                    "magic",
-                    {"caster": item.player_id, "card": item.card.name},
-                )
+                if is_cmd:
+                    caster_player = room.players.get(item.player_id)
+                    cmd = get_commander(item.commander_id or getattr(caster_player, "commander_id", None))
+                    await self._add_log(
+                        room,
+                        f"第{room.round}回合 · {self._name(room, item.player_id)} 发动的指挥官技能"
+                        f"【{item.card.name}】{suffix}",
+                        "magic",
+                        {"caster": item.player_id, "commander_id": item.commander_id, "skill_id": item.skill_id},
+                    )
+                    await self._publisher.emit(
+                        "commander_skill_used",
+                        {
+                            "player_id": item.player_id,
+                            "commander_id": item.commander_id or (cmd.id if cmd else DEFAULT_COMMANDER_ID),
+                            "commander_name": cmd.name if cmd else "",
+                            "commander_level": int(getattr(caster_player, "commander_level", 1) or 1) if caster_player else 1,
+                            "skill_id": item.skill_id,
+                            "skill_name": item.card.name,
+                            "stage": "negated",
+                            "negated": True,
+                            "negated_by": by,
+                        },
+                        room=room.id,
+                    )
+                    await self._emit_commander_state(room)
+                else:
+                    await self._add_log(
+                        room,
+                        f"第{room.round}回合 · {self._name(room, item.player_id)} 使用了"
+                        f"【{item.card.name}】{suffix}",
+                        "magic",
+                        {"caster": item.player_id, "card": item.card.name},
+                    )
                 results.append(result)
                 await self._sync_each_seat(room)
+                continue
+
+            if getattr(item, "item_kind", "magic_card") == "commander_skill":
+                effect_result = await self._resolve_commander_skill(room, item)
+                caster_player = room.players.get(item.player_id)
+                cmd = get_commander(item.commander_id or getattr(caster_player, "commander_id", None))
+                chain_result = ChainResult(
+                    card=item.card,
+                    caster=item.player_id,
+                    success=effect_result.success,
+                    message=effect_result.message,
+                    extra={
+                        "item_kind": "commander_skill",
+                        "commander_id": item.commander_id,
+                        "skill_id": item.skill_id,
+                    },
+                )
+                await self._add_log(
+                    room,
+                    f"第{room.round}回合 · {self._name(room, item.player_id)} 的指挥官技能"
+                    f"【{item.card.name}】生效"
+                    + (f"，{effect_result.message}" if effect_result.success and effect_result.message else ""),
+                    "magic",
+                    {"caster": item.player_id, "commander_id": item.commander_id, "skill_id": item.skill_id},
+                )
+                await self._publisher.emit(
+                    "commander_skill_used",
+                    {
+                        "player_id": item.player_id,
+                        "commander_id": item.commander_id or (cmd.id if cmd else DEFAULT_COMMANDER_ID),
+                        "commander_name": cmd.name if cmd else "",
+                        "commander_level": int(getattr(caster_player, "commander_level", 1) or 1) if caster_player else 1,
+                        "skill_id": item.skill_id,
+                        "skill_name": item.card.name,
+                        "stage": "resolve",
+                        "negated": False,
+                    },
+                    room=room.id,
+                )
+                results.append(chain_result)
+                if effect_result.success and room.state != RoomState.GAME_OVER:
+                    for loser_id in room.players:
+                        winner_id = room.opponent_of(loser_id)
+                        if winner_id and battle_rules.is_zero_ship_defeat(room, loser_id):
+                            await self.finish(room, winner_id, loser_id, reason=f"{item.card.name}结算后无战舰可用")
+                            chain_result.game_over = True
+                            break
+                await self._emit_active_effects(room)
+                for p in room.players.values():
+                    await self._emit_hand(p)
+                await self._emit_ships_updated(room)
+                await self._emit_commander_state(room)
+                await self._sync_each_seat(room)
+                if room.chain and room.chain_animation_clients:
+                    await asyncio.sleep(0.18)
                 continue
 
             motion = chain_card_effect(room, item)
@@ -1742,6 +2210,7 @@ class MagicService:
         room.chain_waiting = False
         room.chain_window = None
         room.chain_passes = 0
+        room.commander_chain_uses.clear()
         self._chain_resolutions.pop(room.id, None)
         room.chain_resolving = False
         chain_rules.clear_display(room)
@@ -2361,7 +2830,8 @@ class MagicService:
         frames = lifecycle_rules.clear_board_effects(room, list(room.players), "灵气复苏")
         frames += lifecycle_rules.clear_multiturn_effects(room, "灵气复苏")
         interaction_rules.clear_ship_picks(room)
-        for player in room.players.values():
+        for pid, player in room.players.items():
+            clear_delayed_locks_for_player(room, pid)
             player.ships = []
             player.sunken_ships = []
             player.permanently_destroyed_ships = []
@@ -2820,6 +3290,7 @@ class MagicService:
         owner = room.players.get(owner_id)
         if owner is None:
             return
+        clear_delayed_locks_for_ship(room, owner_id, ship)
         from ..domain.mystery_tech.effects import maintain_fleet, on_sink
         maintain_fleet(room)
         source = attacker_id or self._last_attacker(room)
@@ -2882,7 +3353,11 @@ class MagicService:
         player = room.players.get(player_id)
         if player is None or not getattr(player.effect_flags, "wuxian", False):
             return False
-        if field_magic_name(room) == "教皇旨意" or battle_rules.attacks_forced_zero(room):
+        if (
+            firepower_control_active(room, player_id)
+            or field_magic_name(room) == "教皇旨意"
+            or battle_rules.attacks_forced_zero(room)
+        ):
             return False
         if room.current_attacker != player_id:
             return False
@@ -3140,12 +3615,15 @@ class MagicService:
              "outcome": outcome},
         )
         if outcome == "opponent_zero_attacks":
-            room.attacks_remaining = 0
-            entry = room.game_effects.get("zero_attacks_turn")
-            if not isinstance(entry, dict):
-                entry = {}
-            entry[opponent_id] = room.round
-            room.game_effects["zero_attacks_turn"] = entry
+            if firepower_control_active(room, room.current_attacker):
+                room.attacks_remaining = firepower_control_remaining(room, room.current_attacker)
+            else:
+                room.attacks_remaining = 0
+                entry = room.game_effects.get("zero_attacks_turn")
+                if not isinstance(entry, dict):
+                    entry = {}
+                entry[opponent_id] = room.round
+                room.game_effects["zero_attacks_turn"] = entry
             await self._publisher.emit(
                 "attacks_updated",
                 {
@@ -3368,6 +3846,8 @@ class MagicService:
             return {"status": "error", "message": "还没到你的攻击回合"}
         if self._phase(room) != "battle":
             return {"status": "error", "message": "当前不是战斗阶段"}
+        if firepower_control_active(room, player_id):
+            return {"status": "error", "message": "「火力统制」生效期间总攻击次数锁定，不能通过弃牌增加攻击次数"}
         if battle_rules.attacks_forced_zero(room):
             return {"status": "error", "message": "当前效果使攻击次数恒定为0，不能通过弃牌获得攻击次数"}
         player = room.players[player_id]
@@ -3530,6 +4010,7 @@ class MagicService:
                 if not is_ship_alive(player, ship):
                     continue
                 player.ships.remove(ship)
+                clear_delayed_locks_for_ship(room, player_id, ship)
                 player.remaining_ships -= 1
                 removed += 1
             if removed:
@@ -3667,6 +4148,8 @@ class MagicService:
         effects.expire(room, effects.BOUNDARY_ROUND)
         effects.project_effect_flags(room)
         await self._emit_active_effects(room)
+        await self._settle_due_delayed_locks(room)
+        await self._emit_commander_state(room)
         return None
 
     async def on_turn_switch(self, room: Room) -> None:

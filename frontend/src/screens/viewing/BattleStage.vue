@@ -48,7 +48,7 @@ async function showPreview(card: ViewCard, event: Event): Promise<void> {
       <div v-for="side in sides" :key="side" class="view-battle__half" :data-owner="side" :class="{ 'is-turn': frame.context.state !== 'game_over' && frame.context.current_side === side }">
         <header class="view-player" :data-testid="mode + '-player-' + side">
           <span class="view-player__flag">{{ side === 'p1' ? 'Ⅰ' : 'Ⅱ' }}</span>
-          <div><strong>{{ frame.players[side].name }}</strong><small>{{ frame.context.state === 'game_over' ? frame.context.winner === side ? '本局获胜' : '对局结束' : frame.context.current_side === side ? '正在行动' : '舰队待命' }}</small></div>
+          <div><strong>{{ frame.players[side].name }}</strong><small v-if="frame.commanders?.sides?.[side]" class="view-cmd-tag" :data-testid="mode + '-commander-' + side">{{ frame.commanders.sides[side].commander_name }} · Lv.{{ frame.commanders.sides[side].commander_level || 1 }}{{ frame.commanders.sides[side].dauntless_active ? ' · 无畏' : '' }}{{ frame.commanders.sides[side].firepower_control_active ? ' · 火力统制' : '' }}</small><small>{{ frame.context.state === 'game_over' ? frame.context.winner === side ? '本局获胜' : '对局结束' : frame.context.current_side === side ? '正在行动' : '舰队待命' }}</small></div>
           <b>{{ frame.players[side].remaining_ships }}<small> 艘</small></b>
         </header>
         <BoardPanel :board="side === 'p1' ? 'self' : 'opponent'" :board-testid="mode + '-board-' + side"

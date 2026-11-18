@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 640" width="480" height="640">
+  <defs>
+    <linearGradient id="gradBg" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0%" stop-color="#151926"/>
+      <stop offset="100%" stop-color="#2d2830"/>
+    </linearGradient>
+    <radialGradient id="gradGlow" cx="50%" cy="38%" r="55%">
+      <stop offset="0%" stop-color="#eab354" stop-opacity="0.52"/>
+      <stop offset="100%" stop-color="#2d2830" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="gradAcc" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fef08a"/>
+      <stop offset="100%" stop-color="#eab354"/>
+    </linearGradient>
+  </defs>
+  
+    <rect width="480" height="640" rx="28" fill="url(#gradBg)"/>
+    <rect width="480" height="640" rx="28" fill="url(#gradGlow)" opacity="0.68"/>
+    <path d="M0 540 Q120 500 240 535 T480 520 L480 640 L0 640 Z" fill="#eab354" opacity="0.16"/>
+    <path d="M0 570 Q160 535 300 565 T480 555 L480 640 L0 640 Z" fill="#fef08a" opacity="0.12"/>
+    
+        <g opacity="0.48">
+          <ellipse cx="240" cy="235" rx="185" ry="70" fill="none" stroke="#fef08a" stroke-width="1.5" transform="rotate(-18 240 235)"/>
+          <ellipse cx="240" cy="235" rx="185" ry="70" fill="none" stroke="#eab354" stroke-width="1.5" transform="rotate(18 240 235)"/>
+          <rect x="64" y="135" width="44" height="62" rx="6" fill="#191f2c" stroke="#eab354" stroke-width="2" transform="rotate(-14 86 166)"/>
+          <rect x="372" y="145" width="44" height="62" rx="6" fill="#191f2c" stroke="#fef08a" stroke-width="2" transform="rotate(14 394 176)"/>
+        </g>
+        
+    
+        <circle cx="240" cy="250" r="168" fill="none" stroke="#eab354" stroke-width="1.5" stroke-dasharray="10 10" opacity="0.32"/>
+        
+    
+  
+        <!-- 后方长发波浪 -->
+        <path d="M162 172 C125 220 112 340 130 435 C154 405 162 330 178 265 Z" fill="#e8dec8" stroke="#6b5635" stroke-width="2"/>
+        <path d="M318 172 C355 220 368 340 350 435 C326 405 318 330 302 265 Z" fill="#e8dec8" stroke="#6b5635" stroke-width="2"/>
+        <path d="M138 380 C145 315 156 260 172 220" fill="none" stroke="#fff7df" stroke-width="4" opacity="0.8"/>
+
+        <!-- 白金披风与礼装双排扣风衣 -->
+        <path d="M112 345 L62 605 L418 605 L368 345 Z" fill="#191f2c" stroke="#eab354" stroke-width="1.6"/>
+        <path d="M142 340 L188 318 L240 358 L292 318 L338 340 L358 590 L122 590 Z" fill="#f5f3ef" stroke="#eab354" stroke-width="2.4"/>
+        <path d="M188 318 L240 442 L292 318 L272 345 L240 402 L208 345 Z" fill="#191f2c"/>
+        <!-- 白金饰链与肩穗 -->
+        <path d="M166 335 Q240 398 314 335" fill="none" stroke="#eab354" stroke-width="3.5" stroke-dasharray="5 3"/>
+        <polygon points="136,342 184,318 188,350 138,366" fill="#eab354" stroke="#fef08a" stroke-width="1.5"/>
+        <polygon points="344,342 296,318 292,350 342,366" fill="#eab354" stroke="#fef08a" stroke-width="1.5"/>
+        <circle cx="212" cy="402" r="5" fill="#eab354"/>
+        <circle cx="268" cy="402" r="5" fill="#eab354"/>
+        <circle cx="212" cy="442" r="5" fill="#eab354"/>
+        <circle cx="268" cy="442" r="5" fill="#eab354"/>
+
+        <!-- 颈与温柔从容面庞 -->
+        <path d="M223 288 V332 L240 346 L257 332 V288 Z" fill="#fdede4"/>
+        <path d="M182 184 C180 258 206 298 240 302 C274 298 300 258 298 184 C296 136 184 136 182 184 Z" fill="#fdede4" stroke="#5c4734" stroke-width="2"/>
+
+        <!-- 琥珀金双眸 -->
+        <ellipse cx="212" cy="234" rx="13.5" ry="14" fill="#fff"/>
+        <ellipse cx="213" cy="236" rx="9" ry="10.5" fill="#d99b38"/>
+        <circle cx="213" cy="236" r="4.2" fill="#2b1d08"/>
+        <circle cx="217" cy="230" r="2.8" fill="#fff"/>
+        <ellipse cx="268" cy="234" rx="13.5" ry="14" fill="#fff"/>
+        <ellipse cx="267" cy="236" rx="9" ry="10.5" fill="#d99b38"/>
+        <circle cx="267" cy="236" r="4.2" fill="#2b1d08"/>
+        <circle cx="271" cy="230" r="2.8" fill="#fff"/>
+        <path d="M196 218 Q212 214 226 220 M284 218 Q268 214 254 220" fill="none" stroke="#664f2c" stroke-width="2" stroke-linecap="round"/>
+        <path d="M229 269 Q240 276 252 269" fill="none" stroke="#b86b66" stroke-width="2" stroke-linecap="round"/>
+
+        <!-- 柔顺金银发丝与斜戴白色金檐提督帽 -->
+        <path d="M170 198 C176 124 306 122 310 198 C295 166 276 170 260 206 C250 174 236 176 224 206 C206 172 186 174 170 198 Z" fill="#e8dec8" stroke="#6b5635" stroke-width="1.8"/>
+        <g transform="rotate(-11 240 136)">
+          <path d="M168 156 L186 108 L294 108 L312 156 Q240 142 168 156 Z" fill="#f8fafc" stroke="#eab354" stroke-width="2.4"/>
+          <path d="M178 152 Q240 164 302 152 L296 162 Q240 172 184 162 Z" fill="#191f2c"/>
+          <polygon points="240,120 246,133 258,133 248,140 252,152 240,145 228,152 232,140 222,133 234,133" fill="#eab354"/>
+        </g>
+        <!-- 手边黄金怀表 -->
+        <g transform="translate(152, 468)">
+          <line x1="25" y1="-88" x2="0" y2="-28" stroke="#fef08a" stroke-width="2" stroke-dasharray="3 3"/>
+          <circle cx="0" cy="0" r="24" fill="#191f2c" stroke="#eab354" stroke-width="3"/>
+          <circle cx="0" cy="0" r="17" fill="#fffbeb"/>
+          <line x1="0" y1="0" x2="0" y2="-11" stroke="#191f2c" stroke-width="2.2" stroke-linecap="round"/>
+          <line x1="0" y1="0" x2="8" y2="5" stroke="#eab354" stroke-width="2" stroke-linecap="round"/>
+        </g>
+        
+</svg>

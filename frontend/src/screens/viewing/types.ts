@@ -11,6 +11,11 @@ export interface ViewBoard { fleet: FleetCell[]; marks: Shot[]; shots: Shot[]; r
 export interface ViewFrame {
   version: 2; audience: 'replay' | 'spectator'
   context: Json; rules: Json; players: Record<Side, ViewPlayer>; boards: Record<Side, ViewBoard>; chain: Json
+  commanders?: {
+    enabled?: boolean
+    sides?: Record<string, { commander_id?: string; commander_name?: string; commander_level?: number; firepower_control_active?: boolean; dauntless_active?: boolean }>
+    revealed_locks?: Array<{ id?: string; caster_side?: string; target_side?: string; cells?: Point[] }>
+  }
 }
 export interface ViewPacket { version: 2; room_id: string; seq: number; frame: ViewFrame; cues: Json[]; baseline?: boolean }
 export interface ViewEvent { seq: number; step: number; type: 'state' | 'presentation'; patch?: Partial<ViewFrame>; cue?: Json }

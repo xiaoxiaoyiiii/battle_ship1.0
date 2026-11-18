@@ -41,7 +41,7 @@ from alembic.config import Config
 from .models import Base
 from .schema import verify_schema
 
-HEAD_REVISION = "0015_card_skins"
+HEAD_REVISION = "0016_commanders"
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
 INTERNAL_TABLES = frozenset({"sqlite_sequence", "alembic_version"})
 

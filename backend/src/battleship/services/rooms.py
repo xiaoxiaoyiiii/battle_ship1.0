@@ -33,6 +33,11 @@ from ..contracts.identity import (
 )
 from ..domain.anticheat import suspicion
 from ..domain import mutations, bans
+from ..domain.commanders import (
+    COMMANDER_IDS,
+    DEFAULT_COMMANDER_ID,
+    commander_room_state,
+)
 from ..infra.logging import get_logger
 from ..infra.ratelimit import RateLimiter
 from ..domain.room import (
@@ -125,6 +130,7 @@ class RoomService:
     ) -> None:
         self.rooms: dict[str, Room] = {}
         self.daily_challenges = None
+        self.commanders: Any = None
         self.match_queue: list[dict[str, Any]] = []
         self.mutation_rng = mutation_rng or random
         self.mutation_clock = mutation_clock or time.time
@@ -256,6 +262,44 @@ class RoomService:
             current_socket_id=connection.sid,
         )
         return decision.ok
+
+    def _apply_commander(
+        self,
+        room: Room,
+        seat_id: str,
+        *,
+        requested_commander_id: str | None = None,
+        is_ai: bool = False,
+    ) -> None:
+        """为进房或成局座位写入服务端权威指挥官配置与初始对局计数。"""
+        player = room.players.get(seat_id)
+        if player is None:
+            return
+        if self.commanders is not None:
+            loadout = self.commanders.resolve_loadout(
+                player.user_id,
+                requested_commander_id,
+                is_ai=is_ai,
+                ai_difficulty=getattr(room, "ai_difficulty", "normal"),
+                rng=self.mutation_rng,
+            )
+        elif is_ai:
+            chosen = self.mutation_rng.choice(COMMANDER_IDS)
+            loadout = {"commander_id": chosen, "commander_level": 5, "cosmetics": {}}
+        else:
+            chosen = (
+                requested_commander_id
+                if requested_commander_id in COMMANDER_IDS
+                else DEFAULT_COMMANDER_ID
+            )
+            loadout = {"commander_id": chosen, "commander_level": 1, "cosmetics": {}}
+        player.commander_id = str(loadout["commander_id"])
+        player.commander_level = max(1, int(loadout.get("commander_level", 1) or 1))
+        player.commander_cosmetics = dict(loadout.get("cosmetics") or {})
+        player.commander_skill_used_count = 0
+        player.commander_last_used_round = None
+        player.commander_next_available_round = 1
+        player.commander_shots_used_this_round = 0
 
     # ------------------------------------------------------------- lifecycle
 
@@ -408,6 +452,12 @@ class RoomService:
             socket_id=connection.sid,
             registered=bool(connection.user_id),
         )
+        self._apply_commander(
+            room,
+            player_id,
+            requested_commander_id=data.get("commander_id"),
+            is_ai=False,
+        )
         self.rooms[room.id] = room
         self.presence.update_identity(
             connection.sid, name=room.players[player_id].name, user_id=connection.user_id
@@ -446,6 +496,12 @@ class RoomService:
             name=self._player_name(connection, data), user_id=player_id,
             socket_id=connection.sid, registered=bool(connection.user_id),
         )
+        self._apply_commander(
+            room,
+            player_id,
+            requested_commander_id=data.get("commander_id"),
+            is_ai=False,
+        )
         room.ai_difficulty = _normalize_difficulty(data.get("difficulty") or "normal")
         room.ai_difficulty_by_player = {}
         room.ranked = False
@@ -462,6 +518,7 @@ class RoomService:
             remaining_ships=0,
         )
         room.init_player_magic(ai_id)
+        self._apply_commander(room, ai_id, is_ai=True)
         self.rooms[room.id] = room
         self.presence.update_identity(connection.sid, name=room.players[player_id].name,
                                       user_id=connection.user_id)
@@ -548,11 +605,24 @@ class RoomService:
                 name=player_name, user_id=player_id, socket_id=connection.sid,
                 registered=bool(connection.user_id),
             )
+            self._apply_commander(
+                room,
+                player_id,
+                requested_commander_id=data.get("commander_id"),
+                is_ai=False,
+            )
         else:
             # 人机旧客户端仍先创建再加入；创建时已保留人类座位。
             player_id = own_entry[0]
             seated.socket_id = connection.sid
             room.disconnected.pop(player_id, None)
+            if data.get("commander_id") and room.state == RoomState.WAITING:
+                self._apply_commander(
+                    room,
+                    player_id,
+                    requested_commander_id=data.get("commander_id"),
+                    is_ai=False,
+                )
 
         if len(room.players) == 2:
             # Skeleton: a full room enters placement. Placement legality / RPS /
@@ -582,6 +652,7 @@ class RoomService:
                         "mutations": mutations.payload(room, seat_id),
                         "card_bans": bans.payload(room, seat_id),
                         "max_ships": room.players[seat_id].max_ships,
+                        "commander_state": commander_room_state(room, seat_id),
                         # Ticket #51: additive per-seat wait state (the room
                         # broadcast game_state cannot carry it: the two seats'
                         # "opponent" differ).

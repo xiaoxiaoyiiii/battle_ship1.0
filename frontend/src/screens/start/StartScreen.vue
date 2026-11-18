@@ -7,6 +7,7 @@ import MysteryTechToggle from '../../components/MysteryTechToggle.vue'
 import { useCardBansStore } from '../../stores/cardBans'
 import HomeTasks from './HomeTasks.vue'
 import BattlePassCard from './BattlePassCard.vue'
+import CommanderSelectorStrip from '../../components/commander/CommanderSelectorStrip.vue'
 import MatchFoundOverlay from '../../components/MatchFoundOverlay.vue'
 import StateSurface from '../../components/StateSurface.vue'
 import SupportAuthorLink from '../../components/SupportAuthorLink.vue'
@@ -417,6 +418,7 @@ async function startAi(): Promise<void> {
           <h2 id="home-actions-title" class="home-main__title">选择你的下一场海战</h2>
           <p class="home-main__lead">落子、施法，在连锁中扭转战局。</p>
         </div>
+        <CommanderSelectorStrip title="出战指挥官配置" />
         <div class="home-launch__actions">
         <button
           type="button"

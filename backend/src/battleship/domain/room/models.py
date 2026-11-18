@@ -152,6 +152,13 @@ class Player:
     registered: bool = False
     damage_dealt_this_turn: int = 0
     ship_reductions_this_turn: int = 0
+    commander_id: str = "chichao"
+    commander_level: int = 1
+    commander_cosmetics: dict[str, Any] = field(default_factory=dict)
+    commander_skill_used_count: int = 0
+    commander_last_used_round: int | None = None
+    commander_next_available_round: int = 1
+    commander_shots_used_this_round: int = 0
 
 
 def is_ship_alive(player: Player, ship: PlayerShip | None) -> bool:
@@ -444,6 +451,12 @@ class Room:
     spectators: dict[str, dict[str, Any]] = field(default_factory=dict)
     spectate_chat_recent: dict[str, list[float]] = field(default_factory=dict)
     spectate_chat_last: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    # 指挥官系统当局状态（按局隔离，大回合/连锁清理各有边界）
+    firepower_control_round: dict[str, int] = field(default_factory=dict)
+    dauntless_round: dict[str, int] = field(default_factory=dict)
+    delayed_locks: list[dict[str, Any]] = field(default_factory=list)
+    commander_chain_uses: dict[str, set[str]] = field(default_factory=dict)
 
     # Ticket #36: 框架无关的 effect 总线运行态（订阅 / 租约 / 事件队列 / 错误）。
     # 只是运行期簿记，不参与房间相等性与 repr，避免日志与快照被噪音污染。

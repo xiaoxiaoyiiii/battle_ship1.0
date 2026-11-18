@@ -247,6 +247,8 @@ async def last_stand(ctx: EffectContext) -> EffectResult:
             ctx.room, ctx.caster_id, [{"x": p.x, "y": p.y} for p in ship.positions]
         )
     ctx.caster.remaining_ships = 0
+    from ...commanders.rules import clear_delayed_locks_for_player
+    clear_delayed_locks_for_player(ctx.room, ctx.caster_id)
 
     await ctx.clear_board_effects([ctx.caster_id], "绝处逢生")
     if sacrificed:
@@ -313,6 +315,8 @@ async def last_chance(ctx: EffectContext) -> EffectResult:
     ctx.caster.permanently_destroyed_ships = []
     ctx.caster.remaining_ships = 0
     ctx.caster.needs_reset = True
+    from ...commanders.rules import clear_delayed_locks_for_player
+    clear_delayed_locks_for_player(ctx.room, ctx.caster_id)
     ctx.opponent.attacks = []
     ctx.opponent.revealed_positions = []
     await ctx.emit_board_attacks()
@@ -372,6 +376,7 @@ async def polar_reversal(ctx: EffectContext) -> EffectResult:
     ctx.room.field_magic = None
     ctx.room.field_magic_owner = None
     ctx.room.game_effects = {}
+    ctx.room.delayed_locks = []
     # 不要在这里清连锁与弃牌堆：本效果可能正是连锁里的一张，清掉会让下层
     # 待结算的卡既不被结算也不退牌（吞卡）；chain 由 _resolve_chain 收尾。
     temps.clear(ctx.room)
@@ -579,12 +584,16 @@ async def eden(ctx: EffectContext) -> EffectResult:
 async def papal_edict(ctx: EffectContext) -> EffectResult:
     await ctx.place_field(ctx.card)
     ctx.room.game_effects["papal_edict"] = True
-    ctx.room.attacks_remaining = 0
+    from ...commanders.rules import firepower_control_active, firepower_control_remaining
+    if ctx.room.current_attacker and firepower_control_active(ctx.room, ctx.room.current_attacker):
+        ctx.room.attacks_remaining = firepower_control_remaining(ctx.room, ctx.room.current_attacker)
+    else:
+        ctx.room.attacks_remaining = 0
     await ctx.emit(
         "attacks_updated",
         {
             "current_attacker": ctx.room.current_attacker,
-            "attacks_remaining": 0,
+            "attacks_remaining": ctx.room.attacks_remaining,
         },
         room=ctx.room.id,
     )

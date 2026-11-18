@@ -4,6 +4,7 @@ import type { TypedSocket } from '../socket/client'
 import { acquireSettlementChannel, getSettlementSocket } from './settlement'
 import { useHomeStore } from '../stores/home'
 import { useCardBansStore } from '../stores/cardBans'
+import { useCommandersStore } from '../stores/commanders'
 
 /**
  * The home-screen wire channel (ticket #26).
@@ -147,10 +148,12 @@ export async function emitFindMatch(
   mode: 'casual' | 'ranked' | 'mystery_tech',
 ): Promise<Ack> {
   const bans = useCardBansStore()
+  const commanders = useCommandersStore()
   if (mode === 'ranked' && bans.selectionError) throw new Error(bans.selectionError)
   return (await socket.emitEvent('find_match', {
     player_name: playerName,
     mode,
+    commander_id: commanders.selectedCommanderId,
     ...(mode === 'ranked' ? { ban_preselection: [...bans.preselection] } : {}),
   })) as Ack
 }
@@ -175,10 +178,13 @@ export async function createAiRoom(
   difficulty: string,
   mysteryTech = false,
 ): Promise<AiRoomResult> {
+  const commanders = useCommandersStore()
+  const commanderId = commanders.selectedCommanderId
   const created = (await socket.emitEvent('create_ai_room', {
     player_name: playerName,
     difficulty,
     mystery_tech: mysteryTech,
+    commander_id: commanderId,
   })) as Ack
   if (created.status !== 'success') {
     return { ok: false, message: created.message || '创建人机房间失败' }
@@ -188,6 +194,7 @@ export async function createAiRoom(
   const joined = (await socket.emitEvent('join_room', {
     room_id: roomId,
     player_name: playerName,
+    commander_id: commanderId,
   })) as Ack
   if (joined.status !== 'success') {
     return { ok: false, message: joined.message || '进入人机房间失败' }

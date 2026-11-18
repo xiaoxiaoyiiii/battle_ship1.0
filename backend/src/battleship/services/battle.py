@@ -290,8 +290,23 @@ class BattleService:
                 )
                 return {"status": "success", "game_over": True}
 
+        if outcome.dauntless_blocked and outcome.revealed_ship_positions:
+            attacker_player = room.players.get(player_id)
+            revealed_payload = [
+                {"x": int(rx), "y": int(ry)}
+                for rx, ry in outcome.revealed_ship_positions
+            ]
+            if attacker_player and attacker_player.socket_id:
+                await self._publisher.emit(
+                    "revealed_positions",
+                    {"positions": revealed_payload, "kind": "dauntless"},
+                    to=attacker_player.socket_id,
+                )
+
         note = ""
-        if outcome.shield_blocked:
+        if outcome.dauntless_blocked:
+            note = "，被无畏舰队抵消伤害并显形"
+        elif outcome.shield_blocked:
             note = "，被护盾挡下"
         elif outcome.ship_sunk:
             note = "，击沉战舰"

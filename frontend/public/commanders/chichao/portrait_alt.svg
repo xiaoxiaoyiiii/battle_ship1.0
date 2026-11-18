@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 640" width="480" height="640">
+  <defs>
+    <linearGradient id="gradBg" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0%" stop-color="#0d0f18"/>
+      <stop offset="100%" stop-color="#2b1627"/>
+    </linearGradient>
+    <radialGradient id="gradGlow" cx="50%" cy="38%" r="55%">
+      <stop offset="0%" stop-color="#fb7185" stop-opacity="0.52"/>
+      <stop offset="100%" stop-color="#2b1627" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="gradAcc" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fda4af"/>
+      <stop offset="100%" stop-color="#fb7185"/>
+    </linearGradient>
+  </defs>
+  
+    <rect width="480" height="640" rx="28" fill="url(#gradBg)"/>
+    <rect width="480" height="640" rx="28" fill="url(#gradGlow)" opacity="0.68"/>
+    <path d="M0 540 Q120 500 240 535 T480 520 L480 640 L0 640 Z" fill="#fb7185" opacity="0.16"/>
+    <path d="M0 570 Q160 535 300 565 T480 555 L480 640 L0 640 Z" fill="#fda4af" opacity="0.12"/>
+    
+        <g opacity="0.5">
+          <path d="M35 330 L125 270 L165 290 L70 365 Z" fill="#12131c" stroke="#fb7185" stroke-width="2"/>
+          <path d="M445 330 L355 270 L315 290 L410 365 Z" fill="#12131c" stroke="#fb7185" stroke-width="2"/>
+          <line x1="95" y1="285" x2="25" y2="235" stroke="#fda4af" stroke-width="4" stroke-linecap="round"/>
+          <line x1="385" y1="285" x2="455" y2="235" stroke="#fda4af" stroke-width="4" stroke-linecap="round"/>
+          <circle cx="380" cy="120" r="46" fill="none" stroke="#fb7185" stroke-width="1.5" opacity="0.65"/>
+          <path d="M380 65 V95 M380 145 V175 M325 120 H355 M405 120 H435" stroke="#fda4af" stroke-width="1.6"/>
+        </g>
+        
+    
+        <circle cx="240" cy="240" r="195" fill="none" stroke="#fb7185" stroke-width="2" stroke-dasharray="14 8" opacity="0.55"/>
+        <circle cx="240" cy="240" r="165" fill="none" stroke="#fda4af" stroke-width="1.2" opacity="0.45"/>
+        <path d="M40 420 L130 340 M440 420 L350 340" stroke="#fda4af" stroke-width="2" opacity="0.4"/>
+        
+    
+  
+        <!-- 后发双马尾与高光 -->
+        <path d="M165 180 C110 210 92 310 112 405 C140 365 152 315 170 250 Z" fill="#2b1d2e" stroke="#12080d" stroke-width="2.5"/>
+        <path d="M315 180 C370 210 388 310 368 405 C340 365 328 315 310 250 Z" fill="#2b1d2e" stroke="#12080d" stroke-width="2.5"/>
+        <path d="M116 320 C128 285 142 255 158 228" fill="none" stroke="#f43f5e" stroke-width="4" opacity="0.7" stroke-linecap="round"/>
+        <path d="M364 320 C352 285 338 255 322 228" fill="none" stroke="#f43f5e" stroke-width="4" opacity="0.7" stroke-linecap="round"/>
+
+        <!-- 披风与红黑短军装 -->
+        <path d="M132 340 L85 595 L395 595 L348 340 Z" fill="#12131c" stroke="#fb7185" stroke-width="2.4"/>
+        <path d="M150 345 L188 320 L240 358 L292 320 L330 345 L350 565 L130 565 Z" fill="#171117" stroke="#fb7185" stroke-width="2.2"/>
+        <!-- 短装红黑腰封与双排金红扣 -->
+        <path d="M168 340 L240 420 L312 340 L292 325 L240 382 L188 325 Z" fill="#fb7185"/>
+        <rect x="178" y="458" width="124" height="24" rx="5" fill="#fb7185" stroke="#fda4af" stroke-width="1.6"/>
+        <circle cx="210" cy="405" r="5" fill="#fda4af"/>
+        <circle cx="270" cy="405" r="5" fill="#fda4af"/>
+        <circle cx="210" cy="435" r="5" fill="#fda4af"/>
+        <circle cx="270" cy="435" r="5" fill="#fda4af"/>
+        <!-- 肩章与战术臂铠 -->
+        <polygon points="145,342 186,322 192,350 148,365" fill="#fb7185" stroke="#fda4af" stroke-width="1.5"/>
+        <polygon points="335,342 294,322 288,350 332,365" fill="#fb7185" stroke="#fda4af" stroke-width="1.5"/>
+        <path d="M138 380 L108 505 L148 518 L174 415 Z" fill="#231722" stroke="#fda4af" stroke-width="2"/>
+        <path d="M342 380 L372 505 L332 518 L306 415 Z" fill="#231722" stroke="#fda4af" stroke-width="2"/>
+
+        <!-- 颈部与脸庞 -->
+        <path d="M222 290 V332 L240 346 L258 332 V290 Z" fill="#fbe3dc"/>
+        <rect x="218" y="302" width="44" height="14" rx="4" fill="#12131c" stroke="#fb7185" stroke-width="1.5"/>
+        <path d="M180 185 C178 260 205 298 240 302 C275 298 302 260 300 185 C298 135 182 135 180 185 Z" fill="#fbe3dc" stroke="#3a1c1e" stroke-width="2"/>
+
+        <!-- 动漫五官与锐利红瞳 -->
+        <ellipse cx="212" cy="235" rx="14" ry="15" fill="#fff"/>
+        <ellipse cx="213" cy="237" rx="9" ry="11" fill="#fb7185"/>
+        <circle cx="213" cy="237" r="4.5" fill="#18080c"/>
+        <circle cx="217" cy="231" r="3" fill="#fff"/>
+        <ellipse cx="268" cy="235" rx="14" ry="15" fill="#fff"/>
+        <ellipse cx="267" cy="237" rx="9" ry="11" fill="#fb7185"/>
+        <circle cx="267" cy="237" r="4.5" fill="#18080c"/>
+        <circle cx="271" cy="231" r="3" fill="#fff"/>
+        <path d="M196 218 L228 224 M284 218 L252 224" stroke="#4d1924" stroke-width="2.5" stroke-linecap="round"/>
+        <path d="M229 270 Q240 276 253 268" fill="none" stroke="#a64b55" stroke-width="2.2" stroke-linecap="round"/>
+
+        <!-- 碎发刘海与海军指挥官贝雷/短军帽 -->
+        <path d="M168 195 C172 130 295 120 312 195 C300 165 275 168 262 206 C254 176 242 178 234 212 C222 178 198 182 185 215 Z" fill="#2b1d2e" stroke="#12080d" stroke-width="2"/>
+        <path d="M165 162 C180 112 302 110 315 160 C295 148 185 148 165 162 Z" fill="#12131c" stroke="#fb7185" stroke-width="2.4"/>
+        <polygon points="240,124 246,138 260,138 249,146 253,160 240,152 227,160 231,146 220,138 234,138" fill="#fda4af"/>
+
+        <!-- 右眼全息火控单镜片 -->
+        <polygon points="252,220 296,216 302,248 250,250" fill="#fb7185" fill-opacity="0.32" stroke="#fda4af" stroke-width="2"/>
+        <circle cx="272" cy="235" r="8" fill="none" stroke="#fda4af" stroke-width="1.2"/>
+        
+</svg>

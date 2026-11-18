@@ -23,6 +23,9 @@ import PhasePriorityPrompt from './PhasePriorityPrompt.vue'
 import ChainAnimationOverlay from './ChainAnimationOverlay.vue'
 import CardDrawAnimation from './CardDrawAnimation.vue'
 import CardEffectOverlay from './CardEffectOverlay.vue'
+import CommanderHudBar from '../../components/commander/CommanderHudBar.vue'
+import CommanderSkillOverlay from '../../components/commander/CommanderSkillOverlay.vue'
+import { useCommandersStore } from '../../stores/commanders'
 import { useCardEffectsStore } from '../../stores/cardEffects'
 import { useCardDrawStore } from '../../stores/cardDraw'
 import { useChainAnimationStore } from '../../stores/chainAnimation'
@@ -104,6 +107,7 @@ const game = useGameStore()
 const match = useMatchStore()
 const result = useResultStore()
 const ui = useUiStore()
+const commanders = useCommandersStore()
 const chainAnimation = useChainAnimationStore()
 const cardEffects = useCardEffectsStore()
 const {
@@ -1488,6 +1492,121 @@ async function respondPriority(card: CardLike): Promise<void> {
   await dispatchCard(card, {}, false, token)
 }
 
+async function respondPriorityCommanderSkill(selectedCells?: Array<{ x: number; y: number }>): Promise<void> {
+  const request = priorityRequest.value
+  if (!request || busy.value || priorityRemaining.value <= 0) return
+  priorityError.value = ''
+  busy.value = true
+  try {
+    const ack = await sendBattleEvent('priority_response', {
+      room_id: state.value.room_id,
+      player_id: state.value.player_id,
+      token: request.token,
+      respond: true,
+      use_commander_skill: true,
+      selected_cells: selectedCells ?? [],
+    })
+    if (ack.status === 'success' && state.value.priority_waiting?.token === request.token) {
+      game.applyServerState({ priority_waiting: null })
+    } else if (ack.status !== 'success') {
+      priorityError.value = ack.message || '指挥官技能响应失败'
+      ui.notifyError('game-priority-cmd-err', priorityError.value)
+    }
+  } catch (error) {
+    priorityError.value = '响应失败：' + String(error)
+    ui.notifyError('game-priority-cmd-err', priorityError.value)
+  } finally {
+    busy.value = false
+  }
+}
+
+const chainCmdShipIdx = ref<number | null>(null)
+const chainLivingShips = computed(() =>
+  (Array.isArray(state.value.ships) ? state.value.ships : [])
+    .map((ship, idx) => ({ ...ship, idx }))
+    .filter((ship) => ship.alive && Array.isArray(ship.positions) && ship.positions.length > 0),
+)
+
+async function activateCommanderSkill(selectedCells?: Array<{ x: number; y: number }>): Promise<void> {
+  if (busy.value) return
+  busy.value = true
+  try {
+    const answeredWindow = match.chainWindow
+    const ack = await sendBattleEvent('use_commander_skill', {
+      room_id: state.value.room_id,
+      player_id: state.value.player_id,
+      selected_cells: selectedCells ?? [],
+    })
+    if (ack.status === 'success') {
+      if (answeredWindow && match.chainWindow === answeredWindow) match.closeChainWindow()
+    } else {
+      ui.notifyError('game-commander-skill-err', ack.message || '指挥官技能无法发动')
+    }
+  } catch (error) {
+    ui.notifyError('game-commander-skill-err', '发动失败：' + String(error))
+  } finally {
+    busy.value = false
+  }
+}
+
+async function respondChainCommanderSkill(cmdSkill: Record<string, unknown>): Promise<void> {
+  if (busy.value) return
+  const needShip = cmdSkill.id === 'sacrifice_gambit'
+  let cells: Array<{ x: number; y: number }> = []
+  if (needShip) {
+    const picked = chainLivingShips.value.find((s) => s.idx === chainCmdShipIdx.value)
+    if (!picked) {
+      ui.notifyError('game-commander-skill-pick', '请先选择一艘己方存活战舰用于弃舰筹谋')
+      return
+    }
+    cells = [{ x: picked.positions[0].x, y: picked.positions[0].y }]
+  }
+  const answeredWindow = match.chainWindow
+  busy.value = true
+  try {
+    const ack = await sendBattleEvent('chain_response', {
+      room_id: state.value.room_id,
+      player_id: state.value.player_id,
+      chain: true,
+      use_commander_skill: true,
+      selected_cells: cells,
+    })
+    if (ack.status === 'success') {
+      chainCmdShipIdx.value = null
+      if (match.chainWindow === answeredWindow) match.closeChainWindow()
+    } else {
+      ui.notifyError('game-chain-failed', ack.message || '无法连锁发动指挥官技能')
+    }
+  } catch (error) {
+    ui.notifyError('game-chain-failed', '连锁响应发送失败：' + String(error))
+  } finally {
+    busy.value = false
+  }
+}
+
+async function interactCommander(): Promise<void> {
+  try {
+    await sendBattleEvent('commander_interact', {
+      room_id: state.value.room_id,
+      player_id: state.value.player_id,
+    })
+  } catch {
+    // 忽略轻量语音互动网络波动
+  }
+}
+
+async function sendCommanderEmoji(text: string): Promise<void> {
+  try {
+    await sendBattleEvent('chat_message', {
+      room_id: state.value.room_id,
+      player_id: state.value.player_id,
+      message: text,
+    })
+  } catch {
+    // 忽略发送波动
+  }
+}
+
 async function passPriority(): Promise<void> {
   const request = priorityRequest.value
   if (!request || busy.value) return
@@ -1984,6 +2103,15 @@ function backToLobby(): void {
         </div>
 
         <!-- 手机档：单块棋盘 + 海域切换标签（标题与提交的棋盘同源） -->
+        <CommanderHudBar
+          :commander-state="state.commander_state"
+          :player-id="state.player_id"
+          :ships="state.ships"
+          :busy="busy"
+          @activate="activateCommanderSkill"
+          @interact="interactCommander"
+          @send-emoji="sendCommanderEmoji"
+        />
         <div v-if="boardMode === 'tabs' && !selection" class="board-tabs" :class="{ 'has-chain-reminder': (priorityCollapsed && priorityRequest) || (chainCollapsed && chainHasContent) }" role="tablist" aria-label="切换棋盘">
           <button
             type="button"
@@ -2473,6 +2601,34 @@ function backToLobby(): void {
         </div>
         <p class="game-chain-window__hint" data-testid="game-chain-hint">{{ canHover && !compact ? '把鼠标移到卡上可以看效果，点一下即打出；上面的卡名也能看对方那张卡。' : '点卡牌阅读效果，确认后点击「接续此卡」；点上面的卡名可看触发卡。' }}不响应请点「不响应」。</p>
         <div class="game-chain-options">
+          <div v-if="chainWindow.commanderSkill" class="chain-preview-anchor" style="grid-column:1/-1;">
+            <div style="display:flex;flex-direction:column;gap:6px;padding:8px 10px;border-radius:10px;border:1px solid #facc15;background:rgb(234 179 84 / 12%);">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+                <div>
+                  <strong style="color:#fef08a;">【{{ chainWindow.commanderSkill.name }}】</strong>
+                  <small style="color:#bae6fd;margin-left:6px;">{{ chainWindow.commanderSkill.commander_name }} · 速阶 {{ chainWindow.commanderSkill.speed || 3 }} 指挥官技能</small>
+                </div>
+                <button
+                  type="button"
+                  class="button button--primary"
+                  data-testid="game-chain-commander-skill-btn"
+                  :disabled="busy || (chainWindow.commanderSkill.id === 'sacrifice_gambit' && chainCmdShipIdx === null)"
+                  @click="respondChainCommanderSkill(chainWindow.commanderSkill)"
+                >连锁发动指挥官技能</button>
+              </div>
+              <small style="color:#dcebf7;">{{ chainWindow.commanderSkill.description }}</small>
+              <div v-if="chainWindow.commanderSkill.id === 'sacrifice_gambit'" style="display:flex;flex-wrap:wrap;gap:6px;">
+                <button
+                  v-for="ship in chainLivingShips"
+                  :key="'chain-ship-' + ship.idx"
+                  type="button"
+                  class="button button--ghost"
+                  :style="chainCmdShipIdx === ship.idx ? 'border-color:#facc15;color:#fef08a;' : ''"
+                  @click="chainCmdShipIdx = ship.idx"
+                >战舰#{{ ship.idx + 1 }} ({{ ship.positions.map(p => `${p.x},${p.y}`).join(' ') }})</button>
+              </div>
+            </div>
+          </div>
           <div v-for="(card, index) in speed3Hand" :key="chainCardTestId(card, index, speed3Hand)" class="chain-preview-anchor" @mouseleave="!compact && (chainPreviewSource = '')">
             <button type="button" class="game-chain-option" :class="{ 'is-inspected': chainInspect?.name === card.name }" :data-testid="chainCardTestId(card, index, speed3Hand)"
               :disabled="!!chainResponseReason(card)" :title="chainResponseReason(card)"
@@ -2687,10 +2843,11 @@ function backToLobby(): void {
     </div>
     <ChainAnimationOverlay :suspended="Boolean(placementRequest || selection || match.pickRequest || match.shieldChoice || state.needs_reset)" />
     <CardEffectOverlay />
+    <CommanderSkillOverlay />
     <MagicPlacementPanel v-if="placementOpen && placementRequest" :request="placementRequest" :kind="placementKind" :title="placementTitle" :hint="placementHint" :selected="placementSelected" :busy="placementBusy" :error="placementError" :compact="compact" :tight="tight" @confirm="submitPlacement()" @cancel="submitPlacement(true)" />
     <MagicChoicePanel />
     <MagicDiscardPanel />
-    <PhasePriorityPrompt :open="Boolean(priorityRequest && ui.phasePrompts && !priorityCollapsed && selection?.priorityToken === undefined)" :request="priorityRequest" :now="now" :busy="busy" :error="priorityError" @select="respondPriority" @pass="passPriority" @collapse="priorityCollapsed = true" />
+    <PhasePriorityPrompt :open="Boolean(priorityRequest && ui.phasePrompts && !priorityCollapsed && selection?.priorityToken === undefined)" :request="priorityRequest" :now="now" :busy="busy" :error="priorityError" :ships="state.ships" @select="respondPriority" @select-commander-skill="respondPriorityCommanderSkill" @pass="passPriority" @collapse="priorityCollapsed = true" />
 
   </section>
 </template>

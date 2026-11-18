@@ -34,6 +34,7 @@ from .http.routers import client_promo as client_promo_router
 from .http.routers import mailbox as mailbox_router
 from .http.routers import auth as auth_router
 from .http.routers import chat as chat_router
+from .http.routers import commanders as commanders_router
 from .http.routers import contracts as contracts_router
 from .http.routers import frontend as frontend_router
 from .http.routers import friends as friends_router
@@ -63,6 +64,7 @@ from .services.anticheat import AnticheatService
 from .services.auth import AuthService
 from .services.battle_pass import BattlePassService
 from .services.collection import CollectionService
+from .services.commanders import CommanderService
 from .services.gacha import GachaService
 from .http.routers import collection as collection_router
 from .services.checkin import CheckinService
@@ -122,6 +124,7 @@ class Application:
     chat: ChatService
     spectators: SpectatorService
     ai: AiService
+    commanders: CommanderService
 
 
 @asynccontextmanager
@@ -231,6 +234,8 @@ def create_application(settings: Settings | None = None,
     settlement.add_hook(battle_pass.settlement_hook)
     collection = CollectionService(database)
     settlement.add_hook(collection.settlement_hook)
+    commanders = CommanderService(database)
+    settlement.add_hook(commanders.settlement_hook)
     gacha = GachaService(database)
     ranked_seasons = RankedSeasonService(database)
 
@@ -354,6 +359,7 @@ def create_application(settings: Settings | None = None,
     fastapi_app.include_router(daily_challenge_router.router)
     fastapi_app.include_router(checkin_router.router)
     fastapi_app.include_router(collection_router.router)
+    fastapi_app.include_router(commanders_router.router)
     fastapi_app.include_router(leaderboard_router.router)
     fastapi_app.include_router(replay_router.router)
     fastapi_app.include_router(lobby_router.router)
@@ -416,6 +422,7 @@ def create_application(settings: Settings | None = None,
     daily_challenges = DailyChallengeService(database, rooms, settings.daily_puzzles_path)
     daily_challenges.battle = battle
     rooms.collection = collection
+    rooms.commanders = commanders
     rooms.daily_challenges = settlement.daily_challenges = daily_challenges
     fastapi_app.state.daily_challenges = daily_challenges
     magic = MagicService(
@@ -440,7 +447,7 @@ def create_application(settings: Settings | None = None,
     # Ticket #16: queue/pairing plus the ban gates live in the service; the ban
     # gate is the same AuthService instance used by the HTTP dependencies.
     matchmaking = MatchmakingService(
-        rooms, database=database, auth=auth, lobby=lobby
+        rooms, database=database, auth=auth, lobby=lobby, commanders=commanders
     )
     friends = FriendsService(database, presence, rooms)
     # Legacy _finalize_match pushed recent_opponent to both seats before
@@ -475,6 +482,7 @@ def create_application(settings: Settings | None = None,
     fastapi_app.state.progression = progression
     fastapi_app.state.battle_pass = battle_pass
     fastapi_app.state.collection = collection
+    fastapi_app.state.commanders = commanders
     fastapi_app.state.gacha = gacha
     fastapi_app.state.ranked_seasons = ranked_seasons
     fastapi_app.state.maintenance = Maintenance(database, ranked_seasons, settings.backup_directory)
@@ -516,6 +524,7 @@ def create_application(settings: Settings | None = None,
         chat=chat,
         spectators=spectators,
         ai=ai,
+        commanders=commanders,
     )
 
 

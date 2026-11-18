@@ -38,6 +38,7 @@ export interface ChainWindowState {
   caster: string
   targetPreview: PublicChainPreview | null
   speed3Cards: CardLike[]
+  commanderSkill?: Record<string, unknown> | null
   countdown: number
   openedAt: number
 }
@@ -233,6 +234,10 @@ export const useMatchStore = defineStore('match', () => {
       caster: String(payload.caster ?? ''),
       targetPreview: parseTargetPreview(payload.target_preview),
       speed3Cards: speed3,
+      commanderSkill:
+        payload.commander_skill && typeof payload.commander_skill === 'object'
+          ? (payload.commander_skill as Record<string, unknown>)
+          : null,
       countdown: Number(payload.countdown ?? 10) || 10,
       openedAt: Date.now(),
     }

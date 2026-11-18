@@ -21,7 +21,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{ (event: 'error', error: Event): void }>()
 const frameId = computed(() => props.frame || 'none')
-const hasAnimatedFrame = computed(() => ['aurora', 'golden_wheel', 'mithril_ring', 'king_aura', 'season_tide_ring', 'abyssal_glow', 'tideglass', 'ember_wake', 'star_compass', 'client_voyage'].includes(frameId.value))
+const hasAnimatedFrame = computed(() => ['aurora', 'golden_wheel', 'mithril_ring', 'king_aura', 'season_tide_ring', 'abyssal_glow', 'tideglass', 'ember_wake', 'star_compass', 'client_voyage', 'cmd_chichao_frame_2', 'cmd_qingtong_frame_2', 'cmd_tieanchor_frame_2', 'cmd_guihang_frame_2'].includes(frameId.value))
 </script>
 
 <template>
@@ -145,6 +145,18 @@ const hasAnimatedFrame = computed(() => ['aurora', 'golden_wheel', 'mithril_ring
 .avatar-stack[data-frame='client_voyage']::before { border-width: 3px; border-style: double; animation: avatar-stack-pulse 3.4s ease-in-out infinite; }
 .avatar-stack[data-frame='client_voyage'] .avatar-stack__ornament { inset: -5px; opacity: .78; border: 1px dotted rgb(127 208 232 / 70%); animation: avatar-stack-wheel-reverse 11s linear infinite; }
 .avatar-stack[data-frame='client_voyage'] .avatar-stack__halo { opacity: .66; inset: -8px; background: radial-gradient(circle, rgb(127 208 232 / 26%), transparent 60%); animation: avatar-stack-halo 3.4s ease-in-out infinite; }
+.avatar-stack[data-frame='cmd_chichao_frame_1']::before { --avatar-ring: #e84855; --avatar-glow: rgb(232 72 85 / 44%); border-width: 3px; }
+.avatar-stack[data-frame='cmd_chichao_frame_2'] { --avatar-ring: #ff4d63; --avatar-glow: rgb(255 77 99 / 64%); }
+.avatar-stack[data-frame='cmd_chichao_frame_2']::before { border-width: 3px; border-style: double; animation: avatar-stack-pulse 2.2s ease-in-out infinite; }
+.avatar-stack[data-frame='cmd_qingtong_frame_1']::before { --avatar-ring: #4ea8de; --avatar-glow: rgb(78 168 222 / 44%); border-width: 3px; }
+.avatar-stack[data-frame='cmd_qingtong_frame_2'] { --avatar-ring: #38bdf8; --avatar-glow: rgb(56 189 248 / 64%); }
+.avatar-stack[data-frame='cmd_qingtong_frame_2']::before { border-width: 3px; border-style: dashed; animation: avatar-stack-wheel 8s linear infinite; }
+.avatar-stack[data-frame='cmd_tieanchor_frame_1']::before { --avatar-ring: #3b76f6; --avatar-glow: rgb(59 118 246 / 44%); border-width: 3px; }
+.avatar-stack[data-frame='cmd_tieanchor_frame_2'] { --avatar-ring: #60a5fa; --avatar-glow: rgb(96 165 250 / 64%); }
+.avatar-stack[data-frame='cmd_tieanchor_frame_2']::before { border-width: 4px; animation: avatar-stack-king 2.6s ease-in-out infinite; }
+.avatar-stack[data-frame='cmd_guihang_frame_1']::before { --avatar-ring: #eab354; --avatar-glow: rgb(234 179 84 / 44%); border-width: 3px; }
+.avatar-stack[data-frame='cmd_guihang_frame_2'] { --avatar-ring: #fbbf24; --avatar-glow: rgb(251 191 36 / 68%); }
+.avatar-stack[data-frame='cmd_guihang_frame_2']::before { border-width: 3px; border-style: double; animation: avatar-stack-wheel 7s linear infinite; }
 
 @keyframes avatar-stack-wheel { to { transform: rotate(360deg); } }
 @keyframes avatar-stack-wheel-reverse { to { transform: rotate(-360deg); } }

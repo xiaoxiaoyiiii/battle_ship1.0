@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect width="256" height="256" rx="42" fill="#174287"/>
+  <circle cx="128" cy="122" r="92" fill="#3b82f6" opacity="0.22"/>
+  
+        <circle cx="128" cy="128" r="118" fill="none" stroke="#e0f2fe" stroke-width="4" stroke-dasharray="12 8">
+          <animateTransform attributeName="transform" type="rotate" from="0 128 128" to="360 128 128" dur="6s" repeatCount="indefinite"/>
+        </circle>
+        
+  <path d="M68 118 C68 172 95 196 128 198 C161 196 188 172 188 118 C188 64 68 64 68 118 Z" fill="#f5e6dc" stroke="#221922" stroke-width="2.5"/>
+  <ellipse cx="102" cy="134" rx="13" ry="13" fill="#fff"/>
+  <circle cx="102" cy="134" r="9" fill="#7dd3fc"/>
+  <circle cx="105" cy="130" r="3" fill="#fff"/>
+  <ellipse cx="154" cy="134" rx="13" ry="13" fill="#fff"/>
+  <circle cx="154" cy="134" r="9" fill="#7dd3fc"/>
+  <circle cx="157" cy="130" r="3" fill="#fff"/>
+  <path d="M104 162 Q128 182 152 162 Z" fill="#ffd166" stroke="#9a4e52" stroke-width="2.4"/>
+  <path d="M62 114 C68 48 190 48 194 114 C178 86 156 90 144 116 C132 88 118 88 106 116 C92 88 74 90 62 114 Z" fill="#172b52" stroke="#16161e" stroke-width="2.4"/>
+  <rect x="30" y="206" width="196" height="34" rx="17" fill="#0a1120" stroke="#e0f2fe" stroke-width="2"/>
+  <text x="128" y="229" text-anchor="middle" font-family="'Microsoft YaHei', sans-serif" font-size="16" font-weight="700" fill="#e0f2fe">重甲共振</text>
+</svg>

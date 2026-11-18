@@ -678,3 +678,65 @@ class UserTaskCounter(Base):
     day: Mapped[str] = mapped_column(sa.Text, primary_key=True)
     metric: Mapped[str] = mapped_column(sa.Text, primary_key=True)
     value: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text('0'))
+
+
+class UserCommanderOwned(Base):
+    """玩家已解锁的指挥官角色与独立等级经验/装配外观。"""
+    __tablename__ = "user_commanders_owned"
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    commander_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    unlock_source: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    cost_paid: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text("0"))
+    xp: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text("0"))
+    level: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text("1"))
+    equipped_json: Mapped[str] = mapped_column(sa.Text, nullable=False, server_default=text("'{}'"))
+    unlocked_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    updated_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    __table_args__ = (
+        Index("idx_user_commanders_owned_user", "user_id"),
+    )
+
+
+class UserCommanderSelection(Base):
+    """玩家当前出战指挥官与免费首发名额标记。"""
+    __tablename__ = "user_commander_selections"
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    selected_commander_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    free_claimed: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text("1"))
+    updated_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+
+
+class UserCommanderClaim(Base):
+    """指挥官逐级成长奖励领取幂等记录。"""
+    __tablename__ = "user_commander_claims"
+    user_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    commander_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    level: Mapped[int] = mapped_column(sa.Integer, primary_key=True)
+    claimed_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    __table_args__ = (
+        Index("idx_user_commander_claims_user", "user_id", "commander_id"),
+    )
+
+
+class CommanderXpEvent(Base):
+    """单局指挥官经验发放流水（含人机每日帽统计与同局去重）。"""
+    __tablename__ = "commander_xp_events"
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    match_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    commander_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    mode: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    is_ai: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text("0"))
+    day_cst: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    raw_xp: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text("0"))
+    granted_xp: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text("0"))
+    before_xp: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text("0"))
+    after_xp: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text("0"))
+    before_level: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text("1"))
+    after_level: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text("1"))
+    reason: Mapped[str] = mapped_column(sa.Text, nullable=False, server_default=text("'settled'"))
+    created_at: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    __table_args__ = (
+        sa.UniqueConstraint("user_id", "match_id", name="uq_commander_xp_user_match"),
+        Index("idx_commander_xp_user_day_ai", "user_id", "day_cst", "is_ai"),
+    )

@@ -9,6 +9,7 @@ import { usePlacementStore } from '../../stores/placement'
 import { useResultStore } from '../../stores/result'
 import { useUiStore } from '../../stores/ui'
 import { useAudioStore } from '../../stores/audio'
+import { useCommandersStore, portraitForLevelAndEquipped, commanderTierOf } from '../../stores/commanders'
 import SupportAuthorPrompt from '../../components/SupportAuthorPrompt.vue'
 import SupportAuthorLink from '../../components/SupportAuthorLink.vue'
 import {
@@ -45,6 +46,7 @@ const home = useHomeStore()
 const placement = usePlacementStore()
 const result = useResultStore()
 const ui = useUiStore()
+const commanders = useCommandersStore()
 
 let releaseChannel: (() => void) | null = null
 let barTimer: ReturnType<typeof setTimeout> | null = null
@@ -84,8 +86,48 @@ const challenge = computed(() => gameOver.value?.challenge)
 const hasResult = computed(() => gameOver.value !== null)
 const matchId = computed(() => result.gameOverMatchId)
 const outcome = computed<Outcome>(() => outcomeOf(gameOver.value, game.state.player_id))
+const cmdSelf = computed(() => {
+  const raw = game.state.commander_state as { self?: { commander_id?: string; commander_name?: string; commander_level?: number; cosmetics?: Record<string, unknown> } | null } | null
+  return raw?.self ?? null
+})
+const cmdSettled = computed(() => commanders.lastXpSettled)
+function commanderReasonLabel(reason: string | undefined): string {
+  switch (reason) {
+    case 'settled':
+      return '完赛发放'
+    case 'ai_cap_partial':
+      return '触及今日人机上限，按剩余额度发放'
+    case 'ai_cap_reached':
+      return '今日人机经验已达上限（0 XP）'
+    case 'instant_surrender':
+      return '首回合零交火秒投不计经验'
+    case 'disconnect_forfeit':
+    case 'forfeit_loser':
+      return '掉线或逃跑判负不计经验'
+    case 'anticheat_blocked':
+      return '反作弊拦截不计经验'
+    case 'daily_challenge_disabled':
+      return '每日挑战不计指挥官经验'
+    case 'max_level_capped':
+      return '已满 20 级'
+    default:
+      return ''
+  }
+}
+const cmdVictoryMotion = computed(() => {
+  if (outcome.value !== 'win' || !cmdSelf.value) return 'none'
+  const equipped = cmdSelf.value.cosmetics as Record<string, unknown> | undefined
+  if (equipped?.victory_motion === 'exclusive' || Number(cmdSelf.value.commander_level || 1) >= 13) return 'exclusive'
+  return 'base'
+})
+
 watch([hasResult, outcome], () => {
-  if (hasResult.value) useAudioStore().playOutcome(game.state.room_id || matchId.value, outcome.value)
+  if (hasResult.value) {
+    useAudioStore().playOutcome(game.state.room_id || matchId.value, outcome.value)
+    if (outcome.value === 'win' && cmdSelf.value?.commander_id) {
+      commanders.playVoice(cmdSelf.value.commander_id, 'voice_victory')
+    }
+  }
 }, { immediate: true })
 const verdict = computed(() => verdictText(outcome.value))
 const summary = computed(() => {
@@ -509,6 +551,46 @@ function openReplay(): void {
               <b>+{{ row.xp }}</b>
             </li>
           </ul>
+        </section>
+
+        <section
+          v-if="cmdSelf || cmdSettled"
+          class="game-over__xp game-over__commander"
+          :class="{ 'is-exclusive-motion': cmdVictoryMotion === 'exclusive' }"
+          data-testid="game-over-commander-xp"
+          aria-label="指挥官战果与经验"
+        >
+          <h2 class="game-over__section-title">指 挥 官</h2>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <img
+              v-if="cmdSelf?.commander_id || cmdSettled?.commander_id"
+              :src="portraitForLevelAndEquipped(cmdSettled?.commander_id || cmdSelf?.commander_id || 'chichao', cmdSettled?.after_level || cmdSelf?.commander_level || 1, cmdSelf?.cosmetics)"
+              :alt="cmdSettled?.commander_name || cmdSelf?.commander_name || '指挥官'"
+              style="width:54px;height:72px;border-radius:10px;object-fit:cover;border:1px solid #fbbf24;"
+              :class="'cmd-tier-' + commanderTierOf(cmdSettled?.after_level || cmdSelf?.commander_level || 1)"
+            />
+            <div style="flex:1;min-width:0;">
+              <p style="margin:0;font-weight:700;color:#0f172a;font-size:15px;">
+                {{ cmdSettled?.commander_name || cmdSelf?.commander_name }} · Lv.{{ cmdSettled?.after_level || cmdSelf?.commander_level || 1 }}
+                <small v-if="cmdVictoryMotion === 'exclusive'" style="color:#b45309;margin-left:6px;">✦ 专属胜利动作展示</small>
+              </p>
+              <template v-if="cmdSettled">
+                <p style="margin:4px 0 0;font-size:13px;color:#0369a1;">
+                  指挥官经验 <b data-testid="game-over-commander-xp-delta" style="color:#0284c7;">{{ cmdSettled.delta >= 0 ? '+' + cmdSettled.delta : cmdSettled.delta }} XP</b>
+                  <small v-if="commanderReasonLabel(cmdSettled.reason)" style="color:#475569;margin-left:6px;">（{{ commanderReasonLabel(cmdSettled.reason) }}）</small>
+                </p>
+                <p v-if="cmdSettled.is_ai && cmdSettled.ai_daily_xp_cap" style="margin:2px 0 0;font-size:12px;color:#475569;">
+                  今日人机经验额度：{{ cmdSettled.ai_daily_xp_used }} / {{ cmdSettled.ai_daily_xp_cap }}
+                </p>
+                <p v-if="cmdSettled.new_claimable_levels.length" style="margin:4px 0 0;font-size:12px;color:#b45309;">
+                  已解锁新奖励（Lv.{{ cmdSettled.new_claimable_levels.join(', ') }}），前往 <router-link to="/commanders" style="color:#b45309;font-weight:600;text-decoration:underline;">指挥官殿堂领取</router-link>
+                </p>
+              </template>
+              <p v-else style="margin:4px 0 0;font-size:12px;color:#475569;">
+                {{ modeKey === 'custom' || challenge ? '当前模式不计入指挥官成长经验' : '出战完成本场较量' }}
+              </p>
+            </div>
+          </div>
         </section>
 
         <section v-if="achievementItems.length" class="game-over__badges" data-testid="game-over-achievements" aria-label="本局解锁徽章">

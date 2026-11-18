@@ -118,13 +118,16 @@ def choose_attack(room: Any, player_id: str,
 
 
 def choose_chain_response(room: Any, player_id: str) -> dict[str, Any] | None:
-    """困难和大师使用与开窗资格相同的选牌结果；没有合法反制时让过。"""
+    """困难和大师使用与开窗资格相同的选牌结果，或 AI 使用速阶三指挥官技能；没有合法响应时让过。"""
 
     card = chain_rules.choose_ai_response_card(room, player_id)
-    if card is None:
-        return None
-    return {"chain": True, "card": {"name": card.name, "speed": card.speed,
-                                    "type": card.type}, "targets": []}
+    if card is not None:
+        return {"chain": True, "card": {"name": card.name, "speed": card.speed,
+                                        "type": card.type}, "targets": []}
+    cmd_resp = chain_rules.choose_ai_commander_response(room, player_id)
+    if cmd_resp is not None:
+        return {"chain": True, **cmd_resp}
+    return None
 
 
 def resolve_ship_pick(room: Any, player_id: str, reason: Any,

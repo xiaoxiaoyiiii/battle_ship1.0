@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect width="256" height="256" rx="42" fill="#123c5c"/>
+  <circle cx="128" cy="122" r="92" fill="#38bdf8" opacity="0.22"/>
+  
+  <path d="M68 118 C68 172 95 196 128 198 C161 196 188 172 188 118 C188 64 68 64 68 118 Z" fill="#f5ebe6" stroke="#221922" stroke-width="2.5"/>
+  <ellipse cx="102" cy="134" rx="13" ry="13" fill="#fff"/>
+  <circle cx="102" cy="134" r="9" fill="#72efdd"/>
+  <circle cx="105" cy="130" r="3" fill="#fff"/>
+  <ellipse cx="154" cy="134" rx="13" ry="13" fill="#fff"/>
+  <circle cx="154" cy="134" r="9" fill="#72efdd"/>
+  <circle cx="157" cy="130" r="3" fill="#fff"/>
+  <path d="M84 114 L112 122 M172 114 L144 122" stroke="#221922" stroke-width="3.6" stroke-linecap="round"/><path d="M110 166 Q128 158 146 166" fill="none" stroke="#9a4e52" stroke-width="3.2" stroke-linecap="round"/>
+  <path d="M62 114 C68 48 190 48 194 114 C178 86 156 90 144 116 C132 88 118 88 106 116 C92 88 74 90 62 114 Z" fill="#2b4257" stroke="#16161e" stroke-width="2.4"/>
+  <rect x="30" y="206" width="196" height="34" rx="17" fill="#101b29" stroke="#bae6fd" stroke-width="2"/>
+  <text x="128" y="229" text-anchor="middle" font-family="'Microsoft YaHei', sans-serif" font-size="16" font-weight="700" fill="#bae6fd">静观其变</text>
+</svg>

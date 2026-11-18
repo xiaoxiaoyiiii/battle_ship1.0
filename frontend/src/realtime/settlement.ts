@@ -10,6 +10,7 @@ import { useAudioStore } from '../stores/audio'
 import { usePlacementStore } from '../stores/placement'
 import { useLobbyStore } from '../stores/lobby'
 import { useHomeStore } from '../stores/home'
+import { useCommandersStore } from '../stores/commanders'
 import { applyMysteryTechEvent, hydrateMysteryTechFromSync, type MysteryTechEventName } from './mysteryTech'
 import router from '../router'
 
@@ -39,6 +40,10 @@ export type SettlementEventName =
   | 'card_drawn'
   | 'mystery_tech_state'
   | 'mystery_tech_public'
+  | 'commander_state_updated'
+  | 'commander_skill_used'
+  | 'commander_xp_settled'
+  | 'commander_interact'
 
 // Typed listeners: only the frames that exist in the generated outbound union.
 // recent_opponent is absent there (see the raw listener below).
@@ -58,6 +63,10 @@ const SETTLEMENT_EVENTS = [
   'card_drawn',
   'mystery_tech_state',
   'mystery_tech_public',
+  'commander_state_updated',
+  'commander_skill_used',
+  'commander_xp_settled',
+  'commander_interact',
 ] as const
 
 // 取消与重新配对可能在大厅挂载前连续抵达，由持久连接接住这次交接。
@@ -232,6 +241,18 @@ export function applySettlementEvent(
         remaining_ships: payload.player_remaining_ships,
         opponent_remaining_ships: payload.opponent_remaining_ships,
       })
+      break
+    case 'commander_state_updated':
+      game.applyServerState({ commander_state: payload })
+      break
+    case 'commander_skill_used':
+      useCommandersStore(pinia).recordSkillUsed(payload, game.state.player_id)
+      break
+    case 'commander_xp_settled':
+      useCommandersStore(pinia).recordXpSettled(payload)
+      break
+    case 'commander_interact':
+      useCommandersStore(pinia).recordInteract(payload)
       break
   }
 }

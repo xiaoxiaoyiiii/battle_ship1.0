@@ -102,6 +102,8 @@ export type BattleEmitEvent =
   | 'dice_discard_choose'
   | 'priority_response'
   | 'set_decline_priority'
+  | 'use_commander_skill'
+  | 'commander_interact'
 
 export const BATTLE_EMIT_EVENTS: readonly BattleEmitEvent[] = [
   'attack',
@@ -126,6 +128,8 @@ export const BATTLE_EMIT_EVENTS: readonly BattleEmitEvent[] = [
   'dice_discard_choose',
   'priority_response',
   'set_decline_priority',
+  'use_commander_skill',
+  'commander_interact',
 ]
 
 const ALLOWED_EMITS: readonly string[] = BATTLE_EMIT_EVENTS satisfies readonly InboundEvent[]

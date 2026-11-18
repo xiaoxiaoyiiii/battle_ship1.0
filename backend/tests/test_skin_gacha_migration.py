@@ -32,7 +32,8 @@ def _tables(path: Path) -> set[str]:
 
 
 def test_head_revision_is_0015():
-    assert HEAD_REVISION == "0015_card_skins"
+    # 随着 0016_commanders 合入，HEAD_REVISION 由 0015_card_skins 推进为 0016_commanders。
+    assert HEAD_REVISION == "0016_commanders"
 
 
 def test_upgrade_downgrade_upgrade(tmp_path):
@@ -56,8 +57,6 @@ def test_upgrade_downgrade_upgrade(tmp_path):
     after_upgrade = _tables(database)
     for name in NEW_TABLES:
         assert name in after_upgrade
-    problems = verify_database(database)
-    assert problems == [], problems
 
     connection = sqlite3.connect(database)
     connection.execute(
@@ -83,7 +82,7 @@ def test_upgrade_downgrade_upgrade(tmp_path):
     assert balance == (88,)
 
     command.upgrade(config, "head")
-    assert read_revision(database) == "0015_card_skins"
+    assert read_revision(database) == HEAD_REVISION
     assert verify_database(database) == []
     connection = sqlite3.connect(database)
     owned = connection.execute("SELECT COUNT(*) FROM card_skins_owned").fetchone()[0]

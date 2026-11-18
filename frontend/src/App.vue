@@ -16,6 +16,7 @@ import HelpOverlay from './components/HelpOverlay.vue'
 import ScreenBoundary from './components/ScreenBoundary.vue'
 import ToastHost from './components/ToastHost.vue'
 import TideAshBadge from './components/TideAshBadge.vue'
+import CommanderVoiceToast from './components/commander/CommanderVoiceToast.vue'
 import GlobalPointerEffects from './components/GlobalPointerEffects.vue'
 import DiceRollOverlay from './screens/game/DiceRollOverlay.vue'
 import MysteryTechOverlay from './screens/game/MysteryTechOverlay.vue'
@@ -101,6 +102,7 @@ const immersive = computed(() => FLOW_ROUTE_NAMES.has(String(route.name)) && !sc
 const destinations = [
   { name: 'start', label: '开战' },
   { name: 'lobby', label: '大厅' },
+  { name: 'commanders', label: '指挥官' },
   { name: 'battle-pass', label: '通行证' },
   { name: 'shop', label: '商店' },
   { name: 'leaderboard', label: '排行' },
@@ -681,6 +683,7 @@ onBeforeUnmount(() => {
   </AppOverlay>
 
   <ToastHost />
+  <CommanderVoiceToast />
   <MysteryTechOverlay />
   <DiceRollOverlay
     :self-id="game.state.player_id"

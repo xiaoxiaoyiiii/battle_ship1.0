@@ -8,19 +8,43 @@ import { useUiStore } from '../../stores/ui'
 import type { CardLike } from './view'
 import { useAdaptiveGameLayout } from './useAdaptiveGameLayout'
 
-const props = defineProps<{ request: Record<string, unknown> | null; open: boolean; now: number; busy: boolean; error: string }>()
-const emit = defineEmits<{ select: [card: CardLike]; pass: []; collapse: [] }>()
+const props = defineProps<{
+  request: Record<string, unknown> | null
+  open: boolean
+  now: number
+  busy: boolean
+  error: string
+  ships?: Array<{ positions: Array<{ x: number; y: number }>; alive: boolean }>
+}>()
+const emit = defineEmits<{
+  select: [card: CardLike]
+  selectCommanderSkill: [selectedCells?: Array<{ x: number; y: number }>]
+  pass: []
+  collapse: []
+}>()
 const ui = useUiStore()
 const { compact } = useAdaptiveGameLayout()
 // 关闭时保留最后一帧内容，避免淡出过程中标题和卡牌先被清空。
 const lastRequest = shallowRef<Record<string, unknown>>({})
 const selectedIndex = ref<number | null>(null)
+const cmdSkillSelected = ref(false)
+const cmdShipIdx = ref<number | null>(null)
 const hoveredIndex = ref<number | null>(null)
 const hoverPanel = ref<HTMLElement | null>(null)
 const bodyPanel = ref<HTMLElement | null>(null)
 const hoverPosition = ref({ left: '12px', top: '12px' })
 const request = computed(() => props.request ?? lastRequest.value)
 const cards = computed(() => Array.isArray(request.value.speed3_cards) ? request.value.speed3_cards as CardLike[] : [])
+const commanderSkill = computed(() =>
+  request.value.commander_skill && typeof request.value.commander_skill === 'object'
+    ? (request.value.commander_skill as Record<string, unknown>)
+    : null,
+)
+const livingShips = computed(() =>
+  (props.ships ?? [])
+    .map((ship, idx) => ({ ...ship, idx }))
+    .filter((ship) => ship.alive && Array.isArray(ship.positions) && ship.positions.length > 0),
+)
 const selected = computed(() => selectedIndex.value === null ? null : cards.value[selectedIndex.value] ?? null)
 const hovered = computed(() => hoveredIndex.value === null ? null : cards.value[hoveredIndex.value] ?? null)
 const remaining = computed(() => Math.max(0, Math.ceil((Number(request.value.deadline) - props.now) / 1000)))
@@ -51,13 +75,27 @@ async function showPreview(index: number, event: MouseEvent): Promise<void> {
 }
 
 function playSelected(): void {
-  if (!selected.value || props.busy || remaining.value <= 0) return
+  if (props.busy || remaining.value <= 0) return
+  if (cmdSkillSelected.value && commanderSkill.value) {
+    if (commanderSkill.value.id === 'sacrifice_gambit') {
+      const target = livingShips.value.find((s) => s.idx === cmdShipIdx.value)
+      if (!target) return
+      hidePreview()
+      emit('selectCommanderSkill', [{ x: target.positions[0].x, y: target.positions[0].y }])
+      return
+    }
+    hidePreview()
+    emit('selectCommanderSkill', [])
+    return
+  }
+  if (!selected.value) return
   hidePreview()
   emit('select', selected.value)
 }
 
 function choose(index: number): void {
   if (props.busy || remaining.value <= 0) return
+  cmdSkillSelected.value = false
   if (selectedIndex.value === index && window.matchMedia('(hover: hover) and (min-width: 1200px) and (min-height: 700px)').matches) playSelected()
   else {
     selectedIndex.value = index
@@ -65,12 +103,19 @@ function choose(index: number): void {
   }
 }
 
+function chooseCommanderSkill(): void {
+  if (props.busy || remaining.value <= 0 || !commanderSkill.value) return
+  selectedIndex.value = null
+  cmdSkillSelected.value = true
+  cmdShipIdx.value = null
+}
+
 watch(() => props.request, value => {
   if (!value) return
-  if (value.token !== lastRequest.value.token) { selectedIndex.value = null; hidePreview() }
+  if (value.token !== lastRequest.value.token) { selectedIndex.value = null; cmdSkillSelected.value = false; cmdShipIdx.value = null; hidePreview() }
   lastRequest.value = value
 }, { immediate: true })
-watch(() => props.open, open => { hidePreview(); if (open) selectedIndex.value = null })
+watch(() => props.open, open => { hidePreview(); if (open) { selectedIndex.value = null; cmdSkillSelected.value = false; cmdShipIdx.value = null } })
 onMounted(() => window.addEventListener('resize', hidePreview))
 onBeforeUnmount(() => window.removeEventListener('resize', hidePreview))
 </script>
@@ -85,14 +130,40 @@ onBeforeUnmount(() => window.removeEventListener('resize', hidePreview))
       <div ref="bodyPanel" class="phase-prompt__body" :class="{ 'has-selection': selected }">
       <p class="phase-prompt__hint">选择速阶 3 卡牌查看效果，确认后打出。</p>
       <div class="phase-prompt__cards" aria-label="可用速阶三卡牌">
+        <button
+          v-if="commanderSkill"
+          type="button"
+          class="phase-prompt__card"
+          :class="{ 'is-selected': cmdSkillSelected }"
+          :aria-pressed="cmdSkillSelected"
+          data-testid="game-phase-commander-skill"
+          :disabled="busy || remaining <= 0"
+          @click="chooseCommanderSkill"
+        >
+          <span><strong>【{{ commanderSkill.name }}】</strong><small>{{ commanderSkill.commander_name }} · 速阶 {{ commanderSkill.speed || 3 }} 指挥官技能</small><small class="phase-prompt__card-state">{{ cmdSkillSelected ? '已选中 · 点击下方打出' : '点击响应指挥官技能' }}</small></span>
+        </button>
         <button v-for="(card, index) in cards" :key="card.name + index" type="button" class="phase-prompt__card" :class="{ 'is-selected': selectedIndex === index }" :aria-pressed="selectedIndex === index" :data-testid="'game-phase-card-' + card.name" :disabled="busy || remaining <= 0" @mouseenter="showPreview(index, $event)" @mouseleave="hidePreview" @blur="hidePreview" @click="choose(index)">
           <CardFaceArt v-if="cardArtUrl(card.name)" :name="card.name" :skin-id="ownSkinId(card.name)" context="hand" :alt="card.name + '卡面'" />
           <span><strong>{{ card.name }}</strong><small>速阶 {{ card.speed }}</small><small class="phase-prompt__card-state">{{ selectedIndex === index ? '已选中 · 点击下方打出' : '点击查看效果' }}</small></span>
         </button>
       </div>
-      <div class="phase-prompt__effect" :class="{ 'is-empty': !selected }" data-testid="game-phase-card-effect" aria-live="polite">
-        <template v-if="selected"><strong>{{ selected.name }}</strong><p>{{ selected.description }}</p></template>
-        <p v-else>选择上方卡牌查看效果；不出牌可直接放行。</p>
+      <div class="phase-prompt__effect" :class="{ 'is-empty': !selected && !cmdSkillSelected }" data-testid="game-phase-card-effect" aria-live="polite">
+        <template v-if="cmdSkillSelected && commanderSkill">
+          <strong>{{ commanderSkill.commander_name }} · 【{{ commanderSkill.name }}】</strong>
+          <p>{{ commanderSkill.description }}</p>
+          <div v-if="commanderSkill.id === 'sacrifice_gambit'" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;">
+            <button
+              v-for="ship in livingShips"
+              :key="ship.idx"
+              type="button"
+              class="button button--ghost"
+              :style="cmdShipIdx === ship.idx ? 'border-color:#facc15;color:#fef08a;' : ''"
+              @click="cmdShipIdx = ship.idx"
+            >战舰#{{ ship.idx + 1 }} ({{ ship.positions.map(p => `${p.x},${p.y}`).join(' ') }})</button>
+          </div>
+        </template>
+        <template v-else-if="selected"><strong>{{ selected.name }}</strong><p>{{ selected.description }}</p></template>
+        <p v-else>选择上方卡牌或指挥官技能查看效果；不响应可直接放行。</p>
       </div>
       <p v-if="error" class="phase-prompt__error" role="alert">{{ error }}</p>
       </div>
@@ -101,7 +172,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', hidePreview))
         <label><input type="checkbox" data-testid="game-phase-disable" :checked="!ui.phasePrompts" @change="ui.setPhasePrompts(!(($event.target as HTMLInputElement).checked))" />以后自动放行<span>可在设置中恢复</span></label>
         <div class="phase-prompt__actions">
           <button type="button" class="button button--ghost" data-testid="game-phase-pass" :disabled="busy" @click="emit('pass')">不出牌</button>
-          <button type="button" class="button button--primary" data-testid="game-phase-play" :disabled="!selected || busy || remaining <= 0" @click="playSelected">{{ busy ? '正在打出…' : '打出' }}</button>
+          <button type="button" class="button button--primary" data-testid="game-phase-play" :disabled="(!selected && !(cmdSkillSelected && (commanderSkill?.id !== 'sacrifice_gambit' || cmdShipIdx !== null))) || busy || remaining <= 0" @click="playSelected">{{ busy ? '正在打出…' : '打出' }}</button>
         </div>
       </footer>
       <span class="phase-prompt__sr">本次询问共 {{ countdown }} 秒</span>

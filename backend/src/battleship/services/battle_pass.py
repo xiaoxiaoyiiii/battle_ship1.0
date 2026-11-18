@@ -17,7 +17,7 @@ from ..domain.battle_pass import (
     MATCH_WIN_XP,
     WEEKLY_MATCH_XP_CAP,
 )
-from ..domain.tasks import TASKS, periods
+from ..domain.tasks import TASKS, periods, tasks_for
 from ..domain.shop import owned_cosmetics, storage_kind
 from ..domain.tide_ash import (
     CURRENCY, DAILY_MATCH_CAP, DUPLICATE_TIDE, FREE_GAP_TIDE, PREMIUM_GAP_TIDE,
@@ -317,7 +317,7 @@ class BattlePassService:
                 totals = uow.tasks.totals(uid, window["start"], window["end"])
                 completed = sum(
                     int(totals.get(metric, 0)) >= int(target)
-                    for metric, _title, _desc, target in TASKS[period]
+                    for metric, _title, _desc, target in tasks_for(period)
                 )
                 xp = task_reward_xp(period, completed)
                 if xp:

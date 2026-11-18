@@ -2,7 +2,7 @@
 from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
-from ..domain.tasks import TASKS, periods
+from ..domain.tasks import periods, tasks_for
 from ..domain.room import Room
 from ..repositories import Database, UnitOfWork
 if TYPE_CHECKING:
@@ -25,7 +25,7 @@ def task_view(database: Database, user_id: str | None, *, now: float | None = No
                 'tasks': [{'id': f'{period}_{metric}', 'metric': metric, 'title': title, 'description': description,
                     'target': target, 'current': min(totals.get(metric, 0), target),
                     'completed': authenticated and totals.get(metric, 0) >= target}
-                    for metric, title, description, target in TASKS[period]],
+                    for metric, title, description, target in tasks_for(period, timestamp)],
             }
         return result
 

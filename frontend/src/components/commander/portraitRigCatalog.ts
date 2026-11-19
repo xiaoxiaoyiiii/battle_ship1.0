@@ -83,9 +83,9 @@ const CHICHAO_BASE: Omit<PortraitRigSpec, 'commanderId' | 'variant'> = {
   rayRgb: [1.0, 0.52, 0.32],
   particleRgb: [1.0, 0.68, 0.36],
   lashRgb: [0.16, 0.06, 0.08],
-  breathSpeed: 1.85,
+  breathSpeed: 1.12,
   blinkPeriod: 4.3,
-  motionGain: 1.0,
+  motionGain: 0.96,
 }
 
 const QINGTONG_BASE: Omit<PortraitRigSpec, 'commanderId' | 'variant'> = {
@@ -101,9 +101,9 @@ const QINGTONG_BASE: Omit<PortraitRigSpec, 'commanderId' | 'variant'> = {
   rayRgb: [0.55, 0.92, 1.0],
   particleRgb: [0.68, 0.95, 1.0],
   lashRgb: [0.09, 0.12, 0.2],
-  breathSpeed: 1.65,
+  breathSpeed: 1.02,
   blinkPeriod: 4.8,
-  motionGain: 0.96,
+  motionGain: 0.94,
 }
 
 const TIEANCHOR_BASE: Omit<PortraitRigSpec, 'commanderId' | 'variant'> = {
@@ -119,9 +119,9 @@ const TIEANCHOR_BASE: Omit<PortraitRigSpec, 'commanderId' | 'variant'> = {
   rayRgb: [0.56, 0.82, 1.0],
   particleRgb: [0.76, 0.9, 1.0],
   lashRgb: [0.1, 0.11, 0.14],
-  breathSpeed: 1.5,
+  breathSpeed: 0.94,
   blinkPeriod: 5.2,
-  motionGain: 0.92,
+  motionGain: 0.9,
 }
 
 const GUIHANG_BASE: Omit<PortraitRigSpec, 'commanderId' | 'variant'> = {
@@ -137,17 +137,17 @@ const GUIHANG_BASE: Omit<PortraitRigSpec, 'commanderId' | 'variant'> = {
   rayRgb: [1.0, 0.9, 0.56],
   particleRgb: [1.0, 0.94, 0.72],
   lashRgb: [0.22, 0.15, 0.1],
-  breathSpeed: 1.72,
+  breathSpeed: 1.06,
   blinkPeriod: 4.5,
-  motionGain: 1.04,
+  motionGain: 1.0,
 }
 
 const CATALOG: Record<string, PortraitRigSpec> = {
   'chichao:base': makeRig('chichao', 'base', CHICHAO_BASE),
-  'chichao:ascended': makeRig('chichao', 'ascended', CHICHAO_BASE, { motionGain: 1.06 }),
+  'chichao:ascended': makeRig('chichao', 'ascended', CHICHAO_BASE, { motionGain: 1.0 }),
   'chichao:alt': makeRig('chichao', 'alt', CHICHAO_BASE, {
     glowRgb: [1.0, 0.45, 0.25],
-    motionGain: 1.1,
+    motionGain: 1.02,
   }),
   'chichao:ultimate': makeRig('chichao', 'ultimate', CHICHAO_BASE, {
     face: [0.54, 0.675, 0.165, 0.16],
@@ -155,36 +155,36 @@ const CATALOG: Record<string, PortraitRigSpec> = {
     chest: [0.5, 0.92],
     rightEye: { cx: 0.618, cy: 0.635, rx: 0.044, ry: 0.019, angle: -0.08 },
     visor: { cx: 0.41, cy: 0.66, rx: 0.085, ry: 0.05 },
-    motionGain: 1.18,
+    motionGain: 1.04,
   }),
 
   'qingtong:base': makeRig('qingtong', 'base', QINGTONG_BASE),
-  'qingtong:ascended': makeRig('qingtong', 'ascended', QINGTONG_BASE, { motionGain: 1.02 }),
+  'qingtong:ascended': makeRig('qingtong', 'ascended', QINGTONG_BASE, { motionGain: 0.96 }),
   'qingtong:alt': makeRig('qingtong', 'alt', QINGTONG_BASE, {
     rayRgb: [0.68, 0.88, 1.0],
-    motionGain: 1.08,
+    motionGain: 1.0,
   }),
-  'qingtong:ultimate': makeRig('qingtong', 'ultimate', QINGTONG_BASE, { motionGain: 1.14 }),
+  'qingtong:ultimate': makeRig('qingtong', 'ultimate', QINGTONG_BASE, { motionGain: 1.02 }),
 
   'tieanchor:base': makeRig('tieanchor', 'base', TIEANCHOR_BASE),
-  'tieanchor:ascended': makeRig('tieanchor', 'ascended', TIEANCHOR_BASE, { motionGain: 0.98 }),
+  'tieanchor:ascended': makeRig('tieanchor', 'ascended', TIEANCHOR_BASE, { motionGain: 0.92 }),
   'tieanchor:alt': makeRig('tieanchor', 'alt', TIEANCHOR_BASE, {
     glowRgb: [0.56, 0.82, 1.0],
-    motionGain: 1.04,
+    motionGain: 0.94,
   }),
   'tieanchor:ultimate': makeRig('tieanchor', 'ultimate', TIEANCHOR_BASE, {
     glowRgb: [0.52, 0.88, 1.0],
     rayRgb: [0.72, 0.94, 1.0],
-    motionGain: 1.12,
+    motionGain: 0.96,
   }),
 
   'guihang:base': makeRig('guihang', 'base', GUIHANG_BASE),
-  'guihang:ascended': makeRig('guihang', 'ascended', GUIHANG_BASE, { motionGain: 1.08 }),
+  'guihang:ascended': makeRig('guihang', 'ascended', GUIHANG_BASE, { motionGain: 1.02 }),
   'guihang:alt': makeRig('guihang', 'alt', GUIHANG_BASE, {
     rayRgb: [0.98, 0.86, 0.55],
-    motionGain: 1.12,
+    motionGain: 1.04,
   }),
-  'guihang:ultimate': makeRig('guihang', 'ultimate', GUIHANG_BASE, { motionGain: 1.2 }),
+  'guihang:ultimate': makeRig('guihang', 'ultimate', GUIHANG_BASE, { motionGain: 1.06 }),
 }
 
 export function getPortraitRig(commanderId: string, variant: string): PortraitRigSpec {
@@ -217,11 +217,11 @@ export function resolveWallpaperRank(
   const modeVfx = mode === 'strip' ? 0.82 : mode === 'bust' ? 0.92 : 1.0
   const modeParallax = mode === 'strip' ? 0.7 : mode === 'bust' ? 0.88 : 1.0
 
-  // Escalate clearly across forms: base(1.0) -> ascended(1.30) -> alt(1.56) -> ultimate(1.88)
-  const stepMotion = 0.98 + effectiveRank * 0.25
-  const stepVfx = 0.72 + effectiveRank * 0.38
-  const stepParallax = 0.84 + effectiveRank * 0.18
-  const stepBloom = 0.58 + effectiveRank * 0.32
+  // Decouple calm physical poise (motionScale/parallaxScale) from escalating optical spectacle (vfxScale/bloomScale)
+  const stepMotion = 0.85 + effectiveRank * 0.08
+  const stepVfx = 0.55 + effectiveRank * 0.44
+  const stepParallax = 0.75 + effectiveRank * 0.09
+  const stepBloom = 0.45 + effectiveRank * 0.30
 
   return {
     variantRank: vRank,

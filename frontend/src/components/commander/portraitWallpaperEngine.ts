@@ -129,8 +129,8 @@ vec2 objectCoverUv(vec2 screenUv) {
   vec2 off = (1.0 - vis) * uFocus;
   vec2 rawUv = off + screenUv * vis;
   vec2 anchor = clamp(uFocus, vec2(0.18), vec2(0.82));
-  // Subtle overscan (4.5%) so depth parallax & wind waves never hit border clamping.
-  return anchor + (rawUv - anchor) * 0.955;
+  // Subtle overscan (1.5%) so restrained parallax & hair breeze never hit border clamping.
+  return anchor + (rawUv - anchor) * 0.985;
 }
 
 void sampleRigMaps(vec2 uv, out vec3 rigL, out vec3 rigR) {
@@ -196,15 +196,11 @@ void main() {
   float mScale = uMotionScale * uMotionGain;
   float vScale = uVfxScale;
 
-  // Gentle organic idle camera float blended with spring-damped mouse 2.5D parallax
-  vec2 idleCam = vec2(
-    sin(uTime * 0.48) * 0.32 + sin(uTime * 0.91 + 1.4) * 0.12,
-    cos(uTime * 0.39 + 0.7) * 0.26
-  );
-  vec2 camInput = uPointer * (0.85 + 0.35 * uHoverMix) + idleCam * (0.42 - 0.12 * uHoverMix);
-  float pxStrength = 0.0145 * uParallaxScale;
+  // Idle camera is 100% rock-solid; 2.5D parallax activates only on smooth mouse hover.
+  vec2 camInput = uPointer * uHoverMix;
+  float pxStrength = 0.0030 * uParallaxScale;
 
-  // Coarse rig sample for 4-step depth parallax (zero seam tearing)
+  // Coarse rig sample for 2-step restrained depth parallax (zero silhouette tearing)
   vec3 rigL0, rigR0;
   sampleRigMaps(baseUv, rigL0, rigR0);
   float roughDepth = rigL0.r;
@@ -226,50 +222,42 @@ void main() {
 
   // Face protection ellipse in character UV space
   vec2 fNorm = (charUv - uFace.xy) / max(vec2(0.01), uFace.zw);
-  float faceProtect = smoothstep(1.12, 0.62, length(fNorm));
+  float faceProtect = smoothstep(1.15, 0.62, length(fNorm));
 
-  // Anatomical breathing + delayed rigid head micro-tilt/bob
+  // Calm, poised breathing & delayed gentle vertical head settle (zero rubber horizontal squeeze)
   float breathPhase = uTime * uBreathSpeed;
-  float breath = sin(breathPhase) * 0.5 + 0.5 * sin(breathPhase * 0.5 + 0.4);
-  float headLag = sin(breathPhase - 0.65);
+  float breath = 0.5 - 0.5 * cos(breathPhase);
+  float headLag = 0.5 - 0.5 * cos(breathPhase - 0.55);
 
   vec2 chestVec = charUv - uChest;
-  float torsoZone = smoothstep(0.45, 0.04, length(vec2(chestVec.x * 0.75, chestVec.y * 0.92)));
-  vec2 breathShift = vec2(
-    -chestVec.x * breath * 0.0085 * torsoZone,
-    +(0.0075 * breath * torsoZone)
-  ) * mScale;
+  float torsoZone = smoothstep(0.46, 0.08, length(vec2(chestVec.x * 0.65, chestVec.y * 0.90)));
+  vec2 breathShift = vec2(0.0, +0.0024 * breath * torsoZone) * mScale;
 
   vec2 headVec = charUv - uHeadPivot;
-  float tiltAngle = (headLag * 0.011 + camInput.x * 0.008 * uParallaxScale) * mScale * headMask;
+  float tiltAngle = sin(breathPhase * 0.5 - 0.4) * 0.0022 * mScale * headMask;
   vec2 headRot = (rot2(-tiltAngle) * headVec - headVec);
-  vec2 headShift = (headRot + vec2(0.0, +headLag * 0.0042 * mScale * headMask));
+  vec2 headShift = headRot + vec2(0.0, +headLag * 0.0018 * mScale * headMask);
 
   // Inverse warp into character texture space (so eyes track rigid head motion!)
   vec2 texUv = charUv + breathShift + headShift;
 
-  // Multi-octave directional wind flow for flowing hair, ribbons, capes & floating gear
+  // Low-frequency gentle breeze on outer hair tips & loose ribbons ONLY
   float waveGuard = (1.0 - faceProtect);
   vec2 wDir = normalize(uWindDir);
   vec2 wPerp = vec2(-wDir.y, wDir.x);
   float projAlong = dot(texUv - uHeadPivot, wDir);
   float projCross = dot(texUv - uHeadPivot, wPerp);
 
-  float w1 = sin(projAlong * 17.5 - uTime * 2.55 + projCross * 5.0);
-  float w2 = sin(projAlong * 31.0 - uTime * 3.85 - projCross * 8.5 + 1.2);
-  float hairDisp = (w1 * 0.68 + w2 * 0.32) * hairMask * waveGuard * 0.0125 * mScale;
-  float hoverGust = (0.0028 * uHoverMix * sin(uTime * 3.2 - projAlong * 12.0)) * hairMask * waveGuard;
-  texUv -= (wDir * (hairDisp * 0.55 + hoverGust) + wPerp * (hairDisp * 0.85));
+  float w1 = sin(projAlong * 6.5 - uTime * 1.15 + projCross * 2.2);
+  float w2 = sin(projAlong * 11.5 - uTime * 1.75 - projCross * 3.0 + 1.1);
+  float hairDisp = (w1 * 0.72 + w2 * 0.28) * hairMask * waveGuard * 0.0028 * mScale;
+  float hoverGust = (0.0012 * uHoverMix * sin(uTime * 1.8 - projAlong * 6.0)) * hairMask * waveGuard;
+  texUv -= (wDir * (hairDisp * 0.45 + hoverGust) + wPerp * (hairDisp * 0.85));
 
-  float c1 = sin(texUv.y * 12.5 - uTime * 1.95 + texUv.x * 5.5);
-  float c2 = cos(texUv.x * 16.0 - uTime * 2.45 + texUv.y * 7.0);
-  vec2 clothDelta = vec2(c1 * 0.75 + c2 * 0.35, c2 * 0.85) * clothMask * waveGuard * 0.0092 * mScale;
+  float c1 = sin(texUv.y * 5.5 - uTime * 1.05 + texUv.x * 2.5);
+  float c2 = cos(texUv.x * 7.0 - uTime * 1.35 + texUv.y * 3.0);
+  vec2 clothDelta = vec2(c1 * 0.75 + c2 * 0.25, c2 * 0.45) * clothMask * waveGuard * 0.0026 * mScale;
   texUv -= clothDelta;
-
-  // Dedicated sea horizon capillary ripple (horizontal shimmer + slight vertical reflection sway)
-  float seaWave1 = sin(texUv.y * 34.0 - uTime * 2.1 + texUv.x * 4.5);
-  float seaWave2 = cos(texUv.y * 22.0 + uTime * 1.6 - texUv.x * 7.0);
-  texUv -= vec2((seaWave1 * 0.65 + seaWave2 * 0.35) * 0.0019, seaWave2 * 0.0007) * waterMask * (0.68 + 0.32 * mScale);
 
   // Natural irregular blinking & iris sparkle
   float blink = blinkEnvelope(uTime + uChest.x * 1.7, uBlinkPeriod) * (0.88 + 0.12 * clamp(mScale, 0.5, 1.5));
@@ -288,10 +276,13 @@ void main() {
   col = mix(col, uLashRgb, lashTotal);
   col += vec3(1.0, 0.97, 0.92) * clamp(sparkL + sparkR, 0.0, 0.28);
 
-  // Subtle sea water caustic sparkle on ocean horizon pixels
-  if (waterMask > 0.04) {
-    float seaGlint = pow(max(0.0, sin(clampedTexUv.x * 38.0 + uTime * 2.2 + sin(clampedTexUv.y * 54.0 - uTime * 1.8))), 7.0);
-    col += mix(uGlowRgb, vec3(0.92, 0.97, 1.0), 0.55) * waterMask * seaGlint * (0.10 + 0.10 * vScale);
+  // Pure optical ocean light shimmer & dancing horizon reflections (ZERO UV pixel warping)
+  if (waterMask > 0.03) {
+    float wBand1 = sin(clampedTexUv.y * 78.0 - uTime * 1.85 + sin(clampedTexUv.x * 16.0 + uTime * 0.9) * 1.4);
+    float wBand2 = sin(clampedTexUv.x * 28.0 + uTime * 1.35 - clampedTexUv.y * 42.0);
+    float glint = pow(max(0.0, wBand1 * 0.65 + wBand2 * 0.35), 5.0);
+    float softSheen = (0.5 + 0.5 * sin(clampedTexUv.y * 26.0 - uTime * 1.2)) * 0.055;
+    col += mix(uGlowRgb, vec3(0.94, 0.98, 1.0), 0.60) * waterMask * (glint * (0.16 + 0.14 * vScale) + softSheen);
   }
 
   // Tactical visor optical scanline & hover sheen (ChiChao red visor, QingTong cyan monocle)
@@ -301,40 +292,48 @@ void main() {
     float scanY = fract(vDist.y * 0.5 - uTime * 0.65);
     float scanLine = exp(-pow((scanY - 0.5) * 9.0, 2.0));
     float sheen = exp(-pow((vDist.x - sin(uTime * 1.1) * 0.6 - uPointer.x * 0.4) * 2.5, 2.0));
-    col += uGlowRgb * visorZone * (0.04 + 0.12 * scanLine + 0.09 * sheen) * (0.50 + 0.30 * vScale);
+    col += uGlowRgb * visorZone * (0.04 + 0.14 * scanLine + 0.11 * sheen) * (0.50 + 0.34 * vScale);
   }
 
-  // Dynamic emissive breathing glow & soft interactive rim
-  float pulse = 0.68 + 0.32 * sin(uTime * 2.35 + clampedTexUv.y * 3.0);
-  float glowBoost = glowMask * pulse * (0.12 + 0.16 * uBloomScale + 0.10 * uHoverMix);
-  col += uGlowRgb * glowBoost * 0.42;
-  col += col * glowMask * pulse * 0.10 * uBloomScale;
+  // Flowing metallic/energy sheen sweeping across glowing props & hover specular shift (zero distortion)
+  float pulse = 0.66 + 0.34 * sin(uTime * 1.85 + clampedTexUv.y * 2.8);
+  float sweepPhase = fract(clampedTexUv.x * 0.65 + clampedTexUv.y * 0.45 - uTime * 0.24 - camInput.x * 0.14);
+  float energySweep = exp(-pow((sweepPhase - 0.5) * 6.5, 2.0));
+  float glowBoost = glowMask * (pulse * (0.10 + 0.15 * uBloomScale) + energySweep * (0.16 + 0.14 * uBloomScale + 0.14 * uHoverMix));
+  col += uGlowRgb * glowBoost * 0.48;
+  col += col * glowMask * (pulse * 0.08 + energySweep * 0.14) * uBloomScale;
 
-  // Volumetric diagonal God Rays sweeping upper frame
-  vec2 rayUv = vScreenUv - camInput * 0.025;
+  // Volumetric diagonal God Rays with clear layered hover parallax
+  vec2 rayUv = vScreenUv - camInput * (0.045 * uParallaxScale);
   float rayCoord = rayUv.x * 0.78 + rayUv.y * 0.48;
   float rayA = pow(max(0.0, sin(rayCoord * 7.5 - uTime * 0.42)), 3.0);
   float rayB = pow(max(0.0, sin(rayCoord * 13.0 + uTime * 0.28 + 1.7)), 4.0);
   float upperFade = smoothstep(0.95, 0.04, vScreenUv.y) * smoothstep(-0.1, 0.85, 1.0 - abs(vScreenUv.x - 0.5));
   float bgBias = mix(1.0, 0.35, depthVal);
-  col += uRayRgb * (rayA * 0.65 + rayB * 0.45) * upperFade * bgBias * (0.065 + 0.085 * vScale);
+  col += uRayRgb * (rayA * 0.65 + rayB * 0.45) * upperFade * bgBias * (0.055 + 0.095 * vScale);
 
   // Attenuate foreground particle intensity across face ellipse so faces remain crisp & readable
   float faceClear = 1.0 - smoothstep(1.42, 0.72, length(fNorm)) * 0.90;
 
-  // Theme-specific gorgeous ambient effects + dual-depth parallax particles
+  // Theme-specific gorgeous ambient effects + strong dual-depth hover parallax particles
   if (uThemeId < 0.5) {
-    // 0: ChiChao — Warm fire-control ember sparks rising across sunset horizon
-    for (int i = 0; i < 12; i++) {
+    // 0: ChiChao — Warm fire-control ember sparks + upper crimson targeting reticle aura on ascended+
+    float reticleGate = smoothstep(0.75, 1.85, vScale);
+    if (reticleGate > 0.01) {
+      vec2 rc = (vScreenUv - (vec2(0.52, 0.32) - camInput * (0.032 * uParallaxScale))) * vec2(max(0.25, uDstSize.x / max(1.0, uDstSize.y)), 1.0);
+      float rRing = exp(-pow((length(rc) - 0.36) * 34.0, 2.0)) * (0.55 + 0.45 * sin(uTime * 1.4));
+      col += uGlowRgb * rRing * (0.30 + 0.70 * bgBias) * faceClear * 0.14 * reticleGate;
+    }
+    for (int i = 0; i < 14; i++) {
       float fi = float(i);
-      float layerD = mix(0.25, 1.15, hash12(vec2(fi, 2.1)));
-      float spd = mix(0.11, 0.28, hash12(vec2(fi, 4.7)));
+      float layerD = mix(0.28, 1.25, hash12(vec2(fi, 2.1)));
+      float spd = mix(0.09, 0.24, hash12(vec2(fi, 4.7)));
       float rx = hash12(vec2(fi, 8.3));
       float ry = hash12(vec2(fi, 11.9));
       float life = fract(ry - uTime * spd);
-      float sway = sin(uTime * 2.1 + fi * 1.9 + life * 6.28) * 0.045;
-      vec2 p = vec2(fract(rx + sway - uTime * 0.03 * layerD), life);
-      p -= camInput * (layerD * 0.032 * uParallaxScale);
+      float sway = sin(uTime * 1.8 + fi * 1.9 + life * 6.28) * 0.04;
+      vec2 p = vec2(fract(rx + sway - uTime * 0.025 * layerD), life);
+      p -= camInput * (layerD * 0.048 * uParallaxScale);
       vec2 d = (vScreenUv - p) * vec2(max(0.25, uDstSize.x / max(1.0, uDstSize.y)), 1.0);
       float sz = mix(0.0055, 0.0145, layerD) * (0.78 + 0.22 * vScale);
       float ember = exp(-dot(d, d) / (sz * sz));
@@ -342,58 +341,66 @@ void main() {
       col += mix(uGlowRgb, uParticleRgb, hash12(vec2(fi, 5.5))) * ember * fadeEnv * (0.20 + 0.26 * vScale) * layerD * faceClear;
     }
   } else if (uThemeId < 1.5) {
-    // 1: QingTong — Expanding sonar pulse + rising cyan acoustic motes
-    vec2 center = vec2(0.46, 0.35) - camInput * 0.018 * uParallaxScale;
+    // 1: QingTong — Smooth concentric sonar pulse (dual harmonic on high tiers) + rising cyan acoustic motes
+    vec2 center = vec2(0.46, 0.35) - camInput * (0.032 * uParallaxScale);
     vec2 sc = (vScreenUv - center) * vec2(max(0.25, uDstSize.x / max(1.0, uDstSize.y)), 1.0);
     float dist = length(sc);
-    float ping = fract(uTime * 0.26);
+    float ping = fract(uTime * 0.24);
     float ringGate = smoothstep(0.55, 1.55, vScale);
-    float ring = exp(-pow((dist - ping * 0.85) * 28.0, 2.0)) * (1.0 - ping) * (0.35 + 0.65 * bgBias) * faceClear;
-    col += uGlowRgb * ring * (0.05 + 0.18 * ringGate);
-    for (int i = 0; i < 10; i++) {
+    float ring1 = exp(-pow((dist - ping * 0.85) * 28.0, 2.0)) * (1.0 - ping);
+    float ping2 = fract(ping + 0.5);
+    float ring2 = exp(-pow((dist - ping2 * 0.85) * 32.0, 2.0)) * (1.0 - ping2) * smoothstep(1.0, 1.9, vScale) * 0.65;
+    col += uGlowRgb * (ring1 + ring2) * (0.35 + 0.65 * bgBias) * faceClear * (0.06 + 0.18 * ringGate);
+    for (int i = 0; i < 12; i++) {
       float fi = float(i);
-      float layerD = mix(0.3, 1.1, hash12(vec2(fi, 3.2)));
-      float spd = mix(0.07, 0.18, hash12(vec2(fi, 6.4)));
+      float layerD = mix(0.3, 1.2, hash12(vec2(fi, 3.2)));
+      float spd = mix(0.06, 0.16, hash12(vec2(fi, 6.4)));
       float rx = hash12(vec2(fi, 9.1));
       float ry = hash12(vec2(fi, 14.3));
       float life = fract(ry - uTime * spd);
-      vec2 p = vec2(fract(rx + sin(uTime * 1.4 + fi) * 0.03), life) - camInput * (layerD * 0.028 * uParallaxScale);
+      vec2 p = vec2(fract(rx + sin(uTime * 1.2 + fi) * 0.03), life) - camInput * (layerD * 0.048 * uParallaxScale);
       vec2 d = (vScreenUv - p) * vec2(max(0.25, uDstSize.x / max(1.0, uDstSize.y)), 1.0);
       float sz = mix(0.0065, 0.0155, layerD);
       float orb = smoothstep(sz, 0.0, length(d));
       col += uParticleRgb * orb * sin(life * 3.1415926) * (0.16 + 0.22 * vScale) * layerD * faceClear;
     }
   } else if (uThemeId < 2.5) {
-    // 2: TieAnchor — Storm rain streaks + sea mist + intermittent shield arc flash
+    // 2: TieAnchor — Diagonal storm rain streaks + low sea mist + storm lightning arc gleam strictly on glowMask
     float stormFlash = pow(max(0.0, sin(uTime * 1.35 + sin(uTime * 3.7))), 14.0);
-    col += uGlowRgb * glowMask * stormFlash * 0.28 * vScale;
-    float mist = (0.5 + 0.5 * sin(vScreenUv.x * 5.0 - uTime * 0.55 + sin(vScreenUv.y * 4.0))) * smoothstep(0.35, 1.0, vScreenUv.y);
-    col += uParticleRgb * mist * 0.065 * vScale * (0.4 + 0.6 * faceClear);
-    for (int i = 0; i < 12; i++) {
+    col += uGlowRgb * glowMask * stormFlash * 0.34 * vScale;
+    float mist = (0.5 + 0.5 * sin(vScreenUv.x * 5.0 - uTime * 0.55 - camInput.x * 0.4 + sin(vScreenUv.y * 4.0))) * smoothstep(0.35, 1.0, vScreenUv.y);
+    col += uParticleRgb * mist * (0.055 + 0.045 * vScale) * (0.4 + 0.6 * faceClear);
+    for (int i = 0; i < 14; i++) {
       float fi = float(i);
-      float layerD = mix(0.35, 1.05, hash12(vec2(fi, 1.7)));
-      float spd = mix(0.55, 0.95, hash12(vec2(fi, 5.1)));
+      float layerD = mix(0.35, 1.15, hash12(vec2(fi, 1.7)));
+      float spd = mix(0.48, 0.88, hash12(vec2(fi, 5.1)));
       float life = fract(hash12(vec2(fi, 9.7)) + uTime * spd);
       float px = fract(hash12(vec2(fi, 13.4)) - life * 0.16);
-      vec2 p = vec2(px, life) - camInput * (layerD * 0.026 * uParallaxScale);
+      vec2 p = vec2(px, life) - camInput * (layerD * 0.048 * uParallaxScale);
       vec2 d = (vScreenUv - p) * vec2(max(0.25, uDstSize.x / max(1.0, uDstSize.y)), 1.0);
       vec2 dr = rot2(0.18) * d;
       float streak = exp(-pow(dr.x * 160.0, 2.0)) * exp(-pow(dr.y * 18.0, 2.0));
       col += uParticleRgb * streak * (0.14 + 0.18 * vScale) * layerD * faceClear;
     }
   } else {
-    // 3: GuiHang — Golden stardust bokeh & twinkling 4-point celestial stars
-    for (int i = 0; i < 12; i++) {
+    // 3: GuiHang — Golden stardust bokeh & twinkling 4-point celestial stars + soft celestial halo shimmer
+    float haloGate = smoothstep(0.75, 1.85, vScale);
+    if (haloGate > 0.01) {
+      vec2 hc = (vScreenUv - (vec2(0.50, 0.24) - camInput * (0.032 * uParallaxScale))) * vec2(max(0.25, uDstSize.x / max(1.0, uDstSize.y)), 1.0);
+      float hRing = exp(-pow((length(hc) - 0.34) * 32.0, 2.0)) * (0.55 + 0.45 * sin(uTime * 1.2));
+      col += uGlowRgb * hRing * (0.30 + 0.70 * bgBias) * faceClear * 0.14 * haloGate;
+    }
+    for (int i = 0; i < 14; i++) {
       float fi = float(i);
-      float layerD = mix(0.3, 1.15, hash12(vec2(fi, 2.8)));
-      float spd = mix(0.06, 0.16, hash12(vec2(fi, 6.2)));
+      float layerD = mix(0.3, 1.25, hash12(vec2(fi, 2.8)));
+      float spd = mix(0.05, 0.14, hash12(vec2(fi, 6.2)));
       float life = fract(hash12(vec2(fi, 10.5)) - uTime * spd);
-      float px = fract(hash12(vec2(fi, 15.1)) + sin(uTime * 1.1 + fi * 1.7) * 0.035);
-      vec2 p = vec2(px, life) - camInput * (layerD * 0.030 * uParallaxScale);
+      float px = fract(hash12(vec2(fi, 15.1)) + sin(uTime * 1.0 + fi * 1.7) * 0.03);
+      vec2 p = vec2(px, life) - camInput * (layerD * 0.048 * uParallaxScale);
       vec2 d = (vScreenUv - p) * vec2(max(0.25, uDstSize.x / max(1.0, uDstSize.y)), 1.0);
-      float twinkle = 0.55 + 0.45 * sin(uTime * 3.4 + fi * 2.3);
+      float twinkle = 0.55 + 0.45 * sin(uTime * 3.0 + fi * 2.3);
       float fadeEnv = sin(life * 3.1415926) * twinkle;
-      float shape = i < 6 ? fourPointStar(d, 0.015 * layerD) : smoothstep(0.016 * layerD, 0.003, length(d));
+      float shape = i < 7 ? fourPointStar(d, 0.015 * layerD) : smoothstep(0.016 * layerD, 0.003, length(d));
       col += mix(uGlowRgb, uParticleRgb, 0.55) * shape * fadeEnv * (0.20 + 0.25 * vScale) * layerD * faceClear;
     }
   }
@@ -656,7 +663,7 @@ function renderInstance(p: GlPool, inst: StageInstance, nowSec: number, dt: numb
   const rigRec = getOrLoadTexture(p, resolveRig(params.commanderId, params.variant))
   if (!artRec.ready || !rigRec.ready || !artRec.tex || !rigRec.tex) return false
 
-  const spring = Math.min(1, dt * 8.5)
+  const spring = Math.min(1, dt * 5.2)
   inst.curPx += (inst.targetPx - inst.curPx) * spring
   inst.curPy += (inst.targetPy - inst.curPy) * spring
   const targetHover = inst.hovered ? 1 : 0

@@ -202,6 +202,7 @@ const equippedCosmetics = computed(() => {
 type EditorTab = 'hero' | 'profile-bg' | 'frame' | 'title' | 'effects' | 'tags' | 'status'
 const editorOpen = ref(false)
 const editorTab = ref<EditorTab>('hero')
+const editorScrollEl = ref<HTMLElement | null>(null)
 const editorDraft = ref({
   title_id: '',
   tags: [] as string[],
@@ -283,6 +284,10 @@ function closeEditor(): void {
 function chooseEditorTab(tab: EditorTab): void {
   editorTab.value = tab
 }
+
+watch(editorTab, () => {
+  editorScrollEl.value?.scrollTo({ top: 0 })
+})
 
 function chooseEditorOption(item: unknown): void {
   const row = item as JsonObject
@@ -911,7 +916,8 @@ watch(targetUsername, () => {
       </div>
     </template>
 
-    <section v-if="editorOpen" class="profile-editor" data-testid="profile-editor" aria-label="编辑名片">
+    <Teleport to="body">
+      <section v-if="editorOpen" class="profile-editor" data-testid="profile-editor" aria-label="编辑名片">
       <div class="profile-editor__backdrop" @click="closeEditor"></div>
       <div class="profile-editor__panel" role="dialog" aria-modal="true" aria-labelledby="profile-editor-title">
         <header class="profile-editor__head">
@@ -947,66 +953,69 @@ watch(targetUsername, () => {
               <button type="button" :class="{ 'is-active': editorTab === 'tags' }" @click="chooseEditorTab('tags')">标签</button>
               <button type="button" :class="{ 'is-active': editorTab === 'status' }" @click="chooseEditorTab('status')">状态</button>
             </div>
-            <div v-if="editorTab !== 'status' && editorTab !== 'effects'" class="profile-editor__options">
-              <button
-                v-for="item in editorOptions"
-                :key="editorItemId(item) || 'empty-title'"
-                type="button"
-                class="profile-editor__option"
-                :class="{ 'is-selected': editorTab === 'tags' ? editorTagSelected(editorItemId(item)) : editorItemId(item) === editorSelection, 'is-locked': !editorItemUnlocked(item) }"
-                :disabled="!editorItemUnlocked(item)"
-                @click="chooseEditorOption(item)"
-              >
-                <span class="profile-editor__option-mark" aria-hidden="true">{{ editorItemUnlocked(item) ? '✦' : '🔒' }}</span>
-                <b>{{ editorItemName(item) }}</b>
-                <small>{{ editorItemDescription(item) }}</small>
-                <em v-if="editorTab === 'tags' ? editorTagSelected(editorItemId(item)) : editorItemId(item) === editorSelection">{{ editorTab === 'tags' ? '已选择' : '已装备' }}</em>
-              </button>
+            <div ref="editorScrollEl" class="profile-editor__scroll" data-testid="profile-editor-scroll">
+              <div v-if="editorTab !== 'status' && editorTab !== 'effects'" class="profile-editor__options">
+                <button
+                  v-for="item in editorOptions"
+                  :key="editorItemId(item) || 'empty-title'"
+                  type="button"
+                  class="profile-editor__option"
+                  :class="{ 'is-selected': editorTab === 'tags' ? editorTagSelected(editorItemId(item)) : editorItemId(item) === editorSelection, 'is-locked': !editorItemUnlocked(item) }"
+                  :disabled="!editorItemUnlocked(item)"
+                  @click="chooseEditorOption(item)"
+                >
+                  <span class="profile-editor__option-mark" aria-hidden="true">{{ editorItemUnlocked(item) ? '✦' : '🔒' }}</span>
+                  <b>{{ editorItemName(item) }}</b>
+                  <small>{{ editorItemDescription(item) }}</small>
+                  <em v-if="editorTab === 'tags' ? editorTagSelected(editorItemId(item)) : editorItemId(item) === editorSelection">{{ editorTab === 'tags' ? '已选择' : '已装备' }}</em>
+                </button>
+              </div>
+              <div v-else-if="editorTab === 'effects'" class="profile-editor__effect-groups">
+                <section class="profile-editor__effect-group">
+                  <header><b>全局鼠标 / 触控</b><small>覆盖大厅、个人主页和局内战斗</small></header>
+                  <div class="profile-editor__options">
+                    <button
+                      v-for="item in pointerEffectOptions"
+                      :key="'pointer-' + editorItemId(item)"
+                      type="button"
+                      class="profile-editor__option"
+                      :class="{ 'is-selected': editorItemId(item) === effectSelection('pointer'), 'is-locked': !editorItemUnlocked(item) }"
+                      :disabled="!editorItemUnlocked(item)"
+                      @click="chooseEffectOption('pointer', item)"
+                    >
+                      <span class="profile-editor__option-mark" aria-hidden="true">{{ editorItemUnlocked(item) ? '✦' : '🔒' }}</span>
+                      <b>{{ editorItemName(item) }}</b><small>{{ editorItemDescription(item) }}</small>
+                      <em v-if="editorItemId(item) === effectSelection('pointer')">已装备</em>
+                    </button>
+                  </div>
+                </section>
+                <section class="profile-editor__effect-group">
+                  <header><b>称号动效</b><small>文字保持清晰，动效只作用于光晕和边缘</small></header>
+                  <div class="profile-editor__options">
+                    <button
+                      v-for="item in titleEffectOptions"
+                      :key="'title-fx-' + editorItemId(item)"
+                      type="button"
+                      class="profile-editor__option"
+                      :class="{ 'is-selected': editorItemId(item) === effectSelection('title'), 'is-locked': !editorItemUnlocked(item) }"
+                      :disabled="!editorItemUnlocked(item)"
+                      @click="chooseEffectOption('title', item)"
+                    >
+                      <span class="profile-editor__option-mark" aria-hidden="true">{{ editorItemUnlocked(item) ? '✦' : '🔒' }}</span>
+                      <b>{{ editorItemName(item) }}</b><small>{{ editorItemDescription(item) }}</small>
+                      <em v-if="editorItemId(item) === effectSelection('title')">已装备</em>
+                    </button>
+                  </div>
+                </section>
+              </div>
+              <label v-else class="profile-editor__field"><span>一句话状态</span><textarea v-model="editorDraft.status_text" maxlength="30" rows="4" placeholder="写一句让别人记住你的航海状态"></textarea><small>{{ editorDraft.status_text.length }} / 30</small></label>
             </div>
-            <div v-else-if="editorTab === 'effects'" class="profile-editor__effect-groups">
-              <section class="profile-editor__effect-group">
-                <header><b>全局鼠标 / 触控</b><small>覆盖大厅、个人主页和局内战斗</small></header>
-                <div class="profile-editor__options">
-                  <button
-                    v-for="item in pointerEffectOptions"
-                    :key="'pointer-' + editorItemId(item)"
-                    type="button"
-                    class="profile-editor__option"
-                    :class="{ 'is-selected': editorItemId(item) === effectSelection('pointer'), 'is-locked': !editorItemUnlocked(item) }"
-                    :disabled="!editorItemUnlocked(item)"
-                    @click="chooseEffectOption('pointer', item)"
-                  >
-                    <span class="profile-editor__option-mark" aria-hidden="true">{{ editorItemUnlocked(item) ? '✦' : '🔒' }}</span>
-                    <b>{{ editorItemName(item) }}</b><small>{{ editorItemDescription(item) }}</small>
-                    <em v-if="editorItemId(item) === effectSelection('pointer')">已装备</em>
-                  </button>
-                </div>
-              </section>
-              <section class="profile-editor__effect-group">
-                <header><b>称号动效</b><small>文字保持清晰，动效只作用于光晕和边缘</small></header>
-                <div class="profile-editor__options">
-                  <button
-                    v-for="item in titleEffectOptions"
-                    :key="'title-fx-' + editorItemId(item)"
-                    type="button"
-                    class="profile-editor__option"
-                    :class="{ 'is-selected': editorItemId(item) === effectSelection('title'), 'is-locked': !editorItemUnlocked(item) }"
-                    :disabled="!editorItemUnlocked(item)"
-                    @click="chooseEffectOption('title', item)"
-                  >
-                    <span class="profile-editor__option-mark" aria-hidden="true">{{ editorItemUnlocked(item) ? '✦' : '🔒' }}</span>
-                    <b>{{ editorItemName(item) }}</b><small>{{ editorItemDescription(item) }}</small>
-                    <em v-if="editorItemId(item) === effectSelection('title')">已装备</em>
-                  </button>
-                </div>
-              </section>
-            </div>
-            <label v-else class="profile-editor__field"><span>一句话状态</span><textarea v-model="editorDraft.status_text" maxlength="30" rows="4" placeholder="写一句让别人记住你的航海状态"></textarea><small>{{ editorDraft.status_text.length }} / 30</small></label>
           </div>
         </div>
         <footer class="profile-editor__actions"><button type="button" class="button button--ghost" :disabled="settings.cardSaving || settings.effectsSaving" @click="closeEditor">取消</button><button type="button" class="button profile-editor__save" :disabled="settings.cardSaving || settings.effectsSaving" @click="saveEditor">{{ settings.cardSaving || settings.effectsSaving ? '保存中…' : '保存名片' }}</button></footer>
       </div>
-    </section>
+      </section>
+    </Teleport>
   </section>
 </template>
 
@@ -1837,7 +1846,7 @@ watch(targetUsername, () => {
 .profile-editor {
   position: fixed;
   inset: 0;
-  z-index: 30;
+  z-index: var(--z-overlay, 100);
   display: grid;
   place-items: center;
   padding: 24px;
@@ -1854,9 +1863,10 @@ watch(targetUsername, () => {
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   width: min(1120px, 100%);
-  max-height: min(820px, calc(100dvh - 48px));
+  height: min(820px, calc(100dvh - 48px));
+  max-height: calc(100dvh - 48px);
   overflow: hidden;
   border: 1px solid var(--border-strong);
   border-radius: 20px;
@@ -1879,16 +1889,17 @@ watch(targetUsername, () => {
 
 .profile-editor__body {
   display: grid;
-  grid-template-columns: minmax(360px, .9fr) minmax(460px, 1.1fr);
+  grid-template-columns: minmax(300px, .88fr) minmax(0, 1.12fr);
   gap: 22px;
   min-height: 0;
   padding: 22px 28px;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .profile-editor__preview {
   position: relative;
-  min-height: 420px;
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--role-action) 42%, var(--panel-line));
   border-radius: 16px;
@@ -1912,8 +1923,8 @@ watch(targetUsername, () => {
 	.profile-editor__preview[data-bg='deep'] { background: linear-gradient(150deg, #1d466e, #091521 80%); }
 	.profile-editor__preview[data-bg='kelp_green'] { background: linear-gradient(150deg, #205c55, #102b2f 80%); }
 	.profile-editor__preview[data-bg='abyssal_grid'] { background-color: #080d18; background-image: linear-gradient(rgb(201 162 76 / 8%) 1px, transparent 1px), linear-gradient(90deg, rgb(201 162 76 / 8%) 1px, transparent 1px), linear-gradient(150deg, #16131c, #060a12 80%); background-size: 24px 24px, 24px 24px, auto; }
-.profile-editor__preview-label { position: absolute; top: 18px; left: 20px; color: var(--cyan); font-size: 11px; letter-spacing: .16em; }
-.profile-editor__preview-cover { position: absolute; inset: 0 0 auto; height: 190px; background: linear-gradient(120deg, rgb(122 90 240 / 88%), rgb(34 151 183 / 88%)); opacity: .82; }
+.profile-editor__preview-label { position: absolute; z-index: 1; top: 18px; left: 20px; color: rgb(125 224 244 / 92%); font-size: 11px; letter-spacing: .16em; }
+.profile-editor__preview-cover { position: absolute; inset: 0 0 auto; height: min(190px, 44%); background: linear-gradient(120deg, rgb(122 90 240 / 88%), rgb(34 151 183 / 88%)); opacity: .82; }
 	.profile-editor__preview[data-bg='deep'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(35 85 121 / 92%), rgb(16 40 68 / 92%)); }
 	.profile-editor__preview[data-bg='graphite'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(83 97 112 / 92%), rgb(33 42 52 / 92%)); }
 	.profile-editor__preview[data-bg='cyber'] .profile-editor__preview-cover { background: linear-gradient(120deg, rgb(102 55 170 / 92%), rgb(22 45 89 / 92%)); }
@@ -1948,10 +1959,11 @@ watch(targetUsername, () => {
 .profile-editor__preview-avatar { width: 84px; height: 84px; --avatar-size: 84px; flex-basis: 84px; }
 .profile-editor__preview-identity h3 { margin: 0; color: #fff; font-size: 25px; overflow-wrap: anywhere; }
 .profile-editor__preview-identity span { display: inline-block; margin-top: 7px; color: var(--gold-strong); font-size: 13px; }
-.profile-editor__preview-status { position: absolute; left: 24px; right: 24px; bottom: 32px; margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.profile-editor__preview-status { position: absolute; left: 24px; right: 24px; bottom: 32px; margin: 0; color: rgb(226 238 252 / 84%); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
 
-.profile-editor__controls { min-width: 0; }
-.profile-editor__tabs { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; margin-bottom: 18px; }
+.profile-editor__controls { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.profile-editor__tabs { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); flex-shrink: 0; gap: 8px; margin-bottom: 18px; }
+.profile-editor__scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 6px; }
 .profile-editor__tabs button { min-height: 44px; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--surface-sea); color: var(--text-muted); font: inherit; font-size: 13px; cursor: pointer; }
 .profile-editor__tabs button.is-active { border-color: var(--role-action); background: var(--role-action-soft); color: var(--text-primary); box-shadow: inset 0 -2px var(--role-action); }
 .profile-editor__options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
@@ -2085,12 +2097,15 @@ watch(targetUsername, () => {
   .profile__name { font-size: 26px; }
   .profile__avatar { width: 104px; height: 104px; }
   .profile-editor { padding: 10px; }
+  .profile-editor__panel { height: auto; max-height: calc(100dvh - 20px); }
   .profile-editor__head { flex-wrap: wrap; align-items: flex-start; gap: 6px; padding: 14px 16px; }
   .profile-editor__status { overflow-wrap: anywhere; }
   .profile-editor__actions { gap: 8px; padding: 12px 16px; }
-  .profile-editor__body { grid-template-columns: 1fr; }
+  .profile-editor__body { grid-template-columns: 1fr; overflow-y: auto; padding: 14px 16px; }
   .profile-editor__tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .profile-editor__preview { min-height: 300px; }
+  .profile-editor__preview { height: auto; min-height: 300px; }
+  .profile-editor__controls { overflow: visible; }
+  .profile-editor__scroll { flex: none; overflow: visible; padding-right: 0; }
   .profile-editor__options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 /* 短横屏使用紧凑双栏；窄竖屏（包括键盘缩小后的窗口）保持原单列。 */
@@ -2113,7 +2128,12 @@ watch(targetUsername, () => {
     font-size: 24px;
   }
 
+  .profile-editor {
+    padding: 8px;
+  }
+
   .profile-editor__panel {
+    height: calc(100dvh - 16px);
     max-height: calc(100dvh - 16px);
   }
 
@@ -2123,6 +2143,8 @@ watch(targetUsername, () => {
     grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
     gap: 10px;
     min-height: 0;
+    overflow: hidden;
+    padding: 12px 16px;
   }
 
   .profile-editor__preview {
@@ -2150,9 +2172,16 @@ watch(targetUsername, () => {
   .profile-editor__preview-status { font-size: 11px; }
 
   .profile-editor__controls {
+    display: block;
     min-width: 0;
     min-height: 0;
     overflow-y: auto;
+    padding-right: 4px;
+  }
+
+  .profile-editor__scroll {
+    overflow: visible;
+    padding-right: 0;
   }
 
   .profile-editor__options,

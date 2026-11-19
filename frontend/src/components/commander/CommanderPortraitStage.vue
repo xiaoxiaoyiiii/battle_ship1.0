@@ -10,6 +10,7 @@ import {
   portraitVariantFor,
   type CommanderEquippedLike,
 } from '../../stores/commanders'
+import { useUiStore } from '../../stores/ui'
 import CommanderVfxLayer, { type CommanderVfxStage } from './CommanderVfxLayer.vue'
 
 const props = withDefaults(
@@ -42,6 +43,7 @@ const effectiveTier = computed(() =>
   typeof props.previewTier === 'number' ? props.previewTier : commanderTierOf(props.level),
 )
 
+const ui = useUiStore()
 const palette = computed(() => commanderPalette(props.commanderId))
 
 const activeVariant = computed(() => {
@@ -56,13 +58,21 @@ const activeVariant = computed(() => {
   return portraitVariantFor(props.level, props.equipped)
 })
 
-const imgSrc = computed(() => {
+const portraitSrc = computed(() => {
   if (props.portraitOverride) {
     return commanderPortraitUrl(props.commanderId, props.portraitOverride)
   }
   return portraitForLevelAndEquipped(props.commanderId, props.level, props.equipped)
 })
 
+// 原图用于缩略图或减少动画。分层动作沿用玩家实际装备的立绘。
+const artMotion = computed(() => {
+  if (ui.motion === 'reduced' || activeVariant.value === 'base' || effectiveTier.value < 2) return ''
+  if (effectiveTier.value >= 4 && activeVariant.value === 'ultimate') return 'ultimate'
+  return effectiveTier.value >= 3 ? 'surge' : 'flow'
+})
+
+const imgSrc = computed(() => artMotion.value ? `${portraitSrc.value}#${artMotion.value}` : portraitSrc.value)
 const facePos = computed(() => commanderFaceFocus(props.commanderId, activeVariant.value))
 
 const isExclusiveVfx = computed(() => {
@@ -93,6 +103,7 @@ const isExclusiveVfx = computed(() => {
   >
     <img
       class="cmd-portrait-stage__img"
+      :class="{ 'cmd-portrait-stage__img--art-motion': artMotion }"
       :src="imgSrc"
       :alt="commanderName || commanderId"
       decoding="async"
@@ -135,6 +146,10 @@ const isExclusiveVfx = computed(() => {
 }
 .cmd-portrait-stage--full .cmd-portrait-stage__img {
   object-position: 50% 20%;
+}
+.cmd-portrait-stage__img--art-motion {
+  animation: none;
+  will-change: auto;
 }
 .cmd-portrait-stage.is-muted .cmd-portrait-stage__img {
   filter: saturate(0.68) brightness(0.84);

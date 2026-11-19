@@ -32,11 +32,6 @@ def register_magic_handlers(sio: socketio.AsyncServer, magic: MagicService) -> N
         connection = await connection_from_sio(sio, sid)
         return await magic.use_commander_skill(connection, data)
 
-    @sio.on("commander_interact")
-    async def commander_interact(sid: str, data: dict[str, Any] | None = None) -> dict:
-        connection = await connection_from_sio(sio, sid)
-        return await magic.commander_interact(connection, data)
-
     @sio.on("select_magic_target")
     async def select_magic_target(sid: str, data: dict[str, Any] | None = None) -> dict:
         connection = await connection_from_sio(sio, sid)

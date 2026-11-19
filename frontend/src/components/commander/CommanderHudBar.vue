@@ -5,7 +5,6 @@ import {
   commanderEmojiUrl,
   commanderPalette,
   commanderTierOf,
-  useCommandersStore,
 } from '../../stores/commanders'
 import CommanderPortraitStage from './CommanderPortraitStage.vue'
 import CommanderSkillOverlay from './CommanderSkillOverlay.vue'
@@ -58,11 +57,9 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (event: 'activate', skillId?: string): void
-  (event: 'interact'): void
   (event: 'sendEmoji', text: string): void
 }>()
 
-const store = useCommandersStore()
 const detailOpen = ref(false)
 const emojiOpen = ref(false)
 
@@ -139,13 +136,6 @@ function seatStyleVars(seat: SeatCmd | null): Record<string, string> {
 function handleSkillClick(): void {
   if (!enabled.value || !canUseSkill.value || props.busy) return
   emit('activate', selfSeat.value?.skill?.id)
-}
-
-function interact(): void {
-  if (selfSeat.value) {
-    store.playVoice(selfSeat.value.commander_id, 'voice_interact')
-  }
-  emit('interact')
 }
 
 function onEscapeKey(event: KeyboardEvent): void {
@@ -238,13 +228,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscapeKey))
                   @click="detailOpen = !detailOpen; emojiOpen = false"
                 >{{ detailOpen ? '收起' : '技能详情' }}</button>
                 <button
-                  type="button"
-                  class="cmd-hud__mini-btn"
-                  title="点击触发指挥官语音互动"
-                  data-testid="commander-interact-btn"
-                  @click="interact"
-                >语音</button>
-                <button
                   v-if="unlockedEmojis.length"
                   type="button"
                   class="cmd-hud__mini-btn"
@@ -318,13 +301,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscapeKey))
     <template v-else>
       <div class="cmd-compact-strip" :style="seatStyleVars(selfSeat)">
         <div v-if="selfSeat" class="cmd-compact-side cmd-compact-side--self" data-testid="commander-hud-self">
-          <button
-            type="button"
-            class="cmd-compact__avatar-btn"
-            title="点击触发指挥官语音互动"
-            data-testid="commander-interact-btn"
-            @click="interact"
-          >
+          <div class="cmd-compact__avatar-wrap">
             <img
               class="cmd-compact__avatar"
               :class="'cmd-hud__tier-' + commanderTierOf(selfSeat.commander_level || 1)"
@@ -337,7 +314,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscapeKey))
               :commander-level="selfSeat.commander_level || 1"
               :cosmetics="selfSeat.cosmetics"
             />
-          </button>
+          </div>
           <span class="cmd-compact__meta">
             <b>{{ selfSeat.commander_name }}</b>
             <small>Lv.{{ selfSeat.commander_level || 1 }}</small>
@@ -661,7 +638,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscapeKey))
 .cmd-compact-side--opp {
   flex: 0 1 auto;
 }
-.cmd-compact__avatar-btn,
 .cmd-compact__avatar-wrap {
   position: relative;
   display: inline-flex;
@@ -671,7 +647,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscapeKey))
   border-radius: 50%;
   overflow: hidden;
   flex-shrink: 0;
-  cursor: pointer;
 }
 .cmd-compact__avatar {
   width: 26px;

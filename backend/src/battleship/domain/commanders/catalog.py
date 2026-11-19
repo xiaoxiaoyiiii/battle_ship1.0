@@ -54,7 +54,6 @@ class CommanderSpec:
     personality: str
     palette: dict[str, str]
     skill: SkillSpec
-    voice_lines: dict[str, str]
     rewards: dict[int, dict[str, Any]]
     profile_cosmetics: dict[str, str]
 
@@ -68,7 +67,6 @@ class CommanderSpec:
             "personality": self.personality,
             "palette": dict(self.palette),
             "skill": self.skill.to_dict(),
-            "voice_lines": dict(self.voice_lines),
             "rewards": {
                 str(lvl): dict(info) for lvl, info in sorted(self.rewards.items())
             },
@@ -87,18 +85,6 @@ class CommanderSpec:
                     "emoji_3": f"/commanders/{self.id}/emoji_3.svg",
                     "emoji_dynamic": f"/commanders/{self.id}/emoji_dynamic.svg",
                 },
-                "voices": {
-                    key: f"/commanders/{self.id}/{key}.ogg"
-                    for key in (
-                        "voice_greet",
-                        "voice_sortie",
-                        "voice_skill_1",
-                        "voice_victory",
-                        "voice_interact",
-                        "voice_skill_2",
-                        "voice_mastery",
-                    )
-                },
             },
         }
 
@@ -115,26 +101,12 @@ def _build_rewards(
     title_20 = f"cmd_{cid}_title_20"
 
     rewards: dict[int, dict[str, Any]] = {
-        2: {
-            "level": 2,
-            "label": f"{cname}·问候语音",
-            "category": "voice",
-            "summary": "2 级解锁问候语音，可在指挥官页试听并在对局中发送问候。",
-            "items": [{"kind": "voice", "id": "voice_greet", "name": f"{cname}问候语音"}],
-        },
         3: {
             "level": 3,
             "label": f"表情①「{names['e1']}」",
             "category": "emoji",
             "summary": "3 级解锁角色专属表情①，可在对局快捷发送。",
             "items": [{"kind": "emoji", "id": "emoji_1", "name": f"表情①「{names['e1']}」"}],
-        },
-        4: {
-            "level": 4,
-            "label": f"{cname}·出击语音",
-            "category": "voice",
-            "summary": "4 级解锁出击语音，匹配成功亮牌登场时可触发。",
-            "items": [{"kind": "voice", "id": "voice_sortie", "name": f"{cname}出击语音"}],
         },
         5: {
             "level": 5,
@@ -147,26 +119,12 @@ def _build_rewards(
                 {"kind": "frame", "id": frame_1, "name": f"基础头像框「{names['f1']}」"},
             ],
         },
-        6: {
-            "level": 6,
-            "label": f"{cname}·技能语音",
-            "category": "voice",
-            "summary": "6 级解锁招牌技能发动语音，主动释放技能时伴随播报。",
-            "items": [{"kind": "voice", "id": "voice_skill_1", "name": f"{cname}技能语音"}],
-        },
         7: {
             "level": 7,
             "label": f"表情②「{names['e2']}」",
             "category": "emoji",
             "summary": "7 级解锁角色专属表情②。",
             "items": [{"kind": "emoji", "id": "emoji_2", "name": f"表情②「{names['e2']}」"}],
-        },
-        8: {
-            "level": 8,
-            "label": f"{cname}·胜利语音",
-            "category": "voice",
-            "summary": "8 级解锁胜利语音，对局获胜结算界面自动响起。",
-            "items": [{"kind": "voice", "id": "voice_victory", "name": f"{cname}胜利语音"}],
         },
         9: {
             "level": 9,
@@ -186,13 +144,6 @@ def _build_rewards(
                 {"kind": "frame", "id": frame_2, "name": f"动态头像框「{names['f2']}」"},
             ],
         },
-        11: {
-            "level": 11,
-            "label": f"{cname}·对局互动语音",
-            "category": "voice",
-            "summary": "11 级解锁对局互动语音，战局胶着时向对手或队友致意。",
-            "items": [{"kind": "voice", "id": "voice_interact", "name": f"{cname}对局互动语音"}],
-        },
         12: {
             "level": 12,
             "label": f"表情③「{names['e3']}」",
@@ -206,13 +157,6 @@ def _build_rewards(
             "category": "victory_motion",
             "summary": "13 级解锁终局结算专属胜利动态展示动作。",
             "items": [{"kind": "victory_motion", "id": "exclusive", "name": f"胜利动作「{names['vm']}」"}],
-        },
-        14: {
-            "level": 14,
-            "label": f"{cname}·新增技能语音组",
-            "category": "voice",
-            "summary": "14 级解锁新增技能语音组，与基础技能语音可自由装配切换或轮播。",
-            "items": [{"kind": "voice", "id": "voice_skill_2", "name": f"{cname}新增技能语音组"}],
         },
         15: {
             "level": 15,
@@ -245,13 +189,6 @@ def _build_rewards(
             "category": "profile_bg",
             "summary": "18 级解锁带动态海况光纹的个人资料卡背景。",
             "items": [{"kind": "card_bg", "id": bg_2, "name": f"动态资料卡背景「{names['bg2']}」"}],
-        },
-        19: {
-            "level": 19,
-            "label": f"{cname}·精通语音组",
-            "category": "voice",
-            "summary": "19 级解锁精通语音组，展现身经百战的巅峰统帅台词。",
-            "items": [{"kind": "voice", "id": "voice_mastery", "name": f"{cname}精通语音组"}],
         },
         20: {
             "level": 20,
@@ -390,15 +327,6 @@ COMMANDERS: tuple[CommanderSpec, ...] = (
                 "过载反应的额外攻击次数将被压制，但击沉摸牌效果照常触发。"
             ),
         ),
-        voice_lines={
-            "voice_greet": "舰桥已就位。赤潮号全炮门待命，指示目标吧，指挥官。",
-            "voice_sortie": "红黑旗帜升起！第一轮齐射，绝不留情！",
-            "voice_skill_1": "全舰听令——火力统制开启，六轮压制射击准备！",
-            "voice_victory": "海面已肃清。干脆利落的胜仗，正合我意！",
-            "voice_interact": "别犹豫，瞄准敌舰轮廓最清晰的那一格！",
-            "voice_skill_2": "算力重新分配——所有炮位锁定最大齐射序列！",
-            "voice_mastery": "不需要花哨的变数，六发炮火足以定鼎战局！",
-        },
         rewards=_CHICHAO_REWARDS,
         profile_cosmetics=_CHICHAO_COSMETICS,
     ),
@@ -433,15 +361,6 @@ COMMANDERS: tuple[CommanderSpec, ...] = (
                 "揭晓前仅船主可见具体被标记船只，青瞳方与观战方无法提前获知目标；若目标在揭晓前死亡，标记立即消失且复活后不恢复。"
             ),
         ),
-        voice_lines={
-            "voice_greet": "潮汐与风向都已校准。请保持冷静，局势尽在视线之内。",
-            "voice_sortie": "航迹已记录。不必急于出手，先看清对手的破绽。",
-            "voice_skill_1": "声呐相位偏移……延迟锁定已完成，静待海雾散去。",
-            "voice_victory": "推演与结果分毫不差。胜负早已在锁定那一刻注定。",
-            "voice_interact": "再等一回合，隐藏在暗处的舰影就会自己浮出水面。",
-            "voice_skill_2": "光学校准重构——即便身处迷雾，也无处可遁。",
-            "voice_mastery": "青瞳观测之下，没有永远沉默的坐标。倒计时开始了。",
-        },
         rewards=_QINGTONG_REWARDS,
         profile_cosmetics=_QINGTONG_COSMETICS,
     ),
@@ -476,15 +395,6 @@ COMMANDERS: tuple[CommanderSpec, ...] = (
                 "「无畏」仅抵消普通炮击击沉：被普通炮击命中仍消耗 1 次攻击并使隐藏船显形，但不损毁击沉；魔法卡与神秘科技伤害不受「无畏」抵消。"
             ),
         ),
-        voice_lines={
-            "voice_greet": "装甲舱室巡检完毕。只要铁锚还在舰队前方，防线就不会崩塌。",
-            "voice_sortie": "锚链收起，全舰保持阵型！风浪再大，我们也稳如磐石！",
-            "voice_skill_1": "全舰提升装甲隔舱——无畏舰队，正面迎击炮火！",
-            "voice_victory": "钢铁与信念都没有辜负我们。安全返航！",
-            "voice_interact": "普通的炮弹击不沉真正的铁舰。稳住节奏。",
-            "voice_skill_2": "损管全面接管！就算暴露位置，也休想击沉任何一艘！",
-            "voice_mastery": "以此身铸就海上长城——全舰进入无畏态势，不可动摇！",
-        },
         rewards=_TIEANCHOR_REWARDS,
         profile_cosmetics=_TIEANCHOR_COSMETICS,
     ),
@@ -519,15 +429,6 @@ COMMANDERS: tuple[CommanderSpec, ...] = (
                 "连锁结算生效后摸 2 张魔法卡。每大回合不限发动次数，但同一条连锁内至多发动 1 次。"
             ),
         ),
-        voice_lines={
-            "voice_greet": "海图已经展开，每一枚棋子都有它的去处。欢迎登舰，指挥官。",
-            "voice_sortie": "风平浪静适合谋篇布局。让我们优雅地赢下这一局。",
-            "voice_skill_1": "舍弃一隅，方能换得全局胜机——弃舰筹谋！",
-            "voice_victory": "从容落子，满盘皆归航。干得漂亮。",
-            "voice_interact": "一艘护卫舰的退场，有时能换回决定胜负的手牌。",
-            "voice_skill_2": "计算已然清晰，付出这份代价——两枚胜手归位。",
-            "voice_mastery": "真正的掌棋人从不畏惧暂时的损耗。请收下这手逆转之牌。",
-        },
         rewards=_GUIHANG_REWARDS,
         profile_cosmetics=_GUIHANG_COSMETICS,
     ),
@@ -539,7 +440,6 @@ DEFAULT_COMMANDER_ID = "chichao"
 
 DEFAULT_EQUIPPED: dict[str, str] = {
     "portrait": "base",
-    "voice_pack": "base",
     "intro": "base",
     "skill_vfx": "base",
     "victory_motion": "base",

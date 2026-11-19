@@ -87,16 +87,6 @@ function triggerStageMotion(stage: CommanderVfxStage): void {
   }, dur)
 }
 
-const voiceMeta: Array<{ key: string; label: string }> = [
-  { key: 'voice_greet', label: '问候语音' },
-  { key: 'voice_sortie', label: '出击语音' },
-  { key: 'voice_skill_1', label: '技能语音' },
-  { key: 'voice_victory', label: '胜利语音' },
-  { key: 'voice_interact', label: '互动语音' },
-  { key: 'voice_skill_2', label: '新增技能语音组' },
-  { key: 'voice_mastery', label: '精通语音组' },
-]
-
 function pickInspect(c: CommanderSpecView): void {
   inspectedId.value = c.id
   previewPortrait.value = ''
@@ -115,7 +105,6 @@ async function handleUnlock(): Promise<void> {
   const res = await store.unlock(c.id)
   feedback.value = res.message || (res.ok ? `成功解锁「${c.name}」` : '')
   if (res.ok) {
-    store.playVoice(c.id, 'voice_greet')
     ui.notify({ code: 'cmd-unlocked', message: feedback.value, tone: 'success' })
   } else if (res.message) {
     ui.notifyError('cmd-unlock-err', res.message)
@@ -128,7 +117,6 @@ async function handleSelect(): Promise<void> {
   const res = await store.select(c.id)
   feedback.value = res.message || ''
   if (res.ok) {
-    store.playVoice(c.id, 'voice_sortie')
     ui.notify({ code: 'cmd-selected', message: feedback.value, tone: 'success' })
   } else if (res.message) {
     ui.notifyError('cmd-select-err', res.message)
@@ -158,12 +146,6 @@ async function handleEquip(slot: string, value: string): Promise<void> {
   } else if (res.message) {
     ui.notifyError('cmd-equip-err', res.message)
   }
-}
-
-function auditionVoice(key: string): void {
-  const c = inspected.value
-  if (!c) return
-  store.playVoice(c.id, key)
 }
 
 function portraitLabel(v: string): string {
@@ -237,7 +219,6 @@ function portraitLabel(v: string): string {
         <div
           class="cmd-stage__portrait-box"
           :class="'tier-' + effectivePreviewTier"
-          @click="auditionVoice('voice_interact')"
         >
           <CommanderPortraitStage
             class="cmd-stage__portrait-stage"
@@ -254,7 +235,6 @@ function portraitLabel(v: string): string {
           <span class="cmd-stage__tier-tag">
             Lv.{{ inspected.progress.level }} · {{ commanderTierLabel(effectivePreviewTier) }}
           </span>
-          <span class="cmd-stage__tap-hint">点击立绘试听互动台词</span>
         </div>
 
         <!-- 四形态进化对照（标注等级与已装备/已领取/可领取/可预览状态） -->
@@ -393,12 +373,12 @@ function portraitLabel(v: string): string {
             :class="{ 'is-active': activeTab === 'loadout' }"
             data-testid="commander-tab-loadout"
             @click="activeTab = 'loadout'"
-          >语音试听 · 外观装配</button>
+          >外观装配</button>
         </nav>
 
         <section v-if="activeTab === 'rewards'" class="cmd-rewards" data-testid="commander-rewards-list">
           <div class="cmd-rewards__toolbar">
-            <span>领取后立绘/语音/表情/名片饰品不会覆盖你当前已手动装备的名片外观。</span>
+            <span>领取奖励后，已装备的外观仍会保留。</span>
             <button
               v-if="inspected.owned && inspected.claimable_levels.length"
               type="button"
@@ -460,24 +440,6 @@ function portraitLabel(v: string): string {
                 </div>
               </div>
               <div class="cmd-slot">
-                <label>技能语音组</label>
-                <div class="cmd-slot__opts">
-                  <button
-                    v-for="vp in [
-                      { id: 'base', label: '基础语音' },
-                      { id: 'skill_2', label: '14级扩展语音' },
-                      { id: 'mastery', label: '19级精通语音' },
-                    ]"
-                    :key="vp.id"
-                    type="button"
-                    class="cmd-opt-btn"
-                    :class="{ 'is-picked': inspected.equipped.voice_pack === vp.id }"
-                    :disabled="!inspected.owned || !inspected.unlocked_options.voice_packs.includes(vp.id)"
-                    @click="handleEquip('voice_pack', vp.id)"
-                  >{{ vp.label }}</button>
-                </div>
-              </div>
-              <div class="cmd-slot">
                 <label>登场动画 & 技能特效 & 胜利动作</label>
                 <div class="cmd-slot__opts">
                   <button
@@ -506,26 +468,6 @@ function portraitLabel(v: string): string {
                 </div>
               </div>
             </div>
-          </div>
-
-          <div class="cmd-loadout__group">
-            <h4>角色全套语音试听（.ogg 实时发声）</h4>
-            <ul class="cmd-voice-list">
-              <li v-for="v in voiceMeta" :key="v.key" class="cmd-voice-item">
-                <div>
-                  <b>{{ v.label }}</b>
-                  <small v-if="inspected.unlocked_options.voices.includes(v.key)">已解锁</small>
-                  <small v-else class="is-dim">试听预览（达到对应等级领取后局内触发）</small>
-                  <p>{{ inspected.voice_lines[v.key] }}</p>
-                </div>
-                <button
-                  type="button"
-                  class="button button--ghost"
-                  :data-testid="'commander-audition-' + v.key"
-                  @click="auditionVoice(v.key)"
-                >试听</button>
-              </li>
-            </ul>
           </div>
 
           <div class="cmd-loadout__group">
@@ -737,7 +679,6 @@ function portraitLabel(v: string): string {
   border-radius: 16px;
   overflow: hidden;
   border: 1.5px solid var(--cmd-acc);
-  cursor: pointer;
 }
 .cmd-stage__portrait-stage {
   display: block;
@@ -844,16 +785,6 @@ function portraitLabel(v: string): string {
   color: var(--cmd-acc);
   font-size: 11px;
   font-weight: 700;
-}
-.cmd-stage__tap-hint {
-  position: absolute;
-  inset: auto 10px 10px 10px;
-  text-align: center;
-  padding: 4px 8px;
-  border-radius: 999px;
-  background: rgb(5 12 24 / 76%);
-  color: #e0f2fe;
-  font-size: 11px;
 }
 .cmd-stage__variants {
   display: grid;
@@ -1104,41 +1035,6 @@ function portraitLabel(v: string): string {
 .cmd-opt-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
-}
-.cmd-voice-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-.cmd-voice-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-radius: 10px;
-  background: rgb(10 21 38 / 78%);
-  border: 1px solid rgb(148 163 184 / 20%);
-}
-.cmd-voice-item b {
-  font-size: 13px;
-  color: #f1f5f9;
-  margin-right: 8px;
-}
-.cmd-voice-item small {
-  font-size: 11px;
-  color: #4ade80;
-}
-.cmd-voice-item small.is-dim {
-  color: #94a3b8;
-}
-.cmd-voice-item p {
-  margin: 3px 0 0;
-  font-size: 12px;
-  color: #cbd5e1;
 }
 .cmd-emoji-grid {
   display: flex;

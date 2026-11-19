@@ -1,6 +1,5 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { useAudioStore } from './audio'
 import { useWalletStore } from './wallet'
 
 const GUEST_COMMANDER_KEY = 'battleship.commander.selected'
@@ -33,7 +32,6 @@ export interface CommanderProgress {
 
 export interface CommanderEquipped {
   portrait: string
-  voice_pack: string
   intro: string
   skill_vfx: string
   victory_motion: string
@@ -62,13 +60,11 @@ export interface CommanderSpecView {
   personality: string
   palette: { primary: string; secondary: string; accent: string; glow: string }
   skill: CommanderSkillSpec
-  voice_lines: Record<string, string>
   profile_cosmetics: Record<string, string>
   assets: {
     portraits: Record<string, string>
     avatar: string
     emojis: Record<string, string>
-    voices: Record<string, string>
   }
   owned: boolean
   selected: boolean
@@ -79,8 +75,6 @@ export interface CommanderSpecView {
   equipped: CommanderEquipped
   unlocked_options: {
     portraits: string[]
-    voice_packs: string[]
-    voices: string[]
     intros: string[]
     skill_vfx: string[]
     victory_motions: string[]
@@ -160,12 +154,6 @@ const COMMANDER_RIG_MODULES = import.meta.glob('/public/commanders/*/rig_*.png',
   import: 'default',
 }) as Record<string, string>
 
-const COMMANDER_OGG_MODULES = import.meta.glob('/public/commanders/*/*.ogg', {
-  eager: true,
-  query: '?url',
-  import: 'default',
-}) as Record<string, string>
-
 export function commanderPortraitUrl(commanderId: string, variant = 'base'): string {
   const safeId = commanderId || 'chichao'
   const safeVar = ['base', 'ascended', 'alt', 'ultimate'].includes(variant) ? variant : 'base'
@@ -198,13 +186,6 @@ export function commanderEmojiUrl(commanderId: string, key = 'emoji_1'): string 
   const safeKey = key || 'emoji_1'
   const path = `/public/commanders/${safeId}/${safeKey}.svg`
   return COMMANDER_SVG_MODULES[path] ?? `/commanders/${safeId}/${safeKey}.svg`
-}
-
-export function commanderVoiceUrl(commanderId: string, voiceKey: string): string {
-  const safeId = commanderId || 'chichao'
-  const safeKey = voiceKey || 'voice_greet'
-  const path = `/public/commanders/${safeId}/${safeKey}.ogg`
-  return COMMANDER_OGG_MODULES[path] ?? `/commanders/${safeId}/${safeKey}.ogg`
 }
 
 export type CommanderPortraitVariant = 'base' | 'ascended' | 'alt' | 'ultimate'
@@ -363,12 +344,10 @@ export const useCommandersStore = defineStore('commanders', () => {
   const busy = ref(false)
   const error = ref('')
   const guestSelectedId = ref<string>(readGuestSelected())
-  const voiceCaption = ref<{ commanderId: string; name: string; line: string; ts: number } | null>(null)
   const lastSkillEvent = ref<CommanderSkillCastEvent | null>(null)
   const lastXpSettled = ref<CommanderXpSettledPayload | null>(null)
   const consumedSkillEventIds = new Set<string>()
   let currentAudio: HTMLAudioElement | null = null
-  let captionTimer: ReturnType<typeof setTimeout> | null = null
 
   const commanders = computed(() => view.value?.commanders ?? [])
   const selectedCommanderId = computed(() => {
@@ -506,45 +485,7 @@ export const useCommandersStore = defineStore('commanders', () => {
     })
   }
 
-  function showCaption(commanderId: string, name: string, line: string): void {
-    if (!line) return
-    voiceCaption.value = { commanderId, name, line, ts: Date.now() }
-    if (captionTimer !== null) clearTimeout(captionTimer)
-    captionTimer = setTimeout(() => {
-      voiceCaption.value = null
-    }, 3600)
-  }
-
-  function playVoice(
-    commanderId: string,
-    voiceKey: string,
-    overrideLine?: string,
-  ): void {
-    const spec = commanders.value.find((c) => c.id === commanderId)
-    const line = overrideLine || spec?.voice_lines?.[voiceKey] || ''
-    const name = spec?.name || commanderId
-    if (line) showCaption(commanderId, name, line)
-
-    const audio = useAudioStore()
-    if (audio.sfxMuted || audio.sfxVolume <= 0) return
-    if (typeof window === 'undefined' || typeof Audio === 'undefined') return
-    try {
-      if (currentAudio) {
-        currentAudio.pause()
-        currentAudio.src = ''
-      }
-      const el = new Audio(commanderVoiceUrl(commanderId, voiceKey))
-      el.volume = Math.max(0, Math.min(1, audio.sfxVolume))
-      currentAudio = el
-      void el.play().catch(() => {
-        // 无手势触发或无音频设备环境下静默降级为台词字幕展示。
-      })
-    } catch {
-      // 忽略本地音频播放异常
-    }
-  }
-
-  function recordSkillUsed(payload: Record<string, unknown>, myPlayerId: string): void {
+  function recordSkillUsed(payload: Record<string, unknown>): void {
     const stage = String(payload.stage || 'resolve') as CommanderSkillCastEvent['stage']
     const ev: CommanderSkillCastEvent = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -564,28 +505,6 @@ export const useCommandersStore = defineStore('commanders', () => {
       ts: Date.now(),
     }
     lastSkillEvent.value = ev
-    if (stage === 'resolve' && ev.success !== false && ev.player_id === myPlayerId) {
-      const cmd = commanders.value.find((c) => c.id === ev.commander_id)
-      const unlockedVoices = cmd?.unlocked_options?.voices ?? []
-      const pack = cmd?.equipped?.voice_pack || 'base'
-      const preferredKey =
-        pack === 'mastery' && unlockedVoices.includes('voice_mastery')
-          ? 'voice_mastery'
-          : pack === 'skill_2' && unlockedVoices.includes('voice_skill_2')
-            ? 'voice_skill_2'
-            : 'voice_skill_1'
-      playVoice(ev.commander_id, preferredKey)
-    } else if (stage === 'resolve' || stage === 'chain_enter') {
-      playVoice(ev.commander_id, 'voice_skill_1')
-    }
-  }
-
-  function recordInteract(payload: Record<string, unknown>): void {
-    const cid = String(payload.commander_id || '')
-    const name = String(payload.commander_name || cid)
-    const line = String(payload.line || '')
-    if (!cid) return
-    playVoice(cid, 'voice_interact', line || `${name} 致意。`)
   }
 
   function recordXpSettled(payload: Record<string, unknown>): void {
@@ -649,7 +568,6 @@ export const useCommandersStore = defineStore('commanders', () => {
     selectedCommander,
     freeInitialAvailable,
     totalClaimableCount,
-    voiceCaption,
     lastSkillEvent,
     lastXpSettled,
     load,
@@ -657,9 +575,7 @@ export const useCommandersStore = defineStore('commanders', () => {
     select,
     claim,
     equip,
-    playVoice,
     recordSkillUsed,
-    recordInteract,
     recordXpSettled,
     isSkillEventFresh,
     consumeSkillEvent,

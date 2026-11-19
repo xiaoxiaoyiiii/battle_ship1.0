@@ -60,7 +60,6 @@ INBOUND_EVENTS: tuple[str, ...] = (
     "cancel_placement",
     "use_magic_card",
     "use_commander_skill",
-    "commander_interact",
     "select_magic_target",
     "confirm_magic_target",
     "cancel_magic_selection",

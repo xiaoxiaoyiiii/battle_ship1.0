@@ -1460,26 +1460,6 @@ class MagicService:
             return EffectResult(True, msg, extra={"draw_count": drawn})
         return EffectResult(False, f"未知指挥官技能: {item.skill_id}")
 
-    async def commander_interact(
-        self, connection: Connection, data: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
-        """对局内点击指挥官头像触发角色语音台词与轻量互动反馈。"""
-        data = data if isinstance(data, dict) else {}
-        room, player_id = self._seat(connection, data)
-        if room is None:
-            return dict(INVALID_SEAT)
-        player = room.players[player_id]
-        cmd = get_commander(getattr(player, "commander_id", None) or DEFAULT_COMMANDER_ID)
-        payload = {
-            "room_id": room.id,
-            "player_id": player_id,
-            "commander_id": cmd.id if cmd else DEFAULT_COMMANDER_ID,
-            "commander_name": cmd.name if cmd else "赤潮",
-            "line": cmd.voice_lines.get("interact", "") if cmd else "",
-        }
-        await self._publisher.emit("commander_interact", payload, room=room.id)
-        return {"status": "success", **payload}
-
     # ------------------------------------------------------------ chain engine
 
     async def _open_chain_window(self, room: Room, caster_id: str) -> None:

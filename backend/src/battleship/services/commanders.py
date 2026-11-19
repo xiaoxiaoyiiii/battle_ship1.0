@@ -13,7 +13,6 @@ from ..domain.commanders import (
     COMMANDERS,
     DEFAULT_COMMANDER_ID,
     DEFAULT_EQUIPPED,
-    MAX_LEVEL,
     UNLOCK_COST_TIDE_ASH,
     CommanderSpec,
     clamp_xp,
@@ -34,7 +33,7 @@ PROFILE_COSMETIC_KINDS = frozenset({"frame", "card_bg", "title"})
 
 
 def _unlocked_options_for(claimed: set[int]) -> dict[str, Any]:
-    """根据已领取奖励等级集合，派生可装配的外观/语音选项列表。"""
+    """根据已领取奖励等级集合，派生可装配的外观选项。"""
     portraits = ["base"]
     if 10 in claimed:
         portraits.append("ascended")
@@ -42,25 +41,6 @@ def _unlocked_options_for(claimed: set[int]) -> dict[str, Any]:
         portraits.append("alt")
     if 20 in claimed:
         portraits.append("ultimate")
-
-    voice_packs = ["base"]
-    if 14 in claimed:
-        voice_packs.append("skill_2")
-    if 19 in claimed:
-        voice_packs.append("mastery")
-
-    voices: list[str] = []
-    for lvl, key in (
-        (2, "voice_greet"),
-        (4, "voice_sortie"),
-        (6, "voice_skill_1"),
-        (8, "voice_victory"),
-        (11, "voice_interact"),
-        (14, "voice_skill_2"),
-        (19, "voice_mastery"),
-    ):
-        if lvl in claimed:
-            voices.append(key)
 
     intros = ["base"]
     if 15 in claimed:
@@ -92,8 +72,6 @@ def _unlocked_options_for(claimed: set[int]) -> dict[str, Any]:
 
     return {
         "portraits": portraits,
-        "voice_packs": voice_packs,
-        "voices": voices,
         "intros": intros,
         "skill_vfx": skill_vfx,
         "victory_motions": victory_motions,
@@ -109,8 +87,6 @@ def _sanitized_equipped(raw: dict[str, str], unlocked: dict[str, Any]) -> dict[s
             equipped[key] = val
     if equipped["portrait"] not in unlocked["portraits"]:
         equipped["portrait"] = "base"
-    if equipped["voice_pack"] not in unlocked["voice_packs"]:
-        equipped["voice_pack"] = "base"
     if equipped["intro"] not in unlocked["intros"]:
         equipped["intro"] = "base"
     if equipped["skill_vfx"] not in unlocked["skill_vfx"]:
@@ -128,8 +104,7 @@ def _sanitized_equipped(raw: dict[str, str], unlocked: dict[str, Any]) -> dict[s
 
 def _reward_items_payload(spec: CommanderSpec, claimed: set[int], current_level: int) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for lvl in range(2, MAX_LEVEL + 1):
-        entry = spec.rewards[lvl]
+    for lvl, entry in sorted(spec.rewards.items()):
         unlocked_lv = current_level >= lvl
         is_claimed = lvl in claimed
         rows.append({
@@ -233,7 +208,7 @@ class CommanderService:
                 "progress": progress,
                 "equipped": equipped,
                 "unlocked_options": unlocked,
-                "claimed_levels": sorted(claimed),
+                "claimed_levels": sorted(claimed.intersection(spec.rewards)),
                 "claimable_levels": claimable_levels,
                 "reward_track": reward_track,
             })
@@ -382,10 +357,12 @@ class CommanderService:
             already = uow.commanders.claimed_levels(user_id, spec.id).get(spec.id, set())
 
             if claim_all:
-                targets = [lvl for lvl in range(2, current_level + 1) if lvl not in already]
+                targets = sorted(
+                    lvl for lvl in spec.rewards if lvl <= current_level and lvl not in already
+                )
             else:
-                if level is None or not isinstance(level, int) or level < 2 or level > MAX_LEVEL:
-                    return {"ok": False, "reason": "invalid_level", "message": "无效的奖励等级"}
+                if not isinstance(level, int) or level not in spec.rewards:
+                    return {"ok": False, "reason": "invalid_level", "message": "该等级没有可领取的成长奖励"}
                 if level > current_level:
                     return {
                         "ok": False,
@@ -399,8 +376,7 @@ class CommanderService:
                 if not uow.commanders.claim_level_once(user_id, spec.id, lvl, now=ts):
                     continue
                 newly_claimed.append(lvl)
-                reward = spec.rewards.get(lvl) or {}
-                for item in reward.get("items") or ():
+                for item in spec.rewards[lvl]["items"]:
                     if item.get("kind") in PROFILE_COSMETIC_KINDS and item.get("id"):
                         uow.commanders.grant_profile_cosmetic(
                             user_id,
@@ -452,7 +428,6 @@ class CommanderService:
 
             slot_allowed = {
                 "portrait": unlocked["portraits"],
-                "voice_pack": unlocked["voice_packs"],
                 "intro": unlocked["intros"],
                 "skill_vfx": unlocked["skill_vfx"],
                 "victory_motion": unlocked["victory_motions"],
@@ -471,9 +446,10 @@ class CommanderService:
                     }
                 clean_patch[slot] = val
 
-            uow.commanders.update_equipped(user_id, spec.id, clean_patch, now=ts)
+            if clean_patch:
+                uow.commanders.update_equipped(user_id, spec.id, clean_patch, now=ts)
             view = self._build_user_view(uow, user_id, day)
-            return {**view, "ok": True, "message": f"已更新「{spec.name}」外观与语音装配"}
+            return {**view, "ok": True, "message": f"已更新「{spec.name}」外观装配"}
 
     # ------------------------------------------------------------ match loadout
 
@@ -491,16 +467,14 @@ class CommanderService:
             chosen = (rng or random).choice(COMMANDER_IDS)
             # 不同难度展示递进视觉档位，所有技能保持零战力加成。
             diff_level = {"easy": 1, "normal": 5, "hard": 10, "master": 20}.get(ai_difficulty, 5)
-            claimed = {lvl for lvl in (2, 3, 4, 5, 6, 8, 10, 11, 13, 14, 15, 16, 17, 19, 20) if lvl <= diff_level}
+            claimed = {lvl for lvl in (3, 5, 10, 13, 15, 16, 17, 20) if lvl <= diff_level}
             unlocked = _unlocked_options_for(claimed)
             cosmetics = {
                 "portrait": unlocked["portraits"][-1],
-                "voice_pack": unlocked["voice_packs"][-1],
                 "intro": unlocked["intros"][-1],
                 "skill_vfx": unlocked["skill_vfx"][-1],
                 "victory_motion": unlocked["victory_motions"][-1],
                 "avatar": unlocked["avatars"][-1],
-                "unlocked_voices": unlocked["voices"],
                 "unlocked_emojis": unlocked["emojis"],
                 "title": get_commander(chosen).profile_cosmetics["title_20_name"] if 20 in claimed else "",
                 "frame": (
@@ -542,7 +516,6 @@ class CommanderService:
                         "commander_level": int(row["level"]),
                         "cosmetics": {
                             **equipped,
-                            "unlocked_voices": unlocked["voices"],
                             "unlocked_emojis": unlocked["emojis"],
                             "title": profile.get("title_id") or (spec.profile_cosmetics["title_20_name"] if 20 in claimed else ""),
                             "frame": profile.get("frame_id") or "none",
@@ -556,7 +529,6 @@ class CommanderService:
             "commander_level": 1,
             "cosmetics": {
                 **_sanitized_equipped(dict(DEFAULT_EQUIPPED), unlocked),
-                "unlocked_voices": [],
                 "unlocked_emojis": [],
                 "title": "",
                 "frame": "none",
@@ -674,7 +646,7 @@ class CommanderService:
             claimed = uow.commanders.claimed_levels(uid, commander_id).get(commander_id, set())
             new_claimable = [
                 lvl for lvl in range(before_level + 1, after_level + 1)
-                if lvl not in claimed and lvl >= 2
+                if spec and lvl in spec.rewards and lvl not in claimed
             ]
             ai_used_after = ai_used + (decision.granted_xp if room.is_ai_room else 0)
             if player.socket_id:

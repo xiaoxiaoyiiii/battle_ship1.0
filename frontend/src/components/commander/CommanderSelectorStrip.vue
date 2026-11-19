@@ -138,14 +138,12 @@ async function pickCommander(cmd: CommanderSpecView): Promise<void> {
   if (store.freeInitialAvailable && !cmd.owned) {
     const res = await store.unlock(cmd.id)
     actionNote.value = res.message || (res.ok ? `已免费解锁并出战「${cmd.name}」` : '')
-    if (res.ok) store.playVoice(cmd.id, 'voice_greet')
     return
   }
   if (auth.isGuest || cmd.owned) {
     const res = await store.select(cmd.id)
     if (res.ok) {
       actionNote.value = `已切换为「${cmd.name}」`
-      store.playVoice(cmd.id, 'voice_greet')
     } else if (res.message) {
       actionNote.value = res.message
     }
@@ -158,7 +156,6 @@ async function claimFree(cmd: CommanderSpecView): Promise<void> {
   const res = await store.unlock(cmd.id)
   if (res.ok) {
     ui.notify({ code: 'cmd-free-unlock', message: res.message || `已免费解锁「${cmd.name}」`, tone: 'success' })
-    store.playVoice(cmd.id, 'voice_greet')
   } else if (res.message) {
     ui.notifyError('cmd-free-unlock-err', res.message)
   }

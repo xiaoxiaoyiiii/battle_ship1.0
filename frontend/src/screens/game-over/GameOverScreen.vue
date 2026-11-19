@@ -147,9 +147,6 @@ const cmdVictoryDesc = computed(() => {
 watch([hasResult, outcome], () => {
   if (hasResult.value) {
     useAudioStore().playOutcome(game.state.room_id || matchId.value, outcome.value)
-    if (outcome.value === 'win' && cmdSelf.value?.commander_id) {
-      commanders.playVoice(cmdSelf.value.commander_id, 'voice_victory')
-    }
   }
 }, { immediate: true })
 const verdict = computed(() => verdictText(outcome.value))

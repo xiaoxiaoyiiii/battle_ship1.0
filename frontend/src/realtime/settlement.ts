@@ -43,7 +43,6 @@ export type SettlementEventName =
   | 'commander_state_updated'
   | 'commander_skill_used'
   | 'commander_xp_settled'
-  | 'commander_interact'
 
 // Typed listeners: only the frames that exist in the generated outbound union.
 // recent_opponent is absent there (see the raw listener below).
@@ -66,7 +65,6 @@ const SETTLEMENT_EVENTS = [
   'commander_state_updated',
   'commander_skill_used',
   'commander_xp_settled',
-  'commander_interact',
 ] as const
 
 // 取消与重新配对可能在大厅挂载前连续抵达，由持久连接接住这次交接。
@@ -246,13 +244,10 @@ export function applySettlementEvent(
       game.applyServerState({ commander_state: payload })
       break
     case 'commander_skill_used':
-      useCommandersStore(pinia).recordSkillUsed(payload, game.state.player_id)
+      useCommandersStore(pinia).recordSkillUsed(payload)
       break
     case 'commander_xp_settled':
       useCommandersStore(pinia).recordXpSettled(payload)
-      break
-    case 'commander_interact':
-      useCommandersStore(pinia).recordInteract(payload)
       break
   }
 }

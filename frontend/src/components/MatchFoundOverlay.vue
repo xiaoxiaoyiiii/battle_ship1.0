@@ -10,7 +10,6 @@ import {
   commanderIntroForEquipped,
   commanderPalette,
   commanderTierOf,
-  useCommandersStore,
 } from '../stores/commanders'
 import CommanderPortraitStage from './commander/CommanderPortraitStage.vue'
 
@@ -32,7 +31,6 @@ const emit = defineEmits<{ (event: 'done'): void }>()
 const profile = useProfileStore()
 const audio = useAudioStore()
 const game = useGameStore()
-const commanders = useCommandersStore()
 
 interface MatchCmdSide {
   commander_id?: string
@@ -61,10 +59,6 @@ function introBadgeText(side: MatchCmdSide | null): string {
   if (mode === 'enhanced') return '强化登场'
   return ''
 }
-
-watch(selfCmd, (side) => {
-  if (side?.commander_id) commanders.playVoice(side.commander_id, 'voice_sortie')
-}, { immediate: true })
 
 function stringValue(source: JsonObject | null, key: string): string {
   const value = source?.[key]

@@ -21,7 +21,6 @@ OUTBOUND_EVENTS: tuple[str, ...] = (
     "chain_resolving",
     "card_drawn",
     "chat_message",
-    "commander_interact",
     "commander_skill_used",
     "commander_state_updated",
     "commander_xp_settled",

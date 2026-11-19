@@ -758,7 +758,6 @@ SPECTATE_EVENTS: dict[str, Any] = {
     "message": None,
     "rps_result": None,
     "chat_message": None,
-    "commander_interact": None,
     "commander_skill_used": _pub_commander_skill,
     # Public board markers (announced by the card itself to both players).
     "shenwei_hole": None,

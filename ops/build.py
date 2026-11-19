@@ -94,11 +94,18 @@ def _verify_dist() -> list[str]:
         except ValueError as exc:
             problems.append(f"manifest is not JSON: {exc}")
         else:
-            webp = [key for key in data if key.endswith(".webp")]
-            if len(webp) != EXPECTED_CARD_FACES:
+            faces = {
+                key: entry for key, entry in data.items()
+                if key.startswith("public/card_faces/") and key.endswith(".webp")
+            }
+            if len(faces) != EXPECTED_CARD_FACES:
                 problems.append(
-                    f"manifest has {len(webp)} card faces, expected {EXPECTED_CARD_FACES}"
+                    f"manifest has {len(faces)} card faces, expected {EXPECTED_CARD_FACES}"
                 )
+            for key, entry in faces.items():
+                file = entry.get("file")
+                if not file or not (DIST / file).is_file():
+                    problems.append(f"missing built card face for {key}")
     return problems
 
 

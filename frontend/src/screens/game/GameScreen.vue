@@ -1645,17 +1645,6 @@ async function sendCommanderSkill(opportunity: CommanderSkillOpportunity, select
   }
 }
 
-async function interactCommander(): Promise<void> {
-  try {
-    await sendBattleEvent('commander_interact', {
-      room_id: state.value.room_id,
-      player_id: state.value.player_id,
-    })
-  } catch {
-    // 忽略轻量语音互动网络波动
-  }
-}
-
 async function sendCommanderEmoji(text: string): Promise<void> {
   try {
     await sendBattleEvent('chat_message', {
@@ -2034,7 +2023,6 @@ function backToLobby(): void {
       :busy="busy || Boolean(selection || commanderSacrifice)"
       :compact="compact"
       @activate="activateCommanderSkill"
-      @interact="interactCommander"
       @send-emoji="sendCommanderEmoji"
     />
 

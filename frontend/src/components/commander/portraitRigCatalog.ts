@@ -150,11 +150,11 @@ const CATALOG: Record<string, PortraitRigSpec> = {
     motionGain: 1.1,
   }),
   'chichao:ultimate': makeRig('chichao', 'ultimate', CHICHAO_BASE, {
-    face: [0.53, 0.62, 0.155, 0.15],
-    headPivot: [0.53, 0.77],
-    chest: [0.5, 0.9],
-    rightEye: { cx: 0.615, cy: 0.595, rx: 0.044, ry: 0.019, angle: -0.08 },
-    visor: { cx: 0.415, cy: 0.625, rx: 0.085, ry: 0.045 },
+    face: [0.54, 0.675, 0.165, 0.16],
+    headPivot: [0.53, 0.83],
+    chest: [0.5, 0.92],
+    rightEye: { cx: 0.618, cy: 0.635, rx: 0.044, ry: 0.019, angle: -0.08 },
+    visor: { cx: 0.41, cy: 0.66, rx: 0.085, ry: 0.05 },
     motionGain: 1.18,
   }),
 

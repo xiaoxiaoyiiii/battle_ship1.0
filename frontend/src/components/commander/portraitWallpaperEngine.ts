@@ -422,11 +422,20 @@ let lastTickMs = 0
 let frameCount = 0
 let lifecycleBound = false
 
+function isInstanceDrawable(inst: StageInstance): boolean {
+  if (!inst.visible || inst.width <= 0 || inst.height <= 0) return false
+  if (typeof inst.canvas.checkVisibility === 'function') {
+    const root = inst.canvas.parentElement
+    if (root && !root.checkVisibility({ visibilityProperty: true })) return false
+  }
+  return true
+}
+
 function updateDebugStats(): void {
   if (typeof window === 'undefined') return
   let visibleStages = 0
   for (const inst of instances.values()) {
-    if (inst.visible && inst.width > 0 && inst.height > 0) visibleStages += 1
+    if (isInstanceDrawable(inst)) visibleStages += 1
   }
   let texturesReady = 0
   if (pool) {
@@ -611,6 +620,9 @@ function bindLifecycle(): void {
       scheduleLoop()
     }
   })
+  // Wake loop immediately when a drawer/overlay toggles CSS visibility
+  document.addEventListener('transitionrun', () => scheduleLoop(), true)
+  document.addEventListener('click', () => scheduleLoop(), true)
 }
 
 function stopLoop(): void {
@@ -623,7 +635,7 @@ function stopLoop(): void {
 function hasDrawableInstances(): boolean {
   if (typeof document !== 'undefined' && document.hidden) return false
   for (const inst of instances.values()) {
-    if (inst.visible && inst.width > 0 && inst.height > 0) return true
+    if (isInstanceDrawable(inst)) return true
   }
   return false
 }
@@ -744,7 +756,7 @@ function tick(nowMs: number): void {
   let drew = false
 
   for (const inst of instances.values()) {
-    if (!inst.visible || inst.width <= 0 || inst.height <= 0) continue
+    if (!isInstanceDrawable(inst)) continue
     if (renderInstance(p, inst, nowSec, dt, urlResolver.art, urlResolver.rig)) {
       drew = true
     }

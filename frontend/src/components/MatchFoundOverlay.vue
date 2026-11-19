@@ -325,7 +325,7 @@ onBeforeUnmount(stop)
 .match-found__side--rival .match-found__chips span { color:#f6d7a0; }
 .match-found__commander { display:inline-flex; align-items:center; gap:9px; margin-top:4px; padding:4px 12px 4px 5px; border-radius:12px; border:1px solid color-mix(in srgb,var(--cmd-pri,#38bdf8) 48%,rgb(125 211 252 / 40%)); background:rgb(6 17 32 / 82%); font-size:11px; color:#e0f2fe; text-align:left; }
 .match-found__cmd-portrait { width:44px; height:44px; border-radius:8px; flex-shrink:0; }
-.match-found__cmd-portrait :deep(.cmd-vfx__pill) { display:none; }
+.match-found__cmd-portrait :deep(.cmd-vfx__stage-badge) { display:none; }
 .match-found__cmd-copy { display:flex; flex-direction:column; gap:2px; min-width:0; }
 .match-found__cmd-copy b { font-size:12px; color:#f8fafc; line-height:1.15; }
 .match-found__cmd-copy small { font-size:10.5px; color:var(--cmd-acc,#bae6fd); line-height:1.15; }

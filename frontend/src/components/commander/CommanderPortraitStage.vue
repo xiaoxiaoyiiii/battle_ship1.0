@@ -65,7 +65,7 @@ const portraitSrc = computed(() => {
   return portraitForLevelAndEquipped(props.commanderId, props.level, props.equipped)
 })
 
-// 原图用于缩略图或减少动画。分层动作沿用玩家实际装备的立绘。
+// 缩略图和减少动效使用原画。开启待机动作时也沿用实际装备的立绘。
 const artMotion = computed(() => {
   if (ui.motion === 'reduced' || activeVariant.value === 'base' || effectiveTier.value < 2) return ''
   if (effectiveTier.value >= 4 && activeVariant.value === 'ultimate') return 'ultimate'

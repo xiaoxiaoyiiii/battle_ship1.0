@@ -9,7 +9,9 @@ import {
   type CommanderSkillCastEvent,
 } from '../../stores/commanders'
 import CommanderVfxLayer, { type CommanderVfxStage } from './CommanderVfxLayer.vue'
+import { commanderSkillArt } from './commanderSkillArt'
 import CommanderSkillIcon from './CommanderSkillIcon.vue'
+import { commanderSkillVisual } from './commanderSkillVisuals'
 
 const props = withDefaults(
   defineProps<{
@@ -77,6 +79,10 @@ const isExclusive = computed(() => {
 const palette = computed(() =>
   commanderPalette(activeCutin.value?.commander_id || 'chichao'),
 )
+const artwork = computed(() => {
+  const skill = commanderSkillVisual(activeCutin.value?.skill_id)
+  return skill ? commanderSkillArt[skill.id] : ''
+})
 </script>
 
 <template>
@@ -101,6 +107,7 @@ const palette = computed(() =>
     role="status"
     aria-live="polite"
   >
+    <img v-if="artwork" class="cmd-corner-cutin__art" :src="artwork" alt="" draggable="false" />
     <CommanderVfxLayer
       :commander-id="activeCutin.commander_id"
       :stage="effectiveStage"
@@ -131,6 +138,15 @@ const palette = computed(() =>
   pointer-events: none;
   container-type: inline-size;
 }
+.cmd-corner-cutin__art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 35%;
+}
+.cmd-corner-cutin.is-negated .cmd-corner-cutin__art { filter: grayscale(1) brightness(.72); }
 .cmd-corner-cutin__badge {
   position: absolute;
   bottom: 5px;
@@ -150,7 +166,12 @@ const palette = computed(() =>
 .cmd-corner-cutin__badge .commander-skill-icon { width: 21px; height: 21px; }
 .cmd-corner-cutin__badge small { color: #fff2cf; }
 @container (max-width: 90px) {
-  .cmd-corner-cutin__badge { inset: 2px; justify-content: center; padding: 0; }
+  .cmd-corner-cutin__badge {
+    inset: auto 2px 2px auto;
+    padding: 1px;
+    background: #101a2cdb;
+  }
+  .cmd-corner-cutin__badge .commander-skill-icon { width: 12px; height: 12px; }
   .cmd-corner-cutin__badge :is(b, small) { display: none; }
 }
 .sr-only {

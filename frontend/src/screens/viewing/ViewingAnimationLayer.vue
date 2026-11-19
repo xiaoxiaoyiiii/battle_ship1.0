@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { preloadCommanderSkillArt } from '../../components/commander/commanderSkillArt'
 import { drawChainFrame } from '../game/chainAnimationCanvas'
 import { planChainStage } from '../game/chainStageLayout'
 import { drawCardEffect, drawCounterEffect, warmCardEffectCaches, clearCardEffectCaches } from '../game/cardEffects/canvas'
@@ -159,6 +160,7 @@ function paint(c: HTMLCanvasElement, cue: Json): void {
 }
 watch(() => [props.cue, props.progress], () => void nextTick(draw), { flush: 'post' })
 onMounted(() => {
+  void preloadCommanderSkillArt().then(draw)
   warmCardEffectCaches()
   redrawViewport()
   window.addEventListener('resize', redrawViewport)

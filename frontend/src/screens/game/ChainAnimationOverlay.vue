@@ -5,6 +5,7 @@ import { useGameStore } from '../../stores/game'
 import { useUiStore } from '../../stores/ui'
 import { useAudioStore } from '../../stores/audio'
 import { resolveCardArtUrl } from '../../cards/skinArt'
+import { preloadCommanderSkillArt } from '../../components/commander/commanderSkillArt'
 import { drawChainFrame } from './chainAnimationCanvas'
 import { createChainSkinFaces } from './chainSkinFaces'
 import { planChainStage, type ChainStageInsets } from './chainStageLayout'
@@ -90,6 +91,7 @@ watch(() => animation.version, start)
 watch(() => [ui.motion, ui.connection], syncMotion)
 watch(() => props.suspended, () => { if (props.suspended) frame.value = null; start() })
 onMounted(() => {
+  void preloadCommanderSkillArt()
   mounted = true; motion = window.matchMedia('(prefers-reduced-motion: reduce)')
   animation.hydrate(game.state.chain, false); syncMotion()
   document.addEventListener('visibilitychange', syncMotion); motion.addEventListener('change', syncMotion)

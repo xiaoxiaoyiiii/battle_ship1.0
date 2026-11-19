@@ -3,6 +3,7 @@ import { drawCounterEffect } from './cardEffects/canvas'
 import type { ChainStageCard, ChainStagePlan } from './chainStageLayout'
 import { masteryTier } from '../collection/model'
 import type { SkinFaceLookup } from './chainSkinFaces'
+import { commanderSkillImage } from '../../components/commander/commanderSkillArt'
 import { commanderSkillVisual } from '../../components/commander/commanderSkillVisuals'
 
 type ArtLookup = (name: string, skinId?: string | null) => HTMLImageElement | null
@@ -38,36 +39,49 @@ const skillPaths = new Map<string, Path2D>()
 function drawCommanderCard(ctx: CanvasRenderingContext2D, item: ChainArtCard, width: number, visual: NonNullable<ReturnType<typeof commanderSkillVisual>>): void {
   ctx.save()
   ctx.scale(width / 104, width / 104)
-  const panel = ctx.createRadialGradient(0, 0, 3, 0, 0, 73)
-  panel.addColorStop(0, visual.primary)
-  panel.addColorStop(.29, visual.surface)
-  panel.addColorStop(1, visual.surface)
-  ctx.fillStyle = panel
+  const image = commanderSkillImage(visual.id)
+  if (image.complete && image.naturalWidth) {
+    ctx.drawImage(image, -52, -78, 104, 156)
+  } else {
+    ctx.fillStyle = visual.surface
+    ctx.fillRect(-52, -78, 104, 156)
+    ctx.save()
+    ctx.translate(-34, -34)
+    ctx.scale(68 / 64, 68 / 64)
+    let path = skillPaths.get(visual.id)
+    if (!path) {
+      path = new Path2D(visual.path)
+      skillPaths.set(visual.id, path)
+    }
+    ctx.strokeStyle = visual.accent
+    ctx.lineWidth = 3.25
+    ctx.lineJoin = 'round'
+    ctx.lineCap = 'round'
+    ctx.stroke(path)
+    ctx.restore()
+  }
+  const shade = ctx.createLinearGradient(0, -78, 0, 78)
+  shade.addColorStop(0, '#07101be8')
+  shade.addColorStop(.24, '#07101b00')
+  shade.addColorStop(.65, '#07101b00')
+  shade.addColorStop(1, '#07101bea')
+  ctx.fillStyle = shade
   ctx.fillRect(-52, -78, 104, 156)
   ctx.strokeStyle = visual.primary
   ctx.lineWidth = 1
-  ctx.strokeRect(-47.5, -73.5, 95, 147)
-  ctx.strokeRect(28.5, -66.5, 14, 15)
+  ctx.strokeRect(-50.5, -76.5, 101, 153)
+  ctx.fillStyle = '#08121dda'
+  ctx.fillRect(33, -70, 12, 14)
+  ctx.strokeRect(33, -70, 12, 14)
   ctx.fillStyle = visual.accent
   ctx.textAlign = 'left'
   ctx.font = 'bold 10px sans-serif'
-  ctx.fillText('指挥官技能', -41, -55)
-  ctx.fillText(String(item.speed ?? 3), 32, -55)
+  ctx.fillText('指挥官技能', -43, -59)
   ctx.textAlign = 'center'
-  ctx.font = 'bold 15px sans-serif'
-  ctx.fillText(item.name, 0, 60, 89)
-  ctx.translate(-34, -32)
-  ctx.scale(68 / 64, 68 / 64)
-  let path = skillPaths.get(visual.id)
-  if (!path) {
-    path = new Path2D(visual.path)
-    skillPaths.set(visual.id, path)
-  }
-  ctx.strokeStyle = visual.accent
-  ctx.lineWidth = 3.25
-  ctx.lineJoin = 'round'
-  ctx.lineCap = 'round'
-  ctx.stroke(path)
+  ctx.fillText(String(item.speed ?? 3), 39, -59)
+  ctx.fillStyle = '#fff7ee'
+  ctx.font = 'bold 16px sans-serif'
+  ctx.fillText(item.name, 0, 67, 89)
   ctx.restore()
 }
 

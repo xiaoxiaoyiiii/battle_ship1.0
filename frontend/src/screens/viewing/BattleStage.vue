@@ -6,7 +6,7 @@ import { resolveCardArtUrl } from '../../cards/skinArt'
 import { CARDS } from '../../cards/cardData'
 import '../game/card-inspect.css'
 import MysteryTechBadges from '../game/MysteryTechBadges.vue'
-import CommanderSkillIcon from '../../components/commander/CommanderSkillIcon.vue'
+import { commanderSkillArt } from '../../components/commander/commanderSkillArt'
 import { commanderAvatarUrl } from '../../stores/commanders'
 import { boardCells, sides } from './frame'
 import { commanderPresentation } from './presentation'
@@ -61,7 +61,7 @@ async function showPreview(card: ViewCard, event: Event): Promise<void> {
             <img :src="commanderAvatarUrl(frame.commanders?.sides?.[side]?.commander_id || cast?.skill.commanderId || '')" alt="" />
             <div v-if="cast?.seat === side" class="view-player__cast" data-testid="viewing-commander-cue"
               :data-seat="side" :data-skill="cast.skill.id" :data-skill-stage="cast.stage">
-              <CommanderSkillIcon :skill-id="cast.skill.id" />
+              <img :src="commanderSkillArt[cast.skill.id]" alt="" draggable="false" />
               <span>{{ cast.skill.name }}<small>{{ cast.detail }}</small></span>
             </div>
           </div>

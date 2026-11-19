@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import CommanderSkillIcon from './CommanderSkillIcon.vue'
+import { commanderSkillArt } from './commanderSkillArt'
 import { commanderSkillVisual } from './commanderSkillVisuals'
 
 const props = withDefaults(defineProps<{
@@ -24,10 +24,10 @@ const visual = computed(() => commanderSkillVisual(props.skillId))
     :data-skill-id="visual.id"
   >
     <div class="commander-skill-card__face">
+      <img class="commander-skill-card__art" :src="commanderSkillArt[visual.id]" alt="" draggable="false" />
       <header><span>指挥官技能</span><b>{{ speed }}</b></header>
       <strong>{{ visual.name }}</strong>
       <span v-if="order" class="commander-skill-card__order">{{ order }}</span>
-      <div class="commander-skill-card__mark"><CommanderSkillIcon :skill-id="skillId" /></div>
     </div>
     <span v-if="negated" class="commander-skill-card__negated">无效</span>
   </div>
@@ -51,38 +51,61 @@ const visual = computed(() => commanderSkillVisual(props.skillId))
   box-sizing: border-box;
   position: absolute;
   inset: 0;
-  display: grid;
-  grid-template-rows: auto auto 1fr;
-  gap: 6%;
-  padding: 6% 7% 12%;
   border: 1px solid var(--skill-primary);
   border-radius: inherit;
-  background:
-    repeating-linear-gradient(141deg, transparent 0 22px, color-mix(in srgb, var(--skill-primary) 17%, transparent) 22px 23px),
-    radial-gradient(ellipse at 50% 53%, color-mix(in srgb, var(--skill-primary) 31%, var(--skill-surface)), var(--skill-surface) 73%);
+  overflow: hidden;
+  background: radial-gradient(at 50% 40%, var(--skill-primary), var(--skill-surface) 76%);
+}
+.commander-skill-card__art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.commander-skill-card__face::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(#07101be8, transparent 24% 65%, #07101bea 100%);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--skill-primary) 30%, transparent);
+  pointer-events: none;
 }
 header {
+  position: absolute;
+  z-index: 1;
+  inset: 4% 6% auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 3px;
-  font-size: clamp(7px, 9.4cqw, 13px);
+  font-size: clamp(7px, 10cqw, 13px);
+  font-weight: 700;
   line-height: 1.1;
+  text-shadow: 0 1px 2px #03070d;
 }
-header b { padding: .18em .42em; border: 1px solid var(--skill-primary); border-radius: 4px; }
+header b {
+  padding: .12em .37em;
+  border: 1px solid var(--skill-primary);
+  border-radius: 3px;
+  background: #08121dda;
+}
 header span { white-space: nowrap; }
-.commander-skill-card__mark { display: grid; place-items: center; min-height: 0; }
-.commander-skill-card__mark .commander-skill-icon {
-  width: 78%;
-  height: auto;
-  max-height: 90%;
-  filter: drop-shadow(0 0 6px var(--skill-primary));
+strong {
+  position: absolute;
+  z-index: 1;
+  inset: auto 4% 5%;
+  color: #fff7ee;
+  font-size: clamp(10px, 16cqw, 20px);
+  text-align: center;
+  line-height: 1.15;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px #03070d, 0 0 6px var(--skill-surface);
 }
-strong { font-size: clamp(10px, 15cqw, 20px); text-align: center; line-height: 1.15; }
 .commander-skill-card__order {
   position: absolute;
-  left: 8%;
-  bottom: 8%;
+  z-index: 1;
+  left: 7%;
+  bottom: 21%;
   color: #fff5d4;
   font: italic 700 clamp(10px, 18cqw, 21px)/1 Georgia, serif;
   text-shadow: 0 0 5px #08121c;
@@ -90,6 +113,7 @@ strong { font-size: clamp(10px, 15cqw, 20px); text-align: center; line-height: 1
 .is-negated .commander-skill-card__face { filter: grayscale(1) brightness(.72); }
 .commander-skill-card__negated {
   position: absolute;
+  z-index: 2;
   inset: 44% 0 auto;
   padding: .1em;
   transform: rotate(-9deg);
@@ -103,6 +127,7 @@ strong { font-size: clamp(10px, 15cqw, 20px); text-align: center; line-height: 1
 .is-entering::after {
   content: '';
   position: absolute;
+  z-index: 3;
   inset: 0;
   background: linear-gradient(132deg, transparent 18%, var(--skill-accent) 48%, transparent 71%);
   animation: skill-stack-flash 420ms ease-out both;

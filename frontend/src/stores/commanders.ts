@@ -146,6 +146,18 @@ const COMMANDER_SVG_MODULES = import.meta.glob('/public/commanders/*/*.svg', {
   import: 'default',
 }) as Record<string, string>
 
+const COMMANDER_ART_MODULES = import.meta.glob('/public/commanders/*/art_*.webp', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+}) as Record<string, string>
+
+const COMMANDER_RIG_MODULES = import.meta.glob('/public/commanders/*/rig_*.png', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+}) as Record<string, string>
+
 const COMMANDER_OGG_MODULES = import.meta.glob('/public/commanders/*/*.ogg', {
   eager: true,
   query: '?url',
@@ -157,6 +169,20 @@ export function commanderPortraitUrl(commanderId: string, variant = 'base'): str
   const safeVar = ['base', 'ascended', 'alt', 'ultimate'].includes(variant) ? variant : 'base'
   const key = `/public/commanders/${safeId}/portrait_${safeVar}.svg`
   return COMMANDER_SVG_MODULES[key] ?? `/commanders/${safeId}/portrait_${safeVar}.svg`
+}
+
+export function commanderArtUrl(commanderId: string, variant = 'base'): string {
+  const safeId = commanderId || 'chichao'
+  const safeVar = ['base', 'ascended', 'alt', 'ultimate'].includes(variant) ? variant : 'base'
+  const key = `/public/commanders/${safeId}/art_${safeVar}.webp`
+  return COMMANDER_ART_MODULES[key] ?? `/commanders/${safeId}/art_${safeVar}.webp`
+}
+
+export function commanderRigUrl(commanderId: string, variant = 'base'): string {
+  const safeId = commanderId || 'chichao'
+  const safeVar = ['base', 'ascended', 'alt', 'ultimate'].includes(variant) ? variant : 'base'
+  const key = `/public/commanders/${safeId}/rig_${safeVar}.png`
+  return COMMANDER_RIG_MODULES[key] ?? `/commanders/${safeId}/rig_${safeVar}.png`
 }
 
 export function commanderAvatarUrl(commanderId: string): string {
